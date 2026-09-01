@@ -14,5 +14,5 @@
  * 稳定标识符边界由本模块常量和相关测试维护，不随展示名迁移。
  */
 
-/** 产品对用户 / LLM 展示的品牌名（唯一规范写法，不要再派生其它变体）。 */
-export const BRAND_NAME = 'Cindy';
+/** Lex 对用户 / LLM 展示的品牌名（唯一规范写法，不要再派生其它变体）。 */
+export const BRAND_NAME = 'Lex';

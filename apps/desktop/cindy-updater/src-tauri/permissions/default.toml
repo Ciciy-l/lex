@@ -16,5 +16,5 @@ description = "Allow the UI to terminate the updater process."
 commands.allow = ["quit_now"]
 
 [default]
-description = "All commands the cindy-updater UI needs."
+description = "All commands the lex-updater UI needs."
 permissions = ["allow-get-status", "allow-open-log-dir", "allow-quit-now"]

@@ -5,7 +5,7 @@ use clap::Parser;
 /// CLI args delivered by the main Electron process when it spawns the updater.
 /// Spec: see `executeUpdateWindows` in `apps/desktop/src/main/updateService.ts`.
 #[derive(Parser, Debug, Clone)]
-#[command(name = "cindy-updater", version)]
+#[command(name = "lex-updater", version)]
 pub struct CliArgs {
     /// Path to the downloaded zip patch.
     #[arg(long)]

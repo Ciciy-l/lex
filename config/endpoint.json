@@ -14,7 +14,7 @@
   "githubApiBaseUrl": "https://github.cindy.com.cn",
   "skillhubApiBaseUrl": "https://xd-skillhub.cindy.com.cn",
   "pluginApiBaseUrl": "https://plugin.cindy.com.cn",
-  "cdnBaseUrl": "https://hotfix.cindy.com.cn/cindy",
+  "cdnBaseUrl": "https://raw.githubusercontent.com/Ciciy-l/lex/updates",
   "mobileUpdateBaseUrl": "https://mobile-update.cindy.com.cn",
   "authDesktopCallbackUrl": "https://auth.cindy.com.cn/api/auth/desktop/callback",
   "review": "0.1.0"

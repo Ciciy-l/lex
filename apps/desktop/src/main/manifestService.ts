@@ -28,7 +28,7 @@ const log = createLogger('manifestService');
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export interface PlatformAsset {
-  /** Relative path under baseUrl, e.g. "claude-code/2.1.108/win32-x64/claude.exe.gz" */
+  /** Relative path under baseUrl, or an absolute HTTPS release URL. */
   file: string;
   sha256: string;
   size: number;
@@ -122,6 +122,29 @@ function currentUpdateChannel(): UpdateChannel {
 export function getBaseUrl(): string {
   if (process.env.XDT_CDN_BASE_URL) return process.env.XDT_CDN_BASE_URL;
   return getClientEndpoint('cdnBaseUrl');
+}
+
+/**
+ * Resolve an asset path advertised by a manifest.
+ *
+ * Release manifests may point at GitHub Release assets (absolute HTTPS URLs)
+ * while the manifest itself is served from the Lex updates branch.  Keep
+ * supporting the historical relative-path form, but never concatenate an
+ * absolute URL onto the base URL (which would produce an unusable URL).
+ */
+export function resolveManifestAssetUrl(baseUrl: string, file: string): string {
+  const candidate = file.trim();
+  if (!candidate) return `${baseUrl.replace(/\/+$/, '')}/`;
+  try {
+    const absolute = new URL(candidate);
+    if (absolute.protocol === 'https:' || absolute.protocol === 'http:') {
+      return absolute.toString();
+    }
+  } catch {
+    // Relative paths are resolved below; malformed values are left to the
+    // downloader's normal request/error handling.
+  }
+  return `${baseUrl.replace(/\/+$/, '')}/${candidate.replace(/^\/+/, '')}`;
 }
 
 /**

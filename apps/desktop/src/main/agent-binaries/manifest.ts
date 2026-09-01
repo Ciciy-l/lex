@@ -12,6 +12,7 @@
  */
 
 import type { Manifest } from '../manifestService.js';
+import { resolveManifestAssetUrl } from '../manifestService.js';
 
 /** Vendor binary 资产元数据（与 manifestService.PlatformAsset / <VendorCodeManifest> 字段对齐） */
 export interface VendorAsset {
@@ -67,5 +68,5 @@ export function getVendorAsset(manifest: Manifest, manifestField: string): Vendo
  * 等价于现有 `${getBaseUrl()}/${asset.file}` 写法。
  */
 export function resolveVendorAssetUrl(baseUrl: string, asset: VendorAsset): string {
-  return `${baseUrl}/${asset.file}`;
+  return resolveManifestAssetUrl(baseUrl, asset.file);
 }

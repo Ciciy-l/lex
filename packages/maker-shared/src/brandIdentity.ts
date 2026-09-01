@@ -5,9 +5,9 @@
  * 这边管 OS 注册身份与磁盘/协议标识符——exe 名、AppUserModelId/bundle id、
  * 深链 scheme、userData 目录名、CDN 渠道前缀、更新器产物名等。
  *
- * 2026-07-17 身份翻转(Cindy 渠道分叉,老 /xdt-maker 渠道冻结不再发版):
- * 主值全部切换为 Cindy 系,旧值移入 legacy 数组供兼容读取与未来数据迁移方案
- * 使用。本仓构建从此产出 Cindy 身份的包(新装用户直装);存量 xdt-maker 用户
+ * 2026-09-02 Lex 独立发行版身份隔离:
+ * 主值全部切换为 Lex 系,旧值移入 legacy 数组供兼容读取与未来数据迁移方案
+ * 使用。本仓构建从此产出 Lex 身份的包(新装用户直装);存量 xdt-maker/Cindy 用户
  * 停留在冻结渠道,待后续独立设计的自动迁移方案接走。
  *
  * ⚠️ 语义边界:
@@ -23,7 +23,7 @@
  *    `xdt-image://` 等进程内 scheme、`.cshare` 扩展名、
  *    localStorage 键等)由各自协议/存储模块维护,
  *    不要试图从这里派生它们。
- *  - `updaterName` = `cindy-updater`(2026-07-17 经 owner 确认随品牌翻转改名,
+ *  - `updaterName` = `lex-updater`(Lex 独立发行版使用独立更新器产物名,
  *    docs/dev-rules/cindy-updater.md;老渠道已冻结、新应用未发过版,无自更新兼容包袱)。
  *    消费方:updateService(resources 源名 + %TEMP% 运行名)、forge prePackage
  *    构建/签名/extraResource、notices 脚本登记路径。
@@ -135,7 +135,7 @@ export interface BrandIdentity {
 }
 
 /**
- * 当前生效的身份档案(Cindy,2026-07-17 翻转)。
+ * 当前生效的身份档案(Lex 独立发行版)。
  * 旧 xdt-maker 值全部下沉 legacy 数组。
  *
  * 区域差异字段:appId、userDataDirName 按区域派生(cn/global 是两个可并存
@@ -148,26 +148,26 @@ export interface BrandIdentity {
  */
 export const BRAND_IDENTITY: BrandIdentity = Object.freeze({
   displayName: BRAND_NAME,
-  executableName: 'Cindy',
+  executableName: 'Lex',
   executableNameByRegion: Object.freeze({
-    cn: 'Cindy',
-    // 2026-07-26 与 cn 同值(见字段 doc):global 包全部可见位置显示 Cindy,
-    // 放弃 cn/global 同机双装的文件层隔离;appId / userData 仍分区。
-    global: 'Cindy',
-    dev: 'CindyDev',
+    cn: 'Lex',
+    global: 'Lex',
+    dev: 'LexDev',
   }),
   appIdByRegion: Object.freeze({
-    cn: 'com.xd.cindycn',
-    global: 'com.xd.cindy',
-    dev: 'com.xd.cindydev',
+    cn: 'com.ciciy.lexcn',
+    global: 'com.ciciy.lex',
+    dev: 'com.ciciy.lexdev',
   }),
+  // Deep-link protocol remains `cindy://` for cross-client compatibility;
+  // OS installation identity is isolated by the Lex app/bundle IDs above.
   primaryScheme: 'cindy',
   legacySchemes: Object.freeze(['xdt-maker']),
-  userDataDirName: 'Cindy',
+  userDataDirName: 'Lex',
   userDataDirNameByRegion: Object.freeze({
-    cn: 'Cindy',
-    global: 'CindyGlobal',
-    dev: 'CindyDev',
+    cn: 'Lex',
+    global: 'LexGlobal',
+    dev: 'LexDev',
   }),
   legacyUserDataDirNames: Object.freeze(['xdt-maker']),
   legacyUserDataDirNamesByRegion: Object.freeze({
@@ -181,9 +181,9 @@ export const BRAND_IDENTITY: BrandIdentity = Object.freeze({
     global: Object.freeze([]),
     dev: Object.freeze([]),
   }),
-  cdnPrefix: 'cindy',
-  updaterName: 'cindy-updater',
-  dbFilePrefix: 'cindy',
+  cdnPrefix: 'lex',
+  updaterName: 'lex-updater',
+  dbFilePrefix: 'lex',
   legacyDbFilePrefixes: Object.freeze(['xdt-maker']),
 });
 

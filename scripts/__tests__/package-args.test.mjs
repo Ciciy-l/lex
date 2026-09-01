@@ -35,6 +35,14 @@ test('parsePackageArgs: 版本无关本地包默认 global', () => {
   assert.equal(out.versionSpec, null);
 });
 
+test('parsePackageArgs: 允许预发布版本用于 rc 升级回归', () => {
+  const out = parsePackageArgs(['--version', '0.1.0-rc.1', '--region', 'global'], {
+    platform: 'linux',
+    arch: 'x64',
+  });
+  assert.equal(out.versionSpec, '0.1.0-rc.1');
+});
+
 test('parsePackageArgs: 版本化打包必须显式指定 region', () => {
   assert.throws(
     () => parsePackageArgs(['--version', '1.2.3'], {

@@ -70,7 +70,7 @@ const INSTALL_TIMEOUT_MS = 60_000;
  * 与 forge.config.ts extraResource 的 `resources/cli` 落点一致。
  */
 export function resolveBundledCliPath(resourcesPath: string): string {
-  return path.join(resourcesPath, 'cli', 'cindy');
+  return path.join(resourcesPath, 'cli', CLI_COMMAND_NAME);
 }
 
 /** POSIX shell 单引号转义:把值安全地包进 '...'。 */

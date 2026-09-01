@@ -30,6 +30,9 @@ const appGetPath = vi.fn((name: string) => {
 });
 const fetchManifest = vi.fn();
 const getBaseUrl = vi.fn(() => CDN_EXTERNAL_BASE_URL);
+const resolveManifestAssetUrl = vi.fn((base: string, file: string) =>
+  /^https?:\/\//.test(file) ? file : `${base.replace(/\/+$/, '')}/${file.replace(/^\/+/, '')}`,
+);
 const isDev = vi.fn(() => false);
 const download = vi.fn();
 const readAutoUpdateSettings = vi.fn(() => ({ autoRelaunchOnIdle: true }));
@@ -88,6 +91,7 @@ vi.mock('../manifestService', () => ({
   getBaseUrl,
   isDev,
   clearCachedManifest: vi.fn(),
+  resolveManifestAssetUrl,
 }));
 
 vi.mock('../updateChannelStore', () => ({
@@ -348,6 +352,24 @@ describe('checkForUpdate Linux installer flow', () => {
 
     await expect(enableUncustomizedBetaChannel()).resolves.toBe(false);
     expect(tryEnableUncustomizedBetaAtomic).not.toHaveBeenCalled();
+  });
+});
+
+describe('checkForUpdate release asset URL resolution', () => {
+  it('passes an absolute GitHub Release URL to the downloader unchanged', async () => {
+    readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });
+    download.mockImplementation(async ({ targetPath }: { targetPath: string }) => {
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      fs.writeFileSync(targetPath, 'update');
+      return { path: targetPath, size: 123 };
+    });
+    const { checkForUpdate } = await freshUpdateService('darwin');
+    const releaseUrl = 'https://github.com/Ciciy-l/lex/releases/download/v0.1.0/Lex-arm64-hotfix.zip';
+    await expect(checkForUpdate(updateManifest('9.9.9', releaseUrl))).resolves.toBe('ready');
+    expect(download).toHaveBeenCalledWith(expect.objectContaining({
+      url: releaseUrl,
+      sha256: 'abc',
+    }));
   });
 });
 

@@ -1,12 +1,12 @@
 [package]
-name = "cindy-updater"
+name = "lex-updater"
 version = "0.1.0"
 edition = "2021"
-description = "Windows updater for Cindy"
+description = "Windows updater for Lex"
 license = "Apache-2.0"
 
 [[bin]]
-name = "cindy-updater"
+name = "lex-updater"
 path = "src/main.rs"
 
 [build-dependencies]
