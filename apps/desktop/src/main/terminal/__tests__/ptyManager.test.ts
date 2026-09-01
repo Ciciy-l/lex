@@ -32,7 +32,13 @@ interface FakePty extends IPty {
   __spawnEnv: Record<string, string | undefined>;
 }
 
-function makeFakePty(spawnArgs: { command: string; args: string[]; cols?: number; rows?: number; env?: Record<string, string | undefined> }): FakePty {
+function makeFakePty(spawnArgs: {
+  command: string;
+  args: string[];
+  cols?: number;
+  rows?: number;
+  env?: Record<string, string | undefined>;
+}): FakePty {
   const dataListeners: Array<(s: string) => void> = [];
   const exitListeners: Array<(info: { exitCode: number; signal?: number }) => void> = [];
   const fake: FakePty = {
@@ -123,6 +129,7 @@ let exitPayloads: Array<{ target: WebContents; payload: ExitPayload }> = [];
 
 function makeManager(opts?: {
   resolveFallbackOwner?: (dead: WebContents) => WebContents | null;
+  canTransferOwner?: (current: WebContents, next: WebContents, sessionId: string) => boolean;
   platform?: NodeJS.Platform;
 }) {
   return new PtyManager({
@@ -147,6 +154,7 @@ function makeManager(opts?: {
       },
     },
     resolveFallbackOwner: opts?.resolveFallbackOwner,
+    canTransferOwner: opts?.canTransferOwner ?? (() => true),
     platform: opts?.platform,
   });
 }
@@ -210,7 +218,7 @@ describe('PtyManager.create', () => {
     expect(allSpawns).toHaveLength(1);
 
     // 模拟 session 切换后重新 mount:同 id 再 create,**不应** spawn 第二次
-    const second = mgr.create({ id: 't1', cwd: '/elsewhere', cols: 120, rows: 40, owner });
+    const second = mgr.create({ id: 't1', cwd: '/tmp', cols: 120, rows: 40, owner });
     expect(allSpawns).toHaveLength(1); // 没有新 spawn
     expect(second.pid).toBe(first.pid);
     expect(second.shellId).toBe(first.shellId);
@@ -229,12 +237,42 @@ describe('PtyManager.create', () => {
     expect(dataPayloads[0].target).toBe(ownerNew);
   });
 
-  it('同 id 已 exit 时再 create 抛错(需走显式 restart)', () => {
+  it('拒绝 ownership gate 未授权的同 id attach 并保留原 owner', () => {
+    const mgr = makeManager({ canTransferOwner: () => false });
+    const owner = makeFakeWebContents() as unknown as WebContents;
+    const intruder = makeFakeWebContents() as unknown as WebContents;
+    mgr.create({ id: 't1', cwd: '/tmp', owner });
+
+    expect(() => mgr.create({ id: 't1', cwd: '/tmp', owner: intruder })).toThrow(
+      'TERMINAL_OWNER_MISMATCH:t1',
+    );
+    lastSpawn!.__triggerData('still private');
+    expect(dataPayloads[0]?.target).toBe(owner);
+  });
+
+  it('拒绝用不同 profile 或 cwd attach 已存在的 session', () => {
+    const mgr = makeManager();
+    const owner = makeFakeWebContents() as unknown as WebContents;
+    mgr.create({ id: 't1', cwd: '/tmp/project-a', owner });
+
+    expect(() => mgr.create({ id: 't1', cwd: '/tmp/project-a', profile: 'codex', owner })).toThrow(
+      'TERMINAL_SESSION_MISMATCH:t1',
+    );
+    expect(() => mgr.create({ id: 't1', cwd: '/tmp/project-b', owner })).toThrow(
+      'TERMINAL_SESSION_MISMATCH:t1',
+    );
+    expect(allSpawns).toHaveLength(1);
+  });
+
+  it('同 id 已 exit 时 createOrAttach 返回 exit 快照供新 renderer 恢复 overlay', () => {
     const mgr = makeManager();
     const owner = makeFakeWebContents() as unknown as WebContents;
     mgr.create({ id: 't1', cwd: '/tmp', owner });
     lastSpawn!.__triggerExit({ exitCode: 0 });
-    expect(() => mgr.create({ id: 't1', cwd: '/tmp', owner })).toThrow(/already exists/);
+    expect(mgr.create({ id: 't1', cwd: '/tmp', owner }).exit).toEqual({
+      code: 0,
+      signal: null,
+    });
   });
 });
 
@@ -244,9 +282,9 @@ describe('PtyManager.write batching', () => {
     const owner = makeFakeWebContents() as unknown as WebContents;
     mgr.create({ id: 't1', cwd: '/tmp', owner });
 
-    mgr.write('t1', 'a');
-    mgr.write('t1', 'b');
-    mgr.write('t1', 'c');
+    mgr.write('t1', 'a', owner);
+    mgr.write('t1', 'b', owner);
+    mgr.write('t1', 'c', owner);
     // microtask 还没 flush
     expect(lastSpawn!.__writes).toEqual([]);
     // 让 microtask 跑
@@ -259,16 +297,16 @@ describe('PtyManager.write batching', () => {
     const owner = makeFakeWebContents() as unknown as WebContents;
     mgr.create({ id: 't1', cwd: '/tmp', owner });
 
-    mgr.write('t1', 'x');
+    mgr.write('t1', 'x', owner);
     await Promise.resolve();
-    mgr.write('t1', 'y');
+    mgr.write('t1', 'y', owner);
     await Promise.resolve();
     expect(lastSpawn!.__writes).toEqual(['x', 'y']);
   });
 
   it('未知 id write 静默忽略', async () => {
     const mgr = makeManager();
-    mgr.write('nope', 'data');
+    mgr.write('nope', 'data', makeFakeWebContents() as unknown as WebContents);
     await Promise.resolve();
     // 没有任何 spawn 被调用
     expect(allSpawns).toHaveLength(0);
@@ -279,9 +317,50 @@ describe('PtyManager.write batching', () => {
     const owner = makeFakeWebContents() as unknown as WebContents;
     mgr.create({ id: 't1', cwd: '/tmp', owner });
     lastSpawn!.__triggerExit({ exitCode: 0 });
-    mgr.write('t1', 'late');
+    mgr.write('t1', 'late', owner);
     await Promise.resolve();
     expect(lastSpawn!.__writes).toEqual([]);
+  });
+
+  it('dispose 后同 id 重建不会把旧 session 的 queued input 写进新 PTY', async () => {
+    const mgr = makeManager();
+    const owner = makeFakeWebContents() as unknown as WebContents;
+    mgr.create({ id: 't1', cwd: '/tmp', owner });
+    const oldPty = lastSpawn!;
+
+    mgr.write('t1', 'old-input', owner);
+    mgr.dispose('t1', owner);
+    mgr.create({ id: 't1', cwd: '/tmp', owner });
+    const replacement = lastSpawn!;
+    await Promise.resolve();
+
+    expect(replacement).not.toBe(oldPty);
+    expect(oldPty.__writes).toEqual([]);
+    expect(replacement.__writes).toEqual([]);
+  });
+});
+
+describe('PtyManager ownership checks', () => {
+  it('非 owner 不能 write、resize、dispose 或 restart', async () => {
+    const mgr = makeManager();
+    const owner = makeFakeWebContents() as unknown as WebContents;
+    const intruder = makeFakeWebContents() as unknown as WebContents;
+    mgr.create({ id: 't1', cwd: '/tmp', owner });
+    const pty = lastSpawn!;
+
+    mgr.write('t1', 'private input', intruder);
+    mgr.resize('t1', 120, 40, intruder);
+    mgr.dispose('t1', intruder);
+    await Promise.resolve();
+
+    expect(pty.__writes).toEqual([]);
+    expect(pty.__resizes).toEqual([]);
+    expect(pty.__killed).toBe(false);
+    expect(mgr.has('t1')).toBe(true);
+
+    pty.__triggerExit({ exitCode: 0 });
+    expect(() => mgr.restart('t1', intruder)).toThrow('TERMINAL_OWNER_MISMATCH:t1');
+    expect(allSpawns).toHaveLength(1);
   });
 });
 
@@ -290,7 +369,7 @@ describe('PtyManager.resize', () => {
     const mgr = makeManager();
     const owner = makeFakeWebContents() as unknown as WebContents;
     mgr.create({ id: 't1', cwd: '/tmp', cols: 80, rows: 24, owner });
-    mgr.resize('t1', 120, 40);
+    mgr.resize('t1', 120, 40, owner);
     expect(lastSpawn!.__resizes).toEqual([{ cols: 120, rows: 40 }]);
   });
 
@@ -298,7 +377,7 @@ describe('PtyManager.resize', () => {
     const mgr = makeManager();
     const owner = makeFakeWebContents() as unknown as WebContents;
     mgr.create({ id: 't1', cwd: '/tmp', cols: 80, rows: 24, owner });
-    mgr.resize('t1', 80, 24);
+    mgr.resize('t1', 80, 24, owner);
     expect(lastSpawn!.__resizes).toEqual([]);
   });
 
@@ -306,9 +385,9 @@ describe('PtyManager.resize', () => {
     const mgr = makeManager();
     const owner = makeFakeWebContents() as unknown as WebContents;
     mgr.create({ id: 't1', cwd: '/tmp', owner });
-    mgr.resize('t1', 0, 24);
-    mgr.resize('t1', NaN, 40);
-    mgr.resize('t1', 100, -1);
+    mgr.resize('t1', 0, 24, owner);
+    mgr.resize('t1', NaN, 40, owner);
+    mgr.resize('t1', 100, -1, owner);
     expect(lastSpawn!.__resizes).toEqual([]);
   });
 
@@ -317,7 +396,7 @@ describe('PtyManager.resize', () => {
     const owner = makeFakeWebContents() as unknown as WebContents;
     mgr.create({ id: 't1', cwd: '/tmp', owner });
     lastSpawn!.__triggerExit({ exitCode: 0 });
-    mgr.resize('t1', 100, 30);
+    mgr.resize('t1', 100, 30, owner);
     expect(lastSpawn!.__resizes).toEqual([]);
   });
 });
@@ -327,7 +406,7 @@ describe('PtyManager.dispose', () => {
     const mgr = makeManager();
     const owner = makeFakeWebContents() as unknown as WebContents;
     mgr.create({ id: 't1', cwd: '/tmp', owner });
-    mgr.dispose('t1');
+    mgr.dispose('t1', owner);
     expect(lastSpawn!.__killed).toBe(true);
     expect(lastSpawn!.__dataListenersDisposed).toBe(true);
     expect(lastSpawn!.__exitListenersDisposed).toBe(true);
@@ -339,14 +418,16 @@ describe('PtyManager.dispose', () => {
     const owner = makeFakeWebContents() as unknown as WebContents;
     mgr.create({ id: 't1', cwd: '/tmp', owner });
     lastSpawn!.__triggerExit({ exitCode: 0 });
-    mgr.dispose('t1');
+    mgr.dispose('t1', owner);
     expect(lastSpawn!.__killed).toBe(false);
     expect(mgr.has('t1')).toBe(false);
   });
 
   it('未知 id dispose 是 no-op', () => {
     const mgr = makeManager();
-    expect(() => mgr.dispose('nope')).not.toThrow();
+    expect(() =>
+      mgr.dispose('nope', makeFakeWebContents() as unknown as WebContents),
+    ).not.toThrow();
   });
 });
 
@@ -380,6 +461,34 @@ describe('PtyManager.restart', () => {
     const mgr = makeManager();
     const owner = makeFakeWebContents() as unknown as WebContents;
     expect(() => mgr.restart('nope', owner)).toThrow(/not found/);
+  });
+
+  it('replacement spawn 失败时保留旧 exited session 供用户重试', () => {
+    let spawnCount = 0;
+    const owner = makeFakeWebContents() as unknown as WebContents;
+    const mgr = new PtyManager({
+      spawn: (command, args, options) => {
+        spawnCount += 1;
+        if (spawnCount === 2) throw new Error('replacement unavailable');
+        const fake = makeFakePty({
+          command,
+          args,
+          cols: options.cols,
+          rows: options.rows,
+          env: options.env as Record<string, string | undefined> | undefined,
+        });
+        lastSpawn = fake;
+        allSpawns.push(fake);
+        return fake;
+      },
+      sink: { emitData: vi.fn(), emitExit: vi.fn() },
+    });
+    mgr.create({ id: 't1', cwd: '/tmp', owner });
+    lastSpawn!.__triggerExit({ exitCode: 1 });
+
+    expect(() => mgr.restart('t1', owner)).toThrow(/replacement unavailable/);
+    expect(mgr.has('t1')).toBe(true);
+    expect(mgr.__debugListSessions()[0]?.exit).toEqual({ code: 1, signal: null });
   });
 });
 
@@ -622,6 +731,22 @@ describe('PtyManager fallback owner transfer (RSB 子窗口销毁不杀 PTY)', (
     pty.__triggerData('after transfer');
     expect(dataPayloads).toHaveLength(1);
     expect(dataPayloads[0].target).toBe(mainWin);
+  });
+
+  it('fallback transfer 未通过 ownership gate 时 dispose 而不转移', () => {
+    const sidebar = makeFakeWebContents();
+    const mainWin = makeFakeWebContents();
+    const mgr = makeManager({
+      resolveFallbackOwner: () => mainWin as unknown as WebContents,
+      canTransferOwner: () => false,
+    });
+    mgr.create({ id: 't1', cwd: '/tmp', owner: sidebar as unknown as WebContents });
+    const pty = lastSpawn!;
+
+    sidebar.__triggerDestroyed();
+
+    expect(pty.__killed).toBe(true);
+    expect(mgr.has('t1')).toBe(false);
   });
 
   it('只转移 dead owner 名下的 session,其它 owner 不受影响', () => {

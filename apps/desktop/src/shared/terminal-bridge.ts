@@ -18,6 +18,19 @@ export type ShellId =
   | 'gitbash'
   | 'wsl';
 
+/**
+ * 终端工作台允许启动的受控 profile。
+ *
+ * Renderer 只能传这些稳定枚举，不能传 executable、args 或 env。Main 进程
+ * 根据 profile 从受管的 agent binary 链解析真正的执行文件。
+ */
+export const TERMINAL_PROFILES = ['shell', 'claude', 'codex', 'pi'] as const;
+export type TerminalProfile = (typeof TERMINAL_PROFILES)[number];
+
+export function isTerminalProfile(value: unknown): value is TerminalProfile {
+  return typeof value === 'string' && (TERMINAL_PROFILES as readonly string[]).includes(value);
+}
+
 export interface AvailableShell {
   id: Exclude<ShellId, 'auto'>;
   command: string;
@@ -33,12 +46,19 @@ export interface TerminalCreateParams {
   rows?: number;
   /** Settings 用户偏好；不传走 main 端的 GET_DEFAULT_SHELL_PREF。 */
   shellPref?: ShellId | null;
+  /** 受控启动 profile；省略时创建普通 shell。 */
+  profile?: TerminalProfile;
 }
 
 export interface TerminalCreateResult {
-  shellId: Exclude<ShellId, 'auto'>;
+  /** Shell id for shell panes; profile id for agent panes (kept as a string for compatibility). */
+  shellId: string;
   shellDisplayName: string;
   pid: number;
+  profile: TerminalProfile;
+  profileDisplayName: string;
+  /** Re-attach reconciliation for a process that exited while another window owned it. */
+  exit: TerminalExitInfo | null;
 }
 
 export interface TerminalExitInfo {

@@ -1,34 +1,38 @@
-/**
- * TerminalTabBody —— terminal tab 的 TabBody。
- *
- * 生命周期：
- *   1. 首次 mount：从 xtermPool 拿 Terminal 实例 → `terminal.open(slot)` → fit
- *      → state.created === false → IPC create PTY → patchState({ created: true })
- *      之后再次 mount(用户切回此 tab)只重挂 DOM + 重新 fit + focus，不重建 PTY
- *   2. 用户输入 → xterm onData → IPC.terminal.write(id, data)
- *   3. PTY 输出 → main 推 terminal:data event → 自己按 id filter → terminal.write(chunk)
- *   4. PTY 退出 → state.exited 填上 → 渲染 overlay (退出码 + Restart 按钮)
- *      点 Restart → IPC.terminal.restart(id) → 清 state.exited
- *   5. unmount(切走 / 整个 RSB 关）：仅离开 DOM，xterm 实例和 PTY 都保活
- *   6. 真正销毁(关 tab 触发 plugin.onBeforeClose)：disposeXterm + IPC.terminal.dispose
- *
- * resize：ResizeObserver 监听 slot 尺寸 → fitAddon.fit() → 拿 cols/rows → IPC.terminal.resize
- *
- * 错误显示：create / restart 失败 → 在 overlay 上显示 i18n 错误文案;不阻断 UI(用户可重试)
- */
+/** Terminal workbench body: independent xterm/PTY panes with recursive splits. */
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { RotateCw, AlertTriangle } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  ArrowLeftRight,
+  ArrowUpDown,
+  Bot,
+  Circle,
+  Plus,
+  RotateCw,
+  Terminal as TerminalIcon,
+  X,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Spinner } from '@/components/ui/spinner';
+import { Tip } from '@/components/ui/tooltip';
+import { extractIpcError } from '@/utils/ipcError';
 import type { TabKindHostContext } from '../../types';
-import { getOrCreateXterm, type XtermEntry } from './lib/xtermPool';
-import type {
-  TerminalDataEvent,
-  TerminalExitEvent,
-} from '../../../../../shared/terminal-bridge';
-import type { TerminalState } from './index';
+import { disposeXterm, getOrCreateXterm, type XtermEntry } from './lib/xtermPool';
+import {
+  MAX_TERMINAL_PANES,
+  collectPaneIds,
+  createPaneState,
+  removeTerminalPane,
+  setActiveTerminalPane,
+  splitTerminalPane,
+  updateTerminalPane,
+  type TerminalLayoutNode,
+  type TerminalPaneState,
+  type TerminalProfile,
+  type TerminalState,
+} from './terminal-layout';
+import { terminalPtyId } from './index';
+import type { TerminalDataEvent, TerminalExitEvent } from '../../../../../shared/terminal-bridge';
 
 interface Props {
   state: TerminalState;
@@ -37,296 +41,588 @@ interface Props {
 }
 
 interface RuntimeError {
-  /** i18n key,渲染时 t() 一下。 */
-  i18nKey: string;
+  key: string;
   detail: string;
 }
+
+const PROFILES: Array<{ id: TerminalProfile; labelKey: string }> = [
+  { id: 'shell', labelKey: 'rightSidebar.terminal.profileShell' },
+  { id: 'claude', labelKey: 'rightSidebar.terminal.profileClaude' },
+  { id: 'codex', labelKey: 'rightSidebar.terminal.profileCodex' },
+  { id: 'pi', labelKey: 'rightSidebar.terminal.profilePi' },
+];
 
 export function TerminalTabBody({ state, ctx, active }: Props) {
   const { tabId, workdir, patchState } = ctx;
   const { t } = useTranslation();
+  // A failed create/restart belongs to one pane.  Keeping this keyed by pane
+  // id prevents an error from pane A being shown after the user focuses pane B.
+  const [runtimeErrors, setRuntimeErrors] = useState<Record<string, RuntimeError>>({});
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const nextIdRef = useRef(2);
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
+  const paneIds = useMemo(() => collectPaneIds(state.layout), [state.layout]);
+  const canSplit = paneIds.length < MAX_TERMINAL_PANES;
+  const activePane = state.panes[state.activePaneId] ?? state.panes[paneIds[0]];
+
+  // Keep ids unique even when restoring a layout created in another renderer.
+  useEffect(() => {
+    const max = paneIds.reduce((found, id) => {
+      const n = Number(id.match(/pane-(\d+)/)?.[1] ?? 0);
+      return Math.max(found, n);
+    }, 0);
+    nextIdRef.current = Math.max(nextIdRef.current, max + 1);
+  }, [paneIds]);
+
+  const persist = useCallback(
+    (next: TerminalState) => {
+      stateRef.current = next;
+      patchState(next);
+    },
+    [patchState],
+  );
+
+  const patchPane = useCallback(
+    (paneId: string, patch: Partial<Omit<TerminalPaneState, 'id'>>) => {
+      persist(updateTerminalPane(stateRef.current, paneId, patch));
+    },
+    [persist],
+  );
+
+  const setPaneRuntimeError = useCallback((paneId: string, error: RuntimeError | null) => {
+    setRuntimeErrors((current) => {
+      if (error == null) {
+        if (!(paneId in current)) return current;
+        const next = { ...current };
+        delete next[paneId];
+        return next;
+      }
+      if (current[paneId]?.key === error.key && current[paneId]?.detail === error.detail) {
+        return current;
+      }
+      return { ...current, [paneId]: error };
+    });
+  }, []);
+
+  const closeAgentMenu = useCallback((restoreFocus = true) => {
+    setMenuOpen(false);
+    if (restoreFocus) menuButtonRef.current?.focus();
+  }, []);
+
+  // The agent menu is an interactive popover rather than a passive div:
+  // clicking elsewhere or pressing Escape closes it, and focus returns to the
+  // trigger when it was closed from inside the menu.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (menuRef.current?.contains(target) || menuButtonRef.current?.contains(target)) return;
+      closeAgentMenu(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      closeAgentMenu();
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [closeAgentMenu, menuOpen]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const frame = requestAnimationFrame(() => {
+      menuRef.current
+        ?.querySelector<HTMLButtonElement>('[role="menuitem"]:not([disabled])')
+        ?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [menuOpen]);
+
+  useEffect(() => {
+    if (menuOpen) return;
+    // If a menu item had focus, put keyboard users back on the trigger after
+    // React removes the menu from the tree.  Do not steal focus from a click
+    // elsewhere in the workbench.
+    const active = document.activeElement;
+    if (menuRef.current?.contains(active)) menuButtonRef.current?.focus();
+  }, [menuOpen]);
+
+  const createSplit = useCallback(
+    (direction: 'horizontal' | 'vertical', profile: TerminalProfile = 'shell') => {
+      if (collectPaneIds(stateRef.current.layout).length >= MAX_TERMINAL_PANES) return;
+      const id = `pane-${nextIdRef.current++}`;
+      const current = stateRef.current;
+      const next = splitTerminalPane(
+        current,
+        current.activePaneId,
+        direction,
+        createPaneState(id, profile),
+      );
+      if (next) persist(next);
+      closeAgentMenu();
+    },
+    [closeAgentMenu, persist],
+  );
+
+  const createProfilePane = useCallback(
+    (profile: TerminalProfile) => {
+      if (collectPaneIds(stateRef.current.layout).length >= MAX_TERMINAL_PANES) return;
+      const id = `pane-${nextIdRef.current++}`;
+      const current = stateRef.current;
+      const next = splitTerminalPane(
+        current,
+        current.activePaneId,
+        'horizontal',
+        createPaneState(id, profile),
+      );
+      if (next) persist(next);
+      closeAgentMenu();
+    },
+    [closeAgentMenu, persist],
+  );
+
+  const closePane = useCallback(
+    (paneId: string) => {
+      const next = removeTerminalPane(stateRef.current, paneId);
+      if (!next) return;
+      const ptyId = terminalPtyId(tabId, paneId);
+      void disposePty(ptyId);
+      disposeXterm(ptyId);
+      setPaneRuntimeError(paneId, null);
+      persist(next);
+    },
+    [persist, setPaneRuntimeError, tabId],
+  );
+
+  const selectPane = useCallback(
+    (paneId: string) => persist(setActiveTerminalPane(stateRef.current, paneId)),
+    [persist],
+  );
+
+  const localUnavailable = ctx.remoteHostId !== null || ctx.deviceLinkDeviceId !== null || !workdir;
+
+  if (localUnavailable) {
+    const pending = ctx.deviceLinkDeviceId === undefined;
+    return (
+      <div className="flex h-full items-center justify-center bg-[var(--panel-bg)] px-6 text-center">
+        <div className="max-w-80 text-12 text-[var(--text-secondary)]">
+          <TerminalIcon className="mx-auto mb-3 text-[var(--text-tertiary)]" size={22} />
+          {t(pending ? 'rightSidebar.terminal.targetResolving' : 'rightSidebar.terminal.localOnly')}
+        </div>
+      </div>
+    );
+  }
+
+  if (!activePane) return null;
+
+  return (
+    <div className="flex h-full min-h-0 w-full flex-col bg-[var(--panel-bg)]">
+      <div className="flex h-9 shrink-0 items-center justify-between border-b border-[var(--border-default)] px-2">
+        <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
+          {paneIds.map((paneId, index) => {
+            const pane = state.panes[paneId];
+            if (!pane) return null;
+            const label = pane.title || profileLabel(pane.profile, t);
+            return (
+              <button
+                key={paneId}
+                type="button"
+                onClick={() => selectPane(paneId)}
+                className={`inline-flex h-7 max-w-36 items-center gap-1 rounded-lg px-2 text-11 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] ${
+                  paneId === activePane.id
+                    ? 'bg-[var(--surface-chip)] text-[var(--text-primary)]'
+                    : 'text-[var(--text-tertiary)] hover:bg-[var(--surface-hover)]'
+                }`}
+                aria-label={t('rightSidebar.terminal.focusPane', { name: label })}
+              >
+                <PaneIcon profile={pane.profile} />
+                <span className="truncate">{label}</span>
+                <span className="text-[var(--text-tertiary)]">{index + 1}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex shrink-0 items-center gap-0.5">
+          <Tip text={t('rightSidebar.terminal.splitHorizontal')}>
+            <button
+              type="button"
+              disabled={!canSplit}
+              className="rounded-full p-1.5 hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:cursor-not-allowed disabled:opacity-40"
+              onClick={() => createSplit('horizontal')}
+              aria-label={t('rightSidebar.terminal.splitHorizontal')}
+            >
+              <ArrowLeftRight size={14} />
+            </button>
+          </Tip>
+          <Tip text={t('rightSidebar.terminal.splitVertical')}>
+            <button
+              type="button"
+              disabled={!canSplit}
+              className="rounded-full p-1.5 hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:cursor-not-allowed disabled:opacity-40"
+              onClick={() => createSplit('vertical')}
+              aria-label={t('rightSidebar.terminal.splitVertical')}
+            >
+              <ArrowUpDown size={14} />
+            </button>
+          </Tip>
+          <div className="relative">
+            <Tip text={t('rightSidebar.terminal.launchAgent')}>
+              <button
+                ref={menuButtonRef}
+                type="button"
+                className="rounded-full p-1.5 hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+                onClick={() => setMenuOpen((open) => !open)}
+                aria-label={t('rightSidebar.terminal.launchAgent')}
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+              >
+                <Plus size={14} />
+              </button>
+            </Tip>
+            {menuOpen && (
+              <div
+                ref={menuRef}
+                role="menu"
+                tabIndex={-1}
+                onBlur={(event) => {
+                  const next = event.relatedTarget as Node | null;
+                  if (!next || !menuRef.current?.contains(next)) closeAgentMenu(false);
+                }}
+                className="absolute right-0 top-8 z-20 min-w-40 rounded-xl border border-[var(--border-default)] bg-[var(--surface-elevated)] p-1 shadow-[var(--shadow-menu)]"
+              >
+                {PROFILES.map(({ id, labelKey }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    role="menuitem"
+                    disabled={!canSplit}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-12 hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring)] disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={() => createProfilePane(id)}
+                  >
+                    <PaneIcon profile={id} />
+                    <span>{t(labelKey)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="relative min-h-0 flex-1 overflow-hidden">
+        <LayoutNodeView
+          node={state.layout}
+          state={state}
+          tabId={tabId}
+          workdir={workdir}
+          activePaneId={state.activePaneId}
+          active={active === true}
+          runtimeErrors={runtimeErrors}
+          onSelect={selectPane}
+          onClose={closePane}
+          onPatchPane={patchPane}
+          onRuntimeError={setPaneRuntimeError}
+          t={t}
+        />
+      </div>
+    </div>
+  );
+}
+
+interface LayoutNodeViewProps {
+  node: TerminalLayoutNode;
+  state: TerminalState;
+  tabId: string;
+  workdir: string;
+  activePaneId: string;
+  active: boolean;
+  runtimeErrors: Readonly<Record<string, RuntimeError>>;
+  onSelect: (id: string) => void;
+  onClose: (id: string) => void;
+  onPatchPane: (id: string, patch: Partial<Omit<TerminalPaneState, 'id'>>) => void;
+  onRuntimeError: (paneId: string, error: RuntimeError | null) => void;
+  t: ReturnType<typeof useTranslation>['t'];
+}
+
+function LayoutNodeView(props: LayoutNodeViewProps) {
+  const { node } = props;
+  if (node.type === 'leaf') {
+    const pane = props.state.panes[node.paneId];
+    if (!pane) return null;
+    return (
+      <TerminalPaneView
+        key={`${pane.id}:${pane.profile}`}
+        {...props}
+        pane={pane}
+        runtimeError={props.runtimeErrors[pane.id] ?? null}
+      />
+    );
+  }
+  const firstStyle = { flexBasis: 0, flexGrow: node.ratio };
+  const secondStyle = { flexBasis: 0, flexGrow: 1 - node.ratio };
+  return (
+    <div
+      className={`flex h-full w-full ${node.direction === 'horizontal' ? 'flex-row' : 'flex-col'}`}
+    >
+      <div className="min-h-0 min-w-0" style={firstStyle}>
+        <LayoutNodeView {...props} node={node.first} />
+      </div>
+      <div
+        className={
+          node.direction === 'horizontal'
+            ? 'w-px shrink-0 bg-[var(--border-default)]'
+            : 'h-px shrink-0 bg-[var(--border-default)]'
+        }
+      />
+      <div className="min-h-0 min-w-0" style={secondStyle}>
+        <LayoutNodeView {...props} node={node.second} />
+      </div>
+    </div>
+  );
+}
+
+function TerminalPaneView({
+  pane,
+  runtimeError,
+  ...props
+}: LayoutNodeViewProps & { pane: TerminalPaneState; runtimeError: RuntimeError | null }) {
   const slotRef = useRef<HTMLDivElement>(null);
   const entryRef = useRef<XtermEntry | null>(null);
-  /** xterm onData 的 disposer,unmount 时解订阅避免内存泄漏。 */
-  const onDataDisposerRef = useRef<{ dispose(): void } | null>(null);
-  /** 标记本组件实例是否还活着,异步 callback 里检查。 */
   const aliveRef = useRef(true);
-
-  const [runtimeError, setRuntimeError] = useState<RuntimeError | null>(null);
+  const onDataRef = useRef<{ dispose(): void } | null>(null);
+  const ptyId = terminalPtyId(props.tabId, pane.id);
+  const isActive = props.activePaneId === pane.id;
+  const canClose = collectPaneIds(props.state.layout).length > 1;
   const [restarting, setRestarting] = useState(false);
 
-  // ─── 1. xterm DOM 挂载 + IPC data/exit 订阅 ───
-  // 用 useLayoutEffect 确保 paint 前 DOM 已经 attach,避免首帧空白
   useLayoutEffect(() => {
     aliveRef.current = true;
     const slot = slotRef.current;
     if (!slot) return;
-
-    const entry = getOrCreateXterm(tabId);
+    const entry = getOrCreateXterm(ptyId);
     entryRef.current = entry;
-
-    // 首次 open 把 xterm DOM 绑到 slot。之后 mount(同 tab 切走再切回)需要把
-    // xterm 内部的 root element 重新 append 到当前 slot —— xterm 自己不维护
-    // pool DOM,我们手动处理。
-    const rootEl = (entry.terminal.element as HTMLElement | undefined);
-    if (rootEl && rootEl.parentElement !== slot) {
-      slot.appendChild(rootEl);
-    } else if (!rootEl) {
-      entry.terminal.open(slot);
-    }
-
-    // 订阅 xterm 用户输入 → 推给 main
-    onDataDisposerRef.current = entry.terminal.onData((data: string) => {
-      void window.electronAPI.terminal.write(tabId, data).catch((err) => {
-        console.warn('[terminal] write failed', err);
-      });
+    const root = entry.terminal.element as HTMLElement | undefined;
+    if (root && root.parentElement !== slot) slot.appendChild(root);
+    else if (!root) entry.terminal.open(slot);
+    onDataRef.current = entry.terminal.onData(
+      (data) => void window.electronAPI.terminal.write(ptyId, data).catch(() => undefined),
+    );
+    const offData = window.electronAPI.terminal.onData((event: unknown) => {
+      const data = event as TerminalDataEvent;
+      if (aliveRef.current && data.id === ptyId) entry.terminal.write(data.chunk);
     });
-
-    // 订阅 main 推过来的 PTY 输出 / 退出,按 tabId filter
-    const offData = window.electronAPI.terminal.onData((evt: unknown) => {
-      const data = evt as TerminalDataEvent;
-      if (!aliveRef.current || data.id !== tabId) return;
-      entry.terminal.write(data.chunk);
+    const offExit = window.electronAPI.terminal.onExit((event: unknown) => {
+      const data = event as TerminalExitEvent;
+      if (aliveRef.current && data.id === ptyId)
+        props.onPatchPane(pane.id, { exited: data.exit, created: true });
     });
-    const offExit = window.electronAPI.terminal.onExit((evt: unknown) => {
-      const ex = evt as TerminalExitEvent;
-      if (!aliveRef.current || ex.id !== tabId) return;
-      patchState({ exited: ex.exit });
-    });
-
-    // 首次 fit + 拿到尺寸
-    fitNow(entry);
-
+    fitAndPush(entry, ptyId);
     return () => {
       aliveRef.current = false;
-      onDataDisposerRef.current?.dispose();
-      onDataDisposerRef.current = null;
+      onDataRef.current?.dispose();
+      onDataRef.current = null;
       offData();
       offExit();
-      // xterm 实例和 PTY 都保活,这里仅 detach DOM 不 dispose
     };
-  }, [tabId, patchState]);
+  }, [pane.id, ptyId, props.onPatchPane]);
 
-  // ─── 2. PTY 创建 / 跨窗口 re-attach ───
-  // 两种进入条件:
-  //   a) state.created === false:首次创建 PTY
-  //   b) state.created === true 但本 renderer 的 xterm entry 从未 attach 过
-  //      (entry.ptyAttached === false):侧边栏宿主在"内嵌 ↔ 独立子窗口"间迁移,
-  //      PTY 在 main 仍活着但输出 sink 绑在旧窗口的 webContents 上。
-  //      ptyManager.create 是幂等 attach、可换 owner —— 再调一次把 sink 切到本窗口,
-  //      输入输出即恢复(xterm scrollback 是 per-renderer 的,迁移后丢失可接受)。
   useEffect(() => {
-    if (restarting) return;
     const entry = entryRef.current;
     if (!entry) return;
-    if (state.created && entry.ptyAttached) return;
-    const isReattach = state.created;
+    if (pane.created && entry.ptyAttached) return;
     let cancelled = false;
-    const { cols, rows } = entry.lastSize;
-    const fallbackCwd = workdir || (typeof process !== 'undefined' && process.env?.HOME) || '/';
     void window.electronAPI.terminal
       .create({
-        id: tabId,
-        cwd: fallbackCwd,
-        cols,
-        rows,
-        // 不传 shellPref → main 端读取 Settings 中持久化的默认 shell。
+        id: ptyId,
+        cwd: props.workdir,
+        cols: entry.lastSize.cols,
+        rows: entry.lastSize.rows,
+        profile: pane.profile,
       })
       .then((result) => {
-        if (cancelled || !aliveRef.current) return;
-        entry.ptyAttached = true;
-        // re-attach 路径不重复 patchState —— 持久化字段没变,写一遍只是无谓 IPC。
-        if (!isReattach) {
-          patchState({
-            created: true,
-            shellId: result.shellId,
-            shellDisplayName: result.shellDisplayName,
-            exited: null,
-          });
+        // A pane can be removed while the invoke is in flight.  The Main
+        // handler may have spawned successfully even though React has already
+        // unmounted this view; release that late-created PTY instead of leaving
+        // an orphan process behind.  `aliveRef` only flips on real unmount, so a
+        // dependency refresh does not accidentally dispose a live session.
+        if (cancelled || !aliveRef.current) {
+          if (!aliveRef.current) void disposePty(ptyId);
+          return;
         }
-        setRuntimeError(null);
+        entry.ptyAttached = true;
+        props.onPatchPane(pane.id, {
+          created: true,
+          exited: result.exit,
+          shellId: result.shellId,
+          shellDisplayName: result.profileDisplayName || result.shellDisplayName,
+        });
+        props.onRuntimeError(pane.id, null);
       })
-      .catch((err: unknown) => {
+      .catch((error: unknown) => {
         if (cancelled || !aliveRef.current) return;
-        setRuntimeError(parseError(err));
+        props.onRuntimeError(pane.id, parseRuntimeError(error));
       });
     return () => {
       cancelled = true;
     };
-  }, [state.created, restarting, tabId, workdir, patchState]);
+  }, [
+    pane.created,
+    pane.id,
+    pane.profile,
+    props.onPatchPane,
+    props.onRuntimeError,
+    props.workdir,
+    ptyId,
+  ]);
 
-  // ─── 3. ResizeObserver → fit → IPC resize ───
   useEffect(() => {
     const slot = slotRef.current;
     if (!slot) return;
-    const ro = new ResizeObserver(() => {
-      const entry = entryRef.current;
-      if (!entry || !aliveRef.current) return;
-      fitAndPushSize(entry, tabId);
+    const observer = new ResizeObserver(() => {
+      if (entryRef.current) fitAndPush(entryRef.current, ptyId);
     });
-    ro.observe(slot);
-    return () => ro.disconnect();
-  }, [tabId]);
+    observer.observe(slot);
+    return () => observer.disconnect();
+  }, [ptyId]);
 
-  // ─── 4. active 切换时 fit + focus(避免后台 layout 抖动)───
   useEffect(() => {
-    if (!active) return;
-    const entry = entryRef.current;
-    if (!entry) return;
-    // 切到本 tab 时 fit 一下,因为后台 tab 的 layout 可能没跟上侧栏宽度变化
-    requestAnimationFrame(() => {
-      if (!aliveRef.current || !entryRef.current) return;
-      fitAndPushSize(entryRef.current, tabId);
-      entryRef.current.terminal.focus();
+    if (!props.active || !isActive) return;
+    const frame = requestAnimationFrame(() => {
+      const entry = entryRef.current;
+      if (!entry) return;
+      fitAndPush(entry, ptyId);
+      entry.terminal.focus();
     });
-  }, [active, tabId]);
+    return () => cancelAnimationFrame(frame);
+  }, [isActive, props.active, ptyId]);
 
-  // ─── 5. Restart 按钮 handler ───
-  const onRestart = useCallback(async () => {
+  const restart = async () => {
     if (restarting) return;
     setRestarting(true);
-    setRuntimeError(null);
     try {
-      const result = await window.electronAPI.terminal.restart(tabId);
-      if (!aliveRef.current) return;
-      patchState({
+      const result = await window.electronAPI.terminal.restart(ptyId);
+      if (entryRef.current) entryRef.current.ptyAttached = true;
+      props.onPatchPane(pane.id, {
         created: true,
-        shellId: result.shellId,
-        shellDisplayName: result.shellDisplayName,
         exited: null,
+        shellId: result.shellId,
+        shellDisplayName: result.profileDisplayName || result.shellDisplayName,
       });
-      // xterm 自身的 scrollback 保留;新 PTY 输出会继续 append
-    } catch (err) {
-      if (!aliveRef.current) return;
-      setRuntimeError(parseError(err));
+      props.onRuntimeError(pane.id, null);
+    } catch (error: unknown) {
+      props.onRuntimeError(pane.id, parseRuntimeError(error));
     } finally {
-      if (aliveRef.current) setRestarting(false);
+      setRestarting(false);
     }
-  }, [restarting, tabId, patchState]);
+  };
 
-  // 渲染:slot 撑满,exited / runtimeError 在上面叠一层 overlay
+  const label = pane.title || profileLabel(pane.profile, props.t);
   return (
-    <div className="relative h-full w-full bg-[#1c1c1c]">
-      <div ref={slotRef} className="absolute top-2 bottom-0 left-2 right-2" />
-      {state.exited != null && !runtimeError && (
-        <ExitedOverlay
-          exit={state.exited}
-          restarting={restarting}
-          onRestart={onRestart}
-          t={t}
-        />
-      )}
-      {runtimeError != null && (
-        <ErrorOverlay
-          message={t(runtimeError.i18nKey, { detail: runtimeError.detail })}
-          restarting={restarting}
-          onRetry={onRestart}
-          t={t}
-        />
-      )}
-    </div>
-  );
-}
-
-// ───────── helpers ─────────
-
-function fitNow(entry: XtermEntry): void {
-  try {
-    entry.fitAddon.fit();
-    entry.lastSize = { cols: entry.terminal.cols, rows: entry.terminal.rows };
-  } catch {
-    /* slot 可能还没尺寸,忽略 */
-  }
-}
-
-function fitAndPushSize(entry: XtermEntry, tabId: string): void {
-  try {
-    entry.fitAddon.fit();
-  } catch {
-    return;
-  }
-  const cols = entry.terminal.cols;
-  const rows = entry.terminal.rows;
-  if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols < 1 || rows < 1) return;
-  if (cols === entry.lastSize.cols && rows === entry.lastSize.rows) return;
-  entry.lastSize = { cols, rows };
-  void window.electronAPI.terminal.resize(tabId, cols, rows).catch(() => {
-    /* 已 disposed 的 session 静默忽略 */
-  });
-}
-
-function parseError(err: unknown): RuntimeError {
-  const message = err instanceof Error ? err.message : String(err);
-  if (/TERMINAL_SHELL_NOT_FOUND/.test(message)) {
-    return { i18nKey: 'rightSidebar.terminal.shellNotFound', detail: message };
-  }
-  if (/TERMINAL_SPAWN_FAILED/.test(message)) {
-    return { i18nKey: 'rightSidebar.terminal.spawnFailed', detail: message };
-  }
-  return { i18nKey: 'rightSidebar.terminal.spawnFailed', detail: message };
-}
-
-function ExitedOverlay({
-  exit,
-  restarting,
-  onRestart,
-  t,
-}: {
-  exit: { code: number | null; signal: string | null };
-  restarting: boolean;
-  onRestart: () => void;
-  t: ReturnType<typeof useTranslation>['t'];
-}) {
-  const message = exit.signal
-    ? t('rightSidebar.terminal.processKilled', { signal: exit.signal })
-    : t('rightSidebar.terminal.processExited', { code: exit.code ?? 0 });
-  return (
-    <div className="pointer-events-none absolute inset-0 flex items-end justify-center pb-6">
-      <div className="pointer-events-auto flex items-center gap-3 rounded-md border border-white/15 bg-black/80 px-4 py-2 text-sm text-white shadow-lg backdrop-blur">
-        <span>{message}</span>
-        <button
-          type="button"
-          onClick={onRestart}
-          disabled={restarting}
-          className="inline-flex items-center gap-1 rounded border border-white/20 px-2 py-0.5 text-xs hover:bg-white/10 disabled:opacity-50"
-        >
-          <Spinner icon={RotateCw} size={12} spinning={restarting} />
-          {t('rightSidebar.terminal.restart')}
-        </button>
+    <div
+      className={`group relative h-full w-full ${isActive ? 'ring-1 ring-inset ring-[var(--focus-ring)]' : ''}`}
+      onMouseDown={() => props.onSelect(pane.id)}
+    >
+      <div ref={slotRef} className="absolute inset-0 bg-[var(--panel-bg)] p-1" />
+      <div className="pointer-events-none absolute left-2 top-1 z-10 flex items-center gap-1 rounded-lg bg-[var(--surface-elevated)] px-1.5 py-0.5 text-10 text-[var(--text-tertiary)] opacity-0 transition-opacity group-hover:opacity-100">
+        <PaneIcon profile={pane.profile} />
+        {label}
       </div>
-    </div>
-  );
-}
-
-function ErrorOverlay({
-  message,
-  restarting,
-  onRetry,
-  t,
-}: {
-  message: string;
-  restarting: boolean;
-  onRetry: () => void;
-  t: ReturnType<typeof useTranslation>['t'];
-}) {
-  return (
-    <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-      <div className="pointer-events-auto flex max-w-[90%] flex-col items-center gap-2 rounded-md border border-white/15 bg-black/80 px-4 py-3 text-sm text-white shadow-lg backdrop-blur">
-        <div className="flex items-center gap-2 text-red-300">
-          <AlertTriangle size={14} />
-          <span>{message}</span>
+      <div className="pointer-events-none absolute right-1 top-1 z-10 flex items-center gap-0.5 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
+        {pane.exited && (
+          <Tip text={props.t('rightSidebar.terminal.restart')}>
+            <button
+              type="button"
+              className="rounded-full p-1 text-[var(--text-tertiary)] hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+              onClick={restart}
+              aria-label={props.t('rightSidebar.terminal.restart')}
+            >
+              <Spinner icon={RotateCw} size={12} spinning={restarting} />
+            </button>
+          </Tip>
+        )}
+        {canClose && (
+          <Tip text={props.t('rightSidebar.terminal.closePane')}>
+            <button
+              type="button"
+              className="rounded-full p-1 text-[var(--text-tertiary)] hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+              onClick={() => props.onClose(pane.id)}
+              aria-label={props.t('rightSidebar.terminal.closePane')}
+            >
+              <X size={12} />
+            </button>
+          </Tip>
+        )}
+      </div>
+      {pane.exited && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
+          <div className="pointer-events-auto flex items-center gap-2 rounded-lg border border-[var(--border-default)] bg-[var(--surface-elevated)] px-2 py-1 text-11">
+            <Circle size={8} className="text-[var(--text-tertiary)]" />
+            {props.t('rightSidebar.terminal.processExited', { code: pane.exited.code ?? 0 })}
+            <button
+              type="button"
+              className="rounded-lg px-1.5 py-0.5 text-10 hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+              onClick={restart}
+            >
+              {props.t('rightSidebar.terminal.restart')}
+            </button>
+          </div>
         </div>
-        <button
-          type="button"
-          onClick={onRetry}
-          disabled={restarting}
-          className="inline-flex items-center gap-1 rounded border border-white/20 px-2 py-0.5 text-xs hover:bg-white/10 disabled:opacity-50"
-        >
-          <Spinner icon={RotateCw} size={12} spinning={restarting} />
-          {t('rightSidebar.terminal.restart')}
-        </button>
-      </div>
+      )}
+      {runtimeError && isActive && (
+        <div className="absolute inset-x-2 bottom-3 z-10 rounded-lg border border-[var(--border-default)] bg-[var(--surface-elevated)] px-2 py-1 text-11 text-[var(--text-secondary)]">
+          {props.t(runtimeError.key, { detail: runtimeError.detail })}
+        </div>
+      )}
     </div>
   );
+}
+
+function PaneIcon({ profile }: { profile: TerminalProfile }) {
+  return profile === 'shell' ? <TerminalIcon size={12} /> : <Bot size={12} />;
+}
+
+function profileLabel(profile: TerminalProfile, t: ReturnType<typeof useTranslation>['t']): string {
+  const item = PROFILES.find((candidate) => candidate.id === profile);
+  return item ? t(item.labelKey) : t('rightSidebar.terminal.profileShell');
+}
+
+function parseRuntimeError(error: unknown): RuntimeError {
+  const ipc = extractIpcError(error);
+  const detail = ipc?.message ?? (error instanceof Error ? error.message : String(error));
+  return {
+    key:
+      ipc?.code === 'TERMINAL_AGENT_NOT_READY'
+        ? 'rightSidebar.terminal.agentNotReady'
+        : 'rightSidebar.terminal.spawnFailed',
+    detail,
+  };
+}
+
+function fitAndPush(entry: XtermEntry, id: string): void {
+  try {
+    entry.fitAddon.fit();
+    const cols = entry.terminal.cols;
+    const rows = entry.terminal.rows;
+    if (cols < 1 || rows < 1 || (cols === entry.lastSize.cols && rows === entry.lastSize.rows))
+      return;
+    entry.lastSize = { cols, rows };
+    void window.electronAPI.terminal.resize(id, cols, rows).catch(() => undefined);
+  } catch {
+    /* the pane may not have a measurable size during its first frame */
+  }
+}
+
+async function disposePty(id: string): Promise<void> {
+  try {
+    await window.electronAPI.terminal.dispose(id);
+  } catch {
+    /* no existing PTY */
+  }
 }

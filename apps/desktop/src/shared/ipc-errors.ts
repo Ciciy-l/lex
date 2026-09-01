@@ -182,6 +182,7 @@ export type IpcErrorCode =
   | 'TERMINAL_NOT_FOUND' // 指定 ptyId 不存在(可能已 dispose / 从未创建)
   | 'TERMINAL_SPAWN_FAILED' // node-pty spawn 抛错(权限 / 路径不可达等)
   | 'TERMINAL_SHELL_NOT_FOUND' // 用户偏好的 shell 二进制不在系统上
+  | 'TERMINAL_AGENT_NOT_READY' // 受控 CLI Agent 二进制尚未准备好
   | 'TERMINAL_ALREADY_DISPOSED' // 在已 dispose 的 session 上调 restart 等操作
   // 意识(.cindy 装入)
   | 'GHOST_FILE_INVALID' // 不是合法 zip / 缺 ghost.json / 清单不合格 / 超限
@@ -390,6 +391,7 @@ const IPC_ERROR_CODES: ReadonlySet<IpcErrorCode> = new Set<IpcErrorCode>([
   'TERMINAL_NOT_FOUND',
   'TERMINAL_SPAWN_FAILED',
   'TERMINAL_SHELL_NOT_FOUND',
+  'TERMINAL_AGENT_NOT_READY',
   'TERMINAL_ALREADY_DISPOSED',
   'GHOST_FILE_INVALID',
   'GHOST_HOST_UNSUPPORTED',

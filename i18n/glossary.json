@@ -1830,6 +1830,30 @@
         "ko": "데이터베이스 정리"
       },
       "note": "设置 → 存储空间内主动备份、清理任务消息并压缩本地数据库的功能名称。默认只清理非活跃任务；用户确认开启可选项后，也会清理活跃任务的历史。先登记为 proposed，待实际使用后再固化。"
+    },
+    {
+      "id": "cli-agent-workbench",
+      "status": "proposed",
+      "en": "CLI Agent Workbench",
+      "translations": {
+        "zh-CN": "CLI Agent 工作台",
+        "zh-TW": "CLI Agent 工作台",
+        "ja": "CLI Agent ワークベンチ",
+        "ko": "CLI Agent 워크벤치"
+      },
+      "note": "Cindy 内置的终端工作区：在同一个任务中管理多个 CLI Agent pane。先登记为 proposed，待首版实际使用后再固化。"
+    },
+    {
+      "id": "terminal-pane",
+      "status": "proposed",
+      "en": "pane",
+      "translations": {
+        "zh-CN": "窗格",
+        "zh-TW": "窗格",
+        "ja": "ペイン",
+        "ko": "창"
+      },
+      "note": "终端工作台中的一个独立终端区域，拥有自己的 PTY、工作目录和生命周期；与顶层 Terminal tab 区分。"
     }
   ]
 }
