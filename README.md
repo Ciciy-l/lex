@@ -1,3 +1,18 @@
+# Lex
+
+Lex is an independent desktop-agent distribution based on the open-source
+[Cindy](https://github.com/makecindy/cindy) client. It keeps Cindy's local agent
+runtime and task model, and adds an Orca-inspired local CLI workbench with
+multiple PTY panes for Shell, Claude Code, Codex, and Pi.
+
+This project is community-maintained and is not affiliated with or endorsed by
+XD Inc. or the Cindy project. Lex changes are documented in this repository;
+the original Cindy copyright and third-party notices remain in
+[`NOTICE`](NOTICE) and [`docs/legal/notices/`](docs/legal/notices/).
+
+> **Status:** early development. The current workbench is local-only; remote
+> task orchestration remains Cindy's existing feature set.
+
 <p align="center">
   <a href="https://cindy.app"><img src=".github/assets/hero-en.webp" width="100%" alt="CINDY — Consider it done. The open-source AI agent that works out of the box, doing real work on your own computer."></a>
 </p>
@@ -8,7 +23,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License" /></a>
-  <a href="https://github.com/makecindy/cindy/actions/workflows/ci.yml"><img src="https://github.com/makecindy/cindy/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/Ciciy-l/lex/actions/workflows/ci.yml"><img src="https://github.com/Ciciy-l/lex/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-22.x-brightgreen.svg" alt="Node.js 22.x" /></a>
   <a href="https://pnpm.io"><img src="https://img.shields.io/badge/pnpm-10-orange.svg" alt="pnpm" /></a>
 </p>

@@ -1,3 +1,16 @@
+# Lex
+
+Lex 是基于开源 [Cindy](https://github.com/makecindy/cindy) 客户端打造的独立桌面
+Agent 发行版。它保留 Cindy 的本地 Agent 运行时和任务模型，并加入受 Orca 启发的
+本地 CLI 工作台，可在多个 PTY 窗格中使用 Shell、Claude Code、Codex 和 Pi。
+
+本项目由社区独立维护，与 XD Inc. 或 Cindy 项目没有隶属、授权或官方背书关系。
+Lex 的修改记录保留在本仓库中；Cindy 的原始版权和第三方组件声明继续保存在
+[`NOTICE`](NOTICE) 与 [`docs/legal/notices/`](docs/legal/notices/) 中。
+
+> **当前状态：** 早期开发版本。当前工作台仅支持本地 CLI；远程任务编排仍使用
+> Cindy 原有能力。
+
 <p align="center">
   <a href="https://cindy.cn"><img src=".github/assets/hero-zh.webp" width="100%" alt="CINDY —— 想到，就能做到。开源、开箱即用的 AI Agent，在你自己的电脑上替你把真实工作做完。"></a>
 </p>
@@ -8,7 +21,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License" /></a>
-  <a href="https://github.com/makecindy/cindy/actions/workflows/ci.yml"><img src="https://github.com/makecindy/cindy/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/Ciciy-l/lex/actions/workflows/ci.yml"><img src="https://github.com/Ciciy-l/lex/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-22.x-brightgreen.svg" alt="Node.js 22.x" /></a>
   <a href="https://pnpm.io"><img src="https://img.shields.io/badge/pnpm-10-orange.svg" alt="pnpm" /></a>
 </p>
