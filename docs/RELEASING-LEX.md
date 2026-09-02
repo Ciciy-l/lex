@@ -1,8 +1,20 @@
 # Releasing Lex
 
-Lex uses a tag-driven GitHub Actions workflow for desktop packages. The current
-workflow creates a **draft** GitHub Release; it does not publish a stable
-release automatically.
+Lex has two deliberately separate desktop packaging paths:
+
+- **Preview / unsigned**: run `desktop-preview-unsigned` manually from GitHub
+  Actions. It builds the selected platform(s), uploads short-lived Actions
+  Artifacts, and never creates a Release or update manifest. Windows artifacts
+  are unsigned; macOS artifacts use ad-hoc signing and are not Gatekeeper
+  distributable. This path needs no signing or log-upload secrets.
+- **Formal signed release**: `desktop-release-signed-draft` is triggered by a `v*` tag
+  or manually with a SemVer version. It keeps the signing, notarization,
+  log-upload, Draft Release, and update-manifest gates described below.
+
+Preview packages are for installing on a test machine only. They are built as
+versionless `0.0.0` packages, so the updater intentionally ignores them and a
+preview cannot be mistaken for a released upgrade. Use the artifact whose name
+contains `lex-preview-unsigned`; do not upload it to a public release channel.
 
 ## Before the first release
 

@@ -1,4 +1,4 @@
-name: desktop-release-draft
+name: desktop-release-signed-draft
 
 on:
   push:

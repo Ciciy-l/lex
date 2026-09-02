@@ -369,7 +369,7 @@ describe('buildPiNativeProvidersFromConfigs', () => {
     const catalog = await readPiBundledModels(bundledPiPath);
     expect(catalog?.get('openai-codex')?.get('gpt-5.6-sol')?.api).toBe('openai-codex-responses');
     expect(catalog?.get('xai')?.get('grok-4.5')?.api).toBe('openai-responses');
-    expect(catalog?.get('xai')?.get('grok-build-0.1')?.api).toBe('openai-completions');
+    expect(catalog?.get('xai')?.get('grok-build-0.1')?.api).toBe('openai-responses');
     const anthropicModels = [...(catalog?.get('anthropic')?.values() ?? [])];
     expect(anthropicModels.length).toBeGreaterThan(0);
     expect(anthropicModels.every((model) => model.api === 'anthropic-messages')).toBe(true);

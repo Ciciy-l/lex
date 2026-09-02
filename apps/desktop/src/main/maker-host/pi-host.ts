@@ -583,8 +583,8 @@ export function buildPiSubscriptionNativeProviders(
         // catalog annotation is wrong. Keep annotated rows in the overlay so
         // inheritModels cannot filter out a confirmed addition or correction.
         // 探针失败(bundledModelsByProvider == null)不能当成「全部 xAI 都不在二进制里」,
-        // 否则 grok-4.3 / grok-build-0.1 会被改写成 openai-responses。只在探针成功且
-        // 明确缺 grok-4.6 时才合成 addition。
+        // 否则 grok-4.3 / grok-build-0.1 会被误判成不在固定二进制内。只在探针成功且
+        // 明确缺 grok-4.6 时才合成 addition；既有模型的协议继续以固定 Pi 目录为准。
         const listedIds =
           listedModelIdsByProvider?.get(piProviderId)
           ?? listedPiModelIds(bundledModelsByProvider)?.get(piProviderId);
