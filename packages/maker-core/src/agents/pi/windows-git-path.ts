@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 import {
@@ -20,8 +21,7 @@ export type WindowsPathKind = 'file' | 'directory';
  * Behavior is adapted from oh-my-pi's `crates/pi-shell/src/windows.rs`
  * (https://github.com/can1357/oh-my-pi, commit 326d24bd40d9858e24e1036ae739c27c72eeb543).
  * The upstream project is MIT-licensed; this small, dependency-free port is
- * compatible with Cindy's Apache-2.0 distribution. It is intentionally not
- * wired into PiAgent or any production startup path in this PR.
+ * compatible with Cindy's Apache-2.0 distribution.
  */
 
 export interface WindowsGitPathProbes {
@@ -45,8 +45,100 @@ export const WINDOWS_GIT_REGISTRY_KEYS = [
   'HKLM\\SOFTWARE\\WOW6432Node\\GitForWindows',
 ] as const;
 
+export interface ResolveWindowsGitBashPathOptions {
+  platform?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
+  exists?: (candidate: string) => boolean;
+}
+
 const WINDOWS_GIT_EXECUTABLE = 'git.exe';
 const WINDOWS_PATH_PROBE_TIMEOUT_MS = 3_000;
+
+/**
+ * Resolve Git for Windows' Bash without trusting the first `where bash.exe`
+ * result. WindowsApps exposes a WSL shim that can precede Git Bash, while Git
+ * itself may live on another drive or in the per-user Programs directory.
+ * Candidate executables are only checked for existence; none are launched.
+ */
+export function resolveWindowsGitBashPath({
+  platform = process.platform,
+  env = process.env,
+  exists = existsSync,
+}: ResolveWindowsGitBashPathOptions = {}): string | undefined {
+  if (platform !== 'win32') return undefined;
+
+  const roots: string[] = [];
+  const seen = new Set<string>();
+  const addRoot = (candidate: string): void => {
+    const normalized = path.win32.normalize(candidate);
+    const key = normalized.toLowerCase();
+    if (!path.win32.isAbsolute(normalized) || seen.has(key)) return;
+    seen.add(key);
+    roots.push(normalized);
+  };
+
+  for (const rawSegment of (env.Path ?? env.PATH ?? '').split(';')) {
+    const segment = rawSegment.trim().replace(/^"|"$/g, '');
+    if (!segment || !path.win32.isAbsolute(segment)) continue;
+    const normalized = path.win32.normalize(segment);
+    const basename = path.win32.basename(normalized).toLowerCase();
+    if (basename !== 'cmd' && basename !== 'bin') continue;
+    const parent = path.win32.dirname(normalized);
+    const parentName = path.win32.basename(parent).toLowerCase();
+    addRoot(
+      basename === 'bin' && (parentName === 'usr' || parentName.startsWith('mingw'))
+        ? path.win32.dirname(parent)
+        : parent,
+    );
+  }
+
+  for (const envKey of ['ProgramW6432', 'ProgramFiles', 'ProgramFiles(x86)']) {
+    const value = env[envKey];
+    if (typeof value === 'string' && value.trim()) {
+      addRoot(path.win32.join(value.trim(), 'Git'));
+    }
+  }
+  const localAppData = env.LOCALAPPDATA;
+  if (typeof localAppData === 'string' && localAppData.trim()) {
+    addRoot(path.win32.join(localAppData.trim(), 'Programs', 'Git'));
+  }
+
+  for (const root of roots) {
+    const bashCandidate = path.win32.join(root, 'bin', 'bash.exe');
+    const gitCandidates = [
+      path.win32.join(root, 'cmd', WINDOWS_GIT_EXECUTABLE),
+      path.win32.join(root, 'bin', WINDOWS_GIT_EXECUTABLE),
+    ];
+    try {
+      if (exists(bashCandidate) && gitCandidates.some((candidate) => exists(candidate))) {
+        return bashCandidate;
+      }
+    } catch {
+      // Shell discovery remains best-effort across inaccessible PATH entries.
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Pi already handles the standard Program Files roots. Return an override only
+ * when its built-in discovery would miss the resolved executable.
+ */
+export function resolveNonDefaultWindowsGitBashPath(
+  options: ResolveWindowsGitBashPathOptions = {},
+): string | undefined {
+  if ((options.platform ?? process.platform) !== 'win32') return undefined;
+  const env = options.env ?? process.env;
+  const resolved = resolveWindowsGitBashPath(options);
+  if (!resolved) return undefined;
+  const defaults = ['ProgramW6432', 'ProgramFiles', 'ProgramFiles(x86)']
+    .map((key) => env[key])
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map((value) => (
+      path.win32.normalize(path.win32.join(value.trim(), 'Git', 'bin', 'bash.exe')).toLowerCase()
+    ));
+  return defaults.includes(path.win32.normalize(resolved).toLowerCase()) ? undefined : resolved;
+}
 
 /**
  * PowerShell emits each registry value as UTF-16LE Base64. The transport is

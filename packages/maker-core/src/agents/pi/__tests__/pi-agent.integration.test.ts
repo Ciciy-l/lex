@@ -28,6 +28,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { PiAgent } from '../index.js';
+import { resolveNonDefaultWindowsGitBashPath } from '../windows-git-path.js';
 import { TurnPermissionPolicyUnsupportedError, type AgentDeps, type AgentSessionHandle } from '../../base-agent.js';
 import type { AgentEvent } from '../../../types/events.js';
 import type { Logger } from '../../../interfaces/logger.js';
@@ -372,6 +373,7 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
         ],
       },
       resolvePiAgentHome: () => agentHome,
+      resolvePiShellPath: () => resolveNonDefaultWindowsGitBashPath(),
       spawnPiSubagentRunner: (request) => {
         const child = spawn(process.execPath, [request.runnerFile, request.configFile], {
           cwd: request.cwd,

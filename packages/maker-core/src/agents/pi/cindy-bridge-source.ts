@@ -80,6 +80,7 @@ const MANAGED_RG_PATH_ENV = 'CINDY_PI_MANAGED_RG_PATH';
 const SUBAGENT_RUN_DIR_ENV = 'CINDY_PI_SUBAGENT_RUN_DIR';
 const PI_PACKAGE_MANAGEMENT_ENV = 'CINDY_PI_PACKAGE_MANAGEMENT';
 const PI_BASH_PACKAGE_HOME_ENV = 'CINDY_PI_BASH_PACKAGE_HOME';
+const PI_BASH_SHELL_PATH_ENV = 'CINDY_PI_BASH_SHELL_PATH';
 const PI_PACKAGE_MANAGEMENT_TITLE = 'cindy:pi-package';
 const MAX_PI_PACKAGE_SOURCE_LENGTH = 2_048;
 
@@ -92,6 +93,7 @@ const SECRET_ENV_NAMES = new Set<string>([
   'CINDY_PI_PERMISSION_FILE',
   PI_PACKAGE_MANAGEMENT_ENV,
   PI_BASH_PACKAGE_HOME_ENV,
+  PI_BASH_SHELL_PATH_ENV,
   MANAGED_RG_PATH_ENV,
   SUBAGENT_RUN_DIR_ENV,
   'PI_CODING_AGENT_DIR',
@@ -2926,6 +2928,9 @@ export default async function cindyBridge(pi: any) {
     );
   }
   const bashTool = createBashTool(process.cwd(), {
+    // The bridge replaces Pi's built-in bash tool, so settings.json is not
+    // consulted by this tool factory. Use the same host-resolved executable.
+    shellPath: process.env[PI_BASH_SHELL_PATH_ENV],
     // PI_SESSION_FILE 会暴露 agentHome，继而让一次获批的 shell 定位并篡改
     // permission file；其余 PI_SESSION_* 元数据对完成编码任务也不是必需能力。
     exposeSessionEnvironment: false,

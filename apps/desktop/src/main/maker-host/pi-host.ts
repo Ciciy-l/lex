@@ -25,6 +25,7 @@ import { app } from 'electron';
 import {
   PiAgent,
   PiNativeProviderProxyNotReadyError,
+  resolveNonDefaultWindowsGitBashPath,
   type AgentDeps,
   type AuthAdapter,
   type AuthState,
@@ -1648,6 +1649,8 @@ export function buildPiAgent(opts: BuildPiAgentOpts): PiAgent | null {
       if (remoteHostId) return '$HOME/.xdt-server/v1/pi-agent-home';
       return path.join(app.getPath('userData'), 'pi-agent-home');
     },
+    resolvePiShellPath: ({ remoteHostId }) =>
+      remoteHostId ? undefined : resolveNonDefaultWindowsGitBashPath(),
     resolvePiManagedPackageResources: resolveManagedPiPackageResources,
     mutatePiManagedPackage: mutateAuthorizedPiManagedPackage,
     getPiExtensionUiStrings: () => ({

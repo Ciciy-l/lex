@@ -9,6 +9,8 @@ import {
   gitPathsForInstallRoot,
   partitionWindowsProbeCandidates,
   probePartitionedWindowsPathKinds,
+  resolveNonDefaultWindowsGitBashPath,
+  resolveWindowsGitBashPath,
   resolveWindowsGitPath,
   translateMsysPathSegment,
   WINDOWS_GIT_REGISTRY_KEYS,
@@ -34,6 +36,71 @@ function fakeFs(files: string[]): Pick<WindowsGitPathProbes, 'isDirectory' | 'is
 }
 
 describe('Windows Git/PATH helpers', () => {
+  it('resolves non-default Git Bash ahead of a WindowsApps WSL shim', () => {
+    const gitBash = 'D:\\Program Files\\Git\\bin\\bash.exe';
+    const files = new Set([
+      gitBash.toLowerCase(),
+      'D:\\Program Files\\Git\\cmd\\git.exe'.toLowerCase(),
+    ]);
+    const env = {
+      Path: [
+        'C:\\Users\\alice\\AppData\\Local\\Microsoft\\WindowsApps',
+        'D:\\Program Files\\Git\\cmd',
+      ].join(';'),
+      ProgramFiles: 'C:\\Program Files',
+      'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+    };
+
+    expect(resolveWindowsGitBashPath({
+      platform: 'win32',
+      env,
+      exists: (candidate) => files.has(candidate.toLowerCase()),
+    })).toBe(gitBash);
+    expect(resolveNonDefaultWindowsGitBashPath({
+      platform: 'win32',
+      env,
+      exists: (candidate) => files.has(candidate.toLowerCase()),
+    })).toBe(gitBash);
+  });
+
+  it('derives a PortableGit root from an MSYS bin directory', () => {
+    const gitBash = 'E:\\Tools\\PortableGit\\bin\\bash.exe';
+    const files = new Set([
+      gitBash.toLowerCase(),
+      'E:\\Tools\\PortableGit\\cmd\\git.exe'.toLowerCase(),
+    ]);
+    expect(resolveWindowsGitBashPath({
+      platform: 'win32',
+      env: { Path: 'E:\\Tools\\PortableGit\\mingw64\\bin' },
+      exists: (candidate) => files.has(candidate.toLowerCase()),
+    })).toBe(gitBash);
+  });
+
+  it('leaves Pi default Git Bash discovery unchanged for Program Files installs', () => {
+    const gitBash = 'C:\\Program Files\\Git\\bin\\bash.exe';
+    const env = { Path: 'C:\\Windows', ProgramFiles: 'C:\\Program Files' };
+    expect(resolveNonDefaultWindowsGitBashPath({
+      platform: 'win32',
+      env,
+      exists: (candidate) => [
+        gitBash,
+        'C:\\Program Files\\Git\\cmd\\git.exe',
+      ].some((expected) => candidate.toLowerCase() === expected.toLowerCase()),
+    })).toBeUndefined();
+  });
+
+  it('does not treat an unrelated PATH bin directory as Git Bash', () => {
+    expect(resolveWindowsGitBashPath({
+      platform: 'win32',
+      env: { Path: 'D:\\Unrelated\\bin' },
+      exists: (candidate) => candidate.toLowerCase() === 'D:\\Unrelated\\bin\\bash.exe'.toLowerCase(),
+    })).toBeUndefined();
+  });
+
+  it('does not resolve a Windows shell on non-Windows platforms', () => {
+    expect(resolveWindowsGitBashPath({ platform: 'linux' })).toBeUndefined();
+  });
+
   it('checks per-user Git for Windows installs before machine-wide registry keys', () => {
     expect(WINDOWS_GIT_REGISTRY_KEYS).toEqual([
       'HKCU\\SOFTWARE\\GitForWindows',
