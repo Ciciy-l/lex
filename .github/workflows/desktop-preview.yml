@@ -186,7 +186,7 @@ jobs:
           pnpm release:package -- "${args[@]}"
 
       - name: Upload unsigned preview artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lex-preview-unsigned-${{ inputs.region }}-${{ matrix.platform }}-${{ github.sha }}
           path: apps/desktop/release/artifacts/${{ inputs.region }}/unversioned/

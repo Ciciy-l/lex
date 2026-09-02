@@ -344,7 +344,7 @@ jobs:
           pnpm release:package -- "${args[@]}"
 
       - name: Upload packaged artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: desktop-${{ matrix.platform }}-${{ needs.resolve-release.outputs.version }}-${{ needs.resolve-release.outputs.signing_mode }}
           path: apps/desktop/release/artifacts/global/${{ needs.resolve-release.outputs.version }}/
@@ -359,7 +359,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download packaged artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
 
