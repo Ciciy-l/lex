@@ -7,8 +7,8 @@ name: pr-code-review
 # 仓库侧的审阅口径写在根目录 REVIEW.md（复用 workflow 的 prompt 会主动读取）。
 #
 # 前置配置：
-#   - repository secret `ANTHROPIC_API_KEY`(必需)。复用 workflow 声明为 required,
-#     缺了本 workflow 每次都失败,代码里无法兜底。
+#   - repository secret `ANTHROPIC_API_KEY`(可选)。配置后运行 Claude review；未配置时
+#     由 review-preflight 明确跳过这个建议性检查，不影响 client-ci 或发布流程。
 #   - repository variable `ANTHROPIC_BASE_URL`(可选)。不设则走 api.anthropic.com。
 
 on:
@@ -28,7 +28,28 @@ permissions:
 # cancel-in-progress,再套一层只会让取消粒度重复。
 
 jobs:
+  review-preflight:
+    name: review credentials
+    runs-on: ubuntu-latest
+    outputs:
+      available: ${{ steps.detect.outputs.available }}
+    steps:
+      - id: detect
+        name: Detect Anthropic credentials
+        shell: bash
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [[ -n "$ANTHROPIC_API_KEY" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "Anthropic credentials are configured; running Claude review."
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Anthropic credentials are not configured; skipping advisory Claude review."
+          fi
+
   code-review:
+    needs: review-preflight
     # 与被调用 workflow 内部的 if 重复是有意的——在调用方就短路,fork PR 与 draft
     # 连 job 都不启动。fork PR 一律不 review:一是 fork 触发的 pull_request 事件
     # 取不到 secrets,二是外部分支内容进 prompt 有注入面。外部贡献者的 PR 因此
@@ -36,7 +57,8 @@ jobs:
     #
     # 排除 dependabot:它的分支在本仓,同仓判断拦不住,但 GitHub 把 Dependabot 触发的
     # pull_request 当 fork 处理——Actions secrets 一律不可见,只有 Dependabot secrets
-    # 可见。于是 job 会照常启动,然后在拿不到 ANTHROPIC_API_KEY 这一步必然失败。
+    # 可见。review-preflight 会在 job 之前检查凭据；没有凭据时改走成功的 skipped
+    # 说明 job，避免把建议性 review 误报为代码失败。
     # 本仓 dependabot 每周巡检 github-actions 与 npm 两个生态(上限 5 个 PR,见
     # .github/dependabot.yml),不排除就是每周固定几条红。
     #
@@ -61,7 +83,8 @@ jobs:
       github.event.pull_request &&
       !github.event.pull_request.draft &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.actor != 'dependabot[bot]'
+      github.actor != 'dependabot[bot]' &&
+      needs.review-preflight.outputs.available == 'true'
     # 跨 org 复用 workflow,按本仓惯例钉死 commit SHA 而不是 @v1 浮动 tag:
     # tag 可被上游重新指向,而这份 workflow 持有 pull-requests:write 并决定
     # 喂给模型的 prompt。dependabot(github-actions 生态,见 .github/dependabot.yml)
@@ -85,3 +108,19 @@ jobs:
       head_repo_full_name: ${{ github.event.pull_request.head.repo.full_name }}
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+  code-review-skipped:
+    name: code review unavailable
+    needs: review-preflight
+    if: >-
+      github.event.pull_request &&
+      !github.event.pull_request.draft &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]' &&
+      needs.review-preflight.outputs.available != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain skipped advisory review
+        run: |
+          echo "Claude code review skipped because ANTHROPIC_API_KEY is not configured."
+          echo "This advisory check does not gate client-ci or releases."
