@@ -146,7 +146,7 @@ function cleanOutDir() {
   }
 }
 
-function runForgeMake({ platform, arch, region, version, versionless, noSign, webAuthnAppleTeamId }) {
+function runForgeMake({ platform, arch, region, version, versionless, allowUnsigned, noSign, webAuthnAppleTeamId }) {
   console.log('==> Building remote bundles...');
   execSync('node scripts/build-remote-bundles.mjs', { cwd: DESKTOP_ROOT, stdio: 'inherit' });
 
@@ -164,7 +164,10 @@ function runForgeMake({ platform, arch, region, version, versionless, noSign, we
     // 版本无关 / 开源打包(versionless):配置文件是 gitignore 的、默认 checkout 里不存在,
     // 允许缺失 ⇒ 注入空目标、功能整体关闭,拉仓即可打包(2026-08-04 review P1)。
     // 注意 allowMissing 只放宽「文件缺失」;文件在但内容损坏两种模式都仍然硬失败。
-    ...desktopLogUploadBuildEnv({ authRegion: region, allowMissing: versionless }),
+    // 版本化无签名发布仍然是可分发、可更新的构建，但早期 Lex 仓库可能还
+    // 没有配置日志上报目标。只有正式签名模式才把该配置作为硬门禁；
+    // versionless 与 --allow-unsigned 都允许空配置，功能保持关闭。
+    ...desktopLogUploadBuildEnv({ authRegion: region, allowMissing: versionless || allowUnsigned }),
     // forge.config.ts 的 NSIS appId / AUMID 优先读这个(与 VITE_ 同源,双保险)。
     CINDY_AUTH_REGION: region,
     // forge.config.ts 注入 packagerConfig.appVersion;版本无关时为占位 0.0.0。
@@ -463,7 +466,8 @@ async function finishDarwin({
     exec(`/usr/bin/ditto -c -k "${packagedDir}" "${hotfixZipPath}"`);
     files.push(fileEntry('hotfix', hotfixZipPath));
   } else {
-    // 版本无关(或显式放行)→ ad-hoc 签名,产出 .app 的 zip 供本机/内部试用。
+    // 版本无关(或显式放行)→ ad-hoc 签名。版本化无签名包也必须同时产出
+    // hotfix ZIP：更新器只消费 hotfix 字段，不能把 installer ZIP 当作热更包。
     writeMacEntitlements(helperEntitlementsPath);
     writeMacEntitlements(mainEntitlementsPath, { appleEvents: true });
     adhocSignMacApp(appPath, helperEntitlementsPath, mainEntitlementsPath, arch);
@@ -488,6 +492,13 @@ async function finishDarwin({
     if (fs.existsSync(appZipPath)) fs.unlinkSync(appZipPath);
     exec(`/usr/bin/ditto -c -k --keepParent "${appPath}" "${appZipPath}"`);
     files.push(fileEntry('installer', appZipPath));
+    if (!versionless) {
+      const hotfixZipPath = path.join(artifactDir, `${baseName}-${arch}-hotfix.zip`);
+      console.log('==> Creating hotfix ZIP (ad-hoc signed)...');
+      if (fs.existsSync(hotfixZipPath)) fs.unlinkSync(hotfixZipPath);
+      exec(`/usr/bin/ditto -c -k "${packagedDir}" "${hotfixZipPath}"`);
+      files.push(fileEntry('hotfix', hotfixZipPath));
+    }
   }
 
   return { files, signing: { mode: signingMode } };
@@ -623,6 +634,7 @@ async function main() {
       region,
       version,
       versionless,
+      allowUnsigned,
       noSign,
       webAuthnAppleTeamId: webAuthnProvisioningProfile ? macSigningIdentity?.teamId : undefined,
     });
@@ -699,6 +711,8 @@ async function main() {
   }
   if (versionless) {
     console.log('注意: 版本无关包(0.0.0)不参与热更新,仅供本地/社区使用,不能作为发布产物。');
+  } else if (allowUnsigned || noSign) {
+    console.log('注意: 这是版本化无签名包;可参与热更新,但首次安装可能触发系统安全警告。');
   }
 }
 

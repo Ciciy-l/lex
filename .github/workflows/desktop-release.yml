@@ -1,4 +1,4 @@
-name: desktop-release-signed-draft
+name: desktop-release-auto
 
 on:
   push:
@@ -10,6 +10,15 @@ on:
         description: "SemVer version without the v prefix (for example 0.1.0)"
         required: true
         type: string
+      mode:
+        description: "Release mode: auto signs when all credentials are ready, or force unsigned/signed"
+        required: true
+        default: auto
+        type: choice
+        options:
+          - auto
+          - unsigned
+          - signed
 
 permissions:
   contents: write
@@ -23,6 +32,118 @@ env:
   XDT_SKIP_AGENT_BIN_INSTALL: "1"
 
 jobs:
+  resolve-release:
+    name: Resolve version and signing mode
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      signing_mode: ${{ steps.mode.outputs.signing_mode }}
+      signing_ready: ${{ steps.mode.outputs.signing_ready }}
+    steps:
+      - name: Resolve release version
+        id: version
+        shell: bash
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$DISPATCH_VERSION"
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: $version" >&2
+            exit 1
+          fi
+          if [ "$version" = "0.0.0" ] || [[ "$version" == 0.0.0-* ]]; then
+            echo '0.0.0 is reserved for local versionless builds; use a real release version.' >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Select automatic signing mode
+        id: mode
+        shell: bash
+        env:
+          REQUESTED_MODE: ${{ inputs.mode || 'auto' }}
+          GH_TOKEN: ${{ github.token }}
+          LOG_UPLOAD_CONFIG: ${{ secrets.LEX_LOG_UPLOAD_CONFIG_JSON }}
+          WIN_SIGN_CMD: ${{ secrets.LEX_WIN_SIGN_CMD }}
+          APPLE_ID: ${{ secrets.LEX_APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.LEX_APPLE_TEAM_ID }}
+          APPLE_SIGN_IDENTITY: ${{ secrets.LEX_APPLE_SIGN_IDENTITY }}
+          APPLE_APP_PASSWORD: ${{ secrets.LEX_APPLE_APP_PASSWORD }}
+          MACOS_CERT_P12_BASE64: ${{ secrets.LEX_MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.LEX_MACOS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=()
+          check_secret() {
+            local name="$1" value="$2"
+            if [ -z "$value" ]; then missing+=("$name"); fi
+          }
+          check_secret LEX_LOG_UPLOAD_CONFIG_JSON "$LOG_UPLOAD_CONFIG"
+          check_secret LEX_WIN_SIGN_CMD "$WIN_SIGN_CMD"
+          check_secret LEX_APPLE_ID "$APPLE_ID"
+          check_secret LEX_APPLE_TEAM_ID "$APPLE_TEAM_ID"
+          check_secret LEX_APPLE_SIGN_IDENTITY "$APPLE_SIGN_IDENTITY"
+          check_secret LEX_APPLE_APP_PASSWORD "$APPLE_APP_PASSWORD"
+          check_secret LEX_MACOS_CERT_P12_BASE64 "$MACOS_CERT_P12_BASE64"
+          check_secret LEX_MACOS_CERT_PASSWORD "$MACOS_CERT_PASSWORD"
+          ready=true
+          [ "${#missing[@]}" -eq 0 ] || ready=false
+          # Once a signed Lex release has been published, do not silently
+          # regress future auto releases to unsigned output when a credential
+          # expires or is accidentally deleted. Release titles are generated
+          # by this workflow and provide an immutable, auditable lock.
+          release_names="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json name --jq '.[].name')"
+          signing_locked=false
+          if printf '%s\n' "$release_names" | grep -Fq '(signed'; then signing_locked=true; fi
+          case "$REQUESTED_MODE" in
+            signed)
+              if [ "$ready" != true ]; then
+                printf 'Signed mode requested but required secrets are missing: %s\n' "${missing[*]}" >&2
+                exit 1
+              fi
+              selected=signed
+              ;;
+            unsigned)
+              if [ "$signing_locked" = true ]; then
+                echo 'Signed releases already exist; refusing an unsigned release after signing was enabled.' >&2
+                exit 1
+              fi
+              selected=unsigned
+              ;;
+            auto)
+              if [ "$ready" = true ]; then
+                selected=signed
+              elif [ "$signing_locked" = true ]; then
+                echo 'Signing is locked because a previous signed release exists, but required secrets are missing.' >&2
+                exit 1
+              else
+                selected=unsigned
+              fi
+              ;;
+            *)
+              echo "Unsupported release mode: $REQUESTED_MODE" >&2
+              exit 1
+              ;;
+          esac
+          echo "signing_mode=$selected" >> "$GITHUB_OUTPUT"
+          echo "signing_ready=$ready" >> "$GITHUB_OUTPUT"
+          echo "signing_locked=$signing_locked" >> "$GITHUB_OUTPUT"
+          if [ "$selected" = signed ]; then
+            echo 'Automatic mode selected a signed release.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo 'Automatic mode selected a versioned unsigned release.'
+              echo
+              echo "Missing release credentials: ${missing[*]:-none}"
+              echo 'The package keeps its SemVer, GitHub Release, and update manifest.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   quality:
     name: Release quality gate
     runs-on: ubuntu-latest
@@ -72,7 +193,9 @@ jobs:
 
   package:
     name: Package ${{ matrix.platform }}
-    needs: quality
+    needs:
+      - quality
+      - resolve-release
     strategy:
       fail-fast: false
       matrix:
@@ -136,31 +259,13 @@ jobs:
           LEX_LOG_UPLOAD_CONFIG_JSON: ${{ secrets.LEX_LOG_UPLOAD_CONFIG_JSON }}
         run: |
           if [ -z "$LEX_LOG_UPLOAD_CONFIG_JSON" ]; then
-            echo 'LEX_LOG_UPLOAD_CONFIG_JSON is required for a versioned desktop build.' >&2
-            echo 'Create a repository secret containing config/log-upload.json, or keep using versionless local builds.' >&2
-            exit 1
-          fi
-          printf '%s' "$LEX_LOG_UPLOAD_CONFIG_JSON" > config/log-upload.json
-
-      - name: Resolve release version
-        id: version
-        shell: bash
-        env:
-          DISPATCH_VERSION: ${{ inputs.version }}
-        run: |
-          if [ "${GITHUB_REF_TYPE}" = tag ]; then
-            version="${GITHUB_REF_NAME#v}"
+            echo 'No LEX_LOG_UPLOAD_CONFIG_JSON; continuing with logging disabled for this unsigned release.' >> "$GITHUB_STEP_SUMMARY"
           else
-            version="$DISPATCH_VERSION"
+            printf '%s' "$LEX_LOG_UPLOAD_CONFIG_JSON" > config/log-upload.json
           fi
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Invalid release version: $version" >&2
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Require Windows signing configuration
-        if: matrix.system == 'windows'
+        if: needs.resolve-release.outputs.signing_mode == 'signed' && matrix.system == 'windows'
         shell: bash
         env:
           WIN_SIGN_CMD: ${{ secrets.LEX_WIN_SIGN_CMD }}
@@ -171,7 +276,7 @@ jobs:
           fi
 
       - name: Require macOS signing configuration
-        if: matrix.system == 'macos'
+        if: needs.resolve-release.outputs.signing_mode == 'signed' && matrix.system == 'macos'
         shell: bash
         env:
           APPLE_ID: ${{ secrets.LEX_APPLE_ID }}
@@ -190,7 +295,7 @@ jobs:
           done
 
       - name: Import macOS Developer ID certificate
-        if: matrix.system == 'macos'
+        if: needs.resolve-release.outputs.signing_mode == 'signed' && matrix.system == 'macos'
         shell: bash
         env:
           MACOS_CERT_P12_BASE64: ${{ secrets.LEX_MACOS_CERT_P12_BASE64 }}
@@ -225,41 +330,38 @@ jobs:
           APPLE_APP_PASSWORD: ${{ secrets.LEX_APPLE_APP_PASSWORD }}
         shell: bash
         run: |
-          pnpm release:package -- \
+          args=( \
             --platform "${{ matrix.platform }}" \
             --region global \
-            --version "${{ steps.version.outputs.version }}"
+            --version "${{ needs.resolve-release.outputs.version }}" \
+          )
+          if [ "${{ needs.resolve-release.outputs.signing_mode }}" = unsigned ]; then
+            # Force the entire release to the unsigned path. This is important
+            # when only some platform secrets exist: no platform may be
+            # accidentally signed while another falls back to ad-hoc output.
+            args+=(--no-sign --allow-unsigned)
+          fi
+          pnpm release:package -- "${args[@]}"
 
       - name: Upload packaged artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-${{ matrix.platform }}-${{ steps.version.outputs.version }}
-          path: apps/desktop/release/artifacts/global/${{ steps.version.outputs.version }}/
+          name: desktop-${{ matrix.platform }}-${{ needs.resolve-release.outputs.version }}-${{ needs.resolve-release.outputs.signing_mode }}
+          path: apps/desktop/release/artifacts/global/${{ needs.resolve-release.outputs.version }}/
           if-no-files-found: error
           retention-days: 14
 
   publish:
     name: Create GitHub Release draft
-    needs: package
+    needs:
+      - package
+      - resolve-release
     runs-on: ubuntu-latest
     steps:
       - name: Download packaged artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
-
-      - name: Resolve release version
-        id: version
-        shell: bash
-        env:
-          DISPATCH_VERSION: ${{ inputs.version }}
-        run: |
-          if [ "${GITHUB_REF_TYPE}" = tag ]; then
-            version="${GITHUB_REF_NAME#v}"
-          else
-            version="$DISPATCH_VERSION"
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Generate checksums
         shell: bash
@@ -271,19 +373,30 @@ jobs:
       - name: Create or update draft release
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.resolve-release.outputs.version }}
+          SIGNING_MODE: ${{ needs.resolve-release.outputs.signing_mode }}
         shell: bash
         run: |
           tag="v${VERSION}"
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" \
-              --draft --title "Lex ${tag} (draft)"
+          if [ "$SIGNING_MODE" = signed ]; then
+            notes='Windows and macOS packages are signed and notarized.'
           else
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" \
-              --draft --title "Lex ${tag} (draft)" \
-              --notes "Automated multi-platform draft. Windows and macOS packages are signed and notarized by the release gate; review assets before publishing."
+            notes='Windows packages are unsigned and macOS packages use ad-hoc signing; these are suitable for testing but may trigger SmartScreen or Gatekeeper warnings.'
           fi
+          release_flags=()
+          if [[ "$VERSION" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag already exists; refusing to replace immutable versioned assets." >&2
+            echo 'Use a new, higher SemVer tag for a changed signing mode or rebuilt package.' >&2
+            exit 1
+          fi
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            "${release_flags[@]}" \
+            --draft --title "Lex ${tag} (${SIGNING_MODE}, draft)" \
+            --notes "Automated multi-platform Lex release. Build mode: ${SIGNING_MODE}. ${notes} Review assets before publishing."
           while IFS= read -r -d '' file; do
             gh release upload "$tag" "$file" --repo "$GITHUB_REPOSITORY" --clobber
           done < <(find dist -type f ! -name build-info.json ! -name SHA256SUMS.txt -print0)

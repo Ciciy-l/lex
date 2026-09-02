@@ -98,9 +98,10 @@ function normalizeRegionTarget(raw, region) {
  */
 /**
  * `allowMissing`：**文件缺失**（ENOENT）时不抛错，返回 `null`（= 全区域无目标 ⇒ 功能整体
- * 关闭）。给版本无关 / 开源打包用：默认 checkout 里 `config/log-upload.json` 是 gitignore 的、
- * 不存在,不该因此打不出包(2026-08-04 review P1)。注意**只对「缺失」放宽** —— 文件在但内容
- * 损坏 / 非法仍然硬失败(半截配置比没有更危险),发行(有版本)打包也仍然要求文件必须在。
+ * 关闭）。给版本无关 / 开源打包，以及显式允许无签名的版本化测试发布使用：默认 checkout
+ * 里 `config/log-upload.json` 是 gitignore 的、不存在,不该因此打不出包(2026-08-04 review P1)。
+ * 注意**只对「缺失」放宽** —— 文件在但内容损坏 / 非法仍然硬失败(半截配置比没有更危险),
+ * 正式签名发行仍然要求文件必须在。
  */
 export function loadLogUploadTargets({ repoRoot = REPO_ROOT, configPath, allowMissing = false } = {}) {
   const file = configPath ?? logUploadConfigPath(repoRoot);
@@ -183,8 +184,8 @@ function assertRegionsIsolated(targets, file) {
  * 注入串里带 `region`，运行时会与烘焙的 `VITE_CINDY_AUTH_REGION` 交叉校验，不一致即视为
  * 未配置。这样"cn 包误带 global 目标"这类错配在运行时也拦得住，而不是只靠打包脚本正确。
  *
- * `allowMissing`（版本无关 / 开源打包传 true）：配置文件缺失时注入空串而不是抛错，让功能整体
- * 关闭。发行(有版本)打包传 false（默认），缺失即硬失败。
+ * `allowMissing`（版本无关 / 无签名版本化发布传 true）：配置文件缺失时注入空串而不是抛错，
+ * 让功能整体关闭。正式签名发行传 false（默认），缺失即硬失败。
  */
 export function desktopLogUploadBuildEnv({ authRegion, repoRoot, configPath, allowMissing = false } = {}) {
   const region = resolveClientBuildRegion(
