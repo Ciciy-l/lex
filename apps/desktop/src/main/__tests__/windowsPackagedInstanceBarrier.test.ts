@@ -23,8 +23,8 @@ describe('windowsPackagedInstanceBarrier', () => {
   });
 
   it('uses Electron ProcessSingleton names and a message-only-window probe', () => {
-    expect(__testing.processSingletonNames('Cindy')).toEqual({
-      mutexName: 'Local\\CindyProcessSingletonStartup',
+    expect(__testing.processSingletonNames('Lex')).toEqual({
+      mutexName: 'Local\\LexProcessSingletonStartup',
       windowClass: 'Chrome_MessageWindow',
     });
     expect(__testing.WINDOWS_PACKAGED_INSTANCE_BARRIER_SCRIPT).toContain('FindWindowEx');
@@ -39,12 +39,15 @@ describe('windowsPackagedInstanceBarrier', () => {
   it.runIf(process.platform === 'win32')(
     'holds the packaged startup mutex until release and allows a later retry',
     async () => {
-      const programName = `CindyBarrierTest${process.pid}`;
+      const programName = `LexBarrierTest${process.pid}`;
       const userDataDir = path.join(os.tmpdir(), programName);
       const first = await acquireWindowsPackagedInstanceBarrier({
         userDataDir,
         programName,
-        timeoutMs: 1_000,
+        // PowerShell cold start on hosted Windows runners can exceed one
+        // second; keep the helper startup budget independent from the short
+        // busy-mutex assertion below.
+        timeoutMs: 5_000,
       });
       try {
         expect(first.isHeld()).toBe(true);
@@ -63,7 +66,7 @@ describe('windowsPackagedInstanceBarrier', () => {
       const retry = await acquireWindowsPackagedInstanceBarrier({
         userDataDir,
         programName,
-        timeoutMs: 1_000,
+        timeoutMs: 5_000,
       });
       expect(retry.isHeld()).toBe(true);
       await retry.release();
