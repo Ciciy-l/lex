@@ -94,7 +94,7 @@ describe('device-link shared contract', () => {
       .toContain('还没有配置可用的 API Key');
     expect(describeAgentAuthError('claude-code not authenticated: no_key'))
       .toContain('设置 → 模型供应商');
-    expect(describeAgentAuthError('claude-code not authenticated: no_key')).toContain('Cindy');
+    expect(describeAgentAuthError('claude-code not authenticated: no_key')).toContain('Lex');
     expect(describeAgentAuthError('claude-code not authenticated: no_key')).not.toContain('XDMaker');
     expect(describeAgentAuthError('claude-code not authenticated: no_key')).toContain('Claude');
     expect(describeAgentAuthError('codex not authenticated: no_credentials'))

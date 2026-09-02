@@ -491,6 +491,25 @@ describe('resolveDevCliFlags', () => {
 });
 
 describe('resolveDevProfileKind / isIsolatedIdentityOnProductionProfile', () => {
+  it('Lex 独立发行版的正式目录与冻结 Cindy 目录一样受保护', () => {
+    for (const dir of ['/AppData/Lex', '/AppData/LexGlobal', '/AppData/LexDev']) {
+      expect(
+        resolveDevProfileKind({
+          isolatedDirIsEpochDerived: false,
+          effectiveUserDataDir: dir,
+          appDataDir: '/AppData',
+        }),
+      ).toBe('production-shared');
+      expect(
+        isIsolatedIdentityOnProductionProfile({
+          isolated: true,
+          effectiveUserDataDir: dir,
+          appDataDir: '/AppData',
+        }),
+      ).toBe(true);
+    }
+  });
+
   it('正式目录一律是 production-shared,isolated 旗标不能把它变成沙箱', () => {
     expect(
       resolveDevProfileKind({

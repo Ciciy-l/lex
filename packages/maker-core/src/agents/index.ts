@@ -18,6 +18,7 @@ export {
 // finalizeCodexCitationText = 剥截断残尾 + 归一化(与流式 completed 完全同口径)。
 export { finalizeCodexCitationText, normalizeCodexFileCitations } from './codex/translator.js';
 export { PiAgent } from './pi/index.js';
+export { resolveNonDefaultWindowsGitBashPath } from './pi/windows-git-path.js';
 export {
   canReuseCodexHostForCredentialMode,
   canReuseHostForCredentialMode,

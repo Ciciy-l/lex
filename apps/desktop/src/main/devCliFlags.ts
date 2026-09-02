@@ -113,9 +113,18 @@ const ISOLATION_NAME_RE = /^[A-Za-z0-9_-]{1,32}$/;
 
 /**
  * 同机所有正式区域 profile 的目录名。当前构建区域只决定默认目录和沙箱派生，
- * 不能缩小保护集合：Global 启动指到 CN 的 Cindy、反向同理，都仍是正式 profile。
+ * 不能缩小保护集合：Lex 与冻结的 Cindy 安装都必须被识别为正式 profile，避免
+ * `--isolated` 误把现有安装目录当作 custom 沙箱并改写其密钥链身份。
  */
-export const OFFICIAL_USER_DATA_DIR_NAMES = ['Cindy', 'CindyGlobal', 'CindyDev'] as const;
+export const OFFICIAL_USER_DATA_DIR_NAMES = [
+  'Lex',
+  'LexGlobal',
+  'LexDev',
+  // Legacy Cindy profiles remain protected during the independent-channel migration.
+  'Cindy',
+  'CindyGlobal',
+  'CindyDev',
+] as const;
 
 export interface DevCliFlagsInput {
   argv: readonly string[];

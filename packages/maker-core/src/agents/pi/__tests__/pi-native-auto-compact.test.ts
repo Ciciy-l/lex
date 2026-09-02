@@ -124,6 +124,15 @@ describe("Pi native settings", () => {
       compaction: { reserveTokens: 25_000 },
     });
     expect(JSON.parse(buildPiSettingsJsonContent(128_000))).toEqual({ transport: "sse", retry });
+    expect(JSON.parse(buildPiSettingsJsonContent(
+      128_000,
+      undefined,
+      "D:\\Program Files\\Git\\bin\\bash.exe",
+    ))).toEqual({
+      transport: "sse",
+      retry,
+      shellPath: "D:\\Program Files\\Git\\bin\\bash.exe",
+    });
   });
 });
 

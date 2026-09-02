@@ -1,0 +1,173 @@
+name: publish-lex-update-manifests
+
+on:
+  # Draft releases intentionally do not publish update metadata.  Promote the
+  # release only after its assets and notes have been reviewed.
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Published Lex release tag (for example v0.1.0-rc.1)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lex-updates
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish Lex update manifests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      RELEASE_PRERELEASE: ${{ github.event.release.prerelease || '' }}
+      REPOSITORY: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Download release assets
+        run: |
+          rm -rf release-assets generated-manifests
+          mkdir -p release-assets generated-manifests
+          gh release download "$RELEASE_TAG" --repo "$REPOSITORY" --dir release-assets \
+            --pattern '*.exe' --pattern '*.dmg' --pattern '*.deb' --pattern '*.zip'
+
+      - name: Build platform manifests with checksums
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          RELEASE_PRERELEASE: ${{ github.event.release.prerelease || '' }}
+          REPOSITORY: ${{ github.repository }}
+          CINDY_VENDOR_CDN_BASE: https://hotfix.cindy.app/cindy
+        run: |
+          if [ -z "$RELEASE_PRERELEASE" ]; then
+            RELEASE_PRERELEASE="$(gh release view "$RELEASE_TAG" --repo "$REPOSITORY" --json isPrerelease --jq .isPrerelease)"
+          fi
+          if [ "$RELEASE_PRERELEASE" = true ]; then
+            manifest_suffix='-beta'
+            echo "MANIFEST_SUFFIX=$manifest_suffix" >> "$GITHUB_ENV"
+            echo 'This is a prerelease; publishing beta-channel manifests.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            manifest_suffix=''
+            echo 'MANIFEST_SUFFIX=' >> "$GITHUB_ENV"
+            echo 'This is a stable release; publishing release-channel manifests.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          export MANIFEST_SUFFIX="$manifest_suffix"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, urllib.request
+
+          root = pathlib.Path('release-assets')
+          out = pathlib.Path('generated-manifests')
+          version = os.environ['RELEASE_TAG'].removeprefix('v')
+          suffix = os.environ.get('MANIFEST_SUFFIX', '')
+          base = f"https://github.com/{os.environ['REPOSITORY']}/releases/download/{os.environ['RELEASE_TAG']}"
+          files = sorted(p for p in root.iterdir() if p.is_file())
+
+          def pick(pattern):
+              matches = [p for p in files if pattern.search(p.name)]
+              if len(matches) != 1:
+                  raise SystemExit(f"expected exactly one asset matching {pattern.pattern!r}, got {[p.name for p in matches]}")
+              return matches[0]
+
+          def asset(path):
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              return {
+                  'file': f"{base}/{path.name}",
+                  'sha256': digest,
+                  'size': path.stat().st_size,
+              }
+
+          def vendor_assets(platform):
+              """Keep the pinned CLI runtime assets available during migration.
+
+              Lex owns the app update channel; until these large binaries are
+              mirrored, their signed metadata points at the frozen Cindy CDN.
+              Absolute URLs are required because the client base URL is Lex.
+              """
+              source_url = f"{os.environ['CINDY_VENDOR_CDN_BASE']}/manifest-{platform}.json"
+              with urllib.request.urlopen(source_url, timeout=30) as response:
+                  source = json.load(response)
+              result = {}
+              for key in ('claudeCode', 'codex', 'ripgrep', 'pi'):
+                  value = source.get(key)
+                  if not isinstance(value, dict) or not value.get('file'):
+                      continue
+                  value = dict(value)
+                  if not re.match(r'^https?://', str(value['file'])):
+                      value['file'] = f"{os.environ['CINDY_VENDOR_CDN_BASE'].rstrip('/')}/{str(value['file']).lstrip('/')}"
+                  result[key] = value
+              return result
+
+          def app_payload(platform, app):
+              payload = {'app': app}
+              payload.update(vendor_assets(platform))
+              return payload
+
+          # Windows emits one x64 installer and hotfix (without an arch suffix).
+          win_hotfix = pick(re.compile(r'-hotfix\.zip$', re.I))
+          win_installer = pick(re.compile(r'-Setup\.exe$', re.I))
+          (out / f'manifest-win32-x64{suffix}.json').write_text(json.dumps(app_payload('win32-x64', {
+              'version': version, 'releaseNotes': f'Lex {version}',
+              'hotfix': asset(win_hotfix), 'installer': asset(win_installer)
+          }), indent=2) + '\n')
+
+          for arch in ('arm64', 'x64'):
+              hotfix = pick(re.compile(rf'-{arch}-hotfix\.zip$', re.I))
+              # Signed builds publish DMG installers; unsigned versioned builds
+              # publish an app ZIP. Both are valid fresh-install assets. The
+              # hotfix ZIP above is the asset consumed by the in-app updater.
+              installer = pick(re.compile(rf'-{arch}\.(?:dmg|zip)$', re.I))
+              (out / f'manifest-darwin-{arch}{suffix}.json').write_text(json.dumps(app_payload(f'darwin-{arch}', {
+                  'version': version, 'releaseNotes': f'Lex {version}',
+                  'hotfix': asset(hotfix), 'installer': asset(installer)
+              }), indent=2) + '\n')
+
+          linux = pick(re.compile(r'-amd64\.deb$', re.I))
+          (out / f'manifest-linux-x64{suffix}.json').write_text(json.dumps(app_payload('linux-x64', {
+              'version': version, 'releaseNotes': f'Lex {version}',
+              'installer': asset(linux)
+          }), indent=2) + '\n')
+          # Keep the complete endpoint schema (auth/API/website endpoints are
+          # still Cindy-compatible until Lex operates its own services), while
+          # replacing only the update/CDN channel with the Lex branch.
+          endpoint = json.loads(pathlib.Path('config/endpoint.global.json').read_text())
+          endpoint['cdnBaseUrl'] = 'https://raw.githubusercontent.com/Ciciy-l/lex/updates'
+          (out / 'endpoint.json').write_text(json.dumps(endpoint, indent=2) + '\n')
+          PY
+
+      - name: Publish manifests to the Lex updates branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repo_url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          worktree="$(mktemp -d)"
+          trap 'rm -rf "$worktree"' EXIT
+          if git ls-remote --exit-code "$repo_url" refs/heads/updates >/dev/null 2>&1; then
+            git clone --depth=1 --branch updates "$repo_url" "$worktree/repo"
+          else
+            git init "$worktree/repo"
+            git -C "$worktree/repo" checkout --orphan updates
+            git -C "$worktree/repo" remote add origin "$repo_url"
+          fi
+          # Keep the other channel's manifests. A beta/rc publish must not
+          # erase the last stable manifest, and vice versa.
+          cp generated-manifests/* "$worktree/repo/"
+          git -C "$worktree/repo" config user.name 'github-actions[bot]'
+          git -C "$worktree/repo" config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C "$worktree/repo" add .
+          if git -C "$worktree/repo" diff --cached --quiet; then
+            echo 'Update manifests are unchanged.'
+            exit 0
+          fi
+          git -C "$worktree/repo" commit -s -m "chore: publish Lex ${RELEASE_TAG} update manifests"
+          git -C "$worktree/repo" push origin HEAD:updates

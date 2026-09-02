@@ -1,0 +1,34 @@
+#!/bin/sh
+# Lex 命令行启动器 —— 随 Lex.app 分发并由安装菜单链接到 PATH。
+# 用法: lex [路径]
+PROG=$(basename "$0")
+SELF="$0"
+case "$SELF" in
+  */*) ;;
+  *) SELF=$(command -v "$SELF" 2>/dev/null || printf '%s' "$SELF") ;;
+esac
+while [ -h "$SELF" ]; do
+  link=$(readlink "$SELF")
+  case "$link" in
+    /*) SELF="$link" ;;
+    *) SELF="$(dirname "$SELF")/$link" ;;
+  esac
+done
+BIN_DIR=$(cd "$(dirname "$SELF")" >/dev/null 2>&1 && pwd)
+APP=$(cd "$BIN_DIR/../../.." >/dev/null 2>&1 && pwd)
+if [ "$#" -eq 0 ]; then
+  exec open -a "$APP"
+fi
+if [ "$#" -gt 1 ]; then
+  echo "$PROG: 一次只能打开一个路径(收到 $# 个)。请分多次运行,例如:$PROG ." >&2
+  exit 2
+fi
+arg="$1"
+if [ -d "$arg" ]; then
+  abs=$(cd "$arg" >/dev/null 2>&1 && pwd)
+elif [ -e "$arg" ]; then
+  dir=$(cd "$(dirname "$arg")" >/dev/null 2>&1 && pwd) && abs="$dir/$(basename "$arg")"
+else
+  abs="$arg"
+fi
+exec open -a "$APP" -- "$abs"

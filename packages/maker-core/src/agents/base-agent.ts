@@ -609,6 +609,16 @@ export interface AgentDeps {
   ) => Promise<PiExtraSpawnConfig | null>;
 
   /**
+   * Pi-only: resolve a local Bash executable when Pi's built-in Windows
+   * discovery misses a non-standard Git installation. Remote sessions resolve
+   * their shell on the execution host and should return undefined.
+   */
+  resolvePiShellPath?: (ctx: {
+    workingDir: string;
+    remoteHostId?: string | null;
+  }) => string | undefined;
+
+  /**
    * Pi-only: authenticate a child process to the host's loopback model proxy.
    * PiAgent creates a high-entropy token per session, registers it before spawn,
    * and disposes the exact registration when startup fails or the session closes.

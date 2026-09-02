@@ -1,0 +1,90 @@
+name: sync-cindy-upstream
+
+on:
+  schedule:
+    - cron: "17 2 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: cindy-upstream-sync
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout Lex
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          lfs: true
+          token: ${{ github.token }}
+
+      - name: Configure Git identity
+        run: |
+          git config user.name 'lex-upstream-sync[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+      - name: Fetch Cindy upstream
+        run: |
+          git remote add cindy-upstream https://github.com/makecindy/cindy.git
+          git fetch --no-tags cindy-upstream main
+          git fetch origin main
+
+      - name: Merge upstream into dedicated sync branch
+        id: merge
+        shell: bash
+        run: |
+          branch='sync/cindy-main'
+          if git diff --quiet origin/main cindy-upstream/main; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git switch --create "$branch" origin/main
+          if ! git merge --no-ff --no-edit cindy-upstream/main; then
+            conflicts="$(git diff --name-only --diff-filter=U | sed 's/^/- /')"
+            git merge --abort
+            {
+              echo 'changed=true'
+              echo 'conflict=true'
+              echo 'conflicts<<EOF'
+              echo "$conflicts"
+              echo 'EOF'
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+          echo 'conflict=false' >> "$GITHUB_OUTPUT"
+
+      - name: Open or update upstream sync pull request
+        if: steps.merge.outputs.changed == 'true' && steps.merge.outputs.conflict != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          git push --force origin sync/cindy-main
+          if gh pr list --repo "$GITHUB_REPOSITORY" --head sync/cindy-main --state open --json number --jq 'length' | grep -q '^0$'; then
+            gh pr create --repo "$GITHUB_REPOSITORY" \
+              --base main \
+              --head sync/cindy-main \
+              --title 'chore: sync Cindy upstream' \
+              --body $'This PR merges the latest main from https://github.com/makecindy/cindy into Lex.\n\nPlease review branding, endpoints, updater behavior, migrations, native dependencies, and the CLI workbench before merging. The normal Lex CI must pass.'
+          fi
+
+      - name: Report merge conflicts
+        if: steps.merge.outputs.conflict == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONFLICTS: ${{ steps.merge.outputs.conflicts }}
+        shell: bash
+        run: |
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title 'chore: Cindy upstream sync needs conflict resolution' \
+            --body $'The scheduled upstream merge could not be created automatically.\n\nConflicting paths:\n'"${CONFLICTS}"$'\n\nResolve the merge on a local branch, run the required checks, and open a PR into main.' || true

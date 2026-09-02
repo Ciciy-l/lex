@@ -82,11 +82,11 @@ describe('mobile native app config', () => {
     const cn = buildConfig({ config: appJson.expo });
     expect(
       process.env.EXPO_PUBLIC_ENDPOINT_MANIFEST_PEER_BASE_URL,
-    ).toBe('https://hotfix.cindy.app/cindy');
+    ).toBe('https://raw.githubusercontent.com/Ciciy-l/lex/updates');
     expect(cn.extra.xdtProductionEnv).toEqual({
       EXPO_PUBLIC_CINDY_AUTH_REGION: 'cn',
       EXPO_PUBLIC_ENDPOINT_MANIFEST_BASE_URL:
-        'https://hotfix.cindy.com.cn/cindy',
+        'https://raw.githubusercontent.com/Ciciy-l/lex/updates',
     });
     expect(cn.extra.xdtProductionEnv).not.toHaveProperty(
       'EXPO_PUBLIC_ENDPOINT_MANIFEST_PEER_BASE_URL',

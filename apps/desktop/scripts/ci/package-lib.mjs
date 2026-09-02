@@ -49,9 +49,9 @@ export function debianArch(nodeArch) {
   }
 }
 
-/** x.y.z 显式版本(不接受前缀 v / 预发布后缀——发布版本号是 CDN 比较键,保持纯净)。 */
+/** 显式 SemVer 版本(不接受前缀 v；允许 rc/beta 等预发布后缀)。 */
 export function isExplicitVersion(value) {
-  return /^\d+\.\d+\.\d+$/.test(value);
+  return /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value);
 }
 
 /**
@@ -145,7 +145,7 @@ export function parsePackageArgs(argv, defaults = {}) {
     !VERSION_BUMP_KINDS.includes(out.versionSpec) &&
     !isExplicitVersion(out.versionSpec)
   ) {
-    throw new Error(`非法 --version: ${out.versionSpec}(可选 x.y.z / major / minor / patch)`);
+    throw new Error(`非法 --version: ${out.versionSpec}(可选 x.y.z[-prerelease] / major / minor / patch)`);
   }
   return out;
 }
@@ -198,13 +198,12 @@ export function artifactRelDir({ region, version, versionless, platformKey }) {
 }
 
 /**
- * 新渠道产物文件基名(老 release 脚本的 xdt-maker-* 命名不动,新产物统一
- * cindy-*)。两区同名(owner 决策):发布渠道靠不同 OSS bucket 区分,本地
+ * Lex 渠道产物文件基名。两区同名(owner 决策):发布渠道靠不同更新地址区分,本地
  * 产物已按 artifactRelDir 的 `<region>/` 目录分层,文件名不再
  * 叠区域前缀。
  */
 export function artifactBaseName({ version, versionless }) {
-  return `cindy-${versionless ? 'unversioned' : version}`;
+  return `lex-${versionless ? 'unversioned' : version}`;
 }
 
 /**
@@ -222,7 +221,7 @@ export function buildBuildInfo(ctx) {
   return {
     // v2 移除无运行语义的 package channel；发布通道只属于 publish 阶段。
     schemaVersion: 2,
-    product: 'cindy-desktop',
+    product: 'lex-desktop',
     // 版本无关包 version 记 null,占位符不冒充真实版本。
     version: ctx.versionless ? null : ctx.version,
     versionless: ctx.versionless,

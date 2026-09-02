@@ -9,9 +9,9 @@ export const DESKTOP_DEV_REGIONS = Object.freeze(["cn", "global", "dev"]);
  * .mjs 启动器不能直接 import TS；同步关系由 brand-identity-sync.test.mjs 锁住。
  */
 export const DESKTOP_USER_DATA_DIR_NAME_BY_REGION = Object.freeze({
-  cn: "Cindy",
-  global: "CindyGlobal",
-  dev: "CindyDev",
+  cn: "Lex",
+  global: "LexGlobal",
+  dev: "LexDev",
 });
 
 /** 共享 Desktop profile 的区域目录名；省略区域时遵循产品规则默认 Global。 */

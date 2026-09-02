@@ -1,0 +1,403 @@
+name: desktop-release-auto
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "SemVer version without the v prefix (for example 0.1.0)"
+        required: true
+        type: string
+      mode:
+        description: "Release mode: auto signs when all credentials are ready, or force unsigned/signed"
+        required: true
+        default: auto
+        type: choice
+        options:
+          - auto
+          - unsigned
+          - signed
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_OPTIONS: "--max-old-space-size=8192"
+  XDT_SKIP_AGENT_BIN_INSTALL: "1"
+
+jobs:
+  resolve-release:
+    name: Resolve version and signing mode
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      signing_mode: ${{ steps.mode.outputs.signing_mode }}
+      signing_ready: ${{ steps.mode.outputs.signing_ready }}
+    steps:
+      - name: Resolve release version
+        id: version
+        shell: bash
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$DISPATCH_VERSION"
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: $version" >&2
+            exit 1
+          fi
+          if [ "$version" = "0.0.0" ] || [[ "$version" == 0.0.0-* ]]; then
+            echo '0.0.0 is reserved for local versionless builds; use a real release version.' >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Select automatic signing mode
+        id: mode
+        shell: bash
+        env:
+          REQUESTED_MODE: ${{ inputs.mode || 'auto' }}
+          GH_TOKEN: ${{ github.token }}
+          LOG_UPLOAD_CONFIG: ${{ secrets.LEX_LOG_UPLOAD_CONFIG_JSON }}
+          WIN_SIGN_CMD: ${{ secrets.LEX_WIN_SIGN_CMD }}
+          APPLE_ID: ${{ secrets.LEX_APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.LEX_APPLE_TEAM_ID }}
+          APPLE_SIGN_IDENTITY: ${{ secrets.LEX_APPLE_SIGN_IDENTITY }}
+          APPLE_APP_PASSWORD: ${{ secrets.LEX_APPLE_APP_PASSWORD }}
+          MACOS_CERT_P12_BASE64: ${{ secrets.LEX_MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.LEX_MACOS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=()
+          check_secret() {
+            local name="$1" value="$2"
+            if [ -z "$value" ]; then missing+=("$name"); fi
+          }
+          check_secret LEX_LOG_UPLOAD_CONFIG_JSON "$LOG_UPLOAD_CONFIG"
+          check_secret LEX_WIN_SIGN_CMD "$WIN_SIGN_CMD"
+          check_secret LEX_APPLE_ID "$APPLE_ID"
+          check_secret LEX_APPLE_TEAM_ID "$APPLE_TEAM_ID"
+          check_secret LEX_APPLE_SIGN_IDENTITY "$APPLE_SIGN_IDENTITY"
+          check_secret LEX_APPLE_APP_PASSWORD "$APPLE_APP_PASSWORD"
+          check_secret LEX_MACOS_CERT_P12_BASE64 "$MACOS_CERT_P12_BASE64"
+          check_secret LEX_MACOS_CERT_PASSWORD "$MACOS_CERT_PASSWORD"
+          ready=true
+          [ "${#missing[@]}" -eq 0 ] || ready=false
+          # Once a signed Lex release has been published, do not silently
+          # regress future auto releases to unsigned output when a credential
+          # expires or is accidentally deleted. Release titles are generated
+          # by this workflow and provide an immutable, auditable lock.
+          release_names="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json name --jq '.[].name')"
+          signing_locked=false
+          if printf '%s\n' "$release_names" | grep -Fq '(signed'; then signing_locked=true; fi
+          case "$REQUESTED_MODE" in
+            signed)
+              if [ "$ready" != true ]; then
+                printf 'Signed mode requested but required secrets are missing: %s\n' "${missing[*]}" >&2
+                exit 1
+              fi
+              selected=signed
+              ;;
+            unsigned)
+              if [ "$signing_locked" = true ]; then
+                echo 'Signed releases already exist; refusing an unsigned release after signing was enabled.' >&2
+                exit 1
+              fi
+              selected=unsigned
+              ;;
+            auto)
+              if [ "$ready" = true ]; then
+                selected=signed
+              elif [ "$signing_locked" = true ]; then
+                echo 'Signing is locked because a previous signed release exists, but required secrets are missing.' >&2
+                exit 1
+              else
+                selected=unsigned
+              fi
+              ;;
+            *)
+              echo "Unsupported release mode: $REQUESTED_MODE" >&2
+              exit 1
+              ;;
+          esac
+          echo "signing_mode=$selected" >> "$GITHUB_OUTPUT"
+          echo "signing_ready=$ready" >> "$GITHUB_OUTPUT"
+          echo "signing_locked=$signing_locked" >> "$GITHUB_OUTPUT"
+          if [ "$selected" = signed ]; then
+            echo 'Automatic mode selected a signed release.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo 'Automatic mode selected a versioned unsigned release.'
+              echo
+              echo "Missing release credentials: ${missing[*]:-none}"
+              echo 'The package keeps its SemVer, GitHub Release, and update manifest.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  quality:
+    name: Release quality gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install bundled ripgrep for workspace tests
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: pnpm install:ripgrep
+
+      - name: Check DCO and repository invariants
+        run: |
+          pnpm check:dco
+          pnpm check:endpoints
+          pnpm check:i18n
+          pnpm check:i18n-glossary
+          pnpm check:brand-terminology
+
+      - name: Typecheck desktop
+        env:
+          NODE_OPTIONS: "--max-old-space-size=6144"
+        run: pnpm --filter desktop typecheck
+
+      - name: Run unit tests
+        run: pnpm test:unit
+
+  package:
+    name: Package ${{ matrix.platform }}
+    needs:
+      - quality
+      - resolve-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The macOS packager emits both arm64 and x64 artifacts from the
+          # native Apple Silicon runner. Linux arm64 is intentionally omitted
+          # until a native arm64 runner is enabled for this repository.
+          - platform: win32
+            runner: windows-latest
+            system: windows
+          - platform: darwin
+            runner: macos-14
+            system: macos
+          - platform: linux
+            runner: ubuntu-24.04
+            system: linux
+
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install Rust toolchain for Windows native helpers
+        if: matrix.system == 'windows'
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          cargo --version
+
+      - name: Install Linux packaging dependencies
+        if: matrix.system == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fakeroot dpkg desktop-file-utils python3 make gcc g++
+
+      - name: Install dependencies
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: pnpm install --frozen-lockfile
+
+      - name: Materialize release log-upload configuration
+        shell: bash
+        env:
+          LEX_LOG_UPLOAD_CONFIG_JSON: ${{ secrets.LEX_LOG_UPLOAD_CONFIG_JSON }}
+        run: |
+          if [ -z "$LEX_LOG_UPLOAD_CONFIG_JSON" ]; then
+            echo 'No LEX_LOG_UPLOAD_CONFIG_JSON; continuing with logging disabled for this unsigned release.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '%s' "$LEX_LOG_UPLOAD_CONFIG_JSON" > config/log-upload.json
+          fi
+
+      - name: Require Windows signing configuration
+        if: needs.resolve-release.outputs.signing_mode == 'signed' && matrix.system == 'windows'
+        shell: bash
+        env:
+          WIN_SIGN_CMD: ${{ secrets.LEX_WIN_SIGN_CMD }}
+        run: |
+          if [ -z "$WIN_SIGN_CMD" ]; then
+            echo 'LEX_WIN_SIGN_CMD is required for a versioned Windows release.' >&2
+            exit 1
+          fi
+
+      - name: Require macOS signing configuration
+        if: needs.resolve-release.outputs.signing_mode == 'signed' && matrix.system == 'macos'
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.LEX_APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.LEX_APPLE_TEAM_ID }}
+          APPLE_SIGN_IDENTITY: ${{ secrets.LEX_APPLE_SIGN_IDENTITY }}
+          APPLE_APP_PASSWORD: ${{ secrets.LEX_APPLE_APP_PASSWORD }}
+          MACOS_CERT_P12_BASE64: ${{ secrets.LEX_MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.LEX_MACOS_CERT_PASSWORD }}
+        run: |
+          for name in APPLE_ID APPLE_TEAM_ID APPLE_SIGN_IDENTITY APPLE_APP_PASSWORD MACOS_CERT_P12_BASE64 MACOS_CERT_PASSWORD; do
+            eval "value=\${$name}"
+            if [ -z "$value" ]; then
+              echo "$name is required for a versioned macOS release." >&2
+              exit 1
+            fi
+          done
+
+      - name: Import macOS Developer ID certificate
+        if: needs.resolve-release.outputs.signing_mode == 'signed' && matrix.system == 'macos'
+        shell: bash
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.LEX_MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.LEX_MACOS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          cert_path="$RUNNER_TEMP/lex-developer-id.p12"
+          keychain_path="$RUNNER_TEMP/lex-build.keychain-db"
+          keychain_password="$(uuidgen)"
+          printf '%s' "$MACOS_CERT_P12_BASE64" | base64 --decode > "$cert_path" 2>/dev/null \
+            || printf '%s' "$MACOS_CERT_P12_BASE64" | base64 -D > "$cert_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$cert_path" -P "$MACOS_CERT_PASSWORD" -A -t cert -f pkcs12 "$keychain_path"
+          security list-keychains -d user -s "$keychain_path" login.keychain-db
+          security default-keychain -s "$keychain_path"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain_path"
+          security find-identity -v -p codesigning "$keychain_path"
+          {
+            echo "CINDY_MAC_KEYCHAIN_PATH=$keychain_path"
+            echo "CINDY_MAC_KEYCHAIN_PASSWORD=$keychain_password"
+          } >> "$GITHUB_ENV"
+
+      - name: Package desktop
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CINDY_WIN_SIGN_CMD: ${{ secrets.LEX_WIN_SIGN_CMD }}
+          APPLE_ID: ${{ secrets.LEX_APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.LEX_APPLE_TEAM_ID }}
+          APPLE_SIGN_IDENTITY: ${{ secrets.LEX_APPLE_SIGN_IDENTITY }}
+          APPLE_APP_PASSWORD: ${{ secrets.LEX_APPLE_APP_PASSWORD }}
+        shell: bash
+        run: |
+          args=( \
+            --platform "${{ matrix.platform }}" \
+            --region global \
+            --version "${{ needs.resolve-release.outputs.version }}" \
+          )
+          if [ "${{ needs.resolve-release.outputs.signing_mode }}" = unsigned ]; then
+            # Force the entire release to the unsigned path. This is important
+            # when only some platform secrets exist: no platform may be
+            # accidentally signed while another falls back to ad-hoc output.
+            args+=(--no-sign --allow-unsigned)
+          fi
+          pnpm release:package -- "${args[@]}"
+
+      - name: Upload packaged artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.platform }}-${{ needs.resolve-release.outputs.version }}-${{ needs.resolve-release.outputs.signing_mode }}
+          path: apps/desktop/release/artifacts/global/${{ needs.resolve-release.outputs.version }}/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Create GitHub Release draft
+    needs:
+      - package
+      - resolve-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          find dist -type f ! -name build-info.json -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > dist/SHA256SUMS.txt
+
+      - name: Create or update draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.resolve-release.outputs.version }}
+          SIGNING_MODE: ${{ needs.resolve-release.outputs.signing_mode }}
+        shell: bash
+        run: |
+          tag="v${VERSION}"
+          if [ "$SIGNING_MODE" = signed ]; then
+            notes='Windows and macOS packages are signed and notarized.'
+          else
+            notes='Windows packages are unsigned and macOS packages use ad-hoc signing; these are suitable for testing but may trigger SmartScreen or Gatekeeper warnings.'
+          fi
+          release_flags=()
+          if [[ "$VERSION" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag already exists; refusing to replace immutable versioned assets." >&2
+            echo 'Use a new, higher SemVer tag for a changed signing mode or rebuilt package.' >&2
+            exit 1
+          fi
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            "${release_flags[@]}" \
+            --draft --title "Lex ${tag} (${SIGNING_MODE}, draft)" \
+            --notes "Automated multi-platform Lex release. Build mode: ${SIGNING_MODE}. ${notes} Review assets before publishing."
+          while IFS= read -r -d '' file; do
+            gh release upload "$tag" "$file" --repo "$GITHUB_REPOSITORY" --clobber
+          done < <(find dist -type f ! -name build-info.json ! -name SHA256SUMS.txt -print0)
+          gh release upload "$tag" dist/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --clobber

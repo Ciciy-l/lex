@@ -242,6 +242,7 @@ const PI_PACKAGE_MANAGEMENT_ENV = 'CINDY_PI_PACKAGE_MANAGEMENT';
 const PI_PACKAGE_MANAGEMENT_TITLE = 'cindy:pi-package';
 const PI_SUBAGENT_RUN_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PI_BASH_PACKAGE_HOME_ENV = 'CINDY_PI_BASH_PACKAGE_HOME';
+const PI_BASH_SHELL_PATH_ENV = 'CINDY_PI_BASH_SHELL_PATH';
 /** 轮 42 P1:models.json 内容指纹(远端 daemon 启动身份的一部分, 值无凭证)。 */
 const PI_MODELS_JSON_HASH_ENV = 'CINDY_PI_MODELS_JSON_HASH';
 /** 远端权限/Extra Dir 快照指纹 —— 档位变则 envHash 变, daemon 重启而非覆盖热读文件。 */
@@ -1000,6 +1001,7 @@ interface FailedPiStartupCleanup {
 export function buildPiSettingsJsonContent(
   contextWindow: number,
   piCompactionPct?: number,
+  shellPath?: string,
 ): string {
   const effectiveContextWindow = contextWindow > 0 ? contextWindow : 128_000;
   const reserveTokens = piCompactionPct === undefined
@@ -1013,6 +1015,7 @@ export function buildPiSettingsJsonContent(
       baseDelayMs: 2000,
       provider: { maxRetries: 0 },
     },
+    ...(shellPath ? { shellPath } : {}),
     ...(reserveTokens !== undefined
       ? { compaction: { reserveTokens } }
       : {}),
@@ -1376,19 +1379,33 @@ export class PiAgent extends BaseAgent {
     };
   }
 
-  private buildCurrentPiSettingsJson(contextWindow?: number, piCompactionPct?: number): string {
+  private buildCurrentPiSettingsJson(
+    contextWindow?: number,
+    piCompactionPct?: number,
+    shellPath?: string,
+  ): string {
     return buildPiSettingsJsonContent(
       contextWindow && contextWindow > 0 ? contextWindow : 128_000,
       piCompactionPct,
+      shellPath,
     );
   }
 
   private async writePiRuntimeSettings(
     agentHome: string,
-    opts: { fileOps?: PiRemoteFileOps; contextWindow?: number; piCompactionPct?: number } = {},
+    opts: {
+      fileOps?: PiRemoteFileOps;
+      contextWindow?: number;
+      piCompactionPct?: number;
+      shellPath?: string;
+    } = {},
   ): Promise<void> {
     const settingsJsonPath = joinRemotePosixPath(agentHome, 'settings.json');
-    const settingsJsonContent = this.buildCurrentPiSettingsJson(opts.contextWindow, opts.piCompactionPct);
+    const settingsJsonContent = this.buildCurrentPiSettingsJson(
+      opts.contextWindow,
+      opts.piCompactionPct,
+      opts.shellPath,
+    );
     if (opts.fileOps) {
       await opts.fileOps.writeFile(settingsJsonPath, settingsJsonContent);
       return;
@@ -1417,6 +1434,8 @@ export class PiAgent extends BaseAgent {
       contextWindow?: number;
       /** Session-frozen Pi auto-compact percentage. Do not re-read the live getter. */
       piCompactionPct?: number;
+      /** Optional host-resolved local Bash path. Remote Pi resolves its own shell. */
+      shellPath?: string;
     } = {},
   ): Promise<{
     gatewayImageInputByModel: Map<string, boolean>;
@@ -1561,7 +1580,11 @@ export class PiAgent extends BaseAgent {
     // isolated embedded runtime. Other PI providers ignore this transport knob.
     // Agent-level retries stay with Pi (provider maxRetries stays 0 — Pi docs:
     // SDK retries can swallow quota errors before the agent sees them).
-    const settingsJsonContent = this.buildCurrentPiSettingsJson(opts.contextWindow, opts.piCompactionPct);
+    const settingsJsonContent = this.buildCurrentPiSettingsJson(
+      opts.contextWindow,
+      opts.piCompactionPct,
+      opts.shellPath,
+    );
     // 远端 launch identity 必须覆盖进程启动才读的快照。只 hash models.json 时，
     // retry/transport/compaction 改写会落到旧 configHome，daemon 纯 attach。
     const modelsJsonHash = createHash('sha256')
@@ -1819,6 +1842,12 @@ export class PiAgent extends BaseAgent {
     }
     const startupContextWindow =
       selectedRuntimeModel?.contextWindow ?? publicRuntimeModel?.contextWindow ?? 128_000;
+    const localShellPath = remote
+      ? undefined
+      : this.deps.resolvePiShellPath?.({
+          workingDir: opts.workingDir,
+          remoteHostId: opts.remoteHostId,
+        });
 
     // 普通远端会话直连网关(remoteEndpoint),不生成本地 proxy token。只有显式声明
     // hostProxyForward 的 provider（当前为 xAI）仍通过 Desktop compat proxy：
@@ -2162,6 +2191,7 @@ export class PiAgent extends BaseAgent {
         preview: true,
         contextWindow: startupContextWindow,
         piCompactionPct: sessionPiAutoCompactPct,
+        shellPath: localShellPath,
       });
       configHome = joinRemotePosixPath(
         agentHome,
@@ -2174,7 +2204,13 @@ export class PiAgent extends BaseAgent {
       nativeProviders,
       retainedRuntimeModel,
       authProviderId,
-      { remote, fileOps, contextWindow: startupContextWindow, piCompactionPct: sessionPiAutoCompactPct },
+      {
+        remote,
+        fileOps,
+        contextWindow: startupContextWindow,
+        piCompactionPct: sessionPiAutoCompactPct,
+        shellPath: localShellPath,
+      },
     );
     const bashPackageHome = joinRemotePosixPath(configHome, 'bash-package-home');
     await mkdirp(bashPackageHome);
@@ -3955,6 +3991,10 @@ export class PiAgent extends BaseAgent {
         CINDY_SUBAGENT_ENV.ownerId,
         // 受管工具路径同属控制面：不得让获批 bash 改写/替换后影响后续自动放行的 grep/find。
         ...(managedRipgrepPath ? [PI_MANAGED_RG_PATH_ENV] : []),
+        // The bridge replaces Pi's built-in bash tool, so it receives the
+        // resolved executable separately. Do not expose this control input to
+        // model-invoked shell children.
+        ...(localShellPath ? [PI_BASH_SHELL_PATH_ENV] : []),
       ]));
       // 远端会话零继承本机 env(对齐 claude env-builder mode:'remote')—— 本机全量 env
       // 对远端无意义且是隐私泄漏面;远端只有精选集合(CINDY_PI_* + authEnv + MCP header)。
@@ -3980,6 +4020,7 @@ export class PiAgent extends BaseAgent {
         [PI_SECRET_ENV_NAMES_ENV]: JSON.stringify(piSecretEnvNames),
         PI_CODING_AGENT_DIR: configHome,
         [PI_BASH_PACKAGE_HOME_ENV]: bashPackageHome,
+        ...(localShellPath ? { [PI_BASH_SHELL_PATH_ENV]: localShellPath } : {}),
         CINDY_PI_PERMISSION_FILE: permissionFile,
         ...(allowPiPackageManagement ? { [PI_PACKAGE_MANAGEMENT_ENV]: piPackageManagementToken } : {}),
         // 轮 40-w4-t12 HIGH-1:review-only 启动标记 —— 独立于权限文件(文件损坏/
@@ -4744,7 +4785,13 @@ export class PiAgent extends BaseAgent {
         previousProviders,
         retainedRuntimeModel,
         authProviderId,
-        { remote, fileOps, contextWindow: ctx.contextWindow || startupContextWindow, piCompactionPct: sessionPiAutoCompactPct },
+        {
+          remote,
+          fileOps,
+          contextWindow: ctx.contextWindow || startupContextWindow,
+          piCompactionPct: sessionPiAutoCompactPct,
+          shellPath: localShellPath,
+        },
       );
       nativeProviders = previousProviders;
       nativeProviderById.clear();
@@ -4816,7 +4863,13 @@ export class PiAgent extends BaseAgent {
           nativeProviders,
           retainedRuntimeModel,
           authProviderId,
-          { remote, fileOps, contextWindow: ctx.contextWindow || startupContextWindow, piCompactionPct: sessionPiAutoCompactPct },
+          {
+            remote,
+            fileOps,
+            contextWindow: ctx.contextWindow || startupContextWindow,
+            piCompactionPct: sessionPiAutoCompactPct,
+            shellPath: localShellPath,
+          },
         );
         gatewayApiByModel.clear();
         for (const [key, value] of written.gatewayApiByModel) gatewayApiByModel.set(key, value);
@@ -5134,6 +5187,7 @@ export class PiAgent extends BaseAgent {
             fileOps,
             contextWindow: nextWindow,
             piCompactionPct: sessionPiAutoCompactPct,
+            shellPath: localShellPath,
           });
           if (!sdkSessionId) {
             throw new Error('pi: missing session path after model switch; cannot reload compaction settings');

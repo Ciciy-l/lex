@@ -1064,6 +1064,16 @@ describe('cindy-bridge extension source', () => {
     });
   });
 
+  it('passes the host-resolved Bash path to the replacement tool without exposing it to Bash children', () => {
+    const source = CINDY_BRIDGE_EXTENSION_SOURCE;
+    expect(source).toContain("const PI_BASH_SHELL_PATH_ENV = 'CINDY_PI_BASH_SHELL_PATH';");
+    expect(source).toContain('PI_BASH_SHELL_PATH_ENV,');
+    expect(source).toContain('shellPath: process.env[PI_BASH_SHELL_PATH_ENV],');
+    expect(source.indexOf('PI_BASH_SHELL_PATH_ENV,')).toBeLessThan(
+      source.indexOf('function withoutPiSecrets'),
+    );
+  });
+
   it('keeps Pi vision bridge tool security invariants (registration, size, magic-byte, redirect, redaction)', () => {
     const source = CINDY_BRIDGE_EXTENSION_SOURCE;
     // 工具只在已启用且可解析 primary 后端时注册（fallback-only 不注册）。

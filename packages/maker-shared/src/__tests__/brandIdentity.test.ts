@@ -37,7 +37,7 @@ describe('BRAND_IDENTITY invariants', () => {
   });
 
   it('executableName / userDataDirName 是安全的文件名段(允许首字母大写)', () => {
-    // executableName 首字母大写是产品决策(Cindy.exe,同 Discord/Slack 惯例):
+    // executableName 首字母大写是产品决策(Lex.exe,同 Discord/Slack 惯例):
     // Windows 进程匹配大小写不敏感,mac Mach-O 名对用户不可见;OSS key 等大小写
     // 敏感场景一律走小写的 cdnPrefix,不用本字段。userDataDirName 同理
     // (Electron productName 惯例)。区域值不含空格(owner 决策,双装路径安全)。
@@ -56,7 +56,7 @@ describe('BRAND_IDENTITY invariants', () => {
   it('系统身份与数据目录两区互不相同;exe 名两区同值(显示名统一决策)', () => {
     // userData 目录 / appId 撞名会让两区共库、共系统身份,必须保持分离。
     // exe 名(安装目录 / .app / 快捷方式)2026-07-26 起 cn/global 同值
-    // 'Cindy':owner 决策显示名统一,放弃文件层双装隔离(见
+    // 'Lex':owner 决策显示名统一,放弃文件层双装隔离(见
     // executableNameByRegion doc)。cdnPrefix 两区共用是 owner 决策:
     // 发布渠道靠不同 OSS bucket 区分,不靠路径前缀。
     expect(BRAND_IDENTITY.executableNameByRegion.cn)
@@ -136,20 +136,20 @@ describe('区域解析与派生', () => {
 
   it('brandAppId / brandBundleIdPrefix 按区域取值,默认 global', () => {
     expect(DEFAULT_CINDY_REGION).toBe('global');
-    expect(brandAppId()).toBe('com.xd.cindy');
-    expect(brandAppId('global')).toBe('com.xd.cindy');
-    expect(brandBundleIdPrefix('cn')).toBe('com.xd.cindycn');
-    expect(brandBundleIdPrefix('global')).toBe('com.xd.cindy');
+    expect(brandAppId()).toBe('com.ciciy.lex');
+    expect(brandAppId('global')).toBe('com.ciciy.lex');
+    expect(brandBundleIdPrefix('cn')).toBe('com.ciciy.lexcn');
+    expect(brandBundleIdPrefix('global')).toBe('com.ciciy.lex');
   });
 
   it('brandExecutableName / brandUserDataDirName 按区域取值,默认 global', () => {
-    expect(brandExecutableName()).toBe('Cindy');
+    expect(brandExecutableName()).toBe('Lex');
     // global 与 cn 同值(2026-07-26 显示名统一决策);dev 仍独立。
-    expect(brandExecutableName('global')).toBe('Cindy');
-    expect(brandExecutableName('dev')).toBe('CindyDev');
-    expect(brandUserDataDirName()).toBe('CindyGlobal');
-    expect(brandUserDataDirName('global')).toBe('CindyGlobal');
-    expect(brandUserDataDirName('cn')).toBe('Cindy');
+    expect(brandExecutableName('global')).toBe('Lex');
+    expect(brandExecutableName('dev')).toBe('LexDev');
+    expect(brandUserDataDirName()).toBe('LexGlobal');
+    expect(brandUserDataDirName('global')).toBe('LexGlobal');
+    expect(brandUserDataDirName('cn')).toBe('Lex');
   });
 });
 
@@ -159,11 +159,11 @@ describe('派生 helper', () => {
   });
 
   it('allUserDataDirNames 本区域目录名恒为首位 + 全部历史值,且不含另一区域', () => {
-    expect(allUserDataDirNames()).toEqual(['CindyGlobal']);
-    expect(allUserDataDirNames('cn')).toEqual(['Cindy', 'xdt-maker']);
-    // global 的匹配集不含 cn 的 Cindy / xdt-maker：orphan-reaper 按路径认领
+    expect(allUserDataDirNames()).toEqual(['LexGlobal']);
+    expect(allUserDataDirNames('cn')).toEqual(['Lex', 'xdt-maker']);
+    // global 的匹配集不含 cn 的 Lex / xdt-maker：orphan-reaper 按路径认领
     // 进程，跨区域匹配会误杀另一个安装的进程。
-    expect(allUserDataDirNames('global')).toEqual(['CindyGlobal']);
+    expect(allUserDataDirNames('global')).toEqual(['LexGlobal']);
   });
 
   it('legacyBrandUserDataDirNames 只返回品牌翻转前的共享 mToc 来源', () => {

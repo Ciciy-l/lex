@@ -1,0 +1,206 @@
+name: desktop-preview-unsigned
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "Platform to build (all, win32, darwin, or linux)"
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - win32
+          - darwin
+          - linux
+      region:
+        description: "Lex region identity to package"
+        required: true
+        default: global
+        type: choice
+        options:
+          - global
+          - cn
+          - dev
+      skip_smoke:
+        description: "Skip launching the packaged app (debugging only)"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-preview-${{ github.ref }}-${{ inputs.platform }}-${{ inputs.region }}
+  cancel-in-progress: true
+
+env:
+  NODE_OPTIONS: "--max-old-space-size=8192"
+  XDT_SKIP_AGENT_BIN_INSTALL: "1"
+
+jobs:
+  select-platforms:
+    name: Select preview platforms
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Build package matrix
+        id: matrix
+        shell: bash
+        env:
+          PREVIEW_PLATFORM: ${{ inputs.platform }}
+        run: |
+          case "$PREVIEW_PLATFORM" in
+            all)
+              matrix='{"include":[{"platform":"win32","runner":"windows-latest","system":"windows"},{"platform":"darwin","runner":"macos-14","system":"macos"},{"platform":"linux","runner":"ubuntu-24.04","system":"linux"}]}'
+              ;;
+            win32)
+              matrix='{"include":[{"platform":"win32","runner":"windows-latest","system":"windows"}]}'
+              ;;
+            darwin)
+              matrix='{"include":[{"platform":"darwin","runner":"macos-14","system":"macos"}]}'
+              ;;
+            linux)
+              matrix='{"include":[{"platform":"linux","runner":"ubuntu-24.04","system":"linux"}]}'
+              ;;
+            *)
+              echo "Unsupported preview platform: $PREVIEW_PLATFORM" >&2
+              exit 1
+              ;;
+          esac
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  quality:
+    name: Preview quality gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install bundled ripgrep for workspace tests
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: pnpm install:ripgrep
+
+      - name: Check DCO and repository invariants
+        run: |
+          pnpm check:dco
+          pnpm check:endpoints
+          pnpm check:i18n
+          pnpm check:i18n-glossary
+          pnpm check:brand-terminology
+
+      - name: Typecheck desktop
+        env:
+          NODE_OPTIONS: "--max-old-space-size=6144"
+        run: pnpm --filter desktop typecheck
+
+      - name: Run unit tests
+        run: pnpm test:unit
+
+  package:
+    name: Preview ${{ matrix.platform }}
+    needs:
+      - quality
+      - select-platforms
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select-platforms.outputs.matrix) }}
+
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install Rust toolchain for Windows native helpers
+        if: matrix.system == 'windows'
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          cargo --version
+
+      - name: Install Linux packaging dependencies
+        if: matrix.system == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fakeroot dpkg desktop-file-utils python3 make gcc g++
+
+      - name: Install dependencies
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: pnpm install --frozen-lockfile
+
+      - name: Package unsigned preview
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PREVIEW_REGION: ${{ inputs.region }}
+          SKIP_SMOKE: ${{ inputs.skip_smoke }}
+        shell: bash
+        run: |
+          args=(
+            --platform "${{ matrix.platform }}"
+            --region "$PREVIEW_REGION"
+            --no-sign
+          )
+          if [ "$SKIP_SMOKE" = "true" ]; then
+            args+=(--skip-smoke)
+          fi
+          pnpm release:package -- "${args[@]}"
+
+      - name: Upload unsigned preview artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lex-preview-unsigned-${{ inputs.region }}-${{ matrix.platform }}-${{ github.sha }}
+          path: apps/desktop/release/artifacts/${{ inputs.region }}/unversioned/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Explain preview limitations
+        shell: bash
+        run: |
+          {
+            echo '### Lex unsigned preview'
+            echo
+            echo '- This artifact is for testing only and expires after 14 days.'
+            echo '- Windows is unsigned; macOS is ad-hoc signed and not notarized.'
+            echo '- The package reports version 0.0.0 and does not receive automatic updates.'
+            echo '- No GitHub Release or update manifest was created.'
+          } >> "$GITHUB_STEP_SUMMARY"

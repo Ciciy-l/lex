@@ -128,3 +128,19 @@ describe('probeBetaManifest', () => {
     await expect(service.probeBetaManifest()).resolves.toBe(true);
   });
 });
+
+describe('resolveManifestAssetUrl', () => {
+  it('preserves absolute release asset URLs', async () => {
+    const service = await import('../manifestService');
+    expect(service.resolveManifestAssetUrl(
+      'https://updates.example/lex',
+      'https://github.com/Ciciy-l/lex/releases/download/v0.1.0/Lex-Setup.exe',
+    )).toBe('https://github.com/Ciciy-l/lex/releases/download/v0.1.0/Lex-Setup.exe');
+  });
+
+  it('resolves legacy relative asset paths against the configured base', async () => {
+    const service = await import('../manifestService');
+    expect(service.resolveManifestAssetUrl('https://updates.example/lex/', '/app/win32-x64/Lex.zip'))
+      .toBe('https://updates.example/lex/app/win32-x64/Lex.zip');
+  });
+});

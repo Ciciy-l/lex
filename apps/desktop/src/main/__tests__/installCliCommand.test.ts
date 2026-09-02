@@ -21,58 +21,57 @@ import {
 } from '../installCliCommand';
 
 describe('CLI_COMMAND_NAME 跟随 edition 品牌', () => {
-  it('测试环境(未注入区域 → 默认 global)命令名为 cindy', () => {
-    expect(CLI_COMMAND_NAME).toBe('cindy');
-    expect(CLI_LINK_PATH).toBe('/usr/local/bin/cindy');
+  it('测试环境(未注入区域 → 默认 global)命令名为 lex', () => {
+    expect(CLI_COMMAND_NAME).toBe('lex');
+    expect(CLI_LINK_PATH).toBe('/usr/local/bin/lex');
   });
 
-  it('由区域可执行名小写化:global / cn → cindy,内部 dev → cindydev', () => {
-    // global 与 cn 展示名统一为 Cindy(2026-07-26 决策),故命令名同为 cindy。
-    expect(brandExecutableName('global').toLowerCase()).toBe('cindy');
-    expect(brandExecutableName('cn').toLowerCase()).toBe('cindy');
-    expect(brandExecutableName('dev').toLowerCase()).toBe('cindydev');
+  it('由区域可执行名小写化:global / cn → lex,内部 dev → lexdev', () => {
+    expect(brandExecutableName('global').toLowerCase()).toBe('lex');
+    expect(brandExecutableName('cn').toLowerCase()).toBe('lex');
+    expect(brandExecutableName('dev').toLowerCase()).toBe('lexdev');
   });
 });
 
 describe('resolveBundledCliPath', () => {
-  it('由 resourcesPath 推出包内 cli/cindy', () => {
-    const resourcesPath = '/Applications/Cindy.app/Contents/Resources';
-    expect(resolveBundledCliPath(resourcesPath)).toBe(path.join(resourcesPath, 'cli', 'cindy'));
+  it('由 resourcesPath 推出包内 cli/lex', () => {
+    const resourcesPath = '/Applications/Lex.app/Contents/Resources';
+    expect(resolveBundledCliPath(resourcesPath)).toBe(path.join(resourcesPath, 'cli', 'lex'));
   });
 
   it('路径含空格也正确', () => {
-    const resourcesPath = '/Users/a/My Apps/Cindy.app/Contents/Resources';
-    expect(resolveBundledCliPath(resourcesPath)).toBe(path.join(resourcesPath, 'cli', 'cindy'));
+    const resourcesPath = '/Users/a/My Apps/Lex.app/Contents/Resources';
+    expect(resolveBundledCliPath(resourcesPath)).toBe(path.join(resourcesPath, 'cli', 'lex'));
   });
 });
 
 describe('buildInstallShellCommand', () => {
   it('mkdir -p 链接目录、拒绝真实目录后 ln -sfn 目标到 source', () => {
     const cmd = buildInstallShellCommand(
-      '/Applications/Cindy.app/Contents/Resources/cli/cindy',
+      '/Applications/Lex.app/Contents/Resources/cli/lex',
       CLI_LINK_PATH,
     );
     expect(cmd).toBe(
-      `mkdir -p '/usr/local/bin' && if [ -d '/usr/local/bin/cindy' ] && [ ! -L '/usr/local/bin/cindy' ]; then echo '/usr/local/bin/cindy is a directory' >&2; exit 1; fi && ln -sfn '/Applications/Cindy.app/Contents/Resources/cli/cindy' '/usr/local/bin/cindy'`,
+      `mkdir -p '/usr/local/bin' && if [ -d '/usr/local/bin/lex' ] && [ ! -L '/usr/local/bin/lex' ]; then echo '/usr/local/bin/lex is a directory' >&2; exit 1; fi && ln -sfn '/Applications/Lex.app/Contents/Resources/cli/lex' '/usr/local/bin/lex'`,
     );
   });
 
   it('用 -sfn 而非 -sf(macOS 上替换指向目录的旧 symlink,不解引用进目录)', () => {
-    const cmd = buildInstallShellCommand('/App/Cindy.app/Contents/Resources/cli/cindy', CLI_LINK_PATH);
+    const cmd = buildInstallShellCommand('/App/Lex.app/Contents/Resources/cli/lex', CLI_LINK_PATH);
     expect(cmd).toContain(`ln -sfn `);
     expect(cmd).not.toContain(`ln -sf `);
   });
 
   it('含单引号的路径被安全转义', () => {
-    const cmd = buildInstallShellCommand(`/Users/o'brien/Cindy.app/Contents/Resources/cli/cindy`, CLI_LINK_PATH);
-    expect(cmd).toContain(`'/Users/o'\\''brien/Cindy.app/Contents/Resources/cli/cindy'`);
+    const cmd = buildInstallShellCommand(`/Users/o'brien/Lex.app/Contents/Resources/cli/lex`, CLI_LINK_PATH);
+    expect(cmd).toContain(`'/Users/o'\\''brien/Lex.app/Contents/Resources/cli/lex'`);
   });
 });
 
 describe('buildUninstallShellCommand', () => {
   it('仅当目标是 symlink 时才 rm -f(不误删同路径普通文件,并发移除也幂等)', () => {
     expect(buildUninstallShellCommand(CLI_LINK_PATH)).toBe(
-      `if [ -L '/usr/local/bin/cindy' ]; then rm -f '/usr/local/bin/cindy'; fi`,
+      `if [ -L '/usr/local/bin/lex' ]; then rm -f '/usr/local/bin/lex'; fi`,
     );
   });
 
@@ -88,7 +87,7 @@ describe('shellSingleQuote', () => {
   const { shellSingleQuote } = __testing;
 
   it('普通路径直接包单引号', () => {
-    expect(shellSingleQuote('/usr/local/bin/cindy')).toBe(`'/usr/local/bin/cindy'`);
+    expect(shellSingleQuote('/usr/local/bin/lex')).toBe(`'/usr/local/bin/lex'`);
   });
 
   it("内部单引号转义为 '\\''", () => {
@@ -140,10 +139,10 @@ describe('isUserCancelledAdmin', () => {
   });
 });
 
-describe('随包分发的启动器脚本 resources/cli/cindy', () => {
+describe('随包分发的启动器脚本 resources/cli/lex', () => {
   const scriptPath = path.resolve(
     fileURLToPath(import.meta.url),
-    '../../../../resources/cli/cindy',
+    '../../../../resources/cli/lex',
   );
   // Git checkout 可能按平台写成 CRLF；这里验证的是 shell 内容，不是工作区换行策略。
   const script = readFileSync(scriptPath, 'utf8').replaceAll('\r\n', '\n');
@@ -155,7 +154,6 @@ describe('随包分发的启动器脚本 resources/cli/cindy', () => {
   it('跟随 symlink 自定位并反推 .app', () => {
     expect(script).toContain('while [ -h "$SELF" ]; do');
     expect(script).toContain('readlink "$SELF"');
-    // BIN_DIR/../../.. : cli → Resources → Contents → *.app
     expect(script).toContain('APP=$(cd "$BIN_DIR/../../.." >/dev/null 2>&1 && pwd)');
   });
 
@@ -170,7 +168,7 @@ describe('随包分发的启动器脚本 resources/cli/cindy', () => {
     expect(script).toContain('exit 2');
   });
 
-  it('把单个参数解析为绝对路径(支持 cindy .)', () => {
+  it('把单个参数解析为绝对路径(支持 lex .)', () => {
     expect(script).toContain('abs=$(cd "$arg" >/dev/null 2>&1 && pwd)');
     expect(script).toContain('arg="$1"');
   });

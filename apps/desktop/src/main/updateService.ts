@@ -34,7 +34,14 @@ import {
 } from '@cindy/maker-core/pi-subagent-runs';
 import { BRAND_IDENTITY } from '@cindy/maker-shared/brand-identity';
 
-import { fetchManifest, getBaseUrl, isDev, probeBetaManifest, clearCachedManifest } from './manifestService';
+import {
+  fetchManifest,
+  getBaseUrl,
+  isDev,
+  probeBetaManifest,
+  clearCachedManifest,
+  resolveManifestAssetUrl,
+} from './manifestService';
 import type { Manifest } from './manifestService';
 import { download, DownloadError } from './downloader/index';
 import { ProgressNormalizer } from './updateProgressNormalizer';
@@ -1121,7 +1128,7 @@ async function doCheckForUpdate(manifestOverride?: Manifest | null): Promise<Che
 
   log.info('Update available: %s → %s (wasReady=%s)', currentVersion, latestVersion, wasReady);
 
-  const downloadUrl = `${getBaseUrl()}/${asset.file}`;
+  const downloadUrl = resolveManifestAssetUrl(getBaseUrl(), asset.file);
   const fileName = path.basename(asset.file);
   const destPath = path.join(getUpdatesDir(), fileName);
 

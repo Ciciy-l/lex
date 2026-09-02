@@ -40,7 +40,7 @@ const desktopDevCacheRelativeDirs = Object.freeze([
  * 一致——.mjs 无法 import TS 单点,只能镜像字面量;
  * 一致性由 scripts/__tests__/brand-identity-sync.test.mjs 断言兜底。
  */
-export const BRAND_USER_DATA_DIR_NAME = 'Cindy';
+export const BRAND_USER_DATA_DIR_NAME = 'Lex';
 
 // 桌面端 .env 默认值。2026-07 端点清单重构后 .env 不再承载任何端点 URL
 // (运行期端点全部来自清单:remote restart 按 region 读 config/endpoint*.json,
@@ -530,7 +530,7 @@ export function sanitizeIsolationName(raw) {
 
 export function looksLikeCindyManagedUserDataDir(dir) {
   const base = path.basename(path.resolve(dir));
-  return /^(Cindy|CindyGlobal|CindyDev)(?:-dev2(?:-[A-Za-z0-9_-]+)?)?$/i.test(base);
+  return /^(Lex|LexGlobal|LexDev)(?:-dev2(?:-[A-Za-z0-9_-]+)?)?$/i.test(base);
 }
 
 /** Named `--isolated=<name>` must not inherit another Cindy profile. Custom dirs stay. */

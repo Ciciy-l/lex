@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Cindy Updater",
+  "productName": "Lex Updater",
   "version": "0.1.0",
-  "identifier": "com.xd.cindy.updater",
+  "identifier": "com.ciciy.lex.updater",
   "build": {
     "frontendDist": "../ui"
   },
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Cindy 更新",
+        "title": "Lex 更新",
         "width": 480,
         "height": 220,
         "resizable": false,
