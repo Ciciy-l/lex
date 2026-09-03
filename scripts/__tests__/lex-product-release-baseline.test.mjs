@@ -33,6 +33,8 @@ test('release workflows keep one package while choosing signed or versioned unsi
   const updates = readText('.github/workflows/lex-updates.yml');
   const upstream = readText('.github/workflows/upstream-sync.yml');
   const ci = readText('.github/workflows/ci.yml');
+  const releaseWorkflow = YAML.parse(release);
+  const previewWorkflow = YAML.parse(preview);
 
   assert.match(release, /--region global/);
   assert.doesNotMatch(release, /--region cn/);
@@ -60,6 +62,19 @@ test('release workflows keep one package while choosing signed or versioned unsi
   );
   assert.match(preview, /pnpm check:dco -- --base origin\/main --head "\$GITHUB_SHA"/);
   assert.doesNotMatch(`${release}\n${preview}`, /^\s*pnpm check:dco\s*$/m);
+  for (const [name, workflow] of [
+    ['release', releaseWorkflow],
+    ['preview', previewWorkflow],
+  ]) {
+    assert.equal(workflow.jobs.quality.env.ELECTRON_SKIP_BINARY_DOWNLOAD, '1', name);
+    assert.equal(
+      workflow.jobs.quality.env.ELECTRON_OVERRIDE_DIST_PATH,
+      '${{ github.workspace }}/.electron-stub-dist',
+      name,
+    );
+    assert.equal(workflow.env?.ELECTRON_SKIP_BINARY_DOWNLOAD, undefined, name);
+    assert.equal(workflow.jobs.package.env?.ELECTRON_SKIP_BINARY_DOWNLOAD, undefined, name);
+  }
   assert.match(updates, /release:\n\s+types: \[published\]/);
   assert.match(updates, /isDraft == false/);
   assert.match(updates, /re\.escape\(version\).*?-hotfix/);
