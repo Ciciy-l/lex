@@ -1,6 +1,15 @@
 /** Terminal workbench body: independent xterm/PTY panes with recursive splits. */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import {
   ArrowLeftRight,
   ArrowUpDown,
@@ -20,15 +29,20 @@ import type { TabKindHostContext } from '../../types';
 import { disposeXterm, getOrCreateXterm, type XtermEntry } from './lib/xtermPool';
 import {
   MAX_TERMINAL_PANES,
+  MAX_SPLIT_RATIO,
+  MIN_SPLIT_RATIO,
+  clampSplitRatio,
   collectPaneIds,
   createPaneState,
   removeTerminalPane,
   setActiveTerminalPane,
   splitTerminalPane,
+  updateTerminalSplitRatio,
   updateTerminalPane,
   type TerminalLayoutNode,
   type TerminalPaneState,
   type TerminalProfile,
+  type TerminalSplitPath,
   type TerminalState,
 } from './terminal-layout';
 import { terminalPtyId } from './index';
@@ -51,6 +65,10 @@ const PROFILES: Array<{ id: TerminalProfile; labelKey: string }> = [
   { id: 'codex', labelKey: 'rightSidebar.terminal.profileCodex' },
   { id: 'pi', labelKey: 'rightSidebar.terminal.profilePi' },
 ];
+
+const ROOT_SPLIT_PATH: TerminalSplitPath = [];
+const SPLIT_GUTTER_PX = 6;
+const KEYBOARD_RESIZE_STEP = 0.05;
 
 export function TerminalTabBody({ state, ctx, active }: Props) {
   const { tabId, workdir, patchState } = ctx;
@@ -207,6 +225,15 @@ export function TerminalTabBody({ state, ctx, active }: Props) {
     [persist],
   );
 
+  const commitSplitRatio = useCallback(
+    (path: TerminalSplitPath, ratio: number) => {
+      const current = stateRef.current;
+      const next = updateTerminalSplitRatio(current, path, ratio);
+      if (next !== current) persist(next);
+    },
+    [persist],
+  );
+
   const localUnavailable = ctx.remoteHostId !== null || ctx.deviceLinkDeviceId !== null || !workdir;
 
   if (localUnavailable) {
@@ -319,6 +346,7 @@ export function TerminalTabBody({ state, ctx, active }: Props) {
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <LayoutNodeView
           node={state.layout}
+          splitPath={ROOT_SPLIT_PATH}
           state={state}
           tabId={tabId}
           workdir={workdir}
@@ -328,6 +356,7 @@ export function TerminalTabBody({ state, ctx, active }: Props) {
           onSelect={selectPane}
           onClose={closePane}
           onPatchPane={patchPane}
+          onCommitSplitRatio={commitSplitRatio}
           onRuntimeError={setPaneRuntimeError}
           t={t}
         />
@@ -338,6 +367,7 @@ export function TerminalTabBody({ state, ctx, active }: Props) {
 
 interface LayoutNodeViewProps {
   node: TerminalLayoutNode;
+  splitPath: TerminalSplitPath;
   state: TerminalState;
   tabId: string;
   workdir: string;
@@ -347,6 +377,7 @@ interface LayoutNodeViewProps {
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
   onPatchPane: (id: string, patch: Partial<Omit<TerminalPaneState, 'id'>>) => void;
+  onCommitSplitRatio: (path: TerminalSplitPath, ratio: number) => void;
   onRuntimeError: (paneId: string, error: RuntimeError | null) => void;
   t: ReturnType<typeof useTranslation>['t'];
 }
@@ -365,24 +396,174 @@ function LayoutNodeView(props: LayoutNodeViewProps) {
       />
     );
   }
+  return <TerminalSplitNodeView {...props} node={node} />;
+}
+
+function TerminalSplitNodeView(
+  props: LayoutNodeViewProps & { node: Extract<TerminalLayoutNode, { type: 'split' }> },
+) {
+  const { node, splitPath } = props;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const firstRef = useRef<HTMLDivElement>(null);
+  const secondRef = useRef<HTMLDivElement>(null);
+  const separatorRef = useRef<HTMLDivElement>(null);
+  const resizeCleanupRef = useRef<((commit: boolean) => void) | null>(null);
+  const displayedRatioRef = useRef(node.ratio);
+  const isHorizontal = node.direction === 'horizontal';
+
+  const displayRatio = useCallback((ratio: number) => {
+    const clamped = clampSplitRatio(ratio);
+    displayedRatioRef.current = clamped;
+    if (firstRef.current) firstRef.current.style.flexGrow = String(clamped);
+    if (secondRef.current) secondRef.current.style.flexGrow = String(1 - clamped);
+    separatorRef.current?.setAttribute('aria-valuenow', String(Math.round(clamped * 100)));
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!resizeCleanupRef.current) displayRatio(node.ratio);
+  }, [displayRatio, node.ratio]);
+
+  useEffect(
+    () => () => {
+      resizeCleanupRef.current?.(false);
+    },
+    [],
+  );
+
+  const commitRatio = useCallback(
+    (ratio: number) => {
+      const clamped = clampSplitRatio(ratio);
+      displayRatio(clamped);
+      props.onCommitSplitRatio(splitPath, clamped);
+    },
+    [displayRatio, props.onCommitSplitRatio, splitPath],
+  );
+
+  const handlePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      const container = containerRef.current;
+      const separator = separatorRef.current;
+      if (!container || !separator) return;
+      const bounds = container.getBoundingClientRect();
+      const axisSize = (isHorizontal ? bounds.width : bounds.height) - SPLIT_GUTTER_PX;
+      if (axisSize <= 0) return;
+
+      resizeCleanupRef.current?.(true);
+      const pointerId = event.pointerId;
+      const startPosition = isHorizontal ? event.clientX : event.clientY;
+      const startRatio = displayedRatioRef.current;
+      let moved = false;
+      document.body.classList.add('resizing-pane');
+      try {
+        separator.setPointerCapture?.(pointerId);
+      } catch {
+        // Pointer capture may be unavailable in older embedded Chromium builds.
+      }
+
+      const handlePointerMove = (pointerEvent: PointerEvent) => {
+        if (pointerEvent.pointerId !== pointerId) return;
+        const position = isHorizontal ? pointerEvent.clientX : pointerEvent.clientY;
+        moved = true;
+        displayRatio(startRatio + (position - startPosition) / axisSize);
+      };
+
+      const finishResize = (commit: boolean) => {
+        if (resizeCleanupRef.current !== finishResize) return;
+        resizeCleanupRef.current = null;
+        document.removeEventListener('pointermove', handlePointerMove);
+        document.removeEventListener('pointerup', handlePointerUp);
+        document.removeEventListener('pointercancel', handlePointerCancel);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        window.removeEventListener('blur', handleWindowBlur);
+        document.body.classList.remove('resizing-pane');
+        try {
+          if (separator.hasPointerCapture?.(pointerId)) separator.releasePointerCapture(pointerId);
+        } catch {
+          // Losing capture already completed the browser-side cleanup.
+        }
+        if (commit && moved) props.onCommitSplitRatio(splitPath, displayedRatioRef.current);
+        else if (!commit) displayRatio(node.ratio);
+      };
+
+      const handlePointerUp = (pointerEvent: PointerEvent) => {
+        if (pointerEvent.pointerId === pointerId) finishResize(true);
+      };
+      const handlePointerCancel = (pointerEvent: PointerEvent) => {
+        if (pointerEvent.pointerId === pointerId) finishResize(true);
+      };
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === 'hidden') finishResize(true);
+      };
+      const handleWindowBlur = () => finishResize(true);
+
+      resizeCleanupRef.current = finishResize;
+      document.addEventListener('pointermove', handlePointerMove);
+      document.addEventListener('pointerup', handlePointerUp);
+      document.addEventListener('pointercancel', handlePointerCancel);
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      window.addEventListener('blur', handleWindowBlur);
+    },
+    [displayRatio, isHorizontal, node.ratio, props.onCommitSplitRatio, splitPath],
+  );
+
+  const handleKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      const decreaseKey = isHorizontal ? 'ArrowLeft' : 'ArrowUp';
+      const increaseKey = isHorizontal ? 'ArrowRight' : 'ArrowDown';
+      let nextRatio: number | null = null;
+      if (event.key === decreaseKey) nextRatio = displayedRatioRef.current - KEYBOARD_RESIZE_STEP;
+      else if (event.key === increaseKey)
+        nextRatio = displayedRatioRef.current + KEYBOARD_RESIZE_STEP;
+      else if (event.key === 'Home') nextRatio = MIN_SPLIT_RATIO;
+      else if (event.key === 'End') nextRatio = MAX_SPLIT_RATIO;
+      if (nextRatio === null) return;
+      event.preventDefault();
+      commitRatio(nextRatio);
+    },
+    [commitRatio, isHorizontal],
+  );
+
   const firstStyle = { flexBasis: 0, flexGrow: node.ratio };
   const secondStyle = { flexBasis: 0, flexGrow: 1 - node.ratio };
   return (
     <div
+      ref={containerRef}
+      data-terminal-split-path={splitPath.join('.') || 'root'}
       className={`flex h-full w-full ${node.direction === 'horizontal' ? 'flex-row' : 'flex-col'}`}
     >
-      <div className="min-h-0 min-w-0" style={firstStyle}>
-        <LayoutNodeView {...props} node={node.first} />
+      <div ref={firstRef} className="min-h-0 min-w-0" style={firstStyle}>
+        <LayoutNodeView {...props} node={node.first} splitPath={[...splitPath, 'first']} />
       </div>
       <div
+        ref={separatorRef}
+        role="separator"
+        tabIndex={0}
+        aria-orientation={isHorizontal ? 'vertical' : 'horizontal'}
+        aria-label={props.t('rightSidebar.terminal.resizePanes')}
+        aria-valuemin={Math.round(MIN_SPLIT_RATIO * 100)}
+        aria-valuemax={Math.round(MAX_SPLIT_RATIO * 100)}
+        aria-valuenow={Math.round(node.ratio * 100)}
+        onPointerDown={handlePointerDown}
+        onKeyDown={handleKeyDown}
         className={
-          node.direction === 'horizontal'
-            ? 'w-px shrink-0 bg-[var(--border-default)]'
-            : 'h-px shrink-0 bg-[var(--border-default)]'
+          isHorizontal
+            ? 'group relative z-10 w-1.5 shrink-0 touch-none cursor-col-resize focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring)]'
+            : 'group relative z-10 h-1.5 shrink-0 touch-none cursor-row-resize focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring)]'
         }
-      />
-      <div className="min-h-0 min-w-0" style={secondStyle}>
-        <LayoutNodeView {...props} node={node.second} />
+      >
+        <span
+          aria-hidden="true"
+          className={
+            isHorizontal
+              ? 'pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-[var(--border-default)] group-hover:bg-[var(--text-tertiary)] group-focus-visible:bg-[var(--text-tertiary)]'
+              : 'pointer-events-none absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-[var(--border-default)] group-hover:bg-[var(--text-tertiary)] group-focus-visible:bg-[var(--text-tertiary)]'
+          }
+        />
+      </div>
+      <div ref={secondRef} className="min-h-0 min-w-0" style={secondStyle}>
+        <LayoutNodeView {...props} node={node.second} splitPath={[...splitPath, 'second']} />
       </div>
     </div>
   );

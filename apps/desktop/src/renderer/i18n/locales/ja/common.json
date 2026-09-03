@@ -6132,6 +6132,7 @@
       "launchAgent": "新しい CLI ペイン",
       "focusPane": "{{name}} ペインにフォーカス",
       "closePane": "ペインを閉じる",
+      "resizePanes": "ターミナルペインのサイズを変更",
       "localOnly": "CLI ペインはローカルタスクでのみ利用できます。",
       "targetResolving": "タスクの実行デバイスを確認中…",
       "agentNotReady": "この Agent ランタイムはまだ準備できていません。起動準備後にもう一度お試しください。",
