@@ -96,7 +96,7 @@ jobs:
 
       - name: Check DCO and repository invariants
         run: |
-          pnpm check:dco
+          pnpm check:dco -- --base origin/main --head "$GITHUB_SHA"
           pnpm check:endpoints
           pnpm check:i18n
           pnpm check:i18n-glossary
