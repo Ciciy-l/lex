@@ -102,6 +102,17 @@ test('packaging metadata uses the Lex display name while Cindy remains the servi
   assert.doesNotMatch(loginBrand, /assets\/login\/wordmark(?:-dark)?(?:@2x)?\.png/);
 });
 
+test('Lex updater package and binary entry keep the same Rust crate identity', () => {
+  const cargo = readText('apps/desktop/cindy-updater/src-tauri/Cargo.toml');
+  const main = readText('apps/desktop/cindy-updater/src-tauri/src/main.rs');
+  const packageSection = cargo.match(/\[package\]([\s\S]*?)(?=\n\[|$)/)?.[1] ?? '';
+  const packageName = packageSection.match(/^\s*name\s*=\s*"([^"]+)"/m)?.[1];
+
+  assert.equal(packageName, 'lex-updater');
+  assert.match(main, new RegExp(`\\b${packageName.replaceAll('-', '_')}::run\\(\\);`));
+  assert.doesNotMatch(main, /\bcindy_updater::/);
+});
+
 test('GitHub Pages workflow and self-contained website form a valid download surface', () => {
   for (const workflowPath of [
     '.github/workflows/pages.yml',
