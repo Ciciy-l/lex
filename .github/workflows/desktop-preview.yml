@@ -158,7 +158,21 @@ jobs:
         if: matrix.system == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y fakeroot dpkg desktop-file-utils python3 make gcc g++
+          sudo apt-get install -y fakeroot dpkg desktop-file-utils python3 make gcc g++ xvfb x11-utils
+
+      - name: Start Linux virtual display
+        if: matrix.system == 'linux'
+        run: |
+          Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp > "$RUNNER_TEMP/xvfb.log" 2>&1 &
+          for attempt in $(seq 1 40); do
+            if xdpyinfo -display :99 >/dev/null 2>&1; then
+              echo "DISPLAY=:99" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 0.25
+          done
+          cat "$RUNNER_TEMP/xvfb.log"
+          exit 1
 
       - name: Install dependencies
         env:

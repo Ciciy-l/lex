@@ -74,6 +74,23 @@ test('release workflows keep one package while choosing signed or versioned unsi
     );
     assert.equal(workflow.env?.ELECTRON_SKIP_BINARY_DOWNLOAD, undefined, name);
     assert.equal(workflow.jobs.package.env?.ELECTRON_SKIP_BINARY_DOWNLOAD, undefined, name);
+
+    const packageSteps = workflow.jobs.package.steps;
+    const linuxDependencies = packageSteps.find(
+      (step) => step.name === 'Install Linux packaging dependencies',
+    );
+    const virtualDisplay = packageSteps.find(
+      (step) => step.name === 'Start Linux virtual display',
+    );
+    assert.ok(linuxDependencies, `${name} Linux packaging dependencies step`);
+    assert.equal(linuxDependencies.if, "matrix.system == 'linux'", name);
+    assert.match(linuxDependencies.run, /\bxvfb\b/, name);
+    assert.match(linuxDependencies.run, /\bx11-utils\b/, name);
+    assert.ok(virtualDisplay, `${name} Linux virtual display step`);
+    assert.equal(virtualDisplay.if, "matrix.system == 'linux'", name);
+    assert.match(virtualDisplay.run, /Xvfb :99/, name);
+    assert.match(virtualDisplay.run, /xdpyinfo -display :99/, name);
+    assert.match(virtualDisplay.run, /DISPLAY=:99.*GITHUB_ENV/, name);
   }
   assert.match(updates, /release:\n\s+types: \[published\]/);
   assert.match(updates, /isDraft == false/);
@@ -93,6 +110,10 @@ test('release workflows keep one package while choosing signed or versioned unsi
 test('packaging metadata uses the Lex display name while Cindy remains the service brand', () => {
   const forge = readText('apps/desktop/forge.config.ts');
   const loginBrand = readText('apps/desktop/src/renderer/components/login/LoginBrandStage.tsx');
+  assert.match(
+    forge,
+    /new MakerNSIS\(\{[\s\S]*?getAppBuilderConfig: async \(\) => \(\{[\s\S]*?publish: null,/,
+  );
   assert.match(forge, /ProductName: BRAND_IDENTITY\.displayName/);
   assert.match(forge, /mac display name → \$\{displayName\}/);
   assert.doesNotMatch(forge, /ProductName: ['"]Cindy['"]/);
