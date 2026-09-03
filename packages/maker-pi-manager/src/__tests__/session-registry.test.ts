@@ -914,6 +914,13 @@ describe('env-file', () => {
       cleanupFns.push(() => { registry.close(); fs.rmSync(tmpDir, { recursive: true, force: true }); });
 
       const child = makeSurviveChild();
+      let resolveSigkill!: () => void;
+      const sigkillSent = new Promise<void>((resolve) => {
+        resolveSigkill = resolve;
+      });
+      child.kill.mockImplementation((signal?: string) => {
+        if (signal === 'SIGKILL') resolveSigkill();
+      });
       mockSpawn.mockReturnValueOnce(child);
       const server = makeServer();
       server.listen.mockImplementation(() => {
@@ -922,15 +929,10 @@ describe('env-file', () => {
       mockCreateServer.mockReturnValueOnce(server);
 
       const ensurePromise = registry.ensure('fail-survive', 'cmd', { KEY: 'val' }, 'h1', false);
-      // spawnSession 前置有真实 fs I/O await(rm env-file + atomic writeFile tmp +
-      // rename + rm sock), 先把它们 flush 到 catch 段(waitForExit 的 setTimeout
-      // 注册)再 advance。spawn 失败 catch 是**直接 SIGKILL**(同步), 轮询条件
-      // 等 child.kill 被调即到达 catch。轮 42 CI 修复:上限 500 → 5000 —— 慢
-      // CI 上真实 fs 链(4 个 await)可能排得更久, 500 次 setImmediate 不够,
-      // 提前失败后 afterEach 删 tmpDir 会让迟到的 rename 变成 unhandled ENOENT。
-      for (let i = 0; i < 5000 && child.kill.mock.calls.length === 0; i += 1) {
-        await flushMicrotasks();
-      }
+      // spawnSession 前置包含真实 fs I/O。等待 mock child 明确收到 SIGKILL，
+      // 不用固定次数的 setImmediate 猜测 I/O 何时完成；慢 Windows runner 上
+      // 猜测过早耗尽会让 afterEach 先删 tmpDir，制造迟到 rename 的 ENOENT。
+      await sigkillSent;
       expect(child.kill).toHaveBeenCalledWith('SIGKILL');
       // KILL_CONFIRM_MS (5000):waitForExit times out → SESSION_KILL_SURVIVED
       vi.advanceTimersByTime(5000);
