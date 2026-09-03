@@ -1,198 +1,128 @@
 # Lex
 
-Lex is an independent desktop-agent distribution based on the open-source
-[Cindy](https://github.com/makecindy/cindy) client. It keeps Cindy's local agent
-runtime and task model, and adds an Orca-inspired local CLI workbench with
-multiple PTY panes for Shell, Claude Code, Codex, and Pi.
+> A community desktop agent distribution based on
+> [Cindy](https://github.com/makecindy/cindy), with an Orca-inspired local CLI workbench.
 
-This project is community-maintained and is not affiliated with or endorsed by
-XD Inc. or the Cindy project. Lex changes are documented in this repository;
-the original Cindy copyright and third-party notices remain in
-[`NOTICE`](NOTICE) and [`docs/legal/notices/`](docs/legal/notices/).
+[简体中文](README.zh-CN.md) · [Download](https://github.com/Ciciy-l/lex/releases) ·
+[Website](https://ciciy-l.github.io/lex/) · [Issues](https://github.com/Ciciy-l/lex/issues)
 
-> **Status:** early development. The current workbench is local-only; remote
-> task orchestration remains Cindy's existing feature set.
+[![CI](https://github.com/Ciciy-l/lex/actions/workflows/ci.yml/badge.svg)](https://github.com/Ciciy-l/lex/actions/workflows/ci.yml)
+[![Release](https://github.com/Ciciy-l/lex/actions/workflows/desktop-release.yml/badge.svg)](https://github.com/Ciciy-l/lex/actions/workflows/desktop-release.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-<p align="center">
-  <a href="https://cindy.app"><img src=".github/assets/hero-en.webp" width="100%" alt="CINDY — Consider it done. The open-source AI agent that works out of the box, doing real work on your own computer."></a>
-</p>
+Lex keeps Cindy as its application and agent foundation, then adds a desktop-native
+CLI workspace: open several Shell, Claude Code, Codex, or Pi sessions beside the chat,
+split panes, resize them, preserve their PTY lifecycle, and keep the work inside the
+same project window.
 
-<p align="center">
-  <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a>
-</p>
+Lex is independently maintained and is not affiliated with or endorsed by XD Inc. or
+the Cindy project.
 
-<p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License" /></a>
-  <a href="https://github.com/Ciciy-l/lex/actions/workflows/ci.yml"><img src="https://github.com/Ciciy-l/lex/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-22.x-brightgreen.svg" alt="Node.js 22.x" /></a>
-  <a href="https://pnpm.io"><img src="https://img.shields.io/badge/pnpm-10-orange.svg" alt="pnpm" /></a>
-</p>
+The desktop product and distribution are named **Lex**. The inherited assistant
+persona and Cindy-backed account/service surfaces continue to use the **Cindy** name
+on purpose; this preserves upstream behavior and does not imply that Lex is an official
+Cindy build.
 
-<p align="center">
-  🌐 <a href="https://cindy.app">cindy.app</a> &nbsp;·&nbsp; ⬇️ <a href="https://cindy.app/download/">Download</a>
-</p>
+## One app, two Cindy service regions
 
+There is only one Lex installer, application identity, user-data profile, version, and
+update channel. On the sign-in screen, choose the service region for your Cindy account:
 
-Cindy is an open-source AI agent that works out of the box. She brings multiple
-harnesses, models and tools into one agent that finishes real work in your
-projects and apps. Ready from day one, yours to shape over time.
+- **Global** for Global Cindy accounts;
+- **Mainland China** for Mainland China Cindy accounts;
+- organization SSO discovers its home region automatically.
 
-Cindy runs locally on your own machine, using your real files and logged-in
-apps. The first supported harnesses are **Claude Code** and **Codex** — more are
-being added, and a native harness is in the works. Models and harnesses mix
-freely and can switch mid-task while your workspace, memory, skills and tools
-stay continuous; one task can even be planned, executed in parallel, and
-reviewed by agents on different harness × model combos. She can drive your
-browser, computer and phone, and take work from IM and schedules.
+The account choice routes Cindy authentication, subscription, cloud models, voice,
+storage, Device Link, and remote-control traffic. It does **not** change the Lex app,
+download, or update channel. Saved accounts remember their own region.
 
-This repository is the open-source **client** for Cindy — the desktop and mobile
-apps plus their shared packages, organized as a pnpm monorepo.
+## Cindy and Lex responsibilities
 
-The client is free to use, and its source code is open under Apache-2.0. Bring
-models your way: sign in to the official Cindy service (usage deducted
-transparently), authorize the **Claude Code / Codex Coding Plan** you already
-pay for and keep using it inside Cindy — no duplicate bill — connect your own
-API keys, or use local models.
-See [cindy.app](https://cindy.app) for service details,
-[pricing](https://cindy.app/#pricing), and [downloads](https://cindy.app/download/).
-
-## Yours to shape
-
-Open source means more than visible — it means changeable:
-
-- **Memory** — correct her once and she does it right from then on, shared across harnesses.
-- **Skills** — teach a way of working once and reuse it everywhere; handing them to your team is in the making.
-- **Automation** — recurring work schedules itself, runs itself, reports back.
-- **MCP** — wire your internal tools and business systems into her reach.
-- **Plugins** — reshape features, UI and interactions, shared through an open marketplace *(in the making)*.
-- **Source** — audit, fork, extend, and contribute improvements back under Apache-2.0.
-
-Ready out of the box, never boxed in — start with
-[`CONTRIBUTING.en.md`](CONTRIBUTING.en.md) and build Cindy with us.
-
-## What's in this repo
-
-| Path | Description |
+| Area | Provider |
 | --- | --- |
-| `apps/desktop` | Electron desktop client |
-| `apps/mobile` | Expo / React Native mobile client |
-| `packages/*` | Shared client capabilities (auth, device-link, agent orchestration, model providers, …) |
-| `apps/*-bin` | Tool binaries shipped with the desktop app; none are committed — claude-code, codex, and ripgrep are downloaded per platform by `pnpm install`, and the Android platform-tools binaries are fetched (pinned version, sha256-verified) before Windows packaging |
+| Desktop app, CLI workbench, packaging, website, support, updates | Lex community project |
+| Account, subscription, hosted models, cloud storage, Device Link, remote services | Cindy official services |
+| Source foundation and upstream fixes | Cindy open-source project |
 
-**Not in this repo:** the backend service lives in a separate
-repository and is not part of this monorepo.
+Cindy online services remain subject to Cindy's terms, regional availability, and
+service status. Lex does not operate those services or sell a separate subscription.
+You can also choose **Skip Sign-In** for local-only agent use; server-backed features
+are then unavailable.
 
-| Mode | Account requirement | Availability |
-| --- | --- | --- |
-| Hosted service | Cindy cloud account | Use Cindy's full hosted service. See [pricing](https://cindy.app/#pricing). |
-| Skip Sign-In | No Cindy sign-in required | Choose “Skip Sign-In” on the login screen to use local agents; the app then shows the account state as “Not signed in”. Server-backed capabilities are unavailable in this state. |
+## Current status
 
-## Prerequisites
+Lex is in early preview. Versioned GitHub Releases may be unsigned until the project
+has configured platform signing. Unsigned packages are useful for testing but may show
+Windows SmartScreen, macOS Gatekeeper, or Linux package-manager warnings. Once signing
+secrets are configured, the same versioned release and update path automatically emits
+signed production artifacts, so existing installations can upgrade normally.
 
-- **Node.js** 22.x
-- **pnpm** 10.x (v11 is not yet supported)
-- **Git LFS**
+The current scope is **Lex Desktop**. The mobile source remains upstream Cindy code;
+Lex Desktop can continue to work with the official Cindy mobile client.
 
-## Getting started
+## Run from source
 
-Contributor setup, Git LFS, dependency updates, and access requirements are maintained in
-[`CONTRIBUTING.en.md`](CONTRIBUTING.en.md).
-Plugins are installed through SkillHub or manually.
+Requirements: Node.js 22.x, pnpm 10.x, Git, and Git LFS.
 
-Minimal entry point:
-
-```bash
-git clone https://github.com/makecindy/cindy.git
-cd cindy
+```powershell
+git clone https://github.com/Ciciy-l/lex.git
+cd lex
 git lfs pull
-pnpm install
+corepack enable
+corepack pnpm install
+corepack pnpm restart:desktop:remote --region=global
 ```
 
-## Development entry points
+`--region=global` now identifies the single Lex build profile. The Cindy account service
+region is selected on the login screen. Use an isolated development profile when needed:
 
-```bash
-# Mainland China Cindy account
-pnpm restart:desktop:remote --region=cn
-
-# Global Cindy account
-pnpm restart:desktop:remote --region=global
+```powershell
+corepack pnpm restart:desktop:remote --region=global --isolated=dev
 ```
 
-Remote development uses your own Cindy cloud account and existing login state, so
-you can continue existing sessions and work while developing the client. Use `cn`
-for Mainland China accounts and `global` for everyone else; do not rely
-on the internal default. Full desktop, mobile, data-isolation, and validation
-workflows are in [`CONTRIBUTING.en.md`](CONTRIBUTING.en.md).
+See [CONTRIBUTING.en.md](CONTRIBUTING.en.md) for the full development workflow.
 
-“Skip Sign-In” on the login screen runs local agents without a Cindy account
-(shown in the app as “Not signed in”), not a connection to a local server.
-Server-backed capabilities are unavailable in this state.
+## Releases and updates
 
-**About the default servers:** the client connects to Cindy's official cloud
-services by default (endpoint manifests in
-[`config/endpoint.json`](config/endpoint.json) and
-[`config/endpoint.global.json`](config/endpoint.global.json); desktop
-auto-updates also come from the official CDN). This is intentional — external
-developers don't need to self-host a server: sign in with your own Cindy
-account in a dev build and develop / test directly against the official
-servers.
+- Push a semantic version tag such as `v0.2.0-rc.1` to run the multi-platform release
+  workflow.
+- A published GitHub Release generates update manifests on the `updates` branch.
+- Prereleases update the beta channel; stable releases update the stable channel.
+- Signing is selected automatically from configured repository secrets. Missing signing
+  credentials produce versioned unsigned preview packages instead of a fake version.
 
-## Architecture
+Details are in [docs/RELEASING-LEX.md](docs/RELEASING-LEX.md).
 
-- [`DESIGN.md`](DESIGN.md) — visual design system, color tokens, and UI conventions
-- [`docs/README.md`](docs/README.md) — complete documentation and rules index
-- [`docs/auth-realm-routing.md`](docs/auth-realm-routing.md) — organization SSO region discovery and session endpoint routing
-- [`CONTRIBUTING.en.md`](CONTRIBUTING.en.md) — contributor setup, validation, and submission workflow
-- [`AGENTS.md`](AGENTS.md) — engineering rules, launch/runtime contracts, and module boundaries
-- [`docs/dev-rules/`](docs/dev-rules/) — deep-dive architecture docs (e.g. Orca multi-agent orchestration)
+## Keeping up with Cindy
 
-## Contributing
+The `upstream-sync` workflow checks Cindy regularly and opens a reviewable sync pull
+request. Keep Lex-specific product identity, CLI workbench, and release files separate
+where possible; resolve conflicts in favor of Cindy security/fix changes while retaining
+Lex's documented product boundaries.
 
-Contributions go through pull requests into `main`. Read
-[`CONTRIBUTING.en.md`](CONTRIBUTING.en.md) first, then use
-[`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md).
-Every commit needs a [Developer Certificate of Origin](DCO) sign-off
-(`git commit -s`); a DCO check on each pull request enforces it, and no CLA is
-required.
-Please also follow [`CODE_OF_CONDUCT.en.md`](CODE_OF_CONDUCT.en.md). For ordinary
-usage questions, see [`SUPPORT.en.md`](SUPPORT.en.md); report security issues
-privately through [`SECURITY.en.md`](SECURITY.en.md).
+## Privacy and telemetry
 
-## Security
+Lex keeps Cindy's consent and analytics controls, but Lex release builds do **not** enable
+the upstream TapDB reporting path by default. No chat content, file content, or working
+directory is sent as product analytics. Signed-in sessions still use Cindy's official
+online services and heartbeat according to Cindy's terms and privacy policy.
 
-Never commit credentials or authorization files to the working tree. If you
-discover a security issue, follow [`SECURITY.en.md`](SECURITY.en.md) to report it
-privately rather than opening a public issue.
+Diagnostic logs stay local unless you explicitly choose **Upload logs now**. Crash log
+upload is a separate opt-in setting and is off by default; both paths also require privacy
+consent and a Lex-owned upload destination configured at build time.
 
-## Privacy & telemetry
+## Contributing and support
 
-**Official distribution builds** include [TapDB](https://www.taptap.io/tapdb)
-usage analytics for product-level aggregate statistics (device / OS / app-version
-metadata; associated with your account ID after sign-in). It does **not** collect
-chat content, file content, or working-directory data. In addition, while signed
-in to a cloud account the client sends an online heartbeat to Cindy services
-(account ID, platform, and version only). Crash dumps stay on the local machine
-and are never uploaded automatically.
+- Development rules: [AGENTS.md](AGENTS.md) and [docs/README.md](docs/README.md)
+- Support and bug reports: [SUPPORT.en.md](SUPPORT.en.md)
+- Private vulnerability reports: [SECURITY.en.md](SECURITY.en.md)
+- Pull requests require DCO sign-off (`git commit -s`).
 
-**Building from source?** You are not required to keep analytics:
+## License and attribution
 
-- Mobile is off by default — without TapDB credentials (`clientId` /
-  `clientToken`) injected at build time, `apps/mobile/src/analytics/mobileTapdb.ts`
-  is a no-op;
-- Desktop can be fully stripped by removing the `initTapdb()` call in
-  `apps/desktop/src/renderer/index.tsx` (implementation lives in
-  `apps/desktop/src/renderer/analytics/`).
+Source code is licensed under [Apache License 2.0](LICENSE), except where separately
+identified. The original Cindy attribution and Lex modification notice are preserved in
+[NOTICE](NOTICE); third-party notices and SBOMs are under [docs/legal](docs/legal).
 
-## License / 许可证
-
-Except as otherwise noted, the source code in this repository is licensed under
-the [Apache License, Version 2.0](LICENSE). Individual source files do not
-carry per-file license headers; the repository-root `LICENSE` governs.
-
-Model weights, datasets, prompts, trademarks, and other separately identified
-materials may be subject to their own license terms and are not automatically
-covered by the repository-level Apache-2.0 grant. Third-party open-source
-components retain their own copyright and license. Their attribution notices and
-SPDX SBOMs are managed under [`docs/legal/`](docs/legal/), with artifact-specific
-outputs in [`docs/legal/notices/`](docs/legal/notices/). See [`NOTICE`](NOTICE)
-for this project's copyright and attribution information.
+Apache-2.0 does not grant rights to Cindy trademarks, hosted services, model weights,
+datasets, or other separately identified materials.

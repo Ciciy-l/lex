@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Lex is a community desktop agent distribution based on Cindy, with a local multi-pane CLI workbench.">
+  <meta name="theme-color" content="#0d1117">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+  <title>Lex — Local agent workbench</title>
+  <style>
+    :root{color-scheme:dark;--bg:#080b10;--panel:#111722;--panel2:#171f2d;--text:#f4f7fb;--muted:#aeb8c8;--line:#293244;--accent:#7c5cff;--accent2:#25d7ba;--warn:#f4c95d;--shadow:0 28px 80px rgba(0,0,0,.38)}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:radial-gradient(circle at 75% 0,#1c1940 0,transparent 34rem),radial-gradient(circle at 0 42%,#0c2b31 0,transparent 30rem),var(--bg);color:var(--text);font:16px/1.65 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}a{color:inherit}button,a{touch-action:manipulation}.wrap{width:min(1120px,calc(100% - 36px));margin:auto}.nav{height:76px;display:flex;align-items:center;justify-content:space-between}.brand{display:flex;align-items:center;gap:12px;font-weight:800;letter-spacing:.04em;text-decoration:none}.mark{display:grid;place-items:center;width:38px;height:38px;border-radius:12px;background:linear-gradient(145deg,var(--accent),var(--accent2));color:#06100e;font-weight:950;box-shadow:0 8px 28px rgba(68,215,191,.22)}.navlinks{display:flex;align-items:center;gap:18px}.navlinks a{color:var(--muted);text-decoration:none}.lang{border:1px solid var(--line);background:rgba(17,23,34,.78);color:var(--text);border-radius:999px;padding:8px 13px;cursor:pointer}.hero{padding:90px 0 76px;text-align:center}.eyebrow{display:inline-flex;gap:8px;align-items:center;border:1px solid #3b4660;background:rgba(17,23,34,.74);border-radius:999px;padding:7px 13px;color:#ccd4e1;font-size:14px}.dot{width:8px;height:8px;border-radius:50%;background:var(--accent2);box-shadow:0 0 18px var(--accent2)}h1{font-size:clamp(46px,9vw,92px);line-height:.98;letter-spacing:-.055em;margin:28px auto 26px;max-width:980px}.gradient{background:linear-gradient(90deg,#fff 12%,#a89aff 52%,#58e7d0);-webkit-background-clip:text;background-clip:text;color:transparent}.lede{max-width:760px;margin:0 auto;color:var(--muted);font-size:clamp(18px,2.2vw,23px)}.actions{display:flex;flex-wrap:wrap;justify-content:center;gap:12px;margin-top:34px}.btn{display:inline-flex;align-items:center;justify-content:center;min-height:50px;padding:0 22px;border-radius:14px;text-decoration:none;font-weight:750;border:1px solid var(--line);background:var(--panel)}.btn.primary{border:0;background:linear-gradient(135deg,var(--accent),#5c7cff);box-shadow:0 12px 36px rgba(92,88,255,.32)}.btn:hover{transform:translateY(-1px)}.release{margin:26px auto 0;color:var(--muted);font-size:14px}.release strong{color:var(--text)}.terminal{margin:58px auto 0;max-width:900px;text-align:left;border:1px solid #313c50;border-radius:22px;background:rgba(13,17,25,.91);box-shadow:var(--shadow);overflow:hidden}.terminalbar{display:flex;align-items:center;gap:7px;height:46px;padding:0 16px;border-bottom:1px solid var(--line);background:#101621}.terminalbar i{width:10px;height:10px;border-radius:50%;background:#465064}.terminalbar i:first-child{background:#ff6b65}.terminalbar i:nth-child(2){background:#f4c95d}.terminalbar i:nth-child(3){background:#3bd39f}.terminalbar span{margin-left:10px;color:#8e9aad;font:13px ui-monospace,SFMono-Regular,Consolas,monospace}.panes{display:grid;grid-template-columns:1fr 1fr;min-height:310px}.pane{padding:22px 24px;font:14px/1.75 ui-monospace,SFMono-Regular,Consolas,monospace;color:#cbd5e4}.pane+.pane{border-left:1px solid var(--line)}.prompt{color:var(--accent2)}.dim{color:#728096}.ok{color:#8ee89f}.section{padding:82px 0}.section h2{font-size:clamp(32px,5vw,52px);line-height:1.1;letter-spacing:-.035em;margin:0 0 18px}.sectionlead{color:var(--muted);max-width:720px;margin:0 0 38px;font-size:18px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.card{border:1px solid var(--line);border-radius:20px;padding:25px;background:linear-gradient(145deg,rgba(23,31,45,.9),rgba(13,18,27,.9))}.card h3{margin:10px 0 9px;font-size:20px}.card p{margin:0;color:var(--muted)}.icon{font-size:24px}.boundary{display:grid;grid-template-columns:1fr 1fr;gap:18px}.boundary .card{padding:30px}.tag{display:inline-block;border-radius:999px;padding:4px 10px;background:#222a3a;color:#bdc7d7;font-size:13px}.list{padding:0;margin:18px 0 0;list-style:none}.list li{padding:8px 0;border-bottom:1px solid rgba(41,50,68,.7)}.notice{border:1px solid #5a4b27;background:rgba(70,53,18,.35);border-radius:18px;padding:20px 23px;color:#ead9a8}.footer{border-top:1px solid var(--line);padding:34px 0 52px;color:var(--muted)}.footerrow{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}.footer a{color:#d6deea;text-decoration:none;margin-right:14px}[data-lang]{display:none}html[data-locale="en"] [data-lang="en"],html[data-locale="zh"] [data-lang="zh"]{display:revert}
+    @media(max-width:760px){.navlinks>a{display:none}.hero{padding-top:56px}.panes{grid-template-columns:1fr}.pane+.pane{border-left:0;border-top:1px solid var(--line)}.grid,.boundary{grid-template-columns:1fr}.section{padding:58px 0}.terminal{margin-top:42px}}
+    @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.btn:hover{transform:none}}
+  </style>
+</head>
+<body>
+  <header class="wrap nav">
+    <a class="brand" href="#"><span class="mark">L</span><span>LEX</span></a>
+    <nav class="navlinks" aria-label="Primary">
+      <a href="#features"><span data-lang="en">Features</span><span data-lang="zh">功能</span></a>
+      <a href="#relationship"><span data-lang="en">About Cindy</span><span data-lang="zh">与 Cindy 的关系</span></a>
+      <a href="https://github.com/Ciciy-l/lex">GitHub</a>
+      <button id="lang" class="lang" type="button" aria-label="Switch language">中文</button>
+    </nav>
+  </header>
+
+  <main>
+    <section class="wrap hero">
+      <div class="eyebrow"><span class="dot"></span><span data-lang="en">Community preview · one cross-platform release</span><span data-lang="zh">社区预览 · 一套多平台发行</span></div>
+      <h1><span data-lang="en">Your agents.<br><span class="gradient">One local workbench.</span></span><span data-lang="zh">你的 Agent。<br><span class="gradient">一个本地工作台。</span></span></h1>
+      <p class="lede" data-lang="en">Lex builds on Cindy and brings Shell, Claude Code, Codex and Pi into manageable, resizable CLI panes beside your agent conversation.</p>
+      <p class="lede" data-lang="zh">Lex 基于 Cindy，把 Shell、Claude Code、Codex 和 Pi 收进聊天窗口旁可管理、可分屏、可缩放的 CLI 工作区。</p>
+      <div class="actions">
+        <a id="download" class="btn primary" href="https://github.com/Ciciy-l/lex/releases"><span data-lang="en">Download for your platform</span><span data-lang="zh">下载当前平台版本</span></a>
+        <a class="btn" href="https://github.com/Ciciy-l/lex"><span data-lang="en">View source</span><span data-lang="zh">查看源码</span></a>
+      </div>
+      <div id="release" class="release"><span data-lang="en">Checking the latest release…</span><span data-lang="zh">正在读取最新版本…</span></div>
+      <div class="terminal" aria-label="Lex CLI workbench illustration">
+        <div class="terminalbar"><i></i><i></i><i></i><span>F:\Projects\lex · CLI workbench</span></div>
+        <div class="panes">
+          <div class="pane"><span class="prompt">PS&gt;</span> codex<br><span class="dim">› Inspecting workspace…</span><br><span class="ok">✓ Implemented auth realm routing</span><br><span class="dim">› Running related tests…</span><br><span class="ok">✓ Related tests passed</span></div>
+          <div class="pane"><span class="prompt">$</span> pi<br><span class="dim">Working directory:</span> ./apps/desktop<br><br><span class="prompt">›</span> Review the CLI pane lifecycle<br><span class="ok">No blocking findings.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="features" class="wrap section">
+      <h2 data-lang="en">Local CLI control, without leaving Cindy's agent foundation.</h2><h2 data-lang="zh">保留 Cindy 的 Agent 基础，加入真正的本地 CLI 管理。</h2>
+      <p class="sectionlead" data-lang="en">The first Lex milestone focuses on the desktop workflow developers feel every day.</p><p class="sectionlead" data-lang="zh">Lex 的第一个里程碑专注于开发者每天都能直接感受到的桌面工作流。</p>
+      <div class="grid">
+        <article class="card"><div class="icon">▦</div><h3 data-lang="en">Multi-pane workspace</h3><h3 data-lang="zh">多窗格工作区</h3><p data-lang="en">Open, split, resize and focus several local PTY sessions inside the right sidebar.</p><p data-lang="zh">在右侧栏内打开、拆分、缩放和聚焦多个本地 PTY 会话。</p></article>
+        <article class="card"><div class="icon">⌘</div><h3 data-lang="en">Your CLI agents</h3><h3 data-lang="zh">你自己的 CLI Agent</h3><p data-lang="en">Use installed Shell, Claude Code, Codex and Pi tools with the repository's working directory.</p><p data-lang="zh">直接使用本机 Shell、Claude Code、Codex 和 Pi，并继承仓库工作目录。</p></article>
+        <article class="card"><div class="icon">↺</div><h3 data-lang="en">Lifecycle you can trust</h3><h3 data-lang="zh">可靠的生命周期</h3><p data-lang="en">Pane state, input, process exit, abort and Windows Git Bash fallbacks are handled explicitly.</p><p data-lang="zh">明确处理窗格状态、输入、进程退出、中止，以及 Windows Git Bash 兜底。</p></article>
+      </div>
+    </section>
+
+    <section id="relationship" class="wrap section">
+      <h2 data-lang="en">Independent client. Official Cindy online services.</h2><h2 data-lang="zh">独立客户端，继续使用 Cindy 官方在线服务。</h2>
+      <p class="sectionlead" data-lang="en">Lex is transparent about where it comes from and who operates each part.</p><p class="sectionlead" data-lang="zh">Lex 大方说明自己的来源，也明确每项能力由谁负责。</p>
+      <div class="boundary">
+        <article class="card"><span class="tag">Lex</span><h3 data-lang="en">Community distribution</h3><h3 data-lang="zh">社区发行版</h3><ul class="list"><li data-lang="en">Desktop product and CLI workbench</li><li data-lang="zh">桌面产品与 CLI 工作台</li><li data-lang="en">Installer, website, support and updates</li><li data-lang="zh">安装包、官网、支持与更新</li><li data-lang="en">Open development on GitHub</li><li data-lang="zh">在 GitHub 上开放开发</li></ul></article>
+        <article class="card"><span class="tag">Cindy</span><h3 data-lang="en">Official online services</h3><h3 data-lang="zh">官方在线服务</h3><ul class="list"><li data-lang="en">Account and subscription</li><li data-lang="zh">账号与订阅</li><li data-lang="en">Hosted models, storage and voice</li><li data-lang="zh">托管模型、云存储与语音</li><li data-lang="en">Device Link and remote control</li><li data-lang="zh">Device Link 与远程控制</li></ul></article>
+      </div>
+      <p class="notice" style="margin-top:18px" data-lang="en">Lex is independently maintained and is not affiliated with or endorsed by XD Inc. or Cindy. Cindy services are governed by Cindy's own terms, availability and support.</p>
+      <p class="notice" style="margin-top:18px" data-lang="zh">Lex 由社区独立维护，与 XD Inc. 或 Cindy 不存在隶属、授权或官方背书关系。Cindy 服务受其官方条款、可用性与支持政策约束。</p>
+    </section>
+
+    <section class="wrap section">
+      <h2 data-lang="en">One download. The account chooses its service region.</h2><h2 data-lang="zh">只下载一次，账号决定服务区。</h2>
+      <p class="sectionlead" data-lang="en">Choose Global or Mainland China on sign-in; enterprise SSO discovers its region. Lex itself always keeps the same installation and update channel.</p><p class="sectionlead" data-lang="zh">个人登录选择 Global 或中国大陆，企业 SSO 自动发现。Lex 始终保持同一个安装身份与更新通道。</p>
+      <div class="actions" style="justify-content:flex-start;margin-top:0"><a class="btn primary" href="https://github.com/Ciciy-l/lex/releases"><span data-lang="en">All releases</span><span data-lang="zh">查看全部版本</span></a><a class="btn" href="https://github.com/Ciciy-l/lex/issues"><span data-lang="en">Report an issue</span><span data-lang="zh">反馈问题</span></a></div>
+    </section>
+
+    <section class="wrap section">
+      <h2 data-lang="en">Privacy is explicit.</h2><h2 data-lang="zh">隐私边界明确可见。</h2>
+      <p class="sectionlead" data-lang="en">Lex releases keep upstream TapDB analytics disabled by default. Diagnostic logs stay local unless you upload them; crash auto-upload is a separate opt-in and is off by default. Cindy account traffic remains governed by Cindy's terms and privacy policy.</p><p class="sectionlead" data-lang="zh">Lex 发行包默认关闭上游 TapDB 统计。诊断日志默认留在本机；崩溃自动上传是独立选项且默认关闭。Cindy 账号流量仍遵循 Cindy 官方条款与隐私政策。</p>
+    </section>
+  </main>
+
+  <footer class="footer"><div class="wrap footerrow"><div>Lex · Apache-2.0 · Based on Cindy</div><div><a href="https://github.com/Ciciy-l/lex">Source</a><a href="https://github.com/Ciciy-l/lex/blob/main/SECURITY.en.md">Security</a><a href="https://github.com/makecindy/cindy">Cindy upstream</a></div></div></footer>
+
+  <script>
+    const root=document.documentElement,langButton=document.getElementById('lang'),release=document.getElementById('release'),download=document.getElementById('download');
+    let releaseData=null,releaseUnavailable=false;
+    function renderRelease(){
+      if(releaseUnavailable){release.textContent=root.dataset.locale==='zh'?'前往 GitHub Releases 获取最新版本':'Get the latest build from GitHub Releases';return}
+      if(!releaseData){release.textContent=root.dataset.locale==='zh'?'正在读取最新版本…':'Checking the latest release…';return}
+      const label=String(releaseData.version||releaseData.tag||'preview'),preview=releaseData.prerelease===true,strong=document.createElement('strong');
+      strong.textContent=label;
+      release.replaceChildren(document.createTextNode(root.dataset.locale==='zh'?'最新版本：':'Latest: '),strong,document.createTextNode(root.dataset.locale==='zh'?` · ${preview?'预览版':'稳定版'}`:` · ${preview?'preview':'stable'}`));
+    }
+    function setLocale(locale){root.dataset.locale=locale;root.lang=locale==='zh'?'zh-CN':'en';langButton.textContent=locale==='zh'?'English':'中文';localStorage.setItem('lex-site-locale',locale);renderRelease()}
+    setLocale(localStorage.getItem('lex-site-locale')||((navigator.language||'').toLowerCase().startsWith('zh')?'zh':'en'));
+    langButton.addEventListener('click',()=>setLocale(root.dataset.locale==='zh'?'en':'zh'));
+    fetch('./release.json',{cache:'no-store'}).then(r=>r.ok?r.json():Promise.reject()).then(data=>{
+      releaseData=data;
+      const assets=Array.isArray(data.assets)?data.assets:[],platform=/win/i.test(navigator.platform)?'win':/mac/i.test(navigator.platform)?'mac':'linux';
+      // Browsers cannot reliably distinguish Apple Silicon from Intel.  Keep
+      // macOS on the release page so the user chooses the correct architecture.
+      const match=platform==='mac'?null:assets.find(a=>platform==='win'?/-Setup\.exe$/i.test(a.name):/-amd64\.deb$/i.test(a.name));
+      if(match?.url)download.href=match.url;else if(data.releaseUrl)download.href=data.releaseUrl;
+      renderRelease();
+    }).catch(()=>{releaseUnavailable=true;renderRelease()});
+  </script>
+</body>
+</html>

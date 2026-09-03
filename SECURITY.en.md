@@ -12,13 +12,13 @@ chat.
 
 The preferred channel is GitHub's private vulnerability reporting form:
 
-<https://github.com/makecindy/cindy/security/advisories/new>
+<https://github.com/Ciciy-l/lex/security/advisories/new>
 
-If that form is unavailable, email **feedback@cindy.app**. We recommend using
-`[Cindy Security]` in the subject. If reproduction materials contain sensitive
-information, tell us in the email and wait for the maintainers to provide an
-appropriate secure transfer method. Do not send sensitive materials through a
-public channel.
+If that form is unavailable, do not post exploit details in a public issue.
+First make non-sensitive contact through the repository maintainer's GitHub
+profile and agree on a private transfer method. Issues affecting only Cindy
+accounts or official online services should be reported directly under Cindy's
+official security policy.
 
 ## What to include
 
@@ -37,12 +37,9 @@ details must not be disclosed in a public issue either.
 
 ## Response process
 
-We will acknowledge the report, reproduce it, assess its impact, and update the
-report when a fix or mitigation can be disclosed. Our target cadence:
-**acknowledgement with an initial assessment within 5 business days**, and a
-**90-day coordinated disclosure window** for confirmed vulnerabilities
-(adjustable in coordination with the reporter). If you hear nothing for more
-than 7 days, please ping us through the other channel (email or GitHub).
+Community maintainers will acknowledge, reproduce, and assess reports as soon
+as practical and coordinate disclosure timing with the reporter. No commercial
+support SLA is currently offered.
 
 ## Contributor notes
 
