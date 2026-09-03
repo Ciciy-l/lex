@@ -7,8 +7,12 @@ on:
       - "website/**"
       - "config/lex-product.json"
       - ".github/workflows/pages.yml"
-  release:
-    types: [published]
+  # A release event keeps the tag as its deployment ref, which may be rejected by the
+  # github-pages environment when it is protected for main only. Wait for the update
+  # manifests workflow instead: workflow_run executes this workflow from the default branch.
+  workflow_run:
+    workflows: [publish-lex-update-manifests]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -22,6 +26,7 @@ concurrency:
 
 jobs:
   deploy:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
