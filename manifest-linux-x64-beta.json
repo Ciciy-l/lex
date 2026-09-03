@@ -1,0 +1,31 @@
+{
+  "app": {
+    "version": "0.1.0-rc.5",
+    "releaseNotes": "Lex 0.1.0-rc.5",
+    "installer": {
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.0-rc.5/lex-0.1.0-rc.5-amd64.deb",
+      "sha256": "7f367a56db9fce0f2c520b5c0ad8823a3817b35135dc9cf2cc7c1b1bc0a30e93",
+      "size": 186925868
+    }
+  },
+  "claudeCode": {
+    "version": "2.1.219",
+    "file": "https://hotfix.cindy.app/cindy/claude-code/2.1.219/linux-x64/claude.gz",
+    "sha256": "858d228ee4c9a968cbcc04d6742f5e1d1575dc22cc2c8b8974cc3c5eb62a2c8a",
+    "size": 86275882,
+    "binarySha256": "22cfd6f5b3061c0391ba84e9cf8c9deaa37783aac18b004d42ec061e98f00691"
+  },
+  "codex": {
+    "version": "0.145.0",
+    "file": "https://hotfix.cindy.app/cindy/codex/0.145.0/linux-x64/codex.gz",
+    "sha256": "ec5fe401224f81ded675cde5bc8fba0cd1a6cc44bb31c810711a5ddd6a95f805",
+    "size": 115808553,
+    "binarySha256": "a2a05dafaa1acb002a45eaec0a462de5b13694fcfcd7bc43305f14781ce7be14"
+  },
+  "pi": {
+    "version": "0.84.4",
+    "file": "https://hotfix.cindy.app/cindy/pi/0.84.4/linux-x64/pi.dist.tar.gz",
+    "sha256": "b0aefd0e08f84df7eab57da8b60a598e47f0eec1ab6853fd32f4ebba47f9626a",
+    "size": 43162555
+  }
+}

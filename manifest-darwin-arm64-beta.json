@@ -1,0 +1,36 @@
+{
+  "app": {
+    "version": "0.1.0-rc.5",
+    "releaseNotes": "Lex 0.1.0-rc.5",
+    "hotfix": {
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.0-rc.5/lex-0.1.0-rc.5-arm64-hotfix.zip",
+      "sha256": "5d4904520e644372a3d8767dcf8cddf63dd8073e688bf3fec345486c7d018af9",
+      "size": 246957304
+    },
+    "installer": {
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.0-rc.5/lex-0.1.0-rc.5-arm64.zip",
+      "sha256": "ac7410d0dfbb6df0f5673a3715afdc6bac500a1b1ec5602e1447f9fb39af8473",
+      "size": 244853006
+    }
+  },
+  "claudeCode": {
+    "version": "2.1.219",
+    "file": "https://hotfix.cindy.app/cindy/claude-code/2.1.219/darwin-arm64/claude.gz",
+    "sha256": "7bdbd48b22db7b34ead57361d095dda63c9049c3ff0944e037bc0f011470062f",
+    "size": 75025282,
+    "binarySha256": "a8e806faaefac53c7a0f26523d8a45c60dbef3407b14ef990c75765d08febc82"
+  },
+  "codex": {
+    "version": "0.145.0",
+    "file": "https://hotfix.cindy.app/cindy/codex/0.145.0/darwin-arm64/codex.gz",
+    "sha256": "752de083922a77807072d4fecc8c52634a888b07ea513b1df32b348567b50889",
+    "size": 102106034,
+    "binarySha256": "1da3f4e0e96028b8a771814293c3033dafd1971f943f6c7e79b0897fe705f590"
+  },
+  "pi": {
+    "version": "0.84.4",
+    "file": "https://hotfix.cindy.app/cindy/pi/0.84.4/darwin-arm64/pi.dist.tar.gz",
+    "sha256": "5bf0ce75418f64f3c97b843028c2f7314a8c964849e221a00c7e5585eff00f94",
+    "size": 31646076
+  }
+}
