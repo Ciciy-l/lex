@@ -1235,6 +1235,10 @@ if (isWin) {
   makers.unshift(
     new MakerNSIS({
       getAppBuilderConfig: async () => ({
+        // Forge owns artifact collection and the release workflow publishes only after every
+        // platform passes. Prevent electron-builder from inferring an eager GitHub publish from
+        // GITHUB_TOKEN + a version tag while MakerNSIS is still producing the Windows installer.
+        publish: null,
         // NSIS installer(Setup.exe)与 uninstaller(Uninstall <App>.exe)的签名。
         // 这是签卸载器的唯一入口(Issue #998):uninstaller 由 NSIS 编译期两遍生成后
         // 嵌入 installer,postPackage 阶段还不存在、也没有独立成品文件可事后补签,
