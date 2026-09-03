@@ -9,6 +9,7 @@ export const MIN_SPLIT_RATIO = 0.2;
 export const MAX_SPLIT_RATIO = 0.8;
 
 export type TerminalSplitDirection = 'horizontal' | 'vertical';
+export type TerminalSplitPath = readonly ('first' | 'second')[];
 
 export interface TerminalPaneState {
   id: string;
@@ -78,6 +79,16 @@ export function collectPaneIds(node: TerminalLayoutNode): string[] {
 export function clampSplitRatio(ratio: number): number {
   if (!Number.isFinite(ratio)) return 0.5;
   return Math.max(MIN_SPLIT_RATIO, Math.min(MAX_SPLIT_RATIO, ratio));
+}
+
+/** Update one recursive split without relying on pane ids or mutable tree nodes. */
+export function updateTerminalSplitRatio(
+  state: TerminalState,
+  path: TerminalSplitPath,
+  ratio: number,
+): TerminalState {
+  const layout = updateSplitRatioAtPath(state.layout, path, 0, clampSplitRatio(ratio));
+  return layout && layout !== state.layout ? { ...state, layout } : state;
 }
 
 /**
@@ -271,6 +282,23 @@ function replaceLeaf(
   const second = replaceLeaf(node.second, paneId, replacement);
   if (!first || !second) return null;
   return { ...node, first, second };
+}
+
+function updateSplitRatioAtPath(
+  node: TerminalLayoutNode,
+  path: TerminalSplitPath,
+  depth: number,
+  ratio: number,
+): TerminalLayoutNode | null {
+  if (depth === path.length) {
+    if (node.type !== 'split') return null;
+    return node.ratio === ratio ? node : { ...node, ratio };
+  }
+  if (node.type !== 'split') return null;
+  const side = path[depth];
+  const child = updateSplitRatioAtPath(node[side], path, depth + 1, ratio);
+  if (!child) return null;
+  return child === node[side] ? node : { ...node, [side]: child };
 }
 
 function removeLeaf(node: TerminalLayoutNode, paneId: string): TerminalLayoutNode | null {

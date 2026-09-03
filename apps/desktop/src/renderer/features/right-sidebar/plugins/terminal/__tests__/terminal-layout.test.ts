@@ -10,6 +10,7 @@ import {
   removeTerminalPane,
   setActiveTerminalPane,
   splitTerminalPane,
+  updateTerminalSplitRatio,
   updateTerminalPane,
 } from '../terminal-layout';
 
@@ -70,6 +71,41 @@ describe('terminal layout model', () => {
     expect(updateTerminalPane(state, 'missing', { title: 'ignored' })).toBe(state);
     const updated = updateTerminalPane(state, 'pane-1', { title: 'Build', profile: 'codex' });
     expect(updated.panes['pane-1']).toMatchObject({ title: 'Build', profile: 'codex' });
+  });
+
+  it('updates nested split ratios by stable path and preserves unrelated branches', () => {
+    const root = splitTerminalPane(
+      createInitialTerminalState(),
+      'pane-1',
+      'horizontal',
+      createPaneState('pane-2'),
+    )!;
+    const nested = splitTerminalPane(root, 'pane-1', 'vertical', createPaneState('pane-3'))!;
+    if (nested.layout.type !== 'split') throw new Error('root split missing');
+    const untouchedSecond = nested.layout.second;
+
+    const updated = updateTerminalSplitRatio(nested, ['first'], 0.7);
+    expect(updated).not.toBe(nested);
+    expect(updated.layout).not.toBe(nested.layout);
+    if (updated.layout.type !== 'split' || updated.layout.first.type !== 'split') {
+      throw new Error('nested split missing');
+    }
+    expect(updated.layout.first.ratio).toBe(0.7);
+    expect(updated.layout.second).toBe(untouchedSecond);
+  });
+
+  it('clamps split updates and ignores leaf or missing paths', () => {
+    const state = splitTerminalPane(
+      createInitialTerminalState(),
+      'pane-1',
+      'horizontal',
+      createPaneState('pane-2'),
+    )!;
+    const clamped = updateTerminalSplitRatio(state, [], 99);
+    expect(clamped.layout.type === 'split' ? clamped.layout.ratio : null).toBe(0.8);
+    expect(updateTerminalSplitRatio(state, ['first'], 0.6)).toBe(state);
+    expect(updateTerminalSplitRatio(state, ['second', 'first'], 0.6)).toBe(state);
+    expect(updateTerminalSplitRatio(state, [], 0.5)).toBe(state);
   });
 
   it('hydrates valid layouts, resets process-local lifecycle, and migrates legacy tabs', () => {

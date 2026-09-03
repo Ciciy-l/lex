@@ -6134,6 +6134,7 @@
       "launchAgent": "New CLI pane",
       "focusPane": "Focus {{name}} pane",
       "closePane": "Close pane",
+      "resizePanes": "Resize Terminal Panes",
       "localOnly": "CLI panes are available for local tasks only.",
       "targetResolving": "Resolving the task execution device…",
       "agentNotReady": "This Agent runtime is not ready yet. Finish startup preparation and try again.",

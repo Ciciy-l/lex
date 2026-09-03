@@ -6124,6 +6124,7 @@
       "launchAgent": "新建 CLI 窗格",
       "focusPane": "聚焦 {{name}} 窗格",
       "closePane": "关闭窗格",
+      "resizePanes": "调整终端窗格大小",
       "localOnly": "CLI 窗格目前仅支持本机任务。",
       "targetResolving": "正在解析任务执行设备…",
       "agentNotReady": "该 Agent 运行时尚未准备好，请完成启动准备后重试。",
