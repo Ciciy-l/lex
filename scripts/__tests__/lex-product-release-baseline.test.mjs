@@ -54,6 +54,12 @@ test('release workflows keep one package while choosing signed or versioned unsi
   );
   assert.match(release, /The package keeps its SemVer, GitHub Release, and update manifest/);
   assert.match(preview, /--no-sign/);
+  assert.match(
+    release,
+    /pnpm check:dco -- --base "\$\{GITHUB_SHA\}\^1" --head "\$GITHUB_SHA"/,
+  );
+  assert.match(preview, /pnpm check:dco -- --base origin\/main --head "\$GITHUB_SHA"/);
+  assert.doesNotMatch(`${release}\n${preview}`, /^\s*pnpm check:dco\s*$/m);
   assert.match(updates, /release:\n\s+types: \[published\]/);
   assert.match(updates, /isDraft == false/);
   assert.match(updates, /re\.escape\(version\).*?-hotfix/);
