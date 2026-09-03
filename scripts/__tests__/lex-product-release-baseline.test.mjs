@@ -147,6 +147,16 @@ test('GitHub Pages workflow and self-contained website form a valid download sur
 
   const html = readText('website/index.html');
   const pages = readText('.github/workflows/pages.yml');
+  const pagesWorkflow = YAML.parse(pages);
+  assert.equal(pagesWorkflow.on.release, undefined);
+  assert.deepEqual(pagesWorkflow.on.workflow_run, {
+    workflows: ['publish-lex-update-manifests'],
+    types: ['completed'],
+  });
+  assert.equal(
+    pagesWorkflow.jobs.deploy.if,
+    "github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'",
+  );
   assert.match(html, /<meta name="viewport"/);
   assert.match(html, /@media\(max-width:760px\)/);
   assert.match(html, /fetch\('\.\/release\.json'/);
