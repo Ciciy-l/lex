@@ -147,6 +147,14 @@ export default defineConfig(({ mode }) => {
           // Electron's unpatched filesystem implementation. The legacy userData
           // migration needs physical .asar files to remain ordinary files.
           'original-fs',
+          // node:sqlite is provided by Electron 41's Node 24 runtime, but the
+          // release bundler itself runs on Node 22. Older Vite builtin lists do
+          // not recognize it there and replace the module with
+          // `__vite-browser-external`, which breaks its named exports during
+          // packaging. Keep both spellings external so Electron resolves the
+          // real builtin at runtime.
+          'sqlite',
+          'node:sqlite',
           'bufferutil',
           'utf-8-validate',
           'better-sqlite3',
