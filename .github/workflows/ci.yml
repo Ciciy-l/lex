@@ -6,12 +6,17 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      checkout_ref:
+        description: "Commit SHA to test with the trusted main-branch workflow"
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: client-ci-${{ github.event.pull_request.number || github.ref }}
+  group: client-ci-${{ inputs.checkout_ref || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -34,6 +39,7 @@ jobs:
       - name: Checkout client
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
           fetch-depth: 0
           lfs: true
 
@@ -113,6 +119,7 @@ jobs:
       - name: Checkout client
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
           fetch-depth: 0
           lfs: true
 
@@ -177,6 +184,7 @@ jobs:
       - name: Checkout client
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
           fetch-depth: 0
           lfs: true
 
@@ -224,6 +232,7 @@ jobs:
       - name: Checkout client
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
           fetch-depth: 0
           lfs: true
 

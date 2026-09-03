@@ -9,6 +9,7 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  actions: write
 
 concurrency:
   group: cindy-upstream-sync
@@ -42,13 +43,16 @@ jobs:
         shell: bash
         run: |
           branch='sync/cindy-main'
-          if git diff --quiet origin/main cindy-upstream/main; then
+          # Lex main normally contains product commits that do not exist in Cindy,
+          # so tree equality is not a valid "already synced" test.  The upstream
+          # tip being an ancestor is the actual invariant.
+          if git merge-base --is-ancestor cindy-upstream/main origin/main; then
             echo 'changed=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           git switch --create "$branch" origin/main
-          if ! git merge --no-ff --no-edit cindy-upstream/main; then
+          if ! git merge --no-ff --no-edit --signoff cindy-upstream/main; then
             conflicts="$(git diff --name-only --diff-filter=U | sed 's/^/- /')"
             git merge --abort
             {
@@ -62,6 +66,7 @@ jobs:
           fi
           echo 'changed=true' >> "$GITHUB_OUTPUT"
           echo 'conflict=false' >> "$GITHUB_OUTPUT"
+          echo "merge_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Open or update upstream sync pull request
         if: steps.merge.outputs.changed == 'true' && steps.merge.outputs.conflict != 'true'
@@ -77,6 +82,16 @@ jobs:
               --title 'chore: sync Cindy upstream' \
               --body $'This PR merges the latest main from https://github.com/makecindy/cindy into Lex.\n\nPlease review branding, endpoints, updater behavior, migrations, native dependencies, and the CLI workbench before merging. The normal Lex CI must pass.'
           fi
+
+      # Pull requests created with GITHUB_TOKEN intentionally do not emit a
+      # pull_request workflow event.  workflow_dispatch is the GitHub-supported
+      # exception, and records the normal CI checks on the exact sync-branch SHA.
+      - name: Run CI for the bot sync branch
+        if: steps.merge.outputs.changed == 'true' && steps.merge.outputs.conflict != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SYNC_MERGE_SHA: ${{ steps.merge.outputs.merge_sha }}
+        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main -f checkout_ref="$SYNC_MERGE_SHA"
 
       - name: Report merge conflicts
         if: steps.merge.outputs.conflict == 'true'

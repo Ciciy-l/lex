@@ -26,7 +26,6 @@ jobs:
     timeout-minutes: 15
     env:
       RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
-      RELEASE_PRERELEASE: ${{ github.event.release.prerelease || '' }}
       REPOSITORY: ${{ github.repository }}
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -34,6 +33,18 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Verify the release is published
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_json="$(gh release view "$RELEASE_TAG" --repo "$REPOSITORY" --json isDraft,isPrerelease,publishedAt)"
+          if ! jq -e '.isDraft == false and .publishedAt != null' <<<"$release_json" >/dev/null; then
+            echo "Release $RELEASE_TAG is still a draft or has not been published; refusing to update the public channel." >&2
+            exit 1
+          fi
+          echo "prerelease=$(jq -r '.isPrerelease' <<<"$release_json")" >> "$GITHUB_OUTPUT"
 
       - name: Download release assets
         run: |
@@ -45,13 +56,10 @@ jobs:
       - name: Build platform manifests with checksums
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
-          RELEASE_PRERELEASE: ${{ github.event.release.prerelease || '' }}
+          RELEASE_PRERELEASE: ${{ steps.release.outputs.prerelease }}
           REPOSITORY: ${{ github.repository }}
           CINDY_VENDOR_CDN_BASE: https://hotfix.cindy.app/cindy
         run: |
-          if [ -z "$RELEASE_PRERELEASE" ]; then
-            RELEASE_PRERELEASE="$(gh release view "$RELEASE_TAG" --repo "$REPOSITORY" --json isPrerelease --jq .isPrerelease)"
-          fi
           if [ "$RELEASE_PRERELEASE" = true ]; then
             manifest_suffix='-beta'
             echo "MANIFEST_SUFFIX=$manifest_suffix" >> "$GITHUB_ENV"
@@ -113,7 +121,10 @@ jobs:
               return payload
 
           # Windows emits one x64 installer and hotfix (without an arch suffix).
-          win_hotfix = pick(re.compile(r'-hotfix\.zip$', re.I))
+          # The release also contains macOS *-arm64-hotfix.zip and
+          # *-x64-hotfix.zip. Anchor Windows to the exact SemVer segment so
+          # the generic suffix cannot select three assets at once.
+          win_hotfix = pick(re.compile(rf'-{re.escape(version)}-hotfix\.zip$', re.I))
           win_installer = pick(re.compile(r'-Setup\.exe$', re.I))
           (out / f'manifest-win32-x64{suffix}.json').write_text(json.dumps(app_payload('win32-x64', {
               'version': version, 'releaseNotes': f'Lex {version}',
@@ -136,12 +147,6 @@ jobs:
               'version': version, 'releaseNotes': f'Lex {version}',
               'installer': asset(linux)
           }), indent=2) + '\n')
-          # Keep the complete endpoint schema (auth/API/website endpoints are
-          # still Cindy-compatible until Lex operates its own services), while
-          # replacing only the update/CDN channel with the Lex branch.
-          endpoint = json.loads(pathlib.Path('config/endpoint.global.json').read_text())
-          endpoint['cdnBaseUrl'] = 'https://raw.githubusercontent.com/Ciciy-l/lex/updates'
-          (out / 'endpoint.json').write_text(json.dumps(endpoint, indent=2) + '\n')
           PY
 
       - name: Publish manifests to the Lex updates branch
