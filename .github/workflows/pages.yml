@@ -1,0 +1,69 @@
+name: deploy-lex-website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - "config/lex-product.json"
+      - ".github/workflows/pages.yml"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: lex-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout the public site
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          sparse-checkout: |
+            website
+            config/lex-product.json
+
+      - name: Generate latest release metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          api_file="$RUNNER_TEMP/lex-releases.json"
+          if gh api "repos/$GITHUB_REPOSITORY/releases?per_page=20" > "$api_file" && jq -e '[.[] | select(.draft == false and .published_at != null)] | length > 0' "$api_file" >/dev/null; then
+            jq '[.[] | select(.draft == false and .published_at != null)][0] | {
+              version: (.tag_name | sub("^v"; "")),
+              tag: .tag_name,
+              prerelease: .prerelease,
+              publishedAt: .published_at,
+              releaseUrl: .html_url,
+              assets: [.assets[] | {name: .name, url: .browser_download_url, size: .size}]
+            }' "$api_file" > website/release.json
+          fi
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
+        with:
+          enablement: true
+
+      - name: Upload website artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+        with:
+          path: website
+
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5

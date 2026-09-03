@@ -56,9 +56,7 @@ import { useLocale } from '@/hooks/useLocale';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Tip } from '@/components/ui/tooltip';
 import { fetchReleaseNotes } from '@/release-notes';
-
-// 运行期端点清单(dev/packaged 都在启动阻断后有真值,烘焙兜底已退役)
-const websiteUrl = () => window.electronAPI.clientEndpoints.websiteUrl;
+import { LEX_DOWNLOAD_PAGE_URL } from '../../../shared/endpoints';
 
 interface UpdateBannerProps {
   isCollapsed: boolean;
@@ -265,12 +263,12 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
 
   const handleManualDownload = () => {
     setShowTranslocatedDialog(false);
-    window.open(websiteUrl(), '_blank');
+    void window.electronAPI.openExternal(LEX_DOWNLOAD_PAGE_URL);
   };
 
   const handleSpawnFailedDownload = () => {
     setShowSpawnFailedDialog(false);
-    window.open(websiteUrl(), '_blank');
+    void window.electronAPI.openExternal(LEX_DOWNLOAD_PAGE_URL);
   };
 
   // 文字链要显示的版本 —— undefined 即不显示。ready 态之外(superseding / error)没有

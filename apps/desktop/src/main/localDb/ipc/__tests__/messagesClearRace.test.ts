@@ -3,6 +3,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { messages, sessions } from '../../schema';
+import { tx as runTx } from '../../worker/opHandlers/tx';
 
 const h = vi.hoisted(() => ({
   db: null as ReturnType<typeof drizzle> | null,
@@ -63,6 +64,9 @@ function createDb(): Database.Database {
     CREATE TABLE sessions (
       id TEXT PRIMARY KEY,
       cleared_at INTEGER,
+      list_preview TEXT,
+      list_preview_role TEXT,
+      list_message_count INTEGER,
       status TEXT NOT NULL DEFAULT 'active'
     );
     CREATE TABLE messages (
@@ -92,6 +96,12 @@ function createDb(): Database.Database {
         sqlite.prepare('UPDATE sessions SET cleared_at = ? WHERE id = ?').run(200, 's1');
       }
       return sqlite.prepare(sql).run(...params);
+    }),
+    tx: vi.fn(async (name: string, args: unknown) => {
+      if (h.raceOnInsert && name === 'message.insert') {
+        sqlite.prepare('UPDATE sessions SET cleared_at = ? WHERE id = ?').run(200, 's1');
+      }
+      return runTx(sqlite, { name, args });
     }),
   };
   return sqlite;

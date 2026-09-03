@@ -58,7 +58,6 @@ import {
 } from '../localDb/dialogueWorkspace.js';
 import * as authManager from '../authManager.js';
 import { getClientEndpoint } from '../clientEndpointsService.js';
-import { CURRENT_CINDY_REGION } from '../../shared/brandRegion.js';
 import { getAppCapabilities } from '../appCapabilities.js';
 import { ownerScopedUserDataPath } from '../appSessionState.js';
 import {
@@ -382,11 +381,11 @@ function broadcastTelegramBehavior(view: TelegramHookBehaviorState): void {
   }
 }
 
-/** Never persist raw account identity; region also isolates shared dev userData. */
+/** Never persist raw account identity; account realm disambiguates same ids across services. */
 function currentAccountFingerprint(): string | null {
   const userId = authManager.getCurrentUserId();
   if (!userId) return null;
-  const fingerprintSource = `${CURRENT_CINDY_REGION}\0${userId}`;
+  const fingerprintSource = `${authManager.getActiveAuthRealm()}\0${userId}`;
   // userId is a public account identifier used only for local namespacing, not a password.
   // codeql[js/insufficient-password-hash]
   return createHash('sha256').update(fingerprintSource).digest('base64url').slice(0, 22);

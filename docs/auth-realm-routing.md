@@ -1,109 +1,98 @@
-# 组织登录区域路由
+# Lex Desktop 账号服务区路由
 
-Cindy 的中国大陆版与国际版仍是两个独立的安装包和更新通道。组织 SSO 登录可以在
-用户提交企业标识后自动发现组织所在的 auth 区域，并让本次登录会话使用该区域的完整
-服务端点。
+Lex Desktop 只发布一个安装包、一个系统身份和一个更新通道。中国大陆与 Global
+在本文中表示 **Cindy 账号服务区（realm）**，不表示两个 Lex 版本。权威产品边界见
+[`product-rules/region-and-editions.md`](./product-rules/region-and-editions.md)。
 
-## 两类区域状态
+## 三类状态
 
-- `buildRegion`：由安装包决定，控制 App ID、URL scheme、品牌、法律链接、网站、
-  CDN 与更新通道；运行期不可切换。
-- `sessionRealm`：`cn | global`，控制 auth、device-link、oauth-broker、OSS、
-  heartbeat、model-access、voice、GitHub、SkillHub、plugin 与 hook 等所有使用
-  登录令牌的服务；组织登录成功后一直保留到登出。
+- `compatBuildRegion`：上游兼容构建参数。它仍用于旧凭证迁移、开发端点自举和内部
+  `dev` 身份，但 `cn` / `global` 必须映射到同一个 Lex app ID、可执行文件、
+  userData 目录和更新通道。它不能用于判断当前账号的数据面。
+- `selectedPersonalRealm`：未登录或新增账号时，用户在登录页明确选择的
+  `cn | global`。Main 持有真值，Renderer 只能通过受信任 IPC 请求变更。
+- `activeSessionRealm`：登录成功后与凭证绑定的服务区。保存账号切换、冷启动刷新和
+  运行时 token 轮换都从凭证记录恢复该值。
 
-两者可以不同。例如，中国大陆安装包可以登录位于 `global` 的组织；它的更新仍来自
-中国大陆安装包通道，但组织数据与带 Bearer token 的业务请求全部走 `global`。
+Lex 产品官网、支持入口、GitHub Release 和更新清单不随账号 realm 改变。Cindy
+账号、订阅、模型、Device Link、远控和其他带账号语义的在线服务随会话 realm 路由。
 
-## 端点清单契约
+## 个人登录
 
-区域身份不由远端清单自报，而由构建时注入的受信任地址表决定：
+登录页默认选择 Global，并允许用户切换到中国大陆。切换后 Main 先加载目标 realm
+的受信任端点清单，再返回该区的登录方式；邮箱/手机号、验证码、Captcha、社交登录
+和 Cindy 官方协议链接都复用同一个冻结 realm。
 
-- `*.cindy.com.cn` 对应中国大陆区域；
-- `*.cindy.app` 对应国际区域。
+一旦进入浏览器跳转或已经得到组织发现结果，本次流程的 realm 不能再切换。取消、
+reset 或失败清理临时票据；已登录账号在新账号提交成功前不受影响。
 
-构建脚本分别读取 `config/endpoint.json` 与 `config/endpoint.global.json` 的
-`cdnBaseUrl`，把当前区域和对端区域的两个清单基址烘焙进客户端。远端
-`endpoint.json` 继续使用原有 `schemaVersion: 1` 与业务端点字段，不要求
-`region`、`crossRealmOrgLoginEnabled` 或 `realmManifestBaseUrls`。
+## 企业 SSO 发现
 
-客户端从某个受信任地址加载到清单后，就把它归入该地址对应的区域，并使用其中的
-`authApiBaseUrl` 调用该区 auth-server。discovery 响应仍必须包含 `region`，且必须与
-请求的区域一致；这可以防止 CDN 或 auth-server 配错后把组织路由到错误数据面。
+企业 ID、组织 slug 或已验证域名会在 CN/Global 两区分别发现组织归属：
 
-## 发现与失败规则
-
-用户提交企业 ID、组织 slug 或已验证域名后，客户端直接并行加载两区清单，分别取出
-各自的 `authApiBaseUrl`，再并行调用两区 `POST /api/auth/sso/discovery`。服务端响应
-包含自报的 `region`。
-
-- 一区成功、另一区明确返回 `ORG_SSO_NOT_FOUND`：选择成功区域。
-- 两区都成功：`ORG_REALM_AMBIGUOUS`，不自动猜测。
+- 一区成功、另一区明确返回 `ORG_SSO_NOT_FOUND`：使用成功区域。
+- 两区都成功：返回 `ORG_REALM_AMBIGUOUS`，不猜测。
 - 两区都明确未找到：保留 `ORG_SSO_NOT_FOUND`。
-- 任一区超时、不可达、响应非法或区域不匹配：`ORG_REALM_UNAVAILABLE`；即使另一区
-  成功也 fail closed。
+- 任一区超时、不可达、响应非法或区域不匹配：返回
+  `ORG_REALM_UNAVAILABLE`，即使另一侧成功也 fail closed。
 
-发现结果与 `buildRegion` 相同时直接进入连接选择，不显示额外确认。发现结果与
-`buildRegion` 不同时，客户端显示目标区域，并说明继续后 Cindy 将连接该区域；用户
-确认后才进入连接选择并继续 SSO，取消或 reset 会丢弃临时区域。安装包及更新通道仍由
-`buildRegion` 固定，无需在确认文案中重复说明。选中的临时区域用于本次 SSO
-authorize、callback、授权码兑换、联系方式验证与身份选择。
+发现结果与登录页当前选择不同时，界面必须先显示目标服务区并取得确认，再允许启动
+SSO。后续 authorize、callback、授权码兑换、联系方式验证和 membership 选择始终
+复用发现得到的 realm。
 
-## 会话持久化与恢复
+## 端点清单与缓存
 
-Desktop safeStorage 和 Mobile SecureStore 都只保存一个加密的原子记录：
+CN 与 Global 的清单自举地址都是构建期信任锚。客户端下载清单时记录目标 realm，
+并要求清单自报的 region（若存在）与目标一致：
 
-```json
-{ "version": 1, "realm": "global", "refreshToken": "…" }
-```
+- `*.cindy.com.cn` 属于中国大陆服务区；
+- `*.cindy.app` 属于 Global 服务区；
+- 只有源码明确列出的共享 Hook 端点可以跨域。
 
-旧版裸 refresh token 只在一次性迁移时按 `buildRegion` 解释。冷启动先加载并核验记录中
-区域的端点清单，再向该区域 refresh；对端清单暂不可用时保留记录供重试，禁止退回
-`buildRegion` 发送 token。Desktop 在 refresh 返回组织 membership 后才允许激活跨区业务
-端点；个人 membership 只有在 `sessionRealm === buildRegion` 时才能恢复。跨区个人
-session 被拒绝时，Desktop 仍把轮换后的 refresh token 写回原 realm，但保持未登录且不
-删除记录，避免破坏共享 userData 中另一实例仍在使用的会话。登出会清除记录和
-`sessionRealm`，业务端点恢复安装包区域。
+两区缓存使用独立文件。网络失败时只允许读取同一 realm、同一 `sourceUrl` 的缓存，
+读回后重新做严格语法和主机白名单校验。解析失败、region 不匹配或不可信主机不得
+降级到缓存，也不得退回兼容构建区域发送 token。旧版单文件缓存只可作为其原构建区
+的一次性兼容候选。
 
-Mobile 的 Pending OAuth 同时保存 `realm`，但 redirect scheme 始终使用当前安装包的
-scheme。个人验证码和社交登录不做跨区域发现，也不合并两区 passport。
+## 凭证、账号与本地数据
 
-## 模型访问与媒体目录边界
+Desktop safeStorage/vault 保存带 realm 的凭证记录。保存账号的 key 与展示摘要也带
+realm；冷启动、刷新和账号切换必须先加载记录所属 realm 的端点，再发送 token。
+token 轮换先原子写回原 realm，之后才发布新登录态。
 
-Desktop 的 model-access 身份由 `(userId, sessionRealm)` 共同确定。登出、换账号或
-同账号切换 realm 时，客户端立即清空旧 XD 动态模型清单，作废旧身份在途的凭据与
-`/models` 响应，并从当前 realm 重新同步；迟到响应不得写回凭据或覆盖新区域模型。
+当前 Cindy Device Link 与本地多处存储仍要求使用服务端的裸 membership ID，不能
+直接把对外 owner 改成 `realm:id`。同时，两区并未承诺 membership ID 全局唯一。
+在后续 Profile Registry 以 `(realm, membershipId)` 全面派生本地 namespace 之前，
+Lex 采用兼容优先的过渡保护：如果设备上已知另一 realm 使用相同裸 ID，拒绝激活
+第二个身份并返回 `ACCOUNT_NAMESPACE_CONFLICT`。显式登录会回滚本次凭证提交；
+冷启动或运行时刷新保留服务端刚轮换的有效 token，但不发布冲突身份。
 
-XD 媒体能力属于 `buildRegion` 产品能力，不随组织 `sessionRealm` 跨区扩张。
-Global 构建保留目录中的完整图像与视频清单；中国大陆和 dev 构建会同时投影动态
-agent 清单里的媒体能力组与静态媒体清单：不暴露图像模型，视频仅暴露
-`seedance-fast` 与 `seedance-pro`。设置页、模型停用成员校验和 Cindy 媒体运行时
-都消费 main 侧同一投影策略，Renderer 不另做隐藏。
+## 运行期消费者
 
-## Mobile 推送撤销
+活动 realm 变化时，Main 先切换账号端点，再重载或失效以下消费者：
 
-Mobile 按 `sessionRealm` 分别保存推送注册与待注销状态。登出、换账号或换区域时，
-客户端会在替换 Access Token 和业务端点之前，用旧 Token 向旧区域现有的鉴权接口
-`DELETE /api/device-link/push-token` 发起 best-effort 撤销；请求同时携带本机 APNs token，
-便于同一区域内清理同一安装留下的旧账号记录。
+- Model Access 目录、Provider 推荐和 XD 能力投影；
+- 订阅、余额、账单币种和用量展示；
+- IM Bot 区域可见性；
+- Cindy 官网、移动端下载二维码和官方协议链接；
+- Device Link、远控及其他使用当前账号令牌的连接。
 
-撤销失败不能阻断退出或登录。待注销标记仍绑定原区域，并且只会在客户端以后重新持有
-该区域登录态时重试；CN Token 不会发送到 Global 端点，Global Token 也不会发送到 CN
-端点。两区 device-link-server 不互相信任、不互查数据，也不需要新增跨区鉴权端点、
-数据库字段、密钥或环境变量。
+Renderer 可以使用 `AuthState.serviceRealm` 调整展示，但不能据此拼接服务 URL；URL
+仍由 Main 的已校验端点表提供。Lex 自身的更新地址始终来自
+`config/lex-product.json`，不参与账号 realm 切换。
 
-## 上线与回滚
+## Mobile 边界
 
-按以下顺序发布：
+当前 Lex 里程碑只发行 Desktop。仓库中的 Mobile 仍是上游 Cindy 客户端；Lex
+Desktop 的二维码按当前账号 realm 指向相应 Cindy 官方移动端下载页。本文不改变
+Cindy Mobile 自身的安装、凭证或推送协议。
 
-1. 先升级中国大陆和国际 `auth-server`，确保 discovery 响应都包含正确的 `region`。
-2. 确认两区 `endpoint.json` 均可公网访问，且各自 `authApiBaseUrl` 指向同区域的
-   auth-server。
-3. 发布包含双区域可信清单地址的 Desktop 与 Mobile 客户端；device-link-server 无需
-   为区域路由增加部署步骤。
-4. 用同区组织和跨区组织各验证一次发现、确认、登录、冷启动恢复与登出；Mobile 还需
-   验证换账号或区域时，旧区域在新会话提交前收到推送撤销请求。
+## 验收要点
 
-需要紧急回滚新的组织发现能力时，应通过客户端版本回滚或客户端级开关处理，不能删除
-任一区域清单；已建立的跨区会话仍需要按保存的 `sessionRealm` 加载原区域端点并刷新
-token。
+1. 同一个 Lex 安装可以分别登录 CN 和 Global 账号，系统身份与更新通道不变。
+2. 登录每个子流程只使用 Main 冻结的 realm，Renderer 不能自行改写路由。
+3. 保存账号、冷启动和 token 轮换不会把一侧凭证发送到另一侧端点。
+4. 两区清单缓存互不覆盖，且缓存不能扩大编译期主机信任边界。
+5. 同裸 membership ID 的跨 realm 身份在 Profile Registry 完成前 fail closed。
+6. 账号切换后模型、Provider、账单、IM、协议与 Cindy Mobile 下载入口同步刷新。
+7. Lex Release、官网、支持入口和自动更新始终保持 Lex 自有单通道。

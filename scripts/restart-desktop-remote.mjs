@@ -517,7 +517,13 @@ export function hasIsolationIntent(argv = [], env = process.env) {
 }
 
 export function officialProductionUserDataDirs() {
-  return DESKTOP_DEV_REGIONS.map((region) => productionUserDataDir(region));
+  // Keep the pre-unification `Lex` profile protected as well. It may still
+  // contain credentials from early preview builds even though cn/global now
+  // share the single `LexGlobal` production profile.
+  return [...new Set([
+    userDataDirNamed(BRAND_USER_DATA_DIR_NAME),
+    ...DESKTOP_DEV_REGIONS.map((region) => productionUserDataDir(region)),
+  ])];
 }
 
 /** 与 devCliFlags ISOLATION_NAME_RE 一致：非法名字回落默认沙箱，不把路径段写进目录。 */

@@ -82,6 +82,9 @@ vi.mock('react-i18next', () => ({
 vi.mock('@/hooks/useApiKey', () => ({
   useApiKey: () => ({ hasSavedKey: false, isReconciling: false }),
 }));
+vi.mock('@/contexts/AuthContext', () => ({
+  useAuth: () => ({ serviceRealm: 'global' }),
+}));
 vi.mock('@/hooks/useClaudeOAuthConnected', () => ({
   useClaudeOAuthConnected: () => true,
 }));

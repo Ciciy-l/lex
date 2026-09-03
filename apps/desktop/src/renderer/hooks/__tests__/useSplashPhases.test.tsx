@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   coverHeld: false,
   updateErrorCode: undefined as string | undefined,
 }));
+const openExternal = vi.fn(async () => ({ success: true }));
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -62,12 +63,18 @@ describe('useSplash phase 表', () => {
     mocks.coverHeld = false;
     mocks.updateErrorCode = undefined;
     mocks.checkEnvironment.mockClear();
+    openExternal.mockClear();
     (
       window as unknown as {
-        electronAPI: { clientEndpoints: { websiteUrl: string } };
-        open: typeof window.open;
+        electronAPI: {
+          clientEndpoints: { websiteUrl: string };
+          openExternal: typeof openExternal;
+        };
       }
-    ).electronAPI = { clientEndpoints: { websiteUrl: 'https://cindy.example/download' } };
+    ).electronAPI = {
+      clientEndpoints: { websiteUrl: 'https://cindy.example/download' },
+      openExternal,
+    };
     window.matchMedia = vi.fn().mockReturnValue({
       matches: false,
       addEventListener: () => {},
@@ -172,9 +179,8 @@ describe('useSplash phase 表', () => {
     }
   });
 
-  it('CTA 动作语义:manifest/download 重试 → checkEnvironment;spawn →「前往下载」window.open,不触发 retry', () => {
+  it('CTA 动作语义:manifest/download 重试 → checkEnvironment;spawn → 打开 Lex 下载页,不触发 retry', () => {
     mocks.envStatus = 'manifest_failed';
-    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
     const { result } = renderHook(() => useSplash());
 
     act(() => result.current.onRetryManifest());
@@ -184,10 +190,9 @@ describe('useSplash phase 表', () => {
     expect(mocks.checkEnvironment).toHaveBeenCalledTimes(2);
 
     act(() => result.current.onSpawnFailedDownload());
-    expect(openSpy).toHaveBeenCalledWith('https://cindy.example/download', '_blank');
+    expect(openExternal).toHaveBeenCalledWith('https://github.com/Ciciy-l/lex/releases');
     // spawn CTA 禁 retry:不得追加 checkEnvironment 调用(v6.12/v6.14)
     expect(mocks.checkEnvironment).toHaveBeenCalledTimes(2);
-    openSpy.mockRestore();
   });
 
   it('onTipsClick 仅在 splash_failed 触发 checkEnvironment', () => {

@@ -2,8 +2,6 @@
  * 单轮费用计算。定价先看实际 billing route，再看模型；模型名不再决定来源。
  */
 
-import type { CindyRegion } from '@cindy/maker-shared/brand-identity';
-
 import { gatewayLedgerCurrency, getModelPriceQuote } from '../../shared/modelPriceQuote.js';
 import {
   addRegionalMoney,
@@ -111,7 +109,6 @@ export function billingRouteForExplicitProvider(
 export interface TurnPricingContext {
   providerId: string | null;
   billingRoute: BillingRoute;
-  region: CindyRegion;
 }
 
 export type TurnCostSource = 'sdk' | 'gateway' | 'reference' | 'sdk-fallback' | 'subscription';

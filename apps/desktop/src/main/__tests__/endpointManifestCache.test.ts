@@ -15,12 +15,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CROSS_REGION_ENDPOINT_KEYS,
   ENDPOINT_MANIFEST_CACHE_FILE_NAME,
+  ENDPOINT_MANIFEST_CACHE_FILE_BY_REALM,
   REGION_ENDPOINT_DOMAIN,
   findBootstrapHostOutsideTrustedDomains,
   findUntrustedCachedEndpoint,
   formatCacheSavedAt,
   readEndpointManifestCache,
+  readEndpointManifestCacheForRealm,
   writeEndpointManifestCache,
+  writeEndpointManifestCacheForRealm,
 } from '../endpointManifestCache';
 
 let dir: string;
@@ -41,6 +44,10 @@ const ENTRY = {
 
 function cacheFile(): string {
   return path.join(dir, ENDPOINT_MANIFEST_CACHE_FILE_NAME);
+}
+
+function realmCacheFile(region: 'cn' | 'global'): string {
+  return path.join(dir, ENDPOINT_MANIFEST_CACHE_FILE_BY_REALM[region]);
 }
 
 // Windows 上创建 symlink 需要管理员或开发者模式;拿不到权限时(EPERM)跳过相关
@@ -67,6 +74,19 @@ describe('endpointManifestCache', () => {
     const nested = path.join(dir, 'a', 'b');
     expect(writeEndpointManifestCache(nested, ENTRY)).toBe(true);
     expect(readEndpointManifestCache(nested)).toEqual(ENTRY);
+  });
+
+  it('CN / Global 使用独立文件且互不覆盖', () => {
+    const cn = { ...ENTRY, sourceUrl: 'https://hotfix.cindy.com.cn/cindy/endpoint.json' };
+    const global = { ...ENTRY, sourceUrl: 'https://hotfix.cindy.app/cindy/endpoint.json' };
+
+    expect(writeEndpointManifestCacheForRealm(dir, 'cn', cn)).toBe(true);
+    expect(writeEndpointManifestCacheForRealm(dir, 'global', global)).toBe(true);
+    expect(readEndpointManifestCacheForRealm(dir, 'cn')).toEqual(cn);
+    expect(readEndpointManifestCacheForRealm(dir, 'global')).toEqual(global);
+    expect(fs.existsSync(realmCacheFile('cn'))).toBe(true);
+    expect(fs.existsSync(realmCacheFile('global'))).toBe(true);
+    expect(readEndpointManifestCache(dir)).toBeNull();
   });
 
   it('写入不留下临时文件', () => {

@@ -8,6 +8,8 @@ import { afterEach, test } from 'node:test';
 import {
   desktopClientBuildEnv,
   loadEndpointManifestBaseUrl,
+  loadLexProductConfig,
+  loadLexUpdateManifestBaseUrl,
   loadPeerEndpointManifestBaseUrl,
   mobileClientBundleEnv,
   mobileClientBundleProcessEnv,
@@ -33,6 +35,10 @@ test('desktop/mobile 构建从 region 清单的 cdnBaseUrl 生成自举环境变
 
   assert.deepEqual(desktopClientBuildEnv({ allowEnvOverride: false, repoRoot }), {
     VITE_CINDY_AUTH_REGION: 'global',
+    VITE_LEX_HOMEPAGE_URL: 'https://lex.example.invalid/',
+    VITE_LEX_DOWNLOAD_PAGE_URL: 'https://downloads.lex.example.invalid/latest',
+    VITE_LEX_SUPPORT_URL: 'https://support.lex.example.invalid/issues',
+    VITE_LEX_UPDATE_MANIFEST_BASE_URL: 'https://updates.lex.example.invalid/app',
     VITE_ENDPOINT_MANIFEST_BASE_URL: 'https://hotfix-global.example.invalid/app',
     VITE_ENDPOINT_MANIFEST_PEER_BASE_URL: 'https://hotfix-cn.example.invalid/app',
   });
@@ -60,6 +66,17 @@ test('desktop/mobile 构建从 region 清单的 cdnBaseUrl 生成自举环境变
     loadPeerEndpointManifestBaseUrl({ authRegion: 'cn', repoRoot }),
     'https://hotfix-global.example.invalid/app',
   );
+  assert.equal(
+    loadLexUpdateManifestBaseUrl(repoRoot),
+    'https://updates.lex.example.invalid/app',
+  );
+  assert.deepEqual(loadLexProductConfig(repoRoot), {
+    schemaVersion: 1,
+    homepageUrl: 'https://lex.example.invalid/',
+    downloadPageUrl: 'https://downloads.lex.example.invalid/latest',
+    supportUrl: 'https://support.lex.example.invalid/issues',
+    updateManifestBaseUrl: 'https://updates.lex.example.invalid/app',
+  });
 });
 
 test('Mobile bundling 进程环境只在 CindyDev 保留 Release 清单基址', () => {
@@ -172,6 +189,36 @@ test('端点清单自举基址缺失、非法协议或携带凭据时 fail close
   assert.throws(() => loadEndpointManifestBaseUrl({ authRegion: 'cn', repoRoot }), /HTTPS/);
 });
 
+test('Lex 产品地址缺失、非法协议或携带凭据时 fail closed', () => {
+  const repoRoot = writeRepoFixtures();
+  const productPath = path.join(repoRoot, 'config', 'lex-product.json');
+  const valid = loadLexProductConfig(repoRoot);
+
+  for (const field of [
+    'homepageUrl',
+    'downloadPageUrl',
+    'supportUrl',
+    'updateManifestBaseUrl',
+  ]) {
+    const missing = { ...valid };
+    delete missing[field];
+    fs.writeFileSync(productPath, JSON.stringify(missing));
+    assert.throws(() => loadLexProductConfig(repoRoot), new RegExp(field));
+
+    fs.writeFileSync(
+      productPath,
+      JSON.stringify({ ...valid, [field]: 'http://lex.example.invalid' }),
+    );
+    assert.throws(() => loadLexProductConfig(repoRoot), /HTTPS/);
+
+    fs.writeFileSync(
+      productPath,
+      JSON.stringify({ ...valid, [field]: 'https://user:pass@lex.example.invalid' }),
+    );
+    assert.throws(() => loadLexProductConfig(repoRoot), /HTTPS/);
+  }
+});
+
 test('发布 CDN 只接受显式 XDT_CDN_BASE_URL', () => {
   delete process.env.XDT_CDN_BASE_URL;
   assert.throws(() => resolveReleaseCdnBaseUrl(), /XDT_CDN_BASE_URL/);
@@ -195,6 +242,16 @@ function writeRepoFixtures() {
   fs.writeFileSync(
     path.join(configDir, 'endpoint.dev.json'),
     JSON.stringify({ schemaVersion: 1, cdnBaseUrl: 'https://hotfix-dev.example.invalid/app/' }),
+  );
+  fs.writeFileSync(
+    path.join(configDir, 'lex-product.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      homepageUrl: 'https://lex.example.invalid/',
+      downloadPageUrl: 'https://downloads.lex.example.invalid/latest',
+      supportUrl: 'https://support.lex.example.invalid/issues',
+      updateManifestBaseUrl: 'https://updates.lex.example.invalid/app/',
+    }),
   );
   return repoRoot;
 }

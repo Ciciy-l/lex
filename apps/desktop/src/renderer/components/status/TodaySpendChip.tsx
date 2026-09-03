@@ -63,6 +63,7 @@ import {
 } from '@/hooks/useSessionUsageMoney';
 import { useSessionTokens } from '@/hooks/useSessionTokens';
 import { useChatDisplaySnapshot } from '@/components/chat/ChatDisplaySnapshotContext';
+import { useAuth } from '@/contexts/AuthContext';
 import {
   requestCodexAccountRefresh,
   useAccountUsage,
@@ -107,7 +108,6 @@ import {
 import { aggregateAssistantTurnUsageDetails } from '@/lib/userTurnUsage';
 import type { TurnUsageDetails } from '../../../shared/turnUsageDetails';
 import {
-  DEFAULT_USAGE_CURRENCY,
   gatewayMoney,
   type RegionalMoney,
 } from '../../../shared/regionalMoney';
@@ -145,9 +145,6 @@ const PRIMARY_GATEWAY_METRICS: readonly MetricKey[] = ['daily', 'credit', 'sessi
 const DAY_MS = 24 * 60 * 60 * 1000;
 const QUOTA_POPOVER_OPEN_DELAY_MS = 300;
 const QUOTA_POPOVER_CLOSE_GRACE_MS = 200;
-const DEFAULT_MONEY_SYMBOL = DEFAULT_USAGE_CURRENCY === 'CNY' ? '¥' : '$';
-const DEFAULT_MONEY_PLACEHOLDER = `${DEFAULT_MONEY_SYMBOL}—`;
-
 const PLAN_TYPE_LABELS: Record<string, string> = {
   free: 'Free',
   go: 'Go',
@@ -187,25 +184,28 @@ function computeMetricSlots(
   claudeQuota: ClaudeAccountUsageSnapshot | null,
   creditTotals: CreditTotals | null,
   sessionMoney: RegionalMoney | null,
+  defaultCurrency: RegionalMoney['currency'],
   t: TFunction,
 ): Record<MetricKey, MetricSlot> {
+  const defaultMoneySymbol = defaultCurrency === 'CNY' ? '¥' : '$';
+  const defaultMoneyPlaceholder = `${defaultMoneySymbol}—`;
   const slots: Record<MetricKey, MetricSlot> = {
-    daily: { label: t('todaySpend.dailyLimitLabel', { spend: DEFAULT_MONEY_PLACEHOLDER, limit: DEFAULT_MONEY_PLACEHOLDER }), available: false },
-    monthly: { label: t('todaySpend.monthlyLimitLabel', { spend: DEFAULT_MONEY_PLACEHOLDER, limit: DEFAULT_MONEY_PLACEHOLDER }), available: false },
-    credit: { label: t('todaySpend.creditLabel', { used: DEFAULT_MONEY_PLACEHOLDER, total: DEFAULT_MONEY_PLACEHOLDER }), available: false },
-    session: { label: t('todaySpend.sessionCostLabel', { cost: DEFAULT_MONEY_PLACEHOLDER }), available: false },
+    daily: { label: t('todaySpend.dailyLimitLabel', { spend: defaultMoneyPlaceholder, limit: defaultMoneyPlaceholder }), available: false },
+    monthly: { label: t('todaySpend.monthlyLimitLabel', { spend: defaultMoneyPlaceholder, limit: defaultMoneyPlaceholder }), available: false },
+    credit: { label: t('todaySpend.creditLabel', { used: defaultMoneyPlaceholder, total: defaultMoneyPlaceholder }), available: false },
+    session: { label: t('todaySpend.sessionCostLabel', { cost: defaultMoneyPlaceholder }), available: false },
   };
 
   // 额度池账本没有周期概念(订阅发放 + 充值 + 赠送), 所以不派生日均软限额。
   // 账本历史缺失的池按余额兜底(见 resolveCreditTotals), 保证「总额 − 已用」恒等于
   // 设置页那个可用余额, chip 上永远是两个数、不退化成单值。
   //
-  // 币种走 gatewayMoney 的默认值(DEFAULT_USAGE_CURRENCY = 按发行区域)。这三池是
+  // 三池账本 API 没有单独返回币种，按当前 Cindy 账号 realm 选择展示币种。这三池是
   // Cindy 自己的计费账本, 与账单页 BILLING_CURRENCY 同一笔钱、必须同口径 —— 不能
   // 改用 Gateway 目录下发的币种, 否则同一笔余额在两个界面显示成不同货币。
   if (creditTotals) {
-    const used = formatCompactMoney(gatewayMoney(creditTotals.used));
-    const total = formatCompactMoney(gatewayMoney(creditTotals.total));
+    const used = formatCompactMoney(gatewayMoney(creditTotals.used, defaultCurrency));
+    const total = formatCompactMoney(gatewayMoney(creditTotals.total, defaultCurrency));
     slots.credit = {
       label: t('todaySpend.creditLabel', { used, total }),
       tooltipLabel: t('todaySpend.tooltip.creditUsed', { used, total }),
@@ -1091,6 +1091,10 @@ export function TodaySpendChip({
   deviceLinkDeviceId,
 }: TodaySpendChipProps) {
   const { t, i18n } = useTranslation();
+  const { serviceRealm } = useAuth();
+  const defaultMoneyCurrency: RegionalMoney['currency'] =
+    serviceRealm === 'cn' ? 'CNY' : 'USD';
+  const defaultMoneySymbol = defaultMoneyCurrency === 'CNY' ? '¥' : '$';
   const formatterLocale = i18n.resolvedLanguage ?? i18n.language;
   // device-link 远程会话:turn 跑在被控端、消耗被控端账号,计费形态(订阅/网关)与账号
   // 余量的事实都在被控端 —— 本机的 route 观察 / 账号快照与之无关,一律不读、不据此分类。
@@ -1564,7 +1568,7 @@ export function TodaySpendChip({
     const chipSegments = sessionSegment ? [sessionSegment] : [];
     labelNode = chipSegments.length > 0
       ? renderSegmentedLabel(chipSegments)
-      : <span className="tabular-nums opacity-60">{DEFAULT_MONEY_SYMBOL}</span>;
+      : <span className="tabular-nums opacity-60">{defaultMoneySymbol}</span>;
     const tooltipLines: string[] = [];
     pushSessionUsageLines(tooltipLines, sessionUsage, sessionTokens, t);
     appendLatestTurnUsageLines(tooltipLines, latestTurnUsage, t);
@@ -1575,7 +1579,7 @@ export function TodaySpendChip({
     if (sessionSegment) chipSegments.push(sessionSegment);
     labelNode = chipSegments.length > 0
       ? renderSegmentedLabel(chipSegments)
-      : <span className="tabular-nums opacity-60">{DEFAULT_MONEY_SYMBOL}</span>;
+      : <span className="tabular-nums opacity-60">{defaultMoneySymbol}</span>;
     tooltipNode = buildCodexTooltipNode(
       accountUsage,
       sessionTokens,
@@ -1593,7 +1597,7 @@ export function TodaySpendChip({
     if (sessionSegment) chipSegments.push(sessionSegment);
     labelNode = chipSegments.length > 0
       ? renderSegmentedLabel(chipSegments)
-      : <span className="tabular-nums opacity-60">{DEFAULT_MONEY_SYMBOL}</span>;
+      : <span className="tabular-nums opacity-60">{defaultMoneySymbol}</span>;
     tooltipNode = buildXaiTooltipNode(
       xaiSubscriptionUsage,
       xaiRateLimit,
@@ -1611,9 +1615,15 @@ export function TodaySpendChip({
     if (sessionSegment) chipSegments.push(sessionSegment);
     labelNode = chipSegments.length > 0
       ? renderSegmentedLabel(chipSegments)
-      : <span className="tabular-nums opacity-60">{DEFAULT_MONEY_SYMBOL}</span>;
+      : <span className="tabular-nums opacity-60">{defaultMoneySymbol}</span>;
   } else {
-    const slots = computeMetricSlots(claudeQuota, creditTotals, sessionMoney, t);
+    const slots = computeMetricSlots(
+      claudeQuota,
+      creditTotals,
+      sessionMoney,
+      defaultMoneyCurrency,
+      t,
+    );
     const chipSegments = getGatewayChipSegments(slots);
     const codexApiHasTokenFallback = isCodexApi
       && !slots.session.available
@@ -1674,7 +1684,7 @@ export function TodaySpendChip({
           </span>
         );
       } else {
-        labelNode = <span className="tabular-nums opacity-60">{DEFAULT_MONEY_SYMBOL}</span>;
+        labelNode = <span className="tabular-nums opacity-60">{defaultMoneySymbol}</span>;
       }
     } else {
       // 之前用纯字符串 ".join(' · ')" — middle dot · 落在 x-height, 周围混着 cap-height

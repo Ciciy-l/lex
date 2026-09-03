@@ -48,7 +48,7 @@ describe('agent capabilities shared model', () => {
   it('uses the same 2–3 letter English effort codes on desktop and mobile', () => {
     expect(
       ['minimal', 'low', 'medium', 'high', 'xhigh', 'ultra', 'max'].map(
-        compactEnglishEffortLabel,
+        (effort) => compactEnglishEffortLabel(effort),
       ),
     ).toEqual(['Min', 'Lo', 'Mid', 'Hi', 'XHi', 'Ult', 'Max']);
     expect(compactEnglishEffortLabel('extra-high')).toBe('XHi');

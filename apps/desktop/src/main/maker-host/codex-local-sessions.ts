@@ -17,8 +17,8 @@ import path from 'node:path';
 import readline from 'node:readline';
 
 import {
-  allUserDataDirNames,
   brandUserDataDirName,
+  legacyBrandUserDataDirNames,
 } from '@cindy/maker-shared/brand-identity';
 import { CURRENT_CINDY_REGION } from '../../shared/brandRegion.js';
 
@@ -1378,11 +1378,14 @@ function acceptStateBackedWinnerAfterRecovery(
   return winner;
 }
 
-/** 当前区域的全部历史品牌 Codex HOME;不包含当前区域正在使用的 HOME。 */
+/**
+ * 品牌翻转前的 Codex HOME。这里只做源文件快照式读取与私有复制，不把这些
+ * 目录加入 Lex 的进程认领/清理范围；单一 Lex 发行版因此仍能恢复旧 Cindy
+ * 会话，同时不会误杀仍在运行的旧客户端 Agent。
+ */
 function legacyBrandedCodexHomes(targetHome: string): string[] {
   const userDataParent = path.dirname(path.dirname(targetHome));
-  return allUserDataDirNames(CURRENT_CINDY_REGION)
-    .slice(1)
+  return legacyBrandUserDataDirNames()
     .map((dirName) => path.join(userDataParent, dirName, 'codex-home'));
 }
 
@@ -3755,7 +3758,7 @@ function getDesktopCodexHome(): string {
     /* fallback for non-Electron test runners */
   }
 
-  // 兜底路径按现有区域目录映射取值(global=CindyGlobal,cn=Cindy，同机双装分库)。
+  // 兜底路径按 Lex 安装身份取值；cn/global 兼容参数同目录，dev 单独隔离。
   const dirName = brandUserDataDirName(CURRENT_CINDY_REGION);
   if (process.platform === 'darwin') {
     return path.join(os.homedir(), 'Library', 'Application Support', dirName, 'codex-home');

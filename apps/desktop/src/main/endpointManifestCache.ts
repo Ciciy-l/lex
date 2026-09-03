@@ -13,7 +13,7 @@
  *    绕过一次真实的配置错);
  *  - 读回来的原文必须重新走同一套严格解析,磁盘内容不被信任;
  *  - 记录写入时的清单地址,升级或换区导致自举基址变化时缓存直接作废;
- *  - **端点主机必须落在写死的、按构建区域收紧的域内**(见 REGION_ENDPOINT_DOMAIN;
+ *  - **端点主机必须落在写死的、按目标账号 realm 收紧的域内**(见 REGION_ENDPOINT_DOMAIN;
  *    只有 slack / telegram hook 这两个跨区共享服务例外)。
  *
  * 最后一条是安全边界,不是洁癖(review 抓到):这个文件位于 userData,可被其他进程
@@ -21,7 +21,7 @@
  * 指向自己 https 主机的缓存,再让清单 CDN 不可达,用户点「用上次配置启动」之后
  * authManager 就会把 access token 发到那台主机(凭证泄露)。真正的修法是服务端签名,
  * 但那是跨仓改动;在此之前用**编译期锚点**把爆炸半径收掉:允许的域是源码里写死的、
- * 且按构建区域收紧的(REGION_ENDPOINT_DOMAIN),任何 userData 写入都改不了它。
+ * 且按目标账号 realm 收紧的(REGION_ENDPOINT_DOMAIN),任何 userData 写入都改不了它。
  *
  * 存储位置按 credentials-and-local-storage.md:Desktop 持久数据放
  * `app.getPath('userData')`。清单本身是 CDN 上公开可读的配置,不含任何凭证。
@@ -31,9 +31,17 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import type { ClientEndpointRegion } from '@cindy/maker-shared/client-endpoints';
 import type { SupportedLocale } from '../shared/locale.js';
 
+/** 旧版单区域缓存名，仅用于当前构建区的向后兼容读取。 */
 export const ENDPOINT_MANIFEST_CACHE_FILE_NAME = 'endpoint-manifest-cache.json';
+export const ENDPOINT_MANIFEST_CACHE_FILE_BY_REALM: Readonly<
+  Record<ClientEndpointRegion, string>
+> = Object.freeze({
+  cn: 'endpoint-manifest-cache-cn.json',
+  global: 'endpoint-manifest-cache-global.json',
+});
 
 /**
  * 缓存**文件**体积上限;超过即视为异常文件,不读也不写。
@@ -55,8 +63,8 @@ export interface CachedEndpointManifest {
   manifestText: string;
 }
 
-function cacheFilePath(userDataDir: string): string {
-  return path.join(userDataDir, ENDPOINT_MANIFEST_CACHE_FILE_NAME);
+function cacheFilePath(userDataDir: string, fileName: string): string {
+  return path.join(userDataDir, fileName);
 }
 
 /**
@@ -127,8 +135,11 @@ function readRegularFileWithin(file: string, maxBytes: number): string | null {
  * 读缓存。文件缺失、损坏、字段类型不对或体积异常都返回 null(缓存是可选辅助,
  * 任何异常都不该影响启动流程)。
  */
-export function readEndpointManifestCache(userDataDir: string): CachedEndpointManifest | null {
-  const file = cacheFilePath(userDataDir);
+function readEndpointManifestCacheFile(
+  userDataDir: string,
+  fileName: string,
+): CachedEndpointManifest | null {
+  const file = cacheFilePath(userDataDir, fileName);
   const raw = readRegularFileWithin(file, MAX_CACHE_FILE_BYTES);
   if (raw === null) return null;
   let parsed: unknown;
@@ -154,6 +165,19 @@ export function readEndpointManifestCache(userDataDir: string): CachedEndpointMa
   return { savedAt, sourceUrl, manifestText };
 }
 
+/** 读取旧版单区域缓存；新代码应优先使用按 realm 分区的入口。 */
+export function readEndpointManifestCache(userDataDir: string): CachedEndpointManifest | null {
+  return readEndpointManifestCacheFile(userDataDir, ENDPOINT_MANIFEST_CACHE_FILE_NAME);
+}
+
+/** 读取指定 Cindy 账号服务区的独立缓存。 */
+export function readEndpointManifestCacheForRealm(
+  userDataDir: string,
+  region: ClientEndpointRegion,
+): CachedEndpointManifest | null {
+  return readEndpointManifestCacheFile(userDataDir, ENDPOINT_MANIFEST_CACHE_FILE_BY_REALM[region]);
+}
+
 /**
  * 写缓存(先写临时文件再 rename,避免断电/崩溃留下半份 JSON)。
  * 返回 false = 写失败;调用方只记日志,不阻断启动。
@@ -168,15 +192,16 @@ export function readEndpointManifestCache(userDataDir: string): CachedEndpointMa
  * O_CREAT|O_EXCL 遇到 symlink 也必定失败;随机后缀则保证不会被"先占位"卡住。
  * 最终的 renameSync 不跟随 symlink,所以 target 被换成 symlink 也只是被替换掉。
  */
-export function writeEndpointManifestCache(
+function writeEndpointManifestCacheFile(
   userDataDir: string,
   entry: CachedEndpointManifest,
+  fileName: string,
 ): boolean {
   // 量最终落盘的那份字节,并用同一份结果写入:读路径按文件字节数卡同一上限,
   // 两端量同一个东西才不会出现"写得进、读不回"。
   const payload = JSON.stringify(entry, null, 2);
   if (Buffer.byteLength(payload, 'utf8') > MAX_CACHE_FILE_BYTES) return false;
-  const target = cacheFilePath(userDataDir);
+  const target = cacheFilePath(userDataDir, fileName);
   const tmp = `${target}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
   let fd: number | null = null;
   try {
@@ -204,10 +229,31 @@ export function writeEndpointManifestCache(
   }
 }
 
+/** 写入旧版单区域缓存；保留给兼容测试与旧调用方。 */
+export function writeEndpointManifestCache(
+  userDataDir: string,
+  entry: CachedEndpointManifest,
+): boolean {
+  return writeEndpointManifestCacheFile(userDataDir, entry, ENDPOINT_MANIFEST_CACHE_FILE_NAME);
+}
+
+/** 按 Cindy 账号服务区独立写入，避免 CN / Global 清单相互覆盖。 */
+export function writeEndpointManifestCacheForRealm(
+  userDataDir: string,
+  region: ClientEndpointRegion,
+  entry: CachedEndpointManifest,
+): boolean {
+  return writeEndpointManifestCacheFile(
+    userDataDir,
+    entry,
+    ENDPOINT_MANIFEST_CACHE_FILE_BY_REALM[region],
+  );
+}
+
 // ── 缓存端点的受信任域约束 ──────────────────────────────────────────────────
 
 /**
- * **各构建区域的端点域**——离线缓存的信任锚点,写死在源码里。
+ * **各 Cindy 账号 realm 的端点域**——离线缓存的信任锚点,写死在源码里。
  *
  * 为什么不从自举基址「去掉最左一段」推导(第一次 review 抓到):那样做在多段公共后缀上
  * 会**放宽**信任。`https://example.co.uk` 去掉一段得到 `co.uk`,于是任何人注册的
@@ -237,7 +283,7 @@ export const REGION_ENDPOINT_DOMAIN: Readonly<Record<'cn' | 'global', string>> =
  * 跨区共享的 hook 服务:两份清单(含 CN)都指向 cindy.app,所以只有这几个 hook key
  * 允许落在 Global 域。**别往这里加 key** —— 每加一个就等于允许该端点跨区,而这个集合之外
  * 的所有端点(尤其 auth / device-link / oauth-broker / model-access / voice)必须锁在
- * 本构建区域,否则就回到上面说的跨区 token 误发。
+ * 当前目标 realm,否则就回到上面说的跨区 token 误发。
  */
 export const CROSS_REGION_ENDPOINT_KEYS: ReadonlySet<string> = new Set([
   'slackHookWsUrl',
@@ -247,7 +293,7 @@ export const CROSS_REGION_ENDPOINT_KEYS: ReadonlySet<string> = new Set([
 
 /** 缓存端点的来源策略:按 key 决定它允许落在哪个域。 */
 export interface CachedEndpointOriginPolicy {
-  /** 本构建区域的端点域(REGION_ENDPOINT_DOMAIN[buildRegion])。 */
+  /** 当前目标账号 realm 的端点域(REGION_ENDPOINT_DOMAIN[realm])。 */
   regionDomain: string;
   /** 跨区共享 hook 允许落在的域(固定是 Global 域)。 */
   crossRegionDomain: string;

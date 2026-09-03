@@ -5328,7 +5328,7 @@
     "backToLogin": "Back to sign-in"
   },
   "login": {
-    "title": "Welcome to Cindy",
+    "title": "Welcome to Lex",
     "subtitle": "Choose a secure way to sign in",
     "phonePlaceholder": "Enter your phone number",
     "emailPlaceholder": "Enter your email",
@@ -5409,8 +5409,13 @@
       "returnButton": "Return to {{appName}}"
     },
     "regionPill": {
-      "cn": "CN",
+      "cn": "Mainland China",
       "dev": "Dev"
+    },
+    "serviceRealm": {
+      "cn": "Mainland China",
+      "global": "Global",
+      "switch": "Cindy service region: {{realm}} · Switch"
     },
     "captcha": {
       "title": "Security check",
@@ -5422,6 +5427,7 @@
     "errors": {
       "fallback": "Sign-in failed. Please try again.",
       "AUTH_SERVICE_UNAVAILABLE": "The sign-in service is temporarily unavailable.",
+      "ACCOUNT_NAMESPACE_CONFLICT": "This account identifier is already used by another Cindy service region on this device. Sign-in was blocked to protect local data.",
       "AUTH_REQUEST_FAILED": "The sign-in request failed. Please try again.",
       "NETWORK_ERROR": "Could not connect. Check your network and try again.",
       "REQUEST_TIMEOUT": "The request timed out. Please try again.",

@@ -19,6 +19,7 @@ const loginHook = vi.hoisted(() => ({
     isLoading: false,
     errorCode: null as string | null,
     loginState: null as unknown,
+    loginRealm: 'cn' as const,
     dispatch: vi.fn(async () => true),
     dispatchWithResult: vi.fn(async () => ({ success: true, code: null })),
     clearError: vi.fn(),
@@ -45,7 +46,6 @@ vi.mock('@/components/title-bar/WindowControls', () => ({ WindowControls: () => 
 
 import { LoginPage } from '../LoginPage';
 import { parseLegalSegments } from '../LoginControls';
-import { LEGAL_LINKS } from '../../../../shared/legalLinks';
 
 const CN_TERMS_URL = 'https://protocol.xd.cn/cindy/agreement.html';
 const CN_PRIVACY_URL = 'https://protocol.xd.cn/cindy/privacy-1.0.html';
@@ -77,6 +77,7 @@ function mount(state: AuthFlowState | null, extra?: Partial<typeof loginHook.val
     isLoading: false,
     errorCode: null,
     loginState: state,
+    loginRealm: 'cn' as const,
     dispatch: vi.fn(async () => true),
     dispatchWithResult: vi.fn(async () => ({ success: true, code: null })),
     clearError: vi.fn(),
@@ -176,9 +177,17 @@ describe('协议同意行', () => {
     // 链接点击不影响勾选态、不弹同意弹窗
     expect(screen.getByTestId('login-consent-radio').getAttribute('aria-checked')).toBe('false');
     expect(screen.queryByTestId('login-consent-dialog')).toBeNull();
-    // 区域分流单点:测试构建 = cn(未注入 VITE_CINDY_AUTH_REGION)
-    expect(LEGAL_LINKS.termsOfService).toBe(CN_TERMS_URL);
-    expect(LEGAL_LINKS.privacyPolicy).toBe(CN_PRIVACY_URL);
+  });
+
+  it('服务区切换由受校验登录 action 交给 Main，且只请求目标 realm', async () => {
+    mount(await identifierState('providers:cn-social'));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('login-service-realm-switch'));
+    });
+    expect(loginHook.value.dispatch).toHaveBeenCalledWith({
+      type: 'select-realm',
+      realm: 'global',
+    });
   });
 });
 

@@ -23,7 +23,6 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useAuth } from '@/contexts/AuthContext';
-import { CURRENT_CINDY_REGION } from '../../../shared/brandRegion';
 import { DiscordBotSection } from './DiscordBotSection';
 import { DingTalkBotSection } from './DingTalkBotSection';
 import { FeishuBotSection } from './FeishuBotSection';
@@ -116,9 +115,9 @@ function PersonalGroupContent({
 
 export function ImBotSection({ targetGroup }: { targetGroup: ImBotSettingsGroup | null }) {
   const { t } = useTranslation();
-  const { mode, dataOwnerId, user } = useAuth();
+  const { mode, dataOwnerId, serviceRealm, user } = useAuth();
   const identity: ImBotIdentity = {
-    region: CURRENT_CINDY_REGION,
+    region: serviceRealm,
     mode,
     membershipKind: user?.membershipKind ?? null,
   };

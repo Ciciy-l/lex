@@ -8,6 +8,7 @@ vi.mock('react-i18next', () => ({
     t: (key: string) => key,
   }),
 }));
+vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ serviceRealm: 'global' }) }));
 
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn() },

@@ -2,6 +2,10 @@
 
 interface ImportMetaEnv {
   readonly VITE_CINDY_AUTH_REGION: 'cn' | 'global' | 'dev';
+  readonly VITE_LEX_HOMEPAGE_URL: string;
+  readonly VITE_LEX_DOWNLOAD_PAGE_URL: string;
+  readonly VITE_LEX_SUPPORT_URL: string;
+  readonly VITE_LEX_UPDATE_MANIFEST_BASE_URL: string;
   /** 当前构建区域的端点清单自举基址；业务端点走 electronAPI.clientEndpoints。 */
   readonly VITE_ENDPOINT_MANIFEST_BASE_URL: string;
   /** 另一物理区域的受信任端点清单自举基址。 */
@@ -553,6 +557,8 @@ interface FeishuBotRegistrationStatusPayload {
 /** Auth state pushed from main → renderer via 'auth:state-change'. */
 interface AuthStateChangePayload {
   user: AuthUser | null;
+  /** Cindy service realm for the active account or current signed-out selection. */
+  serviceRealm: 'cn' | 'global';
   mode: 'signed-out' | 'local' | 'cloud';
   dataOwnerId: string | null;
   ownerGeneration: number;
@@ -1117,8 +1123,13 @@ interface ElectronAPI {
   ) => () => void;
   osRelease: string;
   appVersion: string;
-  /** 运行期端点清单(main 启动时远程 → 缓存 → 烘焙解析;重启生效)。 */
-  clientEndpoints: { websiteUrl: string };
+  /** Cindy 服务端点由 Main 按当前账号 realm 选择；Renderer 不持有业务真值。 */
+  clientEndpoints: {
+    /** 启动清单快照，仅供旧消费点兼容。 */
+    websiteUrl: string;
+    /** 当前已激活账号 realm 对应的 Cindy 官网。 */
+    getActiveWebsiteUrl: () => Promise<string>;
+  };
   appDisplayVersion: string;
   appDisplayVersionDetail: string;
   preferredSystemLocale: ApplicationMenuLocale;
@@ -2041,6 +2052,8 @@ interface ElectronAPI {
   authHasPersistedSessionHintSync: () => boolean;
   authInitialize: () => Promise<{
     user: AuthUser | null;
+    /** Cindy service realm for the active account or current signed-out selection. */
+    serviceRealm: 'cn' | 'global';
     mode: 'signed-out' | 'local' | 'cloud';
     dataOwnerId: string | null;
     ownerGeneration: number;

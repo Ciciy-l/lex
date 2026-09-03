@@ -3,11 +3,13 @@ import type {
   AccountDeletionAvailability,
   AccountDeletionStatus,
   AuthFlowState,
+  AuthRegion,
   VerificationKind,
 } from '@cindy/auth-client';
 
 export type DesktopLoginAction =
   | { type: 'reset' }
+  | { type: 'select-realm'; realm: AuthRegion }
   | { type: 'cancel-browser' }
   | { type: 'discover'; email: string }
   | { type: 'discover-sso-org'; org: string }
@@ -28,12 +30,14 @@ export type DesktopLoginAction =
   | { type: 'verify-binding'; contact: string; code: string };
 
 export type DesktopLoginActionResult =
-  | { success: true; state: AuthFlowState }
-  | { success: false; code: string; state: AuthFlowState | null };
+  | { success: true; state: AuthFlowState; realm: AuthRegion }
+  | { success: false; code: string; state: AuthFlowState | null; realm: AuthRegion };
 
 export interface DesktopSavedAccount {
   /** Opaque main-owned identifier. Renderer must not derive realm or membership ids from it. */
   accountKey: string;
+  /** Display-only Cindy service realm; the opaque accountKey remains authoritative for switching. */
+  serviceRealm: AuthRegion;
   displayName: string;
   email: string | null;
   avatarUrl: string | null;
@@ -105,6 +109,10 @@ export function parseDesktopLoginAction(value: unknown): DesktopLoginAction | nu
   switch (value.type) {
     case 'reset':
       return { type: 'reset' };
+    case 'select-realm':
+      return value.realm === 'cn' || value.realm === 'global'
+        ? { type: 'select-realm', realm: value.realm }
+        : null;
     case 'cancel-browser':
       return { type: 'cancel-browser' };
     case 'discover':

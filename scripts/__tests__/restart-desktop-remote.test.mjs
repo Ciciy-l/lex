@@ -223,16 +223,16 @@ test("userData conflict detection matches exact sandbox dirs only", () => {
 	);
 });
 
-test("shared production userData path is region-aware", () => {
+test("shared production userData path is realm-independent", () => {
 	assert.equal(path.basename(productionUserDataDir()), "LexGlobal");
 	assert.equal(path.basename(productionUserDataDir("global")), "LexGlobal");
-	assert.equal(path.basename(productionUserDataDir("cn")), "Lex");
+	assert.equal(path.basename(productionUserDataDir("cn")), "LexGlobal");
 	assert.equal(path.basename(productionUserDataDir("dev")), "LexDev");
 });
 
-test("default isolated userData path is region-aware", () => {
+test("default isolated userData path follows the unified production identity", () => {
 	assert.equal(path.basename(defaultIsolatedUserDataDir("", "global")), "LexGlobal-dev2");
-	assert.equal(path.basename(defaultIsolatedUserDataDir("", "cn")), "Lex-dev2");
+	assert.equal(path.basename(defaultIsolatedUserDataDir("", "cn")), "LexGlobal-dev2");
 	assert.equal(path.basename(defaultIsolatedUserDataDir("review", "dev")), "LexDev-dev2-review");
 });
 

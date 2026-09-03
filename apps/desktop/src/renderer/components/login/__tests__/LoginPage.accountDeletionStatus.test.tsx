@@ -8,6 +8,7 @@ const loginHook = vi.hoisted(() => ({
     isLoading: false,
     errorCode: null,
     loginState: { step: 'browser-redirect' as const, label: 'Google' },
+    loginRealm: 'cn' as const,
     hasAccountDeletionReceipt: true,
     getAccountDeletionStatus: vi.fn(),
     clearAccountDeletionReceipt: vi.fn(),

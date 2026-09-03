@@ -21,10 +21,11 @@ import { useAutoUpdateSettings } from '@/hooks/useAutoUpdateSettings';
 import { useAnalyticsSettings } from '@/hooks/useAnalyticsSettings';
 import { useLogUploadSettings } from '@/hooks/useLogUploadSettings';
 import { extractIpcError } from '@/utils/ipcError';
+import { useAuth } from '@/contexts/AuthContext';
 import { DefaultOverrideControls } from './DefaultOverrideControls';
 import { StorageManagementCard } from './StorageManagementCard';
 import { CURRENT_CINDY_REGION } from '../../../shared/brandRegion';
-import { LEGAL_LINKS } from '../../../shared/legalLinks';
+import { legalLinksForRealm } from '../../../shared/legalLinks';
 
 interface AgentVersionState {
   loading: boolean;
@@ -166,17 +167,19 @@ export function AboutSection() {
 
 export function LegalLinksRows() {
   const { t } = useTranslation();
+  const { serviceRealm } = useAuth();
+  const legalLinks = legalLinksForRealm(serviceRealm);
 
   return (
     <>
       <LegalLinkRow
         label={t('settings.about.legal.termsOfServiceLabel')}
-        url={LEGAL_LINKS.termsOfService}
+        url={legalLinks.termsOfService}
       />
       <Divider />
       <LegalLinkRow
         label={t('settings.about.legal.privacyPolicyLabel')}
-        url={LEGAL_LINKS.privacyPolicy}
+        url={legalLinks.privacyPolicy}
       />
     </>
   );

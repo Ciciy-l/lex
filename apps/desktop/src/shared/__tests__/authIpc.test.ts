@@ -96,6 +96,15 @@ describe('desktop auth IPC validation', () => {
 
   it('accepts each non-browser action shape', () => {
     expect(parseDesktopLoginAction({ type: 'reset' })).toEqual({ type: 'reset' });
+    expect(parseDesktopLoginAction({ type: 'select-realm', realm: 'cn', ignored: true })).toEqual({
+      type: 'select-realm',
+      realm: 'cn',
+    });
+    expect(parseDesktopLoginAction({ type: 'select-realm', realm: 'global' })).toEqual({
+      type: 'select-realm',
+      realm: 'global',
+    });
+    expect(parseDesktopLoginAction({ type: 'select-realm', realm: 'dev' })).toBeNull();
     expect(parseDesktopLoginAction({ type: 'cancel-browser' })).toEqual({
       type: 'cancel-browser',
     });

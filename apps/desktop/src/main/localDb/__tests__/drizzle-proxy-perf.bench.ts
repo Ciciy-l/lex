@@ -20,6 +20,12 @@ const ITERATIONS = 1_000;
 const WARMUP = 100;
 // 全量 vitest 会和大量测试并发，worker 线程尾延迟会被调度噪声放大；严格性能门禁必须通过专用命令独立运行。
 const STRICT_PERF_GATE = process.env.XDT_DB_PROXY_PERF_STRICT === '1';
+// The benchmark itself finishes in roughly 15 seconds on the supported local
+// Windows toolchain, but a full Desktop sweep can starve its DB worker for more
+// than two minutes while the Git integration workers are busy. Keep the Linux
+// and macOS liveness bound unchanged; allow enough headroom on Windows without
+// changing the samples or any strict performance threshold.
+const PERF_TEST_TIMEOUT_MS = process.platform === 'win32' ? 300_000 : 120_000;
 
 let workerBundleDir: string | undefined;
 let workerScriptPath: string;
@@ -62,11 +68,16 @@ const CREATE_TABLES = [
       im_user_id TEXT,
       used_project_context INTEGER NOT NULL DEFAULT 0,
       codex_history_has_product_prompt INTEGER,
+      codex_plan_json TEXT,
       extra_dirs TEXT NOT NULL DEFAULT '[]',
+      writable_dirs TEXT NOT NULL DEFAULT '[]',
       remote_host_id TEXT,
       active_turn_started_at INTEGER,
       active_turn_pid INTEGER,
       last_turn_ended_at INTEGER,
+      list_preview TEXT,
+      list_preview_role TEXT,
+      list_message_count INTEGER,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     )
@@ -241,7 +252,7 @@ describe('MR2.2 Step 0 drizzle proxy performance baseline', () => {
       await client.dispose();
       inprocSqlite.close();
     }
-  }, 120_000);
+  }, PERF_TEST_TIMEOUT_MS);
 });
 
 async function setupSqlite(db: Database.Database): Promise<void> {

@@ -7,6 +7,7 @@ interface UseLoginReturn {
   isLoading: boolean;
   errorCode: string | null;
   loginState: ReturnType<typeof useAuth>['loginState'];
+  loginRealm: ReturnType<typeof useAuth>['loginRealm'];
   hasAccountDeletionReceipt: boolean;
   getAccountDeletionStatus: ReturnType<typeof useAuth>['getAccountDeletionStatus'];
   clearAccountDeletionReceipt: ReturnType<typeof useAuth>['clearAccountDeletionReceipt'];
@@ -34,6 +35,7 @@ interface UseLoginReturn {
 export function useLogin(): UseLoginReturn {
   const {
     loginState,
+    loginRealm,
     loadLoginState,
     dispatchLoginAction,
     hasAccountDeletionReceipt,
@@ -97,6 +99,7 @@ export function useLogin(): UseLoginReturn {
     isLoading,
     errorCode,
     loginState,
+    loginRealm,
     hasAccountDeletionReceipt,
     getAccountDeletionStatus,
     clearAccountDeletionReceipt,

@@ -5,7 +5,7 @@
  * 挂载方(NewMakerDraftRoute)只决定位置与 device-link gate。所有行为都是导航,
  * 不在卡内做 OAuth:
  *   - 推荐行:cloud → 设置定位 Cindy AI(?connect=xd);signed-out/local → /login。
- *   - 主列表/「其他供应商」折叠区按构建区域装配(cn=国内预设主列,global=OAuth
+ *   - 主列表/「其他供应商」折叠区按当前 Cindy 账号服务区装配(cn=国内预设主列,global=OAuth
  *     三家主列,见 useProviderOnboarding.primaryRows 注释):内置渠道 → 向导授权步,
  *     预设 → 向导表单步(均 ?connect=<id>)。
  *   - 「我有 API key」→ 向导目录第一步(?wizard=1)。

@@ -5318,7 +5318,7 @@
     "backToLogin": "返回登录方式"
   },
   "login": {
-    "title": "欢迎使用 Cindy",
+    "title": "欢迎使用 Lex",
     "subtitle": "选择一种方式安全登录",
     "phonePlaceholder": "请输入手机号",
     "emailPlaceholder": "请输入邮箱",
@@ -5399,8 +5399,13 @@
       "returnButton": "回到 {{appName}}"
     },
     "regionPill": {
-      "cn": "CN",
+      "cn": "中国大陆",
       "dev": "Dev"
+    },
+    "serviceRealm": {
+      "cn": "中国大陆",
+      "global": "Global",
+      "switch": "Cindy 服务区：{{realm}} · 切换"
     },
     "captcha": {
       "title": "安全验证",
@@ -5412,6 +5417,7 @@
     "errors": {
       "fallback": "登录失败，请稍后重试",
       "AUTH_SERVICE_UNAVAILABLE": "登录服务暂不可用",
+      "ACCOUNT_NAMESPACE_CONFLICT": "此设备上已有另一 Cindy 服务区使用相同的账号标识。为保护本地数据，已阻止登录。",
       "AUTH_REQUEST_FAILED": "登录请求失败，请重试",
       "NETWORK_ERROR": "网络连接失败，请检查网络",
       "REQUEST_TIMEOUT": "请求超时，请重试",

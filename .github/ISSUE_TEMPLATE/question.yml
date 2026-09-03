@@ -18,5 +18,5 @@ body:
     attributes:
       label: "环境 / Environment"
       value: |
-        - Cindy 版本或 commit / version or commit:
+        - Lex 版本或 commit / version or commit:
         - 平台与版本 / platform & OS version:

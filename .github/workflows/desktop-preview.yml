@@ -13,15 +13,6 @@ on:
           - win32
           - darwin
           - linux
-      region:
-        description: "Lex region identity to package"
-        required: true
-        default: global
-        type: choice
-        options:
-          - global
-          - cn
-          - dev
       skip_smoke:
         description: "Skip launching the packaged app (debugging only)"
         required: true
@@ -32,7 +23,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: desktop-preview-${{ github.ref }}-${{ inputs.platform }}-${{ inputs.region }}
+  group: desktop-preview-${{ github.ref }}-${{ inputs.platform }}
   cancel-in-progress: true
 
 env:
@@ -119,6 +110,9 @@ jobs:
       - name: Run unit tests
         run: pnpm test:unit
 
+      - name: Validate Lex preview and website contracts
+        run: pnpm exec node scripts/__tests__/lex-product-release-baseline.test.mjs
+
   package:
     name: Preview ${{ matrix.platform }}
     needs:
@@ -171,7 +165,7 @@ jobs:
       - name: Package unsigned preview
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          PREVIEW_REGION: ${{ inputs.region }}
+          PREVIEW_REGION: global
           SKIP_SMOKE: ${{ inputs.skip_smoke }}
         shell: bash
         run: |
@@ -186,10 +180,10 @@ jobs:
           pnpm release:package -- "${args[@]}"
 
       - name: Upload unsigned preview artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: lex-preview-unsigned-${{ inputs.region }}-${{ matrix.platform }}-${{ github.sha }}
-          path: apps/desktop/release/artifacts/${{ inputs.region }}/unversioned/
+          name: lex-preview-unsigned-${{ matrix.platform }}-${{ github.sha }}
+          path: apps/desktop/release/artifacts/global/unversioned/
           if-no-files-found: error
           retention-days: 14
 

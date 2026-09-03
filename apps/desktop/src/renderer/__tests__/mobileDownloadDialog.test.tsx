@@ -12,6 +12,9 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
+const authState = vi.hoisted(() => ({ serviceRealm: 'cn' as 'cn' | 'global' }));
+vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => authState }));
+
 const { toDataURL } = vi.hoisted(() => ({
   toDataURL: vi.fn(async () => 'data:image/png;base64,mobile-download'),
 }));
@@ -36,6 +39,7 @@ const globalStyles = readFileSync(resolve(__dirname, '..', 'styles', 'globals.cs
 const themeColors = readFileSync(resolve(__dirname, '..', 'themes', 'colors.ts'), 'utf8');
 
 const openExternal = vi.fn(async () => ({ success: true }));
+const getActiveWebsiteUrl = vi.fn(async () => 'https://cindy.cn');
 type DeviceLinkState = Awaited<ReturnType<ElectronAPI['deviceLink']['getState']>>;
 const getState = vi.fn<() => Promise<DeviceLinkState>>(async () => ({
   remoteControlEnabled: true,
@@ -86,9 +90,12 @@ const onConnectionIssue = vi.fn(() => vi.fn());
 const detachedTriggerRef = { current: null as HTMLButtonElement | null };
 
 beforeEach(() => {
+  authState.serviceRealm = 'cn';
   toDataURL.mockClear();
   toastError.mockClear();
   openExternal.mockClear();
+  getActiveWebsiteUrl.mockReset();
+  getActiveWebsiteUrl.mockResolvedValue('https://cindy.cn');
   getState.mockClear();
   listDevices.mockClear();
   presenceChangedHandler = undefined;
@@ -98,7 +105,7 @@ beforeEach(() => {
   Object.defineProperty(window, 'electronAPI', {
     configurable: true,
     value: {
-      clientEndpoints: { websiteUrl: 'https://cindy.cn' },
+      clientEndpoints: { websiteUrl: 'https://cindy.cn', getActiveWebsiteUrl },
       openExternal,
       deviceLink: {
         getState,
@@ -322,6 +329,39 @@ describe('MobileDownloadDialog', () => {
     expect(openExternal).toHaveBeenCalledWith('https://cindy.cn/download/');
   });
 
+  it('re-reads the Main-owned website when the signed-in account realm changes', async () => {
+    getActiveWebsiteUrl
+      .mockResolvedValueOnce('https://realm-cn.example.com')
+      .mockResolvedValueOnce('https://realm-global.example.com');
+    const props = {
+      open: true,
+      onOpenChange: vi.fn(),
+      remoteAvailable: true,
+      onOpenRemoteSettings: vi.fn(),
+      onOpenDevices: vi.fn(),
+      triggerRef: detachedTriggerRef,
+    };
+    const view = render(<MobileDownloadDialog {...props} />);
+
+    await waitFor(() =>
+      expect(toDataURL).toHaveBeenCalledWith(
+        'https://realm-cn.example.com/download/',
+        expect.any(Object),
+      ),
+    );
+
+    authState.serviceRealm = 'global';
+    view.rerender(<MobileDownloadDialog {...props} />);
+
+    await waitFor(() => expect(getActiveWebsiteUrl).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(toDataURL).toHaveBeenCalledWith(
+        'https://realm-global.example.com/download/',
+        expect.any(Object),
+      ),
+    );
+  });
+
   it('reports a failed handoff to the system browser', async () => {
     openExternal.mockResolvedValueOnce({ success: false });
     render(
@@ -335,7 +375,11 @@ describe('MobileDownloadDialog', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'sidebar.mobileDownload.openPage' }));
+    const openButton = screen.getByRole('button', {
+      name: 'sidebar.mobileDownload.openPage',
+    });
+    await waitFor(() => expect((openButton as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(openButton);
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith('sidebar.mobileDownload.openFailed'),
     );
@@ -351,7 +395,7 @@ describe('MobileDownloadDialog', () => {
   it('retries QR generation when the dialog is reopened after a failure', async () => {
     // 用独立站点绕开模块级二维码缓存(缓存按 URL 命中,复用 cindy.cn 会直接拿到
     // 前面用例生成好的结果,失败路径根本走不到)。
-    window.electronAPI.clientEndpoints.websiteUrl = 'https://qr-retry.example.com';
+    getActiveWebsiteUrl.mockResolvedValue('https://qr-retry.example.com');
     toDataURL.mockRejectedValueOnce(new Error('canvas busy'));
     const props = {
       onOpenChange: vi.fn(),
@@ -572,7 +616,7 @@ describe('MobileDownloadDialog', () => {
   });
 
   it('focuses a usable fallback when the download endpoint is invalid', async () => {
-    window.electronAPI.clientEndpoints.websiteUrl = 'not-a-url';
+    getActiveWebsiteUrl.mockResolvedValue('not-a-url');
     render(
       <MobileDownloadDialog
         open

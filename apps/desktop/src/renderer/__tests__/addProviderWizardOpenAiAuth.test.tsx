@@ -32,6 +32,7 @@ const { triggerLogin, cancelLogin, codexAuthMock } = vi.hoisted(() => ({
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'zh-CN' } }),
 }));
+vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ serviceRealm: 'cn' }) }));
 
 vi.mock('@/hooks/useCodexAuth', () => ({
   // 与真实实现同签名同判定(loading 沿用 providerConnected,其余仅

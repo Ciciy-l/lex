@@ -45,8 +45,7 @@
     "export:login-callback-template": "tsx scripts/export-login-callback-template.ts"
   },
   "author": {
-    "name": "XD Inc.",
-    "email": "feedback@cindy.app"
+    "name": "Lex contributors"
   },
   "license": "Apache-2.0",
   "dependencies": {

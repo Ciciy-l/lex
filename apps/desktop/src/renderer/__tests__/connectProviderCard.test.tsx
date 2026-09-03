@@ -17,22 +17,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ProviderView } from '@cindy/model-providers';
 
-const { providersState, authState, regionState, detectState, exitLocalModeMock } = vi.hoisted(
+const { providersState, authState, detectState, exitLocalModeMock } = vi.hoisted(
   () => ({
     providersState: { providers: [] as unknown[], loading: false },
-    authState: { mode: 'cloud' as string },
-    regionState: { value: 'global' as string },
+    authState: { mode: 'cloud' as string, serviceRealm: 'global' as 'cn' | 'global' },
     detectState: { detections: [] as unknown[] },
     exitLocalModeMock: vi.fn(async () => undefined),
   }),
 );
-
-// 与 hook 内 `../../shared/brandRegion` 解析到同一模块(都落 src/shared/)。
-vi.mock('../../shared/brandRegion', () => ({
-  get CURRENT_CINDY_REGION() {
-    return regionState.value;
-  },
-}));
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'zh-CN' } }),
@@ -117,7 +109,7 @@ beforeEach(() => {
   providersState.providers = baseProviders;
   providersState.loading = false;
   authState.mode = 'cloud';
-  regionState.value = 'global';
+  authState.serviceRealm = 'global';
   detectState.detections = [];
   (window as unknown as { electronAPI: unknown }).electronAPI = {
     maker: {
@@ -202,8 +194,8 @@ describe('ConnectProviderCard', () => {
     );
   });
 
-  it('cn 区零连接 → 主列为国内预设,OAuth 三家收进折叠区;点预设行落 connect=<presetId>', async () => {
-    regionState.value = 'cn';
+  it('中国大陆账号零连接 → 主列为国内预设,OAuth 三家收进折叠区;点预设行落 connect=<presetId>', async () => {
+    authState.serviceRealm = 'cn';
     await renderCardSettled();
 
     // 主列:cn 预设;Anthropic 不在主列(折叠区未展开时不可见)。

@@ -63,7 +63,6 @@ describe('turn cost routing regression', () => {
       {
         providerId: 'xd',
         billingRoute: 'xd-gateway',
-        region: 'global',
       },
     );
 
@@ -92,7 +91,6 @@ describe('turn cost routing regression', () => {
         {
           providerId: 'anthropic',
           billingRoute: 'provider-api',
-          region: 'cn',
         },
       );
 

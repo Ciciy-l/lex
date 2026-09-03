@@ -751,7 +751,7 @@ describe('sendToSession ordering', () => {
     expect(terminalBlock).toContain('await orcaTeamServiceForEvents?.handleWorkerTerminalTurn({');
     expect(terminalBlock).toContain('sessionId: session.id,');
     expect(terminalBlock).toContain("status: isTerminalTurnErrorEvent(event) ? 'error' : 'done',");
-    expect(terminalBlock).toContain('finalText,');
+    expect(terminalBlock).toContain('finalText: workerTerminalFinalText,');
     expect(terminalBlock).not.toContain('getWorkerLink');
     expect(terminalBlock).not.toContain('listWorkersByLead');
     expect(terminalBlock).not.toContain('dispatchInterAgentMessage');

@@ -2,12 +2,11 @@ import { EventEmitter } from 'node:events';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { TEST_CDN_BASE_URL } from '../../test/vitest/clientEndpointsFixture';
+import { LEX_UPDATE_MANIFEST_BASE_URL } from '../../shared/endpoints';
 
 const netRequest = vi.hoisted(() => vi.fn());
 const canaryRead = vi.hoisted(() => vi.fn(() => false));
 const isBetaChannelEnabled = vi.hoisted(() => vi.fn(() => false));
-const getClientEndpoint = vi.hoisted(() => vi.fn(() => TEST_CDN_BASE_URL));
 
 vi.mock('electron', () => ({
   app: {
@@ -23,10 +22,6 @@ vi.mock('../canaryFlagStore', () => ({
 
 vi.mock('../updateChannelStore', () => ({
   isBetaChannelEnabled,
-}));
-
-vi.mock('../clientEndpointsService', () => ({
-  getClientEndpoint,
 }));
 
 vi.mock('../logger', () => ({
@@ -66,11 +61,10 @@ describe('manifestService cache channel identity', () => {
     canaryRead.mockReturnValue(false);
     isBetaChannelEnabled.mockReset();
     isBetaChannelEnabled.mockReturnValue(false);
-    getClientEndpoint.mockReset();
-    getClientEndpoint.mockReturnValue(TEST_CDN_BASE_URL);
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     const { clearCachedManifest } = await import('../manifestService');
     clearCachedManifest();
   });
@@ -87,6 +81,19 @@ describe('manifestService cache channel identity', () => {
     expect(service.getCachedManifest()).toBeNull();
     expect(netRequest.mock.calls[0]?.[0]).toContain('manifest-');
     expect(String(netRequest.mock.calls[0]?.[0])).not.toContain('-beta.json');
+  });
+
+  it('uses the Lex update base independently from Cindy service endpoints', async () => {
+    const service = await import('../manifestService');
+    expect(service.getBaseUrl()).toBe(LEX_UPDATE_MANIFEST_BASE_URL);
+    expect(LEX_UPDATE_MANIFEST_BASE_URL).toContain('Ciciy-l/lex');
+  });
+
+  it('ignores a runtime update-base override in packaged builds', async () => {
+    vi.stubEnv('XDT_CDN_BASE_URL', 'https://attacker.invalid/updates');
+    const service = await import('../manifestService');
+
+    expect(service.getBaseUrl()).toBe(LEX_UPDATE_MANIFEST_BASE_URL);
   });
 
   it('does not cache a fetch that finishes after the shared channel changes', async () => {
@@ -107,8 +114,6 @@ describe('probeBetaManifest', () => {
     canaryRead.mockReturnValue(false);
     isBetaChannelEnabled.mockReset();
     isBetaChannelEnabled.mockReturnValue(false);
-    getClientEndpoint.mockReset();
-    getClientEndpoint.mockReturnValue(TEST_CDN_BASE_URL);
   });
 
   afterEach(async () => {

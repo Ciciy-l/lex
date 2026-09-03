@@ -21,6 +21,12 @@ import { describe, expect, it } from 'vitest';
 const SRC_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 const ENDPOINT_ENV_KEYS = [
+  // Lex 应用更新基址是独立于 Cindy 服务区的构建期固定值，只允许在 shared
+  // 适配层读取，不得被账号 realm 或运行期 Cindy 端点清单改写。
+  'VITE_LEX_HOMEPAGE_URL',
+  'VITE_LEX_DOWNLOAD_PAGE_URL',
+  'VITE_LEX_SUPPORT_URL',
+  'VITE_LEX_UPDATE_MANIFEST_BASE_URL',
   // 现役:本区与对端的两份端点清单自举基址。
   'VITE_ENDPOINT_MANIFEST_BASE_URL',
   'VITE_ENDPOINT_MANIFEST_PEER_BASE_URL',
@@ -67,7 +73,7 @@ describe('端点类 import.meta.env 只允许出现在白名单文件', () => {
     }
     expect(
       violations,
-      `以下文件直接读取端点类 import.meta.env(应改走 getClientEndpoint / electronAPI.clientEndpoints):\n${violations.join('\n')}`,
+      `以下文件越权直接读取端点类 import.meta.env（Cindy 服务端点应走运行期清单，Lex 更新基址应走 shared/endpoints）：\n${violations.join('\n')}`,
     ).toEqual([]);
   });
 

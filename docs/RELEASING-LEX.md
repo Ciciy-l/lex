@@ -22,12 +22,11 @@ still verifies SHA-256 and can apply their hotfix archives.
 The versioned packager uses `config/log-upload.json` when it is available. The
 file is intentionally not committed. Add its JSON contents as the repository
 secret `LEX_LOG_UPLOAD_CONFIG_JSON` before enabling production log upload. When
-that secret is absent, `auto` mode treats the build as unsigned and keeps log
-upload disabled; no fake credentials are accepted.
+that secret is absent, log upload stays disabled without changing the package's
+signing mode; no fake credentials are accepted.
 
 Configure these repository secrets before enabling signed releases:
 
-- `LEX_LOG_UPLOAD_CONFIG_JSON` — the release log-upload JSON;
 - `LEX_WIN_SIGN_CMD` — a Windows Authenticode signing command template;
 - `LEX_APPLE_ID`, `LEX_APPLE_TEAM_ID`, `LEX_APPLE_SIGN_IDENTITY`, and
   `LEX_APPLE_APP_PASSWORD` — Developer ID signing/notarization identity;
@@ -35,6 +34,9 @@ Configure these repository secrets before enabling signed releases:
   encoded Developer ID Application `.p12` and its import password. The
   workflow imports this certificate into an ephemeral macOS keychain before
   packaging; the private key is never written to the repository.
+
+`LEX_LOG_UPLOAD_CONFIG_JSON` is optional and independent from signing. Configure
+it only after Lex has its own reviewed upload destination and privacy policy.
 
 In `auto` mode, a missing or partial set of signing secrets selects the unsigned
 path. Use manual `mode: signed` when you want a hard failure instead. Keep

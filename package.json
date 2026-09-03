@@ -1,19 +1,18 @@
 {
-  "name": "cindy",
+  "name": "lex",
   "private": true,
-  "description": "Cindy open-source client monorepo — desktop, mobile, and shared packages",
+  "description": "Lex community desktop agent distribution based on Cindy",
   "license": "Apache-2.0",
   "author": {
-    "name": "XD Inc.",
-    "email": "feedback@cindy.app"
+    "name": "Lex contributors"
   },
-  "homepage": "https://cindy.app",
+  "homepage": "https://ciciy-l.github.io/lex/",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/makecindy/cindy.git"
+    "url": "git+https://github.com/Ciciy-l/lex.git"
   },
   "bugs": {
-    "url": "https://github.com/makecindy/cindy/issues"
+    "url": "https://github.com/Ciciy-l/lex/issues"
   },
   "engines": {
     "node": ">=22.12",

@@ -23,6 +23,7 @@ const { providersState, authState, creditUsageState, modelAccessState, apiKeySta
       mode: 'cloud' as 'cloud' | 'local' | 'signed-out',
       user: { membershipKind: 'personal' } as { membershipKind: 'personal' | 'org' } | null,
       dataOwnerId: 'account-1' as string | null,
+      serviceRealm: 'cn' as 'cn' | 'global',
     },
     creditUsageState: { available: null as string | null },
     modelAccessState: {
@@ -124,7 +125,7 @@ vi.mock('@/components/settings/AddProviderWizard', () => ({
 }));
 
 vi.mock('@/features/billing/money', () => ({
-  BILLING_CURRENCY: 'cny',
+  billingCurrencyForRealm: (realm: 'cn' | 'global') => (realm === 'global' ? 'usd' : 'cny'),
   formatBillingAmount: (amount: string, currency: string) => `${currency}:${amount}`,
 }));
 
@@ -183,6 +184,7 @@ beforeEach(() => {
   authState.mode = 'cloud';
   authState.user = { membershipKind: 'personal' };
   authState.dataOwnerId = 'account-1';
+  authState.serviceRealm = 'cn';
   creditUsageState.available = '18.42';
   modelAccessState.state = 'ok';
   modelAccessState.source = 'server';

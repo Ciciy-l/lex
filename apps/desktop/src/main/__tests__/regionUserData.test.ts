@@ -2,29 +2,28 @@ import { describe, expect, it } from 'vitest';
 import { resolveRegionUserDataDirName } from '../regionUserData';
 
 /**
- * 同机双装的核心不变量:保持已发布的 cn=Lex、global=LexGlobal 映射，数据库 /
- * 登录态 / 单实例锁 / sessionData 随 userData 目录天然隔离。此模块跑在 main 入口
- * 最早期，回归 = 两个区域的包共库串台(P0)，所以把所有象限全部锁死。
+ * Lex 单发行版核心不变量：cn/global 兼容构建参数必须落到同一个正式 profile；
+ * dev 仍独立。此模块跑在 main 入口最早期，所以把所有象限锁死。
  */
 describe('resolveRegionUserDataDirName', () => {
   const ARGV = ['Lex.exe'] as const;
 
-  it('packaged + global → 覆写为 LexGlobal(与 cn 分库)', () => {
+  it('packaged + global → 唯一正式 LexGlobal profile', () => {
     expect(
       resolveRegionUserDataDirName({ isPackaged: true, region: 'global', argv: ARGV }),
     ).toBe('LexGlobal');
   });
 
-  it('packaged + cn → null(区域目录名 = productName 默认,保持原生行为)', () => {
+  it('packaged + cn 兼容参数 → 同一个 LexGlobal profile', () => {
     expect(
       resolveRegionUserDataDirName({ isPackaged: true, region: 'cn', argv: ARGV }),
-    ).toBeNull();
+    ).toBe('LexGlobal');
   });
 
   it('dev(非 packaged)按区域选择正式 profile，隔离沙箱再基于它派生', () => {
     expect(
       resolveRegionUserDataDirName({ isPackaged: false, region: 'cn', argv: ARGV }),
-    ).toBeNull();
+    ).toBe('LexGlobal');
     expect(
       resolveRegionUserDataDirName({ isPackaged: false, region: 'global', argv: ARGV }),
     ).toBe('LexGlobal');

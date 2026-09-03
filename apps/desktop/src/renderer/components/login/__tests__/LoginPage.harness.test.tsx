@@ -27,6 +27,7 @@ const loginHook = vi.hoisted(() => ({
     isLoading: false,
     errorCode: null as string | null,
     loginState: null as unknown,
+    loginRealm: 'cn' as const,
     dispatch: vi.fn(async () => true),
     dispatchWithResult: vi.fn(async () => ({ success: true, code: null })),
     clearError: vi.fn(),
@@ -103,6 +104,7 @@ function mount(
     isLoading: false,
     errorCode: null,
     loginState: state,
+    loginRealm: 'cn',
     dispatch: vi.fn(async () => true),
     dispatchWithResult: vi.fn(async () => ({ success: true, code: null })),
     clearError: vi.fn(),
@@ -163,10 +165,10 @@ describe('wave4 stage 视觉', () => {
     expect(panel.style.height).toBe('500px');
   });
 
-  it('字标为 wave4 黑红版内层几何 423×145 @(698,1046)(368:1381)', async () => {
+  it('Lex 字标沿用 wave4 内层几何 423×145 @(698,1046)(368:1381)', async () => {
     mount(await identifierState('providers:both'));
-    const wordmark = document.querySelector('img[src*="wordmark"]') as HTMLImageElement;
-    expect(wordmark).toBeTruthy();
+    const wordmark = screen.getByTestId('login-brand-wordmark') as HTMLImageElement;
+    expect(wordmark.alt).toBe('Lex');
     expect(wordmark.style.left).toBe('698px');
     expect(wordmark.style.top).toBe('1046px');
     expect(wordmark.style.width).toBe('423px');

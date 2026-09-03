@@ -22,6 +22,7 @@ import { Check, ChevronDown, Plug, Plus, RefreshCw, Sparkles, Trash2 } from 'luc
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { Spinner } from '@/components/ui/spinner';
+import { useAuth } from '@/contexts/AuthContext';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   DropdownMenu,
@@ -99,7 +100,6 @@ import type {
   ProviderWireProtocol,
 } from '@cindy/model-providers';
 import { SettingsTextInput } from './SettingsTextInput';
-import { CURRENT_CINDY_REGION } from '@/../shared/brandRegion';
 import {
   configuredPresetAgents,
   isConfiguredPresetRuntime,
@@ -463,6 +463,7 @@ export function CustomProviderDialog({
   onClose,
 }: CustomProviderDialogProps) {
   const { t, i18n } = useTranslation();
+  const { serviceRealm } = useAuth();
   const editing = !!initial;
   const initialOAuth = initial?.auth?.method === 'oauth' ? initial.auth.oauth : undefined;
 
@@ -731,14 +732,14 @@ export function CustomProviderDialog({
   );
 
   // 新建态拉取预设模板（本地 IPC 极快返回；失败静默 —— 没有预设也不影响手填，规则 7 不做 loading）。
-  // 按实际构建区域排序，不随 UI 语言变化（只排序不过滤，可达性由测试连接实测裁决）。
+  // 按当前 Cindy 账号服务区排序，不随 UI 语言变化（只排序不过滤）。
   useEffect(() => {
     if (editing) return;
     let cancelled = false;
     void window.electronAPI.maker
       .listProviderPresets()
       .then((r) => {
-        if (!cancelled) setPresets(sortPresetsForRegion(r.presets, CURRENT_CINDY_REGION));
+        if (!cancelled) setPresets(sortPresetsForRegion(r.presets, serviceRealm));
       })
       .catch(() => {
         /* 预设缺失不影响手填 */
@@ -746,7 +747,7 @@ export function CustomProviderDialog({
     return () => {
       cancelled = true;
     };
-  }, [editing]);
+  }, [editing, serviceRealm]);
 
   /** 应用预设：预填显示名 + 各 runtime 的 baseUrl / 模型 / headers（创建时快照，之后与预设脱钩）。 */
   const applyPreset = useCallback(

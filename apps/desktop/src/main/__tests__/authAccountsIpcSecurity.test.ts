@@ -3,9 +3,10 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-describe('desktop saved-account IPC boundary', () => {
+describe('desktop auth IPC boundary', () => {
   const source = readFileSync(resolve(__dirname, '..', 'bootstrap-electron.ts'), 'utf8');
   const channels = [
+    'auth:dispatch-login-action',
     'auth:accounts:list',
     'auth:accounts:sync',
     'auth:accounts:switch',

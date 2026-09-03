@@ -4,13 +4,9 @@
  * Fetches and caches the CDN manifest.json that drives both app hot-updates
  * and Claude Code binary management.
  *
- * - The CDN base URL comes from the client endpoint manifest
- *   (`getClientEndpoint('cdnBaseUrl')`) — the endpoint manifest is resolved
- *   blocking-style BEFORE any update check (bootstrap-electron:
- *   initClientEndpoints → …later… update chain), so all reads here happen
- *   strictly after init. The base URL is therefore read lazily inside
- *   functions — NEVER capture it in module-level constants (module
- *   evaluation happens before initClientEndpoints and would throw).
+ * - Lex updates use their own build-time anchored manifest URL. Cindy service
+ *   endpoint manifests are selected at runtime by the signed-in account realm;
+ *   those two trust domains must never be coupled.
  * - In dev mode (app.isPackaged === false), fetching is skipped entirely.
  */
 
@@ -20,8 +16,8 @@ import * as canaryFlagStore from './canaryFlagStore';
 import { resolveUpdateChannel, type UpdateChannel } from '@cindy/maker-shared/update-channel';
 
 import { createLogger } from './logger';
-import { getClientEndpoint } from './clientEndpointsService';
 import { isBetaChannelEnabled } from './updateChannelStore';
+import { LEX_UPDATE_MANIFEST_BASE_URL } from '../shared/endpoints';
 
 const log = createLogger('manifestService');
 
@@ -116,12 +112,12 @@ function currentUpdateChannel(): UpdateChannel {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-// 惰性读取(见文件顶注):清单在 initClientEndpoints 之后才可读,模块级捕获会炸。
-// 2026-07 退役 cdnInternalBaseUrl:内网加速镜像与 internal_test.txt 探测已下线,
-// 更新/hotfix 链一律直连 cdnBaseUrl。
+// XDT_CDN_BASE_URL 仅供未打包的本地/受控测试覆盖；正式包始终读取 Lex 唯一
+// 更新通道。正式包接受进程环境会让任意父进程改写更新信任锚。
 export function getBaseUrl(): string {
-  if (process.env.XDT_CDN_BASE_URL) return process.env.XDT_CDN_BASE_URL;
-  return getClientEndpoint('cdnBaseUrl');
+  if (!app.isPackaged && process.env.XDT_CDN_BASE_URL) return process.env.XDT_CDN_BASE_URL;
+  if (!LEX_UPDATE_MANIFEST_BASE_URL) throw new Error('Lex update manifest base URL is missing');
+  return LEX_UPDATE_MANIFEST_BASE_URL;
 }
 
 /**

@@ -234,7 +234,8 @@ const DEV_REPORTING_ENV = 'XDT_TAPDB_DEV';
 let buildGateLogged = false;
 
 /**
- * 构建 flavor 闸:默认只有 packaged 构建允许上报,dev 可通过 XDT_TAPDB_DEV=1 手动放行。
+ * 构建 flavor 闸:Lex 默认不替 Cindy 启用 TapDB。只有开发者显式设置
+ * XDT_TAPDB_DEV=1 时才允许上报（无论 packaged/dev），用于经授权的链路验证。
  *
  * 为什么必须有这道闸:TapDB Web SDK 的设备身份(device_id)写在 renderer 的
  * localStorage 里,而 localStorage 按 **origin + userData 目录** 分家 ——
@@ -252,11 +253,10 @@ let buildGateLogged = false;
  * (fail closed,宁可少报不可乱报)。
  */
 function isReportingBuild(): boolean {
-  if (app.isPackaged === true) return true;
   const devOptIn = process.env[DEV_REPORTING_ENV] === '1';
   if (!buildGateLogged) {
     buildGateLogged = true;
-    log.info('analytics build gate evaluated', { packaged: false, devOptIn });
+    log.info('analytics build gate evaluated', { packaged: app.isPackaged === true, devOptIn });
   }
   return devOptIn;
 }

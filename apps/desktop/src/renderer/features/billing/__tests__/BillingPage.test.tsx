@@ -27,7 +27,10 @@ const modelCatalogMocks = vi.hoisted(() => ({
   })),
 }));
 
-const authState = vi.hoisted(() => ({ dataOwnerId: 'account-fixture' as string | null }));
+const authState = vi.hoisted(() => ({
+  dataOwnerId: 'account-fixture' as string | null,
+  serviceRealm: 'cn' as 'cn' | 'global',
+}));
 
 /**
  * 计费页只用 useSearchParams 消费 `?intent=topup` 深链，不需要真的挂 Router：
@@ -75,7 +78,10 @@ vi.mock('@/features/feature-context', () => ({
   useRegisterContentHeader: vi.fn(),
 }));
 vi.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({ dataOwnerId: authState.dataOwnerId }),
+  useAuth: () => ({
+    dataOwnerId: authState.dataOwnerId,
+    serviceRealm: authState.serviceRealm,
+  }),
 }));
 // 只覆写 useSearchParams(深链 ?intent=topup 的读写口),其余导出保留真实实现 ——
 // 全量替换会让后续用到 Link / useNavigate 等导出的用例拿到 undefined 才炸在别处。
@@ -121,6 +127,7 @@ beforeEach(() => {
   uiMocks.toastSuccess.mockReset();
   modelCatalogMocks.refreshBuiltinProviderModels.mockClear();
   authState.dataOwnerId = 'account-fixture';
+  authState.serviceRealm = 'cn';
   routerState.search = '';
 });
 

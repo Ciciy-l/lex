@@ -40,12 +40,14 @@ const auth = vi.hoisted(() => ({
   mode: 'cloud' as 'signed-out' | 'local' | 'cloud',
   membershipKind: 'personal' as 'personal' | 'org' | null,
   dataOwnerId: 'account-a' as string | null,
+  serviceRealm: 'cn' as 'cn' | 'global',
 }));
 
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({
     mode: auth.mode,
     dataOwnerId: auth.dataOwnerId,
+    serviceRealm: auth.serviceRealm,
     user: auth.membershipKind ? { membershipKind: auth.membershipKind } : null,
   }),
 }));

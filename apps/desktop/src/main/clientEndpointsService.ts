@@ -41,8 +41,8 @@
  * 共享逻辑(schema / 非空 URL 校验 / 缺省字段归一)在 @cindy/maker-shared/client-endpoints;
  * 本文件负责 desktop 侧 IO 与 renderer 消费(sendSync IPC,首帧同步可用)。
  *
- * 依赖方向(2026-07 重构后):manifestService(更新链)经 getClientEndpoint
- * 读清单的 cdnBaseUrl——本文件**不得** import manifestService(会成环);
+ * 依赖方向:本模块只管理 Cindy 服务端点；Lex 应用/CLI 运行时更新清单由
+ * manifestService 从独立构建锚点读取。本文件不得 import manifestService；
  * isDev 语义在此内联为 !app.isPackaged。
  */
 
@@ -71,7 +71,8 @@ import {
   findUntrustedCachedEndpoint,
   formatCacheSavedAt,
   readEndpointManifestCache,
-  writeEndpointManifestCache,
+  readEndpointManifestCacheForRealm,
+  writeEndpointManifestCacheForRealm,
   REGION_ENDPOINT_DOMAIN,
 } from './endpointManifestCache';
 import {
@@ -83,6 +84,7 @@ import {
   type EndpointManifestFailureKind,
 } from './endpointManifestDialogCopy';
 import { createLogger, getLogDir } from './logger';
+import { assertTrustedAppRendererEvent } from './security/trustedAppRenderer';
 import { ENDPOINT_MANIFEST_BASE_URL, ENDPOINT_MANIFEST_PEER_BASE_URL } from '../shared/endpoints';
 import { resolvePreferredSystemLocale } from '../shared/locale';
 
@@ -103,17 +105,19 @@ const DEFAULT_REALM_MANIFEST_BASE_URLS: RealmManifestBaseUrls =
         global: ENDPOINT_MANIFEST_PEER_BASE_URL,
       };
 /**
- * **缓存**端点的来源策略(编译期锚点):非跨区端点必须落在本构建区域的域内。
+ * **缓存**端点的来源策略(编译期锚点):非跨区端点必须落在目标账号 realm 的域内。
  *
  * 按区域收紧、而不是「两个域都信」:线上两份清单都没有 region 字段、region 本身也是
  * 清单里未认证的数据,所以并集会让 CN 构建接受一份把 authApiBaseUrl 换成 Global 真实
  * 服务的伪造缓存,离线启动后把 CN 的 token 发去 Global(review 抓到)。
  * 详见 endpointManifestCache.ts 的 REGION_ENDPOINT_DOMAIN / CROSS_REGION_ENDPOINT_KEYS。
  */
-const CACHED_ENDPOINT_ORIGIN_POLICY = {
-  regionDomain: REGION_ENDPOINT_DOMAIN[BUILD_AUTH_REGION],
-  crossRegionDomain: REGION_ENDPOINT_DOMAIN.global,
-} as const;
+function cachedEndpointOriginPolicy(region: ClientEndpointRegion) {
+  return {
+    regionDomain: REGION_ENDPOINT_DOMAIN[region],
+    crossRegionDomain: REGION_ENDPOINT_DOMAIN.global,
+  } as const;
+}
 
 /** 单次请求的网络超时——只用于触发错误框,不是静默降级。 */
 const ATTEMPT_TIMEOUT_MS = 15_000;
@@ -145,6 +149,8 @@ const AUTO_RETRY_DELAYS_MS: readonly number[] = [800, 2400];
 const DIAGNOSIS_TOTAL_BUDGET_MS = 15_000;
 
 export const CLIENT_ENDPOINTS_SYNC_CHANNEL = 'client-endpoints:get-sync';
+export const CLIENT_ENDPOINTS_ACTIVE_WEBSITE_CHANNEL =
+  'client-endpoints:get-active-website-url';
 
 // ── 清单来源解析(纯函数,规则 14:内存 harness 可测) ─────────────────────
 
@@ -617,11 +623,7 @@ const realmEndpointCache = new Map<ClientEndpointRegion, ClientEndpointMap>();
 /** 本次启动是否走了离线缓存(自动回退或用户确认,而非本次网络拉取)。 */
 let startedFromCachedManifest = false;
 
-const BUILD_SCOPED_ENDPOINT_KEYS = new Set<ClientEndpointKey>([
-  'websiteUrl',
-  'cdnBaseUrl',
-  'mobileUpdateBaseUrl',
-]);
+const BUILD_SCOPED_ENDPOINT_KEYS = new Set<ClientEndpointKey>(['mobileUpdateBaseUrl']);
 
 /** 弹框语言:跟随系统语言偏好列表,与原生菜单栏同一套解析。 */
 function resolveDialogLocale(): EndpointManifestDialogLocale {
@@ -998,13 +1000,18 @@ function getLogDirSafe(): string | null {
  * 读离线缓存并做与主路径完全相同的严格校验。任何一项不符都返回 null——
  * 弹框上就不会出现离线按钮,用户看到的仍是"重试 / 退出"。
  */
-function loadOfflineManifestCandidate(
+function loadCachedRealmManifest(
   manifestUrl: string,
-  locale: EndpointManifestDialogLocale,
-): OfflineManifestCandidate | null {
-  let cached: ReturnType<typeof readEndpointManifestCache>;
+  region: ClientEndpointRegion,
+): { parsed: Extract<ParseClientEndpointManifestResult, { ok: true }>; savedAt: string } | null {
+  let cached: ReturnType<typeof readEndpointManifestCacheForRealm>;
   try {
-    cached = readEndpointManifestCache(app.getPath('userData'));
+    const userDataDir = app.getPath('userData');
+    cached = readEndpointManifestCacheForRealm(userDataDir, region);
+    // 从旧版升级时，单文件缓存只可能属于当时的构建区；绝不能拿它恢复对端 realm。
+    if (!cached && region === BUILD_AUTH_REGION) {
+      cached = readEndpointManifestCache(userDataDir);
+    }
   } catch {
     return null;
   }
@@ -1023,32 +1030,44 @@ function loadOfflineManifestCandidate(
     log.warn('cached endpoint manifest ignored: %s', parsed.reason);
     return null;
   }
-  if (parsed.region !== null && parsed.region !== BUILD_AUTH_REGION) {
+  if (parsed.region !== null && parsed.region !== region) {
     log.warn(
-      'cached endpoint manifest ignored: region %s != build %s',
+      'cached endpoint manifest ignored: region %s != expected %s',
       parsed.region,
-      BUILD_AUTH_REGION,
+      region,
     );
     return null;
   }
   // 安全边界:这个文件在 userData、可被其他进程写,严格解析只管语法不管来源。
-  // 按 CACHED_ENDPOINT_ORIGIN_POLICY 逐 key 校验来源域,拒掉攻击者自选的主机,也拒掉
+  // 按目标 realm 的编译期 origin policy 逐 key 校验来源域,拒掉攻击者自选的主机,也拒掉
   // 「换成另一区域的真实服务」——否则一份被改过的缓存 + 一次 CDN 不可达,就能让
   // authManager 把 access token 发到对方主机或对方区域。
   // 两条废弃做法都别改回去(理由见 endpointManifestCache.ts):从自举基址推导域(多段
   // 公共后缀上会放宽信任)、以及只给一个「两区域并集」的域清单(线上清单没有 region,
   // 并集等于允许跨区替换)。
-  const untrusted = findUntrustedCachedEndpoint(parsed.endpoints, CACHED_ENDPOINT_ORIGIN_POLICY);
+  const originPolicy = cachedEndpointOriginPolicy(region);
+  const untrusted = findUntrustedCachedEndpoint(parsed.endpoints, originPolicy);
   if (untrusted) {
     log.error(
-      'cached endpoint manifest rejected: endpoint %s outside build-region domain %s (cross-region keys allow %s)',
+      'cached endpoint manifest rejected: endpoint %s outside %s realm domain %s (cross-region keys allow %s)',
       untrusted,
-      CACHED_ENDPOINT_ORIGIN_POLICY.regionDomain,
-      CACHED_ENDPOINT_ORIGIN_POLICY.crossRegionDomain,
+      region,
+      originPolicy.regionDomain,
+      originPolicy.crossRegionDomain,
     );
     return null;
   }
-  return { parsed, savedAt: formatCacheSavedAt(cached.savedAt, locale) };
+  return { parsed, savedAt: cached.savedAt };
+}
+
+function loadOfflineManifestCandidate(
+  manifestUrl: string,
+  locale: EndpointManifestDialogLocale,
+): OfflineManifestCandidate | null {
+  const cached = loadCachedRealmManifest(manifestUrl, BUILD_AUTH_REGION);
+  return cached
+    ? { parsed: cached.parsed, savedAt: formatCacheSavedAt(cached.savedAt, locale) }
+    : null;
 }
 
 /**
@@ -1061,10 +1080,14 @@ function loadOfflineManifestCandidate(
  * 原文是刚刚被同一个 parser 接受过的,所以"存原文会不会读不回来"不成立;真正需要
  * 防的是读取时用新 parser 判定不通过,那条路径已经 fail closed(不给离线按钮)。
  */
-function cacheResolvedManifest(manifestUrl: string, manifestText: string): void {
+function cacheResolvedManifest(
+  manifestUrl: string,
+  manifestText: string,
+  region: ClientEndpointRegion,
+): void {
   let written = false;
   try {
-    written = writeEndpointManifestCache(app.getPath('userData'), {
+    written = writeEndpointManifestCacheForRealm(app.getPath('userData'), region, {
       savedAt: new Date().toISOString(),
       sourceUrl: manifestUrl,
       manifestText,
@@ -1140,7 +1163,7 @@ export async function initClientEndpoints(): Promise<boolean> {
       resolvedManifestBox.value = manifest;
       resolvedManifestBox.fromCache = origin === 'cache';
       if (origin === 'network' && source.kind === 'cdn' && rawText) {
-        cacheResolvedManifest(manifestUrl, rawText);
+        cacheResolvedManifest(manifestUrl, rawText, BUILD_AUTH_REGION);
       }
     },
   });
@@ -1233,12 +1256,19 @@ export async function loadClientEndpointsForRealm(
   if (!baseUrl) {
     throw new Error('realm-manifest-url-unavailable');
   }
-  const fetched = await fetchTextViaNet(
-    `${baseUrl}/${MANIFEST_FILE_NAME}?t=${Date.now()}`,
-    ATTEMPT_TIMEOUT_MS,
-  );
+  const manifestUrl = `${baseUrl}/${MANIFEST_FILE_NAME}`;
+  const fetched = await fetchTextViaNet(`${manifestUrl}?t=${Date.now()}`, ATTEMPT_TIMEOUT_MS);
   if (!fetched.ok) {
-    throw new Error(fetchFailedReason(fetched.detail));
+    const reason = fetchFailedReason(fetched.detail);
+    if (classifyManifestFailure(reason) === 'network') {
+      const offline = loadCachedRealmManifest(manifestUrl, region);
+      if (offline) {
+        realmEndpointCache.set(region, offline.parsed.endpoints);
+        log.warn('using cached %s endpoint manifest after network failure', region);
+        return offline.parsed.endpoints;
+      }
+    }
+    throw new Error(reason);
   }
   const parsed = resolveClientEndpointsStrict(fetched.text);
   if (!parsed.ok) {
@@ -1247,6 +1277,7 @@ export async function loadClientEndpointsForRealm(
   if (parsed.region !== null && parsed.region !== region) {
     throw new Error(`region-mismatch:${region}:${parsed.region}`);
   }
+  cacheResolvedManifest(manifestUrl, fetched.text, region);
   realmEndpointCache.set(region, parsed.endpoints);
   return parsed.endpoints;
 }
@@ -1285,6 +1316,10 @@ export function getResolvedClientEndpoints(): ClientEndpointMap {
 export function registerClientEndpointsIpc(): void {
   ipcMain.on(CLIENT_ENDPOINTS_SYNC_CHANNEL, (event) => {
     event.returnValue = getResolvedClientEndpoints();
+  });
+  ipcMain.handle(CLIENT_ENDPOINTS_ACTIVE_WEBSITE_CHANNEL, (event) => {
+    assertTrustedAppRendererEvent(event);
+    return getClientEndpoint('websiteUrl');
   });
 }
 

@@ -9,7 +9,7 @@
  *   `if (用户同意隐私协议) { init(...) }`。真相由 main 持有,本模块只消费
  *   `electronAPI.getAnalyticsSettings().allowed` 这个结论:
  *     allowed = isReportingBuild() && 已同意隐私政策 && 使用统计开关开启
- *   (isReportingBuild = packaged 构建,或 dev 下显式 XDT_TAPDB_DEV=1)
+ *   (Lex 默认关闭；仅显式 XDT_TAPDB_DEV=1 的授权链路验证会放行)
  *
  * ⚠️ 构建闸(2026-07-26):dev 构建默认 allowed=false,SDK 不初始化。dev 的
  *   renderer 从 `http://localhost:<vite 端口>` 加载、沙箱各有独立 userData,
@@ -71,7 +71,8 @@ const log = createLogger('tapdb');
 
 // ── Config ──────────────────────────────────────────────────────────────────
 //
-// TapDB 项目按构建区域二选一,appId 与采集端点(serverUrl,SDK 直接 POST、不再
+// 仅供显式 XDT_TAPDB_DEV=1 链路验证：TapDB 项目按兼容构建区域二选一，appId
+// 与采集端点(serverUrl,SDK 直接 POST、不再
 // 追加路径)必须同区配对。appId 是公开应用标识(服务端 tapdbChargeReporter 同样
 // 硬编码同一对 ID),不属于凭证。
 //

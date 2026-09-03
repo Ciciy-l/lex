@@ -13,7 +13,7 @@ vi.mock('electron', () => ({
 }));
 vi.mock('../../shared/brandRegion', () => ({
   CURRENT_CINDY_REGION: 'cn',
-  CURRENT_APP_ID: 'com.ciciy.lexcn',
+  CURRENT_APP_ID: 'com.ciciy.lex',
 }));
 vi.mock('../logger', () => ({
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() }),
@@ -22,9 +22,9 @@ vi.mock('../logger', () => ({
 import { healWindowsShortcuts, type ShortcutSelfHealDeps } from '../windowsShortcutSelfHeal';
 import { brandAppId, brandExecutableName } from '@cindy/maker-shared/brand-identity';
 
-// 本文件专测 CN 产物的历史快捷方式修复，显式固定区域，避免继承宿主环境。
+// cn 仅是历史兼容参数；Lex 正式包始终使用同一个 app id。
 const EXPECTED_APP_ID = brandAppId('cn');
-// 重建目标 .lnk 基名(与实现的 SHORTCUT_BASENAME 同源;cn = 'Cindy')。
+// 重建目标 .lnk 基名与实现的 SHORTCUT_BASENAME 同源。
 const NEW_SHORTCUT_NAME = brandExecutableName('cn');
 
 const EXE = 'C:\\Program Files\\xdt-maker\\xdt-maker.exe';

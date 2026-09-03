@@ -18,15 +18,9 @@ import { useTranslation } from 'react-i18next';
 import { ChevronRight, Gift } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/contexts/AuthContext';
 import { usePromotionalGrantNotice } from '@/hooks/usePromotionalGrantNotice';
-import { CURRENT_CINDY_REGION } from '../../../shared/brandRegion';
-import { formatBillingAmount } from '@/features/billing/money';
-
-/**
- * 结算币种由运行区域决定,与计费页 BILLING_CURRENCY 同一口径 —— 金额一律走
- * formatBillingAmount 格式化,组件不硬编码任何数字或币种符号。
- */
-const BILLING_CURRENCY = CURRENT_CINDY_REGION === 'global' ? 'usd' : 'cny';
+import { billingCurrencyForRealm, formatBillingAmount } from '@/features/billing/money';
 
 export function PromotionalGrantNotice({
   className,
@@ -36,8 +30,10 @@ export function PromotionalGrantNotice({
   enabled?: boolean;
 }) {
   const { t, i18n } = useTranslation();
+  const { serviceRealm } = useAuth();
   const navigate = useNavigate();
   const notice = usePromotionalGrantNotice(enabled);
+  const billingCurrency = billingCurrencyForRealm(serviceRealm);
 
   if (!notice.visible || !notice.grant) return null;
 
@@ -76,7 +72,7 @@ export function PromotionalGrantNotice({
           {t('onboarding.promotionalGrant.desc', {
             amount: formatBillingAmount(
               notice.grant.originalAmount,
-              BILLING_CURRENCY,
+              billingCurrency,
               billingLocale,
             ),
             date: expiresAtLabel,

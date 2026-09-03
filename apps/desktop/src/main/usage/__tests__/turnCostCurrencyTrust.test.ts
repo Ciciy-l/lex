@@ -13,7 +13,6 @@ import type { ModelPriceQuote, ModelPricingCatalog } from '../../../shared/regio
 const XD_GATEWAY: TurnPricingContext = {
   providerId: 'xd',
   billingRoute: 'xd-gateway',
-  region: 'global',
 };
 
 const TOKENS = {

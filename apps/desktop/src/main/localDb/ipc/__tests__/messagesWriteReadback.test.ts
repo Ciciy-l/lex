@@ -13,12 +13,14 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { messages, sessions } from '../../schema';
+import { tx as runTx } from '../../worker/opHandlers/tx';
 
 const h = vi.hoisted(() => ({
   db: null as ReturnType<typeof drizzle> | null,
   sqlite: null as Database.Database | null,
   client: null as any,
   queries: [] as string[],
+  queryCountAtTx: [] as number[],
   mediaRefCalls: [] as Array<{ sessionId: string; role: string; content: unknown }>,
 }));
 
@@ -76,6 +78,9 @@ function setupDb(): void {
     CREATE TABLE sessions (
       id TEXT PRIMARY KEY,
       cleared_at INTEGER,
+      list_preview TEXT,
+      list_preview_role TEXT,
+      list_message_count INTEGER,
       status TEXT NOT NULL DEFAULT 'active'
     );
     CREATE TABLE messages (
@@ -107,12 +112,17 @@ function setupDb(): void {
     drizzle: db,
     exec: vi.fn(async (sql: string, params: unknown[] = []) => h.sqlite!.prepare(sql).run(...params)),
     query: vi.fn(async (sql: string, params: unknown[] = []) => h.sqlite!.prepare(sql).all(...params)),
+    tx: vi.fn(async (name: string, args: unknown) => {
+      h.queryCountAtTx.push(h.queries.length);
+      return runTx(sqlite, { name, args });
+    }),
   };
 }
 
 describe('message write paths avoid large-content readback', () => {
   beforeEach(() => {
     h.queries.length = 0;
+    h.queryCountAtTx.length = 0;
     h.mediaRefCalls.length = 0;
     setupDb();
   });
@@ -127,10 +137,14 @@ describe('message write paths avoid large-content readback', () => {
         createdAt: 1000,
       });
 
-      const insertIdx = h.queries.findIndex((q) => q.startsWith('insert into "messages"'));
-      expect(insertIdx).toBeGreaterThanOrEqual(0);
+      expect(h.client.tx).toHaveBeenCalledWith(
+        'message.insert',
+        expect.objectContaining({ sessionId: 's1', clientId: 'c1' }),
+      );
+      const queryCountAtInsert = h.queryCountAtTx[0];
+      expect(queryCountAtInsert).toEqual(expect.any(Number));
       expect(
-        h.queries.slice(insertIdx + 1).filter((q) => q.includes('from "messages"')),
+        h.queries.slice(queryCountAtInsert).filter((q) => q.includes('from "messages"')),
       ).toEqual([]);
 
       expect(msg.clientId).toBe('c1');

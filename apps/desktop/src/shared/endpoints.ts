@@ -2,13 +2,12 @@
  * Desktop 端点适配层。
  *
  * 2026-07 端点清单重构后,运行期业务端点(api / auth / device-link / oauth broker /
- * heartbeat / slack hook / website / 网关 / 更新链 CDN)**全部**来自启动阻断式
- * 解析的端点清单(main 走 getClientEndpoint(),renderer 走
- * electronAPI.clientEndpoints)——本文件不再提供任何业务端点烘焙常量。
+ * heartbeat / slack hook / website / 网关)来自启动阻断式解析的 Cindy 端点清单
+ * (main 走 getClientEndpoint(),renderer 走 electronAPI.clientEndpoints)。Lex 应用
+ * 更新基址独立烘焙，绝不随 Cindy 账号服务区切换。
  *
- * 仅存的烘焙注入是本区与对端的两份清单自举基址(构建脚本分别读取
- * config/endpoint*.json 的 cdnBaseUrl);本文件只提供类型化出口,不保存任何
- * 生产地址。空值表示当前构建未配置,消费方(clientEndpointsService)会阻断暴露。
+ * 烘焙注入包括本区与对端的 Cindy 服务清单自举基址，以及独立的 Lex 更新
+ * 清单基址；本文件只提供类型化出口，不在源码中散落生产地址。
  */
 
 import type { CindyRegion } from '@cindy/maker-shared/brand-identity';
@@ -19,7 +18,7 @@ function injectedEndpoint(value: string | undefined): string {
 
 /**
  * 当前构建区域端点清单(endpoint.json)的自举拉取基址。另一物理区域使用下方
- * PEER 基址；其余业务端点(含更新链 CDN base)全部来自清单解析结果。
+ * PEER 基址；其余 Cindy 业务端点全部来自清单解析结果。
  */
 export const ENDPOINT_MANIFEST_BASE_URL = injectedEndpoint(
   import.meta.env.VITE_ENDPOINT_MANIFEST_BASE_URL,
@@ -29,6 +28,20 @@ export const ENDPOINT_MANIFEST_BASE_URL = injectedEndpoint(
 export const ENDPOINT_MANIFEST_PEER_BASE_URL = injectedEndpoint(
   import.meta.env.VITE_ENDPOINT_MANIFEST_PEER_BASE_URL,
 );
+
+/** Lex application/runtime update manifests. Never follows the Cindy account realm. */
+export const LEX_UPDATE_MANIFEST_BASE_URL = injectedEndpoint(
+  import.meta.env.VITE_LEX_UPDATE_MANIFEST_BASE_URL,
+);
+
+/** Lex public product links, independent from Cindy account/service realms. */
+export const LEX_PRODUCT_HOMEPAGE_URL = injectedEndpoint(
+  import.meta.env.VITE_LEX_HOMEPAGE_URL,
+);
+export const LEX_DOWNLOAD_PAGE_URL = injectedEndpoint(
+  import.meta.env.VITE_LEX_DOWNLOAD_PAGE_URL,
+);
+export const LEX_SUPPORT_URL = injectedEndpoint(import.meta.env.VITE_LEX_SUPPORT_URL);
 
 /**
  * TapDB 埋点上报端点,按构建区域二选一;第三方固定协议地址不属于生产端点私有配置。
