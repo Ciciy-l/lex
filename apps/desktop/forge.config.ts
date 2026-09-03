@@ -643,30 +643,24 @@ function signPackagedExes(buildPath: string): void {
 
 /**
  * macOS 打包显示名(与 win32metadata 同构):packaged 后把
- * .app 的 Info.plist 里 CFBundleDisplayName 改成 Cindy——Dock 名、Cmd+Tab、
+ * .app 的 Info.plist 里 CFBundleDisplayName 改成当前产品展示名——Dock 名、Cmd+Tab、
  * Finder、系统通知读的都是它(显示优先级 CFBundleDisplayName > CFBundleName)。
  *
  * ⚠️ 绝不能改 CFBundleName:Electron 启动时用主 app 的 CFBundleName 拼
  * `Frameworks/<CFBundleName> Helper.app` 查找 Helper(electron_main_delegate_mac.mm,
  * 唯一 fallback 是 'Electron Helper.app'),而 Helper 目录名跟随 packager name
- * (区域派生:cn/global 'Cindy' / dev 'CindyDev')。把 CFBundleName 改成
+ * (Lex 正式构建为 `Lex`,内部 dev 构建为 `LexDev`)。把 CFBundleName 改成
  * 与 Helper 目录不一致的值会让包启动即 FATAL "Unable to find helper app"
  * (SIGTRAP;2026-07-21 dev region smoke 实踩)。
- * 代价:菜单栏粗体标题取自 CFBundleName 且运行时改不了,dev 构建上显示
- * CindyDev 而非 Cindy——cn/global(packager 已写 Cindy)不受影响,可接受。
+ * 代价:菜单栏粗体标题取自 CFBundleName 且运行时改不了,dev 构建保留
+ * `LexDev` 以明确区分内部调试包。
  *
  * 为什么在 postPackage 改而不是 packagerConfig:electron-packager 在
  * updatePlistFiles 里先合并 extendInfo、后用 appName/executableName 覆写
- * CFBundleName / CFBundleDisplayName,extendInfo 改不动这两个键;而给
- * packagerConfig.name 设 'Cindy' 会连 .app 目录名一起改,踩标识符红线。
+ * CFBundleName / CFBundleDisplayName,extendInfo 改不动这两个键。
  *
- * 历史沿革:本步骤诞生于身份翻转前(当时 .app/CFBundleExecutable/bundle id/
- * userData 均为 xdt-maker 系,这里是唯一的显示名来源)。2026-07-17 身份翻转后
- * cn 构建的 packager 本身就会把 CFBundleName/CFBundleDisplayName 写成 Cindy,
- * 对 cn 是冗余兜底;2026-07-26 global exe 名与 cn 统一为 'Cindy' 后 global
- * 同样只是冗余兜底;dev 构建的 packager name 仍是 'CindyDev',本步骤把
- * Dock 名、Cmd+Tab、系统通知的**显示层**拉回 Cindy(BRAND_NAME 各区共用),
- * 对 dev 是显示名的唯一来源。正式签名/公证(外部发布流程)发生在
+ * 这个 postPackage 兜底让系统展示层恒定跟随 BRAND_NAME。正式签名/
+ * 公证(外部发布流程)发生在
  * postPackage 之后,本改动会被签名一起封印,不存在破坏签名问题。
  */
 function applyMacPackagedDisplayName(buildPath: string, platform: string): void {
@@ -681,14 +675,15 @@ function applyMacPackagedDisplayName(buildPath: string, platform: string): void 
     // 否则 Electron 找不到 Helper app(见函数头 ⚠️)。
     const key = 'CFBundleDisplayName';
     // packager 必写该键,Set 即可;Add 兜底防未来 packager 行为变化。
-    const set = spawnSync('/usr/libexec/PlistBuddy', ['-c', `Set :${key} Cindy`, plistPath]);
+    const displayName = BRAND_IDENTITY.displayName;
+    const set = spawnSync('/usr/libexec/PlistBuddy', ['-c', `Set :${key} ${displayName}`, plistPath]);
     if (set.status !== 0) {
-      const add = spawnSync('/usr/libexec/PlistBuddy', ['-c', `Add :${key} string Cindy`, plistPath]);
+      const add = spawnSync('/usr/libexec/PlistBuddy', ['-c', `Add :${key} string ${displayName}`, plistPath]);
       if (add.status !== 0) {
         throw new Error(`[forge:postPackage] PlistBuddy failed to set ${key} in ${plistPath}`);
       }
     }
-    console.log(`[forge:postPackage] mac display name → Cindy (${appDir}/Contents/Info.plist)`);
+    console.log(`[forge:postPackage] mac display name → ${displayName} (${appDir}/Contents/Info.plist)`);
   }
 }
 
@@ -1226,8 +1221,8 @@ const makers: ForgeConfig['makers'] = [
       icon: path.join(__dirname, 'resources', 'icon.png'),
       // 双 scheme:cindy 主 + xdt-maker 兼容(老分享链接不死)。
       mimeType: allDeepLinkSchemes().map((s) => `x-scheme-handler/${s}`),
-      maintainer: 'Lizi <feedback@cindy.app>',
-      // deb 包名规范要求小写;跟随区域 exe 名(cn/global cindy / dev cindydev)。
+      maintainer: 'Lex contributors',
+      // deb 包名规范要求小写;跟随构建身份的 exe 名(Lex / LexDev)。
       name: CINDY_EXE.toLowerCase(),
       bin: CINDY_EXE,
       productName: CINDY_EXE,
@@ -1330,25 +1325,22 @@ const config: ForgeConfig = {
     // 所以这里显式覆盖 loudness / node-pty 整个目录。
     asar: { unpack: '**/{@img/{sharp-libvips-*,sharp-win32-*},loudness,native/sqlite-vec,node-pty}/**' },
     // 打包名(out 目录 / mac .app 包名 / Helper 目录名 / 主 plist CFBundleName)
-    // 按区域派生:cn/global 'Cindy'(2026-07-26 显示名统一,.app 撞名双装
-    // 互覆已被 owner 接受)/ dev 'CindyDev'(显式设值防 packager 回落
-    // package.json productName 让 dev 与正式包撞名)。mac 的 Dock/Cmd+Tab/
+    // Lex 正式包为 Lex,内部 dev 包为 LexDev。mac 的 Dock/Cmd+Tab/
     // 通知**显示名**由 postPackage 的 applyMacPackagedDisplayName 经
-    // CFBundleDisplayName 统一拉回 Cindy(对 dev 是唯一显示名来源;
+    // CFBundleDisplayName 统一拉回 BRAND_IDENTITY.displayName;
     // CFBundleName 不可动,Electron 靠它找 Helper,见该函数注释)。
     name: CINDY_EXE,
     executableName: CINDY_EXE,
-    // mac bundle id(与 Windows AUMID 同值,按区域派生;cn/global 是两个可并存
-    // 的系统身份,与 mobile 的 com.xd.cindycn / com.xd.cindy 同一套)。
+    // mac bundle id 与 Windows AUMID 同值;Lex 正式 cn/global 参数共用一个身份。
     appBundleId: CINDY_APP_ID,
     // exe 资源元数据(任务管理器进程名、文件右键属性的显示层)。只影响展示,
-    // 与 exe 文件名 / AUMID / userData 等标识符解耦;显示层两区共用 Cindy
+    // 与 exe 文件名 / AUMID / userData 等标识符解耦;显示层各构建共用 Lex
     // (与 mac 显示名口径一致)。FileDescription 走 BRAND_IDENTITY.displayName,
     // 与 NSIS maker 的 extraMetadata.description 同一表达式——安装器/卸载器
     // 与主 exe 的「说明」字段必须同值,否则 dev 包会安装前后显示两个名字。
     win32metadata: {
       CompanyName: 'XD',
-      ProductName: 'Cindy',
+      ProductName: BRAND_IDENTITY.displayName,
       FileDescription: BRAND_IDENTITY.displayName,
     },
     icon: 'resources/icon',
@@ -1361,8 +1353,8 @@ const config: ForgeConfig = {
       // 双 scheme 注册:cindy:// 主 + xdt-maker:// 永久兼容(存量分享链接不死)。
       { name: 'Cindy Deep Link', schemes: [...allDeepLinkSchemes()] },
     ],
-    // macOS 文件夹右键 "打开方式 → Cindy" 入口:
-    //   声明 app 能接受 public.folder, Finder 自动把 Cindy 出现在 "打开方式" 列表。
+    // macOS 文件夹右键 "打开方式 → Lex" 入口:
+    //   声明 app 能接受 public.folder, Finder 自动把 Lex 放进 "打开方式" 列表。
     //   LSHandlerRank=Alternate: 不抢 Finder 默认 handler, 仅作为可选项之一。
     //   CFBundleTypeRole=Editor: 用户对该类型有 "打开+操作" 能力 (而非 Viewer 只看)。
     //   触发后 macOS 通过 app.on('open-file') 事件把目录路径推给 main 进程,

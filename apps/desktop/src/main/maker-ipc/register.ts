@@ -570,7 +570,6 @@ import {
   piPackageMutationNeedsGrant,
 } from '../maker-host/pi-package-mutation-grant.js';
 import { escapePiPackageNativeDialogText } from '../maker-host/pi-package-native-dialog.js';
-import { CURRENT_CINDY_REGION } from '../../shared/brandRegion.js';
 import {
   triggerClaudeSubscriptionUsageRefresh,
   triggerCodexAccountUsageRefresh,
@@ -5152,7 +5151,7 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
             const { turnMoney, estimatedTurnMoney, perModel } = resolveClaudeTurnCostSinks(
               deltas,
               pricing,
-              { providerId: sessionProviderForBilling, billingRoute, region: CURRENT_CINDY_REGION },
+              { providerId: sessionProviderForBilling, billingRoute },
               claudeUsageSegments,
               claudeUsageSegmentsComplete,
             );
@@ -5789,7 +5788,6 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
                     context: {
                       providerId: sessionProvider,
                       billingRoute,
-                      region: CURRENT_CINDY_REGION,
                     },
                     segments: pricingSegments,
                   }).money;

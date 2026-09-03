@@ -936,7 +936,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }),
   osRelease: ipcRenderer.sendSync('get-os-release') as string,
   appVersion: ipcRenderer.sendSync('get-app-version') as string,
-  clientEndpoints: { websiteUrl: clientEndpointsInfo?.websiteUrl ?? '' },
+  clientEndpoints: {
+    websiteUrl: clientEndpointsInfo?.websiteUrl ?? '',
+    getActiveWebsiteUrl: (): Promise<string> =>
+      ipcRenderer.invoke('client-endpoints:get-active-website-url'),
+  },
   preferredSystemLocale: readInitialPreferredSystemLocale(),
   appDisplayVersion: appDisplayVersionInfo.display,
   appDisplayVersionDetail: appDisplayVersionInfo.detail,
@@ -1864,8 +1868,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.sendSync('auth:has-persisted-session-hint-sync') === true,
   authInitialize: (): Promise<{
     user: unknown;
+    serviceRealm: 'cn' | 'global';
     mode: 'signed-out' | 'local' | 'cloud';
     dataOwnerId: string | null;
+    ownerGeneration: number;
     canEnterApp: boolean;
     isAuthenticated: boolean;
     isCanary: boolean;

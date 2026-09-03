@@ -173,7 +173,8 @@ describe('TodaySpendChip dashboard routing', () => {
     expect(source).not.toContain('function getSessionCostSegment(');
     expect(source).toContain('const cost = formatTurnCostMoney(sessionMoney)');
     expect(source).toContain("tooltipLabel: t('todaySpend.tooltip.sessionUsed'");
-    expect(source).toContain('cost: DEFAULT_MONEY_PLACEHOLDER');
+    expect(source).toContain('cost: defaultMoneyPlaceholder');
+    expect(source).toContain("serviceRealm === 'cn' ? 'CNY' : 'USD'");
     // 会话实际费用与价值估算都无条件读取；当前 provider 只影响配额窗口，
     // 不再决定“本对话”金额取哪一条链路。
     expect(source).toMatch(

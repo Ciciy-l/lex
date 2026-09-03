@@ -42,8 +42,9 @@ export interface IssueEnvInfo {
   /** /issue 所在轮开始时冻结的 Cindy 模型选择值。 */
   modelId: string;
   /**
-   * 本构建的区域身份(中国版 / 国际版 / 开发版)。构建期烘焙、运行时不可切换,
-   * 但同一个版本号在两区是两个不同的包——反馈里没有它就分不清用户装的是哪一个。
+   * 上游兼容构建区域（cn / global / dev）。Lex 的 cn/global 是同一个正式包和
+   * 系统身份；此字段仅保留兼容诊断，不能解释为当前登录账号的 Cindy 服务区。
+   * dev 仍是独立内部构建，反馈中保留它便于定位开发环境问题。
    */
   region: CindyRegion;
 }

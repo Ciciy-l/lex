@@ -68,7 +68,6 @@ import {
   maybeEnableXdOrgBetaDefault,
   shouldAttemptOrgBetaDefault,
 } from './xdOrgBetaDefault';
-import { canRestoreAuthSessionForMembership } from './authRealmPolicy';
 import {
   createAuthBrowserAuthorizationSlot,
   createAuthLoopbackDevBridgeSlot,
@@ -124,6 +123,14 @@ import {
   type AppSessionMode,
 } from './appSessionState.js';
 import {
+  CloudOwnerRealmConflictError,
+  emptyCloudOwnerRealmRegistry,
+  mergeCloudOwnerRealmClaims,
+  parseCloudOwnerRealmRegistry,
+  type CloudOwnerIdentity,
+  type CloudOwnerRealmRegistry,
+} from './ownerRealmIsolation.js';
+import {
   claimLegacyOwnerNamespace,
   recordLegacyGhostMigrationResult,
 } from './ownerNamespaceMigration.js';
@@ -143,7 +150,10 @@ import {
 } from './localProfileDataMigration.js';
 import { buildSafeStorageIssueMeta } from './safeStorageIssueLog.js';
 import { createCredentialStoreHealth } from './authCredentialStoreHealth';
-import { withCrossProcessLock } from './device-link/crossProcessLock';
+import {
+  withCrossProcessLock,
+  withSecurityBoundaryLock,
+} from './device-link/crossProcessLock';
 import {
   StableOwnerPostCommitCoordinator,
   type StableOwnerPostCommitTask,
@@ -186,6 +196,8 @@ function authServerUrl(realm: AuthRegion = activeAuthRealm): string {
 const AUTH_SESSION_KEY = 'cindy_auth_session_v1';
 const AUTH_ACCOUNT_VAULT_KEY = 'cindy_auth_accounts_v1';
 const AUTH_ACCOUNT_VAULT_LOCK_FILE = '.cindy-auth-accounts-v1.lock';
+const CLOUD_OWNER_REALM_REGISTRY_KEY = 'lex_cloud_owner_realms_v1';
+const CLOUD_OWNER_REALM_REGISTRY_LOCK_FILE = '.lex-cloud-owner-realms-v1.lock';
 const LEGACY_RESOURCE_REFRESH_TOKEN_KEY = 'cindy_auth_refresh_token';
 const ACCOUNT_DELETION_RECEIPT_KEY = 'cindy_auth_account_deletion_receipt';
 const LEGACY_ACCOUNT_REFRESH_TOKEN_KEY = 'cindy_auth_account_refresh_token';
@@ -262,6 +274,8 @@ interface AuthAccountVault {
 
 export interface AuthState {
   user: User | null;
+  /** Cindy service realm for the active account or current signed-out selection. */
+  serviceRealm: AuthRegion;
   /** Stable application session. Local is an app session, not cloud authentication. */
   mode: AppSessionMode;
   /** Owner for local databases and owner-scoped private state. */
@@ -346,11 +360,16 @@ async function ensureStableOwnerPostCommit(reason: string): Promise<void> {
 
 let accessToken: string | null = null;
 let currentUser: CurrentUser | null = null;
-/** 已登录会话区域；安装包区域 AUTH_REGION 始终不变。 */
+/** 已登录会话区域；Lex 安装身份与该服务区无关。 */
 let activeAuthRealm: AuthRegion = AUTH_REGION;
 /**
- * 当前登录流使用的区域。个人登录固定为安装包区域，企业发现后改为组织区域；
- * 账号选择、绑定等后续步骤继续复用，reset/cancel/失败回收时清除。
+ * 个人登录明确选择的 Cindy 服务区。Main 是唯一真值；Renderer 只能通过受校验
+ * IPC 改变它。登录成功后保留本次选择，已保存账号则由凭证自身的 realm 恢复。
+ */
+let selectedPersonalAuthRealm: AuthRegion = 'global';
+/**
+ * 当前登录流冻结的 Cindy 服务区。个人登录取用户明确选择，企业发现后取组织
+ * 所属区域；账号选择、绑定等后续步骤继续复用，reset/cancel/失败回收时清除。
  */
 let pendingAuthRealm: AuthRegion | null = null;
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -392,7 +411,10 @@ let pendingAccountMemberships: AuthMembership[] = [];
 let pendingLoginTicket: string | null = null;
 let pendingBindTicket: string | null = null;
 let pendingSsoVerificationTicket: string | null = null;
-let loginActionPromise: Promise<DesktopLoginActionResult> | null = null;
+type LoginActionCoreResult =
+  | { success: true; state: AuthFlowState }
+  | { success: false; code: string; state: AuthFlowState | null };
+let loginActionPromise: Promise<LoginActionCoreResult> | null = null;
 let loginActionPromiseEpoch: number | null = null;
 // Separate from authStateEpoch: closing an add-account surface must invalidate
 // its requests without expiring the still-active account's runtime refresh.
@@ -1721,7 +1743,7 @@ async function clearConfirmedDeadRefreshTokens(
       break;
   }
 
-  // legacy 从属副本只在与安装包区域一致时才由本进程镜像 / 解释。
+  // 无 realm 的 legacy 从属副本只在与本进程兼容区域一致时镜像 / 解释。
   if (realm !== AUTH_REGION) return;
   let legacyOutcome: RemoveIfUnchangedResult = 'changed';
   for (const token of deadTokens) {
@@ -1746,7 +1768,8 @@ async function clearConfirmedDeadRefreshTokens(
  *
  * 镜像只能解决「新版轮换 → 旧版追赶」;反向(旧版实例轮换后只写 legacy,本进程读 v1
  * 读到的仍是已作废的旧值)同样会误判确定性失效,所以读侧也必须认 legacy。v1 排前面:
- * 它带 realm、是本版本的权威记录;legacy 仅在与安装包区域一致时才可解释。
+ * 它带 realm、是本版本的权威记录；无 realm 的 legacy 仅在与本进程兼容区域
+ * 一致时才可解释。
  *
  * 这里刻意**不**折叠成单个候选。选择要在 `runRefreshWithReplacementRetry` 里做——只有
  * 它知道本轮哪些 token 已经被服务端拒过。在这里先按优先级挑一枚,会让 v1 里那枚已失效
@@ -1987,10 +2010,12 @@ function mergeMembershipWithExisting(
 async function withCloudOwnerCommit<T>(opts: {
   previousOwnerId: string | null;
   nextOwnerId: string;
+  nextRealm: AuthRegion;
   prepareTransition: () => Promise<void>;
   prepareCommit?: () => Promise<void>;
   commit: () => T | Promise<T>;
 }): Promise<T> {
+  await claimCloudOwnerRealmIsolation(opts.nextRealm, opts.nextOwnerId);
   if (isPassiveSharedUserDataInstance()) {
     return withGhostSkillProjectionReadOnlyOwner(opts.nextOwnerId, opts.commit);
   }
@@ -2076,6 +2101,105 @@ async function withCloudOwnerCommit<T>(opts: {
   }
   if (committed) requestStableOwnerPostCommit('owner-commit');
   return result;
+}
+
+function knownCloudOwnerIdentities(): CloudOwnerIdentity[] {
+  const vault = readAuthAccountVault();
+  const identities: CloudOwnerIdentity[] = [];
+  if (currentUser) {
+    identities.push({ realm: activeAuthRealm, membershipId: currentUser.id });
+  }
+  for (const resource of Object.values(vault.resources)) {
+    identities.push({ realm: resource.realm, membershipId: resource.metadata.membershipId });
+  }
+  for (const passport of Object.values(vault.passports)) {
+    for (const membership of passport.memberships) {
+      identities.push({ realm: passport.realm, membershipId: membership.membershipId });
+    }
+  }
+  return identities;
+}
+
+function cloudOwnerRealmRegistryLockPath(): string {
+  return path.join(app.getPath('userData'), CLOUD_OWNER_REALM_REGISTRY_LOCK_FILE);
+}
+
+function cloudOwnerRealmRegistryUnavailable(message: string): AuthApiError {
+  return new AuthApiError('CREDENTIAL_STORE_UNAVAILABLE', 503, message);
+}
+
+function readCloudOwnerRealmRegistry(): CloudOwnerRealmRegistry {
+  const raw = readAtomicSafe(CLOUD_OWNER_REALM_REGISTRY_KEY);
+  if (raw === null) {
+    if (isAtomicPersistedSecretAbsent(CLOUD_OWNER_REALM_REGISTRY_KEY)) {
+      return emptyCloudOwnerRealmRegistry();
+    }
+    throw cloudOwnerRealmRegistryUnavailable(
+      'The local account namespace registry is temporarily unavailable',
+    );
+  }
+  try {
+    return parseCloudOwnerRealmRegistry(raw);
+  } catch (error) {
+    log.error('local account namespace registry is invalid', error);
+    throw cloudOwnerRealmRegistryUnavailable(
+      'The local account namespace registry could not be read safely',
+    );
+  }
+}
+
+/**
+ * Persist the first verified realm for every bare Cindy membership id.
+ *
+ * This registry deliberately survives logout and saved-account removal: local databases and
+ * owner-scoped secrets survive those actions too. The strict cross-process lock covers the
+ * complete read/check/write transaction, so two instances cannot claim the same bare id for
+ * opposite realms. Known vault identities are backfilled during the same transaction for
+ * upgrades from versions that predate the registry.
+ */
+async function claimCloudOwnerRealmIsolation(
+  realm: AuthRegion,
+  membershipId: string,
+): Promise<void> {
+  await withSecurityBoundaryLock(
+    cloudOwnerRealmRegistryLockPath(),
+    { label: 'cloud-owner-realm-registry', waitMs: 5_000 },
+    async (status) => {
+      if (!status.held) {
+        throw cloudOwnerRealmRegistryUnavailable(
+          `The local account namespace registry is temporarily ${status.reason}`,
+        );
+      }
+      const current = readCloudOwnerRealmRegistry();
+      let next: ReturnType<typeof mergeCloudOwnerRealmClaims>;
+      try {
+        next = mergeCloudOwnerRealmClaims(current, [
+          ...knownCloudOwnerIdentities(),
+          { realm, membershipId },
+        ]);
+      } catch (error) {
+        if (error instanceof CloudOwnerRealmConflictError) {
+          throw new AuthApiError(
+            'ACCOUNT_NAMESPACE_CONFLICT',
+            409,
+            'This account id is already used by another Cindy service realm on this device',
+          );
+        }
+        log.error('could not extend the local account namespace registry', error);
+        throw cloudOwnerRealmRegistryUnavailable(
+          'The local account namespace registry could not be updated safely',
+        );
+      }
+      if (
+        next.changed &&
+        !writeAtomicSafe(CLOUD_OWNER_REALM_REGISTRY_KEY, JSON.stringify(next.registry))
+      ) {
+        throw cloudOwnerRealmRegistryUnavailable(
+          'Could not persist the local account namespace registry',
+        );
+      }
+    },
+  );
 }
 
 /**
@@ -3060,6 +3184,7 @@ function snapshotAuthState(): AuthState {
           passportId: currentUser.passportId,
         }
       : null,
+    serviceRealm: isCloudAuthenticated ? activeAuthRealm : selectedPersonalAuthRealm,
     mode: appSession.mode,
     dataOwnerId: appSession.dataOwnerId,
     ownerGeneration: appSession.generation,
@@ -3080,6 +3205,7 @@ function snapshotLoggedOutAuthState(): AuthState {
   const appSession = getActiveAppSession();
   return {
     user: null,
+    serviceRealm: selectedPersonalAuthRealm,
     mode: 'signed-out',
     dataOwnerId: null,
     ownerGeneration: appSession.generation,
@@ -3450,12 +3576,12 @@ export function getActiveAuthRealm(): AuthRegion {
 }
 
 /**
- * 登录页人机验证托管挑战页地址(不含 query)。邮箱发码固定走构建区域的 auth
- * 部署(与 runLoginAction 的 startsBuildRealmFlow 口径一致),不看 activeAuthRealm。
+ * 登录页人机验证托管挑战页地址(不含 query)。跟随 Main 冻结的登录流 realm，
+ * 未进入登录流时使用个人登录页当前选择；不读取 Renderer 自行推导的区域。
  * 惰性求值:端点清单可能在 app.ready 后被远程 manifest 回填,不得固化。
  */
 export function getLoginCaptchaChallengeUrl(): string {
-  return authServerUrl(AUTH_REGION) + LOGIN_CAPTCHA_PAGE_PATH;
+  return authServerUrl(pendingAuthRealm ?? selectedPersonalAuthRealm) + LOGIN_CAPTCHA_PAGE_PATH;
 }
 
 /** SkillHub v0.2.1: 返回当前登录用户 id（cuid），未登录时返回 null */
@@ -3483,11 +3609,13 @@ export function getAuthState(): AuthState {
 
 function accountSummaryFromMetadata(
   accountKey: string,
+  serviceRealm: AuthRegion,
   metadata: StoredAccountMetadata,
   activeAccountKey: string | null,
 ): DesktopSavedAccount {
   return {
     accountKey,
+    serviceRealm,
     displayName: metadata.displayName || metadata.email || 'Cindy',
     email: metadata.email,
     avatarUrl: metadata.avatarUrl,
@@ -3500,19 +3628,23 @@ function accountSummaryFromMetadata(
 
 export function listSavedAccounts(): DesktopAccountSwitcherSnapshot {
   const vault = readAuthAccountVault({ allowUnreadable: true });
-  const byKey = new Map<string, StoredAccountMetadata>();
+  const byKey = new Map<string, { realm: AuthRegion; metadata: StoredAccountMetadata }>();
   for (const [key, resource] of Object.entries(vault.resources)) {
-    byKey.set(key, resource.metadata);
+    byKey.set(key, { realm: resource.realm, metadata: resource.metadata });
   }
   for (const passport of Object.values(vault.passports)) {
     for (const membership of passport.memberships) {
       const key = accountVaultKey(passport.realm, membership.membershipId);
-      if (!byKey.has(key)) byKey.set(key, membership);
+      if (!byKey.has(key)) {
+        byKey.set(key, { realm: passport.realm, metadata: membership });
+      }
     }
   }
   const activeKey = currentUser ? accountVaultKey(activeAuthRealm, currentUser.id) : null;
   const accounts = [...byKey.entries()]
-    .map(([key, metadata]) => accountSummaryFromMetadata(key, metadata, activeKey))
+    .map(([key, entry]) =>
+      accountSummaryFromMetadata(key, entry.realm, entry.metadata, activeKey),
+    )
     .sort((left, right) => {
       if (left.isCurrent !== right.isCurrent) return left.isCurrent ? -1 : 1;
       const leftUsed = vault.resources[left.accountKey]?.lastUsedAt ?? 0;
@@ -3628,14 +3760,6 @@ export async function switchSavedAccount(rawAccountKey: unknown): Promise<void> 
       markActive: false,
       validateBeforeWrite: () => assertLoginFlowCurrent(switchLoginFlowEpoch),
     });
-  }
-
-  if (!canRestoreAuthSessionForMembership(AUTH_REGION, realm, pair.membership.kind)) {
-    throw new AuthApiError(
-      'REGION_MISMATCH',
-      409,
-      'Personal accounts must match the installed build region',
-    );
   }
 
   pendingAuthRealm = realm;
@@ -4073,6 +4197,7 @@ export async function initialize(options: AuthInitializeOptions = {}): Promise<A
       await withCloudOwnerCommit({
         previousOwnerId: previousSession.dataOwnerId,
         nextOwnerId: currentUser.id,
+        nextRealm: activeAuthRealm,
         prepareTransition: async () => {
           if (!accountSwitchTeardown) {
             throw new Error('active cloud owner recovery requires a teardown hook');
@@ -4171,7 +4296,7 @@ export async function initialize(options: AuthInitializeOptions = {}): Promise<A
   }
   if (!persistedSession) {
     // 旧版只保存裸 refresh token，没有 realm 可供校验。只有独占 userData 的
-    // primary 才能按当前构建区域迁移它；passive 若猜 AUTH_REGION，恰好会在旧
+    // primary 才能按本进程兼容区域迁移它；passive 若猜 AUTH_REGION，恰好会在旧
     // cn / global 共库时把对端 token 认领成本区会话，随后 refresh 轮换并改写
     // primary 的凭证。这里 fail closed：保留旧文件，本进程稳定保持登出，等
     // 同区域的独占实例完成原子迁移。
@@ -4388,21 +4513,11 @@ async function runColdStartRefreshFlow(
       return finishColdStartSignedOut('cold-start-credential-ownership-lost');
     }
     lastAcceptedRefreshToken = refreshData.refreshToken;
-    if (
-      !canRestoreAuthSessionForMembership(AUTH_REGION, storedRealm, refreshData.membership.kind)
-    ) {
-      // The credential transaction above already preserved the rotated token
-      // in its issuing realm. This process must not publish that identity.
-      resetActiveAuthRealmToBuild();
-      log.warn(
-        `cold-start refresh rejected cross-realm personal session realm=${storedRealm} buildRegion=${AUTH_REGION}`,
-      );
-      return finishColdStartSignedOut('cold-start-incompatible-membership');
-    }
     const previousSession = getActiveAppSession();
     await withCloudOwnerCommit({
       previousOwnerId: previousSession.dataOwnerId,
       nextOwnerId: refreshData.membership.id,
+      nextRealm: storedRealm,
       prepareTransition: async () => {
         if (!accountSwitchTeardown) {
           throw new Error('cold-start cloud owner transition requires a teardown hook');
@@ -4426,6 +4541,7 @@ async function runColdStartRefreshFlow(
           activateClientEndpointRealm(storedRealm);
           activeAuthRealm = storedRealm;
         }
+        selectedPersonalAuthRealm = storedRealm;
         accessToken = refreshData.accessToken;
         currentUser = mapMembershipToAuthUser(refreshData.membership);
         commitCloudAppSession(currentUser.id);
@@ -4479,7 +4595,10 @@ async function runColdStartRefreshFlow(
   }
 }
 
-async function loadLoginProviders(expectedLoginFlowEpoch = loginFlowEpoch): Promise<AuthFlowState> {
+async function loadLoginProviders(
+  expectedLoginFlowEpoch = loginFlowEpoch,
+  realm: AuthRegion = selectedPersonalAuthRealm,
+): Promise<AuthFlowState> {
   discoveredMethods = [];
   pendingAccountToken = null;
   pendingAccountRefreshToken = null;
@@ -4489,10 +4608,13 @@ async function loadLoginProviders(expectedLoginFlowEpoch = loginFlowEpoch): Prom
   pendingSsoVerificationTicket = null;
   pendingAccountDeletionRestored = false;
   pendingAuthRealm = null;
+  await loadClientEndpointsForRealm(realm);
+  assertLoginFlowCurrent(expectedLoginFlowEpoch);
+  selectedPersonalAuthRealm = realm;
   // 与冷启动 splash 同一把闸:限时等待,超时先以 AUTH_SERVICE_UNAVAILABLE 解锁
   // preparing UI,getProviders 继续后台跑;不 abort(net.fetch 本就可能无视 abort)。
   const providers = await awaitLoginProvidersWithPreparingGate(
-    createAuthClient(AUTH_REGION).getProviders(),
+    createAuthClient(realm).getProviders(),
     log,
   );
   assertLoginFlowCurrent(expectedLoginFlowEpoch);
@@ -4509,9 +4631,9 @@ async function discoverOrganizationRealm(org: string, expectedLoginFlowEpoch = l
   pendingAuthRealm = null;
   const realmConfig = getClientEndpointRealmConfig();
   if (!realmConfig.crossRealmOrgLoginEnabled || !realmConfig.realmManifestBaseUrls) {
-    const discovery = await createAuthClient(AUTH_REGION).discoverSsoOrg(org);
+    const discovery = await createAuthClient(selectedPersonalAuthRealm).discoverSsoOrg(org);
     assertLoginFlowCurrent(expectedLoginFlowEpoch);
-    pendingAuthRealm = AUTH_REGION;
+    pendingAuthRealm = selectedPersonalAuthRealm;
     return discovery;
   }
 
@@ -4540,16 +4662,27 @@ async function discoverOrganizationRealm(org: string, expectedLoginFlowEpoch = l
 export async function getLoginState(): Promise<DesktopLoginActionResult> {
   const expectedLoginFlowEpoch = loginFlowEpoch;
   try {
-    if (loginFlowState) return { success: true, state: loginFlowState };
-    return { success: true, state: await loadLoginProviders(expectedLoginFlowEpoch) };
+    if (loginFlowState) {
+      return { success: true, state: loginFlowState, realm: selectedPersonalAuthRealm };
+    }
+    return {
+      success: true,
+      state: await loadLoginProviders(expectedLoginFlowEpoch),
+      realm: selectedPersonalAuthRealm,
+    };
   } catch (error) {
     if (loginFlowEpoch !== expectedLoginFlowEpoch) {
-      return { success: false, code: 'AUTH_FLOW_SUPERSEDED', state: loginFlowState };
+      return {
+        success: false,
+        code: 'AUTH_FLOW_SUPERSEDED',
+        state: loginFlowState,
+        realm: selectedPersonalAuthRealm,
+      };
     }
     const failure = mapLoginProvidersLoadFailure(error);
     log.warn(`load login providers failed code=${failure.code}`);
     loginFlowState = failure.state;
-    return failure;
+    return { ...failure, realm: selectedPersonalAuthRealm };
   }
 }
 
@@ -4576,7 +4709,7 @@ async function completeLogin(
   const releaseLoginFlowCommit = sealLoginFlowCommit(expectedLoginFlowEpoch);
 
   try {
-    const committedRealm = pendingAuthRealm ?? AUTH_REGION;
+    const committedRealm = pendingAuthRealm ?? selectedPersonalAuthRealm;
     const accountRefreshToken = outcome.accountRefreshToken ?? pendingAccountRefreshToken;
     let previousPersistedSession: ReturnType<typeof readPersistedAuthSession> = null;
     let activeSessionWritten = false;
@@ -4607,6 +4740,7 @@ async function completeLogin(
           await withCloudOwnerCommit({
             previousOwnerId: previousSession.dataOwnerId,
             nextOwnerId: nextUser.id,
+            nextRealm: committedRealm,
             prepareTransition: async () => {
               assertTransitionCurrent();
               if (!accountSwitchTeardown) {
@@ -4635,6 +4769,7 @@ async function completeLogin(
                 clearReplacementIntegrationReloadTimers();
                 activateClientEndpointRealm(committedRealm);
                 activeAuthRealm = committedRealm;
+                selectedPersonalAuthRealm = committedRealm;
                 if (!isPassiveSharedUserDataInstance()) {
                   removeSafe(LEGACY_REFRESH_TOKEN_KEY);
                 }
@@ -4730,14 +4865,37 @@ async function acceptLoginOutcome(
   return loginFlowState;
 }
 
-async function runLoginAction(action: DesktopLoginAction): Promise<DesktopLoginActionResult> {
+async function runLoginAction(action: DesktopLoginAction): Promise<LoginActionCoreResult> {
   const actionLoginFlowEpoch = loginFlowEpoch;
-  const startsBuildRealmFlow =
+  if (action.type === 'select-realm') {
+    if (pendingAuthRealm !== null || loginFlowState?.step === 'browser-redirect') {
+      return {
+        success: false,
+        code: 'LOGIN_REALM_CHANGE_UNAVAILABLE',
+        state: loginFlowState,
+      };
+    }
+    loginFlowState = null;
+    try {
+      return {
+        success: true,
+        state: await loadLoginProviders(actionLoginFlowEpoch, action.realm),
+      };
+    } catch (error) {
+      if (loginFlowEpoch !== actionLoginFlowEpoch) {
+        return { success: false, code: 'AUTH_FLOW_SUPERSEDED', state: loginFlowState };
+      }
+      const failure = mapLoginProvidersLoadFailure(error);
+      loginFlowState = failure.state;
+      return failure;
+    }
+  }
+  const startsPersonalRealmFlow =
     action.type === 'discover' ||
     action.type === 'request-code' ||
     action.type === 'verify-code' ||
     (action.type === 'start-browser' && action.kind === 'social');
-  const loginRealm = startsBuildRealmFlow ? AUTH_REGION : (pendingAuthRealm ?? activeAuthRealm);
+  const loginRealm = pendingAuthRealm ?? selectedPersonalAuthRealm;
   const client = createAuthClient(loginRealm);
   const stateBeforeAction = loginFlowState?.step === 'error' ? null : loginFlowState;
   try {
@@ -4790,7 +4948,7 @@ async function runLoginAction(action: DesktopLoginAction): Promise<DesktopLoginA
     // loadLoginProviders clears transient login state. Pin a new personal login
     // afterwards so account selection and binding cannot inherit the active
     // organization's realm. The active account remains untouched until commit.
-    if (startsBuildRealmFlow) pendingAuthRealm = loginRealm;
+    if (startsPersonalRealmFlow) pendingAuthRealm = loginRealm;
 
     if (action.type === 'discover') {
       const email = action.email.trim().toLowerCase();
@@ -4815,7 +4973,7 @@ async function runLoginAction(action: DesktopLoginAction): Promise<DesktopLoginA
         actionLoginFlowEpoch,
       );
       const methods = ssoOrgDiscoveryToMethods(discovery);
-      if (discovery.region !== AUTH_REGION) {
+      if (discovery.region !== selectedPersonalAuthRealm) {
         if (!providerConfig) {
           throw new AuthApiError(
             'AUTH_SERVICE_UNAVAILABLE',
@@ -5057,30 +5215,50 @@ export async function dispatchLoginAction(action: unknown): Promise<DesktopLogin
   // would subsequently close.
   if (sessionInvalidationPromise) await sessionInvalidationPromise;
   if (loginFlowEpoch !== dispatchLoginFlowEpoch) {
-    return { success: false, code: 'AUTH_FLOW_SUPERSEDED', state: loginFlowState };
+    return {
+      success: false,
+      code: 'AUTH_FLOW_SUPERSEDED',
+      state: loginFlowState,
+      realm: selectedPersonalAuthRealm,
+    };
   }
   const parsedAction = parseDesktopLoginAction(action);
   if (!parsedAction) {
-    return { success: false, code: 'INVALID_AUTH_ACTION', state: loginFlowState };
+    return {
+      success: false,
+      code: 'INVALID_AUTH_ACTION',
+      state: loginFlowState,
+      realm: selectedPersonalAuthRealm,
+    };
   }
   if (parsedAction.type === 'cancel-browser') {
     const pendingAction = loginActionPromiseEpoch === loginFlowEpoch ? loginActionPromise : null;
     const cancelled = browserAuthorizationSlot.cancelActive();
     if (!cancelled && !pendingAction) {
-      return { success: false, code: 'NO_BROWSER_AUTH_IN_PROGRESS', state: loginFlowState };
+      return {
+        success: false,
+        code: 'NO_BROWSER_AUTH_IN_PROGRESS',
+        state: loginFlowState,
+        realm: selectedPersonalAuthRealm,
+      };
     }
     const settled = pendingAction ? await pendingAction : null;
     const state = settled?.state ?? loginFlowState ?? (await loadLoginProviders());
-    return { success: true, state };
+    return { success: true, state, realm: selectedPersonalAuthRealm };
   }
   if (loginActionPromise && loginActionPromiseEpoch === loginFlowEpoch) {
-    return { success: false, code: 'LOGIN_BUSY', state: loginFlowState };
+    return {
+      success: false,
+      code: 'LOGIN_BUSY',
+      state: loginFlowState,
+      realm: selectedPersonalAuthRealm,
+    };
   }
   const run = runLoginAction(parsedAction);
   loginActionPromise = run;
   loginActionPromiseEpoch = loginFlowEpoch;
   try {
-    return await run;
+    return { ...(await run), realm: selectedPersonalAuthRealm };
   } finally {
     if (loginActionPromise === run) {
       loginActionPromise = null;
@@ -5242,23 +5420,6 @@ export async function refresh(): Promise<boolean> {
         return false;
       }
       lastAcceptedRefreshToken = data.refreshToken;
-      if (!canRestoreAuthSessionForMembership(AUTH_REGION, refreshRealm, data.membership.kind)) {
-        // The credential transaction above preserves the rotated token in its
-        // issuing realm, but this process never publishes the incompatible
-        // personal identity or activates that realm's business endpoints.
-        log.warn(
-          `runtime refresh rejected cross-realm personal session realm=${refreshRealm} buildRegion=${AUTH_REGION}`,
-        );
-        if (currentUser !== null) {
-          await expireRuntimeAuth(currentUser.id, 'replaced-elsewhere', {
-            preservePersistedRefreshToken: true,
-          });
-        } else {
-          resetActiveAuthRealmToBuild();
-          await recoverAccountFreeOwnerAtStartup('signed-out', 'runtime-incompatible-membership');
-        }
-        return false;
-      }
       const needsIdentityCheck =
         replacementRetries > 0 ||
         persistedRefreshTokenNeedsIdentityCheck ||
@@ -5281,6 +5442,7 @@ export async function refresh(): Promise<boolean> {
         await withCloudOwnerCommit({
           previousOwnerId: getActiveAppSession().dataOwnerId,
           nextOwnerId: nextUser.id,
+          nextRealm: refreshRealm,
           prepareTransition: async () => {
             if (!accountSwitchTeardown) {
               throw new Error('runtime cloud owner transition requires a teardown hook');
@@ -5348,6 +5510,7 @@ export async function refresh(): Promise<boolean> {
       await withCloudOwnerCommit({
         previousOwnerId: getActiveAppSession().dataOwnerId,
         nextOwnerId: nextUser.id,
+        nextRealm: refreshRealm,
         prepareTransition: async () => {
           if (!accountSwitchTeardown) {
             throw new Error('runtime cloud owner transition requires a teardown hook');

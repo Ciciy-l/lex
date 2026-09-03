@@ -35,6 +35,18 @@ export default defineConfig({
     'import.meta.env.VITE_ENDPOINT_MANIFEST_PEER_BASE_URL': JSON.stringify(
       clientBuildEnv.VITE_ENDPOINT_MANIFEST_PEER_BASE_URL,
     ),
+    'import.meta.env.VITE_LEX_HOMEPAGE_URL': JSON.stringify(
+      clientBuildEnv.VITE_LEX_HOMEPAGE_URL,
+    ),
+    'import.meta.env.VITE_LEX_DOWNLOAD_PAGE_URL': JSON.stringify(
+      clientBuildEnv.VITE_LEX_DOWNLOAD_PAGE_URL,
+    ),
+    'import.meta.env.VITE_LEX_SUPPORT_URL': JSON.stringify(
+      clientBuildEnv.VITE_LEX_SUPPORT_URL,
+    ),
+    'import.meta.env.VITE_LEX_UPDATE_MANIFEST_BASE_URL': JSON.stringify(
+      clientBuildEnv.VITE_LEX_UPDATE_MANIFEST_BASE_URL,
+    ),
   },
   plugins: [
     {
@@ -64,6 +76,11 @@ export default defineConfig({
   },
   test: {
     globals: true,
+    // High-core Windows developer machines otherwise start enough fork workers
+    // to starve worker-thread and real-Git tests for their entire per-test
+    // timeout. CI already shards the suite; cap only the local Windows pool so
+    // the full `pnpm --filter desktop test` sweep remains deterministic.
+    maxWorkers: process.platform === 'win32' ? 8 : undefined,
     // Main-process tests do real IO (loopback HTTP servers, git subprocesses,
     // heavy module imports through the vite-node transform). On Windows those
     // are markedly slower and, under the full desktop suite's worker-pool

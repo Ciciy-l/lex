@@ -4,9 +4,7 @@ import { useAppShellCover } from '@/contexts/AppShellCoverContext';
 import { useEnvCheck } from '@/contexts/EnvCheckContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUpdateStatus } from '@/hooks/useUpdateStatus';
-
-// 运行期端点清单(dev/packaged 都在启动阻断后有真值,烘焙兜底已退役)
-const websiteUrl = () => window.electronAPI.clientEndpoints.websiteUrl;
+import { LEX_DOWNLOAD_PAGE_URL } from '../../shared/endpoints';
 
 /* ── Types ── */
 
@@ -296,7 +294,7 @@ export function useSplash() {
   }, [phase, checkEnvironment]);
 
   const onSpawnFailedDownload = useCallback(() => {
-    window.open(websiteUrl(), '_blank');
+    void window.electronAPI.openExternal(LEX_DOWNLOAD_PAGE_URL);
   }, []);
 
   // ── Show progress bar during download phases ──

@@ -49,7 +49,7 @@ import type {
 import { AlipayIcon } from './AlipayIcon';
 import { billingApi } from './api';
 import { BillingCheckoutDialog } from './BillingCheckoutDialog';
-import { BILLING_CURRENCY, formatBillingAmount as formatMoney } from './money';
+import { billingCurrencyForRealm, formatBillingAmount as formatMoney } from './money';
 import {
   PlanChangeStatusDialog,
   PlanChangeTargetDialog,
@@ -307,6 +307,11 @@ export function BillingPage() {
   return (
     <BillingSettingsSection key={`billing:${dataOwnerId ?? 'none'}`} accountId={dataOwnerId} />
   );
+}
+
+function useBillingCurrency(): 'cny' | 'usd' {
+  const { serviceRealm } = useAuth();
+  return billingCurrencyForRealm(serviceRealm);
 }
 
 export function BillingSettingsSection({ accountId }: { accountId: string | null }) {
@@ -1526,6 +1531,7 @@ function BalanceOverviewCard({
   onPurchase: () => void;
 }) {
   const { t, i18n } = useTranslation();
+  const billingCurrency = useBillingCurrency();
   const billingLocale = i18n.resolvedLanguage ?? i18n.language;
   const available = usage?.available ?? balance?.available ?? null;
   const observedAt = usage?.observedAt ?? balance?.observedAt ?? null;
@@ -1549,7 +1555,7 @@ function BalanceOverviewCard({
           ) : available !== null ? (
             <>
               <p className="text-20 font-medium leading-7 tracking-[-0.02em] tabular-nums text-[var(--text-primary)]">
-                {formatMoney(available, BILLING_CURRENCY, billingLocale)}
+                {formatMoney(available, billingCurrency, billingLocale)}
               </p>
               {observedAt && (
                 <p className="mt-1 text-11 text-[var(--text-tertiary)]">
@@ -1587,6 +1593,7 @@ function UsageBreakdownCard({
   hasNoActiveSubscription: boolean;
 }) {
   const { t, i18n } = useTranslation();
+  const billingCurrency = useBillingCurrency();
   const billingLocale = i18n.resolvedLanguage ?? i18n.language;
   const poolLabels = {
     plan: t('billing.balance.plan'),
@@ -1624,7 +1631,7 @@ function UsageBreakdownCard({
               >
                 <p className="text-13 font-medium text-[var(--text-primary)]">{poolLabels[key]}</p>
                 <p className="text-13 font-medium tabular-nums text-[var(--text-primary)]">
-                  {formatMoney(amount, BILLING_CURRENCY, billingLocale)}
+                  {formatMoney(amount, billingCurrency, billingLocale)}
                 </p>
               </div>
             ))
@@ -1647,13 +1654,14 @@ function CreditPoolRow({
   noActiveSubscription: boolean;
 }) {
   const { t, i18n } = useTranslation();
+  const billingCurrency = useBillingCurrency();
   const billingLocale = i18n.resolvedLanguage ?? i18n.language;
   const percent = usagePercent(pool);
   const detail =
     pool.used !== null && pool.total !== null
       ? t('billing.usage.poolDetail', {
-          used: formatMoney(pool.used, BILLING_CURRENCY, billingLocale),
-          total: formatMoney(pool.total, BILLING_CURRENCY, billingLocale),
+          used: formatMoney(pool.used, billingCurrency, billingLocale),
+          total: formatMoney(pool.total, billingCurrency, billingLocale),
         })
       : noActiveSubscription && isZeroCreditAmount(pool.remaining)
         ? t('billing.usage.noPlanCredits')
@@ -1683,7 +1691,7 @@ function CreditPoolRow({
         <p className="text-11 text-[var(--text-tertiary)]">
           {t('billing.usage.remaining')}
           <span className="ml-1.5 text-13 font-medium tabular-nums text-[var(--text-primary)]">
-            {formatMoney(pool.remaining, BILLING_CURRENCY, billingLocale)}
+            {formatMoney(pool.remaining, billingCurrency, billingLocale)}
           </span>
         </p>
       </div>
@@ -1869,12 +1877,13 @@ function OrderHistoryCard({
 
 function GrantAmount({ label, amount }: { label: string; amount: string }) {
   const { i18n } = useTranslation();
+  const billingCurrency = useBillingCurrency();
   const billingLocale = i18n.resolvedLanguage ?? i18n.language;
   return (
     <div className="min-w-0 text-right">
       <p className="truncate text-10 text-[var(--text-tertiary)]">{label}</p>
       <p className="mt-0.5 truncate text-11 font-medium tabular-nums text-[var(--text-primary)]">
-        {formatMoney(amount, BILLING_CURRENCY, billingLocale)}
+        {formatMoney(amount, billingCurrency, billingLocale)}
       </p>
     </div>
   );

@@ -24,6 +24,7 @@ const loginHook = vi.hoisted(() => ({
     isLoading: false,
     errorCode: null as string | null,
     loginState: null as unknown,
+    loginRealm: 'global' as 'cn' | 'global',
     dispatch: vi.fn(async () => true),
     dispatchWithResult: vi.fn(async () => ({ success: true, code: null })),
     clearError: vi.fn(),
@@ -40,7 +41,7 @@ const CONSENT_TEXT: Record<string, string> = {
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => CONSENT_TEXT[key] ?? key }),
 }));
-// 构建区域 = global(LEGAL_LINKS 亦随之解析为 protocol.xd.com 系)
+// 构建身份仍为 global；登录页协议链接由 Main 返回的 loginRealm 决定。
 vi.mock('../../../../shared/brandRegion', () => ({
   CURRENT_CINDY_REGION: 'global',
   CURRENT_APP_ID: 'com.xd.cindy',
@@ -78,6 +79,7 @@ function mount(state: AuthFlowState | null, extra?: Partial<typeof loginHook.val
     isLoading: false,
     errorCode: null,
     loginState: state,
+    loginRealm: 'global' as const,
     dispatch: vi.fn(async () => true),
     dispatchWithResult: vi.fn(async () => ({ success: true, code: null })),
     clearError: vi.fn(),

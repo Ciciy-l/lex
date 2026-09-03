@@ -5326,7 +5326,7 @@
     "backToLogin": "로그인 방식으로 돌아가기"
   },
   "login": {
-    "title": "Cindy에 오신 것을 환영합니다",
+    "title": "Lex에 오신 것을 환영합니다",
     "subtitle": "안전한 로그인 방법을 선택하세요",
     "phonePlaceholder": "휴대폰 번호 입력",
     "emailPlaceholder": "이메일 입력",
@@ -5407,8 +5407,13 @@
       "returnButton": "{{appName}}(으)로 돌아가기"
     },
     "regionPill": {
-      "cn": "CN",
+      "cn": "중국 본토",
       "dev": "Dev"
+    },
+    "serviceRealm": {
+      "cn": "중국 본토",
+      "global": "Global",
+      "switch": "Cindy 서비스 지역: {{realm}} · 전환"
     },
     "captcha": {
       "title": "보안 확인",
@@ -5420,6 +5425,7 @@
     "errors": {
       "fallback": "로그인에 실패했습니다. 다시 시도하세요.",
       "AUTH_SERVICE_UNAVAILABLE": "로그인 서비스를 일시적으로 사용할 수 없습니다.",
+      "ACCOUNT_NAMESPACE_CONFLICT": "이 기기에서 다른 Cindy 서비스 리전이 동일한 계정 식별자를 사용하고 있습니다. 로컬 데이터를 보호하기 위해 로그인을 차단했습니다.",
       "AUTH_REQUEST_FAILED": "로그인 요청에 실패했습니다.",
       "NETWORK_ERROR": "네트워크 연결을 확인하세요.",
       "REQUEST_TIMEOUT": "요청 시간이 초과되었습니다.",

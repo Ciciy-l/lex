@@ -50,6 +50,7 @@ const DRIZZLE_PROXY_SCHEMA = [
       used_project_context INTEGER NOT NULL DEFAULT 0,
       codex_history_has_product_prompt INTEGER,
       extra_dirs TEXT NOT NULL DEFAULT '[]',
+      writable_dirs TEXT NOT NULL DEFAULT '[]',
       remote_host_id TEXT,
       active_turn_started_at INTEGER,
       active_turn_pid INTEGER,

@@ -24,6 +24,7 @@ const { codexState, triggerLoginMock } = vi.hoisted(() => ({
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'zh-CN' } }),
 }));
+vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ serviceRealm: 'cn' }) }));
 
 vi.mock('@/hooks/useCodexAuth', () => ({
   // 与真实实现同判定:仅 authenticated + oauth 视为 ChatGPT 已连接。

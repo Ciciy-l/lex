@@ -20,19 +20,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TEST_CLIENT_ENDPOINTS } from '../../test/vitest/clientEndpointsFixture';
 
 const ipcOn = vi.hoisted(() => vi.fn());
+const ipcHandle = vi.hoisted(() => vi.fn());
 const netRequest = vi.hoisted(() => vi.fn());
+const appGetPath = vi.hoisted(() => vi.fn());
 const showMessageBoxSync = vi.hoisted(() => vi.fn());
 const clipboardWriteText = vi.hoisted(() => vi.fn());
+const assertTrustedAppRendererEvent = vi.hoisted(() => vi.fn());
 vi.mock('electron', () => ({
   app: {
-    getPath: vi.fn(),
+    getPath: appGetPath,
     getAppPath: vi.fn(() => '/repo/apps/desktop'),
     isPackaged: false,
     exit: vi.fn(),
   },
   dialog: { showMessageBoxSync },
   clipboard: { writeText: clipboardWriteText },
-  ipcMain: { on: ipcOn },
+  ipcMain: { on: ipcOn, handle: ipcHandle },
   net: { request: netRequest },
   // netLog 是静态 import(architecture-invariants.md §2);captureEndpointNetLog 这条
   // 路径由 captureNetLogAround 的注入式用例覆盖,这里只需让模块能加载。
@@ -43,6 +46,10 @@ vi.mock('electron', () => ({
 vi.mock('../logger', () => ({
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
   getLogDir: () => '/tmp/cindy-test-logs',
+}));
+
+vi.mock('../security/trustedAppRenderer', () => ({
+  assertTrustedAppRendererEvent,
 }));
 
 import {
@@ -63,6 +70,7 @@ import {
   resolveClientEndpointsBlocking,
   resolveEndpointSource,
   CLIENT_ENDPOINTS_SYNC_CHANNEL,
+  CLIENT_ENDPOINTS_ACTIVE_WEBSITE_CHANNEL,
   type BlockingResolveDeps,
   type ManifestPromptContext,
 } from '../clientEndpointsService';
@@ -70,9 +78,12 @@ import {
 afterEach(() => {
   resetClientEndpointsForTest();
   ipcOn.mockClear();
+  ipcHandle.mockClear();
   netRequest.mockReset();
+  appGetPath.mockReset();
   showMessageBoxSync.mockReset();
   clipboardWriteText.mockReset();
+  assertTrustedAppRendererEvent.mockReset();
 });
 
 const FULL_MANIFEST = JSON.stringify({
@@ -266,6 +277,16 @@ function mockNetManifest(text: string): void {
     response.emit('data', Buffer.from(text));
     response.emit('end');
   });
+  netRequest.mockReturnValueOnce(request);
+}
+
+function mockNetFailure(message = 'net::ERR_INTERNET_DISCONNECTED'): void {
+  const request = new EventEmitter() as EventEmitter & {
+    abort: ReturnType<typeof vi.fn>;
+    end: ReturnType<typeof vi.fn>;
+  };
+  request.abort = vi.fn();
+  request.end = vi.fn(() => request.emit('error', new Error(message)));
   netRequest.mockReturnValueOnce(request);
 }
 
@@ -1443,6 +1464,10 @@ describe('getter / IPC', () => {
     resetClientEndpointsForTest(resolved);
     registerClientEndpointsIpc();
     expect(ipcOn).toHaveBeenCalledWith(CLIENT_ENDPOINTS_SYNC_CHANNEL, expect.any(Function));
+    expect(ipcHandle).toHaveBeenCalledWith(
+      CLIENT_ENDPOINTS_ACTIVE_WEBSITE_CHANNEL,
+      expect.any(Function),
+    );
     const handler = ipcOn.mock.calls[0][1] as (event: { returnValue?: unknown }) => void;
     const event: { returnValue?: unknown } = {};
     handler(event);
@@ -1451,7 +1476,22 @@ describe('getter / IPC', () => {
     expect(getClientEndpoint('websiteUrl')).toBe('https://site.example.com');
   });
 
-  it('组织会话切换所有 token 消费端点,但安装身份与更新链保持构建区域', () => {
+  it('当前账号官网 IPC 只接受可信 app renderer，并返回运行期激活 realm 的值', () => {
+    const resolved = { ...TEST_CLIENT_ENDPOINTS, websiteUrl: 'https://site.example.com' };
+    resetClientEndpointsForTest(resolved);
+    registerClientEndpointsIpc();
+    const registration = ipcHandle.mock.calls.find(
+      ([channel]) => channel === CLIENT_ENDPOINTS_ACTIVE_WEBSITE_CHANNEL,
+    );
+    const handler = registration?.[1] as ((event: object) => string) | undefined;
+    expect(handler).toBeTypeOf('function');
+    const event = {};
+    expect(handler!(event)).toBe('https://site.example.com');
+    expect(assertTrustedAppRendererEvent).toHaveBeenCalledOnce();
+    expect(assertTrustedAppRendererEvent).toHaveBeenCalledWith(event);
+  });
+
+  it('账号服务区切换业务、Cindy 官网与运行资产端点，移动更新入口保持安装范围', () => {
     const cn = {
       ...TEST_CLIENT_ENDPOINTS,
       authApiBaseUrl: 'https://auth.cn.example.com',
@@ -1487,10 +1527,10 @@ describe('getter / IPC', () => {
     expect(getClientEndpoint('modelAccessApiBaseUrl')).toBe(global.modelAccessApiBaseUrl);
     expect(getClientEndpoint('voiceApiBaseUrl')).toBe(global.voiceApiBaseUrl);
 
-    expect(getClientEndpoint('websiteUrl')).toBe(cn.websiteUrl);
-    expect(getClientEndpoint('cdnBaseUrl')).toBe(cn.cdnBaseUrl);
+    expect(getClientEndpoint('websiteUrl')).toBe(global.websiteUrl);
+    expect(getClientEndpoint('cdnBaseUrl')).toBe(global.cdnBaseUrl);
     expect(getClientEndpoint('mobileUpdateBaseUrl')).toBe(cn.mobileUpdateBaseUrl);
-    expect(getClientEndpointForRealm('global', 'cdnBaseUrl')).toBe(cn.cdnBaseUrl);
+    expect(getClientEndpointForRealm('global', 'cdnBaseUrl')).toBe(global.cdnBaseUrl);
 
     resetClientEndpointRealm();
     expect(getClientEndpoint('authApiBaseUrl')).toBe(cn.authApiBaseUrl);
@@ -1519,6 +1559,44 @@ describe('getter / IPC', () => {
         /^https:\/\/manifest\.global\.example\.com\/app\/endpoint\.json\?t=\d+$/,
       ),
     );
+  });
+
+  it('对端清单按 realm 落盘，网络中断时只恢复同区可信缓存', async () => {
+    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lex-realm-endpoint-cache-'));
+    appGetPath.mockReturnValue(userDataDir);
+    const realmManifestBaseUrls = {
+      cn: 'https://hotfix.cindy.com.cn/cindy',
+      global: 'https://hotfix.cindy.app/cindy',
+    };
+    const globalManifest = fs.readFileSync(
+      path.resolve(__dirname, '../../../../../config/endpoint.global.json'),
+      'utf8',
+    );
+
+    try {
+      resetClientEndpointsForTest(TEST_CLIENT_ENDPOINTS, {
+        buildRegion: 'cn',
+        realmManifestBaseUrls,
+      });
+      mockNetManifest(globalManifest);
+      await expect(loadClientEndpointsForRealm('global')).resolves.toMatchObject({
+        authApiBaseUrl: 'https://auth.cindy.app',
+      });
+      expect(
+        fs.existsSync(path.join(userDataDir, 'endpoint-manifest-cache-global.json')),
+      ).toBe(true);
+
+      resetClientEndpointsForTest(TEST_CLIENT_ENDPOINTS, {
+        buildRegion: 'cn',
+        realmManifestBaseUrls,
+      });
+      mockNetFailure();
+      await expect(loadClientEndpointsForRealm('global')).resolves.toMatchObject({
+        authApiBaseUrl: 'https://auth.cindy.app',
+      });
+    } finally {
+      fs.rmSync(userDataDir, { recursive: true, force: true });
+    }
   });
 
   it('对端清单自报 region 时必须与目标区域一致，拒绝后不污染缓存', async () => {

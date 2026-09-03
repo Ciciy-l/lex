@@ -24,6 +24,7 @@ vi.mock('react-i18next', () => ({
     i18n: { language: 'en' },
   }),
 }));
+vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ serviceRealm: 'cn' }) }));
 
 beforeEach(() => {
   customProviderMocks.readCustomProviderKey.mockReset();

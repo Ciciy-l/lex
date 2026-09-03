@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
   endpoint: 'https://model.cn.example',
   buildEndpoint: 'https://model.cn.example',
+  serviceRealm: 'cn' as 'cn' | 'global',
   owner: 'owner-default',
   canUseCindyGateway: true,
   loads: [] as Array<{
@@ -92,7 +93,7 @@ vi.mock('../../logger.js', () => ({
   }),
 }));
 vi.mock('../../authManager.js', () => ({
-  getAuthState: () => ({ mode: 'signed-out', user: null }),
+  getAuthState: () => ({ mode: 'signed-out', user: null, serviceRealm: h.serviceRealm }),
 }));
 vi.mock('../../appSessionState.js', () => ({
   getActiveAppSession: () => ({ mode: 'signed-out', dataOwnerId: h.owner }),
@@ -627,6 +628,7 @@ describe('provider catalog realm reload', () => {
     expect(startupXd?.embeddingModels).toEqual([]);
 
     h.endpoint = 'https://model.global.example';
+    h.serviceRealm = 'global';
     const globalReload = reloadActiveCatalogForEndpointChange();
     // Endpoint activation must synchronously remove the CN catalog before any await.
     expect(activeMarker()).not.toBe('catalog-cn-initial');
@@ -637,6 +639,7 @@ describe('provider catalog realm reload', () => {
 
     // A quick switch back to CN supersedes the still-pending Global request.
     h.endpoint = 'https://model.cn.example';
+    h.serviceRealm = 'cn';
     const cnReload = reloadActiveCatalogForEndpointChange();
     h.loads[1]!.resolve(catalogNamed('catalog-global-stale'));
     await globalReload;
@@ -823,6 +826,7 @@ describe('provider catalog realm reload', () => {
     });
 
     h.endpoint = 'https://model.global.example';
+    h.serviceRealm = 'global';
     const globalReloadIndex = h.loads.length;
     const globalReload = reloadActiveCatalogForEndpointChange();
     h.loads[globalReloadIndex]!.resolve(
@@ -882,6 +886,15 @@ describe('provider catalog realm reload', () => {
     expect(
       getActiveCatalog().providers.find((provider) => provider.id === 'xai')?.models.codex,
     ).toEqual(activeXaiModels);
+
+    // Keep the order-dependent harness on its default CN source for the
+    // generic catalog semantics below. A realm change is a source change and
+    // must go through the same reload boundary as production.
+    h.endpoint = 'https://model.cn.example';
+    h.serviceRealm = 'cn';
+    const reset = reloadActiveCatalogForEndpointChange();
+    h.loads.at(-1)!.resolve(catalogNamed('catalog-cn-reset'));
+    await reset;
   });
 
   it('installs a same-registry fallback snapshot and propagates evidence atomically', async () => {

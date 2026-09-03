@@ -36,6 +36,7 @@ const snapshot = {
   accounts: [
     {
       accountKey: 'personal-key',
+      serviceRealm: 'global' as const,
       displayName: 'Personal Cindy',
       email: 'personal@example.com',
       avatarUrl: 'https://example.com/user-avatar.png',
@@ -46,6 +47,7 @@ const snapshot = {
     },
     {
       accountKey: 'org-key',
+      serviceRealm: 'cn' as const,
       displayName: 'Organization Cindy',
       email: 'org@example.com',
       avatarUrl: 'https://example.com/org-user-avatar.png',
@@ -97,9 +99,9 @@ describe('AccountSwitcherDialog', () => {
     );
 
     expect(await screen.findByText('Personal Cindy')).toBeTruthy();
-    expect(screen.getByText('personal@example.com')).toBeTruthy();
+    expect(screen.getByText('personal@example.com · login.serviceRealm.global')).toBeTruthy();
     expect(screen.getByText('Example Corp')).toBeTruthy();
-    expect(screen.getByText('Organization Cindy')).toBeTruthy();
+    expect(screen.getByText('Organization Cindy · login.serviceRealm.cn')).toBeTruthy();
     expect(document.querySelector('img[src="https://example.com/org-logo.png"]')).toBeTruthy();
     expect(document.querySelector('img[src="https://example.com/org-user-avatar.png"]')).toBeNull();
     expect(screen.queryByText(/组织账号|Organization account/)).toBeNull();

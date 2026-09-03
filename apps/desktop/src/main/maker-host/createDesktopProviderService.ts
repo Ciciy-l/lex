@@ -46,6 +46,7 @@ import {
   getActiveCatalog,
   getModelPlaneWarnings,
   setActiveCatalog,
+  setActiveCatalogServiceRealm,
   setCustomProviderConfigs,
   setCustomProviders,
   setDiscoveredCodexModels,
@@ -341,6 +342,7 @@ const io: CatalogIO = {
  * 绝不把安装区域的 provider/routing 目录冒充成组织区域目录。
  */
 function buildSource(): CatalogSourceConfig {
+  setActiveCatalogServiceRealm(getAuthState().serviceRealm);
   const explicitUrl = process.env.XDT_MODELS_URL;
   const baseUrl = getClientEndpoint('modelAccessApiBaseUrl');
   const usesBuildRealm = baseUrl === getBuildClientEndpoint('modelAccessApiBaseUrl');
@@ -356,6 +358,7 @@ function buildSource(): CatalogSourceConfig {
 
 function catalogSourceKey(source: CatalogSourceConfig): string {
   return JSON.stringify({
+    serviceRealm: getAuthState().serviceRealm,
     url: source.url ?? null,
     localPath: source.localPath ?? null,
     baseUrl: source.baseUrl ?? null,

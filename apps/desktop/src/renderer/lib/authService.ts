@@ -36,6 +36,7 @@ export interface User {
 
 export interface AuthState {
   user: User | null;
+  serviceRealm: 'cn' | 'global';
   mode: 'signed-out' | 'local' | 'cloud';
   dataOwnerId: string | null;
   ownerGeneration: number;
@@ -77,6 +78,7 @@ export function createAuthService(): AuthService {
   const unsubscribeIpc = window.electronAPI.onAuthStateChange((rawState) => {
     const normalized: AuthState = {
       user: rawState.user as User | null,
+      serviceRealm: rawState.serviceRealm === 'cn' ? 'cn' : 'global',
       mode: rawState.mode,
       dataOwnerId: rawState.dataOwnerId,
       ownerGeneration: rawState.ownerGeneration,
@@ -96,6 +98,7 @@ export function createAuthService(): AuthService {
       const raw = await window.electronAPI.authInitialize();
       return {
         user: raw.user as User | null,
+        serviceRealm: raw.serviceRealm === 'cn' ? 'cn' : 'global',
         mode: raw.mode,
         dataOwnerId: raw.dataOwnerId,
         ownerGeneration: raw.ownerGeneration,

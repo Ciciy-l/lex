@@ -1168,7 +1168,7 @@ describe('maker:event hot path ordering', () => {
       'const { turnMoney, estimatedTurnMoney, perModel } = resolveClaudeTurnCostSinks(',
     );
     expect(claudeDoneSource).toContain('providerId: sessionProviderForBilling');
-    expect(claudeDoneSource).toContain('billingRoute,');
+    expect(claudeDoneSource).toContain('{ providerId: sessionProviderForBilling, billingRoute },');
     expect(claudeDoneSource).toContain(
       'const claudeUsageSegments = normalizeTurnUsageSegments(doneData?.usageSegments);',
     );

@@ -17,7 +17,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let userDataDir = '';
-/** 除「构建闸」那一组之外,所有用例测的都是正式构建下的同意语义。 */
+/** 除「构建闸」那一组之外，所有用例都显式开启链路以单测同意语义。 */
 let isPackaged = true;
 
 vi.mock('electron', () => ({
@@ -47,7 +47,9 @@ const originalDevReportingEnv = process.env.XDT_TAPDB_DEV;
 beforeEach(() => {
   userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cindy-analytics-'));
   isPackaged = true;
-  delete process.env.XDT_TAPDB_DEV;
+  // Most tests isolate the consent/toggle state machine from Lex's product-level
+  // reporting opt-in. The dedicated build-gate cases below remove this flag.
+  process.env.XDT_TAPDB_DEV = '1';
 });
 
 afterEach(() => {
@@ -302,7 +304,7 @@ describe('legacy consent migration window closure', () => {
 });
 
 /**
- * 构建闸 —— dev 构建绝不上报。
+ * 构建闸 —— Lex 构建默认不上报，只有显式链路验证可开启。
  *
  * dev 的 renderer 从 http://localhost:<vite 端口> 加载、每条 --isolated 沙箱各有独立
  * userData,TapDB 的 device_id 存在 localStorage 里因而每次都是新的,会凭空造出大量
@@ -311,6 +313,7 @@ describe('legacy consent migration window closure', () => {
 describe('analytics build gate', () => {
   it('refuses to report from a dev build even after consent', async () => {
     isPackaged = false;
+    delete process.env.XDT_TAPDB_DEV;
     const store = await importStore();
 
     store.acceptPrivacyConsent();
@@ -327,8 +330,9 @@ describe('analytics build gate', () => {
     });
   });
 
-  it('still reports from a packaged build with the same on-disk record', async () => {
+  it('keeps Lex packaged builds opted out unless reporting is explicitly enabled', async () => {
     isPackaged = false;
+    delete process.env.XDT_TAPDB_DEV;
     const devStore = await importStore();
     devStore.acceptPrivacyConsent();
     expect(devStore.isAnalyticsAllowed()).toBe(false);
@@ -336,10 +340,10 @@ describe('analytics build gate', () => {
     // 同一份盘上记录,换成正式构建立刻放行 —— 证明差异只来自构建 flavor。
     isPackaged = true;
     const packagedStore = await importStore();
-    expect(packagedStore.isAnalyticsAllowed()).toBe(true);
+    expect(packagedStore.isAnalyticsAllowed()).toBe(false);
   });
 
-  it('lets XDT_TAPDB_DEV=1 opt a dev build back in (link verification escape hatch)', async () => {
+  it('lets XDT_TAPDB_DEV=1 opt a build back in (link verification escape hatch)', async () => {
     isPackaged = false;
     process.env.XDT_TAPDB_DEV = '1';
     const store = await importStore();
@@ -364,6 +368,7 @@ describe('analytics build gate', () => {
   it('fails closed when the host cannot tell whether the build is packaged', async () => {
     // 非 Electron 宿主 / 不完整 mock:isPackaged 不是严格 true 就按 dev 处理。
     isPackaged = undefined as unknown as boolean;
+    delete process.env.XDT_TAPDB_DEV;
     const store = await importStore();
 
     store.acceptPrivacyConsent();

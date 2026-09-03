@@ -21,9 +21,9 @@ import { Check, Info, Plus, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { Spinner } from '@/components/ui/spinner';
+import { useAuth } from '@/contexts/AuthContext';
 import { createCustomProvider, type RuntimeKeys } from '@/lib/customProviders';
 import { PROVIDER_SECRET_IDS } from '../../../shared/providerSecrets';
-import { CURRENT_CINDY_REGION } from '../../../shared/brandRegion';
 import { configuredPresetAgents } from '../../../shared/piRuntimeInitialization';
 import { uniqueCustomProviderId } from '@/lib/customProviderId';
 import {
@@ -330,6 +330,7 @@ export function AddProviderWizard({
   onDone,
 }: AddProviderWizardProps) {
   const { t, i18n } = useTranslation();
+  const { serviceRealm } = useAuth();
   const codexAuth = useCodexAuth();
 
   const [presets, setPresets] = useState<ProviderPreset[]>([]);
@@ -484,8 +485,8 @@ export function AddProviderWizard({
     [providers],
   );
   const sortedPresets = useMemo(
-    () => sortPresetsForRegion(presets, CURRENT_CINDY_REGION),
-    [presets],
+    () => sortPresetsForRegion(presets, serviceRealm),
+    [presets, serviceRealm],
   );
   const q = query.trim().toLowerCase();
   const filteredOauth = q

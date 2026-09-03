@@ -60,9 +60,8 @@ import {
   ssoOrgHistoryOptionId,
 } from './LoginControls';
 import { useResendCountdown } from './useResendCountdown';
-import { CURRENT_CINDY_REGION } from '../../../shared/brandRegion';
 import { shouldLabelRegion } from '../../../shared/regionCode';
-import { LEGAL_LINKS } from '../../../shared/legalLinks';
+import { legalLinksForRealm } from '../../../shared/legalLinks';
 import { resolveIdentifierMethod } from '../../../shared/loginIdentifierMethod';
 import {
   DRAG_BAR_HEIGHT,
@@ -77,31 +76,12 @@ import { canResumePendingConsent, makeConsentStamp, type ConsentStamp } from './
 import { getSsoOrgHistory } from '@/state/ssoOrgHistory';
 
 /**
- * 标题旁区域徽标的 i18n key(2026-07-27 拍板)。
- *
- * **global 故意缺席**:Cindy 是「天生全球」的产品,默认版本不需要给自己贴标签
- * 证明是全球版——只有为特定法规单独构建的版本才被标注(不对称命名)。旧实现给
- * global 挂 "Global" 徽标,读出来反而是「存在一个本土主场版、这是它的出口型号」,
- * 与叙事相反。cn / dev 仍标注:两者连的都不是 global 端点(cn 走国内端点、dev
- * 走独立 dev 端点),登录页是用户确认自己连向哪个后端的位置;dev 另有并存场景
- * ——CindyDev 保持独立可执行名,可与正式包同机共存。⚠️ 别把 cn 的理由写成
- * 「区分同机双装的 cn / global」:2026-07-26 起两者可执行名同为 Cindy、安装
- * 目录与快捷方式同名互抢,该双装场景已明确放弃支持(见 brandIdentity.ts 的
- * executableNameByRegion doc)。
- *
- * 值为五语同文的区域代号(与旧 login.globalRegion 一致:区域标识不翻译),仍走
- * i18n 以便日后改判为「中国大陆版」这类可译文案时不必回改组件。
- *
- * ⚠️ 本表只负责「哪个区域用哪个 i18n key」。**「标不标」不由本表决定**——那是
- * `shared/regionCode.ts` 的 `CINDY_REGION_CODE` 一处说了算(issue 反馈链路、侧栏
- * 版本行同源),消费处统一过 `shouldLabelRegion()`。否则改了 shared 映射、登录页
- * 这张表没跟上,徽标就会与其它界面报出不同的区域身份而没有任何信号。两者的对齐
- * (有代号的区域必须有 key、不标的区域不得有 key)由
- * `renderer/__tests__/regionCode.consistency.test.ts` 断言。
+ * 当前选择的 Cindy 账号服务区徽标。Lex 只有一个安装身份，徽标描述的是登录目标，
+ * 不是另一套应用版本；Global 仍按既有无标签规则呈现，CN 明示中国大陆服务区。
+ * 映射必须继续通过 shouldLabelRegion() 与其它区域标签保持一致。
  */
-const REGION_PILL_KEY: Partial<Record<typeof CURRENT_CINDY_REGION, string>> = {
+const REGION_PILL_KEY: Partial<Record<'cn' | 'global', string>> = {
   cn: 'login.regionPill.cn',
-  dev: 'login.regionPill.dev',
 };
 
 const log = createLogger('LoginPage');
@@ -132,6 +112,7 @@ export function LoginPage({
     isLoading,
     errorCode,
     loginState,
+    loginRealm = 'global',
     hasAccountDeletionReceipt = false,
     getAccountDeletionStatus,
     clearAccountDeletionReceipt,
@@ -328,10 +309,11 @@ export function LoginPage({
   }, [consentDialogOpen, loginState?.step]);
   const openLegalLink = (kind: 'terms' | 'privacy') => {
     // 链接经系统默认浏览器打开(shell:open-external 只放行 http(s),未登录可用);
-    // URL 按构建区域分流(国内 protocol.xd.cn / 国际 protocol.xd.com)。
+    // URL 按当前 Cindy 账号服务区分流(国内 protocol.xd.cn / 国际 protocol.xd.com)。
     // 吞掉 IPC 失败(与移动端 Linking.openURL(...).catch 同口径),避免未处理 rejection
+    const links = legalLinksForRealm(loginRealm);
     void window.electronAPI
-      ?.openExternal?.(kind === 'terms' ? LEGAL_LINKS.termsOfService : LEGAL_LINKS.privacyPolicy)
+      ?.openExternal?.(kind === 'terms' ? links.termsOfService : links.privacyPolicy)
       .catch(() => undefined);
   };
 
@@ -359,26 +341,32 @@ export function LoginPage({
   useLayoutEffect(() => {
     return () => reportPanelBottomReserve(null);
   }, [reportPanelBottomReserve]);
-  const isGlobalBuild = import.meta.env.VITE_CINDY_AUTH_REGION === 'global';
-  // 徽标读 CURRENT_CINDY_REGION 而非上面的 env 字面比较:未注入区域的本地 dev
-  // 构建经 resolveCindyRegion 落到默认 global,正确地不挂徽标(而非误挂 Dev)。
+  // 徽标描述当前选择的 Cindy 账号服务区，不描述 Lex 安装包身份。
   // 「标不标」过 shouldLabelRegion(shared 单点,与侧栏 / issue 链路同源),本组件的
   // REGION_PILL_KEY 只回答「用哪个 key」——两层分开,shared 映射改了这里不会静默漂移。
-  const regionPillKey = shouldLabelRegion(CURRENT_CINDY_REGION)
-    ? REGION_PILL_KEY[CURRENT_CINDY_REGION]
+  const regionPillKey = shouldLabelRegion(loginRealm)
+    ? REGION_PILL_KEY[loginRealm]
     : undefined;
-  // identifier 形态 = 构建区域确定性推导(用户拍板 2026-07-21:手机/邮箱分区互斥,
+  // identifier 形态 = 当前 Cindy 服务区确定性推导(手机/邮箱分区互斥,
   // 双 tab 切换移除);providers 仅兜底区域首选方式未下发的场景。
   const identifierKind: VerificationKind = useMemo(
     () =>
       loginState?.step === 'identifier'
-        ? resolveIdentifierMethod(CURRENT_CINDY_REGION, loginState.providers)
-        : isGlobalBuild
+        ? resolveIdentifierMethod(loginRealm, loginState.providers)
+        : loginRealm === 'global'
           ? 'email'
           : 'phone',
-    [loginState, isGlobalBuild],
+    [loginState, loginRealm],
   );
   const [identifier, setIdentifier] = useState('');
+  const switchPersonalRealm = async () => {
+    const nextRealm = loginRealm === 'global' ? 'cn' : 'global';
+    clearError();
+    const switched = await dispatch({ type: 'select-realm', realm: nextRealm });
+    if (!switched) return;
+    setIdentifier('');
+    setIdentifierFormatError(null);
+  };
   // identifier 本地格式校验错误(设计稿 347:1727:非法邮箱/手机号 → 输入框红边 +
   // 底部红字「请输入正确邮箱」/「请输入正确手机号」)。提交前本地拦截、不发 discover
   // (规则 9:能代码化的格式校验不甩给 server 往返);与 server errorCode 互斥展示
@@ -738,6 +726,19 @@ export function LoginPage({
               )}
               error={!!errorCode || identifierFormatError != null}
             />
+            <LoginTextLink
+              testId="login-service-realm-switch"
+              disabled={isLoading || localModePending}
+              onClick={() => void switchPersonalRealm()}
+            >
+              {t('login.serviceRealm.switch', {
+                realm: t(
+                  loginRealm === 'global'
+                    ? 'login.serviceRealm.global'
+                    : 'login.serviceRealm.cn',
+                ),
+              })}
+            </LoginTextLink>
             <LoginPrimaryButton
               type="submit"
               disabled={!identifier.trim()}

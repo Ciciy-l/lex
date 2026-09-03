@@ -28,7 +28,8 @@ export function combineSessionUsageMoney(
 ): SessionUsageMoney {
   // 历史 turnCostUsd 的真实来源可能是 USD，也可能是曾被误标的 Gateway CNY。
   // 只兼容与当前会话账本同币种的值；无法确定换算关系时直接丢弃，不猜测或强转。
-  const preferredCurrency = actualMoney?.currency ?? DEFAULT_USAGE_CURRENCY;
+  const preferredCurrency =
+    actualMoney?.currency ?? estimatedValueMoney?.currency ?? DEFAULT_USAGE_CURRENCY;
   const compatibleEstimatedValueMoney =
     estimatedValueMoney?.currency === preferredCurrency
       ? estimatedValueMoney

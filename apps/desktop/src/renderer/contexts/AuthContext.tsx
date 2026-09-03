@@ -65,6 +65,7 @@ import { getDataOwnerGeneration, setDataOwnerGeneration } from './dataOwnerGener
  */
 export interface AuthContextValue {
   user: User | null;
+  serviceRealm: 'cn' | 'global';
   mode: 'signed-out' | 'local' | 'cloud';
   dataOwnerId: string | null;
   /** Failed auth boundaries remount owner-scoped routes so stale generations can rehydrate. */
@@ -78,6 +79,8 @@ export interface AuthContextValue {
   deviceId: string | null;
   /** Renderer-safe login screen state; auth tickets remain in main. */
   loginState: AuthFlowState | null;
+  /** Main-owned Cindy service realm selected for the personal login surface. */
+  loginRealm: 'cn' | 'global';
   loadLoginState: () => Promise<DesktopLoginActionResult>;
   dispatchLoginAction: (action: DesktopLoginAction) => Promise<DesktopLoginActionResult>;
   logout: () => Promise<void>;
@@ -129,6 +132,7 @@ export function AuthProvider({
   enableSessionExpiredPrompt?: boolean;
 }) {
   const [user, setUser] = useState<User | null>(null);
+  const [serviceRealm, setServiceRealm] = useState<'cn' | 'global'>('global');
   const [mode, setMode] = useState<'signed-out' | 'local' | 'cloud'>('signed-out');
   const [dataOwnerId, setDataOwnerId] = useState<string | null>(null);
   const [dataOwnerRecoveryEpoch, setDataOwnerRecoveryEpoch] = useState(0);
@@ -141,6 +145,7 @@ export function AuthProvider({
   const [accountDeletionRestored, setAccountDeletionRestored] = useState(false);
   const [credentialStoreUnavailable, setCredentialStoreUnavailable] = useState(false);
   const [loginState, setLoginState] = useState<AuthFlowState | null>(null);
+  const [loginRealm, setLoginRealm] = useState<'cn' | 'global'>('global');
   const { confirm } = useConfirmDialog();
   const { t } = useTranslation();
 
@@ -198,6 +203,7 @@ export function AuthProvider({
       activeDataOwnerIdRef.current = state.dataOwnerId;
       activeDataOwnerGenerationRef.current = state.ownerGeneration;
       setNewMakerDraftOwner(state.dataOwnerId);
+      setServiceRealm(state.serviceRealm);
       setProviderModelMemoryOwner(state.dataOwnerId);
       // 模型选择器的持久记忆与 newMakerDraft 同待遇:同一处、同一个 dataOwnerId、
       // 登出时同样传 null(state.dataOwnerId 在 signed-out 快照里就是 null,分区键退回
@@ -357,6 +363,7 @@ export function AuthProvider({
   const loadLoginState = useCallback(async (): Promise<DesktopLoginActionResult> => {
     const result = await authServiceRef.current!.getLoginState();
     setLoginState(result.state);
+    setLoginRealm(result.realm);
     return result;
   }, []);
 
@@ -368,6 +375,7 @@ export function AuthProvider({
         setLoginState({ step: 'browser-redirect', label: action.label });
       }
       const result = await authServiceRef.current!.dispatchLoginAction(action);
+      setLoginRealm(result.realm);
       // Org discovery can auto-start a sole SSO browser flow below. Persist at
       // the successful discovery boundary so a later browser cancel/timeout
       // does not erase a valid organization from local history.
@@ -430,6 +438,7 @@ export function AuthProvider({
   const beginAddAccount = useCallback(async () => {
     const result = await authServiceRef.current!.beginAddAccount();
     setLoginState(result.state);
+    setLoginRealm(result.realm);
     return result;
   }, []);
 
@@ -492,6 +501,7 @@ export function AuthProvider({
   const value = useMemo(
     () => ({
       user,
+      serviceRealm,
       mode,
       dataOwnerId,
       dataOwnerRecoveryEpoch,
@@ -501,6 +511,7 @@ export function AuthProvider({
       isInitializing,
       deviceId,
       loginState,
+      loginRealm,
       loadLoginState,
       dispatchLoginAction,
       logout,
@@ -523,6 +534,7 @@ export function AuthProvider({
     }),
     [
       user,
+      serviceRealm,
       mode,
       dataOwnerId,
       dataOwnerRecoveryEpoch,
@@ -532,6 +544,7 @@ export function AuthProvider({
       isInitializing,
       deviceId,
       loginState,
+      loginRealm,
       loadLoginState,
       dispatchLoginAction,
       logout,

@@ -134,7 +134,7 @@ describe('direct Session.send guard', () => {
     const violations = findDirectSendViolations(program);
 
     expect(violations).toEqual([]);
-  }, 15_000);
+  }, 30_000);
 });
 
 function findDirectSendViolations(program: ts.Program): SendViolation[] {

@@ -7,10 +7,8 @@ import { useIsDarkMode } from '@/components/markdown/useIsDarkMode';
 import heroPng from '@/assets/login/hero.png';
 import heroPng2x from '@/assets/login/hero@2x.png';
 import heroMask from '@/assets/login/hero-mask.svg';
-import wordmarkPng from '@/assets/login/wordmark.png';
-import wordmarkPng2x from '@/assets/login/wordmark@2x.png';
-import wordmarkDarkPng from '@/assets/login/wordmark-dark.png';
-import wordmarkDarkPng2x from '@/assets/login/wordmark-dark@2x.png';
+import wordmarkSvg from '@/assets/login/lex-wordmark.svg';
+import wordmarkDarkSvg from '@/assets/login/lex-wordmark-dark.svg';
 import sloganPng from '@/assets/login/slogan.png';
 import sloganPng2x from '@/assets/login/slogan@2x.png';
 import sloganDarkPng from '@/assets/login/slogan-dark.png';
@@ -57,13 +55,10 @@ export function LoginBrandStage() {
   // 品牌块整体让位(scale+translateY,构图冻结;用户拍板 2026-07-23,design.md §11)
   const { scale, translateY } = brandPlacement(width, height, panelBottomReserve);
   const sloganShift = sloganShiftX(width, scale);
-  // 暗色画布用白字版字标/SLOGAN(figma 532:585 CINDY_Standard_White / SLOGAN #FBFBFB;
-  // 深浅判定同 useBrandLogo:跟随 theme-service 挂的 dark class)。立绘两模式同资产。
+  // 登录人物与标语继续承接 Cindy 的 Agent 视觉；产品字标使用 Lex 自有矢量资产。
+  // 深浅判定同 useBrandLogo：跟随 theme-service 挂的 dark class。
   const isDark = useIsDarkMode();
-  const wordmarkSrc = isDark ? wordmarkDarkPng : wordmarkPng;
-  const wordmarkSrcSet = isDark
-    ? `${wordmarkDarkPng} 1x, ${wordmarkDarkPng2x} 2x`
-    : `${wordmarkPng} 1x, ${wordmarkPng2x} 2x`;
+  const wordmarkSrc = isDark ? wordmarkDarkSvg : wordmarkSvg;
   const sloganSrc = isDark ? sloganDarkPng : sloganPng;
   const sloganSrcSet = isDark
     ? `${sloganDarkPng} 1x, ${sloganDarkPng2x} 2x`
@@ -183,7 +178,6 @@ export function LoginBrandStage() {
             onError={() => handleAssetSettled('wordmark')}
             className="pointer-events-none absolute select-none object-contain"
             src={wordmarkSrc}
-            srcSet={wordmarkSrcSet}
             style={{
               left: WORDMARK.inner.x,
               top: WORDMARK.inner.y,

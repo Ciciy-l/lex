@@ -11,11 +11,9 @@
  * 停留在冻结渠道,待后续独立设计的自动迁移方案接走。
  *
  * ⚠️ 语义边界:
- *  - 这是**构建期单点,不是运行时开关**。区域(cn/global)是唯一的构建期维度,
- *    经打包命令的 CINDY_AUTH_REGION 选择,默认 global。appId / userData 目录名
- *    按区域派生(cn 与 global 是两个可并存的系统身份,appId 与 mobile 的
- *    com.xd.cindycn / com.xd.cindy 同一套);exe 名 cn/global 同值 'Cindy'
- *    (2026-07-26 显示名统一决策,文件层双装隔离随之放弃,dev 仍独立)。
+ *  - Lex 正式发行只有一个系统身份。历史 `cn` / `global` 参数继续存在于 Cindy
+ *    服务兼容层，但二者必须解析到同一个 appId、可执行名和 userData 目录；
+ *    `dev` 仍是独立内部身份。
  *  - 历史兼容锚点(旧 scheme 解析、旧 userData / DB 文件识别)由
  *    `legacySchemes` / `legacyUserDataDirNames(ByRegion)` / `legacyDbFilePrefixes`
  *    承载,只增不减:老用户机器上的存量注册与文件可能永远带着旧值。
@@ -38,7 +36,7 @@
 import { BRAND_NAME } from './branding.js';
 
 /**
- * 构建期区域维度(与 mobile 的 EXPO_PUBLIC_CINDY_AUTH_REGION 同语义)。
+ * 历史构建/服务兼容维度(与 mobile 的 EXPO_PUBLIC_CINDY_AUTH_REGION 同语义)。
  * 2026-07-20 新增第三目标 `dev`:独立系统身份(CindyDev,可与 cn/global 同机
  * 三装),连接独立的 dev 服务器(config/endpoint.dev.json,服务端就绪前为
  * 约定占位域名)。行为语义上 dev 归 cn 系(登录线/文案等运行时按区域分支处
@@ -67,27 +65,20 @@ export interface BrandIdentity {
   readonly displayName: string;
   /**
    * 可执行文件基名(Windows 加 .exe;mac Mach-O 名同源派生)。
-   * 首字母大写是产品决策(Cindy.exe,同 Discord/Slack 惯例);Windows 进程
-   * 匹配大小写不敏感,产物 / OSS key 命名走小写的 `cdnPrefix`,互不影响。
-   * ⚠️ 这是 **cn / dev 基线值**;2026-07-18 支持同机双装后,打包与运行时
-   * 一律走 `brandExecutableName(region)` 取区域值,本字段仅供 dev 链路
-   * (restart 脚本镜像)与 legacy 消费点使用。
+   * 首字母大写是产品决策；Windows 进程匹配大小写不敏感，产物 key 命名走
+   * 小写的 `cdnPrefix`，互不影响。打包与运行时统一走
+   * `brandExecutableName(region)`，本字段供无区域的兼容消费点使用。
    */
   readonly executableName: string;
   /**
-   * 按区域派生的可执行文件基名(exe / mac .app 包名 / 安装目录 / NSIS
-   * 快捷方式全部跟随)。2026-07-26 owner 决策:cn 与 global 同值 'Cindy',
-   * 让 global 包在 Dock / Finder / 菜单栏 / Windows 快捷方式等全部位置显示
-   * Cindy——代价是 cn/global 同机双装时安装目录 / .app / .lnk 同名互抢
-   * (第二个安装覆盖第一个的文件与快捷方式,更新器按 exe 名杀进程会波及另一
-   * 区域),该场景明确放弃支持;appId 与 userData 目录仍按区域分离,系统身份
-   * 与数据互不影响。dev 保持独立名(CindyDev,可与正式包并存)。区域名不含
-   * 空格(部分系统对带空格路径的兼容性差,owner 决策)。
+   * 按兼容区域参数派生的可执行文件基名(exe / mac .app 包名 / 安装目录 /
+   * NSIS 快捷方式全部跟随)。Lex 的 cn/global 参数必须同值，保证只有一个正式
+   * 安装身份；dev 保持独立名，可与正式包并存。
    */
   readonly executableNameByRegion: Readonly<Record<CindyRegion, string>>;
   /**
-   * Windows AppUserModelId = NSIS appId = macOS bundle id,按区域派生
-   * (cn/global 是两个可并存的系统身份,与 mobile 同一套命名)。
+   * Windows AppUserModelId = NSIS appId = macOS bundle id。Lex 的 cn/global
+   * 兼容参数同值，避免账号服务区改变安装身份。
    * ⚠️ AUMID 三位一体:NSIS appId、运行时 setAppUserModelId、快捷方式 AUMID
    * 必须逐字符一致,否则 Windows toast 通知被静默丢弃。取值经 `brandAppId()`。
    */
@@ -97,9 +88,9 @@ export interface BrandIdentity {
   /** 历史 scheme,永久保持注册 + 解析兼容(存量链接不能死)。只增不减。 */
   readonly legacySchemes: readonly string[];
   /**
-   * Electron 默认派生的 userData 目录名(= package.json productName)。已发布的
-   * cn 构建沿用该目录；global 继续使用历史独立目录 `CindyGlobal`，避免启动时
-   * 改名或搬迁用户数据。
+   * Electron 默认派生的 userData 目录名(= package.json productName)。正式
+   * cn/global 兼容参数通过下表统一到既有 LexGlobal profile，避免已测试用户的
+   * safeStorage 数据因目录迁移失效。
    */
   readonly userDataDirName: string;
   /** 按区域派生的 userData 目录名。 */
@@ -107,8 +98,8 @@ export interface BrandIdentity {
   /** 品牌翻转前的共享历史 userData 目录名(首登 mToc 迁移使用)。只增不减。 */
   readonly legacyUserDataDirNames: readonly string[];
   /**
-   * 各区域曾经使用过的 userData 目录名。按路径识别进程的消费点只能匹配本区域，
-   * 不能把另一发行版的历史目录纳入自己的 kill / 回收范围。只增不减。
+   * 各兼容区域曾经使用过的 userData 目录名。按路径识别进程的消费点只可加入
+   * 当前正式目录和本参数明确拥有的历史目录，避免误杀旧产品实例。只增不减。
    */
   readonly legacyUserDataDirNamesByRegion: Readonly<
     Record<CindyRegion, readonly string[]>
@@ -120,10 +111,8 @@ export interface BrandIdentity {
     Record<CindyRegion, readonly string[]>
   >;
   /**
-   * 更新分发 CDN / OSS 的一级路径前缀(渠道身份,老客户端永远只看自己的前缀)。
-   * ⚠️ 两区共用(owner 决策 2026-07-18):cn / global 的发布渠道靠**不同
-   * OSS bucket** 区分,不靠路径前缀——本字段不做区域派生,发布侧矩阵按
-   * region 选 bucket。
+   * 更新分发的一级路径前缀。Lex 只有一个正式更新通道，本字段不随 Cindy
+   * 账号服务区派生。
    */
   readonly cdnPrefix: string;
   /** 更新器/迁移执行器产物基名(`<updaterName>.exe`)。 */
@@ -138,13 +127,9 @@ export interface BrandIdentity {
  * 当前生效的身份档案(Lex 独立发行版)。
  * 旧 xdt-maker 值全部下沉 legacy 数组。
  *
- * 区域差异字段:appId、userDataDirName 按区域派生(cn/global 是两个可并存
- * 的系统身份,数据分库);executableName 自 2026-07-26 起 cn/global 同值
- * (显示统一为 Cindy,放弃文件层双装隔离,见 executableNameByRegion doc),
- * 仅 dev 保持独立名;深链 scheme、展示名 BRAND_NAME、cdnPrefix、dbFilePrefix、
- * updaterName 两区共用(scheme 共用是 owner 决策:双装时后注册者赢,单装用户
- * 无感;cdnPrefix 共用因发布渠道靠不同 OSS bucket 区分;db 前缀因 userData
- * 已分目录无需再区分)。
+ * cn/global 兼容参数共享同一个正式 Lex appId、可执行名、userData、更新器与
+ * 更新通道；仅 dev 保持独立身份。Cindy 账号 realm 在运行期由 auth/endpoint
+ * 层处理，不得在这里重新派生第二套 Lex 身份。
  */
 export const BRAND_IDENTITY: BrandIdentity = Object.freeze({
   displayName: BRAND_NAME,
@@ -155,7 +140,7 @@ export const BRAND_IDENTITY: BrandIdentity = Object.freeze({
     dev: 'LexDev',
   }),
   appIdByRegion: Object.freeze({
-    cn: 'com.ciciy.lexcn',
+    cn: 'com.ciciy.lex',
     global: 'com.ciciy.lex',
     dev: 'com.ciciy.lexdev',
   }),
@@ -165,7 +150,9 @@ export const BRAND_IDENTITY: BrandIdentity = Object.freeze({
   legacySchemes: Object.freeze(['xdt-maker']),
   userDataDirName: 'Lex',
   userDataDirNameByRegion: Object.freeze({
-    cn: 'Lex',
+    // Lex has one production installation/profile identity. Keep the already
+    // exercised Global profile name to avoid invalidating safeStorage data.
+    cn: 'LexGlobal',
     global: 'LexGlobal',
     dev: 'LexDev',
   }),
@@ -225,9 +212,9 @@ export function allDeepLinkSchemes(identity: BrandIdentity = BRAND_IDENTITY): re
 }
 
 /**
- * 按路径识别本产品 userData 的全部目录名(本区域当前 + 本区域明确拥有的历史名)，
- * 本区域目录名恒为首位。⚠️ 故意**不包含另一区域当前或历史使用的目录**：同机双装
- * 时 orphan-reaper 等按路径匹配的消费点只应认领自己区域的进程，跨区域匹配会误杀。
+ * 按路径识别本产品 userData 的全部目录名(唯一正式目录 + 当前兼容参数明确拥有的
+ * 历史名)，正式目录恒为首位。历史名仍按参数收窄，避免 orphan-reaper 等消费点
+ * 误认领旧产品或内部 dev 实例。
  */
 export function allUserDataDirNames(
   region: CindyRegion = DEFAULT_CINDY_REGION,

@@ -68,7 +68,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { BILLING_CURRENCY, formatBillingAmount } from '@/features/billing/money';
+import { billingCurrencyForRealm, formatBillingAmount } from '@/features/billing/money';
 import { canAccessBillingSettings } from './billingVisibility';
 import { resolveXdAssetModuleState } from './providerAssetModule';
 import {
@@ -1230,7 +1230,8 @@ function XdGatewayHeader({
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const { confirm } = useConfirmDialog();
-  const { mode, user } = useAuth();
+  const { mode, serviceRealm, user } = useAuth();
+  const BILLING_CURRENCY = billingCurrencyForRealm(serviceRealm);
   const { key, hasSavedKey, clearKey } = useApiKey();
   const syncStatus = useModelAccessStatus();
   const connected = provider?.connected ?? false;

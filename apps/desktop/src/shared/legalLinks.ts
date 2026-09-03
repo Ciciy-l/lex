@@ -1,13 +1,10 @@
 /**
  * legalLinks — 服务条款 / 隐私协议链接的区域分流单点。
  *
- * 区域与 brandRegion 同口径:构建期 VITE_CINDY_AUTH_REGION 烘焙,运行时不可
- * 切换(cn 与 global 是两个可并存的系统身份)。国内走 protocol.xd.cn,国际走
- * protocol.xd.com;链接一律经系统默认浏览器打开(renderer 走
+ * Lex 只有一个安装包，协议链接按当前 Cindy 账号服务区解析。国内走
+ * protocol.xd.cn，国际走 protocol.xd.com；链接一律经系统默认浏览器打开(renderer 走
  * `window.electronAPI.openExternal`,channel `shell:open-external` 只放行 http(s))。
  */
-
-import { CURRENT_CINDY_REGION } from './brandRegion';
 
 export interface LegalLinks {
   /** 服务条款 */
@@ -26,6 +23,7 @@ const GLOBAL_LEGAL_LINKS: LegalLinks = {
   privacyPolicy: 'https://protocol.xd.com/cindy/privacy.html',
 };
 
-/** 本构建区域的协议链接(dev 区域归 cn 系,与登录 identifier 形态同口径)。 */
-export const LEGAL_LINKS: LegalLinks =
-  CURRENT_CINDY_REGION === 'global' ? GLOBAL_LEGAL_LINKS : CN_LEGAL_LINKS;
+/** 登录页按 Main 返回的服务区选择 Cindy 官方条款。 */
+export function legalLinksForRealm(realm: 'cn' | 'global'): LegalLinks {
+  return realm === 'global' ? GLOBAL_LEGAL_LINKS : CN_LEGAL_LINKS;
+}

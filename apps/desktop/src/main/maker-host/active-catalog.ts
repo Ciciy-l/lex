@@ -420,6 +420,20 @@ let revision = 0;
 
 /** Electron 相关副作用由 desktop host 注入，本模块继续保持纯状态容器。 */
 let changedListener: ((nextRevision: number) => void) | null = null;
+/** 当前 Cindy 账号服务区；只决定未验证 XD fallback 的区域投影。 */
+let activeCatalogServiceRealm: 'cn' | 'global' =
+  CURRENT_CINDY_REGION === 'global' ? 'global' : 'cn';
+
+/**
+ * Desktop host 在每次按账号 realm 装载目录前同步设置。这里只失效惰性投影，
+ * 随后的完整 catalog commit 负责统一推进 revision / 广播，避免一次切区发两代事件。
+ */
+export function setActiveCatalogServiceRealm(region: 'cn' | 'global'): void {
+  if (activeCatalogServiceRealm === region) return;
+  activeCatalogServiceRealm = region;
+  merged = null;
+  effectiveRegistryMetaIndex = null;
+}
 
 function markChanged(): void {
   merged = null;
@@ -837,10 +851,10 @@ function computeMerged(): Catalog {
     baseCapabilityEvidence === 'current'
       ? projectUnverifiedCatalogFallbackForBuildRegion(
           source,
-          CURRENT_CINDY_REGION,
+          activeCatalogServiceRealm,
           baseUnverifiedXdMediaKinds,
         )
-      : projectUnverifiedCatalogFallbackForBuildRegion(source, CURRENT_CINDY_REGION);
+      : projectUnverifiedCatalogFallbackForBuildRegion(source, activeCatalogServiceRealm);
   // Dynamic OpenAI/Anthropic roots are rebuilt from discovery/registry below,
   // but the daily OSS catalog may carry sparse PI protocol annotations. Keep
   // only that metadata and apply it after existence has been independently
@@ -883,10 +897,13 @@ function computeMerged(): Catalog {
     baseCapabilityEvidence === 'current'
       ? projectUnverifiedCatalogFallbackForBuildRegion(
           BUNDLED_CATALOG,
-          CURRENT_CINDY_REGION,
+          activeCatalogServiceRealm,
           baseUnverifiedXdMediaKinds,
         )
-      : projectUnverifiedCatalogFallbackForBuildRegion(BUNDLED_CATALOG, CURRENT_CINDY_REGION);
+      : projectUnverifiedCatalogFallbackForBuildRegion(
+          BUNDLED_CATALOG,
+          activeCatalogServiceRealm,
+        );
   const catalogXd = b.providers.find((provider) => provider.id === 'xd');
   const xdShell = catalogXd ?? fallbackXdCatalog.providers.find((provider) => provider.id === 'xd');
   const bundledXai = BUNDLED_CATALOG.providers.find((provider) => provider.id === 'xai');

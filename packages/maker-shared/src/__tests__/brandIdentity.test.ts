@@ -53,23 +53,22 @@ describe('BRAND_IDENTITY invariants', () => {
     }
   });
 
-  it('系统身份与数据目录两区互不相同;exe 名两区同值(显示名统一决策)', () => {
-    // userData 目录 / appId 撞名会让两区共库、共系统身份,必须保持分离。
-    // exe 名(安装目录 / .app / 快捷方式)2026-07-26 起 cn/global 同值
-    // 'Lex':owner 决策显示名统一,放弃文件层双装隔离(见
-    // executableNameByRegion doc)。cdnPrefix 两区共用是 owner 决策:
-    // 发布渠道靠不同 OSS bucket 区分,不靠路径前缀。
+  it('Lex 正式服务区参数共享一个系统身份与数据目录，dev 保持隔离', () => {
     expect(BRAND_IDENTITY.executableNameByRegion.cn)
       .toBe(BRAND_IDENTITY.executableNameByRegion.global);
     expect(BRAND_IDENTITY.userDataDirNameByRegion.cn)
+      .toBe(BRAND_IDENTITY.userDataDirNameByRegion.global);
+    expect(BRAND_IDENTITY.appIdByRegion.cn).toBe(BRAND_IDENTITY.appIdByRegion.global);
+    expect(BRAND_IDENTITY.appIdByRegion.dev).not.toBe(BRAND_IDENTITY.appIdByRegion.global);
+    expect(BRAND_IDENTITY.userDataDirNameByRegion.dev)
       .not.toBe(BRAND_IDENTITY.userDataDirNameByRegion.global);
   });
 
-  it('cn 区域值 = 基线标量字段(dev / legacy 消费点与 cn 构建同一身份)', () => {
+  it('产品可执行名与正式区域同值；正式 userData 使用已验证的共享目录', () => {
     expect(BRAND_IDENTITY.executableNameByRegion.cn).toBe(BRAND_IDENTITY.executableName);
-    expect(BRAND_IDENTITY.userDataDirNameByRegion.cn).toBe(
-      BRAND_IDENTITY.userDataDirName,
-    );
+    expect(BRAND_IDENTITY.userDataDirName).toBe('Lex');
+    expect(BRAND_IDENTITY.userDataDirNameByRegion.cn).toBe('LexGlobal');
+    expect(BRAND_IDENTITY.userDataDirNameByRegion.global).toBe('LexGlobal');
   });
 
   it('scheme 符合 RFC 3986(字母开头,字母/数字/+/-/. 组成)且主 scheme 不在 legacy 里', () => {
@@ -81,11 +80,13 @@ describe('BRAND_IDENTITY invariants', () => {
     expect(BRAND_IDENTITY.legacySchemes).not.toContain(BRAND_IDENTITY.primaryScheme);
   });
 
-  it('appId 两区都是反向域名格式且互不相同(cn/global 可并存的系统身份)', () => {
+  it('正式 appId 是单一反向域名，dev 使用独立反向域名', () => {
     const rdnRe = /^[a-z][a-z0-9]*(\.[a-z][a-z0-9-]*)+$/;
     expect(BRAND_IDENTITY.appIdByRegion.cn).toMatch(rdnRe);
     expect(BRAND_IDENTITY.appIdByRegion.global).toMatch(rdnRe);
-    expect(BRAND_IDENTITY.appIdByRegion.cn).not.toBe(BRAND_IDENTITY.appIdByRegion.global);
+    expect(BRAND_IDENTITY.appIdByRegion.dev).toMatch(rdnRe);
+    expect(BRAND_IDENTITY.appIdByRegion.cn).toBe(BRAND_IDENTITY.appIdByRegion.global);
+    expect(BRAND_IDENTITY.appIdByRegion.dev).not.toBe(BRAND_IDENTITY.appIdByRegion.global);
   });
 
   it('legacy userData / DB 前缀不含当前值(历史表只放旧值)', () => {
@@ -138,7 +139,7 @@ describe('区域解析与派生', () => {
     expect(DEFAULT_CINDY_REGION).toBe('global');
     expect(brandAppId()).toBe('com.ciciy.lex');
     expect(brandAppId('global')).toBe('com.ciciy.lex');
-    expect(brandBundleIdPrefix('cn')).toBe('com.ciciy.lexcn');
+    expect(brandBundleIdPrefix('cn')).toBe('com.ciciy.lex');
     expect(brandBundleIdPrefix('global')).toBe('com.ciciy.lex');
   });
 
@@ -149,7 +150,7 @@ describe('区域解析与派生', () => {
     expect(brandExecutableName('dev')).toBe('LexDev');
     expect(brandUserDataDirName()).toBe('LexGlobal');
     expect(brandUserDataDirName('global')).toBe('LexGlobal');
-    expect(brandUserDataDirName('cn')).toBe('Lex');
+    expect(brandUserDataDirName('cn')).toBe('LexGlobal');
   });
 });
 
@@ -160,9 +161,8 @@ describe('派生 helper', () => {
 
   it('allUserDataDirNames 本区域目录名恒为首位 + 全部历史值,且不含另一区域', () => {
     expect(allUserDataDirNames()).toEqual(['LexGlobal']);
-    expect(allUserDataDirNames('cn')).toEqual(['Lex', 'xdt-maker']);
-    // global 的匹配集不含 cn 的 Lex / xdt-maker：orphan-reaper 按路径认领
-    // 进程，跨区域匹配会误杀另一个安装的进程。
+    expect(allUserDataDirNames('cn')).toEqual(['LexGlobal', 'xdt-maker']);
+    // Lex 正式身份两区相同；CN 仍保留旧 xdt-maker 迁移来源。
     expect(allUserDataDirNames('global')).toEqual(['LexGlobal']);
   });
 
@@ -182,7 +182,7 @@ describe('派生 helper', () => {
       ...BRAND_IDENTITY,
       primaryScheme: 'xdt-maker',
       legacySchemes: [],
-      userDataDirNameByRegion: { cn: 'xdt-maker', global: 'xdt-maker' },
+      userDataDirNameByRegion: { cn: 'xdt-maker', global: 'xdt-maker', dev: 'xdt-maker-dev' },
       legacyUserDataDirNames: [],
       legacyUserDataDirNamesByRegion: { cn: [], global: [], dev: [] },
       legacyDialogueUserDataDirNamesByRegion: { cn: [], global: [], dev: [] },

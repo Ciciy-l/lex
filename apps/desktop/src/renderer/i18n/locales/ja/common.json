@@ -5326,7 +5326,7 @@
     "backToLogin": "ログイン方法に戻る"
   },
   "login": {
-    "title": "Cindy へようこそ",
+    "title": "Lex へようこそ",
     "subtitle": "安全なログイン方法を選択してください",
     "phonePlaceholder": "電話番号を入力",
     "emailPlaceholder": "メールアドレスを入力",
@@ -5407,8 +5407,13 @@
       "returnButton": "{{appName}} に戻る"
     },
     "regionPill": {
-      "cn": "CN",
+      "cn": "中国本土",
       "dev": "Dev"
+    },
+    "serviceRealm": {
+      "cn": "中国本土",
+      "global": "Global",
+      "switch": "Cindy サービス地域：{{realm}} · 切替"
     },
     "captcha": {
       "title": "セキュリティチェック",
@@ -5420,6 +5425,7 @@
     "errors": {
       "fallback": "ログインに失敗しました。再試行してください。",
       "AUTH_SERVICE_UNAVAILABLE": "ログインサービスは一時的に利用できません。",
+      "ACCOUNT_NAMESPACE_CONFLICT": "このデバイスでは、別の Cindy サービスリージョンが同じアカウント識別子を使用しています。ローカルデータを保護するため、ログインを停止しました。",
       "AUTH_REQUEST_FAILED": "ログインリクエストに失敗しました。",
       "NETWORK_ERROR": "ネットワーク接続を確認してください。",
       "REQUEST_TIMEOUT": "リクエストがタイムアウトしました。",

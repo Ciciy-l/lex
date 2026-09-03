@@ -2,7 +2,16 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { formatBillingAmount, formatBillingMinorAmount } from '../money';
+import {
+  billingCurrencyForRealm,
+  formatBillingAmount,
+  formatBillingMinorAmount,
+} from '../money';
+
+it('maps billing currency from the signed-in Cindy account realm', () => {
+  expect(billingCurrencyForRealm('cn')).toBe('cny');
+  expect(billingCurrencyForRealm('global')).toBe('usd');
+});
 
 // USD 走窄符号(见 money.ts 的 billingCurrencyFormatOptions),否则 zh-CN 等宿主
 // locale 下 Intl 默认会给出 US$,期望值必须带上同一选项才跟实现同源;这里仍不写死

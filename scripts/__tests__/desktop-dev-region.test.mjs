@@ -10,10 +10,10 @@ import {
   stripDesktopDevRegionArgs,
 } from "../shared/desktop-dev-region.mjs";
 
-test("desktop shared userData follows the region identity", () => {
+test("desktop shared userData keeps one production identity across service realms", () => {
   assert.equal(desktopUserDataDirNameForRegion(), "LexGlobal");
   assert.equal(desktopUserDataDirNameForRegion("global"), "LexGlobal");
-  assert.equal(desktopUserDataDirNameForRegion("cn"), "Lex");
+  assert.equal(desktopUserDataDirNameForRegion("cn"), "LexGlobal");
   assert.equal(desktopUserDataDirNameForRegion("dev"), "LexDev");
   assert.throws(() => desktopUserDataDirNameForRegion("us"), /expected cn, global or dev/);
 });
@@ -25,7 +25,7 @@ test("desktop userData path follows platform appData rules and selected region",
   );
   assert.equal(
     desktopUserDataDirForRegion("cn", "linux", { XDG_CONFIG_HOME: "/tmp/config" }, "/home/tester"),
-    "/tmp/config/Lex",
+    "/tmp/config/LexGlobal",
   );
   assert.equal(
     desktopUserDataDirForRegion(

@@ -14,6 +14,7 @@ vi.mock('react-i18next', () => ({
     i18n: { language: i18nState.language },
   }),
 }));
+vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ serviceRealm: 'cn' }) }));
 
 vi.mock('@/lib/toast', () => ({
   toast: { error: vi.fn(), success: vi.fn() },

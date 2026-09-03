@@ -3,11 +3,12 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { LEGAL_LINKS } from '../../../../shared/legalLinks';
+import { legalLinksForRealm } from '../../../../shared/legalLinks';
 
 const toast = vi.hoisted(() => ({
   error: vi.fn(),
 }));
+const auth = vi.hoisted(() => ({ serviceRealm: 'global' as 'cn' | 'global' }));
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -20,6 +21,10 @@ vi.mock('@/lib/toast', () => ({
   toast,
 }));
 
+vi.mock('@/contexts/AuthContext', () => ({
+  useAuth: () => ({ serviceRealm: auth.serviceRealm }),
+}));
+
 import { LegalLinksRows } from '../AboutSection';
 
 const openExternal = vi.fn();
@@ -27,6 +32,7 @@ const openExternal = vi.fn();
 describe('AboutSection legal links', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    auth.serviceRealm = 'global';
     openExternal.mockResolvedValue({ success: true });
     (window as unknown as { electronAPI: unknown }).electronAPI = {
       openExternal,
@@ -48,7 +54,11 @@ describe('AboutSection legal links', () => {
     expect(termsButton.className).toContain('py-2.5');
 
     fireEvent.click(termsButton);
-    await waitFor(() => expect(openExternal).toHaveBeenCalledWith(LEGAL_LINKS.termsOfService));
+    await waitFor(() =>
+      expect(openExternal).toHaveBeenCalledWith(
+        legalLinksForRealm('global').termsOfService,
+      ),
+    );
 
     const privacyButton = screen.getByRole('button', {
       name: 'settings.about.legal.viewDocument:settings.about.legal.privacyPolicyLabel',
@@ -58,7 +68,24 @@ describe('AboutSection legal links', () => {
     );
 
     fireEvent.click(privacyButton);
-    await waitFor(() => expect(openExternal).toHaveBeenCalledWith(LEGAL_LINKS.privacyPolicy));
+    await waitFor(() =>
+      expect(openExternal).toHaveBeenCalledWith(legalLinksForRealm('global').privacyPolicy),
+    );
+  });
+
+  it('uses the active China-mainland account realm for Cindy legal documents', async () => {
+    auth.serviceRealm = 'cn';
+    render(<LegalLinksRows />);
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'settings.about.legal.viewDocument:settings.about.legal.termsOfServiceLabel',
+      }),
+    );
+
+    await waitFor(() =>
+      expect(openExternal).toHaveBeenCalledWith(legalLinksForRealm('cn').termsOfService),
+    );
   });
 
   it('shows the localized failure message when the system browser cannot open a document', async () => {

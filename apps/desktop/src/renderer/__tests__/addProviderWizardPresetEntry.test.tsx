@@ -18,6 +18,7 @@ import type { ProviderView } from '@cindy/model-providers';
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'zh-CN' } }),
 }));
+vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ serviceRealm: 'cn' }) }));
 
 vi.mock('@/hooks/useCodexAuth', () => ({
   isChatGptConnectionConnected: () => false,

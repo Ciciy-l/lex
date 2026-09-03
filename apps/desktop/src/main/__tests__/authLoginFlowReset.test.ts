@@ -53,7 +53,7 @@ describe('auth login-flow reset', () => {
     expect(source).not.toContain('setJwt(');
   });
 
-  it('requires confirmation only when enterprise discovery crosses the build region', () => {
+  it('requires confirmation only when enterprise discovery crosses the selected service realm', () => {
     const start = source.indexOf("if (action.type === 'discover-sso-org') {");
     expect(start).toBeGreaterThan(-1);
     const body = source.slice(
@@ -61,7 +61,7 @@ describe('auth login-flow reset', () => {
       source.indexOf("\n    if (action.type === 'request-code')", start),
     );
     expect(body).toContain('const methods = ssoOrgDiscoveryToMethods(discovery)');
-    expect(body).toContain('if (discovery.region !== AUTH_REGION)');
+    expect(body).toContain('if (discovery.region !== selectedPersonalAuthRealm)');
     expect(body).toContain("type: 'realm-switch-required'");
     expect(body).toContain("type: 'discovery-loaded'");
     expect(body).toContain("email: ''");
@@ -83,7 +83,7 @@ describe('auth login-flow reset', () => {
     expect(confirmBody).not.toContain("type: 'start-browser'");
   });
 
-  it('pins personal login to the build realm and clears stale realm before organization discovery', () => {
+  it('pins personal login to the explicitly selected realm and clears stale SSO discovery', () => {
     const discoveryStart = source.indexOf('async function discoverOrganizationRealm(');
     const discoveryBody = source.slice(discoveryStart, source.indexOf('\n}', discoveryStart));
     expect(discoveryBody).toContain('pendingAuthRealm = null;');
@@ -97,15 +97,21 @@ describe('auth login-flow reset', () => {
     expect(actionPreamble).toContain("action.type === 'request-code'");
     expect(actionPreamble).toContain("action.type === 'verify-code'");
     expect(actionPreamble).toContain("action.type === 'start-browser' && action.kind === 'social'");
-    expect(actionPreamble).toContain('? AUTH_REGION');
+    expect(actionPreamble).toContain(
+      'const loginRealm = pendingAuthRealm ?? selectedPersonalAuthRealm;',
+    );
     expect(actionPreamble).toContain('const client = createAuthClient(loginRealm);');
+    expect(actionPreamble).toContain("if (action.type === 'select-realm')");
+    expect(actionPreamble).toContain(
+      'state: await loadLoginProviders(actionLoginFlowEpoch, action.realm)',
+    );
 
     const personalActionSetup = source.slice(
       source.indexOf('if (!providerConfig) await loadLoginProviders', actionStart),
       source.indexOf("if (action.type === 'discover')", actionStart),
     );
     expect(personalActionSetup).toContain(
-      'if (startsBuildRealmFlow) pendingAuthRealm = loginRealm;',
+      'if (startsPersonalRealmFlow) pendingAuthRealm = loginRealm;',
     );
   });
 
@@ -203,6 +209,28 @@ describe('auth login-flow reset', () => {
       expect(start).toBeGreaterThan(-1);
       expect(source.slice(start, end)).toContain('mutateAuthAccountVault(');
     }
+  });
+
+  it('claims a durable owner realm before any local owner transition', () => {
+    expect(source).toContain("const CLOUD_OWNER_REALM_REGISTRY_KEY = 'lex_cloud_owner_realms_v1';");
+    const claimStart = source.indexOf('async function claimCloudOwnerRealmIsolation(');
+    const claimEnd = source.indexOf('\n}\n\n/**\n * Publish an account-free owner', claimStart);
+    const claimBody = source.slice(claimStart, claimEnd);
+    expect(claimBody).toContain('withSecurityBoundaryLock(');
+    expect(claimBody).toContain('readCloudOwnerRealmRegistry();');
+    expect(claimBody).toContain('...knownCloudOwnerIdentities(),');
+    expect(claimBody).toContain("'ACCOUNT_NAMESPACE_CONFLICT'");
+    expect(claimBody).toContain('writeAtomicSafe(CLOUD_OWNER_REALM_REGISTRY_KEY');
+
+    const commitStart = source.indexOf('async function withCloudOwnerCommit<T>');
+    const projectionStart = source.indexOf('withGhostSkillProjectionOwnerCommit({', commitStart);
+    expect(source.indexOf('await claimCloudOwnerRealmIsolation(', commitStart)).toBeLessThan(
+      projectionStart,
+    );
+
+    const logoutStart = source.indexOf('async function clearAuthAccountVault(');
+    const logoutEnd = source.indexOf('\n}\n\nfunction metadataFromMembership', logoutStart);
+    expect(source.slice(logoutStart, logoutEnd)).not.toContain('CLOUD_OWNER_REALM_REGISTRY_KEY');
   });
 
   it('filters invalid vault children only for read-only projection', () => {
@@ -343,7 +371,7 @@ describe('auth login-flow reset', () => {
     );
   });
 
-  it('single-flights Passport refresh and rejects cross-realm personal account switching', () => {
+  it('single-flights Passport refresh and restores saved accounts in their recorded realm', () => {
     const helperStart = source.indexOf('async function refreshPassportSessionSingleFlight(');
     const helperEnd = source.indexOf(
       '\n}\n\nasync function rememberUpdatedMembershipMetadata',
@@ -373,15 +401,15 @@ describe('auth login-flow reset', () => {
       switchStart,
     );
     const switchBody = source.slice(switchStart, switchEnd);
-    const policyGuard = switchBody.indexOf('!canRestoreAuthSessionForMembership(');
+    const endpointLoad = switchBody.indexOf('await loadClientEndpointsForRealm(realm);');
     const commitRealm = switchBody.indexOf('pendingAuthRealm = realm;');
-    expect(policyGuard).toBeGreaterThan(-1);
-    expect(commitRealm).toBeGreaterThan(policyGuard);
+    expect(endpointLoad).toBeGreaterThan(-1);
+    expect(commitRealm).toBeGreaterThan(endpointLoad);
     expect(switchBody).toContain('refreshPassportSessionSingleFlight(');
     expect(switchBody).toContain('refreshSavedResourceSession({');
     expect(switchBody).not.toContain('client.refresh(resource.refreshToken)');
     expect(switchBody).not.toContain('removeVaultAccount(parsedKey)');
-    expect(switchBody).toContain("'REGION_MISMATCH'");
+    expect(switchBody).not.toContain("'REGION_MISMATCH'");
     expect(switchBody).toContain('const switchLoginFlowEpoch = loginFlowEpoch;');
     expect(switchBody).toContain(
       "await completeLogin({ status: 'ok', ...pair }, switchLoginFlowEpoch);",
@@ -554,7 +582,7 @@ describe('auth login-flow reset', () => {
     expect(logoutBody).toContain('preservePersistedRefreshToken: true');
   });
 
-  it('activates a restored realm only after the refreshed membership passes build policy', () => {
+  it('loads and activates the credential realm without coupling it to the package region', () => {
     const initializeStart = source.indexOf('export async function initialize(');
     const initializeEnd = source.indexOf('\n}\n\n/**\n * 冷启动 refresh 流程本体', initializeStart);
     const initializeBody = source.slice(initializeStart, initializeEnd);
@@ -565,12 +593,9 @@ describe('auth login-flow reset', () => {
     const coldEnd = source.indexOf('\n}\n\nasync function loadLoginProviders()', coldStart);
     const coldBody = source.slice(coldStart, coldEnd);
     const coldCredentialCommit = coldBody.indexOf('await commitDesktopRefreshCredentials(');
-    const coldPolicyGuard = coldBody.indexOf('!canRestoreAuthSessionForMembership(');
     const coldRealmActivation = coldBody.indexOf('activateClientEndpointRealm(storedRealm);');
     expect(coldCredentialCommit).toBeGreaterThan(-1);
-    expect(coldPolicyGuard).toBeGreaterThan(-1);
-    expect(coldCredentialCommit).toBeLessThan(coldPolicyGuard);
-    expect(coldRealmActivation).toBeGreaterThan(coldPolicyGuard);
+    expect(coldRealmActivation).toBeGreaterThan(coldCredentialCommit);
     expect(coldBody).toContain('requestedToken,');
     expect(coldBody).toContain('allowUnclaimedVault: true');
     expect(coldBody).toContain("epochChanged('before-cold-start-credential-commit')");
@@ -594,17 +619,12 @@ describe('auth login-flow reset', () => {
     const refreshStart = source.indexOf('export async function refresh(): Promise<boolean> {');
     const refreshEnd = source.indexOf('\n}\n\nexport async function logout()', refreshStart);
     const refreshBody = source.slice(refreshStart, refreshEnd);
-    const runtimePolicyGuard = refreshBody.indexOf('!canRestoreAuthSessionForMembership(');
     const runtimeRealmActivation = refreshBody.indexOf(
       'activateClientEndpointRealm(refreshRealm);',
     );
-    expect(runtimePolicyGuard).toBeGreaterThan(-1);
-    expect(runtimeRealmActivation).toBeGreaterThan(runtimePolicyGuard);
+    expect(runtimeRealmActivation).toBeGreaterThan(-1);
     expect(refreshBody).toContain('await commitDesktopRefreshCredentials(');
-    expect(refreshBody).toContain(
-      "await expireRuntimeAuth(currentUser.id, 'replaced-elsewhere', {",
-    );
-    expect(refreshBody).toContain('preservePersistedRefreshToken: true');
+    expect(refreshBody).not.toContain('!canRestoreAuthSessionForMembership(');
   });
 
   it('unlocks login preparing with the splash startup gate after 30s', () => {
@@ -612,7 +632,8 @@ describe('auth login-flow reset', () => {
     const loadEnd = source.indexOf('\n}\n\nasync function discoverOrganizationRealm(', loadStart);
     const loadBody = source.slice(loadStart, loadEnd);
     expect(loadBody).toContain('await awaitLoginProvidersWithPreparingGate(');
-    expect(loadBody).toContain('createAuthClient(AUTH_REGION).getProviders()');
+    expect(loadBody).toContain('createAuthClient(realm).getProviders()');
+    expect(loadBody).toContain('await loadClientEndpointsForRealm(realm);');
     // 闸只限时等待,不 abort 在途 getProviders(与 splash 冷启动闸同一语义)。
     expect(loadBody).not.toContain('.abort(');
 

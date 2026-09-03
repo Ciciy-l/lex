@@ -4,6 +4,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import crypto from 'node:crypto';
+import { desktopClientBuildEnv } from '../../scripts/shared/client-endpoint-build-env.mjs';
 
 const TIPTAP_AND_PROSEMIRROR_PACKAGES = [
   '@tiptap/core',
@@ -208,6 +209,7 @@ function discoverPureInternalPackages(): { specifiers: string[]; names: string[]
 
 const { specifiers: INTERNAL_PURE_PACKAGE_EXCLUDES, names: INTERNAL_PURE_PACKAGE_NAMES } =
   discoverPureInternalPackages();
+const clientBuildEnv = desktopClientBuildEnv({ allowEnvOverride: false });
 
 /**
  * 「带第三方依赖」的内部 workspace 包(maker-core / maker-cc-manager 等)仍走 optimizeDeps
@@ -324,6 +326,17 @@ export default defineConfig(({ command }) => {
 const rendererConfig = {
   root: path.resolve(__dirname, 'src/renderer'),
   envDir: __dirname,
+  define: {
+    'import.meta.env.VITE_LEX_HOMEPAGE_URL': JSON.stringify(
+      clientBuildEnv.VITE_LEX_HOMEPAGE_URL,
+    ),
+    'import.meta.env.VITE_LEX_DOWNLOAD_PAGE_URL': JSON.stringify(
+      clientBuildEnv.VITE_LEX_DOWNLOAD_PAGE_URL,
+    ),
+    'import.meta.env.VITE_LEX_SUPPORT_URL': JSON.stringify(
+      clientBuildEnv.VITE_LEX_SUPPORT_URL,
+    ),
+  },
   plugins: [react(), pdfjsAssetsPlugin()],
   resolve: {
     alias: {

@@ -26,22 +26,18 @@ import {
 const XD_GATEWAY: TurnPricingContext = {
   providerId: 'xd',
   billingRoute: 'xd-gateway',
-  region: 'global',
 };
 const XD_GATEWAY_CN: TurnPricingContext = {
   providerId: 'xd',
   billingRoute: 'xd-gateway',
-  region: 'cn',
 };
 const PROVIDER_API: TurnPricingContext = {
   providerId: 'anthropic',
   billingRoute: 'provider-api',
-  region: 'global',
 };
 const SUBSCRIPTION: TurnPricingContext = {
   providerId: 'anthropic',
   billingRoute: 'subscription',
-  region: 'global',
 };
 
 function quote(
@@ -411,7 +407,7 @@ describe('resolveTurnCost', () => {
       tokens: { inputTokens: 1_000, outputTokens: 100, cacheReadTokens: 0, cacheCreateTokens: 0 },
       sdkCostDelta: 1.23,
       pricing: null,
-      context: { providerId: null, billingRoute: 'unknown', region: 'global' },
+      context: { providerId: null, billingRoute: 'unknown' },
     });
     expect(result).toMatchObject({ source: 'sdk-fallback', money: null });
   });
@@ -437,7 +433,7 @@ describe('resolveTurnCost', () => {
       tokens: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreateTokens: 0 },
       sdkCostDelta: 2,
       pricing: catalog(quote('some-other-model', 3, 15)),
-      context: { providerId: 'openai', billingRoute: 'provider-api', region: 'cn' },
+      context: { providerId: 'openai', billingRoute: 'provider-api' },
     });
     expect(providerApiOnUsdLedger.money).toMatchObject({ amount: 2, currency: 'USD' });
 
@@ -447,7 +443,7 @@ describe('resolveTurnCost', () => {
       tokens: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreateTokens: 0 },
       sdkCostDelta: 2,
       pricing: catalog(quote('some-other-model', 3, 15, { currency: 'CNY' })),
-      context: { providerId: 'openai', billingRoute: 'provider-api', region: 'cn' },
+      context: { providerId: 'openai', billingRoute: 'provider-api' },
     });
     expect(providerApiOnCnyLedger.money).toMatchObject({ currency: 'CNY' });
     expect(providerApiOnCnyLedger.money?.amount).toBeCloseTo(2 * 6.7, 6);
@@ -560,7 +556,7 @@ describe('resolveTurnCost', () => {
           approximate: true,
         }),
       ),
-      context: { providerId: 'deepseek', billingRoute: 'provider-api', region: 'global' },
+      context: { providerId: 'deepseek', billingRoute: 'provider-api' },
     });
 
     expect(result).toMatchObject({
@@ -584,7 +580,7 @@ describe('resolveTurnCost', () => {
           approximate: true,
         }),
       ),
-      context: { providerId: 'deepseek', billingRoute: 'provider-api', region: 'global' },
+      context: { providerId: 'deepseek', billingRoute: 'provider-api' },
     });
 
     expect(result).toEqual({
@@ -612,7 +608,7 @@ describe('resolveTurnCost', () => {
           approximate: true,
         }),
       ),
-      context: { providerId: 'deepseek', billingRoute: 'provider-api', region: 'global' },
+      context: { providerId: 'deepseek', billingRoute: 'provider-api' },
       segments: [],
     });
     expect(result).toEqual({ model: 'deepseek-v4-pro', source: 'reference', money: null });
@@ -677,7 +673,7 @@ describe('resolveTurnCost', () => {
       tokens: { inputTokens: 1_000_000, outputTokens: 0, cacheReadTokens: 0, cacheCreateTokens: 0 },
       sdkCostDelta: 5,
       pricing: null,
-      context: { providerId: null, billingRoute: 'unknown', region: 'global' },
+      context: { providerId: null, billingRoute: 'unknown' },
     });
     expect(byRoute).toMatchObject({ source: 'subscription', money: null });
     expect(byPrefix).toMatchObject({ source: 'subscription', money: null });
@@ -701,7 +697,6 @@ describe('resolveTurnCost', () => {
         context: {
           providerId,
           billingRoute: billingRouteForExplicitProvider(providerId, 'subscription')!,
-          region: 'global',
         },
       });
       expect(result).toMatchObject({ source: 'subscription', money: null });
@@ -725,7 +720,7 @@ describe('resolveTurnCost', () => {
           approximate: true,
         }),
       ),
-      context: { providerId: 'vercel-ai-gateway', billingRoute: 'provider-api', region: 'global' },
+      context: { providerId: 'vercel-ai-gateway', billingRoute: 'provider-api' },
     });
 
     expect(result.source).toBe('reference');

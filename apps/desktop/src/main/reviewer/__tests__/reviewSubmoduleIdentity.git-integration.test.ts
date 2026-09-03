@@ -31,6 +31,18 @@ async function initRepo(dir: string): Promise<void> {
   await configureRepo(dir);
 }
 
+/** Keep submodule clones byte-stable even when the host has core.autocrlf enabled globally. */
+function submoduleCommand(...args: string[]): string[] {
+  return [
+    '-c',
+    'protocol.file.allow=always',
+    '-c',
+    'core.autocrlf=false',
+    'submodule',
+    ...args,
+  ];
+}
+
 /** 父仓 + 已初始化 submodule(vendor/lib,含一个已提交文件 inner.txt)。 */
 async function setupParentWithSubmodule(): Promise<{ parent: string; sub: string }> {
   const upstream = path.join(workRoot, 'lib-upstream');
@@ -45,7 +57,7 @@ async function setupParentWithSubmodule(): Promise<{ parent: string; sub: string
   await runGit(['add', 'root.txt'], { cwd: parent });
   await runGit(['commit', '--no-gpg-sign', '-m', 'parent seed'], { cwd: parent });
   await runGit(
-    ['-c', 'protocol.file.allow=always', 'submodule', 'add', upstream, 'vendor/lib'],
+    submoduleCommand('add', upstream, 'vendor/lib'),
     { cwd: parent },
   );
   await runGit(['commit', '--no-gpg-sign', '-m', 'add submodule'], { cwd: parent });
@@ -186,7 +198,7 @@ describe('readReviewSubmoduleIdentity (#2463)', () => {
     await runGit(['commit', '--no-gpg-sign', '-m', 'parent seed'], { cwd: parent });
     for (const name of ['vendor/a', 'vendor/b']) {
       await runGit(
-        ['-c', 'protocol.file.allow=always', 'submodule', 'add', upstream, name],
+        submoduleCommand('add', upstream, name),
         { cwd: parent },
       );
       await configureRepo(path.join(parent, ...name.split('/')));
@@ -271,7 +283,7 @@ describe('readReviewSubmoduleIdentity (#2463)', () => {
     await runGit(['commit', '--no-gpg-sign', '-m', 'parent seed'], { cwd: parent });
     for (const name of ['vendor/a', 'vendor/b']) {
       await runGit(
-        ['-c', 'protocol.file.allow=always', 'submodule', 'add', upstream, name],
+        submoduleCommand('add', upstream, name),
         { cwd: parent },
       );
       await configureRepo(path.join(parent, ...name.split('/')));
@@ -357,9 +369,7 @@ async function setupNestedChain(levels: number): Promise<{ parent: string; inner
     await fs.writeFile(path.join(repo, `file-l${i}.txt`), `l${i}\n`);
     await runGit(['add', '.'], { cwd: repo });
     await runGit(['commit', '--no-gpg-sign', '-m', `l${i} seed`], { cwd: repo });
-    await runGit(['-c', 'protocol.file.allow=always', 'submodule', 'add', upstream, 'child'], {
-      cwd: repo,
-    });
+    await runGit(submoduleCommand('add', upstream, 'child'), { cwd: repo });
     await runGit(['commit', '--no-gpg-sign', '-m', 'add child'], { cwd: repo });
     upstream = repo;
   }
@@ -368,12 +378,10 @@ async function setupNestedChain(levels: number): Promise<{ parent: string; inner
   await fs.writeFile(path.join(parent, 'root.txt'), 'root\n');
   await runGit(['add', 'root.txt'], { cwd: parent });
   await runGit(['commit', '--no-gpg-sign', '-m', 'parent seed'], { cwd: parent });
-  await runGit(['-c', 'protocol.file.allow=always', 'submodule', 'add', upstream, 'vendor/lib'], {
-    cwd: parent,
-  });
+  await runGit(submoduleCommand('add', upstream, 'vendor/lib'), { cwd: parent });
   await runGit(['commit', '--no-gpg-sign', '-m', 'add submodule'], { cwd: parent });
   await runGit(
-    ['-c', 'protocol.file.allow=always', 'submodule', 'update', '--init', '--recursive'],
+    submoduleCommand('update', '--init', '--recursive'),
     { cwd: parent },
   );
   const innermost = path.join(parent, 'vendor', 'lib', ...Array(levels - 1).fill('child'));
@@ -434,7 +442,7 @@ describe('readReviewSubmoduleIdentity 路径边界 (#2463 review)', () => {
       // --show-toplevel 输出被 trim 会裁掉路径本身的尾随空格,realpath 查错
       // 路径 → 整次 Review 失败。
       await runGit(
-        ['-c', 'protocol.file.allow=always', 'submodule', 'add', upstream, 'vendor/lib '],
+        submoduleCommand('add', upstream, 'vendor/lib '),
         { cwd: parent },
       );
       await runGit(['commit', '--no-gpg-sign', '-m', 'add submodule'], { cwd: parent });

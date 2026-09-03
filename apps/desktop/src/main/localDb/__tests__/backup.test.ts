@@ -24,6 +24,7 @@ import {
 } from '../backup';
 
 const GB = 1024 ** 3;
+const KB = 1024;
 
 let tmpDir: string;
 let dbFilePath: string;
@@ -73,31 +74,31 @@ describe('pruneIsoBackupsToBudget', () => {
   });
 
   it('大库场景（事故回归）：总体积超预算 → 只留最新一份', () => {
-    // 模拟 13GB 库、budget = 1.5×13 = 19.5GB：留下最新 13GB 后，再往旧一份就超预算
-    const b1 = makeBackup('2026-06-29T00-00-00-000Z', 13 * GB);
-    const b2 = makeBackup('2026-07-01T00-00-00-000Z', 13 * GB);
-    const b3 = makeBackup('2026-07-06T00-00-00-000Z', 13 * GB);
+    // 比例等价模拟 13GB 库，避免 Windows ftruncate 实际分配数十 GB。
+    const b1 = makeBackup('2026-06-29T00-00-00-000Z', 13 * KB);
+    const b2 = makeBackup('2026-07-01T00-00-00-000Z', 13 * KB);
+    const b3 = makeBackup('2026-07-06T00-00-00-000Z', 13 * KB);
     const removed = pruneIsoBackupsToBudget(dbFilePath, {
       maxCount: 3,
-      maxTotalBytes: isoBackupTotalBudgetBytes(13 * GB),
+      maxTotalBytes: Math.floor(13 * KB * 1.5),
     });
     expect(removed.sort()).toEqual([b1, b2].sort());
     expect(listIsoBackups(dbFilePath)).toEqual([b3]);
   });
 
   it('keepNewest 默认 true：最新一份即使单份超预算也保留', () => {
-    const only = makeBackup('2026-07-06T00-00-00-000Z', 13 * GB);
+    const only = makeBackup('2026-07-06T00-00-00-000Z', 13 * KB);
     const removed = pruneIsoBackupsToBudget(dbFilePath, {
       maxCount: 3,
-      maxTotalBytes: 1 * GB,
+      maxTotalBytes: 1 * KB,
     });
     expect(removed).toEqual([]);
     expect(listIsoBackups(dbFilePath)).toEqual([only]);
   });
 
   it('keepNewest=false（备份前腾预算）：预算为 0 时可清空全部旧备份', () => {
-    makeBackup('2026-07-01T00-00-00-000Z', 13 * GB);
-    makeBackup('2026-07-06T00-00-00-000Z', 13 * GB);
+    makeBackup('2026-07-01T00-00-00-000Z', 13 * KB);
+    makeBackup('2026-07-06T00-00-00-000Z', 13 * KB);
     const removed = pruneIsoBackupsToBudget(dbFilePath, {
       maxCount: 0,
       maxTotalBytes: 0,

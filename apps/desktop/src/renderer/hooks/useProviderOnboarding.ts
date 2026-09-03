@@ -20,7 +20,6 @@ import type { ProviderPreset, ProviderView } from '@cindy/model-providers';
 import { useAuth } from '@/contexts/AuthContext';
 import { useProviders } from '@/hooks/useProviders';
 import { subscribeProvidersSnapshot } from '@/lib/providersSnapshotStore';
-import { CURRENT_CINDY_REGION } from '../../shared/brandRegion';
 import type { LocalCliDetection } from '../../shared/localCliDetect';
 import {
   dismissProviderOnboarding,
@@ -68,7 +67,7 @@ export interface UseProviderOnboardingReturn {
    */
   detectedRows: DetectedProviderRow[];
   /**
-   * 主列表行,按构建区域装配(CN 版首推海外订阅渠道不合理,2026-07-24 用户反馈):
+   * 主列表行,按当前 Cindy 账号服务区装配(大陆账号首推海外订阅渠道不合理):
    *   - cn:regionHint=cn 的预设(智谱/Kimi/MiniMax/百炼…,最多 4 行;目录异常
    *     取不到 cn 预设时回落 OAuth 行);Anthropic/OpenAI/xAI 收进折叠区。
    *   - global:内置 OAuth 行(anthropic → openai → xai,目录序);预设收折叠区。
@@ -87,7 +86,7 @@ interface UseProviderOnboardingOptions {
 export function useProviderOnboarding(
   options?: UseProviderOnboardingOptions,
 ): UseProviderOnboardingReturn {
-  const { mode } = useAuth();
+  const { mode, serviceRealm } = useAuth();
   const { providers, loading } = useProviders();
 
   const dismissed = useSyncExternalStore(
@@ -161,8 +160,8 @@ export function useProviderOnboarding(
   }, [detections, providers]);
 
   const presets = useMemo(
-    () => (rawPresets ? sortPresetsForRegion(rawPresets, CURRENT_CINDY_REGION) : []),
-    [rawPresets],
+    () => (rawPresets ? sortPresetsForRegion(rawPresets, serviceRealm) : []),
+    [rawPresets, serviceRealm],
   );
 
   // 主列/折叠区装配(区域策略见 UseProviderOnboardingReturn.primaryRows 注释)。
@@ -179,7 +178,7 @@ export function useProviderOnboarding(
       kind: 'preset',
       preset,
     }));
-    if (CURRENT_CINDY_REGION === 'cn') {
+    if (serviceRealm === 'cn') {
       // presets 未落定(本地 IPC,毫秒级)前主列留空,避免先闪 OAuth 再换预设。
       if (rawPresets == null) return { primaryRows: [], moreRows: [] };
       const cnPresets = presetRows.filter(
@@ -201,7 +200,7 @@ export function useProviderOnboarding(
       };
     }
     return { primaryRows: oauthRows, moreRows: presetRows };
-  }, [oauthProviders, presets, rawPresets, detectedRows]);
+  }, [oauthProviders, presets, rawPresets, detectedRows, serviceRealm]);
 
   return {
     visible,

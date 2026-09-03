@@ -7,6 +7,7 @@ import * as QRCode from 'qrcode';
 import cindyIconUrl from '@/../../resources/icon.png?url';
 import { Spinner } from '@/components/ui/spinner';
 import { Tip } from '@/components/ui/tooltip';
+import { useAuth } from '@/contexts/AuthContext';
 import { compareDevicesByName } from '@/features/device-link/deviceSort';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
@@ -183,9 +184,12 @@ export function MobileDownloadDialog({
   triggerRef,
 }: MobileDownloadDialogProps) {
   const { t } = useTranslation();
+  // 只作为 Main auth 状态变化的重读信号；服务 URL 真值仍由下方 IPC 返回。
+  const { serviceRealm } = useAuth();
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [qrError, setQrError] = useState(false);
   const [qrAttempt, setQrAttempt] = useState(0);
+  const [websiteUrl, setWebsiteUrl] = useState<string | null>(null);
   const [remoteSnapshot, setRemoteSnapshot] = useState<MobileRemoteSnapshot | null>(null);
   const [remoteStatusError, setRemoteStatusError] = useState(false);
   const primaryActionRef = useRef<HTMLButtonElement>(null);
@@ -194,8 +198,28 @@ export function MobileDownloadDialog({
   const refreshRemoteRef = useRef<(() => void) | null>(null);
   const skipNextOpenRefreshRef = useRef(false);
   const openHandledRef = useRef(false);
-  const websiteUrl = window.electronAPI.clientEndpoints.websiteUrl;
-  const downloadUrl = useMemo(() => resolveMobileDownloadUrl(websiteUrl), [websiteUrl]);
+  const downloadUrl = useMemo(
+    () => (websiteUrl === null ? undefined : resolveMobileDownloadUrl(websiteUrl)),
+    [websiteUrl],
+  );
+
+  // URL 真值留在 Main：账号切区完成后，Renderer 只用 serviceRealm 触发重读，
+  // 不自行拼装或缓存 CN / Global 服务地址。
+  useEffect(() => {
+    let active = true;
+    setWebsiteUrl(null);
+    void window.electronAPI.clientEndpoints
+      .getActiveWebsiteUrl()
+      .then((url) => {
+        if (active) setWebsiteUrl(url);
+      })
+      .catch(() => {
+        if (active) setWebsiteUrl('');
+      });
+    return () => {
+      active = false;
+    };
+  }, [serviceRealm]);
 
   // Prepare the QR before the first click so opening the dialog never waits on
   // canvas encoding. The module-level cache keeps this a once-per-endpoint cost.
@@ -206,6 +230,10 @@ export function MobileDownloadDialog({
     let active = true;
     setQrError(false);
 
+    if (downloadUrl === undefined) {
+      setQrDataUrl(null);
+      return;
+    }
     if (!downloadUrl) {
       setQrDataUrl(null);
       setQrError(true);
@@ -231,6 +259,20 @@ export function MobileDownloadDialog({
       active = false;
     };
   }, [downloadUrl, qrAttempt]);
+
+  // Radix 的首次自动聚焦早于异步 Main IPC 返回时，会先落到远控或关闭按钮。
+  // 仅当焦点仍停在这个自动 fallback 上时补到二维码主动作；用户已经主动移动
+  // 焦点则绝不抢回。
+  useEffect(() => {
+    if (!open || !downloadUrl) return;
+    const activeElement = document.activeElement;
+    if (
+      activeElement === remoteActionRef.current ||
+      activeElement === closeActionRef.current
+    ) {
+      primaryActionRef.current?.focus();
+    }
+  }, [open, downloadUrl]);
 
   // Device state is also warmed while the dialog is closed. This makes its
   // first rendered layout stable instead of showing a large QR and then

@@ -187,6 +187,21 @@ describe('shouldApplyEstimatedValueEntry', () => {
 });
 
 describe('combineSessionUsageMoney', () => {
+  it('keeps an estimate-only CN session in its account ledger currency', () => {
+    const estimate: RegionalMoney = {
+      amount: 0.75,
+      currency: 'CNY',
+      approximate: true,
+      kind: 'value-estimate',
+      estimateReasons: ['subscription-value'],
+    };
+
+    const result = combineSessionUsageMoney(null, estimate);
+
+    expect(result.estimatedValueMoney).toEqual(estimate);
+    expect(result.totalMoney).toMatchObject({ amount: 0.75, currency: 'CNY' });
+  });
+
   it('adds CN actual cost and subscription value into one stable session total', () => {
     const result = combineSessionUsageMoney(
       {

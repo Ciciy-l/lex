@@ -9,6 +9,7 @@ import { ModelPickerOverlay } from '../CustomProviderDialog';
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
+vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ serviceRealm: 'cn' }) }));
 
 afterEach(cleanup);
 

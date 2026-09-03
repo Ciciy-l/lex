@@ -148,13 +148,7 @@ function applyMigrationScriptSync(db: Sqlite, fileName: string): void {
   }
   if (fileName === '0065_equal_shinobi_shaw.sql') {
     ensureColumnSync(db, 'sessions', 'last_turn_ended_at', 'integer');
-  }
-  if (fileName === '0064_icy_bruce_banner.sql') {
-    ensureColumnSync(db, 'sessions', 'active_turn_started_at', 'integer');
-    ensureColumnSync(db, 'sessions', 'active_turn_pid', 'integer');
-  }
-  if (fileName === '0065_equal_shinobi_shaw.sql') {
-    ensureColumnSync(db, 'sessions', 'last_turn_ended_at', 'integer');
+    return;
   }
   if (fileName === '0080_regional_money.sql') {
     ensureColumnSync(db, 'sessions', 'total_cost_amount', 'real DEFAULT 0 NOT NULL');
@@ -202,6 +196,19 @@ function applyMigrationScriptSync(db: Sqlite, fileName: string): void {
     );
     return;
   }
+  if (fileName === '0091_amazing_blur.sql') {
+    ensureColumnSync(db, 'sessions', 'codex_plan_json', 'text');
+    return;
+  }
+  if (fileName === '0097_fresh_stryfe.sql') {
+    ensureColumnSync(db, 'sessions', 'list_preview', 'text');
+    ensureColumnSync(db, 'sessions', 'list_preview_role', 'text');
+    ensureColumnSync(db, 'sessions', 'list_message_count', 'integer');
+    return;
+  }
+  if (fileName === '0099_boring_champions.sql') {
+    ensureColumnSync(db, 'sessions', 'writable_dirs', "text DEFAULT '[]' NOT NULL");
+  }
 }
 
 async function applyMigrationScript(target: DbClient, fileName: string): Promise<void> {
@@ -228,13 +235,7 @@ async function applyMigrationScript(target: DbClient, fileName: string): Promise
   }
   if (fileName === '0065_equal_shinobi_shaw.sql') {
     await ensureColumn(target, 'sessions', 'last_turn_ended_at', 'integer');
-  }
-  if (fileName === '0064_icy_bruce_banner.sql') {
-    await ensureColumn(target, 'sessions', 'active_turn_started_at', 'integer');
-    await ensureColumn(target, 'sessions', 'active_turn_pid', 'integer');
-  }
-  if (fileName === '0065_equal_shinobi_shaw.sql') {
-    await ensureColumn(target, 'sessions', 'last_turn_ended_at', 'integer');
+    return;
   }
   if (fileName === '0080_regional_money.sql') {
     await ensureColumn(target, 'sessions', 'total_cost_amount', 'real DEFAULT 0 NOT NULL');
@@ -281,6 +282,19 @@ async function applyMigrationScript(target: DbClient, fileName: string): Promise
       'integer DEFAULT 0 NOT NULL',
     );
     return;
+  }
+  if (fileName === '0091_amazing_blur.sql') {
+    await ensureColumn(target, 'sessions', 'codex_plan_json', 'text');
+    return;
+  }
+  if (fileName === '0097_fresh_stryfe.sql') {
+    await ensureColumn(target, 'sessions', 'list_preview', 'text');
+    await ensureColumn(target, 'sessions', 'list_preview_role', 'text');
+    await ensureColumn(target, 'sessions', 'list_message_count', 'integer');
+    return;
+  }
+  if (fileName === '0099_boring_champions.sql') {
+    await ensureColumn(target, 'sessions', 'writable_dirs', "text DEFAULT '[]' NOT NULL");
   }
 }
 

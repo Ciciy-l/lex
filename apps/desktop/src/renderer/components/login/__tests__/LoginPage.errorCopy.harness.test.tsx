@@ -25,6 +25,7 @@ const loginHook = vi.hoisted(() => ({
     isLoading: false,
     errorCode: null as string | null,
     loginState: null as unknown,
+    loginRealm: 'cn' as const,
     dispatch: vi.fn(async () => true),
     dispatchWithResult: vi.fn(async () => ({ success: true, code: null })),
     clearError: vi.fn(),
@@ -59,6 +60,8 @@ const NAMED_CODES = [
   'INVALID_BIND_TICKET',
   'REGION_MISMATCH',
 ] as const;
+/** Main-only boundary errors do not come from the auth-server scenario transport. */
+const LOCAL_NAMED_CODES = ['ACCOUNT_NAMESPACE_CONFLICT'] as const;
 const FALLBACK_CODES = ['UNKNOWN_CODE', 'LOGIN_BUSY'] as const;
 
 const zhErrors = zhCN.login.errors as Record<string, string>;
@@ -118,6 +121,7 @@ function mountWithError(code: string) {
     isLoading: false,
     errorCode: code,
     loginState: identifierState,
+    loginRealm: 'cn',
     dispatch: vi.fn(async () => true),
     dispatchWithResult: vi.fn(async () => ({ success: true, code: null })),
     clearError: vi.fn(),
@@ -132,6 +136,16 @@ describe('error-copy 桌面 19 码表 + 兜底(现网 i18n verbatim,#D91F37 族)
       const wire = await wireErrorCode(code);
       expect(wire).toBe(code); // 真实 client 原样透传 wire code
       mountWithError(wire);
+      const errorText = screen.getByTestId('login-error-text');
+      expect(errorText.textContent).toBe(zhErrors[code]);
+      expect(errorText.getAttribute('style')).toContain('var(--login-error-fg)');
+    });
+  }
+
+  for (const code of LOCAL_NAMED_CODES) {
+    it(`error-copy ${code} 本地边界文案 verbatim`, () => {
+      expect(zhErrors[code], `zh-CN 缺 login.errors.${code}`).toBeTruthy();
+      mountWithError(code);
       const errorText = screen.getByTestId('login-error-text');
       expect(errorText.textContent).toBe(zhErrors[code]);
       expect(errorText.getAttribute('style')).toContain('var(--login-error-fg)');

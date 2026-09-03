@@ -199,6 +199,11 @@ export function AccountSwitcherDialog({
               const primaryLabel = hasDistinctOrgName ? account.orgName : account.displayName;
               const secondaryLabel =
                 account.kind === 'org' && hasDistinctOrgName ? account.displayName : account.email;
+              const realmLabel = t(
+                account.serviceRealm === 'cn'
+                  ? 'login.serviceRealm.cn'
+                  : 'login.serviceRealm.global',
+              );
               return (
                 <button
                   key={account.accountKey}
@@ -223,9 +228,13 @@ export function AccountSwitcherDialog({
                     </span>
                     {secondaryLabel ? (
                       <span className="mt-0.5 block truncate text-12 text-[var(--text-secondary)]">
-                        {secondaryLabel}
+                        {secondaryLabel} · {realmLabel}
                       </span>
-                    ) : null}
+                    ) : (
+                      <span className="mt-0.5 block truncate text-12 text-[var(--text-secondary)]">
+                        {realmLabel}
+                      </span>
+                    )}
                   </span>
                   {switching ? (
                     <Spinner size={16} className="text-[var(--text-secondary)]" />
