@@ -120,29 +120,39 @@ jobs:
               payload.update(vendor_assets(platform))
               return payload
 
-          # Windows emits one x64 installer and hotfix (without an arch suffix).
-          # The release also contains macOS *-arm64-hotfix.zip and
-          # *-x64-hotfix.zip. Anchor Windows to the exact SemVer segment so
-          # the generic suffix cannot select three assets at once.
-          win_hotfix = pick(re.compile(rf'-{re.escape(version)}-hotfix\.zip$', re.I))
-          win_installer = pick(re.compile(r'-Setup\.exe$', re.I))
+          # New releases use self-explanatory public names. Keep the old rc.5
+          # patterns as a read-only compatibility path so a manual manifest
+          # rebuild for an already-published release remains possible.
+          escaped_version = re.escape(version)
+          win_hotfix = pick(re.compile(
+              rf'^Lex-{escaped_version}-(?:Windows-x64-Auto-Update|hotfix)\.zip$', re.I
+          ))
+          win_installer = pick(re.compile(
+              rf'^Lex-{escaped_version}-(?:Windows-x64-)?Setup\.exe$', re.I
+          ))
           (out / f'manifest-win32-x64{suffix}.json').write_text(json.dumps(app_payload('win32-x64', {
               'version': version, 'releaseNotes': f'Lex {version}',
               'hotfix': asset(win_hotfix), 'installer': asset(win_installer)
           }), indent=2) + '\n')
 
-          for arch in ('arm64', 'x64'):
-              hotfix = pick(re.compile(rf'-{arch}-hotfix\.zip$', re.I))
-              # Signed builds publish DMG installers; unsigned versioned builds
-              # publish an app ZIP. Both are valid fresh-install assets. The
-              # hotfix ZIP above is the asset consumed by the in-app updater.
-              installer = pick(re.compile(rf'-{arch}\.(?:dmg|zip)$', re.I))
+          for arch, public_arch in (('arm64', 'Apple-Silicon'), ('x64', 'Intel')):
+              hotfix = pick(re.compile(
+                  rf'^Lex-{escaped_version}-(?:macOS-{public_arch}-Auto-Update|{arch}-hotfix)\.zip$', re.I
+              ))
+              # All new signed and unsigned builds publish a DMG for manual
+              # installation. The old ZIP alternative only supports immutable
+              # releases created before the naming/DMG migration.
+              installer = pick(re.compile(
+                  rf'^Lex-{escaped_version}-(?:macOS-{public_arch}\.dmg|{arch}\.(?:dmg|zip))$', re.I
+              ))
               (out / f'manifest-darwin-{arch}{suffix}.json').write_text(json.dumps(app_payload(f'darwin-{arch}', {
                   'version': version, 'releaseNotes': f'Lex {version}',
                   'hotfix': asset(hotfix), 'installer': asset(installer)
               }), indent=2) + '\n')
 
-          linux = pick(re.compile(r'-amd64\.deb$', re.I))
+          linux = pick(re.compile(
+              rf'^Lex-{escaped_version}-(?:Linux-x64|amd64)\.deb$', re.I
+          ))
           (out / f'manifest-linux-x64{suffix}.json').write_text(json.dumps(app_payload('linux-x64', {
               'version': version, 'releaseNotes': f'Lex {version}',
               'installer': asset(linux)

@@ -31,6 +31,7 @@ test('release workflows keep one package while choosing signed or versioned unsi
   const release = readText('.github/workflows/desktop-release.yml');
   const preview = readText('.github/workflows/desktop-preview.yml');
   const updates = readText('.github/workflows/lex-updates.yml');
+  const packaging = readText('apps/desktop/scripts/package-desktop.mjs');
   const upstream = readText('.github/workflows/upstream-sync.yml');
   const ci = readText('.github/workflows/ci.yml');
   const releaseWorkflow = YAML.parse(release);
@@ -94,7 +95,12 @@ test('release workflows keep one package while choosing signed or versioned unsi
   }
   assert.match(updates, /release:\n\s+types: \[published\]/);
   assert.match(updates, /isDraft == false/);
-  assert.match(updates, /re\.escape\(version\).*?-hotfix/);
+  assert.match(updates, /Windows-x64-Auto-Update/);
+  assert.match(updates, /macOS-\{public_arch\}-Auto-Update/);
+  assert.match(updates, /Linux-x64/);
+  assert.match(updates, /\{arch\}-hotfix/);
+  assert.match(packaging, /Lex-<version\|Preview>-Windows-x64-Setup\.exe/);
+  assert.match(packaging, /Creating unsigned DMG around ad-hoc signed app/);
   assert.match(release, /basename "\$file"/);
   assert.match(release, /actions\/upload-artifact@[0-9a-f]{40}/);
   assert.match(release, /actions\/download-artifact@[0-9a-f]{40}/);
@@ -162,6 +168,8 @@ test('GitHub Pages workflow and self-contained website form a valid download sur
   assert.match(html, /fetch\('\.\/release\.json'/);
   assert.match(html, /github\.com\/Ciciy-l\/lex\/releases/);
   assert.match(html, /platform==='mac'\?null/);
+  assert.match(html, /Windows-x64/);
+  assert.match(html, /Linux-x64/);
   assert.match(html, /TapDB analytics disabled by default/);
   assert.match(pages, /select\(\.draft == false and \.published_at != null\)/);
   assert.doesNotMatch(html, /<script[^>]+src=/i);

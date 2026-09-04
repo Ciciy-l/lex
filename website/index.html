@@ -98,7 +98,7 @@
       const assets=Array.isArray(data.assets)?data.assets:[],platform=/win/i.test(navigator.platform)?'win':/mac/i.test(navigator.platform)?'mac':'linux';
       // Browsers cannot reliably distinguish Apple Silicon from Intel.  Keep
       // macOS on the release page so the user chooses the correct architecture.
-      const match=platform==='mac'?null:assets.find(a=>platform==='win'?/-Setup\.exe$/i.test(a.name):/-amd64\.deb$/i.test(a.name));
+      const match=platform==='mac'?null:assets.find(a=>platform==='win'?/(?:-Windows-x64)?-Setup\.exe$/i.test(a.name):/(?:-Linux-x64|-amd64)\.deb$/i.test(a.name));
       if(match?.url)download.href=match.url;else if(data.releaseUrl)download.href=data.releaseUrl;
       renderRelease();
     }).catch(()=>{releaseUnavailable=true;renderRelease()});

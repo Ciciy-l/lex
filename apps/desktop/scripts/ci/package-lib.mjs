@@ -203,7 +203,50 @@ export function artifactRelDir({ region, version, versionless, platformKey }) {
  * 叠区域前缀。
  */
 export function artifactBaseName({ version, versionless }) {
-  return `lex-${versionless ? 'unversioned' : version}`;
+  return `Lex-${versionless ? 'Preview' : version}`;
+}
+
+/**
+ * 面向下载用户的架构名。macOS 不暴露容易误解的 Node `arm64` / `x64`，
+ * 直接使用 Apple 购买与「关于本机」界面中的常见称呼；其它平台保留 x64。
+ */
+export function publicArtifactArch(platform, arch) {
+  if (platform === 'darwin') {
+    if (arch === 'arm64') return 'Apple-Silicon';
+    if (arch === 'x64') return 'Intel';
+  } else if (platform === 'win32' || platform === 'linux') {
+    if (arch === 'x64') return 'x64';
+    if (arch === 'arm64') return 'arm64';
+  }
+  throw new Error(`不支持的产物平台/架构: ${platform}-${arch}`);
+}
+
+/** 可供用户手动下载、安装的公开产物名。 */
+export function installerArtifactName({ platform, arch, version, versionless }) {
+  const base = artifactBaseName({ version, versionless });
+  const publicArch = publicArtifactArch(platform, arch);
+  switch (platform) {
+    case 'win32': return `${base}-Windows-${publicArch}-Setup.exe`;
+    case 'darwin': return `${base}-macOS-${publicArch}.dmg`;
+    case 'linux': return `${base}-Linux-${publicArch}.deb`;
+    default: throw new Error(`不支持的产物平台: ${platform}`);
+  }
+}
+
+/**
+ * 应用内更新专用 ZIP。名称明确标注 Auto-Update，避免用户把它误认为安装包；
+ * Linux 更新直接消费 .deb，没有独立 ZIP。
+ */
+export function updateArtifactName({ platform, arch, version, versionless }) {
+  if (versionless) {
+    throw new Error('版本无关包不生成自动更新产物');
+  }
+  if (platform !== 'win32' && platform !== 'darwin') {
+    throw new Error(`平台 ${platform} 不生成 ZIP 自动更新产物`);
+  }
+  const base = artifactBaseName({ version, versionless });
+  const platformName = platform === 'win32' ? 'Windows' : 'macOS';
+  return `${base}-${platformName}-${publicArtifactArch(platform, arch)}-Auto-Update.zip`;
 }
 
 /**

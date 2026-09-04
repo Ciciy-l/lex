@@ -369,12 +369,12 @@ describe('packaged iOS Simulator sidecar artifact verification', () => {
     );
     const notarizeIndex = finishDarwinBody.indexOf('notarizeMacApp(appPath, identity)');
     const releaseGateIndex = finishDarwinBody.indexOf('runIOSSimulatorReleaseGate(', notarizeIndex);
-    const dmgIndex = finishDarwinBody.indexOf('createMacDMG(');
+    const signedDmgIndex = finishDarwinBody.indexOf('createMacDMG(', releaseGateIndex);
     const adhocIndex = finishDarwinBody.indexOf('adhocSignMacApp(');
     const untrustedGateIndex = finishDarwinBody.indexOf(
       "runIOSSimulatorReleaseGate(appPath, arch, 'untrusted')",
     );
-    const appZipIndex = finishDarwinBody.indexOf('Creating app ZIP (ad-hoc signed)');
+    const unsignedDmgIndex = finishDarwinBody.indexOf('createMacDMG(', untrustedGateIndex);
 
     expect(notarizeIndex).toBeGreaterThan(-1);
     expect(releaseGateIndex).toBeGreaterThan(notarizeIndex);
@@ -382,9 +382,12 @@ describe('packaged iOS Simulator sidecar artifact verification', () => {
     expect(finishDarwinBody).toContain(
       'CINDY_IOS_SIMULATOR_RELEASE_NATIVE_SMOKE=1 requires a packaged Native Helper',
     );
-    expect(dmgIndex).toBeGreaterThan(releaseGateIndex);
+    expect(signedDmgIndex).toBeGreaterThan(releaseGateIndex);
     expect(adhocIndex).toBeGreaterThan(-1);
     expect(untrustedGateIndex).toBeGreaterThan(adhocIndex);
-    expect(appZipIndex).toBeGreaterThan(untrustedGateIndex);
+    expect(unsignedDmgIndex).toBeGreaterThan(untrustedGateIndex);
+    expect(finishDarwinBody).toContain(
+      'createMacDMG(appPath, dmgPath, `${appName} Installer`);',
+    );
   });
 });

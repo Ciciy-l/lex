@@ -10,8 +10,12 @@ import fs from 'node:fs';
 import {
   PLATFORM_ARCHS,
   VERSIONLESS_VERSION,
+  artifactBaseName,
   debianArch,
+  installerArtifactName,
   parsePackageArgs,
+  publicArtifactArch,
+  updateArtifactName,
 } from '../../apps/desktop/scripts/ci/package-lib.mjs';
 
 test('Desktop 默认版本与 versionless 打包哨兵一致', () => {
@@ -171,4 +175,56 @@ test('debianArch: deb 架构名与 maker-deb 一致', () => {
   assert.equal(debianArch('ia32'), 'i386');
   assert.equal(debianArch('armv7l'), 'armhf');
   assert.equal(debianArch('arm'), 'armel');
+});
+
+test('公开安装包名称明确标注平台、架构与用途', () => {
+  const release = { version: '0.1.0-rc.6', versionless: false };
+  assert.equal(artifactBaseName(release), 'Lex-0.1.0-rc.6');
+  assert.equal(publicArtifactArch('darwin', 'arm64'), 'Apple-Silicon');
+  assert.equal(publicArtifactArch('darwin', 'x64'), 'Intel');
+  assert.equal(
+    installerArtifactName({ platform: 'win32', arch: 'x64', ...release }),
+    'Lex-0.1.0-rc.6-Windows-x64-Setup.exe',
+  );
+  assert.equal(
+    installerArtifactName({ platform: 'darwin', arch: 'arm64', ...release }),
+    'Lex-0.1.0-rc.6-macOS-Apple-Silicon.dmg',
+  );
+  assert.equal(
+    installerArtifactName({ platform: 'darwin', arch: 'x64', ...release }),
+    'Lex-0.1.0-rc.6-macOS-Intel.dmg',
+  );
+  assert.equal(
+    installerArtifactName({ platform: 'linux', arch: 'x64', ...release }),
+    'Lex-0.1.0-rc.6-Linux-x64.deb',
+  );
+});
+
+test('ZIP 名称明确标为自动更新资产，版本无关预览不生成更新包', () => {
+  const release = { version: '0.1.0-rc.6', versionless: false };
+  assert.equal(
+    updateArtifactName({ platform: 'win32', arch: 'x64', ...release }),
+    'Lex-0.1.0-rc.6-Windows-x64-Auto-Update.zip',
+  );
+  assert.equal(
+    updateArtifactName({ platform: 'darwin', arch: 'arm64', ...release }),
+    'Lex-0.1.0-rc.6-macOS-Apple-Silicon-Auto-Update.zip',
+  );
+  assert.equal(
+    updateArtifactName({ platform: 'darwin', arch: 'x64', ...release }),
+    'Lex-0.1.0-rc.6-macOS-Intel-Auto-Update.zip',
+  );
+  assert.throws(
+    () => updateArtifactName({ platform: 'win32', arch: 'x64', version: '0.0.0', versionless: true }),
+    /版本无关包不生成自动更新产物/,
+  );
+});
+
+test('版本无关预览安装包使用 Preview 标记且 macOS 仍产出 DMG', () => {
+  const preview = { version: '0.0.0', versionless: true };
+  assert.equal(artifactBaseName(preview), 'Lex-Preview');
+  assert.equal(
+    installerArtifactName({ platform: 'darwin', arch: 'arm64', ...preview }),
+    'Lex-Preview-macOS-Apple-Silicon.dmg',
+  );
 });
