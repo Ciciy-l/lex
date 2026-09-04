@@ -1344,11 +1344,13 @@ function ensureDmgbuild() {
 }
 
 /**
- * 生成带品牌安装界面的 UDZO DMG 并签名:Splash 风浅色背景(高清立绘 + CINDY
+ * 生成带品牌安装界面的 UDZO DMG。正式包传入 Developer ID identity 后签名；
+ * 预览包不传 identity，保留未签名容器（其中的 .app 已由调用方 ad-hoc 签名）。
+ * Splash 风浅色背景(高清立绘 + CINDY
  * 字标 + 手写体 + 拖拽箭头,PDF 矢量高清)、app 居左 / Applications 软链居右、
  * 660×460 固定窗口。
  * 布局坐标与 resources/dmg/render-background.swift 内的品牌块/箭头位置联动,改动需两边同步。
- * @param {{ signIdentity: string }} identity
+ * @param {{ signIdentity: string } | undefined} identity
  */
 export function createMacDMG(appPath, dmgPath, volumeName, identity) {
   const dmgbuildBin = ensureDmgbuild();
@@ -1388,6 +1390,13 @@ export function createMacDMG(appPath, dmgPath, volumeName, identity) {
     fs.rmSync(settingsPath, { force: true });
   }
 
+  if (identity === undefined) {
+    console.log('    Leaving DMG container unsigned (preview release)...');
+    return;
+  }
+  if (!identity.signIdentity) {
+    throw new Error('DMG signing identity is missing signIdentity');
+  }
   console.log('    Signing DMG...');
   exec(`/usr/bin/codesign --force --timestamp --sign "${identity.signIdentity}" "${dmgPath}"`);
 }

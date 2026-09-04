@@ -35,9 +35,10 @@
 //                                   该环境的机器打版本无关包时用它
 //
 // 产物: release/artifacts/<region>/<version|unversioned>/<platform-arch>/
-//   cindy-<version|unversioned>-Setup.exe / -<arch>.dmg /
-//              -<amd64|arm64>.deb                        安装包
-//   cindy-<version>-hotfix.zip                           热更包(仅有版本时)
+//   Lex-<version|Preview>-Windows-x64-Setup.exe
+//   Lex-<version|Preview>-macOS-<Apple-Silicon|Intel>.dmg
+//   Lex-<version|Preview>-Linux-<x64|arm64>.deb           安装包
+//   Lex-<version>-<Windows|macOS>-<arch>-Auto-Update.zip 应用内更新包
 //   build-info.json                                      发布侧唯一输入
 // =============================================================================
 
@@ -79,9 +80,9 @@ import {
   parsePackageArgs,
   resolvePackageVersion,
   artifactRelDir,
-  artifactBaseName,
+  installerArtifactName,
+  updateArtifactName,
   buildBuildInfo,
-  debianArch,
 } from './ci/package-lib.mjs';
 import { applyMacSigningConfigToEnv, applyReleaseCdnBaseUrlToEnv } from './ci/release-regions.mjs';
 
@@ -259,7 +260,7 @@ function findSetupExe(makeBaseDir) {
   return walk(makeBaseDir);
 }
 
-async function finishWindows({ artifactDir, baseName, appName, versionless, allowUnsigned, noSign }) {
+async function finishWindows({ artifactDir, appName, arch, version, versionless, allowUnsigned, noSign }) {
   const makeBaseDir = path.join(DESKTOP_ROOT, 'out', 'make');
   const packagedDir = path.join(DESKTOP_ROOT, 'out', `${appName}-win32-x64`);
   const setupExe = findSetupExe(makeBaseDir);
@@ -330,14 +331,18 @@ async function finishWindows({ artifactDir, baseName, appName, versionless, allo
     console.log('==> CINDY_WIN_SIGN_CMD not set — installer / uninstaller / internal exes are UNSIGNED');
   }
 
-  const installerPath = path.join(artifactDir, `${baseName}-Setup.exe`);
+  const installerPath = path.join(artifactDir, installerArtifactName({
+    platform: 'win32', arch, version, versionless,
+  }));
   fs.copyFileSync(setupExe, installerPath);
 
   const files = [fileEntry('installer', installerPath)];
 
   // 热更 ZIP 只对有版本的包有意义(版本无关包不参与热更新)。
   if (!versionless) {
-    const hotfixZipPath = path.join(artifactDir, `${baseName}-hotfix.zip`);
+    const hotfixZipPath = path.join(artifactDir, updateArtifactName({
+      platform: 'win32', arch, version, versionless,
+    }));
     console.log('==> Creating hotfix ZIP from packaged app...');
     if (fs.existsSync(hotfixZipPath)) fs.unlinkSync(hotfixZipPath);
     execFileSync(
@@ -357,9 +362,9 @@ async function finishWindows({ artifactDir, baseName, appName, versionless, allo
 
 async function finishDarwin({
   artifactDir,
-  baseName,
   appName,
   arch,
+  version,
   versionless,
   allowUnsigned,
   noSign,
@@ -452,7 +457,9 @@ async function finishDarwin({
       );
     }
 
-    const dmgPath = path.join(artifactDir, `${baseName}-${arch}.dmg`);
+    const dmgPath = path.join(artifactDir, installerArtifactName({
+      platform: 'darwin', arch, version, versionless,
+    }));
     console.log('==> Creating DMG...');
     // DMG 卷名 = 安装窗口标题,走 '<appName> Installer'(cn/global
     // 'Cindy Installer' / dev 'CindyDev Installer');版本号不进卷名,
@@ -460,14 +467,16 @@ async function finishDarwin({
     createMacDMG(appPath, dmgPath, `${appName} Installer`, identity);
     files.push(fileEntry('installer', dmgPath));
 
-    const hotfixZipPath = path.join(artifactDir, `${baseName}-${arch}-hotfix.zip`);
+    const hotfixZipPath = path.join(artifactDir, updateArtifactName({
+      platform: 'darwin', arch, version, versionless,
+    }));
     console.log('==> Creating hotfix ZIP...');
     if (fs.existsSync(hotfixZipPath)) fs.unlinkSync(hotfixZipPath);
     exec(`/usr/bin/ditto -c -k "${packagedDir}" "${hotfixZipPath}"`);
     files.push(fileEntry('hotfix', hotfixZipPath));
   } else {
-    // 版本无关(或显式放行)→ ad-hoc 签名。版本化无签名包也必须同时产出
-    // hotfix ZIP：更新器只消费 hotfix 字段，不能把 installer ZIP 当作热更包。
+    // 版本无关(或显式放行)→ ad-hoc 签名。DMG 是用户手动安装入口；版本化
+    // 无签名包另产出 Auto-Update ZIP，更新器不会误用安装镜像。
     writeMacEntitlements(helperEntitlementsPath);
     writeMacEntitlements(mainEntitlementsPath, { appleEvents: true });
     adhocSignMacApp(appPath, helperEntitlementsPath, mainEntitlementsPath, arch);
@@ -487,13 +496,16 @@ async function finishDarwin({
         } host (Mach-O arch verified)`,
       );
     }
-    const appZipPath = path.join(artifactDir, `${baseName}-${arch}.zip`);
-    console.log('==> Creating app ZIP (ad-hoc signed)...');
-    if (fs.existsSync(appZipPath)) fs.unlinkSync(appZipPath);
-    exec(`/usr/bin/ditto -c -k --keepParent "${appPath}" "${appZipPath}"`);
-    files.push(fileEntry('installer', appZipPath));
+    const dmgPath = path.join(artifactDir, installerArtifactName({
+      platform: 'darwin', arch, version, versionless,
+    }));
+    console.log('==> Creating unsigned DMG around ad-hoc signed app...');
+    createMacDMG(appPath, dmgPath, `${appName} Installer`);
+    files.push(fileEntry('installer', dmgPath));
     if (!versionless) {
-      const hotfixZipPath = path.join(artifactDir, `${baseName}-${arch}-hotfix.zip`);
+      const hotfixZipPath = path.join(artifactDir, updateArtifactName({
+        platform: 'darwin', arch, version, versionless,
+      }));
       console.log('==> Creating hotfix ZIP (ad-hoc signed)...');
       if (fs.existsSync(hotfixZipPath)) fs.unlinkSync(hotfixZipPath);
       exec(`/usr/bin/ditto -c -k "${packagedDir}" "${hotfixZipPath}"`);
@@ -504,16 +516,18 @@ async function finishDarwin({
   return { files, signing: { mode: signingMode } };
 }
 
-async function finishLinux({ artifactDir, baseName, arch }) {
+async function finishLinux({ artifactDir, arch, version, versionless }) {
   const makeBaseDir = path.join(DESKTOP_ROOT, 'out', 'make');
   const debPath = findInstallerArtifact(makeBaseDir, 'deb');
   if (!debPath) {
     console.error(`ERROR: No .deb found under ${makeBaseDir}`);
     process.exit(1);
   }
-  // 架构后缀跟随 deb 命名规范(x64 → amd64,arm64 → arm64),与 MakerDeb 写出的
-  // 包一致:归集时写死 amd64 会让 arm64 产物顶着 amd64 的名字发出去。
-  const installerPath = path.join(artifactDir, `${baseName}-${debianArch(arch)}.deb`);
+  // .deb 内部 Architecture 仍由 MakerDeb 写成 Debian 规范的 amd64/arm64；公开
+  // 文件名使用用户更熟悉的 x64/arm64，且明确标注 Linux。
+  const installerPath = path.join(artifactDir, installerArtifactName({
+    platform: 'linux', arch, version, versionless,
+  }));
   fs.copyFileSync(debPath, installerPath);
   // Linux 没有 hotfix zip；应用内更新下载这份 installer .deb，再用 pkexec 覆盖安装。
   return { files: [fileEntry('installer', installerPath)], signing: { mode: 'none' } };
@@ -606,10 +620,9 @@ async function main() {
   // 版本号临时写入 package.json(asar 内 app.getVersion() 的来源),退出自动恢复。
   writePackageVersion(version);
 
-  // 产物基名按区域派生(cn/global 'Cindy' / dev 'CindyDev',out 目录 / exe /
-  // .app 同名;forge.config 的 packagerConfig.name 同源)。
+  // packaged 应用名按区域派生，out 目录 / exe / .app 同名，并与
+  // forge.config 的 packagerConfig.name 同源。
   const appName = packagedAppName(region);
-  const baseName = artifactBaseName({ version, versionless });
   const finishers = { win32: finishWindows, darwin: finishDarwin, linux: finishLinux };
   const meta = collectBuildMeta();
   const results = [];
@@ -666,7 +679,6 @@ async function main() {
     try {
       ({ files, signing } = await finishers[platform]({
         artifactDir,
-        baseName,
         appName,
         arch,
         version,

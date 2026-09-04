@@ -13,9 +13,10 @@ Lex has two desktop packaging paths:
   Artifact only; it does not enter the public update channel.
 
 Versioned unsigned releases are clearly labelled in their Release title and
-notes. Windows packages are unsigned and macOS packages use ad-hoc signing, so
-first installation can trigger SmartScreen or Gatekeeper warnings. The updater
-still verifies SHA-256 and can apply their hotfix archives.
+notes. Windows packages are unsigned; macOS apps use ad-hoc signing and their
+DMG container is unsigned, so first installation can trigger SmartScreen or
+Gatekeeper warnings. The updater still verifies SHA-256 and can apply the
+separately labelled `Auto-Update.zip` archives.
 
 ## Before the first release
 
@@ -64,11 +65,18 @@ git tag -a v0.1.0-rc.1 -m "Lex v0.1.0-rc.1"
 git push origin v0.1.0-rc.1
 ```
 
-The workflow builds (with or without signing):
+The workflow builds the same clearly named asset set with or without signing:
 
-- Windows x64 NSIS installer and hotfix ZIP;
-- macOS arm64 and x64 DMG/hotfix ZIP when signed, or app ZIP/hotfix ZIP when unsigned;
-- Linux x64 `.deb`.
+- `Lex-<version>-Windows-x64-Setup.exe` and its `Auto-Update.zip`;
+- `Lex-<version>-macOS-Apple-Silicon.dmg` and its `Auto-Update.zip`;
+- `Lex-<version>-macOS-Intel.dmg` and its `Auto-Update.zip`;
+- `Lex-<version>-Linux-x64.deb`.
+
+The DMG files are the manual macOS install surface: users mount the image and
+drag `Lex.app` into Applications. The ZIP files are intentionally labelled
+`Auto-Update` because they are consumed by the in-app updater, not selected for
+a fresh manual install. A DMG does not replace signing or notarization; unsigned
+releases still show the expected Gatekeeper warning.
 
 Linux arm64 is intentionally not included until a native arm64 runner is
 enabled. Every package job runs on its target operating system because the
