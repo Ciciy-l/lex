@@ -7,11 +7,16 @@
 // 的既有提交无影响。只读 git 元数据，不访问网络、不读任何私有配置或凭证。
 //
 // PR 上的权威门禁是 DCO GitHub App 的 check（配置见 .github/dco.yml），本脚本是提交前
-// 的本地自查，判定刻意与 App 对齐或更严，好让本地通过一定意味着 App 通过。
+// 的本地自查；普通模式判定刻意与 App 对齐或更严。下述发行历史例外模式不代表
+// 被排除的上游历史通过 App，也不用于 PR 的 DCO 结论。
 //
 // 本地用法：
 //   pnpm check:dco                                  校验 origin/main..HEAD
 //   node scripts/check-dco.mjs --base <ref> --head <ref>
+// Release-only policy: --upstream-baseline <full SHA> excludes the ancestors of
+// an explicitly accepted imported snapshot. This is NOT DCO certification of
+// that history and is forbidden for pull_request events. Ordinary checks keep
+// their existing strict behavior; see docs/RELEASING-LEX.md.
 // 在 pull_request 事件下运行时（GITHUB_EVENT_PATH 存在）自动从 payload 取
 // base.sha 与 head.sha 作为范围。
 
@@ -307,14 +312,36 @@ function reportFailures({ failures, start }) {
 
 function main() {
   const { start, head, baseRef } = resolveRange();
-  const stdout = execFileSync('git', ['log', `--format=${LOG_FORMAT}`, `${start}..${head}`], {
+  const revisions = [`${start}..${head}`];
+  if (process.argv.includes('--upstream-baseline')) {
+    const baseline = readArg('--upstream-baseline');
+    if (!/^[0-9a-f]{40}$/.test(baseline ?? '') || revParse(baseline) !== baseline) {
+      throw new Error('Upstream baseline must be a full, existing commit SHA.');
+    }
+    const eventPath = process.env.GITHUB_EVENT_PATH;
+    if (process.env.GITHUB_EVENT_NAME?.startsWith('pull_request') ||
+        (eventPath && JSON.parse(readFileSync(eventPath, 'utf8')).pull_request)) {
+      throw new Error('Imported-history exclusions are not allowed in pull request DCO checks.');
+    }
+    if (baseline === head) throw new Error('Upstream baseline cannot be the release head.');
+    try {
+      git(['merge-base', '--is-ancestor', baseline, head], { stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch {
+      throw new Error('Upstream baseline must be an ancestor of the release head.');
+    }
+    const total = Number(git(['rev-list', '--count', ...revisions]));
+    revisions.push(`^${baseline}`);
+    const remaining = Number(git(['rev-list', '--count', ...revisions]));
+    console.log(`Accepted upstream history: ${baseline}; ${total - remaining} imported commits excluded by release policy, NOT certified as DCO-valid.`);
+  }
+  const stdout = execFileSync('git', ['log', `--format=${LOG_FORMAT}`, ...revisions], {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   });
   const commits = parseGitLog(stdout);
 
   if (commits.length === 0) {
-    console.log(`No new commits in ${shortSha(start)}..${shortSha(head)}; nothing to check.`);
+    console.log(`No new commits in the selected scope ${shortSha(start)}..${shortSha(head)}; nothing to check.`);
     return;
   }
 

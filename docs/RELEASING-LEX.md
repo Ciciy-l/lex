@@ -56,6 +56,25 @@ base64 -i Lex-Developer-ID.p12 | tr -d '\\n'
 
 ## Build a draft
 
+### Accepted upstream history and DCO
+
+Lex retains Cindy's original Git history. PR #17 accepted the immutable Cindy
+snapshot `1857e28e60effe9dc04d910d67e807ea166308ad`; its imported history includes
+81 author/sign-off identity mismatches documented in `CINDY-SYNC-20260905.md`.
+The release quality gate explicitly excludes ancestors of this exact snapshot
+with `--upstream-baseline` and prints the excluded count. This is an accepted
+imported-history exception, **not** a claim that those commits passed DCO.
+It neither rewrites upstream history nor supplies signatures for its authors.
+
+The ordinary PR DCO check, sign-off matching rules and GitHub DCO App are
+unchanged. The option is rejected on pull request events. Lex commits outside
+that snapshot and later upstream commits in the checked range still require
+valid sign-offs. Never replace the pin with a moving branch or the release
+head. Changing it requires a reviewed upstream sync and an explicit policy
+change, not an automatic advance from the upstream-sync bot.
+
+### Version and artifacts
+
 Use a new SemVer tag, including prerelease suffixes such as `v0.1.0-rc.1`:
 
 ```bash
