@@ -13,7 +13,7 @@ permissions:
 
 concurrency:
   group: cindy-upstream-sync
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   sync:
@@ -21,8 +21,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout Lex
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: main
           fetch-depth: 0
           lfs: true
           token: ${{ github.token }}
@@ -38,23 +39,56 @@ jobs:
           git fetch --no-tags cindy-upstream main
           git fetch origin main
 
-      - name: Merge upstream into dedicated sync branch
-        id: merge
+      - name: Check high-risk upstream boundaries before merging
+        id: policy
         shell: bash
         run: |
-          branch='sync/cindy-main'
-          # Lex main normally contains product commits that do not exist in Cindy,
-          # so tree equality is not a valid "already synced" test.  The upstream
-          # tip being an ancestor is the actual invariant.
+          baseline=$(git merge-base origin/main cindy-upstream/main)
+          upstream_sha=$(git rev-parse cindy-upstream/main)
+          node scripts/upstream-sync-policy.mjs "$baseline" "$upstream_sha" > "$RUNNER_TEMP/cindy-upstream-review.txt"
+
+      - name: Request approval for high-risk upstream changes
+        if: steps.policy.outputs.approval_required == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          title='chore: Cindy upstream sync requires maintainer approval'
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$title in:title" --json number,title --jq '.[] | select(.title == "chore: Cindy upstream sync requires maintainer approval") | .number' | head -n 1)
+          if [ -n "$existing" ]; then
+            echo "Approval issue #$existing is still open; no changes merged or pushed."
+            exit 0
+          fi
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file "$RUNNER_TEMP/cindy-upstream-review.txt"
+
+      - name: Merge upstream into dedicated sync branch
+        id: merge
+        if: steps.policy.outputs.approval_required != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
           if git merge-base --is-ancestor cindy-upstream/main origin/main; then
             echo 'changed=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
+          open_sync=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --base main --limit 1000 --json headRefName --jq '[.[] | select(.headRefName | startswith("sync/cindy-"))] | length')
+          if [ "$open_sync" != '0' ]; then
+            echo 'An upstream sync PR is already open; preserving its branch and manual fixes.'
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          upstream_sha=$(git rev-parse cindy-upstream/main)
+          branch="sync/cindy-${upstream_sha:0:12}-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
           git switch --create "$branch" origin/main
           if ! git merge --no-ff --no-edit --signoff cindy-upstream/main; then
             conflicts="$(git diff --name-only --diff-filter=U | sed 's/^/- /')"
             git merge --abort
+            if [ -z "$conflicts" ]; then
+              echo 'Merge failed without conflicts; investigate the Git error.' >&2
+              exit 1
+            fi
             {
               echo 'changed=true'
               echo 'conflict=true'
@@ -68,30 +102,30 @@ jobs:
           echo 'conflict=false' >> "$GITHUB_OUTPUT"
           echo "merge_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Open or update upstream sync pull request
+      - name: Open upstream sync pull request
         if: steps.merge.outputs.changed == 'true' && steps.merge.outputs.conflict != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          SYNC_BRANCH: ${{ steps.merge.outputs.branch }}
         shell: bash
         run: |
-          git push --force origin sync/cindy-main
-          if gh pr list --repo "$GITHUB_REPOSITORY" --head sync/cindy-main --state open --json number --jq 'length' | grep -q '^0$'; then
-            gh pr create --repo "$GITHUB_REPOSITORY" \
-              --base main \
-              --head sync/cindy-main \
-              --title 'chore: sync Cindy upstream' \
-              --body $'This PR merges the latest main from https://github.com/makecindy/cindy into Lex.\n\nPlease review branding, endpoints, updater behavior, migrations, native dependencies, and the CLI workbench before merging. The normal Lex CI must pass.'
-          fi
+          git push origin "HEAD:refs/heads/$SYNC_BRANCH"
+          gh pr create --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --base main \
+            --head "$SYNC_BRANCH" \
+            --title 'chore: sync Cindy upstream' \
+            --body $'## 这次改了什么\n\n### 摘要\n\nMerge a pinned Cindy snapshot into Lex, preserving upstream ancestry. No release is created.\n\n### 变更类型\n\n- [x] chore: upstream synchronization\n\n### 范围\n\nPreserve Lex identity, service boundaries and CLI workbench. No tag or release. Breaking changes require human review.\n\n### UI 变化\n\n- 引用的设计规范：docs/design-rules/DESIGN.md §10 (Light/Dark), §15 (Lex identity), §16 (login). Preserve Lex assets and Cindy service labels; visual changes still require human review.\n\n## 怎么验证的\n\n### 自动验证\n\nTrusted Lex main CI is dispatched for this immutable PR head. CI and design-basis checks must pass on this PR before merging.\n\n### 手工验证 / 未执行的验证\n\nThe bot has not performed desktop, installation, upgrade or visual smoke tests. Maintainer verification is required.\n\n## 风险\n\n### 风险分类\n\n- [x] 跨平台差异\n- [x] 权限 / 安全 / 用户数据\n- [x] 存量插件兼容\n\n### 影响与回滚\n\nReview app IDs, account isolation, service routing, updater, CLI workbench, migrations, protocol compatibility, plugins and native dependencies. Obtain required specialist approvals. Existing plugin impact must be evaluated before merging.\n\nMerge normally, not with squash/rebase. A first-parent revert rolls back code; data changes may need separate recovery.\n\n### 提交前检查\n\n- [x] Newly created commits carry DCO sign-off; upstream history is preserved.\n- [ ] Maintainer has reviewed the complete diff, compatibility and runtime results.'
 
-      # Pull requests created with GITHUB_TOKEN intentionally do not emit a
-      # pull_request workflow event.  workflow_dispatch is the GitHub-supported
-      # exception, and records the normal CI checks on the exact sync-branch SHA.
       - name: Run CI for the bot sync branch
         if: steps.merge.outputs.changed == 'true' && steps.merge.outputs.conflict != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           SYNC_MERGE_SHA: ${{ steps.merge.outputs.merge_sha }}
-        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main -f checkout_ref="$SYNC_MERGE_SHA"
+          SYNC_BRANCH: ${{ steps.merge.outputs.branch }}
+        run: |
+          pr_number=$(gh pr view "$SYNC_BRANCH" --repo "$GITHUB_REPOSITORY" --json number --jq .number)
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main -f checkout_ref="$SYNC_MERGE_SHA" -f pr_number="$pr_number"
 
       - name: Report merge conflicts
         if: steps.merge.outputs.conflict == 'true'
@@ -100,6 +134,12 @@ jobs:
           CONFLICTS: ${{ steps.merge.outputs.conflicts }}
         shell: bash
         run: |
+          title='chore: Cindy upstream sync needs conflict resolution'
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$title in:title" --json number,title --jq '.[] | select(.title == "chore: Cindy upstream sync needs conflict resolution") | .number' | head -n 1)
+          if [ -n "$existing" ]; then
+            echo "Unresolved upstream conflict issue #$existing already exists."
+            exit 0
+          fi
           gh issue create --repo "$GITHUB_REPOSITORY" \
-            --title 'chore: Cindy upstream sync needs conflict resolution' \
-            --body $'The scheduled upstream merge could not be created automatically.\n\nConflicting paths:\n'"${CONFLICTS}"$'\n\nResolve the merge on a local branch, run the required checks, and open a PR into main.' || true
+            --title "$title" \
+            --body $'The upstream merge needs manual resolution. No changes were pushed.\n\nConflicting paths:\n'"${CONFLICTS}"$'\n\nCreate a separate sync/cindy-* branch from Lex main, preserve upstream merge ancestry, run the required checks and open a PR.'

@@ -11,6 +11,10 @@ on:
         description: "Commit SHA to test with the trusted main-branch workflow"
         required: false
         type: string
+      pr_number:
+        description: "Same-repository sync PR receiving checks for checkout_ref"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -29,6 +33,66 @@ env:
   NODE_OPTIONS: '--max-old-space-size=8192'
 
 jobs:
+  prepare-sync-checks:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_ref != '' && inputs.pr_number != '' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: write
+    outputs:
+      check_ids: ${{ steps.prepare.outputs.check_ids }}
+    steps:
+      - name: Checkout trusted CI reporter
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Register checks on the exact PR head
+        id: prepare
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SYNC_HEAD_SHA: ${{ inputs.checkout_ref }}
+          SYNC_PR_NUMBER: ${{ inputs.pr_number }}
+        run: node scripts/report-upstream-ci.mjs prepare
+
+  report-sync-checks:
+    if: ${{ always() && needs.prepare-sync-checks.result == 'success' }}
+    needs: [prepare-sync-checks, verify, windows-unit, git-integration]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: write
+    steps:
+      - name: Checkout trusted CI reporter
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Publish results and validate PR design basis
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SYNC_HEAD_SHA: ${{ inputs.checkout_ref }}
+          SYNC_PR_NUMBER: ${{ inputs.pr_number }}
+          SYNC_CHECK_IDS: ${{ needs.prepare-sync-checks.outputs.check_ids }}
+          SYNC_VERIFY_RESULT: ${{ needs.verify.result }}
+          SYNC_WINDOWS_RESULT: ${{ needs.windows-unit.result }}
+          SYNC_GIT_RESULT: ${{ needs.git-integration.result }}
+        run: node scripts/report-upstream-ci.mjs complete
+
   # 静态检查、类型检查和 runner 自测与 Linux 单测分片并行。这里不装
   # bundled ripgrep；它只在 Desktop 单测收集时需要，由单测分片自行安装。
   verify-checks:
@@ -40,6 +104,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_ref || github.sha }}
+          persist-credentials: false
           fetch-depth: 0
           lfs: true
 
@@ -52,7 +117,8 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-          cache: pnpm
+          cache: ${{ github.event_name != 'workflow_dispatch' && 'pnpm' || '' }}
+          package-manager-cache: false
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install dependencies
@@ -120,6 +186,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_ref || github.sha }}
+          persist-credentials: false
           fetch-depth: 0
           lfs: true
 
@@ -132,7 +199,8 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-          cache: pnpm
+          cache: ${{ github.event_name != 'workflow_dispatch' && 'pnpm' || '' }}
+          package-manager-cache: false
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install dependencies
@@ -185,6 +253,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_ref || github.sha }}
+          persist-credentials: false
           fetch-depth: 0
           lfs: true
 
@@ -197,7 +266,8 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-          cache: pnpm
+          cache: ${{ github.event_name != 'workflow_dispatch' && 'pnpm' || '' }}
+          package-manager-cache: false
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install dependencies
@@ -233,6 +303,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_ref || github.sha }}
+          persist-credentials: false
           fetch-depth: 0
           lfs: true
 
@@ -245,7 +316,8 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-          cache: pnpm
+          cache: ${{ github.event_name != 'workflow_dispatch' && 'pnpm' || '' }}
+          package-manager-cache: false
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install dependencies

@@ -94,12 +94,50 @@ manifest automatically.
 ## Upstream synchronization
 
 `.github/workflows/upstream-sync.yml` fetches
-`makecindy/cindy:main` every Monday and on demand. It merges the result into the
-dedicated `sync/cindy-main` branch and opens or updates a PR into Lex `main`.
-Merge conflicts create an Issue instead of committing conflict markers. Review
+`makecindy/cindy:main` every Monday at 02:17 UTC and on demand. It pins a snapshot
+on a new `sync/cindy-<sha>-<run>-<attempt>` branch and opens a PR into Lex `main`.
+Before merging, a trusted main preflight checks for updater, potential system
+prompt, plugin-foundation and mobile-native changes. A match opens or reuses an
+approval Issue and stops before modifying a branch or creating a PR. This
+conservative path check is not a substitute for reviewing the actual diff.
+After approval, integrate the snapshot on a separate manual sync branch.
+Low-risk automated PRs are drafts; machine tests do not mark them Ready or merge
+them. Maintainers must finish risk review before requesting automatic code review.
+If any `sync/cindy-*` PR is already open, the bot stops without modifying its
+branch, body or manual fixes. It never force pushes. Merge conflicts open one
+unresolved Issue instead of committing conflict markers. Review
 branding, endpoints, updater code, database migrations, native dependencies,
 and the Lex CLI workbench before merging. The regular PR CI remains the merge
-gate.
+gate. Use a normal merge for upstream sync PRs, never squash or rebase, so the
+next sync can recognize which upstream history is already integrated.
+
+Bot PR workflows may require maintainer approval. The sync workflow therefore
+dispatches the trusted `main` version of `ci.yml` with an immutable
+`checkout_ref` and `pr_number`. Test jobs have read-only repository permissions,
+do not persist checkout credentials, and disable dependency caches for dispatched
+runs. Separate jobs, using only the trusted main scripts, register and finish
+`verify`, `Windows unit tests`, `Desktop Git integration` and
+`check:pr-design-basis` checks on the exact PR head. They verify the PR repository,
+base, branch, current SHA and run attempt before reporting results. A green
+workflow on main alone is not evidence that a different PR head passed.
+
+If dispatch fails, a run is cancelled before reporting, or the PR gains another
+commit, run `client-ci` manually on **main** with the PR latest full SHA as
+`checkout_ref` and its number as `pr_number`. Pending or stale checks never count
+as passing. An open PR is intentionally not redispatched automatically, to avoid
+overwriting maintainer work or wasting CI runs. A branch left without a PR can
+be inspected and used to open a PR manually; the bot never deletes such branches.
+Use a fresh dispatch (recommended) or **Re-run all jobs**, not **Re-run failed
+jobs**: failed-only retries reuse check IDs from the earlier prepare attempt,
+which the reporter deliberately rejects. Disabling automatic dependency caches
+reduces accidental cache reuse; it is not a security sandbox for hostile code.
+Review upstream provenance before testing or merging untrusted changes.
+
+For this checkout, create a dedicated `sync/cindy-<date>` branch from Lex main,
+fetch `origin` (Cindy), and merge a recorded upstream SHA there. Push only to
+`lex`, open a normal PR and validate product/service boundaries before merging.
+Do not run the release examples above with `origin` in this checkout: use `lex`
+for Lex pulls, tags and pushes. No sync action creates a tag or publishes a release.
 
 For local work, keep separate remotes:
 
