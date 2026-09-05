@@ -4,7 +4,7 @@ title: Setting up the FeiShu (Lark) bot
 summary: Configure the FeiShu bot (App ID / App Secret) in Settings > IM bots to get DM notifications and bot interaction.
 tab: im-bot
 ---
-Cindy can send DMs and take commands through a FeiShu (Lark) bot. (This is unrelated to signing into Cindy — you sign in with your Cindy account; FeiShu is no longer a login method.)
+Lex can send DMs and take commands through a FeiShu (Lark) bot. (This is unrelated to signing into Lex itself — the connection still uses your Cindy account; FeiShu is no longer a login method.)
 
 **Setting up the bot:**
 
@@ -43,5 +43,5 @@ Without it the bot still answers when @-ed, but with no chat context, and it DMs
 
 **Notes:**
 
-- The "conflict" badge state means another Cindy instance is already bound to the same bot for this user — typical when running dev + release simultaneously. Disconnect on one side to clear it.
+- The "conflict" badge state means another Lex instance is already bound to the same bot for this user — typical when running dev + release simultaneously. Disconnect on one side to clear it.
 - Settings > IM bots also hosts the Slack and Telegram bindings (the "Cindy" tab) and a bring-your-own Discord bot, alongside this FeiShu bot.

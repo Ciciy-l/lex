@@ -19,6 +19,6 @@ For larger tasks the agent may first propose a **plan**, shown as a card in the 
 
 **Notes:**
 
-- For Claude Code, this card is exactly how the SDK's `ExitPlanMode` tool surfaces: the app intercepts that tool call into a `plan_review` interaction and, on Approve, auto-exits plan mode. Cindy's renderer ↔ main `resolveInteraction` layer is what renders the card and returns your decision.
+- For Claude Code, this card is exactly how the SDK's `ExitPlanMode` tool surfaces: the app intercepts that tool call into a `plan_review` interaction and, on Approve, auto-exits plan mode. Lex's renderer ↔ main `resolveInteraction` layer is what renders the card and returns your decision.
 - An approved plan card stays in your chat history with an "approved" state; you can scroll back to it.
 - If you close the window while a plan card is open, the agent is still paused waiting for your decision — reopen the session to resolve it.

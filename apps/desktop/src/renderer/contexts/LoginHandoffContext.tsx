@@ -14,7 +14,7 @@ import {
  * (implementation-plan Step 3b WHAT2,时序权威 = design.md §3.1 / demo splashHandoff())。
  *
  * 所有权契约(v4/v6.12 冻结):
- * - `LoginBrandStage` = 品牌视觉层(白底体系背景渐变/立绘/字标/Slogan)唯一渲染者,
+ * - `LoginBrandStage` = 品牌视觉层(白底体系背景渐变/立绘/字标)唯一渲染者,
  *   overlay pointer-events:none,仅主窗挂载;
  * - 白色输入面板与第三方圆钮行归 LoginPage 唯一拥有,本 context 只协调面板层的
  *   opacity/transform 入场,不重复渲染;
@@ -23,10 +23,9 @@ import {
  *
  * 两分支(无 auth-init-failed 虚构分支,初始化异常已在 AuthContext 归一未登录):
  * - unauthenticated 冷启动:settle(300ms)→shift(650ms cubic-bezier(.33,0,.18,1))
- *   →panel(420ms 上滑 20px cubic-bezier(.35,.1,.25,1))→slogan(+100ms,500ms
- *   cubic-bezier(.55,.06,.38,.96),Slogan 最后出现)。
+ *   →panel(420ms 上滑 20px cubic-bezier(.35,.1,.25,1))→done。
  *   注:wave4 Splash 五帧(379:581 等)实测品牌五要素坐标与登录帧 368:1375 完全一致
- *   (立绘 443,275/字标容器 570,1029/SLOGAN 1191,863)——Splash 位 = 登录位,shift 段
+ *   (立绘 443,275/字标容器 570,1029)——Splash 位 = 登录位,shift 段
  *   位移量为 0,但相位与时长照 demo 时间轴保留(面板入场锚定在 t=950ms)。
  *   demo 的 227px 位移属旧 wave3 帧(366:845)静态呈现,已被 wave4 帧行取代
  *   (附录 B 分层基准:Splash 静态布局=wave4,demo 只验阶段-文案-时序)。
@@ -48,11 +47,7 @@ export const LOGIN_HANDOFF_TIMINGS = Object.freeze({
   panelMs: 420,
   panelEasing: 'cubic-bezier(.35,.1,.25,1)',
   panelRisePx: 20,
-  /** 步骤 5 Slogan:面板开始后 +100ms,500ms;必须最后出现。 */
-  sloganDelayMs: 100,
-  sloganMs: 500,
-  sloganEasing: 'cubic-bezier(.55,.06,.38,.96)',
-  /** demo 收尾 buffer(300+moveMs+100+500+60 后 commit)。 */
+  /** 面板入场完成后的收尾 buffer。 */
   doneBufferMs: 60,
   /** authenticated 分支品牌淡出时长(与 splash fade 同步,--splash-fade-duration)。 */
   brandExitMs: 500,
@@ -64,7 +59,6 @@ export type LoginHandoffPhase =
   | 'shift' // t=300~950ms
   | 'awaiting-panel' // shift 结束但「面板已挂载」信号未到(仅未登录)
   | 'panel' // 面板入场中
-  | 'slogan' // Slogan 入场中(面板开始 +100ms)
   | 'brand-exit' // authenticated:品牌 overlay 淡出中
   | 'done';
 
@@ -78,16 +72,14 @@ export interface LoginHandoffContextValue {
    * 品牌层应使用常态本地模式 footer 的预留值。
    */
   panelBottomReserve: number | null;
-  /** 播放中(boot 之后、done 之前)——面板/Slogan 的入场 transition 只在此期挂。 */
+  /** 播放中(boot 之后、done 之前)——面板入场 transition 只在此期挂。 */
   isPlaying: boolean;
   /** 品牌 overlay 是否应挂载(startup 期恒挂;done 后跟随 login 面板存在;authenticated 淡出后卸载)。 */
   brandStageMounted: boolean;
   /** authenticated 分支淡出中(LoginBrandStage 消费为 opacity 过渡)。 */
   brandExiting: boolean;
-  /** 面板已进入可见段(panel/slogan/done)。 */
+  /** 面板已进入可见段(panel/done)。 */
   panelRevealed: boolean;
-  /** Slogan 已进入可见段(slogan/done)——必须最后出现。 */
-  sloganRevealed: boolean;
   reportBrandAssetsReady: () => void;
   reportSplashExited: () => void;
   reportLoginPanelMounted: () => void;
@@ -99,7 +91,7 @@ const LoginHandoffContext = createContext<LoginHandoffContextValue | null>(null)
 
 /**
  * Provider 缺失时的静态兜底(单测直接 render LoginPage/LoginBrandStage 等场景):
- * 视为已播完——面板/Slogan 直落终态、品牌 overlay 常挂、reporter 全 no-op。
+ * 视为已播完——面板直落终态、品牌 overlay 常挂、reporter 全 no-op。
  */
 const FALLBACK_VALUE: LoginHandoffContextValue = Object.freeze({
   phase: 'done',
@@ -109,7 +101,6 @@ const FALLBACK_VALUE: LoginHandoffContextValue = Object.freeze({
   brandStageMounted: true,
   brandExiting: false,
   panelRevealed: true,
-  sloganRevealed: true,
   reportBrandAssetsReady: () => {},
   reportSplashExited: () => {},
   reportLoginPanelMounted: () => {},
@@ -216,16 +207,12 @@ export function LoginHandoffProvider({
     if (phase === 'awaiting-panel' && panelMounted) setPhase('panel');
   }, [phase, panelMounted]);
 
-  // panel → slogan(+100ms) → done(slogan 起步 +500ms 动画 +60ms demo buffer)。
+  // panel 入场完成 → done。
   useEffect(() => {
     if (phase === 'panel') {
-      schedule(() => setPhase('slogan'), LOGIN_HANDOFF_TIMINGS.sloganDelayMs);
-      return;
-    }
-    if (phase === 'slogan') {
       schedule(
         () => setPhase('done'),
-        LOGIN_HANDOFF_TIMINGS.sloganMs + LOGIN_HANDOFF_TIMINGS.doneBufferMs,
+        LOGIN_HANDOFF_TIMINGS.panelMs + LOGIN_HANDOFF_TIMINGS.doneBufferMs,
       );
     }
   }, [phase, schedule]);
@@ -245,8 +232,7 @@ export function LoginHandoffProvider({
       // 丢失品牌层(登录页只剩悬空白面板,2026-07-20 对抗 review P1)。
       brandStageMounted: phase !== 'done' ? true : panelMounted || coverHeld,
       brandExiting: phase === 'brand-exit',
-      panelRevealed: phase === 'panel' || phase === 'slogan' || phase === 'done',
-      sloganRevealed: phase === 'slogan' || phase === 'done',
+      panelRevealed: phase === 'panel' || phase === 'done',
       reportBrandAssetsReady,
       reportSplashExited,
       reportLoginPanelMounted,

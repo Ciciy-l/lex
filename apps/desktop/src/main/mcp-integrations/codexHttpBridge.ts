@@ -24,6 +24,7 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { runWithLiziMcpSessionContext, type LiziMcpSessionContext } from '@cindy/mcps';
 
 import type { Logger } from '@cindy/maker-core';
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 import {
   createCodexMcpThreadContextStore,
   isSameCodexMcpSessionContext,
@@ -880,7 +881,7 @@ function writeBlockedToolCallResponse(
     ? `Built-in tool "${pluginId}" is disabled for this session. Enable it in Settings and start a new session to apply the change.`
     : reason === 'ambiguous_thread_context'
       ? `Built-in tool "${pluginId}" received calls from more than one session in a single batch and cannot tell them apart. Retry the calls one session at a time.`
-      : `Built-in tool "${pluginId}" could not bind this call to a verified Cindy session. This is a session-routing problem, not a plugin setup problem. Start a new task and try again.`;
+      : `Built-in tool "${pluginId}" could not bind this call to a verified ${BRAND_NAME} session. This is a session-routing problem, not a plugin setup problem. Start a new task and try again.`;
   const disabledResult = (id: unknown) => ({
     jsonrpc: '2.0',
     id: id ?? null,

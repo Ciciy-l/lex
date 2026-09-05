@@ -47,7 +47,6 @@ vi.mock('@/components/title-bar/WindowControls', () => ({ WindowControls: () => 
 
 import { LoginPage } from '../LoginPage';
 import { LoginBrandStage } from '../LoginBrandStage';
-import { desktopScale, sloganShiftX } from '../loginScale';
 
 function scenarioClient(scenario: string, region: 'cn' | 'global' = 'cn') {
   return new CindyAuthClient({
@@ -110,9 +109,9 @@ function mount(
     clearError: vi.fn(),
     ...extra,
   };
-  // PR2b 所有权拆分:品牌视觉层(背景/立绘/字标/Slogan)迁入 LoginBrandStage
+  // PR2b 所有权拆分:品牌视觉层(背景/立绘/字标)迁入 LoginBrandStage
   // (App 级 overlay 唯一渲染者),harness 按 App 实际组合渲染两者——
-  // wave4 视觉五维断言目标不变,testId 与几何期望逐字保留。
+  // 品牌视觉断言继续覆盖唯一渲染者与几何契约。
   return render(
     <>
       <LoginBrandStage />
@@ -142,7 +141,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-/* ── wave4 视觉五维(brand-background / panel-border / wordmark / slogan) ── */
+/* ── Lex 品牌视觉(brand-background / panel-border / wordmark) ── */
 describe('wave4 stage 视觉', () => {
   it('brand-background 纯平白底(消费 login-bg-base,无渐变;2026-07-22 对齐 PR #104,viewport 锚定)', async () => {
     mount(await identifierState('providers:both'));
@@ -175,21 +174,9 @@ describe('wave4 stage 视觉', () => {
     expect(wordmark.style.height).toBe('145px');
   });
 
-  it('SLOGAN 为 #2A2828 矢量版资产,几何 453.22×129.12 @(1194,866)(368:1394)', async () => {
+  it('不渲染 Cindy 的旧手写体标语', async () => {
     mount(await identifierState('providers:both'));
-    const slogan = screen.getByTestId('login-slogan') as HTMLImageElement;
-    expect(slogan.src).toContain('slogan');
-    expect(slogan.style.left).toBe('1194px');
-    expect(slogan.style.top).toBe('866px');
-    expect(slogan.style.width).toBe('453.22px');
-    expect(slogan.style.height).toBe('129.12px');
-  });
-
-  it('slogan 窄窗左移只平移不缩放(demo applyDesktopScale 公式)', () => {
-    const { scale } = desktopScale(560, 800);
-    const shift = sloganShiftX(560, scale);
-    expect(shift).toBeLessThan(0);
-    expect(sloganShiftX(1920, desktopScale(1920, 800).scale)).toBe(0);
+    expect(screen.queryByTestId('login-slogan')).toBeNull();
   });
 });
 

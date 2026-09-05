@@ -16,6 +16,7 @@
  * 简短错误信息；清单来源、网络探针与本机路径默认只进日志，用户主动点击「复制诊断
  * 信息」时才组装进剪贴板文本。
  */
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 import type { SupportedLocale } from '../shared/locale.js';
 
 export type EndpointManifestDialogLocale = SupportedLocale;
@@ -61,11 +62,11 @@ export const ENDPOINT_MANIFEST_DIALOG_COPY: Record<
   EndpointManifestDialogCopy
 > = {
   'zh-CN': {
-    networkTitle: 'Cindy 暂时无法连接',
-    configTitle: 'Cindy 暂时无法启动',
+    networkTitle: `${BRAND_NAME} 暂时无法连接`,
+    configTitle: `${BRAND_NAME} 暂时无法启动`,
     networkBody:
-      '启动时未能连接到 Cindy 服务。请确认设备已联网，然后重新尝试启动。如果正在使用 Proxy 或公司网络，可以切换网络后再试。',
-    configBody: 'Cindy 暂时无法完成启动。请稍后重新尝试；如果问题持续出现，请联系技术支持。',
+      `${BRAND_NAME} 启动时未能连接到 Cindy 服务。请确认设备已联网，然后重新尝试启动。如果正在使用 Proxy 或公司网络，可以切换网络后再试。`,
+    configBody: `${BRAND_NAME} 暂时无法完成启动。请稍后重新尝试；如果问题持续出现，请联系技术支持。`,
     errorLine: '错误信息：{{error}}',
     diagnosticsHint: '需要反馈时，可以复制诊断信息后粘贴给我们。',
     copyDiagnosticsButton: '复制诊断信息',
@@ -74,16 +75,16 @@ export const ENDPOINT_MANIFEST_DIALOG_COPY: Record<
     noSavedConfigurationHint: '这台设备没有可用的历史配置，需要恢复连接后才能继续启动。',
     offlineHint:
       '也可以用上次成功获取的配置离线启动（获取于 {{savedAt}}），需要联网的功能会不可用。',
-    retryButton: '重试启动 Cindy',
+    retryButton: `重试启动 ${BRAND_NAME}`,
     offlineButton: '用上次配置启动',
-    quitButton: '退出 Cindy',
+    quitButton: `退出 ${BRAND_NAME}`,
   },
   'zh-TW': {
-    networkTitle: 'Cindy 暫時無法連線',
-    configTitle: 'Cindy 暫時無法啟動',
+    networkTitle: `${BRAND_NAME} 暫時無法連線`,
+    configTitle: `${BRAND_NAME} 暫時無法啟動`,
     networkBody:
-      '啟動時無法連線到 Cindy 服務。請確認裝置已連線網路，然後再次嘗試啟動。如果正在使用 Proxy 或公司網路，可以切換網路後再試。',
-    configBody: 'Cindy 暫時無法完成啟動。請稍後再試；如果問題持續發生，請聯絡技術支援。',
+      `${BRAND_NAME} 啟動時無法連線到 Cindy 服務。請確認裝置已連線網路，然後再次嘗試啟動。如果正在使用 Proxy 或公司網路，可以切換網路後再試。`,
+    configBody: `${BRAND_NAME} 暫時無法完成啟動。請稍後再試；如果問題持續發生，請聯絡技術支援。`,
     errorLine: '錯誤資訊：{{error}}',
     diagnosticsHint: '需要協助時，可以複製診斷資訊並貼到支援訊息中。',
     copyDiagnosticsButton: '複製診斷資訊',
@@ -91,37 +92,37 @@ export const ENDPOINT_MANIFEST_DIALOG_COPY: Record<
     copyFailedHint: '無法複製診斷資訊，請再試一次。',
     noSavedConfigurationHint: '此裝置沒有可用的歷史設定，必須恢復連線後才能繼續啟動。',
     offlineHint: '也可以使用上次成功取得的設定離線啟動（取得時間：{{savedAt}}），需要網路的功能將無法使用。',
-    retryButton: '再次嘗試啟動 Cindy',
+    retryButton: `再次嘗試啟動 ${BRAND_NAME}`,
     offlineButton: '使用上次的設定',
-    quitButton: '結束 Cindy',
+    quitButton: `結束 ${BRAND_NAME}`,
   },
   en: {
-    networkTitle: "Cindy Couldn't Connect",
-    configTitle: "Cindy Couldn't Start",
+    networkTitle: `${BRAND_NAME} Couldn't Connect`,
+    configTitle: `${BRAND_NAME} Couldn't Start`,
     networkBody:
-      "Cindy couldn't connect to its services during startup. Check that this device is online, then try starting again. If you're using a proxy or company network, try switching networks.",
+      `${BRAND_NAME} couldn't connect to Cindy services during startup. Check that this device is online, then try starting again. If you're using a proxy or company network, try switching networks.`,
     configBody:
-      "Cindy couldn't finish starting right now. Try again later. If the problem continues, contact support.",
+      `${BRAND_NAME} couldn't finish starting right now. Try again later. If the problem continues, contact support.`,
     errorLine: 'Error: {{error}}',
     diagnosticsHint: 'If you need help, copy the diagnostics into your support message.',
     copyDiagnosticsButton: 'Copy Diagnostics',
     copiedHint: 'Diagnostics copied. Paste them into your support message.',
     copyFailedHint: "Diagnostics couldn't be copied. Try again.",
     noSavedConfigurationHint:
-      'This device has no saved configuration yet, so Cindy needs to reconnect before it can start.',
+      `This device has no saved configuration yet, so ${BRAND_NAME} needs to reconnect before it can start.`,
     offlineHint:
-      'You can also start offline with the configuration Cindy last fetched ({{savedAt}}). Features that need a network connection will be unavailable.',
-    retryButton: 'Try Starting Cindy Again',
+      `You can also start offline with the configuration ${BRAND_NAME} last fetched ({{savedAt}}). Features that need a network connection will be unavailable.`,
+    retryButton: `Try Starting ${BRAND_NAME} Again`,
     offlineButton: 'Use Last Configuration',
-    quitButton: 'Quit Cindy',
+    quitButton: `Quit ${BRAND_NAME}`,
   },
   ja: {
-    networkTitle: 'Cindy に一時的に接続できません',
-    configTitle: 'Cindy を一時的に起動できません',
+    networkTitle: `${BRAND_NAME} に一時的に接続できません`,
+    configTitle: `${BRAND_NAME} を一時的に起動できません`,
     networkBody:
-      '起動時に Cindy のサービスへ接続できませんでした。デバイスがネットワークに接続されていることを確認して、もう一度起動してください。プロキシや社内ネットワークを使用している場合は、ネットワークを切り替えてお試しください。',
+      `${BRAND_NAME} の起動時に Cindy のサービスへ接続できませんでした。デバイスがネットワークに接続されていることを確認して、もう一度起動してください。プロキシや社内ネットワークを使用している場合は、ネットワークを切り替えてお試しください。`,
     configBody:
-      'Cindy の起動を完了できませんでした。時間をおいてもう一度お試しください。問題が続く場合は、サポートにお問い合わせください。',
+      `${BRAND_NAME} の起動を完了できませんでした。時間をおいてもう一度お試しください。問題が続く場合は、サポートにお問い合わせください。`,
     errorLine: 'エラー情報: {{error}}',
     diagnosticsHint: 'サポートが必要な場合は、診断情報をコピーしてメッセージに貼り付けてください。',
     copyDiagnosticsButton: '診断情報をコピー',
@@ -131,17 +132,17 @@ export const ENDPOINT_MANIFEST_DIALOG_COPY: Record<
       'このデバイスには利用できる保存済み設定がないため、接続が回復してから起動を続ける必要があります。',
     offlineHint:
       '前回取得できた設定でオフライン起動することもできます（取得日時: {{savedAt}}）。ネットワークが必要な機能は利用できません。',
-    retryButton: 'Cindy の起動を再試行',
+    retryButton: `${BRAND_NAME} の起動を再試行`,
     offlineButton: '前回の設定で起動',
-    quitButton: 'Cindy を終了',
+    quitButton: `${BRAND_NAME} を終了`,
   },
   ko: {
-    networkTitle: 'Cindy에 일시적으로 연결할 수 없습니다',
-    configTitle: 'Cindy를 일시적으로 시작할 수 없습니다',
+    networkTitle: `${BRAND_NAME}에 일시적으로 연결할 수 없습니다`,
+    configTitle: `${BRAND_NAME}를 일시적으로 시작할 수 없습니다`,
     networkBody:
-      '시작하는 동안 Cindy 서비스에 연결하지 못했습니다. 기기가 네트워크에 연결되어 있는지 확인한 후 다시 시작해 보세요. 프록시나 회사 네트워크를 사용 중이라면 다른 네트워크로 전환해 보세요.',
+      `${BRAND_NAME}를 시작하는 동안 Cindy 서비스에 연결하지 못했습니다. 기기가 네트워크에 연결되어 있는지 확인한 후 다시 시작해 보세요. 프록시나 회사 네트워크를 사용 중이라면 다른 네트워크로 전환해 보세요.`,
     configBody:
-      '지금은 Cindy 시작을 완료할 수 없습니다. 잠시 후 다시 시도해 주세요. 문제가 계속되면 지원팀에 문의해 주세요.',
+      `지금은 ${BRAND_NAME} 시작을 완료할 수 없습니다. 잠시 후 다시 시도해 주세요. 문제가 계속되면 지원팀에 문의해 주세요.`,
     errorLine: '오류 정보: {{error}}',
     diagnosticsHint: '도움이 필요하면 진단 정보를 복사해 지원 메시지에 붙여 넣어 주세요.',
     copyDiagnosticsButton: '진단 정보 복사',
@@ -151,9 +152,9 @@ export const ENDPOINT_MANIFEST_DIALOG_COPY: Record<
       '이 기기에는 사용할 수 있는 저장된 설정이 없어 연결이 복구된 후에 시작할 수 있습니다.',
     offlineHint:
       '마지막으로 가져온 설정으로 오프라인 시작할 수도 있습니다({{savedAt}} 기준). 네트워크가 필요한 기능은 사용할 수 없습니다.',
-    retryButton: 'Cindy 시작 다시 시도',
+    retryButton: `${BRAND_NAME} 시작 다시 시도`,
     offlineButton: '지난 설정으로 시작',
-    quitButton: 'Cindy 종료',
+    quitButton: `${BRAND_NAME} 종료`,
   },
 };
 
@@ -200,7 +201,7 @@ export function buildEndpointManifestDiagnosticsText(
   input: Pick<EndpointManifestDialogInput, 'kind' | 'reason' | 'source' | 'diagnosis' | 'logPath'>,
 ): string {
   return [
-    'Cindy startup diagnostics',
+    `${BRAND_NAME} startup diagnostics`,
     `kind=${input.kind}`,
     `reason=${input.reason}`,
     `source=${input.source ?? 'n/a'}`,

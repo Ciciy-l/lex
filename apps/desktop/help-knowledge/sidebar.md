@@ -62,8 +62,8 @@ The left sidebar lists your sessions. It's the main way to navigate and organize
 
 **Removing a project from the sidebar:**
 
-- Open a local project's overflow menu and choose **Remove Project from Sidebar**. Cindy asks for confirmation, removes the project from the sidebar, and keeps its existing sessions available as projectless chats in the main list. Individually pinned sessions remain in **Pinned**. Those sessions are not archived or stopped, and files on your computer are not deleted.
-- To restore the project, choose **Add Project** and select the same directory again. Cindy restores the existing sessions under their original project grouping instead of creating an empty session.
+- Open a local project's overflow menu and choose **Remove Project from Sidebar**. Lex asks for confirmation, removes the project from the sidebar, and keeps its existing sessions available as projectless chats in the main list. Individually pinned sessions remain in **Pinned**. Those sessions are not archived or stopped, and files on your computer are not deleted.
+- To restore the project, choose **Add Project** and select the same directory again. Lex restores the existing sessions under their original project grouping instead of creating an empty session.
 
 **Session statuses:**
 

@@ -9,8 +9,8 @@
 
 import { useIsDarkMode } from '@/components/markdown/useIsDarkMode';
 
-import logoLight from '@/assets/logo-light.png';
-import logoDark from '@/assets/logo-dark.png';
+import logoLight from '@/assets/login/lex-wordmark.svg';
+import logoDark from '@/assets/login/lex-wordmark-dark.svg';
 
 export { logoLight, logoDark };
 

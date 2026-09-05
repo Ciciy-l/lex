@@ -25,6 +25,7 @@
 
 import { app, ipcMain, nativeImage, Notification, type BrowserWindow } from 'electron';
 import type { FeishuIM } from '@cindy/im';
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 import * as path from 'node:path';
 
 import { markSessionNeedsAttention } from './appBadgeService';
@@ -68,7 +69,7 @@ const devNotificationIcon = !app.isPackaged
  *   - 'error'       — agent 本轮以报错结束
  *   - 'needs-reply' — agent 抛出 ask-user / permission / plan-review，等用户处理
  */
-const CLIENT_NOTIFICATION_NAME = 'Cindy';
+const CLIENT_NOTIFICATION_NAME = BRAND_NAME;
 
 interface ShowSessionEventPayload {
   sessionId: string;
@@ -85,7 +86,7 @@ interface ShowSessionEventPayload {
 }
 
 /**
- * Toast 文案分两层：title 同时标识 Cindy 与任务，body 放结构化终态。
+ * Toast 文案分两层：title 同时标识当前产品与任务，body 放结构化终态。
  * 不能只依赖 Windows AUMID / macOS bundle 元数据标识来源：不同系统和通知中心
  * 展示的 app 元数据并不一致，只显示任务名时容易被误认成同名插件主动发出的通知。
  */
@@ -172,7 +173,7 @@ export function initNotificationService(deps: NotificationServiceDeps): void {
         showDesktopSessionEvent(getWindow, { sessionId, title: safeTitle, kind });
       } else {
         // Dock/taskbar 角标独立于外发通道；即便只开飞书或两个通知开关都关闭，
-        // session 进入终态后仍要在 Cindy 内标记为需要关注。
+        // session 进入终态后仍要在当前产品内标记为需要关注。
         markSessionNeedsAttention(sessionId);
       }
 

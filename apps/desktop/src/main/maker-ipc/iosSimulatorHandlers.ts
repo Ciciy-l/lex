@@ -1,5 +1,6 @@
 import { IOSSimulatorInstanceError } from '@cindy/ios-simulator-runtime';
 import type { IOSSimulatorMcpAccessDecision } from '@cindy/mcps';
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
 import type {
   IOSSimulatorNativeH264StreamProfileRequest,
@@ -204,7 +205,7 @@ function throwIOSSimulatorPluginAccessError(
     case 'session-unavailable':
       throwIpcError(
         'IOS_SIMULATOR_PLUGIN_SESSION_UNAVAILABLE',
-        'The iOS Simulator plugin is unavailable in the current Cindy session.',
+        `The iOS Simulator plugin is unavailable in the current ${BRAND_NAME} session.`,
       );
     case 'disabled':
     default:

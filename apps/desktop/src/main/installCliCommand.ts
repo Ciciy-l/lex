@@ -39,6 +39,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 
 import { brandExecutableName } from '@cindy/maker-shared/brand-identity';
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
 import { createLogger, maskPath } from './logger';
 import {
@@ -167,9 +168,15 @@ function labelsFor(locale: ApplicationMenuLocale): ApplicationMenuLabels {
   return APPLICATION_MENU_LABELS[locale];
 }
 
-/** 展开标签占位符:`{{path}}` → symlink 路径,`{{cmd}}` → 品牌命令名(全部出现处)。 */
+/** 展开标签占位符：symlink 路径、品牌命令名与当前发行版的产品展示名。 */
 function fmt(template: string, linkPath: string): string {
-  return template.split('{{path}}').join(linkPath).split('{{cmd}}').join(CLI_COMMAND_NAME);
+  return template
+    .split('{{path}}')
+    .join(linkPath)
+    .split('{{cmd}}')
+    .join(CLI_COMMAND_NAME)
+    .split('{{appName}}')
+    .join(BRAND_NAME);
 }
 
 async function showMessage(
@@ -204,8 +211,8 @@ export async function installCindyCliCommand(
   if (!app.isPackaged) {
     await showMessage(window, {
       type: 'info',
-      message: labels.installCliDevOnlyTitle,
-      detail: labels.installCliDevOnlyDetail,
+      message: fmt(labels.installCliDevOnlyTitle, CLI_LINK_PATH),
+      detail: fmt(labels.installCliDevOnlyDetail, CLI_LINK_PATH),
     });
     return;
   }
@@ -219,8 +226,8 @@ export async function installCindyCliCommand(
       buttons: [labels.installCliMoveToApplications, labels.installCliCancel],
       defaultId: 0,
       cancelId: 1,
-      message: labels.installCliNotInApplicationsTitle,
-      detail: labels.installCliNotInApplicationsDetail,
+      message: fmt(labels.installCliNotInApplicationsTitle, CLI_LINK_PATH),
+      detail: fmt(labels.installCliNotInApplicationsDetail, CLI_LINK_PATH),
     });
     if (choice.response === 0) {
       try {
@@ -336,6 +343,7 @@ export async function uninstallCindyCliCommand(): Promise<void> {
 
 /** 仅给单测:导出纯函数,不依赖 Electron / 真实文件系统。 */
 export const __testing = {
+  fmt,
   shellSingleQuote,
   escapeForAppleScriptString,
   isPermissionError,

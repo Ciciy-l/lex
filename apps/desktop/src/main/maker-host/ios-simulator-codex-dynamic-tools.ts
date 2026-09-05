@@ -7,6 +7,7 @@ import {
   registerIOSSimulatorTools,
   type IOSSimulatorMcpDeps,
 } from '@cindy/mcps';
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
 const NAMESPACE = 'cindy_ios_simulator';
 const FLAT_TOOL_SEPARATOR = '__';
@@ -18,7 +19,7 @@ const TOOLS = [
     type: 'function',
     name: LIST_TOOLS_NAME,
     description:
-      "Discover Cindy's embedded iOS Simulator tools. Use this deterministic Host gateway when the embedded route is selected for iOS app work. Every tool behind it acts on a simulated Apple device: never use it to browse the web, fetch HTTP data, or automate this Mac. Start with check_environment.",
+      `Discover ${BRAND_NAME}'s embedded iOS Simulator tools. Use this deterministic Host gateway when the embedded route is selected for iOS app work. Every tool behind it acts on a simulated Apple device: never use it to browse the web, fetch HTTP data, or automate this Mac. Start with check_environment.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -32,7 +33,7 @@ const TOOLS = [
     type: 'function',
     name: CALL_TOOL_NAME,
     description:
-      "Invoke a validated embedded iOS Simulator tool for the current Cindy session. Call list_tools first, then pass the selected inner tool name and arguments. Every tool here targets a simulated Apple device, so do not route web browsing, HTTP fetching, or host automation through it.",
+      `Invoke a validated embedded iOS Simulator tool for the current ${BRAND_NAME} session. Call list_tools first, then pass the selected inner tool name and arguments. Every tool here targets a simulated Apple device, so do not route web browsing, HTTP fetching, or host automation through it.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -103,7 +104,7 @@ export function createIOSSimulatorCodexDynamicToolProvider(options: {
           {
             ok: false,
             errorCode: 'IOS_SIMULATOR_HOST_ERROR',
-            data: { message: 'The current Cindy session is unavailable.' },
+            data: { message: `The current ${BRAND_NAME} session is unavailable.` },
           },
           false,
         );

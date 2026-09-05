@@ -1355,7 +1355,7 @@ const config: ForgeConfig = {
     //          main/deepLink.ts registerDeepLinkProtocol()。
     protocols: [
       // 双 scheme 注册:cindy:// 主 + xdt-maker:// 永久兼容(存量分享链接不死)。
-      { name: 'Cindy Deep Link', schemes: [...allDeepLinkSchemes()] },
+      { name: `${BRAND_IDENTITY.displayName} Deep Link`, schemes: [...allDeepLinkSchemes()] },
     ],
     // macOS 文件夹右键 "打开方式 → Lex" 入口:
     //   声明 app 能接受 public.folder, Finder 自动把 Lex 放进 "打开方式" 列表。
@@ -1371,19 +1371,19 @@ const config: ForgeConfig = {
       // agent 会话中访问受 TCC 保护的目录(桌面/文稿/下载)时，macOS 需要这些声明才能向
       // 用户展示授权弹窗；缺失时系统直接静默拒绝，不弹窗。
       NSDesktopFolderUsageDescription:
-        "Cindy's AI agent needs access to read and write files on your Desktop.",
+        `${BRAND_IDENTITY.displayName}'s AI agent needs access to read and write files on your Desktop.`,
       NSDocumentsFolderUsageDescription:
-        "Cindy's AI agent needs access to read and write files in your Documents folder.",
+        `${BRAND_IDENTITY.displayName}'s AI agent needs access to read and write files in your Documents folder.`,
       NSDownloadsFolderUsageDescription:
-        "Cindy's AI agent needs access to read and write files in your Downloads folder.",
+        `${BRAND_IDENTITY.displayName}'s AI agent needs access to read and write files in your Downloads folder.`,
       // 智能通讯录导入: 经 osascript 向"通讯录"发 Apple Events(只读拉取)。
       // 缺这条声明 macOS 会不弹授权窗直接拒绝(-1743), 用户只看到静默失败。
       NSAppleEventsUsageDescription:
-        'Cindy uses Apple Events to read Contacts you import and to add or update Contacts you explicitly export.',
+        `${BRAND_IDENTITY.displayName} uses Apple Events to read Contacts you import and to add or update Contacts you explicitly export.`,
       NSContactsUsageDescription:
-        'Cindy accesses Contacts only when you import them or explicitly export additions or updates.',
+        `${BRAND_IDENTITY.displayName} accesses Contacts only when you import them or explicitly export additions or updates.`,
       NSLocalNetworkUsageDescription:
-        'Cindy uses your local network to sync end-to-end encrypted Smart Contacts directly between your online desktop devices.',
+        `${BRAND_IDENTITY.displayName} uses your local network to sync end-to-end encrypted Smart Contacts directly between your online desktop devices.`,
       CFBundleDocumentTypes: [
         {
           CFBundleTypeName: 'Folder',
@@ -1437,11 +1437,11 @@ const config: ForgeConfig = {
     extendHelperInfo: {
       NSMicrophoneUsageDescription: 'This app needs access to the microphone for voice input.',
       NSDesktopFolderUsageDescription:
-        "Cindy's AI agent needs access to read and write files on your Desktop.",
+        `${BRAND_IDENTITY.displayName}'s AI agent needs access to read and write files on your Desktop.`,
       NSDocumentsFolderUsageDescription:
-        "Cindy's AI agent needs access to read and write files in your Documents folder.",
+        `${BRAND_IDENTITY.displayName}'s AI agent needs access to read and write files in your Documents folder.`,
       NSDownloadsFolderUsageDescription:
-        "Cindy's AI agent needs access to read and write files in your Downloads folder.",
+        `${BRAND_IDENTITY.displayName}'s AI agent needs access to read and write files in your Downloads folder.`,
     },
     // chat-data-localization F1：drizzle SQL migration 文件需要随包发出，
     // main 通过 process.resourcesPath/drizzle 读取。dev 模式 main 走源码路径，

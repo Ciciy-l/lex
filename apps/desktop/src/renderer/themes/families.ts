@@ -27,12 +27,12 @@ export interface ThemeFamily {
 
 export const DEFAULT_FAMILY_ID = 'cindy';
 
-// 顺序就是设置 dropdown 的显示顺序:Cindy 作为新用户默认主题置顶,
+// 顺序就是设置 dropdown 的显示顺序:Lex 作为新用户默认主题置顶,
 // 之后按 light→dark 双变体优先, 再列 dark-only 家族。
 const BUILTIN_FAMILIES: ThemeFamily[] = [
   {
     id: 'cindy',
-    name: 'Cindy',
+    name: 'Lex',
     light: cindyLight,
     dark: cindyDark,
   },

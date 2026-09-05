@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { parse as parseToml } from 'smol-toml';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
 const execFileAsync = promisify(execFile);
 const OPENAI_TEAM_ID = '2DC432GLL2';
@@ -460,7 +461,7 @@ async function inspectCodexBrowserCompanion(
   } catch (error) {
     return unavailable(
       'provider_not_installed',
-      `cannot read Cindy's isolated Codex plugin config: ${error instanceof Error ? error.message : String(error)}`,
+      `cannot read ${BRAND_NAME}'s isolated Codex plugin config: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
   const isolatedPlugins = isRecord(isolatedConfig.plugins) ? isolatedConfig.plugins : {};
@@ -468,7 +469,7 @@ async function inspectCodexBrowserCompanion(
   if (!isRecord(isolatedPlugin) || isolatedPlugin.enabled !== true) {
     return unavailable(
       'provider_not_installed',
-      `${SOURCE_PLUGIN_KEY} is not enabled in Cindy's isolated Codex runtime`,
+      `${SOURCE_PLUGIN_KEY} is not enabled in ${BRAND_NAME}'s isolated Codex runtime`,
     );
   }
 

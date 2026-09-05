@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it, vi } from "vitest";
+import { BRAND_NAME } from "@cindy/maker-shared/branding";
 
 import type { IOSSimulatorMcpDeps } from "../types.js";
 import { createIOSSimulatorMcpServer } from "./server.js";
@@ -127,7 +128,7 @@ describe("createIOSSimulatorMcpServer", () => {
         (tool: { name: string; description: string }) =>
           tool.name === "start_instance",
       )?.description,
-    ).toContain("Cindy's viewer");
+    ).toContain(`${BRAND_NAME}'s viewer`);
     await Promise.all([client.close(), server.close()]);
   });
 

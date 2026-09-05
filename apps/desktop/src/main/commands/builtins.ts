@@ -437,7 +437,7 @@ export function registerBuiltinDesktopCommands(
   registry.register({
     name: 'issue',
     description:
-      `File feedback to the ${BRAND_NAME} team — the agent helps clarify details, then submits a GitHub issue after your confirmation. Usage: /issue [initial description]`,
+      `Report an issue affecting ${BRAND_NAME} to the Cindy upstream project — the agent helps clarify details, then submits a GitHub issue after your confirmation. Usage: /issue [initial description]`,
     execute: (ctx) => {
       sendDesktopCommandToSender(ctx, buildPayload('issue', ctx));
     },

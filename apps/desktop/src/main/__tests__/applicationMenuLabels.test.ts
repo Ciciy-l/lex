@@ -10,8 +10,9 @@
  * 复用 scripts/shared/glossary-rules.mjs,与根门禁、mobile 影子 catalog 同一套,
  * 避免各处各写一份规则后悄悄漂移。
  */
-import { APPLICATION_MENU_LABELS } from '../applicationMenuLabels';
+import { describe, expect, it } from 'vitest';
 
+import { APPLICATION_MENU_LABELS } from '../applicationMenuLabels';
 import { describeShadowCatalogGlossary, flattenShadowCatalog } from './shadowCatalogGlossary';
 
 describeShadowCatalogGlossary(
@@ -19,3 +20,14 @@ describeShadowCatalogGlossary(
   flattenShadowCatalog(APPLICATION_MENU_LABELS, 'desktop:menu.'),
   '原生菜单',
 );
+
+describe('原生应用菜单品牌占位符', () => {
+  it.each(Object.entries(APPLICATION_MENU_LABELS))(
+    '%s 不把桌面产品名硬编码为 Cindy',
+    (_locale, labels) => {
+      for (const value of Object.values(labels)) {
+        expect(value).not.toMatch(/\bCindy\b/);
+      }
+    },
+  );
+});

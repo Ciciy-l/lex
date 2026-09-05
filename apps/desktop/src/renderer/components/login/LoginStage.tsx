@@ -7,7 +7,7 @@ import { LOGIN_GROUP, LOGIN_LOCAL_MODE } from './loginDesignTokens';
  * LoginStage — 桌面登录 1819×2098 设计画布的「面板宿主」层(demo v3.1 缩放)。
  *
  * PR2b 所有权拆分(implementation-plan Step 3b WHAT2):品牌视觉层(白底体系背景
- * 渐变/立绘/字标/Slogan)已整体迁入 `LoginBrandStage`(App 级 overlay,唯一渲染者);
+ * 渐变/立绘/字标)已整体迁入 `LoginBrandStage`(App 级 overlay,唯一渲染者);
  * 本组件只承载 LoginPage 唯一拥有的白色输入面板与第三方圆钮行(children),
  * 面板恒定 0.5 缩放,垂直锚点/避让计算引用 desktopScale 来映射品牌坐标系。
  *

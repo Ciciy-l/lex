@@ -4,7 +4,7 @@
  * 权威来源:docs/cindy-login-hifi.html `desktopScale()`(demo:1809-1815,
  * implementation-plan.md「参数权威链」收口项):
  *   高度缩放基准 = 整设计画布高 2098(保留设计稿上下留白比例,构图占比与稿一致);
- *   宽度拉伸 → 元素大小不变(仅 slogan 左移),宽度不参与缩放;
+ *   宽度拉伸 → 元素大小不变,宽度不参与缩放;
  *   panelGuard = (w - 24) / 680 为唯一宽度介入:极端窄高组合下保障 680 宽功能面板不被裁。
  *
  * 行为合约(计划 Step 2 单测锚点):
@@ -25,10 +25,7 @@ export function desktopScale(w: number, h: number): { scale: number } {
 }
 
 /**
- * Slogan 窄窗左移量(demo applyDesktopScale 逐字移植,adaptation §1.1 条 8):
- * 只平移不缩放。1647.22 = Slogan 右缘(1194 + 453.22),909.5 = 画布中线(1819/2),
- * 20 = 右侧安全边距;可见半宽按当前 scale 反算回设计坐标系。
- * 返回负值 translateX 像素(设计坐标系);无溢出时为 0。
+ * @deprecated 仅供历史登录设计预览提取器复现旧稿；Lex Desktop 运行时不再渲染 slogan。
  */
 export function sloganShiftX(viewportWidth: number, scale: number): number {
   const visibleHalf = viewportWidth / 2 / scale;
@@ -97,7 +94,7 @@ export interface BrandPlacement {
 /**
  * 品牌块整体让位(用户拍板 2026-07-23 第二轮,design.md §11):
  * 字标任何窗口必须完整可见,且绝不遮挡立绘脸部/黑猫——后者由「构图冻结」保证:
- * 品牌块(立绘 275..1209,字标底 1191 / Slogan 底 995 均在其内)只作为整体
+ * 品牌块(立绘 275..1209,字标底 1191 均在其内)只作为整体
  * 移动/缩放,字标与立绘的设计相对位(压胸口渐隐区)永不改变。三级规则:
  *   ① 常态:v3.1 desktopScale + 画布居中(translateY=0),大窗零变化;
  *   ② 面板上侵:块底越过面板顶-12 → 整块上移补偿,至块顶触及视口顶 12 为止;

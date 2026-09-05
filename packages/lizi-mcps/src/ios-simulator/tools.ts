@@ -4,6 +4,7 @@ import type {
   IOSSimulatorMcpErrorCode,
   IOSSimulatorMcpToolName,
 } from "../types.js";
+import { BRAND_NAME } from "@cindy/maker-shared/branding";
 import { deprecatedIOSSimulatorToolAliasesFor } from "./tool-names.js";
 import {
   IOSSimulatorToolRegistry,
@@ -163,7 +164,7 @@ export function registerIOSSimulatorTools(
   register({
     name: "check_environment",
     description:
-      "Check whether the current local macOS session can use Cindy's embedded iOS Simulator runtime, Xcode, and the viewer bridge. This does not open macOS Simulator.app.",
+      `Check whether the current local macOS session can use ${BRAND_NAME}'s embedded iOS Simulator runtime, Xcode, and the viewer bridge. This does not open macOS Simulator.app.`,
     readOnly: true,
     inputShape: {},
     handler: async () =>
@@ -172,7 +173,7 @@ export function registerIOSSimulatorTools(
   register({
     name: "doctor",
     description:
-      "Run one bounded Host diagnosis for the current Cindy session, including environment, ownership, drivers, admitted capabilities, tool availability, and recommended next actions.",
+      `Run one bounded Host diagnosis for the current ${BRAND_NAME} session, including environment, ownership, drivers, admitted capabilities, tool availability, and recommended next actions.`,
     readOnly: true,
     inputShape: {},
     handler: async () => callHost(deps, "doctor", {}, getContext?.()),
@@ -188,7 +189,7 @@ export function registerIOSSimulatorTools(
   register({
     name: "list_instances",
     description:
-      "List only the iOS Simulator instances owned by the current Cindy session.",
+      `List only the iOS Simulator instances owned by the current ${BRAND_NAME} session.`,
     readOnly: true,
     inputShape: {},
     handler: async () => callHost(deps, "list_instances", {}, getContext?.()),
@@ -196,7 +197,7 @@ export function registerIOSSimulatorTools(
   register({
     name: "create_instance",
     description:
-      "Create a Cindy-owned embedded simulator from an installed template device, then attach it to this session for display in Cindy's viewer.",
+      `Create a ${BRAND_NAME}-owned embedded simulator from an installed template device, then attach it to this session for display in ${BRAND_NAME}'s viewer.`,
     inputShape: {
       templateUdid: z.string().uuid(),
       name: z.string().trim().min(1).max(128),
@@ -207,7 +208,7 @@ export function registerIOSSimulatorTools(
   register({
     name: "attach_device",
     description:
-      "Attach one exact simulator UDID to the current Cindy embedded-simulator session. Resource admission is enforced by the host; this operation does not open Simulator.app.",
+      `Attach one exact simulator UDID to the current ${BRAND_NAME} embedded-simulator session. Resource admission is enforced by the host; this operation does not open Simulator.app.`,
     inputShape: { udid: z.string().uuid() },
     handler: async (args) =>
       callHost(deps, "attach_device", args, getContext?.()),
@@ -247,7 +248,7 @@ export function registerIOSSimulatorTools(
   register({
     name: "start_instance",
     description:
-      "Boot the exact simulator attached to this Cindy embedded-simulator session, invalidate stale generations, and display it in Cindy's viewer without opening Simulator.app.",
+      `Boot the exact simulator attached to this ${BRAND_NAME} embedded-simulator session, invalidate stale generations, and display it in ${BRAND_NAME}'s viewer without opening Simulator.app.`,
     inputShape: routeShape,
     handler: async (args) =>
       callHost(deps, "start_instance", args, getContext?.()),
@@ -262,7 +263,7 @@ export function registerIOSSimulatorTools(
   register({
     name: "detach_device",
     description:
-      "Detach the viewer. Cindy-booted devices get a ten-minute grace period; preexisting devices remain running.",
+      `Detach the viewer. ${BRAND_NAME}-booted devices get a ten-minute grace period; preexisting devices remain running.`,
     inputShape: routeShape,
     handler: async (args) =>
       callHost(deps, "detach_device", args, getContext?.()),
@@ -631,7 +632,7 @@ export function registerIOSSimulatorTools(
   register({
     name: "build_app",
     description:
-      "Build one iOS app for the embedded simulator instance. Xcode runs the project's build scripts as the current macOS user, so scripts may read or modify files outside the project and build output is returned to the Agent. Approve only for a trusted project. For repositories with multiple or nested Xcode containers, pass containerPath as a worktree-relative path (or an absolute path that still resolves inside the worktree), then select a shared scheme when needed. Continue with install_app and launch_app on this same Cindy session.",
+      `Build one iOS app for the embedded simulator instance. Xcode runs the project's build scripts as the current macOS user, so scripts may read or modify files outside the project and build output is returned to the Agent. Approve only for a trusted project. For repositories with multiple or nested Xcode containers, pass containerPath as a worktree-relative path (or an absolute path that still resolves inside the worktree), then select a shared scheme when needed. Continue with install_app and launch_app on this same ${BRAND_NAME} session.`,
     inputShape: {
       ...routeShape,
       containerPath: z.string().trim().min(1).max(4096).optional(),
@@ -661,7 +662,7 @@ export function registerIOSSimulatorTools(
   register({
     name: "install_app",
     description:
-      "Install a build artifact produced for this Cindy session onto the exact simulator.",
+      `Install a build artifact produced for this ${BRAND_NAME} session onto the exact simulator.`,
     inputShape: { ...routeShape, artifactId: z.string().uuid() },
     handler: async (args) =>
       callHost(deps, "install_app", args, getContext?.()),
@@ -669,7 +670,7 @@ export function registerIOSSimulatorTools(
   register({
     name: "launch_app",
     description:
-      "Launch an installed build artifact on the exact Cindy embedded simulator with bounded arguments; this does not open macOS Simulator.app.",
+      `Launch an installed build artifact on the exact ${BRAND_NAME} embedded simulator with bounded arguments; this does not open macOS Simulator.app.`,
     inputShape: {
       ...routeShape,
       artifactId: z.string().uuid(),
@@ -695,7 +696,7 @@ export function registerIOSSimulatorTools(
   register({
     name: "take_simulator_screenshot",
     description:
-      "Capture the simulated device's own screen and persist the explicit result in Cindy media. Not a screenshot of this Mac or of a browser page. The image may be sent to the model.",
+      `Capture the simulated device's own screen and persist the explicit result in ${BRAND_NAME} media. Not a screenshot of this Mac or of a browser page. The image may be sent to the model.`,
     inputShape: routeShape,
     handler: async (args) =>
       callHost(deps, "take_screenshot", args, getContext?.()),
@@ -749,7 +750,7 @@ export function registerIOSSimulatorTools(
   register({
     name: "stop_recording",
     description:
-      "Stop a current recording and ingest the finalized MOV into Cindy media.",
+      `Stop a current recording and ingest the finalized MOV into ${BRAND_NAME} media.`,
     inputShape: { ...routeShape, recordingId: z.string().uuid() },
     handler: async (args) =>
       callHost(deps, "stop_recording", args, getContext?.()),

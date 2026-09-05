@@ -17,6 +17,7 @@ import {
   type GhostIOSSimulatorStatusProbeResult,
   type InstalledGhost,
 } from '../../shared/ghost.js';
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
 export const GHOST_IOS_SIMULATOR_OPEN_MIN_INTERVAL_MS = 5_000;
 export const GHOST_IOS_SIMULATOR_STATUS_CACHE_MS = 1_000;
@@ -177,7 +178,7 @@ export class GhostIOSSimulatorSlot {
       context = await this.deps.authorizeFocusedContext();
     }
     if (!context?.sessionId.trim()) {
-      return fail('HOST_NOT_READY', '当前没有打开的 Cindy 任务；先打开一个任务再使用内置模拟器');
+      return fail('HOST_NOT_READY', `当前没有打开的 ${BRAND_NAME} 任务；先打开一个任务再使用内置模拟器`);
     }
 
     let probe: GhostIOSSimulatorStatusProbeResult;
@@ -212,7 +213,7 @@ export class GhostIOSSimulatorSlot {
     }
 
     if (!this.deps.focusViewer(context, instanceId)) {
-      return fail('HOST_NOT_READY', '当前没有可打开内置模拟器面板的 Cindy 窗口');
+      return fail('HOST_NOT_READY', `当前没有可打开内置模拟器面板的 ${BRAND_NAME} 窗口`);
     }
     this.deps.log?.info('ghost ios simulator panel requested', {
       ghostId,

@@ -21,7 +21,7 @@ const LOCALES: EndpointManifestDialogLocale[] = ['zh-CN', 'zh-TW', 'en', 'ja', '
 
 /** CJK 与拉丁字母混排检测用:排除产品名、已裁决术语与占位符后仍有英文单词即视为混排。 */
 function stripAllowedLatin(text: string): string {
-  return text.replace(/\{\{\w+\}\}/g, ' ').replace(/Cindy|Proxy/g, ' ');
+  return text.replace(/\{\{\w+\}\}/g, ' ').replace(/Cindy|Lex|Proxy/g, ' ');
 }
 
 describe('端点清单弹框文案', () => {

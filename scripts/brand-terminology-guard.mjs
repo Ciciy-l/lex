@@ -40,15 +40,82 @@ const ALLOWED_LEGACY_OCCURRENCES = new Set([
 ]);
 
 // ---------------------------------------------------------------------------
-// Locale 品牌名占位符检查:
-// 品牌展示名已收敛到 @cindy/maker-shared/branding 的 BRAND_NAME,四语言 locale
-// 文案统一用 {{appName}} 占位。这里拒绝在 locale JSON 里重新硬编码品牌名——
-// 硬编码在开发期无感知,未来改名时必漏。运行时插值的端到端断言在
+// Locale 品牌边界检查:
+// - Lex 是本地 Desktop 产品名，必须通过 {{appName}} 注入，locale 不得硬编码；
+// - Cindy 只允许出现在账号、订阅、AI、语音、远程服务、官方 bot/市场、
+//   插件生态与兼容协议等明确归属 Cindy 的文案中；
+// - 新出现的 Cindy 文案必须先加入精确 key 或小范围 prefix allowlist，不能把整棵
+//   settings.ghosts / login / billing 放行，否则上游同步时本地主体残留会静默漏过。
+// 运行时插值的端到端断言在
 // apps/desktop/src/renderer/__tests__/i18nBrandPlaceholder.test.ts。
 // ---------------------------------------------------------------------------
 
 const LOCALE_FILE_RE = /^apps\/desktop\/src\/renderer\/i18n\/locales\/[^/]+\/common\.json$/;
-const LOCALE_BRAND_RE = /XDMaker|XD Maker|xdt-maker/;
+const LOCALE_HOST_BRAND_RE = /XDMaker|XD Maker|xdt-maker|\bLex\b/;
+const LOCALE_CINDY_RE = /\bCindy\b/;
+
+const LOCALE_CINDY_ALLOWED_KEY_PATHS = new Set([
+  'settings.userProfile.local.description',
+  'settings.userProfile.local.signIn',
+  'settings.connections.claude.logoutConfirm.description',
+  'settings.providers.xdSignin.cta',
+  'settings.wechatBot.authorization.description',
+  'settings.wechatBot.authorization.rebindDescription',
+  'settings.wechatBot.bound.notes.connected',
+  'settings.telegramBot.guide.step4.body',
+  'settings.imBot.tips.cindy',
+  'settings.ghosts.page.createWithCindy',
+  'settings.ghosts.page.createPrompt',
+  'settings.ghosts.errors.idReserved',
+  'settings.ghosts.detail.exportFileType',
+  'settings.ghosts.contents.slotCindy',
+  'settings.contacts.sync.status.signInRequired',
+  'login.localModeDescription',
+  'login.errors.ACCOUNT_NAMESPACE_CONFLICT',
+  'login.errors.ORG_REALM_UNAVAILABLE',
+  'sidebar.user.downloadMobile',
+  'onboarding.inheritedSubscription.desc',
+  'onboarding.promotionalGrant.title',
+  'voiceInputOverlay.cindyServiceUnavailable',
+]);
+
+const LOCALE_CINDY_ALLOWED_KEY_PREFIXES = [
+  'settings.agentIsland.skins.cindy.',
+  'settings.about.legal.',
+  'settings.about.social.',
+  'settings.voiceInput.serviceSource.',
+  'settings.connections.codex.apiMode.',
+  'settings.connections.claude.apiMode.',
+  'settings.providers.xd.',
+  'settings.remoteControl.',
+  'settings.ghosts.market.',
+  'settings.ghosts.perm.',
+  'settings.ghosts.detail.cindyPrefs.',
+  'settings.ghosts.trust.',
+  'accountDeletion.',
+  'login.consentDialog.',
+  'login.realmConsent.',
+  'login.serviceRealm.',
+  'sidebar.mobileDownload.',
+  'onboarding.connectProvider.cindy.',
+  'onboarding.connectProvider.banner.',
+  'chat.errorBanner.',
+  'chat.ghostSummon.',
+  'chat.threadContext.',
+  'chat.remoteError.',
+  'ccAgent.layout.apiKeyDialog.',
+  'scheduler.editor.preRunHook.aiFailure.',
+  'issueTracker.mine.',
+  'issueAgent.',
+  'logic.confirm.voiceApiKeyAuth',
+];
+
+function isAllowedCindyLocaleKey(path) {
+  return (
+    LOCALE_CINDY_ALLOWED_KEY_PATHS.has(path) ||
+    LOCALE_CINDY_ALLOWED_KEY_PREFIXES.some((prefix) => path.startsWith(prefix))
+  );
+}
 /**
  * key 级豁免:当前为空。历史豁免均已随 2026-07 品牌翻转清退:
  *  - openForLoginHint(Chrome 受管 profile 显示名)→ profile 已翻 Cindy,文案同步;
@@ -59,9 +126,12 @@ const LOCALE_BRAND_RE = /XDMaker|XD Maker|xdt-maker/;
 const LOCALE_EXEMPT_KEY_PATHS = new Set([]);
 function collectLocaleViolations(file, node, path, out) {
   if (typeof node === 'string') {
-    if (!LOCALE_BRAND_RE.test(node)) return;
-    if (LOCALE_EXEMPT_KEY_PATHS.has(path)) return;
-    out.push({ file, key: path });
+    if (LOCALE_HOST_BRAND_RE.test(node) && !LOCALE_EXEMPT_KEY_PATHS.has(path)) {
+      out.push({ file, key: path, kind: 'host-brand' });
+    }
+    if (LOCALE_CINDY_RE.test(node) && !isAllowedCindyLocaleKey(path)) {
+      out.push({ file, key: path, kind: 'cindy-boundary' });
+    }
     return;
   }
   if (node && typeof node === 'object') {
@@ -180,13 +250,18 @@ if (violations.length > 0) {
 }
 
 if (localeViolations.length > 0) {
-  console.error('❌ [brand-terminology-guard] hardcoded brand name in locale files — use {{appName}}');
+  console.error('❌ [brand-terminology-guard] locale brand boundary violation');
   for (const hit of localeViolations) {
-    console.error(`  ${hit.file} → key "${hit.key}"`);
+    const guidance =
+      hit.kind === 'cindy-boundary'
+        ? 'local Lex surfaces must use {{appName}}; allow Cindy only for explicit service/ecosystem keys'
+        : 'use {{appName}}';
+    console.error(`  ${hit.file} → key "${hit.key}" (${guidance})`);
   }
-  console.error('\nlocale 文案里的品牌名必须写 {{appName}}(由 i18next defaultVariables 注入 BRAND_NAME)。');
-  console.error('标识符例外属于稳定标识符层，不要将其当作 locale 展示文案改名。');
+  console.error('\nLex 本地产品名必须写 {{appName}}(由 i18next defaultVariables 注入 BRAND_NAME)。');
+  console.error('Cindy 只用于明确归属 Cindy 的账号、在线服务、官方 bot/市场与插件生态。');
+  console.error('技术标识符例外属于稳定兼容层，不要将其当作 locale 展示文案改名。');
   process.exit(1);
 }
 
-console.log('✅ [brand-terminology-guard] PASS — no forbidden brand spellings, locales use {{appName}}');
+console.log('✅ [brand-terminology-guard] PASS — locale Lex/Cindy boundary is explicit');

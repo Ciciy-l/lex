@@ -17,6 +17,7 @@
 import type { Plugin, PluginId } from './types.js';
 import { ESSENTIAL_PLUGIN_IDS } from './types.js';
 import type { LiziMcpId } from '@cindy/mcps';
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
 interface BuiltinPluginMeta {
   id: PluginId;
@@ -30,7 +31,7 @@ interface BuiltinPluginMeta {
  */
 const BUILTIN_META: BuiltinPluginMeta[] = [
   { id: 'android',     name: 'Android Automation', description: 'Android adb automation — screenshots, UI dump, taps, swipes, text input, and app launch on connected devices' },
-  { id: 'ios-simulator', name: 'iOS Simulator', description: 'Cindy embedded iOS Simulator — create or attach a session-owned device, boot it in the embedded viewer, build/install/launch apps, inspect screens, and debug interactions.' },
+  { id: 'ios-simulator', name: 'iOS Simulator', description: `${BRAND_NAME} embedded iOS Simulator — create or attach a session-owned device, boot it in the embedded viewer, build/install/launch apps, inspect screens, and debug interactions.` },
   { id: 'browser',     name: 'Browser',      description: 'Browser automation — isolated browsing, snapshots, screenshots, and page actions' },
   { id: 'computer',    name: 'Computer Use', description: 'Local desktop automation — apps, windows, UI inspection, clicks, and typing via an installed driver' },
   { id: 'feishu_bot',   name: 'Feishu Bot',   description: 'Send files and notifications to Feishu users via bot messages' },
@@ -41,7 +42,7 @@ const BUILTIN_META: BuiltinPluginMeta[] = [
   { id: 'memory',       name: 'Maker Memory', description: 'Cross-agent long-term memory for persistent context across sessions' },
   { id: 'contacts',     name: 'Smart Contacts', description: 'Agent-native contacts — cross-platform identity resolution, relationship context, and timeline events' },
   { id: 'docs',         name: 'Document Toolkit', description: 'Turn content into real files — PDF, Word, Excel, and PowerPoint — and read them back to verify the result. No extra software to install.' },
-  { id: 'xdt_helper',   name: 'Cindy Helper', description: 'Host capability disclosure — tells agents what tools and models are available' },
+  { id: 'xdt_helper',   name: `${BRAND_NAME} Helper`, description: 'Host capability disclosure — tells agents what tools and models are available' },
   { id: 'collab',       name: 'Collab Mode',  description: 'Multi-worker collaboration (Orca team) — start_team / create_worker / send_to_worker etc.' },
   { id: 'lsp',          name: 'LSP',          description: 'TypeScript LSP queries (Beta — gated by Settings → Experimental → LSP Mode)' },
   // xd_service 已于 2026-07-13 退役:Pages 能力(含部署)整体迁入内置意识

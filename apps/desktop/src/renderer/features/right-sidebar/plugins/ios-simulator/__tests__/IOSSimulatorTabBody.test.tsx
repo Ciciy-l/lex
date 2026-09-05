@@ -437,7 +437,7 @@ describe('IOSSimulatorTabBody', () => {
     const api = installStatus(readyStatus());
     api.status.mockRejectedValueOnce(
       new Error(
-        'Error invoking remote method: Error: [IOS_SIMULATOR_PLUGIN_SESSION_UNAVAILABLE] The iOS Simulator plugin is unavailable in the current Cindy session.',
+        'Error invoking remote method: Error: [IOS_SIMULATOR_PLUGIN_SESSION_UNAVAILABLE] The iOS Simulator plugin is unavailable in the current Lex session.',
       ),
     );
 
@@ -690,7 +690,7 @@ describe('IOSSimulatorTabBody', () => {
     api.call.mockResolvedValueOnce({
       ok: false,
       errorCode: 'SIMULATOR_ATTACHED_ELSEWHERE',
-      message: 'The simulator is attached to another Cindy session.',
+      message: 'The simulator is attached to another app session.',
     });
 
     render(<IOSSimulatorTabBody state={{ instanceId: null }} ctx={ctx} />);

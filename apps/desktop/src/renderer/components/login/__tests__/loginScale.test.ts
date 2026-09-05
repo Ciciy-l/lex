@@ -5,7 +5,6 @@ import {
   desktopScale,
   panelPlacement,
   PANEL_FIXED_SCALE,
-  sloganShiftX,
 } from '../loginScale';
 import { CONTROL, PANEL, SSO_ORG_HISTORY } from '../loginDesignTokens';
 
@@ -34,21 +33,6 @@ describe('desktopScale(demo v3.1 拍板公式)', () => {
 
   it('panelGuard 仅在极端窄高组合介入((300,2200) → (300-24)/680)', () => {
     expect(desktopScale(300, 2200).scale).toBeCloseTo(276 / 680, 6);
-  });
-});
-
-describe('sloganShiftX(窄窗左移只平移不缩放,demo applyDesktopScale 移植)', () => {
-  it('宽窗不左移(可见半宽覆盖 Slogan 右缘)', () => {
-    const { scale } = desktopScale(1920, 800);
-    expect(sloganShiftX(1920, scale)).toBe(0);
-  });
-
-  it('窄窗产生负向平移(数值 = 溢出量向上取整)', () => {
-    const { scale } = desktopScale(560, 800); // 高度基准 scale≈0.3813,半宽 280/0.3813≈734.3 < 757.72
-    const shift = sloganShiftX(560, scale);
-    expect(shift).toBeLessThan(0);
-    const visibleHalf = 560 / 2 / scale;
-    expect(shift).toBe(-Math.ceil(1647.22 - 909.5 + 20 - visibleHalf));
   });
 });
 

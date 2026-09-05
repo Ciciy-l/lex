@@ -1,6 +1,6 @@
 ==============================================================================
 THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
-Cindy desktop application — all supported platforms
+Lex desktop application — all supported platforms
 ==============================================================================
 
 Windows、macOS 与 Linux 桌面产物的保守合并声明。

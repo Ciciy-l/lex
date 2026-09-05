@@ -19,6 +19,7 @@ import type {
   SubagentTranscriptEntry,
   SubagentTranscriptPageResponse,
 } from '@cindy/maker-shared/subagent-workspace';
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
 const RUN_DIR_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_STATUS_BYTES = 2 * 1024 * 1024;
@@ -2306,7 +2307,7 @@ async function acquirePiSubagentResumeClaim(
       ...(holder.hostStartTimeSec !== undefined ? { startTimeSec: holder.hostStartTimeSec } : {}),
     })) {
       throw new PiSubagentResumeClaimedError(
-        'Another running Cindy instance is already resuming this Subagent generation.',
+        `Another running ${BRAND_NAME} instance is already resuming this Subagent generation.`,
       );
     }
     if (attempt === 0) {

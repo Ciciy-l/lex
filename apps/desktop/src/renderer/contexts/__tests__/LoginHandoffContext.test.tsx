@@ -6,8 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 /**
  * LoginHandoff 衔接动画测试(implementation-plan Step 3b WHAT2/WHAT3)。
  *
- * - fake-timer 时序:settle 0.3s → shift 650ms → panel 420ms 上滑 20px →
- *   slogan +100ms/500ms(demo splashHandoff() 时间轴逐项对照;Slogan 最后出现);
+ * - fake-timer 时序:settle 0.3s → shift 650ms → panel 420ms 上滑 20px → done;
  * - 冷启动每次播放、resize/reset 不重播、卸载清理;reduced-motion 直落终态;
  * - 两条冷启动集成(real AuthProvider + resolved snapshot,集成层禁 mock-reject
  *   ——异常路径由 AuthContext catch 归一为 resolved-unauthenticated,单测另测):
@@ -138,7 +137,7 @@ function fireAnchors() {
 }
 
 describe('LoginHandoff 时序(fake-timer)', () => {
-  it('settle 0.3s→shift 650ms→panel 420ms 上滑→slogan +100ms/500ms,Slogan 最后出现(demo splashHandoff 对照)', () => {
+  it('settle 0.3s→shift 650ms→panel 420ms 上滑→done', () => {
     render(
       <LoginHandoffProvider authResolved authenticated={false}>
         <Probe />
@@ -152,7 +151,6 @@ describe('LoginHandoff 时序(fake-timer)', () => {
     fireAnchors();
     expect(probe.current!.phase).toBe('settle');
     expect(probe.current!.panelRevealed).toBe(false);
-    expect(probe.current!.sloganRevealed).toBe(false);
 
     act(() => vi.advanceTimersByTime(T.settleMs - 1));
     expect(probe.current!.phase).toBe('settle');
@@ -165,29 +163,18 @@ describe('LoginHandoff 时序(fake-timer)', () => {
     // t=950ms:面板入场(420ms cubic-bezier(.35,.1,.25,1) 由消费端 style 承载)
     expect(probe.current!.phase).toBe('panel');
     expect(probe.current!.panelRevealed).toBe(true);
-    expect(probe.current!.sloganRevealed).toBe(false); // Slogan 尚未出现
-
-    act(() => vi.advanceTimersByTime(T.sloganDelayMs - 1));
+    act(() => vi.advanceTimersByTime(T.panelMs + T.doneBufferMs - 1));
     expect(probe.current!.phase).toBe('panel');
-    act(() => vi.advanceTimersByTime(1));
-    expect(probe.current!.phase).toBe('slogan');
-    expect(probe.current!.sloganRevealed).toBe(true); // Slogan 最后出现
-
-    act(() => vi.advanceTimersByTime(T.sloganMs + T.doneBufferMs - 1));
-    expect(probe.current!.phase).toBe('slogan');
     act(() => vi.advanceTimersByTime(1));
     expect(probe.current!.phase).toBe('done');
     expect(probe.current!.isPlaying).toBe(false);
-    // 时序常量本体锚定(demo 逐字):300/650/420/100/500 + 三条 easing
+    // 时序常量本体锚定:300/650/420 + 两条 easing
     expect(T.settleMs).toBe(300);
     expect(T.shiftMs).toBe(650);
     expect(T.panelMs).toBe(420);
     expect(T.panelRisePx).toBe(20);
-    expect(T.sloganDelayMs).toBe(100);
-    expect(T.sloganMs).toBe(500);
     expect(T.shiftEasing).toBe('cubic-bezier(.33,0,.18,1)');
     expect(T.panelEasing).toBe('cubic-bezier(.35,.1,.25,1)');
-    expect(T.sloganEasing).toBe('cubic-bezier(.55,.06,.38,.96)');
   });
 
   it('未登录另需「面板已挂载」信号才进 panel 步(awaiting-panel 门)', () => {
@@ -248,10 +235,9 @@ describe('LoginHandoff 时序(fake-timer)', () => {
       </LoginHandoffProvider>,
     );
     fireAnchors();
-    // 不经 settle/shift/panel/slogan,直接 done;面板与 Slogan 即刻可见
+    // 不经 settle/shift/panel,直接 done;面板即刻可见
     expect(probe.current!.phase).toBe('done');
     expect(probe.current!.panelRevealed).toBe(true);
-    expect(probe.current!.sloganRevealed).toBe(true);
     expect(probe.current!.isPlaying).toBe(false);
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -315,7 +301,6 @@ async function flush() {
 function loadBrandAssets() {
   fireEvent.load(screen.getByTestId('login-brand-hero'));
   fireEvent.load(screen.getByTestId('login-brand-wordmark'));
-  fireEvent.load(screen.getByTestId('login-slogan'));
 }
 
 describe('冷启动集成(resolved snapshot,禁 mock-reject)', () => {
@@ -353,20 +338,20 @@ describe('冷启动集成(resolved snapshot,禁 mock-reject)', () => {
     renderColdStart();
     await flush();
 
-    // ── 冷启动品牌屏(demo desktop-splash 相):品牌可见、Slogan 未出现、
+    // ── 冷启动品牌屏(demo desktop-splash 相):Lex 品牌可见、
     //    Splash 统一面板在场、登录面板隐藏 ──
     expect(screen.getAllByTestId('login-stage-root').length).toBe(1);
     const hero = screen.getByTestId('login-brand-hero');
     expect(hero.style.left).toBe('443px'); // wave4 品牌位 = 登录位(379:5xx 实测)
     expect(hero.style.top).toBe('275px');
-    expect(screen.getByTestId('login-slogan').style.opacity).toBe('0');
+    expect(screen.queryByTestId('login-slogan')).toBeNull();
     expect(screen.getByTestId('splash-panel')).toBeTruthy();
     const group = screen.getByTestId('login-group');
     expect(group.style.opacity).toBe('0'); // splash 期登录面板不可见 → 最多一个可见 panel
     expect(group.style.pointerEvents).toBe('none');
     // 单一品牌 DOM:LoginPage 面板宿主层内不含任何品牌图(所有权契约)
     const panelHost = screen.getByTestId('login-panel-stage-root');
-    expect(panelHost.querySelectorAll('img[src*="hero"], img[src*="wordmark"], img[src*="slogan"]').length).toBe(0);
+    expect(panelHost.querySelectorAll('img[src*="hero"], img[src*="wordmark"]').length).toBe(0);
     // overlay 不拦截 hit-test
     expect(screen.getByTestId('login-stage-root').className).toContain('pointer-events-none');
 
@@ -386,7 +371,7 @@ describe('冷启动集成(resolved snapshot,禁 mock-reject)', () => {
     expect(probe.current!.phase).toBe('shift');
     expect(screen.getByTestId('login-group').style.opacity).toBe('0');
 
-    // t=950:面板入场(420ms 上滑 20px);Slogan 仍未出现
+    // t=950:面板入场(420ms 上滑 20px)
     await act(async () => {
       vi.advanceTimersByTime(450);
     });
@@ -395,20 +380,11 @@ describe('冷启动集成(resolved snapshot,禁 mock-reject)', () => {
     expect(groupIn.style.opacity).toBe('1');
     expect(groupIn.style.transform).toContain('translateY(0px)');
     expect(groupIn.style.transition).toContain('420ms cubic-bezier(.35,.1,.25,1)');
-    expect(screen.getByTestId('login-slogan').style.opacity).toBe('0');
+    expect(screen.queryByTestId('login-slogan')).toBeNull();
 
-    // +100ms Slogan 最后出现(500ms 缓入)
+    // 面板入场完成后收尾:done 后品牌固定登录位、面板可点击、全程单面板
     await act(async () => {
-      vi.advanceTimersByTime(100);
-    });
-    expect(probe.current!.phase).toBe('slogan');
-    const slogan = screen.getByTestId('login-slogan');
-    expect(slogan.style.opacity).toBe('1');
-    expect(slogan.style.transition).toContain('500ms cubic-bezier(.55,.06,.38,.96)');
-
-    // 收尾:done 后品牌固定登录位、面板可点击、全程单面板
-    await act(async () => {
-      vi.advanceTimersByTime(560);
+      vi.advanceTimersByTime(T.panelMs + T.doneBufferMs);
     });
     expect(probe.current!.phase).toBe('done');
     expect(screen.getByTestId('login-brand-hero').style.left).toBe('443px');
@@ -461,7 +437,7 @@ describe('冷启动集成(resolved snapshot,禁 mock-reject)', () => {
     expect(screen.queryByTestId('login-panel-stage-root')).toBeNull();
   });
 
-  it('authenticated 冷启动 → 登出回 /login:品牌层重挂为终态(固定登录位/Slogan 直落可见/不重播)——P1 回归', async () => {
+  it('authenticated 冷启动 → 登出回 /login:品牌层重挂为终态且不重播——P1 回归', async () => {
     svc.service.initialize.mockResolvedValue({
       isAuthenticated: true,
       isCanary: false,
@@ -492,16 +468,14 @@ describe('冷启动集成(resolved snapshot,禁 mock-reject)', () => {
       });
     });
 
-    // 品牌层重挂(它是背景/立绘/字标/Slogan 唯一渲染者,缺席 = 悬空白面板)
+    // 品牌层重挂(它是背景/立绘/字标唯一渲染者,缺席 = 悬空白面板)
     const overlay = screen.getByTestId('login-stage-root');
     expect(overlay.className).toContain('pointer-events-none');
-    // 终态:品牌固定登录位、Slogan 直落可见且无入场过渡(不重播,playedRef 语义)
+    // 终态:品牌固定登录位(不重播,playedRef 语义)
     const hero = screen.getByTestId('login-brand-hero');
     expect(hero.style.left).toBe('443px');
     expect(hero.style.top).toBe('275px');
-    const slogan = screen.getByTestId('login-slogan');
-    expect(slogan.style.opacity).toBe('1');
-    expect(slogan.style.transition).toBe('');
+    expect(screen.queryByTestId('login-slogan')).toBeNull();
     // 登录面板同样直落终态可点击,无入场动画重播
     const group = screen.getByTestId('login-group');
     expect(group.style.opacity).toBe('1');
@@ -513,7 +487,7 @@ describe('冷启动集成(resolved snapshot,禁 mock-reject)', () => {
     expect(probe.current!.phase).toBe('done');
     act(() => vi.runAllTimers());
     expect(probe.current!.phase).toBe('done');
-    expect(screen.getByTestId('login-slogan').style.opacity).toBe('1');
+    expect(screen.queryByTestId('login-slogan')).toBeNull();
     expect(screen.getByTestId('login-group').style.opacity).toBe('1');
     expect(screen.getByTestId('login-stage-root')).toBeTruthy();
     expect(vi.getTimerCount()).toBe(0);

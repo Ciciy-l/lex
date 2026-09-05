@@ -609,7 +609,7 @@ describe('piEnvironment per-session identity', () => {
     expect(callResp.status).toBe(200);
     const result = await readRpcText(callResp) as { result?: { isError?: boolean; content?: { text?: string }[] } };
     expect(result.result?.isError).toBe(true);
-    expect(result.result?.content?.[0]?.text).toContain('verified Cindy session');
+    expect(result.result?.content?.[0]?.text).toContain('verified Lex session');
   });
 
   it('registers the worker bridge before the Pi session role is available', async () => {

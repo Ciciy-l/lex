@@ -59,7 +59,7 @@ describe('NewMakerDraftRoute CREATE AGENT visual contract', () => {
     expect(source).not.toContain('surface-translucent-sidebar');
     expect(source).not.toContain('agent-island-annie');
     expect(source).toContain('<ThemeBrandLockup');
-    expect(brandLockupSource).toContain('head-image-dark.png');
+    expect(brandLockupSource).toContain('lex-assistant-avatar.png');
   });
 
   it('centers the CREATE AGENT content group without reintroducing route chrome', () => {
@@ -172,9 +172,10 @@ describe('NewMakerDraftRoute CREATE AGENT visual contract', () => {
   });
 
   it('uses exact CREATE AGENT quick-start and avatar tokens from the Figma slices', () => {
-    // head_image 切图方案(用户裁决 2026-07-17):边框烧入图,仅投影走 CSS
-    expect(brandLockupSource).toContain('head-image-dark.png');
-    expect(brandLockupSource).toContain('head-image-light.png');
+    // Lex 默认头像由独立透明 PNG 提供，自定义主题仍可覆盖素材。
+    expect(brandLockupSource).toContain('lex-assistant-avatar.png');
+    expect(brandLockupSource).not.toContain('head-image-light.png');
+    expect(brandLockupSource).not.toContain('head-image-dark.png');
     expect(brandLockupSource).toContain("drop-shadow(0 2px 3.65px rgba(0, 0, 0, 0.15))");
     expect(brandLockupSource).toContain('BRAND_ICON_SIZE = 50');
     expect(brandLockupSource).toContain('BRAND_LOGO_WIDTH = 110');

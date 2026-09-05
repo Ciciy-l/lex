@@ -70,7 +70,7 @@ export function createIOSSimulatorRuntime(
           platform,
           "UNSUPPORTED_PLATFORM",
           "Apple iOS Simulator is only available on macOS.",
-          ["Open this project in a local Cindy session on macOS."],
+          ["Open this project in a local desktop app session on macOS."],
         );
       }
 

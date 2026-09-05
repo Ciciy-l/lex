@@ -29,7 +29,13 @@ describe('Settings About social links', () => {
     expect(xiaohongshuIndex).toBeGreaterThan(xIndex);
   });
 
-  it('renders a desktop three-column action card and opens links externally', () => {
+  it('renders the Cindy community links inside a default-collapsed disclosure', () => {
+    expect(aboutSource).toContain(
+      "<CollapsibleAboutPanel title={t('settings.about.social.title')}>",
+    );
+    expect(aboutSource).toContain('const [open, setOpen] = useState(false)');
+    expect(aboutSource).toContain('aria-expanded={open}');
+    expect(aboutSource).toContain('<div hidden={!open}>');
     expect(aboutSource).toContain('grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-2.5');
     expect(aboutSource).toContain(
       'min-h-[68px] min-w-0 select-none items-center gap-3 rounded-full px-6 py-2.5',
@@ -64,6 +70,8 @@ describe('Settings About social links', () => {
       settings: {
         about: {
           social?: Record<string, string>;
+          legal?: Record<string, string>;
+          lexContact?: Record<string, string>;
         };
       };
     };
@@ -81,5 +89,10 @@ describe('Settings About social links', () => {
     expect(messages.settings.about.social?.xiaohongshuDescription).toBe(
       expectedXiaohongshuDescriptions[locale],
     );
+    expect(messages.settings.about.legal?.title).toContain('Cindy');
+    expect(messages.settings.about.lexContact).toMatchObject({
+      title: expect.any(String),
+      placeholder: expect.any(String),
+    });
   });
 });

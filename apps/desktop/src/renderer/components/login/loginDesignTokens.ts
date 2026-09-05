@@ -3,7 +3,7 @@
  *
  * 尺寸常量:token-decision-table.md §4 指定落点(desktop renderer 本文件);
  * 数值权威 = figma-component-spec.md §4/§5.1(带 nodeId)+ demo 呈现仲裁
- * (id-tabs 几何、Slogan 位移等设计稿未单列项)。
+ * (id-tabs 几何等设计稿未单列项)。
  *
  * 颜色:全部经 CSS var 消费(规则 16,组件内禁 raw hex)。本对象是登录组件
  * 取色的唯一入口——token 注册在 themes/colors.ts(wave4 组 PR0a;组件色组
@@ -13,21 +13,13 @@
 /** 桌面画布(figma §5.1,1819×2098)。 */
 export const STAGE = { width: 1819, height: 2098 } as const;
 
-/** 五要素绝对定位(figma §5.1 + wave4 §8.1)。 */
+/** Lex 品牌要素绝对定位(figma §5.1 + wave4 §8.1)。 */
 export const HERO = { x: 443, y: 275, size: 934 } as const; // 347:971 立绘
 export const WORDMARK = {
   // 容器 680×180 @(570,1029);wave4 黑红位图内层 423×145 @(128,17) → 绝对 (698,1046)
   frame: { x: 570, y: 1029, width: 680, height: 180 },
   inner: { x: 698, y: 1046, width: 423, height: 145 }, // 368:1381
 } as const;
-export const SLOGAN = {
-  // 外框 460×134 @(1191,863),vector 453.22×129.12 @(3,3) → 绝对 (1194,866);368:1394
-  x: 1194,
-  y: 866,
-  width: 453.22,
-  height: 129.12,
-} as const;
-
 /**
  * 登录整体组(figma §5.1:x=570;sso-org 族 y=1227,其余 1229——demo loginY())。
  *
@@ -41,6 +33,15 @@ export const LOGIN_GROUP = {
   ySsoOrg: 1227,
   width: 680,
   height: 620,
+} as const;
+/**
+ * @deprecated 仅供历史登录设计预览提取器复现旧稿；Lex Desktop 运行时不再渲染该元素。
+ */
+export const SLOGAN = {
+  x: 1194,
+  y: 866,
+  width: 453.22,
+  height: 129.12,
 } as const;
 
 /**

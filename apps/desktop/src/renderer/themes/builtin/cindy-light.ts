@@ -1,9 +1,9 @@
 import type { Theme } from '../types';
-import cindyLogoLight from '../../assets/cindy-logo-light.png';
+import lexLogoLight from '../../assets/login/lex-wordmark.svg';
 import { CINDY_ACRYLIC_WINDOW_BACKING } from '../../../shared/windowBackdrop';
 
 /*
- * CINDY Light — 品牌红 CTA + 暖象牙底(#F2F2ED)+ AA 正文。
+ * Lex Light — 暖象牙底(#F2F2ED)+ AA 正文。
  * 值的唯一权威: token-decision-table.md §3(2026-07-17 U8 批准) + §9(2026-08 色阶改版,用户批准)。
  * §9 要点: 面/边框全暖(B=R-5)、文字渐进暖、二级抬到 >=3.0(取代 U2 light 原值)、
  * 交互态分页面/卡片双锚定。每个 override 注释来源;零自由裁量。
@@ -184,9 +184,9 @@ const overrides = {
 
 export const cindyLight: Theme = {
   id: 'cindy-light',
-  name: 'CINDY Light',
+  name: 'Lex Light',
   type: 'light',
   colors: overrides,
-  // U5 品牌版横向 logo：黑字+红箭头，浅底可见。
-  brand: { logo: { src: cindyLogoLight } },
+  // 稳定 theme id 保留 Cindy 兼容名，用户可见品牌使用 Lex。
+  brand: { logo: { src: lexLogoLight } },
 };

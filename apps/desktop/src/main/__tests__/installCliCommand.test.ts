@@ -107,6 +107,15 @@ describe('escapeForAppleScriptString', () => {
   });
 });
 
+describe('CLI dialog label interpolation', () => {
+  const { fmt } = __testing;
+
+  it('expands path, command and the Lex product name without leaving placeholders', () => {
+    const rendered = fmt('{{appName}}: {{cmd}} → {{path}} ({{appName}})', '/usr/local/bin/lex');
+    expect(rendered).toBe('Lex: lex → /usr/local/bin/lex (Lex)');
+  });
+});
+
 describe('isPermissionError', () => {
   const { isPermissionError } = __testing;
 

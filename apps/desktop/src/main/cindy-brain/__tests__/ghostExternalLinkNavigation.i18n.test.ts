@@ -44,8 +44,8 @@ describe('Ghost 外链原生确认框 i18n', () => {
 
   it('zh-CN 使用已确认的精确文案', () => {
     expect(readCopy('zh-CN').ghostPanel?.externalLinkConfirm).toEqual({
-      title: '是否要 Cindy 打开外部网站',
-      message: '是否要 Cindy 打开外部网站',
+      title: '是否要 {{appName}} 打开外部网站',
+      message: '是否要 {{appName}} 打开外部网站',
       open: '打开网站',
       cancel: '取消',
     });
