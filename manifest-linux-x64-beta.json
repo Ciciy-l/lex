@@ -1,19 +1,19 @@
 {
   "app": {
-    "version": "0.1.0-rc.5",
-    "releaseNotes": "Lex 0.1.0-rc.5",
+    "version": "0.1.0-rc.6",
+    "releaseNotes": "Lex 0.1.0-rc.6",
     "installer": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.0-rc.5/lex-0.1.0-rc.5-amd64.deb",
-      "sha256": "7f367a56db9fce0f2c520b5c0ad8823a3817b35135dc9cf2cc7c1b1bc0a30e93",
-      "size": 186925868
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.0-rc.6/Lex-0.1.0-rc.6-Linux-x64.deb",
+      "sha256": "30da80e5466705df8cde2bae6e8aec452c75934b4ff36f20dd6abbe708cfef14",
+      "size": 189776702
     }
   },
   "claudeCode": {
-    "version": "2.1.219",
-    "file": "https://hotfix.cindy.app/cindy/claude-code/2.1.219/linux-x64/claude.gz",
-    "sha256": "858d228ee4c9a968cbcc04d6742f5e1d1575dc22cc2c8b8974cc3c5eb62a2c8a",
-    "size": 86275882,
-    "binarySha256": "22cfd6f5b3061c0391ba84e9cf8c9deaa37783aac18b004d42ec061e98f00691"
+    "version": "2.1.259",
+    "file": "https://hotfix.cindy.app/cindy/claude-code/2.1.259/linux-x64/claude.gz",
+    "sha256": "abe722d1a3db8e10efaba01be92487dca3daf7aae72db6906971b1c80111e776",
+    "size": 97243499,
+    "binarySha256": "f7dd62ae415378018cd21dd950eb3bac174ab085830304d3b8b098146bfd47b6"
   },
   "codex": {
     "version": "0.145.0",
@@ -21,6 +21,12 @@
     "sha256": "ec5fe401224f81ded675cde5bc8fba0cd1a6cc44bb31c810711a5ddd6a95f805",
     "size": 115808553,
     "binarySha256": "a2a05dafaa1acb002a45eaec0a462de5b13694fcfcd7bc43305f14781ce7be14"
+  },
+  "codexPackage": {
+    "version": "0.153.0",
+    "file": "https://hotfix.cindy.app/cindy/codex-package/0.153.0/linux-x64/codex-package.dist.tar.gz",
+    "sha256": "92225b382cd22880fe4848ea6b490066cc5df376c9c195c7f142cfa863f77f2e",
+    "size": 129203089
   },
   "pi": {
     "version": "0.84.4",

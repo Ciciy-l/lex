@@ -1,24 +1,24 @@
 {
   "app": {
-    "version": "0.1.0-rc.5",
-    "releaseNotes": "Lex 0.1.0-rc.5",
+    "version": "0.1.0-rc.6",
+    "releaseNotes": "Lex 0.1.0-rc.6",
     "hotfix": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.0-rc.5/lex-0.1.0-rc.5-x64-hotfix.zip",
-      "sha256": "344b391dcea18a4c426287bbb42e29f69f477d129bb1fbf83bc471cd79c49544",
-      "size": 256888394
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.0-rc.6/Lex-0.1.0-rc.6-macOS-Intel-Auto-Update.zip",
+      "sha256": "e61f286a68278afbf8878d14efc3a44352764b2b0e6a58c6e049646b2d9e0d83",
+      "size": 259809454
     },
     "installer": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.0-rc.5/lex-0.1.0-rc.5-x64.zip",
-      "sha256": "da699e40c31fc9411e711fc1bf30a9bdba612293bc800709705bbfe5ae8660a9",
-      "size": 254784096
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.0-rc.6/Lex-0.1.0-rc.6-macOS-Intel.dmg",
+      "sha256": "e98f95fc64d39bd98e182715abd5bdac3868e002d631e92d7077a11a51580b49",
+      "size": 287090608
     }
   },
   "claudeCode": {
-    "version": "2.1.219",
-    "file": "https://hotfix.cindy.app/cindy/claude-code/2.1.219/darwin-x64/claude.gz",
-    "sha256": "c5de7576e8e8311cb4a7e799ddac4cc949a11cfc60b89862c50efa8fa17fe669",
-    "size": 79954098,
-    "binarySha256": "03be9f988ed88391b4a5f08e4c5dc317ce2fffa4a9dc66c01106326e7698ee76"
+    "version": "2.1.259",
+    "file": "https://hotfix.cindy.app/cindy/claude-code/2.1.259/darwin-x64/claude.gz",
+    "sha256": "850e9127624648c42bdb33e0195b0a651bfc6c651bd747f239ba5b41c7fcee16",
+    "size": 91555458,
+    "binarySha256": "af8741cff0d3fb5c4b893c7cb3613bd21b28fa61cca45469d60b8e5e161eb9d8"
   },
   "codex": {
     "version": "0.145.0",
@@ -26,6 +26,12 @@
     "sha256": "8e4e9c672b4b2b4ca6770329bd94404adca1cb323f6a08a8fc3c6b331517b640",
     "size": 111433745,
     "binarySha256": "6db9193ce2c9a8cef2b5482612cde24202a4329dfc34f4687a036d5d7da619af"
+  },
+  "codexPackage": {
+    "version": "0.153.0",
+    "file": "https://hotfix.cindy.app/cindy/codex-package/0.153.0/darwin-x64/codex-package.dist.tar.gz",
+    "sha256": "300e21ada27b86dff5c829cd217f15cd0ce19b42fb068a1dc0f409d86a772e89",
+    "size": 123455794
   },
   "pi": {
     "version": "0.84.4",

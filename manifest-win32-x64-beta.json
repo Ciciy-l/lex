@@ -1,24 +1,24 @@
 {
   "app": {
-    "version": "0.1.0-rc.5",
-    "releaseNotes": "Lex 0.1.0-rc.5",
+    "version": "0.1.0-rc.6",
+    "releaseNotes": "Lex 0.1.0-rc.6",
     "hotfix": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.0-rc.5/lex-0.1.0-rc.5-hotfix.zip",
-      "sha256": "6625fa7dc609201fb0dc7d852aaca013b6155807cd835715ec7dfa186ac91493",
-      "size": 315216226
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.0-rc.6/Lex-0.1.0-rc.6-Windows-x64-Auto-Update.zip",
+      "sha256": "5164118c8f4efa1b5170a919b0da23e0e28fe2b67cc96b90cc0b1cade95f8363",
+      "size": 318180063
     },
     "installer": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.0-rc.5/lex-0.1.0-rc.5-Setup.exe",
-      "sha256": "4e8b61e4d73e00dfcfebbc56061838ceec59bffb7f01e4ba2056400d44598173",
-      "size": 230881428
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.0-rc.6/Lex-0.1.0-rc.6-Windows-x64-Setup.exe",
+      "sha256": "91cdd4e090f792e986d4b35091d7cc57cac455dc8927dd6751031bf60a531e92",
+      "size": 233760233
     }
   },
   "claudeCode": {
-    "version": "2.1.219",
-    "file": "https://hotfix.cindy.app/cindy/claude-code/2.1.219/win32-x64/claude.exe.gz",
-    "sha256": "eb4462dda7cabc26600e8365eb9fa6fe4a3ee708c3461698e421b19684b6dea6",
-    "size": 86239278,
-    "binarySha256": "10f4c1f85b07f3cf6b8fff930fd26ecd475bd146a378acfafa559a6db9d89637"
+    "version": "2.1.259",
+    "file": "https://hotfix.cindy.app/cindy/claude-code/2.1.259/win32-x64/claude.exe.gz",
+    "sha256": "09c953fe0e18516d3ef5b55821af1c232b808e200c53b203be1cd507d557492b",
+    "size": 100063881,
+    "binarySha256": "85429000ec9b80082613e9ecd2e0d3b2276c9d5b22a681936575d2c4c2f342ed"
   },
   "codex": {
     "version": "0.145.0",
@@ -26,6 +26,12 @@
     "sha256": "e02205780cefbaaccf4593766e1db206c609c095125af953f88bf1028bfd47fa",
     "size": 123809462,
     "binarySha256": "83751f15cb6a0a7b97df67752c001e3fe1c20e18ffbfec3ff63567296205eb6c"
+  },
+  "codexPackage": {
+    "version": "0.153.0",
+    "file": "https://hotfix.cindy.app/cindy/codex-package/0.153.0/win32-x64/codex-package.dist.tar.gz",
+    "sha256": "f34ef6af157f285e51520401cc8bdd9cec448dfa666e7a5487867bf285cd6887",
+    "size": 141424261
   },
   "pi": {
     "version": "0.84.4",
