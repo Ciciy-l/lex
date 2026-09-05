@@ -48,8 +48,13 @@ describe('Linux update settings', () => {
   afterEach(() => cleanup());
 
   beforeEach(() => {
-    (window as unknown as { electronAPI: { platform: string } }).electronAPI = {
+    (
+      window as unknown as {
+        electronAPI: { platform: string; supportsBetaUpdateChannel?: boolean };
+      }
+    ).electronAPI = {
       platform: 'linux',
+      supportsBetaUpdateChannel: true,
     };
   });
 
@@ -71,7 +76,22 @@ describe('Linux update settings', () => {
     expect(screen.queryByText('settings.about.linuxUpdateDescription')).toBeNull();
   });
 
-  it('hides the beta channel card on Linux', () => {
+  it('shows the beta channel card on Linux x64', () => {
+    render(<ExperimentalSection />);
+
+    expect(screen.getByText('lsp-beta-cell')).toBeTruthy();
+    expect(screen.getByText('beta-channel-cell')).toBeTruthy();
+  });
+
+  it('hides the beta channel card on Linux arm64', () => {
+    (
+      window as unknown as {
+        electronAPI: { platform: string; supportsBetaUpdateChannel?: boolean };
+      }
+    ).electronAPI = {
+      platform: 'linux',
+      supportsBetaUpdateChannel: false,
+    };
     render(<ExperimentalSection />);
 
     expect(screen.getByText('lsp-beta-cell')).toBeTruthy();

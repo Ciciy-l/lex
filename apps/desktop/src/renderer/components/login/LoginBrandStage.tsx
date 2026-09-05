@@ -1,7 +1,7 @@
 import { useCallback, useRef, type CSSProperties } from 'react';
 import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
-import { useLoginHandoff } from '@/contexts/LoginHandoffContext';
+import { LOGIN_HANDOFF_TIMINGS, useLoginHandoff } from '@/contexts/LoginHandoffContext';
 import { useIsDarkMode } from '@/components/markdown/useIsDarkMode';
 
 import heroPng from '@/assets/branding/lex-assistant-hero.png';
@@ -10,7 +10,7 @@ import heroMask from '@/assets/login/hero-mask.svg';
 import wordmarkSvg from '@/assets/login/lex-wordmark.svg';
 import wordmarkDarkSvg from '@/assets/login/lex-wordmark-dark.svg';
 
-import { brandPlacement } from './loginScale';
+import { brandPlacement, splashBrandPlacement } from './loginScale';
 import {
   HERO,
   LOGIN_COLORS,
@@ -45,9 +45,13 @@ export function LoginBrandStage() {
   const handoff = useLoginHandoff();
   const { width, height } = useViewportSize();
   const panelBottomReserve =
-    handoff.panelBottomReserve ?? LOGIN_LOCAL_MODE.reservedHeight;
+    handoff.panelBottomReserve ??
+    (handoff.brandLayout === 'login' ? LOGIN_LOCAL_MODE.reservedHeight : 0);
   // 品牌块整体让位(scale+translateY,构图冻结;用户拍板 2026-07-23,design.md §11)
-  const { scale, translateY } = brandPlacement(width, height, panelBottomReserve);
+  const { scale, translateY } =
+    handoff.brandLayout === 'splash'
+      ? splashBrandPlacement(width, height)
+      : brandPlacement(width, height, panelBottomReserve);
   // 登录人物与字标均使用 Lex 自有品牌资产；Cindy 仅保留为账号与在线服务品牌。
   // 深浅判定同 useBrandLogo：跟随 theme-service 挂的 dark class。
   const isDark = useIsDarkMode();
@@ -77,7 +81,10 @@ export function LoginBrandStage() {
 
   if (!handoff.brandStageMounted) return null;
 
-  const rootStyle: CSSProperties = handoff.brandExiting
+  // The background must stay opaque while the authenticated brand content
+  // fades. Otherwise the transparent macOS vibrancy backing shows through as
+  // a gray veil during the Splash → app handoff.
+  const contentStyle: CSSProperties = handoff.brandExiting
     ? {
         opacity: 0,
         transition: 'opacity var(--splash-fade-duration) var(--splash-fade-easing)',
@@ -89,7 +96,6 @@ export function LoginBrandStage() {
       aria-hidden
       data-testid="login-stage-root"
       className="pointer-events-none fixed inset-0 z-[9980] overflow-hidden"
-      style={rootStyle}
     >
       {/* 静态背景子层:纯平底(--login-bg-base 二态,亮 #EDEDED / 暗 #1F1F1E;
           PR #104 撤渐变口径),viewport 锚定铺满,不参与 handoff 变换(v6.12 分层冻结) */}
@@ -102,7 +108,7 @@ export function LoginBrandStage() {
         }}
       />
       {/* 可动画内容子层:立绘/字标(1819×2098 画布居中等比缩放) */}
-      <div data-testid="login-brand-content" className="absolute inset-0">
+      <div data-testid="login-brand-content" className="absolute inset-0" style={contentStyle}>
         <div
           data-testid="login-brand-canvas"
           className="absolute left-1/2 top-1/2"
@@ -111,6 +117,14 @@ export function LoginBrandStage() {
             height: STAGE.height,
             transform: `translate(-50%, calc(-50% + ${translateY}px)) scale(${scale})`,
             transformOrigin: '50% 50%',
+            // The layout switch is synchronized with panel playback;
+            // shift and terminal states remain immediate.
+            transition:
+              handoff.isPlaying &&
+              handoff.brandLayout === 'login' &&
+              handoff.phase === 'panel'
+                ? `transform ${LOGIN_HANDOFF_TIMINGS.panelMs}ms ${LOGIN_HANDOFF_TIMINGS.panelEasing}`
+                : undefined,
           }}
         >
           <img

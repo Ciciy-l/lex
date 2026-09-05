@@ -467,19 +467,21 @@ function modelEntryError(
     );
     if (defaultError) return defaultError;
   }
-  const isV4MediaModel =
+  const isV4StandaloneModel =
     schemaVersion === MODEL_ACCESS_CATALOG_SCHEMA_VERSION &&
-    (value.mode === 'image_generation' || value.mode === 'video_generation');
-  if (isV4MediaModel && supportedAgents.length > 0) {
-    return `${path}.agents must be empty for a v4 Gateway media mode`;
+    (value.mode === 'image_generation' ||
+      value.mode === 'video_generation' ||
+      value.mode === 'embedding');
+  if (isV4StandaloneModel && supportedAgents.length > 0) {
+    return `${path}.agents must be empty for a v4 Gateway standalone capability mode`;
   }
   if (
     (schemaVersion === MODEL_ACCESS_CATALOG_V3_SCHEMA_VERSION ||
       schemaVersion === MODEL_ACCESS_CATALOG_SCHEMA_VERSION) &&
     supportedAgents.length === 0 &&
-    !isV4MediaModel
+    !isV4StandaloneModel
   ) {
-    return `${path}.agents may be empty only for a v4 Gateway media mode`;
+    return `${path}.agents may be empty only for a v4 Gateway standalone capability mode`;
   }
 
   for (const [key, max] of [
@@ -509,7 +511,7 @@ function modelEntryError(
   }
   if (
     (schemaVersion === MODEL_ACCESS_CATALOG_V3_SCHEMA_VERSION ||
-      (schemaVersion === MODEL_ACCESS_CATALOG_SCHEMA_VERSION && !isV4MediaModel)) &&
+      (schemaVersion === MODEL_ACCESS_CATALOG_SCHEMA_VERSION && !isV4StandaloneModel)) &&
     value.contextWindow === undefined
   ) {
     return `${path}.contextWindow is required for schema version 3 and v4 chat models`;
@@ -577,7 +579,19 @@ function modelEntryError(
         isModelEffort(value.defaultEffort) ? value.defaultEffort : null,
       );
       if (error) return error;
-      if (isPlainObject(override) && override.wireProtocol !== undefined) {
+      if (
+        agent === 'pi' &&
+        isPlainObject(override) &&
+        override.wireProtocol !== undefined &&
+        (typeof override.wireProtocol !== 'string' || override.wireProtocol.trim().length === 0)
+      ) {
+        return `${path}.perAgent.pi.wireProtocol must be a non-empty string when present`;
+      }
+      if (
+        agent !== 'pi' &&
+        isPlainObject(override) &&
+        override.wireProtocol !== undefined
+      ) {
         if (!isModelAccessWireProtocol(override.wireProtocol)) {
           return `${path}.perAgent.${agent}.wireProtocol must be a supported wire protocol`;
         }
@@ -593,6 +607,10 @@ function modelEntryError(
     schemaVersion === MODEL_ACCESS_CATALOG_SCHEMA_VERSION
   ) {
     for (const agent of supportedAgents) {
+      // Pi accepts a missing/future string here because Cindy Server and the local Pi catalog are
+      // higher authorities; an unsupported last-priority Gateway hint only closes that model route.
+      // Claude and Codex have no such fallback and remain strict contract requirements.
+      if (agent === 'pi') continue;
       const override = isPlainObject(value.perAgent) ? value.perAgent[agent] : undefined;
       if (!isPlainObject(override) || !isModelAccessWireProtocol(override.wireProtocol)) {
         return `${path}.perAgent.${agent}.wireProtocol is required when ${path}.agents includes ${agent}`;

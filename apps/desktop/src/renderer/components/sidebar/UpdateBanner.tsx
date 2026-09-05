@@ -44,7 +44,7 @@
  * 下载完成后主进程会把 status 切回 'ready' 且 version 升级到新版,banner 自动刷新。
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Flame, Check, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -57,6 +57,8 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Tip } from '@/components/ui/tooltip';
 import { fetchReleaseNotes } from '@/release-notes';
 import { LEX_DOWNLOAD_PAGE_URL } from '../../../shared/endpoints';
+
+const WINDOWS_VC_RUNTIME_DOWNLOAD_URL = 'https://aka.ms/vs/17/release/vc_redist.x64.exe';
 
 interface UpdateBannerProps {
   isCollapsed: boolean;
@@ -104,6 +106,7 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
   // 区别于 status 变化等其它导致的复位。
   const restoreFocusRef = useRef(false);
   const [showTranslocatedDialog, setShowTranslocatedDialog] = useState(false);
+  const [showWindowsRuntimeDialog, setShowWindowsRuntimeDialog] = useState(false);
   const { t } = useTranslation();
 
   const [showSpawnFailedDialog, setShowSpawnFailedDialog] = useState(false);
@@ -114,7 +117,13 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
   // the app is running from a read-only App Translocation path.
   const isTranslocated = status === 'error' && errorCode === 'translocated';
   const isSpawnFailed = status === 'error' && errorCode === 'updater_spawn_failed';
+  const isWindowsRuntimeMissing =
+    status === 'ready' && errorCode === 'windows_vc_runtime_missing';
   const isPreparing = status === 'superseding';
+
+  useEffect(() => {
+    if (isWindowsRuntimeMissing) setShowWindowsRuntimeDialog(true);
+  }, [isWindowsRuntimeMissing]);
 
   useEffect(() => {
     if (isSpawnFailed) setShowSpawnFailedDialog(true);
@@ -127,11 +136,11 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
   // 一旦不再是 ready(如被 superseding 顶掉 / 出错),复位确认态,避免残留一个
   // 指向旧补丁的「仍要重启」;同时作废在飞的探针 —— 它的结论建立在「当前补丁可装」之上。
   useEffect(() => {
-    if (status !== 'ready') {
+    if (status !== 'ready' || isWindowsRuntimeMissing) {
       relaunchEpochRef.current += 1;
       setConfirming(false);
     }
-  }, [status]);
+  }, [status, isWindowsRuntimeMissing]);
 
   // 卸载时同样作废在飞的探针。卸载后 setConfirming 只是一次无效更新,但 handleRelaunch
   // 会真的把 app 重启掉 —— 这条 cleanup 不是防 React 警告,是防意外重启。
@@ -190,11 +199,6 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
     dismiss(status, version ?? null);
   };
 
-  // Banner is visible for ready (relaunch available), superseding (preparing
-  // a newer version on top of an already-ready patch), or error fallback
-  // dialogs. Everything else hides the banner.
-  if (status !== 'ready' && !isPreparing && !isTranslocated && !isSpawnFailed) return null;
-
   // 展开态的完整横幅:用户关掉、有任务在跑、或探针还没给出「弹出 / 让路」决定时
   // 都不渲染,避免闪一下再收成火焰。收起态那颗小火焰本身就是最小化提醒,busy
   // 让路和探针空窗都要留着;只有用户点过 X 才连它一起藏。
@@ -205,10 +209,6 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
   const hideExpandedBanner =
     hideUntilBusyDecision
     || (dismissed && (status === 'ready' || isPreparing));
-  if (!isCollapsed && hideExpandedBanner) return null;
-  if (isCollapsed && dismissed && reason === 'user' && (status === 'ready' || isPreparing)) {
-    return null;
-  }
 
   const handleRelaunch = () => {
     const theme = document.documentElement.classList.contains('dark') ? 'dark' : 'light';
@@ -235,6 +235,10 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
   // 卸载、已就绪补丁可能被 superseding 顶掉。少了它们,「点了稍后却重启」「装回旧补丁」
   // 「confirming 残留到下次唤回」三种都会真实发生。
   const handleRelaunchClick = async (): Promise<void> => {
+    if (isWindowsRuntimeMissing) {
+      setShowWindowsRuntimeDialog(true);
+      return;
+    }
     if (relaunchProbeRef.current) return;
     relaunchProbeRef.current = true;
     const epoch = relaunchEpochRef.current;
@@ -271,6 +275,16 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
     void window.electronAPI.openExternal(LEX_DOWNLOAD_PAGE_URL);
   };
 
+  const handleWindowsRuntimeDownload = () => {
+    setShowWindowsRuntimeDialog(false);
+    void window.electronAPI.openExternal(WINDOWS_VC_RUNTIME_DOWNLOAD_URL);
+  };
+
+  const handleWindowsRuntimeRetry = () => {
+    const theme = document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+    window.electronAPI.relaunchToUpdate(theme);
+  };
+
   // 文字链要显示的版本 —— undefined 即不显示。ready 态之外(superseding / error)没有
   // 可信版本号,confirming 态则刻意让位给两步确认。hasNotes 已经蕴含「ready + 该版本
   // 公告可渲染」,这里再显式列出条件,读代码时不必回溯 effect。
@@ -285,6 +299,32 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
   // to vX" body would be misleading (version may be missing, button does
   // nothing because the patch has already been cleared).
   const isErrorOnly = isTranslocated || isSpawnFailed;
+
+  const withWindowsRuntimeDialog = (content: ReactNode) => (
+    <>
+      {isWindowsRuntimeMissing && (
+        <ConfirmDialog
+          open={showWindowsRuntimeDialog}
+          onOpenChange={setShowWindowsRuntimeDialog}
+          title={t('update.windowsRuntimeMissing.title')}
+          description={t('update.windowsRuntimeMissing.description')}
+          confirmText={t('update.windowsRuntimeMissing.download')}
+          tertiaryText={t('update.windowsRuntimeMissing.retry')}
+          cancelText={t('update.windowsRuntimeMissing.later')}
+          autoFocusConfirm
+          onConfirm={handleWindowsRuntimeDownload}
+          onTertiary={handleWindowsRuntimeRetry}
+          onCancel={() => setShowWindowsRuntimeDialog(false)}
+        />
+      )}
+      {content}
+    </>
+  );
+
+  // Banner is visible for ready (relaunch available), superseding (preparing
+  // a newer version on top of an already-ready patch), or error fallback
+  // dialogs. Everything else hides the banner.
+  if (status !== 'ready' && !isPreparing && !isTranslocated && !isSpawnFailed) return null;
 
   if (isErrorOnly) {
     // onOpenChange is a no-op so the user can't accidentally dismiss the
@@ -319,12 +359,20 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
     );
   }
 
+  // The prerequisite dialog must not be suppressed by the normal busy/dismiss
+  // rules. After the user chooses "later", the usual banner visibility rules
+  // resume and clicking the update entry opens this dialog again.
+  if (!isCollapsed && hideExpandedBanner) return withWindowsRuntimeDialog(null);
+  if (isCollapsed && dismissed && reason === 'user' && (status === 'ready' || isPreparing)) {
+    return withWindowsRuntimeDialog(null);
+  }
+
   // ── Collapsed state: icon only ──
   if (isCollapsed) {
     // 确认态(仅在有任务在跑时出现):上方 ✓(仍要重启,占据原 Flame 图标位置,鼠标零位移),
     // 下方 ✕(取消)。收起态没有文案位置,「会打断进行中的任务」只能落在 ✓ 的 tooltip 上。
     if (confirming && !isPreparing) {
-      return (
+      return withWindowsRuntimeDialog(
         <div className="flex flex-col items-center gap-0.5 border-t border-sidebar-border py-1.5">
           <Tip text={t('update.banner.confirmTooltip')} side="right">
             <button
@@ -353,11 +401,11 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
               <X className="h-5 w-5" strokeWidth={2} />
             </button>
           </Tip>
-        </div>
+        </div>,
       );
     }
 
-    return (
+    return withWindowsRuntimeDialog(
       <div className="flex flex-col items-center border-t border-sidebar-border">
         <Tip
           text={isPreparing
@@ -388,12 +436,12 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
             </div>
           </button>
         </Tip>
-      </div>
+      </div>,
     );
   }
 
   // ── Expanded state: full banner ──
-  return (
+  return withWindowsRuntimeDialog(
     <div className="flex select-none flex-col border-t border-sidebar-border">
       <div className="relative flex flex-col items-center gap-[10px] px-4 py-3">
         {/* X dismiss —— 右上角。error 态 body 本就隐藏,superseding 允许 dismiss。
@@ -522,6 +570,6 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
           </button>
         )}
       </div>
-    </div>
+    </div>,
   );
 }

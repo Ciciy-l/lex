@@ -23,7 +23,14 @@ interface RuntimeSetModelSession {
   codexThreadModelProviderId?: string | null;
   codexCindyRemoteCompactionCompatible?: boolean | null;
   model: string;
-  setModel: (model: string, opts?: { providerId?: string | null; effort?: Effort }) => Promise<void>;
+  setModel: (
+    model: string,
+    opts?: { providerId?: string | null; effort?: Effort },
+  ) => Promise<void>;
+  requiresModelSwitchRebuild?: (
+    model: string,
+    opts?: { providerId?: string | null },
+  ) => boolean | Promise<boolean>;
 }
 
 interface RuntimeSetModelActiveSession {
@@ -55,6 +62,8 @@ export interface ApplyRuntimeSetModelChangeInput {
    * 形态相同，也必须沿用 credential-switch 的 idle close / busy defer 边界。
    */
   forceSessionRebuild?: boolean;
+  /** Fail closed before an otherwise-required runtime replacement mutates route state. */
+  assertSessionCloseSupported?: () => void;
   isSessionInTurn?: (sessionId: string) => boolean;
   /**
    * 会话自己正在跑 turn 时的延迟生效登记(PendingCredentialSwitchService.register)。
@@ -108,6 +117,24 @@ export type ApplyRuntimeSetModelChangeResult =
   /** 凭证形态要换但会话自己在跑:已登记 pending,turn 结束后自动生效。 */
   | { status: 'deferred'; persistedRoute?: never };
 
+export async function closeRejectedRuntimeAndRestoreControlStores(input: {
+  closeRuntime: () => Promise<void>;
+  restoreControlStores: () => void;
+  reportCloseError: (error: unknown) => void;
+  assertRuntimeClosed: () => void;
+}): Promise<void> {
+  try {
+    await input.closeRuntime();
+  } catch (error) {
+    input.reportCloseError(error);
+  } finally {
+    // The old control route must match the unchanged persistent route even when
+    // teardown rejects. The caller then verifies that no rejected handle remains.
+    input.restoreControlStores();
+  }
+  input.assertRuntimeClosed();
+}
+
 export function isRemoteModelSwitchRouteChangeError(error: unknown): boolean {
   return (
     (error as { code?: unknown } | null)?.code === 'REMOTE_MODEL_SWITCH_ROUTE_CHANGE' ||
@@ -142,17 +169,15 @@ export async function applyRuntimeSetModelChange(
   // 新来源、再换模型时,决策与登记都要沿用那个来源,不能回落到 store 里的旧值
   // (否则会把 pending 的来源覆盖丢)。
   const pendingTarget =
-    normalizedProviderId === undefined
-      ? input.getPendingCredentialSwitch?.(sessionId)
-      : undefined;
+    normalizedProviderId === undefined ? input.getPendingCredentialSwitch?.(sessionId) : undefined;
   const nextProviderId =
     normalizedProviderId !== undefined
       ? normalizedProviderId
       : pendingTarget !== undefined
         ? pendingTarget.providerId
         : currentProviderId;
-  const shouldCloseSession = sess
-    ? input.forceSessionRebuild === true || shouldCloseSessionForCredentialSwitch({
+  const credentialModeRequiresRebuild = sess
+    ? shouldCloseSessionForCredentialSwitch({
         agentKind: sess.agentKind,
         remoteHostId: sess.remoteHostId,
         currentProviderId,
@@ -161,8 +186,7 @@ export async function applyRuntimeSetModelChange(
         nextModel: model,
         currentCodexProxyActive: sess.codexProxyActive,
         currentCodexThreadModelProviderId: sess.codexThreadModelProviderId,
-        currentCodexCindyRemoteCompactionCompatible:
-          sess.codexCindyRemoteCompactionCompatible,
+        currentCodexCindyRemoteCompactionCompatible: sess.codexCindyRemoteCompactionCompatible,
         codexAuthInjection: input.codexAuthInjection,
       })
     : false;
@@ -170,12 +194,22 @@ export async function applyRuntimeSetModelChange(
   if (requiresCodexThreadRelink && !input.relinkCodexThread) {
     throw new Error(`Codex provider thread relink is required for session ${sessionId}`);
   }
+  const modelSwitchRequiresRebuild =
+    sess &&
+    input.forceSessionRebuild !== true &&
+    !credentialModeRequiresRebuild &&
+    !requiresCodexThreadRelink
+      ? await sess.requiresModelSwitchRebuild?.(model, { providerId: nextProviderId }) ?? false
+      : false;
+  const shouldCloseSession = Boolean(sess) && (
+    input.forceSessionRebuild === true ||
+    modelSwitchRequiresRebuild ||
+    credentialModeRequiresRebuild
+  );
   let selfBusyMemo: boolean | undefined;
   const isSelfBusy = (): boolean => {
     if (selfBusyMemo !== undefined) return selfBusyMemo;
-    const active = maker
-      .listActiveSessions()
-      .find((candidate) => candidate.id === sessionId);
+    const active = maker.listActiveSessions().find((candidate) => candidate.id === sessionId);
     selfBusyMemo = active
       ? isLocalSessionBusy(active, isSessionInTurn)
       : isSessionInTurn?.(sessionId) === true;
@@ -229,14 +263,20 @@ export async function applyRuntimeSetModelChange(
   }
 
   if (sess && (shouldCloseSession || requiresCodexThreadRelink)) {
+    input.assertSessionCloseSupported?.();
     if (isSelfBusy() && input.registerPendingCredentialSwitch) {
       await input.registerPendingCredentialSwitch(sessionId, {
         model,
         providerId: nextProviderId,
       });
-      logger?.info('set-model: credential switch deferred until turn end', {
+      logger?.info('set-model: session rebuild deferred until turn end', {
         sessionId,
         agentKind: sess.agentKind,
+        reason: input.forceSessionRebuild === true
+          ? 'forced'
+          : modelSwitchRequiresRebuild
+            ? 'model-context-host'
+            : 'credential-mode',
         currentProviderId,
         nextProviderId,
         fromModel: sess.model,
@@ -289,9 +329,16 @@ export async function applyRuntimeSetModelChange(
     if (providerId !== undefined) setSessionProvider(sessionId, nextProviderId);
     // close + route 都落定后再唤醒队列:排队消息按新凭证形态 lazy-create 派发。
     input.wakeSessionInputQueue?.(sessionId);
-    logger?.info('set-model: closed live session after credential mode switch', {
+    logger?.info('set-model: closed live session for route rebuild', {
       sessionId,
       agentKind: sess.agentKind,
+      reason: input.forceSessionRebuild === true
+        ? 'forced'
+        : requiresCodexThreadRelink
+          ? 'provider-thread-relink'
+          : modelSwitchRequiresRebuild
+            ? 'model-context-host'
+            : 'credential-mode',
       currentProviderId,
       nextProviderId,
       fromModel: sess.model,
@@ -325,9 +372,9 @@ export async function applyRuntimeSetModelChange(
     await sess.setModel(model, {
       // model-only 且内存尚未确认来源时不要把 providerId:null 传进 runtime,
       // 否则未 hydrate 的 custom 会话会被清成默认网关。
-      ...(normalizedProviderId !== undefined
-        || hasSessionProvider(sessionId)
-        || pendingTarget !== undefined
+      ...(normalizedProviderId !== undefined ||
+      hasSessionProvider(sessionId) ||
+      pendingTarget !== undefined
         ? { providerId: nextProviderId }
         : {}),
       ...(effort !== undefined ? { effort } : {}),

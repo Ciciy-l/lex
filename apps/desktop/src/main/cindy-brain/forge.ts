@@ -2017,7 +2017,9 @@ Cindy 先发布，确认首个支持它的**正式版本号**后，再把 \`minC
 
 ## 4. main.js 电子脑(沙箱后台逻辑)
 
-跑在无网络、无文件、无 Node 的独立沙箱页里,只有一个全局 \`cindy\`:
+跑在无文件、无 Node、无通用网络直连的独立沙箱页里,只有一个全局 \`cindy\`。
+唯一外部直连例外是所有插件页面共有的 HTTPS 图片请求;\`fetch\` / XHR、脚本、样式、
+字体、音视频与 WebSocket 仍不能直连:
 
 \`\`\`js
 // 收活:AI 调你的工具时收到 tool-call
@@ -3230,8 +3232,16 @@ tool-call 内轮询时记得定期发 tool-progress 心跳续命(见 §4"长任�
 "settingsHeight": 360              // 可选:固定高度 px(160–800);缺省 = 随内容自适应(矮内容真收矮),超 800 内部滚动
 \`\`\`
 
-**渲染环境**:与面板同款沙箱页(零桥、零网络直连、CSP 只认同源)。主题变量与
-面板同一套(§5「主题」条的 \`var(--xxx, 回退值)\` 写法照用),主机注入并随换肤
+**渲染环境**:与面板同款沙箱页(零桥、无通用网络直连,与同插件面板/逻辑页共用浏览器存储和
+\`BroadcastChannel\`,脚本/样式/字体/媒体/数据请求仍只认同源)。所有插件 HTML 页面
+(settingsHtml、panel、mainView 与逻辑页)唯一的网络直连例外都是**HTTPS 图片资源**:
+\`<img src="https://…">\` 与 CSS \`background-image: url("https://…")\` 可以直接加载
+任意 HTTPS 地址。主机统一生成 CSP 并只放行 Electron 判定为 \`image\` 的 HTTPS 请求;
+它**不会放行** \`fetch()\` / XHR、外部脚本、外部样式表、字体、音视频、WebSocket、
+\`http:\` 图片或其它协议。加载远程图片会向第三方暴露网络地址及完整图片 URL,不要把密钥、
+token 或用户私密数据拼进 URL。CSP 仍阻止内联脚本和 \`onload\` / \`onerror\` 等内联事件;
+同包外挂 JS 的行为不变。主题变量与面板同一套(§5「主题」条的
+\`var(--xxx, 回退值)\` 写法照用),主机注入并随换肤
 自动重灌;设置区基线背景 = 宿主设置卡片色(与相邻卡片无缝),别再自己铺整页
 底色。高度缺省自适应:主机在页面就绪后量内容高度,内容动态增减(展开区、
 追加列表)时会自动跟随重量(内部 ResizeObserver 通知宿主再量,你无需做
@@ -3469,6 +3479,13 @@ for (const chunk of chunks) {
 const done = await cindy.library({ op: 'writeCommit', streamId: b.streamId });
 // done = { ok:true, path, bytes, sha256 }; 中断/放弃用 writeAbort
 
+// 在文件夹中显示 / 系统另存为(不回用户所选绝对路径)
+await cindy.library({ op: 'reveal', path: 'exports/a.psd' });
+const saved = await cindy.library({ op: 'saveAs', path: 'exports/a.psd', name: 'layers.psd' });
+// saved = { ok:true, cancelled:true }
+//      或 { ok:true, cancelled:false, path:'exports/a.psd', bytes }
+// path 永远是库内相对键,不是用户另存到的绝对路径
+
 // SQLite:参数化语句 + 首词白名单(SELECT/WITH/INSERT/REPLACE/UPDATE/DELETE/
 // CREATE/DROP/ALTER/REINDEX/ANALYZE);ATTACH/PRAGMA/VACUUM/事务语句一律拒,
 // 事务由宿主管理(db.batch 整批原子),迁移按 user_version 幂等续跑
@@ -3491,7 +3508,15 @@ await cindy.library({ op: 'db.check',  dbPath: 'library.sqlite' });  // quick_ch
   \`LIBRARY_UNAVAILABLE\`(含 reason:binding-moved/disk-missing/corrupt)、
   \`LIBRARY_READONLY\`、\`DISK_FULL\`、\`PATH_INVALID\`、\`NOT_FOUND\`、
   \`ALREADY_EXISTS\`、\`TOO_LARGE\`、\`STREAM_INVALID\`、\`DB_STATEMENT_REJECTED\`、
-  \`DB_ROW_LIMIT\`(结果集超 2000 行,自己加 LIMIT)、\`DB_MIGRATION_CONFLICT\`;
+  \`DB_ROW_LIMIT\`(结果集超 2000 行,自己加 LIMIT)、\`DB_MIGRATION_CONFLICT\`、
+  \`BUSY\`、\`RATE_LIMITED\`;
+- **reveal / saveAs**:只收库内相对路径。成功不回用户另存目标的绝对路径;
+  取消是 \`{ cancelled:true }\`。reveal 打开系统文件夹、saveAs 弹系统对话框
+  (跨平台标题带已核验插件名;macOS 另有正文),同插件 3 秒内连发 \`RATE_LIMITED\`;
+  saveAs 已有对话框在场 \`BUSY\`(不排队)。
+  对话框期间账号切换则拒绝拷贝(\`LIBRARY_UNAVAILABLE\`);
+  拷贝完成替换前、reveal 打开文件夹前再核一次会话;
+  确认后先拷到目标旁临时文件再替换,失败不破坏已有文件;
 - **不可用 ≠ 空**:\`state:'unavailable'\` 时**不要**当空库重建、不要触发
   清理、不要把素材判成已删——如实向用户展示状态,等位置恢复;
 - **无跨库事务**:多个 .sqlite 之间没有 ATTACH;跨库一致性用幂等 + 墓碑
@@ -4309,12 +4334,13 @@ const opened = await cindy.iosSimulator.request({
 
 ## 6. 沙箱红线(平台结构保证,写了也没用)
 
-- **本节说的是 main.js 浏览器电子脑**:它无文件系统、无 Node API、默认无网络——
+- **本节说的是 main.js 浏览器电子脑**:它无文件系统、无 Node API、无通用网络直连
+  (所有插件页面共有的 HTTPS 图片请求是唯一例外)——
   即使另声明 node，Node 也在独立进程里，只能经 §4.12 的 stdio 与 main.js 交换数据，
   不会把 require/process 等能力注入 main.js。想用 AI/出图走 cindy-request 求主机代办,
   随包代码与 CLI 走 §4.12 的 Node 工作进程，网络走 \`cindy.fetch\`，落盘走 \`cindy.fs\`；
   是否需要 manifest 声明取决于是 Agent 在途调用还是插件自主调用，见 §4.2、
-  §4.7 和 §4.10。沙箱内直连(fetch/XHR/
+  §4.7 和 §4.10。除 HTTPS 图片外,沙箱内直连(fetch/XHR/
   WebSocket)与直接读写磁盘永远不存在,声明字段给的是"请主机代办"的资格,
   不是能力本身;
 - 保险库里的凭证明文永不进沙箱:network 的 key 由主机保管注入,你的代码

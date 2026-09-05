@@ -2,6 +2,13 @@
   "ipcError": {
     "INVALID_PARAMS": "参数无效，请检查后重试。",
     "PRECONDITION_FAILED": "当前状态下无法执行此操作，请稍后重试。",
+    "MODEL_CONTEXT_USAGE_UNKNOWN": "模型未切换：无法确认当前任务已使用的上下文。请保留当前模型，或新建任务后再选择",
+    "MODEL_WINDOW_CURRENT_CONTEXT_UNKNOWN": "模型未切换：无法确认当前模型的上下文窗口。请检查自定义模型的窗口设置；若无法修改，请保留当前模型或新建任务",
+    "MODEL_WINDOW_TARGET_CONTEXT_UNKNOWN": "模型未切换：无法确认目标模型的上下文窗口。请检查自定义模型的窗口设置；若无法修改，请选择其他模型或新建任务",
+    "MODEL_WINDOW_REMOTE_REBUILD_UNSUPPORTED": "模型未切换：远程任务无法为更小的上下文窗口安全整理上下文。请保留当前模型，或新建任务后选择目标模型",
+    "MODEL_WINDOW_PROTECTION_UNAVAILABLE": "模型未切换：上下文保护功能暂不可用。请保留当前模型，或新建任务后再选择",
+    "MODEL_SWITCH_TASK_RUNNING": "模型未切换：当前任务仍在运行。请等待本次回复结束后再试",
+    "MODEL_WINDOW_PREPARATION_IN_PROGRESS": "模型未切换：正在整理当前任务的上下文。请等待完成后再试",
     "SESSION_RUNNING": "当前任务正在运行，请稍后再试。",
     "PI_IMAGE_INPUT_UNSUPPORTED": "当前 Pi 模型未启用图片输入。请切换到支持图片的模型；如果这是自定义模型，请在供应商设置中开启“支持图片输入”，然后新建 Pi 任务。",
     "CREDENTIAL_SWITCH_BUSY": "Codex 正在其它任务中运行，本次来源切换未生效（本任务仍使用原来源）。等它结束后再试。",
@@ -12,10 +19,19 @@
     "REMOTE_NATIVE_OAUTH_UNAVAILABLE": "未连接 Claude.ai 订阅，请先连接或选择网关模型",
     "DEVICE_LINK_DEVICE_UNRESPONSIVE": "目标设备长时间无响应，请检查远程设备后重试",
     "INTERNAL": "操作失败，请稍后重试。",
+    "SSH_CONFIG_CONCURRENT_MODIFICATION": "SSH 配置已在磁盘上发生变化，请重新加载后再试。",
+    "SSH_CONFIG_RELOAD_REQUIRED": "SSH 配置已保存，但 {{appName}} 刷新失败。请重新加载 SSH 配置。",
+    "SSH_CONFIG_OWNERSHIP_REQUIRED": "{{appName}} 无法安全管理此 SSH 配置。请重新加载，并确认 {{appName}} 所有权标记存在且主机别名唯一。",
+    "SSH_CONFIG_AUTH_UNSUPPORTED": "{{appName}} 无法安全复现此主机的部分 SSH 配置规则。终端 SSH 仍可能成功；请检查 Match、条件 Include、IdentityAgent、IdentitiesOnly 和公钥设置。",
+    "SSH_AGENT_UNAVAILABLE": "SSH Agent 当前不可用。请启动 SSH Agent，并用 ssh-add 加载对应私钥后重试。",
+    "SSH_HOST_PREFS_WRITE_FAILED": "主机仍已保存，但显示名称或 Agent Proxy 设置未能保存。请检查本地存储权限后重试。",
     "REMOTE_WORKDIR_INVALID": "远程项目目录无效，请重新选择项目目录。",
     "REMOTE_WORKDIR_NOT_FOUND": "远程项目目录不存在，请重新选择项目目录。",
     "REMOTE_WORKDIR_NOT_DIRECTORY": "远程项目路径不是文件夹，请重新选择项目目录。",
-    "REMOTE_WORKDIR_UNAVAILABLE": "远程项目目录不可访问，请恢复网络盘连接后重试。"
+    "REMOTE_WORKDIR_UNAVAILABLE": "远程项目目录不可访问，请恢复网络盘连接后重试。",
+    "RIGHT_SIDEBAR_TOO_MANY_TABS": "当前任务已达标签数量上限，请先关闭一些标签",
+    "RIGHT_SIDEBAR_STATE_TOO_LARGE": "标签内容过大，无法添加",
+    "RIGHT_SIDEBAR_UNKNOWN_KIND": "该标签类型暂不可用"
   },
   "providerError": {
     "AUTH_INVALID": "API 密钥无效或已过期（401），请检查密钥后重试",
@@ -165,6 +181,13 @@
       "title": "远端机器",
       "footnote": "第一版仅支持 SSH 连接管理。在远端运行 Agent 的能力将在后续版本中加入。",
       "viaAuth": "通过 {{label}} 认证",
+      "readOnlyFromSshConfig": "连接信息来自 SSH 配置",
+      "configWarning": "部分 SSH 配置规则 {{appName}} 无法解析，主机列表或连接信息可能与终端 SSH 不一致。",
+      "configDiagnostic": {
+        "io": "{{appName}} 无法读取 SSH 配置。这里仍显示上次成功读取的主机；请检查文件权限，然后重新加载。",
+        "syntax": "{{appName}} 无法解析 SSH 配置。这里仍显示上次成功读取的主机；请修复配置，然后重新加载。",
+        "limit": "SSH 配置的嵌套过深或内容过大，{{appName}} 无法安全读取。这里仍显示上次成功读取的主机。"
+      },
       "empty": {
         "title": "还没有远端机器。",
         "hint": "点击\"添加\"注册一台，或点刷新图标从 ~/.ssh/config 导入。"
@@ -196,7 +219,9 @@
       },
       "edit": {
         "title": "编辑 {{id}}",
-        "submit": "保存修改"
+        "submit": "保存修改",
+        "connectionFieldsReadOnly": "来自 SSH 配置的连接信息在这里为只读；显示名、自动连接和 Agent Proxy 仍可修改。",
+        "authenticationFromSshConfig": "认证信息来自 SSH 配置。"
       },
       "keys": {
         "title": "配置 SSH 密钥",
@@ -273,6 +298,8 @@
       "add": {
         "title": "添加一台远端机器",
         "alias": "别名",
+        "displayName": "显示名",
+        "displayNamePlaceholder": "可选，仅在 {{appName}} 中显示",
         "hostname": "主机名",
         "user": "用户",
         "port": "端口",
@@ -373,6 +400,7 @@
         "reloaded": "已重新读取 ~/.ssh/config",
         "loadFailed": "加载远端机器失败",
         "addFailed": "添加机器失败",
+        "addConflict": "添加期间 SSH 配置发生了变化。请重新加载配置，检查该主机条目后再试。",
         "connectFailed": "连接失败",
         "disconnectFailed": "断开失败",
         "removeFailed": "移除失败",
@@ -544,12 +572,14 @@
         "hint": "首次关闭时会询问，选择后可随时在这里修改。",
         "aria": "选择关闭主窗口时的行为",
         "tray": "收起到托盘",
+        "minimize": "最小化窗口",
         "quit": "退出 {{appName}}"
       },
       "closePrompt": {
         "title": "关闭 {{appName}}",
         "message": "关闭主窗口时要执行什么操作？",
-        "detail": "{{appName}} 收起到系统托盘后，任务会继续运行；右键托盘图标可以退出。你可以稍后在设置中修改。"
+        "detail": "收起到系统托盘后，任务会继续运行；右键托盘图标可以退出。你可以稍后在设置中修改。",
+        "linuxDetail": "最小化窗口后，任务会继续运行；你可以从任务栏或窗口概览恢复 {{appName}}，也可以稍后在设置中修改。"
       },
       "trayMenu": {
         "show": "打开 {{appName}}",
@@ -731,7 +761,7 @@
         "description": "Linux 目前提供 Ubuntu 22.04 / 24.04 的 .deb 包。有新版本时，应用会下载安装包，安装时需要系统密码。",
         "item1": "首次安装用 sudo apt install ./lex-<版本>-<架构>.deb（x64 为 amd64，arm64 为 arm64）。",
         "item2": "应用内更新会下载 .deb，点更新后通过系统权限提示覆盖安装。",
-        "item3": "Linux 暂不提供 Beta 渠道和空闲时自动安装，因为安装需要输入密码。"
+        "item3": "Linux x64 支持 Beta 渠道，arm64 暂不支持。两种架构都不支持空闲时自动安装，因为安装需要系统授权。"
       },
       "qnaTitle": "直接提问",
       "qnaDescription": "如果 overview 里没有覆盖到你的问题，可以直接问我该怎么做。",
@@ -764,6 +794,7 @@
       "appVersionLabel": "应用版本号",
       "claudeCodeVersionLabel": "Claude Code 版本号",
       "codexVersionLabel": "Codex 版本号",
+      "piVersionLabel": "Pi 版本号",
       "logsDirLabel": "日志目录",
       "openLogsDir": "打开",
       "openLogsDirTooltip": "在系统文件管理器中打开日志目录",
@@ -854,61 +885,61 @@
         "chatAttachmentsClearConfirmTitle": "清理消息附件缓存？",
         "chatAttachmentsClearConfirmDescription": "只会删除消息附件缓存目录中的文件，不会读取消息数据库。清理后，历史消息中的部分附件可能无法打开，且无法恢复。",
         "chatAttachmentsClearConfirmButton": "清理附件缓存",
-          "chatAttachmentsCleared": "消息附件缓存已清理",
-          "chatAttachmentsClearFailed": "无法清理消息附件缓存，请重试",
-          "dbSlimmingBackupDirectoryDialogTitle": "选择数据库清理备份目录",
-          "dbSlimmingLabel": "数据库清理",
-          "dbSlimmingDescription": "扫描超过所选时间未更新的软删除和已归档任务历史，可选择同时纳入活跃任务。确认后重启 {{appName}}，在数据库打开前清理并压缩。不会删除磁盘附件或生成媒体。",
-          "dbSlimmingScanButton": "扫描数据库",
-          "dbSlimmingScanLoading": "正在扫描数据库，请稍候…",
-          "dbSlimmingScanResultTitle": "数据库扫描结果",
-          "dbSlimmingExecutionLoading": "正在准备数据库清理，{{appName}} 即将重启…",
-          "dbSlimmingArchiveAgeLabel": "清理未更新时间超过",
-          "dbSlimmingArchiveAgeOption7Days": "7 天",
-          "dbSlimmingArchiveAgeOption1": "1 个月",
-          "dbSlimmingArchiveAgeOption3": "3 个月",
-          "dbSlimmingArchiveAgeOption6": "6 个月",
-          "dbSlimmingIncludeActiveLabel": "清理活跃任务历史",
-          "dbSlimmingIncludeActiveDescription": "同时清理超过所选时间的活跃任务历史",
-          "dbSlimmingIncludeActiveConfirmTitle": "将活跃任务纳入数据库清理？",
-          "dbSlimmingIncludeActiveConfirmDescription": "活跃任务即使超过所选时间，也可能仍在运行。清理不会等待任务停止，任务在扫描后继续产生的消息也可能被清除。启用后，超过所选时间的活跃、已归档和软删除任务都会被清理。符合范围的活跃任务历史消息和 Agent 上下文将被清除；任务条目仍会保留。数据库备份可以恢复任务和消息数据；不创建备份时，这些数据也无法恢复。用于审查或撤销这些消息所产生文件改动的记录不包含在数据库备份中，无法恢复。",
-          "dbSlimmingIncludeActiveConfirmButton": "纳入活跃任务",
-          "dbSlimmingIncludeActiveCancelButton": "保留活跃任务",
-          "dbSlimmingBackupLabel": "清理前备份数据库",
-          "dbSlimmingBackupDefaultLocation": "数据库所在目录（只保留最近一次清理备份）",
-          "dbSlimmingUseDefaultDirectoryButton": "使用默认目录",
-          "dbSlimmingChooseDirectoryButton": "选择备份目录",
-          "dbSlimmingBackupDirectoryFailed": "无法选择备份目录，请重试",
-          "dbSlimmingScanFailed": "无法扫描数据库，请重试",
-          "dbSlimmingScheduleFailed": "无法安排数据库清理，请重新扫描后重试",
-          "dbSlimmingBackupMissing": "没有找到最近一次清理备份",
-          "dbSlimmingBackupOpenFailed": "无法打开清理备份位置，请重试",
-          "dbSlimmingReportTasks": "将清理软删除任务 {{deleted}} 个、归档任务 {{archived}} 个",
-          "dbSlimmingReportTasksWithActive": "将清理活跃任务 {{active}} 个、软删除任务 {{deleted}} 个、归档任务 {{archived}} 个",
-          "dbSlimmingReportMessages": "预计清理 {{count}} 条消息内容（约 {{size}}）",
-          "dbSlimmingReportSpace": "数据库 {{database}}；临时空间至少需要 {{temporary}}；当前可用 {{free}}",
-          "dbSlimmingSpaceUnknown": "未知",
-          "dbSlimmingInsufficientSpace": "当前磁盘空间不足，无法安全创建工作副本并压缩数据库。",
-          "dbSlimmingConfirmButton": "确认数据库清理",
-          "dbSlimmingConfirmTitle": "重启并清理数据库？",
-          "dbSlimmingConfirmDescriptionWithBackup": "{{appName}} 将优雅重启，并在下次启动、数据库打开前完成备份、历史清理、压缩和完整性校验。备份写入并校验通过后才会清理数据。",
-          "dbSlimmingConfirmDescriptionWithoutBackup": "{{appName}} 将优雅重启，并在下次启动、数据库打开前清理和压缩。本次不创建备份，清除的历史内容无法恢复。",
-          "dbSlimmingRestartButton": "重启并清理数据库",
-          "dbSlimmingResultCompleted": "已清除 {{tasks}} 个任务中的 {{messages}} 条消息，数据库缩小 {{size}}。",
-          "dbSlimmingOpenBackupButton": "打开清理备份",
-          "dbSlimmingToastCompleted": "数据库清理完成，已释放 {{size}}",
-          "dbSlimmingHistoryCleared": "历史内容已清除",
-          "dbSlimmingFailure": {
-            "backup-failed": "未能创建或保留数据库备份，未清理历史内容。",
-            "cleanup-failed": "数据库清理未完成，原数据库保持不变。",
-            "database-in-use": "数据库正被其他实例使用，未执行清理。",
-            "insufficient-space": "磁盘空间不足，未执行数据库清理。",
-            "integrity-check-failed": "数据库完整性校验未通过，已恢复原数据库。",
-            "replacement-failed": "无法安装压缩后的数据库，已恢复原数据库。",
-            "recovery-failed": "数据库恢复失败，{{appName}} 已停止打开数据库以保护原始数据。",
-            "unknown": "数据库清理未完成，请重试。"
-          },
-          "cleanupLabel": "磁盘清理",
+        "chatAttachmentsCleared": "消息附件缓存已清理",
+        "chatAttachmentsClearFailed": "无法清理消息附件缓存，请重试",
+        "dbSlimmingBackupDirectoryDialogTitle": "选择数据库清理备份目录",
+        "dbSlimmingLabel": "数据库清理",
+        "dbSlimmingDescription": "扫描超过所选时间未更新的软删除和已归档任务历史，可选择同时纳入活跃任务。确认后重启 {{appName}}，在数据库打开前清理并压缩。不会删除磁盘附件或生成媒体。",
+        "dbSlimmingScanButton": "扫描数据库",
+        "dbSlimmingScanLoading": "正在扫描数据库，请稍候…",
+        "dbSlimmingScanResultTitle": "数据库扫描结果",
+        "dbSlimmingExecutionLoading": "正在准备数据库清理，{{appName}} 即将重启…",
+        "dbSlimmingArchiveAgeLabel": "清理未更新时间超过",
+        "dbSlimmingArchiveAgeOption7Days": "7 天",
+        "dbSlimmingArchiveAgeOption1": "1 个月",
+        "dbSlimmingArchiveAgeOption3": "3 个月",
+        "dbSlimmingArchiveAgeOption6": "6 个月",
+        "dbSlimmingIncludeActiveLabel": "清理活跃任务历史",
+        "dbSlimmingIncludeActiveDescription": "同时清理超过所选时间的活跃任务历史",
+        "dbSlimmingIncludeActiveConfirmTitle": "将活跃任务纳入数据库清理？",
+        "dbSlimmingIncludeActiveConfirmDescription": "活跃任务即使超过所选时间，也可能仍在运行。清理不会等待任务停止，任务在扫描后继续产生的消息也可能被清除。启用后，超过所选时间的活跃、已归档和软删除任务都会被清理。符合范围的活跃任务历史消息和 Agent 上下文将被清除；任务条目仍会保留。数据库备份可以恢复任务和消息数据；不创建备份时，这些数据也无法恢复。用于审查或撤销这些消息所产生文件改动的记录不包含在数据库备份中，无法恢复。",
+        "dbSlimmingIncludeActiveConfirmButton": "纳入活跃任务",
+        "dbSlimmingIncludeActiveCancelButton": "保留活跃任务",
+        "dbSlimmingBackupLabel": "清理前备份数据库",
+        "dbSlimmingBackupDefaultLocation": "数据库所在目录（只保留最近一次清理备份）",
+        "dbSlimmingUseDefaultDirectoryButton": "使用默认目录",
+        "dbSlimmingChooseDirectoryButton": "选择备份目录",
+        "dbSlimmingBackupDirectoryFailed": "无法选择备份目录，请重试",
+        "dbSlimmingScanFailed": "无法扫描数据库，请重试",
+        "dbSlimmingScheduleFailed": "无法安排数据库清理，请重新扫描后重试",
+        "dbSlimmingBackupMissing": "没有找到最近一次清理备份",
+        "dbSlimmingBackupOpenFailed": "无法打开清理备份位置，请重试",
+        "dbSlimmingReportTasks": "将清理软删除任务 {{deleted}} 个、归档任务 {{archived}} 个",
+        "dbSlimmingReportTasksWithActive": "将清理活跃任务 {{active}} 个、软删除任务 {{deleted}} 个、归档任务 {{archived}} 个",
+        "dbSlimmingReportMessages": "预计清理 {{count}} 条消息内容（约 {{size}}）",
+        "dbSlimmingReportSpace": "数据库 {{database}}；临时空间至少需要 {{temporary}}；当前可用 {{free}}",
+        "dbSlimmingSpaceUnknown": "未知",
+        "dbSlimmingInsufficientSpace": "当前磁盘空间不足，无法安全创建工作副本并压缩数据库。",
+        "dbSlimmingConfirmButton": "确认数据库清理",
+        "dbSlimmingConfirmTitle": "重启并清理数据库？",
+        "dbSlimmingConfirmDescriptionWithBackup": "{{appName}} 将优雅重启，并在下次启动、数据库打开前完成备份、历史清理、压缩和完整性校验。备份写入并校验通过后才会清理数据。",
+        "dbSlimmingConfirmDescriptionWithoutBackup": "{{appName}} 将优雅重启，并在下次启动、数据库打开前清理和压缩。本次不创建备份，清除的历史内容无法恢复。",
+        "dbSlimmingRestartButton": "重启并清理数据库",
+        "dbSlimmingResultCompleted": "已清除 {{tasks}} 个任务中的 {{messages}} 条消息，数据库缩小 {{size}}。",
+        "dbSlimmingOpenBackupButton": "打开清理备份",
+        "dbSlimmingToastCompleted": "数据库清理完成，已释放 {{size}}",
+        "dbSlimmingHistoryCleared": "历史内容已清除",
+        "dbSlimmingFailure": {
+          "backup-failed": "未能创建或保留数据库备份，未清理历史内容。",
+          "cleanup-failed": "数据库清理未完成，原数据库保持不变。",
+          "database-in-use": "数据库正被其他实例使用，未执行清理。",
+          "insufficient-space": "磁盘空间不足，未执行数据库清理。",
+          "integrity-check-failed": "数据库完整性校验未通过，已恢复原数据库。",
+          "replacement-failed": "无法安装压缩后的数据库，已恢复原数据库。",
+          "recovery-failed": "数据库恢复失败，{{appName}} 已停止打开数据库以保护原始数据。",
+          "unknown": "数据库清理未完成，请重试。"
+        },
+        "cleanupLabel": "磁盘清理",
         "cleanupDescription": "扫描没有被任何任务引用的媒体文件、超限缓存与废弃目录。先报数，确认后才删除；输入框草稿和排队消息里的图片会被自动保护。",
         "scanButton": "扫描",
         "scanFailed": "扫描失败",
@@ -983,15 +1014,12 @@
         },
         "refiner": {
           "label": "润色模型",
-          "hint": "整理口语文本使用的模型。",
-          "ariaLabel": "语音润色模型选择"
-        },
-        "refinerFallback": {
-          "label": "润色备选模型",
-          "hint": "主润色模型失败时改用的备选；默认不启用。",
-          "ariaLabel": "语音润色备选模型选择",
-          "none": "不使用备选",
-          "noneDescription": "主模型失败时直接保留原始识别文本"
+          "hint": "跟随辅助模型。",
+          "followAuxiliary": "跟随辅助模型",
+          "followHint": "润色模型跟随「设置 → 个性化 → 辅助模型」的顺序。Cindy 托管语音不受影响，润色仍在服务端。",
+          "openAuxiliary": "前往辅助模型",
+          "cannotRefine": "当前辅助模型无法用于语音润色（例如纯 Claude Messages），这次不润色。",
+          "ariaLabel": "语音润色模型"
         },
         "customAsr": {
           "optionLabel": "自定义实时 ASR",
@@ -1463,6 +1491,8 @@
         "copyKeyFailed": "复制失败，请稍后重试",
         "asset": {
           "viewUsage": "查看用量",
+          "buyPlan": "购买套餐",
+          "upgradePlan": "升级套餐",
           "syncFailed": "凭据同步失败，暂时无法获取余额。已保存的模型配置不受影响。"
         }
       },
@@ -1476,6 +1506,13 @@
           "createTitle": "添加自定义供应商",
           "editTitle": "编辑自定义供应商",
           "desc": "配置与 OpenAI / Anthropic 兼容的供应商。"
+        },
+        "imageGenerationReload": {
+          "title": "重新加载 Codex",
+          "description": "保存此图片生成配置需要重新加载 Codex，并会中断当前正在执行的 Codex 任务。",
+          "interrupt": "保存并停止",
+          "cancel": "取消",
+          "close": "关闭"
         },
         "fields": {
           "name": "显示名称",
@@ -1498,6 +1535,15 @@
           "modelContextWindowTitle": "上下文窗口(tokens)。留空按 200K 保守默认；影响窗口显示与压缩阈值。",
           "modelSupportsImageInput": "支持图片输入",
           "modelSupportsImageInputHelp": "仅在该模型确实支持视觉输入时开启。保存后新建 Pi 任务生效。",
+          "runtimeAdvanced": "高级",
+          "runtimeSupportsImageGeneration": "支持图片生成与编辑",
+          "runtimeSupportsImageGenerationHelpLabel": "了解图片生成与编辑支持",
+          "runtimeSupportsImageGenerationConditionTitle": "适用条件",
+          "runtimeSupportsImageGenerationCondition": "网关需兼容 OpenAI Responses API，并支持图片生成与编辑。",
+          "runtimeSupportsImageGenerationEndpointsTitle": "接口要求",
+          "runtimeSupportsImageGenerationEndpoints": "网关必须处理以下请求：",
+          "runtimeSupportsImageGenerationPermissionsTitle": "权限与失败处理",
+          "runtimeSupportsImageGenerationPermissions": "当前 API Key、账号或用户组需有图片模型权限。此开关只声明网关能力，不会自动开通上游权限。调用失败时会显示真实上游错误，不会切换到其他图片服务。",
           "modelSupportsReasoning": "支持推理",
           "modelSupportsReasoningHelp": "仅在该模型接受推理强度时开启，并勾选它实际支持的所有档位。保存后，下一个 Pi Agent 会话生效。",
           "modelReasoningEfforts": "支持的推理强度",
@@ -1883,15 +1929,33 @@
         "invalidLibraryName": "请输入 Ollama 库名，或粘贴 huggingface.co 上的模型页链接",
         "advancedExactName": "高级：精确库名",
         "models": {
-          "qwen38-27b": { "blurb": "当前最强可本机跑的稠密模型，适合编程和长任务。" },
-          "gpt-oss-20b": { "blurb": "OpenAI 开源 20B，16GB 级机器上的对话和推理首选。" },
-          "gemma4-e2b": { "blurb": "Gemma 4 最小杯，轻量机器也能跑，带视觉。" },
-          "gemma4-e4b": { "blurb": "Google Gemma 4 小杯，轻量日常，带视觉。" },
-          "gemma4-12b": { "blurb": "Gemma 4 中杯，日常对话和多模态更稳。" },
-          "gemma4-31b": { "blurb": "Gemma 4 大杯，对话和多模态更强，也更吃内存。" },
-          "gemma4-26b": { "blurb": "Gemma 4 的 MoE 中大杯，激活参数更少，适合中高配。" },
-          "ornith15-35b": { "blurb": "Ornith 1.5 中杯 MoE，本机编程和 Agent 备选。" },
-          "glm-47-flash": { "blurb": "智谱新一代编程模型，30B MoE，适合写代码和 Agent。" }
+          "qwen38-27b": {
+            "blurb": "当前最强可本机跑的稠密模型，适合编程和长任务。"
+          },
+          "gpt-oss-20b": {
+            "blurb": "OpenAI 开源 20B，16GB 级机器上的对话和推理首选。"
+          },
+          "gemma4-e2b": {
+            "blurb": "Gemma 4 最小杯，轻量机器也能跑，带视觉。"
+          },
+          "gemma4-e4b": {
+            "blurb": "Google Gemma 4 小杯，轻量日常，带视觉。"
+          },
+          "gemma4-12b": {
+            "blurb": "Gemma 4 中杯，日常对话和多模态更稳。"
+          },
+          "gemma4-31b": {
+            "blurb": "Gemma 4 大杯，对话和多模态更强，也更吃内存。"
+          },
+          "gemma4-26b": {
+            "blurb": "Gemma 4 的 MoE 中大杯，激活参数更少，适合中高配。"
+          },
+          "ornith15-35b": {
+            "blurb": "Ornith 1.5 中杯 MoE，本机编程和 Agent 备选。"
+          },
+          "glm-47-flash": {
+            "blurb": "智谱新一代编程模型，30B MoE，适合写代码和 Agent。"
+          }
         },
         "onboardingTitle": "先安装 Ollama 运行环境",
         "onboardingBody": "安装 Ollama 后，即可在 {{appName}} 中下载和使用本机模型，无需打开 Ollama App。Ollama 是免费开源的第三方运行环境。",
@@ -2421,7 +2485,7 @@
       },
       "commandMenu": {
         "start": "查看欢迎信息和用法",
-        "new": "开启新对话",
+        "new": "创建新任务",
         "help": "查看命令帮助",
         "stop": "中止当前执行",
         "session": "最近任务列表，选中即续聊",
@@ -2607,28 +2671,15 @@
     },
     "subagentModels": {
       "title": "Subagent",
-      "description": "选择 Claude Code 和 Codex 的 Subagent 模型。",
+      "description": "设置 Claude Code 的默认模型，以及 Codex 的 Subagent 调配方式。",
       "unspecified": "跟随默认设置",
-      "hint": "Claude Code 的设置从新任务开始生效；Codex 的设置会在空闲后自动应用。",
-      "codexV2ModelHint": "Claude Code 使用所选模型作为默认值。Codex 的所有本机 Subagent 都固定使用所选模型和推理强度。",
-      "codexOauthCompatibilityHint": "固定 Subagent 路由与 ChatGPT OAuth 不能安全共用。主任务使用 ChatGPT OAuth，或非 OAuth 主任务指定 ChatGPT OAuth Subagent 时，{{appName}} 会忽略这里的模型、来源和推理强度，改用主任务的 Codex 默认 Subagent。",
+      "hint": "Claude Code 的设置从新任务开始生效；Codex 智能调配会在 Codex 空闲后应用。",
       "saveFailed": "保存 Subagent 设置失败",
-      "guardrails": {
-        "title": "Codex Subagent 护栏",
-        "enableHint": "允许 Codex 在执行任务时创建一次性 Subagent。关闭后对旧版（V1）和 Sol / Terra（V2）都生效。",
-        "enableAria": "允许 Codex 使用 Subagent",
-        "cindyPolicyLabel": "使用 {{appName}} 自定义 Subagent 策略",
-        "cindyPolicyHint": "开启后，{{appName}} 会注入策略，引导 Codex 在探索型任务中主动使用 Subagent。对于本身已擅长规划和委派的模型，额外引导可能适得其反；关闭后不再注入，改用 Codex 的原生默认行为。",
-        "cindyPolicyAria": "使用 {{appName}} 自定义 Subagent 策略",
-        "concurrencyLabel": "Subagent 并发上限",
-        "concurrencyHint": "同时运行的 Subagent 数量上限。每个 Subagent 都会消耗模型配额，调低更省；Ultra 档位下并发达到 8 时 Codex 会发出用量警告。",
-        "concurrencyFollowDefault": "跟随 Codex 默认（旧版 V1 为 6，Sol / Terra 为 3）",
-        "concurrencyAria": "调整 Codex Subagent 并发上限",
-        "concurrencyCustomAria": "自定义 Codex Subagent 并发上限",
-        "nestedLabel": "允许 Subagent 再创建 Subagent",
-        "nestedHint": "仅旧版 Codex Multi-Agent（V1）生效，Sol / Terra（V2）会忽略此设置。",
-        "nestedAria": "允许 Subagent 再创建 Subagent",
-        "localOnlyHint": "以上护栏仅对本机运行的 Codex 生效，SSH 远程连接的 Codex 不受影响。"
+      "smartRouting": {
+        "label": "Codex 智能调配",
+        "nativeHint": "关闭时完全使用 Codex 原生的 Sol / Terra 分配方式。",
+        "enabledHint": "开启后，Codex 可按任务选用更多已连接模型；卡片显示实际执行模型。",
+        "aria": "启用 Codex 智能调配"
       },
       "toast": {
         "saved": "Subagent 设置已保存",
@@ -2637,28 +2688,40 @@
     },
     "auxiliaryModels": {
       "title": "辅助模型",
-      "description": "为任务自动命名和输入框推荐指令分别指定一组 Agent 和模型。",
-      "sessionTitle": {
-        "label": "任务自动命名",
-        "description": "适用于 Claude Code、Codex、Pi 任务，以及手动 AI 重命名。",
-        "ariaLabel": "选择任务自动命名模型",
-        "automatic": "自动选择（跟随当前任务）"
+      "description": "用于任务自动命名和 AI 重命名、输入框推荐指令、Help、置顶任务摘要、IM / 飞书标题与群上下文判断、定时任务脚本、插件快问快答的「跟随默认」，以及自带密钥的语音润色。",
+      "automatic": "自动推荐",
+      "customize": "自定义",
+      "preferred": {
+        "label": "首选",
+        "description": "轻量文本优先使用的模型。",
+        "ariaLabel": "选择首选辅助模型"
       },
-      "promptRecommendation": {
-        "label": "输入框推荐指令",
-        "description": "仅在“小技巧”中启用输入框推荐后调用。",
-        "ariaLabel": "选择输入框推荐指令模型",
-        "automatic": "自动选择（保持当前规则）"
+      "fallback1": {
+        "label": "备选 1",
+        "description": "首选不可用时改用的模型，可留空。",
+        "ariaLabel": "选择第一备选辅助模型"
       },
+      "fallback2": {
+        "label": "备选 2",
+        "description": "前两个都不可用时改用的模型，可留空。",
+        "ariaLabel": "选择第二备选辅助模型"
+      },
+      "emptySlot": "未选择",
+      "customHint": "自定义后只按你选的顺序尝试；都不可用时不会偷偷换成别的模型。",
+      "signInHint": "登录 Cindy 后可使用自动推荐；未登录时请在自定义中选择已配置的其他供应商模型。",
       "chooseAgent": "选择 Agent",
       "backToAgents": "返回选择 Agent",
-      "explicitRouteHint": "显式指定后只使用该 Agent 和模型；不可用时不会自动切换。",
       "searchPlaceholder": "搜索模型或供应商",
       "noResults": "没有可用模型",
       "unavailable": "当前不可用",
       "budget": "折扣",
       "subscription": "订阅",
-      "saveFailed": "保存辅助模型设置失败"
+      "saveFailed": "保存辅助模型设置失败",
+      "chain": {
+        "cindyHy3": "Hy3",
+        "cindyDeepseekV4Flash": "DeepSeek v4 Flash",
+        "cindyQwen38Flash": "Qwen 3.8 Flash"
+      }
     },
     "compaction": {
       "title": "上下文压缩",
@@ -2861,7 +2924,7 @@
       "installSectionDescription": "粘贴 pi.dev 页面上的安装来源，或输入 npm 包名、Git 地址、本地绝对路径。",
       "installedSectionTitle": "已安装",
       "sourcePlaceholder": "npm 包名、Git 地址或本地绝对路径",
-      "inspectionHint": "安装时只提示一次风险。确认后会安装扩展并检查资源；检查成功时，可运行资源会自动启用。",
+      "inspectionHint": "Pi 包由 Pi 原生包系统安装和加载。{{appName}} 只展示建议性兼容详情；未知、不支持或分析失败都不会阻止安装和启用。",
       "install": "安装",
       "update": "更新",
       "remove": "卸载",
@@ -2883,12 +2946,7 @@
       "retry": "重试",
       "operationInProgress": "正在处理 {{name}}…",
       "relativePathUnsupported": "在设置中安装本地扩展时请使用绝对路径；./extension 这类相对路径可在 Pi 任务中安装。",
-      "confirmTitle": "安装这个 Pi 扩展？",
-      "confirmDescription": "{{source}} 是第三方代码，会与 {{appName}} 的 Pi 在同一进程中运行，可能读取 Pi 能访问的文件和凭证。安装不会执行 npm 生命周期脚本。确认后将安装扩展。检查成功后，可运行资源会自动启用，即使 {{appName}} 同时提示兼容性限制。",
-      "confirmInstall": "了解风险并安装",
       "updateConfirmTitle": "更新这个 Pi 扩展？",
-      "updateConfirmDescription": "{{source}} 会下载第三方新版本并替换已安装代码。更新不会执行 npm 生命周期脚本。扩展代码与 Pi 在同一进程中运行，可能读取文件和凭证。确认后将更新扩展。你主动关闭的扩展会保持关闭；其他扩展会在检查成功后启用。",
-      "confirmUpdate": "了解风险并更新",
       "uninstallTitle": "卸载 Pi 扩展？",
       "uninstallDescription": "将从这台设备移除 {{name}}。当前已打开的 Pi 任务仍会保留旧扩展，关闭后才会彻底卸载。",
       "confirmUninstall": "卸载",
@@ -2932,30 +2990,29 @@
       "runtimeMismatch": "{{packageName}} 要求 Pi {{range}}，{{appName}} 当前使用的是 {{currentVersion}}。",
       "runtimeLegacyPackage": "{{packageName}} 属于 Pi 的旧运行时命名空间；基于它构建的扩展代码可能无法在 {{appName}} 当前的 Pi 中加载。",
       "runtimeUnknown": "{{packageName}} 要求 Pi {{range}}，但 {{appName}} 无法确定当前 Pi 版本是否满足。",
-      "compatibilityNoticeTitle": "已安装，但发现兼容限制",
-      "compatibilityNoticeDescription": "{{name}} 已完成安装或更新。下面是 {{appName}} 的检查结果；当前启用状态会显示在扩展列表，修改只影响新建或重启后的 Pi 任务。",
-      "extensionApprovalTitle": "启用可执行扩展代码？",
-      "extensionApprovalDescription": "启用后，第三方扩展代码会与 Pi 在同一进程中运行，可以读取 Pi 能访问的文件和环境变量，包括模型或 API 凭证。{{appName}} 目前无法隔离这些访问；只有完全信任来源时才启用。",
-      "parserDisclaimer": "这是静态兼容检查，不是安全审计，也无法证明任意第三方代码完全兼容。",
-      "disableAfterInstall": "停用这个扩展",
-      "keepEnabled": "仍然启用",
-      "keepDisabled": "保持停用",
-      "approveAndEnable": "了解风险并启用",
-      "done": "完成",
       "warning": {
         "no-resources": "这个扩展没有发现 Pi 资源。",
-        "inspection-failed": "扩展已登记，但无法检查已安装内容。",
-        "inspection-limit": "扩展内容超过安全检查上限，已保持停用。",
-        "unsupported-filter": "这个扩展使用了 {{appName}} 暂时无法安全复现的 Pi 资源筛选配置，因此保持停用。",
-        "unsafe-source": "这个扩展的旧来源包含凭证或私密 URL 参数。{{appName}} 已隐藏敏感部分、保持停用，并禁止在应用内更新或移除。",
-        "lifecycle-scripts-disabled": "这个扩展声明了安装脚本，但 {{appName}} 为安全起见没有执行。依赖安装脚本生成文件的功能可能不可用。"
+        "inspection-failed": "{{appName}} 无法检查已安装内容，但不会因此停用；仍由 Pi 原生处理。",
+        "inspection-limit": "{{appName}} 已达到详情分析上限并停止展示更多结果；包仍通过 Pi 原生加载。",
+        "unsupported-filter": "{{appName}} 暂时无法展示这个 Pi 资源筛选配置；包和筛选仍由 Pi 原生处理。",
+        "unsafe-source": "保存的来源包含凭证或私密 URL 参数。{{appName}} 仅在此处隐藏敏感字段，不会阻断 Pi 的包行为。"
+      },
+      "failure": {
+        "sourceUnavailable": "无法访问这个来源。请检查网络或地址，也可以换一个来源重试。",
+        "packageNotFound": "没有找到这个包。请检查包名或仓库地址。",
+        "versionNotFound": "没有找到这个版本。请选择可用版本后重试。",
+        "stateUnavailable": "{{appName}} 无法读取 Pi 扩展状态。请重启 {{appName}} 后重试。",
+        "runtimeConvergencePartial": "Pi 扩展更改已保存，但部分本机 Pi 任务可能仍在运行旧扩展。请重启 {{appName}} 后再使用 Pi。",
+        "nativeCommandFailed": "Pi 原生包命令失败。请检查来源或版本后重试。"
       },
       "success": {
-        "install": "Pi 扩展已安装，请在下方查看启用状态。当前任务不会变化。",
-        "installEnabled": "Pi 扩展已安装并启用。当前任务不会变化；新建或重启 Pi 任务后生效。",
-        "remove": "Pi 扩展已移除。当前任务仍保留旧扩展，关闭后才会彻底卸载。",
-        "update": "Pi 扩展已更新。当前任务仍使用旧版本；新建或重启后生效。",
-        "set-enabled": "Pi 扩展启用状态已保存。当前任务不会变化；新建或重启后生效。"
+        "install": "Pi 扩展已安装。正在运行的本机 Pi 任务已停止；新建 Pi 任务即可使用。",
+        "installEnabled": "Pi 扩展已安装并启用。正在运行的本机 Pi 任务已停止；新建 Pi 任务即可使用。",
+        "remove": "Pi 扩展已移除。正在运行的本机 Pi 任务已停止，其工具无法再运行。",
+        "settingsRemove": "Pi 扩展已移除。正在运行的本机 Pi 任务已停止，其工具无法再运行。",
+        "settingsDisable": "Pi 扩展已停用。正在运行的本机 Pi 任务已停止，其工具无法再运行。",
+        "update": "Pi 扩展已更新。正在运行的本机 Pi 任务已停止；新建 Pi 任务即可使用新版本。",
+        "set-enabled": "Pi 扩展启用状态已保存。正在运行的本机 Pi 任务已停止；新建 Pi 任务即可使用新状态。"
       }
     },
     "computerUse": {
@@ -2977,7 +3034,14 @@
           "toggleFailed": "切换浏览器自动化失败",
           "openedForLogin": "已打开自动化浏览器，请在其中登录需要的网站",
           "openForLoginFailed": "打开浏览器失败",
-          "foreignInstance": "本机已有另一个 {{appName}} 占用了 Agent 专用浏览器。请先退出其它 {{appName}} 窗口再试。"
+          "foreignInstance": "本机已有另一个 {{appName}} 占用了 Agent 专用浏览器。请先退出其它 {{appName}} 窗口再试。",
+          "profileLocked": "请彻底退出 Chrome、Edge 或 Brave（包括托盘中的进程），然后重试。",
+          "noChromium": "未在这台电脑上找到 Chrome、Edge、Brave 或 Chromium。",
+          "noAuthDb": "没有找到可复制的浏览器登录数据。请先在日常浏览器中登录，或关闭「使用我的浏览器登录态」后在 Agent 专用浏览器中登录。",
+          "copyFailed": "无法复制浏览器登录态。请彻底退出日常浏览器后重试，或关闭「使用我的浏览器登录态」。",
+          "headlessForbidden": "Agent 专用浏览器处于无界面模式时无法使用你的浏览器登录态。",
+          "stopFailed": "请彻底关闭 Agent 专用浏览器，然后重试。",
+          "appBoundEncryptionUnsupported": "Windows 已使用应用绑定加密保护这些浏览器登录态，{{appName}} 无法复制。请关闭「使用我的浏览器登录态」，打开 Agent 专用浏览器并在其中登录一次。"
         },
         "openForLogin": "打开 Agent 专用浏览器",
         "openForLoginHint": "这是 Agent 专用的独立浏览器：基于你本机的 Chrome，但用一份独立配置（右上角显示为 {{appName}}），不会动你日常 Chrome 的标签页、书签和登录态。Agent 会在这里替你打开网页、阅读内容、点击和截图。需要登录的网站，点上面「打开 Agent 专用浏览器」手动登录一次即可——登录态会长期保留，之后 Agent 就能以你的身份继续操作。"
@@ -3679,6 +3743,28 @@
       "recording": "按下新快捷键…",
       "editAria": "修改 {{name}} 的快捷键",
       "workLouderCodex": {
+        "codexGuard": {
+          "title": "Codex 兼容性",
+          "label": "防止 Codex 占用设备",
+          "aria": "防止 Codex 占用 Codex Micro",
+          "recover": "恢复环境",
+          "status": {
+            "unsupported": "仅 macOS",
+            "disabled": "已关闭",
+            "protecting": "请重启 Codex",
+            "intercepted": "保护中",
+            "recovery-required": "需要恢复",
+            "error": "不可用"
+          },
+          "descriptions": {
+            "unsupported": "此保护仅在 macOS 上可用。",
+            "disabled": "{{appName}} 运行期间阻止 Codex 连接 Codex Micro；不会限制 {{appName}} 本身。",
+            "protecting": "保护已就绪。请完全退出后重新打开 Codex；已经运行的 Codex 不受影响。",
+            "intercepted": "已阻止 Codex 的 Work Louder 服务，{{appName}} 可以继续使用设备。",
+            "recovery-required": "保护已停止，但 NODE_OPTIONS 尚未安全恢复。请先重试恢复，再重新开启。",
+            "error": "{{appName}} 无法更新 Codex 保护；原有 NODE_OPTIONS 已保留或等待恢复。"
+          }
+        },
         "commands": {
           "session.selectPrevious": {
             "name": "上一个任务",
@@ -3841,7 +3927,7 @@
           "label": "连接",
           "toggle": {
             "label": "启用",
-            "aria": "让这个 {{appName}} 在前台时使用 Xbox 手柄"
+            "aria": "让这个 {{appName}} 占用 Codex Micro"
           },
           "status": {
             "connecting": "正在连接",
@@ -3853,13 +3939,13 @@
             "unavailable": "当前系统暂不支持"
           },
           "descriptions": {
-            "connecting": "{{appName}} 正在查找 Xbox 手柄。",
-            "connected": "{{appName}} 在前台时会监听这只手柄。",
-            "disabled": "启用后，{{appName}} 在前台时会监听手柄。",
-            "present": "启用后，{{appName}} 在前台时会监听手柄。",
-            "not-detected": "请用 USB 或蓝牙连接 Xbox 手柄。",
-            "error": "{{appName}} 暂时无法读取手柄，正在重试。",
-            "unavailable": "这台电脑还不能读取 Xbox 手柄。",
+            "connecting": "{{appName}} 正在启动 Work Louder 设备服务。",
+            "connected": "USB 已连接，{{appName}} 正在监听按键并同步任务灯效。",
+            "disabled": "启用后，{{appName}} 会监听按键，并用灯光显示任务状态。",
+            "present": "启用后，{{appName}} 会监听按键，并用灯光显示任务状态。",
+            "not-detected": "请用支持数据传输的 USB 线连接键盘；如果 ChatGPT 正在占用设备，请先关闭。",
+            "error": "{{appName}} 暂时无法与键盘通信，正在自动重试。",
+            "unavailable": "未找到官方 Work Louder SDK。请保留支持 Codex Micro 的 ChatGPT 或 Codex 应用，重启 {{appName}} 后再试。",
             "connection-timeout": "Work Louder 服务在规定时间内没有响应，{{appName}} 会自动重试。",
             "connection-failed": "Work Louder 服务启动失败，{{appName}} 会自动重试。",
             "permission-required": "macOS 拒绝了键盘访问，请在输入监控中允许 {{appName}} 后重试。",
@@ -3893,12 +3979,12 @@
           "title": "Agent 键",
           "source": {
             "label": "任务顺序",
-            "description": "AG00～AG05 就是侧边栏从上到下的前 6 个任务，顺序与那里一致。",
+            "description": "任务键按板上顺序，对应侧边栏从上到下的任务。",
             "descriptions": {
-              "sidebar": "AG00～AG05 就是侧边栏从上到下的前 6 个任务，顺序与那里一致。",
-              "last-sent": "AG00～AG05 按你最后一次发消息的时间，最近的排在前面。",
-              "priority": "AG00～AG05 对应前 6 个优先任务。",
-              "custom": "AG00～AG05 各自打开你指定的任务。"
+              "sidebar": "任务键按板上顺序，对应侧边栏从上到下的任务。",
+              "last-sent": "任务键按板上顺序，对应你最近发过消息的任务，越近越靠前。",
+              "priority": "任务键按板上顺序，对应优先任务。",
+              "custom": "每颗任务键打开你指定的任务。"
             },
             "value": "侧边栏顺序",
             "options": {
@@ -3915,7 +4001,16 @@
           },
           "newTask": "新任务",
           "slot": "最近第 {{position}} 个",
-          "slotAria": "AG{{slot}} 打开最近第 {{position}} 个任务"
+          "slotAria": "AG{{slot}} 打开最近第 {{position}} 个任务",
+          "role": {
+            "label": "按键用途",
+            "description": "任务键用来切换任务，并用灯光显示状态。动作键用来执行快捷操作，还可以更换键帽。",
+            "task": "任务键",
+            "action": "动作键"
+          },
+          "lightingLimit": "固件最多给板上顺序的前 6 颗任务键独立亮灯。多出来的任务键仍能切换任务。",
+          "unlitKey": "这颗键排在前 6 颗之后，没有独立状态灯。",
+          "taskHint": "推荐使用透明键帽，任务状态会有不同颜色的灯效显示。"
         },
         "commandKeys": {
           "builtInDescription": "保持键帽自带的动作，或把这个键改绑到别的动作。",
@@ -3926,7 +4021,7 @@
           "title": "麦克风",
           "separate": {
             "label": "拆分麦克风键",
-            "description": "保持 ACT10 和 ACT11 分开，不合并为一个 MIC 键。"
+            "description": "短按开始并保持录音，再按一下停止；长按松手停止。"
           }
         },
         "analog": {
@@ -3966,7 +4061,8 @@
           "tasks": "任务",
           "commands": "命令",
           "keycaps": "键帽",
-          "skills": "技能"
+          "skills": "技能",
+          "voice": "语音输入"
         },
         "layout": {
           "editor": {
@@ -3978,7 +4074,10 @@
             "cancel": "取消",
             "save": "保存",
             "assignedShortcut": "已分配动作",
-            "selectKeycap": "选择键帽 {{keycap}}"
+            "selectKeycap": "选择键帽 {{keycap}}",
+            "keyTitle": "编辑按键",
+            "keyDescription": "任务键打开任务并显示状态灯；动作键执行快捷操作，并可以选择键帽。",
+            "blank": "空白"
           },
           "keyboard": {
             "indicator": "状态指示灯",
@@ -3991,6 +4090,54 @@
             "title": "恢复键位布局",
             "description": "恢复键帽、摇杆、旋钮和麦克风分配，不改变任务顺序或灯光设置。",
             "button": "恢复布局"
+          },
+          "merge": {
+            "right": "和右边合成一颗宽键",
+            "down": "和下面合成一颗长键",
+            "split": "拆成两个按键",
+            "rightDescription": "一颗宽键帽会盖住右边那颗。被盖住的任务键会变成动作键。",
+            "downDescription": "一颗长键帽会盖住下面那颗。被盖住的任务键会变成动作键。",
+            "splitDescription": "拆开后，被盖住的那颗变回空白按键。"
+          }
+        },
+        "models": {
+          "creatorMicro2": {
+            "title": "Work Louder Creator Micro 2",
+            "entryDescription": "用按键打开任务，并用灯光同步任务状态。",
+            "openAria": "打开 Work Louder Creator Micro 2 设置",
+            "connection": {
+              "toggle": {
+                "aria": "让这台 {{appName}} 使用 Creator Micro 2"
+              },
+              "descriptions": {
+                "connecting": "{{appName}} 正在启动 Work Louder 设备服务。",
+                "connected": "USB 已连接，{{appName}} 正在监听按键并同步任务灯效。",
+                "disabled": "开启后，{{appName}} 会改写当前图层、监听按键，并用灯光显示任务状态。",
+                "present": "开启后，{{appName}} 会改写当前图层、监听按键，并用灯光显示任务状态。",
+                "not-detected": "请用支持数据传输的 USB 线连接键盘；如果 ChatGPT 正在占用设备，请先关闭。",
+                "error": "{{appName}} 暂时无法与键盘通信，正在自动重试。",
+                "unavailable": "未找到官方 Work Louder SDK。请保留支持 Codex Micro 的 ChatGPT 或 Codex 应用，重启 {{appName}} 后再试。",
+                "connection-timeout": "Work Louder 服务在规定时间内没有响应，{{appName}} 会自动重试。",
+                "connection-failed": "Work Louder 服务启动失败，{{appName}} 会自动重试。",
+                "permission-required": "macOS 拒绝了键盘访问，请在输入监控中允许 {{appName}} 后重试。",
+                "sdk-unavailable": "未找到官方 Work Louder SDK。请保留支持 Codex Micro 的 ChatGPT 或 Codex 应用，重启 {{appName}} 后再试。",
+                "device-in-use": "其他应用正在占用这块键盘。请先关闭 ChatGPT 或 Input，然后再试。"
+              }
+            },
+            "agentKeys": {
+              "source": {
+                "descriptions": {
+                  "sidebar": "任务键按板上顺序，对应侧边栏从上到下的任务。",
+                  "last-sent": "任务键按板上顺序，对应你最近发过消息的任务，越近越靠前。",
+                  "priority": "任务键按板上顺序，对应优先任务。",
+                  "custom": "每颗任务键打开你指定的任务。"
+                }
+              }
+            },
+            "errors": {
+              "load": "无法加载 Creator Micro 2 设置",
+              "save": "无法保存 Creator Micro 2 设置"
+            }
           }
         }
       },
@@ -4321,7 +4468,9 @@
         "openAria": "打开 PlayStation 手柄设置",
         "entryDescription": "{{appName}} 在前台时，用手柄滚动、说话、发送和切换任务",
         "connection": {
-          "toggle": { "aria": "让这个 {{appName}} 在前台时使用 PlayStation 手柄" },
+          "toggle": {
+            "aria": "让这个 {{appName}} 在前台时使用 PlayStation 手柄"
+          },
           "descriptions": {
             "connecting": "{{appName}} 正在查找 PlayStation 手柄。",
             "connected": "{{appName}} 在前台时会监听这只手柄。",
@@ -4338,7 +4487,9 @@
         "openAria": "打开 Switch 手柄设置",
         "entryDescription": "{{appName}} 在前台时，用手柄滚动、说话、发送和切换任务",
         "connection": {
-          "toggle": { "aria": "让这个 {{appName}} 在前台时使用 Switch 手柄" },
+          "toggle": {
+            "aria": "让这个 {{appName}} 在前台时使用 Switch 手柄"
+          },
           "descriptions": {
             "connecting": "{{appName}} 正在查找 Switch 手柄。",
             "connected": "{{appName}} 在前台时会监听这只手柄。",
@@ -4355,7 +4506,9 @@
         "openAria": "打开通用手柄设置",
         "entryDescription": "{{appName}} 在前台时，用手柄滚动、说话、发送和切换任务",
         "connection": {
-          "toggle": { "aria": "让这个 {{appName}} 在前台时使用通用手柄" },
+          "toggle": {
+            "aria": "让这个 {{appName}} 在前台时使用通用手柄"
+          },
           "descriptions": {
             "connecting": "{{appName}} 正在查找手柄。",
             "connected": "{{appName}} 在前台时会监听这只手柄。",
@@ -4687,7 +4840,7 @@
         "fsWrite": "可写入文件(创建/修改)",
         "fsWriteDetail": "它自己的专属数据目录随时可写；当前任务的工作目录跟随任务的权限模式(免批模式直接写，逐条确认模式先征求你同意)；其它目录每次都需要你确认。文件始终由主机代写，插件本身无法直接访问你的文件系统。",
         "libraryPersist": "可使用持久作品库(大量文件与数据库)",
-        "libraryPersistDetail": "它会获得一个由 {{appName}} 管理的独立存储区，用来保存你的作品数据(如画布、图片、数据库)，不受普通插件数据配额限制。文件与数据库操作全部由主机代执行，插件只能使用库内相对路径，无法触碰你的其它文件。卸载插件不会删除这些数据；删除必须在 {{appName}} 设置中单独确认。",
+        "libraryPersistDetail": "它会获得一个由 {{appName}} 管理的独立存储区，用来保存你的作品数据(如画布、图片、数据库)，不受普通插件数据配额限制。文件与数据库操作全部由主机代执行，插件只能使用库内相对路径，无法触碰你的其它文件。它还可以让 {{appName}} 在系统文件夹中显示库内文件，或弹出系统另存为窗口由你选择拷贝位置；取消则不会拷出任何文件。卸载插件不会删除这些数据；删除必须在 {{appName}} 设置中单独确认。",
         "networkHost": "访问网络域名 {{host}}",
         "networkSecret": "需要你提供凭证「{{name}}」",
         "networkSecretGhostInputDetail": "凭证由这个插件自己的设置界面收集，录入时会经过插件页面；随后一次性交给主机加密保管，存入后插件无法读回，主机只在请求它声明的域名时注入。",
@@ -4906,6 +5059,10 @@
       "pick": {
         "dialogTitle": "选择文件夹",
         "dialogMessage": "插件「{{name}}」请求你选择一个文件夹"
+      },
+      "saveAs": {
+        "dialogTitle": "插件「{{name}}」另存为",
+        "dialogMessage": "插件「{{name}}」请求你另存一份拷贝"
       },
       "confirm": {
         "dialogTitle": "插件「{{name}}」请你确认"
@@ -5248,7 +5405,6 @@
     "expandControlledNotice": "展开被控提示：{{label}}",
     "versionMismatch": "对方版本不一致，部分功能可能受限"
   },
-
   "accountDeletion": {
     "entryButton": "注销账号",
     "entryAria": "注销当前账号",
@@ -5398,7 +5554,8 @@
     "browserWaiting": "请在浏览器中完成验证",
     "browserCallback": {
       "successTitle": "登录成功",
-      "successBody": "你可以关闭此页面，回到 {{appName}} 继续。",
+      "successBody": "登录已成功，现在可以关闭此页面了。",
+      "closeCountdown": "{{count}}秒后自动关闭",
       "errorTitle": "登录未完成",
       "errorBody": "请回到 {{appName}} 重新登录。",
       "returnButton": "回到 {{appName}}"
@@ -5651,20 +5808,32 @@
   "usageHistory": {
     "description": "这台设备上 {{appName}} 内部产生的 token 用量。记录从该功能上线起积累，不回填更早的历史。",
     "empty": "还没有用量记录。跑过对话之后，这里会开始积累。",
+    "loadFailed": "无法加载用量历史。请重新打开设置后重试。",
+    "range": {
+      "label": "时间范围",
+      "ariaLabel": "筛选用量时间范围",
+      "all": "所有时间",
+      "30d": "最近 30 天",
+      "7d": "最近 7 天",
+      "today": "今天"
+    },
     "cacheHitTooltip": "缓存读取 ÷（输入 + 缓存读取 + 缓存写入），与消息卡片同口径。",
     "summary": {
       "title": "概览"
     },
     "stats": {
       "todayTokens": "今日 token",
+      "todayTokensInRange": "{{range}} token",
       "totalTokens": "近 30 天 token",
+      "totalTokensInRange": "{{range}} token",
       "streak": "连续活跃天数",
       "cacheHitRate": "缓存命中率(近 30 天)",
+      "cacheHitRateInRange": "缓存命中率({{range}})",
       "models": "用到的模型"
     },
     "heatmap": {
       "title": "活跃热力图",
-      "subtitle": "近 20 周",
+      "subtitle": "近 {{count}} 周",
       "emptyCell": "当天没有用量记录"
     },
     "daily": {
@@ -5677,6 +5846,7 @@
       "col": {
         "agent": "Agent / harness",
         "total": "近 30 天 token",
+        "totalInRange": "{{range}} token",
         "share": "占比",
         "today": "今日",
         "hitRate": "缓存命中率",
@@ -5689,6 +5859,7 @@
       "col": {
         "model": "模型",
         "total": "总 token",
+        "totalInRange": "{{range}} token",
         "share": "占比",
         "input": "输入",
         "output": "输出",
@@ -5699,7 +5870,7 @@
     },
     "tasks": {
       "title": "最耗 token 的任务",
-      "subtitle": "近 30 天内活跃过的任务，按累计 token 排序",
+      "subtitle": "{{range}}内活跃过的任务，按累计 token 排序",
       "col": {
         "task": "任务",
         "model": "模型",
@@ -5709,7 +5880,7 @@
         "lastActive": "最后活跃"
       },
       "providerTooltip": "取该任务当前选定的供应商；未指定时留空。",
-      "tokensTooltip": "该任务的生命周期累计，不是近 30 天内的增量。"
+      "tokensTooltip": "该任务的生命周期累计；{{range}}仅用于筛选活跃任务，不表示该范围内的增量。"
     }
   },
   "usageDashboard": {
@@ -5955,6 +6126,10 @@
       "detachDevice": "断开设备",
       "startDevice": "启动设备",
       "stopDevice": "停止设备",
+      "deleteDevice": "删除设备",
+      "deleteDeviceConfirmTitle": "删除“{{device}}”？",
+      "deleteDeviceConfirmDescription": "此操作会永久删除这台模拟器，以及其中存储的所有 App、账号和数据。此操作无法撤销。",
+      "deleteRunningDeviceConfirmDescription": "这台模拟器正在运行。确认后，{{appName}} 会先清理相关资源并停止设备，然后永久删除其中的所有 App、账号和数据。此操作无法撤销。",
       "attachedDescription": "此设备已绑定到当前 {{appName}} 任务。",
       "agentControlTitle": "Agent 控制",
       "agentControlDescription": "允许后，Agent 才能启动、停止或操作这台设备。",
@@ -5995,6 +6170,10 @@
       "rotateDevice": "旋转设备",
       "lockScreen": "锁定屏幕",
       "unlockScreen": "解锁屏幕",
+      "copyScreenshot": "复制截图",
+      "screenshotCopied": "模拟器截图已复制",
+      "screenshotCopyFailed": "无法复制模拟器截图，请稍后重试",
+      "moreControls": "更多模拟器控制",
       "controlsUnavailable": "模拟器控制暂时不可用",
       "enterTextBeforeSending": "请先输入要发送的文本",
       "agentBusyTitle": "Agent 正在使用此设备",
@@ -6030,7 +6209,7 @@
         }
       },
       "nativeRecovery": {
-        "available": "Native 加速当前不可用。重试期间，WDA 画面和控制会保持可用。",
+        "available": "Native 加速当前不可用，画面帧率可能降低，操作延迟可能升高。",
         "action": "尝试恢复 Native",
         "recovering": "正在恢复 Native 加速，当前 WDA 画面和控制会保持可用。",
         "recoveringAction": "正在恢复 Native…",
@@ -6057,7 +6236,8 @@
         "stop": "正在停止设备…",
         "detach": "正在断开设备…",
         "grant": "正在更新 Agent 控制权限…",
-        "control": "正在更新输入控制…"
+        "control": "正在更新输入控制…",
+        "screenshot": "正在复制模拟器截图…"
       },
       "setup": {
         "localMac": "请在 Mac 上的本地 {{appName}} 任务中打开此项目。",
@@ -6660,6 +6840,13 @@
       "move": "立即移动（推荐）",
       "download": "手动下载新版本"
     },
+    "windowsRuntimeMissing": {
+      "title": "需要安装 Microsoft Visual C++ 运行库",
+      "description": "这台电脑缺少更新程序所需的 Microsoft Visual C++ 运行库。已下载的更新包会保留；请安装微软官方 x64 运行库后重新检查。",
+      "download": "下载运行库",
+      "retry": "重新检查",
+      "later": "稍后安装"
+    },
     "moveToApplications": {
       "title": "移动到应用程序文件夹",
       "message": "将 {{appName}} 移动到「应用程序」文件夹可获得更好的体验，包括自动更新。",
@@ -6688,7 +6875,6 @@
       "moreLabel": "更多，当前用户：{{name}}",
       "menuSettings": "设置",
       "menuAddAccount": "登录更多账号",
-      "menuLogout": "退出",
       "canaryBadge": "灰度用户",
       "regionCodeCn": "CN",
       "regionCodeDev": "Dev",
@@ -6790,6 +6976,58 @@
     }
   },
   "newChat": {
+    "homeSuggestions": {
+      "shuffle": "换一批",
+      "dismiss": "不再显示",
+      "downloadsDesktop": {
+        "label": "看看我的下载和桌面堆了什么，列一份该清理的清单",
+        "prompt": "看一下我的下载文件夹和桌面，统计都堆了些什么：占空间最大的、明显重复的、半年以上没动过的、以及能安全归档的。给我一份清单，每一项标清在哪、多大、为什么建议处理。这一轮只看不动，等我确认再说要不要动手。"
+      },
+      "whatCindyCanDo": {
+        "label": "看看我这台电脑上都有什么，你能帮我做哪些事",
+        "prompt": "看一下我这台电脑上装了什么、我平时在弄什么类型的东西，据此判断我大概是做什么的。然后告诉我：以你的能力，最能帮到我的具体是哪几件事，每件用一句话说清在什么场景下用、能替我省掉什么。不要念功能清单，要针对我这台机器上真实存在的东西说。"
+      },
+      "recentDocs": {
+        "label": "看一遍我最近在弄的文档，帮我理成一份清单",
+        "prompt": "看一下我最近一段时间打开和改过的文档，按主题归一归，告诉我我手上大概有几摊事、每摊到哪一步了、有没有明显烂尾的。给我一份清单，标清每份文件在哪。只读，不要动我的文件。"
+      },
+      "listCodeProjects": {
+        "label": "把我电脑上的代码项目列出来，讲清每个是干什么的",
+        "prompt": "在我常用的目录里找出所有代码项目，列成一份清单：每个项目一句话说清是干什么的、用什么写的、最近一次改动是什么时候。然后指出哪几个看起来是主线、哪几个像是已经放弃的。如果一个都没找到，直接告诉我没找到。这一轮只读，不要改任何文件。"
+      },
+      "storageUsage": {
+        "label": "盘一下这台电脑的存储，空间到底被什么吃掉了",
+        "prompt": "盘一遍这台电脑的存储：按占用从大到小列出目录和文件，指出哪些是缓存、哪些是重复、哪些是我大概忘了的旧东西。给我一份占用排行加一句结论：删掉哪几类能腾出最多空间。只统计，不要删任何东西。"
+      },
+      "unusedApps": {
+        "label": "盘一下我装了哪些应用，哪些很久没用还占着地方",
+        "prompt": "看一下这台电脑装了哪些应用，按占用空间和最近使用时间排一排，指出哪些很久没打开还占着大块地方。给我一份清单，先不要卸载任何东西。"
+      },
+      "uncommittedChanges": {
+        "label": "找出我最近在改的项目，看看有什么没提交的、有没有隐患",
+        "prompt": "找出我最近动过的那个代码项目，看一遍还没提交的改动，告诉我这些改动在干什么、有没有明显的问题或漏掉的地方。只读，不要动我的文件，也不要提交任何东西。"
+      },
+      "devEnvironment": {
+        "label": "检查一遍我的开发环境，有没有该修的",
+        "prompt": "检查这台机器的开发环境：装了哪些语言运行时和包管理器、各自什么版本、有没有版本冲突或者明显过旧的、git 配置有没有问题。给我一份现状清单加一句结论：哪几处建议先修。只检查，不要自己动手装或改配置。"
+      },
+      "whySlow": {
+        "label": "查查电脑为什么卡",
+        "prompt": "查这台电脑现在为什么卡：负载、内存、磁盘、开机时长、占 CPU/内存最多的几个进程。用几句话给结论和依据。只读，不要改任何东西，不要杀进程，不要问我开了什么。"
+      },
+      "diagnoseNetwork": {
+        "label": "诊断一下网速",
+        "prompt": "诊断这台电脑的网络：ping、DNS、现在是有线还是 Wi-Fi，用一两句话给结论。不要跑长时间测速，不要问运营商。"
+      },
+      "subscriptionSpend": {
+        "label": "盘点我的订阅支出",
+        "prompt": "扫一遍下载、收据和本地账单，盘点我的订阅都在扣多少钱：列出服务名和金额。找不到就直接说找不到。不要改订阅、不要问银行卡、不要登录邮箱。"
+      },
+      "expenseTracker": {
+        "label": "做个记账小工具",
+        "prompt": "在这个任务的工作目录里做一个能直接打开的本地记账小工具：日期、金额、分类、备注。不要后端、不要问还要哪些功能。"
+      }
+    },
     "noProvider": {
       "title": "当前模型没有可用来源",
       "description": "当前模型还没有已连接的来源，请先在设置里连接一个再发送。",
@@ -7038,6 +7276,7 @@
         "layoutTryUnified": "尝试新选择器",
         "layoutOriginal": "切回老版",
         "addFavorite": "存为收藏",
+        "customize": "自定义",
         "removeFavorite": "取消收藏",
         "favoriteConfig": "收藏配置",
         "recommended": "推荐",
@@ -7257,6 +7496,11 @@
       },
       "remoteSwitchFailed": "远程设置切换失败，未生效",
       "switchFailed": "设置切换失败，未生效",
+      "modelWindowUnknown": {
+        "custom": "模型未切换：目标模型「{{model}}」缺少上下文窗口信息。请在「{{provider}}」的模型设置中补充后重试。",
+        "builtin": "模型未切换：无法确认目标模型「{{model}}」的上下文窗口。请刷新「{{provider}}」的模型列表；若仍失败，请重新连接该供应商。",
+        "openSettings": "去设置"
+      },
       "permissionSwitchFailed": "权限模式切换失败，已保留原设置",
       "fullAccessConfirmation": {
         "title": "开启 Full access？",
@@ -7289,7 +7533,7 @@
         "title": "这个模型装不下当前对话",
         "warnToast": "这段对话已经用了 {{used}}，换过去大约会占新模型容量（{{total}}）的 {{pct}}%",
         "overflowDescription": "这段对话已经用了 {{used}}，超过新模型能放下的 {{total}}（约 {{pct}}%）。换过去后，{{appName}} 会先整理一份摘要再继续；对话记录还在，只是不会整段原样带给新模型。",
-        "overflowDescriptionRemote": "这段对话已经用了 {{used}}，超过新模型能放下的 {{total}}（约 {{pct}}%）。远程任务不会自动换窗，下一次发送仍可能失败。可以仍然切换，或留在当前模型。",
+        "overflowDescriptionRemote": "当前远程任务的上下文已用 {{used}} / {{total}}（约 {{pct}}%），无法安全切换到这个小窗口模型。请保留当前模型，或新建任务后再选择。",
         "confirmSwitch": "切换并继续",
         "cancelSwitch": "先不换"
       },
@@ -7373,6 +7617,15 @@
     }
   },
   "onboarding": {
+    "homeZeroModel": {
+      "title": "登录 Cindy 继续使用",
+      "desc": "你还未配置任何模型，登录 Cindy 后即可使用数十种顶级大模型。",
+      "cta": "登录 Cindy",
+      "cloudTitle": "使用 Cindy 继续",
+      "cloudDesc": "你还未配置任何模型，开通官方服务即可使用数十种顶级大模型。",
+      "cloudCta": "开始使用",
+      "ownApi": "我有自己的模型 API 配置"
+    },
     "connectProvider": {
       "title": "连接一个模型供应商，开始对话",
       "desc": "还没有可用的模型。连接任意一个供应商即可开始对话。",
@@ -7463,12 +7716,17 @@
   },
   "chatgptAuthRecovery": {
     "title": "ChatGPT 登录已失效",
-    "systemSharedInvalidated": "{{appName}} 当前沿用了本机的 ChatGPT 登录。该登录已失效。请在 {{appName}} 中重新登录后重试。",
+    "systemSharedInvalidated": "{{appName}} 当前沿用了本机的 ChatGPT 登录。请先在 ChatGPT App 中恢复登录；这不会创建第二份凭证或挤掉本机登录。",
     "instanceIsolatedInvalidated": "{{appName}} 当前使用的是单独登录的 ChatGPT 账号。该登录已失效。请在 {{appName}} 中重新登录后重试。",
     "unknownInvalidated": "{{appName}} 当前的 ChatGPT 登录已失效。请重新登录后重试。",
     "recovered": "ChatGPT 登录已恢复，请重试。",
     "openApp": "打开 ChatGPT App",
     "relogin": "重新登录 ChatGPT",
+    "reloginRiskTitle": "仍要由 {{appName}} 重新登录？",
+    "reloginRiskDescription": "{{appName}} 会创建新的 OpenAI OAuth 登录凭证。通常不会影响 ChatGPT App；如果仍与系统 Codex 共用同一份凭证，相关应用可能会要求你重新登录。",
+    "reloginRiskConfirm": "接受风险并继续",
+    "devWriteBlocked": "开发环境默认只读共享本机 ChatGPT 登录，不能发起登录或改写凭证。确需测试 OAuth 时，请用隔离沙箱并显式设置 XDT_ALLOW_DEV_OAUTH_WRITE=1。",
+    "devReadOnly": "开发环境只读",
     "checking": "正在检测…",
     "recheck": "重新检测",
     "later": "稍后处理",
@@ -7649,7 +7907,7 @@
       "switchClaudeSubscriptionTitle": "把当前任务切换到 Claude.ai 订阅并重试",
       "switchingClaudeSubscription": "正在切换到 Claude.ai…",
       "claudeSubscriptionSwitchFailed": "无法切换到 Claude.ai 或重试当前任务：{{msg}}",
-      "budgetModelHint": "如果反复失败，可以切换到普通版 GPT 再试试。",
+      "codexAppServerRetired": "Codex 服务已重启或更换；当前请求已中断，请重新运行。",
       "codexAuthMissing": "远端 Codex 还没同步登录态（401 Unauthorized）。点击右侧「同步登录态」把本机 Codex 凭证推到远端 {{appName}} Codex home，然后重试发送。",
       "codexAuthMissingLocal": "Codex 凭证缺失或失效（401 Unauthorized）。请在 {{appName}} Settings → Codex 重新登录（登录后会自动重启 Codex app-server），或在终端跑 `codex login` + 在 Settings 切换一次鉴权模式来重启 app-server，然后新建任务再发。",
       "codexSessionExpired": "OpenAI 连接需要更新。重新连接 ChatGPT 后即可继续；{{appName}} 不会退出系统 Codex CLI，也不会要求你重新连接其他模型来源。",
@@ -7683,6 +7941,7 @@
       "networkHideRaw": "收起原始错误",
       "gatewayProxyTokenInvalid": "Cindy AI 凭据已失效。请点击「重试」。若仍失败，请退出后重新登录",
       "gatewayProxyTokenInvalidNoRetry": "Cindy AI 凭据已失效。若后续仍失败，请退出后重新登录",
+      "modelAccessDenied": "当前上游账号无权访问此模型。请切换模型，或向供应商确认模型访问权限",
       "silentStopContinue": "继续",
       "silentStopContinueTitle": "继续当前任务",
       "piTransportClosed": "远端 Pi 连接已中断（SSH 通道关闭）。远端任务仍在运行，重新连接后可以继续。",
@@ -8216,8 +8475,19 @@
       "showMore": "显示另外 {{count}} 个",
       "showLess": "收起",
       "artifactLabel": "成品",
-      "formats": { "pdf": "PDF", "docx": "Word", "pptx": "PPT", "xlsx": "Excel" },
-      "summary": { "pages": "{{count}} 页", "slides": "{{count}} 张幻灯片", "sheets": "{{count}} 个工作表", "rows": "{{count}} 行", "bytes": "{{count}}" }
+      "formats": {
+        "pdf": "PDF",
+        "docx": "Word",
+        "pptx": "PPT",
+        "xlsx": "Excel"
+      },
+      "summary": {
+        "pages": "{{count}} 页",
+        "slides": "{{count}} 张幻灯片",
+        "sheets": "{{count}} 个工作表",
+        "rows": "{{count}} 行",
+        "bytes": "{{count}}"
+      }
     },
     "turnChanges": {
       "title": "已更改 {{count}} 个文件",
@@ -8485,9 +8755,6 @@
         "tasksLoadFailed": "暂时读取不到 {{device}} 上的任务，正在自动重试…",
         "tasksPartiallyFailed": "暂时读取不到 {{device}} 上的任务，正在自动重试；先显示已加载的内容",
         "devicesLoading": "正在读取远程设备…",
-        "devicesLoadFailed": "无法读取远程设备列表。请检查连接后重试。",
-        "devicesPartiallyFailed": "无法刷新远程设备列表，当前仅显示已加载的内容。",
-        "retryDevices": "重新读取设备",
         "remoteSettings": "远程连接设置",
         "multiSelect": "多选",
         "deselect": "取消勾选",
@@ -8863,9 +9130,24 @@
           "merged": "已合并",
           "closed": "已关闭"
         },
-        "needsToken": "本地 gh CLI 未登录——让 Agent 执行一次 gh auth login 即可显示 PR 状态",
+        "ghNotLoggedIn": "本机 gh 尚未登录 GitHub，看不到 PR 状态",
+        "ghMissing": "未检测到 GitHub CLI（gh），看不到 PR 状态",
+        "notFound": "PR 不存在，或当前账号无权限查看",
         "statusUnknown": "状态获取失败",
         "openAria": "在浏览器打开 PR #{{number}}",
+        "clickToOpen": "点击在浏览器打开 PR",
+        "guidance": {
+          "login": {
+            "hint": "点击让 Agent 帮你登录",
+            "aria": "PR #{{number}} 状态不可用：让 Agent 登录 GitHub",
+            "prompt": "请帮我登录 GitHub CLI：运行 `gh auth login -h github.com -w`，把出现的一次性设备码和网址告诉我；我在浏览器完成授权后，你再用 `gh auth status` 确认登录成功。"
+          },
+          "install": {
+            "hint": "点击让 Agent 帮你安装并登录",
+            "aria": "PR #{{number}} 状态不可用：让 Agent 安装并登录 GitHub CLI",
+            "prompt": "请帮我安装 GitHub CLI（gh，macOS 用 `brew install gh`，Windows 用 `winget install GitHub.cli`），然后运行 `gh auth login -h github.com -w` 登录，把出现的一次性设备码和网址告诉我；我在浏览器完成授权后，你再用 `gh auth status` 确认登录成功。"
+          }
+        },
         "unresolved": "{{count}} 条未解决的 review 评论"
       }
     },
@@ -9113,7 +9395,15 @@
           "5": "星期五",
           "6": "星期六"
         },
-        "short": { "0": "日", "1": "一", "2": "二", "3": "三", "4": "四", "5": "五", "6": "六" }
+        "short": {
+          "0": "日",
+          "1": "一",
+          "2": "二",
+          "3": "三",
+          "4": "四",
+          "5": "五",
+          "6": "六"
+        }
       },
       "time": {
         "last": "上次 {{value}}",
@@ -9954,10 +10244,21 @@
       "search": "搜索技能",
       "clearSearch": "清除技能搜索",
       "noSearchResults": "没有找到匹配的技能",
-      "browseTitle": "浏览 Skill Hub",
-      "browseDesc": "发现并安装更多技能",
-      "recommended": "推荐安装",
-      "recommendedEmpty": "暂无推荐",
+      "catalogFiltersAria": "SkillHub 分类",
+      "categoryFiltersAria": "按分类筛选技能",
+      "scrollCategoriesLeft": "向左查看更多分类",
+      "scrollCategoriesRight": "向右查看更多分类",
+      "categoryScrollAtStart": "已经是第一个分类",
+      "categoryScrollAtEnd": "已经是最后一个分类",
+      "catalogFilter": {
+        "public": "公开",
+        "organization": "组织",
+        "mine": "我的管理"
+      },
+      "catalogMore": "更多",
+      "loadMore": "加载更多",
+      "loadingMore": "加载中…",
+      "catalogEmpty": "当前分类暂无技能",
       "local": "本地技能",
       "localEmpty": "还没有本地技能",
       "installed": "已安装",
@@ -10139,7 +10440,6 @@
       "sortDownloads": "下载量",
       "sortLatest": "最近更新",
       "sortCreated": "最新发布",
-      "chipAvailable": "可获取",
       "chipAll": "全部",
       "chipMine": "我的管理",
       "ownerGroupPersonal": "个人",
@@ -10153,7 +10453,7 @@
       "installError": "未知错误"
     },
     "marketCard": {
-      "visibilityPublic": "XD.Inc",
+      "visibilityPublic": "公开",
       "visibilityDept": "团队",
       "visibilityPrivate": "个人",
       "timeLabel": "发布时间",
@@ -10178,6 +10478,7 @@
       }
     },
     "publishedStatus": {
+      "waitingReview": "等待审核",
       "machineReviewing": "机审中",
       "manualReviewing": "人工复核中",
       "rejected": "审核未通过"
@@ -10189,7 +10490,7 @@
       "emptyHint": "这个云端 Skill 没有返回可预览文件"
     },
     "marketDetail": {
-      "visibilityPublic": "XD.Inc 可见",
+      "visibilityPublic": "所有用户可见",
       "visibilityPrivate": "个人可见",
       "visibilityDept": "团队可见",
       "files": "文件",
@@ -10200,6 +10501,7 @@
       "forbidden": "没有权限操作这个 Skill",
       "notFound": "这个 Skill 已不存在，请返回列表刷新",
       "managementApiUnavailable": "Hub 管理接口暂未就绪，请稍后再试",
+      "invalidVisibility": "当前组织暂不支持该可见范围，请选择公开发布",
       "default": "操作失败，请稍后重试"
     },
     "installPicker": {
@@ -10244,17 +10546,15 @@
       "descriptionPlaceholder": "简要描述该 Skill 的用途",
       "visibilityLabel": "可见性",
       "visibilityPublicTitle": "公开",
-      "visibilityPublicDesc": "全公司可见 · 默认",
+      "visibilityPublicDesc": "所有用户可见 · 默认",
       "versionLabel": "版本号",
       "versionFormatHint": "格式：x.y.z (例如 1.0.1)",
-      "categoryLabel": "分类",
-      "categoryAuto": "自动",
-      "categoryPlaceholder": "请选择分类",
-      "categoryLoading": "正在加载分类…",
-      "categoryLoadFailed": "分类加载失败，请重试",
-      "categoryEmpty": "当前没有可用分类",
-      "categoryRequired": "请选择分类后再发布",
-      "categoryInvalid": "当前分类已不可用，请重新选择",
+      "categoryLabel": "标签",
+      "categoryPlaceholder": "请选择标签（可选）",
+      "categoryLoading": "正在加载标签…",
+      "categoryLoadFailed": "标签加载失败，请重试",
+      "categoryEmpty": "当前没有可用的平台标签",
+      "categoryInvalid": "一个或多个标签已不可用，请重新选择",
       "retryLoadCategories": "重试",
       "extraDeptGroup": "部门",
       "extraTeamGroup": "团队",
@@ -10372,6 +10672,14 @@
         "title": "已取消",
         "message": ""
       },
+      "SKILL_HUB_READ_ONLY": {
+        "title": "当前组织仅支持浏览",
+        "message": "当前组织的技能目录暂不支持发布或管理"
+      },
+      "INVALID_VISIBILITY": {
+        "title": "可见范围不可用",
+        "message": "请选择当前发布身份支持的可见范围"
+      },
       "INTERNAL": {
         "title": "服务器错误",
         "message": "发布失败，请稍后重试"
@@ -10385,8 +10693,12 @@
       "dismiss": "知道了",
       "passedTitle": "安全扫描通过",
       "passedDesc": "该版本已通过所有安全检查，现已发布到市场。",
+      "pendingTitle": "已提交，等待平台审核",
+      "pendingDesc": "安全扫描已经完成，平台审核通过后会自动发布到公开市场。",
       "failedTitle": "安全扫描未通过",
       "failedDesc": "该版本因安全扫描不达标被标记为 {{status}}，暂时无法在市场中被其他用户安装。请修复以下问题后重新发布。",
+      "processingFailedTitle": "发布处理失败",
+      "processingFailedDesc": "该版本已上传，但服务器在处理发布时发生内部错误。这不是安全检查拒绝，请稍后重新发布。",
       "copyReviewResult": "复制审核结果",
       "copiedReviewResult": "已复制",
       "copyReviewResultFailed": "复制失败",
@@ -10399,12 +10711,14 @@
         "passed": "已通过",
         "failed": "未通过",
         "warning": "有风险",
+        "waitingReview": "等待审核",
         "reviewing": "审核中",
         "unavailable": "暂不可用"
       },
       "gateLabel": {
         "llmReview": "LLM 审核",
-        "securityScan": "安全扫描"
+        "securityScan": "安全扫描",
+        "publicationProcessing": "发布处理"
       }
     },
     "diffPanel": {
@@ -10456,7 +10770,7 @@
       "title": "管理可见性",
       "tierLabel": "可见性",
       "tierPublic": "公开",
-      "tierPublicDesc": "全公司可见",
+      "tierPublicDesc": "所有用户可见",
       "tierTeam": "给团队使用",
       "tierTeamDesc": "指定团队可见",
       "tierPrivate": "仅自己使用",
@@ -10464,13 +10778,18 @@
       "save": "保存",
       "saving": "保存中…",
       "saved": "管理可见性已保存",
+      "submitReview": "提交审核",
+      "waitingReview": "等待审核",
+      "publicReviewSubmitted": "已提交当前版本的公开审核",
+      "publicReviewPending": "当前版本正在等待公开审核，审核通过后会进入公开市场。",
+      "publicReviewRejected": "公开审核未通过：{{reason}}",
       "impactPrivate": "保存后，仅你可见。",
       "impactPrivateLeavingMarket": "保存后会从公开市场下架，并转为自己可见；已通过审核的版本会保留审核通过状态。",
       "impactPrivateTeam": "保存后转为自己可见；团队将看不到这个 Skill，也无法管理。",
       "impactPrivateTeamLeavingMarket": "保存后会从公开市场下架，并转为自己可见；团队将看不到这个 Skill，也无法管理。已通过审核的版本会保留审核通过状态。",
       "impactTeam": "保存后，选中的团队或部门可以看到并下载。",
       "impactTeamLeavingMarket": "保存后会从公开市场下架，只有选中的团队或部门可以看到并下载；已通过审核的版本会保留审核通过状态。",
-      "impactPublic": "保存后进入公开市场；若当前已审核通过，会立即对外可见，审核状态会保留。"
+      "impactPublic": "提交当前版本的公开审核；审核通过后进入公开市场，无需发布新版本。"
     },
     "marketEdit": {
       "saved": "市场展示信息已保存",
@@ -10596,7 +10915,7 @@
     },
     "confirm": {
       "logoutTitle": "退出登录",
-      "logoutDescription": "确定要退出这台设备上的所有账号吗？",
+      "logoutDescription": "确定要退出当前账号吗？",
       "logoutConfirm": "退出",
       "cancel": "取消",
       "sessionExpiredTitle": "登录已过期",
@@ -11047,6 +11366,32 @@
         "action": "复制订单 ID {{id}}",
         "success": "订单 ID 已复制",
         "failed": "复制订单 ID 失败，请重试"
+      },
+      "invoice": {
+        "action": "申请开票",
+        "title": "申请开票",
+        "description": "请将以下信息发送至客服邮箱 {{email}}，以申请开具发票。",
+        "requiredInfo": "邮件中请提供以下信息：",
+        "emailSubject": "申请开具订单 {{orderId}} 的发票",
+        "emailBody": "您好，\n\n我想申请开具以下订单的发票：\n\n────────────────────\n订单号：{{orderId}}\n应用：{{application}}\n支付方式：{{paymentMethod}}\n开票金额：{{amount}}\n发票抬头：\n联系人：\n联系电话：\n邮箱：\n────────────────────\n\n谢谢。",
+        "sendAction": "发送开票申请",
+        "emailCopied": "客服邮箱已复制",
+        "emailCopyFailed": "复制客服邮箱失败，请重试",
+        "sendFailed": "无法打开邮件应用，请手动发送邮件至 {{email}}。",
+        "gmailFallbackTitle": "改用 Gmail 打开？",
+        "gmailFallbackDescription": "开票申请中包含订单信息。打开 Gmail 会将这些信息分享给 Google，是否继续？",
+        "gmailFallbackConfirm": "打开 Gmail",
+        "notAvailable": "暂无信息",
+        "fields": {
+          "orderId": "订单号",
+          "application": "应用",
+          "paymentMethod": "支付方式",
+          "amount": "开票金额",
+          "invoiceTitle": "发票抬头",
+          "contact": "联系人",
+          "phone": "联系电话",
+          "email": "邮箱"
+        }
       },
       "states": {
         "completed": "已完成",

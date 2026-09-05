@@ -147,24 +147,22 @@ export function setClaudeProxyOAuthSpawnChecker(fn: () => boolean): void {
 // sdkSessionId 当前无对应活跃会话。routingTransform 据此查该会话显式选定的供应商做统一路由;
 // 未注入 / 查不到 / 该会话没选供应商 → 回落 spawn-aware 默认路由(与未升级行为字节级一致)。
 //
-// 热路径必须永不抛:ipcMaker 在 owner boundary 会抛 PRECONDITION_FAILED,proxy 引擎捕获后
-// fail-open 默认 LiteLLM,provider-oauth 占位 key 原样上游 → 确定性 401。setter 内吞掉异常,
-// 当作「会话未反解」;真正的 fail-closed 在 routingTransform 收口(boundary pending → 503,
-// 含订阅桥;非 boundary 的占位透传合同不变)。
+// 查询失败与查无会话不同:异常交由 routingTransform 的统一 catch 返回本地 503。
+// 吞掉异常并返回 null 会丢失显式来源归属,把 custom 请求带到默认网关 (#3631)。
 let _resolveCcSessionId: ((sdkSessionId: string) => string | null) | null = null;
 export function setClaudeProxySessionIdResolver(
   fn: (sdkSessionId: string) => string | null,
 ): void {
-  _resolveCcSessionId = (sdkSessionId) => {
-    try {
-      return fn(sdkSessionId);
-    } catch (err) {
-      log.warn('cc session resolver threw; treating as unresolved', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return null;
-    }
-  };
+  _resolveCcSessionId = fn;
+}
+
+/** Best-effort observers must not fail a response; routing uses the throwing resolver directly. */
+function observeCcSessionId(sdkSessionId: string): string | null {
+  try {
+    return _resolveCcSessionId?.(sdkSessionId) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // owner-boundary 探针 —— 由 host 注入 isAppSessionBoundaryPending。pending 期间
@@ -252,6 +250,56 @@ function headerValue(headers: Readonly<Record<string, string>>, name: string): s
     if (k.toLowerCase() === lower && typeof v === 'string' && v.length > 0) return v;
   }
   return null;
+}
+
+/**
+ * Pi chooses the payload API; the proxy only borrows Gateway's matching authenticated front door.
+ * Messages uses the Claude route, while Responses, Chat Completions, and native Gemini use the
+ * Codex/OpenAI route. The original URL and body remain untouched so Gateway performs no client-side
+ * protocol coercion.
+ */
+export function piGatewayRequestAgent(
+  requestUrl: string,
+): 'claude-code' | 'codex' {
+  try {
+    const pathname = new URL(requestUrl, 'http://127.0.0.1').pathname.replace(/\/+$/, '');
+    return pathname.endsWith('/messages') ? 'claude-code' : 'codex';
+  } catch {
+    return 'codex';
+  }
+}
+
+function sanitizePiGatewayDecision(
+  decision: RoutingDecision | null,
+  requestUrl: string,
+): RoutingDecision | null {
+  let pathname: string;
+  try {
+    pathname = new URL(requestUrl, 'http://127.0.0.1').pathname;
+  } catch {
+    return decision;
+  }
+  if (!pathname.includes('/v1beta/')) return decision;
+  // Pi must populate Google's SDK header to satisfy its local model schema, but for Cindy Gateway
+  // that value is only a process placeholder (or the Gateway bearer key), never a Google API key.
+  // Strip it even when auth routing produced no override (for example during a transient key read
+  // failure), so the default upstream can never receive the stale client-side credential.
+  return {
+    ...(decision ?? {}),
+    headerDelete: [
+      ...new Set([
+        ...(decision?.headerDelete ?? []),
+        'x-goog-api-key',
+        ...(!decision
+          ? [
+              'x-cindy-pi-session-id',
+              'x-cindy-pi-session-token',
+              'x-cindy-pi-provider-id',
+            ]
+          : []),
+      ]),
+    ],
+  };
 }
 
 function isOwnerBoundaryPending(): boolean {
@@ -509,7 +557,19 @@ export function createModelRoutingTransform(): RoutingTransform {
         localHandler: getPiNativeSubscriptionHandler(piProviderId, piSessionId),
       };
     }
-    const requestAgent = piSessionId ? 'pi' : 'claude-code';
+    const isPiGatewayRequest = Boolean(
+      piSessionId &&
+        (subagentRoute
+          ? piProviderId === null || piProviderId === 'xd'
+          : piProviderId === 'xd' ||
+            (piProviderId === null &&
+              (selectedPiProviderId === null || selectedPiProviderId === 'xd'))),
+    );
+    const requestAgent = piSessionId
+      ? isPiGatewayRequest
+        ? piGatewayRequestAgent(ctx.url)
+        : 'pi'
+      : 'claude-code';
     // 后台活动检测(claude-session-background-activity):凡带 cc 会话标头的请求
     // 都记一笔活动时刻。routingTransform 会处理无 body 控制面请求与 JSON 请求；
     // 非 JSON 的 POST/PUT/PATCH 不经过这里,由响应侧 observer 兜底观察活动。
@@ -599,6 +659,15 @@ export function createModelRoutingTransform(): RoutingTransform {
 
     const gatewayKey = _readGatewayKey();
 
+    if (subagentRoute && isPiGatewayRequest) {
+      // A `cindy` child route is provider-null by design. Route it by the request API instead of
+      // accidentally inheriting the parent session provider.
+      return sanitizePiGatewayDecision(
+        gatewayDefaultRouteDecision(requestAgent, gatewayKey) ?? unavailablePiProviderRoute('xd'),
+        ctx.url,
+      );
+    }
+
     if (subagentRoute && piProviderId) {
       // A provider-pinned child token is both the authorization boundary and
       // the route source. Re-reading the parent session provider here would
@@ -616,7 +685,16 @@ export function createModelRoutingTransform(): RoutingTransform {
       // 不在订阅直连供应商(xai / openai-cc)声明的 modelPrefixes 范围内 → 返回 null,
       // 落到下方 ② 段 spawn 默认路由,分类器照常走网关/直连(issue #886)。
       const perSession = resolveSessionRouteDecision(sessionId, requestAgent, gatewayKey, wireModel);
-      const recordSelectedRoute = <T extends object | null>(route: T): T => {
+      const recordSelectedRoute = (route: RoutingDecision | null): RoutingDecision | null => {
+        // A missing descriptor is not permission to use the default upstream.
+        // Keep builtin subscription scope fallbacks, but pin explicit custom
+        // requests even while their catalog/runtime is temporarily unavailable.
+        if (!route && requestAgent === 'claude-code' && explicitCustomProvider) {
+          return retryableLocalRoute(
+            'provider_route_unavailable',
+            'The selected provider route is unavailable; check its configuration and retry.',
+          );
+        }
         if (
           requestAgent === 'claude-code'
           && route
@@ -628,10 +706,15 @@ export function createModelRoutingTransform(): RoutingTransform {
             selectedProviderId === 'xd' ? 'gateway' : 'subscription',
           );
         }
-        return route;
+        return isPiGatewayRequest ? sanitizePiGatewayDecision(route, ctx.url) : route;
       };
       if (perSession instanceof Promise) return perSession.then(recordSelectedRoute);
-      if (perSession) return recordSelectedRoute(perSession);
+      if (perSession || (requestAgent === 'claude-code' && explicitCustomProvider)) {
+        return recordSelectedRoute(perSession);
+      }
+      if (isPiGatewayRequest && selectedProviderId === 'xd') {
+        return sanitizePiGatewayDecision(null, ctx.url);
+      }
     }
 
     // ①.5 隐式来源(sessionId 未反解出/未绑定供应商,或 ① 段 scope 门放行下来):按模型
@@ -734,7 +817,7 @@ export function createModelRoutingTransform(): RoutingTransform {
       if (decision) {
         // oauth-spawn 默认:全量换网关 key(防订阅 token 泄漏到网关)。
         recordResolvedDefaultRoute('gateway');
-        return decision;
+        return isPiGatewayRequest ? sanitizePiGatewayDecision(decision, ctx.url) : decision;
       }
       if (apiKeyHeader !== null) {
         // 占位 key 且无网关 key:保持改动前行为(passthrough,上游 401)——下方的
@@ -850,18 +933,16 @@ export async function ensureAnthropicCompatProxyReady(): Promise<void> {
         createClaudeRateLimitHeadersObserver(),
         createClaudeGatewayErrorObserver(),
         // 后台活动检测:响应流按节流刷新活动时刻(覆盖长 SSE 跨过 turn 结束点仍在吐字的场景)。
-        createClaudeSessionActivityResponseObserver((sdkSessionId) =>
-          _resolveCcSessionId ? _resolveCcSessionId(sdkSessionId) : null,
-        ),
+        createClaudeSessionActivityResponseObserver(observeCcSessionId),
         createClaudeAutoClassifierFailureObserver(
-          (sdkSessionId) => (_resolveCcSessionId ? _resolveCcSessionId(sdkSessionId) : null),
+          observeCcSessionId,
           { logger: log },
         ),
         createProviderUpstreamErrorObserver({
           agent: 'claude-code',
           resolveUserProviderId: (requestHeaders) => {
             const sdkSessionId = requestHeaders['x-claude-code-session-id'];
-            const sessionId = sdkSessionId && _resolveCcSessionId ? _resolveCcSessionId(sdkSessionId) : null;
+            const sessionId = sdkSessionId ? observeCcSessionId(sdkSessionId) : null;
             return sessionId ? getUserProviderIdForSession(sessionId) : null;
           },
           resolveUserProviderName: (providerId) =>
@@ -934,9 +1015,7 @@ export async function ensureAnthropicCompatProxyReady(): Promise<void> {
         createXaiModelInputSanitizeTransform(),
         createOllamaAnthropicSystemTransform((headers) => {
           const sdkSessionId = headers['x-claude-code-session-id'];
-          return sdkSessionId && _resolveCcSessionId
-            ? _resolveCcSessionId(sdkSessionId)
-            : null;
+          return sdkSessionId ? observeCcSessionId(sdkSessionId) : null;
         }),
         stripNonAnthropicFields,
       ],

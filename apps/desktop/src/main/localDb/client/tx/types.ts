@@ -29,6 +29,7 @@ export type DbTxName =
   | 'message.delete'
   | 'im.deleteBindings'
   | 'im.replaceBinding'
+  | 'im.rotateSession'
   | 'wechatActivateBindingEpoch'
   | 'wechatCommitPollBatch'
   | 'wechatLeaseNextTask'
@@ -145,6 +146,8 @@ export interface ForkSessionArgs {
     updatedAt: number;
   };
   uuidMap: Array<[string, string]> | Record<string, string>;
+  /** Rebind copied provider-native fork anchors to the child vendor session. */
+  nativeForkAnchorSessionMap?: Array<[string, string]> | Record<string, string>;
   /** Legacy Claude imports may have stored transcript parentage in parentUuid. */
   legacyTranscriptParentUuids?: string[];
   /** Imported Claude assistant rows may retain an external tool-use parent id. */
@@ -182,6 +185,8 @@ export interface EmbeddingRecordFailuresArgs {
   jobs: Array<{ rowid: number; attempts: number }>;
   errMsg: string;
   now: number;
+  /** #3416:确定性失败(INVALID_MODEL 等)整批直接进 'failed' 终态,不走退避。 */
+  terminal?: boolean;
 }
 
 export interface EmbeddingEnqueueArgs {
@@ -802,6 +807,37 @@ export interface WechatUnbindCleanupResult {
   filePaths: string[];
 }
 
+export interface ImRotateSessionArgs {
+  previousSessionId: string | null;
+  detachBinding: {
+    channel: string;
+    botContextId: string;
+    userId: string;
+    scopeKey: string;
+    targetSessionId: string;
+  } | null;
+  session: {
+    id: string;
+    title: string;
+    workingDir: string;
+    workspaceKind: 'project' | 'dialogue';
+    model: string;
+    effort: string;
+    permissionMode: string;
+    fastMode: boolean;
+    agentKind: string;
+    providerId: string | null;
+    source: string;
+    imBotContextId: string;
+    imUserId: string;
+  };
+  now: number;
+}
+
+export interface ImRotateSessionResult {
+  previousStatus: 'active' | 'archived' | 'deleted' | null;
+}
+
 export type DbTxArgsByName = {
   'codex.importMessages': CodexImportMessagesArgs;
   'claude.importMessages': ClaudeImportMessagesArgs;
@@ -833,6 +869,7 @@ export type DbTxArgsByName = {
   'message.delete': MessageDeleteArgs;
   'im.deleteBindings': ImDeleteBindingsArgs;
   'im.replaceBinding': ImReplaceBindingArgs;
+  'im.rotateSession': ImRotateSessionArgs;
   wechatActivateBindingEpoch: WechatActivateBindingEpochArgs;
   wechatCommitPollBatch: WechatCommitPollBatchArgs;
   wechatLeaseNextTask: WechatLeaseNextTaskArgs;
@@ -884,6 +921,7 @@ export type DbTxResultByName = {
   'message.delete': MessageDeleteResult;
   'im.deleteBindings': undefined;
   'im.replaceBinding': undefined;
+  'im.rotateSession': ImRotateSessionResult;
   wechatActivateBindingEpoch: WechatActivateBindingEpochResult;
   wechatCommitPollBatch: WechatCommitPollBatchResult;
   wechatLeaseNextTask: WechatLeasedTask | null;

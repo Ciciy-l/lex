@@ -75,6 +75,7 @@ import { migrateManagedOllamaProvider } from '../local-model-runtime/managedOlla
 import { migrateLocalConnectProvider } from '../../shared/localConnectHarness.js';
 import {
   setCustomProviderKeyReader,
+  setCustomProviderHeaderReader,
   setOAuthTokenReader,
   setProviderOAuthTokenReader,
   setProviderViewsReader,
@@ -92,7 +93,11 @@ import {
   addProviderSecretsClearedListener,
 } from '../secrets/providerSecretStore.js';
 import { readClaudeApiKey, desktopCodexAuthAdapter } from './auth-adapters.js';
-import { getProviderSecretStore, readCustomProviderKey } from '../secrets/providerSecretStore.js';
+import {
+  getProviderSecretStore,
+  readCustomProviderHeaders,
+  readCustomProviderKey,
+} from '../secrets/providerSecretStore.js';
 import { hasClaudeAiOAuth, hasClaudeAiOAuthUnbound } from './claude-credentials-store.js';
 import { getValidClaudeAiOAuth } from './claude-oauth-refresh.js';
 import {
@@ -432,6 +437,7 @@ export function ensureActiveCatalogLoaded(): Promise<Catalog> {
   // 接通自定义供应商密钥读取器（idempotent）：provider-route 用 setter 注入避免触电，
   // 这里在路由发生前（splash 早于任何 turn）把真实 safeStorage 读取接进去。
   setCustomProviderKeyReader(readCustomProviderKey);
+  setCustomProviderHeaderReader(readCustomProviderHeaders);
   setProviderOAuthTokenReader((providerId, agent, options) => {
     if (providerId === 'xai') return readXaiProviderOAuthToken(options);
     // Codex and Pi processes do not carry Claude Code's native OAuth credential.
@@ -486,6 +492,7 @@ export function ensureActiveCatalogLoaded(): Promise<Catalog> {
     const sourceKey = catalogSourceKey(source);
     // 首次加载时顺手清掉旧版磁盘缓存孤儿（fire-and-forget，每进程一次）。
     void cleanupLegacyCatalogCache();
+    let authorityCatalog: CatalogLoadResult['authorityCatalog'] = null;
     let capabilityEvidence: CatalogCapabilityEvidence = 'fallback';
     let unverifiedXdMediaKinds: CatalogLoadResult['unverifiedXdMediaKinds'] = [
       'image',
@@ -493,12 +500,13 @@ export function ensureActiveCatalogLoaded(): Promise<Catalog> {
       'embedding',
     ];
     activeInflight = loadCatalog(source, io, (result) => {
+      authorityCatalog = result.authorityCatalog;
       capabilityEvidence = result.capabilityEvidence;
       unverifiedXdMediaKinds = result.unverifiedXdMediaKinds;
     })
       .then(async (catalog) => {
         activeCatalogSourceKey = sourceKey;
-        setActiveCatalog(catalog, { capabilityEvidence, unverifiedXdMediaKinds });
+        setActiveCatalog(catalog, { authorityCatalog, capabilityEvidence, unverifiedXdMediaKinds });
         syncLocalCatalogOverridesIntoActiveCatalog();
         getActiveCatalog();
         logModelPlaneWarnings();
@@ -560,6 +568,7 @@ export function reloadActiveCatalogForEndpointChange(): Promise<Catalog> {
   setActiveCatalog(BUNDLED_CATALOG, { capabilityEvidence: 'fallback' });
   broadcastReferenceModelPricing();
 
+  let authorityCatalog: CatalogLoadResult['authorityCatalog'] = null;
   let capabilityEvidence: CatalogCapabilityEvidence = 'fallback';
   let unverifiedXdMediaKinds: CatalogLoadResult['unverifiedXdMediaKinds'] = [
     'image',
@@ -567,6 +576,7 @@ export function reloadActiveCatalogForEndpointChange(): Promise<Catalog> {
     'embedding',
   ];
   const flight = loadCatalog(source, io, (result) => {
+    authorityCatalog = result.authorityCatalog;
     capabilityEvidence = result.capabilityEvidence;
     unverifiedXdMediaKinds = result.unverifiedXdMediaKinds;
   })
@@ -578,7 +588,7 @@ export function reloadActiveCatalogForEndpointChange(): Promise<Catalog> {
         return getActiveCatalog();
       }
       activeCatalogSourceKey = sourceKey;
-      setActiveCatalog(catalog, { capabilityEvidence, unverifiedXdMediaKinds });
+      setActiveCatalog(catalog, { authorityCatalog, capabilityEvidence, unverifiedXdMediaKinds });
       broadcastReferenceModelPricing();
       return getActiveCatalog();
     })
@@ -618,7 +628,7 @@ export async function refreshActiveCatalogFromSource(): Promise<Catalog> {
   }
   const generation = endpointReloadGeneration;
   const flight = loadCatalogWithSource(sourceConfig, io)
-    .then(({ catalog, source, capabilityEvidence, unverifiedXdMediaKinds }) => {
+    .then(({ catalog, authorityCatalog, source, capabilityEvidence, unverifiedXdMediaKinds }) => {
       if (source === 'bundled') {
         throw new Error('catalog refresh exhausted configured sources; keeping current snapshot');
       }
@@ -642,6 +652,7 @@ export async function refreshActiveCatalogFromSource(): Promise<Catalog> {
           // 选中 current 还是 fallback，都必须把完整快照与能力证据原子安装。
           // commitActiveCatalogSnapshot 会保留完整快照与证据均相同的精确 no-op。
           commitActiveCatalogSnapshot(catalog, {
+            authorityCatalog,
             capabilityEvidence,
             unverifiedXdMediaKinds,
           });
@@ -666,7 +677,11 @@ export async function refreshActiveCatalogFromSource(): Promise<Catalog> {
           return getActiveCatalog();
         }
       }
-      commitActiveCatalogSnapshot(catalog, { capabilityEvidence, unverifiedXdMediaKinds });
+      commitActiveCatalogSnapshot(catalog, {
+        authorityCatalog,
+        capabilityEvidence,
+        unverifiedXdMediaKinds,
+      });
       // computeMerged 在这里同步完成，确保告警属于刚提交的同一代目录；不能读取
       // 上一代惰性缓存留下的 warnings。
       const activeCatalog = getActiveCatalog();
@@ -741,16 +756,24 @@ export async function refreshDiscoveredCodexModels(
  *
  * best-effort：localDb 未就绪 / 读失败时清空 custom（不抛），不影响内置供应商与路由默认行为。
  */
+// Same-owner refreshes can overlap (startup readiness, model discovery, and Settings CRUD). An
+// older DB read must never publish after a newer one or a persisted capability can disappear from
+// the in-memory routing catalog until the next full app restart.
+let customProviderCatalogRefreshGeneration = 0;
+
 export async function refreshCustomProvidersIntoCatalog(
   shouldApply: () => boolean = () => true,
 ): Promise<void> {
+  if (!shouldApply()) {
+    log.info('discarded stale custom provider catalog refresh');
+    return;
+  }
+  const generation = ++customProviderCatalogRefreshGeneration;
+  const isCurrent = (): boolean =>
+    generation === customProviderCatalogRefreshGeneration && shouldApply();
   try {
-    if (!shouldApply()) {
-      log.info('discarded stale custom provider catalog refresh');
-      return;
-    }
     const configs = await listCustomProvidersWithSecureHeaders();
-    if (!shouldApply()) {
+    if (!isCurrent()) {
       log.info('discarded stale custom provider catalog refresh');
       return;
     }
@@ -765,7 +788,7 @@ export async function refreshCustomProvidersIntoCatalog(
         if (!previous || JSON.stringify(config.runtimes) === JSON.stringify(previous.runtimes)) {
           return [];
         }
-        if (!shouldApply()) return [];
+        if (!isCurrent()) return [];
         return [
           updateCustomProviderIfUnchanged(previous.id, previous, config).catch((err: unknown) => {
             log.warn('persist migrated custom provider failed', {
@@ -777,13 +800,13 @@ export async function refreshCustomProvidersIntoCatalog(
         ];
       }),
     );
-    if (!shouldApply()) {
+    if (!isCurrent()) {
       log.info('discarded stale custom provider catalog refresh after migration');
       return;
     }
     if (persisted.some((applied) => applied !== true)) {
       const fresh = await listCustomProvidersWithSecureHeaders();
-      if (!shouldApply()) {
+      if (!isCurrent()) {
         log.info('discarded stale custom provider catalog refresh after cas miss');
         return;
       }
@@ -794,7 +817,7 @@ export async function refreshCustomProvidersIntoCatalog(
     setCustomProviderConfigs(next);
     log.info('custom providers merged into active catalog', { count: next.length });
   } catch (err) {
-    if (!shouldApply()) {
+    if (!isCurrent()) {
       log.info('discarded stale custom provider catalog refresh failure', {
         err: String(err),
       });

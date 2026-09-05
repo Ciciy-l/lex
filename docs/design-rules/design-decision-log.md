@@ -10,7 +10,224 @@
 > 2026-07-25 起 `§15` CINDY 皮肤族的决策史(红色体系重构、caret 改稿、vibrancy
 > 定稿等)已随 §15 保号重构迁入本文件,`DESIGN.md §15` 只保留现行规范。
 
+## 2026-09
+
+- **09-03** **DS-4 Button / Input 规格缺口六项裁决（拍板人 = 用户/设计师）**——
+  背景：`DESIGN.md §4` 按钮 `height ⚠ not yet specified`，hover / pressed / 字号字重 /
+  secondary token 归属 / SettingsTextInput ivory 底均未写死。本张把既有
+  PillButton / CtaPillButton / SettingsTextInput 升格进 `components/ui/`，
+  规格按下列裁决回写 §4（去掉 `⚠ not yet specified`）。
+  1. **G1 高度**：按钮双档 32/36px、输入框三档 32/36/40px，共用 4px 步进；按钮不设 40，
+     不为对称造无消费者的档。
+  2. **G2 hover**：机制统一为换色 token，禁用透明度 hover。Cta 私有原型的
+     `hover:opacity-90` 换成 `--accent-hover` 是**有意视觉变化**。
+  3. **G3 pressed**：进最低状态矩阵。
+     **值的实现方式在 2026-09-04 self-review 后改过一轮**：初版把 hover 记账成
+     既有 slot 的 alias（primary hover → `--surface-hover`、secondary pressed →
+     `--surface-chip`），pressed 用字面量（`#cfcfcd` / `#4a4a48` / `#1a1a1a`）。
+     复核发现两类问题：
+     - **暗色状态不可区分（真实缺陷）**：暗色下 `--surface-hover` 与 `--surface-chip`
+       同值，default-dark / cindy-dark / one-dark-pro / monokai-pro 四个主题
+       primary 悬停零反馈；`--surface-hover-soft` 在 cindy-dark 距
+       `--surface-elevated` 仅 2/255，secondary 同样失效。违反 `DESIGN.md §10`
+       双模式交付门槛。
+     - **字面量 pressed 不跟主题**：monokai-pro 色板 `#403E41`，按下会跳到
+       无关的 `#4a4a48`。
+     **改法与比例经用户 2026-09-04 补批**（越界经过见下方 09-04 条）：每一档从
+     **本变体的 rest 底色朝本变体的前景色**混色——hover 8%、pressed 自 hover 再 10%；
+     cta hover 仍是 `--accent-hover`，另给组件名 `--button-cta-hover` 便于 DS-8
+     落回 semantic。11 个内置主题实测每档 ΔRGB ≥ 8。守卫
+     `themes/__tests__/buttonStateContrast.test.ts`。这五个派生值按治理合同 §3.4
+     只登记不进 DTCG 影子层。
+  4. **G4 字号字重**：text-13 + font-medium（500），直接写进 §4。
+  5. **G5 secondary token**：`ui/button` secondary 绑 Tier-1
+     (`--surface-elevated` + `--border-default`)，不继承 `--settings-btn-secondary-*`。
+     同值性核查（默认 Light/Dark 快照）：**不同值**——Light fill
+     `settings-btn-secondary-bg` → `--surface-chip-alt` `#e5e5e5` vs
+     `--surface-elevated` `#ffffff`；Dark fill 同值 `#2c2c2a`。用户 2026-09-03
+     看对照图后裁决**接受有意统一成白底**（设置页这批灰药丸改成规范次级；
+     亮色从灰变白，暗色几乎不变）。2026-09-04 用户在隔离沙箱实机
+     （CINDY Light，设置通用 / 模型供应商）确认空心描边「可以，没问题」。
+  6. **G6 ivory**：保留为显式 `surface="ivory"` variant，三处标登记债
+     （§4 / 台账 `desktop.settings` 下一动作 / 组件注释）。本张不翻案。
+  落点：`DESIGN.md §4`、`components/ui/button.tsx`、`components/ui/input.tsx`、
+  `colors.ts` `button-*` token、影子包 `src/component/color.json`。
+
+- **09-04** **Button 状态梯改为派生，比例 hover 8% / pressed 10%（拍板人 = 用户/设计师）**——
+  取代 09-03 G2/G3 原本的「值从 `--surface-hover` 族现值取 / 用现有 chip-hover token
+  加深一档」。**改法的动因是缺陷，比例是新裁决**：
+  - 照原指令实现后，`--surface-hover` 在暗色下与 `--surface-chip` 同值，
+    default-dark / cindy-dark / one-dark-pro / monokai-pro 的 primary 悬停零反馈；
+    `--surface-hover-soft` 在 cindy-dark 距 `--surface-elevated` 仅 2/255，secondary 同样失效。
+    字面量 pressed 则不跟主题（monokai-pro 色板 `#403E41`，按下会跳到无关的 `#4a4a48`）。
+  - 定案：每档从本变体 rest 底色朝本变体前景色混色，**hover 8%、pressed 自 hover 再 10%**。
+    这与 G2 当初选换色 token 的理由同向——「能被主题 override，直接关系换风格只改颜料表」；
+    派生跟随任何主题覆盖，固定色号做不到。
+  - 实机验证（CINDY Dark，即修复前坏得最厉害的主题）：secondary rest `#1F1F1F` →
+    hover `45,45,45` → pressed `62,62,62`，悬停差值由 2 拉到 14。
+
+  **同时记下一次流程越界，供后续张次引用**：计划 §5 要求「六项裁决之外若再遇现状差异，
+  列出报告，不擅自统一」，G2/G3 也明确「值走记账，设计师 review 批」。执行方虽然报告了
+  暗色撞色这一差异，但在收到「全部修」后**自行选定了派生方案与 8% / 10% 两个比例并直接落地**，
+  没有把方案本身回交裁决——落地时这两个比例处于未获批状态，直到 2026-09-04 用户补批。
+  治理合同 §1.1 把这类具体色号列为「记账值」，合法改值路径是「同 PR 更新快照 + 交证据 +
+  设计师批准」；前三步当时已完成，缺的正是第四步。**结论不是「派生错了」，而是
+  「修缺陷可以自主，定值不可以」**——本条留档，避免被后人当成「执行方可自行发明设计值」的先例。
+
+- **09-04** **DS-4 两项次要差异裁决：输入框禁用态保留、域 alias 不回退（拍板人 = 用户/设计师）**——
+  这两项是 self-review 时补申报、当时尚未单独获批的差异。逐条走查后裁决：
+  1. **输入框禁用态 60% 不透明度：保留。** 全仓 19 个输入调用点里**只有 1 个**会传
+     `disabled`（`AgentResourceSection` 的「并发命令上限」，仅在三档预设写盘在途时为真）。
+     关键事实：该输入框**改造前就已经传 `disabled`**，只是没有任何视觉表现；而**同一
+     section 的三档预设按钮改造前就带 `opacity-60`**（`AgentResourceSection.tsx` 既有代码）。
+     所以改造前的实际观感是「按钮变淡、紧邻的数字框不变」——本项不是新增禁用观感，
+     是补齐同屏不一致。CINDY Light 合成后：边框 `#E4E4DF`→`#EEEEE9`、数字
+     `#1A1A1A`→`#757573`、填充与卡片同色故无变化。
+  2. **`ui/input` 保持绑 Tier-1，不回退域 alias。** 分裂风险已量化：仅在用户持有
+     **「新建本地副本」导出型本地主题**时可见。该导出把全部 520 个 token 解析成**字面量**
+     写进 JSON（`theme-service.ts` `exportThemeColors` 遍历整个 colorRegistry），而
+     `resolveThemeValue` 优先读本地主题字面量——于是这类用户改 `border-default` 时，
+     标准输入框（6 处）跟着变，被字面量钉住的 `--settings-input-border` 消费者（138 处）不变。
+     判定保留的三条理由：(a) **导入型 VSCode / Obsidian 主题零影响**——导入器只写 108 个
+     token、不含 `settings-input-*`，那批消费者会向上回落到同一个 slot，一致；
+     (b) **这条断层线既存、非 DS-4 新造**：导出型主题里「直接读 `border-default`」（全仓
+     513 处）与「读 `settings-input-border`」（138 处）本来就会因改其一而分裂，DS-4 只是把
+     6 个调用点从 138 那侧挪到 513 那侧，即让标准件站到人多的一侧；
+     (c) `settings-input-placeholder` 一项本就被 `local-themes-normalize` 丢弃并转成
+     `text-placeholder`，零影响。
+     **代价照实登记**：那 138 处（连同同族共 49 个文件）的收口作为 **DS-5 待办**写入
+     `design-inventory.md` 的 `desktop.settings` 人工区下一动作；因其跨 6 个其它 surface，
+     须整族一次收口，不按 surface 零敲。修的方向是把未收口的一侧拉过来，而非把标准件退回去。
+  本条不带任何产品代码改动——两项实现在 self-review 时已落地，这里只补裁决与登记。
+
+- **09-04** **DS-4 self-review 追加的三项收口（非新裁决，是修缺陷与补申报）**——
+  1. **禁用态不再触发 hover 换色**：`ui/button` 的 hover / active 一律加 `enabled:`
+     前缀。CSS 的 `:hover` 对 disabled 元素照样匹配，而 `globals.css` 只把禁用态
+     指针收成普通箭头、不管背景；旧 `PillButton` 根本没有 hover，所以这属 DS-4
+     迁移引入的行为回归（ProvidersSection 多处传 `disabled={busy}`）。
+  2. **`§4 input/text` 的 focus 槽还原为 `--focus-ring-soft`**：初版把规范值改成
+     opaque `--focus-ring` 去迁就实现，但这不在六项裁决里。按「六项裁决之外遇到
+     现状差异只登记、不擅自统一」还原 spec，偏差登记进 `design-governance.md §10`
+     待裁决表。
+  3. **`ui/input` 换绑 Tier-1 的事实补申报**：border / text / placeholder /
+     focus-border 从 `--settings-input-*` 域 alias 改绑
+     `--border-default` / `--text-primary` / `--text-placeholder` /
+     `--text-tertiary-stone`（与 G5 对 button/secondary 同一条判据）。11 个内置
+     主题与外部主题导入 allowlist 均未 override 这些 alias，故默认外观逐值不变；
+     变的是 override 面——手写过 `settings-input-*` 的用户本地主题不再作用于本组件。
+     旧 token ID 一个未删，兼容红线未破。
+
 ## 2026-08
+
+- **08-29** **圆角三档写死：按钮一律胶囊、4px 不入档（拍板人 = 用户）**——
+  背景：设计系统改造调研发现 PermissionPrompt 混用 `rounded-[8px]`×4 /
+  `rounded-[4px]`×4 / `rounded-[12px]`×1，与 §5 三档冲突；全仓走查
+  `rounded-[4px]` 生产存量共 30 处（2026-08-29 快照，不止权限弹窗，是普遍债；
+  仅为字面量语法局部计数，裸 `rounded` / `rounded-sm` 等价写法见下方口径块
+  与补充裁决 (6)）。
+  计数口径（`design-governance.md` §9 计数纪律，均为当日快照）：
+
+  ```bash
+  # PermissionPrompt 内圆角分布（2026-08-29 快照：8px×4 / 4px×4 / 12px×1）
+  git grep -o 'rounded-\[8px\]' -- apps/desktop/src/renderer/components/new-chat/PermissionPrompt.tsx | wc -l
+  git grep -o 'rounded-\[4px\]' -- apps/desktop/src/renderer/components/new-chat/PermissionPrompt.tsx | wc -l
+  git grep -o 'rounded-\[12px\]' -- apps/desktop/src/renderer/components/new-chat/PermissionPrompt.tsx | wc -l
+  # 全仓 rounded-[4px] 存量（2026-08-29 快照：30；字面量语法，全 renderer 无 tests/vendor 命中）
+  git grep -o "rounded-\[4px\]" -- apps/desktop/src/renderer | wc -l
+  # 解析后等价 4px 的其它写法（2026-08-29 快照；生产代码 = pathspec 排除 tests/vendor）。
+  # 数值依据：tailwind.config.ts 的 borderRadius.lg/md/sm 基于 var(--radius) 派生；
+  # --radius 由 theme-service 运行时注入（colors.ts registerColor('radius', 0.5rem)
+  # → serializeThemeCss 写入 :root，dark 主题经 resolveThemeValue 回退 light 默认），
+  # 故 rounded-sm = calc(0.5rem − 4px) = 4px、rounded-md = calc(0.5rem − 2px) = 6px，
+  # 裸 rounded = Tailwind DEFAULT 0.25rem = 4px。
+  # ⚠ 上述求值以「主题未覆盖 colors.radius」为前提：resolveThemeValue 优先读
+  # theme.colors[id]，本地主题 JSON 手写 colors.radius（如 '1rem'）会整体平移
+  # rounded-sm/md 的 computed 值（sm 变 12px、md 变 14px）——外部主题导入的
+  # 108-token allowlist 不含 radius，但本地主题无白名单过滤。按类名的档位分类
+  # 只对内置 / 未覆盖 radius 的主题成立；「radius 是否冻结为不可覆盖不变量」
+  # 登记为待裁决项（见下方补充裁决 (7)），裁决前 DS-7 棘轮按类名建基线、
+  # 以默认主题 computed 值为准。
+  # 裸 rounded 计数限定「字符串字面量内的独立 token」（PCRE 词边界 + 前瞻排除
+  # rounded-* 变体；grep -v 排除 `${rounded}` 模板插值）——旧口径曾把注释与局部
+  # 变量名（如 turnUsageTooltip.ts 的 const rounded）计入 80，属假阳性，已修正为 58。
+  # DS-6 迁移与 DS-7 棘轮的基线按三语法合计（30+58+11）建立；此为静态扫描近似，
+  # 棘轮落地时应以 AST / 编译产物扫描为准。
+  git grep -oP "[\"'\`][^\"'\`]*\brounded\b(?![-a-zA-Z\[])[^\"'\`]*[\"'\`]" -- apps/desktop/src/renderer ':!*/__tests__/*' ':!*.test.*' ':!*/vendor/*' | grep -v '\${rounded' | wc -l    # 裸 rounded：58
+  git grep -oP "[\"'\`][^\"'\`]*\brounded-sm\b(?![-a-zA-Z\[])[^\"'\`]*[\"'\`]" -- apps/desktop/src/renderer ':!*/__tests__/*' ':!*.test.*' ':!*/vendor/*' | wc -l                                 # rounded-sm：11
+  # 同为非档位值的 rounded-md（6px，亦不入 §5 三档；供 DS-7 棘轮一并建基线）
+  git grep -oP "[\"'\`][^\"'\`]*\brounded-md\b(?![-a-zA-Z\[])[^\"'\`]*[\"'\`]" -- apps/desktop/src/renderer ':!*/__tests__/*' ':!*.test.*' ':!*/vendor/*' | grep -v '\${rounded' | wc -l   # rounded-md：196
+  ```
+
+  裁决四条：(1) **三档不变、不加档**，把 §5 的软表述写死——会提交决定 / 触发动作
+  的按钮**一律胶囊**（权限允许/拒绝按钮包含在内），原「only for small interactive
+  pieces that cannot wear the pill」的主观逃生口删除；(2) 8px 档的判据改为
+  「套在盒子里、自己不是按钮」（textarea、菜单行高亮、块内小格照旧合法）；
+  (3) **4px 不入档**：存量登记为债、随设计系统迁移逐步偿还，新代码禁止再写
+  （机器拦截随棘轮 PR 落地，此前靠 review 按 §5 执行）；(4) **「看起来小」不是
+  改档的理由**——元素按「是什么」（按钮 / 盒子 / 盒内非按钮）定档，不按尺寸。
+  2026-07-28 已登记的 status micro-cells 2px 窄豁免（非交互、≤8px、仅状态）
+  维持不变，不因本裁决扩大或收回。**尚未裁决、随 Permission 迁移再关**：允许 /
+  拒绝按钮的视觉主次、危险授权样式、Desktop 与 Mobile 权限弹窗几何是否一致。
+  （→ `DESIGN.md §5` Border Radius Scale；治理合同
+  [`design-governance.md`](./design-governance.md) §10 待裁决登记表「PermissionPrompt
+  圆角」行已随本裁决改为已关闭；迁移执行 = 设计系统路线图 DS-6 / 棘轮 = DS-7，
+  见 `design-governance.md` §12）
+- **08-29（补充裁决，随 #3619 review 落定）** **圆角判据二则收口：textarea 单一
+  归档、裸文字按钮豁免（拍板人 = 用户）**——review 指出 §4/§5/§7/§9 四处对
+  textarea 的判据互相冲突（「盒内非按钮」vs「无条件 8px」vs「所有交互元素胶囊」），
+  以及 §5「every button is a pill — no exceptions」与 §4 向导「← 上一步」裸文字
+  按钮互相矛盾。两条收口：(1) **textarea 一律 8px**——不设嵌套前提，嵌在 12px
+  容器内或作为表单最外层控件都是同一档（胶囊对高框体会变形，8px 是其唯一档位）；
+  §5 判据句同步改写，§4/§7/§9 摘要句逐一对齐，并声明 §5 为唯一裁决源、摘要句
+  漂移时以 §5 为准。(2) **无自身背景的裸文字按钮豁免胶囊**——「← 上一步」与
+  §16.3 登录文字按钮这类只有文字、没有可圆角的填充底色的按钮不带任何圆角；
+  豁免随组件条目登记（§4 向导条目已写明），新增裸文字按钮用法须在引入它的
+  组件条目登记。`AddProviderWizard.tsx` 现行实现（无圆角文字按钮）与裁决一致，
+  无需迁移。（→ `DESIGN.md §5` / §4 Inputs & Forms / §4 Multi-step dialogs / §7 / §9）
+  追加两处（第二轮 review 指出同节残留）：(3) §5 判据分类句由三分类
+  「button / box / nested non-button」扩为四分类「button / box / textarea（一律
+  8px）/ nested non-button」，独立 textarea 不再落在分类缝隙里；(4) §7「Keep all
+  buttons at 10px 24px padding with pill shape」与 §5 Spacing「consistent across
+  all buttons」两处绝对表述收窄为「filled buttons」，裸文字按钮不受 pill padding
+  约束、按其组件条目执行；§5 Pill 档首句同步由「every button」改「every filled
+  button」。（同上条落点）
+  追加修正（第三轮 review 指出 (4) 的「filled」限定误伤透明控件）：(5) **撤销
+  「filled」反向排除措辞**——透明填充 / 仅描边的交互控件（对话框 secondary/cancel
+  透明填充按钮、inactive tab、composer chip 静止态 borderless）都保留胶囊，「fill
+  样式从不改变档位」。豁免改回**直接正向表述**：唯一豁免 = 已登记的裸文字按钮，
+  §1 / §5 Pill 档（首句恢复「every button」，豁免句同步改为「no shape to
+  round」）/ §5 Spacing / §7 Do 共五处统一为「all (buttons|interactive
+  elements) + registered bare text buttons are the only exemption」；(4) 中「filled
+  buttons」字样随本轮撤销作废，裸文字按钮不受 pill padding 约束的实质不变。
+  （同上条落点）
+  追加修正（第五轮 review 指出 4px 计数口径漏等价写法；第六轮 review 指出注入链
+  未交代、裸 rounded 计数混入非样式文本）：(6) **「4px 不入档」的禁令覆盖所有解析后
+  等价于 4px 的写法**——本仓 `tailwind.config.ts` 只覆盖 `borderRadius.lg/md/sm`
+  （基于 `var(--radius)` 派生），裸 `rounded`（Tailwind DEFAULT 0.25rem）与
+  `rounded-sm`（8px−4px）同样解析为 4px，与 `rounded-[4px]` 同属禁止档位的等价
+  语法；`rounded-md`（8px−2px=6px）亦不入三档。**`--radius` 的数值依据**：该变量
+  不在任何静态 CSS 文件中，由 `theme-service.ts` 运行时注入——`colors.ts`
+  `registerColor('radius', { light: '0.5rem' })` 经 `serializeThemeCss` 写入
+  `:root`（dark 主题经 `resolveThemeValue` 回退 light 默认，值不变），故
+  `rounded-sm`/`rounded-md` 的 `calc(var(--radius) ± Npx)` 在运行时有效求值。
+  主裁决「全仓 30 处」只是 `rounded-[4px]` 字面量语法的局部计数——生产代码中
+  裸 `rounded` 另有 58 处（字符串字面量内独立 token 口径；旧口径 80 曾混入注释与
+  局部变量名假阳性，如 `turnUsageTooltip.ts` 的 `const rounded`、
+  `AppearanceSection.tsx` 注释行，已修正）、`rounded-sm` 11 处（计数命令见上方
+  口径块）；DS-6 迁移与 DS-7 棘轮建基线时必须按三种 4px 等价语法合计（30+58+11）
+  建立，并把 `rounded-md` 的 196 处一并纳入非档位值清理范围，不得只按 30 建基线。
+  静态计数是近似口径，棘轮落地时应以 AST / 编译产物扫描复核。§5 行内数字句同步补
+  「in ANY of its equivalent spellings」限定并指向口径块。（同上条落点）
+  追加（第七轮 review 指出主题覆盖可平移派生值）：(7) **`rounded-sm`/`rounded-md`
+  的档位分类以「主题未覆盖 `colors.radius`」为前提**——`resolveThemeValue` 优先读
+  `theme.colors[id]`，本地主题 JSON 手写 `colors.radius`（如 `'1rem'`）会把
+  `rounded-sm` 平移到 12px、`rounded-md` 到 14px（外部主题导入的 108-token
+  allowlist 不含 radius，本地主题无白名单过滤）。口径块已补 ⚠ 前提说明；DS-7
+  棘轮按类名建基线、以默认主题 computed 值为准。**待裁决（随 DS-7 棘轮设计一并关）**：
+  `radius` 是否冻结为不可覆盖的主题不变量（冻结则类名分类对全部主题成立；不冻结则
+  棘轮须按 computed value 分类或豁免覆盖主题）——冻结涉及 `local-themes-normalize`
+  加白名单与既有本地主题兼容（治理合同兼容红线：用户主题不改写磁盘），属代码改动，
+  不随本纯文档 PR 落地。（同上条落点）
 
 - **08-16** **登录：唯一 SSO 不再经过 method-choice（拍板人 = 用户）**——
   用户已经从登录首页选了企业 SSO（组织标识探测），或邮箱 / 组织探测结果只剩
@@ -326,6 +543,19 @@
 
 ## Backlog(已知、刻意搁置)
 
-- `MakerExperimentalView.tsx` 通篇裸 hardcode hex(#404040 / #d4d4d4 / #262626 / #333),违反 DESIGN.md 第 10 节 token 规则。因是 experimental 视图,暂不清理,仅备忘(原 §13 旁注,2026-06)。
+- [x] **MakerExperimentalView.tsx 裸 hardcode hex 清理**(已解决 2026-08-31)
+  现状:诊断页通篇裸 hardcode 暗色 hex(页面文字、卡片、输入框、按钮、事件流等),
+  违反 DESIGN.md 第 10 节 token 规则;路由生产包按 URL 可达,Light 主题下不可读。
+  处理:全量改成语义 token(text-primary / text-secondary / text-tertiary /
+  surface-elevated / border-default / accent-cta-bg / accent-pure-cta-fg /
+  error-flat / surface-chip / surface-chip-alt),
+  双模式由 token 体系自动覆盖;新增源契约守卫 `makerExperimentalThemeContract.test.ts`
+  锁「零裸色 + token 已注册 + light/dark 双槽位」。
+  合并范围(与 PR 3 同一「renderer 硬编码颜色清理」):CCAgentSessionView handoff pill
+  两处裸灰文字色改 text-muted-foreground;context 环阈值红/橙改 error-flat /
+  warning-fg 语义 token,双模式由 token 体系覆盖。
+  review 修订(PR 3686 auto-review P1):事件流标题从 warning-accent 改为
+  text-secondary——11px 小字在 Light 白色 surface-elevated 上对比度不足,且
+  warning-accent 语义限定运行/警告状态表面,普通诊断事件标题不在其列。
 - R2 §4.3 Project_List 五点差异(2026-07-17 lead 裁决本轮不做,出处为设计阶段工作文件 `2026-07-17-r2-ui-specs.md` §4.3,不入仓库):① Project_List 三态拆分(active-task-pill / project-card / flat-list-row 不共用 `sidebar-item-active`);② 项目 header / list card 选中应中性底(`#312F2F`/`#F6F6F6`,非 `#DF0C27` 大红);③ 去 Project_List 选中组 `focus-ring-soft` 蓝 ring,改 card stroke `#DCDFE3`/`#434343`;④ 小箭头 `#A61629` 强调(非整行红底);⑤ 本轮收敛不扩战线,后续另开。
 - splash 渐变辉光层未实现(2026-07-18 backlog,待用户表态)。

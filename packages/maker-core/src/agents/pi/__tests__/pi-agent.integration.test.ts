@@ -130,7 +130,13 @@ function anthropicStreamBody(text: string): string {
 }
 
 /** 最小完整的 OpenAI Responses SSE 流：供 Pi 原生 Responses BYOM 回归使用。 */
-function responsesStreamBody(text: string, model: string): string {
+function responsesStreamBody(text: string, model: string, usage = {
+  input_tokens: 1,
+  input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+  output_tokens: 1,
+  output_tokens_details: { reasoning_tokens: 0 },
+  total_tokens: 2,
+}): string {
   const responseId = 'resp_byom_reasoning_1';
   const item = {
     id: 'msg_byom_reasoning_1',
@@ -160,13 +166,7 @@ function responsesStreamBody(text: string, model: string): string {
     tools: [],
     top_p: 1,
     truncation: 'disabled',
-    usage: {
-      input_tokens: 1,
-      input_tokens_details: { cached_tokens: 0 },
-      output_tokens: 1,
-      output_tokens_details: { reasoning_tokens: 0 },
-      total_tokens: 2,
-    },
+    usage,
     metadata: {},
   };
   return sse([
@@ -264,6 +264,35 @@ function responsesStreamBody(text: string, model: string): string {
   ]);
 }
 
+/** 最小 OpenAI Chat Completions SSE 流：验证 PI 内置模型表的 completions 分配。 */
+function chatCompletionsStreamBody(text: string, model: string): string {
+  return [
+    `data: ${JSON.stringify({
+      id: 'chatcmpl_pi_native_1',
+      object: 'chat.completion.chunk',
+      created: 1,
+      model,
+      choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }],
+    })}\n\n`,
+    `data: ${JSON.stringify({
+      id: 'chatcmpl_pi_native_1',
+      object: 'chat.completion.chunk',
+      created: 1,
+      model,
+      choices: [{ index: 0, delta: { content: text }, finish_reason: null }],
+    })}\n\n`,
+    `data: ${JSON.stringify({
+      id: 'chatcmpl_pi_native_1',
+      object: 'chat.completion.chunk',
+      created: 1,
+      model,
+      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    })}\n\n`,
+    'data: [DONE]\n\n',
+  ].join('');
+}
+
 /** 让"模型"发起一次工具调用的 SSE 流(stop_reason=tool_use)。 */
 function anthropicToolUseBody(toolName: string, input: Record<string, unknown>): string {
   return sse([
@@ -334,7 +363,13 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
           'content-type': 'text/event-stream',
           'cache-control': 'no-cache',
         });
-        res.end(scriptedResponses.shift() ?? anthropicStreamBody('pong from fake gateway'));
+        const url = req.url ?? '';
+        const fallback = url.includes('/responses')
+          ? responsesStreamBody('pong from fake gateway', 'pi-test-model')
+          : url.includes('/chat/completions')
+            ? chatCompletionsStreamBody('pong from fake gateway', 'pi-test-model')
+            : anthropicStreamBody('pong from fake gateway');
+        res.end(scriptedResponses.shift() ?? fallback);
       });
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -369,6 +404,13 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
             // 网关图片门控(assertImageInputSupported)按目录能力放行;多模态用例
             // 走的正是本模型,不标会在 send 前被 PiImageInputUnsupportedError 拒收。
             supportsImageInput: true,
+          },
+          {
+            id: 'pi-test-small-model',
+            displayName: 'Pi Test Small Model',
+            contextWindow: 100_000,
+            efforts: [],
+            defaultEffort: null,
           },
         ],
       },
@@ -447,6 +489,42 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
   );
 
   it(
+    'keeps the target runtime after a context-window settings reload',
+    { timeout: 60_000 },
+    async () => {
+      const agent = new PiAgent(buildDeps());
+      const workingDir = mkdtempSync(path.join(tmpdir(), 'pi-agent-model-reload-cwd-'));
+      let handle: AgentSessionHandle | null = null;
+      const requestsBefore = seenRequests.length;
+      try {
+        handle = await agent.startSession({
+          sessionId: 'itest-model-reload-session',
+          workingDir,
+          model: 'pi-test-model',
+        });
+        await handle.setModel?.('pi-test-small-model');
+        expect(handle.model).toBe('pi-test-small-model');
+        expect(handle.getUsageSnapshot().contextWindow).toBe(100_000);
+
+        const done = (async () => {
+          for await (const event of handle!.events()) {
+            if (event.type === 'done') return;
+          }
+        })();
+        await handle.send({ type: 'user', content: 'after model switch' });
+        await done;
+
+        const request = seenRequests.slice(requestsBefore).at(-1);
+        expect(request).toBeDefined();
+        expect(JSON.parse(request!.body)).toMatchObject({ model: 'pi-test-small-model' });
+      } finally {
+        await handle?.close();
+        rmSync(workingDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it(
     'keeps provider cindy and sends a gateway Responses model to /v1/responses',
     { timeout: 60_000 },
     async () => {
@@ -494,6 +572,76 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
         expect(events.some((event) =>
           event.type === 'text'
           && (event.data as { text?: string }).text?.includes('pong from responses gateway'),
+        )).toBe(true);
+      } finally {
+        await handle?.close();
+        rmSync(workingDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it(
+    'sends the locally selected Gateway Kimi API with matching compat to /v1/chat/completions',
+    { timeout: 60_000 },
+    async () => {
+      const deps = buildDeps();
+      deps.capabilityAdditions = {
+        ...deps.capabilityAdditions,
+        availableModels: [
+          ...(deps.capabilityAdditions?.availableModels ?? []),
+          {
+            id: 'moonshotai/kimi-k3',
+            displayName: 'Kimi K3',
+            contextWindow: 1_000_000,
+            efforts: ['low', 'high', 'max'],
+            defaultEffort: 'max',
+          },
+        ],
+      };
+      deps.resolvePiGatewayModelApi = (_providerId, modelId) =>
+        modelId === 'moonshotai/kimi-k3' ? 'openai-completions' : 'anthropic-messages';
+      deps.resolvePiGatewayModelSpec = (_providerId, modelId) =>
+        modelId === 'moonshotai/kimi-k3'
+          ? {
+              api: 'openai-completions',
+              compat: {
+                maxTokensField: 'max_tokens',
+                thinkingFormat: 'openai',
+                requiresReasoningContentOnAssistantMessages: true,
+                deferredToolsMode: 'kimi',
+              },
+              thinkingLevelMap: { low: 'low', high: 'high', max: 'max' },
+            }
+          : { api: 'anthropic-messages' };
+      const workingDir = mkdtempSync(path.join(tmpdir(), 'pi-agent-kimi-cwd-'));
+      let handle: AgentSessionHandle | null = null;
+      const requestsBefore = seenRequests.length;
+      scriptedResponses.push(chatCompletionsStreamBody('pong from kimi gateway', 'moonshotai/kimi-k3'));
+      try {
+        handle = await new PiAgent(deps).startSession({
+          sessionId: 'itest-kimi-session',
+          workingDir,
+          model: 'moonshotai/kimi-k3',
+          providerId: 'xd',
+          effort: 'max',
+        });
+        const events: AgentEvent[] = [];
+        const collected = (async () => {
+          for await (const event of handle!.events()) {
+            events.push(event);
+            if (event.type === 'done') break;
+          }
+        })();
+
+        await handle.send({ type: 'user', content: 'ping kimi' });
+        await collected;
+
+        const requests = seenRequests.slice(requestsBefore);
+        expect(requests.some((request) => request.url === '/v1/chat/completions')).toBe(true);
+        expect(requests.some((request) => request.url === '/v1/responses')).toBe(false);
+        expect(events.some((event) =>
+          event.type === 'text'
+          && (event.data as { text?: string }).text?.includes('pong from kimi gateway'),
         )).toBe(true);
       } finally {
         await handle?.close();
@@ -655,7 +803,7 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
   );
 
   it(
-    'uses PI bundled xAI Responses APIs as the native subscription baseline',
+    'uses the current PI bundled xAI Responses API for both official models',
     { timeout: 60_000 },
     async () => {
       const deps = buildDeps();
@@ -734,6 +882,8 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
         responsesStreamBody('pong from xai responses', 'grok-4.5'),
         '/v1/responses',
       );
+      // Pi v0.84.3 moved bundled xAI models onto Responses with encrypted
+      // reasoning replay. grok-build-0.1 is no longer Chat Completions.
       await run(
         'itest-native-xai-completions',
         'xai/grok-build-0.1',
@@ -1291,7 +1441,18 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
         const activeConfigHomes = readdirSync(runTmp, { withFileTypes: true })
           .filter((entry) => entry.isDirectory())
           .map((entry) => path.join(runTmp, entry.name))
-          .filter((candidate) => existsSync(path.join(candidate, 'models.json')));
+          .filter((candidate) => {
+            const modelsPath = path.join(candidate, 'models.json');
+            if (!existsSync(modelsPath)) return false;
+            try {
+              const parsed = JSON.parse(readFileSync(modelsPath, 'utf8')) as {
+                providers?: Record<string, unknown>;
+              };
+              return Boolean(parsed.providers?.localbyom);
+            } catch {
+              return false;
+            }
+          });
         expect(activeConfigHomes).toHaveLength(1);
         const configHome = activeConfigHomes[0];
         if (!configHome) throw new Error('active Pi config home missing');
@@ -1327,10 +1488,13 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
     },
   );
 
-  it(
-    'BYOM Responses: an explicit Pi effort reaches the upstream reasoning.effort request field',
+  it.each([
+    { model: 'byom-reasoner', effort: 'xhigh' as const },
+    { model: 'gpt-6-astra', effort: 'max' as const },
+  ])(
+    'BYOM Responses: $model sends $effort with compatible cache parameters',
     { timeout: 60_000 },
-    async () => {
+    async ({ model, effort }) => {
       const nativeSeen: Array<{
         url: string;
         auth: string | undefined;
@@ -1351,7 +1515,13 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
             'content-type': 'text/event-stream',
             'cache-control': 'no-cache',
           });
-          res.end(responsesStreamBody('pong from Responses', 'byom-reasoner'));
+          res.end(responsesStreamBody('pong from Responses', model, {
+            input_tokens: 300_000,
+            input_tokens_details: { cached_tokens: 200_000, cache_write_tokens: 50_000 },
+            output_tokens: 100,
+            output_tokens_details: { reasoning_tokens: 0 },
+            total_tokens: 300_100,
+          }));
         });
       });
       await new Promise<void>((resolve) => nativeServer.listen(0, '127.0.0.1', resolve));
@@ -1381,16 +1551,21 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
             apiKeyEnvVar: 'CINDY_PI_KEY_LOCALRESPONSES',
             models: [
               {
-                id: 'byom-reasoner',
+                id: model,
                 name: 'BYOM Reasoner',
                 reasoning: true,
+                contextWindow: 1_050_000,
+                cost: {
+                  input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5,
+                  tiers: [{ inputTokensAbove: 272_000, input: 20, output: 75, cacheRead: 2, cacheWrite: 25 }],
+                },
                 thinkingLevelMap: {
                   minimal: null,
                   low: 'low',
                   medium: null,
                   high: 'high',
                   xhigh: 'xhigh',
-                  max: null,
+                  max: model === 'gpt-6-astra' ? 'max' : null,
                 },
               },
             ],
@@ -1407,24 +1582,40 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
           sessionId: 'byom-responses-session',
           workingDir,
           providerId: 'localresponses',
-          model: 'byom-reasoner',
-          effort: 'xhigh',
+          model,
+          effort,
         });
         const done = (async () => {
           for await (const event of handle!.events()) {
-            if (event.type === 'done') break;
+            if (event.type === 'done') return event;
           }
         })();
         await handle.send({ type: 'user', content: 'reason carefully' });
-        await done;
+        const completed = await done;
+        expect(completed?.data).toMatchObject({
+          status: 'completed',
+          usage: {
+            inputTokens: 50_000, outputTokens: 100,
+            cacheReadTokens: 200_000, cacheCreationTokens: 50_000,
+            segments: [expect.objectContaining({ cacheCreateTokens: 50_000, costUsd: expect.closeTo(2.6575, 10) })],
+          },
+        });
 
         expect(nativeSeen).toHaveLength(1);
         expect(nativeSeen[0]?.url).toMatch(/\/responses(?:\?|$)/);
         expect(nativeSeen[0]?.auth).toContain('responses-secret-key');
         expect(JSON.parse(nativeSeen[0]?.body ?? '{}')).toMatchObject({
-          model: 'byom-reasoner',
-          reasoning: { effort: 'xhigh' },
+          model,
+          reasoning: { effort },
         });
+        const payload = JSON.parse(nativeSeen[0]?.body ?? '{}');
+        if (model === 'gpt-6-astra') {
+          expect(payload.prompt_cache_retention).toBeUndefined();
+          expect(payload.prompt_cache_options).toEqual({ ttl: '30m' });
+        } else {
+          expect(payload.prompt_cache_retention).toBe('24h');
+          expect(payload.prompt_cache_options).toBeUndefined();
+        }
         expect(seenRequests.length).toBe(gatewayBefore);
       } finally {
         await handle?.close();
@@ -1711,8 +1902,8 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
         });
         expect(keyTurn.resolverTools).toEqual([]);
         const keyFollowUp = seenRequests.slice(keyReqBefore).map((request) => request.body).join('\n');
-        expect(keyFollowUp).not.toContain('KEY_SECRET=must-not-leak');
-        expect(keyFollowUp).toContain('Cindy blocks reading credential or key paths');
+        expect(keyFollowUp).toContain('KEY_SECRET=must-not-leak');
+        expect(keyFollowUp).not.toContain('Cindy blocks reading credential or key paths');
 
         scriptedResponses.push(
           anthropicToolUseBody('grep', { pattern: 'SAFE_SELECTOR', path: 'src', glob: 'source.ts' }),
@@ -2073,16 +2264,16 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
   );
 
   it(
-    'full access still blocks credential reads (parent env holds the proxy session token)',
+    'full access does not secretly block credential-looking reads',
     { timeout: 60_000 },
     async () => {
-      // greptile 回归:bypassPermissions 提前返回不得跳过凭证路径检查,否则内置 read
-      // 可读 /proc/self/environ 之类路径拿到父进程里的代理 token,绕过审批盗刷额度。
       const workingDir = mkdtempSync(path.join(tmpdir(), 'pi-perm-bypass-cred-'));
+      const secretPath = path.join(workingDir, '.env');
+      writeFileSync(secretPath, 'CRED_MARKER=pi-full-access-ok\n');
       try {
         scriptedResponses.length = 0;
         scriptedResponses.push(
-          anthropicToolUseBody('read', { path: '/proc/self/environ' }),
+          anthropicToolUseBody('read', { path: secretPath }),
           anthropicStreamBody('bypass cred turn finished'),
         );
         const reqBefore = seenRequests.length;
@@ -2090,13 +2281,12 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
           sessionId: 'perm-bypass-cred',
           workingDir,
           permissionMode: 'bypassPermissions',
-          resolverBehavior: 'allow', // 若误弹窗且被 allow,下面的 block 理由断言就会失败
+          resolverBehavior: 'allow',
         });
-        // Full access 不弹窗,直接硬拦
         expect(resolverTools).toEqual([]);
         const followUp = seenRequests.slice(reqBefore).map((r) => r.body);
-        expect(followUp.some((b) => b.includes('Cindy blocks reading credential or key paths'))).toBe(true);
-        expect(followUp.some((b) => b.includes('CINDY_PI_SESSION_TOKEN='))).toBe(false);
+        expect(followUp.some((b) => b.includes('Cindy blocks reading credential or key paths'))).toBe(false);
+        expect(followUp.some((b) => b.includes('CRED_MARKER=pi-full-access-ok'))).toBe(true);
       } finally {
         rmSync(workingDir, { recursive: true, force: true });
         scriptedResponses.length = 0;
@@ -2105,16 +2295,16 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
   );
 
   it(
-    'full access blocks bash reads of process environ (parent /proc holds the secrets)',
+    'full access does not secretly block bash reads of process environ',
     { timeout: 60_000 },
     async () => {
-      // codex 回归:spawn 边界只剥子进程 env,父 pi 进程仍持有 token;bash
-      // `cat /proc/self/environ` 同 UID 直取 → 即使 Full access 也硬拦。
       const workingDir = mkdtempSync(path.join(tmpdir(), 'pi-perm-bash-environ-'));
       try {
         scriptedResponses.length = 0;
         scriptedResponses.push(
-          anthropicToolUseBody('bash', { command: 'cat /proc/self/environ' }),
+          anthropicToolUseBody('bash', {
+            command: 'ENVIRON_MARKER=pi-full-access-ok; echo "$ENVIRON_MARKER"; cat /proc/self/environ',
+          }),
           anthropicStreamBody('bash environ turn finished'),
         );
         const reqBefore = seenRequests.length;
@@ -2126,8 +2316,8 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
         });
         expect(resolverTools).toEqual([]);
         const followUp = seenRequests.slice(reqBefore).map((r) => r.body);
-        expect(followUp.some((b) => b.includes('Cindy blocks reading process environment'))).toBe(true);
-        expect(followUp.some((b) => b.includes('CINDY_PI_SESSION_TOKEN='))).toBe(false);
+        expect(followUp.some((b) => b.includes('Cindy blocks reading process environment'))).toBe(false);
+        expect(followUp.some((b) => b.includes('ENVIRON_MARKER=pi-full-access-ok'))).toBe(true);
       } finally {
         rmSync(workingDir, { recursive: true, force: true });
         scriptedResponses.length = 0;
@@ -2186,6 +2376,7 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
         mkdirSync(path.dirname(secretPath), { recursive: true });
         mkdirSync(subDir);
         mkdirSync(stackOtherDir);
+        mkdirSync(path.dirname(path.join(workingDir, escapedLinkName)), { recursive: true });
         writeFileSync(secretPath, 'FAKE_REDIRECT_DOTENV_SECRET=must-not-leak');
         writeFileSync(ordinaryPath, 'ordinary-content');
         writeFileSync(path.join(workingDir, 'change-dir.sh'), 'cd sub\n');
@@ -2285,9 +2476,9 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
         });
         expect(fullAccessTurn.resolverTools).toEqual([]);
         const fullAccessFollowUp = seenRequests.slice(fullAccessReqBefore).map((request) => request.body);
-        expect(fullAccessFollowUp.some((body) => body.includes('FAKE_REDIRECT_DOTENV_SECRET'))).toBe(false);
         expect(fullAccessFollowUp.some((body) => body.includes('Cindy blocks reading credential or key paths')))
-          .toBe(true);
+          .toBe(false);
+        expect(fullAccessFollowUp.some((body) => body.includes('FAKE_REDIRECT_DOTENV_SECRET'))).toBe(true);
       } finally {
         rmSync(workingDir, { recursive: true, force: true });
         scriptedResponses.length = 0;
@@ -2337,9 +2528,9 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
         });
         expect(fullAccessTurn.resolverTools).toEqual([]);
         const fullAccessFollowUp = seenRequests.slice(fullAccessReqBefore).map((request) => request.body);
-        expect(fullAccessFollowUp.some((body) => body.includes('FAKE_DOTGLOB_SECRET'))).toBe(false);
         expect(fullAccessFollowUp.some((body) => body.includes('Cindy blocks reading credential or key paths')))
-          .toBe(true);
+          .toBe(false);
+        expect(fullAccessFollowUp.some((body) => body.includes('ordinary-glob-content'))).toBe(true);
 
         delete process.env.BASHOPTS;
         for (const [sessionId, command] of [
@@ -2367,7 +2558,7 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
 
         scriptedResponses.length = 0;
         scriptedResponses.push(
-          anthropicToolUseBody('bash', { command: 'shopt -s dotglob; cat <*' }),
+          anthropicToolUseBody('bash', { command: 'shopt -s dotglob; cat *' }),
           anthropicStreamBody('bash Full Access runtime dotglob turn finished'),
         );
         const runtimeFullAccessReqBefore = seenRequests.length;
@@ -2380,9 +2571,9 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
         expect(runtimeFullAccessTurn.resolverTools).toEqual([]);
         const runtimeFullAccessFollowUp = seenRequests.slice(runtimeFullAccessReqBefore)
           .map((request) => request.body);
-        expect(runtimeFullAccessFollowUp.some((body) => body.includes('FAKE_DOTGLOB_SECRET'))).toBe(false);
         expect(runtimeFullAccessFollowUp.some((body) =>
-          body.includes('Cindy blocks reading credential or key paths'))).toBe(true);
+          body.includes('Cindy blocks reading credential or key paths'))).toBe(false);
+        expect(runtimeFullAccessFollowUp.some((body) => body.includes('FAKE_DOTGLOB_SECRET'))).toBe(true);
 
         scriptedResponses.length = 0;
         scriptedResponses.push(
@@ -2409,6 +2600,7 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
     },
   );
 
+  // symlink-platform-skip: CDPATH and the redirect commands in this case require a POSIX Bash host.
   it.skipIf(process.platform === 'win32' || !canSymlink)(
     'auto mode fail closes inherited CDPATH while explicit relative cd keeps ordinary reads fast',
     { timeout: 60_000 },
@@ -2543,14 +2735,11 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
   );
 
   it.skipIf(!canSymlink)(
-    'full access blocks credential reads reached through a workspace symlink',
+    'full access does not secretly block credential reads reached through a workspace symlink',
     { timeout: 60_000 },
     async () => {
-      // greptile 回归:未解析路径命不中特征,但工作区内符号链接可指向敏感目标;
-      // realpath 跟随后再判 → 即使 Full access 也硬拦。
       const workingDir = mkdtempSync(path.join(tmpdir(), 'pi-perm-symlink-cred-'));
       try {
-        // 真实敏感文件(路径含 id_rsa,命中凭证特征)+ 工作区内指向它的无害名字符号链接。
         mkdirSync(path.join(workingDir, 'secrets'), { recursive: true });
         const secretPath = path.join(workingDir, 'secrets', 'id_rsa');
         writeFileSync(secretPath, 'FAKE PRIVATE KEY');
@@ -2571,8 +2760,8 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
         });
         expect(resolverTools).toEqual([]);
         const followUp = seenRequests.slice(reqBefore).map((r) => r.body);
-        expect(followUp.some((b) => b.includes('Cindy blocks reading credential or key paths'))).toBe(true);
-        expect(followUp.some((b) => b.includes('FAKE PRIVATE KEY'))).toBe(false);
+        expect(followUp.some((b) => b.includes('Cindy blocks reading credential or key paths'))).toBe(false);
+        expect(followUp.some((b) => b.includes('FAKE PRIVATE KEY'))).toBe(true);
       } finally {
         rmSync(workingDir, { recursive: true, force: true });
         scriptedResponses.length = 0;
