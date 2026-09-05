@@ -196,7 +196,10 @@ jobs:
 
       - name: Check DCO and repository invariants
         run: |
-          pnpm check:dco -- --base "${GITHUB_SHA}^1" --head "$GITHUB_SHA"
+          # Accepted immutable Cindy snapshot from PR #17. This is an imported
+          # history exception, not a DCO certification; never use a moving ref.
+          # Newer upstream history and Lex-authored commits remain checked.
+          pnpm check:dco -- --base "${GITHUB_SHA}^1" --head "$GITHUB_SHA" --upstream-baseline 1857e28e60effe9dc04d910d67e807ea166308ad
           pnpm check:endpoints
           pnpm check:i18n
           pnpm check:i18n-glossary

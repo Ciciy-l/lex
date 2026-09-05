@@ -5,7 +5,7 @@
 // 格式串、范围解析、hook 里的 sh/sed 写错都只能在真 git 上暴露。
 
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -444,6 +444,96 @@ test('resolvePosixShell never probes relative candidates from blank or invalid W
     path.win32.join('C:\\Program Files (x86)', 'Git', 'bin', 'sh.exe'),
   ]);
   assert.ok(candidates.every((candidate) => path.win32.isAbsolute(candidate)));
+});
+
+// Release history fixtures run on Windows too; they do not depend on POSIX hooks.
+function createImportedHistoryFixture(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lex-dco-history-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const config = path.join(dir, 'empty.gitconfig');
+  fs.writeFileSync(config, '');
+  const env = {
+    ...process.env, GIT_CONFIG_GLOBAL: config, GIT_CONFIG_NOSYSTEM: '1',
+    GIT_AUTHOR_NAME: 'Lex Contributor', GIT_AUTHOR_EMAIL: 'lex@example.com',
+    GIT_COMMITTER_NAME: 'Lex Contributor', GIT_COMMITTER_EMAIL: 'lex@example.com',
+  };
+  delete env.GITHUB_EVENT_PATH;
+  delete env.GITHUB_EVENT_NAME;
+  const git = (...args) => execFileSync('git', args, { cwd: dir, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  git('init', '--quiet', '--initial-branch=main', '--template=');
+  git('config', 'commit.gpgsign', 'false');
+  git('commit', '--quiet', '--allow-empty', '-m', 'common history');
+  const base = git('rev-parse', 'HEAD');
+  const commit = (subject, signed = false) => {
+    git('commit', '--quiet', '--allow-empty', ...(signed ? ['-s'] : []), '-m', subject);
+    return git('rev-parse', 'HEAD');
+  };
+  git('switch', '-c', 'upstream');
+  const baseline = commit('imported unsigned history');
+  git('switch', 'main');
+  commit('Lex signed work', true);
+  git('merge', '--no-ff', '--no-edit', '-m', 'import accepted snapshot', 'upstream');
+  const check = (extra = [], extraEnv = {}) => {
+    const r = spawnSync(process.execPath, [CHECK_DCO, '--base', base, '--head', 'HEAD', ...extra], {
+      cwd: dir, env: { ...env, ...extraEnv }, encoding: 'utf8',
+    });
+    assert.ifError(r.error);
+    return { code: r.status, output: `${r.stdout}${r.stderr}` };
+  };
+  return { dir, git, commit, check, baseline };
+}
+
+test('accepted imported history is reported separately; new Lex work still needs DCO', (t) => {
+  const r = createImportedHistoryFixture(t);
+  const strict = r.check();
+  assert.equal(strict.code, 1);
+  assert.match(strict.output, /imported unsigned history/);
+  const scoped = r.check(['--upstream-baseline', r.baseline]);
+  assert.equal(scoped.code, 0, scoped.output);
+  assert.match(scoped.output, /1 imported commits excluded.*NOT certified as DCO-valid/);
+  assert.match(scoped.output, /1 commit signed off/);
+  r.commit('new unsigned Lex change');
+  const rejected = r.check(['--upstream-baseline', r.baseline]);
+  assert.equal(rejected.code, 1);
+  assert.match(rejected.output, /new unsigned Lex change/);
+});
+
+test('the pinned snapshot never exempts later upstream history', (t) => {
+  const r = createImportedHistoryFixture(t);
+  r.git('switch', 'upstream');
+  r.commit('future upstream unsigned change');
+  r.git('switch', 'main');
+  r.git('merge', '--no-ff', '--no-edit', '-m', 'import future history', 'upstream');
+  const rejected = r.check(['--upstream-baseline', r.baseline]);
+  assert.equal(rejected.code, 1);
+  assert.match(rejected.output, /future upstream unsigned change/);
+});
+
+test('baseline must be an immutable existing ancestor, never the release head', (t) => {
+  const r = createImportedHistoryFixture(t);
+  for (const bad of ['upstream', r.baseline.slice(0, 8), 'f'.repeat(40), '']) {
+    const rejected = r.check(['--upstream-baseline', bad]);
+    assert.equal(rejected.code, 1);
+    assert.match(rejected.output, /full, existing commit SHA/);
+  }
+  assert.match(r.check(['--upstream-baseline', r.git('rev-parse', 'HEAD')]).output, /cannot be the release head/);
+  r.git('switch', 'upstream');
+  const unmerged = r.commit('unmerged history');
+  r.git('switch', 'main');
+  const rejected = r.check(['--upstream-baseline', unmerged]);
+  assert.equal(rejected.code, 1);
+  assert.match(rejected.output, /must be an ancestor/);
+});
+
+test('pull request checks cannot opt into the release imported-history exception', (t) => {
+  const r = createImportedHistoryFixture(t);
+  const payload = path.join(r.dir, 'event.json');
+  fs.writeFileSync(payload, JSON.stringify({ pull_request: { number: 1 } }));
+  for (const env of [{ GITHUB_EVENT_NAME: 'pull_request' }, { GITHUB_EVENT_NAME: 'pull_request_target' }, { GITHUB_EVENT_PATH: payload }]) {
+    const rejected = r.check(['--upstream-baseline', r.baseline], env);
+    assert.equal(rejected.code, 1);
+    assert.match(rejected.output, /not allowed in pull request/);
+  }
 });
 
 // --- 端到端：真 git 仓库 ---

@@ -169,6 +169,8 @@
   瞬时 commit（不存在于本仓库、GitHub 上查不到该 SHA）；对这类合成 SHA 跑
   `check:dco` 的失败结果不构成缺签证据，不要据此报告 DCO 问题。判定 DCO 是否通过，
   一律以 PR 上的 DCO App check 与真实提交范围（`origin/main..PR head`）的结果为准。
+  发行门禁唯一的已接收上游历史例外见 `docs/RELEASING-LEX.md`；它不适用于新建
+  Lex commit 或 PR 的 DCO 检查，也不代表上游历史通过 DCO。
 - **提交前测试门禁（硬性要求）**：无论是提 PR 还是直接 commit，提交前都必须在本地
   跑完仓库根 `pnpm test:unit:related`（只跑这次改动能影响到的单测；改到测试调度、
   依赖清单、workspace 配置、Vitest 配置或单测 CI 时会自动退回全量 `pnpm test:unit`），
