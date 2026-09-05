@@ -93,6 +93,14 @@ See [CONTRIBUTING.en.md](CONTRIBUTING.en.md) for the full development workflow.
 
 Details are in [docs/RELEASING-LEX.md](docs/RELEASING-LEX.md).
 
+### Cindy Skill Hub compatibility
+
+Skill Hub migration uses two separate manifest fields: released clients keep
+using `skillhubApiBaseUrl` (the deprecated XD proxy), while current clients use
+`cindySkillHubApiBaseUrl`. The current client deliberately does not fall back to
+the legacy field when the new endpoint is absent.
+
+
 ## Keeping up with Cindy
 
 The `upstream-sync` workflow checks Cindy regularly and opens a reviewable sync pull

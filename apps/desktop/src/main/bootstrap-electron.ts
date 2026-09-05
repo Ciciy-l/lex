@@ -32,6 +32,7 @@ import {
   createWindowBackdropMaterialArgument,
   WINDOW_BACKDROP_MATERIAL_CHANGED_CHANNEL,
 } from '../shared/windowBackdrop.js';
+import { isAllowedBillingMailtoRequest } from '../shared/billing.js';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -54,6 +55,12 @@ import {
   readWindowFullscreenState,
   showMainWindowAndRestoreFullscreen,
 } from './mainWindowFullscreenStartup';
+import {
+  installMainWindowMaximizeRecovery,
+  installMainWindowNativeRestoreIntent,
+  readPersistedWindowMaximized,
+  type MainWindowMaximizeRecoveryController,
+} from './mainWindowMaximizeRecovery';
 import { prewarmMacComputerPermissionGuideHelper } from './computer-permission-guide/MacComputerPermissionGuideNativeHost.js';
 import { handleOpenChatGPTApp } from './chatgpt-app.js';
 import {
@@ -326,6 +333,8 @@ import { cindyGhostSchemePrivilege } from './cindy-brain/runtime/electronSandbox
 import { fetchReleaseNotes, fetchReleaseNotesIndex } from './releaseNotesService';
 import { resolveWorkspacePathCached, resolveWorkspacePathBatchCached } from './pathResolver';
 import { registerLocalDbIpc } from './localDb/ipc/registerAll';
+import { getActiveCatalog } from './maker-host/active-catalog';
+import { resolveSessionContextWindow } from '../shared/sessionContextWindow';
 import {
   getSessionRowSnapshot,
   resumeDeletedPiSubagentCleanup,
@@ -452,6 +461,7 @@ import {
 import {
   assertTrustedAppRendererEvent,
   isTrustedAppRendererEvent,
+  isTrustedCindyRendererWindow,
   isTrustedAppRendererWindow,
 } from './security/trustedAppRenderer.js';
 import { isMainShellWindowUrl } from './cindy-brain/scheduleSlot.js';
@@ -800,6 +810,7 @@ import {
 } from './sessionDragPreviewHtml.js';
 import {
   isGlobalVoiceInputOverlayVisible,
+  isGlobalVoiceInputOverlaySender,
   releaseActiveGlobalVoiceInputShortcut,
   registerGlobalVoiceInputIpc,
 } from './voice-input/global.js';
@@ -820,23 +831,33 @@ import { healWindowsShortcuts } from './windowsShortcutSelfHeal.js';
 import { CURRENT_APP_ID, CURRENT_CINDY_REGION } from '../shared/brandRegion.js';
 import {
   readWindowBehaviorSettings,
+  writeLinuxCloseBehavior,
   writeSwallowActivationClick,
   writeWindowsCloseBehavior,
 } from './window-behavior-settings-store.js';
 import {
   hideWindowToWindowsTray,
   popUpWindowsTrayMenu,
-  requestWindowsCloseBehavior,
   requestWindowsTrayQuit,
 } from './windowsTrayLifecycle.js';
-import { createWindowsClosePromptFallbackController } from './windowsClosePromptFallback.js';
 import {
+  applyLinuxMainWindowCloseBehavior,
+  createCloseBehaviorPromptFallbackController,
+  requestMainWindowCloseBehavior,
+} from './mainWindowCloseBehavior.js';
+import {
+  isLinuxCloseBehavior,
   isWindowsCloseBehavior,
+  WINDOW_BEHAVIOR_GET_LINUX_CLOSE_BEHAVIOR_CHANNEL,
   WINDOW_BEHAVIOR_GET_WINDOWS_CLOSE_BEHAVIOR_CHANNEL,
+  WINDOW_BEHAVIOR_LINUX_CLOSE_BEHAVIOR_REQUESTED_CHANNEL,
+  WINDOW_BEHAVIOR_LINUX_CLOSE_BEHAVIOR_SHOWN_CHANNEL,
+  WINDOW_BEHAVIOR_SET_LINUX_CLOSE_BEHAVIOR_CHANNEL,
   WINDOW_BEHAVIOR_SET_SWALLOW_ACTIVATION_CLICK_CHANNEL,
   WINDOW_BEHAVIOR_SET_WINDOWS_CLOSE_BEHAVIOR_CHANNEL,
   WINDOW_BEHAVIOR_WINDOWS_CLOSE_BEHAVIOR_REQUESTED_CHANNEL,
   WINDOW_BEHAVIOR_WINDOWS_CLOSE_BEHAVIOR_SHOWN_CHANNEL,
+  type LinuxCloseBehavior,
   type WindowsCloseBehavior,
 } from '../shared/windowBehavior.js';
 import { getDesktopCommandRegistry, registerBuiltinDesktopCommands } from './commands/index.js';
@@ -850,8 +871,6 @@ import { parseImDefaultSettingsPatch } from './im/parseDefaultSettingsPatch.js';
 import {
   SUBAGENT_MODEL_SETTINGS_DEFAULTS,
   codexSpawnConfigChanged,
-  isCodexSubagentEffort,
-  isValidCodexSubagentConcurrencyInput,
   isValidSubagentModelIdInput,
   normalizeSubagentModelId,
   reconcileSubagentModelSettingsPatch,
@@ -933,6 +952,7 @@ import { findCindyFileInArgv } from './cindy-brain/argv.js';
 import { handleIncomingCindyFile } from './cindy-brain/openFileInstall.js';
 import { registerCindyFileAssociation } from './cindy-brain/fileAssociation.js';
 import { runPluginStorageSmoke } from './smoke/pluginStorageSmoke.js';
+import { runComputerUseSmokeIfRequested } from './smoke/computerUseSmoke.js';
 import { setMainLocale, t } from './i18n.js';
 import { requireObject, throwIpcError } from './utils/ipcValidate.js';
 import { pickNativeAtResource } from './nativeAtResourcePicker.js';
@@ -1122,7 +1142,7 @@ async function attemptStartSchedulerOnce(): Promise<void> {
     startLearnHost({
       maker,
       broadcast: broadcastLearnEvent,
-      fetchHubSkill: (slug) => fetchHubSkillReference(learnMarketService, slug),
+      fetchHubSkill: (slug, catalogScope) => fetchHubSkillReference(learnMarketService, slug, catalogScope),
       ...automationGitBaselineHooks,
     });
   } catch (err) {
@@ -2936,6 +2956,7 @@ function isPathAllowed(filePath: string): boolean {
 // BrowserWindow，[0] 拿到它再 .focus() 等于啥也没干，用户视觉上以为
 // "双击启动不了"。
 let mainWindowRef: BrowserWindow | null = null;
+let mainWindowMaximizeRecoveryController: MainWindowMaximizeRecoveryController | null = null;
 // 端点清单阻断门:ready 流程走到正常 createWindow() 前置 true。在此之前
 // second-instance / activate 一律不许建窗——阻断循环(错误框重试)期间用户
 // 双击图标 / 点 Dock 若能建窗,preload 的模块级 sendSync 会因 handler 未注册
@@ -3007,7 +3028,7 @@ let windowsTrayMenu: Menu | null = null;
 // 已弹出的菜单在 native callback 前必须保留,即使语言切换清掉了当前缓存。
 const activeWindowsTrayMenus = new Set<Menu>();
 const windowsTrayLog = createLogger('windows-tray');
-const WINDOWS_CLOSE_PROMPT_FALLBACK_DELAY_MS = 2_000;
+const CLOSE_BEHAVIOR_PROMPT_FALLBACK_DELAY_MS = 2_000;
 
 function buildWindowsTrayMenu(): Menu {
   return Menu.buildFromTemplate([
@@ -3170,13 +3191,35 @@ function showNativeWindowsCloseBehaviorPrompt(): WindowsCloseBehavior {
   return choice === 1 ? 'quit' : 'tray';
 }
 
-const windowsClosePromptFallback = createWindowsClosePromptFallbackController(
+function showNativeLinuxCloseBehaviorPrompt(): LinuxCloseBehavior {
+  const options = {
+    type: 'question' as const,
+    title: t('settings.windowBehavior.closePrompt.title'),
+    message: t('settings.windowBehavior.closePrompt.message'),
+    detail: t('settings.windowBehavior.closePrompt.linuxDetail'),
+    buttons: [
+      t('settings.windowBehavior.closeBehavior.minimize'),
+      t('settings.windowBehavior.closeBehavior.quit'),
+    ],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  };
+  const mainWindow = mainWindowRef;
+  const choice =
+    mainWindow && !mainWindow.isDestroyed()
+      ? dialog.showMessageBoxSync(mainWindow, options)
+      : dialog.showMessageBoxSync(options);
+  return choice === 1 ? 'quit' : 'minimize';
+}
+
+const windowsClosePromptFallback = createCloseBehaviorPromptFallbackController(
   {
     readBehavior: () => readWindowBehaviorSettings().windowsCloseBehavior,
     showRendererPrompt: () => {
       const mainWindow = mainWindowRef;
       if (!mainWindow) return;
-      requestWindowsCloseBehavior(
+      requestMainWindowCloseBehavior(
         mainWindow,
         WINDOW_BEHAVIOR_WINDOWS_CLOSE_BEHAVIOR_REQUESTED_CHANNEL,
       );
@@ -3194,7 +3237,34 @@ const windowsClosePromptFallback = createWindowsClosePromptFallbackController(
     schedule: (callback, delayMs) => setTimeout(callback, delayMs),
     cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
   },
-  WINDOWS_CLOSE_PROMPT_FALLBACK_DELAY_MS,
+  CLOSE_BEHAVIOR_PROMPT_FALLBACK_DELAY_MS,
+);
+
+const linuxClosePromptFallback = createCloseBehaviorPromptFallbackController(
+  {
+    readBehavior: () => readWindowBehaviorSettings().linuxCloseBehavior,
+    showRendererPrompt: () => {
+      const mainWindow = mainWindowRef;
+      if (!mainWindow) return;
+      requestMainWindowCloseBehavior(
+        mainWindow,
+        WINDOW_BEHAVIOR_LINUX_CLOSE_BEHAVIOR_REQUESTED_CHANNEL,
+      );
+    },
+    showNativePrompt: showNativeLinuxCloseBehaviorPrompt,
+    persistBehavior: writeLinuxCloseBehavior,
+    applyBehavior: (behavior) => {
+      const mainWindow = mainWindowRef;
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        applyLinuxMainWindowCloseBehavior(mainWindow, behavior, () => app.quit());
+      } else {
+        app.quit();
+      }
+    },
+    schedule: (callback, delayMs) => setTimeout(callback, delayMs),
+    cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  },
+  CLOSE_BEHAVIOR_PROMPT_FALLBACK_DELAY_MS,
 );
 
 app.on('before-quit', () => {
@@ -3203,6 +3273,7 @@ app.on('before-quit', () => {
   retryPiRuntimeAfterNetworkRecovery = null;
   disposePiRuntimeRecovery = null;
   windowsClosePromptFallback.dispose();
+  linuxClosePromptFallback.dispose();
   destroyWindowsTray();
   disposeUpdatePresentationRecovery();
 });
@@ -3567,7 +3638,15 @@ const createWindow = () => {
   // 改用顶层 import 而不是运行时 require —— Vite 才能 bundle 进 main 产物，
   // 否则 packaged app 因 pnpm hoisted 布局 + electron-packager 只扫
   // apps/desktop/node_modules 而拿不到这个包，运行时报 Cannot find module。
+  const mainWindowStateFile = 'window-state.json';
+  // Read the flag before the keeper validates bounds: it discards `isMaximized`
+  // along with off-screen bounds, which is exactly the lid-closed / monitor-asleep
+  // relaunch case where we still want to come back maximized.
+  const persistedMaximized = readPersistedWindowMaximized(
+    path.join(app.getPath('userData'), mainWindowStateFile),
+  );
   const mainWindowState = windowStateKeeper({
+    file: mainWindowStateFile,
     defaultWidth: 1280,
     defaultHeight: 800,
     // Applying fullscreen while a hidden macOS window is still starting can
@@ -3575,6 +3654,8 @@ const createWindow = () => {
     fullScreen: process.platform !== 'darwin',
   });
   const shouldRestoreMacFullscreen = process.platform === 'darwin' && mainWindowState.isFullScreen;
+  const shouldRestoreMaximized =
+    !shouldRestoreMacFullscreen && (persistedMaximized || Boolean(mainWindowState.isMaximized));
 
   const mainWindow = new BrowserWindow({
     x: mainWindowState.x,
@@ -3664,8 +3745,8 @@ const createWindow = () => {
       }
       return;
     }
-    // Windows: first close asks once, then either quits or keeps the main window
-    // alive in the system tray. Linux keeps the historical quit behavior.
+    // Windows and Linux ask once on first close, then reuse the persisted choice.
+    // The keep-running action follows each platform: tray on Windows, minimize on Linux.
     event.preventDefault();
     if (process.platform === 'win32') {
       const behavior = readWindowBehaviorSettings().windowsCloseBehavior;
@@ -3674,6 +3755,15 @@ const createWindow = () => {
         return;
       }
       applyWindowsCloseBehavior(mainWindow, behavior);
+      return;
+    }
+    if (process.platform === 'linux') {
+      const behavior = readWindowBehaviorSettings().linuxCloseBehavior;
+      if (!behavior) {
+        linuxClosePromptFallback.request();
+        return;
+      }
+      applyLinuxMainWindowCloseBehavior(mainWindow, behavior, () => app.quit());
       return;
     }
     app.quit();
@@ -3699,6 +3789,27 @@ const createWindow = () => {
   // Wire resize / move / maximize / fullscreen listeners that persist the
   // state to disk on `close`. Must run before any user resize event fires.
   mainWindowState.manage(mainWindow);
+  if (shouldRestoreMaximized && !mainWindow.isMaximized()) mainWindow.maximize();
+  // Windows can transiently unmaximize during display/DPI re-layout. macOS
+  // owns its native Zoom behavior, so do not install the Windows recovery
+  // state machine there.
+  if (process.platform === 'win32') {
+    const maximizeRecovery = installMainWindowMaximizeRecovery(mainWindow, screen, {
+      armed: shouldRestoreMaximized,
+      log: createSchedulerLogger('main-window-maximize-recovery'),
+    });
+    mainWindowMaximizeRecoveryController = maximizeRecovery;
+    const removeNativeRestoreIntent = installMainWindowNativeRestoreIntent(
+      mainWindow,
+      maximizeRecovery.notifyUserUnmaximizeIntent,
+    );
+    mainWindow.once('closed', () => {
+      removeNativeRestoreIntent();
+      if (mainWindowMaximizeRecoveryController === maximizeRecovery) {
+        mainWindowMaximizeRecoveryController = null;
+      }
+    });
+  }
 
   // dev-only:F12 切换 DevTools 的兜底通道。走 before-input-event 在 main 侧
   // 拦截,按键根本不进 renderer —— 不受页面内快捷键系统 / 输入焦点 / 菜单
@@ -3718,6 +3829,7 @@ const createWindow = () => {
       restoreFullscreen: shouldRestoreMacFullscreen,
     });
     if (!app.isPackaged) markDesktopDevWindowReady();
+    void runComputerUseSmokeIfRequested();
     // 资源用量窗口不应与主窗口首帧争 CPU。主窗口可见后再后台完成 BrowserWindow、
     // renderer 和首份进程快照预热；回调绑定当代主窗口，重建/退出后不会创建孤儿窗。
     resourceUsagePrewarmTimer = setTimeout(() => {
@@ -4416,7 +4528,7 @@ const registerIpcHandlers = () => {
   });
 
   // Window behavior —— swallowActivationClick 保持 renderer 运行时事实标准;
-  // Windows close behavior 由 main 读写并执行。
+  // Windows / Linux close behavior 由 main 读写并执行。
   ipcMain.handle(
     WINDOW_BEHAVIOR_SET_SWALLOW_ACTIVATION_CLICK_CHANNEL,
     async (_e, enabled: unknown) => {
@@ -4445,6 +4557,28 @@ const registerIpcHandlers = () => {
   ipcMain.on(WINDOW_BEHAVIOR_WINDOWS_CLOSE_BEHAVIOR_SHOWN_CHANNEL, (event) => {
     if (BrowserWindow.fromWebContents(event.sender) === mainWindowRef) {
       windowsClosePromptFallback.acknowledge();
+    }
+  });
+  ipcMain.handle(WINDOW_BEHAVIOR_GET_LINUX_CLOSE_BEHAVIOR_CHANNEL, async (event) => {
+    assertTrustedAppRendererEvent(event);
+    return readWindowBehaviorSettings().linuxCloseBehavior;
+  });
+  ipcMain.handle(
+    WINDOW_BEHAVIOR_SET_LINUX_CLOSE_BEHAVIOR_CHANNEL,
+    async (event, behavior: unknown) => {
+      assertTrustedAppRendererEvent(event);
+      if (!isLinuxCloseBehavior(behavior)) {
+        throwIpcError('INVALID_PARAMS', 'Linux close behavior required (quit|minimize)');
+      }
+      linuxClosePromptFallback.acknowledge();
+      writeLinuxCloseBehavior(behavior);
+      return behavior;
+    },
+  );
+  ipcMain.on(WINDOW_BEHAVIOR_LINUX_CLOSE_BEHAVIOR_SHOWN_CHANNEL, (event) => {
+    assertTrustedAppRendererEvent(event);
+    if (BrowserWindow.fromWebContents(event.sender) === mainWindowRef) {
+      linuxClosePromptFallback.acknowledge();
     }
   });
   // LSP Beta 开关 IPC —— 同 compat-mode 模式:
@@ -4706,6 +4840,9 @@ const registerIpcHandlers = () => {
     const win = BrowserWindow.fromWebContents(event.sender) ?? mainWindowRef;
     if (!win) return;
     if (win.isMaximized()) {
+      if (win === mainWindowRef) {
+        mainWindowMaximizeRecoveryController?.notifyUserUnmaximizeIntent();
+      }
       win.unmaximize();
     } else {
       win.maximize();
@@ -5937,13 +6074,18 @@ const registerIpcHandlers = () => {
   // macOS Privacy panes that Settings uses for permission onboarding.
   ipcMain.handle(
     'shell:open-external',
-    async (_event: Electron.IpcMainInvokeEvent, url: string): Promise<{ success: boolean }> => {
+    async (event: Electron.IpcMainInvokeEvent, url: string): Promise<{ success: boolean }> => {
       try {
         const parsed = new URL(url);
         const isWebUrl = parsed.protocol === 'http:' || parsed.protocol === 'https:';
+        // Mail links are restricted to the fixed billing inbox. Renderer content may
+        // provide the localized subject/body, but it must not choose a recipient or
+        // use mailto as a general-purpose external scheme.
+        const isBillingMailto =
+          isAllowedBillingMailtoRequest(url, isTrustedAppRendererEvent(event));
         const isAllowedSystemSettingsUrl =
           process.platform === 'darwin' && allowedSystemSettingsUrls.has(url);
-        if (!isWebUrl && !isAllowedSystemSettingsUrl) {
+        if (!isWebUrl && !isBillingMailto && !isAllowedSystemSettingsUrl) {
           return { success: false };
         }
         await shell.openExternal(url);
@@ -5959,7 +6101,18 @@ const registerIpcHandlers = () => {
   // 打开 renderer 提供的任意自定义 scheme / deep link。
   ipcMain.handle('shell:open-chatgpt-app', async (event): Promise<{ success: boolean }> =>
     handleOpenChatGPTApp(event, {
-      assertTrustedSender: assertTrustedAppRendererEvent,
+      assertTrustedSender: (candidate) => {
+        // The cached global overlay is a trusted Cindy renderer but deliberately
+        // not app-content: it needs this fixed, no-argument capability to keep
+        // auth recovery visible without activating the main window.
+        const overlayWindow = BrowserWindow.fromWebContents(candidate.sender);
+        if (
+          isGlobalVoiceInputOverlaySender(candidate.sender) &&
+          candidate.senderFrame === candidate.sender.mainFrame &&
+          isTrustedCindyRendererWindow(overlayWindow)
+        ) return;
+        assertTrustedAppRendererEvent(candidate);
+      },
       openExternal: (url) => shell.openExternal(url),
     }),
   );
@@ -8085,6 +8238,7 @@ app.on('ready', async () => {
   // 保证 beforeEnsureReady 推送 confirm 态时 renderer 已能 invoke 确认通道。
   registerLegacyMigrationIpc();
   registerLocalDbIpc({
+    resolveContextWindow: (session) => resolveSessionContextWindow(getActiveCatalog(), session),
     cancelSessionOperations: cancelIOSSimulatorSessionOperations,
     cleanupRemovedSession: cleanupIOSSimulatorRemovedSession,
     closeIdleSessionForMove: async (sessionId) => {
@@ -9267,7 +9421,7 @@ function parseSubagentModelSettingsPatch(raw: unknown): SubagentModelSettingsPat
   const input = raw as Record<string, unknown>;
   const patch: SubagentModelSettingsPatch = {};
   // providerId 与 model id 同约束(短标识串),共用同一套校验/归一化。
-  for (const key of ['claudeCode', 'claudeCodeProviderId', 'codex', 'codexProviderId'] as const) {
+  for (const key of ['claudeCode', 'claudeCodeProviderId'] as const) {
     if (!(key in input)) continue;
     const value = input[key];
     if (!isValidSubagentModelIdInput(value)) {
@@ -9275,39 +9429,11 @@ function parseSubagentModelSettingsPatch(raw: unknown): SubagentModelSettingsPat
     }
     patch[key] = normalizeSubagentModelId(value);
   }
-  // 护栏/effort 字段类型各异(enum / boolean / number|null),逐字段分支校验。
-  if ('codexEffort' in input) {
-    if (input.codexEffort !== null && !isCodexSubagentEffort(input.codexEffort)) {
-      throwIpcError('INVALID_PARAMS', 'subagent codexEffort must be a known effort or null');
+  if ('codexSmartSubagentRouting' in input) {
+    if (typeof input.codexSmartSubagentRouting !== 'boolean') {
+      throwIpcError('INVALID_PARAMS', 'subagent codexSmartSubagentRouting must be boolean');
     }
-    patch.codexEffort = input.codexEffort as SubagentModelSettingsPatch['codexEffort'];
-  }
-  if ('codexSubagentsEnabled' in input) {
-    if (typeof input.codexSubagentsEnabled !== 'boolean') {
-      throwIpcError('INVALID_PARAMS', 'subagent codexSubagentsEnabled must be boolean');
-    }
-    patch.codexSubagentsEnabled = input.codexSubagentsEnabled;
-  }
-  if ('codexUseCindySubagentPolicy' in input) {
-    if (typeof input.codexUseCindySubagentPolicy !== 'boolean') {
-      throwIpcError('INVALID_PARAMS', 'subagent codexUseCindySubagentPolicy must be boolean');
-    }
-    patch.codexUseCindySubagentPolicy = input.codexUseCindySubagentPolicy;
-  }
-  if ('codexMaxConcurrentSubagents' in input) {
-    if (!isValidCodexSubagentConcurrencyInput(input.codexMaxConcurrentSubagents)) {
-      throwIpcError(
-        'INVALID_PARAMS',
-        'subagent codexMaxConcurrentSubagents must be an integer in range or null',
-      );
-    }
-    patch.codexMaxConcurrentSubagents = input.codexMaxConcurrentSubagents;
-  }
-  if ('codexAllowNestedSubagents' in input) {
-    if (typeof input.codexAllowNestedSubagents !== 'boolean') {
-      throwIpcError('INVALID_PARAMS', 'subagent codexAllowNestedSubagents must be boolean');
-    }
-    patch.codexAllowNestedSubagents = input.codexAllowNestedSubagents;
+    patch.codexSmartSubagentRouting = input.codexSmartSubagentRouting;
   }
   return patch;
 }

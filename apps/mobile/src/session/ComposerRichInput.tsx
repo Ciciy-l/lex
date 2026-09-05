@@ -1,6 +1,7 @@
 import { forwardRef, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Platform, StyleSheet } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
+import Animated, { useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
 import { File, Paths } from 'expo-file-system';
 import * as Clipboard from 'expo-clipboard';
 import {
@@ -18,6 +19,7 @@ import {
   type ComposerWebMessage,
 } from '@/session/composerRichInputProtocol';
 import { COMPOSER_PASTED_IMAGE_FILE_PREFIX } from '@/session/pastedImageAttachment';
+import { registerMobileMessageWebView } from '@/session/mobileMessageWebViewMetrics';
 
 export interface ComposerRichInputHandle {
   applyDocumentAndSetSelectionToEnd(document: ComposerDocument): void;
@@ -32,6 +34,8 @@ export interface ComposerRichInputProps {
   document: ComposerDocument;
   editable?: boolean;
   height: number;
+  /** Resize follows the UI thread without an RN render or WebView reload. */
+  animatedHeight?: SharedValue<number>;
   hidden?: boolean;
   maxHeight: number;
   onBlur?: () => void;
@@ -59,6 +63,7 @@ export const ComposerRichInput = forwardRef<ComposerRichInputHandle, ComposerRic
   function ComposerRichInput({
     accessibilityHint,
     accessibilityLabel,
+    animatedHeight,
     document,
     editable = true,
     height,
@@ -78,6 +83,7 @@ export const ComposerRichInput = forwardRef<ComposerRichInputHandle, ComposerRic
     theme,
   }, forwardedRef) {
     const webViewRef = useRef<WebView | null>(null);
+    useEffect(() => registerMobileMessageWebView('composer'), []);
     const readyRef = useRef(false);
     const webSignatureRef = useRef('');
     const pendingDocumentRef = useRef<{
@@ -313,6 +319,7 @@ export const ComposerRichInput = forwardRef<ComposerRichInputHandle, ComposerRic
     }, [inject, resolveSessionLinkLabel]);
 
     const handleMessage = useCallback((event: WebViewMessageEvent) => {
+      if (disposedRef.current) return;
       const message = parseComposerWebMessage(event.nativeEvent.data);
       if (!message) return;
       if (message.type === 'ready') {
@@ -373,7 +380,11 @@ export const ComposerRichInput = forwardRef<ComposerRichInputHandle, ComposerRic
       }
     }, [applyDocument, commitPlainTextPaste, focusEditor, inject, maxHeight, onBlur, onChangeDocument, onFocus, onHeightChange, onPasteImagesLoading, persistPastedImage, runtimeConfig, settlePastedImage]);
 
+    const heightStyle = useAnimatedStyle(() => ({ height: animatedHeight?.value ?? height }));
     return (
+      // WebView's imperative ref is a command handle, not a Fabric host ref.
+      // Animate its native View container and let the WebView fill that frame.
+      <Animated.View style={[styles.frame, heightStyle, { opacity: hidden ? 0 : 1 }]}>
       <WebView
         ref={webViewRef}
         accessibilityHint={accessibilityHint}
@@ -401,10 +412,12 @@ export const ComposerRichInput = forwardRef<ComposerRichInputHandle, ComposerRic
         scrollEnabled={false}
         setSupportMultipleWindows={false}
         source={{ html }}
-        style={[styles.webView, { height, opacity: hidden ? 0 : 1 }]}
+        containerStyle={styles.webView}
+        style={styles.webView}
         testID={testID}
         textInteractionEnabled
       />
+      </Animated.View>
     );
   },
 );
@@ -425,11 +438,13 @@ async function deleteComposerPastedImageUris(uris: readonly string[]): Promise<v
 }
 
 const styles = StyleSheet.create({
+  frame: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: COMPOSER_SINGLE_LINE_HEIGHT,
+  },
   webView: {
     backgroundColor: 'transparent',
-    // react-native-webview defaults the native child to flex: 1. Override it
-    // because this composer drives the child with an explicit measured height.
-    flex: 0,
-    minHeight: COMPOSER_SINGLE_LINE_HEIGHT,
+    flex: 1,
   },
 });

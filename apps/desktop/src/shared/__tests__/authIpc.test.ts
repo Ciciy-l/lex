@@ -1,9 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  LOGIN_PREPARING_UNLOCK_TIMEOUT_MS,
+  awaitDesktopLoginStateLoad,
   parseDesktopAccountDeletionConfirmInput,
   parseDesktopAccountKey,
   parseDesktopLoginAction,
+  settleDesktopLoginResult,
 } from '../authIpc';
 
 describe('desktop auth IPC validation', () => {
@@ -194,5 +197,116 @@ describe('parseDesktopAccountDeletionConfirmInput', () => {
         code: '123456',
       }),
     ).toBeNull();
+  });
+});
+
+describe.each(['cn', 'global'] as const)('settleDesktopLoginResult (%s)', (realm) => {
+  it('keeps a successful identifier state', () => {
+    const state = {
+      step: 'identifier' as const,
+      providers: {
+        region: realm,
+        attribution: 'email' as const,
+        email: true,
+        phone: false,
+        social: [],
+      },
+    };
+    expect(settleDesktopLoginResult({ success: true, state, realm })).toEqual({
+      success: true,
+      state,
+      realm,
+    });
+  });
+
+  it('maps a failed null state onto the retryable error step', () => {
+    expect(
+      settleDesktopLoginResult({
+        success: false,
+        code: 'AUTH_FLOW_SUPERSEDED',
+        state: null,
+        realm,
+      }),
+    ).toEqual({
+      success: false,
+      code: 'AUTH_FLOW_SUPERSEDED',
+      state: { step: 'error', code: 'AUTH_FLOW_SUPERSEDED', recoverTo: 'identifier' },
+      realm,
+    });
+  });
+});
+
+describe.each(['cn', 'global'] as const)('awaitDesktopLoginStateLoad (%s)', (realm) => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('returns a settled identifier before the preparing timeout', async () => {
+    const state = {
+      step: 'identifier' as const,
+      providers: {
+        region: realm,
+        attribution: 'email' as const,
+        email: true,
+        phone: false,
+        social: [],
+      },
+    };
+    await expect(
+      awaitDesktopLoginStateLoad(async () => ({ success: true, state, realm }), realm),
+    ).resolves.toEqual({ success: true, state, realm });
+  });
+
+  it('unlocks preparing after 30s when getLoginState never settles', async () => {
+    const hung = () => new Promise<never>(() => undefined);
+    const p = awaitDesktopLoginStateLoad(hung, realm);
+    const rejected = expect(p).resolves.toEqual({
+      success: false,
+      code: 'AUTH_SERVICE_UNAVAILABLE',
+      state: { step: 'error', code: 'AUTH_SERVICE_UNAVAILABLE', recoverTo: 'identifier' },
+      realm,
+    });
+    await vi.advanceTimersByTimeAsync(LOGIN_PREPARING_UNLOCK_TIMEOUT_MS - 1);
+    await vi.advanceTimersByTimeAsync(1);
+    await rejected;
+  });
+
+  it('maps a thrown getLoginState onto the retryable error step', async () => {
+    await expect(
+      awaitDesktopLoginStateLoad(async () => {
+        throw new Error('ipc exploded');
+      }, realm),
+    ).resolves.toEqual({
+      success: false,
+      code: 'AUTH_SERVICE_UNAVAILABLE',
+      state: { step: 'error', code: 'AUTH_SERVICE_UNAVAILABLE', recoverTo: 'identifier' },
+      realm,
+    });
+  });
+
+  it('preserves the invocation realm when the loader throws synchronously', async () => {
+    await expect(
+      awaitDesktopLoginStateLoad(() => { throw new Error('sync IPC failure'); }, realm),
+    ).resolves.toEqual({
+      success: false,
+      code: 'AUTH_SERVICE_UNAVAILABLE',
+      state: { step: 'error', code: 'AUTH_SERVICE_UNAVAILABLE', recoverTo: 'identifier' },
+      realm,
+    });
+  });
+
+  it('keeps the main-owned result realm instead of replacing it with the fallback', async () => {
+    const resultRealm = realm === 'cn' ? 'global' : 'cn';
+    await expect(
+      awaitDesktopLoginStateLoad(async () => ({
+        success: false,
+        code: 'AUTH_FLOW_SUPERSEDED',
+        state: null,
+        realm: resultRealm,
+      }), realm),
+    ).resolves.toMatchObject({ realm: resultRealm, state: { step: 'error' } });
   });
 });

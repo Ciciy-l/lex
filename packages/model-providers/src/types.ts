@@ -170,6 +170,11 @@ export interface RoutingDescriptor {
    * 未声明表示没有足够能力信息，调用方不得按模型名猜测。
    */
   supportsResponsesCustomTools?: boolean;
+  /**
+   * 该自定义 Provider 的 Codex Responses runtime 是否支持原生图片生成与编辑。
+   * 缺省按 false 处理；它与模型图片输入能力独立，也不得从模型名推断。
+   */
+  supportsImageGeneration?: boolean;
   /** 真实上游 base URL（direct 时是供应商自家；gateway 时是 XD 网关 base）。 */
   upstream: string;
   /**
@@ -328,6 +333,10 @@ export interface CatalogModel {
   maxOutput?: number;
   /** 支持的 effort 档；空数组 = 不支持切换（如 Haiku / 部分 provider-managed 模型）。 */
   efforts: Effort[];
+  /** 独立 Pi 远端目录的显式能力；缺席时保留旧目录兼容行为。 */
+  reasoning?: boolean;
+  reasoningEfforts?: PiReasoningEffort[];
+  reasoningDefaultEffort?: PiReasoningEffort;
   /**
    * Model-specific effort 显示名覆盖（= maker-core ModelDescriptor.effortDisplayNames）。
    * 缺省时回退统一档名词表(桌面 i18n `effortLevels.*` / 手机 MOBILE_EFFORT_LABELS)→
@@ -567,6 +576,8 @@ export interface ProviderPresetRuntime {
   baseUrl: string;
   /** 非标准推理端点的相对路径；缺省由 wire protocol 推导。 */
   requestPath?: string;
+  /** Codex Responses runtime 是否支持原生图片生成与编辑；缺省为 false。 */
+  supportsImageGeneration?: boolean;
   /** 推荐模型清单（预填进表单，用户可增删改）。 */
   models: ProviderRuntimeModelConfig[];
   /** 可选预填请求头。 */
@@ -661,6 +672,8 @@ export interface CustomProviderRuntimeConfig {
   baseUrl: string;
   /** 非标准推理端点的相对路径；缺省由 wire protocol 推导。 */
   requestPath?: string;
+  /** Codex Responses runtime 是否支持原生图片生成与编辑；缺省为 false。 */
+  supportsImageGeneration?: boolean;
   /** 用户模型；contextWindow 可由预设带入，缺省时由 `buildUserProvider` 补保守默认。 */
   models: ProviderRuntimeModelConfig[];
   /**

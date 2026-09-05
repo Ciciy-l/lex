@@ -28,6 +28,20 @@ import {
   CINDY_PI_BASH_MAX_TIMEOUT_SECONDS,
 } from '../cindy-bridge-source.js';
 
+const canLinkFile = (() => {
+  const root = mkdtempSync(path.join(tmpdir(), 'cindy-bridge-file-link-probe-'));
+  try {
+    const target = path.join(root, 'target');
+    writeFileSync(target, 'probe');
+    symlinkSync(target, path.join(root, 'link'), 'file');
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+})();
+
 type ReviewSearchHelpers = {
   collectReadonlyCredentialEvidence: (
     toolName: string,
@@ -161,6 +175,47 @@ function loadBashPackageHomeHelper(): {
   };
 }
 
+function powerShellOverlayEnabled(platform: NodeJS.Platform, factory: unknown): boolean {
+  const source = CINDY_BRIDGE_EXTENSION_SOURCE;
+  const start = source.indexOf('const createPowerShellTool =');
+  const end = source.indexOf('// Cindy owns a separate Pi extension store.', start);
+  if (start < 0 || end <= start) throw new Error('PowerShell overlay was not found');
+  const condition = /^\s*if \((.*createPowerShellTool.*)\) \{$/m.exec(source.slice(start, end))?.[1];
+  if (!condition) throw new Error('PowerShell overlay condition was not found');
+  return Boolean(runInNewContext(condition, {
+    createPowerShellTool: factory,
+    process: { platform },
+  }));
+}
+
+function loadPowerShellReadEvidence(
+  cwd: string,
+): (input: unknown) => { targets: string[]; unresolved: boolean } {
+  const source = CINDY_BRIDGE_EXTENSION_SOURCE;
+  const start = source.indexOf('const POWERSHELL_DIRECT_FILE_READ_COMMANDS');
+  const end = source.indexOf('function bashInputReadEvidence', start);
+  if (start < 0 || end <= start) throw new Error('PowerShell read evidence helper was not found');
+  const executableSource = [
+    'type BashInputReadEvidence = { targets: string[]; unresolved: boolean };',
+    source.slice(start, end),
+    '(globalThis as any).powershellInputReadEvidence = powershellInputReadEvidence;',
+  ].join('\n');
+  const compiled = ts.transpileModule(executableSource, {
+    compilerOptions: {
+      module: ts.ModuleKind.None,
+      target: ts.ScriptTarget.ES2022,
+    },
+  }).outputText;
+  const context: Record<string, unknown> = {
+    path,
+    process: { cwd: () => cwd },
+  };
+  runInNewContext(compiled, context);
+  return context.powershellInputReadEvidence as (
+    input: unknown,
+  ) => { targets: string[]; unresolved: boolean };
+}
+
 function loadPiPackageMutationCommandHelper(): (input: unknown) => boolean {
   const source = CINDY_BRIDGE_EXTENSION_SOURCE;
   const parserStart = source.indexOf('function readShellRedirectionTarget');
@@ -287,6 +342,32 @@ function loadBashTimeoutHelpers(): {
 }
 
 describe('cindy-bridge extension source', () => {
+  it('adapts Astra API payloads without changing other models or subscription requests', () => {
+    const start = CINDY_BRIDGE_EXTENSION_SOURCE.indexOf('function astraResponsesPayload(');
+    const end = CINDY_BRIDGE_EXTENSION_SOURCE.indexOf('export default async function cindyBridge');
+    const adapt = new Function(`${CINDY_BRIDGE_EXTENSION_SOURCE.slice(start, end)}; return astraResponsesPayload;`)();
+    const original = {
+      prompt_cache_retention: '24h',
+      prompt_cache_options: { mode: 'explicit' },
+      temperature: 0.5, top_p: 1, top_logprobs: 2,
+      include: ['reasoning.encrypted_content', 'message.output_text.logprobs'],
+      reasoning: { effort: 'none', summary: 'auto' },
+      input: [{ role: 'user', content: 'hello' }],
+    };
+    const model = { id: 'gpt-6-astra', api: 'openai-responses' };
+    expect(adapt(original, model)).toEqual({
+      prompt_cache_options: { ttl: '30m', mode: 'explicit' },
+      include: ['reasoning.encrypted_content'],
+      reasoning: { effort: 'low', summary: 'auto' },
+      input: original.input,
+    });
+    expect(original.reasoning.effort).toBe('none');
+    expect(original.prompt_cache_retention).toBe('24h');
+    expect(adapt({ reasoning: { effort: 'max' } }, model).reasoning.effort).toBe('max');
+    expect(adapt(original, { ...model, id: 'gpt-5.5' })).toBeUndefined();
+    expect(adapt(original, { ...model, api: 'openai-codex-responses' })).toBeUndefined();
+  });
+
   it('is valid standalone TypeScript for the Pi runtime to load', () => {
     const result = ts.transpileModule(CINDY_BRIDGE_EXTENSION_SOURCE, {
       compilerOptions: {
@@ -356,12 +437,144 @@ describe('cindy-bridge extension source', () => {
     expect(evidence('read', { path: 42 }).touchesCredential).toBe(true);
   });
 
+  it('canonicalizes direct PowerShell read operands through a directory symlink or junction', () => {
+    const tempRoot = mkdtempSync(path.join(tmpdir(), 'cindy-pi-powershell-link-'));
+    try {
+      const sshDir = path.join(tempRoot, 'secrets', '.ssh');
+      const keyPath = path.join(sshDir, 'id_rsa');
+      const innocentLink = path.join(tempRoot, 'innocent');
+      mkdirSync(sshDir, { recursive: true });
+      writeFileSync(keyPath, 'secret');
+      symlinkSync(sshDir, innocentLink, process.platform === 'win32' ? 'junction' : 'dir');
+      const operand = process.platform === 'win32'
+        ? '.\\innocent\\id_rsa'
+        : './innocent/id_rsa';
+      const evidence = loadPowerShellReadEvidence(tempRoot);
+
+      const commands = [
+        ...['Get-Content', 'gc', 'cat', 'type', 'Microsoft.PowerShell.Management\\Get-Content']
+          .map((commandName) => commandName + ' ' + operand),
+        'Get-Content -Path ' + operand,
+        "Get-Content -LiteralPath '" + operand + "' -Raw",
+        'Write-Output ok; Get-Content ' + operand,
+        'Get-Content ' + operand + ' | Out-String',
+        'Write-Output ok | Get-Content ' + operand,
+        'Write-Output "ok; still"; Get-Content ' + operand,
+        'Write-Output ok\nGet-Content ' + operand,
+        'Write-Output ok\rGet-Content ' + operand,
+        '# harmless preface\nGet-Content ' + operand,
+      ];
+      for (const command of commands) {
+        const result = evidence({ command });
+        expect(result.unresolved, command).toBe(false);
+        expect(result.targets, command).toHaveLength(1);
+        expect(realpathSync(result.targets[0]), command).toBe(realpathSync(keyPath));
+      }
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed for relative PowerShell reads after a directory change', () => {
+    const tempRoot = mkdtempSync(path.join(tmpdir(), 'cindy-pi-powershell-cwd-'));
+    try {
+      const sshDir = path.join(tempRoot, 'secrets', '.ssh');
+      const keyPath = path.join(sshDir, 'work');
+      const innocentLink = path.join(tempRoot, 'innocent');
+      mkdirSync(sshDir, { recursive: true });
+      writeFileSync(keyPath, 'secret');
+      symlinkSync(sshDir, innocentLink, process.platform === 'win32' ? 'junction' : 'dir');
+      const location = process.platform === 'win32' ? '.\\innocent' : './innocent';
+      const evidence = loadPowerShellReadEvidence(tempRoot);
+
+      for (const locationCommand of [
+        `Set-Location ${location}`,
+        `cd ${location}`,
+        `chdir ${location}`,
+        `sl ${location}`,
+        `Push-Location ${location}`,
+        `pushd ${location}`,
+        'Pop-Location',
+        'popd',
+      ]) {
+        const command = `${locationCommand}; Get-Content work`;
+        expect(evidence({ command }), command).toEqual({ targets: [], unresolved: true });
+      }
+
+      expect(evidence({ command: `Set-Location ${location}` })).toEqual({
+        targets: [],
+        unresolved: false,
+      });
+      expect(evidence({ command: `Set-Location ${location}; Get-Content '${keyPath}'` })).toEqual({
+        targets: [path.normalize(keyPath)],
+        unresolved: false,
+      });
+
+      expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain(
+        'isCindyShellTool(event.toolName) && (bashReadEvidence.unresolved || touchesCredentialPath(bashReadTargets))',
+      );
+      expect(CINDY_BRIDGE_EXTENSION_SOURCE).not.toContain(
+        "if (credentialRead && permission.mode === 'bypassPermissions')",
+      );
+      expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain("if (permission.mode === 'bypassPermissions') return;");
+      expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain('await ctx.ui.input(');
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when a direct PowerShell read operand is not statically resolvable', () => {
+    const evidence = loadPowerShellReadEvidence(process.cwd());
+    for (const command of [
+      'Get-Content $target',
+      'Get-Content "${target}"',
+      'Get-Content (Join-Path . id_rsa)',
+      'Get-Content ./safe"name".txt',
+      "Get-Content ./safe'name'.txt",
+      'Get-Content ./safe*.txt',
+      'Get-Content -Encoding utf8 ./safe.txt',
+      'Get-Content\u00a0./safe.txt',
+      'Write-Output ok; Get-Content $target',
+      'Write-Output ok; Get-Content (Join-Path . id_rsa)',
+      'git status | Get-Content $target',
+      'git status > status.txt; Get-Content ./safe.txt',
+      '(Get-Content ./safe.txt)',
+      '{ Get-Content ./safe.txt }',
+      'git status & Get-Content ./safe.txt',
+      'Get-`Content ./safe.txt',
+      'Write-Output ok && Get-Content ./safe.txt',
+      'Write-Output ok\u2028Get-Content ./safe.txt',
+      "Write-Output ok; Get-Content './unterminated",
+    ]) {
+      expect(evidence({ command }), command).toEqual({ targets: [], unresolved: true });
+    }
+    expect(evidence({ command: 'Write-Output ok' })).toEqual({ targets: [], unresolved: false });
+  });
+
+  it('keeps ordinary PowerShell operators out of credential-read evidence', () => {
+    const evidence = loadPowerShellReadEvidence(process.cwd());
+    for (const command of [
+      'git status | Out-String',
+      'git status > status.txt',
+      '(git status)',
+      '{ git status }',
+      'git status &',
+      'Write-Output foo`nbar',
+      "Write-Output '(Get-Content ./safe.txt)'",
+      'Write-Output ok && Write-Output done',
+      'Write-Output ok\u2028Write-Output done',
+    ]) {
+      expect(evidence({ command }), command).toEqual({ targets: [], unresolved: false });
+    }
+  });
+
+  // symlink-platform-skip: This case validates POSIX shell and filename semantics that Windows cannot represent.
   it.skipIf(process.platform === 'win32')(
     'collects canonical credential targets without flagging ordinary symlinks',
     () => {
       const source = CINDY_BRIDGE_EXTENSION_SOURCE;
       const helperStart = source.indexOf('const CREDENTIAL_PATH_PATTERNS');
-      const helperEnd = source.indexOf('// 从 bash 子进程读取任意进程的初始环境');
+      const helperEnd = source.indexOf('const PROC_ENVIRON_READ_RE');
       expect(helperStart).toBeGreaterThan(-1);
       expect(helperEnd).toBeGreaterThan(helperStart);
 
@@ -964,7 +1177,8 @@ describe('cindy-bridge extension source', () => {
           hasUnresolvedTarget: false,
         });
         expect(source).toContain("event.toolName === 'bash'\n      ? bashInputReadEvidence(event.input)");
-        expect(source).toContain('bashReadEvidence.unresolved || touchesCredentialPath(bashReadTargets)');
+        expect(source).toContain("event.toolName === 'powershell'\n        ? powershellInputReadEvidence(event.input)");
+        expect(source).toContain('isCindyShellTool(event.toolName) && (bashReadEvidence.unresolved || touchesCredentialPath(bashReadTargets))');
         expect(source).toContain('resolvedCredentialPaths: credentialEvidenceForHost');
       } finally {
         rmSync(tempRoot, { recursive: true, force: true });
@@ -978,6 +1192,10 @@ describe('cindy-bridge extension source', () => {
     for (const tool of ['createBashTool', 'createFindTool', 'createGrepTool', 'createLsTool']) {
       expect(source).toContain(tool + ',');
     }
+    expect(source).toContain('import * as piCodingAgent from');
+    expect(source).toContain('createPowerShellTool');
+    expect(source).toContain('function isCindyShellTool');
+    expect(source).toContain('function powershellInputReadEvidence');
     expect(source).toContain("const args = ['--files', '--hidden', '--no-require-git']");
     expect(source).toContain("if (pattern.includes('/')) {");
     expect(source).toContain('path.basename(relative)');
@@ -1074,6 +1292,18 @@ describe('cindy-bridge extension source', () => {
     );
   });
 
+  it('registers the native PowerShell overlay on Windows when Pi exports its factory', () => {
+    expect(powerShellOverlayEnabled('win32', () => undefined)).toBe(true);
+    expect(powerShellOverlayEnabled('win32', undefined)).toBe(false);
+  });
+
+  it.each(['darwin', 'linux'] as const)(
+    'does not register the native PowerShell overlay on %s',
+    (platform) => {
+      expect(powerShellOverlayEnabled(platform, () => undefined)).toBe(false);
+    },
+  );
+
   it('keeps Pi vision bridge tool security invariants (registration, size, magic-byte, redirect, redaction)', () => {
     const source = CINDY_BRIDGE_EXTENSION_SOURCE;
     // 工具只在已启用且可解析 primary 后端时注册（fallback-only 不注册）。
@@ -1110,10 +1340,22 @@ describe('cindy-bridge extension source', () => {
     expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain("pi.on('tool_call'");
     expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain('FILE_WRITE_BUILTINS.has(event.toolName)');
     expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain("pi.on('tool_result'");
-    expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain("captureToolName !== 'bash'");
     expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain("String(captureToolName ?? '').startsWith('mcp__')");
     expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain('captureToolName = gatewayCall?.qualifiedName');
     expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain('captureInput = gatewayCall?.args');
+  });
+
+  it('routes PowerShell results through the same opaque turn-change capture as bash', () => {
+    const source = CINDY_BRIDGE_EXTENSION_SOURCE;
+    const handlerStart = source.indexOf("pi.on('tool_result'");
+    const handlerEnd = source.indexOf('// ── 视觉桥工具', handlerStart);
+    expect(handlerStart).toBeGreaterThanOrEqual(0);
+    expect(handlerEnd).toBeGreaterThan(handlerStart);
+    const handler = source.slice(handlerStart, handlerEnd);
+
+    expect(source).toContain("return toolName === 'bash' || toolName === 'powershell';");
+    expect(handler).toContain('if (!isCindyShellTool(captureToolName)');
+    expect(handler).toContain('TURN_CHANGE_CAPTURE_TITLE');
   });
 
   it('exposes a constant two-tool MCP gateway while preserving the real MCP identity for approval', () => {
@@ -1339,10 +1581,12 @@ describe('cindy-bridge extension source', () => {
   it('hard-blocks writes only in read-only reference roots, not external writable roots', () => {
     const source = CINDY_BRIDGE_EXTENSION_SOURCE;
     const readOnlyGate = source.indexOf('permission.readOnlyRoots.some((root) =>');
-    const credentialGate = source.indexOf("if (event.toolName === 'bash' && commandReadsProcessEnviron", readOnlyGate);
+    const credentialGate = source.indexOf('const environRead = isCindyShellTool(event.toolName)', readOnlyGate);
     expect(readOnlyGate).toBeGreaterThan(-1);
     expect(credentialGate).toBeGreaterThan(readOnlyGate);
     expect(source.slice(readOnlyGate, credentialGate)).not.toContain('permission.writableRoots');
+    expect(source).not.toContain('Cindy blocks reading credential or key paths, even with Full access.');
+    expect(source).not.toContain('Cindy blocks reading process environment (/proc/*/environ), even with Full access.');
     expect(source).toContain('resolvedWritePath: writeTargetResolved');
     expect(source).toContain(
       'resolvedWritableRoots: resolveWritableRootsForHost(permission.writableRoots)',
@@ -1435,7 +1679,7 @@ describe('cindy-bridge extension source', () => {
     expect(source).toContain('REVIEW_CREDENTIAL_GLOB_PATTERNS.some');
   });
 
-  it.skipIf(process.platform === 'win32')(
+  it.skipIf(!canLinkFile)(
     'pins every Pi read tool to the real path that passed Review validation',
     () => {
       const source = CINDY_BRIDGE_EXTENSION_SOURCE;

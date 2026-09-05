@@ -105,7 +105,9 @@ jobs:
               with urllib.request.urlopen(source_url, timeout=30) as response:
                   source = json.load(response)
               result = {}
-              for key in ('claudeCode', 'codex', 'ripgrep', 'pi'):
+              # Keep the legacy single-binary field for older Lex clients;
+              # current Codex consumes the complete package (support files too).
+              for key in ('claudeCode', 'codex', 'codexPackage', 'ripgrep', 'pi'):
                   value = source.get(key)
                   if not isinstance(value, dict) or not value.get('file'):
                       continue

@@ -14,6 +14,31 @@ import { BRAND_NAME } from '@cindy/maker-shared/branding';
 import { i18n } from '../i18n';
 
 describe('locale 品牌名插值', () => {
+  it.each(['en', 'zh-CN', 'zh-TW', 'ja', 'ko'])('%s keeps new upstream host copy separate from Cindy services', (lng) => {
+    for (const key of [
+      'ipcError.MODEL_CONTEXT_USAGE_UNKNOWN',
+      'settings.remote.add.displayNamePlaceholder',
+      'settings.auxiliaryModels.customHint',
+      'settings.shortcuts.workLouderCodex.models.creatorMicro2.connection.descriptions.connecting',
+      'chatgptAuthRecovery.reloginRiskTitle',
+    ]) {
+      const rendered = i18n.t(key, { lng });
+      expect(rendered).not.toBe(key);
+      expect(rendered).not.toContain('Cindy');
+      expect(rendered).not.toContain('{{appName}}');
+      if (lng === 'en') expect(rendered).toContain(BRAND_NAME);
+    }
+    for (const key of [
+      'settings.auxiliaryModels.signInHint',
+      'onboarding.homeZeroModel.title',
+      'onboarding.homeZeroModel.desc',
+      'onboarding.homeZeroModel.cta',
+      'onboarding.homeZeroModel.cloudTitle',
+    ]) {
+      expect(i18n.t(key, { lng })).toContain('Cindy');
+    }
+  });
+
   it('{{appName}} 由 defaultVariables 注入为 BRAND_NAME(端到端)', () => {
     // update.moveToApplications.message 是含 {{appName}} 的真实 key(main 迷你 i18n 也消费它)。
     const rendered = i18n.t('update.moveToApplications.message');

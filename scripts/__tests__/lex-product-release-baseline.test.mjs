@@ -113,6 +113,18 @@ test('release workflows keep one package while choosing signed or versioned unsi
   assert.match(ci, /ref: \$\{\{ inputs\.checkout_ref \|\| github\.sha \}\}/);
 });
 
+test('Lex manifests carry every runtime field consumed by the desktop binary manager', () => {
+  const updates = readText('.github/workflows/lex-updates.yml');
+  const consumers = readText('apps/desktop/src/main/agent-binaries/index.ts');
+  const vendorLoop = updates.split('\n').find((line) => line.includes('for key in ('));
+  assert.ok(vendorLoop, 'Lex vendor asset projection must enumerate runtime fields');
+  const published = new Set([...vendorLoop.matchAll(/'([^']+)'/g)].map((match) => match[1]));
+  const required = [...consumers.matchAll(/manifestField: '([^']+)'/g)].map((match) => match[1]);
+  assert.ok(required.includes('codexPackage'), 'Codex package consumption must be covered');
+  for (const field of required) assert.ok(published.has(field), field + ' missing from Lex manifests');
+  assert.ok(published.has('codex'), 'Keep the single-binary field for already-installed older clients');
+});
+
 test('packaging metadata uses the Lex display name while Cindy remains the service brand', () => {
   const forge = readText('apps/desktop/forge.config.ts');
   const loginBrand = readText('apps/desktop/src/renderer/components/login/LoginBrandStage.tsx');

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { applyKnownXaiCorrections, preferredDefaultEffort } from './xai-catalog-corrections.mjs';
+import { applyAstraCatalogAdditions } from './openai-catalog-corrections.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const CATALOG_PATH = path.join(ROOT, 'packages/model-providers/catalog/providers.json');
@@ -31,6 +32,12 @@ const PRESET_PROVIDER_MAP = {
 
 const PROVIDER_IDS = [...new Set([
   ...Object.values(PRESET_PROVIDER_MAP).map(({ providerId }) => providerId),
+  // Subscription providers are native Pi sources. Their membership and capabilities must not
+  // be copied from Cindy's separately discovered Claude Code or Codex catalogs.
+  'anthropic',
+  'openai-codex',
+  // Read public API metadata too, so Astra additions yield to native upstream entries.
+  'openai',
   'xai',
 ])].sort();
 
@@ -168,6 +175,7 @@ async function main() {
     }
   }
   if (providers.xai) providers.xai = applyKnownXaiCorrections(providers.xai);
+  applyAstraCatalogAdditions(providers);
 
   const catalog = JSON.parse(await fs.readFile(CATALOG_PATH, 'utf8'));
   for (const preset of catalog.presets ?? []) {

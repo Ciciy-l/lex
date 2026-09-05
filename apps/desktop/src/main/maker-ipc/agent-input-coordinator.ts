@@ -32,6 +32,11 @@ import { createMessage as createDbMessage } from '../localDb/ipc/messages.js';
 import { touchUserSendInDb } from '../localDb/ipc/sessions.js';
 import type { InterruptedTurnErrorSignals } from './interruptedTurnAutoResume.js';
 import type { SuppressedTurnErrorOwner } from './autoResumeBookkeeping.js';
+import {
+  restoreTrustedDesktopQueuedOrigin,
+  revokeTrustedDesktopQueuedOrigin,
+  TRUSTED_DESKTOP_PI_COMMAND_SNAPSHOT,
+} from './makerSendTransaction.js';
 import type {
   DesktopSessionDispatchFailure,
   HostSendFailureCode,
@@ -201,6 +206,8 @@ export interface AgentInputSendOpts {
    * 最终 wire 消息。**由 main 构造,不是 wire 输入。**
    */
   fromMobileClient?: boolean;
+  /** Queue provenance stamped by the controlled desktop at device-link input IPC entry. */
+  fromDeviceLinkClient?: boolean;
   /** Main-owned clear token captured when this input became active. */
   expectedClearBoundaryMs?: number | null;
   /** Main-owned input generation captured before async preparation. */
@@ -1172,9 +1179,9 @@ export class AgentInputCoordinator {
     }
     let items: AgentInputQueuedMessage[];
     try {
-      items = (await this.deps.loadQueueSnapshot!(sessionId)).map(
-        normalizeRestoredSyntheticTrigger,
-      );
+      items = (await this.deps.loadQueueSnapshot!(sessionId))
+        .map(normalizeRestoredSyntheticTrigger)
+        .map(restoreTrustedDesktopQueuedOrigin);
     } catch (err) {
       log.warn('load queue snapshot failed; will retry on next entry', {
         sessionId,
@@ -2914,6 +2921,7 @@ export class AgentInputCoordinator {
     sessionRefs?: AgentInputQueuedMessage['sessionRefs'],
     trustedSessionReferenceContexts?: AgentInputSessionReferenceContext[],
     requireTrustedSnapshot = false,
+    finalizeUpdatedMessage?: (updated: AgentInputQueuedMessage) => AgentInputQueuedMessage,
   ): AgentInputProjection {
     const trimmed = newText.trim();
     if (!trimmed) return this.getProjection(sessionId);
@@ -2936,7 +2944,9 @@ export class AgentInputCoordinator {
         delete updated.sessionReferencesRequireTrustedSnapshot;
         delete updated.trustedSessionReferenceContexts;
       }
-      return updated;
+      return finalizeUpdatedMessage && newText !== entry.text
+        ? finalizeUpdatedMessage(updated)
+        : updated;
     });
     this.emit(sessionId);
     return this.getProjection(sessionId);
@@ -2967,6 +2977,7 @@ export class AgentInputCoordinator {
     sessionId: string,
     clientId: string,
     next: AgentInputQueuedMessage,
+    finalizeUpdatedMessage?: (updated: AgentInputQueuedMessage) => AgentInputQueuedMessage,
   ): { projection: AgentInputProjection; updated: boolean } {
     if (!next.text.trim() && !(next.files && next.files.length > 0)) {
       return { projection: this.getProjection(sessionId), updated: false };
@@ -2977,8 +2988,18 @@ export class AgentInputCoordinator {
     }
     const index = state.pendingQueue.findIndex((entry) => entry.clientId === clientId);
     if (index < 0) return { projection: this.getProjection(sessionId), updated: false };
+    const current = state.pendingQueue[index];
+    const updated = updateQueuedMessageContent(current, next);
+    const authorizationContentChanged = updated.text !== current.text
+      || updated.persistedContent !== current.persistedContent
+      || updated.files !== current.files
+      || updated.mentions !== current.mentions
+      || updated.sessionRefs !== current.sessionRefs
+      || updated.agentReferences !== current.agentReferences;
     const nextQueue = [...state.pendingQueue];
-    nextQueue[index] = updateQueuedMessageContent(state.pendingQueue[index], next);
+    nextQueue[index] = finalizeUpdatedMessage && authorizationContentChanged
+      ? finalizeUpdatedMessage(updated)
+      : updated;
     state.pendingQueue = nextQueue;
     this.emit(sessionId);
     return { projection: this.getProjection(sessionId), updated: true };
@@ -3740,8 +3761,10 @@ export class AgentInputCoordinator {
   private toProjectedItem(item: AgentInputQueuedMessage): AgentInputQueuedMessage {
     const projected = { ...item };
     delete projected.hostAcceptedAtMs;
+    delete projected.fromDeviceLinkClient;
     delete projected.trustedSessionReferenceContexts;
     delete projected.sessionReferencesRequireTrustedSnapshot;
+    delete (projected as Record<string, unknown>)[TRUSTED_DESKTOP_PI_COMMAND_SNAPSHOT];
     // Recovery hints are main-owned evidence for the next vendor turn, not
     // renderer/device-link payload. Keep the projection minimal and avoid
     // echoing transcript-derived summaries to remote controllers.
@@ -4267,6 +4290,7 @@ export class AgentInputCoordinator {
             delete head.sessionReferencesRequireTrustedSnapshot;
           }
           delete head.agentReferences;
+          revokeTrustedDesktopQueuedOrigin(head);
           this.deps.onUserMessageRewritten?.(sessionId, head, {
             ghostId: verdict.ghostId,
             ghostName: verdict.ghostName,
@@ -4304,6 +4328,7 @@ export class AgentInputCoordinator {
         ...(head.origin?.kind === 'scheduler' ? { origin: head.origin } : {}),
         // 手机来源透传到 send 事务:drain 已脱离入队时的 async context。
         ...(head.fromMobileClient ? { fromMobileClient: true } : {}),
+        ...(head.fromDeviceLinkClient ? { fromDeviceLinkClient: true } : {}),
         persistUserMessage: {
           clientId: head.clientId,
           content: head.persistedContent,

@@ -59,6 +59,7 @@ const LOCALE_CINDY_ALLOWED_KEY_PATHS = new Set([
   'settings.userProfile.local.signIn',
   'settings.connections.claude.logoutConfirm.description',
   'settings.providers.xdSignin.cta',
+  'settings.auxiliaryModels.signInHint',
   'settings.wechatBot.authorization.description',
   'settings.wechatBot.authorization.rebindDescription',
   'settings.wechatBot.bound.notes.connected',
@@ -76,6 +77,10 @@ const LOCALE_CINDY_ALLOWED_KEY_PATHS = new Set([
   'sidebar.user.downloadMobile',
   'onboarding.inheritedSubscription.desc',
   'onboarding.promotionalGrant.title',
+  'onboarding.homeZeroModel.title',
+  'onboarding.homeZeroModel.desc',
+  'onboarding.homeZeroModel.cta',
+  'onboarding.homeZeroModel.cloudTitle',
   'voiceInputOverlay.cindyServiceUnavailable',
 ]);
 

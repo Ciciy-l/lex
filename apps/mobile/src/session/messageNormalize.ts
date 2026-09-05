@@ -51,6 +51,7 @@ import {
   localizeToolLoopError,
   parseMobileToolLoopErrorDetails,
 } from '@/session/toolLoopErrorI18n';
+import type { MobileToolInputProjection } from '@/session/messageToolPayloadProjection';
 
 export type NormalizedRemoteMessageKind =
   | 'user'
@@ -108,6 +109,8 @@ export interface NormalizedRemoteMessage {
   orcaCard?: OrcaCollabCard;
   /** tool 消息专用:tool_result 是否已到达(含被隐藏的 orca 空结果),驱动工具行 running/done 状态。 */
   toolSettled?: boolean;
+  /** Large settled tool input is fetched only when the user asks to view it. */
+  toolInputProjection?: MobileToolInputProjection;
   /** Durable Agent/Task terminal lifecycle restored from tool_use metadata. */
   agentTaskStatus?: AgentTaskTerminalStatus;
   /** assistant 专用:是否本轮收尾正文(操作行只挂在收尾正文上,对齐桌面 #456);由 messageRenderModel 标注。 */
@@ -180,6 +183,9 @@ interface ToolUsePayload extends MessageNormalizeToolUse {
   diff?: NormalizedToolDiff;
 }
 
+const toolResultPreviewByContent = new WeakMap<object, { language: string; preview: string }>();
+const toolUsePayloadByMessage = new WeakMap<RemoteMessage, ToolUsePayload>();
+
 export function normalizeRemoteMessages(messages: readonly RemoteMessage[]): NormalizedRemoteMessage[] {
   const sorted = sortMessagesByCreatedAt(messages);
   const toolResultPairing = buildMessageToolResultPairing(sorted, {
@@ -192,6 +198,7 @@ export function normalizeRemoteMessages(messages: readonly RemoteMessage[]): Nor
 
     if (message.role === 'tool_use') {
       const tool = parseToolUse(message);
+      const toolInputProjection = message.mobileToolInputProjection;
       const agentTaskStatus = normalizeAgentTaskTerminalStatus(
         message.agentMeta?.agentTaskStatus,
       );
@@ -229,6 +236,7 @@ export function normalizeRemoteMessages(messages: readonly RemoteMessage[]): Nor
         // 结束时刻(配对 tool_result 落库时间)驱动渲染层的历史空洞判定,详见共享类型上的说明。
         settledAt: toolResultPairing.resultCreatedAtFor(message, tool),
         toolSettled: toolResultPairing.hasResultFor(message, tool),
+        ...(toolInputProjection ? { toolInputProjection } : {}),
         ...(agentTaskStatus ? { agentTaskStatus } : {}),
       });
       continue;
@@ -272,6 +280,29 @@ export function normalizeRemoteMessages(messages: readonly RemoteMessage[]): Nor
         createdAt: message.createdAt,
       });
       continue;
+    }
+
+    // Desktop persists context rebuilds as empty assistant rows with metadata.
+    if (message.role === 'assistant') {
+      const rebuild = readRecord(message.agentMeta?.contextRebuild);
+      if (rebuild) {
+        result.push({
+          key: messageNormalizeKey(message),
+          source: message,
+          kind: 'system',
+          role: message.role,
+          label: 'system:context-rebuild',
+          body: '',
+          systemCardType: 'context-rebuild',
+          systemCardData: {
+            reason: typeof rebuild.reason === 'string' ? rebuild.reason : 'context-overflow',
+            handoff: typeof rebuild.handoff === 'string' ? rebuild.handoff : '',
+          },
+          align: 'agent',
+          createdAt: message.createdAt,
+        });
+        continue;
+      }
     }
 
     // /goal 持久记录(桌面 goal-host 落库:role 'assistant' + 空 content + agentMeta 标记)
@@ -408,12 +439,7 @@ export function normalizeRemoteMessages(messages: readonly RemoteMessage[]): Nor
       align: message.role === 'user' && hookSource === undefined ? 'user' : 'agent',
       createdAt: message.createdAt,
       isStreaming: readMessageStreaming(message) || undefined,
-      ...(message.role === 'assistant' && (
-        message.agentMeta?.turnCompleted === true ||
-        (turnCost.turnMoney?.amount ?? 0) > 0 ||
-        // 无报价轮只落 turnUsageDetails,它同样只在 turn 结束时写入,等价收尾信号。
-        turnCost.turnTotalTokens !== undefined
-      )
+      ...(remoteMessageCompletesTurn(message, turnCost)
         ? { turnCompleted: true }
         : {}),
       ...turnCost,
@@ -466,6 +492,18 @@ function dedupeToolImagesAgainstAssistantMarkdown(
 }
 
 function toolResultContentToPreview(content: unknown): string {
+  if (content !== null && typeof content === 'object') {
+    const language = i18n.resolvedLanguage ?? i18n.language;
+    const cached = toolResultPreviewByContent.get(content);
+    if (cached?.language === language) return cached.preview;
+    const preview = uncachedToolResultContentToPreview(content);
+    toolResultPreviewByContent.set(content, { language, preview });
+    return preview;
+  }
+  return uncachedToolResultContentToPreview(content);
+}
+
+function uncachedToolResultContentToPreview(content: unknown): string {
   const compacted = parseToolResultCompactionMarker(content);
   if (!compacted) return contentToPreview(content);
   return i18n.t('message.renderer.toolResultCompacted', {
@@ -482,11 +520,25 @@ function toolResultContentFor(
 }
 
 function parseToolUse(message: RemoteMessage): ToolUsePayload {
+  const cached = toolUsePayloadByMessage.get(message);
+  if (cached) return cached;
   const sharedTool = parseMessageToolUse(message);
+  const projection = message.mobileToolInputProjection;
+  if (projection) {
+    const payload = {
+      ...sharedTool,
+      toolName: projection.toolName,
+      summary: projection.summary,
+    };
+    toolUsePayloadByMessage.set(message, payload);
+    return payload;
+  }
   const { toolName, input } = sharedTool;
   const summary = toolName ? formatToolUseSummary(toolName, input) : contentToPreview(message.content);
   const diff = buildToolDiff(toolName, input);
-  return { ...sharedTool, summary, diff };
+  const payload = { ...sharedTool, summary, diff };
+  toolUsePayloadByMessage.set(message, payload);
+  return payload;
 }
 
 function parseUserContent(content: unknown): {
@@ -757,6 +809,7 @@ function normalizeSystemCardType(value: unknown): MobileSystemCardType | null {
     || value === 'pwd'
     || value === 'status'
     || value === 'compact'
+    || value === 'context-rebuild'
     || value === 'cmd'
     || value === 'learn'
     ? value
@@ -808,6 +861,19 @@ function projectTurnMoney(
     },
     turnCostUsd: cost,
   };
+}
+
+/** Same completion boundary for normalization and streaming-prefix invalidation. */
+export function remoteMessageCompletesTurn(
+  message: RemoteMessage,
+  turnCost = readTurnCost(message),
+): boolean {
+  return message.role === 'assistant' && (
+    message.agentMeta?.turnCompleted === true
+    || (turnCost.turnMoney?.amount ?? 0) > 0
+    // Usage without a price is also written only when the turn ends.
+    || turnCost.turnTotalTokens !== undefined
+  );
 }
 
 function readTurnCost(
