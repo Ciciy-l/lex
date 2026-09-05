@@ -39,7 +39,7 @@ import {
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { useBrandLogo } from '@/hooks/useBrandLogo';
-import shareCharacterSrc from '@/assets/cindy-share-character.jpg';
+import shareCharacterSrc from '@/assets/branding/lex-assistant-share.png';
 import { shareSelectionStore, useShareSelectionCount } from './shareSelectionStore';
 
 const log = createLogger('ShareSelectionBar');
@@ -66,7 +66,7 @@ export function ShareSelectionBar({
   const barRef = useRef<HTMLDivElement | null>(null);
   const mountedRef = useRef(true);
   const selectionBeforeSelectAllRef = useRef<string[] | null>(null);
-  // 页脚使用产品指定的 Cindy 主视觉；wordmark 仍跟随当前主题。
+  // 页脚使用 Lex 主视觉；wordmark 仍跟随当前主题。
   const logoSrc = useBrandLogo();
   // 不缓存:render-window 会随滚动变化,缓存会让按钮状态与当前可选消息错位;
   // 导出 / 全选动作仍会当场复查 DOM,这里仅派生当前复选框显示状态。

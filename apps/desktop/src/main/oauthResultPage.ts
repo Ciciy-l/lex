@@ -4,6 +4,8 @@
  * unavailable; the inlined values mirror docs/design-rules/cindy-design-system.md's default light/dark theme.
  */
 
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
+
 import { DEEP_LINK_URL_PREFIX } from '../shared/deepLinkSchemes';
 import { LOGIN_CALLBACK_CHIBI } from './assets/loginCallbackAssets';
 
@@ -373,7 +375,7 @@ function renderBrandLoginCallbackPage(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>${title} · Cindy</title>
+<title>${title} · ${BRAND_NAME}</title>
 <style>
 :root{color-scheme:light;--page:#eeeeee;--card:#fbfbfb;--card-border:#d4d4d4;--title:#252222;--body:#6f6f6f;--detail:#a3a3a3;--cta:#2a2828;--cta-border:#434343;--cta-text:#d4d4d4;--cta-hover:rgba(255,255,255,.08);--cta-active:rgba(0,0,0,.5)}
 :root[data-theme="dark"]{color-scheme:dark;--page:#2a2828;--card:#312f2f;--card-border:#434343;--title:#d4d4d4;--body:#6f6f6f;--detail:#737373;--cta:#eeeeee;--cta-border:#ffffff;--cta-text:#2a2828;--cta-hover:rgba(0,0,0,.05);--cta-active:rgba(0,0,0,.1)}
@@ -431,7 +433,7 @@ export function renderOAuthResultPage(input: OAuthResultPageInput): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>${title} · Cindy</title>
+<title>${title} · ${BRAND_NAME}</title>
 <style>
 :root{color-scheme:light;--page:#f8f8f6;--card:#fff;--border:#d7d7d4;--text:#262626;--muted:#737373;--detail:#a3a3a3;--chip:#e5e5e5;--cta:#000;--cta-text:#fff;--cta-hover:#262626}
 :root[data-theme="dark"]{color-scheme:dark;--page:#1f1f1e;--card:#2c2c2a;--border:#3c3c3a;--text:#d4d4d4;--muted:#a3a3a3;--detail:#737373;--chip:#3c3c3a;--cta:#fff;--cta-text:#000;--cta-hover:#e5e5e5}

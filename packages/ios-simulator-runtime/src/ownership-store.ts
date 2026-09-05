@@ -125,7 +125,7 @@ export class IOSSimulatorOwnershipStore {
       if (existing?.sessionId !== sessionId) {
         throw new IOSSimulatorInstanceError(
           "SIMULATOR_ATTACHED_ELSEWHERE",
-          "The simulator is attached to another Cindy session.",
+          "The simulator is attached to another app session.",
         );
       }
       if (existing) return this.renew(existing.instanceId, sessionId);
@@ -133,7 +133,7 @@ export class IOSSimulatorOwnershipStore {
     if (this.listForSession(sessionId).length >= this.#maxInstancesPerSession) {
       throw new IOSSimulatorInstanceError(
         "SESSION_INSTANCE_LIMIT_REACHED",
-        "This Cindy session already has the maximum number of simulator instances.",
+        "This app session already has the maximum number of simulator instances.",
       );
     }
     this.#assertMutationAllowed?.();
@@ -216,7 +216,7 @@ export class IOSSimulatorOwnershipStore {
     if (instance.sessionId !== requireNonEmpty(sessionId, "sessionId")) {
       throw new IOSSimulatorInstanceError(
         "INSTANCE_NOT_OWNED",
-        "The iOS Simulator instance belongs to another Cindy session.",
+        "The iOS Simulator instance belongs to another app session.",
       );
     }
     return copyInstance(instance);

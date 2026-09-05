@@ -12,6 +12,7 @@
  */
 
 import { projectPersistedAgentFacingUserText } from '@cindy/maker-shared/agent-input-projection';
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
 /** DB 层引擎标识(sessions.agent_kind / messages.agent_kind 的值域)。 */
 export type DbAgentKind = 'cc' | 'codex' | 'pi';
@@ -504,11 +505,11 @@ function assembleHandoffText(
   ) {
     const rebuildCause =
       opts.reason === 'context-overflow'
-        ? `The previous native agent session exceeded the model's context window, so Cindy started a fresh native session in the same task. ` +
+        ? `The previous native agent session exceeded the model's context window, so ${BRAND_NAME} started a fresh native session in the same task. ` +
           `Below is the valid conversation history before the overflowing turn; treat only these records as the prior conversation, ` +
           `and do not try to recover, cite, or infer messages that are not listed. `
         : opts.reason === 'pi-prompt-timeout'
-          ? `The previous native agent session stopped responding to prompts, so Cindy started a fresh native session in the same task. ` +
+          ? `The previous native agent session stopped responding to prompts, so ${BRAND_NAME} started a fresh native session in the same task. ` +
             `Below is the valid conversation history before the unresponsive turn; treat only these records as the prior conversation, ` +
             `and do not try to recover, cite, or infer messages that are not listed. `
         : `The user edited this conversation's local record, which invalidated the current native session context. ` +

@@ -84,6 +84,20 @@ describe('OAuth result page language and copy', () => {
   });
 });
 
+describe('OAuth result page product title', () => {
+  it('uses Lex as the Desktop-owned browser page title', () => {
+    const html = renderOAuthResultPage({
+      htmlLang: 'en',
+      title: 'Connected',
+      body: 'You can return to the app.',
+      variant: 'success',
+    });
+
+    expect(html).toContain('<title>Connected · Lex</title>');
+    expect(html).not.toContain('<title>Connected · Cindy</title>');
+  });
+});
+
 describe('shared ghost OAuth callback copy (生产/preview 合一)', () => {
   it('provides complete ghost copy with placeholders for all languages', () => {
     for (const lang of ALL_OAUTH_LANGS) {

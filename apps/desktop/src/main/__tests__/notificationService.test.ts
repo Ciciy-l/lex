@@ -357,14 +357,14 @@ describe('notificationService — channels 分发', () => {
     expect(notificationCtor).toHaveBeenCalledTimes(1);
     expect(notificationCtor).toHaveBeenCalledWith(
       expect.objectContaining({
-        title: 'Cindy · Hello',
+        title: 'Lex · Hello',
         body: '已完成 ✓',
       }),
     );
     expect(feishuIm.sendMarkdownText).not.toHaveBeenCalled();
   });
 
-  it('needs-reply kind → 桌面显示需要你回复并标识 Cindy', async () => {
+  it('needs-reply kind → 桌面显示需要你回复并标识 Lex', async () => {
     const { initNotificationService } = await freshService();
     const feishuIm = makeFeishuIm('ou_owner');
     initNotificationService(baseDeps(feishuIm));
@@ -378,7 +378,7 @@ describe('notificationService — channels 分发', () => {
 
     expect(notificationCtor).toHaveBeenCalledWith(
       expect.objectContaining({
-        title: 'Cindy · Needs input',
+        title: 'Lex · Needs input',
         body: '需要你回复',
       }),
     );
@@ -401,7 +401,7 @@ describe('notificationService — channels 分发', () => {
     // 文案断言 — 锁住对外可见的飞书消息格式,后续如要改文案需主动调整测试。
     expect(feishuIm.sendMarkdownText).toHaveBeenCalledWith(
       'ou_owner',
-      'Cindy · 任务「Hello」需要你回复',
+      'Lex · 任务「Hello」需要你回复',
     );
   });
 
@@ -421,7 +421,7 @@ describe('notificationService — channels 分发', () => {
     expect(feishuIm.sendMarkdownText).toHaveBeenCalledTimes(1);
     expect(feishuIm.sendMarkdownText).toHaveBeenCalledWith(
       'ou_owner',
-      'Cindy · 任务「Hello」已完成 ✓',
+      'Lex · 任务「Hello」已完成 ✓',
     );
   });
 
@@ -439,13 +439,13 @@ describe('notificationService — channels 分发', () => {
 
     expect(notificationCtor).toHaveBeenCalledWith(
       expect.objectContaining({
-        title: 'Cindy · Broken model',
+        title: 'Lex · Broken model',
         body: '执行失败',
       }),
     );
     expect(feishuIm.sendMarkdownText).toHaveBeenCalledWith(
       'ou_owner',
-      'Cindy · 任务「Broken model」执行失败',
+      'Lex · 任务「Broken model」执行失败',
     );
   });
 
@@ -465,20 +465,20 @@ describe('notificationService — channels 分发', () => {
 
     expect(notificationCtor).toHaveBeenCalledWith(
       expect.objectContaining({
-        title: 'Cindy · 整理報告',
+        title: 'Lex · 整理報告',
         body: '需要你回覆',
       }),
     );
     expect(feishuIm.sendMarkdownText).toHaveBeenCalledWith(
       'ou_owner',
-      'Cindy · 任務「整理報告」需要你回覆',
+      'Lex · 任務「整理報告」需要你回覆',
     );
 
     notificationCtor.mockClear();
     showDesktopSessionEvent(() => null, { sessionId: '', title: '', kind: 'error' });
     expect(notificationCtor).toHaveBeenCalledWith(
       expect.objectContaining({
-        title: 'Cindy · 未命名任務',
+        title: 'Lex · 未命名任務',
         body: '執行失敗',
       }),
     );

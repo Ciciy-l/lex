@@ -9,7 +9,7 @@ Voice input lets you dictate instead of typing. Hold a shortcut, talk, release �
 **Activation:**
 
 - Default shortcut: **Alt+Space** on macOS, **Ctrl+Shift+Space** on Windows. The shortcut is customizable on macOS and Windows. On Linux, global voice shortcuts are not supported yet (the setting is hidden).
-- The shortcut is **global** — it works even when Cindy isn't the focused app, so you can dictate into the composer from anywhere.
+- The shortcut is **global** — it works even when Lex isn't the focused app, so you can dictate into the composer from anywhere.
 - It's **push-and-hold**: press to start listening, release to stop and submit.
 
 **Settings:**

@@ -35,7 +35,7 @@ import {
 /**
  * SplashScreen — wave4 白底统一面板版(implementation-plan Step 3b WHAT1)。
  *
- * 所有权(v4/v6.12):品牌视觉(白底体系背景/立绘/字标/Slogan)已整体迁入
+ * 所有权(v4/v6.12):品牌视觉(白底体系背景/立绘/字标)已整体迁入
  * `LoginBrandStage`(唯一渲染者,z-[9980],本组件透过透明根透出它);本组件退化为
  * loading/tips/进度层——登录同款白面板(680×440 r36 @570,1229,与登录帧同坐标系
  * 同 desktopScale 缩放)承载全部 Splash 状态。面板高 440 由 SPLASH_PANEL.height 固定,

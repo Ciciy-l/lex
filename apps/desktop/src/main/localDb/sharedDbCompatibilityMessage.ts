@@ -6,6 +6,7 @@
  */
 
 import type { MigrationCompatibilityIssue, MigrationCompatibilityReport } from './migrationRunner';
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
 export function buildPackagedReadOnlyCompatibilityMessage(
   compatibility: MigrationCompatibilityReport,
@@ -43,7 +44,7 @@ export function buildSharedDbCompatibilityMessage(
 
   if (hasNonVersionIssue(compatibility.issues)) {
     return (
-      '共享数据的 schema、migration 记录或运行时身份与当前开发版不一致。为保护数据，Cindy 没有打开它。' +
+      `共享数据的 schema、migration 记录或运行时身份与当前开发版不一致。为保护数据，${BRAND_NAME} 没有打开它。` +
       '请使用与该数据匹配的 checkout，或改用 --isolated。' +
       `（详情：${issueSummary || 'unknown'}）`
     );
@@ -52,7 +53,7 @@ export function buildSharedDbCompatibilityMessage(
   if (hasIssue(compatibility.issues, 'schema-version-ahead')) {
     return (
       `共享数据已是 schema ${compatibility.databaseVersion}，而此开发版只支持到 ` +
-      `${compatibility.checkoutVersion}。为保护数据，Cindy 没有打开它。` +
+      `${compatibility.checkoutVersion}。为保护数据，${BRAND_NAME} 没有打开它。` +
       '请使用包含该 schema 的 checkout 启动开发版；重启或把当前 checkout 设为 primary 都不会降级数据库。' +
       '如只需隔离测试，可改用 --isolated。' +
       `（详情：${issueSummary || 'unknown'}）`
@@ -62,7 +63,7 @@ export function buildSharedDbCompatibilityMessage(
   if (hasIssue(compatibility.issues, 'schema-version-behind')) {
     return (
       `共享数据是 schema ${compatibility.databaseVersion}，而此开发版包含到 ` +
-      `schema ${compatibility.checkoutVersion}。为保护数据，Cindy 没有打开它。` +
+      `schema ${compatibility.checkoutVersion}。为保护数据，${BRAND_NAME} 没有打开它。` +
       '请先关闭共享数据的 passive 实例，再用当前 checkout 作为 primary 完成迁移。' +
       '如只需隔离测试，可改用 --isolated。' +
       `（详情：${issueSummary || 'unknown'}）`

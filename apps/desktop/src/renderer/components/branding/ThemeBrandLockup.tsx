@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
-import headImageDark from '@/assets/head-image-dark.png';
-import headImageLight from '@/assets/head-image-light.png';
+import lexAssistantAvatar from '@/assets/branding/lex-assistant-avatar.png';
 import { logoDark, logoLight } from '@/hooks/useBrandLogo';
 import { cn } from '@/lib/utils';
 import type { Theme, ThemeBrandAsset } from '@/themes/types';
@@ -86,7 +85,7 @@ export interface ThemeBrandLockupProps {
 
 export function ThemeBrandLockup({ theme, className, testId }: ThemeBrandLockupProps) {
   const dark = isDarkTheme(theme);
-  const defaultIcon: ThemeBrandAsset = { src: dark ? headImageDark : headImageLight };
+  const defaultIcon: ThemeBrandAsset = { src: lexAssistantAvatar };
   const defaultLogo: ThemeBrandAsset = { src: dark ? logoDark : logoLight };
   const customIcon = theme?.brand?.icon;
   const customLogo = theme?.brand?.logo;

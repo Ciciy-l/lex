@@ -5,6 +5,7 @@ import { release as hostOsRelease } from 'node:os';
 import path from 'node:path';
 
 import { app, BrowserWindow } from 'electron';
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
 import {
   createIOSSimulatorRuntime,
@@ -372,7 +373,7 @@ export function createRegistryBackedIOSSimulatorActor(
   } catch (error) {
     startupError = new IOSSimulatorInstanceError(
       'DEVICE_BUSY',
-      'Cindy cannot safely manage iOS Simulator devices because the ownership registry is unavailable.',
+      `${BRAND_NAME} cannot safely manage iOS Simulator devices because the ownership registry is unavailable.`,
       false,
     );
     logger.error('iOS Simulator ownership registry writer could not start', {
@@ -391,7 +392,7 @@ export function createRegistryBackedIOSSimulatorActor(
         // process cannot claim the same devices or overwrite recovery evidence.
         startupError = new IOSSimulatorInstanceError(
           'DEVICE_BUSY',
-          'Cindy cannot safely manage iOS Simulator devices because the ownership registry is invalid.',
+          `${BRAND_NAME} cannot safely manage iOS Simulator devices because the ownership registry is invalid.`,
           false,
         );
         logger.error('iOS Simulator ownership registry is unavailable', {
@@ -561,7 +562,7 @@ function createDefaultActor(
     persisted.release();
     throw new IOSSimulatorInstanceError(
       'DEVICE_BUSY',
-      'Another Cindy process is managing iOS Simulator ownership for this profile.',
+      `Another ${BRAND_NAME} process is managing iOS Simulator ownership for this profile.`,
       true,
     );
   }
@@ -1167,7 +1168,7 @@ export function createIOSSimulatorHost(options: IOSSimulatorHostOptions = {}): I
     if ((sessionOperationAdmissionEpochs.get(sessionId) ?? 0) === expectedEpoch) return;
     throw new IOSSimulatorInstanceError(
       'MUTATION_CANCELLED',
-      `The ${operation} was cancelled because its Cindy task lifecycle changed.`,
+      `The ${operation} was cancelled because its ${BRAND_NAME} task lifecycle changed.`,
       true,
     );
   }
@@ -1181,7 +1182,7 @@ export function createIOSSimulatorHost(options: IOSSimulatorHostOptions = {}): I
     ) {
       throw new IOSSimulatorInstanceError(
         'MUTATION_CANCELLED',
-        'The simulator binding was cancelled because its Cindy task lifecycle changed.',
+        `The simulator binding was cancelled because its ${BRAND_NAME} task lifecycle changed.`,
         true,
       );
     }
@@ -1223,7 +1224,7 @@ export function createIOSSimulatorHost(options: IOSSimulatorHostOptions = {}): I
     }
     throw new IOSSimulatorInstanceError(
       'MUTATION_CANCELLED',
-      'The simulator binding was cancelled because its Cindy task lifecycle changed.',
+      `The simulator binding was cancelled because its ${BRAND_NAME} task lifecycle changed.`,
       true,
     );
   }
@@ -1841,7 +1842,7 @@ export function createIOSSimulatorHost(options: IOSSimulatorHostOptions = {}): I
   ): Promise<SessionResolution> {
     const normalizedSessionId = sessionId.trim();
     if (!normalizedSessionId) {
-      return sessionError(null, 'SESSION_CONTEXT_REQUIRED', 'A Cindy session is required.');
+      return sessionError(null, 'SESSION_CONTEXT_REQUIRED', `A ${BRAND_NAME} session is required.`);
     }
     const removalAdmissionEpoch = sessionRemovalAdmissionEpochs.get(normalizedSessionId) ?? 0;
     const session = await getSession(normalizedSessionId);
@@ -1849,14 +1850,14 @@ export function createIOSSimulatorHost(options: IOSSimulatorHostOptions = {}): I
       return sessionError(
         normalizedSessionId,
         'SESSION_NOT_FOUND',
-        'The Cindy session no longer exists.',
+        `The ${BRAND_NAME} session no longer exists.`,
       );
     }
     if (session.status && session.status !== 'active') {
       return sessionError(
         normalizedSessionId,
         'SESSION_NOT_FOUND',
-        'The Cindy session is no longer active.',
+        `The ${BRAND_NAME} session is no longer active.`,
       );
     }
     if (session.remoteHostId) {
@@ -3391,7 +3392,7 @@ export function createIOSSimulatorHost(options: IOSSimulatorHostOptions = {}): I
       return {
         code: 'MEDIA_CLEANUP_INCOMPLETE',
         message:
-          'The simulator lifecycle completed, but pending media cleanup did not finish. Restart Cindy before capturing more simulator media.',
+          `The simulator lifecycle completed, but pending media cleanup did not finish. Restart ${BRAND_NAME} before capturing more simulator media.`,
       };
     }
   }
@@ -3540,7 +3541,7 @@ export function createIOSSimulatorHost(options: IOSSimulatorHostOptions = {}): I
     ) {
       throw new IOSSimulatorInstanceError(
         'INSTANCE_NOT_OWNED',
-        'This simulator viewer is not owned by the current Cindy window.',
+        `This simulator viewer is not owned by the current ${BRAND_NAME} window.`,
         true,
       );
     }
@@ -3561,14 +3562,14 @@ export function createIOSSimulatorHost(options: IOSSimulatorHostOptions = {}): I
     ) {
       throw new IOSSimulatorInstanceError(
         'INSTANCE_NOT_OWNED',
-        'This simulator already has an active viewer in another Cindy window.',
+        `This simulator already has an active viewer in another ${BRAND_NAME} window.`,
         true,
       );
     }
     if (activeViewer && activeViewer.sessionId !== sessionId) {
       throw new IOSSimulatorInstanceError(
         'INSTANCE_NOT_OWNED',
-        'This simulator viewer belongs to another Cindy task.',
+        `This simulator viewer belongs to another ${BRAND_NAME} task.`,
         true,
       );
     }
@@ -4546,7 +4547,7 @@ export function createIOSSimulatorHost(options: IOSSimulatorHostOptions = {}): I
         return {
           ok: false,
           errorCode: 'SESSION_CONTEXT_REQUIRED',
-          message: 'iOS Simulator tools require an active Cindy session.',
+          message: `iOS Simulator tools require an active ${BRAND_NAME} session.`,
         };
       }
       if (disposePromise) return hostDisposedResult();
@@ -6499,7 +6500,7 @@ async function readPassiveIOSSimulatorPluginStatus(
     return {
       ok: false,
       errorCode: 'SESSION_CONTEXT_REQUIRED',
-      message: 'A Cindy session is required.',
+      message: `A ${BRAND_NAME} session is required.`,
     };
   }
   try {
@@ -6542,7 +6543,7 @@ async function readPassiveIOSSimulatorPluginStatus(
       return {
         ok: false,
         errorCode: 'SESSION_NOT_FOUND',
-        message: 'The Cindy session no longer exists.',
+        message: `The ${BRAND_NAME} session no longer exists.`,
       };
     }
     if (session.remoteHostId) {
@@ -6798,7 +6799,7 @@ export async function reconcilePersistedIOSSimulatorOwnership(
     if (!registry.acquireWriterSync()) {
       throw new IOSSimulatorInstanceError(
         'DEVICE_BUSY',
-        'Another Cindy process is managing iOS Simulator ownership for this profile.',
+        `Another ${BRAND_NAME} process is managing iOS Simulator ownership for this profile.`,
         true,
       );
     }
@@ -6877,7 +6878,7 @@ export function cleanupIOSSimulatorRemovedSession(sessionId: string): Promise<vo
     if (!registry.acquireWriterSync()) {
       throw new IOSSimulatorInstanceError(
         'DEVICE_BUSY',
-        'Another Cindy process is managing iOS Simulator ownership for this profile.',
+        `Another ${BRAND_NAME} process is managing iOS Simulator ownership for this profile.`,
         true,
       );
     }

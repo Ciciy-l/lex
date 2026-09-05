@@ -33,9 +33,9 @@ const CASES: Array<{
     done: '已完成 ✓',
     error: '执行失败',
     needsReply: '需要你回复',
-    externalDone: 'Cindy · 任务「整理报告」已完成 ✓',
-    externalError: 'Cindy · 任务「整理报告」执行失败',
-    externalNeedsReply: 'Cindy · 任务「整理报告」需要你回复',
+    externalDone: 'Lex · 任务「整理报告」已完成 ✓',
+    externalError: 'Lex · 任务「整理报告」执行失败',
+    externalNeedsReply: 'Lex · 任务「整理报告」需要你回复',
   },
   {
     locale: 'zh-TW',
@@ -44,9 +44,9 @@ const CASES: Array<{
     done: '已完成 ✓',
     error: '執行失敗',
     needsReply: '需要你回覆',
-    externalDone: 'Cindy · 任務「整理報告」已完成 ✓',
-    externalError: 'Cindy · 任務「整理報告」執行失敗',
-    externalNeedsReply: 'Cindy · 任務「整理報告」需要你回覆',
+    externalDone: 'Lex · 任務「整理報告」已完成 ✓',
+    externalError: 'Lex · 任務「整理報告」執行失敗',
+    externalNeedsReply: 'Lex · 任務「整理報告」需要你回覆',
   },
   {
     locale: 'en',
@@ -55,9 +55,9 @@ const CASES: Array<{
     done: 'Completed ✓',
     error: 'Failed',
     needsReply: 'Reply needed',
-    externalDone: 'Cindy · Session “Report” completed ✓',
-    externalError: 'Cindy · Session “Report” failed',
-    externalNeedsReply: 'Cindy · Session “Report” needs your reply',
+    externalDone: 'Lex · Session “Report” completed ✓',
+    externalError: 'Lex · Session “Report” failed',
+    externalNeedsReply: 'Lex · Session “Report” needs your reply',
   },
   {
     locale: 'ja',
@@ -66,9 +66,9 @@ const CASES: Array<{
     done: '完了しました ✓',
     error: '実行に失敗しました',
     needsReply: '返信が必要です',
-    externalDone: 'Cindy · セッション「レポート」が完了しました ✓',
-    externalError: 'Cindy · セッション「レポート」の実行に失敗しました',
-    externalNeedsReply: 'Cindy · セッション「レポート」への返信が必要です',
+    externalDone: 'Lex · セッション「レポート」が完了しました ✓',
+    externalError: 'Lex · セッション「レポート」の実行に失敗しました',
+    externalNeedsReply: 'Lex · セッション「レポート」への返信が必要です',
   },
   {
     locale: 'ko',
@@ -77,9 +77,9 @@ const CASES: Array<{
     done: '완료됨 ✓',
     error: '실행 실패',
     needsReply: '답변이 필요합니다',
-    externalDone: 'Cindy · 세션 “보고서” 완료됨 ✓',
-    externalError: 'Cindy · 세션 “보고서” 실행 실패',
-    externalNeedsReply: 'Cindy · 세션 “보고서”에 답변이 필요합니다',
+    externalDone: 'Lex · 세션 “보고서” 완료됨 ✓',
+    externalError: 'Lex · 세션 “보고서” 실행 실패',
+    externalNeedsReply: 'Lex · 세션 “보고서”에 답변이 필요합니다',
   },
 ];
 
@@ -110,13 +110,13 @@ describe('session notification copy', () => {
     (title) => {
       setMainLocale('en');
       expect(getSessionExternalNotificationText(title, 'done')).toBe(
-        `Cindy · Session “${title}” completed ✓`,
+        `Lex · Session “${title}” completed ✓`,
       );
       expect(getSessionExternalNotificationText(title, 'error')).toBe(
-        `Cindy · Session “${title}” failed`,
+        `Lex · Session “${title}” failed`,
       );
       expect(getSessionExternalNotificationText(title, 'needs-reply')).toBe(
-        `Cindy · Session “${title}” needs your reply`,
+        `Lex · Session “${title}” needs your reply`,
       );
     },
   );

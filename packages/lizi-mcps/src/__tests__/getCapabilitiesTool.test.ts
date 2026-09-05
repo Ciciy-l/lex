@@ -73,12 +73,14 @@ describe('capabilities data source', () => {
   it('about-cindy 覆盖产品身份与源码仓库', () => {
     const entry = findCapability('about-cindy');
     expect(entry).toBeDefined();
-    expect(entry!.detail).toContain('https://github.com/makecindy/cindy');
+    expect(entry!.detail).toContain('https://github.com/Ciciy-l/lex');
+    expect(entry!.detail).toContain('https://ciciy-l.github.io/lex/');
+    expect(entry!.detail).toContain('基于开源 Cindy 客户端');
+    expect(entry!.detail).toContain('不是 Cindy 或 XD Inc. 的官方产品');
     // 执行位置不能被写死成客户端:SSH 远程工作区下 agent 进程在远端主机。
     expect(entry!.detail).toContain('SSH 远程工作区');
-    // 官网是区域敏感的:两个都要给,只给国际版会把大陆用户导错。
-    expect(entry!.detail).toContain('https://cindy.cn');
-    expect(entry!.detail).toContain('https://cindy.app');
+    // Cindy 的 CN / Global 只描述账号服务区，不得被说成两个 Lex 版本。
+    expect(entry!.detail).toContain('不是两个 Lex 版本');
   });
 
   it('issue-tracker 不套固定问卷,并说明自动附加环境含 Harness / 模型 ID', () => {

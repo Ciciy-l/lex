@@ -68,7 +68,7 @@ let disposePiRuntimeRecovery: (() => void) | null = null;
 // splash displays real byte progress.
 const LINUX_AGENT_INSTALL_STARTUP_DEADLINE_MS = 5 * 60_000;
 // Pi 是可选能力。首启可以给它一小段时间从 CDN 准备，但网络异常时不能让
-// 整个 Cindy 一直停在启动页；到期后取消本次下载并禁用本次 Pi。
+// 整个宿主应用一直停在启动页；到期后取消本次下载并禁用本次 Pi。
 const PI_AGENT_INSTALL_STARTUP_DEADLINE_MS = 60_000;
 
 /** Preserve actionable saved-account failures across Electron serialization. */
@@ -3439,7 +3439,7 @@ if (
   if (!gotTheLock) {
     markDesktopDevStartupFailed(
       'SINGLE_INSTANCE_OWNED',
-      'Another Cindy instance already owns this single-instance lock scope.',
+      `Another ${BRAND_NAME} instance already owns this single-instance lock scope.`,
       { userDataDir: realUserDataDir, lockScopeDir },
     );
     app.quit();

@@ -354,7 +354,7 @@ export function App() {
                       {/* LoginHandoffProvider 包 SplashScreen + RouterProvider(Step 3b
                           WHAT2 宿主契约):Splash→登录/主界面衔接动画状态机。
                           LoginBrandStage = 品牌视觉唯一渲染者(白底体系背景 + 立绘/
-                          字标/Slogan),overlay pointer-events:none,仅主窗挂载(与
+                          字标),overlay pointer-events:none,仅主窗挂载(与
                           Splash gating 同源;副窗/sidebar 窗不挂)。 */}
                       <LoginHandoffHost>
                         {/* 副窗口(「在新窗口打开」)/ 右侧栏子窗口跳过 splash:env/热更检查

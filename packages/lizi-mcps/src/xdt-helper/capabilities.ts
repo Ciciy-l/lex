@@ -1,7 +1,7 @@
 /**
  * xdt-helper/capabilities.ts
  * ---------------------------------------------------------------------------
- * Cindy 用户视角能力清单的"单一事实源"。
+ * Lex 用户视角能力清单的"单一事实源"。
  *
  * 编辑规则:
  *  - one-liner 给模型用,要让模型一眼判断要不要拉 detail。控制在 ~50 字。
@@ -14,7 +14,7 @@
  *  - "用户产品功能" 一类一个 bucket(ai-chat / session-management / scheduler 等)
  *  - "外部数据源 / 服务的 MCP 接入" 各自独立 bucket(jira / confluence / google-sheets / ai-art)
  *  - 飞书较特殊:"基础接入(登录/通知/MCP 文档表格等)" 与 "移动办公接管 session" 拆两个 bucket,
- *    因为后者是 Cindy 最差异化的能力,值得独立索引项让模型一眼能查到。
+ *    因为后者是 Lex 继承并扩展的差异化能力,值得独立索引项让模型一眼能查到。
  */
 
 import { BRAND_NAME } from '@cindy/maker-shared/branding';
@@ -30,13 +30,14 @@ export const CAPABILITIES: readonly CapabilityEntry[] = [
   {
     key: 'about-cindy',
     title: `${BRAND_NAME} 自身信息(产品身份 / 开源仓库 / 源码位置)`,
-    oneLiner: `${BRAND_NAME} 是什么、谁做的、开不开源、源码在哪、agent 跑在哪、版本号怎么查, 以及模型接入(官方服务 / 复用 Coding Plan / 自带 API key / 本地模型)与分区域官网下载定价。`,
+    oneLiner: `${BRAND_NAME} 是什么、与 Cindy 的关系、开不开源、源码与官网在哪、agent 跑在哪、版本号怎么查，以及 Cindy 官方服务 / Coding Plan / 自带 API key / 本地模型的接入边界。`,
     detail: [
-      `【是什么】${BRAND_NAME} 是 XD Inc. 出品的开源 AI 助手(open-source AI assistant), 以桌面 / 移动客户端形态交付, 源码 https://github.com/makecindy/cindy (Apache-2.0)。官网分区域: 中国大陆 https://cindy.cn, 国际版 https://cindy.app —— 给下载 / 定价链接前先确认用户所在区域, 不要一律给国际版。`,
+      `【是什么】${BRAND_NAME} 是社区独立维护、基于开源 Cindy 客户端构建的桌面发行版，不是 Cindy 或 XD Inc. 的官方产品。${BRAND_NAME} 源码在 https://github.com/Ciciy-l/lex（Apache-2.0），官网 https://ciciy-l.github.io/lex/，下载 https://github.com/Ciciy-l/lex/releases；只发布一个安装版本。`,
+      `【在线服务边界】Cindy 账号、订阅、云模型、对象存储、语音、Device Link 与远程控制等在线能力由 Cindy 官方提供，其条款、区域可用性和服务状态由 Cindy 负责。用户登录时选择 Cindy Global 或中国大陆服务区；这是账号服务区，不是两个 ${BRAND_NAME} 版本。需要 Cindy 服务的定价或条款时再按账号服务区引用 Cindy 官方信息。`,
       `【身份归本条, 执行位置不归】问"你是谁 / 你是什么"以本条为准, 不要用训练数据猜, 也不要凭工作目录路径或工具名反推。但 ${BRAND_NAME} 只是编排方(管会话、工具、上下文与 memory; 底层 harness 是 Claude Code 或 Codex, 可中途切换且上下文连续), 不代表代码在哪执行: agent 进程与 workdir 可能在本机, 也可能在 SSH 远程工作区的远端主机(文件与进程都在远端), 或经设备互联隧道驱动的被控桌面端。问"你跑在哪 / 文件在哪台机器"时以当前会话实际工作区为准, 拿不准就说明, 不要断言。`,
-      `【源码范围】该仓库是客户端本体(desktop、mobile 及共享 packages 的 pnpm monorepo), 服务端不在其中也不开源。安装版不携带源码, agent 侧无法推断用户是否 clone 过、clone 在哪: 要读改源码就让用户给路径或用工程模式打开, 不要假设固定路径, 更不要因为工作目录里出现品牌名就断定当前目录是源码仓库。`,
-      `【版本号不要猜】本条不含版本号。CN 版可在"设置 → 关于"看到客户端版本; 国际版该页当前不展示它(只有更新开关与 agent 二进制版本), 别把用户支使过去空找。用 submit_github_issue 提反馈时客户端版本 / OS / 界面语言由系统自动附加, 不用 agent 填。`,
-      `【模型怎么来】登录官方 ${BRAND_NAME} 服务按量透明扣费、授权已付费的 Claude Code / Codex Coding Plan 继续用(不重复付费)、接自己的 API key, 或跑本地模型。价格见对应区域官网。`,
+      `【源码范围】${BRAND_NAME} 仓库当前发行 Desktop 及其共享 packages；仓内 Mobile 代码仍属于 Cindy 上游，不代表存在 ${BRAND_NAME} Mobile。Cindy 服务端不在该仓库。安装版不携带源码，agent 侧无法推断用户是否 clone 过、clone 在哪：要读改源码就让用户给路径或用工程模式打开，不要假设固定路径。`,
+      `【版本号不要猜】本条不含版本号。所有 ${BRAND_NAME} 用户都可在"设置 → 关于"查看客户端版本；提交反馈时客户端版本 / OS / 界面语言由系统自动附加，不用 agent 填。`,
+      `【模型怎么来】可登录 Cindy 官方服务使用其云模型，授权已付费的 Claude Code / Codex Coding Plan 继续用，接自己的 API key，或运行本地模型。不要把 Cindy 官方服务称为 ${BRAND_NAME} 自营服务。`,
     ].join(' '),
   },
   {
@@ -123,15 +124,15 @@ export const CAPABILITIES: readonly CapabilityEntry[] = [
   },
   {
     key: 'issue-tracker',
-    title: '官方反馈提交',
-    oneLiner: '/issue 命令或自然语言发起,agent 对话式整理后经确认卡片提交 GitHub issue。',
+    title: 'Cindy 上游反馈提交',
+    oneLiner: '/issue 命令或自然语言发起，agent 对话式整理后经确认卡片提交到 Cindy 上游 GitHub issue。',
     detail: [
       '用户输入 /issue(可带初始描述)或直接说"帮我提个 issue",agent 先把反馈整理清楚再提交:缺什么问什么,不套固定问卷,不够清楚时不会急着提交。',
       '整理出对维护者有用的标题与正文,默认概括并脱敏;功能建议不写源码级方案。对话里的图不会传到 GitHub,不要声称截图已附。',
       '整理出结构化标题与正文后调用 submit_github_issue(cindy_helper 的 feedback 类目),系统会尽量隐藏常见密钥、个人路径和邮箱。',
       '提交前 App 内弹系统确认卡片,用户可编辑标题/正文、确认或取消;',
       '不需要安装或配置 GitHub 插件:默认由 Cindy 官方 Bot 提交;当前已配置且可用的 GitHub 账号只作为确认卡里的额外身份选项。',
-      `客户端版本 / OS / Harness / 模型 ID / 界面语言由系统作为「提交时的任务环境」自动附加(OS 来自提交客户端本机,Harness / 模型是当前任务快照,不一定是出问题的那个)。用户说明的实际故障环境按需写进正文。最终创建到 ${BRAND_NAME} 官方 GitHub 仓库。创建后会返回 issue 链接,并可继续协助用户从源码复现、修复 Bug、开发功能和准备 PR。`,
+      `客户端版本 / OS / Harness / 模型 ID / 界面语言由系统作为「提交时的任务环境」自动附加(OS 来自提交客户端本机,Harness / 模型是当前任务快照,不一定是出问题的那个)。用户说明的实际故障环境按需写进正文。当前反馈最终创建到 Cindy 上游 GitHub 仓库，不要误称为 ${BRAND_NAME} 官方仓库。创建后会返回 issue 链接,并可继续协助用户从源码复现、修复 Bug、开发功能和准备 PR。`,
     ].join(' '),
   },
   {

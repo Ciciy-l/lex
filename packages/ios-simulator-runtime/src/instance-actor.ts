@@ -816,7 +816,7 @@ export class IOSSimulatorInstanceActor {
         this.#throwCreateFailure(cleanupRequired, signal);
         throw new IOSSimulatorInstanceError(
           "SIMULATOR_ATTACHED_ELSEWHERE",
-          "The newly created simulator was attached to another Cindy session.",
+          "The newly created simulator was attached to another app session.",
         );
       }
 

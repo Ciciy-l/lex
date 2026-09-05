@@ -15,6 +15,7 @@ import {
   PLUGIN_MEMBER_UPLOAD_MAX_ARCHIVE_BYTES,
   type PluginMemberUploadStatusResponse,
 } from '@cindy/plugin-protocol';
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
 import {
   getActiveAppSession,
@@ -402,7 +403,7 @@ export class PluginPublisherOrchestrator {
           errorCode: signal.aborted ? null : 'CONFIRM_UNAVAILABLE',
           message: signal.aborted
             ? cancelMessage(record.uploadId !== null)
-            : '请在 Cindy 窗口内重试',
+            : `请在 ${BRAND_NAME} 窗口内重试`,
         });
         return;
       }

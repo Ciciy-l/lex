@@ -313,7 +313,7 @@ describe('desktop MCP approval policy', () => {
       });
       expect(presentation?.title).toMatch(title);
       expect(presentation?.description).toMatch(
-        /current Cindy task.*start or stop.*install or launch.*tap.*swipe.*type.*screenshots.*settings.*without another device-control prompt.*disconnect.*revoke Agent control.*sensitive actions.*separate approval/i,
+        /current Lex task.*start or stop.*install or launch.*tap.*swipe.*type.*screenshots.*settings.*without another device-control prompt.*disconnect.*revoke Agent control.*sensitive actions.*separate approval/i,
       );
     }
 

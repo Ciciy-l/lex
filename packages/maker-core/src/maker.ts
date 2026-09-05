@@ -16,6 +16,7 @@
  */
 
 import { DEFAULT_DRAFT_SESSION_TITLE } from '@cindy/maker-shared/session-title';
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 import fs from 'node:fs';
 import path from 'node:path';
 import { clearTimeout as clearNodeTimeout, setTimeout as setNodeTimeout } from 'node:timers';
@@ -443,7 +444,7 @@ export class Maker {
       const existing = this.activeCodexThreadClaims.get(nextKey);
       if (existing && existing.token !== owner.token) {
         throw new Error(
-          `Codex thread ${threadId} is already active in another Cindy task. Close that task and try again.`,
+          `Codex thread ${threadId} is already active in another ${BRAND_NAME} task. Close that task and try again.`,
         );
       }
       this.activeCodexThreadClaims.set(nextKey, owner);

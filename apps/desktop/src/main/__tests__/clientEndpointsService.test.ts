@@ -140,7 +140,7 @@ describe('启动失败系统提示框', () => {
     };
     const visibleText = `${options.message}\n${options.detail}\n${options.buttons.join('\n')}`;
     expect(options.type).toBe('warning');
-    expect(options.message).toBe('Cindy 暂时无法连接');
+    expect(options.message).toBe('Lex 暂时无法连接');
     expect(visibleText).toContain('请确认设备已联网');
     expect(visibleText).toContain('错误信息：ERR_CONNECTION_RESET');
     expect(visibleText).toContain('复制诊断信息');

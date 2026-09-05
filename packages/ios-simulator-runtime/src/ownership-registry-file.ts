@@ -159,7 +159,7 @@ function parseSnapshot(value: unknown): IOSSimulatorInstance[] | null {
 function invalidRegistryError(): IOSSimulatorInstanceError {
   return new IOSSimulatorInstanceError(
     "DEVICE_BUSY",
-    "Cindy cannot safely manage iOS Simulator devices because the ownership registry is invalid.",
+    "iOS Simulator devices cannot be managed safely because the ownership registry is invalid.",
     false,
   );
 }
@@ -250,7 +250,7 @@ export class IOSSimulatorOwnershipRegistryFile {
       this.#writerLease = null;
       throw new IOSSimulatorInstanceError(
         "DEVICE_BUSY",
-        "Another Cindy process is managing iOS Simulator ownership for this profile.",
+        "Another host process is managing iOS Simulator ownership for this profile.",
         true,
       );
     }

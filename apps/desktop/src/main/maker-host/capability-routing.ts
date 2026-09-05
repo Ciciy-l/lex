@@ -2,6 +2,7 @@ import type {
   CapabilityRouteOverride,
   CapabilityRoutingPolicy,
 } from '@cindy/maker-core';
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
 const CODEX_COMPUTER_USE_REPLACEMENT_ROUTE = {
   capabilityId: 'computer-use',
@@ -16,7 +17,7 @@ const CODEX_COMPUTER_USE_REPLACEMENT_ROUTE = {
     kind: 'cindy-host',
     id: 'cindy_computer',
   },
-  reason: 'Cindy owns desktop-control enablement, permissions, and execution.',
+  reason: `${BRAND_NAME} owns desktop-control enablement, permissions, and execution.`,
 } as const satisfies CapabilityRouteOverride;
 
 /**
@@ -128,7 +129,7 @@ export const DESKTOP_CAPABILITY_ROUTING_POLICY = {
         containerId: 'computer-use@openai-bundled',
       },
       invocation: 'disabled',
-      reason: 'The bundled Skill requires node_repl, which is unavailable in Cindy.',
+      reason: `The bundled Skill requires node_repl, which is unavailable in ${BRAND_NAME}.`,
     },
   ],
 } as const satisfies CapabilityRoutingPolicy;
@@ -142,7 +143,7 @@ const CODEX_IN_APP_BROWSER_UNAVAILABLE_OVERRIDE = {
     id: 'browser@openai-bundled',
   },
   invocation: 'disabled',
-  reason: 'Cindy does not host the ChatGPT in-app browser runtime.',
+  reason: `${BRAND_NAME} does not host the ChatGPT in-app browser runtime.`,
 } as const satisfies CapabilityRoutingPolicy['overrides'][number];
 
 const CODEX_CHROME_USE_OVERRIDES = [
@@ -159,7 +160,7 @@ const CODEX_CHROME_USE_OVERRIDES = [
       kind: 'cindy-plugin',
       id: 'browser',
     },
-    reason: 'Cindy Browser owns browser automation while it is enabled for this workspace.',
+    reason: `${BRAND_NAME} Browser owns browser automation while it is enabled for this workspace.`,
   },
   {
     capabilityId: 'browser-use',
@@ -174,7 +175,7 @@ const CODEX_CHROME_USE_OVERRIDES = [
       kind: 'cindy-plugin',
       id: 'browser',
     },
-    reason: 'Cindy Browser owns browser automation while it is enabled for this workspace.',
+    reason: `${BRAND_NAME} Browser owns browser automation while it is enabled for this workspace.`,
   },
 ] as const satisfies CapabilityRoutingPolicy['overrides'];
 

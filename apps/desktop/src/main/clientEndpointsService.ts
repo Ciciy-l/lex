@@ -59,6 +59,7 @@ import {
   type ParseClientEndpointManifestResult,
   type RealmManifestBaseUrls,
 } from '@cindy/maker-shared/client-endpoints';
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
 import {
   createDefaultProbes,
@@ -587,7 +588,7 @@ export function promptRetryDialog(
     // createWindow 之前无父窗口,showMessageBoxSync 直接系统模态。
     const clicked = dialog.showMessageBoxSync({
       type: 'warning',
-      title: 'Cindy',
+      title: BRAND_NAME,
       message: content.message,
       detail: content.detail,
       buttons: content.buttons,

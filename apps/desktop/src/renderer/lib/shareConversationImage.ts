@@ -65,7 +65,7 @@ export interface BuildShareImageOptions {
   contentWidth: number;
   /** 页脚品牌 logo 的 URL(打包资源,同源)。 */
   logoSrc: string;
-  /** 页脚 Cindy 角色主视觉的 URL(打包资源,同源)。 */
+  /** 页脚产品角色主视觉的 URL(打包资源,同源)。 */
   characterSrc?: string;
 }
 
@@ -387,7 +387,7 @@ async function sameOriginToDataUrl(url: string): Promise<string> {
   });
 }
 
-/** Cindy 角色图标的边长(px)。 */
+/** 产品角色图标的边长(px)。 */
 const FOOTER_CHARACTER_PX = 40;
 /** 品牌 wordmark 高度(px)。 */
 const FOOTER_LOGO_HEIGHT_PX = 24;
@@ -395,7 +395,7 @@ const FOOTER_LOGO_HEIGHT_PX = 24;
 export interface ShareImageFooterAssets {
   /** 品牌 wordmark(按主题深浅选好的那一版)。 */
   logoSrc: string;
-  /** Cindy 角色主视觉;缺省时页脚只有 logo。 */
+  /** 产品角色主视觉;缺省时页脚只有 logo。 */
   characterSrc?: string;
 }
 

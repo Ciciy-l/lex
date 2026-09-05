@@ -1420,7 +1420,7 @@ const artifactDefinitions = {
       ...buildDesktopCommonEntries(apacheText, "@img/sharp-win32-x64"),
       ...buildWindowsEntries(),
     ],
-    productName: "Cindy desktop application — Windows x64",
+    productName: "Lex desktop application — Windows x64",
     description: ["Windows x64 桌面安装包的第三方开源组件声明。"],
     notes: [
       "包含 Rust/Tauri updater、Windows 功能键监听器的运行时 crate 闭包和随包 Android Platform-Tools。",
@@ -1435,7 +1435,7 @@ const artifactDefinitions = {
       ]),
       ...buildMacEntries(),
     ],
-    productName: "Cindy desktop application — macOS x64/arm64",
+    productName: "Lex desktop application — macOS x64/arm64",
     description: [
       "macOS Intel 与 Apple Silicon 桌面安装包的第三方开源组件声明。",
     ],
@@ -1449,7 +1449,7 @@ const artifactDefinitions = {
       "@img/sharp-libvips-linux-x64",
       "@img/sharp-libvips-linux-arm64",
     ]),
-    productName: "Cindy desktop application — Linux x64/arm64 glibc",
+    productName: "Lex desktop application — Linux x64/arm64 glibc",
     description: ["Linux x64 与 arm64 glibc 桌面安装包的第三方开源组件声明。"],
     notes: [
       "合并 x64 与 arm64 原生可选包;不包含运行时按需下载的 Android Platform-Tools。",
@@ -1603,7 +1603,7 @@ outputs.push(
     buildOutput({
       packages: desktopCombined.packages,
       manualEntries: desktopManual,
-      productName: "Cindy desktop application — all supported platforms",
+      productName: "Lex desktop application — all supported platforms",
       description: ["Windows、macOS 与 Linux 桌面产物的保守合并声明。"],
       coverageNotes: [
         "发布包可按 docs/legal/notices/desktop-<platform>.txt 使用平台精确版本。",
@@ -1618,7 +1618,7 @@ outputs.push(
     path.join(DESKTOP_DIR, "resources", "THIRD-PARTY-RESTRICTED.txt"),
     buildRestrictedOutput(
       desktopRestricted,
-      "Cindy desktop application — all supported platforms",
+      "Lex desktop application — all supported platforms",
     ),
   ],
 );

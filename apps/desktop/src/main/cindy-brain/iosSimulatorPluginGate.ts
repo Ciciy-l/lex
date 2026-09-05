@@ -1,4 +1,5 @@
 import type { IOSSimulatorMcpAccessDecision } from '@cindy/mcps';
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
 import type { InstalledGhost } from '../../shared/ghost.js';
 
@@ -24,7 +25,7 @@ function pluginActionData(
 }
 
 /**
- * Resolve the live product gate for Cindy's Host-owned iOS Simulator.
+ * Resolve the live product gate for the Host-owned iOS Simulator.
  *
  * The gateway remains discoverable so an Agent can explain how to install or
  * enable the plugin, but every lifecycle/input/media call must re-evaluate this
@@ -41,7 +42,7 @@ export function resolveIOSSimulatorPluginAccess(
       allowed: false,
       errorCode: 'IOS_SIMULATOR_PLUGIN_REQUIRED',
       message:
-        "Cindy's embedded iOS Simulator requires the iOS Simulator plugin. The embedded route is unavailable until the user installs and enables “iOS Simulator” from Plugins → Marketplace; other iOS workflows are unaffected.",
+        `${BRAND_NAME}'s embedded iOS Simulator requires the iOS Simulator plugin. The embedded route is unavailable until the user installs and enables “iOS Simulator” from Plugins → Marketplace; other iOS workflows are unaffected.`,
       data: pluginActionData('not-installed', 'install-plugin'),
     };
   }
@@ -81,7 +82,7 @@ export function resolveIOSSimulatorPluginAccess(
     allowed: false,
     errorCode: 'IOS_SIMULATOR_PLUGIN_DISABLED',
     message:
-      'The installed embedded iOS Simulator plugin is unavailable in the current Cindy session. Make it available from the Plugins page before retrying the embedded tool; other iOS workflows are unaffected.',
+      `The installed embedded iOS Simulator plugin is unavailable in the current ${BRAND_NAME} session. Make it available from the Plugins page before retrying the embedded tool; other iOS workflows are unaffected.`,
     data: pluginActionData('session-unavailable', 'enable-plugin', candidates[0]),
   };
 }

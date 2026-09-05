@@ -25,7 +25,7 @@ vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ serviceRealm: auth.serviceRealm }),
 }));
 
-import { LegalLinksRows } from '../AboutSection';
+import { CindyLegalPanel, LegalLinksRows } from '../AboutSection';
 
 const openExternal = vi.fn();
 
@@ -41,6 +41,29 @@ describe('AboutSection legal links', () => {
 
   afterEach(() => cleanup());
 
+  it('keeps Cindy legal information collapsed until the user opens it', () => {
+    render(<CindyLegalPanel />);
+
+    const disclosure = screen.getByRole('button', {
+      name: 'settings.about.legal.title',
+    });
+    expect(disclosure.getAttribute('aria-expanded')).toBe('false');
+    expect(
+      screen.queryByRole('button', {
+        name: 'settings.about.legal.viewDocument:settings.about.legal.termsOfServiceLabel',
+      }),
+    ).toBeNull();
+
+    fireEvent.click(disclosure);
+
+    expect(disclosure.getAttribute('aria-expanded')).toBe('true');
+    expect(
+      screen.getByRole('button', {
+        name: 'settings.about.legal.viewDocument:settings.about.legal.termsOfServiceLabel',
+      }),
+    ).not.toBeNull();
+  });
+
   it('renders both legal documents and opens the region-selected URLs externally', async () => {
     render(<LegalLinksRows />);
 
@@ -55,9 +78,7 @@ describe('AboutSection legal links', () => {
 
     fireEvent.click(termsButton);
     await waitFor(() =>
-      expect(openExternal).toHaveBeenCalledWith(
-        legalLinksForRealm('global').termsOfService,
-      ),
+      expect(openExternal).toHaveBeenCalledWith(legalLinksForRealm('global').termsOfService),
     );
 
     const privacyButton = screen.getByRole('button', {

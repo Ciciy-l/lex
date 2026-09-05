@@ -280,7 +280,7 @@ describe('account provider readiness wiring', () => {
     expect(controlWrite).toBeGreaterThan(gate);
     // Refusal has to reach the user, not fail silently as "0 controlled".
     expect(makerIpcSource).toContain(
-      'This Subagent run belongs to another running Cindy instance.',
+      'This Subagent run belongs to another running ${BRAND_NAME} instance.',
     );
   });
 

@@ -2,16 +2,16 @@
  * AboutSection — Settings → About tab content.
  *
  * 版本号:
- *   - 应用版本号:仅国内版显示,值由 window.electronAPI.appDisplayVersion 同步注入
+ *   - 应用版本号:所有 Lex 用户均显示,值由 window.electronAPI.appDisplayVersion 同步注入
  *   - Claude Code 版本号: spawn 当前应用使用的 binary `--version`
  *   - Codex 版本号: 同上
  *
  * 卡片样式与 NotificationSection / FeishuBotSection 同级 (rounded-xl / Board border)。
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ExternalLink, FolderOpen, Loader2, Upload } from 'lucide-react';
+import { ChevronDown, ChevronRight, ExternalLink, FolderOpen, Loader2, Upload } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
@@ -24,7 +24,6 @@ import { extractIpcError } from '@/utils/ipcError';
 import { useAuth } from '@/contexts/AuthContext';
 import { DefaultOverrideControls } from './DefaultOverrideControls';
 import { StorageManagementCard } from './StorageManagementCard';
-import { CURRENT_CINDY_REGION } from '../../../shared/brandRegion';
 import { legalLinksForRealm } from '../../../shared/legalLinks';
 
 interface AgentVersionState {
@@ -117,16 +116,12 @@ export function AboutSection() {
           'border border-[var(--settings-theme-card-border)]',
         )}
       >
-        {CURRENT_CINDY_REGION === 'cn' && (
-          <>
-            <InfoRow
-              label={t('settings.about.appVersionLabel')}
-              value={window.electronAPI.appDisplayVersion}
-              title={window.electronAPI.appDisplayVersionDetail}
-            />
-            <Divider />
-          </>
-        )}
+        <InfoRow
+          label={t('settings.about.appVersionLabel')}
+          value={window.electronAPI.appDisplayVersion}
+          title={window.electronAPI.appDisplayVersionDetail}
+        />
+        <Divider />
         <AutoUpdateToggleRow />
         <Divider />
         <AnalyticsToggleRow />
@@ -150,8 +145,6 @@ export function AboutSection() {
         <CrashAutoUploadToggleRow />
         <Divider />
         <UploadLogsRow />
-        <Divider />
-        <LegalLinksRows />
       </div>
 
       {/* 存储空间(媒体总仓占用 / 清理 / 体检) */}
@@ -160,8 +153,78 @@ export function AboutSection() {
       </h3>
       <StorageManagementCard />
 
-      <SocialLinksPanel />
+      <LexContactPanel />
+      <CindyLegalPanel />
+      <CindyCommunityPanel />
     </div>
+  );
+}
+
+function LexContactPanel() {
+  const { t } = useTranslation();
+
+  return (
+    <section
+      className={cn(
+        'mt-2 flex flex-col gap-1 rounded-xl px-[18px] py-4',
+        'border border-[var(--settings-theme-card-border)]',
+        'bg-[var(--settings-theme-card-bg)]',
+      )}
+    >
+      <h3 className="text-13 font-medium text-[var(--settings-section-title)]">
+        {t('settings.about.lexContact.title')}
+      </h3>
+      <p className="text-12 leading-[1.4] text-[var(--settings-section-sublabel)]">
+        {t('settings.about.lexContact.placeholder')}
+      </p>
+    </section>
+  );
+}
+
+function CollapsibleAboutPanel({ title, children }: { title: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <section
+      className={cn(
+        'flex flex-col overflow-hidden rounded-xl',
+        'border border-[var(--settings-theme-card-border)]',
+        'bg-[var(--settings-theme-card-bg)]',
+      )}
+    >
+      <button
+        aria-expanded={open}
+        className={cn(
+          'group flex w-full select-none items-center justify-between gap-3 px-[18px] py-4 text-left',
+          'transition-colors hover:bg-[var(--surface-hover)]',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring-soft)]',
+        )}
+        onClick={() => setOpen((current) => !current)}
+        type="button"
+      >
+        <span className="text-13 font-medium text-[var(--settings-section-title)]">{title}</span>
+        <span
+          aria-hidden
+          className="shrink-0 text-[var(--settings-section-sublabel)] transition-colors group-hover:text-[var(--settings-section-title)]"
+        >
+          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </span>
+      </button>
+      <div hidden={!open}>
+        <Divider />
+        {children}
+      </div>
+    </section>
+  );
+}
+
+export function CindyLegalPanel() {
+  const { t } = useTranslation();
+
+  return (
+    <CollapsibleAboutPanel title={t('settings.about.legal.title')}>
+      <LegalLinksRows />
+    </CollapsibleAboutPanel>
   );
 }
 
@@ -222,7 +285,7 @@ function LegalLinkRow({ label, url }: { label: string; url: string }) {
   );
 }
 
-function SocialLinksPanel() {
+export function CindyCommunityPanel() {
   const { t } = useTranslation();
 
   const handleSocialLinkClick = async (url: string) => {
@@ -237,12 +300,8 @@ function SocialLinksPanel() {
   };
 
   return (
-    <div className="mt-5 flex flex-col gap-2.5">
-      <h3 className="text-13 font-medium text-[var(--settings-section-title)]">
-        {t('settings.about.social.title')}
-      </h3>
-
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-2.5">
+    <CollapsibleAboutPanel title={t('settings.about.social.title')}>
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-2.5 p-3">
         {DESKTOP_SOCIAL_LINKS.map((link) => (
           <button
             className={cn(
@@ -275,7 +334,7 @@ function SocialLinksPanel() {
           </button>
         ))}
       </div>
-    </div>
+    </CollapsibleAboutPanel>
   );
 }
 

@@ -1,9 +1,9 @@
 ---
 id: getting-started
-title: Getting started with Cindy
+title: Getting started with Lex
 summary: Create a session, choose an agent and working directory, send your first prompt, and iterate.
 ---
-Cindy is a desktop app that runs AI coding agents (Claude Code and Codex) for you.
+Lex is a community desktop app based on Cindy that runs AI coding agents (Claude Code, Codex, and Pi) for you.
 
 **Your first session:**
 

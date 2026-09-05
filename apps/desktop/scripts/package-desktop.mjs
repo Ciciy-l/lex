@@ -589,7 +589,7 @@ async function main() {
   }
 
   console.log('='.repeat(60));
-  console.log(`==> Package Cindy desktop`);
+  console.log(`==> Package Lex desktop`);
   console.log(`    platform: ${archs.map((a) => `${platform}-${a}`).join(' + ')}`);
   console.log(`    region:   ${region}`);
   console.log(`    version:  ${versionless ? `(版本无关,占位 ${version},不参与热更新)` : version}`);

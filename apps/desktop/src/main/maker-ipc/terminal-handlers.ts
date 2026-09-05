@@ -12,6 +12,7 @@
  */
 
 import { BrowserWindow, ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
 import { throwIpcError } from '../utils/ipcValidate.js';
 import { createLogger } from '../logger.js';
@@ -84,7 +85,7 @@ export function registerTerminalHandlers(options?: TerminalHandlersOptions): Pty
   const isTrustedOwner = options?.isTrustedOwner ?? isTrustedTerminalOwner;
   const assertTrustedSender = (event: IpcMainInvokeEvent): void => {
     if (!isTrustedSender(event)) {
-      throwIpcError('PERMISSION_DENIED', 'terminal IPC is only available to Cindy renderers');
+      throwIpcError('PERMISSION_DENIED', `terminal IPC is only available to ${BRAND_NAME} renderers`);
     }
   };
   const pushToTrustedOwner = (target: WebContents, channel: string, payload: unknown): void => {

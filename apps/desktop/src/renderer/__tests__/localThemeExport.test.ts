@@ -47,7 +47,7 @@ describe('local theme export', () => {
   it('用可直接替换的示例路径解释 icon / logo 配置', () => {
     const source: Theme = {
       id: 'cindy-light',
-      name: 'CINDY Light',
+      name: 'Lex Light',
       type: 'light',
       colors: {},
     };

@@ -1,25 +1,20 @@
 import { useCallback, useRef, type CSSProperties } from 'react';
 import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
-import { LOGIN_HANDOFF_TIMINGS, useLoginHandoff } from '@/contexts/LoginHandoffContext';
+import { useLoginHandoff } from '@/contexts/LoginHandoffContext';
 import { useIsDarkMode } from '@/components/markdown/useIsDarkMode';
 
-import heroPng from '@/assets/login/hero.png';
-import heroPng2x from '@/assets/login/hero@2x.png';
+import heroPng from '@/assets/branding/lex-assistant-hero.png';
+import heroPng2x from '@/assets/branding/lex-assistant-master.png';
 import heroMask from '@/assets/login/hero-mask.svg';
 import wordmarkSvg from '@/assets/login/lex-wordmark.svg';
 import wordmarkDarkSvg from '@/assets/login/lex-wordmark-dark.svg';
-import sloganPng from '@/assets/login/slogan.png';
-import sloganPng2x from '@/assets/login/slogan@2x.png';
-import sloganDarkPng from '@/assets/login/slogan-dark.png';
-import sloganDarkPng2x from '@/assets/login/slogan-dark@2x.png';
 
-import { brandPlacement, sloganShiftX } from './loginScale';
+import { brandPlacement } from './loginScale';
 import {
   HERO,
   LOGIN_COLORS,
   LOGIN_LOCAL_MODE,
-  SLOGAN,
   STAGE,
   WORDMARK,
 } from './loginDesignTokens';
@@ -31,21 +26,20 @@ import { useViewportSize } from './LoginStage';
  * 所有权契约(v6.12 冻结;暗色实现 PR 起画布随 light/dark 二态):
  * - 唯一渲染登录画布背景(不透明纯平底,亮 #EDEDED / 暗 #1F1F1E 经 --login-bg-base
  *   二态;2026-07-22 用户拍板对齐 PR #104 撤 wave4 双红渐变,暗色沿用纯平口径)
- *   与品牌三要素(立绘/字标/Slogan);输入面板与圆钮行归 LoginPage,绝不在此重复。
- *   暗色画布用白字版字标/SLOGAN 资产(figma 532:585),立绘两模式同资产。
+ *   与品牌两要素(立绘/字标);输入面板与圆钮行归 LoginPage,绝不在此重复。
+ *   暗色画布用白字版字标资产(figma 532:585),立绘两模式同资产。
  * - overlay `pointer-events: none`,不拦截 hit-test;仅主窗挂载(App.tsx 与 Splash
  *   同源 gating),z-[9980] 盖住主界面、低于 LoginPage 面板层(z-[9990])与
  *   SplashScreen(z-[9999])。
  * - 内部分层冻结:静态 full-viewport 背景子层(纯平白底,viewport 锚定)与
- *   可动画内容子层(立绘/字标/Slogan)分离——handoff 的 transform/opacity 只作用于
+ *   可动画内容子层(立绘/字标)分离——handoff 的 transform/opacity 只作用于
  *   内容子层,背景不参与任何 handoff 变换。
  * - 不透明白底全盖机制承接自 main Splash v2(PR #104):启动加载期完全遮蔽已挂载
  *   主界面,底色消费 token 不另造字面值——本层挂载期间该机制持续生效,不得回退。
  *
  * 几何:wave4 帧(368:1375 与 Splash 五帧 379:5xx 实测同坐标)——立绘 934×934
- * @(443,275)、字标黑红版内层 423×145 @(698,1046)、SLOGAN 453.22×129.12 @(1194,866);
- * Splash 位 = 登录位(shift 段位移量 0,见 LoginHandoffContext 顶注),done 后品牌
- * 元素固定登录位。Slogan 由 handoff 控制最后出现(500ms cubic-bezier(.55,.06,.38,.96))。
+ * @(443,275)、字标黑红版内层 423×145 @(698,1046)。Splash 位 = 登录位
+ * (shift 段位移量 0,见 LoginHandoffContext 顶注),done 后品牌元素固定登录位。
  */
 export function LoginBrandStage() {
   const handoff = useLoginHandoff();
@@ -54,24 +48,19 @@ export function LoginBrandStage() {
     handoff.panelBottomReserve ?? LOGIN_LOCAL_MODE.reservedHeight;
   // 品牌块整体让位(scale+translateY,构图冻结;用户拍板 2026-07-23,design.md §11)
   const { scale, translateY } = brandPlacement(width, height, panelBottomReserve);
-  const sloganShift = sloganShiftX(width, scale);
-  // 登录人物与标语继续承接 Cindy 的 Agent 视觉；产品字标使用 Lex 自有矢量资产。
+  // 登录人物与字标均使用 Lex 自有品牌资产；Cindy 仅保留为账号与在线服务品牌。
   // 深浅判定同 useBrandLogo：跟随 theme-service 挂的 dark class。
   const isDark = useIsDarkMode();
   const wordmarkSrc = isDark ? wordmarkDarkSvg : wordmarkSvg;
-  const sloganSrc = isDark ? sloganDarkPng : sloganPng;
-  const sloganSrcSet = isDark
-    ? `${sloganDarkPng} 1x, ${sloganDarkPng2x} 2x`
-    : `${sloganPng} 1x, ${sloganPng2x} 2x`;
 
-  // 品牌资产推进锚:立绘/字标/Slogan 三图全部 settle(load 或 error 均计,防死锁)。
+  // 品牌资产推进锚:立绘/字标两图全部 settle(load 或 error 均计,防死锁)。
   const settledRef = useRef<Set<string>>(new Set());
   const reportedRef = useRef(false);
   const handleAssetSettled = useCallback(
     (key: string) => {
       if (reportedRef.current) return;
       settledRef.current.add(key);
-      if (settledRef.current.size >= 3) {
+      if (settledRef.current.size >= 2) {
         reportedRef.current = true;
         handoff.reportBrandAssetsReady();
       }
@@ -95,19 +84,6 @@ export function LoginBrandStage() {
       }
     : {};
 
-  const sloganStyle: CSSProperties = {
-    left: SLOGAN.x,
-    top: SLOGAN.y,
-    width: SLOGAN.width,
-    height: SLOGAN.height,
-    opacity: handoff.sloganRevealed ? 1 : 0,
-    transform: sloganShift !== 0 ? `translateX(${sloganShift}px)` : undefined,
-    // 入场 transition 只在播放期挂(reduced-motion/回访直落终态无过渡)。
-    transition: handoff.isPlaying
-      ? `opacity ${LOGIN_HANDOFF_TIMINGS.sloganMs}ms ${LOGIN_HANDOFF_TIMINGS.sloganEasing}`
-      : undefined,
-  };
-
   return (
     <div
       aria-hidden
@@ -125,7 +101,7 @@ export function LoginBrandStage() {
           backgroundColor: LOGIN_COLORS.bgBase,
         }}
       />
-      {/* 可动画内容子层:立绘/字标/Slogan(1819×2098 画布居中等比缩放) */}
+      {/* 可动画内容子层:立绘/字标(1819×2098 画布居中等比缩放) */}
       <div data-testid="login-brand-content" className="absolute inset-0">
         <div
           data-testid="login-brand-canvas"
@@ -184,19 +160,6 @@ export function LoginBrandStage() {
               width: WORDMARK.inner.width,
               height: WORDMARK.inner.height,
             }}
-          />
-          <img
-            alt=""
-            aria-hidden
-            draggable={false}
-            data-testid="login-slogan"
-            ref={assetRef('slogan')}
-            onLoad={() => handleAssetSettled('slogan')}
-            onError={() => handleAssetSettled('slogan')}
-            className="pointer-events-none absolute select-none object-contain"
-            src={sloganSrc}
-            srcSet={sloganSrcSet}
-            style={sloganStyle}
           />
         </div>
       </div>

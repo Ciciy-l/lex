@@ -1,9 +1,9 @@
 import type { Theme } from '../types';
-import cindyLogoDark from '../../assets/cindy-logo-dark.png';
+import lexLogoDark from '../../assets/login/lex-wordmark-dark.svg';
 import { CINDY_ACRYLIC_WINDOW_BACKING } from '../../../shared/windowBackdrop';
 
 /*
- * CINDY Dark — 品牌红 CTA + 中性近黑底(#181818)+ AA 正文;U2 二级信息色忠于 Figma 原值。
+ * Lex Dark — 中性近黑底(#181818)+ AA 正文;U2 二级信息色忠于 Figma 原值。
  * 值的唯一权威: token-decision-table.md §3(2026-07-17 U8 批准) + §9(2026-08 色阶改版,用户批准)。
  * §9 要点: 整体平移变暗且归零暖差、三级色等亮度转中性;已知债(层次保留率 ~65%)见 issue #2559。
  * 每个 override 注释来源;零自由裁量。
@@ -185,9 +185,9 @@ const overrides = {
 
 export const cindyDark: Theme = {
   id: 'cindy-dark',
-  name: 'CINDY Dark',
+  name: 'Lex Dark',
   type: 'dark',
   colors: overrides,
-  // U5 品牌版横向 logo：白字+红箭头，深底可见。
-  brand: { logo: { src: cindyLogoDark } },
+  // 稳定 theme id 保留 Cindy 兼容名，用户可见品牌使用 Lex。
+  brand: { logo: { src: lexLogoDark } },
 };

@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { BRAND_NAME } from "@cindy/maker-shared/branding";
 import {
   ListResourcesRequestSchema,
   ListResourceTemplatesRequestSchema,
@@ -56,7 +57,7 @@ export function createIOSSimulatorMcpServer(
 
   server.tool(
     "list_tools",
-    "Discover Cindy's embedded iOS Simulator tools. Use this entry point when the embedded route is selected for opening, running, testing, or debugging an iOS app in Cindy. Everything behind it acts on a simulated Apple device: never use it to browse the web, fetch HTTP data, or automate this Mac — use the browser, fetch, or computer tools for those. Start with check_environment before selecting a device.",
+    `Discover ${BRAND_NAME}'s embedded iOS Simulator tools. Use this entry point when the embedded route is selected for opening, running, testing, or debugging an iOS app in ${BRAND_NAME}. Everything behind it acts on a simulated Apple device: never use it to browse the web, fetch HTTP data, or automate this Mac — use the browser, fetch, or computer tools for those. Start with check_environment before selecting a device.`,
     { category: z.enum(["ios_simulator"]).optional() },
     async () => {
       const availability = await deps.describeTools?.(readContext(options));
@@ -79,7 +80,7 @@ export function createIOSSimulatorMcpServer(
   );
   server.tool(
     "call_tool",
-    "Invoke a validated iOS Simulator tool for the current Cindy session. Every tool here targets a simulated Apple device, so do not route web browsing, HTTP fetching, or host automation through it.",
+    `Invoke a validated iOS Simulator tool for the current ${BRAND_NAME} session. Every tool here targets a simulated Apple device, so do not route web browsing, HTTP fetching, or host automation through it.`,
     {
       name: z.string(),
       args: jsonObjectArg("Arguments object for the selected tool"),
