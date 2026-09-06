@@ -60,9 +60,7 @@ const LOCALE_CINDY_ALLOWED_KEY_PATHS = new Set([
   'settings.connections.claude.logoutConfirm.description',
   'settings.providers.xdSignin.cta',
   'settings.auxiliaryModels.signInHint',
-  'settings.wechatBot.authorization.description',
   'settings.wechatBot.authorization.rebindDescription',
-  'settings.wechatBot.bound.notes.connected',
   'settings.telegramBot.guide.step4.body',
   'settings.imBot.tips.cindy',
   'settings.ghosts.page.createWithCindy',
@@ -75,7 +73,6 @@ const LOCALE_CINDY_ALLOWED_KEY_PATHS = new Set([
   'login.errors.ACCOUNT_NAMESPACE_CONFLICT',
   'login.errors.ORG_REALM_UNAVAILABLE',
   'sidebar.user.downloadMobile',
-  'onboarding.inheritedSubscription.desc',
   'onboarding.promotionalGrant.title',
   'onboarding.homeZeroModel.title',
   'onboarding.homeZeroModel.desc',
@@ -115,7 +112,15 @@ const LOCALE_CINDY_ALLOWED_KEY_PREFIXES = [
   'logic.confirm.voiceApiKeyAuth',
 ];
 
-function isAllowedCindyLocaleKey(path) {
+function isAllowedCindyLocaleKey(path, value) {
+  // 此句同时说明本地主体与服务端；仅允许服务端保留一次 Cindy。
+  if (path === 'settings.wechatBot.bound.notes.connected') {
+    return (
+      value.includes('{{appName}}') &&
+      (value.match(/\bCindy\b/g) ?? []).length === 1 &&
+      /\bCindy (?:servers\b|服务端|服務端|サーバー|서버)/.test(value)
+    );
+  }
   return (
     LOCALE_CINDY_ALLOWED_KEY_PATHS.has(path) ||
     LOCALE_CINDY_ALLOWED_KEY_PREFIXES.some((prefix) => path.startsWith(prefix))
@@ -134,7 +139,7 @@ function collectLocaleViolations(file, node, path, out) {
     if (LOCALE_HOST_BRAND_RE.test(node) && !LOCALE_EXEMPT_KEY_PATHS.has(path)) {
       out.push({ file, key: path, kind: 'host-brand' });
     }
-    if (LOCALE_CINDY_RE.test(node) && !isAllowedCindyLocaleKey(path)) {
+    if (LOCALE_CINDY_RE.test(node) && !isAllowedCindyLocaleKey(path, node)) {
       out.push({ file, key: path, kind: 'cindy-boundary' });
     }
     return;

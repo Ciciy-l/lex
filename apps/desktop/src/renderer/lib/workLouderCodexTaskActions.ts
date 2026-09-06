@@ -1,3 +1,4 @@
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 import { ApiError } from '@/lib/httpClient';
 import { toast } from '@/lib/toast';
 import { forkAtMessage } from '@/lib/sessionService';
@@ -51,7 +52,7 @@ export async function copyCurrentTaskMarkdown(
       const text = sessionMessageDisplayText(message);
       if (!text) return [];
       const heading =
-        message.role === 'user' ? 'User' : message.role === 'assistant' ? 'Cindy' : null;
+        message.role === 'user' ? 'User' : message.role === 'assistant' ? BRAND_NAME : null;
       return heading ? [`## ${heading}`, '', text, ''] : [];
     });
     if (lines.length === 0) {

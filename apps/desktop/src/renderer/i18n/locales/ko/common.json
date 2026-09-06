@@ -2208,7 +2208,7 @@
       "authorization": {
         "title": "WeChat 인증",
         "rebindTitle": "새 {{appName}}를 WeChat에 연결",
-        "description": "Tencent 인증 페이지가 시스템 브라우저에서 열립니다. 스캔 후 WeChat에서 Cindy와 대화할 수 있습니다.",
+        "description": "Tencent 인증 페이지가 시스템 브라우저에서 열립니다. 스캔 후 WeChat에서 {{appName}}와 대화할 수 있습니다.",
         "rebindDescription": "이 WeChat에는 이미 연결이 있습니다. 계속하면 기존 Cindy 또는 OpenClaw 연결이 대체될 수 있습니다.",
         "confirm": "인증하기",
         "cancel": "취소",
@@ -2231,7 +2231,7 @@
           "disconnected": "연결은 저장되어 있지만 현재 실행 중이 아닙니다.",
           "authorizing": "새 WeChat 인증을 준비하고 있습니다.",
           "waiting_confirmation": "WeChat 스캔 확인을 기다리고 있습니다.",
-          "connected": "WeChat 개인 메시지는 이 컴퓨터의 Cindy로 직접 전달되며 Cindy 서버를 경유하지 않습니다.",
+          "connected": "WeChat 개인 메시지는 이 컴퓨터의 {{appName}}로 직접 전달되며 Cindy 서버를 경유하지 않습니다.",
           "reconnecting": "WeChat 연결을 복구하고 있습니다. 다시 스캔할 필요가 없습니다.",
           "needs_reauth": "WeChat 인증이 만료되었거나 다른 연결로 교체되었습니다. 다시 스캔하세요.",
           "disabled_by_policy": "호환성 정책으로 연결이 일시 중지되었습니다. 인증 정보와 세션은 유지됩니다.",
@@ -7651,7 +7651,7 @@
     },
     "inheritedSubscription": {
       "title": "이 컴퓨터에 이미 로그인된 {{products}} 계정을 그대로 사용합니다",
-      "desc": "Cindy가 이 기기에 로그인된 계정을 그대로 사용했으며, 별도의 인증은 필요하지 않았습니다. 계정을 바꾸거나 연결을 끊으려면 모델 제공자에서 변경하세요.",
+      "desc": "{{appName}}가 이 기기에 로그인된 계정을 그대로 사용했으며, 별도의 인증은 필요하지 않았습니다. 계정을 바꾸거나 연결을 끊으려면 모델 제공자에서 변경하세요.",
       "openProviders": "모델 제공자 열기",
       "acknowledge": "확인",
       "separator": ", "

@@ -39,6 +39,35 @@ describe('locale 品牌名插值', () => {
     }
   });
 
+  it.each([
+    ['en', 'Cindy servers'],
+    ['zh-CN', 'Cindy 服务端'],
+    ['zh-TW', 'Cindy 服務端'],
+    ['ja', 'Cindy サーバー'],
+    ['ko', 'Cindy 서버'],
+  ])('%s names the local host while preserving WeChat service branding', (lng, serverName) => {
+    for (const key of [
+      'settings.wechatBot.authorization.description',
+      'onboarding.inheritedSubscription.desc',
+    ]) {
+      const rendered = i18n.t(key, { lng });
+      expect(rendered).not.toBe(key);
+      expect(rendered).toContain(BRAND_NAME);
+      expect(rendered).not.toContain('{{appName}}');
+      expect(rendered).not.toContain('Cindy');
+    }
+
+    const connected = i18n.t('settings.wechatBot.bound.notes.connected', { lng });
+    expect(connected).toContain(BRAND_NAME);
+    expect(connected).not.toContain('{{appName}}');
+    expect(connected).toContain(serverName);
+    expect(connected.match(/Cindy/g)).toHaveLength(1);
+
+    const rebind = i18n.t('settings.wechatBot.authorization.rebindDescription', { lng });
+    expect(rebind).toContain('Cindy');
+    expect(rebind).toContain('OpenClaw');
+  });
+
   it('{{appName}} 由 defaultVariables 注入为 BRAND_NAME(端到端)', () => {
     // update.moveToApplications.message 是含 {{appName}} 的真实 key(main 迷你 i18n 也消费它)。
     const rendered = i18n.t('update.moveToApplications.message');

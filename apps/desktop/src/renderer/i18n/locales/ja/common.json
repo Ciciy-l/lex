@@ -2208,7 +2208,7 @@
       "authorization": {
         "title": "WeChat を認証",
         "rebindTitle": "新しい {{appName}} を WeChat に接続",
-        "description": "Tencent の認証ページをシステムブラウザで開きます。スキャン後、WeChat から Cindy と会話できます。",
+        "description": "Tencent の認証ページをシステムブラウザで開きます。スキャン後、WeChat から {{appName}} と会話できます。",
         "rebindDescription": "この WeChat には既に接続があります。続行すると、既存の Cindy または OpenClaw 接続が置き換わる場合があります。",
         "confirm": "認証へ",
         "cancel": "キャンセル",
@@ -2231,7 +2231,7 @@
           "disconnected": "接続は保存されていますが、現在は動作していません。",
           "authorizing": "新しい WeChat 認証を準備しています。",
           "waiting_confirmation": "WeChat のスキャン確認を待っています。",
-          "connected": "WeChat のプライベートメッセージはこのコンピューターの Cindy に直接届き、Cindy サーバーを経由しません。",
+          "connected": "WeChat のプライベートメッセージはこのコンピューターの {{appName}} に直接届き、Cindy サーバーを経由しません。",
           "reconnecting": "WeChat 接続を復旧しています。再スキャンは不要です。",
           "needs_reauth": "WeChat 認証が期限切れか、別の接続に置き換えられました。もう一度スキャンしてください。",
           "disabled_by_policy": "互換性ポリシーにより接続は一時停止中です。認証情報とセッションは保持されています。",
@@ -7651,7 +7651,7 @@
     },
     "inheritedSubscription": {
       "title": "このパソコンでログイン済みの {{products}} をそのまま使っています",
-      "desc": "Cindy はこの端末でログイン済みのアカウントをそのまま利用しました。別途の認証は不要です。アカウントの切り替えや解除はモデルプロバイダーから行えます。",
+      "desc": "{{appName}} はこの端末でログイン済みのアカウントをそのまま利用しました。別途の認証は不要です。アカウントの切り替えや解除はモデルプロバイダーから行えます。",
       "openProviders": "モデルプロバイダーを開く",
       "acknowledge": "了解",
       "separator": "、"
