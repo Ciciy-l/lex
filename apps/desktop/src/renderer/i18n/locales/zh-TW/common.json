@@ -6308,6 +6308,7 @@
       "splitVertical": "上下分割",
       "launchAgent": "新增 CLI 窗格",
       "focusPane": "聚焦 {{name}} 窗格",
+      "movePane": "拖曳 {{name}} 窗格以調整分割位置",
       "closePane": "關閉窗格",
       "resizePanes": "調整終端窗格大小",
       "localOnly": "CLI 窗格目前僅支援本機任務。",

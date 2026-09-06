@@ -10,12 +10,11 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowLeftRight,
   ArrowUpDown,
-  Bot,
   Circle,
-  Plus,
   RotateCw,
   Terminal as TerminalIcon,
   X,
@@ -23,10 +22,11 @@ import {
 import { useTranslation } from 'react-i18next';
 
 import { Spinner } from '@/components/ui/spinner';
+import { themeService } from '@/themes/theme-service';
 import { Tip } from '@/components/ui/tooltip';
 import { extractIpcError } from '@/utils/ipcError';
 import type { TabKindHostContext } from '../../types';
-import { disposeXterm, getOrCreateXterm, type XtermEntry } from './lib/xtermPool';
+import { disposeXterm, getOrCreateXterm, updateXtermTheme, type XtermEntry } from './lib/xtermPool';
 import {
   MAX_TERMINAL_PANES,
   MAX_SPLIT_RATIO,
@@ -35,17 +35,20 @@ import {
   collectPaneIds,
   createPaneState,
   removeTerminalPane,
+  moveTerminalPane,
   setActiveTerminalPane,
   splitTerminalPane,
   updateTerminalSplitRatio,
   updateTerminalPane,
   type TerminalLayoutNode,
+  type TerminalDropZone,
   type TerminalPaneState,
   type TerminalProfile,
   type TerminalSplitPath,
   type TerminalState,
 } from './terminal-layout';
 import { terminalPtyId } from './index';
+import { useTerminalPaneDrag } from './lib/useTerminalPaneDrag';
 import type { TerminalDataEvent, TerminalExitEvent } from '../../../../../shared/terminal-bridge';
 
 interface Props {
@@ -67,7 +70,9 @@ const PROFILES: Array<{ id: TerminalProfile; labelKey: string }> = [
 ];
 
 const ROOT_SPLIT_PATH: TerminalSplitPath = [];
-const SPLIT_GUTTER_PX = 6;
+// The visible divider is intentionally narrow; its hit area remains large
+// enough for pointer and keyboard resizing.
+const SPLIT_GUTTER_PX = 4;
 const KEYBOARD_RESIZE_STEP = 0.05;
 
 export function TerminalTabBody({ state, ctx, active }: Props) {
@@ -76,16 +81,28 @@ export function TerminalTabBody({ state, ctx, active }: Props) {
   // A failed create/restart belongs to one pane.  Keeping this keyed by pane
   // id prevents an error from pane A being shown after the user focuses pane B.
   const [runtimeErrors, setRuntimeErrors] = useState<Record<string, RuntimeError>>({});
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuButtonRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const paneHostsRef = useRef(new Map<string, HTMLDivElement>());
+  const getPaneHost = useCallback((paneId: string) => {
+    let host = paneHostsRef.current.get(paneId);
+    if (!host) {
+      host = document.createElement('div');
+      host.className = 'h-full min-h-0 w-full min-w-0';
+      paneHostsRef.current.set(paneId, host);
+    }
+    return host;
+  }, []);
   const nextIdRef = useRef(2);
   const stateRef = useRef(state);
   stateRef.current = state;
 
   const paneIds = useMemo(() => collectPaneIds(state.layout), [state.layout]);
   const canSplit = paneIds.length < MAX_TERMINAL_PANES;
-  const activePane = state.panes[state.activePaneId] ?? state.panes[paneIds[0]];
+  useEffect(() => {
+    for (const paneId of paneHostsRef.current.keys()) {
+      if (!paneIds.includes(paneId)) paneHostsRef.current.delete(paneId);
+    }
+  }, [paneIds]);
 
   // Keep ids unique even when restoring a layout created in another renderer.
   useEffect(() => {
@@ -126,85 +143,19 @@ export function TerminalTabBody({ state, ctx, active }: Props) {
     });
   }, []);
 
-  const closeAgentMenu = useCallback((restoreFocus = true) => {
-    setMenuOpen(false);
-    if (restoreFocus) menuButtonRef.current?.focus();
-  }, []);
-
-  // The agent menu is an interactive popover rather than a passive div:
-  // clicking elsewhere or pressing Escape closes it, and focus returns to the
-  // trigger when it was closed from inside the menu.
-  useEffect(() => {
-    if (!menuOpen) return;
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (menuRef.current?.contains(target) || menuButtonRef.current?.contains(target)) return;
-      closeAgentMenu(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      closeAgentMenu();
-    };
-    document.addEventListener('pointerdown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [closeAgentMenu, menuOpen]);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    const frame = requestAnimationFrame(() => {
-      menuRef.current
-        ?.querySelector<HTMLButtonElement>('[role="menuitem"]:not([disabled])')
-        ?.focus();
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [menuOpen]);
-
-  useEffect(() => {
-    if (menuOpen) return;
-    // If a menu item had focus, put keyboard users back on the trigger after
-    // React removes the menu from the tree.  Do not steal focus from a click
-    // elsewhere in the workbench.
-    const active = document.activeElement;
-    if (menuRef.current?.contains(active)) menuButtonRef.current?.focus();
-  }, [menuOpen]);
-
-  const createSplit = useCallback(
-    (direction: 'horizontal' | 'vertical', profile: TerminalProfile = 'shell') => {
+  const createSplitForPane = useCallback(
+    (paneId: string, direction: 'horizontal' | 'vertical', profile: TerminalProfile = 'shell') => {
       if (collectPaneIds(stateRef.current.layout).length >= MAX_TERMINAL_PANES) return;
       const id = `pane-${nextIdRef.current++}`;
-      const current = stateRef.current;
       const next = splitTerminalPane(
-        current,
-        current.activePaneId,
+        stateRef.current,
+        paneId,
         direction,
         createPaneState(id, profile),
       );
       if (next) persist(next);
-      closeAgentMenu();
     },
-    [closeAgentMenu, persist],
-  );
-
-  const createProfilePane = useCallback(
-    (profile: TerminalProfile) => {
-      if (collectPaneIds(stateRef.current.layout).length >= MAX_TERMINAL_PANES) return;
-      const id = `pane-${nextIdRef.current++}`;
-      const current = stateRef.current;
-      const next = splitTerminalPane(
-        current,
-        current.activePaneId,
-        'horizontal',
-        createPaneState(id, profile),
-      );
-      if (next) persist(next);
-      closeAgentMenu();
-    },
-    [closeAgentMenu, persist],
+    [persist],
   );
 
   const closePane = useCallback(
@@ -234,6 +185,21 @@ export function TerminalTabBody({ state, ctx, active }: Props) {
     [persist],
   );
 
+  const movePane = useCallback(
+    (sourceId: string, targetId: string, zone: TerminalDropZone) => {
+      const current = stateRef.current;
+      const next = moveTerminalPane(current, sourceId, targetId, zone);
+      if (next !== current) persist(next);
+    },
+    [persist],
+  );
+  const { preview, beginDrag, onClickCapture, onPointerDownCapture } = useTerminalPaneDrag(
+    rootRef,
+    state,
+    active,
+    movePane,
+  );
+
   const localUnavailable = ctx.remoteHostId !== null || ctx.deviceLinkDeviceId !== null || !workdir;
 
   if (localUnavailable) {
@@ -248,119 +214,70 @@ export function TerminalTabBody({ state, ctx, active }: Props) {
     );
   }
 
-  if (!activePane) return null;
+  if (paneIds.length === 0) return null;
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col bg-[var(--panel-bg)]">
-      <div className="flex h-9 shrink-0 items-center justify-between border-b border-[var(--border-default)] px-2">
-        <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
-          {paneIds.map((paneId, index) => {
-            const pane = state.panes[paneId];
-            if (!pane) return null;
-            const label = pane.title || profileLabel(pane.profile, t);
-            return (
-              <button
-                key={paneId}
-                type="button"
-                onClick={() => selectPane(paneId)}
-                className={`inline-flex h-7 max-w-36 items-center gap-1 rounded-lg px-2 text-11 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] ${
-                  paneId === activePane.id
-                    ? 'bg-[var(--surface-chip)] text-[var(--text-primary)]'
-                    : 'text-[var(--text-tertiary)] hover:bg-[var(--surface-hover)]'
-                }`}
-                aria-label={t('rightSidebar.terminal.focusPane', { name: label })}
-              >
-                <PaneIcon profile={pane.profile} />
-                <span className="truncate">{label}</span>
-                <span className="text-[var(--text-tertiary)]">{index + 1}</span>
-              </button>
-            );
-          })}
+    <div
+      ref={rootRef}
+      onClickCapture={onClickCapture}
+      onPointerDownCapture={onPointerDownCapture}
+      data-terminal-workbench=""
+      className="relative h-full min-h-0 w-full overflow-hidden bg-[var(--panel-bg)]"
+    >
+      <LayoutNodeView
+        node={state.layout}
+        splitPath={ROOT_SPLIT_PATH}
+        getPaneHost={getPaneHost}
+        onCommitSplitRatio={commitSplitRatio}
+        t={t}
+      />
+      {paneIds.map((paneId) => {
+        const pane = state.panes[paneId];
+        if (!pane) return null;
+        return createPortal(
+          <TerminalPaneView
+            pane={pane}
+            state={state}
+            tabId={tabId}
+            workdir={workdir}
+            activePaneId={state.activePaneId}
+            canSplit={canSplit}
+            active={active === true}
+            runtimeError={runtimeErrors[paneId] ?? null}
+            onSelect={selectPane}
+            onClose={closePane}
+            onSplit={createSplitForPane}
+            onPatchPane={patchPane}
+            onRuntimeError={setPaneRuntimeError}
+            onBeginDrag={beginDrag}
+            dragging={preview?.sourcePaneId === paneId}
+            t={t}
+          />,
+          getPaneHost(paneId),
+          paneId,
+        );
+      })}
+      {preview && (
+        <div
+          className="absolute inset-0 z-20 cursor-grabbing select-none"
+          data-terminal-drag-overlay=""
+        >
+          {preview.target && (
+            <div
+              data-terminal-drop-target={preview.target.paneId}
+              data-terminal-drop-zone={preview.target.zone}
+              aria-hidden="true"
+              className="pointer-events-none absolute rounded-lg border border-[var(--focus-ring)] bg-[color-mix(in_srgb,var(--focus-ring)_18%,transparent)]"
+              style={{
+                left: preview.target.left,
+                top: preview.target.top,
+                width: preview.target.width,
+                height: preview.target.height,
+              }}
+            />
+          )}
         </div>
-        <div className="flex shrink-0 items-center gap-0.5">
-          <Tip text={t('rightSidebar.terminal.splitHorizontal')}>
-            <button
-              type="button"
-              disabled={!canSplit}
-              className="rounded-full p-1.5 hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:cursor-not-allowed disabled:opacity-40"
-              onClick={() => createSplit('horizontal')}
-              aria-label={t('rightSidebar.terminal.splitHorizontal')}
-            >
-              <ArrowLeftRight size={14} />
-            </button>
-          </Tip>
-          <Tip text={t('rightSidebar.terminal.splitVertical')}>
-            <button
-              type="button"
-              disabled={!canSplit}
-              className="rounded-full p-1.5 hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:cursor-not-allowed disabled:opacity-40"
-              onClick={() => createSplit('vertical')}
-              aria-label={t('rightSidebar.terminal.splitVertical')}
-            >
-              <ArrowUpDown size={14} />
-            </button>
-          </Tip>
-          <div className="relative">
-            <Tip text={t('rightSidebar.terminal.launchAgent')}>
-              <button
-                ref={menuButtonRef}
-                type="button"
-                className="rounded-full p-1.5 hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
-                onClick={() => setMenuOpen((open) => !open)}
-                aria-label={t('rightSidebar.terminal.launchAgent')}
-                aria-haspopup="menu"
-                aria-expanded={menuOpen}
-              >
-                <Plus size={14} />
-              </button>
-            </Tip>
-            {menuOpen && (
-              <div
-                ref={menuRef}
-                role="menu"
-                tabIndex={-1}
-                onBlur={(event) => {
-                  const next = event.relatedTarget as Node | null;
-                  if (!next || !menuRef.current?.contains(next)) closeAgentMenu(false);
-                }}
-                className="absolute right-0 top-8 z-20 min-w-40 rounded-xl border border-[var(--border-default)] bg-[var(--surface-elevated)] p-1 shadow-[var(--shadow-menu)]"
-              >
-                {PROFILES.map(({ id, labelKey }) => (
-                  <button
-                    key={id}
-                    type="button"
-                    role="menuitem"
-                    disabled={!canSplit}
-                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-12 hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring)] disabled:cursor-not-allowed disabled:opacity-40"
-                    onClick={() => createProfilePane(id)}
-                  >
-                    <PaneIcon profile={id} />
-                    <span>{t(labelKey)}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-      <div className="relative min-h-0 flex-1 overflow-hidden">
-        <LayoutNodeView
-          node={state.layout}
-          splitPath={ROOT_SPLIT_PATH}
-          state={state}
-          tabId={tabId}
-          workdir={workdir}
-          activePaneId={state.activePaneId}
-          active={active === true}
-          runtimeErrors={runtimeErrors}
-          onSelect={selectPane}
-          onClose={closePane}
-          onPatchPane={patchPane}
-          onCommitSplitRatio={commitSplitRatio}
-          onRuntimeError={setPaneRuntimeError}
-          t={t}
-        />
-      </div>
+      )}
     </div>
   );
 }
@@ -368,35 +285,55 @@ export function TerminalTabBody({ state, ctx, active }: Props) {
 interface LayoutNodeViewProps {
   node: TerminalLayoutNode;
   splitPath: TerminalSplitPath;
+  getPaneHost: (id: string) => HTMLDivElement;
+  onCommitSplitRatio: (path: TerminalSplitPath, ratio: number) => void;
+  t: ReturnType<typeof useTranslation>['t'];
+}
+
+interface TerminalPaneViewProps {
+  pane: TerminalPaneState;
   state: TerminalState;
   tabId: string;
   workdir: string;
   activePaneId: string;
+  canSplit: boolean;
   active: boolean;
-  runtimeErrors: Readonly<Record<string, RuntimeError>>;
+  runtimeError: RuntimeError | null;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
+  onSplit: (id: string, direction: 'horizontal' | 'vertical') => void;
   onPatchPane: (id: string, patch: Partial<Omit<TerminalPaneState, 'id'>>) => void;
-  onCommitSplitRatio: (path: TerminalSplitPath, ratio: number) => void;
   onRuntimeError: (paneId: string, error: RuntimeError | null) => void;
+  onBeginDrag: (id: string, event: ReactPointerEvent<HTMLButtonElement>) => void;
+  dragging: boolean;
   t: ReturnType<typeof useTranslation>['t'];
 }
 
 function LayoutNodeView(props: LayoutNodeViewProps) {
-  const { node } = props;
-  if (node.type === 'leaf') {
-    const pane = props.state.panes[node.paneId];
-    if (!pane) return null;
-    return (
-      <TerminalPaneView
-        key={`${pane.id}:${pane.profile}`}
-        {...props}
-        pane={pane}
-        runtimeError={props.runtimeErrors[pane.id] ?? null}
-      />
-    );
+  if (props.node.type === 'leaf') {
+    return <TerminalPaneSlot paneId={props.node.paneId} getPaneHost={props.getPaneHost} />;
   }
-  return <TerminalSplitNodeView {...props} node={node} />;
+  return <TerminalSplitNodeView {...props} node={props.node} />;
+}
+
+function TerminalPaneSlot({
+  paneId,
+  getPaneHost,
+}: {
+  paneId: string;
+  getPaneHost: (id: string) => HTMLDivElement;
+}) {
+  const slotRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const slot = slotRef.current;
+    if (!slot) return;
+    const host = getPaneHost(paneId);
+    slot.appendChild(host);
+    return () => {
+      if (host.parentElement === slot) slot.removeChild(host);
+    };
+  }, [paneId, getPaneHost]);
+  return <div ref={slotRef} className="h-full min-h-0 w-full min-w-0" />;
 }
 
 function TerminalSplitNodeView(
@@ -549,8 +486,8 @@ function TerminalSplitNodeView(
         onKeyDown={handleKeyDown}
         className={
           isHorizontal
-            ? 'group relative z-10 w-1.5 shrink-0 touch-none cursor-col-resize focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring)]'
-            : 'group relative z-10 h-1.5 shrink-0 touch-none cursor-row-resize focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring)]'
+            ? 'group relative z-10 w-1 shrink-0 touch-none cursor-col-resize focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring)]'
+            : 'group relative z-10 h-1 shrink-0 touch-none cursor-row-resize focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring)]'
         }
       >
         <span
@@ -569,11 +506,7 @@ function TerminalSplitNodeView(
   );
 }
 
-function TerminalPaneView({
-  pane,
-  runtimeError,
-  ...props
-}: LayoutNodeViewProps & { pane: TerminalPaneState; runtimeError: RuntimeError | null }) {
+function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProps) {
   const slotRef = useRef<HTMLDivElement>(null);
   const entryRef = useRef<XtermEntry | null>(null);
   const aliveRef = useRef(true);
@@ -613,6 +546,16 @@ function TerminalPaneView({
       offExit();
     };
   }, [pane.id, ptyId, props.onPatchPane]);
+
+  // xterm keeps its own canvas colors, so changing the host theme does not
+  // repaint existing panes automatically. Re-apply semantic tokens in place
+  // while preserving the PTY and scrollback.
+  useEffect(() => {
+    const entry = entryRef.current;
+    if (!entry) return;
+    updateXtermTheme(entry);
+    return themeService.onDidChangeTheme(() => updateXtermTheme(entry));
+  }, [ptyId]);
 
   useEffect(() => {
     const entry = entryRef.current;
@@ -682,7 +625,7 @@ function TerminalPaneView({
       entry.terminal.focus();
     });
     return () => cancelAnimationFrame(frame);
-  }, [isActive, props.active, ptyId]);
+  }, [isActive, props.active, props.state.layout, ptyId]);
 
   const restart = async () => {
     if (restarting) return;
@@ -707,39 +650,84 @@ function TerminalPaneView({
   const label = pane.title || profileLabel(pane.profile, props.t);
   return (
     <div
-      className={`group relative h-full w-full ${isActive ? 'ring-1 ring-inset ring-[var(--focus-ring)]' : ''}`}
-      onMouseDown={() => props.onSelect(pane.id)}
+      data-terminal-pane-id={pane.id}
+      className={`group relative h-full w-full ${isActive ? 'ring-1 ring-inset ring-[var(--focus-ring)]' : ''} ${props.dragging ? 'opacity-60' : ''}`}
+      onMouseDown={(event) => {
+        if (!(event.target as Element).closest('[data-terminal-pane-header]'))
+          props.onSelect(pane.id);
+      }}
     >
       <div ref={slotRef} className="absolute inset-0 bg-[var(--panel-bg)] p-1" />
-      <div className="pointer-events-none absolute left-2 top-1 z-10 flex items-center gap-1 rounded-lg bg-[var(--surface-elevated)] px-1.5 py-0.5 text-10 text-[var(--text-tertiary)] opacity-0 transition-opacity group-hover:opacity-100">
-        <PaneIcon profile={pane.profile} />
-        {label}
-      </div>
-      <div className="pointer-events-none absolute right-1 top-1 z-10 flex items-center gap-0.5 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
-        {pane.exited && (
-          <Tip text={props.t('rightSidebar.terminal.restart')}>
-            <button
-              type="button"
-              className="rounded-full p-1 text-[var(--text-tertiary)] hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
-              onClick={restart}
-              aria-label={props.t('rightSidebar.terminal.restart')}
-            >
-              <Spinner icon={RotateCw} size={12} spinning={restarting} />
-            </button>
-          </Tip>
-        )}
-        {canClose && (
-          <Tip text={props.t('rightSidebar.terminal.closePane')}>
-            <button
-              type="button"
-              className="rounded-full p-1 text-[var(--text-tertiary)] hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
-              onClick={() => props.onClose(pane.id)}
-              aria-label={props.t('rightSidebar.terminal.closePane')}
-            >
-              <X size={12} />
-            </button>
-          </Tip>
-        )}
+      <div
+        data-terminal-pane-header=""
+        className="group/terminal-header absolute inset-x-0 top-0 z-10 flex h-6 items-center gap-1 px-1"
+      >
+        <Tip
+          text={props.t('rightSidebar.terminal.movePane', { name: label })}
+          controlledOpen={props.dragging ? false : undefined}
+        >
+          <button
+            type="button"
+            className={`absolute inset-0 flex h-full min-w-0 touch-none items-center rounded-lg text-left text-10 text-[var(--text-tertiary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring)] ${canClose ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
+            aria-label={props.t('rightSidebar.terminal.movePane', { name: label })}
+            onPointerDown={(event) => props.onBeginDrag(pane.id, event)}
+            onClick={() => props.onSelect(pane.id)}
+          />
+        </Tip>
+        <div className="relative z-10 ml-auto flex shrink-0 items-center gap-0.5 rounded-lg bg-[var(--surface-elevated)] opacity-0 transition-opacity group-hover/terminal-header:opacity-100 focus-within:opacity-100">
+          {pane.exited && (
+            <Tip text={props.t('rightSidebar.terminal.restart')}>
+              <button
+                type="button"
+                className="rounded-full p-1 text-[var(--text-tertiary)] hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={restart}
+                aria-label={props.t('rightSidebar.terminal.restart')}
+              >
+                <Spinner icon={RotateCw} size={12} spinning={restarting} />
+              </button>
+            </Tip>
+          )}
+          {props.canSplit && (
+            <>
+              <Tip text={props.t('rightSidebar.terminal.splitHorizontal')}>
+                <button
+                  type="button"
+                  className="rounded-full p-1 text-[var(--text-tertiary)] hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={() => props.onSplit(pane.id, 'horizontal')}
+                  aria-label={props.t('rightSidebar.terminal.splitHorizontal')}
+                >
+                  <ArrowLeftRight size={12} />
+                </button>
+              </Tip>
+              <Tip text={props.t('rightSidebar.terminal.splitVertical')}>
+                <button
+                  type="button"
+                  className="rounded-full p-1 text-[var(--text-tertiary)] hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={() => props.onSplit(pane.id, 'vertical')}
+                  aria-label={props.t('rightSidebar.terminal.splitVertical')}
+                >
+                  <ArrowUpDown size={12} />
+                </button>
+              </Tip>
+            </>
+          )}
+          {canClose && (
+            <Tip text={props.t('rightSidebar.terminal.closePane')}>
+              <button
+                type="button"
+                className="rounded-full p-1 text-[var(--text-tertiary)] hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={() => props.onClose(pane.id)}
+                aria-label={props.t('rightSidebar.terminal.closePane')}
+              >
+                <X size={12} />
+              </button>
+            </Tip>
+          )}
+        </div>
       </div>
       {pane.exited && (
         <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
@@ -763,10 +751,6 @@ function TerminalPaneView({
       )}
     </div>
   );
-}
-
-function PaneIcon({ profile }: { profile: TerminalProfile }) {
-  return profile === 'shell' ? <TerminalIcon size={12} /> : <Bot size={12} />;
 }
 
 function profileLabel(profile: TerminalProfile, t: ReturnType<typeof useTranslation>['t']): string {

@@ -6310,6 +6310,7 @@
       "splitVertical": "Split top and bottom",
       "launchAgent": "New CLI pane",
       "focusPane": "Focus {{name}} pane",
+      "movePane": "Drag {{name}} pane to move",
       "closePane": "Close pane",
       "resizePanes": "Resize Terminal Panes",
       "localOnly": "CLI panes are available for local tasks only.",

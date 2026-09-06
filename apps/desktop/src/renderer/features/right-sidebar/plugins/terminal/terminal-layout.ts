@@ -9,6 +9,7 @@ export const MIN_SPLIT_RATIO = 0.2;
 export const MAX_SPLIT_RATIO = 0.8;
 
 export type TerminalSplitDirection = 'horizontal' | 'vertical';
+export type TerminalDropZone = 'left' | 'right' | 'top' | 'bottom';
 export type TerminalSplitPath = readonly ('first' | 'second')[];
 
 export interface TerminalPaneState {
@@ -131,6 +132,51 @@ export function removeTerminalPane(state: TerminalState, paneId: string): Termin
   const nextActive =
     state.activePaneId === paneId ? (collectPaneIds(nextLayout)[0] ?? '') : state.activePaneId;
   return { ...state, layout: nextLayout, panes, activePaneId: nextActive };
+}
+
+export function moveTerminalPane(
+  state: TerminalState,
+  sourcePaneId: string,
+  targetPaneId: string,
+  zone: TerminalDropZone,
+): TerminalState {
+  const paneIds = collectPaneIds(state.layout);
+  if (
+    sourcePaneId === targetPaneId ||
+    !state.panes[sourcePaneId] ||
+    !state.panes[targetPaneId] ||
+    !paneIds.includes(sourcePaneId) ||
+    !paneIds.includes(targetPaneId)
+  )
+    return state;
+
+  const direction = zone === 'left' || zone === 'right' ? 'horizontal' : 'vertical';
+  const sourceFirst = zone === 'left' || zone === 'top';
+  const firstId = sourceFirst ? sourcePaneId : targetPaneId;
+  const secondId = sourceFirst ? targetPaneId : sourcePaneId;
+  const alreadyAdjacent = (node: TerminalLayoutNode): boolean => {
+    if (node.type === 'leaf') return false;
+    return (
+      (node.direction === direction &&
+        node.first.type === 'leaf' &&
+        node.first.paneId === firstId &&
+        node.second.type === 'leaf' &&
+        node.second.paneId === secondId) ||
+      alreadyAdjacent(node.first) ||
+      alreadyAdjacent(node.second)
+    );
+  };
+  if (alreadyAdjacent(state.layout)) return state;
+  const detached = removeLeaf(state.layout, sourcePaneId);
+  if (!detached) return state;
+  const layout = replaceLeaf(detached, targetPaneId, {
+    type: 'split',
+    direction,
+    ratio: 0.5,
+    first: { type: 'leaf', paneId: firstId },
+    second: { type: 'leaf', paneId: secondId },
+  });
+  return layout ? { ...state, layout, activePaneId: sourcePaneId } : state;
 }
 
 export function setActiveTerminalPane(state: TerminalState, paneId: string): TerminalState {

@@ -6308,6 +6308,7 @@
       "splitVertical": "上下に分割",
       "launchAgent": "新しい CLI ペイン",
       "focusPane": "{{name}} ペインにフォーカス",
+      "movePane": "{{name}} ペインをドラッグして移動",
       "closePane": "ペインを閉じる",
       "resizePanes": "ターミナルペインのサイズを変更",
       "localOnly": "CLI ペインはローカルタスクでのみ利用できます。",
