@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
 const mocks = vi.hoisted(() => ({
   listMessagesFor: vi.fn(),
@@ -79,7 +80,7 @@ describe('workLouderCodexTaskActions', () => {
     mocks.listMessagesFor
       .mockResolvedValueOnce(newestPage)
       .mockResolvedValueOnce([
-        { role: 'assistant', content: 'world', id: 'old-2', createdAt: '2026-08-18T00:01:00.000Z' },
+        { role: 'assistant', content: 'Cindy services', id: 'old-2', createdAt: '2026-08-18T00:01:00.000Z' },
         { role: 'user', content: 'hello', id: 'old-1', createdAt: '2026-08-18T00:00:00.000Z' },
       ]);
     const writeText = vi.fn().mockResolvedValue(undefined);
@@ -87,9 +88,12 @@ describe('workLouderCodexTaskActions', () => {
 
     await copyCurrentTaskMarkdown('session-1', { navigate: vi.fn(), t: (key) => key });
 
-    expect(writeText).toHaveBeenCalledWith(
-      expect.stringMatching(/^## User\n\nhello\n\n## Cindy\n\nworld[\s\S]*## Cindy\n\nlatest$/),
-    );
+    expect(writeText).toHaveBeenCalledOnce();
+    const markdown = writeText.mock.calls[0][0] as string;
+    expect(markdown.startsWith([
+      '## User', '', 'hello', '', '## ' + BRAND_NAME, '', 'Cindy services', '',
+    ].join('\n'))).toBe(true);
+    expect(markdown.endsWith(['## ' + BRAND_NAME, '', 'latest'].join('\n'))).toBe(true);
     expect(mocks.listMessagesFor).toHaveBeenCalledTimes(2);
     expect(mocks.toast.success).toHaveBeenCalled();
   });

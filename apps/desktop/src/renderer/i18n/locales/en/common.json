@@ -2209,7 +2209,7 @@
       "authorization": {
         "title": "Authorize WeChat",
         "rebindTitle": "Connect a new {{appName}} to WeChat",
-        "description": "Tencent's webpage will open for authorization. After scanning, you can talk to Cindy from WeChat.",
+        "description": "Tencent's webpage will open for authorization. After scanning, you can talk to {{appName}} from WeChat.",
         "rebindDescription": "This WeChat account already has a connection. Continuing may replace its existing Cindy or OpenClaw connection.",
         "confirm": "Authorize",
         "cancel": "Cancel",
@@ -2232,7 +2232,7 @@
           "disconnected": "The connection is saved but is not currently running.",
           "authorizing": "Preparing a new WeChat authorization.",
           "waiting_confirmation": "Waiting for scan confirmation in WeChat.",
-          "connected": "WeChat private messages go directly to Cindy on this computer and are not relayed through Cindy servers.",
+          "connected": "WeChat private messages go directly to {{appName}} on this computer and are not relayed through Cindy servers.",
           "reconnecting": "This computer is restoring the WeChat connection. No new scan is needed.",
           "needs_reauth": "The WeChat authorization expired or was replaced by another connection. Scan again.",
           "disabled_by_policy": "The connection is paused by this version's compatibility policy; credentials and sessions remain saved.",
@@ -7653,7 +7653,7 @@
     },
     "inheritedSubscription": {
       "title": "Using the {{products}} sign-in already on this computer",
-      "desc": "Cindy picked up the account you're already signed in to locally — no separate authorization was needed. Switch or disconnect it under model providers.",
+      "desc": "{{appName}} picked up the account you're already signed in to locally — no separate authorization was needed. Switch or disconnect it under model providers.",
       "openProviders": "Open Model Providers",
       "acknowledge": "Got it",
       "separator": ", "

@@ -2208,7 +2208,7 @@
       "authorization": {
         "title": "微信授權",
         "rebindTitle": "將新的 {{appName}} 連線到微信",
-        "description": "即將跳轉到騰訊提供的網頁完成授權。掃碼繫結後，即可在微信中與 Cindy 對話。",
+        "description": "即將跳轉到騰訊提供的網頁完成授權。掃碼繫結後，即可在微信中與 {{appName}} 對話。",
         "rebindDescription": "當前微信已有連線。繼續掃碼可能解除該微信原有的 Cindy 或 OpenClaw 連線。",
         "confirm": "去授權",
         "cancel": "取消",
@@ -2231,7 +2231,7 @@
           "disconnected": "連線已儲存，當前尚未啟動。",
           "authorizing": "正在準備新的微信授權。",
           "waiting_confirmation": "正在等待微信掃碼確認。",
-          "connected": "微信私聊訊息會直接進入本機 Cindy，訊息不經過 Cindy 服務端轉發。",
+          "connected": "微信私聊訊息會直接進入本機 {{appName}}，訊息不經過 Cindy 服務端轉發。",
           "reconnecting": "本機正在恢復與微信的連線，無需重新掃碼。",
           "needs_reauth": "微信授權已失效或被新的連線替換，請重新掃碼。",
           "disabled_by_policy": "連線因當前版本的相容性策略暫停；憑證和任務仍保留。",
@@ -7651,7 +7651,7 @@
     },
     "inheritedSubscription": {
       "title": "已沿用這臺電腦上的 {{products}} 登入",
-      "desc": "Cindy 直接使用了本機已登入的帳號，沒有另外要你授權。想換帳號或斷開，去模型供應商裡改。",
+      "desc": "{{appName}} 直接使用了本機已登入的帳號，沒有另外要你授權。想換帳號或斷開，去模型供應商裡改。",
       "openProviders": "開啟模型供應商",
       "acknowledge": "知道了",
       "separator": "、"
