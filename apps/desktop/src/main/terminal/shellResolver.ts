@@ -19,7 +19,10 @@
  */
 
 import { existsSync, statSync } from 'node:fs';
+import { execFile } from 'node:child_process';
 import path from 'node:path';
+import type { AvailableShell, ShellId } from '../../shared/terminal-bridge';
+export type { AvailableShell, ShellId } from '../../shared/terminal-bridge';
 
 /**
  * 显式按目标平台拼路径——不用 `path.join`（它在 Mac 测试 host 上跑 win32 分支
@@ -27,21 +30,10 @@ import path from 'node:path';
  * Windows / *nix 上行为完全一致。
  */
 function joinForPlatform(dir: string, basename: string): string {
-  return process.platform === 'win32' ? path.win32.join(dir, basename) : path.posix.join(dir, basename);
+  return process.platform === 'win32'
+    ? path.win32.join(dir, basename)
+    : path.posix.join(dir, basename);
 }
-
-/** 可选 shell 的 stable id。Settings 持久化用。 */
-export type ShellId =
-  | 'auto'
-  | 'zsh'
-  | 'bash'
-  | 'fish'
-  | 'sh'
-  | 'pwsh'
-  | 'powershell'
-  | 'cmd'
-  | 'gitbash'
-  | 'wsl';
 
 /** 具体到二进制的解析结果，PtyManager spawn 用。 */
 export interface ResolvedShell {
@@ -54,17 +46,30 @@ export interface ResolvedShell {
   displayName: string;
 }
 
-/** Settings 下拉用。 */
-export interface AvailableShell {
-  id: Exclude<ShellId, 'auto'>;
-  command: string;
-  displayName: string;
-  /** 此条恰好是 auto-detect 当下命中的 → UI 在 `'自动选择'` 后括注它。 */
-  isAutoDetectTarget: boolean;
-}
-
 const WIN_PATHEXT_DEFAULT = '.EXE;.CMD;.BAT';
 const GIT_BASH_ARGS = ['--login', '-i'];
+
+function windowsEnv(name: string): string | undefined {
+  return (
+    process.env[name] ??
+    Object.entries(process.env).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1]
+  );
+}
+
+function windowsPathDirs(): string[] {
+  return (windowsEnv('PATH') ?? '')
+    .split(';')
+    .map((dir) => dir.trim().replace(/^"|"$/g, ''))
+    .filter(Boolean);
+}
+
+function isFile(file: string): boolean {
+  try {
+    return existsSync(file) && statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
 
 /**
  * 在 PATH 里找一个可执行文件。Windows 自动按 PATHEXT 追加扩展名（若 bin 已带匹配扩展则不重复追）。
@@ -72,14 +77,14 @@ const GIT_BASH_ARGS = ['--login', '-i'];
  */
 function whichSync(bin: string): string | null {
   if (process.platform === 'win32') {
-    const pathext = (process.env.PATHEXT ?? WIN_PATHEXT_DEFAULT)
+    const pathext = (windowsEnv('PATHEXT') ?? WIN_PATHEXT_DEFAULT)
       .split(';')
       .map((e) => e.toLowerCase())
       .filter(Boolean);
     const lowerBin = bin.toLowerCase();
     const hasExt = pathext.some((e) => lowerBin.endsWith(e));
     const exts = hasExt ? [''] : ['', ...pathext];
-    for (const dir of (process.env.PATH ?? '').split(';')) {
+    for (const dir of windowsPathDirs()) {
       if (!dir) continue;
       for (const ext of exts) {
         const candidate = joinForPlatform(dir, bin + ext);
@@ -105,40 +110,38 @@ function whichSync(bin: string): string | null {
 }
 
 function findGitBashOnWindows(): string | null {
-  // 1) PATH 中找 git-bash.exe（最理想）
-  const direct = whichSync('git-bash.exe');
-  if (direct) return direct;
-
-  // 2) git.exe 同级或 ../bin/bash.exe
+  // Follow Orca's Git/PortableGit candidate strategy. git-bash.exe is a GUI
+  // launcher, never the executable attached to a PTY; use the real bash.exe.
+  const candidates = new Set<string>();
+  const addRoot = (root: string) => {
+    candidates.add(path.win32.join(root, 'bin', 'bash.exe'));
+    candidates.add(path.win32.join(root, 'usr', 'bin', 'bash.exe'));
+  };
+  const launcher = whichSync('git-bash.exe');
+  if (launcher) addRoot(path.win32.dirname(launcher));
   const git = whichSync('git.exe');
   if (git) {
     const gitDir = path.win32.dirname(git);
-    const gitParentDir = path.win32.dirname(gitDir);
-    const candidates = [
-      path.win32.join(gitDir, 'bash.exe'),
-      path.win32.join(gitParentDir, 'bin', 'bash.exe'),
-    ];
-    for (const c of candidates) {
-      try {
-        if (existsSync(c)) return c;
-      } catch {
-        /* skip */
-      }
-    }
+    candidates.add(path.win32.join(gitDir, 'bash.exe'));
+    addRoot(path.win32.dirname(gitDir));
   }
-
-  // 3) Program Files\Git\bin\bash.exe（默认安装路径）
-  for (const envKey of ['ProgramFiles', 'ProgramFiles(x86)', 'LocalAppData']) {
-    const root = process.env[envKey];
+  for (const dir of windowsPathDirs()) {
+    const direct = path.win32.join(dir, 'bash.exe');
+    if (/(?:^|\\)(?:git|portablegit)(?:\\usr)?\\bin\\bash\.exe$/i.test(direct)) {
+      candidates.add(direct);
+    }
+    const base = path.win32.basename(dir).toLowerCase();
+    if (base === 'git' || base === 'portablegit') addRoot(dir);
+    const parent = path.win32.dirname(dir);
+    if (base === 'cmd' && /^(git|portablegit)$/i.test(path.win32.basename(parent))) addRoot(parent);
+  }
+  for (const envKey of ['ProgramFiles', 'ProgramW6432', 'ProgramFiles(x86)', 'LocalAppData']) {
+    const root = windowsEnv(envKey);
     if (!root) continue;
-    const c = path.win32.join(root, 'Git', 'bin', 'bash.exe');
-    try {
-      if (existsSync(c)) return c;
-    } catch {
-      /* skip */
-    }
+    addRoot(path.win32.join(root, 'Git'));
+    addRoot(path.win32.join(root, 'Programs', 'Git'));
   }
-  return null;
+  return [...candidates].find(isFile) ?? null;
 }
 
 function resolveAutoDetectShellWin(): ResolvedShell {
@@ -155,7 +158,7 @@ function resolveAutoDetectShellWin(): ResolvedShell {
       displayName: 'Windows PowerShell',
     };
 
-  const cmd = process.env.COMSPEC?.trim() || 'cmd.exe';
+  const cmd = windowsEnv('COMSPEC')?.trim() || 'cmd.exe';
   return { id: 'cmd', command: cmd, args: [], displayName: 'Command Prompt' };
 }
 
@@ -233,7 +236,7 @@ export function resolveShellById(id: Exclude<ShellId, 'auto'>): ResolvedShell | 
         return p ? { id, command: p, args: [], displayName: 'Windows PowerShell' } : null;
       }
       case 'cmd': {
-        const p = process.env.COMSPEC?.trim() || 'cmd.exe';
+        const p = windowsEnv('COMSPEC')?.trim() || 'cmd.exe';
         return { id, command: p, args: [], displayName: 'Command Prompt' };
       }
       case 'gitbash': {
@@ -289,22 +292,38 @@ const NIX_CANDIDATES = ['zsh', 'bash', 'fish', 'sh'] as const;
 const WIN_CANDIDATES = ['pwsh', 'powershell', 'cmd', 'gitbash', 'wsl'] as const;
 
 let cachedAvailable: AvailableShell[] | null = null;
+let cachedUntil = 0;
+let probeInFlight: Promise<AvailableShell[]> | null = null;
+
+function probeWsl(command: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    // Like Orca's async capability probe: do not block Main/PTY traffic while
+    // an uninitialised Windows WSL stub is starting or timing out.
+    execFile(command, ['--status'], { timeout: 5000, windowsHide: true }, (error) =>
+      resolve(!error),
+    );
+  });
+}
 
 /**
  * 探测当前机器上所有装了的 shell。结果在进程内存里 memo，避免 Settings 下拉反复打开时
  * 重复走 fs / PATH 步进。用户期间装新 shell 不会自动出现，但重启 app 即重新 probe。
  */
-export function probeAvailableShells(): AvailableShell[] {
-  if (cachedAvailable) return cachedAvailable;
-
-  const autoTarget = resolveAutoDetectShell().id;
-  const candidates: ReadonlyArray<Exclude<ShellId, 'auto'>> =
-    process.platform === 'win32' ? WIN_CANDIDATES : NIX_CANDIDATES;
-
-  const result: AvailableShell[] = [];
-  for (const id of candidates) {
-    const r = resolveShellById(id);
-    if (r) {
+export function probeAvailableShells(): Promise<AvailableShell[]> {
+  if (cachedAvailable && Date.now() < cachedUntil) return Promise.resolve(cachedAvailable);
+  if (probeInFlight) return probeInFlight;
+  probeInFlight = (async () => {
+    const autoTarget = resolveAutoDetectShell().id;
+    const candidates = process.platform === 'win32' ? WIN_CANDIDATES : NIX_CANDIDATES;
+    const result: AvailableShell[] = [];
+    let retryWsl = false;
+    for (const id of candidates) {
+      const r = resolveShellById(id);
+      if (!r) continue;
+      if (id === 'wsl' && !(await probeWsl(r.command))) {
+        retryWsl = true;
+        continue;
+      }
       result.push({
         id: r.id,
         command: r.command,
@@ -312,12 +331,19 @@ export function probeAvailableShells(): AvailableShell[] {
         isAutoDetectTarget: r.id === autoTarget,
       });
     }
-  }
-  cachedAvailable = result;
-  return result;
+    cachedAvailable = result;
+    // Failed WSL probes may be transient; reopening after backoff can discover it.
+    cachedUntil = retryWsl ? Date.now() + 30_000 : Infinity;
+    return result;
+  })().finally(() => {
+    probeInFlight = null;
+  });
+  return probeInFlight;
 }
 
 /** 仅供单测：清缓存让下次 probe 重新走 fs 探测。 */
 export function __resetShellProbeCacheForTesting(): void {
   cachedAvailable = null;
+  cachedUntil = 0;
+  probeInFlight = null;
 }

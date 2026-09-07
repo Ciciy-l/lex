@@ -4264,6 +4264,18 @@
         "switch-session-9": {
           "label": "切換到第 9 個任務",
           "description": "跳轉到側邊欄第 9 個可見任務"
+        },
+        "terminal-focus-previous-pane": {
+          "label": "上一個窗格",
+          "description": "上一個窗格"
+        },
+        "terminal-focus-next-pane": {
+          "label": "下一個窗格",
+          "description": "下一個窗格"
+        },
+        "terminal-toggle-pane-zoom": {
+          "label": "放大目前窗格",
+          "description": "放大目前窗格"
         }
       },
       "none": "未設定",
@@ -6298,9 +6310,33 @@
       }
     },
     "terminal": {
+      "launchCli": "啟動 CLI",
+      "tools": "工作區工具",
+      "toggleTools": "展開或收起工具區",
+      "showTools": "展開工具區",
+      "hideTools": "收起工具區",
+      "moreTools": "更多工具",
+      "sessions": "{{appName}} CLI 工作階段",
+      "noSessions": "尚無 CLI 工作階段",
+      "retryList": "無法讀取 CLI 工作階段，點擊重試",
+      "actionFailed": "CLI 操作未完成，請重試。",
+      "terminate": "終止程序",
+      "terminateConfirm": "這會停止所選程序，其他分割終端會繼續執行。",
+      "forget": "移除已結束的終端",
+      "hidden": "已隱藏",
+      "process": {
+        "running": "執行中",
+        "terminating": "正在停止",
+        "exited": "已退出",
+        "terminated": "已終止",
+        "missing": "未執行"
+      },
       "defaultTitle": "終端",
       "workbenchTitle": "終端（{{count}} 個窗格）",
       "profileShell": "Shell",
+      "agentSection": "Agent",
+      "defaultShellBadge": "預設",
+      "detectingShells": "正在偵測終端…",
       "profileClaude": "Claude",
       "profileCodex": "Codex",
       "profilePi": "Pi",
@@ -6793,6 +6829,43 @@
       "terminateConfirmDescription": "將強制終止該 Agent 處理程序，使用該處理程序的所有任務都會中斷；之後在任一受影響任務裡繼續發訊息，即可按需重新啟動 Agent。",
       "terminated": "已終止 {{name}} 處理程序",
       "terminateFailed": "無法終止該處理程序，它可能已自行退出；列表會隨下一次取樣自動更新"
+    },
+    "workbench": {
+      "rename": "重新命名",
+      "renameHint": "留空可恢復預設名稱。",
+      "searchOutput": "搜尋終端機輸出",
+      "matchCase": "區分大小寫",
+      "noMatches": "沒有符合結果",
+      "previousMatch": "上一個符合結果",
+      "nextMatch": "下一個符合結果",
+      "closeSearch": "關閉搜尋",
+      "zoomPane": "放大目前窗格",
+      "restorePane": "還原配置",
+      "unplaced": "未放置的終端機",
+      "keepOpen": "保持開啟",
+      "verifySaveFailed": "無法核對磁碟檔案，請重試後再儲存。",
+      "fileChanged": "磁碟檔案已變更",
+      "overwrite": "覆寫檔案",
+      "reloadFile": "重新載入檔案",
+      "keepDraft": "保留草稿",
+      "openInLex": "在 {{appName}} 瀏覽器中開啟",
+      "fileLinkFailed": "無法開啟此路徑，請確認其位於工作目錄內。",
+      "startupDirectory": "相對路徑使用啟動目錄：{{path}}",
+      "git": "Git",
+      "unstaged": "未暫存",
+      "staged": "已暫存",
+      "recentHistory": "最近提交",
+      "historyLimit": "僅顯示 HEAD 可達的最近 50 筆提交。",
+      "historyUnavailable": "目前連線尚不支援最近提交紀錄。",
+      "refresh": "重新整理",
+      "noChanges": "沒有變更",
+      "noCommits": "尚無提交",
+      "loadFailed": "無法載入，請嘗試重新整理。",
+      "comparison": "分支比較",
+      "comparisonHint": "查看目前分支相對基準分支的已提交變更，不包含尚未提交的檔案。",
+      "historyLoading": "正在載入最近提交…",
+      "previousPane": "上一個窗格",
+      "nextPane": "下一個窗格"
     }
   },
   "update": {

@@ -79,7 +79,7 @@ export async function openSubagentsTab(
     }));
     if (await rerouteIfOwnershipMoved()) return;
   }
-  if ((focusTab || bucket.activeTabId === null) && bucket.activeTabId !== tab.id) {
+  if ((focusTab || bucket.activeContentTabId === null) && bucket.activeContentTabId !== tab.id) {
     await setActiveTab(sessionId, tab.id);
     if (await rerouteIfOwnershipMoved()) return;
   }

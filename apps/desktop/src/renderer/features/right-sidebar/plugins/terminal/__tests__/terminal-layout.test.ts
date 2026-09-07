@@ -7,6 +7,9 @@ import {
   createInitialTerminalState,
   createPaneState,
   hydrateTerminalState,
+  hideTerminalPane,
+  visibleTerminalPaneIds,
+  adjacentTerminalPane,
   moveTerminalPane,
   removeTerminalPane,
   setActiveTerminalPane,
@@ -26,6 +29,19 @@ describe('moving existing terminal panes', () => {
     )!;
     return splitTerminalPane(pair, 'pane-2', 'vertical', createPaneState('pane-3', 'codex'))!;
   }
+
+  it('retains hidden split slots through hydration, skips them in focus navigation, and protects the final visible pane', () => {
+    const original = threePanes();
+    const hidden = hydrateTerminalState(hideTerminalPane(original, 'pane-2'));
+    expect(hidden.layout).toEqual(original.layout);
+    expect(visibleTerminalPaneIds(hidden)).toEqual(['pane-1', 'pane-3']);
+    expect(adjacentTerminalPane({ ...hidden, activePaneId: 'pane-1' }, 1)).toBe('pane-3');
+    const onlyThird = hideTerminalPane(hidden, 'pane-1')!;
+    expect(hideTerminalPane(onlyThird, 'pane-3')).toBeNull();
+    const removed = removeTerminalPane(onlyThird, 'pane-3')!;
+    expect(removed.viewHidden).toBe(true);
+    expect(collectPaneIds(removed.layout)).toEqual(['pane-1', 'pane-2']);
+  });
 
   it.each<TerminalDropZone>(['left', 'right', 'top', 'bottom'])(
     'moves into the %s half without replacing pane state',

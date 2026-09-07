@@ -4265,6 +4265,18 @@
         "switch-session-9": {
           "label": "Go to session 9",
           "description": "Jump to the 9th visible session in the sidebar"
+        },
+        "terminal-focus-previous-pane": {
+          "label": "Previous pane",
+          "description": "Previous pane"
+        },
+        "terminal-focus-next-pane": {
+          "label": "Next pane",
+          "description": "Next pane"
+        },
+        "terminal-toggle-pane-zoom": {
+          "label": "Maximize pane",
+          "description": "Maximize pane"
         }
       },
       "none": "Not set",
@@ -6300,9 +6312,33 @@
       }
     },
     "terminal": {
+      "launchCli": "Launch CLI",
+      "tools": "Workspace tools",
+      "toggleTools": "Toggle tools",
+      "showTools": "Show tools",
+      "hideTools": "Hide tools",
+      "moreTools": "More tools",
+      "sessions": "{{appName}} CLI sessions",
+      "noSessions": "No CLI sessions",
+      "retryList": "Could not load CLI sessions. Retry",
+      "actionFailed": "Could not complete the CLI action. Please retry.",
+      "terminate": "Terminate process",
+      "terminateConfirm": "This stops the selected process. Other split terminals keep running.",
+      "forget": "Remove ended terminal",
+      "hidden": "Hidden",
+      "process": {
+        "running": "Running",
+        "terminating": "Stopping",
+        "exited": "Exited",
+        "terminated": "Terminated",
+        "missing": "Not running"
+      },
       "defaultTitle": "Terminal",
       "workbenchTitle": "Terminal ({{count}} panes)",
       "profileShell": "Shell",
+      "agentSection": "Agent",
+      "defaultShellBadge": "Default",
+      "detectingShells": "Detecting terminals…",
       "profileClaude": "Claude",
       "profileCodex": "Codex",
       "profilePi": "Pi",
@@ -6795,6 +6831,43 @@
       "terminateConfirmDescription": "This force-stops the Agent process. Every task using this process will be interrupted; send another message in an affected task to start an Agent again.",
       "terminated": "Stopped the {{name}} process",
       "terminateFailed": "Couldn't stop this process — it may have already exited. The list updates with the next sample."
+    },
+    "workbench": {
+      "rename": "Rename",
+      "renameHint": "Leave empty to restore the default name.",
+      "searchOutput": "Search terminal output",
+      "matchCase": "Match case",
+      "noMatches": "No matches",
+      "previousMatch": "Previous match",
+      "nextMatch": "Next match",
+      "closeSearch": "Close search",
+      "zoomPane": "Maximize pane",
+      "restorePane": "Restore layout",
+      "unplaced": "Unplaced terminals",
+      "keepOpen": "Keep open",
+      "verifySaveFailed": "Unable to verify the file on disk. Retry before saving.",
+      "fileChanged": "File changed on disk",
+      "overwrite": "Overwrite file",
+      "reloadFile": "Reload file",
+      "keepDraft": "Keep draft",
+      "openInLex": "Open in {{appName}} browser",
+      "fileLinkFailed": "Cannot open this path. Check that it is inside the working directory.",
+      "startupDirectory": "Relative paths use the startup directory: {{path}}",
+      "git": "Git",
+      "unstaged": "Unstaged",
+      "staged": "Staged",
+      "recentHistory": "Recent commits",
+      "historyLimit": "Showing the latest 50 commits reachable from HEAD.",
+      "historyUnavailable": "Recent history is unavailable on this connection.",
+      "refresh": "Refresh",
+      "noChanges": "No changes",
+      "noCommits": "No commits yet",
+      "loadFailed": "Unable to load. Try refreshing.",
+      "comparison": "Compare branches",
+      "comparisonHint": "View committed changes on this branch relative to a base branch. Uncommitted files are not included.",
+      "historyLoading": "Loading recent commits…",
+      "previousPane": "Previous pane",
+      "nextPane": "Next pane"
     }
   },
   "update": {

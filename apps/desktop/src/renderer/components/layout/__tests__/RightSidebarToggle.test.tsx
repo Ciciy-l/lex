@@ -10,6 +10,15 @@ vi.mock('react-i18next', () => ({
 import { RightSidebarToggle } from '../RightSidebarToggle';
 
 describe('RightSidebarToggle', () => {
+  it.each(['left', 'right'] as const)('keeps the original panel icon for the sidebar on the %s', side => {
+    const view = render(<RightSidebarToggle collapsed side={side} onToggle={vi.fn()} />);
+    expect(view.container.querySelector('.lucide-panel-' + side)).toBeTruthy();
+    view.rerender(<RightSidebarToggle collapsed={false} side={side} onToggle={vi.fn()} />);
+    expect(view.container.querySelector('.lucide-panel-' + side)).toBeTruthy();
+    view.rerender(<RightSidebarToggle action="show" collapsed side={side} onToggle={vi.fn()} />);
+    expect(view.container.querySelector('.lucide-panel-' + side)).toBeTruthy();
+    expect(view.container.querySelector('.lucide-chevrons-left, .lucide-chevrons-right')).toBeNull();
+  });
   it.each([true, false])(
     'uses one stable show label for the fixed trigger when collapsed=%s',
     (collapsed) => {

@@ -4264,6 +4264,18 @@
         "switch-session-9": {
           "label": "9番目のセッションに移動",
           "description": "サイドバーに表示されている9番目のセッションに移動します"
+        },
+        "terminal-focus-previous-pane": {
+          "label": "前のペイン",
+          "description": "前のペイン"
+        },
+        "terminal-focus-next-pane": {
+          "label": "次のペイン",
+          "description": "次のペイン"
+        },
+        "terminal-toggle-pane-zoom": {
+          "label": "ペインを最大化",
+          "description": "ペインを最大化"
         }
       },
       "none": "未設定",
@@ -6298,9 +6310,33 @@
       }
     },
     "terminal": {
+      "launchCli": "CLI を起動",
+      "tools": "ワークスペースツール",
+      "toggleTools": "ツールの表示を切り替え",
+      "showTools": "ツールを表示",
+      "hideTools": "ツールを非表示",
+      "moreTools": "その他のツール",
+      "sessions": "{{appName}} CLI セッション",
+      "noSessions": "CLI セッションはありません",
+      "retryList": "CLI セッションを読み込めませんでした。再試行",
+      "actionFailed": "CLI 操作を完了できませんでした。再試行してください。",
+      "terminate": "プロセスを終了",
+      "terminateConfirm": "選択したプロセスを停止します。他の分割ターミナルは実行を続けます。",
+      "forget": "終了したターミナルを削除",
+      "hidden": "非表示",
+      "process": {
+        "running": "実行中",
+        "terminating": "停止中",
+        "exited": "終了済み",
+        "terminated": "停止済み",
+        "missing": "未実行"
+      },
       "defaultTitle": "ターミナル",
       "workbenchTitle": "ターミナル（{{count}} ペイン）",
       "profileShell": "Shell",
+      "agentSection": "Agent",
+      "defaultShellBadge": "デフォルト",
+      "detectingShells": "ターミナルを検出中…",
       "profileClaude": "Claude",
       "profileCodex": "Codex",
       "profilePi": "Pi",
@@ -6793,6 +6829,43 @@
       "terminateConfirmDescription": "この Agent プロセスを強制終了します。このプロセスを使用しているすべてのタスクが中断されます。影響を受けたタスクでメッセージを送信すると、必要に応じて Agent を再起動できます。",
       "terminated": "{{name}} プロセスを終了しました",
       "terminateFailed": "プロセスを終了できませんでした。すでに終了している可能性があります。リストは次回のサンプリングで自動的に更新されます"
+    },
+    "workbench": {
+      "rename": "名前を変更",
+      "renameHint": "空欄にすると既定の名前に戻ります。",
+      "searchOutput": "ターミナル出力を検索",
+      "matchCase": "大文字と小文字を区別",
+      "noMatches": "一致なし",
+      "previousMatch": "前の一致",
+      "nextMatch": "次の一致",
+      "closeSearch": "検索を閉じる",
+      "zoomPane": "ペインを最大化",
+      "restorePane": "レイアウトを復元",
+      "unplaced": "未配置のターミナル",
+      "keepOpen": "開いたままにする",
+      "verifySaveFailed": "ディスク上のファイルを確認できません。再試行してから保存してください。",
+      "fileChanged": "ディスク上のファイルが変更されました",
+      "overwrite": "ファイルを上書き",
+      "reloadFile": "ファイルを再読み込み",
+      "keepDraft": "下書きを保持",
+      "openInLex": "{{appName}} ブラウザーで開く",
+      "fileLinkFailed": "パスを開けません。作業ディレクトリ内にあることを確認してください。",
+      "startupDirectory": "相対パスの起点は起動ディレクトリです：{{path}}",
+      "git": "Git",
+      "unstaged": "未ステージ",
+      "staged": "ステージ済み",
+      "recentHistory": "最近のコミット",
+      "historyLimit": "HEAD から到達可能な最新 50 件を表示しています。",
+      "historyUnavailable": "この接続では最近の履歴を利用できません。",
+      "refresh": "更新",
+      "noChanges": "変更なし",
+      "noCommits": "コミットはまだありません",
+      "loadFailed": "読み込めません。更新してください。",
+      "comparison": "ブランチを比較",
+      "comparisonHint": "基準ブランチに対するコミット済みの変更を表示します。未コミットのファイルは含みません。",
+      "historyLoading": "最近のコミットを読み込み中…",
+      "previousPane": "前のペイン",
+      "nextPane": "次のペイン"
     }
   },
   "update": {

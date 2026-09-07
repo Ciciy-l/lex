@@ -370,6 +370,45 @@ describe('useReviewGitState cache continuity', () => {
     });
   });
 
+  it.each(['success', 'failure'] as const)(
+    'clears a same-path file from the previous commit before a new commit %s',
+    async (outcome) => {
+      let reject!: (error: Error) => void;
+      let resolve!: (data: ReviewFileDiffData) => void;
+      const next = new Promise<ReviewFileDiffData>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      const fileDiff = vi
+        .fn()
+        .mockResolvedValueOnce(fileDiffData('src/shared.ts'))
+        .mockReturnValueOnce(next);
+      window.electronAPI = { gitReview: { fileDiff } } as unknown as typeof window.electronAPI;
+      const request: ReviewFileDiffRequest = {
+        source: 'commit',
+        path: 'src/shared.ts',
+        commitOid: 'a',
+      };
+      const props = { sessionId: `file-commit-switch-${outcome}`, request, refreshVersion: 0 };
+      const view = render(createElement(FileDiffProbe, props));
+      await waitFor(() =>
+        expect(screen.getByTestId('state').textContent).toBe('src/shared.ts|idle'),
+      );
+      view.rerender(
+        createElement(FileDiffProbe, { ...props, request: { ...request, commitOid: 'b' } }),
+      );
+      expect(screen.getByTestId('state').textContent).toBe('null|loading');
+      await act(async () => {
+        if (outcome === 'success') resolve(fileDiffData('src/shared.ts'));
+        else reject(new Error('cannot read commit b'));
+        await next.catch(() => undefined);
+      });
+      expect(screen.getByTestId('state').textContent).toBe(
+        outcome === 'success' ? 'src/shared.ts|idle' : 'null|idle',
+      );
+    },
+  );
+
   it('does not reload a file diff batch when request array identity changes without content changes', async () => {
     const fileDiff = vi.fn(async (payload: ReviewFileDiffRequest & { sessionId: string }) =>
       fileDiffData(payload.path),

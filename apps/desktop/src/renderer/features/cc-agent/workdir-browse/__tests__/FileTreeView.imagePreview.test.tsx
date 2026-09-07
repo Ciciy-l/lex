@@ -33,6 +33,16 @@ function makeTree(): UseFileTreeReturn {
 afterEach(() => cleanup());
 
 describe('FileTreeView image preview action', () => {
+  it('previews with pointer click and keeps a file with double-click or keyboard activation', () => {
+    const preview = vi.fn(), permanent = vi.fn();
+    render(<FileTreeView tree={makeTree()} selectedPath={null} onSelectFile={preview} onOpenFile={permanent} />);
+    const row = screen.getByRole('button', { name: 'README.md' });
+    fireEvent.click(row, { detail: 1 }); expect(preview).toHaveBeenLastCalledWith('README.md');
+    expect(permanent).not.toHaveBeenCalled();
+    fireEvent.doubleClick(row); expect(permanent).toHaveBeenLastCalledWith('README.md');
+    permanent.mockClear(); fireEvent.click(row, { detail: 0 });
+    expect(permanent).toHaveBeenCalledOnce();
+  });
   it('shows the eye action only for lightbox-compatible images', () => {
     const onPreviewImage = vi.fn();
     const { container } = render(

@@ -42,6 +42,9 @@ import { RightSidebarToggle } from '@/components/layout/RightSidebarToggle';
 import { CHROME_ACTIONS_GEOMETRY } from '@/components/layout/chromeActionsGeometry';
 import { TabBar, TabStrip } from './TabBar';
 import { EmptyState } from './EmptyState';
+import { GitNavigation } from './GitNavigation';
+import { WorkspaceToolRail } from './WorkspaceToolRail';
+import { isHiddenTerminal, workspaceSurface } from '../../../shared/workspaceSurface';
 import { getTabKind, hydrateTabState } from './registry';
 import {
   addOrFocusSingletonTab,
@@ -63,11 +66,12 @@ import './plugins';
 import { initRsbBrowserBridge } from './lib/rsbBrowserBridge';
 import { initIOSSimulatorFocusBridge } from './lib/iosSimulatorFocusBridge';
 import { initPopupRouter, setPopupFallbackSession } from './lib/popupRouter';
+import { launchTerminal } from './lib/terminalNavigation';
+import type { ShellId, TerminalProfile } from '../../../shared/terminal-bridge';
 import { TabBodyErrorBoundary } from './TabBodyErrorBoundary';
 import { useInstalledGhosts } from '@/cindy-brain/useInstalledGhosts';
 import {
   isIOSSimulatorPluginAvailable,
-  mergeAvailableTabOrder,
   projectAvailableTabs,
 } from './iosSimulatorPluginAvailability';
 
@@ -256,11 +260,53 @@ export function RightSidebarShell({
     [iosSimulatorPluginAvailable, subagentsEligibilityKnown, subagentsEnabled],
   );
   const projectedTabs = useMemo(
-    () => projectAvailableTabs(bucket.tabs, bucket.activeTabId, tabAvailability),
-    [bucket.activeTabId, bucket.tabs, tabAvailability],
+    () => projectAvailableTabs(bucket.tabs, bucket.activeContentTabId ?? null, tabAvailability),
+    [bucket.activeContentTabId, bucket.tabs, tabAvailability],
   );
   const tabs = projectedTabs.tabs;
-  const activeTabId = projectedTabs.activeTabId;
+  const contentTabs = useMemo(
+    () => tabs.filter((tab) => workspaceSurface(tab.kind) === 'content' && !isHiddenTerminal(tab)),
+    [tabs],
+  );
+  const toolTabs = useMemo(
+    () => tabs.filter((tab) => workspaceSurface(tab.kind) === 'tool'),
+    [tabs],
+  );
+  const activeContentTabId = bucket.activeContentTabId
+    ? (contentTabs.find((tab) => tab.id === bucket.activeContentTabId)?.id ??
+      contentTabs[0]?.id ??
+      null)
+    : null;
+  const activeToolId = bucket.activeToolId
+    ? (toolTabs.find((tab) => tab.id === bucket.activeToolId)?.id ?? toolTabs[0]?.id ?? null)
+    : null;
+  const [toolsExpanded, setToolsExpanded] = useState(true);
+  const activeTool = toolTabs.find((tab) => tab.id === activeToolId);
+  const activeContent = contentTabs.find((tab) => tab.id === activeContentTabId);
+  const [selectedTool, setSelectedTool] = useState<{
+    sessionId: string | null;
+    kind: TabKindId;
+  } | null>(null);
+  const selectedToolKind =
+    selectedTool?.sessionId === sessionId
+      ? selectedTool.kind
+      : (activeTool?.kind ?? 'file-browser');
+  const activeRailKind =
+    activeContent?.kind === 'orca-workers' ? activeContent.kind : selectedToolKind;
+  const showingToolId = toolTabs.find((tab) => tab.kind === selectedToolKind)?.id ?? null;
+  const canLaunchCli = !!sessionId && !!workdir && !remoteHostId && deviceLinkDeviceId === null;
+  const handleLaunchTerminal = useCallback(
+    (profile: TerminalProfile, shellPref?: ShellId) => {
+      if (!sessionId || !canLaunchCli) return;
+      void launchTerminal(sessionId, workdir, profile, shellPref)
+        .then((tab) => setActiveTab(sessionId, tab.id, 'content'))
+        .catch((err) => {
+          toast.error(t(mapIpcErrorToI18nKey(err, { fallback: 'rightSidebar.tabs.addFailed' })));
+          log.error('launch terminal failed', { sessionId, profile, shellPref, err });
+        });
+    },
+    [canLaunchCli, sessionId, t, workdir],
+  );
 
   // 首帧只挂当前激活 tab。其余 tab 在浏览器空闲期逐个补挂载，随后继续按原有
   // keep-alive 语义保留组件 / webview / 编辑器状态。这样恢复一个多 tab 会话时，
@@ -277,21 +323,27 @@ export function RightSidebarShell({
       if (previous.sessionId !== sessionId) {
         return {
           sessionId,
-          tabIds: activeTabId ? new Set([activeTabId]) : new Set(),
+          tabIds: new Set([activeContentTabId, activeToolId].filter((id): id is string => !!id)),
         };
       }
-      if (!activeTabId || previous.tabIds.has(activeTabId)) return previous;
+      const selectedIds = [activeContentTabId, activeToolId].filter((id): id is string => !!id);
+      if (selectedIds.every((id) => previous.tabIds.has(id))) return previous;
       const next = new Set(previous.tabIds);
-      next.add(activeTabId);
+      selectedIds.forEach((id) => next.add(id));
       return { sessionId, tabIds: next };
     });
-  }, [activeTabId, sessionId]);
+  }, [activeContentTabId, activeToolId, sessionId]);
 
   useEffect(() => {
     if (!bucket.hydrated || !sessionId) return;
     const pendingTabIds = tabs
       .map((tab) => tab.id)
-      .filter((tabId) => tabId !== activeTabId && !deferredMountedTabIds.has(tabId));
+      .filter(
+        (tabId) =>
+          tabId !== activeContentTabId &&
+          tabId !== activeToolId &&
+          !deferredMountedTabIds.has(tabId),
+      );
     if (pendingTabIds.length === 0) return;
 
     let cancelled = false;
@@ -323,67 +375,22 @@ export function RightSidebarShell({
       if (idleId !== null) window.cancelIdleCallback(idleId);
       if (timeoutId !== null) clearTimeout(timeoutId);
     };
-  }, [activeTabId, bucket.hydrated, deferredMountedTabIds, sessionId, tabs]);
+  }, [activeContentTabId, activeToolId, bucket.hydrated, deferredMountedTabIds, sessionId, tabs]);
 
-  // If a now-hidden simulator tab owned the active marker, move the persisted
-  // marker to a visible tab (or null). The simulator tab itself remains stored
-  // and returns when the plugin is enabled again.
-  //
-  // Never write while Subagents eligibility is still unknown: the projection is
-  // provisional during that window, so converging it would persist a decision
-  // taken from incomplete information and destroy the restored selection.
+  // Reconcile availability per surface; switching tools must not overwrite content selection.
   useEffect(() => {
-    if (!subagentsEligibilityKnown) return;
-    if (!bucket.hydrated || !sessionId || bucket.activeTabId === activeTabId) return;
-    void setActiveTab(sessionId, activeTabId).catch((err) => {
-      log.error('hidden simulator active-tab reconciliation failed', {
-        sessionId,
-        activeTabId,
-        err,
-      });
-    });
-  }, [activeTabId, bucket.activeTabId, bucket.hydrated, sessionId, subagentsEligibilityKnown]);
-
-  const prevTabCountRef = useRef<number | null>(null);
-  useEffect(() => {
-    prevTabCountRef.current = null;
-  }, [sessionId]);
-
-  // A bucket containing only unavailable product surfaces must not leave an
-  // empty public sidebar open. Preserve hidden state for later eligibility.
-  const hiddenOnlyCollapseRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!shellVisible) {
-      hiddenOnlyCollapseRef.current = null;
-      return;
+    if (!subagentsEligibilityKnown || !bucket.hydrated || !sessionId) return;
+    if (bucket.activeContentTabId && bucket.activeContentTabId !== activeContentTabId) {
+      void setActiveTab(sessionId, activeContentTabId, 'content').catch((err) =>
+        log.error('content selection reconciliation failed', { sessionId, err }),
+      );
     }
-    const shouldCollapse =
-      bucket.hydrated &&
-      bucket.tabs.length > 0 &&
-      tabs.length === 0 &&
-      bucket.tabs.some(
-        (tab) =>
-          (tab.kind === 'ios-simulator' && !iosSimulatorPluginAvailable) ||
-          (tab.kind === 'subagents' && subagentsEligibilityKnown && !subagentsEnabled),
-      ) &&
-      prevTabCountRef.current === null;
-    if (!shouldCollapse || !sessionId) {
-      hiddenOnlyCollapseRef.current = null;
-      return;
-    }
-    if (hiddenOnlyCollapseRef.current === sessionId) return;
-    hiddenOnlyCollapseRef.current = sessionId;
-    onAllTabsClosed?.();
   }, [
+    activeContentTabId,
+    bucket.activeContentTabId,
     bucket.hydrated,
-    bucket.tabs,
-    iosSimulatorPluginAvailable,
-    subagentsEligibilityKnown,
-    subagentsEnabled,
-    onAllTabsClosed,
     sessionId,
-    shellVisible,
-    tabs.length,
+    subagentsEligibilityKnown,
   ]);
 
   // 面板收束(2026-08):插件页签不再注册进右侧栏。历史会话里持久化的
@@ -404,20 +411,7 @@ export function RightSidebarShell({
     })();
   }, [bucket.hydrated, bucket.tabs, sessionId]);
 
-  // 关掉最后一个 tab → 通知 host 自动收起侧栏。只在 tab 数「从 >0 变 0」的转变时
-  // 触发,不是"等于 0"就触发:
-  //   - hydrated 后首帧 prev===null 不触发(区分"刚加载出来就是空"与"关到空");
-  //   - 展开一个本就 0-tab 的 session 也不会被立刻折叠,用户仍能在 EmptyState 加 tab。
-  // sessionId 变化时重置计数,避免"切到一个空 session"被误判成"关空"。
-  useEffect(() => {
-    if (!bucket.hydrated) return; // 未 hydrate 的空数组不算"关空"
-    const prev = prevTabCountRef.current;
-    prevTabCountRef.current = tabs.length;
-    if (prev !== null && prev > 0 && tabs.length === 0) {
-      onAllTabsClosed?.();
-    }
-  }, [bucket.hydrated, tabs.length, onAllTabsClosed]);
-
+  // Fixed tools remain available even when the last content tab is closed.
   const handleAdd = useCallback(
     (kind: TabKindId) => {
       if (!sessionId) {
@@ -439,7 +433,15 @@ export function RightSidebarShell({
       const initialState = plugin ? plugin.defaultState() : null;
       // 单例 kind(当前仅 review)走 addOrFocusSingletonTab:已存在则切到现有,
       // 否则正常 addTab。menu meta 的 singleton 字段是数据来源,目前只有 review。
-      const isSingleton = plugin?.menu?.singleton === true;
+      const isSingleton = workspaceSurface(kind) === 'tool' || plugin?.menu?.singleton === true;
+      // Review retains a fixed rail entry and intentionally selects its empty
+      // Git-tool placeholder. Collaboration opens its existing content tab and
+      // leaves the current tool pane untouched; browser/terminal creation does
+      // the same.
+      if (workspaceSurface(kind) === 'tool' || kind === 'review') {
+        setSelectedTool({ sessionId, kind });
+        setToolsExpanded(true);
+      }
       const action = isSingleton
         ? addOrFocusSingletonTab(sessionId, kind, initialState)
         : addTab(sessionId, kind, initialState);
@@ -457,6 +459,30 @@ export function RightSidebarShell({
     },
     [iosSimulatorPluginAvailable, sessionId, subagentsEnabled, t],
   );
+
+  // External file/Background navigation uses the same per-session tool selection.
+  useEffect(() => {
+    const focused = tabs.find((tab) => tab.id === bucket.activeToolId);
+    if (focused && workspaceSurface(focused.kind) === 'tool') {
+      setSelectedTool({ sessionId, kind: focused.kind });
+      setToolsExpanded(true);
+    }
+  }, [bucket.activeToolId, sessionId]);
+
+  // The workspace opens directly. Fixed tools are navigation, not disposable tabs.
+  const defaultToolAttempts = useRef(new Set<string>());
+  useEffect(() => {
+    if (
+      sessionId &&
+      bucket.hydrated &&
+      shellVisible &&
+      toolTabs.length === 0 &&
+      !defaultToolAttempts.current.has(sessionId)
+    ) {
+      defaultToolAttempts.current.add(sessionId);
+      handleAdd('file-browser');
+    }
+  }, [sessionId, bucket.hydrated, shellVisible, toolTabs.length, handleAdd]);
 
   const handleClose = useCallback(
     (tabId: string) => {
@@ -481,7 +507,11 @@ export function RightSidebarShell({
   const handleReorder = useCallback(
     (orderedIds: string[]) => {
       if (!sessionId) return;
-      const fullOrder = mergeAvailableTabOrder(bucket.tabs, orderedIds, tabAvailability);
+      const ordered = new Set(orderedIds);
+      let index = 0;
+      const fullOrder = bucket.tabs.map((tab) =>
+        ordered.has(tab.id) ? orderedIds[index++] : tab.id,
+      );
       void reorderTabs(sessionId, fullOrder).catch((err) => {
         log.error('handleReorder failed', { sessionId, orderedIds, err });
       });
@@ -493,22 +523,23 @@ export function RightSidebarShell({
     (direction: RightTabDirection): boolean => {
       if (!sessionId) return false;
       // 右侧栏存在但折叠 / 单 tab 时按键语义是 no-op,仍需消费以免漏给系统菜单。
-      if (!shellVisible || tabs.length < 2) return true;
-      const activeIndex = tabs.findIndex((tab) => tab.id === activeTabId);
+      if (!shellVisible || contentTabs.length < 2) return true;
+      const activeIndex = contentTabs.findIndex((tab) => tab.id === activeContentTabId);
       const nextIndex =
         activeIndex < 0
           ? direction === 'next'
             ? 0
-            : tabs.length - 1
-          : (activeIndex + (direction === 'next' ? 1 : -1) + tabs.length) % tabs.length;
-      const nextTabId = tabs[nextIndex]?.id;
-      if (!nextTabId || nextTabId === activeTabId) return false;
+            : contentTabs.length - 1
+          : (activeIndex + (direction === 'next' ? 1 : -1) + contentTabs.length) %
+            contentTabs.length;
+      const nextTabId = contentTabs[nextIndex]?.id;
+      if (!nextTabId || nextTabId === activeContentTabId) return false;
       void setActiveTab(sessionId, nextTabId).catch((err) => {
         log.error('cycle right sidebar tab failed', { sessionId, direction, nextTabId, err });
       });
       return true;
     },
-    [activeTabId, sessionId, shellVisible, tabs],
+    [activeContentTabId, sessionId, shellVisible, contentTabs],
   );
 
   useAppShortcut('right-tab-prev', () => handleCycleTab('prev'), {
@@ -526,7 +557,7 @@ export function RightSidebarShell({
   const handleCloseOthers = useCallback(
     async (keepTabId: string) => {
       if (!sessionId) return;
-      const targets = tabs.filter((t) => t.id !== keepTabId).map((t) => t.id);
+      const targets = contentTabs.filter((t) => t.id !== keepTabId).map((t) => t.id);
       for (const tabId of targets) {
         try {
           await closeTab(sessionId, tabId);
@@ -536,13 +567,13 @@ export function RightSidebarShell({
         }
       }
     },
-    [sessionId, tabs],
+    [sessionId, contentTabs],
   );
 
   // 右键菜单"关闭所有":关掉本 session 的全部 tab。
   const handleCloseAll = useCallback(async () => {
     if (!sessionId) return;
-    const targets = tabs.map((t) => t.id);
+    const targets = contentTabs.map((t) => t.id);
     for (const tabId of targets) {
       try {
         await closeTab(sessionId, tabId);
@@ -551,7 +582,7 @@ export function RightSidebarShell({
         break;
       }
     }
-  }, [sessionId, tabs]);
+  }, [sessionId, contentTabs]);
 
   // popup 路由已挪到窗口级常驻模块(lib/popupRouter.ts):订阅不随 Shell 生命
   // 周期,用户离开聊天视图 / main 端归属等待期间 route 切换都不再丢 popup。
@@ -633,13 +664,14 @@ export function RightSidebarShell({
               「+」wrapper 传 h-[30px](pill 高)而非 h-full:TabStrip 根高度由
               内容驱动,百分比高度会退化。 */}
           <TabStrip
-            tabs={tabs}
-            activeTabId={activeTabId}
+            tabs={contentTabs}
+            activeTabId={activeContentTabId}
             sessionId={sessionId}
             onActivate={handleActivate}
             onClose={handleClose}
             onReorder={handleReorder}
             onAdd={handleAdd}
+            onLaunchTerminal={canLaunchCli ? handleLaunchTerminal : undefined}
             onCloseOthers={handleCloseOthers}
             onCloseAll={handleCloseAll}
             pillVariant="chip"
@@ -682,13 +714,14 @@ export function RightSidebarShell({
         </div>
       ) : (
         <TabBar
-          tabs={tabs}
-          activeTabId={activeTabId}
+          tabs={contentTabs}
+          activeTabId={activeContentTabId}
           sessionId={sessionId}
           onActivate={handleActivate}
           onClose={handleClose}
           onReorder={handleReorder}
           onAdd={handleAdd}
+          onLaunchTerminal={canLaunchCli ? handleLaunchTerminal : undefined}
           showWindowControls={!isMac}
           onMaximize={onMaximize}
           onCloseSidebar={onCloseSidebar}
@@ -703,7 +736,7 @@ export function RightSidebarShell({
           subagentsAvailable={subagentsEnabled}
         />
       )}
-      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--panel-bg)]">
+      <div className="relative flex min-h-0 flex-1 overflow-hidden bg-[var(--panel-bg)]">
         {/* 首次切到某 session 时 cache 尚未 hydrate(等 IPC list 回包),保留 panel
             背景而非闪 EmptyState —— EmptyState 是"真的没 tab"的 Welcome 内容。
             sessionId 为 null 也走这条:Shell 不显示任何内容(无激活会话)。 */}
@@ -723,22 +756,76 @@ export function RightSidebarShell({
           // 所有 tab 都挂载,只切换可见性(规则 7:杜绝切顶层 tab 时 plugin 内部 state /
           // webview / 编辑器 / 文件树 expansion 全部丢失重建)。pointer-events 用
           // `hidden` 自然 disable,visibility 状态由 onVisibilityChange 给 plugin。
-          tabs
-            .filter((tab) => tab.id === activeTabId || deferredMountedTabIds.has(tab.id))
-            .map((tab) => (
-            <PluginBodyHost
-              key={tab.id}
-              tab={tab}
-              active={tab.id === activeTabId}
-              sessionId={sessionId}
-              workdir={workdir}
-              remoteHostId={remoteHostId}
-              deviceLinkDeviceId={deviceLinkDeviceId}
-              shellVisible={shellVisible}
-              t={t}
-            />
-            ))
+          <>
+            <div
+              data-workspace-surface="content"
+              className="relative flex min-w-0 flex-1 flex-col overflow-hidden"
+              onFocusCapture={() => {
+                if (activeContentTabId && bucket.activeContentTabId !== activeContentTabId)
+                  handleActivate(activeContentTabId);
+              }}
+            >
+              {tabs
+                .filter((tab) => workspaceSurface(tab.kind) === 'content')
+                .filter((tab) => tab.id === activeContentTabId || deferredMountedTabIds.has(tab.id))
+                .map((tab) => (
+                  <PluginBodyHost
+                    key={tab.id}
+                    tab={tab}
+                    active={tab.id === activeContentTabId && !isHiddenTerminal(tab)}
+                    sessionId={sessionId}
+                    workdir={workdir}
+                    remoteHostId={remoteHostId}
+                    deviceLinkDeviceId={deviceLinkDeviceId}
+                    shellVisible={shellVisible}
+                    t={t}
+                  />
+                ))}
+              {contentTabs.length === 0 && (
+                <div className="flex flex-1 items-center justify-center">
+                  <span className="text-12 text-[var(--text-tertiary)]">
+                    {t('rightSidebar.tabs.empty.title')}
+                  </span>
+                </div>
+              )}
+            </div>
+            <div
+              data-workspace-surface="tool"
+              className={
+                toolsExpanded
+                  ? 'relative flex min-w-0 flex-col overflow-hidden border-l border-[var(--border-default)]'
+                  : 'hidden'
+              }
+              style={{ flex: '0 1 240px', minWidth: toolsExpanded ? 180 : 0 }}
+            >
+              {selectedToolKind === 'review' && toolsExpanded && shellVisible && sessionId && deviceLinkDeviceId !== undefined &&
+                <GitNavigation key={JSON.stringify([sessionId, deviceLinkDeviceId, workdir, remoteHostId])} sessionId={sessionId} deviceId={deviceLinkDeviceId} />}
+              {toolTabs
+                .filter((tab) => tab.id === showingToolId || deferredMountedTabIds.has(tab.id))
+                .map((tab) => (
+                  <PluginBodyHost
+                    key={tab.id}
+                    tab={tab}
+                    active={tab.id === showingToolId}
+                    sessionId={sessionId}
+                    workdir={workdir}
+                    remoteHostId={remoteHostId}
+                    deviceLinkDeviceId={deviceLinkDeviceId}
+                    shellVisible={shellVisible && toolsExpanded}
+                    t={t}
+                  />
+                ))}
+            </div>
+          </>
         )}
+        <WorkspaceToolRail
+          activeKind={activeRailKind}
+          expanded={toolsExpanded}
+          onToggle={() => setToolsExpanded((value) => !value)}
+          onSelect={handleAdd}
+          subagentsAvailable={subagentsEnabled}
+          iosSimulatorAvailable={iosSimulatorPluginAvailable}
+        />
       </div>
     </div>
   );

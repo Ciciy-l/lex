@@ -14,9 +14,8 @@
  *     PanelLeft，同为 28px / 15 / rounded-md 规格族）对齐，供 mac 右上浮层用
  *     （2026-07 随左簇一起从 36px 缩到 28px，左右对称）。
  * chip 栈容器是 pointer-events-none，本按钮自带 `pointer-events-auto` 才能接收点击
- * （Windows chip 栈约束；mac 在 ContentHeader 里无副作用）。图标随 `side` 翻转:
- * 面板在右 = lucide `PanelRight`(与左栏 `PanelLeft` 对称),面板在左 = `PanelLeft`
- * ——图标画的就是"面板贴哪条边",跟着面板走才不说谎。
+ * （Windows chip 栈约束；mac 在 ContentHeader 里无副作用）。此侧栏入口保留 Panel
+ * 图标，按 side 指示面板位置；工具区内部的展开/收起才使用双箭头。
  */
 
 import { PanelLeft, PanelRight } from 'lucide-react';

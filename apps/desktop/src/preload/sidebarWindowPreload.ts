@@ -51,7 +51,7 @@ function readPreferredSystemLocale(): ApplicationMenuLocale {
   try {
     const value = ipcRenderer.sendSync('app-locale:get-preferred-system-locale-sync');
     return typeof value === 'string' && (SUPPORTED_LOCALES as readonly string[]).includes(value)
-      ? value as ApplicationMenuLocale
+      ? (value as ApplicationMenuLocale)
       : DEFAULT_LOCALE;
   } catch {
     return DEFAULT_LOCALE;
@@ -191,30 +191,58 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // APIs consumed by the built-in RSB tabs; the full primary-window bridge is
   // not exposed to this detached renderer.
   fileBrowser: {
-    listDir: (params: unknown): Promise<unknown> => ipcRenderer.invoke('maker:file-browser:list-dir', params),
-    listAllFiles: (params: unknown): Promise<unknown> => ipcRenderer.invoke('maker:file-browser:list-all', params),
-    readFile: (params: unknown): Promise<unknown> => ipcRenderer.invoke('maker:file-browser:read-file', params),
-    writeFile: (params: unknown): Promise<unknown> => ipcRenderer.invoke('maker:file-browser:write-file', params),
-    createFile: (params: unknown): Promise<unknown> => ipcRenderer.invoke('maker:file-browser:create-file', params),
-    createFolder: (params: unknown): Promise<unknown> => ipcRenderer.invoke('maker:file-browser:create-folder', params),
-    deleteEntry: (params: unknown): Promise<unknown> => ipcRenderer.invoke('maker:file-browser:delete-entry', params),
-    renameEntry: (params: unknown): Promise<unknown> => ipcRenderer.invoke('maker:file-browser:rename-entry', params),
-    stat: (params: unknown): Promise<unknown> => ipcRenderer.invoke('maker:file-browser:stat', params),
-    startWatch: (params: unknown): Promise<unknown> => ipcRenderer.invoke('maker:file-browser:start-watch', params),
-    stopWatch: (params: unknown): Promise<unknown> => ipcRenderer.invoke('maker:file-browser:stop-watch', params),
-    onEvent: (cb: (event: unknown) => void): (() => void) => onPayload('maker:file-browser:event', cb),
-    fetchRemote: (params: unknown): Promise<unknown> => ipcRenderer.invoke('maker:file-browser:fetch-remote', params),
-    readCached: (params: unknown): Promise<unknown> => ipcRenderer.invoke('maker:file-browser:read-cached', params),
-    cachePut: (params: unknown): Promise<unknown> => ipcRenderer.invoke('maker:file-browser:cache-put', params),
-    onTransferProgress: (cb: (event: unknown) => void): (() => void) => onPayload('maker:file-browser:transfer', cb),
-    chatFetch: (params: unknown): Promise<unknown> => ipcRenderer.invoke('maker:chat-file:fetch', params),
-    chatStat: (params: unknown): Promise<unknown> => ipcRenderer.invoke('maker:chat-file:stat', params),
+    listDir: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('maker:file-browser:list-dir', params),
+    listAllFiles: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('maker:file-browser:list-all', params),
+    readFile: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('maker:file-browser:read-file', params),
+    writeFile: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('maker:file-browser:write-file', params),
+    createFile: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('maker:file-browser:create-file', params),
+    createFolder: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('maker:file-browser:create-folder', params),
+    deleteEntry: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('maker:file-browser:delete-entry', params),
+    renameEntry: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('maker:file-browser:rename-entry', params),
+    stat: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('maker:file-browser:stat', params),
+    startWatch: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('maker:file-browser:start-watch', params),
+    stopWatch: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('maker:file-browser:stop-watch', params),
+    onEvent: (cb: (event: unknown) => void): (() => void) =>
+      onPayload('maker:file-browser:event', cb),
+    fetchRemote: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('maker:file-browser:fetch-remote', params),
+    readCached: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('maker:file-browser:read-cached', params),
+    cachePut: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('maker:file-browser:cache-put', params),
+    onTransferProgress: (cb: (event: unknown) => void): (() => void) =>
+      onPayload('maker:file-browser:transfer', cb),
+    chatFetch: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('maker:chat-file:fetch', params),
+    chatStat: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('maker:chat-file:stat', params),
   },
   terminal: {
+    listAvailableShells: () => ipcRenderer.invoke('terminal:list-available-shells'),
+    resolveFile: (id: string, path: string) => ipcRenderer.invoke('terminal:resolve-file', id, path),
+    rename: (id: string, title: string) => ipcRenderer.invoke('terminal:rename', id, title),
+    list: (sessionId: string) => ipcRenderer.invoke('terminal:list', sessionId),
+    detach: (id: string) => ipcRenderer.invoke('terminal:detach', id),
+    terminate: (id: string) => ipcRenderer.invoke('terminal:terminate', id),
+    onStatus: (cb: (record: unknown) => void) => onPayload('terminal:status', cb),
     create: (params: unknown): Promise<unknown> => ipcRenderer.invoke('terminal:create', params),
-    write: (id: string, data: string): Promise<unknown> => ipcRenderer.invoke('terminal:write', id, data),
-    resize: (id: string, cols: number, rows: number): Promise<unknown> => ipcRenderer.invoke('terminal:resize', id, cols, rows),
+    write: (id: string, data: string): Promise<unknown> =>
+      ipcRenderer.invoke('terminal:write', id, data),
+    resize: (id: string, cols: number, rows: number): Promise<unknown> =>
+      ipcRenderer.invoke('terminal:resize', id, cols, rows),
     dispose: (id: string): Promise<unknown> => ipcRenderer.invoke('terminal:dispose', id),
+    forget: (id: string) => ipcRenderer.invoke('terminal:forget', id),
     restart: (id: string): Promise<unknown> => ipcRenderer.invoke('terminal:restart', id),
     onData: (cb: (event: unknown) => void): (() => void) => onPayload('terminal:data', cb),
     onExit: (cb: (event: unknown) => void): (() => void) => onPayload('terminal:exit', cb),
@@ -222,34 +250,42 @@ contextBridge.exposeInMainWorld('electronAPI', {
   processMonitor: {
     subscribe: (): Promise<unknown> => ipcRenderer.invoke('process-monitor:subscribe'),
     unsubscribe: (): Promise<unknown> => ipcRenderer.invoke('process-monitor:unsubscribe'),
-    terminate: (request: unknown): Promise<unknown> => ipcRenderer.invoke('process-monitor:terminate-agent', request),
-    onSample: (cb: (sample: unknown) => void): (() => void) => onPayload('process-monitor:sample', cb),
+    terminate: (request: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('process-monitor:terminate-agent', request),
+    onSample: (cb: (sample: unknown) => void): (() => void) =>
+      onPayload('process-monitor:sample', cb),
   },
   rsbNativePopup: {
-    claim: (input: unknown): Promise<unknown> => ipcRenderer.invoke('rsb-native-popup:claim', input),
-    setBounds: (input: unknown): Promise<unknown> => ipcRenderer.invoke('rsb-native-popup:set-bounds', input),
-    command: (input: unknown): Promise<unknown> => ipcRenderer.invoke('rsb-native-popup:command', input),
-    close: (input: unknown): Promise<unknown> => ipcRenderer.invoke('rsb-native-popup:close', input),
-    onEvent: (cb: (event: unknown) => void): (() => void) => onPayload('rsb-native-popup:event', cb),
+    claim: (input: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('rsb-native-popup:claim', input),
+    setBounds: (input: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('rsb-native-popup:set-bounds', input),
+    command: (input: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('rsb-native-popup:command', input),
+    close: (input: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('rsb-native-popup:close', input),
+    onEvent: (cb: (event: unknown) => void): (() => void) =>
+      onPayload('rsb-native-popup:event', cb),
   },
   openExternal: (url: string): Promise<unknown> => ipcRenderer.invoke('shell:open-external', url),
-  openFileInBrowser: (pathOrUrl: string): Promise<unknown> => ipcRenderer.invoke('shell:open-file-in-browser', pathOrUrl),
-  openPath: (pathOrUrl: string): Promise<unknown> => ipcRenderer.invoke('shell:open-path', pathOrUrl),
-  showItemInFolder: (params: unknown): Promise<unknown> => ipcRenderer.invoke('shell:show-item-in-folder', params),
+  openFileInBrowser: (pathOrUrl: string): Promise<unknown> =>
+    ipcRenderer.invoke('shell:open-file-in-browser', pathOrUrl),
+  openPath: (pathOrUrl: string): Promise<unknown> =>
+    ipcRenderer.invoke('shell:open-path', pathOrUrl),
+  showItemInFolder: (params: unknown): Promise<unknown> =>
+    ipcRenderer.invoke('shell:show-item-in-folder', params),
   copyMediaToClipboard: (params: unknown): Promise<unknown> =>
     ipcRenderer.invoke('media:copy-to-clipboard', params),
   openMediaWithDefaultApp: (params: unknown): Promise<void> =>
     ipcRenderer.invoke('media:open-with-default-app', params),
   saveMediaAs: (params: unknown): Promise<unknown> => ipcRenderer.invoke('media:save-as', params),
-  cacheMediaForSession: (params: {
-    url: string;
-    sessionId: string;
-  }): Promise<unknown> => ipcRenderer.invoke('media:cache-for-session', params),
+  cacheMediaForSession: (params: { url: string; sessionId: string }): Promise<unknown> =>
+    ipcRenderer.invoke('media:cache-for-session', params),
   readImageBytes: (params: { url: string }): Promise<{ base64: string; mimeType: string }> =>
     ipcRenderer.invoke('media:read-image-bytes', params),
-  readCachedImageAsBase64: (
-    params: { url: string },
-  ): Promise<{ base64: string; mimeType: string }> =>
+  readCachedImageAsBase64: (params: {
+    url: string;
+  }): Promise<{ base64: string; mimeType: string }> =>
     ipcRenderer.invoke('image-cache:read-base64', params),
   getFilePath: (file: File): string => {
     try {
@@ -258,8 +294,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return '';
     }
   },
-  cacheImageFromBuffer: (params: unknown): Promise<unknown> => ipcRenderer.invoke('image-cache:from-buffer', params),
-  onRsbBrowserFocusUrlBar: (cb: () => void): (() => void) => onPayload('rsb:browser-focus-url-bar', cb),
+  cacheImageFromBuffer: (params: unknown): Promise<unknown> =>
+    ipcRenderer.invoke('image-cache:from-buffer', params),
+  onRsbBrowserFocusUrlBar: (cb: () => void): (() => void) =>
+    onPayload('rsb:browser-focus-url-bar', cb),
 
   // 意识面板注册与运行所需的最小 bridge。右侧栏独立窗口会复用
   // ghostPanels/GhostChipPanelBody，但不暴露安装、卸载、开发运行时或权限管理能力。
@@ -268,10 +306,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     reload: (id: string): Promise<{ state: string }> => ipcRenderer.invoke('ghosts:reload', id),
     setEnabled: (id: string, enabled: boolean): Promise<{ ok: true }> =>
       ipcRenderer.invoke('ghosts:set-enabled', id, enabled),
-    resolvePanelMedia: (
-      uri: string,
-      purpose?: 'attach' | 'menu',
-    ): Promise<unknown> => ipcRenderer.invoke('ghosts:resolve-panel-media', uri, purpose),
+    resolvePanelMedia: (uri: string, purpose?: 'attach' | 'menu'): Promise<unknown> =>
+      ipcRenderer.invoke('ghosts:resolve-panel-media', uri, purpose),
     runtimeStates: (): Promise<{ states: Record<string, string> }> =>
       ipcRenderer.invoke('ghosts:runtime-states'),
     onChanged: (cb: (payload: unknown) => void): (() => void) => onPayload('ghosts:changed', cb),
@@ -318,12 +354,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     /** 鍙岄樁娈靛氨缁?renderer shell 鎸傝浇銆?*/
     rendererReady: (): Promise<void> => ipcRenderer.invoke(RSB_WINDOW_RENDERER_READY_CHANNEL),
     /** 鍙岄樁娈靛氨缁?棣栦唤涓氬姟鍐呭宸叉彁浜ゃ€?*/
-    presentationReady: (): Promise<void> => ipcRenderer.invoke(RSB_WINDOW_PRESENTATION_READY_CHANNEL),
+    presentationReady: (): Promise<void> =>
+      ipcRenderer.invoke(RSB_WINDOW_PRESENTATION_READY_CHANNEL),
     /** 璇锋眰浠?main 缂撳瓨鍒锋柊 context銆?*/
     refreshContext: (): Promise<void> => ipcRenderer.invoke(RSB_WINDOW_REFRESH_CONTEXT_CHANNEL),
-    onStateChanged: (
-      cb: (state: { detached: boolean; open: boolean }) => void,
-    ): (() => void) => onPayload('maker:push:rsb-window:state-changed', cb),
+    onStateChanged: (cb: (state: { detached: boolean; open: boolean }) => void): (() => void) =>
+      onPayload('maker:push:rsb-window:state-changed', cb),
     onContextChanged: (
       cb: (ctx: {
         sessionId: string | null;
@@ -334,9 +370,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
         available: boolean;
       }) => void,
     ): (() => void) => onPayload('maker:push:rsb-window:context-changed', cb),
-    onCommand: (
-      cb: (cmd: unknown) => void,
-    ): (() => void) => onPayload('maker:push:rsb-window:command', cb),
+    onCommand: (cb: (cmd: unknown) => void): (() => void) =>
+      onPayload('maker:push:rsb-window:command', cb),
     onTabHandoff: (cb: (handoff: RsbWindowTabHandoff) => void): (() => void) =>
       onPayload(RSB_WINDOW_TAB_HANDOFF_CHANNEL, cb),
     sendCommand: (request: unknown): Promise<string> =>
@@ -366,8 +401,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }): Promise<unknown> => ipcRenderer.invoke('local-db:right-sidebar-tabs:upsert', input),
     close: (input: { id: string }): Promise<unknown> =>
       ipcRenderer.invoke('local-db:right-sidebar-tabs:close', input),
-    setActive: (input: { sessionId: string; id: string | null }): Promise<unknown> =>
-      ipcRenderer.invoke('local-db:right-sidebar-tabs:setActive', input),
+    setActive: (input: {
+      sessionId: string;
+      id: string | null;
+      surface?: 'tool' | 'content';
+    }): Promise<unknown> => ipcRenderer.invoke('local-db:right-sidebar-tabs:setActive', input),
     reorder: (input: { sessionId: string; orderedIds: string[] }): Promise<unknown> =>
       ipcRenderer.invoke('local-db:right-sidebar-tabs:reorder', input),
   },
@@ -429,7 +467,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
         sessionId: string,
         messageId: string,
         opts?: { radius?: number },
-      ): Promise<unknown> => ipcRenderer.invoke('local-db:messages:around', sessionId, messageId, opts),
+      ): Promise<unknown> =>
+        ipcRenderer.invoke('local-db:messages:around', sessionId, messageId, opts),
       aroundClientId: (
         sessionId: string,
         clientId: string,
@@ -446,24 +485,38 @@ contextBridge.exposeInMainWorld('electronAPI', {
         onPayloadWithMetadata('local-db:session:error-persisted', cb),
     },
     rightSidebarTabs: {
-      list: (input: unknown): Promise<unknown> => ipcRenderer.invoke('local-db:right-sidebar-tabs:list', input),
-      ensureSingleton: (input: unknown): Promise<unknown> => ipcRenderer.invoke('local-db:right-sidebar-tabs:ensure-singleton', input),
-      upsert: (input: unknown): Promise<unknown> => ipcRenderer.invoke('local-db:right-sidebar-tabs:upsert', input),
-      close: (input: unknown): Promise<unknown> => ipcRenderer.invoke('local-db:right-sidebar-tabs:close', input),
-      setActive: (input: unknown): Promise<unknown> => ipcRenderer.invoke('local-db:right-sidebar-tabs:setActive', input),
-      reorder: (input: unknown): Promise<unknown> => ipcRenderer.invoke('local-db:right-sidebar-tabs:reorder', input),
+      list: (input: unknown): Promise<unknown> =>
+        ipcRenderer.invoke('local-db:right-sidebar-tabs:list', input),
+      ensureSingleton: (input: unknown): Promise<unknown> =>
+        ipcRenderer.invoke('local-db:right-sidebar-tabs:ensure-singleton', input),
+      upsert: (input: unknown): Promise<unknown> =>
+        ipcRenderer.invoke('local-db:right-sidebar-tabs:upsert', input),
+      close: (input: unknown): Promise<unknown> =>
+        ipcRenderer.invoke('local-db:right-sidebar-tabs:close', input),
+      setActive: (input: unknown): Promise<unknown> =>
+        ipcRenderer.invoke('local-db:right-sidebar-tabs:setActive', input),
+      reorder: (input: unknown): Promise<unknown> =>
+        ipcRenderer.invoke('local-db:right-sidebar-tabs:reorder', input),
     },
     subagentRuns: {
-      list: (input: unknown): Promise<unknown> => ipcRenderer.invoke('local-db:subagent-runs:list', input),
-      detail: (input: unknown): Promise<unknown> => ipcRenderer.invoke('local-db:subagent-runs:detail', input),
-      transcript: (input: unknown): Promise<unknown> => ipcRenderer.invoke('local-db:subagent-runs:transcript', input),
-      onChanged: (cb: (payload: unknown, ownerStamp?: unknown) => void): (() => void) => onPayloadWithMetadata('local-db:subagent-runs:changed', cb),
+      list: (input: unknown): Promise<unknown> =>
+        ipcRenderer.invoke('local-db:subagent-runs:list', input),
+      detail: (input: unknown): Promise<unknown> =>
+        ipcRenderer.invoke('local-db:subagent-runs:detail', input),
+      transcript: (input: unknown): Promise<unknown> =>
+        ipcRenderer.invoke('local-db:subagent-runs:transcript', input),
+      onChanged: (cb: (payload: unknown, ownerStamp?: unknown) => void): (() => void) =>
+        onPayloadWithMetadata('local-db:subagent-runs:changed', cb),
     },
     orcaWorkflows: {
-      getByLeadSession: (id: string): Promise<unknown> => ipcRenderer.invoke('local-db:orca-workflows:get-by-lead', id),
-      getByWorkerSession: (id: string): Promise<unknown> => ipcRenderer.invoke('local-db:orca-workflows:get-by-worker-session', id),
-      listWorkersByLead: (id: string): Promise<unknown> => ipcRenderer.invoke('local-db:orca-workflows:list-workers-by-lead', id),
-      listWorkersByLeads: (ids: string[]): Promise<unknown> => ipcRenderer.invoke('local-db:orca-workflows:list-workers-by-leads', ids),
+      getByLeadSession: (id: string): Promise<unknown> =>
+        ipcRenderer.invoke('local-db:orca-workflows:get-by-lead', id),
+      getByWorkerSession: (id: string): Promise<unknown> =>
+        ipcRenderer.invoke('local-db:orca-workflows:get-by-worker-session', id),
+      listWorkersByLead: (id: string): Promise<unknown> =>
+        ipcRenderer.invoke('local-db:orca-workflows:list-workers-by-lead', id),
+      listWorkersByLeads: (ids: string[]): Promise<unknown> =>
+        ipcRenderer.invoke('local-db:orca-workflows:list-workers-by-leads', ids),
       createWorker: (input: Record<string, unknown>): Promise<unknown> =>
         ipcRenderer.invoke('maker:worker:create', input),
       switchFocus: (input: Record<string, unknown>): Promise<unknown> =>
@@ -491,29 +544,48 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('maker:team:end', leadSessionId),
       getCollaborationSettings: (): Promise<unknown> =>
         ipcRenderer.invoke('maker:collaboration-settings:get'),
-      onOrcaWorkerChanged: (cb: (payload: unknown) => void): (() => void) => onPayload('maker:orca:worker-changed', cb),
+      onOrcaWorkerChanged: (cb: (payload: unknown) => void): (() => void) =>
+        onPayload('maker:orca:worker-changed', cb),
     },
   },
 
   gitReview: {
+    history: (params: { sessionId: string }) => ipcRenderer.invoke('git-review:history', params),
     get: (params: unknown): Promise<unknown> => ipcRenderer.invoke('git-review:get', params),
-    summary: (params: unknown): Promise<unknown> => ipcRenderer.invoke('git-review:summary', params),
-    commits: (params: unknown): Promise<unknown> => ipcRenderer.invoke('git-review:commits', params),
-    commitDiff: (params: unknown): Promise<unknown> => ipcRenderer.invoke('git-review:commit-diff', params),
-    branchDiff: (params: unknown): Promise<unknown> => ipcRenderer.invoke('git-review:branch-diff', params),
-    fileDiff: (params: unknown): Promise<unknown> => ipcRenderer.invoke('git-review:file-diff', params),
-    imagePreview: (params: unknown): Promise<unknown> => ipcRenderer.invoke('git-review:image-preview', params),
-    markdownPreview: (params: unknown): Promise<unknown> => ipcRenderer.invoke('git-review:markdown-preview', params),
-    openFile: (params: unknown): Promise<unknown> => ipcRenderer.invoke('git-review:open-file', params),
-    stageFile: (params: unknown): Promise<unknown> => ipcRenderer.invoke('git-review:stage-file', params),
-    unstageFile: (params: unknown): Promise<unknown> => ipcRenderer.invoke('git-review:unstage-file', params),
-    discardFile: (params: unknown): Promise<unknown> => ipcRenderer.invoke('git-review:discard-file', params),
-    stageHunk: (params: unknown): Promise<unknown> => ipcRenderer.invoke('git-review:stage-hunk', params),
-    unstageHunk: (params: unknown): Promise<unknown> => ipcRenderer.invoke('git-review:unstage-hunk', params),
-    discardHunk: (params: unknown): Promise<unknown> => ipcRenderer.invoke('git-review:discard-hunk', params),
-    stageAll: (params: unknown): Promise<unknown> => ipcRenderer.invoke('git-review:stage-all', params),
-    unstageAll: (params: unknown): Promise<unknown> => ipcRenderer.invoke('git-review:unstage-all', params),
-    discardAll: (params: unknown): Promise<unknown> => ipcRenderer.invoke('git-review:discard-all', params),
+    summary: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('git-review:summary', params),
+    commits: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('git-review:commits', params),
+    commitDiff: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('git-review:commit-diff', params),
+    branchDiff: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('git-review:branch-diff', params),
+    fileDiff: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('git-review:file-diff', params),
+    imagePreview: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('git-review:image-preview', params),
+    markdownPreview: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('git-review:markdown-preview', params),
+    openFile: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('git-review:open-file', params),
+    stageFile: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('git-review:stage-file', params),
+    unstageFile: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('git-review:unstage-file', params),
+    discardFile: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('git-review:discard-file', params),
+    stageHunk: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('git-review:stage-hunk', params),
+    unstageHunk: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('git-review:unstage-hunk', params),
+    discardHunk: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('git-review:discard-hunk', params),
+    stageAll: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('git-review:stage-all', params),
+    unstageAll: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('git-review:unstage-all', params),
+    discardAll: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('git-review:discard-all', params),
     commit: (params: unknown): Promise<unknown> => ipcRenderer.invoke('git-review:commit', params),
     push: (params: unknown): Promise<unknown> => ipcRenderer.invoke('git-review:push', params),
   },
@@ -574,10 +646,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /** 涓荤獥鎺ㄩ€?RSB 娴忚鍣ㄦ寜閿懡浠?鈱樷嚙鈫?绛?鍒板瓙绐楀彛銆?*/
   search: {
     start: (params: unknown): Promise<unknown> => ipcRenderer.invoke('maker:search:start', params),
-    cancel: (params: unknown): Promise<unknown> => ipcRenderer.invoke('maker:search:cancel', params),
+    cancel: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('maker:search:cancel', params),
     onEvent: (cb: (event: unknown) => void): (() => void) => onPayload('maker:search:event', cb),
   },
-  onRsbBrowserCommand: (
-    cb: (payload: { command: string }) => void,
-  ): (() => void) => onPayload('maker:push:rsb-browser-command', cb),
+  onRsbBrowserCommand: (cb: (payload: { command: string }) => void): (() => void) =>
+    onPayload('maker:push:rsb-browser-command', cb),
 });

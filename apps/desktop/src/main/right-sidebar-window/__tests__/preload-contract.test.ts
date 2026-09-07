@@ -191,7 +191,7 @@ describe('sidebarWindowPreload 椤跺眰濂戠害', () => {
       'fetchRemote', 'readCached', 'cachePut', 'onTransferProgress', 'chatFetch', 'chatStat',
     ]));
     expect(terminalKeys).toEqual(expect.arrayContaining([
-      'create', 'write', 'resize', 'dispose', 'restart', 'onData', 'onExit',
+      'create', 'write', 'resize', 'dispose', 'restart', 'onData', 'onExit', 'listAvailableShells',
     ]));
     expect(gitReviewKeys).toEqual(expect.arrayContaining([
       'get', 'summary', 'commits', 'commitDiff', 'branchDiff', 'fileDiff', 'imagePreview',

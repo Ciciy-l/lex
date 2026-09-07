@@ -7,6 +7,9 @@
 
 import { promises as fs } from 'node:fs';
 
+import { isTrustedAppRendererEvent } from '../security/trustedAppRenderer.js';
+import { listRepositoryHistory } from './commitReader.js';
+import type { ReviewHistoryData } from './types.js';
 import { ipcMain, shell } from 'electron';
 
 import { requireObject, requireString, throwIpcError } from '../utils/ipcValidate.js';
@@ -50,6 +53,7 @@ import type {
 } from './types.js';
 
 export const GIT_REVIEW_INVOKE = {
+  HISTORY: 'git-review:history',
   GET: 'git-review:get',
   SUMMARY: 'git-review:summary',
   COMMITS: 'git-review:commits',
@@ -155,6 +159,10 @@ export async function readReviewSummary(sessionId: string, deps: Pick<GitReviewD
   if (scope.disabledReason || !scope.repoRoot) return buildDirtySummary(sessionId, scope, null);
   const status = await deps.readStatus(scope);
   return buildDirtySummary(sessionId, status.scope, status);
+}
+
+export async function readReviewHistory(sessionId: string, deps: Pick<GitReviewDeps, 'resolveScope'> = { resolveScope: resolveReviewScope }): Promise<ReviewHistoryData> {
+  return listRepositoryHistory(await deps.resolveScope(sessionId));
 }
 
 export async function readReviewCommits(sessionId: string, baseRef: string | null, deps: Pick<GitReviewDeps, 'resolveScope'> = {
@@ -696,6 +704,15 @@ export function registerGitReviewIpc(options: GitReviewIpcOptions = {}): void {
     ...defaultGitReviewDeps,
     isSessionRunning: options.isSessionRunning,
   };
+
+  ipcMain.handle(GIT_REVIEW_INVOKE.HISTORY, async (event, payload: unknown) => {
+    if (!isTrustedAppRendererEvent(event)) throwIpcError('PERMISSION_DENIED', 'trusted renderer required');
+    try {
+      const sessionId = parseSessionId(payload);
+      if (sessionId.length > 128) throwIpcError('INVALID_PARAMS', 'invalid sessionId');
+      return await withSessionReviewExecution(sessionId, () => readReviewHistory(sessionId));
+    } catch (err) { rethrowReviewIpcError(err); }
+  });
 
   ipcMain.handle(GIT_REVIEW_INVOKE.GET, async (_event, payload: unknown) => {
     try {

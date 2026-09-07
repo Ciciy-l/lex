@@ -14,6 +14,8 @@
 import { BrowserWindow, ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
+import { getSessionRowSnapshotStrict } from '../localDb/ipc/sessions.js';
+import { resolveTerminalFile } from '../terminal/terminalFileResolver.js';
 import { throwIpcError } from '../utils/ipcValidate.js';
 import { createLogger } from '../logger.js';
 import {
@@ -85,7 +87,10 @@ export function registerTerminalHandlers(options?: TerminalHandlersOptions): Pty
   const isTrustedOwner = options?.isTrustedOwner ?? isTrustedTerminalOwner;
   const assertTrustedSender = (event: IpcMainInvokeEvent): void => {
     if (!isTrustedSender(event)) {
-      throwIpcError('PERMISSION_DENIED', `terminal IPC is only available to ${BRAND_NAME} renderers`);
+      throwIpcError(
+        'PERMISSION_DENIED',
+        `terminal IPC is only available to ${BRAND_NAME} renderers`,
+      );
     }
   };
   const pushToTrustedOwner = (target: WebContents, channel: string, payload: unknown): void => {
@@ -99,6 +104,7 @@ export function registerTerminalHandlers(options?: TerminalHandlersOptions): Pty
   };
   const manager = new PtyManager({
     sink: {
+      emitStatus: (target, record) => pushToTrustedOwner(target, TERMINAL_PUSH.STATUS, record),
       emitData: (target: WebContents, payload: DataPayload) => {
         // A renderer can navigate after the PTY is attached.  Checking only
         // `isDestroyed()` would keep sending private terminal output to an
@@ -124,6 +130,62 @@ export function registerTerminalHandlers(options?: TerminalHandlersOptions): Pty
     },
   });
 
+  ipcMain.handle(TERMINAL_INVOKE.RESOLVE_FILE, async (event: IpcMainInvokeEvent, idArg: unknown, pathArg: unknown) => {
+    assertTrustedSender(event);
+    const id = requireString(idArg, 'id', MAX_TERMINAL_ID_LENGTH);
+    const candidate = requireString(pathArg, 'path', MAX_TERMINAL_CWD_LENGTH);
+    const runtime = manager.getRuntime(id, event.sender);
+    if (!runtime) throwIpcError('PERMISSION_DENIED', 'terminal is unavailable to this window');
+    const lead = await getSessionRowSnapshotStrict(runtime.sessionId);
+    if (!lead?.workingDir || lead.remoteHostId || lead.workspaceKind === 'remote') throwIpcError('PERMISSION_DENIED', 'local workspace required');
+    try {
+      const target = await resolveTerminalFile(lead.workingDir, runtime.cwd, candidate);
+      assertTrustedSender(event);
+      if (!manager.isOwner(id, event.sender)) throwIpcError('PERMISSION_DENIED', 'terminal owner changed');
+      return target;
+    } catch {
+      throwIpcError('INVALID_PARAMS', 'file is unavailable in this workspace');
+    }
+  });
+
+  ipcMain.handle(TERMINAL_INVOKE.RENAME, (event: IpcMainInvokeEvent, idArg: unknown, title: unknown) => {
+    assertTrustedSender(event);
+    const id = requireString(idArg, 'id', MAX_TERMINAL_ID_LENGTH);
+    if (typeof title !== 'string' || title.length > 120 || /[\x00-\x1f\x7f]/.test(title)) {
+      throwIpcError('INVALID_PARAMS', 'invalid terminal title');
+    }
+    if (manager.has(id) && !manager.isOwner(id, event.sender)) {
+      throwIpcError('PERMISSION_DENIED', 'terminal session is owned by another window');
+    }
+    manager.rename(id, title as string, event.sender);
+  });
+
+  ipcMain.handle(TERMINAL_INVOKE.LIST, (event: IpcMainInvokeEvent, sessionArg: unknown) => {
+    assertTrustedSender(event);
+    return manager.list(
+      requireString(sessionArg, 'sessionId', MAX_TERMINAL_ID_LENGTH),
+      event.sender,
+    );
+  });
+  for (const channel of [TERMINAL_INVOKE.DETACH, TERMINAL_INVOKE.TERMINATE]) {
+    ipcMain.handle(channel, (event: IpcMainInvokeEvent, idArg: unknown) => {
+      assertTrustedSender(event);
+      const id = requireString(idArg, 'id', MAX_TERMINAL_ID_LENGTH);
+      if (!manager.has(id)) throwIpcError('TERMINAL_NOT_FOUND', 'terminal is no longer available');
+      if (!manager.isOwner(id, event.sender)) {
+        throwIpcError('PERMISSION_DENIED', 'terminal session is owned by another window');
+      }
+      if (channel === TERMINAL_INVOKE.DETACH) manager.detach(id, event.sender);
+      else {
+        try {
+          manager.terminate(id, event.sender);
+        } catch {
+          throwIpcError('INTERNAL', 'failed to terminate the terminal process');
+        }
+      }
+    });
+  }
+
   ipcMain.handle(TERMINAL_INVOKE.CREATE, (event: IpcMainInvokeEvent, params: unknown) => {
     assertTrustedSender(event);
     const opts = parseCreateParams(params, event.sender);
@@ -143,6 +205,9 @@ export function registerTerminalHandlers(options?: TerminalHandlersOptions): Pty
       // 区分 shell not found vs 通用 spawn 失败。shellResolver 永远返回 ResolvedShell，
       // 兜底到 /bin/sh / cmd.exe；这里失败一般是 spawn 系统调用层面的（权限 / 路径不可达）。
       const msg = err instanceof Error ? err.message : String(err);
+      if (/TERMINAL_NOT_FOUND/.test(msg)) {
+        throwIpcError('TERMINAL_NOT_FOUND', 'terminal is no longer available');
+      }
       if (/TERMINAL_AGENT_NOT_READY/.test(msg)) {
         throwIpcError('TERMINAL_AGENT_NOT_READY', 'the selected Agent runtime is not ready');
       }
@@ -196,6 +261,19 @@ export function registerTerminalHandlers(options?: TerminalHandlersOptions): Pty
     manager.dispose(id, event.sender);
   });
 
+  ipcMain.handle(TERMINAL_INVOKE.FORGET, (event: IpcMainInvokeEvent, idArg: unknown) => {
+    assertTrustedSender(event);
+    const id = requireString(idArg, 'id', MAX_TERMINAL_ID_LENGTH);
+    if (manager.has(id) && !manager.isOwner(id, event.sender)) {
+      throwIpcError('PERMISSION_DENIED', 'terminal session is owned by another window');
+    }
+    try {
+      manager.forget(id, event.sender);
+    } catch {
+      throwIpcError('PRECONDITION_FAILED', 'cannot remove a terminal that has not exited');
+    }
+  });
+
   ipcMain.handle(TERMINAL_INVOKE.RESTART, (event, idArg: unknown) => {
     assertTrustedSender(event);
     const id = requireString(idArg, 'id', MAX_TERMINAL_ID_LENGTH);
@@ -230,7 +308,7 @@ export function registerTerminalHandlers(options?: TerminalHandlersOptions): Pty
 
   ipcMain.handle(
     TERMINAL_INVOKE.LIST_AVAILABLE_SHELLS,
-    (event: IpcMainInvokeEvent): AvailableShell[] => {
+    (event: IpcMainInvokeEvent): Promise<AvailableShell[]> => {
       assertTrustedSender(event);
       return probeAvailableShells();
     },
@@ -285,7 +363,24 @@ function parseCreateParams(raw: unknown, owner: WebContents): CreateOptions {
   const rows = optionalPositiveInt(obj.rows);
   const shellPref = optionalShellPref(obj.shellPref);
   const profile = optionalTerminalProfile(obj.profile);
-  return { id, cwd, cols, rows, shellPref, profile, owner };
+  const sessionId =
+    obj.sessionId === undefined
+      ? undefined
+      : requireString(obj.sessionId, 'sessionId', MAX_TERMINAL_ID_LENGTH);
+  if (obj.attachOnly !== undefined && typeof obj.attachOnly !== 'boolean') {
+    throwIpcError('INVALID_PARAMS', 'attachOnly must be boolean');
+  }
+  return {
+    id,
+    cwd,
+    cols,
+    rows,
+    shellPref,
+    profile,
+    owner,
+    sessionId,
+    attachOnly: obj.attachOnly === true,
+  };
 }
 
 function requireString(value: unknown, name: string, maxLength: number): string {

@@ -21,6 +21,7 @@
 import '@xterm/xterm/css/xterm.css';
 
 import { Terminal, type ITheme, type ITerminalOptions } from '@xterm/xterm';
+import { SearchAddon } from '@xterm/addon-search';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 
@@ -29,8 +30,12 @@ import { createLogger } from '@/lib/logger';
 const log = createLogger('terminal');
 
 export interface XtermEntry {
+  offOutput?: () => void;
+  onUrlContext?: (event: MouseEvent, url: string) => void;
+  hoveredUrl?: () => string | null;
   terminal: Terminal;
   fitAddon: FitAddon;
+  searchAddon: SearchAddon;
   /** 上次 fit 的尺寸,供 mount 后立即用作 PTY 初始 cols/rows。 */
   lastSize: { cols: number; rows: number };
   /**
@@ -117,21 +122,33 @@ export function getOrCreateXterm(tabId: string): XtermEntry {
   if (entry) return entry;
   const terminal = new Terminal(DEFAULT_OPTIONS);
   const fitAddon = new FitAddon();
+  const searchAddon = new SearchAddon();
+  terminal.loadAddon(searchAddon);
   // xterm's default link handler uses `window.open()`. In an Electron
   // renderer that creates a popup window, which is intentionally blocked by
   // the app's window policy and leaves terminal links inert. Route the click
   // through the existing main-process URL allowlist instead.
-  const webLinks = new WebLinksAddon(openTerminalExternalLink);
+  let hoveredUrl: string | null = null;
+  const webLinks = new WebLinksAddon(openTerminalExternalLink, {
+    hover: (_event, url) => { hoveredUrl = url; },
+    leave: () => { hoveredUrl = null; },
+  });
   terminal.loadAddon(fitAddon);
   terminal.loadAddon(webLinks);
   attachSelectionCopyShortcut(terminal);
   entry = {
     terminal,
+    hoveredUrl: () => hoveredUrl,
     fitAddon,
+    searchAddon,
     lastSize: { cols: 80, rows: 24 },
     ptyAttached: false,
   };
   pool.set(tabId, entry);
+  // Keep output flowing into the retained terminal while its view is unmounted.
+  entry.offOutput = window.electronAPI?.terminal?.onData?.((event) => {
+    if (event.id === tabId) terminal.write(event.chunk);
+  });
   return entry;
 }
 
@@ -168,11 +185,12 @@ export function markAllPtyDetached(): void {
   for (const entry of pool.values()) entry.ptyAttached = false;
 }
 
-/** 仅供 plugin.onBeforeClose 调用：真正销毁实例 + 释放 GPU/DOM 资源。 */
+/** Explicit Forget (or test cleanup): release the retained view/output resources. */
 export function disposeXterm(tabId: string): void {
   const entry = pool.get(tabId);
   if (!entry) return;
   pool.delete(tabId);
+  entry.offOutput?.();
   try {
     entry.terminal.dispose();
   } catch {

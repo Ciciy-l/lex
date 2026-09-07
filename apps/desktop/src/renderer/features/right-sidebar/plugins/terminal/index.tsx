@@ -12,6 +12,8 @@ import { Terminal as TerminalIcon } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
 import { registerTabKind } from '../../registry';
+import { terminalPtyId } from './terminalIdentity';
+export { terminalPtyId } from './terminalIdentity';
 import type { TabKindPlugin } from '../../types';
 import {
   collectPaneIds,
@@ -27,6 +29,7 @@ const TerminalTabBody = lazy(() =>
 );
 
 function TerminalTabPillTitle({ state, t }: { state: TerminalState; t: TFunction }) {
+  if (state.customTitle) return <>{state.customTitle}</>;
   const paneCount = collectPaneIds(state.layout).length;
   if (state.panes[state.activePaneId]?.title) return <>{state.panes[state.activePaneId].title}</>;
   if (paneCount > 1) return <>{t('rightSidebar.terminal.workbenchTitle', { count: paneCount })}</>;
@@ -51,35 +54,21 @@ const plugin: TabKindPlugin<TerminalState> = {
   TabBody: TerminalTabBody,
   defaultState: () => createInitialTerminalState(),
   hydrateState: hydrateTerminalState,
-  /** Release every pane's PTY and xterm instance when the tab is really closed. */
+  /** Closing the tab hides its view, retaining all panes and their PTYs. */
   onBeforeClose: async (rawState, ctx) => {
     const state = hydrateTerminalState(rawState);
-    const { disposeXterm } = await import('./lib/xtermPool');
     const paneIds = collectPaneIds(state.layout);
     await Promise.all(
       paneIds.map(async (paneId) => {
-        const ptyId = terminalPtyId(ctx.tabId, paneId);
+        const ptyId = state.panes[paneId].terminalId || terminalPtyId(ctx.tabId, paneId);
         try {
-          await window.electronAPI.terminal.dispose(ptyId);
+          await window.electronAPI.terminal.detach(ptyId);
         } catch {
           /* already disposed / app shutdown */
         }
-        disposeXterm(ptyId);
       }),
     );
-    // Pre-workbench tabs used the tab id directly. Keep this one-shot cleanup
-    // for users upgrading from that schema.
-    try {
-      await window.electronAPI.terminal.dispose(ctx.tabId);
-    } catch {
-      /* no legacy session */
-    }
-    disposeXterm(ctx.tabId);
   },
 };
-
-export function terminalPtyId(tabId: string, paneId: string): string {
-  return `${tabId}:${paneId}`;
-}
 
 registerTabKind(plugin as unknown as TabKindPlugin, import.meta.hot);

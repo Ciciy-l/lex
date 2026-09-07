@@ -10,6 +10,7 @@
  */
 
 import './file-browser';
+import './file-content';
 import './web-browser';
 import './ios-simulator';
 import './terminal';

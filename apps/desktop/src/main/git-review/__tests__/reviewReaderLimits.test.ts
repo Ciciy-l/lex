@@ -11,7 +11,7 @@ vi.mock('../gitRunner.js', async () => {
 });
 
 import { listBranchBaseCandidates, readBranchDiff } from '../branchReader';
-import { listBranchCommits, readCommitDiff } from '../commitReader';
+import { listBranchCommits, listRepositoryHistory, readCommitDiff } from '../commitReader';
 import type { ReviewScope } from '../types';
 
 const baseOid = 'a'.repeat(40);
@@ -19,6 +19,29 @@ const headOid = 'b'.repeat(40);
 const mergeBaseOid = 'c'.repeat(40);
 const commitOid = 'd'.repeat(40);
 const parentOid = 'e'.repeat(40);
+
+describe('bounded repository history', () => {
+  it('uses a fixed HEAD with a 51-record bound and no comparison branch lookup', async () => {
+    runGitMock.mockReset();
+    runGitMock.mockImplementation(async (args: string[]) => {
+      if (args[0] === 'rev-parse') return { stdout: headOid + '\n' };
+      if (args[0] === 'log') return { stdout: Array.from({ length: 51 }, (_, i) => i.toString(16).padStart(40, '0') + '\0' + '2026-09-07T12:00:00Z' + '\0commit ' + i).join('\n') };
+      throw new Error('unexpected git operation');
+    });
+    const result = await listRepositoryHistory(scope());
+    expect(result.headOid).toBe(headOid); expect(result.commits).toHaveLength(50); expect(result.truncated).toBe(true);
+    expect(runGitMock).toHaveBeenCalledTimes(2);
+    expect(runGitMock).toHaveBeenLastCalledWith(expect.arrayContaining(['--max-count=51', headOid, '--']), expect.objectContaining({ maxStdoutBytes: 1024 * 1024 }));
+  });
+  it('returns an empty unborn/disabled history without invoking log', async () => {
+    runGitMock.mockReset(); runGitMock.mockRejectedValue(new Error('unborn'));
+    expect((await listRepositoryHistory(scope())).commits).toEqual([]);
+    expect(runGitMock).toHaveBeenCalledTimes(1);
+    runGitMock.mockClear();
+    expect((await listRepositoryHistory({ ...scope(), disabledReason: 'non-git', repoRoot: null })).commits).toEqual([]);
+    expect(runGitMock).not.toHaveBeenCalled();
+  });
+});
 
 function scope(): ReviewScope {
   return {

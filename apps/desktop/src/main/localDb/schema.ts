@@ -1483,7 +1483,7 @@ export const customMcpServers = sqliteTable(
  *
  * 约束(由 IPC handler 层保证):
  *   - 单 session 最多 20 个 tab(超抛 RIGHT_SIDEBAR_TOO_MANY_TABS)。
- *   - 单 session 内 is_active 至多 1 行 true(由 setActive handler 先清旧 active 保证)。
+ *   - 单 session 每个 workspace surface 内 is_active 至多 1 行 true。
  *   - position 由 application 维护连续(0,1,2,...);reorder handler 一次性重写整序。
  */
 export const rightSidebarTabs = sqliteTable(
@@ -1497,7 +1497,7 @@ export const rightSidebarTabs = sqliteTable(
     kind: text('kind').notNull(),
     /** TabBar 上的顺序(0 起,同 session 内连续);reorder IPC 时整序更新。 */
     position: integer('position').notNull(),
-    /** same session 内至多 1 行 true;由 setActive handler 保证。 */
+    /** same session 每个 workspace surface 内至多 1 行 true;由 setActive handler 保证。 */
     isActive: integer('is_active', { mode: 'boolean' }).notNull().default(false),
     /** plugin 私有状态 JSON 字符串。读时由 IPC handler JSON.parse,写时 JSON.stringify。 */
     state: text('state').notNull().default('{}'),

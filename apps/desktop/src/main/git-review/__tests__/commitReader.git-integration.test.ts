@@ -7,7 +7,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 vi.setConfig({ testTimeout: process.platform === 'win32' ? 60_000 : 30_000 });
 
 import { TestDirectoryTemplate } from '../../../test/vitest/testDirectoryTemplate';
-import { listBranchCommits, readCommitDiff } from '../commitReader';
+import { listBranchCommits, listRepositoryHistory, readCommitDiff } from '../commitReader';
 import { runGit } from '../gitRunner';
 import type { ReviewScope } from '../types';
 
@@ -95,6 +95,17 @@ afterAll(async () => {
 });
 
 describe('git-review commitReader', () => {
+  it('shows HEAD history on main without any comparison branch and supports detached HEAD', async () => {
+    const repoPath = await initRepo();
+    expect((await listRepositoryHistory(scope(repoPath))).commits).toEqual([]);
+    await fs.writeFile(path.join(repoPath, 'history.txt'), 'first\n');
+    const first = await commitAll(repoPath, 'first');
+    await fs.writeFile(path.join(repoPath, 'history.txt'), 'second\n');
+    const second = await commitAll(repoPath, 'second');
+    expect((await listRepositoryHistory(scope(repoPath))).commits.map(c => c.oid)).toEqual([second, first]);
+    await runGit(['checkout', '--detach', first], { cwd: repoPath });
+    expect((await listRepositoryHistory(scope(repoPath))).commits.map(c => c.oid)).toEqual([first]);
+  });
   it('lists branch commits from base..HEAD and reads a normal commit diff against first parent', async () => {
     const repoPath = await initRepo();
     await fs.writeFile(path.join(repoPath, 'note.txt'), 'one\n');

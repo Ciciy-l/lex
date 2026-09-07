@@ -51,13 +51,11 @@ import { Save, Table2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { fileBrowserApiFor } from '@/lib/fileBrowserTransport';
 
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Spinner } from '@/components/ui/spinner';
 import { acquireFindInPage } from '@/components/find-in-page/findInPageOwnership';
 import { useAppShortcut } from '@/hooks/useAppShortcut';
-import {
-  PlaintextEditor,
-  type PlaintextEditorHandle,
-} from '@/components/markdown/PlaintextEditor';
+import { PlaintextEditor, type PlaintextEditorHandle } from '@/components/markdown/PlaintextEditor';
 import { MermaidLightboxHost } from '@/components/markdown/MermaidLightboxHost';
 import { MermaidSourceEditorHost } from '@/components/markdown/MermaidSourceEditor';
 import { MarkdownImageLightboxHost } from '@/components/markdown/MarkdownImageLightboxHost';
@@ -74,7 +72,7 @@ import { ImagePreview } from './ImagePreview';
 import { PdfPreview } from './PdfPreview';
 import { UnrenderablePlaceholder } from './UnrenderablePlaceholder';
 import { DocSearchBar } from './DocSearchBar';
-import { setActiveFileBodyHandle } from './lib/activeFileBodyHandle';
+import { getActiveFileBodyHandle, setActiveFileBodyHandle } from './lib/activeFileBodyHandle';
 import { loadFileScroll, saveFileScroll } from './lib/fileScrollStore';
 import { basename, formatBytes, formatMtime } from './lib/fileMeta';
 import { OpenInSystemActions } from './OpenInSystemActions';
@@ -148,16 +146,16 @@ export interface FileBodyViewProps {
   content: FileContent;
   /** false = 只读预览,用于侧边栏拖入工程外文件等不应隐式写盘的入口。 */
   allowEdit?: boolean;
+  /** Inactive workspace tabs keep drafts, but never own global shortcuts. */
+  active?: boolean;
   /**
    * 保存成功后回调,把 disk 上的最新数据回传给父层 useFileContent.setLocal。
    * 同步推 cache + state,避免 refresh() 走 IPC 时闪一帧空白。
    */
-  onSaved?: (data: {
-    content: string;
-    size: number;
-    mtimeMs: number;
-    truncated: boolean;
-  }) => void;
+  onUserEdit?: () => void;
+  revealTarget?: { line: number; column?: number; requestId: string } | null;
+  onRevealConsumed?: () => void;
+  onSaved?: (data: { content: string; size: number; mtimeMs: number; truncated: boolean }) => void;
   /**
    * 来自 URL ?search 参数 — workdir-browse 搜索面板里点命中行时,父组件把命中
    * query 传过来。本组件会在文件加载完毕后自动打开 in-file 搜索栏并把它当作
@@ -180,7 +178,7 @@ export interface FileBodyViewProps {
 export interface FileBodyHandle {
   /** true = 当前可编辑内容相对原始内容已变化(LF 归一后比对)。 */
   isDirty(): boolean;
-  /** 写入磁盘。无 dirty 时直接 resolve(true) 不做任何 IO。返回 false = 写入失败。 */
+  /** 写入磁盘。无 dirty 时不做 IO。false 表示写入失败或保存期间又有新编辑，不能关闭。 */
   save(): Promise<boolean>;
 }
 
@@ -193,7 +191,11 @@ export const FileBodyView = forwardRef<FileBodyHandle, FileBodyViewProps>(functi
     relPath,
     content,
     onSaved,
+    onUserEdit,
+    revealTarget,
+    onRevealConsumed,
     allowEdit = true,
+    active = true,
     jumpQuery,
     jumpLine,
     onSearchJumpConsumed,
@@ -231,6 +233,29 @@ export const FileBodyView = forwardRef<FileBodyHandle, FileBodyViewProps>(functi
   // 原生 !==,归一化成本挪到基准写入时(setBaseline)一次性支付。
   const initialContentNormalizedRef = useRef('');
   const latestDiskContentRef = useRef('');
+  const [conflict, setConflict] = useState<{
+    content: string;
+    size: number;
+    mtimeMs: number;
+    truncated: boolean;
+  } | null>(null);
+  const conflictPaused = useRef(false);
+  const lastReveal = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      !active ||
+      content.kind !== 'text' ||
+      !revealTarget ||
+      lastReveal.current === revealTarget.requestId
+    )
+      return;
+    const frame = requestAnimationFrame(() => {
+      if (!editorRef.current?.revealPosition(revealTarget.line, revealTarget.column ?? 1)) return;
+      lastReveal.current = revealTarget.requestId;
+      onRevealConsumed?.();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [active, content, editMode, revealTarget, onRevealConsumed]);
 
   /** dirty 比对基准的唯一写入口:同步维护原文与归一化两份。 */
   const setBaseline = useCallback((raw: string) => {
@@ -240,7 +265,14 @@ export const FileBodyView = forwardRef<FileBodyHandle, FileBodyViewProps>(functi
 
   // markdown 静默自动保存调度器。writeToDisk 是 useCallback、身份随 deps 变,
   // 经 ref 间接引用让调度器实例可以整个生命周期只建一次。
-  const writeToDiskRef = useRef<((opts?: { silent?: boolean; guardExternalChange?: boolean }) => Promise<boolean>) | null>(null);
+  const writeToDiskRef = useRef<
+    | ((opts?: {
+        silent?: boolean;
+        guardExternalChange?: boolean;
+        overwrite?: boolean;
+      }) => Promise<boolean>)
+    | null
+  >(null);
   const autosaveRef = useRef<MarkdownAutosaveHandle | null>(null);
   if (autosaveRef.current === null) {
     autosaveRef.current = createMarkdownAutosave({
@@ -309,6 +341,8 @@ export const FileBodyView = forwardRef<FileBodyHandle, FileBodyViewProps>(functi
     setDirty(false);
     setSaving(false);
     setSaveError(null);
+    setConflict(null);
+    conflictPaused.current = false;
     autosave.cancel();
     // 切文件 → 关搜索栏、清掉所有残留高亮 / cached matches。
     setBarVisible(false);
@@ -334,8 +368,7 @@ export const FileBodyView = forwardRef<FileBodyHandle, FileBodyViewProps>(functi
   // markdown / 其它文本 / 代码文件都走"永远编辑态",
   // 省掉 Pencil/Check 按钮。
   // 这两个 flag 在多个 effect 和 render 分支里共用,统一在这里推一次。
-  const isMarkdown =
-    relPath !== null && detectRenderable(relPath).kind === 'markdown';
+  const isMarkdown = relPath !== null && detectRenderable(relPath).kind === 'markdown';
   const alwaysEdit = canEdit;
 
   useEffect(() => {
@@ -418,98 +451,120 @@ export const FileBodyView = forwardRef<FileBodyHandle, FileBodyViewProps>(functi
   // markdown / alwaysEdit 模式下保存成功都停留在当前编辑器里。
   // 写盘成功后同步推进 initialContentRef = next,这样下一次 setDirty 比对的基
   // 准就是磁盘最新内容 —— 用户继续敲字的 dirty 判定才正确。
-  // 返回值:true = 已保存(或本来就无变化),false = IO 失败(setSaveError 已写)。
-  const writeToDisk = useCallback(async (opts?: {
-    silent?: boolean;
-    guardExternalChange?: boolean;
-  }): Promise<boolean> => {
-    if (!allowEdit) return true;
-    if (!relPath) return true;
-    const editorValue = editorRef.current?.getValue();
-    if (editorValue == null) return true;
-    // textarea.value 按 HTML 规范会把行尾规范化成 LF,但磁盘原文在 Windows
-    // 上常是 CRLF。两件事要分开处理:
-    //   1) 脏判定 —— 两侧都归一到 LF 再比,避免"没改"被误判成"改了"。
-    //   2) 写回磁盘 —— 如果原文是 CRLF,要把 editor 的 LF 还原回 CRLF,
-    //      否则一次保存会把整个文件行尾静默换掉,git diff 会炸。
-    const normalize = (s: string) => s.replace(/\r\n/g, '\n');
-    const original = initialContentRef.current;
-    if (normalize(editorValue) === normalize(original)) {
-      // 无变化直接退出 —— 避免一次空写入触发 chokidar 反弹。
-      setDirty(false);
-      return true;
-    }
-    if (
-      opts?.guardExternalChange &&
-      normalize(latestDiskContentRef.current) !== normalize(original)
-    ) {
-      const msg = t('ccAgent.workdirBrowse.fileBody.externalChangeBlocked');
-      setSaveError(msg);
-      toast.error(t('ccAgent.workdirBrowse.fileBody.saveFailed', { message: msg }));
-      return false;
-    }
-    const originalUsesCRLF = original.includes('\r\n');
-    const next = originalUsesCRLF
-      ? editorValue.replace(/\r?\n/g, '\r\n')
-      : editorValue;
-    setSaving(true);
-    savingRef.current = true;
-    setSaveError(null);
-    try {
-      const res = await fileBrowserApiFor(deviceId).writeFile({
-        workdir,
-        remoteHostId,
-        relPath,
-        content: next,
-      });
-      if (!res.ok) {
-        setSaveError(res.message);
-        // 写盘失败:toast 立即提示 + saveError banner 持续展示详情,两者互补
-        // (toast 1.2s 自动消失,banner 留到下一次保存或切文件)。
-        toast.error(t('ccAgent.workdirBrowse.fileBody.saveFailed', { message: res.message }));
+  // true means the current draft is fully saved, not merely the captured snapshot.
+  // false also keeps the view open when new edits arrived during the write.
+  const writeToDisk = useCallback(
+    async (opts?: {
+      silent?: boolean;
+      guardExternalChange?: boolean;
+      overwrite?: boolean;
+    }): Promise<boolean> => {
+      if (!allowEdit) return true;
+      if (!relPath) return true;
+      if (savingRef.current || (opts?.silent && conflictPaused.current)) return false;
+      const editorValue = editorRef.current?.getValue();
+      if (editorValue == null) return true;
+      // textarea.value 按 HTML 规范会把行尾规范化成 LF,但磁盘原文在 Windows
+      // 上常是 CRLF。两件事要分开处理:
+      //   1) 脏判定 —— 两侧都归一到 LF 再比,避免"没改"被误判成"改了"。
+      //   2) 写回磁盘 —— 如果原文是 CRLF,要把 editor 的 LF 还原回 CRLF,
+      //      否则一次保存会把整个文件行尾静默换掉,git diff 会炸。
+      const normalize = (s: string) => s.replace(/\r\n/g, '\n');
+      const original = initialContentRef.current;
+      if (normalize(editorValue) === normalize(original)) {
+        // 无变化直接退出 —— 避免一次空写入触发 chokidar 反弹。
+        setDirty(false);
+        return true;
+      }
+      const originalUsesCRLF = original.includes('\r\n');
+      const next = originalUsesCRLF ? editorValue.replace(/\r?\n/g, '\r\n') : editorValue;
+      setSaving(true);
+      savingRef.current = true;
+      setSaveError(null);
+      try {
+        // Read through the owning transport. A failed/truncated read is never permission to overwrite.
+        const disk = await fileBrowserApiFor(deviceId).readFile({ workdir, remoteHostId, relPath });
+        if (!disk.ok || disk.data.truncated)
+          throw new Error(t('rightSidebar.workbench.verifySaveFailed'));
+        if (!opts?.overwrite && normalize(disk.data.content) !== normalize(original)) {
+          conflictPaused.current = true;
+          autosave.cancel();
+          setConflict(disk.data);
+          setSaveError(t('ccAgent.workdirBrowse.fileBody.externalChangeBlocked'));
+          return false;
+        }
+        const res = await fileBrowserApiFor(deviceId).writeFile({
+          workdir,
+          remoteHostId,
+          relPath,
+          content: next,
+        });
+        if (!res.ok) {
+          setSaveError(res.message);
+          // 写盘失败:toast 立即提示 + saveError banner 持续展示详情,两者互补
+          // (toast 1.2s 自动消失,banner 留到下一次保存或切文件)。
+          toast.error(t('ccAgent.workdirBrowse.fileBody.saveFailed', { message: res.message }));
+          return false;
+        }
+        // 同步推进 baseline,后续 dirty 比对从磁盘最新内容算起。
+        setBaseline(next);
+        latestDiskContentRef.current = next;
+        const stillDirty =
+          normalize(editorRef.current?.getValue() ?? editorValue) !== normalize(next);
+        setDirty(stillDirty);
+        conflictPaused.current = false;
+        if (stillDirty && isMarkdown) autosave.schedule();
+        window.dispatchEvent(
+          new CustomEvent('lex:workspace-file-saved', { detail: { sessionId } }),
+        );
+        // 把刚写到磁盘的内容直接回传给父层(走 setLocal 路径同步推 cache + state),
+        // 不走 refresh() 触发的 cache miss + loading 中间态 → 没有空白闪帧。
+        // canEdit 已经把 truncated 文件挡掉(见 canEdit = !isTruncated),所以
+        // 走到这里的保存内容一定是完整文件,truncated 固定 false。
+        onSaved?.({
+          content: next,
+          size: res.size,
+          mtimeMs: res.mtimeMs,
+          truncated: false,
+        });
+        if (!opts?.silent) {
+          toast.success(t('ccAgent.workdirBrowse.fileBody.saved'));
+        }
+        return !stillDirty;
+      } catch (err) {
+        const msg = String(err);
+        setSaveError(msg);
+        toast.error(t('ccAgent.workdirBrowse.fileBody.saveFailed', { message: msg }));
         return false;
+      } finally {
+        setSaving(false);
+        savingRef.current = false;
       }
-      // 同步推进 baseline,后续 dirty 比对从磁盘最新内容算起。
-      setBaseline(next);
-      latestDiskContentRef.current = next;
-      setDirty(false);
-      // 把刚写到磁盘的内容直接回传给父层(走 setLocal 路径同步推 cache + state),
-      // 不走 refresh() 触发的 cache miss + loading 中间态 → 没有空白闪帧。
-      // canEdit 已经把 truncated 文件挡掉(见 canEdit = !isTruncated),所以
-      // 走到这里的保存内容一定是完整文件,truncated 固定 false。
-      onSaved?.({
-        content: next,
-        size: res.size,
-        mtimeMs: res.mtimeMs,
-        truncated: false,
-      });
-      if (!opts?.silent) {
-        toast.success(t('ccAgent.workdirBrowse.fileBody.saved'));
-      }
-      return true;
-    } catch (err) {
-      const msg = String(err);
-      setSaveError(msg);
-      toast.error(t('ccAgent.workdirBrowse.fileBody.saveFailed', { message: msg }));
-      return false;
-    } finally {
-      setSaving(false);
-      savingRef.current = false;
-    }
-  }, [allowEdit, relPath, workdir, remoteHostId, deviceId, onSaved, t, setBaseline]);
+    },
+    [allowEdit, relPath, workdir, remoteHostId, deviceId, onSaved, t, setBaseline, isMarkdown],
+  );
 
   // autosave 调度器经 ref 取最新 writeToDisk(实例只建一次,身份不随 deps 漂)。
   useEffect(() => {
     writeToDiskRef.current = writeToDisk;
   }, [writeToDisk]);
 
+  // Read the editor and saved baseline synchronously: close can run before
+  // React publishes the dirty-state update from a completed save.
+  const isDirty = useCallback(() => {
+    if (!allowEdit || !editMode) return false;
+    const value = editorRef.current?.getValue();
+    if (value == null) return dirty;
+    return value.replace(/\r\n/g, '\n') !== initialContentRef.current.replace(/\r\n/g, '\n');
+  }, [allowEdit, editMode, dirty]);
+
   useImperativeHandle(
     ref,
     () => ({
-      isDirty: () => allowEdit && editMode && dirty,
+      isDirty,
       save: () => (allowEdit ? writeToDisk() : Promise.resolve(true)),
     }),
-    [allowEdit, editMode, dirty, writeToDisk],
+    [allowEdit, isDirty, writeToDisk],
   );
 
   // 同步把当前 FileBodyView 的 handle 注册到 module-level singleton,让
@@ -517,12 +572,16 @@ export const FileBodyView = forwardRef<FileBodyHandle, FileBodyViewProps>(functi
   // lib/activeFileBodyHandle.ts)。effect 的 deps 跟着 useImperativeHandle 走,
   // editMode/dirty 变化时刷新 store 引用。unmount 时清空。
   useEffect(() => {
-    setActiveFileBodyHandle({
-      isDirty: () => allowEdit && editMode && dirty,
+    if (!active) return;
+    const handle = {
+      isDirty,
       save: () => (allowEdit ? writeToDisk() : Promise.resolve(true)),
-    });
-    return () => setActiveFileBodyHandle(null);
-  }, [allowEdit, editMode, dirty, writeToDisk]);
+    };
+    setActiveFileBodyHandle(handle);
+    return () => {
+      if (getActiveFileBodyHandle() === handle) setActiveFileBodyHandle(null);
+    };
+  }, [active, allowEdit, isDirty, writeToDisk]);
 
   // ── find-in-page / search-in-project capture ───────────────────────────
   // 组合键定义在 shared/appShortcuts registry (默认 Ctrl/Cmd+F 与
@@ -536,9 +595,10 @@ export const FileBodyView = forwardRef<FileBodyHandle, FileBodyViewProps>(functi
   // 组合键。事件通过 window CustomEvent 派发给同路由下的 WorkdirBrowseSidebar,
   // 解耦两侧组件。
   useEffect(() => {
+    if (!active) return;
     const release = acquireFindInPage();
     return () => release();
-  }, []);
+  }, [active]);
 
   // Bail when an app-level mermaid source modal is open. The modal mounts
   // AFTER us so any capture listener it registers can't preempt our
@@ -559,7 +619,7 @@ export const FileBodyView = forwardRef<FileBodyHandle, FileBodyViewProps>(functi
       });
       return true;
     },
-    { stopImmediate: true },
+    { stopImmediate: true, enabled: active },
   );
 
   useAppShortcut(
@@ -569,7 +629,7 @@ export const FileBodyView = forwardRef<FileBodyHandle, FileBodyViewProps>(functi
       window.dispatchEvent(new CustomEvent('workdir-open-project-search'));
       return true;
     },
-    { stopImmediate: true },
+    { stopImmediate: true, enabled: active },
   );
 
   // ── save-file → 写盘 (默认 Ctrl/⌘+S) ────────────────────────────────────
@@ -586,7 +646,7 @@ export const FileBodyView = forwardRef<FileBodyHandle, FileBodyViewProps>(functi
       if (!saving) void writeToDisk();
       return true;
     },
-    { stopImmediate: true },
+    { stopImmediate: true, enabled: active },
   );
 
   // ── Search runner ───────────────────────────────────────────────────────
@@ -674,7 +734,7 @@ export const FileBodyView = forwardRef<FileBodyHandle, FileBodyViewProps>(functi
   // 注:这块 effect 必须放在 closeSearch (useCallback) 之后 —— deps 数组
   // 在 render 时同步求值,放前面会撞 const 的 temporal dead zone。
   useEffect(() => {
-    if (!barVisible) return;
+    if (!active || !barVisible) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       e.preventDefault();
@@ -684,7 +744,7 @@ export const FileBodyView = forwardRef<FileBodyHandle, FileBodyViewProps>(functi
     };
     window.addEventListener('keydown', handler, true);
     return () => window.removeEventListener('keydown', handler, true);
-  }, [barVisible, closeSearch]);
+  }, [active, barVisible, closeSearch]);
 
   // ── Project-search jump (URL ?search&line) ─────────────────────────────
   // 父组件从 workdir-browse 的搜索面板里点命中行 → URL 带上 ?search & ?line。
@@ -728,23 +788,13 @@ export const FileBodyView = forwardRef<FileBodyHandle, FileBodyViewProps>(functi
 
     const targetLine = jumpLine ?? null;
     const idx =
-      targetLine !== null
-        ? countMatchesBeforeLine(content.content, jumpQuery, targetLine)
-        : 0;
+      targetLine !== null ? countMatchesBeforeLine(content.content, jumpQuery, targetLine) : 0;
     const active = Math.min(idx, lastRun.total - 1);
     setSearchActive(active);
     editorRef.current?.search.setActive(active);
     lastJumpKeyRef.current = jumpKey;
     onSearchJumpConsumed?.();
-  }, [
-    relPath,
-    jumpQuery,
-    jumpLine,
-    content,
-    searchQuery,
-    searchTotal,
-    onSearchJumpConsumed,
-  ]);
+  }, [relPath, jumpQuery, jumpLine, content, searchQuery, searchTotal, onSearchJumpConsumed]);
 
   // ── Non-text render branches (early returns; no edit affordance) ────────
   if (!relPath || content.kind === 'empty') {
@@ -982,6 +1032,35 @@ export const FileBodyView = forwardRef<FileBodyHandle, FileBodyViewProps>(functi
         ) : null}
       </div>
 
+      {conflict && (
+        <ConfirmDialog
+          open
+          title={t('rightSidebar.workbench.fileChanged')}
+          description={t('ccAgent.workdirBrowse.fileBody.externalChangeBlocked')}
+          confirmText={t('rightSidebar.workbench.overwrite')}
+          confirmVariant="destructive"
+          tertiaryText={t('rightSidebar.workbench.reloadFile')}
+          cancelText={t('rightSidebar.workbench.keepDraft')}
+          onOpenChange={(open) => {
+            if (!open) setConflict(null);
+          }}
+          onConfirm={() => {
+            setConflict(null);
+            void writeToDisk({ overwrite: true });
+          }}
+          onTertiary={() => {
+            const disk = conflict;
+            setBaseline(disk.content);
+            latestDiskContentRef.current = disk.content;
+            editorRef.current?.setValue(disk.content);
+            setDirty(false);
+            setSaveError(null);
+            conflictPaused.current = false;
+            setConflict(null);
+            onSaved?.(disk);
+          }}
+        />
+      )}
       {/* 保存错误 toast —— 出现在按钮组下方,主动重试或切文件后清掉。 */}
       {saveError && (
         <div
@@ -989,8 +1068,7 @@ export const FileBodyView = forwardRef<FileBodyHandle, FileBodyViewProps>(functi
           className={cn(
             'absolute right-[18px] top-[54px] z-10 max-w-[360px]',
             'rounded-md border px-3 py-1.5 text-12',
-            'border-red-300/70 bg-red-50/95 text-red-700',
-            'dark:border-red-800/60 dark:bg-red-950/80 dark:text-red-300',
+            'border-[var(--border-default)] bg-[var(--surface-elevated)] text-[var(--text-primary)]',
             'shadow-sm',
           )}
         >
@@ -1034,10 +1112,7 @@ export const FileBodyView = forwardRef<FileBodyHandle, FileBodyViewProps>(functi
               // 文档级"插入表格",非 Markdown 给"保存"。
               if (!canEdit || !editMode) return;
               const target = e.target;
-              if (
-                target instanceof HTMLElement &&
-                target.closest('.cm-md-table-widget')
-              ) {
+              if (target instanceof HTMLElement && target.closest('.cm-md-table-widget')) {
                 return;
               }
               e.preventDefault();
@@ -1068,9 +1143,10 @@ export const FileBodyView = forwardRef<FileBodyHandle, FileBodyViewProps>(functi
                       // val 来自 CodeMirror,行尾恒为 LF;基准的归一化在
                       // setBaseline 时一次性完成,这里每键只付一次原生比较。
                       const hasChange = val !== initialContentNormalizedRef.current;
+                      if (hasChange) onUserEdit?.();
                       setDirty(hasChange);
                       if (isMarkdown) {
-                        if (hasChange) autosave.schedule();
+                        if (hasChange && !conflictPaused.current) autosave.schedule();
                         else autosave.cancel();
                       }
                     }
@@ -1139,7 +1215,9 @@ export const FileBodyView = forwardRef<FileBodyHandle, FileBodyViewProps>(functi
                 )}
               >
                 <Save className="mr-2 h-3.5 w-3.5 shrink-0" />
-                <span className="relative top-px">{t('ccAgent.workdirBrowse.fileBody.menuSave')}</span>
+                <span className="relative top-px">
+                  {t('ccAgent.workdirBrowse.fileBody.menuSave')}
+                </span>
                 <span className="ml-auto pl-4 text-11 text-[var(--cmd-palette-item-meta)]">
                   {window.electronAPI?.platform === 'darwin' ? '⌘S' : 'Ctrl+S'}
                 </span>
@@ -1220,7 +1298,6 @@ function EditingChip({
     </div>
   );
 }
-
 
 /**
  * CachedFileView — 大文件缓存副本的应用内预览。
@@ -1312,10 +1389,19 @@ function CachedFileBody({
   }, [cachePath, isImg, isPdf, isVideo]);
 
   if (isImg) {
-    return <ImagePreview workdir={cacheDir} relPath={cacheBase} size={stat.size} mtimeMs={stat.mtimeMs} />;
+    return (
+      <ImagePreview
+        workdir={cacheDir}
+        relPath={cacheBase}
+        size={stat.size}
+        mtimeMs={stat.mtimeMs}
+      />
+    );
   }
   if (isPdf) {
-    return <PdfPreview workdir={cacheDir} relPath={cacheBase} size={stat.size} mtimeMs={stat.mtimeMs} />;
+    return (
+      <PdfPreview workdir={cacheDir} relPath={cacheBase} size={stat.size} mtimeMs={stat.mtimeMs} />
+    );
   }
   if (isVideo) {
     if (videoFailed) {
@@ -1350,7 +1436,9 @@ function CachedFileBody({
               {' · '}
               {formatBytes(stat.size)}
               {' · '}
-              {t('ccAgent.workdirBrowse.unrenderable.modifiedAt', { time: formatMtime(stat.mtimeMs) })}
+              {t('ccAgent.workdirBrowse.unrenderable.modifiedAt', {
+                time: formatMtime(stat.mtimeMs),
+              })}
             </>
           )}
         </div>
@@ -1382,9 +1470,7 @@ function CachedFileBody({
   if (!probed) {
     return (
       <div className="flex h-full w-full items-center justify-center">
-        {showLoading && (
-          <Spinner size={16} className="text-[var(--cmd-palette-item-meta)]" />
-        )}
+        {showLoading && <Spinner size={16} className="text-[var(--cmd-palette-item-meta)]" />}
       </div>
     );
   }
@@ -1399,7 +1485,6 @@ function CachedFileBody({
     />
   );
 }
-
 
 /**
  * FetchingProgress — 大文件取回进度:分相文案(远端上传 / 下载)+ 百分比 +

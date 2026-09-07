@@ -7,16 +7,22 @@
  */
 
 export type ShellId =
-  | 'auto'
-  | 'zsh'
-  | 'bash'
-  | 'fish'
-  | 'sh'
-  | 'pwsh'
-  | 'powershell'
-  | 'cmd'
-  | 'gitbash'
-  | 'wsl';
+  'auto' | 'zsh' | 'bash' | 'fish' | 'sh' | 'pwsh' | 'powershell' | 'cmd' | 'gitbash' | 'wsl';
+
+export function isShellId(value: unknown): value is ShellId {
+  return (
+    value === 'auto' ||
+    value === 'zsh' ||
+    value === 'bash' ||
+    value === 'fish' ||
+    value === 'sh' ||
+    value === 'pwsh' ||
+    value === 'powershell' ||
+    value === 'cmd' ||
+    value === 'gitbash' ||
+    value === 'wsl'
+  );
+}
 
 /**
  * 终端工作台允许启动的受控 profile。
@@ -39,7 +45,11 @@ export interface AvailableShell {
 }
 
 export interface TerminalCreateParams {
-  /** 跟 RSB tabId 一致（1:1 关系）。 */
+  /** Owning Lead; CLI sessions are not Maker workers. */
+  sessionId?: string;
+  /** Reconnect only: never spawn a replacement for a missing runtime. */
+  attachOnly?: boolean;
+  /** Stable PTY identity, independent of its content tab and split pane. */
   id: string;
   cwd: string;
   cols?: number;
@@ -66,6 +76,18 @@ export interface TerminalExitInfo {
   signal: string | null;
 }
 
+export interface TerminalRuntimeRecord {
+  terminalId: string;
+  sessionId: string;
+  profile: TerminalProfile;
+  title: string;
+  cwd: string;
+  status: 'running' | 'terminating' | 'exited' | 'terminated';
+  detached: boolean;
+  pid: number;
+  exit: TerminalExitInfo | null;
+}
+
 /** main → renderer 推送的 data event payload。 */
 export interface TerminalDataEvent {
   id: string;
@@ -80,6 +102,14 @@ export interface TerminalExitEvent {
 
 /** preload 暴露给 renderer 的 terminal API 形状。 */
 export interface TerminalBridge {
+  resolveFile(id: string, path: string): Promise<{ workdir: string; path: string; kind: 'file' | 'directory' }>;
+  rename(id: string, title: string): Promise<void>;
+  list(sessionId: string): Promise<TerminalRuntimeRecord[]>;
+  detach(id: string): Promise<void>;
+  terminate(id: string): Promise<void>;
+  /** Atomically remove an ended runtime; refuses a concurrent running/restarted process. */
+  forget(id: string): Promise<void>;
+  onStatus(callback: (record: TerminalRuntimeRecord) => void): () => void;
   create(params: TerminalCreateParams): Promise<TerminalCreateResult>;
   write(id: string, data: string): Promise<void>;
   resize(id: string, cols: number, rows: number): Promise<void>;

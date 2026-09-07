@@ -15,18 +15,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import {
-  Bot,
-  FileDiff,
-  FolderTree,
-  Globe,
-  ListTodo,
-  Smartphone,
-  Terminal,
-} from 'lucide-react';
+import { Bot, Globe, Smartphone, Terminal } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { TabKindId, TabKindMenuMeta } from './types';
+import type { AvailableShell, ShellId, TerminalProfile } from '../../../shared/terminal-bridge';
 
 const DROPDOWN_WIDTH = 220;
 /** 视口两侧给 dropdown 留的呼吸空间。 */
@@ -51,38 +44,17 @@ interface AddTabDropdownProps {
   iosSimulatorAvailable?: boolean;
   /** Pi is the only harness with the complete Subagents detail contract. */
   subagentsAvailable?: boolean;
+  /** Launch a new terminal/agent in the existing content tab strip. */
+  onLaunchTerminal?: (profile: TerminalProfile, shellPref?: ShellId) => void;
 }
 
 // Phase 1 硬编码。Phase 2 之后由 plugin registry 自动汇总。
 const MENU_ITEMS: TabKindMenuMeta[] = [
   {
-    kind: 'file-browser',
-    labelKey: 'rightSidebar.tabs.kinds.fileBrowser',
-    icon: FolderTree,
-    order: 10,
-    enabled: true,
-  },
-  {
-    kind: 'review',
-    labelKey: 'rightSidebar.tabs.kinds.review',
-    icon: FileDiff,
-    order: 15,
-    enabled: true,
-    singleton: true,
-  },
-  {
     kind: 'subagents',
     labelKey: 'rightSidebar.tabs.kinds.subagents',
     icon: Bot,
     order: 16,
-    enabled: true,
-    singleton: true,
-  },
-  {
-    kind: 'background-tasks',
-    labelKey: 'rightSidebar.tabs.kinds.backgroundTasks',
-    icon: ListTodo,
-    order: 17,
     enabled: true,
     singleton: true,
   },
@@ -100,13 +72,6 @@ const MENU_ITEMS: TabKindMenuMeta[] = [
     order: 25,
     enabled: true,
   },
-  {
-    kind: 'terminal',
-    labelKey: 'rightSidebar.tabs.kinds.terminal',
-    icon: Terminal,
-    order: 30,
-    enabled: true,
-  },
 ];
 
 export function AddTabDropdown({
@@ -116,9 +81,31 @@ export function AddTabDropdown({
   existingKinds,
   iosSimulatorAvailable = false,
   subagentsAvailable = false,
+  onLaunchTerminal,
 }: AddTabDropdownProps) {
   const { t } = useTranslation();
   const ref = useRef<HTMLDivElement | null>(null);
+  const [availableShells, setAvailableShells] = useState<AvailableShell[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const probe = window.electronAPI?.terminal?.listAvailableShells;
+    if (!probe || !onLaunchTerminal) {
+      setAvailableShells([]);
+      return () => {
+        cancelled = true;
+      };
+    }
+    void probe()
+      .then((shells) => {
+        if (!cancelled) setAvailableShells(Array.isArray(shells) ? shells : []);
+      })
+      .catch(() => {
+        if (!cancelled) setAvailableShells([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   // 定位:portal 到 body + fixed,按 anchor rect 摆位。原实现是「+」wrapper 内的
   // absolute 元素,RSB 面板窄于 220px 时向左展开的部分会被 Shell 根容器的
   // overflow-hidden 直接裁掉(左圆角/边框消失)。portal 出去后 dropdown 浮在面板
@@ -220,6 +207,14 @@ export function AddTabDropdown({
   );
   const enabled = visibleItems.filter((m) => m.enabled).sort((a, b) => a.order - b.order);
   const coming = visibleItems.filter((m) => !m.enabled).sort((a, b) => a.order - b.order);
+  const shellItems = [...(availableShells ?? [])].sort(
+    (a, b) => Number(b.isAutoDetectTarget) - Number(a.isAutoDetectTarget),
+  );
+  const agentItems: Array<{ profile: TerminalProfile; label: string; icon: LucideIcon }> = [
+    { profile: 'claude', label: t('rightSidebar.terminal.profileClaude'), icon: Bot },
+    { profile: 'codex', label: t('rightSidebar.terminal.profileCodex'), icon: Bot },
+    { profile: 'pi', label: t('rightSidebar.terminal.profilePi'), icon: Bot },
+  ];
 
   return createPortal(
     <div
@@ -240,16 +235,53 @@ export function AddTabDropdown({
         if (anchorRef.current?.contains(next)) return;
         onClose();
       }}
-      className="fixed z-50 w-[220px] rounded-xl border border-[var(--border-default)] bg-[var(--surface-elevated)] p-1 outline-none"
+      className="fixed z-50 w-[220px] overflow-y-auto rounded-xl border border-[var(--border-default)] bg-[var(--surface-elevated)] p-1 outline-none"
       style={{
         boxShadow: 'var(--shadow-menu)',
         top: pos?.top ?? 0,
         left: pos?.left ?? 0,
+        maxHeight: 'calc(100vh - ' + ((pos?.top ?? 0) + VIEWPORT_PADDING) + 'px)',
         // 首帧 pos 未测出前不可见,layoutEffect 同步定位后展示(paint 前,无闪烁)。
         visibility: pos ? 'visible' : 'hidden',
       }}
     >
       <GroupHeader label={t('rightSidebar.tabs.menu.addLabel')} />
+      <GroupHeader label={t('rightSidebar.terminal.profileShell')} />
+      {availableShells === null ? (
+        <DropdownItem icon={Terminal} label={t('rightSidebar.terminal.detectingShells')} disabled />
+      ) : shellItems.length > 0 ? (
+        shellItems.map((shell) => (
+          <DropdownItem
+            key={`shell-${shell.id}`}
+            icon={Terminal}
+            label={shell.displayName}
+            trailing={
+              shell.isAutoDetectTarget ? t('rightSidebar.terminal.defaultShellBadge') : undefined
+            }
+            disabled={!onLaunchTerminal}
+            onClick={() => onLaunchTerminal?.('shell', shell.id)}
+          />
+        ))
+      ) : (
+        <DropdownItem
+          icon={Terminal}
+          label={t('rightSidebar.terminal.profileShell')}
+          disabled={!onLaunchTerminal}
+          onClick={() => onLaunchTerminal?.('shell')}
+        />
+      )}
+      <div className="mx-1 my-1 h-px bg-[var(--border-default)]" />
+      <GroupHeader label={t('rightSidebar.terminal.agentSection')} />
+      {agentItems.map((item) => (
+        <DropdownItem
+          key={item.profile}
+          icon={item.icon}
+          label={item.label}
+          disabled={!onLaunchTerminal}
+          onClick={() => onLaunchTerminal?.(item.profile)}
+        />
+      ))}
+      <div className="mx-1 my-1 h-px bg-[var(--border-default)]" />
       {enabled.map((m) => {
         const alreadyOpen = m.singleton && existingKinds?.has(m.kind);
         return (
@@ -284,9 +316,7 @@ export function AddTabDropdown({
 
 function GroupHeader({ label }: { label: string }) {
   return (
-    <div className="px-2.5 pt-2 pb-1 text-10 font-medium text-[var(--text-tertiary)]">
-      {label}
-    </div>
+    <div className="px-2.5 pt-2 pb-1 text-10 font-medium text-[var(--text-tertiary)]">{label}</div>
   );
 }
 

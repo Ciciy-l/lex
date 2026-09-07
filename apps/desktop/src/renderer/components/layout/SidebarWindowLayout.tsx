@@ -47,10 +47,7 @@ import { useLocale } from '@/hooks/useLocale';
 import { createLogger } from '@/lib/logger';
 import { makerChatStore } from '@/lib/makerChatStore';
 import { GhostMediaLightboxHost } from '@/cindy-brain/GhostMediaLightboxHost';
-import {
-  ensureGhostPanelsRegistered,
-  useGhostPanelsSync,
-} from '@/cindy-brain/ghostPanels';
+import { ensureGhostPanelsRegistered, useGhostPanelsSync } from '@/cindy-brain/ghostPanels';
 
 const log = createLogger('SidebarWindowLayout');
 
@@ -119,9 +116,11 @@ export function SidebarWindowLayout() {
   }, []);
 
   useEffect(() => {
-    return window.electronAPI.onLocaleChanged?.((locale) => {
-      if (locale !== effectiveLocale) setLocale(locale);
-    }) ?? undefined;
+    return (
+      window.electronAPI.onLocaleChanged?.((locale) => {
+        if (locale !== effectiveLocale) setLocale(locale);
+      }) ?? undefined
+    );
   }, [effectiveLocale, setLocale]);
 
   // presentation-ready 只代表轻量壳已经提交首帧。不能等待主窗 context:
@@ -253,8 +252,8 @@ export function SidebarWindowLayout() {
   useAppShortcut('close-tab-or-window', () => {
     if (interactiveSessionId) {
       const bucket = getBucket(interactiveSessionId);
-      if (bucket.activeTabId) {
-        void closeTab(interactiveSessionId, bucket.activeTabId).catch((err) => {
+      if (bucket.activeContentTabId) {
+        void closeTab(interactiveSessionId, bucket.activeContentTabId).catch((err) => {
           log.warn('close tab via shortcut failed', err);
         });
         return true;
@@ -292,9 +291,11 @@ export function SidebarWindowLayout() {
             onClick={() => {
               const snapshot = getTabSnapshot(interactiveSessionId);
               const handoff = snapshot ? { snapshots: [snapshot] } : undefined;
-              void window.electronAPI.rightSidebarWindow.setDetached(false, handoff).catch((err) => {
-                log.warn('merge back failed', err);
-              });
+              void window.electronAPI.rightSidebarWindow
+                .setDetached(false, handoff)
+                .catch((err) => {
+                  log.warn('merge back failed', err);
+                });
             }}
             aria-label={t('rightSidebar.window.mergeBack')}
           >

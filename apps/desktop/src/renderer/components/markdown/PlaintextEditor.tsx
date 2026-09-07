@@ -134,6 +134,7 @@ export interface PlaintextEditorHandle {
    * preview 里捕获 line, 切到 editor 挂载完调本方法对齐位置)。
    */
   scrollToLine: (line: number) => void;
+  revealPosition: (line: number, column: number) => boolean;
   /** Current non-empty selection's raw document slice. */
   getSelectionText: () => string | null;
   /** Current non-empty selection's 1-based source line range. */
@@ -1147,6 +1148,14 @@ export const PlaintextEditor = forwardRef<PlaintextEditorHandle, PlaintextEditor
         search,
         getViewportTopLine: () =>
           cmViewRef.current ? getViewportTopLine(cmViewRef.current) : null,
+        revealPosition: (line: number, column: number) => {
+          const view = cmViewRef.current;
+          if (!view) return false;
+          const target = view.state.doc.line(Math.max(1, Math.min(view.state.doc.lines, line)));
+          const anchor = target.from + Math.max(0, Math.min(target.length, column - 1));
+          view.dispatch({ selection: { anchor }, effects: EditorView.scrollIntoView(anchor, { y: 'center' }) });
+          return true;
+        },
         scrollToLine: (line: number) => {
           const view = cmViewRef.current;
           if (!view) return;

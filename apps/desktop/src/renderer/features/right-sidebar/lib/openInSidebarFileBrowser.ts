@@ -38,7 +38,7 @@ export async function openDirInSidebarFileBrowser(
   const bucket = getBucket(sessionId);
   const existing = bucket.tabs.find((t) => t.kind === 'file-browser');
   if (existing) {
-    if (bucket.activeTabId !== existing.id) {
+    if (bucket.activeToolId !== existing.id) {
       await setActiveTab(sessionId, existing.id);
     }
     await patchTabState(sessionId, existing.id, (current) => {
@@ -77,7 +77,7 @@ export async function openFileInSidebarFileBrowser(
   const bucket = getBucket(sessionId);
   const existing = bucket.tabs.find((t) => t.kind === 'file-browser');
   if (existing) {
-    if (bucket.activeTabId !== existing.id) {
+    if (bucket.activeToolId !== existing.id) {
       await setActiveTab(sessionId, existing.id);
     }
     await patchTabState(sessionId, existing.id, (current) => {
@@ -124,7 +124,7 @@ export async function openExternalFileInSidebarFileBrowser(
   const bucket = getBucket(sessionId);
   const existing = bucket.tabs.find((t) => t.kind === 'file-browser');
   if (existing) {
-    if (bucket.activeTabId !== existing.id) {
+    if (bucket.activeToolId !== existing.id) {
       await setActiveTab(sessionId, existing.id);
     }
     await patchTabState(sessionId, existing.id, (current) => {

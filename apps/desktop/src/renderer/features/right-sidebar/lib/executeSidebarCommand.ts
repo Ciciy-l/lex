@@ -14,10 +14,15 @@ import {
 import { openBackgroundTasksTab } from './openBackgroundTasksTab';
 import { openSubagentsTab } from './openSubagentsTab';
 import { openTurnReview } from './openTurnReview';
+import { openFileContentTab } from './openFileContentTab';
 import { openUrlInSidebarBrowser } from './openInSidebarBrowser';
 
 /** 在 main 已选定的当前 renderer host 中执行命令，不自行选择宿主。 */
 export async function executeSidebarCommand(command: RsbWindowCommand): Promise<void> {
+  if (command.type === 'open-file-content') {
+    await openFileContentTab(command.sessionId, command.file);
+    return;
+  }
   if (command.type === 'open-web-browser') {
     await openUrlInSidebarBrowser(command.sessionId, command.url);
     return;
@@ -76,8 +81,9 @@ export async function executeSidebarCommand(command: RsbWindowCommand): Promise<
     await ensureHydrated(command.sessionId);
     const bucket = getBucket(command.sessionId);
     const reviewTab = bucket.tabs.find((tab) => tab.kind === 'review');
-    const hostAlreadyVisible = typeof document === 'undefined' || document.visibilityState === 'visible';
-    if (reviewTab && bucket.activeTabId === reviewTab.id && hostAlreadyVisible) {
+    const hostAlreadyVisible =
+      typeof document === 'undefined' || document.visibilityState === 'visible';
+    if (reviewTab && bucket.activeContentTabId === reviewTab.id && hostAlreadyVisible) {
       await closeTab(command.sessionId, reviewTab.id);
       return;
     }

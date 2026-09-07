@@ -13,6 +13,19 @@ const xtermMocks = vi.hoisted(() => ({
   getOrCreateXterm: vi.fn(),
   updateXtermTheme: vi.fn(),
 }));
+const linkMocks = vi.hoisted(() => ({
+  activate: null as null | ((link: { path: string; line?: number; column?: number }) => void),
+  openDirectory: vi.fn(async () => undefined),
+  openFile: vi.fn(async () => undefined),
+}));
+vi.mock('../lib/terminalFileLinks', () => ({
+  registerTerminalFileLinks: (_terminal: unknown, activate: NonNullable<typeof linkMocks.activate>) => {
+    linkMocks.activate = activate;
+    return { dispose: vi.fn() };
+  },
+}));
+vi.mock('../../../lib/openInSidebarFileBrowser', () => ({ openDirInSidebarFileBrowser: linkMocks.openDirectory }));
+vi.mock('../../../lib/openFileContentTab', () => ({ openFileContentInSidebar: linkMocks.openFile }));
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -45,6 +58,7 @@ function makeEntry() {
   };
   return {
     terminal,
+    searchAddon: { clearDecorations: vi.fn(), findNext: vi.fn(() => true), findPrevious: vi.fn(() => true) },
     fitAddon: { fit: vi.fn() },
     lastSize: { cols: 80, rows: 24 },
     ptyAttached: false,
@@ -64,7 +78,7 @@ function makeContext(patchState: ReturnType<typeof vi.fn>): TabKindHostContext {
   };
 }
 
-function renderSplitWorkbench(direction: 'horizontal' | 'vertical' = 'horizontal') {
+function renderSplitWorkbench(direction: 'horizontal' | 'vertical' = 'horizontal', active = false) {
   const state = splitTerminalPane(
     createInitialTerminalState(),
     'pane-1',
@@ -74,11 +88,13 @@ function renderSplitWorkbench(direction: 'horizontal' | 'vertical' = 'horizontal
   if (!state) throw new Error('split state missing');
   const patchState = vi.fn();
   const ctx = makeContext(patchState);
-  const view = render(<TerminalTabBody state={state} ctx={ctx} active={false} />);
+  const view = render(<TerminalTabBody state={state} ctx={ctx} active={active} />);
   return { ...view, patchState, state, ctx };
 }
 
 beforeEach(() => {
+  linkMocks.openDirectory.mockClear();
+  linkMocks.openFile.mockClear();
   const entries = new Map<string, ReturnType<typeof makeEntry>>();
   xtermMocks.disposeXterm.mockReset();
   xtermMocks.updateXtermTheme.mockReset();
@@ -102,8 +118,10 @@ beforeEach(() => {
     configurable: true,
     value: {
       terminal: {
+        resolveFile: vi.fn(),
         create: vi.fn(() => new Promise(() => undefined)),
         dispose: vi.fn(async () => undefined),
+        detach: vi.fn(async () => undefined),
         onData: vi.fn(() => vi.fn()),
         onExit: vi.fn(() => vi.fn()),
         resize: vi.fn(async () => undefined),
@@ -121,6 +139,84 @@ afterEach(() => {
 });
 
 describe('TerminalTabBody pane dragging', () => {
+  it('hides a pane without deleting its split slot and restores the original two-pane layout', () => {
+    const view = renderSplitWorkbench();
+    fireEvent.click(screen.getAllByRole('button', { name: 'rightSidebar.terminal.closePane' })[1]);
+    const next = view.patchState.mock.calls.at(-1)![0];
+    expect(next.layout).toEqual(view.state.layout);
+    expect(next.panes['pane-2'].viewHidden).toBe(true);
+    view.rerender(<TerminalTabBody state={next} ctx={view.ctx} active={false} />);
+    expect(document.querySelectorAll('[data-terminal-pane-id]')).toHaveLength(1);
+    expect(screen.queryByRole('separator')).toBeNull();
+    expect(window.electronAPI.terminal.dispose).not.toHaveBeenCalled();
+    const restored = { ...next, panes: { ...next.panes, 'pane-2': { ...next.panes['pane-2'], viewHidden: false } } };
+    view.rerender(<TerminalTabBody state={restored} ctx={view.ctx} active={false} />);
+    expect(document.querySelectorAll('[data-terminal-pane-id]')).toHaveLength(2);
+    expect(screen.getByRole('separator')).toBeTruthy();
+  });
+
+  it('offers terminal search and maximize/restore in the pane header context menu', () => {
+    renderSplitWorkbench('horizontal', true);
+    const header = document.querySelectorAll('[data-terminal-pane-header]')[1];
+    fireEvent.contextMenu(header);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'rightSidebar.workbench.searchOutput' }));
+    expect(screen.getByRole('textbox', { name: 'rightSidebar.workbench.searchOutput' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'rightSidebar.workbench.closeSearch' }));
+    fireEvent.contextMenu(header);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'rightSidebar.workbench.zoomPane' }));
+    expect(screen.queryByRole('separator')).toBeNull();
+    fireEvent.contextMenu(header);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'rightSidebar.workbench.restorePane' }));
+    expect(screen.getByRole('separator')).toBeTruthy();
+  });
+
+  it('routes directory links to the file tree and files with line numbers to content tabs', async () => {
+    renderSplitWorkbench();
+    vi.mocked(window.electronAPI.terminal.resolveFile).mockResolvedValueOnce({ workdir: '/project', path: 'src', kind: 'directory' });
+    await act(async () => linkMocks.activate!({ path: './src/' }));
+    expect(linkMocks.openDirectory).toHaveBeenCalledExactlyOnceWith('session-1', 'src');
+    expect(linkMocks.openFile).not.toHaveBeenCalled();
+    vi.mocked(window.electronAPI.terminal.resolveFile).mockResolvedValueOnce({ workdir: '/project', path: 'src/a.ts', kind: 'file' });
+    await act(async () => linkMocks.activate!({ path: './src/a.ts', line: 12, column: 3 }));
+    expect(linkMocks.openFile).toHaveBeenCalledWith('session-1', expect.objectContaining({ path: 'src/a.ts', reveal: expect.objectContaining({ line: 12, column: 3 }) }));
+  });
+
+  it('ignores link resolution that finishes after its pane was unmounted', async () => {
+    let resolve!: (value: { workdir: string; path: string; kind: 'directory' }) => void;
+    vi.mocked(window.electronAPI.terminal.resolveFile).mockReturnValue(new Promise(done => { resolve = done; }));
+    const view = renderSplitWorkbench();
+    act(() => linkMocks.activate!({ path: './src/' }));
+    view.unmount();
+    await act(async () => resolve({ workdir: '/project', path: 'src', kind: 'directory' }));
+    expect(linkMocks.openDirectory).not.toHaveBeenCalled();
+    expect(linkMocks.openFile).not.toHaveBeenCalled();
+  });
+  it('retains a late-created PTY when navigation unmounts the view and its bucket is absent', async () => {
+    let finish!: (value: TerminalCreateResult) => void;
+    vi.mocked(window.electronAPI.terminal.create).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const state = createInitialTerminalState();
+    const view = render(<TerminalTabBody state={state} ctx={makeContext(vi.fn())} active />);
+    view.unmount();
+    await act(async () => {
+      finish({
+        shellId: 'bash',
+        shellDisplayName: 'Bash',
+        pid: 1,
+        profile: 'shell',
+        profileDisplayName: 'Bash',
+        exit: null,
+      });
+    });
+    expect(window.electronAPI.terminal.dispose).not.toHaveBeenCalled();
+    expect(window.electronAPI.terminal.detach).toHaveBeenCalledWith('terminal-tab:pane-1');
+    expect(xtermMocks.disposeXterm).not.toHaveBeenCalled();
+  });
+
   it('keeps the top drag area accessible without an overlaid badge or native tooltip', () => {
     renderSplitWorkbench();
     const handles = screen.getAllByRole('button', { name: 'rightSidebar.terminal.movePane' });
@@ -139,8 +235,8 @@ describe('TerminalTabBody pane dragging', () => {
     );
   });
 
-  function setupDrag() {
-    const view = renderSplitWorkbench();
+  function setupDrag(active = false) {
+    const view = renderSplitWorkbench('horizontal', active);
     const root = view.container.querySelector<HTMLElement>('[data-terminal-workbench]')!;
     const panes = [...view.container.querySelectorAll<HTMLElement>('[data-terminal-pane-id]')];
     const rect = (left: number, width: number) => ({
@@ -258,7 +354,9 @@ describe('TerminalTabBody pane dragging', () => {
     fireEvent.pointerDown(close, { button: 0, pointerId: 7 });
     fireEvent.click(close);
     expect(view.patchState).toHaveBeenCalledTimes(1);
-    expect(window.electronAPI.terminal.dispose).toHaveBeenCalledTimes(1);
+    expect(window.electronAPI.terminal.detach).toHaveBeenCalledTimes(1);
+    expect(window.electronAPI.terminal.dispose).not.toHaveBeenCalled();
+    expect(xtermMocks.disposeXterm).not.toHaveBeenCalled();
   });
 
   it.each(['acquire', 'release'])('cleans up even if pointer capture fails to %s', (stage) => {
@@ -310,6 +408,7 @@ describe('TerminalTabBody pane dragging', () => {
         }),
     );
     const view = setupDrag();
+    view.rerender(<TerminalTabBody state={view.state} ctx={view.ctx} active={true} />);
     const pendingResolve = resolveCreation;
     const previousPanes = view.panes;
     const subscriptions = vi.mocked(window.electronAPI.terminal.onData).mock.calls.length;
@@ -319,7 +418,7 @@ describe('TerminalTabBody pane dragging', () => {
       view.drop();
     });
     const nextState = view.patchState.mock.calls.at(-1)![0];
-    view.rerender(<TerminalTabBody state={nextState} ctx={view.ctx} active={false} />);
+    view.rerender(<TerminalTabBody state={nextState} ctx={view.ctx} active={true} />);
     expect(view.container.querySelector('[data-terminal-pane-id="pane-1"]')).toBe(previousPanes[0]);
     expect(view.container.querySelector('[data-terminal-pane-id="pane-2"]')).toBe(previousPanes[1]);
     expect(xtermMocks.getOrCreateXterm).toHaveBeenCalledTimes(2);
@@ -342,6 +441,22 @@ describe('TerminalTabBody pane dragging', () => {
 });
 
 describe('TerminalTabBody split resizing', () => {
+  it.each([
+    ['splitHorizontal', 'columns2', 'horizontal'],
+    ['splitVertical', 'rows2', 'vertical'],
+  ] as const)('uses a split-layout icon for %s and still creates a new pane', (label, icon, direction) => {
+    const state = createInitialTerminalState();
+    const patchState = vi.fn();
+    render(<TerminalTabBody state={state} ctx={makeContext(patchState)} active={false} />);
+    const button = screen.getByRole('button', { name: 'rightSidebar.terminal.' + label });
+    expect(button.querySelector('.lucide-' + icon)).toBeTruthy();
+    expect(button.querySelector('.lucide-arrow-left-right, .lucide-arrow-up-down')).toBeNull();
+    fireEvent.click(button);
+    const next = patchState.mock.calls.at(-1)![0];
+    expect(next.layout).toMatchObject({ type: 'split', direction, first: { type: 'leaf', paneId: 'pane-1' } });
+    expect(Object.keys(next.panes)).toHaveLength(2);
+    expect(next.panes['pane-1']).toEqual(state.panes['pane-1']);
+  });
   it('uses pane-local split controls and does not render a secondary pane tab bar', () => {
     const { patchState } = renderSplitWorkbench();
 

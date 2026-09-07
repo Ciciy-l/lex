@@ -5,6 +5,7 @@
  * git's synthetic empty tree via `diff-tree --root`.
  */
 
+import type { ReviewHistoryData } from './types.js';
 import { runGit, GitRunError } from './gitRunner.js';
 import { parseGitDiff, parseGitDiffs } from './diffParser.js';
 import { isSafeBranchBaseRef, listBranchBaseCandidates, pickDefaultBranchBaseCandidate } from './branchReader.js';
@@ -132,6 +133,19 @@ function parseBranchCommitLog(stdout: string): ReviewCommit[] {
       };
     })
     .filter((commit) => commit.oid);
+}
+
+/** HEAD history is intentionally independent of the comparison branch range. */
+export async function listRepositoryHistory(scope: ReviewScope): Promise<ReviewHistoryData> {
+  const empty: ReviewHistoryData = { scope, headOid: null, commits: [], truncated: false };
+  if (scope.disabledReason || !scope.repoRoot) return empty;
+  const headOid = await resolveHeadCommit(scope.repoRoot);
+  if (!headOid) return empty;
+  const { stdout } = await runGit(['log', '--no-decorate', '--max-count=51', '--format=%H%x00%cI%x00%s', headOid, '--'], {
+    cwd: scope.repoRoot, maxStdoutBytes: 1024 * 1024,
+  });
+  const commits = parseBranchCommitLog(stdout);
+  return { scope, headOid, commits: commits.slice(0, 50), truncated: commits.length > 50 };
 }
 
 export async function listBranchCommits(

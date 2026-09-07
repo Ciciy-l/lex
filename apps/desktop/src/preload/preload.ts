@@ -1098,11 +1098,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // - listAvailableShells / get|setDefaultShellPref: Settings 个性化下拉用
   // - onData / onExit: main → renderer 推送(fanOut 内部一次绑定多订阅,每个 tab 自己按 id filter)
   terminal: {
+    resolveFile: (id: string, path: string) => ipcRenderer.invoke('terminal:resolve-file', id, path),
+    rename: (id: string, title: string) => ipcRenderer.invoke('terminal:rename', id, title),
+    list: (sessionId: string) => ipcRenderer.invoke('terminal:list', sessionId),
+    detach: (id: string) => ipcRenderer.invoke('terminal:detach', id),
+    terminate: (id: string) => ipcRenderer.invoke('terminal:terminate', id),
+    onStatus: (cb: IpcCallback) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => cb(payload);
+      ipcRenderer.on('terminal:status', handler);
+      return () => ipcRenderer.removeListener('terminal:status', handler);
+    },
     create: (params: unknown) => ipcRenderer.invoke('terminal:create', params),
     write: (id: string, data: string) => ipcRenderer.invoke('terminal:write', id, data),
     resize: (id: string, cols: number, rows: number) =>
       ipcRenderer.invoke('terminal:resize', id, cols, rows),
     dispose: (id: string) => ipcRenderer.invoke('terminal:dispose', id),
+    forget: (id: string) => ipcRenderer.invoke('terminal:forget', id),
     restart: (id: string) => ipcRenderer.invoke('terminal:restart', id),
     listAvailableShells: () => ipcRenderer.invoke('terminal:list-available-shells'),
     getDefaultShellPref: () => ipcRenderer.invoke('terminal:get-default-shell-pref'),
@@ -1797,10 +1808,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => ipcRenderer.removeListener(XBOX_GAMEPAD_STATE_CHANGED_CHANNEL, listener);
     },
     onPreviewInput: (callback: (input: XboxGamepadPreviewInput) => void): (() => void) => {
-      const listener = (
-        _event: Electron.IpcRendererEvent,
-        input: XboxGamepadPreviewInput,
-      ): void => callback(input);
+      const listener = (_event: Electron.IpcRendererEvent, input: XboxGamepadPreviewInput): void =>
+        callback(input);
       ipcRenderer.on(XBOX_GAMEPAD_PREVIEW_INPUT_CHANNEL, listener);
       return () => ipcRenderer.removeListener(XBOX_GAMEPAD_PREVIEW_INPUT_CHANNEL, listener);
     },
@@ -3172,11 +3181,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
       visibleSlugs?: string[];
     }): Promise<{
       success: boolean;
-      result?: { slug: string; visibility: 'private' | 'shared' | 'public'; requestedVisibility?: 'public'; reviewStatus?: 'pending' };
+      result?: {
+        slug: string;
+        visibility: 'private' | 'shared' | 'public';
+        requestedVisibility?: 'public';
+        reviewStatus?: 'pending';
+      };
       error?: string;
       errorCode?: string;
-    }> =>
-      ipcRenderer.invoke('skillhub:set-published-visibility', params),
+    }> => ipcRenderer.invoke('skillhub:set-published-visibility', params),
 
     // 读取已发布 skill 的可见对象(共享团队 + 可见部门),编辑可见范围弹窗回显用
     getPublishedVisibility: (
@@ -4369,8 +4382,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       hosts: unknown[];
       warningCount?: number;
       diagnostic?: { kind: 'io' | 'syntax' | 'limit' } | null;
-    }> =>
-      ipcRenderer.invoke('maker:remote-ssh:reload-config'),
+    }> => ipcRenderer.invoke('maker:remote-ssh:reload-config'),
     add: (host: {
       id: string;
       displayName?: string;
@@ -4771,6 +4783,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   gitReview: {
+    history: (params: { sessionId: string }): Promise<import('../shared/gitReviewWire').ReviewHistoryData> => ipcRenderer.invoke('git-review:history', params),
     get: (params: { sessionId: string; ignoreWhitespace?: boolean }): Promise<ReviewData> =>
       ipcRenderer.invoke('git-review:get', params),
     summary: (params: { sessionId: string }): Promise<ReviewDirtySummary> =>
@@ -5038,9 +5051,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
         input: import('../shared/localDbMaintenance').DbSlimmingScheduleInput,
       ): Promise<import('../shared/localDbMaintenance').DbSlimmingScheduleResult> =>
         ipcRenderer.invoke('local-db:maintenance:schedule', input),
-      getLastResult: (): Promise<
-        import('../shared/localDbMaintenance').DbSlimmingResult | null
-      > => ipcRenderer.invoke('local-db:maintenance:last-result'),
+      getLastResult: (): Promise<import('../shared/localDbMaintenance').DbSlimmingResult | null> =>
+        ipcRenderer.invoke('local-db:maintenance:last-result'),
       openLastBackupDirectory: (): Promise<{ opened: boolean }> =>
         ipcRenderer.invoke('local-db:maintenance:open-last-backup-directory'),
       getStartupProgress: (): Promise<
@@ -5130,8 +5142,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       close: (input: { id: string }): Promise<unknown> =>
         ipcRenderer.invoke('local-db:right-sidebar-tabs:close', input),
       /** 切换激活 tab;id=null 表示清空激活(关闭最后一个 tab 时使用)。 */
-      setActive: (input: { sessionId: string; id: string | null }): Promise<unknown> =>
-        ipcRenderer.invoke('local-db:right-sidebar-tabs:setActive', input),
+      setActive: (input: {
+        sessionId: string;
+        id: string | null;
+        surface?: 'tool' | 'content';
+      }): Promise<unknown> => ipcRenderer.invoke('local-db:right-sidebar-tabs:setActive', input),
       /** 一次性重写 session 内 tab position(orderedIds 数组下标 = 新 position)。 */
       reorder: (input: { sessionId: string; orderedIds: string[] }): Promise<unknown> =>
         ipcRenderer.invoke('local-db:right-sidebar-tabs:reorder', input),
@@ -6474,9 +6489,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       owner: { dataOwnerId: string | null; ownerGeneration: number },
     ): Promise<{ pct: number; isCustomized: boolean; defaultPct: number }> =>
       ipcRenderer.invoke('maker:compaction:set-pct', pct, owner),
-    compactionResetPct: (
-      owner: { dataOwnerId: string | null; ownerGeneration: number },
-    ): Promise<{ pct: number; isCustomized: boolean; defaultPct: number }> =>
+    compactionResetPct: (owner: {
+      dataOwnerId: string | null;
+      ownerGeneration: number;
+    }): Promise<{ pct: number; isCustomized: boolean; defaultPct: number }> =>
       ipcRenderer.invoke('maker:compaction:reset-pct', owner),
 
     // Pi 原生自动上下文压缩阈值。下次启动或恢复 Pi 任务时生效。
@@ -6488,9 +6504,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       owner: { dataOwnerId: string | null; ownerGeneration: number },
     ): Promise<{ pct: number; isCustomized: boolean; defaultPct: number }> =>
       ipcRenderer.invoke('maker:pi-compaction:set-pct', pct, owner),
-    piCompactionResetPct: (
-      owner: { dataOwnerId: string | null; ownerGeneration: number },
-    ): Promise<{ pct: number; isCustomized: boolean; defaultPct: number }> =>
+    piCompactionResetPct: (owner: {
+      dataOwnerId: string | null;
+      ownerGeneration: number;
+    }): Promise<{ pct: number; isCustomized: boolean; defaultPct: number }> =>
       ipcRenderer.invoke('maker:pi-compaction:reset-pct', owner),
 
     // LSP Beta 开关 —— 控制 mcp providers 是否注入 lsp_* 工具 (Phase 1 Beta)。
@@ -6923,8 +6940,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         days?: number | 'all';
         modelDays?: number | 'all';
         forceRefresh?: boolean;
-      }): Promise<unknown> =>
-        ipcRenderer.invoke('maker:usage:history', opts),
+      }): Promise<unknown> => ipcRenderer.invoke('maker:usage:history', opts),
       /** Claude USD 推送 (per-turn, agentKind=claude-code 时订阅它)。 */
       onTodaySpendChanged: fanOutMakerUsageTodaySpend,
       /** Codex token 推送 (per-turn, agentKind=codex 时订阅它)。 */

@@ -18,6 +18,10 @@ const mocks = vi.hoisted(() => ({
   managerWrite: vi.fn(),
   managerResize: vi.fn(),
   managerDispose: vi.fn(),
+  managerForget: vi.fn(),
+  managerList: vi.fn(() => []),
+  managerDetach: vi.fn(),
+  managerTerminate: vi.fn(),
   managerRestart: vi.fn(() => ({
     shellId: 'bash',
     shellDisplayName: 'Bash',
@@ -45,6 +49,10 @@ vi.mock('../../terminal/ptyManager.js', () => ({
     write = mocks.managerWrite;
     resize = mocks.managerResize;
     dispose = mocks.managerDispose;
+    forget = mocks.managerForget;
+    list = mocks.managerList;
+    detach = mocks.managerDetach;
+    terminate = mocks.managerTerminate;
     restart = mocks.managerRestart;
   },
 }));
@@ -161,6 +169,48 @@ describe('terminal IPC authorization and ownership', () => {
     mocks.managerIsOwner.mockImplementation((_id: string, sender: WebContents) => sender === owner);
   });
 
+  it('validates attach-only and Lead identity at the native boundary', () => {
+    registerTerminalHandlers({ isTrustedSender: () => true });
+    invokeCreate({ id: 'a', cwd: '/tmp', sessionId: 'lead', attachOnly: true });
+    expect(mocks.managerCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'lead', attachOnly: true }),
+    );
+    expect(() => invokeCreate({ id: 'a', cwd: '/tmp', attachOnly: 'true' })).toThrow(
+      /INVALID_PARAMS/,
+    );
+    expect(() => invokeCreate({ id: 'a', cwd: '/tmp', sessionId: '' })).toThrow(/INVALID_PARAMS/);
+    mocks.managerCreate.mockImplementationOnce(() => {
+      throw new Error('TERMINAL_NOT_FOUND:a');
+    });
+    expect(() => invokeCreate({ id: 'a', cwd: '/tmp', attachOnly: true })).toThrow(
+      /TERMINAL_NOT_FOUND/,
+    );
+  });
+
+  it.each([TERMINAL_INVOKE.DETACH, TERMINAL_INVOKE.TERMINATE])(
+    'rejects non-owner %s',
+    (channel) => {
+      registerTerminalHandlers({ isTrustedSender: () => true });
+      expect(() => handlerFor(channel)({ sender: intruder } as IpcMainInvokeEvent, 'a')).toThrow(
+        /PERMISSION_DENIED/,
+      );
+      expect(mocks.managerDetach).not.toHaveBeenCalled();
+      expect(mocks.managerTerminate).not.toHaveBeenCalled();
+    },
+  );
+
+  it('lists only through the trusted boundary and sanitizes stop failures', () => {
+    registerTerminalHandlers({ isTrustedSender: () => true });
+    handlerFor(TERMINAL_INVOKE.LIST)({ sender: owner } as IpcMainInvokeEvent, 'lead');
+    expect(mocks.managerList).toHaveBeenCalledWith('lead', owner);
+    mocks.managerTerminate.mockImplementationOnce(() => {
+      throw new Error('private native details');
+    });
+    expect(() =>
+      handlerFor(TERMINAL_INVOKE.TERMINATE)({ sender: owner } as IpcMainInvokeEvent, 'a'),
+    ).toThrow(/INTERNAL/);
+  });
+
   it('rejects an untrusted renderer before creating a native process', () => {
     registerTerminalHandlers({ isTrustedSender: () => false });
 
@@ -177,6 +227,7 @@ describe('terminal IPC authorization and ownership', () => {
     [TERMINAL_INVOKE.WRITE, ['terminal-1', 'hello']],
     [TERMINAL_INVOKE.RESIZE, ['terminal-1', 80, 24]],
     [TERMINAL_INVOKE.DISPOSE, ['terminal-1']],
+    [TERMINAL_INVOKE.FORGET, ['terminal-1']],
     [TERMINAL_INVOKE.RESTART, ['terminal-1']],
   ] as const)('rejects %s when another window owns the session', (channel, args) => {
     registerTerminalHandlers({ isTrustedSender: () => true });

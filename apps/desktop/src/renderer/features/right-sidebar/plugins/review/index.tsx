@@ -34,6 +34,7 @@ const ReviewTabBody = lazy(() =>
 );
 
 export interface ReviewState {
+  historyCommitOid?: string | null;
   /** 当前选中的审查来源。 */
   descriptor: ReviewSourceDescriptor;
   /** 最近一次从消息变更卡片进入时的精确快照，切换 Git 来源后仍可返回。 */
@@ -138,6 +139,7 @@ const plugin: TabKindPlugin<ReviewState> = {
         ? (legacyTurnTarget?.jumpTarget ?? null)
         : null);
     return {
+      historyCommitOid: typeof obj.historyCommitOid === 'string' && /^[a-f0-9]{40,64}$/i.test(obj.historyCommitOid) ? obj.historyCommitOid : null,
       descriptor,
       messageSnapshot,
       jumpTarget,

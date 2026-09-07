@@ -12,12 +12,15 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { execFile } from 'node:child_process';
 
 // Mock fs 必须在 shellResolver 被加载之前；用 vi.hoisted 拿一个共享的 fixture handle。
 const fixture = vi.hoisted(() => ({
   existing: new Set<string>(),
   files: new Set<string>(),
 }));
+
+vi.mock('node:child_process', () => ({ execFile: vi.fn() }));
 
 vi.mock('node:fs', () => {
   return {
@@ -56,6 +59,7 @@ function setExistingFiles(paths: string[]): void {
 const ORIGINAL_ENV = { ...process.env };
 
 beforeEach(() => {
+  vi.mocked(execFile).mockReset();
   __resetShellProbeCacheForTesting();
   // 清干净，每个 case 自己组装需要的 env
   for (const k of Object.keys(process.env)) delete process.env[k];
@@ -228,38 +232,38 @@ describe('resolveShellForCreate', () => {
 });
 
 describe('probeAvailableShells', () => {
-  it('macOS：列出装了的 shell + 标注 auto target', () => {
+  it('macOS：列出装了的 shell + 标注 auto target', async () => {
     setPlatform('darwin');
     process.env.SHELL = '/bin/zsh';
     setExistingFiles(['/bin/zsh', '/bin/bash', '/bin/sh']); // 没 fish
-    const list = probeAvailableShells();
+    const list = await probeAvailableShells();
     expect(list.map((s) => s.id)).toEqual(['zsh', 'bash', 'sh']);
     expect(list.find((s) => s.id === 'zsh')?.isAutoDetectTarget).toBe(true);
     expect(list.find((s) => s.id === 'bash')?.isAutoDetectTarget).toBe(false);
   });
 
-  it('memo：第二次调用不重新走 fs（改文件集合也不变结果）', () => {
+  it('memo：第二次调用不重新走 fs（改文件集合也不变结果）', async () => {
     setPlatform('darwin');
     process.env.SHELL = '/bin/zsh';
     setExistingFiles(['/bin/zsh']);
-    const first = probeAvailableShells();
+    const first = await probeAvailableShells();
     setExistingFiles(['/bin/zsh', '/bin/bash']); // 模拟用户后装了 bash
-    const second = probeAvailableShells();
+    const second = await probeAvailableShells();
     expect(second).toBe(first); // 同引用
   });
 
-  it('__resetShellProbeCacheForTesting 后重新探测', () => {
+  it('__resetShellProbeCacheForTesting 后重新探测', async () => {
     setPlatform('darwin');
     process.env.SHELL = '/bin/zsh';
     setExistingFiles(['/bin/zsh']);
-    probeAvailableShells();
+    await probeAvailableShells();
     setExistingFiles(['/bin/zsh', '/bin/bash']);
     __resetShellProbeCacheForTesting();
-    const list = probeAvailableShells();
+    const list = await probeAvailableShells();
     expect(list.map((s) => s.id)).toEqual(['zsh', 'bash']);
   });
 
-  it('Windows：只列当前装了的子集', () => {
+  it('Windows：只列当前装了的子集', async () => {
     setPlatform('win32');
     process.env.PATH = 'C:\\Windows\\System32';
     process.env.PATHEXT = '.EXE';
@@ -270,7 +274,56 @@ describe('probeAvailableShells', () => {
       'C:\\Program Files\\Git\\bin\\bash.exe', // 有
       // 没 pwsh，没 wsl
     ]);
-    const list = probeAvailableShells();
+    const list = await probeAvailableShells();
     expect(list.map((s) => s.id).sort()).toEqual(['cmd', 'gitbash', 'powershell'].sort());
+  });
+
+  it.each([false, true])('only lists functional WSL, available=%s', async (available) => {
+    setPlatform('win32');
+    process.env.PATH = 'C:\\Windows\\System32';
+    setExistingFiles(['C:\\Windows\\System32\\wsl.exe']);
+    const pending = probeAvailableShells();
+    expect(probeAvailableShells()).toBe(pending);
+    expect(execFile).toHaveBeenCalledWith(
+      'C:\\Windows\\System32\\wsl.exe',
+      ['--status'],
+      { timeout: 5000, windowsHide: true },
+      expect.any(Function),
+    );
+    const callback = vi.mocked(execFile).mock.calls[0][3] as (error: Error | null) => void;
+    callback(available ? null : new Error('WSL is not installed'));
+    expect((await pending).some((s) => s.id === 'wsl')).toBe(available);
+    await probeAvailableShells();
+    expect(execFile).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Git Bash PATH candidates', () => {
+  beforeEach(() => setPlatform('win32'));
+
+  it('resolves the real bash next to a GUI launcher on another drive', () => {
+    process.env.Path = '"D:\\Tools\\Git"';
+    setExistingFiles(['D:\\Tools\\Git\\git-bash.exe', 'D:\\Tools\\Git\\bin\\bash.exe']);
+    expect(resolveShellById('gitbash')?.command).toBe('D:\\Tools\\Git\\bin\\bash.exe');
+  });
+
+  it('never returns the git-bash.exe GUI wrapper or the Windows bash stub', () => {
+    process.env.PATH = 'D:\\Tools\\Git;C:\\Windows\\System32';
+    setExistingFiles(['D:\\Tools\\Git\\git-bash.exe', 'C:\\Windows\\System32\\bash.exe']);
+    expect(resolveShellById('gitbash')).toBeNull();
+  });
+
+  it.each(['cmd', 'usr\\bin'])('discovers PortableGit from its %s PATH entry', (segment) => {
+    process.env.Path = 'E:\\PortableGit\\' + segment;
+    setExistingFiles(['E:\\PortableGit\\usr\\bin\\bash.exe']);
+    expect(resolveShellById('gitbash')?.command).toBe('E:\\PortableGit\\usr\\bin\\bash.exe');
+  });
+
+  it('accepts uppercase LOCALAPPDATA and a per-user Git install', () => {
+    process.env.LOCALAPPDATA = 'D:\\User\\AppData\\Local';
+    setExistingFiles(['D:\\User\\AppData\\Local\\Programs\\Git\\bin\\bash.exe']);
+    expect(resolveShellById('gitbash')?.command).toBe(
+      'D:\\User\\AppData\\Local\\Programs\\Git\\bin\\bash.exe',
+    );
   });
 });

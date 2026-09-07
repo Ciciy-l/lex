@@ -65,12 +65,7 @@ interface RightSidebarTabsIpcStub {
 }
 
 type RsbBrowserCommand =
-  | 'go-back'
-  | 'go-forward'
-  | 'reload'
-  | 'close-tab'
-  | 'right-tab-prev'
-  | 'right-tab-next';
+  'go-back' | 'go-forward' | 'reload' | 'close-tab' | 'right-tab-prev' | 'right-tab-next';
 
 let rsbBrowserCommandListeners: Array<(payload: { command: RsbBrowserCommand }) => void> = [];
 
@@ -335,10 +330,15 @@ describe('RightSidebarShell empty state', () => {
       }),
     );
 
-    await waitFor(() => expect(onAllTabsClosed).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getBucket('s1').activeContentTabId).toBeNull());
+    expect(onAllTabsClosed).not.toHaveBeenCalled();
     expect(screen.queryByText('rightSidebar.tabs.kinds.subagents')).toBeNull();
     expect(tabsIpc.close).not.toHaveBeenCalled();
-    expect(tabsIpc.setActive).toHaveBeenCalledWith({ sessionId: 's1', id: null });
+    expect(tabsIpc.setActive).toHaveBeenCalledWith({
+      sessionId: 's1',
+      id: null,
+      surface: 'content',
+    });
   });
 
   it('keeps a persisted Subagents-only sidebar intact while Pi eligibility is loading', async () => {
@@ -366,7 +366,12 @@ describe('RightSidebarShell empty state', () => {
     // active tab and the restored selection is lost before Pi resolves.
     await waitFor(() => expect(screen.getByText('rightSidebar.tabs.kinds.subagents')).toBeTruthy());
     // Nothing may be written back while the projection is provisional.
-    expect(tabsIpc.setActive).not.toHaveBeenCalled();
+    expect(
+      tabsIpc.setActive.mock.calls.filter(
+        ([payload]) =>
+          payload.id === null || payload.id === 'tab-files' || payload.surface === 'content',
+      ),
+    ).toHaveLength(0);
 
     view.rerender(
       createElement(RightSidebarShell, {
@@ -384,8 +389,13 @@ describe('RightSidebarShell empty state', () => {
     expect(onAllTabsClosed).not.toHaveBeenCalled();
     expect(tabsIpc.close).not.toHaveBeenCalled();
     // The restored active marker survived the unknown window untouched.
-    expect(getBucket('s1').activeTabId).toBe('tab-subagents');
-    expect(tabsIpc.setActive).not.toHaveBeenCalled();
+    expect(getBucket('s1').activeContentTabId).toBe('tab-subagents');
+    expect(
+      tabsIpc.setActive.mock.calls.filter(
+        ([payload]) =>
+          payload.id === null || payload.id === 'tab-files' || payload.surface === 'content',
+      ),
+    ).toHaveLength(0);
   });
 
   it('keeps the restored active Subagents tab when eligibility resolves after a mixed-tab cold load', async () => {
@@ -395,7 +405,7 @@ describe('RightSidebarShell empty state', () => {
     // restored selection was gone by the time Pi eligibility arrived.
     tabsIpc.list.mockResolvedValueOnce({
       tabs: [
-        { id: 'tab-files', kind: 'file-browser', state: null },
+        { id: 'tab-files', kind: 'file-content', state: null },
         { id: 'tab-subagents', kind: 'subagents', state: null },
       ],
       activeTabId: 'tab-subagents',
@@ -412,8 +422,13 @@ describe('RightSidebarShell empty state', () => {
     );
 
     await waitFor(() => expect(tabsIpc.list).toHaveBeenCalledWith({ sessionId: 's1' }));
-    expect(tabsIpc.setActive).not.toHaveBeenCalled();
-    expect(getBucket('s1').activeTabId).toBe('tab-subagents');
+    expect(
+      tabsIpc.setActive.mock.calls.filter(
+        ([payload]) =>
+          payload.id === null || payload.id === 'tab-files' || payload.surface === 'content',
+      ),
+    ).toHaveLength(0);
+    expect(getBucket('s1').activeContentTabId).toBe('tab-subagents');
 
     view.rerender(
       createElement(RightSidebarShell, {
@@ -427,14 +442,19 @@ describe('RightSidebarShell empty state', () => {
     );
 
     await waitFor(() => expect(screen.getByText('rightSidebar.tabs.kinds.subagents')).toBeTruthy());
-    expect(getBucket('s1').activeTabId).toBe('tab-subagents');
-    expect(tabsIpc.setActive).not.toHaveBeenCalled();
+    expect(getBucket('s1').activeContentTabId).toBe('tab-subagents');
+    expect(
+      tabsIpc.setActive.mock.calls.filter(
+        ([payload]) =>
+          payload.id === null || payload.id === 'tab-files' || payload.surface === 'content',
+      ),
+    ).toHaveLength(0);
   });
 
   it('still reconciles the active marker once eligibility resolves to unavailable', async () => {
     tabsIpc.list.mockResolvedValueOnce({
       tabs: [
-        { id: 'tab-files', kind: 'file-browser', state: null },
+        { id: 'tab-files', kind: 'file-content', state: null },
         { id: 'tab-subagents', kind: 'subagents', state: null },
       ],
       activeTabId: 'tab-subagents',
@@ -464,7 +484,11 @@ describe('RightSidebarShell empty state', () => {
     );
 
     await waitFor(() =>
-      expect(tabsIpc.setActive).toHaveBeenCalledWith({ sessionId: 's1', id: 'tab-files' }),
+      expect(tabsIpc.setActive).toHaveBeenCalledWith({
+        sessionId: 's1',
+        id: 'tab-files',
+        surface: 'content',
+      }),
     );
     expect(screen.queryByText('rightSidebar.tabs.kinds.subagents')).toBeNull();
     expect(tabsIpc.close).not.toHaveBeenCalled();
@@ -509,9 +533,9 @@ describe('RightSidebarShell empty state', () => {
     const Pill = () => createElement('span');
     const Icon = (() => null) as unknown as LucideIcon;
     registerTabKind({
-      kind: 'file-browser',
+      kind: 'file-content',
       menu: {
-        kind: 'file-browser',
+        kind: 'file-content',
         labelKey: 'rightSidebar.tabs.kinds.fileBrowser',
         icon: Icon,
         order: 1,
@@ -536,7 +560,7 @@ describe('RightSidebarShell empty state', () => {
     });
     tabsIpc.list.mockResolvedValueOnce({
       tabs: [
-        { id: 'tab-a', kind: 'file-browser', state: null },
+        { id: 'tab-a', kind: 'file-content', state: null },
         { id: 'tab-b', kind: 'terminal', state: null },
       ],
       activeTabId: 'tab-a',
@@ -578,7 +602,7 @@ describe('RightSidebarShell empty state', () => {
       expect(unmountB).not.toHaveBeenCalled();
       view.unmount();
     } finally {
-      unregisterTabKind('file-browser');
+      unregisterTabKind('file-content');
       unregisterTabKind('terminal');
       delete (window as unknown as { requestIdleCallback?: unknown }).requestIdleCallback;
       delete (window as unknown as { cancelIdleCallback?: unknown }).cancelIdleCallback;
@@ -588,7 +612,7 @@ describe('RightSidebarShell empty state', () => {
   it('cycles right sidebar tabs in strip order and wraps around', async () => {
     tabsIpc.list.mockResolvedValueOnce({
       tabs: [
-        { id: 'tab-file', kind: 'file-browser', state: null },
+        { id: 'tab-file', kind: 'file-content', state: null },
         { id: 'tab-terminal', kind: 'terminal', state: null },
       ],
       activeTabId: 'tab-terminal',
@@ -614,7 +638,7 @@ describe('RightSidebarShell empty state', () => {
   it('does not cycle when the shell is hidden or only one tab exists', async () => {
     tabsIpc.list.mockResolvedValueOnce({
       tabs: [
-        { id: 'tab-file', kind: 'file-browser', state: null },
+        { id: 'tab-file', kind: 'file-content', state: null },
         { id: 'tab-terminal', kind: 'terminal', state: null },
       ],
       activeTabId: 'tab-file',
@@ -635,11 +659,16 @@ describe('RightSidebarShell empty state', () => {
     const hiddenShortcut = dispatchShortcut('BracketRight', { metaKey: true, shiftKey: true });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(hiddenShortcut.defaultPrevented).toBe(true);
-    expect(tabsIpc.setActive).not.toHaveBeenCalled();
+    expect(
+      tabsIpc.setActive.mock.calls.filter(
+        ([payload]) =>
+          payload.id === null || payload.id === 'tab-files' || payload.surface === 'content',
+      ),
+    ).toHaveLength(0);
     unmount();
 
     tabsIpc.list.mockResolvedValueOnce({
-      tabs: [{ id: 'tab-file', kind: 'file-browser', state: null }],
+      tabs: [{ id: 'tab-file', kind: 'file-content', state: null }],
       activeTabId: 'tab-file',
     });
     render(
@@ -657,13 +686,18 @@ describe('RightSidebarShell empty state', () => {
     const singleTabShortcut = dispatchShortcut('BracketRight', { metaKey: true, shiftKey: true });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(singleTabShortcut.defaultPrevented).toBe(true);
-    expect(tabsIpc.setActive).not.toHaveBeenCalled();
+    expect(
+      tabsIpc.setActive.mock.calls.filter(
+        ([payload]) =>
+          payload.id === null || payload.id === 'tab-files' || payload.surface === 'content',
+      ),
+    ).toHaveLength(0);
   });
 
   it('also works in the detached sidebar window path', async () => {
     tabsIpc.list.mockResolvedValueOnce({
       tabs: [
-        { id: 'tab-file', kind: 'file-browser', state: null },
+        { id: 'tab-file', kind: 'file-content', state: null },
         { id: 'tab-terminal', kind: 'terminal', state: null },
       ],
       activeTabId: 'tab-file',
@@ -690,7 +724,7 @@ describe('RightSidebarShell empty state', () => {
   it('cycles tabs from a focused webview guest command', async () => {
     tabsIpc.list.mockResolvedValueOnce({
       tabs: [
-        { id: 'tab-file', kind: 'file-browser', state: null },
+        { id: 'tab-file', kind: 'file-content', state: null },
         { id: 'tab-browser', kind: 'web-browser', state: null },
       ],
       activeTabId: 'tab-browser',
@@ -715,7 +749,7 @@ describe('RightSidebarShell empty state', () => {
     );
   });
 
-  it('keeps the empty guide visible and uses the mac unified topbar', async () => {
+  it('offers fixed tools and the Orca-style add menu in the original mac unified topbar', async () => {
     const { container } = render(
       createElement(RightSidebarShell, {
         sessionId: 's1',
@@ -726,9 +760,9 @@ describe('RightSidebarShell empty state', () => {
       }),
     );
 
-    await waitFor(() => expect(screen.getByText('rightSidebar.tabs.empty.title')).toBeTruthy());
+    await waitFor(() => expect(getBucket('s1').hydrated).toBe(true));
     expect(tabsIpc.list).toHaveBeenCalledOnce();
-    expect(tabsIpc.upsert).not.toHaveBeenCalled();
+    await waitFor(() => expect(tabsIpc.upsert).toHaveBeenCalledOnce());
     expect(window.electronAPI.gitReview.summary as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
     expect(container.firstElementChild?.className).toContain('min-h-0');
     expect(container.firstElementChild?.className).toContain('overflow-hidden');
@@ -742,6 +776,9 @@ describe('RightSidebarShell empty state', () => {
     // 合并顶栏走 chip 变体:strip 垂直居中,与「+」/ 浮层按钮同一水平中线。
     expect(strip.className).toContain('items-center');
     expect(screen.getByRole('button', { name: 'rightSidebar.tabs.addAria' })).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: 'rightSidebar.tabs.kinds.fileBrowser' }),
+    ).toBeTruthy();
   });
 
   it('reserves the fullscreen ChromeActions area in the maximized unified topbar', async () => {
@@ -864,7 +901,7 @@ describe('RightSidebarShell empty state', () => {
       }),
     );
 
-    await waitFor(() => expect(screen.getByText('rightSidebar.tabs.empty.title')).toBeTruthy());
+    await waitFor(() => expect(getBucket('s1').hydrated).toBe(true));
     const actions = screen.getByTestId('right-sidebar-topbar-actions');
     expect(actions).toBeTruthy();
     screen.getByRole('button', { name: 'rightSidebar.tabs.controls.detachAria' }).click();
@@ -891,7 +928,7 @@ describe('RightSidebarShell empty state', () => {
         onCloseSidebar,
       }),
     );
-    await waitFor(() => expect(screen.getByText('rightSidebar.tabs.empty.title')).toBeTruthy());
+    await waitFor(() => expect(getBucket('s1').hydrated).toBe(true));
     expect(screen.getByTestId('right-sidebar-topbar-actions')).toBeTruthy();
     expect(screen.queryByTestId('right-sidebar-fixed-trigger-spacer')).toBeNull();
     unmountMax();
@@ -909,10 +946,12 @@ describe('RightSidebarShell empty state', () => {
         onCloseSidebar,
       }),
     );
-    await waitFor(() => expect(screen.getByText('rightSidebar.tabs.empty.title')).toBeTruthy());
+    await waitFor(() => expect(getBucket('s1').hydrated).toBe(true));
     expect(screen.getByTestId('right-sidebar-topbar-actions')).toBeTruthy();
     expect(screen.queryByTestId('right-sidebar-fixed-trigger-spacer')).toBeNull();
-    expect(screen.getByRole('button', { name: 'rightSidebar.tabs.controls.detachAria' })).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: 'rightSidebar.tabs.controls.detachAria' }),
+    ).toBeTruthy();
     expect(screen.getByRole('button', { name: 'contentHeader.collapsePanel' })).toBeTruthy();
   });
 
@@ -932,7 +971,7 @@ describe('RightSidebarShell empty state', () => {
       }),
     );
 
-    await waitFor(() => expect(screen.getByText('rightSidebar.tabs.empty.title')).toBeTruthy());
+    await waitFor(() => expect(getBucket('s1').hydrated).toBe(true));
     expect(screen.queryByTestId('right-sidebar-unified-topbar')).toBeNull();
     const tabbar = screen.getByTestId('right-sidebar-tab-bar');
     expect(tabbar.className).toContain('h-[36px]');
@@ -966,7 +1005,7 @@ describe('RightSidebarShell empty state', () => {
       }),
     );
 
-    await waitFor(() => expect(screen.getByText('rightSidebar.tabs.empty.title')).toBeTruthy());
+    await waitFor(() => expect(getBucket('s1').hydrated).toBe(true));
     expect(
       screen.queryByRole('button', { name: 'rightSidebar.tabs.controls.showAria' }),
     ).toBeNull();
@@ -987,7 +1026,7 @@ describe('RightSidebarShell empty state', () => {
       }),
     );
 
-    await waitFor(() => expect(screen.getByText('rightSidebar.tabs.empty.title')).toBeTruthy());
+    await waitFor(() => expect(getBucket('s1').hydrated).toBe(true));
     expect(screen.queryByTestId('right-sidebar-unified-topbar')).toBeNull();
     const tabbar = screen.getByTestId('right-sidebar-tab-bar');
     expect(tabbar.className).toContain('h-[36px]');
@@ -995,11 +1034,12 @@ describe('RightSidebarShell empty state', () => {
     expect(screen.queryByLabelText('rightSidebar.tabs.controls.closeAria')).toBeNull();
   });
 
-  it('fires onAllTabsClosed exactly once when the last tab is closed', async () => {
+  it('keeps fixed tools open when the last content tab is closed', async () => {
     tabsIpc.list.mockResolvedValueOnce({
       tabs: [
-        { id: 'tab-a', kind: 'file-browser', state: null },
-        { id: 'tab-b', kind: 'terminal', state: null },
+        { id: 'tool-files', kind: 'file-browser', state: null },
+        { id: 'tab-a', kind: 'file-content', state: null },
+        { id: 'tab-b', kind: 'web-browser', state: null },
       ],
       activeTabId: 'tab-a',
     });
@@ -1027,7 +1067,8 @@ describe('RightSidebarShell empty state', () => {
     await act(async () => {
       await closeTab('s1', 'tab-b');
     });
-    expect(onAllTabsClosed).toHaveBeenCalledTimes(1);
+    expect(onAllTabsClosed).not.toHaveBeenCalled();
+    expect(getBucket('s1').tabs.map((tab) => tab.id)).toEqual(['tool-files']);
   });
 
   it('does not fire onAllTabsClosed for a session that is empty from the start', async () => {
@@ -1045,7 +1086,7 @@ describe('RightSidebarShell empty state', () => {
     );
 
     // hydrated 后一直是 0(从未 >0),首帧 prev===null 不触发。
-    await waitFor(() => expect(screen.getByText('rightSidebar.tabs.empty.title')).toBeTruthy());
+    await waitFor(() => expect(getBucket('s1').hydrated).toBe(true));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(onAllTabsClosed).not.toHaveBeenCalled();
   });
@@ -1053,7 +1094,7 @@ describe('RightSidebarShell empty state', () => {
   it('does not fire onAllTabsClosed when switching to an empty session', async () => {
     tabsIpc.list
       .mockResolvedValueOnce({
-        tabs: [{ id: 'tab-a', kind: 'file-browser', state: null }],
+        tabs: [{ id: 'tab-a', kind: 'file-content', state: null }],
         activeTabId: 'tab-a',
       })
       .mockResolvedValueOnce({ tabs: [], activeTabId: null });
@@ -1084,7 +1125,7 @@ describe('RightSidebarShell empty state', () => {
         onAllTabsClosed,
       }),
     );
-    await waitFor(() => expect(screen.getByText('rightSidebar.tabs.empty.title')).toBeTruthy());
+    await waitFor(() => expect(getBucket('s1').hydrated).toBe(true));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(onAllTabsClosed).not.toHaveBeenCalled();
   });
@@ -1164,7 +1205,7 @@ describe('RightSidebarShell 跨 session popup 归属', () => {
 
     await waitFor(() => expect(getBucket('s2').tabs).toHaveLength(1));
     // 当前会话 s1 不该被塞进这个 tab。
-    expect(getBucket('s1').tabs).toHaveLength(0);
+    expect(getBucket('s1').tabs.filter((tab) => tab.kind === 'web-browser')).toHaveLength(0);
     await waitFor(() => expect(requests).toHaveLength(1));
     expect(requests[0].visibility).toBe('open');
     expect(requests[0].opts.sessionId).toBe('s2');
@@ -1187,8 +1228,10 @@ describe('RightSidebarShell 跨 session popup 归属', () => {
       await Promise.resolve();
     });
 
-    await waitFor(() => expect(getBucket('s1').tabs).toHaveLength(1));
-    const tab = getBucket('s1').tabs[0];
+    await waitFor(() =>
+      expect(getBucket('s1').tabs.filter((tab) => tab.kind === 'web-browser')).toHaveLength(1),
+    );
+    const tab = getBucket('s1').tabs.filter((tab) => tab.kind === 'web-browser')[0];
     await waitFor(() => expect(rsbNativePopupClaim).toHaveBeenCalledTimes(1));
     expect(rsbNativePopupClaim).toHaveBeenCalledWith({
       surfaceId: 'surface-oauth',
@@ -1207,7 +1250,9 @@ describe('RightSidebarShell 跨 session popup 归属', () => {
       }
       await Promise.resolve();
     });
-    await waitFor(() => expect(getBucket('s1').tabs).toHaveLength(0));
+    await waitFor(() =>
+      expect(getBucket('s1').tabs.filter((tab) => tab.kind === 'web-browser')).toHaveLength(0),
+    );
     expect(rsbNativePopupClose).toHaveBeenCalledWith({ surfaceId: 'surface-oauth' });
   });
 
@@ -1264,7 +1309,9 @@ describe('RightSidebarShell 跨 session popup 归属', () => {
       await Promise.resolve();
     });
 
-    await waitFor(() => expect(getBucket('s1').tabs).toHaveLength(1));
+    await waitFor(() =>
+      expect(getBucket('s1').tabs.filter((tab) => tab.kind === 'web-browser')).toHaveLength(1),
+    );
   });
 
   it('当前 session 的 popup 也离屏物化并请求展开(折叠侧栏下 OAuth 不再卡死)', async () => {
@@ -1284,11 +1331,13 @@ describe('RightSidebarShell 跨 session popup 归属', () => {
       await Promise.resolve();
     });
 
-    await waitFor(() => expect(getBucket('s1').tabs).toHaveLength(1));
+    await waitFor(() =>
+      expect(getBucket('s1').tabs.filter((tab) => tab.kind === 'web-browser')).toHaveLength(1),
+    );
     await waitFor(() => expect(eagerSpawnAndReport).toHaveBeenCalledTimes(1));
     expect(eagerSpawnAndReport).toHaveBeenCalledWith(
       's1',
-      getBucket('s1').tabs[0].id,
+      getBucket('s1').tabs.filter((tab) => tab.kind === 'web-browser')[0].id,
       'https://accounts.example.com/oauth',
     );
     await waitFor(() => expect(requests).toHaveLength(1));
@@ -1340,6 +1389,10 @@ describe('RightSidebarShell add-tab failure toast', () => {
     eagerSpawnAndReport.mockClear();
     eagerSpawnAndReport.mockImplementation(async () => undefined);
     tabsIpc = makeRightSidebarTabsIpc();
+    tabsIpc.list.mockResolvedValue({
+      tabs: [{ id: 'files', kind: 'file-browser', state: null }],
+      activeTabId: 'files',
+    });
     installElectronApi(tabsIpc);
   });
 
@@ -1371,6 +1424,7 @@ describe('RightSidebarShell add-tab failure toast', () => {
         sessionId: 's1',
         workdir: '/tmp/repo',
         remoteHostId: null,
+        deviceLinkDeviceId: null,
         shellVisible: true,
         isMac: true,
       }),
@@ -1386,7 +1440,9 @@ describe('RightSidebarShell add-tab failure toast', () => {
     try {
       renderShellWithTerminalKind();
       await waitFor(() => expect(tabsIpc.list).toHaveBeenCalledWith({ sessionId: 's1' }));
-      const addButton = screen.getByRole('button', { name: 'rightSidebar.tabs.addAria' });
+      const addButton = screen.getAllByRole('button', {
+        name: 'rightSidebar.tabs.addAria',
+      })[0];
       vi.spyOn(addButton.parentElement as HTMLElement, 'getBoundingClientRect').mockReturnValue({
         x: 20,
         y: 20,
@@ -1399,7 +1455,7 @@ describe('RightSidebarShell add-tab failure toast', () => {
         toJSON: () => ({}),
       });
       fireEvent.click(addButton);
-      fireEvent.click(screen.getByRole('menuitem', { name: 'rightSidebar.tabs.kinds.terminal' }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'rightSidebar.terminal.profileShell' }));
       await waitFor(() => expect(toastError).toHaveBeenCalledWith(expectedKey));
     } finally {
       unregisterTabKind('terminal');
@@ -1411,7 +1467,9 @@ describe('RightSidebarShell add-tab failure toast', () => {
     try {
       renderShellWithTerminalKind();
       await waitFor(() => expect(tabsIpc.list).toHaveBeenCalledWith({ sessionId: 's1' }));
-      const addButton = screen.getByRole('button', { name: 'rightSidebar.tabs.addAria' });
+      const addButton = screen.getAllByRole('button', {
+        name: 'rightSidebar.tabs.addAria',
+      })[0];
       vi.spyOn(addButton.parentElement as HTMLElement, 'getBoundingClientRect').mockReturnValue({
         x: 20,
         y: 20,
@@ -1424,7 +1482,7 @@ describe('RightSidebarShell add-tab failure toast', () => {
         toJSON: () => ({}),
       });
       fireEvent.click(addButton);
-      fireEvent.click(screen.getByRole('menuitem', { name: 'rightSidebar.tabs.kinds.terminal' }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'rightSidebar.terminal.profileShell' }));
       await waitFor(() => expect(toastError).toHaveBeenCalledWith('rightSidebar.tabs.addFailed'));
     } finally {
       unregisterTabKind('terminal');

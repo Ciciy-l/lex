@@ -36,7 +36,7 @@ import { createLogger } from '../logger.js';
 import { resolveShellForCreate, type ShellId, type ResolvedShell } from './shellResolver.js';
 import { defaultPtySpawn, type PtySpawnFn } from './ptyFactory.js';
 import { resolveTerminalCommand, type ResolvedTerminalCommand } from './agentProfileResolver.js';
-import type { TerminalProfile } from '../../shared/terminal-bridge.js';
+import type { TerminalProfile, TerminalRuntimeRecord } from '../../shared/terminal-bridge.js';
 
 const log = createLogger('terminal/pty-manager');
 
@@ -90,6 +90,8 @@ const ENV_KEYS_TO_STRIP: readonly string[] = [
 ];
 
 export interface CreateOptions {
+  sessionId?: string;
+  attachOnly?: boolean;
   /** PTY session id，对应 RSB tab id（1:1 关系）。 */
   id: string;
   /** 工作目录；不存在或为空时主调方应自己 fallback 到 home。 */
@@ -132,11 +134,16 @@ export interface ExitPayload {
 
 /** 主进程对外暴露的事件接收器。生产代码 → 走 webContents.send；测试 → 自定义收集。 */
 export interface PtyEventSink {
+  emitStatus?: (target: WebContents, record: TerminalRuntimeRecord) => void;
   emitData: (target: WebContents, payload: DataPayload) => void;
   emitExit: (target: WebContents, payload: ExitPayload) => void;
 }
 
 interface PtySession {
+  titleOverride?: string;
+  leadSessionId: string;
+  detached: boolean;
+  terminated: boolean;
   id: string;
   pty: IPty;
   resolved: ResolvedShell | ResolvedTerminalCommand;
@@ -210,6 +217,71 @@ export class PtyManager {
     return this.sessions.has(id);
   }
 
+  private record(session: PtySession): TerminalRuntimeRecord {
+    return {
+      terminalId: session.id,
+      sessionId: session.leadSessionId,
+      profile: session.profile,
+      title: session.titleOverride || session.resolved.displayName,
+      cwd: session.cwd,
+      status: session.exit
+        ? session.terminated
+          ? 'terminated'
+          : 'exited'
+        : session.terminated
+          ? 'terminating'
+          : 'running',
+      detached: session.detached,
+      pid: session.pty.pid,
+      exit: session.exit,
+    };
+  }
+
+  private emitStatus(session: PtySession): void {
+    if (!session.owner.isDestroyed()) this.sink.emitStatus?.(session.owner, this.record(session));
+  }
+
+  getRuntime(id: string, owner: WebContents): TerminalRuntimeRecord | null {
+    const session = this.sessions.get(id);
+    return session && session.owner === owner ? this.record(session) : null;
+  }
+
+  list(sessionId: string, owner: WebContents): TerminalRuntimeRecord[] {
+    return [...this.sessions.values()]
+      .filter((session) => session.leadSessionId === sessionId && session.owner === owner)
+      .map((session) => this.record(session));
+  }
+
+  rename(id: string, title: string, owner: WebContents): void {
+    const session = this.sessions.get(id);
+    if (!session || session.owner !== owner) return;
+    session.titleOverride = title.trim().slice(0, 120);
+    this.emitStatus(session);
+  }
+
+  detach(id: string, owner: WebContents): void {
+    const session = this.sessions.get(id);
+    if (!session || session.owner !== owner) return;
+    session.detached = true;
+    this.emitStatus(session);
+  }
+
+  terminate(id: string, owner: WebContents): void {
+    const session = this.sessions.get(id);
+    if (!session || session.owner !== owner || session.exit || session.terminated) return;
+    session.pendingInput = '';
+    session.terminated = true;
+    try {
+      // Keep the exit subscription: only a real exit confirms termination.
+      session.pty.kill();
+    } catch (error) {
+      session.terminated = false;
+      this.emitStatus(session);
+      throw error;
+    }
+    this.emitStatus(session);
+  }
+
   /**
    * Check the renderer that currently owns a session. Terminal ids are
    * persisted and therefore guessable; every mutating operation must still be
@@ -241,6 +313,9 @@ export class PtyManager {
   create(opts: CreateOptions): CreateResult {
     const existing = this.sessions.get(opts.id);
     if (existing) {
+      if (opts.sessionId && existing.leadSessionId && existing.leadSessionId !== opts.sessionId) {
+        throw new Error(`TERMINAL_SESSION_MISMATCH:${opts.id}`);
+      }
       const requestedProfile = opts.profile ?? 'shell';
       if (
         existing.profile !== requestedProfile ||
@@ -266,6 +341,9 @@ export class PtyManager {
           pid: existing.pty.pid,
         },
       });
+      existing.leadSessionId ||= opts.sessionId ?? '';
+      existing.detached = false;
+      this.emitStatus(existing);
       return {
         shellId: existing.resolved.id,
         shellDisplayName: existing.resolved.displayName,
@@ -275,9 +353,11 @@ export class PtyManager {
         exit: existing.exit,
       };
     }
+    if (opts.attachOnly) throw new Error(`TERMINAL_NOT_FOUND:${opts.id}`);
     const session = this.spawnSession(opts);
     this.sessions.set(opts.id, session);
     this.trackOwner(opts.owner);
+    this.emitStatus(session);
     log.info('pty created', {
       safe: {
         id: opts.id,
@@ -354,11 +434,21 @@ export class PtyManager {
     this.disposeSession(session);
   }
 
+  /** Check and remove synchronously, so a stale renderer list cannot kill a restarted PTY. */
+  forget(id: string, owner: WebContents): void {
+    const session = this.sessions.get(id);
+    if (!session) return;
+    if (session.owner !== owner) throw new Error('TERMINAL_OWNER_MISMATCH');
+    if (!session.exit) throw new Error('TERMINAL_STILL_RUNNING');
+    this.disposeSession(session);
+  }
+
   /** Internal owner-destruction cleanup; callers must already hold the session. */
   private disposeSession(session: PtySession): void {
     if (this.sessions.get(session.id) !== session) return;
     this.sessions.delete(session.id);
     this.cleanupSession(session);
+    this.emitStatus(session);
   }
 
   /** Release native subscriptions and (when still running) terminate a PTY. */
@@ -401,6 +491,7 @@ export class PtyManager {
     // instead of turning the pane into an unrecoverable "not found" state.
     const replacement = this.spawnSession({
       id,
+      sessionId: old.leadSessionId,
       cwd: old.cwd,
       cols: old.cols,
       rows: old.rows,
@@ -408,9 +499,11 @@ export class PtyManager {
       profile: old.profile,
       owner,
     });
+    replacement.titleOverride = old.titleOverride;
     this.sessions.set(id, replacement);
     this.trackOwner(owner);
     this.cleanupSession(old);
+    this.emitStatus(replacement);
     log.info('pty restarted', {
       safe: { id, shellId: replacement.resolved.id, pid: replacement.pty.pid },
     });
@@ -497,6 +590,9 @@ export class PtyManager {
 
     const pty = this.spawnFn(resolved.command, resolved.args, spawnOpts);
     const session: PtySession = {
+      leadSessionId: opts.sessionId ?? '',
+      detached: false,
+      terminated: false,
       id: opts.id,
       pty,
       resolved,
@@ -537,6 +633,7 @@ export class PtyManager {
         signal: signal != null ? String(signal) : null,
       };
       session.exit = exitInfo;
+      this.emitStatus(session);
       // flush 一下残留输入（exit 后写无意义，但保持状态干净）
       session.pendingInput = '';
       log.info('pty exit', {

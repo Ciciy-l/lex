@@ -12,8 +12,8 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  ArrowLeftRight,
-  ArrowUpDown,
+  Columns2,
+  Rows2,
   Circle,
   RotateCw,
   Terminal as TerminalIcon,
@@ -21,20 +21,34 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import { useAppShortcut } from '@/hooks/useAppShortcut';
+import { acquireFindInPage } from '@/components/find-in-page/findInPageOwnership';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { RenameDialog } from '../../RenameDialog';
+import { openFileContentInSidebar } from '../../lib/openFileContentTab';
+import { openDirInSidebarFileBrowser } from '../../lib/openInSidebarFileBrowser';
+import { openUrlInSidebarBrowser } from '../../lib/openInSidebarBrowser';
+import { toast } from '@/lib/toast';
+import { registerTerminalFileLinks } from './lib/terminalFileLinks';
+import { TerminalSearchBar } from './TerminalSearchBar';
 import { Spinner } from '@/components/ui/spinner';
 import { themeService } from '@/themes/theme-service';
 import { Tip } from '@/components/ui/tooltip';
 import { extractIpcError } from '@/utils/ipcError';
 import type { TabKindHostContext } from '../../types';
-import { disposeXterm, getOrCreateXterm, updateXtermTheme, type XtermEntry } from './lib/xtermPool';
+import { getBucket } from '../../store';
+import { getOrCreateXterm, updateXtermTheme, type XtermEntry } from './lib/xtermPool';
 import {
+  adjacentTerminalPane,
   MAX_TERMINAL_PANES,
+  hydrateTerminalState,
   MAX_SPLIT_RATIO,
   MIN_SPLIT_RATIO,
   clampSplitRatio,
   collectPaneIds,
   createPaneState,
-  removeTerminalPane,
+  hideTerminalPane,
+  visibleTerminalPaneIds,
   moveTerminalPane,
   setActiveTerminalPane,
   splitTerminalPane,
@@ -49,7 +63,7 @@ import {
 } from './terminal-layout';
 import { terminalPtyId } from './index';
 import { useTerminalPaneDrag } from './lib/useTerminalPaneDrag';
-import type { TerminalDataEvent, TerminalExitEvent } from '../../../../../shared/terminal-bridge';
+import type { TerminalExitEvent } from '../../../../../shared/terminal-bridge';
 
 interface Props {
   state: TerminalState;
@@ -76,12 +90,43 @@ const SPLIT_GUTTER_PX = 4;
 const KEYBOARD_RESIZE_STEP = 0.05;
 
 export function TerminalTabBody({ state, ctx, active }: Props) {
-  const { tabId, workdir, patchState } = ctx;
+  const { tabId, patchState } = ctx;
+  const workdir = state.cwd || ctx.workdir;
   const { t } = useTranslation();
   // A failed create/restart belongs to one pane.  Keeping this keyed by pane
   // id prevents an error from pane A being shown after the user focuses pane B.
   const [runtimeErrors, setRuntimeErrors] = useState<Record<string, RuntimeError>>({});
   const rootRef = useRef<HTMLDivElement>(null);
+  const [zoomedPaneId, setZoomedPaneId] = useState<string | null>(null);
+  const [searchPaneId, setSearchPaneId] = useState<string | null>(null);
+  const terminalFocused = () => rootRef.current?.contains(document.activeElement) === true;
+  useEffect(() => {
+    if (!active) return;
+    let release: (() => void) | undefined;
+    const sync = () => {
+      const focused = rootRef.current?.contains(document.activeElement);
+      if (focused && !release) release = acquireFindInPage();
+      if (!focused && release) { release(); release = undefined; }
+    };
+    sync();
+    document.addEventListener('focusin', sync);
+    return () => { document.removeEventListener('focusin', sync); release?.(); };
+  }, [active]);
+  useAppShortcut('find-in-page', () => {
+    if (!terminalFocused()) return false;
+    setSearchPaneId(stateRef.current.activePaneId); return true;
+  }, { enabled: active, stopImmediate: true });
+  const focusAdjacent = (direction: -1 | 1) => {
+    if (!terminalFocused()) return false;
+    setZoomedPaneId(null); setSearchPaneId(null);
+    selectPane(adjacentTerminalPane(stateRef.current, direction)); return true;
+  };
+  useAppShortcut('terminal-focus-previous-pane', () => focusAdjacent(-1), { enabled: active });
+  useAppShortcut('terminal-focus-next-pane', () => focusAdjacent(1), { enabled: active });
+  useAppShortcut('terminal-toggle-pane-zoom', () => {
+    if (!terminalFocused()) return false;
+    setZoomedPaneId(id => id ? null : stateRef.current.activePaneId); return true;
+  }, { enabled: active });
   const paneHostsRef = useRef(new Map<string, HTMLDivElement>());
   const getPaneHost = useCallback((paneId: string) => {
     let host = paneHostsRef.current.get(paneId);
@@ -96,8 +141,11 @@ export function TerminalTabBody({ state, ctx, active }: Props) {
   const stateRef = useRef(state);
   stateRef.current = state;
 
-  const paneIds = useMemo(() => collectPaneIds(state.layout), [state.layout]);
-  const canSplit = paneIds.length < MAX_TERMINAL_PANES;
+  const paneIds = useMemo(() => visibleTerminalPaneIds(state), [state.layout, state.panes]);
+  useEffect(() => {
+    if (zoomedPaneId && (state.activePaneId !== zoomedPaneId || !paneIds.includes(zoomedPaneId))) setZoomedPaneId(null);
+  }, [state.activePaneId, paneIds, zoomedPaneId]);
+  const canSplit = collectPaneIds(state.layout).length < MAX_TERMINAL_PANES;
   useEffect(() => {
     for (const paneId of paneHostsRef.current.keys()) {
       if (!paneIds.includes(paneId)) paneHostsRef.current.delete(paneId);
@@ -106,12 +154,12 @@ export function TerminalTabBody({ state, ctx, active }: Props) {
 
   // Keep ids unique even when restoring a layout created in another renderer.
   useEffect(() => {
-    const max = paneIds.reduce((found, id) => {
+    const max = Object.keys(state.panes).reduce((found, id) => {
       const n = Number(id.match(/pane-(\d+)/)?.[1] ?? 0);
       return Math.max(found, n);
     }, 0);
     nextIdRef.current = Math.max(nextIdRef.current, max + 1);
-  }, [paneIds]);
+  }, [state.panes]);
 
   const persist = useCallback(
     (next: TerminalState) => {
@@ -146,13 +194,12 @@ export function TerminalTabBody({ state, ctx, active }: Props) {
   const createSplitForPane = useCallback(
     (paneId: string, direction: 'horizontal' | 'vertical', profile: TerminalProfile = 'shell') => {
       if (collectPaneIds(stateRef.current.layout).length >= MAX_TERMINAL_PANES) return;
+      setZoomedPaneId(null);
       const id = `pane-${nextIdRef.current++}`;
-      const next = splitTerminalPane(
-        stateRef.current,
-        paneId,
-        direction,
-        createPaneState(id, profile),
-      );
+      const next = splitTerminalPane(stateRef.current, paneId, direction, {
+        ...createPaneState(id, profile),
+        terminalId: crypto.randomUUID(),
+      });
       if (next) persist(next);
     },
     [persist],
@@ -160,11 +207,12 @@ export function TerminalTabBody({ state, ctx, active }: Props) {
 
   const closePane = useCallback(
     (paneId: string) => {
-      const next = removeTerminalPane(stateRef.current, paneId);
+      setZoomedPaneId(null);
+      const next = hideTerminalPane(stateRef.current, paneId);
       if (!next) return;
-      const ptyId = terminalPtyId(tabId, paneId);
-      void disposePty(ptyId);
-      disposeXterm(ptyId);
+      const ptyId = stateRef.current.panes[paneId].terminalId || terminalPtyId(tabId, paneId);
+      // Preserve its original split slot and PTY identity for background restore.
+      void window.electronAPI.terminal.detach(ptyId).catch(() => undefined);
       setPaneRuntimeError(paneId, null);
       persist(next);
     },
@@ -172,7 +220,10 @@ export function TerminalTabBody({ state, ctx, active }: Props) {
   );
 
   const selectPane = useCallback(
-    (paneId: string) => persist(setActiveTerminalPane(stateRef.current, paneId)),
+    (paneId: string) => {
+      setSearchPaneId(null);
+      persist(setActiveTerminalPane(stateRef.current, paneId));
+    },
     [persist],
   );
 
@@ -188,6 +239,7 @@ export function TerminalTabBody({ state, ctx, active }: Props) {
   const movePane = useCallback(
     (sourceId: string, targetId: string, zone: TerminalDropZone) => {
       const current = stateRef.current;
+      setZoomedPaneId(null);
       const next = moveTerminalPane(current, sourceId, targetId, zone);
       if (next !== current) persist(next);
     },
@@ -222,15 +274,22 @@ export function TerminalTabBody({ state, ctx, active }: Props) {
       onClickCapture={onClickCapture}
       onPointerDownCapture={onPointerDownCapture}
       data-terminal-workbench=""
-      className="relative h-full min-h-0 w-full overflow-hidden bg-[var(--panel-bg)]"
+      className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--panel-bg)]"
     >
+      {searchPaneId && active && state.panes[searchPaneId] && <TerminalSearchBar key={searchPaneId}
+        terminalId={state.panes[searchPaneId].terminalId || terminalPtyId(tabId, searchPaneId)}
+        onClose={() => { setSearchPaneId(null); getOrCreateXterm(state.panes[searchPaneId].terminalId || terminalPtyId(tabId, searchPaneId)).terminal.focus(); }} />}
+      <div className="relative min-h-0 flex-1">
       <LayoutNodeView
         node={state.layout}
+        zoomedPaneId={zoomedPaneId}
+        visiblePaneIds={paneIds}
         splitPath={ROOT_SPLIT_PATH}
         getPaneHost={getPaneHost}
         onCommitSplitRatio={commitSplitRatio}
         t={t}
       />
+      </div>
       {paneIds.map((paneId) => {
         const pane = state.panes[paneId];
         if (!pane) return null;
@@ -239,6 +298,7 @@ export function TerminalTabBody({ state, ctx, active }: Props) {
             pane={pane}
             state={state}
             tabId={tabId}
+            sessionId={ctx.sessionId}
             workdir={workdir}
             activePaneId={state.activePaneId}
             canSplit={canSplit}
@@ -249,7 +309,10 @@ export function TerminalTabBody({ state, ctx, active }: Props) {
             onSplit={createSplitForPane}
             onPatchPane={patchPane}
             onRuntimeError={setPaneRuntimeError}
-            onBeginDrag={beginDrag}
+            onBeginDrag={(id, event) => { setZoomedPaneId(null); beginDrag(id, event); }}
+            zoomed={zoomedPaneId === paneId}
+            onZoom={() => setZoomedPaneId(id => id === paneId ? null : paneId)}
+            onSearch={() => setSearchPaneId(paneId)}
             dragging={preview?.sourcePaneId === paneId}
             t={t}
           />,
@@ -283,6 +346,8 @@ export function TerminalTabBody({ state, ctx, active }: Props) {
 }
 
 interface LayoutNodeViewProps {
+  visiblePaneIds: string[];
+  zoomedPaneId: string | null;
   node: TerminalLayoutNode;
   splitPath: TerminalSplitPath;
   getPaneHost: (id: string) => HTMLDivElement;
@@ -291,6 +356,7 @@ interface LayoutNodeViewProps {
 }
 
 interface TerminalPaneViewProps {
+  sessionId: string;
   pane: TerminalPaneState;
   state: TerminalState;
   tabId: string;
@@ -306,11 +372,15 @@ interface TerminalPaneViewProps {
   onRuntimeError: (paneId: string, error: RuntimeError | null) => void;
   onBeginDrag: (id: string, event: ReactPointerEvent<HTMLButtonElement>) => void;
   dragging: boolean;
+  zoomed: boolean;
+  onZoom: () => void;
+  onSearch: () => void;
   t: ReturnType<typeof useTranslation>['t'];
 }
 
 function LayoutNodeView(props: LayoutNodeViewProps) {
   if (props.node.type === 'leaf') {
+    if (!props.visiblePaneIds.includes(props.node.paneId)) return null;
     return <TerminalPaneSlot paneId={props.node.paneId} getPaneHost={props.getPaneHost} />;
   }
   return <TerminalSplitNodeView {...props} node={props.node} />;
@@ -462,8 +532,12 @@ function TerminalSplitNodeView(
     [commitRatio, isHorizontal],
   );
 
-  const firstStyle = { flexBasis: 0, flexGrow: node.ratio };
-  const secondStyle = { flexBasis: 0, flexGrow: 1 - node.ratio };
+  const zoomFirst = !!props.zoomedPaneId && collectPaneIds(node.first).includes(props.zoomedPaneId);
+  const zoomSecond = !!props.zoomedPaneId && collectPaneIds(node.second).includes(props.zoomedPaneId);
+  const hideFirst = zoomSecond || !collectPaneIds(node.first).some(id => props.visiblePaneIds.includes(id));
+  const hideSecond = zoomFirst || !collectPaneIds(node.second).some(id => props.visiblePaneIds.includes(id));
+  const firstStyle = { flexBasis: 0, flexGrow: hideSecond ? 1 : node.ratio, display: hideFirst ? 'none' : undefined };
+  const secondStyle = { flexBasis: 0, flexGrow: hideFirst ? 1 : 1 - node.ratio, display: hideSecond ? 'none' : undefined };
   return (
     <div
       ref={containerRef}
@@ -475,6 +549,7 @@ function TerminalSplitNodeView(
       </div>
       <div
         ref={separatorRef}
+        style={hideFirst || hideSecond ? { display: 'none' } : undefined}
         role="separator"
         tabIndex={0}
         aria-orientation={isHorizontal ? 'vertical' : 'horizontal'}
@@ -511,10 +586,13 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
   const entryRef = useRef<XtermEntry | null>(null);
   const aliveRef = useRef(true);
   const onDataRef = useRef<{ dispose(): void } | null>(null);
-  const ptyId = terminalPtyId(props.tabId, pane.id);
+  const ptyId = pane.terminalId || terminalPtyId(props.tabId, pane.id);
   const isActive = props.activePaneId === pane.id;
-  const canClose = collectPaneIds(props.state.layout).length > 1;
+  const canClose = visibleTerminalPaneIds(props.state).length > 1;
   const [restarting, setRestarting] = useState(false);
+  const [menu, setMenu] = useState<{x: number; y: number} | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  const [urlMenu, setUrlMenu] = useState<{ x: number; y: number; url: string } | null>(null);
 
   useLayoutEffect(() => {
     aliveRef.current = true;
@@ -525,13 +603,24 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
     const root = entry.terminal.element as HTMLElement | undefined;
     if (root && root.parentElement !== slot) slot.appendChild(root);
     else if (!root) entry.terminal.open(slot);
+    let linkRequest = 0;
+    let linksActive = true;
+    const fileLinks = registerTerminalFileLinks(entry.terminal, link => {
+      const request = ++linkRequest;
+      void window.electronAPI.terminal.resolveFile(ptyId, link.path).then(target => {
+        if (!linksActive || request !== linkRequest) return;
+        if (target.kind === 'directory') return openDirInSidebarFileBrowser(props.sessionId, target.path);
+        return openFileContentInSidebar(props.sessionId, {
+          workdir: target.workdir, path: target.path, external: false, remoteHostId: null, deviceId: null,
+          ...(link.line ? { reveal: { line: link.line, column: link.column, requestId: crypto.randomUUID() } } : {}),
+        });
+      }).catch(() => {
+        if (linksActive && request === linkRequest) toast.error(props.t('rightSidebar.workbench.fileLinkFailed'));
+      });
+    }, props.t('rightSidebar.workbench.startupDirectory', { path: props.workdir }));
     onDataRef.current = entry.terminal.onData(
       (data) => void window.electronAPI.terminal.write(ptyId, data).catch(() => undefined),
     );
-    const offData = window.electronAPI.terminal.onData((event: unknown) => {
-      const data = event as TerminalDataEvent;
-      if (aliveRef.current && data.id === ptyId) entry.terminal.write(data.chunk);
-    });
     const offExit = window.electronAPI.terminal.onExit((event: unknown) => {
       const data = event as TerminalExitEvent;
       if (aliveRef.current && data.id === ptyId)
@@ -540,9 +629,10 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
     fitAndPush(entry, ptyId);
     return () => {
       aliveRef.current = false;
+      linksActive = false;
+      fileLinks.dispose();
       onDataRef.current?.dispose();
       onDataRef.current = null;
-      offData();
       offExit();
     };
   }, [pane.id, ptyId, props.onPatchPane]);
@@ -561,27 +651,35 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
     const entry = entryRef.current;
     if (!entry) return;
     if (pane.created && entry.ptyAttached) return;
+    if (props.state.viewHidden || (!props.active && !pane.runtimeStarted)) return;
     let cancelled = false;
     void window.electronAPI.terminal
       .create({
         id: ptyId,
+        sessionId: props.sessionId,
+        attachOnly: pane.runtimeStarted === true,
         cwd: props.workdir,
         cols: entry.lastSize.cols,
         rows: entry.lastSize.rows,
         profile: pane.profile,
+        ...(pane.shellPref === undefined ? {} : { shellPref: pane.shellPref }),
       })
       .then((result) => {
-        // A pane can be removed while the invoke is in flight.  The Main
-        // handler may have spawned successfully even though React has already
-        // unmounted this view; release that late-created PTY instead of leaving
-        // an orphan process behind.  `aliveRef` only flips on real unmount, so a
-        // dependency refresh does not accidentally dispose a live session.
+        // Local bucket absence can mean navigation/cache handoff, not deletion.
+        // A late response must never authorize process termination.
         if (cancelled || !aliveRef.current) {
-          if (!aliveRef.current) void disposePty(ptyId);
+          entry.ptyAttached = true;
+          const retained = getBucket(props.sessionId).tabs.find((tab) => tab.id === props.tabId);
+          const saved = retained ? hydrateTerminalState(retained.state) : null;
+          if (!aliveRef.current || saved?.viewHidden || (saved && !saved.panes[pane.id])) {
+            void window.electronAPI.terminal.detach(ptyId).catch(() => undefined);
+          }
           return;
         }
         entry.ptyAttached = true;
         props.onPatchPane(pane.id, {
+          terminalId: ptyId,
+          runtimeStarted: true,
           created: true,
           exited: result.exit,
           shellId: result.shellId,
@@ -600,9 +698,15 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
     pane.created,
     pane.id,
     pane.profile,
+    pane.shellPref,
     props.onPatchPane,
     props.onRuntimeError,
     props.workdir,
+    props.sessionId,
+    props.tabId,
+    props.active,
+    props.state.viewHidden,
+    pane.runtimeStarted,
     ptyId,
   ]);
 
@@ -631,9 +735,22 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
     if (restarting) return;
     setRestarting(true);
     try {
-      const result = await window.electronAPI.terminal.restart(ptyId);
+      // Missing runtime after an app restart is not resumed automatically.
+      // An explicit Restart is allowed to create a new process.
+      const records = await window.electronAPI.terminal.list(props.sessionId);
+      const result = records.some((record) => record.terminalId === ptyId)
+        ? await window.electronAPI.terminal.restart(ptyId)
+        : await window.electronAPI.terminal.create({
+            id: ptyId,
+            sessionId: props.sessionId,
+            cwd: props.workdir,
+            profile: pane.profile,
+            ...(pane.shellPref === undefined ? {} : { shellPref: pane.shellPref }),
+          });
       if (entryRef.current) entryRef.current.ptyAttached = true;
       props.onPatchPane(pane.id, {
+        terminalId: ptyId,
+        runtimeStarted: true,
         created: true,
         exited: null,
         shellId: result.shellId,
@@ -650,6 +767,11 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
   const label = pane.title || profileLabel(pane.profile, props.t);
   return (
     <div
+      onContextMenu={event => {
+        if ((event.target as Element).closest('[data-terminal-pane-header]')) return;
+        const url = entryRef.current?.hoveredUrl?.();
+        if (url && /^https?:\/\//i.test(url)) { event.preventDefault(); setUrlMenu({ x: event.clientX, y: event.clientY, url }); }
+      }}
       data-terminal-pane-id={pane.id}
       className={`group relative h-full w-full ${isActive ? 'ring-1 ring-inset ring-[var(--focus-ring)]' : ''} ${props.dragging ? 'opacity-60' : ''}`}
       onMouseDown={(event) => {
@@ -659,6 +781,7 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
     >
       <div ref={slotRef} className="absolute inset-0 bg-[var(--panel-bg)] p-1" />
       <div
+        onContextMenu={event => { event.preventDefault(); props.onSelect(pane.id); setMenu({x: event.clientX, y: event.clientY}); }}
         data-terminal-pane-header=""
         className="group/terminal-header absolute inset-x-0 top-0 z-10 flex h-6 items-center gap-1 px-1"
       >
@@ -698,7 +821,7 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
                   onClick={() => props.onSplit(pane.id, 'horizontal')}
                   aria-label={props.t('rightSidebar.terminal.splitHorizontal')}
                 >
-                  <ArrowLeftRight size={12} />
+                  <Columns2 size={14} />
                 </button>
               </Tip>
               <Tip text={props.t('rightSidebar.terminal.splitVertical')}>
@@ -709,7 +832,7 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
                   onClick={() => props.onSplit(pane.id, 'vertical')}
                   aria-label={props.t('rightSidebar.terminal.splitVertical')}
                 >
-                  <ArrowUpDown size={12} />
+                  <Rows2 size={14} />
                 </button>
               </Tip>
             </>
@@ -729,6 +852,22 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
           )}
         </div>
       </div>
+      <DropdownMenu open={urlMenu !== null} onOpenChange={open => { if (!open) setUrlMenu(null); }}>
+        <DropdownMenuTrigger asChild><span style={{ position: 'fixed', left: urlMenu?.x ?? 0, top: urlMenu?.y ?? 0, width: 1, height: 1 }} /></DropdownMenuTrigger>
+        <DropdownMenuContent><DropdownMenuItem onSelect={() => { if (urlMenu) void openUrlInSidebarBrowser(props.sessionId, urlMenu.url).catch(() => toast.error(props.t('rightSidebar.terminal.actionFailed'))); }}>{props.t('rightSidebar.workbench.openInLex')}</DropdownMenuItem></DropdownMenuContent>
+      </DropdownMenu>
+      <DropdownMenu open={menu !== null} onOpenChange={open => { if (!open) setMenu(null); }}>
+        <DropdownMenuTrigger asChild><span style={{ position: 'fixed', left: menu?.x ?? 0, top: menu?.y ?? 0, width: 1, height: 1 }} /></DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuItem onSelect={props.onSearch}>{props.t('rightSidebar.workbench.searchOutput')}</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setRenaming(true)}>{props.t('rightSidebar.workbench.rename')}</DropdownMenuItem>
+          <DropdownMenuItem onSelect={props.onZoom}>{props.t(props.zoomed ? 'rightSidebar.workbench.restorePane' : 'rightSidebar.workbench.zoomPane')}</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {renaming && <RenameDialog initialValue={pane.title} onClose={() => setRenaming(false)} onSave={async title => {
+        await window.electronAPI.terminal.rename(ptyId, title);
+        props.onPatchPane(pane.id, { title });
+      }} />}
       {pane.exited && (
         <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
           <div className="pointer-events-auto flex items-center gap-2 rounded-lg border border-[var(--border-default)] bg-[var(--surface-elevated)] px-2 py-1 text-11">
@@ -747,6 +886,14 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
       {runtimeError && isActive && (
         <div className="absolute inset-x-2 bottom-3 z-10 rounded-lg border border-[var(--border-default)] bg-[var(--surface-elevated)] px-2 py-1 text-11 text-[var(--text-secondary)]">
           {props.t(runtimeError.key, { detail: runtimeError.detail })}
+          <button
+            type="button"
+            className="ml-2 rounded-full px-2 py-1 hover:bg-[var(--surface-hover)]"
+            disabled={restarting}
+            onClick={() => void restart()}
+          >
+            {props.t('rightSidebar.terminal.restart')}
+          </button>
         </div>
       )}
     </div>
@@ -781,13 +928,5 @@ function fitAndPush(entry: XtermEntry, id: string): void {
     void window.electronAPI.terminal.resize(id, cols, rows).catch(() => undefined);
   } catch {
     /* the pane may not have a measurable size during its first frame */
-  }
-}
-
-async function disposePty(id: string): Promise<void> {
-  try {
-    await window.electronAPI.terminal.dispose(id);
-  } catch {
-    /* no existing PTY */
   }
 }

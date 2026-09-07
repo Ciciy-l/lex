@@ -28,6 +28,7 @@ export interface FilterResultListProps {
   indexError?: string | null;
   selectedPath: string | null;
   onSelectFile: (relPath: string) => void;
+  onOpenFile?: (relPath: string) => void;
 }
 
 export function FilterResultList({
@@ -37,6 +38,7 @@ export function FilterResultList({
   indexError = null,
   selectedPath,
   onSelectFile,
+  onOpenFile,
 }: FilterResultListProps) {
   const { t } = useTranslation();
 
@@ -75,7 +77,8 @@ export function FilterResultList({
             <button
               type="button"
               key={relPath}
-              onClick={() => onSelectFile(relPath)}
+              onClick={e => e.detail === 0 && onOpenFile ? onOpenFile(relPath) : onSelectFile(relPath)}
+              onDoubleClick={() => onOpenFile?.(relPath)}
               title={relPath}
               className={cn(
                 'flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm',

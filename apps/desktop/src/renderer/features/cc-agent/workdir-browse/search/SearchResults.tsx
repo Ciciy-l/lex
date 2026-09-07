@@ -49,6 +49,7 @@ export interface SearchResultsProps {
   results: FileResult[];
   /** 用户点命中行 → 打开文件 + 跳到对应行(由上层处理 URL setSearchParams)。 */
   onOpenMatch: (relPath: string, lineNumber: number) => void;
+  onKeepMatch?: (relPath: string, lineNumber: number) => void;
 }
 
 /** 平铺后的虚拟列表 row。header / match 两种,都带 fileIndex 方便定位回源数据。 */
@@ -62,7 +63,7 @@ const MATCH_HEIGHT = 22;
 // 滚动到视口边缘时下一行已经在 DOM 里, 不会有"空白闪一下"的感觉。
 const OVERSCAN = 8;
 
-export function SearchResults({ results, onOpenMatch }: SearchResultsProps) {
+export function SearchResults({ results, onOpenMatch, onKeepMatch }: SearchResultsProps) {
   // 折叠态:per-relPath。默认全展开。
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
@@ -145,7 +146,8 @@ export function SearchResults({ results, onOpenMatch }: SearchResultsProps) {
               ) : (
                 <MatchRow
                   match={row.match}
-                  onClick={() => onOpenMatch(row.relPath, row.match.lineNumber)}
+                  onClick={e => (e.detail === 0 && onKeepMatch ? onKeepMatch : onOpenMatch)(row.relPath, row.match.lineNumber)}
+                  onDoubleClick={() => onKeepMatch?.(row.relPath, row.match.lineNumber)}
                 />
               )}
             </div>
@@ -198,10 +200,11 @@ function FileHeader({ relPath, matchCount, collapsed, onToggle }: FileHeaderProp
 
 interface MatchRowProps {
   match: MatchLine;
-  onClick: () => void;
+  onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  onDoubleClick?: () => void;
 }
 
-function MatchRow({ match, onClick }: MatchRowProps) {
+function MatchRow({ match, onClick, onDoubleClick }: MatchRowProps) {
   const fragments = useMemo(
     () => splitLineByMatches(match.lineText, match.submatches),
     [match.lineText, match.submatches],
@@ -210,6 +213,7 @@ function MatchRow({ match, onClick }: MatchRowProps) {
     <button
       type="button"
       onClick={onClick}
+      onDoubleClick={onDoubleClick}
       title={`Line ${match.lineNumber}`}
       className={cn(
         'flex h-[22px] w-full items-center rounded-[4px]',
