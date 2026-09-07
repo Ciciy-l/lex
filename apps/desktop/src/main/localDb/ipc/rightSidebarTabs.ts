@@ -22,11 +22,16 @@
 
 import { ipcMain } from 'electron';
 import { createId } from '@paralleldrive/cuid2';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray, notInArray, sql } from 'drizzle-orm';
 
 import { getDbClient } from '../client/current.js';
 import { rightSidebarTabs, sessions } from '../schema.js';
 import { MAX_STATE_JSON_BYTES } from '../../../shared/rightSidebarTabState.js';
+import {
+  workspaceSurface,
+  isHiddenTerminal,
+  WORKSPACE_TOOL_KINDS,
+} from '../../../shared/workspaceSurface.js';
 import { assertTrustedAppRendererEvent } from '../../security/trustedAppRenderer.js';
 import { requireObject, requireString, throwIpcError } from '../../utils/ipcValidate.js';
 import { createLogger } from '../../logger.js';
@@ -35,7 +40,19 @@ const log = createLogger('rightSidebarTabs');
 
 /** 单 session 最多 20 个 tab,超抛 RIGHT_SIDEBAR_TOO_MANY_TABS。 */
 const MAX_TABS_PER_SESSION = 20;
-const SINGLETON_TAB_KINDS = new Set(['subagents']);
+const SINGLETON_TAB_KINDS = new Set(['subagents', 'orca-workers']);
+const singletonQueues = new Map<string, Promise<unknown>>();
+
+async function serializeSingleton<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
+  const previous = singletonQueues.get(sessionId) ?? Promise.resolve();
+  const task = previous.catch(() => undefined).then(operation);
+  singletonQueues.set(sessionId, task);
+  try {
+    return await task;
+  } finally {
+    if (singletonQueues.get(sessionId) === task) singletonQueues.delete(sessionId);
+  }
+}
 
 export interface TabRow {
   id: string;
@@ -127,6 +144,12 @@ export function registerRightSidebarTabsIpc(): void {
     return {
       tabs: rows.map(rowToTab),
       activeTabId: activeRow?.id ?? null,
+      activeToolId: rows.find((r) => r.isActive && workspaceSurface(r.kind) === 'tool')?.id ?? null,
+      activeContentTabId:
+        rows.find(
+          (r) =>
+            r.isActive && workspaceSurface(r.kind) === 'content' && !isHiddenTerminal(rowToTab(r)),
+        )?.id ?? null,
       persistable: true,
     };
   });
@@ -135,69 +158,74 @@ export function registerRightSidebarTabsIpc(): void {
   // singleton while attached/detached hosts overlap. The partial unique index
   // is the authority; INSERT OR IGNORE + re-read returns one canonical row to
   // every caller without changing the user's active tab.
-  ipcMain.handle('local-db:right-sidebar-tabs:ensure-singleton', async (event, payload: unknown) => {
-    assertTrustedAppRendererEvent(event);
-    const obj = requireObject(payload, 'ensure singleton payload');
-    const sessionId = requireString(obj.sessionId, 'sessionId');
-    const kind = requireString(obj.kind, 'kind');
-    if (!SINGLETON_TAB_KINDS.has(kind)) {
-      throwIpcError('INVALID_PARAMS', `${kind} is not a singleton tab kind`);
-    }
-    const stateJson = serializeState(obj.state);
-    const db = getDbClient().drizzle;
-    const sessionExists = await db
-      .select({ id: sessions.id })
-      .from(sessions)
-      .where(eq(sessions.id, sessionId))
-      .limit(1);
-    if (sessionExists.length === 0) {
-      return { tab: null, created: false, persistable: false };
-    }
-    const [existing] = await db
-      .select()
-      .from(rightSidebarTabs)
-      .where(and(eq(rightSidebarTabs.sessionId, sessionId), eq(rightSidebarTabs.kind, kind)))
-      .limit(1);
-    if (existing) {
-      return { tab: rowToTab(existing), created: false, persistable: true };
-    }
-    const current = await db
-      .select({ id: rightSidebarTabs.id })
-      .from(rightSidebarTabs)
-      .where(eq(rightSidebarTabs.sessionId, sessionId));
-    if (current.length >= MAX_TABS_PER_SESSION) {
-      throwIpcError(
-        'RIGHT_SIDEBAR_TOO_MANY_TABS',
-        `session ${sessionId} already has ${MAX_TABS_PER_SESSION} tabs (limit reached)`,
-      );
-    }
-    const now = Date.now();
-    const id = `t_${createId()}`;
-    await db
-      .insert(rightSidebarTabs)
-      .values({
-        id,
-        sessionId,
-        kind,
-        position: current.length,
-        state: stateJson,
-        isActive: false,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .onConflictDoNothing();
-    const [canonical] = await db
-      .select()
-      .from(rightSidebarTabs)
-      .where(and(eq(rightSidebarTabs.sessionId, sessionId), eq(rightSidebarTabs.kind, kind)))
-      .limit(1);
-    if (!canonical) throw new Error(`failed to ensure ${kind} tab for session ${sessionId}`);
-    return {
-      tab: rowToTab(canonical),
-      created: canonical.id === id,
-      persistable: true,
-    };
-  });
+  ipcMain.handle(
+    'local-db:right-sidebar-tabs:ensure-singleton',
+    async (event, payload: unknown) => {
+      assertTrustedAppRendererEvent(event);
+      const obj = requireObject(payload, 'ensure singleton payload');
+      const sessionId = requireString(obj.sessionId, 'sessionId');
+      const kind = requireString(obj.kind, 'kind');
+      if (!SINGLETON_TAB_KINDS.has(kind)) {
+        throwIpcError('INVALID_PARAMS', `${kind} is not a singleton tab kind`);
+      }
+      const stateJson = serializeState(obj.state);
+      return serializeSingleton(sessionId, async () => {
+        const db = getDbClient().drizzle;
+        const sessionExists = await db
+          .select({ id: sessions.id })
+          .from(sessions)
+          .where(eq(sessions.id, sessionId))
+          .limit(1);
+        if (sessionExists.length === 0) {
+          return { tab: null, created: false, persistable: false };
+        }
+        const [existing] = await db
+          .select()
+          .from(rightSidebarTabs)
+          .where(and(eq(rightSidebarTabs.sessionId, sessionId), eq(rightSidebarTabs.kind, kind)))
+          .limit(1);
+        if (existing) {
+          return { tab: rowToTab(existing), created: false, persistable: true };
+        }
+        const current = await db
+          .select({ id: rightSidebarTabs.id })
+          .from(rightSidebarTabs)
+          .where(eq(rightSidebarTabs.sessionId, sessionId));
+        if (current.length >= MAX_TABS_PER_SESSION) {
+          throwIpcError(
+            'RIGHT_SIDEBAR_TOO_MANY_TABS',
+            `session ${sessionId} already has ${MAX_TABS_PER_SESSION} tabs (limit reached)`,
+          );
+        }
+        const now = Date.now();
+        const id = `t_${createId()}`;
+        await db
+          .insert(rightSidebarTabs)
+          .values({
+            id,
+            sessionId,
+            kind,
+            position: current.length,
+            state: stateJson,
+            isActive: false,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .onConflictDoNothing();
+        const [canonical] = await db
+          .select()
+          .from(rightSidebarTabs)
+          .where(and(eq(rightSidebarTabs.sessionId, sessionId), eq(rightSidebarTabs.kind, kind)))
+          .limit(1);
+        if (!canonical) throw new Error(`failed to ensure ${kind} tab for session ${sessionId}`);
+        return {
+          tab: rowToTab(canonical),
+          created: canonical.id === id,
+          persistable: true,
+        };
+      });
+    },
+  );
 
   // upsert: 新增或更新 tab(state / position / kind)。kind 不变(新 tab 注册时定),
   // 但接口允许传以保持 IPC 形态对称(renderer 拿到 unknown kind 时可以 fallback)。
@@ -261,9 +289,7 @@ export function registerRightSidebarTabsIpc(): void {
     return { ok: true };
   });
 
-  // setActive: 先把 session 内所有 tab 设 inactive,再设 target 为 active(targetId=null
-  // 表示无激活态,close last tab 时使用)。两步操作不在事务里 —— 单 session 内 tab 数 ≤ 20,
-  // 失败概率极低;真出现中间态 next list 时 UI 会展示"无激活 tab",用户重新点一下就好。
+  // Persist one selection per surface with a single atomic SQL update.
   ipcMain.handle('local-db:right-sidebar-tabs:setActive', async (event, payload: unknown) => {
     assertTrustedAppRendererEvent(event);
     const obj = requireObject(payload, 'setActive payload');
@@ -271,28 +297,38 @@ export function registerRightSidebarTabsIpc(): void {
     const targetId = obj.id === null ? null : requireString(obj.id, 'id');
     const db = getDbClient().drizzle;
     const now = Date.now();
+    // Existing isActive rows can represent one selection per surface without
+    // changing the historical database schema or rewriting users' tab state.
+    const rows = await db
+      .select()
+      .from(rightSidebarTabs)
+      .where(eq(rightSidebarTabs.sessionId, sessionId));
+    const target = rows.find((row) => row.id === targetId);
+    if (targetId && !target) throwIpcError('NOT_FOUND', 'tab does not belong to this session');
+    if (obj.surface !== undefined && obj.surface !== 'tool' && obj.surface !== 'content') {
+      throwIpcError('INVALID_PARAMS', 'invalid workspace surface');
+    }
+    const surface = target ? workspaceSurface(target.kind) : obj.surface;
+    // One SQL UPDATE changes the whole surface atomically; no clear/set gap.
     await db
       .update(rightSidebarTabs)
-      .set({ isActive: false, updatedAt: now })
-      .where(eq(rightSidebarTabs.sessionId, sessionId));
-    if (targetId !== null) {
-      // SELECT 验证存在再 UPDATE,不用 `.update().returning()` —— 本仓 SQLite 上不使用
-      // drizzle 的 update/delete `.returning()`(grep 验证全仓 0 处);某些 drizzle 版本
-      // 在 update returning 上行为不一致(测试 setup 与 production 之间存在差异),
-      // 直接用 select + 无 returning update 最稳。
-      const exists = await db
-        .select({ id: rightSidebarTabs.id })
-        .from(rightSidebarTabs)
-        .where(and(eq(rightSidebarTabs.id, targetId), eq(rightSidebarTabs.sessionId, sessionId)))
-        .limit(1);
-      if (exists.length === 0) {
-        throwIpcError('NOT_FOUND', `tab ${targetId} not found in session ${sessionId}`);
-      }
-      await db
-        .update(rightSidebarTabs)
-        .set({ isActive: true, updatedAt: now })
-        .where(and(eq(rightSidebarTabs.id, targetId), eq(rightSidebarTabs.sessionId, sessionId)));
-    }
+      .set({
+        isActive:
+          targetId === null
+            ? false
+            : sql<boolean>`CASE WHEN ${rightSidebarTabs.id} = ${targetId} THEN 1 ELSE 0 END`,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(rightSidebarTabs.sessionId, sessionId),
+          surface === undefined
+            ? undefined
+            : surface === 'tool'
+              ? inArray(rightSidebarTabs.kind, [...WORKSPACE_TOOL_KINDS])
+              : notInArray(rightSidebarTabs.kind, [...WORKSPACE_TOOL_KINDS]),
+        ),
+      );
     return { ok: true };
   });
 

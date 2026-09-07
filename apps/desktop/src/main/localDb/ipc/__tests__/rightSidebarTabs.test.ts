@@ -74,6 +74,8 @@ interface ListResp {
     isActive: boolean;
   }>;
   activeTabId: string | null;
+  activeToolId?: string | null;
+  activeContentTabId?: string | null;
   persistable?: boolean;
 }
 
@@ -111,6 +113,48 @@ describe('rightSidebarTabs IPC', () => {
   });
 
   describe(':list', () => {
+    it('persists independent tool/content selection and clears only the requested surface', async () => {
+      for (const [id, kind] of [
+        ['files', 'file-browser'],
+        ['cli', 'terminal'],
+        ['review', 'review'],
+      ]) {
+        await invoke('local-db:right-sidebar-tabs:upsert', {
+          id,
+          kind,
+          sessionId: 's1',
+          position: 0,
+          state: {},
+        });
+      }
+      await invoke('local-db:right-sidebar-tabs:setActive', { sessionId: 's1', id: 'files' });
+      await invoke('local-db:right-sidebar-tabs:setActive', { sessionId: 's1', id: 'cli' });
+      await invoke('local-db:right-sidebar-tabs:setActive', { sessionId: 's1', id: 'review' });
+      const selected = await invoke<ListResp>('local-db:right-sidebar-tabs:list', {
+        sessionId: 's1',
+      });
+      expect(selected.activeToolId).toBe('files');
+      expect(selected.activeContentTabId).toBe('review');
+      expect(
+        selected.tabs
+          .filter((tab) => tab.isActive)
+          .map((tab) => tab.id)
+          .sort(),
+      ).toEqual(['files', 'review']);
+      await expect(
+        invoke('local-db:right-sidebar-tabs:setActive', { sessionId: 's2', id: 'review' }),
+      ).rejects.toThrow(/NOT_FOUND/);
+      await invoke('local-db:right-sidebar-tabs:setActive', {
+        sessionId: 's1',
+        id: null,
+        surface: 'content',
+      });
+      const cleared = await invoke<ListResp>('local-db:right-sidebar-tabs:list', {
+        sessionId: 's1',
+      });
+      expect(cleared.activeToolId).toBe('files');
+      expect(cleared.activeContentTabId).toBeNull();
+    });
     it('empty session returns empty tabs + null activeTabId', async () => {
       const result = await invoke<ListResp>('local-db:right-sidebar-tabs:list', {
         sessionId: 's1',
@@ -156,7 +200,7 @@ describe('rightSidebarTabs IPC', () => {
       await invoke('local-db:right-sidebar-tabs:upsert', {
         id: 't1',
         sessionId: 's1',
-        kind: 'file-browser',
+        kind: 'file-content',
         position: 0,
       });
       await invoke('local-db:right-sidebar-tabs:upsert', {
@@ -246,11 +290,14 @@ describe('rightSidebarTabs IPC', () => {
     });
 
     it.each([
-      ['cyclic state', () => {
-        const state: Record<string, unknown> = {};
-        state.self = state;
-        return state;
-      }],
+      [
+        'cyclic state',
+        () => {
+          const state: Record<string, unknown> = {};
+          state.self = state;
+          return state;
+        },
+      ],
       ['BigInt state', () => ({ value: BigInt(1) })],
       ['top-level function state', () => () => undefined],
     ])('rejects non-JSON-serializable %s with INVALID_PARAMS', async (_name, makeState) => {
@@ -295,27 +342,30 @@ describe('rightSidebarTabs IPC', () => {
       expect(listed.tabs).toEqual([]);
     });
 
-    it('returns one canonical Subagents tab across concurrent callers without activating it', async () => {
-      const [first, second] = await Promise.all([
-        invoke<{ tab: ListResp['tabs'][number]; created: boolean }>(
-          'local-db:right-sidebar-tabs:ensure-singleton',
-          { sessionId: 's1', kind: 'subagents', state: { selectedRunId: null } },
-        ),
-        invoke<{ tab: ListResp['tabs'][number]; created: boolean }>(
-          'local-db:right-sidebar-tabs:ensure-singleton',
-          { sessionId: 's1', kind: 'subagents', state: { selectedRunId: 'ignored-race' } },
-        ),
-      ]);
+    it.each(['subagents', 'orca-workers'])(
+      'returns one canonical %s tab across concurrent callers without activating it',
+      async (kind) => {
+        const [first, second] = await Promise.all([
+          invoke<{ tab: ListResp['tabs'][number]; created: boolean }>(
+            'local-db:right-sidebar-tabs:ensure-singleton',
+            { sessionId: 's1', kind, state: { selectedRunId: null } },
+          ),
+          invoke<{ tab: ListResp['tabs'][number]; created: boolean }>(
+            'local-db:right-sidebar-tabs:ensure-singleton',
+            { sessionId: 's1', kind, state: { selectedRunId: 'ignored-race' } },
+          ),
+        ]);
 
-      expect(first.tab.id).toBe(second.tab.id);
-      expect([first.created, second.created].filter(Boolean)).toHaveLength(1);
-      const listed = await invoke<ListResp>('local-db:right-sidebar-tabs:list', {
-        sessionId: 's1',
-      });
-      expect(listed.tabs).toHaveLength(1);
-      expect(listed.tabs[0]).toMatchObject({ kind: 'subagents', isActive: false });
-      expect(listed.activeTabId).toBeNull();
-    });
+        expect(first.tab.id).toBe(second.tab.id);
+        expect([first.created, second.created].filter(Boolean)).toHaveLength(1);
+        const listed = await invoke<ListResp>('local-db:right-sidebar-tabs:list', {
+          sessionId: 's1',
+        });
+        expect(listed.tabs).toHaveLength(1);
+        expect(listed.tabs[0]).toMatchObject({ kind, isActive: false });
+        expect(listed.activeTabId).toBeNull();
+      },
+    );
 
     it('fails closed for unknown sessions and non-singleton kinds', async () => {
       await expect(
@@ -360,7 +410,7 @@ describe('rightSidebarTabs IPC', () => {
       await invoke('local-db:right-sidebar-tabs:upsert', {
         id: 't1',
         sessionId: 's1',
-        kind: 'file-browser',
+        kind: 'file-content',
         position: 0,
       });
       await invoke('local-db:right-sidebar-tabs:upsert', {
@@ -378,7 +428,7 @@ describe('rightSidebarTabs IPC', () => {
       await invoke('local-db:right-sidebar-tabs:setActive', { sessionId: 's1', id: 't2' });
       const r2 = await invoke<ListResp>('local-db:right-sidebar-tabs:list', { sessionId: 's1' });
       expect(r2.activeTabId).toBe('t2');
-      // 同 session 最多 1 行 is_active=true
+      // 同一内容区最多 1 行 is_active=true
       expect(r2.tabs.filter((t) => t.isActive)).toHaveLength(1);
     });
 

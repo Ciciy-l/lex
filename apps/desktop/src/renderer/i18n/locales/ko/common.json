@@ -4264,6 +4264,18 @@
         "switch-session-9": {
           "label": "9번째 세션으로 이동",
           "description": "사이드바에 표시된 9번째 세션으로 이동합니다"
+        },
+        "terminal-focus-previous-pane": {
+          "label": "이전 창 영역",
+          "description": "이전 창 영역"
+        },
+        "terminal-focus-next-pane": {
+          "label": "다음 창 영역",
+          "description": "다음 창 영역"
+        },
+        "terminal-toggle-pane-zoom": {
+          "label": "창 영역 최대화",
+          "description": "창 영역 최대화"
         }
       },
       "none": "설정 안 됨",
@@ -6298,9 +6310,33 @@
       }
     },
     "terminal": {
+      "launchCli": "CLI 실행",
+      "tools": "작업 공간 도구",
+      "toggleTools": "도구 표시 전환",
+      "showTools": "도구 표시",
+      "hideTools": "도구 숨기기",
+      "moreTools": "기타 도구",
+      "sessions": "{{appName}} CLI 세션",
+      "noSessions": "CLI 세션이 없습니다",
+      "retryList": "CLI 세션을 불러오지 못했습니다. 다시 시도",
+      "actionFailed": "CLI 작업을 완료하지 못했습니다. 다시 시도해 주세요.",
+      "terminate": "프로세스 종료",
+      "terminateConfirm": "선택한 프로세스를 중지합니다. 다른 분할 터미널은 계속 실행됩니다.",
+      "forget": "종료된 터미널 제거",
+      "hidden": "숨김",
+      "process": {
+        "running": "실행 중",
+        "terminating": "중지 중",
+        "exited": "종료됨",
+        "terminated": "중지됨",
+        "missing": "실행되지 않음"
+      },
       "defaultTitle": "터미널",
       "workbenchTitle": "터미널({{count}}개 창)",
       "profileShell": "Shell",
+      "agentSection": "Agent",
+      "defaultShellBadge": "기본값",
+      "detectingShells": "터미널 감지 중…",
       "profileClaude": "Claude",
       "profileCodex": "Codex",
       "profilePi": "Pi",
@@ -6308,6 +6344,7 @@
       "splitVertical": "위아래로 분할",
       "launchAgent": "새 CLI 창",
       "focusPane": "{{name}} 창에 포커스",
+      "movePane": "{{name}} 창을 드래그하여 이동",
       "closePane": "창 닫기",
       "resizePanes": "터미널 창 크기 조절",
       "localOnly": "CLI 창은 현재 로컬 작업에서만 사용할 수 있습니다.",
@@ -6792,6 +6829,43 @@
       "terminateConfirmDescription": "이 Agent 프로세스를 강제 종료합니다. 이 프로세스를 사용하는 모든 작업이 중단되며, 영향을 받은 작업에서 메시지를 보내면 필요할 때 Agent를 다시 시작할 수 있습니다.",
       "terminated": "{{name}} 프로세스를 종료했습니다",
       "terminateFailed": "프로세스를 종료하지 못했습니다. 이미 종료되었을 수 있습니다. 목록은 다음 샘플링 때 자동으로 업데이트됩니다."
+    },
+    "workbench": {
+      "rename": "이름 변경",
+      "renameHint": "비워 두면 기본 이름으로 돌아갑니다.",
+      "searchOutput": "터미널 출력 검색",
+      "matchCase": "대소문자 구분",
+      "noMatches": "일치 항목 없음",
+      "previousMatch": "이전 일치 항목",
+      "nextMatch": "다음 일치 항목",
+      "closeSearch": "검색 닫기",
+      "zoomPane": "창 영역 최대화",
+      "restorePane": "레이아웃 복원",
+      "unplaced": "배치되지 않은 터미널",
+      "keepOpen": "열린 상태 유지",
+      "verifySaveFailed": "디스크의 파일을 확인할 수 없습니다. 다시 시도한 후 저장하세요.",
+      "fileChanged": "디스크의 파일이 변경됨",
+      "overwrite": "파일 덮어쓰기",
+      "reloadFile": "파일 다시 불러오기",
+      "keepDraft": "초안 유지",
+      "openInLex": "{{appName}} 브라우저에서 열기",
+      "fileLinkFailed": "경로를 열 수 없습니다. 작업 디렉터리 안에 있는지 확인하세요.",
+      "startupDirectory": "상대 경로는 시작 디렉터리를 기준으로 합니다: {{path}}",
+      "git": "Git",
+      "unstaged": "스테이징되지 않음",
+      "staged": "스테이징됨",
+      "recentHistory": "최근 커밋",
+      "historyLimit": "HEAD에서 도달 가능한 최근 커밋 50개를 표시합니다.",
+      "historyUnavailable": "이 연결에서는 최근 기록을 사용할 수 없습니다.",
+      "refresh": "새로고침",
+      "noChanges": "변경 사항 없음",
+      "noCommits": "아직 커밋 없음",
+      "loadFailed": "불러올 수 없습니다. 새로고침하세요.",
+      "comparison": "브랜치 비교",
+      "comparisonHint": "기준 브랜치에 대한 현재 브랜치의 커밋된 변경 사항을 봅니다. 커밋하지 않은 파일은 포함하지 않습니다.",
+      "historyLoading": "최근 커밋을 불러오는 중…",
+      "previousPane": "이전 창 영역",
+      "nextPane": "다음 창 영역"
     }
   },
   "update": {

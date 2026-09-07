@@ -39,6 +39,11 @@ export interface RsbWindowContext {
 
 /** main → 子窗口的命令推送(如主窗终端快捷键转发 / detached RSB 内定位文件)。 */
 export type RsbWindowCommand =
+  | { type: 'open-file-content'; sessionId: string; file: {
+      path: string; workdir: string; external: boolean; preview?: boolean;
+      remoteHostId?: string | null; deviceId?: string | null;
+      reveal?: { line: number; column?: number; requestId: string } | null;
+    } }
   | { type: 'open-terminal'; sessionId: string }
   | { type: 'toggle-review-tab'; sessionId: string }
   | { type: 'open-web-browser'; sessionId: string; url: string }
@@ -110,11 +115,7 @@ export interface RsbWindowCommandRouteRequest {
 }
 
 /** main-owned 宿主裁决；renderer 只有 attached 可以写本地 store。 */
-export type RsbWindowCommandRouteResult =
-  | 'attached'
-  | 'routed'
-  | 'queued'
-  | 'stale-context';
+export type RsbWindowCommandRouteResult = 'attached' | 'routed' | 'queued' | 'stale-context';
 
 /**
  * 主 renderer 与分离侧栏 renderer 切换宿主时双向交接的内存态 tab 快照。
@@ -123,6 +124,8 @@ export type RsbWindowCommandRouteResult =
  * SQLite，避免用子窗口里可能过期的 renderer 快照覆盖持久化真相。
  */
 export interface RsbWindowTabSnapshot {
+  activeToolId?: string | null;
+  activeContentTabId?: string | null;
   sessionId: string;
   tabs: Array<{ id: string; kind: string; state: unknown }>;
   activeTabId: string | null;

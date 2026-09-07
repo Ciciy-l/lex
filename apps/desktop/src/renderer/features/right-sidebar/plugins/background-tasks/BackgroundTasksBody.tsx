@@ -74,6 +74,7 @@ import {
 } from './workflowProgressModel';
 import { WorkflowProgressTree } from './WorkflowProgressTree';
 import { requestChatTaskFocus } from './chatTaskFocusIntent';
+import { BackgroundCliSessions } from '../../BackgroundCliSessions';
 
 // ---------------------------------------------------------------------------
 // store 订阅(轻量选择器)
@@ -768,19 +769,20 @@ export function BackgroundTasksBody({
     );
   }
 
-  if (runningResolved.length === 0 && completedResolved.length === 0) {
-    return (
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
-        <ListTodo size={20} className="text-[var(--text-tertiary)]" aria-hidden="true" />
-        <div className="text-12 text-[var(--text-tertiary)]">
-          {t('rightSidebar.backgroundTasks.empty')}
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-2">
+      {sessionId && (
+        <BackgroundCliSessions
+          sessionId={sessionId}
+          visible={visible}
+          enabled={!ctx.remoteHostId && ctx.deviceLinkDeviceId === null}
+        />
+      )}
+      {runningResolved.length === 0 && completedResolved.length === 0 && (
+        <p className="px-3 py-4 text-12 text-[var(--text-tertiary)]">
+          {t('rightSidebar.backgroundTasks.empty')}
+        </p>
+      )}
       {runningResolved.length > 0 && (
         <>
           <SectionHeader label={t('rightSidebar.backgroundTasks.running')} />

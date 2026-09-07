@@ -38,6 +38,7 @@ export interface SearchPanelProps {
   maxMatches: number;
 
   onOpenMatch: (relPath: string, lineNumber: number) => void;
+  onKeepMatch?: (relPath: string, lineNumber: number) => void;
 }
 
 export function SearchPanel({
@@ -53,6 +54,7 @@ export function SearchPanel({
   errorCode = null,
   maxMatches,
   onOpenMatch,
+  onKeepMatch,
 }: SearchPanelProps) {
   const hasQuery = query.trim().length > 0;
   return (
@@ -93,7 +95,7 @@ export function SearchPanel({
           只给固定高度(min-h-0 + flex-1) + padding,不再加 overflow-y-auto,
           避免双层滚动。横向截断由 SearchResults 自己 overflow-x-hidden 兜住。 */}
       <div className={cn('min-h-0 flex-1 p-1')}>
-        <SearchResults results={results} onOpenMatch={onOpenMatch} />
+        <SearchResults results={results} onOpenMatch={onOpenMatch} onKeepMatch={onKeepMatch} />
       </div>
     </div>
   );

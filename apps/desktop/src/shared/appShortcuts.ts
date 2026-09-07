@@ -30,9 +30,12 @@ export interface AppShortcutCombo {
  * 文件预览可同屏挂载右侧浏览器和 chat rail, 且在 window capture 阶段消费快捷键。
  * 仅用于改绑冲突判定, 不做展示分组。
  */
-export type AppShortcutScope = 'app' | 'workdir-doc' | 'browser' | 'composer';
+export type AppShortcutScope = 'app' | 'workdir-doc' | 'browser' | 'composer' | 'terminal';
 
 export const APP_SHORTCUT_IDS = [
+  'terminal-focus-previous-pane',
+  'terminal-focus-next-pane',
+  'terminal-toggle-pane-zoom',
   'toggle-sidebar',
   'open-settings',
   'new-maker',
@@ -140,6 +143,25 @@ function modCombo(code: string, platform: string, extra: ComboModifiers = {}): A
 // 数组顺序即设置页展示顺序: 高频动作在前 (新对话 → 侧边栏 → 权限模式 →
 // 命令行 → 查找 → 缩放 → 浏览器)。hiddenInSettings 项不展示但仍正常生效。
 export const APP_SHORTCUT_DEFINITIONS: ReadonlyArray<AppShortcutDefinition> = [
+  {
+    id: 'terminal-focus-previous-pane', scope: 'terminal', rebindable: true,
+    labelKey: 'settings.shortcuts.items.terminal-focus-previous-pane.label',
+    descriptionKey: 'settings.shortcuts.items.terminal-focus-previous-pane.description',
+    getDefaultCombos: (platform) => [modCombo('ArrowLeft', platform, { alt: true })],
+  },
+  {
+    id: 'terminal-focus-next-pane', scope: 'terminal', rebindable: true,
+    labelKey: 'settings.shortcuts.items.terminal-focus-next-pane.label',
+    descriptionKey: 'settings.shortcuts.items.terminal-focus-next-pane.description',
+    getDefaultCombos: (platform) => [modCombo('ArrowRight', platform, { alt: true })],
+  },
+  {
+    id: 'terminal-toggle-pane-zoom', scope: 'terminal', rebindable: true,
+    labelKey: 'settings.shortcuts.items.terminal-toggle-pane-zoom.label',
+    descriptionKey: 'settings.shortcuts.items.terminal-toggle-pane-zoom.description',
+    getDefaultCombos: (platform) => [modCombo('Enter', platform, { alt: true })],
+  },
+
   {
     id: 'new-maker',
     scope: 'app',

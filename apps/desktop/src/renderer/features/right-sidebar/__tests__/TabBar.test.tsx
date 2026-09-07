@@ -9,7 +9,9 @@ vi.mock('react-i18next', () => ({
 }));
 
 import { TabStrip } from '../TabBar';
+import { WorkspaceToolRail } from '../WorkspaceToolRail';
 import type { TabState } from '../types';
+import type { ShellId, TerminalProfile } from '../../../../shared/terminal-bridge';
 
 // 两个不同 kind 的 tab —— 未注册 plugin 时走 fallback 图标/标题,label 即 KIND_LABEL_KEY。
 const TABS: TabState[] = [
@@ -41,10 +43,12 @@ function renderStrip(overrides?: {
   onReorder?: (orderedIds: string[]) => void;
   iosSimulatorAvailable?: boolean;
   subagentsAvailable?: boolean;
+  onLaunchTerminal?: (profile: TerminalProfile, shellPref?: ShellId) => void;
 }) {
   const onClose = vi.fn(overrides?.onClose);
   const onActivate = vi.fn(overrides?.onActivate);
   const onReorder = vi.fn(overrides?.onReorder);
+  const onAdd = vi.fn();
   render(
     <TabStrip
       tabs={TABS}
@@ -52,13 +56,144 @@ function renderStrip(overrides?: {
       onActivate={onActivate}
       onClose={onClose}
       onReorder={onReorder}
-      onAdd={vi.fn()}
+      onAdd={onAdd}
+      onLaunchTerminal={overrides?.onLaunchTerminal}
       iosSimulatorAvailable={overrides?.iosSimulatorAvailable}
       subagentsAvailable={overrides?.subagentsAvailable}
     />,
   );
-  return { onClose, onActivate, onReorder };
+  return { onClose, onActivate, onReorder, onAdd };
 }
+
+function openCreateMenu(): HTMLElement {
+  const button = screen.getByRole('button', { name: 'rightSidebar.tabs.addAria' });
+  vi.spyOn(button.parentElement as HTMLElement, 'getBoundingClientRect').mockReturnValue({
+    x: 20,
+    y: 20,
+    top: 20,
+    right: 44,
+    bottom: 44,
+    left: 20,
+    width: 24,
+    height: 24,
+    toJSON: () => ({}),
+  });
+  fireEvent.click(button);
+  return button;
+}
+
+function installShellProbe(probe: () => Promise<unknown>): void {
+  Object.defineProperty(window, 'electronAPI', {
+    configurable: true,
+    value: { terminal: { listAvailableShells: probe } },
+  });
+}
+
+describe('workspace + menu', () => {
+  it('lists detected shells with the default first and launches the selected ShellId', async () => {
+    const probe = vi.fn(async () => [
+      { id: 'cmd', displayName: 'Command Prompt', isAutoDetectTarget: false },
+      { id: 'gitbash', displayName: 'Git Bash', isAutoDetectTarget: true },
+    ]);
+    installShellProbe(probe);
+    const launch = vi.fn();
+    renderStrip({ onLaunchTerminal: launch });
+    openCreateMenu();
+    const gitBash = await screen.findByRole('menuitem', { name: /^Git Bash/ });
+    expect(screen.getAllByRole('menuitem')[0]).toBe(gitBash);
+    expect(screen.queryByRole('menuitem', { name: 'PowerShell' })).toBeNull();
+    expect(probe).toHaveBeenCalledOnce();
+    fireEvent.click(gitBash);
+    expect(launch).toHaveBeenCalledExactlyOnceWith('shell', 'gitbash');
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('retains an automatic-shell fallback if detection fails', async () => {
+    installShellProbe(async () => {
+      throw new Error('probe failed');
+    });
+    const launch = vi.fn();
+    renderStrip({ onLaunchTerminal: launch });
+    openCreateMenu();
+    fireEvent.click(
+      await screen.findByRole('menuitem', { name: 'rightSidebar.terminal.profileShell' }),
+    );
+    expect(launch).toHaveBeenCalledExactlyOnceWith('shell', undefined);
+  });
+
+  it.each([
+    ['claude', 'profileClaude'],
+    ['codex', 'profileCodex'],
+    ['pi', 'profilePi'],
+  ] as const)('launches %s in a new content tab, without choosing a shell', (profile, key) => {
+    const launch = vi.fn();
+    renderStrip({ onLaunchTerminal: launch });
+    openCreateMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'rightSidebar.terminal.' + key }));
+    expect(launch).toHaveBeenCalledExactlyOnceWith(profile, undefined);
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('opens the browser through the existing tab callback', () => {
+    const { onAdd } = renderStrip();
+    openCreateMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: new RegExp('^' + LABEL_WEB) }));
+    expect(onAdd).toHaveBeenCalledExactlyOnceWith('web-browser');
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('keeps fixed workspace tools out of the create-tab menu', () => {
+    renderStrip({ subagentsAvailable: true });
+    openCreateMenu();
+    for (const label of [
+      LABEL_FILE,
+      'rightSidebar.tabs.kinds.backgroundTasks',
+      'rightSidebar.workbench.git',
+      'rightSidebar.tabs.kinds.review',
+      LABEL_ORCA,
+    ]) {
+      expect(screen.queryByRole('menuitem', { name: label })).toBeNull();
+    }
+  });
+
+  it('does not probe or enable local terminals when the host has no local launch capability', () => {
+    const probe = vi.fn(async () => []);
+    installShellProbe(probe);
+    renderStrip();
+    openCreateMenu();
+    expect(probe).not.toHaveBeenCalled();
+    const cli = screen.getByRole('menuitem', {
+      name: 'rightSidebar.terminal.profileCodex',
+    }) as HTMLButtonElement;
+    expect(cli.disabled).toBe(true);
+  });
+
+  it('keeps file/background/review/collaboration on the rail, not browser', () => {
+    const onSelect = vi.fn();
+    render(
+      <WorkspaceToolRail
+        expanded
+        activeKind="file-browser"
+        onToggle={vi.fn()}
+        onSelect={onSelect}
+        subagentsAvailable={false}
+        iosSimulatorAvailable={false}
+      />,
+    );
+    for (const label of [
+      LABEL_FILE,
+      'rightSidebar.tabs.kinds.backgroundTasks',
+      'rightSidebar.workbench.git',
+      LABEL_ORCA,
+    ]) {
+      expect(screen.getByRole('button', { name: label })).toBeTruthy();
+    }
+    expect(screen.queryByRole('button', { name: LABEL_WEB })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'rightSidebar.terminal.moreTools' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: LABEL_ORCA }));
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith('orca-workers');
+  });
+});
 
 describe('TabStrip iOS Simulator plugin gate', () => {
   it('does not expose the Host viewer before the product plugin is enabled', () => {
@@ -112,7 +247,10 @@ describe('TabStrip Pi Subagents gate', () => {
   });
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  delete (window as unknown as { electronAPI?: unknown }).electronAPI;
+});
 
 describe('TabStrip 中键关闭 tab', () => {
   it('renders the collaboration tab fallback label when the plugin is not registered', () => {

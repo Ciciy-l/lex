@@ -6,7 +6,7 @@
  */
 
 import {
-  addTab,
+  ensureSingletonTab,
   closeTab,
   ensureHydrated,
   getBucket,
@@ -113,19 +113,17 @@ async function ensureOrcaWorkersTabLocal(
   opts: OrcaWorkersTabOptions,
 ): Promise<void> {
   await ensureHydrated(leadSessionId);
-  const bucket = getBucket(leadSessionId);
-  const existing = bucket.tabs.find((candidate) => candidate.kind === 'orca-workers');
-  if (existing) {
-    if (opts.focusWorkerSessionId !== undefined || opts.searchJump !== undefined) {
-      await patchTabState(leadSessionId, existing.id, (state) => withWorkerOpenIntent(state, opts));
-    }
-    if (opts.focusTab && bucket.activeTabId !== existing.id) {
-      await setActiveTab(leadSessionId, existing.id);
-    }
-    return;
+  const tab = await ensureSingletonTab(leadSessionId, 'orca-workers', {});
+  // A host handoff may finish while Main commits the canonical view. Only the
+  // winning renderer applies the open intent, without creating another tab.
+  const route = await routeDetachedOrcaWorkersCommand(leadSessionId, opts, opts.focusTab === true);
+  if (route !== 'attached') return;
+  if (opts.focusWorkerSessionId !== undefined || opts.searchJump !== undefined) {
+    await patchTabState(leadSessionId, tab.id, (state) => withWorkerOpenIntent(state, opts));
   }
-
-  await addTab(leadSessionId, 'orca-workers', withWorkerOpenIntent({}, opts));
+  if (opts.focusTab && getBucket(leadSessionId).activeContentTabId !== tab.id) {
+    await setActiveTab(leadSessionId, tab.id);
+  }
 }
 
 export async function ensureOrcaWorkersTab(

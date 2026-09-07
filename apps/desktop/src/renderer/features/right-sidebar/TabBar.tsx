@@ -52,11 +52,18 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { keepFileContentTab } from './lib/openFileContentTab';
+import { hydrateFileContentTab } from './plugins/file-content/state';
+import { RenameDialog } from './RenameDialog';
+import { patchTabState } from './store';
+import { hydrateTerminalState } from './plugins/terminal/terminal-layout';
 import { AddTabDropdown } from './AddTabDropdown';
 import { getTabKind, hydrateTabState } from './registry';
 import type { BuiltinTabKindId, TabKindId, TabState } from './types';
+import type { ShellId, TerminalProfile } from '../../../shared/terminal-bridge';
 
 interface TabBarProps {
+  addControl?: React.ReactNode;
   tabs: TabState[];
   activeTabId: string | null;
   sessionId?: string | null;
@@ -64,6 +71,7 @@ interface TabBarProps {
   onClose: (id: string) => void;
   onReorder: (orderedIds: string[]) => void;
   onAdd: (kind: TabKindId) => void;
+  onLaunchTerminal?: (profile: TerminalProfile, shellPref?: ShellId) => void;
   /**
    * 是否在 TabBar 右端渲染 maximize + 折叠按钮。
    * - Mac false:控件走 MainLayout 浮层
@@ -100,6 +108,7 @@ interface TabBarProps {
 }
 
 interface TabStripProps {
+  addControl?: React.ReactNode;
   tabs: TabState[];
   activeTabId: string | null;
   sessionId?: string | null;
@@ -107,6 +116,7 @@ interface TabStripProps {
   onClose: (id: string) => void;
   onReorder: (orderedIds: string[]) => void;
   onAdd: (kind: TabKindId) => void;
+  onLaunchTerminal?: (profile: TerminalProfile, shellPref?: ShellId) => void;
   onCloseOthers?: (keepTabId: string) => void;
   onCloseAll?: () => void;
   className?: string;
@@ -133,6 +143,7 @@ interface TabStripProps {
 
 const KIND_ICON: Record<BuiltinTabKindId, LucideIcon> = {
   'file-browser': FolderTree,
+  'file-content': FolderTree,
   'web-browser': Globe,
   'ios-simulator': Smartphone,
   terminal: Terminal,
@@ -145,6 +156,7 @@ const KIND_ICON: Record<BuiltinTabKindId, LucideIcon> = {
 
 const KIND_LABEL_KEY: Record<BuiltinTabKindId, string> = {
   'file-browser': 'rightSidebar.tabs.kinds.fileBrowser',
+  'file-content': 'rightSidebar.tabs.kinds.fileBrowser',
   'web-browser': 'rightSidebar.tabs.kinds.browser',
   'ios-simulator': 'rightSidebar.tabs.kinds.iosSimulator',
   terminal: 'rightSidebar.tabs.kinds.terminal',
@@ -198,6 +210,7 @@ function scrollTabIntoContainerView(container: HTMLElement | null, tab: HTMLElem
 }
 
 export function TabBar({
+  addControl,
   tabs,
   activeTabId,
   sessionId,
@@ -205,6 +218,7 @@ export function TabBar({
   onClose,
   onReorder,
   onAdd,
+  onLaunchTerminal,
   showWindowControls,
   onMaximize,
   onCloseSidebar,
@@ -230,6 +244,7 @@ export function TabBar({
       style={{ WebkitAppRegion: chromeWindowDrag ? 'drag' : 'no-drag' } as React.CSSProperties}
     >
       <TabStrip
+        addControl={addControl}
         tabs={tabs}
         activeTabId={activeTabId}
         sessionId={sessionId}
@@ -237,6 +252,7 @@ export function TabBar({
         onClose={onClose}
         onReorder={onReorder}
         onAdd={onAdd}
+        onLaunchTerminal={onLaunchTerminal}
         onCloseOthers={onCloseOthers}
         onCloseAll={onCloseAll}
         addButtonWrapperClassName="h-[36px]"
@@ -296,6 +312,7 @@ export function TabBar({
 }
 
 export function TabStrip({
+  addControl,
   tabs,
   activeTabId,
   sessionId = null,
@@ -303,6 +320,7 @@ export function TabStrip({
   onClose,
   onReorder,
   onAdd,
+  onLaunchTerminal,
   onCloseOthers,
   onCloseAll,
   className,
@@ -325,6 +343,7 @@ export function TabStrip({
     tabId: string;
   } | null>(null);
   const closeContextMenu = () => setContextMenu(null);
+  const [renaming, setRenaming] = useState<TabState | null>(null);
 
   // 溢出渐变遮罩:只在对应侧**真的有溢出**时才启用那一侧的 fade。
   // 历史坑(2026-07-01):全量常开的 fade-mask 会把首尾 active pill 的 1px border
@@ -441,25 +460,27 @@ export function TabStrip({
         className={cn('relative flex shrink-0 items-center', addButtonWrapperClassName)}
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
-        <Tip text={t('rightSidebar.tabs.addAria')} side="bottom">
-          <button
-            type="button"
-            aria-label={t('rightSidebar.tabs.addAria')}
-            aria-haspopup="menu"
-            aria-expanded={dropdownOpen}
-            onClick={() => setDropdownOpen((v) => !v)}
-            className={cn(
-              'inline-flex h-6 w-6 items-center justify-center rounded-full transition-colors',
-              addButtonClassName,
-              dropdownOpen
-                ? 'bg-[var(--surface-chip)] text-[var(--text-primary)]'
-                : 'text-[var(--titlebar-icon)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]',
-            )}
-          >
-            <Plus size={13} />
-          </button>
-        </Tip>
-        {dropdownOpen && (
+        {addControl ?? (
+          <Tip text={t('rightSidebar.tabs.addAria')} side="bottom">
+            <button
+              type="button"
+              aria-label={t('rightSidebar.tabs.addAria')}
+              aria-haspopup="menu"
+              aria-expanded={dropdownOpen}
+              onClick={() => setDropdownOpen((v) => !v)}
+              className={cn(
+                'inline-flex h-6 w-6 items-center justify-center rounded-full transition-colors',
+                addButtonClassName,
+                dropdownOpen
+                  ? 'bg-[var(--surface-chip)] text-[var(--text-primary)]'
+                  : 'text-[var(--titlebar-icon)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]',
+              )}
+            >
+              <Plus size={13} />
+            </button>
+          </Tip>
+        )}
+        {!addControl && dropdownOpen && (
           <AddTabDropdown
             anchorRef={addButtonWrapperRef}
             onClose={() => setDropdownOpen(false)}
@@ -467,6 +488,14 @@ export function TabStrip({
               onAdd(kind);
               setDropdownOpen(false);
             }}
+            onLaunchTerminal={
+              onLaunchTerminal
+                ? (profile, shellPref) => {
+                    setDropdownOpen(false);
+                    onLaunchTerminal(profile, shellPref);
+                  }
+                : undefined
+            }
             existingKinds={existingKinds}
             iosSimulatorAvailable={iosSimulatorAvailable}
             subagentsAvailable={subagentsAvailable}
@@ -508,6 +537,14 @@ export function TabStrip({
         >
           {contextMenu && (
             <>
+              {sessionId && tabs.find(tab => tab.id === contextMenu.tabId)?.kind === 'file-content' && (
+                <DropdownMenuItem onSelect={() => { void keepFileContentTab(sessionId, contextMenu.tabId); closeContextMenu(); }}>{t('rightSidebar.workbench.keepOpen')}</DropdownMenuItem>
+              )}
+              {sessionId && tabs.find(tab => tab.id === contextMenu.tabId)?.kind === 'terminal' && (
+                <DropdownMenuItem onSelect={() => { setRenaming(tabs.find(tab => tab.id === contextMenu.tabId) ?? null); closeContextMenu(); }}>
+                  {t('rightSidebar.workbench.rename')}
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem
                 onClick={() => {
                   const id = contextMenu.tabId;
@@ -543,6 +580,8 @@ export function TabStrip({
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+      {renaming && sessionId && <RenameDialog initialValue={hydrateTerminalState(renaming.state).customTitle || ''}
+        onClose={() => setRenaming(null)} onSave={value => patchTabState(sessionId, renaming.id, current => ({ ...hydrateTerminalState(current), customTitle: value }))} />}
     </div>
   );
 }
@@ -591,6 +630,7 @@ function TabPill({
   return (
     <div
       ref={pillRef}
+      onDoubleClick={() => { if (sessionId && tab.kind === 'file-content' && hydrateFileContentTab(tab.state).preview) void keepFileContentTab(sessionId, tab.id); }}
       onContextMenu={onContextMenu}
       // 中键(滚轮键)关闭当前 tab —— 对齐浏览器等多 tab 应用的通用习惯。
       // auxclick 对所有非主键(中/右键)都会触发,这里只认中键(button === 1);

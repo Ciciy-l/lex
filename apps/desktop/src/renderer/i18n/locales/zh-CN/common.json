@@ -4258,6 +4258,18 @@
         "switch-session-9": {
           "label": "切换到第 9 个任务",
           "description": "跳转到侧边栏第 9 个可见任务"
+        },
+        "terminal-focus-previous-pane": {
+          "label": "上一个窗格",
+          "description": "上一个窗格"
+        },
+        "terminal-focus-next-pane": {
+          "label": "下一个窗格",
+          "description": "下一个窗格"
+        },
+        "terminal-toggle-pane-zoom": {
+          "label": "放大当前窗格",
+          "description": "放大当前窗格"
         }
       },
       "none": "未设置",
@@ -6298,9 +6310,33 @@
       }
     },
     "terminal": {
+      "launchCli": "启动 CLI",
+      "tools": "工作区工具",
+      "toggleTools": "展开或收起工具区",
+      "showTools": "展开工具区",
+      "hideTools": "收起工具区",
+      "moreTools": "更多工具",
+      "sessions": "{{appName}} CLI 终端",
+      "noSessions": "暂无 CLI 终端",
+      "retryList": "读取 CLI 终端失败，点击重试",
+      "actionFailed": "CLI 操作未完成，请重试。",
+      "terminate": "终止进程",
+      "terminateConfirm": "这会停止所选进程，其他分屏终端会继续运行。",
+      "forget": "移除已结束的终端",
+      "hidden": "已隐藏",
+      "process": {
+        "running": "运行中",
+        "terminating": "正在停止",
+        "exited": "已退出",
+        "terminated": "已终止",
+        "missing": "未运行"
+      },
       "defaultTitle": "终端",
       "workbenchTitle": "终端（{{count}} 个窗格）",
       "profileShell": "Shell",
+      "agentSection": "Agent",
+      "defaultShellBadge": "默认",
+      "detectingShells": "正在检测终端…",
       "profileClaude": "Claude",
       "profileCodex": "Codex",
       "profilePi": "Pi",
@@ -6308,6 +6344,7 @@
       "splitVertical": "上下分屏",
       "launchAgent": "新建 CLI 窗格",
       "focusPane": "聚焦 {{name}} 窗格",
+      "movePane": "拖动 {{name}} 窗格以调整分屏位置",
       "closePane": "关闭窗格",
       "resizePanes": "调整终端窗格大小",
       "localOnly": "CLI 窗格目前仅支持本机任务。",
@@ -6792,6 +6829,43 @@
       "terminateConfirmDescription": "将强制终止该 Agent 进程，使用该进程的所有任务都会中断；之后在任一受影响任务里继续发消息，即可按需重新启动 Agent。",
       "terminated": "已终止 {{name}} 进程",
       "terminateFailed": "无法终止该进程，它可能已自行退出；列表会随下一次采样自动更新"
+    },
+    "workbench": {
+      "rename": "重命名",
+      "renameHint": "留空可恢复默认名称。",
+      "searchOutput": "搜索终端输出",
+      "matchCase": "区分大小写",
+      "noMatches": "无匹配结果",
+      "previousMatch": "上一个匹配",
+      "nextMatch": "下一个匹配",
+      "closeSearch": "关闭搜索",
+      "zoomPane": "放大当前窗格",
+      "restorePane": "还原布局",
+      "unplaced": "未放置的终端",
+      "keepOpen": "保持打开",
+      "verifySaveFailed": "无法核对磁盘文件，请重试后再保存。",
+      "fileChanged": "磁盘文件已更改",
+      "overwrite": "覆盖文件",
+      "reloadFile": "重新加载文件",
+      "keepDraft": "保留草稿",
+      "openInLex": "在 {{appName}} 浏览器中打开",
+      "fileLinkFailed": "无法打开此路径，请确认其位于工作目录内。",
+      "startupDirectory": "相对路径使用启动目录：{{path}}",
+      "git": "Git",
+      "unstaged": "未暂存",
+      "staged": "已暂存",
+      "recentHistory": "最近提交",
+      "historyLimit": "仅显示 HEAD 可达的最近 50 条提交。",
+      "historyUnavailable": "当前连接暂不支持最近提交记录。",
+      "refresh": "刷新",
+      "noChanges": "没有变更",
+      "noCommits": "暂无提交",
+      "loadFailed": "无法加载，请尝试刷新。",
+      "comparison": "分支对比",
+      "comparisonHint": "查看当前分支相对基线分支的已提交改动，不包含未提交文件。",
+      "historyLoading": "正在加载最近提交…",
+      "previousPane": "上一个窗格",
+      "nextPane": "下一个窗格"
     }
   },
   "update": {

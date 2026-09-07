@@ -7,12 +7,110 @@ import {
   createInitialTerminalState,
   createPaneState,
   hydrateTerminalState,
+  hideTerminalPane,
+  visibleTerminalPaneIds,
+  adjacentTerminalPane,
+  moveTerminalPane,
   removeTerminalPane,
   setActiveTerminalPane,
   splitTerminalPane,
   updateTerminalSplitRatio,
   updateTerminalPane,
+  type TerminalDropZone,
 } from '../terminal-layout';
+
+describe('moving existing terminal panes', () => {
+  function threePanes() {
+    const pair = splitTerminalPane(
+      createInitialTerminalState(),
+      'pane-1',
+      'horizontal',
+      createPaneState('pane-2', 'claude'),
+    )!;
+    return splitTerminalPane(pair, 'pane-2', 'vertical', createPaneState('pane-3', 'codex'))!;
+  }
+
+  it('retains hidden split slots through hydration, skips them in focus navigation, and protects the final visible pane', () => {
+    const original = threePanes();
+    const hidden = hydrateTerminalState(hideTerminalPane(original, 'pane-2'));
+    expect(hidden.layout).toEqual(original.layout);
+    expect(visibleTerminalPaneIds(hidden)).toEqual(['pane-1', 'pane-3']);
+    expect(adjacentTerminalPane({ ...hidden, activePaneId: 'pane-1' }, 1)).toBe('pane-3');
+    const onlyThird = hideTerminalPane(hidden, 'pane-1')!;
+    expect(hideTerminalPane(onlyThird, 'pane-3')).toBeNull();
+    const removed = removeTerminalPane(onlyThird, 'pane-3')!;
+    expect(removed.viewHidden).toBe(true);
+    expect(collectPaneIds(removed.layout)).toEqual(['pane-1', 'pane-2']);
+  });
+
+  it.each<TerminalDropZone>(['left', 'right', 'top', 'bottom'])(
+    'moves into the %s half without replacing pane state',
+    (zone) => {
+      const initial = threePanes();
+      const moved = moveTerminalPane(initial, 'pane-1', 'pane-3', zone);
+      const firstId = zone === 'left' || zone === 'top' ? 'pane-1' : 'pane-3';
+      const secondId = firstId === 'pane-1' ? 'pane-3' : 'pane-1';
+      expect(moved.panes).toBe(initial.panes);
+      expect(moved.activePaneId).toBe('pane-1');
+      expect(collectPaneIds(moved.layout)).toEqual(['pane-2', firstId, secondId]);
+      expect(moved.layout).toEqual({
+        type: 'split',
+        direction: 'vertical',
+        ratio: 0.5,
+        first: { type: 'leaf', paneId: 'pane-2' },
+        second: {
+          type: 'split',
+          direction: zone === 'left' || zone === 'right' ? 'horizontal' : 'vertical',
+          ratio: 0.5,
+          first: { type: 'leaf', paneId: firstId },
+          second: { type: 'leaf', paneId: secondId },
+        },
+      });
+      expect(hydrateTerminalState(moved).layout).toEqual(moved.layout);
+      expect(collectPaneIds(initial.layout)).toEqual(['pane-1', 'pane-2', 'pane-3']);
+    },
+  );
+
+  it('collapses a nested source and resolves the target after detaching', () => {
+    const initial = threePanes();
+    const moved = moveTerminalPane(initial, 'pane-3', 'pane-1', 'bottom');
+    expect(moved.layout).toMatchObject({
+      direction: 'horizontal',
+      first: { direction: 'vertical', first: { paneId: 'pane-1' }, second: { paneId: 'pane-3' } },
+      second: { type: 'leaf', paneId: 'pane-2' },
+    });
+    expect(moved.panes).toBe(initial.panes);
+  });
+
+  it('leaves self drops, missing ids and same-position drops unchanged, preserving ratios', () => {
+    const initial = updateTerminalSplitRatio(threePanes(), ['second'], 0.7);
+    expect(moveTerminalPane(initial, 'pane-1', 'pane-1', 'top')).toBe(initial);
+    expect(moveTerminalPane(initial, 'missing', 'pane-1', 'top')).toBe(initial);
+    expect(moveTerminalPane(initial, 'pane-1', 'missing', 'left')).toBe(initial);
+    expect(moveTerminalPane(initial, 'pane-3', 'pane-2', 'bottom')).toBe(initial);
+    expect(moveTerminalPane(initial, 'pane-2', 'pane-3', 'top')).toBe(initial);
+    const dangling = { ...initial, panes: { ...initial.panes, orphan: createPaneState('orphan') } };
+    expect(moveTerminalPane(dangling, 'orphan', 'pane-1', 'top')).toBe(dangling);
+    expect(moveTerminalPane(dangling, 'pane-1', 'orphan', 'top')).toBe(dangling);
+  });
+
+  it('still allows reordering at the pane limit', () => {
+    let initial = createInitialTerminalState();
+    for (let index = 2; index <= MAX_TERMINAL_PANES; index++) {
+      initial = splitTerminalPane(
+        initial,
+        'pane-1',
+        'horizontal',
+        createPaneState('pane-' + index),
+      )!;
+    }
+    const moved = moveTerminalPane(initial, 'pane-1', 'pane-2', 'top');
+    expect(moved).not.toBe(initial);
+    expect(collectPaneIds(moved.layout)).toHaveLength(MAX_TERMINAL_PANES);
+    expect(new Set(collectPaneIds(moved.layout)).size).toBe(MAX_TERMINAL_PANES);
+    expect(moved.panes).toBe(initial.panes);
+  });
+});
 
 describe('terminal layout model', () => {
   it('creates a single shell pane and splits/removes recursively', () => {

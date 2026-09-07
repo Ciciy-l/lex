@@ -191,9 +191,9 @@ describe('ReviewTabBody expanded diff budget', () => {
   it('skips expanded-row scanning when file count already virtualizes the outer list', () => {
     const diffs = Array.from({ length: 101 }, (_, index) => diff('unstaged', `${index}.ts`));
 
-    expect(countEagerExpandedDiffRows(diffs, new Set(diffs.map((item) => item.id)), 'unified')).toBe(
-      0,
-    );
+    expect(
+      countEagerExpandedDiffRows(diffs, new Set(diffs.map((item) => item.id)), 'unified'),
+    ).toBe(0);
   });
 });
 
@@ -1102,6 +1102,13 @@ describe('ReviewTabBody capped diff helpers', () => {
     expect(getNextCappedFileSelection('branch:main:b.ts', diffs)).toBe('branch:main:b.ts');
     expect(getNextCappedFileSelection('missing', diffs)).toBe('branch:main:a.ts');
     expect(getNextCappedFileSelection(null, [])).toBeNull();
+    expect(getNextCappedFileSelection(null, diffs, 'branch:main:b.ts')).toBe('branch:main:b.ts');
+    expect(getNextCappedFileSelection(null, diffs, 'missing')).toBeNull();
+    expect(getNextCappedFileSelection(null, diffs, null)).toBeNull();
+    // After consuming the external target, manual navigation wins on refresh.
+    expect(getNextCappedFileSelection('branch:main:a.ts', diffs, 'branch:main:b.ts')).toBe(
+      'branch:main:a.ts',
+    );
   });
 
   it('converts capped summary entries into lightweight placeholder diffs for file tree and jump UI', () => {

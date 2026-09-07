@@ -349,8 +349,13 @@ export function getCappedDiffForSource({
 export function getNextCappedFileSelection(
   currentId: string | null,
   diffs: readonly Pick<FileDiff, 'id'>[],
+  requestedId?: string | null,
 ): string | null {
   if (currentId && diffs.some((diff) => diff.id === currentId)) return currentId;
+  // An external navigation must never silently select an unrelated first file.
+  if (requestedId !== undefined) {
+    return diffs.find((diff) => diff.id === requestedId)?.id ?? null;
+  }
   return diffs[0]?.id ?? null;
 }
 
@@ -505,6 +510,20 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
   );
   const [jumpRequest, setJumpRequest] = useState<ReviewFileJumpRequest | null>(null);
   const [selectedCappedFileId, setSelectedCappedFileId] = useState<string | null>(null);
+  const navigationKey = JSON.stringify([
+    sessionId,
+    deviceLinkDeviceId,
+    descriptor,
+    state.jumpTarget,
+  ]);
+  const [previousNavigationKey, setPreviousNavigationKey] = useState(navigationKey);
+  if (previousNavigationKey !== navigationKey) {
+    // Reset before paint: a new same-source jump must supersede local navigation.
+    // Keep the external target pending until its matching source data arrives.
+    setPreviousNavigationKey(navigationKey);
+    setJumpRequest(null);
+    setSelectedCappedFileId(null);
+  }
   const [reviewWriteVersion, setReviewWriteVersion] = useState(0);
   // header 元素用 state 而不是 ref 持有:首帧常走"无会话 / 加载中"早退分支,
   // <header> 尚不存在;空依赖 effect 只跑一次会永远挂不上 ResizeObserver,
@@ -580,10 +599,14 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
     (entryJumpDiff && state.jumpTarget
       ? { id: entryJumpDiff.id, nonce: state.jumpTarget.nonce }
       : null);
+  const requestedCappedFileId = state.jumpTarget ? (entryJumpDiff?.id ?? null) : undefined;
+  const nextCappedFileId = getNextCappedFileSelection(
+    selectedCappedFileId,
+    cappedSummaryDiffs,
+    requestedCappedFileId,
+  );
   const selectedCappedSummaryDiff = currentCapped
-    ? (cappedSummaryDiffs.find((diff) => diff.id === selectedCappedFileId) ??
-      cappedSummaryDiffs[0] ??
-      null)
+    ? (cappedSummaryDiffs.find((diff) => diff.id === nextCappedFileId) ?? null)
     : null;
   const expansionDiffs =
     currentCapped && selectedCappedSummaryDiff ? [selectedCappedSummaryDiff] : visibleDiffs;
@@ -831,6 +854,7 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
   const updateReviewDataFromWrite = useCallback(
     (nextData: typeof data) => {
       if (!nextData) return;
+      window.dispatchEvent(new Event('lex:git-changed'));
       setReviewWriteVersion((version) => version + 1);
       if (hideWhitespace) {
         refresh();
@@ -1055,6 +1079,7 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
 
   useEffect(() => {
     if (
+      state.historyCommitOid !== selectedCommitOid &&
       shouldFallbackFromMissingSelectedCommit(
         source,
         selectedCommitOid,
@@ -1065,7 +1090,15 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
     ) {
       setSource('branch');
     }
-  }, [commits, commitsState.data, commitsState.loading, selectedCommitOid, setSource, source]);
+  }, [
+    commits,
+    commitsState.data,
+    commitsState.loading,
+    selectedCommitOid,
+    setSource,
+    source,
+    state.historyCommitOid,
+  ]);
 
   const togglePath = useCallback(
     (id: string) => {
@@ -1160,19 +1193,13 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
 
   useEffect(() => {
     if (!currentCapped) return;
-    const nextId = getNextCappedFileSelection(selectedCappedFileId, cappedSummaryDiffs);
+    const nextId = nextCappedFileId;
     if (nextId === selectedCappedFileId) return;
     setSelectedCappedFileId(nextId);
     if (nextId && !expandedSet.has(nextId)) {
       setDiffExpansionOverrides((current) => new Map(current).set(nextId, true));
     }
-  }, [cappedSummaryDiffs, currentCapped, expandedSet, selectedCappedFileId]);
-
-  useEffect(() => {
-    // 切 source 后 DiffList 重挂载、nonce 去重 ref 归零;残留的
-    // jumpRequest 会在切回同 source 时被重放成一次意外跳转,这里清掉。
-    setJumpRequest(null);
-  }, [source]);
+  }, [nextCappedFileId, currentCapped, expandedSet, selectedCappedFileId]);
 
   useEffect(() => {
     if (!headerEl) {

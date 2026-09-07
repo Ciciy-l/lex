@@ -9,6 +9,8 @@ vi.mock('../../store', () => ({
   getBucket: vi.fn(() => ({
     tabs: [{ id: 'review-1', kind: 'review' }],
     activeTabId: 'review-1',
+    activeContentTabId: 'review-1',
+    activeToolId: null,
   })),
 }));
 vi.mock('../openInSidebarBrowser', () => ({

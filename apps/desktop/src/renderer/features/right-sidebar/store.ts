@@ -21,11 +21,14 @@ import { extractIpcError } from '@/utils/ipcError';
 import { normalizePersistableFavicon } from '../../../shared/faviconPersistence';
 import { createIpcError } from '../../../shared/ipc-errors';
 import { MAX_STATE_JSON_BYTES } from '../../../shared/rightSidebarTabState';
+import { workspaceSurface, isHiddenTerminal } from '../../../shared/workspaceSurface';
+import { hydrateTerminalState } from './plugins/terminal/terminal-layout';
 import { getSessionDeviceId } from '@/features/device-link/remoteProjectsStore';
 import { getTabKind } from './registry';
 import { browserWebviewPool } from './lib/browserWebviewPool';
 import { unmarkPopupSpawnedTab } from './lib/popupTabs';
 import { closeNativePopupForTab } from './lib/nativePopupTabs';
+import { isFilePreviewProtected } from './lib/filePreviewProtection';
 import type { TabKindId, TabState } from './types';
 import type { RsbWindowTabSnapshot } from '../../../shared/rightSidebarWindow';
 
@@ -33,6 +36,8 @@ const log = createLogger('rightSidebar.store');
 
 /** Bucket = 某个 session 的 tab 列表 + 激活 + hydrate 状态。 */
 export interface TabBucket {
+  activeToolId?: string | null;
+  activeContentTabId?: string | null;
   /** false = 尚未从 IPC 加载,Shell 应渲染 placeholder。 */
   hydrated: boolean;
   tabs: TabState[];
@@ -129,6 +134,8 @@ let storeGeneration = 0;
 let cacheGeneration = 0;
 
 interface RightSidebarTabsListResult {
+  activeToolId?: string | null;
+  activeContentTabId?: string | null;
   tabs: Array<{ id: string; kind: string; state: unknown }>;
   activeTabId: string | null;
   /** false = session is not present in this device's local sessions table. */
@@ -181,6 +188,14 @@ function rollbackTabStateWrite(key: string, item: PendingTabStateWrite): void {
   const bucket = getBucket(item.input.sessionId);
   const idx = bucket.tabs.findIndex((tab) => tab.id === item.input.id);
   if (idx < 0) return;
+  // Replacing a preview changes FileContentView's React key. Rolling back a
+  // failed metadata write must not unmount a newly edited file. Keep its view
+  // and propagate the persistence error; a subsequent write can retry it.
+  if (
+    bucket.tabs[idx].kind === 'file-content' &&
+    isFilePreviewProtected(item.input.sessionId, item.input.id)
+  )
+    return;
   const tabs = [...bucket.tabs];
   tabs[idx] = { ...tabs[idx], state: baseline };
   setBucket(item.input.sessionId, { tabs });
@@ -307,7 +322,7 @@ async function drainStateWrites(): Promise<void> {
           continue;
         }
         rollbackTabStateWrite(key, item);
-        log.error('patchTabState IPC failed; rolling back cache', {
+        log.error('patchTabState IPC failed; rolling back unprotected cache', {
           sessionId: item.input.sessionId,
           tabId: item.input.id,
           err,
@@ -393,6 +408,20 @@ function setBucket(sessionId: string, next: Partial<TabBucket>): TabBucket {
   // 一直停在 false,Shell 永远渲染占位。
   const base: TabBucket = current ?? { hydrated: true, tabs: [], activeTabId: null };
   const merged: TabBucket = { ...base, ...next };
+  for (const surface of ['tool', 'content'] as const) {
+    const key = surface === 'tool' ? 'activeToolId' : 'activeContentTabId';
+    const available = merged.tabs.filter(
+      (tab) => workspaceSurface(tab.kind) === surface && !isHiddenTerminal(tab),
+    );
+    const activated = next.activeTabId && available.find((tab) => tab.id === next.activeTabId);
+    const selected = next[key] !== undefined ? next[key] : activated ? activated.id : merged[key];
+    merged[key] =
+      typeof selected === 'string'
+        ? available.some((tab) => tab.id === selected)
+          ? selected
+          : (available[0]?.id ?? null)
+        : null;
+  }
   cache.set(sessionId, merged);
   notify(sessionId);
   return merged;
@@ -492,6 +521,8 @@ export function getTabSnapshot(sessionId: string | null | undefined): RsbWindowT
     sessionId,
     tabs: bucket.tabs.map(({ id, kind, state }) => ({ id, kind, state })),
     activeTabId: bucket.activeTabId,
+    activeToolId: bucket.activeToolId,
+    activeContentTabId: bucket.activeContentTabId,
     persistable: false,
   };
 }
@@ -500,15 +531,22 @@ export function getTabSnapshot(sessionId: string | null | undefined): RsbWindowT
 export function importTabSnapshot(snapshot: RsbWindowTabSnapshot): void {
   if (snapshot.persistable || !snapshot.sessionId) return;
   const seen = new Set<string>();
-  const tabs: TabState[] = snapshot.tabs.filter((tab) => {
-    if (!tab.id || !tab.kind || seen.has(tab.id)) return false;
-    seen.add(tab.id);
-    return true;
-  }).map((tab) => ({ ...tab, kind: tab.kind as TabKindId }));
-  const activeTabId = snapshot.activeTabId && seen.has(snapshot.activeTabId)
-    ? snapshot.activeTabId
-    : null;
-  const bucket: TabBucket = { hydrated: true, tabs, activeTabId };
+  const tabs: TabState[] = snapshot.tabs
+    .filter((tab) => {
+      if (!tab.id || !tab.kind || seen.has(tab.id)) return false;
+      seen.add(tab.id);
+      return true;
+    })
+    .map((tab) => ({ ...tab, kind: tab.kind as TabKindId }));
+  const activeTabId =
+    snapshot.activeTabId && seen.has(snapshot.activeTabId) ? snapshot.activeTabId : null;
+  const bucket: TabBucket = {
+    hydrated: true,
+    tabs,
+    activeTabId,
+    activeToolId: snapshot.activeToolId,
+    activeContentTabId: snapshot.activeContentTabId,
+  };
   memoryOnlySessions.add(snapshot.sessionId);
   pendingHandoffBuckets.set(snapshot.sessionId, bucket);
   setBucket(snapshot.sessionId, bucket);
@@ -578,7 +616,13 @@ export async function ensureHydrated(sessionId: string): Promise<void> {
         kind: row.kind as TabKindId,
         state: sanitizeHydratedTabState(row.kind, row.state),
       }));
-      setBucket(sessionId, { hydrated: true, tabs, activeTabId: result.activeTabId });
+      setBucket(sessionId, {
+        hydrated: true,
+        tabs,
+        activeTabId: result.activeTabId,
+        activeToolId: result.activeToolId,
+        activeContentTabId: result.activeContentTabId,
+      });
     } finally {
       inflight.delete(sessionId);
     }
@@ -697,10 +741,18 @@ export async function addOrFocusSingletonTab(
   kind: TabKindId,
   initialState: unknown = null,
 ): Promise<TabState> {
+  if (kind === 'orca-workers') {
+    const canonical = await ensureSingletonTab(sessionId, kind, initialState);
+    await setActiveTab(sessionId, canonical.id);
+    return canonical;
+  }
   const bucket = getBucket(sessionId);
   const existing = bucket.tabs.find((t) => t.kind === kind);
   if (existing) {
-    if (bucket.activeTabId !== existing.id) {
+    if (
+      (workspaceSurface(kind) === 'tool' ? bucket.activeToolId : bucket.activeContentTabId) !==
+      existing.id
+    ) {
       await setActiveTab(sessionId, existing.id);
     }
     return existing;
@@ -816,7 +868,7 @@ function forgetClosedTab(sessionId: string, tabId: string, kind: TabKindId): voi
 
 /**
  * 关 tab —— 优先激活右邻 → 左邻 → null。失败回滚。
- * plugin.onBeforeClose 给 plugin 释放 main 进程资源的机会(terminal 在这里 dispose PTY)。
+ * plugin.onBeforeClose runs the plugin's explicit close policy; terminal views detach, not kill PTYs.
  * 默认失败不阻断关闭流程;只有 plugin 明确返回 false 时才否决关闭。
  *
  * 并发纪律:**变更段按 session 串行**(见 closeMutationQueues)。关闭要跨越
@@ -837,6 +889,25 @@ export async function closeTab(
 ): Promise<void> {
   const tab = getBucket(sessionId).tabs.find((t) => t.id === tabId);
   if (!tab) return;
+  if (tab.kind === 'terminal' && !opts.skipBeforeClose) {
+    if (isHiddenTerminal(tab)) return;
+    // Keep the canonical tab/layout so reopening one pane restores its siblings.
+    await patchTabState(sessionId, tabId, (raw) => {
+      const state = hydrateTerminalState(raw);
+      return {
+        ...state,
+        viewHidden: true,
+        panes: Object.fromEntries(
+          Object.entries(state.panes).map(([id, pane]) => [id, { ...pane, runtimeStarted: true }]),
+        ),
+      };
+    });
+    const plugin = getTabKind(tab.kind);
+    await plugin?.onBeforeClose?.(tab.state, { tabId, sessionId });
+    const next = getBucket(sessionId).activeContentTabId ?? null;
+    await setActiveTab(sessionId, next, 'content');
+    return;
+  }
 
   // 先调 close interceptor / plugin onBeforeClose,后改 cache + IPC。
   // 在 cache 改之前调,plugin 拿到的还是 closing tab 的稳定状态。
@@ -879,13 +950,23 @@ export async function closeTab(
     const idx = prev.tabs.findIndex((t) => t.id === tabId);
     if (idx < 0) return;
     const closingKind = prev.tabs[idx].kind;
+    const closingSurface = workspaceSurface(closingKind);
+    const activeKey = closingSurface === 'content' ? 'activeContentTabId' : 'activeToolId';
     const nextTabs = prev.tabs.filter((t) => t.id !== tabId);
+    const peers = prev.tabs.filter(
+      (t) => workspaceSurface(t.kind) === closingSurface && !isHiddenTerminal(t),
+    );
+    const peerIndex = peers.findIndex((t) => t.id === tabId);
+    const nextSurfaceId =
+      prev[activeKey] === tabId
+        ? (peers[peerIndex + 1]?.id ?? peers[peerIndex - 1]?.id ?? null)
+        : (prev[activeKey] ?? null);
     let nextActiveId = prev.activeTabId;
     if (tabId === prev.activeTabId) {
-      nextActiveId = nextTabs[idx]?.id ?? nextTabs[idx - 1]?.id ?? null;
+      nextActiveId = nextSurfaceId;
     }
 
-    setBucket(sessionId, { tabs: nextTabs, activeTabId: nextActiveId });
+    setBucket(sessionId, { tabs: nextTabs, activeTabId: nextActiveId, [activeKey]: nextSurfaceId });
     // 先等这个 tab 的创建落定(见 pendingTabCreates)—— 否则 close 可能跑在 INSERT
     // 之前,拿 NOT_FOUND 把整次关闭回滚掉。
     const pendingCreate = pendingTabCreates.get(tabId);
@@ -930,8 +1011,8 @@ export async function closeTab(
           // setActive(null) 会把新 renderer 已接管会话的 active 标志清掉。
           const afterClose = getBucket(sessionId);
           if (afterClose.hydrated) {
-            let activeNow = afterClose.activeTabId;
-            if (activeNow !== prev.activeTabId) {
+            let activeNow = afterClose[activeKey] ?? null;
+            if (activeNow !== prev[activeKey]) {
               // 并发 addTab 可能刚把新 tab 设为 active 而它的 INSERT 还在途:直接
               // setActive 会撞 [NOT_FOUND](main 端还会先清掉全 session 的 active 位)。
               // 等它的创建落定;等待期间 active 可能又变,落定后重取现值。
@@ -943,12 +1024,16 @@ export async function closeTab(
                 // bucket 设为 hydrated=false;再次确认 bucket 仍由本 renderer 持有。
                 cacheStillOwned = getBucket(sessionId).hydrated;
                 if (cacheStillOwned) {
-                  activeNow = getBucket(sessionId).activeTabId;
+                  activeNow = getBucket(sessionId)[activeKey] ?? null;
                 }
               }
-              if (cacheStillOwned && activeNow !== prev.activeTabId) {
+              if (cacheStillOwned && activeNow !== prev[activeKey]) {
                 setActiveTarget = activeNow;
-                await ipc.setActive({ sessionId, id: activeNow });
+                await ipc.setActive({
+                  sessionId,
+                  id: activeNow,
+                  ...(activeNow === null ? { surface: closingSurface } : {}),
+                });
               }
             }
           }
@@ -970,9 +1055,12 @@ export async function closeTab(
           if (
             current.hydrated &&
             setActiveTarget !== undefined &&
-            current.activeTabId === setActiveTarget
+            current[activeKey] === setActiveTarget
           ) {
-            setBucket(sessionId, { tabs: current.tabs, activeTabId: null });
+            setBucket(sessionId, {
+              [activeKey]: null,
+              ...(current.activeTabId === setActiveTarget ? { activeTabId: null } : {}),
+            });
           }
         }
       }
@@ -1003,7 +1091,9 @@ export async function closeTab(
         // 的替代者"才恢复回被关 tab;并发操作已把 active 指向别处时尊重现值。
         const activeTabId =
           prev.activeTabId === tabId && now.activeTabId === nextActiveId ? tabId : now.activeTabId;
-        setBucket(sessionId, { tabs: restored, activeTabId });
+        const selection =
+          prev[activeKey] === tabId && now[activeKey] === nextSurfaceId ? tabId : now[activeKey];
+        setBucket(sessionId, { tabs: restored, activeTabId, [activeKey]: selection });
       }
       throw err;
     }
@@ -1020,25 +1110,42 @@ export async function closeAllTabs(sessionId: string): Promise<void> {
 }
 
 /** 切换激活 tab —— 同 id 即 noop。失败回滚。 */
-export async function setActiveTab(sessionId: string, tabId: string | null): Promise<void> {
+export async function setActiveTab(
+  sessionId: string,
+  tabId: string | null,
+  surface?: 'tool' | 'content',
+): Promise<void> {
   const prev = getBucket(sessionId);
-  if (tabId === prev.activeTabId) return;
-  // closeTab 已把关闭中的 tab 从 bucket 乐观移除:若此时用户点击该 tab(或
-  // 并发命令调 setActiveTab),activeTabId 会指向 tabs 里不存在的 id —— sidebar
-  // 无法渲染对应 body;close 落库后 DB 里也没有 active row。提前守门,拒绝激活
-  // 不在当前 bucket 里的 tab。
-  if (tabId !== null && !prev.tabs.some((t) => t.id === tabId)) return;
-  setBucket(sessionId, { activeTabId: tabId });
+  const target =
+    tabId === null ? null : prev.tabs.find((tab) => tab.id === tabId && !isHiddenTerminal(tab));
+  if (tabId !== null && !target) return;
+  const targetSurface = target ? workspaceSurface(target.kind) : surface;
+  if (target && surface && targetSurface !== surface) return;
+  const keys: Array<'activeContentTabId' | 'activeToolId'> = targetSurface
+    ? [targetSurface === 'content' ? 'activeContentTabId' : 'activeToolId']
+    : ['activeToolId', 'activeContentTabId'];
+  if (prev.activeTabId === tabId && keys.every((key) => prev[key] === tabId)) return;
+  const selection = Object.fromEntries(keys.map((key) => [key, tabId]));
+  setBucket(sessionId, { activeTabId: tabId, ...selection });
   try {
     const ipc = ipcApi();
-    if (ipc && shouldPersist(sessionId)) await ipc.setActive({ sessionId, id: tabId });
+    if (ipc && shouldPersist(sessionId))
+      await ipc.setActive({ sessionId, id: tabId, ...(surface ? { surface } : {}) });
   } catch (err) {
     if (isMissingSessionPersistenceError(err)) {
       markMemoryOnlySession(sessionId);
       return;
     }
     log.error('setActiveTab IPC failed; rolling back cache', { sessionId, tabId, err });
-    setBucket(sessionId, { activeTabId: prev.activeTabId });
+    const now = getBucket(sessionId);
+    const rollback = Object.fromEntries(
+      keys.filter((key) => now[key] === tabId).map((key) => [key, prev[key] ?? null]),
+    );
+    if (Object.keys(rollback).length)
+      setBucket(sessionId, {
+        ...rollback,
+        ...(now.activeTabId === tabId ? { activeTabId: prev.activeTabId } : {}),
+      });
     throw err;
   }
 }

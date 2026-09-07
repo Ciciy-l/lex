@@ -167,12 +167,10 @@ export function forceKillBrowserTab(tabId: string): Promise<void> {
   } catch {
     // attach 尚未完成时 getWebContentsId 抛 —— 不带兜底 id,交给 main 判 NOT_FOUND。
   }
-  return api
-    .forceKill(webContentsId === undefined ? { tabId } : { tabId, webContentsId })
-    .then(
-      () => undefined,
-      () => undefined,
-    );
+  return api.forceKill(webContentsId === undefined ? { tabId } : { tabId, webContentsId }).then(
+    () => undefined,
+    () => undefined,
+  );
 }
 
 /**
@@ -392,9 +390,7 @@ export function releaseRsbBrowserTab(tabId: string): Promise<void> {
   if (!api) return Promise.resolve();
   const reported = lastReportedWebContentsId.get(tabId);
   lastReportedWebContentsId.delete(tabId);
-  return api
-    .release(reported === undefined ? { tabId } : { tabId, webContentsId: reported })
-    .then(
+  return api.release(reported === undefined ? { tabId } : { tabId, webContentsId: reported }).then(
     () => undefined,
     () => undefined,
   );
@@ -535,8 +531,7 @@ async function handleTabOpRequest(
           error: `tab ${req.tabId ?? '(session default)'} not found`,
         };
       } else {
-        const url =
-          (tab.state as { url?: string } | null | undefined)?.url ?? 'about:blank';
+        const url = (tab.state as { url?: string } | null | undefined)?.url ?? 'about:blank';
         await eagerSpawnAndReport(req.sessionId, tab.id, url);
         result = { reqId, ok: true, tabId: tab.id };
       }
@@ -578,7 +573,7 @@ async function handleTabOpRequest(
 function pickDefaultBrowserTab(
   bucket: ReturnType<typeof getBucket>,
 ): ReturnType<typeof getBucket>['tabs'][number] | undefined {
-  const active = bucket.tabs.find((t) => t.id === bucket.activeTabId);
+  const active = bucket.tabs.find((t) => t.id === bucket.activeContentTabId);
   if (active?.kind === 'web-browser') return active;
   for (let i = bucket.tabs.length - 1; i >= 0; i -= 1) {
     if (bucket.tabs[i].kind === 'web-browser') return bucket.tabs[i];

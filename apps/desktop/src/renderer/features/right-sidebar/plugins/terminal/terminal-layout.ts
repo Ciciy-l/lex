@@ -1,4 +1,9 @@
-import type { TerminalExitInfo, TerminalProfile } from '../../../../../shared/terminal-bridge';
+import {
+  isShellId,
+  type ShellId,
+  type TerminalExitInfo,
+  type TerminalProfile,
+} from '../../../../../shared/terminal-bridge';
 
 export type { TerminalProfile } from '../../../../../shared/terminal-bridge';
 
@@ -9,9 +14,16 @@ export const MIN_SPLIT_RATIO = 0.2;
 export const MAX_SPLIT_RATIO = 0.8;
 
 export type TerminalSplitDirection = 'horizontal' | 'vertical';
+export type TerminalDropZone = 'left' | 'right' | 'top' | 'bottom';
 export type TerminalSplitPath = readonly ('first' | 'second')[];
 
 export interface TerminalPaneState {
+  /** Hide the view without losing its slot in the split tree or PTY identity. */
+  viewHidden?: boolean;
+  terminalId?: string;
+  /** Requested shell for the first create/restart; absent means use the global default. */
+  shellPref?: ShellId | null;
+  runtimeStarted?: boolean;
   id: string;
   profile: TerminalProfile;
   /** Empty means use the profile's default display name. */
@@ -40,6 +52,9 @@ export interface TerminalLayoutSplit {
 export type TerminalLayoutNode = TerminalLayoutLeaf | TerminalLayoutSplit;
 
 export interface TerminalState {
+  customTitle?: string;
+  cwd?: string;
+  viewHidden?: boolean;
   version: typeof TERMINAL_LAYOUT_VERSION;
   layout: TerminalLayoutNode;
   panes: Record<string, TerminalPaneState>;
@@ -74,6 +89,20 @@ export function createInitialTerminalState(profile: TerminalProfile = 'shell'): 
 export function collectPaneIds(node: TerminalLayoutNode): string[] {
   if (node.type === 'leaf') return [node.paneId];
   return [...collectPaneIds(node.first), ...collectPaneIds(node.second)];
+}
+
+export function visibleTerminalPaneIds(state: TerminalState): string[] {
+  return collectPaneIds(state.layout).filter(id => !state.panes[id]?.viewHidden);
+}
+
+export function hideTerminalPane(state: TerminalState, paneId: string): TerminalState | null {
+  const visible = visibleTerminalPaneIds(state);
+  if (!visible.includes(paneId) || visible.length <= 1) return null;
+  return {
+    ...state,
+    panes: { ...state.panes, [paneId]: { ...state.panes[paneId], viewHidden: true } },
+    activePaneId: state.activePaneId === paneId ? visible.find(id => id !== paneId)! : state.activePaneId,
+  };
 }
 
 export function clampSplitRatio(ratio: number): number {
@@ -128,9 +157,54 @@ export function removeTerminalPane(state: TerminalState, paneId: string): Termin
   if (!nextLayout) return null;
   const panes = { ...state.panes };
   delete panes[paneId];
-  const nextActive =
-    state.activePaneId === paneId ? (collectPaneIds(nextLayout)[0] ?? '') : state.activePaneId;
-  return { ...state, layout: nextLayout, panes, activePaneId: nextActive };
+  const visible = collectPaneIds(nextLayout).filter(id => !panes[id].viewHidden);
+  const nextActive = visible.includes(state.activePaneId) ? state.activePaneId : (visible[0] ?? collectPaneIds(nextLayout)[0]);
+  return { ...state, layout: nextLayout, panes, activePaneId: nextActive, ...(!visible.length ? { viewHidden: true } : {}) };
+}
+
+export function moveTerminalPane(
+  state: TerminalState,
+  sourcePaneId: string,
+  targetPaneId: string,
+  zone: TerminalDropZone,
+): TerminalState {
+  const paneIds = collectPaneIds(state.layout);
+  if (
+    sourcePaneId === targetPaneId ||
+    !state.panes[sourcePaneId] ||
+    !state.panes[targetPaneId] ||
+    !paneIds.includes(sourcePaneId) ||
+    !paneIds.includes(targetPaneId)
+  )
+    return state;
+
+  const direction = zone === 'left' || zone === 'right' ? 'horizontal' : 'vertical';
+  const sourceFirst = zone === 'left' || zone === 'top';
+  const firstId = sourceFirst ? sourcePaneId : targetPaneId;
+  const secondId = sourceFirst ? targetPaneId : sourcePaneId;
+  const alreadyAdjacent = (node: TerminalLayoutNode): boolean => {
+    if (node.type === 'leaf') return false;
+    return (
+      (node.direction === direction &&
+        node.first.type === 'leaf' &&
+        node.first.paneId === firstId &&
+        node.second.type === 'leaf' &&
+        node.second.paneId === secondId) ||
+      alreadyAdjacent(node.first) ||
+      alreadyAdjacent(node.second)
+    );
+  };
+  if (alreadyAdjacent(state.layout)) return state;
+  const detached = removeLeaf(state.layout, sourcePaneId);
+  if (!detached) return state;
+  const layout = replaceLeaf(detached, targetPaneId, {
+    type: 'split',
+    direction,
+    ratio: 0.5,
+    first: { type: 'leaf', paneId: firstId },
+    second: { type: 'leaf', paneId: secondId },
+  });
+  return layout ? { ...state, layout, activePaneId: sourcePaneId } : state;
 }
 
 export function setActiveTerminalPane(state: TerminalState, paneId: string): TerminalState {
@@ -173,11 +247,15 @@ export function hydrateTerminalState(raw: unknown): TerminalState {
       const finalPanes: Record<string, TerminalPaneState> = {};
       for (const id of finalIds) finalPanes[id] = panes[id];
       const requestedActive = typeof obj.activePaneId === 'string' ? obj.activePaneId : '';
+      const visible = finalIds.filter(id => !finalPanes[id].viewHidden);
       return {
+        customTitle: typeof obj.customTitle === 'string' ? obj.customTitle.trim().slice(0, 120) : undefined,
+        viewHidden: obj.viewHidden === true,
+        cwd: typeof obj.cwd === 'string' ? obj.cwd : undefined,
         version: TERMINAL_LAYOUT_VERSION,
         layout: finalLayout,
         panes: finalPanes,
-        activePaneId: finalPanes[requestedActive] ? requestedActive : finalIds[0],
+        activePaneId: visible.includes(requestedActive) ? requestedActive : (visible[0] ?? finalIds[0]),
       };
     }
   }
@@ -255,8 +333,13 @@ function isSafePaneId(value: string): boolean {
 function normalizePane(raw: unknown, id: string): TerminalPaneState {
   const obj = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
   const profile = isProfile(obj.profile) ? obj.profile : 'shell';
+  const shellPref = obj.shellPref === null ? null : isShellId(obj.shellPref) ? obj.shellPref : undefined;
   return {
     ...createPaneState(id, profile),
+    ...(shellPref === undefined ? {} : { shellPref }),
+    terminalId: typeof obj.terminalId === 'string' ? obj.terminalId : undefined,
+    runtimeStarted: obj.runtimeStarted === true,
+    ...(obj.viewHidden === true ? { viewHidden: true } : {}),
     title: typeof obj.title === 'string' ? obj.title.slice(0, 120) : '',
     shellId: typeof obj.shellId === 'string' ? obj.shellId : '',
     shellDisplayName: typeof obj.shellDisplayName === 'string' ? obj.shellDisplayName : '',
@@ -322,4 +405,11 @@ function pruneUnknownLeaves(
   if (!first) return second;
   if (!second) return first;
   return { ...node, ratio: clampSplitRatio(node.ratio), first, second };
+}
+
+/** Visual traversal does not depend on pane creation order. */
+export function adjacentTerminalPane(state: TerminalState, direction: -1 | 1): string {
+  const ids = visibleTerminalPaneIds(state);
+  const index = Math.max(0, ids.indexOf(state.activePaneId));
+  return ids[(index + direction + ids.length) % ids.length] ?? state.activePaneId;
 }

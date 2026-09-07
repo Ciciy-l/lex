@@ -10,8 +10,8 @@
  * Terminal 只是个 JS 对象,没有像 webview 那样必须保活的 DOM,挂到哪个 div
  * 都能 open()。所以 pool 只存"实例本体 + addons + 上次 fit 的尺寸",不存 DOM。
  *
- * Terminal 实例首次创建时,主题色用 RSB 内嵌色块预设(后续可改 token);如果将来
- * 接 token system,把这里的 theme 改成读 CSS variable 即可。
+ * Terminal 颜色从宿主设计系统的语义 token 读取；主题切换时由
+ * TerminalPaneView 原地刷新 options.theme，PTY 与 scrollback 均保持不变。
  */
 
 // xterm.js 自带的样式表 —— 必须 import,否则 xterm 内部用来接键盘/IME 输入的
@@ -20,7 +20,8 @@
 // document.head,不需要额外配置。
 import '@xterm/xterm/css/xterm.css';
 
-import { Terminal, type ITerminalOptions } from '@xterm/xterm';
+import { Terminal, type ITheme, type ITerminalOptions } from '@xterm/xterm';
+import { SearchAddon } from '@xterm/addon-search';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 
@@ -29,8 +30,12 @@ import { createLogger } from '@/lib/logger';
 const log = createLogger('terminal');
 
 export interface XtermEntry {
+  offOutput?: () => void;
+  onUrlContext?: (event: MouseEvent, url: string) => void;
+  hoveredUrl?: () => string | null;
   terminal: Terminal;
   fitAddon: FitAddon;
+  searchAddon: SearchAddon;
   /** 上次 fit 的尺寸,供 mount 后立即用作 PTY 初始 cols/rows。 */
   lastSize: { cols: number; rows: number };
   /**
@@ -45,6 +50,57 @@ export interface XtermEntry {
 
 const pool = new Map<string, XtermEntry>();
 
+const TERMINAL_THEME_TOKENS = {
+  background: '--panel-bg',
+  foreground: '--text-primary',
+  cursor: '--text-primary',
+  cursorAccent: '--panel-bg',
+  selectionBackground: '--surface-chip',
+} as const;
+
+/** Read the resolved values after the current theme stylesheet has been applied. */
+export function getTerminalTheme(): ITheme {
+  if (typeof document === 'undefined') return {};
+  const styles = getComputedStyle(document.documentElement);
+  const theme: ITheme = {};
+  for (const [key, token] of Object.entries(TERMINAL_THEME_TOKENS) as Array<
+    [keyof typeof TERMINAL_THEME_TOKENS, string]
+  >) {
+    const rawValue = styles.getPropertyValue(token).trim();
+    const value = resolveCssColor(token, rawValue);
+    if (value) theme[key] = value;
+  }
+  return theme;
+}
+
+/**
+ * Custom properties can be aliases (for example --panel-bg: var(--surface)).
+ * xterm consumes concrete CSS colors, so resolve the alias through a hidden
+ * probe element instead of passing a `var(...)` expression to its canvas.
+ */
+function resolveCssColor(token: string, rawValue: string): string {
+  if (typeof document === 'undefined' || !document.documentElement) return rawValue;
+  const probe = document.createElement('span');
+  probe.style.position = 'absolute';
+  probe.style.visibility = 'hidden';
+  probe.style.pointerEvents = 'none';
+  probe.style.color = `var(${token})`;
+  document.documentElement.appendChild(probe);
+  const resolved = getComputedStyle(probe).color.trim();
+  probe.remove();
+  // jsdom (and Chromium when a token is missing) may return the unresolved
+  // `var(...)` expression. Keep a concrete raw value in that case, but never
+  // hand an unresolved custom-property expression to xterm.
+  if (resolved && !resolved.startsWith('var(')) return resolved;
+  return rawValue.startsWith('var(') ? '' : rawValue;
+}
+
+/** Update an existing terminal without replacing its scrollback or addons. */
+export function updateXtermTheme(entry: XtermEntry): void {
+  entry.terminal.options.theme = getTerminalTheme();
+  if (entry.terminal.rows > 0) entry.terminal.refresh(0, entry.terminal.rows - 1);
+}
+
 const DEFAULT_OPTIONS: ITerminalOptions = {
   // Codex 同款字号 / 字体;cursorBlink 跟 iTerm 默认行为对齐。
   fontFamily: '"SF Mono", Menlo, Monaco, "Cascadia Code", "Courier New", monospace',
@@ -56,14 +112,8 @@ const DEFAULT_OPTIONS: ITerminalOptions = {
   scrollback: 5000,
   // 允许 OSC 8 超链接(WebLinksAddon 也会处理裸 URL)
   allowProposedApi: false,
-  // 反色风格的暗黑主题。RSB 视觉是黑底白字。
-  theme: {
-    background: '#1c1c1c',
-    foreground: '#e6e6e6',
-    cursor: '#e6e6e6',
-    cursorAccent: '#1c1c1c',
-    selectionBackground: '#3a4a5a',
-  },
+  // Keep xterm in sync with the host application's semantic theme tokens.
+  theme: getTerminalTheme(),
 };
 
 /** 获取或创建某个 tabId 的 xterm 实例。重复调用同 id 返回同一个。 */
@@ -72,21 +122,33 @@ export function getOrCreateXterm(tabId: string): XtermEntry {
   if (entry) return entry;
   const terminal = new Terminal(DEFAULT_OPTIONS);
   const fitAddon = new FitAddon();
+  const searchAddon = new SearchAddon();
+  terminal.loadAddon(searchAddon);
   // xterm's default link handler uses `window.open()`. In an Electron
   // renderer that creates a popup window, which is intentionally blocked by
   // the app's window policy and leaves terminal links inert. Route the click
   // through the existing main-process URL allowlist instead.
-  const webLinks = new WebLinksAddon(openTerminalExternalLink);
+  let hoveredUrl: string | null = null;
+  const webLinks = new WebLinksAddon(openTerminalExternalLink, {
+    hover: (_event, url) => { hoveredUrl = url; },
+    leave: () => { hoveredUrl = null; },
+  });
   terminal.loadAddon(fitAddon);
   terminal.loadAddon(webLinks);
   attachSelectionCopyShortcut(terminal);
   entry = {
     terminal,
+    hoveredUrl: () => hoveredUrl,
     fitAddon,
+    searchAddon,
     lastSize: { cols: 80, rows: 24 },
     ptyAttached: false,
   };
   pool.set(tabId, entry);
+  // Keep output flowing into the retained terminal while its view is unmounted.
+  entry.offOutput = window.electronAPI?.terminal?.onData?.((event) => {
+    if (event.id === tabId) terminal.write(event.chunk);
+  });
   return entry;
 }
 
@@ -123,11 +185,12 @@ export function markAllPtyDetached(): void {
   for (const entry of pool.values()) entry.ptyAttached = false;
 }
 
-/** 仅供 plugin.onBeforeClose 调用：真正销毁实例 + 释放 GPU/DOM 资源。 */
+/** Explicit Forget (or test cleanup): release the retained view/output resources. */
 export function disposeXterm(tabId: string): void {
   const entry = pool.get(tabId);
   if (!entry) return;
   pool.delete(tabId);
+  entry.offOutput?.();
   try {
     entry.terminal.dispose();
   } catch {

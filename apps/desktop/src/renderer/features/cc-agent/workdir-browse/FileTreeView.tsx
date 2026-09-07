@@ -104,6 +104,7 @@ export interface FileTreeViewProps {
   selectedPath: string | null;
   /** Click on a file row → caller updates URL search param. */
   onSelectFile: (relPath: string) => void;
+  onOpenFile?: (relPath: string) => void;
   /** 图片文件行的小眼睛操作；仅传入该能力的宿主显示。 */
   onPreviewImage?: (entry: DirEntry) => void;
   /** Right-click 文件夹 → 新建文件。parentRel 是被点中文件夹的 relPath。 */
@@ -207,6 +208,7 @@ export const FileTreeView = forwardRef<FileTreeViewHandle, FileTreeViewProps>(fu
     tree,
     selectedPath,
     onSelectFile,
+  onOpenFile,
     onPreviewImage,
     onNewFile,
     onNewFolder,
@@ -347,6 +349,7 @@ export const FileTreeView = forwardRef<FileTreeViewHandle, FileTreeViewProps>(fu
             loading={tree.loadingPaths.has(entry.relPath)}
             onToggleFolder={tree.toggleFolder}
             onSelectFile={onSelectFile}
+            onOpenFile={onOpenFile}
             onPreviewImage={onPreviewImage}
             onContextMenu={(e) => {
               e.preventDefault();
@@ -559,6 +562,7 @@ interface FileTreeRowProps {
   loading?: boolean;
   onToggleFolder: (relPath: string) => void;
   onSelectFile: (relPath: string) => void;
+  onOpenFile?: (relPath: string) => void;
   onPreviewImage?: (entry: DirEntry) => void;
   onContextMenu: (e: React.MouseEvent) => void;
 }
@@ -571,6 +575,7 @@ function FileTreeRow({
   loading = false,
   onToggleFolder,
   onSelectFile,
+  onOpenFile,
   onPreviewImage,
   onContextMenu,
 }: FileTreeRowProps) {
@@ -615,6 +620,7 @@ function FileTreeRow({
     <div
       draggable
       onClick={handleClick}
+      onDoubleClick={() => { if (!isFolder) onOpenFile?.(entry.relPath); }}
       onContextMenu={onContextMenu}
       onDragStart={handleDragStart}
       style={rowStyle}
@@ -634,7 +640,8 @@ function FileTreeRow({
         type="button"
         onClick={(event) => {
           event.stopPropagation();
-          handleClick();
+          if (!isFolder && event.detail === 0 && onOpenFile) onOpenFile(entry.relPath);
+          else handleClick();
         }}
         style={{ paddingLeft }}
         className="flex h-full min-w-0 flex-1 items-center gap-1.5 bg-transparent p-0 text-left text-inherit focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring)]"

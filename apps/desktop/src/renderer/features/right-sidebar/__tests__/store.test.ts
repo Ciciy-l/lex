@@ -14,13 +14,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { _resetTabKindRegistry, registerTabKind } from '../registry';
-import {
-  _resetPopupTabsForTests,
-  isPopupSpawnedTab,
-  markPopupSpawnedTab,
-} from '../lib/popupTabs';
+import { _resetPopupTabsForTests, isPopupSpawnedTab, markPopupSpawnedTab } from '../lib/popupTabs';
 import { browserWebviewPool } from '../lib/browserWebviewPool';
 import type { TabKindPlugin } from '../types';
+import { protectFilePreview } from '../lib/filePreviewProtection';
 
 // device-link origin 注册表桩:'remote-' 前缀的 sessionId 视为远程会话。
 // store 对远程会话必须走纯内存(right_sidebar_tabs 对 sessions 表有 FK,
@@ -54,17 +51,17 @@ function makeIpcStub(): IpcStub {
 function installIpc(stub: IpcStub): void {
   // 测试用 window.electronAPI 桩。完整 surface 太大,只挂 store 用到的子集,
   // 配合 `as unknown as ...` 绕过 typing(测试本来就是用 mock 替换完整 contract)。
-  (window as unknown as {
-    electronAPI: { localDb: { rightSidebarTabs: IpcStub }; platform: string };
-  }).electronAPI = {
+  (
+    window as unknown as {
+      electronAPI: { localDb: { rightSidebarTabs: IpcStub }; platform: string };
+    }
+  ).electronAPI = {
     localDb: { rightSidebarTabs: stub },
     platform: 'darwin',
   };
 }
 
-function registerVetoPlugin(
-  onBeforeClose = vi.fn(async () => false),
-): ReturnType<typeof vi.fn> {
+function registerVetoPlugin(onBeforeClose = vi.fn(async () => false)): ReturnType<typeof vi.fn> {
   registerTabKind({
     kind: 'orca-workers',
     menu: {
@@ -131,7 +128,9 @@ describe('RSB store', () => {
   describe('ensureHydrated', () => {
     it('calls IPC list once and caches hydrated bucket', async () => {
       ipc.list.mockResolvedValueOnce({
-        tabs: [{ id: 't1', kind: 'file-browser', position: 0, state: { selectedFilePath: 'a.md' } }],
+        tabs: [
+          { id: 't1', kind: 'file-browser', position: 0, state: { selectedFilePath: 'a.md' } },
+        ],
         activeTabId: 't1',
       });
       await store.ensureHydrated('s1');
@@ -183,7 +182,9 @@ describe('RSB store', () => {
       expect(ipc.upsert).not.toHaveBeenCalled();
       expect(ipc.setActive).not.toHaveBeenCalled();
       expect(store.getBucket('ghost-s1').tabs).toHaveLength(1);
-      expect((store.getBucket('ghost-s1').tabs[0].state as { title: string }).title).toBe('Example');
+      expect((store.getBucket('ghost-s1').tabs[0].state as { title: string }).title).toBe(
+        'Example',
+      );
     });
 
     it('exports and restores a memory-only bucket across host cache invalidation', async () => {
@@ -196,6 +197,8 @@ describe('RSB store', () => {
         sessionId: 'handoff-s1',
         tabs: [{ id: tab.id, kind: 'web-browser', state: { url: 'https://example.com' } }],
         activeTabId: tab.id,
+        activeContentTabId: tab.id,
+        activeToolId: null,
         persistable: false,
       });
 
@@ -209,6 +212,8 @@ describe('RSB store', () => {
         hydrated: true,
         tabs: [{ id: tab.id, kind: 'web-browser', state: { url: 'https://example.com' } }],
         activeTabId: tab.id,
+        activeContentTabId: tab.id,
+        activeToolId: null,
       });
     });
 
@@ -228,15 +233,13 @@ describe('RSB store', () => {
         hydrated: true,
         tabs: [{ id: tab.id, kind: 'web-browser', state: { url: 'https://example.com' } }],
         activeTabId: tab.id,
+        activeContentTabId: tab.id,
+        activeToolId: null,
       });
     });
 
     it('does not let a late empty hydrate overwrite a received handoff', async () => {
-      let resolveList!: (value: {
-        tabs: never[];
-        activeTabId: null;
-        persistable: false;
-      }) => void;
+      let resolveList!: (value: { tabs: never[]; activeTabId: null; persistable: false }) => void;
       ipc.list.mockImplementationOnce(
         () =>
           new Promise((resolve) => {
@@ -259,14 +262,13 @@ describe('RSB store', () => {
         hydrated: true,
         tabs: snapshot.tabs,
         activeTabId: 'tab-a',
+        activeContentTabId: 'tab-a',
+        activeToolId: null,
       });
     });
 
     it('can rehydrate after a host transition invalidates an in-flight hydrate', async () => {
-      let resolveInitial!: (value: {
-        tabs: never[];
-        activeTabId: null;
-      }) => void;
+      let resolveInitial!: (value: { tabs: never[]; activeTabId: null }) => void;
       ipc.list.mockImplementationOnce(
         () =>
           new Promise((resolve) => {
@@ -292,6 +294,8 @@ describe('RSB store', () => {
         hydrated: true,
         tabs: [{ id: 'tab-after-transition', kind: 'web-browser', state: { url: 'about:blank' } }],
         activeTabId: 'tab-after-transition',
+        activeContentTabId: 'tab-after-transition',
+        activeToolId: null,
       });
       expect(ipc.list).toHaveBeenCalledTimes(2);
     });
@@ -325,7 +329,9 @@ describe('RSB store', () => {
       // blob: 不可持久化 → 清成"无图标"。
       expect((tabs[0].state as { favicon: string | null }).favicon).toBeNull();
       // 小 data: 保留。
-      expect((tabs[1].state as { favicon: string | null }).favicon).toBe('data:image/png;base64,eA==');
+      expect((tabs[1].state as { favicon: string | null }).favicon).toBe(
+        'data:image/png;base64,eA==',
+      );
       // 非 web-browser kind 原样透传。
       expect(tabs[2].state).toEqual({ selectedFilePath: 'x.md' });
     });
@@ -366,11 +372,9 @@ describe('RSB store', () => {
         await store.addTab('ghost-s1', 'web-browser', { url: `https://example.com/${i}` });
       }
 
-      const rejection = store.addTab(
-        'ghost-s1',
-        'web-browser',
-        { url: 'https://example.com/overflow' },
-      );
+      const rejection = store.addTab('ghost-s1', 'web-browser', {
+        url: 'https://example.com/overflow',
+      });
       await expect(rejection).rejects.toMatchObject({ code: 'RIGHT_SIDEBAR_TOO_MANY_TABS' });
       await expect(rejection).rejects.toThrow(/limit reached/);
       expect(store.getBucket('ghost-s1').tabs).toHaveLength(20);
@@ -382,7 +386,9 @@ describe('RSB store', () => {
       await store.ensureHydrated('ghost-s1');
 
       await expect(
-        store.addTab('ghost-s1', 'web-browser', { favicon: `data:image/png;base64,${'x'.repeat(20 * 1024)}` }),
+        store.addTab('ghost-s1', 'web-browser', {
+          favicon: `data:image/png;base64,${'x'.repeat(20 * 1024)}`,
+        }),
       ).rejects.toThrow(/tab state JSON too large/);
       expect(store.getBucket('ghost-s1').tabs).toHaveLength(0);
       expect(ipc.upsert).not.toHaveBeenCalled();
@@ -449,11 +455,14 @@ describe('RSB store', () => {
     });
 
     it.each([
-      ['cyclic state', () => {
-        const state: Record<string, unknown> = {};
-        state.self = state;
-        return state;
-      }],
+      [
+        'cyclic state',
+        () => {
+          const state: Record<string, unknown> = {};
+          state.self = state;
+          return state;
+        },
+      ],
       ['BigInt state', () => ({ value: BigInt(1) })],
       ['top-level function state', () => () => undefined],
     ])('rejects non-JSON-serializable %s before optimistic insertion', async (_name, makeState) => {
@@ -473,7 +482,9 @@ describe('RSB store', () => {
     });
 
     it('falls back to memory-only when the first persist hits a missing session FK', async () => {
-      ipc.upsert.mockRejectedValueOnce(new Error('SQLITE_CONSTRAINT_FOREIGNKEY: FOREIGN KEY constraint failed'));
+      ipc.upsert.mockRejectedValueOnce(
+        new Error('SQLITE_CONSTRAINT_FOREIGNKEY: FOREIGN KEY constraint failed'),
+      );
       const tab = await store.addTab('ghost-race', 'web-browser', { url: 'https://example.com' });
       await store.patchTabState('ghost-race', tab.id, (current) => ({
         ...(current as object),
@@ -657,7 +668,7 @@ describe('RSB store', () => {
     it('returns the existing tab + setActive when same kind already present', async () => {
       const first = await store.addOrFocusSingletonTab('s1', 'review', null);
       // 切到别的 tab 让 active 不再是 review
-      const other = await store.addTab('s1', 'file-browser', null);
+      const other = await store.addTab('s1', 'file-content', null);
       expect(store.getBucket('s1').activeTabId).toBe(other.id);
       ipc.upsert.mockClear();
       ipc.setActive.mockClear();
@@ -812,11 +823,17 @@ describe('RSB store', () => {
       ipc.setActive.mockClear();
       let releaseClose!: () => void;
       ipc.close.mockImplementationOnce(
-        () => new Promise((resolve) => { releaseClose = () => resolve({ ok: true }); }),
+        () =>
+          new Promise((resolve) => {
+            releaseClose = () => resolve({ ok: true });
+          }),
       );
       let releaseUpsert!: () => void;
       ipc.upsert.mockImplementationOnce(
-        () => new Promise((resolve) => { releaseUpsert = () => resolve({ ok: true }); }),
+        () =>
+          new Promise((resolve) => {
+            releaseUpsert = () => resolve({ ok: true });
+          }),
       );
 
       const close = store.closeTab('s1', a.id);
@@ -860,7 +877,10 @@ describe('RSB store', () => {
       ipc.setActive.mockClear();
       let rejectFirst!: (e: Error) => void;
       ipc.setActive.mockImplementationOnce(
-        () => new Promise((_resolve, reject) => { rejectFirst = (e) => reject(e); }),
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectFirst = (e) => reject(e);
+          }),
       );
 
       const close = store.closeTab('s1', a.id); // 替代者 = b → setActive(b) 挂起
@@ -891,11 +911,16 @@ describe('RSB store', () => {
       // 吞掉意味着 state 写队列可能已写进 DB 的孤儿行永远没人清,重启复活。
       let rejectUpsert!: (e: Error) => void;
       ipc.upsert.mockImplementationOnce(
-        () => new Promise((_resolve, reject) => { rejectUpsert = (e) => reject(e); }),
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectUpsert = (e) => reject(e);
+          }),
       );
       let createdId = '';
       const pendingAdd = store.addTab('s1', 'web-browser', null, {
-        onOptimisticAdd: (id) => { createdId = id; },
+        onOptimisticAdd: (id) => {
+          createdId = id;
+        },
       });
       const close = store.closeTab('s1', createdId);
       await Promise.resolve();
@@ -911,11 +936,16 @@ describe('RSB store', () => {
     it('孤儿行清理把 Electron 包装形态的 [NOT_FOUND] 视为"行本来就没有",不重试', async () => {
       let rejectUpsert!: (e: Error) => void;
       ipc.upsert.mockImplementationOnce(
-        () => new Promise((_resolve, reject) => { rejectUpsert = (e) => reject(e); }),
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectUpsert = (e) => reject(e);
+          }),
       );
       let createdId = '';
       const pendingAdd = store.addTab('s1', 'web-browser', null, {
-        onOptimisticAdd: (id) => { createdId = id; },
+        onOptimisticAdd: (id) => {
+          createdId = id;
+        },
       });
       const close = store.closeTab('s1', createdId);
       await Promise.resolve();
@@ -937,11 +967,16 @@ describe('RSB store', () => {
       // `includes('[NOT_FOUND]')` 会把这类无关错误当成"行不存在",静默跳过清理。
       let rejectUpsert!: (e: Error) => void;
       ipc.upsert.mockImplementationOnce(
-        () => new Promise((_resolve, reject) => { rejectUpsert = (e) => reject(e); }),
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectUpsert = (e) => reject(e);
+          }),
       );
       let createdId = '';
       const pendingAdd = store.addTab('s1', 'web-browser', null, {
-        onOptimisticAdd: (id) => { createdId = id; },
+        onOptimisticAdd: (id) => {
+          createdId = id;
+        },
       });
       const close = store.closeTab('s1', createdId);
       await Promise.resolve();
@@ -958,11 +993,16 @@ describe('RSB store', () => {
     it('孤儿行清理重试仍失败时向上抛,不静默', async () => {
       let rejectUpsert!: (e: Error) => void;
       ipc.upsert.mockImplementationOnce(
-        () => new Promise((_resolve, reject) => { rejectUpsert = (e) => reject(e); }),
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectUpsert = (e) => reject(e);
+          }),
       );
       let createdId = '';
       const pendingAdd = store.addTab('s1', 'web-browser', null, {
-        onOptimisticAdd: (id) => { createdId = id; },
+        onOptimisticAdd: (id) => {
+          createdId = id;
+        },
       });
       const close = store.closeTab('s1', createdId);
       await Promise.resolve();
@@ -983,9 +1023,10 @@ describe('RSB store', () => {
       const a = await store.addTab('s1', 'web-browser', null);
       let rejectClose!: (err: Error) => void;
       ipc.close.mockImplementationOnce(
-        () => new Promise((_resolve, reject) => {
-          rejectClose = (err) => reject(err);
-        }),
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectClose = (err) => reject(err);
+          }),
       );
 
       const close = store.closeTab('s1', a.id);
@@ -1009,9 +1050,10 @@ describe('RSB store', () => {
       ipc.upsert.mockClear();
       let releaseWrite!: () => void;
       ipc.upsert.mockImplementationOnce(
-        () => new Promise<{ ok: true }>((resolve) => {
-          releaseWrite = () => resolve({ ok: true });
-        }),
+        () =>
+          new Promise<{ ok: true }>((resolve) => {
+            releaseWrite = () => resolve({ ok: true });
+          }),
       );
 
       const write = store.patchTabState('s1', a.id, () => ({ url: 'https://example.com/1' }));
@@ -1078,23 +1120,46 @@ describe('RSB store', () => {
   });
 
   describe('closeAllTabs', () => {
-    it('closes every tab in the session bucket', async () => {
+    it('removes disposable tabs and hides terminal views without deleting their layout', async () => {
       const a = await store.addTab('s1', 'file-browser', null);
       const b = await store.addTab('s1', 'web-browser', null);
       const c = await store.addTab('s1', 'terminal', null);
 
       await store.closeAllTabs('s1');
 
-      expect(store.getBucket('s1').tabs).toEqual([]);
-      expect(store.getBucket('s1').activeTabId).toBeNull();
-      expect(ipc.close).toHaveBeenCalledTimes(3);
+      expect(store.getBucket('s1').tabs).toEqual([
+        { ...c, state: expect.objectContaining({ viewHidden: true }) },
+      ]);
+      expect(store.getBucket('s1').activeContentTabId).toBeNull();
+      expect(ipc.close).toHaveBeenCalledTimes(2);
       expect(ipc.close).toHaveBeenNthCalledWith(1, { id: a.id });
       expect(ipc.close).toHaveBeenNthCalledWith(2, { id: b.id });
-      expect(ipc.close).toHaveBeenNthCalledWith(3, { id: c.id });
+      expect(ipc.close).not.toHaveBeenCalledWith({ id: c.id });
     });
   });
 
   describe('setActiveTab', () => {
+    it('keeps tool selection independent and replaces closed content only within its surface', async () => {
+      const files = await store.addTab('s1', 'file-browser', {});
+      const first = await store.addTab('s1', 'web-browser', {});
+      const second = await store.addTab('s1', 'review', {});
+      await store.setActiveTab('s1', files.id);
+      expect(store.getBucket('s1').activeContentTabId).toBe(second.id);
+      await store.closeTab('s1', second.id);
+      expect(store.getBucket('s1').activeContentTabId).toBe(first.id);
+      expect(store.getBucket('s1').activeToolId).toBe(files.id);
+      expect(ipc.setActive).toHaveBeenLastCalledWith({ sessionId: 's1', id: first.id });
+    });
+
+    it('rolls back a failed content switch without losing the tool selection', async () => {
+      const first = await store.addTab('s1', 'web-browser', {});
+      const second = await store.addTab('s1', 'review', {});
+      const files = await store.addTab('s1', 'file-browser', {});
+      ipc.setActive.mockRejectedValueOnce(new Error('write failed'));
+      await expect(store.setActiveTab('s1', first.id)).rejects.toThrow('write failed');
+      expect(store.getBucket('s1').activeContentTabId).toBe(second.id);
+      expect(store.getBucket('s1').activeToolId).toBe(files.id);
+    });
     it('updates activeTabId optimistically', async () => {
       const a = await store.addTab('s1', 'file-browser', null);
       const b = await store.addTab('s1', 'file-browser', null);
@@ -1127,7 +1192,9 @@ describe('RSB store', () => {
         store.patchTabState('s1', a.id, () => ({ selectedFilePath: 'x.md' })),
       ).rejects.toThrow('boom');
       const bucket = store.getBucket('s1');
-      expect((bucket.tabs[0].state as { selectedFilePath: string | null }).selectedFilePath).toBeNull();
+      expect(
+        (bucket.tabs[0].state as { selectedFilePath: string | null }).selectedFilePath,
+      ).toBeNull();
     });
 
     it('rejects oversized persisted patches without notifying or writing', async () => {
@@ -1154,15 +1221,46 @@ describe('RSB store', () => {
       unsubscribe();
     });
 
+    it('never rolls an edited preview B back to A after both pending metadata writes fail', async () => {
+      await store.ensureHydrated('s1');
+      const a = await store.addTab('s1', 'file-content', { path: 'a.ts', preview: true });
+      let rejectFirst!: (err: Error) => void;
+      ipc.upsert
+        .mockImplementationOnce(
+          () =>
+            new Promise((_, reject) => {
+              rejectFirst = reject;
+            }),
+        )
+        .mockRejectedValueOnce(new Error('second failed'));
+      const first = store.patchTabState('s1', a.id, () => ({ path: 'b.ts', preview: true }));
+      const firstError = first.catch((error) => error);
+      const release = protectFilePreview('s1', a.id);
+      try {
+        const second = store.patchTabState('s1', a.id, () => ({ path: 'b.ts', preview: false }));
+        const secondError = second.catch((error) => error);
+        rejectFirst(new Error('first failed'));
+        expect((await firstError).message).toBe('first failed');
+        expect((await secondError).message).toBe('second failed');
+        expect(store.getBucket('s1').tabs[0].state).toEqual({ path: 'b.ts', preview: false });
+        ipc.upsert.mockResolvedValue({ ok: true });
+        await store.patchTabState('s1', a.id, (current) => current);
+        expect(ipc.upsert.mock.calls.at(-1)![0].state).toEqual({ path: 'b.ts', preview: false });
+      } finally {
+        release();
+      }
+    });
+
     it('serializes DB writes and coalesces the latest pending state per tab', async () => {
       const a = await store.addTab('s1', 'web-browser', { url: 'https://example.com/0' });
       ipc.upsert.mockClear();
       let releaseFirst!: () => void;
       ipc.upsert
         .mockImplementationOnce(
-          () => new Promise<{ ok: true }>((resolve) => {
-            releaseFirst = () => resolve({ ok: true });
-          }),
+          () =>
+            new Promise<{ ok: true }>((resolve) => {
+              releaseFirst = () => resolve({ ok: true });
+            }),
         )
         .mockResolvedValue({ ok: true });
 
@@ -1188,9 +1286,10 @@ describe('RSB store', () => {
       let rejectFirst!: (err: Error) => void;
       ipc.upsert
         .mockImplementationOnce(
-          () => new Promise((_, reject) => {
-            rejectFirst = reject;
-          }),
+          () =>
+            new Promise((_, reject) => {
+              rejectFirst = reject;
+            }),
         )
         .mockRejectedValueOnce(new Error('latest failed'));
 
@@ -1258,9 +1357,10 @@ describe('RSB store', () => {
       ipc.upsert.mockClear();
       let releaseWrite!: () => void;
       ipc.upsert.mockImplementationOnce(
-        () => new Promise<{ ok: true }>((resolve) => {
-          releaseWrite = () => resolve({ ok: true });
-        }),
+        () =>
+          new Promise<{ ok: true }>((resolve) => {
+            releaseWrite = () => resolve({ ok: true });
+          }),
       );
 
       const write = store.patchTabState('s1', a.id, () => ({ url: 'https://example.com/next' }));
@@ -1287,9 +1387,10 @@ describe('RSB store', () => {
       let releaseFirst!: () => void;
       ipc.upsert
         .mockImplementationOnce(
-          () => new Promise<{ ok: true }>((resolve) => {
-            releaseFirst = () => resolve({ ok: true });
-          }),
+          () =>
+            new Promise<{ ok: true }>((resolve) => {
+              releaseFirst = () => resolve({ ok: true });
+            }),
         )
         .mockResolvedValue({ ok: true });
 
@@ -1316,9 +1417,10 @@ describe('RSB store', () => {
 
       let releaseClose: (() => void) | undefined;
       ipc.close.mockImplementationOnce(
-        () => new Promise<{ ok: true }>((resolve) => {
-          releaseClose = () => resolve({ ok: true });
-        }),
+        () =>
+          new Promise<{ ok: true }>((resolve) => {
+            releaseClose = () => resolve({ ok: true });
+          }),
       );
 
       const closing = store.closeTab('s1', tab.id);

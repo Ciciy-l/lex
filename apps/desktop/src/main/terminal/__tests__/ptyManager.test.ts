@@ -18,6 +18,7 @@ import type { IPty } from 'node-pty';
 import type { WebContents } from 'electron';
 
 import { PtyManager, type DataPayload, type ExitPayload } from '../ptyManager';
+import type { TerminalRuntimeRecord } from '../../../shared/terminal-bridge';
 
 // ---------- Fake IPty ----------
 
@@ -126,6 +127,7 @@ let lastSpawn: FakePty | null = null;
 let allSpawns: FakePty[] = [];
 let dataPayloads: Array<{ target: WebContents; payload: DataPayload }> = [];
 let exitPayloads: Array<{ target: WebContents; payload: ExitPayload }> = [];
+let statusPayloads: TerminalRuntimeRecord[] = [];
 
 function makeManager(opts?: {
   resolveFallbackOwner?: (dead: WebContents) => WebContents | null;
@@ -146,6 +148,7 @@ function makeManager(opts?: {
       return fake;
     },
     sink: {
+      emitStatus: (_target, record) => statusPayloads.push(record),
       emitData: (target, payload) => {
         dataPayloads.push({ target, payload });
       },
@@ -164,6 +167,7 @@ beforeEach(() => {
   allSpawns = [];
   dataPayloads = [];
   exitPayloads = [];
+  statusPayloads = [];
   // 确保 shell auto-detect 在 *nix 上能拿到 zsh / bash / sh 之一（CI 环境）
   if (!process.env.SHELL) process.env.SHELL = '/bin/sh';
 });
@@ -173,6 +177,107 @@ afterEach(() => {
 });
 
 describe('PtyManager.create', () => {
+  it('renames display metadata without touching PTY and preserves it through restart', () => {
+    const mgr = makeManager();
+    const owner = makeFakeWebContents() as unknown as WebContents;
+    const other = makeFakeWebContents() as unknown as WebContents;
+    mgr.create({ id: 'rename', sessionId: 'lead', cwd: '/tmp', owner });
+    const pty = lastSpawn!;
+    const defaultTitle = mgr.list('lead', owner)[0].title;
+    mgr.rename('rename', ' Build ', owner);
+    expect(mgr.list('lead', owner)[0].title).toBe('Build');
+    expect(pty.__writes).toEqual([]); expect(pty.__resizes).toEqual([]); expect(pty.__killed).toBe(false);
+    mgr.rename('rename', 'stolen', other);
+    expect(mgr.list('lead', owner)[0].title).toBe('Build');
+    pty.__triggerExit({ exitCode: 0 }); mgr.restart('rename', owner);
+    expect(mgr.list('lead', owner)[0].title).toBe('Build');
+    mgr.rename('rename', '', owner);
+    expect(mgr.list('lead', owner)[0].title).toBe(defaultTitle);
+  });
+  it('rejects missing attach-only without spawning and preserves Lead ownership', () => {
+    const mgr = makeManager();
+    const owner = makeFakeWebContents() as unknown as WebContents;
+    expect(() =>
+      mgr.create({ id: 'missing', sessionId: 'lead', cwd: '/tmp', owner, attachOnly: true }),
+    ).toThrow(/TERMINAL_NOT_FOUND/);
+    expect(allSpawns).toHaveLength(0);
+    mgr.create({ id: 'a', sessionId: 'lead', cwd: '/tmp', owner });
+    mgr.create({ id: 'a', sessionId: 'lead', cwd: '/tmp', owner, attachOnly: true });
+    expect(allSpawns).toHaveLength(1);
+    expect(() =>
+      mgr.create({ id: 'a', sessionId: 'other', cwd: '/tmp', owner, attachOnly: true }),
+    ).toThrow(/SESSION_MISMATCH/);
+    expect(mgr.list('other', owner)).toEqual([]);
+  });
+
+  it('keeps detached PTYs, output and natural exit metadata alive', () => {
+    const mgr = makeManager();
+    const owner = makeFakeWebContents() as unknown as WebContents;
+    mgr.create({ id: 'a', sessionId: 'lead', cwd: '/tmp', owner });
+    const process = lastSpawn!;
+    mgr.detach('a', owner);
+    expect(process.__killed).toBe(false);
+    process.__triggerData('background output');
+    expect(dataPayloads.at(-1)?.payload.chunk).toBe('background output');
+    process.__triggerExit({ exitCode: 7 });
+    expect(mgr.list('lead', owner)[0]).toMatchObject({
+      detached: true,
+      status: 'exited',
+      exit: { code: 7 },
+    });
+    expect(statusPayloads.at(-1)).toMatchObject({ terminalId: 'a', status: 'exited' });
+    mgr.create({ id: 'a', sessionId: 'lead', cwd: '/tmp', owner, attachOnly: true });
+    expect(allSpawns).toHaveLength(1);
+    expect(mgr.list('lead', owner)[0].detached).toBe(false);
+  });
+
+  it('terminates only the chosen pane, and waits for its real exit before allowing restart', () => {
+    const mgr = makeManager();
+    const owner = makeFakeWebContents() as unknown as WebContents;
+    mgr.create({ id: 'a', sessionId: 'lead', cwd: '/tmp', owner });
+    const first = lastSpawn!;
+    mgr.create({ id: 'b', sessionId: 'lead', cwd: '/tmp', owner });
+    const second = lastSpawn!;
+    mgr.terminate('a', owner);
+    mgr.terminate('a', owner);
+    expect(first.kill).toHaveBeenCalledOnce();
+    expect(second.__killed).toBe(false);
+    expect(mgr.list('lead', owner)[0].status).toBe('terminating');
+    expect(() => mgr.restart('a', owner)).toThrow(/still running/);
+    first.__triggerExit({ exitCode: 0 });
+    expect(mgr.list('lead', owner)[0].status).toBe('terminated');
+    mgr.restart('a', owner);
+    expect(mgr.list('lead', owner)[0]).toMatchObject({ sessionId: 'lead', status: 'running' });
+    expect(allSpawns).toHaveLength(3);
+  });
+
+  it('does not fake a successful termination when native kill fails', () => {
+    const mgr = makeManager();
+    const owner = makeFakeWebContents() as unknown as WebContents;
+    mgr.create({ id: 'a', sessionId: 'lead', cwd: '/tmp', owner });
+    vi.mocked(lastSpawn!.kill).mockImplementationOnce(() => {
+      throw new Error('kill failed');
+    });
+    expect(() => mgr.terminate('a', owner)).toThrow('kill failed');
+    expect(mgr.list('lead', owner)[0].status).toBe('running');
+    expect(lastSpawn!.__dataListenersDisposed).toBe(false);
+    expect(lastSpawn!.__exitListenersDisposed).toBe(false);
+    expect(() => mgr.restart('a', owner)).toThrow(/still running/);
+    expect(allSpawns).toHaveLength(1);
+  });
+
+  it('limits runtime listing and mutations to the owning window and Lead', () => {
+    const mgr = makeManager();
+    const owner = makeFakeWebContents() as unknown as WebContents;
+    const other = makeFakeWebContents() as unknown as WebContents;
+    mgr.create({ id: 'a', sessionId: 'lead', cwd: '/tmp', owner });
+    mgr.detach('a', other);
+    mgr.terminate('a', other);
+    expect(mgr.list('lead', other)).toEqual([]);
+    expect(mgr.list('other', owner)).toEqual([]);
+    expect(mgr.list('lead', owner)[0]).toMatchObject({ detached: false, status: 'running' });
+    expect(lastSpawn!.__killed).toBe(false);
+  });
   it('spawn 一个 PTY 并发回 metadata', () => {
     const mgr = makeManager();
     const owner = makeFakeWebContents() as unknown as WebContents;
@@ -428,6 +533,27 @@ describe('PtyManager.dispose', () => {
     expect(() =>
       mgr.dispose('nope', makeFakeWebContents() as unknown as WebContents),
     ).not.toThrow();
+  });
+});
+
+describe('PtyManager.forget', () => {
+  it('refuses a still-running or restarted process and only removes after real exit', () => {
+    const mgr = makeManager();
+    const owner = makeFakeWebContents() as unknown as WebContents;
+    mgr.create({ id: 't1', sessionId: 'lead', cwd: '/tmp', owner });
+    const first = lastSpawn!;
+    expect(() => mgr.forget('t1', owner)).toThrow('TERMINAL_STILL_RUNNING');
+    expect(first.__killed).toBe(false);
+    first.__triggerExit({ exitCode: 0 });
+    mgr.restart('t1', owner);
+    const restarted = lastSpawn!;
+    expect(() => mgr.forget('t1', owner)).toThrow('TERMINAL_STILL_RUNNING');
+    expect(restarted.__killed).toBe(false);
+    restarted.__triggerExit({ exitCode: 0 });
+    mgr.forget('t1', owner);
+    expect(mgr.has('t1')).toBe(false);
+    expect(restarted.__killed).toBe(false);
+    expect(() => mgr.forget('t1', owner)).not.toThrow();
   });
 });
 

@@ -482,7 +482,7 @@ export const MAKER_INVOKE = {
    * 实时连接状态（XD=gateway key / Anthropic=Claude.ai OAuth / OpenAI=Codex OAuth）。
    * 供应商的「连接 / 断开」复用各 agent 已有的鉴权通道（CLAUDE_OAUTH_* / AUTH_* / 登录托管），
    * 不另立重复通道。
-  */
+   */
   PROVIDER_LIST: 'maker:provider:list',
   /**
    * 内置四家模型清单手动刷新。入参仅允许 xd / anthropic / openai / xai；
@@ -966,6 +966,12 @@ export const MAKER_PUSH = {
  *   - GET / SET DEFAULT_SHELL_PREF: 持久化用户默认 shell 偏好
  */
 export const TERMINAL_INVOKE = {
+  RESOLVE_FILE: 'terminal:resolve-file',
+  RENAME: 'terminal:rename',
+  LIST: 'terminal:list',
+  DETACH: 'terminal:detach',
+  TERMINATE: 'terminal:terminate',
+  FORGET: 'terminal:forget',
   CREATE: 'terminal:create',
   WRITE: 'terminal:write',
   RESIZE: 'terminal:resize',
@@ -978,6 +984,7 @@ export const TERMINAL_INVOKE = {
 
 /** PTY → renderer 单向推送（webContents.send）。 */
 export const TERMINAL_PUSH = {
+  STATUS: 'terminal:status',
   /** payload: { id: string; chunk: string }。每次 PTY onData 一次。 */
   DATA: 'terminal:data',
   /** payload: { id: string; exit: { code: number | null; signal: string | null } }。 */

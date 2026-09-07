@@ -229,6 +229,13 @@ export interface ReviewCommit {
   authorTime: number;
 }
 
+export interface ReviewHistoryData {
+  scope: ReviewScope;
+  headOid: string | null;
+  commits: ReviewCommit[];
+  truncated: boolean;
+}
+
 export interface ReviewCommitListData {
   scope: ReviewScope;
   baseRef: string | null;

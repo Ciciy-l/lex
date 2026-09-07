@@ -359,17 +359,29 @@ export function useReviewFileDiff(
     },
     [branchBaseRef, commitOid, deviceId, ignoreWhitespace, oldPath, path, refreshVersion, source],
   );
-  const cacheKey =
+  // A different commit/path is a different document, even inside one session.
+  // Only refreshing the same request may retain its previous contents.
+  const scopeKey =
     sessionId && source && path
-      ? `${deviceId ?? 'local'}:file:${sessionId}:${source}:${commitOid ?? branchBaseRef ?? 'worktree'}:${oldPath ?? ''}:${path}:${ignoreWhitespace ? 'w' : 'plain'}:${refreshVersion}`
+      ? JSON.stringify([
+          deviceId,
+          sessionId,
+          source,
+          commitOid,
+          branchBaseRef,
+          oldPath,
+          path,
+          ignoreWhitespace,
+        ])
       : null;
+  const cacheKey = scopeKey ? `${scopeKey}:${refreshVersion}` : null;
   return useGitReviewLoad(
     sessionId && source && path ? sessionId : null,
     fetchFileDiff,
     'git review file diff failed',
     {
       cacheKey,
-      scopeKey: sessionId && source && path ? `${deviceId ?? 'local'}:${sessionId}` : null,
+      scopeKey,
       preserveWhenDisabled: true,
     },
   );

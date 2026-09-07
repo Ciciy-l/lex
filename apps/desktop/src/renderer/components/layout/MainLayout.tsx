@@ -1230,7 +1230,7 @@ export function MainLayout() {
             const reviewIsActive =
               !isRightSidebarCollapsedRef.current &&
               reviewTab != null &&
-              bucket.activeTabId === reviewTab.id;
+              bucket.activeContentTabId === reviewTab.id;
             if (reviewIsActive && reviewTab) {
               await closeTab(sessionId, reviewTab.id);
               return;
@@ -1289,8 +1289,8 @@ export function MainLayout() {
         : lastInteractionInRsbRef.current;
     if (sessionId && !rsbDetached && !isRightSidebarCollapsed && userInRsb) {
       const bucket = getBucket(sessionId);
-      if (bucket.activeTabId) {
-        void closeTab(sessionId, bucket.activeTabId).catch((err) => {
+      if (bucket.activeContentTabId) {
+        void closeTab(sessionId, bucket.activeContentTabId).catch((err) => {
           applicationMenuLog.warn('close sidebar tab via shortcut failed', err);
         });
         return true;
