@@ -31,13 +31,9 @@ import {
   normalizeBinaryVersion,
 } from './binary-version-probe.js';
 import { getVendorAsset, resolveVendorAssetUrl, type VendorAsset } from './manifest.js';
+import { getRuntimeAssetBaseUrl, getRuntimeManifest } from './runtime-manifest.js';
 import { download, DownloadError, type ProgressEvent } from '../downloader/index.js';
-import {
-  fetchManifest,
-  getCachedManifest,
-  getBaseUrl,
-  getPlatformKey,
-} from '../manifestService.js';
+import { getPlatformKey } from '../manifestService.js';
 
 // ── 私有路径 helpers（顶层 function，无 export）─────────────────────────────
 
@@ -282,11 +278,11 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
       const onProgress = opts?.onProgress;
       try {
         const binaryName = deriveBinaryName();
-        // 1. 拉 manifest（不带 dev fallback —— dev mode 归属在 Boss 2 包壳层）
-        let manifest = getCachedManifest();
-        if (!manifest) manifest = await fetchManifest(undefined, opts?.signal);
+        // 1. Read the build-pinned runtime snapshot. App update channels are a
+        // separate concern and must never gate first-run runtime provisioning.
+        const manifest = getRuntimeManifest();
         
-        // 2. manifest 获取失败时，检查本地已验证版本（离线 fallback）
+        // 2. 当前构建不支持该平台时，检查本地已验证版本（离线 fallback）。
         if (!manifest) {
           // Optional assets (currently Pi) must remain disabled when the
           // manifest is unavailable; a stale local install may have been
@@ -300,7 +296,7 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
           }
           emit({
             status: 'failed',
-            error: { code: 'manifest_failed', message: 'Failed to fetch manifest from CDN' },
+            error: { code: 'manifest_failed', message: 'Runtime snapshot unavailable for this platform' },
           }, onProgress);
           return { ready: false, binaryPath: '', error: 'manifest_failed' };
         }
@@ -371,7 +367,7 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
 
         // 5. 计算下载目标路径（gz 中间文件加 .gz 后缀，tar-gz-dir 落整包归档，
         //    raw 直接落到 binaryName）
-        const url = resolveVendorAssetUrl(getBaseUrl(), asset);
+        const url = resolveVendorAssetUrl(getRuntimeAssetBaseUrl(), asset);
         const useGzMid = config.artifact.kind === 'gz' && asset.file.endsWith('.gz');
         const downloadDest = config.artifact.kind === 'tar-gz-dir'
           ? path.join(versionDir, `${binaryName}.dist.tar.gz`)
@@ -394,7 +390,11 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
           signal: opts?.signal,
           // 可选 Pi 不该在 CDN 故障时做六轮重试拖住启动；一次连接失败就降级，
           // 持续有进度的正常下载仍可在宿主总 deadline 内完成。
-          retry: config.optionalAsset ? { maxAttempts: 1 } : undefined,
+          retry:
+            config.optionalAsset || config.fastNetworkFallback
+              ? { maxAttempts: 1 }
+              : undefined,
+          timeout: config.fastNetworkFallback ? { connectMs: 3_000 } : undefined,
           onProgress: (e: ProgressEvent) => {
             emit({
               status: 'downloading',
@@ -476,17 +476,13 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
     },
 
     async peekNeedsDownload(): Promise<boolean> {
-      // 不发起任何下载——只读 manifest（cache 优先）+ 本地 isInstalled 检查。
-      // 任何异常 / manifest 缺失 → 返回 true（保守地走 prepare()，让其内部的完整错误处理接管）。
-      // optionalAsset vendor 例外:manifest 有但缺该字段 = 平台没发这个可选资产,
+      // 不发起任何下载——只读构建内置 snapshot + 本地 isInstalled 检查。
+      // 任何异常 / snapshot 缺失 → 返回 true（保守地走 prepare()，让其内部的完整错误处理接管）。
+      // optionalAsset vendor 例外:snapshot 有但缺该字段 = 平台没发这个可选资产,
       // 不存在可下载的东西,返回 false(不计入 splash 下载步数;prepare 会以
       // asset_missing 快速失败交调用方降级)。
       try {
-        let manifest = getCachedManifest();
-        // 可选资产的 peek 只用于 splash 步数提示，不能为了“猜要不要下载”额外
-        // 发一次可能卡住启动的网络请求；真正 prepare 会带宿主 deadline 拉清单。
-        if (!manifest && config.optionalAsset) return true;
-        if (!manifest) manifest = await fetchManifest();
+        const manifest = getRuntimeManifest();
         if (!manifest) return true;
         const asset = getVendorAsset(manifest, config.manifestField);
         if (!asset) return config.optionalAsset !== true;

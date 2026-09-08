@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 
 interface SemverApi {
   compare(left: string, right: string): number;
+  prerelease(version: string): readonly (string | number)[] | null;
   valid(version: string): string | null;
 }
 
@@ -12,6 +13,12 @@ export type AppUpdateVersionRelation = 'newer' | 'same' | 'older' | 'invalid';
 /** Normalize a strict app-update SemVer value, or fail closed for malformed input. */
 export function parseAppUpdateVersion(version: unknown): string | null {
   return typeof version === 'string' ? semver.valid(version) : null;
+}
+
+/** A prerelease installer is itself an explicit opt-in to the beta update line. */
+export function isPrereleaseAppVersion(version: unknown): boolean {
+  const parsed = parseAppUpdateVersion(version);
+  return parsed !== null && semver.prerelease(parsed) !== null;
 }
 
 /**

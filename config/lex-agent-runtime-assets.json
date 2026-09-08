@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "cdnBaseUrl": "https://hotfix.cindy.app/cindy",
+  "platforms": {
+    "win32-x64": {
+      "claudeCode": { "version": "2.1.259", "file": "claude-code/2.1.259/win32-x64/claude.exe.gz", "sha256": "09c953fe0e18516d3ef5b55821af1c232b808e200c53b203be1cd507d557492b", "size": 100063881, "binarySha256": "85429000ec9b80082613e9ecd2e0d3b2276c9d5b22a681936575d2c4c2f342ed" },
+      "codex": { "version": "0.145.0", "file": "codex/0.145.0/win32-x64/codex.exe.gz", "sha256": "e02205780cefbaaccf4593766e1db206c609c095125af953f88bf1028bfd47fa", "size": 123809462, "binarySha256": "83751f15cb6a0a7b97df67752c001e3fe1c20e18ffbfec3ff63567296205eb6c" },
+      "codexPackage": { "version": "0.153.0", "file": "codex-package/0.153.0/win32-x64/codex-package.dist.tar.gz", "sha256": "f34ef6af157f285e51520401cc8bdd9cec448dfa666e7a5487867bf285cd6887", "size": 141424261 },
+      "pi": { "version": "0.84.4", "file": "pi/0.84.4/win32-x64/pi.dist.tar.gz", "sha256": "dd3e72892bbf9fb9d2cd61e1d4ca9adc0ef01399b3539ed741ab834eba504191", "size": 45804170 }
+    },
+    "darwin-arm64": {
+      "claudeCode": { "version": "2.1.259", "file": "claude-code/2.1.259/darwin-arm64/claude.gz", "sha256": "551852537fd04bbbcb5aee54a36f5e379aef466d425633d6e2cfed4e58714180", "size": 87558468, "binarySha256": "884baa38fe1a624be25c4a91568bf5a08b5cf4e7d7acf29b7760e3525d964898" },
+      "codex": { "version": "0.145.0", "file": "codex/0.145.0/darwin-arm64/codex.gz", "sha256": "752de083922a77807072d4fecc8c52634a888b07ea513b1df32b348567b50889", "size": 102106034, "binarySha256": "1da3f4e0e96028b8a771814293c3033dafd1971f943f6c7e79b0897fe705f590" },
+      "codexPackage": { "version": "0.153.0", "file": "codex-package/0.153.0/darwin-arm64/codex-package.dist.tar.gz", "sha256": "12148c150b47b000d33234065dd63b2eab7e2189ab718cc48931a75485ba9415", "size": 115613840 },
+      "pi": { "version": "0.84.4", "file": "pi/0.84.4/darwin-arm64/pi.dist.tar.gz", "sha256": "5bf0ce75418f64f3c97b843028c2f7314a8c964849e221a00c7e5585eff00f94", "size": 31646076 }
+    },
+    "darwin-x64": {
+      "claudeCode": { "version": "2.1.259", "file": "claude-code/2.1.259/darwin-x64/claude.gz", "sha256": "850e9127624648c42bdb33e0195b0a651bfc6c651bd747f239ba5b41c7fcee16", "size": 91555458, "binarySha256": "af8741cff0d3fb5c4b893c7cb3613bd21b28fa61cca45469d60b8e5e161eb9d8" },
+      "codex": { "version": "0.145.0", "file": "codex/0.145.0/darwin-x64/codex.gz", "sha256": "8e4e9c672b4b2b4ca6770329bd94404adca1cb323f6a08a8fc3c6b331517b640", "size": 111433745, "binarySha256": "6db9193ce2c9a8cef2b5482612cde24202a4329dfc34f4687a036d5d7da619af" },
+      "codexPackage": { "version": "0.153.0", "file": "codex-package/0.153.0/darwin-x64/codex-package.dist.tar.gz", "sha256": "300e21ada27b86dff5c829cd217f15cd0ce19b42fb068a1dc0f409d86a772e89", "size": 123455794 },
+      "pi": { "version": "0.84.4", "file": "pi/0.84.4/darwin-x64/pi.dist.tar.gz", "sha256": "741a634f67cb64d5c970edd2e5fd4bc94d33fd9d8772b716c4589f0293e2c5d6", "size": 33731200 }
+    },
+    "linux-x64": {
+      "claudeCode": { "version": "2.1.259", "file": "claude-code/2.1.259/linux-x64/claude.gz", "sha256": "abe722d1a3db8e10efaba01be92487dca3daf7aae72db6906971b1c80111e776", "size": 97243499, "binarySha256": "f7dd62ae415378018cd21dd950eb3bac174ab085830304d3b8b098146bfd47b6" },
+      "codex": { "version": "0.145.0", "file": "codex/0.145.0/linux-x64/codex.gz", "sha256": "ec5fe401224f81ded675cde5bc8fba0cd1a6cc44bb31c810711a5ddd6a95f805", "size": 115808553, "binarySha256": "a2a05dafaa1acb002a45eaec0a462de5b13694fcfcd7bc43305f14781ce7be14" },
+      "codexPackage": { "version": "0.153.0", "file": "codex-package/0.153.0/linux-x64/codex-package.dist.tar.gz", "sha256": "92225b382cd22880fe4848ea6b490066cc5df376c9c195c7f142cfa863f77f2e", "size": 129203089 },
+      "pi": { "version": "0.84.4", "file": "pi/0.84.4/linux-x64/pi.dist.tar.gz", "sha256": "b0aefd0e08f84df7eab57da8b60a598e47f0eec1ab6853fd32f4ebba47f9626a", "size": 43162555 }
+    }
+  }
+}
