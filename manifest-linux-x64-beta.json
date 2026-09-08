@@ -1,11 +1,11 @@
 {
   "app": {
-    "version": "0.1.1-rc.3",
-    "releaseNotes": "Lex 0.1.1-rc.3",
+    "version": "0.1.1-rc.4",
+    "releaseNotes": "Lex 0.1.1-rc.4",
     "installer": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.1-rc.3/Lex-0.1.1-rc.3-Linux-x64.deb",
-      "sha256": "98c36e3757d95afe2836c89198a204b1a3fad0b16d2e9ef52fa8c1e8e138f46d",
-      "size": 189788816
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.1-rc.4/Lex-0.1.1-rc.4-Linux-x64.deb",
+      "sha256": "a1579438cd88860999385198dd774850454aadef02803489e491e3fb18e29f3a",
+      "size": 189811104
     }
   },
   "claudeCode": {
