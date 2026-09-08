@@ -118,6 +118,8 @@ describe('MakerMemoryManager · owner scope guard (#2341)', () => {
     manager.dispose();
   });
 
+  // This exercises real SQLite close/open and directory I/O. Windows Defender can
+  // retain those files briefly on a loaded runner, so keep the extra budget local.
   it('scope 变化时关闭旧 db 并重建到新根 (owner 提交/切换)', async () => {
     let currentRoot = rootA;
     let currentScope = 'signed-out:none:0';
@@ -156,7 +158,7 @@ describe('MakerMemoryManager · owner scope guard (#2341)', () => {
     expect(existsSync(path.join(memoryDirFor(rootA), 'project_note.md'))).toBe(true);
     expect(existsSync(path.join(memoryDirFor(rootB), 'project_note-b.md'))).toBe(true);
     manager.dispose();
-  });
+  }, 20_000);
 
   it('无 resolveBasePath/ownerScopeKey 的静态 basePath 宿主行为不变 (回归)', async () => {
     const sqlite = trackingSqlite();

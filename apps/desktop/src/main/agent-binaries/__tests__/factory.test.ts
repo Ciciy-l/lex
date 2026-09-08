@@ -15,6 +15,10 @@ import type { VendorRuntimeState } from '../types.js';
 
 const mocks = vi.hoisted(() => ({
   download: vi.fn(),
+  fetchAppManifest: vi.fn(async () => {
+    throw new Error('app update manifest unavailable');
+  }),
+  runtimeManifest: { current: { app: {} } as { app: Record<string, never> } | null },
 }));
 
 vi.mock('../../downloader/index.js', () => ({
@@ -31,9 +35,13 @@ vi.mock('../../downloader/index.js', () => ({
 const FAKE_SHA = 'a'.repeat(64);
 
 vi.mock('../../manifestService.js', () => ({
-  fetchManifest: vi.fn(async () => null),
-  getCachedManifest: vi.fn(() => ({ app: {} })),
-  getBaseUrl: () => 'https://cdn.test',
+  fetchManifest: mocks.fetchAppManifest,
+  getPlatformKey: () => 'win32-x64',
+}));
+
+vi.mock('../runtime-manifest.js', () => ({
+  getRuntimeManifest: () => mocks.runtimeManifest.current,
+  getRuntimeAssetBaseUrl: () => 'https://cdn.test',
 }));
 
 vi.mock('../manifest.js', () => ({
@@ -81,6 +89,8 @@ function makeProvisioner() {
 
 beforeEach(() => {
   mocks.download.mockReset();
+  mocks.fetchAppManifest.mockClear();
+  mocks.runtimeManifest.current = { app: {} };
 });
 
 describe('createBinaryProvisioner emit 时序', () => {
@@ -124,6 +134,23 @@ describe('createBinaryProvisioner emit 时序', () => {
     expect(statuses).toContain('downloading');
     expect(statuses[statuses.length - 1]).toBe('ready');
   });
+
+  it('Linux-style fallback policy makes one short CDN attempt', async () => {
+    mocks.download.mockImplementation(async (opts: DownloadOpts) => fulfillDownload(opts, false));
+    const provisioner = createBinaryProvisioner({
+      vendorKey: 'claude',
+      manifestField: 'claudeCode',
+      installSubdir: `factory-fast-fallback-${Date.now()}`,
+      artifact: { kind: 'gz', binaryName: 'claude-test-bin' },
+      fastNetworkFallback: true,
+    });
+
+    await expect(provisioner.prepare()).resolves.toMatchObject({ ready: true });
+    expect(mocks.download).toHaveBeenCalledWith(expect.objectContaining({
+      retry: { maxAttempts: 1 },
+      timeout: { connectMs: 3_000 },
+    }));
+  });
 });
 
 
@@ -147,17 +174,14 @@ describe('离线启动 fallback', () => {
     };
   }
 
-  it('本地有已验证版本时:manifest fetch 失败仍返回 ready', async () => {
+  it('内置 runtime 快照缺失时仍可复用本地已验证版本', async () => {
     const installSubdir = `offline-fallback-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const version = '1.2.3-verified';
     const binaryName = 'test-binary';
     const local = await mountVerifiedBinary(installSubdir, version, binaryName);
 
     try {
-      // 让 manifest 和 cache 都返回 null（模拟 CDN 不可达）
-      const { getCachedManifest, fetchManifest } = await import('../../manifestService.js');
-      vi.mocked(getCachedManifest).mockReturnValue(null as any);
-      vi.mocked(fetchManifest).mockResolvedValue(null as any);
+      mocks.runtimeManifest.current = null;
 
       const provisioner = createBinaryProvisioner({
         vendorKey: 'claude',
@@ -182,14 +206,6 @@ describe('离线启动 fallback', () => {
     const local = await mountVerifiedBinary(installSubdir, version, binaryName);
 
     try {
-      // manifest 返回成功，但 download 会抛错（模拟 CDN 拦截）
-      const { getCachedManifest, fetchManifest } = await import('../../manifestService.js');
-      vi.mocked(getCachedManifest).mockReturnValue(null as any);
-      vi.mocked(fetchManifest).mockResolvedValue({
-        version: '2.0.0',
-        claude: { file: '/linux-x64/claude.bin', sha256: 'abc', size: 100 },
-      } as any);
-
       // Mock download to throw
       const downloader = await import('../../downloader/index.js');
       vi.mocked(downloader.download).mockRejectedValue(new Error('CDN blocked'));
@@ -217,12 +233,6 @@ describe('离线启动 fallback', () => {
     const local = await mountVerifiedBinary(installSubdir, version, binaryName);
 
     try {
-      const { getCachedManifest, fetchManifest } = await import('../../manifestService.js');
-      vi.mocked(getCachedManifest).mockReturnValue(null as any);
-      vi.mocked(fetchManifest).mockResolvedValue({
-        version: '3.0.0',
-        claudeCode: { file: 'claude/claude-3.0.0.gz', sha256: FAKE_SHA, size: 3 },
-      } as any);
       // A successful download followed by invalid gzip exercises the catch path
       // for extraction/verification failures, not just network failures.
       mocks.download.mockImplementation(async (opts: DownloadOpts) => {
@@ -259,9 +269,7 @@ describe('离线启动 fallback', () => {
     const local = await mountVerifiedBinary(installSubdir, '4.0.0-verified', 'pi');
 
     try {
-      const { getCachedManifest, fetchManifest } = await import('../../manifestService.js');
-      vi.mocked(getCachedManifest).mockReturnValue(null as any);
-      vi.mocked(fetchManifest).mockResolvedValue(null as any);
+      mocks.runtimeManifest.current = null;
 
       const provisioner = createBinaryProvisioner({
         vendorKey: 'pi',
@@ -285,12 +293,6 @@ describe('离线启动 fallback', () => {
     const local = await mountVerifiedBinary(installSubdir, '5.0.0-verified', 'pi');
 
     try {
-      const { getCachedManifest, fetchManifest } = await import('../../manifestService.js');
-      vi.mocked(getCachedManifest).mockReturnValue(null as any);
-      vi.mocked(fetchManifest).mockResolvedValue({
-        version: '5.0.0',
-        pi: { file: 'pi/pi-5.0.0.gz', sha256: FAKE_SHA, size: 3 },
-      } as any);
       mocks.download.mockRejectedValue(new Error('CDN blocked'));
 
       const provisioner = createBinaryProvisioner({
@@ -308,5 +310,15 @@ describe('离线启动 fallback', () => {
     } finally {
       local.cleanup();
     }
+  });
+
+  it('应用更新 manifest 不可用也不阻断全新 runtime 下载', async () => {
+    mocks.download.mockImplementation(async (opts: DownloadOpts) => fulfillDownload(opts, false));
+
+    const result = await makeProvisioner().prepare();
+
+    expect(result.ready).toBe(true);
+    expect(mocks.download).toHaveBeenCalledTimes(1);
+    expect(mocks.fetchAppManifest).not.toHaveBeenCalled();
   });
 });

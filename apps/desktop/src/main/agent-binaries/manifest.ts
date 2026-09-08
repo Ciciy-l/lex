@@ -1,5 +1,5 @@
 /**
- * apps/desktop/src/main/vendor/manifest.ts
+ * apps/desktop/src/main/agent-binaries/manifest.ts
  *
  * 通用 manifest 字段提取器：按入参 manifestField 索引 manifest 顶层字段，
  * 返回该 vendor 对应的 binary 资产元数据。
@@ -14,7 +14,7 @@
 import type { Manifest } from '../manifestService.js';
 import { resolveManifestAssetUrl } from '../manifestService.js';
 
-/** Vendor binary 资产元数据（与 manifestService.PlatformAsset / <VendorCodeManifest> 字段对齐） */
+/** Agent runtime 资产元数据（与内置 snapshot 及旧版更新 manifest 字段对齐）。 */
 export interface VendorAsset {
   version: string;
   file: string;
@@ -65,7 +65,7 @@ export function getVendorAsset(manifest: Manifest, manifestField: string): Vendo
 
 /**
  * 拼接完整下载 URL。
- * 等价于现有 `${getBaseUrl()}/${asset.file}` 写法。
+ * 支持 snapshot 中的相对 CDN 路径，也兼容旧 manifest 的绝对 URL。
  */
 export function resolveVendorAssetUrl(baseUrl: string, asset: VendorAsset): string {
   return resolveManifestAssetUrl(baseUrl, asset.file);

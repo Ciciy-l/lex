@@ -32,10 +32,12 @@ vi.mock('../../downloader/index.js', () => ({
 }));
 
 vi.mock('../../manifestService.js', () => ({
-  fetchManifest: vi.fn(async () => ({ app: {} })),
-  getCachedManifest: vi.fn(() => ({ app: {} })),
-  getBaseUrl: () => 'https://cdn.test',
   getPlatformKey: () => 'darwin-arm64',
+}));
+
+vi.mock('../runtime-manifest.js', () => ({
+  getRuntimeManifest: () => ({ app: {} }),
+  getRuntimeAssetBaseUrl: () => 'https://cdn.test',
 }));
 
 vi.mock('../manifest.js', () => ({

@@ -1,12 +1,28 @@
 import { describe, expect, it } from 'vitest';
 
-import { compareAppUpdateVersions, parseAppUpdateVersion } from '../updateVersionPolicy';
+import {
+  compareAppUpdateVersions,
+  isPrereleaseAppVersion,
+  parseAppUpdateVersion,
+} from '../updateVersionPolicy';
 
 describe('parseAppUpdateVersion', () => {
   it('normalizes valid SemVer and rejects malformed input', () => {
     expect(parseAppUpdateVersion('1.2.3')).toBe('1.2.3');
     expect(parseAppUpdateVersion('not-semver')).toBeNull();
     expect(parseAppUpdateVersion(null)).toBeNull();
+  });
+});
+
+describe('isPrereleaseAppVersion', () => {
+  it.each([
+    ['0.1.1-rc.1', true],
+    ['0.1.1-beta.2+build.7', true],
+    ['0.1.1', false],
+    ['not-semver', false],
+    [null, false],
+  ])('classifies %s as prerelease=%s', (version, expected) => {
+    expect(isPrereleaseAppVersion(version)).toBe(expected);
   });
 });
 

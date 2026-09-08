@@ -21,8 +21,7 @@ const FAKE_SHA = 'b'.repeat(64);
 
 const mocks = vi.hoisted(() => ({
   download: vi.fn(),
-  fetchManifest: vi.fn(async () => ({ app: {} })),
-  cachedManifest: { current: { app: {} } as { app: Record<string, never> } | null },
+  runtimeManifest: { current: { app: {} } as { app: Record<string, never> } | null },
   // 每个用例把要打包进 tar.gz 的源目录塞进来,download mock 现打包成归档落盘。
   archiveState: { srcDir: '' },
   asset: {
@@ -47,10 +46,12 @@ vi.mock('../../downloader/index.js', () => ({
 }));
 
 vi.mock('../../manifestService.js', () => ({
-  fetchManifest: mocks.fetchManifest,
-  getCachedManifest: vi.fn(() => mocks.cachedManifest.current),
-  getBaseUrl: () => 'https://cdn.test',
   getPlatformKey: () => 'darwin-arm64',
+}));
+
+vi.mock('../runtime-manifest.js', () => ({
+  getRuntimeManifest: () => mocks.runtimeManifest.current,
+  getRuntimeAssetBaseUrl: () => 'https://cdn.test',
 }));
 
 vi.mock('../manifest.js', () => ({
@@ -106,9 +107,7 @@ function stageDist(layout: 'flat' | 'nested', withBinary = true): string {
 
 beforeEach(() => {
   mocks.download.mockReset();
-  mocks.fetchManifest.mockReset();
-  mocks.fetchManifest.mockResolvedValue({ app: {} });
-  mocks.cachedManifest.current = { app: {} };
+  mocks.runtimeManifest.current = { app: {} };
   mocks.asset.current = {
     version: '9.9.9-test',
     file: 'pi/9.9.9-test/darwin-arm64/pi.dist.tar.gz',
@@ -225,13 +224,11 @@ describe('createBinaryProvisioner tar-gz-dir', () => {
     mocks.download.mockImplementation(fulfillDownloadWithTarGz);
     const controller = new AbortController();
 
-    mocks.cachedManifest.current = null;
     const result = await makeProvisioner({ optionalAsset: true }).prepare({
       signal: controller.signal,
     });
 
     expect(result.ready).toBe(true);
-    expect(mocks.fetchManifest).toHaveBeenCalledWith(undefined, controller.signal);
     expect(mocks.download).toHaveBeenCalledWith(
       expect.objectContaining({
         signal: controller.signal,

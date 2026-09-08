@@ -15,7 +15,8 @@
  *
  * 落盘:userData/update-channel-settings.json。用户拨动写 enableBeta;
  * 组织默认写 orgDefaultEnableBeta,两者分开。
- * 默认关闭。manifestService.fetchManifest() 用 resolveUpdateChannel 把本开关与
+ * 稳定构建默认关闭；预发布构建默认打开（安装 RC 本身即明确 opt-in），用户显式
+ * 关闭仍优先。manifestService.fetchManifest() 用 resolveUpdateChannel 把本开关与
  * canaryFlagStore.read() 收敛成最终发布通道(优先级 canary > beta > release)。
  */
 
@@ -28,6 +29,7 @@ import {
   createOverrideSettingsFile,
   type OverrideSettingsState,
 } from './maker-host/override-settings-file.js';
+import { isPrereleaseAppVersion } from './updateVersionPolicy.js';
 
 const log = desktopMakerLogger.child('update-channel-settings');
 
@@ -41,7 +43,10 @@ export interface UpdateChannelSettings {
 }
 
 const DEFAULTS: UpdateChannelSettings = {
-  enableBeta: false,
+  // Installing an RC/beta package is already an explicit beta opt-in. Starting
+  // it on the release channel can deadlock a clean install before Settings is
+  // reachable when only prerelease manifests exist. Stable builds remain off.
+  enableBeta: isPrereleaseAppVersion(app.getVersion?.()),
   orgDefaultEnableBeta: false,
 };
 
@@ -66,7 +71,7 @@ export function resolveEffectiveEnableBeta(
 ): boolean {
   return state.customizedKeys.includes('enableBeta')
     ? state.value.enableBeta
-    : state.value.orgDefaultEnableBeta;
+    : state.value.enableBeta || state.value.orgDefaultEnableBeta;
 }
 
 function resolveEffectiveSettings(
@@ -96,8 +101,8 @@ export function readUpdateChannelSettingsState(): OverrideSettingsState<UpdateCh
 }
 
 export async function writeEnableBeta(enableBeta: boolean): Promise<void> {
-  // 关 beta 的值等于系统默认 false。若不 preserveDefaults,override 会被删掉,
-  // 用户键消失后会被当成未自定义,xd 组织下次登录又会默认打开。
+  // 用户选择必须在不同构建默认值之间保持。若不 preserveDefaults，恰好等于当前
+  // 构建默认值的选择会被删掉，换到 stable/RC 后可能被另一默认值覆盖。
   // 设置页每次拨动都写 enableBeta,与组织默认标记分开。
   // 和 tryEnableUncustomizedBetaAtomic 共用同一把跨进程锁,避免默认写入盖掉用户关闭。
   await store.writePatchAtomic({ enableBeta }, { preserveDefaults: true });

@@ -29,7 +29,7 @@ export const ENDPOINT_MANIFEST_PEER_BASE_URL = injectedEndpoint(
   import.meta.env.VITE_ENDPOINT_MANIFEST_PEER_BASE_URL,
 );
 
-/** Lex application/runtime update manifests. Never follows the Cindy account realm. */
+/** Lex application update manifests. Never follows the Cindy account realm. */
 export const LEX_UPDATE_MANIFEST_BASE_URL = injectedEndpoint(
   import.meta.env.VITE_LEX_UPDATE_MANIFEST_BASE_URL,
 );
