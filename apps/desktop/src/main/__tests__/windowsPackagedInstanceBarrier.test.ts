@@ -57,11 +57,9 @@ describe('windowsPackagedInstanceBarrier', () => {
     child.signalCode = null;
     child.kill = vi.fn(() => true);
     let finished = false;
-    const waiting = __testing
-      .waitForExit(child as never, 20)
-      .then(() => {
-        finished = true;
-      });
+    const waiting = __testing.waitForExit(child as never, 20).then(() => {
+      finished = true;
+    });
 
     await vi.waitFor(() => expect(child.kill).toHaveBeenCalledOnce(), {
       // 20ms 的强制终止定时器在有负载的 runner 上可能晚触发；
@@ -111,5 +109,8 @@ describe('windowsPackagedInstanceBarrier', () => {
       expect(retry.isHeld()).toBe(true);
       await retry.release();
     },
+    // The production probe intentionally allows a slow hosted-runner Add-Type
+    // compilation; keep Vitest's outer budget from expiring first.
+    30_000,
   );
 });

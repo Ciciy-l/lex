@@ -2,7 +2,11 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 
 const DEFAULT_ACQUIRE_TIMEOUT_MS = 5_000;
 const HELPER_START_TIMEOUT_MS = 5_000;
-const HELPER_PROBE_TIMEOUT_MS = 5_000;
+// Add-Type compiles the small P/Invoke helper after the startup mutex is held.
+// A fully loaded hosted Windows runner has exceeded the old five-second budget
+// even though the helper was healthy, so keep this stage independent and wide
+// enough to avoid a false fail-closed result under scheduler contention.
+const HELPER_PROBE_TIMEOUT_MS = 10_000;
 const HELPER_EXIT_TIMEOUT_MS = 2_000;
 const MAX_HELPER_OUTPUT_BYTES = 16 * 1024;
 
@@ -128,9 +132,7 @@ function waitForBarrierStatus(
     const armTimeout = (durationMs: number, stage: string): void => {
       clearTimeout(timer);
       timer = setTimeout(() => {
-        finish(() =>
-          reject(new Error(`timed out ${stage} Windows packaged-instance barrier`)),
-        );
+        finish(() => reject(new Error(`timed out ${stage} Windows packaged-instance barrier`)));
         child.kill();
       }, durationMs);
     };
