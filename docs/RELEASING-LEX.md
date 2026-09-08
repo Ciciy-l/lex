@@ -73,6 +73,14 @@ valid sign-offs. Never replace the pin with a moving branch or the release
 head. Changing it requires a reviewed upstream sync and an explicit policy
 change, not an automatic advance from the upstream-sync bot.
 
+Before completing a GitHub squash merge, make sure the `Signed-off-by` identity
+in the squash message exactly matches the author or committer identity that
+GitHub will write to the resulting commit. A local Git alias is not equivalent
+to a different GitHub profile name or email. Verify the merged commit with the
+release DCO command before creating a tag. If an identity mismatch has already
+reached `main`, do not rewrite published history or reuse a failed release tag;
+land a correctly signed follow-up through CI and use the next SemVer version.
+
 ### Version and artifacts
 
 Use a new SemVer tag, including prerelease suffixes such as `v0.1.0-rc.1`:
