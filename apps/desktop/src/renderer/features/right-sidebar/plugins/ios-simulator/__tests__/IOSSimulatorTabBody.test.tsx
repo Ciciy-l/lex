@@ -1944,121 +1944,110 @@ describe('IOSSimulatorTabBody', () => {
     expect(textInput.disabled).toBe(false);
   });
 
-  it(
-    'ignores an explicit Native recovery result after the viewer switches devices',
-    async () => {
-      const statusValue = multiReadyStatus();
-      if (!statusValue.ok) throw new Error('Expected a ready simulator status.');
-      statusValue.routeStatuses = statusValue.instances.map((instance) => ({
-        sessionId: 'session-a',
-        instanceId: instance.instanceId,
-        generation: instance.generation,
-        updatedAt: '2026-08-06T00:00:00.000Z',
-        nativeRecoveryAvailable: true,
+  it('ignores an explicit Native recovery result after the viewer switches devices', async () => {
+    const statusValue = multiReadyStatus();
+    if (!statusValue.ok) throw new Error('Expected a ready simulator status.');
+    statusValue.routeStatuses = statusValue.instances.map((instance) => ({
+      sessionId: 'session-a',
+      instanceId: instance.instanceId,
+      generation: instance.generation,
+      updatedAt: '2026-08-06T00:00:00.000Z',
+      nativeRecoveryAvailable: true,
+      stream: {
+        adapter: 'wda',
+        encoding: 'jpeg',
+        state: 'fallback',
+        reasonCode: 'native-sidecar-unavailable',
+      },
+      input: {
+        adapter: 'wda',
+        state: 'fallback',
+        continuous: false,
+        multiTouch: false,
+        reasonCode: 'native-sidecar-unavailable',
+      },
+    }));
+    const api = installStatus(statusValue);
+    const jpegResult = (
+      request: IOSSimulatorViewerVisibilityRequest,
+    ): IOSSimulatorToolResponse => ({
+      ok: true,
+      data: {
         stream: {
-          adapter: 'wda',
-          encoding: 'jpeg',
-          state: 'fallback',
-          reasonCode: 'native-sidecar-unavailable',
-        },
-        input: {
-          adapter: 'wda',
-          state: 'fallback',
-          continuous: false,
-          multiTouch: false,
-          reasonCode: 'native-sidecar-unavailable',
-        },
-      }));
-      const api = installStatus(statusValue);
-      const jpegResult = (
-        request: IOSSimulatorViewerVisibilityRequest,
-      ): IOSSimulatorToolResponse => ({
-        ok: true,
-        data: {
-          stream: {
+          instanceId: request.instanceId,
+          generation: request.generation,
+          state: 'streaming',
+          reconnectAttempt: 0,
+          latestFrame: {
             instanceId: request.instanceId,
             generation: request.generation,
-            state: 'streaming',
-            reconnectAttempt: 0,
-            latestFrame: {
-              instanceId: request.instanceId,
-              generation: request.generation,
-              sequence: 1,
-              encoding: 'jpeg',
-              receivedAt: '2026-08-06T00:00:00.000Z',
-              bytes: new Uint8Array([1, 2, 3]),
-            },
+            sequence: 1,
+            encoding: 'jpeg',
+            receivedAt: '2026-08-06T00:00:00.000Z',
+            bytes: new Uint8Array([1, 2, 3]),
           },
-          viewport: { width: 393, height: 852, orientation: 'PORTRAIT' },
         },
-      });
-      api.setViewerVisibility.mockImplementation(async (request) => jpegResult(request));
-      api.latestFrame.mockImplementation(async (request?: unknown) =>
-        jpegResult({
-          ...(request as IOSSimulatorViewerVisibilityRequest),
-          viewerToken: 'poll',
-          visible: true,
-          preferredEncoding: 'jpeg',
+        viewport: { width: 393, height: 852, orientation: 'PORTRAIT' },
+      },
+    });
+    api.setViewerVisibility.mockImplementation(async (request) => jpegResult(request));
+    // The recovery race does not depend on frame polling. Keep the poll pending so the
+    // full Windows shard cannot starve the two recovery completions with 50 ms renders.
+    api.latestFrame.mockReturnValue(new Promise<IOSSimulatorToolResponse>(() => undefined));
+    let resolveA!: (value: IOSSimulatorToolResponse) => void;
+    let resolveB!: (value: IOSSimulatorToolResponse) => void;
+    api.retryNativeRoute.mockImplementation(
+      (request) =>
+        new Promise((resolve) => {
+          if (request.instanceId === 'instance-a') resolveA = resolve;
+          else resolveB = resolve;
         }),
-      );
-      let resolveA!: (value: IOSSimulatorToolResponse) => void;
-      let resolveB!: (value: IOSSimulatorToolResponse) => void;
-      api.retryNativeRoute.mockImplementation(
-        (request) =>
-          new Promise((resolve) => {
-            if (request.instanceId === 'instance-a') resolveA = resolve;
-            else resolveB = resolve;
-          }),
-      );
+    );
 
-      const rendered = render(
-        <IOSSimulatorTabBody state={{ instanceId: 'instance-a' }} ctx={ctx} active shellVisible />,
+    const rendered = render(
+      <IOSSimulatorTabBody state={{ instanceId: 'instance-a' }} ctx={ctx} active shellVisible />,
+    );
+    const recoveryButtonA = (await screen.findByRole('button', {
+      name: 'rightSidebar.iosSimulator.nativeRecovery.action',
+    })) as HTMLButtonElement;
+    await waitFor(() => expect(recoveryButtonA.disabled).toBe(false));
+    fireEvent.click(recoveryButtonA);
+    await waitFor(() => expect(api.retryNativeRoute).toHaveBeenCalledTimes(1));
+
+    rendered.rerender(
+      <IOSSimulatorTabBody state={{ instanceId: 'instance-b' }} ctx={ctx} active shellVisible />,
+    );
+    const recoveryButtonB = (await screen.findByRole('button', {
+      name: 'rightSidebar.iosSimulator.nativeRecovery.action',
+    })) as HTMLButtonElement;
+    await waitFor(() => expect(recoveryButtonB.disabled).toBe(false));
+    fireEvent.click(recoveryButtonB);
+    await waitFor(() => {
+      expect(api.retryNativeRoute).toHaveBeenCalledTimes(2);
+      expect(api.retryNativeRoute).toHaveBeenLastCalledWith(
+        expect.objectContaining({ instanceId: 'instance-b' }),
       );
-      const recoveryButtonA = (await screen.findByRole('button', {
-        name: 'rightSidebar.iosSimulator.nativeRecovery.action',
-      })) as HTMLButtonElement;
-      await waitFor(() => expect(recoveryButtonA.disabled).toBe(false));
-      fireEvent.click(recoveryButtonA);
-      await waitFor(() => expect(api.retryNativeRoute).toHaveBeenCalledTimes(1));
+    });
 
-      rendered.rerender(
-        <IOSSimulatorTabBody state={{ instanceId: 'instance-b' }} ctx={ctx} active shellVisible />,
-      );
-      const recoveryButtonB = (await screen.findByRole('button', {
-        name: 'rightSidebar.iosSimulator.nativeRecovery.action',
-      })) as HTMLButtonElement;
-      await waitFor(() => expect(recoveryButtonB.disabled).toBe(false));
-      fireEvent.click(recoveryButtonB);
-      await waitFor(() => {
-        expect(api.retryNativeRoute).toHaveBeenCalledTimes(2);
-        expect(api.retryNativeRoute).toHaveBeenLastCalledWith(
-          expect.objectContaining({ instanceId: 'instance-b' }),
-        );
-      });
+    await act(async () => {
+      resolveA({ ok: true, data: { nativeRecovered: false } });
+      await Promise.resolve();
+    });
+    expect(
+      (
+        screen.getByRole('button', {
+          name: 'rightSidebar.iosSimulator.nativeRecovery.recoveringAction',
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    expect(screen.queryByText('rightSidebar.iosSimulator.nativeRecovery.failed')).toBeNull();
 
-      await act(async () => {
-        resolveA({ ok: true, data: { nativeRecovered: false } });
-        await Promise.resolve();
-      });
-      expect(
-        (
-          screen.getByRole('button', {
-            name: 'rightSidebar.iosSimulator.nativeRecovery.recoveringAction',
-          }) as HTMLButtonElement
-        ).disabled,
-      ).toBe(true);
-      expect(screen.queryByText('rightSidebar.iosSimulator.nativeRecovery.failed')).toBeNull();
-
-      await act(async () => {
-        resolveB({ ok: true, data: { nativeRecovered: false } });
-        await Promise.resolve();
-      });
-      await screen.findByText('rightSidebar.iosSimulator.nativeRecovery.failed');
-    },
-    // The complete Windows shard can delay jsdom scheduling beyond the shared
-    // 20-second default. The assertions still require both device transitions.
-    process.platform === 'win32' ? 40_000 : 5_000,
-  );
+    await act(async () => {
+      resolveB({ ok: true, data: { nativeRecovered: false } });
+      await Promise.resolve();
+    });
+    await screen.findByText('rightSidebar.iosSimulator.nativeRecovery.failed');
+  }, 60_000);
 
   it('streams pointer samples through native touch and temporarily boosts frame rate', async () => {
     const api = installStatus({
