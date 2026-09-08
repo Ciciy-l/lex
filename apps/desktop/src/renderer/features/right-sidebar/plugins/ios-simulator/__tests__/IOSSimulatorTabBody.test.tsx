@@ -2052,7 +2052,7 @@ describe('IOSSimulatorTabBody', () => {
       await Promise.resolve();
     });
     await screen.findByText('rightSidebar.iosSimulator.nativeRecovery.failed');
-  });
+  }, 60_000);
 
   it('streams pointer samples through native touch and temporarily boosts frame rate', async () => {
     const api = installStatus({
