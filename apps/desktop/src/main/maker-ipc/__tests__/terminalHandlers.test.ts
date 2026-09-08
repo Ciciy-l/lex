@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   managerList: vi.fn(() => []),
   managerDetach: vi.fn(),
   managerTerminate: vi.fn(),
+  managerDestroy: vi.fn(async () => undefined),
   managerRestart: vi.fn(() => ({
     shellId: 'bash',
     shellDisplayName: 'Bash',
@@ -53,6 +54,7 @@ vi.mock('../../terminal/ptyManager.js', () => ({
     list = mocks.managerList;
     detach = mocks.managerDetach;
     terminate = mocks.managerTerminate;
+    destroy = mocks.managerDestroy;
     restart = mocks.managerRestart;
   },
 }));
@@ -88,6 +90,28 @@ function invokeCreate(params: Record<string, unknown>): unknown {
 }
 
 describe('terminal CREATE shell preference', () => {
+  it('awaits confirmed destruction and enforces ownership before killing', async () => {
+    const sender = { isDestroyed: () => false } as unknown as WebContents;
+    const event = { sender } as IpcMainInvokeEvent;
+    const handler = handlerFor(TERMINAL_INVOKE.DESTROY);
+    mocks.managerIsOwner.mockReturnValueOnce(false);
+    await expect(handler(event, 'terminal-a')).rejects.toThrow('PERMISSION_DENIED');
+    expect(mocks.managerDestroy).not.toHaveBeenCalled();
+    mocks.managerDestroy.mockRejectedValueOnce(new Error('timeout'));
+    await expect(handler(event, 'terminal-a')).rejects.toThrow('PRECONDITION_FAILED');
+    await handler(event, 'terminal-a');
+    expect(mocks.managerDestroy).toHaveBeenCalledWith('terminal-a', sender);
+  });
+
+  it('rejects untrusted destruction and invalid ids before reaching the manager', async () => {
+    const event = { sender: { isDestroyed: () => false } } as unknown as IpcMainInvokeEvent;
+    await expect(handlerFor(TERMINAL_INVOKE.DESTROY)(event, '')).rejects.toThrow();
+    expect(mocks.managerDestroy).not.toHaveBeenCalled();
+    mocks.ipcHandle.mockClear();
+    registerTerminalHandlers({ isTrustedSender: () => false });
+    await expect(handlerFor(TERMINAL_INVOKE.DESTROY)(event, 'terminal-a')).rejects.toThrow('PERMISSION_DENIED');
+    expect(mocks.managerDestroy).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.managerHas.mockReturnValue(true);

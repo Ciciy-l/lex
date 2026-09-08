@@ -33,6 +33,17 @@ export async function forgetTerminal(sessionId: string, terminalId: string): Pro
     throw new Error('TERMINAL_STILL_RUNNING');
   // Main rechecks the real runtime atomically. Only mutate saved views after this succeeds.
   await window.electronAPI.terminal.forget(terminalId);
+  await removeTerminalViews(sessionId, terminalId);
+}
+
+/** Both trash buttons use the same exit-confirmed Main operation. */
+export async function destroyTerminal(sessionId: string, terminalId: string): Promise<void> {
+  await ensureHydrated(sessionId);
+  await window.electronAPI.terminal.destroy(terminalId);
+  await removeTerminalViews(sessionId, terminalId);
+}
+
+async function removeTerminalViews(sessionId: string, terminalId: string): Promise<void> {
   for (const tab of getBucket(sessionId).tabs) {
     if (tab.kind !== 'terminal') continue;
     const state = hydrateTerminalState(tab.state);

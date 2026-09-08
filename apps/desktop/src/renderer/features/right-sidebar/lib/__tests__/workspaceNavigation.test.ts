@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   list: vi.fn(),
   dispose: vi.fn(),
+  destroy: vi.fn(),
   close: vi.fn(),
   add: vi.fn(),
   patch: vi.fn(),
@@ -31,7 +32,7 @@ vi.mock('../../store', () => ({
 }));
 vi.mock('../../plugins/terminal/lib/xtermPool', () => ({ disposeXterm: mocks.disposeXterm }));
 import { openFileContentTab, keepFileContentTab, protectFilePreview } from '../openFileContentTab';
-import { openOrFocusTerminal, forgetTerminal, launchTerminal } from '../terminalNavigation';
+import { openOrFocusTerminal, forgetTerminal, launchTerminal, destroyTerminal } from '../terminalNavigation';
 import { cliSessionItems, cliSessionGroups } from '../cliSessionItems';
 import { workspaceSurface } from '../../../../../shared/workspaceSurface';
 
@@ -41,6 +42,7 @@ beforeEach(() => {
   mocks.list.mockResolvedValue([]);
   mocks.create.mockResolvedValue({});
   mocks.dispose.mockResolvedValue(undefined);
+  mocks.destroy.mockResolvedValue(undefined);
   mocks.add.mockImplementation(async (_session, kind, state) => {
     const tab = { id: 'tab-' + mocks.tabs.length, kind, state };
     mocks.tabs.push(tab);
@@ -57,12 +59,41 @@ beforeEach(() => {
         list: mocks.list,
         create: mocks.create,
         forget: mocks.dispose,
+        destroy: mocks.destroy,
       },
     },
   });
 });
 
 describe('workspace content navigation', () => {
+  it('keeps views until destruction succeeds, then removes only the selected split', async () => {
+    hiddenSplit();
+    const saved = mocks.tabs[0].state;
+    mocks.destroy.mockRejectedValueOnce(new Error('kill failed'));
+    await expect(destroyTerminal('lead', 'pty-a')).rejects.toThrow('kill failed');
+    expect(mocks.tabs[0].state).toBe(saved);
+    expect(mocks.disposeXterm).not.toHaveBeenCalled();
+    await destroyTerminal('lead', 'pty-a');
+    expect(mocks.tabs[0].state).toMatchObject({ layout: { type: 'leaf', paneId: 'pane-2' } });
+    expect(mocks.close).not.toHaveBeenCalled();
+    await destroyTerminal('lead', 'pty-b');
+    expect(mocks.close).toHaveBeenCalledWith('lead', 'original', { skipBeforeClose: true });
+    expect(mocks.dispose).not.toHaveBeenCalled();
+  });
+
+  it('hides the last visible pane and restores the same tab and original layout', async () => {
+    const original = hiddenSplit();
+    let next = hideTerminalPane(original, 'pane-1')!;
+    next = hideTerminalPane(next, 'pane-2')!;
+    expect(next.viewHidden).toBe(true);
+    expect(visibleTerminalPaneIds(next)).toEqual([]);
+    mocks.tabs[0].state = next;
+    await openOrFocusTerminal('lead', 'pty-a');
+    expect(mocks.tabs[0].state).toMatchObject({ viewHidden: false, layout: original.layout });
+    expect(visibleTerminalPaneIds(hydrateTerminalState(mocks.tabs[0].state))).toEqual(['pane-1']);
+    expect(mocks.add).not.toHaveBeenCalled();
+    expect(mocks.destroy).not.toHaveBeenCalled();
+  });
   it('replaces one clean preview in place, serializes rapid opens and keeps explicit opens permanent', async () => {
     const file = { path: 'a.ts', workdir: '/project', external: false, preview: true };
     const ids = await Promise.all(['a.ts', 'b.ts', 'c.ts'].map(path => openFileContentTab('preview-lead', { ...file, path })));

@@ -198,6 +198,7 @@ export interface PtyManagerDeps {
 
 export class PtyManager {
   private readonly sessions = new Map<string, PtySession>();
+  private readonly destroying = new Map<string, Promise<void>>();
   private readonly trackedOwners = new WeakSet<WebContents>();
   private readonly spawnFn: PtySpawnFn;
   private readonly sink: PtyEventSink;
@@ -280,6 +281,38 @@ export class PtyManager {
       throw error;
     }
     this.emitStatus(session);
+  }
+
+  /** Terminate one concrete PTY and remove it only after its real exit. */
+  async destroy(id: string, owner: WebContents): Promise<void> {
+    const session = this.sessions.get(id);
+    if (!session) return;
+    if (session.owner !== owner) throw new Error('TERMINAL_OWNER_MISMATCH');
+    const pending = this.destroying.get(id);
+    if (pending) return pending;
+    if (session.exit) { this.forget(id, owner); return; }
+
+    let resolveExit!: () => void;
+    let rejectExit!: (error: unknown) => void;
+    const exited = new Promise<void>((resolve, reject) => {
+      resolveExit = resolve;
+      rejectExit = reject;
+    });
+    // Subscribe before kill: some native backends report exit synchronously.
+    const listener = session.pty.onExit(() => resolveExit());
+    const timer = setTimeout(() => rejectExit(new Error('TERMINAL_TERMINATION_TIMEOUT')), 10_000);
+    const operation = exited.then(() => {
+      if (this.sessions.get(id) !== session || session.owner !== owner)
+        throw new Error('TERMINAL_SESSION_CHANGED');
+      this.forget(id, owner);
+    }).finally(() => {
+      clearTimeout(timer);
+      listener.dispose();
+      if (this.destroying.get(id) === operation) this.destroying.delete(id);
+    });
+    this.destroying.set(id, operation);
+    try { this.terminate(id, owner); } catch (error) { rejectExit(error); }
+    return operation;
   }
 
   /**
@@ -480,6 +513,7 @@ export class PtyManager {
 
   /** 在已 exit 的 session 上重启；id 保留，PTY 实例替换。 */
   restart(id: string, owner: WebContents): CreateResult {
+    if (this.destroying.has(id)) throw new Error('terminal session still running: destruction pending');
     const old = this.sessions.get(id);
     if (!old) throw new Error(`terminal session not found: ${id}`);
     if (old.owner !== owner) throw new Error(`TERMINAL_OWNER_MISMATCH:${id}`);

@@ -261,6 +261,19 @@ export function registerTerminalHandlers(options?: TerminalHandlersOptions): Pty
     manager.dispose(id, event.sender);
   });
 
+  ipcMain.handle(TERMINAL_INVOKE.DESTROY, async (event: IpcMainInvokeEvent, idArg: unknown) => {
+    assertTrustedSender(event);
+    const id = requireString(idArg, 'id', MAX_TERMINAL_ID_LENGTH);
+    if (manager.has(id) && !manager.isOwner(id, event.sender)) {
+      throwIpcError('PERMISSION_DENIED', 'terminal session is owned by another window');
+    }
+    try {
+      await manager.destroy(id, event.sender);
+    } catch {
+      throwIpcError('PRECONDITION_FAILED', 'could not confirm terminal exit; its record was retained');
+    }
+  });
+
   ipcMain.handle(TERMINAL_INVOKE.FORGET, (event: IpcMainInvokeEvent, idArg: unknown) => {
     assertTrustedSender(event);
     const id = requireString(idArg, 'id', MAX_TERMINAL_ID_LENGTH);

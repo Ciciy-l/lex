@@ -1103,6 +1103,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     list: (sessionId: string) => ipcRenderer.invoke('terminal:list', sessionId),
     detach: (id: string) => ipcRenderer.invoke('terminal:detach', id),
     terminate: (id: string) => ipcRenderer.invoke('terminal:terminate', id),
+    destroy: (id: string) => ipcRenderer.invoke('terminal:destroy', id),
     onStatus: (cb: IpcCallback) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => cb(payload);
       ipcRenderer.on('terminal:status', handler);

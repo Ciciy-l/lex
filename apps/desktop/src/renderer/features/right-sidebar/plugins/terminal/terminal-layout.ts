@@ -97,11 +97,12 @@ export function visibleTerminalPaneIds(state: TerminalState): string[] {
 
 export function hideTerminalPane(state: TerminalState, paneId: string): TerminalState | null {
   const visible = visibleTerminalPaneIds(state);
-  if (!visible.includes(paneId) || visible.length <= 1) return null;
+  if (!visible.includes(paneId)) return null;
   return {
     ...state,
     panes: { ...state.panes, [paneId]: { ...state.panes[paneId], viewHidden: true } },
-    activePaneId: state.activePaneId === paneId ? visible.find(id => id !== paneId)! : state.activePaneId,
+    viewHidden: visible.length === 1 ? true : state.viewHidden,
+    activePaneId: state.activePaneId === paneId ? visible.find(id => id !== paneId) ?? paneId : state.activePaneId,
   };
 }
 

@@ -107,6 +107,8 @@ export interface TerminalBridge {
   list(sessionId: string): Promise<TerminalRuntimeRecord[]>;
   detach(id: string): Promise<void>;
   terminate(id: string): Promise<void>;
+  /** Wait for confirmed process exit before removing its runtime record. */
+  destroy(id: string): Promise<void>;
   /** Atomically remove an ended runtime; refuses a concurrent running/restarted process. */
   forget(id: string): Promise<void>;
   onStatus(callback: (record: TerminalRuntimeRecord) => void): () => void;

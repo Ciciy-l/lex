@@ -235,6 +235,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     list: (sessionId: string) => ipcRenderer.invoke('terminal:list', sessionId),
     detach: (id: string) => ipcRenderer.invoke('terminal:detach', id),
     terminate: (id: string) => ipcRenderer.invoke('terminal:terminate', id),
+    destroy: (id: string) => ipcRenderer.invoke('terminal:destroy', id),
     onStatus: (cb: (record: unknown) => void) => onPayload('terminal:status', cb),
     create: (params: unknown): Promise<unknown> => ipcRenderer.invoke('terminal:create', params),
     write: (id: string, data: string): Promise<unknown> =>
