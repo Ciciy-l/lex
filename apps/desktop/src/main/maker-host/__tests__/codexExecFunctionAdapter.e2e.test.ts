@@ -127,7 +127,7 @@ describe.skipIf(!codexBoundaryAvailable)('Codex custom exec function adapter E2E
 
   afterEach(async () => {
     while (cleanups.length > 0) await cleanups.pop()?.();
-  });
+  }, 30_000);
 
   it('reads a fixture through a real commandExecution and returns it without Web Search', async () => {
     const providerRequests: Array<Record<string, unknown>> = [];
