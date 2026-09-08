@@ -670,7 +670,7 @@ describe('接管陈旧锁', () => {
     expect(fs.existsSync(lock)).toBe(true);
   });
 
-  it('bounds repeated successful stale takeovers by time and count', async () => {
+  it('bounds repeated successful stale takeovers by count', async () => {
     const lock = path.join(dir, 'lock');
     await writeStaleStrictLock(lock);
     const originalRename = fsp.rename;
@@ -686,17 +686,51 @@ describe('接管陈旧锁', () => {
       }
       return result;
     }) as typeof fsp.rename);
+    const fixedNow = Date.now();
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(fixedNow);
     try {
-      const started = performance.now();
       await expect(
-        withCrossProcessLock(lock, { label: 'churn', waitMs: 2_000 }, async (s) => s),
+        withCrossProcessLock(lock, { label: 'churn', waitMs: 60_000 }, async (s) => s),
       ).resolves.toEqual({ held: false, reason: 'busy' });
-      expect(performance.now() - started).toBeLessThan(1_000);
+      // The result must come from the takeover-count guard, not the caller deadline.
+      // Keep protocol time fixed so Windows filesystem scheduling is not part of the assertion.
       expect(takeovers).toBe(3);
     } finally {
+      nowSpy.mockRestore();
       spy.mockRestore();
     }
-  });
+  }, 20_000);
+
+  it('does not start another takeover after the previous takeover consumes the deadline', async () => {
+    const lock = path.join(dir, 'lock');
+    await writeStaleStrictLock(lock);
+    const originalRename = fsp.rename;
+    const fixedNow = Date.now();
+    let protocolNow = fixedNow;
+    let takeovers = 0;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => protocolNow);
+    const renameSpy = vi.spyOn(fsp, 'rename').mockImplementation((async (
+      from: unknown,
+      to: unknown,
+    ) => {
+      const result = await (originalRename as (...args: unknown[]) => Promise<unknown>)(from, to);
+      if (from === lock && typeof to === 'string' && to.startsWith(`${lock}.reclaim-`)) {
+        takeovers += 1;
+        await writeStaleStrictLock(lock);
+        protocolNow = fixedNow + 2_001;
+      }
+      return result;
+    }) as typeof fsp.rename);
+    try {
+      await expect(
+        withCrossProcessLock(lock, { label: 'deadline', waitMs: 2_000 }, async (s) => s),
+      ).resolves.toEqual({ held: false, reason: 'busy' });
+      expect(takeovers).toBe(1);
+    } finally {
+      nowSpy.mockRestore();
+      renameSpy.mockRestore();
+    }
+  }, 20_000);
 
   it('publishes after the final stale takeover when the path stays empty', async () => {
     const lock = path.join(dir, 'lock');
@@ -752,6 +786,8 @@ describe('接管陈旧锁', () => {
       }
       return (originalLink as (...args: unknown[]) => Promise<unknown>)(from, to);
     }) as typeof fsp.link);
+    const fixedNow = Date.now();
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(fixedNow);
     try {
       await expect(
         withCrossProcessLock(lock, { label: 'final-takeover-busy', waitMs: 2_000 }, async (s) => s),
@@ -759,10 +795,11 @@ describe('接管陈旧锁', () => {
       expect(takeovers).toBe(3);
       expect(busyPublishes).toBe(1);
     } finally {
+      nowSpy.mockRestore();
       renameSpy.mockRestore();
       linkSpy.mockRestore();
     }
-  });
+  }, 20_000);
 
   it('recovers an own reclaim gate after rename and fsync both fail', async () => {
     const lock = path.join(dir, 'lock');
