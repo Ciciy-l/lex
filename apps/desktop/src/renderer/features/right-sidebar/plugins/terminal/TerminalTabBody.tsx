@@ -17,7 +17,8 @@ import {
   Circle,
   RotateCw,
   Terminal as TerminalIcon,
-  X,
+  Minus,
+  Trash2,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -29,10 +30,11 @@ import { openFileContentInSidebar } from '../../lib/openFileContentTab';
 import { openDirInSidebarFileBrowser } from '../../lib/openInSidebarFileBrowser';
 import { openUrlInSidebarBrowser } from '../../lib/openInSidebarBrowser';
 import { toast } from '@/lib/toast';
+import { useConfirmDialog } from '@/components/ui/confirm-dialog-provider';
+import { destroyTerminal } from '../../lib/terminalNavigation';
 import { registerTerminalFileLinks } from './lib/terminalFileLinks';
 import { TerminalSearchBar } from './TerminalSearchBar';
 import { Spinner } from '@/components/ui/spinner';
-import { themeService } from '@/themes/theme-service';
 import { Tip } from '@/components/ui/tooltip';
 import { extractIpcError } from '@/utils/ipcError';
 import type { TabKindHostContext } from '../../types';
@@ -93,6 +95,9 @@ export function TerminalTabBody({ state, ctx, active }: Props) {
   const { tabId, patchState } = ctx;
   const workdir = state.cwd || ctx.workdir;
   const { t } = useTranslation();
+  const { confirm } = useConfirmDialog();
+  const [destroyingPaneId, setDestroyingPaneId] = useState<string | null>(null);
+  const destroyingRef = useRef(false);
   // A failed create/restart belongs to one pane.  Keeping this keyed by pane
   // id prevents an error from pane A being shown after the user focuses pane B.
   const [runtimeErrors, setRuntimeErrors] = useState<Record<string, RuntimeError>>({});
@@ -219,6 +224,26 @@ export function TerminalTabBody({ state, ctx, active }: Props) {
     [persist, setPaneRuntimeError, tabId],
   );
 
+  const destroyPane = async (paneId: string) => {
+    if (destroyingRef.current) return;
+    const pane = stateRef.current.panes[paneId];
+    if (!pane) return;
+    destroyingRef.current = true;
+    setDestroyingPaneId(paneId);
+    try {
+      if (!await confirm({
+        title: t('rightSidebar.terminal.destroyPane'),
+        description: t('rightSidebar.terminal.destroyConfirm'),
+        confirmText: t('rightSidebar.terminal.destroyPane'),
+        confirmVariant: 'destructive',
+      })) return;
+      await destroyTerminal(ctx.sessionId, pane.terminalId || terminalPtyId(tabId, paneId));
+      setZoomedPaneId(null);
+      setSearchPaneId(null);
+    } catch { toast.error(t('rightSidebar.terminal.actionFailed')); }
+    finally { destroyingRef.current = false; setDestroyingPaneId(null); }
+  };
+
   const selectPane = useCallback(
     (paneId: string) => {
       setSearchPaneId(null);
@@ -306,6 +331,8 @@ export function TerminalTabBody({ state, ctx, active }: Props) {
             runtimeError={runtimeErrors[paneId] ?? null}
             onSelect={selectPane}
             onClose={closePane}
+            onDestroy={destroyPane}
+            destroying={destroyingPaneId === paneId}
             onSplit={createSplitForPane}
             onPatchPane={patchPane}
             onRuntimeError={setPaneRuntimeError}
@@ -367,6 +394,8 @@ interface TerminalPaneViewProps {
   runtimeError: RuntimeError | null;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
+  onDestroy: (id: string) => Promise<void>;
+  destroying: boolean;
   onSplit: (id: string, direction: 'horizontal' | 'vertical') => void;
   onPatchPane: (id: string, patch: Partial<Omit<TerminalPaneState, 'id'>>) => void;
   onRuntimeError: (paneId: string, error: RuntimeError | null) => void;
@@ -585,7 +614,6 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
   const slotRef = useRef<HTMLDivElement>(null);
   const entryRef = useRef<XtermEntry | null>(null);
   const aliveRef = useRef(true);
-  const onDataRef = useRef<{ dispose(): void } | null>(null);
   const ptyId = pane.terminalId || terminalPtyId(props.tabId, pane.id);
   const isActive = props.activePaneId === pane.id;
   const canClose = visibleTerminalPaneIds(props.state).length > 1;
@@ -618,9 +646,6 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
         if (linksActive && request === linkRequest) toast.error(props.t('rightSidebar.workbench.fileLinkFailed'));
       });
     }, props.t('rightSidebar.workbench.startupDirectory', { path: props.workdir }));
-    onDataRef.current = entry.terminal.onData(
-      (data) => void window.electronAPI.terminal.write(ptyId, data).catch(() => undefined),
-    );
     const offExit = window.electronAPI.terminal.onExit((event: unknown) => {
       const data = event as TerminalExitEvent;
       if (aliveRef.current && data.id === ptyId)
@@ -631,8 +656,6 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
       aliveRef.current = false;
       linksActive = false;
       fileLinks.dispose();
-      onDataRef.current?.dispose();
-      onDataRef.current = null;
       offExit();
     };
   }, [pane.id, ptyId, props.onPatchPane]);
@@ -644,7 +667,6 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
     const entry = entryRef.current;
     if (!entry) return;
     updateXtermTheme(entry);
-    return themeService.onDidChangeTheme(() => updateXtermTheme(entry));
   }, [ptyId]);
 
   useEffect(() => {
@@ -797,7 +819,7 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
             onClick={() => props.onSelect(pane.id)}
           />
         </Tip>
-        <div className="relative z-10 ml-auto flex shrink-0 items-center gap-0.5 rounded-lg bg-[var(--surface-elevated)] opacity-0 transition-opacity group-hover/terminal-header:opacity-100 focus-within:opacity-100">
+        <div data-terminal-pane-actions="" className={'relative z-10 ml-auto flex shrink-0 items-center gap-0.5 rounded-lg bg-[var(--surface-elevated)] transition-opacity ' + (isActive ? 'opacity-100' : 'opacity-0 group-hover/terminal-header:opacity-100 focus-within:opacity-100')}>
           {pane.exited && (
             <Tip text={props.t('rightSidebar.terminal.restart')}>
               <button
@@ -837,19 +859,27 @@ function TerminalPaneView({ pane, runtimeError, ...props }: TerminalPaneViewProp
               </Tip>
             </>
           )}
-          {canClose && (
-            <Tip text={props.t('rightSidebar.terminal.closePane')}>
+            <Tip text={props.t('rightSidebar.terminal.hidePane')}>
               <button
                 type="button"
                 className="rounded-full p-1 text-[var(--text-tertiary)] hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={() => props.onClose(pane.id)}
-                aria-label={props.t('rightSidebar.terminal.closePane')}
+                aria-label={props.t('rightSidebar.terminal.hidePane')}
               >
-                <X size={12} />
+                <Minus size={12} />
               </button>
             </Tip>
-          )}
+          <Tip text={props.t('rightSidebar.terminal.destroyPane')}>
+            <button type="button"
+              className="rounded-full p-1 text-[var(--text-tertiary)] hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:opacity-50"
+              disabled={props.destroying}
+              aria-label={props.t('rightSidebar.terminal.destroyPane')}
+              onPointerDown={event => event.stopPropagation()}
+              onClick={() => void props.onDestroy(pane.id)}>
+              <Trash2 size={12} />
+            </button>
+          </Tip>
         </div>
       </div>
       <DropdownMenu open={urlMenu !== null} onOpenChange={open => { if (!open) setUrlMenu(null); }}>

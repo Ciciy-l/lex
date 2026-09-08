@@ -30,14 +30,17 @@ describe('moving existing terminal panes', () => {
     return splitTerminalPane(pair, 'pane-2', 'vertical', createPaneState('pane-3', 'codex'))!;
   }
 
-  it('retains hidden split slots through hydration, skips them in focus navigation, and protects the final visible pane', () => {
+  it('retains hidden split slots through hydration and hides the tab with its final visible pane', () => {
     const original = threePanes();
     const hidden = hydrateTerminalState(hideTerminalPane(original, 'pane-2'));
     expect(hidden.layout).toEqual(original.layout);
     expect(visibleTerminalPaneIds(hidden)).toEqual(['pane-1', 'pane-3']);
     expect(adjacentTerminalPane({ ...hidden, activePaneId: 'pane-1' }, 1)).toBe('pane-3');
     const onlyThird = hideTerminalPane(hidden, 'pane-1')!;
-    expect(hideTerminalPane(onlyThird, 'pane-3')).toBeNull();
+    const allHidden = hideTerminalPane(onlyThird, 'pane-3')!;
+    expect(allHidden.viewHidden).toBe(true);
+    expect(visibleTerminalPaneIds(allHidden)).toEqual([]);
+    expect(allHidden.layout).toEqual(onlyThird.layout);
     const removed = removeTerminalPane(onlyThird, 'pane-3')!;
     expect(removed.viewHidden).toBe(true);
     expect(collectPaneIds(removed.layout)).toEqual(['pane-1', 'pane-2']);

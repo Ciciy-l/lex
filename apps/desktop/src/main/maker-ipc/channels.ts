@@ -971,6 +971,7 @@ export const TERMINAL_INVOKE = {
   LIST: 'terminal:list',
   DETACH: 'terminal:detach',
   TERMINATE: 'terminal:terminate',
+  DESTROY: 'terminal:destroy',
   FORGET: 'terminal:forget',
   CREATE: 'terminal:create',
   WRITE: 'terminal:write',

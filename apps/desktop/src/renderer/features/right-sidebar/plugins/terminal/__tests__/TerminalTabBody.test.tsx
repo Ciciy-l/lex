@@ -13,6 +13,9 @@ const xtermMocks = vi.hoisted(() => ({
   getOrCreateXterm: vi.fn(),
   updateXtermTheme: vi.fn(),
 }));
+const actionMocks = vi.hoisted(() => ({ confirm: vi.fn(), destroy: vi.fn() }));
+vi.mock('@/components/ui/confirm-dialog-provider', () => ({ useConfirmDialog: () => ({ confirm: actionMocks.confirm }) }));
+vi.mock('../../../lib/terminalNavigation', () => ({ destroyTerminal: actionMocks.destroy }));
 const linkMocks = vi.hoisted(() => ({
   activate: null as null | ((link: { path: string; line?: number; column?: number }) => void),
   openDirectory: vi.fn(async () => undefined),
@@ -93,6 +96,8 @@ function renderSplitWorkbench(direction: 'horizontal' | 'vertical' = 'horizontal
 }
 
 beforeEach(() => {
+  actionMocks.confirm.mockReset().mockResolvedValue(false);
+  actionMocks.destroy.mockReset().mockResolvedValue(undefined);
   linkMocks.openDirectory.mockClear();
   linkMocks.openFile.mockClear();
   const entries = new Map<string, ReturnType<typeof makeEntry>>();
@@ -139,9 +144,33 @@ afterEach(() => {
 });
 
 describe('TerminalTabBody pane dragging', () => {
+  it('keeps active pane actions visible and allows hiding the final pane', () => {
+    const view = renderSplitWorkbench();
+    const actions = document.querySelectorAll('[data-terminal-pane-actions]');
+    expect(actions[1].classList.contains('opacity-100')).toBe(true);
+    expect(actions[0].classList.contains('opacity-0')).toBe(true);
+    fireEvent.click(screen.getAllByRole('button', { name: 'rightSidebar.terminal.hidePane' })[1]);
+    const next = view.patchState.mock.calls.at(-1)![0];
+    view.rerender(<TerminalTabBody state={next} ctx={view.ctx} active={false} />);
+    expect(screen.getByRole('button', { name: 'rightSidebar.terminal.destroyPane' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'rightSidebar.terminal.hidePane' }));
+    expect(view.patchState.mock.calls.at(-1)![0].viewHidden).toBe(true);
+    expect(actionMocks.destroy).not.toHaveBeenCalled();
+  });
+
+  it('requires confirmation before destroying a pane', async () => {
+    renderSplitWorkbench();
+    const button = screen.getAllByRole('button', { name: 'rightSidebar.terminal.destroyPane' })[0];
+    await act(async () => { fireEvent.click(button); });
+    expect(actionMocks.confirm).toHaveBeenCalledWith(expect.objectContaining({ confirmVariant: 'destructive' }));
+    expect(actionMocks.destroy).not.toHaveBeenCalled();
+    actionMocks.confirm.mockResolvedValueOnce(true);
+    await act(async () => { fireEvent.click(button); });
+    expect(actionMocks.destroy).toHaveBeenCalledOnce();
+  });
   it('hides a pane without deleting its split slot and restores the original two-pane layout', () => {
     const view = renderSplitWorkbench();
-    fireEvent.click(screen.getAllByRole('button', { name: 'rightSidebar.terminal.closePane' })[1]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'rightSidebar.terminal.hidePane' })[1]);
     const next = view.patchState.mock.calls.at(-1)![0];
     expect(next.layout).toEqual(view.state.layout);
     expect(next.panes['pane-2'].viewHidden).toBe(true);
@@ -230,7 +259,7 @@ describe('TerminalTabBody pane dragging', () => {
     expect(
       screen.getAllByRole('button', { name: 'rightSidebar.terminal.splitHorizontal' }),
     ).toHaveLength(2);
-    expect(screen.getAllByRole('button', { name: 'rightSidebar.terminal.closePane' })).toHaveLength(
+    expect(screen.getAllByRole('button', { name: 'rightSidebar.terminal.hidePane' })).toHaveLength(
       2,
     );
   });
@@ -350,7 +379,7 @@ describe('TerminalTabBody pane dragging', () => {
       view.move();
       fireEvent.blur(window);
     });
-    const close = screen.getAllByRole('button', { name: 'rightSidebar.terminal.closePane' })[1];
+    const close = screen.getAllByRole('button', { name: 'rightSidebar.terminal.hidePane' })[1];
     fireEvent.pointerDown(close, { button: 0, pointerId: 7 });
     fireEvent.click(close);
     expect(view.patchState).toHaveBeenCalledTimes(1);

@@ -133,7 +133,7 @@ describe('resolveAutoDetectShell — Windows', () => {
     setExistingFiles(['C:\\Program Files\\PowerShell\\7\\pwsh.exe']);
     expect(resolveAutoDetectShell()).toMatchObject({
       id: 'pwsh',
-      displayName: 'PowerShell',
+      displayName: 'PowerShell 7',
     });
   });
 
@@ -143,7 +143,7 @@ describe('resolveAutoDetectShell — Windows', () => {
     setExistingFiles(['C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe']);
     expect(resolveAutoDetectShell()).toMatchObject({
       id: 'powershell',
-      displayName: 'Windows PowerShell',
+      displayName: 'Windows PowerShell 5.1',
     });
   });
 

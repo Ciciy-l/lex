@@ -147,7 +147,7 @@ function findGitBashOnWindows(): string | null {
 function resolveAutoDetectShellWin(): ResolvedShell {
   // 优先级: pwsh.exe → powershell.exe → COMSPEC → cmd.exe（兜底，cmd.exe 一定存在）
   const pwsh = whichSync('pwsh.exe');
-  if (pwsh) return { id: 'pwsh', command: pwsh, args: [], displayName: 'PowerShell' };
+  if (pwsh) return { id: 'pwsh', command: pwsh, args: [], displayName: 'PowerShell 7' };
 
   const powershell = whichSync('powershell.exe');
   if (powershell)
@@ -155,7 +155,7 @@ function resolveAutoDetectShellWin(): ResolvedShell {
       id: 'powershell',
       command: powershell,
       args: [],
-      displayName: 'Windows PowerShell',
+      displayName: 'Windows PowerShell 5.1',
     };
 
   const cmd = windowsEnv('COMSPEC')?.trim() || 'cmd.exe';
@@ -229,11 +229,11 @@ export function resolveShellById(id: Exclude<ShellId, 'auto'>): ResolvedShell | 
     switch (id) {
       case 'pwsh': {
         const p = whichSync('pwsh.exe');
-        return p ? { id, command: p, args: [], displayName: 'PowerShell' } : null;
+        return p ? { id, command: p, args: [], displayName: 'PowerShell 7' } : null;
       }
       case 'powershell': {
         const p = whichSync('powershell.exe');
-        return p ? { id, command: p, args: [], displayName: 'Windows PowerShell' } : null;
+        return p ? { id, command: p, args: [], displayName: 'Windows PowerShell 5.1' } : null;
       }
       case 'cmd': {
         const p = windowsEnv('COMSPEC')?.trim() || 'cmd.exe';

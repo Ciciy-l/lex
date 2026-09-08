@@ -47,6 +47,10 @@ describe('xterm theme integration', () => {
       foreground: '#202020',
       selectionBackground: '#e5e5e5',
     });
-    expect(terminal.refresh).toHaveBeenCalledWith(0, 23);
+    expect(terminal.refresh).not.toHaveBeenCalled();
+    const applied = terminal.options.theme;
+    updateXtermTheme(entry);
+    expect(terminal.options.theme).toBe(applied);
+    expect(terminal.refresh).not.toHaveBeenCalled();
   });
 });

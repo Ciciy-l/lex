@@ -11,7 +11,7 @@
  * 都能 open()。所以 pool 只存"实例本体 + addons + 上次 fit 的尺寸",不存 DOM。
  *
  * Terminal 颜色从宿主设计系统的语义 token 读取；主题切换时由
- * TerminalPaneView 原地刷新 options.theme，PTY 与 scrollback 均保持不变。
+ * 实例池原地刷新 options.theme，PTY 与 scrollback 均保持不变。
  */
 
 // xterm.js 自带的样式表 —— 必须 import,否则 xterm 内部用来接键盘/IME 输入的
@@ -26,11 +26,17 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 
 import { createLogger } from '@/lib/logger';
+import { themeService } from '@/themes/theme-service';
+import { createSynchronizedOutputWriter } from './synchronizedOutput';
 
 const log = createLogger('terminal');
 
 export interface XtermEntry {
   offOutput?: () => void;
+  offInput?: () => void;
+  offTheme?: () => void;
+  disposeOutput?: () => void;
+  appliedTheme?: ITheme;
   onUrlContext?: (event: MouseEvent, url: string) => void;
   hoveredUrl?: () => string | null;
   terminal: Terminal;
@@ -97,8 +103,12 @@ function resolveCssColor(token: string, rawValue: string): string {
 
 /** Update an existing terminal without replacing its scrollback or addons. */
 export function updateXtermTheme(entry: XtermEntry): void {
-  entry.terminal.options.theme = getTerminalTheme();
-  if (entry.terminal.rows > 0) entry.terminal.refresh(0, entry.terminal.rows - 1);
+  const theme = getTerminalTheme();
+  const previous = entry.appliedTheme;
+  if (previous && Object.keys(previous).length === Object.keys(theme).length &&
+    Object.entries(theme).every(([key, value]) => previous[key as keyof ITheme] === value)) return;
+  entry.terminal.options.theme = theme;
+  entry.appliedTheme = theme;
 }
 
 const DEFAULT_OPTIONS: ITerminalOptions = {
@@ -112,15 +122,14 @@ const DEFAULT_OPTIONS: ITerminalOptions = {
   scrollback: 5000,
   // 允许 OSC 8 超链接(WebLinksAddon 也会处理裸 URL)
   allowProposedApi: false,
-  // Keep xterm in sync with the host application's semantic theme tokens.
-  theme: getTerminalTheme(),
 };
 
 /** 获取或创建某个 tabId 的 xterm 实例。重复调用同 id 返回同一个。 */
 export function getOrCreateXterm(tabId: string): XtermEntry {
   let entry = pool.get(tabId);
   if (entry) return entry;
-  const terminal = new Terminal(DEFAULT_OPTIONS);
+  const theme = getTerminalTheme();
+  const terminal = new Terminal({ ...DEFAULT_OPTIONS, theme });
   const fitAddon = new FitAddon();
   const searchAddon = new SearchAddon();
   terminal.loadAddon(searchAddon);
@@ -138,6 +147,7 @@ export function getOrCreateXterm(tabId: string): XtermEntry {
   attachSelectionCopyShortcut(terminal);
   entry = {
     terminal,
+    appliedTheme: theme,
     hoveredUrl: () => hoveredUrl,
     fitAddon,
     searchAddon,
@@ -145,9 +155,21 @@ export function getOrCreateXterm(tabId: string): XtermEntry {
     ptyAttached: false,
   };
   pool.set(tabId, entry);
+  const retainedEntry = entry;
+  const input = terminal.onData((data) => {
+    void window.electronAPI.terminal.write(tabId, data).catch(() => undefined);
+  });
+  entry.offInput = () => input.dispose();
+  entry.offTheme = themeService.onDidChangeTheme(() => updateXtermTheme(retainedEntry));
   // Keep output flowing into the retained terminal while its view is unmounted.
+  const output = window.electronAPI?.platform === 'win32'
+    ? createSynchronizedOutputWriter(data => terminal.write(data))
+    : undefined;
+  entry.disposeOutput = () => output?.dispose();
   entry.offOutput = window.electronAPI?.terminal?.onData?.((event) => {
-    if (event.id === tabId) terminal.write(event.chunk);
+    if (event.id !== tabId) return;
+    if (output) output.push(event.chunk);
+    else terminal.write(event.chunk);
   });
   return entry;
 }
@@ -191,6 +213,9 @@ export function disposeXterm(tabId: string): void {
   if (!entry) return;
   pool.delete(tabId);
   entry.offOutput?.();
+  entry.disposeOutput?.();
+  entry.offInput?.();
+  entry.offTheme?.();
   try {
     entry.terminal.dispose();
   } catch {

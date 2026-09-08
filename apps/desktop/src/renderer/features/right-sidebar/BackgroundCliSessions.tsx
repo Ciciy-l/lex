@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Square, Trash2, Terminal } from 'lucide-react';
+import { Trash2, Terminal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tip } from '@/components/ui/tooltip';
 import { useConfirmDialog } from '@/components/ui/confirm-dialog-provider';
 import { toast } from '@/lib/toast';
 import type { TerminalRuntimeRecord } from '../../../shared/terminal-bridge';
-import { openOrFocusTerminal, forgetTerminal } from './lib/terminalNavigation';
+import { openOrFocusTerminal, destroyTerminal } from './lib/terminalNavigation';
 import { getBucket, subscribe } from './store';
 import { cliSessionGroups } from './lib/cliSessionItems';
 
@@ -149,49 +149,30 @@ export function BackgroundCliSessions({
                 </span>
               </span>
             </button>
-            {row.status === 'running' ? (
-              <Tip text={t('rightSidebar.terminal.terminate')}>
+              <Tip text={t('rightSidebar.terminal.destroyPane')}>
                 <Button
                   variant="secondary"
                   size="md"
                   className="w-8 px-0"
                   disabled={busy !== null}
-                  aria-label={t('rightSidebar.terminal.terminate')}
+                  aria-label={t('rightSidebar.terminal.destroyPane')}
                   onClick={() =>
                     void run(row.terminalId, async () => {
                       if (
                         await confirm({
-                          title: t('rightSidebar.terminal.terminate'),
-                          description: t('rightSidebar.terminal.terminateConfirm'),
+                          title: t('rightSidebar.terminal.destroyPane'),
+                          description: t('rightSidebar.terminal.destroyConfirm'),
                           confirmVariant: 'destructive',
-                          confirmText: t('rightSidebar.terminal.terminate'),
+                          confirmText: t('rightSidebar.terminal.destroyPane'),
                         })
                       )
-                        await window.electronAPI.terminal.terminate(row.terminalId);
+                        await destroyTerminal(sessionId, row.terminalId);
                     })
                   }
                 >
-                  <Square size={13} />
+                  <Trash2 size={13} />
                 </Button>
               </Tip>
-            ) : (
-              row.status !== 'terminating' && (
-                <Tip text={t('rightSidebar.terminal.forget')}>
-                  <Button
-                    variant="secondary"
-                    size="md"
-                    className="w-8 px-0"
-                    disabled={busy !== null}
-                    aria-label={t('rightSidebar.terminal.forget')}
-                    onClick={() =>
-                      void run(row.terminalId, () => forgetTerminal(sessionId, row.terminalId))
-                    }
-                  >
-                    <Trash2 size={13} />
-                  </Button>
-                </Tip>
-              )
-            )}
           </div>
         ))}
         </details>)

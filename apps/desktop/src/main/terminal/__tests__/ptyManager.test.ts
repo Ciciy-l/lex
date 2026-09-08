@@ -176,6 +176,65 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe('PtyManager.destroy', () => {
+  it('waits for real exit, deduplicates destruction and leaves siblings running', async () => {
+    const mgr = makeManager();
+    const owner = makeFakeWebContents() as unknown as WebContents;
+    mgr.create({ id: 'a', sessionId: 'lead', cwd: '/tmp', owner });
+    const a = lastSpawn!;
+    mgr.create({ id: 'b', sessionId: 'lead', cwd: '/tmp', owner });
+    const b = lastSpawn!;
+    const first = mgr.destroy('a', owner);
+    const second = mgr.destroy('a', owner);
+    expect(a.kill).toHaveBeenCalledOnce();
+    expect(mgr.has('a')).toBe(true);
+    expect(b.kill).not.toHaveBeenCalled();
+    a.__triggerExit({ exitCode: 0 });
+    expect(() => mgr.restart('a', owner)).toThrow('destruction pending');
+    await Promise.all([first, second]);
+    expect(mgr.has('a')).toBe(false);
+    expect(mgr.has('b')).toBe(true);
+    expect(b.kill).not.toHaveBeenCalled();
+    mgr.dispose('b', owner);
+  });
+
+  it('handles synchronous exit and already-ended or missing records', async () => {
+    const mgr = makeManager();
+    const owner = makeFakeWebContents() as unknown as WebContents;
+    mgr.create({ id: 'sync', cwd: '/tmp', owner });
+    const pty = lastSpawn!;
+    vi.mocked(pty.kill).mockImplementation(() => pty.__triggerExit({ exitCode: 0 }));
+    await mgr.destroy('sync', owner);
+    expect(mgr.has('sync')).toBe(false);
+    mgr.create({ id: 'ended', cwd: '/tmp', owner });
+    const ended = lastSpawn!;
+    ended.__triggerExit({ exitCode: 0 });
+    await mgr.destroy('ended', owner);
+    expect(ended.kill).not.toHaveBeenCalled();
+    await mgr.destroy('missing', owner);
+  });
+
+  it('retains the record on kill failure or timeout and rejects another owner', async () => {
+    vi.useFakeTimers();
+    const mgr = makeManager();
+    const owner = makeFakeWebContents() as unknown as WebContents;
+    try {
+      mgr.create({ id: 'keep', sessionId: 'lead', cwd: '/tmp', owner });
+      const pty = lastSpawn!;
+      await expect(mgr.destroy('keep', makeFakeWebContents() as unknown as WebContents)).rejects.toThrow('OWNER_MISMATCH');
+      expect(pty.kill).not.toHaveBeenCalled();
+      vi.mocked(pty.kill).mockImplementationOnce(() => { throw new Error('kill failed'); });
+      await expect(mgr.destroy('keep', owner)).rejects.toThrow('kill failed');
+      expect(mgr.list('lead', owner)[0].status).toBe('running');
+      const rejected = expect(mgr.destroy('keep', owner)).rejects.toThrow('TERMINATION_TIMEOUT');
+      await vi.advanceTimersByTimeAsync(10_000);
+      await rejected;
+      expect(mgr.has('keep')).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { mgr.dispose('keep', owner); vi.useRealTimers(); }
+  });
+});
+
 describe('PtyManager.create', () => {
   it('renames display metadata without touching PTY and preserves it through restart', () => {
     const mgr = makeManager();
