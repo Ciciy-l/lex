@@ -552,6 +552,7 @@ import {
   registerPiAgentIfAvailable,
 } from './maker-host/index.js';
 import { createPiRuntimeRecovery } from './agent-binaries/pi-runtime-recovery.js';
+import { logRequiredRuntimeFailure } from './environment-check-diagnostics.js';
 import { createDynamicMaker } from './maker-host/dynamic-maker.js';
 import { ensureBundledRipgrepReady } from './maker-host/runtime-configs.js';
 import {
@@ -1406,6 +1407,7 @@ const updatePresentationLog = createLogger('update-presentation');
 const voicePowerBroadcastLog = createLogger('voice-input-power');
 const sessionDragPreviewLog = createLogger('session-drag-preview');
 const piSubagentLog = createLogger('pi-subagent');
+const environmentCheckLog = createLogger('environment-check');
 let rendererBootGuard: RendererBootGuard | null = null;
 
 const lifecycleDbClientManager = createLifecycleDbClientManager({
@@ -5937,6 +5939,11 @@ const registerIpcHandlers = () => {
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
+      logRequiredRuntimeFailure(environmentCheckLog, {
+        kind: 'claude-code',
+        platform,
+        stage: 'exception',
+      });
       return {
         claudeCode: { status: 'failed' as const, error: message },
         codex: { status: 'skipped' as const },
@@ -5947,6 +5954,12 @@ const registerIpcHandlers = () => {
     }
 
     if (!claudeRes.ready || !claudeRes.path) {
+      logRequiredRuntimeFailure(environmentCheckLog, {
+        kind: 'claude-code',
+        platform,
+        stage: 'not-ready',
+        runtimeError: claudeRes.error,
+      });
       return {
         claudeCode: {
           status: 'failed' as const,
@@ -5973,6 +5986,11 @@ const registerIpcHandlers = () => {
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
+      logRequiredRuntimeFailure(environmentCheckLog, {
+        kind: 'codex',
+        platform,
+        stage: 'exception',
+      });
       return {
         claudeCode: { status: 'passed' as const, path: claudeRes.path },
         codex: { status: 'failed' as const, error: message },
@@ -5983,6 +6001,12 @@ const registerIpcHandlers = () => {
     }
 
     if (!codexRes.ready || !codexRes.path) {
+      logRequiredRuntimeFailure(environmentCheckLog, {
+        kind: 'codex',
+        platform,
+        stage: 'not-ready',
+        runtimeError: codexRes.error,
+      });
       return {
         claudeCode: { status: 'passed' as const, path: claudeRes.path },
         codex: { status: 'failed' as const, error: codexRes.error ?? 'Codex binary not available' },
@@ -6002,9 +6026,13 @@ const registerIpcHandlers = () => {
       ensureBundledRipgrepReady();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      // splash 失败态 UI 不渲染 error 字段,这行日志是缺 rg 时唯一的诊断出口
-      // (补装指引在 message 里);与下方 pi 失败的 console.warn 同一既有惯例。
-      console.error('[bootstrap-electron] bundled ripgrep check failed:', message);
+      logRequiredRuntimeFailure(environmentCheckLog, {
+        kind: 'ripgrep',
+        platform,
+        stage: 'exception',
+      });
+      // splash 失败态 UI 不渲染 error 字段；上面的结构化诊断保留失败类型，
+      // 同时避免把本地安装路径写入可上传日志。
       return {
         claudeCode: { status: 'passed' as const, path: claudeRes.path },
         codex: { status: 'passed' as const, path: codexRes.path },

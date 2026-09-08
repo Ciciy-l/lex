@@ -4,10 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 
 const appGetPath = vi.fn();
+const appGetVersion = vi.fn(() => '0.1.1');
 
 vi.mock('electron', () => ({
   app: {
     getPath: appGetPath,
+    getVersion: appGetVersion,
   },
 }));
 
@@ -28,10 +30,43 @@ async function loadStore() {
 }
 
 beforeEach(() => {
+  appGetVersion.mockReset();
+  appGetVersion.mockReturnValue('0.1.1');
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cindy-update-channel-'));
   appGetPath.mockImplementation((name: string) => {
     if (name === 'userData') return tempDir;
     return tempDir;
+  });
+});
+
+describe('build-version defaults', () => {
+  it('fails closed when a minimal Electron host does not expose a version', async () => {
+    appGetVersion.mockReturnValue(undefined as unknown as string);
+    const store = await loadStore();
+
+    expect(store.readUpdateChannelSettings().enableBeta).toBe(false);
+  });
+
+  it('defaults a prerelease installer to beta without persisting an override', async () => {
+    appGetVersion.mockReturnValue('0.1.1-rc.1');
+    const store = await loadStore();
+
+    expect(store.readUpdateChannelSettings()).toEqual({
+      enableBeta: true,
+      orgDefaultEnableBeta: false,
+    });
+    expect(store.readUpdateChannelSettingsState().customizedKeys).toEqual([]);
+    expect(fs.existsSync(path.join(tempDir, 'update-channel-settings.json'))).toBe(false);
+  });
+
+  it('preserves an explicit prerelease opt-out', async () => {
+    appGetVersion.mockReturnValue('0.1.1-rc.1');
+    const store = await loadStore();
+
+    await store.writeEnableBeta(false);
+
+    expect(store.readUpdateChannelSettings().enableBeta).toBe(false);
+    expect(store.isEnableBetaUserCustomized()).toBe(true);
   });
 });
 

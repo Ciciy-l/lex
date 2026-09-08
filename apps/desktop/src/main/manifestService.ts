@@ -1,8 +1,7 @@
 /**
  * manifestService.ts
  * ---------------------------------------------------------------------------
- * Fetches and caches the CDN manifest.json that drives both app hot-updates
- * and Claude Code binary management.
+ * Fetches and caches the Lex application update manifest.
  *
  * - Lex updates use their own build-time anchored manifest URL. Cindy service
  *   endpoint manifests are selected at runtime by the signed-in account realm;
@@ -85,7 +84,10 @@ export interface PiManifest {
 
 export interface Manifest {
   app: AppManifest;
-  /** Linux manifests omit agent assets; packaged Linux uses its official runtime fallback. */
+  /**
+   * Runtime fields remain in published manifests only for already-released
+   * clients. Current builds use the build-pinned agent runtime snapshot.
+   */
   claudeCode?: ClaudeCodeManifest;
   codex?: CodexManifest;
   codexPackage?: CodexManifest;
@@ -262,8 +264,8 @@ export async function fetchManifest(
 }
 
 /**
- * Return the in-memory cached manifest (may be null if never fetched or dev mode).
- * 读取时跟当前发布通道对账:共库另一实例切过渠道后,旧缓存不能再给 agent prepare 用。
+ * Return the in-memory cached app update manifest (may be null if never fetched or dev mode).
+ * 读取时跟当前发布通道对账:共库另一实例切过渠道后,旧缓存不能继续驱动更新。
  */
 export function getCachedManifest(): Manifest | null {
   if (!cached) return null;
@@ -278,10 +280,7 @@ export function getCachedManifest(): Manifest | null {
 /**
  * 清掉内存里的 manifest 缓存。
  *
- * 切渠道(beta↔release)时调用:agent 二进制(Claude Code / Codex / ripgrep / pi)
- * 的 prepare 会先 getCachedManifest() 再 fetchManifest(),若缓存还停在旧渠道,
- * 同进程内切渠道后可能继续按旧渠道的版本号/下载地址安装资产。清掉后下一次
- * prepare/轮询会重新按新渠道 fetch。
+ * 切渠道(beta↔release)时调用，确保下次更新轮询不复用旧渠道缓存。
  */
 export function clearCachedManifest(): void {
   cached = null;
@@ -293,11 +292,9 @@ export function clearCachedManifest(): void {
  * 探测 beta 渠道 manifest 是否可达(HTTP 200)。
  *
  * 供设置页在用户打开 beta 开关前预检:CDN 尚未部署 manifest-{platform}-beta.json
- * 时拒绝开启。beta 失败不回落 stable(与 canary 同口径),一旦开启却拉不到,
- * 不只应用热更失效,连 agent 二进制(Claude Code / Codex / ripgrep / pi)也会因
- * 拿不到 manifest 里的版本号而不可用(见 agent-binaries/factory.ts 的
- * 「manifest 之后才判 isInstalled」顺序)——所以「能不能开」必须提前探明,
- * 而不是等用户重启后才发现坏了。
+ * 时拒绝开启。beta 失败不回落 stable(与 canary 同口径)，避免用户切换后
+ * 应用更新被钉在不可达渠道。Agent runtime 使用随构建固定的独立快照，不受
+ * 这里的通道探测结果影响。
  *
  * HTTP 200 之后还要能解析出 app.version；Linux 还必须带完整可信的 .deb 元数据。
  * 截断 JSON / 错误页 / 不完整安装清单都不能当成渠道可用。

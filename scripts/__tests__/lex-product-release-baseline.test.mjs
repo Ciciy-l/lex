@@ -115,16 +115,77 @@ test('release workflows keep one package while choosing signed or versioned unsi
   assert.match(ci, /ref: \$\{\{ inputs\.checkout_ref \|\| github\.sha \}\}/);
 });
 
-test('Lex manifests carry every runtime field consumed by the desktop binary manager', () => {
+test('Lex agent runtime snapshot is pinned, complete, and platform-safe', () => {
+  const snapshot = readJson('config/lex-agent-runtime-assets.json');
+  const pins = {
+    claudeCode: readJson('tools/claude/latest.json'),
+    codex: readJson('tools/codex/latest.json'),
+    codexPackage: readJson('tools/codex-package/latest.json'),
+    pi: readJson('tools/pi/latest.json'),
+  };
+  const directories = {
+    claudeCode: 'claude-code',
+    codex: 'codex',
+    codexPackage: 'codex-package',
+    pi: 'pi',
+  };
+
+  assert.equal(snapshot.schemaVersion, 1);
+  assert.match(snapshot.cdnBaseUrl, /^https:\/\/[^\s/]+(?:\/[^\s/]+)*$/);
+  assert.ok(!snapshot.cdnBaseUrl.endsWith('/'));
+  assert.deepEqual(Object.keys(snapshot.platforms).sort(), [
+    'darwin-arm64',
+    'darwin-x64',
+    'linux-x64',
+    'win32-x64',
+  ]);
+
+  for (const [platform, assets] of Object.entries(snapshot.platforms)) {
+    for (const field of ['claudeCode', 'codex', 'codexPackage', 'pi']) {
+      const value = assets[field];
+      assert.ok(value && typeof value === 'object', `${platform}/${field}`);
+      assert.equal(value.version, pins[field].version, `${platform}/${field} version`);
+      assert.equal(
+        value.file.startsWith(`${directories[field]}/${value.version}/${platform}/`),
+        true,
+        `${platform}/${field} file`,
+      );
+      assert.equal(value.file.includes('..'), false, `${platform}/${field} traversal`);
+      assert.equal(value.file.includes('\\'), false, `${platform}/${field} separator`);
+      assert.equal(value.file.includes('://'), false, `${platform}/${field} relative path`);
+      assert.match(value.sha256, /^[a-f0-9]{64}$/i, `${platform}/${field} sha256`);
+      assert.equal(Number.isSafeInteger(value.size) && value.size > 0, true, `${platform}/${field} size`);
+      if (value.binarySha256 !== undefined) {
+        assert.match(value.binarySha256, /^[a-f0-9]{64}$/i, `${platform}/${field} binarySha256`);
+      }
+    }
+    assert.equal(
+      assets.claudeCode.binarySha256,
+      pins.claudeCode.runtimeAssets[platform].sha256,
+      `${platform}/claudeCode upstream binary digest`,
+    );
+  }
+});
+
+test('Lex update publishing projects the tag-pinned runtime snapshot without network drift', () => {
   const updates = readText('.github/workflows/lex-updates.yml');
-  const consumers = readText('apps/desktop/src/main/agent-binaries/index.ts');
-  const vendorLoop = updates.split('\n').find((line) => line.includes('for key in ('));
-  assert.ok(vendorLoop, 'Lex vendor asset projection must enumerate runtime fields');
-  const published = new Set([...vendorLoop.matchAll(/'([^']+)'/g)].map((match) => match[1]));
-  const required = [...consumers.matchAll(/manifestField: '([^']+)'/g)].map((match) => match[1]);
-  assert.ok(required.includes('codexPackage'), 'Codex package consumption must be covered');
-  for (const field of required) assert.ok(published.has(field), field + ' missing from Lex manifests');
-  assert.ok(published.has('codex'), 'Keep the single-binary field for already-installed older clients');
+  const factory = readText('apps/desktop/src/main/agent-binaries/factory.ts');
+  const binaries = readText('apps/desktop/src/main/agent-binaries/index.ts');
+
+  assert.match(updates, /config\/lex-agent-runtime-assets\.json/);
+  assert.match(updates, /runtime_snapshot\.get\('cdnBaseUrl'/);
+  assert.match(updates, /runtime_snapshot\.get\('platforms'/);
+  assert.match(updates, /payload\.update\(runtime_assets\(platform\)\)/);
+  assert.match(updates, /manifest_suffixes = \[suffix\] if suffix else \['', '-beta'\]/);
+  assert.match(updates, /for output_suffix in manifest_suffixes/);
+  assert.match(updates, /RC installs can graduate/);
+  assert.match(updates, /'claudeCode', 'codex', 'codexPackage', 'ripgrep', 'pi'/);
+  assert.doesNotMatch(updates, /urllib\.request|urlopen\(|CINDY_VENDOR_CDN_BASE/);
+
+  for (const source of [factory, binaries]) {
+    assert.match(source, /getRuntimeManifest/);
+    assert.doesNotMatch(source, /fetchManifest|getCachedManifest|getBaseUrl/);
+  }
 });
 
 test('packaging metadata uses the Lex display name while Cindy remains the service brand', () => {

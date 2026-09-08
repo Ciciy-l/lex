@@ -1,6 +1,15 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -1177,16 +1186,11 @@ describe('Cindy durable PI Subagent runner', () => {
     });
     const controlsDir = path.join(fixture.runDir, 'controls');
     await mkdir(controlsDir, { recursive: true });
-    const write = async (control: Record<string, unknown>): Promise<void> => {
-      const requestId = randomUUID();
-      await writeFile(
-        path.join(controlsDir, `${requestId}.json`),
-        `${JSON.stringify({ version: 1, requestId, ...control })}\n`,
-        { mode: 0o600 },
-      );
-    };
-    // Approval first by every ordering key the runner sorts on.
-    await write({
+    const approvalRequestId = randomUUID();
+    const stopRequestId = randomUUID();
+    const approval = JSON.stringify({
+      version: 1,
+      requestId: approvalRequestId,
       seq: 1,
       requestedAt: 1,
       action: 'approval',
@@ -1194,7 +1198,22 @@ describe('Cindy durable PI Subagent runner', () => {
       approvalId: 'approval-1',
       confirmed: true,
     });
-    await write({ seq: 2, requestedAt: 2, action: 'stop' });
+    const stop = JSON.stringify({
+      version: 1,
+      requestId: stopRequestId,
+      seq: 2,
+      requestedAt: 2,
+      action: 'stop',
+    });
+    // Publish both controls in one synchronous turn. Two awaited writes let a
+    // slow Windows runner poll between them and consume the approval alone,
+    // which did not exercise this test's same-batch ordering premise.
+    await Promise.all([
+      writeFile(path.join(controlsDir, `${approvalRequestId}.json`), `${approval}\n`, {
+        mode: 0o600,
+      }),
+      writeFile(path.join(controlsDir, `${stopRequestId}.json`), `${stop}\n`, { mode: 0o600 }),
+    ]);
 
     const stopped = await waitFor(async () => {
       const [run] = await listPiSubagentRuns(fixture.root);

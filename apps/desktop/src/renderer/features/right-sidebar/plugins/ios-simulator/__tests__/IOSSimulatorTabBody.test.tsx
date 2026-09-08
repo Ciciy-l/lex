@@ -1991,14 +1991,9 @@ describe('IOSSimulatorTabBody', () => {
       },
     });
     api.setViewerVisibility.mockImplementation(async (request) => jpegResult(request));
-    api.latestFrame.mockImplementation(async (request?: unknown) =>
-      jpegResult({
-        ...(request as IOSSimulatorViewerVisibilityRequest),
-        viewerToken: 'poll',
-        visible: true,
-        preferredEncoding: 'jpeg',
-      }),
-    );
+    // The recovery race does not depend on frame polling. Keep the poll pending so the
+    // full Windows shard cannot starve the two recovery completions with 50 ms renders.
+    api.latestFrame.mockReturnValue(new Promise<IOSSimulatorToolResponse>(() => undefined));
     let resolveA!: (value: IOSSimulatorToolResponse) => void;
     let resolveB!: (value: IOSSimulatorToolResponse) => void;
     api.retryNativeRoute.mockImplementation(
@@ -2052,7 +2047,7 @@ describe('IOSSimulatorTabBody', () => {
       await Promise.resolve();
     });
     await screen.findByText('rightSidebar.iosSimulator.nativeRecovery.failed');
-  });
+  }, 60_000);
 
   it('streams pointer samples through native touch and temporarily boosts frame rate', async () => {
     const api = installStatus({

@@ -58,7 +58,6 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
           RELEASE_PRERELEASE: ${{ steps.release.outputs.prerelease }}
           REPOSITORY: ${{ github.repository }}
-          CINDY_VENDOR_CDN_BASE: https://hotfix.cindy.app/cindy
         run: |
           if [ "$RELEASE_PRERELEASE" = true ]; then
             manifest_suffix='-beta'
@@ -67,18 +66,35 @@ jobs:
           else
             manifest_suffix=''
             echo 'MANIFEST_SUFFIX=' >> "$GITHUB_ENV"
-            echo 'This is a stable release; publishing release-channel manifests.' >> "$GITHUB_STEP_SUMMARY"
+            echo 'This is a stable release; publishing release and beta-channel manifests so RC installs can graduate.' >> "$GITHUB_STEP_SUMMARY"
           fi
           export MANIFEST_SUFFIX="$manifest_suffix"
           python3 - <<'PY'
-          import hashlib, json, os, pathlib, re, urllib.request
+          import hashlib, json, os, pathlib, re
 
           root = pathlib.Path('release-assets')
           out = pathlib.Path('generated-manifests')
           version = os.environ['RELEASE_TAG'].removeprefix('v')
           suffix = os.environ.get('MANIFEST_SUFFIX', '')
+          # RC publishes beta only. Stable advances both channels so a user who
+          # installed an RC receives the corresponding stable build without
+          # manually changing Settings.
+          manifest_suffixes = [suffix] if suffix else ['', '-beta']
           base = f"https://github.com/{os.environ['REPOSITORY']}/releases/download/{os.environ['RELEASE_TAG']}"
           files = sorted(p for p in root.iterdir() if p.is_file())
+          runtime_snapshot_path = pathlib.Path('config/lex-agent-runtime-assets.json')
+          try:
+              runtime_snapshot = json.loads(runtime_snapshot_path.read_text(encoding='utf-8'))
+          except (OSError, json.JSONDecodeError) as error:
+              raise SystemExit(f"invalid pinned runtime snapshot: {error}") from error
+          if runtime_snapshot.get('schemaVersion') != 1:
+              raise SystemExit('unsupported pinned runtime snapshot schema')
+          runtime_cdn_base = str(runtime_snapshot.get('cdnBaseUrl', '')).rstrip('/')
+          runtime_platforms = runtime_snapshot.get('platforms')
+          if not re.fullmatch(r'https://[^\s]+', runtime_cdn_base):
+              raise SystemExit('pinned runtime CDN base must be an absolute HTTPS URL')
+          if not isinstance(runtime_platforms, dict):
+              raise SystemExit('pinned runtime snapshot platforms must be an object')
 
           def pick(pattern):
               matches = [p for p in files if pattern.search(p.name)]
@@ -94,33 +110,46 @@ jobs:
                   'size': path.stat().st_size,
               }
 
-          def vendor_assets(platform):
-              """Keep the pinned CLI runtime assets available during migration.
-
-              Lex owns the app update channel; until these large binaries are
-              mirrored, their signed metadata points at the frozen Cindy CDN.
-              Absolute URLs are required because the client base URL is Lex.
-              """
-              source_url = f"{os.environ['CINDY_VENDOR_CDN_BASE']}/manifest-{platform}.json"
-              with urllib.request.urlopen(source_url, timeout=30) as response:
-                  source = json.load(response)
+          def runtime_assets(platform):
+              """Project the release tag's pinned CLI assets for older clients."""
+              source = runtime_platforms.get(platform)
+              if not isinstance(source, dict):
+                  raise SystemExit(f"pinned runtime snapshot is missing platform {platform}")
               result = {}
-              # Keep the legacy single-binary field for older Lex clients;
-              # current Codex consumes the complete package (support files too).
+              required = {'claudeCode', 'codex', 'codexPackage', 'pi'}
               for key in ('claudeCode', 'codex', 'codexPackage', 'ripgrep', 'pi'):
                   value = source.get(key)
-                  if not isinstance(value, dict) or not value.get('file'):
+                  if not isinstance(value, dict):
+                      if key in required:
+                          raise SystemExit(f"pinned runtime snapshot {platform} is missing {key}")
                       continue
                   value = dict(value)
-                  if not re.match(r'^https?://', str(value['file'])):
-                      value['file'] = f"{os.environ['CINDY_VENDOR_CDN_BASE'].rstrip('/')}/{str(value['file']).lstrip('/')}"
+                  runtime_file = str(value.get('file', '')).strip()
+                  if re.fullmatch(r'https://[^\s]+', runtime_file):
+                      value['file'] = runtime_file
+                  else:
+                      path_parts = pathlib.PurePosixPath(runtime_file).parts
+                      if (
+                          not runtime_file
+                          or runtime_file.startswith(('/', '\\'))
+                          or '\\' in runtime_file
+                          or '..' in path_parts
+                          or '://' in runtime_file
+                      ):
+                          raise SystemExit(f"unsafe pinned runtime path for {platform}/{key}")
+                      value['file'] = f"{runtime_cdn_base}/{runtime_file}"
                   result[key] = value
               return result
 
           def app_payload(platform, app):
               payload = {'app': app}
-              payload.update(vendor_assets(platform))
+              payload.update(runtime_assets(platform))
               return payload
+
+          def write_platform_manifest(platform, payload):
+              body = json.dumps(payload, indent=2) + '\n'
+              for output_suffix in manifest_suffixes:
+                  (out / f'manifest-{platform}{output_suffix}.json').write_text(body)
 
           # New releases use self-explanatory public names. Keep the old rc.5
           # patterns as a read-only compatibility path so a manual manifest
@@ -132,10 +161,10 @@ jobs:
           win_installer = pick(re.compile(
               rf'^Lex-{escaped_version}-(?:Windows-x64-)?Setup\.exe$', re.I
           ))
-          (out / f'manifest-win32-x64{suffix}.json').write_text(json.dumps(app_payload('win32-x64', {
+          write_platform_manifest('win32-x64', app_payload('win32-x64', {
               'version': version, 'releaseNotes': f'Lex {version}',
               'hotfix': asset(win_hotfix), 'installer': asset(win_installer)
-          }), indent=2) + '\n')
+          }))
 
           for arch, public_arch in (('arm64', 'Apple-Silicon'), ('x64', 'Intel')):
               hotfix = pick(re.compile(
@@ -147,18 +176,18 @@ jobs:
               installer = pick(re.compile(
                   rf'^Lex-{escaped_version}-(?:macOS-{public_arch}\.dmg|{arch}\.(?:dmg|zip))$', re.I
               ))
-              (out / f'manifest-darwin-{arch}{suffix}.json').write_text(json.dumps(app_payload(f'darwin-{arch}', {
+              write_platform_manifest(f'darwin-{arch}', app_payload(f'darwin-{arch}', {
                   'version': version, 'releaseNotes': f'Lex {version}',
                   'hotfix': asset(hotfix), 'installer': asset(installer)
-              }), indent=2) + '\n')
+              }))
 
           linux = pick(re.compile(
               rf'^Lex-{escaped_version}-(?:Linux-x64|amd64)\.deb$', re.I
           ))
-          (out / f'manifest-linux-x64{suffix}.json').write_text(json.dumps(app_payload('linux-x64', {
+          write_platform_manifest('linux-x64', app_payload('linux-x64', {
               'version': version, 'releaseNotes': f'Lex {version}',
               'installer': asset(linux)
-          }), indent=2) + '\n')
+          }))
           PY
 
       - name: Publish manifests to the Lex updates branch
@@ -176,8 +205,8 @@ jobs:
             git -C "$worktree/repo" checkout --orphan updates
             git -C "$worktree/repo" remote add origin "$repo_url"
           fi
-          # Keep the other channel's manifests. A beta/rc publish must not
-          # erase the last stable manifest, and vice versa.
+          # RC updates beta only. Stable advances both release and beta so
+          # prerelease installs can graduate; untouched channels stay in place.
           cp generated-manifests/* "$worktree/repo/"
           git -C "$worktree/repo" config user.name 'github-actions[bot]'
           git -C "$worktree/repo" config user.email '41898282+github-actions[bot]@users.noreply.github.com'

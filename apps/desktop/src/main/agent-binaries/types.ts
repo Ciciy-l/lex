@@ -35,6 +35,12 @@ export interface BinaryProvisionerConfig {
    */
   optionalAsset?: boolean;
   /**
+   * Use one short network attempt before returning control to an outer fallback
+   * chain. Packaged Linux enables this for required runtimes because it can use
+   * an installed/private/system CLI when the Cindy CDN is unreachable.
+   */
+  fastNetworkFallback?: boolean;
+  /**
    * 可选的本地真实版本探针。配置后，prepare/peek 会优先选择 `.verified` 安装中
    * 实际 semver 不低于 manifest 的最高版本，避免宿主升级时把用户已自更新的
    * runtime 降级。探针失败只表示候选不可用于仲裁，原 manifest 流程照常继续。
@@ -67,9 +73,9 @@ export interface BinaryProvisioner {
   }): Promise<{ ready: boolean; binaryPath: string; error?: string }>;
 
   /**
-   * 不触发任何下载，仅判断"如果调 prepare() 是否会发生 OSS 下载"。
-   * 复用 cached manifest（splash phase 1 已 fetch）+ 本地 isInstalled+.verified 检查。
-   * dev 模式下 host 包壳层应在调用前自行短路（dev 永不走 OSS）。
+   * 不触发任何下载，仅判断"如果调 prepare() 是否会发生 CDN 下载"。
+   * 读取内置 runtime snapshot + 本地 isInstalled+.verified 检查。
+   * dev 模式下 host 包壳层应在调用前自行短路（dev 永不走 CDN）。
    */
   peekNeedsDownload(): Promise<boolean>;
 
