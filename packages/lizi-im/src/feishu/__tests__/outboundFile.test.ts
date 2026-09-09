@@ -2,6 +2,9 @@ import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -10,6 +13,11 @@ const mocks = vi.hoisted(() => ({
   createImage: vi.fn(),
   createMessage: vi.fn(async () => ({ data: { message_id: 'om_sent' } })),
 }));
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return { ...actual, spawn: vi.fn(actual.spawn) };
+});
 
 vi.mock('@larksuiteoapi/node-sdk', () => ({
   Client: class {
@@ -59,9 +67,13 @@ async function fileFixture(name: string, content: string): Promise<string> {
   return absPath;
 }
 
-describe('Feishu parent-chat file reuse', () => {
+describe('Feishu parent-chat file reuse', {
+  timeout: process.platform === 'win32' || process.platform === 'darwin' ? 15_000 : 5_000,
+}, () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.createMessage.mockReset();
+    mocks.createMessage.mockResolvedValue({ data: { message_id: 'om_sent' } });
     outbound.unbindClient();
     outbound.bindClient({ appId: 'cli_file_test', appSecret: 'secret', service: 'feishu' });
     mocks.createFile.mockImplementation(
@@ -79,6 +91,9 @@ describe('Feishu parent-chat file reuse', () => {
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     outbound.unbindClient();
     await Promise.all(
       tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
@@ -216,40 +231,62 @@ describe('Feishu parent-chat file reuse', () => {
     await fs.writeFile(outside, 'LEAKED SECRET');
 
     let uploaded = '';
+    let replaced = false;
+    const originalStat = await fs.stat(absPath, { bigint: true });
     mocks.createFile.mockImplementation(
       async ({ data }: { data: { file: NodeJS.ReadableStream } }) => {
+        expect(replaced).toBe(false);
+        fsSync.renameSync(absPath, path.join(path.dirname(absPath), 'opened-original.txt'));
+        fsSync.copyFileSync(outside, absPath);
+        replaced = true;
         uploaded = await readStream(data.file);
         return { file_key: 'file-key' };
       },
     );
 
-    const realCreateReadStream = fsSync.createReadStream;
-    const spy = vi.spyOn(fsSync, 'createReadStream').mockImplementation(((
-      file: unknown,
-      options?: unknown,
-    ) => {
-      if (file === absPath) {
-        fsSync.unlinkSync(absPath);
-        fsSync.copyFileSync(outside, absPath);
-      }
-      return realCreateReadStream(
-        file as Parameters<typeof realCreateReadStream>[0],
-        options as Parameters<typeof realCreateReadStream>[1],
-      );
-    }) as typeof fsSync.createReadStream);
+    const primary = await outbound.sendFile('ou_owner', absPath, 'report.txt');
+    expect(primary.ok).toBe(true);
+    expect(replaced).toBe(true);
+    expect(uploaded).toBe('trusted report');
+    expect(await fs.readFile(absPath, 'utf8')).toBe('LEAKED SECRET');
+    expect(primary.uploadedSource).toMatchObject({
+      realPath: expect.any(String),
+      dev: String(originalStat.dev),
+      ino: String(originalStat.ino),
+    });
+    expect(String((await fs.stat(absPath, { bigint: true })).ino)).not.toBe(String(originalStat.ino));
+  });
 
-    try {
-      const primary = await outbound.sendFile('ou_owner', absPath, 'report.txt');
-      expect(primary.ok).toBe(true);
-      expect(uploaded).toBe('trusted report');
-      expect(primary.uploadedSource).toMatchObject({
-        realPath: expect.any(String),
-        dev: expect.any(String),
-        ino: expect.any(String),
-      });
-    } finally {
-      spy.mockRestore();
-    }
+  it('settles a timed-out native helper before the next upload can consume its mocks', async () => {
+    const absPath = await fileFixture('timeout.txt', 'trusted report');
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    const child = new EventEmitter();
+    const stdout = new PassThrough();
+    const kill = vi.fn(() => {
+      child.emit('close', null);
+      return true;
+    });
+    const spawnObserved = Promise.withResolvers<void>();
+    vi.mocked(spawn).mockImplementationOnce(() => {
+      spawnObserved.resolve();
+      return Object.assign(child, { stdout, kill }) as unknown as ReturnType<typeof spawn>;
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const pending = outbound.sendFile('ou_owner', absPath);
+    await spawnObserved.promise;
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(mocks.createFile).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(pending).resolves.toMatchObject({ ok: true, uploadedSource: { realPath: '' } });
+    expect(kill).toHaveBeenCalledOnce();
+    expect(mocks.createFile).toHaveBeenCalledOnce();
+    expect(stdout.destroyed).toBe(true);
+    mocks.createMessage.mockRejectedValueOnce(new Error('group unavailable'));
+    await expect(outbound.sendFileToChat('oc_group', {
+      msgType: 'file',
+      content: JSON.stringify({ file_key: 'file-key' }),
+    }, 'after-timeout')).resolves.toEqual({ ok: false, reason: 'SEND_FAIL' });
+    expect(mocks.createFile).toHaveBeenCalledOnce();
   });
 
   it('does not attest a path-based fallback when the Windows helper is unavailable', async () => {
