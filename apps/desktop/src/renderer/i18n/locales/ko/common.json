@@ -6871,8 +6871,8 @@
     "banner": {
       "title": "{{version}}로 업데이트됨",
       "subtitle": "재시작해 적용",
-      "viewNotes": "Lex 버전 정보 보기",
-      "viewNotesAria": "Lex {{version}} 버전 정보 보기",
+      "viewNotes": "{{appName}} 버전 정보 보기",
+      "viewNotesAria": "{{appName}} {{version}} 버전 정보 보기",
       "button": "재시작",
       "tooltipReady": "업데이트 준비됨 — 클릭해 재시작{{versionSuffix}}",
       "ariaCollapsed": "업데이트 준비됨, 클릭해 버전 {{version}}로 재시작",
@@ -6894,8 +6894,8 @@
       "dismissAria": "업데이트 알림 일시 숨김"
     },
     "notice": {
-      "title": "Lex 버전 정보",
-      "viewLexRelease": "GitHub에서 Lex v{{version}} 보기",
+      "title": "{{appName}} 버전 정보",
+      "viewLexRelease": "GitHub에서 {{appName}} v{{version}} 보기",
       "newFeatures": "새로운 기능",
       "bugFixes": "버그 수정",
       "thanksTo": "감사",
@@ -6952,7 +6952,7 @@
       "canaryBadge": "Canary 사용자",
       "regionCodeCn": "CN",
       "regionCodeDev": "Dev",
-      "viewReleaseNotes": "Lex 버전 정보 보기",
+      "viewReleaseNotes": "{{appName}} 버전 정보 보기",
       "reopenUpdateBanner": "업데이트 준비됨 — 클릭하여 확인",
       "downloadMobile": "Cindy 모바일 다운로드"
     },

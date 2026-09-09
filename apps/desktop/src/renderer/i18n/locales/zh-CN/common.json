@@ -6871,8 +6871,8 @@
     "banner": {
       "title": "已更新到 {{version}}",
       "subtitle": "重启以应用更新",
-      "viewNotes": "查看 Lex 版本日志",
-      "viewNotesAria": "查看 Lex {{version}} 的版本日志",
+      "viewNotes": "查看 {{appName}} 版本日志",
+      "viewNotesAria": "查看 {{appName}} {{version}} 的版本日志",
       "button": "立即重启",
       "tooltipReady": "更新已就绪 — 点击重启{{versionSuffix}}",
       "ariaCollapsed": "更新已就绪，点击重启到版本 {{version}}",
@@ -6894,8 +6894,8 @@
       "dismissAria": "关闭更新提示，稍后再决定"
     },
     "notice": {
-      "title": "Lex 版本日志",
-      "viewLexRelease": "查看 Lex v{{version}} GitHub Release",
+      "title": "{{appName}} 版本日志",
+      "viewLexRelease": "查看 {{appName}} v{{version}} GitHub Release",
       "newFeatures": "新功能",
       "bugFixes": "问题修复",
       "thanksTo": "感谢",
@@ -6952,7 +6952,7 @@
       "canaryBadge": "灰度用户",
       "regionCodeCn": "CN",
       "regionCodeDev": "Dev",
-      "viewReleaseNotes": "查看 Lex 版本日志",
+      "viewReleaseNotes": "查看 {{appName}} 版本日志",
       "reopenUpdateBanner": "有更新待重启，点击查看",
       "downloadMobile": "下载 Cindy 移动端"
     },

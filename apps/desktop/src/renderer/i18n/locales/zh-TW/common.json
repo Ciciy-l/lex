@@ -6871,8 +6871,8 @@
     "banner": {
       "title": "已更新到 {{version}}",
       "subtitle": "重啟以應用更新",
-      "viewNotes": "檢視 Lex 版本日誌",
-      "viewNotesAria": "檢視 Lex {{version}} 的版本日誌",
+      "viewNotes": "檢視 {{appName}} 版本日誌",
+      "viewNotesAria": "檢視 {{appName}} {{version}} 的版本日誌",
       "button": "立即重啟",
       "tooltipReady": "更新已就緒 — 點選重啟{{versionSuffix}}",
       "ariaCollapsed": "更新已就緒，點選重啟到版本 {{version}}",
@@ -6894,8 +6894,8 @@
       "dismissAria": "關閉更新提示，稍後再決定"
     },
     "notice": {
-      "title": "Lex 版本日誌",
-      "viewLexRelease": "檢視 Lex v{{version}} GitHub Release",
+      "title": "{{appName}} 版本日誌",
+      "viewLexRelease": "檢視 {{appName}} v{{version}} GitHub Release",
       "newFeatures": "新功能",
       "bugFixes": "問題修復",
       "thanksTo": "感謝",
@@ -6952,7 +6952,7 @@
       "canaryBadge": "灰度使用者",
       "regionCodeCn": "CN",
       "regionCodeDev": "Dev",
-      "viewReleaseNotes": "檢視 Lex 版本日誌",
+      "viewReleaseNotes": "檢視 {{appName}} 版本日誌",
       "reopenUpdateBanner": "有更新待重啟，點選檢視",
       "downloadMobile": "下載 Cindy 移動端"
     },
