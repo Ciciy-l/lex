@@ -6873,8 +6873,8 @@
     "banner": {
       "title": "Updated to {{version}}",
       "subtitle": "Relaunch to apply",
-      "viewNotes": "View Lex Version Notes",
-      "viewNotesAria": "View Lex {{version}} Version Notes",
+      "viewNotes": "View {{appName}} Version Notes",
+      "viewNotesAria": "View {{appName}} {{version}} Version Notes",
       "button": "Relaunch",
       "tooltipReady": "Update ready – click to relaunch{{versionSuffix}}",
       "ariaCollapsed": "Update ready, click to relaunch to version {{version}}",
@@ -6896,8 +6896,8 @@
       "dismissAria": "Dismiss update banner for now"
     },
     "notice": {
-      "title": "Lex Version Notes",
-      "viewLexRelease": "View Lex v{{version}} on GitHub",
+      "title": "{{appName}} Version Notes",
+      "viewLexRelease": "View {{appName}} v{{version}} on GitHub",
       "newFeatures": "New Features",
       "bugFixes": "Bug Fixes",
       "thanksTo": "Thanks to",
@@ -6954,7 +6954,7 @@
       "canaryBadge": "Canary user",
       "regionCodeCn": "CN",
       "regionCodeDev": "Dev",
-      "viewReleaseNotes": "View Lex Version Notes",
+      "viewReleaseNotes": "View {{appName}} Version Notes",
       "reopenUpdateBanner": "Update ready — click to review",
       "downloadMobile": "Download Cindy Mobile"
     },

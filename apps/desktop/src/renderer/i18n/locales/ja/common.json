@@ -6871,8 +6871,8 @@
     "banner": {
       "title": "{{version}} に更新済み",
       "subtitle": "再起動して適用",
-      "viewNotes": "Lex バージョン情報を見る",
-      "viewNotesAria": "Lex {{version}} のバージョン情報を見る",
+      "viewNotes": "{{appName}} バージョン情報を見る",
+      "viewNotesAria": "{{appName}} {{version}} のバージョン情報を見る",
       "button": "再起動",
       "tooltipReady": "更新準備完了 — クリックで再起動{{versionSuffix}}",
       "ariaCollapsed": "更新準備完了、クリックでバージョン {{version}} に再起動",
@@ -6894,8 +6894,8 @@
       "dismissAria": "更新通知を一時的に閉じる"
     },
     "notice": {
-      "title": "Lex バージョン情報",
-      "viewLexRelease": "GitHub で Lex v{{version}} を見る",
+      "title": "{{appName}} バージョン情報",
+      "viewLexRelease": "GitHub で {{appName}} v{{version}} を見る",
       "newFeatures": "新機能",
       "bugFixes": "不具合修正",
       "thanksTo": "感謝",
@@ -6952,7 +6952,7 @@
       "canaryBadge": "Canary ユーザー",
       "regionCodeCn": "CN",
       "regionCodeDev": "Dev",
-      "viewReleaseNotes": "Lex バージョン情報を見る",
+      "viewReleaseNotes": "{{appName}} バージョン情報を見る",
       "reopenUpdateBanner": "更新の準備完了 — クリックして確認",
       "downloadMobile": "Cindy モバイル版をダウンロード"
     },
