@@ -1,0 +1,81 @@
+{
+  "version": "0.1.1-rc.5",
+  "date": "2026-09-09",
+  "contentByLocale": {
+    "zh-CN": {
+      "intro": "Lex 0.1.1-rc.5 版本日志",
+      "topics": [
+        {
+          "id": "independent-device-login",
+          "title": "同机登录互不影响",
+          "text": "Lex 现在使用独立设备身份和凭据命名空间；同一台电脑上的 Cindy 与 Lex 登录不会再互相使会话失效。升级后需要重新登录 Lex 一次。"
+        },
+        {
+          "id": "reliable-version-notes",
+          "title": "更可靠的版本日志",
+          "text": "发布前会校验五种语言的版本日志并同步到更新通道。网络无法获取日志时，Lex 会明确提示失败，并提供当前版本的 GitHub Release 链接供你主动打开。"
+        }
+      ]
+    },
+    "zh-TW": {
+      "intro": "Lex 0.1.1-rc.5 版本日誌",
+      "topics": [
+        {
+          "id": "independent-device-login",
+          "title": "同機登入互不影響",
+          "text": "Lex 現在使用獨立裝置身分與憑證命名空間；同一台電腦上的 Cindy 與 Lex 登入不會再互相使工作階段失效。升級後需要重新登入 Lex 一次。"
+        },
+        {
+          "id": "reliable-version-notes",
+          "title": "更可靠的版本日誌",
+          "text": "發佈前會驗證五種語言的版本日誌並同步到更新通道。網路無法取得日誌時，Lex 會明確提示失敗，並提供目前版本的 GitHub Release 連結供你主動開啟。"
+        }
+      ]
+    },
+    "en": {
+      "intro": "Lex 0.1.1-rc.5 version notes",
+      "topics": [
+        {
+          "id": "independent-device-login",
+          "title": "Independent same-machine sign-in",
+          "text": "Lex now uses its own device identity and credential namespace, so Cindy and Lex no longer invalidate each other's sessions on the same computer. Sign in to Lex once after upgrading."
+        },
+        {
+          "id": "reliable-version-notes",
+          "title": "More reliable version notes",
+          "text": "Publication validates version notes in five languages and publishes them with the update channel. If the notes cannot be fetched, Lex clearly reports the failure and offers the matching GitHub Release for you to open."
+        }
+      ]
+    },
+    "ja": {
+      "intro": "Lex 0.1.1-rc.5 バージョン情報",
+      "topics": [
+        {
+          "id": "independent-device-login",
+          "title": "同一PC上のログインを分離",
+          "text": "Lex は独自のデバイスIDと認証情報の名前空間を使用します。同じPC上の Cindy と Lex が互いのセッションを無効にすることはありません。アップグレード後に Lex へ一度再ログインしてください。"
+        },
+        {
+          "id": "reliable-version-notes",
+          "title": "より信頼できるバージョン情報",
+          "text": "公開前に5言語のバージョン情報を検証し、更新チャネルとともに公開します。取得できない場合、Lex は失敗を明示し、対応する GitHub Release を自分で開けるリンクを表示します。"
+        }
+      ]
+    },
+    "ko": {
+      "intro": "Lex 0.1.1-rc.5 버전 정보",
+      "topics": [
+        {
+          "id": "independent-device-login",
+          "title": "같은 PC의 로그인 분리",
+          "text": "Lex는 별도의 기기 ID와 자격 증명 네임스페이스를 사용합니다. 같은 컴퓨터의 Cindy와 Lex가 더 이상 서로의 세션을 무효화하지 않습니다. 업그레이드 후 Lex에 한 번 다시 로그인하세요."
+        },
+        {
+          "id": "reliable-version-notes",
+          "title": "더 신뢰할 수 있는 버전 정보",
+          "text": "배포 전에 5개 언어의 버전 정보를 검증하고 업데이트 채널과 함께 게시합니다. 정보를 가져오지 못하면 Lex가 실패를 명확히 알리고, 사용자가 직접 열 수 있는 해당 GitHub Release 링크를 제공합니다."
+        }
+      ]
+    }
+  }
+}
