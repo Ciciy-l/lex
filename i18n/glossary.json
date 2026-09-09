@@ -14,6 +14,18 @@
   ],
   "terms": [
     {
+      "id": "lex-version-notes",
+      "status": "proposed",
+      "en": "Lex Version Notes",
+      "translations": {
+        "zh-CN": "Lex 版本日志",
+        "zh-TW": "Lex 版本日誌",
+        "ja": "Lex バージョン情報",
+        "ko": "Lex 버전 정보"
+      },
+      "note": "Lex 桌面版本的结构化更新信息，区别于 Cindy 在线服务；用于版本日志弹窗和查看入口。"
+    },
+    {
       "id": "cindy-ai-free-tier",
       "status": "proposed",
       "en": "Free tier",

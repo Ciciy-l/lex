@@ -38,7 +38,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { pipeline } from 'node:stream/promises';
 import { execFile, execFileSync, spawn } from 'node:child_process';
-import { machineIdSync } from 'node-machine-id';
+import { deviceCredentialKey, getProductDeviceId } from './productDeviceId';
 import windowStateKeeper from 'electron-window-state';
 import { BRAND_NAME } from '@cindy/maker-shared/branding';
 import {
@@ -4266,7 +4266,10 @@ const registerIpcHandlers = () => {
   // refresh token / local 模式)时不得激活亮色门,否则已登录暗色用户会先看到
   // 亮色首帧。必须 sendSync——判定发生在首帧之前,异步 IPC 赶不上。
   ipcMain.on('auth:has-persisted-session-hint-sync', (event) => {
-    event.returnValue = hasPersistedSessionHint({ userDataPath: app.getPath('userData') });
+    event.returnValue = hasPersistedSessionHint({
+      userDataPath: app.getPath('userData'),
+      credentialKey: deviceCredentialKey,
+    });
   });
 
   ipcMain.on('get-app-display-version-info', (event) => {
@@ -4985,7 +4988,7 @@ const registerIpcHandlers = () => {
   );
 
   // Device ID (hardware-based, survives app reinstall)
-  const machineId = machineIdSync();
+  const machineId = getProductDeviceId();
   ipcMain.handle('get-device-id', () => machineId);
 
   // CC 网络调试开关 — renderer Settings → Experimental "CC 网络调试日志" 操作此值。

@@ -370,13 +370,12 @@ describe('resolveDevCliFlags', () => {
       envDeviceIdOverride: 'my-device',
     });
     expect(flags.needsIsolatedDeviceId).toBe(false);
-    // 空白串视作未设置,仍要派生
     const blank = resolveDevCliFlags({
       ...base,
       argv: [...base.argv, '--isolated'],
       envDeviceIdOverride: '   ',
     });
-    expect(blank.needsIsolatedDeviceId).toBe(true);
+    expect(blank.needsIsolatedDeviceId).toBe(false);
   });
 
   it('显式 XDT_USER_DATA_DIR 优先于沙箱默认目录(设备标识照常派生)', () => {

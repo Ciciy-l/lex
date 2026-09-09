@@ -79,6 +79,11 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: Validate Lex version notices before building
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: node scripts/lex-release-notices.mjs "$RELEASE_VERSION"
+
       - name: Select automatic signing mode
         id: mode
         shell: bash

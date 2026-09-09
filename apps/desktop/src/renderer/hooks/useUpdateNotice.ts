@@ -10,6 +10,7 @@ import { useLocale } from '@/hooks/useLocale';
 import type { SupportedLocale } from '@/i18n';
 import { toast } from '@/lib/toast';
 import { createLogger } from '@/lib/logger';
+import { lexReleaseUrl } from '@/release-notes/lexRelease';
 
 const log = createLogger('UseUpdateNotice');
 
@@ -210,6 +211,16 @@ function versionsForManual(index: string[] | null, appVersion: string): string[]
 export function useUpdateNotice(): UseUpdateNoticeReturn {
   const { t } = useTranslation();
   const { effectiveLocale } = useLocale();
+  const showNoticeFailure = useCallback((version: string) => {
+    toast.error(t('logic.toasts.fetchUpdateNoticeFailed'), {
+      action: {
+        label: t('update.notice.viewLexRelease', { version }),
+        onClick: () => { void window.electronAPI.openExternal(lexReleaseUrl(version)); },
+      },
+    });
+  }, [t]);
+  const showNoticeFailureRef = useRef(showNoticeFailure);
+  showNoticeFailureRef.current = showNoticeFailure;
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<UpdateNoticeMode | null>(null);
   const [releaseNotes, setReleaseNotes] = useState<ReleaseNotes[] | null>(null);
@@ -344,8 +355,14 @@ export function useUpdateNotice(): UseUpdateNoticeReturn {
           });
         }
       }
+      if (!cancelled && !dialogOpenedRef.current && !autoNoticeSuppressedRef.current) {
+        showNoticeFailureRef.current(appVersion);
+      }
     })().catch((err) => {
       log.warn('auto-fetch threw:', err);
+      if (!cancelled && !dialogOpenedRef.current && !autoNoticeSuppressedRef.current) {
+        showNoticeFailureRef.current(appVersion);
+      }
     });
 
     return () => { cancelled = true; };
@@ -445,7 +462,7 @@ export function useUpdateNotice(): UseUpdateNoticeReturn {
       }
       if (!seed) {
         dialogOpenedRef.current = false;
-        toast.error(t('logic.toasts.fetchUpdateNoticeFailed'));
+        showNoticeFailure(appVersion);
         return;
       }
 
@@ -465,9 +482,9 @@ export function useUpdateNotice(): UseUpdateNoticeReturn {
     })().catch((err) => {
       dialogOpenedRef.current = false;
       log.warn('manual-fetch threw:', err);
-      toast.error(t('logic.toasts.fetchUpdateNoticeFailed'));
+      showNoticeFailure(appVersion);
     });
-  }, [t, open, fetchVersionsForCurrentLocale]);
+  }, [showNoticeFailure, open, fetchVersionsForCurrentLocale]);
 
   const onOpenVersion = useCallback((pendingVersion: string) => {
     // `open` is state, so two clicks in the same tick both read `false` and both
@@ -512,7 +529,7 @@ export function useUpdateNotice(): UseUpdateNoticeReturn {
       // didn't ask. Bail (the banner's probe makes this a rare CDN race).
       if (!notes.some((n) => n.version === pendingVersion)) {
         dialogOpenedRef.current = false;
-        toast.error(t('logic.toasts.fetchUpdateNoticeFailed'));
+        showNoticeFailure(pendingVersion);
         return;
       }
 
@@ -531,9 +548,9 @@ export function useUpdateNotice(): UseUpdateNoticeReturn {
     })().catch((err) => {
       dialogOpenedRef.current = false;
       log.warn('preview-fetch threw:', err);
-      toast.error(t('logic.toasts.fetchUpdateNoticeFailed'));
+      showNoticeFailure(pendingVersion);
     });
-  }, [t, open, fetchVersionsForCurrentLocale]);
+  }, [showNoticeFailure, open, fetchVersionsForCurrentLocale]);
 
   const loadVersion = useCallback(
     (version: string) => fetchReleaseNotes(version, effectiveLocale),

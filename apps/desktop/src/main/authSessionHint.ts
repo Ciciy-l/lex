@@ -15,15 +15,16 @@ import fs from 'node:fs';
 
 /** 与 authManager.ts 的 AUTH_SESSION_KEY / LEGACY_*_KEY 对应(那边是
  * module-private 常量;此处只按 safe-storage 落盘文件名做存在性检查)。 */
-const PERSISTED_TOKEN_FILES = [
-  'cindy_auth_session_v1.enc',
-  'cindy_auth_refresh_token.enc',
-  'cindy_auth_account_refresh_token.enc',
-  'refresh_token.enc',
+const PERSISTED_TOKEN_KEYS = [
+  'cindy_auth_session_v1',
+  'cindy_auth_refresh_token',
+  'cindy_auth_account_refresh_token',
+  'refresh_token',
 ];
 
 export interface AuthSessionHintDeps {
   userDataPath: string;
+  credentialKey?: (key: string) => string;
   existsSync?: (filepath: string) => boolean;
   readFileSync?: (filepath: string) => string;
 }
@@ -40,8 +41,9 @@ export function hasPersistedSessionHint(deps: AuthSessionHintDeps): boolean {
   const read = deps.readFileSync ?? ((p: string) => fs.readFileSync(p, 'utf-8'));
 
   const safeStorageDir = path.join(deps.userDataPath, 'safe-storage');
-  for (const file of PERSISTED_TOKEN_FILES) {
+  for (const key of PERSISTED_TOKEN_KEYS) {
     try {
+      const file = `${deps.credentialKey?.(key) ?? key}.enc`;
       if (exists(path.join(safeStorageDir, file))) return true;
     } catch {
       // 单个探测失败继续查其余线索

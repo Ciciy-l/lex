@@ -46,6 +46,9 @@ jobs:
           fi
           echo "prerelease=$(jq -r '.isPrerelease' <<<"$release_json")" >> "$GITHUB_OUTPUT"
 
+      - name: Validate tagged Lex version notices
+        run: node scripts/lex-release-notices.mjs "$RELEASE_TAG"
+
       - name: Download release assets
         run: |
           rm -rf release-assets generated-manifests
@@ -208,6 +211,7 @@ jobs:
           # RC updates beta only. Stable advances both release and beta so
           # prerelease installs can graduate; untouched channels stay in place.
           cp generated-manifests/* "$worktree/repo/"
+          node scripts/lex-release-notices.mjs "$RELEASE_TAG" "$worktree/repo"
           git -C "$worktree/repo" config user.name 'github-actions[bot]'
           git -C "$worktree/repo" config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git -C "$worktree/repo" add .

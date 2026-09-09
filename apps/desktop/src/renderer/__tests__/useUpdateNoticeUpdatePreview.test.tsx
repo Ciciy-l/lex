@@ -83,6 +83,30 @@ afterEach(() => {
 });
 
 describe('useUpdateNotice onOpenVersion — pre-install preview', () => {
+  it.each(['manual', 'preview'])('offers a version-specific Lex link on %s failure without redirecting', async (entry) => {
+    const openExternal = vi.fn();
+    window.electronAPI.openExternal = openExternal;
+    mocks.fetchReleaseNotes.mockResolvedValue(null);
+    mocks.fetchReleaseNotesIndex.mockResolvedValue(null);
+    const { result } = renderHook(() => useUpdateNotice());
+    act(() => {
+      if (entry === 'manual') result.current.onOpen();
+      else result.current.onOpenVersion('1.4.2');
+    });
+    await waitFor(() => expect(mocks.toastError).toHaveBeenCalled());
+    expect(openExternal).not.toHaveBeenCalled();
+    const [message, options] = mocks.toastError.mock.calls[0];
+    expect(message).toBe('logic.toasts.fetchUpdateNoticeFailed');
+    expect(options.action.label).toBe('update.notice.viewLexRelease');
+    options.action.onClick();
+    expect(openExternal).toHaveBeenCalledWith(
+      entry === 'manual'
+        ? 'https://github.com/Ciciy-l/lex/releases/tag/v1.4.1'
+        : 'https://github.com/Ciciy-l/lex/releases/tag/v1.4.2',
+    );
+    expect(result.current.open).toBe(false);
+  });
+
   it('shows one block for a plain one-version bump', async () => {
     const { result } = renderHook(() => useUpdateNotice());
 

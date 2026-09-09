@@ -161,7 +161,7 @@ export interface DevCliFlagsInput {
    * 同一显式路径按默认身份打开造成双身份互写(#912 review P1 第三十二轮)。
    */
   envUserDataDirEpoch: string | undefined;
-  /** 已显式设置的 XDT_DEVICE_ID_OVERRIDE;非空时隔离模式不再派生独立设备标识。 */
+  /** 已显式设置的 XDT_DEVICE_ID_OVERRIDE;包括空串,隔离模式都不再派生设备标识。 */
   envDeviceIdOverride: string | undefined;
   /** XDT_SCHEDULER_PASSIVE 环境变量:严格 '1' = 被动模式(restart 脚本路径)。 */
   envSchedulerPassive: string | undefined;
@@ -429,7 +429,7 @@ export function resolveDevCliFlags(input: DevCliFlagsInput): DevCliFlags {
     isolatedOnProductionProfile,
     userDataDirOverride,
     isolatedDirIsEpochDerived,
-    needsIsolatedDeviceId: isolated && !input.envDeviceIdOverride?.trim(),
+    needsIsolatedDeviceId: isolated && input.envDeviceIdOverride === undefined,
     isolationName,
     invalidIsolationName,
     // argv 优先(human 直跑),env 兜底(restart 脚本路径);与 --passive 同款双通道。

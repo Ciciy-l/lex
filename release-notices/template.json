@@ -1,0 +1,81 @@
+{
+  "version": "REPLACE_WITH_RELEASE_VERSION",
+  "date": "2026-09-09",
+  "contentByLocale": {
+    "zh-CN": {
+      "intro": "Lex 版本日志",
+      "topics": [
+        {
+          "id": "device-isolation",
+          "title": "独立设备登录",
+          "text": "Lex 与 Cindy 使用独立设备会话，同机登录不再互相覆盖。升级后需要重新登录 Lex 一次。"
+        },
+        {
+          "id": "version-notes",
+          "title": "可靠的版本日志",
+          "text": "发布前校验五种语言的版本日志。获取失败时显示明确提示，并提供对应版本的 Lex GitHub Release 链接，由你决定是否打开。"
+        }
+      ]
+    },
+    "zh-TW": {
+      "intro": "Lex 版本日誌",
+      "topics": [
+        {
+          "id": "device-isolation",
+          "title": "獨立裝置登入",
+          "text": "Lex 與 Cindy 使用獨立裝置工作階段，同機登入不再互相覆寫。升級後需要重新登入 Lex 一次。"
+        },
+        {
+          "id": "version-notes",
+          "title": "可靠的版本日誌",
+          "text": "發佈前驗證五種語言的版本日誌。取得失敗時顯示明確提示，並提供對應版本的 Lex GitHub Release 連結，由你決定是否開啟。"
+        }
+      ]
+    },
+    "en": {
+      "intro": "Lex version notes",
+      "topics": [
+        {
+          "id": "device-isolation",
+          "title": "Independent device login",
+          "text": "Lex and Cindy use separate device sessions on the same machine. This upgrade requires signing in to Lex once again."
+        },
+        {
+          "id": "version-notes",
+          "title": "Reliable version notes",
+          "text": "Release publication validates notes in five languages. If notes cannot be fetched, an explicit error offers the matching Lex GitHub Release link without opening it automatically."
+        }
+      ]
+    },
+    "ja": {
+      "intro": "Lex バージョン情報",
+      "topics": [
+        {
+          "id": "device-isolation",
+          "title": "独立したデバイスログイン",
+          "text": "同じ端末の Lex と Cindy が別々のデバイスセッションを使用します。アップグレード後、Lex への再ログインが一度必要です。"
+        },
+        {
+          "id": "version-notes",
+          "title": "確実なバージョン情報",
+          "text": "公開前に5言語のバージョン情報を検証します。取得に失敗した場合はエラーと該当する Lex GitHub Release へのリンクを表示し、自動では開きません。"
+        }
+      ]
+    },
+    "ko": {
+      "intro": "Lex 버전 정보",
+      "topics": [
+        {
+          "id": "device-isolation",
+          "title": "독립적인 기기 로그인",
+          "text": "같은 컴퓨터의 Lex와 Cindy가 별도의 기기 세션을 사용합니다. 업그레이드 후 Lex에 한 번 다시 로그인해야 합니다."
+        },
+        {
+          "id": "version-notes",
+          "title": "신뢰할 수 있는 버전 정보",
+          "text": "배포 전에 5개 언어의 버전 정보를 검증합니다. 정보를 가져오지 못하면 오류와 해당 Lex GitHub Release 링크를 표시하며 자동으로 열지 않습니다."
+        }
+      ]
+    }
+  }
+}

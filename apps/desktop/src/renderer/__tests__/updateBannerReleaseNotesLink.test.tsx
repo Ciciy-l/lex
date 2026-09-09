@@ -63,6 +63,7 @@ beforeEach(() => {
     value: {
       anyActivityBlockingRelaunch,
       relaunchToUpdate,
+      openExternal: vi.fn(),
       clientEndpoints: { websiteUrl: 'https://cindy.ai' },
     } as unknown as Window['electronAPI'],
   });
@@ -90,6 +91,12 @@ describe('UpdateBanner release-notes link', () => {
 
     await waitFor(() => expect(fetchReleaseNotes).toHaveBeenCalled());
     expect(screen.queryByText(LINK)).toBeNull();
+    expect(screen.getByText('update.notice.loadFailed')).toBeTruthy();
+    expect(window.electronAPI.openExternal).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText('update.notice.viewLexRelease:1.4.2'));
+    expect(window.electronAPI.openExternal).toHaveBeenCalledWith(
+      'https://github.com/Ciciy-l/lex/releases/tag/v1.4.2',
+    );
   });
 
   it('hides the link while the busy-turn interruption warning is showing', async () => {

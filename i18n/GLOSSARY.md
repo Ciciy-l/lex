@@ -255,6 +255,10 @@ Lark 国际版 IM 服务的官方品牌名，四语统一保留原品牌写法�
 
 Orca 协同角色名，与 Worker 成对。五语统一保留英文 Lead，不译成 Leader / 主控 / 主导 / 队长。这里只钉大小写形态：首字母大写 Lead。存量文案里仍有小写 lead（如 lead session），先登记为 proposed，待与 Worker 一并固化。
 
+### Lex Version Notes
+
+Lex 桌面版本的结构化更新信息，区别于 Cindy 在线服务；用于版本日志弹窗和查看入口。
+
 ### Local model
 
 用户机器上运行的开源权重模型（经 Ollama / LM Studio 等本机 runtime）。刻意不用「本地模型」——「本地模式」已废弃，指未登录 Cindy 账号；「本机」强调权重和推理都在用户这台电脑上。设置页本机模型分组、Ollama 详情副标题使用。proposed：等本机模型入口上线后再固化。

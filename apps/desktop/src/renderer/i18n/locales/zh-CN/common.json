@@ -6871,8 +6871,8 @@
     "banner": {
       "title": "已更新到 {{version}}",
       "subtitle": "重启以应用更新",
-      "viewNotes": "查看更新公告",
-      "viewNotesAria": "查看 {{version}} 的更新公告",
+      "viewNotes": "查看 Lex 版本日志",
+      "viewNotesAria": "查看 Lex {{version}} 的版本日志",
       "button": "立即重启",
       "tooltipReady": "更新已就绪 — 点击重启{{versionSuffix}}",
       "ariaCollapsed": "更新已就绪，点击重启到版本 {{version}}",
@@ -6894,7 +6894,8 @@
       "dismissAria": "关闭更新提示，稍后再决定"
     },
     "notice": {
-      "title": "更新公告",
+      "title": "Lex 版本日志",
+      "viewLexRelease": "查看 Lex v{{version}} GitHub Release",
       "newFeatures": "新功能",
       "bugFixes": "问题修复",
       "thanksTo": "感谢",
@@ -6904,7 +6905,7 @@
       "versionsSpan": "{{count}} 个版本",
       "versionJumpAria": "跳转到版本，共 {{count}} 个版本，当前 v{{version}}",
       "loading": "加载中",
-      "loadFailed": "加载失败",
+      "loadFailed": "获取版本日志失败",
       "retry": "重试"
     },
     "translocated": {
@@ -6951,7 +6952,7 @@
       "canaryBadge": "灰度用户",
       "regionCodeCn": "CN",
       "regionCodeDev": "Dev",
-      "viewReleaseNotes": "查看版本日志",
+      "viewReleaseNotes": "查看 Lex 版本日志",
       "reopenUpdateBanner": "有更新待重启，点击查看",
       "downloadMobile": "下载 Cindy 移动端"
     },
@@ -10928,7 +10929,7 @@
       "migrationNoneNeeded": "所有项已存在，无需迁移",
       "migrationPartial": "迁移完成：成功 {{success}} / 跳过 {{skipped}} / 失败 {{failed}}（共 {{total}}）",
       "migrationFailed": "迁移失败，请稍后重试",
-      "fetchUpdateNoticeFailed": "获取更新公告失败",
+      "fetchUpdateNoticeFailed": "获取版本日志失败",
       "corruptionRestored": "数据库已从 {{time}} 的快照恢复，期间的对话记录可能丢失",
       "schemaDriftWarning": "本地数据库版本记录不一致。请升级到最新版；如果更新后仍反复出现，请联系支持。应用不会自动删除本地数据",
       "telegramBotConnected": "Telegram 机器人配置已保存",

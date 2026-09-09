@@ -19,7 +19,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import fs from 'node:fs';
-import { machineIdSync } from 'node-machine-id';
+import { deviceCredentialKey, getProductDeviceId } from './productDeviceId';
 import {
   AuthApiError,
   CindyAuthClient,
@@ -200,22 +200,22 @@ const AUTH_REGION: AuthRegion =
 function authServerUrl(realm: AuthRegion = activeAuthRealm): string {
   return getClientEndpointForRealm(realm, 'authApiBaseUrl');
 }
-const AUTH_SESSION_KEY = 'cindy_auth_session_v1';
-const AUTH_ACCOUNT_VAULT_KEY = 'cindy_auth_accounts_v1';
+const AUTH_SESSION_KEY = deviceCredentialKey('cindy_auth_session_v1');
+const AUTH_ACCOUNT_VAULT_KEY = deviceCredentialKey('cindy_auth_accounts_v1');
 const AUTH_ACCOUNT_VAULT_LOCK_FILE = '.cindy-auth-accounts-v1.lock';
 const CLOUD_OWNER_REALM_REGISTRY_KEY = 'lex_cloud_owner_realms_v1';
 const CLOUD_OWNER_REALM_REGISTRY_LOCK_FILE = '.lex-cloud-owner-realms-v1.lock';
-const AUTH_ACCOUNT_LOGOUT_TOMBSTONES_KEY = 'cindy_auth_account_logout_tombstones_v1';
+const AUTH_ACCOUNT_LOGOUT_TOMBSTONES_KEY = deviceCredentialKey('cindy_auth_account_logout_tombstones_v1');
 // The aggregate vault stays readable by v1 clients for explicit-login
 // compatibility. Per-membership logout tombstones live in a separate key that
 // older clients never read or rewrite, so their Passport sync cannot resurrect
 // an account explicitly logged out by a newer client.
 const AUTH_ACCOUNT_VAULT_VERSION = 2 as const;
 const AUTH_ACCOUNT_LOGOUT_TOMBSTONES_VERSION = 1 as const;
-const LEGACY_RESOURCE_REFRESH_TOKEN_KEY = 'cindy_auth_refresh_token';
+const LEGACY_RESOURCE_REFRESH_TOKEN_KEY = deviceCredentialKey('cindy_auth_refresh_token');
 const ACCOUNT_DELETION_RECEIPT_KEY = 'cindy_auth_account_deletion_receipt';
-const LEGACY_ACCOUNT_REFRESH_TOKEN_KEY = 'cindy_auth_account_refresh_token';
-const LEGACY_REFRESH_TOKEN_KEY = 'refresh_token';
+const LEGACY_ACCOUNT_REFRESH_TOKEN_KEY = deviceCredentialKey('cindy_auth_account_refresh_token');
+const LEGACY_REFRESH_TOKEN_KEY = deviceCredentialKey('refresh_token');
 const DEFAULT_MODEL = 'claude-sonnet-4-6';
 const DEFAULT_EFFORT = 'medium';
 
@@ -408,13 +408,13 @@ function isOwnerChangeShellPending(): boolean {
   return ownerChangeShellPendingDepth > 0;
 }
 /**
- * 设备标识。默认绑定物理机(machineIdSync)。
+ * 设备标识由 productDeviceId 统一解析；正式 Lex 使用独立的 lex- 设备命名空间。
  *
- * dev-only 覆盖:设了 `XDT_DEVICE_ID_OVERRIDE` 则用它——用于在同一台机器上跑多个
+ * 显式覆盖:设了 `XDT_DEVICE_ID_OVERRIDE` 则原样使用——用于在同一台机器上跑多个
  * desktop 实例模拟「多设备」(device-link 跨设备远程控制本地联调)。deviceId 只是
  * 同账号下区分设备的标识、非鉴权凭证(鉴权走 auth-server 签发的 JWT),覆盖无安全风险。
  */
-const deviceId = process.env.XDT_DEVICE_ID_OVERRIDE?.trim() || machineIdSync();
+const deviceId = getProductDeviceId();
 
 let loginFlowState: AuthFlowState | null = null;
 let providerConfig: ProviderConfig | null = null;
