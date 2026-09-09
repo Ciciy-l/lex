@@ -27,9 +27,8 @@
  * 弹窗(useUpdateNotice 的 onOpenVersion),普通单版本升级就只有一块。三条刻意的边界:
  *   - 只在 ready 态出现。superseding 态顶部刻意不显示版本号(新版还在下),没有可信的
  *     版本可查,confirming 态则要保持中断警告的干净,两者都不给入口。
- *   - CDN 上没有该版本公告(或内容不可渲染)时不显示入口 —— 用挂载时的 fetch 探测,
- *     宁可没有入口,也不给一个点了报错的链接。探测结果被 release-notes 双层缓存复用,
- *     真正点开时不会再打一次网。
+ *   - CDN 公告可用时显示应用内入口；获取失败时显示明确错误和对应 Lex Release 链接,
+ *     不自动打开浏览器。成功探测被 release-notes 双层缓存复用,真正点开时无需再请求。
  *   - 收起 / rail 态放不下文字链,因此**没有入口**;那两态里 UserInfoSection 的火焰按钮
  *     也只能看 <= 当前已装版本的历史,看不到待装版本。这是本方案已知的取舍。
  *
@@ -56,6 +55,7 @@ import { useLocale } from '@/hooks/useLocale';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Tip } from '@/components/ui/tooltip';
 import { fetchReleaseNotes } from '@/release-notes';
+import { lexReleaseUrl } from '@/release-notes/lexRelease';
 import { LEX_DOWNLOAD_PAGE_URL } from '../../../shared/endpoints';
 
 const WINDOWS_VC_RUNTIME_DOWNLOAD_URL = 'https://aka.ms/vs/17/release/vc_redist.x64.exe';
@@ -112,6 +112,7 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
   const [showSpawnFailedDialog, setShowSpawnFailedDialog] = useState(false);
   // 待安装版本的公告在 CDN 上是否可用 —— 决定文字链是否渲染。
   const [hasNotes, setHasNotes] = useState(false);
+  const [failedNotesVersion, setFailedNotesVersion] = useState<string | null>(null);
 
   // Show the translocated fallback dialog when the main process reports
   // the app is running from a read-only App Translocation path.
@@ -170,14 +171,25 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
   //     让探测跟着弹窗开关反复重跑。
   const canOpenNotice = Boolean(onOpenVersionNotice);
   useEffect(() => {
+    setFailedNotesVersion(null);
     if (status !== 'ready' || !version || !canOpenNotice || isCollapsed) {
       setHasNotes(false);
       return;
     }
     let cancelled = false;
     fetchReleaseNotes(version, effectiveLocale)
-      .then((notes) => { if (!cancelled) setHasNotes(notes !== null); })
-      .catch(() => { if (!cancelled) setHasNotes(false); });
+      .then((notes) => {
+        if (!cancelled) {
+          setHasNotes(notes !== null);
+          setFailedNotesVersion(notes === null ? version : null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setHasNotes(false);
+          setFailedNotesVersion(version);
+        }
+      });
     return () => { cancelled = true; };
   }, [status, version, canOpenNotice, isCollapsed, effectiveLocale]);
 
@@ -504,6 +516,20 @@ export function UpdateBanner({ isCollapsed, onOpenVersionNotice }: UpdateBannerP
             >
               {t('update.banner.viewNotes')}
             </button>
+          )}
+          {status === 'ready' && !confirming && failedNotesVersion === version && version && (
+            <>
+              <span className="text-center text-xs text-sidebar-muted">
+                {t('update.notice.loadFailed')}
+              </span>
+              <button
+                type="button"
+                className="text-xs text-sidebar-muted underline underline-offset-2 hover:text-foreground"
+                onClick={() => void window.electronAPI.openExternal(lexReleaseUrl(version))}
+              >
+                {t('update.notice.viewLexRelease', { version })}
+              </button>
+            </>
           )}
         </div>
 

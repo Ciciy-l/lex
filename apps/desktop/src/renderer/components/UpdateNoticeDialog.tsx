@@ -19,6 +19,7 @@ import type {
 import type { UpdateNoticeMode } from '@/hooks/useUpdateNotice';
 import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils';
+import { lexReleaseUrl } from '@/release-notes/lexRelease';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -353,6 +354,13 @@ function PlaceholderBlock({
         {isError && (
           <span className="inline-flex items-center gap-2 text-12 text-[var(--cmd-palette-item-meta)]">
             {t('update.notice.loadFailed')}
+            <button
+              type="button"
+              className="underline underline-offset-2"
+              onClick={() => void window.electronAPI.openExternal(lexReleaseUrl(version))}
+            >
+              {t('update.notice.viewLexRelease', { version })}
+            </button>
             {onRetry && (
               <button
                 type="button"

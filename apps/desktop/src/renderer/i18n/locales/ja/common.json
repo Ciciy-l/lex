@@ -6871,8 +6871,8 @@
     "banner": {
       "title": "{{version}} に更新済み",
       "subtitle": "再起動して適用",
-      "viewNotes": "更新情報を見る",
-      "viewNotesAria": "{{version}} の更新情報を見る",
+      "viewNotes": "Lex バージョン情報を見る",
+      "viewNotesAria": "Lex {{version}} のバージョン情報を見る",
       "button": "再起動",
       "tooltipReady": "更新準備完了 — クリックで再起動{{versionSuffix}}",
       "ariaCollapsed": "更新準備完了、クリックでバージョン {{version}} に再起動",
@@ -6894,7 +6894,8 @@
       "dismissAria": "更新通知を一時的に閉じる"
     },
     "notice": {
-      "title": "更新情報",
+      "title": "Lex バージョン情報",
+      "viewLexRelease": "GitHub で Lex v{{version}} を見る",
       "newFeatures": "新機能",
       "bugFixes": "不具合修正",
       "thanksTo": "感謝",
@@ -6904,7 +6905,7 @@
       "versionsSpan": "{{count}} バージョン",
       "versionJumpAria": "バージョンへ移動 — 全 {{count}} バージョン、現在は v{{version}}",
       "loading": "読み込み中",
-      "loadFailed": "読み込み失敗",
+      "loadFailed": "バージョン情報の取得に失敗しました",
       "retry": "再試行"
     },
     "translocated": {
@@ -6951,7 +6952,7 @@
       "canaryBadge": "Canary ユーザー",
       "regionCodeCn": "CN",
       "regionCodeDev": "Dev",
-      "viewReleaseNotes": "リリースノートを表示",
+      "viewReleaseNotes": "Lex バージョン情報を見る",
       "reopenUpdateBanner": "更新の準備完了 — クリックして確認",
       "downloadMobile": "Cindy モバイル版をダウンロード"
     },
@@ -10928,7 +10929,7 @@
       "migrationNoneNeeded": "すべて存在するため、移行は不要です",
       "migrationPartial": "移行完了：成功 {{success}} / スキップ {{skipped}} / 失敗 {{failed}}（合計 {{total}}）",
       "migrationFailed": "移行に失敗しました。後でもう一度お試しください",
-      "fetchUpdateNoticeFailed": "更新通知の取得に失敗しました",
+      "fetchUpdateNoticeFailed": "バージョン情報の取得に失敗しました",
       "corruptionRestored": "{{time}} のスナップショットからデータベースを復元しました。期間中の対話履歴が失われた可能性があります",
       "schemaDriftWarning": "ローカルデータベースのバージョン記録に不整合があります。最新版に更新し、更新後もこの警告が繰り返し表示される場合はサポートに連絡してください。アプリがローカルデータを自動的に削除することはありません。",
       "telegramBotConnected": "Telegram ボット設定を保存しました",

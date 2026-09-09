@@ -128,11 +128,11 @@ describe('auth login-flow reset', () => {
 
   it('keeps account access tokens in memory while persisting only encrypted refresh sessions', () => {
     expect(source).toContain(
-      "const LEGACY_ACCOUNT_REFRESH_TOKEN_KEY = 'cindy_auth_account_refresh_token';",
+      "const LEGACY_ACCOUNT_REFRESH_TOKEN_KEY = deviceCredentialKey('cindy_auth_account_refresh_token');",
     );
     expect(source).toContain('let pendingAccountToken: string | null = null;');
     expect(source).toContain('client.exchangeAccountMembership(accountToken, action.accountId)');
-    expect(source).toContain("const AUTH_ACCOUNT_VAULT_KEY = 'cindy_auth_accounts_v1';");
+    expect(source).toContain("const AUTH_ACCOUNT_VAULT_KEY = deviceCredentialKey('cindy_auth_accounts_v1');");
     expect(source).toContain('client.refreshAccount(current.accountRefreshToken)');
     expect(source).toContain('client.logoutAccount(pair.accountToken)');
     expect(source).toContain('writeAtomicSafe(AUTH_ACCOUNT_VAULT_KEY');
@@ -163,7 +163,7 @@ describe('auth login-flow reset', () => {
   it('keeps saved account metadata fresh after profile edits and Passport sync', () => {
     expect(source).toContain('const AUTH_ACCOUNT_VAULT_VERSION = 2 as const;');
     expect(source).toContain(
-      "const AUTH_ACCOUNT_LOGOUT_TOMBSTONES_KEY = 'cindy_auth_account_logout_tombstones_v1';",
+      "const AUTH_ACCOUNT_LOGOUT_TOMBSTONES_KEY = deviceCredentialKey('cindy_auth_account_logout_tombstones_v1');",
     );
     expect(source).toContain('const AUTH_ACCOUNT_LOGOUT_TOMBSTONES_VERSION = 1 as const;');
     expect(source).toContain('const logoutAuthEpoch = authStateEpoch;');

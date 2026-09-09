@@ -6871,8 +6871,8 @@
     "banner": {
       "title": "{{version}}로 업데이트됨",
       "subtitle": "재시작해 적용",
-      "viewNotes": "업데이트 소식 보기",
-      "viewNotesAria": "{{version}} 업데이트 소식 보기",
+      "viewNotes": "Lex 버전 정보 보기",
+      "viewNotesAria": "Lex {{version}} 버전 정보 보기",
       "button": "재시작",
       "tooltipReady": "업데이트 준비됨 — 클릭해 재시작{{versionSuffix}}",
       "ariaCollapsed": "업데이트 준비됨, 클릭해 버전 {{version}}로 재시작",
@@ -6894,7 +6894,8 @@
       "dismissAria": "업데이트 알림 일시 숨김"
     },
     "notice": {
-      "title": "업데이트 소식",
+      "title": "Lex 버전 정보",
+      "viewLexRelease": "GitHub에서 Lex v{{version}} 보기",
       "newFeatures": "새로운 기능",
       "bugFixes": "버그 수정",
       "thanksTo": "감사",
@@ -6904,7 +6905,7 @@
       "versionsSpan": "{{count}}개 버전",
       "versionJumpAria": "버전으로 이동 — 전체 {{count}}개 버전, 현재 v{{version}}",
       "loading": "불러오는 중",
-      "loadFailed": "불러오기 실패",
+      "loadFailed": "버전 정보를 가져오지 못했습니다",
       "retry": "다시 시도"
     },
     "translocated": {
@@ -6951,7 +6952,7 @@
       "canaryBadge": "Canary 사용자",
       "regionCodeCn": "CN",
       "regionCodeDev": "Dev",
-      "viewReleaseNotes": "릴리즈 노트 보기",
+      "viewReleaseNotes": "Lex 버전 정보 보기",
       "reopenUpdateBanner": "업데이트 준비됨 — 클릭하여 확인",
       "downloadMobile": "Cindy 모바일 다운로드"
     },
@@ -10928,7 +10929,7 @@
       "migrationNoneNeeded": "모든 항목이 이미 존재하며 마이그레이션 불필요",
       "migrationPartial": "마이그레이션 완료: 성공 {{success}} / 건너뜀 {{skipped}} / 실패 {{failed}} (총 {{total}})",
       "migrationFailed": "마이그레이션 실패. 잠시 후 다시 시도하세요",
-      "fetchUpdateNoticeFailed": "업데이트 알림 가져오기 실패",
+      "fetchUpdateNoticeFailed": "버전 정보를 가져오지 못했습니다",
       "corruptionRestored": "{{time}}의 스냅샷에서 데이터베이스가 복원됨. 그 사이의 대화 기록이 손실되었을 수 있습니다",
       "schemaDriftWarning": "로컬 데이터베이스 버전 기록이 일치하지 않습니다. 최신 버전으로 업데이트한 뒤에도 이 경고가 계속 표시되면 지원팀에 문의해 주세요. 앱은 로컬 데이터를 자동으로 삭제하지 않습니다.",
       "telegramBotConnected": "Telegram 봇 구성이 저장됨",

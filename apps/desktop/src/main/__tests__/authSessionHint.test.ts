@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import path from 'node:path';
 
 import { hasPersistedSessionHint } from '../authSessionHint';
@@ -20,27 +20,72 @@ function makeDeps(files: Record<string, string | true>) {
 }
 
 describe('hasPersistedSessionHint', () => {
+  it.each([
+    'cindy_auth_session_v1',
+    'cindy_auth_refresh_token',
+    'cindy_auth_account_refresh_token',
+    'refresh_token',
+  ])('detects namespaced %s without probing old credential files', (key) => {
+    const deps = makeDeps({ [`safe-storage/lex_device_v1_${key}.enc`]: true });
+    const existsSync = vi.fn(deps.existsSync);
+    expect(
+      hasPersistedSessionHint({
+        ...deps,
+        existsSync,
+        credentialKey: (value) => `lex_device_v1_${value}`,
+      }),
+    ).toBe(true);
+    expect(
+      existsSync.mock.calls.every(([filepath]) =>
+        path.basename(filepath).startsWith('lex_device_v1_'),
+      ),
+    ).toBe(true);
+  });
+
+  it('does not reuse or read old raw-ID files, while preserving the local-mode hint', () => {
+    const deps = makeDeps({
+      'safe-storage/cindy_auth_session_v1.enc': true,
+      'safe-storage/cindy_auth_refresh_token.enc': true,
+      'safe-storage/cindy_auth_account_refresh_token.enc': true,
+      'safe-storage/refresh_token.enc': true,
+    });
+    const existsSync = vi.fn(deps.existsSync);
+    const readFileSync = vi.fn(deps.readFileSync);
+    const namespaced = {
+      ...deps,
+      existsSync,
+      readFileSync,
+      credentialKey: (value: string) => `lex_device_v1_${value}`,
+    };
+    expect(hasPersistedSessionHint(namespaced)).toBe(false);
+    expect(existsSync).toHaveBeenCalledTimes(4);
+    expect(
+      existsSync.mock.calls.every(([filepath]) =>
+        path.basename(filepath).startsWith('lex_device_v1_'),
+      ),
+    ).toBe(true);
+    expect(readFileSync.mock.calls).toEqual([[path.join(deps.userDataPath, 'app-session.json')]]);
+    readFileSync.mockReturnValueOnce('{"activeMode":"local"}');
+    expect(hasPersistedSessionHint(namespaced)).toBe(true);
+  });
+
   it('真首启(无 token 文件、无 app-session.json)→ false', () => {
     expect(hasPersistedSessionHint(makeDeps({}))).toBe(false);
   });
 
   it('存在原子 auth session → true(cloud 会话冷启动可恢复,非首启)', () => {
     expect(
-      hasPersistedSessionHint(
-        makeDeps({ 'safe-storage/cindy_auth_session_v1.enc': true }),
-      ),
+      hasPersistedSessionHint(makeDeps({ 'safe-storage/cindy_auth_session_v1.enc': true })),
     ).toBe(true);
   });
 
   it('legacy token 文件同样算存量会话', () => {
     expect(
-      hasPersistedSessionHint(
-        makeDeps({ 'safe-storage/cindy_auth_refresh_token.enc': true }),
-      ),
+      hasPersistedSessionHint(makeDeps({ 'safe-storage/cindy_auth_refresh_token.enc': true })),
     ).toBe(true);
-    expect(
-      hasPersistedSessionHint(makeDeps({ 'safe-storage/refresh_token.enc': true })),
-    ).toBe(true);
+    expect(hasPersistedSessionHint(makeDeps({ 'safe-storage/refresh_token.enc': true }))).toBe(
+      true,
+    );
     expect(
       hasPersistedSessionHint(
         makeDeps({ 'safe-storage/cindy_auth_account_refresh_token.enc': true }),
