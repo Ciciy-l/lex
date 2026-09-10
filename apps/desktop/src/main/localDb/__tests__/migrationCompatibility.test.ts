@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -283,39 +283,61 @@ describe('checkMigrationCompatibility', () => {
     }
   });
 
-  it('upgrades a released Lex v102 runtime sidecar through the post-102 upstream chain', () => {
-    const sourceDrizzleDir = path.resolve(__dirname, '../../../../drizzle');
-    const legacyDrizzleDir = mkdtempSync(path.join(tmpdir(), 'lex-v102-drizzle-'));
-    cleanupDirs.push(legacyDrizzleDir);
-    const migrations = listMigrations(sourceDrizzleDir);
-    const releasedMigrations = migrations.filter((migration) => migration.seq <= 102);
-    const releasedGitWorkspaceMigration = releasedMigrations.at(-1);
+  const releasedRuntimeUpgradeCases = [
+    {
+      release: 'v0.1.0-rc.1',
+      schemaVersion: 99,
+      expectedApplied: [100, 101, 102, 103, 104],
+      releasedIdentity: {
+        seq: 99,
+        fileName: '0099_boring_champions.sql',
+        sqlHash: 'b4e0497804e46e0a0b0b8c31975b062152d551bac49c3c2e80932567b4085dcd',
+        scriptHash: '353f473ef643cadd07f6fede066f27dd5d1f01ef73941bb4c678824e62d76fea',
+      },
+    },
+    {
+      release: 'v0.1.1-rc.5',
+      schemaVersion: 101,
+      expectedApplied: [102, 103, 104],
+      releasedIdentity: {
+        seq: 101,
+        fileName: '0101_repair_cjk_fts_missing_rows.sql',
+        sqlHash: 'b4e0497804e46e0a0b0b8c31975b062152d551bac49c3c2e80932567b4085dcd',
+        scriptHash: 'fa7a77fe27809aba9e1bfb9cebe546fa26c1f14b0e41a305fda6ce3c14b28988',
+      },
+    },
+    {
+      release: 'v0.1.2-rc.1',
+      schemaVersion: 102,
+      expectedApplied: [103, 104],
+      releasedIdentity: {
+        seq: 102,
+        fileName: '0102_merge_git_workspace_tabs.sql',
+        sqlHash: 'b4e0497804e46e0a0b0b8c31975b062152d551bac49c3c2e80932567b4085dcd',
+        scriptHash: '5c7356dc8b74b167a30c759dcf823047841ea0240666174282f947b7cfc8b5dc',
+      },
+    },
+  ] as const;
 
-    expect(releasedGitWorkspaceMigration?.fileName).toBe('0102_merge_git_workspace_tabs.sql');
-    expect(hashMigrationFile(releasedGitWorkspaceMigration!.sqlPath)).toBe(
-      'b4e0497804e46e0a0b0b8c31975b062152d551bac49c3c2e80932567b4085dcd',
-    );
-    expect(releasedGitWorkspaceMigration?.tsScriptPath).toBeDefined();
-    expect(hashMigrationFile(releasedGitWorkspaceMigration!.tsScriptPath!)).toBe(
-      '5c7356dc8b74b167a30c759dcf823047841ea0240666174282f947b7cfc8b5dc',
-    );
+  it.each(releasedRuntimeUpgradeCases)(
+    'upgrades the $release runtime sidecar through the current upstream chain',
+    ({ schemaVersion, expectedApplied, releasedIdentity }) => {
+      const sourceDrizzleDir = path.resolve(__dirname, '../../../../drizzle');
+      const legacyDrizzleDir = mkdtempSync(path.join(tmpdir(), `lex-v${schemaVersion}-drizzle-`));
+      cleanupDirs.push(legacyDrizzleDir);
+      const migrations = listMigrations(sourceDrizzleDir);
+      const releasedMigrations = migrations.filter((migration) => migration.seq <= schemaVersion);
 
-    for (const migration of releasedMigrations) {
-      copyFileSync(migration.sqlPath, path.join(legacyDrizzleDir, migration.fileName));
-      if (migration.tsScriptPath) {
-        const scriptsDir = path.join(legacyDrizzleDir, 'scripts');
-        mkdirSync(scriptsDir, { recursive: true });
-        copyFileSync(
-          migration.tsScriptPath,
-          path.join(scriptsDir, path.basename(migration.tsScriptPath)),
-        );
-      }
-    }
+      const releasedTail = releasedMigrations.at(-1);
+      expect(releasedTail?.seq).toBe(releasedIdentity.seq);
+      expect(releasedTail?.fileName).toBe(releasedIdentity.fileName);
+      expect(hashMigrationFile(releasedTail!.sqlPath)).toBe(releasedIdentity.sqlHash);
+      expect(hashMigrationFile(releasedTail!.tsScriptPath!)).toBe(releasedIdentity.scriptHash);
 
-    const dbFilePath = path.join(legacyDrizzleDir, 'lex-v102.db');
-    const db = new Database(dbFilePath);
-    try {
-      db.exec(`
+      const dbFilePath = path.join(legacyDrizzleDir, `lex-v${schemaVersion}.db`);
+      const db = new Database(dbFilePath);
+      try {
+        db.exec(`
         CREATE TABLE migration_meta (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);
         CREATE TABLE migration_history (
           seq INTEGER PRIMARY KEY NOT NULL,
@@ -324,89 +346,123 @@ describe('checkMigrationCompatibility', () => {
           applied_at INTEGER NOT NULL
         );
         CREATE TABLE sessions (id TEXT PRIMARY KEY NOT NULL);
-        CREATE TABLE right_sidebar_tabs (session_id TEXT NOT NULL, kind TEXT NOT NULL);
+        CREATE TABLE right_sidebar_tabs (
+          id TEXT PRIMARY KEY NOT NULL,
+          session_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          position INTEGER NOT NULL DEFAULT 0,
+          is_active INTEGER NOT NULL DEFAULT 0,
+          state TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL DEFAULT 0,
+          updated_at INTEGER NOT NULL DEFAULT 0
+        );
         CREATE TABLE skill_usage_exposures (
           skill_name TEXT NOT NULL,
           analyzer_version TEXT NOT NULL,
           seen_at INTEGER NOT NULL,
-          raw_file_path TEXT NOT NULL
+         raw_file_path TEXT NOT NULL
         );
-        INSERT INTO migration_meta (key, value) VALUES ('schema_version', '102');
+        CREATE TABLE messages (
+          id TEXT PRIMARY KEY NOT NULL,
+          session_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          content TEXT NOT NULL,
+          rewind_at INTEGER
+        );
+        INSERT INTO migration_meta (key, value) VALUES ('schema_version', '${schemaVersion}');
       `);
-      const insertHistory = db.prepare(
-        `INSERT INTO migration_history (seq, file_name, content_hash, applied_at)
+        const insertHistory = db.prepare(
+          `INSERT INTO migration_history (seq, file_name, content_hash, applied_at)
          VALUES (?, ?, ?, 1)`,
-      );
-      for (const migration of releasedMigrations) {
-        insertHistory.run(migration.seq, migration.fileName, hashMigrationFile(migration.sqlPath));
-      }
+        );
+        for (const migration of releasedMigrations) {
+          insertHistory.run(
+            migration.seq,
+            migration.fileName,
+            hashMigrationFile(migration.sqlPath),
+          );
+        }
 
-      prepareMigrationRuntimeManifest(dbFilePath, legacyDrizzleDir, 102);
-      const releasedManifest = JSON.parse(
-        readFileSync(`${dbFilePath}.migration-runtime.json`, 'utf8'),
-      ) as {
-        migrations: Array<{
-          seq: number;
-          fileName: string;
-          sqlHash: string;
-          scriptHash: string | null;
-        }>;
-      };
-      const releasedIdentity = releasedManifest.migrations.find(
-        (migration) => migration.seq === 102,
-      );
+        // A released binary only knows its own migration prefix.  Persist that
+        // exact prefix before the current checkout writes intent for its pending
+        // migrations, matching the sidecar upgrade path on disk.
+        writeFileSync(
+          `${dbFilePath}.migration-runtime.json`,
+          `${JSON.stringify({
+            version: 1,
+            legacyBaselineVersion: schemaVersion,
+            migrations: releasedMigrations.map((migration) => ({
+              seq: migration.seq,
+              fileName: migration.fileName,
+              sqlHash: hashMigrationFile(migration.sqlPath),
+              scriptHash: migration.tsScriptPath ? hashMigrationFile(migration.tsScriptPath) : null,
+            })),
+          })}\n`,
+          'utf8',
+        );
 
-      expect(releasedIdentity).toEqual({
-        seq: 102,
-        fileName: '0102_merge_git_workspace_tabs.sql',
-        sqlHash: 'b4e0497804e46e0a0b0b8c31975b062152d551bac49c3c2e80932567b4085dcd',
-        scriptHash: '5c7356dc8b74b167a30c759dcf823047841ea0240666174282f947b7cfc8b5dc',
-      });
+        const releasedManifest = JSON.parse(
+          readFileSync(`${dbFilePath}.migration-runtime.json`, 'utf8'),
+        ) as {
+          migrations: Array<{
+            seq: number;
+            fileName: string;
+            sqlHash: string;
+            scriptHash: string | null;
+          }>;
+        };
+        expect(releasedManifest.migrations.at(-1)).toEqual(releasedIdentity);
 
-      prepareMigrationRuntimeManifest(dbFilePath, sourceDrizzleDir, 102);
-      const replay = runMigrationReplay(db, { drizzleDir: sourceDrizzleDir });
-      expect(replay.applied.map((migration) => migration.seq)).toEqual([103, 104]);
-      expect(
-        db
-          .prepare(
-            `SELECT name FROM sqlite_master
+        prepareMigrationRuntimeManifest(dbFilePath, sourceDrizzleDir, schemaVersion);
+        const replay = runMigrationReplay(db, {
+          drizzleDir: sourceDrizzleDir,
+          currentVersion: schemaVersion,
+        });
+        expect(replay.applied.map((migration) => migration.seq)).toEqual(expectedApplied);
+        expect(
+          db
+            .prepare(
+              `SELECT name FROM sqlite_master
            WHERE type = 'index' AND name = 'idx_skill_usage_exposures_skill_recent'`,
-          )
-          .pluck()
-          .get(),
-      ).toBe('idx_skill_usage_exposures_skill_recent');
-      expect(
-        db
-          .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'bot_profiles'`)
-          .pluck()
-          .get(),
-      ).toBe('bot_profiles');
+            )
+            .pluck()
+            .get(),
+        ).toBe('idx_skill_usage_exposures_skill_recent');
+        expect(
+          db
+            .prepare(
+              `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'bot_profiles'`,
+            )
+            .pluck()
+            .get(),
+        ).toBe('bot_profiles');
 
-      const finalManifest = JSON.parse(
-        readFileSync(`${dbFilePath}.migration-runtime.json`, 'utf8'),
-      ) as {
-        migrations: Array<{
-          seq: number;
-          fileName: string;
-          sqlHash: string;
-          scriptHash: string | null;
-        }>;
-      };
-      expect(finalManifest.migrations.find((migration) => migration.seq === 102)).toEqual(
-        releasedIdentity,
-      );
-      expect(finalManifest.migrations.at(-1)).toMatchObject({
-        seq: 104,
-        fileName: '0104_bot_mode.sql',
-      });
-      expect(checkMigrationCompatibility(db, sourceDrizzleDir, dbFilePath)).toEqual({
-        compatible: true,
-        databaseVersion: 104,
-        checkoutVersion: 104,
-        issues: [],
-      });
-    } finally {
-      db.close();
-    }
-  });
+        const finalManifest = JSON.parse(
+          readFileSync(`${dbFilePath}.migration-runtime.json`, 'utf8'),
+        ) as {
+          migrations: Array<{
+            seq: number;
+            fileName: string;
+            sqlHash: string;
+            scriptHash: string | null;
+          }>;
+        };
+        expect(
+          finalManifest.migrations.find((migration) => migration.seq === schemaVersion),
+        ).toEqual(releasedIdentity);
+        expect(finalManifest.migrations.at(-1)).toMatchObject({
+          seq: 104,
+          fileName: '0104_bot_mode.sql',
+        });
+        expect(checkMigrationCompatibility(db, sourceDrizzleDir, dbFilePath)).toEqual({
+          compatible: true,
+          databaseVersion: 104,
+          checkoutVersion: 104,
+          issues: [],
+        });
+      } finally {
+        db.close();
+      }
+    },
+  );
 });
