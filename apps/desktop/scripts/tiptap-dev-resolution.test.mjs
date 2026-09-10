@@ -69,7 +69,9 @@ test.each([false, true])(
           await resolve('@tiptap/pm/' + name),
         );
       }
-      const url = (id) => '/@fs/' + id.replaceAll('\\', '/');
+      // Match Vite's canonical `path.posix.join(FS_PREFIX, resolved.id)` URL shape on POSIX.
+      const url = (id) => path.posix.join('/@fs/', id.replaceAll('\\', '/'));
+      assert.equal(url('/home/runner/work/lex/view.js'), '/@fs/home/runner/work/lex/view.js');
       const served = async (requestUrl) => {
         const response = await globalThis.fetch(new URL(requestUrl, server.resolvedUrls.local[0]));
         assert.equal(response.status, 200, requestUrl);
