@@ -11,6 +11,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import type { ReviewableAction } from './agents/shared/auto-review.js';
+import type { AutoReviewDecision } from './agents/shared/auto-review-decision.js';
 
 import {
   extractNonSecretErrorSignals,
@@ -54,6 +56,7 @@ import type {
   TurnContinuationState,
 } from './agents/base-agent.js';
 import {
+  AUTO_REVIEW_SOURCE_CONTENT,
   TurnDispatchRejectedError,
   TurnDispatchUnconfirmedError,
 } from './agents/base-agent.js';
@@ -531,30 +534,19 @@ export class Session {
 
     // 注入 InteractionResolver 到底层 handle, 转发到 host 维护的 listener。
     // 没接 listener 时按 kind 给出安全默认: 都视作 deny(host 必须接 listener 才能交互)。
-    this.handle.setInteractionResolver(async (req) => {
-      // 等用户回应期间挂起 stall 看门狗:用户可能离开电脑很久,没有事件是正常的,
-      // 中断这种 turn 等于把"等你决定"误判成"卡死"(见 DEFAULT_TURN_STALL_MS)。
-      this.pendingInteractions += 1;
-      const interactionRuntime = this.observeInteractionStarted(req);
-      this.clearTurnStallWatchdog();
-      try {
-        if (!this.interactionListener) {
-          this.logger.warn('interaction request received but no listener attached, denying', { kind: req.kind, requestId: req.requestId });
-          if (req.kind === 'ask_user_question') {
-            return { kind: 'ask_user_question', answers: {} };
-          }
-          if (req.kind === 'plan_review') {
-            return { kind: 'plan_review', behavior: 'deny', reason: 'no_listener_attached', dismissed: true };
-          }
-          return { kind: req.kind, behavior: 'deny', reason: 'no_listener_attached' } as InteractionDecision;
+    this.handle.setInteractionResolver((req) => this.runHostInteraction(req, async () => {
+      if (!this.interactionListener) {
+        this.logger.warn('interaction request received but no listener attached, denying', { kind: req.kind, requestId: req.requestId });
+        if (req.kind === 'ask_user_question') {
+          return { kind: 'ask_user_question', answers: {} };
         }
-        return await this.interactionListener(req);
-      } finally {
-        this.pendingInteractions = Math.max(0, this.pendingInteractions - 1);
-        this.observeInteractionSettled(interactionRuntime);
-        this.armTurnStallWatchdog();
+        if (req.kind === 'plan_review') {
+          return { kind: 'plan_review', behavior: 'deny', reason: 'no_listener_attached', dismissed: true };
+        }
+        return { kind: req.kind, behavior: 'deny', reason: 'no_listener_attached' } as InteractionDecision;
       }
-    });
+      return await this.interactionListener(req);
+    }));
   }
 
   // ── 公开 API ─────────────────────────────────────────────────────────────
@@ -820,6 +812,7 @@ export class Session {
       // 层 B：用户贴图主动调视觉（视觉桥钩子）。此时 turn guard 已通过、reservation 已
       // 建立——并发 send 已被 isTurnRunning 挡住，不会在 guard 前浪费视觉调用；取消时
       // reservation.abortController.signal 可中止视觉请求。钩子失败/未生效 → 原样透传。
+      const autoReviewSourceContent = msg.content;
       if (this.visionBridge) {
         // 传入 reservation abort signal：用户 Stop / 外部取消时中止视觉请求，避免浪费
         // 外部视觉调用（多图最坏 图片数×timeout 才返回）。
@@ -869,6 +862,7 @@ export class Session {
         try {
           await this.handle.send(msg, {
             ...handleOpts,
+            [AUTO_REVIEW_SOURCE_CONTENT]: autoReviewSourceContent,
             signal: reservation.abortController.signal,
           });
         } finally {
@@ -1058,6 +1052,7 @@ export class Session {
     // 的 turn（跨 turn 串线）。记录发起时代号，转换后必须「同一 generation 且仍
     // 在跑」才投递。
     const steerTurnGeneration = this.getTurnGeneration();
+    const autoReviewSourceContent = msg.content;
     // 层 B：steer 追加图片同样走视觉桥（与 send 一致），否则纯文本模型收到的
     // 原始 image block 会被后端忽略或拒绝（Greptile P1）。
     msg = await this.bridgedVisionMessage(msg, opts?.signal);
@@ -1068,7 +1063,7 @@ export class Session {
       throw new Error(`Session ${this.id} has no active turn to steer`);
     }
     this.startEventLoopIfNeeded();
-    await this.handle.steer(msg, opts);
+    await this.handle.steer(msg, { ...opts, [AUTO_REVIEW_SOURCE_CONTENT]: autoReviewSourceContent });
   }
 
   async abort(): Promise<void> {
@@ -1380,6 +1375,10 @@ export class Session {
     }
   }
 
+  async getCodexContextWindowInfo() {
+    return this.handle.getCodexContextWindowInfo?.() ?? null;
+  }
+
   getUsageSnapshot(): UsageSnapshot {
     return this.handle.getUsageSnapshot();
   }
@@ -1471,6 +1470,37 @@ export class Session {
       return null;
     }
     return this.permissionModeState;
+  }
+
+  /** Review a Host-side tool step without reconstructing or persisting another copy of user intent. */
+  async reviewHostPermissionAction(action: ReviewableAction): Promise<AutoReviewDecision> {
+    const permission = this.stablePermissionModeState;
+    if (!permission) return { verdict: 'block', reason: 'Session permissions are changing or the task has closed.' };
+    if (permission.mode !== 'auto') return { verdict: 'ask' };
+    // Host steps can belong to a still-active descendant after the foreground
+    // turn finishes. Guard Session authority here; root-turn generation is not
+    // the lifetime of that call. The harness checks changing user intent, and
+    // callers retain their own invocation-validity checks.
+    const turnControl = this.turnControlState;
+    const gracefulStop = turnControl?.gracefulStopState ?? 'none';
+    let invalidated = false;
+    const unsubscribe = this.onStatusChange((status) => { if (status !== 'active') invalidated = true; });
+    let decision: AutoReviewDecision;
+    try {
+      decision = await this.handle.reviewAutoPermissionAction?.(action)
+        ?? { verdict: 'ask', unavailable: true };
+    } catch {
+      decision = { verdict: 'ask', unavailable: true };
+    } finally {
+      unsubscribe();
+    }
+    const current = this.stablePermissionModeState;
+    if (invalidated || !current || current.generation !== permission.generation
+      || (turnControl?.gracefulStopState ?? 'none') !== gracefulStop
+      || (this.turnControlState?.gracefulStopState ?? 'none') !== gracefulStop) {
+      return { verdict: 'block', reason: 'Task or permissions changed; retry with the current scope.' };
+    }
+    return decision;
   }
 
   /**
@@ -1864,6 +1894,23 @@ export class Session {
   onStatusChange(listener: SessionStatusListener): () => void {
     this.statusListeners.add(listener);
     return () => this.statusListeners.delete(listener);
+  }
+
+  /** Host-owned permissions share the same waiting lifecycle as provider interactions. */
+  async runHostInteraction(
+    request: InteractionRequest,
+    resolve: () => Promise<InteractionDecision>,
+  ): Promise<InteractionDecision> {
+    this.pendingInteractions += 1;
+    const runtime = this.observeInteractionStarted(request);
+    this.clearTurnStallWatchdog();
+    try {
+      return await resolve();
+    } finally {
+      this.pendingInteractions = Math.max(0, this.pendingInteractions - 1);
+      this.observeInteractionSettled(runtime);
+      this.armTurnStallWatchdog();
+    }
   }
 
   setInteractionListener(listener: InteractionRequestListener | null): void {

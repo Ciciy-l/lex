@@ -11,10 +11,14 @@ import {
   type SessionControlDeps,
 } from '../xdt-helper/session_control.js';
 
-function parse(result: XdtHelperToolResult): Record<string, unknown> {
+interface ParsedToolResult extends Record<string, unknown> {
+  data?: Record<string, unknown>;
+}
+
+function parse(result: XdtHelperToolResult): ParsedToolResult {
   const first = result.content[0];
   if (!first || first.type !== 'text') throw new Error('missing text payload');
-  return JSON.parse(first.text) as Record<string, unknown>;
+  return JSON.parse(first.text) as ParsedToolResult;
 }
 
 function setup(opts?: { sessionId?: string | undefined }) {

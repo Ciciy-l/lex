@@ -32,7 +32,7 @@ interface UseLoginReturn {
 }
 
 /** Coordinates presentation state while all credentials and tickets stay in main. */
-export function useLogin(): UseLoginReturn {
+export function useLogin({ autoLoad = true }: { autoLoad?: boolean } = {}): UseLoginReturn {
   const {
     loginState,
     loginRealm,
@@ -49,7 +49,7 @@ export function useLogin(): UseLoginReturn {
   const loadingRef = useRef(false);
 
   useEffect(() => {
-    if (loginState || loadingRef.current) return;
+    if (!autoLoad || loginState || loadingRef.current) return;
     loadingRef.current = true;
     setIsLoading(true);
     void loadLoginState()
@@ -61,7 +61,7 @@ export function useLogin(): UseLoginReturn {
         loadingRef.current = false;
         setIsLoading(false);
       });
-  }, [loadLoginState, loginState]);
+  }, [autoLoad, loadLoginState, loginState]);
 
   const dispatchWithResult = useCallback(
     async (action: DesktopLoginAction): Promise<{ success: boolean; code: string | null }> => {

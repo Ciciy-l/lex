@@ -1,14 +1,21 @@
 import Constants from 'expo-constants';
+import { createBackgroundConnection } from './backgroundConnection';
+import { createRecoveryDiagnostics, settleMeasuredSnapshot, type RecoveryPhase } from './recoveryDiagnostics';
+import { confirmTrackedSubscription, SubscriptionAcknowledgements } from './subscriptionAcknowledgements';
 import { AppState, Platform } from 'react-native';
 import {
   DeviceLinkClient,
   DeviceLinkError,
   CONTROLLER_CAPABILITY_MAKER_EVENT_BATCH_V1,
+  CONTROLLER_CAPABILITY_SESSION_TEXT_SNAPSHOT_V1,
   CONTROLLER_CAPABILITY_PROVIDER_LOGO_KINDS_V2,
+  DEVICE_LINK_CAPABILITY_COMPACT_MESSAGE_HISTORY_V1,
   DL_SUBSCRIBE_CHANNEL,
   DL_UNSUBSCRIBE_CHANNEL,
   FILE_BROWSER_EVENT_CHANNEL,
   PROTOCOL_VERSION,
+  REMOTE_RESOURCE_CHANGED_CHANNEL,
+  parseRemoteResourceChangedPayload,
   type DeviceLinkConnectionIssue,
   type DeviceLinkStatus,
   type Envelope,
@@ -16,6 +23,7 @@ import {
   type LinkAcceptPayload,
   type PresenceSnapshot,
   type PushPayload,
+  type RemoteResourceChangedPayload,
   type Topic,
 } from '@cindy/device-link';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -142,6 +150,8 @@ export interface DeviceLinkContextValue {
   connectionIssue: DeviceLinkConnectionIssue | null;
   presenceVersion: number;
   connectionEpoch: number;
+  /** Current remote ACK identity; null until every requested topic is confirmed. */
+  getSubscriptionIdentity?(deviceId: string, topics: readonly Topic[]): number | null;
   lastPresenceSnapshot: PresenceSnapshot | null;
   /** 当前 relay 连接代内的逐设备 availability；null = 本代尚无权威 verdict。 */
   getPresenceAvailability(deviceId: string): boolean | null;
@@ -168,19 +178,26 @@ export interface DeviceLinkContextValue {
   unsubscribe(owner: string, deviceId: string, topics: string[]): Promise<void>;
   /** 被控端 runtime Agent roster 发生变化时通知当前控制端页面。 */
   onAgentsChanged: (listener: (deviceId: string) => void) => () => void;
+  /** 模块中立的远程资源失效事件；页面收到后按 collection/ref 重拉。 */
+  onRemoteResourceChanged: (
+    listener: (deviceId: string, payload: RemoteResourceChangedPayload) => void,
+  ) => () => void;
 }
 
 const DeviceLinkContext = createContext<DeviceLinkContextValue | null>(null);
+const recoveryDiagnostics = new WeakMap<DeviceLinkClient, ReturnType<typeof createRecoveryDiagnostics>>();
 
 /**
  * 本控制端声明的端到端可选能力(link-open 与 subscribe 两处共用同一份,漏一处会让
  * 被控端按能力缺失降级)。被控端只在看到对应能力后才发送新 wire 形状。
  */
 const CONTROLLER_CAPABILITIES = [
+  CONTROLLER_CAPABILITY_SESSION_TEXT_SNAPSHOT_V1,
   CONTROLLER_CAPABILITY_PROVIDER_LOGO_KINDS_V2,
   // maker:event 微批:被控端把同一会话的连续事件合并成一帧,本端拆包后逐条消费
   // (见 remoteSessionStore 的 MAKER_EVENT_BATCH_CHANNEL 分支)。
   CONTROLLER_CAPABILITY_MAKER_EVENT_BATCH_V1,
+  DEVICE_LINK_CAPABILITY_COMPACT_MESSAGE_HISTORY_V1,
 ];
 
 // 任意目标端真实应答的独立时序证据。它不等同于 presence verdict,也不参与 IPC/DB
@@ -188,6 +205,16 @@ const CONTROLLER_CAPABILITIES = [
 const remoteResponseEvidenceEpochs = createPresenceAvailabilityEpochs();
 const remoteResponseEvidenceListeners = new Set<(deviceId: string) => void>();
 const remoteAgentRosterListeners = new Set<(deviceId: string) => void>();
+const remoteBotChangedListeners = new Set<(deviceId: string, channel: string, payload: unknown) => void>();
+export function subscribeRemoteBotChanges(listener: (deviceId: string, channel: string, payload: unknown) => void): () => void {
+  remoteBotChangedListeners.add(listener);
+  return () => { remoteBotChangedListeners.delete(listener); };
+}
+
+const remoteResourceChangedListeners = new Set<(
+  deviceId: string,
+  payload: RemoteResourceChangedPayload,
+) => void>();
 
 // 永久 link-close 后被抑制后台重建的设备(见 updateRehydrateSuppressionOnLinkClose)。
 // 模块级(与 remoteResponseEvidenceEpochs 同模式):sendOpenLink 等模块级函数也需要
@@ -212,6 +239,13 @@ function subscribeRemoteAgentRoster(
 ): () => void {
   remoteAgentRosterListeners.add(listener);
   return () => remoteAgentRosterListeners.delete(listener);
+}
+
+function subscribeRemoteResourceChanged(
+  listener: (deviceId: string, payload: RemoteResourceChangedPayload) => void,
+): () => void {
+  remoteResourceChangedListeners.add(listener);
+  return () => remoteResourceChangedListeners.delete(listener);
 }
 
 /**
@@ -286,7 +320,10 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
   currentDataOwnerIdRef.current = auth.user?.id ?? null;
   const clientRef = useRef<DeviceLinkClient | null>(null);
   const registryRef = useRef(new DeviceLinkTopicRegistry());
-  const remoteSubscribedTopicsRef = useRef(new Map<string, Set<Topic>>());
+  const [subscriptionVersion, setSubscriptionVersion] = useState(0);
+  const remoteSubscribedTopicsRef = useRef(new SubscriptionAcknowledgements(
+    () => setSubscriptionVersion((version) => version + 1),
+  ));
   // A local reliable ACK reset may happen after the last durable topic/open owner is gone,
   // while the client still holds an in-flight reliable frame. Preserve a per-peer transient
   // open intent until that exact peer is ready again; never promote it to a shared WSS reset.
@@ -392,12 +429,15 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
     deviceId: string,
     topics: readonly Topic[],
   ) => {
-    while (!backgroundReleaseInFlightRef.current) {
-      const releaseGeneration = backgroundReleaseGenerationRef.current;
-      const toSend = topicsMissingRemoteAck(remoteSubscribedTopicsRef.current, deviceId, topics)
-        .filter((topic) => registryRef.current.hasTopic(deviceId, topic));
-      if (toSend.length === 0) return;
-      const sent = await sendSubscribeWithAccessHandling(
+    const releaseGeneration = backgroundReleaseGenerationRef.current;
+    const record = recoveryDiagnostics.get(client)?.capture(deviceId, connectionEpochRef.current);
+    await confirmTrackedSubscription({
+      isCurrent: () => !backgroundReleaseInFlightRef.current
+        && backgroundReleaseGenerationRef.current === releaseGeneration && clientRef.current === client,
+      generation: () => `${connectionEpochRef.current}:${remoteSubscribedTopicsRef.current.generation(deviceId)}`,
+      missing: () => topicsMissingRemoteAck(remoteSubscribedTopicsRef.current, deviceId, topics)
+        .filter((topic) => registryRef.current.hasTopic(deviceId, topic)),
+      send: (toSend) => sendSubscribeWithAccessHandling(
         client,
         deviceId,
         toSend,
@@ -405,22 +445,14 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
           !backgroundReleaseInFlightRef.current
           && toSend.every((topic) => registryRef.current.hasTopic(deviceId, topic))
         ),
-      );
-      if (
-        backgroundReleaseInFlightRef.current
-        || backgroundReleaseGenerationRef.current !== releaseGeneration
-      ) return;
-      if (!sent) {
-        // Scope changed while ensureOnlineForRequest was waiting. Re-evaluate once more so topics
-        // still held by another owner are not starved, while released topics never reach the host.
-        continue;
-      }
-      // 只有仍被持有、真正记进 ACK 表的 topic 才算订阅生效(中途被释放的那些不算)。
-      noteSessionLiveStreamsAcked(
-        markHeldRemoteTopicsSubscribed(remoteSubscribedTopicsRef.current, registryRef.current, deviceId, toSend),
-      );
-      return;
-    }
+      ),
+      acknowledge: (toSend) => {
+        // 只有仍被持有、真正记进 ACK 表的 topic 才算订阅生效(中途被释放的那些不算)。
+        const held = markHeldRemoteTopicsSubscribed(remoteSubscribedTopicsRef.current, registryRef.current, deviceId, toSend);
+        noteSessionLiveStreamsAcked(held);
+        if (held.length > 0) record?.('subscription', 'applied', held.length);
+      },
+    });
   }, []);
 
   // 熔断 open 设备的显式代表性探测:openLink 建链(成功按不定论,不关熔断),
@@ -604,13 +636,20 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
           presenceWipeTimerDeps,
         );
       },
-      rebuildSessionSnapshot: (deviceId, sessionId, opts) => rebuildSessionSnapshot(
-        client,
-        deviceId,
-        sessionId,
-        connectionEpochRef.current,
-        opts,
-      ),
+      rebuildSessionSnapshot: (deviceId, sessionId, opts) => {
+        const epoch = connectionEpochRef.current;
+        const releaseGeneration = backgroundReleaseGenerationRef.current;
+        return rebuildSessionSnapshot(client, deviceId, sessionId, epoch, {
+          ...opts,
+          subscriptionIdentity: remoteSubscribedTopicsRef.current.identity(deviceId, ['sessions', `session:${sessionId}`]),
+        }, () => client === clientRef.current
+          && client.getStatus() === 'online'
+          && connectionEpochRef.current === epoch
+          && backgroundReleaseGenerationRef.current === releaseGeneration
+          && !backgroundReleaseInFlightRef.current
+          && !revokedDevicesStore.has(deviceId)
+          && !client.isOutboundExplicitlyClosed(deviceId));
+      },
     });
 
     if (
@@ -761,6 +800,12 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
       },
     });
     clientRef.current = client;
+    const diagnostics = createRecoveryDiagnostics(
+      (event) => mobileDeviceLinkLogger.info('recovery phase', event),
+      () => connectionEpochRef.current,
+    );
+    recoveryDiagnostics.set(client, diagnostics);
+    if (AppState.currentState === 'active') diagnostics.foreground();
     const offIssue = client.onConnectionIssue(setConnectionIssue);
     const offStatus = client.onStatusChange((next) => {
       setStatus(next);
@@ -1051,18 +1096,6 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    // 退后台的断连宽限状态:stopTimer 挂着表示还没真正 stop;backgroundAt 用于
-    // 回前台时判断 JS 是否在计时器触发前就被挂起(见 BACKGROUND_SUSPEND_SUSPECT_MS)。
-    const backgroundState: { stopTimer: ReturnType<typeof setTimeout> | null; backgroundAt: number } = {
-      stopTimer: null,
-      backgroundAt: 0,
-    };
-    const clearBackgroundStopTimer = () => {
-      if (backgroundState.stopTimer) {
-        clearTimeout(backgroundState.stopTimer);
-        backgroundState.stopTimer = null;
-      }
-    };
     const releaseHeavyTopics = (): Promise<void>[] => {
       const releases: Promise<void>[] = [];
       for (const plan of registryRef.current.snapshot()) {
@@ -1076,28 +1109,30 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
       }
       return releases;
     };
+    const backgroundConnection = createBackgroundConnection({
+      isBackground: () => AppState.currentState === 'background',
+      releaseTopics: releaseHeavyTopics,
+      stop: () => client.stop(),
+      connect: () => client.connectNow('appstate-active', { overrideCongestionCooldown: true }),
+      graceMs: BACKGROUND_STOP_GRACE_MS,
+      releaseWaitMs: BACKGROUND_FINAL_UNSUBSCRIBE_WAIT_MS,
+      suspendMs: BACKGROUND_SUSPEND_SUSPECT_MS,
+    });
     const sub = AppState.addEventListener('change', (next) => {
       if (next === 'active') {
+        diagnostics.foreground();
         backgroundReleaseInFlightRef.current = false;
-        const heldConnection = backgroundState.stopTimer !== null;
-        clearBackgroundStopTimer();
-        const backgroundedForMs = backgroundState.backgroundAt > 0 ? Date.now() - backgroundState.backgroundAt : 0;
-        backgroundState.backgroundAt = 0;
-        if (heldConnection && backgroundedForMs > BACKGROUND_SUSPEND_SUSPECT_MS) {
-          // 宽限计时器没来得及触发但后台已超阈值:JS 被挂起过,socket 大概率
-          // 已被系统回收而状态机仍认为 online——主动换新连接,别等心跳才发现假活。
-          client.stop();
-        }
         // 回前台立刻重连:绕开断线后遗留的指数退避计时器(可能 park 到 30s),
         // 让"打开 App → 打开会话"路径快速恢复在线,而不是干等退避。
         // overrideCongestionCooldown:用户显式回前台是拥塞冷却的合法豁免——
         // 冷却默认只拦请求路径的 un-park(waitUntilOnline),不拦真人操作。
-        client.connectNow('appstate-active', { overrideCongestionCooldown: true });
+        backgroundConnection.active();
         // 快速切换(连接被宽限保住、始终 online)不会有 online 状态转换,这条显式
         // 补齐就是断档回填的唯一触发点;其余路径下它因 status 未 online 而空转。
         void rehydrateWithClient(client);
       }
       if (next === 'background') {
+        diagnostics.background();
         backgroundReleaseInFlightRef.current = true;
         backgroundReleaseGenerationRef.current += 1;
         // App 生命周期暂停全部恢复执行，但各 peer 状态仍彼此独立；回前台统一
@@ -1108,32 +1143,31 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
         // 后若订阅残留(宽限窗、挂起延迟最长可拖到 server 60s 空闲清扫),恰好在
         // 用户离开的瞬间完成的任务就永远收不到通知。只动远端订阅与 ack 簿记,
         // registry 所有权保留 —— 回前台的 rehydrate 会因 ack 已清而重新订阅。
-        for (const release of releaseHeavyTopics()) {
-          void release.catch(() => undefined);
-        }
-        // 短暂宽限再断:几秒内切回的快速 App 切换不触发整套断连/重连/补齐。
-        // iOS 挂起后计时器不再运行,恢复时由上面的 active 分支收拾残局。
-        backgroundState.backgroundAt = Date.now();
-        clearBackgroundStopTimer();
-        backgroundState.stopTimer = setTimeout(() => {
-          backgroundState.stopTimer = null;
-          if (AppState.currentState !== 'background') return;
-          // 已发出的 stale subscribe 无法撤回;断开前再幂等释放一次并等待已发出的
-          // unsubscribe 收尾,确保最后落到桌面端的 session topic 状态仍是释放。
-          const finalRelease = Promise.allSettled(releaseHeavyTopics());
-          const boundedWait = new Promise<void>((resolve) => {
-            setTimeout(resolve, BACKGROUND_FINAL_UNSUBSCRIBE_WAIT_MS);
-          });
-          void Promise.race([finalRelease, boundedWait]).finally(() => {
-            if (AppState.currentState === 'background') client.stop();
-          });
-        }, BACKGROUND_STOP_GRACE_MS);
+        backgroundConnection.background();
       }
     });
 
+    // Loaded inside the authenticated lifecycle; old native builds keep their
+    // existing heartbeat fallback if the optional runtime module is unavailable.
+    let disposed = false;
+    let networkSubscription: { remove(): void } | undefined;
+    void import('expo-network').then(({ addNetworkStateListener }) => {
+      if (disposed) return;
+      networkSubscription = addNetworkStateListener((network) => {
+        if (AppState.currentState !== 'active' || network.isConnected === false) return;
+        client.notifyNetworkChanged();
+      });
+    }).catch(() => {
+      console.warn('[device-link] network listener unavailable; using heartbeat recovery');
+    });
+
     return () => {
+      disposed = true;
+      diagnostics.background();
+      recoveryDiagnostics.delete(client);
+      networkSubscription?.remove();
       sub.remove();
-      clearBackgroundStopTimer();
+      backgroundConnection.dispose();
       offUnresponsive();
       offResponseEvidence();
       offBeforeLink();
@@ -1246,6 +1280,7 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
     presenceVersion,
     connectionEpoch,
     lastPresenceSnapshot,
+    getSubscriptionIdentity: (deviceId, topics) => remoteSubscribedTopicsRef.current.identity(deviceId, topics),
     getPresenceAvailability,
     openLink,
     reopenLink,
@@ -1254,6 +1289,7 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
     subscribe,
     unsubscribe,
     onAgentsChanged: subscribeRemoteAgentRoster,
+    onRemoteResourceChanged: subscribeRemoteResourceChanged,
   }), [
     closeLink,
     connectionEpoch,
@@ -1268,6 +1304,8 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
     subscribe,
     unsubscribe,
     subscribeRemoteAgentRoster,
+    subscribeRemoteResourceChanged,
+    subscriptionVersion,
   ]);
 
   return <DeviceLinkContext.Provider value={value}>{children}</DeviceLinkContext.Provider>;
@@ -1305,6 +1343,16 @@ export function routeFrame(env: Envelope, handlers: {
   }
   if (push.channel === 'maker:agents:changed') {
     handlers.onAgentsChanged?.(env.src);
+    return;
+  }
+  if (push.channel === 'maker:bot-delegation:changed' || push.channel === 'maker:bot-direct-message:changed') {
+    for (const listener of remoteBotChangedListeners) listener(env.src, push.channel, push.payload);
+    return;
+  }
+  if (push.channel === REMOTE_RESOURCE_CHANGED_CHANNEL) {
+    const payload = parseRemoteResourceChangedPayload(push.payload);
+    if (!payload) return;
+    for (const listener of remoteResourceChangedListeners) listener(env.src, payload);
     return;
   }
   if (push.channel === 'maker:schedule:event') {
@@ -1362,8 +1410,12 @@ async function rebuildSessionSnapshot(
   deviceId: string,
   sessionId: string,
   connectionEpoch: number,
-  opts?: DeviceLinkRehydrateSendOptions,
+  opts: DeviceLinkRehydrateSendOptions | undefined,
+  isCurrent: () => boolean,
 ): Promise<void> {
+  const record = recoveryDiagnostics.get(client)?.capture(deviceId, connectionEpoch);
+  const measured = <T,>(phase: RecoveryPhase, read: Promise<T>, apply: (value: T) => boolean) =>
+    settleMeasuredSnapshot(read, apply, (outcome) => record?.(phase, outcome));
   // 这四个并发请求是同一轮补齐:一次路由抖动可能让它们同时等满超时,但这只
   // 代表一个独立故障观测。共享显式 cohort,避免单轮 fan-out 直接凑满 3 次阈值。
   const sendOpts: SendInvokeOptions = {
@@ -1380,14 +1432,73 @@ async function rebuildSessionSnapshot(
   const unenteredMessageAuthorityAtRequestStart = messageDetailEnteredAtRequestStart
     ? null
     : remoteSessionStore.captureUnenteredSessionMessageAuthority(sessionId);
-  const snapshotScope = { deviceId, sessionId, connectionEpoch };
+  const snapshotScope = { deviceId, sessionId, connectionEpoch, subscriptionIdentity: opts?.subscriptionIdentity };
   const pendingSnapshotAtRequestStart = remoteSessionStore.getPendingInteractions(sessionId);
   // 四路快照独立拉取、独立落库:断连补齐窗口本就脆弱,一个子请求失败不应拖垮
   // 其余(旧实现共用一个 catch,任一失败三份快照全丢)。goal 覆盖断连窗口内
   // 丢失的 maker:goal:status-changed push;model-pref / turn-cost 无对应查询通道,
   // 暂不在补齐范围(需扩桌面端 invoke 白名单)。
-  const [history, pending, projection, goal] = await Promise.allSettled([
-    runSessionMessagesSnapshotSingleFlight(
+  const applyHistory = (value: RemoteMessage[]) => {
+    if (!isCurrent()) return false;
+    if (Array.isArray(value)) {
+      // moreBeyondWindow:这一页上沿之外服务端还有历史(满 80 条,或被 device-link 裁过行)。为真时
+      // store 不保留早于本页的缓存段 —— 断连期间漏收的 push 可能正落在两段之间,保留就在窗口里
+      // 留下孤岛,而漏收的量不大时两侧时间差很小、时间阈值的空洞检测发现不了(#1222)。
+      const windowOptions = {
+        moreBeyondWindow: hasMoreOlderMessages(value, RECONNECT_MESSAGE_WINDOW_LIMIT),
+      };
+      if (messageAuthorityAtRequestStart) {
+        return remoteSessionStore.setLatestMessageWindow(sessionId, value, {
+          ...windowOptions,
+          authority: messageAuthorityAtRequestStart,
+        });
+      } else if (
+        unenteredMessageAuthorityAtRequestStart
+        && remoteSessionStore.canCommitUnenteredSessionMessageWindow(
+          unenteredMessageAuthorityAtRequestStart,
+          deviceId,
+        )
+      ) {
+        // 从未打开过的 regular 仍承担首页/全局消息镜像；但请求飞行期间只要发生过
+        // enter / leave / forget / clear，生命周期 fence 就会失效，旧重连响应不得越过
+        // 新生命周期。Store 同时校验 regular retention 与物理设备归属，避免旧设备响应
+        // 写回新 shard。
+        return remoteSessionStore.setLatestMessageWindow(sessionId, value, windowOptions);
+      }
+    }
+    return false;
+  };
+  const applyPending = (value: PendingInteraction[]) => {
+    if (!isCurrent()) return false;
+    if (Array.isArray(value)) {
+      remoteSessionStore.setPendingInteractions(sessionId, value, { finalizeStreaming: true });
+      return true;
+    }
+    return false;
+  };
+  const applyProjection = (value: InputProjection) => {
+    if (!isCurrent()) return false;
+    if (value) {
+      return remoteSessionStore.setInputProjectionIfCurrent(
+        sessionId,
+        value,
+        projectionEpochAtRequestStart,
+      );
+    }
+    return false;
+  };
+  const applyGoal = (value: MobileGoalStatusPayload | null | undefined) => {
+    if (!isCurrent()) return false;
+    // undefined = 未拿到/未知(兼容形态的空返回),不能当作权威「无 goal」落库——
+    // 那会把在世的 goal 卡清掉直到下一条 push;只有显式 null 才代表确认无 goal。
+    if (value !== undefined) {
+      remoteSessionStore.setGoalStatus(sessionId, value);
+      return true;
+    }
+    return false;
+  };
+  const [history, pending, projection, goal] = await Promise.all([
+    measured('history', runSessionMessagesSnapshotSingleFlight(
       snapshotScope,
       RECONNECT_MESSAGE_WINDOW_LIMIT,
       messageAuthorityAtRequestStart
@@ -1404,8 +1515,8 @@ async function rebuildSessionSnapshot(
         [sessionId, { limit: RECONNECT_MESSAGE_WINDOW_LIMIT }],
         sendOpts,
       ),
-    ),
-    runSessionPendingInteractionsSnapshotSingleFlight(
+    ), applyHistory),
+    measured('pending', runSessionPendingInteractionsSnapshotSingleFlight(
       snapshotScope,
       pendingSnapshotAtRequestStart,
       () => sendInvokeWithAccessHandling<PendingInteraction[]>(
@@ -1415,8 +1526,8 @@ async function rebuildSessionSnapshot(
         [sessionId],
         sendOpts,
       ),
-    ),
-    runSessionProjectionSnapshotSingleFlight(
+    ), applyPending),
+    measured('projection', runSessionProjectionSnapshotSingleFlight(
       snapshotScope,
       projectionEpochAtRequestStart,
       () => sendInvokeWithAccessHandling<InputProjection>(
@@ -1426,56 +1537,15 @@ async function rebuildSessionSnapshot(
         [sessionId],
         sendOpts,
       ),
-    ),
-    sendInvokeWithAccessHandling<MobileGoalStatusPayload | null | undefined>(
+    ), applyProjection),
+    measured('goal', sendInvokeWithAccessHandling<MobileGoalStatusPayload | null | undefined>(
       client,
       deviceId,
       'maker:goal:get-status',
       [sessionId],
       sendOpts,
-    ),
+    ), applyGoal),
   ]);
-  if (history.status === 'fulfilled' && Array.isArray(history.value)) {
-    // moreBeyondWindow:这一页上沿之外服务端还有历史(满 80 条,或被 device-link 裁过行)。为真时
-    // store 不保留早于本页的缓存段 —— 断连期间漏收的 push 可能正落在两段之间,保留就在窗口里
-    // 留下孤岛,而漏收的量不大时两侧时间差很小、时间阈值的空洞检测发现不了(#1222)。
-    const windowOptions = {
-      moreBeyondWindow: hasMoreOlderMessages(history.value, RECONNECT_MESSAGE_WINDOW_LIMIT),
-    };
-    if (messageAuthorityAtRequestStart) {
-      remoteSessionStore.setLatestMessageWindow(sessionId, history.value, {
-        ...windowOptions,
-        authority: messageAuthorityAtRequestStart,
-      });
-    } else if (
-      unenteredMessageAuthorityAtRequestStart
-      && remoteSessionStore.canCommitUnenteredSessionMessageWindow(
-        unenteredMessageAuthorityAtRequestStart,
-        deviceId,
-      )
-    ) {
-      // 从未打开过的 regular 仍承担首页/全局消息镜像；但请求飞行期间只要发生过
-      // enter / leave / forget / clear，生命周期 fence 就会失效，旧重连响应不得越过
-      // 新生命周期。Store 同时校验 regular retention 与物理设备归属，避免旧设备响应
-      // 写回新 shard。
-      remoteSessionStore.setLatestMessageWindow(sessionId, history.value, windowOptions);
-    }
-  }
-  if (pending.status === 'fulfilled' && Array.isArray(pending.value)) {
-    remoteSessionStore.setPendingInteractions(sessionId, pending.value, { finalizeStreaming: true });
-  }
-  if (projection.status === 'fulfilled' && projection.value) {
-    remoteSessionStore.setInputProjectionIfCurrent(
-      sessionId,
-      projection.value,
-      projectionEpochAtRequestStart,
-    );
-  }
-  // undefined = 未拿到/未知(兼容形态的空返回),不能当作权威「无 goal」落库——
-  // 那会把在世的 goal 卡清掉直到下一条 push;只有显式 null 才代表确认无 goal。
-  if (goal.status === 'fulfilled' && goal.value !== undefined) {
-    remoteSessionStore.setGoalStatus(sessionId, goal.value);
-  }
   // 任一子快照瞬时失败 → 上抛让 rehydrate 计入重试;永久失败(老被控端无 goal
   // 通道的 CHANNEL_NOT_ALLOWED、权限撤销等)吞掉,重试没有意义。同批若已有
   // fulfilled 目标应答,兄弟 unavailable 只能算局部瞬态,不能升级为整机 verdict。

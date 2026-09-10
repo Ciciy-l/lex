@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
+import { LoaderCircle } from 'lucide-react-native';
+import { useReduceMotionEnabled } from '@/hooks/useReduceMotion';
 import { Text } from '@/components/AppText';
 import type { DeviceLinkConnectionIssue, DeviceLinkStatus } from '@cindy/device-link';
 import {
@@ -17,8 +19,8 @@ import {
   resolveConnectionBannerVisibility,
   resolveEffectiveConnectionError,
 } from '@/components/connectionBannerVisibility';
-import { fontWeight, useThemedStyles, type ThemeColors } from '@/theme';
-import { lineHeight, radius, spacing, typeScale } from '@/theme/tokens';
+import { fontWeight, useTheme, useThemedStyles, type ThemeColors } from '@/theme';
+import { iconSize, lineHeight, radius, spacing, typeScale } from '@/theme/tokens';
 
 /** 普通断线(无分类 issue)转为可见提示前的静默窗口:健康重连通常 <1s 完成,不闪 banner。 */
 const OFFLINE_BANNER_DELAY_MS = 1_200;
@@ -37,18 +39,21 @@ export function useShowConnectionBanner(
   error: string | null,
   issue: DeviceLinkConnectionIssue | null,
   deviceUnresponsive = false,
+  recovery?: 'syncing' | 'recovered',
 ): boolean {
-  const offline = status !== 'online';
+  const offline = status !== 'online' || recovery === 'syncing';
+  const showRecovered = recovery !== undefined;
   const [offlineLongEnough, setOfflineLongEnough] = useState(false);
   useEffect(() => {
     if (!offline) {
-      setOfflineLongEnough(false);
-      return;
+      if (!showRecovered) { setOfflineLongEnough(false); return; }
+      const timer = setTimeout(() => setOfflineLongEnough(false), 2_000);
+      return () => clearTimeout(timer);
     }
     const timer = setTimeout(() => setOfflineLongEnough(true), OFFLINE_BANNER_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [offline]);
-  return resolveConnectionBannerVisibility({
+  }, [offline, showRecovered]);
+  return (recovery === 'recovered' && offlineLongEnough) || resolveConnectionBannerVisibility({
     offline,
     offlineLongEnough,
     // 熔断已关后屏幕残留的 DEVICE_UNRESPONSIVE 错误按陈旧丢弃(review P1),
@@ -66,10 +71,12 @@ export function ConnectionBanner({
   density = 'default',
   deviceUnresponsive = false,
   error,
+  requestErrorAutoRecovering,
   issue = null,
   lastSyncedAt,
   onSync,
   variant = 'bar',
+  recovery,
 }: {
   status: DeviceLinkStatus;
   loading: boolean;
@@ -77,13 +84,18 @@ export function ConnectionBanner({
   /** 当前关联设备熔断 open(电脑端未响应);relay 可能仍 online,单独入参 */
   deviceUnresponsive?: boolean;
   error: string | null;
+  /** Request owners with local retry (e.g. history pagination) can opt out of connection recovery. */
+  requestErrorAutoRecovering?: boolean;
   /** 连接层失败原因(useDeviceLink().connectionIssue);比请求级 error 更根因,优先展示 */
   issue?: DeviceLinkConnectionIssue | null;
   lastSyncedAt: number | null;
   onSync(): void;
   variant?: 'bar' | 'inline';
+  recovery?: 'syncing' | 'recovered';
 }) {
   const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
+  const reduceMotion = useReduceMotionEnabled();
   const { t } = useTranslation();
   // 链路已 online 说明普通 issue 已过期;unstable 描述跨连接抖动,online 时仍展示。
   // issue 优先于请求级 error:链路断因明确时,invoke 失败都是它的下游症状(NOT_CONNECTED)。
@@ -95,18 +107,22 @@ export function ConnectionBanner({
   // useShowConnectionBanner 同一判定,否则会出现可见但无内容的空壳 banner)。
   const effectiveError = resolveEffectiveConnectionError(error, deviceUnresponsive);
   const friendlyError = activeIssue || showUnresponsive ? null : describeRemoteError(effectiveError);
+  const autoRecoveringRequest = requestErrorAutoRecovering ?? isAutoRecoveringRemoteError(effectiveError);
+  const showRecoveryProgress = (!activeIssue || activeIssue.kind === 'unstable' || activeIssue.kind === 'replaced')
+    && (status === 'connecting' || deviceUnresponsive || recovery === 'syncing'
+      || (friendlyError !== null && autoRecoveringRequest));
   const showSyncAction = resolveConnectionBannerSyncActionVisibility({
     online: status === 'online',
     hasActiveIssue: activeIssue !== null,
     deviceUnresponsive: showUnresponsive,
     hasRequestError: friendlyError !== null,
-    requestErrorAutoRecovering: isAutoRecoveringRemoteError(effectiveError),
+    requestErrorAutoRecovering: autoRecoveringRequest,
   });
   const tone = activeIssue
     ? 'off'
     : showUnresponsive
       ? 'busy'
-      : friendlyError ? 'muted' : status === 'online' ? 'ready' : status === 'connecting' ? 'busy' : 'off';
+      : friendlyError ? 'muted' : recovery === 'syncing' ? 'busy' : status === 'online' ? 'ready' : status === 'connecting' ? 'busy' : 'off';
   const compact = density === 'compact';
   const title = activeIssue
     ? activeIssue.kind === 'unstable'
@@ -114,14 +130,16 @@ export function ConnectionBanner({
       : connectionIssueTitle(activeIssue.kind)
     : showUnresponsive
       ? t('deviceLink.deviceUnresponsiveTitle')
-      : friendlyError ? t('deviceLink.syncFailed') : relayStatusLabel(status);
+      : friendlyError ? t('deviceLink.syncFailed') : status === 'online' && recovery
+        ? t(`deviceLink.recovery.${recovery}`) : relayStatusLabel(status);
   const copy = activeIssue
     ? activeIssue.kind === 'unstable'
       ? t('deviceLink.unstableHint')
       : connectionIssueHint(activeIssue.kind)
     : showUnresponsive
       ? t('deviceLink.deviceUnresponsiveHint')
-      : friendlyError ?? relayStatusHint(status, lastSyncedAt);
+      : friendlyError ?? (status === 'online' && recovery === 'syncing'
+        ? t('deviceLink.recovery.syncingHint') : relayStatusHint(status, lastSyncedAt));
   return (
     <View
       style={[
@@ -132,7 +150,7 @@ export function ConnectionBanner({
       ]}
       testID="connection.banner"
     >
-      <StatusDot tone={tone} pulsing={!activeIssue && (status === 'connecting' || showUnresponsive)} />
+      <StatusDot tone={tone} pulsing={!activeIssue && (status === 'connecting' || showUnresponsive || recovery === 'syncing')} />
       <View style={[styles.textBlock, compact && styles.textBlockCompact]}>
         <Text
           ellipsizeMode="tail"
@@ -159,6 +177,20 @@ export function ConnectionBanner({
           loading={loading}
           onPress={onSync}
           testID="connection.syncButton"
+        />
+      ) : showRecoveryProgress ? reduceMotion === false ? (
+        <ActivityIndicator
+          accessibilityLabel={`${title} · ${copy}`}
+          color={colors.textSecondary}
+          size="small"
+          testID="connection.recoveryProgress"
+        />
+      ) : (
+        <LoaderCircle
+          accessibilityLabel={`${title} · ${copy}`}
+          color={colors.textSecondary}
+          size={iconSize.action}
+          testID="connection.recoveryProgressStatic"
         />
       ) : null}
     </View>

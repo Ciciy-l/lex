@@ -18,6 +18,8 @@ import { useTranslation } from 'react-i18next';
 import { Bot, Globe, Smartphone, Terminal } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useBotProfiles } from '@/features/bots/botStore';
+import { findBotProfileForSession } from '@/features/bots/botSessionOwners';
 import type { TabKindId, TabKindMenuMeta } from './types';
 import type { AvailableShell, ShellId, TerminalProfile } from '../../../shared/terminal-bridge';
 
@@ -27,9 +29,19 @@ const VIEWPORT_PADDING = 8;
 /** anchor 底边到 dropdown 顶边的间距(原 mt-1)。 */
 const ANCHOR_GAP = 4;
 
+const BOT_SECONDARY_KINDS = new Set<TabKindId>([
+  'review',
+  'subagents',
+  'background-tasks',
+  'terminal',
+  'ios-simulator',
+]);
+
 interface AddTabDropdownProps {
   /** 定位锚点:「+」按钮 wrapper。dropdown portal 到 body 后按它的 rect 摆位。 */
   anchorRef: React.RefObject<HTMLElement | null>;
+  /** 当前会话。伙伴任务用来把工程面板从默认菜单里收掉。 */
+  sessionId?: string | null;
   /** 点 outside / Escape 关闭。 */
   onClose: () => void;
   /** 选 kind。调用方负责真创建 tab + 关闭 dropdown。单例 kind 已存在时
@@ -76,6 +88,7 @@ const MENU_ITEMS: TabKindMenuMeta[] = [
 
 export function AddTabDropdown({
   anchorRef,
+  sessionId,
   onClose,
   onSelect,
   existingKinds,
@@ -84,6 +97,8 @@ export function AddTabDropdown({
   onLaunchTerminal,
 }: AddTabDropdownProps) {
   const { t } = useTranslation();
+  const bots = useBotProfiles();
+  const isBotSession = Boolean(sessionId && findBotProfileForSession(bots, sessionId));
   const ref = useRef<HTMLDivElement | null>(null);
   const [availableShells, setAvailableShells] = useState<AvailableShell[] | null>(null);
   useEffect(() => {
@@ -200,11 +215,12 @@ export function AddTabDropdown({
     };
   }, [anchorRef, onClose]);
 
-  const visibleItems = MENU_ITEMS.filter(
-    (item) =>
-      (item.kind !== 'ios-simulator' || iosSimulatorAvailable) &&
-      (item.kind !== 'subagents' || subagentsAvailable),
-  );
+  const visibleItems = MENU_ITEMS.filter((item) => {
+    if (item.kind === 'ios-simulator' && !iosSimulatorAvailable) return false;
+    if (item.kind === 'subagents' && !subagentsAvailable) return false;
+    if (isBotSession && BOT_SECONDARY_KINDS.has(item.kind)) return false;
+    return true;
+  });
   const enabled = visibleItems.filter((m) => m.enabled).sort((a, b) => a.order - b.order);
   const coming = visibleItems.filter((m) => !m.enabled).sort((a, b) => a.order - b.order);
   const shellItems = [...(availableShells ?? [])].sort(

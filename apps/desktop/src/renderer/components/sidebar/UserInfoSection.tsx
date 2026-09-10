@@ -243,6 +243,10 @@ export function UserInfoSection({ isCollapsed, onOpenUpdateNotice }: UserInfoSec
                 account.isCurrent || switchingAccountKey !== null || !accountsMutationAllowed
               }
               onSelect={() => void switchSavedAccount(account)}
+              // Radix synthesizes a click when a press starts outside this item
+              // and releases over it. Async account rows can move under that
+              // release; require a normal click or keyboard selection instead.
+              onPointerUp={(event) => event.preventDefault()}
               className="gap-2.5 py-2"
             >
               <AccountMenuAvatar account={account} />
@@ -284,7 +288,7 @@ export function UserInfoSection({ isCollapsed, onOpenUpdateNotice }: UserInfoSec
         {mode === 'local' ? (
           <DropdownMenuItem onSelect={() => void openAddAccount()} className="gap-2.5">
             <UserPlus className="h-4 w-4" aria-hidden="true" />
-            {t('sidebar.user.menuAddAccount')}
+            {t('login.signIn')}
           </DropdownMenuItem>
         ) : null}
         <DropdownMenuItem onSelect={openSettings} className="gap-2.5">

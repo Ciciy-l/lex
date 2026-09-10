@@ -3233,6 +3233,23 @@ describe('provider:models-fetch handler', () => {
     expect(deps.fetchModels).not.toHaveBeenCalled();
   });
 
+  it.each(
+    (['baseUrl', 'modelsUrl'] as const).flatMap((field) =>
+      ['user@', ':secret@', 'user:secret@', 'us%65r:s%65cret@'].map((userinfo) => ({ field, userinfo })),
+    ),
+  )('rejects credentials in model discovery $field at IPC ingress: $userinfo', async ({ field, userinfo }) => {
+    const harness = new IpcHarness();
+    const deps = makeDeps();
+    registerProviderHandlers(harness, deps);
+    await expect(harness.invoke(MAKER_INVOKE.PROVIDER_MODELS_FETCH, {
+      agent: 'codex',
+      authMethod: 'apiKey',
+      baseUrl: 'https://x.example/v1',
+      [field]: `https://${userinfo}x.example/v1/models`,
+    })).rejects.toThrow(/INVALID_PARAMS/);
+    expect(deps.fetchModels).not.toHaveBeenCalled();
+  });
+
   it('rejects malformed input with INVALID_PARAMS (bad agent / bad url / bad modelsUrl / bad headers)', async () => {
     const harness = new IpcHarness();
     const deps = makeDeps();
@@ -3626,5 +3643,88 @@ describe('provider:oauth mutation ordering', () => {
     await expect(first).resolves.toEqual({ ok: false, reason: 'login_cancelled' });
     await expect(second).resolves.toEqual({ ok: true });
     expect(rollbackCredentials).toHaveBeenCalledOnce();
+  });
+});
+
+
+describe('model context limit IPC', () => {
+  const primary = { providerId: 'openai', agent: 'codex' as const, modelId: 'gpt-6' };
+  const related = { providerId: 'openai', agent: 'claude-code' as const, modelId: 'chatgpt/gpt-6' };
+  const stamp = { dataOwnerId: 'owner-a', ownerGeneration: 1 };
+
+  it('returns native facts separately from model preferences without writing or launching a task', async () => {
+    const harness = new IpcHarness();
+    const native = { contextWindow: 272_000, usableContextWindow: 258_400, autoCompactTokenLimit: 244_800,
+      modelMaxContextWindow: 872_000, source: 'runtime' as const, fallbackModel: false };
+    const readCodexContextWindowInfo = vi.fn(async () => native);
+    const writeModelContextLimit = vi.fn();
+    registerProviderHandlers(harness, makeDeps({
+      readModelContextLimit: () => ({ limit: 1_000_000, isCustomized: true }),
+      writeModelContextLimit, readCodexContextWindowInfo,
+    }));
+    await expect(harness.invoke(MAKER_INVOKE.MODEL_CONTEXT_LIMIT_GET, { ...primary, sessionId: 'live-codex' }))
+      .resolves.toMatchObject({ limit: 1_000_000, codexContext: native });
+    expect(readCodexContextWindowInfo).toHaveBeenCalledWith(primary, 'live-codex');
+    expect(writeModelContextLimit).not.toHaveBeenCalled();
+    await expect(harness.invoke(MAKER_INVOKE.MODEL_CONTEXT_LIMIT_GET, { ...primary, sessionId: 123 }))
+      .rejects.toThrow();
+  });
+
+  it('validates every alias then writes one atomic edit with the current owner', async () => {
+    const harness = new IpcHarness();
+    const deps = makeDeps({
+      currentOwnerSession: () => ({ dataOwnerId: 'owner-a', generation: 1 }),
+      listProviders: async () => [catalogView('openai', { codex: ['gpt-6'], 'claude-code': ['chatgpt/gpt-6'] })],
+      readModelContextLimit: () => ({ limit: 500_000, isCustomized: true }),
+      writeModelContextLimit: vi.fn(),
+    });
+    registerProviderHandlers(harness, deps);
+    const target = { ...primary, relatedTargets: [related] };
+    await expect(harness.invoke(MAKER_INVOKE.MODEL_CONTEXT_LIMIT_SET, target, 500_000, stamp)).resolves.toMatchObject({ limit: 500_000, isCustomized: true, mixed: false });
+    expect(deps.writeModelContextLimit).toHaveBeenCalledExactlyOnceWith([primary, related], 500_000);
+    await expect(harness.invoke(MAKER_INVOKE.MODEL_CONTEXT_LIMIT_SET, target, 400_000, { ...stamp, ownerGeneration: 0 })).rejects.toThrow();
+    await expect(harness.invoke(MAKER_INVOKE.MODEL_CONTEXT_LIMIT_SET, { ...primary, relatedTargets: [primary] }, 400_000, stamp)).rejects.toThrow();
+    await expect(harness.invoke(MAKER_INVOKE.MODEL_CONTEXT_LIMIT_SET, { ...primary, relatedTargets: [{ ...related, providerId: 'other' }] }, 400_000, stamp)).rejects.toThrow();
+    expect(deps.writeModelContextLimit).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not save a window when native catalog preparation fails', async () => {
+    const harness = new IpcHarness();
+    const writeModelContextLimit = vi.fn();
+    registerProviderHandlers(harness, makeDeps({
+      currentOwnerSession: () => ({ dataOwnerId: 'owner-a', generation: 1 }),
+      listProviders: async () => [catalogView('openai', { codex: ['gpt-6'] })],
+      readModelContextLimit: () => ({ limit: null, isCustomized: false }),
+      validateModelContextLimit: async () => { throw new Error('native catalog unavailable'); },
+      writeModelContextLimit,
+    }));
+    await expect(harness.invoke(MAKER_INVOKE.MODEL_CONTEXT_LIMIT_SET, primary, 1_000_000, stamp)).rejects.toThrow('native catalog unavailable');
+    expect(writeModelContextLimit).not.toHaveBeenCalled();
+  });
+
+  it('waits for runtime reconfiguration and reports failures for both save and reset', async () => {
+    const harness = new IpcHarness();
+    registerProviderHandlers(harness, makeDeps({
+      currentOwnerSession: () => ({ dataOwnerId: 'owner-a', generation: 1 }),
+      listProviders: async () => [catalogView('openai', { codex: ['gpt-6'] })],
+      readModelContextLimit: () => ({ limit: null, isCustomized: false }),
+      writeModelContextLimit: async () => { throw new Error('runtime refresh failed'); },
+    }));
+    await expect(harness.invoke(MAKER_INVOKE.MODEL_CONTEXT_LIMIT_SET, primary, 1_000_000, stamp)).rejects.toThrow();
+    await expect(harness.invoke(MAKER_INVOKE.MODEL_CONTEXT_LIMIT_RESET, primary, stamp)).rejects.toThrow();
+  });
+
+  it('rejects an owner change during asynchronous catalog validation without writing', async () => {
+    const harness = new IpcHarness();
+    let generation = 1;
+    const deps = makeDeps({
+      currentOwnerSession: () => ({ dataOwnerId: 'owner-a', generation }),
+      listProviders: async () => { generation = 2; return [catalogView('openai', { codex: ['gpt-6'] })]; },
+      readModelContextLimit: () => ({ limit: null, isCustomized: false }),
+      writeModelContextLimit: vi.fn(),
+    });
+    registerProviderHandlers(harness, deps);
+    await expect(harness.invoke(MAKER_INVOKE.MODEL_CONTEXT_LIMIT_SET, primary, 500_000, stamp)).rejects.toThrow();
+    expect(deps.writeModelContextLimit).not.toHaveBeenCalled();
   });
 });

@@ -59,6 +59,8 @@ function createDb(): Database.Database {
       ON right_sidebar_tabs (session_id) WHERE kind = 'subagents';
     CREATE UNIQUE INDEX right_sidebar_tabs_review_singleton_idx
       ON right_sidebar_tabs (session_id) WHERE kind = 'review';
+    CREATE UNIQUE INDEX right_sidebar_tabs_bot_artifacts_singleton_idx
+      ON right_sidebar_tabs (session_id) WHERE kind = 'bot-artifacts';
   `);
   sqlite.prepare(`INSERT INTO sessions (id) VALUES (?)`).run('s1');
   sqlite.prepare(`INSERT INTO sessions (id) VALUES (?)`).run('s2');
@@ -397,6 +399,12 @@ describe('rightSidebarTabs IPC', () => {
         invoke('local-db:right-sidebar-tabs:ensure-singleton', {
           sessionId: 's1',
           kind: 'web-browser',
+        }),
+      ).rejects.toThrow(/INVALID_PARAMS/);
+      await expect(
+        invoke('local-db:right-sidebar-tabs:ensure-singleton', {
+          sessionId: 's1',
+          kind: 'bot-artifacts',
         }),
       ).rejects.toThrow(/INVALID_PARAMS/);
     });

@@ -35,6 +35,7 @@ import { probeBinaryVersion } from './binary-version-probe.js';
 import { findDevBinary } from './dev-fallback.js';
 import {
   findCachedLinuxRuntimeFallbackBinary,
+  findUsableLinuxRuntimeFallbackBinary,
   prepareLinuxRuntimeFallback,
 } from './linux-runtime-fallback.js';
 import { getVendorAsset } from './manifest.js';
@@ -42,6 +43,15 @@ import { getRuntimeManifest } from './runtime-manifest.js';
 import { getPlatformKey } from '../manifestService.js';
 import { ProgressNormalizer } from '../updateProgressNormalizer.js';
 import { createLogger } from '../logger.js';
+import { consumeStartupBinaryUpdateMarker } from './startup-update.js';
+
+let startupCheckForUpdates: boolean | undefined;
+
+function resolveUpdateCheck(checkForUpdates?: boolean): boolean {
+  startupCheckForUpdates ??= app.isPackaged
+    && consumeStartupBinaryUpdateMarker(app.getPath('userData'), app.getVersion());
+  return checkForUpdates ?? startupCheckForUpdates;
+}
 
 /**
  * CDN 腿预算上限(毫秒)。有进展的慢速下载给 3 分钟窗口(百 MB 级资产在慢网
@@ -297,18 +307,31 @@ export async function prepare(
     return { ready: false, error: `${kind} dev binary not found for ${getPlatformKey()}`, downloaded: false };
   }
 
+  opts = { ...opts, checkForUpdates: resolveUpdateCheck(opts.checkForUpdates) };
+
   // ── packaged Linux:内置 snapshot 的 CDN 资产优先,失败回落 runtime fallback ──
-  // Linux 与 mac/win 共用随构建固定的 Cindy CDN 资产。CDN 链失败(snapshot
-  // 无资产、下载失败)是预期内的降级第一环,不向 splash
+  // Linux 与 mac/win 共用随构建固定的 Lex runtime CDN 资产。App 更新 manifest
+  // 与 CLI runtime 更新链完全独立；CDN 链失败(snapshot 无资产、下载失败)是预期
+  // 内的降级第一环,不向 splash
   // 广播 failed,静默落到 runtime fallback(私有安装 / 旧缓存 / 系统 CLI /
   // 官方下载)——fallback 才是最终判决。
   // pi 例外:没有官方 CLI fallback 链,Linux 也走下方通用 snapshot 路径
   // (snapshot 缺 pi 字段 → asset_missing 快速失败,由调用方降级)。
   if (process.platform === 'linux' && app.isPackaged && kind !== 'pi') {
     // Runtime metadata is local, so the shared deadline starts when the first
-    // prepare begins instead of including a remote manifest probe.
+    // prepare begins instead of including a remote app-update manifest probe.
     if (opts.signal && !linuxRoundStartBySignal.has(opts.signal)) {
       linuxRoundStartBySignal.set(opts.signal, Date.now());
+    }
+    if (opts.checkForUpdates === false) {
+      const hasLocalCdnRuntime = !await getBase(kind).peekNeedsDownload(opts);
+      if (!hasLocalCdnRuntime) {
+        const localPath = await findUsableLinuxRuntimeFallbackBinary(kind, opts.signal);
+        if (localPath) {
+          lastReadyPath.set(kind, localPath);
+          return { ready: true, path: localPath, downloaded: false };
+        }
+      }
     }
     // CDN 腿的信号与预算在 prepareViaCdn 内构造(预算从传输真正开始计起,
     // 排队等待不计入,见该函数注释)。CDN 链任何异常(含磁盘错误级)都是降级
@@ -413,7 +436,7 @@ async function prepareViaCdn(
 
   // ── 不广播 IPC 路径 (lazy 调用, 当前 desktop 不走) ────────────────────────
   if (!broadcastProgress) {
-    const result = await base.prepare({ signal: opts.signal });
+    const result = await base.prepare({ signal: opts.signal, checkForUpdates: opts.checkForUpdates });
     if (result.ready) {
       lastReadyPath.set(kind, result.binaryPath);
       return { ready: true, path: result.binaryPath };
@@ -478,6 +501,7 @@ async function prepareViaCdn(
   try {
     const result = await base.prepare({
       signal: effectiveSignal,
+      checkForUpdates: opts.checkForUpdates,
       onProgress: (p: VendorRuntimeState) => {
         if (p.status === 'downloading') {
           didDownload = true;
@@ -543,21 +567,27 @@ async function prepareViaCdn(
 
 // ── splash 顺序检查 helpers ──────────────────────────────────────────────────
 
-export async function peekNeedsDownload(kind: AgentBinaryKind): Promise<boolean> {
+export async function peekNeedsDownload(
+  kind: AgentBinaryKind,
+  opts: Pick<PrepareOpts, 'checkForUpdates'> = {},
+): Promise<boolean> {
   // dev 模式永不下载 (findDevBinary 命中 / 缺失都不走 OSS)
   if (!app.isPackaged) return false;
-  // Linux(cc/codex):the build-pinned snapshot decides whether the CDN leg is
-  // available; no remote app-update manifest probe belongs on this path.
+  opts = { ...opts, checkForUpdates: resolveUpdateCheck(opts.checkForUpdates) };
+  // Linux(cc/codex):the build-pinned runtime snapshot decides whether the CDN
+  // leg is available; no remote app-update manifest probe belongs on this path.
   // PATH 与版本探测统一留给可取消的 async prepare。
   // pi 各平台统一走 manifest peek(可选资产:manifest 缺字段 → false)。
   if (process.platform === 'linux' && kind !== 'pi') {
     const manifest = getRuntimeManifest();
     if (manifest && getVendorAsset(manifest, CONFIG[kind].manifestField)) {
-      return getBase(kind).peekNeedsDownload();
+      const needsDownload = await getBase(kind).peekNeedsDownload(opts);
+      if (!needsDownload || opts.checkForUpdates) return needsDownload;
     }
+    if (opts.checkForUpdates === false) return await findUsableLinuxRuntimeFallbackBinary(kind) === null;
     return findCachedLinuxRuntimeFallbackBinary(kind) === null;
   }
-  return getBase(kind).peekNeedsDownload();
+  return getBase(kind).peekNeedsDownload(opts);
 }
 
 export async function getInstallState(kind: AgentBinaryKind): Promise<VendorRuntimeState> {

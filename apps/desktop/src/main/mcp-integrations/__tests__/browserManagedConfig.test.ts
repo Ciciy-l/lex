@@ -4,10 +4,9 @@ import { BRAND_NAME } from '@cindy/maker-shared/branding';
 import { buildManagedConfig } from '../browser-managed-config.js';
 
 describe('managed browser runtime config', () => {
-  it('allows only proxy fake-IP ranges without disabling private-network protection', () => {
-    expect(buildManagedConfig().browser?.ssrfPolicy).toEqual({
-      allowRfc2544BenchmarkRange: true,
-      allowIpv6UniqueLocalRange: true,
+  it.each([false, true])('allows private-network browsing with useRealProfile=%s', (useRealProfile) => {
+    expect(buildManagedConfig({ useRealProfile }).browser?.ssrfPolicy).toEqual({
+      dangerouslyAllowPrivateNetwork: true,
     });
   });
 

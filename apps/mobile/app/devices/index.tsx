@@ -1,3 +1,4 @@
+import { cacheRemoteResourceHome, readRemoteResourceSnapshot } from '@/device-link/remoteResourceCache';
 import { useFocusEffect, useIsFocused } from 'expo-router';
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import {
@@ -20,7 +21,7 @@ import {
   type TextStyle,
   type ViewStyle,
 } from 'react-native';
-import { Text, TextInput } from '@/components/AppText';
+import { Text } from '@/components/AppText';
 import { DeviceLinkError, type DeviceView, type PresenceSnapshot } from '@cindy/device-link';
 import {
   Archive,
@@ -74,8 +75,8 @@ import {
 import {
   buildHomeDisplayPullDownActions,
   buildHomeScopePullDownActions,
-  homeDisplayMenuPatch,
   parseHomeScopePullDownAction,
+  homeDisplayMenuPatch,
   type HomeDisplayMenuKey,
 } from '@/session/homeChromeMenus';
 import { useConversationSearchFilterMenu } from '@/session/useConversationSearchFilterMenu';
@@ -83,6 +84,12 @@ import { buildMainWindowLayout } from '@/components/mainWindowLayout';
 import { useScreenEdgePadding } from '@/components/screenEdgeInsets';
 import { isAccessRevokedError } from '@/device-link/accessRevoked';
 import { useDeviceLink } from '@/device-link/DeviceLinkContext';
+import {
+  discoverRemoteHomeCollections,
+  remoteResourceDiscoveryTargets,
+  serializeRemoteResourceTargets,
+  type RemoteHomeCollection,
+} from '@/device-link/remoteResources';
 import {
   createEmptyDeviceIdentityCache,
   loadDeviceIdentityCache,
@@ -105,6 +112,7 @@ import {
   formatRemoteError,
 } from '@/device-link/remoteStatus';
 import { withTransientRemoteRetry } from '@/device-link/remoteRetry';
+import { runIndependentSnapshotReads } from '@/device-link/sessionSnapshotSingleFlight';
 import { revokedDevicesStore, useRevokedDevices } from '@/device-link/revokedDevicesStore';
 import { useUnresponsiveDevices } from '@/device-link/unresponsiveDevicesStore';
 import {
@@ -424,6 +432,10 @@ function HomeScreenContent() {
   const [error, setError] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
+  const [remoteHomeCollections, setRemoteHomeCollections] = useState<RemoteHomeCollection[]>([]);
+  const [resourceCacheAccount, setResourceCacheAccount] = useState<number | null>(null);
+  const remoteHomeCollectionsRef = useRef<RemoteHomeCollection[]>([]);
+  remoteHomeCollectionsRef.current = remoteHomeCollections;
   const selectedDeviceIdRef = useRef<string | null>(selectedDeviceId);
   selectedDeviceIdRef.current = selectedDeviceId;
   const [searchOpen, setSearchOpen] = useState(false);
@@ -443,12 +455,9 @@ function HomeScreenContent() {
   const [loggingOut, setLoggingOut] = useState(false);
   // 菜单关闭动画完成(Modal 卸载)后要执行的动作。iOS 上两个兄弟 Modal 重叠时,第二个 Modal
   // 是叠在菜单 Modal 的 VC 上 present 的,菜单淡出后卸载会把它连带 dismiss 掉——所以从菜单里
-  // 打开重命名 / 撤销授权弹窗必须等菜单完全卸载(onClosed)后再挂载,不能同一帧直接 set。
+  // 打开账号切换 / 撤销授权弹窗必须等菜单完全卸载(onClosed)后再挂载,不能同一帧直接 set。
   const pendingMenuActionRef = useRef<(() => void) | null>(null);
   const pendingAccountSwitcherActionRef = useRef<(() => void) | null>(null);
-  const [renameTarget, setRenameTarget] = useState<MobileHomeDeviceFilterItem | null>(null);
-  const [renameDraft, setRenameDraft] = useState('');
-  const [renameSaving, setRenameSaving] = useState(false);
   const {
     actionSheetSession,
     archiveSession,
@@ -542,9 +551,6 @@ function HomeScreenContent() {
     setHostProjectOrders(new Map());
     setRevokedTipDeviceId(null);
     setRetryingDeviceIds(new Set());
-    setRenameTarget(null);
-    setRenameDraft('');
-    setRenameSaving(false);
     setProjectDrag(null);
   }, [accountGeneration]);
 
@@ -691,55 +697,45 @@ function HomeScreenContent() {
     }
     updateDeviceConnectionState(device.deviceId, 'syncing');
     try {
-      const [
-        list,
-        activeSessions,
-        activeSessionSnapshotEpoch,
-        sessionListMutationEpoch,
-      ] = await withTransientRemoteRetry(async () => {
+      const assertCurrentScope = () => {
         if (
           homeAccountGenerationRef.current !== expectedAccountGeneration
           || !isCurrentHomeSyncTarget(device.deviceId, expectedHomeSyncGeneration)
-        ) {
-          throw new HomeSyncScopeSupersededError();
-        }
+        ) throw new HomeSyncScopeSupersededError();
+      };
+      await withTransientRemoteRetry(async () => {
+        assertCurrentScope();
         homeListOwnedDeviceIdsRef.current.add(device.deviceId);
         await subscribe(HOME_LIST_SUBSCRIPTION_OWNER, device.deviceId, ['sessions']);
-        if (
-          homeAccountGenerationRef.current !== expectedAccountGeneration
-          || !isCurrentHomeSyncTarget(device.deviceId, expectedHomeSyncGeneration)
-        ) {
-          throw new HomeSyncScopeSupersededError();
-        }
-        // Capture inside the retry callback so every maker:list-active attempt gets its own
-        // fence. A newer retry push received while this request is in flight must survive
-        // the older snapshot, while progress predating this attempt can be cleared.
-        const activeSessionSnapshotEpoch = remoteSessionStore.captureActiveSessionSnapshotEpoch();
-        const sessionListMutationEpoch = remoteSessionStore.captureDeviceSessionListMutationEpoch(
-          device.deviceId,
-        );
-        const [list, activeSessions] = await Promise.all([
-          invoke<RemoteSession[]>(device.deviceId, 'local-db:sessions:list', [
-            LIST_LIMIT,
-            remoteListStatusFilter(statusFilter),
-            // hydrate / 重连是权威重拉，绕开被控端写前的同参数 in-flight list。
-            { includePinned: true, fresh: true },
-          ]),
-          // `sessions` topic replay covers list-level Agent Island activity, but the authoritative
-          // "turn currently running" snapshot is maker:list-active. Pull it with the list so Home
-          // does not need a session-detail round trip before showing running rows.
-          invoke<unknown[]>(device.deviceId, 'maker:list-active', []).catch((err) => {
-            if (isOptionalActiveSessionSnapshotError(err)) return null;
-            throw err;
-          }),
-        ]);
-        return [
-          list,
-          activeSessions,
-          activeSessionSnapshotEpoch,
-          sessionListMutationEpoch,
-        ] as const;
+        assertCurrentScope();
       });
+      // A slow activity snapshot must not replay an already successful whole list.
+      // Each read captures its own authority fence again on every retry.
+      const [[list, sessionListMutationEpoch], [activeSessions, activeSessionSnapshotEpoch]] =
+        await runIndependentSnapshotReads([
+          async () => {
+            assertCurrentScope();
+            const epoch = remoteSessionStore.captureDeviceSessionListMutationEpoch(device.deviceId);
+            const list = await invoke<RemoteSession[]>(device.deviceId, 'local-db:sessions:list', [
+              LIST_LIMIT,
+              remoteListStatusFilter(statusFilter),
+              { includePinned: true, fresh: true },
+            ]);
+            return [list, epoch] as const;
+          },
+          async () => {
+            assertCurrentScope();
+            const epoch = remoteSessionStore.captureActiveSessionSnapshotEpoch();
+            // Old hosts ignore this optional projection and still return the full snapshot.
+            const active = await invoke<unknown[]>(device.deviceId, 'maker:list-active', [
+              { summary: true },
+            ]).catch((err) => {
+              if (isOptionalActiveSessionSnapshotError(err)) return null;
+              throw err;
+            });
+            return [active, epoch] as const;
+          },
+        ] as const, withTransientRemoteRetry);
       if (
         homeAccountGenerationRef.current !== expectedAccountGeneration
         || !isCurrentHomeSyncTarget(device.deviceId, expectedHomeSyncGeneration)
@@ -1354,23 +1350,6 @@ function HomeScreenContent() {
     // probe invoke clears the revoked mark on success; the tip-close effect handles dismissal.
   }, [accountGeneration, probeRevokedDeviceAccess]);
 
-  const openRenameDevice = useCallback((item: MobileHomeDeviceFilterItem) => {
-    if (!item.deviceId) return;
-    const begin = () => {
-      setRenameTarget(item);
-      setRenameDraft(item.label);
-      setError(null);
-    };
-    // 自定义范围菜单还没卸掉时不能直接挂重命名 Modal。
-    // 原生 UIMenu 没有这层 Modal,可以立刻打开。
-    if (deviceMenuOpen) {
-      pendingMenuActionRef.current = begin;
-      setDeviceMenuOpen(false);
-      return;
-    }
-    begin();
-  }, [deviceMenuOpen]);
-
   // 菜单 Modal 完全关闭(淡出结束 + 卸载)后,执行延后的弹窗动作。
   const handleDeviceMenuClosed = useCallback(() => {
     const action = pendingMenuActionRef.current;
@@ -1414,55 +1393,6 @@ function HomeScreenContent() {
     const next = event.nativeEvent.contentOffset.y > 8;
     setHeaderFrosted((current) => (current === next ? current : next));
   }, [homeScrollY]);
-
-  const closeRenameDevice = useCallback(() => {
-    if (renameSaving) return;
-    setRenameTarget(null);
-    setRenameDraft('');
-  }, [renameSaving]);
-
-  const confirmRenameDevice = useCallback(async () => {
-    const expectedAccountGeneration = accountGeneration;
-    const target = renameTarget;
-    const name = renameDraft.trim();
-    if (!target?.deviceId || !name || renameSaving) return;
-    if (name === target.label.trim()) {
-      setRenameTarget(null);
-      setRenameDraft('');
-      return;
-    }
-
-    setRenameSaving(true);
-    try {
-      const res = await apiFetch<{ deviceId: string; name: string }>(
-        `/api/device-link/devices/${encodeURIComponent(target.deviceId)}`,
-        {
-          baseUrl: DEVICE_LINK_API_BASE_URL,
-          body: { name },
-          method: 'PATCH',
-          timeoutMs: DEVICE_LIST_TIMEOUT_MS,
-        },
-      );
-      if (homeAccountGenerationRef.current !== expectedAccountGeneration) return;
-      const nextName = res.name;
-      setDevices((current) => {
-        const nextRaw = current.map((device) =>
-          device.deviceId === target.deviceId ? { ...device, name: nextName } : device);
-        const next = reconcileDeviceViews(nextRaw).devices;
-        devicesRef.current = next;
-        return next;
-      });
-      remoteSessionStore.renameDevice(target.deviceId, nextName);
-      setRenameTarget(null);
-      setRenameDraft('');
-      void loadHome({ visible: false });
-    } catch (err) {
-      if (homeAccountGenerationRef.current !== expectedAccountGeneration) return;
-      setError(formatRemoteError(err));
-    } finally {
-      if (homeAccountGenerationRef.current === expectedAccountGeneration) setRenameSaving(false);
-    }
-  }, [accountGeneration, apiFetch, loadHome, reconcileDeviceViews, renameDraft, renameSaving, renameTarget]);
 
   const deviceRows = useMemo(
     () => toDeviceListItems(devices, Date.now(), revokedDevices),
@@ -1528,6 +1458,57 @@ function HomeScreenContent() {
     statusDetail: item.statusDetail,
     statusLabel: item.statusLabel,
   })), [deviceRows]);
+  useEffect(() => {
+    let cancelled = false;
+    remoteHomeCollectionsRef.current = [];
+    setRemoteHomeCollections([]);
+    setResourceCacheAccount(null);
+    void readRemoteResourceSnapshot(homeCacheUserId).then((snapshot) => {
+      if (cancelled) return;
+      remoteHomeCollectionsRef.current = snapshot.home;
+      setRemoteHomeCollections(snapshot.home);
+      setResourceCacheAccount(accountGeneration);
+    });
+    return () => { cancelled = true; };
+  }, [accountGeneration, homeCacheUserId]);
+  useEffect(() => {
+    if (resourceCacheAccount !== accountGeneration || !homeListCacheHydrated || (deviceModels.length === 0 && lastSyncedAt === null)) return;
+    let cancelled = false;
+    const targets = remoteResourceDiscoveryTargets(deviceModels, remoteHomeCollectionsRef.current);
+    if (targets.length === 0) {
+      remoteHomeCollectionsRef.current = [];
+      setRemoteHomeCollections([]);
+      return () => { cancelled = true; };
+    }
+    void discoverRemoteHomeCollections(
+      invoke,
+      targets,
+      i18nInstance.language,
+      remoteHomeCollectionsRef.current,
+    )
+      .then((collections) => {
+        if (!cancelled && homeAccountGenerationRef.current === accountGeneration) {
+          remoteHomeCollectionsRef.current = collections;
+          setRemoteHomeCollections(collections);
+          void cacheRemoteResourceHome(homeCacheUserId, collections);
+        }
+      })
+      .catch(() => {
+        // Optional capability discovery must not turn a healthy Sessions home into an error page.
+        // Keep the last same-account manifest during transient link failures.
+      });
+    return () => { cancelled = true; };
+  }, [
+    accountGeneration,
+    connectionEpoch,
+    resourceCacheAccount,
+    lastSyncedAt,
+    homeListCacheHydrated,
+    homeCacheUserId,
+    deviceModels,
+    i18nInstance.language,
+    invoke,
+  ]);
   useEffect(() => {
     remoteSessionStore.setConversationSearchDeviceModels(deviceModels.map((item) => ({
       canOpen: item.canOpen,
@@ -2384,33 +2365,31 @@ function HomeScreenContent() {
     () => buildHomeScopePullDownActions(
       home.deviceFilters,
       t('devices.list.allConversations'),
-      {
-        openLabel: t('devices.list.menu.openDevice'),
-        renameLabel: t('devices.list.menu.renameDevice'),
-        showTasksLabel: t('devices.list.menu.showDeviceTasks'),
-      },
+      remoteHomeCollections.map((collection) => ({
+        id: collection.id,
+        title: collection.title,
+      })),
     ),
-    [home.deviceFilters, t],
+    [home.deviceFilters, remoteHomeCollections, t],
   );
   const handleHomeScopeAction = useCallback((id: string) => {
     const parsed = parseHomeScopePullDownAction(id);
-    if (parsed.kind === 'open') {
-      const item = home.deviceFilters.find((filter) => filter.deviceId === parsed.deviceId);
-      if (!item?.deviceId) return;
+    if (parsed.kind === 'collection') {
+      const collection = remoteHomeCollections.find((item) => item.id === parsed.collectionId);
+      if (!collection) return;
       guardedPush({
-        pathname: '/devices/[deviceId]',
-        params: { deviceId: item.deviceId, name: item.label },
+        pathname: '/resources/[collectionId]',
+        params: {
+          collectionId: collection.id,
+          title: collection.title,
+          targets: serializeRemoteResourceTargets(collection.targets),
+        },
       });
-      return;
-    }
-    if (parsed.kind === 'rename') {
-      const item = home.deviceFilters.find((filter) => filter.deviceId === parsed.deviceId);
-      if (item) openRenameDevice(item);
       return;
     }
     const item = home.deviceFilters.find((filter) => filter.id === parsed.filterId);
     if (item) selectHomeScope(item);
-  }, [guardedPush, home.deviceFilters, openRenameDevice, selectHomeScope]);
+  }, [guardedPush, home.deviceFilters, remoteHomeCollections, selectHomeScope]);
   const homeDisplayPullDownActions = useMemo(
     () => buildHomeDisplayPullDownActions({
       groupByProject,
@@ -2725,19 +2704,22 @@ function HomeScreenContent() {
         }}
       />
       <DeviceMenuModal
+        collections={remoteHomeCollections}
         connectionStates={deviceConnectionStates}
         filters={home.deviceFilters}
         onClose={() => setDeviceMenuOpen(false)}
         onClosed={handleDeviceMenuClosed}
-        onOpenDevice={(item) => {
-          if (!item.deviceId) return;
+        onSelectCollection={(collection) => {
           setDeviceMenuOpen(false);
           guardedPush({
-            pathname: '/devices/[deviceId]',
-            params: { deviceId: item.deviceId, name: item.label },
+            pathname: '/resources/[collectionId]',
+            params: {
+              collectionId: collection.id,
+              title: collection.title,
+              targets: serializeRemoteResourceTargets(collection.targets),
+            },
           });
         }}
-        onRenameDevice={openRenameDevice}
         onSelect={(item) => {
           if (item.deviceId && item.state === 'access_revoked') {
             // 撤销授权提示同样是兄弟 Modal,必须等菜单卸载后再挂(见 pendingMenuActionRef 注释)。
@@ -2777,6 +2759,12 @@ function HomeScreenContent() {
         onOpenAccounts={() => {
           pendingMenuActionRef.current = () => setAccountSwitcherOpen(true);
           setChromeMenuCloseInstant(false);
+          setChromeMenuOpen(false);
+        }}
+        onOpenDevices={() => {
+          pendingMenuActionRef.current = null;
+          guardedPush('/devices/manage');
+          setChromeMenuCloseInstant(true);
           setChromeMenuOpen(false);
         }}
         onOpenSettings={() => {
@@ -2836,14 +2824,6 @@ function HomeScreenContent() {
         topOffset={chromeHeight}
         visible={displaySettingsOpen}
       />
-      <RenameDeviceModal
-        draft={renameDraft}
-        onCancel={closeRenameDevice}
-        onChangeDraft={setRenameDraft}
-        onConfirm={confirmRenameDevice}
-        saving={renameSaving}
-        visible={renameTarget !== null}
-      />
       <SessionOptionsPresenter
         onAction={handleSessionSheetAction}
         onClose={() => setActionSheetSession(null)}
@@ -2878,28 +2858,29 @@ function HomeInitialLoadingState({ style }: { style?: StyleProp<ViewStyle> }) {
 }
 
 function DeviceMenuModal({
+  collections,
   connectionStates,
   filters,
   onClose,
   onClosed,
-  onOpenDevice,
-  onRenameDevice,
   onSelect,
+  onSelectCollection,
   topOffset,
   visible,
 }: {
+  collections: readonly RemoteHomeCollection[];
   connectionStates: Record<string, HomeDeviceConnectionState>;
   filters: readonly MobileHomeDeviceFilterItem[];
   onClose(): void;
   /** 淡出动画完成、Modal 真正卸载后触发;父级用它把「打开第二个 Modal」延后到菜单卸载之后。 */
   onClosed?(): void;
-  onOpenDevice(item: MobileHomeDeviceFilterItem): void;
-  onRenameDevice(item: MobileHomeDeviceFilterItem): void;
   onSelect(item: MobileHomeDeviceFilterItem): void;
+  onSelectCollection(item: RemoteHomeCollection): void;
   topOffset: number;
   visible: boolean;
 }) {
   const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
   const { t } = useTranslation();
   const { height: screenHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -2939,15 +2920,25 @@ function DeviceMenuModal({
                 testID="home.deviceChip.all"
               />
             ) : null}
+            {collections.map((collection) => (
+              <DeviceMenuItem
+                icon={collection.iconName === 'users'
+                  ? <UsersRound color={colors.textSecondary} size={iconSize.md} strokeWidth={iconStroke.regular} />
+                  : undefined}
+                key={`collection:${collection.id}`}
+                label={collection.title}
+                onPress={() => onSelectCollection(collection)}
+                selected={false}
+                testID={`home.remoteCollection.${collection.id}`}
+              />
+            ))}
             {deviceFilters.map((item) => (
               <DeviceMenuItem
                 connectionState={item.deviceId ? connectionStates[item.deviceId] ?? 'idle' : 'idle'}
                 dimmed={!item.available && item.state !== 'access_revoked'}
                 key={item.id}
                 label={item.label}
-                onLongPress={item.deviceId ? () => onOpenDevice(item) : undefined}
                 onPress={() => onSelect(item)}
-                onRename={item.deviceId ? () => onRenameDevice(item) : undefined}
                 selected={item.selected}
                 status={deviceMenuStatus(item)}
                 testID={item.deviceId ? `home.deviceChip.${sanitizeDeviceChipTestId(item.deviceId)}` : undefined}
@@ -3091,9 +3082,7 @@ function DeviceMenuItem({
   dimmed = false,
   icon,
   label,
-  onLongPress,
   onPress,
-  onRename,
   selected,
   status,
   testID,
@@ -3103,24 +3092,20 @@ function DeviceMenuItem({
   dimmed?: boolean;
   icon?: ReactNode;
   label: string;
-  onLongPress?: () => void;
   onPress(): void;
-  onRename?: () => void;
   selected: boolean;
   status?: 'online' | 'offline';
   testID?: string;
 }) {
   const styles = useThemedStyles(makeStyles);
   const { colors } = useTheme();
-  const { t } = useTranslation();
   const rowDisabled = dimmed;
   return (
     <Pressable
       accessibilityLabel={label}
       accessibilityRole="button"
       accessibilityState={{ checked: checked || undefined, disabled: rowDisabled, selected: selected || undefined }}
-      disabled={rowDisabled && !onRename}
-      onLongPress={rowDisabled ? undefined : onLongPress}
+      disabled={rowDisabled}
       onPress={() => {
         if (rowDisabled) return;
         onPress();
@@ -3145,88 +3130,7 @@ function DeviceMenuItem({
           {connectionState === 'failed' ? <View style={styles.deviceConnectionFailedRing} /> : null}
         </View>
       ) : null}
-      {onRename ? (
-        <Pressable
-          accessibilityLabel={t('devices.list.a11y.renameDevice', { label })}
-          accessibilityRole="button"
-          hitSlop={8}
-          onPress={(event) => {
-            event.stopPropagation();
-            onRename();
-          }}
-          style={({ pressed }) => [styles.deviceMenuRenameButton, pressed && styles.pressed]}
-          testID={testID ? `${testID}.rename` : undefined}
-        >
-          <Pencil color={colors.textSecondary} size={iconSize.lg} strokeWidth={iconStroke.regular} />
-        </Pressable>
-      ) : null}
     </Pressable>
-  );
-}
-
-function RenameDeviceModal({
-  draft,
-  onCancel,
-  onChangeDraft,
-  onConfirm,
-  saving,
-  visible,
-}: {
-  draft: string;
-  onCancel(): void;
-  onChangeDraft(value: string): void;
-  onConfirm(): void;
-  saving: boolean;
-  visible: boolean;
-}) {
-  const styles = useThemedStyles(makeStyles);
-  const { colors } = useTheme();
-  const { t } = useTranslation();
-  const canSave = draft.trim().length > 0 && !saving;
-  return (
-    <Modal animationType="fade" transparent visible={visible} onRequestClose={onCancel}>
-      <Pressable style={styles.renameDeviceBackdrop} onPress={onCancel} testID="home.renameDevice.backdrop">
-        <Pressable style={styles.renameDeviceCard} onPress={() => undefined} testID="home.renameDevice.modal">
-          <Text style={styles.renameDeviceTitle}>{t('devices.list.renameDevice.title')}</Text>
-          <TextInput
-            autoFocus
-            editable={!saving}
-            maxLength={64}
-            onChangeText={onChangeDraft}
-            onSubmitEditing={() => {
-              if (canSave) onConfirm();
-            }}
-            placeholder={t('devices.list.renameDevice.placeholder')}
-            placeholderTextColor={colors.textTertiary}
-            returnKeyType="done"
-            selectTextOnFocus
-            style={styles.renameDeviceInput}
-            testID="home.renameDevice.input"
-            value={draft}
-          />
-          {/* 确认对统一规则:共享满宽纵排组(保存在上/取消居底),置于卡片底部。 */}
-          <MainWindowActionGroup
-            primaryActions={[{
-              accessibilityLabel: saving ? t('devices.list.renameDevice.savingA11y') : t('devices.list.renameDevice.saveA11y'),
-              busy: saving,
-              disabled: !canSave,
-              label: saving ? t('devices.common.saving') : t('devices.common.save'),
-              onPress: onConfirm,
-              testID: 'home.renameDevice.save',
-              tone: 'primary',
-            }]}
-            cancelAction={{
-              accessibilityLabel: t('devices.list.a11y.cancelRename'),
-              disabled: saving,
-              label: t('devices.common.cancel'),
-              onPress: onCancel,
-              testID: 'home.renameDevice.cancel',
-            }}
-            testID="home.renameDevice.actions"
-          />
-        </Pressable>
-      </Pressable>
-    </Modal>
   );
 }
 
@@ -4606,52 +4510,11 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     position: 'relative',
     width: 20,
   },
-  deviceMenuRenameButton: {
-    alignItems: 'center',
-    borderRadius: radius.pill,
-    height: 34,
-    justifyContent: 'center',
-    width: 34,
-  },
   deviceMenuDivider: {
     backgroundColor: colors.border,
     height: StyleSheet.hairlineWidth,
     marginHorizontal: spacing.sm,
     marginVertical: spacing.sm,
-  },
-  renameDeviceBackdrop: {
-    alignItems: 'center',
-    backgroundColor: colors.overlay,
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.xl,
-  },
-  renameDeviceCard: {
-    backgroundColor: colors.surfaceElevated,
-    borderColor: colors.border,
-    borderRadius: radius.container,
-    borderWidth: StyleSheet.hairlineWidth,
-    gap: spacing.md,
-    maxWidth: 360,
-    padding: spacing.lg,
-    width: '100%',
-  },
-  renameDeviceTitle: {
-    color: colors.textPrimary,
-    fontSize: typeScale.title,
-    fontWeight: fontWeight.medium,
-    lineHeight: lineHeight.subtitle,
-  },
-  renameDeviceInput: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: radius.container,
-    borderWidth: StyleSheet.hairlineWidth,
-    color: colors.textPrimary,
-    fontSize: typeScale.body,
-    minHeight: 48,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
   },
   revokedTipBackdrop: {
     alignItems: 'center',

@@ -58,13 +58,19 @@ base64 -i Lex-Developer-ID.p12 | tr -d '\\n'
 
 ### Accepted upstream history and DCO
 
-Lex retains Cindy's original Git history. PR #17 accepted the immutable Cindy
-snapshot `1857e28e60effe9dc04d910d67e807ea166308ad`; its imported history includes
-81 author/sign-off identity mismatches documented in `CINDY-SYNC-20260905.md`.
-The release quality gate explicitly excludes ancestors of this exact snapshot
-with `--upstream-baseline` and prints the excluded count. This is an accepted
-imported-history exception, **not** a claim that those commits passed DCO.
-It neither rewrites upstream history nor supplies signatures for its authors.
+Lex retains Cindy's original Git history. The current release-only baseline is
+the immutable Cindy `v0.1.76` snapshot
+`0d1a5c7da95e22a1215dc5ad637bf60549453ee8`, recorded in
+`CINDY-SYNC-20260910.md`. The release quality gate explicitly excludes
+ancestors of this exact snapshot with `--upstream-baseline` and prints the
+excluded count. This is an accepted imported-history exception, **not** a claim
+that those commits passed DCO. It neither rewrites upstream history nor supplies
+signatures for its authors.
+
+`CINDY-SYNC-20260905.md` remains the historical record for the earlier
+`1857e28e60effe9dc04d910d67e807ea166308ad` snapshot and its separately recorded
+identity findings; those findings must not be reused as a count or conclusion
+for the `v0.1.76` range.
 
 The ordinary PR DCO check, sign-off matching rules and GitHub DCO App are
 unchanged. The option is rejected on pull request events. Lex commits outside
