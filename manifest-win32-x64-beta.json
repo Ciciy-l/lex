@@ -1,16 +1,16 @@
 {
   "app": {
-    "version": "0.1.2-rc.1",
-    "releaseNotes": "Lex 0.1.2-rc.1",
+    "version": "0.1.2-rc.2",
+    "releaseNotes": "Lex 0.1.2-rc.2",
     "hotfix": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.2-rc.1/Lex-0.1.2-rc.1-Windows-x64-Auto-Update.zip",
-      "sha256": "05e5340854d8389a90e16941ebc45b3670ee3bfabec63ed44377131c6d0f5e5b",
-      "size": 318298326
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.2-rc.2/Lex-0.1.2-rc.2-Windows-x64-Auto-Update.zip",
+      "sha256": "e84285249907dcd94ee08dacfea6db4f59a2475dbfd36bed6b4f5d29683db8e2",
+      "size": 318989214
     },
     "installer": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.2-rc.1/Lex-0.1.2-rc.1-Windows-x64-Setup.exe",
-      "sha256": "7a9f958ad4142cd871b890ad039f418e072dcc6d5ca86d4c5d8730c27ab9bb9f",
-      "size": 233821131
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.2-rc.2/Lex-0.1.2-rc.2-Windows-x64-Setup.exe",
+      "sha256": "a1641066bbf614acd2e212264feef79a488cb38e434e826dcce273230e01cc69",
+      "size": 234642169
     }
   },
   "claudeCode": {
@@ -28,10 +28,10 @@
     "binarySha256": "83751f15cb6a0a7b97df67752c001e3fe1c20e18ffbfec3ff63567296205eb6c"
   },
   "codexPackage": {
-    "version": "0.153.0",
-    "file": "https://hotfix.cindy.app/cindy/codex-package/0.153.0/win32-x64/codex-package.dist.tar.gz",
-    "sha256": "f34ef6af157f285e51520401cc8bdd9cec448dfa666e7a5487867bf285cd6887",
-    "size": 141424261
+    "version": "0.153.4",
+    "file": "https://hotfix.cindy.app/cindy/codex-package/0.153.4/win32-x64/codex-package.dist.tar.gz",
+    "sha256": "cd38e60cf090066c58fcfa457318ac1efe9ac9af308acbd3fe83fa01a602902a",
+    "size": 141491178
   },
   "pi": {
     "version": "0.84.4",

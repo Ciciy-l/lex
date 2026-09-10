@@ -1,11 +1,11 @@
 {
   "app": {
-    "version": "0.1.2-rc.1",
-    "releaseNotes": "Lex 0.1.2-rc.1",
+    "version": "0.1.2-rc.2",
+    "releaseNotes": "Lex 0.1.2-rc.2",
     "installer": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.2-rc.1/Lex-0.1.2-rc.1-Linux-x64.deb",
-      "sha256": "631284316005bfaa0b6de93ad1684f3a1a02aa22524bd607091651b2b513e147",
-      "size": 189784606
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.2-rc.2/Lex-0.1.2-rc.2-Linux-x64.deb",
+      "sha256": "5c6b0cfb16b6ed47acf480a06064e7b748d7ea2f857a839851a24bb04b0796ff",
+      "size": 190408648
     }
   },
   "claudeCode": {
@@ -23,10 +23,10 @@
     "binarySha256": "a2a05dafaa1acb002a45eaec0a462de5b13694fcfcd7bc43305f14781ce7be14"
   },
   "codexPackage": {
-    "version": "0.153.0",
-    "file": "https://hotfix.cindy.app/cindy/codex-package/0.153.0/linux-x64/codex-package.dist.tar.gz",
-    "sha256": "92225b382cd22880fe4848ea6b490066cc5df376c9c195c7f142cfa863f77f2e",
-    "size": 129203089
+    "version": "0.153.4",
+    "file": "https://hotfix.cindy.app/cindy/codex-package/0.153.4/linux-x64/codex-package.dist.tar.gz",
+    "sha256": "bb345b82d0357c38d91a76bac460bf11b0f4ac1935075cc1df135aecd61297ae",
+    "size": 129267684
   },
   "pi": {
     "version": "0.84.4",
