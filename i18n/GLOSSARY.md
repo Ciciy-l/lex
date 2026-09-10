@@ -239,6 +239,10 @@ OAuth 2.0 Device Authorization Grant 中由用户在另一设备验证页输入�
 
 设备间数据在发送端加密、接收端解密，中转服务只搬运密文。当前先按四语言常用安全术语登记为待讨论，避免 E2EE、端对端加密、End-to-End 暗号化等多套可见说法并存。
 
+### Git Graph
+
+Lex 原创的只读 Git 提交关系内容页签，不表示或复用同名第三方扩展。
+
 ### Harness
 
 用户确认并公开提交 Issue 时显示承载当前 Agent 的运行框架。五语暂统一保留英文 Harness；具体值固定使用 Claude Code、Codex、Pi 的公开全名，不使用 cc/cx/pi 等内部缩写。

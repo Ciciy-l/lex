@@ -66,7 +66,7 @@ describe('git-review device-op', () => {
   });
 
   it('rejects unknown and write ops without dispatching (read-only contract)', async () => {
-    for (const op of ['nope', 'stage-file', 'unstage-file', 'discard-file', 'stage-hunk', 'commit', 'push', 'open-file']) {
+    for (const op of ['nope', 'graph', 'graph-compare', 'navigation', 'stage-file', 'unstage-file', 'discard-file', 'stage-hunk', 'commit', 'push', 'open-file']) {
       expect(await handleRemoteOp({ op, payload: { sessionId: 's1' } })).toEqual({
         ok: false,
         message: `unknown op: ${op}`,

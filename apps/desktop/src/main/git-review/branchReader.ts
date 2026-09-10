@@ -587,6 +587,7 @@ async function readRawBranchDiff(
     'diff',
     ...whitespaceArgs,
     '--no-ext-diff',
+    '--no-textconv',
     '--patch-with-raw',
     '-z',
     '--no-color',
@@ -610,6 +611,7 @@ async function readRawBranchDiffs(
     'diff',
     ...whitespaceArgs,
     '--no-ext-diff',
+    '--no-textconv',
     '--patch-with-raw',
     '-z',
     '--no-color',
@@ -641,6 +643,23 @@ export async function readBranchDiff(
   if (!comparison) {
     return emptyBranchDiff(scope, candidates, {}, warning('no-base-candidates', 'No base branch candidates found'));
   }
+  return readResolvedTreeDiff(scope, candidates, comparison, options);
+}
+
+export async function readExplicitTreeDiff(scope: ReviewScope, fromOid: string, toOid: string): Promise<ReviewBranchDiffData> {
+  if (![fromOid, toOid].every(oid => /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(oid))) throw new Error('Invalid commit OID');
+  return readResolvedTreeDiff(scope, [], {
+    baseRef: fromOid, baseOid: fromOid, headOid: toOid, mergeBaseOid: fromOid, warning: null,
+  }, {});
+}
+
+async function readResolvedTreeDiff(
+  scope: ReviewScope,
+  candidates: ReviewBranchBaseCandidate[],
+  comparison: BranchComparison,
+  options: ReviewDiffReadOptions,
+): Promise<ReviewBranchDiffData> {
+  if (!scope.repoRoot || scope.disabledReason) return emptyBranchDiff(scope, candidates, {}, null);
   const comparisonFields = {
     baseRef: comparison.baseRef,
     baseOid: comparison.baseOid,

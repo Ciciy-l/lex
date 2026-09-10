@@ -1,14 +1,51 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { RefreshCw } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Tip } from '@/components/ui/tooltip';
+import { ArrowLeftRight, FileDiff, GitBranch, GitFork, RefreshCw } from 'lucide-react';
+import { GitControl } from './lib/GitControl';
 import { toast } from '@/lib/toast';
 import { gitReviewApiFor } from '@/lib/gitReviewTransport';
-import type { ReviewCommit, ReviewData, ReviewHistoryData } from '../../../shared/gitReviewWire';
+import type {
+  ReviewCommit,
+  ReviewData,
+  ReviewHistoryData,
+  ReviewDisableReason,
+} from '../../../shared/gitReviewWire';
 import { openGitReview } from './lib/openGitReview';
+import { openGitGraph } from './lib/openGitGraph';
+import { createGraphRefreshQueue } from './plugins/git-graph/state';
 import { getBucket } from './store';
 import type { ReviewState } from './plugins/review';
+
+const disabledReasonKeys = {
+  'remote-session': {
+    title: 'rightSidebar.review.disabled.remote-session.title',
+    desc: 'rightSidebar.review.disabled.remote-session.desc',
+  },
+  'no-session': {
+    title: 'rightSidebar.review.disabled.no-session.title',
+    desc: 'rightSidebar.review.disabled.no-session.desc',
+  },
+  'no-workdir': {
+    title: 'rightSidebar.review.disabled.no-workdir.title',
+    desc: 'rightSidebar.review.disabled.no-workdir.desc',
+  },
+  'non-git': {
+    title: 'rightSidebar.review.disabled.non-git.title',
+    desc: 'rightSidebar.review.disabled.non-git.desc',
+  },
+  'git-unavailable': {
+    title: 'rightSidebar.review.disabled.git-unavailable.title',
+    desc: 'rightSidebar.review.disabled.git-unavailable.desc',
+  },
+  'invalid-worktree': {
+    title: 'rightSidebar.review.disabled.invalid-worktree.title',
+    desc: 'rightSidebar.review.disabled.invalid-worktree.desc',
+  },
+  unknown: {
+    title: 'rightSidebar.review.disabled.unknown.title',
+    desc: 'rightSidebar.review.disabled.unknown.desc',
+  },
+} satisfies Record<ReviewDisableReason, { title: string; desc: string }>;
 
 export function GitNavigation({
   sessionId,
@@ -34,7 +71,7 @@ function GitNavigationContent({
   deviceId: string | null;
 }) {
   const { t } = useTranslation();
-  const [data, setData] = useState<ReviewData | null>(null);
+  const [data, setData] = useState<Pick<ReviewData, 'scope' | 'status'> | null>(null);
   const [history, setHistory] = useState<ReviewHistoryData | null>(null);
   const [failed, setFailed] = useState(false);
   const [historyFailed, setHistoryFailed] = useState(false);
@@ -42,17 +79,18 @@ function GitNavigationContent({
   const [busy, setBusy] = useState(false);
   const revision = useRef(0);
   const inFlight = useRef(false);
+  const queueRef = useRef<ReturnType<typeof createGraphRefreshQueue> | null>(null);
   const refresh = useCallback(async () => {
     if (inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
     setHistoryBusy(true);
     const request = ++revision.current;
-    // Each section publishes as soon as it is ready. Full working-tree diffs
-    // can take much longer than the bounded history read on large repositories.
     await Promise.allSettled([
-      gitReviewApiFor(deviceId)
-        .get({ sessionId })
+      (deviceId
+        ? gitReviewApiFor(deviceId).get({ sessionId })
+        : window.electronAPI.gitReview.navigation({ sessionId })
+      )
         .then((result) => {
           if (request === revision.current) {
             setData(result);
@@ -84,15 +122,18 @@ function GitNavigationContent({
     setBusy(false);
   }, [sessionId, deviceId]);
   useEffect(() => {
-    void refresh();
+    const queue = createGraphRefreshQueue(refresh);
+    queueRef.current = queue;
+    queue.request();
     const update = () => {
-      if (document.visibilityState !== 'hidden') void refresh();
+      if (document.visibilityState !== 'hidden') queue.request();
     };
     const interval = window.setInterval(update, 15000);
     window.addEventListener('focus', update);
     window.addEventListener('lex:workspace-file-saved', update);
     window.addEventListener('lex:git-changed', update);
     return () => {
+      queue.dispose();
       revision.current++;
       inFlight.current = false;
       clearInterval(interval);
@@ -113,26 +154,51 @@ function GitNavigationContent({
       className="flex min-h-0 flex-1 flex-col overflow-y-auto text-12"
       aria-label={t('rightSidebar.workbench.git')}
     >
-      <div className="flex items-center gap-1 border-b border-[var(--border-default)] p-2">
-        <div className="min-w-0 flex-1">
-          <div className="truncate" title={data?.scope.repoRoot || ''}>
+      <div className="border-b border-[var(--border-default)] px-2 py-1.5">
+        <div className="flex min-w-0 items-center gap-1">
+          <span className="min-w-0 flex-1 truncate font-medium" title={data?.scope.repoRoot || ''}>
             {data?.scope.repoRoot?.split(/[\\/]/).pop() || t('rightSidebar.workbench.git')}
-          </div>
-          <div className="truncate text-11 text-[var(--text-secondary)]">
-            {data?.scope.branch || (data?.scope.isDetached ? data.scope.headOid?.slice(0, 7) : '')}
-          </div>
-        </div>
-        <Tip text={t('rightSidebar.workbench.refresh')}>
-          <Button
-            size="md"
-            variant="secondary"
+          </span>
+          <GitControl
+            label={t('rightSidebar.workbench.refresh')}
+            iconOnly
             disabled={busy}
-            aria-label={t('rightSidebar.workbench.refresh')}
-            onClick={() => void refresh()}
+            onClick={() => queueRef.current?.request()}
           >
-            <RefreshCw size={14} />
-          </Button>
-        </Tip>
+            <RefreshCw size={13} />
+          </GitControl>
+        </div>
+        <div className="flex min-w-0 items-center gap-1 text-11 text-[var(--text-secondary)]">
+          <GitBranch size={12} className="shrink-0" aria-hidden="true" />
+          <span className="truncate">
+            {data?.scope.branch || (data?.scope.isDetached ? data.scope.headOid?.slice(0, 7) : '')}
+          </span>
+          {data?.scope.aheadBehind?.upstream && (
+            <span className="ml-auto shrink-0" title={data.scope.aheadBehind.upstream}>
+              ↑{data.scope.aheadBehind.ahead} ↓{data.scope.aheadBehind.behind}
+            </span>
+          )}
+        </div>
+        <div className="mt-1 flex flex-wrap gap-1">
+          <GitControl
+            label={t('rightSidebar.gitGraph.title')}
+            onClick={() =>
+              void openGitGraph(sessionId).catch(() =>
+                toast.error(t('rightSidebar.workbench.loadFailed')),
+              )
+            }
+          >
+            <GitFork size={13} />
+            {t('rightSidebar.gitGraph.title')}
+          </GitControl>
+          <GitControl
+            label={t('rightSidebar.tabs.kinds.review')}
+            onClick={() => navigate({ kind: 'unstaged' })}
+          >
+            <FileDiff size={13} />
+            {t('rightSidebar.tabs.kinds.review')}
+          </GitControl>
+        </div>
       </div>
       {failed && (
         <p role="alert" className="px-2">
@@ -141,57 +207,78 @@ function GitNavigationContent({
       )}
       {data?.scope.disabledReason ? (
         <div className="p-2 text-[var(--text-secondary)]">
-          <p>{t(`rightSidebar.review.disabled.${data.scope.disabledReason}.title`)}</p>
-          <p className="text-11">
-            {t(`rightSidebar.review.disabled.${data.scope.disabledReason}.desc`)}
-          </p>
+          <p>{t(disabledReasonKeys[data.scope.disabledReason].title)}</p>
+          <p className="text-11">{t(disabledReasonKeys[data.scope.disabledReason].desc)}</p>
         </div>
       ) : (
         <>
           {(['unstaged', 'staged'] as const).map((source) => {
             const files = data?.status?.files.filter((file) => file.sources.includes(source)) ?? [];
             return (
-              <details key={source} open className="border-b border-[var(--border-default)] p-2">
-                <summary className="cursor-pointer select-none font-medium">
-                  {t(
-                    source === 'staged'
-                      ? 'rightSidebar.workbench.staged'
-                      : 'rightSidebar.workbench.unstaged',
-                  )}{' '}
-                  ({files.length})
-                </summary>
-                {files.map((file) => (
-                  <button
-                    key={file.path}
-                    className="block w-full truncate rounded-md px-2 py-1 text-left hover:bg-[var(--surface-hover)]"
-                    data-native-title="truncated-text"
-                    title={file.path}
-                    onClick={() => navigate({ kind: source }, file.path)}
-                  >
-                    {file.isUntracked ? '? ' : ''}
-                    {file.path}
-                  </button>
-                ))}
-                {!files.length && !busy && (
-                  <p className="px-2 text-11 text-[var(--text-tertiary)]">
-                    {t('rightSidebar.workbench.noChanges')}
-                  </p>
-                )}
-              </details>
+              <section
+                key={source}
+                className="relative border-b border-[var(--border-default)] p-2"
+              >
+                <GitControl
+                  className="absolute right-1 top-1"
+                  iconOnly
+                  label={
+                    t(
+                      source === 'staged'
+                        ? 'rightSidebar.workbench.staged'
+                        : 'rightSidebar.workbench.unstaged',
+                    ) +
+                    ' (' +
+                    files.length +
+                    ')'
+                  }
+                  onClick={() => navigate({ kind: source })}
+                >
+                  <FileDiff size={13} />
+                </GitControl>
+                <details open>
+                  <summary className="cursor-pointer select-none pr-7 font-medium">
+                    {t(
+                      source === 'staged'
+                        ? 'rightSidebar.workbench.staged'
+                        : 'rightSidebar.workbench.unstaged',
+                    )}{' '}
+                    ({files.length})
+                  </summary>
+                  {files.map((file) => (
+                    <button
+                      key={file.path}
+                      className="block w-full truncate rounded-full px-2 py-1 text-left hover:bg-[var(--surface-hover)]"
+                      data-native-title="truncated-text"
+                      title={file.path}
+                      onClick={() => navigate({ kind: source }, file.path)}
+                    >
+                      {file.isUntracked ? '? ' : ''}
+                      {file.path}
+                    </button>
+                  ))}
+                  {!files.length && !busy && (
+                    <p className="px-2 text-11 text-[var(--text-tertiary)]">
+                      {t('rightSidebar.workbench.noChanges')}
+                    </p>
+                  )}
+                </details>
+              </section>
             );
           })}
-          <div className="border-b border-[var(--border-default)] p-2">
-            <Button
-              variant="secondary"
-              size="md"
+          <div
+            className="border-b border-[var(--border-default)] px-1 py-1"
+            title={t('rightSidebar.workbench.comparisonHint')}
+          >
+            <GitControl
+              label={t('rightSidebar.workbench.comparison')}
               onClick={() => navigate({ kind: 'branch', baseRef: review?.branchBaseRef || null })}
             >
+              <ArrowLeftRight size={13} />
               {t('rightSidebar.workbench.comparison')}
               {review?.branchBaseRef ? ': ' + review.branchBaseRef : ''}
-            </Button>
-            <p className="mt-1 text-11 text-[var(--text-tertiary)]">
-              {t('rightSidebar.workbench.comparisonHint')}
-            </p>
+            </GitControl>
+            <span className="sr-only">{t('rightSidebar.workbench.comparisonHint')}</span>
           </div>
           <details open className="p-2">
             <summary className="cursor-pointer select-none font-medium">
@@ -268,13 +355,16 @@ function CommitFiles({
   }, [open, paths, sessionId, deviceId, commit.oid]);
   return (
     <details onToggle={(e) => setOpen(e.currentTarget.open)}>
-      <summary className="cursor-pointer select-none truncate py-1" title={commit.title}>
-        {commit.shortOid} {commit.title}
+      <summary
+        className="cursor-pointer select-none truncate py-1"
+        title={commit.title + '\n' + commit.oid}
+      >
+        {commit.title}
       </summary>
       {error && <span className="text-11">{t('rightSidebar.workbench.loadFailed')}</span>}
       {paths?.map((path) => (
         <button
-          className="block w-full truncate rounded-md py-1 pl-3 text-left hover:bg-[var(--surface-hover)]"
+          className="block w-full truncate rounded-full py-1 pl-3 text-left hover:bg-[var(--surface-hover)]"
           key={path}
           data-native-title="truncated-text"
           title={path}

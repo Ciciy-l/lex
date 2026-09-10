@@ -28,6 +28,7 @@ export type BuiltinTabKindId =
   | 'ios-simulator'
   | 'terminal'
   | 'review'
+  | 'git-graph'
   | 'orca-workers'
   | 'subagents'
   | 'background-tasks'

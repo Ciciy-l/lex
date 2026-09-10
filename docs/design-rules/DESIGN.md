@@ -507,6 +507,20 @@ cue, not an error or CTA; the mobile white text contrast is 4.98:1.
 
 Never freestyle these semantic colors as hardcoded hex — always go through the corresponding token.
 
+### Git Graph Ancestry Colors
+
+The user-requested Git Graph redesign (2026-09-09) permits six categorical
+ancestry colors, restricted to graph edges and commit nodes. The semantic tokens
+are --git-graph-lane-1 through --git-graph-lane-6, registered in colors.ts with
+separate light/dark defaults. These encode ancestry lanes, not status or branch
+importance. Normal chrome, reference labels, selection backgrounds and actions
+remain neutral. A first-parent line retains its color through column movement;
+additional parents receive another categorical color. Colors may repeat in large
+graphs, so topology, labels and commit IDs remain the authoritative cues.
+The existing process-category palette is explicitly process-only and is not
+repurposed. Existing themes and tokens are not changed. External theme snapshots
+fall back to these base-mode defaults without rewriting stored user themes.
+
 ### Built-in Themes
 
 The implementation truth is `builtinThemes` in `apps/desktop/src/renderer/themes/registry.ts`; adding or removing themes does not require updating this document. The default light/dark (base) themes are exactly the §2 palette.

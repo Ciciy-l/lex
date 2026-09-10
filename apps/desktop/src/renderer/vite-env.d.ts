@@ -4213,6 +4213,9 @@ interface ElectronAPI {
   };
 
   gitReview: {
+    navigation: (params: { sessionId: string }) => Promise<Pick<import('../shared/gitReviewWire').ReviewData, 'scope' | 'status'>>;
+    graph: (params: import('../shared/gitGraph').GitGraphRequest) => Promise<import('../shared/gitGraph').GitGraphData>;
+    graphCompare: (params: import('../shared/gitGraph').GitGraphCompareRequest) => Promise<import('../shared/gitGraph').GitGraphComparison>;
     history: (params: { sessionId: string }) => Promise<import('../shared/gitReviewWire').ReviewHistoryData>;
     get: (params: {
       sessionId: string;
