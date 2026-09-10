@@ -4228,6 +4228,10 @@ interface ElectronAPI {
       sessionId: string;
       baseRef?: string | null;
     }) => Promise<import('@/lib/gitReview.types').ReviewCommitListData>;
+    commitFiles: (params: {
+      sessionId: string;
+      oid: string;
+    }) => Promise<import('@/lib/gitReview.types').ReviewCommitFilesData>;
     commitDiff: (params: {
       sessionId: string;
       oid: string;

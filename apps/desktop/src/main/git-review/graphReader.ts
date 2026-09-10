@@ -6,7 +6,7 @@ import type {
   GitGraphCompareRequest,
   GitGraphComparison,
 } from '../../shared/gitGraph.js';
-import { runGit } from './gitRunner.js';
+import { runGit, type GitRunOptions, type GitRunResult } from './gitRunner.js';
 import {
   defaultScopeResolverDeps,
   resolveReviewScope,
@@ -16,6 +16,43 @@ import { readExplicitTreeDiff } from './branchReader.js';
 import type { ReviewScope } from './types.js';
 
 const oidPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
+const GRAPH_REF_LIMIT = 256;
+const GRAPH_REF_FORMAT =
+  '--format=%(refname)%00%(objectname)%00%(*objectname)%00%(objecttype)%00%(*objecttype)';
+const NON_REMOTE_REF_PREFIXES = ['refs/heads', 'refs/tags', 'refs/stash'];
+
+type GraphGit = (args: readonly string[], opts?: GitRunOptions) => Promise<GitRunResult>;
+
+function parseGraphRefs(stdout: string): { refs: GitGraphRef[]; count: number } {
+  const lines = stdout.trim().split('\n').filter(Boolean);
+  const refs: GitGraphRef[] = lines.flatMap((line) => {
+    const [name, objectOid, peeledOid, objectType, peeledType] = line.trim().split('\0');
+    const oid = objectType === 'commit' ? objectOid : peeledType === 'commit' ? peeledOid : null;
+    if (!oid || !oidPattern.test(oid)) return [];
+    const kind = name.startsWith('refs/heads/')
+      ? 'local'
+      : name.startsWith('refs/remotes/')
+        ? 'remote'
+        : name.startsWith('refs/tags/')
+          ? 'tag'
+          : 'stash';
+    return [{ name, oid, kind }];
+  });
+  return { refs, count: lines.length };
+}
+
+async function readGraphRefs(
+  git: GraphGit,
+  options: GitRunOptions,
+  prefixes: readonly string[],
+  count: number,
+): Promise<{ refs: GitGraphRef[]; count: number }> {
+  const refResult = await git(
+    ['for-each-ref', `--count=${count}`, '--sort=refname', GRAPH_REF_FORMAT, ...prefixes],
+    options,
+  );
+  return parseGraphRefs(refResult.stdout);
+}
 
 export async function withLocalGraphScope<T>(
   sessionId: string,
@@ -63,34 +100,32 @@ export async function readGitGraph(
   if (scope.disabledReason || !scope.repoRoot)
     return { scope, commits: [], refs: [], hasMore: false };
   const options = { cwd: scope.repoRoot, maxStdoutBytes: 4 * 1024 * 1024, timeoutMs: 15000 };
-  const refResult = await git(
-    [
-      'for-each-ref',
-      '--count=257',
-      '--sort=refname',
-      '--format=%(refname)%00%(objectname)%00%(*objectname)%00%(objecttype)%00%(*objecttype)',
-      'refs/heads',
-      'refs/remotes',
-      'refs/tags',
-      'refs/stash',
-    ],
-    options,
-  );
-  const lines = refResult.stdout.trim().split('\n').filter(Boolean);
-  if (lines.length > 256) throw new Error('Git Graph reference limit exceeded (256)');
-  const refs: GitGraphRef[] = lines.flatMap((line) => {
-    const [name, objectOid, peeledOid, objectType, peeledType] = line.trim().split('\0');
-    const oid = objectType === 'commit' ? objectOid : peeledType === 'commit' ? peeledOid : null;
-    if (!oid || !oidPattern.test(oid)) return [];
-    const kind = name.startsWith('refs/heads/')
-      ? 'local'
-      : name.startsWith('refs/remotes/')
-        ? 'remote'
-        : name.startsWith('refs/tags/')
-          ? 'tag'
-          : 'stash';
-    return [{ name, oid, kind }];
-  });
+  let refs: GitGraphRef[];
+  if (request.currentBranch) {
+    // HEAD is the sole graph root in current-branch mode. Keep remote labels
+    // available when requested, but bound labels independently instead of
+    // rejecting the graph because a forge has many unrelated tracking refs.
+    const nonRemote = await readGraphRefs(git, options, NON_REMOTE_REF_PREFIXES, GRAPH_REF_LIMIT);
+    const remote = request.includeRemotes
+      ? await readGraphRefs(git, options, ['refs/remotes'], GRAPH_REF_LIMIT)
+      : { refs: [], count: 0 };
+    refs = [...nonRemote.refs, ...remote.refs];
+  } else {
+    const refResult = await readGraphRefs(
+      git,
+      options,
+      [
+        'refs/heads',
+        ...(request.includeRemotes ? ['refs/remotes'] : []),
+        'refs/tags',
+        'refs/stash',
+      ],
+      GRAPH_REF_LIMIT + 1,
+    );
+    if (refResult.count > GRAPH_REF_LIMIT)
+      throw new Error(`Git Graph reference limit exceeded (${GRAPH_REF_LIMIT})`);
+    refs = refResult.refs;
+  }
   const roots = [
     ...new Set([
       ...(scope.headOid ? [scope.headOid] : []),

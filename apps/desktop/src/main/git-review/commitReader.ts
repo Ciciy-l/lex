@@ -8,7 +8,11 @@
 import type { ReviewHistoryData } from './types.js';
 import { runGit, GitRunError } from './gitRunner.js';
 import { parseGitDiff, parseGitDiffs } from './diffParser.js';
-import { isSafeBranchBaseRef, listBranchBaseCandidates, pickDefaultBranchBaseCandidate } from './branchReader.js';
+import {
+  isSafeBranchBaseRef,
+  listBranchBaseCandidates,
+  pickDefaultBranchBaseCandidate,
+} from './branchReader.js';
 import {
   buildCappedDiffData,
   CAPPED_DIFF_HARD_FILE_COUNT_GUARD,
@@ -19,7 +23,17 @@ import {
   type ParsedNumstat,
   singleFileTooLargeReason,
 } from './cappedDiff.js';
-import type { DiffChangeKind, FileDiff, ReviewBranchDiffWarning, ReviewCappedDiffData, ReviewCommit, ReviewCommitListData, ReviewDiffReadOptions, ReviewDiffSummaryEntry, ReviewScope } from './types.js';
+import type {
+  DiffChangeKind,
+  FileDiff,
+  ReviewBranchDiffWarning,
+  ReviewCappedDiffData,
+  ReviewCommit,
+  ReviewCommitListData,
+  ReviewDiffReadOptions,
+  ReviewDiffSummaryEntry,
+  ReviewScope,
+} from './types.js';
 
 const LARGE_TEXT_THRESHOLD_BYTES = Math.floor(4.4 * 1024 * 1024);
 const TOO_LARGE_THRESHOLD_BYTES = 70 * 1024 * 1024;
@@ -141,9 +155,13 @@ export async function listRepositoryHistory(scope: ReviewScope): Promise<ReviewH
   if (scope.disabledReason || !scope.repoRoot) return empty;
   const headOid = await resolveHeadCommit(scope.repoRoot);
   if (!headOid) return empty;
-  const { stdout } = await runGit(['log', '--no-decorate', '--max-count=51', '--format=%H%x00%cI%x00%s', headOid, '--'], {
-    cwd: scope.repoRoot, maxStdoutBytes: 1024 * 1024,
-  });
+  const { stdout } = await runGit(
+    ['log', '--no-decorate', '--max-count=51', '--format=%H%x00%cI%x00%s', headOid, '--'],
+    {
+      cwd: scope.repoRoot,
+      maxStdoutBytes: 1024 * 1024,
+    },
+  );
   const commits = parseBranchCommitLog(stdout);
   return { scope, headOid, commits: commits.slice(0, 50), truncated: commits.length > 50 };
 }
@@ -159,8 +177,12 @@ export async function listBranchCommits(
       warning: commitWarning('no-base-candidates', 'No base branch candidates found'),
     });
   }
-  const safeRequestedBaseRef = requestedBaseRef && isSafeBranchBaseRef(requestedBaseRef) ? requestedBaseRef : null;
-  const { candidate, missingWarning } = pickDefaultBranchBaseCandidate(candidates, safeRequestedBaseRef);
+  const safeRequestedBaseRef =
+    requestedBaseRef && isSafeBranchBaseRef(requestedBaseRef) ? requestedBaseRef : null;
+  const { candidate, missingWarning } = pickDefaultBranchBaseCandidate(
+    candidates,
+    safeRequestedBaseRef,
+  );
   if (!candidate) {
     return emptyCommitList(scope, {
       warning: commitWarning('no-base-candidates', 'No base branch candidates found'),
@@ -178,12 +200,10 @@ export async function listBranchCommits(
       warning: commitWarning('unborn', 'Current branch has no commits yet'),
     });
   }
-  const { stdout } = await runGit([
-    'log',
-    '--no-decorate',
-    '--format=%H%x00%cI%x00%s',
-    `${candidate.oid}..${headOid}`,
-  ], { cwd: scope.repoRoot, maxStdoutBytes: 32 * 1024 * 1024 });
+  const { stdout } = await runGit(
+    ['log', '--no-decorate', '--format=%H%x00%cI%x00%s', `${candidate.oid}..${headOid}`],
+    { cwd: scope.repoRoot, maxStdoutBytes: 32 * 1024 * 1024 },
+  );
   return {
     scope,
     ...fields,
@@ -197,7 +217,9 @@ async function readCommitIdentity(repoRoot: string, oid: string): Promise<Commit
     cwd: repoRoot,
   });
   const commitOid = normalized.trim();
-  const { stdout } = await runGit(['rev-list', '--parents', '-n', '1', commitOid], { cwd: repoRoot });
+  const { stdout } = await runGit(['rev-list', '--parents', '-n', '1', commitOid], {
+    cwd: repoRoot,
+  });
   const parts = stdout.trim().split(/\s+/).filter(Boolean);
   return {
     oid: commitOid,
@@ -205,11 +227,7 @@ async function readCommitIdentity(repoRoot: string, oid: string): Promise<Commit
   };
 }
 
-async function readChangedEntries(repoRoot: string, identity: CommitIdentity): Promise<CommitChange[]> {
-  const args = identity.firstParentOid
-    ? ['diff-tree', '--no-commit-id', '-r', '-z', '-M', '--name-status', identity.firstParentOid, identity.oid]
-    : ['diff-tree', '--root', '--no-commit-id', '-r', '-z', '-M', '--name-status', identity.oid];
-  const { stdout } = await runGit(args, { cwd: repoRoot, maxStdoutBytes: 32 * 1024 * 1024 });
+function parseChangedEntries(stdout: string): CommitChange[] {
   const parts = stdout.split('\0').filter(Boolean);
   const changes: CommitChange[] = [];
   let i = 0;
@@ -220,7 +238,8 @@ async function readChangedEntries(repoRoot: string, identity: CommitIdentity): P
       const oldPath = parts[i] ?? '';
       const newPath = parts[i + 1] ?? '';
       i += 2;
-      if (newPath) changes.push({ path: newPath, oldPath: oldPath || null, status: statusFromCode(code) });
+      if (newPath)
+        changes.push({ path: newPath, oldPath: oldPath || null, status: statusFromCode(code) });
       continue;
     }
     const filePath = parts[i] ?? '';
@@ -228,6 +247,113 @@ async function readChangedEntries(repoRoot: string, identity: CommitIdentity): P
     if (filePath) changes.push({ path: filePath, oldPath: null, status: statusFromCode(code) });
   }
   return changes;
+}
+
+function isMissingFirstParent(error: unknown, firstParent: string): error is GitRunError {
+  if (
+    !(error instanceof GitRunError) ||
+    error.exitCode !== 128 ||
+    !error.args.includes(firstParent)
+  ) {
+    return false;
+  }
+  // `runGit` fixes LC_ALL=C, making this a stable Git 2.25+ root/shallow
+  // boundary diagnostic. A tree/blob supplied through a safe-looking OID must
+  // still fail the commit peel rather than being treated as a root commit.
+  return (
+    /(?:unknown revision|bad revision|not a valid object name)/i.test(error.stderr) &&
+    !/expected commit type/i.test(error.stderr)
+  );
+}
+
+function parseChangedPaths(stdout: string): string[] {
+  return [...new Set(stdout.split('\0').filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
+async function readChangedEntries(
+  repoRoot: string,
+  identity: CommitIdentity,
+): Promise<CommitChange[]> {
+  const args = identity.firstParentOid
+    ? [
+        'diff-tree',
+        '--no-commit-id',
+        '-r',
+        '-z',
+        '-M',
+        '--name-status',
+        identity.firstParentOid,
+        identity.oid,
+      ]
+    : ['diff-tree', '--root', '--no-commit-id', '-r', '-z', '-M', '--name-status', identity.oid];
+  const { stdout } = await runGit(args, { cwd: repoRoot, maxStdoutBytes: 32 * 1024 * 1024 });
+  return parseChangedEntries(stdout);
+}
+
+/**
+ * Lists only the changed paths used by the compact recent-history navigator.
+ *
+ * This deliberately avoids commit identity, rename similarity, numstat,
+ * blob-size and patch reads. Opening a path still routes to the existing full
+ * commit Review, so the lightweight disclosure never becomes a second diff
+ * implementation.
+ */
+export async function listCommitFiles(
+  scope: ReviewScope,
+  oid: string,
+): Promise<{ commitOid: string; paths: string[] }> {
+  if (scope.disabledReason || !scope.repoRoot) return { commitOid: oid, paths: [] };
+  const options = { cwd: scope.repoRoot, maxStdoutBytes: 4 * 1024 * 1024 };
+  const commit = `${oid}^{commit}`;
+  const firstParent = `${commit}^1`;
+  let stdout: string;
+  try {
+    // Pinning the direct first-parent pair is supported by the project's
+    // Git 2.25 baseline, unlike `--diff-merges=first-parent` (Git 2.31+).
+    // It also avoids the all-parent result produced by `diff-tree -m`.
+    ({ stdout } = await runGit(
+      [
+        'diff-tree',
+        '--no-commit-id',
+        '-r',
+        '-z',
+        '--name-only',
+        '--no-renames',
+        '--no-ext-diff',
+        firstParent,
+        commit,
+      ],
+      options,
+    ));
+  } catch (error) {
+    if (!isMissingFirstParent(error, firstParent)) throw error;
+    // A root commit has no first-parent expression. Its rare fallback retains
+    // the same lightweight path-only read without penalizing normal history.
+    ({ stdout } = await runGit(
+      [
+        'diff-tree',
+        '--root',
+        '--no-commit-id',
+        '-r',
+        '-z',
+        '--name-only',
+        '--no-renames',
+        '--no-ext-diff',
+        commit,
+      ],
+      options,
+    ));
+  }
+  const paths = parseChangedPaths(stdout);
+  if (paths.length > CAPPED_DIFF_HARD_FILE_COUNT_GUARD) {
+    throw new Error(
+      `Commit file list has too many changed files to load: ${paths.length} > ${CAPPED_DIFF_HARD_FILE_COUNT_GUARD}`,
+    );
+  }
+  return {
+    commitOid: oid,
+    paths,
+  };
 }
 
 async function readCommitNumstat(
@@ -239,7 +365,17 @@ async function readCommitNumstat(
     const whitespaceArgs = options.ignoreWhitespace ? ['-w'] : [];
     const args = identity.firstParentOid
       ? ['diff', ...whitespaceArgs, '--numstat', '-z', '-M', identity.firstParentOid, identity.oid]
-      : ['diff-tree', '--root', '--no-commit-id', '-r', ...whitespaceArgs, '--numstat', '-z', '-M', identity.oid];
+      : [
+          'diff-tree',
+          '--root',
+          '--no-commit-id',
+          '-r',
+          ...whitespaceArgs,
+          '--numstat',
+          '-z',
+          '-M',
+          identity.oid,
+        ];
     const { stdout } = await runGit(args, { cwd: repoRoot, maxStdoutBytes: 32 * 1024 * 1024 });
     return parseNumstat(stdout);
   } catch {
@@ -247,7 +383,11 @@ async function readCommitNumstat(
   }
 }
 
-async function readBlobSize(repoRoot: string, treeish: string | null, gitPath: string | null): Promise<number | null> {
+async function readBlobSize(
+  repoRoot: string,
+  treeish: string | null,
+  gitPath: string | null,
+): Promise<number | null> {
   if (!treeish || !gitPath) return null;
   try {
     const { stdout } = await runGit(['cat-file', '-s', `${treeish}:${gitPath}`], { cwd: repoRoot });
@@ -258,15 +398,23 @@ async function readBlobSize(repoRoot: string, treeish: string | null, gitPath: s
   }
 }
 
-async function classifyCommitChange(repoRoot: string, identity: CommitIdentity, change: CommitChange): Promise<Pick<FileDiff, 'kind' | 'size' | 'error'>> {
+async function classifyCommitChange(
+  repoRoot: string,
+  identity: CommitIdentity,
+  change: CommitChange,
+): Promise<Pick<FileDiff, 'kind' | 'size' | 'error'>> {
   const treeish = change.status === 'deleted' ? identity.firstParentOid : identity.oid;
-  const sizePath = change.status === 'deleted' ? change.oldPath ?? change.path : change.path;
+  const sizePath = change.status === 'deleted' ? (change.oldPath ?? change.path) : change.path;
   const size = await readBlobSize(repoRoot, treeish, sizePath);
   if (size !== null && size > TOO_LARGE_THRESHOLD_BYTES) {
     return { kind: 'too-large', size, error: 'File is too large to render' };
   }
   if (size !== null && size > LARGE_TEXT_THRESHOLD_BYTES) {
-    return { kind: 'large-text', size, error: 'Large text diff is not rendered automatically in M1' };
+    return {
+      kind: 'large-text',
+      size,
+      error: 'Large text diff is not rendered automatically in M1',
+    };
   }
   return { kind: 'text', size, error: null };
 }
@@ -278,25 +426,31 @@ async function readCommitSummaryEntries(
   options: ReviewDiffReadOptions = {},
 ): Promise<ReviewDiffSummaryEntry[]> {
   const numstat = await readCommitNumstat(repoRoot, identity, options);
-  const sizeMap = await readBlobSizeMap(repoRoot, changes.map((change) => ({
-    key: change.path,
-    treeish: change.status === 'deleted' ? identity.firstParentOid : identity.oid,
-    gitPath: change.status === 'deleted' ? change.oldPath ?? change.path : change.path,
-  })), COMMIT_DIFF_IO_CONCURRENCY);
+  const sizeMap = await readBlobSizeMap(
+    repoRoot,
+    changes.map((change) => ({
+      key: change.path,
+      treeish: change.status === 'deleted' ? identity.firstParentOid : identity.oid,
+      gitPath: change.status === 'deleted' ? (change.oldPath ?? change.path) : change.path,
+    })),
+    COMMIT_DIFF_IO_CONCURRENCY,
+  );
   const entries = changes.flatMap((change) => {
     const stats = numstat.get(change.path);
     if (options.ignoreWhitespace && change.status === 'modified' && !stats) return [];
     const changedBytes = sizeMap.get(change.path) ?? 0;
-    return [createDiffSummaryEntry({
-      source: 'commit',
-      path: change.path,
-      oldPath: change.oldPath,
-      status: change.status,
-      additions: stats?.additions ?? 0,
-      deletions: stats?.deletions ?? 0,
-      changedBytes,
-      isBinary: stats?.isBinary ?? false,
-    })];
+    return [
+      createDiffSummaryEntry({
+        source: 'commit',
+        path: change.path,
+        oldPath: change.oldPath,
+        status: change.status,
+        additions: stats?.additions ?? 0,
+        deletions: stats?.deletions ?? 0,
+        changedBytes,
+        isBinary: stats?.isBinary ?? false,
+      }),
+    ];
   });
   return entries.sort((a, b) => a.path.localeCompare(b.path));
 }
@@ -313,13 +467,39 @@ async function readRawCommitDiff(
   const whitespaceArgs = options.ignoreWhitespace ? ['-w'] : [];
   if (identity.firstParentOid) {
     const { stdout } = await runGit(
-      ['diff', ...whitespaceArgs, '--no-ext-diff', '--patch-with-raw', '-z', '--no-color', '-M', identity.firstParentOid, identity.oid, '--', ...pathspecs],
+      [
+        'diff',
+        ...whitespaceArgs,
+        '--no-ext-diff',
+        '--patch-with-raw',
+        '-z',
+        '--no-color',
+        '-M',
+        identity.firstParentOid,
+        identity.oid,
+        '--',
+        ...pathspecs,
+      ],
       { cwd: repoRoot, maxStdoutBytes: COMMIT_DIFF_MAX_STDOUT_BYTES },
     );
     return stdout;
   }
   const { stdout } = await runGit(
-    ['diff-tree', '--root', '--no-commit-id', '-r', ...whitespaceArgs, '--no-ext-diff', '--patch-with-raw', '-z', '--no-color', '-M', identity.oid, '--', ...pathspecs],
+    [
+      'diff-tree',
+      '--root',
+      '--no-commit-id',
+      '-r',
+      ...whitespaceArgs,
+      '--no-ext-diff',
+      '--patch-with-raw',
+      '-z',
+      '--no-color',
+      '-M',
+      identity.oid,
+      '--',
+      ...pathspecs,
+    ],
     { cwd: repoRoot, maxStdoutBytes: COMMIT_DIFF_MAX_STDOUT_BYTES },
   );
   return stdout;
@@ -333,13 +513,35 @@ async function readRawCommitDiffs(
   const whitespaceArgs = options.ignoreWhitespace ? ['-w'] : [];
   if (identity.firstParentOid) {
     const { stdout } = await runGit(
-      ['diff', ...whitespaceArgs, '--no-ext-diff', '--patch-with-raw', '-z', '--no-color', '-M', identity.firstParentOid, identity.oid],
+      [
+        'diff',
+        ...whitespaceArgs,
+        '--no-ext-diff',
+        '--patch-with-raw',
+        '-z',
+        '--no-color',
+        '-M',
+        identity.firstParentOid,
+        identity.oid,
+      ],
       { cwd: repoRoot, maxStdoutBytes: COMMIT_DIFF_MAX_STDOUT_BYTES },
     );
     return stdout;
   }
   const { stdout } = await runGit(
-    ['diff-tree', '--root', '--no-commit-id', '-r', ...whitespaceArgs, '--no-ext-diff', '--patch-with-raw', '-z', '--no-color', '-M', identity.oid],
+    [
+      'diff-tree',
+      '--root',
+      '--no-commit-id',
+      '-r',
+      ...whitespaceArgs,
+      '--no-ext-diff',
+      '--patch-with-raw',
+      '-z',
+      '--no-color',
+      '-M',
+      identity.oid,
+    ],
     { cwd: repoRoot, maxStdoutBytes: COMMIT_DIFF_MAX_STDOUT_BYTES },
   );
   return stdout;
@@ -358,7 +560,9 @@ export async function readCommitDiff(
   const identity = await readCommitIdentity(scope.repoRoot, oid);
   const changes = await readChangedEntries(scope.repoRoot, identity);
   if (changes.length > COMMIT_DIFF_MAX_FILE_COUNT) {
-    throw new Error(`Commit diff has too many changed files to load: ${changes.length} > ${COMMIT_DIFF_MAX_FILE_COUNT}`);
+    throw new Error(
+      `Commit diff has too many changed files to load: ${changes.length} > ${COMMIT_DIFF_MAX_FILE_COUNT}`,
+    );
   }
   const summaryEntries = await readCommitSummaryEntries(scope.repoRoot, identity, changes, options);
   const capped = buildCappedDiffData(summaryEntries);
@@ -383,30 +587,46 @@ export async function readCommitDiff(
     }
     try {
       const parsed = change.status === 'typechange' ? undefined : parsedByPath.get(change.path);
-      const raw = parsed?.rawPatch ?? await readRawCommitDiff(scope.repoRoot, identity, change, options);
+      const raw =
+        parsed?.rawPatch ?? (await readRawCommitDiff(scope.repoRoot, identity, change, options));
       if (!raw.trim() || !raw.includes('diff --git')) {
         diffs.push(emptyCommitDiff(change, { kind: 'text', size: classification.size }));
         continue;
       }
       const isBinary = rawDiffIsBinary(raw);
-      diffs.push(parsed ? {
-        ...parsed,
-        oldPath: change.oldPath ?? parsed.oldPath,
-        kind: isBinary ? 'binary' : 'text',
-        size: classification.size,
-        isBinary,
-        error: isBinary ? 'Binary file' : null,
-      } : parseGitDiff(raw, {
-        source: 'commit',
-        pathHint: change.path,
-        oldPathHint: change.oldPath,
-        kind: isBinary ? 'binary' : 'text',
-        size: classification.size,
-        error: isBinary ? 'Binary file' : null,
-      }));
+      diffs.push(
+        parsed
+          ? {
+              ...parsed,
+              oldPath: change.oldPath ?? parsed.oldPath,
+              kind: isBinary ? 'binary' : 'text',
+              size: classification.size,
+              isBinary,
+              error: isBinary ? 'Binary file' : null,
+            }
+          : parseGitDiff(raw, {
+              source: 'commit',
+              pathHint: change.path,
+              oldPathHint: change.oldPath,
+              kind: isBinary ? 'binary' : 'text',
+              size: classification.size,
+              error: isBinary ? 'Binary file' : null,
+            }),
+      );
     } catch (err) {
-      const message = err instanceof GitRunError ? err.stderr || err.message : err instanceof Error ? err.message : String(err);
-      diffs.push(emptyCommitDiff(change, { kind: 'unrenderable', size: classification.size, error: message }));
+      const message =
+        err instanceof GitRunError
+          ? err.stderr || err.message
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      diffs.push(
+        emptyCommitDiff(change, {
+          kind: 'unrenderable',
+          size: classification.size,
+          error: message,
+        }),
+      );
     }
   }
   diffs.sort((a, b) => a.path.localeCompare(b.path));
@@ -430,11 +650,17 @@ export async function readCommitFileDiff(
   if (!scope.repoRoot) return { commitOid: oid, diff: null };
   const identity = await readCommitIdentity(scope.repoRoot, oid);
   const changes = await readChangedEntries(scope.repoRoot, identity);
-  const change = changes.find((item) =>
-    item.path === target.path &&
-    (target.oldPath === null || item.oldPath === target.oldPath));
+  const change = changes.find(
+    (item) =>
+      item.path === target.path && (target.oldPath === null || item.oldPath === target.oldPath),
+  );
   if (!change) return { commitOid: identity.oid, diff: null };
-  const summaryEntries = await readCommitSummaryEntries(scope.repoRoot, identity, [change], options);
+  const summaryEntries = await readCommitSummaryEntries(
+    scope.repoRoot,
+    identity,
+    [change],
+    options,
+  );
   const summary = summaryEntries[0] ?? null;
   const classification = await classifyCommitChange(scope.repoRoot, identity, change);
   const changedBytes = summary?.changedBytes ?? classification.size ?? 0;
@@ -443,7 +669,14 @@ export async function readCommitFileDiff(
     changedBytes,
   });
   if (preReadTooLarge) {
-    return { commitOid: identity.oid, diff: tooLargeCommitDiff(change, changedBytes, `File is too large to render (${preReadTooLarge})`) };
+    return {
+      commitOid: identity.oid,
+      diff: tooLargeCommitDiff(
+        change,
+        changedBytes,
+        `File is too large to render (${preReadTooLarge})`,
+      ),
+    };
   }
   if (classification.kind !== 'text') {
     return { commitOid: identity.oid, diff: emptyCommitDiff(change, classification) };
@@ -451,7 +684,10 @@ export async function readCommitFileDiff(
   try {
     const raw = await readRawCommitDiff(scope.repoRoot, identity, change, options);
     if (!raw.trim() || !raw.includes('diff --git')) {
-      return { commitOid: identity.oid, diff: emptyCommitDiff(change, { kind: 'text', size: classification.size }) };
+      return {
+        commitOid: identity.oid,
+        diff: emptyCommitDiff(change, { kind: 'text', size: classification.size }),
+      };
     }
     const isBinary = rawDiffIsBinary(raw);
     const parsed = parseGitDiff(raw, {
@@ -468,11 +704,30 @@ export async function readCommitFileDiff(
       maxLineBytes: maxPatchLineBytes(parsed.rawPatch),
     });
     if (postReadTooLarge) {
-      return { commitOid: identity.oid, diff: tooLargeCommitDiff(change, parsed.size ?? changedBytes, `File is too large to render (${postReadTooLarge})`) };
+      return {
+        commitOid: identity.oid,
+        diff: tooLargeCommitDiff(
+          change,
+          parsed.size ?? changedBytes,
+          `File is too large to render (${postReadTooLarge})`,
+        ),
+      };
     }
     return { commitOid: identity.oid, diff: parsed };
   } catch (err) {
-    const message = err instanceof GitRunError ? err.stderr || err.message : err instanceof Error ? err.message : String(err);
-    return { commitOid: identity.oid, diff: emptyCommitDiff(change, { kind: 'unrenderable', size: classification.size, error: message }) };
+    const message =
+      err instanceof GitRunError
+        ? err.stderr || err.message
+        : err instanceof Error
+          ? err.message
+          : String(err);
+    return {
+      commitOid: identity.oid,
+      diff: emptyCommitDiff(change, {
+        kind: 'unrenderable',
+        size: classification.size,
+        error: message,
+      }),
+    };
   }
 }

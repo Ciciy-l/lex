@@ -172,6 +172,7 @@ import type { BrowserBackendHealth, BrowserBackendRecoveryResult } from '../shar
 import type {
   ReviewBranchDiffData,
   ReviewCommitDiffData,
+  ReviewCommitFilesData,
   ReviewCommitListData,
   ReviewCommitRequest,
   ReviewCommitResult,
@@ -1098,7 +1099,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // - listAvailableShells / get|setDefaultShellPref: Settings 个性化下拉用
   // - onData / onExit: main → renderer 推送(fanOut 内部一次绑定多订阅,每个 tab 自己按 id filter)
   terminal: {
-    resolveFile: (id: string, path: string) => ipcRenderer.invoke('terminal:resolve-file', id, path),
+    resolveFile: (id: string, path: string) =>
+      ipcRenderer.invoke('terminal:resolve-file', id, path),
     rename: (id: string, title: string) => ipcRenderer.invoke('terminal:rename', id, title),
     list: (sessionId: string) => ipcRenderer.invoke('terminal:list', sessionId),
     detach: (id: string) => ipcRenderer.invoke('terminal:detach', id),
@@ -4784,10 +4786,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   gitReview: {
-    navigation: (params: { sessionId: string }): Promise<Pick<import('../shared/gitReviewWire').ReviewData, 'scope' | 'status'>> => ipcRenderer.invoke('git-review:navigation', params),
-    graph: (params: import('../shared/gitGraph').GitGraphRequest): Promise<import('../shared/gitGraph').GitGraphData> => ipcRenderer.invoke('git-review:graph', params),
-    graphCompare: (params: import('../shared/gitGraph').GitGraphCompareRequest): Promise<import('../shared/gitGraph').GitGraphComparison> => ipcRenderer.invoke('git-review:graph-compare', params),
-    history: (params: { sessionId: string }): Promise<import('../shared/gitReviewWire').ReviewHistoryData> => ipcRenderer.invoke('git-review:history', params),
+    navigation: (params: {
+      sessionId: string;
+    }): Promise<Pick<import('../shared/gitReviewWire').ReviewData, 'scope' | 'status'>> =>
+      ipcRenderer.invoke('git-review:navigation', params),
+    graph: (
+      params: import('../shared/gitGraph').GitGraphRequest,
+    ): Promise<import('../shared/gitGraph').GitGraphData> =>
+      ipcRenderer.invoke('git-review:graph', params),
+    graphCompare: (
+      params: import('../shared/gitGraph').GitGraphCompareRequest,
+    ): Promise<import('../shared/gitGraph').GitGraphComparison> =>
+      ipcRenderer.invoke('git-review:graph-compare', params),
+    history: (params: {
+      sessionId: string;
+    }): Promise<import('../shared/gitReviewWire').ReviewHistoryData> =>
+      ipcRenderer.invoke('git-review:history', params),
     get: (params: { sessionId: string; ignoreWhitespace?: boolean }): Promise<ReviewData> =>
       ipcRenderer.invoke('git-review:get', params),
     summary: (params: { sessionId: string }): Promise<ReviewDirtySummary> =>
@@ -4796,6 +4810,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       sessionId: string;
       baseRef?: string | null;
     }): Promise<ReviewCommitListData> => ipcRenderer.invoke('git-review:commits', params),
+    commitFiles: (params: { sessionId: string; oid: string }): Promise<ReviewCommitFilesData> =>
+      ipcRenderer.invoke('git-review:commit-files', params),
     commitDiff: (params: {
       sessionId: string;
       oid: string;

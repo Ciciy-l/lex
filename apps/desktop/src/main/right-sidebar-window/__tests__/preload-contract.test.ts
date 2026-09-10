@@ -10,7 +10,10 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const PRELOAD_PATH = path.resolve(
-  process.cwd().toLowerCase().endsWith((path.sep + 'apps' + path.sep + 'desktop').toLowerCase())
+  process
+    .cwd()
+    .toLowerCase()
+    .endsWith((path.sep + 'apps' + path.sep + 'desktop').toLowerCase())
     ? process.cwd()
     : path.join(process.cwd(), 'apps', 'desktop'),
   'src/preload/sidebarWindowPreload.ts',
@@ -98,9 +101,7 @@ function objectKeys(body: string, baseIndent?: number): string[] {
   const candidates = [...body.matchAll(/^([ \t]*)([A-Za-z_$][\w$]*)[ \t]*:/gm)];
   if (candidates.length === 0) return [];
   const indent = baseIndent ?? Math.min(...candidates.map((match) => match[1].length));
-  return candidates
-    .filter((match) => match[1].length === indent)
-    .map((match) => match[2]);
+  return candidates.filter((match) => match[1].length === indent).map((match) => match[2]);
 }
 
 const topLevel = exposedTopLevelKeys(source);
@@ -138,15 +139,17 @@ describe('sidebarWindowPreload 椤跺眰濂戠害', () => {
   });
 
   it('鏆撮湶 AuthProvider 鎵€闇€鐨勬渶灏忚璇佺姸鎬?bridge', () => {
-    expect(topLevel).toEqual(expect.arrayContaining([
-      'authHasPersistedSessionHintSync',
-      'authInitialize',
-      'authGetLoginState',
-      'authGetAccountDeletionAvailability',
-      'authGetAccountDeletionStatus',
-      'onAuthStateChange',
-      'onAuthSessionExpired',
-    ]));
+    expect(topLevel).toEqual(
+      expect.arrayContaining([
+        'authHasPersistedSessionHintSync',
+        'authInitialize',
+        'authGetLoginState',
+        'authGetAccountDeletionAvailability',
+        'authGetAccountDeletionStatus',
+        'onAuthStateChange',
+        'onAuthSessionExpired',
+      ]),
+    );
     for (const key of [
       'authDispatchLoginAction',
       'authLogout',
@@ -170,61 +173,164 @@ describe('sidebarWindowPreload 椤跺眰濂戠害', () => {
     expect(topLevel).toEqual(expect.arrayContaining(['rsbBrowserBridge']));
     expect(topLevel).toEqual(expect.arrayContaining(['onRsbBrowserCommand']));
     const browserKeys = exposedNestedKeys(source, 'rsbBrowserBridge');
-    expect(browserKeys).toEqual(expect.arrayContaining([
-      'report', 'release', 'snapshot', 'captureScreenshot', 'captureScreenshotData',
-      'onPin', 'onUnpin', 'onTabOpRequest', 'tabOpResult', 'setActiveSession',
-      'setForeground', 'forceKill', 'onResourceEvent',
-    ]));
+    expect(browserKeys).toEqual(
+      expect.arrayContaining([
+        'report',
+        'release',
+        'snapshot',
+        'captureScreenshot',
+        'captureScreenshotData',
+        'onPin',
+        'onUnpin',
+        'onTabOpRequest',
+        'tabOpResult',
+        'setActiveSession',
+        'setForeground',
+        'forceKill',
+        'onResourceEvent',
+      ]),
+    );
   });
 
   it('鏆撮湶鍒嗙鍙充晶鏍忓疄闄呮寕杞介潰鏉挎墍闇€鐨勬渶灏?bridge', () => {
-    expect(topLevel).toEqual(expect.arrayContaining([
-      'fileBrowser', 'terminal', 'gitReview', 'processMonitor', 'rsbNativePopup',
-      'openExternal', 'openFileInBrowser', 'openPath', 'showItemInFolder',
-      'copyMediaToClipboard', 'openMediaWithDefaultApp', 'saveMediaAs',
-      'cacheMediaForSession', 'readImageBytes', 'readCachedImageAsBase64',
-      'getFilePath', 'cacheImageFromBuffer', 'maker', 'localDb', 'ghosts',
-    ]));
-    expect(fileBrowserKeys).toEqual(expect.arrayContaining([
-      'listDir', 'listAllFiles', 'readFile', 'writeFile', 'createFile', 'createFolder',
-      'deleteEntry', 'renameEntry', 'stat', 'startWatch', 'stopWatch', 'onEvent',
-      'fetchRemote', 'readCached', 'cachePut', 'onTransferProgress', 'chatFetch', 'chatStat',
-    ]));
-    expect(terminalKeys).toEqual(expect.arrayContaining([
-      'create', 'write', 'resize', 'dispose', 'restart', 'onData', 'onExit', 'listAvailableShells',
-    ]));
-    expect(gitReviewKeys).toEqual(expect.arrayContaining([
-      'get', 'summary', 'commits', 'commitDiff', 'branchDiff', 'fileDiff', 'imagePreview',
-      'markdownPreview', 'openFile', 'stageFile', 'unstageFile', 'discardFile', 'stageHunk',
-      'unstageHunk', 'discardHunk', 'stageAll', 'unstageAll', 'discardAll', 'commit', 'push',
-    ]));
-    expect(processMonitorKeys).toEqual(expect.arrayContaining([
-      'subscribe', 'unsubscribe', 'terminate', 'onSample',
-    ]));
-    expect(nativePopupKeys).toEqual(expect.arrayContaining([
-      'claim', 'setBounds', 'command', 'close', 'onEvent',
-    ]));
-    expect(ghostKeys).toEqual(expect.arrayContaining([
-      'listSync', 'reload', 'setEnabled', 'resolvePanelMedia', 'runtimeStates',
-      'onChanged', 'onRuntimeChanged', 'onPreviewMedia',
-      'unreadSync', 'clearUnread', 'onBadge', 'onUnreadSnapshot',
-    ]));
+    expect(topLevel).toEqual(
+      expect.arrayContaining([
+        'fileBrowser',
+        'terminal',
+        'gitReview',
+        'processMonitor',
+        'rsbNativePopup',
+        'openExternal',
+        'openFileInBrowser',
+        'openPath',
+        'showItemInFolder',
+        'copyMediaToClipboard',
+        'openMediaWithDefaultApp',
+        'saveMediaAs',
+        'cacheMediaForSession',
+        'readImageBytes',
+        'readCachedImageAsBase64',
+        'getFilePath',
+        'cacheImageFromBuffer',
+        'maker',
+        'localDb',
+        'ghosts',
+      ]),
+    );
+    expect(fileBrowserKeys).toEqual(
+      expect.arrayContaining([
+        'listDir',
+        'listAllFiles',
+        'readFile',
+        'writeFile',
+        'createFile',
+        'createFolder',
+        'deleteEntry',
+        'renameEntry',
+        'stat',
+        'startWatch',
+        'stopWatch',
+        'onEvent',
+        'fetchRemote',
+        'readCached',
+        'cachePut',
+        'onTransferProgress',
+        'chatFetch',
+        'chatStat',
+      ]),
+    );
+    expect(terminalKeys).toEqual(
+      expect.arrayContaining([
+        'create',
+        'write',
+        'resize',
+        'dispose',
+        'restart',
+        'onData',
+        'onExit',
+        'listAvailableShells',
+      ]),
+    );
+    expect(gitReviewKeys).toEqual(
+      expect.arrayContaining([
+        'get',
+        'summary',
+        'commits',
+        'commitFiles',
+        'commitDiff',
+        'branchDiff',
+        'fileDiff',
+        'imagePreview',
+        'markdownPreview',
+        'openFile',
+        'stageFile',
+        'unstageFile',
+        'discardFile',
+        'stageHunk',
+        'unstageHunk',
+        'discardHunk',
+        'stageAll',
+        'unstageAll',
+        'discardAll',
+        'commit',
+        'push',
+      ]),
+    );
+    expect(processMonitorKeys).toEqual(
+      expect.arrayContaining(['subscribe', 'unsubscribe', 'terminate', 'onSample']),
+    );
+    expect(nativePopupKeys).toEqual(
+      expect.arrayContaining(['claim', 'setBounds', 'command', 'close', 'onEvent']),
+    );
+    expect(ghostKeys).toEqual(
+      expect.arrayContaining([
+        'listSync',
+        'reload',
+        'setEnabled',
+        'resolvePanelMedia',
+        'runtimeStates',
+        'onChanged',
+        'onRuntimeChanged',
+        'onPreviewMedia',
+        'unreadSync',
+        'clearUnread',
+        'onBadge',
+        'onUnreadSnapshot',
+      ]),
+    );
   });
 
   it('涓嶆毚闇?maker / agent / voice / login 鑷不鑳藉姏', () => {
     const forbidden = [
-      'agent', 'voiceInput', 'login', 'settings',
-      'updater', 'chat', 'session',
-      'resourceUsageWindow', 'ghostPanelWindow',
-      'pluginMarket', 'deepLink', 'gitContext',
-      'safeStorageStore', 'safeStorageRead', 'safeStorageRemove',
+      'agent',
+      'voiceInput',
+      'login',
+      'settings',
+      'updater',
+      'chat',
+      'session',
+      'resourceUsageWindow',
+      'ghostPanelWindow',
+      'pluginMarket',
+      'deepLink',
+      'gitContext',
+      'safeStorageStore',
+      'safeStorageRead',
+      'safeStorageRemove',
     ];
     for (const key of forbidden) {
       expect(topLevel).not.toEqual(expect.arrayContaining([key]));
     }
     for (const key of [
-      'install', 'uninstall', 'inspect', 'devRuntime', 'devCall',
-      'approve', 'revokeApproval', 'setCindyPref', 'listCardsBySession',
+      'install',
+      'uninstall',
+      'inspect',
+      'devRuntime',
+      'devCall',
+      'approve',
+      'revokeApproval',
+      'setCindyPref',
+      'listCardsBySession',
     ]) {
       expect(ghostKeys).not.toEqual(expect.arrayContaining([key]));
     }
@@ -232,31 +338,68 @@ describe('sidebarWindowPreload 椤跺眰濂戠害', () => {
 
   it('RSB browser bridge contract', () => {
     const browserKeys = exposedNestedKeys(source, 'rsbBrowserBridge');
-    expect(browserKeys).toEqual(expect.arrayContaining([
-      'report', 'release', 'snapshot', 'captureScreenshot', 'captureScreenshotData',
-      'onPin', 'onUnpin', 'onTabOpRequest', 'tabOpResult', 'setActiveSession',
-      'setForeground', 'forceKill', 'onResourceEvent',
-    ]));
+    expect(browserKeys).toEqual(
+      expect.arrayContaining([
+        'report',
+        'release',
+        'snapshot',
+        'captureScreenshot',
+        'captureScreenshotData',
+        'onPin',
+        'onUnpin',
+        'onTabOpRequest',
+        'tabOpResult',
+        'setActiveSession',
+        'setForeground',
+        'forceKill',
+        'onResourceEvent',
+      ]),
+    );
   });
 });
 
 describe('deviceLink 閺堚偓鐏忓繗绻欑粙瀣╃窗鐠囨繃藟閹?', () => {
   it('閸欘亝姣氶棁鑼剁箼缁嬪绱扮拠婵嗗灙鐞涖劋绗岄梹婊冨剼缂傛挸鐡ㄩ幍鈧棁鈧懗钘夊', () => {
     expect(topLevel).toEqual(expect.arrayContaining(['deviceLink']));
-    expect(deviceLinkKeys).toEqual(expect.arrayContaining([
-      'getState', 'listDevices', 'invoke', 'subscribe', 'unsubscribe',
-      'onPresenceChanged', 'onStatusChanged', 'onRemotePush', 'onAccessRevoked',
-      'onControlTargetChanged', 'onResponsivenessChanged', 'mirrorCache',
-    ]));
-    expect(mirrorCacheKeys).toEqual(expect.arrayContaining([
-      'getMessages', 'putMessages', 'getSessionList', 'putSessionList', 'clear',
-    ]));
+    expect(deviceLinkKeys).toEqual(
+      expect.arrayContaining([
+        'getState',
+        'listDevices',
+        'invoke',
+        'subscribe',
+        'unsubscribe',
+        'onPresenceChanged',
+        'onStatusChanged',
+        'onRemotePush',
+        'onAccessRevoked',
+        'onControlTargetChanged',
+        'onResponsivenessChanged',
+        'mirrorCache',
+      ]),
+    );
+    expect(mirrorCacheKeys).toEqual(
+      expect.arrayContaining([
+        'getMessages',
+        'putMessages',
+        'getSessionList',
+        'putSessionList',
+        'clear',
+      ]),
+    );
   });
 
   it('娑撳秵姣氶棁鑼额啎婢跺洨顓搁悶鍡曠瑢閺夊啴妾?mutation', () => {
     for (const key of [
-      'setEnabled', 'setKeepAwake', 'setDeviceControlEnabled', 'renameDevice',
-      'deleteDevice', 'openLink', 'closeLink', 'disconnectAll', 'revoke', 'restore',
+      'setEnabled',
+      'setKeepAwake',
+      'setDeviceControlEnabled',
+      'renameDevice',
+      'deleteDevice',
+      'openLink',
+      'closeLink',
+      'disconnectAll',
+      'revoke',
+      'restore',
     ]) {
       expect(deviceLinkKeys).not.toEqual(expect.arrayContaining([key]));
     }
@@ -293,31 +436,70 @@ describe('sidebar nested namespace contract', () => {
     );
     expect(exposedNestedKeys(localDbBody, 'messages')).toEqual(
       expect.arrayContaining([
-        'list', 'around', 'aroundClientId', 'estimatedSessionValue',
-        'onCreated', 'onDeleted', 'onErrorPersisted',
+        'list',
+        'around',
+        'aroundClientId',
+        'estimatedSessionValue',
+        'onCreated',
+        'onDeleted',
+        'onErrorPersisted',
       ]),
     );
-    expect(rightSidebarTabsKeys).toEqual(expect.arrayContaining([
-      'list', 'ensureSingleton', 'upsert', 'close', 'setActive', 'reorder',
-    ]));
+    expect(rightSidebarTabsKeys).toEqual(
+      expect.arrayContaining([
+        'list',
+        'ensureSingleton',
+        'upsert',
+        'close',
+        'setActive',
+        'reorder',
+      ]),
+    );
     expect(subagentRunsKeys).toEqual(expect.arrayContaining(['list', 'detail', 'onChanged']));
-    expect(orcaWorkflowKeys).toEqual(expect.arrayContaining([
-      'getByLeadSession', 'getByWorkerSession', 'listWorkersByLead', 'listWorkersByLeads',
-      'createWorker', 'switchFocus', 'idleWorker', 'archiveWorker', 'endTeam',
-      'getCollaborationSettings', 'onOrcaWorkerChanged',
-    ]));
+    expect(orcaWorkflowKeys).toEqual(
+      expect.arrayContaining([
+        'getByLeadSession',
+        'getByWorkerSession',
+        'listWorkersByLead',
+        'listWorkersByLeads',
+        'createWorker',
+        'switchFocus',
+        'idleWorker',
+        'archiveWorker',
+        'endTeam',
+        'getCollaborationSettings',
+        'onOrcaWorkerChanged',
+      ]),
+    );
   });
   it('maker capability contract', () => {
-    expect(makerKeys).toEqual(expect.arrayContaining([
-      'getTurnChangeSets', 'getWorkflowProgress', 'listSessionBackgroundTasks', 'stopAgentTask',
-      'getPendingInteractions',
-      'iosSimulator',
-    ]));
-    expect(iosSimulatorKeys).toEqual(expect.arrayContaining([
-      'requestAccess', 'status', 'call', 'setAgentControl', 'setMutationControl',
-      'setViewerVisibility', 'retryNativeRoute', 'latestFrame', 'copyScreenshot',
-      'setStreamProfile', 'liveTouch',
-      'onH264Frame', 'onRouteStatus', 'onFocusRequest',
-    ]));
+    expect(makerKeys).toEqual(
+      expect.arrayContaining([
+        'getTurnChangeSets',
+        'getWorkflowProgress',
+        'listSessionBackgroundTasks',
+        'stopAgentTask',
+        'getPendingInteractions',
+        'iosSimulator',
+      ]),
+    );
+    expect(iosSimulatorKeys).toEqual(
+      expect.arrayContaining([
+        'requestAccess',
+        'status',
+        'call',
+        'setAgentControl',
+        'setMutationControl',
+        'setViewerVisibility',
+        'retryNativeRoute',
+        'latestFrame',
+        'copyScreenshot',
+        'setStreamProfile',
+        'liveTouch',
+        'onH264Frame',
+        'onRouteStatus',
+        'onFocusRequest',
+      ]),
+    );
   });
 });

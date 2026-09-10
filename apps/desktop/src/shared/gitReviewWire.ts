@@ -41,23 +41,10 @@ export interface ReviewScope {
 }
 
 export type GitIndexStatus =
-  | 'added'
-  | 'modified'
-  | 'deleted'
-  | 'renamed'
-  | 'copied'
-  | 'typechange'
-  | 'unmerged'
-  | null;
+  'added' | 'modified' | 'deleted' | 'renamed' | 'copied' | 'typechange' | 'unmerged' | null;
 
 export type GitWorktreeStatus =
-  | 'modified'
-  | 'deleted'
-  | 'renamed'
-  | 'typechange'
-  | 'untracked'
-  | 'unmerged'
-  | null;
+  'modified' | 'deleted' | 'renamed' | 'typechange' | 'untracked' | 'unmerged' | null;
 
 export interface FileStatus {
   path: string;
@@ -71,12 +58,7 @@ export interface FileStatus {
   rawXY: string;
 }
 
-export type GitOperationKind =
-  | 'merge'
-  | 'rebase'
-  | 'cherry-pick'
-  | 'squash'
-  | 'unknown';
+export type GitOperationKind = 'merge' | 'rebase' | 'cherry-pick' | 'squash' | 'unknown';
 
 export interface GitInProgressState {
   kind: GitOperationKind;
@@ -97,22 +79,10 @@ export interface ReviewStatus {
 }
 
 export type DiffFileKind =
-  | 'text'
-  | 'binary'
-  | 'large-text'
-  | 'too-large'
-  | 'submodule'
-  | 'unrenderable';
+  'text' | 'binary' | 'large-text' | 'too-large' | 'submodule' | 'unrenderable';
 
 export type DiffChangeKind =
-  | 'added'
-  | 'modified'
-  | 'deleted'
-  | 'renamed'
-  | 'copied'
-  | 'typechange'
-  | 'untracked'
-  | 'unknown';
+  'added' | 'modified' | 'deleted' | 'renamed' | 'copied' | 'typechange' | 'untracked' | 'unknown';
 
 export interface DiffLine {
   index: number;
@@ -229,6 +199,18 @@ export interface ReviewCommit {
   authorTime: number;
 }
 
+/**
+ * Lightweight changed-path list for a single commit.
+ *
+ * This intentionally carries no diff, blob, or patch data: the navigator only
+ * needs paths to route the user into the existing full Review surface.
+ */
+export interface ReviewCommitFilesData {
+  scope: ReviewScope;
+  commitOid: string;
+  paths: string[];
+}
+
 export interface ReviewHistoryData {
   scope: ReviewScope;
   headOid: string | null;
@@ -252,11 +234,7 @@ export interface ReviewCommitDiffData {
   capped: ReviewCappedDiffData | null;
 }
 
-export type ReviewBranchBaseCandidateKind =
-  | 'upstream'
-  | 'remote-default'
-  | 'local'
-  | 'remote';
+export type ReviewBranchBaseCandidateKind = 'upstream' | 'remote-default' | 'local' | 'remote';
 
 export interface ReviewBranchBaseCandidate {
   refName: string;
@@ -275,11 +253,7 @@ export interface ReviewBranchBaseCandidate {
 }
 
 export type ReviewBranchDiffWarningCode =
-  | 'base-missing'
-  | 'no-base-candidates'
-  | 'merge-base-missing'
-  | 'too-many-files'
-  | 'unborn';
+  'base-missing' | 'no-base-candidates' | 'merge-base-missing' | 'too-many-files' | 'unborn';
 
 export interface ReviewBranchDiffWarning {
   code: ReviewBranchDiffWarningCode;

@@ -70,6 +70,126 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Git Graph content routing', () => {
+  it('does not let a superseded normal-read error pause growth for the new filter', async () => {
+    render(<Harness />);
+    await screen.findByText('Newest');
+    const viewport = screen.getByLabelText('rightSidebar.gitGraph.history');
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 2000 },
+      scrollTop: { configurable: true, writable: true, value: 1450 },
+    });
+    let reject!: (reason: Error) => void;
+    let finishNew!: (value: typeof data) => void;
+    api.graph
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, fail) => {
+            reject = fail;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishNew = resolve;
+          }),
+      );
+    fireEvent.click(screen.getByRole('button', { name: 'rightSidebar.workbench.refresh' }));
+    await waitFor(() => expect(api.graph).toHaveBeenCalledTimes(2));
+    fireEvent.scroll(viewport);
+    viewport.scrollTop = 0;
+    fireEvent.click(screen.getByLabelText('rightSidebar.gitGraph.currentBranch'));
+    await act(async () => reject(new Error('old query failed')));
+    await waitFor(() => expect(api.graph).toHaveBeenCalledTimes(3));
+    expect(screen.queryByRole('alert')).toBeNull();
+    await act(async () => finishNew(data));
+    api.graph.mockResolvedValue({ ...data, hasMore: false });
+    viewport.scrollTop = 1450;
+    fireEvent.scroll(viewport);
+    await waitFor(() =>
+      expect(api.graph).toHaveBeenLastCalledWith(
+        expect.objectContaining({ limit: 300, currentBranch: true }),
+      ),
+    );
+  });
+  it('releases queued growth skipped while hidden and resumes after a hidden filter change', async () => {
+    const view = render(<Harness />);
+    await screen.findByText('Newest');
+    const viewport = screen.getByLabelText('rightSidebar.gitGraph.history');
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 2000 },
+      scrollTop: { configurable: true, writable: true, value: 1450 },
+    });
+    let finish!: (value: typeof data) => void;
+    api.graph.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'rightSidebar.workbench.refresh' }));
+    await waitFor(() => expect(api.graph).toHaveBeenCalledTimes(2));
+    fireEvent.scroll(viewport);
+    view.rerender(<Harness active={false} />);
+    viewport.scrollTop = 0;
+    fireEvent.click(screen.getByLabelText('rightSidebar.gitGraph.remotes'));
+    await act(async () => finish(data));
+    expect(api.graph).toHaveBeenCalledTimes(2);
+    view.rerender(<Harness />);
+    await waitFor(() => expect(api.graph).toHaveBeenCalledTimes(3));
+    expect(api.graph).toHaveBeenLastCalledWith(
+      expect.objectContaining({ limit: 200, includeRemotes: false }),
+    );
+    api.graph.mockResolvedValue({ ...data, hasMore: false });
+    viewport.scrollTop = 1450;
+    fireEvent.scroll(viewport);
+    await waitFor(() =>
+      expect(api.graph).toHaveBeenLastCalledWith(
+        expect.objectContaining({ limit: 300, includeRemotes: false }),
+      ),
+    );
+  });
+  it.each(['currentBranch', 'remotes'])(
+    'releases superseded queued growth after changing %s during a normal read',
+    async (filter) => {
+      render(<Harness />);
+      await screen.findByText('Newest');
+      const viewport = screen.getByLabelText('rightSidebar.gitGraph.history');
+      Object.defineProperties(viewport, {
+        clientHeight: { configurable: true, value: 400 },
+        scrollHeight: { configurable: true, value: 2000 },
+        scrollTop: { configurable: true, writable: true, value: 1450 },
+      });
+      let finish!: (value: typeof data) => void;
+      api.graph.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'rightSidebar.workbench.refresh' }));
+      await waitFor(() => expect(api.graph).toHaveBeenCalledTimes(2));
+      fireEvent.scroll(viewport);
+      viewport.scrollTop = 0;
+      fireEvent.click(screen.getByLabelText('rightSidebar.gitGraph.' + filter));
+      await act(async () => finish(data));
+      await waitFor(() => expect(api.graph).toHaveBeenCalledTimes(3));
+      expect(api.graph).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          limit: 200,
+          currentBranch: filter === 'currentBranch',
+          includeRemotes: filter !== 'remotes',
+        }),
+      );
+      api.graph.mockResolvedValue({ ...data, hasMore: false });
+      viewport.scrollTop = 1450;
+      fireEvent.scroll(viewport);
+      await waitFor(() =>
+        expect(api.graph).toHaveBeenLastCalledWith(expect.objectContaining({ limit: 300 })),
+      );
+    },
+  );
   it.each([
     'remote-session',
     'no-session',
@@ -208,6 +328,134 @@ describe('Git Graph content routing', () => {
     fireEvent.scroll(viewport);
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(api.graph).toHaveBeenCalledTimes(2);
+  });
+  it('keeps the target prefix locked until its own immediate growth read settles', async () => {
+    render(<Harness />);
+    await screen.findByText('Newest');
+    const viewport = screen.getByLabelText('rightSidebar.gitGraph.history');
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 2000 },
+      scrollTop: { configurable: true, writable: true, value: 1450 },
+    });
+    const background = (() => {
+      let resolve!: (value: typeof data) => void;
+      const promise = new Promise<typeof data>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    })();
+    const growth = (() => {
+      let resolve!: (value: typeof data) => void;
+      const promise = new Promise<typeof data>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    })();
+    api.graph
+      .mockImplementationOnce(() => background.promise)
+      .mockImplementationOnce(() => growth.promise);
+
+    fireEvent.click(screen.getByRole('button', { name: 'rightSidebar.workbench.refresh' }));
+    await waitFor(() => expect(api.graph).toHaveBeenCalledTimes(2));
+    fireEvent.scroll(viewport);
+    for (let index = 0; index < 6; index++) fireEvent.scroll(viewport);
+    expect(api.graph).toHaveBeenCalledTimes(2);
+
+    await act(async () => background.resolve(data));
+    await waitFor(() =>
+      expect(api.graph).toHaveBeenLastCalledWith(expect.objectContaining({ limit: 200 })),
+    );
+    for (let index = 0; index < 6; index++) fireEvent.scroll(viewport);
+    expect(api.graph).toHaveBeenCalledTimes(3);
+
+    await act(async () => growth.resolve({ ...data, hasMore: false }));
+  });
+  it('releases a staged growth lock when a filter changes before its read starts', async () => {
+    render(<Harness />);
+    await screen.findByText('Newest');
+    const viewport = screen.getByLabelText('rightSidebar.gitGraph.history');
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 2000 },
+      scrollTop: { configurable: true, writable: true, value: 1450 },
+    });
+    const background = (() => {
+      let resolve!: (value: typeof data) => void;
+      const promise = new Promise<typeof data>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    })();
+    const filtered = (() => {
+      let resolve!: (value: typeof data) => void;
+      const promise = new Promise<typeof data>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    })();
+    api.graph
+      .mockImplementationOnce(() => background.promise)
+      .mockImplementationOnce(() => filtered.promise);
+
+    fireEvent.click(screen.getByRole('button', { name: 'rightSidebar.workbench.refresh' }));
+    await waitFor(() => expect(api.graph).toHaveBeenCalledTimes(2));
+    fireEvent.scroll(viewport);
+    fireEvent.click(screen.getByLabelText('rightSidebar.gitGraph.currentBranch'));
+    viewport.scrollTop = 0;
+
+    await act(async () => background.resolve(data));
+    await waitFor(() =>
+      expect(api.graph).toHaveBeenLastCalledWith(
+        expect.objectContaining({ limit: 200, currentBranch: true }),
+      ),
+    );
+    await act(async () => filtered.resolve({ ...data, hasMore: true }));
+
+    viewport.scrollTop = 1450;
+    fireEvent.scroll(viewport);
+    await waitFor(() =>
+      expect(api.graph).toHaveBeenLastCalledWith(
+        expect.objectContaining({ limit: 300, currentBranch: true }),
+      ),
+    );
+  });
+  it('continues extending while the viewport remains near the history bottom', async () => {
+    render(<Harness />);
+    await screen.findByText('Newest');
+    const viewport = screen.getByLabelText('rightSidebar.gitGraph.history');
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 2000 },
+      scrollTop: { configurable: true, writable: true, value: 1450 },
+    });
+    const firstGrowth = (() => {
+      let resolve!: (value: typeof data) => void;
+      const promise = new Promise<typeof data>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    })();
+    const secondGrowth = (() => {
+      let resolve!: (value: typeof data) => void;
+      const promise = new Promise<typeof data>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    })();
+    api.graph
+      .mockImplementationOnce(() => firstGrowth.promise)
+      .mockImplementationOnce(() => secondGrowth.promise);
+
+    fireEvent.scroll(viewport);
+    await waitFor(() =>
+      expect(api.graph).toHaveBeenLastCalledWith(expect.objectContaining({ limit: 200 })),
+    );
+    await act(async () => firstGrowth.resolve({ ...data, hasMore: true }));
+    await waitFor(() =>
+      expect(api.graph).toHaveBeenLastCalledWith(expect.objectContaining({ limit: 300 })),
+    );
+    await act(async () => secondGrowth.resolve({ ...data, hasMore: false }));
   });
   it('preserves history and pauses automatic retries after a loading failure', async () => {
     render(<Harness />);

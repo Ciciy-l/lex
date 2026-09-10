@@ -14,6 +14,19 @@ import { PlainUnifiedDiff } from '../review/DiffViewer/PlainUnifiedDiff';
 import { createGraphRefreshQueue, type GitGraphState } from './state';
 
 type Endpoint = { ref: string; oid: string };
+type GraphRefreshSettings = { limit: number; state: GitGraphState };
+type GraphGrowthRequest = { generation: number; settings: GraphRefreshSettings };
+
+function sameGraphRefreshSettings(
+  left: GraphRefreshSettings,
+  right: GraphRefreshSettings,
+): boolean {
+  return (
+    left.limit === right.limit &&
+    left.state.currentBranch === right.state.currentBranch &&
+    left.state.includeRemotes === right.state.includeRemotes
+  );
+}
 
 const disabledReasonKeys = {
   'remote-session': 'rightSidebar.review.disabled.remote-session.desc',
@@ -58,12 +71,21 @@ function GraphContent({
   const visible = useRef(active && shellVisible);
   visible.current = active && shellVisible;
   const list = useRef<HTMLDivElement>(null);
-  const growthPending = useRef(false);
+  const growthPending = useRef<GraphGrowthRequest | null>(null);
+  const growthGeneration = useRef(0);
+  // The immediate request is staged before React commits the new limit. The
+  // matching effect consumes this once so it does not schedule a duplicate
+  // debounced refresh for the same prefix.
+  const growthRefresh = useRef<GraphGrowthRequest | null>(null);
+  // The visible prefix is only safe to extend when it belongs to the active
+  // filter. Otherwise a filter change while scrolled at the bottom could grow
+  // an old 100-row result again before the replacement query arrives.
+  const loadedSettings = useRef<GraphRefreshSettings | null>(null);
   const scrollAnchor = useRef<{ oid: string; offset: number } | null>(null);
   const locateOnRefresh = useRef(false);
   const refresh = useRef<ReturnType<typeof createGraphRefreshQueue> | null>(null);
   const { currentBranch, includeRemotes } = state;
-  const currentSettings = useMemo(
+  const currentSettings = useMemo<GraphRefreshSettings>(
     () => ({ limit, state: { currentBranch, includeRemotes } }),
     [limit, currentBranch, includeRemotes],
   );
@@ -73,16 +95,21 @@ function GraphContent({
   useEffect(() => {
     let alive = true;
     const queue = createGraphRefreshQueue(async () => {
-      if (!visible.current || document.visibilityState === 'hidden') return;
-      setBusy(true);
       const snapshot = settings.current;
+      const growth = growthPending.current;
+      const ownsGrowth =
+        growth && sameGraphRefreshSettings(growth.settings, snapshot) ? growth : null;
+      let attemptedRead = false;
       try {
+        if (!visible.current || document.visibilityState === 'hidden') return;
+        attemptedRead = true;
+        setBusy(true);
         const result = await window.electronAPI.gitReview.graph({
           sessionId: ctx.sessionId,
           limit: snapshot.limit,
           ...snapshot.state,
         });
-        if (alive && snapshot === settings.current) {
+        if (alive && sameGraphRefreshSettings(snapshot, settings.current)) {
           const viewport = list.current;
           if (viewport && viewport.scrollTop > 0) {
             const top = viewport.getBoundingClientRect().top;
@@ -96,14 +123,26 @@ function GraphContent({
               };
           }
           setData(result);
+          loadedSettings.current = snapshot;
           setFailed(false);
         }
       } catch {
-        if (alive) setFailed(true);
+        // A stale background request must not turn the newer scroll prefix
+        // into a paused error state after that prefix has already been staged.
+        if (alive && sameGraphRefreshSettings(snapshot, settings.current)) setFailed(true);
       } finally {
         if (alive) {
-          growthPending.current = false;
-          setBusy(false);
+          // A background/manual request may settle after a scroll expansion
+          // has been queued. Only the request that owns this target prefix may
+          // release its lock; otherwise another scroll can jump from 100 to
+          // 300 before the 200-prefix read has completed.
+          if (ownsGrowth && growthPending.current?.generation === ownsGrowth.generation) {
+            growthPending.current = null;
+            if (!attemptedRead && growthRefresh.current?.generation === ownsGrowth.generation) {
+              growthRefresh.current = null;
+            }
+          }
+          if (attemptedRead) setBusy(false);
         }
       }
     });
@@ -118,7 +157,21 @@ function GraphContent({
   useEffect(() => {
     if (!active || !shellVisible) return;
     const update = () => {
-      if (document.visibilityState !== 'hidden') refresh.current?.request();
+      if (document.visibilityState === 'hidden') return;
+      // A filter/locate change can happen after a near-bottom expansion was
+      // staged but before its single-flight read starts. That expansion no
+      // longer belongs to the new query, so it must not keep the next scroll
+      // prefix permanently locked.
+      const pendingGrowth = growthPending.current;
+      if (pendingGrowth && !sameGraphRefreshSettings(pendingGrowth.settings, currentSettings)) {
+        growthPending.current = null;
+      }
+      const stagedGrowth = growthRefresh.current;
+      if (stagedGrowth) {
+        growthRefresh.current = null;
+        if (sameGraphRefreshSettings(stagedGrowth.settings, currentSettings)) return;
+      }
+      refresh.current?.request();
     };
     update();
     const timer = window.setInterval(update, 15000);
@@ -131,7 +184,7 @@ function GraphContent({
       window.removeEventListener('lex:git-changed', update);
       window.removeEventListener('lex:workspace-file-saved', update);
     };
-  }, [active, shellVisible, limit, state.currentBranch, state.includeRemotes]);
+  }, [active, shellVisible, currentSettings]);
 
   useLayoutEffect(() => {
     const viewport = list.current;
@@ -155,16 +208,30 @@ function GraphContent({
       !shellVisible ||
       document.visibilityState === 'hidden' ||
       !data?.hasMore ||
-      busy ||
+      !loadedSettings.current ||
+      !sameGraphRefreshSettings(loadedSettings.current, settings.current) ||
       failed ||
       growthPending.current ||
-      limit >= 1000
+      settings.current.limit >= 1000
     )
       return;
     if (viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight > 180) return;
-    growthPending.current = true;
-    setLimit((value) => Math.min(1000, value + 100));
-  }, [active, shellVisible, data, busy, failed, limit]);
+    const nextSettings: GraphRefreshSettings = {
+      limit: Math.min(1000, settings.current.limit + 100),
+      state: { currentBranch, includeRemotes },
+    };
+    const growth: GraphGrowthRequest = {
+      generation: ++growthGeneration.current,
+      settings: nextSettings,
+    };
+    growthPending.current = growth;
+    growthRefresh.current = growth;
+    // React has not committed `setLimit` yet. Stage the exact semantic
+    // snapshot first so the urgent queue reads 200 rather than the old 100.
+    settings.current = nextSettings;
+    setLimit(nextSettings.limit);
+    refresh.current?.requestImmediate();
+  }, [active, shellVisible, data, failed, currentBranch, includeRemotes]);
 
   useEffect(() => {
     loadNearBottom();
