@@ -42,12 +42,13 @@ name.
 
 | Area | What you can do |
 | --- | --- |
-| **Content tabs** | Open terminals, files, the browser, Worker conversations, and Review in Cindy's existing content area. Lex does not create a second competing workspace. |
+| **Content tabs** | Open terminals, files, the browser, Worker conversations, and the Git workspace (Git Graph / Review) in Cindy's existing content area. Lex does not create a second competing workspace. |
 | **CLI launch** | Use the `+` menu to start Claude Code, Codex, Pi, or an installed local Shell in a dedicated tab. Shell choices are detected from the computer instead of being hard-coded. |
 | **Terminal layout** | Split panes, resize or drag them into place, rename tabs, search output, and temporarily maximize the pane that needs attention. |
 | **Long-running work** | Hide a pane, switch tabs, or collapse the workspace without terminating its PTY. Stopping a process remains an explicit action. |
 | **Files** | Browse the project tree, single-click to preview, double-click to keep a file open, and automatically keep a preview once it is edited. |
-| **Project context** | Navigate background tasks and collaboration Workers, inspect Git changes and recent commits, and open detailed views in the content area. |
+| **Project context** | Navigate background tasks and collaboration Workers, and open detailed views in the content area. |
+| **Git workspace** | For local projects, open one Git workspace from the tool rail. It defaults to Git Graph; switch to Review in the same tab to inspect local commit relationships, staged or unstaged changes, commit diffs, and selected-commit comparisons. Git Graph and its comparisons are read-only; Review retains its existing guarded change actions. |
 
 Lex continues to support Cindy plugins, Skill Hub resources, and `.cindy` files so the
 existing Cindy community ecosystem remains useful.
@@ -139,7 +140,7 @@ See [CONTRIBUTING.en.md](CONTRIBUTING.en.md) for the complete development workfl
 
 ## Releases and upstream sync
 
-- Prereleases update the beta channel; stable Releases update the stable channel.
+- Prereleases update only the beta channel; stable Releases update both the stable and beta channels so RC installs can graduate.
 - Signing is selected from configured repository secrets without creating a separate
   installer identity or release flow.
 - The `upstream-sync` workflow regularly checks Cindy and opens a reviewable sync PR.
