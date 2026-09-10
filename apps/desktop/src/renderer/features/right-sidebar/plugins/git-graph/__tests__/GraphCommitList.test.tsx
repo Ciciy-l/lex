@@ -27,7 +27,7 @@ it('bounds the ancestry column without dropping commits, subjects, dates or full
     <GraphCommitList data={data} selected={null} query="" includeRemotes onSelect={() => {}} />,
   );
   expect(view.container.querySelectorAll('[data-commit-row]')).toHaveLength(13);
-  expect(view.container.querySelector('[data-commit-row] svg')?.getAttribute('width')).toBe('88');
+  expect(view.container.querySelector('[data-commit-row] svg')?.getAttribute('width')).toBe('76');
   expect(screen.getByText('Commit 0').getAttribute('title')).toBe('Commit 0');
   expect(screen.getByText('main').getAttribute('title')).toBe('refs/heads/main');
   expect(view.container.querySelector('time')?.dateTime).toBe(
@@ -47,12 +47,12 @@ it('pans only the graph column and keeps commit order and dates unchanged', () =
   const before = view.container.querySelector('[data-commit-row]')?.textContent;
   fireEvent.click(screen.getByRole('button', { name: 'rightSidebar.gitGraph.lanesRight' }));
   expect(view.container.querySelector('[data-commit-row] svg')?.getAttribute('viewBox')).toBe(
-    '36 0 88 52',
+    '36 0 76 52',
   );
   expect(view.container.querySelector('[data-commit-row]')?.textContent).toBe(before);
   fireEvent.click(screen.getByRole('button', { name: 'rightSidebar.gitGraph.lanesLeft' }));
   expect(view.container.querySelector('[data-commit-row] svg')?.getAttribute('viewBox')).toBe(
-    '0 0 88 52',
+    '0 0 76 52',
   );
 });
 
@@ -76,7 +76,7 @@ it('marks unloaded parent edges as short dashed spurs rather than full-height ph
     <GraphCommitList data={partial} selected={null} query="" includeRemotes onSelect={() => {}} />,
   );
   const svg = view.container.querySelector('[data-commit-row] svg')!;
-  expect(svg.getAttribute('width')).toBe('28');
+  expect(svg.getAttribute('width')).toBe('16');
   expect(svg.querySelector('path')?.getAttribute('d')).toBe('M 8 26 l 5 12');
   expect(svg.querySelector('path')?.getAttribute('stroke-dasharray')).toBe('2 2');
   expect(svg.querySelector('title')?.textContent).toBe('rightSidebar.gitGraph.unloadedParents');

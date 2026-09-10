@@ -1,10 +1,11 @@
 # Lex Git Graph
 
-The Git tool navigator opens a singleton Git Graph in the existing content-tab
-strip. It does not add a second content region. Its session/workdir comes from
-the owning content host (the Lead in an Orca workflow), never the selected Worker.
-The implementation and SVG lane layout are original Lex code; no code or assets
-from the third-party VS Code Git Graph extension are used.
+The Git tool navigator opens one singleton Git workspace in the existing
+content-tab strip. It defaults to Git Graph; Git Graph and Review switch inside
+that same tab rather than creating a second content region. Its session/workdir
+comes from the owning content host (the Lead in an Orca workflow), never the
+selected Worker. The implementation and SVG lane layout are original Lex code;
+no code or assets from the third-party VS Code Git Graph extension are used.
 
 ## Read-only scope
 
@@ -58,7 +59,7 @@ in isolated test repositories.
 
 The original initial layout allowed the widest ancestry row to determine every
 row's graph width. Large merges pushed subjects off-screen. The revised layout
-keeps ancestry at 16–88 px (at most six lanes visible). Arrow controls pan only
+keeps ancestry at 16–76 px (at most six lanes visible). Arrow controls pan only
 the graph viewport; they do not filter or reorder commits. Selection automatically
 brings its lane into view. First-parent color follows ancestry rather than the
 screen column, so reusing or shifting a column does not recolor that path.

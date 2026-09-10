@@ -12,10 +12,14 @@ const api = vi.hoisted(() => ({
   graphCompare: vi.fn(),
   review: vi.fn(),
   openTab: vi.fn(),
+  patchTabState: vi.fn(),
 }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock('../../../lib/openGitReview', () => ({ openGitReview: api.review }));
-vi.mock('../../../store', () => ({ addOrFocusSingletonTab: api.openTab }));
+vi.mock('../../../store', () => ({
+  addOrFocusSingletonTab: api.openTab,
+  patchTabState: api.patchTabState,
+}));
 vi.mock('../../review/DiffViewer/PlainUnifiedDiff', () => ({
   PlainUnifiedDiff: () => <div>existing diff renderer</div>,
 }));
@@ -31,6 +35,16 @@ const data = {
   refs: [{ name: 'refs/heads/main', oid: head, kind: 'local' }],
   hasMore: true,
 };
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
 
 function Harness({
   sessionId = 'lead',
@@ -70,6 +84,77 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Git Graph content routing', () => {
+  it('shows a labelled initial loader until the first graph snapshot arrives', async () => {
+    const initial = deferred<typeof data>();
+    api.graph.mockReturnValueOnce(initial.promise);
+    render(<Harness />);
+
+    const loading = screen.getByRole('status', { name: 'rightSidebar.gitGraph.loading' });
+    expect(loading.getAttribute('aria-live')).toBe('polite');
+    expect(screen.getByLabelText('rightSidebar.gitGraph.title').getAttribute('aria-busy')).toBe(
+      'true',
+    );
+    expect(screen.getByLabelText('rightSidebar.gitGraph.history').getAttribute('aria-busy')).toBe(
+      'true',
+    );
+    expect(screen.queryByText('Newest')).toBeNull();
+
+    await waitFor(() => expect(api.graph).toHaveBeenCalledTimes(1));
+    await act(async () => initial.resolve(data));
+
+    expect(await screen.findByText('Newest')).toBeTruthy();
+    expect(screen.queryByRole('status', { name: 'rightSidebar.gitGraph.loading' })).toBeNull();
+  });
+
+  it('keeps loaded history visible rather than replacing it with the initial loader on refresh', async () => {
+    render(<Harness />);
+    expect(await screen.findByText('Newest')).toBeTruthy();
+    const next = deferred<typeof data>();
+    api.graph.mockReturnValueOnce(next.promise);
+
+    fireEvent.click(screen.getByRole('button', { name: 'rightSidebar.workbench.refresh' }));
+    await waitFor(() => expect(api.graph).toHaveBeenCalledTimes(2));
+
+    expect(screen.getByText('Newest')).toBeTruthy();
+    expect(screen.queryByRole('status', { name: 'rightSidebar.gitGraph.loading' })).toBeNull();
+    await act(async () => next.resolve(data));
+  });
+
+  it('starts the first graph read immediately instead of waiting for the refresh debounce', async () => {
+    let finish!: (value: typeof data) => void;
+    api.graph.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    render(<Harness />);
+
+    expect(api.graph).toHaveBeenCalledWith({
+      sessionId: 'lead',
+      limit: 100,
+      currentBranch: false,
+      includeRemotes: true,
+    });
+    await act(async () => finish(data));
+  });
+  it('starts the first graph read when a hidden document becomes visible', async () => {
+    let visibility: DocumentVisibilityState = 'hidden';
+    const visibilityState = vi
+      .spyOn(document, 'visibilityState', 'get')
+      .mockImplementation(() => visibility);
+    try {
+      render(<Harness />);
+      expect(api.graph).not.toHaveBeenCalled();
+
+      visibility = 'visible';
+      fireEvent(document, new Event('visibilitychange'));
+
+      await waitFor(() => expect(api.graph).toHaveBeenCalledTimes(1));
+    } finally {
+      visibilityState.mockRestore();
+    }
+  });
   it('does not let a superseded normal-read error pause growth for the new filter', async () => {
     render(<Harness />);
     await screen.findByText('Newest');
@@ -222,9 +307,15 @@ describe('Git Graph content routing', () => {
       expect(control.className).toContain('var(--focus-ring)');
     }
   });
-  it('opens the existing singleton content tab for the supplied Lead', async () => {
+  it('opens the canonical Git tab in Graph view for the supplied Lead', async () => {
+    api.openTab.mockResolvedValue({ id: 'review-tab', kind: 'review' });
+    api.patchTabState.mockImplementation(
+      async (_sessionId: string, _tabId: string, patch: (current: unknown) => unknown) => patch({}),
+    );
     await openGitGraph('lead');
-    expect(api.openTab).toHaveBeenCalledWith('lead', 'git-graph', null);
+    expect(api.openTab).toHaveBeenCalledWith('lead', 'review', null);
+    const update = api.patchTabState.mock.calls[0]?.[2] as (current: unknown) => unknown;
+    expect(update({})).toMatchObject({ activeView: 'graph' });
   });
   it.each([{ deviceId: 'device' }, { remoteHostId: 'ssh' }])(
     'does not query local Git for a remote context %s',
@@ -300,6 +391,36 @@ describe('Git Graph content routing', () => {
     );
     expect(await screen.findByText('rightSidebar.workbench.noChanges')).toBeTruthy();
     expect(screen.getByText('rightSidebar.gitGraph.exactComparison')).toBeTruthy();
+  });
+  it('renders a comparison diff through the deferred rich diff module', async () => {
+    api.graphCompare.mockResolvedValueOnce({
+      fromRef: parent,
+      fromOid: parent,
+      toRef: head,
+      toOid: head,
+      diffs: [
+        {
+          id: 'comparison:src/a.ts',
+          path: 'src/a.ts',
+          additions: 1,
+          deletions: 0,
+        },
+      ],
+      capped: null,
+      warning: null,
+    });
+    render(<Harness />);
+    fireEvent.click(await screen.findByText('Root'));
+    fireEvent.click(screen.getByText('rightSidebar.gitGraph.setFrom'));
+    fireEvent.click(screen.getByText('Newest'));
+    fireEvent.click(screen.getByText('rightSidebar.gitGraph.setTo'));
+    fireEvent.click(
+      screen
+        .getAllByRole('button', { name: 'rightSidebar.gitGraph.compare' })
+        .find((button) => button.closest('details'))!,
+    );
+
+    expect(await screen.findByText('existing diff renderer')).toBeTruthy();
   });
   it('serializes automatic loading during rapid near-bottom scrolls and stops at the end', async () => {
     render(<Harness />);

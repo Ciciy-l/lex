@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeftRight, Crosshair, GitBranch, RefreshCw, X } from 'lucide-react';
 import { GitControl } from '../../lib/GitControl';
@@ -10,8 +19,18 @@ import type { GitGraphData, GitGraphComparison } from '../../../../../shared/git
 import type { ReviewDisableReason } from '../../../../../shared/gitReviewWire';
 import type { TabKindBodyProps } from '../../types';
 import { openGitReview } from '../../lib/openGitReview';
-import { PlainUnifiedDiff } from '../review/DiffViewer/PlainUnifiedDiff';
+import { Spinner } from '@/components/ui/spinner';
+import { GitGraphLoadingState } from './GitGraphLoadingState';
 import { createGraphRefreshQueue, type GitGraphState } from './state';
+
+// The rich diff renderer pulls virtualisation, highlighting and image-preview
+// code. A graph does not need any of that until the user has actually asked
+// to inspect a comparison, so keep the initial Graph chunk focused on history.
+const PlainUnifiedDiff = lazy(() =>
+  import('../review/DiffViewer/PlainUnifiedDiff').then((module) => ({
+    default: module.PlainUnifiedDiff,
+  })),
+);
 
 type Endpoint = { ref: string; oid: string };
 type GraphRefreshSettings = { limit: number; state: GitGraphState };
@@ -84,6 +103,10 @@ function GraphContent({
   const scrollAnchor = useRef<{ oid: string; offset: number } | null>(null);
   const locateOnRefresh = useRef(false);
   const refresh = useRef<ReturnType<typeof createGraphRefreshQueue> | null>(null);
+  // The first visible graph is user-initiated and has no burst to collapse.
+  // Subsequent refreshes still use the queue's debounce so file-save/focus
+  // events cannot create a stream of Git reads.
+  const hasStartedInitialRead = useRef(false);
   const { currentBranch, includeRemotes } = state;
   const currentSettings = useMemo<GraphRefreshSettings>(
     () => ({ limit, state: { currentBranch, includeRemotes } }),
@@ -171,15 +194,22 @@ function GraphContent({
         growthRefresh.current = null;
         if (sameGraphRefreshSettings(stagedGrowth.settings, currentSettings)) return;
       }
-      refresh.current?.request();
+      if (!hasStartedInitialRead.current) {
+        hasStartedInitialRead.current = true;
+        refresh.current?.requestImmediate();
+      } else {
+        refresh.current?.request();
+      }
     };
     update();
     const timer = window.setInterval(update, 15000);
+    document.addEventListener('visibilitychange', update);
     window.addEventListener('focus', update);
     window.addEventListener('lex:git-changed', update);
     window.addEventListener('lex:workspace-file-saved', update);
     return () => {
       clearInterval(timer);
+      document.removeEventListener('visibilitychange', update);
       window.removeEventListener('focus', update);
       window.removeEventListener('lex:git-changed', update);
       window.removeEventListener('lex:workspace-file-saved', update);
@@ -246,6 +276,10 @@ function GraphContent({
     }
   }, [data]);
   const commit = data?.commits.find((item) => item.oid === selected);
+  // Keep the first open explicitly communicative. Once a graph exists, refresh
+  // it in place instead: replacing readable history with a loader on every
+  // focus/file-save refresh is both visually noisy and less useful.
+  const initialLoading = data === null && !failed;
   const choices: Endpoint[] = [
     ...(data?.refs
       .filter((ref) => state.includeRemotes || ref.kind !== 'remote')
@@ -296,6 +330,7 @@ function GraphContent({
     <section
       className="lex-git-graph flex h-full min-h-0 min-w-0 flex-col overflow-auto text-12"
       aria-label={t('rightSidebar.gitGraph.title')}
+      aria-busy={busy || initialLoading || undefined}
     >
       <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-[var(--border-default)] px-2 py-1.5">
         <GitBranch size={14} className="shrink-0 text-[var(--text-secondary)]" aria-hidden="true" />
@@ -355,9 +390,6 @@ function GraphContent({
           </label>
         </div>
       </div>
-      <p role="status" className="sr-only">
-        {busy ? t('rightSidebar.workbench.historyLoading') : ''}
-      </p>
       {failed && (
         <p role="alert" className="p-3">
           {t('rightSidebar.workbench.loadFailed')}
@@ -371,8 +403,11 @@ function GraphContent({
         onScroll={loadNearBottom}
         className="min-h-40 flex-1 overflow-auto"
         aria-label={t('rightSidebar.gitGraph.history')}
+        aria-busy={initialLoading || undefined}
       >
-        {data && (
+        {initialLoading ? (
+          <GitGraphLoadingState />
+        ) : data ? (
           <GraphCommitList
             data={data}
             query={query}
@@ -380,7 +415,7 @@ function GraphContent({
             includeRemotes={state.includeRemotes}
             onSelect={setSelected}
           />
-        )}
+        ) : null}
       </div>
       {!busy && data && !data.commits.length && (
         <p className="p-3">{t('rightSidebar.workbench.noCommits')}</p>
@@ -514,14 +549,24 @@ function GraphContent({
               {!comparison.diffs.length && !comparison.capped && !comparison.warning && (
                 <p>{t('rightSidebar.workbench.noChanges')}</p>
               )}
-              {comparison.diffs.map((diff) => (
-                <details key={diff.id} className="border-t border-[var(--border-default)] py-2">
-                  <summary className="cursor-pointer">
-                    {diff.path} (+{diff.additions} −{diff.deletions})
-                  </summary>
-                  <PlainUnifiedDiff diff={diff} />
-                </details>
-              ))}
+              {comparison.diffs.length > 0 && (
+                <Suspense
+                  fallback={
+                    <div className="flex min-h-12 items-center justify-center" aria-busy="true">
+                      <Spinner size={14} />
+                    </div>
+                  }
+                >
+                  {comparison.diffs.map((diff) => (
+                    <details key={diff.id} className="border-t border-[var(--border-default)] py-2">
+                      <summary className="cursor-pointer">
+                        {diff.path} (+{diff.additions} −{diff.deletions})
+                      </summary>
+                      <PlainUnifiedDiff diff={diff} />
+                    </details>
+                  ))}
+                </Suspense>
+              )}
             </div>
           )}
         </div>

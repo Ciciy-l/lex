@@ -4,10 +4,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../store', () => ({
   ensureHydrated: vi.fn(async () => undefined),
-  addOrFocusSingletonTab: vi.fn(async () => undefined),
+  addOrFocusSingletonTab: vi.fn(async () => ({ id: 'review-1', kind: 'review', state: {} })),
   closeTab: vi.fn(async () => undefined),
+  patchTabState: vi.fn(async () => undefined),
   getBucket: vi.fn(() => ({
-    tabs: [{ id: 'review-1', kind: 'review' }],
+    // An object without activeView represents a persisted pre-unification
+    // Review record; null is covered separately as a new Graph-first tab.
+    tabs: [{ id: 'review-1', kind: 'review', state: {} }],
     activeTabId: 'review-1',
     activeContentTabId: 'review-1',
     activeToolId: null,
@@ -29,7 +32,13 @@ vi.mock('../../plugins/orca-workers/actions', () => ({
   closeOrcaWorkersTabAfterTeamEnd: vi.fn(async () => undefined),
 }));
 
-import { addOrFocusSingletonTab, closeTab, ensureHydrated, getBucket } from '../../store';
+import {
+  addOrFocusSingletonTab,
+  closeTab,
+  ensureHydrated,
+  getBucket,
+  patchTabState,
+} from '../../store';
 import {
   closeOrcaWorkersTabAfterTeamEnd,
   ensureOrcaWorkersTab,
@@ -121,6 +130,7 @@ describe('executeSidebarCommand', () => {
     expect(getBucket).toHaveBeenCalledWith('s1');
     expect(closeTab).not.toHaveBeenCalled();
     expect(addOrFocusSingletonTab).toHaveBeenCalledWith('s1', 'review', null);
+    expect(patchTabState).toHaveBeenCalled();
   });
 
   it('hides Review only after the detached host is already visible', async () => {
@@ -128,5 +138,43 @@ describe('executeSidebarCommand', () => {
     await executeSidebarCommand({ type: 'toggle-review-tab', sessionId: 's1' });
     expect(closeTab).toHaveBeenCalledWith('s1', 'review-1');
     expect(addOrFocusSingletonTab).not.toHaveBeenCalled();
+  });
+
+  it('switches an active Graph workspace to Review instead of closing it', async () => {
+    vi.mocked(getBucket).mockReturnValueOnce({
+      tabs: [{ id: 'review-1', kind: 'review', state: { activeView: 'graph' } }],
+      activeTabId: 'review-1',
+      activeContentTabId: 'review-1',
+      activeToolId: null,
+    } as never);
+    vi.mocked(addOrFocusSingletonTab).mockResolvedValueOnce({
+      id: 'review-1',
+      kind: 'review',
+      state: { activeView: 'graph' },
+    } as never);
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+
+    await executeSidebarCommand({ type: 'toggle-review-tab', sessionId: 's1' });
+
+    expect(closeTab).not.toHaveBeenCalled();
+    expect(addOrFocusSingletonTab).toHaveBeenCalledWith('s1', 'review', null);
+    const update = vi.mocked(patchTabState).mock.calls[0]?.[2] as (current: unknown) => unknown;
+    expect(update({ activeView: 'graph' })).toMatchObject({ activeView: 'review' });
+  });
+
+  it('treats a newly-created null Git state as Graph instead of closing the tab', async () => {
+    vi.mocked(getBucket).mockReturnValueOnce({
+      tabs: [{ id: 'review-1', kind: 'review', state: null }],
+      activeTabId: 'review-1',
+      activeContentTabId: 'review-1',
+      activeToolId: null,
+    } as never);
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+
+    await executeSidebarCommand({ type: 'toggle-review-tab', sessionId: 's1' });
+
+    expect(closeTab).not.toHaveBeenCalled();
+    expect(addOrFocusSingletonTab).toHaveBeenCalledWith('s1', 'review', null);
+    expect(patchTabState).toHaveBeenCalled();
   });
 });

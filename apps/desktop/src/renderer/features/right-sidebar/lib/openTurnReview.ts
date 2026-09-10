@@ -51,6 +51,7 @@ export async function openTurnReview(
     delete preserved.turnTarget;
     return {
       ...preserved,
+      activeView: 'review',
       descriptor: messageSnapshot,
       messageSnapshot,
       jumpTarget: {

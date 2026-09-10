@@ -6007,6 +6007,7 @@
       "dateColumn": "日時",
       "closeDetails": "コミット詳細を閉じる",
       "title": "Git グラフ",
+      "loading": "Git グラフを読み込み中…",
       "localOnly": "Git グラフは読み取り専用で、ローカルタスクのみ利用できます。リモートやデバイスが未確定の場合は利用できません。",
       "locateHead": "HEAD を表示",
       "currentBranch": "現在のブランチのみ",
@@ -6076,11 +6077,11 @@
       "empty": {
         "eyebrow": "右サイドバー",
         "title": "パネルを開く",
-        "desc": "ファイル、レビュー、アクティビティモニタ、内蔵ブラウザ、ターミナルを開いて、左側のチャットと並行して作業できます。",
+        "desc": "ファイル、Git、アクティビティモニタ、内蔵ブラウザ、ターミナルを開いて、左側のチャットと並行して作業できます。",
         "openFile": "ファイルを開く",
         "fileSub": "ファイル",
-        "openReview": "レビューを開く",
-        "reviewSub": "レビュー",
+        "openReview": "Git を開く",
+        "reviewSub": "グラフとレビュー",
         "openSubagents": "サブエージェントを開く",
         "subagentsSub": "後から確認できる子タスク",
         "openBackgroundTasks": "バックグラウンドタスクを開く",
@@ -6893,6 +6894,7 @@
       "comparison": "ブランチを比較",
       "comparisonHint": "基準ブランチに対するコミット済みの変更を表示します。未コミットのファイルは含みません。",
       "historyLoading": "最近のコミットを読み込み中…",
+      "gitLoading": "Git を読み込み中…",
       "previousPane": "前のペイン",
       "nextPane": "次のペイン"
     }

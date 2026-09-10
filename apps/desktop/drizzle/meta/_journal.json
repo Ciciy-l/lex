@@ -715,6 +715,13 @@
       "when": 1788431426308,
       "tag": "0101_repair_cjk_fts_missing_rows",
       "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "6",
+      "when": 1789015827529,
+      "tag": "0102_merge_git_workspace_tabs",
+      "breakpoints": true
     }
   ]
 }

@@ -1511,6 +1511,13 @@ export const rightSidebarTabs = sqliteTable(
     uniqSubagents: uniqueIndex('right_sidebar_tabs_subagents_singleton_idx')
       .on(t.sessionId)
       .where(sql`${t.kind} = 'subagents'`),
+    // Git workspace reuses the historical `review` kind. Keep it authoritative
+    // across attached / detached renderers just like the durable worker view.
+    // The 0102 companion migration first coalesces historical review +
+    // git-graph rows, then creates this index.
+    uniqReview: uniqueIndex('right_sidebar_tabs_review_singleton_idx')
+      .on(t.sessionId)
+      .where(sql`${t.kind} = 'review'`),
   }),
 );
 

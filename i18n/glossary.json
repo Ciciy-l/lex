@@ -17,8 +17,8 @@
       "id": "git-graph",
       "status": "proposed",
       "en": "Git Graph",
-      "translations": { "zh-CN": "Git 提交图", "zh-TW": "Git 提交圖", "ja": "Git グラフ", "ko": "Git 그래프" },
-      "note": "Lex 原创的只读 Git 提交关系内容页签，不表示或复用同名第三方扩展。"
+      "translations": { "zh-CN": "Git 图谱", "zh-TW": "Git 圖譜", "ja": "Git グラフ", "ko": "Git 그래프" },
+      "note": "Lex 原创的只读 Git 提交关系视图，默认显示在统一 Git 页签内，不表示或复用同名第三方扩展。"
     },
     {
       "id": "lex-version-notes",

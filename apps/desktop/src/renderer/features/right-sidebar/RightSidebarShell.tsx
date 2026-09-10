@@ -745,7 +745,7 @@ export function RightSidebarShell({
           // EmptyState 的"打开审查"入口由用户主动创建。
           <EmptyState
             onAddFileTab={() => handleAdd('file-browser')}
-            onAddReviewTab={() => handleAdd('review')}
+            onAddGitTab={() => handleAdd('review')}
             onAddSubagentsTab={() => handleAdd('subagents')}
             onAddBackgroundTasksTab={() => handleAdd('background-tasks')}
             subagentsAvailable={subagentsEnabled}
@@ -798,8 +798,18 @@ export function RightSidebarShell({
               }
               style={{ flex: '0 1 240px', minWidth: toolsExpanded ? 180 : 0 }}
             >
-              {selectedToolKind === 'review' && toolsExpanded && shellVisible && sessionId && deviceLinkDeviceId !== undefined &&
-                <GitNavigation key={JSON.stringify([sessionId, deviceLinkDeviceId, workdir, remoteHostId])} sessionId={sessionId} deviceId={deviceLinkDeviceId} remoteHostId={remoteHostId} />}
+              {selectedToolKind === 'review' &&
+                toolsExpanded &&
+                shellVisible &&
+                sessionId &&
+                deviceLinkDeviceId !== undefined && (
+                  <GitNavigation
+                    key={JSON.stringify([sessionId, deviceLinkDeviceId, workdir, remoteHostId])}
+                    sessionId={sessionId}
+                    deviceId={deviceLinkDeviceId}
+                    remoteHostId={remoteHostId}
+                  />
+                )}
               {toolTabs
                 .filter((tab) => tab.id === showingToolId || deferredMountedTabIds.has(tab.id))
                 .map((tab) => (

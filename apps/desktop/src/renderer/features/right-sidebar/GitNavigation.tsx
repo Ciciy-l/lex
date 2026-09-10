@@ -11,10 +11,12 @@ import type {
   ReviewDisableReason,
 } from '../../../shared/gitReviewWire';
 import { openGitReview } from './lib/openGitReview';
-import { openGitGraph } from './lib/openGitGraph';
+import { openGitGraph, openGitWorkspaceView } from './lib/openGitGraph';
+import { resolveGitWorkspaceView } from './lib/gitWorkspaceView';
 import { createGraphRefreshQueue } from './plugins/git-graph/state';
 import { getBucket } from './store';
 import type { ReviewState } from './plugins/review';
+import './git-navigation.css';
 
 const disabledReasonKeys = {
   'remote-session': {
@@ -152,8 +154,11 @@ function GitNavigationContent({
       toast.error(t('rightSidebar.workbench.loadFailed')),
     );
   };
-  const review = getBucket(sessionId).tabs.find((tab) => tab.kind === 'review')?.state as
-    ReviewState | undefined;
+  const reviewTab = getBucket(sessionId).tabs.find((tab) => tab.kind === 'review');
+  const review = reviewTab?.state as Partial<ReviewState> | undefined;
+  // Legacy review state has no activeView and must remain a Review surface;
+  // no tab yet means the next Git action will create a Graph-first workspace.
+  const storedActiveView = resolveGitWorkspaceView(reviewTab?.state);
   // Graph uses a local-only main IPC. Do not offer an action that is known to
   // be denied for a controlled device or an SSH workspace.
   const canOpenGraph =
@@ -161,12 +166,15 @@ function GitNavigationContent({
     remoteHostId === null &&
     data?.scope.source !== 'remote' &&
     data?.scope.disabledReason !== 'remote-session';
+  // The workspace body also falls back to Review outside local contexts. Keep
+  // the navigator's pressed state aligned with that effective visible view.
+  const activeView = canOpenGraph && storedActiveView === 'graph' ? 'graph' : 'review';
   // Keep a known-empty snapshot visible while the next status read is in flight.
   // Removing it for `busy` collapses both status sections every auto-refresh.
   const hasStatusSnapshot = data?.status != null;
   return (
     <section
-      className="flex min-h-0 flex-1 flex-col overflow-y-auto text-12"
+      className="lex-git-navigation flex min-h-0 flex-1 flex-col overflow-y-auto text-12"
       aria-label={t('rightSidebar.workbench.git')}
     >
       <div className="border-b border-[var(--border-default)] px-2 py-1.5">
@@ -183,38 +191,69 @@ function GitNavigationContent({
             <RefreshCw size={13} />
           </GitControl>
         </div>
-        <div className="flex min-w-0 items-center gap-1 text-11 text-[var(--text-secondary)]">
+        <div className="flex min-w-0 items-center gap-0.5 text-11 text-[var(--text-secondary)]">
           <GitBranch size={12} className="shrink-0" aria-hidden="true" />
-          <span className="truncate">
+          <span className="lex-git-navigation-branch-name min-w-0 shrink truncate">
             {data?.scope.branch || (data?.scope.isDetached ? data.scope.headOid?.slice(0, 7) : '')}
           </span>
-          {data?.scope.aheadBehind?.upstream && (
-            <span className="ml-auto shrink-0" title={data.scope.aheadBehind.upstream}>
-              ↑{data.scope.aheadBehind.ahead} ↓{data.scope.aheadBehind.behind}
-            </span>
-          )}
-        </div>
-        <div className="mt-1 flex flex-wrap gap-1">
-          {canOpenGraph && (
+          <div
+            className="flex shrink-0 items-center gap-px"
+            role="group"
+            aria-label={t('rightSidebar.workbench.git')}
+          >
+            {canOpenGraph && (
+              <GitControl
+                className={
+                  'lex-git-navigation-mode-control ' +
+                  (activeView === 'graph'
+                    ? 'bg-[var(--surface-chip)] text-[var(--text-primary)]'
+                    : '')
+                }
+                label={t('rightSidebar.gitGraph.title')}
+                size="compact"
+                aria-pressed={activeView === 'graph'}
+                onClick={() =>
+                  void openGitGraph(sessionId).catch(() =>
+                    toast.error(t('rightSidebar.workbench.loadFailed')),
+                  )
+                }
+              >
+                <GitFork size={11} />
+                <span className="lex-git-navigation-mode-label">
+                  {t('rightSidebar.gitGraph.title')}
+                </span>
+              </GitControl>
+            )}
             <GitControl
-              label={t('rightSidebar.gitGraph.title')}
+              className={
+                'lex-git-navigation-mode-control ' +
+                (activeView === 'review'
+                  ? 'bg-[var(--surface-chip)] text-[var(--text-primary)]'
+                  : '')
+              }
+              label={t('rightSidebar.tabs.kinds.review')}
+              size="compact"
+              aria-pressed={activeView === 'review'}
               onClick={() =>
-                void openGitGraph(sessionId).catch(() =>
+                void openGitWorkspaceView(sessionId, 'review').catch(() =>
                   toast.error(t('rightSidebar.workbench.loadFailed')),
                 )
               }
             >
-              <GitFork size={13} />
-              {t('rightSidebar.gitGraph.title')}
+              <FileDiff size={11} />
+              <span className="lex-git-navigation-mode-label">
+                {t('rightSidebar.tabs.kinds.review')}
+              </span>
             </GitControl>
+          </div>
+          {data?.scope.aheadBehind?.upstream && (
+            <span
+              className="ml-auto shrink-0 whitespace-nowrap"
+              title={data.scope.aheadBehind.upstream}
+            >
+              ↑{data.scope.aheadBehind.ahead} ↓{data.scope.aheadBehind.behind}
+            </span>
           )}
-          <GitControl
-            label={t('rightSidebar.tabs.kinds.review')}
-            onClick={() => navigate({ kind: 'unstaged' })}
-          >
-            <FileDiff size={13} />
-            {t('rightSidebar.tabs.kinds.review')}
-          </GitControl>
         </div>
       </div>
       {failed && (

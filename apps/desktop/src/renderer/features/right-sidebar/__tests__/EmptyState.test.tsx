@@ -10,14 +10,11 @@ import { EmptyState } from '../EmptyState';
 
 afterEach(() => cleanup());
 
-function renderEmptyState(
-  onAddSubagentsTab = vi.fn(),
-  subagentsAvailable = false,
-) {
+function renderEmptyState(onAddSubagentsTab = vi.fn(), subagentsAvailable = false) {
   return render(
     <EmptyState
       onAddFileTab={vi.fn()}
-      onAddReviewTab={vi.fn()}
+      onAddGitTab={vi.fn()}
       onAddSubagentsTab={onAddSubagentsTab}
       onAddBackgroundTasksTab={vi.fn()}
       onAddBrowserTab={vi.fn()}

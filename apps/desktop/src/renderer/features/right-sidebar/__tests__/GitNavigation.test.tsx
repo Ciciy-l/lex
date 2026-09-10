@@ -11,15 +11,20 @@ const api = vi.hoisted(() => ({
   commitDiff: vi.fn(),
   navigate: vi.fn(),
   openGraph: vi.fn(),
+  openWorkspaceView: vi.fn(),
+  tabs: [] as Array<{ id: string; kind: string; state?: unknown }>,
 }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock('@/components/ui/tooltip', () => ({
   Tip: ({ children }: { children: ReactNode }) => children,
 }));
 vi.mock('@/lib/gitReviewTransport', () => ({ gitReviewApiFor: () => api }));
-vi.mock('../store', () => ({ getBucket: () => ({ tabs: [] }) }));
+vi.mock('../store', () => ({ getBucket: () => ({ tabs: api.tabs }) }));
 vi.mock('../lib/openGitReview', () => ({ openGitReview: api.navigate }));
-vi.mock('../lib/openGitGraph', () => ({ openGitGraph: api.openGraph }));
+vi.mock('../lib/openGitGraph', () => ({
+  openGitGraph: api.openGraph,
+  openGitWorkspaceView: api.openWorkspaceView,
+}));
 import { GitNavigation } from '../GitNavigation';
 
 function deferred<T>() {
@@ -43,6 +48,8 @@ beforeEach(() => {
   api.history.mockResolvedValue(history('initial commit'));
   api.navigate.mockResolvedValue(undefined);
   api.openGraph.mockResolvedValue(undefined);
+  api.openWorkspaceView.mockResolvedValue(undefined);
+  api.tabs = [];
   Object.defineProperty(window, 'electronAPI', { configurable: true, value: { gitReview: api } });
 });
 afterEach(cleanup);
@@ -198,12 +205,50 @@ describe('Git tool loading', () => {
     fireEvent.click(screen.getByRole('button', { name: 'rightSidebar.workbench.staged (0)' }));
     expect(api.navigate).toHaveBeenCalledWith('lead', { kind: 'staged' }, undefined);
   });
+  it('switches the header Review control without replacing the current Review descriptor', async () => {
+    render(<GitNavigation sessionId="lead" deviceId={null} />);
+    await screen.findByText('initial commit');
+
+    fireEvent.click(screen.getByRole('button', { name: 'rightSidebar.tabs.kinds.review' }));
+
+    expect(api.openWorkspaceView).toHaveBeenCalledWith('lead', 'review');
+    expect(api.navigate).not.toHaveBeenCalled();
+  });
+  it('keeps the compact view switch on the branch row and truncates a long branch before it wraps', async () => {
+    const longBranch = 'feature/a-very-long-branch-name-that-must-not-push-the-git-switch-away';
+    api.navigation.mockResolvedValue({
+      scope: {
+        ...status.scope,
+        branch: longBranch,
+        aheadBehind: { upstream: 'origin/main', ahead: 12, behind: 3 },
+      },
+      status: { files: [] },
+    });
+    const view = render(<GitNavigation sessionId="lead" deviceId={null} />);
+    const graph = await screen.findByRole('button', { name: 'rightSidebar.gitGraph.title' });
+    const review = screen.getByRole('button', { name: 'rightSidebar.tabs.kinds.review' });
+    const branch = await screen.findByText(longBranch);
+    expect(graph.getAttribute('aria-pressed')).toBe('true');
+    expect(review.getAttribute('aria-pressed')).toBe('false');
+    expect(branch.className).toContain('truncate');
+    expect(branch.className).toContain('lex-git-navigation-branch-name');
+    expect(graph.closest('[role="group"]')?.parentElement?.className).not.toContain('flex-wrap');
+    expect(view.container.querySelector('.mt-1.flex-wrap')).toBeNull();
+    expect(screen.getByTitle('origin/main').textContent).toBe('↑12 ↓3');
+  });
   it.each([
     { deviceId: 'controlled-device', remoteHostId: null },
     { deviceId: null, remoteHostId: 'ssh-host' },
-  ])('does not offer a local Graph opener for a remote context %#', (props) => {
+  ])('does not offer a local Graph opener for a remote context %#', async (props) => {
     render(<GitNavigation sessionId="lead" {...props} />);
-    expect(screen.queryByRole('button', { name: 'rightSidebar.gitGraph.title' })).toBeNull();
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'rightSidebar.gitGraph.title' })).toBeNull(),
+    );
+    expect(
+      screen
+        .getByRole('button', { name: 'rightSidebar.tabs.kinds.review' })
+        .getAttribute('aria-pressed'),
+    ).toBe('true');
     expect(api.openGraph).not.toHaveBeenCalled();
   });
   it('removes the Graph opener after a locally resolved SSH scope is reported', async () => {

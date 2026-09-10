@@ -1,0 +1,18 @@
+.lex-git-navigation {
+  container: git-navigation / inline-size;
+}
+
+.lex-git-navigation-branch-name {
+  max-width: min(6rem, 30cqi);
+}
+
+@container git-navigation (max-width: 184px) {
+  .lex-git-navigation-mode-label {
+    display: none;
+  }
+
+  .lex-git-navigation-mode-control {
+    width: 20px;
+    padding-inline: 0;
+  }
+}

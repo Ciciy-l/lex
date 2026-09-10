@@ -90,6 +90,21 @@ function installShellProbe(probe: () => Promise<unknown>): void {
 }
 
 describe('workspace + menu', () => {
+  it('labels the canonical review kind as the Git workspace in a tab pill fallback', () => {
+    render(
+      <TabStrip
+        tabs={[{ id: 'git-tab', kind: 'review', state: null }]}
+        activeTabId={null}
+        onActivate={vi.fn()}
+        onClose={vi.fn()}
+        onReorder={vi.fn()}
+        onAdd={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('rightSidebar.workbench.git')).toBeTruthy();
+    expect(screen.queryByText('rightSidebar.tabs.kinds.review')).toBeNull();
+  });
+
   it('lists detected shells with the default first and launches the selected ShellId', async () => {
     const probe = vi.fn(async () => [
       { id: 'cmd', displayName: 'Command Prompt', isAutoDetectTarget: false },

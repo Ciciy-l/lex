@@ -1,7 +1,13 @@
 /** 执行 main 已裁决并推给当前 renderer host 的 RSB command。 */
 
 import type { RsbWindowCommand } from '../../../../shared/rightSidebarWindow';
-import { addOrFocusSingletonTab, closeTab, ensureHydrated, getBucket } from '../store';
+import {
+  addOrFocusSingletonTab,
+  closeTab,
+  ensureHydrated,
+  getBucket,
+  patchTabState,
+} from '../store';
 import {
   closeOrcaWorkersTabAfterTeamEnd,
   ensureOrcaWorkersTab,
@@ -16,6 +22,7 @@ import { openSubagentsTab } from './openSubagentsTab';
 import { openTurnReview } from './openTurnReview';
 import { openFileContentTab } from './openFileContentTab';
 import { openUrlInSidebarBrowser } from './openInSidebarBrowser';
+import { resolveGitWorkspaceView } from './gitWorkspaceView';
 
 /** 在 main 已选定的当前 renderer host 中执行命令，不自行选择宿主。 */
 export async function executeSidebarCommand(command: RsbWindowCommand): Promise<void> {
@@ -83,11 +90,25 @@ export async function executeSidebarCommand(command: RsbWindowCommand): Promise<
     const reviewTab = bucket.tabs.find((tab) => tab.kind === 'review');
     const hostAlreadyVisible =
       typeof document === 'undefined' || document.visibilityState === 'visible';
-    if (reviewTab && bucket.activeContentTabId === reviewTab.id && hostAlreadyVisible) {
+    // The command is a Review shortcut. From Graph it should reveal Review;
+    // only an already-visible Review surface toggles the unified Git tab shut.
+    const activeView = resolveGitWorkspaceView(reviewTab?.state);
+    const reviewIsShowing = activeView !== 'graph';
+    if (
+      reviewTab &&
+      bucket.activeContentTabId === reviewTab.id &&
+      hostAlreadyVisible &&
+      reviewIsShowing
+    ) {
       await closeTab(command.sessionId, reviewTab.id);
       return;
     }
-    await addOrFocusSingletonTab(command.sessionId, 'review', null);
+    const tab = await addOrFocusSingletonTab(command.sessionId, 'review', null);
+    if (!tab) return;
+    await patchTabState(command.sessionId, tab.id, (current) => ({
+      ...(current && typeof current === 'object' && !Array.isArray(current) ? current : {}),
+      activeView: 'review',
+    }));
     return;
   }
   await ensureHydrated(command.sessionId);

@@ -90,7 +90,7 @@ try {
             ],
           };
         });
-      assert(facts.graphWidth <= 88, JSON.stringify(facts));
+      assert(facts.graphWidth <= 76, JSON.stringify(facts));
       assert(facts.subjectWidth >= 180, JSON.stringify(facts));
       assert(facts.visibleTimes === 1, JSON.stringify(facts));
       assert(!facts.overflow, JSON.stringify(facts));
@@ -130,7 +130,7 @@ try {
   await page.setViewportSize({ width: 560, height: 760 });
   await page.goto(server.resolvedUrls.local[0] + 'graph-preview?theme=dark&history=merges');
   await page.locator('[data-commit-row]').first().waitFor();
-  assert.equal(await page.locator('[data-commit-row] svg').first().getAttribute('width'), '40');
+  assert.equal(await page.locator('[data-commit-row] svg').first().getAttribute('width'), '28');
   assert.equal(await page.locator('[data-commit-row]').count(), 29);
   assert.equal(await page.getByRole('button', { name: '再加载 100 条', exact: true }).count(), 0);
   const titles = await page.locator('[data-commit-row] .font-medium').allTextContents();
@@ -142,7 +142,7 @@ try {
   await page.getByText('286148cb Merge branch dev/v1', { exact: true }).waitFor();
   await page.getByText('286148cb Merge branch dev/v1', { exact: true }).scrollIntoViewIfNeeded();
   assert.equal(await page.locator('[data-commit-row]').count(), 293);
-  assert.equal(await page.locator('[data-commit-row] svg').first().getAttribute('width'), '52');
+  assert.equal(await page.locator('[data-commit-row] svg').first().getAttribute('width'), '40');
   console.log(
     'Real repository topology: 293 original-order nodes preserved, max 3 lanes, screenshot commit 286148cb verified',
   );
