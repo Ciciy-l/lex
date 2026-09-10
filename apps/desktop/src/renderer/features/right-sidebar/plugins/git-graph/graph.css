@@ -15,7 +15,7 @@
   grid-template-columns: var(--git-graph-width) minmax(0, 1fr);
   align-items: center;
   width: 100%;
-  height: 52px;
+  height: 36px;
   gap: 8px;
   padding-inline: 8px;
   text-align: left;
@@ -59,6 +59,25 @@
   border-radius: 9999px;
   padding-inline: 6px;
   color: var(--text-secondary);
+}
+
+/* In narrow content tabs, refs and author may shrink together but the date
+   and short OID stay visible as the trailing part of the same metadata line. */
+.lex-git-graph-inline-meta-primary .lex-git-graph-ref {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+@container git-graph (max-width: 420px) {
+  .lex-git-graph-inline-ref-secondary {
+    display: none;
+  }
+}
+
+@container git-graph (max-width: 340px) {
+  .lex-git-graph-inline-ref {
+    display: none;
+  }
 }
 
 @container git-graph (min-width: 640px) {

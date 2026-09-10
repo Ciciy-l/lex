@@ -75,12 +75,28 @@ try {
             (time) => time.getClientRects().length > 0,
           );
           const content = row.querySelector('span');
+          const inlineMetadata = row.querySelector('.lex-git-graph-inline-meta');
+          const inlineAuthor = inlineMetadata?.querySelector('.lex-git-graph-inline-author');
+          const inlineTime = inlineMetadata?.querySelector('time');
+          const inlineHash = inlineMetadata?.querySelector('code');
+          const rect = (node) => {
+            const box = node?.getBoundingClientRect();
+            return box && node.getClientRects().length > 0
+              ? { top: box.top, height: box.height, width: box.width }
+              : null;
+          };
           return {
             rowWidth: row.getBoundingClientRect().width,
+            rowHeight: row.getBoundingClientRect().height,
             graphWidth: svg.getBoundingClientRect().width,
             subjectWidth: content.getBoundingClientRect().width,
             visibleTimes: times.length,
             overflow: row.scrollWidth > row.clientWidth,
+            inlineMetadata: {
+              author: rect(inlineAuthor),
+              time: rect(inlineTime),
+              hash: rect(inlineHash),
+            },
             strokes: [
               ...new Set(
                 [...svg.querySelectorAll('path')].map(
@@ -95,6 +111,23 @@ try {
       assert(facts.visibleTimes === 1, JSON.stringify(facts));
       assert(!facts.overflow, JSON.stringify(facts));
       assert(facts.strokes.length > 1, JSON.stringify(facts));
+      if (facts.rowWidth < 640) {
+        assert.equal(facts.rowHeight, 36, JSON.stringify(facts));
+        assert(facts.inlineMetadata.author, JSON.stringify(facts));
+        assert(facts.inlineMetadata.time, JSON.stringify(facts));
+        assert(facts.inlineMetadata.hash, JSON.stringify(facts));
+        assert(facts.inlineMetadata.author.width > 0, JSON.stringify(facts));
+        assert.equal(
+          facts.inlineMetadata.author.top,
+          facts.inlineMetadata.time.top,
+          JSON.stringify(facts),
+        );
+        assert.equal(
+          facts.inlineMetadata.time.top,
+          facts.inlineMetadata.hash.top,
+          JSON.stringify(facts),
+        );
+      }
       assert.equal(await page.locator('summary button').count(), 0);
       assert.equal(
         await page
