@@ -1,16 +1,16 @@
 {
   "app": {
-    "version": "0.1.1-rc.5",
-    "releaseNotes": "Lex 0.1.1-rc.5",
+    "version": "0.1.2-rc.1",
+    "releaseNotes": "Lex 0.1.2-rc.1",
     "hotfix": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.1-rc.5/Lex-0.1.1-rc.5-Windows-x64-Auto-Update.zip",
-      "sha256": "f7cdca437b4f189bec6a6e0d6d39d203857ec60570d8800af6ebb9f7fbceb640",
-      "size": 318240507
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.2-rc.1/Lex-0.1.2-rc.1-Windows-x64-Auto-Update.zip",
+      "sha256": "05e5340854d8389a90e16941ebc45b3670ee3bfabec63ed44377131c6d0f5e5b",
+      "size": 318298326
     },
     "installer": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.1-rc.5/Lex-0.1.1-rc.5-Windows-x64-Setup.exe",
-      "sha256": "dd8ff2a40a1baf1dfec5a6461c94628b449e773f83c5c69f0b278e129fc4ff40",
-      "size": 233791690
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.2-rc.1/Lex-0.1.2-rc.1-Windows-x64-Setup.exe",
+      "sha256": "7a9f958ad4142cd871b890ad039f418e072dcc6d5ca86d4c5d8730c27ab9bb9f",
+      "size": 233821131
     }
   },
   "claudeCode": {

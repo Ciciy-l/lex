@@ -1,0 +1,106 @@
+{
+  "version": "0.1.2-rc.1",
+  "date": "2026-09-10",
+  "contentByLocale": {
+    "zh-CN": {
+      "intro": "Lex 0.1.2-rc.1 版本日志",
+      "topics": [
+        {
+          "id": "git-workspace",
+          "title": "统一 Git 工作区",
+          "text": "Git 工具区现在只会打开一个 Git 页签，默认显示 Git 图谱；可在同一页签切换到审查，查看本地提交关系、变更和差异。"
+        },
+        {
+          "id": "git-graph-loading",
+          "title": "更清晰的 Git 图谱加载",
+          "text": "首次打开 Git 图谱会立即开始读取并显示加载状态；滚动接近底部时会继续加载更多本地历史。"
+        },
+        {
+          "id": "read-only-graph",
+          "title": "只读的本地图谱",
+          "text": "Git 图谱只读取本地仓库信息，不会执行提交、切换分支或其他 Git 写入操作。"
+        }
+      ]
+    },
+    "zh-TW": {
+      "intro": "Lex 0.1.2-rc.1 版本日誌",
+      "topics": [
+        {
+          "id": "git-workspace",
+          "title": "整合 Git 工作區",
+          "text": "Git 工具列現在只會開啟一個 Git 分頁，預設顯示 Git 圖譜；可在同一分頁切換到審查，查看本機提交關係、變更與差異。"
+        },
+        {
+          "id": "git-graph-loading",
+          "title": "更清楚的 Git 圖譜載入",
+          "text": "首次開啟 Git 圖譜會立即開始讀取並顯示載入狀態；捲動接近底部時會繼續載入更多本機歷史。"
+        },
+        {
+          "id": "read-only-graph",
+          "title": "只讀的本機圖譜",
+          "text": "Git 圖譜只讀取本機儲存庫資訊，不會執行提交、切換分支或其他 Git 寫入操作。"
+        }
+      ]
+    },
+    "en": {
+      "intro": "Lex 0.1.2-rc.1 release notes",
+      "topics": [
+        {
+          "id": "git-workspace",
+          "title": "One Git workspace",
+          "text": "The Git tool now opens one Git tab, starting on Git Graph. Switch to Review in that same tab to inspect local commit relationships, changes, and diffs."
+        },
+        {
+          "id": "git-graph-loading",
+          "title": "Clearer Git Graph loading",
+          "text": "Git Graph starts reading immediately and shows its loading state on first open. Scrolling near the bottom continues loading more local history."
+        },
+        {
+          "id": "read-only-graph",
+          "title": "Read-only local graph",
+          "text": "Git Graph reads local repository data only; it does not commit, check out branches, or perform other Git write operations."
+        }
+      ]
+    },
+    "ja": {
+      "intro": "Lex 0.1.2-rc.1 バージョン情報",
+      "topics": [
+        {
+          "id": "git-workspace",
+          "title": "一つの Git ワークスペース",
+          "text": "Git ツールは一つの Git タブを開くようになり、既定では Git Graph を表示します。同じタブで Review に切り替え、ローカルのコミット関係、変更、差分を確認できます。"
+        },
+        {
+          "id": "git-graph-loading",
+          "title": "分かりやすい Git Graph の読み込み",
+          "text": "Git Graph は初回表示時にすぐ読み込みを始め、状態を表示します。履歴の下端付近までスクロールすると、さらにローカル履歴を読み込みます。"
+        },
+        {
+          "id": "read-only-graph",
+          "title": "ローカル専用の読み取り",
+          "text": "Git Graph はローカルリポジトリの情報を読み取るだけで、コミット、ブランチのチェックアウト、その他の Git 書き込みは行いません。"
+        }
+      ]
+    },
+    "ko": {
+      "intro": "Lex 0.1.2-rc.1 버전 정보",
+      "topics": [
+        {
+          "id": "git-workspace",
+          "title": "하나의 Git 작업 공간",
+          "text": "Git 도구는 이제 하나의 Git 탭을 열고 기본으로 Git Graph를 표시합니다. 같은 탭에서 Review로 전환해 로컬 커밋 관계, 변경 사항, 차이를 확인할 수 있습니다."
+        },
+        {
+          "id": "git-graph-loading",
+          "title": "더 명확해진 Git Graph 로딩",
+          "text": "Git Graph는 처음 열 때 바로 읽기를 시작하고 로딩 상태를 표시합니다. 하단 가까이 스크롤하면 더 많은 로컬 기록을 계속 불러옵니다."
+        },
+        {
+          "id": "read-only-graph",
+          "title": "읽기 전용 로컬 그래프",
+          "text": "Git Graph는 로컬 저장소 정보만 읽으며, 커밋, 브랜치 체크아웃 등 Git 쓰기 작업을 수행하지 않습니다."
+        }
+      ]
+    }
+  }
+}

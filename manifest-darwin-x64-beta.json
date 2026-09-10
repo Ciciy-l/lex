@@ -1,16 +1,16 @@
 {
   "app": {
-    "version": "0.1.1-rc.5",
-    "releaseNotes": "Lex 0.1.1-rc.5",
+    "version": "0.1.2-rc.1",
+    "releaseNotes": "Lex 0.1.2-rc.1",
     "hotfix": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.1-rc.5/Lex-0.1.1-rc.5-macOS-Intel-Auto-Update.zip",
-      "sha256": "623efdc12bc68a7f232de3965f6ca15ecc5d7791525c0323062498f7f8158be1",
-      "size": 259861306
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.2-rc.1/Lex-0.1.2-rc.1-macOS-Intel-Auto-Update.zip",
+      "sha256": "e80862660e0d479668015c125cab9fd607b9836b8369087850d7951b78bab111",
+      "size": 259887885
     },
     "installer": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.1-rc.5/Lex-0.1.1-rc.5-macOS-Intel.dmg",
-      "sha256": "2892236f3f437dfbe3b9dfe5e070c76447e1001e7cabf030b84665058bc76693",
-      "size": 287204930
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.2-rc.1/Lex-0.1.2-rc.1-macOS-Intel.dmg",
+      "sha256": "b4b4ed1218d867c9bf218a6476c3088eeef781a21a0be7b3d7f33d581fbdaf3f",
+      "size": 287175678
     }
   },
   "claudeCode": {
