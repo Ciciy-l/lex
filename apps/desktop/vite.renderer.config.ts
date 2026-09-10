@@ -25,9 +25,14 @@ const TIPTAP_AND_PROSEMIRROR_PACKAGES = [
   'prosemirror-view',
 ];
 
-const TIPTAP_AND_PROSEMIRROR_OPTIMIZE_EXCLUDES = TIPTAP_AND_PROSEMIRROR_PACKAGES.filter(
-  (pkg) => pkg !== '@tiptap/react',
-);
+// Keep React's Tiptap adapter on the same ESM path as direct @tiptap/pm imports.
+// Prebundling just this adapter embeds another ProseMirror class identity.
+const TIPTAP_AND_PROSEMIRROR_OPTIMIZE_EXCLUDES = [
+  ...TIPTAP_AND_PROSEMIRROR_PACKAGES,
+  '@tiptap/extensions',
+  '@tiptap/extension-bubble-menu',
+  '@tiptap/extension-floating-menu',
+];
 
 const CODEMIRROR_RUNTIME_PACKAGES = [
   '@codemirror/autocomplete',
@@ -353,7 +358,13 @@ const rendererConfig = {
       ...CODEMIRROR_OPTIMIZE_EXCLUDES,
       ...INTERNAL_PURE_PACKAGE_EXCLUDES,
     ],
-    include: ['@tiptap/react'],
+    // Excluded @tiptap/react imports these CommonJS hooks. With no include,
+    // a fresh server serves module.exports through /@fs instead of ESM wrappers.
+    // Only wrap the hooks; never prebundle a Tiptap or ProseMirror entry.
+    include: [
+      '@tiptap/react > use-sync-external-store/shim/index.js',
+      '@tiptap/react > use-sync-external-store/shim/with-selector.js',
+    ],
   },
   server: {
     watch: {
