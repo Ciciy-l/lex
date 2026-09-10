@@ -6,6 +6,7 @@ export async function openGitReview(sessionId: string, descriptor: ReviewSourceD
   const tab = await addOrFocusSingletonTab(sessionId, 'review', null);
   if (!tab) return;
   await patchTabState(sessionId, tab.id, raw => ({ ...(raw as object), descriptor,
+    activeView: 'review',
     historyCommitOid: descriptor.kind === 'commit' ? descriptor.commitOid : null,
     jumpTarget: path ? { path, diffId: null, nonce: Date.now() } : null,
   }));

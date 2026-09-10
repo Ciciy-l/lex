@@ -42,7 +42,7 @@ const graph: GitGraphData = {
           ? []
           : [oid(index + 2)],
     title: [
-      '优化 Git 提交图信息布局与主题配色',
+      '优化 Git 图谱信息布局与主题配色',
       '修复分支比较与提交详情显示',
       'feat: preserve commit metadata in narrow content tabs',
     ][index % 3],

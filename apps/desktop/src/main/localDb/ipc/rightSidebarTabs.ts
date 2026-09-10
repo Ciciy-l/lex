@@ -40,7 +40,11 @@ const log = createLogger('rightSidebarTabs');
 
 /** 单 session 最多 20 个 tab,超抛 RIGHT_SIDEBAR_TOO_MANY_TABS。 */
 const MAX_TABS_PER_SESSION = 20;
-const SINGLETON_TAB_KINDS = new Set(['subagents', 'orca-workers']);
+const SINGLETON_TAB_KINDS = new Set(['subagents', 'orca-workers', 'review']);
+// Pre-0102 Graph rows are read only by the migration companion. Reject raw
+// renderer writes so a stale/low-level caller cannot recreate a second Git
+// surface after those rows have been coalesced into the Review/Git singleton.
+const LEGACY_GIT_GRAPH_KIND = 'git-graph';
 const singletonQueues = new Map<string, Promise<unknown>>();
 
 async function serializeSingleton<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
@@ -235,6 +239,9 @@ export function registerRightSidebarTabsIpc(): void {
     const id = requireString(obj.id, 'id');
     const sessionId = requireString(obj.sessionId, 'sessionId');
     const kind = requireString(obj.kind, 'kind');
+    if (kind === LEGACY_GIT_GRAPH_KIND) {
+      throwIpcError('INVALID_PARAMS', 'git-graph is a legacy alias; use the unified Git workspace');
+    }
     const position = requireInt(obj.position, 'position');
     const stateJson = serializeState(obj.state);
     const db = getDbClient().drizzle;

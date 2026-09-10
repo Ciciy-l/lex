@@ -500,6 +500,171 @@ function sanitizeHydratedTabState(kind: string, raw: unknown): unknown {
   return { ...state, favicon: normalized };
 }
 
+type GitWorkspaceView = 'graph' | 'review';
+const CANONICAL_GIT_WORKSPACE_KIND: TabKindId = 'review';
+// `git-graph` remains in TabKindId only so a pre-0102 persisted row can be
+// recognized and coalesced. It is never a creatable top-level surface.
+const LEGACY_GIT_GRAPH_KIND: TabKindId = 'git-graph';
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function persistedGitWorkspaceView(state: Record<string, unknown>): GitWorkspaceView | null {
+  if (state.activeView === 'graph' || state.activeView === 'review') return state.activeView;
+  // `view` was present in an early in-memory handoff draft. It is read only
+  // for compatibility; unified workspace state always writes `activeView`.
+  return state.view === 'graph' || state.view === 'review' ? state.view : null;
+}
+
+function hydrateLegacyGraphPreferences(state: Record<string, unknown>): {
+  currentBranch: boolean;
+  includeRemotes: boolean;
+} {
+  return {
+    currentBranch: state.currentBranch === true,
+    includeRemotes: state.includeRemotes !== false,
+  };
+}
+
+/**
+ * A direct legacy graph creator may carry either the old flat Graph state or
+ * the nested state used by the unified Git workspace. Only explicit filters
+ * override an existing user's Graph preferences; a bare compatibility call
+ * merely reveals Graph in the canonical Git tab.
+ */
+function legacyGraphPreferencesFromCreateState(
+  initialState: unknown,
+): { currentBranch: boolean; includeRemotes: boolean } | null {
+  const direct = asRecord(initialState);
+  const nested = direct ? asRecord(direct.graph) : null;
+  const source =
+    direct &&
+    (Object.prototype.hasOwnProperty.call(direct, 'currentBranch') ||
+      Object.prototype.hasOwnProperty.call(direct, 'includeRemotes'))
+      ? direct
+      : nested &&
+          (Object.prototype.hasOwnProperty.call(nested, 'currentBranch') ||
+            Object.prototype.hasOwnProperty.call(nested, 'includeRemotes'))
+        ? nested
+        : null;
+  return source ? hydrateLegacyGraphPreferences(source) : null;
+}
+
+/**
+ * Compatibility alias for callers compiled against the brief standalone
+ * Graph release. It reuses the durable Review/Git singleton, changes only
+ * its internal view, and never creates a second top-level Graph tab.
+ *
+ * `onOptimisticAdd` deliberately has no equivalent here: an alias operation
+ * does not create a Graph tab of its own, and reporting an existing Git tab
+ * as a newly-created legacy Graph tab would make callers retain a false id.
+ */
+async function openLegacyGitGraphAlias(
+  sessionId: string,
+  initialState: unknown,
+  opts: { activate?: boolean } = {},
+): Promise<TabState> {
+  const requestedPreferences = legacyGraphPreferencesFromCreateState(initialState);
+  const canonical = await ensureSingletonTab(sessionId, CANONICAL_GIT_WORKSPACE_KIND, null);
+
+  await patchTabState(sessionId, canonical.id, (raw) => {
+    const current = asRecord(raw) ?? {};
+    const currentPreferences = asRecord(current.graph);
+    return {
+      ...current,
+      activeView: 'graph',
+      graph: requestedPreferences ?? hydrateLegacyGraphPreferences(currentPreferences ?? {}),
+    };
+  });
+
+  if (opts.activate !== false) await setActiveTab(sessionId, canonical.id);
+  return getBucket(sessionId).tabs.find((tab) => tab.id === canonical.id) ?? canonical;
+}
+
+interface GitWorkspaceTabNormalization {
+  tabs: TabState[];
+  activeTabId: string | null;
+  activeToolId?: string | null;
+  activeContentTabId?: string | null;
+}
+
+/**
+ * Older non-persistable handoffs can still carry separate Review and Graph
+ * tabs. Do the same convergence as the startup DB migration, but purely in
+ * memory: remote/detached snapshots must never make the renderer write a DB
+ * it does not own. Persisted sessions are deliberately handled only by 0102.
+ */
+function normalizeLegacyGitWorkspaceTabs(
+  tabs: TabState[],
+  activeTabId: string | null,
+  activeToolId?: string | null,
+  activeContentTabId?: string | null,
+): GitWorkspaceTabNormalization {
+  const reviewTabs = tabs.filter((tab) => tab.kind === 'review');
+  const graphTabs = tabs.filter((tab) => tab.kind === 'git-graph');
+  if (reviewTabs.length === 0 && graphTabs.length === 0) {
+    return { tabs, activeTabId, activeToolId, activeContentTabId };
+  }
+
+  const activeIds = new Set(
+    [activeContentTabId, activeTabId].filter((id): id is string => typeof id === 'string'),
+  );
+  const activeGraph = graphTabs.find((tab) => activeIds.has(tab.id));
+  const activeReview = reviewTabs.find((tab) => activeIds.has(tab.id));
+  const canonical = activeGraph ?? activeReview ?? reviewTabs[0] ?? graphTabs[0];
+  if (!canonical) return { tabs, activeTabId, activeToolId, activeContentTabId };
+
+  const reviewSource = reviewTabs[0] ?? canonical;
+  const graphSource = graphTabs[0];
+  const reviewState = asRecord(reviewSource.state) ?? {};
+  const canonicalState = asRecord(canonical.state) ?? {};
+  const nestedGraphState = asRecord(reviewState.graph) ?? asRecord(canonicalState.graph) ?? {};
+  const graphState = asRecord(graphSource?.state) ?? nestedGraphState;
+  const reviewFields = { ...reviewState };
+  delete reviewFields.activeView;
+  delete reviewFields.view;
+  delete reviewFields.graph;
+  const activeView: GitWorkspaceView = activeGraph
+    ? 'graph'
+    : activeReview
+      ? // An active legacy Review row without a view was the old review-only
+        // surface. An explicit view, however, is already a unified/pre-release
+        // workspace selection and must survive a memory-only handoff just as it
+        // survives the durable 0102 migration.
+        (persistedGitWorkspaceView(reviewState) ?? 'review')
+      : (persistedGitWorkspaceView(reviewState) ??
+        persistedGitWorkspaceView(canonicalState) ??
+        // A snapshot's active ids describe the currently selected content,
+        // not whether a historical Review has a user-visible context. Keep
+        // that Review context unless this truly is a Graph-only handoff.
+        (reviewTabs.length > 0 ? 'review' : 'graph'));
+  const unified: TabState = {
+    ...canonical,
+    kind: 'review',
+    state: {
+      ...reviewFields,
+      activeView,
+      graph: hydrateLegacyGraphPreferences(graphState),
+    },
+  };
+  const legacyIds = new Set([...reviewTabs, ...graphTabs].map((tab) => tab.id));
+  const mapLegacyId = (id: string | null | undefined) =>
+    typeof id === 'string' && legacyIds.has(id) ? canonical.id : (id ?? null);
+
+  return {
+    tabs: tabs.flatMap((tab) => {
+      if (tab.id === canonical.id) return [unified];
+      return legacyIds.has(tab.id) ? [] : [tab];
+    }),
+    activeTabId: mapLegacyId(activeTabId),
+    activeToolId: mapLegacyId(activeToolId),
+    activeContentTabId: mapLegacyId(activeContentTabId),
+  };
+}
+
 /**
  * 当前快照(同步)。无 sessionId 或 cache miss 时返回 EMPTY_BUCKET 单例
  * (hydrated:false,语义 "尚未加载")。
@@ -540,12 +705,18 @@ export function importTabSnapshot(snapshot: RsbWindowTabSnapshot): void {
     .map((tab) => ({ ...tab, kind: tab.kind as TabKindId }));
   const activeTabId =
     snapshot.activeTabId && seen.has(snapshot.activeTabId) ? snapshot.activeTabId : null;
-  const bucket: TabBucket = {
-    hydrated: true,
+  const normalized = normalizeLegacyGitWorkspaceTabs(
     tabs,
     activeTabId,
-    activeToolId: snapshot.activeToolId,
-    activeContentTabId: snapshot.activeContentTabId,
+    snapshot.activeToolId,
+    snapshot.activeContentTabId,
+  );
+  const bucket: TabBucket = {
+    hydrated: true,
+    tabs: normalized.tabs,
+    activeTabId: normalized.activeTabId,
+    activeToolId: normalized.activeToolId,
+    activeContentTabId: normalized.activeContentTabId,
   };
   memoryOnlySessions.add(snapshot.sessionId);
   pendingHandoffBuckets.set(snapshot.sessionId, bucket);
@@ -616,12 +787,26 @@ export async function ensureHydrated(sessionId: string): Promise<void> {
         kind: row.kind as TabKindId,
         state: sanitizeHydratedTabState(row.kind, row.state),
       }));
+      const normalized =
+        result.persistable === false
+          ? normalizeLegacyGitWorkspaceTabs(
+              tabs,
+              result.activeTabId,
+              result.activeToolId,
+              result.activeContentTabId,
+            )
+          : {
+              tabs,
+              activeTabId: result.activeTabId,
+              activeToolId: result.activeToolId,
+              activeContentTabId: result.activeContentTabId,
+            };
       setBucket(sessionId, {
         hydrated: true,
-        tabs,
-        activeTabId: result.activeTabId,
-        activeToolId: result.activeToolId,
-        activeContentTabId: result.activeContentTabId,
+        tabs: normalized.tabs,
+        activeTabId: normalized.activeTabId,
+        activeToolId: normalized.activeToolId,
+        activeContentTabId: normalized.activeContentTabId,
       });
     } finally {
       inflight.delete(sessionId);
@@ -654,6 +839,9 @@ export async function addTab(
   initialState: unknown = null,
   opts?: { onOptimisticAdd?: (tabId: string) => void; activate?: boolean },
 ): Promise<TabState> {
+  if (kind === LEGACY_GIT_GRAPH_KIND) {
+    return openLegacyGitGraphAlias(sessionId, initialState, { activate: opts?.activate });
+  }
   const activate = opts?.activate !== false;
   const prev = getBucket(sessionId);
   if (prev.tabs.length >= MAX_TABS_PER_SESSION) {
@@ -741,7 +929,10 @@ export async function addOrFocusSingletonTab(
   kind: TabKindId,
   initialState: unknown = null,
 ): Promise<TabState> {
-  if (kind === 'orca-workers') {
+  if (kind === LEGACY_GIT_GRAPH_KIND) {
+    return openLegacyGitGraphAlias(sessionId, initialState);
+  }
+  if (kind === 'orca-workers' || kind === CANONICAL_GIT_WORKSPACE_KIND) {
     const canonical = await ensureSingletonTab(sessionId, kind, initialState);
     await setActiveTab(sessionId, canonical.id);
     return canonical;
@@ -771,6 +962,9 @@ export async function ensureSingletonTab(
   kind: TabKindId,
   initialState: unknown = null,
 ): Promise<TabState> {
+  if (kind === LEGACY_GIT_GRAPH_KIND) {
+    return openLegacyGitGraphAlias(sessionId, initialState, { activate: false });
+  }
   await ensureHydrated(sessionId);
   const current = getBucket(sessionId);
   const local = current.tabs.find((tab) => tab.kind === kind);

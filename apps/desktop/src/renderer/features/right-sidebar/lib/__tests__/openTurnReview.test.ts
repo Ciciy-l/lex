@@ -62,6 +62,7 @@ describe('openTurnReview', () => {
     ).toEqual({
       diffsExpanded: false,
       branchBaseRef: 'origin/release',
+      activeView: 'review',
       descriptor: {
         kind: 'turn-set',
         changeSetIds: ['set-1'],

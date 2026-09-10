@@ -119,7 +119,8 @@ describeMigrationReplay('migration replay', () => {
                'uniq_active_team_per_lead',
                'uniq_orca_workers_focused_per_team',
                'uniq_wechat_inbox_running_session',
-               'uniq_wechat_sync_active'
+               'uniq_wechat_sync_active',
+               'right_sidebar_tabs_review_singleton_idx'
              )
            ORDER BY name`,
         )
@@ -140,6 +141,7 @@ describeMigrationReplay('migration replay', () => {
       expect(schemaVersion).toBe(String(maxMigrationSeq()));
       expect(historyCount).toBe(result.applied.length);
       expect(partialIndexes).toEqual([
+        'right_sidebar_tabs_review_singleton_idx',
         'uniq_active_team_per_lead',
         'uniq_orca_workers_focused_per_team',
         'uniq_wechat_inbox_running_session',

@@ -32,6 +32,7 @@ let store: typeof import('../store');
 
 type IpcStub = {
   list: ReturnType<typeof vi.fn>;
+  ensureSingleton?: ReturnType<typeof vi.fn>;
   upsert: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
   setActive: ReturnType<typeof vi.fn>;
@@ -185,6 +186,167 @@ describe('RSB store', () => {
       expect((store.getBucket('ghost-s1').tabs[0].state as { title: string }).title).toBe(
         'Example',
       );
+    });
+
+    it('coalesces a legacy Git handoff in memory without creating another top-level tab', () => {
+      store.importTabSnapshot({
+        sessionId: 'legacy-handoff',
+        tabs: [
+          {
+            id: 'review-old',
+            kind: 'review',
+            state: { descriptor: { kind: 'unstaged' }, wordWrap: true },
+          },
+          {
+            id: 'graph-active',
+            kind: 'git-graph',
+            state: { currentBranch: true, includeRemotes: false },
+          },
+          { id: 'files', kind: 'file-browser', state: { selectedFilePath: null } },
+        ],
+        activeTabId: 'graph-active',
+        activeContentTabId: 'graph-active',
+        activeToolId: 'files',
+        persistable: false,
+      });
+
+      expect(store.getBucket('legacy-handoff')).toEqual({
+        hydrated: true,
+        tabs: [
+          {
+            id: 'graph-active',
+            kind: 'review',
+            state: {
+              descriptor: { kind: 'unstaged' },
+              wordWrap: true,
+              activeView: 'graph',
+              graph: { currentBranch: true, includeRemotes: false },
+            },
+          },
+          { id: 'files', kind: 'file-browser', state: { selectedFilePath: null } },
+        ],
+        activeTabId: 'graph-active',
+        activeContentTabId: 'graph-active',
+        activeToolId: 'files',
+      });
+      expect(ipc.list).not.toHaveBeenCalled();
+      expect(ipc.upsert).not.toHaveBeenCalled();
+    });
+
+    it('preserves an explicit Graph selection in a unified Git handoff', () => {
+      store.importTabSnapshot({
+        sessionId: 'unified-graph-handoff',
+        tabs: [
+          {
+            id: 'git-workspace',
+            kind: 'review',
+            state: {
+              activeView: 'graph',
+              graph: { currentBranch: true, includeRemotes: false },
+              descriptor: { kind: 'unstaged' },
+            },
+          },
+        ],
+        activeTabId: 'git-workspace',
+        activeContentTabId: 'git-workspace',
+        activeToolId: null,
+        persistable: false,
+      });
+
+      expect(store.getBucket('unified-graph-handoff')).toMatchObject({
+        activeTabId: 'git-workspace',
+        activeContentTabId: 'git-workspace',
+        tabs: [
+          {
+            id: 'git-workspace',
+            kind: 'review',
+            state: {
+              activeView: 'graph',
+              graph: { currentBranch: true, includeRemotes: false },
+            },
+          },
+        ],
+      });
+      expect(ipc.upsert).not.toHaveBeenCalled();
+    });
+
+    it('keeps an inactive legacy Review in Review during a memory-only handoff', () => {
+      store.importTabSnapshot({
+        sessionId: 'inactive-review-handoff',
+        tabs: [
+          {
+            id: 'review-inactive',
+            kind: 'review',
+            state: { descriptor: { kind: 'branch', baseRef: 'main' } },
+          },
+          {
+            id: 'files-active',
+            kind: 'file-browser',
+            state: { selectedFilePath: 'README.md' },
+          },
+        ],
+        activeTabId: 'files-active',
+        activeContentTabId: 'files-active',
+        activeToolId: 'files-active',
+        persistable: false,
+      });
+
+      const review = store
+        .getBucket('inactive-review-handoff')
+        .tabs.find((tab) => tab.id === 'review-inactive');
+      expect(review).toMatchObject({
+        kind: 'review',
+        state: {
+          activeView: 'review',
+          graph: { currentBranch: false, includeRemotes: true },
+          descriptor: { kind: 'branch', baseRef: 'main' },
+        },
+      });
+      expect(ipc.upsert).not.toHaveBeenCalled();
+    });
+
+    it('coalesces a non-persistable legacy list into active Review without a database repair write', async () => {
+      ipc.list.mockResolvedValueOnce({
+        tabs: [
+          {
+            id: 'graph-old',
+            kind: 'git-graph',
+            state: { currentBranch: true, includeRemotes: false },
+          },
+          {
+            id: 'review-active',
+            kind: 'review',
+            state: { descriptor: { kind: 'branch', baseRef: 'main' }, branchBaseRef: 'main' },
+          },
+        ],
+        activeTabId: 'review-active',
+        activeContentTabId: 'review-active',
+        activeToolId: null,
+        persistable: false,
+      });
+
+      await store.ensureHydrated('legacy-list');
+
+      expect(store.getBucket('legacy-list')).toEqual({
+        hydrated: true,
+        tabs: [
+          {
+            id: 'review-active',
+            kind: 'review',
+            state: {
+              descriptor: { kind: 'branch', baseRef: 'main' },
+              branchBaseRef: 'main',
+              activeView: 'review',
+              graph: { currentBranch: true, includeRemotes: false },
+            },
+          },
+        ],
+        activeTabId: 'review-active',
+        activeContentTabId: 'review-active',
+        activeToolId: null,
+      });
+      expect(ipc.upsert).not.toHaveBeenCalled();
+      expect(ipc.close).not.toHaveBeenCalled();
     });
 
     it('exports and restores a memory-only bucket across host cache invalidation', async () => {
@@ -418,6 +580,32 @@ describe('RSB store', () => {
       expect(bucket.activeTabId).toBe(tab.id);
       expect(ipc.upsert).toHaveBeenCalledOnce();
       expect(ipc.setActive).toHaveBeenCalledOnce();
+    });
+
+    it('redirects a direct legacy Graph add into the single canonical Git workspace', async () => {
+      const tab = await store.addTab('s1', 'git-graph', {
+        currentBranch: true,
+        includeRemotes: false,
+      });
+
+      expect(tab).toMatchObject({ kind: 'review' });
+      expect(store.getBucket('s1')).toMatchObject({
+        activeTabId: tab.id,
+        activeContentTabId: tab.id,
+        tabs: [
+          {
+            id: tab.id,
+            kind: 'review',
+            state: {
+              activeView: 'graph',
+              graph: { currentBranch: true, includeRemotes: false },
+            },
+          },
+        ],
+      });
+      expect(ipc.upsert).toHaveBeenCalled();
+      expect(ipc.upsert.mock.calls.every(([input]) => input.kind === 'review')).toBe(true);
+      expect(ipc.setActive).toHaveBeenLastCalledWith({ sessionId: 's1', id: tab.id });
     });
 
     it('rolls back cache when IPC upsert fails', async () => {
@@ -657,6 +845,38 @@ describe('RSB store', () => {
   });
 
   describe('addOrFocusSingletonTab', () => {
+    it('uses the main-owned review singleton before activating its canonical tab', async () => {
+      ipc.ensureSingleton = vi.fn().mockResolvedValue({
+        tab: {
+          id: 'review-canonical',
+          kind: 'review',
+          position: 0,
+          state: { activeView: 'graph' },
+        },
+        created: true,
+        persistable: true,
+      });
+
+      const tab = await store.addOrFocusSingletonTab('s1', 'review', null);
+
+      expect(ipc.ensureSingleton).toHaveBeenCalledWith({
+        sessionId: 's1',
+        kind: 'review',
+        state: null,
+      });
+      expect(ipc.upsert).not.toHaveBeenCalled();
+      expect(tab).toMatchObject({
+        id: 'review-canonical',
+        kind: 'review',
+        state: { activeView: 'graph' },
+      });
+      expect(store.getBucket('s1').activeTabId).toBe('review-canonical');
+      expect(ipc.setActive).toHaveBeenCalledWith({
+        sessionId: 's1',
+        id: 'review-canonical',
+      });
+    });
+
     it('creates a new tab when no existing tab of that kind', async () => {
       const tab = await store.addOrFocusSingletonTab('s1', 'review', null);
       expect(tab.kind).toBe('review');
@@ -682,6 +902,42 @@ describe('RSB store', () => {
       // setActive 应该被调用切到 review
       expect(ipc.setActive).toHaveBeenCalledOnce();
       expect(store.getBucket('s1').activeTabId).toBe(first.id);
+    });
+
+    it('routes every legacy Graph singleton entry through Review without resetting Graph preferences', async () => {
+      const review = await store.addTab('s1', 'review', {
+        activeView: 'review',
+        graph: { currentBranch: true, includeRemotes: false },
+        descriptor: { kind: 'unstaged' },
+      });
+      const other = await store.addTab('s1', 'file-content', null);
+      ipc.upsert.mockClear();
+      ipc.setActive.mockClear();
+
+      const ensured = await store.ensureSingletonTab('s1', 'git-graph', null);
+      expect(ensured.id).toBe(review.id);
+      expect(store.getBucket('s1').activeTabId).toBe(other.id);
+
+      const focused = await store.addOrFocusSingletonTab('s1', 'git-graph', null);
+      expect(focused.id).toBe(review.id);
+      expect(store.getBucket('s1')).toMatchObject({
+        activeTabId: review.id,
+        tabs: [
+          {
+            id: review.id,
+            kind: 'review',
+            state: {
+              activeView: 'graph',
+              graph: { currentBranch: true, includeRemotes: false },
+              descriptor: { kind: 'unstaged' },
+            },
+          },
+          { id: other.id, kind: 'file-content' },
+        ],
+      });
+      expect(store.getBucket('s1').tabs).toHaveLength(2);
+      expect(store.getBucket('s1').tabs.some((tab) => tab.kind === 'git-graph')).toBe(false);
+      expect(ipc.upsert.mock.calls.every(([input]) => input.kind === 'review')).toBe(true);
     });
 
     it('skips setActive when existing tab is already active', async () => {

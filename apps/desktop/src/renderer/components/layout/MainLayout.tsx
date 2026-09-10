@@ -42,6 +42,7 @@ import {
   getBucket,
   getTabSnapshot,
   importTabSnapshot,
+  patchTabState,
   resetCachesForHostTransition,
 } from '@/features/right-sidebar/store';
 import { browserWebviewPool } from '@/features/right-sidebar/lib/browserWebviewPool';
@@ -60,6 +61,7 @@ import {
 import { routeSidebarCommand } from '@/features/right-sidebar/lib/detachedSidebarRouting';
 import { openTerminalFromShortcut } from '@/features/right-sidebar/lib/openTerminalShortcut';
 import { executeSidebarCommand } from '@/features/right-sidebar/lib/executeSidebarCommand';
+import { resolveGitWorkspaceView } from '@/features/right-sidebar/lib/gitWorkspaceView';
 import { openUrlInSidebarBrowser } from '@/features/right-sidebar/lib/openInSidebarBrowser';
 import { useSidebarResize } from '@/hooks/useSidebarResize';
 import { useSidebarCardMode } from '@/hooks/useSidebarCardMode';
@@ -1227,16 +1229,23 @@ export function MainLayout() {
             if (rightSidebarSessionIdRef.current !== sessionId) return;
             const bucket = getBucket(sessionId);
             const reviewTab = bucket.tabs.find((tab) => tab.kind === 'review');
+            const activeView = resolveGitWorkspaceView(reviewTab?.state);
             const reviewIsActive =
               !isRightSidebarCollapsedRef.current &&
               reviewTab != null &&
-              bucket.activeContentTabId === reviewTab.id;
+              bucket.activeContentTabId === reviewTab.id &&
+              activeView !== 'graph';
             if (reviewIsActive && reviewTab) {
               await closeTab(sessionId, reviewTab.id);
               return;
             }
             requestRightSidebarVisibility('open', { sessionId });
-            await addOrFocusSingletonTab(sessionId, 'review', null);
+            const tab = await addOrFocusSingletonTab(sessionId, 'review', null);
+            if (!tab) return;
+            await patchTabState(sessionId, tab.id, (current) => ({
+              ...(current && typeof current === 'object' && !Array.isArray(current) ? current : {}),
+              activeView: 'review',
+            }));
           })().catch((error) => applicationMenuLog.warn('Codex Micro review action failed', error));
           return true;
         }

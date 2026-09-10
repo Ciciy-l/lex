@@ -57,6 +57,8 @@ function createDb(): Database.Database {
     CREATE INDEX right_sidebar_tabs_session_idx ON right_sidebar_tabs (session_id, position);
     CREATE UNIQUE INDEX right_sidebar_tabs_subagents_singleton_idx
       ON right_sidebar_tabs (session_id) WHERE kind = 'subagents';
+    CREATE UNIQUE INDEX right_sidebar_tabs_review_singleton_idx
+      ON right_sidebar_tabs (session_id) WHERE kind = 'review';
   `);
   sqlite.prepare(`INSERT INTO sessions (id) VALUES (?)`).run('s1');
   sqlite.prepare(`INSERT INTO sessions (id) VALUES (?)`).run('s2');
@@ -234,6 +236,23 @@ describe('rightSidebarTabs IPC', () => {
       expect(result.tabs[0].state).toEqual({ foo: 'bar' });
     });
 
+    it('rejects raw legacy Graph writes so they cannot recreate a second Git surface', async () => {
+      await expect(
+        invoke('local-db:right-sidebar-tabs:upsert', {
+          id: 'legacy-graph',
+          sessionId: 's1',
+          kind: 'git-graph',
+          position: 0,
+          state: { currentBranch: true },
+        }),
+      ).rejects.toThrow(/\[INVALID_PARAMS\] git-graph is a legacy alias/);
+
+      const result = await invoke<ListResp>('local-db:right-sidebar-tabs:list', {
+        sessionId: 's1',
+      });
+      expect(result.tabs).toEqual([]);
+    });
+
     it('updates existing tab on conflict', async () => {
       await invoke('local-db:right-sidebar-tabs:upsert', {
         id: 't1',
@@ -342,7 +361,7 @@ describe('rightSidebarTabs IPC', () => {
       expect(listed.tabs).toEqual([]);
     });
 
-    it.each(['subagents', 'orca-workers'])(
+    it.each(['subagents', 'orca-workers', 'review'])(
       'returns one canonical %s tab across concurrent callers without activating it',
       async (kind) => {
         const [first, second] = await Promise.all([

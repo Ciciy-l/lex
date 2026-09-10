@@ -12,6 +12,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import * as registry from '../../../registry';
 import * as expansionPreference from '../diffExpansionPreference';
 import * as pluginMod from '../index';
+import { GitWorkspaceTabBody } from '../GitWorkspaceTabBody';
 
 describe('review plugin', () => {
   beforeEach(() => {
@@ -30,6 +31,10 @@ describe('review plugin', () => {
     expect(got?.menu.enabled).toBe(true);
   });
 
+  it('uses the eager Git workspace shell so the outer tab boundary has no blank fallback', () => {
+    expect(registry.getTabKind('review')?.TabBody).toBe(GitWorkspaceTabBody);
+  });
+
   it('retains the all-diff preference before the review tab is deleted', async () => {
     const p = registry.getTabKind('review')!;
     await p.onBeforeClose?.(
@@ -40,9 +45,11 @@ describe('review plugin', () => {
     expect(expansionPreference.getReviewDiffsExpanded('session-a', true)).toBe(false);
   });
 
-  it('defaultState expands all diffs and includes the persisted review preferences', () => {
+  it('defaultState opens the unified Git workspace in Graph and includes review preferences', () => {
     const p = registry.getTabKind('review')!;
     const a = p.defaultState() as {
+      activeView: string;
+      graph: { currentBranch: boolean; includeRemotes: boolean };
       descriptor: { kind: string };
       messageSnapshot: unknown;
       jumpTarget: unknown;
@@ -55,6 +62,8 @@ describe('review plugin', () => {
       richMarkdownPreview: boolean;
       branchBaseRef: string | null;
     };
+    expect(a.activeView).toBe('graph');
+    expect(a.graph).toEqual({ currentBranch: false, includeRemotes: true });
     expect(a.descriptor).toEqual({ kind: 'unstaged' });
     expect(a.messageSnapshot).toBeNull();
     expect(a.jumpTarget).toBeNull();
@@ -82,6 +91,8 @@ describe('review plugin', () => {
       branchBaseRef: 'origin/release',
       jumpTarget: { diffId: 'branch:main:a.ts', path: 'a.ts', nonce: 3 },
     }) as {
+      activeView: string;
+      graph: { currentBranch: boolean; includeRemotes: boolean };
       diffsExpanded: boolean;
       diffViewMode: string;
       fileTreeVisible: boolean;
@@ -93,6 +104,10 @@ describe('review plugin', () => {
       branchBaseRef: string | null;
       jumpTarget: { diffId: string | null; path: string | null; nonce: number } | null;
     };
+    // This record predates the unified Git workspace. Do not move an existing
+    // Review user onto Graph during hydration.
+    expect(s.activeView).toBe('review');
+    expect(s.graph).toEqual({ currentBranch: false, includeRemotes: true });
     expect(s.diffsExpanded).toBe(false);
     expect(s.diffViewMode).toBe('split');
     expect(s.fileTreeVisible).toBe(true);
@@ -286,10 +301,18 @@ describe('review plugin', () => {
     );
   });
 
-  it('hydrateState defaults to expanded when raw is null or has the wrong shape', () => {
+  it('hydrateState defaults to expanded and uses Graph for a new or invalid raw state', () => {
     const p = registry.getTabKind('review')!;
-    expect((p.hydrateState!(null) as { diffsExpanded: boolean }).diffsExpanded).toBe(true);
-    expect((p.hydrateState!('garbage') as { diffsExpanded: boolean }).diffsExpanded).toBe(true);
+    expect(p.hydrateState!(null) as { diffsExpanded: boolean; activeView: string }).toMatchObject({
+      diffsExpanded: true,
+      activeView: 'graph',
+    });
+    expect(
+      p.hydrateState!('garbage') as { diffsExpanded: boolean; activeView: string },
+    ).toMatchObject({
+      diffsExpanded: true,
+      activeView: 'graph',
+    });
     expect((p.hydrateState!({}) as { diffsExpanded: boolean }).diffsExpanded).toBe(true);
     expect(
       (p.hydrateState!({ diffsExpanded: 'yes' }) as { diffsExpanded: boolean }).diffsExpanded,
@@ -298,6 +321,27 @@ describe('review plugin', () => {
       (p.hydrateState!({ expandedPaths: ['legacy-expanded.ts'] }) as { diffsExpanded: boolean })
         .diffsExpanded,
     ).toBe(true);
+  });
+
+  it('keeps an explicit Graph view and safely hydrates its nested preferences', () => {
+    const p = registry.getTabKind('review')!;
+    const state = p.hydrateState!({
+      activeView: 'graph',
+      graph: { currentBranch: true, includeRemotes: false },
+    }) as {
+      activeView: string;
+      graph: { currentBranch: boolean; includeRemotes: boolean };
+    };
+    expect(state.activeView).toBe('graph');
+    expect(state.graph).toEqual({ currentBranch: true, includeRemotes: false });
+  });
+
+  it('accepts the transient legacy view field but exposes canonical activeView', () => {
+    const p = registry.getTabKind('review')!;
+    expect((p.hydrateState!({ view: 'graph' }) as { activeView: string }).activeView).toBe('graph');
+    expect((p.hydrateState!({ view: 'review' }) as { activeView: string }).activeView).toBe(
+      'review',
+    );
   });
 
   // 引用 pluginMod 让 lint 满意 + 验证 module load 成功

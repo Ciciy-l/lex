@@ -6009,6 +6009,7 @@
       "dateColumn": "Date · time",
       "closeDetails": "Close commit details",
       "title": "Git Graph",
+      "loading": "Loading Git Graph…",
       "localOnly": "Git Graph is read-only and available only for local tasks. Remote and unresolved device contexts are unavailable.",
       "locateHead": "Locate HEAD",
       "currentBranch": "Current branch only",
@@ -6078,11 +6079,11 @@
       "empty": {
         "eyebrow": "Right Sidebar",
         "title": "Add a panel",
-        "desc": "Open files, review, Activity Monitor, a built-in browser, or a terminal here to work alongside the chat on the left.",
+        "desc": "Open files, Git, Activity Monitor, a built-in browser, or a terminal here to work alongside the chat on the left.",
         "openFile": "Open files",
         "fileSub": "Files",
-        "openReview": "Open review",
-        "reviewSub": "Review",
+        "openReview": "Open Git",
+        "reviewSub": "Graph and review",
         "openSubagents": "Open Subagent",
         "subagentsSub": "Durable child work",
         "openBackgroundTasks": "Open background tasks",
@@ -6895,6 +6896,7 @@
       "comparison": "Compare branches",
       "comparisonHint": "View committed changes on this branch relative to a base branch. Uncommitted files are not included.",
       "historyLoading": "Loading recent commits…",
+      "gitLoading": "Loading Git…",
       "previousPane": "Previous pane",
       "nextPane": "Next pane"
     }

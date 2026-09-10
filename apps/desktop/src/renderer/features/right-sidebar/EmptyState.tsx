@@ -9,15 +9,7 @@
  * 插件页独占承载,入口只在 /plugins。
  */
 
-import {
-  Bot,
-  ChevronRight,
-  FileDiff,
-  FolderOpen,
-  Globe,
-  ListTodo,
-  Terminal,
-} from 'lucide-react';
+import { Bot, ChevronRight, FolderOpen, GitFork, Globe, ListTodo, Terminal } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
@@ -26,7 +18,7 @@ interface EmptyStateProps {
   onAddFileTab: () => void;
   onAddBrowserTab: () => void;
   onAddTerminalTab: () => void;
-  onAddReviewTab: () => void;
+  onAddGitTab: () => void;
   onAddSubagentsTab: () => void;
   onAddBackgroundTasksTab: () => void;
   subagentsAvailable?: boolean;
@@ -36,7 +28,7 @@ export function EmptyState({
   onAddFileTab,
   onAddBrowserTab,
   onAddTerminalTab,
-  onAddReviewTab,
+  onAddGitTab,
   onAddSubagentsTab,
   onAddBackgroundTasksTab,
   subagentsAvailable = false,
@@ -62,14 +54,14 @@ export function EmptyState({
           sub={t('rightSidebar.tabs.empty.fileSub')}
           onClick={onAddFileTab}
         />
-        {/* 审查项:tabs 列表为空时(用户从未开过或手动关掉过 review tab),这里是
-            用户重开 review tab 的入口。放在文件浏览器下面,顺序与 + dropdown 保持
+        {/* Git 项:tabs 列表为空时(用户从未开过或手动关掉过 Git tab),这里是
+            用户重开 Git 工作区的入口。放在文件浏览器下面,顺序与 + dropdown 保持
             一致(file-browser order=10 → review order=15 → browser order=20)。 */}
         <ActionRow
-          icon={FileDiff}
+          icon={GitFork}
           label={t('rightSidebar.tabs.empty.openReview')}
           sub={t('rightSidebar.tabs.empty.reviewSub')}
-          onClick={onAddReviewTab}
+          onClick={onAddGitTab}
         />
         {/* 后台任务:顺序与 + dropdown 一致(review order=15 → background-tasks
             order=17 → browser order=20)。 */}

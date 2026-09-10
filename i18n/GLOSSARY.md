@@ -241,7 +241,7 @@ OAuth 2.0 Device Authorization Grant 中由用户在另一设备验证页输入�
 
 ### Git Graph
 
-Lex 原创的只读 Git 提交关系内容页签，不表示或复用同名第三方扩展。
+Lex 原创的只读 Git 提交关系视图，默认显示在统一 Git 页签内，不表示或复用同名第三方扩展。
 
 ### Harness
 

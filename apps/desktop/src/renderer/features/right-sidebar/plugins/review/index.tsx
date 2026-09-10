@@ -12,8 +12,7 @@
  * 注册:模块顶层 import-side-effect。plugins/index.ts 把它 import 进来。
  */
 
-import { lazy } from 'react';
-import { FileDiff } from 'lucide-react';
+import { GitFork } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
 import {
@@ -26,14 +25,17 @@ import {
 import { isSafeBranchBaseRef } from '../../../../../shared/reviewBranchRef';
 import { registerTabKind } from '../../registry';
 import type { TabKindPlugin } from '../../types';
+import { resolveGitWorkspaceView, type GitWorkspaceView } from '../../lib/gitWorkspaceView';
+import { hydrateGraphState, type GitGraphState } from '../git-graph/state';
 import type { DiffViewMode } from './DiffViewer/PlainUnifiedDiff';
 import { seedReviewDiffsExpanded } from './diffExpansionPreference';
-
-const ReviewTabBody = lazy(() =>
-  import('./ReviewTabBody').then((module) => ({ default: module.ReviewTabBody })),
-);
+import { GitWorkspaceTabBody } from './GitWorkspaceTabBody';
 
 export interface ReviewState {
+  /** The workspace's top-level Git surface. New Git tabs start in graph view. */
+  activeView: GitWorkspaceView;
+  /** Graph preferences stay isolated from the Review state persisted below. */
+  graph: GitGraphState;
   historyCommitOid?: string | null;
   /** 当前选中的审查来源。 */
   descriptor: ReviewSourceDescriptor;
@@ -60,6 +62,8 @@ export interface ReviewState {
 }
 
 const DEFAULT_STATE: ReviewState = {
+  activeView: 'graph',
+  graph: hydrateGraphState(null),
   descriptor: { kind: 'unstaged' },
   messageSnapshot: null,
   jumpTarget: null,
@@ -74,32 +78,39 @@ const DEFAULT_STATE: ReviewState = {
 };
 
 function ReviewTabPillTitle({ t }: { state: ReviewState; t: TFunction }) {
-  // 复用 tabs.kinds.review label(与「+」dropdown / add-tab 分组一致),
-  // 避免"pill 上叫改动 / dropdown 里叫审查"的分裂文案。
-  return <>{t('rightSidebar.tabs.kinds.review')}</>;
+  // `review` is the stable persisted kind, but its user-facing surface is now
+  // the unified Git workspace rather than a review-only tab.
+  return <>{t('rightSidebar.workbench.git')}</>;
 }
 
 function ReviewTabPillIcon() {
-  return <FileDiff size={13} />;
+  return <GitFork size={13} />;
 }
 
 const plugin: TabKindPlugin<ReviewState> = {
   kind: 'review',
   menu: {
     kind: 'review',
-    labelKey: 'rightSidebar.tabs.kinds.review',
-    icon: FileDiff,
+    labelKey: 'rightSidebar.workbench.git',
+    icon: GitFork,
     order: 15, // file-browser=10, web-browser=20 之间
     enabled: true,
     singleton: true, // 每个 session 至多 1 个 review tab
   },
   TabPillTitle: ReviewTabPillTitle,
   TabPillIcon: ReviewTabPillIcon,
-  TabBody: ReviewTabBody,
+  TabBody: GitWorkspaceTabBody,
   defaultState: () => ({ ...DEFAULT_STATE }),
   hydrateState: (raw): ReviewState => {
-    if (!raw || typeof raw !== 'object') return { ...DEFAULT_STATE };
-    const obj = raw as Record<string, unknown>;
+    const isObject = !!raw && typeof raw === 'object' && !Array.isArray(raw);
+    const obj = isObject ? (raw as Record<string, unknown>) : {};
+    // Existing persisted review tabs had no activeView. Keep those users in
+    // Review instead of silently switching an in-progress review to Graph.
+    // Null is what a newly-created singleton supplies before default state is
+    // persisted, so it retains the new Graph-first behavior.
+    // `view` was briefly emitted by an in-flight renderer-only migration.
+    // Accept it on read, but always expose/persist the canonical activeView.
+    const activeView = resolveGitWorkspaceView(raw);
     const diffsExpanded =
       typeof obj.diffsExpanded === 'boolean' ? obj.diffsExpanded : DEFAULT_STATE.diffsExpanded;
     const diffViewMode = obj.diffViewMode === 'split' ? 'split' : 'unified';
@@ -139,7 +150,12 @@ const plugin: TabKindPlugin<ReviewState> = {
         ? (legacyTurnTarget?.jumpTarget ?? null)
         : null);
     return {
-      historyCommitOid: typeof obj.historyCommitOid === 'string' && /^[a-f0-9]{40,64}$/i.test(obj.historyCommitOid) ? obj.historyCommitOid : null,
+      activeView,
+      graph: hydrateGraphState(obj.graph),
+      historyCommitOid:
+        typeof obj.historyCommitOid === 'string' && /^[a-f0-9]{40,64}$/i.test(obj.historyCommitOid)
+          ? obj.historyCommitOid
+          : null,
       descriptor,
       messageSnapshot,
       jumpTarget,

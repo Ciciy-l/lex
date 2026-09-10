@@ -25,7 +25,10 @@ export function GraphCommitList({
   const totalLanes = Math.max(1, ...rows.map((row) => row.width));
   const shownLanes = Math.min(6, totalLanes);
   const offset = Math.min(pan, Math.max(0, totalLanes - shownLanes));
-  const width = shownLanes * 12 + 16;
+  // Lanes are centered at 8 + n * 12.  A column therefore needs the
+  // (shownLanes - 1) intervals between centers plus 8px on either side;
+  // allocating one more full interval leaves an unexplained blank gutter.
+  const width = shownLanes * 12 + 4;
   useEffect(() => {
     const row = rows.find((item) => item.oid === selected);
     if (row)

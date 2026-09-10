@@ -1,6 +1,6 @@
 import {
   FolderTree,
-  GitPullRequestArrow,
+  GitFork,
   ListTodo,
   ChevronsLeft,
   ChevronsRight,
@@ -27,7 +27,7 @@ const FIXED_TOOLS = [
   ['orca-workers', 'rightSidebar.tabs.kinds.collaboration', UsersRound],
   // Review opens its existing content tab, while this fixed button remains the
   // stable navigation affordance requested by the Lex workspace layout.
-  ['review', 'rightSidebar.workbench.git', GitPullRequestArrow],
+  ['review', 'rightSidebar.workbench.git', GitFork],
 ] as const;
 
 export function WorkspaceToolRail({
