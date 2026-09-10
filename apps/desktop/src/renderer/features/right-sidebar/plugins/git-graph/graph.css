@@ -1,0 +1,92 @@
+.lex-git-graph {
+  container: git-graph / inline-size;
+}
+
+.lex-git-graph input[type='checkbox'] {
+  accent-color: var(--text-primary);
+}
+
+.dark .lex-git-graph input[type='checkbox'] {
+  color-scheme: dark;
+}
+
+.lex-git-graph-row {
+  display: grid;
+  grid-template-columns: var(--git-graph-width) minmax(0, 1fr);
+  align-items: center;
+  width: 100%;
+  height: 52px;
+  gap: 8px;
+  padding-inline: 8px;
+  text-align: left;
+  color: var(--text-primary);
+}
+
+.lex-git-graph-row:hover,
+.lex-git-graph-row[aria-pressed='true'] {
+  background: var(--surface-hover);
+}
+
+.lex-git-graph-row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.lex-git-graph-row > svg {
+  height: 100%;
+}
+
+.lex-git-graph-date,
+.lex-git-graph-author,
+.lex-git-graph-hash {
+  display: none;
+}
+
+.lex-git-graph-header {
+  height: 28px;
+  color: var(--text-tertiary);
+  font-size: var(--text-11);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.lex-git-graph-ref {
+  display: inline-block;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--border-default);
+  border-radius: 9999px;
+  padding-inline: 6px;
+  color: var(--text-secondary);
+}
+
+@container git-graph (min-width: 640px) {
+  .lex-git-graph-row {
+    grid-template-columns: var(--git-graph-width) minmax(0, 1fr) 14ch 8ch;
+    height: 36px;
+  }
+  .lex-git-graph-header {
+    height: 28px;
+  }
+  .lex-git-graph-date,
+  .lex-git-graph-hash {
+    display: block;
+  }
+  .lex-git-graph-inline-date,
+  .lex-git-graph-inline-hash {
+    display: none;
+  }
+}
+
+@container git-graph (min-width: 880px) {
+  .lex-git-graph-row {
+    grid-template-columns: var(--git-graph-width) minmax(0, 1fr) minmax(72px, 12%) 14ch 8ch;
+  }
+  .lex-git-graph-author {
+    display: block;
+  }
+  .lex-git-graph-inline-author {
+    display: none;
+  }
+}

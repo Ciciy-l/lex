@@ -2339,3 +2339,9 @@ registerColor('button-cta-pressed', {
   light: 'color-mix(in srgb, var(--button-cta-hover) 90%, var(--accent-pure-cta-fg))',
   dark: 'color-mix(in srgb, var(--button-cta-hover) 90%, var(--accent-pure-cta-fg))',
 }, 'DS-4 button/cta pressed — 自 cta hover 朝 CTA 前景再推 10%');
+registerColor('git-graph-lane-1', { light: '#2563eb', dark: '#60a5fa' }, 'Git Graph ancestry lane 1; data visualization only');
+registerColor('git-graph-lane-2', { light: '#7c3aed', dark: '#a78bfa' }, 'Git Graph ancestry lane 2; data visualization only');
+registerColor('git-graph-lane-3', { light: '#0f766e', dark: '#2dd4bf' }, 'Git Graph ancestry lane 3; data visualization only');
+registerColor('git-graph-lane-4', { light: '#b45309', dark: '#fbbf24' }, 'Git Graph ancestry lane 4; data visualization only');
+registerColor('git-graph-lane-5', { light: '#be185d', dark: '#f472b6' }, 'Git Graph ancestry lane 5; data visualization only');
+registerColor('git-graph-lane-6', { light: '#047857', dark: '#6ee7b7' }, 'Git Graph ancestry lane 6; data visualization only');

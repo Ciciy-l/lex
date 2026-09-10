@@ -24,6 +24,8 @@ import { readImagePreview } from './imageReader.js';
 import { readMarkdownPreview } from './markdownReader.js';
 import { GitReviewPushError, pushBranch } from './pushOps.js';
 import { resolveReviewScope } from './scopeResolver.js';
+import { parseGitGraphRequest, parseGitGraphCompareRequest } from '../../shared/gitGraph.js';
+import { readGitGraph, readGitGraphComparison, withLocalGraphScope } from './graphReader.js';
 import { createSshPreviewReaderDeps, withSessionReviewExecution } from './sshReviewBackend.js';
 import { readStatus } from './statusReader.js';
 import { applyFileBatch, applyHunkSelection, GitReviewStageError } from './stageOps.js';
@@ -54,6 +56,9 @@ import type {
 
 export const GIT_REVIEW_INVOKE = {
   HISTORY: 'git-review:history',
+  GRAPH: 'git-review:graph',
+  GRAPH_COMPARE: 'git-review:graph-compare',
+  NAVIGATION: 'git-review:navigation',
   GET: 'git-review:get',
   SUMMARY: 'git-review:summary',
   COMMITS: 'git-review:commits',
@@ -699,7 +704,41 @@ function parsePushPayload(payload: unknown): { sessionId: string; confirmForce?:
   };
 }
 
+function parseGraphIpcRequest<T>(parse: (payload: unknown) => T, payload: unknown): T {
+  try {
+    return parse(payload);
+  } catch (error) {
+    throwIpcError('INVALID_PARAMS', error instanceof Error ? error.message : 'Invalid Git Graph request');
+  }
+}
+
 export function registerGitReviewIpc(options: GitReviewIpcOptions = {}): void {
+  ipcMain.handle(GIT_REVIEW_INVOKE.NAVIGATION, async (event, payload: unknown) => {
+    if (!isTrustedAppRendererEvent(event)) throwIpcError('PERMISSION_DENIED', 'trusted renderer required');
+    try {
+      const sessionId = parseSessionId(payload);
+      if (sessionId.length > 128) throwIpcError('INVALID_PARAMS', 'invalid sessionId');
+      return await withSessionReviewExecution(sessionId, async () => {
+        const scope = await resolveReviewScope(sessionId);
+        const status = scope.repoRoot && !scope.disabledReason ? await readStatus(scope) : null;
+        return { scope: status?.scope ?? scope, status };
+      });
+    } catch (error) { rethrowReviewIpcError(error); }
+  });
+  ipcMain.handle(GIT_REVIEW_INVOKE.GRAPH, async (event, payload: unknown) => {
+    if (!isTrustedAppRendererEvent(event)) throwIpcError('PERMISSION_DENIED', 'trusted renderer required');
+    try {
+      const request = parseGraphIpcRequest(parseGitGraphRequest, payload);
+      return await withLocalGraphScope(request.sessionId, scope => readGitGraph(scope, request));
+    } catch (error) { rethrowReviewIpcError(error); }
+  });
+  ipcMain.handle(GIT_REVIEW_INVOKE.GRAPH_COMPARE, async (event, payload: unknown) => {
+    if (!isTrustedAppRendererEvent(event)) throwIpcError('PERMISSION_DENIED', 'trusted renderer required');
+    try {
+      const request = parseGraphIpcRequest(parseGitGraphCompareRequest, payload);
+      return await withLocalGraphScope(request.sessionId, scope => readGitGraphComparison(scope, request));
+    } catch (error) { rethrowReviewIpcError(error); }
+  });
   const writeDeps: GitReviewDeps = {
     ...defaultGitReviewDeps,
     isSessionRunning: options.isSessionRunning,

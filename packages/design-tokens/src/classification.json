@@ -1,9 +1,9 @@
 {
   "source": "apps/desktop/src/renderer/themes/colors.ts",
   "generatedBy": "packages/design-tokens/src/classify.ts",
-  "snapshotCount": 520,
+  "snapshotCount": 526,
   "categories": {
-    "literal": 248,
+    "literal": 254,
     "alias": 236,
     "hsl-triplet": 6,
     "runtime-derived-or-protected": 30
@@ -5202,6 +5202,54 @@
       "destination": "register-only",
       "lightKind": "color-mix",
       "darkKind": "color-mix",
+      "modeledAsSemantic": false
+    },
+    {
+      "id": "git-graph-lane-1",
+      "category": "literal",
+      "destination": "reference-candidate",
+      "lightKind": "hex",
+      "darkKind": "hex",
+      "modeledAsSemantic": false
+    },
+    {
+      "id": "git-graph-lane-2",
+      "category": "literal",
+      "destination": "reference-candidate",
+      "lightKind": "hex",
+      "darkKind": "hex",
+      "modeledAsSemantic": false
+    },
+    {
+      "id": "git-graph-lane-3",
+      "category": "literal",
+      "destination": "reference-candidate",
+      "lightKind": "hex",
+      "darkKind": "hex",
+      "modeledAsSemantic": false
+    },
+    {
+      "id": "git-graph-lane-4",
+      "category": "literal",
+      "destination": "reference-candidate",
+      "lightKind": "hex",
+      "darkKind": "hex",
+      "modeledAsSemantic": false
+    },
+    {
+      "id": "git-graph-lane-5",
+      "category": "literal",
+      "destination": "reference-candidate",
+      "lightKind": "hex",
+      "darkKind": "hex",
+      "modeledAsSemantic": false
+    },
+    {
+      "id": "git-graph-lane-6",
+      "category": "literal",
+      "destination": "reference-candidate",
+      "lightKind": "hex",
+      "darkKind": "hex",
       "modeledAsSemantic": false
     }
   ]

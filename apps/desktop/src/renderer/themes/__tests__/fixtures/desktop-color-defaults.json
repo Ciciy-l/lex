@@ -1,6 +1,6 @@
 {
   "source": "apps/desktop/src/renderer/themes/colors.ts",
-  "count": 520,
+  "count": 526,
   "colors": [
     {
       "id": "surface",
@@ -2601,6 +2601,12 @@
       "id": "button-cta-pressed",
       "light": "color-mix(in srgb, var(--button-cta-hover) 90%, var(--accent-pure-cta-fg))",
       "dark": "color-mix(in srgb, var(--button-cta-hover) 90%, var(--accent-pure-cta-fg))"
-    }
+    },
+    { "id": "git-graph-lane-1", "light": "#2563eb", "dark": "#60a5fa" },
+    { "id": "git-graph-lane-2", "light": "#7c3aed", "dark": "#a78bfa" },
+    { "id": "git-graph-lane-3", "light": "#0f766e", "dark": "#2dd4bf" },
+    { "id": "git-graph-lane-4", "light": "#b45309", "dark": "#fbbf24" },
+    { "id": "git-graph-lane-5", "light": "#be185d", "dark": "#f472b6" },
+    { "id": "git-graph-lane-6", "light": "#047857", "dark": "#6ee7b7" }
   ]
 }

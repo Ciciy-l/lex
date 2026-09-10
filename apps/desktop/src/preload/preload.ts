@@ -4784,6 +4784,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   gitReview: {
+    navigation: (params: { sessionId: string }): Promise<Pick<import('../shared/gitReviewWire').ReviewData, 'scope' | 'status'>> => ipcRenderer.invoke('git-review:navigation', params),
+    graph: (params: import('../shared/gitGraph').GitGraphRequest): Promise<import('../shared/gitGraph').GitGraphData> => ipcRenderer.invoke('git-review:graph', params),
+    graphCompare: (params: import('../shared/gitGraph').GitGraphCompareRequest): Promise<import('../shared/gitGraph').GitGraphComparison> => ipcRenderer.invoke('git-review:graph-compare', params),
     history: (params: { sessionId: string }): Promise<import('../shared/gitReviewWire').ReviewHistoryData> => ipcRenderer.invoke('git-review:history', params),
     get: (params: { sessionId: string; ignoreWhitespace?: boolean }): Promise<ReviewData> =>
       ipcRenderer.invoke('git-review:get', params),

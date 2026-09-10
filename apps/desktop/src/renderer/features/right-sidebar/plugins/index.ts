@@ -15,6 +15,7 @@ import './web-browser';
 import './ios-simulator';
 import './terminal';
 import './review';
+import './git-graph';
 import './orca-workers';
 import './subagents';
 import './background-tasks';
