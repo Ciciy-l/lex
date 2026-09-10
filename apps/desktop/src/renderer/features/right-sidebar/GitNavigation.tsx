@@ -50,15 +50,18 @@ const disabledReasonKeys = {
 export function GitNavigation({
   sessionId,
   deviceId,
+  remoteHostId = null,
 }: {
   sessionId: string;
   deviceId: string | null;
+  remoteHostId?: string | null;
 }) {
   return (
     <GitNavigationContent
-      key={JSON.stringify([sessionId, deviceId])}
+      key={JSON.stringify([sessionId, deviceId, remoteHostId])}
       sessionId={sessionId}
       deviceId={deviceId}
+      remoteHostId={remoteHostId}
     />
   );
 }
@@ -66,9 +69,11 @@ export function GitNavigation({
 function GitNavigationContent({
   sessionId,
   deviceId,
+  remoteHostId,
 }: {
   sessionId: string;
   deviceId: string | null;
+  remoteHostId: string | null;
 }) {
   const { t } = useTranslation();
   const [data, setData] = useState<Pick<ReviewData, 'scope' | 'status'> | null>(null);
@@ -149,6 +154,16 @@ function GitNavigationContent({
   };
   const review = getBucket(sessionId).tabs.find((tab) => tab.kind === 'review')?.state as
     ReviewState | undefined;
+  // Graph uses a local-only main IPC. Do not offer an action that is known to
+  // be denied for a controlled device or an SSH workspace.
+  const canOpenGraph =
+    deviceId === null &&
+    remoteHostId === null &&
+    data?.scope.source !== 'remote' &&
+    data?.scope.disabledReason !== 'remote-session';
+  // Keep a known-empty snapshot visible while the next status read is in flight.
+  // Removing it for `busy` collapses both status sections every auto-refresh.
+  const hasStatusSnapshot = data?.status != null;
   return (
     <section
       className="flex min-h-0 flex-1 flex-col overflow-y-auto text-12"
@@ -180,17 +195,19 @@ function GitNavigationContent({
           )}
         </div>
         <div className="mt-1 flex flex-wrap gap-1">
-          <GitControl
-            label={t('rightSidebar.gitGraph.title')}
-            onClick={() =>
-              void openGitGraph(sessionId).catch(() =>
-                toast.error(t('rightSidebar.workbench.loadFailed')),
-              )
-            }
-          >
-            <GitFork size={13} />
-            {t('rightSidebar.gitGraph.title')}
-          </GitControl>
+          {canOpenGraph && (
+            <GitControl
+              label={t('rightSidebar.gitGraph.title')}
+              onClick={() =>
+                void openGitGraph(sessionId).catch(() =>
+                  toast.error(t('rightSidebar.workbench.loadFailed')),
+                )
+              }
+            >
+              <GitFork size={13} />
+              {t('rightSidebar.gitGraph.title')}
+            </GitControl>
+          )}
           <GitControl
             label={t('rightSidebar.tabs.kinds.review')}
             onClick={() => navigate({ kind: 'unstaged' })}
@@ -257,7 +274,7 @@ function GitNavigationContent({
                       {file.path}
                     </button>
                   ))}
-                  {!files.length && !busy && (
+                  {!files.length && hasStatusSnapshot && (
                     <p className="px-2 text-11 text-[var(--text-tertiary)]">
                       {t('rightSidebar.workbench.noChanges')}
                     </p>
@@ -332,17 +349,19 @@ function CommitFiles({
   const [open, setOpen] = useState(false);
   useEffect(() => {
     if (!open || paths) return;
+    // Device Link deliberately does not expose this new local IPC capability.
+    // Local Desktop and SSH sessions both stay on the audited main-process
+    // execution path below.
+    if (deviceId !== null) {
+      setError(true);
+      return;
+    }
     let alive = true;
-    void gitReviewApiFor(deviceId)
-      .commitDiff({ sessionId, oid: commit.oid })
+    void window.electronAPI.gitReview
+      .commitFiles({ sessionId, oid: commit.oid })
       .then((result) => {
         if (alive) {
-          setPaths([
-            ...new Set([
-              ...result.diffs.map((diff) => diff.path),
-              ...(result.capped?.files.map((entry) => entry.path) ?? []),
-            ]),
-          ]);
+          setPaths(result.paths);
           setError(false);
         }
       })

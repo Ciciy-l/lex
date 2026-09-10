@@ -26,10 +26,14 @@ from the third-party VS Code Git Graph extension are used.
   ancestry edges are not broken by hiding intermediate commits.
 - Local branches, remote refs, commit tags (including annotated tags), and the
   current stash tip are displayed. Stash reflog history is not included.
-- Reference enumeration is limited to 256 refs and 4 MiB; log output is limited
-  to 4 MiB and 15 seconds. Repositories exceeding these limits fail explicitly
-  rather than silently presenting incomplete ancestry. There is no background
-  fetch. Current-branch mode follows the resolved HEAD, including detached HEAD.
+- All-ref mode is limited to 256 enumerated ref records and 4 MiB; repositories exceeding
+  that bound fail explicitly rather than silently presenting incomplete ancestry.
+  Current-branch mode roots only at HEAD and independently displays up to 256
+  non-remote labels plus, when enabled, 256 remote labels, so unrelated forge
+  branches cannot block the local history view. Labels beyond those display caps
+  do not alter ancestry. Log output is limited to 4 MiB and 15 seconds. There is
+  no background fetch; current-branch mode follows the resolved HEAD, including
+  detached HEAD.
 - Selecting a commit shows its author/time, full OID and parents, with a link to
   existing commit review (first-parent diff, or the root commit's changes).
 - Explicit comparison snapshots both selected labels and full commit OIDs:
@@ -146,10 +150,16 @@ Renderer history uses the backend's original date-ordered prefix without a secon
 sorting pass. Closed columns compact left while remaining path colors persist.
 
 The manual load-more button is removed. Within 180 px of the history viewport's
-bottom, the next bounded batch is requested through the serialized refresh queue.
-The visible commit OID and its pixel offset anchor the viewport across display
-reordering. Growth is blocked while a request is pending, after failure, for hidden
-tabs and when no more history exists. The existing 1,000-commit safety limit is
-retained with a passive limit notice. Refresh retries failed reads; scrolling does
-not create an uncontrolled retry loop. Screenshots of the reference extension are
+bottom, the next bounded batch starts immediately through the serialized
+single-flight queue, so it can begin while a fast scroll is still in progress;
+ordinary focus/file-save/Git-change refreshes remain 250 ms coalesced. The visible
+commit OID and its pixel offset anchor the viewport across display reordering.
+Growth is blocked while a request is pending, after failure, for hidden tabs and
+when no more history exists. The existing 1,000-commit safety limit is retained
+with a passive limit notice. Refresh retries failed reads; scrolling does not
+create an uncontrolled retry loop. Screenshots of the reference extension are
 design targets, not proof that its implementation or repository was reproduced.
+
+Recent-history disclosure reads a fixed commit's changed paths only. It uses the
+same first-parent semantics as full commit Review, but avoids patch, blob-size and
+numstat work until the user explicitly opens the existing Review surface.

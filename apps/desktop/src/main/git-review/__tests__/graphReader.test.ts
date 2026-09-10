@@ -102,22 +102,24 @@ describe('bounded graph reads', () => {
     });
     expect(result[1].parents).toEqual([]);
   });
-  it('pins roots, peels annotated tags, bounds output and excludes remote-only roots', async () => {
+  it('pins roots, peels annotated tags, and retains requested remote labels in current-branch mode', async () => {
     git.mockReset();
     git.mockImplementation(async (args: string[]) => ({
       stdout:
         args[0] === 'for-each-ref'
-          ? [
-              'refs/heads/main\0' + head + '\0\0commit\0',
-              'refs/tags/v1\0' + remote + '\0' + parent + '\0tag\0commit',
-              'refs/remotes/origin/topic\0' + remote + '\0\0commit\0',
-            ].join('\n')
+          ? args.includes('refs/remotes')
+            ? 'refs/remotes/origin/topic\0' + remote + '\0\0commit\0'
+            : [
+                'refs/heads/main\0' + head + '\0\0commit\0',
+                'refs/tags/v1\0' + remote + '\0' + parent + '\0tag\0commit',
+              ].join('\n')
           : record(head, [parent]) + record(parent),
     }));
     const data = await readGitGraph(scope, { ...request, limit: 1, includeRemotes: false });
     expect(data.commits).toHaveLength(1);
     expect(data.hasMore).toBe(true);
     expect(data.refs).toContainEqual({ name: 'refs/tags/v1', kind: 'tag', oid: parent });
+    expect(git.mock.calls[0][0]).not.toContain('refs/remotes');
     expect(git.mock.calls[1][0]).toEqual(
       expect.arrayContaining(['--date-order', '--max-count=2', head, parent, '--']),
     );
@@ -126,8 +128,15 @@ describe('bounded graph reads', () => {
       maxStdoutBytes: 4 * 1024 * 1024,
       timeoutMs: 15000,
     });
-    await readGitGraph(scope, { ...request, currentBranch: true });
-    expect(git.mock.calls[3][0]).not.toContain(parent);
+    const currentBranch = await readGitGraph(scope, { ...request, currentBranch: true });
+    expect(git.mock.calls[2][0]).not.toContain('refs/remotes');
+    expect(git.mock.calls[3][0]).toContain('refs/remotes');
+    expect(git.mock.calls[4][0]).not.toContain(parent);
+    expect(currentBranch.refs).toContainEqual({
+      name: 'refs/remotes/origin/topic',
+      kind: 'remote',
+      oid: remote,
+    });
   });
   it('returns an empty unborn repository without invoking log', async () => {
     git.mockReset().mockResolvedValue({ stdout: '' });
@@ -141,6 +150,43 @@ describe('bounded graph reads', () => {
       .mockReset()
       .mockResolvedValue({ stdout: Array.from({ length: 257 }, () => 'ref').join('\n') });
     await expect(readGitGraph(scope, request)).rejects.toThrow('limit');
+  });
+  it('filters remote roots before applying the 256-ref graph bound but retains bounded labels', async () => {
+    const remoteRefs = [
+      `refs/remotes/origin/visible\0${remote}\0\0commit\0`,
+      ...Array.from(
+        { length: 256 },
+        (_, index) =>
+          `refs/remotes/origin/topic-${index}\0${index.toString(16).padStart(40, '0')}\0\0commit\0`,
+      ),
+    ];
+    const localRef = `refs/heads/main\0${head}\0\0commit\0`;
+    git.mockReset().mockImplementation(async (args: string[]) => ({
+      stdout:
+        args[0] === 'for-each-ref'
+          ? args.includes('refs/remotes')
+            ? remoteRefs
+                .slice(0, Number(args.find((arg) => arg.startsWith('--count='))?.slice(8)))
+                .join('\n')
+            : localRef
+          : record(head),
+    }));
+
+    await expect(readGitGraph(scope, { ...request, includeRemotes: false })).resolves.toMatchObject(
+      { commits: [{ oid: head }] },
+    );
+    expect(git.mock.calls[0][0]).not.toContain('refs/remotes');
+
+    const currentBranch = await readGitGraph(scope, { ...request, currentBranch: true });
+    expect(currentBranch).toMatchObject({ commits: [{ oid: head }] });
+    expect(git.mock.calls[2][0]).not.toContain('refs/remotes');
+    expect(git.mock.calls[3][0]).toEqual(expect.arrayContaining(['refs/remotes', '--count=256']));
+    expect(currentBranch.refs).toContainEqual({
+      name: 'refs/remotes/origin/visible',
+      kind: 'remote',
+      oid: remote,
+    });
+    expect(git.mock.calls[4][0]).not.toContain(remote);
   });
   it('compares exact commit trees without a merge-base or mutable ref lookup', async () => {
     git.mockReset().mockImplementation(async (args: string[]) => ({

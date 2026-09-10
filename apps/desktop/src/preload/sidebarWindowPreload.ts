@@ -230,7 +230,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   terminal: {
     listAvailableShells: () => ipcRenderer.invoke('terminal:list-available-shells'),
-    resolveFile: (id: string, path: string) => ipcRenderer.invoke('terminal:resolve-file', id, path),
+    resolveFile: (id: string, path: string) =>
+      ipcRenderer.invoke('terminal:resolve-file', id, path),
     rename: (id: string, title: string) => ipcRenderer.invoke('terminal:rename', id, title),
     list: (sessionId: string) => ipcRenderer.invoke('terminal:list', sessionId),
     detach: (id: string) => ipcRenderer.invoke('terminal:detach', id),
@@ -557,6 +558,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('git-review:summary', params),
     commits: (params: unknown): Promise<unknown> =>
       ipcRenderer.invoke('git-review:commits', params),
+    commitFiles: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('git-review:commit-files', params),
     commitDiff: (params: unknown): Promise<unknown> =>
       ipcRenderer.invoke('git-review:commit-diff', params),
     branchDiff: (params: unknown): Promise<unknown> =>

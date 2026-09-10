@@ -7,7 +7,12 @@ import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 vi.setConfig({ testTimeout: process.platform === 'win32' ? 60_000 : 30_000 });
 
 import { TestDirectoryTemplate } from '../../../test/vitest/testDirectoryTemplate';
-import { listBranchCommits, listRepositoryHistory, readCommitDiff } from '../commitReader';
+import {
+  listBranchCommits,
+  listCommitFiles,
+  listRepositoryHistory,
+  readCommitDiff,
+} from '../commitReader';
 import { runGit } from '../gitRunner';
 import type { ReviewScope } from '../types';
 
@@ -52,7 +57,11 @@ function scope(repoPath: string, branch = 'main'): ReviewScope {
   };
 }
 
-async function initStaleLocalMainFixture(): Promise<{ repoPath: string; featureOid: string; remoteMainOid: string }> {
+async function initStaleLocalMainFixture(): Promise<{
+  repoPath: string;
+  featureOid: string;
+  remoteMainOid: string;
+}> {
   const repoPath = await initRepo();
   await fs.writeFile(path.join(repoPath, 'base.txt'), 'base\n');
   await commitAll(repoPath, 'root');
@@ -85,9 +94,13 @@ async function initStaleLocalMainFixture(): Promise<{ repoPath: string; featureO
 }
 
 afterEach(async () => {
-  await Promise.all(repos.splice(0).map((repoPath) =>
-    fs.rm(repoPath, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }),
-  ));
+  await Promise.all(
+    repos
+      .splice(0)
+      .map((repoPath) =>
+        fs.rm(repoPath, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }),
+      ),
+  );
 });
 
 afterAll(async () => {
@@ -102,9 +115,14 @@ describe('git-review commitReader', () => {
     const first = await commitAll(repoPath, 'first');
     await fs.writeFile(path.join(repoPath, 'history.txt'), 'second\n');
     const second = await commitAll(repoPath, 'second');
-    expect((await listRepositoryHistory(scope(repoPath))).commits.map(c => c.oid)).toEqual([second, first]);
+    expect((await listRepositoryHistory(scope(repoPath))).commits.map((c) => c.oid)).toEqual([
+      second,
+      first,
+    ]);
     await runGit(['checkout', '--detach', first], { cwd: repoPath });
-    expect((await listRepositoryHistory(scope(repoPath))).commits.map(c => c.oid)).toEqual([first]);
+    expect((await listRepositoryHistory(scope(repoPath))).commits.map((c) => c.oid)).toEqual([
+      first,
+    ]);
   });
   it('lists branch commits from base..HEAD and reads a normal commit diff against first parent', async () => {
     const repoPath = await initRepo();
@@ -122,6 +140,7 @@ describe('git-review commitReader', () => {
 
     const result = await listBranchCommits(scope(repoPath, 'feature'), 'main');
     const diff = await readCommitDiff(scope(repoPath), oid);
+    const files = await listCommitFiles(scope(repoPath), oid);
 
     expect(result.baseRef).toBe('main');
     expect(result.warning).toBeNull();
@@ -135,6 +154,7 @@ describe('git-review commitReader', () => {
       additions: 1,
       deletions: 0,
     });
+    expect(files).toEqual({ commitOid: oid, paths: ['extra.txt'] });
   });
 
   it('falls back to the default branch base for branch commit history', async () => {
@@ -172,6 +192,7 @@ describe('git-review commitReader', () => {
     const oid = await commitAll(repoPath, 'root');
 
     const diff = await readCommitDiff(scope(repoPath), oid);
+    const files = await listCommitFiles(scope(repoPath), oid);
 
     expect(diff.commitOid).toBe(oid);
     expect(diff.diffs[0]).toMatchObject({
@@ -179,6 +200,29 @@ describe('git-review commitReader', () => {
       status: 'added',
       additions: 1,
       deletions: 0,
+    });
+    expect(files).toEqual({ commitOid: oid, paths: ['root.txt'] });
+  });
+
+  it('lists merge commit paths against the first parent without reading patches', async () => {
+    const repoPath = await initRepo();
+    await fs.writeFile(path.join(repoPath, 'base.txt'), 'base\n');
+    await commitAll(repoPath, 'root');
+    await runGit(['checkout', '-b', 'topic'], { cwd: repoPath });
+    await fs.writeFile(path.join(repoPath, 'topic.txt'), 'topic\n');
+    await commitAll(repoPath, 'topic change');
+    await runGit(['checkout', 'main'], { cwd: repoPath });
+    await fs.writeFile(path.join(repoPath, 'main.txt'), 'main\n');
+    await commitAll(repoPath, 'main change');
+    await runGit(['merge', '--no-ff', '--no-gpg-sign', 'topic', '-m', 'merge topic'], {
+      cwd: repoPath,
+    });
+    const { stdout } = await runGit(['rev-parse', 'HEAD'], { cwd: repoPath });
+    const mergeOid = stdout.trim();
+
+    await expect(listCommitFiles(scope(repoPath), mergeOid)).resolves.toEqual({
+      commitOid: mergeOid,
+      paths: ['topic.txt'],
     });
   });
 
@@ -263,9 +307,11 @@ describe('git-review commitReader', () => {
     await commitAll(repoPath, 'root');
     const bulkDir = path.join(repoPath, 'bulk');
     await fs.mkdir(bulkDir);
-    await Promise.all(Array.from({ length: 129 }, (_, index) =>
-      fs.writeFile(path.join(bulkDir, `file-${index}.txt`), `${index}\n`),
-    ));
+    await Promise.all(
+      Array.from({ length: 129 }, (_, index) =>
+        fs.writeFile(path.join(bulkDir, `file-${index}.txt`), `${index}\n`),
+      ),
+    );
     const oid = await commitAll(repoPath, 'many files');
 
     const diff = await readCommitDiff(scope(repoPath), oid);

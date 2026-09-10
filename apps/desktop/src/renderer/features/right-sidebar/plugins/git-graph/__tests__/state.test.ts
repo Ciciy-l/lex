@@ -99,6 +99,29 @@ describe('Git Graph state', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(task).toHaveBeenCalledTimes(2);
   });
+  it('starts scroll growth immediately while preserving one single-flight trailing read', async () => {
+    vi.useFakeTimers();
+    let finish!: () => void;
+    const task = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve;
+          }),
+      )
+      .mockResolvedValue(undefined);
+    const queue = createGraphRefreshQueue(task);
+
+    queue.requestImmediate();
+    expect(task).toHaveBeenCalledTimes(1);
+    queue.request();
+    queue.requestImmediate();
+    finish();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(task).toHaveBeenCalledTimes(2);
+    queue.dispose();
+  });
   it('compacts closed columns while preserving the remaining paths and colors', () => {
     const commits = [
       { oid: 'merge', parents: ['left', 'right'] },

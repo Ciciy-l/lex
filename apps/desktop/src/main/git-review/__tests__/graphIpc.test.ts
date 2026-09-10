@@ -27,16 +27,18 @@ beforeEach(() => {
   registerGitReviewIpc();
 });
 describe('Git Graph IPC boundary', () => {
-  it.each(['git-review:graph', 'git-review:graph-compare', 'git-review:navigation'])(
-    'rejects untrusted senders on %s before parsing or lookup',
-    async (channel) => {
-      mocks.trusted.mockReturnValue(false);
-      const handler = mocks.handle.mock.calls.find(([name]) => name === channel)![1];
-      await expect(handler({}, {})).rejects.toThrow('PERMISSION_DENIED');
-      expect(mocks.local).not.toHaveBeenCalled();
-      expect(mocks.graph).not.toHaveBeenCalled();
-    },
-  );
+  it.each([
+    'git-review:graph',
+    'git-review:graph-compare',
+    'git-review:navigation',
+    'git-review:commit-files',
+  ])('rejects untrusted senders on %s before parsing or lookup', async (channel) => {
+    mocks.trusted.mockReturnValue(false);
+    const handler = mocks.handle.mock.calls.find(([name]) => name === channel)![1];
+    await expect(handler({}, {})).rejects.toThrow('PERMISSION_DENIED');
+    expect(mocks.local).not.toHaveBeenCalled();
+    expect(mocks.graph).not.toHaveBeenCalled();
+  });
   it('validates graph bounds before local session lookup', async () => {
     mocks.trusted.mockReturnValue(true);
     const handler = mocks.handle.mock.calls.find(([name]) => name === 'git-review:graph')![1];

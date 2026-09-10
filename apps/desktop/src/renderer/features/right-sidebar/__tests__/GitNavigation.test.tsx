@@ -7,6 +7,7 @@ const api = vi.hoisted(() => ({
   get: vi.fn(),
   navigation: vi.fn(),
   history: vi.fn(),
+  commitFiles: vi.fn(),
   commitDiff: vi.fn(),
   navigate: vi.fn(),
   openGraph: vi.fn(),
@@ -52,7 +53,7 @@ describe('Git tool loading', () => {
       commits: [{ oid: 'a'.repeat(40), shortOid: 'abcdef0', title: 'Subject only' }],
       truncated: false,
     });
-    api.commitDiff.mockResolvedValue({ diffs: [{ path: 'file.ts' }], capped: null });
+    api.commitFiles.mockResolvedValue({ paths: ['file.ts'] });
     const view = render(<GitNavigation sessionId="lead" deviceId={null} />);
     const summary = await screen.findByText('Subject only');
     expect(summary.textContent).toBe('Subject only');
@@ -60,6 +61,8 @@ describe('Git tool loading', () => {
     expect(view.container.textContent).not.toContain('abcdef0');
     fireEvent.click(summary);
     const file = await screen.findByText('file.ts');
+    expect(api.commitFiles).toHaveBeenCalledWith({ sessionId: 'lead', oid: 'a'.repeat(40) });
+    expect(api.commitDiff).not.toHaveBeenCalled();
     fireEvent.click(file);
     expect(api.navigate).toHaveBeenCalledWith(
       'lead',
@@ -87,6 +90,41 @@ describe('Git tool loading', () => {
     fireEvent.click(action);
     expect(details.open).toBe(true);
     expect(api.navigate).toHaveBeenCalledWith('lead', { kind: 'staged' }, undefined);
+  });
+  it('keeps empty status sections and a collapsed disclosure stable during refresh', async () => {
+    const view = render(<GitNavigation sessionId="lead" deviceId={null} />);
+    await screen.findByText('initial commit');
+    expect(screen.getAllByText('rightSidebar.workbench.noChanges')).toHaveLength(2);
+    const unstaged = view.container.querySelector<HTMLDetailsElement>(
+      '[aria-label="rightSidebar.workbench.git"] > section > details',
+    );
+    if (!unstaged) throw new Error('missing unstaged disclosure');
+    fireEvent.click(unstaged.querySelector('summary')!);
+    expect(unstaged.open).toBe(false);
+
+    const nextStatus = deferred<typeof status>();
+    api.navigation.mockReturnValueOnce(nextStatus.promise);
+    fireEvent.click(screen.getByRole('button', { name: 'rightSidebar.workbench.refresh' }));
+    await waitFor(() => expect(api.navigation).toHaveBeenCalledTimes(2));
+
+    expect(screen.getAllByText('rightSidebar.workbench.noChanges')).toHaveLength(2);
+    const refreshedUnstaged = view.container.querySelector<HTMLDetailsElement>(
+      '[aria-label="rightSidebar.workbench.git"] > section > details',
+    );
+    if (!refreshedUnstaged) throw new Error('missing refreshed unstaged disclosure');
+    expect(refreshedUnstaged).toBe(unstaged);
+    expect(refreshedUnstaged.open).toBe(false);
+
+    await act(async () => nextStatus.resolve(status));
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole('button', { name: 'rightSidebar.workbench.refresh' })
+          .hasAttribute('disabled'),
+      ).toBe(false),
+    );
+    expect(screen.getAllByText('rightSidebar.workbench.noChanges')).toHaveLength(2);
+    expect(refreshedUnstaged.open).toBe(false);
   });
   it('shows history immediately even while working-tree status is still loading', async () => {
     const slow = deferred<typeof status>();
@@ -159,5 +197,22 @@ describe('Git tool loading', () => {
     expect(api.openGraph).toHaveBeenCalledWith('lead');
     fireEvent.click(screen.getByRole('button', { name: 'rightSidebar.workbench.staged (0)' }));
     expect(api.navigate).toHaveBeenCalledWith('lead', { kind: 'staged' }, undefined);
+  });
+  it.each([
+    { deviceId: 'controlled-device', remoteHostId: null },
+    { deviceId: null, remoteHostId: 'ssh-host' },
+  ])('does not offer a local Graph opener for a remote context %#', (props) => {
+    render(<GitNavigation sessionId="lead" {...props} />);
+    expect(screen.queryByRole('button', { name: 'rightSidebar.gitGraph.title' })).toBeNull();
+    expect(api.openGraph).not.toHaveBeenCalled();
+  });
+  it('removes the Graph opener after a locally resolved SSH scope is reported', async () => {
+    api.navigation.mockResolvedValue({
+      scope: { ...status.scope, source: 'remote', disabledReason: 'remote-session' },
+      status: null,
+    });
+    render(<GitNavigation sessionId="lead" deviceId={null} />);
+    await screen.findByText('rightSidebar.review.disabled.remote-session.title');
+    expect(screen.queryByRole('button', { name: 'rightSidebar.gitGraph.title' })).toBeNull();
   });
 });

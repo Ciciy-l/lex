@@ -84,17 +84,28 @@ export function createGraphRefreshQueue(task: () => Promise<void>, delay = 250) 
   let timer: ReturnType<typeof setTimeout> | undefined;
   let running = false;
   let pending = false;
+  let immediatePending = false;
   let disposed = false;
+  const scheduleTrailing = () => {
+    if (disposed || running) return;
+    if (immediatePending) {
+      void run();
+      return;
+    }
+    if (pending) timer = setTimeout(() => void run(), delay);
+  };
   const run = async () => {
     timer = undefined;
     if (disposed || running) return;
+    if (!pending && !immediatePending) return;
     running = true;
     pending = false;
+    immediatePending = false;
     try {
       await task();
     } finally {
       running = false;
-      if (pending && !disposed) timer = setTimeout(() => void run(), delay);
+      scheduleTrailing();
     }
   };
   return {
@@ -104,6 +115,18 @@ export function createGraphRefreshQueue(task: () => Promise<void>, delay = 250) 
       if (running) return;
       clearTimeout(timer);
       timer = setTimeout(() => void run(), delay);
+    },
+    /**
+     * Scroll growth is intentionally not debounced: a loaded prefix should
+     * start extending while the user is still scrolling. Work remains
+     * single-flight; multiple scroll events collapse into one next read.
+     */
+    requestImmediate() {
+      if (disposed) return;
+      immediatePending = true;
+      if (running) return;
+      clearTimeout(timer);
+      void run();
     },
     dispose() {
       disposed = true;

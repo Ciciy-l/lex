@@ -61,12 +61,31 @@ beforeEach(() => {
 
 describe('git-review device-op', () => {
   it('rejects invalid args deterministically', async () => {
-    expect(await handleRemoteOp(undefined as never)).toEqual({ ok: false, message: 'invalid remote-op args' });
-    expect(await handleRemoteOp({ payload: {} } as never)).toEqual({ ok: false, message: 'invalid remote-op args' });
+    expect(await handleRemoteOp(undefined as never)).toEqual({
+      ok: false,
+      message: 'invalid remote-op args',
+    });
+    expect(await handleRemoteOp({ payload: {} } as never)).toEqual({
+      ok: false,
+      message: 'invalid remote-op args',
+    });
   });
 
   it('rejects unknown and write ops without dispatching (read-only contract)', async () => {
-    for (const op of ['nope', 'graph', 'graph-compare', 'navigation', 'stage-file', 'unstage-file', 'discard-file', 'stage-hunk', 'commit', 'push', 'open-file']) {
+    for (const op of [
+      'nope',
+      'graph',
+      'graph-compare',
+      'navigation',
+      'commit-files',
+      'stage-file',
+      'unstage-file',
+      'discard-file',
+      'stage-hunk',
+      'commit',
+      'push',
+      'open-file',
+    ]) {
       expect(await handleRemoteOp({ op, payload: { sessionId: 's1' } })).toEqual({
         ok: false,
         message: `unknown op: ${op}`,
@@ -78,7 +97,10 @@ describe('git-review device-op', () => {
 
   it('routes get with parsed diff options', async () => {
     readReviewDataMock.mockResolvedValue({ scope: { sessionId: 's1' } });
-    const res = await handleRemoteOp({ op: 'get', payload: { sessionId: 's1', ignoreWhitespace: true } });
+    const res = await handleRemoteOp({
+      op: 'get',
+      payload: { sessionId: 's1', ignoreWhitespace: true },
+    });
     expect(readReviewDataMock).toHaveBeenCalledWith('s1', { ignoreWhitespace: true });
     expect(res).toEqual({ ok: true, result: { scope: { sessionId: 's1' } } });
   });
@@ -107,22 +129,31 @@ describe('git-review device-op', () => {
       op: 'file-diff',
       payload: { sessionId: 's1', source: 'unstaged', path: 'src/a.ts' },
     });
-    expect(readReviewFileDiffMock).toHaveBeenCalledWith('s1', expect.objectContaining({
-      source: 'unstaged',
-      path: 'src/a.ts',
-    }));
+    expect(readReviewFileDiffMock).toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining({
+        source: 'unstaged',
+        path: 'src/a.ts',
+      }),
+    );
   });
 
   it('surfaces [INVALID_PARAMS] from real payload validation (unsafe pathspec)', async () => {
     await expect(
-      handleRemoteOp({ op: 'file-diff', payload: { sessionId: 's1', source: 'unstaged', path: '../evil' } }),
+      handleRemoteOp({
+        op: 'file-diff',
+        payload: { sessionId: 's1', source: 'unstaged', path: '../evil' },
+      }),
     ).rejects.toThrow(/INVALID_PARAMS/);
     expect(readReviewFileDiffMock).not.toHaveBeenCalled();
   });
 
   it('summarizes untagged dispatch errors as structured {ok:false}', async () => {
     readReviewDataMock.mockRejectedValue(new Error('boom'));
-    expect(await handleRemoteOp({ op: 'get', payload: { sessionId: 's1' } })).toEqual({ ok: false, message: 'boom' });
+    expect(await handleRemoteOp({ op: 'get', payload: { sessionId: 's1' } })).toEqual({
+      ok: false,
+      message: 'boom',
+    });
   });
 
   it('does not expose controlled-device SSH setup details', async () => {
@@ -150,6 +181,9 @@ describe('git-review device-op', () => {
   it('returns structured OVERSIZE when even gzip cannot fit the frame budget', async () => {
     // 随机字节的 base64 不可压缩:gzip 后仍远超预算 → OVERSIZE。
     readReviewDataMock.mockResolvedValue({ blob: randomBytes(2_500_000).toString('base64') });
-    expect(await handleRemoteOp({ op: 'get', payload: { sessionId: 's1' } })).toEqual({ ok: false, code: 'OVERSIZE' });
+    expect(await handleRemoteOp({ op: 'get', payload: { sessionId: 's1' } })).toEqual({
+      ok: false,
+      code: 'OVERSIZE',
+    });
   });
 });

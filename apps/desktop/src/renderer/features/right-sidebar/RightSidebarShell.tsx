@@ -799,7 +799,7 @@ export function RightSidebarShell({
               style={{ flex: '0 1 240px', minWidth: toolsExpanded ? 180 : 0 }}
             >
               {selectedToolKind === 'review' && toolsExpanded && shellVisible && sessionId && deviceLinkDeviceId !== undefined &&
-                <GitNavigation key={JSON.stringify([sessionId, deviceLinkDeviceId, workdir, remoteHostId])} sessionId={sessionId} deviceId={deviceLinkDeviceId} />}
+                <GitNavigation key={JSON.stringify([sessionId, deviceLinkDeviceId, workdir, remoteHostId])} sessionId={sessionId} deviceId={deviceLinkDeviceId} remoteHostId={remoteHostId} />}
               {toolTabs
                 .filter((tab) => tab.id === showingToolId || deferredMountedTabIds.has(tab.id))
                 .map((tab) => (
