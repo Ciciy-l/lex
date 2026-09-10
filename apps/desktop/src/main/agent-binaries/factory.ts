@@ -131,13 +131,13 @@ function findLatestVerifiedBinary(
 async function findPreferredLocalBinary(
   installSubdir: string,
   binaryName: string,
-  manifestVersion: string,
+  manifestVersion: string | undefined,
   resolveVersion:
     ((binaryPath: string, signal?: AbortSignal) => Promise<string | null>) | undefined,
   signal?: AbortSignal,
 ): Promise<{ version: string; binaryPath: string } | null> {
-  const requiredVersion = normalizeBinaryVersion(manifestVersion);
-  if (!resolveVersion || !requiredVersion) return null;
+  const requiredVersion = manifestVersion === undefined ? null : normalizeBinaryVersion(manifestVersion);
+  if (!resolveVersion || (manifestVersion !== undefined && !requiredVersion)) return null;
 
   // Probe all completed installs concurrently so one broken candidate cannot hide
   // a self-updated runtime or multiply the bounded probe delay.
@@ -153,7 +153,7 @@ async function findPreferredLocalBinary(
     }),
   );
   return resolved.reduce<{ version: string; binaryPath: string } | null>((preferred, candidate) => {
-    if (!candidate || !isBinaryVersionNotOlder(candidate.version, requiredVersion))
+    if (!candidate || (requiredVersion !== null && !isBinaryVersionNotOlder(candidate.version, requiredVersion)))
       return preferred;
     return !preferred || isBinaryVersionNotOlder(candidate.version, preferred.version)
       ? candidate
@@ -269,6 +269,18 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
     return config.artifact.binaryName;
   }
 
+  async function findUsableLocalBinary(signal?: AbortSignal) {
+    return config.localVersionResolver
+      ? findPreferredLocalBinary(
+          config.installSubdir,
+          deriveBinaryName(),
+          undefined,
+          resolveLocalVersion,
+          signal,
+        )
+      : findLatestVerifiedBinary(config.installSubdir, deriveBinaryName());
+  }
+
   return {
     async getState(): Promise<VendorRuntimeState> {
       return { ...state };
@@ -328,6 +340,14 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
           return { ready: false, binaryPath: '', error: 'asset_platform_mismatch' };
         }
         emit({ availableVersion: asset.version }, onProgress);
+
+        if (opts?.checkForUpdates === false) {
+          const local = await findUsableLocalBinary(opts.signal);
+          if (local) {
+            emit({ status: 'ready', installedVersion: local.version, binaryPath: local.binaryPath }, onProgress);
+            return { ready: true, binaryPath: local.binaryPath };
+          }
+        }
 
         // 3. 本地真实版本不低于 manifest:保留用户自更新结果,禁止降级与旧版清理。
         const preferredLocal = await findPreferredLocalBinary(
@@ -475,10 +495,12 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
       }
     },
 
-    async peekNeedsDownload(): Promise<boolean> {
-      // 不发起任何下载——只读构建内置 snapshot + 本地 isInstalled 检查。
-      // 任何异常 / snapshot 缺失 → 返回 true（保守地走 prepare()，让其内部的完整错误处理接管）。
-      // optionalAsset vendor 例外:snapshot 有但缺该字段 = 平台没发这个可选资产,
+    async peekNeedsDownload(opts): Promise<boolean> {
+      // 不发起任何下载——只读构建内置 runtime snapshot + 本地 isInstalled 检查。
+      // App 更新 manifest 属于独立的 Lex 更新通道，绝不能成为 CLI runtime
+      // 首启或版本判定的前置条件。任何异常 / snapshot 缺失 → 返回 true（保守地
+      // 走 prepare()，让其内部的完整错误处理接管）。optionalAsset vendor 例外:
+      // snapshot 有但缺该字段 = 平台没发这个可选资产,
       // 不存在可下载的东西,返回 false(不计入 splash 下载步数;prepare 会以
       // asset_missing 快速失败交调用方降级)。
       try {
@@ -486,6 +508,7 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
         if (!manifest) return true;
         const asset = getVendorAsset(manifest, config.manifestField);
         if (!asset) return config.optionalAsset !== true;
+        if (opts?.checkForUpdates === false) return await findUsableLocalBinary() === null;
         return !isInstalled(config.installSubdir, asset.version, deriveBinaryName());
       } catch {
         return true;

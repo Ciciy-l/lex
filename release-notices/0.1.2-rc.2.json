@@ -1,0 +1,106 @@
+{
+  "version": "0.1.2-rc.2",
+  "date": "2026-09-11",
+  "contentByLocale": {
+    "zh-CN": {
+      "intro": "Lex 0.1.2-rc.2 版本日志",
+      "topics": [
+        {
+          "id": "git-graph-density",
+          "title": "更紧凑的 Git 图谱",
+          "text": "Git 图谱中的作者、时间和短哈希现在合并显示在提交标题下方的一行，查看历史时能看到更多提交。"
+        },
+        {
+          "id": "upgrade-safety",
+          "title": "更稳妥的本地数据升级",
+          "text": "Lex 新增了从已发布 RC 版本升级到当前版本的本地数据路径验证，确保历史迁移身份保持一致。"
+        },
+        {
+          "id": "upstream-stability",
+          "title": "上游稳定性更新",
+          "text": "同步 Cindy v0.1.76 的稳定性修复与能力改进，同时保留 Lex 独立的更新、登录隔离和 Git 工作区体验。"
+        }
+      ]
+    },
+    "zh-TW": {
+      "intro": "Lex 0.1.2-rc.2 版本日誌",
+      "topics": [
+        {
+          "id": "git-graph-density",
+          "title": "更緊湊的 Git 圖譜",
+          "text": "Git 圖譜中的作者、時間和短雜湊現在會合併顯示在提交標題下方的一行，檢視歷史時可看到更多提交。"
+        },
+        {
+          "id": "upgrade-safety",
+          "title": "更穩妥的本機資料升級",
+          "text": "Lex 新增了從已發佈 RC 版本升級到目前版本的本機資料路徑驗證，確保歷史遷移身分保持一致。"
+        },
+        {
+          "id": "upstream-stability",
+          "title": "上游穩定性更新",
+          "text": "同步 Cindy v0.1.76 的穩定性修正與能力改善，同時保留 Lex 獨立的更新、登入隔離和 Git 工作區體驗。"
+        }
+      ]
+    },
+    "en": {
+      "intro": "Lex 0.1.2-rc.2 release notes",
+      "topics": [
+        {
+          "id": "git-graph-density",
+          "title": "A more compact Git Graph",
+          "text": "Git Graph now keeps the author, time, and short hash together beneath each commit title, so more history fits on screen."
+        },
+        {
+          "id": "upgrade-safety",
+          "title": "Safer local-data upgrades",
+          "text": "Lex adds validation for the local-data upgrade path from released RC versions to the current version, preserving historical migration identities."
+        },
+        {
+          "id": "upstream-stability",
+          "title": "Upstream stability update",
+          "text": "This release synchronizes Cindy v0.1.76 stability fixes and capability improvements while retaining Lex-specific updates, sign-in isolation, and Git workspace behavior."
+        }
+      ]
+    },
+    "ja": {
+      "intro": "Lex 0.1.2-rc.2 バージョン情報",
+      "topics": [
+        {
+          "id": "git-graph-density",
+          "title": "よりコンパクトな Git Graph",
+          "text": "Git Graph では作者、日時、短縮ハッシュをコミット題名の下の一行にまとめ、より多くの履歴を表示できるようになりました。"
+        },
+        {
+          "id": "upgrade-safety",
+          "title": "より安全なローカルデータのアップグレード",
+          "text": "Lex は、公開済み RC から現在のバージョンまでのローカルデータ更新経路の検証を追加し、過去のマイグレーション ID を維持します。"
+        },
+        {
+          "id": "upstream-stability",
+          "title": "上流の安定性アップデート",
+          "text": "Cindy v0.1.76 の安定性修正と機能改善を同期しつつ、Lex 固有の更新、ログイン分離、Git ワークスペースの動作を維持します。"
+        }
+      ]
+    },
+    "ko": {
+      "intro": "Lex 0.1.2-rc.2 버전 정보",
+      "topics": [
+        {
+          "id": "git-graph-density",
+          "title": "더 간결해진 Git Graph",
+          "text": "Git Graph는 이제 작성자, 시간, 짧은 해시를 커밋 제목 아래 한 줄에 함께 표시하여 더 많은 기록을 한 화면에서 볼 수 있습니다."
+        },
+        {
+          "id": "upgrade-safety",
+          "title": "더 안전한 로컬 데이터 업그레이드",
+          "text": "Lex는 공개된 RC 버전에서 현재 버전으로 이어지는 로컬 데이터 업그레이드 경로 검증을 추가하여 기존 마이그레이션 ID를 유지합니다."
+        },
+        {
+          "id": "upstream-stability",
+          "title": "업스트림 안정성 업데이트",
+          "text": "Cindy v0.1.76의 안정성 수정과 기능 개선을 동기화하면서 Lex 전용 업데이트, 로그인 격리, Git 작업 공간 동작을 유지합니다."
+        }
+      ]
+    }
+  }
+}

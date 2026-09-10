@@ -21,6 +21,7 @@ const {
   providersState,
   authState,
   creditUsageState,
+  quotaState,
   modelAccessState,
   apiKeyState,
   primaryActionState,
@@ -31,6 +32,9 @@ const {
     user: { membershipKind: 'personal' } as { membershipKind: 'personal' | 'org' } | null,
     dataOwnerId: 'account-1' as string | null,
     serviceRealm: 'cn' as 'cn' | 'global',
+  },
+  quotaState: {
+    usage: null as import('../hooks/useClaudeAccountUsage').ClaudeAccountUsageSnapshot | null,
   },
   creditUsageState: { available: null as string | null },
   modelAccessState: {
@@ -67,10 +71,22 @@ vi.mock('@/contexts/AuthContext', () => ({
 }));
 
 vi.mock('@/hooks/useModelAccessCreditUsage', () => ({
-  useModelAccessCreditUsage: (enabled: boolean) =>
-    enabled && creditUsageState.available !== null
-      ? { available: creditUsageState.available }
-      : null,
+  useModelAccessCreditUsageResult: (enabled: boolean) => ({
+    usage:
+      enabled && creditUsageState.available !== null
+        ? { available: creditUsageState.available }
+        : null,
+    loading: false,
+    refresh: vi.fn(),
+  }),
+}));
+
+vi.mock('@/hooks/useClaudeAccountUsage', () => ({
+  useClaudeAccountUsageResult: (enabled: boolean) => ({
+    usage: enabled ? quotaState.usage : null,
+    loading: false,
+    refresh: vi.fn(),
+  }),
 }));
 
 vi.mock('@/hooks/useXdAssetPrimaryAction', () => ({
@@ -203,6 +219,7 @@ beforeEach(() => {
   authState.dataOwnerId = 'account-1';
   authState.serviceRealm = 'cn';
   creditUsageState.available = '18.42';
+  quotaState.usage = null;
   modelAccessState.state = 'ok';
   modelAccessState.source = 'server';
   modelAccessState.accountTier = null;
@@ -336,13 +353,16 @@ describe('ProvidersSection — Cindy AI 账户资产模块', () => {
     expect(screen.getByText('settings.providers.pill.connected')).toBeTruthy();
   });
 
-  it('企业账号:整块资产模块不渲染,也不显示占位', async () => {
+  it('企业账号:显示周期额度,不读取个人余额或提供充值', async () => {
     authState.user = { membershipKind: 'org' };
+    quotaState.usage = { spend: 25, maxBudget: 100, currency: 'USD', todaySpend: 5, fetchedAt: 1 };
     renderSection();
 
     await screen.findAllByText('settings.providers.xd.title');
     expect(screen.queryByText('billing.balance.title')).toBeNull();
     expect(screen.queryByText('cny:18.42')).toBeNull();
+    expect(screen.getByText('USD:75')).toBeTruthy();
+    expect(primaryActionState.lastEnabled).toBe(false);
     expect(screen.queryByText('billing.settings.topupCard.action')).toBeNull();
   });
 
@@ -355,12 +375,14 @@ describe('ProvidersSection — Cindy AI 账户资产模块', () => {
     expect(screen.queryByText('billing.balance.title')).toBeNull();
   });
 
-  it('拿不到余额:不渲染余额区,不显示「—」占位', async () => {
+  it('拿不到余额:显示说明和就地重试,不伪造零余额', async () => {
     creditUsageState.available = null;
     renderSection();
 
     await screen.findAllByText('settings.providers.xd.title');
-    expect(screen.queryByText('billing.balance.title')).toBeNull();
+    expect(screen.getByText('billing.balance.title')).toBeTruthy();
+    expect(screen.getByText('settings.providers.xd.asset.unavailable')).toBeTruthy();
+    expect(screen.getByText('settings.providers.xd.asset.refresh')).toBeTruthy();
     expect(screen.queryByText('settings.providers.xd.asset.syncFailed')).toBeNull();
   });
 

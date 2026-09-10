@@ -114,6 +114,7 @@ import {
 import { resolveIOSSimulatorDesktopAdmissionPolicy } from './ios-simulator-admission.js';
 import { registerIOSSimulatorExitAbortHandler } from './ios-simulator-exit.js';
 import { compareIOSSimulatorPngBuffers, IOSSimulatorMediaCapture } from './ios-simulator-media.js';
+import { readIOSSimulatorPreferences } from './ios-simulator-preferences.js';
 import {
   clearIOSSimulatorRendererAccess,
   configureIOSSimulatorRendererAccessRevocationObserver,
@@ -556,6 +557,8 @@ export interface IOSSimulatorHostOptions {
   withSessionLock?: <T>(sessionId: string, task: () => Promise<T>) => Promise<T>;
   resolveWorktreeRoot?: (workDir: string) => Promise<string>;
   requestViewerFocus?: (sessionId: string, instanceId: string) => void;
+  /** Owner preference gate for automatic presentation only; explicit focus bypasses it. */
+  shouldAutoOpenViewer?: () => boolean;
   /** Main → renderer route diagnostics seam; injected in tests, broadcast by default. */
   pushRouteStatus?: (status: IOSSimulatorPublicRouteStatus) => void;
   /** Main → exact owning viewer frame seam; injected in tests, fail-closed by default. */
@@ -2286,6 +2289,11 @@ export function createIOSSimulatorHost(options: IOSSimulatorHostOptions = {}): I
         });
       }
     });
+  const shouldAutoOpenViewer = options.shouldAutoOpenViewer ?? (() => true);
+  const requestAutomaticViewerFocus = (sessionId: string, instanceId: string): void => {
+    if (!shouldAutoOpenViewer()) return;
+    requestViewerFocus(sessionId, instanceId);
+  };
 
   async function resolveSession(
     sessionId: string,
@@ -5214,7 +5222,7 @@ export function createIOSSimulatorHost(options: IOSSimulatorHostOptions = {}): I
           viewerSessions.delete(instance.instanceId);
           viewerVisibilityIntents.delete(instance.instanceId);
           clearViewportState(instance.instanceId);
-          requestViewerFocus(sessionId, instance.instanceId);
+          requestAutomaticViewerFocus(sessionId, instance.instanceId);
           publishRouteStatusForInstance(instance, getDriverManager().get(instance.instanceId));
           return {
             ok: true,
@@ -6648,7 +6656,7 @@ export function createIOSSimulatorHost(options: IOSSimulatorHostOptions = {}): I
           } finally {
             unpinArtifact(artifactId);
           }
-          requestViewerFocus(sessionId, route.instanceId);
+          requestAutomaticViewerFocus(sessionId, route.instanceId);
           return { ok: true, data: { artifactId, launched: true } };
         }
         if (name === 'terminate_app') {
@@ -7396,6 +7404,7 @@ function installDefaultIOSSimulatorHost(
       ...(pendingCreateEvidence ? { pendingCreateEvidence } : {}),
       ...(seams.getSession ? { getSession: seams.getSession } : {}),
       driverManager: createDefaultDriverManager(),
+      shouldAutoOpenViewer: () => readIOSSimulatorPreferences().autoOpenEmbeddedPanel,
     });
     configureIOSSimulatorRendererAccessRevocationObserver((grants) => {
       for (const grant of grants) {

@@ -1,4 +1,5 @@
 import {
+  type GhostRecommendation,
   GHOST_LOCALES,
   GHOST_MANIFEST_SUMMARY_MAX_CHARS,
   GHOST_OAUTH_SCOPES_MAX,
@@ -1367,6 +1368,8 @@ export function isGhostSetupErrorCode(value: unknown): value is GhostSetupErrorC
 
 /** ghost.json 清单(不变量由 validateGhostManifest 保证)。 */
 export interface GhostManifest {
+  /** Optional v3 extension, validated only when projecting homepage recommendations. */
+  recommendations?: unknown;
   /** 原始清单格式版本；v2 已在解析边界投影成与 v3 相同的直接字段。 */
   schemaVersion: 2 | 3;
   /** 唯一标识,同时是安装目录名与 panelKind 后缀。 */
@@ -2085,7 +2088,8 @@ export function ghostPermissionItems(manifest: GhostManifest): GhostPermissionIt
     items.push({ key: 'fs', kind: 'fs', labelKey: 'fsWrite', detailKey: 'fsWriteDetail' });
   }
   // library 能力:持久作品库(用户数据语义,不是临时缓存)。详情页必须讲清
-  // 卸载不删、删除走独立确认,以及会打开系统文件夹/另存为对话框。
+  // 卸载不删、删除走独立确认、会打开系统文件夹/另存为对话框,以及可把 PNG
+  // 位图写入系统剪贴板(无确认框,会覆盖当前剪贴板)。
   if (manifest.library === true) {
     items.push({
       key: 'library',
@@ -6217,6 +6221,12 @@ export type GhostPipeHostRequest =
       capability: GhostMediaCapability;
     };
 
+/** Replaces only the calling plugin's catalog; never starts a task. */
+export interface GhostPipeRecommendationsUpdate {
+  type: 'recommendations-update';
+  items: GhostRecommendation[];
+}
+
 /** 插件请求 Agent 新回合时可选的会话处理方式。 */
 export const GHOST_AGENT_RUN_MODES = ['continue', 'fork', 'new'] as const;
 export type GhostAgentRunMode = (typeof GHOST_AGENT_RUN_MODES)[number];
@@ -8228,6 +8238,7 @@ export type GhostPipeFsResult =
 export const GHOST_LIBRARY_OPS = [
   'open',
   'status',
+  'capabilities',
   'read',
   'write',
   'writeBegin',
@@ -8248,8 +8259,54 @@ export const GHOST_LIBRARY_OPS = [
   'db.userVersion',
   'reveal',
   'saveAs',
+  'clipboardWrite',
 ] as const;
 export type GhostLibraryOp = (typeof GHOST_LIBRARY_OPS)[number];
+
+/** v1 能力清单只表达宿主实现支持,不等于此刻有窗口 / 已授权 / 库可用。 */
+export const GHOST_LIBRARY_CAPABILITY_OPERATIONS = ['clipboardWrite', 'saveAs'] as const;
+export type GhostLibraryCapabilityOperation = (typeof GHOST_LIBRARY_CAPABILITY_OPERATIONS)[number];
+
+export const GHOST_LIBRARY_CAPABILITIES_V1 = {
+  version: 1 as const,
+  operations: GHOST_LIBRARY_CAPABILITY_OPERATIONS,
+};
+
+/** 宿主实际操作的稳定失败类别;TIMEOUT / TRANSPORT_ERROR 由插件查询层本地分类,不从 message 猜测。 */
+export const GHOST_LIBRARY_ERROR_REASONS = [
+  'IMPLEMENTATION_UNSUPPORTED',
+  'NO_VISIBLE_WINDOW',
+  'PERMISSION_DENIED',
+  'LIBRARY_UNAVAILABLE',
+  'INVALID_REQUEST',
+  'CANCELLED',
+] as const;
+export type GhostLibraryErrorReason = (typeof GHOST_LIBRARY_ERROR_REASONS)[number];
+
+/**
+ * 消费 capabilities 结果:仅 version=1 且 operations 为字符串数组才有效。
+ * 额外字段忽略,未知 operation 忽略,已知项保留;有效 v1 缺某项才是 unsupported;
+ * 缺字段 / 错类型 / version 非 1 / 旧宿主 unknown-op 一律 unknown。
+ */
+export function classifyGhostLibraryOperationSupport(
+  result: unknown,
+  operation: GhostLibraryCapabilityOperation,
+): 'supported' | 'unsupported' | 'unknown' {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return 'unknown';
+  const row = result as Record<string, unknown>;
+  if (row.ok !== true || row.op !== 'capabilities') return 'unknown';
+  const caps = row.capabilities;
+  if (!caps || typeof caps !== 'object' || Array.isArray(caps)) return 'unknown';
+  const body = caps as Record<string, unknown>;
+  if (body.version !== 1 || !Array.isArray(body.operations)) return 'unknown';
+  if (!body.operations.every((item) => typeof item === 'string')) return 'unknown';
+  const known = new Set<string>(GHOST_LIBRARY_CAPABILITY_OPERATIONS);
+  const listed = new Set<string>();
+  for (const item of body.operations) {
+    if (known.has(item)) listed.add(item);
+  }
+  return listed.has(operation) ? 'supported' : 'unsupported';
+}
 
 /** 上行:library 请求(cindy.library(req) ≡ send({type:'library-request', …req}))。 */
 export interface GhostPipeLibraryRequest {
@@ -8257,7 +8314,7 @@ export interface GhostPipeLibraryRequest {
   op: GhostLibraryOp;
   /** library 相对路径(段数/总长上限比 fs 宽:32 段/512 字符)。 */
   path?: string;
-  /** write 内容(≤16MiB;更大走 writeBegin 分块流)。 */
+  /** write 内容(≤16MiB;更大走 writeBegin 分块流);clipboardWrite 只收 encoding:'base64' 的 PNG 字节。 */
   content?: string;
   encoding?: 'utf8' | 'base64';
   /** write:排他创建(目标已存在则 ALREADY_EXISTS)。 */
@@ -8353,7 +8410,18 @@ export type GhostPipeLibraryResult =
   | { ok: true; op: 'saveAs'; cancelled: true }
   /** saveAs 成功:path 是库内相对键(与请求相同),不是用户另存到的绝对路径。 */
   | { ok: true; op: 'saveAs'; cancelled: false; path: string; bytes: number }
-  | { ok: false; errorCode: string; message: string };
+  /** clipboardWrite 成功:bytes 是写入系统剪贴板的 PNG 位图字节数,不是文件引用。 */
+  | { ok: true; op: 'clipboardWrite'; bytes: number }
+  /** capabilities:无会话只读查询;operations 只表示实现支持。 */
+  | {
+      ok: true;
+      op: 'capabilities';
+      capabilities: {
+        version: 1;
+        operations: GhostLibraryCapabilityOperation[];
+      };
+    }
+  | { ok: false; errorCode: string; message: string; reason?: GhostLibraryErrorReason };
 
 /** Library 概览(ghosts:library-overview IPC 载荷;设置页插件详情消费)。 */
 export interface GhostLibraryOverview {

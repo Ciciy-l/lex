@@ -62,7 +62,7 @@ test('release workflows keep one package while choosing signed or versioned unsi
     /pnpm check:dco -- --base "\$\{GITHUB_SHA\}\^1" --head "\$GITHUB_SHA"/,
   );
   assert.match(preview, /pnpm check:dco -- --base origin\/main --head "\$GITHUB_SHA"/);
-  assert.match(release, /--upstream-baseline 1857e28e60effe9dc04d910d67e807ea166308ad/);
+  assert.match(release, /--upstream-baseline 0d1a5c7da95e22a1215dc5ad637bf60549453ee8/);
   assert.doesNotMatch(preview, /--upstream-baseline/);
   assert.doesNotMatch(`${release}\n${preview}`, /^\s*pnpm check:dco\s*$/m);
   for (const [name, workflow] of [

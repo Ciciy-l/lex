@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { DEVICE_LINK_PUSH } from '../shared/deviceLinkIpc';
 import type { MobileCodexRateLimitsResult } from '@cindy/maker-shared/device-link-contract';
 import type { AppearanceSettings } from '../shared/appearanceSettings';
 import type {
@@ -222,6 +223,7 @@ import type {
   IOSSimulatorAccessRequestResult,
   IOSSimulatorCopyScreenshotRequest,
   IOSSimulatorCopyScreenshotResult,
+  IOSSimulatorPreferences,
   IOSSimulatorSessionStatus,
   IOSSimulatorAgentControlRequest,
   IOSSimulatorFocusRequest,
@@ -757,6 +759,10 @@ const fanOutIOSSimulatorRouteStatus = createIpcFanOut(IOS_SIMULATOR_ROUTE_STATUS
 const fanOutMakerSessionBackgroundActivityChanged = createIpcFanOut(
   'maker:session-background-activity-changed',
 );
+const fanOutBotDelegationChanged = createIpcFanOut('maker:bot-delegation:changed');
+const fanOutBotDirectMessageChanged = createIpcFanOut('maker:bot-direct-message:changed');
+const fanOutBotProfileChanged = createIpcFanOut('maker:bot-profile:changed');
+const fanOutBotLifecycleChanged = createIpcFanOut('maker:bot-lifecycle:changed');
 const fanOutMakerPiPackagesChanged = createIpcFanOut('maker:pi-packages:changed');
 const fanOutMakerUsageTodaySpend = createIpcFanOut('usage:today-spend-changed'); // Claude USD
 const fanOutMakerUsageTodayTokens = createIpcFanOut('usage:today-tokens-changed'); // Codex token
@@ -789,6 +795,7 @@ const fanOutDeviceLinkKeepAwakeChanged = createIpcFanOut('device-link:keep-awake
 const fanOutDeviceLinkOwnershipChanged = createIpcFanOut('device-link:ownership-changed');
 // 控制端:目标设备「无响应」熔断状态翻转(payload = { deviceId, unresponsive })
 const fanOutDeviceLinkResponsivenessChanged = createIpcFanOut('device-link:responsiveness-changed');
+const fanOutDeviceLinkPeerLinkReset = createIpcFanOut(DEVICE_LINK_PUSH.PEER_LINK_RESET);
 
 // device-link 模型列表写穿:被控端本地 main → 自身 renderer,把控制端写穿的草稿 / 会话 pref
 // 交给 renderer 调它原来的本地 setter。仅被控端进程会收到(控制端从不收 → 监听不误触发)。
@@ -1160,6 +1167,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 意识仓库 (shared/ghost.ts)。listSync 走 sendSync:意识面板要与内置
   // 面板同帧注册进布局引擎(规则 7 无跳变);目录扫描极小,同步读不卡启动。
   ghosts: {
+    recommendationsSync: (): import('../shared/homePluginRecommendations').HomePluginRecommendationsSnapshot =>
+      ipcRenderer.sendSync('ghosts:recommendations'),
     listSync: (): { ghosts: unknown[] } => ipcRenderer.sendSync('ghosts:list'),
     recentUsageSync: (): { ids: string[] } => {
       try {
@@ -3208,6 +3217,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Market 分类列表
     listCategories: (params?: {
       scope?: import('../shared/skillhubCatalog').SkillhubCatalogScope;
+      /** Defaults to true for publish/edit pickers; browse filters pass false. */
+      includeEmpty?: boolean;
     }): Promise<{
       success: boolean;
       categories?: import('../shared/skillhubCategory').MarketCategory[];
@@ -3777,6 +3788,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openLogsDir: (): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('app:open-logs-dir'),
 
+  // Open <userData>/cindy-make/tools in the OS file manager (Settings → Cindy Make).
+  openCindyMakeToolsDir: (): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('app:open-cindy-make-tools-dir'),
+
   // ── 客户端日志上报(Settings → About)──
   // 真相在 main:是否配置了上报目标、是否已同意隐私政策、开关的 override 状态都由 main
   // 判定,renderer 只消费结论。上传编号由 main 生成并回传,用户报障时口述给我们。
@@ -3909,8 +3924,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
       entries: { name: string; kind: 'dir' | 'symlink'; path: string }[];
       parent: string | null;
     }> => ipcRenderer.invoke('fs:list-dir', { path }),
-    statPath: (path: string): Promise<{ kind: 'dir' | 'file' | 'missing'; resolvedPath: string }> =>
-      ipcRenderer.invoke('fs:stat-path', { path }),
+    statPath: (
+      path: string,
+    ): Promise<{
+      kind: 'dir' | 'file' | 'missing';
+      resolvedPath: string;
+      mtimeMs?: number;
+      birthtimeMs?: number;
+      sizeBytes?: number;
+    }> => ipcRenderer.invoke('fs:stat-path', { path }),
     mkdirP: (path: string): Promise<{ resolvedPath: string }> =>
       ipcRenderer.invoke('fs:mkdir-p', { path }),
   },
@@ -4273,6 +4295,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onOwnershipChanged: fanOutDeviceLinkOwnershipChanged,
     /** 控制端:目标设备「无响应」熔断状态翻转,payload: { deviceId, unresponsive } */
     onResponsivenessChanged: fanOutDeviceLinkResponsivenessChanged,
+    onPeerLinkReset: fanOutDeviceLinkPeerLinkReset,
     /**
      * 控制端:远程会话镜像的本地冷缓存(main 落 userData,见 main/device-link/mirrorCacheStore.ts)。
      * 只做首屏加速,非权威;fresh 数据一到由 renderer 整体接管。
@@ -5126,6 +5149,31 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('local-db:sessions:ack-interrupted', id),
       // Stage 2 C2: fork 已迁到 electronAPI.maker.fork (走 maker:fork IPC)。
     },
+    bots: {
+      getModelChainSettings: (): Promise<{
+        modelChain: import('../shared/botModelChain').BotModelRoute[];
+        isCustomized: boolean;
+      }> => ipcRenderer.invoke('local-db:bots:model-chain-settings-get'),
+      setModelChainSettings: (body: {
+        modelChain: import('../shared/botModelChain').BotModelRoute[];
+      }): Promise<{
+        modelChain: import('../shared/botModelChain').BotModelRoute[];
+        isCustomized: boolean;
+      }> => ipcRenderer.invoke('local-db:bots:model-chain-settings-set', body),
+      list: (body?: { lastReadAtByBotId?: Record<string, number> }): Promise<unknown[]> =>
+        ipcRenderer.invoke('local-db:bots:list', body),
+      get: (botId: string): Promise<unknown> => ipcRenderer.invoke('local-db:bots:get', botId),
+      chooseAvatar: (body: { botId: string }): Promise<unknown> =>
+        ipcRenderer.invoke('local-db:bots:choose-avatar', body),
+      searchHistory: (body: unknown): Promise<unknown> =>
+        ipcRenderer.invoke('local-db:bots:search-history', body),
+      create: (body: unknown): Promise<unknown> => ipcRenderer.invoke('local-db:bots:create', body),
+      update: (body: unknown): Promise<unknown> => ipcRenderer.invoke('local-db:bots:update', body),
+      createCanonicalSession: (body: unknown): Promise<unknown> =>
+        ipcRenderer.invoke('local-db:bots:create-canonical-session', body),
+      history: (botId: string): Promise<unknown[]> =>
+        ipcRenderer.invoke('local-db:bots:history', botId),
+    },
     conversations: {
       search: (request: unknown): Promise<unknown> =>
         ipcRenderer.invoke('local-db:conversations:search', request),
@@ -5465,6 +5513,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onAgentsChanged: fanOutMakerAgentsChanged,
     getCapabilities: (agentKind: 'claude-code' | 'codex' | 'pi'): Promise<unknown> =>
       ipcRenderer.invoke('maker:get-capabilities', agentKind),
+    listBotDelegations: (
+      parentSessionId: string,
+    ): Promise<import('../shared/botDelegation').BotDelegationListResult> =>
+      ipcRenderer.invoke('maker:bot-delegations:list', parentSessionId),
+    cancelBotDelegation: (
+      parentSessionId: string,
+      delegationId: string,
+    ): Promise<import('../shared/botDelegation').BotDelegationCancelResult> =>
+      ipcRenderer.invoke('maker:bot-delegation:cancel', parentSessionId, delegationId),
+    onBotDelegationChanged: fanOutBotDelegationChanged,
+    getBotDirectMessageThread: (
+      threadId: string,
+      viewerBotId: string,
+    ): Promise<import('../shared/botDirectMessage').BotDirectMessageThreadResult> =>
+      ipcRenderer.invoke('maker:bot-direct-message-thread:get', threadId, viewerBotId),
+    onBotDirectMessageChanged: fanOutBotDirectMessageChanged,
+    onBotProfileChanged: fanOutBotProfileChanged,
+    runBotLifecycleAction: (
+      request: import('../shared/botLifecycle').BotLifecycleActionRequest,
+    ): Promise<import('../shared/botLifecycle').BotLifecycleActionResult> =>
+      ipcRenderer.invoke('maker:bot-lifecycle:action', request),
+    onBotLifecycleChanged: fanOutBotLifecycleChanged,
     listTurnChangeSets: (
       sessionId: string,
     ): Promise<import('../shared/turnChangeSet').TurnChangeSetSummary[]> =>
@@ -5777,6 +5847,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
       target: import('../shared/modelPriceOverride').ModelPriceOverrideTarget,
     ): Promise<import('../shared/modelPriceOverride').ModelPriceOverrideView> =>
       ipcRenderer.invoke('maker:model-price-override:reset', target),
+    /**
+     * 单模型上下文上限 override(设置 → 模型 → 高级设置)。窗口是自动压缩比例的分母,
+     * 调小它让压缩按用户设的长度提前触发。target 与价格 override 同形。
+     * set 传 null = 恢复默认(删 override);返回落盘后的有效值与是否自定义。
+     */
+    getModelContextLimit: (
+      target: import('../shared/modelContextLimit').ModelContextLimitTarget,
+    ): Promise<import('../shared/modelContextLimit').ModelContextLimitView> =>
+      ipcRenderer.invoke('maker:model-context-limit:get', target),
+    setModelContextLimit: (
+      target: import('../shared/modelContextLimit').ModelContextLimitTarget,
+      limit: number | null,
+      owner: import('../shared/modelContextLimit').ModelContextLimitOwner,
+    ): Promise<import('../shared/modelContextLimit').ModelContextLimitView> =>
+      ipcRenderer.invoke('maker:model-context-limit:set', target, limit, owner),
+    resetModelContextLimit: (
+      target: import('../shared/modelContextLimit').ModelContextLimitTarget,
+      owner: import('../shared/modelContextLimit').ModelContextLimitOwner,
+    ): Promise<import('../shared/modelContextLimit').ModelContextLimitView> =>
+      ipcRenderer.invoke('maker:model-context-limit:reset', target, owner),
 
     // 「在新窗口打开」会话多开 —— 新建一个完整窗口定位到该 session。
     openSessionInNewWindow: (sessionId: string, deviceId?: string | null): Promise<void> =>
@@ -5813,9 +5903,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     executeDesktopCommand: (
       name: string,
       // deviceId:device-link 远程会话的归属设备(main 侧 /goal /learn /cmd 据此隧道路由)。
-      ctx: { sessionId?: string; workingDir?: string; args?: string; deviceId?: string },
-    ): Promise<{ success: boolean; error?: string }> =>
-      ipcRenderer.invoke('maker:execute-desktop-command', name, ctx),
+      ctx: {
+        sessionId?: string;
+        workingDir?: string;
+        args?: string;
+        deviceId?: string;
+      } & import('../shared/cindyMakeDoctor').MakeDoctorCommandContext,
+    ): Promise<{
+      success: boolean;
+      error?: string;
+      doctorReport?: import('../shared/cindyMakeDoctor').MakeDoctorReport;
+    }> => ipcRenderer.invoke('maker:execute-desktop-command', name, ctx),
 
     startReview: (input: {
       sourceSessionId: string;
@@ -5846,7 +5944,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     listAgentSkills: (
       agentKind: 'claude-code' | 'codex' | 'pi',
-      params: { workingDir?: string; forceReload?: boolean; sessionId?: string },
+      params: {
+        workingDir?: string;
+        remoteHostId?: string;
+        forceReload?: boolean;
+        sessionId?: string;
+      },
     ): Promise<{
       success: boolean;
       error?: string;
@@ -5882,6 +5985,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onDesktopCommandTriggered: (
       handler: (payload: {
         command: string;
+        doctorReport?: import('../shared/cindyMakeDoctor').MakeDoctorReport;
         sessionId?: string;
         workingDir?: string;
         args?: string;
@@ -7177,6 +7281,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('maker:android:prepare-adb'),
     },
     iosSimulator: {
+      getPreferences: (): Promise<IOSSimulatorPreferences> =>
+        ipcRenderer.invoke('maker:ios-simulator:get-preferences'),
+      setAutoOpenEmbeddedPanel: (enabled: boolean): Promise<IOSSimulatorPreferences> =>
+        ipcRenderer.invoke('maker:ios-simulator:set-auto-open-embedded-panel', { enabled }),
       requestAccess: (
         request: IOSSimulatorAccessRequest,
       ): Promise<IOSSimulatorAccessRequestResult> =>

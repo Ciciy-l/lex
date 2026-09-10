@@ -3464,6 +3464,12 @@ const st = await cindy.library({ op: 'status' });
 // st = { ok:true, state:'ready', usedBytes, fileCount, diskFreeBytes,
 //        softLimitBytes, softLimitExceeded, location:'default'|'custom' }
 
+// 只读能力查询:资格审与 op 合法性之后、会话创建之前返回;不打开库、不弹窗
+const caps = await cindy.library({ op: 'capabilities' });
+// caps = { ok:true, op:'capabilities',
+//          capabilities:{ version:1, operations:['clipboardWrite','saveAs'] } }
+// operations 只表示宿主实现了这些 op,不等于此刻有窗口 / 已授权 / 库可用
+
 // 文件操作(全 Family;写入原子化,大文件走分块流)
 await cindy.library({ op: 'write', path: 'canvases/c1/state.json', content: s });
 await cindy.library({ op: 'read', path: 'canvases/c1/state.json', encoding: 'base64' });
@@ -3486,6 +3492,14 @@ const saved = await cindy.library({ op: 'saveAs', path: 'exports/a.psd', name: '
 //      或 { ok:true, cancelled:false, path:'exports/a.psd', bytes }
 // path 永远是库内相对键,不是用户另存到的绝对路径
 
+// 写系统剪贴板 PNG 位图(不是 Finder 文件列表,也不是 saveAs)
+const copied = await cindy.library({
+  op: 'clipboardWrite', content: pngBase64, encoding: 'base64',
+});
+// copied = { ok:true, bytes }  —— bytes 是写入的 PNG 字节数
+// 空字节 / 非 base64 / 非 PNG / 超限 → { ok:false, errorCode, message }
+// 外部应用能否粘上由操作系统剪贴板决定,插件侧不要自己承诺粘贴完成
+
 // SQLite:参数化语句 + 首词白名单(SELECT/WITH/INSERT/REPLACE/UPDATE/DELETE/
 // CREATE/DROP/ALTER/REINDEX/ANALYZE);ATTACH/PRAGMA/VACUUM/事务语句一律拒,
 // 事务由宿主管理(db.batch 整批原子),迁移按 user_version 幂等续跑
@@ -3504,12 +3518,23 @@ await cindy.library({ op: 'db.check',  dbPath: 'library.sqlite' });  // quick_ch
 
 关键语义(全部由宿主强制):
 
-- **失败是结构化的**:\`{ ok:false, errorCode, message }\`,常用码
-  \`LIBRARY_UNAVAILABLE\`(含 reason:binding-moved/disk-missing/corrupt)、
+- **失败是结构化的**:\`{ ok:false, errorCode, message, reason? }\`。旧
+  \`errorCode\` 保留;另加稳定 \`reason\` 供分类,不要解析人类 \`message\`。
+  常用码 \`LIBRARY_UNAVAILABLE\`(含 open/status 的 binding-moved/disk-missing/corrupt)、
   \`LIBRARY_READONLY\`、\`DISK_FULL\`、\`PATH_INVALID\`、\`NOT_FOUND\`、
   \`ALREADY_EXISTS\`、\`TOO_LARGE\`、\`STREAM_INVALID\`、\`DB_STATEMENT_REJECTED\`、
   \`DB_ROW_LIMIT\`(结果集超 2000 行,自己加 LIMIT)、\`DB_MIGRATION_CONFLICT\`、
-  \`BUSY\`、\`RATE_LIMITED\`;
+  \`BUSY\`、\`RATE_LIMITED\`、\`UNSUPPORTED\`、\`NOT_DECLARED\`;
+  稳定 \`reason\`:无 handler=\`IMPLEMENTATION_UNSUPPORTED\`,无窗口=\`NO_VISIBLE_WINDOW\`,
+  权限=\`PERMISSION_DENIED\`,库不可用=\`LIBRARY_UNAVAILABLE\`(含 vault 透传的
+  open/status 失败),非法请求=\`INVALID_REQUEST\`(含非法/越界 dbPath 与未知 op),
+  取消=\`CANCELLED\`;成功 open/status 的 \`state:'unavailable'\` 仍用结果体 reason
+  (如 disk-missing),不是失败 reason 枚举;查询/传输层本地分类 \`TIMEOUT\` / \`TRANSPORT_ERROR\`;
+- **capabilities**:先查 \`{ op:'capabilities' }\`。仅 \`version===1\` 且
+  \`operations\` 为**全部字符串**的数组才有效;额外字段忽略,未知 operation 忽略,
+  已知项保留;有效 v1 清单缺少某项才是 unsupported。缺字段、错类型(含数组内混入
+  非字符串)、\`version\` 非 1、或旧宿主 unknown-op 一律 unknown,不得把其中碰巧
+  合法的项当成有效清单。查询本身不证明窗口/授权/库可用,也不要求旧插件重装;
 - **reveal / saveAs**:只收库内相对路径。成功不回用户另存目标的绝对路径;
   取消是 \`{ cancelled:true }\`。reveal 打开系统文件夹、saveAs 弹系统对话框
   (跨平台标题带已核验插件名;macOS 另有正文),同插件 3 秒内连发 \`RATE_LIMITED\`;
@@ -3517,6 +3542,12 @@ await cindy.library({ op: 'db.check',  dbPath: 'library.sqlite' });  // quick_ch
   对话框期间账号切换则拒绝拷贝(\`LIBRARY_UNAVAILABLE\`);
   拷贝完成替换前、reveal 打开文件夹前再核一次会话;
   确认后先拷到目标旁临时文件再替换,失败不破坏已有文件;
+- **clipboardWrite**:只收 \`encoding:'base64'\` 的 PNG 字节,写系统剪贴板位图,
+  成功回 \`{ ok:true, bytes }\`。不是 saveAs,也不在文件夹中显示作品。
+  空字节 / 非法 encoding / 非 PNG / 超限一律结构化失败,永不 \`ok:true\`。
+  同插件 3 秒内连发 \`RATE_LIMITED\`;无主壳窗 / 宿主不能写剪贴板 \`UNSUPPORTED\`;
+  账号切换后旧会话不得继续写(\`LIBRARY_UNAVAILABLE\`)。
+  外部粘贴是否成功由操作系统与目标应用决定,插件侧不要单独承诺已粘上;
 - **不可用 ≠ 空**:\`state:'unavailable'\` 时**不要**当空库重建、不要触发
   清理、不要把素材判成已删——如实向用户展示状态,等位置恢复;
 - **无跨库事务**:多个 .sqlite 之间没有 ATTACH;跨库一致性用幂等 + 墓碑
@@ -4272,6 +4303,36 @@ const opened = await cindy.iosSimulator.request({
   partition、CSP 和导航守门不变。\`mainView\` 本身不附赠联网、文件、凭证或其它能力；
 - 页面需要电子脑逻辑时仍先 \`fetch('/wake')\`，通信和媒体协议与 §5 完全相同。插件停用、
   卸载或失去批准后，Host 会卸载页面并退出该路由。
+
+## 4.21 为插件添加推荐任务（可选内容）
+
+在 v3 ghost.json 顶层添加 \`recommendations\` 数组，每条包含稳定 \`id\`、短标题
+\`label\` 和完整 \`prompt\`。最多 24 条，id 为 1–64 位小写字母、数字或连字符，
+label 为 1–120 字符，prompt 为 1–8000 字符；整份列表 UTF-8 不超过 64 KiB。
+可选 \`locales\` 按 en / zh-CN / zh-TW / ja / ko 提供 \`{label,prompt}\`，
+缺当前语言时使用 en，再回退条目自身。不要放秘密或其它账号的内容。
+宿主在生成首页候选时校验此列表，不合格的列表不展示，但不影响插件安装、批准和运行。
+v2 清单继续忽略此扩展字段；运行时更新始终严格校验，不合格的更新不会替换原列表。
+
+\`\`\`json
+{"recommendations":[{"id":"daily-mail","label":"整理今天需要处理的邮件","prompt":"整理今天需要我处理的邮件，列出待办和原文中的截止时间。先给清单，不发送或删除邮件。"}]}
+\`\`\`
+
+运行中的电子脑可调用 \`await cindy.recommendations(items)\`，等价于
+\`cindy.send({type:'recommendations-update',items})\`。Host 从真实沙箱绑定取得身份，
+只替换调用插件自己的完整推荐任务列表；返回 \`{ok:true}\` 或 \`{ok:false,errorCode}\`。
+这不是能力 slot，不执行任务、不授予新权限。面板仍为零桥，需要更新时经同源通信
+交给电子脑。Node 子程序同样由自己的 main.js 代转管子。
+
+运行时列表按当前用户保存，重启保留；卸载清除，停用保留。空数组明确撤下全部推荐，
+不会退回初始推荐任务列表；不提供此字段的旧插件继续正常使用。首页打开或换批时读取最新列表，
+不为获取推荐任务启动所有插件；已显示的一批保持稳定，点击前重新核对是否撤回或改变。
+
+Cindy 统一归类、随机选择与排序，同批每个场景和每个插件最多一条。增加推荐任务数量不会增加
+插件的抽取机会。若只想提供某个场景的任务，替换为仅含该任务的列表即可，但不能指定
+首页位置或优先级。用户主动首装优先，更新包或替换推荐任务列表不算新安装，首次使用后回到普通排序。
+点击推荐后才将 prompt 作为普通用户消息发送，绝不进入系统提示词。未安装/未启用时
+进入已有插件详情，由用户安装或启用后继续；账号配置仍复用 Host Setup 的原调用接续。
 
 ## 5. 面板(panel.html/css/js)
 

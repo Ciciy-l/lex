@@ -9,13 +9,21 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import Database from 'better-sqlite3';
 
-import { GhostLibrarySlot, libraryAvailableRef, type GhostLibrarySlotDeps } from '../librarySlot.js';
+import {
+  GhostLibrarySlot,
+  LIBRARY_CLIPBOARD_WRITE_MAX_BYTES,
+  libraryAvailableRef,
+  type GhostLibrarySlotDeps,
+} from '../librarySlot.js';
 import { createHash } from 'node:crypto';
 import { LibraryBindingStore } from '../libraryBinding.js';
 import { LibraryVault } from '../libraryVault.js';
 import { createLibraryDbCore, type SqliteDatabaseConstructor } from '../libraryDbCore.js';
 import { LibrarySqlService } from '../librarySqlService.js';
-import type { InstalledGhost } from '../../../shared/ghost.js';
+import {
+  classifyGhostLibraryOperationSupport,
+  type InstalledGhost,
+} from '../../../shared/ghost.js';
 
 const Ctor = Database as unknown as SqliteDatabaseConstructor;
 const GHOST_ID = 'mivo-canvas';
@@ -50,7 +58,12 @@ describe('GhostLibrarySlot', () => {
   let bindingStore: LibraryBindingStore;
   let showItemInFolder: ReturnType<typeof vi.fn>;
   let showSaveDialog: ReturnType<typeof vi.fn>;
+  let writeClipboardPng: ReturnType<typeof vi.fn>;
   let syncAgentReadonlyExtraDir: ReturnType<typeof vi.fn>;
+  let captureOwnerScope: ReturnType<typeof vi.fn>;
+  let resolveLibraryRoot: ReturnType<typeof vi.fn>;
+  let createVault: ReturnType<typeof vi.fn>;
+  let createSqlService: ReturnType<typeof vi.fn>;
   let clock: number;
 
   beforeEach(async () => {
@@ -67,28 +80,37 @@ describe('GhostLibrarySlot', () => {
       getManagedRoots: () => [path.join(tmp, 'managed')],
       getDefaultRoot: (id) => path.join(defaultRootBase, id),
     });
+    captureOwnerScope = vi.fn(() => scopeKey);
+    const originalResolve = bindingStore.resolveLibraryRoot.bind(bindingStore);
+    resolveLibraryRoot = vi.fn((ghostId: string) => originalResolve(ghostId));
+    bindingStore.resolveLibraryRoot = ((ghostId: string) => resolveLibraryRoot(ghostId)) as LibraryBindingStore['resolveLibraryRoot'];
+    createVault = vi.fn((d) => new LibraryVault(d));
+    createSqlService = vi.fn((d) =>
+      new LibrarySqlService({
+        ...d,
+        createCore: (ctor) => createLibraryDbCore({ DatabaseCtor: ctor }),
+        inProcessCtor: Ctor,
+      }),
+    );
     const deps: GhostLibrarySlotDeps = {
       getGhost: (id) => ghosts.get(id) ?? null,
       bindingStore,
       getDefaultRoot: (id) => path.join(defaultRootBase, id),
-      captureOwnerScope: () => scopeKey,
-      createVault: (d) => new LibraryVault(d),
-      createSqlService: (d) =>
-        new LibrarySqlService({
-          ...d,
-          createCore: (ctor) => createLibraryDbCore({ DatabaseCtor: ctor }),
-          inProcessCtor: Ctor,
-        }),
+      captureOwnerScope: () => captureOwnerScope(),
+      createVault: (d) => createVault(d),
+      createSqlService: (d) => createSqlService(d),
       getDiskFreeBytes: async () => 1024 ** 4,
       workerScriptPath: () => path.join(tmp, 'unused-worker.js'),
       betterSqliteModulePath: () => 'better-sqlite3',
       showItemInFolder: (...args: unknown[]) => showItemInFolder(...args),
       showSaveDialog: (...args: unknown[]) => showSaveDialog(...args),
+      writeClipboardPng: (...args: unknown[]) => writeClipboardPng(...args),
       syncAgentReadonlyExtraDir: (...args: unknown[]) => syncAgentReadonlyExtraDir(...args),
       now: () => clock,
     };
     showItemInFolder = vi.fn();
     showSaveDialog = vi.fn(async () => ({ canceled: true }));
+    writeClipboardPng = vi.fn(async () => {});
     syncAgentReadonlyExtraDir = vi.fn(async () => {});
     slot = new GhostLibrarySlot(deps);
   });
@@ -102,11 +124,109 @@ describe('GhostLibrarySlot', () => {
     ghosts.set(GHOST_ID, makeGhost(false));
     const r = await slot.handleLibraryRequest(GHOST_ID, { op: 'open' });
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.errorCode).toBe('NOT_DECLARED');
+    if (!r.ok) {
+      expect(r.errorCode).toBe('NOT_DECLARED');
+      expect(r.reason).toBe('PERMISSION_DENIED');
+    }
     ghosts.set(GHOST_ID, makeGhost(true, false));
     const r2 = await slot.handleLibraryRequest(GHOST_ID, { op: 'open' });
     expect(r2.ok).toBe(false);
+    if (!r2.ok) {
+      expect(r2.errorCode).toBe('NOT_DECLARED');
+      expect(r2.reason).toBe('PERMISSION_DENIED');
+    }
+    const deniedCaps = await slot.handleLibraryRequest(GHOST_ID, { op: 'capabilities' });
+    expect(deniedCaps).toMatchObject({
+      ok: false,
+      errorCode: 'NOT_DECLARED',
+      reason: 'PERMISSION_DENIED',
+    });
+    expect(JSON.stringify(deniedCaps)).not.toContain(defaultRootBase);
+    expect(JSON.stringify(deniedCaps)).not.toContain('local:owner');
+    expect(captureOwnerScope).not.toHaveBeenCalled();
+    expect(resolveLibraryRoot).not.toHaveBeenCalled();
     ghosts.set(GHOST_ID, makeGhost(true));
+  });
+
+  it('capabilities: 资格审后、会话创建前返回 v1 清单,首请求零副作用', async () => {
+    const sessionCount = () => (slot as unknown as { sessions: Map<string, unknown> }).sessions.size;
+    const vaultOpen = vi.spyOn(LibraryVault.prototype, 'open');
+    const vaultClear = vi.spyOn(LibraryVault.prototype, 'clearOrphaned');
+    const vaultWriteBegin = vi.spyOn(LibraryVault.prototype, 'writeBegin');
+    const vaultWriteAbort = vi.spyOn(LibraryVault.prototype, 'writeAbort');
+    try {
+    expect(sessionCount()).toBe(0);
+    const r = await slot.handleLibraryRequest(GHOST_ID, { op: 'capabilities' });
+    expect(r).toEqual({
+      ok: true,
+      op: 'capabilities',
+      capabilities: { version: 1, operations: ['clipboardWrite', 'saveAs'] },
+    });
+    expect(classifyGhostLibraryOperationSupport(r, 'clipboardWrite')).toBe('supported');
+    expect(classifyGhostLibraryOperationSupport(r, 'saveAs')).toBe('supported');
+    expect(classifyGhostLibraryOperationSupport(
+      { ok: true, op: 'capabilities', capabilities: { version: 1, operations: ['clipboardWrite', 'saveAs', 'futureOp'], extra: true } },
+      'clipboardWrite',
+    )).toBe('supported');
+    expect(classifyGhostLibraryOperationSupport(
+      { ok: true, op: 'capabilities', capabilities: { version: 1, operations: ['saveAs'] } },
+      'clipboardWrite',
+    )).toBe('unsupported');
+    expect(classifyGhostLibraryOperationSupport(
+      { ok: false, errorCode: 'PATH_INVALID', message: 'unknown op' },
+      'clipboardWrite',
+    )).toBe('unknown');
+    expect(classifyGhostLibraryOperationSupport(
+      { ok: true, op: 'capabilities', capabilities: { version: 2, operations: ['clipboardWrite'] } },
+      'clipboardWrite',
+    )).toBe('unknown');
+    expect(classifyGhostLibraryOperationSupport(
+      { ok: true, op: 'capabilities', capabilities: { operations: ['clipboardWrite'] } },
+      'clipboardWrite',
+    )).toBe('unknown');
+    expect(classifyGhostLibraryOperationSupport(
+      { ok: true, op: 'capabilities', capabilities: { version: 1, operations: 'clipboardWrite' } },
+      'clipboardWrite',
+    )).toBe('unknown');
+    const mixedTypes = {
+      ok: true,
+      op: 'capabilities',
+      capabilities: { version: 1, operations: ['saveAs', 123] },
+    };
+    expect(classifyGhostLibraryOperationSupport(mixedTypes, 'clipboardWrite')).toBe('unknown');
+    expect(classifyGhostLibraryOperationSupport(mixedTypes, 'saveAs')).toBe('unknown');
+    expect(classifyGhostLibraryOperationSupport(
+      { ok: true, op: 'capabilities', capabilities: { version: 1, operations: [123] } },
+      'saveAs',
+    )).toBe('unknown');
+    expect(classifyGhostLibraryOperationSupport(
+      { ok: true, op: 'capabilities', capabilities: { version: 1, operations: ['clipboardWrite', null] } },
+      'clipboardWrite',
+    )).toBe('unknown');
+    expect(sessionCount()).toBe(0);
+    expect(captureOwnerScope).not.toHaveBeenCalled();
+    expect(resolveLibraryRoot).not.toHaveBeenCalled();
+    expect(createVault).not.toHaveBeenCalled();
+    expect(createSqlService).not.toHaveBeenCalled();
+    expect(vaultOpen).not.toHaveBeenCalled();
+    expect(vaultClear).not.toHaveBeenCalled();
+    expect(vaultWriteBegin).not.toHaveBeenCalled();
+    expect(vaultWriteAbort).not.toHaveBeenCalled();
+    expect(syncAgentReadonlyExtraDir).not.toHaveBeenCalled();
+    expect(writeClipboardPng).not.toHaveBeenCalled();
+    expect(showSaveDialog).not.toHaveBeenCalled();
+    expect(showItemInFolder).not.toHaveBeenCalled();
+    expect(JSON.stringify(r)).not.toContain(defaultRootBase);
+    expect(JSON.stringify(r)).not.toContain(tmp);
+    expect(JSON.stringify(r)).not.toContain('local:owner');
+    const libraryRoot = path.join(defaultRootBase, GHOST_ID);
+    expect(fs.existsSync(libraryRoot)).toBe(false);
+    } finally {
+    vaultOpen.mockRestore();
+    vaultClear.mockRestore();
+    vaultWriteBegin.mockRestore();
+    vaultWriteAbort.mockRestore();
+    }
   });
 
   it('管道级全链路:open/status/write/read/rename/delete(默认根)', async () => {
@@ -172,6 +292,41 @@ describe('GhostLibrarySlot', () => {
     expect(backups.some((f) => f.startsWith('pre-migrate-'))).toBe(true);
   });
 
+  it('dbPath 非法/越界 → PATH_INVALID + INVALID_REQUEST', async () => {
+    await slot.handleLibraryRequest(GHOST_ID, { op: 'open' });
+    const missing = await slot.handleLibraryRequest(GHOST_ID, { op: 'db.open' });
+    expect(missing).toMatchObject({ ok: false, errorCode: 'PATH_INVALID', reason: 'INVALID_REQUEST' });
+    const escaped = await slot.handleLibraryRequest(GHOST_ID, {
+      op: 'db.open', dbPath: '../escape.sqlite',
+    });
+    expect(escaped).toMatchObject({ ok: false, errorCode: 'PATH_INVALID', reason: 'INVALID_REQUEST' });
+  });
+
+  it('open/status vault LIBRARY_UNAVAILABLE 透传稳定 reason', async () => {
+    const openSpy = vi.spyOn(LibraryVault.prototype, 'open').mockResolvedValue({
+      ok: false, errorCode: 'LIBRARY_UNAVAILABLE', message: 'Library 实例已作废',
+    });
+    try {
+      const r = await slot.handleLibraryRequest(GHOST_ID, { op: 'open' });
+      expect(r).toMatchObject({
+        ok: false, errorCode: 'LIBRARY_UNAVAILABLE', reason: 'LIBRARY_UNAVAILABLE',
+      });
+    } finally {
+      openSpy.mockRestore();
+    }
+    const statusSpy = vi.spyOn(LibraryVault.prototype, 'status').mockResolvedValue({
+      ok: false, errorCode: 'LIBRARY_UNAVAILABLE', message: 'Library 根目录不可访问',
+    });
+    try {
+      const st = await slot.handleLibraryRequest(GHOST_ID, { op: 'status' });
+      expect(st).toMatchObject({
+        ok: false, errorCode: 'LIBRARY_UNAVAILABLE', reason: 'LIBRARY_UNAVAILABLE',
+      });
+    } finally {
+      statusSpy.mockRestore();
+    }
+  });
+
   it('binding 漂移:目录删除 → open 报 unavailable(disk-missing),写拒', async () => {
     const store = new LibraryBindingStore({
       getFile: () => bindingFile,
@@ -191,7 +346,16 @@ describe('GhostLibrarySlot', () => {
     expect(open2.reason).toBe('disk-missing');
     const w = await slot.handleLibraryRequest(GHOST_ID, { op: 'write', path: 'a.txt', content: 'x' });
     expect(w.ok).toBe(false);
-    if (!w.ok) expect(w.errorCode).toBe('LIBRARY_UNAVAILABLE');
+    if (!w.ok) {
+      expect(w.errorCode).toBe('LIBRARY_UNAVAILABLE');
+      expect(w.reason).toBe('LIBRARY_UNAVAILABLE');
+    }
+    const capsWhileUnavailable = await slot.handleLibraryRequest(GHOST_ID, { op: 'capabilities' });
+    expect(capsWhileUnavailable).toEqual({
+      ok: true,
+      op: 'capabilities',
+      capabilities: { version: 1, operations: ['clipboardWrite', 'saveAs'] },
+    });
     // 绝不落默认根冒充。
     expect(fs.existsSync(path.join(defaultRootBase, GHOST_ID, 'a.txt'))).toBe(false);
   });
@@ -415,7 +579,7 @@ describe('GhostLibrarySlot', () => {
       await slot.disposeAll();
       release();
       const r = await pending;
-      expect(r).toMatchObject({ ok: false, errorCode: 'LIBRARY_UNAVAILABLE' });
+      expect(r).toMatchObject({ ok: false, errorCode: 'LIBRARY_UNAVAILABLE', reason: 'CANCELLED' });
       expect(fs.readFileSync(dest, 'utf8')).toBe('keep-me');
     } finally {
       spy.mockRestore();
@@ -445,8 +609,198 @@ describe('GhostLibrarySlot', () => {
     await slot.disposeAll();
     release({ canceled: false, filePath: dest });
     const r = await pending;
-    expect(r).toMatchObject({ ok: false, errorCode: 'LIBRARY_UNAVAILABLE' });
+    expect(r).toMatchObject({ ok: false, errorCode: 'LIBRARY_UNAVAILABLE', reason: 'CANCELLED' });
     expect(fs.existsSync(dest)).toBe(false);
+  });
+
+  // 1x1 灰度 PNG:签名 + 完整 IHDR(含 13 字节数据与 CRC) + IDAT + IEND。
+  const MIN_PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR42mNgAAAAAgAB5Sfe/AAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  const pngB64 = MIN_PNG.toString('base64');
+  const truncatedPng = MIN_PNG.subarray(0, 24);
+
+  it('clipboardWrite: 成功写回 bytes,不调用 Finder/saveAs',
+    async () => {
+      await slot.handleLibraryRequest(GHOST_ID, { op: 'open' });
+      const r = await slot.handleLibraryRequest(GHOST_ID, {
+        op: 'clipboardWrite', content: pngB64, encoding: 'base64',
+      });
+      expect(r).toEqual({ ok: true, op: 'clipboardWrite', bytes: MIN_PNG.byteLength });
+      expect(writeClipboardPng).toHaveBeenCalledTimes(1);
+      expect(Buffer.from(writeClipboardPng.mock.calls[0]?.[0] as Buffer)).toEqual(MIN_PNG);
+      expect(showItemInFolder).not.toHaveBeenCalled();
+      expect(showSaveDialog).not.toHaveBeenCalled();
+      expect(JSON.stringify(r)).not.toContain(tmp);
+    },
+  );
+
+  it('clipboardWrite: 空字节失败,不调用 writeClipboardPng', async () => {
+    await slot.handleLibraryRequest(GHOST_ID, { op: 'open' });
+    const r = await slot.handleLibraryRequest(GHOST_ID, {
+      op: 'clipboardWrite', content: '', encoding: 'base64',
+    });
+    expect(r).toMatchObject({ ok: false, errorCode: 'PATH_INVALID', reason: 'INVALID_REQUEST' });
+    expect(writeClipboardPng).not.toHaveBeenCalled();
+  });
+
+  it('clipboardWrite: 非法 encoding / 非 base64 / 非 PNG 失败,不调用 writeClipboardPng', async () => {
+    await slot.handleLibraryRequest(GHOST_ID, { op: 'open' });
+    const utf8 = await slot.handleLibraryRequest(GHOST_ID, {
+      op: 'clipboardWrite', content: pngB64, encoding: 'utf8',
+    });
+    expect(utf8).toMatchObject({ ok: false, errorCode: 'PATH_INVALID', reason: 'INVALID_REQUEST' });
+    const badB64 = await slot.handleLibraryRequest(GHOST_ID, {
+      op: 'clipboardWrite', content: '%%%not-base64%%%', encoding: 'base64',
+    });
+    expect(badB64).toMatchObject({ ok: false, errorCode: 'PATH_INVALID', reason: 'INVALID_REQUEST' });
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]).toString('base64');
+    const notPng = await slot.handleLibraryRequest(GHOST_ID, {
+      op: 'clipboardWrite', content: jpeg, encoding: 'base64',
+    });
+    expect(notPng).toMatchObject({ ok: false, errorCode: 'PATH_INVALID', reason: 'INVALID_REQUEST' });
+    const padded = await slot.handleLibraryRequest(GHOST_ID, {
+      op: 'clipboardWrite', content: `${pngB64}=AAAA`, encoding: 'base64',
+    });
+    expect(padded).toMatchObject({ ok: false, errorCode: 'PATH_INVALID', reason: 'INVALID_REQUEST' });
+    const truncated = await slot.handleLibraryRequest(GHOST_ID, {
+      op: 'clipboardWrite', content: truncatedPng.toString('base64'), encoding: 'base64',
+    });
+    expect(truncated).toMatchObject({ ok: false, errorCode: 'PATH_INVALID', reason: 'INVALID_REQUEST' });
+    // 插进 IDAT 数据区:IHDR 结束于 33,IDAT type 后是 offset 41。
+    const iendInIdat = Buffer.concat([
+      MIN_PNG.subarray(0, 41),
+      Buffer.from('IEND', 'ascii'),
+      MIN_PNG.subarray(41),
+    ]);
+    const embedded = await slot.handleLibraryRequest(GHOST_ID, {
+      op: 'clipboardWrite', content: iendInIdat.toString('base64'), encoding: 'base64',
+    });
+    expect(embedded).toMatchObject({ ok: false, errorCode: 'PATH_INVALID', reason: 'INVALID_REQUEST' });
+    const trailing = await slot.handleLibraryRequest(GHOST_ID, {
+      op: 'clipboardWrite', content: Buffer.concat([MIN_PNG, Buffer.from([0x00])]).toString('base64'), encoding: 'base64',
+    });
+    expect(trailing).toMatchObject({ ok: false, errorCode: 'PATH_INVALID', reason: 'INVALID_REQUEST' });
+    expect(writeClipboardPng).not.toHaveBeenCalled();
+    expect(showItemInFolder).not.toHaveBeenCalled();
+    expect(showSaveDialog).not.toHaveBeenCalled();
+  });
+
+  it('clipboardWrite: 超限 payload 失败且上限是有限整数', async () => {
+    expect(Number.isFinite(LIBRARY_CLIPBOARD_WRITE_MAX_BYTES)).toBe(true);
+    expect(LIBRARY_CLIPBOARD_WRITE_MAX_BYTES).toBeGreaterThan(0);
+    await slot.handleLibraryRequest(GHOST_ID, { op: 'open' });
+    const tooBig = 'A'.repeat(Math.floor((LIBRARY_CLIPBOARD_WRITE_MAX_BYTES * 4) / 3) + 16);
+    const r = await slot.handleLibraryRequest(GHOST_ID, {
+      op: 'clipboardWrite', content: tooBig, encoding: 'base64',
+    });
+    expect(r).toMatchObject({ ok: false, errorCode: 'TOO_LARGE' });
+    expect(writeClipboardPng).not.toHaveBeenCalled();
+  });
+
+  it('clipboardWrite: 生产注入无主壳窗 → UNSUPPORTED,不伪装 INTERNAL', async () => {
+    await slot.handleLibraryRequest(GHOST_ID, { op: 'open' });
+    clock += 4_000;
+    writeClipboardPng.mockImplementationOnce(async () => {
+      throw new Error('没有可挂靠的宿主窗口');
+    });
+    const r = await slot.handleLibraryRequest(GHOST_ID, {
+      op: 'clipboardWrite', content: pngB64, encoding: 'base64',
+    });
+    expect(r).toMatchObject({ ok: false, errorCode: 'UNSUPPORTED', reason: 'NO_VISIBLE_WINDOW' });
+    expect(writeClipboardPng).toHaveBeenCalledTimes(1);
+  });
+
+  it('clipboardWrite: 无 handler → UNSUPPORTED + IMPLEMENTATION_UNSUPPORTED,不等于旧宿主', async () => {
+    const noHandler = new GhostLibrarySlot({
+      getGhost: (id) => ghosts.get(id) ?? null,
+      bindingStore,
+      getDefaultRoot: (id) => path.join(defaultRootBase, id),
+      captureOwnerScope: () => captureOwnerScope(),
+      createVault: (d) => createVault(d),
+      createSqlService: (d) => createSqlService(d),
+      getDiskFreeBytes: async () => 1024 ** 4,
+      workerScriptPath: () => path.join(tmp, 'unused-worker.js'),
+      betterSqliteModulePath: () => 'better-sqlite3',
+      showSaveDialog: (...args: unknown[]) => showSaveDialog(...args),
+      now: () => clock,
+    });
+    try {
+      await noHandler.handleLibraryRequest(GHOST_ID, { op: 'open' });
+      const r = await noHandler.handleLibraryRequest(GHOST_ID, {
+        op: 'clipboardWrite', content: pngB64, encoding: 'base64',
+      });
+      expect(r).toMatchObject({
+        ok: false,
+        errorCode: 'UNSUPPORTED',
+        reason: 'IMPLEMENTATION_UNSUPPORTED',
+      });
+      const caps = await noHandler.handleLibraryRequest(GHOST_ID, { op: 'capabilities' });
+      expect(classifyGhostLibraryOperationSupport(caps, 'clipboardWrite')).toBe('supported');
+    } finally {
+      await noHandler.disposeAll();
+    }
+  });
+
+  it('saveAs: 无可见窗口 → INTERNAL + NO_VISIBLE_WINDOW,能力查询仍 supported', async () => {
+    await slot.handleLibraryRequest(GHOST_ID, { op: 'open' });
+    await slot.handleLibraryRequest(GHOST_ID, { op: 'write', path: 'exports/a.psd', content: 'psd' });
+    clock += 4_000;
+    showSaveDialog.mockImplementationOnce(async () => {
+      throw new Error('没有可挂靠的宿主窗口');
+    });
+    const r = await slot.handleLibraryRequest(GHOST_ID, { op: 'saveAs', path: 'exports/a.psd' });
+    expect(r).toMatchObject({ ok: false, errorCode: 'INTERNAL', reason: 'NO_VISIBLE_WINDOW' });
+    const caps = await slot.handleLibraryRequest(GHOST_ID, { op: 'capabilities' });
+    expect(classifyGhostLibraryOperationSupport(caps, 'saveAs')).toBe('supported');
+  });
+
+  it('clipboardWrite: 未知 op 仍拒,不调用 writeClipboardPng', async () => {
+    await slot.handleLibraryRequest(GHOST_ID, { op: 'open' });
+    const r = await slot.handleLibraryRequest(GHOST_ID, { op: 'clipboardPaste' });
+    expect(r).toMatchObject({ ok: false, errorCode: 'PATH_INVALID', reason: 'INVALID_REQUEST' });
+    expect(writeClipboardPng).not.toHaveBeenCalled();
+  });
+
+  it('clipboardWrite: 同插件两次请求间隔不足 = RATE_LIMITED(按尝试记账)', async () => {
+    await slot.handleLibraryRequest(GHOST_ID, { op: 'open' });
+    const first = await slot.handleLibraryRequest(GHOST_ID, {
+      op: 'clipboardWrite', content: pngB64, encoding: 'base64',
+    });
+    expect(first.ok).toBe(true);
+    clock += 1_000;
+    const second = await slot.handleLibraryRequest(GHOST_ID, {
+      op: 'clipboardWrite', content: pngB64, encoding: 'base64',
+    });
+    expect(second).toMatchObject({ ok: false, errorCode: 'RATE_LIMITED' });
+    expect(writeClipboardPng).toHaveBeenCalledTimes(1);
+  });
+
+  it('clipboardWrite: 账号切换后旧会话不得继续写', async () => {
+    await slot.handleLibraryRequest(GHOST_ID, { op: 'open' });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started!: () => void;
+    const opened = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    writeClipboardPng.mockImplementationOnce(async () => {
+      started();
+      await gate;
+    });
+    const pending = slot.handleLibraryRequest(GHOST_ID, {
+      op: 'clipboardWrite', content: pngB64, encoding: 'base64',
+    });
+    await opened;
+    scopeKey = 'local:owner-b:1';
+    await slot.disposeAll();
+    release();
+    const r = await pending;
+    expect(r).toMatchObject({ ok: false, errorCode: 'LIBRARY_UNAVAILABLE', reason: 'CANCELLED' });
+    expect(showSaveDialog).not.toHaveBeenCalled();
   });
 
   it('open/status 握手含 authorizedReadonly 与 generation/identity,JSON 不含绝对库根', async () => {

@@ -10,7 +10,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { createServer, type Server } from 'node:http';
+import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import {
   chmodSync,
   existsSync,
@@ -338,6 +338,7 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
   let agentHome = '';
   const seenRequests: Array<{
     url: string;
+    headers: IncomingHttpHeaders;
     auth: string | undefined;
     sessionId: string | undefined;
     providerId: string | undefined;
@@ -354,6 +355,7 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
       req.on('end', () => {
         seenRequests.push({
           url: req.url ?? '',
+          headers: req.headers,
           auth: (req.headers['x-api-key'] as string | undefined) ?? (req.headers.authorization as string | undefined),
           sessionId: req.headers['x-cindy-pi-session-id'] as string | undefined,
           providerId: req.headers['x-cindy-pi-provider-id'] as string | undefined,
@@ -735,7 +737,7 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
   );
 
   it(
-    'uses PI native Anthropic Messages for a host Claude subscription model',
+    'uses PI native OAuth identity and fallback betas for a host Claude subscription model',
     { timeout: 60_000 },
     async () => {
       const deps = buildDeps();
@@ -759,6 +761,7 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
           name: 'Anthropic',
           baseUrl: endpoint,
           inheritModels: true,
+          apiKeyEnvVar: 'CINDY_PI_ANTHROPIC_PROXY_KEY',
           headers: {
             'x-cindy-pi-session-id': '$CINDY_PI_SESSION_ID',
             'x-cindy-pi-session-token': '$CINDY_PI_SESSION_TOKEN',
@@ -766,7 +769,7 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
           },
           models: [{ id: 'claude-opus-5', wireId: 'claude-opus-5' }],
         }],
-        env: {},
+        env: { CINDY_PI_ANTHROPIC_PROXY_KEY: 'sk-ant-oat01' },
       });
       const workingDir = mkdtempSync(path.join(tmpdir(), 'pi-agent-native-anthropic-cwd-'));
       let handle: AgentSessionHandle | null = null;
@@ -795,6 +798,19 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
             providerId: 'anthropic',
           }),
         ]));
+        const request = seenRequests.slice(requestsBefore).find((item) => item.providerId === 'anthropic')!;
+        expect(request.headers.authorization).toBe('Bearer sk-ant-oat01');
+        expect(request.headers['x-api-key']).toBeUndefined();
+        expect(request.headers['user-agent']).toMatch(/^claude-cli\//);
+        expect(String(request.headers['anthropic-beta']).split(',')).toEqual(expect.arrayContaining([
+          'claude-code-20250219', 'oauth-2025-04-20', 'server-side-fallback-2026-07-01',
+        ]));
+        expect(JSON.parse(request.body)).toMatchObject({
+          system: expect.arrayContaining([
+            expect.objectContaining({ type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." }),
+          ]),
+          fallbacks: expect.arrayContaining([expect.objectContaining({ model: expect.any(String) })]),
+        });
       } finally {
         await handle?.close();
         rmSync(workingDir, { recursive: true, force: true });
@@ -1491,6 +1507,7 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
   it.each([
     { model: 'byom-reasoner', effort: 'xhigh' as const },
     { model: 'gpt-6-astra', effort: 'max' as const },
+    { model: 'gpt-5.6-terra', effort: 'medium' as const },
   ])(
     'BYOM Responses: $model sends $effort with compatible cache parameters',
     { timeout: 60_000 },
@@ -1559,7 +1576,9 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
                   input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5,
                   tiers: [{ inputTokensAbove: 272_000, input: 20, output: 75, cacheRead: 2, cacheWrite: 25 }],
                 },
-                thinkingLevelMap: {
+                thinkingLevelMap: model === 'gpt-5.6-terra' ? {
+                  minimal: 'low', xhigh: 'xhigh', max: 'max',
+                } : {
                   minimal: null,
                   low: 'low',
                   medium: null,
@@ -2954,7 +2973,7 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
         expect(cardUpdates.every((u) => u.provider === 'pi')).toBe(true);
         expect(cardUpdates.at(0)?.status).toBe('running');
         expect(cardUpdates.at(-1)?.status).toBe('completed');
-        expect(cardUpdates.at(-1)?.title).toBe('scout');
+        expect(cardUpdates.at(-1)?.title).toBe('find the auth entry point');
         const finalUsage = cardUpdates.at(-1)?.usage as Record<string, number> | undefined;
         // 真实用量来自子进程的 message_end.usage(fake gateway 上报 42 input tokens)。
         expect(finalUsage?.totalTokens).toBeGreaterThan(0);

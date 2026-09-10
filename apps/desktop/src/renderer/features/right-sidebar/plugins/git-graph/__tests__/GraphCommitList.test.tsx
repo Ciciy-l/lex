@@ -22,7 +22,7 @@ const data = {
   hasMore: false,
 } as GitGraphData;
 
-it('bounds the ancestry column without dropping commits, subjects, dates or full ref tooltips', () => {
+it('bounds the ancestry column and keeps narrow author, date, and short OID metadata on one line', () => {
   const view = render(
     <GraphCommitList data={data} selected={null} query="" includeRemotes onSelect={() => {}} />,
   );
@@ -34,6 +34,10 @@ it('bounds the ancestry column without dropping commits, subjects, dates or full
     new Date(commits[0].authorTime * 1000).toISOString(),
   );
   expect(view.container.querySelector('time')?.getAttribute('title')).toBeTruthy();
+  const inlineMetadata = view.container.querySelector('.lex-git-graph-inline-meta')!;
+  expect(inlineMetadata.querySelector('.lex-git-graph-inline-author')?.textContent).toBe('Author');
+  expect(inlineMetadata.querySelector('time')?.textContent).toBeTruthy();
+  expect(inlineMetadata.querySelector('code')?.textContent).toBe('0');
   expect(
     new Set([...view.container.querySelectorAll('path')].map((path) => path.getAttribute('stroke')))
       .size,

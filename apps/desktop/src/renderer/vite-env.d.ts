@@ -42,6 +42,7 @@ type IOSSimulatorCopyScreenshotRequest =
   import('../shared/iosSimulatorIpc').IOSSimulatorCopyScreenshotRequest;
 type IOSSimulatorCopyScreenshotResult =
   import('../shared/iosSimulatorIpc').IOSSimulatorCopyScreenshotResult;
+type IOSSimulatorPreferences = import('../shared/iosSimulatorIpc').IOSSimulatorPreferences;
 type IOSSimulatorStatusRequest = import('../shared/iosSimulatorIpc').IOSSimulatorStatusRequest;
 type IOSSimulatorToolRequest = import('../shared/iosSimulatorIpc').IOSSimulatorToolRequest;
 type IOSSimulatorToolResponse = import('../shared/iosSimulatorIpc').IOSSimulatorToolResponse;
@@ -1295,6 +1296,7 @@ interface ElectronAPI {
 
   /** 意识仓库 —— 数据模型与校验见 shared/ghost.ts,main 端见 main/cindy-brain/。 */
   ghosts: {
+    recommendationsSync: () => import('../shared/homePluginRecommendations').HomePluginRecommendationsSnapshot;
     /** 首帧同步拉取已装清单(规则 7:意识面板与内置面板同帧注册,无跳变)。 */
     listSync: () => { ghosts: import('../shared/ghost').InstalledGhost[] };
     onForgeOidcInstallConfirmRequest: (
@@ -2985,6 +2987,9 @@ interface ElectronAPI {
    */
   openLogsDir: () => Promise<{ success: boolean; error?: string }>;
 
+  /** Open Cindy's managed Make tools directory (`<userData>/cindy-make/tools`). */
+  openCindyMakeToolsDir: () => Promise<{ success: boolean }>;
+
   /**
    * Reveal a file in the OS file manager (Explorer / Finder). Accepts either
    * an `xdt-image://` URL (resolved on the main side) or an absolute file
@@ -3083,6 +3088,8 @@ interface ElectronAPI {
       resolvedPath: string;
       mtimeMs?: number;
       birthtimeMs?: number;
+      /** 文件字节数;仅 kind==='file'。老被控端不返回时为 undefined。 */
+      sizeBytes?: number;
     }>;
     mkdirP: (path: string) => Promise<{ resolvedPath: string }>;
   };
@@ -3418,6 +3425,8 @@ interface ElectronAPI {
     }>;
     listCategories: (params?: {
       scope?: import('../shared/skillhubCatalog').SkillhubCatalogScope;
+      /** Defaults to true for publish/edit pickers; browse filters pass false. */
+      includeEmpty?: boolean;
     }) => Promise<{
       success: boolean;
       categories?: import('../shared/skillhubCategory').MarketCategory[];
@@ -3839,6 +3848,8 @@ interface ElectronAPI {
     ) => () => void;
     /** 「保持电脑唤醒」在其它共享 userData 实例被翻转后推送 */
     onKeepAwakeChanged: (cb: (payload: { keepAwake: boolean }) => void) => () => void;
+    /** Main 本地投影:单个 peer 的恢复作废旧内容就绪证据，不代表 relay 离线。 */
+    onPeerLinkReset?: (cb: (payload: { deviceId: string }) => void) => () => void;
     /** 控制端:目标设备「无响应」熔断状态翻转(弱网 / 对端卡死;presence 可能仍在线) */
     onResponsivenessChanged: (
       cb: (payload: { deviceId: string; unresponsive: boolean }) => void,
@@ -4540,6 +4551,40 @@ interface ElectronAPI {
       ackInterrupted: (id: string) => Promise<void>;
       // Stage 2 C2: fork 已迁到 electronAPI.maker.fork (走 maker:fork IPC)。
     };
+    bots: {
+      getModelChainSettings: () => Promise<{
+        modelChain: import('../shared/botModelChain').BotModelRoute[];
+        isCustomized: boolean;
+      }>;
+      setModelChainSettings: (body: {
+        modelChain: import('../shared/botModelChain').BotModelRoute[];
+      }) => Promise<{
+        modelChain: import('../shared/botModelChain').BotModelRoute[];
+        isCustomized: boolean;
+      }>;
+      list: (body?: { lastReadAtByBotId?: Record<string, number> }) => Promise<unknown[]>;
+      get: (botId: string) => Promise<unknown>;
+      chooseAvatar: (body: { botId: string }) => Promise<{
+        canceled: boolean;
+        profile?: unknown;
+      }>;
+      searchHistory: (
+        body: import('../shared/botLifecycle').BotHistorySearchRequest,
+      ) => Promise<import('../shared/botLifecycle').BotHistorySearchResponse>;
+      create: (body: unknown) => Promise<unknown>;
+      update: (body: unknown) => Promise<unknown>;
+      createCanonicalSession: (body: {
+        botId: string;
+        expectedCanonicalSessionId: string | null;
+        expectedProfileVersion: number;
+        recoverMissingOnly?: boolean;
+      }) => Promise<{
+        created: boolean;
+        canonicalSessionId: string;
+        session: import('@/lib/ccAgent.types').Session;
+      }>;
+      history: (botId: string) => Promise<unknown[]>;
+    };
     conversations: {
       search: (
         request: import('../shared/conversationSearch').ConversationSearchRequest,
@@ -4963,6 +5008,44 @@ interface ElectronAPI {
     listAvailableAgents: () => Promise<Array<'claude-code' | 'codex' | 'pi'>>;
     onAgentsChanged: (cb: () => void) => () => void;
     getCapabilities: (agentKind: 'claude-code' | 'codex' | 'pi') => Promise<unknown>;
+    listBotDelegations: (
+      parentSessionId: string,
+    ) => Promise<import('../shared/botDelegation').BotDelegationListResult>;
+    cancelBotDelegation: (
+      parentSessionId: string,
+      delegationId: string,
+    ) => Promise<import('../shared/botDelegation').BotDelegationCancelResult>;
+    onBotDelegationChanged: (
+      cb: (
+        payload: import('../shared/botDelegation').BotDelegationChangedPayload,
+        ownerStamp?: import('../shared/dataOwnerPush').DataOwnerPushStamp,
+      ) => void,
+    ) => () => void;
+    getBotDirectMessageThread: (
+      threadId: string,
+      viewerBotId: string,
+    ) => Promise<import('../shared/botDirectMessage').BotDirectMessageThreadResult>;
+    onBotDirectMessageChanged: (
+      cb: (
+        payload: import('../shared/botDirectMessage').BotDirectMessageChangedPayload,
+        ownerStamp?: import('../shared/dataOwnerPush').DataOwnerPushStamp,
+      ) => void,
+    ) => () => void;
+    onBotProfileChanged: (
+      cb: (payload: { botId: string; change: 'created' | 'updated' }) => void,
+    ) => () => void;
+    runBotLifecycleAction: (
+      request: import('../shared/botLifecycle').BotLifecycleActionRequest,
+    ) => Promise<import('../shared/botLifecycle').BotLifecycleActionResult>;
+    onBotLifecycleChanged: (
+      cb: (
+        payload: {
+          botId: string;
+          action: import('../shared/botLifecycle').BotLifecycleAction;
+        },
+        ownerStamp?: import('../shared/dataOwnerPush').DataOwnerPushStamp,
+      ) => void,
+    ) => () => void;
     /** workflow 逐 agent 进度树(只读);读不到 / 解析失败返回 null → 回退 workflow 级卡片。 */
     getWorkflowProgress: (
       sessionId: string,
@@ -5234,6 +5317,23 @@ interface ElectronAPI {
     resetModelPriceOverride: (
       target: import('../shared/modelPriceOverride').ModelPriceOverrideTarget,
     ) => Promise<import('../shared/modelPriceOverride').ModelPriceOverrideView>;
+    /**
+     * 单模型上下文上限 override(设置 → 模型 → 高级设置)。窗口是自动压缩比例的分母,
+     * 调小它让压缩按用户设的长度提前触发。target 与价格 override 同形。
+     * set 传 null = 恢复默认(删 override)。
+     */
+    getModelContextLimit: (
+      target: import('../shared/modelContextLimit').ModelContextLimitTarget,
+    ) => Promise<import('../shared/modelContextLimit').ModelContextLimitView>;
+    setModelContextLimit: (
+      target: import('../shared/modelContextLimit').ModelContextLimitTarget,
+      limit: number | null,
+      owner: import('../shared/modelContextLimit').ModelContextLimitOwner,
+    ) => Promise<import('../shared/modelContextLimit').ModelContextLimitView>;
+    resetModelContextLimit: (
+      target: import('../shared/modelContextLimit').ModelContextLimitTarget,
+      owner: import('../shared/modelContextLimit').ModelContextLimitOwner,
+    ) => Promise<import('../shared/modelContextLimit').ModelContextLimitView>;
 
     // 「在新窗口打开」会话多开
     openSessionInNewWindow: (sessionId: string, deviceId?: string | null) => Promise<void>;
@@ -5258,8 +5358,17 @@ interface ElectronAPI {
 
     executeDesktopCommand: (
       name: string,
-      ctx: { sessionId?: string; workingDir?: string; args?: string; deviceId?: string },
-    ) => Promise<{ success: boolean; error?: string }>;
+      ctx: {
+        sessionId?: string;
+        workingDir?: string;
+        args?: string;
+        deviceId?: string;
+      } & import('../shared/cindyMakeDoctor').MakeDoctorCommandContext,
+    ) => Promise<{
+      success: boolean;
+      error?: string;
+      doctorReport?: import('../shared/cindyMakeDoctor').MakeDoctorReport;
+    }>;
 
     startReview: (input: {
       sourceSessionId: string;
@@ -5278,7 +5387,12 @@ interface ElectronAPI {
 
     listAgentSkills: (
       agentKind: 'claude-code' | 'codex' | 'pi',
-      params: { workingDir?: string; forceReload?: boolean; sessionId?: string },
+      params: {
+        workingDir?: string;
+        remoteHostId?: string;
+        forceReload?: boolean;
+        sessionId?: string;
+      },
     ) => Promise<{
       success: boolean;
       error?: string;
@@ -5306,6 +5420,7 @@ interface ElectronAPI {
     onDesktopCommandTriggered: (
       handler: (payload: {
         command: string;
+        doctorReport?: import('../shared/cindyMakeDoctor').MakeDoctorReport;
         sessionId?: string;
         workingDir?: string;
         args?: string;
@@ -6457,6 +6572,8 @@ interface ElectronAPI {
       prepareAdb: () => Promise<AndroidAdbPreparationState>;
     };
     iosSimulator: {
+      getPreferences: () => Promise<IOSSimulatorPreferences>;
+      setAutoOpenEmbeddedPanel: (enabled: boolean) => Promise<IOSSimulatorPreferences>;
       requestAccess: (
         request: IOSSimulatorAccessRequest,
       ) => Promise<IOSSimulatorAccessRequestResult>;

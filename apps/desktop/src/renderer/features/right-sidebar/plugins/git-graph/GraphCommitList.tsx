@@ -200,37 +200,48 @@ export function GraphCommitList({
               {hasUnloadedParent && (
                 <span className="sr-only">{t('rightSidebar.gitGraph.unloadedParents')}</span>
               )}
-              <span className="flex min-w-0 items-center gap-1 overflow-hidden text-10">
-                {commit.oid === data.scope.headOid && (
-                  <span className="lex-git-graph-ref shrink-0 font-medium">HEAD</span>
-                )}
-                {refs.slice(0, 2).map((ref) => (
-                  <span key={ref.name} className="lex-git-graph-ref" title={ref.name}>
-                    {shortGraphRef(ref.name)}
-                  </span>
-                ))}
-                {refs.length > 2 && (
+              <span className="lex-git-graph-inline-meta flex min-w-0 items-center gap-1 text-10 text-[var(--text-secondary)]">
+                <span className="lex-git-graph-inline-meta-primary flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+                  {commit.oid === data.scope.headOid && (
+                    <span className="lex-git-graph-ref shrink-0 font-medium">HEAD</span>
+                  )}
+                  {refs.slice(0, 2).map((ref, refIndex) => (
+                    <span
+                      key={ref.name}
+                      className={
+                        'lex-git-graph-ref lex-git-graph-inline-ref' +
+                        (refIndex === 1 ? ' lex-git-graph-inline-ref-secondary' : '')
+                      }
+                      title={ref.name}
+                    >
+                      {shortGraphRef(ref.name)}
+                    </span>
+                  ))}
+                  {refs.length > 2 && (
+                    <span
+                      title={refs
+                        .slice(2)
+                        .map((ref) => ref.name)
+                        .join('\n')}
+                    >
+                      +{refs.length - 2}
+                    </span>
+                  )}
                   <span
-                    title={refs
-                      .slice(2)
-                      .map((ref) => ref.name)
-                      .join('\n')}
+                    className="lex-git-graph-inline-author min-w-0 flex-1 truncate"
+                    title={commit.author}
                   >
-                    +{refs.length - 2}
+                    {commit.author}
                   </span>
-                )}
-                <span
-                  className="lex-git-graph-inline-author truncate text-[var(--text-secondary)]"
-                  title={commit.author}
-                >
-                  {commit.author}
                 </span>
-              </span>
-              <span className="lex-git-graph-inline-date flex min-w-0 gap-2 text-10 text-[var(--text-secondary)]">
-                <time dateTime={validTime ? time.toISOString() : undefined} title={fullTime}>
+                <time
+                  className="lex-git-graph-inline-date shrink-0 whitespace-nowrap"
+                  dateTime={validTime ? time.toISOString() : undefined}
+                  title={fullTime}
+                >
                   {shortTime}
                 </time>
-                <code className="lex-git-graph-inline-hash" title={commit.oid}>
+                <code className="lex-git-graph-inline-hash shrink-0" title={commit.oid}>
                   {commit.oid.slice(0, 8)}
                 </code>
               </span>

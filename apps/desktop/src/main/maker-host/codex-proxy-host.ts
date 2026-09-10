@@ -1069,7 +1069,7 @@ function createChatBridgeDecision(
     // 出站代理;显式注入代理感知 fetch(见 outbound-fetch.ts)。
   }, { logger: log, fetchImpl: outboundFetch });
   return {
-    localHandler: ({ rawBody, parsedBody, res }) => {
+    localHandler: ({ rawBody, parsedBody, ctx, res }) => {
       const body = prepareLocalBridgeBody({
         rawBody,
         parsedBody,
@@ -1080,7 +1080,10 @@ function createChatBridgeDecision(
         providerId,
         upstreamBase: route.routing.upstream,
       });
-      return handler.handle({ parsedBody: body, res });
+      // 只把入站头快照交给 bridge 解析稳定会话 ID(→ x-opencode-session,#4073);bridge 不透传
+      // 这些头,凭证与 Codex 账号头仍由 buildLocalHandlerHeaders 的隔离边界管。
+      // ctx 在生产路径恒有;既有测试与旧调用方可能省略,按「无入站头」处理即不附加会话头。
+      return handler.handle({ parsedBody: body, res, requestHeaders: ctx?.headers });
     },
   };
 }
@@ -1794,6 +1797,7 @@ function sanitizeByteDanceSeedTools(body: Record<string, unknown>): Record<strin
 }
 
 const STRICT_GATEWAY_TOOL_HISTORY_MODELS = new Set([
+  'moonshot/kimi-k3',
   'moonshotai/kimi-k3',
   'deepseek/deepseek-v4-pro',
   'deepseek/deepseek-v4-flash',

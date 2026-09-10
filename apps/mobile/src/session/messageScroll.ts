@@ -338,30 +338,14 @@ export function mobileMessageListKeysSignature(keys: readonly string[]): string 
   return keys.join('\0');
 }
 
-export interface MobileFollowVerifyStartDelayInput {
-  animatedScrollInFlight: boolean;
-  now: number;
-  settleAt: number;
-}
-
-/**
- * Animated `scrollToEnd` must own the viewport until its bounded settle window closes.
- * Starting the verifier earlier would read an expected in-flight offset and replace the
- * smooth animation with an immediate non-animated retry.
- */
-export function mobileFollowVerifyStartDelayMs(
-  input: MobileFollowVerifyStartDelayInput,
-): number {
-  if (!input.animatedScrollInFlight) return 0;
-  return Math.max(0, input.settleAt - input.now);
-}
-
 export interface MobileAnchorVerifyInput {
   attempts: number;
   listVisible: boolean;
   metrics: MessageScrollMetrics;
   preserveVisibleContentPosition: boolean;
   stickToLatest: boolean;
+  /** Finger drag / native momentum owns the viewport, including iOS overscroll bounce. */
+  userControllingScroll: boolean;
   waitRounds: number;
 }
 
@@ -381,21 +365,21 @@ export type MobileAnchorVerifyAction =
  * 背景:贴底跟随的落底 scrollToOffset 存在两类静默落空——
  * (a) 行坐标或 size 锚定尚在结算的帧里执行,被后续布局调整吸收/抵消;
  * (b) 落底一刻 scrollMetricsRef 里的 contentHeight / viewportHeight 是陈旧值,目标
- *     offset 偏短,且之后再无 contentSize / layout 事件来纠正。
- * 两类的共同结果都是「最新消息停在底部浮层(composer)后面」。verify 环在每次落底后
- * 校验 offset 是否真到内容末端,未到位则带上限补滚,从机制上兜掉所有此类竞态。
+ *     offset 偏短或内容收缩后偏长,且之后再无 contentSize / layout 事件来纠正。
+ * 偏短会把最新消息留在 composer 后面,偏长会把消息顶上去并留下尾部空白。
+ * 用户没有控制滚动时,校验 offset 与真实末端的双向距离,未到位则带上限补滚。
  */
 export function evaluateMobileAnchorVerify(input: MobileAnchorVerifyInput): MobileAnchorVerifyAction {
   if (!input.stickToLatest || !input.listVisible) return 'settled';
   // 行坐标 / size 锚定仍在 settle 窗口:此刻补滚可能被后续布局吸收,下一轮再判。
   // 等待走独立预算,不消耗补滚额度。
   const { contentHeight, offsetY, viewportHeight } = input.metrics;
-  if (input.preserveVisibleContentPosition || contentHeight <= 0 || viewportHeight <= 0) {
+  if (input.userControllingScroll || input.preserveVisibleContentPosition || contentHeight <= 0 || viewportHeight <= 0) {
     return input.waitRounds >= MOBILE_ANCHOR_VERIFY_MAX_WAIT_ROUNDS ? 'give-up' : 'wait';
   }
-  // 内容不足一屏时 end offset 为 0,任何非负 offset 都算贴底(iOS bounce 可为负,同样无遮挡)。
+  // 不足一屏时也必须回到 0;原生测量收缩后残留的正 offset 不是有效的贴底位置。
   const endOffset = mobileMessageListEndOffset(input.metrics);
-  if (offsetY >= endOffset - MOBILE_ANCHOR_VERIFY_TOLERANCE) return 'settled';
+  if (Math.abs(offsetY - endOffset) <= MOBILE_ANCHOR_VERIFY_TOLERANCE) return 'settled';
   if (input.attempts >= MOBILE_ANCHOR_VERIFY_MAX_ATTEMPTS) return 'give-up';
   return 'retry';
 }
@@ -467,12 +451,12 @@ export interface MobileAutoLoadEarlierDecisionInput {
   atEnd: boolean;
   /** 列表当前也贴在内容开头；与 atEnd 同时成立才说明内容未撑满视口。 */
   atStart: boolean;
-  /** 当前首个渲染项 key(prepend 落地后必变,作为「上次尝试有进展」的信号)。 */
-  firstItemKey: string | null;
+  /** 当前最旧的历史游标；调用方没有游标时退回首个渲染项 key。 */
+  progressKey: string | null;
   /** 冷开补齐预算尚有余额；仍需 atStart + atEnd 确认视口未填满。 */
   initialAutoFillAllowed: boolean;
-  /** 上一次自动触发时的首项 key;相同说明上次尝试无进展(失败/重复页),不再自动重试。 */
-  lastAttemptedFirstItemKey: string | null;
+  /** 上一次自动触发时的历史游标;相同说明上次尝试无进展(失败/重复页),不再自动重试。 */
+  lastAttemptedProgressKey: string | null;
   /** 列表处于近顶预取区(LegendList getState().isNearStart,阈值 = onStartReachedThreshold × 视口)。 */
   nearStart: boolean;
   /** 用户产生过真实上翻意图(拖动 / 上跳导航);冷开初始布局不算。 */
@@ -496,7 +480,7 @@ export interface MobileAutoLoadEarlierDecisionInput {
  * 防失控:
  * - 用户浏览态 atEnd 时不触发:贴底跟流不因自动预取被关掉 end-pin；只有冷开有界补齐
  *   允许短窗口同时 nearStart + atEnd 时拉取；
- * - firstItemKey 去重:一次尝试后必须看到首项变化(真有 prepend)才允许下一次,
+ * - progressKey 去重:一次尝试后必须看到历史游标变化(真有 prepend)才允许下一次,
  *   加载失败或拉回重复页(host cursor 未命中返回最新页)不会无限重试;用户重新拖动时清除,
  *   保证手势永远能重新驱动一次尝试。
  */
@@ -511,8 +495,8 @@ export function shouldAutoLoadEarlier(input: MobileAutoLoadEarlierDecisionInput)
   // request the previous page; only suppress user-driven prefetch when a longer list is still
   // pinned at the latest edge without also being at the history edge.
   if (input.atEnd && input.userScrolledForOlder && !input.atStart) return false;
-  if (!input.firstItemKey) return false;
-  return input.lastAttemptedFirstItemKey !== input.firstItemKey;
+  if (!input.progressKey) return false;
+  return input.lastAttemptedProgressKey !== input.progressKey;
 }
 
 export interface MobilePreviousUserJumpTarget {

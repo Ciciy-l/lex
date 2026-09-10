@@ -95,6 +95,51 @@ describe('active-catalog discovered augment', () => {
     setDiscoveredProviderMediaModels('xai', null);
   });
 
+  it('keeps native subscription maxima through Registry refresh and Claude projection', () => {
+    for (const window of [272000, 400000]) {
+      const catalog = structuredClone(BUNDLED_CATALOG);
+      const entry = catalog.modelRegistry!.models.find((model) => model.id === 'openai/gpt-6-astra')!;
+      entry.contextWindow = window;
+      catalog.modelRegistry!.updatedAt = `2099-01-01T00:00:0${window === 272000 ? 1 : 2}.000Z`;
+      setActiveCatalog(catalog, { authorityCatalog: catalog });
+      setDiscoveredCodexModels([{
+        ...fake('gpt-6-astra'), contextWindow: 272000, contextWindowMax: 872000,
+        contextWindowVerified: true, supportsImageInput: false, supportsFastMode: false,
+      }]);
+      const openai = getActiveCatalog().providers.find((provider) => provider.id === 'openai')!;
+      for (const agent of ['codex', 'claude-code'] as const) {
+        expect(openai.models[agent]!.find((model) => model.id.endsWith('gpt-6-astra'))).toMatchObject({
+          contextWindow: 272000, contextWindowMax: 872000, supportsImageInput: false, supportsFastMode: false,
+        });
+      }
+      // Independent Pi metadata does not acquire Codex-only native limits.
+      expect(openai.models.pi!.find((model) => model.id.endsWith('gpt-6-astra'))?.contextWindowMax)
+        .not.toBe(872000);
+    }
+  });
+
+  it('partial live lists retain cached metadata, replace membership, and respect auth clearing', () => {
+    setActiveCatalog(bundledWithoutRegistry(), { authorityCatalog: bundledWithoutRegistry() });
+    const cached = {
+      ...fake('gpt-99'), contextWindow: 200000, contextWindowMax: 900000,
+      contextWindowVerified: true, supportsImageInput: false, supportsFastMode: true,
+    };
+    setDiscoveredCodexModels([cached, fake('gpt-removed')]);
+    const live = { ...fake('gpt-99'), contextWindow: 272000, supportsFastMode: false };
+    setDiscoveredCodexModels([live, fake('gpt-new')], { source: 'list' });
+    const models = () => getActiveCatalog().providers.find((provider) => provider.id === 'openai')!.models.codex!;
+    expect(models().map((model) => model.id)).not.toContain('gpt-removed');
+    expect(models().find((model) => model.id === 'gpt-99')).toMatchObject({
+      contextWindow: 200000, contextWindowMax: 900000, supportsImageInput: false, supportsFastMode: false,
+    });
+    setDiscoveredCodexModels([]);
+    setDiscoveredCodexModels([live], { source: 'list' });
+    const afterAuth = models().find((model) => model.id === 'gpt-99')!;
+    expect(afterAuth.contextWindow).toBe(272000);
+    expect(afterAuth.contextWindowMax).toBeUndefined();
+    expect(afterAuth.supportsImageInput).toBeUndefined();
+  });
+
   it('Codex discovery 只进入 Codex 与 Claude bridge，不改写 Pi 名单', () => {
     setActiveCatalog(BUNDLED_CATALOG);
     setDiscoveredCodexModels([fake('gpt-5.7')]);
@@ -132,7 +177,8 @@ describe('active-catalog discovered augment', () => {
     expect(projected).toMatchObject({
       id: 'chatgpt/gpt-5.7',
       piApi: 'openai-responses',
-      contextWindow: 400_000,
+      contextWindow: 272_000,
+      contextWindowMax: 400_000,
     });
   });
 
@@ -152,12 +198,12 @@ describe('active-catalog discovered augment', () => {
     ]);
     expect(xai?.models.pi).not.toEqual(xai?.models['claude-code']);
     expect(xai?.models['claude-code']?.find((model) => model.id === 'xai/grok-4.6')).toMatchObject({
-      efforts: ['low', 'medium', 'high'],
-      defaultEffort: 'high',
+      efforts: ['low', 'medium', 'high', 'xhigh'],
+      defaultEffort: 'medium',
     });
     expect(xai?.models.pi?.find((model) => model.id === 'grok-4.6')).toMatchObject({
       efforts: ['low', 'medium', 'high', 'xhigh'],
-      defaultEffort: 'high',
+      defaultEffort: 'medium',
     });
     expect(xai?.models.pi?.find((model) => model.id === 'grok-4.3')).toMatchObject({
       efforts: ['low', 'medium', 'high'],
@@ -184,11 +230,11 @@ describe('active-catalog discovered augment', () => {
       contextWindow: 500_000,
       supportsImageInput: true,
       efforts: ['low', 'medium', 'high', 'xhigh'],
-      defaultEffort: 'high',
+      defaultEffort: 'medium',
     });
     expect(xai?.models['claude-code']?.find((model) => model.id === 'xai/grok-4.6')).toMatchObject({
-      efforts: ['low', 'medium', 'high'],
-      defaultEffort: 'high',
+      efforts: ['low', 'medium', 'high', 'xhigh'],
+      defaultEffort: 'medium',
     });
   });
 
@@ -198,14 +244,14 @@ describe('active-catalog discovered augment', () => {
       { id: 'xai/grok-4.6', efforts: ['low', 'medium', 'high'], defaultEffort: 'medium' },
     ]);
     const xai = getActiveCatalog().providers.find((provider) => provider.id === 'xai');
-    // Claude/Codex 静态梯子留给 #2601；Pi 目录已带官方 xhigh。
+    // Server Registry 和独立 Pi 目录均声明 xhigh，不被旧 discovery 降档。
     expect(xai?.models['claude-code']?.find((model) => model.id === 'xai/grok-4.6')).toMatchObject({
-      efforts: ['low', 'medium', 'high'],
-      defaultEffort: 'high',
+      efforts: ['low', 'medium', 'high', 'xhigh'],
+      defaultEffort: 'medium',
     });
     expect(xai?.models.pi?.find((model) => model.id === 'grok-4.6')).toMatchObject({
       efforts: ['low', 'medium', 'high', 'xhigh'],
-      defaultEffort: 'high',
+      defaultEffort: 'medium',
     });
   });
 
@@ -226,7 +272,7 @@ describe('active-catalog discovered augment', () => {
     });
     expect(xai?.models.pi?.find((model) => model.id === 'grok-4.6')).toMatchObject({
       efforts: ['low', 'medium', 'high', 'xhigh'],
-      defaultEffort: 'high',
+      defaultEffort: 'medium',
     });
   });
 
@@ -241,7 +287,7 @@ describe('active-catalog discovered augment', () => {
     const xai = getActiveCatalog().providers.find((provider) => provider.id === 'xai');
     expect(xai?.models['claude-code']?.find((model) => model.id === 'xai/grok-4.5')).toMatchObject({
       efforts: ['low', 'medium', 'high'],
-      defaultEffort: 'high',
+      defaultEffort: 'medium',
     });
     expect(xai?.models.pi?.find((model) => model.id === 'grok-4.5')).toMatchObject({
       efforts: ['low', 'medium', 'high'],
@@ -249,7 +295,7 @@ describe('active-catalog discovered augment', () => {
     });
   });
 
-  it('keeps an in-list SuperGrok discovery default for non-Grok-4.6 models', () => {
+  it('keeps the Cindy model default when SuperGrok discovery suggests a different default', () => {
     setActiveCatalog(BUNDLED_CATALOG);
     setXaiDiscoveredModels([
       { id: 'xai/grok-4.5', efforts: ['low', 'medium', 'high'], defaultEffort: 'low' },
@@ -258,7 +304,7 @@ describe('active-catalog discovered augment', () => {
     const xai = getActiveCatalog().providers.find((provider) => provider.id === 'xai');
     expect(xai?.models['claude-code']?.find((model) => model.id === 'xai/grok-4.5')).toMatchObject({
       efforts: ['low', 'medium', 'high'],
-      defaultEffort: 'low',
+      defaultEffort: 'medium',
     });
     expect(xai?.models.pi?.find((model) => model.id === 'grok-4.5')).toMatchObject({
       efforts: ['low', 'medium', 'high'],
@@ -266,7 +312,7 @@ describe('active-catalog discovered augment', () => {
     });
     expect(xai?.models.pi?.find((model) => model.id === 'grok-4.6')).toMatchObject({
       efforts: ['low', 'medium', 'high', 'xhigh'],
-      defaultEffort: 'high',
+      defaultEffort: 'medium',
     });
   });
 
@@ -379,7 +425,7 @@ describe('active-catalog discovered augment', () => {
     // 动态快照决定存在性，且明确返回的运行时能力高于 registry 基线。
     const openai = getActiveCatalog().providers.find((p) => p.id === 'openai');
     expect((openai?.models.codex ?? []).find((m) => m.id === 'gpt-5.5')?.contextWindow).toBe(
-      400000,
+      272000,
     );
   });
 
@@ -391,7 +437,7 @@ describe('active-catalog discovered augment', () => {
     const openai = getActiveCatalog().providers.find((p) => p.id === 'openai');
     const m55 = (openai?.models.codex ?? []).find((m) => m.id === 'gpt-5.5');
     // 动态快照决定存在性和明确能力；legacy 静态条目不复活。
-    expect(m55?.contextWindow).toBe(400000);
+    expect(m55).toMatchObject({ contextWindow: 272000, contextWindowMax: 400000 });
   });
 
   it('paired projection 使用同一纯名称和 sortOrder,且按 sortOrder 稳定排序', () => {
@@ -492,10 +538,17 @@ describe('anthropic 发现条目的 modelRegistry 元数据基线', () => {
       ['claude-sonnet-4-6', 'Sonnet 4.6'],
       ['claude-sonnet-4-5', 'Sonnet 4.5'],
       ['claude-haiku-4-5', 'Haiku 4.5'],
+      ['claude-fable-5-1', 'Fable 5.1'],
+      ['claude-mythos-5', 'Mythos 5'],
+    ]);
+    expect(anthropicList('claude-code').filter((model) => model.defaultEnabled !== false)
+      .map((model) => model.id).sort()).toEqual([
+      'claude-fable-5-1', 'claude-haiku-4-5', 'claude-opus-5', 'claude-sonnet-5',
     ]);
     expect(anthropicList('codex')).toEqual(
       anthropicList('claude-code').map((model) => ({
         ...model,
+        defaultEnabled: false,
         supportsFastMode: false,
       })),
     );
@@ -522,35 +575,35 @@ describe('anthropic 发现条目的 modelRegistry 元数据基线', () => {
     ).toEqual({
       'claude-fable-5': {
         efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
-        defaultEffort: 'high',
+        defaultEffort: 'medium',
       },
       'claude-opus-5': {
         efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
-        defaultEffort: 'high',
+        defaultEffort: 'medium',
       },
       'claude-opus-4-8': {
         efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
-        defaultEffort: 'high',
+        defaultEffort: 'medium',
       },
       'claude-opus-4-7': {
         efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
-        defaultEffort: 'high',
+        defaultEffort: 'medium',
       },
       'claude-opus-4-6': {
         efforts: ['low', 'medium', 'high', 'max'],
-        defaultEffort: 'high',
+        defaultEffort: 'medium',
       },
       'claude-opus-4-5': {
         efforts: ['low', 'medium', 'high'],
-        defaultEffort: 'high',
+        defaultEffort: 'medium',
       },
       'claude-sonnet-5': {
         efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
-        defaultEffort: 'high',
+        defaultEffort: 'medium',
       },
       'claude-sonnet-4-6': {
         efforts: ['low', 'medium', 'high', 'max'],
-        defaultEffort: 'high',
+        defaultEffort: 'medium',
       },
       'claude-sonnet-4-5': {
         efforts: [],

@@ -54,6 +54,12 @@ function parse(result: XdtHelperToolResult) {
   return JSON.parse(block.text);
 }
 
+/** Zod's raw-shape contract deliberately erases per-field metadata. */
+function descriptionOf(schema: unknown): string | undefined {
+  const description = (schema as { description?: unknown }).description;
+  return typeof description === 'string' ? description : undefined;
+}
+
 describe('submit_github_issue tool', () => {
   it('要求按最小公开原则泛化用户原话与示例', () => {
     const { registry } = setup();
@@ -76,15 +82,16 @@ describe('submit_github_issue tool', () => {
     expect(tool?.description).toContain('本工具不能把对话里的图片传到 GitHub');
     expect(tool?.description).toContain('禁止写「已提供截图」');
     expect(tool?.description).toContain('不要写仓库路径、实现方案、验收清单');
-    expect(tool?.inputShape.body.description).toContain('按这条反馈本身组织');
-    expect(tool?.inputShape.body.description).not.toContain('bug 优先用');
-    expect(tool?.inputShape.body.description).toContain('禁止声称截图已附');
-    expect(tool?.inputShape.body.description).toContain('提交时的任务环境');
-    expect(tool?.inputShape.body.description).toContain('实际故障');
-    expect(tool?.inputShape.body.description).toContain(
+    const bodyDescription = tool ? descriptionOf(tool.inputShape.body) : undefined;
+    expect(bodyDescription).toContain('按这条反馈本身组织');
+    expect(bodyDescription).not.toContain('bug 优先用');
+    expect(bodyDescription).toContain('禁止声称截图已附');
+    expect(bodyDescription).toContain('提交时的任务环境');
+    expect(bodyDescription).toContain('实际故障');
+    expect(bodyDescription).toContain(
       '不要复制系统自动附加的当前任务快照',
     );
-    expect(tool?.inputShape.body.description).not.toMatch(
+    expect(bodyDescription).not.toMatch(
       /不要写环境信息\(客户端版本 \/ 版本区域 \/ OS \/ Harness \/ 模型 ID/,
     );
   });

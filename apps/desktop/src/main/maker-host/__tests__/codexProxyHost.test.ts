@@ -336,6 +336,16 @@ describe('withCodexUpstreamRecording', () => {
 });
 
 describe('codex gateway config', () => {
+  it.each(['oauth-bearer', 'env-key', 'provider-oauth'] as const)('summary fallback preserves %s credentials and endpoint', async (mode) => {
+    const { buildCodexProxySpawnArgs } = await import('../codex-gateway-config.js');
+    const args = buildCodexProxySpawnArgs('http://127.0.0.1:12345', mode);
+    const provider = (id: string) => Object.fromEntries(args.filter(v => v.startsWith(`model_providers.${id}.`))
+      .map(v => { const [key, ...value] = v.slice(`model_providers.${id}.`.length).split('='); return [key, value.join('=')]; }));
+    const gateway = provider('cindy_gateway');
+    expect(provider('cindy_summary')).toEqual({ ...gateway, name: '"Cindy Summary"' });
+    expect(provider('cindy_codex').name).toBe('"OpenAI"');
+  });
+
   it('所有认证模式都让缺少 model metadata 的 Codex 模型使用 CodeModeOnly', async () => {
     const { buildCodexProxySpawnArgs } = await import('../codex-gateway-config.js');
 
@@ -981,6 +991,7 @@ describe('chatBridgeCapabilitiesForRoute', () => {
             parsedBody.input[2],
           ],
         },
+        requestHeaders: ctx.headers,
         res,
       });
     } finally {
@@ -1050,6 +1061,7 @@ describe('chatBridgeCapabilitiesForRoute', () => {
           instructions: 'PRODUCT_PROMPT',
           input: [],
         },
+        requestHeaders: ctx.headers,
         res,
       });
     } finally {
@@ -1849,6 +1861,7 @@ describe('chatBridgeCapabilitiesForRoute', () => {
           reasoning: { effort: 'high', summary: 'auto' },
           instructions: 'PRODUCT_PROMPT',
         },
+        requestHeaders: ctx.headers,
         res,
       });
     } finally {
@@ -3389,6 +3402,7 @@ describe('codex proxy host', () => {
         model: 'deepseek-v4',
         tools: [{ type: 'function', name: 'shell' }],
       },
+      requestHeaders: ctx.headers,
       res,
     });
 
@@ -3441,6 +3455,7 @@ describe('codex proxy host', () => {
         instructions: 'PRODUCT_PROMPT',
         tools: [{ type: 'function', name: 'shell' }],
       },
+      requestHeaders: ctx.headers,
       res,
     });
 
@@ -3496,6 +3511,7 @@ describe('codex proxy host', () => {
         tools: [{ type: 'function', name: 'shell' }],
         tool_choice: 'auto',
       },
+      requestHeaders: ctx.headers,
       res,
     });
 
@@ -4474,6 +4490,7 @@ describe('codex proxy host', () => {
   });
 
   it.each([
+    'moonshot/kimi-k3',
     'moonshotai/kimi-k3',
     'deepseek/deepseek-v4-pro',
     'deepseek/deepseek-v4-flash',

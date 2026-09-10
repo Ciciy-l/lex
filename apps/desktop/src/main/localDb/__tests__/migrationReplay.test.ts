@@ -158,11 +158,15 @@ describeMigrationReplay('migration replay', () => {
       expect(indexExists(db, 'idx_schedule_runs_running_legacy')).toBe(true);
       expect(indexExists(db, 'idx_schedule_runs_unread_terminal')).toBe(true);
       expect(indexExists(db, 'idx_schedule_runs_session_latest')).toBe(true);
+      expect(indexExists(db, 'idx_skill_usage_exposures_skill_recent')).toBe(true);
+      expect(indexExists(db, 'idx_skill_usage_exposures_skill_recent_any_version')).toBe(true);
+      expect(indexExists(db, 'idx_skill_usage_exposures_analyzer_recent_source')).toBe(true);
       expect(triggerExists(db, 'schedule_session_latest_run_insert')).toBe(true);
       expect(triggerExists(db, 'schedule_session_latest_run_delete')).toBe(true);
       expect(triggerExists(db, 'schedule_session_latest_run_update')).toBe(true);
-      expect(unreadRunPlan.some((row) => row.detail.includes('idx_schedule_runs_unread_terminal')))
-        .toBe(true);
+      expect(
+        unreadRunPlan.some((row) => row.detail.includes('idx_schedule_runs_unread_terminal')),
+      ).toBe(true);
 
       db.prepare("INSERT INTO sessions (id, created_at, updated_at) VALUES ('s-cjk', 1, 1)").run();
       db.prepare(
@@ -175,7 +179,7 @@ describeMigrationReplay('migration replay', () => {
       expect(indexed.content).toBe('登 录 报 错 了');
       expect(
         db
-          .prepare("SELECT message_id FROM messages_fts WHERE messages_fts MATCH '\"登 录\"'")
+          .prepare('SELECT message_id FROM messages_fts WHERE messages_fts MATCH \'"登 录"\'')
           .pluck()
           .all(),
       ).toEqual(['m-cjk']);
@@ -225,6 +229,7 @@ describeMigrationReplay('migration replay', () => {
     const { db, cleanup } = createTempDb();
     // 复刻 0060 之前的库:拷贝 drizzle 目录并剔除 0060,重放到 0059 后再 seed。
     const stagedDir = mkdtempSync(path.join(tmpdir(), 'xdmaker-drizzle-pre0060-'));
+    const replay0060Dir = mkdtempSync(path.join(tmpdir(), 'xdmaker-drizzle-only0060-'));
     try {
       for (const migration of listMigrations(drizzleDir())) {
         if (migration.seq >= 60) continue;
@@ -253,32 +258,37 @@ describeMigrationReplay('migration replay', () => {
       expect(result.applied.map((migration) => migration.seq)).toContain(60);
       expect(columnNames(db, 'sessions')).toContain('plan_mode_enabled');
       const rows = db
-        .prepare(
-          `SELECT id, permission_mode, plan_mode_enabled FROM sessions ORDER BY id`,
-        )
+        .prepare(`SELECT id, permission_mode, plan_mode_enabled FROM sessions ORDER BY id`)
         .all();
       expect(rows).toEqual([
         { id: 'legacy-plan-session', permission_mode: 'ask', plan_mode_enabled: 1 },
         { id: 'plain-session', permission_mode: 'acceptEdits', plan_mode_enabled: 0 },
       ]);
 
+      // 只重放本测试要证明幂等的 0060。把 schema_version 人为倒退后重放所有
+      // 后续 DDL 并不是受支持的恢复路径；新表 migration 也不应被迫做成可重复 CREATE。
+      const migration0060 = listMigrations(drizzleDir()).find((migration) => migration.seq === 60);
+      expect(migration0060).toBeDefined();
+      copyFileSync(migration0060!.sqlPath, path.join(replay0060Dir, migration0060!.fileName));
+      if (migration0060!.tsScriptPath) {
+        mkdirSync(path.join(replay0060Dir, 'scripts'), { recursive: true });
+        copyFileSync(
+          migration0060!.tsScriptPath,
+          path.join(replay0060Dir, 'scripts', path.basename(migration0060!.tsScriptPath)),
+        );
+      }
       const replayResult = runMigrationReplay(db, {
-        drizzleDir: drizzleDir(),
+        drizzleDir: replay0060Dir,
         currentVersion: 59,
       });
-      // 59 之后的迁移全部重放(0060 及以后陆续新增的都在内),不写死具体序号
-      const expectedReplaySeqs = listMigrations(drizzleDir())
-        .filter((migration) => migration.seq > 59)
-        .map((migration) => migration.seq);
-      expect(replayResult.applied.map((migration) => migration.seq)).toEqual(expectedReplaySeqs);
+      expect(replayResult.applied.map((migration) => migration.seq)).toEqual([60]);
       const replayRows = db
-        .prepare(
-          `SELECT id, permission_mode, plan_mode_enabled FROM sessions ORDER BY id`,
-        )
+        .prepare(`SELECT id, permission_mode, plan_mode_enabled FROM sessions ORDER BY id`)
         .all();
       expect(replayRows).toEqual(rows);
     } finally {
       rmSync(stagedDir, { recursive: true, force: true });
+      rmSync(replay0060Dir, { recursive: true, force: true });
       cleanup();
     }
   });
@@ -304,6 +314,17 @@ describeMigrationReplay('migration replay', () => {
         CREATE TABLE schedule_runs (
           id TEXT PRIMARY KEY NOT NULL
         );
+        CREATE TABLE right_sidebar_tabs (
+          id TEXT PRIMARY KEY NOT NULL,
+          session_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          position INTEGER NOT NULL,
+          is_active INTEGER NOT NULL DEFAULT 0,
+          state TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        );
         INSERT INTO sessions (id, permission_mode) VALUES ('legacy-plan', 'plan');
         INSERT INTO migration_history (seq, file_name, content_hash, applied_at) VALUES
           (47, '0047_add_session_summary.sql', '44c224320ca6f5059d5184deae8f5d074f97bfa6502f3d73a54894a962edaf15', 1047),
@@ -319,7 +340,9 @@ describeMigrationReplay('migration replay', () => {
       });
 
       expect(result.applied.map((migration) => migration.seq)).toEqual(
-        listMigrations(drizzleDir()).filter((migration) => migration.seq > 73).map((migration) => migration.seq),
+        listMigrations(drizzleDir())
+          .filter((migration) => migration.seq > 73)
+          .map((migration) => migration.seq),
       );
       expect(
         db
@@ -387,11 +410,16 @@ describeMigrationReplay('migration replay', () => {
       runMigrationReplay(db, { drizzleDir: stagedDir });
       const now = Date.now();
       for (const id of ['lead', 'worker-1', 'worker-2', 'worker-3', 'worker-4']) {
-        db.prepare('INSERT INTO sessions (id, created_at, updated_at) VALUES (?, ?, ?)').run(id, now, now);
+        db.prepare('INSERT INTO sessions (id, created_at, updated_at) VALUES (?, ?, ?)').run(
+          id,
+          now,
+          now,
+        );
       }
-      db.prepare(`INSERT INTO orca_teams
-        (id, lead_session_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`)
-        .run('team-1', 'lead', 'active', now, now);
+      db.prepare(
+        `INSERT INTO orca_teams
+        (id, lead_session_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+      ).run('team-1', 'lead', 'active', now, now);
       const insertWorker = db.prepare(`INSERT INTO orca_workers
         (id, team_id, session_id, status, label, role, focused, created_at, updated_at)
         VALUES (?, 'team-1', ?, 'idle', ?, 'tester', 0, ?, ?)`);
@@ -401,11 +429,9 @@ describeMigrationReplay('migration replay', () => {
 
       runMigrationReplay(db, { drizzleDir: drizzleDir() });
 
-      expect(db.prepare('SELECT label FROM orca_workers ORDER BY created_at').pluck().all()).toEqual([
-        'tester',
-        'tester-3',
-        'tester-2',
-      ]);
+      expect(
+        db.prepare('SELECT label FROM orca_workers ORDER BY created_at').pluck().all(),
+      ).toEqual(['tester', 'tester-3', 'tester-2']);
       expect(tableExists(db, 'orca_worker_creation_reservations')).toBe(true);
       expect(indexExists(db, 'uniq_orca_workers_team_label')).toBe(true);
       expect(() => insertWorker.run('worker-row-4', 'worker-4', 'TESTER', 4, 4)).toThrow();
