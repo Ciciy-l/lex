@@ -9,19 +9,31 @@
 
 ## 1. 先找数据归属
 
-| 内容                                                             | 应维护的位置                                                                                                               | 客户端职责                                                                                   |
-| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| 统一模型目录中的名称、窗口、最大输出、推理档位、参考价及默认标记 | `cindy-server` 的 `model-access-server/catalog/providers.json`；若部署配置了 `MODEL_CATALOG_URL`，还需核对那份远程完整快照 | 同步 `packages/model-providers/catalog/model-registry.json` 作为内置兜底，正确消费实际下发值 |
-| Gateway 的实际可用性、路由能力与实价                             | Gateway／Server 对应控制面                                                                                                 | 保留实际路由与价格来源，不用 registry 参考价覆盖 Gateway 实价                                |
-| 请求协议、SDK 字段兼容、能力透传与 token 计量                    | 本仓对应 harness／bridge／host                                                                                             | 根据具体通道能力适配，测试最终请求与用量                                                     |
-| 模型原生协议与兼容判定基准 | Cindy Registry V3 的 `nativeApi` / `nativeApiRules`，客户端内置补全 | 与 Pi 执行配置、Gateway 路由提示分开维护；结合 Harness 请求协议和实际出站协议判定本地桥接与供应商兼容 |
-| Pi 原生模型元数据                                                | Pi 上游与本仓 `tools/pi/sync-model-catalog.mjs`、`catalog/pi-model-catalog.json`                                           | 保留上游原生字段，区分公共 API 与订阅协议，遵守 `pi-harness.md`                              |
-| 旧任务的上下文占比                                               | 客户端历史读取与展示路径                                                                                                   | 正确区分历史快照、当前目录与运行数据；不能用显示特判掩盖源目录错误                           |
+| 内容                                                             | 应维护的位置                                                                                                               | 客户端职责                                                                                            |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| 统一模型目录中的名称、窗口、最大输出、推理档位、参考价及默认标记 | `cindy-server` 的 `model-access-server/catalog/providers.json`；若部署配置了 `MODEL_CATALOG_URL`，还需核对那份远程完整快照 | 同步 `packages/model-providers/catalog/model-registry.json` 作为内置兜底，正确消费实际下发值          |
+| Gateway 的实际可用性、路由能力与实价                             | Gateway／Server 对应控制面                                                                                                 | 保留实际路由与价格来源，不用 registry 参考价覆盖 Gateway 实价                                         |
+| 请求协议、SDK 字段兼容、能力透传与 token 计量                    | 本仓对应 harness／bridge／host                                                                                             | 根据具体通道能力适配，测试最终请求与用量                                                              |
+| 模型原生协议与兼容判定基准                                       | Cindy Registry V3 的 `nativeApi` / `nativeApiRules`，客户端内置补全                                                        | 与 Pi 执行配置、Gateway 路由提示分开维护；结合 Harness 请求协议和实际出站协议判定本地桥接与供应商兼容 |
+| Pi 原生模型元数据                                                | Pi 上游与本仓 `tools/pi/sync-model-catalog.mjs`、`catalog/pi-model-catalog.json`                                           | 保留上游原生字段，区分公共 API 与订阅协议，遵守 `pi-harness.md`                                       |
+| 旧任务的上下文占比                                               | 客户端历史读取与展示路径                                                                                                   | 正确区分历史快照、当前目录与运行数据；不能用显示特判掩盖源目录错误                                    |
 
 同一模型在公共 API、订阅、Gateway，以及不同 Agent 下的能力可能不同。先列出实际
 `provider + agent + model` 路由，再判断哪些字段共用、哪些需要 `perAgent` 或独立条目。
 公共 API 总窗口、Codex 默认工作窗口、可选最大窗口、有效窗口和压缩阈值不是同一个值。
 参考价也不等于订阅实际扣费；标准／Fast、缓存读／写、长输入分档需分别核实。
+
+公共资料维护在 `baseModels[].defaults`；原接入条目以 `modelRef` 引用公共型号，
+`routes[].defaults` 保存供应商默认差异，只有显式 `forceOverrides` 才能纠正供应商实报。
+同一 ID/alias 必须唯一；公共模型不继承供应商价格、地址、凭证或成员资格。
+
+### V4 媒体类型
+
+图像、视频、音频生成、语音合成、识别、实时音频与向量使用同一 V4 公共资料和
+路由结构；不再增加独立媒体 Registry 或为补类型递增版本。类型与输入输出模态
+分别用 `mode` 和 `modalities` 表达，媒体路由 `agents: []`，聊天路由保持非空。
+Provider 的媒体数组是现有消费接口，由 V4 资料投影；用户成员、账号发现和 Gateway
+实价保持原权威。完整字段及兼容边界见 [V4 全类型规范](../model-registry-v4-media.md)。
 
 ## 2. 核对真实发布链路
 
@@ -43,14 +55,10 @@
 
 ### 默认思考深度的归属
 
-模型的默认深度由当前已接受的 Cindy Registry 条目的 `defaultEffort` 统一决定；
-XD 按精确 provider/model 路由读取同一值，Registry 未声明时按实际支持档位优先选中档，不继承 Gateway 的默认深度。
-维护表内支持中档的型号统一默认中；没有中档时按 high、low、xhigh、max、minimal、ultra 顺序选真实支持档，不新增能力。新任务入口也消费此值，不单独写死 high。`perAgent` 可以收窄可用档位、窗口和 Fast 能力，
-不再决定另一份默认深度；旧文件若缺少模型层默认且 `perAgent.defaultEffort` 的声明
-完全一致，则将该值提升为模型共同默认；声明冲突时统一采用其中最低的深度，避免旧模型
-消失或静默提升开销。模型层显式值始终优先。目标引擎不支持该档时，
-复用共享档位适配规则，不改变模型的默认意图。
-订阅 Registry 已声明可用路由和有效能力时，缺少默认深度不应阻止新模型实体化；从已声明档位补默认，不伪造窗口、路由或思考能力。
+Registry V4 按字段采用「公共默认 → 供应商/运行时默认 → 供应商实报 → 明确 forceOverrides → 用户覆盖」。
+`perAgent` 可声明运行时默认；上游明示的默认优先，缺项才继承。`null` 与空档位保留明确语义；
+实际不支持的默认档按共享规则适配，不增加能力。旧 V1–V3 继续保留历史消费语义。
+完整契约、JSON 示例和用户文件见 [模型资料优先级](../product-rules/model-metadata-precedence.md)。
 用户显式保存的选择和正在运行的任务不随目录刷新被覆盖。
 
 Pi 的 `thinkingLevelMap` 是稀疏映射：标准档位省略时仍支持，`null` 才表示不支持；
@@ -96,8 +104,8 @@ JS
 服务端明确声明的协议、`null`（待核实）及 retired 则优先。补全不改窗口、价格、档位或成员资格，
 也不从 Gateway 的 `wireProtocol` 或 Pi 的 `piApi` 反推原生协议。
 
-从旧 schema 同步内置基线时，先保存并恢复经核实的 `nativeApi` / `nativeApiRules`，
-按 route 身份对齐；以 V3 格式生成新的递增 revision。此时两份 Registry 不再逐字相等，
+历史 V1–V3 迁移时，先保存并恢复经核实的 `nativeApi` / `nativeApiRules`，
+按 route 身份对齐；当时以 V3 格式生成新的递增 revision。此时两份 Registry 不再逐字相等，
 应分别核对业务参数与协议补全差异，不能沿用同 revision 却修改内容。服务端以后可在原文件
 补写这些字段，无需再维护第二份配置文件。
 
@@ -112,7 +120,11 @@ JS
 既有 GPT-5.x 公共 API 长输入参考价仍用于历史／显式长窗口估值，不表示订阅默认窗口
 应扩大；Astra 的长输入参考价已于 2026-09-07 核实并补齐；此前未核实的长输入历史价格仍返回未知。
 
-Pi 的原生目录和请求兼容仍留在客户端。删除临时补项前，必须验证随包 Pi 已原生支持
+Pi 的公共模型成员优先使用 Server 的显式 `providers[].models.pi`（空列表也有效）；
+旧快照缺字段时才回退随包声明。原生目录只补缺失元数据及请求兼容，不再独立决定
+公共模型成员。其他 Harness 沿用现有 Registry 根／桥接表示，不把其空顶层数组当禁用。
+名称、窗口、价格与档位合并结果必须进入三个 Harness 的实际运行配置。
+Pi 的请求兼容仍留在客户端。删除临时补项前，必须验证随包 Pi 已原生支持
 相同模型、协议及参数；仅 Server 新增了该模型，不足以证明可以删除兼容代码。
 
 ### 原生协议覆盖验收
@@ -182,7 +194,6 @@ Doubao Seed 2.1 Pro、Qwen3.8 Max、DS4 Flash Vision Exp、HY4 Preview。只设�
 Kimi 的 XD 默认与公共直连路由分开维护。发布时将这份递增 revision 的 Registry 同步到
 Server 目录；不改 Gateway 的价格、成员、上下文与可用性。
 
-
 ### 模型名称本地化
 
 中文界面使用经核实的官方中文厂商／系列名；版本号与变体后缀保留原样。
@@ -196,7 +207,6 @@ Server 目录；不改 Gateway 的价格、成员、上下文与可用性。
 [腾讯混元](https://hunyuan.tencent.com/)、[智谱](https://www.zhipuai.cn/zh)、
 [月之暗面](https://www.moonshot.cn/)、[深度求索](https://www.deepseek.com/)、
 [字节跳动 Seed](https://seed.bytedance.com/zh/seed2)、[豆包](https://www.doubao.com/)。不根据这些页面改变运行协议或能力。
-
 
 ### 模型简介本地化
 
@@ -224,6 +234,30 @@ Registry 的全部模型及其 routes，防止只翻译当前默认启用的几�
   但按 2026-09-07 用户更正，界面恢复「兼容模式」、默认关闭，允许用户手动开启。
   不新增「支持」协议分类；用户显式开关保持优先。GPT 窗口默认与自动压缩修复不回退。
 
+### 三引擎上下文预算（2026-09-09）
+
+- `contextWindow` 是该路由的工作默认值，`contextWindowMax` 保留上游最大支持值。
+  单模型上下文设置另存用户预算；恢复默认删除预算，重新读取当前工作默认值。
+  Claude Code、Codex、Pi 的创建、恢复、切换和历史整理都必须使用同一路由预算。
+- 修改预算或目录工作默认值后，空闲任务释放运行句柄、下次发送恢复原历史；正在回复的
+  任务等当前轮结束再应用。不得覆盖已排队的模型／来源选择，也不得因刷新失败报告已生效。
+- Claude Code 2.1.259 的已知模型不会靠 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 改变压缩窗口，
+  必须同时配置 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`。该原生窗口最低 100K；更小的预算通过
+  `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` 等比例降低触发阈值。`/context` 的原生窗口／阈值展示
+  不包含这项百分比调整，不能据此断言小预算无效，需验证真实 `compact_boundary`。
+- 预算控制自动整理的触发时机，不代表每个请求（系统提示、工具定义、最新消息和输出）
+  都能严格压到该 token 数以内。原生引擎的最少历史组数和保留空间仍适用。
+- Pi 继承原生目录时通过 `modelOverrides.contextWindow` 应用工作窗口，保留原生协议、
+  OAuth 和兼容参数；生成的压缩预留空间必须使用同一工作窗口。
+- 原生回归进入显式 integration tier，使用隔离目录与本地假上游，不能依赖开发者凭证。
+
+### 本地模型目录
+
+本地模型筛选与更新遵循 [`local-model-selection.md`](../product-rules/local-model-selection.md)。
+Server 维护 Registry V4 的 `localModels`，本仓 `model-registry.json` 仅作离线副本；
+不得重新增加独立的硬编码推荐名单。更新时协调完整 Registry revision 和服务端覆盖源，
+保持旧客户端的版本投影与显式空推荐语义。
+
 
 ### 原生缓存与简略列表的字段完整性（2026-09-07）
 
@@ -250,8 +284,8 @@ Gateway 下发不是所有模型事实的唯一依据。先对照官方规格、
 官方参考价只用于相应参考价入口，不覆盖实价。
 
 Astra / Sol / Terra / Luna 的官方容量为 1,050,000；本地 Registry 分开写模型容量和
-Codex / Claude 的 272,000 工作默认，账号原生明确的最大值继续优先。独立 Pi 目录仍按
-原生来源，不借公共 API 扩大订阅能力。用户可显式调整工作预算，预算不代表通道承诺。
+Codex / Claude 的 272,000 工作默认，账号原生明确的最大值继续优先。Pi 按显式订阅路由声明，
+不借公共 API 扩大订阅能力。用户可显式调整工作预算，预算不代表通道承诺。
 GPT `[1m]` 是旧窗口预设，退出 Desktop 管理和新选择清单；完整运行目录及历史价保留兼容，
 不改收藏、历史模型 ID 或用户已保存的窗口。自定义供应商、Claude / GLM 的真实变体不受影响。
 

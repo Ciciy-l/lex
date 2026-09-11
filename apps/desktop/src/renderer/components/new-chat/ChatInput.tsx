@@ -13,6 +13,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
+import { buildLocalSkillPathRoute } from '@/features/skillhub/lib/localRoutes';
 import { Folder, MessageSquarePlus, Mic, Pen, TriangleAlert, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { AgentInputReference } from '@cindy/maker-shared/agent-input-projection';
@@ -1981,19 +1982,11 @@ export function ChatInput({
     return effectiveSourceIdForModel(providers, activeProviderId, activeModel, kind);
   }, [providers, currentModelAgentKind, activeProviderId, activeModel]);
 
-  // 发送(草稿态建会话)时携带的**显式来源**:仅当本地选择仍在已连接来源栏内才带上
-  // (与 effectiveSourceId 的高亮口径一致,即"所见即所得");否则带 null。
+  // 发送保留显式连接，由 main 验证；目录不可用不能将账号身份变为默认账号。
   // 关键:这里**绝不**把"跟随默认"具体化成原生默认 id(如 'xd')——默认 cohort 必须保持
   //   providerId=null,路由才回落 spawn-aware 默认(字节级不变,no-break);写成显式 'xd'
   //   会改走 catalog gateway-key 路由(见 provider-route.ts),破坏默认 cohort 的路由/缓存基线。
-  const sendProviderId = useMemo<string | null>(() => {
-    const kind = currentModelAgentKind;
-    if (!kind || !activeProviderId) return null;
-    return effectiveSourceIdForModel(sendProviders, activeProviderId, activeModel, kind) ===
-      activeProviderId
-      ? activeProviderId
-      : null;
-  }, [sendProviders, currentModelAgentKind, activeProviderId, activeModel]);
+  const sendProviderId = activeProviderId || null;
 
   // 模型预设采用「全局默认 + 已创建会话保护」:
   //   - 本地草稿 / 已创建会话的**非选中行**都读写 providerModelMemory,所以同一
@@ -2270,10 +2263,11 @@ export function ChatInput({
           return true;
         }
 
-        // 2. 深链 / 路径混排 → text / session / project / path 分段:
+        // 2. 深链 / 独立路径 → text / session / project / path 分段:
         //    session、project 即时成 chip(session 裸链接先短 ID 占位,标题
-        //    异步原地补齐——sessionLinkPaste.ts);path 段先落纯文本,stat
-        //    确认存在后原地升级为 @chip(pathPaste.ts)。
+        //    异步原地补齐——sessionLinkPaste.ts);整段粘贴仅为一个工作区
+        //    绝对路径时,path 段先落纯文本,stat 确认存在后原地升级
+        //    为 @chip(pathPaste.ts);日志或叙述中的路径保持字面原文。
         const segments = text
           ? segmentPastedContent(text, { workingDir: workingDirRef.current })
           : null;
@@ -4186,6 +4180,13 @@ export function ChatInput({
   useEffect(() => {
     reloadSlashCommands();
   }, [reloadSlashCommands]);
+
+  useEffect(() => {
+    return window.electronAPI.skillhub?.onLocalStateChanged?.(() => {
+      void reloadSlashCommands({ forceReload: true });
+    });
+  }, [reloadSlashCommands]);
+
   useEffect(
     () =>
       window.electronAPI.maker.onPiPackagesChanged(() => {
@@ -9004,6 +9005,13 @@ export function ChatInput({
               focusedIndex={slashFocus}
               onFocusedIndexChange={setSlashFocus}
               onSelect={(cmd) => insertSlashCommand(cmd)}
+              allowProjectSkillDetails={!!sessionId}
+              onOpenSkillDetails={!isRemoteSession && !deviceLinkDeviceId ? (cmd) => {
+                if (cmd.kind !== 'agent-skill' || cmd.source !== 'skill' || !cmd.path || cmd.origin === 'package') return;
+                if (!sessionId && cmd.scope !== 'global' && cmd.scope !== 'user') return;
+                draftSaveSchedulerRef.current?.flush();
+                navigate(buildLocalSkillPathRoute(cmd.path, { scope: cmd.scope, workingDir }), { state: { resetHistory: true } });
+              } : undefined}
               onClose={() => {
                 if (trigger.kind === 'slash') setSuppressedSlashAt(trigger.from);
               }}

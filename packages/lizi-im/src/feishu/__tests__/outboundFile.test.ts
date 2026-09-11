@@ -133,6 +133,9 @@ describe('Feishu parent-chat file reuse', {
     expect(mocks.createMessage).toHaveBeenCalledTimes(2);
   });
 
+  // Windows starts a fresh PowerShell process and compiles the native helper
+  // for each containment proof. Keep this security regression independent of
+  // the default 5s Vitest timeout on slower hosted runners.
   it('proves a Unicode file only through the same pinned directory object chain', async () => {
     const allowedRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'cindy-feishu-chain-allowed-'));
     const outsideRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'cindy-feishu-chain-outside-'));
@@ -164,7 +167,7 @@ describe('Feishu parent-chat file reuse', {
       fsSync.closeSync(allowedFd);
       fsSync.closeSync(rootFd);
     }
-  });
+  }, 30_000);
 
   it('rejects a source reached only through an intermediate directory link', async () => {
     const allowedRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'cindy-feishu-chain-link-'));
@@ -274,9 +277,12 @@ describe('Feishu parent-chat file reuse', {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const pending = outbound.sendFile('ou_owner', absPath);
     await spawnObserved.promise;
-    await vi.advanceTimersByTimeAsync(4_999);
     expect(mocks.createFile).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1);
+    // Keep this regression tied to the production helper bound instead of
+    // duplicating it here. The bound was deliberately raised for first-run
+    // PowerShell compilation on hosted Windows; advancing to the next timer
+    // still proves the upload cannot begin before the helper settles.
+    await vi.advanceTimersToNextTimerAsync();
     await expect(pending).resolves.toMatchObject({ ok: true, uploadedSource: { realPath: '' } });
     expect(kill).toHaveBeenCalledOnce();
     expect(mocks.createFile).toHaveBeenCalledOnce();

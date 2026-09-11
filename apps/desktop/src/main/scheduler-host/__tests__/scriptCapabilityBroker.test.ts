@@ -364,7 +364,11 @@ describe('SchedulerScriptCapabilityBroker', () => {
       { method: 'host.capabilities', params: {} },
       new Set(['jira.read']),
       { schedule: schedule() },
-    )) as { protocol: string; granted: string[]; methods: Array<{ method: string; available: boolean }> };
+    )) as {
+      protocol: string;
+      granted: string[];
+      methods: Array<{ method: string; available: boolean; description: string }>;
+    };
     expect(result.protocol).toBe('cindy-script/1');
     expect(result.granted).toEqual(['jira.read']);
     const byMethod = new Map(result.methods.map((m) => [m.method, m.available]));
@@ -376,6 +380,8 @@ describe('SchedulerScriptCapabilityBroker', () => {
     expect(byMethod.get('feishu.recent_messages')).toBe(false);
     expect(byMethod.get('sessions.dispatch')).toBe(false);
     expect(byMethod.get('jira.search_jql')).toBe(true);
+    expect(result.methods.find((method) => method.method === 'sessions.dispatch')?.description)
+      .toBe('创建或唤醒 Lex 会话并投递消息');
     expect(result.methods).toHaveLength(7);
   });
 
@@ -640,8 +646,7 @@ describe('SchedulerScriptCapabilityBroker', () => {
       const { fsSlot } = wireRealChannel(tmp);
       // 真实 dispatcher:资格审 + callId 配对 + 错误折叠全真,只有「意识进程」
       // 本身由 sendToGhost 内联模拟(先经 fs 槽写盘,再 handleToolResult 交卷)。
-      let dispatcher!: GhostPipeDispatcher;
-      dispatcher = new GhostPipeDispatcher({
+      const dispatcher = new GhostPipeDispatcher({
         getGhost: (id) => (id === 'xd-atlassian' ? makeInstalledGhost(id) : null),
         runtimeStateOf: () => 'running',
         spawn: async () => ({ ok: true }),

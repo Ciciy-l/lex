@@ -16,6 +16,7 @@ interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
 
+type BotToolsetContext = import('../shared/botRemoteCapabilities').BotToolsetContext;
 type AgentProxyPrefPayload = import('../shared/agentProxyConfig').SshHostAgentProxyPref;
 type AgentProxyTunnelStatePayload = import('../shared/agentProxyConfig').AgentProxyTunnelState;
 type ModelAccessStatusPayload = import('../shared/modelAccess').ModelAccessStatus;
@@ -995,6 +996,8 @@ interface CrossAgentStepEvent {
 }
 
 interface PluginListItem {
+  /** Present only when queried for a Bot runtime context. */
+  available?: boolean;
   id: string;
   name: string;
   description: string;
@@ -1169,6 +1172,7 @@ type ElectronLocalDbSessionListUsageOptions = Omit<
 };
 
 interface ElectronAPI {
+  routines: import('../shared/routines').RoutinesAPI;
   platform: string;
   /** 当前 Desktop 构建是否具备 Beta 更新渠道。 */
   supportsBetaUpdateChannel?: boolean;
@@ -3176,11 +3180,14 @@ interface ElectronAPI {
 
   // ── SkillHub (xdt-maker-技能中心 v0.2) ──
   skillhub: {
+    setEnabled: (params: { absolutePath: string; skillId?: string; enabled: boolean }) => Promise<{ cindyEnabled: boolean }>;
+    onLocalStateChanged: (callback: () => void) => () => void;
     scan: (params: { projects?: SkillhubProjectInput[] }) => Promise<{
       success: boolean;
       error?: string;
       skills?: SkillhubSkill[];
       sources?: SkillhubSourceReport[];
+      pendingCleanups?: Array<{ token: string; name: string }>;
     }>;
     readSkill: (params: { mdPath: string }) => Promise<{
       success: boolean;
@@ -3441,6 +3448,7 @@ interface ElectronAPI {
     }) => Promise<{
       success: boolean;
       status: string;
+      rejectionReason?: string;
       gates?: Array<{ name: string; status: string; issues?: unknown[] }>;
       scorecard?: Record<string, unknown>;
       error?: string;
@@ -3513,7 +3521,10 @@ interface ElectronAPI {
     cancelInstall: (name: string) => Promise<{ success: boolean }>;
     uninstall: (
       absolutePath: string,
-    ) => Promise<{ success: true } | { success: false; errorCode: string; message: string }>;
+      skillId?: string,
+    ) => Promise<{ success: true; cleanupToken?: string } | { success: false; errorCode: string; message: string }>;
+    retryUninstallCleanup: (token: string) => Promise<{ complete: boolean }>;
+
     /** 在 main 内选择并检查本地包，成功时签发绑定当前 renderer 的短期导入授权。 */
     pickLocal: () => Promise<
       | { success: true; canceled: true }
@@ -3601,6 +3612,10 @@ interface ElectronAPI {
       error?: string;
       blobs: { totalCount: number; totalBytes: number; cacheCount: number; cacheBytes: number };
       legacy: { bytes: number; fileCount: number };
+      fixedCaches: {
+        legacyImages: { bytes: number; fileCount: number };
+        chatAttachments: { bytes: number; fileCount: number };
+      };
       deadDirs: Array<{
         name: string;
         exists: boolean;
@@ -3769,6 +3784,7 @@ interface ElectronAPI {
   fetchReleaseNotesIndex: () => Promise<string[] | null>;
 
   // ── Device Link (设备互联/跨设备远程控制) ─────────────────────────────
+  remoteDesktop: import('../shared/remoteDesktop').RemoteDesktopApi;
   deviceLink: {
     getState: () => Promise<{
       remoteControlEnabled: boolean;
@@ -4436,6 +4452,32 @@ interface ElectronAPI {
           };
         }
     >;
+    databaseSizeWarning: {
+      getSettings: () => Promise<{
+        thresholdGiB: number;
+        disabled: boolean;
+        isCustomized?: boolean;
+        defaultThresholdGiB: number;
+      }>;
+      setSettings: (settings: {
+        thresholdGiB?: number;
+        disabled?: boolean;
+      }) => Promise<{
+        thresholdGiB: number;
+        disabled: boolean;
+        isCustomized?: boolean;
+        defaultThresholdGiB: number;
+      }>;
+      resetSettings: () => Promise<{
+        thresholdGiB: number;
+        disabled: boolean;
+        isCustomized?: boolean;
+        defaultThresholdGiB: number;
+      }>;
+      getStatus: () => Promise<{ databaseBytes: number | null }>;
+      measure: () => Promise<{ databaseBytes: number | null }>;
+      onChanged: (callback: () => void) => () => void;
+    };
     maintenance: {
       scan: (
         input: import('../shared/localDbMaintenance').DbSlimmingScanInput,
@@ -4553,6 +4595,10 @@ interface ElectronAPI {
     };
     bots: {
       getModelChainSettings: () => Promise<{
+        modelChain: import('../shared/botModelChain').BotModelRoute[];
+        isCustomized: boolean;
+      }>;
+      resetModelChainSettings: () => Promise<{
         modelChain: import('../shared/botModelChain').BotModelRoute[];
         isCustomized: boolean;
       }>;
@@ -5165,7 +5211,7 @@ interface ElectronAPI {
       savedProviderId?: string;
     }) => Promise<{
       ok: boolean;
-      models?: { id: string; name: string; contextWindow?: number }[];
+      models?: import('@cindy/model-providers').DiscoveredModel[];
       code?: import('../shared/providerErrors').ProviderErrorCode;
       status?: number;
       detail?: string;
@@ -5190,9 +5236,7 @@ interface ElectronAPI {
     onProvidersChanged: (cb: () => void) => () => void;
 
     // 自定义 MCP 服务器配置 CRUD（可选 bearer token 另走通用 safeStorage IPC，不经这里）。
-    listCustomMcpServers: () => Promise<{
-      servers: import('../shared/customMcp').CustomMcpConfig[];
-    }>;
+    listCustomMcpServers: (context?: import('../shared/customMcp').CustomMcpListContext) => Promise<import('../shared/customMcp').CustomMcpListResult>;
     createCustomMcpServer: (
       config: import('../shared/customMcp').CustomMcpConfig,
     ) => Promise<{ ok: true }>;
@@ -5287,6 +5331,7 @@ interface ElectronAPI {
       dataOwnerId: string | null,
       ownerGeneration: number,
       map: Record<string, boolean>,
+      policy?: import('../shared/modelVisibility').ModelVisibilityPolicy,
     ) => Promise<void>;
     /** Resolve the stable local/cloud owner allowed to import the pre-account preference key. */
     claimLegacyModelVisibilityOwner: () => import('../shared/modelVisibility').ModelVisibilityLegacyOwnerClaim;
@@ -6328,9 +6373,9 @@ interface ElectronAPI {
         reasoningTokens?: number;
         cachedTokens?: number;
       }>;
-      getAccount: (agentKind: 'claude-code' | 'codex' | 'pi') => Promise<unknown | null>;
+      getAccount: (agentKind: 'claude-code' | 'codex' | 'pi', providerId?: string) => Promise<unknown | null>;
       /** Codex app-server authoritative windows and banked reset-credit metadata. */
-      getCodexRateLimits: () => Promise<
+      getCodexRateLimits: (providerId?: string) => Promise<
         import('@cindy/maker-shared/device-link-contract').MobileCodexRateLimitsResult
       >;
       /** Cindy AI /models 下发的 XD 原生报价。 */
@@ -6394,6 +6439,7 @@ interface ElectronAPI {
           updatedAt?: number | null;
           accountId?: string | null;
         }) => void,
+        providerId?: string,
       ) => () => void;
       /** xAI(SuperGrok bridge)限流快照推送;字段与 main usageBroadcaster XaiRateLimitSnapshot 对齐。
        *  null = main 主动清空(xAI 登出 / 换账号,clearXaiRateLimitSnapshot)。 */
@@ -6408,8 +6454,14 @@ interface ElectronAPI {
           } | null,
         ) => void,
       ) => () => void;
-      getXaiSubscription: () => Promise<unknown | null>;
-      onXaiSubscriptionChanged: (cb: (payload: unknown) => void) => () => void;
+      /** Existing native Anthropic subscription snapshot (null means cleared). */
+      getClaudeSubscription: (providerId?: string) => Promise<import('../shared/claudeSubscriptionUsage').ClaudeSubscriptionUsageSnapshot | null>;
+      onClaudeSubscriptionChanged: (
+        cb: (snapshot: import('../shared/claudeSubscriptionUsage').ClaudeSubscriptionUsageSnapshot | null) => void,
+        providerId?: string,
+      ) => () => void;
+      getXaiSubscription: (providerId?: string) => Promise<unknown | null>;
+      onXaiSubscriptionChanged: (cb: (payload: unknown) => void, providerId?: string) => () => void;
     };
 
     /* ── 跨 Agent 工作区互转（双向，5 项独立判断；进度 step 通过 push 流转）── */
@@ -6547,7 +6599,7 @@ interface ElectronAPI {
     };
 
     plugins: {
-      list: (workingDir?: string) => Promise<PluginListItem[]>;
+      list: (workingDir?: string, includeHidden?: boolean, botContext?: Omit<BotToolsetContext, 'workingDir'>) => Promise<PluginListItem[]>;
       getState: (
         id: string,
         workingDir?: string,
@@ -6673,6 +6725,11 @@ interface SkillhubFileEntry {
 }
 
 interface SkillhubSkill {
+  cindyEnabled?: boolean;
+  canUninstall?: boolean;
+  managedByPlugin?: boolean;
+  uninstallLinkOnly?: boolean;
+  discoveryPaths?: string[];
   id: string;
   /** URL 匹配键 — 不含 engine，和路由格式一致，用于侧栏选中高亮。 */
   urlKey: string;
@@ -6710,6 +6767,8 @@ interface SkillhubSkill {
    * Only set for kind=skill; command/agent always null.
    */
   registryEntry: StoredInstall | null;
+  /** Original market slug from the registry joined by physical path. */
+  registrySkillName?: string;
 }
 
 type SkillhubSourceStatus =
@@ -6942,7 +7001,7 @@ type SkillhubPublishErrorCode =
   | 'INVALID_VISIBILITY'
   | 'INTERNAL';
 
-type SkillhubPublishProgressEvent =
+type SkillhubPublishProgressEvent = (
   | { phase: 'packing' }
   | { phase: 'init' }
   | { phase: 'uploading' }
@@ -6965,6 +7024,7 @@ type SkillhubPublishProgressEvent =
       name: string;
       version: string;
       status: string;
+      rejectionReason?: string;
       gates?: Array<{
         name: string;
         label?: Record<string, string>;
@@ -6972,7 +7032,8 @@ type SkillhubPublishProgressEvent =
         issues?: unknown[];
       }>;
     }
-  | { phase: 'failed'; name?: string; errorCode: SkillhubPublishErrorCode; message: string };
+  | { phase: 'failed'; name?: string; errorCode: SkillhubPublishErrorCode; message: string }
+) & { ownerStamp?: import('../shared/dataOwnerPush').DataOwnerPushStamp };
 
 interface Window {
   electronAPI: ElectronAPI;

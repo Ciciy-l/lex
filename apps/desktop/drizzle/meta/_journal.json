@@ -736,6 +736,13 @@
       "when": 1789041101736,
       "tag": "0104_bot_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "6",
+      "when": 1789122762872,
+      "tag": "0105_early_shockwave",
+      "breakpoints": true
     }
   ]
 }

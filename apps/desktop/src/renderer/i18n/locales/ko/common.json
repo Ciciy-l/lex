@@ -1,4 +1,67 @@
 {
+  "remoteDesktop": {
+    "windowsTitle": "잠금 화면 제어",
+    "windowsready": "현재 {{appName}} 실행에 허용되었습니다. {{appName}}를 다시 시작하면 관리자 승인이 다시 필요합니다.",
+    "windowsmissing": "잠금 화면과 관리자 확인 창을 제어하려면 관리자 승인이 필요합니다.",
+    "windowsinstallRequired": "{{appName}}를 Program Files에 모든 사용자용으로 설치하세요.",
+    "windowsunavailable": "시스템 서비스를 사용할 수 없습니다. {{appName}}를 다시 설치하세요.",
+    "windowsEnable": "승인 후 활성화",
+    "windowsDisable": "서비스 제거",
+    "windowsError": "승인이 완료되지 않았습니다. 이 컴퓨터에서 다시 시도하세요.",
+    "permissionsTitle": "원격 데스크톱 권한",
+    "permissionsIntro": "데스크톱을 보려면 화면 기록 권한이, 조작하려면 손쉬운 사용 권한도 필요합니다. 컴퓨터에서 허용하면 상태가 자동으로 갱신됩니다.",
+    "permissionsReady": "시스템 권한이 준비되었습니다. 다시 연결할 수 있습니다.",
+    "screenRecording": "화면 기록",
+    "accessibility": "손쉬운 사용",
+    "screenRecordingHelp": "시스템 설정을 열고 현재 {{appName}} 앱의 화면 기록을 허용하세요. 재시작을 요청하면 {{appName}}를 다시 연 후 연결하세요.",
+    "accessibilityHelp": "설정을 열고 시스템 권한 안내에 표시된 앱의 손쉬운 사용을 허용하세요. 돌아오면 실제 입력 권한을 자동 확인합니다.",
+    "permissionChecking": "확인 중…",
+    "permissionGranted": "허용됨",
+    "permissionUnknown": "확인되지 않음",
+    "permissionMissing": "허용되지 않음",
+    "openPermissionSettings": "권한 허용",
+    "recheckPermissions": "다시 확인",
+    "permissionActionFailed": "권한 안내를 열지 못했습니다. 컴퓨터의 원격 제어 설정에서 다시 시도하세요.",
+    "permissionCheckFailed": "권한을 확인하지 못했습니다. 컴퓨터가 온라인인지 확인하고 다시 시도하세요.",
+    "openGuideOnComputer": "컴퓨터에서 권한 안내 열기",
+    "permissionGuideOpened": "컴퓨터에 권한 안내를 표시했습니다. 컴퓨터에서 계속하세요.",
+    "reconnectAfterPermissions": "확인 후 다시 연결",
+    "closePermissionGuide": "닫기",
+    "title": "원격 데스크톱",
+    "allow": "원격 데스크톱 허용",
+    "allowHint": "같은 계정의 기기에서 이 컴퓨터의 모든 앱을 보고 조작하도록 허용합니다. 위의 기기 제어도 켜주세요.",
+    "permissionHint": "컴퓨터 시스템 설정에서 화면 기록과 손쉬운 사용을 허용한 후 다시 연결하세요.",
+    "beingControlled": "데스크톱을 원격으로 제어 중",
+    "beingViewed": "데스크톱을 원격으로 보는 중",
+    "disconnect": "연결 끊기",
+    "back": "뒤로",
+    "connect": "연결",
+    "connecting": "연결 중…",
+    "disconnected": "연결 끊김",
+    "compatibility": "호환 모드 · 낮은 프레임 속도",
+    "live": "실시간 화면",
+    "controlling": "제어 중",
+    "viewOnly": "보기 전용",
+    "upgrade": "컴퓨터의 {{appName}}를 업데이트하세요.",
+    "disabled": "컴퓨터의 설정 → 원격 제어에서 원격 데스크톱을 켜주세요.",
+    "busy": "데스크톱 입력을 사용 중입니다. 다른 기기의 제어를 해제하거나 Agent 작업이 끝날 때까지 기다리세요.",
+    "connectionError": "연결이 종료되었습니다. 컴퓨터가 온라인인지 확인하고 다시 연결하세요.",
+    "releaseControl": "제어 해제",
+    "takeControl": "제어 시작",
+    "pointer": "트랙패드",
+    "touch": "터치",
+    "pan": "화면 이동",
+    "keyboard": "키보드",
+    "rightClick": "오른쪽 클릭",
+    "fit": "화면 맞춤",
+    "display": "디스플레이",
+    "gestureHint": "두 손가락으로 확대/축소 및 스크롤합니다. 화면 이동 모드에서는 이동합니다. 길게 누른 후 움직이면 드래그합니다.",
+    "textPlaceholder": "컴퓨터에 텍스트 입력",
+    "sendText": "텍스트 전송",
+    "keys": "키",
+    "showDesktop": "데스크톱",
+    "allWindows": "모든 창"
+  },
   "ipcError": {
     "INVALID_PARAMS": "매개변수가 잘못되었습니다. 확인 후 다시 시도하세요.",
     "PRECONDITION_FAILED": "현재 상태에서는 이 작업을 수행할 수 없습니다. 잠시 후 다시 시도하세요.",
@@ -115,6 +178,7 @@
       "restoreFailed": "기본 설정으로 복원하지 못했습니다"
     },
     "tabs": {
+      "storage": "저장 공간",
       "general": "일반",
       "billing": "사용량 및 결제",
       "usage": "사용 기록",
@@ -862,10 +926,25 @@
         "unknown": "알 수 없음"
       },
       "storage": {
+        "mediaSectionTitle": "미디어 파일",
+        "databaseSectionTitle": "데이터베이스",
+        "overviewTitle": "로컬 저장 공간",
+        "overviewDescription": "데이터베이스와 미디어 캐시는 이 컴퓨터에 저장됩니다. {{appName}}는 기록을 자동으로 삭제하지 않습니다.",
+        "mediaSectionHint": "별도로 관리하며 삭제하기 전에 내용을 확인하세요",
+        "databaseUsage": "사용량 {{size}}",
+        "databaseWarningNote": "먼저 검사한 다음 정리할 항목을 선택하세요. 검사만으로는 파일이 삭제되지 않습니다.",
+        "dbSizeWarningThresholdLabel": "데이터베이스 알림 기준",
+        "dbSizeWarningThresholdDescription": "데이터베이스가 이 크기(G)를 초과하면 정리 알림",
+        "dbSizeWarningThresholdInvalid": "알림 기준값을 1~1024 G 범위로 입력하세요.",
+        "dbSizeWarningSaveFailed": "데이터베이스 알림 설정을 저장하지 못했습니다. 다시 시도하세요.",
+        "dbSizeWarningDisableLabel": "다시 알리지 않기",
+        "dbSizeWarningDisableDescription": "사용하면 데이터베이스 공간 알림이 숨겨집니다.",
+        "unknown": "알 수 없음",
         "title": "저장 공간",
         "usageLabel": "미디어 사용량",
-        "usageValue": "{{size}}({{count}}개 파일, 캐시 {{cacheSize}} 포함)",
+        "usageValue": "{{size}} ({{count}}개 파일, 캐시 {{cacheSize}})",
         "statsFailed": "통계를 일시적으로 사용할 수 없습니다",
+        "refreshStatsButton": "저장 공간 사용량 새로 고침",
         "legacyUsage": "이전 버전 데이터(읽기 전용, 정리 대상 아님): {{size}}",
         "legacyImagesLabel": "이미지 캐시 디렉터리",
         "legacyImagesDescription": "{{appName}}는 이 디렉터리를 자동으로 검사하거나 정리하지 않습니다. 파일을 삭제하면 메시지 기록의 이미지가 표시되지 않을 수 있으므로 확인 후 작업해 주세요.",
@@ -1219,8 +1298,7 @@
             "manual": "수동"
           },
           "toast": {
-            "title": "사전에 자동 추가됨",
-            "titleMultiple": "{{count}}개 단어가 사전에 자동 추가됨",
+            "title": "사전에 추가됨",
             "termsSummary": "{{terms}} 외 총 {{count}}개",
             "automaticAdded": "사전에 자동 추가됨: {{term}}",
             "automaticAddedMultiple": "사전에 자동 추가됨: {{term}} 외 {{count}}개",
@@ -1419,6 +1497,10 @@
       },
       "pill": {
         "connected": "연결됨",
+        "configured": "설정됨",
+        "disconnected": "연결되지 않음",
+        "connecting": "연결 중…",
+        "rename": "이름 변경",
         "suspended": "비활성화됨"
       },
       "button": {
@@ -1443,7 +1525,17 @@
         "reconnectRequired": "다시 연결 필요",
         "connect": "ChatGPT 연결",
         "reconnect": "ChatGPT 다시 연결",
-        "cancelConnect": "연결 취소"
+        "cancelConnect": "연결 취소",
+        "accountSource": {
+          "local": "로컬 Codex 계정",
+          "oauth": "별도로 로그인한 계정",
+          "unknown": "기존 OpenAI 연결"
+        },
+        "useLocalAccount": "로컬 Codex 계정 사용",
+        "addIndependentAccount": "별도 계정으로 로그인",
+        "accountSourcesDescription": "기존 로컬 Codex 연결을 사용하거나 별도로 저장되는 계정에 로그인하세요. 두 방식 모두 같은 기능을 지원합니다.",
+        "independentAccountDescription": "별도로 저장되는 ChatGPT 계정에 로그인하거나 API 키로 연결하세요.",
+        "localUnavailable": "재사용할 수 있는 로컬 연결이 없습니다. 기존 제공자의 계정은 변경되지 않습니다."
       },
       "xai": {
         "title": "xAI",
@@ -1452,7 +1544,7 @@
         "billingLabel": "SuperGrok 구독 직접 연결",
         "asset": {
           "weeklyTitle": "주간 한도",
-          "weeklyUsed": "{{percent}}% 사용됨",
+          "weeklyRemaining": "{{percent}}% 남음",
           "resetsAt": "{{at}} 초기화",
           "productLine": "{{product}} {{percent}}%",
           "openUsage": "Grok 사용량 페이지 열기"
@@ -1540,6 +1632,7 @@
           "modelIdPlaceholder": "model-id",
           "modelNamePlaceholder": "표시 이름",
           "modelContextWindowPlaceholder": "컨텍스트(tokens)",
+          "modelType": "모델 유형",
           "modelContextWindowTitle": "컨텍스트 윈도우(토큰 수). 비워 두면 보수적 기본값 200K가 적용되며, 윈도우 표시와 압축 임계값에 영향을 줍니다.",
           "modelSupportsImageInput": "이미지 입력 지원",
           "modelSupportsImageInputHelp": "모델이 실제로 시각 입력을 지원할 때만 켜세요. 저장 후 새 Pi 작업부터 적용됩니다.",
@@ -1742,7 +1835,7 @@
         "subscription": "구독",
         "subscriptionProduct": "{{product}} 구독",
         "noResults": "일치하는 모델 없음",
-        "capabilityNote": "{{agent}}에서는 사용 불가",
+        "capabilityNote": "{{agent}} 설정되지 않음",
         "refreshAria": "모델 목록 새로고침(추가만)",
         "refreshBuiltinAria": "모델 목록 새로고침",
         "refreshingAria": "모델 목록 새로고침 중…",
@@ -1818,6 +1911,7 @@
           "engines": "엔진 지원",
           "enginesHint": "호환 모드는 요청을 변환합니다. 기본적으로 꺼져 있으며 필요할 때 켤 수 있습니다.",
           "engineUnsupported": "지원 안 함",
+          "engineNotConfigured": "설정되지 않음",
           "engineNoFast": "Fast 없음",
           "vision": {
             "vision": "지원",
@@ -2020,8 +2114,8 @@
         "hostProfileApple": "Apple 칩 · 통합 메모리 약 {{memory}}GB",
         "hostProfileGeneric": "메모리 약 {{memory}}GB",
         "hostProfileUnknown": "이 컴퓨터의 메모리를 아직 확인할 수 없습니다",
-        "bestForYou": "가장 잘 맞음",
-        "alsoCoding": "코딩에도 좋음",
+        "bestForYou": "성능 추천",
+        "alsoCoding": "속도 대안",
         "packaging": {
           "mxfp8": "MXFP8",
           "mlx": "MLX",
@@ -2038,41 +2132,12 @@
         "noSearchResults": "일치하는 모델이 없습니다",
         "alreadyInstalled": "설치됨",
         "searchResults": "검색 결과",
-        "moreModels": "자주 쓰는 모델 더 보기",
-        "memoryWarning": "이 컴퓨터의 메모리가 부족합니다({{need}} GB 필요, 현재 약 {{have}} GB)",
+        "moreModels": "다른 후보 모델",
+        "memoryWarning": "추정 메모리 기준 미만({{need}} GB, 이 기기 약 {{have}} GB)",
         "manualDownload": "수동 다운로드",
         "manualDownloadPlaceholder": "Ollama 라이브러리 이름 또는 Hugging Face URL",
         "invalidLibraryName": "Ollama 라이브러리 이름을 입력하거나 huggingface.co 모델 페이지 URL을 붙여넣으세요",
         "advancedExactName": "고급: 정확한 라이브러리 이름",
-        "models": {
-          "qwen38-27b": {
-            "blurb": "로컬에서 돌릴 수 있는 가장 강한 밀집 모델. 코딩과 긴 작업에 적합합니다."
-          },
-          "gpt-oss-20b": {
-            "blurb": "OpenAI 오픈 20B. 16GB급 기기에서 가장 무난한 선택."
-          },
-          "gemma4-e2b": {
-            "blurb": "Gemma 4 최소형. 가벼운 기기에서도 돌아가며 비전을 지원합니다."
-          },
-          "gemma4-e4b": {
-            "blurb": "Google Gemma 4 소형. 가벼운 일상용이며 비전을 지원합니다."
-          },
-          "gemma4-12b": {
-            "blurb": "Gemma 4 중형. 일상 대화와 멀티모달에 더 안정적입니다."
-          },
-          "gemma4-31b": {
-            "blurb": "Gemma 4 대형. 대화와 멀티모달이 더 강하고, 메모리도 더 듭니다."
-          },
-          "gemma4-26b": {
-            "blurb": "Gemma 4 중대형 MoE. 활성 파라미터가 적어 중고사양에 맞습니다."
-          },
-          "ornith15-35b": {
-            "blurb": "Ornith 1.5 중형 MoE. 로컬 코딩과 에이전트 대안."
-          },
-          "glm-47-flash": {
-            "blurb": "Zhipu의 최신 코딩 모델. 30B MoE로 코드와 에이전트에 맞음."
-          }
-        },
         "onboardingTitle": "먼저 Ollama 런타임을 설치하세요",
         "onboardingBody": "Ollama를 설치하면 Ollama 앱을 열지 않고도 {{appName}}에서 로컬 모델을 다운로드하고 사용할 수 있습니다. Ollama는 무료 오픈소스 서드파티 런타임입니다.",
         "installInCindy": "{{appName}}에서 설치",
@@ -2141,8 +2206,8 @@
         "cancelDownload": "미완료 다운로드 삭제",
         "notRecommended": "이 Mac은 Qwen3.8 27B에 필요한 32GB 메모리 기준에 미달합니다. 정확한 라이브러리 이름을 입력해 직접 다운로드할 수 있습니다.",
         "sizeHint": "약 {{size}} · 통합 메모리 {{memory}}GB 필요",
-        "sizeHintApple": "약 {{size}} · 통합 메모리 {{memory}}GB 필요",
-        "sizeHintGeneric": "약 {{size}} · 메모리 {{memory}}GB 필요",
+        "sizeHintApple": "다운로드 {{size}} · 예상 통합 메모리 {{memory}} GB",
+        "sizeHintGeneric": "다운로드 {{size}} · 예상 메모리 {{memory}} GB",
         "deleteFromCindy": "{{appName}}에서 제거",
         "deleteConfirmTitle": "{{appName}}에서 Ollama를 제거할까요?",
         "deleteConfirmBody": "{{appName}} 연결만 제거합니다. Ollama에 이미 받은 모델은 디스크에 남고 서비스도 멈추지 않습니다.",
@@ -2151,7 +2216,8 @@
         "deleteModelConfirmBody": "이 컴퓨터에서 받은 모델 파일을 삭제하고 {{appName}}에서도 제거합니다. 필요하면 나중에 다시 받을 수 있습니다.",
         "deleteModelConfirm": "삭제",
         "deleteModelDone": "{{name}}을(를) 삭제했습니다",
-        "deleteModelFailed": "삭제하지 못했습니다. Ollama가 실행 중인지 확인한 뒤 다시 시도해 주세요."
+        "deleteModelFailed": "삭제하지 못했습니다. Ollama가 실행 중인지 확인한 뒤 다시 시도해 주세요.",
+        "noRecommendation": "아직 이 컴퓨터의 메모리에 맞고 근거가 충분한 추천 모델이 없습니다. 아래에서 후보를 직접 선택할 수 있습니다."
       },
       "xdSignin": {
         "badge": "추천",
@@ -2181,27 +2247,15 @@
           "cancel": "취소"
         }
       },
-      "imagesKey": {
-        "label": "이미지 생성 API key",
-        "placeholder": "OpenAI 플랫폼 API key 붙여넣기",
-        "save": "저장",
-        "clear": "지우기",
-        "toast": {
-          "saved": "이미지 생성 API key를 저장했습니다",
-          "saveFailed": "이미지 생성 API key 저장에 실패했습니다. 다시 시도해 주세요",
-          "cleared": "이미지 생성 API key를 지웠습니다",
-          "clearFailed": "이미지 생성 API key 지우기에 실패했습니다"
-        }
-      },
       "usage": {
-        "percentUsed": "{{percent}}% 사용",
+        "percentRemaining": "{{percent}}% 남음",
         "resetsAt": "{{at}} 초기화",
         "claudePlanFallback": "Claude 구독",
-        "claudeWeekly": "7일 창 {{percent}}%",
-        "scopedModel": "{{model}} {{percent}}%",
+        "claudeWeekly": "7일 한도 {{percent}}% 남음",
+        "scopedModel": "{{model}} {{percent}}% 남음",
         "openClaudeUsage": "사용량 페이지 열기",
         "codexPlanFallback": "ChatGPT 구독",
-        "codexSecondary": "보조 창 {{percent}}%",
+        "codexSecondary": "보조 한도 {{percent}}% 남음",
         "codexResetCredits": "한도 초기화 크레딧 {{count}}장"
       }
     },
@@ -3119,12 +3173,29 @@
       "runtimeUnknown": "{{packageName}}에는 Pi {{range}}가 필요하지만 현재 {{appName}}의 Pi 버전이 요구 사항을 충족하는지 확인할 수 없습니다.",
       "warning": {
         "no-resources": "이 확장에서 Pi 리소스를 찾지 못했습니다.",
+        "analysisIncomplete": "Pi 작업은 완료되었지만 {{appName}}의 후속 분석 또는 보조 빌드는 완료되지 않았습니다.",
         "inspection-failed": "{{appName}}가 설치된 내용을 검사하지 못했지만 이 때문에 비활성화하지 않습니다. Pi가 기본 방식으로 처리합니다.",
         "inspection-limit": "{{appName}}가 상세 분석 한도에서 추가 표시를 중단했습니다. 패키지는 Pi 기본 로더를 통해 계속 사용할 수 있습니다.",
         "unsupported-filter": "{{appName}}가 아직 이 Pi 리소스 필터를 표시할 수 없습니다. 패키지와 필터는 Pi가 기본 방식으로 처리합니다.",
         "unsafe-source": "저장된 소스에 자격 증명 또는 비공개 URL 매개변수가 포함되어 있습니다. {{appName}}는 이 화면에서 민감한 필드만 숨기며 Pi의 패키지 동작은 차단하지 않습니다."
       },
+      "recovery": {
+        "check-credentials": "소스의 인증 정보를 확인하세요.",
+        "check-permissions": "파일과 디렉터리 권한을 확인하세요.",
+        "check-network": "네트워크 연결을 확인하세요.",
+        "check-source": "패키지 이름 또는 저장소 주소를 확인하세요.",
+        "check-version": "요청한 패키지 버전을 확인하세요.",
+        "check-runtime": "Pi 실행 환경을 사용할 수 있는지 확인하세요.",
+        "free-disk-space": "디스크 공간을 확보하세요.",
+        "check-build-dependencies": "확장의 빌드 의존성을 확인하세요.",
+        "refresh-package-state": "확장 목록을 새로 고쳐 현재 상태를 확인하세요.",
+        "inspect-state-before-retry": "확장의 현재 상태를 확인한 후 완료되지 않은 단계를 다시 시도하세요."
+      },
       "failure": {
+        "commandFailed": "Pi 기본 패키지 명령이 실패했습니다.",
+        "commandNotStarted": "Pi 기본 패키지 명령을 시작하지 못했습니다.",
+        "commandTimedOut": "Pi 기본 패키지 명령의 시간이 초과되었습니다.",
+        "commandUnknown": "Pi 기본 패키지 명령의 결과를 확인할 수 없습니다.",
         "sourceUnavailable": "소스에 접근할 수 없습니다. 네트워크나 URL을 확인하거나 다른 소스로 다시 시도하세요.",
         "packageNotFound": "패키지를 찾지 못했습니다. 패키지 이름이나 저장소 URL을 확인하세요.",
         "versionNotFound": "해당 버전을 찾지 못했습니다. 사용 가능한 버전을 선택해 다시 시도하세요.",
@@ -5014,7 +5085,8 @@
         "nodeChildSpawn": "Node 프로그램이 패키지에 신고된 하위 프로세스 시작을 호스트에 요청할 수 있습니다",
         "nodeChildSpawnDetail": "자신의 패키지 안에 신고된 JS 파일만 시작할 수 있으며(메인 프로그램과 동일한 로컬 권한), 임의의 명령은 실행할 수 없습니다. 플러그인이 비활성화되거나 종료되면 하위 프로세스도 함께 종료됩니다.",
         "skill": "AI 어시스턴트에 스킬 \"{{name}}\"을(를) 추가합니다",
-        "skillDetail": "스킬은 AI가 자신의 지시로 읽어들여 실행하는 지시 파일입니다. 사용자의 전체 권한으로 Claude Code와 Codex의 모든 프로젝트에 적용되며, 이 플러그인의 샌드박스에 제한되지 않습니다. 플러그인이 활성화된 동안 계속 사용 가능하며, 비활성화하거나 제거하면 삭제됩니다. 특정 폴더에서만 플러그인을 끄더라도 숨겨지지 않습니다. 여기서는 스킬 전문을 미리 볼 수 없습니다 — 신뢰할 수 있는 플러그인만 설치하세요."
+        "skillDetail": "스킬은 AI가 자신의 지시로 읽어들여 실행하는 지시 파일입니다. 사용자의 전체 권한으로 Claude Code와 Codex의 모든 프로젝트에 적용되며, 이 플러그인의 샌드박스에 제한되지 않습니다. 플러그인이 활성화된 동안 계속 사용 가능하며, 비활성화하거나 제거하면 삭제됩니다. 특정 폴더에서만 플러그인을 끄더라도 숨겨지지 않습니다. 여기서는 스킬 전문을 미리 볼 수 없습니다 — 신뢰할 수 있는 플러그인만 설치하세요.",
+        "routineEvents": "루틴 이벤트"
       },
       "connections": {
         "confirmTitle": "연결 주소 추가",
@@ -5928,6 +6000,8 @@
     "modelWeeklyLabel": "{{model}} 주간",
     "usedPercent": "사용 {{percent}}%",
     "remainingPercent": "남은 {{percent}}%",
+    "resetIn": "{{duration}} 후 초기화",
+    "resetPending": "초기화 정보 업데이트 대기 중",
     "resetAt": "{{at}} 재설정",
     "noWindows": "할당량 구간 데이터가 없습니다",
     "limitRejected": "플랜 한도에 도달하여 요청이 거부될 수 있습니다",
@@ -7122,6 +7196,12 @@
       "binary-missing": "구성 요소를 사용할 수 없음"
     },
     "ariaLabel": "사이드바 네비게이션",
+    "databaseSizeWarning": {
+      "title": "데이터베이스가 많은 공간을 사용 중입니다",
+      "description": "데이터베이스는 약 {{size}}이며 {{threshold}} G를 초과했습니다. 저장 공간에서 정리하는 것이 좋습니다.",
+      "openSettings": "저장 공간 열기",
+      "disable": "다시 알리지 않기"
+    },
     "horizontalTabbarAria": "메인 뷰 전환",
     "tabs": {
       "projects": "프로젝트",
@@ -7338,6 +7418,8 @@
       "composerPlaceholderLatin": "{{name}} 에게 말 걸기…"
     },
     "globalSettings": {
+      "restoreHint": "기본값으로 복원하면 클라이언트의 기본 모델 설정을 따릅니다. 개별 파트너의 사용자 지정 모델은 유지됩니다.",
+      "restoreFailed": "기본값을 복원하지 못했습니다. 다시 시도해 주세요.",
       "title": "파트너",
       "description": "파트너 전체에 적용되는 설정입니다. 개별 파트너 설정은 각자의 페이지에 있어요.",
       "rosterNote": "기본 제공되는 구성원은 버전마다 늘어납니다."
@@ -7416,6 +7498,16 @@
       "thisDevice": "이 컴퓨터",
       "offlineDescription": "{{name}} 님이 오프라인입니다. {{device}}에 다시 연결하면 계속할 수 있어요.",
       "preparing": "준비가 끝나기를 기다리고 있어요…"
+    },
+    "capabilities": {
+      "title": "기능",
+      "search": "기능 검색",
+      "loading": "불러오는 중…",
+      "skill": "스킬",
+      "mcp": "MCP",
+      "toolset": "기본 제공 도구",
+      "unavailable": "사용 불가",
+      "empty": "일치하는 기능이 없습니다"
     }
   },
   "common": {
@@ -7598,6 +7690,7 @@
       "stop": "생성 중지"
     },
     "pluginSetup": {
+      "reopen": "다시 열기",
       "title": "{{name}} 설정",
       "assessmentReadFailed": "플러그인 설정 상태를 읽을 수 없습니다.",
       "setupIncomplete": "플러그인 설정이 완료되지 않았습니다.",
@@ -7786,6 +7879,7 @@
         "china": "중국",
         "image": "이미지",
         "video": "비디오",
+        "audio": "오디오 생성",
         "tts": "음성 합성",
         "stt": "음성 인식",
         "realtime": "실시간 음성",
@@ -7893,7 +7987,7 @@
           },
           "bypassPermissions": {
             "label": "전체 접근",
-            "description": "일반 도구는 확인 없이 실행하지만 Pi 확장 설치, 업데이트 또는 제거에는 계속 확인이 필요합니다. 가장 위험하므로 신뢰할 수 있는 작업에서만 사용하세요."
+            "description": "추가 확인 없이 모든 파일 편집과 네트워크 명령 실행을 허용합니다. 가장 위험하므로 신뢰할 수 있는 작업에서만 사용하세요."
           }
         }
       }
@@ -8889,7 +8983,7 @@
       "contextRebuild": {
         "labelOverflow": "컨텍스트를 정리하고 계속합니다",
         "labelTimeout": "직전 응답이 없어 정리한 뒤 계속합니다",
-        "labelStrip": "큰 이미지를 빼고 계속합니다",
+        "labelStrip": "기록의 이미지를 정리했습니다",
         "toggleHint": "인계 내용 보기",
         "handoffTitle": "인계 내용——정리 후 이 대화의 이어서 넘긴 컨텍스트 요약(대화 기록에 포함되지 않으며 여기에서만 표시)",
         "handoffTitleEnglishSource": "인계 내용——정리 후 이 대화의 이어서 넘긴 컨텍스트 요약. 원문은 영어(대화 기록에 포함되지 않으며 여기에서만 표시)"
@@ -9448,6 +9542,8 @@
         "all": "전체"
       },
       "filterSortBy": {
+        "created": "생성 시간",
+        "activity": "최근 활동",
         "recency": "시간순",
         "manual": "수동",
         "priority": "우선순위"
@@ -9463,7 +9559,7 @@
       "filterTaskSortHeading": "세션 정렬",
       "filterProjectOrderHeading": "프로젝트 순서",
       "filterProjectOrder": {
-        "activity": "최근 활동순",
+        "activity": "세션 정렬 따르기",
         "custom": "수동"
       },
       "filterProjectOrderTip": {
@@ -10841,6 +10937,7 @@
     }
   },
   "commandPalette": {
+    "viewSkillDetails": "스킬 상세 보기",
     "projectSkillNotLoaded": "현재 Pi 작업에는 이 프로젝트 Skill이 아직 로드되지 않았습니다. 새 작업에서는 자동으로 로드를 시도합니다."
   },
   "skillhub": {
@@ -10999,11 +11096,11 @@
         "market": "Market 으로 돌아가기",
         "skillhub": "SkillHub 로 돌아가기"
       },
-      "uninstall": "제거",
+      "uninstall": "스킬 제거",
       "uninstallDialog": {
-        "title": "{{name}} 을 제거하시겠습니까?",
-        "description": "로컬 폴더를 삭제합니다\n{{path}}\n이 작업은 되돌릴 수 없습니다.",
-        "confirm": "제거 확인",
+        "title": "“{{name}}”을 제거하시겠습니까?",
+        "description": "로컬 파일과 수정 내용을 휴지통으로 옮깁니다. 복원할 수 있습니다.\n\n이 스킬을 공유하는 다른 Agent도 영향을 받습니다. 게시된 버전과 다른 위치에 설치된 스킬에는 영향을 주지 않습니다.",
+        "confirm": "제거",
         "cancel": "취소"
       },
       "uninstalledToast": "{{name}} 이 제거되었습니다",
@@ -11297,6 +11394,10 @@
       }
     },
     "scanResult": {
+      "rejectedTitle": "심사 거절",
+      "rejectedDesc": "이 버전은 심사를 통과하지 못했습니다. 아래 피드백에 따라 수정한 후 다시 게시하세요.",
+      "rejectionReasonUnavailable": "이 버전은 심사를 통과하지 못했지만 구체적인 사유가 제공되지 않았습니다. 자세한 내용은 심사 담당자에게 문의하세요.",
+      "rejectionReason": "거절 사유",
       "dismiss": "확인",
       "passedTitle": "보안 스캔 통과",
       "passedDesc": "이 버전은 모든 보안 검사를 통과하여 마켓에 게시되었습니다.",
@@ -11401,6 +11502,27 @@
     "marketEdit": {
       "saved": "마켓 표시 정보가 저장되었습니다",
       "displayNameRequired": "표시 이름을 입력하세요"
+    },
+    "management": {
+      "disabled": "비활성화됨",
+      "enabledLabel": "스킬 “{{name}}” 활성화",
+      "moreLabel": "스킬 “{{name}}” 관리",
+      "activationHint": "{{appName}} 내 스킬 로드에만 적용됩니다. Agent를 시작하거나 다시 시작하면 반영됩니다.",
+      "enabledToast": "스킬 “{{name}}”이 활성화되었습니다. Agent를 시작하거나 다시 시작하면 반영됩니다",
+      "disabledToast": "스킬 “{{name}}”이 비활성화되었습니다. Agent를 시작하거나 다시 시작하면 반영됩니다",
+      "toggleFailed": "스킬 설정을 저장하지 못했습니다. 다시 시도하세요",
+      "uninstallFailed": "스킬을 휴지통으로 옮기지 못했습니다. 파일 권한을 확인한 후 다시 시도하세요",
+      "refreshRequired": "스킬이 변경 중이거나 원본 위치가 변경되었습니다. 목록을 새로 고친 후 다시 시도하세요",
+      "globalScope": "설치 위치: 전역 스킬",
+      "projectScope": "프로젝트: {{project}}",
+      "trashDescription": "로컬 파일과 수정 내용을 휴지통으로 옮깁니다. 복원할 수 있습니다.",
+      "unlinkDescription": "로컬 스킬 등록만 제거합니다. 원본 파일과 수정 내용은 유지됩니다.",
+      "sharedImpact": "이 스킬을 공유하는 다른 Agent도 영향을 받습니다. 게시된 버전과 다른 위치에 설치된 스킬에는 영향을 주지 않습니다.",
+      "managedElsewhere": "이 스킬은 다른 패키지 또는 공유 디렉터리에서 관리됩니다. 원본 위치에서 제거하세요",
+      "managedByPlugin": "이 스킬은 플러그인이 제공합니다. 해당 플러그인 페이지에서 관리하세요.",
+      "cleanupIncomplete": "“{{name}}”의 제거 정리가 완료되지 않았습니다. 다시 시도하거나 나중에 스킬을 다시 열어 계속하세요. 정리가 완료될 때까지 재설치할 수 없습니다.",
+      "retryCleanup": "정리 다시 시도",
+      "cleanupComplete": "정리 완료"
     }
   },
   "makerExperimental": {
@@ -11495,11 +11617,12 @@
       "qrExpired": "QR 코드가 만료됨. 다시 시작하세요",
       "registrationFailed": "생성 실패. 잠시 후 다시 시도하세요",
       "silentStopExhausted": "모델이 빈 응답을 반복해서 반환하여 자동 재개가 일시 중지되었습니다. \"계속\"을 클릭하여 작업을 재개하세요.",
+      "outputLimit": "모델이 출력 한도에 도달하여 이번 응답은 불완전할 수 있습니다. 다음 메시지를 보내 계속할 수 있습니다.",
       "permissionTightenInterruptFailed": "권한을 강화하는 동안 실행 중인 작업을 중지하지 못했습니다. 작업이 끝날 때까지 확인 없이 계속 실행될 수 있습니다. 필요하면 수동으로 중지하세요.",
       "codexAutoReviewUnavailable": "자동 리뷰를 일시적으로 사용할 수 없습니다. 현재 작업을 차단하고 기본 권한으로 전환했습니다. 다시 시도하세요. 필요한 경우 확인을 요청합니다.",
       "hostShellCommandBlocked": "{{appName}}가 내장 iOS 시뮬레이터를 우회하는 셸 명령을 차단했습니다. 기기 제어, 앱 실행, 화면 조작, 스크린샷, 진단에는 iOS 시뮬레이터 도구를 사용하세요.",
       "upstreamResponseIdleTimeout": "모델이 오랫동안 응답하지 않아 무한 대기를 막기 위해 이번 턴을 자동으로 중단했습니다. 완료된 도구 호출은 유지되며, 다음 메시지를 보내 계속할 수 있습니다.",
-      "codexHistoryOversized": "기록에 과대한 이미지가 있어 원격 압축을 끝낼 수 없습니다. {{appName}}가 해당 이미지를 생략하고 이 작업에서 계속합니다.",
+      "codexHistoryOversized": "이미지 기록의 자동 복구 및 계속 진행을 완료하지 못했습니다. ‘계속’을 보내 이 작업을 재개하세요.",
       "codexHistoryOversizedRemote": "기록에 과대한 이미지가 있어 원격 압축을 끝낼 수 없습니다. Codex를 실행 중인 기기에서 이 작업을 연 뒤 다시 보내세요. {{appName}}가 이미지를 생략하고 계속합니다.",
       "codexCompactionNotConverging": "Codex가 컨텍스트를 반복해서 압축했지만 줄어들지 않아, 무한 루프를 막기 위해 이번 턴을 자동으로 중단했습니다. 공간을 차지하는 것은 대화가 아니라 압축으로 줄일 수 없는 시스템 프롬프트와 도구 정의인 경우가 대부분입니다. 새 세션을 시작하세요.",
       "codexCompactionNotConvergingModelSwitch": "Codex가 컨텍스트를 반복해서 압축했지만 줄어들지 않아, 무한 루프를 막기 위해 이번 턴을 자동으로 중단했습니다. 이 세션은 도중에 모델을 변경했고, Codex는 변경 전 모델의 컨텍스트 한도로 계속 판단하고 있습니다. 원래 모델로 되돌리거나 새 세션을 시작하세요.",
@@ -12205,6 +12328,67 @@
     "embedding": "의미가 비슷한 콘텐츠를 찾습니다.",
     "compression": "긴 내용을 간결하게 줄입니다."
   },
+  "routines": {
+    "title": "루틴",
+    "add": "루틴 추가",
+    "back": "루틴으로 돌아가기",
+    "error": "루틴을 업데이트하지 못했습니다. 설정을 확인하고 다시 시도하세요.",
+    "empty": "루틴을 추가하여 팀원이 할 일과 실행 시점을 지정하세요.",
+    "enabled": "활성화됨",
+    "paused": "일시 중지됨",
+    "runNow": "지금 실행",
+    "running": "실행 중…",
+    "name": "이름",
+    "instructions": "지침",
+    "when": "실행 시점",
+    "addTrigger": "트리거 추가",
+    "removeTrigger": "트리거 제거",
+    "schedule": "일정",
+    "hourly": "매시간",
+    "daily": "매일",
+    "weekdays": "평일",
+    "weekly": "매주",
+    "monthly": "매월",
+    "interval": "간격",
+    "advanced": "고급…",
+    "everyMinutes": "{{count}}분마다",
+    "minutes": "분",
+    "expression": "Cron 표현식",
+    "timezone": "시간대",
+    "delete": "루틴 삭제",
+    "save": "루틴 저장",
+    "deleteConfirm": "이 루틴을 삭제하고 대기 중인 실행을 취소할까요?",
+    "keep": "루틴 유지",
+    "history": "실행 기록",
+    "noRuns": "이 루틴은 아직 실행되지 않았습니다.",
+    "field": "필드",
+    "operator": "조건",
+    "value": "값",
+    "addFilter": "조건 추가",
+    "removeFilter": "조건 제거",
+    "pluginCapability": "선언된 이벤트를 발행하여 직접 설정한 루틴만 실행합니다.",
+    "time": "시간",
+    "day": "날짜",
+    "weekday": "요일",
+    "status": {
+      "queued": "대기 중",
+      "running": "실행 중",
+      "success": "완료됨",
+      "failed": "실패함",
+      "interrupted": "중단됨",
+      "cancelled": "취소됨"
+    },
+    "sourceStatus": {
+      "listening": "수신 중",
+      "disconnected": "수신 중지됨",
+      "error": "연결 소스 확인 필요"
+    },
+    "operators": {
+      "equals": "같음",
+      "contains": "포함",
+      "not-equals": "같지 않음"
+    }
+  },
   "cindyMakeDoctor": {
     "description": "{{appName}} 빌드에 필요한 로컬 환경을 확인합니다. 사용법: /cindy-make-doctor",
     "title": "{{appName}} Make · 환경 검사",
@@ -12315,7 +12499,6 @@
       "expand": "업스트림 결과 보기",
       "collapse": "업스트림 결과 숨기기",
       "count": "관련 가능성이 있는 열린 Issue 또는 PR {{count}}개를 찾았습니다",
-
       "kind": {
         "issue": "이슈",
         "pr": "PR"

@@ -287,7 +287,7 @@ describe('checkMigrationCompatibility', () => {
     {
       release: 'v0.1.0-rc.1',
       schemaVersion: 99,
-      expectedApplied: [100, 101, 102, 103, 104],
+      expectedApplied: [100, 101, 102, 103, 104, 105],
       releasedIdentity: {
         seq: 99,
         fileName: '0099_boring_champions.sql',
@@ -298,7 +298,7 @@ describe('checkMigrationCompatibility', () => {
     {
       release: 'v0.1.1-rc.5',
       schemaVersion: 101,
-      expectedApplied: [102, 103, 104],
+      expectedApplied: [102, 103, 104, 105],
       releasedIdentity: {
         seq: 101,
         fileName: '0101_repair_cjk_fts_missing_rows.sql',
@@ -309,7 +309,7 @@ describe('checkMigrationCompatibility', () => {
     {
       release: 'v0.1.2-rc.1',
       schemaVersion: 102,
-      expectedApplied: [103, 104],
+      expectedApplied: [103, 104, 105],
       releasedIdentity: {
         seq: 102,
         fileName: '0102_merge_git_workspace_tabs.sql',
@@ -345,8 +345,13 @@ describe('checkMigrationCompatibility', () => {
           content_hash TEXT NOT NULL,
           applied_at INTEGER NOT NULL
         );
-        CREATE TABLE sessions (id TEXT PRIMARY KEY NOT NULL);
-        CREATE TABLE right_sidebar_tabs (
+         CREATE TABLE sessions (id TEXT PRIMARY KEY NOT NULL);
+         CREATE TABLE schedules (
+           id TEXT PRIMARY KEY NOT NULL,
+           agent_kind TEXT,
+           model TEXT
+         );
+         CREATE TABLE right_sidebar_tabs (
           id TEXT PRIMARY KEY NOT NULL,
           session_id TEXT NOT NULL,
           kind TEXT NOT NULL,
@@ -436,6 +441,12 @@ describe('checkMigrationCompatibility', () => {
             .pluck()
             .get(),
         ).toBe('bot_profiles');
+        expect(
+          db
+            .prepare("PRAGMA table_info('schedules')")
+            .all()
+            .map((column) => (column as { name: string }).name),
+        ).toContain('model_agent_kind');
 
         const finalManifest = JSON.parse(
           readFileSync(`${dbFilePath}.migration-runtime.json`, 'utf8'),
@@ -451,13 +462,13 @@ describe('checkMigrationCompatibility', () => {
           finalManifest.migrations.find((migration) => migration.seq === schemaVersion),
         ).toEqual(releasedIdentity);
         expect(finalManifest.migrations.at(-1)).toMatchObject({
-          seq: 104,
-          fileName: '0104_bot_mode.sql',
+          seq: 105,
+          fileName: '0105_early_shockwave.sql',
         });
         expect(checkMigrationCompatibility(db, sourceDrizzleDir, dbFilePath)).toEqual({
           compatible: true,
-          databaseVersion: 104,
-          checkoutVersion: 104,
+          databaseVersion: 105,
+          checkoutVersion: 105,
           issues: [],
         });
       } finally {

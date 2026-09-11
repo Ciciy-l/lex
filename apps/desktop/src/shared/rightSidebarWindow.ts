@@ -44,6 +44,7 @@ export type RsbWindowCommand =
       remoteHostId?: string | null; deviceId?: string | null;
       reveal?: { line: number; column?: number; requestId: string } | null;
     } }
+  | { type: 'open-routines-tab'; sessionId: string; botId: string }
   | { type: 'open-terminal'; sessionId: string }
   | { type: 'toggle-review-tab'; sessionId: string }
   | { type: 'open-web-browser'; sessionId: string; url: string }

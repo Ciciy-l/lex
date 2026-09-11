@@ -32,6 +32,7 @@ export type BuiltinTabKindId =
   | 'orca-workers'
   | 'subagents'
   | 'background-tasks'
+  | 'routines'
   | 'resource-usage';
 export type TabKindId = BuiltinTabKindId | `ghost:${string}`;
 

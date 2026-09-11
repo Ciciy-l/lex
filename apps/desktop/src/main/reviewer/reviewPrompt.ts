@@ -1,4 +1,6 @@
 import { isReviewSensitiveCredentialPath } from '@cindy/maker-core';
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
+import { escapeUntrustedPromptMarkup } from '../../shared/untrustedPrompt.js';
 
 import type { TurnChangeSetDetail } from '../../shared/turnChangeSet.js';
 import type {
@@ -81,11 +83,9 @@ const MAX_DIFF_CHARS = 180_000;
 
 function untrustedInline(value: string, max: number, fallback: string): string {
   return (
-    value
-      .replace(/[\p{Cc}\u2028\u2029\u202a-\u202e\u2066-\u2069]+/gu, ' ')
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
+    escapeUntrustedPromptMarkup(
+      value.replace(/[\p{Cc}\u2028\u2029\u202a-\u202e\u2066-\u2069]+/gu, ' '),
+    )
       .trim()
       .slice(0, max) || fallback
   );
@@ -355,7 +355,7 @@ export function buildReviewPrompt(input: BuildReviewPromptInput): BuiltReviewPro
       : '（没有显式附件；请根据任务上下文，用只读工具检查当前工作目录中的实际成果。）';
   const coverage = coverageSection(input);
 
-  const prompt = `你是 Cindy 的独立成果审查员。你在一个全新、无开发历史记忆的只读任务中工作。
+  const prompt = `你是 ${BRAND_NAME} 的独立成果审查员。你在一个全新、无开发历史记忆的只读任务中工作。
 
 ## 硬性边界
 
