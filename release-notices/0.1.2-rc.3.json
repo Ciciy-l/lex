@@ -1,0 +1,131 @@
+{
+  "version": "0.1.2-rc.3",
+  "date": "2026-09-12",
+  "contentByLocale": {
+    "zh-CN": {
+      "intro": "Lex 0.1.2-rc.3 版本日志",
+      "topics": [
+        {
+          "id": "provider-accounts-and-models",
+          "title": "更完整的多账号模型管理",
+          "text": "同步 Cindy v0.1.79 的多账号供应商与统一模型目录：切换订阅账号时会隔离旧账号的模型、价格与用量状态，并补齐文本、图像和音频模型的能力路由。"
+        },
+        {
+          "id": "bot-capabilities-and-routines",
+          "title": "Bot 能力发现与例行任务",
+          "text": "Bot 现在可声明可用能力并接入系统提示词上下文；新增例行任务链路，让可恢复的后台协作和定时工作拥有更清晰的能力边界。"
+        },
+        {
+          "id": "mobile-remote-desktop",
+          "title": "更可靠的移动端远程桌面",
+          "text": "移动端纳入原生远程桌面支持，并同步动态 ICE 配置、自营 TURN 恢复和连接状态收敛，改善复杂网络下的连接与恢复体验。"
+        },
+        {
+          "id": "history-and-auth-reliability",
+          "title": "历史恢复与登录状态修复",
+          "text": "修复历史恢复期间流式正文顺序、后台返回后输入框失活、未发送草稿同步，以及账户切换后残留的登录灰度和额度状态。"
+        }
+      ]
+    },
+    "zh-TW": {
+      "intro": "Lex 0.1.2-rc.3 版本日誌",
+      "topics": [
+        {
+          "id": "provider-accounts-and-models",
+          "title": "更完整的多帳號模型管理",
+          "text": "同步 Cindy v0.1.79 的多帳號供應商與統一模型目錄：切換訂閱帳號時會隔離舊帳號的模型、價格與用量狀態，並補齊文字、圖片和音訊模型的能力路由。"
+        },
+        {
+          "id": "bot-capabilities-and-routines",
+          "title": "Bot 能力探索與例行任務",
+          "text": "Bot 現在可宣告可用能力並接入系統提示詞內容；新增例行任務鏈路，讓可恢復的背景協作和排程工作擁有更清晰的能力邊界。"
+        },
+        {
+          "id": "mobile-remote-desktop",
+          "title": "更可靠的行動裝置遠端桌面",
+          "text": "行動裝置納入原生遠端桌面支援，並同步動態 ICE 設定、自營 TURN 復原和連線狀態收斂，改善複雜網路下的連線與復原體驗。"
+        },
+        {
+          "id": "history-and-auth-reliability",
+          "title": "歷史恢復與登入狀態修正",
+          "text": "修正歷史恢復期間的串流正文順序、從背景返回後輸入框失效、未送出草稿同步，以及切換帳號後殘留的登入灰度和額度狀態。"
+        }
+      ]
+    },
+    "en": {
+      "intro": "Lex 0.1.2-rc.3 release notes",
+      "topics": [
+        {
+          "id": "provider-accounts-and-models",
+          "title": "More complete multi-account model management",
+          "text": "Synchronizes Cindy v0.1.79's multi-account providers and unified model catalog: switching subscription accounts now isolates stale model, pricing, and usage state while completing capability routing for text, image, and audio models."
+        },
+        {
+          "id": "bot-capabilities-and-routines",
+          "title": "Bot capability discovery and routines",
+          "text": "Bots can now declare available capabilities and receive system-prompt context. New routines give recoverable background collaboration and scheduled work clearer capability boundaries."
+        },
+        {
+          "id": "mobile-remote-desktop",
+          "title": "More reliable mobile remote desktop",
+          "text": "Mobile gains native remote-desktop support together with dynamic ICE configuration, managed TURN recovery, and converged connection state for more resilient connections on complex networks."
+        },
+        {
+          "id": "history-and-auth-reliability",
+          "title": "History recovery and sign-in reliability",
+          "text": "Fixes streaming-body ordering during history recovery, inactive composers after returning from background, unsent-draft synchronization, and stale sign-in rollout or quota state after an account switch."
+        }
+      ]
+    },
+    "ja": {
+      "intro": "Lex 0.1.2-rc.3 バージョン情報",
+      "topics": [
+        {
+          "id": "provider-accounts-and-models",
+          "title": "より充実した複数アカウントのモデル管理",
+          "text": "Cindy v0.1.79 の複数アカウント対応プロバイダーと統合モデルカタログを同期しました。サブスクリプションアカウントの切り替え時に古いモデル、価格、使用量の状態を分離し、テキスト、画像、音声モデルの能力ルーティングを補完します。"
+        },
+        {
+          "id": "bot-capabilities-and-routines",
+          "title": "Bot の能力検出とルーティン",
+          "text": "Bot は利用可能な能力を宣言し、システムプロンプトのコンテキストを受け取れるようになりました。新しいルーティンにより、復元可能なバックグラウンド協働と定期作業の能力境界が明確になります。"
+        },
+        {
+          "id": "mobile-remote-desktop",
+          "title": "より信頼性の高いモバイルリモートデスクトップ",
+          "text": "モバイルにネイティブのリモートデスクトップを導入し、動的 ICE 設定、管理された TURN 復旧、接続状態の収束を同期しました。複雑なネットワークでの接続と復旧を改善します。"
+        },
+        {
+          "id": "history-and-auth-reliability",
+          "title": "履歴復元とログイン状態の修正",
+          "text": "履歴復元中のストリーミング本文の順序、バックグラウンド復帰後に入力欄が無効になる問題、未送信下書きの同期、アカウント切替後に残るログインのロールアウト状態や利用量状態を修正しました。"
+        }
+      ]
+    },
+    "ko": {
+      "intro": "Lex 0.1.2-rc.3 버전 정보",
+      "topics": [
+        {
+          "id": "provider-accounts-and-models",
+          "title": "더 완전해진 다중 계정 모델 관리",
+          "text": "Cindy v0.1.79의 다중 계정 공급자와 통합 모델 카탈로그를 동기화했습니다. 구독 계정을 전환할 때 이전 모델, 가격, 사용량 상태를 분리하고 텍스트, 이미지, 오디오 모델의 기능 라우팅을 보완합니다."
+        },
+        {
+          "id": "bot-capabilities-and-routines",
+          "title": "Bot 기능 탐색과 루틴",
+          "text": "Bot이 사용 가능한 기능을 선언하고 시스템 프롬프트 컨텍스트를 받을 수 있게 되었습니다. 새 루틴은 복구 가능한 백그라운드 협업과 예약 작업에 더 명확한 기능 경계를 제공합니다."
+        },
+        {
+          "id": "mobile-remote-desktop",
+          "title": "더 안정적인 모바일 원격 데스크톱",
+          "text": "모바일에 네이티브 원격 데스크톱 지원을 도입하고 동적 ICE 구성, 관리형 TURN 복구, 연결 상태 수렴을 동기화하여 복잡한 네트워크에서 연결과 복구 경험을 개선했습니다."
+        },
+        {
+          "id": "history-and-auth-reliability",
+          "title": "기록 복구와 로그인 상태 수정",
+          "text": "기록 복구 중 스트리밍 본문 순서, 백그라운드 복귀 뒤 비활성화되는 입력창, 미전송 초안 동기화, 계정 전환 뒤 남는 로그인 롤아웃 및 사용량 상태를 수정했습니다."
+        }
+      ]
+    }
+  }
+}
