@@ -91,6 +91,7 @@ import {
 import { resolveLoginScenarioFetch } from '@cindy/auth-client/fixtures';
 
 import { createLogger } from './logger';
+import { AuthOwnerChangeShellGate } from './authOwnerChangeShellGate';
 import {
   isGhostSkillProjectionBoundaryStableForOwner,
   withGhostSkillProjectionOwnerCommit,
@@ -394,18 +395,18 @@ let sessionInvalidationPromise: Promise<void> | null = null;
 // Real owner change / logout: keep the renderer fail-closed even if a late
 // notifyRenderer() races the teardown. Same-owner Ghost repair must not set
 // this — that was the 55-minute /login flash.
-let ownerChangeShellPendingDepth = 0;
+const ownerChangeShellGate = new AuthOwnerChangeShellGate();
 
 function enterOwnerChangeShellPending(): void {
-  ownerChangeShellPendingDepth += 1;
+  ownerChangeShellGate.enter();
 }
 
 function leaveOwnerChangeShellPending(): void {
-  ownerChangeShellPendingDepth = Math.max(0, ownerChangeShellPendingDepth - 1);
+  ownerChangeShellGate.leave();
 }
 
 function isOwnerChangeShellPending(): boolean {
-  return ownerChangeShellPendingDepth > 0;
+  return ownerChangeShellGate.isPending();
 }
 /**
  * 设备标识由 productDeviceId 统一解析；正式 Lex 使用独立的 lex- 设备命名空间。
@@ -2836,12 +2837,17 @@ async function repairStableCloudOwnerDataReservations(ownerId: string): Promise<
   }
 }
 
-function commitCloudAppSession(ownerId: string): void {
+function commitCloudAppSession(ownerId: string, authRealmChanged = false): void {
+  // Saved identities are [realm, membershipId]. Same-id realm moves must fence old API work too.
   if (isPassiveSharedUserDataInstance()) {
-    commitVolatileAppSession('cloud', ownerId);
+    commitVolatileAppSession('cloud', ownerId, authRealmChanged);
   } else {
-    commitActiveAppSession('cloud', ownerId);
+    commitActiveAppSession('cloud', ownerId, authRealmChanged);
   }
+  // Publish the new generation in the same synchronous commit as the token
+  // and endpoint switch, before any post-commit migration/projection await.
+  // Same-id realm moves do not necessarily enter a Ghost owner boundary.
+  if (authRealmChanged) notifyRenderer();
 }
 
 /**
@@ -4903,14 +4909,15 @@ async function runColdStartRefreshFlow(
         }
       },
       commit: () => {
-        if (storedRealm !== activeAuthRealm) {
+        const authRealmChanged = storedRealm !== activeAuthRealm;
+        if (authRealmChanged) {
           activateClientEndpointRealm(storedRealm);
           activeAuthRealm = storedRealm;
         }
         selectedPersonalAuthRealm = storedRealm;
         accessToken = refreshData.accessToken;
         currentUser = mapMembershipToAuthUser(refreshData.membership);
-        commitCloudAppSession(currentUser.id);
+        commitCloudAppSession(currentUser.id, authRealmChanged);
         persistedRefreshTokenNeedsIdentityCheck = false;
         clearReplacementIntegrationReloadTimers();
       },
@@ -5026,6 +5033,13 @@ async function discoverOrganizationRealm(org: string, expectedLoginFlowEpoch = l
 }
 
 export async function getLoginState(): Promise<DesktopLoginActionResult> {
+  // A logout publishes the signed-out shell before its owner transition has
+  // finished. Start provider discovery only after that transition settles so
+  // this request captures the post-logout login epoch instead of reporting a
+  // recoverable supersession as a terminal login-page error.
+  while (isOwnerChangeShellPending()) {
+    await ownerChangeShellGate.waitForSettled();
+  }
   const expectedLoginFlowEpoch = loginFlowEpoch;
   try {
     if (loginFlowState) {
@@ -5143,6 +5157,7 @@ async function completeLogin(
                 accessToken = outcome.accessToken;
                 persistedRefreshTokenNeedsIdentityCheck = false;
                 clearReplacementIntegrationReloadTimers();
+                const authRealmChanged = committedRealm !== activeAuthRealm;
                 activateClientEndpointRealm(committedRealm);
                 activeAuthRealm = committedRealm;
                 selectedPersonalAuthRealm = committedRealm;
@@ -5158,10 +5173,10 @@ async function completeLogin(
                 passiveLocalSignOut = false;
                 foreignDeviceLocalSignOut = false;
                 currentUser = nextUser;
-                commitCloudAppSession(currentUser.id);
                 if (!isPassiveSharedUserDataInstance()) {
                   canaryFlagStore.clear();
                 }
+                commitCloudAppSession(currentUser.id, authRealmChanged);
                 pendingAuthRealm = null;
               }),
           });
@@ -5844,7 +5859,7 @@ export async function refresh(): Promise<boolean> {
             }
             accessToken = data.accessToken;
             currentUser = nextUser;
-            commitCloudAppSession(currentUser.id);
+            commitCloudAppSession(currentUser.id, authRealmChanged);
           },
         });
         await migrateLocalProviderBindingsAfterCloudCommit(nextUser.id);
@@ -5903,7 +5918,7 @@ export async function refresh(): Promise<boolean> {
           }
           accessToken = data.accessToken;
           currentUser = nextUser;
-          commitCloudAppSession(currentUser.id);
+          commitCloudAppSession(currentUser.id, authRealmChanged);
         },
       });
       await migrateLocalProviderBindingsAfterCloudCommit(nextUser.id);

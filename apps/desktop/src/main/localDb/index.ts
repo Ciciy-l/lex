@@ -26,7 +26,6 @@
 import type Database from 'better-sqlite3';
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { app, dialog, BrowserWindow } from 'electron';
-import path from 'node:path';
 import fs from 'node:fs';
 import { BRAND_IDENTITY } from '@cindy/maker-shared/brand-identity';
 
@@ -67,6 +66,7 @@ import {
 import { shouldShowNativeFatalDialog, type EnsureReadyErrorCode } from './fatalDialogPolicy';
 import { runPendingDbSlimmingAtStartup } from './dbSlimmingStartup';
 import { deferReleaseUntilDbSlimmingWorkerTermination } from './dbSlimmingWorkerClient';
+import { ownerDatabasePath, prepareModelDefaultsProfile } from './modelDefaultsProfile';
 
 import { createLogger } from '../logger';
 import { recordDesktopDevLocalDbStartupResult } from '../devStartupStatus';
@@ -107,7 +107,7 @@ export function getCurrentUserId(): string | null {
 }
 
 function dbPath(userId: string): string {
-  return path.join(app.getPath('userData'), `${BRAND_IDENTITY.dbFilePrefix}-${userId}.db`);
+  return ownerDatabasePath(app.getPath('userData'), userId);
 }
 
 export function getDbPathForUser(userId: string): string {
@@ -246,6 +246,7 @@ export async function ensureReady(userId: string): Promise<EnsureReadyResult> {
   }
 
   try {
+    if (startupLease.kind === 'writer') prepareModelDefaultsProfile(filePath);
     _db = openWithPragmas(filePath);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

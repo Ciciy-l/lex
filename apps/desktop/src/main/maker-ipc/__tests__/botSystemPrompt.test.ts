@@ -33,6 +33,17 @@ function input(overrides: Partial<BotSystemPromptInput> = {}): BotSystemPromptIn
 }
 
 describe('稳定层:能力必须写进提示词', () => {
+  it('advertises native routines without an optional scheduler toolset only when mounted', () => {
+    const enabled = input();
+    enabled.capabilities.routinesEnabled = true;
+    enabled.capabilities.botModeEnabled = true;
+    const stable = buildBotStableTier(enabled);
+    expect(stable).toContain('routine_save');
+    expect(stable).toContain('保存后再读回');
+    expect(buildBotStableTier(input())).not.toContain('routine_save');
+    enabled.capabilities.botModeEnabled = false;
+    expect(buildBotStableTier(enabled)).not.toContain('routine_save');
+  });
   it('挂了 docs 就点名文档工具,并写清 PDF 要自检', () => {
     const stable = buildBotStableTier(
       input({
@@ -214,6 +225,8 @@ describe('伙伴的家', () => {
     expect(stable).toContain('SOUL.md');
     expect(stable).toContain('memories/USER.md');
     expect(stable).toContain('不要自行改写 SOUL 或 system_prompt');
+    expect(stable).toContain('Lex 已安装的插件、Skill 和 MCP');
+    expect(stable).not.toContain('Cindy 已安装的插件、Skill 和 MCP');
   });
 
   it('没有家就一个字都不提 —— 远端会话够不到本机目录', () => {
@@ -268,6 +281,26 @@ describe('Bot Mode 的角色边界', () => {
     expect(worker).not.toContain('你可以开后台任务，也可以给伙伴发消息');
     expect(worker).not.toContain('send_to_agent');
     expect(worker).not.toContain('start_session_task');
+  });
+});
+
+describe('Bot Mode 的产品身份', () => {
+  it('uses Lex in the routine host guidance while preserving the cindy_helper protocol name', () => {
+    const stable = buildBotStableTier({
+      displayName: '小柴',
+      identity: '你是小柴。',
+      skillIndex: [],
+      capabilities: {
+        toolsets: [],
+        memoryEnabled: false,
+        partnerActionsEnabled: false,
+        ownSkillsEnabled: false,
+        routinesEnabled: true,
+      },
+    });
+    expect(stable).toContain('例行任务由 Lex 持久调度');
+    expect(stable).toContain('cindy_helper');
+    expect(stable).not.toContain('例行任务由 Cindy 持久调度');
   });
 });
 

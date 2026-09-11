@@ -80,6 +80,7 @@ const desktopGitIntegrationInclude = [
 ];
 const makerCoreIntegrationInclude = [
   'src/agents/codex/*.integration.test.ts',
+  'src/agents/claude-code/__tests__/*.integration.test.ts',
   'src/agents/pi/__tests__/*.integration.test.ts',
 ];
 const makerPiManagerIntegrationInclude = [
@@ -91,11 +92,18 @@ const desktopE2eInclude = [
 
 export function desktopUnitWorkerCount(
   availableParallelism = os.availableParallelism(),
+  platform = process.platform,
 ) {
   const available = Number.isFinite(availableParallelism)
     ? Math.floor(availableParallelism)
     : 1;
-  return Math.max(1, Math.min(8, available));
+  // Windows uses forks rather than threads. Each worker then owns a complete
+  // Vite/Node graph; eight workers closed a child IPC channel during the
+  // v0.1.79 desktop gate on a 16 GiB Windows host, while four completed it.
+  // Keep the broader cap for threads/macOS, but make the Windows CI path
+  // conservative rather than accepting an intermittent worker loss.
+  const platformCap = platform === 'win32' ? 4 : 8;
+  return Math.max(1, Math.min(platformCap, available));
 }
 
 const noCollectableWorkspace = (name, cwd, reason = noCollectableTestsReason) => ({
@@ -131,7 +139,8 @@ export default {
           status: 'required',
           execution: 'exclusive',
           // Desktop unit tests spawn many Git/filesystem subprocesses. Benchmarking
-          // found eight workers to be the best complexity/resource tradeoff.
+          // found eight workers to be the best complexity/resource tradeoff on
+          // thread-capable platforms; win32 forks are capped separately above.
           // Lower-CPU hosts stay capped by their available parallelism.
           // It runs exclusively so these workers never overlap outer workspaces.
           // The pool follows the webstorage flag, because the flag cannot
@@ -229,7 +238,11 @@ export default {
     // Mobile has enough test files to become the critical path at one worker.
     // Give it the full worker budget, but never overlap it with other workspaces.
     requiredUnitWorkspace('mobile', 'apps/mobile', { workers: 4, execution: 'exclusive' }),
-    requiredUnitWorkspace('@cindy/anthropic-compat-proxy', 'packages/anthropic-compat-proxy'),
+    // These tests own short-lived loopback HTTP/TLS servers. Keep their
+    // single Vitest worker isolated from the outer workspace batch: on the
+    // Windows v0.1.79 gate, overlapping starts could terminate the process
+    // after the first server file without emitting a test diagnostic.
+    requiredUnitWorkspace('@cindy/anthropic-compat-proxy', 'packages/anthropic-compat-proxy', { execution: 'exclusive' }),
     requiredUnitWorkspace('@cindy/anthropic-responses-bridge', 'packages/anthropic-responses-bridge'),
     requiredUnitWorkspace('@cindy/responses-anthropic-bridge', 'packages/responses-anthropic-bridge'),
     requiredUnitWorkspace('@cindy/responses-chat-bridge', 'packages/responses-chat-bridge'),
@@ -257,11 +270,18 @@ export default {
         unit: {
           status: 'required',
           command: unitVitestCommand(1, 'forks'),
-          exclude: ['**/*.integration.test.ts', '**/*.e2e.test.ts'],
+          exclude: ['**/*.integration.test.ts', '**/*.e2e.test.ts', '**/*.git-integration.test.ts'],
+        },
+        'git-integration': {
+          status: 'manual',
+          reason: 'Full real-Git coverage is explicit because each case builds temporary repos, linked worktrees and separate-git-dir clones via git subprocesses.',
+          coverage: 'allowlist',
+          command: vitestBin('run', '--maxWorkers=1'),
+          include: ['src/**/*.git-integration.test.ts'],
         },
         integration: {
           status: 'manual',
-          reason: 'Pi/Codex integration tests spawn real agent binaries and local protocol servers.',
+          reason: 'Claude/Pi/Codex integration tests spawn real agent binaries and local protocol servers.',
           execution: 'exclusive',
           coverage: 'allowlist',
           command: vitestBin('run', '--pool=forks', '--maxWorkers=1'),

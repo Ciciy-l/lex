@@ -61,6 +61,8 @@ describe('buildReviewPrompt', () => {
     });
 
     expect(result.targetKind).toBe('changes');
+    expect(result.prompt).toContain('你是 Lex 的独立成果审查员');
+    expect(result.prompt).not.toContain('你是 Cindy 的独立成果审查员');
     expect(result.prompt).toContain('src/a.ts');
     expect(result.prompt).toContain('P0');
     expect(result.prompt).toContain('只读');

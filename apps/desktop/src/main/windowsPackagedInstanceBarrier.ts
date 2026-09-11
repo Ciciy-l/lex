@@ -1,11 +1,12 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 
 const DEFAULT_ACQUIRE_TIMEOUT_MS = 5_000;
-const HELPER_START_TIMEOUT_MS = 5_000;
+// PowerShell cold start is independent from mutex contention. On loaded Windows
+// CI workers two shards can start this helper together and exceed five seconds
+// before the script emits its first status line.
+const HELPER_START_TIMEOUT_MS = 15_000;
 // Add-Type compiles the small P/Invoke helper after the startup mutex is held.
-// A fully loaded hosted Windows runner has exceeded the old five-second budget
-// even though the helper was healthy, so keep this stage independent and wide
-// enough to avoid a false fail-closed result under scheduler contention.
+// Keep its healthy-but-contended probe independent from the cold-start budget.
 const HELPER_PROBE_TIMEOUT_MS = 10_000;
 const HELPER_EXIT_TIMEOUT_MS = 2_000;
 const MAX_HELPER_OUTPUT_BYTES = 16 * 1024;

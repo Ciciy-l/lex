@@ -1,3 +1,4 @@
+import { installPiBinaryUpdate } from './pi-self-update.js';
 /**
  * apps/desktop/src/main/agent-binaries/index.ts
  *
@@ -29,6 +30,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { app, BrowserWindow } from 'electron';
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
 import { createBinaryProvisioner } from './factory.js';
 import { probeBinaryVersion } from './binary-version-probe.js';
@@ -199,6 +201,15 @@ function getBase(kind: AgentBinaryKind): BinaryProvisioner {
 // maker-host getMaker() 在构造期同步读, 必须早于第一次 createSession。
 
 const lastReadyPath = new Map<AgentBinaryKind, string>();
+
+/** Called only by the authorized Pi management service while holding its mutation lock. */
+export async function updateReadyPiBinary(force: boolean): Promise<string> {
+  const current = lastReadyPath.get('pi');
+  if (!current) throw new Error(`Pi is not installed in ${BRAND_NAME}`);
+  const result = await installPiBinaryUpdate(path.join(app.getPath('userData'), 'pi'), current, force);
+  lastReadyPath.set('pi', result.binaryPath);
+  return result.version;
+}
 
 export function getReadyBinaryPath(kind: AgentBinaryKind): string | undefined {
   return lastReadyPath.get(kind);

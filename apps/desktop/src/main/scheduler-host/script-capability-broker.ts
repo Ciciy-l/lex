@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 
 import type { Schedule, ScriptCapability } from '@cindy/maker-scheduler';
+import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
 import type { GhostToolCallResult } from '../../shared/ghost.js';
 import { getGhostCardService, getGhostPipeDispatcher } from '../cindy-brain/index.js';
@@ -184,7 +185,7 @@ const SCRIPT_METHOD_CATALOG: ReadonlyArray<{
   { method: 'jira.add_comment', capability: 'jira.comment', params: '{issue_key, body_text | body_adf}', description: '向 Jira issue 添加评论;body_text 纯文本与 body_adf(ADF 文档对象,支持 @mention)恰好二选一' },
   { method: 'feishu.recent_chats', capability: 'feishu.read', params: '{count?≤50}', description: '按活跃时间倒序列最近飞书会话' },
   { method: 'feishu.recent_messages', capability: 'feishu.read', params: '{chat_id, count?≤50, start_time?}', description: '拉指定飞书会话最近消息(新→旧,start_time 增量)' },
-  { method: 'sessions.dispatch', capability: 'sessions.dispatch', params: '{message, title?, target_session_id?}', description: '创建或唤醒 Cindy 会话并投递消息' },
+  { method: 'sessions.dispatch', capability: 'sessions.dispatch', params: '{message, title?, target_session_id?}', description: `创建或唤醒 ${BRAND_NAME} 会话并投递消息` },
 ];
 
 /**

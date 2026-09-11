@@ -1,3 +1,10 @@
+import { codexAccountState } from './maker-host/codex-account-auth.js';
+import { syncSubscriptionAccountUsage } from './usage/subscriptionAccountUsage.js';
+import { clearSubscriptionAccountDiscoveredModels, setSubscriptionAccountInvalidatedHandler } from './maker-host/subscription-account-auth.js';
+import { startWorktreeRecycleMaintenance, stopWorktreeRecycleMaintenance, auditRegisteredWorktrees } from './worktree/recycleMaintenance';
+import { requestWorktreeRecycle } from './worktree/managedRecycle';
+import { recycleSessionWorktreeForStatusChange } from './localDb/ipc/sessions';
+import { tryGetDbClient } from './localDb/client/current';
 import {
   app,
   BrowserWindow,
@@ -18,6 +25,7 @@ import {
   type WebContents,
 } from 'electron';
 import { resolveVibrancyConfig } from './vibrancyConfig';
+import { getSessionThinkingSnapshots, getHistoryToolName } from './messagePersistBroadcaster';
 import { applyVibrancyToSecondaryWindows } from './secondary-windows';
 import {
   rememberResolvedAppTheme,
@@ -127,6 +135,7 @@ app.commandLine.appendSwitch('enable-features', 'SharedArrayBuffer');
 // Windows 上 codex app-server 子进程不会随父死 → 残留孤儿, 持有 binary 文件锁,
 // 用户下次启动时撞 EBUSY / 端口占用 (anthropic-compat-proxy 等)。
 async function shutdownMaker(): Promise<{ piSessionFailures: number }> {
+  stopWorktreeRecycleMaintenance();
   // Do not terminate Main while one workspace patch command is settling.
   await waitForTurnChangeSetActions();
   // 退出前先把 onClose 重副作用(worktree stash/删除、临时附件清理)一刀切抑制掉:
@@ -298,9 +307,13 @@ import {
 } from './cindy-media/cindyMediaProtocol';
 import * as cindyMediaBlobStore from './cindy-media/blobStore';
 import * as cindyChatAttachments from './cindy-media/chatAttachments';
-import { openOrCreateFixedDirectory } from './cindy-media/fixedDirectory';
+import { getFixedDirectoryStats, openOrCreateFixedDirectory } from './cindy-media/fixedDirectory';
 import { openMakeToolsDirectory } from './cindy-make/toolsDirectory';
 import { createStorageIpcHandlers } from './cindy-media/storageIpc';
+import {
+  collectDatabaseSizeWarningStatus,
+  type DatabaseSizeWarningStatus,
+} from './database-size-warning-status';
 import {
   getAllRegisteredDraftUrls,
   reportDraftUrls as registerWindowDraftUrls,
@@ -358,6 +371,15 @@ import {
   getDbClient,
   setCurrentDbClient,
 } from './localDb/client/current';
+import {
+  readDatabaseSizeWarningSettingsState,
+  parseDatabaseSizeWarningSettingsPatch,
+  writeDatabaseSizeWarningSettings,
+  resetDatabaseSizeWarningSettings,
+  DEFAULT_DATABASE_SIZE_WARNING_THRESHOLD_GIB,
+  getDatabaseSizeWarningSettingsFilePath,
+} from './database-size-warning-settings';
+import { createDatabaseSizeWarningSettingsWatcher } from './database-size-warning-settings-watcher.js';
 import { createLocalDbMaintenanceIpcHandlers } from './localDb/ipc/maintenance';
 import { writeDbSlimmingDevRelaunchSignal } from './localDb/devDbSlimmingRelaunch';
 import {
@@ -462,6 +484,7 @@ import { sanitizeGhostNoticeText } from './cindy-brain/notifySlot.js';
 import { isIpcError } from '../shared/ipc-errors';
 import { readFileBytesForPreview } from './fileReadBytes.js';
 import { initHeartbeatService } from './heartbeatService';
+import { registerRemoteDesktopIpc } from './remote-desktop';
 import { initAnalyticsSettingsService, noteAuthColdStartState } from './analyticsSettingsService';
 import { initLogUploadService, scheduleStartupBackfill } from './log-upload';
 import { WindowManualDragController } from './windowManualDrag';
@@ -475,6 +498,7 @@ import {
 import {
   getUpdateRelaunchControllers,
   hasInFlightRemoteInvokes,
+  setHistoryToolNameReader,
   pushSessionActivityToController,
   setSessionsSubscribedListener,
 } from './device-link/dispatch';
@@ -492,7 +516,6 @@ import { registerRemoteResourcesIpc } from './device-link/remoteResourcesIpc';
 import {
   registerWorktreeIpc,
   WorktreePool,
-  reconcileWorktreesForDeletedSessions,
   reconcilePendingSafeDirectoryCleanups,
 } from './worktree';
 // shadow savepoint 链的启动期对账(孤儿 refs/cindy/savepoints/* 清理)
@@ -538,6 +561,7 @@ import {
   finalizeCodexAfterAuthModeChange,
   readCodexRuntimeRoute,
   broadcastClaudeAuthStateChanged,
+  refreshSelectableModelsAndBroadcast,
   broadcastXaiAuthStateChanged,
   refreshProviderAccessAfterAuthChange,
   setProviderAccessRuntimeRefreshListener,
@@ -620,6 +644,7 @@ import {
   anySessionInTurn,
   applyCodexSpawnConfigChangeWithRestart,
   clearDeferredCodexRestartForOwnerBoundary,
+  clearWorkingDirectoryRecoveryForOwnerBoundary,
   collectAgentInputQueueScanTexts,
   createAutomationUserTurnGitBaselineHooks,
   registerModelVisibilitySyncIpc,
@@ -959,10 +984,13 @@ import { pickNativeAtResource } from './nativeAtResourcePicker.js';
 import {
   startScheduler,
   resetScheduler,
+  getSchedulerIfInitialized,
   getScheduleStorage,
   getScheduleStorageIfInitialized,
   getProjectAutomationLoader,
 } from './scheduler-host/index.js';
+import { configureRoutineHost } from './routines/service.js';
+import { getBotRemoteResourceSource } from './localDb/ipc/bots.js';
 import {
   registerScheduleHandlers,
   attachSchedulerEventListeners,
@@ -1010,6 +1038,9 @@ async function waitForCurrentAccountProviderModelsReady(): Promise<void> {
     );
   }
 }
+
+// Live getters preserve account/scheduler replacement without loading Main modules at dispatch time.
+configureRoutineHost({ getBot: getBotRemoteResourceSource, getScheduler: getSchedulerIfInitialized, getScheduleStorage });
 
 /**
  * Phase 4: 不再用 `_schedulerStarted` flag —— `startScheduler()` 内部以 `_scheduler`
@@ -1751,6 +1782,7 @@ async function teardownAuthAccountBoundary(reason: string): Promise<void> {
     // 的 Maker 上兑现旧 owner 的记忆设置重启(shutdown 触发的会话关闭事件也会
     // 撞上它,先清再关)。
     clearDeferredCodexRestartForOwnerBoundary();
+    clearWorkingDirectoryRecoveryForOwnerBoundary();
     // interrupted-turn-resume:shutdown 批量 close 会话会触发 close teardown 的
     // markSessionTurnEnded,把"边界时还在飞的 turn"伪装成正常收尾 —— 被切换打断的
     // 任务从此既无中断横幅也无红点,呈现为"卡住且无报错"(与 ⌘Q 的 quit freeze 同款
@@ -2387,6 +2419,7 @@ registerLayoutIpc();
 // 图片通道的 ChatGPT 鉴权必须由 Main 静态装配；禁止在请求时 import maker-host
 // 生成延迟 chunk（Main bundle 反向 require 会重复执行启动副作用）。
 setCodexImageAuthBinding({
+  hasAuth: (providerId) => codexAccountState(providerId).authenticated,
   getAuth: getChatgptBridgeAuth,
   onAuthFailure: invalidateChatgptBridgeAuth,
 });
@@ -2447,6 +2480,10 @@ authManager.setStableOwnerPostCommitTask(async ({ reason, scopeKey, dataOwnerId 
 //   cindy-media:      媒体总仓字节仓取件窗口(内容寻址 blob;新写入媒体的
 //                     统一协议,历史 xdt-* 协议只读兼容)
 protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'cindy-desktop-capture',
+    privileges: { standard: true, secure: true, supportFetchAPI: true },
+  },
   imageSchemePrivilege,
   videoSchemePrivilege,
   localFileSchemePrivilege,
@@ -3382,7 +3419,9 @@ if (process.platform === 'darwin') {
 function applyMainWindowBackgroundThrottling(): void {
   const win = mainWindowRef;
   if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
-  win.webContents.setBackgroundThrottling(mainWindowBackgroundThrottlingAllowed);
+  win.webContents.setBackgroundThrottling(
+    mainWindowBackgroundThrottlingAllowed,
+  );
 }
 
 function setMainWindowBackgroundThrottlingForActiveTurn(hasRunningTurn: boolean): void {
@@ -4019,6 +4058,53 @@ let lastPluginMarketSyncAt = 0;
 let pluginMarketPeriodicSyncTimer: ReturnType<typeof setInterval> | null = null;
 const PLUGIN_MARKET_PERIODIC_SYNC_MS = 30 * 60 * 1000;
 
+let startupDatabaseSizeWarningStatus: DatabaseSizeWarningStatus = { databaseBytes: null };
+let startupDatabaseSizeWarningStatusChecked = false;
+let startupDatabaseSizeWarningOwnerScope: string | null = null;
+
+function collectCurrentDatabaseSizeWarningStatus(): DatabaseSizeWarningStatus {
+  return collectDatabaseSizeWarningStatus({
+    getCurrentDbPath: localDbGetCurrentDbPath,
+    getCurrentUserId: getCurrentDbClientUserId,
+    resolveDbPathForUser: getDbPathForUser,
+  });
+}
+
+function broadcastDatabaseSizeWarningChanged(): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+      win.webContents.send('database-size-warning:changed');
+    }
+  }
+}
+
+const databaseSizeWarningSettingsWatcher = createDatabaseSizeWarningSettingsWatcher(() => {
+  broadcastDatabaseSizeWarningChanged();
+});
+
+app.once('will-quit', () => databaseSizeWarningSettingsWatcher.dispose());
+
+function rebindDatabaseSizeWarningSettingsWatcher(): void {
+  databaseSizeWarningSettingsWatcher.rebind(getDatabaseSizeWarningSettingsFilePath());
+}
+
+/** Capture the database size once after the first local DB startup completes. */
+function checkDatabaseSizeWarningAtStartup(): void {
+  const ownerScope = activeOwnerScopeKey();
+  if (
+    startupDatabaseSizeWarningStatusChecked &&
+    startupDatabaseSizeWarningOwnerScope === ownerScope
+  ) return;
+  startupDatabaseSizeWarningStatus = collectCurrentDatabaseSizeWarningStatus();
+  startupDatabaseSizeWarningStatusChecked = true;
+  startupDatabaseSizeWarningOwnerScope = ownerScope;
+  dbClientLog.info(
+    'database size warning startup check completed',
+    startupDatabaseSizeWarningStatus,
+  );
+  broadcastDatabaseSizeWarningChanged();
+}
+
 /** Run market discovery and automatic updates for the current stable owner. */
 function syncPluginMarketForActiveOwner(minIntervalMs = 0): void {
   const session = getActiveAppSession();
@@ -4054,6 +4140,48 @@ function parseOptionalDeviceLinkDeviceId(value: unknown): string | null | undefi
 }
 
 const registerIpcHandlers = () => {
+  ipcMain.handle('database-size-warning:get-settings', (event) => {
+    assertTrustedAppRendererEvent(event);
+    const state = readDatabaseSizeWarningSettingsState();
+    return {
+      ...state.value,
+      isCustomized: state.isCustomized,
+      defaultThresholdGiB: DEFAULT_DATABASE_SIZE_WARNING_THRESHOLD_GIB,
+    };
+  });
+  ipcMain.handle('database-size-warning:set-settings', async (event, payload: unknown) => {
+    assertTrustedAppRendererEvent(event);
+    const parsed = parseDatabaseSizeWarningSettingsPatch(payload);
+    if ('error' in parsed) throwIpcError('INVALID_PARAMS', parsed.error);
+    await writeDatabaseSizeWarningSettings(parsed.patch);
+    const state = readDatabaseSizeWarningSettingsState();
+    broadcastDatabaseSizeWarningChanged();
+    return {
+      ...state.value,
+      isCustomized: state.isCustomized,
+      defaultThresholdGiB: DEFAULT_DATABASE_SIZE_WARNING_THRESHOLD_GIB,
+    };
+  });
+  ipcMain.handle('database-size-warning:reset-settings', async (event) => {
+    assertTrustedAppRendererEvent(event);
+    await resetDatabaseSizeWarningSettings();
+    const state = readDatabaseSizeWarningSettingsState();
+    broadcastDatabaseSizeWarningChanged();
+    return {
+      ...state.value,
+      isCustomized: state.isCustomized,
+      defaultThresholdGiB: DEFAULT_DATABASE_SIZE_WARNING_THRESHOLD_GIB,
+    };
+  });
+  ipcMain.handle('database-size-warning:get-status', (event) => {
+    assertTrustedAppRendererEvent(event);
+    return startupDatabaseSizeWarningStatus;
+  });
+  ipcMain.handle('database-size-warning:measure', (event) => {
+    assertTrustedAppRendererEvent(event);
+    return collectCurrentDatabaseSizeWarningStatus();
+  });
+
   // Find the primary app window, skipping transient utility BrowserWindows like
   // the voice-input overlay (minimizable:false, maximizable:false). Electron's
   // BrowserWindow.getAllWindows() ordering is not guaranteed to be stable across
@@ -4759,7 +4887,21 @@ const registerIpcHandlers = () => {
 
   // 上游作废 xAI 凭证、收口自动登出后,走和手动登出完全一致的 UI 收尾(广播 + 清账号级
   // 限流快照),否则用户会停在「显示已连接、请求连环 403」的假状态。
-  setXaiAuthInvalidatedHandler(() => {
+  setSubscriptionAccountInvalidatedHandler((providerId) => {
+    const scope = activeOwnerScopeKey();
+    const broadcast = () => {
+      if (scope === activeOwnerScopeKey() && !isAppSessionBoundaryPending()) {
+        refreshSelectableModelsAndBroadcast({ providerId });
+      }
+    };
+    void syncSubscriptionAccountUsage(providerId).then(broadcast, broadcast);
+  });
+  setXaiAuthInvalidatedHandler((providerId) => {
+    if (providerId !== 'xai') {
+      void clearSubscriptionAccountDiscoveredModels(providerId);
+      void syncSubscriptionAccountUsage(providerId).then(broadcastXaiAuthStateChanged, broadcastXaiAuthStateChanged);
+      return;
+    }
     resetProviderModelAutoRefreshCooldowns('xai');
     clearXaiDiscoveredModels();
     clearXaiMediaModels();
@@ -5851,6 +5993,7 @@ const registerIpcHandlers = () => {
           .catch(() => {});
       });
       makerIpcsRegistered = true;
+      worktreeRuntimeCloseReady = true;
       // device-link 捕获自检放在这里(而非 bootstrap 线性段):maker:create-session / maker:send
       // 由上面的 registerMakerCoreIpc 注册,属 splash 后的延迟注册;若在线性段(initDeviceLinkService
       // 之后)就 assert,会误报这两个 sentinel「未捕获」。此刻所有 sentinel(含线性段已注册的
@@ -5862,16 +6005,7 @@ const registerIpcHandlers = () => {
       // 不阻塞启动 —— 老链路仍可用; 下次 splash retry 再尝试。
     }
 
-    // Phase 3 恢复上次退出时保留的 worktree pool（未被 session 引用的 clean ephemeral → 入池，dirty → 保留，stale → 清除）。
-    // 在 scheduler 之前恢复，确保首个 scheduler job 能命中池缓存。
-    await WorktreePool.recoverPool().catch((err) => {
-      console.error('[bootstrap-electron] recoverPool failed (non-fatal):', err);
-    });
-    // P0 重构对账:会话已删除(status='deleted' 或行已缺失)但 worktree 回收没跑完
-    // (崩溃窗口/回收失败)的孤儿,启动期补一次回收。fire-and-forget,不阻塞启动。
-    void reconcileWorktreesForDeletedSessions().catch((err) => {
-      console.error('[bootstrap-electron] worktree reconcile failed (non-fatal):', err);
-    });
+    startReadyWorktreeMaintenance();
     // 删除 worktree 时因拿不到全局 safe.directory 锁而落盘的残留路径, 启动期补清。
     void reconcilePendingSafeDirectoryCleanups().catch((err) => {
       console.error('[bootstrap-electron] safe.directory cleanup reconcile failed (non-fatal):', err);
@@ -6449,6 +6583,7 @@ const registerIpcHandlers = () => {
 
   registerSkillhubIpc({
     getMaker: getMakerCore,
+    getManagedSkillRoots: () => getGhostManager().managedRootDirs(),
     getAllowedProjectRoots: listAllowedSkillhubProjectRoots,
   });
   disposeSkillhubAutoSyncAuthListener = authManager.onAuthStateChange((state) => {
@@ -7622,11 +7757,16 @@ const registerIpcHandlers = () => {
           activeOwnerScopeKey() === ownerScopeKey && !isAppSessionBoundaryPending(),
       };
     };
-    const withActiveChatAttachmentRoot = <T>(
+    const withActiveChatAttachmentRoot = async <T>(
       action: (rootDir: string, isCurrentOwner: () => boolean) => Promise<T>,
+      options: { allowOwnerChangeAfterAction?: boolean } = {},
     ): Promise<T> => {
       const { rootDir, isCurrentOwner } = captureActiveChatAttachmentRoot();
-      return action(rootDir, isCurrentOwner);
+      const result = await action(rootDir, isCurrentOwner);
+      if (!options.allowOwnerChangeAfterAction && !isCurrentOwner()) {
+        throwIpcError('PRECONDITION_FAILED', 'chat attachment directory owner changed');
+      }
+      return result;
     };
 
     // 各窗口草稿附件 URL 上报(composerDraftStore mutator 尾部推送;多窗口
@@ -7641,14 +7781,20 @@ const registerIpcHandlers = () => {
       getRegisteredDraftUrls: getAllRegisteredDraftUrls,
       openLegacyImagesDir: () => openFixedDirectory(imageCacheStore.getCacheRoot()),
       clearLegacyImagesDir: () => clearFixedDirectory(imageCacheStore.getCacheRoot()),
+      getLegacyImagesDirStats: () => getFixedDirectoryStats(imageCacheStore.getCacheRoot()),
       openChatAttachmentsDir: () =>
         withActiveChatAttachmentRoot((rootDir, isCurrentOwner) =>
           openFixedDirectory(rootDir, isCurrentOwner),
         ),
       clearChatAttachmentsDir: () =>
-        withActiveChatAttachmentRoot((rootDir, isCurrentOwner) =>
-          clearFixedDirectory(rootDir, isCurrentOwner),
+        withActiveChatAttachmentRoot(
+          (rootDir, isCurrentOwner) => clearFixedDirectory(rootDir, isCurrentOwner),
+          { allowOwnerChangeAfterAction: true },
         ),
+      getChatAttachmentsDirStats: () =>
+        !getActiveAppSession().dataOwnerId || isAppSessionBoundaryPending()
+          ? Promise.resolve({ bytes: 0, fileCount: 0 })
+          : withActiveChatAttachmentRoot((rootDir) => getFixedDirectoryStats(rootDir)),
     });
     ipcMain.handle('cindy-media:storage-stats', () => storageHandlers.stats());
     ipcMain.handle('cindy-media:storage-scan', (_event, params: { draftUrls: string[] }) =>
@@ -8258,6 +8404,7 @@ app.on('ready', async () => {
   });
 
   registerIpcHandlers();
+  rebindDatabaseSizeWarningSettingsWatcher();
   startInputDeviceRuntime();
   startInputDevices();
   // 本机 FS 目录浏览(项目选择器「添加远程项目」逐级浏览;device-link 经隧道在被控端执行)。
@@ -8275,8 +8422,12 @@ app.on('ready', async () => {
   // 首登轻量数据迁移(mToc)的确认弹窗 IPC —— 必须先于 registerLocalDbIpc 注册,
   // 保证 beforeEnsureReady 推送 confirm 态时 renderer 已能 invoke 确认通道。
   registerLegacyMigrationIpc();
+  setHistoryToolNameReader(getHistoryToolName);
   registerLocalDbIpc({
+    isSessionTurnPendingCompletion,
+    readHistoryLiveMessages: getSessionThinkingSnapshots,
     resolveContextWindow: (session) => resolveSessionContextWindow(getActiveCatalog(), session),
+    requestWorktreeRecycle,
     cancelSessionOperations: cancelIOSSimulatorSessionOperations,
     cleanupRemovedSession: cleanupIOSSimulatorRemovedSession,
     closeIdleSessionForMove: async (sessionId) => {
@@ -8411,6 +8562,12 @@ app.on('ready', async () => {
       const dbClientTakeover = await ensureLifecycleDbClient(userId);
       logStartupPhase('db-client-takeover');
       if (dbClientTakeover.mode === 'failed' || dbClientTakeover.mode === 'skipped') {
+        // Do not expose the previous owner's startup snapshot after a failed
+        // takeover. A later successful takeover will capture a fresh snapshot.
+        startupDatabaseSizeWarningStatus = { databaseBytes: null };
+        startupDatabaseSizeWarningStatusChecked = false;
+        startupDatabaseSizeWarningOwnerScope = null;
+        broadcastDatabaseSizeWarningChanged();
         dbClientLog.warn('[DbClient] lifecycle client unavailable; skip db-client startup hooks', {
           userId,
           mode: dbClientTakeover.mode,
@@ -8426,10 +8583,12 @@ app.on('ready', async () => {
         }
         return;
       }
+      checkDatabaseSizeWarningAtStartup();
       // Bot recovery is owner-scoped and must start only after DbClient
       // takeover. registerMakerIpc also invokes this once its services exist,
       // covering both possible splash/login orderings without duplicate runs.
       void restoreBotRuntimeForCurrentOwner();
+      startReadyWorktreeMaintenance();
       if (dbClientTakeover.mode === 'unchanged') {
         // 副窗口会再次走 localDb.ensureReady；同 owner 的 lifecycle client 已由首个
         // onReady 完整启动，因此这里只保留 DB 连接交接，不重复执行账号级启动维护。
@@ -8870,6 +9029,7 @@ app.on('ready', async () => {
   // owning modules above; future collections/actions do not add tunnel channels.
   registerRemoteResourcesIpc();
   registerDeviceLinkIpc();
+  registerRemoteDesktopIpc(isGlobalVoiceInputOverlaySender);
   void startupPurgeDrain
     .then(({ purged, pending }) => {
       if (purged > 0 || pending > 0) {
@@ -9575,4 +9735,22 @@ if (
   require.cache[__filename] == null
 ) {
   require.cache[__filename] = module;
+}
+
+let worktreeRuntimeCloseReady = false;
+let lastWorktreeMaintenanceDb: ReturnType<typeof tryGetDbClient> = null;
+
+/** Worktree maintenance needs both storage and runtime-close services. */
+function startReadyWorktreeMaintenance(): void {
+  startWorktreeRecycleMaintenance({
+    isReady: () => worktreeRuntimeCloseReady && getMakerIfReady() !== null && tryGetDbClient() !== null,
+    recycleCurrentSession: (sessionId, status) => recycleSessionWorktreeForStatusChange(sessionId, status),
+    onAttemptComplete: auditRegisteredWorktrees,
+  });
+  const db = tryGetDbClient();
+  if (worktreeRuntimeCloseReady && getMakerIfReady() && db && db !== lastWorktreeMaintenanceDb) {
+    lastWorktreeMaintenanceDb = db;
+    void auditRegisteredWorktrees().catch((error) => dbClientLog.warn('worktree audit postponed', error));
+    void WorktreePool.recoverPool().catch((error) => dbClientLog.warn('worktree pool recovery postponed', error));
+  }
 }

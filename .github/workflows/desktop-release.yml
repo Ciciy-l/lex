@@ -201,10 +201,10 @@ jobs:
 
       - name: Check DCO and repository invariants
         run: |
-          # Accepted immutable Cindy v0.1.76 snapshot. This is an imported
+          # Accepted immutable Cindy v0.1.79 snapshot. This is an imported
           # history exception, not a DCO certification; never use a moving ref.
           # Newer upstream history and Lex-authored commits remain checked.
-          pnpm check:dco -- --base "${GITHUB_SHA}^1" --head "$GITHUB_SHA" --upstream-baseline 0d1a5c7da95e22a1215dc5ad637bf60549453ee8
+          pnpm check:dco -- --base "${GITHUB_SHA}^1" --head "$GITHUB_SHA" --upstream-baseline abcf92c2b34e99209e505662a3fe4e11868e8aa1
           pnpm check:endpoints
           pnpm check:i18n
           pnpm check:i18n-glossary

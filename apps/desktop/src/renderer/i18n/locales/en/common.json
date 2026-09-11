@@ -1,4 +1,67 @@
 {
+  "remoteDesktop": {
+    "windowsTitle": "Lock screen control",
+    "windowsready": "Enabled for this {{appName}} process. Restarting {{appName}} requires administrator authorization again.",
+    "windowsmissing": "Allow control of the lock screen and administrator prompts. Administrator authorization is required.",
+    "windowsinstallRequired": "Install {{appName}} for all users in Program Files to enable this feature.",
+    "windowsunavailable": "The system service is unavailable. Reinstall {{appName}} and try again.",
+    "windowsEnable": "Authorize",
+    "windowsDisable": "Remove service",
+    "windowsError": "Authorization was not completed. Try again on this computer.",
+    "permissionsTitle": "Remote desktop permissions",
+    "permissionsIntro": "Screen recording lets you view the desktop. Accessibility also enables control. Complete authorization on the computer; status updates automatically.",
+    "permissionsReady": "System permissions are ready. You can reconnect.",
+    "screenRecording": "Screen recording",
+    "accessibility": "Accessibility",
+    "screenRecordingHelp": "Open System Settings and enable screen recording for this {{appName}} app. If macOS asks you to restart, reopen {{appName}} before connecting.",
+    "accessibilityHelp": "Open settings and enable accessibility for the app identified by the system prompt. The actual input permission is checked automatically when you return.",
+    "permissionChecking": "Checking…",
+    "permissionGranted": "Granted",
+    "permissionUnknown": "Unconfirmed",
+    "permissionMissing": "Not granted",
+    "openPermissionSettings": "Grant permission",
+    "recheckPermissions": "Check again",
+    "permissionActionFailed": "Could not open the permission guide. Try again in Remote control settings on the computer.",
+    "permissionCheckFailed": "Could not check permissions. Make sure the computer is online and try again.",
+    "openGuideOnComputer": "Open guide on computer",
+    "permissionGuideOpened": "The permission guide is open on the computer. Continue there.",
+    "reconnectAfterPermissions": "Check and reconnect",
+    "closePermissionGuide": "Close",
+    "title": "Remote desktop",
+    "allow": "Allow remote desktop",
+    "allowHint": "Allow your signed-in devices to view and operate all apps on this computer. Also enable device control above.",
+    "permissionHint": "On the computer, allow screen recording and accessibility in system settings, then reconnect.",
+    "beingControlled": "Your desktop is being controlled",
+    "beingViewed": "Your desktop is being viewed",
+    "disconnect": "Disconnect",
+    "back": "Back",
+    "connect": "Connect",
+    "connecting": "Connecting…",
+    "disconnected": "Disconnected",
+    "compatibility": "Compatibility mode · lower frame rate",
+    "live": "Live",
+    "controlling": "Controlling",
+    "viewOnly": "View only",
+    "upgrade": "Update {{appName}} on the computer to use remote desktop.",
+    "disabled": "On the computer, enable remote desktop in Settings → Remote control.",
+    "busy": "Desktop input is busy. Release control on the other device or wait for the Agent action to finish.",
+    "connectionError": "Connection ended. Check that the computer is online, then reconnect.",
+    "releaseControl": "Release control",
+    "takeControl": "Take control",
+    "pointer": "Trackpad",
+    "touch": "Touch",
+    "pan": "Move view",
+    "keyboard": "Keyboard",
+    "rightClick": "Right click",
+    "fit": "Fit",
+    "display": "Display",
+    "gestureHint": "Pinch to zoom. Two fingers scroll; Move view pans. Hold, then move to drag.",
+    "textPlaceholder": "Type on the computer",
+    "sendText": "Send text",
+    "keys": "Keys",
+    "showDesktop": "Desktop",
+    "allWindows": "All windows"
+  },
   "ipcError": {
     "INVALID_PARAMS": "Invalid input. Please check and try again.",
     "PRECONDITION_FAILED": "This action is unavailable in the current state. Please try again.",
@@ -115,6 +178,7 @@
       "restoreFailed": "Failed to restore default settings"
     },
     "tabs": {
+      "storage": "Storage",
       "general": "General",
       "billing": "Usage and billing",
       "usage": "Usage history",
@@ -862,10 +926,25 @@
         "unknown": "Unknown"
       },
       "storage": {
+        "mediaSectionTitle": "Media files",
+        "databaseSectionTitle": "Database",
+        "overviewTitle": "Local storage overview",
+        "overviewDescription": "Your database and media cache stay on this computer. {{appName}} does not delete your history automatically.",
+        "mediaSectionHint": "Manage separately; review items before clearing",
+        "databaseUsage": "Using {{size}}",
+        "databaseWarningNote": "Scan first, then choose what to clean. Scanning does not delete files immediately.",
+        "dbSizeWarningThresholdLabel": "Database reminder threshold",
+        "dbSizeWarningThresholdDescription": "Remind me to clean up when the database exceeds this size (G)",
+        "dbSizeWarningThresholdInvalid": "Enter a threshold between 1 and 1024 G.",
+        "dbSizeWarningSaveFailed": "Could not save database reminder settings. Try again.",
+        "dbSizeWarningDisableLabel": "Do not remind me again",
+        "dbSizeWarningDisableDescription": "When enabled, database space reminders are hidden.",
+        "unknown": "Unknown",
         "title": "Storage",
         "usageLabel": "Media storage used",
         "usageValue": "{{size}} ({{count}} files, {{cacheSize}} cache)",
         "statsFailed": "Stats temporarily unavailable",
+        "refreshStatsButton": "Refresh storage usage",
         "legacyUsage": "Legacy data (read-only, not part of cleanup): {{size}}",
         "legacyImagesLabel": "Image cache directory",
         "legacyImagesDescription": "{{appName}} does not scan or clean this directory automatically. Deleting files may make images in message history unavailable; review them before deleting.",
@@ -1220,7 +1299,6 @@
           },
           "toast": {
             "title": "Added to dictionary",
-            "titleMultiple": "Added {{count}} terms",
             "termsSummary": "{{terms}} and {{count}} terms total",
             "automaticAdded": "Auto-added to dictionary: {{term}}",
             "automaticAddedMultiple": "Auto-added {{count}} terms, including {{term}}",
@@ -1419,6 +1497,10 @@
       },
       "pill": {
         "connected": "Connected",
+        "configured": "Configured",
+        "disconnected": "Not connected",
+        "connecting": "Connecting…",
+        "rename": "Rename",
         "suspended": "Disabled"
       },
       "button": {
@@ -1443,7 +1525,17 @@
         "reconnectRequired": "Reconnect Needed",
         "connect": "Connect ChatGPT",
         "reconnect": "Reconnect ChatGPT",
-        "cancelConnect": "Cancel Connection"
+        "cancelConnect": "Cancel Connection",
+        "accountSource": {
+          "local": "Local Codex account",
+          "oauth": "Independently signed-in account",
+          "unknown": "Existing OpenAI connection"
+        },
+        "useLocalAccount": "Use local Codex account",
+        "addIndependentAccount": "Sign in to a separate account",
+        "accountSourcesDescription": "Use your existing local Codex connection or sign in to a separately saved account. Both support the same features.",
+        "independentAccountDescription": "Sign in to a separately saved ChatGPT account, or connect with an API key.",
+        "localUnavailable": "No local connection is available to reuse. Existing provider accounts will not be replaced."
       },
       "xai": {
         "title": "xAI",
@@ -1452,7 +1544,7 @@
         "billingLabel": "SuperGrok subscription (direct)",
         "asset": {
           "weeklyTitle": "Weekly limit",
-          "weeklyUsed": "{{percent}}% used",
+          "weeklyRemaining": "{{percent}}% remaining",
           "resetsAt": "Resets {{at}}",
           "productLine": "{{product}} {{percent}}%",
           "openUsage": "Open Grok usage"
@@ -1540,6 +1632,7 @@
           "modelIdPlaceholder": "model-id",
           "modelNamePlaceholder": "Display name",
           "modelContextWindowPlaceholder": "Context (tokens)",
+          "modelType": "Model type",
           "modelContextWindowTitle": "Context window in tokens. Leave empty for the conservative 200K default; affects the window display and compaction threshold.",
           "modelSupportsImageInput": "Supports image input",
           "modelSupportsImageInputHelp": "Enable only when the model actually accepts visual input. Start a new Pi task after saving.",
@@ -1743,7 +1836,7 @@
         "subscription": "Subscription",
         "subscriptionProduct": "{{product}} Subscription",
         "noResults": "No matching models",
-        "capabilityNote": "Not available in {{agent}}",
+        "capabilityNote": "Not configured for {{agent}}",
         "refreshAria": "Refresh model list (additions only)",
         "refreshBuiltinAria": "Refresh Model List",
         "refreshingAria": "Refreshing model list…",
@@ -1819,6 +1912,7 @@
           "engines": "Engine support",
           "enginesHint": "Compatibility mode converts requests. It is off by default and can be enabled when needed.",
           "engineUnsupported": "Not supported",
+          "engineNotConfigured": "Not configured",
           "engineNoFast": "No Fast",
           "vision": {
             "vision": "Supported",
@@ -2001,7 +2095,7 @@
         "back": "← Back",
         "finish": "Finish",
         "cancel": "Cancel",
-        "useApiKey": "Use an API key instead",
+        "useApiKey": "API key connection",
         "metaOAuthOrApi": "Subscription (OAuth) · API key",
         "builtinApiKey": {
           "subtitle": "Connect with your own API key",
@@ -2021,8 +2115,8 @@
         "hostProfileApple": "Apple silicon · about {{memory}} GB unified memory",
         "hostProfileGeneric": "About {{memory}} GB memory",
         "hostProfileUnknown": "This computer’s memory isn’t available yet",
-        "bestForYou": "Best for you",
-        "alsoCoding": "Also good for coding",
+        "bestForYou": "Capability pick",
+        "alsoCoding": "Speed alternative",
         "packaging": {
           "mxfp8": "MXFP8",
           "mlx": "MLX",
@@ -2039,41 +2133,12 @@
         "noSearchResults": "No matching models",
         "alreadyInstalled": "Installed",
         "searchResults": "Search results",
-        "moreModels": "More local models",
-        "memoryWarning": "Not enough memory on this computer (needs {{need}} GB, about {{have}} GB available)",
+        "moreModels": "Other candidate models",
+        "memoryWarning": "Below the estimated memory threshold ({{need}} GB; this computer has about {{have}} GB)",
         "manualDownload": "Manual download",
         "manualDownloadPlaceholder": "Ollama library name or Hugging Face URL",
         "invalidLibraryName": "Enter an Ollama library name, or paste a huggingface.co model page URL",
         "advancedExactName": "Advanced: exact library name",
-        "models": {
-          "qwen38-27b": {
-            "blurb": "The strongest dense model you can run locally. Best for coding and long tasks."
-          },
-          "gpt-oss-20b": {
-            "blurb": "OpenAI’s open 20B. The usual pick for 16 GB machines."
-          },
-          "gemma4-e2b": {
-            "blurb": "Smallest Gemma 4. Light machines, with vision."
-          },
-          "gemma4-e4b": {
-            "blurb": "Google Gemma 4 small. Light daily use, with vision."
-          },
-          "gemma4-12b": {
-            "blurb": "Gemma 4 mid-size. Steadier chat and multimodal."
-          },
-          "gemma4-31b": {
-            "blurb": "Gemma 4 large. Stronger chat and multimodal, more memory."
-          },
-          "gemma4-26b": {
-            "blurb": "Gemma 4 mid-large MoE. Fewer active parameters, mid-to-high-end machines."
-          },
-          "ornith15-35b": {
-            "blurb": "Ornith 1.5 mid-size MoE. The local coding and agent backup."
-          },
-          "glm-47-flash": {
-            "blurb": "Zhipu’s current coding model. 30B MoE, good for code and agents."
-          }
-        },
         "onboardingTitle": "Install the Ollama runtime",
         "onboardingBody": "After you install Ollama, you can download and use local models in {{appName}} without opening the Ollama app. Ollama is a free, open-source third-party runtime.",
         "installInCindy": "Install in {{appName}}",
@@ -2142,8 +2207,8 @@
         "cancelDownload": "Delete Incomplete Download",
         "notRecommended": "This Mac doesn’t meet the 32 GB memory bar for Qwen3.8 27B. You can still enter an exact library name.",
         "sizeHint": "About {{size}} · needs {{memory}} GB unified memory",
-        "sizeHintApple": "About {{size}} · needs {{memory}} GB unified memory",
-        "sizeHintGeneric": "About {{size}} · needs {{memory}} GB memory",
+        "sizeHintApple": "Download {{size}} · estimated {{memory}} GB unified memory",
+        "sizeHintGeneric": "Download {{size}} · estimated {{memory}} GB memory",
         "deleteFromCindy": "Remove from {{appName}}",
         "deleteConfirmTitle": "Remove Ollama from {{appName}}?",
         "deleteConfirmBody": "This only removes the {{appName}} connection. Models already downloaded in Ollama stay on disk, and the service keeps running.",
@@ -2152,7 +2217,8 @@
         "deleteModelConfirmBody": "This deletes the downloaded model files from this computer and removes them from {{appName}}. You can download the model again later.",
         "deleteModelConfirm": "Delete",
         "deleteModelDone": "Deleted {{name}}",
-        "deleteModelFailed": "Couldn’t delete the model. Make sure Ollama is running, then try again."
+        "deleteModelFailed": "Couldn’t delete the model. Make sure Ollama is running, then try again.",
+        "noRecommendation": "No recommendation with sufficient evidence fits this computer yet. You can choose a candidate below."
       },
       "xdSignin": {
         "badge": "Recommended",
@@ -2182,27 +2248,15 @@
           "cancel": "Cancel"
         }
       },
-      "imagesKey": {
-        "label": "Image generation API key",
-        "placeholder": "Paste OpenAI platform API key",
-        "save": "Save",
-        "clear": "Clear",
-        "toast": {
-          "saved": "Image generation API key saved",
-          "saveFailed": "Failed to save image generation API key. Please try again.",
-          "cleared": "Image generation API key cleared",
-          "clearFailed": "Failed to clear image generation API key"
-        }
-      },
       "usage": {
-        "percentUsed": "{{percent}}% used",
+        "percentRemaining": "{{percent}}% remaining",
         "resetsAt": "Resets {{at}}",
         "claudePlanFallback": "Claude subscription",
-        "claudeWeekly": "7-day window {{percent}}%",
-        "scopedModel": "{{model}} {{percent}}%",
+        "claudeWeekly": "7-day window: {{percent}}% remaining",
+        "scopedModel": "{{model}}: {{percent}}% remaining",
         "openClaudeUsage": "Open usage page",
         "codexPlanFallback": "ChatGPT subscription",
-        "codexSecondary": "Secondary window {{percent}}%",
+        "codexSecondary": "Secondary window: {{percent}}% remaining",
         "codexResetCredits": "{{count}} limit reset credits"
       }
     },
@@ -3120,12 +3174,29 @@
       "runtimeUnknown": "{{packageName}} requires Pi {{range}}, but {{appName}} could not determine whether its current Pi version satisfies it.",
       "warning": {
         "no-resources": "No Pi resources were found in this extension.",
+        "analysisIncomplete": "Pi completed the operation, but {{appName}} could not finish its follow-up analysis or optional build.",
         "inspection-failed": "{{appName}} could not inspect the installed contents. This does not disable the package; Pi still handles it natively.",
         "inspection-limit": "{{appName}} stopped displaying analysis after its inspection limit. The package remains available through Pi’s native loader.",
         "unsupported-filter": "{{appName}} cannot display this Pi resource filter yet. Pi still handles the package and filter natively.",
         "unsafe-source": "The saved source contains credentials or private URL parameters. {{appName}} hid those fields in this view without blocking Pi’s package behavior."
       },
+      "recovery": {
+        "check-credentials": "Check the source credentials.",
+        "check-permissions": "Check file and directory permissions.",
+        "check-network": "Check the network connection.",
+        "check-source": "Check the package name or repository address.",
+        "check-version": "Check the requested package version.",
+        "check-runtime": "Check that the Pi runtime is available.",
+        "free-disk-space": "Free up disk space.",
+        "check-build-dependencies": "Check the extension’s build dependencies.",
+        "refresh-package-state": "Refresh the extension list to check its current state.",
+        "inspect-state-before-retry": "Check the current extension state before retrying unfinished steps."
+      },
       "failure": {
+        "commandFailed": "The native Pi package command failed.",
+        "commandNotStarted": "The native Pi package command could not start.",
+        "commandTimedOut": "The native Pi package command timed out.",
+        "commandUnknown": "The result of the native Pi package command could not be confirmed.",
         "sourceUnavailable": "The source is unavailable. Check the network or URL, or try another source.",
         "packageNotFound": "The package was not found. Check the package name or repository URL.",
         "versionNotFound": "That version was not found. Choose an available version and try again.",
@@ -5015,7 +5086,8 @@
         "nodeChildSpawn": "Its Node program can ask the host to start declared sub-processes from its package",
         "nodeChildSpawnDetail": "Only JS files declared inside its own package can be started (same local permissions as the main program); arbitrary commands cannot be executed. Sub-processes are closed together when the plugin is disabled or exits.",
         "skill": "Adds the skill \"{{name}}\" to your AI assistants",
-        "skillDetail": "A skill is an instruction file the AI loads and follows as its own, with your full permissions, in Claude Code and Codex, across every project — it is not confined to this plugin's sandbox. It stays available while the plugin is enabled and is removed when the plugin is disabled or uninstalled; turning the plugin off for a single folder does not hide it. The full skill text cannot be previewed here — only install plugins you trust."
+        "skillDetail": "A skill is an instruction file the AI loads and follows as its own, with your full permissions, in Claude Code and Codex, across every project — it is not confined to this plugin's sandbox. It stays available while the plugin is enabled and is removed when the plugin is disabled or uninstalled; turning the plugin off for a single folder does not hide it. The full skill text cannot be previewed here — only install plugins you trust.",
+        "routineEvents": "Routine Events"
       },
       "connections": {
         "confirmTitle": "Add connection address",
@@ -5930,6 +6002,8 @@
     "modelWeeklyLabel": "{{model}} weekly",
     "usedPercent": "Used {{percent}}%",
     "remainingPercent": "Remaining {{percent}}%",
+    "resetIn": "Resets in {{duration}}",
+    "resetPending": "Awaiting reset update",
     "resetAt": "Resets {{at}}",
     "noWindows": "No quota window data available",
     "limitRejected": "Plan limit reached; requests may be rejected",
@@ -7124,6 +7198,12 @@
       "binary-missing": "Component unavailable"
     },
     "ariaLabel": "Sidebar navigation",
+    "databaseSizeWarning": {
+      "title": "Database is using a lot of space",
+      "description": "The database is about {{size}}, above {{threshold}} G. Consider cleaning it up in Storage.",
+      "openSettings": "Open Storage",
+      "disable": "Do not remind me"
+    },
     "horizontalTabbarAria": "Main view switcher",
     "tabs": {
       "projects": "Projects",
@@ -7340,6 +7420,8 @@
       "composerPlaceholderLatin": "Say something to {{name}}…"
     },
     "globalSettings": {
+      "restoreHint": "Restoring defaults follows the client’s default model settings. Individual teammates’ custom models stay unchanged.",
+      "restoreFailed": "Could not restore defaults. Try again.",
       "title": "Teammates",
       "description": "Settings shared by all teammates. Anything about one teammate lives on their own page.",
       "rosterNote": "The shipped roster grows with each release."
@@ -7418,6 +7500,16 @@
       "thisDevice": "This computer",
       "offlineDescription": "{{name}} is offline. Reconnect {{device}} to continue.",
       "preparing": "Waiting for this teammate to get ready…"
+    },
+    "capabilities": {
+      "title": "Capabilities",
+      "search": "Search capabilities",
+      "loading": "Loading…",
+      "skill": "Skills",
+      "mcp": "MCP",
+      "toolset": "Built-in tools",
+      "unavailable": "Unavailable",
+      "empty": "No matching capabilities"
     }
   },
   "common": {
@@ -7600,6 +7692,7 @@
       "stop": "Stop generating"
     },
     "pluginSetup": {
+      "reopen": "Reopen",
       "title": "{{name}} Settings",
       "assessmentReadFailed": "Couldn't read the plugin setup status.",
       "setupIncomplete": "Plugin setup is not complete.",
@@ -7788,6 +7881,7 @@
         "china": "China",
         "image": "Image",
         "video": "Video",
+        "audio": "Audio Generation",
         "tts": "Text to Speech",
         "stt": "Speech to Text",
         "realtime": "Realtime Audio",
@@ -7895,7 +7989,7 @@
           },
           "bypassPermissions": {
             "label": "Full access",
-            "description": "Routine tools run without asking. Pi extension commands you send directly run as requested; agent-initiated changes still require tool approval. Highest risk; use only for trusted tasks."
+            "description": "Allows editing any file and running networked commands without another confirmation. Highest risk; use only for trusted tasks."
           }
         }
       }
@@ -8895,7 +8989,7 @@
       "contextRebuild": {
         "labelOverflow": "Context reorganized, continuing",
         "labelTimeout": "Last turn didn't respond; context reorganized to continue",
-        "labelStrip": "Oversized images removed, continuing",
+        "labelStrip": "Historical images reorganized",
         "toggleHint": "View handoff context",
         "handoffTitle": "Handoff — the context summary sent to the next stretch of this conversation (not part of the chat transcript; shown only here)",
         "handoffTitleEnglishSource": "Handoff — the context summary sent to the next stretch of this conversation (not part of the chat transcript; shown only here)"
@@ -9463,6 +9557,8 @@
         "all": "All"
       },
       "filterSortBy": {
+        "created": "Created Time",
+        "activity": "Recent Activity",
         "recency": "By time",
         "manual": "Manual",
         "priority": "Priority"
@@ -9478,7 +9574,7 @@
       "filterTaskSortHeading": "Session sort",
       "filterProjectOrderHeading": "Project order",
       "filterProjectOrder": {
-        "activity": "By recent activity",
+        "activity": "Follow Session Sorting",
         "custom": "Manual"
       },
       "filterProjectOrderTip": {
@@ -10857,6 +10953,7 @@
     }
   },
   "commandPalette": {
+    "viewSkillDetails": "View skill details",
     "projectSkillNotLoaded": "This Pi task hasn't loaded this project Skill. New tasks will automatically try to load it."
   },
   "skillhub": {
@@ -11015,11 +11112,11 @@
         "market": "Back to Market",
         "skillhub": "Back to SkillHub"
       },
-      "uninstall": "Uninstall",
+      "uninstall": "Uninstall Skill",
       "uninstallDialog": {
-        "title": "Uninstall {{name}}?",
-        "description": "Will remove the local folder\n{{path}}\nThis cannot be undone.",
-        "confirm": "Confirm uninstall",
+        "title": "Uninstall “{{name}}”?",
+        "description": "Local files and edits will move to the trash and can be restored.\n\nOther Agents sharing this skill will also be affected. Published versions and installations elsewhere are unaffected.",
+        "confirm": "Uninstall",
         "cancel": "Cancel"
       },
       "uninstalledToast": "{{name}} uninstalled",
@@ -11313,6 +11410,10 @@
       }
     },
     "scanResult": {
+      "rejectedTitle": "Review Rejected",
+      "rejectedDesc": "This version did not pass review. Address the feedback below and publish again.",
+      "rejectionReasonUnavailable": "This version did not pass review, but no specific reason is available. Contact the reviewer for details.",
+      "rejectionReason": "Rejection Reason",
       "dismiss": "Got it",
       "passedTitle": "Security Scan Passed",
       "passedDesc": "This version has passed all security checks and is now live on the market.",
@@ -11417,6 +11518,27 @@
     "marketEdit": {
       "saved": "Market info saved",
       "displayNameRequired": "Display name is required"
+    },
+    "management": {
+      "disabled": "Disabled",
+      "enabledLabel": "Enable Skill “{{name}}”",
+      "moreLabel": "Manage Skill “{{name}}”",
+      "activationHint": "Controls Skill loading in {{appName}} only. Takes effect when starting or restarting an Agent.",
+      "enabledToast": "Skill “{{name}}” enabled. Start or restart the Agent to apply.",
+      "disabledToast": "Skill “{{name}}” disabled. Start or restart the Agent to apply.",
+      "toggleFailed": "Could not save the Skill setting. Try again.",
+      "uninstallFailed": "Could not move the Skill to the trash. Check file permissions and try again.",
+      "refreshRequired": "The Skill is being changed or its source has changed. Refresh the list and try again.",
+      "globalScope": "Installation: global Skill",
+      "projectScope": "Project: {{project}}",
+      "trashDescription": "Local files and edits will move to the trash and can be restored.",
+      "unlinkDescription": "Only the local skill entry will be removed. Original files and edits will be kept.",
+      "sharedImpact": "Other Agents sharing this skill will also be affected. Published versions and installations elsewhere are unaffected.",
+      "managedElsewhere": "This Skill belongs to another package or shared directory. Remove it at its source.",
+      "managedByPlugin": "This skill is provided by a plugin. Manage it on that plugin’s page.",
+      "cleanupIncomplete": "Uninstall cleanup for “{{name}}” is unfinished. Retry now or reopen Skills later to continue. Reinstallation is paused until cleanup completes.",
+      "retryCleanup": "Retry cleanup",
+      "cleanupComplete": "Cleanup completed"
     }
   },
   "makerExperimental": {
@@ -11511,11 +11633,12 @@
       "qrExpired": "QR code expired, please start again",
       "registrationFailed": "Creation failed, please retry later",
       "silentStopExhausted": "The model returned empty responses repeatedly; auto-resume is paused. Click \"Continue\" to resume the task.",
+      "outputLimit": "The model reached its output limit, so this response may be incomplete. Send the next message to continue.",
       "permissionTightenInterruptFailed": "Failed to stop the running task while tightening permissions; it may keep running without approval prompts until it finishes. Stop it manually if needed.",
       "codexAutoReviewUnavailable": "Auto-review is temporarily unavailable. The current action was blocked and permissions switched to Default. Retry the request; {{appName}} will ask when needed.",
       "hostShellCommandBlocked": "{{appName}} blocked a shell command that would bypass the embedded iOS Simulator. Use the iOS Simulator tool for device control, app launches, interaction, screenshots, and diagnostics.",
       "upstreamResponseIdleTimeout": "The model stopped responding for a long time, so this turn was interrupted to avoid hanging forever. Completed tool calls are preserved — send the next message to continue.",
-      "codexHistoryOversized": "This task’s history includes oversized images, so remote compaction cannot finish. {{appName}} will omit those images and continue in this task.",
+      "codexHistoryOversized": "Automatic image history recovery and continuation could not finish. Send “Continue” to resume this task.",
       "codexHistoryOversizedRemote": "This task’s history includes oversized images, so remote compaction cannot finish. Open the task on the machine running Codex and send again; {{appName}} will omit those images there.",
       "codexCompactionNotConverging": "Codex kept compacting the context without making progress, so this turn was interrupted to stop the loop. What's taking up the space usually isn't the conversation — the system prompt and tool definitions can't be compacted away. Start a new task to continue.",
       "codexCompactionNotConvergingModelSwitch": "Codex kept compacting the context without making progress, so this turn was interrupted to stop the loop. This task switched model midway, and Codex still evaluates the context limit against the previous model. Switch back to that model to continue, or start a new task.",
@@ -12222,6 +12345,67 @@
     "embedding": "For finding related content by meaning.",
     "compression": "For condensing lengthy content."
   },
+  "routines": {
+    "title": "Routines",
+    "add": "Add Routine",
+    "back": "Back to Routines",
+    "error": "Could not update routines. Check the settings and try again.",
+    "empty": "Add a routine to tell this teammate what to do and when.",
+    "enabled": "Enabled",
+    "paused": "Paused",
+    "runNow": "Run Now",
+    "running": "Running…",
+    "name": "Name",
+    "instructions": "Instructions",
+    "when": "When to Run",
+    "addTrigger": "Add Trigger",
+    "removeTrigger": "Remove Trigger",
+    "schedule": "Schedule",
+    "hourly": "Hourly",
+    "daily": "Daily",
+    "weekdays": "Weekdays",
+    "weekly": "Weekly",
+    "monthly": "Monthly",
+    "interval": "Interval",
+    "advanced": "Advanced…",
+    "everyMinutes": "Every {{count}} Minutes",
+    "minutes": "Minutes",
+    "expression": "Cron Expression",
+    "timezone": "Time Zone",
+    "delete": "Delete Routine",
+    "save": "Save Routine",
+    "deleteConfirm": "Delete this routine and cancel its pending runs?",
+    "keep": "Keep Routine",
+    "history": "Run History",
+    "noRuns": "This routine has not run yet.",
+    "field": "Field",
+    "operator": "Condition",
+    "value": "Value",
+    "addFilter": "Add Condition",
+    "removeFilter": "Remove Condition",
+    "pluginCapability": "Publishes declared events to your routines. Only routines you configure can run.",
+    "time": "Time",
+    "day": "Day",
+    "weekday": "Weekday",
+    "status": {
+      "queued": "Queued",
+      "running": "Running",
+      "success": "Completed",
+      "failed": "Failed",
+      "interrupted": "Interrupted",
+      "cancelled": "Cancelled"
+    },
+    "sourceStatus": {
+      "listening": "Listening",
+      "disconnected": "Not Listening",
+      "error": "Source Needs Attention"
+    },
+    "operators": {
+      "equals": "Equals",
+      "contains": "Contains",
+      "not-equals": "Does Not Equal"
+    }
+  },
   "cindyMakeDoctor": {
     "description": "Check the local environment for building {{appName}}. Usage: /cindy-make-doctor",
     "title": "{{appName}} Make · Environment",
@@ -12332,7 +12516,6 @@
       "expand": "Show upstream results",
       "collapse": "Hide upstream results",
       "count": "Found {{count}} potentially related open Issues or PRs",
-
       "kind": {
         "issue": "Issue",
         "pr": "PR"

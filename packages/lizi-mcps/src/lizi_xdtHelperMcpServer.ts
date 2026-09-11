@@ -29,6 +29,7 @@ import { BRAND_NAME } from '@cindy/maker-shared/branding';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ListToolsRequestSchema, type Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import { registerBotRoutineTools, type BotRoutineCallbacks } from './xdt-helper/botRoutineTools.js';
 import { jsonObjectArg } from './json-object-arg.js';
 
 import { XdtHelperToolRegistry } from './lizi_xdtHelperToolRegistry.js';
@@ -62,6 +63,11 @@ import {
   registerBotSkillTools,
   type BotSkillCallbacks,
 } from './xdt-helper/bot_skills.js';
+import {
+  registerBotCapabilityTools,
+  withCindyGatedBotToolDescriptions,
+  type BotCapabilityCallbacks,
+} from './xdt-helper/bot_capabilities.js';
 import type { XdtHelperHistoryDeps } from './xdt-helper/_history_types.js';
 import type { SessionQueueDeps } from './xdt-helper/list_session_queue.js';
 import type { SessionControlDeps } from './xdt-helper/session_control.js';
@@ -156,10 +162,18 @@ interface BotMessagingCallbacks {
 
 // ── Entry tool registration ──────────────────────────────────────────────────
 
+function cindyAvailableForSession(sessionCtx: XdtHelperMcpSessionCtx): boolean {
+  const ctx = resolveLiziMcpSessionContext(sessionCtx);
+  // Match helper / remoteBotOnly: cindy is missing only for remote Claude/Codex.
+  // Remote Pi tunnels the in-process cindy gateway over the MCP bridge.
+  return !ctx.remoteHostId || ctx.agentKind === 'pi';
+}
+
 function registerListToolsEntry(
   server: McpServer,
   registry: XdtHelperToolRegistry,
   allowedCategories: () => Promise<ReadonlySet<string> | null>,
+  sessionCtx: XdtHelperMcpSessionCtx,
 ): void {
   server.tool(
     'list_tools',
@@ -171,7 +185,10 @@ function registerListToolsEntry(
         if (allowed && !allowed.has(category)) {
           return errorPayload('CAPABILITY_NOT_AVAILABLE', '这个类目不属于当前任务的能力面。');
         }
-        const tools = registry.list(category as (typeof CATEGORY_ENUM)[number]);
+        const tools = withCindyGatedBotToolDescriptions(
+          registry.list(category as (typeof CATEGORY_ENUM)[number]),
+          cindyAvailableForSession(sessionCtx),
+        );
         return {
           content: [
             {
@@ -541,6 +558,7 @@ export interface XdtHelperMcpDeps {
   sendToSession?: SendToSessionCallback;
   /** Cindy Bot-only background Session-task controls. Host validates the caller Session. */
   sessionTasks?: SessionTaskCallbacks;
+  botRoutines?: BotRoutineCallbacks;
   /** Direct Bot-to-Bot messages over each partner's canonical Cindy Session. */
   botMessaging?: BotMessagingCallbacks;
   /** Direct lightweight Bot creation for a Bot-bound session. */
@@ -551,6 +569,7 @@ export interface XdtHelperMcpDeps {
    * the caller Session.
    */
   botSkills?: BotSkillCallbacks;
+  botCapabilities?: BotCapabilityCallbacks;
   /**
    * 官方反馈 issue 提交回调(弹确认卡片 → 用户确认 → POST server)。host 注入后,
    * feedback 类工具 submit_github_issue 会被注册; 不注入则不出现在 list_tools 里。
@@ -690,6 +709,17 @@ export function createXdtHelperMcpServer(
     });
   }
 
+  if (deps.botCapabilities) {
+    registerBotCapabilityTools(registry, {
+      getSessionContext: () => resolveLiziMcpSessionContext(sessionCtx),
+      callbacks: deps.botCapabilities,
+    });
+  }
+  if (deps.botRoutines) {
+    registerBotRoutineTools(registry, deps.botRoutines,
+      () => resolveLiziMcpSessionContext(sessionCtx).sessionId);
+  }
+
   registerStartSessionTaskEntry(registry, deps, sessionCtx);
   registerSendToAgentEntry(registry, deps, sessionCtx);
   registerSessionTaskControlEntries(registry, deps, sessionCtx);
@@ -699,7 +729,7 @@ export function createXdtHelperMcpServer(
       callbacks: deps.botProfiles,
     });
   }
-  registerListToolsEntry(server, registry, allowedCategories);
+  registerListToolsEntry(server, registry, allowedCategories, sessionCtx);
   registerCallToolEntry(server, registry, {
     logger: deps.logger,
     // per-call 解析:codex HTTP bridge 的 server factory 阶段 ctx 是空的,
@@ -737,8 +767,12 @@ export function createXdtHelperMcpServer(
     const botTools: Tool[] = directTools.map((definition) => ({
       name: definition.name, description: definition.description, inputSchema: schema(definition.inputShape),
     }));
+    // Codex/remote Claude share one helper factory; rewrite ghost guidance from
+    // the request-time session, not the empty factory ctx.
     server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: (await allowedCategories())?.has('bots') ? [...entryTools, ...botTools] : entryTools,
+      tools: (await allowedCategories())?.has('bots')
+        ? [...entryTools, ...withCindyGatedBotToolDescriptions(botTools, cindyAvailableForSession(sessionCtx))]
+        : entryTools,
     }));
   }
   return server;

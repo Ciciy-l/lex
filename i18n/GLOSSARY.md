@@ -291,6 +291,10 @@ Lex 桌面版本的结构化更新信息，区别于 Cindy 在线服务；用于
 
 灵动岛角色皮肤名(设置页「图标皮肤」列表)。角色专名,四语统一保留拉丁原词,不做音译(避免「艾莉卡 / エリカ / 에리카」多套写法)。
 
+### Audio Generation
+
+V4 模型类型 audio_generation，包含通用声音生成；与 audio_speech 语音合成分别展示。
+
 ### Compression
 
 issue #882：模型管理/新对话选择器的分类标签，对应网关的文档压缩类模型（如 ai-gateway-doc）。此前被硬编码为笼统的 other 分类。
@@ -379,6 +383,30 @@ dev 版登录页区域徽标上的标签值（DESIGN.md §16.3），四语同值
 
 已确定禁用：`开发版（仅当英文含 Dev）`（zh-CN）、`開発版（仅当英文含 Dev）`（ja）、`개발판（仅当英文含 Dev）`（ko）
 
+### Remote desktop
+
+同账号手机查看和操作电脑真实桌面，独立于 Cindy 内部设备控制授权。
+
+### Lock screen control
+
+Windows 远程桌面设置中的系统服务授权能力；不表示支持开机前解密或无人登录。
+
+### Native resolution
+
+Remote display mode reported as native by the host OS; distinct from current and recommended. Compact option badge: Native / 原生.
+
+### Picture in picture
+
+Remote desktop display controls; resolution changes the host display, small window uses system picture in picture.
+
+### Computer resolution
+
+Remote desktop display controls; resolution changes the host display, small window uses system picture in picture.
+
+### Take over connection
+
+Explicit user action that replaces the current remote desktop viewer; never used for automatic recovery.
+
 ### Activity Monitor
 
 独立窗口/兼容页签,展示本机进程 CPU/内存并可终止 Agent 进程。不可叫「任务管理器」——Session→任务 已 decided,会被读成管理左侧任务列表。不叫「用量」——会和 token / 账号 Usage→用量 混淆(#3183)。「资源监视器」是窗口标题,看的是本机资源占用,不是输入监控;输入监控权限仍用「监听权限」。
@@ -386,6 +414,14 @@ dev 版登录页区域徽标上的标签值（DESIGN.md §16.3），四语同值
 ### Role name
 
 Orca Worker 创建卡上的命名字段。它只是派活用的名字，不改变 Agent、模型、权限或能力。先登记为 proposed，避免「角色 / 名称 / Role」多套说法并存。
+
+### Routine
+
+伙伴的长期指令，可由多个时间或事件条件触发；沿用 Chris 提供的 Grok Bot 界面用语。
+
+### Trigger
+
+例行任务的时间或事件触发条件。
 
 ### Run records
 

@@ -43,6 +43,7 @@ import {
   CONTROLLER_CAPABILITY_MAKER_EVENT_BATCH_V1,
   CONTROLLER_CAPABILITY_SESSION_TEXT_SNAPSHOT_V1,
   DEVICE_LINK_CAPABILITY_COMPACT_MESSAGE_HISTORY_V1,
+  DEVICE_LINK_CAPABILITY_HISTORY_VIEW_V1,
   byteLength,
   DeviceLinkError,
   parseFsWatchTopic,
@@ -66,7 +67,11 @@ import {
   type ProviderLogoRouting,
 } from '@cindy/model-providers/branding';
 import { app } from 'electron';
+import { remoteDesktop } from '../remote-desktop';
+import { REMOTE_DESKTOP_CHANNEL } from '@cindy/device-link';
 import type { DeviceLinkClient } from '@cindy/device-link';
+import { isDeferredHistoryPush, deferredToolBoundary } from './historyViewPush';
+import { mapHistoryViewMessages, type HistoryMessageSource, type HistoryViewItem } from '@cindy/maker-shared/message-window';
 import { createLogger } from '../logger';
 import { projectMobileMessagePage, projectMobileToolPush } from './mobileToolProjection';
 import { normalizeSessionProviderId } from '../maker-host/session-provider-store.js';
@@ -95,6 +100,7 @@ import { LEGACY_TOPIC, type ActiveController } from './subscriptions';
 import { MAKER_PUSH } from '../maker-ipc/channels.js';
 import { RECOVERY_CHECKPOINT_MARKER } from '../maker-ipc/recoveryCoordinator.js';
 import {
+  sanitizeBotAuthorizationMetaForRemote,
   projectInteractionDismissedForRemote,
   projectInteractionRequestForRemote,
 } from '../cindy-brain/ghostSetupInteractionBridge.js';
@@ -108,6 +114,9 @@ const pushFailures = createPushFailureLog((summary) => log.warn('push delivery f
 function reportPushFailure(dst: string, channel: string, error: unknown): void {
   pushFailures.record(shortId(dst), channel, error instanceof DeviceLinkError ? error.code : 'UNKNOWN');
 }
+let readHistoryToolName = (_sessionId: string, _toolUseId: string): string => '';
+export function setHistoryToolNameReader(read: typeof readHistoryToolName): void { readHistoryToolName = read; }
+
 
 /**
  * 老版本 mobile 只认识 #527 之前已发布的 logo kind。新 mark 可由同版本客户端按
@@ -945,6 +954,13 @@ const makerEventBatchStages = new Map<string, MakerEventBatchStage>();
 // Bound live traffic before it enters the shared socket FIFO. Only opt-in
 // controllers can repair skipped deltas from the authoritative in-flight block.
 const MAKER_EVENT_WINDOW_SOFT_CAP = 16;
+// Recheck the existing repair stage promptly after the window drains. Waiting
+// two seconds here also suppresses healthy later deltas for those two seconds.
+// The peer/window gates still run before reading or sending any snapshot.
+const SESSION_SYNC_RETRY_MS = 250;
+// Keep the original pacing when reading/admitting a snapshot actually fails:
+// socket bytes or the authorization queue can be full even below the soft cap.
+const SESSION_SYNC_FAILURE_RETRY_MS = 2_000;
 function isNonFinalTextPush(payload: unknown): boolean {
   const event = (payload as { event?: { type?: unknown; data?: { isFinal?: unknown } } } | null)?.event;
   return event?.type === 'text' && event.data?.isFinal === false;
@@ -954,6 +970,7 @@ const sessionSyncStages = new Map<string, {
   sessions: Map<string, boolean>;
   timer: ReturnType<typeof setTimeout> | null;
   ownerStamp?: PushOwnerStamp;
+  startedAt: number;
 }>();
 
 function clearSessionSyncStage(dst: string): void {
@@ -962,18 +979,26 @@ function clearSessionSyncStage(dst: string): void {
   sessionSyncStages.delete(dst);
 }
 
-function stageSessionSync(dst: string, sessionId: string, historyRequired = true): void {
+function stageSessionSync(dst: string, sessionId: string, historyRequired = true, retryDelayMs = SESSION_SYNC_RETRY_MS): void {
   if (!subscriptions.controllerSupports(dst, CONTROLLER_CAPABILITY_SESSION_TEXT_SNAPSHOT_V1)) return;
   let stage = sessionSyncStages.get(dst);
   if (!stage) {
-    stage = { sessions: new Map(), timer: null, ownerStamp: broadcastTap.getSafeDataOwnerPushStamp?.() };
+    stage = { sessions: new Map(), timer: null, ownerStamp: broadcastTap.getSafeDataOwnerPushStamp?.(), startedAt: Date.now() };
     sessionSyncStages.set(dst, stage);
+    log.debug(`session sync repair queued to=${shortId(dst)}`
+      + ` queueDepth=${activeClient?.getReliableSendQueueDepth?.(dst) ?? 0}`
+      + ` writable=${activeClient?.canSendPush?.(dst) !== false}`);
   }
   stage.sessions.set(sessionId, historyRequired || stage.sessions.get(sessionId) === true);
   if (stage.sessions.size > SESSION_ACTIVITY_STAGE_MAX_KEYS) {
     stage.sessions.delete(stage.sessions.keys().next().value!);
   }
-  if (stage.timer) return;
+  if (stage.timer) {
+    if (retryDelayMs !== SESSION_SYNC_FAILURE_RETRY_MS) return;
+    // Flushing an older batch may have re-armed the fast check. A subsequent
+    // admission failure must retain the original, slower retry interval.
+    clearTimeout(stage.timer);
+  }
   stage.timer = setTimeout(() => {
     stage.timer = null;
     if (!activeClient || activeClient.getStatus() !== 'online'
@@ -1005,24 +1030,34 @@ function stageSessionSync(dst: string, sessionId: string, historyRequired = true
         let admissionFailed = false;
         sendBotCheckedPush(dst, SESSION_SYNC_CHANNEL, payload,
           (projected) => {
-            if (subscriptions.controllerHasTopic(dst, `session:${sid}`)) {
-              activeClient?.sendPush(dst, SESSION_SYNC_CHANNEL, projected, ownerStamp);
+            if (activeClient && subscriptions.controllerHasTopic(dst, `session:${sid}`)) {
+              activeClient.sendPush(dst, SESSION_SYNC_CHANNEL, projected, ownerStamp);
+              // Admission is not delivery/ACK. Log once per admitted repair,
+              // never per retry or token, and never include the snapshot body.
+              log.debug(`session sync repair admitted to=${shortId(dst)}`
+                + ` session=${shortId(sid)} stageAgeMs=${Date.now() - stage.startedAt}`
+                + ` resyncRequired=${payload.resyncRequired}`);
             }
           },
           () => {
             admissionFailed = true;
-            stageSessionSync(dst, sid, payload.resyncRequired);
+            // A late authorization failure may belong to an already drained
+            // stage. Preserve a newer stage's fast timer while merging the work.
+            const currentStage = sessionSyncStages.get(dst);
+            stageSessionSync(dst, sid, payload.resyncRequired,
+              currentStage && currentStage !== stage ? SESSION_SYNC_RETRY_MS : SESSION_SYNC_FAILURE_RETRY_MS);
           });
         if (admissionFailed) break;
         stage.sessions.delete(sid);
       } catch {
+        stageSessionSync(dst, sid, stage.sessions.get(sid), SESSION_SYNC_FAILURE_RETRY_MS);
         break;
       }
     }
     const next = stage.sessions.entries().next().value;
     if (next) stageSessionSync(dst, next[0], next[1]);
     else clearSessionSyncStage(dst);
-  }, 2_000);
+  }, retryDelayMs);
   (stage.timer as unknown as { unref?: () => void }).unref?.();
 }
 
@@ -1550,6 +1585,7 @@ function scheduleSessionActivityRetry(dst: string, stage: SessionActivityStage):
 }
 
 function clearSessionActivityStage(dst: string): void {
+  clearHistoryNotices(dst);
   const stage = sessionActivityStages.get(dst);
   if (!stage) return;
   if (stage.retryTimer) clearTimeout(stage.retryTimer);
@@ -1558,6 +1594,7 @@ function clearSessionActivityStage(dst: string): void {
 
 function clearAllSessionActivityStages(): void {
   pushFailures.flush();
+  for (const dst of historyNoticeStages.keys()) clearHistoryNotices(dst);
   for (const dst of [...sessionActivityStages.keys()]) clearSessionActivityStage(dst);
   for (const dst of [...sessionPatchStages.keys()]) clearSessionPatchStage(dst);
 }
@@ -1581,6 +1618,26 @@ export function pushSessionActivityToController(
  * 按 topic 把一条本机广播转发给订阅了它的控制端。listener 注册后每条 tap 都过这里
  * (live 读 registry,topic 变化即时生效)。topic 算不出(无 session 标识)→ 丢弃。
  */
+const historyNoticeStages = new Map<string, Map<string, { ownerStamp?: PushOwnerStamp; timer: ReturnType<typeof setTimeout> }>>();
+function stageHistoryNotice(dst: string, sessionId: string, ownerStamp?: PushOwnerStamp): void {
+  const pending = historyNoticeStages.get(dst) ?? new Map();
+  if (pending.has(sessionId)) return;
+  if (pending.size >= 100) return;
+  const timer = setTimeout(() => {
+    pending.delete(sessionId);
+    if (pending.size === 0) historyNoticeStages.delete(dst);
+    if (subscriptions.getControllersForTopic(`session:${sessionId}`).includes(dst)) {
+      sendPushBestEffort(dst, 'maker:history-view-changed', { sessionId }, ownerStamp);
+    }
+  }, 500);
+  pending.set(sessionId, { timer, ownerStamp });
+  historyNoticeStages.set(dst, pending);
+}
+function clearHistoryNotices(dst: string): void {
+  for (const item of historyNoticeStages.get(dst)?.values() ?? []) clearTimeout(item.timer);
+  historyNoticeStages.delete(dst);
+}
+
 function forwardPush(channel: string, payload: unknown, ownerStamp?: PushOwnerStamp): void {
   if (!activeClient) return;
   const topic = topicForPush(channel, payload);
@@ -1594,7 +1651,7 @@ function forwardPush(channel: string, payload: unknown, ownerStamp?: PushOwnerSt
   ) {
     const msg = (payload as { message: unknown }).message;
     if (msg && typeof msg === 'object' && !Array.isArray(msg)) {
-      const sanitized = stripRecoveryCheckpointFromMessage(msg as Record<string, unknown>);
+      const sanitized = sanitizeRemoteMessage(msg as Record<string, unknown>);
       if (sanitized !== msg) {
         remotePayload = { ...payload, message: sanitized };
       }
@@ -1651,10 +1708,14 @@ function forwardPush(channel: string, payload: unknown, ownerStamp?: PushOwnerSt
     }
     return mobilePayload;
   };
+  const historySessionId = readPushSessionId(remotePayload);
+  const deferred = historySessionId !== null && isDeferredHistoryPush(channel, remotePayload,
+    (id) => readHistoryToolName(historySessionId, id));
   const offlineTargets = subscriptions
     .getKnownControllersForTopic(topic)
     .filter((dst) => !liveTargets.includes(dst));
   for (const dst of offlineTargets) {
+    if (deferred && historySessionId && subscriptions.hasHistoryView(dst, historySessionId)) continue;
     if (OFFLINE_QUEUEABLE_PUSH_CHANNELS.has(channel)) {
       offlinePushQueue.enqueue(dst, {
         channel,
@@ -1665,7 +1726,20 @@ function forwardPush(channel: string, payload: unknown, ownerStamp?: PushOwnerSt
     }
   }
   for (const dst of liveTargets) {
-    const targetPayload = payloadFor(dst);
+    let targetPayload = payloadFor(dst);
+    // A pending read also needs notices: its sampled rows can precede this push.
+    // Filtering still requires ready in projectsHistoryDetails, so raw survives.
+    if (deferred && historySessionId && subscriptions.hasHistoryView(dst, historySessionId, true)) {
+      const folded = subscriptions.projectsHistoryDetails(dst, historySessionId);
+      const event = (remotePayload as { event?: { type?: string; data?: { stage?: string } } })?.event;
+      // A folded duration ticks locally. Token deltas do not change its summary.
+      if (!folded || event?.type !== 'thinking' || event.data?.stage !== 'delta') stageHistoryNotice(dst, historySessionId, ownerStamp);
+      if (folded) {
+        const boundary = channel === MAKER_PUSH.EVENT ? deferredToolBoundary(remotePayload) : null;
+        if (boundary === null) continue;
+        targetPayload = boundary;
+      }
+    }
     const willBatch = batchEligibleSessionId !== null && batchTargets!.has(dst)
       && estimateMakerEventBytes(targetPayload) < MAKER_EVENT_BATCH_MAX_BYTES;
     // 跨 channel 保序(review 两轮):**不入批**的帧必须排在该会话已暂存的事件
@@ -1891,6 +1965,7 @@ export function dropAllControllers(
   client: DeviceLinkClient,
   reason: 'user' | 'toggle-off' | 'shutdown',
 ): void {
+  remoteDesktop.stop();
   const controllerIds = new Set([
     ...subscriptions.getControllerIds(),
     ...topicSubscriptionControllers,
@@ -1949,6 +2024,7 @@ function deactivateControllerState(
   }
   let changed = false;
   changed = acceptedLinkControllers.delete(deviceId) || changed;
+  remoteDesktop.stop(deviceId);
   changed = controllerConnectionEpochByDevice.delete(deviceId) || changed;
   changed = controllerLinkGenerationByDevice.delete(deviceId) || changed;
   changed = reportedControllerNameByDevice.has(deviceId) || changed;
@@ -1989,6 +2065,7 @@ export function deactivateController(
 
 /** Relay 连接离开 online：清本连接代所有 active controller，但保留恢复意图。 */
 export function deactivateAllControllers(reason: string): void {
+  remoteDesktop.stop();
   const controllerIds = new Set([
     ...subscriptions.getControllerIds(),
     ...topicSubscriptionControllers,
@@ -2027,6 +2104,7 @@ export function forgetControllerInvokeState(deviceId: string): void {
 
 /** 显式撤销时清理短时离线队列与 remembered topic，避免恢复后重放撤权期间数据。 */
 export function purgeRevokedController(deviceId: string): void {
+  remoteDesktop.stop(deviceId);
   const changed = deactivateControllerState(deviceId);
   topicSubscriptionControllers.delete(deviceId);
   offlinePushQueue.clear(deviceId);
@@ -2075,6 +2153,7 @@ async function handleFrame(client: DeviceLinkClient, env: Envelope): Promise<voi
         return;
       }
       clearRemoteInvokeStateFor(src);
+      remoteDesktop.stop(src);
       offlinePushQueue.clear(src);
       const deactivated = deactivateControllerState(src);
       // Keep the protocol-capability marker, but discard all remembered routing.
@@ -2197,6 +2276,7 @@ function handleLinkOpen(
     client.sendLinkAccept(src, requestId, {
       appVersion: app.getVersion(),
       allowlistHash: computeAllowlistHash(),
+      capabilities: [DEVICE_LINK_CAPABILITY_HISTORY_VIEW_V1],
     });
   } catch (err) {
     // 背压等瞬时失败:短退避重试(见 LINK_ACCEPT_RETRY_DELAYS_MS 注释),
@@ -2208,6 +2288,7 @@ function handleLinkOpen(
     return;
   }
   markControllerLinkActive(client, src);
+  subscriptions.clearHistoryViews(src);
   acceptedLinkControllers.add(src);
   if (knownModernController) {
     subscriptions.updateControllerMetadata(src, name, capabilities);
@@ -2360,6 +2441,7 @@ async function handleInvoke(
   const releaseBusyLease = shouldAcquireRemoteInvokeBusyLease(src, payload)
     ? acquireRemoteInvokeBusyLease()
     : () => undefined;
+  const handlerStartedAt = Date.now();
   const executionPromise = Promise.resolve()
     .then(() => executeInvoke(src, payload))
     .catch((err): InvokeResultPayload => {
@@ -2389,6 +2471,12 @@ async function handleInvoke(
   let result: InvokeResultPayload;
   try {
     result = normalizeInvokeResultForWire(await resultPromise);
+    const executionWaitMs = Date.now() - handlerStartedAt;
+    if (executionWaitMs >= 1_000) {
+      log.debug(`remote invoke slow execution request=${shortId(requestId)} from=${shortId(src)}`
+        + ` channel=${payload && REMOTE_INVOKE_ALLOWLIST.has(payload.channel) ? payload.channel : 'unknown'}`
+        + ` executionWaitMs=${executionWaitMs} ok=${result.ok}`);
+    }
     if ((remoteInvokeLinkEpoch.get(src) ?? 0) !== invokeLinkEpoch) return;
   } finally {
     if (inFlightRemoteInvokeResults.get(cacheKey) === inFlightEntry) {
@@ -2581,12 +2669,22 @@ function sanitizeMessageInvokeResult(
   result: InvokeResultPayload,
   channel: string | undefined,
 ): InvokeResultPayload {
+  if (result.ok && (channel === 'local-db:messages:view' || channel === 'local-db:messages:work-details')) {
+    const page = result.result as { items?: Array<{ type: string; messages?: unknown[] }>; messages?: unknown[] };
+    const sanitize = (message: unknown) => message && typeof message === 'object' && !Array.isArray(message)
+      ? sanitizeRemoteMessage(message as Record<string, unknown>) : message;
+    return { ok: true, result: { ...page,
+      ...(page.messages ? { messages: page.messages.map(sanitize) } : {}),
+      ...(page.items ? { items: mapHistoryViewMessages(page.items as HistoryViewItem<HistoryMessageSource>[],
+        (rows) => rows.map(sanitize) as HistoryMessageSource[]) } : {}),
+    } };
+  }
   if (!channel || !REMOTE_MESSAGE_CHANNELS.has(channel)) return result;
   if (!result.ok || !Array.isArray(result.result)) return result;
   let changed = false;
   const sanitized = result.result.map((msg: unknown) => {
     if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return msg;
-    const out = stripRecoveryCheckpointFromMessage(msg as Record<string, unknown>);
+    const out = sanitizeRemoteMessage(msg as Record<string, unknown>);
     if (out !== msg) changed = true;
     return out;
   });
@@ -2652,7 +2750,7 @@ function sendInvokeResultSafe(
     rememberRemoteInvokeResult(key, fingerprint, attempt.result);
   }
   if (attempt.sent) {
-    removeRemoteInvokeResultOutboxEntry(key);
+    removeRemoteInvokeResultOutboxEntry(key, true);
     return true;
   }
   return enqueueRemoteInvokeResult({
@@ -2768,15 +2866,20 @@ function enqueueRemoteInvokeResult(entry: QueuedRemoteInvokeResult): boolean {
   remoteInvokeResultOutboxBytes += entry.bytes;
   log.warn(
     `queued invoke-result after local send backpressure for ${entry.channel ?? '?'} ` +
-    `to ${shortId(entry.src)}`,
+    `to ${shortId(entry.src)} request=${shortId(entry.requestId)}` +
+    ` queueMessages=${remoteInvokeResultOutbox.size} queueBytes=${remoteInvokeResultOutboxBytes}`,
   );
   scheduleRemoteInvokeResultOutboxFlush();
   return true;
 }
 
-function removeRemoteInvokeResultOutboxEntry(key: string): void {
+function removeRemoteInvokeResultOutboxEntry(key: string, sent = false): void {
   const queued = remoteInvokeResultOutbox.get(key);
   if (!queued) return;
+  if (sent) {
+    log.info(`flushed queued invoke-result for ${queued.channel ?? '?'} to ${shortId(queued.src)}`
+      + ` request=${shortId(queued.requestId)} queuedMs=${Math.max(0, Date.now() - queued.queuedAt)}`);
+  }
   remoteInvokeResultOutbox.delete(key);
   remoteInvokeResultOutboxBytes -= queued.bytes;
   if (remoteInvokeResultOutbox.size === 0) clearRemoteInvokeResultOutboxTimer();
@@ -2851,7 +2954,7 @@ function flushRemoteInvokeResultOutbox(onlySrc?: string): void {
     if (now - queued.queuedAt >= outboxEntryMaxAgeMs(queued.channel)) {
       log.warn(
         `dropping expired invoke-result outbox entry for ${queued.channel ?? '?'} ` +
-        `to ${shortId(queued.src)}`,
+        `to ${shortId(queued.src)} request=${shortId(queued.requestId)} queuedMs=${now - queued.queuedAt}`,
       );
       removeRemoteInvokeResultOutboxEntry(key);
       continue;
@@ -2891,10 +2994,7 @@ function flushRemoteInvokeResultOutbox(onlySrc?: string): void {
       }
       continue;
     }
-    removeRemoteInvokeResultOutboxEntry(key);
-    log.info(
-      `flushed queued invoke-result for ${queued.channel ?? '?'} to ${shortId(queued.src)}`,
-    );
+    removeRemoteInvokeResultOutboxEntry(key, true);
   }
   if (remoteInvokeResultOutbox.size > 0) scheduleRemoteInvokeResultOutboxFlush();
 }
@@ -2905,6 +3005,20 @@ function compactInvokeResultForDeviceLink(
   frame: { dst: string; requestId: string },
   args?: unknown[],
 ): InvokeResultPayload | null {
+  if (result.ok && (channel === 'local-db:messages:view' || channel === 'local-db:messages:work-details')
+    && result.result && typeof result.result === 'object') {
+    const page = result.result as Record<string, unknown>;
+    const mapPage = (map: (row: unknown) => unknown): InvokeResultPayload => ({ ok: true, result: {
+      ...page,
+      ...(Array.isArray(page.messages) ? { messages: page.messages.map(map) } : {}),
+      ...(Array.isArray(page.items) ? { items: mapHistoryViewMessages(page.items as HistoryViewItem<HistoryMessageSource>[],
+        (rows) => rows.map(map) as HistoryMessageSource[]) } : {}),
+    } });
+    const compact = mapPage(compactRemoteMessageForDeviceLink);
+    if (fitsInvokeResultFrame(frame, compact)) return compact;
+    const placeholder = mapPage((row) => forceCompactRemoteMessageContent(compactRemoteMessageForDeviceLink(row)));
+    return fitsInvokeResultFrame(frame, placeholder) ? placeholder : null;
+  }
   if (!channel || !REMOTE_MESSAGE_CHANNELS.has(channel)) return null;
   if (!result.ok || !Array.isArray(result.result)) return null;
   const compactMessages = result.result.map(compactRemoteMessageForDeviceLink);
@@ -2999,7 +3113,7 @@ function compactRemoteMessageForDeviceLink(message: unknown): unknown {
   if (record.role === 'tool_use') {
     const compactContent = compactRemoteToolUseContent(record.content, false);
     if (compactContent === record.content) {
-      return stripRecoveryCheckpointFromMessage(record);
+      return sanitizeRemoteMessage(record);
     }
     return {
       ...record,
@@ -3012,7 +3126,7 @@ function compactRemoteMessageForDeviceLink(message: unknown): unknown {
     : REMOTE_MESSAGE_CONTENT_LIMIT;
   const compactContent = compactRemoteMessageContent(record.content, contentLimit);
   if (compactContent === record.content) {
-    return stripRecoveryCheckpointFromMessage(record);
+    return sanitizeRemoteMessage(record);
   }
   return {
     ...record,
@@ -3045,23 +3159,24 @@ function mergeRemoteAgentMeta(agentMeta: unknown, patch: Record<string, unknown>
     return { ...patch };
   }
   const { recoveryCheckpoint: _, ...safe } = agentMeta as Record<string, unknown>;
-  return { ...safe, ...patch };
+  return { ...sanitizeBotAuthorizationMetaForRemote(safe), ...patch };
 }
 
-function stripRecoveryCheckpointFromMessage(record: Record<string, unknown>): Record<string, unknown> {
+function sanitizeRemoteMessage(record: Record<string, unknown>): Record<string, unknown> {
   const agentMeta = record.agentMeta;
-  const hasCheckpointInMeta = agentMeta && typeof agentMeta === 'object' && !Array.isArray(agentMeta) &&
-    'recoveryCheckpoint' in (agentMeta as Record<string, unknown>);
+  const hasPrivateMetadata = agentMeta && typeof agentMeta === 'object' && !Array.isArray(agentMeta) &&
+    ('recoveryCheckpoint' in (agentMeta as Record<string, unknown>) ||
+      'botAuthorization' in (agentMeta as Record<string, unknown>));
   const content = record.content;
   const checkpointIdx = typeof content === 'string'
     ? (content as string).indexOf(RECOVERY_CHECKPOINT_MARKER)
     : -1;
   const hasCheckpointInContent = checkpointIdx >= 0;
-  if (!hasCheckpointInMeta && !hasCheckpointInContent) return record;
+  if (!hasPrivateMetadata && !hasCheckpointInContent) return record;
   const result: Record<string, unknown> = { ...record };
-  if (hasCheckpointInMeta) {
+  if (hasPrivateMetadata) {
     const { recoveryCheckpoint: _, ...safeMeta } = agentMeta as Record<string, unknown>;
-    result.agentMeta = safeMeta;
+    result.agentMeta = sanitizeBotAuthorizationMetaForRemote(safeMeta);
   }
   if (hasCheckpointInContent) {
     result.content = (content as string).slice(0, checkpointIdx);
@@ -3285,6 +3400,11 @@ export async function runInvoke(
     };
   }
 
+  if (payload.channel === REMOTE_DESKTOP_CHANNEL) {
+    try { return { ok: true, result: await remoteDesktop.request(src, payload.args?.[0]) }; }
+    catch (error) { return { ok: false, error: { code: 'IPC_ERROR', message: error instanceof Error ? error.message : 'DESKTOP_UNAVAILABLE' } }; }
+  }
+
   // Review sessions may be mirrored to controllers for visibility, but their
   // only input is the host's direct reviewer.send() call. Reject before the
   // synthetic ipcMain event is dispatched, then let the handler repeat the
@@ -3424,6 +3544,8 @@ export async function runInvoke(
   try {
     const args = payload.args ?? [];
     const invocationOwner = broadcastTap.captureDataOwnerBroadcastScope();
+    const historyView = (payload.channel === 'local-db:messages:view' || payload.channel === 'local-db:messages:view-intent')
+      && typeof args[0] === 'string' ? subscriptions.prepareHistoryView(src, args[0]) : undefined;
     if (hasRemoteBotSessionLookup()) await assertRemoteBotInvocationAllowed(args, payload.channel);
     const listingCapabilities = payload.channel === 'maker:provider:list'
       ? invokeControllerCapabilities(payload)
@@ -3435,6 +3557,7 @@ export async function runInvoke(
         // 平台按 server 盖章的 src 查本机 presence 登记表,不采信控制端自报的任何
         // 帧内字段(allowlist 只挡 channel 不挡 args,见下方 dispatchLocalInvoke 前的说明)。
         controllerPlatform: getControllerPlatform(src),
+        historyView,
       },
       // provider:list 的首参只承载隧道能力协商，不进入本机 IPC handler。
       () => dispatchLocalInvoke(
