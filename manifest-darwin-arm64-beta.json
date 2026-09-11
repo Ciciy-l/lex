@@ -1,16 +1,16 @@
 {
   "app": {
-    "version": "0.1.2-rc.2",
-    "releaseNotes": "Lex 0.1.2-rc.2",
+    "version": "0.1.2-rc.3",
+    "releaseNotes": "Lex 0.1.2-rc.3",
     "hotfix": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.2-rc.2/Lex-0.1.2-rc.2-macOS-Apple-Silicon-Auto-Update.zip",
-      "sha256": "b1084eda5f0e47a71aef72ce5ecc5c525717aedb7b275d451bd8f01222f5a2da",
-      "size": 250697941
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.2-rc.3/Lex-0.1.2-rc.3-macOS-Apple-Silicon-Auto-Update.zip",
+      "sha256": "7d539d4ab8c0456755dd4fb995caedaa3e37276d16c8591ecea92b2b15060d92",
+      "size": 251012340
     },
     "installer": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.2-rc.2/Lex-0.1.2-rc.2-macOS-Apple-Silicon.dmg",
-      "sha256": "8a05f06688c419d921203a6e23ea1594b44d5deb40c3238828672860266f38d8",
-      "size": 276344693
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.2-rc.3/Lex-0.1.2-rc.3-macOS-Apple-Silicon.dmg",
+      "sha256": "e869da5e0eda5e9e3d82cc8a4a61aee0b2e8622043c3310add2c8cf901da67ea",
+      "size": 276714091
     }
   },
   "claudeCode": {
