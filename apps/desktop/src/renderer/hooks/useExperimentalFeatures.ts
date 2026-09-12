@@ -4,7 +4,7 @@
  * 设计：
  * - 每个 feature 一个 boolean，默认全 off（实验功能必须显式 opt-in）
  * - localStorage key = 'experimental.<feature>'
- * - 跨组件实例同步走 storage 事件（同 useNotificationSettings 模式）
+ * - 同窗口组件实例走自定义事件同步；其它窗口走 storage 事件
  *
  * 新增 experimental feature 只需要：
  * 1. 在 EXPERIMENTAL_FEATURES 加一项
@@ -31,13 +31,17 @@ export interface ExperimentalFeatureMeta {
 /**
  * 实验功能注册表。新 feature 在这里追加一项即可。
  */
-// 整个 Experimental 区块仅 admin 用户可见 (在 ExperimentalSection 顶层 gate, 不在
-// 单项上加 adminOnly)。新加 experimental feature 直接 push 到这个数组即可,
-// 自动继承 admin-only 可见策略, 不需要再做权限相关声明。
-// 数组为空时 ExperimentalSection 自动隐藏 (length === 0 早退)。
-export const EXPERIMENTAL_FEATURES: ReadonlyArray<ExperimentalFeatureMeta> = [];
+export const EXPERIMENTAL_FEATURES: ReadonlyArray<ExperimentalFeatureMeta> = [
+  {
+    key: 'teammates',
+    title: 'Teammates',
+    description: 'Show the Teammates workspace and related settings.',
+  },
+];
 
 const KEY_PREFIX = 'experimental.';
+const CHANGE_EVENT = 'experimental-feature-change';
+const volatileFlags = new Map<string, boolean>();
 
 function storageKey(featureKey: string): string {
   return `${KEY_PREFIX}${featureKey}`;
@@ -47,10 +51,16 @@ function storageKey(featureKey: string): string {
 export function getExperimentalFlag(featureKey: string): boolean {
   try {
     const raw = localStorage.getItem(storageKey(featureKey));
-    return raw === 'true';
-  } catch {
+    if (raw === 'true') return true;
+    if (raw === 'false') return false;
     return false;
+  } catch {
+    return volatileFlags.get(featureKey) ?? false;
   }
+}
+
+function publishExperimentalFlagChange(featureKey: string): void {
+  window.dispatchEvent(new CustomEvent<string>(CHANGE_EVENT, { detail: featureKey }));
 }
 
 /** 单 feature hook —— 返回 [enabled, setEnabled] 元组风格 */
@@ -60,14 +70,20 @@ export function useExperimentalFlag(featureKey: string): {
 } {
   const [enabled, setEnabledState] = useState<boolean>(() => getExperimentalFlag(featureKey));
 
-  const setEnabled = useCallback((next: boolean) => {
-    setEnabledState(next);
-    try {
-      localStorage.setItem(storageKey(featureKey), String(next));
-    } catch {
-      // localStorage 不可用 —— 忽略
-    }
-  }, [featureKey]);
+  const setEnabled = useCallback(
+    (next: boolean) => {
+      setEnabledState(next);
+      try {
+        localStorage.setItem(storageKey(featureKey), String(next));
+        volatileFlags.delete(featureKey);
+      } catch {
+        // localStorage 不可用时，当前窗口仍保留本次明确的用户选择。
+        volatileFlags.set(featureKey, next);
+      }
+      publishExperimentalFlagChange(featureKey);
+    },
+    [featureKey],
+  );
 
   useEffect(() => {
     const handler = (e: StorageEvent) => {
@@ -75,7 +91,16 @@ export function useExperimentalFlag(featureKey: string): {
       setEnabledState(getExperimentalFlag(featureKey));
     };
     window.addEventListener('storage', handler);
-    return () => window.removeEventListener('storage', handler);
+    const localHandler = (event: Event) => {
+      const changedFeatureKey = event instanceof CustomEvent ? event.detail : null;
+      if (changedFeatureKey !== featureKey) return;
+      setEnabledState(getExperimentalFlag(featureKey));
+    };
+    window.addEventListener(CHANGE_EVENT, localHandler);
+    return () => {
+      window.removeEventListener('storage', handler);
+      window.removeEventListener(CHANGE_EVENT, localHandler);
+    };
   }, [featureKey]);
 
   return { enabled, setEnabled };

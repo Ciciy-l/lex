@@ -2262,7 +2262,12 @@
     "experimental": {
       "title": "실험적 기능",
       "toggleAria": "실험적 기능 전환: {{title}}",
-      "features": {}
+      "features": {
+        "teammates": {
+          "title": "동료",
+          "description": "동료 작업 영역과 관련 설정을 표시합니다."
+        }
+      }
     },
     "lspMode": {
       "cell": {
@@ -7398,6 +7403,7 @@
       "actionFailed": "작업이 완료되지 않았습니다. 잠시 후 다시 시도하세요."
     },
     "backToChat": "채팅으로 돌아가기",
+    "backToTasks": "작업으로 돌아가기",
     "memoryRecovery": {
       "action": "메모리 다시 켜기"
     },

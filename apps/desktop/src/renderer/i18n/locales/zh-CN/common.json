@@ -2262,7 +2262,12 @@
     "experimental": {
       "title": "实验性功能",
       "toggleAria": "切换实验功能：{{title}}",
-      "features": {}
+      "features": {
+        "teammates": {
+          "title": "伙伴",
+          "description": "显示伙伴工作区及相关设置。"
+        }
+      }
     },
     "lspMode": {
       "cell": {
@@ -7398,6 +7403,7 @@
       "actionFailed": "操作未完成，请稍后重试。"
     },
     "backToChat": "返回对话",
+    "backToTasks": "返回任务",
     "memoryRecovery": {
       "action": "重新开启记忆"
     },

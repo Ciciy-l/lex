@@ -2262,7 +2262,12 @@
     "experimental": {
       "title": "実験的機能",
       "toggleAria": "実験的機能を切り替え: {{title}}",
-      "features": {}
+      "features": {
+        "teammates": {
+          "title": "仲間",
+          "description": "仲間のワークスペースと関連設定を表示します。"
+        }
+      }
     },
     "lspMode": {
       "cell": {
@@ -7398,6 +7403,7 @@
       "actionFailed": "操作が完了しませんでした。しばらくしてから再試行してください。"
     },
     "backToChat": "チャットに戻る",
+    "backToTasks": "タスクに戻る",
     "memoryRecovery": {
       "action": "メモリをオンに戻す"
     },

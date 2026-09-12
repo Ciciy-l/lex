@@ -2263,7 +2263,12 @@
     "experimental": {
       "title": "Experimental",
       "toggleAria": "Toggle experimental feature: {{title}}",
-      "features": {}
+      "features": {
+        "teammates": {
+          "title": "Teammates",
+          "description": "Show the Teammates workspace and related settings."
+        }
+      }
     },
     "lspMode": {
       "cell": {
@@ -7400,6 +7405,7 @@
       "actionFailed": "The action did not finish. Try again shortly."
     },
     "backToChat": "Back to chat",
+    "backToTasks": "Back to tasks",
     "memoryRecovery": {
       "action": "Turn memory back on"
     },
