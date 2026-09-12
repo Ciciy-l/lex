@@ -23,7 +23,8 @@ function isDirectSkillEntry(value: string): boolean {
   if (!suffix) return false;
   // Check the entry, discovery root and engine config directories. The owner
   // prefix may itself be a tracked project alias or an OS path such as /var.
-  for (const _segment of suffix.split('/').filter(Boolean)) {
+  const discoverySegmentCount = suffix.split('/').filter(Boolean).length;
+  for (let index = 0; index < discoverySegmentCount; index += 1) {
     if (fs.lstatSync(current).isSymbolicLink()) return false;
     current = path.dirname(current);
   }
@@ -31,10 +32,20 @@ function isDirectSkillEntry(value: string): boolean {
 }
 
 function targetIdentity(operationPath: string): string {
-  const entry = fs.lstatSync(operationPath);
+  // Windows NTFS file IDs routinely exceed Number.MAX_SAFE_INTEGER. Reading
+  // them as numbers can erase the low bits and make a replacement directory
+  // compare equal to the confirmation snapshot, so keep the exact BigInt
+  // representation until it is serialized into the opaque identity token.
+  const entry = fs.lstatSync(operationPath, { bigint: true });
   const source = fs.realpathSync.native(operationPath);
-  const physical = fs.statSync(source);
-  return JSON.stringify([source, entry.dev, entry.ino, physical.dev, physical.ino]);
+  const physical = fs.statSync(source, { bigint: true });
+  return JSON.stringify([
+    source,
+    entry.dev.toString(),
+    entry.ino.toString(),
+    physical.dev.toString(),
+    physical.ino.toString(),
+  ]);
 }
 
 /** Ownership comes from Host-managed roots, never a link name or a directory-name heuristic. */
