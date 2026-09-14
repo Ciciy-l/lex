@@ -41,7 +41,8 @@ import {
   mergeSettingsPatch,
 } from './imDefaultSettingsLogic';
 
-function vendorKeyFor(agentKind: ImDefaultAgentKind): 'cc' | 'codex' | 'pi' {
+/** OMP 接入:vendor 口径跟随 agentKind 放宽为四元组(ModelSelector 侧已同步)。 */
+function vendorKeyFor(agentKind: ImDefaultAgentKind): 'cc' | 'codex' | 'pi' | 'omp' {
   return agentKind === 'claude-code' ? 'cc' : agentKind;
 }
 
@@ -121,6 +122,7 @@ export function ImDefaultSettingsSection({
       }),
       codex: deriveModelsFromProviders(providers, 'codex', { admissionFiltered: true }),
       pi: deriveModelsFromProviders(providers, 'pi', { admissionFiltered: true }),
+      omp: deriveModelsFromProviders(providers, 'omp', { admissionFiltered: true }),
     };
     return {
       'claude-code': fromProviders['claude-code'].length
@@ -131,6 +133,11 @@ export function ImDefaultSettingsSection({
         : (codex.capabilities?.availableModels ?? []),
       pi: fromProviders.pi.length
         ? fromProviders.pi
+        : (pi.capabilities?.availableModels ?? []),
+      // OMP 接入:本设置页尚未提供 OMP 入口,清单口径照抄 Pi(含回落),
+      // 保证 Record<ImDefaultAgentKind, …> 完整、读取侧不会拿到 undefined。
+      omp: fromProviders.omp.length
+        ? fromProviders.omp
         : (pi.capabilities?.availableModels ?? []),
     };
   }, [providers, cc.capabilities, codex.capabilities, pi.capabilities]);

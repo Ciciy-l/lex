@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 
 import { ModelSelector } from '@/components/new-chat/ModelSelector';
+import type { UnifiedEngine } from '@/components/new-chat/unifiedModelSelection';
 import type { AgentKind } from '@/hooks/useAgentCapabilities';
 import { useAvailableAgents } from '@/hooks/useAvailableAgents';
 import type { MakerVendor } from '@/lib/ccAgent.types';
@@ -63,6 +64,11 @@ export function BotModelChainEditor({
     .filter((vendor) => !hiddenVendors.includes(vendor))
     .filter((vendor) => remote || (loaded && availableVendors.has(vendor)));
   const unifiedAgents = visibleVendors.map(agentKindFor);
+  // ModelSelector 回传的 engine 是 UnifiedEngine(比本面板可见集合更宽,OMP 已在
+  // 其中)。这里的过滤本来就有,补成类型守卫让 TS 也能收窄 —— 从而不需要放宽
+  // harnessFor / agentKindFor 的参数,OMP 依然不会进入链路。
+  const isVisibleVendor = (engine: UnifiedEngine): engine is (typeof visibleVendors)[number] =>
+    (visibleVendors as readonly string[]).includes(engine);
 
   const replace = (index: number, patch: Partial<BotModelRoute>) => {
     if (!remote && !loaded) return;
@@ -109,7 +115,7 @@ export function BotModelChainEditor({
         unifiedPanel
         unifiedAgents={unifiedAgents}
         onUnifiedSelect={(selection) => {
-          if (!visibleVendors.includes(selection.engine)) return;
+          if (!isVisibleVendor(selection.engine)) return;
           replace(index, {
             harness: harnessFor(selection.engine),
             providerId: selection.providerId,

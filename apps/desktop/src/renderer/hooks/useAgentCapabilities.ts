@@ -17,12 +17,12 @@ import type { Effort, PermissionMode } from '@/lib/userPreferences.types';
 
 const log = createLogger('useAgentCapabilities');
 
-export type AgentKind = 'claude-code' | 'codex' | 'pi';
+export type AgentKind = 'claude-code' | 'codex' | 'pi' | 'omp';
 
 // capability 生命周期(预取 / 驱逐通知 / 本地快照刷新 / 启动预载)必须覆盖全部 agent，
 // 少一个就会让该 agent 的远程会话在断链或 provider revision 后收不到 loading 事件、
 // 也不再被重新预取，界面永久停在旧模型/能力快照(codex review)。新增 agent 只改这里。
-const ALL_AGENT_KINDS = ['claude-code', 'codex', 'pi'] as const;
+const ALL_AGENT_KINDS = ['claude-code', 'codex', 'pi', 'omp'] as const;
 
 // renderer 视角: id 全部是不透明 string, 渲染只读 displayName。
 // effort 的合法 id 集合 = capabilities.effortLevels 上每个项的 id。
@@ -55,7 +55,8 @@ export interface ModelDescriptor {
    * 解耦;生产环境 XD 网关由服务端按区域下发)。消费点见 modelDefinitions.newSessionDefaultModelId
    * 与 draftModelCalibration:被标记且可用的模型优先作新对话默认。
    */
-  newSessionDefault?: ('claude-code' | 'codex' | 'pi')[];
+  // OMP 接入:目录可以把 omp 声明成新对话默认种子(与 maker-core capabilities 同口径)。
+  newSessionDefault?: ('claude-code' | 'codex' | 'pi' | 'omp')[];
 }
 
 export interface EffortDescriptor {
@@ -613,10 +614,11 @@ export function beginLocalCapabilitiesRefresh(): number {
 }
 
 /**
- * 读取本地 agent 能力快照；核心 agent 失败向上抛，只有明确的 Pi 未注册结果才不阻断 provider 目录。
+ * 读取本地 agent 能力快照；核心 agent 失败向上抛，只有明确的 Pi/OMP 未注册结果才不阻断 provider 目录。
  *
- * Pi 的 CLI 是 best-effort 下载的目录分发，开发机或网络受限时可能暂时缺失。
- * 明确未注册时不能让 `maker:get-capabilities('pi')` 的单点失败把 Claude/Codex
+ * Pi 的 CLI 是 best-effort 下载的目录分发，开发机或网络受限时可能暂时缺失；OMP 同为
+ * 可选资产且 P0 阶段尚无注册的 agent 实现。
+ * 明确未注册时不能让 `maker:get-capabilities('pi'/'omp')` 的单点失败把 Claude/Codex
  * 模型目录整组回滚为空；但临时 IPC、序列化或解析错误必须向上抛，让联合刷新保留
  * 上一份完整快照。
  */
@@ -634,8 +636,13 @@ export async function loadLocalCapabilitiesSnapshot(): Promise<LocalCapabilities
             : typeof error === 'object' && error !== null && 'message' in error
               ? String(error.message)
               : String(error);
-        if (agent !== 'pi' || !message.includes("Agent 'pi' is not registered")) throw error;
-        log.warn('optional Pi capabilities unavailable; continuing with core agents:', error);
+        // Pi / OMP 同为可选资产(P0 阶段 OMP 尚未注册 agent 实现):明确的
+        // "Agent '<kind>' is not registered" 不阻断核心目录,其余错误照常上抛。
+        const isUnregisteredOptionalAgent =
+          (agent === 'pi' && message.includes("Agent 'pi' is not registered")) ||
+          (agent === 'omp' && message.includes("Agent 'omp' is not registered"));
+        if (!isUnregisteredOptionalAgent) throw error;
+        log.warn(`optional ${agent} capabilities unavailable; continuing with core agents:`, error);
         return null;
       }
     }),

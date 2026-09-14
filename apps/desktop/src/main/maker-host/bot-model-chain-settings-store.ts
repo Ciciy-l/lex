@@ -75,13 +75,15 @@ function currentStore(rootPath?: string) {
 }
 
 export async function readBotModelChainSettings(
-  options?: { rootPath?: string; providers?: readonly ProviderView[]; availableAgents?: ReadonlySet<'cc' | 'codex' | 'pi'> },
+  // 可用 vendor 集合要容纳 'omp'(listAvailableAgents 现在会返回它),即便 OMP
+  // 没有产品默认 tuple —— 下放器里由 vendorForAgent 决定跳过。
+  options?: { rootPath?: string; providers?: readonly ProviderView[]; availableAgents?: ReadonlySet<'cc' | 'codex' | 'pi' | 'omp'> },
 ): Promise<BotModelChainSettings> {
   return (await readBotModelChainSettingsState(options)).value;
 }
 
 export async function readBotModelChainSettingsState(
-  options?: { rootPath?: string; providers?: readonly ProviderView[]; availableAgents?: ReadonlySet<'cc' | 'codex' | 'pi'> },
+  options?: { rootPath?: string; providers?: readonly ProviderView[]; availableAgents?: ReadonlySet<'cc' | 'codex' | 'pi' | 'omp'> },
 ): Promise<OverrideSettingsState<BotModelChainSettings>> {
   const store = currentStore(options?.rootPath);
   store.invalidateIfChanged();
@@ -132,7 +134,7 @@ export async function resetBotModelChainSettings(
  */
 export async function readEffectiveBotModelChain(
   config: Record<string, unknown>,
-  options?: { rootPath?: string; providers?: readonly ProviderView[]; availableAgents?: ReadonlySet<'cc' | 'codex' | 'pi'> },
+  options?: { rootPath?: string; providers?: readonly ProviderView[]; availableAgents?: ReadonlySet<'cc' | 'codex' | 'pi' | 'omp'> },
 ): Promise<BotModelRoute[]> {
   if (Array.isArray(config.modelChainOverride)) {
     const explicit = normalizeBotModelChain(config.modelChainOverride);

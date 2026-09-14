@@ -5887,9 +5887,12 @@ function formatTokenCount(n: number): string {
  */
 function getModelContextWindow(
   model: string,
-  vendorKey: 'cc' | 'codex' | 'pi',
+  vendorKey: 'cc' | 'codex' | 'pi' | 'omp',
   deviceId?: string,
 ): number | undefined {
+  // OMP 接入:modelDefinitions 只有 cc/codex/pi 的能力清单,omp 查不到上下文窗口 ——
+  // 返回 undefined 交给 resolveDisplayContextWindow 兜底,不伪造一个窗口大小。
+  if (vendorKey === 'omp') return undefined;
   const found = getModelsForVendor(vendorKey, deviceId).find((m) => m.id === model);
   return found?.contextWindow;
 }

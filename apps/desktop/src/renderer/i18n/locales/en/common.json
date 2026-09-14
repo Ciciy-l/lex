@@ -7997,6 +7997,20 @@
             "label": "Full access",
             "description": "Allows editing any file and running networked commands without another confirmation. Highest risk; use only for trusted tasks."
           }
+        },
+        "omp": {
+          "ask": {
+            "label": "Default permissions",
+            "description": "Read-only tools always run without asking; writing files and running commands ask each time."
+          },
+          "auto": {
+            "label": "Auto-review",
+            "description": "Read-only tools and file writes always run without asking; running commands still ask each time."
+          },
+          "bypassPermissions": {
+            "label": "Full access",
+            "description": "Reads, writes, and commands all run without asking. Actions you explicitly deny and dangerous-command overrides still apply. Highest risk; use only for trusted tasks."
+          }
         }
       }
     },

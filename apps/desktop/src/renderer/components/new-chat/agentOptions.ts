@@ -16,6 +16,8 @@ import type { ComponentType } from 'react';
 
 import { ClaudeMark } from '@/components/icons/ClaudeMark';
 import { CodexMark } from '@/components/icons/CodexMark';
+// OMP 未进入可选引擎列表(SELECTABLE_VENDORS)前不在此注册展示元数据;
+// OmpMark 的真实使用点在 settings/ModelAdvancedDrawer.tsx 的 AGENT_MARK。
 import { PiMark } from '@/components/icons/PiMark';
 import { SELECTABLE_VENDORS, type SelectableVendor } from '@/lib/agentVendors';
 

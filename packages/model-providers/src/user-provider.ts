@@ -216,7 +216,10 @@ function registryEffortMetadata(
   modelId: string,
   agent: AgentKind,
 ): RegistryEffortMetadata | undefined {
-  if (agent === "pi" || !registry) return undefined;
+  // OMP 与 Pi 一样不进 V2 线路目录(MODEL_ACCESS_V2_AGENTS 是服务端冻结的
+  // wire schema,只覆盖 claude-code/codex);P0 阶段 omp 在此同样回落到
+  // 逐模型显式配置,不继承 registry effort 元数据。
+  if (agent === "pi" || agent === "omp" || !registry) return undefined;
 
   // Stage 1 — exact lookup: only the original modelId.
   const exactMatches = expandedRegistryEntries(registry).filter((entry) =>

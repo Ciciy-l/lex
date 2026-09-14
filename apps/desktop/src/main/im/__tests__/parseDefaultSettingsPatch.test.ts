@@ -75,6 +75,8 @@ describe('parseImDefaultSettingsPatch', () => {
         'claude-code': { providerId: 'p-cc', model: 'm-cc', effort: 'low' },
         codex: { providerId: 'p-codex', model: 'm-codex', effort: 'low' },
         pi: { providerId: 'p-pi', model: 'm-pi', effort: 'low' },
+        // omp 只是类型贯通的第四槽,取值与 Pi 同形即可(本用例只校验解析对称性)。
+        omp: { providerId: 'p-omp', model: 'm-omp', effort: 'low' },
       },
     };
     for (const key of Object.keys(IM_DEFAULT_SETTINGS) as Array<keyof ImDefaultSettings>) {

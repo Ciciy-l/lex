@@ -47,7 +47,8 @@ function refreshRemoteCapabilitiesOnce(deviceId: string): void {
   remoteCapabilitiesRefreshInFlight.set(deviceId, pending);
 }
 
-type RuntimeAgentKind = 'claude-code' | 'codex' | 'pi';
+/** OMP 接入:runtime agent id 放宽为四元组(可用引擎列表仍是三元组,见 useModelPickerAgents)。 */
+type RuntimeAgentKind = 'claude-code' | 'codex' | 'pi' | 'omp';
 
 /** runtime agent id → NewMaker vendor(其余保持同名)。 */
 function toVendor(agent: RuntimeAgentKind): MakerVendor {

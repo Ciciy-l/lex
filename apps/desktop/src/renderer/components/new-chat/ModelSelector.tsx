@@ -633,7 +633,8 @@ interface ModelSelectorProps {
   /** 非选中模型行的 effort/fast 全局预设读写器(按本机 / 被控设备隔离)。 */
   modelMemory?: ModelMemoryAccessors;
   /** When provided, only models with this vendorKey are shown in the dropdown. */
-  vendorKey?: 'cc' | 'codex' | 'pi';
+  // OMP 接入:会话引擎可能是 omp,这里只做展示/路由口径,放宽到四元组。
+  vendorKey?: 'cc' | 'codex' | 'pi' | 'omp';
   /**
    * 已创建会话的 trigger 同时展示 Agent 与模型，避免 Claude Code 使用 OpenAI 模型时
    * 只看来源图标而误判成 Codex。必须由权威 session/runtime 身份或明确切换 intent 提供，
@@ -787,7 +788,8 @@ interface ModelSelectorContentProps {
   thinkingEnabled?: boolean;
   onThinkingChange?: (enabled: boolean) => void | Promise<void>;
   modelMemory?: ModelMemoryAccessors;
-  vendorKey?: 'cc' | 'codex' | 'pi';
+  // OMP 接入:会话引擎可能是 omp,这里只做展示/路由口径,放宽到四元组。
+  vendorKey?: 'cc' | 'codex' | 'pi' | 'omp';
   /** device-link 远程会话所属被控端 id(列被控端模型)。 */
   deviceId?: string;
   /** SSH 远程会话隐藏订阅直连模型(语义同 ModelSelectorProps 同名字段)。 */
@@ -875,7 +877,8 @@ interface ModelSelectorContentProps {
     anchor: {
       uid: string;
       wireModelId: string;
-      engine: 'cc' | 'codex' | 'pi';
+      // OMP 接入:锚点引擎跟随 UnifiedEngine 放宽为四元组。
+      engine: 'cc' | 'codex' | 'pi' | 'omp';
       /** 选中时的显式来源。来源也是锚点身份的一部分:同 wire id 同引擎、仅来源不同的
        *  配置是两份配置,少了它,别的窗口把会话来源从 A 切到 B 后,面板仍在 A 的收藏上
        *  打勾(2026-08-17 review)。 */
@@ -900,7 +903,8 @@ interface ModelSelectorContentProps {
     modelId: string;
     /** 该行生效档位;该 (模型, 引擎) 不可调档时为 undefined。 */
     effort?: Effort;
-    engine: 'cc' | 'codex' | 'pi';
+    /** OMP 接入:引擎跟随 UnifiedEngine 放宽为四元组。 */
+    engine: 'cc' | 'codex' | 'pi' | 'omp';
     fast: boolean;
     favoriteUid: string | null;
     /** 配置浮层「恢复推荐」的应用动作；调用方应删除 override，不得重新记忆推荐值。 */
@@ -951,10 +955,12 @@ interface ModelSelectorContentProps {
   interactionDisabled?: boolean;
 }
 
-function vendorKeyToAgentKind(v?: 'cc' | 'codex' | 'pi'): AgentKind | null {
+/** OMP 接入:vendor 口径放宽为四元组,omp 直接映射回 omp(不再折叠成 null)。 */
+function vendorKeyToAgentKind(v?: 'cc' | 'codex' | 'pi' | 'omp'): AgentKind | null {
   if (v === 'cc') return 'claude-code';
   if (v === 'codex') return 'codex';
   if (v === 'pi') return 'pi';
+  if (v === 'omp') return 'omp';
   return null;
 }
 
@@ -1095,7 +1101,8 @@ function ModelSelectorContentView({
   const modelTagDensity = modelTagDensityForWidth(paneWidth ?? (fluidWidth ? null : 320));
   // session-agent-switch:两步式引擎切换的浏览态。browseVendor 初始 = 会话当前引擎;
   // 切到另一家 tab 只是「浏览目标引擎的模型」,选中模型行才真正触发切换事务。
-  const [browseVendor, setBrowseVendor] = useState<'cc' | 'codex' | 'pi'>(
+  // OMP 接入:vendorKey 已是四元组口径,浏览态随之放宽(实际可选引擎仍是三元组)。
+  const [browseVendor, setBrowseVendor] = useState<'cc' | 'codex' | 'pi' | 'omp'>(
     agentSwitch?.currentVendor ?? vendorKey ?? 'cc',
   );
   const browseSwitchPendingRef = useRef(false);
@@ -3000,7 +3007,9 @@ function ModelSelectorContentView({
           <VendorSegmentedSwitcher
             value={browseVendor}
             onChange={(next) => {
-              if (next !== 'orca') void handleBrowseVendorChange(next);
+              // OMP 尚未进入两段切换的可选引擎(与 SELECTABLE_VENDORS 同口径),
+              // 分段回调里不会真的出现 omp,这里只是把类型收敛到已支持的三种。
+              if (next !== 'orca' && next !== 'omp') void handleBrowseVendorChange(next);
             }}
             dense
             width={304}

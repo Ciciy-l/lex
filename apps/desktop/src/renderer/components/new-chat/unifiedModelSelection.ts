@@ -25,17 +25,23 @@ import type { Effort } from '@/lib/userPreferences.types';
 import { applyProviderOrderIds } from '../../../shared/providerOrder';
 import type { ModelFavoriteItem } from '@/state/modelFavorites';
 
-/** 引擎在**选择器 / 草稿链路**里的口径(vendor);catalog / capabilities 侧是 AgentKind。 */
-export type UnifiedEngine = SelectableVendor;
+/**
+ * 引擎在**选择器 / 草稿链路**里的口径(vendor);catalog / capabilities 侧是 AgentKind。
+ *
+ * OMP 接入:AgentKind 已含 omp,而 SELECTABLE_VENDORS 仍是三元组(OMP 尚未作为可选引擎
+ * 暴露)。这里把 omp 并入本口径,使 `agentKindOfEngine` / `engineOfAgentKind` 能无损往返,
+ * 而不是把 omp 静默折叠成 pi —— 那样会写出「界面是 omp、落库是 pi」的假配置。
+ */
+export type UnifiedEngine = SelectableVendor | 'omp';
 
 /** vendor → AgentKind(查目录 / 能力 / 记忆时用)。 */
 export function agentKindOfEngine(engine: UnifiedEngine): AgentKind {
-  return engine === 'cc' ? 'claude-code' : engine === 'codex' ? 'codex' : 'pi';
+  return engine === 'cc' ? 'claude-code' : engine === 'codex' ? 'codex' : engine === 'omp' ? 'omp' : 'pi';
 }
 
 /** AgentKind → vendor(落 store / draft 时用)。未知值回落 cc,与既有 sanitize 方向一致。 */
 export function engineOfAgentKind(agent: AgentKind): UnifiedEngine {
-  return agent === 'codex' ? 'codex' : agent === 'pi' ? 'pi' : 'cc';
+  return agent === 'codex' ? 'codex' : agent === 'pi' ? 'pi' : agent === 'omp' ? 'omp' : 'cc';
 }
 
 /**

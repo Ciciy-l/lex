@@ -232,6 +232,8 @@ function makeDefault(): NewMakerDraft {
       pi: defaultVendorPrefs('pi'),
       orca: defaultVendorPrefs('orca'),
       codex: defaultVendorPrefs('codex'),
+      // omp 无独立产品默认,复用 cc 种子默认(与 defaultVendorPrefs 回落一致)。
+      omp: defaultVendorPrefs('omp'),
     },
     modelChosenByVendor: {},
     defaultTupleCustomized: false,
@@ -375,16 +377,21 @@ function sanitize(raw: unknown): NewMakerDraft {
   // 已经随旧版完整草稿自然落盘过的 cc seed。它们不是用户选择，不能因为新版目录换了
   // seed 就反过来把系统快照认成自定义；这里只服务一次性迁移，不参与新会话默认决策。
   const legacyCcSeedModels = new Set([def.lastByVendor.cc.model, 'claude-sonnet-4-6']);
-  const isKnownProductTuple = (slotVendor: MakerVendor, prefs: Partial<VendorPrefs>): boolean =>
-    typeof prefs.providerId === 'string' &&
-    prefs.providerId.length > 0 &&
-    typeof prefs.model === 'string' &&
-    prefs.model.length > 0 &&
-    isKnownProductDefaultTupleIdentity({
-      vendor: slotVendor,
-      providerId: prefs.providerId,
-      model: prefs.model,
-    });
+  const isKnownProductTuple = (slotVendor: MakerVendor, prefs: Partial<VendorPrefs>): boolean => {
+    // omp 无产品默认 tuple(vendorForAgent 返回 null),不走产品 tuple 识别。
+    if (slotVendor === 'omp') return false;
+    return (
+      typeof prefs.providerId === 'string' &&
+      prefs.providerId.length > 0 &&
+      typeof prefs.model === 'string' &&
+      prefs.model.length > 0 &&
+      isKnownProductDefaultTupleIdentity({
+        vendor: slotVendor,
+        providerId: prefs.providerId,
+        model: prefs.model,
+      })
+    );
+  };
   const legacyCcModelCandidate =
     vendor === 'cc' &&
     legacyCcPrefs &&
@@ -458,6 +465,9 @@ function sanitize(raw: unknown): NewMakerDraft {
       pi: sanitizeVendorPrefs(lastByVendorRaw.pi, 'pi'),
       orca: sanitizeVendorPrefs(lastByVendorRaw.orca, 'orca'),
       codex: sanitizeVendorPrefs(lastByVendorRaw.codex, 'codex'),
+      // OMP 接入:与新增 vendor 同规则补位;defaultVendorPrefs 没有 omp 分支时会
+      // 落到 cc 默认分支(与 orca 同处理),符合预期。
+      omp: sanitizeVendorPrefs(lastByVendorRaw.omp, 'omp'),
     },
     modelChosenByVendor,
     defaultTupleCustomized,

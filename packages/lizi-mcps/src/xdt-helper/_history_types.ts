@@ -8,7 +8,8 @@
 
 import type { ControlResult } from '../types.js';
 
-export type HistoryAgentKind = 'cc' | 'codex' | 'pi';
+/** 与 desktop 侧 ConversationSearchAgentKind 对齐:OMP 会话同样允许被过滤。 */
+export type HistoryAgentKind = 'cc' | 'codex' | 'pi' | 'omp';
 export type HistoryOrder = 'asc' | 'desc';
 
 /** Stable business errors exposed by cross-device history readers. */

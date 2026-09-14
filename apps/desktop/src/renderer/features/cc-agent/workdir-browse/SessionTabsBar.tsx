@@ -35,7 +35,7 @@ import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { WINDOW_DRAG_STYLE, WINDOW_NO_DRAG_STYLE } from '@/components/layout/windowDrag';
 import { Tip } from '@/components/ui/tooltip';
-import { VendorIcon } from '@/components/sidebar/VendorIcon';
+import { VendorIcon, agentKindToVendor } from '@/components/sidebar/VendorIcon';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -249,7 +249,9 @@ export function SessionTabsBar({
         {sessions.map((session) => {
           const sessionId = session.id;
           const title = getSessionDisplayTitle(session, unnamedLabel).trim() || unnamedLabel;
-          const vendor = session.agentKind;
+          // OMP 接入:身份图标统一走 agentKindToVendor(唯一的 agentKind→vendor 映射),
+          // 不再把 session.agentKind 直接当 vendor 用 —— omp 尚未登记图标,由该函数回落。
+          const vendor = agentKindToVendor(session.agentKind);
           const isActive = sessionId === activeSessionId;
           const isRunning = runningMap.has(sessionId);
           const isEditing = renamingId === sessionId;

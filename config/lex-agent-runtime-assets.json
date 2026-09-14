@@ -24,7 +24,8 @@
       "claudeCode": { "version": "2.1.259", "file": "claude-code/2.1.259/linux-x64/claude.gz", "sha256": "abe722d1a3db8e10efaba01be92487dca3daf7aae72db6906971b1c80111e776", "size": 97243499, "binarySha256": "f7dd62ae415378018cd21dd950eb3bac174ab085830304d3b8b098146bfd47b6" },
       "codex": { "version": "0.145.0", "file": "codex/0.145.0/linux-x64/codex.gz", "sha256": "ec5fe401224f81ded675cde5bc8fba0cd1a6cc44bb31c810711a5ddd6a95f805", "size": 115808553, "binarySha256": "a2a05dafaa1acb002a45eaec0a462de5b13694fcfcd7bc43305f14781ce7be14" },
       "codexPackage": { "version": "0.153.4", "file": "codex-package/0.153.4/linux-x64/codex-package.dist.tar.gz", "sha256": "bb345b82d0357c38d91a76bac460bf11b0f4ac1935075cc1df135aecd61297ae", "size": 129267684 },
-      "pi": { "version": "0.84.4", "file": "pi/0.84.4/linux-x64/pi.dist.tar.gz", "sha256": "b0aefd0e08f84df7eab57da8b60a598e47f0eec1ab6853fd32f4ebba47f9626a", "size": 43162555 }
+      "pi": { "version": "0.84.4", "file": "pi/0.84.4/linux-x64/pi.dist.tar.gz", "sha256": "b0aefd0e08f84df7eab57da8b60a598e47f0eec1ab6853fd32f4ebba47f9626a", "size": 43162555 },
+      "omp": { "version": "18.1.18", "file": "omp/18.1.18/linux-x64/omp", "sha256": "45421f9a5f112bc47cb9f77c4b4d7927631f8ff859624f821287ec854eb239fc", "size": 201098720 }
     }
   }
 }

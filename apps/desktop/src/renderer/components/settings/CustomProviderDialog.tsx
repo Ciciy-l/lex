@@ -141,6 +141,14 @@ const AGENTS: DialogAgentKind[] = ['claude-code', 'codex', 'pi'];
 
 const VISIBLE_AGENTS: DialogAgentKind[] = AGENTS;
 
+/**
+ * OMP 接入:AgentKind 已放宽为四元组,但本面板只配置 claude / codex / pi 三个 runtime
+ * (见上方注释)。回落到类型守卫而不是断言,避免把 omp 当成已配置 runtime 去索引表单。
+ */
+function isDialogAgentKind(agent: AgentKind): agent is DialogAgentKind {
+  return agent === 'claude-code' || agent === 'codex' || agent === 'pi';
+}
+
 const DIALOG_FOCUSABLE_SELECTOR = [
   'button:not([disabled])',
   'input:not([disabled])',
@@ -1063,7 +1071,7 @@ export function CustomProviderDialog({
       // 的 runtime 上,handleSave 的守卫拦不住"用户已经看不到"的这条草稿,表单
       // 卡死报错却找不到对应输入框(review P1)。
       setWindowDrafts({});
-      const first = configuredPresetAgents(p)[0];
+      const first = configuredPresetAgents(p).find(isDialogAgentKind);
       if (first) setActiveTab(first);
       // 预设整体替换名称/鉴权/全部 runtime:任何既有字段错误的指向(字段值、
       // 行结构、tab)都已失效。程序化赋值不触发输入的 change,须在此显式清除
@@ -1814,7 +1822,8 @@ export function CustomProviderDialog({
       if (isCommittableWindowText(draftText)) continue;
       const sep = draftKey.lastIndexOf(':');
       const draftAgent = draftKey.slice(0, sep) as AgentKind;
-      if (!VISIBLE_AGENTS.includes(draftAgent)) continue;
+      // OMP 接入:窗口草稿 key 可能是 omp,但 omp 不在本面板配置的 runtime 之列,跳过。
+      if (!isDialogAgentKind(draftAgent)) continue;
       // 该 runtime 未配置 baseUrl、或该行 id/name 为空:两者都会在下面序列化时
       // 被丢弃,不会写进最终配置,草稿再非法也不该挡住一个原本有效的保存
       // (review P1)。

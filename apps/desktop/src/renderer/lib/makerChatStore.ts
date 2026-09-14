@@ -2335,7 +2335,9 @@ export type MessageDeliveryMode = 'queue' | 'steer';
 
 /** 仅影响 selector/chip 的乐观展示；agentKind 始终保留真实 reducer 路由。 */
 export interface AgentSwitchIntentRecord {
-  target: 'claude-code' | 'codex' | 'pi';
+  // OMP 尚不能作为会话引擎被选中(T04 注册 agent 后才开放),但会话状态必须能
+  // 容纳它:DB 的 sessions.agent_kind 与上游 AgentKind 都已是四元组。
+  target: 'claude-code' | 'codex' | 'pi' | 'omp';
   model: string;
   providerId: string | null;
   effort?: string;
@@ -2350,8 +2352,10 @@ export interface SessionChatState {
    * 透传 agentKind, maker:event 收到事件时按 agentKind 决定走 Claude reducer 还是
    * Codex reducer。ensureInitialMessages 从 DB sessions.agent_kind 读出来灌进。
    * 默认 'claude-code' 兼容老路径(老 session row 没有此字段时按 Claude 处理)。
+   * 取值集合跟随上游 AgentKind:'omp' 目前不会被写入(会话创建尚未开放 OMP),
+   * 但状态类型先放开,避免从 DB 读回四元组值时无处安放。
    */
-  agentKind: 'claude-code' | 'codex' | 'pi';
+  agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
   /** 下一条消息发送时才由 main 应用的跨引擎切换意图。 */
   agentSwitchIntent: AgentSwitchIntentRecord | null;
   /**
@@ -10672,8 +10676,8 @@ function retryInvalidatedInitialHistoryFetchIfNeeded(
  */
 function dbAgentKindToMakerKind(
   dbKind: string | null | undefined,
-  fallback: 'claude-code' | 'codex' | 'pi' = 'claude-code',
-): 'claude-code' | 'codex' | 'pi' {
+  fallback: 'claude-code' | 'codex' | 'pi' | 'omp' = 'claude-code',
+): 'claude-code' | 'codex' | 'pi' | 'omp' {
   if (dbKind === 'codex') return 'codex';
   if (dbKind === 'cc') return 'claude-code';
   if (dbKind === 'pi') return 'pi';
@@ -13304,7 +13308,7 @@ function autoTitleFallbackLabels(): AutoTitleFallbackLabels {
 function scheduleAutoName(
   sessionId: string,
   text: string,
-  agentKind: 'claude-code' | 'codex' | 'pi',
+  agentKind: 'claude-code' | 'codex' | 'pi' | 'omp',
   isUserText = true,
 ): void {
   // 与 main 共用 normalizeAutoTitle,两端算出的占位串逐字一致,回流时不跳变。
@@ -13420,7 +13424,7 @@ function clearAutoTitlePreviewSafely(sessionId: string): void {
 function maybeAutoNameUnnamedSession(
   sessionId: string,
   seed: AutoTitleSeed | null,
-  agentKind: 'claude-code' | 'codex' | 'pi',
+  agentKind: 'claude-code' | 'codex' | 'pi' | 'omp',
 ): void {
   if (!seed?.isUserText) return;
   scheduleAutoName(sessionId, seed.text, agentKind, true);
@@ -15980,7 +15984,10 @@ function sendUiTrigger(sessionId: string, prompt: string): Promise<void> {
  * sdkSessionId——否则 buildCreateOpts 会把旧引擎的原生会话 id 当 resume 目标
  * (main 侧 reconcileCreateOptsWithDb 是兜底,这里是第一现场收敛)。
  */
-function noteAgentSwitched(sessionId: string, agentKind: 'claude-code' | 'codex' | 'pi'): void {
+function noteAgentSwitched(
+  sessionId: string,
+  agentKind: 'claude-code' | 'codex' | 'pi' | 'omp',
+): void {
   if (!sessionId) return;
   setState(sessionId, (s) => {
     const nextProviderId = s.agentSwitchIntent ? s.agentSwitchIntent.providerId : s.sessionProviderId;
@@ -16012,7 +16019,7 @@ function noteAgentSwitched(sessionId: string, agentKind: 'claude-code' | 'codex'
  */
 function noteAgentSwitchIntent(
   sessionId: string,
-  target: 'claude-code' | 'codex' | 'pi',
+  target: 'claude-code' | 'codex' | 'pi' | 'omp',
   opts: { model: string; providerId: string | null; effort?: string; fastMode?: boolean },
 ): void {
   if (!sessionId) return;

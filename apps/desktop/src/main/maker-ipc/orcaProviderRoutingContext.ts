@@ -53,7 +53,7 @@ export async function readOrcaWorkerProviderRoutingContext(deps: {
             modelRegistry,
             provider.id,
             model.id,
-            agent === 'pi' ? undefined : agent,
+            agent === 'pi' || agent === 'omp' ? undefined : agent,
           );
           return matched ? [[model.id, matched.entry.id]] : [];
         }),
@@ -83,6 +83,9 @@ export async function readOrcaWorkerProviderRoutingContext(deps: {
       'claude-code': availabilityFor('claude-code'),
       codex: availabilityFor('codex'),
       pi: availabilityFor('pi'),
+      // OMP 与 Pi 共用网关目录(registry 身份同样交给 modelRegistry 解析),
+      // 故这里的可用性快照与 Pi 完全同构。
+      omp: availabilityFor('omp'),
     },
     resolveDefaultProviderIdForModel: (agent, model) =>
       effectiveSourceIdForModel(views, null, model, agent),

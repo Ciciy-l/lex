@@ -13,6 +13,7 @@ import { execFileSync } from 'node:child_process';
 import {
   binaryRelativePathFor,
   binFileFor,
+  ensureBinary,
   isValidBinary,
   isValidDirDist,
   listSiblingWorktreeRoots,
@@ -37,6 +38,68 @@ test('dev startup prepares every supported runtime, including Pi', () => {
     'utf8',
   );
   assert.match(devGuard, /const AGENT_KINDS = SUPPORTED_BINARY_KINDS;/);
+});
+
+// OMP 是 opt-in runtime：默认 dev 首启 / postinstall 绝不顺带下载它，只有显式
+// 指定 --kinds=omp 才安装；同时它不允许任何绕过 SHA-256 的"本地已存在"捷径。
+test('OMP is explicitly installable but never added to the default set', () => {
+  assert.equal(binaryRelativePathFor('omp', 'win32-x64'), 'omp.exe');
+  assert.equal(binaryRelativePathFor('omp', 'darwin-arm64'), 'omp');
+  assert.equal(updateScriptForKind('omp'), 'omp');
+  assert.equal(supportsCdnFallback('omp'), false);
+  assert.equal(SUPPORTED_BINARY_KINDS.includes('omp'), false);
+});
+
+test('OMP refuses marker-only local files and never reuses a sibling binary', async () => {
+  const root = tmpDir('ensure-omp-root-');
+  const sibling = tmpDir('ensure-omp-sibling-');
+  const platformKey = 'win32-x64';
+  const relativePath = binaryRelativePathFor('omp', platformKey);
+  const trusted = Buffer.alloc(4_096, 9);
+  const writeCandidate = (worktreeRoot, contents) => {
+    const directory = path.join(worktreeRoot, 'apps', 'omp-bin', platformKey);
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(path.join(directory, relativePath), contents);
+    fs.writeFileSync(path.join(directory, '.version'), '18.1.18\n');
+    return directory;
+  };
+
+  // 两个 worktree 里都躺着"体积够大 + 版本标记正确"但内容错误的二进制,
+  // 任何基于体积 / 标记的捷径判定都会把它们当成已就位。
+  writeCandidate(root, Buffer.alloc(1_024, 1));
+  writeCandidate(sibling, Buffer.alloc(1_024, 2));
+  let ensureCalls = 0;
+  let siblingSearches = 0;
+  const verificationPaths = [];
+  const updater = {
+    readPinnedVersion: () => '18.1.18',
+    isVerifiedInstalledPlatform: ({ filePath }) => {
+      verificationPaths.push(filePath);
+      return fs.existsSync(filePath) && fs.readFileSync(filePath).equals(trusted);
+    },
+    ensurePlatform: async ({ version, platformKey: actualPlatform }) => {
+      ensureCalls++;
+      assert.equal(version, '18.1.18');
+      assert.equal(actualPlatform, platformKey);
+      writeCandidate(root, trusted);
+    },
+  };
+
+  const installed = await ensureBinary('omp', platformKey, {
+    rootDir: root,
+    loadUpdater: async () => updater,
+    siblingWorktreeRoots: () => {
+      siblingSearches++;
+      return [sibling];
+    },
+  });
+
+  assert.equal(installed, path.join(root, 'apps', 'omp-bin', platformKey, relativePath));
+  assert.equal(ensureCalls, 1);
+  assert.equal(siblingSearches, 0);
+  assert.deepEqual(fs.readFileSync(installed), trusted);
+  // 下载前后各校验一次,确认终检没有被"文件存在"短路。
+  assert.ok(verificationPaths.length >= 2);
 });
 
 const LFS_POINTER = [

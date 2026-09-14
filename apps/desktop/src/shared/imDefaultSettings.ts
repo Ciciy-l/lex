@@ -1,4 +1,4 @@
-export type ImDefaultAgentKind = 'claude-code' | 'codex' | 'pi';
+export type ImDefaultAgentKind = 'claude-code' | 'codex' | 'pi' | 'omp';
 export type ImDefaultPermissionMode =
   'ask' | 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions';
 export type ImDefaultEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
@@ -71,6 +71,13 @@ export const IM_DEFAULT_SETTINGS: ImDefaultSettings = {
       model: 'claude-sonnet-5',
       effort: 'high',
     },
+    // OMP 与 Pi 同属后期接入的引擎：IM 侧暂不开放绑定,这里只给一份与 Pi 同档的
+    // 占位默认值(Runtime 真正注册后由 T04 换成实际可用模型)。
+    omp: {
+      providerId: null,
+      model: 'claude-sonnet-5',
+      effort: 'high',
+    },
   },
 };
 
@@ -89,7 +96,7 @@ export const IM_DEFAULT_EFFORT_OVERRIDES: Readonly<Partial<Record<string, ImDefa
   'codex/gpt-5.5': 'high',
 };
 
-const AGENT_KINDS = new Set<ImDefaultAgentKind>(['claude-code', 'codex', 'pi']);
+const AGENT_KINDS = new Set<ImDefaultAgentKind>(['claude-code', 'codex', 'pi', 'omp']);
 const EFFORTS = new Set<ImDefaultEffort>([
   'minimal',
   'low',

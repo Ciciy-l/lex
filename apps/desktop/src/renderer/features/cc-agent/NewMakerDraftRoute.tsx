@@ -1242,7 +1242,14 @@ export function NewMakerDraftRoute() {
       resolveNewMakerDefaultTuple({
         providers: localProviders,
         providersLoading: localProvidersLoading,
-        availableAgents: availableVendors,
+        // OMP 接入:shared/newMakerDefaultTuple 的 vendor 口径到今天仍只有
+        // cc/codex/pi/orca —— omp 与 orca 一样没有产品默认 tuple(见其中的
+        // vendorForAgent),按它的口径收敛后再传入,别让 omp 凭空产生 tuple。
+        availableAgents: new Set(
+          [...availableVendors].filter(
+            (vendor): vendor is 'cc' | 'codex' | 'pi' | 'orca' => vendor !== 'omp',
+          ),
+        ),
         availableAgentsLoaded,
       }),
     [localProviders, localProvidersLoading, availableVendors, availableAgentsLoaded],

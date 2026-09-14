@@ -3382,7 +3382,8 @@ describe('统一面板 · 行内折扣徽标', () => {
       isFavoriteRow: false,
       justFavorited: false,
       interactionDisabled: false,
-      effortLabelOf: (_agent: 'claude-code' | 'codex' | 'pi', effort: string) => effort,
+      // OMP 接入:effortLabelOf 的 agent 口径随 AgentKind 放宽为四元组。
+      effortLabelOf: (_agent: 'claude-code' | 'codex' | 'pi' | 'omp', effort: string) => effort,
       providers: [],
       onReveal: vi.fn(),
       onRevealForKeyboard: vi.fn(),

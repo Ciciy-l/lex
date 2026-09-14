@@ -20,6 +20,40 @@ export {
 export { finalizeCodexCitationText, normalizeCodexFileCitations } from './codex/translator.js';
 export { PiAgent } from './pi/index.js';
 export { resolveNonDefaultWindowsGitBashPath } from './pi/windows-git-path.js';
+// OMP 协议层(--mode rpc 的 JSONL-over-stdio 契约)是与 Claude/Codex/Pi 同位置的
+// 第四个接入面。注意:此处导出的是**协议资产**(命令目录解析 / 进程宿主),
+// 探测层的 launch-plan / probe-controller 在 OMP 真正作为 agent 落地后由
+// T02 一并从公开入口摘除 —— 在此之前 desktop main 的探测通道仍靠它编译通过。
+export {
+  createOmpIsolatedProbeLaunchPlan,
+  isOmpCompatibilityBaseline,
+  OMP_PROBE_CONFIG_DIR_NAME,
+  OMP_PROBE_SETTINGS_FILE,
+  parseOmpVersionOutput,
+  validateOmpProbeModel,
+} from './omp/launch-plan.js';
+export type {
+  OmpIsolatedRoots,
+  OmpProbeLaunchPlan,
+  OmpProbeModel,
+} from './omp/launch-plan.js';
+export {
+  OMP_COMPATIBILITY_BASELINE,
+  OmpCommandCatalog,
+  parseOmpCommands,
+} from './omp/commands.js';
+export { startOmpProcess } from './omp/process-host.js';
+export type { OmpCommand, OmpCatalogSnapshot } from './omp/commands.js';
+export type {
+  OmpProcessHost,
+  OmpProcessHostOptions,
+} from './omp/process-host.js';
+export { OmpProbeController } from './omp/probe-controller.js';
+export type {
+  OmpProbeControllerOptions,
+  OmpProbeSnapshot,
+  OmpProbeStatus,
+} from './omp/probe-controller.js';
 export {
   canReuseCodexHostForCredentialMode,
   canReuseHostForCredentialMode,

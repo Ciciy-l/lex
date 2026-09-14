@@ -63,7 +63,8 @@ interface AgentTaskCardProps {
   sessionId?: string;
   /** Current owning harness. Pi's durable-detail sidebar must never surface
    * after the session has switched to Claude Code or Codex. */
-  sessionAgentKind?: 'cc' | 'codex' | 'pi';
+  // OMP 接入:会话引擎可能是 omp,prop 口径同步放宽(内部判定全是等值比较)。
+  sessionAgentKind?: 'cc' | 'codex' | 'pi' | 'omp';
 }
 
 function readInputString(input: unknown, keys: string[]): string | undefined {

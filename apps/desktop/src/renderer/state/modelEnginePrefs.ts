@@ -65,8 +65,14 @@ import { createStorageReconciler } from './storageOpReplay';
 
 const STORAGE_KEY = 'xdt:modelEnginePrefs:v1';
 
-/** 引擎 override 的取值域 = 用户可选引擎表(见文件头对口径的说明)。 */
-export type ModelEngine = SelectableVendor;
+/**
+ * 引擎 override 的取值域 = 用户可选引擎表(见文件头对口径的说明)。
+ *
+ * OMP 接入:统一选择器的 UnifiedEngine 已含 omp(它要能表达目录里真实存在的 omp 引擎),
+ * 这里的落库口径同步放宽;omp 尚未进入 SELECTABLE_VENDORS,写入仍会被
+ * `isSelectableVendor` 的运行期守卫挡下,不会产生脏数据。
+ */
+export type ModelEngine = SelectableVendor | 'omp';
 
 /**
  * 单条 override。刻意用对象而不是裸字符串:规格预留了「同一 (来源, 模型) 上还要记别的

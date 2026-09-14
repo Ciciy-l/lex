@@ -48,7 +48,8 @@ import type { SessionReference } from '../../../../shared/sessionReference';
 import { isReviewSessionSource } from '../../../../shared/sessionSource';
 
 export type Destination = 'local' | 'worktree' | 'thread';
-export type AgentKind = 'claude-code' | 'codex' | 'pi';
+// OMP 引擎接入(T01):agentKind 值域随上游 ccAgent.types.AgentKind 拓宽为四元组。
+export type AgentKind = 'claude-code' | 'codex' | 'pi' | 'omp';
 
 interface ChipButtonProps {
   icon?: React.ReactNode;

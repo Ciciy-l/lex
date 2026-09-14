@@ -19,6 +19,8 @@
 
 import { z } from 'zod';
 
+import type { AgentKind } from '@cindy/maker-core';
+
 import { withScheduler } from './_shared.js';
 import type { SchedulerMcpDeps } from '../types.js';
 import type { SchedulerToolRegistry } from '../cindy_schedulerToolRegistry.js';
@@ -88,7 +90,7 @@ export function registerScheduleSetPreRunHookTool(
         let currentCommand: string | undefined;
         let currentTimeoutMs: number | undefined;
         let providerId: string | undefined;
-        let agentKind: 'codex' | 'claude-code' | 'pi' | undefined;
+        let agentKind: AgentKind | undefined;
         let model: string | undefined;
         if (scheduleId) {
           const schedule = await scheduler.get(scheduleId);

@@ -338,6 +338,21 @@ function readLegacyBotGlobalModelChain(): BotModelRoute[] | null {
   }
 }
 
+/**
+ * OMP 接入:shared/newMakerDefaultTuple 的 vendor 口径到今天仍只有 cc/codex/pi/orca ——
+ * omp 与 orca 一样**没有产品默认 tuple**(见其中的 vendorForAgent),所以按它的口径
+ * 收敛后再传入,而不是让 omp 凭空参与默认 tuple 选拔。
+ */
+function toDefaultTupleVendors(
+  vendors: ReadonlySet<'cc' | 'codex' | 'pi' | 'omp' | 'orca'> | null,
+): ReadonlySet<'cc' | 'codex' | 'pi' | 'orca'> {
+  return new Set(
+    [...(vendors ?? [])].filter(
+      (vendor): vendor is 'cc' | 'codex' | 'pi' | 'orca' => vendor !== 'omp',
+    ),
+  );
+}
+
 export function getEffectiveBotModelChain(
   _fallbackHarness: BotHarness = NEW_BOT_DEFAULT_HARNESS,
 ): BotModelRoute[] {
@@ -346,7 +361,7 @@ export function getEffectiveBotModelChain(
   const providers = getCachedProvidersSnapshot();
   const availableAgents = getCachedAvailableVendors();
   return defaultBotModelChain({ providers: providers?.providers ?? [],
-    providersLoading: !providers, availableAgents: availableAgents ?? new Set(),
+    providersLoading: !providers, availableAgents: toDefaultTupleVendors(availableAgents),
     availableAgentsLoaded: availableAgents !== null });
 }
 

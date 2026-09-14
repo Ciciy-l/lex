@@ -119,8 +119,8 @@ export interface ScheduleFormState {
   recurring: boolean;
   /** 手动模式:true → 创建后永不自动 fire,只能 Run now。UI 上需要 recurring=false 才能勾。 */
   manual: boolean;
-  agentKind: 'claude-code' | 'codex' | 'pi';
-  modelAgentKind?: 'claude-code' | 'codex' | 'pi';
+  agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
+  modelAgentKind?: 'claude-code' | 'codex' | 'pi' | 'omp';
   /** The bound task's baseline, independent of the editable model choice. Form-only. */
   boundAgent?: { sessionId: string; agentKind: ScheduleFormState['agentKind'] };
   model: string;
@@ -357,9 +357,9 @@ export function applyRunMode(
   return unchanged ? form : next;
 }
 
-/** renderer Session.agentKind('cc'|'codex')→ schedule agentKind 映射。 */
+/** renderer Session.agentKind('cc'|'codex'|'pi'|'omp')→ schedule agentKind 映射。 */
 export function sessionAgentKindToScheduleAgentKind(
-  kind: 'cc' | 'codex' | 'pi',
+  kind: 'cc' | 'codex' | 'pi' | 'omp',
 ): ScheduleFormState['agentKind'] {
   if (kind === 'codex') return 'codex';
   if (kind === 'pi') return 'pi';

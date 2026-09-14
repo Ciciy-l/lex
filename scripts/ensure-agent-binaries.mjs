@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * ensure-agent-binaries — 按需下载 Desktop runtime 二进制
- * （claude / codex / ripgrep / pi）。
+ * （claude / codex / ripgrep / pi；OMP 仅显式 opt-in）。
  *
  * 这些二进制不再进 git/LFS（见 .gitattributes / .gitignore）。本脚本在 dev 启动、
  * 打包、发版时按"当前/目标平台 + tools/<kind>/latest.json 里 pin 的版本"从上游按需
@@ -53,19 +53,39 @@ const KINDS = {
     dirDist: true,
     requiredDirDistFiles: ['theme/dark.json', 'theme/light.json', 'theme/theme-schema.json'],
   },
+  // OMP 目前还不是对客的产品入口：上游 runtime 体积不小（单平台 ~200MB），
+  // 标记为 opt-in,保证 postinstall / dev 首启绝不顺带下载它,只有显式
+  // `--kinds=omp`（或 `pnpm install:omp`）才会把它拉下来。
+  omp: {
+    binDir: 'omp-bin',
+    base: 'omp',
+    module: '../tools/omp/update.mjs',
+    defaultInstall: false,
+    cdnFallback: false,
+    // 版本标记 + 文件体积不够作为供应链凭据：OMP 是单二进制但体积远大于常规
+    // 二进制,兄弟 worktree 的「同名即复用」短路会跳过哈希校验,这里强制走
+    // kind 自带的 SHA-256 校验器,绝不复用通用路径的本地副本。
+    strictPinnedRuntime: true,
+  },
 };
 
 /**
  * Dev 启动 guard 与 postinstall 的共享真源。新增 runtime kind 时只改 KINDS，
  * 避免“安装脚本已支持，但全新 checkout 的 dev 首启不会准备”。
  */
-export const SUPPORTED_BINARY_KINDS = Object.freeze(Object.keys(KINDS));
+// opt-in 的 kind（defaultInstall:false）不计入这里 —— dev 首启 / postinstall
+// 的默认清单只该包含每个开发者都需要的 runtime。
+export const SUPPORTED_BINARY_KINDS = Object.freeze(
+  Object.entries(KINDS)
+    .filter(([, config]) => config.defaultInstall !== false)
+    .map(([kind]) => kind),
+);
 
 const log = (msg) => console.log(`\x1b[36m[ensure-agent-binaries]\x1b[0m ${msg}`);
 const warn = (msg) => console.log(`\x1b[33m[ensure-agent-binaries]\x1b[0m ${msg}`);
 
 export function supportsCdnFallback(kind) {
-  return KINDS[kind]?.dirDist !== true;
+  return KINDS[kind]?.dirDist !== true && KINDS[kind]?.cdnFallback !== false;
 }
 
 export function updateScriptForKind(kind) {
@@ -220,19 +240,27 @@ export function tryReuseFromSiblingWorktree({ candidates, binFile, version, dest
  * 确保 <kind> 在 <platformKey> 平台的二进制就位。已存在合法文件且非 force 时跳过。
  * 返回最终二进制的绝对路径。
  */
-export async function ensureBinary(kind, platformKey = currentPlatformKey(), { force = false } = {}) {
+export async function ensureBinary(kind, platformKey = currentPlatformKey(), options = {}) {
+  // rootDir / loadUpdater / siblingWorktreeRoots 可注入：单测要在临时目录里验证
+  // 「opt-in runtime 绝不复用兄弟 worktree」这类分支，不能真扫本机 worktree。
+  const {
+    force = false,
+    rootDir = ROOT,
+    loadUpdater = (modulePath) => import(modulePath),
+    siblingWorktreeRoots = listSiblingWorktreeRoots,
+  } = options;
   const cfg = KINDS[kind];
   if (!cfg) throw new Error(`Unknown kind: ${kind} (known: ${Object.keys(KINDS).join(', ')})`);
 
   const binaryRelativePath = binaryRelativePathFor(kind, platformKey);
   const binFile = path.basename(binaryRelativePath);
-  const binDirPath = path.join(ROOT, 'apps', cfg.binDir, platformKey);
+  const binDirPath = path.join(rootDir, 'apps', cfg.binDir, platformKey);
   const binPath = path.join(binDirPath, binaryRelativePath);
   const markerPath = path.join(binDirPath, '.version');
   const updateScript = updateScriptForKind(kind);
 
   // 先解析 pin 版本——skip 判定必须同时比对版本，否则旧的合法二进制会让 pin 升级被静默跳过。
-  const mod = await import(cfg.module);
+  const mod = await loadUpdater(cfg.module);
   const version = mod.readPinnedVersion();
   if (!version) {
     throw new Error(
@@ -242,10 +270,20 @@ export async function ensureBinary(kind, platformKey = currentPlatformKey(), { f
   }
 
   // 已就位且版本标记 == pin 才跳过；标记缺失/不匹配则刷新（promoteOnePlatform 写入标记）。
-  // dirDist 的"已就位"额外要求安装清单齐全,不能只看主执行文件。
-  const presentAndValid = cfg.dirDist
-    ? isValidDirDist(binDirPath, binPath, requiredDirDistFilesFor(cfg, platformKey))
-    : isValidBinary(binPath);
+  // dirDist 的"已就位"额外要求安装清单齐全,不能只看主执行文件;strictPinnedRuntime
+  // 还要逐字节哈希通过 —— 否则一个"体积够大 + 标记写对"的伪副本就能永久骗过校验,
+  // 让真正被篡改 / 替换过的 runtime 一直留在原地。
+  const verifyStrictRuntime = () => {
+    if (typeof mod.isVerifiedInstalledPlatform !== 'function') {
+      throw new Error(`${kind} updater does not provide strict installed-runtime verification`);
+    }
+    return mod.isVerifiedInstalledPlatform({ version, platformKey, filePath: binPath });
+  };
+  const presentAndValid = cfg.strictPinnedRuntime
+    ? verifyStrictRuntime()
+    : cfg.dirDist
+      ? isValidDirDist(binDirPath, binPath, requiredDirDistFilesFor(cfg, platformKey))
+      : isValidBinary(binPath);
   if (!force && presentAndValid && readInstalledVersion(markerPath) === version) {
     log(`${kind} ${platformKey}: already present @ ${version}, skip`);
     return binPath;
@@ -257,9 +295,11 @@ export async function ensureBinary(kind, platformKey = currentPlatformKey(), { f
   // 保持走正宗下载不复用。
   let reusedFrom = null;
   // dirDist kind 的产物含主执行文件之外的运行时资产，单文件复用会产出缺资产的坏安装。
-  if (!force && !cfg.dirDist) {
+  // strictPinnedRuntime 同理不能走这条捷径（见 KINDS.omp 注释）：它要求 SHA-256
+  // 逐字节校验,而兄弟 worktree 复用是「copy 过去即算安装」,校验会被绕过。
+  if (!force && !cfg.dirDist && !cfg.strictPinnedRuntime) {
     reusedFrom = tryReuseFromSiblingWorktree({
-      candidates: listSiblingWorktreeRoots(ROOT).map((root) =>
+      candidates: siblingWorktreeRoots(rootDir).map((root) =>
         path.join(root, 'apps', cfg.binDir, platformKey),
       ),
       binFile,
@@ -277,9 +317,13 @@ export async function ensureBinary(kind, platformKey = currentPlatformKey(), { f
       await mod.ensurePlatform({ version, platformKey, force });
     } catch (upstreamErr) {
       if (!supportsCdnFallback(kind)) {
+        // dirDist 与「刻意只走上游」的 opt-in runtime 给出的失败理由不同，不要混为一谈。
+        const fallbackReason = cfg.dirDist
+          ? 'This runtime is a directory distribution, so the single-binary CDN fallback is unsafe.'
+          : 'This runtime is intentionally upstream-only and cannot use the general CDN fallback.';
         throw new Error(
           `Failed to download ${kind} ${platformKey}@${version} from upstream: ${upstreamErr.message}. ` +
-            `This runtime is a directory distribution, so the single-binary CDN fallback is unsafe. ` +
+            `${fallbackReason} ` +
             `Run "pnpm update:${updateScript}" manually or check network availability.`,
         );
       }
@@ -306,9 +350,13 @@ export async function ensureBinary(kind, platformKey = currentPlatformKey(), { f
   // 被占用（app 运行中、EBUSY）时只 warn 不抛，会留下旧 binary + 旧标记，这里据此把静默失败
   // 转成显式错误。本地复用路径同样受此终检兜底。
   const installed = readInstalledVersion(markerPath);
-  const finalValid = cfg.dirDist
-    ? isValidDirDist(binDirPath, binPath, requiredDirDistFilesFor(cfg, platformKey))
-    : isValidBinary(binPath);
+  // strictPinnedRuntime 不看体积 / 不看 existsSync,一律走 kind 自带的校验器
+  // (与 pin 文件里的 sha256 逐字节比对),否则「文件在但内容不对」会被判为成功。
+  const finalValid = cfg.strictPinnedRuntime
+    ? mod.isVerifiedInstalledPlatform({ version, platformKey, filePath: binPath })
+    : cfg.dirDist
+      ? isValidDirDist(binDirPath, binPath, requiredDirDistFilesFor(cfg, platformKey))
+      : isValidBinary(binPath);
   if (!finalValid || installed !== version) {
     throw new Error(
       `${kind} ${platformKey}: ensure failed — expected ${version} at ${binPath} but installed marker is ${installed ?? '(none)'}. ` +

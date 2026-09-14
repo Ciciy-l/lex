@@ -802,7 +802,7 @@ interface ChatInputProps {
    * `lastByVendor.model` 并原样进 createSession,写错就是首条请求路由到一个不存在的模型。
    */
   onUnifiedDraftSelect?: (selection: {
-    vendor: 'cc' | 'codex' | 'pi';
+    vendor: 'cc' | 'codex' | 'pi' | 'omp';
     providerId: string;
     /** 选中引擎的 **wire model id**。 */
     modelId: string;
@@ -827,10 +827,13 @@ function agentKindToVendor(kind: AgentKind): 'cc' | 'codex' | 'pi' {
   return kind === 'codex' ? 'codex' : kind === 'pi' ? 'pi' : 'cc';
 }
 
-function vendorKeyToAgentKind(v?: 'cc' | 'codex' | 'pi'): AgentKind | null {
+// 取值集合与 ModelSelector / PermissionSelector 的同名映射保持一致(都含 'omp'),
+// 否则同一份 engine 联合在不同组件间要来回收窄。
+function vendorKeyToAgentKind(v?: 'cc' | 'codex' | 'pi' | 'omp'): AgentKind | null {
   if (v === 'cc') return 'claude-code';
   if (v === 'codex') return 'codex';
   if (v === 'pi') return 'pi';
+  if (v === 'omp') return 'omp';
   return null;
 }
 
@@ -6432,7 +6435,8 @@ export function ChatInput({
     ) => void | boolean | Promise<void | boolean>;
   }>({ byProvider: () => {}, byModel: () => {} });
   const confirmAgentBrowseSwitch = useCallback(
-    (targetAgent: 'claude-code' | 'codex' | 'pi' | null) =>
+    // OMP 接入:目标引擎跟随 AgentKind 放宽为四元组(内部判定全是等值比较 / 取值查表)。
+    (targetAgent: AgentKind | null) =>
       confirmAgentSwitchRisk({
         // 不必再问的两种:回原引擎(same-engine no-op),或点的就是已经确认过的意图目标
         // Harness(只换模型,不换引擎)。换到第三家仍要问(Chris 2026-08-20:Claude 任务里
@@ -6456,7 +6460,8 @@ export function ChatInput({
   );
   const performAgentSwitch = useCallback(
     async (
-      targetAgentKind: 'claude-code' | 'codex' | 'pi',
+      // OMP 接入:目标引擎跟随 AgentKind 放宽为四元组。
+      targetAgentKind: AgentKind,
       newModelId: string,
       providerId: string | null = null,
       // 意图期内的档位/Fast 改动经此显式覆盖(用户手选优先于记忆/默认解析)。
@@ -6931,7 +6936,7 @@ export function ChatInput({
       /** 选中引擎的 **wire model id** —— 唯一可发送、可当记忆键的那个 id。 */
       modelId: string;
       effort?: Effort;
-      engine: 'cc' | 'codex' | 'pi';
+      engine: 'cc' | 'codex' | 'pi' | 'omp';
       fast: boolean;
       favoriteUid: string | null;
       /** 行的归一化 id(面板行身份)。草稿层不消费,更不作为发送 id。 */

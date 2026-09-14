@@ -81,6 +81,12 @@ function normalizeSettings(raw: unknown): ImDefaultSettings {
         'pi',
         rawAgentOrLegacy(rawAgents, 'pi', agentKind, legacySettings),
       ),
+      // OMP:IM 侧暂不开放绑定,但设置卡已经落盘第四槽,归一化必须一并补齐,
+      // 否则读侧丢 key、legacy 检测(信号 4)的整体比对也会恒不成立。
+      omp: normalizeAgentSettings(
+        'omp',
+        rawAgentOrLegacy(rawAgents, 'omp', agentKind, legacySettings),
+      ),
     },
   };
 }
@@ -348,7 +354,9 @@ function settingsOverrides(
     overrides.groupPermissionMode = value.groupPermissionMode;
   }
   const agents: Partial<Record<ImDefaultAgentKind, ImDefaultAgentSettings>> = {};
-  for (const agentKind of ['claude-code', 'codex', 'pi'] as const) {
+  // 枚举要覆盖全部四个槽:omp 目前与出厂值恒等(不会进 overrides),但漏掉会让
+  // 后续开放绑定时的定制静默丢失。
+  for (const agentKind of ['claude-code', 'codex', 'pi', 'omp'] as const) {
     if (!agentSettingsEqual(value.agents[agentKind], defaults.agents[agentKind])) {
       agents[agentKind] = value.agents[agentKind];
     }
@@ -364,7 +372,7 @@ function settingsCustomizedKeys(value: ImDefaultSettings, defaults: ImDefaultSet
   if (value.groupPermissionMode !== defaults.groupPermissionMode) {
     keys.push('groupPermissionMode');
   }
-  for (const agentKind of ['claude-code', 'codex', 'pi'] as const) {
+  for (const agentKind of ['claude-code', 'codex', 'pi', 'omp'] as const) {
     if (!agentSettingsEqual(value.agents[agentKind], defaults.agents[agentKind])) {
       keys.push(`agents.${agentKind}`);
     }
@@ -385,6 +393,7 @@ function cloneSettings(settings: ImDefaultSettings): ImDefaultSettings {
       'claude-code': { ...settings.agents['claude-code'] },
       codex: { ...settings.agents.codex },
       pi: { ...settings.agents.pi },
+      omp: { ...settings.agents.omp },
     },
   };
 }

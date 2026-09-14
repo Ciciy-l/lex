@@ -748,6 +748,9 @@ export function CreateWorkerPopover({
                 fastModeConfigurable={['codex', 'pi']}
                 unifiedAgents={sshRemote ? (pickerAgents ?? ['claude-code', 'codex']).filter((kind) => kind !== 'pi') : pickerAgents}
                 onUnifiedSelect={deviceId && remoteProviders.unsupported ? undefined : (selection) => {
+                  // OMP 目前不能作为 worker 引擎:创建侧仍按三个 agent 建模
+                  // (WorkerCreationPrefs / vendorKey 都没有 OMP 的槽位)。
+                  if (selection.engine === 'omp') return;
                   const nextAgent = selection.engine === 'cc' ? 'claude-code' : selection.engine;
                   updateAgent(nextAgent);
                   setModel(selection.modelId);

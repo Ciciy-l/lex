@@ -508,7 +508,7 @@ describe('deferred switch (turn running)', () => {
     const store = new Map<
       string,
       {
-        targetAgentKind: 'claude-code' | 'codex' | 'pi';
+        targetAgentKind: PendingAgentSwitchIntent['targetAgentKind'];
         model: string;
         providerId: string | null | undefined;
         effort?: string;
