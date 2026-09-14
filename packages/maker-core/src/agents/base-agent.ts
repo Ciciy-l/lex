@@ -54,6 +54,7 @@ import type {
 } from '../types/account-rate-limits.js';
 import type { HookEvent, HookCallbackMatcher, Query } from '@anthropic-ai/claude-agent-sdk';
 
+import type { OmpSessionCredentials } from './omp/launch-plan.js';
 import type { AuthAdapter } from '../interfaces/auth-adapter.js';
 import type { AgentRuntimeConfig } from '../interfaces/runtime-config.js';
 import type { Logger } from '../interfaces/logger.js';
@@ -700,6 +701,30 @@ export interface AgentDeps {
   resolvePiAgentHome?: (remoteHostId?: string | null) => string | undefined;
   /** Native user context root, separate from Cindy's models/auth runtime home. */
   resolvePiGlobalContextHome?: (remoteHostId?: string | null) => string | undefined;
+
+  /**
+   * OMP-only（T04 由 desktop host 注入）：受管持久根（`userData/omp-agent-home`）。
+   * 绝不能复用 Pi 的目录 —— 两者上游仓库不同但环境变量名相近（PI_CONFIG_DIR /
+   * PI_CODING_AGENT_DIR），复用会静默读到对方的凭证与会话。
+   */
+  resolveOmpAgentHome?: (remoteHostId?: string | null) => string | undefined;
+  /**
+   * OMP-only：进子进程 env 的 Cindy 托管凭证。只给值，不落盘 ——
+   * `models.yml` 的 apiKey 写的是 env 名（spike §10.4）。
+   */
+  resolveOmpCredentials?: (context: {
+    sessionId?: string;
+    providerId?: string | null;
+  }) => OmpSessionCredentials | undefined;
+  /**
+   * OMP-only：受管 `models.yml` 的**内容**（provider/catalog 在 host 侧）。
+   * maker-core 只负责把它写到受管根里，不解析、不改写一个字节。
+   */
+  resolveOmpModelsYaml?: (context: {
+    sessionId?: string;
+    providerId?: string | null;
+    model: string;
+  }) => string | undefined;
 
   /**
    * Pi-only: advisory metadata for Cindy UI/command projection. This resolver

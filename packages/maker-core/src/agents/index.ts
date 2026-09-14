@@ -87,6 +87,19 @@ export {
   parseOmpCommands,
 } from './omp/commands.js';
 export { startOmpProcess } from './omp/process-host.js';
+export { OmpAgent } from './omp/index.js';
+export {
+  OmpPermissionBridge,
+  classifyOmpOptions,
+  describeOmpApproval,
+  parseOmpUiRequest,
+  type OmpUiRequest,
+} from './omp/permission-bridge.js';
+export {
+  OmpTranslator,
+  redactOmpText,
+  type OmpTranslation,
+} from './omp/translator.js';
 export type { OmpCommand, OmpCatalogSnapshot } from './omp/commands.js';
 export type {
   OmpProcessHost,
