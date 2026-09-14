@@ -1,173 +1,186 @@
-import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  OMP_PROBE_CONFIG_DIR_NAME,
-  OMP_PROBE_SETTINGS_FILE,
-  createOmpIsolatedProbeLaunchPlan,
+  createOmpSessionLaunchPlan,
   isOmpCompatibilityBaseline,
+  OMP_CONFIG_DIR_NAME,
+  OMP_SETTINGS_FILE_NAME,
   parseOmpVersionOutput,
+  validateOmpLaunchModel,
 } from './launch-plan.js';
+import {
+  OMP_CINDY_API_KEY_ENV,
+  OMP_CINDY_SESSION_ID_ENV,
+  OMP_CINDY_SESSION_TOKEN_ENV,
+} from './models-config.js';
 
-function expectInside(root: string, candidate: string, implementation: typeof path): void {
-  const relative = implementation.relative(root, candidate);
-  expect(relative).not.toBe('');
-  expect(relative.startsWith('..')).toBe(false);
-  expect(implementation.isAbsolute(relative)).toBe(false);
+function plan(
+  overrides: Partial<Parameters<typeof createOmpSessionLaunchPlan>[0]> = {},
+) {
+  return createOmpSessionLaunchPlan({
+    roots: { home: '/lex/omp-agent-home', workingDir: '/projects/app', platform: 'linux' },
+    permissionMode: 'ask',
+    ...overrides,
+  });
 }
 
-function roots(sandboxRoot: string) {
-  return process.platform === 'win32'
-    ? { sandboxRoot, windowsSystemRoot: 'C:\\Windows' }
-    : { sandboxRoot };
-}
-
-describe('OMP isolated probe launch plan', () => {
-  it('accepts only the fixed-tag version wire shape and compatibility baseline', () => {
+describe('parseOmpVersionOutput', () => {
+  it('accepts the pinned v18.1.18 banner and nothing looser', () => {
     expect(parseOmpVersionOutput('omp/18.1.18\n')).toBe('18.1.18');
     expect(parseOmpVersionOutput('omp/18.1.18\r\n')).toBe('18.1.18');
     expect(isOmpCompatibilityBaseline('omp/18.1.18\n')).toBe(true);
     expect(isOmpCompatibilityBaseline('omp/18.1.19\n')).toBe(false);
-    expect(parseOmpVersionOutput('v18.1.18\n')).toBeUndefined();
-    expect(parseOmpVersionOutput('omp/18.1.18\nwarning\n')).toBeUndefined();
-    expect(parseOmpVersionOutput('omp/18.1.18')).toBeUndefined();
+    expect(parseOmpVersionOutput('omp 18.1.18')).toBeUndefined();
+    expect(parseOmpVersionOutput('omp/18.1.18\nnoise')).toBeUndefined();
+  });
+});
+
+describe('createOmpSessionLaunchPlan', () => {
+  it('uses the real working directory instead of a sandbox home', () => {
+    const result = plan();
+    expect(result.roots.workingDir).toBe('/projects/app');
+    expect(result.roots.home).toBe('/lex/omp-agent-home');
+    expect(result.roots.workingDir.startsWith(result.roots.home)).toBe(false);
   });
 
-  it('uses fresh roots and a non-inherited environment for a no-prompt probe', () => {
-    const root = process.platform === 'win32' ? 'C:\\sandbox\\omp-123' : '/sandbox/omp-123';
-    const plan = createOmpIsolatedProbeLaunchPlan(roots(root));
-    const implementation = process.platform === 'win32' ? path.win32 : path.posix;
-    const resolved = implementation.resolve(root);
+  it('keeps every managed root inside the persistent OMP home', () => {
+    const result = plan();
+    expect(result.roots.config).toBe(`/lex/omp-agent-home/${OMP_CONFIG_DIR_NAME}`);
+    expect(result.roots.agent).toBe('/lex/omp-agent-home/.omp/agent');
+    expect(result.roots.sessions).toBe('/lex/omp-agent-home/.omp/agent/sessions');
+    expect(result.roots.temporary).toBe('/lex/omp-agent-home/tmp');
+    expect(result.roots.settingsFile).toBe(
+      `/lex/omp-agent-home/.omp/agent/${OMP_SETTINGS_FILE_NAME}`,
+    );
+    expect(result.roots.modelsFile).toBe('/lex/omp-agent-home/.omp/agent/models.yml');
+  });
 
-    expect(plan.roots.sandboxRoot).toBe(resolved);
-    for (const value of Object.values(plan.roots).filter(
-      (entry) => entry !== plan.roots.sandboxRoot,
-    ))
-      expectInside(resolved, value, implementation);
-    expect(plan.roots.settingsFile).toBe(implementation.join(resolved, OMP_PROBE_SETTINGS_FILE));
-    expect(plan.environment).toMatchObject({
-      HOME: plan.roots.home,
-      PI_CONFIG_DIR: OMP_PROBE_CONFIG_DIR_NAME,
-      PI_CODING_AGENT_DIR: plan.roots.agent,
-      TMPDIR: plan.roots.temporary,
-      TMP: plan.roots.temporary,
-      TEMP: plan.roots.temporary,
-    });
-    expect(plan.environment).not.toHaveProperty('PATH');
-    expect(plan.environment).not.toHaveProperty('PI_CONFIG_FILES');
-    expect(plan.environment).not.toHaveProperty('PI_PROFILE');
-    expect(plan.environment).not.toHaveProperty('OMP_PROFILE');
-    expect(plan.roots.config).toBe(implementation.join(plan.roots.home, OMP_PROBE_CONFIG_DIR_NAME));
-    // v18.1.18 stops its project-plugin ancestor walk at HOME. Starting the
-    // probe below that fresh directory must keep the walk out of the parent
-    // system temp directory, where a host-side project registry could exist.
-    expect(plan.roots.workingDirectory).toBe(implementation.join(plan.roots.home, 'workdir'));
-    expectInside(plan.roots.home, plan.roots.workingDirectory, implementation);
-    expect(plan.arguments).toEqual([
+  it('starts an RPC session without the probe-only session/tool opt-outs', () => {
+    const result = plan();
+    expect(result.arguments.slice(0, 4)).toEqual([
       '--mode',
       'rpc',
       '--config',
-      plan.roots.settingsFile,
-      '--no-session',
-      '--no-tools',
-      '--no-extensions',
-      '--no-skills',
-      '--no-rules',
-      '--no-lsp',
-      '--no-pty',
-      '--no-title',
-      '--approval-mode',
-      'always-ask',
+      result.roots.settingsFile,
     ]);
-    expect(plan.settingsYaml).toBe(
-      'startup:\n' +
-        '  setupWizard: false\n' +
-        '  checkUpdate: false\n' +
-        'mcp:\n' +
-        '  enableProjectConfig: false\n' +
-        'tools:\n' +
-        '  approvalMode: always-ask\n' +
-        'enabledProviders: []\n',
-    );
+    expect(result.arguments).not.toContain('--no-session');
+    expect(result.arguments).not.toContain('--no-tools');
   });
 
-  it('adds only validated explicit model selection', () => {
-    const root = process.platform === 'win32' ? 'C:\\sandbox\\omp-123' : '/sandbox/omp-123';
-    const plan = createOmpIsolatedProbeLaunchPlan(roots(root), {
-      provider: 'example-provider',
-      model: 'example-model',
-    });
+  it('maps each exposed permission tier to the OMP approval mode', () => {
+    expect(plan({ permissionMode: 'ask' }).approvalMode).toBe('always-ask');
+    expect(plan({ permissionMode: 'auto' }).approvalMode).toBe('write');
+    expect(plan({ permissionMode: 'bypassPermissions' }).approvalMode).toBe('yolo');
+  });
 
-    expect(plan.arguments.slice(-4)).toEqual([
-      '--provider',
-      'example-provider',
-      '--model',
-      'example-model',
-    ]);
+  it('fails closed to always-ask for unexposed or unknown modes', () => {
+    expect(plan({ permissionMode: 'acceptEdits' }).approvalMode).toBe('always-ask');
+    expect(plan({ permissionMode: 'default' }).approvalMode).toBe('always-ask');
+    expect(plan({ permissionMode: 'plan' }).approvalMode).toBe('always-ask');
+    expect(plan({ permissionMode: 'nope' }).approvalMode).toBe('always-ask');
+    expect(plan({ permissionMode: undefined }).approvalMode).toBe('always-ask');
+  });
+
+  it('double-writes the approval mode into argv and the settings YAML', () => {
+    const result = plan({ permissionMode: 'auto' });
+    expect(result.arguments).toContain('--approval-mode');
+    expect(result.arguments[result.arguments.indexOf('--approval-mode') + 1]).toBe('write');
+    expect(result.settingsYaml).toContain('approvalMode: write');
+    // 上游默认 yolo,必须显式关掉启动向导 / 更新检查 / 项目 MCP 配置。
+    expect(result.settingsYaml).toContain('setupWizard: false');
+    expect(result.settingsYaml).toContain('checkUpdate: false');
+    expect(result.settingsYaml).toContain('enableProjectConfig: false');
+    expect(result.settingsYaml).toContain('- cindy');
+  });
+
+  it('passes provider and model only when they are present', () => {
+    expect(plan().arguments).not.toContain('--provider');
+    const result = plan({ model: { provider: 'cindy', model: 'MiniMax-M2' } });
+    expect(result.arguments).toContain('--provider');
+    expect(result.arguments).toContain('cindy');
+    expect(result.arguments).toContain('MiniMax-M2');
+  });
+
+  it('adds the provider id to enabledProviders', () => {
+    const result = plan({ model: { provider: 'minimax' } });
+    expect(result.settingsYaml).toContain('- minimax');
+    expect(result.settingsYaml).toContain('- cindy');
+  });
+
+  it('never inherits the parent process environment', () => {
+    const result = plan();
+    expect(Object.keys(result.environment)).not.toContain('PATH');
+    expect(result.environment.HOME).toBe('/lex/omp-agent-home');
+    expect(result.environment.PI_CONFIG_DIR).toBe(OMP_CONFIG_DIR_NAME);
+    expect(result.environment.PI_CODING_AGENT_DIR).toBe('/lex/omp-agent-home/.omp/agent');
+  });
+
+  it('injects credentials only into the child env snapshot', () => {
+    const result = plan({
+      credentials: { proxyKey: 'placeholder', sessionId: 's-1', sessionToken: 't-1' },
+    });
+    expect(result.environment[OMP_CINDY_API_KEY_ENV]).toBe('placeholder');
+    expect(result.environment[OMP_CINDY_SESSION_ID_ENV]).toBe('s-1');
+    expect(result.environment[OMP_CINDY_SESSION_TOKEN_ENV]).toBe('t-1');
+    expect(result.settingsYaml).not.toContain('placeholder');
+  });
+
+  it('omits credential env entries when no credentials are supplied', () => {
+    const result = plan();
+    expect(result.environment[OMP_CINDY_API_KEY_ENV]).toBeUndefined();
+    expect(result.environment[OMP_CINDY_SESSION_ID_ENV]).toBeUndefined();
+  });
+
+  it('requires a Windows system root on win32 and keeps the OS paths', () => {
     expect(() =>
-      createOmpIsolatedProbeLaunchPlan(roots(root), {
-        provider: '--yolo',
-        model: 'example-model',
+      createOmpSessionLaunchPlan({
+        roots: { home: 'C:/lex/omp', workingDir: 'C:/work', platform: 'win32' },
+        permissionMode: 'ask',
       }),
-    ).toThrow('Invalid OMP probe provider');
-    expect(() =>
-      createOmpIsolatedProbeLaunchPlan(roots(root), {
-        provider: 'example-provider',
-        model: '\0',
-      }),
-    ).toThrow('Invalid OMP probe model');
-  });
-
-  it('constructs Windows-only home and app-data redirects without parent env values', () => {
-    const plan = createOmpIsolatedProbeLaunchPlan({
-      sandboxRoot: 'C:\\sandbox\\omp-123',
-      platform: 'win32',
-      windowsSystemRoot: 'C:\\Windows',
-    });
-
-    expect(plan.environment).toMatchObject({
-      HOME: 'C:\\sandbox\\omp-123\\home',
-      USERPROFILE: 'C:\\sandbox\\omp-123\\home',
-      HOMEDRIVE: 'C:',
-      HOMEPATH: '\\sandbox\\omp-123\\home',
-      APPDATA: 'C:\\sandbox\\omp-123\\appdata',
-      LOCALAPPDATA: 'C:\\sandbox\\omp-123\\localappdata',
-      SystemRoot: 'C:\\Windows',
-      WINDIR: 'C:\\Windows',
-    });
-    expect(plan.environment).not.toHaveProperty('APPDATA', process.env.APPDATA);
-  });
-
-  it.each(['', '\0', process.platform === 'win32' ? 'C:\\' : '/'])(
-    'rejects an unsafe sandbox root %j',
-    (sandboxRoot) => {
-      expect(() => createOmpIsolatedProbeLaunchPlan(roots(sandboxRoot))).toThrow();
-    },
-  );
-
-  it('returns immutable snapshots so later callers cannot add unsafe flags or env', () => {
-    const root = process.platform === 'win32' ? 'C:\\sandbox\\omp-123' : '/sandbox/omp-123';
-    const plan = createOmpIsolatedProbeLaunchPlan(roots(root));
-
-    expect(Object.isFrozen(plan)).toBe(true);
-    expect(Object.isFrozen(plan.roots)).toBe(true);
-    expect(Object.isFrozen(plan.arguments)).toBe(true);
-    expect(Object.isFrozen(plan.environment)).toBe(true);
-    expect(() => (plan.arguments as string[]).push('--yolo')).toThrow();
-  });
-
-  it('requires an explicit host system root for Windows', () => {
-    expect(() =>
-      createOmpIsolatedProbeLaunchPlan({
-        sandboxRoot: 'C:\\sandbox\\omp-123',
+    ).toThrow(/system root/);
+    const result = createOmpSessionLaunchPlan({
+      roots: {
+        home: 'C:/lex/omp',
+        workingDir: 'C:/work',
         platform: 'win32',
-      }),
-    ).toThrow('valid Windows system root');
+        windowsSystemRoot: 'C:/Windows',
+      },
+      permissionMode: 'ask',
+    });
+    expect(result.environment.SystemRoot).toBe('C:\\Windows');
+    expect(result.environment.WINDIR).toBe('C:\\Windows');
+    expect(result.environment.USERPROFILE).toBe('C:\\lex\\omp');
+    expect(result.roots.agent).toBe('C:\\lex\\omp\\.omp\\agent');
+  });
+
+  it('opts into --session-dir only when the caller pins a session directory', () => {
+    expect(plan().arguments).not.toContain('--session-dir');
+    const result = plan({ sessionDir: '/lex/omp-agent-home/.omp/agent/sessions' });
+    expect(result.arguments).toContain('--session-dir');
+    expect(result.arguments).toContain('/lex/omp-agent-home/.omp/agent/sessions');
+  });
+
+  it('rejects non-absolute roots', () => {
     expect(() =>
-      createOmpIsolatedProbeLaunchPlan({
-        sandboxRoot: 'C:\\sandbox\\omp-123',
-        platform: 'win32',
-        windowsSystemRoot: 'relative',
+      createOmpSessionLaunchPlan({
+        roots: { home: 'relative', workingDir: '/work', platform: 'linux' },
       }),
-    ).toThrow('valid Windows system root');
+    ).toThrow(/home/);
+    expect(() =>
+      createOmpSessionLaunchPlan({
+        roots: { home: '/lex/omp', workingDir: 'relative', platform: 'linux' },
+      }),
+    ).toThrow(/working directory/);
+  });
+});
+
+describe('validateOmpLaunchModel', () => {
+  it('accepts a partial selector and rejects hostile values', () => {
+    expect(validateOmpLaunchModel(undefined)).toBeUndefined();
+    expect(validateOmpLaunchModel({ model: 'MiniMax-M2' })).toEqual({ model: 'MiniMax-M2' });
+    expect(validateOmpLaunchModel({ provider: 'cindy' })).toEqual({ provider: 'cindy' });
+    expect(() => validateOmpLaunchModel({})).toThrow(/launch model/);
+    expect(() => validateOmpLaunchModel({ model: '-x' })).toThrow(/model/);
+    expect(() => validateOmpLaunchModel({ model: 'a'.repeat(513) })).toThrow(/model/);
+    expect(() => validateOmpLaunchModel('x')).toThrow(/launch model/);
   });
 });

@@ -1,57 +1,94 @@
 import path from 'node:path';
 import { OMP_COMPATIBILITY_BASELINE } from './commands.js';
+import {
+  OMP_CINDY_API_KEY_ENV,
+  OMP_CINDY_PROVIDER_ID,
+  OMP_CINDY_SESSION_ID_ENV,
+  OMP_CINDY_SESSION_TOKEN_ENV,
+  OMP_MODELS_FILE_NAME,
+} from './models-config.js';
+import {
+  resolveOmpApprovalMode,
+  type OmpApprovalMode,
+} from './permission-map.js';
 
-export const OMP_PROBE_SETTINGS_FILE = 'omp-probe-settings.yaml';
-/** OMP interprets PI_CONFIG_DIR as a directory name below HOME, not a path. */
-export const OMP_PROBE_CONFIG_DIR_NAME = '.omp';
+/** OMP 把 PI_CONFIG_DIR 当作 HOME 下的**目录名**，不是绝对路径。 */
+export const OMP_CONFIG_DIR_NAME = '.omp';
+export const OMP_SETTINGS_FILE_NAME = 'omp-settings.yaml';
 
-export interface OmpIsolatedRoots {
-  /** A host-created, unique and otherwise empty directory for one probe. */
-  sandboxRoot: string;
+export interface OmpSessionRoots {
+  /**
+   * Lex 受管的**持久** OMP 根（`userData/omp-agent-home`）。
+   * 绝不能是 `~/.omp`，更不能是 Pi 的目录 —— 两者上游仓库不同但环境变量名相近。
+   */
+  home: string;
+  /** 会话的真实项目目录（不是沙箱临时目录）。 */
+  workingDir: string;
   platform?: NodeJS.Platform;
-  /** Windows needs this non-secret OS runtime path even with a fresh environment. */
+  /** Windows 即使重建环境也需要的非敏感 OS 路径。 */
   windowsSystemRoot?: string;
 }
 
-export interface OmpProbeModel {
-  provider: string;
-  model: string;
+export interface OmpLaunchModel {
+  provider?: string;
+  model?: string;
 }
 
-export interface OmpProbeLaunchPlan {
+export interface OmpSessionCredentials {
+  /** 交给 models.yml `apiKey` 指向的 env 的占位值；只进子进程 env，不落盘。 */
+  proxyKey?: string;
+  sessionId?: string;
+  sessionToken?: string;
+}
+
+export interface OmpSessionLaunchPlanInput {
+  readonly roots: OmpSessionRoots;
+  /** Lex 权限档位；未知/缺失一律 fail-closed 到 `always-ask`（见 permission-map）。 */
+  readonly permissionMode?: unknown;
+  readonly model?: OmpLaunchModel;
+  readonly credentials?: OmpSessionCredentials;
+  /**
+   * 可选：把会话 JSONL 指到受管根内。
+   * 上游 `--session-dir` 未在 v18.1.18 spike 中实证，因此默认不传（agent 目录
+   * 本身已在受管根内，默认落点即受管）；需要显式钉住时才打开。
+   */
+  readonly sessionDir?: string;
+}
+
+export interface OmpSessionLaunchPlan {
   readonly roots: Readonly<{
-    sandboxRoot: string;
     home: string;
     config: string;
     agent: string;
-    workingDirectory: string;
+    sessions: string;
+    workingDir: string;
     temporary: string;
     settingsFile: string;
+    modelsFile: string;
   }>;
-  /**
-   * This is a deliberately small overlay, not an allowlist for OMP discovery.
-   * The host must create every root empty before it starts the process.
-   */
+  /** 实际生效的 OMP 档位（双写进 --approval-mode 与 settings YAML，防默认 yolo）。 */
+  readonly approvalMode: OmpApprovalMode;
   readonly settingsYaml: string;
-  /** Exact argv for an isolated, no-prompt RPC capability probe. */
+  /** 生产会话启动参数：没有 `--no-session` / `--no-tools`。 */
   readonly arguments: readonly string[];
-  /** A fresh environment, never a clone of the parent process environment. */
+  /** 全新环境，绝不克隆父进程 environment。 */
   readonly environment: Readonly<Record<string, string>>;
 }
 
 const MAX_ARGUMENT_VALUE_LENGTH = 512;
+const MAX_ENV_VALUE_LENGTH = 4096;
 const VERSION_OUTPUT = /^omp\/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)\r?\n$/u;
 
 /**
- * OMP v18.1.18 prints exactly `omp/<semver>\\n` for `--version`. Keeping this
- * strict avoids treating arbitrary diagnostic output as a vetted executable.
+ * OMP v18.1.18 的 `--version` 输出严格是 `omp/<semver>\n`。保持严格，
+ * 避免把任意诊断输出当成受审可执行文件。
  */
 export function parseOmpVersionOutput(output: string): string | undefined {
   if (typeof output !== 'string' || output.length > 256) return undefined;
   return VERSION_OUTPUT.exec(output)?.[1];
 }
 
-/** The initial RPC adapter intentionally supports one audited upstream tag. */
+/** RPC 适配器只支持一个经审计的上游 tag。 */
 export function isOmpCompatibilityBaseline(output: string): boolean {
   return parseOmpVersionOutput(output) === OMP_COMPATIBILITY_BASELINE;
 }
@@ -60,11 +97,18 @@ function pathApi(platform: NodeJS.Platform): typeof path {
   return platform === 'win32' ? path.win32 : path.posix;
 }
 
-function requireAbsolutePath(value: string, name: string, implementation: typeof path): string {
+function requireAbsolutePath(
+  value: string,
+  name: string,
+  implementation: typeof path,
+): string {
   if (typeof value !== 'string' || !value || value.includes('\0'))
     throw new Error(`Invalid OMP ${name}`);
-  const resolved = implementation.resolve(value);
-  if (!implementation.isAbsolute(resolved) || resolved === implementation.parse(resolved).root)
+  // 不做 resolve：相对路径必须由调用方先钉成绝对路径,避免静默落到进程 cwd。
+  if (!implementation.isAbsolute(value))
+    throw new Error(`OMP ${name} must be an absolute non-root directory`);
+  const resolved = implementation.normalize(value);
+  if (resolved === implementation.parse(resolved).root)
     throw new Error(`OMP ${name} must be an absolute non-root directory`);
   return resolved;
 }
@@ -82,31 +126,28 @@ function requireArgumentValue(value: unknown, name: string): string {
   return value;
 }
 
-/**
- * Validates the optional model selector before a probe can materialize any
- * filesystem state. Keep the launch-plan call below as a second boundary: it
- * is also used directly by the sandbox materializer.
- */
-export function validateOmpProbeModel(model: unknown): OmpProbeModel | undefined {
-  if (model === undefined) return undefined;
-  if (!model || typeof model !== 'object' || Array.isArray(model))
-    throw new Error('Invalid OMP probe model');
-  const candidate = model as Partial<OmpProbeModel>;
-  return Object.freeze({
-    provider: requireArgumentValue(candidate.provider, 'probe provider'),
-    model: requireArgumentValue(candidate.model, 'probe model'),
-  });
+function requireEnvironmentValue(value: unknown, name: string): string {
+  if (
+    typeof value !== 'string' ||
+    !value ||
+    value.length > MAX_ENV_VALUE_LENGTH ||
+    value.includes('\0') ||
+    Array.from(value).some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
+  ) {
+    throw new Error(`Invalid OMP ${name}`);
+  }
+  return value;
 }
 
 function requireWindowsSystemRoot(value: string | undefined): string {
   if (
     typeof value !== 'string' ||
     !value ||
-    value.length > 4096 ||
+    value.length > MAX_ENV_VALUE_LENGTH ||
     value.includes('\0') ||
     !path.win32.isAbsolute(value)
   ) {
-    throw new Error('OMP probe requires a valid Windows system root');
+    throw new Error('OMP requires a valid Windows system root');
   }
   return path.win32.normalize(value);
 }
@@ -114,7 +155,7 @@ function requireWindowsSystemRoot(value: string | undefined): string {
 function descendant(root: string, child: string, implementation: typeof path): string {
   const relative = implementation.relative(root, child);
   if (!relative || relative.startsWith('..') || implementation.isAbsolute(relative))
-    throw new Error('Invalid OMP isolated root layout');
+    throw new Error('Invalid OMP managed root layout');
   return child;
 }
 
@@ -123,58 +164,106 @@ function freezeRecord(values: Record<string, string>): Readonly<Record<string, s
 }
 
 /**
- * Builds a deliberately restricted launch plan for a one-shot OMP RPC probe.
- *
- * OMP's fixed v18.1.18 startup eagerly reads home/config/agent/project dotenv
- * files before its normal settings layer. Therefore this is only safe when the
- * Desktop host supplies a newly created, empty sandbox root. The function is
- * intentionally pure: it neither creates the directories nor starts a process.
+ * 校验可选的 provider/model 选择器。provider 缺省时 settings 仍钉住 Cindy block，
+ * 因为 models.yml 里 Cindy provider 总是由 host 物化。
  */
-export function createOmpIsolatedProbeLaunchPlan(
-  input: OmpIsolatedRoots,
-  model?: OmpProbeModel,
-): OmpProbeLaunchPlan {
+export function validateOmpLaunchModel(model: unknown): OmpLaunchModel | undefined {
+  if (model === undefined) return undefined;
+  if (!model || typeof model !== 'object' || Array.isArray(model))
+    throw new Error('Invalid OMP launch model');
+  const candidate = model as Partial<OmpLaunchModel>;
+  if (candidate.provider === undefined && candidate.model === undefined)
+    throw new Error('Invalid OMP launch model');
+  return Object.freeze({
+    ...(candidate.provider === undefined
+      ? {}
+      : { provider: requireArgumentValue(candidate.provider, 'provider') }),
+    ...(candidate.model === undefined
+      ? {}
+      : { model: requireArgumentValue(candidate.model, 'model') }),
+  });
+}
+
+function settingsYaml(approvalMode: OmpApprovalMode, providers: readonly string[]): string {
+  return [
+    'startup:',
+    '  setupWizard: false',
+    '  checkUpdate: false',
+    'mcp:',
+    '  enableProjectConfig: false',
+    'tools:',
+    // 与 --approval-mode 同值双写：OMP 上游默认 yolo，不能依赖任何一侧的默认值。
+    `  approvalMode: ${approvalMode}`,
+    'enabledProviders:',
+    ...providers.map((provider) => `  - ${provider}`),
+    '',
+  ].join('\n');
+}
+
+/**
+ * 构建**生产会话**启动计划（替代已删除的探测版 `createOmpIsolatedProbeLaunchPlan`）。
+ *
+ * 与探测版的差异：cwd 是真实项目目录；HOME 等根是持久受管目录（不是一次性沙箱）；
+ * 不再带 `--no-session` / `--no-tools`（会话与工具是生产会话的本体）。
+ * 函数保持纯：既不创建目录，也不启动进程。
+ */
+export function createOmpSessionLaunchPlan(
+  input: OmpSessionLaunchPlanInput,
+): OmpSessionLaunchPlan {
   if (!input || typeof input !== 'object' || Array.isArray(input))
-    throw new Error('Invalid OMP isolated roots');
-  const platform = input.platform ?? process.platform;
+    throw new Error('Invalid OMP session launch input');
+  const roots = input.roots;
+  if (!roots || typeof roots !== 'object' || Array.isArray(roots))
+    throw new Error('Invalid OMP session roots');
+  const platform = roots.platform ?? process.platform;
   if (platform !== 'win32' && platform !== 'darwin' && platform !== 'linux')
     throw new Error('Unsupported OMP platform');
   const implementation = pathApi(platform);
-  const sandboxRoot = requireAbsolutePath(input.sandboxRoot, 'sandbox root', implementation);
+  const home = requireAbsolutePath(roots.home, 'home', implementation);
+  // 真实项目目录：不在 HOME 之下（否则 OMP 的项目插件上爬会一路爬到受管根）。
+  const workingDir = requireAbsolutePath(roots.workingDir, 'working directory', implementation);
   const buildPath = (name: string) =>
-    descendant(sandboxRoot, implementation.join(sandboxRoot, name), implementation);
-  const home = buildPath('home');
+    descendant(home, implementation.join(home, name), implementation);
   const config = descendant(
-    sandboxRoot,
-    implementation.join(home, OMP_PROBE_CONFIG_DIR_NAME),
+    home,
+    implementation.join(home, OMP_CONFIG_DIR_NAME),
     implementation,
   );
-  const agent = buildPath('agent');
-  // OMP's project-plugin registry walk climbs from cwd until HOME. Keep this
-  // below the fresh HOME so it cannot continue through the host temp parent.
-  const workingDirectory = descendant(
-    sandboxRoot,
-    implementation.join(home, 'workdir'),
+  const agent = descendant(
+    home,
+    implementation.join(config, 'agent'),
     implementation,
   );
+  const sessions =
+    input.sessionDir === undefined
+      ? descendant(home, implementation.join(agent, 'sessions'), implementation)
+      : requireAbsolutePath(input.sessionDir, 'session directory', implementation);
   const temporary = buildPath('tmp');
   const settingsFile = descendant(
-    sandboxRoot,
-    implementation.join(sandboxRoot, OMP_PROBE_SETTINGS_FILE),
+    home,
+    implementation.join(agent, OMP_SETTINGS_FILE_NAME),
+    implementation,
+  );
+  const modelsFile = descendant(
+    home,
+    implementation.join(agent, OMP_MODELS_FILE_NAME),
     implementation,
   );
 
+  const approvalMode = resolveOmpApprovalMode(input.permissionMode).approvalMode;
+  const model = validateOmpLaunchModel(input.model);
+
   const environment: Record<string, string> = {
     HOME: home,
-    PI_CONFIG_DIR: OMP_PROBE_CONFIG_DIR_NAME,
+    PI_CONFIG_DIR: OMP_CONFIG_DIR_NAME,
     PI_CODING_AGENT_DIR: agent,
     TMPDIR: temporary,
     TMP: temporary,
     TEMP: temporary,
-    XDG_CONFIG_HOME: buildPath('xdg-config'),
-    XDG_DATA_HOME: buildPath('xdg-data'),
-    XDG_STATE_HOME: buildPath('xdg-state'),
-    XDG_CACHE_HOME: buildPath('xdg-cache'),
+    XDG_CONFIG_HOME: buildPath('.config'),
+    XDG_DATA_HOME: buildPath('.local/share'),
+    XDG_STATE_HOME: buildPath('.local/state'),
+    XDG_CACHE_HOME: buildPath('.cache'),
   };
   if (platform === 'win32') {
     const parsedHome = implementation.parse(home);
@@ -183,53 +272,69 @@ export function createOmpIsolatedProbeLaunchPlan(
     environment.HOMEPATH = `\\${home.slice(parsedHome.root.length)}`;
     environment.APPDATA = buildPath('appdata');
     environment.LOCALAPPDATA = buildPath('localappdata');
-    const systemRoot = requireWindowsSystemRoot(input.windowsSystemRoot);
+    const systemRoot = requireWindowsSystemRoot(roots.windowsSystemRoot);
     environment.SystemRoot = systemRoot;
     environment.WINDIR = systemRoot;
   }
 
-  const argv = [
+  // 凭证只进子进程 env；models.yml 里 apiKey 写的是 env 名，文件内不含密钥。
+  const credentials = input.credentials;
+  if (credentials !== undefined) {
+    if (!credentials || typeof credentials !== 'object' || Array.isArray(credentials))
+      throw new Error('Invalid OMP session credentials');
+    if (credentials.proxyKey !== undefined)
+      environment[OMP_CINDY_API_KEY_ENV] = requireEnvironmentValue(
+        credentials.proxyKey,
+        'proxy key',
+      );
+    if (credentials.sessionId !== undefined)
+      environment[OMP_CINDY_SESSION_ID_ENV] = requireEnvironmentValue(
+        credentials.sessionId,
+        'session id',
+      );
+    if (credentials.sessionToken !== undefined)
+      environment[OMP_CINDY_SESSION_TOKEN_ENV] = requireEnvironmentValue(
+        credentials.sessionToken,
+        'session token',
+      );
+  }
+
+  const argv: string[] = [
     '--mode',
     'rpc',
     '--config',
     settingsFile,
-    '--no-session',
-    '--no-tools',
+    '--approval-mode',
+    approvalMode,
+    // P0 全关项目侧消费面（PRD Q7）：cwd 改成真实项目目录后避免上爬发现插件。
     '--no-extensions',
     '--no-skills',
     '--no-rules',
     '--no-lsp',
     '--no-pty',
     '--no-title',
-    '--approval-mode',
-    'always-ask',
   ];
-  const validatedModel = validateOmpProbeModel(model);
-  if (validatedModel) {
-    argv.push('--provider', validatedModel.provider, '--model', validatedModel.model);
-  }
+  if (input.sessionDir !== undefined) argv.push('--session-dir', sessions);
+  if (model?.provider !== undefined) argv.push('--provider', model.provider);
+  if (model?.model !== undefined) argv.push('--model', model.model);
+
+  const providers = [OMP_CINDY_PROVIDER_ID];
+  if (model?.provider !== undefined && !providers.includes(model.provider))
+    providers.push(model.provider);
 
   return Object.freeze({
     roots: Object.freeze({
-      sandboxRoot,
       home,
       config,
       agent,
-      workingDirectory,
+      sessions,
+      workingDir,
       temporary,
       settingsFile,
+      modelsFile,
     }),
-    settingsYaml: [
-      'startup:',
-      '  setupWizard: false',
-      '  checkUpdate: false',
-      'mcp:',
-      '  enableProjectConfig: false',
-      'tools:',
-      '  approvalMode: always-ask',
-      'enabledProviders: []',
-      '',
-    ].join('\n'),
+    approvalMode,
+    settingsYaml: settingsYaml(approvalMode, providers),
     arguments: Object.freeze(argv),
     environment: freezeRecord(environment),
   });

@@ -21,22 +21,67 @@ export { finalizeCodexCitationText, normalizeCodexFileCitations } from './codex/
 export { PiAgent } from './pi/index.js';
 export { resolveNonDefaultWindowsGitBashPath } from './pi/windows-git-path.js';
 // OMP 协议层(--mode rpc 的 JSONL-over-stdio 契约)是与 Claude/Codex/Pi 同位置的
-// 第四个接入面。注意:此处导出的是**协议资产**(命令目录解析 / 进程宿主),
-// 探测层的 launch-plan / probe-controller 在 OMP 真正作为 agent 落地后由
-// T02 一并从公开入口摘除 —— 在此之前 desktop main 的探测通道仍靠它编译通过。
+// 第四个接入面。此处导出的是**生产资产**:命令目录解析 / 进程宿主 / 版本基线,
+// 以及 T02 新增的会话启动计划、受管 models.yml 生成、权限档位映射。
+// 探测层(probe-controller / 隔离沙箱 launch plan)已随 T02 一并删除。
 export {
-  createOmpIsolatedProbeLaunchPlan,
+  createOmpSessionLaunchPlan,
   isOmpCompatibilityBaseline,
-  OMP_PROBE_CONFIG_DIR_NAME,
-  OMP_PROBE_SETTINGS_FILE,
+  OMP_CONFIG_DIR_NAME,
+  OMP_SETTINGS_FILE_NAME,
   parseOmpVersionOutput,
-  validateOmpProbeModel,
+  validateOmpLaunchModel,
 } from './omp/launch-plan.js';
 export type {
-  OmpIsolatedRoots,
-  OmpProbeLaunchPlan,
-  OmpProbeModel,
+  OmpLaunchModel,
+  OmpSessionCredentials,
+  OmpSessionLaunchPlan,
+  OmpSessionLaunchPlanInput,
+  OmpSessionRoots,
 } from './omp/launch-plan.js';
+// 受管 models.yml:Cindy provider 只能走 models.yml(base-url 环境变量只覆盖本地
+// 引擎),apiKey 写 env 名,密钥只进子进程 env、不落盘。
+export {
+  buildOmpCindyModelsYaml,
+  buildOmpCindyProvider,
+  buildOmpModelsConfigYaml,
+  OMP_CINDY_API_KEY_ENV,
+  OMP_CINDY_PROVIDER_ID,
+  OMP_CINDY_PROVIDER_ID_HEADER,
+  OMP_CINDY_SESSION_ID_ENV,
+  OMP_CINDY_SESSION_ID_HEADER,
+  OMP_CINDY_SESSION_TOKEN_ENV,
+  OMP_CINDY_SESSION_TOKEN_HEADER,
+  OMP_MODELS_FILE_NAME,
+  OMP_PROVIDER_APIS,
+} from './omp/models-config.js';
+export type {
+  OmpCindyProviderInput,
+  OmpModelsConfigInput,
+  OmpModelsModel,
+  OmpModelsModelCost,
+  OmpModelsProvider,
+  OmpModelsProviderWithModels,
+  OmpProviderApi,
+} from './omp/models-config.js';
+// 权限档位映射:三档显式表驱动,fail-closed 到 always-ask(绝不到 yolo)。
+export {
+  isOmpApprovalMode,
+  isOmpPermissionModeSupported,
+  normalizeOmpApprovalMode,
+  OMP_APPROVAL_MODES,
+  OMP_APPROVAL_TIERS,
+  OMP_FALLBACK_APPROVAL_MODE,
+  OMP_PERMISSION_MODES,
+  OMP_SUPPORTED_PERMISSION_MODES,
+  resolveOmpApprovalMode,
+  toOmpApprovalMode,
+} from './omp/permission-map.js';
+export type {
+  OmpApprovalMode,
+  OmpApprovalResolution,
+  OmpApprovalTierPolicy,
+} from './omp/permission-map.js';
 export {
   OMP_COMPATIBILITY_BASELINE,
   OmpCommandCatalog,
@@ -48,12 +93,6 @@ export type {
   OmpProcessHost,
   OmpProcessHostOptions,
 } from './omp/process-host.js';
-export { OmpProbeController } from './omp/probe-controller.js';
-export type {
-  OmpProbeControllerOptions,
-  OmpProbeSnapshot,
-  OmpProbeStatus,
-} from './omp/probe-controller.js';
 export {
   canReuseCodexHostForCredentialMode,
   canReuseHostForCredentialMode,
