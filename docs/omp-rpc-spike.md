@@ -198,3 +198,47 @@ thinking_delta / thinking_end / toolcall_start / toolcall_delta / toolcall_end /
 ### 9.7 端到端确认
 
 真实写入成功：`hello.txt` 落盘 workdir（内容 `hi`），`tool_execution_end.isError:false`。
+
+---
+
+## 10. Header 插值实验（判定性，2026-09-14）
+
+### 10.1 目的
+
+`models.yml` 的 `apiKey` 按环境变量名解析（§0.1-2），那 `headers` 的值是否也支持
+`$VAR` / `${VAR}` 插值？这一点决定 **Cindy 会话 token 能不能放进 headers**：
+若不插值，把 token 写进 `models.yml` 就等于密钥明文落盘，与"凭证只进子进程 env、
+不落盘"的口径直接冲突。
+
+### 10.2 方法
+
+- 脚本：`F:\Projects\lex\tmp\omp-spike-headers.mjs`（可复现；本地 `omp.exe`
+  v18.1.18 + 本地 HTTP 回显服务器，把三种写法同时放进同一个 provider 块，
+  打印 OMP 实际发出的头）。
+- 三种写法：`headers: { x-spike-dollar: $SPIKE_TOKEN }`、`{ x-spike-brace: ${SPIKE_TOKEN} }`、
+  `{ x-spike-literal: LITERAL-VALUE }`；同时 `apiKey: SPIKE_TOKEN`（env 名），
+  进程 env 里 `SPIKE_TOKEN=RESOLVED-SECRET-VALUE`。
+- 结果抓取：回显服务器记录全部请求头，日志落 `%TMP%/omp-header-spike.json`。
+
+### 10.3 结果（5 次请求一致）
+
+| models.yml 写法 | OMP 实际发出 |
+| --- | --- |
+| `x-spike-dollar: $SPIKE_TOKEN` | `x-spike-dollar: $SPIKE_TOKEN`（**原样，不插值**） |
+| `x-spike-brace: ${SPIKE_TOKEN}` | `x-spike-brace: ${SPIKE_TOKEN}`（**原样，不插值**） |
+| `x-spike-literal: LITERAL-VALUE` | `x-spike-literal: LITERAL-VALUE`（原样） |
+| `apiKey: SPIKE_TOKEN`（env 名） | `Authorization: Bearer RESOLVED-SECRET-VALUE`（**按 env 名解析**） |
+
+**结论：OMP 对 header 值不做任何环境变量插值，但对 `apiKey` 的 env 名解析生效。**
+
+### 10.4 对实现的约束（T02 已落地，T04 照此实现）
+
+1. **秘密一律走 `apiKeyEnv`**：只写 env 名，值由 host 注入子进程 env，
+   `models.yml` 里不含任何密钥。
+2. **headers 只放非敏感标识**（provider id、session id）。Cindy 的**会话 token
+   不放 headers**，而是作为 `apiKeyEnv` 指向的环境变量值注入 —— OMP 会以
+   `Authorization: Bearer <token>` 发出，本地 `anthropic-compat-proxy-host.ts`
+   从该头取回（proxy 在我们自己手里，可以这么约定）。
+3. `models-config.ts` 对 header 值做硬校验：`$VAR` / `${VAR}` 形态**直接抛错**，
+   报错信息指明"OMP 不插值，密钥请走 apiKeyEnv"。这类写法不会插值却极易被误以为会，
+   属于会骗人的写法。

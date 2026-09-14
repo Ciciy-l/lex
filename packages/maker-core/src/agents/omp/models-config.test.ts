@@ -7,7 +7,7 @@ import {
   OMP_CINDY_PROVIDER_ID,
   OMP_CINDY_PROVIDER_ID_HEADER,
   OMP_CINDY_SESSION_ID_HEADER,
-  OMP_CINDY_SESSION_TOKEN_HEADER,
+  OMP_CINDY_SESSION_TOKEN_ENV,
 } from './models-config.js';
 
 const BASE_PROVIDER = {
@@ -111,11 +111,10 @@ describe('buildOmpModelsConfigYaml', () => {
 });
 
 describe('buildOmpCindyProvider', () => {
-  it('pins the Cindy routing headers used by the compat proxy', () => {
+  it('pins the non-sensitive routing headers used by the compat proxy', () => {
     const provider = buildOmpCindyProvider({
       baseUrl: 'http://127.0.0.1:1117/v1',
       sessionId: 'session-1',
-      sessionToken: 'token-1',
       models: [{ id: 'MiniMax-M2' }],
     });
     expect(provider.id).toBe(OMP_CINDY_PROVIDER_ID);
@@ -123,7 +122,24 @@ describe('buildOmpCindyProvider', () => {
     expect(provider.apiKeyEnv).toBe(OMP_CINDY_API_KEY_ENV);
     expect(provider.headers?.[OMP_CINDY_PROVIDER_ID_HEADER]).toBe('cindy');
     expect(provider.headers?.[OMP_CINDY_SESSION_ID_HEADER]).toBe('session-1');
-    expect(provider.headers?.[OMP_CINDY_SESSION_TOKEN_HEADER]).toBe('token-1');
+    // 会话 token 只能走 apiKeyEnv 通道,headers 里绝不能出现任何 token 头。
+    expect(Object.keys(provider.headers ?? {})).not.toContain(
+      'x-cindy-omp-session-token',
+    );
+  });
+
+  it('routes the session token through apiKeyEnv instead of a header', () => {
+    const provider = buildOmpCindyProvider({
+      baseUrl: 'http://127.0.0.1:1117/v1',
+      sessionId: 'session-1',
+      // T04 约定:token 由 host 注入该 env,OMP 以 Authorization: Bearer <token> 发出。
+      apiKeyEnv: OMP_CINDY_SESSION_TOKEN_ENV,
+      models: [{ id: 'MiniMax-M2' }],
+    });
+    expect(provider.apiKeyEnv).toBe('CINDY_OMP_SESSION_TOKEN');
+    const yaml = buildOmpModelsConfigYaml({ providers: [provider] });
+    expect(yaml).toContain('    apiKey: CINDY_OMP_SESSION_TOKEN');
+    expect(yaml).not.toContain('x-cindy-omp-session-token');
   });
 
   it('omits session headers when the host does not supply them', () => {
@@ -132,19 +148,36 @@ describe('buildOmpCindyProvider', () => {
       models: [{ id: 'MiniMax-M2' }],
     });
     expect(provider.headers?.[OMP_CINDY_SESSION_ID_HEADER]).toBeUndefined();
-    expect(provider.headers?.[OMP_CINDY_SESSION_TOKEN_HEADER]).toBeUndefined();
   });
 
-  it('writes headers into the YAML without any secret handling shortcuts', () => {
+  it('refuses env-var syntax in header values because OMP never interpolates them', () => {
+    // v18.1.18 实测:header 值原样发出,$VAR / ${VAR} 都不会被替换 —— 会骗人,直接拒。
+    for (const value of ['$SPIKE_TOKEN', '${SPIKE_TOKEN}', 'prefix ${SPIKE_TOKEN}']) {
+      expect(() =>
+        buildOmpCindyProvider({
+          baseUrl: 'http://127.0.0.1:1117/v1',
+          headers: { 'x-cindy-omp-note': value },
+          models: [{ id: 'MiniMax-M2' }],
+        }),
+      ).toThrow(/does not interpolate/);
+      expect(() =>
+        buildOmpModelsConfigYaml({
+          providers: [BASE_PROVIDER, { ...BASE_PROVIDER, id: 'other', headers: { h: value } }],
+        }),
+      ).toThrow(/does not interpolate/);
+    }
+  });
+
+  it('still allows ordinary non-secret header values', () => {
     const yaml = buildOmpCindyModelsYaml({
       baseUrl: 'http://127.0.0.1:1117/v1',
       sessionId: 'session-1',
-      sessionToken: 'token-1',
+      headers: { 'x-cindy-omp-channel': 'desktop' },
       models: [{ id: 'MiniMax-M2' }],
     });
     expect(yaml).toContain('    headers:');
     expect(yaml).toContain(`      ${OMP_CINDY_SESSION_ID_HEADER}: 'session-1'`);
-    expect(yaml).toContain(`      ${OMP_CINDY_SESSION_TOKEN_HEADER}: 'token-1'`);
+    expect(yaml).toContain(`      x-cindy-omp-channel: 'desktop'`);
     // apiKey 仍是 env 名,不因 headers 里出现字面量而退化。
     expect(yaml).toContain(`    apiKey: ${OMP_CINDY_API_KEY_ENV}`);
   });

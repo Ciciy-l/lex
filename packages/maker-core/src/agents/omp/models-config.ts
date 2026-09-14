@@ -3,8 +3,26 @@
  *
  * 为什么必须有这一层：OMP 的自定义 provider **只能**走 `<agentDir>/models.yml` ——
  * base-url 类环境变量只覆盖本地引擎（spike §7 实证 `OPENAI_BASE_URL` 未生效）。
- * `apiKey` 按**环境变量名**解析，因此密钥只进子进程 env，绝不落盘；本模块只
- * 产出 env 名，且对"看起来像密钥"的值硬性拒绝。
+ *
+ * ## 凭证通道（真机实测，见 `docs/omp-rpc-spike.md` §10）
+ *
+ * 对 v18.1.18 的实测（本地二进制 + 本地回显服务器，三种写法同时放、5 次请求一致）：
+ *
+ * | models.yml 里的写法 | OMP 实际发出的头 |
+ * | --- | --- |
+ * | `headers: { x-k: $VAR }` | `x-k: $VAR`（**原样，不插值**） |
+ * | `headers: { x-k: ${VAR} }` | `x-k: ${VAR}`（**原样，不插值**） |
+ * | `apiKey: VAR`（env 名） | `Authorization: Bearer <VAR 的值>`（**按 env 名解析**） |
+ *
+ * 由此确定的硬性约定（本模块用校验强制，T04 照此实现）：
+ *
+ * 1. **秘密一律走 `apiKeyEnv`**：只写 env **名**，值由 host 注入子进程 env，
+ *    models.yml 里不含任何密钥，落盘即无泄漏。header 值里出现 `$VAR` / `${VAR}`
+ *    形态一律抛错 —— 它们不会插值却极容易被误以为会，是会骗人的写法。
+ * 2. **headers 只放非敏感标识**：provider id、session id 之类。Cindy 的**会话
+ *    token 不放 headers**，而是作为 `apiKeyEnv` 指向的环境变量值注入，OMP 会以
+ *    `Authorization: Bearer <token>` 发出，本地 `anthropic-compat-proxy-host.ts`
+ *    从该头取回 token（proxy 是我们自己的，可以这么约定）。
  */
 
 export type OmpProviderApi =
@@ -30,7 +48,6 @@ export const OMP_CINDY_SESSION_TOKEN_ENV = 'CINDY_OMP_SESSION_TOKEN';
 
 export const OMP_CINDY_PROVIDER_ID_HEADER = 'x-cindy-omp-provider-id';
 export const OMP_CINDY_SESSION_ID_HEADER = 'x-cindy-omp-session-id';
-export const OMP_CINDY_SESSION_TOKEN_HEADER = 'x-cindy-omp-session-token';
 
 const PROVIDER_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u;
@@ -110,16 +127,40 @@ function bare(value: string): string {
   return value;
 }
 
-function headers(entries: Readonly<Record<string, string>> | undefined): string[] {
-  if (entries === undefined) return [];
+/**
+ * header 值：除常规校验外，拒绝任何 `$VAR` / `${VAR}` 形态。
+ *
+ * OMP **不对 header 做环境变量插值**（v18.1.18 实测，`docs/omp-rpc-spike.md` §10），
+ * 这类写法只会把字面量（或被误以为"已被替换"的密钥）写进落盘文件，是会骗人的
+ * 写法，因此直接拒绝并指明正确通道。
+ */
+function requireHeaderValue(value: unknown): string {
+  const text = requireText(value, 'header value', 4096);
+  if (text.startsWith('$') || text.includes('${'))
+    throw new Error(
+      'OMP does not interpolate environment variables in models.yml header values (verified on v18.1.18); pass the secret through apiKeyEnv instead',
+    );
+  return text;
+}
+
+/** header 名与值的统一校验，供生成器与 provider 组装器共用（早失败）。 */
+function requireHeaderEntries(entries: Readonly<Record<string, string>>): void {
   const keys = Object.keys(entries);
   if (keys.length > 32) throw new Error('Invalid OMP models provider headers');
+  for (const key of keys) {
+    if (!HEADER_NAME.test(key)) throw new Error('Invalid OMP models header name');
+    requireHeaderValue(entries[key]);
+  }
+}
+
+function headers(entries: Readonly<Record<string, string>> | undefined): string[] {
+  if (entries === undefined) return [];
+  requireHeaderEntries(entries);
   return [
     '    headers:',
-    ...keys.map((key) => {
-      if (!HEADER_NAME.test(key)) throw new Error('Invalid OMP models header name');
-      return `      ${bare(key)}: ${quote(requireText(entries[key], 'header value', 4096))}`;
-    }),
+    ...Object.keys(entries).map(
+      (key) => `      ${bare(key)}: ${quote(requireHeaderValue(entries[key]))}`,
+    ),
   ];
 }
 
@@ -234,18 +275,24 @@ export interface OmpCindyProviderInput {
   baseUrl: string;
   api?: OmpProviderApi;
   providerId?: string;
+  /**
+   * 凭证通道：写 env **名**（默认 `CINDY_OMP_PROXY_KEY`）。
+   * Cindy 的会话 token 必须经这里注入（值进子进程 env），OMP 会以
+   * `Authorization: Bearer <token>` 发出，proxy 从该头取回 —— 不要放 headers。
+   */
   apiKeyEnv?: string;
+  /** 非敏感会话标识，进 headers；token 不进。 */
   sessionId?: string;
-  sessionToken?: string;
   headers?: Readonly<Record<string, string>>;
   models: readonly OmpModelsModel[];
 }
 
 /**
- * 组装 Cindy 托管 provider 块（架构 §3.6）。
+ * 组装 Cindy 托管 provider 块（架构 §3.6，**凭证通道按 spike §10 实测修正**）。
  *
- * headers 三件套用于 compat proxy 的钉路由；上游 models.yml 是否支持 `$ENV` 插值
- * 未证实，因此这里直接写字面量 —— 文件位于受管 agent 目录、每会话重写，可接受。
+ * headers 只放非敏感标识（provider id / session id），用于 compat proxy 钉路由；
+ * 会话 token 走 `apiKeyEnv` 指向的 env（见 `OmpCindyProviderInput.apiKeyEnv`），
+ * 因为 OMP 不对 header 值做环境变量插值 —— 把 token 写进 headers 等于明文落盘。
  */
 export function buildOmpCindyProvider(
   input: OmpCindyProviderInput,
@@ -257,10 +304,10 @@ export function buildOmpCindyProvider(
   };
   if (input.sessionId !== undefined)
     headers[OMP_CINDY_SESSION_ID_HEADER] = input.sessionId;
-  if (input.sessionToken !== undefined)
-    headers[OMP_CINDY_SESSION_TOKEN_HEADER] = input.sessionToken;
   for (const [key, value] of Object.entries(input.headers ?? {}))
     headers[key] = value;
+  // 组装阶段就校验：把"header 不插值"这条实测约束前移,别等到物化时才炸。
+  requireHeaderEntries(headers);
   return Object.freeze({
     id: input.providerId ?? OMP_CINDY_PROVIDER_ID,
     baseUrl: input.baseUrl,
