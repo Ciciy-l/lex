@@ -181,7 +181,7 @@ export function buildOmpAgent(opts: BuildOmpAgentOpts): OmpAgent | null {
     // 受管持久根:会话历史落在 userData 下,与 Pi 的根严格分开。
     resolveOmpAgentHome: () => path.join(app.getPath('userData'), 'omp-agent-home'),
     // 凭证只给值、不落盘;没有 sessionId 就无从绑定 token,直接抛错 fail-closed
-    // (静默返回 undefined 会让 OMP 起在"没有 Cindy provider"的半残状态)。
+    // (静默返回 undefined 会让 OMP 起在「没有 Cindy provider」的半残状态)。
     resolveOmpCredentials: (context): OmpSessionCredentials => {
       const sessionId = context.sessionId;
       if (!sessionId) {
