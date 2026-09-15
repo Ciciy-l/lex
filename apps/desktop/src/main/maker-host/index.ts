@@ -158,7 +158,7 @@ import {
 } from './codex-custom-context-catalog.js';
 import { buildPiAgent } from './pi-host.js';
 import { buildOmpAgent } from './omp-host.js';
-import { refreshOmpRuntime } from './omp-runtime.js';
+import { refreshOmpRuntime, subscribeOmpRuntime } from './omp-runtime.js';
 import {
   captureLocalPiPackageRuntimeInvalidationSnapshot,
   invalidateLocalPiPackageRuntimeSnapshot,
@@ -365,6 +365,23 @@ let _registerPiAgent: (() => boolean) | null = null;
  * 还没下载完 —— 由 registerOmpAgentIfAvailable 在下载补齐后补注册。
  */
 let _registerOmpAgent: (() => boolean) | null = null;
+/**
+ * OMP 运行时三态 → 注册的接线只装一次(进程级)。
+ *
+ * 二进制可能在 Cindy 跑着的时候被 `pnpm install:omp` 补齐:下载器上报 succeeded
+ * 后这里补注册 OMP 并广播 AGENTS_CHANGED,引擎下拉里立刻多出 OMP,不必重启。
+ * 刻意不随 resetMaker 反复订阅 —— resetMaker 会把 _registerOmpAgent 置空,
+ * 旧订阅自然退化成 no-op。
+ */
+let ompRuntimeSubscriptionInstalled = false;
+function ensureOmpRuntimeSubscription(): void {
+  if (ompRuntimeSubscriptionInstalled) return;
+  ompRuntimeSubscriptionInstalled = true;
+  subscribeOmpRuntime((snapshot) => {
+    if (snapshot.state !== 'ready') return;
+    registerOmpAgentIfAvailable();
+  });
+}
 /** 视觉桥实例（层 A/B/C 共用），在 resetMaker 时释放缓存。 */
 let _visionBridgeInstance: ReturnType<typeof createVisionBridge> | null = null;
 
@@ -2751,6 +2768,7 @@ export function getMaker(): Maker {
       }
       return true;
     };
+    ensureOmpRuntimeSubscription();
     setVisionBridgeController({
       shouldBridge: _visionBridgeInstance.isTargetModel,
       describeImage: _visionBridgeInstance.describeImage,
