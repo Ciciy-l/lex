@@ -82,6 +82,7 @@ const makerCoreIntegrationInclude = [
   'src/agents/codex/*.integration.test.ts',
   'src/agents/claude-code/__tests__/*.integration.test.ts',
   'src/agents/pi/__tests__/*.integration.test.ts',
+  'src/agents/omp/__tests__/*.integration.test.ts',
 ];
 const makerPiManagerIntegrationInclude = [
   'src/__tests__/pi-manager.integration.test.ts',
