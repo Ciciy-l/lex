@@ -28,9 +28,9 @@ import type { ModelFavoriteItem } from '@/state/modelFavorites';
 /**
  * 引擎在**选择器 / 草稿链路**里的口径(vendor);catalog / capabilities 侧是 AgentKind。
  *
- * OMP 接入:AgentKind 已含 omp,而 SELECTABLE_VENDORS 仍是三元组(OMP 尚未作为可选引擎
- * 暴露)。这里把 omp 并入本口径,使 `agentKindOfEngine` / `engineOfAgentKind` 能无损往返,
- * 而不是把 omp 静默折叠成 pi —— 那样会写出「界面是 omp、落库是 pi」的假配置。
+ * OMP 接入(T04 起):SELECTABLE_VENDORS 已是四元组,本口径与它合一;保留
+ * `| 'omp'` 是显式写出「omp 必须能无损往返」,而不是被静默折叠成 pi —— 那样会
+ * 写出「界面是 omp、落库是 pi」的假配置。
  */
 export type UnifiedEngine = SelectableVendor | 'omp';
 

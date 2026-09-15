@@ -14,10 +14,11 @@
 
 import type { MakerVendor } from './ccAgent.types';
 
-// 注意:本表不含 'omp'——T01 阶段 OMP 不进入用户可选的引擎下拉(见规则:
-// 不要把手 agent 加进任何用户可见的选项数组,AGENT_OPTIONS / 新建会话 picker 等 UI
-// 本阶段不暴露 OMP;其产品默认 tuple 也尚未就绪)。'orca' 同理(已被协同 toggle 取代)。
-export const SELECTABLE_VENDORS = ['cc', 'codex', 'pi'] as const satisfies readonly MakerVendor[];
+// 'omp' 自 T04(Desktop host 集成)起进入可选列表:运行时已注册时它才出现 ——
+// 未注册由 renderer 的 useAvailableAgents 按 `maker:list-available-agents` 隐掉,
+// 见 apps/desktop/src/main/maker-host/omp-runtime.ts 的三态说明。
+// 'orca' 不在表内(已被 ChatInput 底部的协同 toggle 取代)。
+export const SELECTABLE_VENDORS = ['cc', 'codex', 'pi', 'omp'] as const satisfies readonly MakerVendor[];
 
 export type SelectableVendor = (typeof SELECTABLE_VENDORS)[number];
 

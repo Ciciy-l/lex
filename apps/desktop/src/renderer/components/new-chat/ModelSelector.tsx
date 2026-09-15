@@ -3007,8 +3007,11 @@ function ModelSelectorContentView({
           <VendorSegmentedSwitcher
             value={browseVendor}
             onChange={(next) => {
-              // OMP 尚未进入两段切换的可选引擎(与 SELECTABLE_VENDORS 同口径),
-              // 分段回调里不会真的出现 omp,这里只是把类型收敛到已支持的三种。
+              // OMP 自 T04 起进了新建会话的可选引擎(SELECTABLE_VENDORS),但**会话内**
+              // 两步切换仍不支持它:onSwitch 事务与 confirmBrowseSwitch 的入参还是
+              // 三元组(切换 OMP 需要重启续接,见 OmpAgent 的
+              // setPermissionModeMidSession 之外的同款限制)。这里显式收敛,'orca'
+              // 同理(不是引擎,已被协同 toggle 取代)。
               if (next !== 'orca' && next !== 'omp') void handleBrowseVendorChange(next);
             }}
             dense

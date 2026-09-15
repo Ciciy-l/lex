@@ -50,6 +50,7 @@ vi.mock('../pi-proxy-session-token.js', () => ({
   derivePiProxySessionToken: (sessionId: string) => `pi-tok-${sessionId}`,
 }));
 
+import type { RoutingDecision } from '@cindy/anthropic-compat-proxy';
 import { createModelRoutingTransform, setClaudeProxyGatewayKeyReader } from '../anthropic-compat-proxy-host';
 import {
   authenticateOmpProxySession,
@@ -65,10 +66,11 @@ function ctxWith(headers: Record<string, string>, url = '/v1/messages') {
   return { reqId: 1, method: 'POST', url, headers } as never;
 }
 
-/** 触发 localHandler 并解出它写回的 JSON 错误体。 */
-async function errorBodyOf(
-  decision: Awaited<ReturnType<ReturnType<typeof createModelRoutingTransform>>>,
-): Promise<{ status: number; code: string }> {
+type TransformResult = ReturnType<ReturnType<typeof createModelRoutingTransform>>;
+
+/** 触发 localHandler 并解出它写回的 JSON 错误体(决策可能是 promise)。 */
+async function errorBodyOf(result: TransformResult): Promise<{ status: number; code: string }> {
+  const decision = await Promise.resolve(result);
   const writeHead = vi.fn();
   const end = vi.fn();
   await decision?.localHandler?.({ res: { writeHead, end } } as never);
@@ -76,6 +78,11 @@ async function errorBodyOf(
     status: writeHead.mock.calls[0][0] as number,
     code: JSON.parse(end.mock.calls[0][0] as string).error.code as string,
   };
+}
+
+/** 同上,取回已 settled 的决策对象。 */
+async function settledDecision(result: TransformResult): Promise<RoutingDecision | null> {
+  return Promise.resolve(result);
 }
 
 describe('readOmpBearerToken', () => {
@@ -132,10 +139,12 @@ describe('OMP gateway route in cc routingTransform', () => {
     setClaudeProxyGatewayKeyReader(() => null);
   });
 
-  it('takes the token from Authorization and swaps in the gateway key', () => {
-    const decision = createModelRoutingTransform()(
-      { model: 'claude-sonnet-4-6' },
-      ctxWith({ ...OMP_HEADERS, authorization: 'Bearer omp-tok-sess-omp' }),
+  it('takes the token from Authorization and swaps in the gateway key', async () => {
+    const decision = await settledDecision(
+      createModelRoutingTransform()(
+        { model: 'claude-sonnet-4-6' },
+        ctxWith({ ...OMP_HEADERS, authorization: 'Bearer omp-tok-sess-omp' }),
+      ),
     );
     expect(decision).toMatchObject({ headerOverride: { authorization: 'Bearer sk-gw' } });
     // OMP 的识别头只在本地有意义,绝不能带到上游。
@@ -189,12 +198,14 @@ describe('OMP gateway route in cc routingTransform', () => {
     });
   });
 
-  it('leaves requests without OMP headers on the existing Claude path', () => {
+  it('leaves requests without OMP headers on the existing Claude path', async () => {
     // 没有 OMP 头 → 不许走 OMP 分支(否则会误伤 cc / pi 的全部流量)。
-    const decision = createModelRoutingTransform()(
-      { model: 'claude-haiku-4-5-20251001' },
-      ctxWith({ authorization: 'Bearer sk-ant-oat01' }),
+    const decision = await settledDecision(
+      createModelRoutingTransform()(
+        { model: 'claude-haiku-4-5-20251001' },
+        ctxWith({ authorization: 'Bearer sk-ant-oat01' }),
+      ),
     );
-    expect(decision).not.toMatchObject({ headerDelete: expect.any(Array) });
+    expect(decision === null || decision.headerDelete === undefined).toBe(true);
   });
 });

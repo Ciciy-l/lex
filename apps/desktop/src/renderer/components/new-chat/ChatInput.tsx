@@ -820,11 +820,11 @@ interface ChatInputProps {
 }
 
 /** 统一模型选择器联合列表的候选引擎全集(与 SELECTABLE_VENDORS 同一顺序)。 */
-const UNIFIED_AGENT_KINDS: readonly AgentKind[] = ['claude-code', 'codex', 'pi'];
+const UNIFIED_AGENT_KINDS: readonly AgentKind[] = ['claude-code', 'codex', 'pi', 'omp'];
 
 /** AgentKind → NewMaker vendor(useAvailableAgents 用 vendor 口径)。 */
-function agentKindToVendor(kind: AgentKind): 'cc' | 'codex' | 'pi' {
-  return kind === 'codex' ? 'codex' : kind === 'pi' ? 'pi' : 'cc';
+function agentKindToVendor(kind: AgentKind): 'cc' | 'codex' | 'pi' | 'omp' {
+  return kind === 'codex' ? 'codex' : kind === 'pi' ? 'pi' : kind === 'omp' ? 'omp' : 'cc';
 }
 
 // 取值集合与 ModelSelector / PermissionSelector 的同名映射保持一致(都含 'omp'),
