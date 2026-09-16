@@ -92,3 +92,21 @@ test('OMP local runtime acceptance requires its exact pinned size and SHA-256', 
   fs.writeFileSync(runtime, Buffer.alloc(contents.length - 1, 7));
   assert.equal(isVerifiedRuntimeFile(runtime, expected), false);
 });
+
+test('OMP promote writes the .version marker that ensureBinary skips on', () => {
+  // ensure-agent-binaries 的跳过条件是「文件合法 **且** `.version` == pin」,
+  // 而这个标记由 promoteOnePlatform 写。少了它,已经下载好的运行时会每次都被判为
+  // 未就位并重下 161MB —— 用户在新机器上不该遇到这种情况,所以把这条伴随产物钉住。
+  const source = fs.readFileSync(new URL('./update.mjs', import.meta.url), 'utf8');
+  assert.match(source, /writeFileSync\(path\.join\(destinationDirectory, '\.version'\)/);
+  // 顺序也重要:先按 pin 校验 promoted 产物,再写标记 —— 反过来会把坏产物盖上
+  // 「已验证」的章,而 ensureBinary 之后只认标记。
+  const verifyIndex = source.indexOf('verifyPromotedRuntime(');
+  const markerIndex = source.indexOf("'.version'");
+  assert.ok(verifyIndex > -1, 'promote must verify the promoted runtime');
+  assert.ok(markerIndex > -1, 'promote must write the .version marker');
+  assert.ok(
+    verifyIndex < markerIndex,
+    'the marker must be written only after the promoted runtime passed verification',
+  );
+});
