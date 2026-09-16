@@ -270,17 +270,11 @@ export function candidateAgentsForModel(
 ): AgentKind[] {
   const scope = opts.scope ?? 'draft';
   const allowed = opts.agents;
-  return UNIFIED_AGENT_PRIORITY.filter((agent) => {
-    if (allowed && !allowed.includes(agent)) return false;
+  // 单个引擎对 (provider, model) 是否可路由。
+  const isRoutable = (agent: AgentKind): boolean => {
     // providerId 缺席时没有单一 provider 可查 wire id,逐个可能来源试。
     const wireIds = providerId
-      ? [
-          resolveWireModelId(
-            providers.find((p) => p.id === providerId),
-            modelId,
-            agent,
-          ),
-        ]
+      ? [resolveWireModelId(providers.find((p) => p.id === providerId), modelId, agent)]
       : providers.map((provider) => resolveWireModelId(provider, modelId, agent));
     for (const wireId of wireIds) {
       if (!wireId) continue;
@@ -289,6 +283,21 @@ export function candidateAgentsForModel(
       if (!providerId || sourceId === providerId) return true;
     }
     return false;
+  };
+  return UNIFIED_AGENT_PRIORITY.filter((agent) => {
+    if (allowed && !allowed.includes(agent)) return false;
+    // OMP 恒定经本机 proxy 接入(宿主把它的 baseUrl 写成 loopback、api 按会话解析),
+    // 且它原生支持 anthropic-messages / openai-responses / openai-completions 三种协议,
+    // 所以 **cc 与 codex 能路由的 (provider, model),OMP 都能服务**(api 按该模型的
+    // wire protocol 写,proxy 按路径选对应前门)。
+    // 唯独 pi 的 google-generative-ai 它不说(实测 `gemini` 不是 OMP 的合法 api 值),
+    // 所以不跟随 pi。供应商显式声明 omp 条目的,同样放行。
+    if (agent === 'omp') {
+      return (
+        isRoutable('claude-code') || isRoutable('codex') || isRoutable('omp')
+      );
+    }
+    return isRoutable(agent);
   });
 }
 

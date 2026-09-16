@@ -268,14 +268,15 @@ describe('candidateAgentsForModel', () => {
   const providers = [anthropic, openai, xai, xd];
 
   it('按 UNIFIED_AGENT_PRIORITY 序返回该 (provider, model) 真正可路由的引擎', () => {
+    // omp 跟随 cc / codex(它原生说这三种协议,api 由宿主按会话解析),不跟随 pi
+    // (google-generative-ai 不是 OMP 的合法 api)。详见 candidateAgentsForModel 注释。
     expect(candidateAgentsForModel(providers, 'anthropic', 'claude-opus-5')).toEqual([
       'claude-code',
       'codex',
+      'omp',
       'pi',
     ]);
     // omp 排在 pi 之前:pi 是刻意的通用兜底,必须留在最后。
-    // 注意本 fixture 的供应商没有 omp 模型条目,所以上面的候选集**不含** omp ——
-    // 候选资格仍由 getModel(provider.models[agent]) 严格按 agent 判定。
     expect(UNIFIED_AGENT_PRIORITY).toEqual(['claude-code', 'codex', 'omp', 'pi']);
   });
 
@@ -296,11 +297,13 @@ describe('candidateAgentsForModel', () => {
     expect(candidateAgentsForModel(providers, 'openai', 'gpt-5.6-luna')).toEqual([
       'claude-code',
       'codex',
+      'omp',
       'pi',
     ]);
     expect(candidateAgentsForModel(providers, 'openai', 'chatgpt/gpt-5.6-luna')).toEqual([
       'claude-code',
       'codex',
+      'omp',
       'pi',
     ]);
   });
@@ -309,10 +312,12 @@ describe('candidateAgentsForModel', () => {
     expect(candidateAgentsForModel(providers, 'anthropic', 'claude-opus-5')).toEqual([
       'claude-code',
       'codex',
+      'omp',
       'pi',
     ]);
     expect(candidateAgentsForModel(providers, 'xd', 'claude-opus-5')).toEqual([
       'claude-code',
+      'omp',
       'pi',
     ]);
   });
@@ -320,15 +325,26 @@ describe('candidateAgentsForModel', () => {
   it('XD 独占:只有网关提供的模型仍能解析出候选', () => {
     expect(candidateAgentsForModel(providers, 'xd', 'xd-only-model')).toEqual([
       'claude-code',
+      'omp',
       'pi',
     ]);
-    expect(candidateAgentsForModel(providers, 'xd', 'codex-only-model')).toEqual(['codex']);
+    expect(candidateAgentsForModel(providers, 'xd', 'codex-only-model')).toEqual([
+      'codex',
+      'omp',
+    ]);
     expect(candidateAgentsForModel(providers, 'xd', 'not-in-gateway')).toEqual([]);
   });
 
   it('`codex/` 折扣条目不与同名全价条目合并', () => {
-    expect(candidateAgentsForModel(providers, 'xd', 'gpt-5.5')).toEqual(['claude-code', 'codex']);
-    expect(candidateAgentsForModel(providers, 'xd', 'codex/gpt-5.5')).toEqual(['codex']);
+    expect(candidateAgentsForModel(providers, 'xd', 'gpt-5.5')).toEqual([
+      'claude-code',
+      'codex',
+      'omp',
+    ]);
+    expect(candidateAgentsForModel(providers, 'xd', 'codex/gpt-5.5')).toEqual([
+      'codex',
+      'omp',
+    ]);
   });
 
   it('未连接 / 已停用的供应商没有候选(草稿口径)', () => {
@@ -354,14 +370,19 @@ describe('candidateAgentsForModel', () => {
       candidateAgentsForModel(providersWithDead, 'anthropic', 'claude-opus-5', {
         scope: 'session',
       }),
-    ).toEqual(['claude-code', 'codex', 'pi']);
+    ).toEqual(['claude-code', 'codex', 'omp', 'pi']);
   });
 
   it('providerId 缺席 = 跟随默认路由:任一来源可服务即算候选', () => {
-    expect(candidateAgentsForModel(providers, null, 'gpt-5.5')).toEqual(['claude-code', 'codex']);
+    expect(candidateAgentsForModel(providers, null, 'gpt-5.5')).toEqual([
+      'claude-code',
+      'codex',
+      'omp',
+    ]);
     expect(candidateAgentsForModel(providers, null, 'gpt-5.6-luna')).toEqual([
       'claude-code',
       'codex',
+      'omp',
       'pi',
     ]);
   });
@@ -928,14 +949,25 @@ describe('unifiedModelEntries', () => {
   });
 
   it('[1m] 变体不借基础条目蹭候选引擎(智谱形状)', () => {
-    // 候选推导:cc 有 `glm-5.2[1m]`,codex 只有 `glm-5.2` → 长上下文行的候选只有 cc。
-    expect(candidateAgentsForModel([zhipu], 'zhipu', 'glm-5.2[1m]')).toEqual(['claude-code']);
-    expect(candidateAgentsForModel([zhipu], 'zhipu', 'glm-5.2')).toEqual(['claude-code', 'codex']);
+    // 候选推导:cc 有 `glm-5.2[1m]`,codex 只有 `glm-5.2` → 长上下文行 cc 可路由;
+    // omp 跟随 cc(它原生说 anthropic-messages,api 由宿主按会话解析)→ 也进候选。
+    expect(candidateAgentsForModel([zhipu], 'zhipu', 'glm-5.2[1m]')).toEqual([
+      'claude-code',
+      'omp',
+    ]);
+    expect(candidateAgentsForModel([zhipu], 'zhipu', 'glm-5.2')).toEqual([
+      'claude-code',
+      'codex',
+      'omp',
+    ]);
     // wire id 解析同口径:codex 下根本没有这条,必须是 null 而不是回落到标准窗口那条。
     expect(resolveWireModelId(zhipu, 'glm-5.2[1m]', 'codex')).toBeNull();
     expect(resolveWireModelId(zhipu, 'glm-5.2[1m]', 'claude-code')).toBe('glm-5.2[1m]');
 
     const entries = unifiedModelEntries({ providers: [zhipu], isVisible: alwaysVisible });
+    // ⚠️ unifiedModelEntries 的候选 = 「哪些引擎的枚举真的产出了这一行」,
+    // 而**枚举层尚未让 OMP 参与**(内置供应商没有 models.omp 条目)——
+    // 这是 OMP 引擎 chip 未出现的最后一环,待补;补上时这两条期望要同步放开。
     expect(find(entries, 'zhipu', 'glm-5.2[1m]')?.candidates).toEqual(['claude-code']);
     expect(find(entries, 'zhipu', 'glm-5.2[1m]')?.capabilities.codex).toBeUndefined();
     expect(find(entries, 'zhipu', 'glm-5.2')?.candidates).toEqual(['claude-code', 'codex']);
