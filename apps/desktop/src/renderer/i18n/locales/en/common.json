@@ -1687,7 +1687,7 @@
           "pi": "Pi",
           "piDesc": "Pi is a multi-protocol harness: your custom or local models connect natively (Ollama, vLLM, self-hosted endpoints), without going through {{appName}}'s compatibility proxy. Pick the API type below, then enter this source's base URL, key, and models for Pi; leave blank to skip Pi for this source.",
           "omp": "OMP",
-          "ompDesc": "OMP reaches its models through {{appName}}'s compatibility proxy; this page declares which models this source offers to OMP. The endpoint and key are handled by the proxy per session and are not entered here. Leave blank to skip OMP for this source."
+          "ompDesc": "OMP reaches its models through {{appName}}'s compatibility proxy; declare here which models this source offers to OMP. Upstream routing and credentials are handled by the proxy (OMP itself does not use the endpoint or key). Leave blank to skip OMP for this source."
         },
         "errors": {
           "nameRequired": "Display name is required",

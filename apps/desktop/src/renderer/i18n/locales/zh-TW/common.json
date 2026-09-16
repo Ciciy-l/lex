@@ -1687,7 +1687,7 @@
           "pi": "Pi",
           "piDesc": "Pi 是多協議 harness：你的自定義或本地模型（Ollama、vLLM、自建端點）原生直連，不經 {{appName}} 的相容 Proxy。先在下方選 API 型別，再填該來源給 Pi 用的 base URL、金鑰與模型；留空則本來源不配置 Pi。",
           "omp": "OMP",
-          "ompDesc": "OMP 的模型經 {{appName}} 的相容 Proxy 統一接入；本頁宣告該來源為 OMP 提供哪些模型（端點與金鑰由 Proxy 按工作階段處理，不在這裡填寫）。留空則本來源不提供 OMP。"
+          "ompDesc": "OMP 經 {{appName}} 的相容 Proxy 接入；本頁為 OMP 宣告該來源提供哪些模型，上游尋址與憑證由 Proxy 統一處理（OMP 自身不直接使用端點/金鑰）。留空則本來源不提供 OMP。"
         },
         "errors": {
           "nameRequired": "請填寫顯示名稱",
