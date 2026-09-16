@@ -273,7 +273,23 @@ describe('candidateAgentsForModel', () => {
       'codex',
       'pi',
     ]);
-    expect(UNIFIED_AGENT_PRIORITY).toEqual(['claude-code', 'codex', 'pi']);
+    // omp 排在 pi 之前:pi 是刻意的通用兜底,必须留在最后。
+    // 注意本 fixture 的供应商没有 omp 模型条目,所以上面的候选集**不含** omp ——
+    // 候选资格仍由 getModel(provider.models[agent]) 严格按 agent 判定。
+    expect(UNIFIED_AGENT_PRIORITY).toEqual(['claude-code', 'codex', 'omp', 'pi']);
+  });
+
+  it('候选含 omp —— 但仅当该供应商真的为 omp 声明了该模型', () => {
+    // 用户实测:配好了 OMP 的模型,但模型配置浮层里没有 OMP 的引擎 chip。
+    // 根因是候选集从 UNIFIED_AGENT_PRIORITY filter,而那张表漏了 omp。
+    const byom = view({
+      id: 'byom',
+      models: {
+        'claude-code': [m('MiniMax-M2')],
+        omp: [m('MiniMax-M2')],
+      },
+    });
+    expect(candidateAgentsForModel([byom], 'byom', 'MiniMax-M2')).toEqual(['claude-code', 'omp']);
   });
 
   it('bridge 壳与 root 条目寻址同一逻辑模型,候选是并集', () => {

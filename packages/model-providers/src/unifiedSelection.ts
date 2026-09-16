@@ -74,11 +74,20 @@ import type { AgentKind, CatalogModel, Effort, PiModelApi, Provider } from './ty
 /**
  * 引擎优先序 —— 联合列表的行合并序、以及推荐回落序的**唯一定义**。
  *
- * 与 renderer `selectVisibleModels` 的合并序(cc → codex → pi 首见胜出,
+ * 与 renderer `selectVisibleModels` 的合并序(cc → codex → omp → pi 首见胜出,
  * apps/desktop/src/renderer/lib/providerModels.ts)一致,也与 user-provider.ts 的
  * `AGENT_ORDER` 一致 —— 三处同序不是巧合:cc 是覆盖面最广的运行时,pi 是通用兜底。
+ *
+ * ⚠️ 这张表同时是**候选引擎的唯一来源**(candidateAgentsForModel 从它 filter)——
+ * 漏掉的 agent 不会出现在模型配置浮层的引擎 chip 里,也不会被推荐。新增 AgentKind
+ * 时必须同时改这三处。
  */
-export const UNIFIED_AGENT_PRIORITY: readonly AgentKind[] = ['claude-code', 'codex', 'pi'];
+export const UNIFIED_AGENT_PRIORITY: readonly AgentKind[] = [
+  'claude-code',
+  'codex',
+  'omp',
+  'pi',
+];
 
 /**
  * 未声明专用原生协议时保留 cc / codex 的历史回落序。Google 原生 API 的 Pi

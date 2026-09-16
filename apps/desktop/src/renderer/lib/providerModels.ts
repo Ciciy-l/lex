@@ -229,6 +229,11 @@ export function selectVisibleModels(params: {
   deviceCodexModels: ModelDescriptor[];
   devicePiModels?: ModelDescriptor[];
   /**
+   * OMP 目前只在本地跑（无 device-link / SSH 侧模型来源），所以缺省为空数组；
+   * 与 devicePiModels 同形是为了让调用方无需区分处理。
+   */
+  deviceOmpModels?: ModelDescriptor[];
+  /**
    * SSH 远程会话(remoteHostId)传 true:订阅直连模型(chatgpt/ / xai/)不再被过滤,
    * 而是保留在清单中由调用方按 isSubscriptionDirectModel 标记禁用(置灰 + 原因提示)。
    * 远端 cc 不经本地 compat-proxy 的 responses-bridge,选了必失败;静默消失会让用户
@@ -253,6 +258,7 @@ export function selectVisibleModels(params: {
     deviceCcModels,
     deviceCodexModels,
     devicePiModels = [],
+    deviceOmpModels = [],
     excludeSubscriptionDirect,
     excludeChatBridgedCodex,
   } = params;
@@ -271,12 +277,17 @@ export function selectVisibleModels(params: {
       model.id.startsWith('chatgpt/') &&
       model.id.endsWith('[1m]')
     ));
+  const omp = pass(
+    deviceId ? deviceOmpModels : deriveModelsFromProviders(providers, 'omp', deriveOpts('omp')),
+  );
   if (agentKind === 'claude-code') return cc;
   if (agentKind === 'codex') return codex;
   if (agentKind === 'pi') return pi;
+  if (agentKind === 'omp') return omp;
   const merged = [...cc];
   const seen = new Set(merged.map((m) => m.id));
-  for (const list of [codex, pi]) {
+  // 合并序与 UNIFIED_AGENT_PRIORITY 保持一致（pi 恒定最后兜底）。
+  for (const list of [codex, omp, pi]) {
     for (const m of list) {
       if (seen.has(m.id)) continue;
       seen.add(m.id);
