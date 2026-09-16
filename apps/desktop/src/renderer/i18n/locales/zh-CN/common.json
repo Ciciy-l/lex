@@ -1687,7 +1687,7 @@
           "pi": "Pi",
           "piDesc": "Pi 是多协议 harness：你的自定义或本机模型（Ollama、vLLM、自建端点）原生直连，不经 {{appName}} 的兼容 Proxy。先在下方选 API 类型，再填该来源给 Pi 用的 base URL、密钥与模型；留空则本来源不配置 Pi。",
           "omp": "OMP",
-          "ompDesc": "OMP 经 {{appName}} 的 Anthropic 兼容 Proxy 接入，固定使用 Anthropic Messages 协议。填该来源给 OMP 用的 base URL、密钥与模型；留空则本来源不配置 OMP。"
+          "ompDesc": "OMP 的模型经 {{appName}} 的兼容 Proxy 统一接入；本页声明该来源为 OMP 提供哪些模型（端点与密钥由 Proxy 按会话处理，不在这里填写）。留空则本来源不提供 OMP。"
         },
         "errors": {
           "nameRequired": "请填写显示名称",

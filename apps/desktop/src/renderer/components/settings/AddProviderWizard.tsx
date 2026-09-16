@@ -24,7 +24,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { useAuth } from '@/contexts/AuthContext';
 import { createCustomProvider, deleteCustomProvider, type RuntimeKeys } from '@/lib/customProviders';
 import { PROVIDER_SECRET_IDS } from '../../../shared/providerSecrets';
-import { configuredPresetAgents } from '../../../shared/piRuntimeInitialization';
+import { configuredPresetAgents, presetRuntimeForAgent } from '../../../shared/piRuntimeInitialization';
 import { uniqueCustomProviderId } from '@/lib/customProviderId';
 import {
   isLocalRuntimeBetaProviderId,
@@ -99,7 +99,7 @@ function presetRuntimeBaseUrl(
   agent: AgentKind,
   edited: PresetBaseUrls,
 ): string {
-  const runtime = preset.runtimes[agent];
+  const runtime = presetRuntimeForAgent(preset, agent);
   if (!runtime) return '';
   return runtime.baseUrlEditable ? (edited[agent] ?? runtime.baseUrl).trim() : runtime.baseUrl;
 }
@@ -616,7 +616,7 @@ export function AddProviderWizard({
         Object.fromEntries(
           configuredPresetAgents(preset).map((agent) => [
             agent,
-            preset.runtimes[agent]?.baseUrl ?? '',
+            presetRuntimeForAgent(preset, agent)?.baseUrl ?? '',
           ]),
         ) as PresetBaseUrls,
       );
@@ -806,7 +806,7 @@ export function AddProviderWizard({
     const preset = sel.preset;
     const agents = configuredPresetAgents(preset);
     const editableBaseUrlsValid = agents.every((agent) => {
-      const rt = preset.runtimes[agent];
+      const rt = presetRuntimeForAgent(preset, agent);
       return (
         !rt?.baseUrlEditable ||
         isValidEditablePresetBaseUrl(presetRuntimeBaseUrl(preset, agent, presetBaseUrls))
@@ -829,7 +829,7 @@ export function AddProviderWizard({
       }
     >();
     for (const agent of agents) {
-      for (const m of preset.runtimes[agent]?.models ?? []) {
+      for (const m of presetRuntimeForAgent(preset, agent)?.models ?? []) {
         const existing = initial.get(m.id);
         if (existing) {
           if (!existing.agents.includes(agent)) existing.agents.push(agent);
@@ -858,7 +858,7 @@ export function AddProviderWizard({
     // 这类端点只能用于确认预设已有模型，不能扩大其 agent 归属或加入无法分类的新模型。
     const discoveryAgentsByUrl = new Map<string, AgentKind[]>();
     for (const agent of agents) {
-      const modelsUrl = preset.runtimes[agent]?.modelsUrl;
+      const modelsUrl = presetRuntimeForAgent(preset, agent)?.modelsUrl;
       if (!modelsUrl) continue;
       discoveryAgentsByUrl.set(modelsUrl, [...(discoveryAgentsByUrl.get(modelsUrl) ?? []), agent]);
     }
@@ -868,7 +868,7 @@ export function AddProviderWizard({
           if (owners.length < 2) return false;
           const modelSets = new Set(
             owners.map((agent) =>
-              (preset.runtimes[agent]?.models ?? [])
+              (presetRuntimeForAgent(preset, agent)?.models ?? [])
                 .map((model) => model.id)
                 .sort()
                 .join('\u0000'),
@@ -880,7 +880,7 @@ export function AddProviderWizard({
     );
     const results = await Promise.all(
       agents.flatMap((agent) => {
-        const rt = preset.runtimes[agent];
+        const rt = presetRuntimeForAgent(preset, agent);
         if (!rt) {
           return [];
         }
@@ -963,7 +963,7 @@ export function AddProviderWizard({
             const backfillWindow =
               existing.contextWindows?.[agent] === undefined && m.contextWindow !== undefined;
             const presetOwnsModel =
-              preset.runtimes[agent]?.models.some((model) => model.id === m.id) === true;
+              presetRuntimeForAgent(preset, agent)?.models.some((model) => model.id === m.id) === true;
             const discoveredRoute =
               route &&
               !presetOwnsModel &&
@@ -1032,7 +1032,7 @@ export function AddProviderWizard({
    */
   const addManualModel = useCallback(
     (agent: AgentKind) => {
-      if (!sel || sel.kind !== 'preset' || !sel.preset.runtimes[agent]) return;
+      if (!sel || sel.kind !== 'preset' || !presetRuntimeForAgent(sel.preset, agent)) return;
       const id = manualModelIds[agent]?.trim() ?? '';
       if (!id) return;
       setPicks((prev) => {
@@ -1126,7 +1126,7 @@ export function AddProviderWizard({
       const runtimes: CustomProviderConfig['runtimes'] = {};
       const keys: RuntimeKeys = {};
       for (const agent of configuredPresetAgents(preset)) {
-        const rt = preset.runtimes[agent];
+        const rt = presetRuntimeForAgent(preset, agent);
         if (!rt) continue;
         // 只写归属该 runtime 的勾选模型;一个模型都没选中的 runtime 整个跳过
         // (空模型 runtime 无意义,且避免把另一端的模型 id 越界写入)。
@@ -1221,7 +1221,7 @@ export function AddProviderWizard({
   const checkedCount = [...picks.values()].filter((v) => v.checked).length;
   const presetHasRecommendedModels =
     sel?.kind === 'preset' &&
-    presetAgents.some((agent) => (sel.preset.runtimes[agent]?.models.length ?? 0) > 0);
+    presetAgents.some((agent) => (presetRuntimeForAgent(sel.preset, agent)?.models.length ?? 0) > 0);
   const showManualModelFallback =
     sel?.kind === 'preset' &&
     fetchState.status === 'done' &&
@@ -1231,7 +1231,7 @@ export function AddProviderWizard({
   const presetBaseUrlsValid =
     sel?.kind === 'preset' &&
     presetAgents.every((agent) => {
-      const runtime = sel.preset.runtimes[agent];
+      const runtime = presetRuntimeForAgent(sel.preset, agent);
       if (!runtime) return false;
       const value = presetRuntimeBaseUrl(sel.preset, agent, presetBaseUrls);
       if (sel.preset.authMethod === 'none') {
@@ -1748,7 +1748,7 @@ export function AddProviderWizard({
                   上游标注「Cindy 桥接」，让用户明确该通道是协议转换而非原生。 */}
               <div className="flex flex-col gap-2">
                 {presetAgents.map((agent) => {
-                  const rt = sel.preset.runtimes[agent];
+                  const rt = presetRuntimeForAgent(sel.preset, agent);
                   const bridged = agent === 'codex' && rt?.wireProtocol === 'openai-chat';
                   if (rt?.baseUrlEditable) {
                     const value = presetBaseUrls[agent] ?? rt.baseUrl;

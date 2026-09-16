@@ -1619,3 +1619,23 @@ it('offers an OMP tab whose protocol is fixed to Anthropic Messages', async () =
   // anthropic-messages(与 claude-code 同待遇;只有 codex / pi 才提供选择器)。
   expect(screen.queryByText('settings.providers.custom.fields.wireProtocol')).toBeNull();
 });
+
+it('derives the OMP runtime from the preset claude-code runtime', async () => {
+  // 目录里 27 条预设都不带 omp runtime;预设应把 OMP 的模型清单自动带上,
+  // 而不是让用户手填(见 applyPreset 里 omp 回落 claude-code 的注释)。
+  window.electronAPI.maker.listProviderPresets = vi.fn(async () => ({
+    presets: [{
+      id: 'anthropic-like', name: 'Anthropic Like', runtimes: { 'claude-code': {
+        baseUrl: 'https://api.example.test/anthropic',
+        wireProtocol: 'anthropic-messages' as const,
+        models: [{ id: 'MiniMax-M2', name: 'MiniMax M2', mode: 'chat' as const }],
+      } },
+    }],
+  }));
+  render(<CustomProviderDialog onSaved={vi.fn()} onClose={vi.fn()} />);
+  await waitForInitialDialogFocus();
+  fireEvent.click(screen.getByRole('button', { name: 'settings.providers.custom.presets.label' }));
+  fireEvent.click(await screen.findByRole('option', { name: 'Anthropic Like' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'settings.providers.custom.protocol.omp' }));
+  expect(screen.getByDisplayValue('MiniMax-M2')).toBeTruthy();
+});

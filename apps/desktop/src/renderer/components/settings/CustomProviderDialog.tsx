@@ -130,6 +130,7 @@ import { SettingsTextInput } from './SettingsTextInput';
 import {
   configuredPresetAgents,
   isConfiguredPresetRuntime,
+  presetRuntimeForAgent,
 } from '@/../shared/piRuntimeInitialization';
 
 /**
@@ -1051,7 +1052,11 @@ export function CustomProviderDialog({
       setRtSynced((prev) => {
         const next = { ...prev };
         for (const a of AGENTS) {
-          const rc = p.runtimes[a];
+          // 目录里 27 条预设都不带 omp runtime,用共享 helper 让 omp 回落到同一预设的
+          // claude-code runtime —— 详见 shared/piRuntimeInitialization.ts 的
+          // presetRuntimeForAgent 注释(对 OMP 真正起作用的是模型清单,端点/密钥由 host
+          // 侧重写为 loopback proxy)。没有 claude-code 的预设保持留空,不猜。
+          const rc = presetRuntimeForAgent(p, a);
           if (!isConfiguredPresetRuntime(a, rc)) {
             next[a] = emptyRuntime(a);
             continue;

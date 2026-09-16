@@ -343,7 +343,9 @@ describe('AddProviderWizard — preset 直达', () => {
       expect(screen.getByText('settings.providers.wizard.nameLabel')).not.toBeNull(),
     );
     expect(screen.getByDisplayValue('Anthropic API')).not.toBeNull();
-    expect(screen.getAllByText(/api\.anthropic\.com/)).toHaveLength(3);
+    // 每个 runtime 都展示官方端点。OMP 由同预设的 claude-code runtime 派生
+    // (见 shared/piRuntimeInitialization.ts 的 presetRuntimeForAgent),因此是 4 个。
+    expect(screen.getAllByText(/api\.anthropic\.com/)).toHaveLength(4);
   });
 
   it('官方 API 预设:列模型失败 → 第三步仍有推荐模型预勾,可完成(Greptile P1 回归)', async () => {
