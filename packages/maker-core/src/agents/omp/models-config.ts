@@ -36,6 +36,34 @@ export const OMP_PROVIDER_APIS: readonly OmpProviderApi[] = [
   'openai-responses',
 ];
 
+/**
+ * Cindy 侧的 wire protocol 名。与 `@cindy/model-providers` 的 `ProviderWireProtocol`
+ * 同形,就地声明以保持本模块**零依赖**(本文件刻意不 import 任何东西)。
+ */
+export type OmpWireProtocol = 'anthropic-messages' | 'openai-responses' | 'openai-chat';
+
+/**
+ * Cindy 的 wire protocol → OMP models.yml 的 `api`。
+ *
+ * **两边命名不同,必须显式映射,不能透传**（真机实测 v18.1.18）:
+ * Cindy 把 chat completions 一家叫 `openai-chat`,而 OMP 认的值是 `openai-completions`;
+ * 直接透传 `openai-chat` 会让**整份 models.yml 被拒**——OMP 报
+ * `Unknown provider "<id>"`,而不是退化成某个默认协议,所以传错等于会话起不来。
+ *
+ * 另一条同批实测的约束:**OMP 不支持模型级 `api`**(给单个模型写 `api` 同样整份被拒),
+ * 协议只能在 provider 级声明。
+ */
+export function ompApiForWireProtocol(wire: OmpWireProtocol): OmpProviderApi {
+  switch (wire) {
+    case 'anthropic-messages':
+      return 'anthropic-messages';
+    case 'openai-responses':
+      return 'openai-responses';
+    case 'openai-chat':
+      return 'openai-completions';
+  }
+}
+
 /** Cindy 托管 provider 的固定 id（与 models.yml 的 providers.<id> 对应）。 */
 export const OMP_CINDY_PROVIDER_ID = 'cindy';
 

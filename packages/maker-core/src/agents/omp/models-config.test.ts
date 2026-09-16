@@ -8,6 +8,7 @@ import {
   OMP_CINDY_PROVIDER_ID_HEADER,
   OMP_CINDY_SESSION_ID_HEADER,
   OMP_CINDY_SESSION_TOKEN_ENV,
+  ompApiForWireProtocol,
 } from './models-config.js';
 
 const BASE_PROVIDER = {
@@ -180,5 +181,19 @@ describe('buildOmpCindyProvider', () => {
     expect(yaml).toContain(`      x-cindy-omp-channel: 'desktop'`);
     // apiKey 仍是 env 名,不因 headers 里出现字面量而退化。
     expect(yaml).toContain(`    apiKey: ${OMP_CINDY_API_KEY_ENV}`);
+  });
+});
+
+describe('ompApiForWireProtocol', () => {
+  it('maps Cindy wire protocols onto the api values OMP actually accepts', () => {
+    expect(ompApiForWireProtocol('anthropic-messages')).toBe('anthropic-messages');
+    expect(ompApiForWireProtocol('openai-responses')).toBe('openai-responses');
+  });
+
+  it('translates openai-chat instead of passing it through', () => {
+    // Cindy 叫 openai-chat,OMP 认 openai-completions。透传会让整份 models.yml 被拒
+    // (OMP 报 Unknown provider),所以这条断言守的是「必须翻译」而不是「值长什么样」。
+    expect(ompApiForWireProtocol('openai-chat')).toBe('openai-completions');
+    expect(ompApiForWireProtocol('openai-chat')).not.toBe('openai-chat');
   });
 });
