@@ -2549,7 +2549,7 @@ export function CustomProviderDialog({
               border: '1px solid var(--settings-theme-card-border)',
             }}
           >
-            {(activeTab === 'codex' || activeTab === 'pi') && (
+            {(activeTab === 'codex' || activeTab === 'pi' || activeTab === 'omp') && (
               <div className="flex flex-col gap-[7px]">
                 <FieldLabel>{t('settings.providers.custom.fields.wireProtocol')}</FieldLabel>
                 <div className="flex flex-wrap gap-1.5">

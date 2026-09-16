@@ -1607,7 +1607,7 @@ it('preserves preset media metadata through probing and saving', async () => {
   expect(customProviderMocks.createCustomProvider.mock.calls[0][0].runtimes.codex.models[0]).toMatchObject(media);
 });
 
-it('offers an OMP tab whose protocol is fixed to Anthropic Messages', async () => {
+it('offers an OMP tab where the upstream protocol can be chosen', async () => {
   render(<CustomProviderDialog onSaved={vi.fn()} onClose={vi.fn()} />);
   await waitForInitialDialogFocus();
   fireEvent.click(screen.getByRole('tab', { name: 'settings.providers.custom.protocol.omp' }));
@@ -1615,9 +1615,11 @@ it('offers an OMP tab whose protocol is fixed to Anthropic Messages', async () =
   expect(
     screen.getByPlaceholderText('settings.providers.custom.fields.baseUrlPlaceholder'),
   ).toBeTruthy();
-  // 但不给 wire protocol 选择器:OMP 经 Cindy 的 anthropic-compat 代理接入,协议固定
-  // anthropic-messages(与 claude-code 同待遇;只有 codex / pi 才提供选择器)。
-  expect(screen.queryByText('settings.providers.custom.fields.wireProtocol')).toBeNull();
+  // OMP 与 codex / pi 同待遇:可以选上游协议(Cindy 会把它落到 routing.omp.wireProtocol,
+  // 宿主侧再翻译成 OMP models.yml 的 api —— 两家命名不同,见 ompApiForWireProtocol)。
+  expect(
+    screen.getByText('settings.providers.custom.fields.wireProtocol'),
+  ).toBeTruthy();
 });
 
 it('derives the OMP runtime from the preset claude-code runtime', async () => {

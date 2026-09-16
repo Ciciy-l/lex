@@ -51,7 +51,11 @@ vi.mock('../pi-proxy-session-token.js', () => ({
 }));
 
 import type { RoutingDecision } from '@cindy/anthropic-compat-proxy';
-import { createModelRoutingTransform, setClaudeProxyGatewayKeyReader } from '../anthropic-compat-proxy-host';
+import {
+  createModelRoutingTransform,
+  piGatewayRequestAgent,
+  setClaudeProxyGatewayKeyReader,
+} from '../anthropic-compat-proxy-host';
 import {
   authenticateOmpProxySession,
   readOmpBearerToken,
@@ -207,5 +211,16 @@ describe('OMP gateway route in cc routingTransform', () => {
       ),
     );
     expect(decision === null || decision.headerDelete === undefined).toBe(true);
+  });
+});
+
+describe('OMP protocol to gateway front door', () => {
+  it('routes each OMP protocol onto the front door that serves it', () => {
+    // 这条耦合是 OMP 多协议方案能成立的前提：models.yml 的 api 决定 OMP 打到本机
+    // proxy 的**哪条路径**，而 proxy 按路径选前门。三条路径必须与
+    // ompApiForWireProtocol 的三个取值一一对应，任何一侧改动都要同时看这里。
+    expect(piGatewayRequestAgent('/v1/messages')).toBe('claude-code');
+    expect(piGatewayRequestAgent('/responses')).toBe('codex');
+    expect(piGatewayRequestAgent('/chat/completions')).toBe('codex');
   });
 });

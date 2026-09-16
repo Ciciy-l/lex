@@ -279,8 +279,14 @@ function registrySupportsFastMode(
   );
 }
 
-/** 固定 agent 顺序：保证派生出的 provider.agents / routing / models 顺序稳定。 */
-const AGENT_ORDER: readonly AgentKind[] = ["claude-code", "codex", "pi"];
+/**
+ * 固定 agent 顺序：保证派生出的 provider.agents / routing / models 顺序稳定。
+ *
+ * 必须覆盖全部 AgentKind：漏掉的 agent 其 runtime 不会被投影进 catalog 的
+ * routing / models，宿主侧就永远读不到用户为该 agent 填的协议与模型
+ * （OMP 就走不了用户配置的端点类型）。
+ */
+const AGENT_ORDER: readonly AgentKind[] = ["claude-code", "codex", "pi", "omp"];
 
 /** 单个用户填写的模型 → CatalogModel（补默认元数据；effort 按所属 agent 参考内置默认）。 */
 function toCatalogModel(
