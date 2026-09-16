@@ -81,6 +81,20 @@ export const SUPPORTED_BINARY_KINDS = Object.freeze(
     .map(([kind]) => kind),
 );
 
+/**
+ * opt-in runtime：不在默认安装集合里，但**不应被完全无视** —— dev 启动仍要检测它们，
+ * 否则用户启动时看不到这些引擎的任何状态。
+ *
+ * 与 SUPPORTED_BINARY_KINDS 的区别是**失败语义**：它们体积大且（当前）只走上游、
+ * 没有 CDN 兜底，拿它们当硬门槛会让网络到不了上游的人直接起不了 dev。所以调用方
+ * 应当把它们当「尽力准备」：成功与必需项同样记录，失败只警告。
+ */
+export const OPTIONAL_BINARY_KINDS = Object.freeze(
+  Object.entries(KINDS)
+    .filter(([, config]) => config.defaultInstall === false)
+    .map(([kind]) => kind),
+);
+
 const log = (msg) => console.log(`\x1b[36m[ensure-agent-binaries]\x1b[0m ${msg}`);
 const warn = (msg) => console.log(`\x1b[33m[ensure-agent-binaries]\x1b[0m ${msg}`);
 

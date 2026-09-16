@@ -15,6 +15,7 @@ import {
   binFileFor,
   ensureBinary,
   isValidBinary,
+  OPTIONAL_BINARY_KINDS,
   isValidDirDist,
   listSiblingWorktreeRoots,
   readInstalledVersion,
@@ -48,6 +49,15 @@ test('OMP is explicitly installable but never added to the default set', () => {
   assert.equal(updateScriptForKind('omp'), 'omp');
   assert.equal(supportsCdnFallback('omp'), false);
   assert.equal(SUPPORTED_BINARY_KINDS.includes('omp'), false);
+  // 但它必须出现在 opt-in 清单里 —— dev 启动据此「检测但不阻断」:
+  // 完全无视会让用户看不到 OMP 的状态,当硬门槛又会让上游不可达的人起不了 dev。
+  assert.deepEqual(OPTIONAL_BINARY_KINDS, ['omp']);
+
+  const devGuard = fs.readFileSync(
+    new URL('../ensure-dev-runtime-assets.mjs', import.meta.url),
+    'utf8',
+  );
+  assert.match(devGuard, /const OPTIONAL_AGENT_KINDS = OPTIONAL_BINARY_KINDS;/);
 });
 
 test('OMP refuses marker-only local files and never reuses a sibling binary', async () => {
