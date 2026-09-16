@@ -22,6 +22,7 @@ import { app } from 'electron';
 import {
   OmpAgent,
   buildOmpCindyModelsYaml,
+  ompApiForWireProtocol,
   OMP_CINDY_PROVIDER_ID,
   type AgentDeps,
   type AuthAdapter,
@@ -29,6 +30,7 @@ import {
   type AuthState,
   type OmpModelsModel,
   type OmpSessionCredentials,
+  type OmpWireProtocol,
 } from '@cindy/maker-core';
 
 import { getActiveCatalog } from './active-catalog.js';
@@ -102,6 +104,41 @@ export function collectOmpCatalogModels(model: string): OmpModelsModel[] {
 }
 
 /**
+ * 这次会话该让 OMP 对 proxy 说哪种上游协议。
+ *
+ * 为什么必须压成**一个**值:OMP 的 models.yml **只能**在 provider 级声明 `api`
+ * (实测 v18.1.18:给单个模型写 `api` 会让整份文件被拒,报 `Unknown provider`),
+ * 所以 Cindy 的「模型 route 覆盖 → 供应商 routing 默认」两层在这里收敛成一个。
+ *
+ * 取值必须经 `ompApiForWireProtocol` 翻译后才能写进 models.yml —— Cindy 与 OMP 对
+ * chat completions 的命名不同(`openai-chat` vs `openai-completions`),透传会让
+ * OMP 整份拒收、会话起不来。
+ *
+ * 它同时决定 OMP 打到本机 proxy 的哪条路径,而 proxy 按路径选前门:
+ * `anthropic-messages` → `/v1/messages`(Claude 前门);`openai-responses` /
+ * `openai-completions` → `/responses` / `/chat/completions`(Codex 前门)。
+ */
+export function resolveOmpWireProtocol(
+  model: string,
+  providerId?: string | null,
+): OmpWireProtocol {
+  const providers = getActiveCatalog().providers;
+  const scoped = providerId ? providers.filter((p) => p.id === providerId) : providers;
+  // 模型级覆盖优先(与 Cindy 各处 route 解析同口径)。
+  for (const provider of scoped) {
+    const wire = provider.models.omp?.find((entry) => entry.id === model)?.route?.wireProtocol;
+    if (wire) return wire;
+  }
+  // 其次供应商对该 agent 的默认协议。
+  for (const provider of scoped) {
+    const wire = provider.routing.omp?.wireProtocol;
+    if (wire) return wire;
+  }
+  // 兜底与历史语义一致:OMP 走本机 proxy 的 Anthropic 前门。
+  return 'anthropic-messages';
+}
+
+/**
  * 物化前的最后一道闸:models.yml **绝不能**含任何密钥。
  *
  * 通道设计上它只可能有 env 名与非敏感标识,但这条断言把「设计上不可能」变成
@@ -124,15 +161,23 @@ export function buildOmpManagedModelsYaml(params: {
   sessionId: string;
   model: string;
   token: string;
+  /** 该会话选中的供应商(catalog provider id);缺省时协议解析退化为跨全部供应商搜模型。 */
+  providerId?: string | null;
+  /** 显式指定上游协议(测试用);不给则按模型/供应商解析。 */
+  wireProtocol?: OmpWireProtocol;
 }): string | undefined {
   const models = collectOmpCatalogModels(params.model);
   if (models.length === 0) {
     log.warn('omp has no catalog models; skipping models.yml materialization');
     return undefined;
   }
+  const wireProtocol =
+    params.wireProtocol ?? resolveOmpWireProtocol(params.model, params.providerId);
   const yaml = buildOmpCindyModelsYaml({
     baseUrl: getClaudeEndpoint(),
-    api: 'anthropic-messages',
+    // 必须翻译:Cindy 的 `openai-chat` 在 OMP 里叫 `openai-completions`,透传会让
+    // OMP 整份 models.yml 被拒(见 ompApiForWireProtocol 注释)。
+    api: ompApiForWireProtocol(wireProtocol),
     providerId: OMP_CINDY_PROVIDER_ID,
     sessionId: params.sessionId,
     models,
@@ -197,6 +242,7 @@ export function buildOmpAgent(opts: BuildOmpAgentOpts): OmpAgent | null {
         sessionId,
         model: context.model,
         token,
+        providerId: context.providerId,
       });
     },
   });

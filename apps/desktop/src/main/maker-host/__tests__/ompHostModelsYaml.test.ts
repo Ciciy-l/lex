@@ -120,6 +120,32 @@ describe('buildOmpManagedModelsYaml', () => {
     expect(yaml).toContain(env.endpoint);
   });
 
+  it('translates the session wire protocol into the api value OMP accepts', () => {
+    // Cindy 的 openai-chat 在 OMP 里叫 openai-completions;写成 openai-chat 会让 OMP
+    // 整份 models.yml 被拒(实测),所以这条断言守的是**翻译**而不是字符串本身。
+    expect(
+      buildOmpManagedModelsYaml({
+        sessionId: 'sess-1',
+        model: 'm1',
+        token: SECRET,
+        wireProtocol: 'openai-chat',
+      }),
+    ).toContain('api: openai-completions');
+    expect(
+      buildOmpManagedModelsYaml({
+        sessionId: 'sess-1',
+        model: 'm1',
+        token: SECRET,
+        wireProtocol: 'openai-responses',
+      }),
+    ).toContain('api: openai-responses');
+  });
+
+  it('falls back to the Anthropic front door when nothing declares a protocol', () => {
+    const yaml = buildOmpManagedModelsYaml({ sessionId: 'sess-1', model: 'm1', token: SECRET });
+    expect(yaml).toContain('api: anthropic-messages');
+  });
+
   it('skips materialization when no model can be served', () => {
     env.catalogModels = [];
     expect(buildOmpManagedModelsYaml({ sessionId: 'sess-1', model: '', token: SECRET })).toBeUndefined();

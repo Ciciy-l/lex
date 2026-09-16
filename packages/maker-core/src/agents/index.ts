@@ -53,6 +53,7 @@ export {
   OMP_CINDY_SESSION_TOKEN_ENV,
   OMP_MODELS_FILE_NAME,
   OMP_PROVIDER_APIS,
+  ompApiForWireProtocol,
 } from './omp/models-config.js';
 export type {
   OmpCindyProviderInput,
@@ -62,6 +63,7 @@ export type {
   OmpModelsProvider,
   OmpModelsProviderWithModels,
   OmpProviderApi,
+  OmpWireProtocol,
 } from './omp/models-config.js';
 // 权限档位映射:三档显式表驱动,fail-closed 到 always-ask(绝不到 yolo)。
 export {
