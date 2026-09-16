@@ -155,6 +155,30 @@ function isDialogAgentKind(agent: AgentKind): agent is DialogAgentKind {
   );
 }
 
+/**
+ * 协议选择器的文案 key；codex 返回 null(它用 option 自带的 labelKey/helpKey)。
+ *
+ * 为什么需要分引擎文案：codex 那一套写的是「Responses 原生、其余 {{appName}} 桥接」，
+ * 因为 **Codex 只会说 Responses**，上游说别的协议时必须由 {{appName}} 转换。
+ * pi / omp 是原生支持三种协议的 harness，套用 codex 的措辞会得出「明明原生却说桥接」
+ * 的错误描述（OMP 实测三条路径都能直接打）。
+ */
+function wireProtocolCopyKey(
+  agent: DialogAgentKind,
+  protocol: ProviderWireProtocol,
+  kind: 'label' | 'help',
+): string | null {
+  const prefix = agent === 'pi' ? 'pi' : agent === 'omp' ? 'omp' : null;
+  if (!prefix) return null;
+  const suffix =
+    protocol === 'anthropic-messages'
+      ? 'Anthropic'
+      : protocol === 'openai-responses'
+        ? 'Responses'
+        : 'Chat';
+  return `settings.providers.custom.wireProtocol.${prefix}${suffix}${kind === 'help' ? 'Help' : ''}`;
+}
+
 const DIALOG_FOCUSABLE_SELECTOR = [
   'button:not([disabled])',
   'input:not([disabled])',
@@ -2572,30 +2596,15 @@ export function CustomProviderDialog({
                       }
                     >
                       {t(
-                        activeTab === 'pi'
-                          ? `settings.providers.custom.wireProtocol.pi${
-                              option.value === 'anthropic-messages'
-                                ? 'Anthropic'
-                                : option.value === 'openai-responses'
-                                  ? 'Responses'
-                                  : 'Chat'
-                            }`
-                          : option.labelKey,
+                        wireProtocolCopyKey(activeTab, option.value, 'label') ?? option.labelKey,
                       )}
                     </button>
                   ))}
                 </div>
                 <span className="text-12 leading-snug text-[var(--text-tertiary)]">
                   {t(
-                    activeTab === 'pi'
-                      ? `settings.providers.custom.wireProtocol.pi${
-                          f.wireProtocol === 'anthropic-messages'
-                            ? 'AnthropicHelp'
-                            : f.wireProtocol === 'openai-chat'
-                              ? 'ChatHelp'
-                              : 'ResponsesHelp'
-                        }`
-                      : customProviderCodexWireProtocolOption(f.wireProtocol).helpKey,
+                    wireProtocolCopyKey(activeTab, f.wireProtocol, 'help') ??
+                      customProviderCodexWireProtocolOption(f.wireProtocol).helpKey,
                   )}
                 </span>
               </div>

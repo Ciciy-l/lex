@@ -1667,7 +1667,13 @@
           "piAnthropic": "Anthropic Messages",
           "piResponsesHelp": "Pi connects directly to the provider's OpenAI Responses API.",
           "piChatHelp": "Pi connects directly to the provider's OpenAI-compatible Chat Completions API.",
-          "piAnthropicHelp": "Pi connects directly to the provider's Anthropic Messages API."
+          "piAnthropicHelp": "Pi connects directly to the provider's Anthropic Messages API.",
+          "ompResponses": "OpenAI Responses",
+          "ompChat": "OpenAI Chat Completions",
+          "ompAnthropic": "Anthropic Messages",
+          "ompResponsesHelp": "OMP speaks OpenAI Responses natively; {{appName}} only forwards through its local proxy and does not convert the protocol.",
+          "ompChatHelp": "OMP speaks OpenAI Chat Completions natively; {{appName}} only forwards through its local proxy and does not convert the protocol.",
+          "ompAnthropicHelp": "OMP speaks Anthropic Messages natively; {{appName}} only forwards through its local proxy and does not convert the protocol."
         },
         "modelProtocol": {
           "label": "Model protocol",

@@ -1667,7 +1667,13 @@
           "piAnthropic": "Anthropic Messages",
           "piResponsesHelp": "Pi がプロバイダーの OpenAI Responses API に直接接続します。",
           "piChatHelp": "Pi がプロバイダーの OpenAI 互換 Chat Completions API に直接接続します。",
-          "piAnthropicHelp": "Pi がプロバイダーの Anthropic Messages API に直接接続します。"
+          "piAnthropicHelp": "Pi がプロバイダーの Anthropic Messages API に直接接続します。",
+          "ompResponses": "OpenAI Responses",
+          "ompChat": "OpenAI Chat Completions",
+          "ompAnthropic": "Anthropic Messages",
+          "ompResponsesHelp": "OMP は OpenAI Responses をネイティブに扱えます。{{appName}} はローカル Proxy で転送するだけで、プロトコル変換は行いません。",
+          "ompChatHelp": "OMP は OpenAI Chat Completions をネイティブに扱えます。{{appName}} はローカル Proxy で転送するだけで、プロトコル変換は行いません。",
+          "ompAnthropicHelp": "OMP は Anthropic Messages をネイティブに扱えます。{{appName}} はローカル Proxy で転送するだけで、プロトコル変換は行いません。"
         },
         "modelProtocol": {
           "label": "モデルプロトコル",

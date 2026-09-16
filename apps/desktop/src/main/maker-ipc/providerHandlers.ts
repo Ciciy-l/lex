@@ -86,7 +86,10 @@ import type { IpcHandlerRegistry } from './ipcHandlerRegistry.js';
 
 const log = createLogger('maker-ipc:provider');
 
-const VALID_AGENTS: readonly string[] = ['claude-code', 'codex', 'pi'];
+// 必须覆盖全部 AgentKind:这里是供应商 IPC 的 runtime 键白名单,漏掉的 agent 会让
+// 保存/测试连接被 parseRuntimeKeys 判为 null 并以 INVALID_PARAMS 拒掉
+// (用户实测报 `invalid runtime 'omp'`)。
+const VALID_AGENTS: readonly string[] = ['claude-code', 'codex', 'pi', 'omp'];
 const VALID_ADHOC_AUTH_METHODS: readonly string[] = ['apiKey', 'oauth', 'none'];
 const PROVIDER_OAUTH_OWNER_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 type RuntimeKeys = Partial<Record<AgentKind, string>>;

@@ -1620,6 +1620,14 @@ it('offers an OMP tab where the upstream protocol can be chosen', async () => {
   expect(
     screen.getByText('settings.providers.custom.fields.wireProtocol'),
   ).toBeTruthy();
+  // 但说明文案必须是 OMP 自己的:codex 那套写的是「Responses 原生、其余 {{appName}} 桥接」,
+  // 而 OMP 原生支持三种协议,套用会得出「明明原生却说桥接」的错误描述。
+  expect(
+    screen.getByText('settings.providers.custom.wireProtocol.ompAnthropicHelp'),
+  ).toBeTruthy();
+  expect(
+    screen.queryByText('settings.providers.custom.wireProtocol.anthropicHelp'),
+  ).toBeNull();
 });
 
 it('derives the OMP runtime from the preset claude-code runtime', async () => {

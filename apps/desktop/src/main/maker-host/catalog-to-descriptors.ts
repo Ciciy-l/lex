@@ -295,7 +295,10 @@ export function refreshCatalogDerivedModels(
   target: ModelCapabilitiesTarget,
   catalog: Catalog,
 ): void {
-  for (const agent of ['claude-code', 'codex', 'pi'] as const) {
+  // 覆盖全部 AgentKind:漏掉的 agent 其 availableModels 永远不被 splice,
+  // 表现为该引擎在模型面板里没有任何可选模型。omp 与 pi 一样是可选 agent
+  // (二进制缺失时不注册),下方的 catch 已按同口径跳过。
+  for (const agent of ['claude-code', 'codex', 'pi', 'omp'] as const) {
     let availableModels: ModelDescriptor[];
     try {
       availableModels = target.getCapabilities(agent).availableModels;

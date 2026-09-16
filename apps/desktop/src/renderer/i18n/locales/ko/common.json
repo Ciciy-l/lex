@@ -1667,7 +1667,13 @@
           "piAnthropic": "Anthropic Messages",
           "piResponsesHelp": "Pi가 제공자의 OpenAI Responses API에 직접 연결합니다.",
           "piChatHelp": "Pi가 제공자의 OpenAI 호환 Chat Completions API에 직접 연결합니다.",
-          "piAnthropicHelp": "Pi가 제공자의 Anthropic Messages API에 직접 연결합니다."
+          "piAnthropicHelp": "Pi가 제공자의 Anthropic Messages API에 직접 연결합니다.",
+          "ompResponses": "OpenAI Responses",
+          "ompChat": "OpenAI Chat Completions",
+          "ompAnthropic": "Anthropic Messages",
+          "ompResponsesHelp": "OMP는 OpenAI Responses를 네이티브로 지원합니다. {{appName}}는 로컬 Proxy로 전달만 하며 프로토콜을 변환하지 않습니다.",
+          "ompChatHelp": "OMP는 OpenAI Chat Completions를 네이티브로 지원합니다. {{appName}}는 로컬 Proxy로 전달만 하며 프로토콜을 변환하지 않습니다.",
+          "ompAnthropicHelp": "OMP는 Anthropic Messages를 네이티브로 지원합니다. {{appName}}는 로컬 Proxy로 전달만 하며 프로토콜을 변환하지 않습니다."
         },
         "modelProtocol": {
           "label": "모델 프로토콜",

@@ -1667,7 +1667,13 @@
           "piAnthropic": "Anthropic Messages",
           "piResponsesHelp": "Pi 直接連線供應商的 OpenAI Responses API。",
           "piChatHelp": "Pi 直接連線供應商的 OpenAI 相容 Chat Completions API。",
-          "piAnthropicHelp": "Pi 直接連線供應商的 Anthropic Messages API。"
+          "piAnthropicHelp": "Pi 直接連線供應商的 Anthropic Messages API。",
+          "ompResponses": "OpenAI Responses",
+          "ompChat": "OpenAI Chat Completions",
+          "ompAnthropic": "Anthropic Messages",
+          "ompResponsesHelp": "OMP 原生支援 OpenAI Responses；{{appName}} 只做本機 Proxy 轉發，不轉換協定。",
+          "ompChatHelp": "OMP 原生支援 OpenAI Chat Completions；{{appName}} 只做本機 Proxy 轉發，不轉換協定。",
+          "ompAnthropicHelp": "OMP 原生支援 Anthropic Messages；{{appName}} 只做本機 Proxy 轉發，不轉換協定。"
         },
         "modelProtocol": {
           "label": "模型協定",
