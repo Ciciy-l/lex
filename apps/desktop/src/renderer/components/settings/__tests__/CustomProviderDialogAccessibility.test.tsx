@@ -1606,3 +1606,16 @@ it('preserves preset media metadata through probing and saving', async () => {
   await waitFor(() => expect(customProviderMocks.createCustomProvider).toHaveBeenCalledOnce());
   expect(customProviderMocks.createCustomProvider.mock.calls[0][0].runtimes.codex.models[0]).toMatchObject(media);
 });
+
+it('offers an OMP tab whose protocol is fixed to Anthropic Messages', async () => {
+  render(<CustomProviderDialog onSaved={vi.fn()} onClose={vi.fn()} />);
+  await waitForInitialDialogFocus();
+  fireEvent.click(screen.getByRole('tab', { name: 'settings.providers.custom.protocol.omp' }));
+  // tab 内容确实渲染出来了(base URL 输入在位)。
+  expect(
+    screen.getByPlaceholderText('settings.providers.custom.fields.baseUrlPlaceholder'),
+  ).toBeTruthy();
+  // 但不给 wire protocol 选择器:OMP 经 Cindy 的 anthropic-compat 代理接入,协议固定
+  // anthropic-messages(与 claude-code 同待遇;只有 codex / pi 才提供选择器)。
+  expect(screen.queryByText('settings.providers.custom.fields.wireProtocol')).toBeNull();
+});

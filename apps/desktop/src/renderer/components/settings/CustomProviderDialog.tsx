@@ -56,6 +56,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ClaudeMark } from '@/components/icons/ClaudeMark';
 import { CodexMark } from '@/components/icons/CodexMark';
+import { OmpMark } from '@/components/icons/OmpMark';
 import { PiMark } from '@/components/icons/PiMark';
 import {
   CustomProviderRuntimeFillOverlay,
@@ -132,21 +133,25 @@ import {
 } from '@/../shared/piRuntimeInitialization';
 
 /**
- * 本面板配置 claude / codex / pi 三个 runtime。pi 是多协议 harness:BYOM 自定义/本地模型
+ * 本面板配置 claude / codex / pi / omp 四个 runtime。pi 是多协议 harness:BYOM 自定义/本地模型
  * 走 pi 原生 provider 直连(不过 anthropic-compat 代理),故 pi tab 额外提供显式 api 选择器。
+ * omp 经 Cindy 的 anthropic-compat 代理接入(wire protocol 固定 anthropic-messages),
+ * 因此没有 pi 那样的多协议选择器。
  */
-type DialogAgentKind = Extract<AgentKind, 'claude-code' | 'codex' | 'pi'>;
+type DialogAgentKind = Extract<AgentKind, 'claude-code' | 'codex' | 'pi' | 'omp'>;
 
-const AGENTS: DialogAgentKind[] = ['claude-code', 'codex', 'pi'];
+const AGENTS: DialogAgentKind[] = ['claude-code', 'codex', 'pi', 'omp'];
 
 const VISIBLE_AGENTS: DialogAgentKind[] = AGENTS;
 
 /**
- * OMP 接入:AgentKind 已放宽为四元组,但本面板只配置 claude / codex / pi 三个 runtime
- * (见上方注释)。回落到类型守卫而不是断言,避免把 omp 当成已配置 runtime 去索引表单。
+ * 类型守卫:AgentKind 已是四元组,这里回落到守卫而不是断言,避免把未知值当已配置 runtime
+ * 去索引表单。取值集合与 AGENTS 保持一致 —— 新增 runtime 时必须同时改这两处。
  */
 function isDialogAgentKind(agent: AgentKind): agent is DialogAgentKind {
-  return agent === 'claude-code' || agent === 'codex' || agent === 'pi';
+  return (
+    agent === 'claude-code' || agent === 'codex' || agent === 'pi' || agent === 'omp'
+  );
 }
 
 const DIALOG_FOCUSABLE_SELECTOR = [
@@ -177,6 +182,11 @@ const TAB_META: Record<
     labelKey: 'settings.providers.custom.protocol.pi',
     helpKey: 'settings.providers.custom.protocol.piDesc',
   },
+  omp: {
+    Mark: OmpMark,
+    labelKey: 'settings.providers.custom.protocol.omp',
+    helpKey: 'settings.providers.custom.protocol.ompDesc',
+  },
 };
 
 /** pi 默认 wire protocol:BYOM 本地端点(Ollama/vLLM 的 /v1/chat/completions)最常见。 */
@@ -186,6 +196,9 @@ const PI_DEFAULT_WIRE: ProviderWireProtocol = 'openai-chat';
 function defaultWireFor(agent: DialogAgentKind): ProviderWireProtocol {
   if (agent === 'claude-code') return 'anthropic-messages';
   if (agent === 'pi') return PI_DEFAULT_WIRE;
+  // OMP 经 anthropic-compat 代理接入,只支持 Anthropic Messages 形态
+  // (见 packages/maker-core/src/agents/omp/models-config.ts 里 Cindy provider 的 api)。
+  if (agent === 'omp') return 'anthropic-messages';
   return 'openai-responses';
 }
 
@@ -289,6 +302,7 @@ function initRuntimes(initial?: CustomProviderConfig): Record<DialogAgentKind, R
     'claude-code': emptyRuntime('claude-code'),
     codex: emptyRuntime('codex'),
     pi: emptyRuntime('pi'),
+    omp: emptyRuntime('omp'),
   };
   if (initial) {
     for (const a of AGENTS) {
@@ -614,6 +628,7 @@ export function CustomProviderDialog({
     'claude-code': false,
     codex: false,
     pi: false,
+    omp: false,
   });
   const [saving, setSaving] = useState(false);
   const [imageGenerationReloadConfirmation, setImageGenerationReloadConfirmation] =
@@ -665,12 +680,14 @@ export function CustomProviderDialog({
     'claude-code': IDLE_TEST,
     codex: IDLE_TEST,
     pi: IDLE_TEST,
+    omp: IDLE_TEST,
   });
   // per-runtime「获取模型列表」进行中标记（按钮瞬态 spinner）。
   const [fetchingModels, setFetchingModels] = useState<Record<DialogAgentKind, boolean>>({
     'claude-code': false,
     codex: false,
     pi: false,
+    omp: false,
   });
   // 拉取成功后的勾选弹层：行集合 = 拉取结果 ∪ 表单已填（后者默认勾选、保留用户显示名）。
   const [runtimeFill, setRuntimeFill] = useState<RuntimeFillDialogState | null>(null);
@@ -681,6 +698,7 @@ export function CustomProviderDialog({
     'claude-code': false,
     codex: false,
     pi: false,
+    omp: false,
   });
   const runtimeFillTriggerRef = useRef<HTMLButtonElement>(null);
   const modelPickerTriggerRef = useRef<HTMLButtonElement>(null);
@@ -928,6 +946,7 @@ export function CustomProviderDialog({
     'claude-code': '',
     codex: '',
     pi: '',
+    omp: '',
   });
   // A late safeStorage response must not overwrite a key edited or copied while
   // hydration was in flight. Revisions only change for explicit key mutations.
@@ -935,6 +954,7 @@ export function CustomProviderDialog({
     'claude-code': 0,
     codex: 0,
     pi: 0,
+    omp: 0,
   });
 
   // 已存供应商在编辑态的基线快照:端点/协议/鉴权模式取自已存配置,apiKey 取回填值,
@@ -1065,7 +1085,7 @@ export function CustomProviderDialog({
         }
         return next;
       });
-      setTest({ 'claude-code': IDLE_TEST, codex: IDLE_TEST, pi: IDLE_TEST });
+      setTest({ 'claude-code': IDLE_TEST, codex: IDLE_TEST, pi: IDLE_TEST, omp: IDLE_TEST });
       // 预设整体替换所有 runtime 的 models 数组(含清空未声明的 runtime),旧行号
       // 全部失效——不清空的话陈旧草稿(如 -5)会挂在无关的新行、或挂在被预设清空
       // 的 runtime 上,handleSave 的守卫拦不住"用户已经看不到"的这条草稿,表单
@@ -1091,19 +1111,21 @@ export function CustomProviderDialog({
     }
     let cancelled = false;
     setKeyHydrationReady(false);
-    setKeyHydrationFailed({ 'claude-code': false, codex: false, pi: false });
+    setKeyHydrationFailed({ 'claude-code': false, codex: false, pi: false, omp: false });
     const revisionAtStart = { ...keyEditRevisionRef.current };
     void (async () => {
       const nextHas: Record<DialogAgentKind, boolean> = {
         'claude-code': false,
         codex: false,
         pi: false,
+        omp: false,
       };
       const fetched: Partial<Record<DialogAgentKind, string>> = {};
       const failed: Record<DialogAgentKind, boolean> = {
         'claude-code': false,
         codex: false,
         pi: false,
+        omp: false,
       };
       for (const a of AGENTS) {
         if (!initial.runtimes[a]) continue;
@@ -2371,7 +2393,7 @@ export function CustomProviderDialog({
                   type="button"
                   onClick={() => {
                     changeAuthMode(m);
-                    setTest({ 'claude-code': IDLE_TEST, codex: IDLE_TEST, pi: IDLE_TEST });
+                    setTest({ 'claude-code': IDLE_TEST, codex: IDLE_TEST, pi: IDLE_TEST, omp: IDLE_TEST });
                   }}
                   className={cn(
                     'rounded-full border px-3 py-1.5 text-12 font-medium transition-colors',

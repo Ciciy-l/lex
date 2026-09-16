@@ -32,6 +32,7 @@ const runtimeNames = {
   'claude-code': 'Claude Code',
   codex: 'Codex',
   pi: 'Pi',
+  omp: 'OMP',
 };
 
 function state(overrides: Partial<RuntimeFillDialogState> = {}): RuntimeFillDialogState {

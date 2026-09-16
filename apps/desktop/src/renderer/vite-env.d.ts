@@ -5178,11 +5178,11 @@ interface ElectronAPI {
     /** 供应商「测试连接」—— 与真实会话同路由口径的最小探测请求（结构化结果，code 走 providerError.* i18n）。 */
     testProviderConnection: (
       input:
-        | { kind: 'saved'; providerId: string; agent: 'claude-code' | 'codex' | 'pi' }
+        | { kind: 'saved'; providerId: string; agent: 'claude-code' | 'codex' | 'pi' | 'omp' }
         | {
             kind: 'adhoc';
             spec: {
-              agent: 'claude-code' | 'codex' | 'pi';
+              agent: 'claude-code' | 'codex' | 'pi' | 'omp';
               baseUrl: string;
               modelId: string;
               authMethod: 'apiKey' | 'oauth' | 'none';

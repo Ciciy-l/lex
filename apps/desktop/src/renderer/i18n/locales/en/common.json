@@ -1685,7 +1685,9 @@
           "codex": "Codex",
           "codexDesc": "Codex speaks the OpenAI Responses protocol. Choose native Responses, or let {{appName}} bridge Chat Completions or Anthropic Messages. Enter this source's base URL, key, and models for Codex; leave blank to skip Codex for this source.",
           "pi": "Pi",
-          "piDesc": "Pi is a multi-protocol harness: your custom or local models connect natively (Ollama, vLLM, self-hosted endpoints), without going through {{appName}}'s compatibility proxy. Pick the API type below, then enter this source's base URL, key, and models for Pi; leave blank to skip Pi for this source."
+          "piDesc": "Pi is a multi-protocol harness: your custom or local models connect natively (Ollama, vLLM, self-hosted endpoints), without going through {{appName}}'s compatibility proxy. Pick the API type below, then enter this source's base URL, key, and models for Pi; leave blank to skip Pi for this source.",
+          "omp": "OMP",
+          "ompDesc": "OMP connects through {{appName}}'s Anthropic-compatible proxy and always uses the Anthropic Messages protocol. Enter this source's base URL, key, and models for OMP; leave blank to skip OMP for this source."
         },
         "errors": {
           "nameRequired": "Display name is required",

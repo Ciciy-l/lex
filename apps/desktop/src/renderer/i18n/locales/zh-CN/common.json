@@ -1685,7 +1685,9 @@
           "codex": "Codex",
           "codexDesc": "Codex 使用 OpenAI Responses 协议。上游可选择原生 Responses，或由 {{appName}} 桥接 Chat Completions、Anthropic Messages。填该来源用于 Codex 的 baseURL、密钥与模型，留空则此来源不提供 Codex。",
           "pi": "Pi",
-          "piDesc": "Pi 是多协议 harness：你的自定义或本机模型（Ollama、vLLM、自建端点）原生直连，不经 {{appName}} 的兼容 Proxy。先在下方选 API 类型，再填该来源给 Pi 用的 base URL、密钥与模型；留空则本来源不配置 Pi。"
+          "piDesc": "Pi 是多协议 harness：你的自定义或本机模型（Ollama、vLLM、自建端点）原生直连，不经 {{appName}} 的兼容 Proxy。先在下方选 API 类型，再填该来源给 Pi 用的 base URL、密钥与模型；留空则本来源不配置 Pi。",
+          "omp": "OMP",
+          "ompDesc": "OMP 经 {{appName}} 的 Anthropic 兼容 Proxy 接入，固定使用 Anthropic Messages 协议。填该来源给 OMP 用的 base URL、密钥与模型；留空则本来源不配置 OMP。"
         },
         "errors": {
           "nameRequired": "请填写显示名称",
