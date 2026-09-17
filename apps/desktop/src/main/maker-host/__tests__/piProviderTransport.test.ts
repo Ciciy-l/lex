@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as openaiCompletions from '@earendil-works/pi-ai/api/openai-completions';
 import { PROVIDER_MODEL_CATALOG, BUNDLED_CATALOG, buildUserProvider } from '@cindy/model-providers';
-import { createPiProviderFetch, invocationModelRecord, nativeBridgeApiKey, NATIVE_ADAPTER_ERROR_BODY_LIMIT, readBoundedResponseText } from '../pi-provider-transport.js';
+import { createPiProviderFetch, hostCredentialEndpointAllowed, invocationModelRecord, nativeBridgeApiKey, NATIVE_ADAPTER_ERROR_BODY_LIMIT, readBoundedResponseText } from '../pi-provider-transport.js';
 
 vi.mock('@earendil-works/pi-ai/api/openai-completions', async (importOriginal) => ({
   ...await importOriginal<typeof import('@earendil-works/pi-ai/api/openai-completions')>(),
@@ -97,6 +97,14 @@ it('uses Cloudflare gateway authentication without forwarding its token as an up
 it('does not invent a fake API key for header-only native bridges', () => {
   expect(nativeBridgeApiKey({ 'cf-aig-authorization': 'Bearer header-only-key' })).toBe('');
   expect(nativeBridgeApiKey({ authorization: 'Bearer real-key' })).toBe('real-key');
+});
+
+it('allows official Vertex hosts for Desktop ADC and rejects unofficial ones', () => {
+  expect(hostCredentialEndpointAllowed('google-vertex', 'https://aiplatform.googleapis.com')).toBe(true);
+  expect(hostCredentialEndpointAllowed('google-vertex', 'https://aiplatform.us.rep.googleapis.com')).toBe(true);
+  expect(hostCredentialEndpointAllowed('google-vertex', 'https://europe-west1-aiplatform.googleapis.com')).toBe(true);
+  expect(hostCredentialEndpointAllowed('google-vertex', 'https://attacker.example')).toBe(false);
+  expect(hostCredentialEndpointAllowed('google-vertex', 'https://evil-aiplatform.googleapis.com')).toBe(false);
 });
 
 it('does not let Bedrock execution inherit Desktop IAM against an unrelated host', async () => {

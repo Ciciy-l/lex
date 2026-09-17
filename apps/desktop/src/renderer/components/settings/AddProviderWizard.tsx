@@ -120,13 +120,17 @@ function presetRuntimeBaseUrl(
     const source = presetRuntimeForAgent(preset, sourceAgent as AgentKind);
     if (!source || !endpoint) continue;
     const bindings = providerEndpointBindings(source.baseUrl, endpoint.trim());
-    if (bindings && source.baseUrl.includes('{')) return bindProviderEndpoint(runtime.baseUrl, bindings);
+    if (bindings && source.baseUrl.includes('{')) {
+      return bindProviderEndpoint(runtime.baseUrl, bindings, endpoint.trim());
+    }
   }
   return runtime.baseUrl;
 }
 
-function isValidEditablePresetBaseUrl(value: string): boolean {
-  return !/[{}]/.test(value) && parseSafePresetHttpUrl(value) !== null;
+function isValidEditablePresetBaseUrl(value: string, template?: string): boolean {
+  if (/[{}]/.test(value) || parseSafePresetHttpUrl(value) === null) return false;
+  if (!template?.includes('{')) return true;
+  return providerEndpointBindings(template, value) !== null;
 }
 
 function parseSafePresetHttpUrl(value: string): URL | null {
@@ -935,7 +939,7 @@ export function AddProviderWizard({
       const rt = presetRuntimeForAgent(preset, agent);
       return (
         !rt?.baseUrlEditable ||
-        isValidEditablePresetBaseUrl(presetRuntimeBaseUrl(preset, agent, presetBaseUrls))
+        isValidEditablePresetBaseUrl(presetRuntimeBaseUrl(preset, agent, presetBaseUrls), rt.baseUrl)
       );
     });
     if (!editableBaseUrlsValid) return;
@@ -1342,12 +1346,10 @@ export function AddProviderWizard({
             };
           });
         if (agentModels.length === 0) continue;
-        runtimes[agent] = presetConnectionRuntime(
-          preset,
-          agent,
-          agentModels,
-          presetRuntimeBaseUrl(preset, agent, presetBaseUrls),
-        );
+        runtimes[agent] = {
+          ...presetConnectionRuntime(preset, agent, agentModels, rt.baseUrl),
+          ...(rt.modelsUrl ? { modelsUrl: rt.modelsUrl } : {}),
+        };
         if (preset.authMethod !== 'none') {
           const k = apiKey.trim();
           if (k) keys[agent] = k;
@@ -1429,7 +1431,7 @@ export function AddProviderWizard({
           (!runtime.modelsUrl?.trim() || isLoopbackProviderUrl(runtime.modelsUrl.trim()))
         );
       }
-      return !runtime.baseUrlEditable || isValidEditablePresetBaseUrl(value);
+      return !runtime.baseUrlEditable || isValidEditablePresetBaseUrl(value, runtime.baseUrl);
     });
   const presetCanContinue =
     sel?.kind === 'preset' &&
@@ -1959,7 +1961,7 @@ export function AddProviderWizard({
                   const rt = presetRuntimeForAgent(sel.preset, agent);
                   if (rt?.baseUrlEditable) {
                     const value = presetRuntimeBaseUrl(sel.preset, agent, presetBaseUrls);
-                    const valid = isValidEditablePresetBaseUrl(value.trim());
+                    const valid = isValidEditablePresetBaseUrl(value.trim(), rt.baseUrl);
                     return (
                       <label key={agent} className="flex flex-col gap-1.5">
                         <span
