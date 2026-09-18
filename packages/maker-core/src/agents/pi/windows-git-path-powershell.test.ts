@@ -17,6 +17,15 @@ import {
   warnWindowsGitPathProbeFailure,
 } from './windows-git-path-powershell.js';
 
+// The synthetic coordinator below intentionally gets a ten-second budget so
+// the test can exercise its timeout path. GitHub-hosted Windows runners can
+// spend several seconds cold-starting the *outer* PowerShell before that
+// budget begins, so give the test harness separate bounded startup headroom.
+const GROUPED_PROBE_COORDINATOR_BUDGET_MS = 10_000;
+const GROUPED_PROBE_STARTUP_HEADROOM_MS = 15_000;
+const GROUPED_PROBE_EXEC_TIMEOUT_MS =
+  GROUPED_PROBE_COORDINATOR_BUDGET_MS + GROUPED_PROBE_STARTUP_HEADROOM_MS;
+
 describe('Windows Git PATH PowerShell probes', () => {
   it('locks the registry probe command and distinguishes missing keys from real failures', () => {
     const script = buildWindowsRegistryProbeScript([
@@ -154,7 +163,7 @@ describe('Windows Git PATH PowerShell probes', () => {
               encoding: 'utf8',
               input: Buffer.from(JSON.stringify(groups), 'utf8'),
               stdio: ['pipe', 'pipe', 'pipe'],
-              timeout: 15_000,
+              timeout: GROUPED_PROBE_EXEC_TIMEOUT_MS,
               windowsHide: true,
             },
           );
@@ -162,14 +171,22 @@ describe('Windows Git PATH PowerShell probes', () => {
         if (delayMs > 0) {
           // Outlive even the outer deadline, so scheduler pauses cannot make the
           // negative case complete before the coordinator observes expiry.
-          const expired = runProbe(buildWindowsPathKindProbeScript(4, 10_000, 2), 30_000);
+          const expired = runProbe(
+            buildWindowsPathKindProbeScript(4, GROUPED_PROBE_COORDINATOR_BUDGET_MS, 2),
+            30_000,
+          );
           expect(expired).toMatch(/__CINDY_WINDOWS_GIT_PATH_DIAGNOSTIC__\tpath-process-(timeout|budget)/);
           expect(expired).not.toContain(`F\t${Buffer.from(validGit, 'utf16le').toString('base64')}`);
         }
 
         // Correctness needs startup headroom at BOTH timeout layers. Production
         // callers retain their default 1250ms child budget and 3000ms outer budget.
-        const output = runProbe(buildWindowsPathKindProbeScript(4, 10_000, 2, { operationTimeoutMs: 10_000 }));
+        const output = runProbe(buildWindowsPathKindProbeScript(
+          4,
+          GROUPED_PROBE_COORDINATOR_BUDGET_MS,
+          2,
+          { operationTimeoutMs: GROUPED_PROBE_COORDINATOR_BUDGET_MS },
+        ));
 
         expect(output).toContain(`D\t${Buffer.from(validCmd, 'utf16le').toString('base64')}`);
         expect(output).toContain(`F\t${Buffer.from(validGit, 'utf16le').toString('base64')}`);
@@ -179,7 +196,9 @@ describe('Windows Git PATH PowerShell probes', () => {
         rmSync(tempRoot, { recursive: true, force: true });
       }
     },
-    40_000,
+    // The delayed case runs the coordinator twice. Keep the Vitest timeout
+    // above both individually bounded outer PowerShell invocations.
+    (GROUPED_PROBE_EXEC_TIMEOUT_MS * 2) + 10_000,
   );
 
   it.runIf(process.platform === 'win32')(
