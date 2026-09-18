@@ -20,7 +20,6 @@ import { inspectLocalSkillTarget, isPluginManagedSkillPath } from './localSkillT
 
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import matter from 'gray-matter';
 import type { AgentCustomization, Maker, PiRuntimeCapabilityStatus } from '@cindy/maker-core';
@@ -68,10 +67,10 @@ export interface Skill {
   /** 同一 URL 基键存在多个来源时，详情路由必须携带 sourceKey。 */
   requiresSourceKey?: boolean;
   /** 来自哪个 agent 引擎。 */
-  engine: 'claude-code' | 'codex' | 'pi';
+  engine: 'claude-code' | 'codex' | 'pi' | 'omp';
   /** 发现该 skill 的所有引擎专属路径（去重后）。~/.agents/ 通用路径不算引擎。 */
   linkedEngines: Array<{
-    engine: 'claude-code' | 'codex' | 'pi';
+    engine: 'claude-code' | 'codex' | 'pi' | 'omp';
     label: string;
     runtimeStatus?: PiRuntimeCapabilityStatus;
   }>;
@@ -312,7 +311,7 @@ export async function scanAllSkills(
       if (!engineSet.has(eng)) {
         engineSet.set(eng, {
           engine: eng,
-          label: eng === 'claude-code' ? 'Claude' : eng === 'codex' ? 'Codex' : 'Pi',
+          label: eng === 'claude-code' ? 'Claude' : eng === 'codex' ? 'Codex' : eng === 'pi' ? 'Pi' : 'OMP',
           ...(item.runtimeStatus ? { runtimeStatus: item.runtimeStatus } : {}),
         });
       }

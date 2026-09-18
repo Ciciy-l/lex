@@ -76,6 +76,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     scope: string,
     msg: string,
   ): void => ipcRenderer.send('renderer:log', level, scope, msg),
+  recoverViteDependencyLoad: (): void => ipcRenderer.send('renderer:recover-vite-deps'),
   onLocaleChanged: (cb: (locale: SupportedLocale) => void): (() => void) =>
     onPayload(RSB_WINDOW_LOCALE_CHANGED_CHANNEL, cb),
   appearanceSettings: {

@@ -3,7 +3,8 @@
  * ---------------------------------------------------------------------------
  * In-process MCP server (`cindy_orca`) 暴露多 worker 协同(Orca team)控制工具。
  *
- * 暴露 15 个 team 工具(直接 server.tool() 注册到顶层,不走 list_tools/call_tool 入口):
+ * 暴露 18 个 Orca 工具（15 个 team 控制 + 3 个只读诊断；直接 server.tool()
+ * 注册到顶层,不走 list_tools/call_tool 入口）:
  *   start_team / create_worker / create_workers / send_to_worker / interrupt_worker /
  *   get_worker_queue_status / update_queued_message / cancel_queued_message /
  *   merge_queued_messages / list_workers / switch_focus /
@@ -29,6 +30,7 @@
  */
 
 import { BRAND_NAME } from '@cindy/maker-shared/branding';
+import type { OmpHostToolDefinition, OmpHostToolResult } from '@cindy/maker-core';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z, type ZodRawShape } from 'zod';
 
@@ -37,7 +39,7 @@ import {
   type XdtHelperToolCategory,
   type XdtHelperToolHandler,
 } from '../lizi_xdtHelperToolRegistry.js';
-// 15 个 team 工具的注册函数留在 xdt-helper/ 目录(register 是 registry-agnostic,
+// Orca 工具的注册函数留在 xdt-helper/ 目录(register 是 registry-agnostic,
 // 物理搬迁收益低)。本 server 通过 DirectToolSink 把它们直接注册到 McpServer。
 import {
   registerStartTeamTool,
@@ -66,7 +68,7 @@ import { errorPayload, okPayload } from '../xdt-helper/_payload.js';
 // ── Host deps ──────────────────────────────────────────────────────────────
 
 /**
- * 协同(team)控制类工具的 host 回调集合。注入即注册 cindy_orca 的 15 个 team 工具
+ * 协同(team)控制类工具的 host 回调集合。注入即注册 cindy_orca 的完整 18 工具清单
  * (per-session 闭包绑定 ctx)。
  *
  * 回调返 Result 而非抛 Promise<T>: 让 host 能用 `HOST_NOT_READY` errorCode 表达
@@ -218,6 +220,7 @@ export interface OrcaMcpDeps {
       codex?: ModelDescriptor[];
       claude_code?: ModelDescriptor[];
       pi?: ModelDescriptor[];
+      omp?: ModelDescriptor[];
     }>
   >;
   /** 只读诊断：列出当前 Orca workflow 与 worker sessions。 */
@@ -295,7 +298,7 @@ export interface OrcaMcpSessionCtx {
  * DirectToolSink —— 把 team 工具直接 server.tool() 注册的适配器。
  *
  * 复用既有 register*Tool(registry, deps) 的签名: 本类继承 XdtHelperToolRegistry 但
- * override register() —— 不入内部 Map, 而是转调 server.tool()。这样 15 个工具文件
+ * override register() —— 不入内部 Map, 而是转调 server.tool()。这样所有 Orca 工具文件
  * 一行不改即可顶层直接注册。direct 注册下 category 字段无意义(忽略); list()/
  * call() 等继承方法不会被用到(cindy_orca 不暴露 list_tools/call_tool 入口)。
  */
@@ -345,7 +348,7 @@ function resolveLeadSessionContext(getSessionContext: () => OrcaMcpSessionCtx): 
 }
 
 function registerOrcaDiagnosticTools(
-  sink: DirectToolSink,
+  sink: XdtHelperToolRegistry,
   deps: OrcaMcpDeps,
   getSessionContext: () => OrcaMcpSessionCtx,
 ): void {
@@ -417,20 +420,16 @@ function registerOrcaDiagnosticTools(
   });
 }
 
-// ── Factory ────────────────────────────────────────────────────────────────
-
-export function createOrcaMcpServer(
+/**
+ * Registers the one authoritative Orca control manifest.  Claude's MCP SDK
+ * server and OMP's host-tool bridge intentionally share these handlers, Zod
+ * shapes, and role gates; only their transport adapter differs.
+ */
+function registerOrcaTools(
+  sink: XdtHelperToolRegistry,
   deps: OrcaMcpDeps,
   ctx: OrcaMcpSessionCtx,
-): McpServer {
-  const server = new McpServer({
-    name: 'cindy_orca',
-    version: '1.0.0',
-  });
-
-  // 15 个 team 工具经 DirectToolSink 直接注册到顶层。handler 闭包绑定 ctx
-  // (sessionId / vendorOptions), 调用时把请求路由回 host。
-  const sink = new DirectToolSink(server);
+): void {
   const getSessionContext = () => resolveLiziMcpSessionContext(ctx);
   registerStartTeamTool(sink, {
     sessionId: ctx.sessionId,
@@ -497,6 +496,94 @@ export function createOrcaMcpServer(
     listAvailableModels: deps.listAvailableModels,
   });
   registerOrcaDiagnosticTools(sink, deps, getSessionContext);
+}
+
+function ompFailure(message: string): OmpHostToolResult {
+  return {
+    content: [{ type: 'text', text: message }],
+    isError: true,
+  };
+}
+
+/** OMP's host-tool protocol rejects control characters in top-level descriptions. */
+function ompDescription(value: string): string {
+  return value.replace(/[\t\r\n]+/gu, ' ').replace(/ {2,}/gu, ' ').trim();
+}
+
+/**
+ * Converts the existing strict registry result into OMP's deliberately
+ * text-only protocol.  Orca control tools only produce structured JSON text;
+ * rejecting any future non-text result keeps the OMP transport boundary narrow.
+ */
+function toOmpResult(result: { content: readonly { type: string; text?: string }[]; isError?: boolean }): OmpHostToolResult {
+  const content: Array<{ type: 'text'; text: string }> = [];
+  for (const part of result.content) {
+    if (part.type !== 'text' || typeof part.text !== 'string') {
+      return ompFailure('Orca host tool returned an unsupported result');
+    }
+    content.push({ type: 'text', text: part.text });
+  }
+  return content.length > 0
+    ? { content, ...(result.isError === true ? { isError: true } : {}) }
+    : ompFailure('Orca host tool returned an empty result');
+}
+
+/**
+ * Projects the shared Orca manifest onto OMP's host-owned RPC protocol.
+ * Validation remains inside XdtHelperToolRegistry so both transports reject
+ * unknown fields and return the same structured INVALID_ARGS payload.
+ */
+export function createOrcaOmpRpcHostTools(
+  deps: OrcaMcpDeps,
+  ctx: OrcaMcpSessionCtx,
+): readonly OmpHostToolDefinition[] {
+  const registry = new XdtHelperToolRegistry();
+  registerOrcaTools(registry, deps, ctx);
+  return Object.freeze(
+    Array.from(registry.list(), ({ name }) => {
+      const definition = registry.get(name);
+      if (!definition) throw new Error(`Missing Orca tool definition: ${name}`);
+      let parameters: Record<string, unknown>;
+      try {
+        parameters = z.toJSONSchema(z.strictObject(definition.inputShape)) as Record<string, unknown>;
+      } catch {
+        throw new Error(`Could not serialize Orca tool schema: ${name}`);
+      }
+      return Object.freeze({
+        name: definition.name,
+        description: ompDescription(definition.description),
+        parameters: Object.freeze(parameters),
+        execute: async (arguments_, { signal }) => {
+          if (signal.aborted) return ompFailure('Orca host tool was cancelled');
+          try {
+            const result = await registry.call(definition.name, arguments_);
+            return signal.aborted
+              ? ompFailure('Orca host tool was cancelled')
+              : toOmpResult(result);
+          } catch {
+            return ompFailure('Orca host tool execution failed');
+          }
+        },
+      } satisfies OmpHostToolDefinition);
+    }),
+  );
+}
+
+// ── Factory ────────────────────────────────────────────────────────────────
+
+export function createOrcaMcpServer(
+  deps: OrcaMcpDeps,
+  ctx: OrcaMcpSessionCtx,
+): McpServer {
+  const server = new McpServer({
+    name: 'cindy_orca',
+    version: '1.0.0',
+  });
+
+  // 完整 Orca 工具清单经 DirectToolSink 直接注册到顶层。handler 闭包绑定 ctx
+  // (sessionId / vendorOptions), 调用时把请求路由回 host。
+  const sink = new DirectToolSink(server);
+  registerOrcaTools(sink, deps, ctx);
 
   return server;
 }

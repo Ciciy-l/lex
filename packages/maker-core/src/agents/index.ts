@@ -35,6 +35,7 @@ export {
 export type {
   OmpLaunchModel,
   OmpSessionCredentials,
+  OmpSessionExecutableEnvironment,
   OmpSessionLaunchPlan,
   OmpSessionLaunchPlanInput,
   OmpSessionRoots,
@@ -106,6 +107,8 @@ export type { OmpCommand, OmpCatalogSnapshot } from './omp/commands.js';
 export type {
   OmpProcessHost,
   OmpProcessHostOptions,
+  OmpProcessSpawner,
+  OmpProcessSpawnRequest,
 } from './omp/process-host.js';
 export {
   canReuseCodexHostForCredentialMode,

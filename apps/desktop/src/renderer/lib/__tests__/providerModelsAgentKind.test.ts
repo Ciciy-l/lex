@@ -109,4 +109,20 @@ describe('provider model routing helpers', () => {
       }),
     ).toBe('codex');
   });
+
+  it('resolves an OMP model to OMP instead of the Claude Code fallback', () => {
+    const omp = model('omp-only-model');
+
+    expect(
+      resolveVisibleModelAgentKind({
+        modelId: omp.id,
+        agentKind: null,
+        ccModels: [],
+        codexModels: [],
+        piModels: [],
+        ompModels: [omp],
+        providers: [provider('omp', [omp])],
+      }),
+    ).toBe('omp');
+  });
 });

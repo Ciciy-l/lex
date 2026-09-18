@@ -55,6 +55,23 @@ export interface AgentBuiltinCommand {
   description: string;
 }
 
+/**
+ * Runtime-confirmed native command catalog for one live agent session.
+ *
+ * This deliberately carries only the common palette surface. Engines with
+ * richer runtime state (for example Pi's project-resource provenance) keep
+ * that state in their own capability manifests rather than making every
+ * harness depend on it.
+ */
+export type AgentRuntimeCommandCatalogStatus = 'unknown' | 'loaded' | 'failed';
+
+export interface AgentRuntimeCommandCatalogSnapshot {
+  /** Monotonic for each live session handle; changes whenever this snapshot changes. */
+  readonly revision: number;
+  readonly status: AgentRuntimeCommandCatalogStatus;
+  readonly commands: readonly AgentBuiltinCommand[];
+}
+
 /** A user/project skill discovered by scanning the agent's customisation dirs. */
 export interface AgentSkillCommand {
   kind: 'agent-skill';

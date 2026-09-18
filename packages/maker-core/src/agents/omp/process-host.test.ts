@@ -212,6 +212,37 @@ describe('OMP process host boundary', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('reclaims an owned descendant tree after root exit while draining its buffered stdout tail', async () => {
+    const test = fixture();
+    const host = startOmpProcess({
+      ...test.options,
+      ownsProcessTree: true,
+      ...(process.platform === 'win32' ? {} : { detached: true }),
+      ...(process.platform === 'win32'
+        ? { spawnProcess: () => test.process as unknown as ChildProcessWithoutNullStreams }
+        : {}),
+    });
+    const pending = host.client.request({ type: 'prompt', message: 'test' });
+    test.process.stdin.destroy();
+    test.process.emit('exit', 0, null);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(test.options.terminateProcessTree).toHaveBeenCalledExactlyOnceWith(test.process, true);
+    expect(host.getState()).toBe('draining');
+    expect(test.process.stdout.destroyed).toBe(false);
+    test.process.stdout.end(
+      [
+        { type: 'response', command: 'prompt', id: pending.id, success: true },
+        { type: 'prompt_result', id: pending.id, agentInvoked: false },
+      ]
+        .map((event) => JSON.stringify(event))
+        .join('\n') + '\n',
+    );
+    await expect(pending.response).resolves.toMatchObject({ success: true });
+    test.process.emit('close', 0, null);
+    expect(await host.stopAndWait()).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('bounds natural-exit draining if pipes never finish without claiming a confirmed close', async () => {
     const test = fixture();
     const host = startOmpProcess(test.options);
@@ -255,6 +286,26 @@ describe('OMP process host boundary', () => {
       detached: true,
     });
     test.process.emit('close', 0, null);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('requires a detached POSIX process group before accepting process-tree ownership', () => {
+    const test = fixture();
+    if (process.platform === 'win32') return;
+    expect(() => startOmpProcess({ ...test.options, ownsProcessTree: true })).toThrow(
+      'process-tree ownership',
+    );
+    expect(spawn).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('requires a host-native containment spawner before Windows tree ownership', () => {
+    if (process.platform !== 'win32') return;
+    const test = fixture();
+    expect(() => startOmpProcess({ ...test.options, ownsProcessTree: true })).toThrow(
+      'Windows containment host',
+    );
+    expect(spawn).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
 

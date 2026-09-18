@@ -42,6 +42,9 @@ apps/desktop/resources/remote-file-service/
 # buildCindyUpdater);源码在 apps/desktop/cindy-updater/,不入仓避免 4.5MB
 # 二进制持续消耗 Git LFS 流量。
 apps/desktop/resources/cindy-updater.exe
+# Native OMP process-container build outputs are local Cargo intermediates;
+# source and lockfiles under this directory remain versioned.
+apps/desktop/native/omp-process-container/windows/target/
 
 # ── Agent CLI 本地二进制 ─────────────────────────────────────
 # 实体文件按 tools/<kind>/latest.json 的 pin 下载，不进 Git/LFS。

@@ -455,7 +455,7 @@ function localErrorRoute(
 }
 
 /**
- * OMP 的网关路由(与 Pi 不同源,勿合并)。
+ * OMP 的受管代理路由(与 Pi 不同源,勿合并)。
  *
  * 凭证通道:OMP **不对** models.yml 的 header 值做环境变量插值(真机实测
  * v18.1.18,`docs/omp-rpc-spike.md` §10),所以会话 token 走 `apiKey` env 通道,
@@ -463,13 +463,16 @@ function localErrorRoute(
  * 只剩非敏感的 session-id / provider-id,纯粹用于把请求识别成 OMP 的,**不是**
  * 授权凭据(loopback 不是安全边界,任意本地进程都能伪造这两个头)。
  *
- * 路由:OMP 的 Cindy provider 恒定指向本机 proxy,P0 全部按网关前门裁决;
- * 请求 API 决定走 Claude 还是 Codex 前门(与 Pi 同口径)。
+ * 路由:OMP 的 Cindy provider 恒定指向本机 proxy,但真实上游必须从 Main
+ * 保存的会话供应商解析。models.yml 里的 provider-id header 仅用于识别 OMP
+ * 流量，不能作为路由或授权来源；请求 API 仍决定 gateway fallback 的 Claude /
+ * Codex 前门(与 Pi 同口径)。
  */
-function resolveOmpGatewayRoute(
+function resolveOmpRoute(
   ctx: RequestTransformCtx,
   sessionId: string | null,
-): RoutingDecision {
+  wireModel: string | undefined,
+): RoutingDecision | Promise<RoutingDecision> {
   if (!sessionId) {
     return localErrorRoute(
       401,
@@ -487,19 +490,9 @@ function resolveOmpGatewayRoute(
       'Invalid or expired OMP proxy session token.',
     );
   }
+  const selectedProviderId = getSessionProvider(sessionId);
   const gatewayKey = _readGatewayKey();
-  // 与 Pi 同口径:/messages 走 Claude 前门,其余(Responses / Completions)走 Codex。
-  const decision = gatewayDefaultRouteDecision(piGatewayRequestAgent(ctx.url), gatewayKey);
-  if (!decision) {
-    // 没有网关 key 可换 → 绝不能让 OMP 的 bearer(或空凭证)落到默认上游。
-    return localErrorRoute(
-      503,
-      'routing_error',
-      'omp_gateway_unavailable',
-      'OMP gateway route is unavailable.',
-    );
-  }
-  return {
+  const stripOmpHeaders = (decision: RoutingDecision): RoutingDecision => ({
     ...decision,
     // OMP 的识别头只在本地有意义,删掉它们 —— 上游不该看到,更不该被当成凭据。
     headerDelete: [
@@ -509,7 +502,47 @@ function resolveOmpGatewayRoute(
         OMP_CINDY_PROVIDER_ID_HEADER,
       ]),
     ],
+  });
+  const unavailableSelectedProvider = (): RoutingDecision =>
+    localErrorRoute(
+      503,
+      'routing_error',
+      'omp_provider_unavailable',
+      'The selected OMP provider route is unavailable.',
+    );
+  const resolve = (decision: RoutingDecision | null): RoutingDecision => {
+    if (decision) return stripOmpHeaders(decision);
+    // A selected source is an authorization boundary.  Do not let a temporarily
+    // missing / incompatible / mutated OMP route fall through to Cindy Gateway.
+    if (selectedProviderId) return unavailableSelectedProvider();
+    // No selected source retains the legacy gateway fallback.  OMP's bearer is
+    // never allowed to reach a default upstream unchanged.
+    const gatewayDecision = gatewayDefaultRouteDecision(
+      piGatewayRequestAgent(ctx.url),
+      gatewayKey,
+    );
+    return gatewayDecision
+      ? stripOmpHeaders(gatewayDecision)
+      : localErrorRoute(
+          503,
+          'routing_error',
+          'omp_gateway_unavailable',
+          'OMP gateway route is unavailable.',
+        );
   };
+
+  // The session store is Main-owned; deliberately ignore the request's claimed
+  // provider header after authentication.  It is visible to any local process
+  // that can speak to the loopback proxy and must not select an upstream.
+  const selectedRoute = resolveSessionRouteDecision(
+    sessionId,
+    'omp',
+    gatewayKey,
+    wireModel,
+  );
+  return selectedRoute instanceof Promise
+    ? selectedRoute.then(resolve, unavailableSelectedProvider)
+    : resolve(selectedRoute);
 }
 
 function routingTransformThrew(err: unknown, ctx: RequestTransformCtx): RoutingDecision {
@@ -562,7 +595,10 @@ export function createModelRoutingTransform(): RoutingTransform {
     const claimedOmpSessionId = headerValue(ctx.headers, OMP_CINDY_SESSION_ID_HEADER);
     const claimedOmpProviderId = headerValue(ctx.headers, OMP_CINDY_PROVIDER_ID_HEADER);
     if (claimedOmpSessionId !== null || claimedOmpProviderId !== null) {
-      return resolveOmpGatewayRoute(ctx, claimedOmpSessionId);
+      const ompWireModel = isPlainObject(body) && typeof body.model === 'string'
+        ? body.model
+        : undefined;
+      return resolveOmpRoute(ctx, claimedOmpSessionId, ompWireModel);
     }
     const claimedPiSessionId = headerValue(ctx.headers, 'x-cindy-pi-session-id');
     const claimedPiSessionToken = headerValue(ctx.headers, 'x-cindy-pi-session-token');

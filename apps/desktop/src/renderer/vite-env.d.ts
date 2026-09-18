@@ -1247,6 +1247,8 @@ interface ElectronAPI {
     scope: string,
     msg: string,
   ) => void;
+  /** Dev-only, fixed-target retry when Vite replaced its optimized dependency graph. */
+  recoverViteDependencyLoad: () => void;
 
   localThemes: {
     listSync: () => LocalThemesResult;
@@ -5052,9 +5054,9 @@ interface ElectronAPI {
    * apps/desktop/src/main/maker-ipc/ 的 handlers + apps/desktop/src/main/maker-host/。
    */
   maker: {
-    listAvailableAgents: () => Promise<Array<'claude-code' | 'codex' | 'pi'>>;
+    listAvailableAgents: () => Promise<Array<'claude-code' | 'codex' | 'pi' | 'omp'>>;
     onAgentsChanged: (cb: () => void) => () => void;
-    getCapabilities: (agentKind: 'claude-code' | 'codex' | 'pi') => Promise<unknown>;
+    getCapabilities: (agentKind: 'claude-code' | 'codex' | 'pi' | 'omp') => Promise<unknown>;
     listBotDelegations: (
       parentSessionId: string,
     ) => Promise<import('../shared/botDelegation').BotDelegationListResult>;
@@ -5464,6 +5466,13 @@ interface ElectronAPI {
 
     onPiPackagesChanged: (handler: () => void) => () => void;
 
+    /** A live engine-native slash-command directory changed for one session. */
+    onAgentCommandCatalogChanged: (
+      handler: (
+        payload: import('../shared/agentCommandCatalog').AgentCommandCatalogChangedPayload,
+      ) => void,
+    ) => () => void;
+
     onDesktopCommandTriggered: (
       handler: (payload: {
         command: string;
@@ -5552,7 +5561,7 @@ interface ElectronAPI {
     createSession: (opts: {
       /** 可选: 复用外部 sessionId(本端 chat 用 local-db:sessions:create 拿到的 id) */
       id?: string;
-      agentKind: 'claude-code' | 'codex' | 'pi';
+      agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
       workingDir: string;
       model: string;
       title?: string;
@@ -5597,7 +5606,7 @@ interface ElectronAPI {
     enableOrca: (
       leadSessionId: string,
       opts: {
-        workerAgent: 'claude-code' | 'codex' | 'pi';
+        workerAgent: 'claude-code' | 'codex' | 'pi' | 'omp';
         delegateTask?: string;
         role?: string;
         label?: string;
@@ -5645,7 +5654,7 @@ interface ElectronAPI {
       message:
         string | { type: 'user'; content: string | Array<{ type: string; [k: string]: unknown }> },
       createOpts?: {
-        agentKind: 'claude-code' | 'codex' | 'pi';
+        agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
         workingDir: string;
         model: string;
         orcaRole?: import('@/lib/ccAgent.types').OrcaRole | null;
@@ -5692,7 +5701,7 @@ interface ElectronAPI {
     getContextUsage: (
       sessionId: string,
       createOpts?: {
-        agentKind: 'claude-code' | 'codex' | 'pi';
+        agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
         workingDir: string;
         model: string;
         orcaRole?: import('@/lib/ccAgent.types').OrcaRole | null;
@@ -5722,7 +5731,7 @@ interface ElectronAPI {
     listActive: () => Promise<
       Array<{
         sessionId: string;
-        agentKind: 'claude-code' | 'codex' | 'pi';
+        agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
         workDir: string;
         capabilities: unknown;
         isTurnRunning: boolean;
@@ -5870,7 +5879,7 @@ interface ElectronAPI {
       fastMode?: boolean,
     ) => Promise<{
       switched: boolean;
-      agentKind: 'claude-code' | 'codex' | 'pi';
+      agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
       model: string;
       engineReady: boolean;
       deferred?: boolean;
@@ -5882,7 +5891,7 @@ interface ElectronAPI {
      * 重开视图 / device-link 远程会话重连后恢复乐观显示用。
      */
     getSessionAgentSwitchIntent: (sessionId: string) => Promise<{
-      targetAgentKind: 'claude-code' | 'codex' | 'pi';
+      targetAgentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
       model: string;
       providerId: string | null;
       effort?: string;
@@ -6351,7 +6360,7 @@ interface ElectronAPI {
 
     /* ── Agent 联合状态 (binary + auth, 取代老 codex.binary.getStatus) ── */
     agent: {
-      getStatus: (agentKind: 'claude-code' | 'codex' | 'pi') => Promise<{
+      getStatus: (agentKind: 'claude-code' | 'codex' | 'pi' | 'omp') => Promise<{
         binaryReady: boolean;
         binaryPath: string;
         authReady: boolean;

@@ -27,7 +27,8 @@ import {
   type Server,
   type ServerResponse,
 } from 'node:http';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,6 +36,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { OmpAgent } from '../index.js';
 import { buildOmpCindyModelsYaml, OMP_CINDY_API_KEY_ENV } from '../models-config.js';
+import type { OmpProcessSpawnRequest } from '../process-host.js';
 import type { AgentDeps, AgentSessionHandle } from '../../base-agent.js';
 import type { Logger } from '../../../interfaces/logger.js';
 import type {
@@ -53,7 +55,19 @@ const OMP_BINARY = path.join(
   `${process.platform}-${process.arch}`,
   process.platform === 'win32' ? 'omp.exe' : 'omp',
 );
-const ompAvailable = existsSync(OMP_BINARY);
+const OMP_WINDOWS_CONTAINER = path.join(
+  REPO_ROOT,
+  'apps',
+  'omp-bin',
+  `${process.platform}-${process.arch}`,
+  'cindy-omp-process-container.exe',
+);
+// Windows production sessions are only allowed through the native Job Object
+// container.  The real-process integration fixture must exercise that same
+// boundary rather than bypass it with a direct Node spawn.
+const ompContainmentAvailable =
+  process.platform !== 'win32' || existsSync(OMP_WINDOWS_CONTAINER);
+const ompAvailable = existsSync(OMP_BINARY) && ompContainmentAvailable;
 
 const MODEL_ID = 'omp-live-model';
 const PROXY_KEY = 'omp-live-proxy-key';
@@ -91,6 +105,41 @@ const silentLogger: Logger = {
   fatal: () => {},
   child: () => silentLogger,
 };
+
+function spawnLiveOmpProcess(
+  request: OmpProcessSpawnRequest,
+): ChildProcessWithoutNullStreams {
+  if (process.platform !== 'win32') {
+    return spawn(request.executablePath, [...request.arguments], {
+      cwd: request.workingDirectory,
+      env: request.environment,
+      shell: false,
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      ...(request.detached === true ? { detached: true } : {}),
+    });
+  }
+
+  return spawn(
+    OMP_WINDOWS_CONTAINER,
+    [
+      '--protocol',
+      '1',
+      '--parent-pid',
+      String(process.pid),
+      '--',
+      request.executablePath,
+      ...request.arguments,
+    ],
+    {
+      cwd: request.workingDirectory,
+      env: request.environment,
+      shell: false,
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    },
+  );
+}
 
 function toRecord(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
@@ -339,7 +388,20 @@ function makeSandbox(): { home: string; workingDir: string } {
   const workingDir = path.join(root, 'work');
   mkdirSync(home, { recursive: true });
   mkdirSync(workingDir, { recursive: true });
+  // OMP's project Skill discovery is repository-scoped. Make this fixture a
+  // minimal Git worktree instead of relying on a temp directory's ancestor.
+  mkdirSync(path.join(workingDir, '.git'));
   return { home, workingDir };
+}
+
+function writeProjectSkill(workingDir: string, name: string): void {
+  const directory = path.join(workingDir, '.agents', 'skills', name);
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(
+    path.join(directory, 'SKILL.md'),
+    `---\nname: ${name}\ndescription: native OMP integration fixture\n---\n\n# ${name}\n`,
+    'utf8',
+  );
 }
 
 function buildDeps(home: string): AgentDeps {
@@ -354,6 +416,18 @@ function buildDeps(home: string): AgentDeps {
     binaryPath: OMP_BINARY,
     logger: silentLogger,
     resolveOmpAgentHome: () => home,
+    // OmpAgent remains host-agnostic: the Desktop host supplies the minimal
+    // executable environment. Mirror that boundary here instead of letting a
+    // Windows integration fixture silently depend on ambient process.env.
+    resolveOmpExecutableEnvironment: () => ({
+      ...(process.platform === 'win32'
+        ? {
+            systemRoot:
+              process.env.SystemRoot ?? process.env.SYSTEMROOT ?? process.env.WINDIR,
+          }
+        : {}),
+    }),
+    ...(process.platform === 'win32' ? { spawnOmpProcess: spawnLiveOmpProcess } : {}),
     // 与 desktop host 同口径:凭证只给值、不落盘(models.yml 里只有 env 名)。
     resolveOmpCredentials: () => ({ proxyKey: PROXY_KEY, sessionId: SESSION_ID }),
     resolveOmpModelsYaml: (context) =>
@@ -367,6 +441,7 @@ function buildDeps(home: string): AgentDeps {
 }
 
 interface LiveSession {
+  readonly agent: OmpAgent;
   readonly handle: AgentSessionHandle;
   readonly events: AgentEvent[];
   readonly workingDir: string;
@@ -374,7 +449,10 @@ interface LiveSession {
   close(): Promise<void>;
 }
 
-async function startLiveSession(workingDir: string): Promise<LiveSession> {
+async function startLiveSession(
+  workingDir: string,
+  providerId?: string,
+): Promise<LiveSession> {
   const sandbox = makeSandbox();
   const agent = new OmpAgent(buildDeps(sandbox.home));
   const handle = await agent.startSession({
@@ -382,12 +460,14 @@ async function startLiveSession(workingDir: string): Promise<LiveSession> {
     workingDir,
     model: MODEL_ID,
     permissionMode: 'ask',
+    ...(providerId === undefined ? {} : { providerId }),
   });
   const events: AgentEvent[] = [];
   const drained = (async () => {
     for await (const event of handle.events()) events.push(event);
   })();
   return {
+    agent,
     handle,
     events,
     workingDir,
@@ -446,6 +526,58 @@ describe.skipIf(!ompAvailable)('OmpAgent live end-to-end (real omp binary)', () 
         //    应当看到 `Authorization: Bearer <proxyKey>`(spike §10 实测行为)。
         expect(provider.requests.length).toBeGreaterThan(0);
         expect(provider.requests[0]?.authorization).toBe(`Bearer ${PROXY_KEY}`);
+      } finally {
+        await live.close();
+      }
+    },
+  );
+
+  it(
+    'discovers a project Skill in the native skill namespace and accepts its runtime command',
+    { timeout: 120_000 },
+    async () => {
+      const workingDir = makeSandbox().workingDir;
+      const skillName = 'live-project-skill';
+      writeProjectSkill(workingDir, skillName);
+      provider.setScript([{ textChunks: ['NATIVE-SKILL-COMMAND-OK'] }]);
+      const live = await startLiveSession(workingDir);
+      try {
+        await waitUntil(
+          () => live.agent.listAgentCommands({ sessionId: SESSION_ID }).some(
+            (command) => command.name === `skill:${skillName}`,
+          ),
+          60_000,
+          'native OMP skill command catalog',
+        );
+        await live.handle.send(userText(`/skill:${skillName} inspect this project`));
+        await waitUntil(
+          () => concatenatedText(live.events).includes('NATIVE-SKILL-COMMAND-OK'),
+          60_000,
+          'native OMP skill response',
+        );
+      } finally {
+        await live.close();
+      }
+    },
+  );
+
+  it(
+    'uses the managed cindy provider when Lex selected a different source',
+    { timeout: 120_000 },
+    async () => {
+      const workingDir = makeSandbox().workingDir;
+      provider.setScript([{ textChunks: ['SOURCE-PROVIDER-OK'] }]);
+      // `minimax` is Lex routing metadata.  The real OMP process must still
+      // target the only provider in its generated models.yml: `cindy`.
+      const live = await startLiveSession(workingDir, 'minimax');
+      try {
+        await live.handle.send(userText('verify managed provider selection'));
+        await waitUntil(
+          () => concatenatedText(live.events).includes('SOURCE-PROVIDER-OK'),
+          60_000,
+          'the managed provider response',
+        );
+        expect(provider.requests.length).toBeGreaterThan(0);
       } finally {
         await live.close();
       }

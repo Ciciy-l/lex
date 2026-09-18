@@ -680,12 +680,17 @@ describe('deriveAvailableModels — dynamic-first catalog contract', () => {
     const piModels: ModelDescriptor[] = [
       { id: 'stale-pi', displayName: 'Stale', contextWindow: 1, efforts: [], defaultEffort: null },
     ];
+    const ompModels: ModelDescriptor[] = [
+      { id: 'stale-omp', displayName: 'Stale', contextWindow: 1, efforts: [], defaultEffort: null },
+    ];
     const claudeRef = claudeModels;
     const codexRef = codexModels;
     const piRef = piModels;
+    const ompRef = ompModels;
     const target = {
-      getCapabilities(agent: 'claude-code' | 'codex' | 'pi') {
+      getCapabilities(agent: 'claude-code' | 'codex' | 'pi' | 'omp') {
         if (agent === 'pi') return { availableModels: piModels };
+        if (agent === 'omp') return { availableModels: ompModels };
         return { availableModels: agent === 'claude-code' ? claudeModels : codexModels };
       },
     };
@@ -695,9 +700,11 @@ describe('deriveAvailableModels — dynamic-first catalog contract', () => {
     expect(claudeModels).toBe(claudeRef);
     expect(codexModels).toBe(codexRef);
     expect(piModels).toBe(piRef);
+    expect(ompModels).toBe(ompRef);
     expect(claudeModels).toEqual(deriveAvailableModels(injectedCatalog(), 'claude-code'));
     expect(codexModels).toEqual(deriveAvailableModels(injectedCatalog(), 'codex'));
     expect(piModels).toEqual(deriveAvailableModels(injectedCatalog(), 'pi'));
+    expect(ompModels).toEqual(deriveAvailableModels(injectedCatalog(), 'omp'));
   });
 });
 

@@ -106,7 +106,7 @@ OMP 把工具分为三个 tier：**read / write / exec**。`tools.approvalMode` 
 - `yolo` 下**用户 `tools.approval` 策略仍然权威**（显式 deny 仍生效），且危险命令的 `override` 提示在 `yolo` 下同样生效。
 - `always-ask` **仍然自动放行 read tier** —— 这一点决定了"Lex Ask ≠ 每个工具都问"。
 - `--approval-mode` 是 CLI flag，写进临时 settings override；`--config` 传的是配置文件路径（不是 key=value override）。
-- 上游 `startup.setupWizard` / `startup.checkUpdate` / `mcp.enableProjectConfig` 默认均为 **true**，生产必须显式关掉（现有 launch-plan 已做，保留）。
+- 上游 `startup.setupWizard` / `startup.checkUpdate` / `mcp.enableProjectConfig` 默认均为 **true**。生产显式关闭前两项；项目 MCP 配置则与其它本地引擎一致，按 OMP 原生发现规则启用，不在 Lex 启动计划里强制关闭。
 
 ### 3.4 原生 UI 交互子协议
 
@@ -422,8 +422,10 @@ OMP 特有、需要在 UI 上表达的只有四类：
 **Q6 是否允许 OMP 复用 Pi 的用户目录（`~/.pi` / 原生 `~/.omp`）？**
 - **推荐：绝不复用**。`docs/omp-integration.md` 已明确禁止读取或迁移 Pi 的凭证；且两个引擎共享配置根会造成难以诊断的串扰。
 
-**Q7 是否允许 OMP 加载项目级配置 / MCP / 扩展 / 技能 / rules / LSP？**
-- **推荐：P0 全关**（`--no-extensions --no-skills --no-rules --no-lsp --no-pty` + `mcp.enableProjectConfig:false`）。这些面完全未审计，且 OMP 会在启动时从 cwd 向上遍历发现配置。P1 起参照 Pi 的 `project-trust.ts` 信任模型逐项开。
+**Q7（已决）是否允许 OMP 加载项目级配置 / MCP / 扩展 / 技能 / rules / LSP / PTY？**
+- **决定：允许，按 Claude Code、Codex、Pi 的本地引擎范式对齐。** 早期分阶段实施的 `--no-extensions` / `--no-skills` / `--no-rules` / `--no-lsp` / `--no-pty` 与 `mcp.enableProjectConfig:false` 已移除；OMP 在真实工作目录中按原生规则发现这些能力。
+- Lex 仍保留跨引擎一致的托管边界：每个 live runtime 有独立 HOME 和 OMP config / session 根，模型和认证经受管 `cindy` provider 代理，环境只传明确的可执行白名单，Lex 继续拥有任务标题和进程生命周期。共享 `~/.agents/skills` 会投影进受管 HOME；不复用 Pi 或用户 `~/.omp` 的认证 / 配置。
+- 这不是把原生项目扩展、MCP server 或工具行为描述为 OS 沙箱或额外的 Lex 授权层；其能力和副作用遵循上游 OMP 与用户选择的项目上下文。
 
 **Q8 单帧 1 MiB 上限带来的大输出截断，P0 接受吗？**
 - **推荐：P0 接受**（在工具卡片上标注"输出已截断"），v2 协商 + `rpc_chunk` 重组放 P1。当前 `jsonl-reader.ts` 把 `rpc_chunk` 当致命错误关连接，改它需要独立的字节边界测试。

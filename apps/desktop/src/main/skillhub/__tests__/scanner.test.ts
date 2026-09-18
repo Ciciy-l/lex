@@ -386,6 +386,15 @@ describe('scanAllSkills', () => {
             absolutePath: path.join(agentsPath, 'SKILL.md'),
             files: [],
           },
+          {
+            engine: 'omp',
+            kind: 'skill',
+            scope: 'user',
+            name: 'web-access',
+            absolutePath: agentsPath,
+            mdPath: path.join(agentsPath, 'SKILL.md'),
+            files: [],
+          },
         ],
       })),
     } as unknown as Maker;
@@ -403,6 +412,7 @@ describe('scanAllSkills', () => {
     expect(result.skills[0].linkedEngines).toEqual([
       { engine: 'claude-code', label: 'Claude' },
       { engine: 'codex', label: 'Codex' },
+      { engine: 'omp', label: 'OMP' },
     ]);
 
     realpathSyncSpy.mockRestore();

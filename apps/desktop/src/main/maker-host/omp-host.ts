@@ -16,6 +16,7 @@
  */
 
 import path from 'node:path';
+import os from 'node:os';
 
 import { app } from 'electron';
 
@@ -24,11 +25,13 @@ import {
   buildOmpCindyModelsYaml,
   ompApiForWireProtocol,
   OMP_CINDY_PROVIDER_ID,
+  OMP_CINDY_PROVIDER_ID_HEADER,
   type AgentDeps,
   type AuthAdapter,
   type AuthAdapterOptions,
   type AuthState,
   type OmpModelsModel,
+  type OmpSessionExecutableEnvironment,
   type OmpSessionCredentials,
   type OmpWireProtocol,
 } from '@cindy/maker-core';
@@ -38,6 +41,7 @@ import { getClaudeEndpoint } from './anthropic-compat-proxy-host.js';
 import { readClaudeApiKey } from './auth-adapters.js';
 import { createLogger } from '../logger.js';
 import { resolveOmpBinaryPath } from './omp-runtime.js';
+import { createWindowsOmpProcessSpawner } from './omp-process-containment.js';
 import { deriveOmpProxySessionToken } from './pi-proxy-session-token.js';
 
 const log = createLogger('omp-host');
@@ -77,6 +81,64 @@ class DesktopOmpAuthAdapter implements AuthAdapter {
 }
 
 export const desktopOmpAuthAdapter: AuthAdapter = new DesktopOmpAuthAdapter();
+
+function firstEnvironmentValue(
+  environment: NodeJS.ProcessEnv,
+  names: readonly string[],
+): string | undefined {
+  for (const name of names) {
+    const value = environment[name];
+    if (typeof value === 'string' && value.length > 0) return value;
+  }
+  return undefined;
+}
+
+/**
+ * OMP gets the same usable local command/PTY surface as the other native
+ * engines, without inheriting credentials or arbitrary Desktop flags.
+ */
+export function buildDesktopOmpExecutableEnvironment(
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): OmpSessionExecutableEnvironment {
+  const result: OmpSessionExecutableEnvironment = {
+    ...(firstEnvironmentValue(environment, ['PATH', 'Path'])
+      ? { path: firstEnvironmentValue(environment, ['PATH', 'Path']) }
+      : {}),
+  };
+  if (platform === 'win32') {
+    return Object.freeze({
+      ...result,
+      ...(firstEnvironmentValue(environment, ['SystemRoot', 'SYSTEMROOT', 'WINDIR', 'windir'])
+        ? { systemRoot: firstEnvironmentValue(environment, ['SystemRoot', 'SYSTEMROOT', 'WINDIR', 'windir']) }
+        : {}),
+      ...(firstEnvironmentValue(environment, ['ComSpec', 'COMSPEC'])
+        ? { comSpec: firstEnvironmentValue(environment, ['ComSpec', 'COMSPEC']) }
+        : {}),
+      ...(firstEnvironmentValue(environment, ['PATHEXT', 'PathExt'])
+        ? { pathext: firstEnvironmentValue(environment, ['PATHEXT', 'PathExt']) }
+        : {}),
+    });
+  }
+  return Object.freeze({
+    ...result,
+    ...(firstEnvironmentValue(environment, ['SHELL'])
+      ? { shell: firstEnvironmentValue(environment, ['SHELL']) }
+      : {}),
+    ...(firstEnvironmentValue(environment, ['TERM'])
+      ? { term: firstEnvironmentValue(environment, ['TERM']) }
+      : {}),
+    ...(firstEnvironmentValue(environment, ['COLORTERM'])
+      ? { colorTerm: firstEnvironmentValue(environment, ['COLORTERM']) }
+      : {}),
+    ...(firstEnvironmentValue(environment, ['LANG'])
+      ? { lang: firstEnvironmentValue(environment, ['LANG']) }
+      : {}),
+    ...(firstEnvironmentValue(environment, ['LC_CTYPE'])
+      ? { lcCtype: firstEnvironmentValue(environment, ['LC_CTYPE']) }
+      : {}),
+  });
+}
 
 // ── 受管 models.yml ──────────────────────────────────────────────────────────
 
@@ -178,8 +240,14 @@ export function buildOmpManagedModelsYaml(params: {
     // 必须翻译:Cindy 的 `openai-chat` 在 OMP 里叫 `openai-completions`,透传会让
     // OMP 整份 models.yml 被拒(见 ompApiForWireProtocol 注释)。
     api: ompApiForWireProtocol(wireProtocol),
+    // The provider *inside* OMP remains the fixed managed `cindy` entry.
+    // Preserve Lex's selected source separately for the loopback router; it is
+    // not an OMP provider name and must not replace the models.yml key.
     providerId: OMP_CINDY_PROVIDER_ID,
     sessionId: params.sessionId,
+    headers: {
+      [OMP_CINDY_PROVIDER_ID_HEADER]: params.providerId ?? OMP_CINDY_PROVIDER_ID,
+    },
     models,
   });
   assertOmpModelsYamlHasNoSecrets(yaml, [params.token]);
@@ -208,13 +276,24 @@ export function buildOmpAgent(opts: BuildOmpAgentOpts): OmpAgent | null {
     log.warn('omp binary unavailable; omp agent disabled for this launch');
     return null;
   }
+  const spawnOmpProcess = process.platform === 'win32'
+    ? createWindowsOmpProcessSpawner()
+    : undefined;
+  if (spawnOmpProcess === null) {
+    log.warn('omp Windows containment helper unavailable; omp agent disabled for this launch');
+    return null;
+  }
   log.info('omp agent enabled', { binaryPath });
   return new OmpAgent({
     auth: desktopOmpAuthAdapter,
     runtimeConfig: buildDesktopOmpRuntimeConfig(),
-    // getter:二进制可能在会话期间被补齐/更新,每次 spawn 读最新受管路径。
+    // 每次 spawn 都重新走固定 pin 的路径与摘要校验；构造期通过的旧路径
+    // 不能在被替换/删除后作为后备继续执行。
     get binaryPath(): string {
-      return resolveOmpBinaryPath() ?? binaryPath;
+      const verified = resolveOmpBinaryPath();
+      if (!verified)
+        throw new Error('OMP runtime is no longer available or failed verification');
+      return verified;
     },
     logger: opts.logger,
     turnChangeCapture: opts.turnChangeCapture,
@@ -225,6 +304,13 @@ export function buildOmpAgent(opts: BuildOmpAgentOpts): OmpAgent | null {
     makerMemory: opts.makerMemory,
     // 受管持久根:会话历史落在 userData 下,与 Pi 的根严格分开。
     resolveOmpAgentHome: () => path.join(app.getPath('userData'), 'omp-agent-home'),
+    // Native project capabilities need a usable command/terminal environment,
+    // but never a clone of Desktop's credentials or arbitrary process flags.
+    resolveOmpExecutableEnvironment: () => buildDesktopOmpExecutableEnvironment(),
+    spawnOmpProcess,
+    // Share only the cross-agent Skill source. OMP config, auth and session
+    // state remain inside the per-runtime managed HOME above.
+    resolveOmpGlobalSkillsRoot: () => path.join(os.homedir(), '.agents', 'skills'),
     // 凭证只给值、不落盘;没有 sessionId 就无从绑定 token,直接抛错 fail-closed
     // (静默返回 undefined 会让 OMP 起在「没有 Cindy provider」的半残状态)。
     resolveOmpCredentials: (context): OmpSessionCredentials => {

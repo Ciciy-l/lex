@@ -16,13 +16,22 @@ type OmpRpcRequestType =
   | 'compact'
   | 'get_messages';
 
+/** OMP v18.1.18 RPC `set_host_tools` payload (the executable shape only). */
+export interface OmpRpcHostToolDefinition {
+  readonly name: string;
+  readonly label?: string;
+  readonly description: string;
+  readonly parameters: Readonly<Record<string, unknown>>;
+}
+
 export type OmpRpcRequest =
   | { type: OmpRpcRequestType }
   | { type: 'prompt' | 'steer' | 'follow_up'; message: string }
   | { type: 'switch_session'; sessionPath: string }
   | { type: 'set_model'; provider: string; modelId: string }
   | { type: 'set_thinking_level'; level: string }
-  | { type: 'export_html'; outputPath: string };
+  | { type: 'export_html'; outputPath: string }
+  | { type: 'set_host_tools'; tools: readonly OmpRpcHostToolDefinition[] };
 
 export interface OmpRpcResponse {
   type: 'response';
@@ -68,6 +77,7 @@ const REQUEST_TYPES = new Set([
   'compact',
   'export_html',
   'get_messages',
+  'set_host_tools',
 ]);
 
 // 文本载荷的上界刻意比帧上界(1 MiB)宽：真正卡住大消息的是 encode() 的字节检查，
@@ -84,6 +94,68 @@ function requestText(value: unknown, name: string, limit: number): string {
     throw new Error(`Invalid OMP RPC ${name}`);
   }
   return value;
+}
+
+const HOST_TOOL_NAME = /^[A-Za-z][A-Za-z0-9_-]*$/u;
+const MAX_HOST_TOOLS = 32;
+const MAX_HOST_TOOL_SCHEMA_BYTES = 64 * 1024;
+
+function hostToolText(value: unknown, name: string, limit: number): string {
+  const text = requestText(value, name, limit);
+  if (Array.from(text).some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 32 || code === 127;
+  })) {
+    throw new Error(`Invalid OMP RPC ${name}`);
+  }
+  return text;
+}
+
+function hostToolDefinitions(value: unknown): OmpRpcHostToolDefinition[] {
+  if (!Array.isArray(value) || value.length > MAX_HOST_TOOLS)
+    throw new Error('Invalid OMP RPC host tools');
+  const names = new Set<string>();
+  return value.map((candidate) => {
+    if (!isOmpRecord(candidate) || !isOmpRecord(candidate.parameters))
+      throw new Error('Invalid OMP RPC host tools');
+    const name = hostToolText(candidate.name, 'host tool name', 128);
+    if (!HOST_TOOL_NAME.test(name) || names.has(name))
+      throw new Error('Invalid OMP RPC host tools');
+    names.add(name);
+    const description = hostToolText(candidate.description, 'host tool description', 16_384);
+    const label = candidate.label === undefined
+      ? undefined
+      : hostToolText(candidate.label, 'host tool label', 128);
+    let parameters: string;
+    try {
+      parameters = JSON.stringify(candidate.parameters);
+    } catch {
+      throw new Error('Invalid OMP RPC host tools');
+    }
+    if (typeof parameters !== 'string' || Buffer.byteLength(parameters, 'utf8') > MAX_HOST_TOOL_SCHEMA_BYTES)
+      throw new Error('Invalid OMP RPC host tools');
+    return {
+      name,
+      ...(label === undefined ? {} : { label }),
+      description,
+      parameters: candidate.parameters,
+    };
+  });
+}
+
+function hostToolResult(value: unknown): { content: Array<{ type: 'text'; text: string }> } {
+  if (!isOmpRecord(value) || !Array.isArray(value.content) || value.content.length === 0 || value.content.length > 64)
+    throw new Error('Invalid OMP host tool result');
+  let bytes = 0;
+  const content = value.content.map((part) => {
+    if (!isOmpRecord(part) || part.type !== 'text')
+      throw new Error('Invalid OMP host tool result');
+    const text = hostToolText(part.text, 'host tool result text', 256 * 1024);
+    bytes += Buffer.byteLength(text, 'utf8');
+    if (bytes > 256 * 1024) throw new Error('Invalid OMP host tool result');
+    return { type: 'text' as const, text };
+  });
+  return { content };
 }
 
 /**
@@ -128,6 +200,8 @@ function buildRequestPayload(
         id,
         outputPath: requestText(command.outputPath, 'export_html', 4096),
       };
+    case 'set_host_tools':
+      return { type: command.type, id, tools: hostToolDefinitions(command.tools) };
     default:
       return { type: command.type, id };
   }
@@ -284,6 +358,32 @@ export class OmpRpcClient {
     }
   }
 
+  /** Complete an OMP RPC host-tool call without creating a normal request slot. */
+  respondToHostTool(
+    id: string,
+    result: { readonly content: readonly { readonly type: 'text'; readonly text: string }[] },
+    isError?: boolean,
+  ): void {
+    if (this.closed) throw new Error('OMP RPC is closed');
+    if (!this.acceptingRequests) throw new Error('OMP RPC is draining');
+    const callId = hostToolText(id, 'host tool call identity', 256);
+    const normalized = hostToolResult(result);
+    if (isError !== undefined && typeof isError !== 'boolean')
+      throw new Error('Invalid OMP host tool result');
+    const line = this.encode({
+      type: 'host_tool_result',
+      id: callId,
+      result: normalized,
+      ...(isError === true ? { isError: true } : {}),
+    });
+    try {
+      this.transport.writeLine(line);
+    } catch {
+      this.close();
+      throw new Error('OMP host tool transport failed');
+    }
+  }
+
   close(): void {
     if (this.closed) return;
     this.closed = true;
@@ -358,7 +458,11 @@ export class OmpRpcClient {
       return;
     }
     // 我们自己的响应若被服务端 echo 回来，绝不能当成新的 UI 请求再走一遍事件流。
-    if (event.type === 'extension_ui_response') return;
+    if (
+      event.type === 'extension_ui_response' ||
+      event.type === 'host_tool_result' ||
+      event.type === 'host_tool_update'
+    ) return;
     if (event.type === 'extension_ui_request') {
       const requestId = event.id;
       if (typeof requestId === 'string' && requestId && requestId.length <= 256) {

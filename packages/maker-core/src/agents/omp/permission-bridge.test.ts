@@ -37,9 +37,6 @@ function harness(): Harness {
   const written: Array<Record<string, unknown>> = [];
   const events: AgentEvent[] = [];
   const requests: InteractionRequest[] = [];
-  let resolver:
-    | ((request: InteractionRequest) => Promise<{ kind: 'permission'; behavior: 'allow' | 'deny' }>)
-    | undefined;
   const bridge = new OmpPermissionBridge({
     logger: createConsoleLogger('omp-bridge-test'),
     respond: (id: string, response: OmpUiResponse, correlation?: OmpUiCorrelation) => {
@@ -59,7 +56,6 @@ function harness(): Harness {
     events,
     requests,
     setResolver(next) {
-      resolver = next;
       bridge.setResolver(async (request) => {
         requests.push(request);
         return next(request);

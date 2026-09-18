@@ -50,6 +50,7 @@ describe('im default settings logic', () => {
         effort: 'high',
       },
       pi: IM_DEFAULT_SETTINGS.agents.pi,
+      omp: IM_DEFAULT_SETTINGS.agents.omp,
     });
   });
 });

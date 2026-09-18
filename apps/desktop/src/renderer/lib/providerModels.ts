@@ -308,18 +308,23 @@ export function resolveVisibleModelAgentKind(params: {
   ccModels: ModelDescriptor[];
   codexModels: ModelDescriptor[];
   piModels?: ModelDescriptor[];
+  ompModels?: ModelDescriptor[];
   providers: ProviderView[];
 }): AgentKind | null {
-  const { modelId, agentKind, ccModels, codexModels, piModels = [], providers } = params;
+  const { modelId, agentKind, ccModels, codexModels, piModels = [], ompModels = [], providers } = params;
   if (agentKind) return agentKind;
   if (ccModels.some((model) => model.id === modelId)) return 'claude-code';
   if (codexModels.some((model) => model.id === modelId)) return 'codex';
+  if (ompModels.some((model) => model.id === modelId)) return 'omp';
   if (piModels.some((model) => model.id === modelId)) return 'pi';
   if (providers.some((provider) => providerOffersModel(provider, modelId, 'claude-code'))) {
     return 'claude-code';
   }
   if (providers.some((provider) => providerOffersModel(provider, modelId, 'codex'))) {
     return 'codex';
+  }
+  if (providers.some((provider) => providerOffersModel(provider, modelId, 'omp'))) {
+    return 'omp';
   }
   if (providers.some((provider) => providerOffersModel(provider, modelId, 'pi'))) {
     return 'pi';

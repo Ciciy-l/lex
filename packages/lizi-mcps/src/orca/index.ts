@@ -8,6 +8,7 @@
 
 export {
   createOrcaMcpServer,
+  createOrcaOmpRpcHostTools,
   type OrcaMcpDeps,
   type OrcaMcpSessionCtx,
 } from './server.js';

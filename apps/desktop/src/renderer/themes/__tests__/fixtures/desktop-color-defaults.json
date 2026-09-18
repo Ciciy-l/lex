@@ -1,6 +1,6 @@
 {
   "source": "apps/desktop/src/renderer/themes/colors.ts",
-  "count": 547,
+  "count": 548,
   "colors": [
     {
       "id": "surface",

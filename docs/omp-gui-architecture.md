@@ -161,13 +161,20 @@ team-lead 担心"`localDb/schema.ts` 6 处 Drizzle enum 列改动需要不可逆
 | 维度 | 探测版（废弃） | 生产版 |
 | --- | --- | --- |
 | cwd | `<sandbox>/home/workdir` | `StartSessionOptions.workingDir`（真实项目目录） |
-| HOME 等根 | 每次新建一次性 sandbox | **持久**受管根 `userData/omp-agent-home`（HOME/PI_CONFIG_DIR='.omp'/PI_CODING_AGENT_DIR=`<home>/.omp/agent`/XDG_*/AppData 全指向其下） |
-| argv | `--no-session --no-tools …` | `--mode rpc --config <settings.yml> --approval-mode <档> --provider cindy --model <id>`；保留 `--no-extensions --no-skills --no-rules --no-lsp --no-pty --no-title`（P0 全关，PRD Q7）；**去掉** `--no-session --no-tools` |
-| settings YAML | 探测最小集 | 追加 `tools.approvalMode` 与 `--approval-mode` 同值（双写防漂移）、`startup.setupWizard:false`、`startup.checkUpdate:false`、`mcp.enableProjectConfig:false`、`enabledProviders:['cindy']` |
-| 环境 | 无凭证 | 注入 `CINDY_OMP_PROXY_KEY` 占位值 + `CINDY_OMP_SESSION_ID` / `CINDY_OMP_SESSION_TOKEN`；**不合并 `process.env`**（现有契约保留）；Windows 保留 `SystemRoot/WINDIR` |
+| HOME 等根 | 每次新建一次性 sandbox | 每个 live runtime 在 `userData/omp-agent-home/runtimes/<opaque-id>` 下拥有独立受管 HOME；HOME / PI 配置 / agent / XDG / AppData 根都在该 runtime 内 |
+| argv | `--no-session --no-tools …` | `--mode rpc --config <settings.yml> --approval-mode <档> --provider cindy --model <id>`；只保留 `--no-title` 给 Lex 管理任务标题。项目 MCP、extensions、Skills、Rules、LSP 与 PTY 均按 OMP 原生规则启用 |
+| settings YAML | 探测最小集 | 追加 `tools.approvalMode` 与 `--approval-mode` 同值（双写防漂移）、`startup.setupWizard:false`、`startup.checkUpdate:false`、`enabledProviders:['cindy']`；不再强制关闭 `mcp.enableProjectConfig` |
+| 环境 | 无凭证 | 注入 `CINDY_OMP_PROXY_KEY` 占位值 + `CINDY_OMP_SESSION_ID` / `CINDY_OMP_SESSION_TOKEN`；**不合并 `process.env`**。只由宿主白名单带入 PATH、shell / terminal / locale，或 Windows 的 SystemRoot、ComSpec、PATHEXT |
 | models.yml | 无 | host 在 spawn 前物化到 `<PI_CODING_AGENT_DIR>/models.yml`（§3.6） |
 
-**项目插件注册表上爬风险**：cwd 改为真实项目目录后，OMP 会从 cwd 向上遍历发现配置（`docs/omp-integration.md` 第四阶段已核实该行为），P0 靠 `--no-extensions --no-skills --no-rules` + `mcp.enableProjectConfig:false` 关闭消费面；`.env` 加载（cwd/.env 第一优先）是**残留风险**——上游文档确认 cwd `.env` 优先于进程 env 之外的来源，但**已 export 的进程值优先**（*"An already-exported process value wins"*）。因 launch plan 显式注入全部关键变量，`models.yml` apiKey 又按 env 名解析，项目 `.env` 无法劫持凭证路由；此结论写入共享知识，P1 再评估 `--no-env` 类旗标（若上游提供）。
+**原生能力对齐**：早期的项目能力全关策略已经废弃。OMP 现在和 Claude Code、Codex、Pi 一样，让真实工作目录按上游规则发现项目 MCP、extensions、Skills、Rules、LSP 与 PTY；这不是把这些面宣称成 Lex 的额外授权或 OS 沙箱。Lex 仍拥有受管 provider / credentials、独立 runtime HOME、进程生命周期和标题，且从不复用 Pi 或用户 `~/.omp` 的配置与凭证。共享 `~/.agents/skills` 仅以受控链接投影到运行时 HOME；无法投影时降级为没有该全局来源，不会改写已有运行时目录。
+
+OMP 的原生命令目录与文件扫描是两条不同的投影：live session 的
+`get_available_commands` 直接作为 native command 目录提供；文件扫描仅显示尚未验证、
+不可直接执行的 Skill。上游目录不携带 Skill 的路径或启动快照身份，因此同名
+`skill:<name>` 不能证明某个具体 `SKILL.md` 已被该进程加载。Lex 不会把扫描结果提升为
+`loaded`，也不会由扫描结果猜测 `/skill:<name>`；用户仍可从原生命令目录执行上游实际
+公布的命令。
 
 ### 3.6 Cindy provider 注入（omp-host 侧）
 
@@ -226,7 +233,7 @@ host 新增 `buildOmpSubscriptionProviders(catalog, endpoint)`（参照 `pi-host
 
 ### 4.5 会话中途热切换
 
-OMP 设置启动期加载，`setPermissionMode(mode)` 落地为：**drain 当前 turn → 关 stdin 优雅退出（`process-lifecycle` draining 语义）→ 以新 `--approval-mode` 重启进程 → `switch_session{sessionPath}` 续接 → `get_state` 校验 sessionId 未漂移**。UI 显示一次性"正在应用权限设置"状态。失败则回滚到旧档位并提示，不静默停留在中间态。
+OMP 设置启动期加载，`setPermissionMode(mode)` 落地为：**当前 turn 空闲 → 关旧进程并确认整棵树退出（`stopAndWait() === true`）→ 以新 `--approval-mode` 重启进程 → `switch_session{sessionPath}` 续接 → `get_state` 校验 sessionFile 未漂移**。同一 JSONL 不允许被两个 OMP 进程并发 attach，因此旧进程尚未确认退出时绝不启动替换进程。UI 显示一次性"正在应用权限设置"状态；旧进程已停止而替换失败时，会话 fail-closed 并要求重新打开任务，不能假装回滚到一个已退出的旧档位。
 
 ---
 

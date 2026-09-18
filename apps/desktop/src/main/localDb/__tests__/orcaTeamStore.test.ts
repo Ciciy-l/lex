@@ -259,17 +259,34 @@ describe('orcaTeamStore', () => {
     });
   });
 
-  it('preserves Pi worker identity in Orca projections', async () => {
+  it.each(['pi', 'omp'] as const)('preserves %s worker identity in Orca projections', async (agentKind) => {
     const { listWorkersByLead } = await import('../orcaTeamStore.js');
     const client = createTestDbClient();
     setCurrentDbClient(client, 'test-user');
 
     await seedOrcaWorkers(client);
+    await client.exec('UPDATE sessions SET agent_kind = ? WHERE id = ?', [
+      agentKind,
+      'worker-session-2',
+    ]);
     const workers = await listWorkersByLead('lead-session-1');
 
     expect(
       workers.find((worker) => worker.sessionId === 'worker-session-2')?.session.agentKind,
-    ).toBe('pi');
+    ).toBe(agentKind);
+  });
+
+  it('preserves OMP Lead identity when resolving a worker link', async () => {
+    const { getWorkerLink } = await import('../orcaTeamStore.js');
+    const client = createTestDbClient();
+    setCurrentDbClient(client, 'test-user');
+
+    await seedOrcaWorkers(client);
+    await client.exec('UPDATE sessions SET agent_kind = ? WHERE id = ?', ['omp', 'lead-session-1']);
+
+    await expect(getWorkerLink({ workerId: 'worker-1' })).resolves.toMatchObject({
+      leadSession: { agentKind: 'omp' },
+    });
   });
 
   it('returns complete active worker projections grouped by lead in one batch', async () => {

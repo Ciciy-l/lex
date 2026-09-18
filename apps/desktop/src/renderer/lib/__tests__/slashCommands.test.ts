@@ -12,9 +12,10 @@ import {
   reconcilePiRuntimeCommandForDispatch,
   reconcilePiRuntimeCommandForDispatchWithRetry,
   rewriteAgentSkillInvocationForDispatch,
-  rewritePiSkillAliasFromCommand,
-  rewritePiSkillMessageForSend,
+  rewriteNativeSkillAliasFromCommand,
+  rewriteNativeSkillMessageForSend,
   slashCommandInvocationName,
+  shouldRefreshRuntimeCommandCatalog,
   type UnifiedCommand,
 } from '@/lib/slashCommands';
 
@@ -23,6 +24,34 @@ const skill = (overrides: Partial<Extract<UnifiedCommand, { kind: 'agent-skill' 
   name: 'demo',
   source: 'skill' as const,
   ...overrides,
+});
+
+describe('runtime command-catalog invalidation', () => {
+  const payload = {
+    sessionId: 'omp-session',
+    agentKind: 'omp' as const,
+    revision: 2,
+    status: 'loaded' as const,
+  };
+
+  it('refreshes only the exact live session and engine', () => {
+    expect(shouldRefreshRuntimeCommandCatalog(payload, {
+      sessionId: 'omp-session',
+      agentKind: 'omp',
+    })).toBe(true);
+    expect(shouldRefreshRuntimeCommandCatalog(payload, {
+      sessionId: 'other-session',
+      agentKind: 'omp',
+    })).toBe(false);
+    expect(shouldRefreshRuntimeCommandCatalog(payload, {
+      sessionId: 'omp-session',
+      agentKind: 'claude-code',
+    })).toBe(false);
+    expect(shouldRefreshRuntimeCommandCatalog(payload, {
+      sessionId: undefined,
+      agentKind: 'omp',
+    })).toBe(false);
+  });
 });
 
 describe('rewriteAgentSkillInvocationForDispatch', () => {
@@ -94,8 +123,8 @@ describe('rewriteAgentSkillInvocationForDispatch', () => {
     expect(rewriteAgentSkillInvocationForDispatch('/demo', desktop)).toBe('/demo');
   });
 
-  it('leaves non-Pi first messages untouched without loading a roster', async () => {
-    await expect(rewritePiSkillMessageForSend({
+  it('leaves first messages for engines without native skill aliases untouched without loading a roster', async () => {
+    await expect(rewriteNativeSkillMessageForSend({
       agentKind: 'codex',
       message: '/git please',
     })).resolves.toBe('/git please');
@@ -109,9 +138,52 @@ describe('rewriteAgentSkillInvocationForDispatch', () => {
       runtimeCommandName: 'skill:git',
     });
     expect(rewriteAgentSkillInvocationForDispatch('/git please', discovered)).toBe('/git please');
-    expect(rewritePiSkillAliasFromCommand('/git please', discovered)).toBe('/skill:git please');
-    expect(rewritePiSkillAliasFromCommand(' \n/git please', discovered)).toBe(' \n/skill:git please');
-    expect(rewritePiSkillAliasFromCommand('note /git', discovered)).toBe('note /git');
+    expect(rewriteNativeSkillAliasFromCommand('pi', '/git please', discovered)).toBe('/skill:git please');
+    expect(rewriteNativeSkillAliasFromCommand('pi', ' \n/git please', discovered)).toBe(' \n/skill:git please');
+    expect(rewriteNativeSkillAliasFromCommand('pi', 'note /git', discovered)).toBe('note /git');
+  });
+
+  it('does not invent a native alias from a discovered OMP Skill', async () => {
+    const discovered = skill({
+      name: 'repository-guide',
+      scope: 'repo',
+      runtimeStatus: 'discovered',
+      runtimeCommandName: 'skill:repository-guide',
+    });
+
+    expect(rewriteNativeSkillAliasFromCommand('omp', '/repository-guide inspect', discovered)).toBe(
+      '/repository-guide inspect',
+    );
+  });
+
+  it('does not rewrite an OMP first message from its filesystem Skill roster', async () => {
+    vi.stubGlobal('window', {
+      electronAPI: {
+        maker: {
+          listDesktopCommands: async () => ({ success: true, commands: [] }),
+          listAgentCommands: async () => ({ success: true, commands: [] }),
+          listAgentSkills: async () => ({
+            success: true,
+            skills: [skill({
+              name: 'repository-guide',
+              scope: 'user',
+              runtimeStatus: 'discovered',
+              runtimeCommandName: 'skill:repository-guide',
+            })],
+          }),
+        },
+      },
+    });
+    try {
+      await expect(rewriteNativeSkillMessageForSend({
+        agentKind: 'omp',
+        message: '/repository-guide inspect',
+        workingDir: '/workspace',
+        sessionId: 'omp-session',
+      })).resolves.toBe('/repository-guide inspect');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

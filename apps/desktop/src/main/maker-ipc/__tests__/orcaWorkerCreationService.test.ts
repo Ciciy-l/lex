@@ -99,7 +99,7 @@ function createDeps(overrides: Partial<OrcaWorkerCreationDeps> = {}) {
     getWorkerDefaults: vi.fn(() => ({})),
     getWorkerPermissionMode: vi.fn(() => 'auto' as const),
     getAvailableModels: vi.fn((agent: AgentKind) => (
-      agent === 'codex'
+      agent === 'codex' || agent === 'omp'
         ? [
             { id: 'gpt-5.5', efforts: ['low', 'medium', 'high', 'xhigh'], defaultEffort: 'high', supportsFastMode: true },
             { id: 'gpt-5.4', efforts: ['low', 'medium', 'high', 'xhigh'], defaultEffort: 'high', supportsFastMode: true },
@@ -111,6 +111,11 @@ function createDeps(overrides: Partial<OrcaWorkerCreationDeps> = {}) {
     getProviderRoutingContext: vi.fn(async () => providerRoutingContext({
       'claude-code': [{ id: 'xd', name: 'XD Gateway', models: ['claude-sonnet-4-6'] }],
       codex: [{
+        id: 'xd',
+        name: 'XD Gateway',
+        models: ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'codex/budget', 'gpt-no-fast'],
+      }],
+      omp: [{
         id: 'xd',
         name: 'XD Gateway',
         models: ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'codex/budget', 'gpt-no-fast'],
@@ -412,7 +417,7 @@ describe('OrcaWorkerCreationService', () => {
     expect(deps.addOrUpdateWorker).not.toHaveBeenCalled();
   });
 
-  it('rejects unavailable explicit models before reading lead defaults', async () => {
+  it('rejects unavailable explicit models before reading Worker defaults', async () => {
     const { deps, service } = createDeps();
 
     await expect(
@@ -429,7 +434,9 @@ describe('OrcaWorkerCreationService', () => {
       message: expect.stringContaining('gpt-unknown'),
     });
 
-    expect(deps.getLeadSessionRow).not.toHaveBeenCalled();
+    // The lead is read first so the shared creation boundary can reject SSH OMP
+    // before any provider lookup.  Invalid models still must not read defaults.
+    expect(deps.getWorkerDefaults).not.toHaveBeenCalled();
     expect(deps.bootstrapSession).not.toHaveBeenCalled();
   });
 
@@ -819,7 +826,9 @@ describe('OrcaWorkerCreationService', () => {
       message: expect.stringContaining('Claude Code'),
     });
 
-    expect(deps.getLeadSessionRow).not.toHaveBeenCalled();
+    // See the SSH OMP preflight above: the lead lookup precedes provider routing,
+    // but an unavailable route must not consume Worker defaults.
+    expect(deps.getWorkerDefaults).not.toHaveBeenCalled();
     expect(deps.bootstrapSession).not.toHaveBeenCalled();
     expect(deps.addOrUpdateWorker).not.toHaveBeenCalled();
     expect(deps.dispatchWorkerTask).not.toHaveBeenCalled();
@@ -1426,7 +1435,7 @@ describe('OrcaWorkerCreationService', () => {
 
   it.each(
     (['auto', 'bypassPermissions'] as const).flatMap((workerPermissionMode) =>
-      (['claude-code', 'codex', 'pi'] as const).map((workerAgent) => ({
+      (['claude-code', 'codex', 'pi', 'omp'] as const).map((workerAgent) => ({
         workerPermissionMode,
         workerAgent,
       })),
@@ -1434,13 +1443,16 @@ describe('OrcaWorkerCreationService', () => {
   )(
     'starts a $workerAgent Worker with the saved preference $workerPermissionMode',
     async ({ workerPermissionMode, workerAgent }) => {
-      const workerModel = workerAgent === 'codex' ? 'gpt-5.5' : 'claude-sonnet-4-6';
+      const workerModel = workerAgent === 'codex' || workerAgent === 'omp'
+        ? 'gpt-5.5'
+        : 'claude-sonnet-4-6';
       const { deps, service } = createDeps({
         getWorkerPermissionMode: vi.fn(() => workerPermissionMode),
         getProviderRoutingContext: vi.fn(async () => providerRoutingContext({
           'claude-code': [{ id: 'xd', name: 'XD Gateway', models: ['claude-sonnet-4-6'] }],
           codex: [{ id: 'xd', name: 'XD Gateway', models: ['gpt-5.5'] }],
           pi: [{ id: 'xd', name: 'XD Gateway', models: ['claude-sonnet-4-6'] }],
+          omp: [{ id: 'xd', name: 'XD Gateway', models: ['gpt-5.5'] }],
         })),
       });
 

@@ -22,7 +22,6 @@
  */
 
 import { execFile } from 'node:child_process';
-import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -33,6 +32,12 @@ import { OMP_COMPATIBILITY_BASELINE, parseOmpVersionOutput } from '@cindy/maker-
 import { findDevBinary } from '../agent-binaries/dev-fallback.js';
 import { createLogger } from '../logger.js';
 import { getPlatformKey } from '../manifestService.js';
+import {
+  getPinnedOmpRuntimeAsset,
+  OMP_RUNTIME_PLATFORM_KEYS,
+  verifyOmpRuntimeFile,
+  type OmpPinnedRuntimeAsset,
+} from './omp-runtime-verifier.js';
 
 const log = createLogger('omp-runtime');
 
@@ -42,14 +47,7 @@ const execFileAsync = promisify(execFile);
 const VERSION_PROBE_TIMEOUT_MS = 4000;
 
 /** `tools/omp/latest.json` 里有资产的平台;缺一即永久 failed(不重试)。 */
-const SUPPORTED_PLATFORM_KEYS = new Set([
-  'darwin-arm64',
-  'darwin-x64',
-  'linux-arm64',
-  'linux-x64',
-  'win32-arm64',
-  'win32-x64',
-]);
+const SUPPORTED_PLATFORM_KEYS: ReadonlySet<string> = new Set(OMP_RUNTIME_PLATFORM_KEYS);
 
 export type OmpRuntimeState = 'not-ready' | 'downloading' | 'ready' | 'failed';
 
@@ -140,31 +138,32 @@ export function ompBinaryName(platformKey: string = getPlatformKey()): string {
   return platformKey.startsWith('win32') ? 'omp.exe' : 'omp';
 }
 
-function isUsableBinary(candidate: string): boolean {
-  try {
-    fs.accessSync(candidate, fs.constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * 解析 OMP 主执行文件绝对路径;不在位返回 null。
  *
- * dev 复用 agent-binaries 的同一查找约定(`apps/omp-bin/<platform>/omp[.exe]`);
- * 打包态读 userData 下的受管落点(CDN 链尚未接入,没装就是 null)。
+ * dev 复用 agent-binaries 的同一查找约定(`apps/omp-bin/<platform>/omp[.exe]`),
+ * 打包态读 userData 下的受管落点(CDN 链尚未接入,没装就是 null)。两条路径都
+ * 必须重新匹配固定 release pin 的文件尺寸和 SHA-256，不能只信任 marker、PATH
+ * 或可执行位。
  * 刻意**不**走 `getReadyBinaryPath('omp')`:OMP 不在 CDN manifest 的必下清单里,
  * 不能让 splash 为它引入一次下载。
  */
 export function resolveOmpBinaryPath(packaged: boolean = app.isPackaged): string | null {
   const platformKey = getPlatformKey();
-  const name = ompBinaryName(platformKey);
-  if (!packaged) {
-    return findDevBinary({ vendorBinDir: 'omp-bin', binaryName: name });
+  let expected: OmpPinnedRuntimeAsset | undefined;
+  try {
+    expected = getPinnedOmpRuntimeAsset(platformKey);
+  } catch (error) {
+    log.error('OMP runtime pin is invalid; refusing to resolve the binary', {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return null;
   }
-  const candidate = path.join(app.getPath('userData'), 'omp-bin', platformKey, name);
-  return isUsableBinary(candidate) ? candidate : null;
+  if (!expected) return null;
+  const candidate = !packaged
+    ? findDevBinary({ vendorBinDir: 'omp-bin', binaryName: expected.binaryName })
+    : path.join(app.getPath('userData'), 'omp-bin', platformKey, expected.binaryName);
+  return candidate !== null && verifyOmpRuntimeFile(candidate, expected) ? candidate : null;
 }
 
 /**
@@ -201,7 +200,7 @@ const listeners = new Set<(snapshot: OmpRuntimeSnapshot) => void>();
 function computeSnapshot(packaged: boolean = app.isPackaged): OmpRuntimeSnapshot {
   const platformKey = getPlatformKey();
   const binaryPath = resolveOmpBinaryPath(packaged);
-  const binaryUsable = binaryPath !== null && isUsableBinary(binaryPath);
+  const binaryUsable = binaryPath !== null;
   return classifyOmpRuntime({
     platformKey,
     platformSupported: SUPPORTED_PLATFORM_KEYS.has(platformKey),
@@ -248,7 +247,7 @@ export async function refreshOmpRuntime(
 ): Promise<OmpRuntimeSnapshot> {
   const platformKey = getPlatformKey();
   const binaryPath = resolveOmpBinaryPath(packaged);
-  const binaryUsable = binaryPath !== null && isUsableBinary(binaryPath);
+  const binaryUsable = binaryPath !== null;
   let reportedVersion: string | null = null;
   if (binaryUsable && binaryPath !== null) {
     if (probedPath === binaryPath) reportedVersion = probedVersion;

@@ -36,6 +36,18 @@ describe('OMP process exit confirmation', () => {
     test.lifecycle.confirmExit();
   });
 
+  it('force-reclaims an owned tree when natural-exit draining reaches its bound', async () => {
+    const test = fixture();
+    expect(test.lifecycle.markReady()).toBe(true);
+    test.lifecycle.beginDrain();
+    await vi.advanceTimersByTimeAsync(30);
+    expect(test.terminate).toHaveBeenCalledExactlyOnceWith(true);
+    expect(test.lifecycle.getState()).toBe('exit-unconfirmed');
+    expect(await test.lifecycle.stopAndWait()).toBe(false);
+    test.lifecycle.confirmExit();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('escalates once and reports unconfirmed exit rather than success', async () => {
     const test = fixture();
     const first = test.lifecycle.stopAndWait();

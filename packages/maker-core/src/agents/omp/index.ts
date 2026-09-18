@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,9 +10,25 @@ import {
   type StartSessionOptions,
 } from '../base-agent.js';
 import { NotSupportedError, type Capabilities } from '../../types/capabilities.js';
-import type { AgentKind } from '../../types/common.js';
-import type { AgentEvent } from '../../types/events.js';
-import { isOmpRecord } from './commands.js';
+import type {
+  McpProviderContext,
+  OmpHostToolDefinition,
+} from '../../interfaces/mcp-provider.js';
+import type { AgentKind, PermissionMode } from '../../types/common.js';
+import type {
+  ListCustomizationsOptions,
+  ListCustomizationsResult,
+} from '../../types/customizations.js';
+import type {
+  AgentBuiltinCommand,
+  ListAgentSkillsOptions,
+  ListAgentSkillsResult,
+} from '../../types/palette.js';
+import {
+  isOmpRecord,
+  OmpCommandCatalog,
+  readOmpCommandCatalogPayload,
+} from './commands.js';
 import {
   createOmpSessionLaunchPlan,
   type OmpSessionCredentials,
@@ -22,13 +38,29 @@ import { OMP_CINDY_PROVIDER_ID } from './models-config.js';
 import {
   OMP_PERMISSION_MODES,
   resolveOmpApprovalMode,
-  type OmpApprovalMode,
 } from './permission-map.js';
 import { OmpPermissionBridge } from './permission-bridge.js';
+import { OmpHostToolBridge } from './host-tools.js';
 import { startOmpProcess, type OmpProcessHost } from './process-host.js';
 import type { OmpProcessState } from './process-lifecycle.js';
-import { OmpSessionHandle } from './session-handle.js';
+import { terminateOmpProcessTree } from './process-tree.js';
+import {
+  OmpSessionHandle,
+  type OmpPermissionRuntimeFactory,
+  type OmpSessionRuntime,
+  type OmpSessionRuntimeCallbacks,
+} from './session-handle.js';
 import { OmpTranslator } from './translator.js';
+import {
+  ompDisabledSkillNames,
+  ompRuntimeSkillName,
+  scanOmpCustomizations,
+} from './customization-scanner.js';
+import { projectOmpGlobalSkills } from './global-skills.js';
+import {
+  currentDisabledSkillLaunchPaths,
+  snapshotDisabledSkillLaunch,
+} from '../shared/skill-activation.js';
 
 /**
  * OMP Agent —— Lex 的第四个 coding agent（上游 `can1357/oh-my-pi` v18.1.18）。
@@ -45,7 +77,10 @@ import { OmpTranslator } from './translator.js';
 
 const READY_TIMEOUT_MS = 30_000;
 const RPC_TIMEOUT_MS = 30_000;
+/** Give the first `/` palette a chance to include native OMP commands without making discovery a startup dependency. */
+const INITIAL_COMMAND_CATALOG_WAIT_MS = 1_000;
 const STARTUP_FRAME_BUFFER = 256;
+const MAX_APPEND_SYSTEM_PROMPT_BYTES = 256 * 1024;
 
 const REMOTE_UNSUPPORTED = {
   supported: false,
@@ -53,89 +88,331 @@ const REMOTE_UNSUPPORTED = {
   message: 'OMP cannot run on a remote host in this version.',
 } as const;
 
+/**
+ * Derive an opaque, deterministic child root for one live Maker session
+ * instance. The identifier never becomes a path component, so even direct
+ * harness callers cannot escape the host-owned OMP runtime root.
+ */
+export function createOmpSessionRuntimeHome(baseHome: string, instanceId: string): string {
+  return path.join(baseHome, 'runtimes', opaquePathKey(instanceId));
+}
+
 export class OmpAgent extends BaseAgent {
   readonly kind: AgentKind = 'omp';
   readonly capabilities: Capabilities;
+  /**
+   * OMP publishes commands per live process. Keep the catalog keyed by the
+   * business session and fenced by Maker's instance id so a rebuilt session or
+   * a Worker cannot leak its native commands into a sibling palette.
+   */
+  private readonly commandCatalogs = new Map<string, {
+    readonly instanceId: string;
+    readonly catalog: OmpCommandCatalog;
+  }>();
 
   constructor(deps: AgentDeps) {
     super(deps);
     this.capabilities = this.buildCapabilities(OmpAgent.baseCapabilities());
   }
 
+  override listAgentCommands(opts?: { sessionId?: string }): AgentBuiltinCommand[] {
+    const sessionId = opts?.sessionId;
+    if (!sessionId) return [];
+    const snapshot = this.commandCatalogs.get(sessionId)?.catalog.getSnapshot();
+    if (!snapshot || snapshot.status !== 'loaded') return [];
+    return snapshot.commands.map((command) => ({
+      kind: 'agent-builtin' as const,
+      name: command.name,
+      description: command.description ?? `OMP ${command.source} command`,
+    }));
+  }
+
+  /** SkillHub's raw filesystem view; native runtime state remains in the live catalog. */
+  override async listCustomizations(
+    opts: ListCustomizationsOptions,
+  ): Promise<ListCustomizationsResult> {
+    return scanOmpCustomizations(opts);
+  }
+
+  /**
+   * Filesystem Skill discovery for the palette. OMP's native catalog has no
+   * source-path or snapshot provenance, so it must not upgrade a scanned file
+   * to `loaded` merely because a same-name `skill:*` command exists. The live
+   * catalog is exposed independently as native commands.
+   */
+  override async listAgentSkills(
+    opts: ListAgentSkillsOptions,
+  ): Promise<ListAgentSkillsResult> {
+    if (opts.remoteHostId) return { skills: [] };
+    const { items, errors } = await scanOmpCustomizations({
+      workingDirs: opts.workingDir ? [opts.workingDir] : [],
+      forceReload: opts.forceReload,
+    });
+    const result: ListAgentSkillsResult = {
+      skills: items.flatMap((item) => {
+        if (item.kind !== 'skill' || !ompRuntimeSkillName(item)) return [];
+        return [{
+          kind: 'agent-skill' as const,
+          name: item.name,
+          description: item.description,
+          source: 'skill' as const,
+          path: item.mdPath ?? path.join(item.absolutePath, 'SKILL.md'),
+          scope: (item.scope === 'repo' ? 'repo' : 'user') as 'user' | 'repo',
+          enabled: true,
+          // Scanner output is advisory only. The upstream catalog does not
+          // identify the physical Skill it loaded, so neither user nor repo
+          // entries are executable until the live catalog publishes its own
+          // native command.
+          runtimeStatus: 'unknown' as const,
+        }];
+      }).sort((left, right) => left.name.localeCompare(right.name)),
+      ...(errors.length > 0 ? { errors } : {}),
+    };
+    return this.filterActiveSkillCommands(result, opts.remoteHostId);
+  }
+
   override async startSession(opts: StartSessionOptions): Promise<AgentSessionHandle> {
     if (opts.remoteHostId) {
       throw new NotSupportedError('omp:remote-session', { ...REMOTE_UNSUPPORTED });
     }
-    const providerId = opts.providerId ?? OMP_CINDY_PROVIDER_ID;
-    // host 拥有的硬只读会话（Cindy Review）一律按最严档位启动。
-    const requestedMode: unknown = opts.reviewMode === true ? 'ask' : opts.permissionMode;
-    const approvalMode = resolveOmpApprovalMode(requestedMode);
-    if (!approvalMode.matched) {
-      this.deps.logger.warn('omp permission mode was not recognized, fell back to always-ask', {
-        requested: approvalMode.requested ?? null,
-      });
-    }
-
-    const plan = createOmpSessionLaunchPlan({
-      roots: {
-        home: this.resolveAgentHome(),
-        workingDir: opts.workingDir,
-        platform: process.platform,
-        ...(process.env.SystemRoot === undefined
-          ? {}
-          : { windowsSystemRoot: process.env.SystemRoot }),
-      },
-      permissionMode: requestedMode,
-      model: { provider: providerId, model: opts.model },
-      ...(this.resolveCredentials(opts.sessionId, providerId) ?? {}),
-    });
-    await this.materializeRuntimeFiles(plan, opts.sessionId, providerId, opts.model);
-
-    // 帧出口：握手完成前缓冲，句柄建好后再回放（OMP 会在 `ready` 前后自发发
-    // `setWidget`，这些帧必须有人接，否则权限帧可能在没人应答时挂住进程）。
-    let frameSink: (frame: Readonly<Record<string, unknown>>) => void = (frame) => {
-      if (buffered.length < STARTUP_FRAME_BUFFER) buffered.push(frame);
+    // OMP host-tool handlers are registered once for this process and capture
+    // their MCP context. Keep an always-present, session-owned object so a
+    // live Orca promotion can update that context by reference, matching the
+    // Claude Code, Codex, and Pi session contracts. Do not retain the caller's
+    // object: start options are only an initial snapshot.
+    const mutableVendorOptions: Record<string, unknown> = {
+      ...(opts.vendorOptions ?? {}),
     };
-    const buffered: Readonly<Record<string, unknown>>[] = [];
-    let eventSink: ((event: AgentEvent) => void) | undefined;
-    let exitSink: ((state: OmpProcessState) => void) | undefined;
-
-    const host = await this.spawnHost(
-      plan,
-      (frame) => frameSink(frame),
-      (state) => exitSink?.(state),
-    );
-    try {
-      const translator = new OmpTranslator({ logger: this.deps.logger });
-      const bridge = new OmpPermissionBridge({
-        logger: this.deps.logger,
-        respond: (id, response, correlation) =>
-          host.client.respondToUi(id, response, correlation),
-        emit: (event) => eventSink?.(event),
+    // `providerId` is Lex's selected upstream source (for example `minimax`).
+    // OMP itself must never receive that id: the managed models.yml exposes just
+    // one provider, `cindy`, which points at Lex's loopback router.  Conflating
+    // the two made OMP select an unconfigured/builtin provider and reject the
+    // first prompt after an otherwise successful RPC handshake.
+    const sourceProviderId = opts.providerId ?? OMP_CINDY_PROVIDER_ID;
+    // Host-owned hard read-only sessions stay at the strict tier.
+    const requestedMode: unknown = opts.reviewMode === true ? 'ask' : opts.permissionMode;
+    const approvalResolution = resolveOmpApprovalMode(requestedMode);
+    if (!approvalResolution.matched) {
+      this.deps.logger.warn('omp permission mode was not recognized, fell back to always-ask', {
+        requested: approvalResolution.requested ?? null,
       });
-      const handle = new OmpSessionHandle({
-        sessionId: opts.resumeSessionId ?? '',
-        model: opts.model,
-        providerId,
-        workingDir: opts.workingDir,
-        approvalMode: approvalMode.approvalMode,
-        host,
-        translator,
-        bridge,
-        logger: this.deps.logger,
-      });
-      eventSink = (event) => handle.dispatchEvent(event);
-      frameSink = (frame) => handle.dispatchFrame(frame);
-      exitSink = (state) => handle.notifyProcessExit(state);
-      for (const frame of buffered.splice(0)) frameSink(frame);
-
-      const sessionFile = await this.establishSession(host, opts, translator);
-      handle.adoptSessionFile(sessionFile);
-      return handle;
-    } catch (error) {
-      await host.stopAndWait().catch(() => false);
-      throw error;
     }
+    const initialPermissionMode: PermissionMode =
+      requestedMode === 'ask' ||
+      requestedMode === 'auto' ||
+      requestedMode === 'bypassPermissions'
+        ? requestedMode
+        : 'ask';
+    // Keep the same local-only Skill preference contract as the other native
+    // engines. OMP names a disabled Skill in settings, so resolve the current
+    // native discovery view before the process starts rather than treating a
+    // disabled path as an arbitrary command name.
+    const disabledSkillPaths = opts.botRuntimeProfile || opts.reviewMode === true
+      ? []
+      : [...(this.deps.getDisabledSkillPaths?.() ?? [])];
+    const disabledSkillLaunch = snapshotDisabledSkillLaunch(disabledSkillPaths);
+    let disabledSkillNames: string[] = [];
+    if (disabledSkillPaths.length > 0) {
+      try {
+        const customizations = await scanOmpCustomizations({
+          workingDirs: [opts.workingDir],
+          kinds: ['skill'],
+        });
+        disabledSkillNames = ompDisabledSkillNames(
+          customizations.items,
+          currentDisabledSkillLaunchPaths(disabledSkillLaunch),
+        );
+      } catch (error) {
+        this.deps.logger.warn('omp disabled Skill preferences could not be resolved', {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    const executableEnvironment = this.deps.resolveOmpExecutableEnvironment?.();
+    const globalSkillsRoot = this.resolveGlobalSkillsRoot();
+    // The first runtime keeps Maker's instance identity. A restart gets a new
+    // opaque root so one process cannot inherit another's startup files.
+    const firstRuntimeInstanceId = opts.sessionInstanceId?.trim() || randomUUID();
+    let runtimeNumber = 0;
+    const appendSystemPrompt = normalizeAppendSystemPrompt(opts.userPrompt);
+    const mcpContext: McpProviderContext = {
+      agentKind: 'omp',
+      workingDir: opts.workingDir,
+      ...(opts.makerMemoryScopeKey ? { memoryScopeKey: opts.makerMemoryScopeKey } : {}),
+      vendorOptions: mutableVendorOptions,
+      ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
+      ...(opts.sessionInstanceId ? { sessionInstanceId: opts.sessionInstanceId } : {}),
+      // OMP host-tool calls are delivered only through this per-session bridge.
+      // The model never supplies or controls this provenance.
+      mcpCallerKind: 'root',
+      mcpCallerAttested: true,
+    };
+    const hostToolDefinitions = this.resolveHostTools(mcpContext);
+
+    const createRuntime = async (input: {
+      readonly permissionMode: PermissionMode;
+      readonly resumeSessionFile?: string;
+      readonly permitInitialRecovery: boolean;
+    }): Promise<OmpSessionRuntime> => {
+      const runtimeInstanceId = runtimeNumber === 0 ? firstRuntimeInstanceId : randomUUID();
+      runtimeNumber += 1;
+      const runtimeHome = this.resolveSessionAgentHome(runtimeInstanceId);
+      const appendSystemPromptKey = appendSystemPrompt === undefined
+        ? undefined
+        : opaquePathKey(runtimeInstanceId);
+      const commandCatalog = new OmpCommandCatalog();
+      const plan = createOmpSessionLaunchPlan({
+        roots: {
+          home: runtimeHome,
+          workingDir: opts.workingDir,
+          platform: process.platform,
+          ...(executableEnvironment?.systemRoot === undefined
+            ? {}
+            : { windowsSystemRoot: executableEnvironment.systemRoot }),
+        },
+        permissionMode: input.permissionMode,
+        model: { provider: OMP_CINDY_PROVIDER_ID, model: opts.model },
+        ...(executableEnvironment === undefined ? {} : { executableEnvironment }),
+        ...(disabledSkillNames.length === 0 ? {} : { disabledSkillNames }),
+        ...(appendSystemPromptKey === undefined
+          ? {}
+          : { appendSystemPromptKey }),
+        ...(this.resolveCredentials(opts.sessionId, sourceProviderId) ?? {}),
+      });
+
+      let cleanupRuntimeFiles: (() => Promise<void>) | undefined;
+      let host: OmpProcessHost | undefined;
+      let hostTools: OmpHostToolBridge | undefined;
+      let unregisterCommandCatalog: () => void = () => undefined;
+      let callbacks: OmpSessionRuntimeCallbacks | undefined;
+      let activated = false;
+      let disposed = false;
+      let stopAndDisposePromise: Promise<boolean> | undefined;
+      const buffered: Readonly<Record<string, unknown>>[] = [];
+      let pendingExit: OmpProcessState | undefined;
+      const forwardFrame = (frame: Readonly<Record<string, unknown>>) => {
+        if (!activated) {
+          if (buffered.length < STARTUP_FRAME_BUFFER) buffered.push(frame);
+          return;
+        }
+        callbacks?.onFrame(frame);
+      };
+      const forwardExit = (state: OmpProcessState) => {
+        if (!activated) {
+          pendingExit = state;
+          return;
+        }
+        callbacks?.onProcessExit(state);
+      };
+
+      try {
+        cleanupRuntimeFiles = await this.materializeRuntimeFiles(
+          plan,
+          opts.sessionId,
+          sourceProviderId,
+          opts.model,
+          appendSystemPrompt,
+          globalSkillsRoot,
+        );
+        host = await this.spawnHost(plan, forwardFrame, forwardExit);
+        const activeHost = host;
+        const translator = new OmpTranslator({ logger: this.deps.logger });
+        const bridge = new OmpPermissionBridge({
+          logger: this.deps.logger,
+          respond: (id, response, correlation) =>
+            activeHost.client.respondToUi(id, response, correlation),
+          emit: (event) => callbacks?.emit(event),
+        });
+        hostTools = new OmpHostToolBridge(hostToolDefinitions, {
+          logger: this.deps.logger,
+          respond: (id, result) =>
+            activeHost.client.respondToHostTool(id, result, result.isError === true),
+        });
+        const sessionFile = input.resumeSessionFile === undefined || input.permitInitialRecovery
+          ? await this.establishSession(activeHost, opts, translator)
+          : await this.resumeExistingSession(activeHost, input.resumeSessionFile, translator);
+        // A fresh process has no retained bridge surface. Register even an empty
+        // set after new/switch_session and before a prompt can be sent.
+        const { response: hostToolsResponse } = activeHost.client.request(
+          { type: 'set_host_tools', tools: hostTools.definitions() },
+          RPC_TIMEOUT_MS,
+        );
+        await hostToolsResponse;
+        const initialCommandCatalogRefresh = this.refreshCommandCatalog(activeHost, commandCatalog);
+        await waitForInitialOmpCommandCatalog(initialCommandCatalogRefresh);
+
+        const runtime: OmpSessionRuntime = {
+          sessionFile,
+          permissionMode: input.permissionMode,
+          approvalMode: plan.approvalMode,
+          host: activeHost,
+          translator,
+          bridge,
+          hostTools,
+          commandCatalog,
+          activate: (nextCallbacks) => {
+            if (activated || disposed) return;
+            activated = true;
+            callbacks = nextCallbacks;
+            unregisterCommandCatalog = this.registerCommandCatalog(
+              opts.sessionId,
+              runtimeInstanceId,
+              commandCatalog,
+            );
+            for (const frame of buffered.splice(0)) callbacks.onFrame(frame);
+            if (pendingExit !== undefined) callbacks.onProcessExit(pendingExit);
+          },
+          stopAndDispose: () => {
+            if (stopAndDisposePromise) return stopAndDisposePromise;
+            disposed = true;
+            hostTools?.close();
+            unregisterCommandCatalog();
+            stopAndDisposePromise = (async () => {
+              try {
+                return await activeHost.stopAndWait();
+              } finally {
+                await cleanupRuntimeFiles?.();
+              }
+            })();
+            return stopAndDisposePromise;
+          },
+        };
+        return Object.freeze(runtime);
+      } catch (error) {
+        hostTools?.close();
+        unregisterCommandCatalog();
+        await host?.stopAndWait().catch(() => false);
+        await cleanupRuntimeFiles?.().catch(() => undefined);
+        throw error;
+      }
+    };
+
+    const initialRuntime = await createRuntime({
+      permissionMode: initialPermissionMode,
+      ...(opts.resumeSessionId === undefined ? {} : { resumeSessionFile: opts.resumeSessionId }),
+      permitInitialRecovery: true,
+    });
+    const restartRuntime: OmpPermissionRuntimeFactory = ({ permissionMode, sessionFile }) =>
+      createRuntime({
+        permissionMode,
+        resumeSessionFile: sessionFile,
+        permitInitialRecovery: false,
+      });
+    return new OmpSessionHandle({
+      sessionId: initialRuntime.sessionFile,
+      model: opts.model,
+      // Keep the Lex source for subsequent model-selection bookkeeping, while
+      // native set_model calls continue to target the managed `cindy` provider.
+      providerId: sourceProviderId,
+      ompProviderId: OMP_CINDY_PROVIDER_ID,
+      workingDir: opts.workingDir,
+      ...(opts.reviewMode === true ? { reviewMode: true } : {}),
+      disabledSkillPaths: disabledSkillLaunch.identities,
+      vendorOptions: mutableVendorOptions,
+      runtime: initialRuntime,
+      restartRuntime,
+      logger: this.deps.logger,
+    });
   }
 
   /**
@@ -163,6 +440,11 @@ export class OmpAgent extends BaseAgent {
       workingDirectory: plan.roots.workingDir,
       arguments: plan.arguments,
       environment: plan.environment,
+      // POSIX must give the managed session its own process group so an OMP
+      // extension, MCP, LSP, or PTY descendant cannot survive the root.
+      detached: process.platform !== 'win32',
+      ownsProcessTree: true,
+      spawnProcess: this.deps.spawnOmpProcess,
       terminateProcessTree: terminateOmpProcessTree,
       onEvent: (frame) => {
         if (frame.type === 'ready') {
@@ -205,19 +487,34 @@ export class OmpAgent extends BaseAgent {
   ): Promise<string> {
     const resume = opts.resumeSessionId;
     let sessionFile: string | undefined;
-    if (resume !== undefined && resume.length > 0) {
-      try {
-        const { response } = host.client.request(
-          { type: 'switch_session', sessionPath: resume },
-          RPC_TIMEOUT_MS,
-        );
-        await response;
-        sessionFile = await this.readSessionFile(host, translator);
-      } catch (error) {
-        this.deps.logger.warn('omp resume failed', {
-          message: error instanceof Error ? error.message : String(error),
-        });
-        sessionFile = undefined;
+    if (typeof resume === 'string' && resume.length > 0) {
+      if (!isOmpSessionFilePath(resume)) {
+        // A persisted SDK id is untrusted input on the way back into OMP.
+        // Never allow a legacy/corrupt relative path to resolve against the
+        // native process cwd and attach an unrelated project history.
+        this.deps.logger.warn('omp resume session identity is invalid');
+      } else {
+        try {
+          const { response } = host.client.request(
+            { type: 'switch_session', sessionPath: resume },
+            RPC_TIMEOUT_MS,
+          );
+          await response;
+          const resumed = await this.readSessionFile(host, translator);
+          if (resumed !== undefined && !sameOmpSessionFile(resumed, resume)) {
+            // A successful RPC response that points at another history is not an
+            // invalid/missing resume.  Never clear the stored id or silently
+            // attach this Lex task to a different upstream session.
+            throw new OmpResumeIdentityMismatchError();
+          }
+          sessionFile = resumed;
+        } catch (error) {
+          if (error instanceof OmpResumeIdentityMismatchError) throw error;
+          this.deps.logger.warn('omp resume failed', {
+            message: error instanceof Error ? error.message : String(error),
+          });
+          sessionFile = undefined;
+        }
       }
       if (sessionFile === undefined) {
         const mayStartFresh = opts.onInvalidResumeSession
@@ -233,6 +530,30 @@ export class OmpAgent extends BaseAgent {
     }
     if (sessionFile === undefined) throw new Error('OMP did not report a session file');
     return sessionFile;
+  }
+
+  /**
+   * Permission-mode restart is stricter than initial startup: it must resume
+   * the already-live upstream history and never run the invalid-resume fresh
+   * fallback.  A replacement that cannot prove that identity is discarded.
+   */
+  private async resumeExistingSession(
+    host: OmpProcessHost,
+    expectedSessionFile: string,
+    translator: OmpTranslator,
+  ): Promise<string> {
+    if (!isOmpSessionFilePath(expectedSessionFile))
+      throw new OmpResumeIdentityMismatchError();
+    const { response } = host.client.request(
+      { type: 'switch_session', sessionPath: expectedSessionFile },
+      RPC_TIMEOUT_MS,
+    );
+    await response;
+    const resumed = await this.readSessionFile(host, translator);
+    if (resumed === undefined || !sameOmpSessionFile(resumed, expectedSessionFile)) {
+      throw new OmpResumeIdentityMismatchError();
+    }
+    return resumed;
   }
 
   private async readSessionFile(
@@ -258,12 +579,97 @@ export class OmpAgent extends BaseAgent {
     return path.join(os.tmpdir(), 'cindy-omp-agent-home');
   }
 
+  /** Resolve the optional shared user Skill source without adopting ~/.omp. */
+  private resolveGlobalSkillsRoot(): string | undefined {
+    try {
+      return this.deps.resolveOmpGlobalSkillsRoot?.();
+    } catch {
+      this.deps.logger.warn('omp shared global Skills root is unavailable');
+      return undefined;
+    }
+  }
+
+  /** Each live process gets a private HOME/config/agent/session directory. */
+  private resolveSessionAgentHome(instanceId: string): string {
+    return createOmpSessionRuntimeHome(this.resolveAgentHome(), instanceId);
+  }
+
+  private registerCommandCatalog(
+    sessionId: string | undefined,
+    instanceId: string,
+    catalog: OmpCommandCatalog,
+  ): () => void {
+    if (!sessionId) return () => undefined;
+    this.commandCatalogs.set(sessionId, { instanceId, catalog });
+    return () => {
+      const current = this.commandCatalogs.get(sessionId);
+      if (current?.instanceId === instanceId) this.commandCatalogs.delete(sessionId);
+    };
+  }
+
+  private async refreshCommandCatalog(
+    host: OmpProcessHost,
+    catalog: OmpCommandCatalog,
+  ): Promise<void> {
+    const ticket = catalog.beginRead();
+    try {
+      const { response } = host.client.request(
+        { type: 'get_available_commands' },
+        RPC_TIMEOUT_MS,
+      );
+      const result = await response;
+      catalog.completeRead(ticket, readOmpCommandCatalogPayload(result.data));
+    } catch (error) {
+      catalog.failRead(ticket);
+      this.deps.logger.debug('omp native command catalog is unavailable', {
+        reason: error instanceof Error ? error.message : 'unknown',
+      });
+    }
+  }
+
   private resolveCredentials(
     sessionId: string | undefined,
     providerId: string,
   ): { credentials: OmpSessionCredentials } | undefined {
     const credentials = this.deps.resolveOmpCredentials?.({ sessionId, providerId });
     return credentials === undefined ? undefined : { credentials };
+  }
+
+  /**
+   * Build one immutable, session-scoped host-tool surface.  A provider must opt
+   * into OMP explicitly; ordinary MCP providers are not reinterpreted as OMP
+   * extensions or discovered from the project.
+   */
+  private resolveHostTools(context: McpProviderContext): readonly OmpHostToolDefinition[] {
+    const tools: OmpHostToolDefinition[] = [];
+    const names = new Set<string>();
+    for (const provider of this.deps.mcpProviders ?? []) {
+      // Non-adapted providers have no OMP surface.  Skip them before their
+      // enablement gate so a generic MCP provider cannot affect this bounded
+      // host-tool startup path merely by being present in the shared list.
+      if (!provider.toOmpRpcHostTools) continue;
+      let enabled = true;
+      try {
+        enabled = provider.isEnabled?.(context) !== false;
+      } catch {
+        throw new Error(`OMP host tool provider "${provider.name}" could not be evaluated`);
+      }
+      if (!enabled) continue;
+      let provided: readonly OmpHostToolDefinition[] | null;
+      try {
+        provided = provider.toOmpRpcHostTools(context);
+      } catch {
+        throw new Error(`OMP host tool provider "${provider.name}" could not be configured`);
+      }
+      if (provided === null) continue;
+      for (const tool of provided) {
+        if (names.has(tool.name))
+          throw new Error(`Duplicate OMP host tool "${tool.name}"`);
+        names.add(tool.name);
+        tools.push(tool);
+      }
+    }
+    return Object.freeze(tools);
   }
 
   /**
@@ -276,19 +682,64 @@ export class OmpAgent extends BaseAgent {
     sessionId: string | undefined,
     providerId: string,
     model: string,
-  ): Promise<void> {
-    await fs.mkdir(plan.roots.agent, { recursive: true });
-    await fs.mkdir(plan.roots.sessions, { recursive: true });
-    await fs.writeFile(plan.roots.settingsFile, plan.settingsYaml, {
-      encoding: 'utf8',
-      mode: 0o600,
-    });
-    const modelsYaml = this.deps.resolveOmpModelsYaml?.({ sessionId, providerId, model });
-    if (modelsYaml === undefined) {
-      this.deps.logger.warn('omp models.yml was not provided; only built-in providers are usable');
-      return;
+    appendSystemPrompt: string | undefined,
+    globalSkillsRoot: string | undefined,
+  ): Promise<() => Promise<void>> {
+    let cleaned = false;
+    const cleanupSystemPrompt = async () => {
+      if (cleaned || plan.roots.systemPromptFile === undefined) return;
+      cleaned = true;
+      try {
+        await fs.unlink(plan.roots.systemPromptFile);
+      } catch (error) {
+        const code = (error as { code?: unknown } | undefined)?.code;
+        if (code !== 'ENOENT') {
+          this.deps.logger.warn('omp system prompt cleanup failed', {
+            code: typeof code === 'string' ? code : 'unknown',
+          });
+        }
+      }
+    };
+    try {
+      await fs.mkdir(plan.roots.agent, { recursive: true });
+      await fs.mkdir(plan.roots.sessions, { recursive: true });
+      const projectedSkills = await projectOmpGlobalSkills({
+        sourceRoot: globalSkillsRoot,
+        targetRoot: plan.roots.globalSkillsDirectory,
+      });
+      if (projectedSkills.status === 'conflict' || projectedSkills.status === 'error') {
+        // Skills are a native optional resource: a local projection conflict
+        // must not make an otherwise usable project session fail to start.
+        this.deps.logger.warn('omp shared global Skills projection unavailable', {
+          status: projectedSkills.status,
+        });
+      }
+      await fs.writeFile(plan.roots.settingsFile, plan.settingsYaml, {
+        encoding: 'utf8',
+        mode: 0o600,
+      });
+      if (plan.roots.systemPromptFile !== undefined) {
+        if (appendSystemPrompt === undefined)
+          throw new Error('OMP system prompt plan and content are inconsistent');
+        await fs.mkdir(plan.roots.systemPromptDirectory, { recursive: true });
+        await fs.writeFile(plan.roots.systemPromptFile, appendSystemPrompt, {
+          encoding: 'utf8',
+          mode: 0o600,
+        });
+      }
+      const modelsYaml = this.deps.resolveOmpModelsYaml?.({ sessionId, providerId, model });
+      if (modelsYaml === undefined) {
+        this.deps.logger.warn('omp models.yml was not provided; only built-in providers are usable');
+      } else {
+        await fs.writeFile(plan.roots.modelsFile, modelsYaml, { encoding: 'utf8', mode: 0o600 });
+      }
+      return cleanupSystemPrompt;
+    } catch (error) {
+      // The append prompt is per-session and can carry Orca role instructions.
+      // Do not leave it behind if later models.yml materialization fails.
+      await cleanupSystemPrompt();
+      throw error;
     }
-    await fs.writeFile(plan.roots.modelsFile, modelsYaml, { encoding: 'utf8', mode: 0o600 });
   }
 
   private static baseCapabilities(): Capabilities {
@@ -310,14 +761,9 @@ export class OmpAgent extends BaseAgent {
       // 三档由 permission-map 表驱动；`acceptEdits` / `default` / `plan` 无对应
       // 上游语义，故意不暴露（架构 §4.1）。
       permissionModes: [...OMP_PERMISSION_MODES],
-      // OMP 的 approvalMode 是启动期加载的，热切档需要重启续接（架构 §4.5）。
-      // P0 声明不支持 —— 宁可让 UI 隐藏入口，也不假装已即时生效。
-      setPermissionModeMidSession: {
-        supported: false,
-        reason: 'not-implemented',
-        message:
-          'OMP applies a permission-mode change when the session restarts; choose it before the session starts.',
-      },
+      // OMP reads approval mode at startup. The handle safely rebuilds and
+      // resumes the same native JSONL session when the user changes it.
+      setPermissionModeMidSession: { supported: true },
       // 每轮 host 策略在工具审批边界上先于自动放行执行；bypassPermissions 下
       // OMP 直接放行、审批帧不冒泡 → 无法兑现，故列为不支持（与 Pi 同口径）。
       turnPermissionPolicy: {
@@ -355,9 +801,60 @@ function readSessionPath(data: unknown): string | undefined {
   if (!isOmpRecord(data)) return undefined;
   for (const key of ['sessionFile', 'sessionPath', 'session_file']) {
     const value = data[key];
-    if (typeof value === 'string' && value.length > 0 && value.length <= 4096) return value;
+    if (isOmpSessionFilePath(value)) return value;
   }
   return undefined;
+}
+
+/**
+ * Session files are persisted as Lex's sdkSessionId then sent back through
+ * OMP's `switch_session`. Treat them as a path capability, never an opaque
+ * arbitrary string: a relative path would otherwise be interpreted beneath
+ * the next process cwd.
+ */
+function isOmpSessionFilePath(value: unknown): value is string {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > 4096 ||
+    Array.from(value).some((character) => {
+      const code = character.charCodeAt(0);
+      return code < 32 || code === 127;
+    })
+  ) {
+    return false;
+  }
+  const implementation = process.platform === 'win32' ? path.win32 : path.posix;
+  if (!implementation.isAbsolute(value)) return false;
+  // `\\history.jsonl` is only rooted at whichever drive happens to be
+  // current for a Windows process. Unlike a drive-qualified or UNC path it is
+  // not a stable identity that can safely survive a later restart.
+  if (process.platform === 'win32') {
+    const root = implementation.parse(implementation.normalize(value)).root;
+    if (root === '\\' || root === '/') return false;
+  }
+  return true;
+}
+
+class OmpResumeIdentityMismatchError extends Error {
+  constructor() {
+    super('OMP resume session identity mismatch');
+  }
+}
+
+/**
+ * Compare the logical path OMP reports, not filesystem identity: a resumed
+ * JSONL may be unavailable to `realpath` until its first write. Windows path
+ * spelling is case-insensitive; POSIX remains exact after normalization.
+ */
+function sameOmpSessionFile(left: string, right: string): boolean {
+  if (!isOmpSessionFilePath(left) || !isOmpSessionFilePath(right)) return false;
+  const implementation = process.platform === 'win32' ? path.win32 : path.posix;
+  const normalizedLeft = implementation.normalize(left);
+  const normalizedRight = implementation.normalize(right);
+  return process.platform === 'win32'
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
 }
 
 function readContextWindow(data: Record<string, unknown>): number | undefined {
@@ -371,41 +868,37 @@ function readContextWindow(data: Record<string, unknown>): number | undefined {
   return undefined;
 }
 
+/** Keep per-session prompt bytes bounded and out of argv / environment. */
+function normalizeAppendSystemPrompt(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string' || value.includes('\0'))
+    throw new Error('Invalid OMP system prompt');
+  if (value.trim().length === 0) return undefined;
+  if (Buffer.byteLength(value, 'utf8') > MAX_APPEND_SYSTEM_PROMPT_BYTES)
+    throw new Error('OMP system prompt exceeds the supported size');
+  return value;
+}
+
 /**
- * 终止 OMP 进程树。
- *
- * Windows 没有进程组信号，用 `taskkill /T` 走整棵树（与 pi-subagent-runs 同思路）；
- * 失败时退化为直接 kill 直接子进程，绝不静默放过。
+ * A slow or malformed native command directory must never make the task fail
+ * to start. Keep the read alive after the short first-palette window so its
+ * catalog subscription can refresh the UI when it eventually settles.
  */
-function terminateOmpProcessTree(
-  child: ChildProcessWithoutNullStreams,
-  force: boolean,
-): void {
-  const pid = child.pid;
-  if (pid === undefined) return;
-  if (process.platform === 'win32') {
-    const args = force ? ['/PID', String(pid), '/T', '/F'] : ['/PID', String(pid), '/T'];
-    try {
-      const killer = spawn('taskkill', args, { stdio: 'ignore', windowsHide: true });
-      killer.on('error', () => {
-        try {
-          child.kill();
-        } catch {
-          return;
-        }
-      });
-    } catch {
-      try {
-        child.kill();
-      } catch {
-        return;
-      }
-    }
-    return;
-  }
+async function waitForInitialOmpCommandCatalog(refresh: Promise<void>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    process.kill(pid, force ? 'SIGKILL' : 'SIGTERM');
-  } catch {
-    return;
+    await Promise.race([
+      refresh.catch(() => undefined),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, INITIAL_COMMAND_CATALOG_WAIT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+/** An opaque filename key; neither session identity nor prompt text appears in a path. */
+function opaquePathKey(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
 }

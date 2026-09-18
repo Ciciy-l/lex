@@ -953,6 +953,14 @@ export interface LiziMcpProvider {
   toClaudeSdkConfig(context: LiziMcpSessionContext): unknown | null;
   /** Remote MCP config for Codex app-server; SDK instance providers use the host HTTP bridge instead. */
   toCodexMcpConfig?(context: LiziMcpSessionContext): CodexHttpMcpConfig | null;
+  /**
+   * Optional OMP RPC host-tool adapter.  OMP does not load an arbitrary MCP
+   * server; each provider must explicitly project the bounded tools it can
+   * serve through the host-owned RPC bridge.
+   */
+  toOmpRpcHostTools?(
+    context: LiziMcpSessionContext,
+  ): readonly import('@cindy/maker-core').OmpHostToolDefinition[] | null;
   /** Extra env required by remote MCP configs, e.g. bearer tokens. */
   getExtraEnv?(context: LiziMcpSessionContext): Promise<Record<string, string> | null> | Record<string, string> | null;
 }

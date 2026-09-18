@@ -455,6 +455,19 @@ const requestProviderModelsAutoRefresh = vi.fn(async () => ({ ok: true as const 
 
 afterEach(() => { vi.useRealTimers(); });
 
+describe('ModelSelector agent identity', () => {
+  it('keeps OMP as the selected session engine', () => {
+    expect(resolveModelSelectorAgentIdentity('omp', null)).toEqual({
+      vendorKey: 'omp',
+      state: 'current',
+    });
+    expect(resolveModelSelectorAgentIdentity('claude-code', 'omp')).toEqual({
+      vendorKey: 'omp',
+      state: 'pending',
+    });
+  });
+});
+
 beforeEach(() => {
   modelSelectorI18nRef.language = 'zh-CN';
   modelSelectorI18nRef.resolvedLanguage = 'zh-CN';
@@ -489,6 +502,7 @@ describe('resolveRemoteModelListStatus', () => {
         cc: pending,
         codex: failed,
         pi: failed,
+        omp: failed,
         providers: { loading: false, error: null },
       }),
     ).toBe('loading');
@@ -499,6 +513,7 @@ describe('resolveRemoteModelListStatus', () => {
         cc: ready,
         codex: failed,
         pi: failed,
+        omp: failed,
         providers: { loading: false, error: null },
       }),
     ).toBe('ready');
@@ -512,6 +527,7 @@ describe('resolveRemoteModelListStatus', () => {
         cc: failed,
         codex: ready,
         pi: ready,
+        omp: ready,
         providers: { loading: false, error: null },
       }),
     ).toBe('error');
@@ -522,6 +538,7 @@ describe('resolveRemoteModelListStatus', () => {
         cc: ready,
         codex: failed,
         pi: ready,
+        omp: ready,
         providers: { loading: false, error: null },
       }),
     ).toBe('error');
@@ -532,6 +549,7 @@ describe('resolveRemoteModelListStatus', () => {
         cc: ready,
         codex: ready,
         pi: ready,
+        omp: ready,
         providers: { loading: false, error: 'timeout', unsupported: false },
       }),
     ).toBe('error');
@@ -545,6 +563,7 @@ describe('resolveRemoteModelListStatus', () => {
         cc: ready,
         codex: ready,
         pi: ready,
+        omp: ready,
         providers: { loading: false, error: 'channel not allowed', unsupported: true },
       }),
     ).toBe('ready');

@@ -1,13 +1,15 @@
 /**
- * OmpMark —— OMP coding agent(can1357/oh-my-pi)的身份 mark。
+ * OmpMark —— OMP coding agent (can1357/oh-my-pi) 的官方 T 形标记。
  *
- * OMP 上游没有对外的品牌 glyph 规范,这里用「圆环 + 内部星芒」的简洁几何形
- * (13-14px 小尺寸下保持清晰,视觉重量与 ClaudeMark 像素脸 / CodexMark `>_`
- * 花形 / PiMark π 字形对齐,且与三者一眼可区分)。
- *  - variant="mono"(默认):currentColor,跟随主题/状态染色;
- *  - variant="brand":OMP 无官方品牌色,当前与 mono 相同(保留参数是为了与
- *    ClaudeMark/CodexMark/PiMark 的调用面一致,出现官方色后只改这里)。
+ *  - variant="mono" (默认): currentColor，供 sidebar 的主题、选中和运行态
+ *    Thinking Orange 染色使用；
+ *  - variant="brand": 官方粉紫到青色的三段渐变，仅用于需要品牌辨识的
+ *    非状态性表面。gradient id 用 useId 派生，避免多个 OMP mark 同屏串色。
  */
+
+import { useId } from 'react';
+
+const OMP_MARK_PATH = 'M10 14h44v9H43v33h-9V23h-9v22h-9V23H10z';
 
 interface OmpMarkProps {
   size?: number;
@@ -15,30 +17,30 @@ interface OmpMarkProps {
   variant?: 'mono' | 'brand';
 }
 
-export function OmpMark({ size = 14, className }: OmpMarkProps) {
+export function OmpMark({ size = 14, className, variant = 'mono' }: OmpMarkProps) {
+  const gradientId = useId();
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 24 24"
+      viewBox="0 0 64 64"
       xmlns="http://www.w3.org/2000/svg"
       className={className}
       aria-hidden
     >
-      <g
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={2.2}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        {/* 外环(O) */}
-        <circle cx="12" cy="12" r="7.4" />
-        {/* 内部三向星芒 */}
-        <path d="M12 8.6v6.8" />
-        <path d="M9.1 10.3l5.8 3.4" />
-        <path d="M14.9 10.3l-5.8 3.4" />
-      </g>
+      {variant === 'brand' && (
+        <defs>
+          <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor="oklch(0.7 0.24 340)" />
+            <stop offset=".5" stopColor="oklch(0.62 0.21 295)" />
+            <stop offset="1" stopColor="oklch(0.81 0.14 200)" />
+          </linearGradient>
+        </defs>
+      )}
+      <path
+        fill={variant === 'brand' ? `url(#${gradientId})` : 'currentColor'}
+        d={OMP_MARK_PATH}
+      />
     </svg>
   );
 }

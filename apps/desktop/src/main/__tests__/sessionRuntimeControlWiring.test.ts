@@ -29,6 +29,20 @@ function handlerBody(source: string, channel: string, nextChannel: string): stri
 }
 
 describe('session runtime control wiring', () => {
+  it('accepts every supported Maker agent kind when queuing a composer input', () => {
+    const validatorStart = registerSource.indexOf('const requireQueuedMessage = (');
+    const validatorEnd = registerSource.indexOf(
+      'ipcMain.handle(DL_SESSION_REFERENCE_CAPABILITY_CHANNEL',
+      validatorStart,
+    );
+
+    expect(validatorStart).toBeGreaterThan(-1);
+    expect(validatorEnd).toBeGreaterThan(validatorStart);
+    expect(registerSource.slice(validatorStart, validatorEnd)).toContain(
+      'if (!isMakerAgentKind(msg.createOpts.agentKind))',
+    );
+  });
+
   it('advertises host-side model-window protection to remote controllers', () => {
     const capabilities = handlerBody(
       registerSource,

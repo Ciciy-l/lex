@@ -15,6 +15,7 @@ import {
 /** OMP 把 PI_CONFIG_DIR 当作 HOME 下的**目录名**，不是绝对路径。 */
 export const OMP_CONFIG_DIR_NAME = '.omp';
 export const OMP_SETTINGS_FILE_NAME = 'omp-settings.yaml';
+export const OMP_SYSTEM_PROMPT_DIRECTORY_NAME = 'system-prompts';
 
 export interface OmpSessionRoots {
   /**
@@ -41,6 +42,29 @@ export interface OmpSessionCredentials {
   sessionToken?: string;
 }
 
+/**
+ * The small, host-owned part of the parent environment that native OMP tools
+ * need in order to find and launch local programs.  This is deliberately a
+ * whitelist rather than a `process.env` clone: credentials, provider state and
+ * arbitrary application flags stay out of the child process.
+ */
+export interface OmpSessionExecutableEnvironment {
+  /** Search path used by native shell, PTY, LSP and MCP process launches. */
+  path?: string;
+  /** POSIX shell selected by the host when one is available. */
+  shell?: string;
+  /** Terminal capabilities for native PTY output. */
+  term?: string;
+  colorTerm?: string;
+  /** Locale is needed for correctly decoding tool output on POSIX hosts. */
+  lang?: string;
+  lcCtype?: string;
+  /** Windows command interpreter and executable suffix resolution. */
+  systemRoot?: string;
+  comSpec?: string;
+  pathext?: string;
+}
+
 export interface OmpSessionLaunchPlanInput {
   readonly roots: OmpSessionRoots;
   /** Lex 权限档位；未知/缺失一律 fail-closed 到 `always-ask`（见 permission-map）。 */
@@ -48,11 +72,24 @@ export interface OmpSessionLaunchPlanInput {
   readonly model?: OmpLaunchModel;
   readonly credentials?: OmpSessionCredentials;
   /**
+   * Explicit host-approved executable environment.  Omitted values are not
+   * inherited from the parent process.
+   */
+  readonly executableEnvironment?: OmpSessionExecutableEnvironment;
+  /** OMP runtime names to disable through its native skill extension setting. */
+  readonly disabledSkillNames?: readonly string[];
+  /**
    * 可选：把会话 JSONL 指到受管根内。
    * 上游 `--session-dir` 未在 v18.1.18 spike 中实证，因此默认不传（agent 目录
    * 本身已在受管根内，默认落点即受管）；需要显式钉住时才打开。
    */
   readonly sessionDir?: string;
+  /**
+   * Opaque host-generated key for a managed append-system-prompt file.  The
+   * prompt bytes never enter argv; this key only selects a session-unique path
+   * under the OMP agent root.
+   */
+  readonly appendSystemPromptKey?: string;
 }
 
 export interface OmpSessionLaunchPlan {
@@ -65,6 +102,10 @@ export interface OmpSessionLaunchPlan {
     temporary: string;
     settingsFile: string;
     modelsFile: string;
+    /** Managed projection point for the shared ~/.agents/skills root. */
+    globalSkillsDirectory: string;
+    systemPromptDirectory: string;
+    systemPromptFile?: string;
   }>;
   /** 实际生效的 OMP 档位（双写进 --approval-mode 与 settings YAML，防默认 yolo）。 */
   readonly approvalMode: OmpApprovalMode;
@@ -77,6 +118,8 @@ export interface OmpSessionLaunchPlan {
 
 const MAX_ARGUMENT_VALUE_LENGTH = 512;
 const MAX_ENV_VALUE_LENGTH = 4096;
+const MAX_EXECUTABLE_ENV_VALUE_LENGTH = 32 * 1024;
+const MAX_DISABLED_SKILL_NAMES = 256;
 const VERSION_OUTPUT = /^omp\/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)\r?\n$/u;
 
 /**
@@ -119,9 +162,20 @@ function requireArgumentValue(value: unknown, name: string): string {
     !value ||
     value.length > MAX_ARGUMENT_VALUE_LENGTH ||
     value.includes('\0') ||
-    value.startsWith('-')
+    value.startsWith('-') ||
+    Array.from(value).some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
   ) {
     throw new Error(`Invalid OMP ${name}`);
+  }
+  return value;
+}
+
+function requirePromptKey(value: unknown): string {
+  if (
+    typeof value !== 'string' ||
+    !/^[A-Za-z0-9_-]{1,128}$/u.test(value)
+  ) {
+    throw new Error('Invalid OMP system prompt key');
   }
   return value;
 }
@@ -137,6 +191,40 @@ function requireEnvironmentValue(value: unknown, name: string): string {
     throw new Error(`Invalid OMP ${name}`);
   }
   return value;
+}
+
+function optionalExecutableEnvironmentValue(value: unknown, name: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== 'string' ||
+    !value ||
+    value.length > MAX_EXECUTABLE_ENV_VALUE_LENGTH ||
+    value.includes('\0') ||
+    Array.from(value).some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
+  ) {
+    throw new Error(`Invalid OMP executable environment ${name}`);
+  }
+  return value;
+}
+
+function normalizeDisabledSkillNames(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > MAX_DISABLED_SKILL_NAMES)
+    throw new Error('Invalid OMP disabled skills');
+  const names = new Set<string>();
+  for (const candidate of value) {
+    if (
+      typeof candidate !== 'string' ||
+      !candidate ||
+      candidate.length > MAX_ARGUMENT_VALUE_LENGTH ||
+      candidate.includes('\0') ||
+      Array.from(candidate).some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
+    ) {
+      throw new Error('Invalid OMP disabled skill name');
+    }
+    names.add(candidate);
+  }
+  return [...names].sort((left, right) => left.localeCompare(right));
 }
 
 function requireWindowsSystemRoot(value: string | undefined): string {
@@ -184,18 +272,26 @@ export function validateOmpLaunchModel(model: unknown): OmpLaunchModel | undefin
   });
 }
 
-function settingsYaml(approvalMode: OmpApprovalMode, providers: readonly string[]): string {
+function settingsYaml(
+  approvalMode: OmpApprovalMode,
+  providers: readonly string[],
+  disabledSkillNames: readonly string[],
+): string {
   return [
     'startup:',
     '  setupWizard: false',
     '  checkUpdate: false',
-    'mcp:',
-    '  enableProjectConfig: false',
     'tools:',
     // 与 --approval-mode 同值双写：OMP 上游默认 yolo，不能依赖任何一侧的默认值。
     `  approvalMode: ${approvalMode}`,
     'enabledProviders:',
-    ...providers.map((provider) => `  - ${provider}`),
+    ...providers.map((provider) => `  - ${JSON.stringify(provider)}`),
+    ...(disabledSkillNames.length === 0
+      ? []
+      : [
+          'disabledExtensions:',
+          ...disabledSkillNames.map((name) => `  - ${JSON.stringify(`skill:${name}`)}`),
+        ]),
     '',
   ].join('\n');
 }
@@ -249,9 +345,31 @@ export function createOmpSessionLaunchPlan(
     implementation.join(agent, OMP_MODELS_FILE_NAME),
     implementation,
   );
+  const globalSkillsDirectory = descendant(
+    home,
+    implementation.join(home, '.agents', 'skills'),
+    implementation,
+  );
+  const systemPromptDirectory = descendant(
+    home,
+    implementation.join(agent, OMP_SYSTEM_PROMPT_DIRECTORY_NAME),
+    implementation,
+  );
+  const systemPromptKey =
+    input.appendSystemPromptKey === undefined
+      ? undefined
+      : requirePromptKey(input.appendSystemPromptKey);
+  const systemPromptFile = systemPromptKey === undefined
+    ? undefined
+    : descendant(
+        home,
+        implementation.join(systemPromptDirectory, `${systemPromptKey}.md`),
+        implementation,
+      );
 
   const approvalMode = resolveOmpApprovalMode(input.permissionMode).approvalMode;
   const model = validateOmpLaunchModel(input.model);
+  const disabledSkillNames = normalizeDisabledSkillNames(input.disabledSkillNames);
 
   const environment: Record<string, string> = {
     HOME: home,
@@ -275,6 +393,36 @@ export function createOmpSessionLaunchPlan(
     const systemRoot = requireWindowsSystemRoot(roots.windowsSystemRoot);
     environment.SystemRoot = systemRoot;
     environment.WINDIR = systemRoot;
+  }
+
+  const executableEnvironment = input.executableEnvironment;
+  if (executableEnvironment !== undefined) {
+    if (
+      !executableEnvironment ||
+      typeof executableEnvironment !== 'object' ||
+      Array.isArray(executableEnvironment)
+    ) {
+      throw new Error('Invalid OMP executable environment');
+    }
+    const executable = executableEnvironment as OmpSessionExecutableEnvironment;
+    const pathValue = optionalExecutableEnvironmentValue(executable.path, 'PATH');
+    if (pathValue !== undefined) environment.PATH = pathValue;
+    const shell = optionalExecutableEnvironmentValue(executable.shell, 'SHELL');
+    if (shell !== undefined) environment.SHELL = shell;
+    const term = optionalExecutableEnvironmentValue(executable.term, 'TERM');
+    if (term !== undefined) environment.TERM = term;
+    const colorTerm = optionalExecutableEnvironmentValue(executable.colorTerm, 'COLORTERM');
+    if (colorTerm !== undefined) environment.COLORTERM = colorTerm;
+    const lang = optionalExecutableEnvironmentValue(executable.lang, 'LANG');
+    if (lang !== undefined) environment.LANG = lang;
+    const lcCtype = optionalExecutableEnvironmentValue(executable.lcCtype, 'LC_CTYPE');
+    if (lcCtype !== undefined) environment.LC_CTYPE = lcCtype;
+    if (platform === 'win32') {
+      const comSpec = optionalExecutableEnvironmentValue(executable.comSpec, 'ComSpec');
+      if (comSpec !== undefined) environment.ComSpec = comSpec;
+      const pathext = optionalExecutableEnvironmentValue(executable.pathext, 'PATHEXT');
+      if (pathext !== undefined) environment.PATHEXT = pathext;
+    }
   }
 
   // 凭证只进子进程 env；models.yml 里 apiKey 写的是 env 名，文件内不含密钥。
@@ -306,21 +454,20 @@ export function createOmpSessionLaunchPlan(
     settingsFile,
     '--approval-mode',
     approvalMode,
-    // P0 全关项目侧消费面（PRD Q7）：cwd 改成真实项目目录后避免上爬发现插件。
-    '--no-extensions',
-    '--no-skills',
-    '--no-rules',
-    '--no-lsp',
-    '--no-pty',
+    // Lex owns task titles; all other native project capability discovery stays enabled.
     '--no-title',
   ];
   if (input.sessionDir !== undefined) argv.push('--session-dir', sessions);
+  // OMP accepts a file path for --append-system-prompt.  Keep prompt bytes out
+  // of process listings and preserve the stable argv prefix for prompt caching.
+  if (systemPromptFile !== undefined) argv.push('--append-system-prompt', systemPromptFile);
   if (model?.provider !== undefined) argv.push('--provider', model.provider);
   if (model?.model !== undefined) argv.push('--model', model.model);
 
+  // The Lex source-provider is transported as a managed proxy header rather
+  // than exposed as a second native OMP provider. OMP sees only the host-owned
+  // Cindy definition from models.yml.
   const providers = [OMP_CINDY_PROVIDER_ID];
-  if (model?.provider !== undefined && !providers.includes(model.provider))
-    providers.push(model.provider);
 
   return Object.freeze({
     roots: Object.freeze({
@@ -332,9 +479,12 @@ export function createOmpSessionLaunchPlan(
       temporary,
       settingsFile,
       modelsFile,
+      globalSkillsDirectory,
+      systemPromptDirectory,
+      ...(systemPromptFile === undefined ? {} : { systemPromptFile }),
     }),
     approvalMode,
-    settingsYaml: settingsYaml(approvalMode, providers),
+    settingsYaml: settingsYaml(approvalMode, providers, disabledSkillNames),
     arguments: Object.freeze(argv),
     environment: freezeRecord(environment),
   });

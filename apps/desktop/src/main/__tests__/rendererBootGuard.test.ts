@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { RendererBootGuard, type BootGuardTarget } from '../renderer-boot-guard';
+import {
+  RendererBootGuard,
+  shouldMarkRendererBootAliveFromLog,
+  type BootGuardTarget,
+} from '../renderer-boot-guard';
 
 function makeTarget(overrides: Partial<BootGuardTarget> = {}): BootGuardTarget & {
   reloadIgnoringCache: ReturnType<typeof vi.fn>;
@@ -32,6 +36,11 @@ describe('RendererBootGuard', () => {
   });
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('does not treat the dynamic entry failure report as a boot-ready signal', () => {
+    expect(shouldMarkRendererBootAliveFromLog('renderer/entry')).toBe(false);
+    expect(shouldMarkRendererBootAliveFromLog('renderer/app')).toBe(true);
   });
 
   it('markAlive 在超时前到达 → 不 reload 不报错', () => {

@@ -2117,6 +2117,16 @@ export function getMaker(): Maker {
       orcaWorkerBridgeProvider,
     ];
     _mcpProviders.pi = piMcpProviders;
+    // OMP shares the same provider composition as Claude/Codex/Pi.  Its core
+    // only projects providers that explicitly implement toOmpRpcHostTools, so
+    // this does not enable upstream project discovery or arbitrary MCP code.
+    // cindy_orca therefore gives OMP Lead the identical Orca control surface,
+    // while orca_worker_bridge remains the Worker → Lead surface.
+    const ompMcpProviders = [
+      ...createDesktopMcpProviders(makerMemoryProviderDeps),
+      orcaWorkerBridgeProvider,
+    ];
+    _mcpProviders.omp = ompMcpProviders;
     // 用户自定义 MCP:三个 agent 都必须注册其实际持有的数组引用，再统一做初始 refresh。
     // localDb onReady 可能在 Maker 构造前就已触发（此时 registry 无数组，refresh 空跑）；
     // 在此补一次 refresh，若 DB 尚未就绪则 refreshCustomMcpProviders 内部 catch 后静默跳过。
@@ -2419,6 +2429,7 @@ export function getMaker(): Maker {
       capabilityAdditions: {
         availableModels: deriveAvailableModels(getDesktopSelectableCatalog(), 'omp'),
       },
+      mcpProviders: ompMcpProviders,
       makerMemory: makerMemoryManager,
     });
     const ompAgent = buildOmpAgentForDesktop();

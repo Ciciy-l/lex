@@ -11,6 +11,7 @@
  *   · 只有 session id 没有合规 bearer → 401,绝不能掉进 Claude / Pi 的默认路由。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { buildUserProvider } from '@cindy/model-providers';
 
 vi.mock('../../appCapabilities.js', () => ({
   getAppCapabilities: () => ({ canUseCindyGateway: true }),
@@ -60,6 +61,9 @@ import {
   authenticateOmpProxySession,
   readOmpBearerToken,
 } from '../omp-proxy-session-auth';
+import { setCustomProviders } from '../active-catalog';
+import { setCustomProviderKeyReader } from '../provider-route';
+import { clearSessionProvider, setSessionProvider } from '../session-provider-store';
 
 const OMP_HEADERS = {
   'x-cindy-omp-session-id': 'sess-omp',
@@ -141,7 +145,31 @@ describe('OMP gateway route in cc routingTransform', () => {
 
   afterEach(() => {
     setClaudeProxyGatewayKeyReader(() => null);
+    setCustomProviders([]);
+    setCustomProviderKeyReader(() => null);
+    clearSessionProvider('sess-omp');
   });
+
+  function selectDirectOmpProvider(): void {
+    setCustomProviders([
+      buildUserProvider({
+        id: 'minimax',
+        name: 'MiniMax',
+        runtimes: {
+          omp: {
+            baseUrl: 'https://minimax.example/v1',
+            wireProtocol: 'openai-chat',
+            requestPath: '/chat/completions',
+            models: [{ id: 'MiniMax-M3', name: 'MiniMax-M3' }],
+          },
+        },
+      }),
+    ]);
+    setCustomProviderKeyReader((providerId, agent) =>
+      providerId === 'minimax' && agent === 'omp' ? 'sk-minimax' : null,
+    );
+    setSessionProvider('sess-omp', 'minimax');
+  }
 
   it('takes the token from Authorization and swaps in the gateway key', async () => {
     const decision = await settledDecision(
@@ -155,6 +183,48 @@ describe('OMP gateway route in cc routingTransform', () => {
     expect(decision?.headerDelete).toEqual(
       expect.arrayContaining(['x-cindy-omp-session-id', 'x-cindy-omp-provider-id']),
     );
+  });
+
+  it('uses the Main-owned selected OMP provider without a gateway key', async () => {
+    gatewayKey = null;
+    selectDirectOmpProvider();
+
+    const decision = await settledDecision(
+      createModelRoutingTransform()({ model: 'MiniMax-M3' }, ctxWith({
+        ...OMP_HEADERS,
+        authorization: 'Bearer omp-tok-sess-omp',
+      }, '/chat/completions')),
+    );
+
+    expect(decision).toMatchObject({
+      upstreamOverride: 'https://minimax.example/v1',
+      pathOverride: '/chat/completions',
+      headerOverride: {
+        'x-api-key': 'sk-minimax',
+        authorization: 'Bearer sk-minimax',
+      },
+    });
+    expect(decision?.headerDelete).toEqual(
+      expect.arrayContaining(['x-cindy-omp-session-id', 'x-cindy-omp-provider-id']),
+    );
+  });
+
+  it('does not let a forged OMP provider header override the selected provider', async () => {
+    gatewayKey = null;
+    selectDirectOmpProvider();
+
+    const decision = await settledDecision(
+      createModelRoutingTransform()({ model: 'MiniMax-M3' }, ctxWith({
+        ...OMP_HEADERS,
+        'x-cindy-omp-provider-id': 'attacker-controlled-provider',
+        authorization: 'Bearer omp-tok-sess-omp',
+      }, '/chat/completions')),
+    );
+
+    expect(decision).toMatchObject({
+      upstreamOverride: 'https://minimax.example/v1',
+      headerOverride: { authorization: 'Bearer sk-minimax' },
+    });
   });
 
   it('rejects a forged session token with 401', async () => {
@@ -199,6 +269,19 @@ describe('OMP gateway route in cc routingTransform', () => {
     await expect(errorBodyOf(decision)).resolves.toEqual({
       status: 503,
       code: 'omp_gateway_unavailable',
+    });
+  });
+
+  it('fails closed when a selected OMP provider has no usable route', async () => {
+    setSessionProvider('sess-omp', 'missing-provider');
+    const decision = createModelRoutingTransform()(
+      { model: 'MiniMax-M3' },
+      ctxWith({ ...OMP_HEADERS, authorization: 'Bearer omp-tok-sess-omp' }),
+    );
+
+    await expect(errorBodyOf(decision)).resolves.toEqual({
+      status: 503,
+      code: 'omp_provider_unavailable',
     });
   });
 

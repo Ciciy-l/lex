@@ -55,6 +55,7 @@ vi.mock('../pi-proxy-session-token.js', () => ({
 
 import {
   assertOmpModelsYamlHasNoSecrets,
+  buildDesktopOmpExecutableEnvironment,
   buildOmpManagedModelsYaml,
   collectOmpCatalogModels,
 } from '../omp-host';
@@ -82,6 +83,52 @@ describe('collectOmpCatalogModels', () => {
   it('caps the list so a runaway catalog cannot blow up the YAML', () => {
     env.catalogModels = Array.from({ length: 500 }, (_unused, index) => `m-${index}`);
     expect(collectOmpCatalogModels('x').length).toBeLessThanOrEqual(64);
+  });
+});
+
+describe('buildDesktopOmpExecutableEnvironment', () => {
+  it('passes only the POSIX command, terminal, and locale whitelist', () => {
+    const result = buildDesktopOmpExecutableEnvironment({
+      PATH: '/usr/local/bin:/usr/bin',
+      SHELL: '/bin/zsh',
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor',
+      LANG: 'en_US.UTF-8',
+      LC_CTYPE: 'en_US.UTF-8',
+      HOME: '/user/home',
+      API_KEY: 'must-not-cross',
+      NODE_OPTIONS: '--inspect',
+      PI_CONFIG_DIR: '.pi',
+    }, 'linux');
+
+    expect(result).toEqual({
+      path: '/usr/local/bin:/usr/bin',
+      shell: '/bin/zsh',
+      term: 'xterm-256color',
+      colorTerm: 'truecolor',
+      lang: 'en_US.UTF-8',
+      lcCtype: 'en_US.UTF-8',
+    });
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it('uses only Windows command-discovery values and accepts common casing', () => {
+    const result = buildDesktopOmpExecutableEnvironment({
+      Path: 'C:\\Tools;C:\\Windows\\System32',
+      SYSTEMROOT: 'C:\\Windows',
+      COMSPEC: 'C:\\Windows\\System32\\cmd.exe',
+      PathExt: '.COM;.EXE;.BAT;.CMD',
+      USERPROFILE: 'C:\\Users\\someone',
+      API_KEY: 'must-not-cross',
+      LANG: 'en_US.UTF-8',
+    }, 'win32');
+
+    expect(result).toEqual({
+      path: 'C:\\Tools;C:\\Windows\\System32',
+      systemRoot: 'C:\\Windows',
+      comSpec: 'C:\\Windows\\System32\\cmd.exe',
+      pathext: '.COM;.EXE;.BAT;.CMD',
+    });
   });
 });
 
@@ -113,6 +160,18 @@ describe('buildOmpManagedModelsYaml', () => {
     expect(yaml).toContain('x-cindy-omp-session-id');
     expect(yaml).toContain('sess-1');
     expect(yaml).not.toContain('omp-tok');
+  });
+
+  it('keeps the managed OMP provider separate from the selected Lex source', () => {
+    const yaml = buildOmpManagedModelsYaml({
+      sessionId: 'sess-1',
+      model: 'MiniMax-M3',
+      providerId: 'minimax',
+      token: SECRET,
+    });
+    expect(yaml).toContain('  cindy:');
+    expect(yaml).not.toContain('  minimax:');
+    expect(yaml).toContain("x-cindy-omp-provider-id: 'minimax'");
   });
 
   it('points the provider at the local loopback proxy', () => {

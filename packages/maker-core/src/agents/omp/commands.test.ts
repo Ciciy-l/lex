@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { OmpCommandCatalog, parseOmpCommands } from './commands.js';
+import {
+  OmpCommandCatalog,
+  parseOmpCommands,
+  readOmpCommandCatalogPayload,
+} from './commands.js';
 
 const command = (name = 'model', extra: Record<string, unknown> = {}) => ({
   name,
@@ -8,6 +12,15 @@ const command = (name = 'model', extra: Record<string, unknown> = {}) => ({
 });
 
 describe('OMP command catalog', () => {
+  it('accepts only the documented response/push command envelopes', () => {
+    const commands = [command('compact')];
+    expect(readOmpCommandCatalogPayload(commands)).toBe(commands);
+    expect(readOmpCommandCatalogPayload({ commands })).toBe(commands);
+    expect(() => readOmpCommandCatalogPayload({ command: commands })).toThrow(
+      'Invalid OMP command catalog',
+    );
+  });
+
   it.each(['builtin', 'skill', 'extension', 'custom', 'mcp_prompt', 'file'])(
     'retains %s runtime metadata',
     (source) => {
@@ -41,7 +54,10 @@ describe('OMP command catalog', () => {
     null,
     {},
     [command('/model')],
-    [command('bad name')],
+    [command(' bad-name')],
+    [command('bad-name ')],
+    [command('bad  name')],
+    [command('bad\tname')],
     [command('')],
     [command('model', { source: 'future-source' })],
     [command(), command()],
@@ -52,6 +68,19 @@ describe('OMP command catalog', () => {
     Array.from({ length: 2049 }, (_, index) => command('command' + index)),
   ])('rejects an invalid catalog atomically: %j', (value) => {
     expect(() => parseOmpCommands(value)).toThrow();
+  });
+
+  it('accepts and resolves upstream multi-word native command names', () => {
+    const catalog = new OmpCommandCatalog();
+    catalog.replace([command('mm list')]);
+
+    expect(catalog.getSnapshot()).toMatchObject({
+      status: 'loaded',
+      commands: [{ name: 'mm list' }],
+    });
+    expect(catalog.resolve('/mm list')).toMatchObject({ name: 'mm list' });
+    expect(catalog.resolve('/mm list installed')).toMatchObject({ name: 'mm list' });
+    expect(catalog.resolve('/mm')).toBeUndefined();
   });
 
   it('preserves skill namespaces and native spelling without Pi alias rewriting', () => {
@@ -85,6 +114,32 @@ describe('OMP command catalog', () => {
     expect(catalog.completeRead(pending, [command('old')])).toBe(false);
     catalog.failRead(pending);
     expect(catalog.resolve('/new')?.name).toBe('new');
+  });
+
+  it('replays and publishes catalog snapshots without letting one observer block another', () => {
+    const catalog = new OmpCommandCatalog();
+    const observed: Array<{ revision: number; status: string; names: string[] }> = [];
+    const dispose = catalog.subscribe((snapshot, revision) => {
+      observed.push({
+        revision,
+        status: snapshot.status,
+        names: snapshot.commands.map((entry) => entry.name),
+      });
+    });
+    catalog.subscribe(() => {
+      throw new Error('observer failure must be isolated');
+    });
+
+    catalog.replace([command('compact')]);
+    catalog.invalidate('failed');
+    dispose();
+    catalog.replace([command('model')]);
+
+    expect(observed).toEqual([
+      { revision: 0, status: 'unknown', names: [] },
+      { revision: 1, status: 'loaded', names: ['compact'] },
+      { revision: 2, status: 'failed', names: [] },
+    ]);
   });
 
   it('rejects superseded, reused, cross-session and pre-disconnect read tickets', () => {

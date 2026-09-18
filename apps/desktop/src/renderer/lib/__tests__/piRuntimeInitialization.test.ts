@@ -8,7 +8,7 @@ import {
 } from '../../../shared/piRuntimeInitialization.js';
 
 describe('Pi preset runtime initialization', () => {
-  it('skips a legacy Pi runtime whose protocol is not declared', () => {
+  it('skips a legacy Pi runtime whose protocol is not declared, while deriving OMP from Claude', () => {
     const preset: ProviderPreset = {
       id: 'legacy-remote',
       name: 'Legacy Remote',
@@ -24,7 +24,7 @@ describe('Pi preset runtime initialization', () => {
       },
     };
 
-    expect(configuredPresetAgents(preset)).toEqual(['claude-code']);
+    expect(configuredPresetAgents(preset)).toEqual(['claude-code', 'omp']);
     expect(isConfiguredPresetRuntime('pi', preset.runtimes.pi)).toBe(false);
   });
 

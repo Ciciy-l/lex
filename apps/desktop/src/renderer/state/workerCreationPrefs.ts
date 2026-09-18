@@ -9,7 +9,7 @@ import {
 const STORAGE_KEY = 'workerCreationPrefs';
 const CHANGE_EVENT = 'cindy:worker-creation-prefs-changed';
 
-export type WorkerAgentKind = 'codex' | 'claude-code' | 'pi';
+export type WorkerAgentKind = 'codex' | 'claude-code' | 'pi' | 'omp';
 
 export interface WorkerAgentPrefs {
   model: string;
@@ -24,6 +24,7 @@ export interface WorkerCreationPrefs {
   codex: WorkerAgentPrefs;
   'claude-code': WorkerAgentPrefs;
   pi: WorkerAgentPrefs;
+  omp: WorkerAgentPrefs;
   /** 新 Worker 的默认权限；UI 与 Orca tool 共用。 */
   workerPermissionMode: OrcaWorkerPermissionMode;
 }
@@ -34,6 +35,9 @@ export const DEFAULT_WORKER_CREATION_PREFS: WorkerCreationPrefs = {
   'claude-code': { model: 'claude-opus-4-7', effort: 'high', fast: false, providerId: null },
   // pi worker 默认模型与 orcaWorkerCreationService.resolveWorkerConfig 的 pi 分支一致。
   pi: { model: 'claude-sonnet-4-6', effort: 'high', fast: false, providerId: null },
+  // OMP 没有可在客户端静态伪造的产品默认模型。目录准备好后创建面板会收敛为
+  // 当前可路由的首个 OMP 模型；未连接来源时 Main 给出可操作的 provider 提示。
+  omp: { model: '', effort: 'high', fast: false, providerId: null },
   workerPermissionMode: DEFAULT_ORCA_WORKER_PERMISSION_MODE,
 };
 
@@ -43,6 +47,7 @@ function defaultPrefs(): WorkerCreationPrefs {
     codex: { ...DEFAULT_WORKER_CREATION_PREFS.codex },
     'claude-code': { ...DEFAULT_WORKER_CREATION_PREFS['claude-code'] },
     pi: { ...DEFAULT_WORKER_CREATION_PREFS.pi },
+    omp: { ...DEFAULT_WORKER_CREATION_PREFS.omp },
   };
 }
 
@@ -70,10 +75,13 @@ export function readWorkerCreationPrefs(): WorkerCreationPrefs {
           ? 'claude-code'
           : parsed.lastAgent === 'pi'
             ? 'pi'
-            : 'codex',
+            : parsed.lastAgent === 'omp'
+              ? 'omp'
+              : 'codex',
       codex: agentPrefs('codex'),
       'claude-code': agentPrefs('claude-code'),
       pi: agentPrefs('pi'),
+      omp: agentPrefs('omp'),
       workerPermissionMode: resolveOrcaWorkerPermissionMode(parsed.workerPermissionMode),
     };
   } catch {

@@ -36,6 +36,15 @@ export interface RendererBootGuardOptions {
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RELOADS = 2;
 
+/**
+ * The dispatcher can log an entry-import failure before React or the main
+ * renderer has started. That report is diagnostic evidence, not a boot-ready
+ * signal; otherwise it would disarm the very guard meant to recover it.
+ */
+export function shouldMarkRendererBootAliveFromLog(scope: string): boolean {
+  return scope !== 'renderer/entry';
+}
+
 export class RendererBootGuard {
   private alive = false;
   private disposed = false;

@@ -403,8 +403,8 @@ export type MessageRole = 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'a
  * 不作为对话正文渲染,也绝不回发给 agent(注入走 main 的 wire 前缀通道)。
  */
 export interface AgentSwitchContent {
-  fromAgentKind: 'cc' | 'codex' | 'pi';
-  toAgentKind: 'cc' | 'codex' | 'pi';
+  fromAgentKind: 'cc' | 'codex' | 'pi' | 'omp';
+  toAgentKind: 'cc' | 'codex' | 'pi' | 'omp';
   fromModel: string | null;
   toModel: string | null;
   /** Agent 切换时的来源快照；缺失表示旧版边界数据。 */
@@ -437,7 +437,7 @@ export interface Message {
    * session-agent-switch 后 session.agentKind 只代表当前活跃引擎,历史行按本字段解析;
    * null = 切换功能上线前的老消息(回落 session.agentKind)。
    */
-  agentKind?: 'cc' | 'codex' | 'pi' | null;
+  agentKind?: 'cc' | 'codex' | 'pi' | 'omp' | null;
   /** Structured guard details for a persisted tool-loop terminal error. */
   toolLoop?: ToolLoopErrorDetails;
   createdAt: string; // ISO 8601

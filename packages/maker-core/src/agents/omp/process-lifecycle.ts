@@ -83,6 +83,14 @@ export class OmpProcessLifecycle {
     this.state = 'draining';
     this.exitTimer = setTimeout(() => {
       if (this.state !== 'draining') return;
+      // A direct process can exit while a descendant retains one of its stdio
+      // pipes. Ask the owner to force-reclaim its tree before declaring the
+      // outcome unconfirmed; callers that do not own a group safely no-op.
+      try {
+        this.options.requestTermination(true);
+      } catch {
+        // The result remains unconfirmed until `close` supplies real evidence.
+      }
       this.state = 'exit-unconfirmed';
       this.settle(false);
       this.notify();

@@ -9628,7 +9628,7 @@ setRemoteTerminalErrorProbe(hasSessionTerminalError);
 
 interface ActiveSessionSnapshot {
   sessionId: string;
-  agentKind: 'claude-code' | 'codex' | 'pi';
+  agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
   isTurnRunning: boolean;
 }
 
@@ -9637,7 +9637,12 @@ function isActiveSessionSnapshot(value: unknown): value is ActiveSessionSnapshot
   const item = value as Record<string, unknown>;
   return (
     typeof item.sessionId === 'string' &&
-    (item.agentKind === 'claude-code' || item.agentKind === 'codex' || item.agentKind === 'pi') &&
+    (
+      item.agentKind === 'claude-code'
+      || item.agentKind === 'codex'
+      || item.agentKind === 'pi'
+      || item.agentKind === 'omp'
+    ) &&
     typeof item.isTurnRunning === 'boolean'
   );
 }
@@ -10669,7 +10674,7 @@ function retryInvalidatedInitialHistoryFetchIfNeeded(
 }
 
 /**
- * DB sessions.agent_kind('cc' / 'codex' / 'pi')→ maker-core AgentKind 的唯一映射点。
+ * DB sessions.agent_kind('cc' / 'codex' / 'pi' / 'omp')→ maker-core AgentKind 的唯一映射点。
  * 缺失 / 异常值走 fallback(默认 'claude-code',老 row 兼容)。所有从 session
  * row 派生 agentKind 的地方必须走这里,不要在调用点手写三元(历史上多处各写
  * 一份,遗漏 fallback 语义差异被 review 逐个揪出)。
@@ -10681,6 +10686,7 @@ function dbAgentKindToMakerKind(
   if (dbKind === 'codex') return 'codex';
   if (dbKind === 'cc') return 'claude-code';
   if (dbKind === 'pi') return 'pi';
+  if (dbKind === 'omp') return 'omp';
   return fallback;
 }
 
@@ -16072,6 +16078,7 @@ function normalizeAgentSwitchIntent(value: unknown): AgentSwitchIntentRecord | n
     item.targetAgentKind !== 'claude-code'
     && item.targetAgentKind !== 'codex'
     && item.targetAgentKind !== 'pi'
+    && item.targetAgentKind !== 'omp'
   ) return null;
   if (typeof item.model !== 'string' || item.model.length === 0) return null;
   // providerId 缺失按 null(与 main projectPendingAgentSwitchIntent 的 `?? null` 对齐);
@@ -16129,7 +16136,7 @@ function mirrorAgentSwitchIntent(sessionId: string, value: unknown): void {
 function setSessionRuntime(
   sessionId: string,
   opts: {
-    agentKind?: 'claude-code' | 'codex' | 'pi';
+    agentKind?: 'claude-code' | 'codex' | 'pi' | 'omp';
     fastMode?: boolean;
     planModeEnabled?: boolean;
     /** Seed before SessionView hydrates the DB row; sendMessage reads this for SSH routing. */
@@ -16219,7 +16226,12 @@ function mirrorSessionFields(
   // 新引擎的事件会被旧引擎 reducer 错误处理(2026-07-20 审计实锤)。随引擎翻转
   // 同步清 sdkSessionId(旧引擎的原生会话 id 对新引擎无意义,与 noteAgentSwitched
   // 口径一致)。幂等:发起窗口已 noteAgentSwitched → 同值 no-op。
-  if (patch.agentKind === 'cc' || patch.agentKind === 'codex' || patch.agentKind === 'pi') {
+  if (
+    patch.agentKind === 'cc'
+    || patch.agentKind === 'codex'
+    || patch.agentKind === 'pi'
+    || patch.agentKind === 'omp'
+  ) {
     const nextKind = dbToMakerAgentKind(patch.agentKind);
     setState(sessionId, (s) => {
       const intentApplied = s.agentSwitchIntent?.target === nextKind;

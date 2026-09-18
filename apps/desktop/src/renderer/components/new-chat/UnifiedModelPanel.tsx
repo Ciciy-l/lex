@@ -358,8 +358,8 @@ export function UnifiedModelPanel({
     ? `${keepModel.providerId ?? ''}::${keepModel.modelId}::${keepModel.agent}`
     : '';
   const entries = useMemo(
-    () =>
-      unifiedModelEntries({
+    () => {
+      return unifiedModelEntries({
         providers,
         ...(agents ? { agents } : {}),
         isVisible: (providerId, model, agent) =>
@@ -374,7 +374,8 @@ export function UnifiedModelPanel({
         // 否则选择器一打开就是空选态,用户看不出自己在跑什么、也换不回来。豁免按 agent
         // 收窄(见上面 keepModel 的推导注释与该选项头注)。
         ...(keepModel ? { keepModel } : {}),
-      }),
+      });
+    },
     // biome-ignore lint/correctness/useExhaustiveDependencies: 谓词经 ref 读取,刷新信号是 sourceVersion(见其注释);agents 以 agentsKey 表达身份;keepModel 以 keepModelKey 表达身份。
     [providers, agentsKey, scope, sourceVersion, keepModelKey, includePaymentRequired],
   );

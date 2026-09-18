@@ -15,6 +15,7 @@ import type {
   Maker,
   McpProvider,
   McpProviderContext,
+  OmpHostToolDefinition,
   Session,
   SessionDispatchOutcome,
 } from '@cindy/maker-core';
@@ -713,6 +714,365 @@ async function ensureCapturedSession(
 }
 
 
+type OrcaSendToLeadArgs = { message: string; worker_id: string };
+type OrcaReadLeadArgs = { worker_id: string };
+type OrcaReadLeadHistoryArgs = {
+  worker_id: string;
+  from_ms?: number;
+  limit: number;
+  cursor?: { created_at_ms: number; id: string; rowid?: number };
+};
+
+interface OrcaWorkerBridgeOperations {
+  sendToLead(args: OrcaSendToLeadArgs): Promise<OrcaToolResult>;
+  readLeadHistory(args: OrcaReadLeadHistoryArgs): Promise<OrcaToolResult>;
+  readLead(args: OrcaReadLeadArgs): Promise<OrcaToolResult>;
+  leadStatus(args: OrcaReadLeadArgs): Promise<OrcaToolResult>;
+}
+
+const WORKER_ID_DESCRIPTION =
+  'Required. Your assigned worker_id. Find it in the Bridge note at the end of the most recent lead message, or in the system prompt Identity line.';
+const READ_LEAD_HISTORY_DESCRIPTION =
+  'Read user/assistant transcript rows from your owning Lead without waking or modifying the Lead. Use only when an [Orca UI Assignment] depends on Lead context. You MUST pass your worker_id.';
+const READ_LEAD_DESCRIPTION =
+  'You MUST pass your worker_id (see the Bridge note at the end of the most recent lead message). Read captured output from the lead session.';
+const LEAD_STATUS_DESCRIPTION =
+  'You MUST pass your worker_id (see the Bridge note at the end of the most recent lead message). Check the lead session state.';
+
+const ompSendToLeadArgs = z.object({
+  message: z.string().min(1),
+  worker_id: z.string().min(1),
+}).strict();
+const ompReadLeadArgs = z.object({ worker_id: z.string().min(1) }).strict();
+const ompReadLeadHistoryArgs = z.object({
+  worker_id: z.string().min(1),
+  from_ms: z.number().int().nonnegative().optional(),
+  limit: z.number().int().min(1).max(200).default(100),
+  cursor: z.object({
+    created_at_ms: z.number().int().nonnegative(),
+    id: z.string().min(1),
+    rowid: z.number().int().positive().optional(),
+  }).strict().optional(),
+}).strict();
+
+function ompResult(result: OrcaToolResult): {
+  content: readonly { readonly type: 'text'; readonly text: string }[];
+  isError?: boolean;
+} {
+  return {
+    content: result.content.map((part) => ({ type: 'text' as const, text: part.text })),
+    ...(result.isError ? { isError: true } : {}),
+  };
+}
+
+function ompFailure(message: string) {
+  return { content: [{ type: 'text' as const, text: message }], isError: true };
+}
+
+async function executeOmpOperation(
+  signal: AbortSignal,
+  operation: () => Promise<OrcaToolResult>,
+): Promise<ReturnType<typeof ompResult>> {
+  if (signal.aborted) return ompFailure('Orca Worker host tool was cancelled');
+  try {
+    const result = await operation();
+    return signal.aborted
+      ? ompFailure('Orca Worker host tool was cancelled')
+      : ompResult(result);
+  } catch {
+    return ompFailure('Orca Worker host tool failed');
+  }
+}
+
+/** The actual Orca operations are shared by Claude MCP and OMP host tools. */
+function createOrcaWorkerBridgeOperations(
+  deps: OrcaBridgeMcpDeps,
+  ctx: McpProviderContext,
+  leadCaptures: CapturedSessionRegistry,
+  log: Logger,
+): OrcaWorkerBridgeOperations {
+  async function resolveLead(workerId?: string) {
+    const resolved = await resolveWorkerLink(deps, ctx, workerId);
+    if (!resolved.ok) return resolved;
+    const link = resolved.link;
+    const leadVendorOptions: OrcaLeadVendorOptions = {
+      orcaRole: 'lead',
+      orcaLeadSessionId: link.leadSessionId,
+    };
+    const entry = await ensureCapturedSession(
+      leadCaptures,
+      deps,
+      link.leadSession,
+      leadVendorOptions,
+    );
+    return { ok: true as const, link, entry };
+  }
+
+  return {
+    async sendToLead({ message, worker_id }) {
+      const authorization = authorizeSendToLeadCaller(resolveRuntimeMcpContext(ctx));
+      if (!authorization.ok) return text(authorization.error, true);
+      const resolved = await resolveLead(worker_id);
+      if (!resolved.ok) return text(resolved.error, true);
+      const { link, entry } = resolved;
+      if (!entry.session) {
+        return text({ error: 'lead session is not running', lead_session_id: link.leadSessionId }, true);
+      }
+      const liveEntry = entry as CapturedSessionEntry & { session: Session };
+      const previousStatus = liveEntry.status;
+      const previousFinalText = liveEntry.finalText;
+      const previousLastEventAt = liveEntry.lastEventAt;
+      const previousEventSeq = liveEntry.eventSeq;
+      const previousTerminalEventSeq = liveEntry.terminalEventSeq;
+      const markLeadDispatchAccepted = () => {
+        const observedEventDuringDispatch =
+          liveEntry.eventSeq !== previousEventSeq ||
+          liveEntry.status !== previousStatus ||
+          liveEntry.finalText !== previousFinalText ||
+          liveEntry.lastEventAt !== previousLastEventAt;
+        if (liveEntry.terminalEventSeq !== previousTerminalEventSeq) return;
+        if (!observedEventDuringDispatch || liveEntry.finalText === previousFinalText) {
+          liveEntry.finalText = '';
+        }
+        liveEntry.status = 'running';
+        liveEntry.lastEventAt = Date.now();
+      };
+      // A host-accepted report is settled immediately.  Waiting for a queued
+      // lead message to drain would let the worker's turn-end auto-bridge send
+      // a duplicate report.
+      let workerReportSettled = false;
+      const settleWorkerReport = () => {
+        if (workerReportSettled) return;
+        workerReportSettled = true;
+        updatePersistedWorkerStatus(deps, link.workerId, 'done', log);
+        setAutoBridgePending(link.workerId, false);
+      };
+      const dispatchError = await dispatchOrcaToolMessage({
+        session: liveEntry.session,
+        message: { type: 'user', content: formatAgentMessage('worker', message) },
+        deps,
+        rawContent: message,
+        source: 'worker',
+        senderLabel: link.workerId,
+        log,
+        meta: {
+          source: 'mcp-tool',
+          entrypoint: 'orca_worker_bridge.send_to_lead',
+          sessionId: link.leadSessionId,
+          agentKind: link.leadSession.agentKind,
+          action: 'dispatch-to-lead',
+          context: makeOrcaSendContext(
+            'orca_worker_bridge.send_to_lead',
+            link.leadSessionId,
+            'dispatch-to-lead',
+          ),
+          workerId: link.workerId,
+          leadSessionId: link.leadSessionId,
+        },
+        getLogState: () => ({
+          workerStatus: liveEntry.status,
+          autoBridgePending: hasAutoBridgePending(link.workerId),
+        }),
+        onAccepted: markLeadDispatchAccepted,
+        hostOnAccepted: () => {
+          markLeadDispatchAccepted();
+          settleWorkerReport();
+        },
+      });
+      if (isHostOrcaDispatch(dispatchError)) {
+        if (dispatchError.queued) settleWorkerReport();
+        return text({
+          ok: true,
+          ...(dispatchError.queued ? { queued: true } : {}),
+          worker_id: link.workerId,
+          lead_session_id: link.leadSessionId,
+        });
+      }
+      if (dispatchError) {
+        liveEntry.status = previousStatus;
+        liveEntry.finalText = previousFinalText;
+        liveEntry.lastEventAt = previousLastEventAt;
+        return dispatchError;
+      }
+      markLeadDispatchAccepted();
+      await deps.persistUserMessage(link.leadSessionId, {
+        clientId: randomUUID(),
+        content: formatOrcaCommunicationMessage('worker', message),
+      }).catch((err) => {
+        log.warn('persist lead message failed', {
+          err: String(err),
+          workerId: link.workerId,
+          leadSessionId: link.leadSessionId,
+        });
+      });
+      settleWorkerReport();
+      return text({
+        ok: true,
+        worker_id: link.workerId,
+        lead_session_id: link.leadSessionId,
+      });
+    },
+
+    async readLeadHistory({ worker_id, from_ms, limit, cursor }) {
+      const resolved = await resolveWorkerLink(deps, ctx, worker_id);
+      if (!resolved.ok) return text(resolved.error, true);
+      if (!deps.readLeadHistory) return text({ error: 'lead history unavailable' }, true);
+      let page: OrcaLeadHistoryPage;
+      try {
+        page = await deps.readLeadHistory({
+          leadSessionId: resolved.link.leadSessionId,
+          fromMs: from_ms ?? null,
+          limit,
+          cursor: cursor
+            ? {
+                createdAt: cursor.created_at_ms,
+                id: cursor.id,
+                ...(cursor.rowid !== undefined ? { rowid: cursor.rowid } : {}),
+              }
+            : null,
+        });
+      } catch (err) {
+        log.warn('read lead history failed', {
+          workerId: resolved.link.workerId,
+          leadSessionId: resolved.link.leadSessionId,
+          errorName: err instanceof Error ? err.name : undefined,
+        });
+        return text({ error: 'lead history read failed' }, true);
+      }
+      return text({
+        worker_id: resolved.link.workerId,
+        lead_session_id: resolved.link.leadSessionId,
+        messages: page.items.map((item) => ({
+          id: item.id,
+          role: item.role,
+          content: item.content,
+          agent_meta: item.agentMeta,
+          created_at_ms: item.createdAt,
+        })),
+        has_more: page.hasMore,
+        next_cursor: page.nextCursor
+          ? {
+              created_at_ms: page.nextCursor.createdAt,
+              id: page.nextCursor.id,
+              ...(page.nextCursor.rowid !== undefined ? { rowid: page.nextCursor.rowid } : {}),
+            }
+          : null,
+      });
+    },
+
+    async readLead({ worker_id }) {
+      const resolved = await resolveLead(worker_id);
+      if (!resolved.ok) return text(resolved.error, true);
+      const { link, entry } = resolved;
+      return text({
+        worker_id: link.workerId,
+        lead_session_id: link.leadSessionId,
+        status: entry.status,
+        session_status: entry.session?.getStatus() ?? 'not_running',
+        idle_ms: Date.now() - entry.lastEventAt,
+        result: entry.finalText,
+      });
+    },
+
+    async leadStatus({ worker_id }) {
+      const resolved = await resolveLead(worker_id);
+      if (!resolved.ok) return text(resolved.error, true);
+      const { link, entry } = resolved;
+      return text({
+        worker_id: link.workerId,
+        lead_session_id: link.leadSessionId,
+        status: entry.status,
+        session_status: entry.session?.getStatus() ?? 'not_running',
+        idle_ms: Date.now() - entry.lastEventAt,
+      });
+    },
+  };
+}
+
+function createOmpOrcaWorkerTools(operations: OrcaWorkerBridgeOperations): readonly OmpHostToolDefinition[] {
+  const workerId = { type: 'string', minLength: 1, description: WORKER_ID_DESCRIPTION };
+  return Object.freeze([
+    {
+      name: 'send_to_lead',
+      description: SEND_TO_LEAD_TOOL_DESCRIPTION,
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['message', 'worker_id'],
+        properties: { message: { type: 'string', minLength: 1 }, worker_id: workerId },
+      },
+      execute: async (arguments_, { signal }) => {
+        const parsed = ompSendToLeadArgs.safeParse(arguments_);
+        return parsed.success
+          ? executeOmpOperation(signal, () => operations.sendToLead(parsed.data))
+          : ompFailure('Invalid send_to_lead arguments');
+      },
+    },
+    {
+      name: 'read_lead_history',
+      description: READ_LEAD_HISTORY_DESCRIPTION,
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['worker_id'],
+        properties: {
+          worker_id: workerId,
+          from_ms: { type: 'integer', minimum: 0 },
+          limit: { type: 'integer', minimum: 1, maximum: 200, default: 100 },
+          cursor: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['created_at_ms', 'id'],
+            properties: {
+              created_at_ms: { type: 'integer', minimum: 0 },
+              id: { type: 'string', minLength: 1 },
+              rowid: { type: 'integer', minimum: 1 },
+            },
+          },
+        },
+      },
+      execute: async (arguments_, { signal }) => {
+        const parsed = ompReadLeadHistoryArgs.safeParse(arguments_);
+        return parsed.success
+          ? executeOmpOperation(signal, () => operations.readLeadHistory(parsed.data))
+          : ompFailure('Invalid read_lead_history arguments');
+      },
+    },
+    {
+      name: 'read_lead',
+      description: READ_LEAD_DESCRIPTION,
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['worker_id'],
+        properties: { worker_id: workerId },
+      },
+      execute: async (arguments_, { signal }) => {
+        const parsed = ompReadLeadArgs.safeParse(arguments_);
+        return parsed.success
+          ? executeOmpOperation(signal, () => operations.readLead(parsed.data))
+          : ompFailure('Invalid read_lead arguments');
+      },
+    },
+    {
+      name: 'lead_status',
+      description: LEAD_STATUS_DESCRIPTION,
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['worker_id'],
+        properties: { worker_id: workerId },
+      },
+      execute: async (arguments_, { signal }) => {
+        const parsed = ompReadLeadArgs.safeParse(arguments_);
+        return parsed.success
+          ? executeOmpOperation(signal, () => operations.leadStatus(parsed.data))
+          : ompFailure('Invalid lead_status arguments');
+      },
+    },
+  ] satisfies readonly OmpHostToolDefinition[]);
+}
+
 // 契约锚点：归属校验与 auto-bridge settle 见 docs/dev-rules/orca-team-architecture.md「协同运行时行为契约」「坑点与不变量 #3」。
 // Codex MCP HTTP bridge 仍然从全局 ctx 注册 server 名称，所以 worker bridge 必须
 // 对 Codex 可见。真正的执行边界在工具调用时 fail-closed：resolveWorkerLink 会读
@@ -720,278 +1080,63 @@ async function ensureCapturedSession(
 export function createOrcaWorkerBridgeMcpProvider(deps: OrcaBridgeMcpDeps): McpProvider {
   const log = deps.logger.child('mcp/orca_worker_bridge');
   const leadCaptures = new CapturedSessionRegistry();
+  const canCreateClaudeBridge = (ctx: McpProviderContext) =>
+    ctx.vendorOptions?.orcaRole === 'worker'
+    || ctx.agentKind === 'codex'
+    || typeof ctx.getSessionContext === 'function';
   return {
     name: 'orca_worker_bridge',
-    // Global HTTP bridges (Codex and Pi) bind the real session only at request time.
-    // Keep the server registered when a dynamic context resolver exists; every tool
-    // call still fails closed in resolveWorkerLink against that runtime identity.
-    isEnabled: (ctx) =>
-      ctx.vendorOptions?.orcaRole === 'worker'
-      || ctx.agentKind === 'codex'
-      || typeof ctx.getSessionContext === 'function',
+    isEnabled: (ctx) => canCreateClaudeBridge(ctx),
     toClaudeSdkConfig: (ctx) => {
-      if (
-        ctx.vendorOptions?.orcaRole !== 'worker'
-        && ctx.agentKind !== 'codex'
-        && typeof ctx.getSessionContext !== 'function'
-      ) return null;
+      if (!canCreateClaudeBridge(ctx)) return null;
+      const operations = createOrcaWorkerBridgeOperations(deps, ctx, leadCaptures, log);
       const server = new McpServer({ name: 'orca_worker_bridge', version: '0.1.0' });
-
-      async function resolveLead(workerId?: string) {
-        const resolved = await resolveWorkerLink(deps, ctx, workerId);
-        if (!resolved.ok) return resolved;
-        const link = resolved.link;
-        const leadVendorOptions: OrcaLeadVendorOptions = {
-          orcaRole: 'lead',
-          orcaLeadSessionId: link.leadSessionId,
-        };
-        const entry = await ensureCapturedSession(
-          leadCaptures,
-          deps,
-          link.leadSession,
-          leadVendorOptions,
-        );
-        return { ok: true as const, link, entry };
-      }
-
       server.tool(
         'send_to_lead',
         SEND_TO_LEAD_TOOL_DESCRIPTION,
         {
           message: z.string().min(1),
-          worker_id: z.string().min(1).describe('Required. Your assigned worker_id. Find it in the Bridge note at the end of the most recent lead message, or in the system prompt Identity line.'),
+          worker_id: z.string().min(1).describe(WORKER_ID_DESCRIPTION),
         },
-        async ({ message, worker_id }) => {
-          const authorization = authorizeSendToLeadCaller(resolveRuntimeMcpContext(ctx));
-          if (!authorization.ok) return text(authorization.error, true);
-          const resolved = await resolveLead(worker_id);
-          if (!resolved.ok) return text(resolved.error, true);
-          const { link, entry } = resolved;
-          if (!entry.session) {
-            return text({
-              error: 'lead session is not running',
-              lead_session_id: link.leadSessionId,
-            }, true);
-          }
-          const liveEntry = entry as CapturedSessionEntry & { session: Session };
-          const previousStatus = liveEntry.status;
-          const previousFinalText = liveEntry.finalText;
-          const previousLastEventAt = liveEntry.lastEventAt;
-          const previousEventSeq = liveEntry.eventSeq;
-          const previousTerminalEventSeq = liveEntry.terminalEventSeq;
-          const markLeadDispatchAccepted = () => {
-            const observedEventDuringDispatch =
-              liveEntry.eventSeq !== previousEventSeq ||
-              liveEntry.status !== previousStatus ||
-              liveEntry.finalText !== previousFinalText ||
-              liveEntry.lastEventAt !== previousLastEventAt;
-            if (liveEntry.terminalEventSeq !== previousTerminalEventSeq) {
-              return;
-            }
-            if (!observedEventDuringDispatch || liveEntry.finalText === previousFinalText) {
-              liveEntry.finalText = '';
-            }
-            liveEntry.status = 'running';
-            liveEntry.lastEventAt = Date.now();
-          };
-          // worker 回报被 host 接收(直发 accept 或入队成功)即视为"已回报": 立刻标 done +
-          // 清 autoBridgePending。不能等排队消息 drain 到 lead 才清 —— lead 忙时 worker
-          // 自己的 turn 会先结束, turn-end 兜底看到 pending 还在会把它当"忘了回报"再补
-          // 一条桥接, lead 收到两条重复报告。幂等守卫同时防住 drain 时 hostOnAccepted
-          // 二次触发: 那时 worker 可能已被重新派活(running), 不能再改回 done。
-          let workerReportSettled = false;
-          const settleWorkerReport = () => {
-            if (workerReportSettled) return;
-            workerReportSettled = true;
-            updatePersistedWorkerStatus(deps, link.workerId, 'done', log);
-            setAutoBridgePending(link.workerId, false);
-          };
-          const dispatchError = await dispatchOrcaToolMessage({
-            session: liveEntry.session,
-            message: { type: 'user', content: formatAgentMessage('worker', message) },
-            deps,
-            rawContent: message,
-            source: 'worker',
-            senderLabel: link.workerId,
-            log,
-            meta: {
-              source: 'mcp-tool',
-              entrypoint: 'orca_worker_bridge.send_to_lead',
-              sessionId: link.leadSessionId,
-              agentKind: link.leadSession.agentKind,
-              action: 'dispatch-to-lead',
-              context: makeOrcaSendContext(
-                'orca_worker_bridge.send_to_lead',
-                link.leadSessionId,
-                'dispatch-to-lead',
-              ),
-              workerId: link.workerId,
-              leadSessionId: link.leadSessionId,
-            },
-            getLogState: () => ({
-              workerStatus: liveEntry.status,
-              autoBridgePending: hasAutoBridgePending(link.workerId),
-            }),
-            onAccepted: markLeadDispatchAccepted,
-            hostOnAccepted: () => {
-              markLeadDispatchAccepted();
-              settleWorkerReport();
-            },
-          });
-          if (isHostOrcaDispatch(dispatchError)) {
-            if (dispatchError.queued) settleWorkerReport();
-            return text({
-              ok: true,
-              ...(dispatchError.queued ? { queued: true } : {}),
-              worker_id: link.workerId,
-              lead_session_id: link.leadSessionId,
-            });
-          }
-          if (dispatchError) {
-            liveEntry.status = previousStatus;
-            liveEntry.finalText = previousFinalText;
-            liveEntry.lastEventAt = previousLastEventAt;
-            return dispatchError;
-          }
-          markLeadDispatchAccepted();
-          await deps.persistUserMessage(link.leadSessionId, {
-            clientId: randomUUID(),
-            content: formatOrcaCommunicationMessage('worker', message),
-          }).catch((err) => {
-            log.warn('persist lead message failed', {
-              err: String(err),
-              workerId: link.workerId,
-              leadSessionId: link.leadSessionId,
-            });
-          });
-          settleWorkerReport();
-          return text({
-            ok: true,
-            worker_id: link.workerId,
-            lead_session_id: link.leadSessionId,
-          });
-        },
+        (args) => operations.sendToLead(args),
       );
-
       server.tool(
         'read_lead_history',
-        'Read user/assistant transcript rows from your owning Lead without waking or modifying the Lead. Use only when an [Orca UI Assignment] depends on Lead context. You MUST pass your worker_id.',
+        READ_LEAD_HISTORY_DESCRIPTION,
         {
           worker_id: z.string().min(1).describe('Required. Your assigned worker_id.'),
-          from_ms: z
-            .number()
-            .int()
-            .nonnegative()
-            .optional()
+          from_ms: z.number().int().nonnegative().optional()
             .describe('Optional inclusive Unix-ms lower bound, such as the UI assignment snapshot_before_ms.'),
           limit: z.number().int().min(1).max(200).default(100),
-          cursor: z
-            .object({
-              created_at_ms: z.number().int().nonnegative(),
-              id: z.string().min(1),
-              rowid: z.number().int().positive().optional(),
-            })
-            .optional()
-            .describe('next_cursor from the previous page.'),
+          cursor: z.object({
+            created_at_ms: z.number().int().nonnegative(),
+            id: z.string().min(1),
+            rowid: z.number().int().positive().optional(),
+          }).optional().describe('next_cursor from the previous page.'),
         },
-        async ({ worker_id, from_ms, limit, cursor }) => {
-          const resolved = await resolveWorkerLink(deps, ctx, worker_id);
-          if (!resolved.ok) return text(resolved.error, true);
-          if (!deps.readLeadHistory) {
-            return text({ error: 'lead history unavailable' }, true);
-          }
-          let page: OrcaLeadHistoryPage;
-          try {
-            page = await deps.readLeadHistory({
-              leadSessionId: resolved.link.leadSessionId,
-              fromMs: from_ms ?? null,
-              limit,
-              cursor: cursor
-                ? {
-                    createdAt: cursor.created_at_ms,
-                    id: cursor.id,
-                    ...(cursor.rowid !== undefined ? { rowid: cursor.rowid } : {}),
-                  }
-                : null,
-            });
-          } catch (err) {
-            log.warn('read lead history failed', {
-              workerId: resolved.link.workerId,
-              leadSessionId: resolved.link.leadSessionId,
-              errorName: err instanceof Error ? err.name : undefined,
-            });
-            return text({ error: 'lead history read failed' }, true);
-          }
-          return text({
-            worker_id: resolved.link.workerId,
-            lead_session_id: resolved.link.leadSessionId,
-            messages: page.items.map((item) => ({
-              id: item.id,
-              role: item.role,
-              content: item.content,
-              agent_meta: item.agentMeta,
-              created_at_ms: item.createdAt,
-            })),
-            has_more: page.hasMore,
-            next_cursor: page.nextCursor
-              ? {
-                  created_at_ms: page.nextCursor.createdAt,
-                  id: page.nextCursor.id,
-                  ...(page.nextCursor.rowid !== undefined
-                    ? { rowid: page.nextCursor.rowid }
-                    : {}),
-                }
-              : null,
-          });
-        },
+        (args) => operations.readLeadHistory(args),
       );
-
       server.tool(
         'read_lead',
-        'You MUST pass your worker_id (see the Bridge note at the end of the most recent lead message). Read captured output from the lead session.',
-        {
-          worker_id: z.string().min(1).describe('Required. Your assigned worker_id. Find it in the Bridge note at the end of the most recent lead message, or in the system prompt Identity line.'),
-        },
-        async ({ worker_id }) => {
-          const resolved = await resolveLead(worker_id);
-          if (!resolved.ok) return text(resolved.error, true);
-          const { link, entry } = resolved;
-          return text({
-            worker_id: link.workerId,
-            lead_session_id: link.leadSessionId,
-            status: entry.status,
-            session_status: entry.session?.getStatus() ?? 'not_running',
-            idle_ms: Date.now() - entry.lastEventAt,
-            result: entry.finalText,
-          });
-        },
+        READ_LEAD_DESCRIPTION,
+        { worker_id: z.string().min(1).describe(WORKER_ID_DESCRIPTION) },
+        (args) => operations.readLead(args),
       );
-
       server.tool(
         'lead_status',
-        'You MUST pass your worker_id (see the Bridge note at the end of the most recent lead message). Check the lead session state.',
-        {
-          worker_id: z.string().min(1).describe('Required. Your assigned worker_id. Find it in the Bridge note at the end of the most recent lead message, or in the system prompt Identity line.'),
-        },
-        async ({ worker_id }) => {
-          const resolved = await resolveLead(worker_id);
-          if (!resolved.ok) return text(resolved.error, true);
-          const { link, entry } = resolved;
-          return text({
-            worker_id: link.workerId,
-            lead_session_id: link.leadSessionId,
-            status: entry.status,
-            session_status: entry.session?.getStatus() ?? 'not_running',
-            idle_ms: Date.now() - entry.lastEventAt,
-          });
-        },
+        LEAD_STATUS_DESCRIPTION,
+        { worker_id: z.string().min(1).describe(WORKER_ID_DESCRIPTION) },
+        (args) => operations.leadStatus(args),
       );
-
-      return {
-        type: 'sdk',
-        name: 'orca_worker_bridge',
-        instance: server,
-      };
+      return { type: 'sdk', name: 'orca_worker_bridge', instance: server };
+    },
+    // OMP never gets the generic Codex global-server exception. Its per-process
+    // RPC tool surface is installed only for an attested Orca Worker session.
+    toOmpRpcHostTools: (ctx) => {
+      if (ctx.vendorOptions?.orcaRole !== 'worker') return null;
+      return createOmpOrcaWorkerTools(
+        createOrcaWorkerBridgeOperations(deps, ctx, leadCaptures, log),
+      );
     },
   };
 }

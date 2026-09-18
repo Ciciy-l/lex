@@ -67,12 +67,12 @@ describe('OMP catalog adversarial', () => {
     expect(Object.isFrozen(snapshot.commands[0].subcommands[0])).toBe(true);
   });
 
-  it('rejects names that hide whitespace, slash, NUL or DEL inside the token', () => {
+  it('rejects names that hide non-ASCII whitespace, slash, NUL or DEL inside the token', () => {
     for (const bad of [
       'a\tb',
       'a\nb',
       'a\rb',
-      'a b',
+      'a  b',
       'a/b',
       'a\u0001b',
       'a\u007fb',

@@ -7,6 +7,7 @@
  *   2. 版本冲突只能由**探测到**的版本触发:探不出来(null)按 ready,否则一次
  *      execFile 抖动(超时 / 杀进程)就会把一个能用的运行时判死。
  */
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const env = vi.hoisted(() => ({
@@ -14,6 +15,7 @@ const env = vi.hoisted(() => ({
   packaged: false,
   devBinary: null as string | null,
   userData: '/ud',
+  verified: false,
 }));
 
 vi.mock('electron', () => ({
@@ -34,6 +36,20 @@ vi.mock('../../manifestService.js', () => ({
 
 vi.mock('../../agent-binaries/dev-fallback.js', () => ({
   findDevBinary: () => env.devBinary,
+}));
+
+vi.mock('../omp-runtime-verifier.js', () => ({
+  OMP_RUNTIME_PLATFORM_KEYS: [
+    'darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64', 'win32-arm64', 'win32-x64',
+  ],
+  getPinnedOmpRuntimeAsset: (platformKey: string) => ({
+    platformKey,
+    binaryName: platformKey.startsWith('win32') ? 'omp.exe' : 'omp',
+    url: `https://example.test/${platformKey}`,
+    sha256: 'a'.repeat(64),
+    size: 1024,
+  }),
+  verifyOmpRuntimeFile: () => env.verified,
 }));
 
 vi.mock('../../logger.js', () => ({
@@ -166,6 +182,7 @@ describe('resolveOmpBinaryPath', () => {
     env.devBinary = null;
     env.platformKey = 'win32-x64';
     env.userData = '/ud';
+    env.verified = false;
   });
 
   afterEach(() => {
@@ -174,7 +191,13 @@ describe('resolveOmpBinaryPath', () => {
 
   it('uses the opt-in dev tree in development', () => {
     env.devBinary = '/repo/apps/omp-bin/win32-x64/omp.exe';
+    env.verified = true;
     expect(resolveOmpBinaryPath(false)).toBe('/repo/apps/omp-bin/win32-x64/omp.exe');
+  });
+
+  it('refuses a located dev runtime that fails fixed-pin verification', () => {
+    env.devBinary = '/repo/apps/omp-bin/win32-x64/omp.exe';
+    expect(resolveOmpBinaryPath(false)).toBeNull();
   });
 
   it('returns null when the opt-in binary was never downloaded', () => {
@@ -184,8 +207,9 @@ describe('resolveOmpBinaryPath', () => {
   it('never reads the dev tree when packaged', () => {
     env.devBinary = '/repo/apps/omp-bin/win32-x64/omp.exe';
     env.platformKey = 'linux-x64';
+    env.verified = true;
     // 打包态只读 userData 下的受管落点;dev 仓库里的产物对打包态没有意义。
-    expect(resolveOmpBinaryPath(true)).toBeNull();
+    expect(resolveOmpBinaryPath(true)).toBe(path.join('/ud', 'omp-bin', 'linux-x64', 'omp'));
   });
 });
 

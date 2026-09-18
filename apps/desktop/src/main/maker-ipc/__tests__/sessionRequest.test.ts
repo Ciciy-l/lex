@@ -23,6 +23,16 @@ describe('session IPC request parsing', () => {
     });
   });
 
+  it('accepts OMP without normalizing it to another engine', () => {
+    const opts = readCreateSessionOpts({
+      agentKind: 'omp',
+      workingDir: 'C:\\repo',
+      model: 'gpt-5.5',
+    });
+
+    expect(opts.agentKind).toBe('omp');
+  });
+
   it('rejects invalid create-session required fields before Maker side effects', () => {
     expect(() => readCreateSessionOpts(null)).toThrow('[INVALID_PARAMS]');
     expect(() =>

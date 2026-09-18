@@ -16,7 +16,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { Maker, type AgentDeps } from '@cindy/maker-core';
 import type { SessionMeta, SessionStorage } from '@cindy/maker-core';
 
-const env = vi.hoisted(() => ({ binaryPath: '/bin/omp' as string | null }));
+const env = vi.hoisted(() => ({
+  binaryPath: '/bin/omp' as string | null,
+  containmentAvailable: true,
+}));
 
 vi.mock('electron', () => ({
   app: { getPath: () => '/ud', getAppPath: () => '/ap', isPackaged: false },
@@ -54,6 +57,12 @@ vi.mock('../auth-adapters.js', () => ({ readClaudeApiKey: () => 'gw-key' }));
 // 被测的就是这个解析器的返回值:null = 运行时未就绪。
 vi.mock('../omp-runtime.js', () => ({
   resolveOmpBinaryPath: () => env.binaryPath,
+}));
+
+vi.mock('../omp-process-containment.js', () => ({
+  createWindowsOmpProcessSpawner: () => (env.containmentAvailable ? () => {
+    throw new Error('test spawner must not run during registration');
+  } : null),
 }));
 
 vi.mock('../pi-proxy-session-token.js', () => ({
@@ -127,6 +136,28 @@ describe('OMP registration gate', () => {
     const available = registerAgents();
     expect(available).not.toContain('omp');
     expect(available).toEqual([]);
+  });
+
+  it.runIf(process.platform === 'win32')(
+    'leaves omp unregistered when its required Windows containment helper is unavailable',
+    () => {
+      env.binaryPath = '/bin/omp';
+      env.containmentAvailable = false;
+      expect(buildOmpAgent({ logger: createLogger() })).toBeNull();
+      expect(registerAgents()).not.toContain('omp');
+      env.containmentAvailable = true;
+    },
+  );
+
+  it('does not retain a construction-time binary path after verification stops passing', () => {
+    env.binaryPath = '/bin/omp';
+    const agent = buildOmpAgent({ logger: createLogger() });
+    expect(agent).not.toBeNull();
+
+    env.binaryPath = null;
+    expect(() => agent?.getBinaryPath()).toThrow(
+      'OMP runtime is no longer available or failed verification',
+    );
   });
 
   it('never lets an unregistered omp reach session creation', async () => {

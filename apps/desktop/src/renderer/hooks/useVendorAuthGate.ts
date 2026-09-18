@@ -54,7 +54,8 @@ type CopyKey =
   | 'voice-direct-api-key-unauth'
   | 'codex-voice-unauth'
   | 'codex-binary-missing'
-  | 'pi-binary-missing';
+  | 'pi-binary-missing'
+  | 'omp-binary-missing';
 
 function buildCopy(t: (key: string) => string): Record<CopyKey, DialogCopy> {
   return {
@@ -103,6 +104,13 @@ function buildCopy(t: (key: string) => string): Record<CopyKey, DialogCopy> {
       cancelText: t('logic.confirm.cancel'),
       settingsTab: 'providers',
     },
+    'omp-binary-missing': {
+      title: t('logic.confirm.ompBinaryMissingTitle'),
+      description: t('logic.confirm.ompBinaryMissingDescription'),
+      confirmText: t('logic.confirm.goToSettings'),
+      cancelText: t('logic.confirm.cancel'),
+      settingsTab: 'providers',
+    },
   };
 }
 
@@ -115,16 +123,58 @@ export function pickVoiceInputDialogCopy(
   return copy['voice-direct-api-key-unauth'];
 }
 
-function pickCopy(
+export function pickCopy(
   copy: Record<CopyKey, DialogCopy>,
   vendor: AgentKind,
   readiness: Readiness,
 ): DialogCopy | null {
   if (readiness === 'binary-missing' && vendor === 'codex') return copy['codex-binary-missing'];
   if (readiness === 'binary-missing' && vendor === 'pi') return copy['pi-binary-missing'];
+  if (readiness === 'binary-missing' && vendor === 'omp') return copy['omp-binary-missing'];
   if (readiness !== 'unauthenticated') return null;
   // 无可用来源:cc / codex 走同一条「连接来源」文案(send 门禁,与 agent 类型无关)。
   return copy['no-source'];
+}
+
+export type RemoteReadiness = Exclude<Readiness, 'loading'>;
+
+interface RemoteNotReadyCopyKeys {
+  title: string;
+  description: string;
+}
+
+/** Keep remote engine-specific recovery copy aligned with the local gate. */
+export function pickRemoteNotReadyCopyKeys(
+  vendor: AgentKind,
+  readiness: Exclude<RemoteReadiness, 'ready'>,
+): RemoteNotReadyCopyKeys {
+  if (readiness === 'binary-missing') {
+    return {
+      title:
+        vendor === 'pi'
+          ? 'logic.confirm.remotePiBinaryMissingTitle'
+          : vendor === 'omp'
+            ? 'logic.confirm.remoteOmpBinaryMissingTitle'
+            : 'logic.confirm.remoteCodexBinaryMissingTitle',
+      description: 'logic.confirm.remoteAuthDescription',
+    };
+  }
+  if (vendor === 'codex') {
+    return {
+      title: 'logic.confirm.remoteCodexNoSourceTitle',
+      description: 'logic.confirm.remoteCodexNoSourceDescription',
+    };
+  }
+  if (vendor === 'omp') {
+    return {
+      title: 'logic.confirm.remoteOmpNoSourceTitle',
+      description: 'logic.confirm.remoteOmpNoSourceDescription',
+    };
+  }
+  return {
+    title: 'logic.confirm.remoteCcNoSourceTitle',
+    description: 'logic.confirm.remoteCcNoSourceDescription',
+  };
 }
 
 /**
@@ -137,7 +187,8 @@ function pickCopy(
  * 自定义供应商),会把「没登 Codex 但配了其他 GPT 来源」的被控端误判成未登录。
  *
  * 三个输入均可为 null(= 对应信息在已确认的旧端兼容路径里不可用):
- *   - binaryReady:codex 的运行时前提,false 优先返回 binary-missing(cc 随包,不参与);
+   *   - binaryReady:codex / pi / omp 的运行时前提,false 优先返回 binary-missing
+   *     (cc 随包,不参与);
  *   - sourceReady:provider 维度来源判定,可用时是唯一真相;
  *   - authReady:老被控端(allowlist 无 maker:provider:list)的回退口径,仅在
  *     sourceReady 不可用时消费,维持旧行为;
@@ -151,7 +202,7 @@ export function deriveRemoteReadiness(
     sourceReady: boolean | null;
     authReady: boolean | null;
   },
-): Readiness {
+): RemoteReadiness {
   if (vendor !== 'cc' && input.binaryReady === false) {
     return 'binary-missing';
   }
@@ -212,7 +263,7 @@ interface UseVendorAuthGateReturn {
    *   - unauthenticated → 弹 confirmDialog
    *       - 用户点确认 → navigate 到 /settings?tab=...,返回 { proceed: false }
    *       - 用户点取消 → 直接返回 { proceed: false }
-   *   - codex binary-missing → 复用同一弹窗提示去连接页处理
+   *   - codex / pi / omp binary-missing → 提示对应组件尚未就绪
    *   - 其他 (ready / loading) → { proceed: true },不拦截
    *
    * 语音输入会走 main 端 getReadiness,由当前 ASR provider 决定是检查
@@ -237,6 +288,7 @@ export function useVendorAuthGate(): UseVendorAuthGateReturn {
   const cc = useVendorReadiness('cc');
   const codex = useVendorReadiness('codex');
   const pi = useVendorReadiness('pi');
+  const omp = useVendorReadiness('omp');
 
   const checkAndConfirm = useCallback(
     async (
@@ -271,7 +323,13 @@ export function useVendorAuthGate(): UseVendorAuthGateReturn {
       const deviceId = options?.deviceId;
       if (deviceId) {
         const providerAgent: ProviderAgentKind =
-          vendor === 'codex' ? 'codex' : vendor === 'pi' ? 'pi' : 'claude-code';
+          vendor === 'codex'
+            ? 'codex'
+            : vendor === 'pi'
+              ? 'pi'
+              : vendor === 'omp'
+                ? 'omp'
+                : 'claude-code';
         const [statusRes, providersRes] = await Promise.allSettled([
           window.electronAPI.deviceLink.invoke(deviceId, 'maker:agent:status', [providerAgent]),
           window.electronAPI.deviceLink.invoke(deviceId, 'maker:provider:list', []),
@@ -310,27 +368,12 @@ export function useVendorAuthGate(): UseVendorAuthGateReturn {
         });
         if (remoteReadiness === 'ready') return { proceed: true };
         // 未就绪:纯信息弹窗(控制端无法代被控端跳设置)。文案按「未就绪原因 + agent」细分,
-        // 直接说清哪台设备缺什么、去那台设备的哪个设置页处理:
-        //   codex 二进制缺失 → 组件未就绪;来源未就绪 → 该 agent 暂无已连接的模型来源
-        //   (去「设置 → 模型供应商」;codex / cc 文案对称)。
+        // 直接说清哪台设备缺什么、去那台设备的哪个设置页处理。
         const device = remoteProjectsStore.getDeviceName(deviceId) ?? deviceId;
-        let title: string;
-        let description: string;
-        if (remoteReadiness === 'binary-missing') {
-          title = t(vendor === 'pi'
-            ? 'logic.confirm.remotePiBinaryMissingTitle'
-            : 'logic.confirm.remoteCodexBinaryMissingTitle');
-          description = t('logic.confirm.remoteAuthDescription', { device });
-        } else if (vendor === 'codex') {
-          title = t('logic.confirm.remoteCodexNoSourceTitle');
-          description = t('logic.confirm.remoteCodexNoSourceDescription', { device });
-        } else {
-          title = t('logic.confirm.remoteCcNoSourceTitle');
-          description = t('logic.confirm.remoteCcNoSourceDescription', { device });
-        }
+        const remoteCopy = pickRemoteNotReadyCopyKeys(vendor, remoteReadiness);
         await confirm({
-          title,
-          description,
+          title: t(remoteCopy.title),
+          description: t(remoteCopy.description, { device }),
           confirmText: t('logic.confirm.gotIt'),
           showCancel: false,
           autoFocusConfirm: true,
@@ -339,7 +382,8 @@ export function useVendorAuthGate(): UseVendorAuthGateReturn {
       }
 
       // 触发一次最新检查——避免 stale state 误放行。
-      const target = vendor === 'codex' ? codex : vendor === 'pi' ? pi : cc;
+      const target =
+        vendor === 'codex' ? codex : vendor === 'pi' ? pi : vendor === 'omp' ? omp : cc;
       // 已建会话的发送门禁计入 suspended 来源(见 useVendorReadiness 注释);草稿不传。
       const readiness = await target.revalidate({
         includeSuspended: options?.existingSessionRoute === true,
@@ -361,7 +405,7 @@ export function useVendorAuthGate(): UseVendorAuthGateReturn {
       }
       return { proceed: false };
     },
-    [cc, codex, pi, confirm, copy, navigate, t],
+    [cc, codex, pi, omp, confirm, copy, navigate, t],
   );
 
   return { checkAndConfirm };

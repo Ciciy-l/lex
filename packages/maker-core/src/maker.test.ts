@@ -1989,6 +1989,98 @@ describe('Maker session capabilities', () => {
   });
 });
 
+describe('Maker OMP runtime skill status', () => {
+  it('keeps scanned Skills discovered even when the active native catalog has a same-name command', async () => {
+    const agent = createAgent(async (opts) => {
+      const handle = createHandle({ id: `omp-${opts.sessionId}`, agentKind: 'omp' });
+      handle.getRuntimeCommandCatalog = () => ({
+        revision: 1,
+        status: 'loaded',
+        commands: [{
+          kind: 'agent-builtin',
+          name: 'skill:project-skill',
+          description: 'Native project Skill',
+        }],
+      });
+      return handle;
+    }, 'omp');
+    agent.listAgentSkills = vi.fn(async () => ({
+      skills: [
+        {
+          kind: 'agent-skill' as const,
+          name: 'project-skill',
+          source: 'skill' as const,
+          scope: 'repo' as const,
+          path: '/repo/.agents/skills/project-skill/SKILL.md',
+          runtimeStatus: 'discovered' as const,
+          runtimeCommandName: 'skill:project-skill',
+        },
+        {
+          kind: 'agent-skill' as const,
+          name: 'not-loaded',
+          source: 'skill' as const,
+          scope: 'repo' as const,
+          path: '/repo/.agents/skills/not-loaded/SKILL.md',
+          runtimeStatus: 'discovered' as const,
+          runtimeCommandName: 'skill:not-loaded',
+        },
+        {
+          kind: 'agent-skill' as const,
+          name: 'project-replacement',
+          source: 'skill' as const,
+          scope: 'repo' as const,
+          path: '/repo/.agents/skills/project-replacement/SKILL.md',
+          runtimeStatus: 'discovered' as const,
+          runtimeCommandName: 'skill:project-skill',
+        },
+        {
+          kind: 'agent-skill' as const,
+          name: 'user-collision',
+          source: 'skill' as const,
+          scope: 'user' as const,
+          path: '/home/.agents/skills/user-collision/SKILL.md',
+          runtimeStatus: 'discovered' as const,
+          runtimeCommandName: 'skill:project-skill',
+        },
+      ],
+    }));
+    const maker = new Maker({
+      agents: { omp: agent },
+      storage: createStorage(),
+      logger: createLogger(),
+    });
+    try {
+      await maker.createSession({
+        id: 'omp-active',
+        agentKind: 'omp',
+        workingDir: '/repo',
+        model: 'm',
+      });
+
+      const active = await maker.listAgentSkills('omp', {
+        workingDir: '/repo',
+        sessionId: 'omp-active',
+      });
+      const preview = await maker.listAgentSkills('omp', { workingDir: '/repo' });
+      const wrongWorkdir = await maker.listAgentSkills('omp', {
+        workingDir: '/other-repo',
+        sessionId: 'omp-active',
+      });
+
+      expect(active.skills.map((skill) => [skill.name, skill.runtimeStatus])).toEqual([
+        ['project-skill', 'discovered'],
+        ['not-loaded', 'discovered'],
+        ['project-replacement', 'discovered'],
+        ['user-collision', 'discovered'],
+      ]);
+      expect(preview.skills.every((skill) => skill.runtimeStatus === 'discovered')).toBe(true);
+      expect(wrongWorkdir.skills.every((skill) => skill.runtimeStatus === 'discovered')).toBe(true);
+    } finally {
+      await maker.shutdown();
+    }
+  });
+});
+
 describe('Maker Pi runtime skill status', () => {
   it('keeps managed skills pinned to the active session launch snapshot', async () => {
     const managedPath = '/managed/context-mode/SKILL.md';

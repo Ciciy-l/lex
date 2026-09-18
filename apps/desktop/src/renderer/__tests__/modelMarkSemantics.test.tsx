@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { AnthropicMark } from '@/components/icons/AnthropicMark';
 import { ClaudeMark } from '@/components/icons/ClaudeMark';
 import { CodexMark } from '@/components/icons/CodexMark';
+import { OmpMark } from '@/components/icons/OmpMark';
 import { OpenAIMark } from '@/components/icons/OpenAIMark';
 import { ProviderLogoMark } from '@/components/icons/ProviderLogoMark';
 import { ModelIconMark, ProviderMark } from '@/components/new-chat/ModelSelector';
@@ -74,5 +75,37 @@ describe('model mark semantics', () => {
     const brand = render(<CodexMark size={12} variant="brand" />);
     expect(brand.container.querySelector('g')).toBeNull();
     expect(brand.container.querySelector('path')?.hasAttribute('stroke')).toBe(false);
+  });
+
+  it('keeps OMPs official mark themeable and isolates its optional brand gradient', () => {
+    const mono = render(<OmpMark size={12} className="omp-mark" />);
+    const monoSvg = mono.container.querySelector('svg');
+    const monoPath = mono.container.querySelector('path');
+    expect(monoSvg?.getAttribute('width')).toBe('12');
+    expect(monoSvg?.getAttribute('height')).toBe('12');
+    expect(monoSvg?.getAttribute('class')).toBe('omp-mark');
+    expect(monoSvg?.getAttribute('viewBox')).toBe('0 0 64 64');
+    expect(monoPath?.getAttribute('d')).toBe('M10 14h44v9H43v33h-9V23h-9v22h-9V23H10z');
+    expect(monoPath?.getAttribute('fill')).toBe('currentColor');
+    expect(mono.container.querySelector('defs')).toBeNull();
+
+    const firstBrand = render(<OmpMark variant="brand" />);
+    const secondBrand = render(<OmpMark variant="brand" />);
+    const firstGradient = firstBrand.container.querySelector('linearGradient');
+    const secondGradient = secondBrand.container.querySelector('linearGradient');
+    const firstId = firstGradient?.getAttribute('id');
+    const secondId = secondGradient?.getAttribute('id');
+
+    expect(firstId).toBeTruthy();
+    expect(secondId).toBeTruthy();
+    expect(firstId).not.toBe(secondId);
+    expect(firstBrand.container.querySelector('path')?.getAttribute('fill')).toBe(`url(#${firstId})`);
+    expect(
+      [...firstBrand.container.querySelectorAll('stop')].map((stop) => stop.getAttribute('stop-color')),
+    ).toEqual([
+      'oklch(0.7 0.24 340)',
+      'oklch(0.62 0.21 295)',
+      'oklch(0.81 0.14 200)',
+    ]);
   });
 });

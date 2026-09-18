@@ -52,9 +52,10 @@ describe('createOmpSessionLaunchPlan', () => {
       `/lex/omp-agent-home/.omp/agent/${OMP_SETTINGS_FILE_NAME}`,
     );
     expect(result.roots.modelsFile).toBe('/lex/omp-agent-home/.omp/agent/models.yml');
+    expect(result.roots.globalSkillsDirectory).toBe('/lex/omp-agent-home/.agents/skills');
   });
 
-  it('starts an RPC session without the probe-only session/tool opt-outs', () => {
+  it('keeps Lex title ownership while enabling native project capabilities', () => {
     const result = plan();
     expect(result.arguments.slice(0, 4)).toEqual([
       '--mode',
@@ -64,6 +65,10 @@ describe('createOmpSessionLaunchPlan', () => {
     ]);
     expect(result.arguments).not.toContain('--no-session');
     expect(result.arguments).not.toContain('--no-tools');
+    expect(result.arguments).toContain('--no-title');
+    for (const flag of ['--no-extensions', '--no-skills', '--no-rules', '--no-lsp', '--no-pty']) {
+      expect(result.arguments).not.toContain(flag);
+    }
   });
 
   it('maps each exposed permission tier to the OMP approval mode', () => {
@@ -85,11 +90,12 @@ describe('createOmpSessionLaunchPlan', () => {
     expect(result.arguments).toContain('--approval-mode');
     expect(result.arguments[result.arguments.indexOf('--approval-mode') + 1]).toBe('write');
     expect(result.settingsYaml).toContain('approvalMode: write');
-    // 上游默认 yolo,必须显式关掉启动向导 / 更新检查 / 项目 MCP 配置。
+    // 上游默认 yolo,必须显式关掉启动向导 / 更新检查。项目 MCP 配置
+    // 则与其他本地引擎一样由原生项目发现路径处理，不在启动计划里封死。
     expect(result.settingsYaml).toContain('setupWizard: false');
     expect(result.settingsYaml).toContain('checkUpdate: false');
-    expect(result.settingsYaml).toContain('enableProjectConfig: false');
-    expect(result.settingsYaml).toContain('- cindy');
+    expect(result.settingsYaml).not.toContain('enableProjectConfig: false');
+    expect(result.settingsYaml).toContain('- "cindy"');
   });
 
   it('passes provider and model only when they are present', () => {
@@ -100,10 +106,10 @@ describe('createOmpSessionLaunchPlan', () => {
     expect(result.arguments).toContain('MiniMax-M2');
   });
 
-  it('adds the provider id to enabledProviders', () => {
+  it('keeps the native provider list fixed to the managed Cindy proxy', () => {
     const result = plan({ model: { provider: 'minimax' } });
-    expect(result.settingsYaml).toContain('- minimax');
-    expect(result.settingsYaml).toContain('- cindy');
+    expect(result.settingsYaml).not.toContain('minimax');
+    expect(result.settingsYaml).toContain('- "cindy"');
   });
 
   it('never inherits the parent process environment', () => {
@@ -112,6 +118,37 @@ describe('createOmpSessionLaunchPlan', () => {
     expect(result.environment.HOME).toBe('/lex/omp-agent-home');
     expect(result.environment.PI_CONFIG_DIR).toBe(OMP_CONFIG_DIR_NAME);
     expect(result.environment.PI_CODING_AGENT_DIR).toBe('/lex/omp-agent-home/.omp/agent');
+  });
+
+  it('adds only the host-approved executable environment values', () => {
+    const result = plan({
+      executableEnvironment: {
+        path: '/usr/local/bin:/usr/bin',
+        shell: '/bin/zsh',
+        term: 'xterm-256color',
+        colorTerm: 'truecolor',
+        lang: 'en_US.UTF-8',
+        lcCtype: 'en_US.UTF-8',
+      },
+    });
+    expect(result.environment).toMatchObject({
+      PATH: '/usr/local/bin:/usr/bin',
+      SHELL: '/bin/zsh',
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor',
+      LANG: 'en_US.UTF-8',
+      LC_CTYPE: 'en_US.UTF-8',
+    });
+    expect(result.environment.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(result.environment.NODE_OPTIONS).toBeUndefined();
+  });
+
+  it('expresses disabled Skills through OMP native extension settings', () => {
+    const result = plan({ disabledSkillNames: ['zeta', 'alpha', 'alpha'] });
+    expect(result.settingsYaml).toContain('disabledExtensions:');
+    expect(result.settingsYaml).toContain('- "skill:alpha"');
+    expect(result.settingsYaml).toContain('- "skill:zeta"');
+    expect(result.settingsYaml.indexOf('skill:alpha')).toBeLessThan(result.settingsYaml.indexOf('skill:zeta'));
   });
 
   it('injects credentials only into the child env snapshot', () => {

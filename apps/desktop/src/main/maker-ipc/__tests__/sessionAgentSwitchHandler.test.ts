@@ -302,6 +302,64 @@ describe('performSessionAgentSwitch', () => {
     );
   });
 
+  it('stages and applies Claude Code → OMP without falling back to Claude Code', async () => {
+    let row = makeRow();
+    const pending = createPendingAgentSwitchRegistry();
+    const applyAgentSwitchToDb = vi.fn(async (_sessionId: string, patch: {
+      agentKind: 'cc' | 'codex' | 'pi' | 'omp';
+      model: string;
+      providerId: string | null | undefined;
+      sdkSessionId?: string | null;
+    }) => {
+      row = {
+        ...row,
+        ...patch,
+        providerId: patch.providerId ?? null,
+        sdkSessionId: patch.sdkSessionId ?? null,
+      };
+    });
+    const { deps, calls } = makeDeps({
+      pendingSwitches: pending,
+      getSessionRow: async () => ({ ...row }),
+      applyAgentSwitchToDb,
+    });
+
+    const staged = await performSessionAgentSwitch(deps, {
+      sessionId: 's1',
+      targetAgentKind: 'omp',
+      model: 'gpt-5.5',
+      providerId: 'omp-provider',
+    });
+
+    expect(staged).toMatchObject({
+      switched: false,
+      deferred: true,
+      agentKind: 'omp',
+      model: 'gpt-5.5',
+    });
+    expect(pending.get('s1')).toMatchObject({
+      targetAgentKind: 'omp',
+      model: 'gpt-5.5',
+      providerId: 'omp-provider',
+    });
+    expect(calls).toEqual([]);
+
+    await applyPendingAgentSwitchIfIdle(deps, 's1');
+
+    expect(row).toMatchObject({
+      agentKind: 'omp',
+      model: 'gpt-5.5',
+      providerId: 'omp-provider',
+    });
+    expect(applyAgentSwitchToDb).toHaveBeenCalledWith('s1', expect.objectContaining({
+      agentKind: 'omp',
+      model: 'gpt-5.5',
+      providerId: 'omp-provider',
+    }));
+    expect(deps.bootstrapSwitchedSession).not.toHaveBeenCalled();
+    expect(pending.get('s1')).toBeUndefined();
+  });
+
   it('跨引擎 DB 提交后立即覆盖旧 provider route', async () => {
     const { deps } = makeDeps();
 

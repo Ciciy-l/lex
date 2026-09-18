@@ -256,6 +256,7 @@ import {
   loadAllCommands,
   nextAvailableSlashCommandIndex,
   PI_RUNTIME_SKILL_RETRY_DELAYS_MS,
+  shouldRefreshRuntimeCommandCatalog,
   type SlashCommandRosterState,
   type UnifiedCommand,
 } from '@/lib/slashCommands';
@@ -320,6 +321,7 @@ import {
   stripHostCapabilityChips,
 } from '@/lib/composerListDocument';
 import { useAgentCapabilities, type AgentKind } from '@/hooks/useAgentCapabilities';
+import type { SelectableVendor } from '@/lib/agentVendors';
 import { useAvailableAgents } from '@/hooks/useAvailableAgents';
 import { useConnectedSource } from '@/hooks/useConnectedSource';
 import { useProviders } from '@/hooks/useProviders';
@@ -676,9 +678,9 @@ interface ChatInputProps {
   onComposerDropHandled?: () => void;
   /**
    * M35: Vendor lock — when provided, ModelSelector only shows models
-   * belonging to this vendor ('cc' for Claude, 'codex' for OpenAI Codex).
+   * belonging to this vendor.
    */
-  vendorKey?: 'cc' | 'codex' | 'pi';
+  vendorKey?: 'cc' | 'codex' | 'pi' | 'omp';
   /**
    * Optional override for the composerDraftStore key used to persist editor
    * content (and via attachmentState, attachments) across mount/unmount.
@@ -1658,7 +1660,15 @@ export function ChatInput({
   // (localStorage,按 agent 分槽、sanitize 恒有种子值)。默认模型/档位偏好已全量本地化,
   // 不再依赖服务端 UserPreferences(登录态失效/离线时模型与档位选择必须照常工作)。
   const localVendorDefaults =
-    getDraft().lastByVendor[vendorKey === 'pi' ? 'pi' : vendorKey === 'codex' ? 'codex' : 'cc'];
+    getDraft().lastByVendor[
+      vendorKey === 'pi'
+        ? 'pi'
+        : vendorKey === 'codex'
+          ? 'codex'
+          : vendorKey === 'omp'
+            ? 'omp'
+            : 'cc'
+    ];
   // session-agent-switch 意图制:意图期内 chip / 选择器显示用户选择的目标
   // (model/effort/provider/fast),props(镜像 DB)仍是旧引擎值——真切换在下一条
   // 消息发送时刻 apply,patched 回流后意图清除、显示交回 props。意图存放在
@@ -1757,12 +1767,15 @@ export function ChatInput({
   const ccCaps = useAgentCapabilities('claude-code', deviceLinkDeviceId ?? undefined);
   const codexCaps = useAgentCapabilities('codex', deviceLinkDeviceId ?? undefined);
   const piCaps = useAgentCapabilities('pi', deviceLinkDeviceId ?? undefined);
+  const ompCaps = useAgentCapabilities('omp', deviceLinkDeviceId ?? undefined);
   const activeAgentCapabilities =
     agentKind === 'codex'
       ? codexCaps.capabilities
       : agentKind === 'pi'
         ? piCaps.capabilities
-        : ccCaps.capabilities;
+        : agentKind === 'omp'
+          ? ompCaps.capabilities
+          : ccCaps.capabilities;
 
   // session-agent-switch 入口门控。device-link 远程会话读**被控端**的值；除了基础
   // supportsSessionAgentSwitch，还必须有 v2 CAS 能力。同引擎 no-op 的安全收尾依赖 host
@@ -1778,15 +1791,22 @@ export function ChatInput({
   const codexSupportsSessionAgentSwitch =
     codexCaps.capabilities?.supportsSessionAgentSwitch === true &&
     codexCaps.capabilities.supportsSessionAgentSwitchCas === true;
+  const ompSupportsSessionAgentSwitch =
+    ompCaps.capabilities?.supportsSessionAgentSwitch === true &&
+    ompCaps.capabilities.supportsSessionAgentSwitchCas === true;
   // 此能力与原子 model-selection payload 同版发布。旧被控端会忽略 SET_MODEL 第 5 参，
   // 因此缺能力位时保留原来的 SET_MODEL → SET_EFFORT → SET_FAST 兼容链；同引擎
   // reselect 入口本就要求 CAS=true，不会退回这条非原子路径。
   const remoteAtomicModelSelectionSupported =
     ccCaps.capabilities?.supportsSessionAgentSwitchCas === true ||
-    codexCaps.capabilities?.supportsSessionAgentSwitchCas === true;
+    codexCaps.capabilities?.supportsSessionAgentSwitchCas === true ||
+    ompCaps.capabilities?.supportsSessionAgentSwitchCas === true;
   const sessionAgentSwitchSupported =
     sessionOrcaRole === null &&
-    (!deviceLinkDeviceId || ccSupportsSessionAgentSwitch || codexSupportsSessionAgentSwitch);
+    (!deviceLinkDeviceId ||
+      ccSupportsSessionAgentSwitch ||
+      codexSupportsSessionAgentSwitch ||
+      ompSupportsSessionAgentSwitch);
 
   // 切换写入的串行链与写序号都按 session 存在**模块级**协调层(agentSwitchCoordinator),
   // 不放组件 ref:用户切走再切回时旧组件已卸载但 invoke 仍在飞,新组件若另起空队列 /
@@ -1877,8 +1897,11 @@ export function ChatInput({
     if ((piCaps.capabilities?.availableModels ?? []).some((m) => m.id === activeModel)) {
       return 'pi';
     }
+    if ((ompCaps.capabilities?.availableModels ?? []).some((m) => m.id === activeModel)) {
+      return 'omp';
+    }
     return null;
-  }, [activeModel, agentKind, runtimeEffective, composerSelection.pending, composerSelection.display.agentKind, ccCaps.capabilities, codexCaps.capabilities, piCaps.capabilities]);
+  }, [activeModel, agentKind, runtimeEffective, composerSelection.pending, composerSelection.display.agentKind, ccCaps.capabilities, codexCaps.capabilities, piCaps.capabilities, ompCaps.capabilities]);
   // 供应商连接态。effectiveSourceId / sendProviderId / dispatchSend 预检用它。device-link 远程会话 /
   // 草稿用**被控端**供应商目录(隧道),否则用本机(两 hook 都无条件调用,按 deviceLinkDeviceId 取)。
   const localProviders = useProviders();
@@ -1903,6 +1926,7 @@ export function ChatInput({
     cc: ccCaps,
     codex: codexCaps,
     pi: piCaps,
+    omp: ompCaps,
     providers: remoteProviders,
   });
   const providersLoading = deviceLinkDeviceId
@@ -4197,6 +4221,22 @@ export function ChatInput({
       }),
     [reloadSlashCommands],
   );
+  // OMP (and any future runtime-discovered engine) can publish its native
+  // command directory after the composer initially loaded.  The push is only
+  // an invalidation stamp: reload through the normal command-list IPC.
+  useEffect(
+    () =>
+      window.electronAPI.maker.onAgentCommandCatalogChanged((payload) => {
+        if (!shouldRefreshRuntimeCommandCatalog(payload, {
+          sessionId,
+          agentKind: paletteAgentKind,
+        })) {
+          return;
+        }
+        reloadSlashCommands();
+      }),
+    [paletteAgentKind, reloadSlashCommands, sessionId],
+  );
   // Slash 指令与 $意识一致:doc 保持可逐字编辑的普通文本,完整命中当前 roster
   // 时才由 decoration 显示确认胶囊。异步 roster 刷新不进入 keystroke 热路径。
   useEffect(() => {
@@ -6038,7 +6078,9 @@ export function ChatInput({
             ? codexCaps.capabilities
             : currentModelAgentKind === 'pi'
               ? piCaps.capabilities
-              : ccCaps.capabilities,
+              : currentModelAgentKind === 'omp'
+                ? ompCaps.capabilities
+                : ccCaps.capabilities,
         providerId,
         modelId: targetModelId,
         agentKind: currentModelAgentKind,
@@ -6051,6 +6093,7 @@ export function ChatInput({
       ccCaps.capabilities,
       codexCaps.capabilities,
       piCaps.capabilities,
+      ompCaps.capabilities,
     ],
   );
 
@@ -6089,7 +6132,14 @@ export function ChatInput({
         opts.remoteDeviceId ?? getSessionDeviceId(sessionId) ?? deviceLinkDeviceId;
       const markModelChoice = opts.markModelChoice === true;
       if (!remoteDeviceId) {
-        const vendor = agentKind === 'codex' ? 'codex' : agentKind === 'pi' ? 'pi' : 'cc';
+        const vendor =
+          agentKind === 'codex'
+            ? 'codex'
+            : agentKind === 'pi'
+              ? 'pi'
+              : agentKind === 'omp'
+                ? 'omp'
+                : 'cc';
         const persistPrefs = markModelChoice
           ? patchVendorPrefs
           : patchVendorPrefsPreservingModelChoice;
@@ -6524,7 +6574,9 @@ export function ChatInput({
               ? codexCaps.capabilities
               : targetAgentKind === 'pi'
                 ? piCaps.capabilities
-                : ccCaps.capabilities,
+                : targetAgentKind === 'omp'
+                  ? ompCaps.capabilities
+                  : ccCaps.capabilities,
           providerId,
           modelId: newModelId,
           agentKind: targetAgentKind,
@@ -6661,7 +6713,9 @@ export function ChatInput({
                     ? 'Codex'
                     : targetAgentKind === 'pi'
                       ? 'Pi'
-                      : 'Claude Code',
+                      : targetAgentKind === 'omp'
+                        ? 'OMP'
+                        : 'Claude Code',
                 model: newModelId,
               }),
               { duration: 4000 },
@@ -6749,6 +6803,7 @@ export function ChatInput({
       ccCaps.capabilities,
       codexCaps.capabilities,
       piCaps.capabilities,
+      ompCaps.capabilities,
       syncSessionDraftModelPrefs,
     ],
   );
@@ -8779,6 +8834,8 @@ export function ChatInput({
                         ? 'codex'
                         : runtimeAgentKind === 'pi'
                           ? 'pi'
+                          : runtimeAgentKind === 'omp'
+                            ? 'omp'
                           : runtimeAgentKind === 'claude-code'
                             ? 'cc'
                             : vendorKey
@@ -8840,7 +8897,7 @@ export function ChatInput({
                             currentVendor: vendorKey,
                             // 两步分段的目标是 vendor 口径,确认门按 AgentKind 判(与意图
                             // 记录同形),在边界上转一次 —— 见 confirmAgentBrowseSwitch。
-                            confirmBrowseSwitch: (targetVendor: 'cc' | 'codex' | 'pi') =>
+                            confirmBrowseSwitch: (targetVendor: SelectableVendor) =>
                               confirmAgentBrowseSwitch(vendorKeyToAgentKind(targetVendor)),
                             onSwitch: performAgentSwitch,
                           }

@@ -84,7 +84,7 @@ export interface CollabWorkerConfig {
 
 export interface CollabDraft {
   enabled: boolean;
-  worker: 'cc' | 'codex' | 'pi';
+  worker: 'cc' | 'codex' | 'pi' | 'omp';
   workerConfig?: CollabWorkerConfig;
 }
 
@@ -307,11 +307,18 @@ function sanitize(raw: unknown): NewMakerDraft {
   // collab 校验: 老版本无此字段 → 默认 OFF + codex worker。
   const collabRaw = (r as { collab?: Partial<CollabDraft> }).collab;
   const collabWorker: CollabDraft['worker'] =
-    collabRaw?.worker === 'cc' ? 'cc' : collabRaw?.worker === 'pi' ? 'pi' : 'codex';
-  // remote 项目的协同 codex / cc draft 均放行:worker 创建已继承 remoteHostId
+    collabRaw?.worker === 'cc'
+      ? 'cc'
+      : collabRaw?.worker === 'pi'
+        ? 'pi'
+        : collabRaw?.worker === 'omp'
+          ? 'omp'
+          : 'codex';
+  // SSH 项目的协同 Claude/Codex/Pi draft 均放行:worker 创建已继承 remoteHostId
   // (在同一台远端主机 spawn,见 OrcaLeadSessionSnapshot.remoteHostId),两端
   // 远端 MCP 注入均已落地 (codex daemon config + cc per-query http 注入)。
-  // 本地项目(remoteHostId==null)不受影响。
+  // OMP Worker 明确不支持 SSH；UI 隐藏且 Main 创建边界拒绝。本地与 Device Link
+  // 被控端不带 remoteHostId，仍与其它本地 Worker 同口径。
   const collabEnabled = collabRaw?.enabled === true;
   // workerConfig 防御性解析:model 缺失/为空则整块丢弃(不存半截配置),createSession 回退默认。
   const workerConfig: CollabWorkerConfig | undefined = (() => {

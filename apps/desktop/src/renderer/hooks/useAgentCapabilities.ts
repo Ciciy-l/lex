@@ -222,7 +222,11 @@ function isOptionalNewSessionDefault(value: unknown): boolean {
   if (!Array.isArray(value) || value.length === 0) return false;
   if (
     value.some(
-      (agent) => agent !== 'claude-code' && agent !== 'codex' && agent !== 'pi',
+      (agent) =>
+        agent !== 'claude-code'
+        && agent !== 'codex'
+        && agent !== 'pi'
+        && agent !== 'omp',
     )
   ) {
     return false;

@@ -474,7 +474,11 @@ describe('Shared create project picker', () => {
   });
 
   it('keeps remote project drafts out of local workspace probes', () => {
-    expect(newMakerDraftRouteSource).toContain('if (wd && !isRemoteProjectDraft');
+    // SSH projects pass the disabled flag into the shared worktree row, which
+    // turns the local probe input into null. Device-link projects remain
+    // eligible because their probe runs through the target-device tunnel.
+    expect(newMakerDraftRouteSource).toContain('worktreeDisabled={isRemoteProjectDraft}');
+    expect(worktreeChipsSource).toContain('worktreeDisabled ? null : (cwd ?? null)');
     // device-link 草稿的 git 探测经隧道在被控端执行(本机 git 对远程路径必然误报);
     // SSH(worktreeDisabled)仍不探测。
     expect(worktreeChipsSource).toContain('deviceLinkReconnectEpoch,');
