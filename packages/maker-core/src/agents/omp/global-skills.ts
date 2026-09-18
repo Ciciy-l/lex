@@ -91,11 +91,16 @@ export async function projectOmpGlobalSkills(
       ? { status: 'error', changed: false, reason: source.reason }
       : { status: 'missing', changed: false };
   }
+  const normalizedSourceInput = normalizeForCompare(sourceRoot);
   const normalizedTarget = normalizeForCompare(targetRoot);
   // Linking a root to itself or into either side of itself creates a recursive
   // discovery tree.  Treat it as an optional-resource miss, never as a reason
   // to mutate either directory.
   if (
+    // sourceRoot and targetRoot are the caller's lexical paths.  Compare them
+    // before mixing in fs.realpath(): on Windows, an existing source can be
+    // reported in a different namespace from an as-yet-uncreated target.
+    isSameOrInside(normalizedTarget, normalizedSourceInput) ||
     isSameOrInside(source.path, normalizedTarget) ||
     isSameOrInside(normalizedTarget, source.path)
   ) {
