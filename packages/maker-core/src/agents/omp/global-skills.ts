@@ -24,7 +24,19 @@ export interface OmpGlobalSkillsProjectionInput {
 }
 
 function normalizeForCompare(value: string): string {
-  const resolved = path.resolve(value);
+  // `fs.realpath` on Windows is allowed to return the extended-length form
+  // (`\\?\\C:\\...`), while an as-yet-uncreated target is necessarily a
+  // normal lexical path.  Compare both in the same Win32 namespace; otherwise
+  // `path.relative` treats them as different roots and can miss a recursive
+  // source -> target projection.
+  const comparable = process.platform === 'win32'
+    ? value.startsWith('\\\\?\\UNC\\')
+      ? `\\\\${value.slice('\\\\?\\UNC\\'.length)}`
+      : value.startsWith('\\\\?\\')
+        ? value.slice('\\\\?\\'.length)
+        : value
+    : value;
+  const resolved = path.resolve(comparable);
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
 

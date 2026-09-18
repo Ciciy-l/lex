@@ -290,7 +290,8 @@
           "all": "전체",
           "cc": "Claude Code",
           "codex": "Codex",
-          "pi": "Pi"
+          "pi": "Pi",
+          "omp": "OMP"
         },
         "lastActivity": {
           "1d": "1일",

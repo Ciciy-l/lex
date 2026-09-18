@@ -86,6 +86,25 @@ describe('projectOmpGlobalSkills', () => {
     await expect(exists(targetRoot)).resolves.toBe(false);
   });
 
+  it.skipIf(process.platform !== 'win32')(
+    'also detects a recursive layout when the source is expressed as an extended Win32 path',
+    async () => {
+      const root = await temporaryRoot();
+      const sourceRoot = path.join(root, 'shared', 'skills');
+      const targetRoot = path.join(sourceRoot, 'nested-runtime', '.agents', 'skills');
+      await mkdir(sourceRoot, { recursive: true });
+
+      await expect(projectOmpGlobalSkills({
+        sourceRoot: `\\\\?\\${sourceRoot}`,
+        targetRoot,
+      })).resolves.toMatchObject({
+        status: 'skipped',
+        changed: false,
+      });
+      await expect(exists(targetRoot)).resolves.toBe(false);
+    },
+  );
+
   it('rejects malformed host paths before attempting a filesystem mutation', async () => {
     const root = await temporaryRoot();
     const targetRoot = path.join(root, 'runtime', '.agents', 'skills');

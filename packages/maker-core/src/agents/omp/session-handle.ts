@@ -765,14 +765,29 @@ function safeFilePart(value: string): string {
   return cleaned.slice(-64) || 'session';
 }
 
+type SessionFilePathStyle = 'posix' | 'win32';
+
+/**
+ * Classify the persisted path itself instead of relying on the host that happens
+ * to compare it. A Linux CI process can legitimately exercise a resumed Windows
+ * session fixture, while a mixed path style must never be treated as the same
+ * logical session.
+ */
+function sessionFilePathStyle(value: string): SessionFilePathStyle | undefined {
+  if (!value || value.includes('\0')) return undefined;
+  if (/^[A-Za-z]:[\\/]/u.test(value) || value.startsWith('\\\\')) return 'win32';
+  return value.startsWith('/') ? 'posix' : undefined;
+}
+
 /** Normalized logical identity; Windows session paths are case-insensitive. */
 function sameSessionFile(left: string, right: string): boolean {
-  if (typeof left !== 'string' || typeof right !== 'string' || !left || !right) return false;
-  const implementation = process.platform === 'win32' ? path.win32 : path.posix;
-  if (!implementation.isAbsolute(left) || !implementation.isAbsolute(right)) return false;
-  const normalizedLeft = implementation.normalize(left);
-  const normalizedRight = implementation.normalize(right);
-  return process.platform === 'win32'
-    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
-    : normalizedLeft === normalizedRight;
+  if (typeof left !== 'string' || typeof right !== 'string') return false;
+  const leftStyle = sessionFilePathStyle(left);
+  const rightStyle = sessionFilePathStyle(right);
+  if (!leftStyle || leftStyle !== rightStyle) return false;
+
+  if (leftStyle === 'win32') {
+    return path.win32.normalize(left).toLowerCase() === path.win32.normalize(right).toLowerCase();
+  }
+  return path.posix.normalize(left) === path.posix.normalize(right);
 }

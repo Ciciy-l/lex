@@ -450,7 +450,7 @@ describe('session runtime control wiring', () => {
     expect(wakeQueue).toBeGreaterThan(normalWakeGuard);
   });
 
-  it('uses current runtime window facts but still requires a verified target before rebuilding', () => {
+  it('requires route-verified windows before rebuilding', () => {
     const setModel = handlerBody(
       registerSource,
       'const handleSetModel = async (',
@@ -465,7 +465,10 @@ describe('session runtime control wiring', () => {
     const apply = setModel.indexOf('applyRuntimeSetModelChange({');
     expect(verifiedWindowOnly).toBeGreaterThan(-1);
     expect(setModel).toContain('contextWindow: sessions.contextWindow,');
-    expect(setModel).toContain('effectiveContextWindow(');
+    // Runtime-reported windows remain input to contextOverflowRollover when a
+    // rebuild is actually needed. They must not be treated as verified here:
+    // doing so could incorrectly skip a required rebuild.
+    expect(setModel).not.toContain('effectiveContextWindow(');
     expect(setModel).toContain('hasModelWindowContextToProtect(');
     expect(setModel).toContain("'MODEL_CONTEXT_USAGE_UNKNOWN'");
     expect(setModel).toContain("'MODEL_WINDOW_CURRENT_CONTEXT_UNKNOWN'");
