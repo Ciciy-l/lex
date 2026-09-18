@@ -1,4 +1,5 @@
 import { IOS_SIMULATOR_ROUTE_STATUS_CHANNEL } from '../../shared/iosSimulatorIpc.js';
+import { AGENT_COMMAND_CATALOG_CHANGED_CHANNEL } from '../../shared/agentCommandCatalog.js';
 
 /**
  * maker:* IPC channel 名常量。统一收口，禁止 hardcode 字符串。
@@ -822,6 +823,8 @@ export const MAKER_SEND = {
 
 export const MAKER_PUSH = {
   EVENT: 'maker:event',
+  /** A live engine-native `/` catalog changed; renderers re-read the normal palette projection. */
+  AGENT_COMMAND_CATALOG_CHANGED: AGENT_COMMAND_CATALOG_CHANGED_CHANNEL,
   /** Runtime agent roster changed after an optional agent recovery. */
   AGENTS_CHANGED: 'maker:agents:changed',
   TURN_CHANGE_SET_UPDATED: 'maker:turn-change-set:updated',

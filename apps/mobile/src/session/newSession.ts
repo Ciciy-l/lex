@@ -5,20 +5,25 @@ import {
   deriveOptimisticSessionTitle,
 } from '@cindy/maker-shared/session-title';
 import { i18n } from '@/i18n';
-import type { CreateSessionOptions, RemoteDirectoryEntry } from '@/device-link/mobileMakerTransport';
+import type {
+  CreateSessionOptions,
+  MobileAgentKind,
+  RemoteDirectoryEntry,
+} from '@/device-link/mobileMakerTransport';
 import type { DeviceProvidersPayload } from '@/device-link/deviceProvidersCache';
 import type { MobileModelOption } from './agentCapabilities';
 import { effectiveSourceIdForModel } from '@cindy/model-providers/registry';
 import { reconcileEffortForModel, type ProviderModelRow } from './providerModelSections';
 import type { RemoteSession } from './types';
 
-export type NewSessionAgentKind = 'claude-code' | 'codex' | 'pi';
+export type NewSessionAgentKind = MobileAgentKind;
 export type NewSessionWorkspaceKind = 'project' | 'dialogue';
 
 export const NEW_SESSION_AGENT_OPTIONS: readonly { kind: NewSessionAgentKind; label: string }[] = [
   { kind: 'claude-code', label: 'Claude' },
   { kind: 'codex', label: 'Codex' },
   { kind: 'pi', label: 'Pi' },
+  { kind: 'omp', label: 'OMP' },
 ];
 
 /**
@@ -127,7 +132,9 @@ export function parseNewSessionDeviceOptions(
 }
 
 export function normalizeNewSessionAgentKind(value: unknown): NewSessionAgentKind | null {
-  return value === 'claude-code' || value === 'codex' || value === 'pi' ? value : null;
+  return value === 'claude-code' || value === 'codex' || value === 'pi' || value === 'omp'
+    ? value
+    : null;
 }
 
 export function pickNewSessionDefaultDevice(input: {
@@ -162,9 +169,10 @@ const DEFAULT_MODELS: Record<NewSessionAgentKind, string> = {
   'claude-code': 'claude-sonnet-4-6',
   codex: 'gpt-5.4',
   pi: 'gpt-5.4',
+  omp: 'MiniMax-M2',
 };
 
-/** 新建交互式会话的权限种子默认；三个 agent 都保留 Auto-review。 */
+/** 新建交互式会话的权限种子默认；各 Agent 都保留 Auto-review。 */
 export function defaultPermissionModeForNewSessionAgent(_agentKind: NewSessionAgentKind): string {
   return 'auto';
 }
@@ -218,7 +226,13 @@ export function summarizeNewSessionDraft(
   content: NewSessionDraftContentState = {},
 ): NewSessionDraftSummary {
   const validationMessage = validateNewSessionDraft(draft, content);
-  const agentLabel = draft.agentKind === 'codex' ? 'Codex' : draft.agentKind === 'pi' ? 'Pi' : 'Claude';
+  const agentLabel = draft.agentKind === 'codex'
+    ? 'Codex'
+    : draft.agentKind === 'pi'
+      ? 'Pi'
+      : draft.agentKind === 'omp'
+        ? 'OMP'
+        : 'Claude';
   const model = draft.model.trim() || i18n.t('session.new.noModelSelected');
   const effort = draft.effort.trim();
   const workspaceLabel = draft.workspaceKind === 'dialogue'
@@ -333,7 +347,7 @@ type NewSessionDefaultModel = {
   id: string;
   efforts: readonly string[];
   defaultEffort: string | null;
-  newSessionDefault?: readonly ('claude-code' | 'codex' | 'pi')[];
+  newSessionDefault?: readonly NewSessionAgentKind[];
 };
 
 function isNewSessionDefaultForAgent(
@@ -636,7 +650,9 @@ export function pickMostRecentSessionRuntime(
     const model = session.model?.trim();
     if (!model) continue;
     if (options.deviceId && session.deviceLinkDeviceId && session.deviceLinkDeviceId !== options.deviceId) continue;
-    const agentKind: NewSessionAgentKind = session.agentKind === 'codex' || session.agentKind === 'pi'
+    const agentKind: NewSessionAgentKind = session.agentKind === 'codex' ||
+      session.agentKind === 'pi' ||
+      session.agentKind === 'omp'
       ? session.agentKind
       : 'claude-code';
     if (options.agentKind && agentKind !== options.agentKind) continue;

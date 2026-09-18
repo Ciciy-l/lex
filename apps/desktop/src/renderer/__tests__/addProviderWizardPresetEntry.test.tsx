@@ -343,7 +343,9 @@ describe('AddProviderWizard — preset 直达', () => {
       expect(screen.getByText('settings.providers.wizard.nameLabel')).not.toBeNull(),
     );
     expect(screen.getByDisplayValue('Anthropic API')).not.toBeNull();
-    expect(screen.getAllByText(/api\.anthropic\.com/)).toHaveLength(3);
+    // 每个 runtime 都展示官方端点。OMP 由同预设的 claude-code runtime 派生
+    // (见 shared/piRuntimeInitialization.ts 的 presetRuntimeForAgent),因此是 4 个。
+    expect(screen.getAllByText(/api\.anthropic\.com/)).toHaveLength(4);
   });
 
   it('官方 API 预设:列模型失败 → 第三步仍有推荐模型预勾,可完成(Greptile P1 回归)', async () => {
@@ -699,7 +701,8 @@ describe('AddProviderWizard — preset 直达', () => {
     // 同一 model id 在两端窗口可以不同(如 cc=1M / codex=272K):共享一个发现值
     // 会让其中一端显示与压缩阈值双错,必须按 agent 分槽各取各的端点上报值。
     vi.mocked(window.electronAPI.maker.fetchProviderModels).mockImplementation(
-      async ({ agent }: { agent: 'claude-code' | 'codex' | 'pi' }) => ({
+      // OMP 接入:fetchProviderModels 的 agent 口径已放宽为四元组,mock 签名跟随。
+      async ({ agent }: { agent: 'claude-code' | 'codex' | 'pi' | 'omp' }) => ({
         ok: true,
         models: [
           {

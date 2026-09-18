@@ -9,7 +9,7 @@ import type {
 import type { MobileAgentCapabilities } from './agentCapabilities';
 import type { RemoteSession } from './types';
 
-export type MobileSessionAgentKind = 'claude-code' | 'codex' | 'pi';
+export type MobileSessionAgentKind = 'claude-code' | 'codex' | 'pi' | 'omp';
 
 /** 将不可信 device-link payload 收窄为公开 intent；非法值按“无意图”处理。 */
 export function normalizeSessionAgentSwitchIntent(
@@ -21,6 +21,7 @@ export function normalizeSessionAgentSwitchIntent(
     item.targetAgentKind !== 'claude-code'
     && item.targetAgentKind !== 'codex'
     && item.targetAgentKind !== 'pi'
+    && item.targetAgentKind !== 'omp'
   ) return null;
   if (typeof item.model !== 'string' || item.model.length === 0) return null;
   // providerId 缺失(undefined)按 null 处理,与桌面 projectPendingAgentSwitchIntent 的
@@ -42,7 +43,7 @@ export function normalizeSessionAgentSwitchIntent(
 
 /** DB 会话行的 cc/codex 映射到 maker agent kind。 */
 export function sessionAgentKind(session: Pick<RemoteSession, 'agentKind'>): MobileSessionAgentKind {
-  return session.agentKind === 'codex' || session.agentKind === 'pi'
+  return session.agentKind === 'codex' || session.agentKind === 'pi' || session.agentKind === 'omp'
     ? session.agentKind
     : 'claude-code';
 }
@@ -58,13 +59,13 @@ export function supportsMobileSessionAgentSwitch(
 }
 
 export function mobileAgentLabel(agentKind: MobileSessionAgentKind): string {
-  return agentKind === 'codex' ? 'Codex' : agentKind === 'pi' ? 'Pi' : 'Claude Code';
+  return agentKind === 'codex' ? 'Codex' : agentKind === 'pi' ? 'Pi' : agentKind === 'omp' ? 'OMP' : 'Claude Code';
 }
 
 export function mobileAgentLabelFromUnknown(agentKind: unknown): string {
-  return agentKind === 'codex' ? 'Codex' : agentKind === 'pi' ? 'Pi' : 'Claude Code';
+  return agentKind === 'codex' ? 'Codex' : agentKind === 'pi' ? 'Pi' : agentKind === 'omp' ? 'OMP' : 'Claude Code';
 }
 
-export function mobileAgentVendor(agentKind: MobileSessionAgentKind): 'cc' | 'codex' | 'pi' {
+export function mobileAgentVendor(agentKind: MobileSessionAgentKind): 'cc' | 'codex' | 'pi' | 'omp' {
   return agentKind === 'claude-code' ? 'cc' : agentKind;
 }

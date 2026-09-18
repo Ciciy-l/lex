@@ -1667,7 +1667,13 @@
           "piAnthropic": "Anthropic Messages",
           "piResponsesHelp": "Pi 直接连接供应商的 OpenAI Responses API。",
           "piChatHelp": "Pi 直接连接供应商的 OpenAI 兼容 Chat Completions API。",
-          "piAnthropicHelp": "Pi 直接连接供应商的 Anthropic Messages API。"
+          "piAnthropicHelp": "Pi 直接连接供应商的 Anthropic Messages API。",
+          "ompResponses": "OpenAI Responses",
+          "ompChat": "OpenAI Chat Completions",
+          "ompAnthropic": "Anthropic Messages",
+          "ompResponsesHelp": "OMP 原生支持 OpenAI Responses；{{appName}} 只做本机 Proxy 转发，不转换协议。",
+          "ompChatHelp": "OMP 原生支持 OpenAI Chat Completions；{{appName}} 只做本机 Proxy 转发，不转换协议。",
+          "ompAnthropicHelp": "OMP 原生支持 Anthropic Messages；{{appName}} 只做本机 Proxy 转发，不转换协议。"
         },
         "modelProtocol": {
           "label": "模型协议",
@@ -1685,7 +1691,9 @@
           "codex": "Codex",
           "codexDesc": "Codex 使用 OpenAI Responses 协议。上游可选择原生 Responses，或由 {{appName}} 桥接 Chat Completions、Anthropic Messages。填该来源用于 Codex 的 baseURL、密钥与模型，留空则此来源不提供 Codex。",
           "pi": "Pi",
-          "piDesc": "Pi 是多协议 harness：你的自定义或本机模型（Ollama、vLLM、自建端点）原生直连，不经 {{appName}} 的兼容 Proxy。先在下方选 API 类型，再填该来源给 Pi 用的 base URL、密钥与模型；留空则本来源不配置 Pi。"
+          "piDesc": "Pi 是多协议 harness：你的自定义或本机模型（Ollama、vLLM、自建端点）原生直连，不经 {{appName}} 的兼容 Proxy。先在下方选 API 类型，再填该来源给 Pi 用的 base URL、密钥与模型；留空则本来源不配置 Pi。",
+          "omp": "OMP",
+          "ompDesc": "OMP 经 {{appName}} 的兼容 Proxy 接入；本页为 OMP 声明该来源提供哪些模型，上游寻址与凭证由 Proxy 统一处理（OMP 自身不直接使用端点/密钥）。留空则本来源不提供 OMP。"
         },
         "errors": {
           "nameRequired": "请填写显示名称",
@@ -2262,7 +2270,12 @@
     "experimental": {
       "title": "实验性功能",
       "toggleAria": "切换实验功能：{{title}}",
-      "features": {}
+      "features": {
+        "teammates": {
+          "title": "伙伴",
+          "description": "显示伙伴工作区及相关设置。"
+        }
+      }
     },
     "lspMode": {
       "cell": {
@@ -7398,6 +7411,7 @@
       "actionFailed": "操作未完成，请稍后重试。"
     },
     "backToChat": "返回对话",
+    "backToTasks": "返回任务",
     "memoryRecovery": {
       "action": "重新开启记忆"
     },
@@ -7988,6 +8002,20 @@
           "bypassPermissions": {
             "label": "完全访问",
             "description": "允许修改任意文件并运行联网命令，无需再次确认。风险最高，只适合可信任务。"
+          }
+        },
+        "omp": {
+          "ask": {
+            "label": "默认权限",
+            "description": "读取类工具始终自动放行；写文件和运行命令每次都询问。"
+          },
+          "auto": {
+            "label": "自动审批",
+            "description": "读取类工具与写文件始终自动放行；运行命令每次仍会询问。"
+          },
+          "bypassPermissions": {
+            "label": "完全访问",
+            "description": "读取、写入和命令全部自动放行，不再逐一确认。你显式拒绝的操作与危险命令覆盖规则仍然生效。风险最高，只适合可信任务。"
           }
         }
       }
@@ -11667,12 +11695,17 @@
       "codexBinaryMissingDescription": "Codex 组件尚未准备好，暂时无法使用这个功能。请稍后重试，或前往「模型供应商」检查 Codex 连接状态。",
       "piBinaryMissingTitle": "Pi 组件未就绪",
       "piBinaryMissingDescription": "Pi 组件尚未准备好，暂时无法使用这个功能。请稍后重试，或前往「模型供应商」检查 Pi 连接状态。",
+      "ompBinaryMissingTitle": "OMP 组件未就绪",
+      "ompBinaryMissingDescription": "OMP 组件尚未准备好，暂时无法使用这个功能。请稍后重试，或前往「模型供应商」检查 OMP 连接状态。",
       "goToSettings": "前往设置",
       "remoteCodexBinaryMissingTitle": "被控端 Codex 组件未就绪",
       "remotePiBinaryMissingTitle": "被控端 Pi 组件未就绪",
+      "remoteOmpBinaryMissingTitle": "被控端 OMP 组件未就绪",
       "remoteAuthDescription": "需要在被控设备「{{device}}」上完成配置后，才能在这里新建并运行任务。请在该设备上配置后重试。",
       "remoteCodexNoSourceTitle": "被控端 Codex 暂无可用来源",
       "remoteCodexNoSourceDescription": "被控设备「{{device}}」尚未连接 Codex 可用的模型来源，无法在这里新建并运行任务。请在该设备上打开 {{appName}}，在「设置 → 模型供应商」登录 OpenAI 或连接其他来源后重试。",
+      "remoteOmpNoSourceTitle": "被控端 OMP 暂无可用来源",
+      "remoteOmpNoSourceDescription": "被控设备「{{device}}」尚未连接 OMP 可用的模型来源，无法在这里新建并运行任务。请在该设备上打开 {{appName}}，在「设置 → 模型供应商」连接来源后重试。",
       "remoteCcNoSourceTitle": "被控端 Claude 暂无可用来源",
       "remoteCcNoSourceDescription": "被控设备「{{device}}」尚未连接可用的 Claude 模型来源，无法在这里新建并运行任务。请在该设备上打开 {{appName}}，在「设置 → 模型供应商」连接来源后重试。",
       "gotIt": "知道了"

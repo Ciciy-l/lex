@@ -59,6 +59,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     scope: string,
     msg: string,
   ): void => ipcRenderer.send('renderer:log', level, scope, msg),
+  recoverViteDependencyLoad: (): void => ipcRenderer.send('renderer:recover-vite-deps'),
   appearanceSettings: {
     getSync: (): AppearanceSettings | null => appearanceSettings,
     onChanged: (cb: (settings: AppearanceSettings) => void): (() => void) =>

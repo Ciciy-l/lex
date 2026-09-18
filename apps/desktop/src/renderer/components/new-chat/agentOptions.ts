@@ -16,6 +16,7 @@ import type { ComponentType } from 'react';
 
 import { ClaudeMark } from '@/components/icons/ClaudeMark';
 import { CodexMark } from '@/components/icons/CodexMark';
+import { OmpMark } from '@/components/icons/OmpMark';
 import { PiMark } from '@/components/icons/PiMark';
 import { SELECTABLE_VENDORS, type SelectableVendor } from '@/lib/agentVendors';
 
@@ -30,6 +31,8 @@ const VENDOR_PRESENTATION: Record<SelectableVendor, Omit<AgentOption, 'vendor'>>
   cc: { label: 'Claude', Mark: ClaudeMark },
   codex: { label: 'Codex', Mark: CodexMark },
   pi: { label: 'Pi', Mark: PiMark },
+  // 品牌名不进 i18n(产品名跨语言不翻译),与 Claude / Codex / Pi 同口径。
+  omp: { label: 'OMP', Mark: OmpMark },
 };
 
 export const AGENT_OPTIONS: readonly AgentOption[] = SELECTABLE_VENDORS.map((vendor) => ({

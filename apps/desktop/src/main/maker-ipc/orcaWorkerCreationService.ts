@@ -344,15 +344,21 @@ function selectWorkerModel(params: {
   input: OrcaWorkerCreateParams;
   lead: OrcaLeadSessionSnapshot;
   defaults: OrcaWorkerDefaultsSnapshot;
-}): string {
-  const { input, lead, defaults } = params;
-  return input.model
-    ?? defaults.model
-    // pi 显式列出(与 model-defaults.ts 对齐,避免将来改 cc 默认时 pi 静默跟随)。
-    ?? (input.agent === lead.agentKind ? lead.model
-        : input.agent === 'codex' ? 'gpt-5.5'
-        : input.agent === 'pi' ? 'claude-sonnet-4-6'
-        : 'claude-sonnet-4-6');
+  availableModels: readonly OrcaWorkerModelCapabilities[];
+}): string | null {
+  const { input, lead, defaults, availableModels } = params;
+  if (input.model !== undefined) return input.model;
+  if (typeof defaults.model === 'string' && defaults.model.trim().length > 0) {
+    return defaults.model;
+  }
+  if (input.agent === lead.agentKind && lead.model.trim().length > 0) return lead.model;
+  // Pi 显式列出(与 model-defaults.ts 对齐,避免将来改 CC 默认时 Pi 静默跟随)。
+  if (input.agent === 'codex') return 'gpt-5.5';
+  if (input.agent === 'pi') return 'claude-sonnet-4-6';
+  if (input.agent === 'claude-code') return 'claude-sonnet-4-6';
+  // OMP 的 upstream model id 由当前 provider catalog 定义，不能伪造 Claude /
+  // Codex 的产品默认值。取可路由目录的第一项；没有则由调用方给出受控错误。
+  return availableModels[0]?.id ?? null;
 }
 
 /**
@@ -522,7 +528,13 @@ export function budgetModelRequiresApiKeyMessage(model: string): string {
 
 /** agent 的人类可读名,用于 preflight 失败信息。 */
 function agentDisplayName(agent: AgentKind): string {
-  return agent === 'codex' ? 'Codex' : agent === 'pi' ? 'Pi' : 'Claude Code';
+  return agent === 'codex'
+    ? 'Codex'
+    : agent === 'pi'
+      ? 'Pi'
+      : agent === 'omp'
+        ? 'OMP'
+        : 'Claude Code';
 }
 
 /**
@@ -544,7 +556,7 @@ export function buildNoProviderMessage(
   availability: Record<AgentKind, OrcaWorkerProviderSnapshot[]>,
 ): string {
   const base = `${agentDisplayName(agent)} 当前没有可用的模型供应商(provider)。请在「设置 → 模型供应商」连接一个支持 ${agentDisplayName(agent)} 的供应商后重试`;
-  const others = (['claude-code', 'codex', 'pi'] as AgentKind[]).filter(
+  const others = (['claude-code', 'codex', 'pi', 'omp'] as AgentKind[]).filter(
     (a) => a !== agent && (availability[a]?.length ?? 0) > 0,
   );
   if (others.length === 0) return `${base}。`;
@@ -627,6 +639,23 @@ export function createOrcaWorkerCreationService(deps: OrcaWorkerCreationDeps): O
         limit: limitSnapshot(settings.workerHardLimit, activeCount),
       };
     }
+    // SSH OMP is deliberately unsupported.  Enforce that before provider lookup,
+    // remote preparation, reservation, or bootstrap so a rejected request never
+    // reaches an SSH install/start path.  Device Link executes on the controlled
+    // device as a local session and therefore has remoteHostId=null here.
+    const lead = await deps.getLeadSessionRow(params.leadSessionId);
+    if (!lead) {
+      return { ok: false, errorCode: 'NOT_FOUND', message: `lead session ${params.leadSessionId} not found` };
+    }
+    if (lead.remoteHostId && params.agent === 'omp') {
+      return {
+        ok: false,
+        errorCode: 'INVALID_PARAMS',
+        message:
+          'OMP Workers are not supported for SSH remote sessions. Choose Claude Code, Codex, or Pi, or create the OMP Worker locally.',
+      };
+    }
+
     const availableModels = deps.getAvailableModels(params.agent);
     // 标准面板显式选定的来源(非空 string)直接生效,由下方精确 preflight 把关「已连接且
     // 提供该模型」;空串/null/undefined 一律按未显式处理(与 IPC 边界同口径,service 作为
@@ -675,18 +704,6 @@ export function createOrcaWorkerCreationService(deps: OrcaWorkerCreationDeps): O
       };
     }
 
-    const lead = await deps.getLeadSessionRow(params.leadSessionId);
-    if (!lead) {
-      return { ok: false, errorCode: 'NOT_FOUND', message: `lead session ${params.leadSessionId} not found` };
-    }
-
-    // 轮 42:解除「SSH remote lead 禁 Pi worker」闸 —— 该闸写于 Pi SSH remote 能力
-    // 落地之前(前提「PiAgent.startSession 对 remoteHostId 一律 NotSupportedError」
-    // 已不成立, 现 remote pi 会话全链路可用)。worker 创建走通用 remote 路径:
-    // createWorkerInTeam 里 worker 继承 lead.remoteHostId(同远端主机 spawn, 共享远端
-    // workingDir), ensureRemoteReadyForSessionStart 对 pi 已支持 silent install +
-    // pi-manager 预上传, orca_worker_bridge 工具面经 SSH remote-forward 隧道注入。
-    // 与 CC/Codex remote worker 同构;此闸会让 remote pi lead 完全无法使用 pi worker。
     const defaults = deps.getWorkerDefaults(params.agent);
     const workerDefaultProviderId =
       typeof defaults.providerId === 'string' && defaults.providerId.trim()
@@ -700,7 +717,15 @@ export function createOrcaWorkerCreationService(deps: OrcaWorkerCreationDeps): O
       input: params,
       lead,
       defaults,
+      availableModels,
     });
+    if (selectedModel === null) {
+      return {
+        ok: false,
+        errorCode: 'INVALID_PARAMS',
+        message: 'OMP has no available model in the current provider catalog. Connect an OMP provider and choose a model before creating a Worker.',
+      };
+    }
     const leadProviderId =
       params.agent === lead.agentKind && typeof lead.providerId === 'string' && lead.providerId.trim()
         ? lead.providerId.trim()

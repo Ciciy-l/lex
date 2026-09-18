@@ -372,7 +372,9 @@ describe('shared history view lifecycle', () => {
     const detail = snapshot.details.get(key)!;
     // A refreshed subrange can temporarily reuse a wider cache. Both endpoints
     // must still clip correctly after the live rows acquire persistent IDs.
-    snapshot.details.set(key, { ...detail, messages: [row(0, 'thinking', 'before'), ...persisted, row(3, 'thinking', 'after')] });
+    // The snapshot exposes ReadonlyMap, but the controller's live cache is a real
+    // Map; this test deliberately mutates it to simulate a wider reused cache.
+    (snapshot.details as Map<string, typeof detail>).set(key, { ...detail, messages: [row(0, 'thinking', 'before'), ...persisted, row(3, 'thinking', 'after')] });
     const rendered = renderHistoryView({ view, snapshot, liveMessages: [], streaming: true,
       build: messages => messages.map(message => message.content), structure: ungroupedStructure });
     if (mode === 'stored') expect(rendered).not.toContain('first');

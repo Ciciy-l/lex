@@ -70,7 +70,8 @@ function canonicalRegistryEntryModelId(providerId: string, consumerModelId: stri
  * Registry tombstone lookup for a concrete client consumer. This mirrors the same root/bridge
  * graph used by materialization without requiring a CatalogModel entity: retired routes are
  * intentionally absent from the assembled provider list, but legacy controllers may still name
- * one explicitly. Pi is independent from the Registry graph and is never tombstoned here.
+ * one explicitly. Pi is independent from the Registry graph and is never tombstoned here;
+ * OMP 与 Pi 同理(P0 不进 root/bridge 图,模型由 host capabilityAdditions 注入)。
  */
 export function isRegistryTombstoneForConsumer(
   registry: ModelRegistry | null | undefined,
@@ -81,7 +82,7 @@ export function isRegistryTombstoneForConsumer(
   const policy = MODEL_PLANE_POLICIES.get(providerId);
   if (!registry || !policy) return false;
 
-  if (agent === 'pi') return false;
+  if (agent === 'pi' || agent === 'omp') return false;
   const registryAgent =
     policy.roots.includes(agent) || policy.membershipGatedBridges.includes(agent) ? agent : null;
   if (!registryAgent) return false;

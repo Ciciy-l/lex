@@ -83,7 +83,8 @@ const EMPTY_QUERY_SECTIONS: ReadonlyArray<ReadonlySet<AtResourceType>> = [
   new Set(['plugin-command']),
 ];
 
-export type PaletteAgentKind = 'claude-code' | 'codex' | 'pi';
+/** OMP 接入:@ 面板的引擎口径同步放宽为四元组(与 AgentKind 一致)。 */
+export type PaletteAgentKind = 'claude-code' | 'codex' | 'pi' | 'omp';
 
 export interface AtResourceScanContext {
   /** Current local task. Its built-in browser tabs are the only tabs exposed. */

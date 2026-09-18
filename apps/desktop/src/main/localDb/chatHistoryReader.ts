@@ -29,7 +29,8 @@ const messageRowid = sql<number>`"messages"."rowid"`;
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export type HistoryOrder = 'asc' | 'desc';
-export type HistoryAgentKind = 'cc' | 'codex' | 'pi';
+/** sessions.agent_kind 的读取口径;OMP 会话(T01 起可落库)同样允许被过滤。 */
+export type HistoryAgentKind = 'cc' | 'codex' | 'pi' | 'omp';
 
 export interface HistoryCursor {
   createdAt: number; // unix ms

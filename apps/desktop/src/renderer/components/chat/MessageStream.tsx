@@ -379,7 +379,8 @@ interface MessageStreamProps {
   sessionTitle?: string | null;
   /** Owning agent kind — propagated to UserMessage so capability gates
    *  (fork/rewind icon visibility) can read the right agent's capabilities. */
-  agentKind?: 'cc' | 'codex' | 'pi';
+  // OMP 接入:会话引擎可能是 omp,prop 口径同步放宽(内部判定全是等值比较)。
+  agentKind?: 'cc' | 'codex' | 'pi' | 'omp';
   /** Owning session's remote SSH host id (null for local sessions). Forwarded
    *  so message-level controls can gate features unsupported on remote
    *  (e.g. rewind on cc-remote daemon sessions). */
@@ -2371,7 +2372,8 @@ function renderWorkGroupChild(
     workingDir: string;
     sessionId?: string;
     sessionTitle?: string | null;
-    agentKind?: 'cc' | 'codex' | 'pi';
+    // OMP 接入:会话引擎可能是 omp,prop 口径同步放宽(内部判定全是等值比较)。
+    agentKind?: 'cc' | 'codex' | 'pi' | 'omp';
     remoteHostId?: string | null;
     isSessionStreaming: boolean;
     firstUserMessageClientId: string | null;
@@ -5923,7 +5925,8 @@ const MessageItem = memo(function MessageItem({
   remoteHostId?: string | null;
   /** Forwarded to User/AssistantMessage so they can read this agent's
    *  capabilities (gates Fork/Rewind icon visibility). */
-  agentKind?: 'cc' | 'codex' | 'pi';
+  // OMP 接入:会话引擎可能是 omp,prop 口径同步放宽(内部判定全是等值比较)。
+  agentKind?: 'cc' | 'codex' | 'pi' | 'omp';
   /** Whether this session currently has an in-flight SDK turn. Rewind uses it
    *  to require an idle live query; fork can still target stable history. */
   sessionRunning?: boolean;

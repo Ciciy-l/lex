@@ -84,7 +84,7 @@ export interface CollabWorkerConfig {
 
 export interface CollabDraft {
   enabled: boolean;
-  worker: 'cc' | 'codex' | 'pi';
+  worker: 'cc' | 'codex' | 'pi' | 'omp';
   workerConfig?: CollabWorkerConfig;
 }
 
@@ -232,6 +232,8 @@ function makeDefault(): NewMakerDraft {
       pi: defaultVendorPrefs('pi'),
       orca: defaultVendorPrefs('orca'),
       codex: defaultVendorPrefs('codex'),
+      // omp 无独立产品默认,复用 cc 种子默认(与 defaultVendorPrefs 回落一致)。
+      omp: defaultVendorPrefs('omp'),
     },
     modelChosenByVendor: {},
     defaultTupleCustomized: false,
@@ -305,11 +307,18 @@ function sanitize(raw: unknown): NewMakerDraft {
   // collab 校验: 老版本无此字段 → 默认 OFF + codex worker。
   const collabRaw = (r as { collab?: Partial<CollabDraft> }).collab;
   const collabWorker: CollabDraft['worker'] =
-    collabRaw?.worker === 'cc' ? 'cc' : collabRaw?.worker === 'pi' ? 'pi' : 'codex';
-  // remote 项目的协同 codex / cc draft 均放行:worker 创建已继承 remoteHostId
+    collabRaw?.worker === 'cc'
+      ? 'cc'
+      : collabRaw?.worker === 'pi'
+        ? 'pi'
+        : collabRaw?.worker === 'omp'
+          ? 'omp'
+          : 'codex';
+  // SSH 项目的协同 Claude/Codex/Pi draft 均放行:worker 创建已继承 remoteHostId
   // (在同一台远端主机 spawn,见 OrcaLeadSessionSnapshot.remoteHostId),两端
   // 远端 MCP 注入均已落地 (codex daemon config + cc per-query http 注入)。
-  // 本地项目(remoteHostId==null)不受影响。
+  // OMP Worker 明确不支持 SSH；UI 隐藏且 Main 创建边界拒绝。本地与 Device Link
+  // 被控端不带 remoteHostId，仍与其它本地 Worker 同口径。
   const collabEnabled = collabRaw?.enabled === true;
   // workerConfig 防御性解析:model 缺失/为空则整块丢弃(不存半截配置),createSession 回退默认。
   const workerConfig: CollabWorkerConfig | undefined = (() => {
@@ -375,16 +384,21 @@ function sanitize(raw: unknown): NewMakerDraft {
   // 已经随旧版完整草稿自然落盘过的 cc seed。它们不是用户选择，不能因为新版目录换了
   // seed 就反过来把系统快照认成自定义；这里只服务一次性迁移，不参与新会话默认决策。
   const legacyCcSeedModels = new Set([def.lastByVendor.cc.model, 'claude-sonnet-4-6']);
-  const isKnownProductTuple = (slotVendor: MakerVendor, prefs: Partial<VendorPrefs>): boolean =>
-    typeof prefs.providerId === 'string' &&
-    prefs.providerId.length > 0 &&
-    typeof prefs.model === 'string' &&
-    prefs.model.length > 0 &&
-    isKnownProductDefaultTupleIdentity({
-      vendor: slotVendor,
-      providerId: prefs.providerId,
-      model: prefs.model,
-    });
+  const isKnownProductTuple = (slotVendor: MakerVendor, prefs: Partial<VendorPrefs>): boolean => {
+    // omp 无产品默认 tuple(vendorForAgent 返回 null),不走产品 tuple 识别。
+    if (slotVendor === 'omp') return false;
+    return (
+      typeof prefs.providerId === 'string' &&
+      prefs.providerId.length > 0 &&
+      typeof prefs.model === 'string' &&
+      prefs.model.length > 0 &&
+      isKnownProductDefaultTupleIdentity({
+        vendor: slotVendor,
+        providerId: prefs.providerId,
+        model: prefs.model,
+      })
+    );
+  };
   const legacyCcModelCandidate =
     vendor === 'cc' &&
     legacyCcPrefs &&
@@ -458,6 +472,9 @@ function sanitize(raw: unknown): NewMakerDraft {
       pi: sanitizeVendorPrefs(lastByVendorRaw.pi, 'pi'),
       orca: sanitizeVendorPrefs(lastByVendorRaw.orca, 'orca'),
       codex: sanitizeVendorPrefs(lastByVendorRaw.codex, 'codex'),
+      // OMP 接入:与新增 vendor 同规则补位;defaultVendorPrefs 没有 omp 分支时会
+      // 落到 cc 默认分支(与 orca 同处理),符合预期。
+      omp: sanitizeVendorPrefs(lastByVendorRaw.omp, 'omp'),
     },
     modelChosenByVendor,
     defaultTupleCustomized,

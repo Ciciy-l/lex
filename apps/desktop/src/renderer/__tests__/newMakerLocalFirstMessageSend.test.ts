@@ -112,7 +112,10 @@ describe('NewMakerDraftRoute local first-message send', () => {
     expect(pendingHandoff).toBeGreaterThan(slashMatch);
     expect(pendingHandoff).toBeLessThan(sendPromise);
     expect(reviewStart).toBe(-1);
-    expect(source.slice(slashMatch, pendingHandoff)).toContain("capabilityAgentKind === 'pi'");
+    expect(source.slice(slashMatch, pendingHandoff)).toContain(
+      'supportsNativeSkillRuntimeAliases(capabilityAgentKind)',
+    );
+    expect(source).toContain('rewriteNativeSkillMessageForSend');
     expect(sessionViewSource).toContain('const pending = consumePending(sessionId);');
     expect(sessionViewSource).toContain('maybeDispatchDesktopSlashCommand');
     expect(sessionViewSource).toContain('leadingSlashInvocation(message)');

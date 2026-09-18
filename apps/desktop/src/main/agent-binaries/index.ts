@@ -132,7 +132,7 @@ interface AgentBinaryConfig {
   devBinDir: string;               // apps/<devBinDir>/<platform>/
   devBinaryName?: string;          // dev 可覆盖入口相对路径；prod 仍使用 binaryName
   vendorTag: VendorKey;            // 'binary-download-progress' IPC payload 的 vendor 字段
-  artifactKind: 'gz' | 'tar-gz-dir'; // CDN 资产形态(单文件 gz / 整目录 tar.gz)
+  artifactKind: 'gz' | 'tar-gz-dir' | 'raw'; // CDN 资产形态(单文件 gz / 整目录 tar.gz / 裸二进制)
   optionalAsset?: boolean;         // true = manifest 缺字段不算"需要下载"(可选 vendor)
   preserveLocalVersion?: boolean;  // true = 本地真实版本 >= manifest 时保留，禁止降级
   fastNetworkFallback?: boolean;   // true = 短连接单次尝试后尽快进入外层 fallback

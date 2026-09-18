@@ -30,7 +30,7 @@ export function firstProviderChatModel<T extends { id: string; mode?: string; di
   ));
 }
 
-type ProviderProbeAgent = Extract<AgentKind, 'claude-code' | 'codex' | 'pi'>;
+type ProviderProbeAgent = Extract<AgentKind, 'claude-code' | 'codex' | 'pi' | 'omp'>;
 
 export interface ProviderConnectionProbeRoute {
   baseUrl: string;

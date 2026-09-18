@@ -1,0 +1,80 @@
+sequenceDiagram
+  autonumber
+  participant UI as Renderer (ChatInput/PermissionCard)
+  participant Host as maker-host (omp-host)
+  participant Agent as OmpAgent
+  participant Handle as OmpSessionHandle
+  participant RPC as OmpRpcClient
+  participant Tr as OmpTranslator
+  participant Br as OmpPermissionBridge
+  participant OMP as omp --mode rpc (子进程)
+  participant Proxy as anthropic-compat-proxy (loopback)
+  participant DB as localDb (sessions)
+
+  Note over Host,DB: ① 新建会话
+  UI->>Host: createSession(agentKind='omp', workingDir, model, permissionMode)
+  Host->>Host: resolveOmpBinary() + vet (pin/sha256/size, isVettedAgentBinaryPath)
+  Host->>Host: materializeOmpAgentHome(): 写 models.yml(provider cindy, baseUrl=loopback, apiKey=$CINDY_OMP_PROXY_KEY, headers=session-id/token)
+  Host->>Agent: new OmpAgent(deps) → startSession(opts)
+  Agent->>Agent: createOmpSessionLaunchPlan(cwd=workingDir, HOME=omp-agent-home, --approval-mode=map(mode), --provider cindy --model m)
+  Agent->>OMP: spawn(argv, env快照, 不合并process.env)
+  OMP-->>Agent: ready {protocolVersion:1, maxFrameBytes:1MiB}
+  Agent->>RPC: new OmpRpcClient(streamTransport)
+  Agent->>RPC: request(new_session)
+  RPC->>OMP: {type:new_session, id}
+  OMP-->>RPC: response success
+  Agent->>RPC: request(get_state)
+  OMP-->>RPC: {sessionId, sessionFile, model, thinkingLevel}
+  Agent->>DB: 落库 sessions.sdkSessionId = sessionFile
+  Agent-->>Host: OmpSessionHandle
+  Host-->>UI: session started (capabilities 三档权限)
+
+  Note over UI,OMP: ② 发消息 + 流式事件投影
+  UI->>Handle: send({type:'user', content})
+  Handle->>RPC: request(prompt {message})
+  RPC->>OMP: {type:prompt, id:omp-N}
+  OMP-->>RPC: response ACK (success)
+  loop 事件流
+    OMP-->>RPC: agent_start / turn_start / message_start
+    OMP-->>RPC: message_update(text/thinking/toolcall delta)
+    RPC-->>Tr: frame
+    Tr-->>Handle: AgentEvent text/thinking/tool_use/tool_result
+    Handle-->>UI: events (按 sessionId+windowId 绑定, 拒绝迟到/跨会话)
+    OMP-->>RPC: tool_execution_start/update/end (update>1MiB→截断标注)
+    OMP-->>RPC: turn_end / agent_end(isTerminal:true)
+    Tr-->>Handle: done
+  end
+
+  Note over OMP,UI: ③ 权限确认 (extension_ui_request method:confirm, 字段形态待定-防御设计)
+  OMP-->>RPC: extension_ui_request {id, method:'confirm', ..., requestGeneration?}
+  RPC-->>Br: frame (快照 requestGeneration 若存在)
+  alt 已有 pending 或会话不匹配
+    Br->>RPC: respondToUi(id, {cancelled:true})
+  else 正常
+    Br-->>Handle: InteractionRequest{kind:'permission', toolName, input}
+    Handle-->>UI: interaction_request → PermissionPrompt 卡片
+    alt 用户决策 (30s 内)
+      UI-->>Br: allow/deny
+      Br->>RPC: respondToUi(id, {confirmed:bool}, {requestGeneration})
+      RPC->>OMP: {type:extension_ui_response, id, confirmed, requestGeneration?}
+    else 超时 (min(frame.timeout,60s), 默认30s)
+      Br->>RPC: respondToUi(id, {cancelled:true, timedOut:true})
+      Br-->>UI: interaction_dismissed + SystemCard「已按拒绝处理」
+    end
+  end
+  Note over Br: open_url → cancelled + 提示卡(不自动打开); 未知 method → cancelled + 脱敏日志
+
+  Note over UI,OMP: ④ 会话中途切档 (热切换=重启续接)
+  UI->>Handle: setPermissionMode('auto')
+  Handle->>OMP: 关闭 stdin (draining 优雅退出, ≤10s)
+  Handle->>Handle: 重生成 launch plan (--approval-mode write) → spawn
+  OMP-->>Handle: ready
+  Handle->>RPC: request(switch_session {sessionPath: 旧sessionFile})
+  OMP-->>RPC: success
+  Handle->>RPC: request(get_state) → 校验 sessionId 未漂移
+  Handle-->>UI: 状态「权限设置已应用」(失败→回滚旧档+提示)
+
+  Note over Host,Proxy: 模型请求凭证链 (每请求)
+  OMP->>Proxy: POST /v1/messages (x-cindy-omp-provider-id, session-id/token, 占位key)
+  Proxy->>Proxy: 按 provider 头钉住 omp 路由, 校验 session token, 替换真实授权
+  Proxy-->>OMP: 流式响应 (凭证永不落盘、不经 OMP)

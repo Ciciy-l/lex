@@ -5,7 +5,7 @@ import type {
 } from '@cindy/model-providers';
 import { savedCustomProviderModelShape } from '@/../shared/piRuntimeInitialization';
 
-export type RuntimeFillAgent = Extract<AgentKind, 'claude-code' | 'codex' | 'pi'>;
+export type RuntimeFillAgent = Extract<AgentKind, 'claude-code' | 'codex' | 'pi' | 'omp'>;
 export interface RuntimeFillHeaderRow {
   name: string;
   value: string;
@@ -59,7 +59,9 @@ const HEADER_DEPENDENT_FIELDS = new Set<RuntimeFillField>([
   'modelsUrl',
 ]);
 
-const RUNTIME_FILL_AGENTS: readonly RuntimeFillAgent[] = ['claude-code', 'codex', 'pi'];
+// OMP 与 claude-code / codex 同属「经 Cindy 兼容 Proxy 接入」的引擎,因此参与
+// runtime 填充;只有 Pi 走原生直连需要在 OAuth 来源下被排除(见 runtimeFillTargetAgents)。
+const RUNTIME_FILL_AGENTS: readonly RuntimeFillAgent[] = ['claude-code', 'codex', 'pi', 'omp'];
 
 export function runtimeFillTargetAgents(
   source: RuntimeFillAgent,
@@ -71,7 +73,7 @@ export function runtimeFillTargetAgents(
 }
 
 function defaultWire(agent: RuntimeFillAgent): ProviderWireProtocol {
-  return agent === 'claude-code'
+  return agent === 'claude-code' || agent === 'omp'
     ? 'anthropic-messages'
     : agent === 'codex'
       ? 'openai-responses'

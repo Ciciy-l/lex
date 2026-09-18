@@ -22,7 +22,6 @@ import { projectRemoteBotDelegations } from './remoteBotDelegations.js';
 
 import { readCodexContextWindowInfo } from '../maker-host/codex-context-window.js';
 import { prepareCodexCustomContextCatalog } from '../maker-host/codex-custom-context-catalog.js';
-import { inferProviderIdForModel } from '../maker-host/provider-route.js';
 import { resolveConfiguredContextWindow, resolveDesktopModelContextProviderId } from '../maker-host/model-context-settings.js';
 import { getCodexHome } from '../maker-host/auth-adapters.js';
 import { getCachedBinaryStatus } from '../agent-binaries/index.js';
@@ -101,6 +100,8 @@ import {
 } from '../../shared/agentInputQueue.js';
 import { getManagedWorktreeBasePath } from '../../shared/managedWorktreePaths.js';
 import { normalizeWorkingDirForProjectSettings } from '../../shared/workingDir.js';
+import { isMakerAgentKind } from '../../shared/agentKindConversion.js';
+import { createAgentCommandCatalogChangedPayload } from '../../shared/agentCommandCatalog.js';
 
 import {
   buildDeferredRuntimeSelectionProfile,
@@ -131,10 +132,6 @@ import {
 } from '../cindy-brain/ghostSetupInteractionBridge.js';
 import { initGhostSetupCoordinator } from '../cindy-brain/ghostSetupCoordinator.js';
 import { classifyGhostVisibility } from '../cindy-brain/ghostVisibility.js';
-import { resolveSafe as resolveCindyMediaUrl } from '../cindy-media/blobStore.js';
-import { ingestMedia } from '../cindy-media/ingest.js';
-import { removeRefs as removeMediaRefs } from '../cindy-media/ledger.js';
-import { sniffMediaMime } from '../cindy-media/sniffMediaMime.js';
 import { toolNotFoundMessage } from '../cindy-brain/pipeDispatcher.js';
 import { getGhostSetupChangeBus } from '../cindy-brain/ghostSetupChangeBus.js';
 import { isGhostDisabledForWorkdir } from '../cindy-brain/ghostWorkdirPrefs.js';
@@ -755,19 +752,13 @@ import {
 } from './agentHandoff.js';
 import {
   createContextOverflowRollover,
-  effectiveContextWindow,
   hasModelWindowContextToProtect,
-  isContextOverflowErrorData,
-  isOversizedHistoryErrorData,
   isPiPromptRpcTimeoutError,
   lookupVerifiedContextWindow,
   persistedUserContentToWireMessage,
   type ModelWindowSwitchPreparationResult,
 } from './contextOverflowRollover.js';
-import {
-  classifyCodexHistoryOversized,
-  reserveCodexForkCleanup,
-} from '../maker-host/codex-local-sessions.js';
+import { classifyCodexHistoryOversized } from '../maker-host/codex-local-sessions.js';
 import { hydrateQueuedAgentReferences } from './agentInputReferences.js';
 import { agentHandoffPending } from './agentHandoffPendingSingleton.js';
 import { clearSealedCodexPlanState, readCodexPlanState } from '../localDb/codexPlanState.js';
@@ -806,7 +797,7 @@ import {
 } from '../maker-host/session-provider-store.js';
 import { getActiveCatalog, setDiscoveredProviderModels } from '../maker-host/active-catalog.js';
 import { readCompactionPct } from '../maker-host/compaction-settings-store.js';
-import { resolveVerifiedContextWindow, resolveModelDefaultContextWindow } from '../maker-host/catalog-to-descriptors.js';
+import { resolveModelDefaultContextWindow } from '../maker-host/catalog-to-descriptors.js';
 import {
   isModelContextLimitCustomized,
   readModelContextLimit,
@@ -2163,7 +2154,7 @@ export function stopOrcaIdleWatcher(): void {
 }
 
 function requireAgentKind(value: unknown): AgentKind {
-  if (value === 'claude-code' || value === 'codex' || value === 'pi') return value;
+  if (value === 'claude-code' || value === 'codex' || value === 'pi' || value === 'omp') return value;
   throwIpcError('INVALID_PARAMS', 'agentKind required');
 }
 
@@ -4468,6 +4459,25 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
 
   registration.disposers.push(installSessionTurnObserver(sessionTurnObserverDependencies, session));
 
+  // A dynamic native command directory belongs to one live session instance.
+  // Broadcast only its small invalidation stamp; renderers re-read commands
+  // through the existing sender-validated list IPC, so no provider-originated
+  // command metadata crosses this push boundary.
+  registration.disposers.push(
+    session.onRuntimeCommandCatalogChange((snapshot) => {
+      if (!snapshot || sessionBindings.getSession(session.id) !== session) return;
+      broadcastToAllWindows(
+        MAKER_PUSH.AGENT_COMMAND_CATALOG_CHANGED,
+        createAgentCommandCatalogChangedPayload({
+          sessionId: session.id,
+          agentKind: session.agentKind,
+          revision: snapshot.revision,
+          status: snapshot.status,
+        }),
+      );
+    }),
+  );
+
   // session-agent-switch:登记本会话当前引擎,broadcaster / user 行落库据此逐行
   // stamp messages.agent_kind(切换后历史行的 agent_meta 必须按写入时引擎解析)。
   noteSessionAgentKind(session.id, makerToDbAgentKind(session.agentKind));
@@ -5151,7 +5161,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   // (model/effort/fast/permission/source/是否显式选过模型)。控制端经隧道调用 → seed 远程项目草稿。
   // 缓存未就绪 / 该 vendor 无草稿 model → 返回 {},控制端按 capabilities 默认兜底。
   ipcMain.handle(MAKER_INVOKE.GET_NEW_MAKER_DEFAULTS, (_e, agentKind: unknown) => {
-    return getRemoteNewMakerDefaults(requireAgentKind(agentKind));
+    const kind = requireAgentKind(agentKind);
+    return getRemoteNewMakerDefaults(kind);
   });
 
   // device-link 草稿「模型 effort/fast」写穿:控制端经隧道调用 → 跑在**被控端**。被控端不直接改
@@ -5170,8 +5181,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       active?: unknown;
       markModelChoice?: unknown;
     };
-    if (p.agent !== 'claude-code' && p.agent !== 'codex' && p.agent !== 'pi') {
-      throwIpcError('INVALID_PARAMS', 'agent must be claude-code|codex|pi');
+    if (!isMakerAgentKind(p.agent)) {
+      throwIpcError('INVALID_PARAMS', 'agent must be claude-code|codex|pi|omp');
     }
     if (p.providerId !== undefined && typeof p.providerId !== 'string') {
       throwIpcError('INVALID_PARAMS', 'providerId must be string');
@@ -5245,8 +5256,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     if (typeof p.sessionId !== 'string' || !p.sessionId) {
       throwIpcError('INVALID_PARAMS', 'sessionId required');
     }
-    if (p.agent !== 'claude-code' && p.agent !== 'codex' && p.agent !== 'pi') {
-      throwIpcError('INVALID_PARAMS', 'agent must be claude-code|codex|pi');
+    if (!isMakerAgentKind(p.agent)) {
+      throwIpcError('INVALID_PARAMS', 'agent must be claude-code|codex|pi|omp');
     }
     if (typeof p.providerId !== 'string' || !p.providerId) {
       throwIpcError('INVALID_PARAMS', 'providerId required');
@@ -5285,7 +5296,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     if (
       typeof p.sessionId !== 'string' ||
       !p.sessionId ||
-      (p.agent !== 'claude-code' && p.agent !== 'codex' && p.agent !== 'pi') ||
+      !isMakerAgentKind(p.agent) ||
       typeof p.providerId !== 'string' ||
       !p.providerId ||
       typeof p.model !== 'string' ||
@@ -5764,7 +5775,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             ? params.sessionId.trim()
             : undefined;
         const sessionMeta = sessionId ? await maker.getSessionMeta(sessionId) : null;
-        const builtins = maker.listAgentCommands(kind);
+        // OMP's native catalog belongs to the exact live session.  Static
+        // harnesses ignore this optional id, while a session-aware harness must
+        // never surface a sibling Worker/Lead's commands in this palette.
+        const builtins = sessionId === undefined
+          ? maker.listAgentCommands(kind)
+          : maker.listAgentCommands(kind, { sessionId });
         const mayListPackageCommands = shouldListPiPackageCommands(
           kind,
           sessionId !== undefined,
@@ -9845,7 +9861,13 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         deferDelegateTask?: unknown;
       };
       const workerAgent: AgentKind =
-        body.workerAgent === 'codex' ? 'codex' : body.workerAgent === 'pi' ? 'pi' : 'claude-code';
+        body.workerAgent === 'codex'
+          ? 'codex'
+          : body.workerAgent === 'pi'
+            ? 'pi'
+            : body.workerAgent === 'omp'
+              ? 'omp'
+              : 'claude-code';
       const delegateTask = typeof body.delegateTask === 'string' ? body.delegateTask : undefined;
       if (
         body.workerPermissionMode !== undefined &&
@@ -11658,7 +11680,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
     listAvailableModels: async ({ agent }) => {
       try {
-        const agents: AgentKind[] = agent ? [agent] : ['codex', 'claude-code', 'pi'];
+        const agents: AgentKind[] = agent ? [agent] : ['codex', 'claude-code', 'pi', 'omp'];
         const providerRouting = await getProviderRoutingContext();
         const result: Record<
           string,
@@ -11671,8 +11693,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         > = {};
         for (const a of agents) {
           const caps = maker.getCapabilities(a);
-          // key 必须区分 pi,否则 pi 模型会被塞进 claude_code 键与 CC 模型混淆。
-          const key = a === 'codex' ? 'codex' : a === 'pi' ? 'pi' : 'claude_code';
+          // key 必须区分各引擎，不能把 Pi / OMP 模型塞进 claude_code 键。
+          const key = a === 'codex' ? 'codex' : a === 'pi' ? 'pi' : a === 'omp' ? 'omp' : 'claude_code';
           const providers = providerRouting.availability[a] ?? [];
           result[key] = caps.availableModels.map((m) => ({
             id: m.id,
@@ -13942,11 +13964,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     if (!msg.createOpts || typeof msg.createOpts !== 'object') {
       throwIpcError('INVALID_PARAMS', 'queued.createOpts required');
     }
-    if (
-      msg.createOpts.agentKind !== 'claude-code' &&
-      msg.createOpts.agentKind !== 'codex' &&
-      msg.createOpts.agentKind !== 'pi'
-    ) {
+    if (!isMakerAgentKind(msg.createOpts.agentKind)) {
       throwIpcError('INVALID_PARAMS', 'queued.createOpts.agentKind invalid');
     }
     const normalized: AgentInputQueuedMessage = { ...msg };
@@ -15613,7 +15631,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         }
       }
       let targetContextWindow: number | undefined;
-      let currentContextWindow: number | undefined;
       let verifiedCurrentWindow: number | undefined;
       let modelWindowContextNeedsProtection = false;
       let modelWindowRebuilt = false;
@@ -15634,32 +15651,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             runtimeAgentKind,
           ) ?? undefined;
         const liveCurrentWindow = liveSessionBeforeRouteChange?.getUsageSnapshot?.().contextWindow;
-        const reportedCurrentWindow =
-          typeof liveCurrentWindow === 'number' &&
-          Number.isFinite(liveCurrentWindow) &&
-          liveCurrentWindow > 0
-            ? liveCurrentWindow
-            : typeof runtimeStatus.contextWindow === 'number' &&
-                Number.isFinite(runtimeStatus.contextWindow) &&
-                runtimeStatus.contextWindow > 0
-              ? runtimeStatus.contextWindow
-              : 0;
-        // Current-session usage has already been route-capped by the harness when a verified
-        // catalog ceiling exists. If the current route has no verified catalog entry, its live
-        // (or last persisted) effective window is still the best fact about the running context.
-        // Pi remains live-only because its provider/model reload can change the effective window.
-        currentContextWindow =
-          runtimeAgentKind === 'pi'
-            ? typeof liveCurrentWindow === 'number' &&
-              Number.isFinite(liveCurrentWindow) &&
-              liveCurrentWindow > 0
-              ? liveCurrentWindow
-              : undefined
-            : effectiveContextWindow(
-                currentRuntimeModel,
-                reportedCurrentWindow,
-                catalogCurrentWindow,
-              ) || undefined;
         // Pi 的有效窗口只能相信运行时上报值；其它引擎的缩窗闸门只接受目录核实值。
         verifiedCurrentWindow =
           runtimeAgentKind === 'pi'

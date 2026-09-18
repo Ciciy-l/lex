@@ -19,6 +19,7 @@
 import type { UnifiedCommand, AgentKind } from '@cindy/maker-core';
 import { leadingSlashInvocation } from '@cindy/maker-shared';
 import type { PiPackageCommandRuntimeStatus } from '@/../shared/piPackages';
+import type { AgentCommandCatalogChangedPayload } from '@/../shared/agentCommandCatalog';
 
 export { leadingSlashInvocation };
 
@@ -30,6 +31,17 @@ const shadowedUnavailableSkillsByCommands = new WeakMap<UnifiedCommand[], Set<st
 export type { UnifiedCommand } from '@cindy/maker-core';
 
 export const PI_RUNTIME_SKILL_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000, 4_000] as const;
+
+/**
+ * A native command directory is scoped to one live session.  A push from a
+ * different lead, Worker, or engine must never refresh the current palette.
+ */
+export function shouldRefreshRuntimeCommandCatalog(
+  payload: AgentCommandCatalogChangedPayload,
+  context: { sessionId?: string | null; agentKind: AgentKind },
+): boolean {
+  return context.sessionId === payload.sessionId && context.agentKind === payload.agentKind;
+}
 
 export function isSlashCommandUnavailable(command: UnifiedCommand): boolean {
   return command.kind === 'agent-skill'
@@ -50,9 +62,15 @@ export function slashCommandInvocationName(command: UnifiedCommand): string {
     : command.name;
 }
 
+/** Engines whose native Skills use a `skill:<name>` command namespace. */
+export function supportsNativeSkillRuntimeAliases(agentKind: AgentKind): boolean {
+  return agentKind === 'pi' || agentKind === 'omp';
+}
+
 /**
  * Palette / composer keep the human name (`/git`). Rewrite only at dispatch so
- * Pi receives the runtime alias (`/skill:git`) without leaking it into the UI.
+ * the native engine receives the runtime alias (`/skill:git`) without leaking
+ * it into the UI.
  */
 export function rewriteAgentSkillInvocationForDispatch(
   message: string,
@@ -71,11 +89,18 @@ export function rewriteAgentSkillInvocationForDispatch(
   return `${message.slice(0, leading.start)}/${command.runtimeCommandName}${message.slice(leading.end)}`;
 }
 
-/** Rewrite `/git` → `/skill:git` even when the skill is still `discovered`. */
-export function rewritePiSkillAliasFromCommand(
+/**
+ * Rewrite `/git` → `/skill:git` even while native startup still reports the
+ * Skill as discovered. Pi needs this during its runtime retry window. OMP's
+ * scanner has no source provenance in the native catalog, so OMP only accepts
+ * the direct commands its live catalog has actually published.
+ */
+export function rewriteNativeSkillAliasFromCommand(
+  agentKind: AgentKind,
   message: string,
   command: UnifiedCommand | undefined,
 ): string {
+  if (agentKind !== 'pi') return message;
   const leading = leadingSlashInvocation(message);
   if (
     !leading
@@ -89,12 +114,15 @@ export function rewritePiSkillAliasFromCommand(
 }
 
 /** First-message / worktree send paths that skip SessionView dispatch. */
-export async function rewritePiSkillMessageForSend(params: {
+export async function rewriteNativeSkillMessageForSend(params: {
   agentKind: AgentKind;
   message: string;
   workingDir?: string | null;
   sessionId?: string;
 }): Promise<string> {
+  // Pi carries source-path/snapshot provenance for its discovered Skill alias.
+  // OMP does not: a matching `skill:name` might belong to a different physical
+  // Skill, so filesystem discovery must never invent a native invocation.
   if (params.agentKind !== 'pi') return params.message;
   const leading = leadingSlashInvocation(params.message);
   if (!leading) return params.message;
@@ -102,7 +130,7 @@ export async function rewritePiSkillMessageForSend(params: {
     ...(params.sessionId ? { sessionId: params.sessionId } : {}),
   });
   const hit = commands.find((command) => command.name.toLowerCase() === leading.name.toLowerCase());
-  return rewritePiSkillAliasFromCommand(params.message, hit);
+  return rewriteNativeSkillAliasFromCommand(params.agentKind, params.message, hit);
 }
 
 /**

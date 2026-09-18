@@ -147,7 +147,8 @@ import { makerChatStore } from '@/lib/makerChatStore';
 import {
   leadingSlashInvocation,
   rebaseInlineRangesAfterSlashCommandRewrite,
-  rewritePiSkillMessageForSend,
+  rewriteNativeSkillMessageForSend,
+  supportsNativeSkillRuntimeAliases,
 } from '@/lib/slashCommands';
 import { worktreeCreationStore } from '@/lib/worktreeCreationStore';
 import { useRefreshWorktreeForSession } from '@/contexts/WorktreeContext';
@@ -421,8 +422,14 @@ function draftEnableOrcaOptions(
   providersReady: boolean,
   deferDelegateTask = false,
 ) {
-  const preferredAgent: 'claude-code' | 'codex' | 'pi' =
-    collab.worker === 'codex' ? 'codex' : collab.worker === 'pi' ? 'pi' : 'claude-code';
+  const preferredAgent: 'claude-code' | 'codex' | 'pi' | 'omp' =
+    collab.worker === 'codex'
+      ? 'codex'
+      : collab.worker === 'pi'
+        ? 'pi'
+        : collab.worker === 'omp'
+          ? 'omp'
+          : 'claude-code';
   // Worker 类型也是**设备作用域**的(codex review P2):在只连了 Codex 的设备 A 选了 Codex
   // Worker,切到只连 Claude 的设备 B 时,workerConfig 虽然被清了,collab.worker 仍是 codex,
   // 透传过去必撞被控端的 NO_PROVIDER_FOR_AGENT 预检,协同又静默降级成单会话。
@@ -430,10 +437,10 @@ function draftEnableOrcaOptions(
   // 没有已连接供应商、而另一个有,就改用另一个;两个都没有则原样透传,由 main 的精确
   // preflight 报可操作错误(不在这里编一个同样跑不起来的值)。
   // 仅在目录就绪时收窄,理由同下方 providerId:未就绪的空快照会误判成"都没有"。
-  const workerAgent: 'claude-code' | 'codex' | 'pi' = (() => {
+  const workerAgent: 'claude-code' | 'codex' | 'pi' | 'omp' = (() => {
     if (!providersReady) return preferredAgent;
     if (connectedProvidersForAgent(providers, preferredAgent).length > 0) return preferredAgent;
-    const fallback = (['claude-code', 'codex', 'pi'] as const).find(
+    const fallback = (['claude-code', 'codex', 'pi', 'omp'] as const).find(
       (agent) =>
         agent !== preferredAgent && connectedProvidersForAgent(providers, agent).length > 0,
     );
@@ -752,8 +759,8 @@ export function NewMakerDraftRoute() {
    * 并清掉 —— 持久化之后那等于一切引擎只能记住最后一次选择。
    */
   const draftFavoriteAnchor = useDraftFavoriteAnchor(normalizeDbAgentKind(draft.vendor));
-  const persistedAgentKind: 'cc' | 'codex' | 'pi' = normalizeDbAgentKind(draft.vendor);
-  const authVendor: 'cc' | 'codex' | 'pi' = persistedAgentKind;
+  const persistedAgentKind = normalizeDbAgentKind(draft.vendor);
+  const authVendor = persistedAgentKind;
   const capabilityAgentKind = dbToMakerAgentKind(persistedAgentKind);
 
   // 品牌区跟随当前主题；icon / logo 的固定布局统一由 ThemeBrandLockup 负责。
@@ -905,7 +912,7 @@ export function NewMakerDraftRoute() {
   );
   const hiddenSwitcherVendors = useMemo<MakerVendor[]>(() => {
     if (!availableAgentsLoaded) return [];
-    return (['cc', 'codex', 'pi'] as const).filter((vendor) => !availableVendors.has(vendor));
+    return (['cc', 'codex', 'pi', 'omp'] as const).filter((vendor) => !availableVendors.has(vendor));
   }, [availableAgentsLoaded, availableVendors]);
   /**
    * 「这份草稿要建到对端设备上」—— 只看 deviceId,**不再要求 workingDir**(#807)。
@@ -1242,7 +1249,14 @@ export function NewMakerDraftRoute() {
       resolveNewMakerDefaultTuple({
         providers: localProviders,
         providersLoading: localProvidersLoading,
-        availableAgents: availableVendors,
+        // OMP 接入:shared/newMakerDefaultTuple 的 vendor 口径到今天仍只有
+        // cc/codex/pi/orca —— omp 与 orca 一样没有产品默认 tuple(见其中的
+        // vendorForAgent),按它的口径收敛后再传入,别让 omp 凭空产生 tuple。
+        availableAgents: new Set(
+          [...availableVendors].filter(
+            (vendor): vendor is 'cc' | 'codex' | 'pi' | 'orca' => vendor !== 'omp',
+          ),
+        ),
         availableAgentsLoaded,
       }),
     [localProviders, localProvidersLoading, availableVendors, availableAgentsLoaded],
@@ -2078,7 +2092,7 @@ export function NewMakerDraftRoute() {
   const carryDraftFavoriteAnchorToSession = useCallback(
     (
       newSessionId: string,
-      engine: 'cc' | 'codex' | 'pi',
+      engine: 'cc' | 'codex' | 'pi' | 'omp',
       model: string,
       providerId: string | null,
     ): void => {
@@ -2300,7 +2314,7 @@ export function NewMakerDraftRoute() {
   const handleRemoteProjectAdded = useCallback(
     async (target: RemoteProjectTarget) => {
       // vendor 由外层 VendorSegmentedSwitcher (draft.vendor) 单一决策 —— dialog 不再让用户选。
-      const draftVendor: 'cc' | 'codex' | 'pi' = normalizeDbAgentKind(draft.vendor);
+      const draftVendor = normalizeDbAgentKind(draft.vendor);
 
       if (target.kind === 'device-link') {
         // device-link:**不**像 SSH 立即建会话(会在被控端留空会话)。改为把当前草稿指向该被控
@@ -2352,6 +2366,13 @@ export function NewMakerDraftRoute() {
           prefetchDeviceGitSafetySettings(target.deviceId),
         ]);
         return;
+      }
+
+      // OMP is a local cross-platform engine. Its remote SSH host lifecycle has
+      // not been implemented, so do not silently turn an OMP draft into another
+      // engine when a user picks an SSH project.
+      if (draftVendor === 'omp') {
+        throw new Error(t('ccAgent.draft.createSessionFailed'));
       }
 
       // 轮 35 CRITICAL 移除:Pi 已支持 SSH 远端(pi-manager daemon + SshPiTransport,
@@ -3793,7 +3814,12 @@ export function NewMakerDraftRoute() {
           // agent 启动时看到的工作区已是迁移后的状态。fail-soft：检测错误只 warn，不阻塞 send。
           try {
             const wd = effectiveWorkingDir;
-            if (wd && !isRemoteProjectDraft && persistedAgentKind !== 'pi') {
+            if (
+              wd &&
+              !isRemoteProjectDraft &&
+              persistedAgentKind !== 'pi' &&
+              persistedAgentKind !== 'omp'
+            ) {
               const r = await crossAgentConvertService.detect(
                 wd,
                 persistedAgentKind === 'cc' ? 'claude-code' : persistedAgentKind,
@@ -4027,7 +4053,7 @@ export function NewMakerDraftRoute() {
                   }
                 }
 
-                const dispatchedMessage = await rewritePiSkillMessageForSend({
+                const dispatchedMessage = await rewriteNativeSkillMessageForSend({
                   agentKind: persistedAgentKind === 'cc' ? 'claude-code' : persistedAgentKind,
                   message,
                   workingDir: newDir,
@@ -4234,7 +4260,7 @@ export function NewMakerDraftRoute() {
             // 列首 /cmd,以及 Pi 的空白前缀 /cmd;草稿路由只交接,不复制分派逻辑。
             const slashMatch = message.match(/^\/(\S+)(?:\s+(.*))?$/s);
             const leading =
-              !slashMatch && capabilityAgentKind === 'pi'
+              !slashMatch && supportsNativeSkillRuntimeAliases(capabilityAgentKind)
                 ? leadingSlashInvocation(message)
                 : undefined;
             if (slashMatch || leading) {
@@ -4257,7 +4283,7 @@ export function NewMakerDraftRoute() {
               return;
             }
 
-            const dispatchedMessage = await rewritePiSkillMessageForSend({
+            const dispatchedMessage = await rewriteNativeSkillMessageForSend({
               agentKind: capabilityAgentKind,
               message,
               workingDir: sendWorkingDir,
@@ -5636,7 +5662,14 @@ export function NewMakerDraftRoute() {
           onCreate={(form: CreateWorkerForm) => {
             patchCollab({
               enabled: true,
-              worker: form.agent === 'codex' ? 'codex' : form.agent === 'pi' ? 'pi' : 'cc',
+              worker:
+                form.agent === 'codex'
+                  ? 'codex'
+                  : form.agent === 'pi'
+                    ? 'pi'
+                    : form.agent === 'omp'
+                      ? 'omp'
+                      : 'cc',
               workerConfig: {
                 role: form.role,
                 model: form.model,

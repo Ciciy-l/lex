@@ -54,6 +54,11 @@ import type {
 } from '../types/account-rate-limits.js';
 import type { HookEvent, HookCallbackMatcher, Query } from '@anthropic-ai/claude-agent-sdk';
 
+import type {
+  OmpSessionCredentials,
+  OmpSessionExecutableEnvironment,
+} from './omp/launch-plan.js';
+import type { OmpProcessSpawner } from './omp/process-host.js';
 import type { AuthAdapter } from '../interfaces/auth-adapter.js';
 import type { AgentRuntimeConfig } from '../interfaces/runtime-config.js';
 import type { Logger } from '../interfaces/logger.js';
@@ -70,6 +75,7 @@ import type {
   ScanAtResourcesOptions,
   ScanAtResourcesResult,
   AgentBuiltinCommand,
+  AgentRuntimeCommandCatalogSnapshot,
   ListAgentSkillsOptions,
   ListAgentSkillsResult,
 } from '../types/palette.js';
@@ -700,6 +706,46 @@ export interface AgentDeps {
   resolvePiAgentHome?: (remoteHostId?: string | null) => string | undefined;
   /** Native user context root, separate from Cindy's models/auth runtime home. */
   resolvePiGlobalContextHome?: (remoteHostId?: string | null) => string | undefined;
+
+  /**
+   * OMP-only（T04 由 desktop host 注入）：受管持久根（`userData/omp-agent-home`）。
+   * 绝不能复用 Pi 的目录 —— 两者上游仓库不同但环境变量名相近（PI_CONFIG_DIR /
+   * PI_CODING_AGENT_DIR），复用会静默读到对方的凭证与会话。
+   */
+  resolveOmpAgentHome?: (remoteHostId?: string | null) => string | undefined;
+  /**
+   * OMP-only: explicit non-secret process-launch values.  The host chooses the
+   * small PATH/shell/locale whitelist; maker-core never clones process.env.
+   */
+  resolveOmpExecutableEnvironment?: () => OmpSessionExecutableEnvironment | undefined;
+  /**
+   * OMP-only: host-owned native process creation boundary. Desktop supplies a
+   * Windows Job Object container; POSIX keeps the shared process-group path.
+   * The callback is Main-only and never exposed through Renderer IPC.
+   */
+  spawnOmpProcess?: OmpProcessSpawner;
+  /**
+   * OMP-only: the shared native Skill root to project into the managed OMP
+   * HOME.  This is a source directory, never an OMP config/auth root.
+   */
+  resolveOmpGlobalSkillsRoot?: () => string | undefined;
+  /**
+   * OMP-only：进子进程 env 的 Cindy 托管凭证。只给值，不落盘 ——
+   * `models.yml` 的 apiKey 写的是 env 名（spike §10.4）。
+   */
+  resolveOmpCredentials?: (context: {
+    sessionId?: string;
+    providerId?: string | null;
+  }) => OmpSessionCredentials | undefined;
+  /**
+   * OMP-only：受管 `models.yml` 的**内容**（provider/catalog 在 host 侧）。
+   * maker-core 只负责把它写到受管根里，不解析、不改写一个字节。
+   */
+  resolveOmpModelsYaml?: (context: {
+    sessionId?: string;
+    providerId?: string | null;
+    model: string;
+  }) => string | undefined;
 
   /**
    * Pi-only: advisory metadata for Cindy UI/command projection. This resolver
@@ -2101,6 +2147,17 @@ export interface AgentSessionHandle {
   onRuntimeCapabilitiesChange?(
     listener: (manifest: PiRuntimeCapabilityManifest | undefined) => void,
   ): () => void;
+  /**
+   * Engine-neutral projection of the native command catalog for this exact
+   * live runtime. Static command lists remain on `BaseAgent.listAgentCommands`;
+   * this optional surface exists for harnesses that discover or update native
+   * commands after session startup.
+   */
+  getRuntimeCommandCatalog?(): AgentRuntimeCommandCatalogSnapshot | undefined;
+  /** Subscribe to replacement of the live runtime command catalog. */
+  onRuntimeCommandCatalogChange?(
+    listener: (snapshot: AgentRuntimeCommandCatalogSnapshot | undefined) => void,
+  ): () => void;
   /** Codex-only: 当前会话绑定的 app-server host 是否经 loopback proxy 出口。 */
   readonly codexProxyActive?: boolean;
   /**
@@ -2451,16 +2508,17 @@ export abstract class BaseAgent {
   abstract startSession(opts: StartSessionOptions): Promise<AgentSessionHandle>;
 
   /**
-   * Agent 内置 command 白名单 —— ChatInput `/` palette 的 'agent-builtin' 类目。
+   * Agent command palette projection.  Most harnesses return a small static
+   * whitelist; a native RPC harness may instead return the catalog confirmed
+   * by this exact live session.  Callers must therefore pass `sessionId` when
+   * one is available rather than accidentally borrowing another session's
+   * runtime commands.
    *
-   * 同步、半静态: 子类返回硬编码常量数组(见 claude-code/commands.ts)。
-   * 不从 SDK 自动派生 —— 由开发者显式选择想暴露给用户的子集, SDK 支持
-   * 但白名单未列出的命令不会进 palette。
-   *
-   * 执行方式: desktop 把 `/<name> [args]` 当 prompt 前缀直接 send 给当前会话,
-   * 由 agent 自己识别处理。
-   */
-  listAgentCommands(): AgentBuiltinCommand[] {
+   * Execution is unchanged: desktop sends `/<name> [args]` as a prompt prefix
+   * and the agent owns its native command semantics.
+  */
+  listAgentCommands(_opts?: { sessionId?: string }): AgentBuiltinCommand[] {
+    void _opts;
     return [];
   }
 

@@ -13,6 +13,10 @@ describe('agentKindToVendor', () => {
     expect(agentKindToVendor('pi')).toBe('pi');
   });
 
+  it('maps omp sessions to the OMP vendor mark', () => {
+    expect(agentKindToVendor('omp')).toBe('omp');
+  });
+
   it('maps codex to codex and cc/claude-code/null to cc', () => {
     expect(agentKindToVendor('codex')).toBe('codex');
     expect(agentKindToVendor('cc')).toBe('cc');

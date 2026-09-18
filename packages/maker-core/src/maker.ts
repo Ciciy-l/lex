@@ -28,6 +28,7 @@ import type {
   ScanAtResourcesOptions,
   ScanAtResourcesResult,
   AgentBuiltinCommand,
+  AgentRuntimeCommandCatalogSnapshot,
   ListAgentSkillsOptions,
   ListAgentSkillsResult,
 } from './types/palette.js';
@@ -195,7 +196,8 @@ function capabilitiesForSession(
   };
 }
 
-function canonicalPiRuntimePath(value: string): string {
+/** Normalize a path before comparing it with a live runtime-owned session path. */
+function canonicalRuntimePath(value: string): string {
   try {
     return fs.realpathSync(value);
   } catch {
@@ -272,7 +274,7 @@ async function mergePiRuntimeSkillStatuses(
     deadlineAtMs: Date.now() + PI_PROJECT_SKILL_PALETTE_FINGERPRINT_TIMEOUT_MS,
   };
   for (const skill of manifest.projectResources?.loadedSkills ?? []) {
-    const canonicalSourcePath = canonicalPiRuntimePath(skill.sourcePath);
+    const canonicalSourcePath = canonicalRuntimePath(skill.sourcePath);
     if (!skill.snapshotDigest || !skill.sourceFingerprint || !skill.canonicalRepoRoot) {
       changedProjectSkills.set(canonicalSourcePath, skill.sourcePath);
       continue;
@@ -297,7 +299,7 @@ async function mergePiRuntimeSkillStatuses(
     const skillName = command.name.slice('skill:'.length);
     if (command.sourceInfo.scope === 'project' && typeof baseDir === 'string') {
       loadedLegacyProjectSkills.set(
-        [skillName, canonicalPiRuntimePath(baseDir)].join('\0'),
+        [skillName, canonicalRuntimePath(baseDir)].join('\0'),
         command.name,
       );
       continue;
@@ -309,7 +311,7 @@ async function mergePiRuntimeSkillStatuses(
     // their containing folder names.
     const explicitPath = piExplicitSkillRuntimePath(command);
     if (explicitPath) {
-      loadedExplicitSkills.set(canonicalPiRuntimePath(explicitPath), command.name);
+      loadedExplicitSkills.set(canonicalRuntimePath(explicitPath), command.name);
     }
   }
   if (
@@ -326,11 +328,11 @@ async function mergePiRuntimeSkillStatuses(
     skills: sessionResult.skills.map((skill) => {
       let runtimeCommandName: string | undefined;
       if (skill.scope === 'repo' && skill.path) {
-        const canonicalSkillPath = canonicalPiRuntimePath(skill.path);
+        const canonicalSkillPath = canonicalRuntimePath(skill.path);
         if (!changedProjectSkills.has(canonicalSkillPath)) {
           runtimeCommandName = loadedExplicitSkills.get(canonicalSkillPath)
             ?? [skill.path, path.dirname(path.dirname(skill.path))]
-              .map(canonicalPiRuntimePath)
+              .map(canonicalRuntimePath)
               .map((skillPath) => loadedLegacyProjectSkills.get([skill.name, skillPath].join('\0')))
               .find((commandName) => commandName !== undefined);
         }
@@ -1119,6 +1121,19 @@ export class Maker {
     return this.activeSessions.get(id)?.onRuntimeCapabilitiesChange(listener) ?? (() => undefined);
   }
 
+  /** Read a live session's engine-neutral native command catalog without resuming it. */
+  getSessionRuntimeCommandCatalog(id: string): AgentRuntimeCommandCatalogSnapshot | undefined {
+    return this.activeSessions.get(id)?.getRuntimeCommandCatalog();
+  }
+
+  /** Subscribe to an exact live session's native command catalog. */
+  onSessionRuntimeCommandCatalogChange(
+    id: string,
+    listener: (snapshot: AgentRuntimeCommandCatalogSnapshot | undefined) => void,
+  ): () => void {
+    return this.activeSessions.get(id)?.onRuntimeCommandCatalogChange(listener) ?? (() => undefined);
+  }
+
   /**
    * 读 session 持久化元数据 (title / agentKind / sdkSessionId / ...).
    * 主要给 IPC 层在 send 前查最新 title 作为日志诊断字段透传用 ——
@@ -1346,11 +1361,15 @@ export class Maker {
   }
 
   /**
-   * Agent 内置 command (palette 'agent-builtin' 类目) —— 同步硬编码白名单。
-   * 见 agents/<kind>/commands.ts。
+   * Agent command palette projection.  A session-aware runtime catalog is
+   * always scoped to the caller's business session; static agents ignore the
+   * optional id.
    */
-  listAgentCommands(agentKind: AgentKind): AgentBuiltinCommand[] {
-    return this.requireAgent(agentKind).listAgentCommands();
+  listAgentCommands(
+    agentKind: AgentKind,
+    opts?: { sessionId?: string },
+  ): AgentBuiltinCommand[] {
+    return this.requireAgent(agentKind).listAgentCommands(opts);
   }
 
   /**
@@ -1378,11 +1397,20 @@ export class Maker {
       ...agentOpts,
       includeManagedPiPackages,
     }));
-    if (agentKind !== 'pi' || !sessionId) return result;
+    if (!sessionId) return result;
+    // OMP's command catalog deliberately exposes only a command name and
+    // description.  Unlike Pi's project-resource manifest it contains no
+    // source path or launch-snapshot fingerprint, so a matching `skill:name`
+    // cannot prove that this particular scanned file is what the live process
+    // loaded (same-name user/project Skills and in-place replacement are both
+    // valid upstream states). Keep the filesystem view discovered. The native
+    // catalog remains independently available through listAgentCommands.
+    if (agentKind === 'omp') return result;
+    if (agentKind !== 'pi') return result;
     if (
       session?.agentKind !== 'pi'
       || !opts.workingDir
-      || canonicalPiRuntimePath(opts.workingDir) !== canonicalPiRuntimePath(session.workDir)
+      || canonicalRuntimePath(opts.workingDir) !== canonicalRuntimePath(session.workDir)
     ) {
       return result;
     }

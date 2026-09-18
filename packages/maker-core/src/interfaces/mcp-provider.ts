@@ -63,6 +63,33 @@ export interface CodexHttpMcpServerConfig {
   envHttpHeaders?: Record<string, string>;
 }
 
+/**
+ * OMP RPC 的宿主工具定义。
+ *
+ * OMP 是独立 CLI 进程，不能直接消费进程内 MCP Server；它通过 RPC
+ * `set_host_tools` 注册一组受宿主控制的工具，再用 `host_tool_call` 回调。
+ * 这份窄接口刻意只允许文本结果：MCP / Orca 的控制面只需要结构化文本，
+ * 不把任意 UI、文件或二进制能力扩散进 OMP 的启动面。
+ */
+export interface OmpHostToolResult {
+  readonly content: readonly { readonly type: 'text'; readonly text: string }[];
+  /** true → 上游把这次工具调用作为失败处理。 */
+  readonly isError?: boolean;
+}
+
+export interface OmpHostToolDefinition {
+  readonly name: string;
+  readonly label?: string;
+  readonly description: string;
+  /** JSON Schema object, forwarded verbatim only after maker-core validates it. */
+  readonly parameters: Readonly<Record<string, unknown>>;
+  /** The call is cancelled when the OMP session closes or OMP sends host_tool_cancel. */
+  execute(
+    arguments_: Readonly<Record<string, unknown>>,
+    context: Readonly<{ signal: AbortSignal }>,
+  ): Promise<OmpHostToolResult>;
+}
+
 export interface McpProvider {
   /** MCP server 唯一名（host 自定义） */
   name: string;
@@ -76,6 +103,12 @@ export interface McpProvider {
   toClaudeSdkConfig?(context: McpProviderContext): unknown | null;
   /** 返回 Codex app-server 可直接消费的远程 MCP 配置；in-process SDK server 仍走 host HTTP bridge。 */
   toCodexMcpConfig?(context: McpProviderContext): CodexHttpMcpServerConfig | null;
+  /**
+   * Optional OMP adapter.  Providers that do not explicitly implement it stay
+   * unavailable to OMP; this prevents a generic MCP discovery path from
+   * silently loading project tools or extensions in the OMP process.
+   */
+  toOmpRpcHostTools?(context: McpProviderContext): readonly OmpHostToolDefinition[] | null;
   /** Provider 需要额外注入给 agent 子进程的 env，例如远程 MCP bearer token。 */
   getExtraEnv?(context: McpProviderContext): Promise<Record<string, string> | null> | Record<string, string> | null;
 }

@@ -56,6 +56,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ClaudeMark } from '@/components/icons/ClaudeMark';
 import { CodexMark } from '@/components/icons/CodexMark';
+import { OmpMark } from '@/components/icons/OmpMark';
 import { PiMark } from '@/components/icons/PiMark';
 import {
   CustomProviderRuntimeFillOverlay,
@@ -129,17 +130,54 @@ import { SettingsTextInput } from './SettingsTextInput';
 import {
   configuredPresetAgents,
   isConfiguredPresetRuntime,
+  presetRuntimeForAgent,
 } from '@/../shared/piRuntimeInitialization';
 
 /**
- * 本面板配置 claude / codex / pi 三个 runtime。pi 是多协议 harness:BYOM 自定义/本地模型
+ * 本面板配置 claude / codex / pi / omp 四个 runtime。pi 是多协议 harness:BYOM 自定义/本地模型
  * 走 pi 原生 provider 直连(不过 anthropic-compat 代理),故 pi tab 额外提供显式 api 选择器。
+ * omp 经 Cindy 的 anthropic-compat 代理接入(wire protocol 固定 anthropic-messages),
+ * 因此没有 pi 那样的多协议选择器。
  */
-type DialogAgentKind = Extract<AgentKind, 'claude-code' | 'codex' | 'pi'>;
+type DialogAgentKind = Extract<AgentKind, 'claude-code' | 'codex' | 'pi' | 'omp'>;
 
-const AGENTS: DialogAgentKind[] = ['claude-code', 'codex', 'pi'];
+const AGENTS: DialogAgentKind[] = ['claude-code', 'codex', 'pi', 'omp'];
 
 const VISIBLE_AGENTS: DialogAgentKind[] = AGENTS;
+
+/**
+ * 类型守卫:AgentKind 已是四元组,这里回落到守卫而不是断言,避免把未知值当已配置 runtime
+ * 去索引表单。取值集合与 AGENTS 保持一致 —— 新增 runtime 时必须同时改这两处。
+ */
+function isDialogAgentKind(agent: AgentKind): agent is DialogAgentKind {
+  return (
+    agent === 'claude-code' || agent === 'codex' || agent === 'pi' || agent === 'omp'
+  );
+}
+
+/**
+ * 协议选择器的文案 key；codex 返回 null(它用 option 自带的 labelKey/helpKey)。
+ *
+ * 为什么需要分引擎文案：codex 那一套写的是「Responses 原生、其余 {{appName}} 桥接」，
+ * 因为 **Codex 只会说 Responses**，上游说别的协议时必须由 {{appName}} 转换。
+ * pi / omp 是原生支持三种协议的 harness，套用 codex 的措辞会得出「明明原生却说桥接」
+ * 的错误描述（OMP 实测三条路径都能直接打）。
+ */
+function wireProtocolCopyKey(
+  agent: DialogAgentKind,
+  protocol: ProviderWireProtocol,
+  kind: 'label' | 'help',
+): string | null {
+  const prefix = agent === 'pi' ? 'pi' : agent === 'omp' ? 'omp' : null;
+  if (!prefix) return null;
+  const suffix =
+    protocol === 'anthropic-messages'
+      ? 'Anthropic'
+      : protocol === 'openai-responses'
+        ? 'Responses'
+        : 'Chat';
+  return `settings.providers.custom.wireProtocol.${prefix}${suffix}${kind === 'help' ? 'Help' : ''}`;
+}
 
 const DIALOG_FOCUSABLE_SELECTOR = [
   'button:not([disabled])',
@@ -169,6 +207,11 @@ const TAB_META: Record<
     labelKey: 'settings.providers.custom.protocol.pi',
     helpKey: 'settings.providers.custom.protocol.piDesc',
   },
+  omp: {
+    Mark: OmpMark,
+    labelKey: 'settings.providers.custom.protocol.omp',
+    helpKey: 'settings.providers.custom.protocol.ompDesc',
+  },
 };
 
 /** pi 默认 wire protocol:BYOM 本地端点(Ollama/vLLM 的 /v1/chat/completions)最常见。 */
@@ -178,6 +221,9 @@ const PI_DEFAULT_WIRE: ProviderWireProtocol = 'openai-chat';
 function defaultWireFor(agent: DialogAgentKind): ProviderWireProtocol {
   if (agent === 'claude-code') return 'anthropic-messages';
   if (agent === 'pi') return PI_DEFAULT_WIRE;
+  // OMP 经 anthropic-compat 代理接入,只支持 Anthropic Messages 形态
+  // (见 packages/maker-core/src/agents/omp/models-config.ts 里 Cindy provider 的 api)。
+  if (agent === 'omp') return 'anthropic-messages';
   return 'openai-responses';
 }
 
@@ -281,6 +327,7 @@ function initRuntimes(initial?: CustomProviderConfig): Record<DialogAgentKind, R
     'claude-code': emptyRuntime('claude-code'),
     codex: emptyRuntime('codex'),
     pi: emptyRuntime('pi'),
+    omp: emptyRuntime('omp'),
   };
   if (initial) {
     for (const a of AGENTS) {
@@ -606,6 +653,7 @@ export function CustomProviderDialog({
     'claude-code': false,
     codex: false,
     pi: false,
+    omp: false,
   });
   const [saving, setSaving] = useState(false);
   const [imageGenerationReloadConfirmation, setImageGenerationReloadConfirmation] =
@@ -657,12 +705,14 @@ export function CustomProviderDialog({
     'claude-code': IDLE_TEST,
     codex: IDLE_TEST,
     pi: IDLE_TEST,
+    omp: IDLE_TEST,
   });
   // per-runtime「获取模型列表」进行中标记（按钮瞬态 spinner）。
   const [fetchingModels, setFetchingModels] = useState<Record<DialogAgentKind, boolean>>({
     'claude-code': false,
     codex: false,
     pi: false,
+    omp: false,
   });
   // 拉取成功后的勾选弹层：行集合 = 拉取结果 ∪ 表单已填（后者默认勾选、保留用户显示名）。
   const [runtimeFill, setRuntimeFill] = useState<RuntimeFillDialogState | null>(null);
@@ -673,6 +723,7 @@ export function CustomProviderDialog({
     'claude-code': false,
     codex: false,
     pi: false,
+    omp: false,
   });
   const runtimeFillTriggerRef = useRef<HTMLButtonElement>(null);
   const modelPickerTriggerRef = useRef<HTMLButtonElement>(null);
@@ -920,6 +971,7 @@ export function CustomProviderDialog({
     'claude-code': '',
     codex: '',
     pi: '',
+    omp: '',
   });
   // A late safeStorage response must not overwrite a key edited or copied while
   // hydration was in flight. Revisions only change for explicit key mutations.
@@ -927,6 +979,7 @@ export function CustomProviderDialog({
     'claude-code': 0,
     codex: 0,
     pi: 0,
+    omp: 0,
   });
 
   // 已存供应商在编辑态的基线快照:端点/协议/鉴权模式取自已存配置,apiKey 取回填值,
@@ -1023,7 +1076,11 @@ export function CustomProviderDialog({
       setRtSynced((prev) => {
         const next = { ...prev };
         for (const a of AGENTS) {
-          const rc = p.runtimes[a];
+          // 目录里 27 条预设都不带 omp runtime,用共享 helper 让 omp 回落到同一预设的
+          // claude-code runtime —— 详见 shared/piRuntimeInitialization.ts 的
+          // presetRuntimeForAgent 注释(对 OMP 真正起作用的是模型清单,端点/密钥由 host
+          // 侧重写为 loopback proxy)。没有 claude-code 的预设保持留空,不猜。
+          const rc = presetRuntimeForAgent(p, a);
           if (!isConfiguredPresetRuntime(a, rc)) {
             next[a] = emptyRuntime(a);
             continue;
@@ -1057,13 +1114,13 @@ export function CustomProviderDialog({
         }
         return next;
       });
-      setTest({ 'claude-code': IDLE_TEST, codex: IDLE_TEST, pi: IDLE_TEST });
+      setTest({ 'claude-code': IDLE_TEST, codex: IDLE_TEST, pi: IDLE_TEST, omp: IDLE_TEST });
       // 预设整体替换所有 runtime 的 models 数组(含清空未声明的 runtime),旧行号
       // 全部失效——不清空的话陈旧草稿(如 -5)会挂在无关的新行、或挂在被预设清空
       // 的 runtime 上,handleSave 的守卫拦不住"用户已经看不到"的这条草稿,表单
       // 卡死报错却找不到对应输入框(review P1)。
       setWindowDrafts({});
-      const first = configuredPresetAgents(p)[0];
+      const first = configuredPresetAgents(p).find(isDialogAgentKind);
       if (first) setActiveTab(first);
       // 预设整体替换名称/鉴权/全部 runtime:任何既有字段错误的指向(字段值、
       // 行结构、tab)都已失效。程序化赋值不触发输入的 change,须在此显式清除
@@ -1083,19 +1140,21 @@ export function CustomProviderDialog({
     }
     let cancelled = false;
     setKeyHydrationReady(false);
-    setKeyHydrationFailed({ 'claude-code': false, codex: false, pi: false });
+    setKeyHydrationFailed({ 'claude-code': false, codex: false, pi: false, omp: false });
     const revisionAtStart = { ...keyEditRevisionRef.current };
     void (async () => {
       const nextHas: Record<DialogAgentKind, boolean> = {
         'claude-code': false,
         codex: false,
         pi: false,
+        omp: false,
       };
       const fetched: Partial<Record<DialogAgentKind, string>> = {};
       const failed: Record<DialogAgentKind, boolean> = {
         'claude-code': false,
         codex: false,
         pi: false,
+        omp: false,
       };
       for (const a of AGENTS) {
         if (!initial.runtimes[a]) continue;
@@ -1814,7 +1873,8 @@ export function CustomProviderDialog({
       if (isCommittableWindowText(draftText)) continue;
       const sep = draftKey.lastIndexOf(':');
       const draftAgent = draftKey.slice(0, sep) as AgentKind;
-      if (!VISIBLE_AGENTS.includes(draftAgent)) continue;
+      // OMP 接入:窗口草稿 key 可能是 omp,但 omp 不在本面板配置的 runtime 之列,跳过。
+      if (!isDialogAgentKind(draftAgent)) continue;
       // 该 runtime 未配置 baseUrl、或该行 id/name 为空:两者都会在下面序列化时
       // 被丢弃,不会写进最终配置,草稿再非法也不该挡住一个原本有效的保存
       // (review P1)。
@@ -2362,7 +2422,7 @@ export function CustomProviderDialog({
                   type="button"
                   onClick={() => {
                     changeAuthMode(m);
-                    setTest({ 'claude-code': IDLE_TEST, codex: IDLE_TEST, pi: IDLE_TEST });
+                    setTest({ 'claude-code': IDLE_TEST, codex: IDLE_TEST, pi: IDLE_TEST, omp: IDLE_TEST });
                   }}
                   className={cn(
                     'rounded-full border px-3 py-1.5 text-12 font-medium transition-colors',
@@ -2513,7 +2573,7 @@ export function CustomProviderDialog({
               border: '1px solid var(--settings-theme-card-border)',
             }}
           >
-            {(activeTab === 'codex' || activeTab === 'pi') && (
+            {(activeTab === 'codex' || activeTab === 'pi' || activeTab === 'omp') && (
               <div className="flex flex-col gap-[7px]">
                 <FieldLabel>{t('settings.providers.custom.fields.wireProtocol')}</FieldLabel>
                 <div className="flex flex-wrap gap-1.5">
@@ -2536,30 +2596,15 @@ export function CustomProviderDialog({
                       }
                     >
                       {t(
-                        activeTab === 'pi'
-                          ? `settings.providers.custom.wireProtocol.pi${
-                              option.value === 'anthropic-messages'
-                                ? 'Anthropic'
-                                : option.value === 'openai-responses'
-                                  ? 'Responses'
-                                  : 'Chat'
-                            }`
-                          : option.labelKey,
+                        wireProtocolCopyKey(activeTab, option.value, 'label') ?? option.labelKey,
                       )}
                     </button>
                   ))}
                 </div>
                 <span className="text-12 leading-snug text-[var(--text-tertiary)]">
                   {t(
-                    activeTab === 'pi'
-                      ? `settings.providers.custom.wireProtocol.pi${
-                          f.wireProtocol === 'anthropic-messages'
-                            ? 'AnthropicHelp'
-                            : f.wireProtocol === 'openai-chat'
-                              ? 'ChatHelp'
-                              : 'ResponsesHelp'
-                        }`
-                      : customProviderCodexWireProtocolOption(f.wireProtocol).helpKey,
+                    wireProtocolCopyKey(activeTab, f.wireProtocol, 'help') ??
+                      customProviderCodexWireProtocolOption(f.wireProtocol).helpKey,
                   )}
                 </span>
               </div>

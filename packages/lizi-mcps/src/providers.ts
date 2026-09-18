@@ -25,7 +25,11 @@ import { createCindyContactsMcpServer } from './cindy_contactsMcpServer.js';
 import { createXdtHelperMcpServer, type XdtHelperMcpDeps } from './lizi_xdtHelperMcpServer.js';
 import { createCindyDocsMcpServer } from './cindy_docsMcpServer.js';
 import type { DocsMcpDeps } from './cindy-docs/types.js';
-import { createOrcaMcpServer, type OrcaMcpDeps } from './orca/index.js';
+import {
+  createOrcaMcpServer,
+  createOrcaOmpRpcHostTools,
+  type OrcaMcpDeps,
+} from './orca/index.js';
 import { createCindyLspMcpServer, detectTypeScriptProject } from './lsp/index.js';
 import { createBrowserMcpServer } from './browser/index.js';
 import { createComputerMcpServer } from './computer/index.js';
@@ -431,6 +435,15 @@ export function createLiziMcpProviders(
           sessionId: ctx.sessionId,
           vendorOptions: ctx.vendorOptions,
         }),
+      }),
+      // OMP cannot consume an in-process MCP SDK server.  It receives this
+      // same 18-tool Orca manifest over its host-owned RPC bridge instead.
+      toOmpRpcHostTools: (ctx) => createOrcaOmpRpcHostTools(opts.orca!, {
+        agentKind: 'omp',
+        workingDir: ctx.workingDir,
+        ...(ctx.getSessionContext ? { getSessionContext: ctx.getSessionContext } : {}),
+        sessionId: ctx.sessionId,
+        vendorOptions: ctx.vendorOptions,
       }),
     });
   }

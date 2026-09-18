@@ -50,7 +50,9 @@ export const CUSTOM_PROVIDER_ID_RE = /^[a-z0-9_-]+$/;
 // 'cindy' 是 pi models.json 里网关 provider 的保留 id;自定义 provider 撞名会让其模型
 // 既被排除出网关块又不写入原生块 → --model 校验失败,故一并保留。
 const RESERVED_IDS = new Set(['anthropic', 'openai', 'xai', 'xd', 'cindy']);
-const VALID_AGENTS: readonly AgentKind[] = ['claude-code', 'codex', 'pi'];
+// 必须覆盖全部 AgentKind:这里是保存自定义供应商时的白名单,漏掉的 agent 会让
+// 用户配好的该 engine runtime 在保存阶段被整份拒绝(invalid runtime '<id>')。
+const VALID_AGENTS: readonly AgentKind[] = ['claude-code', 'codex', 'pi', 'omp'];
 const MAX_ID_LEN = 40;
 const MAX_NAME_LEN = 60;
 

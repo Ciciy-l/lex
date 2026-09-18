@@ -208,6 +208,18 @@ describe('validateCustomProviderConfig (per-runtime)', () => {
     ).toBe(false);
   });
 
+  it('accepts an OMP runtime, now that OMP is configurable', () => {
+    // VALID_AGENTS 必须覆盖全部 AgentKind:漏掉 omp 时,用户保存带 OMP runtime 的
+    // 供应商会被整份拒绝(invalid runtime 'omp')——用户在界面上就是这么撞上的。
+    const result = validateCustomProviderConfig({
+      ...valid,
+      runtimes: {
+        omp: { baseUrl: 'https://omp.example.test/v1', models: [{ id: 'm', name: 'M' }] },
+      },
+    });
+    expect(result.ok).toBe(true);
+  });
+
   it('rejects runtime with bad baseUrl / missing model fields', () => {
     expect(
       validateCustomProviderConfig({

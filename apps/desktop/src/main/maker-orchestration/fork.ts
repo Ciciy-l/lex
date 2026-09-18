@@ -67,6 +67,18 @@ const messageRowid = sql<number>`rowid`;
 
 type DbAgentKind = 'cc' | 'codex' | 'pi';
 
+/**
+ * OMP has no native fork implementation yet. Keep this boundary fail-closed
+ * instead of treating its RPC session like a Claude transcript.
+ */
+function normalizeForkAgentKind(value: string | null | undefined): DbAgentKind {
+  const kind = normalizeDbAgentKind(value);
+  if (kind === 'omp') {
+    throw forkError('UNSUPPORTED_HISTORY', 'OMP sessions do not support fork');
+  }
+  return kind;
+}
+
 interface MessagePosition {
   createdAt: number;
   rowid: number | null;
@@ -340,6 +352,7 @@ async function resolveForkNativeSource(
   },
   target: { createdAt: number; rowid: number },
 ): Promise<ForkNativeSource> {
+  const sourceAgentKind = normalizeForkAgentKind(source.agentKind);
   if (source.clearedAt !== null && target.createdAt <= source.clearedAt) {
     throw forkError('UNSUPPORTED_HISTORY', '目标消息位于已清除的上下文中');
   }
@@ -413,7 +426,7 @@ async function resolveForkNativeSource(
         Object.hasOwn(previousBoundary, 'toProviderId')
       ) {
         providerId = previousBoundary.toProviderId ?? null;
-      } else if (parsed.fromAgentKind === normalizeDbAgentKind(source.agentKind)) {
+      } else if (parsed.fromAgentKind === sourceAgentKind) {
         providerId = source.providerId;
       } else if (parsed.fromAgentKind === 'codex') {
         providerId = inferProviderIdForModel(model, 'codex');
@@ -451,7 +464,7 @@ async function resolveForkNativeSource(
       throw forkError('UNSUPPORTED_HISTORY', '无法确认目标消息对应的历史引擎');
     }
     return {
-      agentKind: normalizeDbAgentKind(source.agentKind),
+      agentKind: sourceAgentKind,
       sdkSessionId: null,
       model: source.model,
       providerId: source.providerId,
@@ -464,7 +477,7 @@ async function resolveForkNativeSource(
     throw forkError('SOURCE_NEVER_RAN', '原会话尚未运行，无法 fork');
   }
   return {
-    agentKind: normalizeDbAgentKind(source.agentKind),
+    agentKind: sourceAgentKind,
     sdkSessionId: source.sdkSessionId,
     model: source.model,
     providerId: source.providerId,

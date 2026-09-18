@@ -56,8 +56,13 @@ describe('custom provider runtime fill', () => {
   });
 
   it('excludes Pi as a target when the provider uses OAuth', () => {
-    expect(runtimeFillTargetAgents('codex', { includePi: false })).toEqual(['claude-code']);
-    expect(runtimeFillTargetAgents('codex', { includePi: true })).toEqual(['claude-code', 'pi']);
+    // OMP 与 claude-code / codex 同属「经兼容 Proxy 接入」,因此不随 Pi 一起被排除。
+    expect(runtimeFillTargetAgents('codex', { includePi: false })).toEqual(['claude-code', 'omp']);
+    expect(runtimeFillTargetAgents('codex', { includePi: true })).toEqual([
+      'claude-code',
+      'pi',
+      'omp',
+    ]);
   });
 
   it('treats endpoint URL, default request path, and protocol as one atomic selection', () => {
@@ -713,9 +718,10 @@ describe('custom provider runtime fill', () => {
       'claude-code': draft({ apiKey: 'saved-claude' }),
       codex: draft({ apiKey: 'newly-copied-codex' }),
       pi: draft({ apiKey: '' }),
+      omp: draft({ apiKey: '' }),
     };
-    const revisionAtStart = { 'claude-code': 0, codex: 0, pi: 0 };
-    const currentRevision = { 'claude-code': 0, codex: 1, pi: 0 };
+    const revisionAtStart = { 'claude-code': 0, codex: 0, pi: 0, omp: 0 };
+    const currentRevision = { 'claude-code': 0, codex: 1, pi: 0, omp: 0 };
 
     const merged = mergeHydratedRuntimeKeys(
       drafts,
@@ -739,8 +745,9 @@ describe('custom provider runtime fill', () => {
       'claude-code': draft(),
       codex: draft({ baseUrl: 'https://new.example/v1' }),
       pi: draft(),
+      omp: draft(),
     };
-    const revisions = { 'claude-code': 0, codex: 0, pi: 0 };
+    const revisions = { 'claude-code': 0, codex: 0, pi: 0, omp: 0 };
 
     const merged = mergeHydratedRuntimeKeys(
       drafts,

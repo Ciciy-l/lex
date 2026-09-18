@@ -367,6 +367,7 @@ describe('PUSH_FORWARD_ALLOWLIST', () => {
   it('转发事件流 / 交互 / 读模型增量', () => {
     for (const ch of [
       'maker:event',
+      'maker:agent-command-catalog:changed',
       'maker:status-changed',
       'maker:interaction-request',
       'maker:interaction-dismissed',

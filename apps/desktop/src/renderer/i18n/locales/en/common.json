@@ -1667,7 +1667,13 @@
           "piAnthropic": "Anthropic Messages",
           "piResponsesHelp": "Pi connects directly to the provider's OpenAI Responses API.",
           "piChatHelp": "Pi connects directly to the provider's OpenAI-compatible Chat Completions API.",
-          "piAnthropicHelp": "Pi connects directly to the provider's Anthropic Messages API."
+          "piAnthropicHelp": "Pi connects directly to the provider's Anthropic Messages API.",
+          "ompResponses": "OpenAI Responses",
+          "ompChat": "OpenAI Chat Completions",
+          "ompAnthropic": "Anthropic Messages",
+          "ompResponsesHelp": "OMP speaks OpenAI Responses natively; {{appName}} only forwards through its local proxy and does not convert the protocol.",
+          "ompChatHelp": "OMP speaks OpenAI Chat Completions natively; {{appName}} only forwards through its local proxy and does not convert the protocol.",
+          "ompAnthropicHelp": "OMP speaks Anthropic Messages natively; {{appName}} only forwards through its local proxy and does not convert the protocol."
         },
         "modelProtocol": {
           "label": "Model protocol",
@@ -1685,7 +1691,9 @@
           "codex": "Codex",
           "codexDesc": "Codex speaks the OpenAI Responses protocol. Choose native Responses, or let {{appName}} bridge Chat Completions or Anthropic Messages. Enter this source's base URL, key, and models for Codex; leave blank to skip Codex for this source.",
           "pi": "Pi",
-          "piDesc": "Pi is a multi-protocol harness: your custom or local models connect natively (Ollama, vLLM, self-hosted endpoints), without going through {{appName}}'s compatibility proxy. Pick the API type below, then enter this source's base URL, key, and models for Pi; leave blank to skip Pi for this source."
+          "piDesc": "Pi is a multi-protocol harness: your custom or local models connect natively (Ollama, vLLM, self-hosted endpoints), without going through {{appName}}'s compatibility proxy. Pick the API type below, then enter this source's base URL, key, and models for Pi; leave blank to skip Pi for this source.",
+          "omp": "OMP",
+          "ompDesc": "OMP reaches its models through {{appName}}'s compatibility proxy; declare here which models this source offers to OMP. Upstream routing and credentials are handled by the proxy (OMP itself does not use the endpoint or key). Leave blank to skip OMP for this source."
         },
         "errors": {
           "nameRequired": "Display name is required",
@@ -2263,7 +2271,12 @@
     "experimental": {
       "title": "Experimental",
       "toggleAria": "Toggle experimental feature: {{title}}",
-      "features": {}
+      "features": {
+        "teammates": {
+          "title": "Teammates",
+          "description": "Show the Teammates workspace and related settings."
+        }
+      }
     },
     "lspMode": {
       "cell": {
@@ -7400,6 +7413,7 @@
       "actionFailed": "The action did not finish. Try again shortly."
     },
     "backToChat": "Back to chat",
+    "backToTasks": "Back to tasks",
     "memoryRecovery": {
       "action": "Turn memory back on"
     },
@@ -7990,6 +8004,20 @@
           "bypassPermissions": {
             "label": "Full access",
             "description": "Allows editing any file and running networked commands without another confirmation. Highest risk; use only for trusted tasks."
+          }
+        },
+        "omp": {
+          "ask": {
+            "label": "Default permissions",
+            "description": "Read-only tools always run without asking; writing files and running commands ask each time."
+          },
+          "auto": {
+            "label": "Auto-review",
+            "description": "Read-only tools and file writes always run without asking; running commands still ask each time."
+          },
+          "bypassPermissions": {
+            "label": "Full access",
+            "description": "Reads, writes, and commands all run without asking. Actions you explicitly deny and dangerous-command overrides still apply. Highest risk; use only for trusted tasks."
           }
         }
       }
@@ -11683,12 +11711,17 @@
       "codexBinaryMissingDescription": "The Codex component is not ready yet, so this feature cannot be used. Try again later or check the Codex connection in Settings → Providers.",
       "piBinaryMissingTitle": "Pi component not ready",
       "piBinaryMissingDescription": "The Pi component is not ready yet, so this feature cannot be used. Try again later or check the Pi connection in Settings → Providers.",
+      "ompBinaryMissingTitle": "OMP component not ready",
+      "ompBinaryMissingDescription": "The OMP component is not ready yet, so this feature cannot be used. Try again later or check the OMP connection in Settings → Providers.",
       "goToSettings": "Open Settings",
       "remoteCodexBinaryMissingTitle": "Codex component not ready on the remote device",
       "remotePiBinaryMissingTitle": "Pi component not ready on the remote device",
+      "remoteOmpBinaryMissingTitle": "OMP component not ready on the remote device",
       "remoteAuthDescription": "You need to finish setup on the controlled device \"{{device}}\" before you can start a session here. Configure it on that device and try again.",
       "remoteCodexNoSourceTitle": "No Codex source connected on the remote device",
       "remoteCodexNoSourceDescription": "\"{{device}}\" has no model source connected for Codex, so sessions can't be started from here. Open {{appName}} on that device, sign in to OpenAI or connect another source under Settings → Providers, then try again.",
+      "remoteOmpNoSourceTitle": "No OMP source connected on the remote device",
+      "remoteOmpNoSourceDescription": "\"{{device}}\" has no model source connected for OMP, so sessions can't be started from here. Open {{appName}} on that device and connect a source under Settings → Providers, then try again.",
       "remoteCcNoSourceTitle": "No Claude source connected on the remote device",
       "remoteCcNoSourceDescription": "\"{{device}}\" has no Claude model source connected, so sessions can't be started from here. Open {{appName}} on that device, connect a source under Settings → Providers, then try again.",
       "gotIt": "Got it"

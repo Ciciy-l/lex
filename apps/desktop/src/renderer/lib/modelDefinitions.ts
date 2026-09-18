@@ -29,7 +29,9 @@ export interface ModelDefinition {
    * 解耦)。缺省 = 不作为默认。getDefaultModelForVendor / newSessionDefaultModelId 据它选默认;
    * Pi 只接受自己的 v3 标记，不借用其它 Agent 的默认策略。
    */
-  newSessionDefault?: ('claude-code' | 'codex' | 'pi')[];
+  // OMP 接入:目录可以把 omp 声明成新对话默认种子(与 useAgentCapabilities 的
+  // ModelDescriptor 同口径)。
+  newSessionDefault?: ('claude-code' | 'codex' | 'pi' | 'omp')[];
 }
 
 function toLegacy(m: ModelDescriptor, vendorKey: 'cc' | 'codex' | 'pi'): ModelDefinition {

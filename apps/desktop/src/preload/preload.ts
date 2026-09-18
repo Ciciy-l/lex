@@ -169,6 +169,10 @@ import {
   type SidebarSettingsSnapshot,
 } from '../shared/sidebarSettings';
 import { isDataOwnerPushStamp, type DataOwnerPushStamp } from '../shared/dataOwnerPush';
+import {
+  AGENT_COMMAND_CATALOG_CHANGED_CHANNEL,
+  parseAgentCommandCatalogChangedPayload,
+} from '../shared/agentCommandCatalog';
 import type { VoiceInputSyncErrorResult } from '../shared/voiceInputData';
 import type { UtilityTextFailure } from '../shared/utilityTextResult';
 import { DB_SLIMMING_STARTUP_PROGRESS_CHANGED_CHANNEL } from '../shared/localDbMaintenance';
@@ -730,6 +734,9 @@ const fanOutHookControlWorkspaceProviderSource = createIpcFanOut(
 // ─── Maker Core 一阶段重构（新链路）── 与 cc-agent:* / codex:* 双轨并行 ─────
 const fanOutMakerEvent = createIpcFanOut('maker:event');
 const fanOutMakerAgentsChanged = createIpcFanOut('maker:agents:changed');
+const fanOutMakerAgentCommandCatalogChanged = createIpcFanOut(
+  AGENT_COMMAND_CATALOG_CHANGED_CHANNEL,
+);
 const fanOutMakerTurnChangeSetUpdated = createIpcFanOut('maker:turn-change-set:updated');
 const fanOutMakerStatusChanged = createIpcFanOut('maker:status-changed');
 const fanOutMakerInputProjection = createIpcFanOut('maker:input:projection');
@@ -1104,6 +1111,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     scope: string,
     msg: string,
   ): void => ipcRenderer.send('renderer:log', level, scope, msg),
+  recoverViteDependencyLoad: (): void => ipcRenderer.send('renderer:recover-vite-deps'),
 
   localThemes: {
     listSync: (): LocalThemesResult => {
@@ -5588,10 +5596,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ─── Maker Core IPC ─────────────────────────────────────────────────────
   // renderer 通过统一 maker API 按 agentKind 调用 Claude Code / Codex / Pi。
   maker: {
-    listAvailableAgents: (): Promise<Array<'claude-code' | 'codex' | 'pi'>> =>
+    listAvailableAgents: (): Promise<Array<'claude-code' | 'codex' | 'pi' | 'omp'>> =>
       ipcRenderer.invoke('maker:list-available-agents'),
     onAgentsChanged: fanOutMakerAgentsChanged,
-    getCapabilities: (agentKind: 'claude-code' | 'codex' | 'pi'): Promise<unknown> =>
+    getCapabilities: (agentKind: 'claude-code' | 'codex' | 'pi' | 'omp'): Promise<unknown> =>
       ipcRenderer.invoke('maker:get-capabilities', agentKind),
     listBotDelegations: (
       parentSessionId: string,
@@ -5682,11 +5690,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
      */
     testProviderConnection: (
       input:
-        | { kind: 'saved'; providerId: string; agent: 'claude-code' | 'codex' | 'pi' }
+        | { kind: 'saved'; providerId: string; agent: 'claude-code' | 'codex' | 'pi' | 'omp' }
         | {
             kind: 'adhoc';
             spec: {
-              agent: 'claude-code' | 'codex' | 'pi';
+              agent: 'claude-code' | 'codex' | 'pi' | 'omp';
               baseUrl: string;
               modelId: string;
               authMethod: 'apiKey' | 'oauth' | 'none';
@@ -6014,7 +6022,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }): Promise<{ ok: true; runId: string; reviewerSessionId: string }> =>
       ipcRenderer.invoke('maker:review:start', input),
     listAgentCommands: (
-      agentKind: 'claude-code' | 'codex' | 'pi',
+      agentKind: 'claude-code' | 'codex' | 'pi' | 'omp',
       params: { sessionId?: string; allowManagedPiPackagePreview?: boolean } = {},
     ): Promise<{
       success: boolean;
@@ -6024,7 +6032,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }> => ipcRenderer.invoke('maker:list-agent-commands', agentKind, params),
 
     listAgentSkills: (
-      agentKind: 'claude-code' | 'codex' | 'pi',
+      agentKind: 'claude-code' | 'codex' | 'pi' | 'omp',
       params: {
         workingDir?: string;
         remoteHostId?: string;
@@ -6056,6 +6064,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('maker:pi-packages:mutate', request),
 
     onPiPackagesChanged: fanOutMakerPiPackagesChanged,
+
+    /**
+     * A live engine-native command directory changed. Validate/copy the small
+     * invalidation payload here; callers must reload the ordinary command-list
+     * IPC rather than trust command bodies sent over a renderer push.
+     */
+    onAgentCommandCatalogChanged: (
+      handler: (payload: import('../shared/agentCommandCatalog').AgentCommandCatalogChangedPayload) => void,
+    ): (() => void) =>
+      fanOutMakerAgentCommandCatalogChanged((value) => {
+        const payload = parseAgentCommandCatalogChangedPayload(value);
+        if (payload) handler(payload);
+      }),
 
     /**
      * 订阅 main 端 DesktopCommandRegistry execute 后广播的"做 UI 动作"信号。
@@ -6176,7 +6197,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     createSession: (opts: {
       /** 可选: 复用外部 sessionId(本端 chat 用 local-db:sessions:create 拿到的 id) */
       id?: string;
-      agentKind: 'claude-code' | 'codex' | 'pi';
+      agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
       workingDir: string;
       model: string;
       title?: string;
@@ -6229,7 +6250,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     enableOrca: (
       leadSessionId: string,
       opts: {
-        workerAgent: 'claude-code' | 'codex';
+        workerAgent: 'claude-code' | 'codex' | 'pi' | 'omp';
         delegateTask?: string;
         role?: string;
         label?: string;
@@ -6286,7 +6307,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       message:
         string | { type: 'user'; content: string | Array<{ type: string; [k: string]: unknown }> },
       createOpts?: {
-        agentKind: 'claude-code' | 'codex' | 'pi';
+        agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
         workingDir: string;
         model: string;
         orcaRole?: 'lead' | 'worker' | null;
@@ -6331,7 +6352,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getContextUsage: (
       sessionId: string,
       createOpts?: {
-        agentKind: 'claude-code' | 'codex' | 'pi';
+        agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
         workingDir: string;
         model: string;
         orcaRole?: 'lead' | 'worker' | null;
@@ -6370,7 +6391,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listActive: (): Promise<
       Array<{
         sessionId: string;
-        agentKind: 'claude-code' | 'codex' | 'pi';
+        agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
         workDir: string;
         capabilities: unknown;
         isTurnRunning: boolean;
@@ -6433,14 +6454,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // switched=false 且无 deferred = 同引擎 no-op(用户选回当前引擎,意图已清)。
     switchSessionAgent: (
       sessionId: string,
-      targetAgentKind: 'claude-code' | 'codex' | 'pi',
+      targetAgentKind: 'claude-code' | 'codex' | 'pi' | 'omp',
       model: string,
       providerId?: string | null,
       effort?: string,
       fastMode?: boolean,
     ): Promise<{
       switched: boolean;
-      agentKind: 'claude-code' | 'codex' | 'pi';
+      agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
       model: string;
       engineReady: boolean;
       deferred?: boolean;
@@ -6461,7 +6482,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getSessionAgentSwitchIntent: (
       sessionId: string,
     ): Promise<{
-      targetAgentKind: 'claude-code' | 'codex' | 'pi';
+      targetAgentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
       model: string;
       providerId: string | null;
       effort?: string;
@@ -6878,6 +6899,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // dev-only 调用, prod renderer 不会 HMR 也不会调。
     __resetMakerFanOuts: (): void => {
       fanOutMakerEvent.__reset();
+      fanOutMakerAgentCommandCatalogChanged.__reset();
       fanOutMakerTurnChangeSetUpdated.__reset();
       fanOutMakerStatusChanged.__reset();
       fanOutMakerInputProjection.__reset();
@@ -7017,7 +7039,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     autoTitle: (request: {
       sessionId: string;
       text: string;
-      agentKind: 'claude-code' | 'codex' | 'pi';
+      agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
       isUserText?: boolean;
     }): Promise<{ applied: boolean; done: boolean }> =>
       ipcRenderer.invoke('maker:auto-title', request),
@@ -7105,7 +7127,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     // ── Agent 联合状态 (取代老 electronAPI.codex.binary.getStatus) ──────────
     agent: {
-      getStatus: (agentKind: 'claude-code' | 'codex' | 'pi'): Promise<unknown> =>
+      getStatus: (agentKind: 'claude-code' | 'codex' | 'pi' | 'omp'): Promise<unknown> =>
         ipcRenderer.invoke('maker:agent:status', agentKind),
       /** spawn 当前应用使用的 binary `--version`, 进程内缓存。About 面板用。 */
       getBinaryVersion: (
@@ -7232,8 +7254,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
         scheduleName?: string;
         workingDir?: string;
         providerId?: string;
-        agentKind?: 'claude-code' | 'codex';
-        model?: string;
+      agentKind?: 'claude-code' | 'codex' | 'pi' | 'omp';
+      model?: string;
         /** 绑定会话任务:workingDir 空时 main 按会话 meta.workDir 解析落盘/自测目录。 */
         targetSessionId?: string;
         /** 绑定任务的缺省模型/来源维度由 targetSessionId 的会话路由补齐。 */

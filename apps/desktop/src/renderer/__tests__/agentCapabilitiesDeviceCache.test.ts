@@ -84,6 +84,7 @@ describe('useAgentCapabilities deviceId-aware cache', () => {
     expect(getCapabilities).toHaveBeenCalledWith('claude-code');
     expect(getCapabilities).toHaveBeenCalledWith('codex');
     expect(getCapabilities).toHaveBeenCalledWith('pi');
+    expect(getCapabilities).toHaveBeenCalledWith('omp');
     expect(invoke).not.toHaveBeenCalled();
     expect(mod.getCachedCapabilities('claude-code')?.availableModels[0].displayName).toBe(
       'local:claude-code',
@@ -106,7 +107,7 @@ describe('useAgentCapabilities deviceId-aware cache', () => {
     );
   });
 
-  it('本机目录快照在可选 Pi 不可用时仍返回 Claude Code 与 Codex 能力', async () => {
+  it('本机目录快照在可选 Pi 不可用时仍返回 Claude Code、Codex 与 OMP 能力', async () => {
     const { getCapabilities } = stubElectron();
     getCapabilities.mockImplementation(async (agent: string) => {
       if (agent === 'pi')
@@ -120,6 +121,7 @@ describe('useAgentCapabilities deviceId-aware cache', () => {
     await expect(mod.loadLocalCapabilitiesSnapshot()).resolves.toEqual([
       ['claude-code', caps('local:claude-code')],
       ['codex', caps('local:codex')],
+      ['omp', caps('local:omp')],
     ]);
     expect(getCapabilities).toHaveBeenCalledWith('pi');
   });
@@ -137,7 +139,7 @@ describe('useAgentCapabilities deviceId-aware cache', () => {
     );
   });
 
-  it('Pi 不可用且没有旧快照时仍联合提交 provider 与核心能力', async () => {
+  it('Pi 不可用且没有旧快照时仍联合提交 provider、核心能力与 OMP 快照', async () => {
     const harness = stubLocalCatalog();
     harness.setSnapshot('provider-initial', 'initial');
     harness.setUnavailableAgent('pi');
@@ -155,9 +157,12 @@ describe('useAgentCapabilities deviceId-aware cache', () => {
       'initial:codex',
     );
     expect(capabilities.getCachedCapabilities('pi')).toBeNull();
+    expect(capabilities.getCachedCapabilities('omp')?.availableModels[0].displayName).toBe(
+      'initial:omp',
+    );
   });
 
-  it('Pi 变为不可用时清除旧能力，并用新 provider 快照替换核心能力', async () => {
+  it('Pi 变为不可用时清除旧能力，并用新 provider 快照替换核心能力与 OMP', async () => {
     const harness = stubLocalCatalog();
     const catalog = await import('@/lib/localCatalogSnapshot');
     const providers = await import('@/lib/providersSnapshotStore');
@@ -177,9 +182,12 @@ describe('useAgentCapabilities deviceId-aware cache', () => {
       'new:codex',
     );
     expect(capabilities.getCachedCapabilities('pi')).toBeNull();
+    expect(capabilities.getCachedCapabilities('omp')?.availableModels[0].displayName).toBe(
+      'new:omp',
+    );
   });
 
-  it('Pi 临时能力错误时联合刷新保留旧 provider 与三份 agent 快照', async () => {
+  it('Pi 临时能力错误时联合刷新保留旧 provider 与四份 agent 快照', async () => {
     const harness = stubLocalCatalog();
     const catalog = await import('@/lib/localCatalogSnapshot');
     const providers = await import('@/lib/providersSnapshotStore');
@@ -198,6 +206,7 @@ describe('useAgentCapabilities deviceId-aware cache', () => {
       'old:codex',
     );
     expect(capabilities.getCachedCapabilities('pi')?.availableModels[0].displayName).toBe('old:pi');
+    expect(capabilities.getCachedCapabilities('omp')?.availableModels[0].displayName).toBe('old:omp');
   });
 
   it('核心 agent 失败时联合刷新保留 last-valid provider 与能力快照', async () => {
@@ -227,6 +236,7 @@ describe('useAgentCapabilities deviceId-aware cache', () => {
     expect(invoke).toHaveBeenCalledWith('dev-1', 'maker:get-capabilities', ['claude-code']);
     expect(invoke).toHaveBeenCalledWith('dev-1', 'maker:get-capabilities', ['codex']);
     expect(invoke).toHaveBeenCalledWith('dev-1', 'maker:get-capabilities', ['pi']);
+    expect(invoke).toHaveBeenCalledWith('dev-1', 'maker:get-capabilities', ['omp']);
     expect(getCapabilities).not.toHaveBeenCalled();
     expect(mod.getCachedCapabilities('claude-code', 'dev-1')?.availableModels[0].displayName).toBe(
       'dev-1:claude-code',
@@ -522,8 +532,8 @@ describe('useAgentCapabilities deviceId-aware cache', () => {
       mod.prefetchDeviceCapabilities('dev-1'),
       mod.prefetchDeviceCapabilities('dev-1'),
     ]);
-    // cc + codex + pi 各一次 = 3 次,而非 6 次
-    expect(invoke).toHaveBeenCalledTimes(3);
+    // cc + codex + pi + omp 各一次 = 4 次,而非 8 次
+    expect(invoke).toHaveBeenCalledTimes(4);
   });
 
   it('驱逐:evict 只清该设备,本地与其它设备保留', async () => {
@@ -621,15 +631,17 @@ describe('useAgentCapabilities deviceId-aware cache', () => {
     const stale = mod.prefetchDeviceCapabilities('dev-1');
     mod.evictDeviceCapabilities('dev-1');
     const fresh = mod.prefetchDeviceCapabilities('dev-1');
-    // 每轮按 ALL_AGENT_KINDS 顺序 push 三个 resolver(cc/codex/pi):
-    // 第一轮(stale)= [0][1][2],第二轮(fresh)= [3][4][5]。
-    resolvers[3](caps('fresh:claude'));
-    resolvers[4](caps('fresh:codex'));
-    resolvers[5](caps('fresh:pi'));
+    // 每轮按 ALL_AGENT_KINDS 顺序 push 四个 resolver(cc/codex/pi/omp):
+    // 第一轮(stale)= [0][1][2][3],第二轮(fresh)= [4][5][6][7]。
+    resolvers[4](caps('fresh:claude'));
+    resolvers[5](caps('fresh:codex'));
+    resolvers[6](caps('fresh:pi'));
+    resolvers[7](caps('fresh:omp'));
     await fresh;
     resolvers[0](caps('stale:claude'));
     resolvers[1](caps('stale:codex'));
     resolvers[2](caps('stale:pi'));
+    resolvers[3](caps('stale:omp'));
     await stale;
 
     expect(claudeListener).toHaveBeenNthCalledWith(1, { status: 'loading' });

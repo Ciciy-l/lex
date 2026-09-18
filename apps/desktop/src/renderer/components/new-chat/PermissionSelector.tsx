@@ -24,7 +24,8 @@ import type { PermissionMode } from '@/lib/userPreferences.types';
 interface PermissionSelectorProps {
   permissionMode: PermissionMode;
   onPermissionModeChange: (mode: PermissionMode) => void;
-  vendorKey?: 'cc' | 'codex' | 'pi';
+  // OMP 接入:会话引擎可能是 omp,vendor 口径同步放宽为四元组。
+  vendorKey?: 'cc' | 'codex' | 'pi' | 'omp';
   /** device-link 远程会话所属被控端 id;非空 = 权限档从被控端读(本地会话 undefined,行为不变)。 */
   deviceId?: string;
   /** 禁用 trigger。用于断线远程会话等只读 composer 状态。 */
@@ -66,9 +67,10 @@ const PERMISSION_ICONS: Record<string, typeof Hand> = {
   bypassPermissions: TriangleAlert,
 };
 
-function vendorKeyToAgentKind(v: 'cc' | 'codex' | 'pi'): AgentKind {
+function vendorKeyToAgentKind(v: 'cc' | 'codex' | 'pi' | 'omp'): AgentKind {
   if (v === 'codex') return 'codex';
   if (v === 'pi') return 'pi';
+  if (v === 'omp') return 'omp';
   return 'claude-code';
 }
 

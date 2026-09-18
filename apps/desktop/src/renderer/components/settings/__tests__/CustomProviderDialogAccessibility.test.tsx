@@ -1606,3 +1606,46 @@ it('preserves preset media metadata through probing and saving', async () => {
   await waitFor(() => expect(customProviderMocks.createCustomProvider).toHaveBeenCalledOnce());
   expect(customProviderMocks.createCustomProvider.mock.calls[0][0].runtimes.codex.models[0]).toMatchObject(media);
 });
+
+it('offers an OMP tab where the upstream protocol can be chosen', async () => {
+  render(<CustomProviderDialog onSaved={vi.fn()} onClose={vi.fn()} />);
+  await waitForInitialDialogFocus();
+  fireEvent.click(screen.getByRole('tab', { name: 'settings.providers.custom.protocol.omp' }));
+  // tab 内容确实渲染出来了(base URL 输入在位)。
+  expect(
+    screen.getByPlaceholderText('settings.providers.custom.fields.baseUrlPlaceholder'),
+  ).toBeTruthy();
+  // OMP 与 codex / pi 同待遇:可以选上游协议(Cindy 会把它落到 routing.omp.wireProtocol,
+  // 宿主侧再翻译成 OMP models.yml 的 api —— 两家命名不同,见 ompApiForWireProtocol)。
+  expect(
+    screen.getByText('settings.providers.custom.fields.wireProtocol'),
+  ).toBeTruthy();
+  // 但说明文案必须是 OMP 自己的:codex 那套写的是「Responses 原生、其余 {{appName}} 桥接」,
+  // 而 OMP 原生支持三种协议,套用会得出「明明原生却说桥接」的错误描述。
+  expect(
+    screen.getByText('settings.providers.custom.wireProtocol.ompAnthropicHelp'),
+  ).toBeTruthy();
+  expect(
+    screen.queryByText('settings.providers.custom.wireProtocol.anthropicHelp'),
+  ).toBeNull();
+});
+
+it('derives the OMP runtime from the preset claude-code runtime', async () => {
+  // 目录里 27 条预设都不带 omp runtime;预设应把 OMP 的模型清单自动带上,
+  // 而不是让用户手填(见 applyPreset 里 omp 回落 claude-code 的注释)。
+  window.electronAPI.maker.listProviderPresets = vi.fn(async () => ({
+    presets: [{
+      id: 'anthropic-like', name: 'Anthropic Like', runtimes: { 'claude-code': {
+        baseUrl: 'https://api.example.test/anthropic',
+        wireProtocol: 'anthropic-messages' as const,
+        models: [{ id: 'MiniMax-M2', name: 'MiniMax M2', mode: 'chat' as const }],
+      } },
+    }],
+  }));
+  render(<CustomProviderDialog onSaved={vi.fn()} onClose={vi.fn()} />);
+  await waitForInitialDialogFocus();
+  fireEvent.click(screen.getByRole('button', { name: 'settings.providers.custom.presets.label' }));
+  fireEvent.click(await screen.findByRole('option', { name: 'Anthropic Like' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'settings.providers.custom.protocol.omp' }));
+  expect(screen.getByDisplayValue('MiniMax-M2')).toBeTruthy();
+});

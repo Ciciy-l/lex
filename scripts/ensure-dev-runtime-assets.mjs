@@ -20,6 +20,7 @@ import { spawnSync } from 'node:child_process';
 import {
   ensureBinary,
   currentPlatformKey,
+  OPTIONAL_BINARY_KINDS,
   SUPPORTED_BINARY_KINDS,
   updateScriptForKind,
 } from './ensure-agent-binaries.mjs';
@@ -37,6 +38,10 @@ const err = (msg) => console.error(`\x1b[31m[ensure-dev-runtime-assets]\x1b[0m $
 // ensure-agent-binaries 的 kind 真源，保证新 clone / worktree 首次启动 dev
 // 时会自动准备 Pi，与 Claude Code / Codex 一致。
 const AGENT_KINDS = SUPPORTED_BINARY_KINDS;
+
+// opt-in runtime（当前只有 OMP）同样要检测 —— 否则用户启动时看不到它们的任何状态。
+// 但**不能**当硬门槛：体积大且只走上游、没有 CDN 兜底，缺了它不该让整个 dev 起不来。
+const OPTIONAL_AGENT_KINDS = OPTIONAL_BINARY_KINDS;
 
 function platformKey() {
   return `${process.platform}-${process.arch}`;
@@ -159,6 +164,19 @@ async function ensureAgentBinaries() {
       err(`无法准备 ${kind} 的 dev 二进制（${platform}）：${e.message}`);
       err(`请检查网络 / 上游可用性，或手动运行 "pnpm update:${updateScriptForKind(kind)}"。`);
       process.exit(1);
+    }
+  }
+
+  // opt-in runtime：尽力准备。成功与必需项同样记录（ensureBinary 自己会打印
+  // “already present / ensuring”），失败只警告，绝不阻断 dev 启动。
+  for (const kind of OPTIONAL_AGENT_KINDS) {
+    try {
+      await ensureBinary(kind, platform);
+    } catch (e) {
+      warn(
+        `${kind} ${platform}: 未就绪（opt-in 引擎，不阻断启动）：${e.message}`,
+      );
+      warn(`需要时手动运行 "pnpm install:${updateScriptForKind(kind)}"。`);
     }
   }
 }

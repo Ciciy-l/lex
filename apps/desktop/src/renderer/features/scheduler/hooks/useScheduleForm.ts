@@ -85,6 +85,8 @@ function defaultScheduleFormPrefs(): ScheduleFormPrefs {
       'claude-code': EMPTY_AGENT_PREFS,
       codex: EMPTY_AGENT_PREFS,
       pi: EMPTY_AGENT_PREFS,
+      // OMP 接入:默认值照抄 Pi(尚未在 UI 里暴露 OMP 选项)。
+      omp: EMPTY_AGENT_PREFS,
     },
   };
 }
@@ -107,6 +109,8 @@ function loadScheduleFormPrefs(): ScheduleFormPrefs {
         'claude-code': sanitizeAgentPrefs(parsed.lastByAgent?.['claude-code']),
         codex: sanitizeAgentPrefs(parsed.lastByAgent?.codex),
         pi: sanitizeAgentPrefs(parsed.lastByAgent?.pi),
+        // OMP 接入:落盘旧值不存在时按 Pi 的空值口径补齐。
+        omp: sanitizeAgentPrefs(parsed.lastByAgent?.omp),
       },
     };
   } catch {

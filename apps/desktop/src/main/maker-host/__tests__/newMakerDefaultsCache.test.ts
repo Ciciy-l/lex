@@ -100,7 +100,7 @@ describe('getRemoteNewMakerDefaults (device-link 远程草稿镜像)', () => {
     });
   });
 
-  it('草稿变更广播快照始终包含 claude-code、codex、pi 三个槽', () => {
+  it('草稿变更广播快照始终包含四个引擎槽', () => {
     seed({
       lastByVendor: { pi: { model: 'claude-sonnet-4-6' } },
       modelChosenByVendor: { pi: false },
@@ -109,7 +109,7 @@ describe('getRemoteNewMakerDefaults (device-link 远程草稿镜像)', () => {
     });
 
     const snapshot = getRemoteNewMakerDefaultsByVendor();
-    expect(Object.keys(snapshot)).toEqual(['claudeCode', 'codex', 'pi']);
+    expect(Object.keys(snapshot)).toEqual(['claudeCode', 'codex', 'pi', 'omp']);
     expect(snapshot.pi).toMatchObject({
       model: 'claude-sonnet-4-6',
       modelChosenByUser: false,

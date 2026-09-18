@@ -13,7 +13,7 @@ export {
   isPreconditionFailedRemoteError,
 } from '@cindy/maker-shared/device-link-contract';
 
-const AGENT_NOT_AUTHENTICATED_RE = /^(?:\[[A-Z_]+\] )?(claude-code|codex|pi) not authenticated: ?(.*)$/;
+const AGENT_NOT_AUTHENTICATED_RE = /^(?:\[[A-Z_]+\] )?(claude-code|codex|pi|omp) not authenticated: ?(.*)$/;
 
 const CONNECTION_ISSUE_COPY_KEYS: Record<
   DeviceLinkConnectionIssueKind,
@@ -62,7 +62,13 @@ export function describeAgentAuthError(error: string | null | undefined): string
   if (!error) return null;
   const matched = AGENT_NOT_AUTHENTICATED_RE.exec(error.trim());
   if (!matched) return null;
-  const agent = matched[1] === 'claude-code' ? 'Claude' : matched[1] === 'pi' ? 'Pi' : 'Codex';
+  const agent = matched[1] === 'claude-code'
+    ? 'Claude'
+    : matched[1] === 'pi'
+      ? 'Pi'
+      : matched[1] === 'omp'
+        ? 'OMP'
+        : 'Codex';
   const reason = matched[2] || 'unknown';
   const reasonKey: Record<string, string> = {
     no_key: 'noKey',

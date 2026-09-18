@@ -144,6 +144,15 @@ describe('topicForPush', () => {
     expect(topicForPush('maker:event', { sessionId: 123 })).toBeNull();
     expect(topicForPush('maker:event', undefined)).toBeNull();
   });
+
+  it('routes a native command-catalog invalidation to its exact session', () => {
+    expect(topicForPush('maker:agent-command-catalog:changed', {
+      sessionId: 's1',
+      agentKind: 'omp',
+      revision: 1,
+      status: 'loaded',
+    })).toBe('session:s1');
+  });
 });
 
 describe('expandMakerEventBatchPayload', () => {

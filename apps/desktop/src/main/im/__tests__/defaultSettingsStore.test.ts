@@ -174,6 +174,13 @@ describe('im default settings store', () => {
         model: 'claude-sonnet-5',
         effort: 'high',
       },
+      // OMP is the fourth resolved snapshot slot just like Pi. Sparse global
+      // overrides stay sparse, while the legacy root mirror remains total.
+      omp: {
+        providerId: null,
+        model: 'claude-sonnet-5',
+        effort: 'high',
+      },
     });
   });
 

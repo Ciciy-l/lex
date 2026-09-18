@@ -73,6 +73,18 @@ describe('enableRemoteCollabForSession', () => {
     expect(listWorkersByLead).not.toHaveBeenCalled();
   });
 
+  it('uses the same controlled-device collaboration path for an OMP Worker', async () => {
+    enableOrca.mockResolvedValue({ workerSessionId: 'omp-worker-1' });
+
+    await expect(enableRemoteCollabForSession({
+      ...params,
+      options: { workerAgent: 'omp' },
+    })).resolves.toEqual({ focusWorkerSessionId: 'omp-worker-1' });
+
+    expect(getCapabilities).toHaveBeenCalledWith('dev-1', 'omp');
+    expect(enableOrca).toHaveBeenCalledWith('lead-1', { workerAgent: 'omp' });
+  });
+
   it('新被控端延后 UI 派单，并返回 accepted 后使用的远程交接凭据', async () => {
     getCapabilities.mockResolvedValue({
       supportsOrcaWorkerPermissionMode: true,

@@ -253,6 +253,7 @@ test("real agent integration tests are explicit tiers outside unit", () => {
 		"src/agents/codex/*.integration.test.ts",
 		"src/agents/claude-code/__tests__/*.integration.test.ts",
 		"src/agents/pi/__tests__/*.integration.test.ts",
+		"src/agents/omp/__tests__/*.integration.test.ts",
 	]);
 	assert.deepEqual(piManager.tiers.unit.exclude, [
 		"src/__tests__/pi-manager.integration.test.ts",

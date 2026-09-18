@@ -1432,6 +1432,41 @@ describe('applyRuntimeSetModelChange', () => {
     expect(setModel).not.toHaveBeenCalled();
   });
 
+  it('rebuilds an idle OMP Session when its startup-scoped route changes', async () => {
+    const sessionId = rememberSession('runtime-set-model-omp-route-rebuild');
+    setSessionProvider(sessionId, 'minimax');
+    const setModel = vi.fn(async () => {});
+    const requiresModelSwitchRebuild = vi.fn(async () => true);
+    const closeSession = vi.fn(async () => {});
+    const maker: RuntimeSetModelMaker = {
+      getSession: () => ({
+        agentKind: 'omp',
+        remoteHostId: null,
+        model: 'MiniMax-M2',
+        setModel,
+        requiresModelSwitchRebuild,
+      }),
+      listActiveSessions: () => [
+        { id: sessionId, agentKind: 'omp', remoteHostId: null, isTurnRunning: () => false },
+      ],
+      closeSession,
+    };
+
+    await expect(applyRuntimeSetModelChange({
+      maker,
+      sessionId,
+      model: 'MiniMax-M3',
+      providerId: 'minimax',
+      clearPendingCredentialSwitch: vi.fn(),
+    })).resolves.toEqual({ status: 'applied' });
+
+    expect(requiresModelSwitchRebuild).toHaveBeenCalledWith('MiniMax-M3', {
+      providerId: 'minimax',
+    });
+    expect(closeSession).toHaveBeenCalledWith(sessionId);
+    expect(setModel).not.toHaveBeenCalled();
+  });
+
   it('prioritizes a provider thread relink over context-host rebuild preflight', async () => {
     const sessionId = rememberSession('runtime-set-model-relink-before-context-host');
     setSessionProvider(sessionId, 'mygpt');

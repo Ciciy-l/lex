@@ -191,7 +191,7 @@ export interface ModelAccessGatewayModel extends ModelGroupPricing {
    */
   currency?: 'USD' | 'CNY';
   /** 进哪些 runtime tab；Desktop 固定使用 v3，本字段由服务端明确下发。 */
-  agents?: ('claude-code' | 'codex' | 'pi')[];
+  agents?: ('claude-code' | 'codex' | 'pi' | 'omp')[];
   name?: string;
   group?: string;
   description?: string;

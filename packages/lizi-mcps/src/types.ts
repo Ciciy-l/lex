@@ -532,7 +532,7 @@ export type ControlResult<T extends object = object, E extends string = never> =
  * adding a new vendor (e.g. 'gemini') without updating this union will cause
  * LLM tool calls to fail zod enum validation.
  */
-export type ControlWorkerAgent = 'claude-code' | 'codex' | 'pi';
+export type ControlWorkerAgent = 'claude-code' | 'codex' | 'pi' | 'omp';
 
 /** Browser automation MCP host deps. Core browser execution is injected by host. */
 export interface BrowserMcpDeps {
@@ -953,6 +953,14 @@ export interface LiziMcpProvider {
   toClaudeSdkConfig(context: LiziMcpSessionContext): unknown | null;
   /** Remote MCP config for Codex app-server; SDK instance providers use the host HTTP bridge instead. */
   toCodexMcpConfig?(context: LiziMcpSessionContext): CodexHttpMcpConfig | null;
+  /**
+   * Optional OMP RPC host-tool adapter.  OMP does not load an arbitrary MCP
+   * server; each provider must explicitly project the bounded tools it can
+   * serve through the host-owned RPC bridge.
+   */
+  toOmpRpcHostTools?(
+    context: LiziMcpSessionContext,
+  ): readonly import('@cindy/maker-core').OmpHostToolDefinition[] | null;
   /** Extra env required by remote MCP configs, e.g. bearer tokens. */
   getExtraEnv?(context: LiziMcpSessionContext): Promise<Record<string, string> | null> | Record<string, string> | null;
 }

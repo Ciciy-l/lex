@@ -1,0 +1,96 @@
+classDiagram
+  direction LR
+
+  class BaseAgent {
+    <<abstract>>
+    +kind: AgentKind
+    +capabilities: Capabilities
+    #deps: AgentDeps
+    #memoryOverride: boolean|undefined
+    #buildCapabilities(base: Capabilities) Capabilities
+    +startSession(opts: StartSessionOptions)* Promise~AgentSessionHandle~
+  }
+
+  class OmpAgent {
+    +kind: 'omp'
+    +capabilities: Capabilities
+    +startSession(opts: StartSessionOptions) Promise~OmpSessionHandle~
+    -buildOmpCapabilities() Capabilities
+  }
+
+  class OmpSessionHandle {
+    +id: string  // = OMP sessionFile 绝对路径
+    +agentKind: 'omp'
+    +model: string
+    +events: EventEmitter~AgentEvent~
+    +send(message: UserMessage, opts?: SendOptions) Promise~void~
+    +steer(message: UserMessage, opts?: SendOptions) Promise~void~
+    +abort() Promise~void~
+    +close(opts?: AgentSessionTeardownOptions) Promise~void~
+    +getUsageSnapshot() UsageSnapshot
+    +setInteractionResolver(resolver: InteractionResolver) void
+    +setModel(model: string, opts?: {providerId?: string}) Promise~void~
+    +setPermissionMode(mode: PermissionMode) Promise~void~
+    -rpc: OmpRpcClient
+    -translator: OmpTranslator
+    -bridge: OmpPermissionBridge
+    -lifecycle: OmpProcessLifecycle
+  }
+
+  class OmpRpcClient {
+    +request(command: OmpRpcRequest, timeoutMs?: number) {id, response}
+    +respondToUi(id: string, response: OmpUiResponse, correlation?: {requestGeneration?: unknown}) void
+    +releasePrompt(id: string) void
+    +stopAcceptingRequests() void
+    +close() void
+    -pending: Map~string, PendingRequest~
+    -prompts: Set~string~  // ≤64
+  }
+
+  class OmpTranslator {
+    +handleFrame(frame: Record~string,unknown~) void
+    +bindWindow(windowId: string) void
+    +reset() void
+    -sessionId: string
+    -emit(evt: AgentEvent) void
+    -pendingToolCalls: Map~string, ToolCallState~
+  }
+
+  class OmpPermissionBridge {
+    +handleExtensionUiRequest(frame: OmpUiRequestFrame) void
+    +handleAskRequest(frame: OmpAskFrame) void
+    +dismissAll(reason: 'abort'|'close'|'timeout'|'upgrade') void
+    -pending?: PendingInteraction  // 单会话同时仅 1 个
+    -resolver?: InteractionResolver
+    -generationById: Map~string, unknown~  // requestGeneration 快照
+  }
+
+  class OmpLaunchPlanFactory {
+    <<pure functions>>
+    +createOmpSessionLaunchPlan(input: OmpSessionRoots, opts: OmpSessionLaunchOpts) OmpSessionLaunchPlan
+    +mapLexPermissionToOmp(mode: PermissionMode) OmpApprovalMode  // 失败回落 always-ask
+    +buildOmpModelsYml(providers: OmpProviderSpec[]) string
+  }
+
+  class OmpRuntimeResolver {
+    +resolveOmpBinary(platform: NodeJS.Platform) Promise~string|null~
+    +vetOmpBinary(candidate: string) Promise~boolean~
+    -verifyAgainstPin(path: string, pin: OmpPin) Promise~void~
+  }
+
+  class OmpHost {
+    +buildOmpAgent() BaseAgent|null  // 二进制缺失→null→不注册
+    +buildOmpSubscriptionProviders(catalog: Catalog, endpoint: string) OmpModelsYmlResult
+    +materializeOmpAgentHome(sessionId: string) Promise~OmpAgentHomePaths~
+  }
+
+  BaseAgent <|-- OmpAgent
+  OmpAgent ..> OmpSessionHandle : creates
+  OmpSessionHandle --> OmpRpcClient : owns
+  OmpSessionHandle --> OmpTranslator : owns
+  OmpSessionHandle --> OmpPermissionBridge : owns
+  OmpTranslator ..> OmpPermissionBridge : routes ui frames
+  OmpPermissionBridge --> OmpRpcClient : respondToUi (+requestGeneration echo)
+  OmpAgent ..> OmpLaunchPlanFactory : argv/env/settings/models.yml
+  OmpHost ..> OmpAgent : constructs (binaryPath from resolver)
+  OmpHost ..> OmpRuntimeResolver : resolve+vet before spawn

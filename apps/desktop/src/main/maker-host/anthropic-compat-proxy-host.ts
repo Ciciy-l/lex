@@ -117,6 +117,14 @@ import {
   getPiProxySessionProvider,
   isPiProxySubagentRoute,
 } from './pi-proxy-session-auth.js';
+import {
+  authenticateOmpProxySession,
+  readOmpBearerToken,
+} from './omp-proxy-session-auth.js';
+import {
+  OMP_CINDY_PROVIDER_ID_HEADER,
+  OMP_CINDY_SESSION_ID_HEADER,
+} from '@cindy/maker-core';
 import { createXdToolResultImageNoticeTransform } from './xd-tool-result-image-notice.js';
 import { createPiResponsesVerbosityTransform } from './pi-responses-verbosity.js';
 
@@ -428,6 +436,115 @@ function refuseUnsafePlaceholderPassthrough(
   return ownerBoundaryPendingRoute();
 }
 
+function localErrorRoute(
+  status: number,
+  type: string,
+  code: string,
+  message: string,
+): RoutingDecision {
+  return {
+    localHandler: async ({ res }) => {
+      const payload = JSON.stringify({ type: 'error', error: { type, code, message } });
+      res.writeHead(status, {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+      });
+      res.end(payload);
+    },
+  };
+}
+
+/**
+ * OMP 的受管代理路由(与 Pi 不同源,勿合并)。
+ *
+ * 凭证通道:OMP **不对** models.yml 的 header 值做环境变量插值(真机实测
+ * v18.1.18,`docs/omp-rpc-spike.md` §10),所以会话 token 走 `apiKey` env 通道,
+ * 以 `Authorization: Bearer <token>` 抵达 —— 这里从该头取回并校验。header 里
+ * 只剩非敏感的 session-id / provider-id,纯粹用于把请求识别成 OMP 的,**不是**
+ * 授权凭据(loopback 不是安全边界,任意本地进程都能伪造这两个头)。
+ *
+ * 路由:OMP 的 Cindy provider 恒定指向本机 proxy,但真实上游必须从 Main
+ * 保存的会话供应商解析。models.yml 里的 provider-id header 仅用于识别 OMP
+ * 流量，不能作为路由或授权来源；请求 API 仍决定 gateway fallback 的 Claude /
+ * Codex 前门(与 Pi 同口径)。
+ */
+function resolveOmpRoute(
+  ctx: RequestTransformCtx,
+  sessionId: string | null,
+  wireModel: string | undefined,
+): RoutingDecision | Promise<RoutingDecision> {
+  if (!sessionId) {
+    return localErrorRoute(
+      401,
+      'authentication_error',
+      'invalid_omp_session',
+      'OMP proxy request without a session id.',
+    );
+  }
+  const bearer = readOmpBearerToken(ctx.headers);
+  if (bearer === null || !authenticateOmpProxySession(sessionId, bearer)) {
+    return localErrorRoute(
+      401,
+      'authentication_error',
+      'invalid_omp_session_token',
+      'Invalid or expired OMP proxy session token.',
+    );
+  }
+  const selectedProviderId = getSessionProvider(sessionId);
+  const gatewayKey = _readGatewayKey();
+  const stripOmpHeaders = (decision: RoutingDecision): RoutingDecision => ({
+    ...decision,
+    // OMP 的识别头只在本地有意义,删掉它们 —— 上游不该看到,更不该被当成凭据。
+    headerDelete: [
+      ...new Set([
+        ...(decision.headerDelete ?? []),
+        OMP_CINDY_SESSION_ID_HEADER,
+        OMP_CINDY_PROVIDER_ID_HEADER,
+      ]),
+    ],
+  });
+  const unavailableSelectedProvider = (): RoutingDecision =>
+    localErrorRoute(
+      503,
+      'routing_error',
+      'omp_provider_unavailable',
+      'The selected OMP provider route is unavailable.',
+    );
+  const resolve = (decision: RoutingDecision | null): RoutingDecision => {
+    if (decision) return stripOmpHeaders(decision);
+    // A selected source is an authorization boundary.  Do not let a temporarily
+    // missing / incompatible / mutated OMP route fall through to Cindy Gateway.
+    if (selectedProviderId) return unavailableSelectedProvider();
+    // No selected source retains the legacy gateway fallback.  OMP's bearer is
+    // never allowed to reach a default upstream unchanged.
+    const gatewayDecision = gatewayDefaultRouteDecision(
+      piGatewayRequestAgent(ctx.url),
+      gatewayKey,
+    );
+    return gatewayDecision
+      ? stripOmpHeaders(gatewayDecision)
+      : localErrorRoute(
+          503,
+          'routing_error',
+          'omp_gateway_unavailable',
+          'OMP gateway route is unavailable.',
+        );
+  };
+
+  // The session store is Main-owned; deliberately ignore the request's claimed
+  // provider header after authentication.  It is visible to any local process
+  // that can speak to the loopback proxy and must not select an upstream.
+  const selectedRoute = resolveSessionRouteDecision(
+    sessionId,
+    'omp',
+    gatewayKey,
+    wireModel,
+  );
+  return selectedRoute instanceof Promise
+    ? selectedRoute.then(resolve, unavailableSelectedProvider)
+    : resolve(selectedRoute);
+}
+
 function routingTransformThrew(err: unknown, ctx: RequestTransformCtx): RoutingDecision {
   log.warn('routingTransform threw; refusing default upstream', {
     err: err instanceof Error ? err.message : String(err),
@@ -473,6 +590,16 @@ function unavailablePiProviderRoute(providerId: string): RoutingDecision {
  */
 export function createModelRoutingTransform(): RoutingTransform {
   const route: RoutingTransform = (body, ctx) => {
+    // OMP 先于 Pi 判定:OMP 不会带任何 pi-* 头,放前面不会误伤既有链路,
+    // 也让「OMP 未通过鉴权」绝无可能掉进 Pi / Claude 的默认路由。
+    const claimedOmpSessionId = headerValue(ctx.headers, OMP_CINDY_SESSION_ID_HEADER);
+    const claimedOmpProviderId = headerValue(ctx.headers, OMP_CINDY_PROVIDER_ID_HEADER);
+    if (claimedOmpSessionId !== null || claimedOmpProviderId !== null) {
+      const ompWireModel = isPlainObject(body) && typeof body.model === 'string'
+        ? body.model
+        : undefined;
+      return resolveOmpRoute(ctx, claimedOmpSessionId, ompWireModel);
+    }
     const claimedPiSessionId = headerValue(ctx.headers, 'x-cindy-pi-session-id');
     const claimedPiSessionToken = headerValue(ctx.headers, 'x-cindy-pi-session-token');
     if (

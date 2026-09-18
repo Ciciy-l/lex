@@ -48,6 +48,7 @@ import type {
 import { isTerminalAgentErrorEvent, parseToolLoopErrorDetails } from './types/events.js';
 import type { ContextUsageData } from './types/context-usage.js';
 import type { PiRuntimeCapabilityManifest } from './types/pi-runtime-capabilities.js';
+import type { AgentRuntimeCommandCatalogSnapshot } from './types/palette.js';
 import type {
   AgentSessionHandle,
   AgentSessionTeardownOptions,
@@ -1407,6 +1408,18 @@ export class Session {
     listener: (manifest: PiRuntimeCapabilityManifest | undefined) => void,
   ): () => void {
     return this.handle.onRuntimeCapabilitiesChange?.(listener) ?? (() => undefined);
+  }
+
+  /** Return this exact live runtime's native command palette, if it exposes one. */
+  getRuntimeCommandCatalog(): AgentRuntimeCommandCatalogSnapshot | undefined {
+    return this.handle.getRuntimeCommandCatalog?.();
+  }
+
+  /** Subscribe to a live runtime-native command catalog without crossing session boundaries. */
+  onRuntimeCommandCatalogChange(
+    listener: (snapshot: AgentRuntimeCommandCatalogSnapshot | undefined) => void,
+  ): () => void {
+    return this.handle.onRuntimeCommandCatalogChange?.(listener) ?? (() => undefined);
   }
 
   async getContextUsage(): Promise<ContextUsageData> {

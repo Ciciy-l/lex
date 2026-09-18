@@ -82,6 +82,8 @@ const providerRouting = (
         'pi-model': { efforts: ['low', 'high', 'max'], defaultEffort: 'high' },
       },
     }],
+    // OMP 在本用例里没有任何已连接供应商,空清单即可满足类型穷举。
+    omp: [],
   },
   resolveDefaultProviderIdForModel: (agent: AgentKind) => defaults[agent] ?? (
     agent === 'claude-code' ? 'anthropic' : agent === 'codex' ? 'openai' : 'xd'
@@ -311,6 +313,7 @@ describe('resolveSendToSessionExecutionConfig', () => {
             },
           }],
           pi: [],
+          omp: [],
         },
         resolveDefaultProviderIdForModel: () => 'xd',
       },

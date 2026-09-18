@@ -7,7 +7,9 @@ import {
   type ProviderView,
 } from '@cindy/model-providers';
 
-type MakerVendor = 'cc' | 'codex' | 'pi' | 'orca';
+// 与 renderer/lib/ccAgent.types.ts 的 MakerVendor 保持同一取值集合:OMP 虽无产品
+// 默认 tuple(vendorForAgent 返回 null),但可用 vendor 集合里必须能容纳它。
+type MakerVendor = 'cc' | 'codex' | 'pi' | 'omp' | 'orca';
 
 export interface NewMakerDefaultTuple {
   vendor: Extract<MakerVendor, 'cc' | 'codex' | 'pi'>;
@@ -62,8 +64,10 @@ const DEFAULT_POLICIES: readonly ProviderDefaultPolicy[] = [
   },
 ];
 
-function vendorForAgent(agent: AgentKind): NewMakerDefaultTuple['vendor'] {
-  return agent === 'claude-code' ? 'cc' : agent;
+// OMP 尚无产品默认 tuple(没有与之绑定的 provider/模型),与 orca 一样在默认
+// 下放里视为"无对应 vendor"——返回 null 让调用方跳过,而不是编一个假 tuple。
+function vendorForAgent(agent: AgentKind): NewMakerDefaultTuple['vendor'] | null {
+  return agent === 'claude-code' ? 'cc' : agent === 'omp' ? null : agent;
 }
 
 /**
@@ -138,7 +142,7 @@ export function resolveNewMakerDefaultTuples(args: {
 
     for (const agent of policy.agents) {
       const vendor = vendorForAgent(agent);
-      if (!availableAgents.has(vendor)) continue;
+      if (!vendor || !availableAgents.has(vendor)) continue;
       const model = matchingModel(
         provider,
         agent,

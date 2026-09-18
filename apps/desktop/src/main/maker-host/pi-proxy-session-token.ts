@@ -39,14 +39,31 @@ function getOrCreateDerivationKey(): string | null {
   return created;
 }
 
-export function derivePiProxySessionToken(sessionId: string): string {
+/** 共享导出密钥上的域分离派生;域前缀让同一 sessionId 的两个 agent 拿到不同 token。 */
+function deriveProxySessionToken(domain: string, sessionId: string): string {
   const key = getOrCreateDerivationKey();
   if (!key) {
     throw new Error(
-      '[PI_PROXY_DERIVATION_KEY_UNAVAILABLE] Cannot persist remote Pi proxy authentication; reconnect after secure storage becomes available.',
+      '[PI_PROXY_DERIVATION_KEY_UNAVAILABLE] Cannot persist local agent proxy authentication; reconnect after secure storage becomes available.',
     );
   }
-  return createHmac('sha256', key).update(sessionId).digest('base64url');
+  return createHmac('sha256', key).update(`${domain}\n${sessionId}`).digest('base64url');
+}
+
+export function derivePiProxySessionToken(sessionId: string): string {
+  return deriveProxySessionToken('pi', sessionId);
+}
+
+/**
+ * OMP 的会话 token。
+ *
+ * 与 Pi 用同一条 owner-scoped 导出密钥,但域前缀不同 —— OMP 的请求经
+ * `Authorization: Bearer <token>` 进同一个 loopback proxy(它对 models.yml 的
+ * header 值不做环境变量插值,只能走 apiKey env 通道,见
+ * `docs/omp-rpc-spike.md` §10),没有域分离的话一个 Pi token 就能认 OMP 的账。
+ */
+export function deriveOmpProxySessionToken(sessionId: string): string {
+  return deriveProxySessionToken('omp', sessionId);
 }
 
 /** Test-only process restart simulation; does not delete the persisted key. */

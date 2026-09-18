@@ -137,7 +137,8 @@ export function ErrorTailErrorBanner({
   errorText: string;
   onContinue: () => Promise<void> | void;
   onDismiss: () => void;
-  agentKind?: 'cc' | 'codex' | 'pi';
+  // OMP 接入:会话引擎可能是 omp,prop 口径同步放宽(直接透传给 ErrorBanner)。
+  agentKind?: 'cc' | 'codex' | 'pi' | 'omp';
   remoteHostId?: string;
   deviceLinkDeviceId?: string | null;
   modelId?: string;

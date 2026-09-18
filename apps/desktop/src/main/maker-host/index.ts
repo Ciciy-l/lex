@@ -157,6 +157,8 @@ import {
   prepareCodexCustomContextCatalog,
 } from './codex-custom-context-catalog.js';
 import { buildPiAgent } from './pi-host.js';
+import { buildOmpAgent } from './omp-host.js';
+import { refreshOmpRuntime, subscribeOmpRuntime } from './omp-runtime.js';
 import {
   captureLocalPiPackageRuntimeInvalidationSnapshot,
   invalidateLocalPiPackageRuntimeSnapshot,
@@ -358,6 +360,28 @@ let botRuntimeResourcePreflight:
   | ((opts: MakerSessionCreateOpts) => Promise<BotProfileRuntimeSnapshot | null>)
   | null = null;
 let _registerPiAgent: (() => boolean) | null = null;
+/**
+ * OMP 与 Pi 同链:二进制是 opt-in 资产(opt-in 见 omp-runtime),首次装配时可能
+ * 还没下载完 —— 由 registerOmpAgentIfAvailable 在下载补齐后补注册。
+ */
+let _registerOmpAgent: (() => boolean) | null = null;
+/**
+ * OMP 运行时三态 → 注册的接线只装一次(进程级)。
+ *
+ * 二进制可能在 Cindy 跑着的时候被 `pnpm install:omp` 补齐:下载器上报 succeeded
+ * 后这里补注册 OMP 并广播 AGENTS_CHANGED,引擎下拉里立刻多出 OMP,不必重启。
+ * 刻意不随 resetMaker 反复订阅 —— resetMaker 会把 _registerOmpAgent 置空,
+ * 旧订阅自然退化成 no-op。
+ */
+let ompRuntimeSubscriptionInstalled = false;
+function ensureOmpRuntimeSubscription(): void {
+  if (ompRuntimeSubscriptionInstalled) return;
+  ompRuntimeSubscriptionInstalled = true;
+  subscribeOmpRuntime((snapshot) => {
+    if (snapshot.state !== 'ready') return;
+    registerOmpAgentIfAvailable();
+  });
+}
 /** 视觉桥实例（层 A/B/C 共用），在 resetMaker 时释放缓存。 */
 let _visionBridgeInstance: ReturnType<typeof createVisionBridge> | null = null;
 
@@ -2093,6 +2117,16 @@ export function getMaker(): Maker {
       orcaWorkerBridgeProvider,
     ];
     _mcpProviders.pi = piMcpProviders;
+    // OMP shares the same provider composition as Claude/Codex/Pi.  Its core
+    // only projects providers that explicitly implement toOmpRpcHostTools, so
+    // this does not enable upstream project discovery or arbitrary MCP code.
+    // cindy_orca therefore gives OMP Lead the identical Orca control surface,
+    // while orca_worker_bridge remains the Worker → Lead surface.
+    const ompMcpProviders = [
+      ...createDesktopMcpProviders(makerMemoryProviderDeps),
+      orcaWorkerBridgeProvider,
+    ];
+    _mcpProviders.omp = ompMcpProviders;
     // 用户自定义 MCP:三个 agent 都必须注册其实际持有的数组引用，再统一做初始 refresh。
     // localDb onReady 可能在 Maker 构造前就已触发（此时 registry 无数组，refresh 空跑）；
     // 在此补一次 refresh，若 DB 尚未就绪则 refreshCustomMcpProviders 内部 catch 后静默跳过。
@@ -2380,6 +2414,34 @@ export function getMaker(): Maker {
     });
     const piAgent = buildPiAgentForDesktop();
     if (piAgent) makerAgents.pi = piAgent;
+
+    // omp(实验性,opt-in 二进制):与 pi 同一条降级链 —— 二进制在位才注册;
+    // 缺失时 agents map 不含 omp,既有环境零影响,新建入口也会据
+    // listAvailableAgents 把 OMP 从引擎下拉里隐掉(不会白屏/不会莫名报错)。
+    const buildOmpAgentForDesktop = () => buildOmpAgent({
+      logger: desktopMakerLogger,
+      turnChangeCapture: {
+        beforeKnownFileWrite: captureKnownFileBefore,
+        noteOpaqueWrite: noteOpaqueTurnChange,
+      },
+      registerLocalAgentProcess: ({ pid, kind, role }) => registerAgentProcess(pid, kind, role),
+      reviewAutoPermissionAction,
+      capabilityAdditions: {
+        availableModels: deriveAvailableModels(getDesktopSelectableCatalog(), 'omp'),
+      },
+      mcpProviders: ompMcpProviders,
+      makerMemory: makerMemoryManager,
+    });
+    const ompAgent = buildOmpAgentForDesktop();
+    if (ompAgent) makerAgents.omp = ompAgent;
+    // 版本探测是异步的:它能把「二进制在位但 --version 对不上基线」翻成 failed。
+    // 已注册的 omp 不会被这次探测摘掉(在跑的会话继续跑),但下一次 getMaker
+    // (切账号 / 重启)会看到 failed 而不再注册。
+    void refreshOmpRuntime().catch((error) => {
+      desktopMakerLogger.warn('omp runtime version probe failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
 
     setVisionGatewayKeyReader(readClaudeApiKey);
     _visionBridgeInstance = createVisionBridge({
@@ -2702,6 +2764,22 @@ export function getMaker(): Maker {
       }
       return true;
     };
+    _registerOmpAgent = () => {
+      if (!_maker || _maker.listAvailableAgents().includes('omp')) return false;
+      const next = buildOmpAgentForDesktop();
+      if (!next) return false;
+      const registered = _maker.registerAgent('omp', next);
+      if (!registered) {
+        void next.dispose().catch((error) => {
+          desktopMakerLogger.warn('discarding OMP agent after registration race failed', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+        return false;
+      }
+      return true;
+    };
+    ensureOmpRuntimeSubscription();
     setVisionBridgeController({
       shouldBridge: _visionBridgeInstance.isTargetModel,
       describeImage: _visionBridgeInstance.describeImage,
@@ -2793,6 +2871,37 @@ export function registerPiAgentIfAvailable(): boolean {
 }
 
 /**
+ * Register OMP after its opt-in runtime became available and notify renderers.
+ *
+ * 与 Pi 同构:补注册后广播 AGENTS_CHANGED,让 renderer 的 useAvailableAgents
+ * 重拉 roster,OMP 入口在下拉里即时出现(不必重启 Cindy)。
+ */
+export function registerOmpAgentIfAvailable(): boolean {
+  const register = _registerOmpAgent;
+  if (!register) return false;
+  try {
+    if (_maker?.listAvailableAgents().includes('omp')) return true;
+    const registered = register();
+    if (!registered) return false;
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed()) continue;
+      try {
+        win.webContents.send(MAKER_PUSH.AGENTS_CHANGED);
+      } catch {
+        // Window teardown may race the broadcast; other windows still receive it.
+      }
+    }
+    tapWindowBroadcast(MAKER_PUSH.AGENTS_CHANGED, {});
+    return true;
+  } catch (error) {
+    desktopMakerLogger.warn('OMP agent registration after runtime recovery failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+}
+
+/**
  * Resolve and compare the complete frozen Bot resource bundle without creating
  * a runtime snapshot or touching the currently live Agent process.
  */
@@ -2814,6 +2923,7 @@ export function resetMaker(): void {
   _maker = null;
   botRuntimeResourcePreflight = null;
   _registerPiAgent = null;
+  _registerOmpAgent = null;
   _codexAgent = null;
   _mcpProviders = {};
   // coordinator 闭包捕获了刚作废的那个 maker —— 不清掉的话,换账号窗口期内到达的 auth

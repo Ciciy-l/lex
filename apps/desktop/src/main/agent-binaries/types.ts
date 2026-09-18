@@ -9,8 +9,8 @@
  */
 
 // ===== §5.1 VendorKey =====
-/** @frozen v1.0(additive: 2026-08 增补 'pi') */
-export type VendorKey = 'claude' | 'codex' | 'pi';
+/** @frozen v1.0(additive: 2026-08 增补 'pi'; 2026-09 增补 'omp') */
+export type VendorKey = 'claude' | 'codex' | 'pi' | 'omp';
 
 // ===== §5.2 BinaryProvisionerConfig =====
 /** @frozen v1.0(additive: 2026-08 增补 tar-gz-dir artifact 与 optionalAsset) */

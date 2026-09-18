@@ -250,9 +250,9 @@ describe('NewMakerDraftRoute Orca worker create order', () => {
       source.indexOf('async function rehomeDraftAttachments('),
     );
     expect(fn).toContain('const preferredAgent');
-    // 按目标设备目录判断:首选 agent 无已连接供应商时,从三种 agent 中找可用回退。
+    // 按目标设备目录判断:首选 agent 无已连接供应商时,从四种 agent 中找可用回退。
     expect(fn).toContain('connectedProvidersForAgent(providers, preferredAgent).length > 0');
-    expect(fn).toContain("(['claude-code', 'codex', 'pi'] as const).find(");
+    expect(fn).toContain("(['claude-code', 'codex', 'pi', 'omp'] as const).find(");
     expect(fn).toContain(
       'agent !== preferredAgent && connectedProvidersForAgent(providers, agent).length > 0',
     );

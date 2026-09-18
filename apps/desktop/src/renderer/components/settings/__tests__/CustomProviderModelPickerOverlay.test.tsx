@@ -25,7 +25,7 @@ describe('ModelPickerOverlay', () => {
     function Harness() {
       const [open, setOpen] = useState(true);
       const [picker, setPicker] = useState<{
-        agent: 'claude-code' | 'codex' | 'pi';
+        agent: 'claude-code' | 'codex' | 'pi' | 'omp';
         models: typeof models;
         selected: Set<string>;
         query: string;

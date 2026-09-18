@@ -151,7 +151,14 @@ if (!rootElement) {
 }
 const root = createRoot(rootElement);
 
-void (async () => {
+/**
+ * Completes only after the deferred App module has loaded and mounted.
+ *
+ * index.tsx awaits this promise so a stale Vite optimize-deps chunk needed
+ * by ./App reaches the dev-only entry recovery path. Keeping this as an
+ * exported promise preserves the module's existing eager-start behaviour.
+ */
+export const mainEntryReady: Promise<void> = (async () => {
   if (isComputerPermissionBackdrop) {
     const { ComputerPermissionBackdrop } = await import(
       './components/settings/ComputerPermissionGuideWindow'

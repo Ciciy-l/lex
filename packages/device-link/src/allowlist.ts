@@ -584,6 +584,9 @@ export const PUSH_FORWARD_ALLOWLIST: ReadonlySet<string> = new Set([
   'maker:bot-direct-message:changed',
   // maker-ipc MAKER_PUSH
   'maker:event',
+  // Per-session native slash-command catalog invalidation. The controller
+  // reloads the sender-validated list IPC; command bodies are never pushed.
+  'maker:agent-command-catalog:changed',
   'maker:history-view-changed',
   // Device-level runtime Agent roster changes; controllers refresh their local availability cache.
   'maker:agents:changed',

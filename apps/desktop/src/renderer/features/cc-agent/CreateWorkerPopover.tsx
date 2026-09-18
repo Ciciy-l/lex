@@ -54,7 +54,7 @@ const AUTO_ONLY_WORKER_PERMISSION_MODES = ['auto'] as const;
 
 export interface CreateWorkerForm {
   role: string;
-  agent: 'claude-code' | 'codex' | 'pi';
+  agent: 'claude-code' | 'codex' | 'pi' | 'omp';
   model: string;
   effort?: Effort;
   fast?: boolean;
@@ -101,7 +101,7 @@ export function CreateWorkerPopover({
   const navigate = useNavigate();
   const [role, setRole] = useState('developer');
   const [customRole, setCustomRole] = useState('');
-  const [agent, setAgent] = useState<'claude-code' | 'codex' | 'pi'>('codex');
+  const [agent, setAgent] = useState<'claude-code' | 'codex' | 'pi' | 'omp'>('codex');
   const [model, setModel] = useState(DEFAULT_WORKER_CREATION_PREFS.codex.model);
   const [effort, setEffort] = useState<Effort>(DEFAULT_WORKER_CREATION_PREFS.codex.effort);
   const [fast, setFast] = useState(DEFAULT_WORKER_CREATION_PREFS.codex.fast);
@@ -119,6 +119,7 @@ export function CreateWorkerPopover({
   const ccCaps = useAgentCapabilities('claude-code', deviceId);
   const codexCaps = useAgentCapabilities('codex', deviceId);
   const piCaps = useAgentCapabilities('pi', deviceId);
+  const ompCaps = useAgentCapabilities('omp', deviceId);
   const pickerAgents = useModelPickerAgents(agent, deviceId);
   const localProviders = useProviders();
   const remoteProviders = useDeviceProviders(deviceId);
@@ -126,7 +127,8 @@ export function CreateWorkerPopover({
   const providersLoading = deviceId ? remoteProviders.loading : localProviders.loading;
   const providersError = deviceId ? remoteProviders.error : null;
   const visibilityVersion = useModelVisibilityVersion();
-  const activeCapabilitiesState = agent === 'codex' ? codexCaps : agent === 'pi' ? piCaps : ccCaps;
+  const activeCapabilitiesState =
+    agent === 'codex' ? codexCaps : agent === 'pi' ? piCaps : agent === 'omp' ? ompCaps : ccCaps;
   const activeCaps = activeCapabilitiesState.capabilities;
   const supportsWorkerPermissionModeSelection =
     !deviceId || activeCaps?.supportsOrcaWorkerPermissionMode === true;
@@ -342,7 +344,7 @@ export function CreateWorkerPopover({
 
   const vendorKey = agentKindToVendor(agent);
   const updateAgent = useCallback(
-    (nextAgent: 'claude-code' | 'codex' | 'pi') => {
+    (nextAgent: 'claude-code' | 'codex' | 'pi' | 'omp') => {
       if (nextAgent === agent) return;
       // 切走前把当前 agent 的 live 编辑(模型/effort/Fast/来源)快照进内存 prefs:
       // 恢复读的是 prefs,不快照会把「改了还没提交就切了个 tab」的编辑静默回滚到
@@ -726,7 +728,11 @@ export function CreateWorkerPopover({
               value={vendorKey}
               width={220}
               ariaLabel={t('orca.createWorker.agentLabel')}
-              onChange={(next) => updateAgent(next === 'codex' ? 'codex' : next === 'pi' ? 'pi' : 'claude-code')}
+              hiddenVendors={sshRemote ? ['omp'] : undefined}
+              onChange={(next) => {
+                if (next === 'cc') updateAgent('claude-code');
+                else if (next === 'codex' || next === 'pi' || next === 'omp') updateAgent(next);
+              }}
             />
           )}
 
@@ -746,7 +752,11 @@ export function CreateWorkerPopover({
               )}
               <ModelSelector
                 fastModeConfigurable={['codex', 'pi']}
-                unifiedAgents={sshRemote ? (pickerAgents ?? ['claude-code', 'codex']).filter((kind) => kind !== 'pi') : pickerAgents}
+                unifiedAgents={
+                  sshRemote
+                    ? (pickerAgents ?? ['claude-code', 'codex', 'pi']).filter((kind) => kind !== 'omp')
+                    : pickerAgents
+                }
                 onUnifiedSelect={deviceId && remoteProviders.unsupported ? undefined : (selection) => {
                   const nextAgent = selection.engine === 'cc' ? 'claude-code' : selection.engine;
                   updateAgent(nextAgent);
@@ -799,7 +809,14 @@ export function CreateWorkerPopover({
             {noAvailableLocalModels ? (
               <p className="mt-1.5 text-11 leading-snug text-[var(--error-fg)]" role="status">
                 {t('orca.createWorker.noAvailableModels', {
-                  agent: agent === 'codex' ? 'Codex' : agent === 'pi' ? 'Pi' : 'Claude Code',
+                  agent:
+                    agent === 'codex'
+                      ? 'Codex'
+                      : agent === 'pi'
+                        ? 'Pi'
+                        : agent === 'omp'
+                          ? 'OMP'
+                          : 'Claude Code',
                 })}
               </p>
             ) : null}

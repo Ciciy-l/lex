@@ -14,6 +14,8 @@
  * `applyAgentTaskUpdateEvent`; the render layer links either source to its originating tool-call.
  */
 
+import type { SubagentProvider } from './subagentWorkspace.js';
+
 export type AgentTaskStatus = 'running' | 'completed' | 'failed' | 'stopped';
 export type AgentTaskTerminalStatus = Exclude<AgentTaskStatus, 'running'>;
 
@@ -210,7 +212,9 @@ export const PI_SUBAGENT_TOOL_NAME = 'subagent';
  */
 export function normalizeAgentTaskUpdate(
   data: unknown,
-  source?: 'claude-code' | 'codex' | 'pi',
+  // 与 SubagentProvider 对齐:OMP 事件流已经能带 'omp' 来源。provider 词表仍是
+  // 三值(OMP 尚无独立子代理工具名),故 'omp' 走既有的「未知来源」兜底分支。
+  source?: SubagentProvider,
 ): AgentTaskUpdate | null {
   if (!data || typeof data !== 'object') return null;
   const raw = data as Record<string, unknown>;
@@ -362,7 +366,7 @@ export function findAgentTaskUpdate(
  */
 export interface AgentTaskCardModel {
   status: AgentTaskStatus;
-  provider: 'claude-code' | 'codex' | 'pi';
+  provider: 'claude-code' | 'codex' | 'pi' | 'omp';
   /** Best title, or null when nothing usable was found (caller supplies its own fallback). */
   title: string | null;
   description?: string;

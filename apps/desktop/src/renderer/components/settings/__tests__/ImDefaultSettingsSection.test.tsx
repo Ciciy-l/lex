@@ -91,6 +91,8 @@ function defaults(agentKind: ImDefaultSettingsState['agentKind']): ImDefaultSett
       'claude-code': { providerId: null, model: 'claude-opus-4-8', effort: 'xhigh' },
       codex: { providerId: null, model: 'codex/gpt-5.5', effort: 'high' },
       pi: { providerId: null, model: 'claude-sonnet-5', effort: 'high' },
+      // OMP 接入:夹具补齐四元组(取值照抄 Pi)。
+      omp: { providerId: null, model: 'claude-sonnet-5', effort: 'high' },
     },
     isCustomized: false,
     customizedKeys: [],

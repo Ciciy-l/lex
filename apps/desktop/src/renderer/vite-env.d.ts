@@ -1247,6 +1247,8 @@ interface ElectronAPI {
     scope: string,
     msg: string,
   ) => void;
+  /** Dev-only, fixed-target retry when Vite replaced its optimized dependency graph. */
+  recoverViteDependencyLoad: () => void;
 
   localThemes: {
     listSync: () => LocalThemesResult;
@@ -4532,7 +4534,8 @@ interface ElectronAPI {
         permissionMode?: string;
         fastMode?: boolean;
         planModeEnabled?: boolean;
-        agentKind?: 'cc' | 'codex' | 'pi';
+        // OMP 接入:agentKind 全链路放宽为四元组,omp 会话同样可建。
+        agentKind?: 'cc' | 'codex' | 'pi' | 'omp';
         orcaRole?: import('@/lib/ccAgent.types').OrcaRole | null;
         /** 附加只读引用目录列表 (绝对路径); main 端 mapper 会 JSON.stringify 后写库。 */
         extraDirs?: string[];
@@ -5051,9 +5054,9 @@ interface ElectronAPI {
    * apps/desktop/src/main/maker-ipc/ 的 handlers + apps/desktop/src/main/maker-host/。
    */
   maker: {
-    listAvailableAgents: () => Promise<Array<'claude-code' | 'codex' | 'pi'>>;
+    listAvailableAgents: () => Promise<Array<'claude-code' | 'codex' | 'pi' | 'omp'>>;
     onAgentsChanged: (cb: () => void) => () => void;
-    getCapabilities: (agentKind: 'claude-code' | 'codex' | 'pi') => Promise<unknown>;
+    getCapabilities: (agentKind: 'claude-code' | 'codex' | 'pi' | 'omp') => Promise<unknown>;
     listBotDelegations: (
       parentSessionId: string,
     ) => Promise<import('../shared/botDelegation').BotDelegationListResult>;
@@ -5177,11 +5180,11 @@ interface ElectronAPI {
     /** 供应商「测试连接」—— 与真实会话同路由口径的最小探测请求（结构化结果，code 走 providerError.* i18n）。 */
     testProviderConnection: (
       input:
-        | { kind: 'saved'; providerId: string; agent: 'claude-code' | 'codex' | 'pi' }
+        | { kind: 'saved'; providerId: string; agent: 'claude-code' | 'codex' | 'pi' | 'omp' }
         | {
             kind: 'adhoc';
             spec: {
-              agent: 'claude-code' | 'codex' | 'pi';
+              agent: 'claude-code' | 'codex' | 'pi' | 'omp';
               baseUrl: string;
               modelId: string;
               authMethod: 'apiKey' | 'oauth' | 'none';
@@ -5200,7 +5203,8 @@ interface ElectronAPI {
     }>;
     /** 供应商「获取模型列表」—— 表单值透传，结构化结果（code 走 providerError.* i18n）。 */
     fetchProviderModels: (input: {
-      agent: 'claude-code' | 'codex' | 'pi';
+      // OMP 接入:允许为 omp runtime 拉模型清单(四元组)。
+      agent: 'claude-code' | 'codex' | 'pi' | 'omp';
       baseUrl: string;
       authMethod: 'apiKey' | 'oauth' | 'none';
       wireProtocol?: import('@cindy/model-providers').ProviderWireProtocol;
@@ -5421,7 +5425,7 @@ interface ElectronAPI {
       attachments?: import('./lib/fileTypes').SerializedAttachedFile[];
     }) => Promise<{ ok: true; runId: string; reviewerSessionId: string }>;
     listAgentCommands: (
-      agentKind: 'claude-code' | 'codex' | 'pi',
+      agentKind: 'claude-code' | 'codex' | 'pi' | 'omp',
       params?: { sessionId?: string; allowManagedPiPackagePreview?: boolean },
     ) => Promise<{
       success: boolean;
@@ -5431,7 +5435,7 @@ interface ElectronAPI {
     }>;
 
     listAgentSkills: (
-      agentKind: 'claude-code' | 'codex' | 'pi',
+      agentKind: 'claude-code' | 'codex' | 'pi' | 'omp',
       params: {
         workingDir?: string;
         remoteHostId?: string;
@@ -5461,6 +5465,13 @@ interface ElectronAPI {
     ) => Promise<import('../shared/piPackages').PiPackageMutationResult>;
 
     onPiPackagesChanged: (handler: () => void) => () => void;
+
+    /** A live engine-native slash-command directory changed for one session. */
+    onAgentCommandCatalogChanged: (
+      handler: (
+        payload: import('../shared/agentCommandCatalog').AgentCommandCatalogChangedPayload,
+      ) => void,
+    ) => () => void;
 
     onDesktopCommandTriggered: (
       handler: (payload: {
@@ -5517,7 +5528,8 @@ interface ElectronAPI {
     ) => () => void;
 
     scanAtResources: (
-      agentKind: 'claude-code' | 'codex' | 'pi',
+      // OMP 接入:@ 资源扫描接受 omp 口径(四元组)。
+      agentKind: 'claude-code' | 'codex' | 'pi' | 'omp',
       params: { workingDir: string; cap?: number; query?: string },
     ) => Promise<{
       success: boolean;
@@ -5549,7 +5561,7 @@ interface ElectronAPI {
     createSession: (opts: {
       /** 可选: 复用外部 sessionId(本端 chat 用 local-db:sessions:create 拿到的 id) */
       id?: string;
-      agentKind: 'claude-code' | 'codex' | 'pi';
+      agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
       workingDir: string;
       model: string;
       title?: string;
@@ -5594,7 +5606,7 @@ interface ElectronAPI {
     enableOrca: (
       leadSessionId: string,
       opts: {
-        workerAgent: 'claude-code' | 'codex' | 'pi';
+        workerAgent: 'claude-code' | 'codex' | 'pi' | 'omp';
         delegateTask?: string;
         role?: string;
         label?: string;
@@ -5642,7 +5654,7 @@ interface ElectronAPI {
       message:
         string | { type: 'user'; content: string | Array<{ type: string; [k: string]: unknown }> },
       createOpts?: {
-        agentKind: 'claude-code' | 'codex' | 'pi';
+        agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
         workingDir: string;
         model: string;
         orcaRole?: import('@/lib/ccAgent.types').OrcaRole | null;
@@ -5689,7 +5701,7 @@ interface ElectronAPI {
     getContextUsage: (
       sessionId: string,
       createOpts?: {
-        agentKind: 'claude-code' | 'codex' | 'pi';
+        agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
         workingDir: string;
         model: string;
         orcaRole?: import('@/lib/ccAgent.types').OrcaRole | null;
@@ -5719,7 +5731,7 @@ interface ElectronAPI {
     listActive: () => Promise<
       Array<{
         sessionId: string;
-        agentKind: 'claude-code' | 'codex' | 'pi';
+        agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
         workDir: string;
         capabilities: unknown;
         isTurnRunning: boolean;
@@ -5859,14 +5871,15 @@ interface ElectronAPI {
      */
     switchSessionAgent: (
       sessionId: string,
-      targetAgentKind: 'claude-code' | 'codex' | 'pi',
+      // OMP 接入:目标引擎放宽为四元组(请求侧;响应侧仍按 main 当前返回的口径)。
+      targetAgentKind: 'claude-code' | 'codex' | 'pi' | 'omp',
       model: string,
       providerId?: string | null,
       effort?: string,
       fastMode?: boolean,
     ) => Promise<{
       switched: boolean;
-      agentKind: 'claude-code' | 'codex' | 'pi';
+      agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
       model: string;
       engineReady: boolean;
       deferred?: boolean;
@@ -5878,7 +5891,7 @@ interface ElectronAPI {
      * 重开视图 / device-link 远程会话重连后恢复乐观显示用。
      */
     getSessionAgentSwitchIntent: (sessionId: string) => Promise<{
-      targetAgentKind: 'claude-code' | 'codex' | 'pi';
+      targetAgentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
       model: string;
       providerId: string | null;
       effort?: string;
@@ -6242,13 +6255,14 @@ interface ElectronAPI {
     autoTitle: (request: {
       sessionId: string;
       text: string;
-      agentKind: 'claude-code' | 'codex' | 'pi';
+      agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
       isUserText?: boolean;
     }) => Promise<{ applied: boolean; done: boolean }>;
     /** 输入框推荐提示词:turn 结束后预测用户下一步输入。 */
     predictNextPrompt: (request: {
       sessionId: string;
-      agentKind: 'claude-code' | 'codex' | 'pi';
+      // OMP 接入:预测请求接受 omp 口径(四元组)。
+      agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
       messages: Array<{ role: string; content: string }>;
       workingDir?: string;
       turnGen: number;
@@ -6346,7 +6360,7 @@ interface ElectronAPI {
 
     /* ── Agent 联合状态 (binary + auth, 取代老 codex.binary.getStatus) ── */
     agent: {
-      getStatus: (agentKind: 'claude-code' | 'codex' | 'pi') => Promise<{
+      getStatus: (agentKind: 'claude-code' | 'codex' | 'pi' | 'omp') => Promise<{
         binaryReady: boolean;
         binaryPath: string;
         authReady: boolean;
@@ -6535,8 +6549,8 @@ interface ElectronAPI {
         scheduleName?: string;
         workingDir?: string;
         providerId?: string;
-        agentKind?: 'claude-code' | 'codex' | 'pi';
-        model?: string;
+      agentKind?: 'claude-code' | 'codex' | 'pi' | 'omp';
+      model?: string;
         /** 绑定会话任务:workingDir 空时 main 按会话 meta.workDir 解析落盘/自测目录。 */
         targetSessionId?: string;
         /** 绑定任务的缺省模型/来源维度由 targetSessionId 的会话路由补齐。 */

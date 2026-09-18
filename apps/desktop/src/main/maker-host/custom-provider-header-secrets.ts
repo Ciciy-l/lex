@@ -19,10 +19,13 @@ import {
 } from './custom-provider-store.js';
 import { getCurrentDbClientUserId } from '../localDb/client/current.js';
 
+// 覆盖全部 AgentKind:漏掉的 runtime 其 headers 不会被纳入密文管理,
+// 保存/读取时会被当成普通明文处理。
 export const CUSTOM_PROVIDER_RUNTIME_AGENTS: readonly AgentKind[] = [
   'claude-code',
   'codex',
   'pi',
+  'omp',
 ];
 
 export type CustomProviderHeaderSecrets = Partial<

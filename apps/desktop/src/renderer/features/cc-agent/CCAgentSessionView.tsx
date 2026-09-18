@@ -26,7 +26,11 @@ import {
 } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { useLocation, useNavigate, useOutletContext, useParams } from 'react-router-dom';
-import { dbToMakerAgentKind, normalizeDbAgentKind } from '../../../shared/agentKindConversion';
+import {
+  dbToMakerAgentKind,
+  makerToDbAgentKind,
+  normalizeDbAgentKind,
+} from '../../../shared/agentKindConversion';
 import { useTranslation } from 'react-i18next';
 import {
   isCodexResumeNotReadyProjectionError,
@@ -178,7 +182,9 @@ import {
   rebaseInlineRangesAfterSlashCommandRewrite,
   reconcilePiRuntimeCommandForDispatch,
   reconcilePiRuntimeCommandForDispatchWithRetry,
-  rewriteAgentSkillInvocationForDispatch,
+  rewriteNativeSkillAliasFromCommand,
+  supportsNativeSkillRuntimeAliases,
+  shouldRefreshRuntimeCommandCatalog,
   type UnifiedCommand,
 } from '@/lib/slashCommands';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
@@ -1598,37 +1604,64 @@ export function CCAgentSessionView({
   // 设置页本地项目上下文都不该消费它(否则会读到本机同名目录的 skills/files)。在远端
   // 文件 / skills 能力落地前,remote 一律按"无本地 workingDir"处理。
   const isRemoteSession = !!session?.remoteHostId;
+  const commandCatalogLoadSequenceRef = useRef(0);
+  const reloadAllCommands = useCallback(
+    (opts?: { preserveExisting?: boolean }) => {
+      const sequence = ++commandCatalogLoadSequenceRef.current;
+      const agentKind = dbToMakerAgentKind(session?.agentKind);
+      // SSH remote 显式禁用控制端本机 skill 扫描；本地无 workingDir 时 Claude 仍扫全局 skills。
+      const workingDir = session?.workingDir;
+      // A session switch must synchronously clear the old project roster. A
+      // same-session native catalog update keeps the existing roster visible
+      // until the refreshed projection arrives.
+      if (!opts?.preserveExisting) setAllCommands([]);
+      // device-link 远程会话:传 remoteDeviceId,让 agent-builtin / agent-skill 从**被控端**该会话读
+      // (与 ChatInput palette 同源)。否则此 cache 取的是控制端命令,maybeDispatchDesktopSlashCommand
+      // 会把被控端 skill/builtin 影子掉的 /clear、/help 等误判成 desktop 命令、在控制端执行。
+      // 本机会话 remoteDeviceId=undefined → 行为不变。desktop 命令始终本地(见 loadAllCommands)。
+      void loadAllCommands(
+        agentKind,
+        workingDir,
+        {
+          skipAgentSkills: isRemoteSession,
+          sessionId: session?.id,
+        },
+        remoteDeviceId,
+      )
+        .then((commands) => {
+          if (commandCatalogLoadSequenceRef.current === sequence) setAllCommands(commands);
+        })
+        .catch(() => {
+          if (commandCatalogLoadSequenceRef.current === sequence && !opts?.preserveExisting) {
+            setAllCommands([]);
+          }
+        });
+    },
+    [isRemoteSession, remoteDeviceId, session?.agentKind, session?.id, session?.workingDir],
+  );
   useEffect(() => {
-    let cancelled = false;
-    const agentKind = dbToMakerAgentKind(session?.agentKind);
-    // SSH remote 显式禁用控制端本机 skill 扫描；本地无 workingDir 时 Claude 仍扫全局 skills。
-    const wd = session?.workingDir;
-    // 先同步清空:切换会话(尤其 local→remote)时 loadAllCommands 是异步的,清空可避免
-    // 刷新完成前 getHelpCommandsSnapshot / desktop 命令识别复用上一个项目的本地 skills。
-    setAllCommands([]);
-    // device-link 远程会话:传 remoteDeviceId,让 agent-builtin / agent-skill 从**被控端**该会话读
-    // (与 ChatInput palette 同源)。否则此 cache 取的是控制端命令,maybeDispatchDesktopSlashCommand
-    // 会把被控端 skill/builtin 影子掉的 /clear、/help 等误判成 desktop 命令、在控制端执行。
-    // 本机会话 remoteDeviceId=undefined → 行为不变。desktop 命令始终本地(见 loadAllCommands)。
-    loadAllCommands(
-      agentKind,
-      wd,
-      {
-        skipAgentSkills: isRemoteSession,
-        sessionId: session?.id,
-      },
-      remoteDeviceId,
-    )
-      .then((cmds) => {
-        if (!cancelled) setAllCommands(cmds);
-      })
-      .catch(() => {
-        if (!cancelled) setAllCommands([]);
-      });
+    reloadAllCommands();
     return () => {
-      cancelled = true;
+      commandCatalogLoadSequenceRef.current += 1;
     };
-  }, [session?.id, session?.agentKind, session?.workingDir, isRemoteSession, remoteDeviceId]);
+  }, [reloadAllCommands]);
+
+  // A native runtime catalog may arrive after the initial /help snapshot. The
+  // push carries no command bodies; reload the normal session-scoped IPC view
+  // only when it belongs to this exact task and engine.
+  useEffect(
+    () =>
+      window.electronAPI.maker.onAgentCommandCatalogChanged((payload) => {
+        if (!shouldRefreshRuntimeCommandCatalog(payload, {
+          sessionId: session?.id,
+          agentKind: dbToMakerAgentKind(session?.agentKind),
+        })) {
+          return;
+        }
+        reloadAllCommands({ preserveExisting: true });
+      }),
+    [reloadAllCommands, session?.agentKind, session?.id],
+  );
 
   // Keep lastWorkingDir in sync so Settings can distinguish a real project
   // scope from「新对话默认值」. Standalone dialogues have an internal runtime
@@ -1842,7 +1875,6 @@ export function CCAgentSessionView({
   // 真实会话 agentKind(pending switch intent 不影响)——压缩分流必须用它,
   // 否则 intent 乐观切到 pi 但真实会话仍在跑 claude-code 时会错调 compact-session(#1933 review)。
   const realAgentKind = dbToMakerAgentKind(session?.agentKind);
-  const isCodex = displayAgentKind === 'codex';
   // 手动压缩通道判定(#1927/#1933 review):真实 Claude Code → maker:input:compact;
   // 其余 agent 声明 manualCompact.supported(当前仅 pi)→ maker:compact-session;其余无入口。
   // 能力取**真实 agent**(displayAgentKind 在 pending switch 期间可能乐观指向目标 agent,
@@ -2440,7 +2472,7 @@ export function CCAgentSessionView({
   // F-COLLAB: 协同模式真实状态。enabled 来自 session.orcaRole === 'lead';
   // worker(显示用)从 active workflow 的 Worker session 列表查到 agentKind。
   // 切换协同走 IPC enableOrca / disableOrca,失败时 toast。
-  const [collabWorker, setCollabWorker] = useState<'cc' | 'codex' | 'pi'>('codex');
+  const [collabWorker, setCollabWorker] = useState<'cc' | 'codex' | 'pi' | 'omp'>('codex');
   // enableBusy 只盖"开启协同"路径;关闭走 useStopOrcaCollab hook 自己管 busy。
   const [enableBusy, setEnableBusy] = useState(false);
   const [createWorkerOpen, setCreateWorkerOpen] = useState(false);
@@ -2625,9 +2657,17 @@ export function CCAgentSessionView({
     if (!collabProjectionLeadId) return;
     const activeWorker = collabWorkerProjection.workers[0]; // MVP: 假设最多 1 个 active Worker
     if (!activeWorker) return;
-    // orca worker 创建面未开 pi;万一读到脏值也按 codex 收敛,不撑开 toggle 契约。
+    // 显示态必须保留真实 Worker 引擎，不能把 Pi / OMP 投影成 Codex。
     const normalizedKind = normalizeDbAgentKind(activeWorker.agent);
-    setCollabWorker(normalizedKind === 'cc' ? 'cc' : 'codex');
+    setCollabWorker(
+      normalizedKind === 'cc'
+        ? 'cc'
+        : normalizedKind === 'pi'
+          ? 'pi'
+          : normalizedKind === 'omp'
+            ? 'omp'
+            : 'codex',
+    );
   }, [collabProjectionLeadId, collabWorkerProjection.workers]);
 
   // F-COLLAB: "外部触发" 协同状态变化时自动打开协同 tab (典型场景: MCP team
@@ -2713,7 +2753,15 @@ export function CCAgentSessionView({
       try {
         const workerAgent = form.agent;
         const normalizedWorker = normalizeDbAgentKind(workerAgent);
-        setCollabWorker(normalizedWorker === 'cc' ? 'cc' : 'codex');
+        setCollabWorker(
+          normalizedWorker === 'cc'
+            ? 'cc'
+            : normalizedWorker === 'pi'
+              ? 'pi'
+              : normalizedWorker === 'omp'
+                ? 'omp'
+                : 'codex',
+        );
         setCreateWorkerOpen(false);
         // 粘滞归属(codex review P2):入口与协同策略查询都按粘滞 remoteDeviceId 指向被控端,
         // mutation 必须同口径 —— 非粘滞的 makerApiFor 在 relay 瞬断窗口内会退回本机
@@ -2974,7 +3022,9 @@ export function CCAgentSessionView({
       const slashMatch = message.match(/^\/(\S+)(?:\s+(.*))?$/s);
       const agentKind = dbToMakerAgentKind(session?.agentKind);
       const leading =
-        !slashMatch && agentKind === 'pi' ? leadingSlashInvocation(message) : undefined;
+        !slashMatch && supportsNativeSkillRuntimeAliases(agentKind)
+          ? leadingSlashInvocation(message)
+          : undefined;
       if (!slashMatch && !leading) return { handled: false, accepted: false, message };
       const cmdName = (slashMatch?.[1] ?? leading!.name).toLowerCase();
       const args = slashMatch?.[2] ?? '';
@@ -3022,7 +3072,7 @@ export function CCAgentSessionView({
           handled: false,
           accepted: false,
           message:
-            agentKind === 'pi' ? rewriteAgentSkillInvocationForDispatch(message, hit) : message,
+            rewriteNativeSkillAliasFromCommand(agentKind, message, hit),
         };
       }
       // Desktop commands stay `^/` only. A whitespace-prefixed `/help` is not a dispatch.
@@ -3462,7 +3512,10 @@ export function CCAgentSessionView({
       // 重连后由被控端 enqueue / steer 路径做权威校验。这样离开任务后旧 outbox 也不会
       // 再弹出旧页面的认证对话框或导航回旧路由。
       if (!remoteDeviceId) {
-        const authVendor = displayAgentKind === 'pi' ? 'pi' : isCodex ? 'codex' : 'cc';
+        // 在会话内跨引擎切换尚未落库前，displayAgentKind 已经是下一条消息的目标。
+        // 门禁必须随它检查对应供应商；否则 CC → OMP 会错误检查 CC，阻止 Main
+        // 在本次发送事务里应用 pending switch。
+        const authVendor = makerToDbAgentKind(displayAgentKind);
         const { proceed } = await vendorAuthGate.checkAndConfirm(authVendor, {
           // 已建会话:suspended 来源计入(停用不打断运行中会话,门禁只看凭证连接态,
           // PR #744 review 第十七轮)。
@@ -3590,7 +3643,7 @@ export function CCAgentSessionView({
       maybeDispatchDesktopSlashCommand,
       maybeShowContextUsage,
       folderPickerOpen,
-      isCodex,
+      displayAgentKind,
       canNavigateSession,
       navigationMode,
       onSessionNavigate,
@@ -5887,9 +5940,12 @@ function formatTokenCount(n: number): string {
  */
 function getModelContextWindow(
   model: string,
-  vendorKey: 'cc' | 'codex' | 'pi',
+  vendorKey: 'cc' | 'codex' | 'pi' | 'omp',
   deviceId?: string,
 ): number | undefined {
+  // OMP 接入:modelDefinitions 只有 cc/codex/pi 的能力清单,omp 查不到上下文窗口 ——
+  // 返回 undefined 交给 resolveDisplayContextWindow 兜底,不伪造一个窗口大小。
+  if (vendorKey === 'omp') return undefined;
   const found = getModelsForVendor(vendorKey, deviceId).find((m) => m.id === model);
   return found?.contextWindow;
 }
@@ -5911,7 +5967,7 @@ function ContextCapacityRing({
   providerId?: string | null;
   contextTokens: number;
   model: string;
-  vendorKey: 'cc' | 'codex' | 'pi';
+  vendorKey: 'cc' | 'codex' | 'pi' | 'omp';
   /** SDK-reported context window; 0 = not yet known → use hardcoded fallback. */
   sdkContextWindow: number;
   verifiedContextWindow?: number | null;

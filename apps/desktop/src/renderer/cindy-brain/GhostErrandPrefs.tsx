@@ -158,14 +158,19 @@ export function GhostErrandPrefs({
         <span className={labelCls}>{t('settings.ghosts.detail.errandPrefs.model')}</span>
         <ModelSelector
           unifiedAgents={pickerAgents}
-          onUnifiedSelect={({ engine, providerId, modelId, effort, fast }) => save({
-            ...config,
-            agentKind: engine,
-            providerId,
-            model: modelId,
-            effort: ERRAND_EFFORTS.has(effort ?? '') ? effort : undefined,
-            fastMode: fast,
-          })}
+          onUnifiedSelect={({ engine, providerId, modelId, effort, fast }) => {
+            // OMP 还不是 errand 的合法引擎:main 侧 GHOST_ERRAND_AGENT_KINDS 仍是
+            // 三元组,放进来只会得到一个能选但存不下的配置,所以这里显式挡掉。
+            if (engine === 'omp') return;
+            save({
+              ...config,
+              agentKind: engine,
+              providerId,
+              model: modelId,
+              effort: ERRAND_EFFORTS.has(effort ?? '') ? effort : undefined,
+              fastMode: fast,
+            });
+          }}
           modelId={shownModel}
           effort={shownEffort}
           fastMode={shownFast}

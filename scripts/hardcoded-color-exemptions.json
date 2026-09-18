@@ -532,5 +532,27 @@
   "glob": "docs/design-rules/design-inventory.md",
   "reason": "台账 GENERATED 区块自述计数口径(`hsl(var(--token)`),同 DESIGN.md 文档示例先例",
   "owner": "design-system"
+ },
+ {
+  "glob": "apps/desktop/src/renderer/components/icons/OmpMark.tsx",
+  "reason": "用户提供的 OMP 官方 SVG 品牌标记固有三段渐变；工作 UI 的 mono 分支仍只消费 currentColor。",
+  "owner": "omp-integration",
+  "matches": [
+   {
+    "value": "oklch(0.7 0.24 340)",
+    "before": "stopColor=."
+   },
+   {
+    "value": "oklch(0.62 0.21 295)",
+    "before": "stopColor=."
+   },
+   {
+    "value": "oklch(0.81 0.14 200)",
+    "before": "stopColor=."
+   }
+  ],
+  "reviewDate": "2026-09-18",
+  "maintenanceOwner": "Lex OMP integration",
+  "basis": "User-supplied official OMP SVG; the exception is bound to the three official gradient stops in this component."
  }
 ]

@@ -226,7 +226,8 @@ import {
   type AgentBinaryKind,
   type PrepareResult,
 } from './agent-binaries';
-import { RendererBootGuard } from './renderer-boot-guard';
+import { RendererBootGuard, shouldMarkRendererBootAliveFromLog } from './renderer-boot-guard';
+import { recoverViteDependencyLoad } from './vite-dependency-recovery.js';
 import yaml from 'js-yaml';
 import matter from 'gray-matter';
 import type { Maker } from '@cindy/maker-core';
@@ -4399,6 +4400,16 @@ const registerIpcHandlers = () => {
     event.returnValue = getAppDisplayVersionInfo();
   });
 
+  // The renderer only receives a fixed no-argument request. Main verifies the
+  // actual sender and uses WebContents.reloadIgnoringCache() to replace a stale
+  // Vite optimize-deps module graph without clearing the shared profile cache.
+  ipcMain.on('renderer:recover-vite-deps', (event) => {
+    recoverViteDependencyLoad(event, {
+      isDevelopment: Boolean(MAIN_WINDOW_VITE_DEV_SERVER_URL),
+      assertTrustedAppRendererEvent,
+    });
+  });
+
   // Renderer → main 日志转发:走 unified logger 的 writeFromRenderer,
   // 让 main 的 level filter 生效(scope 加 r: 前缀以区分来源)。
   ipcMain.on(
@@ -4409,8 +4420,9 @@ const registerIpcHandlers = () => {
       scope: string,
       msg: string,
     ) => {
-      // renderer 能发日志 = JS 已跑起来 → 解除 dev 启动看门狗(见 renderer-boot-guard.ts)。
-      rendererBootGuard?.markAlive();
+      // `renderer/entry` 是动态入口导入失败时唯一还能执行的错误上报点，不能把它
+      // 误当成主 renderer 已启动，否则 Vite deps 切换竞态会永久解除自愈看门狗。
+      if (shouldMarkRendererBootAliveFromLog(scope)) rendererBootGuard?.markAlive();
       writeFromRenderer(level, scope, msg);
     },
   );

@@ -20,7 +20,7 @@
  */
 
 import { useCallback } from 'react';
-import { Bot, CirclePlus, Plug, Timer } from 'lucide-react';
+import { ArrowLeft, Bot, CirclePlus, Plug, Timer } from 'lucide-react';
 import { useNavigate, useMatch } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
@@ -29,6 +29,7 @@ import { AttentionDot } from '@/components/sidebar/AttentionDot';
 import { useAnyGhostUnread } from '@/cindy-brain/ghostUnreadStore';
 import { GhostPanelRestoreEntry } from '@/cindy-brain/GhostPanelRestoreEntry';
 import { useActiveMainView } from '@/hooks/useActiveMainView';
+import { useExperimentalFlag } from '@/hooks/useExperimentalFeatures';
 import { SidebarInlineSearch } from '@/features/cc-agent/sidebar/SidebarInlineSearch';
 import { useConversationSearchContext } from '@/features/cc-agent/sidebar/conversationSearchContext';
 import { GhostMainViewNavEntries } from './GhostMainViewNavEntries';
@@ -62,6 +63,7 @@ export function SidebarTopNav({
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { activeKey, navigateToView } = useActiveMainView();
+  const { enabled: teammatesEnabled } = useExperimentalFlag('teammates');
   const onScheduleMatch = useMatch('/cc-agent/scheduled');
   const { search, allKnownProjects, openSignal } = useConversationSearchContext();
   // 任一插件有未读 → 入口行尾一颗**静态**绿点(聚合入口按 AttentionDot 规范不呼吸,
@@ -127,26 +129,29 @@ export function SidebarTopNav({
       {hasGhostUnread && <AttentionDot size={6} className="ml-auto mr-0.5" />}
     </button>
   ) : null;
-  const botsRow = showScrollable ? (
-    <button
-      onClick={() => navigateToView('bots')}
-      className={cn(ROW_CLASS, activeKey === 'bots' && ROW_ACTIVE_CLASS)}
-      aria-label={t('sidebar.tabs.bots')}
-      aria-current={activeKey === 'bots' ? 'page' : undefined}
-    >
-      <Bot
-        size={15}
-        strokeWidth={1.8}
-        className={cn(
-          'shrink-0',
-          activeKey === 'bots'
-            ? 'text-sidebar-item-active-foreground'
-            : 'text-[var(--sidebar-nav-text)]',
+  // 伙伴默认不占用主导航；但人在伙伴页时，始终保留同位置的返回动作，确保旧深链、
+  // 已有伙伴任务和刚关闭实验开关的用户都能明确回到此前的任务视图。
+  const botsRow =
+    showScrollable && (teammatesEnabled || activeKey === 'bots') ? (
+      <button
+        onClick={() => navigateToView(activeKey === 'bots' ? 'cc-agent' : 'bots')}
+        className={cn(ROW_CLASS, activeKey === 'bots' && ROW_ACTIVE_CLASS)}
+        aria-label={activeKey === 'bots' ? t('bots.backToTasks') : t('sidebar.tabs.bots')}
+      >
+        {activeKey === 'bots' ? (
+          <ArrowLeft
+            size={15}
+            strokeWidth={1.8}
+            className="shrink-0 text-sidebar-item-active-foreground"
+          />
+        ) : (
+          <Bot size={15} strokeWidth={1.8} className="shrink-0 text-[var(--sidebar-nav-text)]" />
         )}
-      />
-      <span className="leading-none">{t('sidebar.tabs.bots')}</span>
-    </button>
-  ) : null;
+        <span className="leading-none">
+          {activeKey === 'bots' ? t('bots.backToTasks') : t('sidebar.tabs.bots')}
+        </span>
+      </button>
+    ) : null;
   const mainViewRows = showScrollable ? <GhostMainViewNavEntries variant="row" /> : null;
   const restoreRow = showScrollable ? (
     <GhostPanelRestoreEntry variant="row" className={ROW_CLASS} />
