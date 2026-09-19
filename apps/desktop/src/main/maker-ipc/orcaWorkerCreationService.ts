@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { isCredentialModeSwitchBusyError } from '../maker-host/codex-credential-switch.js';
 import { isSubscriptionDirectModel } from '../../shared/subscriptionModels.js';
+import { usesControllerProviderProxyForSsh } from '../../shared/sshAgentProviderRouting.js';
 import type { DispatchWorkerTaskResult, OrcaWorkerEffort, OrcaWorkerStatus } from './orcaTeamService.js';
 import type { MakerSessionCreateOpts } from './sessionRequest.js';
 import {
@@ -644,23 +645,13 @@ export function createOrcaWorkerCreationService(deps: OrcaWorkerCreationDeps): O
         limit: limitSnapshot(settings.workerHardLimit, activeCount),
       };
     }
-    // SSH OMP is deliberately unsupported.  Enforce that before provider lookup,
-    // remote preparation, reservation, or bootstrap so a rejected request never
-    // reaches an SSH install/start path.  Device Link executes on the controlled
-    // device as a local session and therefore has remoteHostId=null here.
+    // Every registered engine follows the same Lead/Worker lifecycle here.
+    // SSH workers retain their Lead's remote host and work directory; the
+    // engine adapter supplies its own managed remote runtime underneath.
     const lead = await deps.getLeadSessionRow(params.leadSessionId);
     if (!lead) {
       return { ok: false, errorCode: 'NOT_FOUND', message: `lead session ${params.leadSessionId} not found` };
     }
-    if (lead.remoteHostId && params.agent === 'omp') {
-      return {
-        ok: false,
-        errorCode: 'INVALID_PARAMS',
-        message:
-          'OMP Workers are not supported for SSH remote sessions. Choose Claude Code, Codex, or Pi, or create the OMP Worker locally.',
-      };
-    }
-
     const availableModels = deps.getAvailableModels(params.agent);
     // 标准面板显式选定的来源(非空 string)直接生效,由下方精确 preflight 把关「已连接且
     // 提供该模型」;空串/null/undefined 一律按未显式处理(与 IPC 边界同口径,service 作为
@@ -910,14 +901,12 @@ export function createOrcaWorkerCreationService(deps: OrcaWorkerCreationDeps): O
       };
     }
 
-    // SSH 远端 worker 的模型/来源兼容闸 (codex-connector R23 P2):remote
-    // transport 不经本地 proxy — subscription-direct 模型 (chatgpt/xai) 与
-    // chat-bridged codex 供应商 (wireProtocol=openai-chat, 其 Responses→Chat
-    // 翻译只挂在本地 codex-proxy) 送到远端必失败。ChatInput 对 remoteHostId
-    // 已用 excludeSubscriptionDirect / excludeChatBridgedCodex 隐藏
-    // (renderer/lib/providerModels.ts 同语义), worker 创建 (UI popover 与
-    // MCP 调用) 在此统一拒绝, 失败提前到创建前而非远端运行期。
-    if (lead.remoteHostId) {
+    // SSH native adapters connect to their providers remotely, so their local
+    // bridge-only routes remain unavailable. OMP is different: its isolated
+    // runtime writes the controller proxy into models.yml and reaches it via a
+    // managed reverse-forward. Keep this admission check aligned with that
+    // actual transport rather than treating every remoteHostId alike.
+    if (lead.remoteHostId && !usesControllerProviderProxyForSsh(params.agent)) {
       if (isSubscriptionDirectModel(resolved.model)) {
         return {
           ok: false,

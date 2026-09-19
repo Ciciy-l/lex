@@ -2041,9 +2041,9 @@ export class PiAgent extends BaseAgent {
   ): Promise<{ transport: PiTransport; remoteBinaryPath: string | undefined }> {
     if (remoteHostId && this.deps.getRemotePiTransport) {
       const transport = await this.deps.getRemotePiTransport(remoteHostId, {
-        binaryPath: this.deps.binaryPath,
+        binaryPath: this.requireLocalBinaryPath(),
         // startSession 已在 plan-mode 段前 resolve;host 侧有 cache,重复 probe 秒回。
-        remoteBinaryPath: remoteBinaryPath ?? this.deps.binaryPath,
+        remoteBinaryPath: remoteBinaryPath ?? this.requireLocalBinaryPath(),
         args: opts.args,
         cwd: opts.cwd,
         env: opts.env,
@@ -2058,7 +2058,7 @@ export class PiAgent extends BaseAgent {
     }
     return {
       transport: createPiStdioTransport({
-        binaryPath: this.deps.binaryPath,
+        binaryPath: this.requireLocalBinaryPath(),
         args: opts.args,
         cwd: opts.cwd,
         env: opts.env,
@@ -3580,7 +3580,7 @@ export class PiAgent extends BaseAgent {
           }
           return resolved;
         })(opts.remoteHostId)
-      : this.deps.binaryPath;
+      : this.requireLocalBinaryPath();
 
     // plan 模式:挂载 pi 自带的 plan-mode example 扩展(随 pi 分发,版本匹配,免 vendoring)。
     // 只在文件存在时 --extension;缺失则 plan 模式静默降级(setPlanMode 时 warn)。

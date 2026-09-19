@@ -104,9 +104,45 @@ Get-CimInstance Win32_Process |
     .filter(Boolean);
 }
 
+function findClosingCommandQuote(command, start, quote) {
+  for (let index = start + 1; index < command.length; index += 1) {
+    if (command[index] !== quote) continue;
+    let slashCount = 0;
+    for (let cursor = index - 1; cursor >= start && command[cursor] === '\\'; cursor -= 1) {
+      slashCount += 1;
+    }
+    // Windows command-line quoting uses an odd backslash count to escape a
+    // quote. This also safely preserves ordinary quoted POSIX values.
+    if (slashCount % 2 === 0) return index;
+  }
+  return -1;
+}
+
 function extractArgumentPath(command, name) {
-  const match = command.match(new RegExp(`--${name}=(.*?)(?=\\s--[A-Za-z0-9-]+=|\\s--[A-Za-z0-9-]+\\s|$)`));
-  return match?.[1]?.replace(/^['"]|['"]$/g, '') ?? null;
+  const prefix = `--${name}=`;
+  const start = command.indexOf(prefix);
+  if (start === -1) return null;
+
+  const valueStart = start + prefix.length;
+  const quote = command[valueStart];
+  if (quote === '"' || quote === "'") {
+    const closingQuote = findClosingCommandQuote(command, valueStart, quote);
+    return closingQuote === -1 ? null : command.slice(valueStart + 1, closingQuote);
+  }
+
+  const remaining = command.slice(valueStart);
+  const nextLongSwitch = /\s(?=--[A-Za-z0-9-]+(?:=|\s|$))/;
+  const longSwitchBoundary = remaining.search(nextLongSwitch);
+  // `/prefetch:<n>` is emitted by Chromium's Windows helpers. It is not a
+  // general command-line delimiter: POSIX paths may legitimately contain that
+  // text, so only use it on the platform that produces this switch.
+  const prefetchBoundary = process.platform === 'win32'
+    ? remaining.search(/\s(?=\/prefetch:\d+(?:\s|$))/)
+    : -1;
+  const boundary = [longSwitchBoundary, prefetchBoundary]
+    .filter((index) => index >= 0)
+    .sort((left, right) => left - right)[0];
+  return boundary === undefined ? remaining : remaining.slice(0, boundary);
 }
 
 function ancestorCommands(pid, byPid) {

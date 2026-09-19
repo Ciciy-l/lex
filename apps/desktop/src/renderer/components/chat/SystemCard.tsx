@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils';
 import { Collapse } from '@/components/ui/collapse';
 import { Spinner } from '@/components/ui/spinner';
 import { LearnStatusCard } from '@/features/learn/LearnStatusCard';
+import { agentKindDisplayLabel } from '../../../shared/agentKindConversion';
 import {
   isStaleReviewFailureCode,
   readReviewFailureCode,
@@ -1119,10 +1120,8 @@ function isEnglishSourceHandoff(handoff: string): boolean {
 function AgentSwitchCard({ data }: { data?: Record<string, unknown> }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
-  const engineLabel = (kind: unknown): string =>
-    kind === 'codex' ? 'Codex' : kind === 'pi' ? 'Pi' : 'Claude Code';
-  const fromLabel = engineLabel(data?.fromAgentKind);
-  const toLabel = engineLabel(data?.toAgentKind);
+  const fromLabel = agentKindDisplayLabel(data?.fromAgentKind);
+  const toLabel = agentKindDisplayLabel(data?.toAgentKind);
   const toModel = typeof data?.toModel === 'string' ? data.toModel : '';
   const handoff = typeof data?.handoff === 'string' ? data.handoff : '';
   const label = t('chat.systemCard.agentSwitch.label', { from: fromLabel, to: toLabel });

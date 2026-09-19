@@ -285,6 +285,7 @@ import type { Effort, PermissionMode } from '@/lib/userPreferences.types';
 import { getAppShortcutCombos } from '@/lib/appShortcutStore';
 import { getNextPermissionMode } from '@/lib/permissionModeCycle';
 import { matchesKeyboardEvent } from '../../../shared/appShortcuts';
+import { usesControllerProviderProxyForSsh } from '../../../shared/sshAgentProviderRouting';
 import {
   getComposerSendShortcutPreference,
   getComposerSendShortcutLabel,
@@ -8920,12 +8921,16 @@ export function ChatInput({
                         : undefined
                     }
                     deviceId={deviceLinkDeviceId ?? undefined}
-                    // SSH 远程会话隐藏订阅直连模型(chatgpt/ / xai/):bridge 只挂在本地 compat-proxy,
-                    // 远程模式走 remoteEndpoint 不经翻译,选了必失败。
-                    excludeSubscriptionDirect={!!remoteHostId}
-                    // 同理隐藏 openai-chat 桥接的 Codex 供应商(DeepSeek / Kimi / GLM 等):
-                    // Responses→Chat 桥只挂在本地 codex-proxy,SSH 远程走 daemon 不经它。
-                    excludeChatBridgedCodex={!!remoteHostId}
+                    // OMP's SSH runtime reaches the controller proxy through a
+                    // managed reverse-forward, so preserve its proxy-backed
+                    // routes. The other SSH adapters keep their direct-route
+                    // exclusions.
+                    excludeSubscriptionDirect={
+                      !!remoteHostId && !usesControllerProviderProxyForSsh(agentKind)
+                    }
+                    excludeChatBridgedCodex={
+                      !!remoteHostId && !usesControllerProviderProxyForSsh(agentKind)
+                    }
                     dense={effectiveDenseToolbar}
                     // 意图期与 activeModel 同一份目标快照(null = 跟随目标引擎默认路由);
                     // 无意图才回到会话 runtime 的 selectedProviderId。

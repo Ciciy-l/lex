@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { isAbsolute } from 'node:path';
 import { OmpProcessLifecycle, type OmpProcessState } from './process-lifecycle.js';
-import { OmpRpcClient } from './rpc-client.js';
+import { OmpRpcClient, type OmpRpcTransport } from './rpc-client.js';
 import { createOmpStreamTransport } from './stream-transport.js';
 
 /**
@@ -54,6 +54,171 @@ export interface OmpProcessHost {
   readonly pid: number | undefined;
   getState(): OmpProcessState;
   stopAndWait(): Promise<boolean>;
+}
+
+/**
+ * A host-owned remote JSONL channel. It intentionally exposes the same
+ * narrow RPC surface as local stdio, but its close implementation must only
+ * request transport shutdown; onClose is the evidence that the SSH command
+ * channel actually finished.
+ */
+export interface OmpRemoteTransport extends OmpRpcTransport {
+  close(): void | Promise<void>;
+  /**
+   * The channel became unusable (local close request, transport error, setup
+   * failure, or physical close). This fences pending RPCs but is not proof
+   * that the remote command has exited; only onClose supplies that evidence.
+   */
+  onTransportClose?(handler: () => void): () => void;
+}
+
+export interface OmpRemoteProcessHostOptions {
+  transport: OmpRemoteTransport;
+  onEvent(event: Readonly<Record<string, unknown>>): void;
+  onState(state: OmpProcessState): void;
+}
+
+/**
+ * Build an OMP process host around a remote SSH JSONL channel.
+ *
+ * Do not fabricate a Node ChildProcess for an SSH command: there is no local
+ * pid whose exit can prove anything about the remote process. The lifecycle
+ * instead waits for the transport's actual close notification and returns
+ * false if that evidence never arrives within the existing bounded timeout.
+ */
+export function startOmpRemoteProcess(
+  options: OmpRemoteProcessHostOptions,
+): OmpProcessHost {
+  if (
+    !options ||
+    typeof options !== 'object' ||
+    !options.transport ||
+    typeof options.transport.writeLine !== 'function' ||
+    typeof options.transport.onLine !== 'function' ||
+    typeof options.transport.onClose !== 'function' ||
+    typeof options.transport.close !== 'function' ||
+    typeof options.onEvent !== 'function' ||
+    typeof options.onState !== 'function'
+  ) {
+    throw new Error('OMP remote process host requires a managed transport');
+  }
+
+  let closeRequested = false;
+  const requestClose = (): void => {
+    if (closeRequested) return;
+    closeRequested = true;
+    try {
+      const result = options.transport.close();
+      if (result && typeof (result as PromiseLike<void>).then === 'function') {
+        void Promise.resolve(result).catch(() => undefined);
+      }
+    } catch {
+      // The lifecycle timer below makes a failed close attempt visible as an
+      // unconfirmed remote exit rather than treating it as completion.
+    }
+  };
+
+  let client: OmpRpcClient | undefined;
+  const lifecycle = new OmpProcessLifecycle({
+    requestTermination: () => requestClose(),
+    onState: (state) => {
+      if (state === 'stopping' || state === 'exit-unconfirmed')
+        client?.stopAcceptingRequests();
+      options.onState(state);
+    },
+  });
+
+  let physicalCloseObserved = false;
+  let unsubscribePhysicalClose: (() => void) | undefined;
+  let transportCloseObserved = false;
+  let unsubscribeTransportClose: (() => void) | undefined;
+  // A synchronously pre-closed transport is allowed to call listeners while
+  // they are being registered. Until this flips, no process host exists for
+  // callers to observe, so closure must only be recorded for the guard below.
+  let initializationComplete = false;
+  try {
+    if (typeof options.transport.onTransportClose === 'function') {
+      unsubscribeTransportClose = options.transport.onTransportClose(() => {
+        // A requested local close or SSH transport failure immediately makes
+        // the RPC channel unusable, so reject pending responses now. It is
+        // deliberately not exit evidence: stopAndWait remains pending until
+        // the physical SSH command channel closes (or times out unconfirmed).
+        transportCloseObserved = true;
+        client?.close();
+        // During listener registration there is no returned host yet. Defer
+        // lifecycle transition to the initialization guard below so a
+        // synchronously pre-closed transport cannot leave force/exit timers
+        // behind after construction throws.
+        if (initializationComplete) lifecycle.stop();
+      });
+    }
+    unsubscribePhysicalClose = options.transport.onClose(() => {
+      // A remote command channel closing is the only completion evidence this
+      // abstraction has. It can follow a normal exit, an SSH disconnect, or a
+      // requested stop; all three make the current RPC channel unusable.
+      physicalCloseObserved = true;
+      client?.close();
+      if (initializationComplete) lifecycle.confirmExit();
+    });
+    client = new OmpRpcClient(
+      options.transport,
+      (event) => {
+        if (event.type === 'ready') {
+          if (
+            event.protocolVersion !== 1 ||
+            !Array.isArray(event.supportedProtocolVersions) ||
+            !event.supportedProtocolVersions.includes(1)
+          ) {
+            lifecycle.stop();
+            return;
+          }
+          if (!lifecycle.markReady()) return;
+        }
+        options.onEvent(event);
+      },
+      () => {
+        if (initializationComplete) lifecycle.stop();
+      },
+    );
+    // A managed transport is allowed to report an already-observed close while
+    // a listener is being registered. Do not return a host with an RPC client
+    // that was constructed after that terminal event: callers must fail
+    // immediately instead of waiting for the ready timeout on a dead channel.
+    const stateAfterClientInit = lifecycle.getState();
+    if (
+      physicalCloseObserved
+      || transportCloseObserved
+      || stateAfterClientInit === 'stopping'
+      || stateAfterClientInit === 'exit-unconfirmed'
+      || stateAfterClientInit === 'exited'
+    ) {
+      client.close();
+      throw new Error('OMP remote transport closed during initialization');
+    }
+    initializationComplete = true;
+  } catch {
+    lifecycle.abort();
+    try {
+      unsubscribePhysicalClose?.();
+    } catch {
+      // Best effort only; requestClose still owns the remote command.
+    }
+    try {
+      unsubscribeTransportClose?.();
+    } catch {
+      // Best effort only; requestClose still owns the remote command.
+    }
+    requestClose();
+    throw new Error('OMP remote process transport could not be initialized');
+  }
+
+  const ownedClient = client;
+  return {
+    client: ownedClient,
+    pid: undefined,
+    getState: () => lifecycle.getState(),
+    stopAndWait: () => lifecycle.stopAndWait(),
+  };
 }
 
 export function startOmpProcess(options: OmpProcessHostOptions): OmpProcessHost {

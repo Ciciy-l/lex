@@ -4541,10 +4541,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // ── Phase B: agent on remote ──────────────────────────────────────────
     probeAgent: (
       id: string,
-      agentKind: 'claude-code' | 'codex',
+      agentKind: 'claude-code' | 'codex' | 'pi' | 'omp',
     ): Promise<{
       probe: {
-        agentKind: 'claude-code' | 'codex';
+        agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
         nodeReady: boolean;
         nodeVersion: string | null;
         installed: boolean;
@@ -4557,10 +4557,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     installAgent: (
       id: string,
-      agentKind: 'claude-code' | 'codex',
+      agentKind: 'claude-code' | 'codex' | 'pi' | 'omp',
     ): Promise<{
       result: {
-        agentKind: 'claude-code' | 'codex';
+        agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
         ready: boolean;
         installed: boolean;
         installedVersion: string | null;
@@ -4571,12 +4571,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
       };
     }> => ipcRenderer.invoke('maker:remote-ssh:install-agent', { id, agentKind }),
 
-    uninstallAgent: (id: string, agentKind: 'claude-code' | 'codex'): Promise<{ ok: true }> =>
+    uninstallAgent: (id: string, agentKind: 'claude-code' | 'codex' | 'pi' | 'omp'): Promise<{ ok: true }> =>
       ipcRenderer.invoke('maker:remote-ssh:uninstall-agent', { id, agentKind }),
 
     runAgentOneShot: (
       id: string,
-      agentKind: 'claude-code' | 'codex',
+      agentKind: 'claude-code' | 'codex' | 'pi' | 'omp',
       prompt: string,
     ): Promise<{
       result: {

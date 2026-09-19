@@ -1240,7 +1240,7 @@ export class ClaudeCodeAgent extends BaseAgent {
     const getAuthEnv = this.deps.auth.getAuthEnv.bind(this.deps.auth);
     const sdkModel = sdkModelFor(opts.model);
     const initialSdkEffort = this.sdkEffortForModel(opts.model, opts.effort ?? 'high');
-    const binaryPath = this.deps.binaryPath;
+    const binaryPath = this.requireLocalBinaryPath();
     const providerRoutedModels = this.capabilities.availableModels.filter((model) =>
       isProviderRoutedModel(model.id),
     );

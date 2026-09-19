@@ -5,6 +5,7 @@ import {
   installRemoteAgent,
   PINNED_CLAUDE_CODE_VERSION,
   PINNED_CODEX_RELEASE_VERSION,
+  PINNED_OMP_VERSION,
   PINNED_PI_VERSION,
   probeRemoteAgent,
   uninstallRemoteAgent,
@@ -131,6 +132,57 @@ describe('remote agent installer', () => {
     expect(calls[0].input).toContain('shasum -a 256 -c -');
     expect(calls[0].input).toContain('tar xzf "$TMP/pi.tgz" -C "$TMP/extract"');
     expect(calls[0].input).toContain('mv "$TMP/extract/pi" "$INSTALL_DIR/pi"');
+  });
+
+  it('probes and installs the exact pinned OMP native runtime without Node/npm', async () => {
+    const calls: Array<{ command: string; input: string }> = [];
+    const host = {
+      exec: async (command: string, opts: { input?: string }) => {
+        calls.push({ command, input: opts.input ?? '' });
+        return {
+          exitCode: 0,
+          stdout: [
+            'INSTALL_DIR /home/u/.xdt-server/v1',
+            `READY omp/${PINNED_OMP_VERSION}`,
+          ].join('\n'),
+          stderr: '',
+        };
+      },
+    } as Pick<RemoteHost, 'exec'> as RemoteHost;
+
+    const probe = await probeRemoteAgent(host, 'omp');
+    expect(probe.installed).toBe(true);
+    expect(probe.installedVersion).toBe(`omp/${PINNED_OMP_VERSION}`);
+    expect(probe.binaryPath).toBe('/home/u/.xdt-server/v1/omp/omp');
+    expect(calls[0].input).toContain('verify_pinned_file');
+    expect(calls[0].input).toContain('omp/$OMP_VERSION');
+
+    const result = await installRemoteAgent(host, 'omp');
+    expect(result.ready).toBe(true);
+    expect(result.installedVersion).toBe(`omp/${PINNED_OMP_VERSION}`);
+    expect(calls[1].input).toContain('downloaded runtime does not match pin');
+    expect(calls[1].input).toContain('promoted runtime does not match pin');
+    // OMP's native asset path has no bundled Node or npm bootstrap.
+    expect(calls[1].input).not.toContain('npm install');
+  });
+
+  it('uninstalls only OMP-owned runtime and managed runtime state', async () => {
+    const calls: Array<{ command: string; label?: string }> = [];
+    const host = {
+      exec: async (command: string, opts?: { label?: string }) => {
+        calls.push({ command, label: opts?.label });
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+    } as Pick<RemoteHost, 'exec'> as RemoteHost;
+
+    await uninstallRemoteAgent(host, 'omp');
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].label).toBe('uninstall-omp');
+    expect(calls[0].command).toContain('/omp');
+    expect(calls[0].command).toContain('/omp-agent-home');
+    expect(calls[0].command).toContain('.installed-omp');
+    expect(calls[0].command).not.toContain('pi-manager');
   });
 
   it('pi uninstall kills pi-manager daemon (pidfile) then removes dirs', async () => {

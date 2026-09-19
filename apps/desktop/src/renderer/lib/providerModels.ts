@@ -28,6 +28,7 @@ import {
 // 同型，picker 现有代码（effortDisplayNames 按 string 索引等）零改动即可消费。
 import type { AgentCapabilities, ModelDescriptor } from '@/hooks/useAgentCapabilities';
 import { isSubscriptionDirectModel } from '../../shared/subscriptionModels';
+import { usesControllerProviderProxyForSsh } from '../../shared/sshAgentProviderRouting';
 
 /** Resolve a context window by the complete runtime route, never a first-wins model id. */
 export function resolveProviderModelContextWindow(params: {
@@ -158,7 +159,7 @@ export function filterChatBridgedCodexProviders(
   agent: AgentKind,
   exclude: boolean,
 ): ProviderView[] {
-  return exclude
+  return exclude && !usesControllerProviderProxyForSsh(agent)
     ? providers.filter((provider) => !isLocalOnlyProviderForAgent(provider, agent))
     : providers;
 }
@@ -229,25 +230,23 @@ export function selectVisibleModels(params: {
   deviceCodexModels: ModelDescriptor[];
   devicePiModels?: ModelDescriptor[];
   /**
-   * OMP 目前只在本地跑（无 device-link / SSH 侧模型来源），所以缺省为空数组；
-   * 与 devicePiModels 同形是为了让调用方无需区分处理。
+   * OMP 的 SSH runtime 仍使用控制端的 provider catalog（经受管
+   * reverse-forward），但 device-link 尚无独立 OMP capabilities 来源，所以
+   * 此处缺省为空数组；与 devicePiModels 同形以免调用方分支。
    */
   deviceOmpModels?: ModelDescriptor[];
   /**
-   * SSH 远程会话(remoteHostId)传 true:订阅直连模型(chatgpt/ / xai/)不再被过滤,
-   * 而是保留在清单中由调用方按 isSubscriptionDirectModel 标记禁用(置灰 + 原因提示)。
-   * 远端 cc 不经本地 compat-proxy 的 responses-bridge,选了必失败;静默消失会让用户
-   * 误以为订阅掉了。device-link 远程不受影响(被控端跑完整 app,其本地 proxy 上
-   * bridge 可用,模型清单本就来自被控端)。唯一例外是 Pi 的 OpenAI `[1m]` context
-   * profile:它依赖 Desktop 本地 subscription adapter 剥离 profile 后缀,SSH 没有等价
-   * 改写链,所以不向远程 Pi picker 发布。
+   * 直连型 SSH 会话传 true:订阅直连模型(chatgpt/ / xai/)保留在清单中，由调用方
+   * 按 isSubscriptionDirectModel 标记禁用（置灰 + 原因提示），避免静默消失。OMP
+   * 经控制端兼容代理的受管 reverse-forward，调用方不传该限制。device-link 远程
+   * 不受影响（被控端跑完整 app）。唯一例外是 Pi 的 OpenAI `[1m]` context profile：
+   * 它依赖 Desktop 本地 subscription adapter 剥离 profile 后缀，SSH 没有等价改写链。
    */
   excludeSubscriptionDirect?: boolean;
   /**
-   * 过滤 `wireProtocol: 'openai-chat'` 的 Codex 供应商(DeepSeek / Kimi / GLM 等):它们的
-   * Responses→Chat 翻译只挂在本地 codex-proxy 的 localHandler 上。SSH 远程会话(remoteHostId)
-   * 必须传 true:远程走 daemon transport、不经本地 proxy,未经桥接的 Chat-only 模型送到远端必失败。
-   * 与 excludeSubscriptionDirect 同由 `!!remoteHostId` 驱动;device-link 远程不受影响(被控端跑完整 app)。
+   * 过滤直连型 SSH 的 `openai-chat` Codex 供应商（DeepSeek / Kimi / GLM 等）。它们的
+   * Responses→Chat 翻译只挂在本地 codex-proxy；OMP 则使用控制端兼容代理，不能传
+   * 该限制。device-link 远程不受影响（被控端跑完整 app）。
    */
   excludeChatBridgedCodex?: boolean;
 }): ModelDescriptor[] {
@@ -265,7 +264,8 @@ export function selectVisibleModels(params: {
   // 普通 subscription-direct 行继续保留,准入由调用方按 isSubscriptionDirectModel
   // 打 disabled。Pi 的 `[1m]` profile 是仅本地可改写的 catalog identity,SSH 侧必须隐藏。
   const pass = (list: ModelDescriptor[]): ModelDescriptor[] => list;
-  const deriveOpts = (agent: AgentKind) => excludeChatBridgedCodex
+  const deriveOpts = (agent: AgentKind) =>
+    excludeChatBridgedCodex && !usesControllerProviderProxyForSsh(agent)
     ? { excludeProvider: (provider: ProviderView) => isLocalOnlyProviderForAgent(provider, agent) }
     : undefined;
   const cc = pass(deviceId ? deviceCcModels : deriveModelsFromProviders(providers, 'claude-code', deriveOpts('claude-code')));

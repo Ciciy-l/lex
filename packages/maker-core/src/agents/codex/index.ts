@@ -2980,7 +2980,7 @@ export class CodexAgent extends BaseAgent {
       const provider = this.deps.getRemoteCodexTransport;
       createTransport = () => provider(remoteHostId);
     } else {
-      const binaryPath = this.deps.binaryPath;
+      const binaryPath = this.requireLocalBinaryPath();
       createTransport = () => createStdioTransport({
         binaryPath,
         env,

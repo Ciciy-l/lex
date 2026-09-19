@@ -58,7 +58,7 @@ import type {
   OmpSessionCredentials,
   OmpSessionExecutableEnvironment,
 } from './omp/launch-plan.js';
-import type { OmpProcessSpawner } from './omp/process-host.js';
+import type { OmpProcessSpawner, OmpRemoteTransport } from './omp/process-host.js';
 import type { AuthAdapter } from '../interfaces/auth-adapter.js';
 import type { AgentRuntimeConfig } from '../interfaces/runtime-config.js';
 import type { Logger } from '../interfaces/logger.js';
@@ -269,10 +269,19 @@ export interface RemoteAgentFileOps {
   sha256File(file: string): Promise<string>;
 }
 
-export interface PiRemoteFileOps extends RemoteAgentFileOps {
+/** Mutable subset used by native sessions that materialize managed files on SSH. */
+export interface WritableRemoteAgentFileOps extends RemoteAgentFileOps {
   mkdirp(dir: string): Promise<void>;
   writeFile(file: string, content: string, mode?: number): Promise<void>;
   rm(fileOrDir: string, opts?: { recursive?: boolean }): Promise<void>;
+}
+
+/** Compatibility name retained for Pi's existing public host contract. */
+export type PiRemoteFileOps = WritableRemoteAgentFileOps;
+
+/** OMP additionally projects the shared Skill directory into its private HOME. */
+export interface OmpRemoteFileOps extends WritableRemoteAgentFileOps {
+  linkDirectory(source: string, target: string): Promise<void>;
 }
 
 /** Gateway rows carry only host-resolved API/compat metadata, never a native provider endpoint. */
@@ -682,11 +691,17 @@ export interface AgentDeps {
   auth: AuthAdapter;
   runtimeConfig: AgentRuntimeConfig;
   /**
-   * Agent CLI 二进制绝对路径。host 在构造 agent 前必须已经把二进制 provisioned 好
-   * (splash 阶段下载/解压); maker-core 自己不下载、不解析 manifest, 拿到就用。
-   * 缺省 / 空串 → BaseAgent 构造期立即抛错, 不让 session 进半就绪状态。
+   * Agent CLI 二进制绝对路径。host 通常在构造 agent 前已经把本机二进制
+   * provisioned 好 (splash 阶段下载/解压); maker-core 自己不下载、不解析
+   * manifest, 拿到就用。
+   *
+   * Only an explicitly remote-only adapter may omit it, together with
+   * allowRemoteOnlyRuntime. Local process starts still use
+   * requireLocalBinaryPath() and fail closed.
    */
-  binaryPath: string;
+  binaryPath?: string;
+  /** Explicit opt-in for an adapter that can execute exclusively on SSH. */
+  allowRemoteOnlyRuntime?: boolean;
   logger: Logger;
 
   /**
@@ -733,6 +748,16 @@ export interface AgentDeps {
    */
   resolveOmpAgentHome?: (remoteHostId?: string | null) => string | undefined;
   /**
+   * OMP-only: resolves the already-probed remote native runtime and the two
+   * remote paths that are safe to use for one managed OMP session. The values
+   * are remote POSIX paths even when Desktop itself runs on Windows.
+   */
+  resolveRemoteOmpRuntime?: (remoteHostId: string) => Promise<{
+    binaryPath: string;
+    agentHome: string;
+    userHome: string;
+  }>;
+  /**
    * OMP-only: explicit non-secret process-launch values.  The host chooses the
    * small PATH/shell/locale whitelist; maker-core never clones process.env.
    */
@@ -743,6 +768,31 @@ export interface AgentDeps {
    * The callback is Main-only and never exposed through Renderer IPC.
    */
   spawnOmpProcess?: OmpProcessSpawner;
+  /** OMP-only: create a direct SSH JSONL transport for a remote OMP process. */
+  getRemoteOmpTransport?: (
+    remoteHostId: string,
+    opts: {
+      remoteBinaryPath: string;
+      args: string[];
+      cwd: string;
+      env: Record<string, string>;
+      logger: AgentDeps['logger'];
+    },
+  ) => OmpRemoteTransport | Promise<OmpRemoteTransport>;
+  /** OMP-only: mutable remote files for settings, models, prompts and Skill projection. */
+  getRemoteOmpFileOps?: (remoteHostId: string) => OmpRemoteFileOps;
+  /**
+   * OMP-only: acquire the reverse-forwarded Cindy compatibility endpoint used
+   * by one remote runtime. The lease stays live until that runtime is closed.
+   */
+  openRemoteOmpProviderForward?: (remoteHostId: string) => Promise<{
+    baseUrl: string;
+    release(): Promise<void>;
+  }>;
+  /** OMP-only: optional remote agent-proxy variables; never copied from Desktop env. */
+  getRemoteOmpAgentProxyEnv?: (remoteHostId: string) => Promise<Record<string, string> | null>;
+  /** Re-resolve the local audited runtime immediately before a local OMP spawn. */
+  resolveOmpLocalBinaryPath?: () => string | undefined;
   /**
    * OMP-only: the shared native Skill root to project into the managed OMP
    * HOME.  This is a source directory, never an OMP config/auth root.
@@ -764,6 +814,10 @@ export interface AgentDeps {
     sessionId?: string;
     providerId?: string | null;
     model: string;
+    /** Present only for an SSH OMP session. */
+    remoteHostId?: string;
+    /** Reverse-forwarded remote loopback endpoint for this runtime. */
+    remoteBaseUrl?: string;
   }) => string | undefined;
 
   /**
@@ -1901,6 +1955,24 @@ export interface StartSessionOptions {
    */
   reviewMode?: true;
   /**
+   * Host-controlled reduction for a narrowly scoped, non-interactive probe.
+   *
+   * OMP normally receives the session's explicitly adapted host-tool surface.
+   * A managed connectivity check must prove the provider/runtime path without
+   * granting that temporary process any host tools, so it asks OMP to publish
+   * an empty `set_host_tools` roster instead. This is intentionally a stricter
+   * capability setting, never a way to add or widen a tool surface.
+   */
+  disableHostTools?: boolean;
+  /**
+   * Main-owned, nonpersistent connectivity probe. This is deliberately a
+   * tightening-only switch: native adapters must use a fresh private runtime
+   * directory, avoid user/project customization discovery, and never treat it
+   * as authorization for a normal task. OMP currently consumes it for its
+   * managed SSH Quick Test.
+   */
+  isolatedProbe?: boolean;
+  /**
    * Exact local files or directories that a host-owned Review may inspect in
    * addition to workingDir. Adapters must treat files as exact grants and
    * directories as subtree grants; this is narrower than extraDirs, whose
@@ -2453,7 +2525,7 @@ export abstract class BaseAgent {
   protected memoryOverride: boolean | undefined;
 
   constructor(protected deps: AgentDeps) {
-    if (!deps.binaryPath) {
+    if (!deps.binaryPath && !deps.allowRemoteOnlyRuntime) {
       throw new Error(
         `${this.constructor.name}: binaryPath is required at construction (host must provision binary before instantiating agent)`,
       );
@@ -2667,6 +2739,7 @@ export abstract class BaseAgent {
    * 拉完整分页快照。返回值表示快照是否仍属于当前 host 且已由宿主成功应用。
    */
   async refreshLocalModels(_options?: RefreshLocalModelsOptions): Promise<boolean> {
+    void _options;
     return false;
   }
 
@@ -2675,6 +2748,7 @@ export abstract class BaseAgent {
    * Codex implements this through the app-server control plane.
    */
   async readAccountRateLimits(_providerId?: string): Promise<AccountRateLimitsResponse> {
+    void _providerId;
     return this.throwNotSupported('account:rate-limits:read', 'not-implemented');
   }
 
@@ -2684,6 +2758,7 @@ export abstract class BaseAgent {
     _providerId?: string,
   ): Promise<ConsumeAccountRateLimitResetCreditResponse> {
     void params;
+    void _providerId;
     return this.throwNotSupported('account:rate-limit-reset:consume', 'not-implemented');
   }
 
@@ -2695,9 +2770,21 @@ export abstract class BaseAgent {
     this.deps.auth.cancelLogin?.();
   }
 
-  /** 同步取 binary path (host 注入时已存在, 构造期校验过)。供 maker:agent:status 用。 */
-  getBinaryPath(): string {
-    return this.deps.binaryPath;
+  /**
+   * Local runtime status for maker:agent:status. A remote-only adapter
+   * reports null rather than fabricating a local path for an SSH executable.
+   */
+  getBinaryPath(): string | null {
+    return this.deps.binaryPath ?? null;
+  }
+
+  /** Require the local executable at the exact local spawn boundary. */
+  protected requireLocalBinaryPath(): string {
+    const binaryPath = this.deps.binaryPath;
+    if (typeof binaryPath !== 'string' || !binaryPath) {
+      throw new Error(`${this.constructor.name}: local binaryPath is unavailable`);
+    }
+    return binaryPath;
   }
 
   // ── Memory 控制 (子类实现) ─────────────────────────────────────────────

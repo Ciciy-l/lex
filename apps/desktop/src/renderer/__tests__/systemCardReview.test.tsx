@@ -7,7 +7,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string) => key,
+    t: (key: string, values?: { from?: unknown; to?: unknown }) =>
+      key === 'chat.systemCard.agentSwitch.label'
+        ? `已从 ${String(values?.from ?? '')} 切换到 ${String(values?.to ?? '')}`
+        : key,
     i18n: { language: 'zh-CN' },
   }),
 }));
@@ -59,9 +62,27 @@ function renderCard(data: Record<string, unknown>, workingDir = '/project') {
   );
 }
 
+function renderAgentSwitchCard(data: Record<string, unknown>) {
+  return render(
+    <MemoryRouter initialEntries={['/cc-agent/source-task']}>
+      <SystemCard cardType="agent-switch" data={data} />
+    </MemoryRouter>,
+  );
+}
+
 afterEach(cleanup);
 
-describe('SystemCard Review', () => {
+describe('SystemCard', () => {
+  it.each([
+    [{ fromAgentKind: 'omp', toAgentKind: 'codex' }, '已从 OMP 切换到 Codex'],
+    [{ fromAgentKind: 'cc', toAgentKind: 'omp' }, '已从 Claude Code 切换到 OMP'],
+  ])('labels OMP correctly in an engine-switch boundary: %s', (data, label) => {
+    renderAgentSwitchCard(data);
+
+    expect(screen.getByRole('separator', { name: label })).toBeTruthy();
+    expect(screen.getByText(label)).toBeTruthy();
+  });
+
   it('shows the read-only running state', () => {
     renderCard({ status: 'running', reviewerSessionId: 'review-task' });
 

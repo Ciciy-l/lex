@@ -179,6 +179,18 @@ describe('buildOmpManagedModelsYaml', () => {
     expect(yaml).toContain(env.endpoint);
   });
 
+  it('uses the managed SSH reverse-forward endpoint for a remote runtime', () => {
+    const remoteBaseUrl = 'http://127.0.0.1:48001/anthropic';
+    const yaml = buildOmpManagedModelsYaml({
+      sessionId: 'sess-1',
+      model: 'm1',
+      token: SECRET,
+      baseUrl: remoteBaseUrl,
+    });
+    expect(yaml).toContain(remoteBaseUrl);
+    expect(yaml).not.toContain(env.endpoint);
+  });
+
   it('translates the session wire protocol into the api value OMP accepts', () => {
     // Cindy 的 openai-chat 在 OMP 里叫 openai-completions;写成 openai-chat 会让 OMP
     // 整份 models.yml 被拒(实测),所以这条断言守的是**翻译**而不是字符串本身。

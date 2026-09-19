@@ -361,4 +361,29 @@ describe('filterChatBridgedCodexProviders — provider source sections', () => {
       'native',
     ]);
   });
+
+  it('keeps OMP controller-proxy routes under the generic SSH exclusion flag', () => {
+    // OAuth OpenAI is correctly local-only for the native SSH adapters. OMP
+    // is deliberately different: the remote runtime reaches the controller
+    // compatibility proxy through its managed reverse-forward.
+    const proxied = {
+      ...provider('user-openai-account', 'omp', ['chatgpt/gpt-5.5', 'deepseek-v4']),
+      auth: { method: 'oauth', native: 'codex' },
+      connected: true,
+    } as ProviderView;
+
+    expect(isLocalOnlyProviderForAgent(proxied, 'omp')).toBe(true);
+    expect(filterChatBridgedCodexProviders([proxied], 'omp', true)).toEqual([proxied]);
+    expect(
+      ids(selectVisibleModels({
+        agentKind: 'omp',
+        deviceId: undefined,
+        providers: [proxied],
+        deviceCcModels: [],
+        deviceCodexModels: [],
+        excludeSubscriptionDirect: true,
+        excludeChatBridgedCodex: true,
+      })),
+    ).toEqual(['chatgpt/gpt-5.5', 'deepseek-v4']);
+  });
 });

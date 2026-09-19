@@ -50,6 +50,12 @@ describe('session runtime control wiring', () => {
     expect(body).toContain("agentKind === 'omp'");
   });
 
+  it('keeps OMP on the shared four-engine path for context-rebuild cards', () => {
+    expect(registerSource).toContain(
+      'const cardAgentKind = normalizeDbAgentKind(sessionKindRow?.agentKind);',
+    );
+  });
+
   it('reads context usage from an already-live OMP task without permitting lazy OMP startup', () => {
     const start = registerSource.indexOf('MAKER_INVOKE.GET_CONTEXT_USAGE');
     const body = registerSource.slice(start, start + 8_000);

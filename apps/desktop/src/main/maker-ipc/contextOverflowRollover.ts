@@ -21,6 +21,7 @@ import {
   MODEL_WINDOW_SWITCH_FORCE_REBUILD_PCT,
   shouldHandoffAfterContextAssessment,
 } from '../../shared/modelSwitchAssessment.js';
+import { agentKindDisplayLabel } from '../../shared/agentKindConversion.js';
 import { afterStripAttempt, decideCindyCompression } from './cindyContextCompression.js';
 import { buildHandoffText, extractPlainText, type HandoffSourceMessage } from './agentHandoff.js';
 
@@ -266,10 +267,7 @@ function normalizeOverflowDbAgentKind(value: string): 'cc' | 'codex' | 'pi' | 'o
 }
 
 export function engineLabelForOverflow(agentKind: string): string {
-  if (agentKind === 'codex') return 'Codex';
-  if (agentKind === 'pi') return 'Pi';
-  if (agentKind === 'omp') return 'OMP';
-  return 'Claude Code';
+  return agentKindDisplayLabel(agentKind);
 }
 
 export function errorContentToData(content: unknown): unknown {

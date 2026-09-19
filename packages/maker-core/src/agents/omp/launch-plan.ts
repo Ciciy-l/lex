@@ -76,6 +76,12 @@ export interface OmpSessionLaunchPlanInput {
    * inherited from the parent process.
    */
   readonly executableEnvironment?: OmpSessionExecutableEnvironment;
+  /**
+   * Host-owned remote network variables. This narrow surface exists for the
+   * existing SSH agent-proxy preference; caller data can never replace HOME,
+   * credentials, config roots, or arbitrary process environment entries.
+   */
+  readonly remoteProxyEnvironment?: Readonly<Record<string, string>>;
   /** OMP runtime names to disable through its native skill extension setting. */
   readonly disabledSkillNames?: readonly string[];
   /**
@@ -120,6 +126,11 @@ const MAX_ARGUMENT_VALUE_LENGTH = 512;
 const MAX_ENV_VALUE_LENGTH = 4096;
 const MAX_EXECUTABLE_ENV_VALUE_LENGTH = 32 * 1024;
 const MAX_DISABLED_SKILL_NAMES = 256;
+const REMOTE_PROXY_ENVIRONMENT_NAMES = new Set([
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+]);
 const VERSION_OUTPUT = /^omp\/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)\r?\n$/u;
 
 /**
@@ -422,6 +433,22 @@ export function createOmpSessionLaunchPlan(
       if (comSpec !== undefined) environment.ComSpec = comSpec;
       const pathext = optionalExecutableEnvironmentValue(executable.pathext, 'PATHEXT');
       if (pathext !== undefined) environment.PATHEXT = pathext;
+    }
+  }
+
+  if (input.remoteProxyEnvironment !== undefined) {
+    const proxyEnvironment = input.remoteProxyEnvironment;
+    if (
+      !proxyEnvironment ||
+      typeof proxyEnvironment !== 'object' ||
+      Array.isArray(proxyEnvironment)
+    ) {
+      throw new Error('Invalid OMP remote proxy environment');
+    }
+    for (const [name, value] of Object.entries(proxyEnvironment)) {
+      if (!REMOTE_PROXY_ENVIRONMENT_NAMES.has(name))
+        throw new Error('Invalid OMP remote proxy environment');
+      environment[name] = requireEnvironmentValue(value, 'remote proxy ' + name);
     }
   }
 

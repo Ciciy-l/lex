@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  agentKindDisplayLabel,
   dbToMakerAgentKind,
   isMakerAgentKind,
   makerToDbAgentKind,
@@ -20,6 +21,15 @@ describe('agent kind conversion', () => {
     expect(isMakerAgentKind('pi')).toBe(true);
     expect(isMakerAgentKind('omp')).toBe(true);
     expect(isMakerAgentKind('unknown')).toBe(false);
+  });
+
+  it('uses one four-engine display mapping for DB and Maker spellings', () => {
+    expect(agentKindDisplayLabel('cc')).toBe('Claude Code');
+    expect(agentKindDisplayLabel('claude-code')).toBe('Claude Code');
+    expect(agentKindDisplayLabel('codex')).toBe('Codex');
+    expect(agentKindDisplayLabel('pi')).toBe('Pi');
+    expect(agentKindDisplayLabel('omp')).toBe('OMP');
+    expect(agentKindDisplayLabel('unknown')).toBe('Claude Code');
   });
 
   it('keeps the historical Claude Code fallback only for unknown values', () => {

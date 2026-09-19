@@ -145,8 +145,8 @@ interface ForwardRecord {
   /** 进行中的 arm, 去重 ensureRemoteForward 与 rearmForwards 的并发竞争。 */
   arming?: Promise<void>;
   /**
-   * 轮 42 P1(codex-connector):句柄引用计数。同一 (localHost, localPort) 的
-   * forward 可能被多个会话共用(同 host 多 Pi 会话共享同一 in-process MCP
+   * 轮 42 P1(codex-connector):句柄引用计数。同一完整绑定语义的 forward
+   * 可能被多个会话共用(同 host 多 Pi 会话共享同一 in-process MCP
    * bridge 端口), 任一方 dispose 不能拆掉别人还在用的隧道 —— 全部句柄释放
    * (refCount 归 0)才真正 unforward。closeRemoteForward / closeAllRemoteForwards
    * 是强制路径(pref 关闭 / 陈旧清理), 清零后直接拆。
@@ -167,8 +167,18 @@ interface ForwardRecord {
  */
 class StaleForwardArmError extends Error {}
 
-function forwardKey(spec: Pick<RemoteForwardSpec, 'localHost' | 'localPort'>): string {
-  return `${spec.localHost}:${spec.localPort}`;
+function forwardKey(
+  spec: Pick<
+    RemoteForwardSpec,
+    'localHost' | 'localPort' | 'preferredRemotePort' | 'exactRemotePort'
+  >,
+): string {
+  // The remote bind policy is part of identity, not merely an arming hint.
+  // Two engines may deliberately reach the same controller endpoint through
+  // different fixed remote ports (OMP 48001 and Pi 47989, for example).
+  // Sharing a record in that case would return a handle for the wrong port.
+  const preferredPort = spec.preferredRemotePort ?? DEFAULT_REMOTE_FORWARD_PORT_BASE;
+  return `${spec.localHost}:${spec.localPort}|${spec.exactRemotePort ? 'exact' : 'scan'}:${preferredPort}`;
 }
 
 export interface ExecStreamHandle {
@@ -686,7 +696,24 @@ export class RemoteHost {
     };
     this.forwards.set(key, record);
     if (this.status === 'ready') {
-      await this.armWithStaleRetry(record);
+      try {
+        await this.armWithStaleRetry(record);
+      } catch (error) {
+        // No handle has been returned yet, so an arm failure must not retain a
+        // zero-ref "wish" that a later reconnect silently re-arms. Only
+        // remove our own still-unclaimed record: a concurrent close/recreate
+        // may already have replaced it.
+        if (this.forwards.get(key) === record && record.refCount === 0) {
+          // arm failed before this record owned a remote listener. Calling
+          // unforwardIn here would be unsafe: another record can legitimately
+          // own the same exact remote port for a different local target.
+          // Late arm success has its own map-identity guard and unbinds only
+          // the listener it just acquired.
+          this.forwards.delete(key);
+          record.armed = false;
+        }
+        throw error;
+      }
     }
     return this.forwardHandle(key, record);
   }
@@ -721,20 +748,23 @@ export class RemoteHost {
   }
 
   /**
-   * 关闭指定本地目标的单条 forward (无该登记时 no-op)。与 closeAll 不同
+   * 关闭指定本地目标的所有 forward (无登记时 no-op)。不同的远端绑定策略
+   * 可以合法复用同一个本地目标，因此这里不能假定它只有一条记录。与 closeAll 不同
    * 不会在 ensure 语义下误触发 arm — 用于「目标变了, 先拆旧的」
    * (review: PR #715 R5: pref 的 localHost/localPort 被编辑后, 旧目标的
    * forward 会残留并随重连 re-arm, 远端多暴露一个隧道口)。
    */
   async closeRemoteForward(localHost: string, localPort: number): Promise<void> {
-    const key = `${localHost}:${localPort}`;
-    const record = this.forwards.get(key);
-    if (!record) return;
-    // 强制路径(陈旧 forward 清理): 无视引用计数直接拆 —— 调用方语义是「目标
-    // 已失效, 旧隧道必须拆除」, 共享者同样不再能指向旧目标。剩余句柄的 close
-    // 幂等 no-op(record 已摘除)。
-    record.refCount = 0;
-    await this.closeForwardRecord(key, record);
+    const matching = Array.from(this.forwards.entries()).filter(
+      ([, record]) => record.spec.localHost === localHost && record.spec.localPort === localPort,
+    );
+    for (const [key, record] of matching) {
+      // 强制路径(陈旧 forward 清理): 无视引用计数直接拆 —— 调用方语义是「目标
+      // 已失效, 旧隧道必须拆除」, 共享者同样不再能指向旧目标。剩余句柄的 close
+      // 幂等 no-op(record 已摘除)。
+      record.refCount = 0;
+      await this.closeForwardRecord(key, record);
+    }
   }
 
   /** 关闭并清除所有已登记 forward (pref 关闭路径)。连接断开时是纯本地清理。 */
@@ -773,9 +803,15 @@ export class RemoteHost {
   /** 真正拆除 forward(引用计数归 0 / 强制关闭路径共用)。幂等。 */
   private async closeForwardRecord(key: string, record: ForwardRecord): Promise<void> {
     if (!this.forwards.delete(key)) return;
+    // An unarmed wish never owned a listener on this SSH connection. In
+    // particular, a different record may already own the same exact remote
+    // port, so unforwarding its preferred port here would tear down a healthy
+    // tunnel. An in-flight arm observes the deleted map record and unbinds
+    // only a late success that it itself acquired.
+    const wasArmed = record.armed;
     record.armed = false;
     // 连接活着就显式 unforward; 断线时服务端侧随连接消失, 无需操作。
-    if (this.status === 'ready' && this.client) {
+    if (wasArmed && this.status === 'ready' && this.client) {
       // 与 forwardIn 对称的看门狗 (review: PR #715 五轮审核 P2): 半开连接
       // 上 ssh2 global request 回调可能丢失, 裸 await 会把 Settings 的
       // 关闭 proxy / 更新 host 流程永久挂住。超时后照常返回 — record 已

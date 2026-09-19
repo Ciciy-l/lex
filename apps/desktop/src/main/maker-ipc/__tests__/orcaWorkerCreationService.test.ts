@@ -2551,6 +2551,66 @@ describe('SSH remote worker model/provider compatibility gate (R23 P2)', () => {
     });
   });
 
+  it('allows a proxy-backed subscription-direct route for a remote OMP worker', async () => {
+    const { service, deps } = createDeps({
+      getLeadSessionRow: vi.fn(async () => remoteLeadRow),
+      getAvailableModels: vi.fn(() => [
+        { id: 'chatgpt/gpt-5.5', efforts: ['low', 'medium', 'high', 'xhigh'], defaultEffort: 'high', supportsFastMode: true },
+      ]),
+      getProviderRoutingContext: vi.fn(async () => providerRoutingContext({
+        'claude-code': [],
+        omp: [{ id: 'chatgpt', name: 'ChatGPT Subscription', models: ['chatgpt/gpt-5.5'] }],
+      })),
+    });
+
+    await expect(
+      service.createWorker({
+        leadSessionId: 'lead-1',
+        role: 'reviewer',
+        agent: 'omp',
+        label: 'omp-subscription',
+        model: 'chatgpt/gpt-5.5',
+        providerId: 'chatgpt',
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      resolved: { providerId: 'chatgpt', model: 'chatgpt/gpt-5.5' },
+    });
+    expect(deps.bootstrapSession).toHaveBeenCalledWith(
+      expect.objectContaining({ agentKind: 'omp', remoteHostId: 'remote-host-1' }),
+    );
+  });
+
+  it('allows a controller-proxy OMP route even if an old snapshot marks it local-only', async () => {
+    const { service, deps } = createDeps({
+      getLeadSessionRow: vi.fn(async () => remoteLeadRow),
+      getAvailableModels: vi.fn(() => [
+        { id: 'deepseek-v4', efforts: ['low', 'medium', 'high', 'xhigh'], defaultEffort: 'high', supportsFastMode: true },
+      ]),
+      getProviderRoutingContext: vi.fn(async () => providerRoutingContext({
+        'claude-code': [],
+        // The current snapshot builder emits false for OMP. Keep the service
+        // agent-aware as well so a stale snapshot cannot reintroduce the old
+        // blanket SSH rejection.
+        omp: [{ id: 'user-openai-account', name: 'OpenAI account', models: ['deepseek-v4'], localOnlyForSsh: true }],
+      })),
+    });
+
+    await expect(
+      service.createWorker({
+        leadSessionId: 'lead-1',
+        role: 'reviewer',
+        agent: 'omp',
+        label: 'omp-proxy',
+        model: 'deepseek-v4',
+        providerId: 'user-openai-account',
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(deps.bootstrapSession).toHaveBeenCalledWith(
+      expect.objectContaining({ agentKind: 'omp', remoteHostId: 'remote-host-1' }),
+    );
+  });
+
   it.each([['deepseek', 'codex'], ['user-openai-account', 'codex'], ['user-claude-account', 'pi']] as const)('rejects local-only source %s/%s before allocating a remote worker', async (providerId, agent) => {
     const { service, deps } = createDeps({
       getLeadSessionRow: vi.fn(async () => remoteLeadRow),
@@ -2617,6 +2677,43 @@ describe('SSH remote worker model/provider compatibility gate (R23 P2)', () => {
     expect(deps.bootstrapSession).toHaveBeenCalledWith(
       expect.objectContaining({
         agentKind: 'pi',
+        remoteHostId: 'remote-host-1',
+        workingDir: '/srv/repo',
+        orcaRole: 'worker',
+      }),
+    );
+  });
+
+  it('allows OMP workers for a remote lead through the common SSH lifecycle', async () => {
+    const ensureRemoteReadyForSessionStart = vi.fn(async () => undefined);
+    const { service, deps } = createDeps({
+      getLeadSessionRow: vi.fn(async () => remoteLeadRow),
+      ensureRemoteReadyForSessionStart,
+      getProviderRoutingContext: vi.fn(async () => providerRoutingContext({
+        'claude-code': [],
+        codex: [{ id: 'xd', name: 'XD Gateway', models: ['gpt-5.5'] }],
+        omp: [{ id: 'xd', name: 'XD Gateway', models: ['gpt-5.5'] }],
+      })),
+    });
+    const result = await service.createWorker({
+      leadSessionId: 'lead-1',
+      role: 'developer',
+      agent: 'omp',
+      label: 'omp-dev',
+    });
+    expect(result).toMatchObject({ ok: true });
+    expect(ensureRemoteReadyForSessionStart).toHaveBeenCalledWith(
+      expect.objectContaining({
+        createOpts: expect.objectContaining({
+          agentKind: 'omp',
+          remoteHostId: 'remote-host-1',
+          workingDir: '/srv/repo',
+        }),
+      }),
+    );
+    expect(deps.bootstrapSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentKind: 'omp',
         remoteHostId: 'remote-host-1',
         workingDir: '/srv/repo',
         orcaRole: 'worker',

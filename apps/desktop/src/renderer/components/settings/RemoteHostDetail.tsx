@@ -28,7 +28,7 @@ import { buildCodexSyncWarning } from '@/utils/codexAuthSync';
 import { remoteSshHostsStore } from '@/lib/remoteSshHostsStore';
 
 type AgentKind = RemoteAgentKind;
-const AGENT_KINDS: ReadonlyArray<AgentKind> = ['claude-code', 'codex', 'pi'];
+const AGENT_KINDS: ReadonlyArray<AgentKind> = ['claude-code', 'codex', 'pi', 'omp'];
 
 interface AgentRowState {
   loading: boolean;
@@ -55,6 +55,7 @@ export function RemoteHostDetail({ hostId }: Props) {
     'claude-code': { ...EMPTY_AGENT_STATE },
     codex: { ...EMPTY_AGENT_STATE },
     pi: { ...EMPTY_AGENT_STATE },
+    omp: { ...EMPTY_AGENT_STATE },
   }));
   const [codexSyncBusy, setCodexSyncBusy] = useState(false);
 
@@ -88,6 +89,7 @@ export function RemoteHostDetail({ hostId }: Props) {
     void probe('claude-code');
     void probe('codex');
     void probe('pi');
+    void probe('omp');
   }, [probe]);
 
   // Subscribe to install-progress push events.
@@ -155,6 +157,10 @@ export function RemoteHostDetail({ hostId }: Props) {
     () => AGENT_KINDS.filter((k) => agents[k].probe?.installed),
     [agents],
   );
+  // OMP Quick Test enters its own managed runtime instead of the generic shell
+  // one-shot, so it can use the same provider/session bridge as a real remote
+  // task without exposing host tools.
+  const quickTestKinds = installedKinds;
 
   // ── Codex auth sync ────────────────────────────────────────────────────
   // Two-step flow (per security plan):
@@ -241,8 +247,8 @@ export function RemoteHostDetail({ hostId }: Props) {
         ))}
       </div>
 
-      {installedKinds.length > 0 && (
-        <QuickTestPanel hostId={hostId} availableKinds={installedKinds} />
+      {quickTestKinds.length > 0 && (
+        <QuickTestPanel hostId={hostId} availableKinds={quickTestKinds} />
       )}
 
       <AgentProxyTunnelCard hostId={hostId} />
@@ -829,6 +835,7 @@ function agentDisplayName(kind: AgentKind, t: (k: string) => string): string {
   // 轮 33 C1:补 pi 分支 —— 此前落入 claudeCodeName 显示为 "Claude Code"。
   if (kind === 'codex') return 'Codex';
   if (kind === 'pi') return t('settings.remote.detail.piName');
+  if (kind === 'omp') return 'OMP';
   return t('settings.remote.detail.claudeCodeName');
 }
 

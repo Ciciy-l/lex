@@ -2,7 +2,12 @@ import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { startOmpProcess, type OmpProcessHostOptions } from './process-host.js';
+import {
+  startOmpProcess,
+  startOmpRemoteProcess,
+  type OmpProcessHostOptions,
+  type OmpRemoteTransport,
+} from './process-host.js';
 
 vi.mock('node:child_process', () => ({ spawn: vi.fn() }));
 beforeEach(() => {
@@ -35,7 +40,146 @@ function fixture() {
   return { process, options };
 }
 
+function remoteFixture() {
+  const lineListeners = new Set<(line: string) => void>();
+  const closeListeners = new Set<() => void>();
+  const transportCloseListeners = new Set<() => void>();
+  const close = vi.fn();
+  const transport: OmpRemoteTransport = {
+    writeLine: vi.fn(),
+    onLine: (listener) => {
+      lineListeners.add(listener);
+      return () => lineListeners.delete(listener);
+    },
+    onClose: (listener) => {
+      closeListeners.add(listener);
+      return () => closeListeners.delete(listener);
+    },
+    onTransportClose: (listener) => {
+      transportCloseListeners.add(listener);
+      return () => transportCloseListeners.delete(listener);
+    },
+    close,
+  };
+  return {
+    transport,
+    close,
+    emitClose: () => {
+      for (const listener of [...closeListeners]) listener();
+    },
+    emitTransportClose: () => {
+      for (const listener of [...transportCloseListeners]) listener();
+    },
+  };
+}
+
 describe('OMP process host boundary', () => {
+  it('waits for the physical SSH close after requesting remote termination', async () => {
+    const remote = remoteFixture();
+    const host = startOmpRemoteProcess({
+      transport: remote.transport,
+      onEvent: vi.fn(),
+      onState: vi.fn(),
+    });
+    const pending = host.client.request({ type: 'get_state' });
+    const rejected = expect(pending.response).rejects.toThrow('closed');
+
+    const stopped = host.stopAndWait();
+    expect(remote.close).toHaveBeenCalledOnce();
+    expect(host.getState()).toBe('stopping');
+
+    // Requesting close is not evidence that the remote command has ended.
+    expect(await Promise.race([
+      stopped.then(() => 'settled'),
+      Promise.resolve('pending'),
+    ])).toBe('pending');
+
+    remote.emitClose();
+    await rejected;
+    await expect(stopped).resolves.toBe(true);
+    expect(host.getState()).toBe('exited');
+
+    await expect(host.stopAndWait()).resolves.toBe(true);
+    expect(remote.close).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('rejects pending RPCs on transport failure without claiming a remote exit', async () => {
+    const remote = remoteFixture();
+    const host = startOmpRemoteProcess({
+      transport: remote.transport,
+      onEvent: vi.fn(),
+      onState: vi.fn(),
+    });
+    const pending = host.client.request({ type: 'get_state' });
+    const rejected = expect(pending.response).rejects.toThrow('closed');
+
+    // SSH can report an unusable channel without delivering its physical close
+    // event. Pending RPCs must fail now, while exit confirmation remains false.
+    remote.emitTransportClose();
+    await rejected;
+    expect(remote.close).toHaveBeenCalledOnce();
+    expect(host.getState()).toBe('stopping');
+    await vi.advanceTimersByTimeAsync(10_000);
+    await expect(host.stopAndWait()).resolves.toBe(false);
+    expect(host.getState()).toBe('exit-unconfirmed');
+
+    // A later real channel close remains valid evidence, but it is distinct
+    // from the preceding local transport failure.
+    remote.emitClose();
+    expect(host.getState()).toBe('exited');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('fails fast when an SSH transport is already closed during listener setup', () => {
+    const close = vi.fn();
+    const onState = vi.fn();
+    const transport: OmpRemoteTransport = {
+      writeLine: vi.fn(),
+      onLine: () => () => undefined,
+      onClose: (listener) => {
+        listener();
+        return () => undefined;
+      },
+      close,
+    };
+
+    expect(() => startOmpRemoteProcess({
+      transport,
+      onEvent: vi.fn(),
+      onState,
+    })).toThrow('OMP remote process transport could not be initialized');
+    expect(close).toHaveBeenCalledOnce();
+    expect(onState).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('cleans lifecycle timers when generic SSH closure is reported during setup', async () => {
+    const close = vi.fn();
+    const onState = vi.fn();
+    const transport: OmpRemoteTransport = {
+      writeLine: vi.fn(),
+      onLine: () => () => undefined,
+      onClose: () => () => undefined,
+      onTransportClose: (listener) => {
+        listener();
+        return () => undefined;
+      },
+      close,
+    };
+
+    expect(() => startOmpRemoteProcess({
+      transport,
+      onEvent: vi.fn(),
+      onState,
+    })).toThrow('OMP remote process transport could not be initialized');
+    expect(close).toHaveBeenCalledOnce();
+    expect(onState).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(onState).not.toHaveBeenCalled();
+  });
+
   it.each(['write-callback', 'input-error'])(
     'preserves exit tail frames after a late %s with a genuinely stalled write',
     async (failure) => {

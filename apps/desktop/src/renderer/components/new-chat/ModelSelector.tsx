@@ -95,6 +95,7 @@ import {
   XAI_MODEL_PREFIX,
   isSubscriptionDirectModel,
 } from '../../../shared/subscriptionModels';
+import { usesControllerProviderProxyForSsh } from '../../../shared/sshAgentProviderRouting';
 import { isModelEnabled, useModelVisibilityVersion } from '@/state/modelVisibilityPrefs';
 import { seedDefaultFavorite } from '@/state/modelFavorites';
 import { useProviderModelMemoryVersion } from '@/state/providerModelMemory';
@@ -644,14 +645,13 @@ interface ModelSelectorProps {
   /** device-link 远程会话所属被控端 id;非空 = 列被控端的模型 + 退化为纯列表(不分供应商段)。 */
   deviceId?: string;
   /**
-   * SSH 远程会话(remoteHostId)传 true:隐藏订阅直连模型(chatgpt/ / xai/)——bridge 只挂在
-   * 本地 compat-proxy,远程模式不经它,选了必失败(见 selectVisibleModels 同名参数)。
+   * 直连型 SSH 会话传 true:订阅直连模型(chatgpt/ / xai/)依赖本地 compat-proxy。
+   * OMP 经控制端兼容代理的受管 reverse-forward，不传此限制。
    */
   excludeSubscriptionDirect?: boolean;
   /**
-   * SSH 远程会话(remoteHostId)传 true:隐藏 `wireProtocol: 'openai-chat'` 的 Codex 供应商
-   * (DeepSeek / Kimi / GLM 等)——Responses→Chat 桥只挂在本地 codex-proxy,远程不经它
-   * (见 selectVisibleModels 同名参数)。
+   * 直连型 SSH 会话传 true:隐藏 `wireProtocol: 'openai-chat'` 的 Codex 供应商
+   * (DeepSeek / Kimi / GLM 等)。OMP 使用控制端代理，不传此限制。
    */
   excludeChatBridgedCodex?: boolean;
   /**
@@ -1322,6 +1322,7 @@ function ModelSelectorContentView({
     () =>
       excludeChatBridgedCodex
         ? (provider: ProviderView, agent: AgentKind): boolean =>
+            !usesControllerProviderProxyForSsh(agent) &&
             isLocalOnlyProviderForAgent(provider, agent)
         : undefined,
     [excludeChatBridgedCodex],
@@ -1329,7 +1330,8 @@ function ModelSelectorContentView({
   const unifiedExcludeModel = useMemo(
     () =>
       excludeSubscriptionDirect
-        ? (model: { id: string }): boolean => isSubscriptionDirectModel(model.id)
+        ? (model: { id: string }, _provider: ProviderView, agent: AgentKind): boolean =>
+            !usesControllerProviderProxyForSsh(agent) && isSubscriptionDirectModel(model.id)
         : undefined,
     [excludeSubscriptionDirect],
   );
@@ -1556,9 +1558,10 @@ function ModelSelectorContentView({
       referencePricing,
     });
   };
-  // SSH 远程会话里订阅直连模型(chatgpt/ / xai/)不可路由:远端 cc 不经本地
-  // compat-proxy 的 responses-bridge,选了必失败。保留在列表但置灰 + 原因提示,
-  // 避免静默消失让用户误以为订阅掉了。device-link 远程(deviceId 非空)不受此限。
+  // 直连型 SSH 会话里订阅直连模型(chatgpt/ / xai/)不可路由：远端 cc 不经本地
+  // compat-proxy 的 responses-bridge，选了必失败。OMP 的调用方不会传此限制，
+  // 因为它经受管 reverse-forward 使用控制端代理。保留受限行并置灰以说明原因；
+  // device-link 远程(deviceId 非空)同样不受此限。
   const subscriptionDirectDisabledReason = (id: string): string | null => {
     if (!excludeSubscriptionDirect || !isSubscriptionDirectModel(id)) return null;
     return id.startsWith(CHATGPT_MODEL_PREFIX)

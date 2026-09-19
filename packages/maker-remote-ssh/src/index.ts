@@ -20,6 +20,7 @@ export type {
 
 export {
   installRemoteAgent,
+  PINNED_OMP_VERSION,
   PINNED_PI_VERSION,
   probeRemoteAgent,
   uninstallRemoteAgent,

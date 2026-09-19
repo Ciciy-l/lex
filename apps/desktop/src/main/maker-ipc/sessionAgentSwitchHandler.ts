@@ -37,7 +37,12 @@ import {
 } from './agentHandoff.js';
 import { throwIpcError } from '../utils/ipcValidate.js';
 import { shouldApplyExclusiveProviderRerouteLive } from '../maker-host/model-route-guard-live.js';
-import { dbToMakerAgentKind, makerToDbAgentKind, normalizeDbAgentKind } from '../../shared/agentKindConversion.js';
+import {
+  agentKindDisplayLabel,
+  dbToMakerAgentKind,
+  makerToDbAgentKind,
+  normalizeDbAgentKind,
+} from '../../shared/agentKindConversion.js';
 
 function throwIfAgentSwitchAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) {
@@ -63,10 +68,7 @@ export function toMakerAgentKind(dbKind: string): AgentKind {
 
 /** 交接 framing 与边界卡展示用的引擎名。 */
 export function agentEngineLabel(dbKind: DbAgentKind): string {
-  if (dbKind === 'codex') return 'Codex';
-  if (dbKind === 'pi') return 'Pi';
-  if (dbKind === 'omp') return 'OMP';
-  return 'Claude Code';
+  return agentKindDisplayLabel(dbKind);
 }
 
 /** role='agent_switch' 边界行的 content 结构(与 renderer AgentSwitchContent 对齐)。 */

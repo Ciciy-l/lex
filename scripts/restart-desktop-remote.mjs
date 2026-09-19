@@ -28,7 +28,11 @@ const rootDir = path.resolve(__dirname, '..');
 const gracefulTimeoutMs = 3000;
 const forceTimeoutMs = 5000;
 const pollIntervalMs = 150;
-const startupReadyTimeoutMs = 120_000;
+// A cold Vite optimization plus Electron's first database migration can exceed
+// two minutes on Windows. Keep the bounded readiness contract, but leave room
+// for that legitimate first boot rather than abandoning a healthy isolated dev
+// instance before it can publish its ready status.
+const startupReadyTimeoutMs = 300_000;
 export const ISOLATED_AUTH_LAUNCH_PROOF_FILE = '.isolated-auth-launch-proof.json';
 const isolatedAuthLaunchProofTtlMs = 10 * 60_000;
 const forceKillLabel = process.platform === 'win32' ? 'taskkill /F /T' : 'kill -9';

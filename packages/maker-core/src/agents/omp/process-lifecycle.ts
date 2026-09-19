@@ -108,6 +108,24 @@ export class OmpProcessLifecycle {
     this.notify();
   }
 
+  /**
+   * Dispose an initialization that will never yield a process host. This is
+   * intentionally not exit confirmation: it only clears timers and settles
+   * any internal waiters false, without publishing a late lifecycle state to
+   * an owner that never received the host.
+   */
+  abort(): void {
+    if (this.state === 'exited') return;
+    clearTimeout(this.startupTimer);
+    clearTimeout(this.forceTimer);
+    clearTimeout(this.exitTimer);
+    this.startupTimer = undefined;
+    this.forceTimer = undefined;
+    this.exitTimer = undefined;
+    this.state = 'exit-unconfirmed';
+    this.settle(false);
+  }
+
   stopAndWait(): Promise<boolean> {
     if (this.state === 'exited') return Promise.resolve(true);
     if (this.state === 'exit-unconfirmed') return Promise.resolve(false);

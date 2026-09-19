@@ -29,9 +29,11 @@ import {
   ClaudeCodeAgent,
   CodexAgent,
   configureDefaultImageResizer,
+  generateSessionId,
   type AgentKind,
   type McpProvider,
 } from '@cindy/maker-core';
+import { PINNED_OMP_VERSION, probeRemoteAgent } from '@cindy/maker-remote-ssh';
 import type { ProviderView } from '@cindy/model-providers';
 import {
   getActiveCatalog,
@@ -140,7 +142,9 @@ import {
 } from '../remote-ssh/agent-proxy.js';
 import {
   createSshPiDaemonTransport,
+  createRemoteOmpFileOps,
   createRemotePiFileOps,
+  createSshOmpTransport,
   resolveRemotePiBinaryPath,
 } from './pi-remote-transport.js';
 import { ensurePiManagerInstalled } from './pi-manager-client.js';
@@ -335,10 +339,17 @@ import {
   withRehydrateCloseSuppressed,
 } from './rehydrateCloseSuppression.js';
 import {
+  clearSessionProvider,
   freezeSessionProviderAtStart,
   getSessionProvider,
   hydrateSessionProvider,
+  setSessionProvider,
 } from './session-provider-store.js';
+import {
+  runManagedRemoteOmpQuickTest as runManagedRemoteOmpQuickTestWithDeps,
+  type ManagedRemoteOmpQuickTestOptions,
+  type RemoteOmpQuickTestResult,
+} from './omp-remote-quick-test.js';
 import { prepareLocalCodexCredentialModeSwitch } from './codex-credential-switch.js';
 import { createDesktopOrcaTeamStoreAdapter } from './orcaTeamStoreAdapter.js';
 import { broadcastOrcaWorkerChanged } from './orcaWorkerBroadcast.js';
@@ -554,6 +565,12 @@ const staleInvalidatedCcSessions = new Set<string>();
  * ensureRemoteForward 顺延探测,断线重连由 RemoteHost re-arm 保持。
  */
 const PI_MCP_FORWARD_PORT_START = 47981;
+/**
+ * OMP's managed provider bridge gets its own remote listener. It is separate
+ * from Pi's MCP forwards and Codex's daemon config bridge so one engine can
+ * never replace another engine's endpoint.
+ */
+const OMP_PROVIDER_FORWARD_PORT = 48001;
 /**
  * 本进程见过的 bridge 实例 — ensureCodexMcpBridgeStartedForRemote 据此检测
  * bridge 重建并清空 forcedFreshCcBridgeSessions (旧 bridge 的
@@ -2490,9 +2507,35 @@ export function getMaker(): Maker {
     const piAgent = buildPiAgentForDesktop();
     if (piAgent) makerAgents.pi = piAgent;
 
-    // omp(实验性,opt-in 二进制):与 pi 同一条降级链 —— 二进制在位才注册;
-    // 缺失时 agents map 不含 omp,既有环境零影响,新建入口也会据
-    // listAvailableAgents 把 OMP 从引擎下拉里隐掉(不会白屏/不会莫名报错)。
+    // OMP has an audited local opt-in runtime, and an independent managed SSH
+    // runtime. The latter owns its own HOME/models.yml/provider forward and
+    // direct JSONL channel; it does not reuse Pi's daemon or Codex's app-server.
+    const requireRemoteOmpHost = (remoteHostId: string) => {
+      const remoteHost = getRemoteSshPool().get(remoteHostId);
+      if (!remoteHost) {
+        throw new Error(`remote SSH host "${remoteHostId}" not found in pool — connect it first under Settings → Remote`);
+      }
+      if (remoteHost.getStatus() !== 'ready') {
+        throw new Error(`remote SSH host "${remoteHostId}" is not connected (status=${remoteHost.getStatus()}) — connect it under Settings → Remote first`);
+      }
+      return remoteHost;
+    };
+    const requireRemoteOmpPath = (value: unknown, label: string): string => {
+      if (
+        typeof value !== 'string'
+        || value.length === 0
+        || value.length > 4096
+        || value.includes('\0')
+        || !path.posix.isAbsolute(value)
+      ) {
+        throw new Error(`remote OMP ${label} must be an absolute POSIX path`);
+      }
+      const normalized = path.posix.normalize(value);
+      if (normalized === '/') {
+        throw new Error(`remote OMP ${label} must not be the filesystem root`);
+      }
+      return normalized;
+    };
     const buildOmpAgentForDesktop = () => buildOmpAgent({
       logger: desktopMakerLogger,
       turnChangeCapture: {
@@ -2506,6 +2549,89 @@ export function getMaker(): Maker {
       },
       mcpProviders: ompMcpProviders,
       makerMemory: makerMemoryManager,
+      resolveRemoteOmpRuntime: async (remoteHostId) => {
+        const remoteHost = requireRemoteOmpHost(remoteHostId);
+        const probe = await probeRemoteAgent(remoteHost, 'omp');
+        const expectedVersion = `omp/${PINNED_OMP_VERSION}`;
+        if (!probe.installed || probe.installedVersion !== expectedVersion || !probe.binaryPath) {
+          throw new Error(
+            `OMP ${expectedVersion} is not installed and verified on remote host ${remoteHostId}`,
+          );
+        }
+        const installDir = requireRemoteOmpPath(probe.installDir, 'install directory');
+        const installParent = path.posix.dirname(installDir);
+        if (path.posix.basename(installParent) !== '.xdt-server') {
+          throw new Error('remote OMP installer returned an unexpected install layout');
+        }
+        const userHome = requireRemoteOmpPath(path.posix.dirname(installParent), 'user home');
+        const binaryPath = requireRemoteOmpPath(probe.binaryPath, 'binary path');
+        const expectedBinaryPath = path.posix.join(installDir, 'omp', 'omp');
+        if (binaryPath !== expectedBinaryPath) {
+          throw new Error('remote OMP installer returned an unexpected binary path');
+        }
+        return Object.freeze({
+          binaryPath,
+          // This state is intentionally distinct from the runtime binary and
+          // from Pi's agent root. Each core runtime adds its own opaque child.
+          agentHome: path.posix.join(installDir, 'omp-agent-home'),
+          userHome,
+        });
+      },
+      getRemoteOmpTransport: (remoteHostId, { remoteBinaryPath, args, cwd, env, logger }) =>
+        createSshOmpTransport({
+          remoteHost: requireRemoteOmpHost(remoteHostId),
+          binaryPath: remoteBinaryPath,
+          args,
+          cwd,
+          env,
+          logger,
+        }),
+      getRemoteOmpFileOps: (remoteHostId) =>
+        createRemoteOmpFileOps(requireRemoteOmpHost(remoteHostId)),
+      getRemoteAgentFileOps: (remoteHostId) =>
+        createRemoteOmpFileOps(requireRemoteOmpHost(remoteHostId)),
+      openRemoteOmpProviderForward: async (remoteHostId) => {
+        const remoteHost = requireRemoteOmpHost(remoteHostId);
+        let localEndpoint: URL;
+        try {
+          localEndpoint = new URL(getClaudeEndpoint());
+        } catch {
+          throw new Error('OMP remote provider forward requires a valid local loopback endpoint');
+        }
+        const localHost = localEndpoint.hostname.replace(/^\[|\]$/gu, '');
+        const localPort = Number(localEndpoint.port);
+        if (
+          !['http:', 'https:'].includes(localEndpoint.protocol)
+          || !['127.0.0.1', '::1', 'localhost'].includes(localHost)
+          || !Number.isInteger(localPort)
+          || localPort < 1
+          || localPort > 65535
+          || localEndpoint.username
+          || localEndpoint.password
+        ) {
+          throw new Error('OMP remote provider forward requires an explicit local loopback endpoint');
+        }
+        const forward = await remoteHost.ensureRemoteForward({
+          localHost,
+          localPort,
+          preferredRemotePort: OMP_PROVIDER_FORWARD_PORT,
+          exactRemotePort: true,
+        });
+        const remoteEndpoint = new URL(localEndpoint.toString());
+        remoteEndpoint.hostname = '127.0.0.1';
+        remoteEndpoint.port = String(forward.remotePort);
+        let released = false;
+        return Object.freeze({
+          baseUrl: remoteEndpoint.toString(),
+          release: async () => {
+            if (released) return;
+            released = true;
+            await forward.close();
+          },
+        });
+      },
+      getRemoteOmpAgentProxyEnv: async (remoteHostId) =>
+        getRemoteAgentProxyEnv(requireRemoteOmpHost(remoteHostId)),
     });
     const ompAgent = buildOmpAgentForDesktop();
     if (ompAgent) makerAgents.omp = ompAgent;
@@ -2917,6 +3043,27 @@ export function resetCodexModelBackfillState(): void {
  */
 export function getMakerIfReady(): Maker | null {
   return _maker;
+}
+
+/**
+ * Run the Settings SSH OMP quick test through the same managed runtime used by
+ * an ordinary remote OMP session. The helper deliberately owns no IPC surface
+ * and no durable task lifecycle.
+ */
+export async function runManagedRemoteOmpQuickTest(
+  options: ManagedRemoteOmpQuickTestOptions,
+): Promise<RemoteOmpQuickTestResult> {
+  return runManagedRemoteOmpQuickTestWithDeps(
+    {
+      ensureProviderReady: ensureCurrentAccountProviderReadiness,
+      listProviders: () => getDesktopProviderService().listProviders({ allowSideEffects: false }),
+      generateSessionId,
+      setSessionProvider,
+      clearSessionProvider,
+      startEphemeralSession: (startOptions) => getMaker().startEphemeralSession(startOptions),
+    },
+    options,
+  );
 }
 
 /** Register Pi after a managed runtime retry and notify local renderers. */

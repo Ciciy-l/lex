@@ -72,6 +72,7 @@ import {
   normalizeDbAgentKind,
   type MakerAgentKindWire,
 } from '../../../shared/agentKindConversion';
+import { usesControllerProviderProxyForSsh } from '../../../shared/sshAgentProviderRouting';
 import { getBranchName } from '../../../shared/managedWorktreeBranches';
 import { AgentSelect } from '@/components/new-chat/AgentSelect';
 import { TopRightChipStack, TopRightChipStackProvider } from '@/components/chat/TopRightChipStack';
@@ -898,6 +899,12 @@ export function NewMakerDraftRoute() {
   }, [attachmentState, t]);
   const effectiveWorkingDir = draft.workingDir;
   const effectiveRemoteHostId = draft.remoteHostId;
+  // Native SSH engines connect to their provider from the remote host. OMP is
+  // deliberately different: its private models.yml points at the controller
+  // compatibility proxy through a managed reverse-forward. Keep the direct
+  // route exclusions scoped to engines which actually need them.
+  const requiresDirectSshProviderRoute =
+    !!effectiveRemoteHostId && !usesControllerProviderProxyForSsh(capabilityAgentKind);
   const isRemoteProjectDraft = effectiveWorkingDir != null && effectiveRemoteHostId != null;
   // device-link:为远程设备项目新建对话(草稿带 deviceId)。与 SSH remoteHostId 互斥。
   // 归一成 string | undefined(能力 hook / getModelById / ChatInput prop 都按此签名;
@@ -1311,8 +1318,10 @@ export function NewMakerDraftRoute() {
    * 结果用在 draftInitialModel 上,会拿新模型配上按旧模型算出来的 effort / fastMode,
    * 提交一份目标模型根本不支持的组合(PR #548 review)。
    *
-   * 候选与 ChatInput 的 SSH 可见性同口径 —— 那里由 `!!remoteHostId` 同时驱动两道排除,
-   * 少一道就会把远端根本路由不出去的模型选成默认:
+   * 候选与 ChatInput 的 SSH 可见性同口径 —— 直连型 SSH 引擎由
+   * `requiresDirectSshProviderRoute` 同时驱动两道排除,少一道就会把远端根本
+   * 路由不出去的模型选成默认。OMP 通过 controller proxy 走独立的受管
+   * reverse-forward，不属于这两道直连限制:
    *   · 供应商级 `excludeChatBridgedCodex`:Responses→Chat 桥只挂本地 codex-proxy;
    *   · 模型级 `excludeSubscriptionDirect`:订阅直连(chatgpt/ 、xai/)的 bridge 只挂本地
    *     compat-proxy。必须逐模型判,同一供应商可能既有可路由模型又有订阅直连模型。
@@ -1322,7 +1331,7 @@ export function NewMakerDraftRoute() {
     const base = filterChatBridgedCodexProviders(
       localProviders,
       capabilityAgentKind,
-      !!effectiveRemoteHostId,
+      requiresDirectSshProviderRoute,
     );
     // 逐模型过滤要落在**候选本身**，而不是只落在「挑哪个模型」那一步：来源解析
     // (effectiveSourceIdForModel) 吃的是同一份候选，若这里不剔除，被排除的条目仍会让它
@@ -1336,13 +1345,13 @@ export function NewMakerDraftRoute() {
         const kept = models.filter(
           (m) =>
             isModelSelectableForNewRoute(m, { userProvider: p.source === 'user' }) &&
-            !(effectiveRemoteHostId && isSubscriptionDirectModel(m.id)),
+            !(requiresDirectSshProviderRoute && isSubscriptionDirectModel(m.id)),
         );
         if (kept.length === models.length) return p;
         return { ...p, models: { ...p.models, [capabilityAgentKind]: kept } };
       })
       .filter((p) => (p.models[capabilityAgentKind] ?? []).length > 0);
-  }, [localProviders, capabilityAgentKind, effectiveRemoteHostId]);
+  }, [localProviders, capabilityAgentKind, requiresDirectSshProviderRoute]);
   /**
    * **自动**选择用的候选:再剔掉清单发现失败的供应商。
    *
@@ -2371,13 +2380,9 @@ export function NewMakerDraftRoute() {
         return;
       }
 
-      // OMP is a local cross-platform engine. Its remote SSH host lifecycle has
-      // not been implemented, so do not silently turn an OMP draft into another
-      // engine when a user picks an SSH project.
-      if (draftVendor === 'omp') {
-        throw new Error(t('ccAgent.draft.createSessionFailed'));
-      }
-
+      // Pi and OMP both have managed SSH runtime contracts. Do not turn a
+      // selected engine into another one at this routing boundary; the common
+      // remote creation path below carries its agent kind, model and provider.
       // 轮 35 CRITICAL 移除:Pi 已支持 SSH 远端(pi-manager daemon + SshPiTransport,
       // startSession 全量支持 remoteHostId)。此前的「Pi 本地专属」fail-closed
       // 守卫与 dialog 的 SSH 过滤是过时逻辑 —— 后端早已装配 getRemotePiTransport
@@ -2392,20 +2397,26 @@ export function NewMakerDraftRoute() {
       // providerId 只保留用户显式选中且仍有效的来源,否则 null(默认路由,不固化默认来源)。
       // 使用 draftInitialModel(用户在 composer 里看到的模型),而不是 chatPrefs.model
       // (当 device-link 草稿活跃时 chatPrefs.model 是旧的 controller-local 值)。
-      // bridge 模型(chatgpt/ / xai/)在远程模式不可用(不经本地 compat-proxy),需降级。
-      // 非 bridge 模型也必须在已连接的本地来源中存在,否则 SSH 会话首消息会被阻塞。
+      // 直连型 SSH 引擎的 bridge 模型(chatgpt/ / xai/)不可用，需降级。
+      // OMP 使用 controller proxy 的受管 reverse-forward，因此保留这些路由。
+      // 任一候选仍必须在已连接的本地来源中存在，否则 SSH 会话首消息会被阻塞。
       const sshConnected = filterChatBridgedCodexProviders(
         connectedProvidersForAgent(localProviders, capabilityAgentKind),
         capabilityAgentKind,
-        true,
+        requiresDirectSshProviderRoute,
       );
       // admissionFiltered:SSH 候选是「挑一个可路由模型」的清单,停用条目与能力模型
       // 不参与(降级兜底也不能落到停用模型上,PR #744 review)。
       const sshVisibleModels = deriveModelsFromProviders(sshConnected, capabilityAgentKind, {
         admissionFiltered: true,
-      }).filter((m) => !isSubscriptionDirectModel(m.id));
+      }).filter(
+        (m) => !requiresDirectSshProviderRoute || !isSubscriptionDirectModel(m.id),
+      );
       let sshModel = draftInitialModel;
-      if (isSubscriptionDirectModel(sshModel) || !sshVisibleModels.some((m) => m.id === sshModel)) {
+      if (
+        (requiresDirectSshProviderRoute && isSubscriptionDirectModel(sshModel)) ||
+        !sshVisibleModels.some((m) => m.id === sshModel)
+      ) {
         if (!sshVisibleModels.length) {
           throw new Error(t('ccAgent.draft.createSessionFailed'));
         }
@@ -4378,6 +4389,7 @@ export function NewMakerDraftRoute() {
     [
       effectiveWorkingDir,
       effectiveRemoteHostId,
+      requiresDirectSshProviderRoute,
       isRemoteProjectDraft,
       isDeviceLinkDraft,
       remoteModelListStatus,

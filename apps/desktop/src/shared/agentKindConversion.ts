@@ -38,3 +38,17 @@ export function makerToDbAgentKind(maker: string | null | undefined): DbAgentKin
 export function normalizeDbAgentKind(value: string | null | undefined): DbAgentKind {
   return value === 'codex' || value === 'pi' || value === 'omp' ? value : 'cc';
 }
+
+/**
+ * Neutral human-readable name for an engine identity. This accepts both the
+ * persisted DB spelling (`cc`) and the Maker wire spelling (`claude-code`),
+ * plus historical/untrusted values so display-only callers do not need to
+ * duplicate a three-branch fallback. Unknown legacy values retain the old
+ * Claude Code presentation rather than inventing a new persisted identity.
+ */
+export function agentKindDisplayLabel(value: unknown): string {
+  if (value === 'codex') return 'Codex';
+  if (value === 'pi') return 'Pi';
+  if (value === 'omp') return 'OMP';
+  return 'Claude Code';
+}

@@ -2,7 +2,8 @@ import { isOmpRecord } from './commands.js';
 import { OMP_MAX_FRAME_BYTES } from './jsonl-reader.js';
 
 export interface OmpRpcTransport {
-  writeLine(line: string): void;
+  /** Local stdio writes synchronously; SSH writes can settle asynchronously. */
+  writeLine(line: string): void | Promise<void>;
   onLine(listener: (line: string) => void): () => void;
   onClose(listener: () => void): () => void;
 }
@@ -278,11 +279,7 @@ export class OmpRpcClient {
         );
       }, timeoutMs);
       this.pending.set(id, { command: command.type, resolve, reject, timer });
-      try {
-        this.transport.writeLine(line);
-      } catch {
-        this.close();
-      }
+      this.writeTransportLine(line);
     });
     return { id, response };
   }
@@ -350,10 +347,7 @@ export class OmpRpcClient {
     }
     this.generations.delete(id);
     const line = this.encode({ ...out, type: 'extension_ui_response', id });
-    try {
-      this.transport.writeLine(line);
-    } catch {
-      this.close();
+    if (!this.writeTransportLine(line)) {
       throw new Error('OMP interaction transport failed');
     }
   }
@@ -376,10 +370,7 @@ export class OmpRpcClient {
       result: normalized,
       ...(isError === true ? { isError: true } : {}),
     });
-    try {
-      this.transport.writeLine(line);
-    } catch {
-      this.close();
+    if (!this.writeTransportLine(line)) {
       throw new Error('OMP host tool transport failed');
     }
   }
@@ -425,6 +416,24 @@ export class OmpRpcClient {
       this.onEvent(event);
     } catch {
       this.close();
+    }
+  }
+
+  /**
+   * Own asynchronous SSH write failures immediately.  Otherwise the rejected
+   * transport promise would be detached from its pending RPC response and can
+   * surface as an unhandled rejection in the Desktop main process.
+   */
+  private writeTransportLine(line: string): boolean {
+    try {
+      const write = this.transport.writeLine(line);
+      if (write && typeof (write as PromiseLike<void>).then === 'function') {
+        void Promise.resolve(write).catch(() => this.close());
+      }
+      return true;
+    } catch {
+      this.close();
+      return false;
     }
   }
 

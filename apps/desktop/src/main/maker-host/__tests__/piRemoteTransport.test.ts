@@ -28,12 +28,14 @@ import type { RemoteHost } from '@cindy/maker-remote-ssh';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import {
+  createRemoteOmpFileOps,
   createRemotePiFileOps,
+  createSshOmpTransport,
   createSshPiTransport,
   killRemotePiManagerSession,
   shellQuote,
 } from '../pi-remote-transport.js';
-import type { PiTransportCloseInfo } from '@cindy/maker-core';
+import { startOmpRemoteProcess, type PiTransportCloseInfo } from '@cindy/maker-core';
 
 // ---------------------------------------------------------------------------
 // pi-manager exclusive path: mock pi-manager-client so we can verify
@@ -192,6 +194,139 @@ describe('pi remote file ops command hygiene', () => {
     expect(calls[0].cmd).toContain('shasum -a 256');
     expect(calls[0].cmd).toContain('openssl dgst -sha256');
     expect(calls[0].cmd).not.toContain('head -c');
+  });
+});
+
+describe('OMP SSH transport and remote Skill projection', () => {
+  function makeJsonlChannel() {
+    const handlers: {
+      stdout?: (chunk: Buffer) => void;
+      close?: (info: { code: number | null; signal: string | null }) => void;
+      error?: (error: unknown) => void;
+    } = {};
+    const channel = {
+      write: vi.fn(() => true),
+      kill: vi.fn(),
+      onDrain: vi.fn(),
+      onStdoutBytes: vi.fn((listener: (chunk: Buffer) => void) => { handlers.stdout = listener; }),
+      onStderr: vi.fn(),
+      onClose: vi.fn((listener: (info: { code: number | null; signal: string | null }) => void) => { handlers.close = listener; }),
+      onError: vi.fn((listener: (error: unknown) => void) => { handlers.error = listener; }),
+    };
+    return { channel, handlers };
+  }
+
+  it('starts OMP as a direct native JSONL command and propagates frames and close', async () => {
+    const { channel, handlers } = makeJsonlChannel();
+    const execStream = vi.fn().mockResolvedValue(channel);
+    const host = { id: 'omp-host', execStream } as unknown as RemoteHost;
+    const transport = createSshOmpTransport({
+      remoteHost: host,
+      binaryPath: '/remote/.xdt-server/v1/omp/omp',
+      args: ['--mode', 'rpc', '--config', '/remote/runtime/config.yml'],
+      cwd: '/remote/project',
+      env: { HOME: '/remote/runtime' },
+      logger: fakeLogger() as never,
+    });
+    const lines: string[] = [];
+    let closes = 0;
+    transport.onLine((line) => lines.push(line));
+    transport.onClose(() => { closes += 1; });
+
+    await vi.waitFor(() => expect(handlers.stdout).toBeDefined());
+    expect(execStream.mock.calls[0][0]).toContain('/remote/.xdt-server/v1/omp/omp');
+    expect(execStream.mock.calls[0][0]).toContain('--mode');
+    expect(execStream.mock.calls[0][0]).not.toContain('pi-manager');
+
+    handlers.stdout!(Buffer.from('{"type":"ready"}\n', 'utf8'));
+    expect(lines).toEqual(['{"type":"ready"}']);
+    await transport.writeLine('{"type":"get_state"}');
+    expect(channel.write).toHaveBeenCalledWith('HOME=/remote/runtime\n\n');
+    expect(channel.write).toHaveBeenCalledWith('{"type":"get_state"}\n');
+
+    await transport.close();
+    expect(channel.kill).toHaveBeenCalledTimes(1);
+    // A local kill request fences the transport, but must not claim that the
+    // remote command has exited before SSH reports the channel close.
+    expect(closes).toBe(0);
+    handlers.close!({ code: 0, signal: null });
+    expect(closes).toBe(1);
+  });
+
+  it('keeps an OMP stop pending until the SSH command channel actually closes', async () => {
+    const { channel, handlers } = makeJsonlChannel();
+    const host = {
+      id: 'omp-host',
+      execStream: vi.fn().mockResolvedValue(channel),
+    } as unknown as RemoteHost;
+    const transport = createSshOmpTransport({
+      remoteHost: host,
+      binaryPath: '/remote/.xdt-server/v1/omp/omp',
+      args: ['--mode', 'rpc'],
+      cwd: '/remote/project',
+      env: { HOME: '/remote/runtime' },
+      logger: fakeLogger() as never,
+    });
+    const process = startOmpRemoteProcess({
+      transport,
+      onEvent: vi.fn(),
+      onState: vi.fn(),
+    });
+
+    await vi.waitFor(() => expect(handlers.stdout).toBeDefined());
+    const pending = process.client.request({ type: 'get_state' });
+    await vi.waitFor(() =>
+      expect(channel.write).toHaveBeenCalledWith(expect.stringContaining('"type":"get_state"')),
+    );
+    const rejected = expect(pending.response).rejects.toThrow('closed');
+    const stopped = process.stopAndWait();
+    expect(channel.kill).toHaveBeenCalledOnce();
+    expect(process.getState()).toBe('stopping');
+
+    // The generic transport closure rejects pending RPCs immediately, before
+    // the physical SSH channel supplies the separate exit confirmation.
+    await rejected;
+
+    // Do not accept the local kill request as exit proof.
+    let settled = false;
+    void stopped.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    handlers.close!({ code: 0, signal: null });
+    await expect(stopped).resolves.toBe(true);
+    expect(process.getState()).toBe('exited');
+  });
+
+  it('projects OMP Skills with a quoted symlink replacement and never recursive deletion', async () => {
+    const calls: string[] = [];
+    const host = {
+      id: 'omp-host',
+      exec: async (command: string) => {
+        calls.push(command);
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+    } as unknown as RemoteHost;
+    const source = "/home/lex/.agents/skill'; touch /tmp/pwned; echo '";
+    const target = '/home/lex/.xdt-server/v1/omp-agent-home/runtimes/x/.agents/skills';
+
+    await createRemoteOmpFileOps(host).linkDirectory(source, target);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain('ln -s -- "$SOURCE" "$TARGET"');
+    expect(calls[0]).toContain('rm -- "$TARGET"');
+    expect(calls[0]).not.toContain('rm -rf');
+    // The outer bash -c command quotes the complete script, which necessarily
+    // contains the attacker-shaped text. Assert the nested quote boundary
+    // instead of treating its mere byte presence as executable.
+    expect(calls[0]).toBe(`bash -c ${shellQuote([
+      `SOURCE=${shellQuote(source)}`,
+      `TARGET=${shellQuote(target)}`,
+      '[ -d "$SOURCE" ] || exit 44',
+      'if [ -L "$TARGET" ]; then rm -- "$TARGET"; elif [ -e "$TARGET" ]; then exit 45; fi',
+      'mkdir -p "$(dirname "$TARGET")"',
+      'ln -s -- "$SOURCE" "$TARGET"',
+    ].join('\n'))}`);
   });
 });
 

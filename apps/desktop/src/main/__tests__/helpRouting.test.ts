@@ -122,12 +122,12 @@ describe('HELP_KNOWLEDGE invariants', () => {
     expect(HELP_KNOWLEDGE.find((d) => d.id === 'api-keys')).toBeUndefined();
   });
 
-  it('collaboration guidance includes Pi as a lead and worker, locally or over SSH (round 42)', () => {
+  it('collaboration guidance includes all four engines as leads and workers, locally or over SSH', () => {
     const collaboration = HELP_KNOWLEDGE.find((d) => d.id === 'collaboration');
 
-    expect(collaboration?.content).toContain('Claude Code, Codex, and Pi can lead locally or over SSH');
-    expect(collaboration?.content).toContain('Claude Code, Codex, or Pi');
-    // 轮 42:Pi SSH remote 能力落地后「local-only」表述已过时,不得再出现。
+    expect(collaboration?.content).toContain('Claude Code, Codex, Pi, and OMP can lead locally or over SSH');
+    expect(collaboration?.content).toContain('Claude Code, Codex, Pi, or OMP');
+    // SSH engines are peer choices; stale partial-engine copy must not return.
     expect(collaboration?.content).not.toContain('Pi sessions are local-only');
     expect(collaboration?.content).not.toContain('SSH remote leads currently use Claude Code or Codex');
   });

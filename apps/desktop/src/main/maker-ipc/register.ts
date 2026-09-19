@@ -587,7 +587,12 @@ import {
   runPiPackageListIpcBoundary,
   runPiPackageMutationIpcBoundary,
 } from './piPackageMutationIpc.js';
-import { dbToMakerAgentKind, makerToDbAgentKind } from '../../shared/agentKindConversion.js';
+import {
+  dbToMakerAgentKind,
+  makerToDbAgentKind,
+  normalizeDbAgentKind,
+} from '../../shared/agentKindConversion.js';
+import { usesControllerProviderProxyForSsh } from '../../shared/sshAgentProviderRouting.js';
 import { readWorkflowProgressForSession } from '../workflow-progress/reader.js';
 import { AgentInputCoordinator } from './agent-input-coordinator.js';
 import { notePromptPredictionSessionStopped } from './promptPredictionStopLedger.js';
@@ -7160,15 +7165,18 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     }
 
     await ensureRemoteHostReady(remoteHostIdToEnsure);
-    const ensureAgentKind: 'claude-code' | 'codex' | 'pi' | null =
+    const ensureAgentKind: 'claude-code' | 'codex' | 'pi' | 'omp' | null =
       session?.agentKind === 'codex' ||
       session?.agentKind === 'claude-code' ||
-      session?.agentKind === 'pi'
+      session?.agentKind === 'pi' ||
+      session?.agentKind === 'omp'
         ? session.agentKind
         : createOpts && typeof createOpts === 'object'
           ? (() => {
               const ak = (createOpts as { agentKind?: unknown }).agentKind;
-              return ak === 'codex' || ak === 'claude-code' || ak === 'pi' ? ak : null;
+              return ak === 'codex' || ak === 'claude-code' || ak === 'pi' || ak === 'omp'
+                ? ak
+                : null;
             })()
           : null;
     if (!ensureAgentKind) return;
@@ -7184,7 +7192,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       return;
     }
 
-    // pi 远端:走通用 silent install(probe 远端 pi 二进制,缺/版本不符则安装)。
+    // Pi / OMP remote runtimes use the generic silent installer. OMP does not
+    // run Pi's manager setup: its direct SSH RPC process is created later by
+    // the OMP host adapter.
     await ensureRemoteAgentInstalledOrInstall(remoteHostIdToEnsure, ensureAgentKind);
     // pi-manager 预上传(前置检查点,而非 transport 创建深处 —— R1 生命周期 H3 /
     // R2 安装 M3)。失败不阻断(transport 内还会再 ensure),但提前暴露问题。
@@ -7309,7 +7319,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       .some(
         (s) =>
           s.remoteHostId === hostId &&
-          (s.agentKind === 'codex' || s.agentKind === 'claude-code' || s.agentKind === 'pi') &&
+          (s.agentKind === 'codex' || s.agentKind === 'claude-code' || s.agentKind === 'pi' || s.agentKind === 'omp') &&
           (agentInputCoordinatorHolder?.hasActiveTurnForRewind(s.id) ?? false),
       );
   }
@@ -12480,12 +12490,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         sessionKindRow.contextWindow > 0
           ? sessionKindRow.contextWindow
           : undefined;
-      const cardAgentKind =
-        sessionKindRow?.agentKind === 'codex'
-          ? 'codex'
-          : sessionKindRow?.agentKind === 'pi'
-            ? 'pi'
-            : 'cc';
+      // The rebuild marker belongs to the persisted engine identity. Keep this
+      // on the shared four-engine normalization path so an OMP rebuild cannot
+      // silently render as a Claude Code card.
+      const cardAgentKind = normalizeDbAgentKind(sessionKindRow?.agentKind);
       broadcastSessionPatched(
         sessionId,
         {
@@ -15732,7 +15740,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (runtimeStatus.remoteHostId) {
         const targetId = effectiveProviderId === undefined ? currentProviderId : effectiveProviderId;
         const target = getActiveCatalog().providers.find((provider) => provider.id === targetId);
-        if (target && isLocalOnlyProviderForAgent(target, dbToMakerAgentKind(runtimeStatus.agentKind))) {
+        const targetAgent = dbToMakerAgentKind(runtimeStatus.agentKind);
+        if (
+          target &&
+          !usesControllerProviderProxyForSsh(targetAgent) &&
+          isLocalOnlyProviderForAgent(target, targetAgent)
+        ) {
           throwIpcError('INVALID_PARAMS', 'This provider requires local execution');
         }
       }
