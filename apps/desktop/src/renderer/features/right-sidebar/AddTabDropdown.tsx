@@ -15,7 +15,16 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { Bot, Globe, Smartphone, Terminal } from 'lucide-react';
+import {
+  Bot,
+  FileDiff,
+  FolderTree,
+  Globe,
+  ListTodo,
+  Smartphone,
+  Terminal,
+  Wrench,
+} from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useBotProfiles } from '@/features/bots/botStore';
@@ -83,6 +92,21 @@ const MENU_ITEMS: TabKindMenuMeta[] = [
     icon: Smartphone,
     order: 25,
     enabled: true,
+  },
+  {
+    kind: 'terminal',
+    labelKey: 'rightSidebar.tabs.kinds.terminal',
+    icon: Terminal,
+    order: 30,
+    enabled: true,
+  },
+  {
+    kind: 'cindy-make',
+    labelKey: 'settings.cindyMake.title',
+    icon: Wrench,
+    order: 12,
+    enabled: true,
+    singleton: true,
   },
 ];
 

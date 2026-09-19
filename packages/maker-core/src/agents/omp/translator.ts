@@ -411,6 +411,10 @@ export class OmpTranslator {
     return {
       kind: 'events',
       events: [
+        // Desktop persists the effective context window from the terminal
+        // status boundary. Keep this before done so the product turn stays
+        // attributed until its final usage snapshot has been observed.
+        this.status('Done', false),
         this.event(
           'done',
           { ...(result === undefined ? {} : { result }) },

@@ -160,6 +160,44 @@ test('new repository main baseline keeps freezing committed migrations', () => {
   }
 });
 
+test('main tracking upstream takes precedence over an upstream origin main', () => {
+  const fixture = createFixture();
+  try {
+    git(fixture.repo, 'remote', 'add', 'lex', 'https://example.invalid/lex.git');
+    git(fixture.repo, 'update-ref', 'refs/remotes/lex/main', fixture.anchor);
+    git(fixture.repo, 'branch', '--set-upstream-to=lex/main', 'main');
+
+    assert.deepEqual(resolveMainBaseline(fixture.repo, {}), {
+      ref: 'lex/main',
+      commit: fixture.anchor,
+    });
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('topic tracking upstream is not treated as a migration release baseline', () => {
+  const fixture = createFixture();
+  try {
+    git(fixture.repo, 'remote', 'add', 'lex', 'https://example.invalid/lex.git');
+    git(fixture.repo, 'checkout', '-b', 'feature/migration-work');
+    git(fixture.repo, 'update-ref', 'refs/remotes/lex/feature/migration-work', fixture.anchor);
+    git(
+      fixture.repo,
+      'branch',
+      '--set-upstream-to=lex/feature/migration-work',
+      'feature/migration-work',
+    );
+
+    assert.deepEqual(resolveMainBaseline(fixture.repo, {}), {
+      ref: 'main',
+      commit: fixture.anchor,
+    });
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test('new repository main baseline freezes companion runtime scripts', () => {
   const fixture = createFixture();
   const scriptPath = path.join(

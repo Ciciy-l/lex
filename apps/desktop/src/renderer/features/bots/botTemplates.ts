@@ -31,22 +31,6 @@ export const BOT_TEMPLATES: readonly BotTemplateDefinition<BotTemplateId>[] = [
     toolsets: ['docs'],
     identitySource: BOT_TEMPLATE_PRESET_IDENTITIES.cindy,
   },
-  {
-    id: 'dash',
-    avatar: BOT_TEMPLATE_PRESET_AVATARS.dash,
-    avatarColor: 'violet',
-    translationKey: 'dash',
-    toolsets: ['docs'],
-    identitySource: BOT_TEMPLATE_PRESET_IDENTITIES.dash,
-  },
-  {
-    id: 'lizi',
-    avatar: BOT_TEMPLATE_PRESET_AVATARS.lizi,
-    avatarColor: 'amber',
-    translationKey: 'lizi',
-    toolsets: ['docs'],
-    identitySource: BOT_TEMPLATE_PRESET_IDENTITIES.lizi,
-  },
 ] as const;
 
 export const CUSTOM_BOT_TEMPLATE: BotTemplateDefinition<typeof CUSTOM_BOT_TEMPLATE_ID> = {

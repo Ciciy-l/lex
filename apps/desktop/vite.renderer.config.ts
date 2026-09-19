@@ -364,6 +364,9 @@ const rendererConfig = {
     include: [
       '@tiptap/react > use-sync-external-store/shim/index.js',
       '@tiptap/react > use-sync-external-store/shim/with-selector.js',
+      // The diff highlighter runs in a lazily-created module Worker. Prebundle
+      // it up front without reintroducing the duplicate Tiptap runtime issue.
+      'highlight.js',
     ],
   },
   server: {

@@ -581,17 +581,41 @@ describe('MakerScheduleRunner model selection', () => {
       );
     });
 
-    it('Pi 空模型且没有已连接来源时在创建会话前明确失败', async () => {
+    it('OMP 空模型按同一已连接来源解析 model + providerId，不能退回 Claude 静态默认', async () => {
+      const h = createSessionHarness();
+      const resolveDefaultModelRoute = vi.fn(async () => ({
+        model: 'omp-connected-model',
+        providerId: 'omp-source',
+      }));
+      const harness = createRunnerHarness(h, null, { resolveDefaultModelRoute });
+
+      await fireToCompletion(
+        harness,
+        h,
+        baseSchedule({ agentKind: 'omp', model: undefined, providerId: 'omp-source' }),
+      );
+
+      expect(resolveDefaultModelRoute).toHaveBeenCalledWith('omp', 'omp-source');
+      expect(harness.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentKind: 'omp',
+          model: 'omp-connected-model',
+          providerId: 'omp-source',
+        }),
+      );
+    });
+
+    it.each(['pi', 'omp'] as const)('%s 空模型且没有已连接来源时在创建会话前明确失败', async (agentKind) => {
       const h = createSessionHarness();
       const resolveDefaultModelRoute = vi.fn(async () => null);
       const harness = createRunnerHarness(h, null, { resolveDefaultModelRoute });
 
       await expect(
         harness.runner.fire(
-          baseSchedule({ agentKind: 'pi', model: undefined, providerId: undefined }),
+          baseSchedule({ agentKind, model: undefined, providerId: undefined }),
           createFireContext(),
         ),
-      ).rejects.toThrow('Pi has no connected model source');
+      ).rejects.toThrow(`no connected model source for ${agentKind}`);
       expect(harness.createSession).not.toHaveBeenCalled();
       expect(h.send).not.toHaveBeenCalled();
     });

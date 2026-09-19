@@ -397,6 +397,8 @@ export function catalogSurfaces() {
       reachableComponents: [
         'MainLayout',
         'Sidebar',
+        'ProjectsSection',
+        'DeviceSectionHeader',
         'RightSidebar',
         'WindowControls',
         'ChromeActions',
@@ -412,6 +414,8 @@ export function catalogSurfaces() {
       styleRoots: [
         'apps/desktop/src/renderer/components/layout',
         'apps/desktop/src/renderer/components/sidebar',
+        'apps/desktop/src/renderer/features/cc-agent/sidebar/sections/ProjectsSection.tsx',
+        'apps/desktop/src/renderer/features/cc-agent/sidebar/DeviceSectionHeader.tsx',
         'apps/desktop/src/renderer/components/title-bar',
         'apps/desktop/src/renderer/layout',
         'apps/desktop/src/renderer/features/right-sidebar',
@@ -423,6 +427,7 @@ export function catalogSurfaces() {
         // MainLayout 根容器与侧栏的背景/token/模糊——全局基础样式是主窗口壳的
         // 实际生效样式源（其它 surface 消费同一文件时同样按各自入口登记）。
         'apps/desktop/src/renderer/styles/globals.css',
+        'apps/desktop/src/renderer/styles/generated/tokens.css',
       ],
       routerPaths: [],
     },
@@ -727,6 +732,7 @@ export function catalogSurfaces() {
         // sidebar-window-entry.tsx 直接导入 globals.css，body/#root 基础样式与
         // 窗口专用规则在该窗口实际生效——独立窗口与主窗口共享同一全局样式源。
         'apps/desktop/src/renderer/styles/globals.css',
+        'apps/desktop/src/renderer/styles/generated/tokens.css',
       ],
       routerPaths: ['/sidebar-window'],
       rendererEntryModules: { sidebarWindow: './sidebar-window-entry' },
@@ -745,6 +751,7 @@ export function catalogSurfaces() {
         'apps/desktop/src/main/ghost-panel-window',
         // ghost-panel-window-entry.tsx 直接导入 globals.css（同侧栏窗理由）。
         'apps/desktop/src/renderer/styles/globals.css',
+        'apps/desktop/src/renderer/styles/generated/tokens.css',
       ],
       routerPaths: ['/ghost-panel-window'],
       rendererEntryModules: { ghostPanelWindow: './ghost-panel-window-entry' },
@@ -763,9 +770,31 @@ export function catalogSurfaces() {
         'apps/desktop/src/main/resource-usage-window',
         // resource-usage-entry.tsx 直接导入 globals.css（同侧栏窗理由）。
         'apps/desktop/src/renderer/styles/globals.css',
+        'apps/desktop/src/renderer/styles/generated/tokens.css',
       ],
       routerPaths: [],
       rendererEntryModules: { resourceUsageWindow: './resource-usage-entry' },
+    },
+    {
+      id: 'desktop.window.remote-desktop',
+      platform: 'desktop',
+      title: '远程桌面独立窗口',
+      productionEntry: '`?remoteDesktopViewer=1` → renderer/remote-desktop-viewer-entry.tsx',
+      reachableComponents: ['RemoteDesktopViewerWindow', 'Select', 'Button', 'FormField', 'ConfirmDialog'],
+      styleRoots: [
+        'apps/desktop/src/renderer/remote-desktop-viewer-entry.tsx',
+        'apps/desktop/src/renderer/features/remote-desktop/RemoteDesktopViewerWindow.tsx',
+        'apps/desktop/src/renderer/components/ui/confirm-dialog.tsx',
+        'apps/desktop/src/renderer/components/ui/select.tsx',
+        'apps/desktop/src/renderer/components/ui/button.tsx',
+        'apps/desktop/src/renderer/components/ui/form-field.tsx',
+        'apps/desktop/src/renderer/features/remote-desktop/viewerWindow.css',
+        'apps/desktop/src/main/remote-desktop-viewer',
+        'apps/desktop/src/renderer/styles/globals.css',
+        'apps/desktop/src/renderer/styles/generated/tokens.css',
+      ],
+      routerPaths: [],
+      rendererEntryModules: { remoteDesktopViewer: './remote-desktop-viewer-entry' },
     },
     {
       id: 'desktop.window.voice-overlay',
@@ -781,6 +810,7 @@ export function catalogSurfaces() {
         'apps/desktop/src/renderer/voice-input/VoiceInputStatusNotice.tsx',
         'apps/desktop/src/main/voice-input/global.ts',
         'apps/desktop/src/renderer/styles/globals.css',
+        'apps/desktop/src/renderer/styles/generated/tokens.css',
       ],
       routerPaths: [],
       viewEntryComponents: { 'voice-input-overlay': 'VoiceInputOverlay' },
@@ -885,7 +915,7 @@ export function catalogSurfaces() {
       id: 'desktop.overlay.permission-prompt',
       platform: 'desktop',
       title: '权限询问',
-      productionEntry: 'PermissionPrompt（会话内权限卡；DS-11 迁移前置）',
+      productionEntry: 'PermissionPrompt（会话内权限卡；DS-9 迁移前置）',
       reachableComponents: ['PermissionPrompt', 'PermissionSelector', 'AskUserQuestionPrompt'],
       styleRoots: [
         'apps/desktop/src/renderer/components/new-chat/PermissionPrompt.tsx',
@@ -1208,7 +1238,7 @@ export function defaultHumanSeed(surfaces) {
     '',
     '生成器不得改本表。首轮（DS-2a）：全部 `legacy`；暂无归属写 `unassigned`。`protected` 与迁移状态正交。',
     '',
-    'Mobile 已纳入同一台账的静态入口发现；保持 legacy，数值接管在 DS-10。',
+    'Mobile 已纳入同一台账的静态入口发现；保持 legacy，数值接管留待 Mobile 独立阶段。',
     '',
     '另册 / 排除（不进必做迁移清单）：',
     '',
@@ -1260,7 +1290,7 @@ const PROTECTED_TAGS = {
   'desktop.chat.new-draft': ['DESIGN.md §15.15 创建页内容位'],
   'desktop.overlay.permission-prompt': [
     'DESIGN.md §5 裸文字按钮豁免（相关）',
-    'DS-11 Permission 迁移前置',
+    'DS-9 Permission 迁移前置',
   ],
   'desktop.settings': [
     'DESIGN.md §10 语义豁免色族消费者',
@@ -1275,7 +1305,7 @@ export function defaultHumanAnnotation(id) {
     owner: 'unassigned',
     status: 'legacy',
     protected: (PROTECTED_TAGS[id] ?? []).join('；') || '—',
-    target: id.startsWith('mobile.') ? 'DS-7 发现入口，DS-10 接管；未迁移' : '查现有标准组件与治理 §12 当前路线；按人工下一动作接管',
+    target: id.startsWith('mobile.') ? 'DS-7 发现入口，Mobile 独立阶段接管；未迁移' : '查现有标准组件与治理 §12 当前路线；按人工下一动作接管',
     next: '保持现状；发现问题记下一动作，本张不修视觉',
   };
 }

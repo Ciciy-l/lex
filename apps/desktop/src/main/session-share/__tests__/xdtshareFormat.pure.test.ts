@@ -120,6 +120,39 @@ describe('validateManifest', () => {
     expect(validateManifest({ ...validManifest(), agentKind: 'pi' }).agentKind).toBe('pi');
   });
 
+  it('accepts a DB-only OMP manifest without portable native state', () => {
+    const manifest = validateManifest({
+      ...validManifest(),
+      agentKind: 'omp',
+      sdkSessionIds: [],
+      activeSdkSessionId: null,
+      exportFidelity: 'db-only',
+      transcripts: [],
+    });
+    expect(manifest.agentKind).toBe('omp');
+    expect(manifest.sdkSessionIds).toEqual([]);
+    expect(manifest.transcripts).toEqual([]);
+  });
+
+  it.each([
+    ['a native session id', { sdkSessionIds: ['C:\\private\\omp.jsonl'] }],
+    ['an active native session id', { activeSdkSessionId: 'C:\\private\\omp.jsonl' }],
+    ['a native transcript', { transcripts: [{ sdkSessionId: 'opaque', path: 'transcripts/omp/a.jsonl' }] }],
+    ['full fidelity', { exportFidelity: 'full' }],
+  ])('rejects an OMP manifest carrying %s', (_label, patch) => {
+    expect(() =>
+      validateManifest({
+        ...validManifest(),
+        agentKind: 'omp',
+        sdkSessionIds: [],
+        activeSdkSessionId: null,
+        exportFidelity: 'db-only',
+        transcripts: [],
+        ...patch,
+      }),
+    ).toThrowError(XdtshareError);
+  });
+
   it('rejects minReaderVersion above this reader', () => {
     try {
       validateManifest({ ...validManifest(), minReaderVersion: 999 });
@@ -186,6 +219,32 @@ describe('validateManifest', () => {
 
   it('manifest without orca leaves the field absent', () => {
     expect('orca' in validateManifest(validManifest())).toBe(false);
+  });
+
+  it('rejects a full-fidelity Orca bundle that contains an OMP Worker', () => {
+    expect(() =>
+      validateManifest({
+        ...validManifest(),
+        orca: {
+          teamStatus: 'active',
+          workers: [
+            {
+              index: 0,
+              agentKind: 'omp',
+              title: 'Worker 1',
+              role: 'developer',
+              label: null,
+              status: 'idle',
+              focused: false,
+              sdkSessionIds: [],
+              activeSdkSessionId: null,
+              counts: { messages: 0 },
+              transcripts: [],
+            },
+          ],
+        },
+      }),
+    ).toThrowError(XdtshareError);
   });
 
   it.each([

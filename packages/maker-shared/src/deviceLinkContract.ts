@@ -510,14 +510,14 @@ export function connectionIssueHint(kind: DeviceLinkConnectionIssueKind): string
 }
 
 /**
- * agent 鉴权失败 message 的固定模板。maker-core 的 claude-code / codex 在
+ * agent 鉴权失败 message 的固定模板。maker-core 的 claude-code / codex / pi / omp 在
  * startSession / 首次 send 的鉴权门禁抛 AgentNotAuthenticatedError 时统一用
  * `<agentKind> not authenticated: <reason>` 这个格式;reason(no_key 等)目前只
  * 存在于 message 字符串里,不随事件结构化下发,relay 又是哑中继原样透传——手机端
  * 要给出可读提示只能按模板识别。formatRemoteError / throwIpcError 会给部分链路的
  * message 加 `[CODE] ` 头,识别时一并容忍。
  */
-const AGENT_NOT_AUTHENTICATED_RE = /^(?:\[[A-Z_]+\] )?(claude-code|codex|pi) not authenticated: ?(.*)$/;
+const AGENT_NOT_AUTHENTICATED_RE = /^(?:\[[A-Z_]+\] )?(claude-code|codex|pi|omp) not authenticated: ?(.*)$/;
 
 /**
  * agent 未鉴权错误 → 手机端直出文案(桌面端走 i18n,不用这组)。
@@ -530,7 +530,13 @@ export function describeAgentAuthError(error: string | null | undefined): string
   if (!error) return null;
   const matched = AGENT_NOT_AUTHENTICATED_RE.exec(error.trim());
   if (!matched) return null;
-  const agentLabel = matched[1] === 'claude-code' ? 'Claude' : matched[1] === 'pi' ? 'Pi' : 'Codex';
+  const agentLabel = matched[1] === 'claude-code'
+    ? 'Claude'
+    : matched[1] === 'pi'
+      ? 'Pi'
+      : matched[1] === 'omp'
+        ? 'OMP'
+        : 'Codex';
   const goSettings = `请在电脑端 ${BRAND_NAME} 的「设置 → 模型供应商」`;
   switch (matched[2]) {
     case 'no_key':

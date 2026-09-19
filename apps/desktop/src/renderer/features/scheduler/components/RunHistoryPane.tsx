@@ -1,3 +1,4 @@
+import { shouldShowOpenPathError } from '../../../../shared/openPathResult';
 /**
  * RunHistoryPane — 右侧执行历史面板
  * ---------------------------------------------------------------------------
@@ -25,6 +26,7 @@ import type { AgentKind, Schedule, ScheduleRun } from '@cindy/maker-scheduler';
 import { useConfirmDialog } from '@/components/ui/confirm-dialog-provider';
 import { useCCSessions } from '@/hooks/useCCSessions';
 import { clearSessionAttentionMany } from '@/lib/sessionAttentionStore';
+import { dbToMakerAgentKind } from '../../../../shared/agentKindConversion';
 
 import { useRuns } from '../hooks/useRuns';
 import { useSessionReferences } from '../hooks/useSessionReferences';
@@ -87,7 +89,7 @@ export function RunHistoryPane({
   const sessionAgentMap = useMemo(() => {
     const m = new Map<string, AgentKind>();
     for (const sess of allSessions) {
-      m.set(sess.id, sess.agentKind === 'cc' ? 'claude-code' : sess.agentKind === 'pi' ? 'pi' : 'codex');
+      m.set(sess.id, dbToMakerAgentKind(sess.agentKind));
     }
     return m;
   }, [allSessions]);
@@ -219,7 +221,7 @@ export function RunHistoryPane({
     if (!dest.workingDir) return;
     try {
       const result = await window.electronAPI.openPath(dest.workingDir);
-      if (!result.success) toast.error(result.error || t('scheduler.detail.openWorkdirFailed'));
+      if (shouldShowOpenPathError(result)) toast.error(result.error || t('scheduler.detail.openWorkdirFailed'));
     } catch {
       toast.error(t('scheduler.detail.openWorkdirFailed'));
     }

@@ -33,17 +33,17 @@ export { BUNDLED_CATALOG, BUILTIN_PROVIDERS } from './builtin.js';
 
 const AGENT_KINDS: readonly AgentKind[] = ['claude-code', 'codex', 'pi'];
 const EFFORTS: readonly Effort[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
-const WIRE_PROTOCOLS = ['anthropic-messages', 'openai-responses', 'openai-chat'] as const;
+const WIRE_PROTOCOLS = ['anthropic-messages', 'openai-responses', 'openai-chat', 'google-generative-ai'] as const;
 
 function isWireProtocol(value: unknown): value is (typeof WIRE_PROTOCOLS)[number] {
   return typeof value === 'string' && (WIRE_PROTOCOLS as readonly string[]).includes(value);
 }
 
 function isWireProtocolAllowedForAgent(
-  agent: AgentKind,
+  _agent: AgentKind,
   value: unknown,
 ): value is (typeof WIRE_PROTOCOLS)[number] {
-  return isWireProtocol(value) && (agent !== 'claude-code' || value === 'anthropic-messages');
+  return isWireProtocol(value);
 }
 
 function isValidModelRoute(
@@ -152,6 +152,9 @@ function validateModel(
   if (m.nativeApi !== undefined && m.nativeApi !== null) {
     assert(isPiModelApi(m.nativeApi), `model.nativeApi invalid for '${m.id}'`);
   }
+  if (m.api !== undefined) {
+    assert(isPiModelApi(m.api), `model.api invalid for '${m.id}'`);
+  }
   if (m.piApi !== undefined) {
     assert(isPiModelApi(m.piApi), `model.piApi invalid for '${m.id}'`);
   }
@@ -187,7 +190,7 @@ function validateOAuthDescriptor(p: Provider): void {
     `provider '${p.id}' auth.oauth.flow invalid`,
   );
   for (const field of ['tokenUrl', 'clientId', 'scopes'] as const) {
-    assert(typeof raw[field] === 'string' && raw[field].length > 0, `provider '${p.id}' auth.oauth.${field} missing`);
+    assert(typeof raw[field] === 'string' && (field === 'scopes' || raw[field].length > 0), `provider '${p.id}' auth.oauth.${field} missing`);
   }
   const requireHttpsUrl = (field: string): void => {
     const value = raw[field];
@@ -549,6 +552,7 @@ function isValidPreset(v: unknown): v is ProviderPreset {
       const mm = m as Record<string, unknown>;
       if (typeof mm.id !== 'string' || mm.id.length === 0) return false;
       if (typeof mm.name !== 'string' || mm.name.length === 0) return false;
+      if (mm.api !== undefined && !isPiModelApi(mm.api)) return false;
       if (mm.piApi !== undefined && !isPiModelApi(mm.piApi)) return false;
       if (
         mm.contextWindow !== undefined
@@ -560,7 +564,6 @@ function isValidPreset(v: unknown): v is ProviderPreset {
       if (!hasValidPresetReasoningCapability(agent, mm)) return false;
     }
     if (r.wireProtocol !== undefined && !isWireProtocol(r.wireProtocol)) return false;
-    if (agent === 'claude-code' && r.wireProtocol === 'openai-chat') return false;
     if (
       r.supportsImageGeneration !== undefined &&
       typeof r.supportsImageGeneration !== 'boolean'
@@ -681,9 +684,6 @@ function normalizePresetRuntimeOptions(p: ProviderPreset): ProviderPreset {
             const sourceUrl = httpUrl(source.baseUrl);
             if (!runtimeUrl || !sourceUrl || sourceUrl.origin !== runtimeUrl.origin) return false;
             if (!isWireProtocol(source.wireProtocol)) return false;
-            if (agent === 'claude-code' && source.wireProtocol !== 'anthropic-messages') {
-              return false;
-            }
             if (
               source.modelsUrl !== undefined &&
               (!isHttpUrl(source.modelsUrl) ||
@@ -822,11 +822,11 @@ export function parseCatalog(input: string | unknown): Catalog {
   for (const provider of catalog.providers) {
     for (const field of ['imageModels', 'videoModels', 'audioModels', 'embeddingModels'] as const)
       validateMediaModels(provider.id, field, provider[field], field === 'audioModels' ? '' : field.replace('Models', 'Defaults'),
-        field === 'imageModels' ? provider.imageDefaults : field === 'videoModels' ? provider.videoDefaults : field === 'embeddingModels' ? provider.embeddingDefaults : undefined, catalog.modelRegistry?.schemaVersion === 4);
+        field === 'imageModels' ? provider.imageDefaults : field === 'videoModels' ? provider.videoDefaults : field === 'embeddingModels' ? provider.embeddingDefaults : undefined, (catalog.modelRegistry?.schemaVersion ?? 0) >= 4);
   }
   const projected = { ...catalog, providers: catalog.providers.map((provider) =>
     projectProviderMediaModels(provider, catalog.modelRegistry, { addDeclared: true })) };
-  for (const provider of projected.providers) validateProvider(provider, catalog.modelRegistry?.schemaVersion === 4);
+  for (const provider of projected.providers) validateProvider(provider, (catalog.modelRegistry?.schemaVersion ?? 0) >= 4);
   validateModelConsistency(projected);
   // 远端下发目录与 bundled 同格式:静态条目的窗口是产品侧写定的真实上限,标记为已核实
   // (幂等;条目自己表过态时尊重原值)。动态发现的模型不经这里 —— 见 withVerifiedStaticWindows。

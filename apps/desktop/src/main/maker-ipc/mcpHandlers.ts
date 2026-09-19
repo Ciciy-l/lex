@@ -57,10 +57,10 @@ export interface McpHandlerDeps {
 }
 
 const listContextSchema = z.object({
-  agentKind: z.enum(['claude-code', 'codex', 'pi']),
+  agentKind: z.enum(['claude-code', 'codex', 'pi', 'omp']),
   botSessionId: z.string().min(1).optional(),
   modelChain: z.array(z.object({
-    harness: z.enum(['claude', 'codex', 'pi']),
+    harness: z.enum(['claude', 'codex', 'pi', 'omp']),
     model: z.string().trim().min(1),
     providerId: z.string().nullable(),
     effort: z.string(),

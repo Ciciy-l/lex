@@ -8,8 +8,8 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('../../secrets/providerSecretStore.js', () => ({
-  readPiProxyDerivationKey: vi.fn(() => h.persistedKey),
-  writePiProxyDerivationKey: vi.fn((value: string) => {
+  readAgentProxyDerivationKey: vi.fn(() => h.persistedKey),
+  writeAgentProxyDerivationKey: vi.fn((value: string) => {
     if (h.failWrites > 0) {
       h.failWrites -= 1;
       return false;
@@ -28,8 +28,9 @@ import {
   derivePiProxySessionToken,
   resetPiProxyDerivationKeyCacheForTests,
 } from '../pi-proxy-session-token.js';
+import { deriveOmpProxySessionToken } from '../omp-proxy-session-token.js';
 
-describe('Pi remote proxy session token derivation', () => {
+describe('agent proxy session token derivation', () => {
   beforeEach(() => {
     h.persistedKey = null;
     h.clearListeners.length = 0;
@@ -38,26 +39,36 @@ describe('Pi remote proxy session token derivation', () => {
     resetPiProxyDerivationKeyCacheForTests();
   });
 
-  it('keeps the same session token across a Desktop restart and isolates other sessions', () => {
-    const first = derivePiProxySessionToken('session-a');
-    expect(first).toMatch(/^[A-Za-z0-9_-]{40,}$/);
+  it('keeps tokens across a Desktop restart while isolating sessions and engines', () => {
+    const firstPi = derivePiProxySessionToken('session-a');
+    const firstOmp = deriveOmpProxySessionToken('session-a');
+    expect(firstPi).toMatch(/^[A-Za-z0-9_-]{40,}$/);
+    expect(firstOmp).toMatch(/^[A-Za-z0-9_-]{40,}$/);
+    expect(firstOmp).not.toBe(firstPi);
     expect(h.writes).toBe(1);
 
     resetPiProxyDerivationKeyCacheForTests();
-    const afterRestart = derivePiProxySessionToken('session-a');
+    const piAfterRestart = derivePiProxySessionToken('session-a');
+    const ompAfterRestart = deriveOmpProxySessionToken('session-a');
     const otherSession = derivePiProxySessionToken('session-b');
 
-    expect(afterRestart).toBe(first);
-    expect(otherSession).not.toBe(first);
+    expect(piAfterRestart).toBe(firstPi);
+    expect(ompAfterRestart).toBe(firstOmp);
+    expect(otherSession).not.toBe(firstPi);
     expect(h.writes).toBe(1);
   });
 
-  it('rotates after the owner secret boundary is cleared', () => {
-    const first = derivePiProxySessionToken('session-a');
+  it('rotates every engine domain after the owner secret boundary is cleared', () => {
+    const firstPi = derivePiProxySessionToken('session-a');
+    const firstOmp = deriveOmpProxySessionToken('session-a');
     h.persistedKey = null;
     for (const listener of h.clearListeners) listener();
 
-    expect(derivePiProxySessionToken('session-a')).not.toBe(first);
+    const nextPi = derivePiProxySessionToken('session-a');
+    const nextOmp = deriveOmpProxySessionToken('session-a');
+    expect(nextPi).not.toBe(firstPi);
+    expect(nextOmp).not.toBe(firstOmp);
+    expect(nextPi).not.toBe(nextOmp);
     expect(h.writes).toBe(2);
   });
 
@@ -65,7 +76,7 @@ describe('Pi remote proxy session token derivation', () => {
     h.failWrites = 1;
 
     expect(() => derivePiProxySessionToken('session-a')).toThrow(
-      'PI_PROXY_DERIVATION_KEY_UNAVAILABLE',
+      'AGENT_PROXY_DERIVATION_KEY_UNAVAILABLE',
     );
     expect(derivePiProxySessionToken('session-a')).toMatch(/^[A-Za-z0-9_-]{40,}$/);
     expect(h.writes).toBe(1);

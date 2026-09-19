@@ -298,7 +298,7 @@ function makeDeps(
 
 function clearAllPrefs(): void {
   // 把测试涉及的目录 × id 全部清一遍(幂等;清空后 store 自动删文件)。
-  for (const dir of [WORKDIR, '/proj/beta', 'E:/Repo']) {
+  for (const dir of [WORKDIR, `${WORKDIR} `, '/proj/beta', 'E:/Repo']) {
     for (const id of ['art', 'other', 'missing', 'sleeping', 'account']) {
       setGhostDisabledForWorkdir(dir, id, false);
     }
@@ -728,6 +728,13 @@ afterAll(() => {
 });
 
 describe('写路径 roundtrip(真实存储,tmp userData)', () => {
+  it('keeps adjacent whitespace-distinct project overrides independent', () => {
+    setGhostDisabledForWorkdir(WORKDIR, 'art', true);
+    expect(isGhostDisabledForWorkdir('art', `${WORKDIR} `)).toBe(false);
+    setGhostDisabledForWorkdir(`${WORKDIR} `, 'other', true);
+    expect(listDisabledGhostIdsForWorkdir(`${WORKDIR} `)).toEqual(['other']);
+    expect(listDisabledGhostIdsForWorkdir(WORKDIR)).toEqual(['art']);
+  });
   it('set → 生效;清最后一条 → 键与文件一并删除(reset 语义)', () => {
     expect(setGhostDisabledForWorkdir(WORKDIR, 'art', true)).toEqual(['art']);
     expect(fs.existsSync(prefsFile())).toBe(true);
@@ -749,23 +756,13 @@ describe('写路径 roundtrip(真实存储,tmp userData)', () => {
   });
 });
 
-describe('connect_account frozen plugin policy', () => {
-  it.each([
-    { __cindyAllowedBuiltinPluginIds: ['other'] },
-    { __cindyDisabledBuiltinPluginIds: ['art'] },
-  ])('rejects a disabled plugin before creating a card: %j', async (policy) => {
-    const deps = makeDeps('claude-code', 'bot-session', 'bot-instance', policy);
-    await expect(deps.connectAccount!({ kind: 'plugin', id: 'art' })).resolves.toMatchObject({
-      ok: false, errorCode: 'GHOST_DISABLED_IN_WORKDIR',
-    });
-    expect(authorizationRequestMock).not.toHaveBeenCalled();
-  });
-
-  it('allows an enabled plugin and keeps Host login independent of plugin policy', async () => {
+describe('connect_account shares Host live plugin policy', () => {
+  it('passes dynamically discovered plugins to Host without treating builtin toolsets as plugin grants', async () => {
     const deps = makeDeps('claude-code', 'bot-session', 'bot-instance', {
-      __cindyAllowedBuiltinPluginIds: ['art'],
+      __cindyAllowedBuiltinPluginIds: ['memory', 'xdt_helper'],
     });
     await deps.connectAccount!({ kind: 'plugin', id: 'art' });
+    expect(authorizationRequestMock).toHaveBeenCalledWith('bot-session', { kind: 'plugin', id: 'art' });
     await deps.connectAccount!({ kind: 'host', id: 'grok' });
     expect(authorizationRequestMock).toHaveBeenCalledTimes(2);
   });

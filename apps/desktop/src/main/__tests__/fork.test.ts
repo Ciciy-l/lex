@@ -18,6 +18,7 @@ import path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { CodexResumePreparationBlockedError } from '@cindy/maker-core';
 import { CODEX_RESUME_NOT_READY_WIRE_MESSAGE } from '@cindy/maker-shared/agent-input-projection';
+import { projectSessionContextWindow } from '../../shared/sessionContextWindow';
 import { computeForkSourceMessagesDigest } from '../localDb/forkRecoverySnapshot.js';
 
 const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -204,7 +205,11 @@ async function writeClaudeJsonlInConfigDir(
 // ── tests ──────────────────────────────────────────────────────────────────
 
 describe('forkSessionAtMessage', () => {
-  it('happy path: fork copies prior messages, calls maker.forkSdkSession with assistant uuid, seeds context snapshot', async () => {
+  it.each([
+    { marker: 200000, projectedWindow: 200000 },
+    { marker: null, projectedWindow: 272000 },
+    { marker: 100000, projectedWindow: 272000 },
+  ])('fork preserves only proven runtime context (marker=$marker)', async ({ marker, projectedWindow }) => {
     const target = makeMessageRow({ id: 'target-user', role: 'user', createdAt: 3000 });
     const priorAssistant = makeMessageRow({
       id: 'asst-1',
@@ -220,7 +225,7 @@ describe('forkSessionAtMessage', () => {
       createdAt: 2000,
     });
 
-    selectQueue.push([makeSourceRow()]); // source session
+    selectQueue.push([makeSourceRow({ contextWindowRuntime: marker })]); // source session
     selectQueue.push([target]); // target message
     selectQueue.push([priorUser, priorAssistant]); // prior messages asc (for bulk copy)
     selectQueue.push([
@@ -276,6 +281,13 @@ describe('forkSessionAtMessage', () => {
     expect(sv.totalCostUsd).toBe(0);
     expect(sv.contextTokens).toBe(123456);
     expect(sv.contextWindow).toBe(200000);
+    expect(sv.contextWindowRuntime).toBe(marker === 200000 ? 200000 : null);
+    // list/get apply this projection after loading the inserted fork row.
+    const projected = projectSessionContextWindow({
+      contextWindow: sv.contextWindow as number,
+      contextWindowRuntime: sv.contextWindowRuntime as number | null,
+    }, () => 272000);
+    expect(projected.contextWindow).toBe(projectedWindow);
     expect(sv.clearedAt).toBeNull();
     expect(sv.pinnedAt).toBeNull();
     expect(typeof sv.userSendAt).toBe('number');
@@ -989,6 +1001,17 @@ describe('forkSessionAtMessage', () => {
     expect(txCalls).toHaveLength(0);
   });
 
+  it('keeps a native OMP transcript fork fail-closed', async () => {
+    selectQueue.push([makeSourceRow({ agentKind: 'omp', sdkSessionId: 'omp-session' })]);
+    selectQueue.push([makeMessageRow({ clientId: 'omp-message' })]);
+
+    await expect(forkSessionAtMessage('src-session', 'omp-message')).rejects.toMatchObject({
+      code: 'UNSUPPORTED_HISTORY',
+    });
+    expect(forkSdkSessionMock).not.toHaveBeenCalled();
+    expect(txCalls).toHaveLength(0);
+  });
+
   it('rejects a historical target invalidated by context rebuild', async () => {
     const target = makeMessageRow({
       id: 'stale-history',
@@ -1077,6 +1100,78 @@ describe('forkSessionAtMessage', () => {
       }),
     );
     expect(createMessageMock).toHaveBeenCalled();
+  });
+
+  it('forks an OMP context-rebuild boundary as a fresh OMP session with a handoff', async () => {
+    const target = makeMessageRow({
+      id: 'omp-history',
+      clientId: 'omp-history-client',
+      role: 'assistant',
+      agentKind: 'omp',
+      createdAt: 2500,
+      rowid: 20,
+    });
+    const priorUser = makeMessageRow({
+      id: 'omp-user',
+      clientId: 'omp-user-client',
+      role: 'user',
+      agentKind: 'omp',
+      createdAt: 2000,
+      rowid: 10,
+    });
+    selectQueue.push([
+      makeSourceRow({
+        agentKind: 'omp',
+        model: 'omp-model',
+        providerId: 'minimax',
+        sdkSessionId: 'omp-session-after-rebuild',
+      }),
+    ]);
+    selectQueue.push([target]);
+    selectQueue.push([]);
+    selectQueue.push([priorUser, target]);
+    selectQueue.push([
+      makeSourceRow({
+        id: 'forked-omp-id',
+        title: '[Fork] Project A',
+        agentKind: 'omp',
+        model: 'omp-model',
+        providerId: 'minimax',
+        sdkSessionId: null,
+        parentSessionId: 'src-session',
+      }),
+    ]);
+    queryOneMock.mockResolvedValueOnce({
+      id: 'omp-context-rebuild',
+      content: JSON.stringify({
+        reason: 'context-overflow',
+        sourceAgentKind: 'omp',
+        sourceModel: 'omp-model',
+        sourceProviderId: 'minimax',
+      }),
+    });
+
+    await forkSessionAtMessage('src-session', 'omp-history-client');
+
+    const txArgs = txCalls.find((call) => call.name === 'fork.session')!.args as {
+      newSession: Record<string, unknown>;
+    };
+    expect(txArgs.newSession).toMatchObject({ agentKind: 'omp', sdkSessionId: null });
+    expect(forkSdkSessionMock).not.toHaveBeenCalled();
+    expect(commitContextRebuildMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.objectContaining({
+        reason: 'context-overflow',
+        sourceAgentKind: 'omp',
+        sourceModel: 'omp-model',
+        sourceProviderId: 'minimax',
+      }),
+    );
+    expect(createMessageMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ agentKind: 'omp' }),
+    );
   });
 
   it('uses the rebuild boundary engine when history crosses a later engine switch', async () => {
@@ -1182,7 +1277,13 @@ describe('forkSessionAtMessage', () => {
     expect(txCalls).toHaveLength(0);
   });
 
-  it('forks a historical Claude node from the parked native session instead of the current Codex thread', async () => {
+  it.each([
+    { route: 'current Codex thread', agentKind: 'codex', model: 'gpt-5.4', providerId: 'xd', expectedMarker: null },
+    { route: 'different engine', agentKind: 'pi', model: 'claude-sonnet-4-6', providerId: null, expectedMarker: null },
+    { route: 'different model', agentKind: 'cc', model: 'claude-opus-4-6', providerId: null, expectedMarker: null },
+    { route: 'different provider', agentKind: 'cc', model: 'claude-sonnet-4-6', providerId: 'xd', expectedMarker: null },
+    { route: 'same route', agentKind: 'cc', model: 'claude-sonnet-4-6', providerId: null, expectedMarker: 1000000 },
+  ])('forks historical Claude history with $route window provenance', async ({ agentKind, model, providerId, expectedMarker }) => {
     const target = makeMessageRow({
       id: 'historical-assistant',
       clientId: 'historical-assistant-cid',
@@ -1201,8 +1302,11 @@ describe('forkSessionAtMessage', () => {
     });
     selectQueue.push([
       makeSourceRow({
-        agentKind: 'codex',
-        model: 'gpt-5.4',
+        agentKind,
+        model,
+        providerId,
+        contextWindow: 1000000,
+        contextWindowRuntime: 1000000,
         sdkSessionId: 'current-codex-thread',
       }),
     ]);
@@ -1224,6 +1328,7 @@ describe('forkSessionAtMessage', () => {
           fromAgentKind: 'cc',
           toAgentKind: 'codex',
           fromModel: 'claude-sonnet-4-6',
+          fromProviderId: null,
           fromSdkSessionId: 'parked-claude-session',
           handoff: 'handoff',
         }),
@@ -1257,6 +1362,12 @@ describe('forkSessionAtMessage', () => {
     expect(txArgs.newSession.agentKind).toBe('cc');
     expect(txArgs.newSession.model).toBe('claude-sonnet-4-6');
     expect(txArgs.newSession.providerId).toBeNull();
+    expect(txArgs.newSession.contextWindowRuntime).toBe(expectedMarker);
+    const projected = projectSessionContextWindow({
+      contextWindow: txArgs.newSession.contextWindow as number,
+      contextWindowRuntime: txArgs.newSession.contextWindowRuntime as number | null,
+    }, () => 200000);
+    expect(projected.contextWindow).toBe(expectedMarker ?? 200000);
   });
 
   it.each([false, true])('restores the provider snapshot from a new historical switch boundary (recovery=%s)', async (recovery) => {

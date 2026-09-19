@@ -48,6 +48,18 @@ describe('sessionOverview', () => {
     expect(overview.stateChips).toEqual([]);
   });
 
+  it('uses the OMP runtime label for OMP sessions', () => {
+    const overview = summarizeSessionOverview({
+      messageCount: 0,
+      pendingCount: 0,
+      queueCount: 0,
+      queuePaused: false,
+      session: session({ agentKind: 'omp', model: 'minimax/MiniMax-M2.5' }),
+    });
+
+    expect(overview.runtimeSubtitle).toBe('OMP · minimax/MiniMax-M2.5 · ask');
+  });
+
   it('promotes pending interactions before queue and spend copy', () => {
     const overview = summarizeSessionOverview({
       diffCount: 2,

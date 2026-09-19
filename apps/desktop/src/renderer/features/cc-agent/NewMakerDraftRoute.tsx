@@ -1,3 +1,4 @@
+import { isModelEnabled, useModelVisibilityVersion } from '@/state/modelVisibilityPrefs';
 /**
  * NewMakerDraftRoute —— "/cc-agent/new" 路由组件:transient draft,无后端 session。
  * ---------------------------------------------------------------------------
@@ -1244,9 +1245,11 @@ export function NewMakerDraftRoute() {
     () => hasAnyModelEngineOverride() || hasAnyProviderModelOverride(),
     [modelEnginePrefsVersion, modelPresetVersion],
   );
+  const defaultVisibilityVersion = useModelVisibilityVersion();
   const suggestedDefaultTuple = useMemo(
     () =>
       resolveNewMakerDefaultTuple({
+        isModelEnabled,
         providers: localProviders,
         providersLoading: localProvidersLoading,
         // OMP 接入:shared/newMakerDefaultTuple 的 vendor 口径到今天仍只有
@@ -1259,7 +1262,7 @@ export function NewMakerDraftRoute() {
         ),
         availableAgentsLoaded,
       }),
-    [localProviders, localProvidersLoading, availableVendors, availableAgentsLoaded],
+    [localProviders, localProvidersLoading, availableVendors, availableAgentsLoaded, defaultVisibilityVersion],
   );
   useEffect(() => {
     // 远程主机 / device-link 的可用 Harness 与来源属于执行端，不能拿控制端本机登录态替它选。

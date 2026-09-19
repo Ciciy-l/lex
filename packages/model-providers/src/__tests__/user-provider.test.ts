@@ -38,6 +38,14 @@ describe('native subscription instances', () => {
     expect(a.agents).toEqual(expect.arrayContaining(['claude-code', 'codex', 'pi']));
     expect(a.models).toEqual(b.models);
     for (const agent of a.agents) expect(a.routing[agent]?.authStrategy).toBe('provider-oauth-header');
+    const builtin = BUNDLED_CATALOG.providers.find(provider => provider.id === brand)!;
+    for (const agent of a.agents) {
+      expect(a.routing[agent]).toEqual({
+        ...builtin.routing[agent],
+        authStrategy: 'provider-oauth-header',
+        ...(native === 'claude' && agent === 'claude-code' ? { headerDelete: ['x-api-key'] } : {}),
+      });
+    }
     expect(a.auth.native).toBe(native);
     expect(a.imageModels).toBeUndefined();
     expect(a.imageDefaults).toBeUndefined();
@@ -256,6 +264,36 @@ describe("buildUserProvider (per-runtime)", () => {
     });
   });
 
+  it("treats Anthropic Messages as OMP's implicit wire protocol", () => {
+    const implicit = buildUserProvider({
+      id: "omp-compatible",
+      name: "OMP compatible",
+      runtimes: {
+        omp: {
+          baseUrl: "https://proxy.example/v1",
+          models: [{ id: "model", name: "Model" }],
+        },
+      },
+    });
+    const explicit = buildUserProvider({
+      id: "omp-anthropic",
+      name: "OMP Anthropic",
+      runtimes: {
+        omp: {
+          baseUrl: "https://proxy.example/v1",
+          wireProtocol: "anthropic-messages",
+          models: [{ id: "model", name: "Model" }],
+        },
+      },
+    });
+
+    // The default is intentionally omitted from the routing descriptor.  The
+    // OMP host resolves that omission to its managed Anthropic Messages front
+    // door, so an explicit default must project identically.
+    expect(implicit.routing.omp?.wireProtocol).toBeUndefined();
+    expect(explicit.routing.omp?.wireProtocol).toBeUndefined();
+  });
+
   it("preserves a non-standard inference request path in routing", () => {
     const p = buildUserProvider({
       ...codexOnly,
@@ -284,7 +322,7 @@ describe("buildUserProvider (per-runtime)", () => {
       efforts: ["low", "medium", "high", "xhigh", "max"],
       defaultEffort: "medium",
       group: "custom:openrouter",
-      defaultEnabled: true,
+      defaultEnabled: false,
     });
   });
 
@@ -1493,5 +1531,127 @@ describe("live preset defaults and discovery provenance", () => {
     config.runtimes.pi!.baseUrl = "https://different.example/v1";
     expect(current().contextWindow).toBe(DEFAULT_CUSTOM_CONTEXT_WINDOW);
     expect(current().supportsImageInput).toBeUndefined();
+  });
+});
+
+describe("official Pi catalog defaults for preset-marked sources (#4295)", () => {
+  const kimiRuntime = () => ({
+    piCatalogProviderId: "kimi-coding",
+    baseUrl: "https://api.kimi.com/coding",
+    wireProtocol: "anthropic-messages" as const,
+    models: [
+      // 2026-09-09 之前从预设创建的存量来源:没有 catalogPresetId,模型也没有 reasoning 字段。
+      { id: "k3-256k", name: "Kimi K3-256K", contextWindow: 262144 },
+      { id: "kimi-for-coding", name: "Kimi K2.7 Code", contextWindow: 262144 },
+    ],
+  });
+  const build = (config: CustomProviderConfig) =>
+    buildUserProvider(config, {
+      modelRegistry: { schemaVersion: 4, updatedAt: "2026-09-11T00:00:00.000Z", models: [] },
+    }).models.pi!;
+
+  it("projects reasoning efforts from the official Pi catalog when the stored model lacks them", () => {
+    const models = build({ id: "kimi-code", name: "Kimi Code", runtimes: { pi: kimiRuntime() } });
+    expect(models.find((m) => m.id === "k3-256k")).toMatchObject({
+      efforts: ["low", "high", "max"],
+      defaultEffort: "high",
+      supportsImageInput: true,
+      maxOutput: 131072,
+    });
+    // 官方目录对该模型只声明 reasoning 而无档位表:与 pi-host 运行期同样得到通用四档。
+    expect(models.find((m) => m.id === "kimi-for-coding")).toMatchObject({
+      efforts: ["minimal", "low", "medium", "high"],
+    });
+  });
+
+  it("merges the catalog under a preset that only declares context/image metadata", () => {
+    const presets = [
+      {
+        id: "moonshot-kimi-code",
+        name: "Kimi Code",
+        runtimes: {
+          pi: {
+            baseUrl: "https://api.kimi.com/coding",
+            wireProtocol: "anthropic-messages" as const,
+            piCatalogProviderId: "kimi-coding",
+            models: [
+              // 预设显式声明档位:预设优先于官方目录。
+              { id: "k3-256k", name: "Kimi K3-256K", contextWindow: 262144, reasoning: true, reasoningEfforts: ["low", "high"], reasoningDefaultEffort: "low" },
+              // 预设只声明 context/image:reasoning 由官方目录补齐,不被短路。
+              { id: "kimi-for-coding", name: "Kimi K2.7 Code", contextWindow: 262144, supportsImageInput: true },
+            ],
+          },
+        },
+      },
+    ];
+    const runtime = { ...kimiRuntime(), catalogPresetId: "moonshot-kimi-code" };
+    const models = buildUserProvider(
+      { id: "kimi-code", name: "Kimi Code", runtimes: { pi: runtime } },
+      { presets: presets as never, modelRegistry: { schemaVersion: 4, updatedAt: "2026-09-11T00:00:00.000Z", models: [] } },
+    ).models.pi!;
+    expect(models.find((m) => m.id === "k3-256k")).toMatchObject({ efforts: ["low", "high"], defaultEffort: "low" });
+    expect(models.find((m) => m.id === "kimi-for-coding")).toMatchObject({
+      efforts: ["minimal", "low", "medium", "high"],
+      supportsImageInput: true,
+    });
+  });
+
+  it("keeps explicit user reasoning settings ahead of the catalog defaults", () => {
+    const runtime = kimiRuntime();
+    runtime.models[0] = { ...runtime.models[0], reasoning: false } as never;
+    const models = build({ id: "kimi-code", name: "Kimi Code", runtimes: { pi: runtime } });
+    expect(models.find((m) => m.id === "k3-256k")).toMatchObject({ efforts: [], defaultEffort: null });
+  });
+
+  it("does not lend catalog capabilities to a hand-edited endpoint or protocol", () => {
+    const edited = kimiRuntime();
+    edited.baseUrl = "https://proxy.example/coding";
+    expect(
+      build({ id: "kimi-code", name: "Kimi Code", runtimes: { pi: edited } }).find((m) => m.id === "k3-256k"),
+    ).toMatchObject({ efforts: [] });
+    const otherProtocol = { ...kimiRuntime(), wireProtocol: "openai-chat" as const };
+    expect(
+      build({ id: "kimi-code", name: "Kimi Code", runtimes: { pi: otherProtocol } }).find((m) => m.id === "k3-256k"),
+    ).toMatchObject({ efforts: [] });
+    const unmarked = kimiRuntime();
+    delete (unmarked as { piCatalogProviderId?: string }).piCatalogProviderId;
+    expect(
+      build({ id: "kimi-code", name: "Kimi Code", runtimes: { pi: unmarked } }).find((m) => m.id === "k3-256k"),
+    ).toMatchObject({ efforts: ["low", "high", "max"] });
+  });
+});
+
+
+describe('imported model native engine defaults', () => {
+  it.each([
+    ['anthropic-messages', [true, false, true]],
+    ['openai-responses', [false, true, true]],
+    ['openai-completions', [false, false, true]],
+    ['google-generative-ai', [false, false, true]],
+  ] as const)('%s only enables native engines', (api, expected) => {
+    const agents = ['claude-code', 'codex', 'pi'] as const;
+    const config: CustomProviderConfig = {
+      id: 'native-default-test', name: 'Test',
+      runtimes: Object.fromEntries(agents.map(agent => [agent, {
+        baseUrl: 'https://example.com/v1',
+        models: [{ id: 'test-model', name: 'Test', api }],
+      }])),
+    };
+    const provider = buildUserProvider(config, { modelRegistry: {
+      schemaVersion: 5, updatedAt: '2026-09-13T00:00:00Z',
+      models: [{ id: 'test-model', name: 'Test', nativeApi: api, routes: [{
+        providerId: config.id, modelId: 'test-model', agents: ['claude-code', 'codex'],
+      }] }],
+    } });
+    expect(agents.map(agent => provider.models[agent]?.[0]?.defaultEnabled)).toEqual(expected);
+  });
+
+  it('preserves explicit configuration defaults', () => {
+    const provider = buildUserProvider({ id: 'explicit-defaults', name: 'Test', runtimes: {
+      pi: { baseUrl: 'https://example.com/v1', models: [{ id: 'test', name: 'Test', api: 'anthropic-messages', defaultEnabled: false }] },
+      codex: { baseUrl: 'https://example.com/v1', models: [{ id: 'test', name: 'Test', api: 'anthropic-messages', defaultEnabled: true }] },
+    } });
+    expect(provider.models.pi?.[0]?.defaultEnabled).toBe(false);
+    expect(provider.models.codex?.[0]?.defaultEnabled).toBe(true);
   });
 });

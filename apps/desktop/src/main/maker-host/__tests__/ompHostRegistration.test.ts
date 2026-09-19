@@ -65,7 +65,7 @@ vi.mock('../omp-process-containment.js', () => ({
   } : null),
 }));
 
-vi.mock('../pi-proxy-session-token.js', () => ({
+vi.mock('../omp-proxy-session-token.js', () => ({
   deriveOmpProxySessionToken: (sessionId: string) => `omp-tok-${sessionId}`,
 }));
 

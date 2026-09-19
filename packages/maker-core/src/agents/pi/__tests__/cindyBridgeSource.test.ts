@@ -422,6 +422,19 @@ describe('cindy-bridge extension source', () => {
     expect((await run).details).toEqual({ answers: { 'Continue?': 'No' }, cancelled: false });
   });
 
+  it('returns a typed answer outside the options as a real answer, not a cancel (#4273)', async () => {
+    const tool = loadQuestionTool();
+    const result = await tool.execute('q', {
+      questions: [
+        { question: 'Continue?', options: ['Yes', 'No'] },
+        { question: 'Which color?', options: ['Red', 'Blue'] },
+      ],
+    }, undefined, undefined, {
+      ui: { select: async (_title: string, options: string[]) => (options.includes('Yes') ? 'No' : 'teal') },
+    });
+    expect(result.details).toEqual({ answers: { 'Continue?': 'No', 'Which color?': 'teal' }, cancelled: false });
+  });
+
   it('reports cancellation without fabricating a choice and validates all questions before showing UI', async () => {
     const tool = loadQuestionTool();
     const ctx = { ui: { input: async () => undefined } };
@@ -436,7 +449,10 @@ describe('cindy-bridge extension source', () => {
   it('adapts Astra API payloads without changing other models or subscription requests', () => {
     const start = CINDY_BRIDGE_EXTENSION_SOURCE.indexOf('function astraResponsesPayload(');
     const end = CINDY_BRIDGE_EXTENSION_SOURCE.indexOf('export default async function cindyBridge');
-    const adapt = new Function(`${CINDY_BRIDGE_EXTENSION_SOURCE.slice(start, end)}; return astraResponsesPayload;`)();
+    const helpers = ts.transpileModule(CINDY_BRIDGE_EXTENSION_SOURCE.slice(start, end), {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+    }).outputText;
+    const adapt = new Function(`${helpers}; return astraResponsesPayload;`)();
     const original = {
       prompt_cache_retention: '24h',
       prompt_cache_options: { mode: 'explicit' },

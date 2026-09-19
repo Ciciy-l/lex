@@ -359,6 +359,17 @@ describe('ChatInput model source switching wiring', () => {
     expect(chatInputSource).toContain(': (vendorKey ?? null);');
   });
 
+  it('names OMP correctly in a pending session selection description', () => {
+    const source = readFileSync(
+      resolve(__dirname, '..', 'components', 'new-chat', 'ModelSelector.tsx'),
+      'utf8',
+    );
+    const start = source.indexOf('const describeSelection =');
+    const body = source.slice(start, source.indexOf('const pendingSelectionTitle', start));
+    expect(body).toContain("selection.agentKind === 'omp'");
+    expect(body).toContain("? 'OMP'");
+  });
+
   it('falls back to the legacy panel only when the controlled device has no provider catalog', () => {
     // device-link 老被控端 capabilities-only:联合列表的数据源是供应商目录,没有目录
     // 就是一张空列表。判据必须是结构化的 unsupported,不是 providers.length===0

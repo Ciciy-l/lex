@@ -43,6 +43,27 @@ describe('session runtime control wiring', () => {
     );
   });
 
+  it('preserves OMP identity when reporting a missing local work directory', () => {
+    const start = registerSource.indexOf('async function checkWorkDirExists(');
+    const body = registerSource.slice(start, start + 3_000);
+    expect(start).toBeGreaterThan(-1);
+    expect(body).toContain("agentKind === 'omp'");
+  });
+
+  it('reads context usage from an already-live OMP task without permitting lazy OMP startup', () => {
+    const start = registerSource.indexOf('MAKER_INVOKE.GET_CONTEXT_USAGE');
+    const body = registerSource.slice(start, start + 8_000);
+    expect(start).toBeGreaterThan(-1);
+    expect(body).toContain("sess.agentKind !== 'omp'");
+    // OMP cannot be lazily created for /context: its managed sandbox and route
+    // belong to the explicit session-start path, just as Pi is not lazy-created.
+    expect(body).toContain("if (co.agentKind !== 'claude-code')");
+  });
+
+  it('replays Windows attention after the main window is shown independently of inventory loading', () => {
+    const body = handlerBody(bootstrapSource, "mainWindow.once('ready-to-show'", 'if (!app.isPackaged) markDesktopDevWindowReady();');
+    expect(body.indexOf('refreshWindowsAppBadge();')).toBeGreaterThan(body.indexOf('showMainWindowAndRestoreFullscreen('));
+  });
   it('advertises host-side model-window protection to remote controllers', () => {
     const capabilities = handlerBody(
       registerSource,
@@ -185,6 +206,10 @@ describe('session runtime control wiring', () => {
       '// ── Custom protocol registration',
     );
     expect(body).toContain('ghostPanelWindowsController.closeForOwnerChange();');
+    expect(body.indexOf('clearAllSessionAttention();')).toBeGreaterThan(-1);
+    expect(body.indexOf('clearAllSessionAttention();')).toBeLessThan(
+      body.indexOf('authManager.setStableOwnerPostCommitTask('),
+    );
     expect(body).toContain('clearAllSessionProviders();');
     expect(body).toContain('clearAllSessionRuntimeAxes();');
     expect(body.indexOf('clearAllSessionProviders();')).toBeLessThan(

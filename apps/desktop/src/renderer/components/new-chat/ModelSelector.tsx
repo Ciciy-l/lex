@@ -3611,7 +3611,13 @@ export function ModelSelector({
     const pid = actualSourceIdForModel(providers, selection.providerId, selection.model, selection.agentKind);
     const provider = providers.find((p) => p.id === (selection.providerId ?? pid));
     const model = provider ? getModel(provider, selection.model, selection.agentKind) : undefined;
-    const vendor = selection.agentKind === 'claude-code' ? 'Claude Code' : selection.agentKind === 'pi' ? 'Pi' : 'Codex';
+    const vendor = selection.agentKind === 'claude-code'
+      ? 'Claude Code'
+      : selection.agentKind === 'pi'
+        ? 'Pi'
+        : selection.agentKind === 'omp'
+          ? 'OMP'
+          : 'Codex';
     return [vendor, model?.name ?? selection.model, provider ? providerDisplayName(provider, t) : selection.providerId,
       selection.effort ? modelEffortLabel(t, model, selection.effort) : null,
       selection.fastMode ? t('newChat.modelSelector.meta.fastBadge') : null].filter(Boolean).join(' · ');

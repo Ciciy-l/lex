@@ -42,7 +42,7 @@ import { readClaudeApiKey } from './auth-adapters.js';
 import { createLogger } from '../logger.js';
 import { resolveOmpBinaryPath } from './omp-runtime.js';
 import { createWindowsOmpProcessSpawner } from './omp-process-containment.js';
-import { deriveOmpProxySessionToken } from './pi-proxy-session-token.js';
+import { deriveOmpProxySessionToken } from './omp-proxy-session-token.js';
 
 const log = createLogger('omp-host');
 
@@ -189,15 +189,20 @@ export function resolveOmpWireProtocol(
   // 模型级覆盖优先(与 Cindy 各处 route 解析同口径)。
   for (const provider of scoped) {
     const wire = provider.models.omp?.find((entry) => entry.id === model)?.route?.wireProtocol;
-    if (wire) return wire;
+    if (isOmpWireProtocol(wire)) return wire;
   }
   // 其次供应商对该 agent 的默认协议。
   for (const provider of scoped) {
     const wire = provider.routing.omp?.wireProtocol;
-    if (wire) return wire;
+    if (isOmpWireProtocol(wire)) return wire;
   }
   // 兜底与历史语义一致:OMP 走本机 proxy 的 Anthropic 前门。
   return 'anthropic-messages';
+}
+
+/** OMP's managed loopback bridge has no Google-native front door. */
+function isOmpWireProtocol(value: unknown): value is OmpWireProtocol {
+  return value === 'anthropic-messages' || value === 'openai-responses' || value === 'openai-chat';
 }
 
 /**

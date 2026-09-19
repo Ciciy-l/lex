@@ -42,12 +42,17 @@ export function resolveVerifiedContextWindow(
   return Math.min(budget, maximum);
 }
 
-/** Codex and Pi report their effective runtime windows; catalogs cannot replace them. */
+/** Native engines report their effective runtime windows; catalogs cannot replace them. */
 export function resolveSessionContextWindow(
   catalog: Pick<Catalog, 'providers'>,
   session: ContextWindowSession,
 ): number | null {
-  if (!session.model || session.agentKind === 'pi' || session.agentKind === 'codex') return null;
+  if (
+    !session.model ||
+    session.agentKind === 'pi' ||
+    session.agentKind === 'codex' ||
+    session.agentKind === 'omp'
+  ) return null;
   return resolveVerifiedContextWindow(
     catalog,
     dbToMakerAgentKind(session.agentKind),
@@ -56,10 +61,12 @@ export function resolveSessionContextWindow(
   );
 }
 
-/** Read-only projection: retain token counts and storage, refresh only the denominator. */
+/** Preserve proven runtime budgets; legacy catalog snapshots retain read-time correction. */
 export function projectSessionContextWindow<
-  T extends ContextWindowSession & { contextWindow: number },
+  T extends ContextWindowSession & { contextWindow: number; contextWindowRuntime?: number | null },
 >(session: T, resolve?: (session: ContextWindowSession) => number | null): T {
+  if (Number.isFinite(session.contextWindow) && session.contextWindow > 0 &&
+      session.contextWindowRuntime === session.contextWindow) return session;
   const window = resolve?.(session);
   return window && Number.isFinite(window) && window > 0 && window !== session.contextWindow
     ? { ...session, contextWindow: window }

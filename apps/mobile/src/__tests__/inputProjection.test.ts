@@ -79,6 +79,20 @@ describe('inputProjection', () => {
     expect('remoteHostId' in queued.createOpts).toBe(false);
   });
 
+  it('preserves OMP as the target engine when queuing a remote message', () => {
+    const queued = buildQueuedTextMessage(
+      session({ agentKind: 'omp', model: 'minimax/MiniMax-M2.5' }),
+      'continue with OMP',
+      new Date('2026-01-01T00:00:04.000Z'),
+      'q-omp',
+    );
+
+    expect(queued.createOpts).toMatchObject({
+      agentKind: 'omp',
+      model: 'minimax/MiniMax-M2.5',
+    });
+  });
+
   it.each([undefined, '', 'future-mode'])('fails closed to ask for invalid permission mode %j', (permissionMode) => {
     const queued = buildQueuedTextMessage(
       session({ permissionMode: permissionMode as RemoteSession['permissionMode'] }),
@@ -402,6 +416,12 @@ describe('inputProjection', () => {
     });
     expect(localizeAgentError(projection.errorReason, projection.toolLoop ?? null)).toBe(
       i18n.t('session.tail.outputLimit'),
+    );
+  });
+
+  it('localizes incomplete execution without exposing the host cell diagnostic', () => {
+    expect(localizeAgentError('yield-continuation-incomplete', null)).toBe(
+      i18n.t('session.tail.executionResultUnavailable'),
     );
   });
 

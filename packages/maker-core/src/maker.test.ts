@@ -1188,6 +1188,79 @@ describe('Maker session creation singleflight', () => {
 });
 
 describe('Maker session close events', () => {
+  it('defers retirement of only the captured runtime and ignores its stale identity after rebuild', async () => {
+    const queue = createAsyncQueue<AgentEvent>();
+    let running = false;
+    const handle = createHandle({ id: 'old-thread', agentKind: 'pi' });
+    handle.send = vi.fn(async () => { running = true; });
+    handle.isTurnRunning = () => running;
+    handle.events = () => queue;
+    const replacement = createHandle({ id: 'new-thread', agentKind: 'pi' });
+    replacement.close = vi.fn(replacement.close);
+    const start = vi.fn().mockResolvedValueOnce(handle).mockResolvedValue(replacement);
+    const maker = new Maker({ agents: { pi: createAgent(start, 'pi') }, storage: createStorage(), logger: createLogger() });
+    const opts = { id: 'retiring', agentKind: 'pi' as const, workingDir: '/repo', model: 'm' };
+    const old = await maker.createSession(opts);
+    await old.send('work');
+    expect(await maker.closeSessionIfCurrent(old, 'requested', { afterCurrentTurn: true })).toBe('deferred');
+    expect(maker.getSession(old.id)).toBe(old);
+    running = false;
+    queue.push({ type: 'done', source: 'pi', data: { status: 'completed', result: 'done' } });
+    await vi.waitFor(() => expect(maker.getSession(old.id)).toBeUndefined());
+    const next = await maker.createSession(opts);
+    await maker.closeSessionIfCurrent(old, 'requested', { afterCurrentTurn: true });
+    expect(maker.getSession(next.id)).toBe(next);
+    expect(replacement.close).not.toHaveBeenCalled();
+    await next.close();
+    queue.end();
+  });
+
+  it.each([
+    { initial: 'runtime-refresh', begun: false, next: 'agent-switch', expected: 'agent-switch' },
+    { initial: 'runtime-refresh', begun: false, next: 'requested', expected: 'requested' },
+    { initial: 'runtime-refresh', begun: true, next: 'agent-switch', expected: 'runtime-refresh' },
+    { initial: 'requested', begun: false, next: 'agent-switch', expected: 'requested' },
+    { initial: 'agent-switch', begun: false, next: 'runtime-refresh', expected: 'agent-switch' },
+  ] as const)('preserves actual close ownership: $initial, begun=$begun, next=$next', async ({ initial, begun, next, expected }) => {
+    const queue = createAsyncQueue<AgentEvent>();
+    const exit = createDeferred();
+    const handle = createHandle({ id: 'retiring-thread', agentKind: 'pi' });
+    handle.events = () => queue;
+    handle.close = vi.fn(async () => { await exit.promise; queue.end(); });
+    const maker = new Maker({ agents: { pi: createAgent(async () => handle, 'pi') },
+      storage: createStorage(), logger: createLogger() });
+    const session = await maker.createSession({ id: 'retiring', agentKind: 'pi', workingDir: '/repo', model: 'm' });
+    const closed = vi.fn();
+    maker.on(event => { if (event.type === 'session:closed') closed(event); });
+    const release = session.acquireTurnLease()!;
+    expect(await maker.closeSessionIfCurrent(session, initial, { afterCurrentTurn: true })).toBe('deferred');
+    if (begun) {
+      release();
+      await vi.waitFor(() => expect(handle.close).toHaveBeenCalledOnce());
+    }
+    const closing = maker.closeSession(session.id, next);
+    exit.resolve();
+    await closing;
+    release();
+    expect(closed).toHaveBeenCalledExactlyOnceWith({
+      type: 'session:closed', sessionId: session.id, session, reason: expected,
+    });
+    expect(handle.close).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the original cause when an unconfirmed close is retried as a switch', async () => {
+    const handle = createHandle({ id: 'failed-close', agentKind: 'pi' });
+    handle.close = vi.fn().mockRejectedValueOnce(new Error('exit unconfirmed')).mockResolvedValue(undefined);
+    const maker = new Maker({ agents: { pi: createAgent(async () => handle, 'pi') },
+      storage: createStorage(), logger: createLogger() });
+    const session = await maker.createSession({ id: 'failed-close', agentKind: 'pi', workingDir: '/repo', model: 'm' });
+    await expect(maker.closeSession(session.id, 'runtime-refresh')).rejects.toThrow('exit unconfirmed');
+    expect(session.getStatus()).toBe('error');
+    await maker.closeSession(session.id, 'agent-switch');
+    expect(maker.getSessionCloseReason(session)).toBe('runtime-refresh');
+    expect(handle.close).toHaveBeenCalledTimes(2);
+  });
+
   it('preserves the explicit close reason and exact Session identity', async () => {
     const maker = new Maker({
       agents: {
@@ -2308,6 +2381,60 @@ describe('Maker Pi runtime skill status', () => {
     }));
     expect(preview.skills.every((skill) => skill.runtimeStatus === 'discovered')).toBe(true);
     expect(wrongProject.skills.every((skill) => skill.runtimeStatus === 'discovered')).toBe(true);
+  });
+
+  it('marks Windows project-scope --skill loaded when frontmatter name differs from the folder', async () => {
+    const agent = createAgent(async (opts) => {
+      const handle = createHandle({ id: `pi-${opts.sessionId}`, agentKind: 'pi' });
+      handle.getRuntimeCapabilities = () => ({
+        sessionId: opts.sessionId,
+        capturedAt: '2026-09-14T00:00:00.000Z',
+        generation: 1,
+        status: 'loaded',
+        source: 'pi:get_commands',
+        commands: [{
+          name: 'skill:frontmatter-alias',
+          source: 'skill',
+          sourceInfo: {
+            source: 'local',
+            scope: 'project',
+            baseDir: '/repo/.pi/skills/folder-name',
+            path: '/repo/.pi/skills/folder-name/SKILL.md',
+          },
+        }],
+      });
+      return handle;
+    }, 'pi');
+    agent.listAgentSkills = vi.fn(async () => ({
+      skills: [{
+        kind: 'agent-skill' as const,
+        name: 'folder-name',
+        source: 'skill' as const,
+        scope: 'repo' as const,
+        path: '/repo/.pi/skills/folder-name/SKILL.md',
+        runtimeStatus: 'discovered' as const,
+      }],
+    }));
+    const maker = new Maker({
+      agents: { pi: agent },
+      storage: createStorage(),
+      logger: createLogger(),
+    });
+    await maker.createSession({
+      id: 'win-alias',
+      agentKind: 'pi',
+      workingDir: '/repo',
+      model: 'm',
+    });
+    const listed = await maker.listAgentSkills('pi', {
+      workingDir: '/repo',
+      sessionId: 'win-alias',
+    });
+    expect(listed.skills[0]).toMatchObject({
+      name: 'folder-name',
+      runtimeStatus: 'loaded',
+      runtimeCommandName: 'skill:frontmatter-alias',
+    });
   });
 
   it('keeps a project skill discovered when its source no longer matches the launch snapshot', async () => {

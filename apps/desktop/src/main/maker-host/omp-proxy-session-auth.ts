@@ -13,7 +13,7 @@
 
 import { timingSafeEqual } from 'node:crypto';
 
-import { deriveOmpProxySessionToken } from './pi-proxy-session-token.js';
+import { deriveOmpProxySessionToken } from './omp-proxy-session-token.js';
 
 /**
  * 从 `Authorization: Bearer <token>` 取回 OMP 会话 token。

@@ -3,9 +3,10 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const { modelSelectorProps, roster } = vi.hoisted(() => ({
+const { modelSelectorProps, roster, defaultModel } = vi.hoisted(() => ({
   modelSelectorProps: vi.fn(),
-  roster: { availableVendors: new Set(['cc', 'codex', 'pi']), loaded: true },
+  defaultModel: { model: 'default-model' },
+  roster: { availableVendors: new Set(['cc', 'codex', 'pi', 'omp']), loaded: true },
 }));
 
 vi.mock('@/hooks/useAvailableAgents', () => ({ useAvailableAgents: () => roster }));
@@ -19,7 +20,7 @@ vi.mock('@/components/new-chat/ModelSelector', () => ({
       providerId: string;
       modelId: string;
       effort?: string;
-      engine: 'cc' | 'codex' | 'pi';
+      engine: 'cc' | 'codex' | 'pi' | 'omp';
       fast: boolean;
       favoriteUid: string | null;
     }) => void;
@@ -65,7 +66,7 @@ vi.mock('@/components/new-chat/ModelSelector', () => ({
 
 vi.mock('../botStore', () => ({
   getEffectiveBotModelSettings: () => ({
-    model: 'default-model',
+    model: defaultModel.model,
     providerId: null,
     effort: '',
     fastMode: false,
@@ -84,8 +85,9 @@ import { BotModelChainEditor } from '../BotModelChainEditor';
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
-  roster.availableVendors = new Set(['cc', 'codex', 'pi']);
+  roster.availableVendors = new Set(['cc', 'codex', 'pi', 'omp']);
   roster.loaded = true;
+  defaultModel.model = 'default-model';
 });
 
 describe('BotModelChainEditor', () => {
@@ -178,7 +180,7 @@ describe('BotModelChainEditor', () => {
       configurationEnabled: true,
       vendorKey: 'pi',
       unifiedPanel: true,
-      unifiedAgents: ['pi', 'claude-code'],
+      unifiedAgents: ['pi', 'claude-code', 'omp'],
       triggerVariant: 'toolbar',
     });
   });
@@ -273,7 +275,7 @@ describe('BotModelChainEditor', () => {
     expect(onChange).toHaveBeenCalledWith([expect.objectContaining({ harness: 'codex' })]);
     roster.loaded = true;
     view.rerender(<BotModelChainEditor value={[]} onChange={vi.fn()} remote hiddenVendors={['codex']} />);
-    expect(modelSelectorProps.mock.lastCall?.[0].unifiedAgents).toEqual(['pi', 'claude-code']);
+    expect(modelSelectorProps.mock.lastCall?.[0].unifiedAgents).toEqual(['pi', 'claude-code', 'omp']);
   });
 
   it('writes depth and fast mode to the selected route without changing its model', () => {
@@ -348,4 +350,18 @@ describe('BotModelChainEditor', () => {
       },
     ]);
   });
+});
+
+it('allows explicitly choosing a backup when no valid default is available', () => {
+  defaultModel.model = '';
+  const primary = { harness: 'codex' as const, model: 'primary-model', providerId: 'openai', effort: 'medium', fastMode: false };
+  const change = vi.fn();
+  const view = render(<BotModelChainEditor value={[primary]} onChange={change} />);
+  const details = view.container.querySelector('details')!;
+  details.open = true;
+  fireEvent(details, new Event('toggle'));
+  fireEvent.click(screen.getByText('bots.modelChain.add'));
+  expect(change).not.toHaveBeenCalled();
+  fireEvent.click(within(details).getByRole('button', { name: 'choose-official-codex-model' }));
+  expect(change).toHaveBeenLastCalledWith([primary, { harness: 'codex', model: 'gpt-5.6-sol', providerId: 'openai', effort: 'medium', fastMode: true }]);
 });

@@ -19,6 +19,9 @@
  */
 
 import { useSyncExternalStore } from 'react';
+import { isDataOwnerPushStampCurrent } from '@/contexts/dataOwnerGeneration';
+import { sameModelRoute, type AppDefaultModelSelection } from '../../shared/appDefaultModelSelection';
+import type { BotModelRoute } from '../../shared/botModelChain';
 
 import type { MakerVendor } from '@/lib/ccAgent.types';
 import { isSelectableVendor } from '@/lib/agentVendors';
@@ -175,6 +178,18 @@ export interface NewMakerDraft {
  * 在目录里都是默认隐藏的模型 —— 种子默认模型压根不在用户看到的清单里。
  */
 function defaultVendorPrefs(vendor: MakerVendor): VendorPrefs {
+  if (vendor === 'omp') {
+    return {
+      // OMP only consumes the dynamic catalog from connected providers. Never
+      // seed it with a Claude model; calibration fills a usable route once the
+      // provider snapshot is available.
+      model: '',
+      effort: 'high',
+      permissionMode: 'auto',
+      planMode: false,
+      providerId: null,
+    };
+  }
   if (vendor === 'pi') {
     return {
       // pi 走 XD 网关(anthropic-messages 可达面),默认给网关中档模型;
@@ -232,7 +247,7 @@ function makeDefault(): NewMakerDraft {
       pi: defaultVendorPrefs('pi'),
       orca: defaultVendorPrefs('orca'),
       codex: defaultVendorPrefs('codex'),
-      // omp 无独立产品默认,复用 cc 种子默认(与 defaultVendorPrefs 回落一致)。
+      // OMP has no static product default; the connected provider catalog calibrates it.
       omp: defaultVendorPrefs('omp'),
     },
     modelChosenByVendor: {},
@@ -373,7 +388,7 @@ function sanitize(raw: unknown): NewMakerDraft {
       ? (r.modelChosenByVendor as Record<string, unknown>)
       : {};
   const modelChosenByVendor: Partial<Record<MakerVendor, boolean>> = {};
-  for (const v of ['cc', 'orca', 'codex', 'pi'] as const) {
+  for (const v of ['cc', 'orca', 'codex', 'pi', 'omp'] as const) {
     if (modelChosenRaw[v] === true) modelChosenByVendor[v] = true;
   }
   // 老版本没有独立的组合标记：显式选过模型/来源/思考深度/Fast 都是足够强的
@@ -409,7 +424,7 @@ function sanitize(raw: unknown): NewMakerDraft {
   const legacyCcModel =
     legacyCcModelCandidate &&
     (r.defaultTupleCustomized === undefined || !isKnownProductTuple('cc', legacyCcPrefs));
-  const legacySourceSelection = (['cc', 'orca', 'codex', 'pi'] as const).some((slotVendor) => {
+  const legacySourceSelection = (['cc', 'orca', 'codex', 'pi', 'omp'] as const).some((slotVendor) => {
     const prefs = lastByVendorRaw[slotVendor];
     if (
       !prefs ||
@@ -472,8 +487,7 @@ function sanitize(raw: unknown): NewMakerDraft {
       pi: sanitizeVendorPrefs(lastByVendorRaw.pi, 'pi'),
       orca: sanitizeVendorPrefs(lastByVendorRaw.orca, 'orca'),
       codex: sanitizeVendorPrefs(lastByVendorRaw.codex, 'codex'),
-      // OMP 接入:与新增 vendor 同规则补位;defaultVendorPrefs 没有 omp 分支时会
-      // 落到 cc 默认分支(与 orca 同处理),符合预期。
+      // Missing legacy OMP prefs stay empty until the dynamic provider catalog resolves them.
       omp: sanitizeVendorPrefs(lastByVendorRaw.omp, 'omp'),
     },
     modelChosenByVendor,
@@ -763,6 +777,11 @@ export function getDraftForPreferenceSync(): NewMakerDraft {
     : persistedDraft;
 }
 
+/** Do not stamp a previous owner's draft during the auth namespace handoff. */
+export function getDraftForOwnerPreferenceSync(ownerId: string | null): NewMakerDraft | null {
+  return activeDataOwnerId === ownerId ? getDraftForPreferenceSync() : null;
+}
+
 /** Switch the persistent draft namespace together with the active data owner. */
 export function setNewMakerDraftOwner(ownerId: string | null): void {
   const normalized = typeof ownerId === 'string' && ownerId.trim().length > 0 ? ownerId : null;
@@ -916,6 +935,40 @@ export function switchVendor(next: MakerVendor): void {
   emit();
 }
 
+/** Explicit Bot-requested default uses the same persisted tuple, with owner/CAS and no partial writes. */
+export function applyAppDefaultModelSelection(selection: AppDefaultModelSelection): boolean {
+  if (!isDataOwnerPushStampCurrent(selection.ownerStamp)
+    || activeDataOwnerId !== selection.ownerStamp.dataOwnerId
+    || Date.now() > selection.expiresAt) return false;
+  const stored = readStoredDraftRecord();
+  const base = stored ? sanitize(stored) : currentDraft;
+  const prefs = base.lastByVendor[base.vendor];
+  const current: BotModelRoute | null = prefs.model ? {
+    harness: base.vendor === 'cc' || base.vendor === 'orca' ? 'claude' : base.vendor,
+    model: prefs.model, providerId: prefs.providerId ?? null, effort: prefs.effort ?? '',
+    fastMode: base.fastModeByModel[prefs.model] === true,
+  } : null;
+  if (!sameModelRoute(current, selection.expectedRoute) && !sameModelRoute(current, selection.route)) return false;
+  const route = selection.route;
+  const vendor = route.harness === 'claude' ? 'cc' : route.harness;
+  const next: NewMakerDraft = { ...base, vendor,
+    defaultTupleCustomized: true, defaultTupleSelectionCustomized: true,
+    modelChosenByVendor: { ...base.modelChosenByVendor, [vendor]: true },
+    lastByVendor: { ...base.lastByVendor, [vendor]: { ...base.lastByVendor[vendor],
+      model: route.model, providerId: route.providerId, effort: route.effort as Effort } },
+    effortByModel: { ...base.effortByModel, [route.model]: route.effort as Effort },
+    fastModeByModel: { ...base.fastModeByModel, [route.model]: route.fastMode },
+  };
+  try {
+    window.localStorage.setItem(storageKey(), JSON.stringify(next));
+  } catch { return false; }
+  currentDraft = { ...currentDraft, ...defaultTuplePreferenceOf(next),
+    effortByModel: next.effortByModel, fastModeByModel: next.fastModeByModel };
+  preferenceSyncFallback = null;
+  emit();
+  return true;
+}
+
 /**
  * 当前草稿 Harness 不可用时按系统顺序回退。
  *
@@ -927,7 +980,7 @@ export function fallbackUnavailableVendor(availableVendors: ReadonlySet<MakerVen
   rebaseStoredDefaultTuplePreference();
   const currentVendor = currentDraft.vendor;
   if (availableVendors.has(currentVendor)) return false;
-  const fallback = (['cc', 'codex', 'pi'] as const).find((vendor) =>
+  const fallback = (['cc', 'codex', 'pi', 'omp'] as const).find((vendor) =>
     availableVendors.has(vendor),
   );
   if (!fallback) return false;

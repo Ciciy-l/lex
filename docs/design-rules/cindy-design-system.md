@@ -4,9 +4,13 @@
 > 设计类 `.md` 一律放本目录，并在下表登记；规范正文不要写进本文件。
 
 
-DS-6 已随 [#4135](https://github.com/makecindy/cindy/pull/4135) 合入（head `62472f559c` / merge `6559d2610a`）。表单贡献入口：先读 [DESIGN §4](./DESIGN.md#inputs--forms)，在真实字段中复用 [FormField](../../apps/desktop/src/renderer/components/ui/form-field.tsx) 与 [SettingsTextInput](../../apps/desktop/src/renderer/components/settings/SettingsTextInput.tsx)（普通域用 Input）；保存反馈用 [Button loading](../../apps/desktop/src/renderer/components/ui/button.tsx)。业务校验、请求与焦点由表单持有；首消费者为 [CustomProviderDialog](../../apps/desktop/src/renderer/components/settings/CustomProviderDialog.tsx)，第二消费者为 [McpServerDialog](../../apps/desktop/src/renderer/components/settings/McpServerDialog.tsx)。[证据与未验收项](../design-evidence/2026-09-08/ds6-forms.md) 区分组件/整页/人工/G2，settings 仍是 pilot。
+DS-6 已随 [#4135](https://github.com/makecindy/cindy/pull/4135) 合入（head `62472f559c` / merge `6559d2610a`）。表单贡献入口：先读 [DESIGN §4](./DESIGN.md#inputs--forms)，在真实字段中复用 [FormField](../../apps/desktop/src/renderer/components/ui/form-field.tsx) 与 [SettingsTextInput](../../apps/desktop/src/renderer/components/settings/SettingsTextInput.tsx)（普通域用 Input）；保存反馈用 [Button loading](../../apps/desktop/src/renderer/components/ui/button.tsx)。业务校验、请求与焦点由表单持有；首消费者为 [CustomProviderDialog](../../apps/desktop/src/renderer/components/settings/ProviderConnectionDialog.tsx)，第二消费者为 [McpServerDialog](../../apps/desktop/src/renderer/components/settings/McpServerDialog.tsx)。[证据与未验收项](../design-evidence/2026-09-08/ds6-forms.md) 区分组件/整页/人工/G2，settings 仍是 pilot。
 
-DS-7 提交候选入口：[规则范围与回退](./design-governance.md#8-治理接线纪律)、[固定历史回放、注入和接线证据](../design-evidence/2026-09-10/ds7-guards.md)。新增颜色可用 `pnpm check:design-colors --base-ref <基线> --worktree` 检查；只报告用 `pnpm report:design-colors`。当前 main 尚未启用候选接线，管理员审核与实际合并另行记录。
+DS-7 已合并 [#4215](https://github.com/makecindy/cindy/pull/4215)。入口：[规则范围与回退](./design-governance.md#8-治理接线纪律)、[固定历史回放、注入和接线证据](../design-evidence/2026-09-10/ds7-guards.md)。新增颜色可用 `pnpm check:design-colors --base-ref <基线> --worktree` 检查；只报告用 `pnpm report:design-colors`。main 已启用该接线；历史采证版本与最终合并事实见治理 §8。
+
+> 2026-09-11：DS-8 已合并 [#4268](https://github.com/makecindy/cindy/pull/4268)，Desktop 静态数值已接 DTCG→Terrazzo。DS-9 已合并 [#4300](https://github.com/makecindy/cindy/pull/4300)，DS-10 已完成报告与维护的本地提交候选，最终验收缺项仍单列；Mobile 留待独立阶段。工程、人工与平台验收分别记录。
+
+DS-10 的报告分类、历史回放、真实运行和未验收项见 [结果索引](../design-evidence/2026-09-13/ds10-desktop-guards.md)。维护操作复用下面入口，独立贡献者试用与工程检查分别记录。
 
 ## 文档索引
 
@@ -15,7 +19,7 @@ DS-7 提交候选入口：[规则范围与回退](./design-governance.md#8-治�
 | [`DESIGN.md`](./DESIGN.md) | 权威视觉规范全文：视觉语言（§1）、颜色（§2）、排版（§3）、组件（§4）、布局（§5）、交互约定与 Motion token（§14）、主题系统与 Token 参考（§10）、CINDY 皮肤族（§15）、登录链路（§16） | **权威正本**（原仓库根文件，根目录 `DESIGN.md` 保留为跳转入口） |
 | [`design-governance.md`](./design-governance.md) | 设计系统治理合同：管道与记账（§1.1）、四种真相边界、Token 层级与现行 §10 三档的映射、兼容红线、工具单选、两级证据合同、PR 风险分类、治理接线纪律、待裁决登记、存量门禁处置表、实施路线图、已知边界（§13） | **治理正本**（管流程；视觉规则仍以 `DESIGN.md` 为准） |
 | [`design-inventory.md`](./design-inventory.md) | Cindy Desktop / Mobile 生产可达 UI 台账：GENERATED 机器事实（稳定 ID / 入口 / 组件 / 样式来源 / Token 与裸值统计）+ 人工迁移状态 | **台账正本**（schema 见 [`design-governance.md`](./design-governance.md) §2.1；生成 `pnpm design:inventory`，校验 `pnpm check:design-inventory`） |
-| [Token README](../../packages/design-tokens/README.md) | 当前影子层边界、DS-8 / DS-10 生产接管、双端真实语义样本与平台覆盖唯一来源 | **Token 合同入口**（当前无生产消费者，不是另一份数值表） |
+| [Token README](../../packages/design-tokens/README.md) | Desktop DTCG 生产生成、维护/回退、实际接管与保留项，Mobile 待新方案共同确认 | **Token 合同入口**（构建期接管 Desktop，运行时只读生成子集） |
 | [`figma-component-spec.md`](./figma-component-spec.md) | 登录链路 Figma 组件与色彩速查手册：全组件逐态参数、nodeId 溯源、wave1–wave6 读取记录 | 权威（登录域逐参数） |
 | [`token-decision-table.md`](./token-decision-table.md) | 登录链路色值 / 尺寸 → token 决策记录（新增 / 复用 / 豁免的判定理由 + 各 wave 增补台账） | 决策记录（现行 token 清单与值以 `DESIGN.md §16.1` + `colors.ts` 为准） |
 | [`design-decision-log.md`](./design-decision-log.md) | 全局设计决策史台账：被推翻的方案、勘误过程、backlog（已收录原 `DESIGN.md §13` G1–G4 归档与 §15 决策史全量） | 决策台账（只增不改；与 `DESIGN.md` 冲突时以 `DESIGN.md` 为准） |
@@ -34,7 +38,12 @@ DS-7 提交候选入口：[规则范围与回退](./design-governance.md#8-治�
 1. 先读 [DESIGN.md](./DESIGN.md) 的适用视觉/组件规则，再读 [治理合同](./design-governance.md) §4 兼容、§6 证据、§7/8 风险与门禁；当前顺序及目标验收见 §12。
 2. 在 [inventory](./design-inventory.md) 找实际入口、保护合同与人工下一动作；没认领的 owner 仍是 unassigned，按实际工作认领，不能把共享组件已被引用当成整页迁移完成。
 3. 复用现有 [Button](../../apps/desktop/src/renderer/components/ui/button.tsx)、[Input / Textarea](../../apps/desktop/src/renderer/components/ui/input.tsx)；设置旧局部覆盖使用 [SettingsTextInput](../../apps/desktop/src/renderer/components/settings/SettingsTextInput.tsx)。表单字段的 label / hint / 错误组合用 [FormField](../../apps/desktop/src/renderer/components/ui/form-field.tsx)，保存期间的防重复反馈用 Button 的 loading 状态（均已随 DS-6 提供，用法见上方「DS-6 表单贡献入口」）。
-4. 需要改设计值时读 [Token README](../../packages/design-tokens/README.md)：当前影子层不被产品消费；双端语义样本与未来生成合同都在该处。Desktop / Mobile 分别在 DS-8 / DS-10 接管；新观感先查治理 §10 待决项，不因数值相同而删除局部主题覆盖。
+4. 聊天复用 [chatChrome](../../apps/desktop/src/renderer/components/chat/chatChrome.ts) 与 [activityRowChrome](../../apps/desktop/src/renderer/components/chat/activityRowChrome.ts)：共用正文/代码排版、图标动作与行反馈，原调用方保留状态、回调及局部主题 alias。完整场景与局限见 [DS-9 证据](../design-evidence/2026-09-11/ds9-desktop-core.md)。
+5. 需要改设计值时读 [Token README](../../packages/design-tokens/README.md)：Desktop 已接管族从 DTCG 生成到原生产入口；同源维护方法与保留清单在该处。Mobile 接口待新重构方案明确后共同确认，以后独立接管；新观感先查治理 §10 待决项，不因数值相同而删除局部主题覆盖。
+
+6. 对未提交候选运行 `pnpm check:design-colors --base-ref <实际基线> --worktree`；单用默认命令只检查提交范围。报告的文件/行号指向待核位置，`report` 不代表违规或批准，来源引用也须符合组件用途。间距优先使用既有 `p-4` / `gap-x-2` 等尺度；不要猜 `--spacing-*` 变量。分类与盲区见治理 §8/13。
+7. 新增/改名入口后运行 `pnpm design:inventory` 和 `pnpm check:design-inventory`；只手工更新对应 surface 的 owner、状态、下一动作，不编辑生成区，不因共用组件已经迁移就把整页标 migrated。
+8. 提交前按开发工作流跑根 `pnpm test:unit:related` 及涉及包的 typecheck。遇到失败先分清源/生成物过期、真实新增违规、仅报告待核；从现有源或消费者修复，不增加整文件豁免。维护和回退入口见 [Token README](../../packages/design-tokens/README.md) 与 [治理 §8](./design-governance.md#8-治理接线纪律)。
 
 以上仓内入口即可开始贡献；无需访问个人桌面记录。此阅读路径检查不代替 G2 的独立贡献者试用。
 

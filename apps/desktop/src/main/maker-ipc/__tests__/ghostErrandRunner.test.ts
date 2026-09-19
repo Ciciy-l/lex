@@ -136,6 +136,28 @@ describe('Pi 代办路由', () => {
   });
 });
 
+describe('OMP 代办路由', () => {
+  it('读取 OMP 草稿默认并创建 OMP 会话，不回落到 Claude', async () => {
+    const createSession = vi.fn(async () => 'sess-omp');
+    const getDraftDefaults = vi.fn(() => ({ model: 'omp-model', providerId: 'minimax' }));
+    const { deps, emitters } = makeDeps({
+      readConfig: () => ({ agentKind: 'omp' }),
+      createSession,
+      getDraftDefaults,
+    });
+    const runner = createGhostErrandRunner(deps);
+    const pending = runner(REQUEST);
+    await vi.waitFor(() => expect(emitters.has('sess-omp')).toBe(true));
+    emitters.get('sess-omp')!.emit(doneEvent());
+    await pending;
+
+    expect(getDraftDefaults).toHaveBeenCalledWith('omp');
+    expect(createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ agentKind: 'omp', model: 'omp-model', providerId: 'minimax' }),
+    );
+  });
+});
+
 describe('专属会话建/复用', () => {
   it('无映射时创建会话并写映射,onSession 尽早回报,投递成功才 onDispatched', async () => {
     const { deps, emitters, writes } = makeDeps();

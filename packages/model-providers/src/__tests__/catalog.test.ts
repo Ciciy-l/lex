@@ -1,3 +1,4 @@
+import { buildUserProvider } from '../user-provider.js';
 import { expandedRegistryEntries } from "../modelMetadataLayers.js";
 /**
  * 目录校验 + 内置供应商契约(2026-07-19 模型列表统一重构后的新契约)。
@@ -236,6 +237,32 @@ describe("bundled catalog validity (dynamic-first contract)", () => {
     });
   });
 
+  it("openai ships GPT Image 2.5 plus previous GPT Image 2", () => {
+    expect(provider("openai").imageModels).toEqual([
+      {
+        id: "openai/gpt-image-2.5-sunburst",
+        name: "GPT Image 2.5 Sunburst",
+        mode: "image_generation",
+        nativeApi: "openai-images",
+        modalities: { input: ["text", "image"], output: ["image"] },
+      },
+      {
+        id: "openai/gpt-image-2.5-flare",
+        name: "GPT Image 2.5 Flare",
+        mode: "image_generation",
+        nativeApi: "openai-images",
+        modalities: { input: ["text", "image"], output: ["image"] },
+      },
+      {
+        id: "openai/gpt-image-2",
+        name: "GPT Image 2",
+        mode: "image_generation",
+        nativeApi: "openai-images",
+        modalities: { input: ["text", "image"], output: ["image"] },
+      },
+    ]);
+  });
+
   it("xai ships both Grok Imagine subscription image models", () => {
     expect(provider("xai").imageModels).toEqual([
       { id: "xai/grok-imagine-image", name: "Grok Imagine Image", mode: "image_generation", nativeApi: "openai-images", modalities: { input: ["text", "image"], output: ["image"] } },
@@ -388,8 +415,9 @@ describe("bundled catalog validity (dynamic-first contract)", () => {
     const presets = BUNDLED_CATALOG.presets ?? [];
     const kimiCode = presets.find((p) => p.id === "moonshot-kimi-code");
     expect(kimiCode).toBeDefined();
+    const projected = buildUserProvider({ id: kimiCode!.id, name: kimiCode!.name, runtimes: kimiCode!.runtimes });
     for (const [agent, rt] of Object.entries(kimiCode!.runtimes)) {
-      for (const m of rt!.models) {
+      for (const m of projected.models[agent as AgentKind] ?? []) {
         expect(
           Number.isFinite(m.contextWindow) && (m.contextWindow ?? 0) > 0,
           `${agent}/${m.id} 缺 contextWindow`,
@@ -970,12 +998,12 @@ describe("provider OAuth and upstream URL validation", () => {
       },
     ],
     [
-      "Claude-incompatible protocol",
-      { baseUrl: "https://api.example/v1", wireProtocol: "openai-responses" },
+      "native API used as portable wire",
+      { baseUrl: "https://api.example/v1", wireProtocol: "google-vertex" },
     ],
   ])("rejects %s model routes", (_label, route) => {
     const catalog = oauthCatalog();
-    if (_label === "Claude-incompatible protocol") {
+    if (_label === "native API used as portable wire") {
       catalog.providers[0]!.agents = ["claude-code"];
       catalog.providers[0]!.routing = {
         "claude-code": {

@@ -356,6 +356,44 @@ describe('exportSessionShare', () => {
     expect(`${manifestText}\n${sessionText}\n${messagesText}`).not.toContain(missingPiSessionFile);
   });
 
+  it('OMP export shares DB history without leaking its local session-file path or native resume data', async () => {
+    const ompSessionFile = path.join(tmpRoot, 'private-omp-home', 'sessions', 'source.jsonl');
+    sessionRowRef.row = {
+      ...baseSession(),
+      agentKind: 'omp',
+      sdkSessionId: ompSessionFile,
+    };
+    messagesRef.rows = baseMessages().map((message) => ({
+      ...message,
+      agentKind: 'omp',
+      agentMeta: JSON.stringify({
+        sdkSessionId: ompSessionFile,
+        nested: { sdkSessionId: ompSessionFile },
+      }),
+    }));
+
+    const target = path.join(tmpRoot, 'out-omp.xdtshare');
+    const outcome = await exportSessionShare({ sessionId: 'xdt-session-1', targetPath: target });
+    expect(outcome).toMatchObject({ status: 'ok', fidelity: 'db-only' });
+
+    const zip = await unzipOf(target);
+    const manifestText = await zip.file('manifest.json')!.async('string');
+    const sessionText = await zip.file('session.json')!.async('string');
+    const messagesText = await zip.file('messages.jsonl')!.async('string');
+    const manifest = validateManifest(JSON.parse(manifestText));
+    expect(manifest).toMatchObject({
+      agentKind: 'omp',
+      sdkSessionIds: [],
+      activeSdkSessionId: null,
+      exportFidelity: 'db-only',
+      transcripts: [],
+    });
+    expect(Object.keys(zip.files).filter((name) => name.startsWith('transcripts/'))).toEqual([]);
+    expect(`${manifestText}\n${sessionText}\n${messagesText}`).not.toContain(ompSessionFile);
+    const meta = JSON.parse(messagesText.split('\n')[0]).agentMeta as string;
+    expect(JSON.parse(meta)).toEqual({ nested: {} });
+  });
+
   it('oversize returns structured outcome without writing file', async () => {
     const target = path.join(tmpRoot, 'out-oversize.xdtshare');
     const outcome = await exportSessionShare({
@@ -548,6 +586,54 @@ describe('exportSessionShare', () => {
       await zip.file('orca/workers/0/session.json')!.async('string'),
     ) as Record<string, unknown>;
     expect(workerSnapshot.agentKind).toBe('codex');
+  });
+
+  it('orca export keeps an OMP Worker DB-only and downgrades the complete bundle from full fidelity', async () => {
+    const ompSessionFile = path.join(tmpRoot, 'private-omp-home', 'sessions', 'worker.jsonl');
+    sessionRowRef.row = { ...baseSession(), orcaRole: 'lead' };
+    activeTeamRef.row = { id: 'team-omp', status: 'active' };
+    workerRowsRef.rows = [
+      { sessionId: 'worker-omp', status: 'idle', label: 'omp-dev', role: 'developer', focused: 1 },
+    ];
+    workerSessionsById.set('worker-omp', {
+      ...baseSession(),
+      id: 'worker-omp',
+      title: 'OMP Worker',
+      agentKind: 'omp',
+      orcaRole: 'worker',
+      sdkSessionId: ompSessionFile,
+    });
+    workerMessagesBySession.set('worker-omp', [
+      {
+        id: 'wm-omp',
+        clientId: 'wc-omp',
+        role: 'assistant',
+        content: JSON.stringify([{ type: 'text', text: 'OMP result' }]),
+        toolUseId: null,
+        agentMeta: JSON.stringify({ sdkSessionId: ompSessionFile }),
+        agentKind: 'omp',
+        createdAt: 1700000000300,
+        rewindAt: null,
+      },
+    ]);
+
+    const target = path.join(tmpRoot, 'out-orca-omp.xdtshare');
+    const outcome = await exportSessionShare({ sessionId: 'xdt-session-1', targetPath: target });
+    expect(outcome).toMatchObject({ status: 'ok', fidelity: 'partial', orcaWorkers: 1 });
+
+    const zip = await unzipOf(target);
+    const manifestText = await zip.file('manifest.json')!.async('string');
+    const manifest = validateManifest(JSON.parse(manifestText));
+    const worker = manifest.orca!.workers[0];
+    expect(worker).toMatchObject({
+      agentKind: 'omp',
+      sdkSessionIds: [],
+      activeSdkSessionId: null,
+      transcripts: [],
+    });
+    expect(zip.file('orca/workers/0/transcripts/omp/worker.jsonl')).toBeNull();
+    const workerMessages = await zip.file('orca/workers/0/messages.jsonl')!.async('string');
+    expect(`${manifestText}\n${workerMessages}`).not.toContain(ompSessionFile);
   });
 
   it('orca lead export fails closed when an active team Worker session is missing or deleted', async () => {

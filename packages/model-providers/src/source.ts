@@ -1,3 +1,4 @@
+import { withClaudeProviderRuntime } from './piProviderPresets.js';
 /**
  * 目录源解析与加载（纯逻辑，IO 由 host 注入，零 Electron / node 依赖）。
  *
@@ -22,7 +23,7 @@ import type { AgentKind, Catalog, Provider, ProviderPreset } from "./types.js";
 
 /** 公共模型目录 API 路径。发布版由 model-access-server 匿名提供完整 Catalog。 */
 export const CATALOG_API_PATH =
-  "/api/model-catalog/catalog?registrySchemaVersion=4";
+  "/api/model-catalog/catalog?registrySchemaVersion=5";
 /** 旧客户端目录的 OSS 相对路径。迁移期作为公共 API 失败后的兼容回退。 */
 export const CATALOG_CFG_PATH = "/cfg/providers.json";
 
@@ -124,7 +125,7 @@ export function resolveCatalogUrl(cfg: CatalogSourceConfig): string | null {
     try {
       const url = new URL(explicit);
       if (url.pathname.endsWith("/api/model-catalog/catalog")) {
-        url.searchParams.set("registrySchemaVersion", "4");
+        url.searchParams.set("registrySchemaVersion", "5");
         return url.toString();
       }
     } catch {
@@ -488,7 +489,7 @@ export function mergeWithBundled(primary: Catalog): Catalog {
   const presets = bundledPresets.map((bundled) => {
     const remote = primaryPresetsById.get(bundled.id);
     return remote
-      ? backfillPresetMetadata(remote, bundled, allowLegacyPiBackfill)
+      ? withClaudeProviderRuntime(backfillPresetMetadata(remote, bundled, allowLegacyPiBackfill))
       : bundled;
   });
   for (const preset of primaryPresets) {

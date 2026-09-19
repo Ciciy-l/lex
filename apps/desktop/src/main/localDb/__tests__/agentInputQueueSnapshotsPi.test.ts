@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { isRestorableQueuedMessage } from '../agentInputQueueSnapshots.js';
 
-function queued(agentKind: 'claude-code' | 'codex' | 'pi') {
+function queued(agentKind: 'claude-code' | 'codex' | 'pi' | 'omp') {
   return {
     clientId: 'client-1',
     text: 'continue',
@@ -13,7 +13,7 @@ function queued(agentKind: 'claude-code' | 'codex' | 'pi') {
 }
 
 describe('agent input queue snapshot restore', () => {
-  it.each(['claude-code', 'codex', 'pi'] as const)('accepts the %s agent kind', (agentKind) => {
+  it.each(['claude-code', 'codex', 'pi', 'omp'] as const)('accepts the %s agent kind', (agentKind) => {
     expect(isRestorableQueuedMessage(queued(agentKind))).toBe(true);
   });
 

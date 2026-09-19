@@ -80,4 +80,18 @@ describe('usage-limit Automation create intent', () => {
     ).toBeNull();
     expect(readUsageLimitScheduleCreateIntent(null)).toBeNull();
   });
+
+  it('preserves OMP as the selected Agent for the recovery task', () => {
+    const ompIntent: UsageLimitScheduleCreateIntent = { ...intent, agentKind: 'omp' };
+
+    expect(readUsageLimitScheduleCreateIntent(usageLimitScheduleNavigationState(ompIntent))).toEqual(
+      ompIntent,
+    );
+    expect(
+      buildUsageLimitScheduleFormOverrides(ompIntent, {
+        name: 'Continue later',
+        prompt: 'Continue the task.',
+      }),
+    ).toMatchObject({ agentKind: 'omp', model: '', providerId: '' });
+  });
 });

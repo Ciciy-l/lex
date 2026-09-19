@@ -1,3 +1,4 @@
+import { getPiExtensionUiCapability } from './extension-ui-capabilities.js';
 import { parsePiManagementArgs, parsePiManagementText } from './managed-command.js';
 import { snapshotDisabledSkillLaunch, currentDisabledSkillLaunchPaths, extendDisabledSkillLaunchPaths, type DisabledSkillLaunchSnapshot } from '../shared/skill-activation.js';
 /**
@@ -91,6 +92,7 @@ import {
 import {
   CINDY_BRIDGE_EXTENSION_FILENAME,
   CINDY_BRIDGE_EXTENSION_SOURCE } from './cindy-bridge-source.js';
+import { nativeProviderAdapterAliases } from './native-provider-adapter-source.js';
 import {
   CINDY_SUBAGENT_ENV,
   CINDY_SUBAGENT_EXTENSION_FILENAME,
@@ -195,8 +197,16 @@ import {
 } from './project-resource-assembly.js';
 import { applyPiBotSkillPolicy } from './bot-skill-policy.js';
 import {
+  assertPiSpawnArgvFitsPlatform,
+  collectPiProjectResourceCliPaths,
+  emptyPiProjectResourceCliPaths,
+  filterPiProjectCliSkills,
+  piProjectResourceCliArgs,
+} from './project-resource-cli.js';
+import {
   createPiTranslateContext,
   disposePiTranslateContext,
+  isCurrentTurnHostAbortRequested,
   isFailedOrAbortedPiCompaction,
   markPiHostAbortRequested,
   markPiHostTurnStartPending,
@@ -863,11 +873,18 @@ function reconcilePiStartupEffort(requested: Effort | undefined, model: ModelDes
  * 有效)—— 防止误触扩展命令让 Cindy 侧状态镜像脱同步(如 /plan),也堵住未来扩展/包
  * 新增命令带来的攻击面。内部控制路径(setPlanMode 的 /plan)不走本函数。
  */
+function isAuthorizedPiSlashCommandName(
+  name: string,
+  manifest: PiRuntimeCapabilityManifest | undefined,
+): boolean {
+  if (name.startsWith('skill:')) return true;
+  if (manifest?.status !== 'loaded') return false;
+  return manifest.authorizedSlashCommandNames?.includes(name) === true;
+}
+
 function isExecutablePiSlashCommand(text: string, manifest: PiRuntimeCapabilityManifest | undefined): boolean {
   const match = text.trimStart().match(/^\/([^\s]+)(?:\s|$)/);
-  if (!match?.[1]) return false;
-  if (match[1].startsWith('skill:')) return true;
-  return manifest?.status === 'loaded' && manifest.managedPackageCommandNames?.includes(match[1]) === true;
+  return Boolean(match?.[1] && isAuthorizedPiSlashCommandName(match[1], manifest));
 }
 
 function managedExtensionSlashCommandName(
@@ -876,7 +893,7 @@ function managedExtensionSlashCommandName(
 ): string | undefined {
   const match = text.trimStart().match(/^\/([^\s]+)(?:\s|$)/);
   if (!match?.[1] || manifest?.status !== 'loaded') return undefined;
-  if (manifest.managedPackageCommandNames?.includes(match[1]) !== true) return undefined;
+  if (!isAuthorizedPiSlashCommandName(match[1], manifest)) return undefined;
   if (!manifest.commands.some((command) => command.name === match[1] && command.source === 'extension')) {
     return undefined;
   }
@@ -920,19 +937,28 @@ const DEFAULT_PI_EXTENSION_UI_STRINGS: PiExtensionUiStrings = {
 async function notifyPiManagedPackageMutationSettled(
   deps: AgentDeps,
   callerSessionId: string | undefined,
-  publishOutcome: (outcome: PiManagedPackageRuntimeConvergence) => void,
+  publishOutcome: (outcome: PiManagedPackageRuntimeConvergence) => AgentEvent,
 ): Promise<void> {
-  const partial = (): void => publishOutcome({
-    runtimeConvergence: 'partial',
-    recoveryAction: 'restart-cindy-to-refresh-packages',
-  });
+  const partial = (): void => {
+    publishOutcome({
+      runtimeConvergence: 'partial',
+      recoveryAction: 'restart-cindy-to-refresh-packages',
+    });
+  };
   const callback = deps.onPiManagedPackageMutationSettled;
   if (!callback) {
     partial();
     return;
   }
   try {
-    await callback(callerSessionId, publishOutcome);
+    await callback(callerSessionId, publishOutcome, () => ({
+      type: 'text', source: 'pi', data: {
+        text: piManagedPackageRuntimeConvergenceReceipt({
+          runtimeConvergence: 'partial', recoveryAction: 'restart-cindy-to-refresh-packages',
+        }),
+        isFinal: true,
+      },
+    }));
   } catch {
     // Native success remains authoritative. Expose only a stable recovery
     // outcome; raw host/session errors stay out of logs and receipts.
@@ -1642,7 +1668,12 @@ export function mergePiUserSettingsPassthrough(
   if (Object.keys(preserved).length === 0) return builtContent;
   const built = JSON.parse(builtContent) as Record<string, unknown>;
   for (const [key, value] of Object.entries(preserved)) {
-    if (!(key in built)) built[key] = value;
+    // These are the small, documented Pi user escape hatches.  Values emitted
+    // by Cindy (including a host-discovered shellPath) are fallbacks, while an
+    // explicit value in the user's Pi settings must win.  Cindy-owned keys are
+    // absent from `preserved`, so transport/retry/compaction/package bindings
+    // remain managed by the runtime.
+    built[key] = value;
   }
   return JSON.stringify(built, null, 2) + '\n';
 }
@@ -1651,12 +1682,18 @@ export function buildPiSettingsJsonContent(
   contextWindow: number,
   piCompactionPct?: number,
   packages: readonly PiNativePackageEntry[] = [],
+  workingContextWindow?: number,
   shellPath?: string,
 ): string {
   const effectiveContextWindow = contextWindow > 0 ? contextWindow : 128_000;
-  const reserveTokens = piCompactionPct === undefined
+  // Pi also uses model.contextWindow to clamp request max_tokens (including a
+  // 4096-token safety margin). A small compaction budget must never shrink that
+  // request capacity. Express the budget through native reserveTokens instead.
+  const budget = workingContextWindow && workingContextWindow > 0
+    ? Math.min(workingContextWindow, effectiveContextWindow) : effectiveContextWindow;
+  const reserveTokens = piCompactionPct === undefined && budget === effectiveContextWindow
     ? undefined
-    : Math.max(1, Math.ceil(effectiveContextWindow * (1 - piCompactionPct / 100)));
+    : Math.max(1, Math.ceil(effectiveContextWindow - budget * ((piCompactionPct ?? 90) / 100)));
   return JSON.stringify({
     transport: 'sse',
     retry: {
@@ -2036,12 +2073,14 @@ export class PiAgent extends BaseAgent {
     contextWindow?: number,
     piCompactionPct?: number,
     packages: readonly PiNativePackageEntry[] = [],
+    workingContextWindow?: number,
     shellPath?: string,
   ): string {
     return buildPiSettingsJsonContent(
       contextWindow && contextWindow > 0 ? contextWindow : 128_000,
       piCompactionPct,
       packages,
+      workingContextWindow,
       shellPath,
     );
   }
@@ -2062,6 +2101,7 @@ export class PiAgent extends BaseAgent {
     opts: {
       fileOps?: PiRemoteFileOps;
       contextWindow?: number;
+      workingContextWindow?: number;
       piCompactionPct?: number;
       packages?: readonly PiNativePackageEntry[];
       shellPath?: string;
@@ -2072,6 +2112,8 @@ export class PiAgent extends BaseAgent {
       opts.contextWindow,
       opts.piCompactionPct,
       opts.packages,
+      opts.workingContextWindow,
+      opts.shellPath,
     );
     if (opts.fileOps) {
       return opts.shellPath
@@ -2093,19 +2135,13 @@ export class PiAgent extends BaseAgent {
         : readOrNull(stableUserSettingsPath),
     ]);
     const merged = mergePiUserSettingsPassthrough(built, sessionContent, stableContent);
-    let runtimeSettings: Record<string, unknown> | undefined;
-    // An explicit user shell wins; the host-discovered Git Bash is only a
-    // fallback. Managed transport, retry, compaction and packages stay intact.
-    if (opts.shellPath && !collectPiUserSettingsPassthrough(merged).shellPath) {
-      runtimeSettings = { ...JSON.parse(merged), shellPath: opts.shellPath };
-    }
     // Runtime rewrites use the startup bindings, never paths reconstructed from
     // settings.json: those paths can now point to a different physical Skill.
     if (opts.disabledSkills) {
-      return JSON.stringify(applyPiDisabledSkillSettings(runtimeSettings ?? JSON.parse(merged),
+      return JSON.stringify(applyPiDisabledSkillSettings(JSON.parse(merged),
         currentDisabledSkillLaunchPaths(opts.disabledSkills)), null, 2) + '\n';
     }
-    return runtimeSettings ? JSON.stringify(runtimeSettings, null, 2) + '\n' : merged;
+    return merged;
   }
 
   private async writePiRuntimeSettings(
@@ -2113,6 +2149,7 @@ export class PiAgent extends BaseAgent {
     opts: {
       fileOps?: PiRemoteFileOps;
       contextWindow?: number;
+      workingContextWindow?: number;
       piCompactionPct?: number;
       shellPath?: string;
       packages?: readonly PiNativePackageEntry[];
@@ -2150,6 +2187,7 @@ export class PiAgent extends BaseAgent {
       offlineValidationOnly?: boolean;
       /** Current model context window used to translate the Pi percentage setting. */
       contextWindow?: number;
+      workingContextWindow?: number;
       /** Session-frozen Pi auto-compact percentage. Do not re-read the live getter. */
       piCompactionPct?: number;
       /** Optional host-resolved local Bash path. Remote Pi resolves its own shell. */
@@ -2254,8 +2292,9 @@ export class PiAgent extends BaseAgent {
           : {}),
         reasoning: m.efforts.length > 0,
         input: supportsImageInput ? ['text', 'image'] : ['text'],
-        // Model Access v3 requires this value; never replace the server limit with a client guess.
-        contextWindow: this.deps.resolveModelContextLimit?.(gatewayProviderId ?? 'xd', m.id) ?? m.contextWindow,
+        // Keep request capacity at least as large as the catalog default. A
+        // smaller working budget is expressed by native compaction settings.
+        contextWindow: Math.max(m.contextWindow, this.deps.resolveModelContextLimit?.(gatewayProviderId ?? 'xd', m.id) ?? 0),
         maxTokens: m.maxOutputTokens && m.maxOutputTokens > 0 ? m.maxOutputTokens : piMaxTokensFallback(m.contextWindow),
         // 计费单位与目录一致($/1M tokens);pi 按此自行计价,usage 事件的 cost 才有真值。
         cost: {
@@ -2295,8 +2334,10 @@ export class PiAgent extends BaseAgent {
       const nativeModels = (
         np.inheritModels ? np.models.filter((model) => model.api !== undefined || model.catalogAddition === true) : np.models
       ).map((m) => {
-        const contextWindow = this.deps.resolveModelContextLimit?.(np.sourceProviderId ?? np.id, m.id)
-          ?? (m.contextWindow && m.contextWindow > 0 ? m.contextWindow : 128_000);
+        const contextWindow = Math.max(
+          m.contextWindow && m.contextWindow > 0 ? m.contextWindow : 128_000,
+          this.deps.resolveModelContextLimit?.(np.sourceProviderId ?? np.id, m.id) ?? 0,
+        );
         return {
           id: m.wireId ?? m.id,
           name: m.name ?? m.id,
@@ -2322,12 +2363,12 @@ export class PiAgent extends BaseAgent {
         ...(np.api ? { api: np.api } : {}),
         // keyless(本机 Ollama 等)也要给 dummy key,否则 pi /model 不显示该模型。
         apiKey: np.apiKeyEnvVar ? `$${np.apiKeyEnvVar}` : 'pi-native-keyless',
-        // Preserve native protocol/compatibility metadata while applying Cindy's
-        // route default or explicit working window to inherited models as well.
+        // Preserve native protocol/compatibility metadata. Larger supported
+        // budgets may raise capacity; smaller budgets only change compaction.
         ...(np.inheritModels ? {
           modelOverrides: Object.fromEntries(np.models.flatMap((model) => {
-            const window = this.deps.resolveModelContextLimit?.(np.sourceProviderId ?? np.id, model.id)
-              ?? model.contextWindow;
+            const window = Math.max(model.contextWindow ?? 0,
+              this.deps.resolveModelContextLimit?.(np.sourceProviderId ?? np.id, model.id) ?? 0);
             return typeof window === 'number' && Number.isSafeInteger(window) && window > 0
               ? [[model.wireId ?? model.id, { contextWindow: window }]] : [];
           })),
@@ -2618,9 +2659,13 @@ export class PiAgent extends BaseAgent {
         });
       }
     }
-    const startupContextWindow =
-      this.deps.resolveModelContextLimit?.(authProviderId, opts.model) ??
-      selectedRuntimeModel?.contextWindow ?? publicRuntimeModel?.contextWindow ?? 128_000;
+    const startupWorkingContextWindow = this.deps.resolveModelContextLimit?.(authProviderId, opts.model) ?? undefined;
+    const nativeModel = nativeProviders.find((provider) => provider.id === initialProvider)?.models
+      .find((model) => (model.wireId ?? model.id) === initialWireModel);
+    const startupContextWindow = Math.max(
+      nativeModel?.contextWindow ?? selectedRuntimeModel?.contextWindow ?? publicRuntimeModel?.contextWindow ?? 128_000,
+      startupWorkingContextWindow ?? 0,
+    );
     const localShellPath = remote
       ? undefined
       : this.deps.resolvePiShellPath?.({
@@ -3017,6 +3062,7 @@ export class PiAgent extends BaseAgent {
         fileOps,
         preview: true,
         contextWindow: startupContextWindow,
+        workingContextWindow: startupWorkingContextWindow,
         piCompactionPct: sessionPiAutoCompactPct,
         shellPath: localShellPath,
       });
@@ -3035,6 +3081,7 @@ export class PiAgent extends BaseAgent {
         remote,
         fileOps,
         contextWindow: startupContextWindow,
+        workingContextWindow: startupWorkingContextWindow,
         piCompactionPct: sessionPiAutoCompactPct,
         shellPath: localShellPath,
       },
@@ -3559,6 +3606,7 @@ export class PiAgent extends BaseAgent {
       ? [] : [...(this.deps.getDisabledSkillPaths?.() ?? [])];
     let disabledSkillLaunch = snapshotDisabledSkillLaunch(disabledSkillPaths);
     const disabledSkillSnapshot = disabledSkillLaunch.identities;
+    const loadProjectResourcesInPlace = !reviewMode && !opts.botRuntimeProfile && !opts.remoteHostId;
     let projectResourceAssembly = unavailablePiProjectResourceAssembly(
       reviewMode ? 'review-mode-project-resources-disabled' : 'approval-resolver-unavailable',
     );
@@ -3571,7 +3619,11 @@ export class PiAgent extends BaseAgent {
         });
         projectResourceAssembly = await assembleApprovedPiProjectResources(trustInput, opts.workingDir);
         projectResourceAssembly = filterPiDisabledProjectSkills(projectResourceAssembly, currentDisabledSkillLaunchPaths(disabledSkillLaunch));
-        projectResourceAssembly = await stageApprovedPiProjectResources(projectResourceAssembly, configHome);
+        // In-place CLI loading uses original repo paths. Staging copies are unused
+        // there and would recopy every Skill asset on each startSession.
+        if (!loadProjectResourcesInPlace) {
+          projectResourceAssembly = await stageApprovedPiProjectResources(projectResourceAssembly, configHome);
+        }
       } catch {
         projectResourceAssembly = unavailablePiProjectResourceAssembly('approval-resolver-failed');
         this.deps.logger.warn('pi project approval resolver failed closed', {
@@ -3609,6 +3661,7 @@ export class PiAgent extends BaseAgent {
           nativePackagePaths = await this.deps.resolvePiNativePackagePaths();
           await this.writePiRuntimeSettings(configHome, {
             contextWindow: startupContextWindow,
+            workingContextWindow: startupWorkingContextWindow,
             piCompactionPct: sessionPiAutoCompactPct,
             packages: nativePackagePaths,
             shellPath: localShellPath,
@@ -3666,13 +3719,27 @@ export class PiAgent extends BaseAgent {
       typeof entry === 'string' ? entry : entry.source
     ));
 
+    // Local root tasks load project skills/prompts/extensions in place via
+    // explicit CLI flags. Keep --no-approve so `.pi/settings.json` is unread.
+    const collectedProjectResources = loadProjectResourcesInPlace
+      ? collectPiProjectResourceCliPaths(opts.workingDir)
+      : emptyPiProjectResourceCliPaths();
+    const projectResourceCli = loadProjectResourcesInPlace
+      ? {
+          ...collectedProjectResources,
+          skills: filterPiProjectCliSkills(
+            collectedProjectResources.skills,
+            currentDisabledSkillLaunchPaths(disabledSkillLaunch),
+          ),
+        }
+      : collectedProjectResources;
+
     const args = [
       '--mode',
       'rpc',
-      // --no-approve remains the hard project-resource gate. Only a local
-      // runtime with Main-supplied user package roots omits --no-extensions, so
-      // Pi can discover those runtime-settings packages without trusting the
-      // task's .pi/extensions or .pi/settings.json.
+      // --no-approve remains the hard project-settings gate. Explicit --skill /
+      // --prompt-template / --extension pass original in-repo paths without
+      // trusting `.pi/settings.json` or auto-installing project packages.
       '--no-approve',
       ...(nativePackagePaths.length === 0 ? ['--no-extensions'] : []),
       '--session-dir',
@@ -3691,12 +3758,28 @@ export class PiAgent extends BaseAgent {
       bridgeExtensionPath,
       ...(localSubagentSupported ? ['--extension', subagentExtensionPath] : []),
       ...(!reviewMode && planModeExtAvailable ? ['--extension', planModeExtPath] : []),
-      ...botSkillSelection.explicitSkillPaths.flatMap((skillPath) => ['--skill', skillPath]),
+      ...(loadProjectResourcesInPlace
+        ? piProjectResourceCliArgs(projectResourceCli)
+        : botSkillSelection.explicitSkillPaths.flatMap((skillPath) => ['--skill', skillPath])),
     ];
+    try {
+      assertPiSpawnArgvFitsPlatform(args);
+    } catch (error) {
+      try {
+        disposeSessionCtx?.();
+      } catch {
+        /* best-effort: cleanup failure must not mask argv budget failure */
+      }
+      disposeSessionCtx = undefined;
+      cleanupConfigHome();
+      cleanupRuntimeFiles();
+      throw error;
+    }
 
     const queue: AsyncQueue<AgentEvent> = createAsyncQueue<AgentEvent>();
     const ctx: PiTranslateContext = createPiTranslateContext(this.deps.logger);
     ctx.getPriceVariant = opts.getPriceVariant;
+    ctx.workingContextWindow = startupWorkingContextWindow;
     const contextModeRoot = findContextModePackageRoot([
       ...nativePackageRoots,
       ...managedPackageResources.packageRoots,
@@ -4647,7 +4730,6 @@ export class PiAgent extends BaseAgent {
     let piAgentLifecycleSequence = 0;
     let activeExtensionCommandNotifications: string[] | null = null;
     const doctorCommandActivity = new DoctorCommandActivity();
-    const unsupportedExtensionUiMethods = new Set<string>();
     const runtimeCapabilityListeners = new Set<(manifest: PiRuntimeCapabilityManifest | undefined) => void>();
     const notifyRuntimeCapabilityListener = (
       listener: (manifest: PiRuntimeCapabilityManifest | undefined) => void,
@@ -5017,6 +5099,7 @@ export class PiAgent extends BaseAgent {
         ...(proxyEnv ?? {}),
         // BYOM 原生 provider 的 api keys(键名对应 spec.apiKeyEnvVar,models.json 用 $ENV 引用)。
         ...nativeEnv,
+        CINDY_PI_NATIVE_PROVIDER_ADAPTERS: JSON.stringify(nativeProviderAdapterAliases(nativeProviders)),
         // 外部 MCP header 真值只经 env 交给 bridge extension；host 生成独立名字，
         // 且这些键已进入 piSecretEnvNames，LLM 可调用的 bash 子进程拿不到。
         ...mcpEnv,
@@ -5198,28 +5281,18 @@ export class PiAgent extends BaseAgent {
                 if (activeExtensionCommandNotifications) {
                   activeExtensionCommandNotifications.push(text);
                 }
-                queue.push({
+                const notification: AgentEvent = {
                   type: 'text',
                   data: { text, isFinal: false },
                   source: 'pi',
-                });
+                };
+                queue.push(notification);
+                return notification;
               },
-              notifyUnsupportedExtensionUi: (method, reason) => {
-                const key = `${method}:${reason}`;
-                if (unsupportedExtensionUiMethods.has(key)) return;
-                unsupportedExtensionUiMethods.add(key);
-                queue.push({
-                  type: 'text',
-                  data: {
-                    text:
-                      reason === 'timed-dialog'
-                        ? `This Pi extension requested a timed ${method} dialog, which ${BRAND_NAME} cannot keep synchronized. The dialog was cancelled.`
-                        : `This Pi extension requested the Pi UI feature “${method}”, which ${BRAND_NAME} cannot display. That UI request was ignored.`,
-                    isFinal: false,
-                  },
-                  source: 'pi',
-                });
-              },
+              // Extension UI compatibility is a Settings concern. Native-only,
+              // unknown, and timed requests are deliberately never injected into
+              // the model conversation; timed dialogs are still cancelled below.
+              notifyUnsupportedExtensionUi: () => {},
             }));
             return;
           }
@@ -5262,6 +5335,7 @@ export class PiAgent extends BaseAgent {
           }
         },
         onExit: ({ code, signal }) => {
+          const hostAbortRequested = isCurrentTurnHostAbortRequested(ctx);
           piProcessExited = true;
           clearPiSubagentRefreshTimer();
           void deferProxyDisposalForDetachedRuns();
@@ -5275,7 +5349,11 @@ export class PiAgent extends BaseAgent {
           runtimeCapabilityListeners.clear();
           if (!closed) {
             // 非用户 close 的进程死亡:terminal error + 收尾,避免 UI 永久 running。
-            queue.push({
+            queue.push(hostAbortRequested ? {
+              type: 'done',
+              data: { status: 'cancelled' },
+              source: 'pi',
+            } : {
               type: 'error',
               data: {
                 message: `pi process exited unexpectedly (code=${code}, signal=${signal})`,
@@ -5444,13 +5522,24 @@ export class PiAgent extends BaseAgent {
         generation,
         stage,
       );
+      const managedPackageRoots = [...nativePackageRoots, ...managedPackageResources.packageRoots];
       const managedPackageCommandNames = identifyManagedPiPackageCommandNames(
         capturedManifest.commands,
-        [...nativePackageRoots, ...managedPackageResources.packageRoots],
+        managedPackageRoots,
+      );
+      const authorizedSlashCommandNames = identifyManagedPiPackageCommandNames(
+        capturedManifest.commands,
+        [
+          ...managedPackageRoots,
+          ...projectResourceCli.skills,
+          ...projectResourceCli.promptTemplates,
+          ...projectResourceCli.extensions,
+        ],
       );
       const manifest = {
         ...capturedManifest,
         managedPackageCommandNames,
+        authorizedSlashCommandNames,
         managedPackageSkills: snapshotManagedPiPackageSkills(
           managedPackageResources.skills,
           capturedManifest.commands,
@@ -5581,11 +5670,13 @@ export class PiAgent extends BaseAgent {
           this.deps,
           opts.sessionId,
           (convergence) => {
-            queue.push({
+            const receipt: AgentEvent = {
               type: 'text',
               data: { text: piManagedPackageRuntimeConvergenceReceipt(convergence), isFinal: false },
               source: 'pi',
-            });
+            };
+            queue.push(receipt);
+            return receipt;
           },
         );
       }
@@ -5864,6 +5955,7 @@ export class PiAgent extends BaseAgent {
           remote,
           fileOps,
           contextWindow: ctx.contextWindow || startupContextWindow,
+          workingContextWindow: ctx.workingContextWindow,
           piCompactionPct: sessionPiAutoCompactPct,
           shellPath: localShellPath,
           packages: nativePackagePaths,
@@ -5945,6 +6037,7 @@ export class PiAgent extends BaseAgent {
             remote,
             fileOps,
             contextWindow: ctx.contextWindow || startupContextWindow,
+            workingContextWindow: ctx.workingContextWindow,
             piCompactionPct: sessionPiAutoCompactPct,
             shellPath: localShellPath,
             packages: nativePackagePaths,
@@ -6266,6 +6359,7 @@ export class PiAgent extends BaseAgent {
           ?.contextWindow ??
         ctx.contextWindow;
       if (nextWindow > 0) ctx.contextWindow = nextWindow;
+      ctx.workingContextWindow = this.deps.resolveModelContextLimit?.(mutableProviderId, model) ?? undefined;
       // Always reload and read get_state after set_model. The catalog and even the
       // set_model response can disagree with the materialized runtime window; callers
       // must not decide whether to destroy native context until this verification ends.
@@ -6277,6 +6371,7 @@ export class PiAgent extends BaseAgent {
           await this.writePiRuntimeSettings(configHome, {
             fileOps,
             contextWindow: nextWindow,
+            workingContextWindow: ctx.workingContextWindow,
             piCompactionPct: sessionPiAutoCompactPct,
             shellPath: localShellPath,
             packages: nativePackagePaths,
@@ -6334,6 +6429,7 @@ export class PiAgent extends BaseAgent {
             await this.writePiRuntimeSettings(configHome, {
               fileOps,
               contextWindow: verifiedWindow,
+              workingContextWindow: ctx.workingContextWindow,
               piCompactionPct: sessionPiAutoCompactPct,
               packages: nativePackagePaths,
               shellPath: localShellPath,
@@ -6954,7 +7050,7 @@ export class PiAgent extends BaseAgent {
           id == null || id === 'xd' || id === PI_PROVIDER_ID ? PI_PROVIDER_ID : id;
         if (model !== mutableModel || contextSource(provider) !== contextSource(mutableProviderId)) return false;
         const window = deps.resolveModelContextLimit?.(provider, model);
-        return typeof window === 'number' && window > 0 && window !== ctx.contextWindow;
+        return (window ?? undefined) !== ctx.workingContextWindow;
       },
 
       async setModel(model: string, setOpts?: { providerId?: string | null; effort?: Effort }): Promise<void> {
@@ -7265,7 +7361,7 @@ export class PiAgent extends BaseAgent {
           tree,
           messages: activePiHistoryFromTree(after.data, tree),
           contextTokens,
-          contextWindow,
+          contextWindow: usageSnapshotOf(ctx).contextWindow,
           ...(draftText ? { draftText } : {}),
         };
       },
@@ -7286,15 +7382,19 @@ export class PiAgent extends BaseAgent {
             | undefined
         )?.contextUsage;
         const totalTokens = typeof contextUsage?.tokens === 'number' && contextUsage.tokens >= 0 ? contextUsage.tokens : ctx.contextTokens;
-        const maxTokens =
+        const nativeCapacity =
           typeof contextUsage?.contextWindow === 'number' && contextUsage.contextWindow > 0
             ? contextUsage.contextWindow
             : ctx.contextWindow;
+        const maxTokens = ctx.workingContextWindow && ctx.workingContextWindow > 0
+          ? Math.min(ctx.workingContextWindow, nativeCapacity) : nativeCapacity;
         const percentage = maxTokens > 0 ? Math.min(100, (totalTokens / maxTokens) * 100) : 0;
         return {
           categories: [{ name: 'Messages', tokens: totalTokens, color: '#8b8b8b' }],
           totalTokens,
           maxTokens,
+          // Context cards and shared summaries use rawMaxTokens as their denominator.
+          // Pi has no separate usable-window reserve within the working budget.
           rawMaxTokens: maxTokens,
           percentage,
           gridRows: [],
@@ -7624,8 +7724,12 @@ export class PiAgent extends BaseAgent {
         action: 'launch' | 'terminate' | 'status',
         runId: string,
       ) => Promise<boolean>;
-      emitExtensionNotification: (message: string, event?: PiRpcEvent) => void;
-      notifyUnsupportedExtensionUi: (method: string, reason: 'unsupported-ui' | 'timed-dialog') => void;
+      emitExtensionNotification: (message: string, event?: PiRpcEvent) => AgentEvent;
+      /** Surface a cancelled native-only dialog once without exposing the raw RPC payload. */
+      notifyUnsupportedExtensionUi: (
+        method: string,
+        reason: 'unsupported-ui' | 'timed-dialog',
+      ) => void;
       /**
        * 把一张挂起的权限卡登记进会话级表,返回注销函数。档位切换 / 关闭会话时由
        * `dismissAllPendingPrompts` 强制 settle,避免放宽档位后调用仍卡在失效的卡上。
@@ -7650,7 +7754,7 @@ export class PiAgent extends BaseAgent {
     const id = typeof event.id === 'string' ? event.id : undefined;
     if (!id) return;
 
-    if (method === 'notify') {
+    if (getPiExtensionUiCapability(method)?.handling === 'notification') {
       const message = typeof event.message === 'string' ? event.message.trim() : '';
       if (!message) return;
       // Pi RPC has no toast surface. Preserve the extension's only visible
@@ -8387,8 +8491,7 @@ export class PiAgent extends BaseAgent {
       return;
     }
 
-    const isDialog = method === 'select' || method === 'confirm' || method === 'input' || method === 'editor';
-    if (isDialog) {
+    if (getPiExtensionUiCapability(method)?.handling === 'dialog') {
       const context = getPermissionCtx();
       const timeout = typeof event.timeout === 'number' && Number.isFinite(event.timeout) ? event.timeout : undefined;
       if (timeout !== undefined) {
@@ -8472,10 +8575,10 @@ export class PiAgent extends BaseAgent {
             proc.send({ type: 'extension_ui_response', id, cancelled: true });
             return;
           }
-          if (method === 'select' && !options.includes(answer)) {
-            proc.send({ type: 'extension_ui_response', id, cancelled: true });
-            return;
-          }
+          // Pi's RPC select contract only distinguishes cancelled from value and hands
+          // `value` back to the caller verbatim; Cindy's question card always offers a
+          // "type your own" entry, so a non-empty answer outside `options` is a real
+          // answer, not a cancel (#4273).
           context.recordUserClarification(question, answer);
           proc.send({ type: 'extension_ui_response', id, value: answer });
         })
@@ -8489,6 +8592,8 @@ export class PiAgent extends BaseAgent {
       return;
     }
 
+    // Preserve a bounded transcript diagnostic for native-only or future UI
+    // methods. The native request is still not rendered by the host.
     getPermissionCtx().notifyUnsupportedExtensionUi(method || 'unknown', 'unsupported-ui');
   }
 }

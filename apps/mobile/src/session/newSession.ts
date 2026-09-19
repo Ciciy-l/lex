@@ -637,7 +637,8 @@ function findSectionModelRow(
  * 过滤:排除 status==='deleted'、无 model;可选 `deviceId`(只看该设备——模型列表 per-device,跨设备 model 可能
  * 在目标设备不存在,来源同理——同设备过滤保证继承的来源在目标设备存在);可选 `agentKind`(只看该 agent)。
  * 排序:按活动时间(userSendAt ?? updatedAt ?? createdAt)降序取第一条。
- * 映射 `RemoteSession.agentKind`:'codex'|'pi' 原样保留,其余(含 'cc')归一为 'claude-code'。无匹配→null。
+ * 映射 `RemoteSession.agentKind`:'codex'|'pi'|'omp' 原样保留,其余(含 'cc')归一为
+ * 'claude-code'。无匹配→null。
  * deviceId 过滤口径对齐 buildRecentWorkspaceOptions:仅当 session 带了 deviceLinkDeviceId 且与目标不符才排除。
  */
 export function pickMostRecentSessionRuntime(

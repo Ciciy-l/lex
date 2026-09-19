@@ -81,6 +81,21 @@ describe('mobileHomeListCache', () => {
     expect(snapshot[1].sessions.map((s) => s.id)).toEqual(['s-b1']);
   });
 
+  it('retains OMP as an OMP session when reading a cached home snapshot', async () => {
+    const { cacheHomeListSnapshot, getCachedHomeListSnapshot } = await import('@/session/mobileHomeListCache');
+
+    await cacheHomeListSnapshot(USER_ID, [
+      makeSession('s-omp', 'dev-a', { agentKind: 'omp', model: 'minimax/MiniMax-M2.5' }),
+    ]);
+
+    const [device] = await getCachedHomeListSnapshot(USER_ID);
+    expect(device.sessions[0]).toMatchObject({
+      id: 's-omp',
+      agentKind: 'omp',
+      model: 'minimax/MiniMax-M2.5',
+    });
+  });
+
   it('returns [] for missing cache, corrupt JSON, or wrong shapes', async () => {
     const { __testing, getCachedHomeListSnapshot } = await import('@/session/mobileHomeListCache');
 

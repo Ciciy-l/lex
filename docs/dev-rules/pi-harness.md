@@ -66,7 +66,9 @@ Cindy 显式设置:models.json、`settings.json` 的 `transport:sse` 与 `retry.
 Cindy 消费 compaction 事件做 UI、usage、digest 投影，并只在本机原生自动压缩确定性失败后锁存
 下一次发送前换窗。设置页的 Pi 百分比默认 90%（已有显式 override 保留），在每次启动或恢复
 Pi 任务时冻结，并写入该任务 `settings.json` 的 `compaction.reserveTokens`
-（`window * (1 - pct/100)`）；切模只按这份快照重算，不回读最新全局值。
+（`capacity - budget * pct/100`）；切模只按这份百分比快照重算，不回读最新全局值。
+模型容量用于 Pi 原生请求长度裁剪，不能随小预算缩到 1K；工作预算只调整原生压缩阈值，
+并作为已应用预算进入 Cindy 的用量快照。
 大窗切小窗先由 Desktop 的统一目标窗口事务按目标窗口 90% 固定压力线评估（独立于 Pi
 日常自动压缩百分比），命中时换干净原生窗口；未命中时 Pi 重写 settings 后调用
 `switch_session`，必须重新 `set_model` 并用 `get_state` 校验
@@ -84,7 +86,8 @@ SSH 不套用本机限核值。沿用现有默认值与 override 存储，不新
 放任 pi 默认(未写 settings.json):`httpIdleTimeoutMs=300000`、`websocketConnectTimeoutMs`、
 `compaction.keepRecentTokens`、`defaultProjectTrust`。Cindy 会在每次 startSession 覆写
 `transport`、`retry.maxRetries=6`（provider 级保持 0）与 `compaction.reserveTokens`；
-未配置 Pi 百分比时不写 `reserveTokens`，沿用 Pi 默认 16384。
+未配置 Pi 百分比且未缩小工作预算时不写 `reserveTokens`，沿用 Pi 默认 16384；
+显式小预算仍以默认 90% 计算触发阈值。
 
 
 Skill 停用适配同时保存物理身份与管理页已扫描的词法发现入口；启动前只采用仍指向该
@@ -157,6 +160,9 @@ Full access 读/搜/bash 与原生对齐的需求正本见 [`pi-full-access-nati
 Pi CLI 管理入口、内核自更新与旧工具兼容的执行边界见
 [`pi-managed-commands.md`](pi-managed-commands.md)。
 
+扩展 UI 能力清单、RPC 静默过滤与设置兼容提示的统一合同见
+[`pi-extension-ui.md`](pi-extension-ui.md)。
+
 ## 4. 维护不变量(改动时不得破坏)
 
 1. **权限档从严到宽**:`capabilities.permissionModes` 必须 `[ask, auto, bypassPermissions]`
@@ -165,9 +171,11 @@ Pi CLI 管理入口、内核自更新与旧工具兼容的执行边界见
 2. **凭证路径判定三处同步**:`shared/auto-review.ts CREDENTIAL_PATH_PATTERNS`、
    `cindy-bridge-source.ts touchesCredentialPath`、`auto-review-policy.ts` 只读分支全字段扫描
    必须同口径。bridge 自包含不能 import,改一处记得改三处。
-3. **斜杠命令转义**:`escapeLeadingSlashCommand` 对 `/` 开头用户输入前置空格转字面(仅放行
-   `/skill:`)—— pi RPC prompt 会执行扩展命令(`/plan` 被 plan-mode 吃掉且不留痕),不转义会让
-   Cindy 状态镜像脱同步并暴露未来扩展命令攻击面。
+3. **斜杠命令转义**:`escapeLeadingSlashCommand` 对 `/` 开头用户输入前置空格转字面。仅放行
+   `/skill:`、本次 `get_commands` 证明 provenance 落在 Cindy-managed package 根内的命令，以及
+   本次显式传入的项目 Skill/prompt/extension 路径所证明的命令。`/` 面板用同一套
+   `authorizedSlashCommandNames`，不单看 managed package。其余扩展命令(如 `/plan`)
+   转义成字面，避免 Cindy 状态镜像脱同步，也堵住未装配来源的命令攻击面。
 4. **auto 档 dispatcher fail-closed**:分类抛错 / 无 resolver 一律不放行。
 5. **成本计量**:models.json 的 cost 来自 host 模型目录(`ModelDescriptor.cost`),缺省按 0;
    派生链 `catalog-to-descriptors.ts` → `capabilities.availableModels` → `writeModelsJson`。
@@ -179,19 +187,18 @@ Pi CLI 管理入口、内核自更新与旧工具兼容的执行边界见
 8. **项目资源显式装配**:root、只读 subagent 与离线 fork 启动 Pi 时都必须显式传
    `--no-approve`;没有 Cindy-managed 本机用户包根时同时传 `--no-extensions`。本机普通 runtime
    存在明确安装且未停用的用户包根时，为保留 Pi 原生 package discovery 可以只省略
-   `--no-extensions`：包根只能来自 Main 生成的 runtime `settings.json`，`--no-approve` 仍是项目
-   `.pi/extensions` / `.pi/settings.json` 的硬门，不得因此传 `--approve` 或读取项目设置。root
-   仅用重复 `--extension` 回装 Cindy 自有 bridge/subagent 与 pinned plan-mode，并仅用重复
-   `--skill` 装配 host 从 PR3 approval snapshot 判定 eligible
-   的项目 skill 目录。eligible canonical 目录必须先完整物化到当前会话 `configHome` 的非自动
-   扫描目录，再把隔离快照路径交给 Pi；不得把仍可变化的项目原路径直接放进 argv。复制期间
-   任一越界 symlink、特殊文件或路径替换会使整组 skills fail closed。不得读取/复制项目
-   `.pi/settings.json`，不得传 `--approve`，
-   不得依赖 `PI_OFFLINE=1` 代替 packages/extensions 硬门。root 不传 `--no-skills`，以保留现有
-   user/global skill 行为；项目 skill 的 `loaded` 只能由当前会话 `get_commands` 对隔离快照路径
-   的 exact temporary/local provenance 证明。approval 真源缺失、异常、撤销、失效、路径消失
-   或快照失败时，新会话
-   一律不带项目 `--skill`，并在 per-session runtime manifest 记录诊断原因。
+   `--no-extensions`：包根只能来自 Main 生成的 runtime `settings.json`，`--no-approve` 仍禁止
+   读取项目 `.pi/settings.json` 与自动安装项目 packages，不得因此传 `--approve`。
+   本地非 Review、非 Bot、非 SSH 的 root 任务用重复 `--skill` / `--prompt-template` /
+   `--extension` 把仓库原路径交给 Pi：`.pi/skills` 与 cwd→git root 内 `.agents/skills`
+   的目录型 Skill、`.pi/prompts/*.md`、`.pi/extensions/*.ts` 与 `*/index.ts`。越界 symlink
+   不传入。root 仍回装 Cindy 自有 bridge/subagent 与 pinned plan-mode。Review、Bot、子代理、
+   离线 `forkSdkSession` 克隆进程与远端会话不带这些项目资源。随后以 `resumeSessionId`
+   恢复的本地根任务（含 fork 之后的恢复）与普通本地任务相同，加载项目资源。
+   不得读取/复制项目 `.pi/settings.json`，不得传 `--approve`，
+   不得依赖 `PI_OFFLINE=1` 代替该 settings 硬门。root 不传 `--no-skills`，以保留现有
+   user/global skill 行为；项目 skill 的 `loaded` 由当前会话 `get_commands` 对原路径 provenance
+   证明。
 9. **Pi bash bounded timeout**:Cindy 覆盖的模型可调 `bash` 在 execute 入口强制默认
    `300s`、上限 `1800s`。缺省或非正数用默认;大于上限或非有限数字 fail-fast(参数错误,
    不是 `Command timed out`);合法秒数原样交给 Pi 原生执行器。不另起 timer / AbortController。
@@ -227,6 +234,41 @@ Pi CLI 管理入口、内核自更新与旧工具兼容的执行边界见
    dispose 未确认 runner 退出必须失败；Host 观察到的退出要能通过控制协议通知前台等待，不能只靠 status.json。
    Windows 上 SIGTERM 不得带 taskkill /F；前台若已读到终态必须先返回，不得被 Host 退出通知盖成失败。
 
+### 4.1 包变更与执行终态
+
+- 工具或原生包命令的回执写入队列、`extension_ui_response` 发出，只表示发送，不能据此
+  关闭正在消费结果的调用者。包变更仍推进原有 generation 并捕获准确 runtime 实例；
+  空闲实例退役，忙碌调用者和同一快照里的兄弟实例保留当前执行，产品终态送达后再退役。
+  `runtimeConvergence=deferred` 表示旧快照暂时服务在途工作，不表示新包已经加载。
+  provider 已空闲但 Session 尚未消费终态时，待退役实例仍拒绝新 turn；
+  仅当前 generation 已由 Host 明确 claim 的 silent-stop continuation 可继续发送。
+  调用者的现有 Host lease 必须覆盖兄弟关闭结果汇总及准确收敛回执的 Session 分发；
+  不能把回执入队当作已分发。交付等待有界，显式关闭仍可结束旧实例。
+  内部退役尚未真正开始关闭时，显式 Agent 切换／关闭可接管关闭原因；一旦开始关闭
+  （包括退出未确认而失败），原因固定，不得被迟到操作改写。IM 切换保护继续匹配准确实例与原因。
+  Host 已放弃续跑时，即使 turn lease 记账失败，也应按原实例与 generation 释放退役等待；
+  记账失败仍不得据此派发后续工作或重放副作用。只有 Host 实际登记续跑的 generation
+  才能阻止空闲关闭；远端／无 observer 接管的 silent-stop 不得凭终态自行占有续跑门。
+  用户 Stop 发出 abort 后、等待 RPC 回执前即按 generation 撤销 Host 续跑门；
+  挂起的 abort 不得阻止已结算工作的待退役 runtime 关闭，迟到返回不得复活旧实例。
+  延迟退役的实际关闭若失败，应在该实例的监听器清理前补发 `partial` 与
+  `restart-cindy-to-refresh-packages` 恢复回执；不改判此前成功结果，不自动重放工作。
+  恢复回执只走 Session 的 `onRuntimeRecovery`，不得进入产品 `onEvent` 正文流；
+  Desktop 与 IM 显式订阅，Goal／Learn／Orca 等消费者不逐个追加过滤。
+  IM 已在 done 退订时，恢复回执须走独立渠道通知，不能把 post-terminal text fan-out
+  当作已交付。通知保留准确实例和包退役发起 generation，渠道发送与送达确认分开；
+  不借通知重开已完成 turn。官方 Telegram 复用协商后的 msg.op；旧 hook、Slack／X
+  的独立出站缺口及离线／拒收／超时限制见 Telegram 能力台账，不扩大现有 wire 契约。
+- 设置页明确要求停用／移除的即时失效路径仍可关闭运行时；Session 必须在清除监听器和
+  当前 turn 归属前给未结算工作发明确失败。用户 Stop 则保持取消，不触发重放。
+- provider idle、进程退出、事件流结束都不是成功证明。Session 用已有 turn generation／
+  control 判断未结算工作，保留缺终态时的有界 watchdog；已送达的成功终态不能被后续退出
+  改判成失败，provider continuation claim 也不能被当作最终结束。
+- Pi 的 `Request was aborted` 只在无当前 generation 的 Host Stop 时归入请求断流失败；
+  无错误正文的 bare abort 仍保持取消。复用既有错误收口及重试预算，不重放包命令或工具。
+- SDK 成功与正文入库／交付分开取证。只见 JSONL 成功但 SQLite 缺正文时，不能自动重跑
+  已成功的工作；应沿 RPC → translator → Session → persistence 查丢失边界。
+
 ## 5. 已交付(2026-07 里程碑)
 
 - redacted thinking 不再显示为空卡片;PI 会话图标(π);Auto-review 核心 + pi adapter + auto 档;
@@ -235,9 +277,9 @@ Pi CLI 管理入口、内核自更新与旧工具兼容的执行边界见
 - 自动化安全网:maker-core PI 定向 + 端到端集成(真 pi 二进制 + 真 bridge + 假模型工具调用)
   覆盖安全命令静默执行 / 危险命令升级并 deny 拦截 / 区内写落盘 / 凭证读升级 / 普通读直通 /
   斜杠转义 / models.json 计费透传。
-- PR4 项目资源桥:只装配 Cindy 明确批准的 `.pi/skills` 与 cwd→git root 范围内
-  `.agents/skills`；真实 pinned Pi RPC 夹具覆盖未批准/显式 skills、重复名、并发隔离，以及
-  项目声明 npm/git/local packages 与 extensions 时零 install/clone/第三方执行。
+- PR4 项目资源桥(2026-07,已废止):当时只装配 Cindy 明确批准的 Skill，项目 packages/extensions
+  不执行。现行口径见 §8：本地根任务用 `--skill` / `--prompt-template` / `--extension` 原地加载
+  仓库原路径，不走批准快照；项目 `.pi/extensions` 会进入该会话。项目 packages 仍不自动安装。
 
 ### SSH 远端能力(2026-08 里程碑,轮 39 补记)
 
@@ -326,7 +368,7 @@ Pi home 复用。settings/packages/extensions 仍属于后续独立安全评审�
   (MEMORY_TYPES / CURATED_MEMORY_TYPES)、`memory/storage.ts rebuildIndex`、`pi/index.ts`
   writeCompactionDigest。
 - ✅ **BYOM / 本地模型**(已交付):自定义/本地模型走 pi 原生 provider 块直连,不过 compat 代理。
-  链路:CustomProviderDialog pi tab(+ api 选择器)→ custom-provider-store(pi runtime)→
+  链路:ProviderConnectionDialog 连接设置(模型能力来自统一目录)→ custom-provider-store(pi runtime)→
   user-provider 派生 → pi-host `resolvePiNativeProviders` → PiAgent writeModelsJson 原生块 +
   provider 感知 setModel。真二进制测试证明直连原生端点、网关零请求。
 - ✅ **统一会话树**(已交付):Cindy session fork 与 Pi append-only entry tree 的后端/

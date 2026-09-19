@@ -1,3 +1,5 @@
+import { RemoteTaskSuggestions } from '@/session/RemoteTaskSuggestions';
+import { countHomeSuggestionSessions, remoteTaskSuggestionsMode, type RemoteTaskSuggestionId } from '@/session/remoteTaskSuggestionsModel';
 import { cacheRemoteResourceHome, readRemoteResourceSnapshot } from '@/device-link/remoteResourceCache';
 import { canBrowseMobileHomeDevice } from '@/session/mobileHome';
 import { useFocusEffect, useIsFocused } from 'expo-router';
@@ -626,15 +628,23 @@ function HomeScreenContent() {
     return result;
   }, []);
 
-  const softInvalidateDeviceMirror = useCallback((deviceId: string) => {
+  // 批量软失效:同一波(REST 快照整批 offline)只让两个 store 各 notify 一次。
+  // 逐台通知时设备数超过 React 嵌套更新上限即致命退出(2026-09-10 Android)。
+  const softInvalidateDeviceMirrors = useCallback((deviceIds: readonly string[]) => {
+    const idSet = new Set(deviceIds);
+    if (idSet.size === 0) return;
     const sessionIds = remoteSessionStore.getSessions()
-      .filter((session) => session.deviceLinkDeviceId === deviceId)
+      .filter((session) => !!session.deviceLinkDeviceId && idSet.has(session.deviceLinkDeviceId))
       .map((session) => session.id);
-    invalidateScheduleIndexForDevice(deviceId);
-    remoteScheduleEventStore.invalidateDeviceMirror(deviceId);
-    remoteSessionStore.markDeviceOffline(deviceId);
+    for (const deviceId of idSet) invalidateScheduleIndexForDevice(deviceId);
+    remoteScheduleEventStore.invalidateDeviceMirrors([...idSet]);
+    remoteSessionStore.markDevicesOffline([...idSet]);
     setScheduleIndex((current) => invalidateRunningSessionScheduleEntries(current, sessionIds));
   }, []);
+
+  const softInvalidateDeviceMirror = useCallback((deviceId: string) => {
+    softInvalidateDeviceMirrors([deviceId]);
+  }, [softInvalidateDeviceMirrors]);
 
   const markDeviceOffline = useCallback((deviceId: string) => {
     // 普通离线是可恢复的传输状态:保留 session/messages,只清 live 投影并失效
@@ -964,9 +974,11 @@ function HomeScreenContent() {
       ));
       // 单次 REST 快照里的 offline 只是可恢复状态,不能硬删刚同步的会话/消息;
       // 显式关闭远控或撤权才是权限终态,继续清敏感镜像。
+      // soft 处先收拢成一批再失效:整批 offline 时逐台通知会击穿 React 嵌套上限。
+      const softInvalidateIds: string[] = [];
       for (const item of deviceRows) {
         const disposition = deviceMirrorCleanupDisposition(item.state);
-        if (disposition === 'soft') softInvalidateDeviceMirror(item.device.deviceId);
+        if (disposition === 'soft') softInvalidateIds.push(item.device.deviceId);
         if (disposition === 'hard') {
           invalidateScheduleIndexForDevice(item.device.deviceId);
           remoteScheduleEventStore.clearDevice(item.device.deviceId);
@@ -974,6 +986,7 @@ function HomeScreenContent() {
           remoteSessionStore.removeDevice(item.device.deviceId);
         }
       }
+      if (softInvalidateIds.length > 0) softInvalidateDeviceMirrors(softInvalidateIds);
       // 整表对账:REST 全量清单对“设备是否仍绑定”是权威。冷启动从缓存种入、
       // 随后被解绑(完全不在清单里)的设备不会出现在状态分类里,按差集硬清 shard;
       // 这与短暂 offline 不同,否则幽灵项会被快照回写无限续存。
@@ -1883,6 +1896,19 @@ function HomeScreenContent() {
   // 首次 loadHome 落地前(含失败态)FAB 只认 live 设备:缓存画出的会话会让 primaryDevice 合成出
   // 「可用」项,但缓存设备不能当 live 设备直接开新会话——列表先画出来,新建入口等 live 数据。
   const newSessionDisabled = !home.primaryDevice || (!initialHomeSettled && !hasOpenableLiveDevice);
+  const taskSuggestionsDeviceId = selectedDeviceId ?? home.primaryDevice?.deviceId ?? undefined;
+  const taskSuggestionsMode = remoteTaskSuggestionsMode({
+    sessionCount: countHomeSuggestionSessions(home,
+      shouldReplaceListWithSearchResults(searchQuery, indexedSearch.status) ? indexedSearch.results : undefined),
+    totalSessionCount: home.overview.all,
+    hasSearchOrFilter: !!searchQuery.trim() || indexedSearch.activeFilterCount > 0 || statusFilter !== 'active',
+    // Cached/offline lists and in-flight searches must not look ready to start work.
+    ready: status === 'online' && !activeConnectionIssue && !initialHomeLoading && !initialHomeError && !connectionError
+      && indexedSearch.status !== 'searching' && !newSessionDisabled
+      && deviceModels.some((device) => device.canOpen
+        && !homeRecoveringDeviceIds.has(device.deviceId)
+        && device.deviceId === taskSuggestionsDeviceId),
+  });
   const newSessionDeviceOptions = useMemo(
     () => deviceModels
       .filter((item) => item.canOpen)
@@ -1926,9 +1952,9 @@ function HomeScreenContent() {
     });
   }, [guardedPush, priorityContext, swipeRegistry, t]);
 
-  const openNewSession = useCallback((project?: MobileHomeProjectGroup) => {
-    const deviceId = project?.deviceId ?? home.primaryDevice?.deviceId;
-    const deviceName = project?.deviceName ?? home.primaryDevice?.label ?? deviceId ?? '';
+  const openNewSession = useCallback((project?: MobileHomeProjectGroup, suggestion?: RemoteTaskSuggestionId, explicitDeviceId?: string) => {
+    const deviceId = project?.deviceId ?? explicitDeviceId ?? home.primaryDevice?.deviceId;
+    const deviceName = project?.deviceName ?? newSessionDeviceOptions.find((device) => device.deviceId === deviceId)?.name ?? home.primaryDevice?.label ?? deviceId ?? '';
     if (!deviceId) {
       setError(t('devices.list.error.noDevice'));
       return;
@@ -1939,13 +1965,18 @@ function HomeScreenContent() {
         deviceId,
         deviceName,
         deviceOptions: serializeNewSessionDeviceOptions(newSessionDeviceOptions),
+        ...(suggestion ? { suggestion } : {}),
         ...(project?.workingDir ? { workingDir: project.workingDir } : {}),
         // 列表正筛选某台电脑时,新建默认跟随这台电脑(显式指定,盖过"上次选择"的
-        // 记忆);"所有对话"下不带标记,新建页回落 newSessionPreferences 的记忆设备。
-        ...(selectedDeviceId ? { deviceExplicit: '1' } : {}),
+        // 记忆);推荐入口固定使用已通过就绪检查的电脑,普通新建仍可恢复记忆设备。
+        ...(selectedDeviceId || explicitDeviceId ? { deviceExplicit: '1' } : {}),
       },
     });
   }, [guardedPush, home.primaryDevice, newSessionDeviceOptions, selectedDeviceId, t]);
+
+  const openSuggestedSession = useCallback((suggestion?: RemoteTaskSuggestionId) => {
+    openNewSession(undefined, suggestion, taskSuggestionsDeviceId);
+  }, [openNewSession, taskSuggestionsDeviceId]);
 
   const logout = useCallback(async () => {
     if (loggingOut) return;
@@ -2674,6 +2705,9 @@ function HomeScreenContent() {
               testID="home.remoteAccessGuide"
               title={emptyStateTitle}
             />
+          ) : taskSuggestionsMode === 'empty' ? (
+            <RemoteTaskSuggestions mode="empty" onNewSession={() => openSuggestedSession()}
+              onSelect={openSuggestedSession} />
           ) : (
             <MainWindowEmptyState
               centered
@@ -2688,6 +2722,10 @@ function HomeScreenContent() {
             />
           )
         }
+        ListFooterComponent={taskSuggestionsMode === 'footer' ? (
+          <RemoteTaskSuggestions mode="footer" onNewSession={() => openSuggestedSession()}
+            onSelect={openSuggestedSession} />
+        ) : null}
         renderItem={renderHomeRow}
       />
 
@@ -2706,8 +2744,8 @@ function HomeScreenContent() {
         />
       ) : null}
 
-      {showRemoteGuide ? null : (
-        // 引导态(无可控制电脑)下没有可发起对话的设备,置灰 FAB 也是噪音,直接不渲染。
+      {showRemoteGuide || taskSuggestionsMode === 'empty' ? null : (
+        // 无可控电脑时不提供入口;完整空态已有主按钮,避免重复显示新建 CTA。
         <Pressable
           accessibilityLabel={t('devices.list.a11y.newRemoteConversation')}
           accessibilityRole="button"

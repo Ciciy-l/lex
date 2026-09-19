@@ -2,7 +2,26 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
 
+import { BRAND_IDENTITY } from '@cindy/maker-shared/brand-identity';
+
 import type { DatabaseConstructor } from './runtime.js';
+
+/**
+ * Only databases owned by this product may participate in the local worktree
+ * reference scan. Keeping the namespace here avoids accidentally treating a
+ * sibling Cindy installation as Lex deletion evidence.
+ */
+export const TASK_DATABASE_FILE_PREFIXES = Object.freeze([
+  BRAND_IDENTITY.dbFilePrefix,
+  ...BRAND_IDENTITY.legacyDbFilePrefixes,
+]);
+
+function isTaskDatabaseFileName(name: string): boolean {
+  return TASK_DATABASE_FILE_PREFIXES.some((prefix) =>
+    name === `${prefix}.db`
+    || (name.startsWith(`${prefix}-`) && name.endsWith('.db') && name.length > prefix.length + 4),
+  );
+}
 
 /** Machine-local deletion evidence only; never exposes messages or credentials. */
 export interface LocalWorktreeReference {
@@ -52,7 +71,7 @@ export function readLocalWorktreeReferences(
   if (fs.existsSync(path.join(root, 'profiles')) && fs.readdirSync(path.join(root, 'profiles')).length) {
     throw new Error('profile database catalog requires a compatible reader');
   }
-  const names = fs.readdirSync(root).filter((name) => /^(?:cindy|xdt)-.+\.db$/.test(name));
+  const names = fs.readdirSync(root).filter(isTaskDatabaseFileName);
   if (!names.includes(path.basename(currentPath))) throw new Error('unknown task database layout');
   const rows: LocalWorktreeReference[] = [];
   for (const name of names) {
@@ -71,7 +90,7 @@ export function readLocalWorktreeReferences(
     }
   }
   // A source created during the scan has not been checked yet.
-  const after = fs.readdirSync(root).filter((name) => /^(?:cindy|xdt)-.+\.db$/.test(name));
+  const after = fs.readdirSync(root).filter(isTaskDatabaseFileName);
   if (after.length !== names.length || after.some((name) => !names.includes(name))) {
     throw new Error('task database catalog changed during scan');
   }

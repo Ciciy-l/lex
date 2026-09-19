@@ -112,7 +112,7 @@ describe('custom provider runtime fill', () => {
     });
   });
 
-  it('reports unsupported endpoint fields and refuses to apply them', () => {
+  it('copies Responses, Chat and Google endpoints onto Claude Code', () => {
     const source = draft({
       baseUrl: 'https://openai.example/v1',
       requestPath: '/responses',
@@ -128,22 +128,7 @@ describe('custom provider runtime fill', () => {
       sourceAgent: 'codex',
       targetAgent: 'claude-code',
     });
-
-    expect(
-      diffs
-        .filter((diff) =>
-          ['baseUrl', 'requestPath', 'wireProtocol', 'headers'].includes(diff.field),
-        )
-        .every((diff) => diff.targetState === 'incompatible'),
-    ).toBe(true);
-    expect(
-      diffs
-        .filter((diff) =>
-          ['baseUrl', 'requestPath', 'wireProtocol', 'headers'].includes(diff.field),
-        )
-        .every((diff) => diff.incompatibilityReason === 'protocol'),
-    ).toBe(true);
-    expect(runtimeFillFieldsForToggle('baseUrl', diffs)).toEqual([]);
+    expect(diffs.find((diff) => diff.field === 'wireProtocol')?.targetState).toBe('conflict');
     expect(
       applyRuntimeFillFields(
         target,
@@ -154,7 +139,11 @@ describe('custom provider runtime fill', () => {
           targetAgent: 'claude-code',
         },
       ),
-    ).toEqual(target);
+    ).toMatchObject({
+      baseUrl: 'https://openai.example/v1',
+      requestPath: '/responses',
+      wireProtocol: 'openai-responses',
+    });
   });
 
   it('rejects the whole inference endpoint when a non-empty request path crosses Pi', () => {

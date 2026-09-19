@@ -49,7 +49,7 @@ vi.mock('../omp-runtime.js', () => ({
   resolveOmpBinaryPath: () => '/bin/omp',
 }));
 
-vi.mock('../pi-proxy-session-token.js', () => ({
+vi.mock('../omp-proxy-session-token.js', () => ({
   deriveOmpProxySessionToken: (sessionId: string) => `omp-tok-${sessionId}`,
 }));
 

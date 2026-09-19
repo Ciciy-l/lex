@@ -1,3 +1,4 @@
+import { shouldShowOpenPathError } from '../../../shared/openPathResult';
 import { shouldShowFailedScheduleNotice } from '@cindy/maker-shared/schedule-model';
 /**
  * CCAgentSessionView
@@ -237,6 +238,7 @@ import {
 import { useSessionHardwareTaskActions } from './lib/sessionHardwareTaskActions';
 import { isRemoteSessionWriteBlocked } from './lib/remoteSessionWriteGuard';
 import { getModelById, getDefaultModelForVendor, getModelsForVendor } from '@/lib/modelDefinitions';
+import { pickFirstConnectedModelForAgent } from '@/lib/draftModelCalibration';
 import { resolveDisplayContextWindow } from '@/lib/contextWindow';
 import { resolveSessionContextWindow } from '../../../shared/sessionContextWindow';
 import { formatRunningTokenCount, resolveRunningUsageMeta } from './lib/runningTokenUsage';
@@ -862,11 +864,10 @@ export function CCAgentSessionView({
       viewVisible &&
       navigationMode !== 'sidebar-embedded' &&
       navigationMode !== 'split-pane');
-  const showComposerControlledBanner = ownsRoute || showControlledBanner;
+  const showComposerControlledBanner = viewVisible && (ownsRoute || showControlledBanner);
   const controlledBy = useControlledBy();
   const hasControlledBanner = showComposerControlledBanner && controlledBy.length > 0;
   const controlledBannerCollapsed = useComposerCollapsed(sessionId ?? null);
-  const showExpandedControlledBanner = hasControlledBanner && !controlledBannerCollapsed;
   const isMac = window.electronAPI?.platform === 'darwin';
   // messageWidth：消息流容器宽度（视觉边距 50px / compact 20px）
   // inputWidth：ChatInput / 状态栏 / workingDir 行的宽度（视觉边距 40px / compact 10px）
@@ -942,6 +943,9 @@ export function CCAgentSessionView({
   // 只有 URL 说了不算 —— 那是导航投影,不是身份。
   const botChatIdentity: BotChatIdentity | null =
     botIdentity && session?.source === 'bot' ? botIdentity : null;
+  // 伙伴没有 RunningStatusBar，折叠呼吸灯继续留在输入框上方，不能随状态行一起消失。
+  const showCenteredControlledBanner =
+    hasControlledBanner && (!controlledBannerCollapsed || Boolean(botChatIdentity));
   // assistant 气泡左侧的伙伴头像。节点在整场对话里是同一个,memo 住让 MessageItem
   // 的 memo 比较仍然成立(否则每帧新节点 = 全流重渲染)。
   const botAssistantAvatar = useMemo(
@@ -1507,7 +1511,7 @@ export function CCAgentSessionView({
     if (isRemoteWorktreeSession) return;
     try {
       const result = await window.electronAPI.openPath(wd);
-      if (!result.success) toast.error(result.error || t('ccAgent.common.openFolderFailed'));
+      if (shouldShowOpenPathError(result)) toast.error(result.error || t('ccAgent.common.openFolderFailed'));
     } catch (err) {
       log.error('[open workingDir]', err);
       toast.error(t('ccAgent.common.openFolderFailed'));
@@ -3316,7 +3320,12 @@ export function CCAgentSessionView({
       }
       const createOpts = session?.workingDir
         ? {
-            agentKind: session.agentKind === 'pi' ? ('pi' as const) : ('claude-code' as const),
+            agentKind:
+              session.agentKind === 'pi'
+                ? ('pi' as const)
+                : session.agentKind === 'omp'
+                  ? ('omp' as const)
+                  : ('claude-code' as const),
             workingDir: session.workingDir,
             model: session.model,
             orcaRole: session.orcaRole ?? null,
@@ -3941,7 +3950,9 @@ export function CCAgentSessionView({
         requestId,
         sessionId,
         agentKind:
-          session?.agentKind === 'codex' || session?.agentKind === 'pi'
+          session?.agentKind === 'codex' ||
+          session?.agentKind === 'pi' ||
+          session?.agentKind === 'omp'
             ? session.agentKind
             : 'claude-code',
         resetAtMs: usageLimitRecovery.resetAtMs,
@@ -4021,13 +4032,14 @@ export function CCAgentSessionView({
       hasSwitchIntent: agentSwitchIntent != null,
       isRemote: Boolean(isRemoteSession || remoteDeviceId || getSessionDeviceId(sessionId)),
     })) return;
-    // 用三值化后的 agent 映射选默认模型:Pi 会话必须回退到 Pi 目录默认,而不是被
-    // `isCodex ? 'codex' : 'cc'` 误写成 CC 首选(可能是更贵的 Opus)(codex review)。
-    const defaultModel = getDefaultModelForVendor(
-      agent === 'pi' ? 'pi' : agent === 'codex' ? 'codex' : 'cc',
-    );
+    // Pi uses its own catalog seed. OMP can only be repaired from a connected
+    // provider route; never rewrite an invalid OMP row to a Claude model.
+    const defaultModelId = agent === 'omp'
+      ? pickFirstConnectedModelForAgent(providers, agent)?.model
+      : getDefaultModelForVendor(agent === 'pi' ? 'pi' : agent === 'codex' ? 'codex' : 'cc').id;
+    if (!defaultModelId) return;
     sessionService
-      .update(sessionId, { model: defaultModel.id })
+      .update(sessionId, { model: defaultModelId })
       .then(() => refreshServerSession())
       .catch((err) => log.warn('vendor fallback patch failed:', err));
   }, [
@@ -4516,7 +4528,7 @@ export function CCAgentSessionView({
         // 伙伴对话不是用户经营的任务:它拿的是「跟谁说话 + 进 TA 的设置」,
         // 不是重命名/置顶/归档/导出那一套任务菜单。
         botChatIdentity ? (
-          <BotSessionContentHeaderRegistration bot={botChatIdentity} sessionId={sessionId} />
+          <BotSessionContentHeaderRegistration bot={botChatIdentity} />
         ) : (
           <SessionContentHeaderRegistration
             session={session}
@@ -4836,7 +4848,7 @@ export function CCAgentSessionView({
                   }
                   className="mb-0"
                 />
-                {showExpandedControlledBanner && (
+                {showCenteredControlledBanner && (
                   <ControlledBanner
                     placement="composer"
                     maxWidth={controlledBannerMaxWidth}
@@ -6014,7 +6026,7 @@ function ContextCapacityRing({
         ? 'var(--warning-fg)'
         : 'var(--msg-tool-card-chevron)';
 
-  const usedTokens = Math.min(contextTokens, contextWindow || Infinity);
+  const usedTokens = Math.max(0, contextTokens);
   const tooltipText =
     contextWindow > 0
       ? `Context — ${formatTokenCount(usedTokens)} / ${formatTokenCount(contextWindow)} (${pct}%)`

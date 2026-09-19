@@ -71,6 +71,7 @@ function harness(options: {
   ompProviderId?: string;
   commandCatalog?: OmpCommandCatalog;
   vendorOptions?: Record<string, unknown>;
+  contextWindow?: number;
 } = {}): Harness {
   const transport = createFakeTransport();
   const vendorOptions = options.vendorOptions ?? {};
@@ -81,7 +82,10 @@ function harness(options: {
     () => undefined,
     () => undefined,
   );
-  const translator = new OmpTranslator({ logger: createConsoleLogger('omp-handle-test') });
+  const translator = new OmpTranslator({
+    logger: createConsoleLogger('omp-handle-test'),
+    ...(options.contextWindow === undefined ? {} : { contextWindow: options.contextWindow }),
+  });
   const bridge = new OmpPermissionBridge({
     logger: createConsoleLogger('omp-handle-test'),
     respond: (id, response, correlation) => client.respondToUi(id, response, correlation),
@@ -255,6 +259,32 @@ describe('OmpSessionHandle identity', () => {
     test.handle.adoptSessionFile('C:\\other\\later.jsonl');
     expect(test.handle.id).toBe('C:\\omp-home\\sessions\\abc.jsonl');
     expect(test.handle.agentKind).toBe('omp');
+  });
+});
+
+describe('OmpSessionHandle context usage', () => {
+  it('projects only the usage and effective window reported by the native runtime', async () => {
+    const test = harness({ contextWindow: 128_000 });
+    test.handle.dispatchFrame({
+      type: 'message_end',
+      message: {
+        id: 'usage-1',
+        role: 'assistant',
+        usage: { input: 1_000, output: 200, cacheRead: 50, cacheWrite: 25 },
+      },
+    });
+
+    await expect(test.handle.getContextUsage()).resolves.toMatchObject({
+      categories: [{ name: 'Messages', tokens: 1_075 }],
+      totalTokens: 1_075,
+      maxTokens: 128_000,
+      rawMaxTokens: 128_000,
+      model: 'MiniMax-M2',
+      memoryFiles: [],
+      mcpTools: [],
+      agents: [],
+      apiUsage: null,
+    });
   });
 });
 
@@ -454,7 +484,8 @@ describe('OmpSessionHandle event stream', () => {
     test.handle.dispatchFrame({ type: 'agent_start' });
     test.handle.dispatchFrame({ type: 'agent_end', isTerminal: true });
     await drain();
-    expect(seen.map((event) => event.type)).toEqual(['text', 'status', 'done']);
+    expect(seen.map((event) => event.type)).toEqual(['text', 'status', 'status', 'done']);
+    expect(seen[2]?.data).toMatchObject({ status: 'Done', isRunning: false });
     await test.handle.close({ reason: 'navigation' });
     await consuming;
   });

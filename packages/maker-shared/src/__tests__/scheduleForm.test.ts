@@ -259,6 +259,15 @@ describe('mobile schedule form model', () => {
     expect(withModel).toMatchObject({ agentKind: 'pi', model: 'my-local-model' });
   });
 
+  it('supports OMP automations with a host-resolved blank default model', () => {
+    const draft = updateDraftAgentKind(createMobileScheduleDraft(null), 'omp');
+    expect(draft.model).toBe('');
+    const input = buildMobileScheduleInput({ ...draft, name: 'OMP task', prompt: 'run', fastMode: true });
+    expect(input).toMatchObject({ agentKind: 'omp' });
+    expect(input).not.toHaveProperty('model');
+    expect(input).not.toHaveProperty('fastMode');
+  });
+
   it('keeps an explicit Pi provider route through edit, templates, and fresh-task serialization', () => {
     const existing = schedule({
       agentKind: 'pi',

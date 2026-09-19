@@ -14,6 +14,7 @@ import type {
   UsageSnapshot,
 } from '../../types/events.js';
 import type { ManualCompactResult } from '../../types/capabilities.js';
+import type { ContextUsageData } from '../../types/context-usage.js';
 import { createAsyncQueue, type AsyncQueue } from '../shared/async-queue.js';
 import type { OmpProcessHost } from './process-host.js';
 import { resolveOmpApprovalMode, type OmpApprovalMode } from './permission-map.js';
@@ -207,6 +208,34 @@ export class OmpSessionHandle implements AgentSessionHandle {
 
   getUsageSnapshot(): UsageSnapshot {
     return this.runtime.translator.getUsageSnapshot();
+  }
+
+  /**
+   * OMP exposes its effective window and accumulated native usage through the
+   * event translator, rather than a Claude-shaped detail RPC.  Project only
+   * those facts into the shared /context card; do not invent a tool, MCP, or
+   * system-prompt breakdown that OMP did not report.
+   */
+  async getContextUsage(): Promise<ContextUsageData> {
+    this.assertRuntimeAvailable();
+    const usage = this.getUsageSnapshot();
+    const totalTokens = usage.contextTokens;
+    const maxTokens = usage.contextWindow;
+    const percentage = maxTokens > 0 ? Math.min(100, (totalTokens / maxTokens) * 100) : 0;
+    return {
+      categories: [{ name: 'Messages', tokens: totalTokens, color: '#8b8b8b' }],
+      totalTokens,
+      maxTokens,
+      rawMaxTokens: maxTokens,
+      percentage,
+      gridRows: [],
+      model: this.mutableModel,
+      memoryFiles: [],
+      mcpTools: [],
+      agents: [],
+      isAutoCompactEnabled: true,
+      apiUsage: null,
+    };
   }
 
   /**

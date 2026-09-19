@@ -239,6 +239,11 @@ describe('sessionListPreviewPatch', () => {
 });
 
 describe('turn-done list preview refresh', () => {
+  it('keeps OMP as the session-owned one-shot fallback engine', () => {
+    const summarySource = readFileSync(resolve(__dirname, '..', 'sessionTaskSummary.ts'), 'utf8');
+    expect(summarySource).toContain("session.agentKind === 'codex' || session.agentKind === 'pi' || session.agentKind === 'omp'");
+  });
+
   it('回合结束后先刷新列表预览,再按需生成置顶摘要', () => {
     const registerSource = readFileSync(
       resolve(__dirname, '..', 'maker-ipc', 'sessionEventTerminal.ts'),

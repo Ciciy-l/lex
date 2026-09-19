@@ -109,4 +109,22 @@ describe('get_chat_history role defaults', () => {
       rolesDefaulted: false,
     }));
   });
+
+  it('forwards the OMP agent filter through the same history path', async () => {
+    const getMessages = vi.fn(async () => ({
+      ok: true as const,
+      page: { items: [], nextCursor: null, hasMore: false },
+    }));
+    const history = {
+      listWorkdirs: vi.fn(),
+      listSessions: vi.fn(),
+      getMessages,
+      searchChatHistory: vi.fn(),
+    } satisfies XdtHelperHistoryDeps;
+    const registry = new XdtHelperToolRegistry();
+    registerGetChatHistoryTool(registry, { history });
+
+    await registry.call('get_chat_history', { session_ids: ['session-1'], agent_kind: 'omp' });
+    expect(getMessages).toHaveBeenCalledWith(expect.objectContaining({ agentKind: 'omp' }));
+  });
 });

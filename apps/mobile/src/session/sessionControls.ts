@@ -1,4 +1,5 @@
-import { isOpenAiSubscriptionProvider, type Provider } from '@cindy/model-providers';
+import { isOpenAiSubscriptionProvider } from '@cindy/model-providers/provider-identity';
+import type { Provider } from '@cindy/model-providers/types';
 export type OpenAiAccountProvider = Pick<Provider, 'id' | 'auth'>;
 export function isSessionOpenAiAccount(providerId: string | null | undefined, provider?: OpenAiAccountProvider): boolean {
   return providerId === 'openai' || (!!provider && provider.id === providerId && isOpenAiSubscriptionProvider(provider));
@@ -33,7 +34,7 @@ export function shouldFallbackToLegacyCodexUsage(error: unknown): boolean {
 
 export function buildContextUsageCreateOpts(session: RemoteSession): Record<string, unknown> {
   return {
-    agentKind: session.agentKind === 'codex' || session.agentKind === 'pi'
+    agentKind: session.agentKind === 'codex' || session.agentKind === 'pi' || session.agentKind === 'omp'
       ? session.agentKind
       : 'claude-code',
     workingDir: session.workingDir ?? '',

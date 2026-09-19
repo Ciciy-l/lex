@@ -22,7 +22,11 @@ import { commitContextRebuild, createMessage } from '../localDb/ipc/messages.js'
 import { getMaker } from '../maker-host/index.js';
 import { inferProviderIdForModel } from '../maker-host/provider-route.js';
 import { createBusinessSessionId } from '../sessionIds.js';
-import { dbToMakerAgentKind, normalizeDbAgentKind } from '../../shared/agentKindConversion.js';
+import {
+  dbToMakerAgentKind,
+  normalizeDbAgentKind,
+  type DbAgentKind,
+} from '../../shared/agentKindConversion.js';
 import type { AgentMeta, Session } from '../../renderer/lib/ccAgent.types';
 import { buildHandoffText, type HandoffSourceMessage } from '../maker-ipc/agentHandoff.js';
 import {
@@ -65,18 +69,14 @@ function normalizePositiveInt(value: unknown): number {
 
 const messageRowid = sql<number>`rowid`;
 
-type DbAgentKind = 'cc' | 'codex' | 'pi';
-
 /**
- * OMP has no native fork implementation yet. Keep this boundary fail-closed
- * instead of treating its RPC session like a Claude transcript.
+ * Normalize the persisted engine name before locating the relevant history
+ * segment. OMP is valid at this stage because a later context-rebuild marker
+ * can safely create a fresh OMP child with a host-generated handoff. Native
+ * OMP transcript forking remains explicitly unsupported below.
  */
 function normalizeForkAgentKind(value: string | null | undefined): DbAgentKind {
-  const kind = normalizeDbAgentKind(value);
-  if (kind === 'omp') {
-    throw forkError('UNSUPPORTED_HISTORY', 'OMP sessions do not support fork');
-  }
-  return kind;
+  return normalizeDbAgentKind(value);
 }
 
 interface MessagePosition {
@@ -188,7 +188,13 @@ async function seedForkHandoffAfterSameEngineRebuild(opts: {
     }));
   const lastUser = [...opts.rows].reverse().find((row) => row.role === 'user');
   const label =
-    opts.agentKind === 'codex' ? 'Codex' : opts.agentKind === 'pi' ? 'Pi' : 'Claude Code';
+    opts.agentKind === 'codex'
+      ? 'Codex'
+      : opts.agentKind === 'pi'
+        ? 'Pi'
+        : opts.agentKind === 'omp'
+          ? 'OMP'
+          : 'Claude Code';
   const handoff = buildHandoffText(handoffMessages, {
     fromLabel: label,
     toLabel: label,
@@ -238,7 +244,8 @@ function parseContextRebuildBoundary(content: string): ParsedContextRebuildBound
       reason: parsed.reason,
       ...(parsed.sourceAgentKind === 'cc' ||
       parsed.sourceAgentKind === 'codex' ||
-      parsed.sourceAgentKind === 'pi'
+      parsed.sourceAgentKind === 'pi' ||
+      parsed.sourceAgentKind === 'omp'
         ? { sourceAgentKind: parsed.sourceAgentKind }
         : {}),
       ...(typeof parsed.sourceModel === 'string' ? { sourceModel: parsed.sourceModel } : {}),
@@ -266,11 +273,15 @@ function parseAgentSwitchBoundary(content: string): ParsedAgentSwitchBoundary | 
     if (
       parsed.fromAgentKind !== 'cc' &&
       parsed.fromAgentKind !== 'codex' &&
-      parsed.fromAgentKind !== 'pi'
+      parsed.fromAgentKind !== 'pi' &&
+      parsed.fromAgentKind !== 'omp'
     )
       return null;
     const toAgentKind =
-      parsed.toAgentKind === 'cc' || parsed.toAgentKind === 'codex' || parsed.toAgentKind === 'pi'
+      parsed.toAgentKind === 'cc' ||
+      parsed.toAgentKind === 'codex' ||
+      parsed.toAgentKind === 'pi' ||
+      parsed.toAgentKind === 'omp'
         ? parsed.toAgentKind
         : undefined;
     return {
@@ -400,6 +411,9 @@ async function resolveForkNativeSource(
       ))
   ) {
     const parsed = parseAgentSwitchBoundary(nextSwitch.content);
+    if (parsed?.fromAgentKind === 'omp') {
+      throw forkError('UNSUPPORTED_HISTORY', 'OMP sessions do not support native transcript fork');
+    }
     if (!parsed?.fromSdkSessionId) {
       throw forkError('UNSUPPORTED_HISTORY', '目标消息对应的历史引擎会话不可用');
     }
@@ -472,6 +486,9 @@ async function resolveForkNativeSource(
       reuseVendorSession: false,
       rebuildReason,
     };
+  }
+  if (sourceAgentKind === 'omp') {
+    throw forkError('UNSUPPORTED_HISTORY', 'OMP sessions do not support native transcript fork');
   }
   if (!source.sdkSessionId) {
     throw forkError('SOURCE_NEVER_RAN', '原会话尚未运行，无法 fork');
@@ -855,6 +872,7 @@ export async function forkSessionAtMessage(
   // Codex: 从当前时间线倒扫 agent_switch，把 copy boundary 之后、确实写入所选
   // 原生 thread 的 user turn 计为 rollback 数；其它引擎片段不能混算。
   const isCodex = forkSource.agentKind === 'codex';
+  const isClaude = forkSource.agentKind === 'cc';
   // pi 复用 codex 的粗粒度 tail-turn fork:countCodexTailTurns 只按 sdkSessionId
   // 数边界后的 user turn(引擎无关),pi 的 forkSdkSession 按 tailTurnsToDrop rewind
   // 到目标 user 消息。只有 Claude(cc)走 message-uuid 锚点路径。
@@ -869,7 +887,7 @@ export async function forkSessionAtMessage(
     target.role,
     forkSource.agentKind,
   );
-  if (!usesTailTurnFork && forkSource.sdkSessionId) {
+  if (isClaude && forkSource.sdkSessionId) {
     claudeAnchorIndex = await loadClaudeTranscriptAnchorIndex({
       sdkSessionId: forkSource.sdkSessionId,
       workingDir: source.workingDir,
@@ -950,6 +968,8 @@ export async function forkSessionAtMessage(
   }
   const forkContextTokens = normalizePositiveInt(initialContextTokens);
   const forkContextWindow = needsHistoryRecovery ? 0 : normalizePositiveInt(source.contextWindow);
+  const sameContextRoute = forkSource.agentKind === normalizeDbAgentKind(source.agentKind) &&
+    forkSource.model === source.model && forkSource.providerId === source.providerId;
 
   // 5. SQLite 事务：insert 新 session + bulk copy messages
   const now = Date.now();
@@ -959,17 +979,17 @@ export async function forkSessionAtMessage(
   const recoveryMarker = needsHistoryRecovery ? buildCodexForkRecoveryMarker({
     source: forkSource, rows: sourceMessages, newMessageIds, sessionId: newSessionId, now,
   }) : undefined;
-  // pi 与 codex 一样:uuidMap 空、无 Claude transcript 锚点,跳过 Claude 专用的
-  // synthetic uuid 补全 / parentUuid 采集(只有 Claude cc 需要)。
-  const txUuidMap = usesTailTurnFork
-    ? uuidMap
-    : augmentClaudeForkUuidMapForSyntheticRows(sourceMessages, uuidMap, claudeAnchorIndex);
-  const legacyTranscriptParentUuids = usesTailTurnFork
-    ? []
-    : collectLegacyClaudeTranscriptParentUuids(sourceMessages, claudeAnchorIndex);
-  const toolParentUuids = usesTailTurnFork
-    ? []
-    : collectClaudeToolParentUuids(sourceMessages, claudeAnchorIndex);
+  // Only Claude owns transcript UUIDs. Codex, Pi, and a fresh OMP handoff copy
+  // visible history without applying Claude-specific metadata rewrites.
+  const txUuidMap = isClaude
+    ? augmentClaudeForkUuidMapForSyntheticRows(sourceMessages, uuidMap, claudeAnchorIndex)
+    : uuidMap;
+  const legacyTranscriptParentUuids = isClaude
+    ? collectLegacyClaudeTranscriptParentUuids(sourceMessages, claudeAnchorIndex)
+    : [];
+  const toolParentUuids = isClaude
+    ? collectClaudeToolParentUuids(sourceMessages, claudeAnchorIndex)
+    : [];
   try {
     await getDbClient().tx('fork.session', {
       sourceSessionId,
@@ -992,6 +1012,8 @@ export async function forkSessionAtMessage(
         totalCostUsd: 0,
         contextTokens: forkContextTokens,
         contextWindow: forkContextWindow,
+        contextWindowRuntime: sameContextRoute && forkContextWindow > 0 && source.contextWindowRuntime === forkContextWindow
+          ? forkContextWindow : null,
         fastMode: forkSource.agentKind === source.agentKind ? source.fastMode : false,
         clearedAt: null,
         pinnedAt: null,

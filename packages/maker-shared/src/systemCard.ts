@@ -110,7 +110,14 @@ export function buildSystemCardData(
     return { workingDir: session?.workingDir ?? '' };
   }
   return {
-    agent: session?.agentKind === 'codex' ? 'Codex' : session?.agentKind === 'pi' ? 'Pi' : 'Claude Code',
+    agent:
+      session?.agentKind === 'codex'
+        ? 'Codex'
+        : session?.agentKind === 'pi'
+          ? 'Pi'
+          : session?.agentKind === 'omp'
+            ? 'OMP'
+            : 'Claude Code',
     fastMode: session?.fastMode === true,
     model: session?.model ?? '',
     permissionMode: session?.permissionMode ?? '',

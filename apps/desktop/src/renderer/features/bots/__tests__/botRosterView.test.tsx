@@ -153,14 +153,14 @@ describe('BotRosterView — 唯一的伙伴创建界面', () => {
     expect(mocks.navigate).not.toHaveBeenCalled();
   });
 
-  it('shows three professional presets plus custom and the shared basic profile fields', () => {
+  it('shows the Cindy preset plus custom and the shared basic profile fields', () => {
     render(<BotRosterView />);
 
     expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('cindy');
-    for (const id of ['cindy', 'dash', 'lizi', 'custom']) {
+    for (const id of ['cindy', 'custom']) {
       expect(screen.getByText(`bots.createWizard.templates.${id}.title`)).toBeTruthy();
     }
-    expect(screen.getAllByRole('option')).toHaveLength(4);
+    expect(screen.getAllByRole('option')).toHaveLength(2);
     expect(screen.getByRole('dialog')).toBeTruthy();
     expect(screen.getByLabelText('bots.nameLabel')).toBeTruthy();
     expect(screen.getByLabelText('bots.profile.summary')).toBeTruthy();
@@ -180,15 +180,16 @@ describe('BotRosterView — 唯一的伙伴创建界面', () => {
     ).toBe(true);
   });
 
-  it('uses a template as a draft in the same fields', () => {
+  it('restores the Cindy template as a draft in the same fields', () => {
     render(<BotRosterView />);
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'dash' } });
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'custom' } });
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'cindy' } });
 
     expect((screen.getByLabelText('bots.nameLabel') as HTMLInputElement).value).toBe(
-      'bots.createWizard.templates.dash.defaultName',
+      'bots.createWizard.templates.cindy.defaultName',
     );
     expect((screen.getByLabelText('bots.profile.summary') as HTMLInputElement).value).toBe(
-      'bots.createWizard.templates.dash.defaultDescription',
+      'bots.createWizard.templates.cindy.defaultDescription',
     );
   });
 
@@ -265,7 +266,7 @@ describe('BotRosterView — 唯一的伙伴创建界面', () => {
     fireEvent.change(document.querySelector('input[type=file]')!, { target: { files: [image] } });
     await waitFor(() => expect(document.querySelector('img[src^="data:image/png"]')).toBeTruthy());
     expect(mocks.addBotProfileAndWait).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'dash' } });
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'cindy' } });
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'custom' } });
     expect((screen.getByLabelText('bots.nameLabel') as HTMLInputElement).value).toBe('Mika');
     expect(document.querySelector('img[src^="data:image/png"]')).toBeTruthy();

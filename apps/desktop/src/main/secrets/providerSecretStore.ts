@@ -585,31 +585,47 @@ export function writeRemoteMcpBridgeToken(value: string): boolean {
   }
 }
 
-/** Read the host-only HMAC key used to derive remote Pi proxy session tokens. */
-export function readPiProxyDerivationKey(): string | null {
+/**
+ * Read the host-only HMAC key used to derive remote agent-proxy session tokens.
+ *
+ * The storage-key spelling is deliberately retained for existing Pi installations:
+ * it is an owner-scoped secret, not a Pi-owned runtime file. Pi and OMP derive
+ * separate domain-bound bearer tokens from this same key.
+ */
+export function readAgentProxyDerivationKey(): string | null {
   try {
     return electronSecretIo.read(PI_PROXY_DERIVATION_KEY_STORAGE_KEY);
   } catch (err) {
     log.warn(
       { err: err instanceof Error ? err.message : String(err) },
-      'read pi proxy derivation key failed',
+      'read agent proxy derivation key failed',
     );
     return null;
   }
 }
 
-/** Persist the host-only remote Pi proxy derivation key on first use. */
-export function writePiProxyDerivationKey(value: string): boolean {
+/** Persist the host-only remote agent-proxy derivation key on first use. */
+export function writeAgentProxyDerivationKey(value: string): boolean {
   try {
     return electronSecretIo.write(PI_PROXY_DERIVATION_KEY_STORAGE_KEY, value);
   } catch (err) {
     log.warn(
       { err: err instanceof Error ? err.message : String(err) },
-      'write pi proxy derivation key failed',
+      'write agent proxy derivation key failed',
     );
     return false;
   }
 }
+
+/**
+ * @deprecated Use `readAgentProxyDerivationKey`. Kept for third-party Desktop
+ * extensions compiled against the old helper; both names use the same persisted
+ * owner-scoped key.
+ */
+export const readPiProxyDerivationKey = readAgentProxyDerivationKey;
+
+/** @deprecated Use `writeAgentProxyDerivationKey`; see the read alias above. */
+export const writePiProxyDerivationKey = writeAgentProxyDerivationKey;
 
 /** 删除某自定义供应商 runtime 的 API key；不存在视为成功。 */
 export function removeCustomProviderKey(

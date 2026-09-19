@@ -201,6 +201,9 @@ export function looksLikeZip(payload: Buffer): boolean {
 
 export type XdtshareFidelity = 'full' | 'partial' | 'db-only';
 
+/** Engine identity persisted in a portable session-share bundle. */
+export type XdtshareAgentKind = 'cc' | 'codex' | 'pi' | 'omp';
+
 export interface XdtshareManifestEntry {
   path: string;
   bytes: number;
@@ -217,7 +220,7 @@ export interface XdtshareTranscriptRef {
 export interface XdtshareOrcaWorkerManifest {
   /** zip 前缀序号(orca/workers/<index>/session.json 等)。 */
   index: number;
-  agentKind: 'cc' | 'codex' | 'pi';
+  agentKind: XdtshareAgentKind;
   title: string;
   role: string;
   label: string | null;
@@ -242,7 +245,7 @@ export interface XdtshareManifest {
   appVersion: string;
   platform: string;
   exportedAt: string;
-  agentKind: 'cc' | 'codex' | 'pi';
+  agentKind: XdtshareAgentKind;
   title: string;
   workspaceKind: 'project' | 'dialogue';
   originalWorkingDir: string | null;
@@ -259,7 +262,7 @@ export interface XdtshareManifest {
 }
 
 const FIDELITIES: ReadonlySet<string> = new Set(['full', 'partial', 'db-only']);
-const AGENT_KINDS: ReadonlySet<string> = new Set(['cc', 'codex', 'pi']);
+const AGENT_KINDS: ReadonlySet<string> = new Set(['cc', 'codex', 'pi', 'omp']);
 const WORKSPACE_KINDS: ReadonlySet<string> = new Set(['project', 'dialogue']);
 const ORCA_TEAM_STATUSES: ReadonlySet<string> = new Set([
   'active',
@@ -303,13 +306,13 @@ export function validateManifest(value: unknown): XdtshareManifest {
   const transcripts = validateTranscriptRefs(value.transcripts, 'transcripts');
   const orca = value.orca == null ? undefined : validateOrcaSection(value.orca);
 
-  return {
+  const manifest: XdtshareManifest = {
     formatVersion,
     minReaderVersion,
     appVersion: expectString(value.appVersion, 'appVersion'),
     platform: expectString(value.platform, 'platform'),
     exportedAt: expectString(value.exportedAt, 'exportedAt'),
-    agentKind: agentKind as 'cc' | 'codex' | 'pi',
+    agentKind: agentKind as XdtshareAgentKind,
     title: expectString(value.title, 'title'),
     workspaceKind: workspaceKind as 'project' | 'dialogue',
     originalWorkingDir:
@@ -332,6 +335,8 @@ export function validateManifest(value: unknown): XdtshareManifest {
     transcripts,
     ...(orca ? { orca } : {}),
   };
+  validateOmpShareContract(manifest);
+  return manifest;
 }
 
 function validateTranscriptRefs(value: unknown, label: string): XdtshareTranscriptRef[] {
@@ -361,7 +366,7 @@ function validateOrcaSection(value: unknown): XdtshareOrcaManifest {
     const counts = isRecord(raw.counts) ? raw.counts : {};
     return {
       index: expectNonNegativeInt(raw.index, `orca.workers[${i}].index`),
-      agentKind: agentKind as 'cc' | 'codex' | 'pi',
+      agentKind: agentKind as XdtshareAgentKind,
       title: expectString(raw.title, `orca.workers[${i}].title`),
       role: expectString(raw.role, `orca.workers[${i}].role`),
       label: raw.label == null ? null : expectString(raw.label, `orca.workers[${i}].label`),
@@ -381,6 +386,48 @@ function validateOrcaSection(value: unknown): XdtshareOrcaManifest {
     };
   });
   return { teamStatus: teamStatus as XdtshareOrcaManifest['teamStatus'], workers };
+}
+
+/**
+ * OMP's SDK identity is an absolute session-file path, not a portable opaque
+ * identifier.  A share bundle must therefore be DB-only for each OMP member:
+ * no native resume id, no transcript reference, and no claim of full native
+ * fidelity for a team that contains OMP.
+ */
+function validateOmpShareContract(manifest: XdtshareManifest): void {
+  const members = [
+    {
+      label: 'session',
+      agentKind: manifest.agentKind,
+      sdkSessionIds: manifest.sdkSessionIds,
+      activeSdkSessionId: manifest.activeSdkSessionId,
+      transcripts: manifest.transcripts,
+    },
+    ...(manifest.orca?.workers.map((worker, index) => ({
+      label: `orca.workers[${index}]`,
+      agentKind: worker.agentKind,
+      sdkSessionIds: worker.sdkSessionIds,
+      activeSdkSessionId: worker.activeSdkSessionId,
+      transcripts: worker.transcripts,
+    })) ?? []),
+  ];
+  const hasOmp = members.some((member) => member.agentKind === 'omp');
+  for (const member of members) {
+    if (member.agentKind !== 'omp') continue;
+    if (
+      member.sdkSessionIds.length > 0 ||
+      member.activeSdkSessionId !== null ||
+      member.transcripts.length > 0
+    ) {
+      throw invalid(`${member.label} OMP data must not carry native session resume data`);
+    }
+  }
+  if (hasOmp && manifest.exportFidelity === 'full') {
+    throw invalid('a bundle containing OMP cannot claim full native fidelity');
+  }
+  if (manifest.agentKind === 'omp' && !manifest.orca && manifest.exportFidelity !== 'db-only') {
+    throw invalid('a standalone OMP bundle must use db-only fidelity');
+  }
 }
 
 function invalid(message: string): XdtshareError {

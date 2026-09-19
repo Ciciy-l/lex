@@ -69,6 +69,7 @@ import {
   XdtshareError,
   validateManifest,
   type XdtshareFidelity,
+  type XdtshareAgentKind,
   type XdtshareManifest,
   type XdtshareOrcaWorkerManifest,
 } from './xdtshareFormat.pure.js';
@@ -102,7 +103,7 @@ function sweepExpiredDrafts(): void {
 
 export interface SharePreview {
   title: string;
-  agentKind: 'cc' | 'codex' | 'pi';
+  agentKind: XdtshareAgentKind;
   workspaceKind: 'project' | 'dialogue';
   originalWorkingDir: string | null;
   exportedAt: string;
@@ -307,6 +308,37 @@ interface WorkerImportPlan {
   activeSdkSessionId: string | null;
 }
 
+function hasUsableOmpDraftModel(draftPrefs: ShareImportDraftPrefs | null): boolean {
+  return typeof draftPrefs?.model === 'string' && draftPrefs.model.trim().length > 0;
+}
+
+/**
+ * OMP has no static model fallback: its model selection is a locally connected
+ * provider route. A mixed-engine bundle cannot safely infer an OMP Worker
+ * route from the lead's different-engine New Maker preferences.
+ */
+function assertOmpImportModelRequirements(
+  manifest: XdtshareManifest,
+  workerPlans: ReadonlyArray<WorkerImportPlan>,
+  draftPrefs: ShareImportDraftPrefs | null,
+): void {
+  if (manifest.agentKind === 'omp' && !hasUsableOmpDraftModel(draftPrefs)) {
+    throw codedError(
+      'PRECONDITION_FAILED',
+      'an OMP shared session requires a locally selected OMP model',
+    );
+  }
+  if (
+    manifest.agentKind !== 'omp' &&
+    workerPlans.some((plan) => plan.manifest.agentKind === 'omp')
+  ) {
+    throw codedError(
+      'PRECONDITION_FAILED',
+      'an OMP Worker requires an OMP lead bundle until per-engine import preferences are available',
+    );
+  }
+}
+
 /**
  * 覆盖事务提交后的旧会话媒体账本收尾。只删旧 session 名下的引用行；共享 blob
  * 字节不直接删除，引用归零后由 recycler 统一回收。失败不反转已经提交的新会话图，
@@ -380,6 +412,8 @@ export async function commitShareImport(
   }
 
   // ── 前置校验 ──
+  const draftPrefs = opts.draftPrefs ?? null;
+  assertOmpImportModelRequirements(manifest, workerPlans, draftPrefs);
   const now = Date.now();
   const newId = randomUUID();
   let workingDir: string;
@@ -462,10 +496,12 @@ export async function commitShareImport(
     if (plan.manifest.agentKind === 'pi') registerPiTargets(plan.bundledTranscripts ?? []);
   }
   const resolveActiveSdkSessionId = (
-    agentKind: 'cc' | 'codex' | 'pi',
+    agentKind: XdtshareAgentKind,
     portableId: string | null,
   ): string | null =>
-    agentKind === 'pi'
+    agentKind === 'omp'
+      ? null
+      : agentKind === 'pi'
       ? portableId
         ? (piTranscriptTargets.get(portableId) ?? null)
         : null
@@ -707,7 +743,7 @@ export async function commitShareImport(
 
     // 会话级还原描述:lead + 全部 Worker 走同一套转录/rollout 落位流程。
     const restorePlans: Array<{
-      agentKind: 'cc' | 'codex' | 'pi';
+      agentKind: XdtshareAgentKind;
       prefix: string;
       title: string;
       bundled: BundledTranscript[];
@@ -829,7 +865,7 @@ export async function commitShareImport(
     const rewriteRules = urlMap.size > 0 ? { urlMap } : {};
     const toDbMessages = (
       rows: BundleMessageRow[],
-      agentKind: 'cc' | 'codex' | 'pi',
+      agentKind: XdtshareAgentKind,
     ): SessionImportShareMessageRow[] =>
       rows.map((m) => ({
         id: randomUUID(),
@@ -840,13 +876,14 @@ export async function commitShareImport(
         agentMeta:
           agentKind === 'pi'
             ? rewritePiAgentMetaForImport(m.agentMeta, piTranscriptTargets)
+            : agentKind === 'omp'
+              ? rewriteOmpAgentMetaForImport(m.agentMeta)
             : m.agentMeta,
         agentKind: m.agentKind,
         createdAt: m.createdAt,
         rewindAt: m.rewindAt,
       }));
     const dbMessages = toDbMessages(messages, manifest.agentKind);
-    const draftPrefs = opts.draftPrefs ?? null;
     const teamId = randomUUID();
     // 恶意/损坏包可能带多个 focused=true(源库有 partial unique 保证唯一);
     // 归一为只保留第一个,避免整包因索引冲突白白失败。
@@ -889,7 +926,8 @@ export async function commitShareImport(
                 orcaRole: 'worker' as const,
                 snapshot: plan.snapshot,
                 draftPrefs,
-                // 导入端草稿偏好按 vendor 存,跨 vendor 的 Worker 用内置兜底模型。
+                // 导入端草稿偏好按 vendor 存。OMP 同引擎 Lead/Worker
+                // 共享动态模型；跨引擎 OMP Worker 已在前置校验 fail closed。
                 applyDraftPrefs: plan.manifest.agentKind === manifest.agentKind,
                 // 与 OrcaWorkerCreationService 同口径:Worker 固定 auto,不继承。
                 permissionModeOverride: 'auto',
@@ -1112,6 +1150,44 @@ function rewritePiAgentMetaForImport(
 }
 
 /**
+ * OMP's SDK identity is a local session-file path. Older or forged bundles
+ * can retain it in nested display metadata even though the manifest contract
+ * forbids native resume data, so remove every occurrence during import too.
+ */
+function rewriteOmpAgentMetaForImport(agentMeta: string | null): string | null {
+  if (!agentMeta) return agentMeta;
+  try {
+    const parsed = JSON.parse(agentMeta) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    stripSdkSessionIds(parsed as Record<string, unknown>);
+    return JSON.stringify(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function stripSdkSessionIds(value: Record<string, unknown> | unknown[]): void {
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      if (!child || typeof child !== 'object') continue;
+      stripSdkSessionIds(
+        Array.isArray(child) ? child : child as Record<string, unknown>,
+      );
+    }
+    return;
+  }
+  for (const [key, child] of Object.entries(value)) {
+    if (key === 'sdkSessionId') {
+      delete value[key];
+      continue;
+    }
+    if (child && typeof child === 'object') {
+      stripSdkSessionIds(Array.isArray(child) ? child : child as Record<string, unknown>);
+    }
+  }
+}
+
+/**
  * 还原一个媒体文件到 B 机对应位置。
  * - session 图片(老包里的 xdt-image per-session 地址)→ **入媒体总仓**(导入
  *   是新写入,不再往 cc-agent/images 添字节),URL 重写为
@@ -1303,15 +1379,16 @@ const FALLBACK_MODEL_BY_AGENT: Record<'cc' | 'codex' | 'pi', string> = {
  * - 会话配置(model/effort/permissionMode/planMode/fastMode/providerId)→ 导入端
  *   draftPrefs(白名单校验,非法/缺省落内置兜底),**不读** snapshot——导出方的
  *   模型/供应商在导入端不一定存在,照搬会产出本机不可用的脏 model(选择器显示
- *   不出、发消息才暴露)。draftPrefs 按包顶层 vendor 采集,跨 vendor 的 Worker
- *   经 applyDraftPrefs=false 落内置兜底;Worker 的 permissionMode 固定 auto
- *   (与 OrcaWorkerCreationService 同口径)。
+ *   不出、发消息才暴露)。OMP 没有静态兜底，必须使用非空的本机动态模型；
+ *   OMP 同引擎 Worker 复用 top-level OMP 草稿，跨引擎 OMP Worker 在写入前拒绝。
+ *   其它跨 vendor Worker 经 applyDraftPrefs=false 落内置兜底；Worker 的
+ *   permissionMode 固定 auto(与 OrcaWorkerCreationService 同口径)。
  * - 历史事实(token 统计 / contextTokens / clearedAt / 时间戳等)→ snapshot 照搬。
  *   contextWindow 也照搬:仅是展示缓存,renderer 按 session.model 重新计算。
  */
 function buildSessionRow(params: {
   newId: string;
-  agentKind: 'cc' | 'codex' | 'pi';
+  agentKind: XdtshareAgentKind;
   title: string;
   workspaceKind: string;
   orcaRole: 'lead' | 'worker' | null;
@@ -1338,6 +1415,17 @@ function buildSessionRow(params: {
   } = params;
   const draftPrefs = params.applyDraftPrefs ? params.draftPrefs : null;
   const str = (v: unknown, fallback: string): string => (typeof v === 'string' && v ? v : fallback);
+  const model =
+    agentKind === 'omp'
+      ? typeof draftPrefs?.model === 'string' && draftPrefs.model.trim().length > 0
+        ? draftPrefs.model.trim()
+        : (() => {
+            throw codedError(
+              'PRECONDITION_FAILED',
+              'an OMP shared session requires a locally selected OMP model',
+            );
+          })()
+      : str(draftPrefs?.model, FALLBACK_MODEL_BY_AGENT[agentKind]);
   const num = (v: unknown, fallback: number): number =>
     typeof v === 'number' && Number.isFinite(v) ? v : fallback;
   const effort = str(draftPrefs?.effort, 'high');
@@ -1348,7 +1436,7 @@ function buildSessionRow(params: {
     workingDir,
     workspaceKind,
     worktreePath,
-    model: str(draftPrefs?.model, FALLBACK_MODEL_BY_AGENT[agentKind]),
+    model,
     effort: EFFORTS.has(effort) ? effort : 'high',
     permissionMode: PERMISSION_MODES.has(permissionMode) ? permissionMode : 'auto',
     providerId:
@@ -1356,12 +1444,12 @@ function buildSessionRow(params: {
         ? draftPrefs.providerId
         : null,
     status: 'active',
-    sdkSessionId: activeSdkSessionId,
+    sdkSessionId: agentKind === 'omp' ? null : activeSdkSessionId,
     totalTokenUsage: num(snapshot.totalTokenUsage, 0),
     totalCostUsd: num(snapshot.totalCostUsd, 0),
     contextTokens: num(snapshot.contextTokens, 0),
     contextWindow: num(snapshot.contextWindow, 0),
-    fastMode: draftPrefs?.fastMode === true,
+    fastMode: agentKind === 'omp' ? false : draftPrefs?.fastMode === true,
     planModeEnabled: draftPrefs?.planMode === true,
     agentKind,
     orcaRole,

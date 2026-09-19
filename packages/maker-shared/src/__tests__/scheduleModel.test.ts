@@ -145,6 +145,10 @@ describe('schedule model', () => {
     });
   });
 
+  it('keeps OMP visible as its own scheduled agent brand', () => {
+    expect(summarizeSchedule(schedule({ agentKind: 'omp' }), [], NOW).detail).toContain('OMP');
+  });
+
   it('summarizes automation overview counts for the mobile dashboard', () => {
     expect(summarizeAutomationOverview([
       schedule({ id: 'active-1', status: 'active' }),

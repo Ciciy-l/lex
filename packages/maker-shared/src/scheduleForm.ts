@@ -458,8 +458,8 @@ export function buildMobileScheduleInput(draft: MobileScheduleDraft): RemoteSche
   if (model) input.model = model;
   const effort = draft.effort.trim();
   if (isMobileScheduleEffort(effort)) input.effort = effort;
-  // Fast 对 Codex 与 Pi 都生效(runner 对 claude-code 忽略此字段,并按模型 supportsFastMode
-  // 收口);只序列化 codex 会让 Pi 任务里开的 Fast 被静默丢弃。
+  // Fast 对 Codex 与 Pi 都生效(runner 对 Claude Code / OMP 忽略此字段,并按模型
+  // supportsFastMode 收口);只序列化 codex 会让 Pi 任务里开的 Fast 被静默丢弃。
   if (draft.agentKind === 'codex' || draft.agentKind === 'pi') input.fastMode = draft.fastMode;
   return input;
 }
@@ -675,9 +675,9 @@ function hasTemplateParam(params: Record<string, string>, key: string): boolean 
 
 function defaultModelFor(agentKind: RemoteScheduleAgentKind): string {
   if (agentKind === 'codex') return DEFAULT_CODEX_MODEL;
-  // Pi 模型来自动态 BYOM 供应商目录,没有固定默认 id;留空 → 序列化时省略 → host 解析
-  // 该 Pi agent 的当前默认模型(用户仍可在自由文本模型框里显式指定)。
-  if (agentKind === 'pi') return '';
+  // Pi / OMP 模型来自动态供应商目录,没有固定默认 id;留空 → 序列化时省略 → host 解析
+  // 当前已连接来源的模型(用户仍可在自由文本模型框里显式指定)。
+  if (agentKind === 'pi' || agentKind === 'omp') return '';
   return DEFAULT_CLAUDE_MODEL;
 }
 
