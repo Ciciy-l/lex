@@ -82,6 +82,19 @@ export interface PiManifest {
   size: number;
 }
 
+/**
+ * OMP is a pinned single-file upstream runtime.  Its `file` may be the
+ * audited GitHub Release URL directly rather than a Cindy CDN-relative path;
+ * the generic resolver accepts both forms and always verifies this digest
+ * before publishing an executable path.
+ */
+export interface OmpManifest {
+  version: string;
+  file: string;
+  sha256: string;
+  size: number;
+}
+
 export interface Manifest {
   app: AppManifest;
   /**
@@ -93,6 +106,7 @@ export interface Manifest {
   codexPackage?: CodexManifest;
   ripgrep?: RipgrepManifest;
   pi?: PiManifest;
+  omp?: OmpManifest;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────

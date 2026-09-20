@@ -63,8 +63,8 @@ import {
 function splashTitleFor(
   phase: SplashPhase,
   t: (key: string) => string,
-  step?: 1 | 2 | 3,
-  totalSteps?: 2 | 3,
+  step?: 1 | 2 | 3 | 4,
+  totalSteps?: 2 | 3 | 4,
 ): string | null {
   switch (phase) {
     case 'splash_checking_update':

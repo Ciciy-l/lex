@@ -3,6 +3,39 @@ import { describe, expect, it, vi } from 'vitest';
 import { createPiRuntimeRecovery } from '../pi-runtime-recovery.js';
 
 describe('Pi runtime recovery', () => {
+  it('starts an optional runtime in the background without a prior failed prepare', async () => {
+    let online = false;
+    const prepare = vi.fn(async () => ({ ready: true, path: '/tmp/omp' }));
+    const register = vi.fn(() => true);
+    const onRegistered = vi.fn();
+    const schedule = vi.fn(() => 0);
+    const recovery = createPiRuntimeRecovery({
+      runtimeName: 'OMP',
+      isOnline: () => online,
+      prepare,
+      register,
+      onRegistered,
+      retryDelayMs: 60_000,
+      setTimeout: schedule as unknown as typeof setTimeout,
+      clearTimeout: (() => undefined) as unknown as typeof clearTimeout,
+    });
+
+    // Offline startup schedules recovery but does not touch the downloader.
+    expect(await recovery.start('startup-after-maker-ipcs')).toBe(false);
+    expect(prepare).not.toHaveBeenCalled();
+    expect(schedule).toHaveBeenCalledOnce();
+
+    online = true;
+    expect(await recovery.start('manual-retry')).toBe(true);
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(register).toHaveBeenCalledOnce();
+    expect(onRegistered).toHaveBeenCalledOnce();
+    // A runtime which is already registered is not prepared a second time.
+    expect(await recovery.start('duplicate')).toBe(false);
+    expect(prepare).toHaveBeenCalledOnce();
+    recovery.dispose();
+  });
+
   it('retries after the network returns and registers Pi once', async () => {
     let online = false;
     let prepareCalls = 0;

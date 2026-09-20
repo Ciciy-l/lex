@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   download: vi.fn(),
   execFile: vi.fn(),
   systemCommands: new Map<string, string>(),
+  ompVerified: true,
 }));
 
 vi.mock('electron', () => ({
@@ -51,6 +52,25 @@ vi.mock('../../downloader/index.js', () => ({
 }));
 vi.mock('../../logger', () => ({ createLogger: () => ({ warn: vi.fn(), info: vi.fn() }) }));
 vi.mock('../dev-fallback.js', () => ({ findDevBinary: () => null }));
+vi.mock('../../maker-host/omp-runtime-verifier.js', () => ({
+  getPinnedOmpRuntimeAsset: (platformKey: string) => {
+    const suffix = platformKey === 'win32-x64'
+      ? 'omp-windows-x64.exe'
+      : platformKey === 'linux-x64'
+        ? 'omp-linux-x64'
+        : platformKey === 'darwin-x64'
+          ? 'omp-darwin-x64'
+          : 'omp-darwin-arm64';
+    return {
+      platformKey,
+      binaryName: platformKey.startsWith('win32') ? 'omp.exe' : 'omp',
+      url: `https://github.com/can1357/oh-my-pi/releases/download/v18.1.18/${suffix}`,
+      sha256: 'b'.repeat(64),
+      size: 7,
+    };
+  },
+  verifyOmpRuntimeFile: () => mocks.ompVerified,
+}));
 
 const originalPlatform = process.platform;
 const quiet = { broadcastProgress: false, broadcastFailure: false };
@@ -91,6 +111,18 @@ function releaseManifest(version = '2.0.0'): Manifest {
     claudeCode: asset('claude'),
     codexPackage: asset('codex'),
     pi: asset('pi'),
+    omp: {
+      version: '18.1.18',
+      file: `https://github.com/can1357/oh-my-pi/releases/download/v18.1.18/${
+        process.platform === 'win32'
+          ? 'omp-windows-x64.exe'
+          : process.platform === 'linux'
+            ? 'omp-linux-x64'
+            : 'omp-darwin-arm64'
+      }`,
+      sha256: 'b'.repeat(64),
+      size: 7,
+    },
   } as unknown as Manifest;
 }
 
@@ -107,6 +139,7 @@ beforeEach(async () => {
   mocks.userDataDir = path.join(tempRoot, 'user-data');
   mocks.isPackaged = true;
   mocks.systemCommands.clear();
+  mocks.ompVerified = true;
   mocks.runtimeManifest = releaseManifest();
   mocks.fetchManifest.mockReset();
   mocks.execFile
@@ -150,6 +183,8 @@ beforeEach(async () => {
         } finally {
           fs.rmSync(payload, { recursive: true, force: true });
         }
+      } else if (url.includes('oh-my-pi/releases/download')) {
+        fs.writeFileSync(targetPath, 'omp raw');
       } else {
         fs.writeFileSync(targetPath, gzipSync(Buffer.from(version)));
       }
@@ -166,6 +201,39 @@ afterAll(() => {
 });
 
 describe('shared startup policy through the real binary preparation chain', () => {
+  it('downloads the fixed raw OMP asset and reuses it only after its byte gate passes', async () => {
+    mocks.runtimeManifest = releaseManifest();
+    await expect(binaries.peekNeedsDownload('omp')).resolves.toBe(true);
+    await expect(binaries.prepare('omp', quiet)).resolves.toMatchObject({
+      ready: true,
+      path: path.join(mocks.userDataDir, 'omp', '18.1.18', process.platform === 'win32' ? 'omp.exe' : 'omp'),
+    });
+    expect(mocks.download).toHaveBeenCalledWith(expect.objectContaining({
+      url: expect.stringContaining('/oh-my-pi/releases/download/v18.1.18/'),
+      targetPath: path.join(mocks.userDataDir, 'omp', '18.1.18', process.platform === 'win32' ? 'omp.exe' : 'omp'),
+    }));
+    expect(binaries.getCachedBinaryStatus('omp')).toMatchObject({ binaryReady: true });
+  });
+
+  it('does not accept a marker-only OMP cache when the fixed byte check fails', async () => {
+    mocks.runtimeManifest = releaseManifest();
+    const binaryPath = path.join(
+      mocks.userDataDir,
+      'omp',
+      '18.1.18',
+      process.platform === 'win32' ? 'omp.exe' : 'omp',
+    );
+    writeExecutable(binaryPath, 'altered omp');
+    fs.writeFileSync(path.join(path.dirname(binaryPath), '.verified'), '');
+    mocks.ompVerified = false;
+    mocks.download.mockRejectedValueOnce(new Error('network unavailable'));
+
+    await expect(binaries.peekNeedsDownload('omp')).resolves.toBe(true);
+    await expect(binaries.prepare('omp', quiet)).resolves.toMatchObject({ ready: false });
+    expect(mocks.download).toHaveBeenCalledOnce();
+    expect(binaries.getCachedBinaryStatus('omp')).toEqual({ binaryReady: false });
+  });
+
   it.each(['darwin', 'win32', 'linux'] as const)(
     'reuses managed runtimes by default on %s from the build-pinned runtime snapshot',
     async (platform) => {

@@ -4,8 +4,9 @@
  *
  * 与 pi-host 的三处**刻意不同**(都是真机实测的硬约束,勿照抄 Pi):
  *
- *  1. 二进制是 opt-in 的(`pnpm install:omp`),不在 CDN 必下清单里 —— 解析走
- *     omp-runtime 的三态,缺二进制时 buildOmpAgent 返回 null、本次不注册 omp。
+ *  1. 开发 checkout 的二进制仍由 `pnpm install:omp` 显式安装；正式 Lex 在启动期
+ *     自动准备已固定且已校验的上游版本。解析始终走 omp-runtime 的三态，缺二进制时
+ *     buildOmpAgent 返回 null、本次不注册 omp。
  *  2. 受管根是 `userData/omp-agent-home`,**绝不能**复用 Pi 的目录:两者上游
  *     仓库不同但环境变量名相近(PI_CONFIG_DIR / PI_CODING_AGENT_DIR)。
  *  3. 凭证通道走 `apiKey` env **名**:OMP 不对 models.yml 的 header 值做环境

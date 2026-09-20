@@ -78,8 +78,8 @@ import {
   waitForTurnChangeSetPersistence,
 } from './turn-change-set/store.js';
 
-let retryPiRuntimeAfterNetworkRecovery: (() => void) | null = null;
-let disposePiRuntimeRecovery: (() => void) | null = null;
+let retryOptionalRuntimesAfterNetworkRecovery: (() => void) | null = null;
+let disposeOptionalRuntimeRecoveries: (() => void) | null = null;
 // Official Linux binaries total hundreds of MB. Keep one shared deadline for
 // both downloads, but allow normal consumer connections to finish while the
 // splash displays real byte progress.
@@ -87,6 +87,11 @@ const LINUX_AGENT_INSTALL_STARTUP_DEADLINE_MS = 5 * 60_000;
 // Pi 是可选能力。首启可以给它一小段时间从 CDN 准备，但网络异常时不能让
 // 整个宿主应用一直停在启动页；到期后取消本次下载并禁用本次 Pi。
 const PI_AGENT_INSTALL_STARTUP_DEADLINE_MS = 60_000;
+// OMP is also optional: its upstream binary is larger than Pi's, so its first
+// managed prepare deliberately runs after the splash path. An unavailable
+// network must never keep Lex on the splash screen; focus/timer recovery uses
+// the same bounded managed provisioner.
+const OMP_AGENT_INSTALL_STARTUP_DEADLINE_MS = 90_000;
 
 /** Preserve actionable saved-account failures across Electron serialization. */
 function throwAuthAccountIpcError(error: unknown): never {
@@ -588,8 +593,9 @@ import {
   restartCodexAfterAuthModeChange,
   waitForInitialCustomMcpRefresh,
   registerPiAgentIfAvailable,
+  registerOmpAgentIfAvailable,
 } from './maker-host/index.js';
-import { createPiRuntimeRecovery } from './agent-binaries/pi-runtime-recovery.js';
+import { createOptionalRuntimeRecovery, createPiRuntimeRecovery } from './agent-binaries/pi-runtime-recovery.js';
 import { logRequiredRuntimeFailure } from './environment-check-diagnostics.js';
 import { createDynamicMaker } from './maker-host/dynamic-maker.js';
 import { ensureBundledRipgrepReady } from './maker-host/runtime-configs.js';
@@ -3339,9 +3345,9 @@ const linuxClosePromptFallback = createCloseBehaviorPromptFallbackController(
 
 app.on('before-quit', () => {
   isQuitting = true;
-  disposePiRuntimeRecovery?.();
-  retryPiRuntimeAfterNetworkRecovery = null;
-  disposePiRuntimeRecovery = null;
+  disposeOptionalRuntimeRecoveries?.();
+  retryOptionalRuntimesAfterNetworkRecovery = null;
+  disposeOptionalRuntimeRecoveries = null;
   windowsClosePromptFallback.dispose();
   linuxClosePromptFallback.dispose();
   destroyWindowsTray();
@@ -3400,7 +3406,7 @@ function scheduleAppFocusSync(): void {
 }
 
 app.on('browser-window-focus', (_event, win) => {
-  retryPiRuntimeAfterNetworkRecovery?.();
+  retryOptionalRuntimesAfterNetworkRecovery?.();
   if (win === mainWindowRef) updatePresentationRecovery?.onWindowFocused();
   if (appFocusSyncTimer) {
     clearTimeout(appFocusSyncTimer);
@@ -5863,8 +5869,9 @@ const registerIpcHandlers = () => {
   // getMaker() 在构造期就读 binary path, 早于 splash 调用会抛错; 第一次 splash 成功后置 true,
   // 后续 retry 走 check-environment 不重复注册 (重复 ipcMain.handle 会覆盖同名 handler)。
   let makerIpcsRegistered = false;
-  // Pi 是“本次启动可选”的能力：准备失败不阻塞主界面，交给 recovery 在网络恢复后
-  // 重新走 managed prepare，并在成功后动态注册到当前 Maker。
+  // Pi / OMP are optional managed runtimes: a startup network miss must not
+  // block the main UI. Each uses the same single-flight recovery mechanism and
+  // dynamically registers itself into the already-created Maker when ready.
   const piRuntimeRecovery = createPiRuntimeRecovery({
     isOnline: () => net.isOnline(),
     prepare: async () => {
@@ -5881,10 +5888,28 @@ const registerIpcHandlers = () => {
     },
     logWarn: (message, error) => console.warn(`[bootstrap-electron] ${message}`, error ?? ''),
   });
-  retryPiRuntimeAfterNetworkRecovery = () => {
+  const ompRuntimeRecovery = createOptionalRuntimeRecovery({
+    runtimeName: 'OMP',
+    isOnline: () => net.isOnline(),
+    prepare: async () => binaryPrepare('omp', {
+      broadcastFailure: false,
+      broadcastProgress: false,
+      signal: AbortSignal.timeout(OMP_AGENT_INSTALL_STARTUP_DEADLINE_MS),
+    }),
+    register: () => registerOmpAgentIfAvailable(),
+    onRegistered: () => {
+      console.info('[bootstrap-electron] OMP runtime recovered and agent registered');
+    },
+    logWarn: (message, error) => console.warn(`[bootstrap-electron] ${message}`, error ?? ''),
+  });
+  retryOptionalRuntimesAfterNetworkRecovery = () => {
     void piRuntimeRecovery.retryNow('window-focus');
+    void ompRuntimeRecovery.retryNow('window-focus');
   };
-  disposePiRuntimeRecovery = () => piRuntimeRecovery.dispose();
+  disposeOptionalRuntimeRecoveries = () => {
+    piRuntimeRecovery.dispose();
+    ompRuntimeRecovery.dispose();
+  };
   const registerMakerIpcsAfterSplash = async (): Promise<void> => {
     if (makerIpcsRegistered) return;
     // 模型供应商目录(providers.json)按「OSS 真源 / bundled 兜底」加载一次存内存:必须在第一次
@@ -6290,10 +6315,18 @@ const registerIpcHandlers = () => {
     // 必装 binary 都 ready,现在才能安全构造 Maker 单例并挂 maker:* / 相关 IPC。
     await registerMakerIpcsAfterSplash();
 
+    // OMP is intentionally not part of splash's serial download queue. Its
+    // runtime is still prepared automatically in release builds, but waiting
+    // for a GitHub download here would make Claude/Codex/Pi unusable for up to
+    // the OMP deadline. start is single-flight and registers OMP dynamically
+    // only after the managed binary has passed its fixed-pin byte verification.
+    void ompRuntimeRecovery.start('startup-after-maker-ipcs');
+
     return {
       claudeCode: { status: 'passed' as const, path: claudeRes.path },
       codex: { status: 'passed' as const, path: codexRes.path },
       pi: piInfo,
+      omp: { status: 'skipped' as const },
       ripgrep: { status: 'passed' as const },
       allPassed: true,
       platform,

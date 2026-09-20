@@ -3,9 +3,9 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "cindy-desktop-macos",
-  "documentNamespace": "https://cindy.app/spdx/desktop-macos/fb58ec3a2e60ecc5bd2e9dfc6e3ff2d32a1f23cc8367e6c4b1fc6b78191e6c03",
+  "documentNamespace": "https://cindy.app/spdx/desktop-macos/f69909d60de989eecef67b00bb1a1e855e7c5107c1ea607bdf4434e2532c5273",
   "creationInfo": {
-    "created": "2026-09-11T14:17:29Z",
+    "created": "2026-09-19T10:53:50Z",
     "creators": [
       "Tool: scripts/generate-third-party-notices.mjs"
     ]
@@ -92,6 +92,16 @@
       "copyrightText": "NOASSERTION"
     },
     {
+      "name": "oh-my-pi (OMP runtime-downloaded binary)",
+      "SPDXID": "SPDXRef-Package-e6287238e3053648",
+      "versionInfo": "18.1.18",
+      "downloadLocation": "https://github.com/can1357/oh-my-pi",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION"
+    },
+    {
       "name": "oh-my-pi Windows Git PATH helpers (adapted)",
       "SPDXID": "SPDXRef-Package-42f340d5003334bd",
       "versionInfo": "326d24bd40d9858e24e1036ae739c27c72eeb543",
@@ -133,8 +143,8 @@
     },
     {
       "name": "pi coding agent (runtime-downloaded binary)",
-      "SPDXID": "SPDXRef-Package-e7ecfd34000fcb76",
-      "versionInfo": "0.85.1",
+      "SPDXID": "SPDXRef-Package-a3cbdbce86e6fdc7",
+      "versionInfo": "0.84.4",
       "downloadLocation": "https://github.com/earendil-works/pi",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
@@ -15740,6 +15750,11 @@
     {
       "spdxElementId": "SPDXRef-DOCUMENT",
       "relationshipType": "DESCRIBES",
+      "relatedSpdxElement": "SPDXRef-Package-e6287238e3053648"
+    },
+    {
+      "spdxElementId": "SPDXRef-DOCUMENT",
+      "relationshipType": "DESCRIBES",
       "relatedSpdxElement": "SPDXRef-Package-42f340d5003334bd"
     },
     {
@@ -15760,7 +15775,7 @@
     {
       "spdxElementId": "SPDXRef-DOCUMENT",
       "relationshipType": "DESCRIBES",
-      "relatedSpdxElement": "SPDXRef-Package-e7ecfd34000fcb76"
+      "relatedSpdxElement": "SPDXRef-Package-a3cbdbce86e6fdc7"
     },
     {
       "spdxElementId": "SPDXRef-DOCUMENT",

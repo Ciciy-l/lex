@@ -384,8 +384,8 @@ let botRuntimeResourcePreflight:
   | null = null;
 let _registerPiAgent: (() => boolean) | null = null;
 /**
- * OMP 与 Pi 同链:二进制是 opt-in 资产(opt-in 见 omp-runtime),首次装配时可能
- * 还没下载完 —— 由 registerOmpAgentIfAvailable 在下载补齐后补注册。
+ * OMP 与 Pi 同链：正式包把它作为可选受管资产自动准备，网络暂不可用时不阻塞
+ * 其它引擎；下载补齐后由 registerOmpAgentIfAvailable 补注册。
  */
 let _registerOmpAgent: (() => boolean) | null = null;
 /**
@@ -2507,7 +2507,7 @@ export function getMaker(): Maker {
     const piAgent = buildPiAgentForDesktop();
     if (piAgent) makerAgents.pi = piAgent;
 
-    // OMP has an audited local opt-in runtime, and an independent managed SSH
+    // OMP has an audited locally managed runtime, and an independent managed SSH
     // runtime. The latter owns its own HOME/models.yml/provider forward and
     // direct JSONL channel; it does not reuse Pi's daemon or Codex's app-server.
     const requireRemoteOmpHost = (remoteHostId: string) => {
@@ -3093,7 +3093,7 @@ export function registerPiAgentIfAvailable(): boolean {
 }
 
 /**
- * Register OMP after its opt-in runtime became available and notify renderers.
+ * Register OMP after its managed runtime became available and notify renderers.
  *
  * 与 Pi 同构:补注册后广播 AGENTS_CHANGED,让 renderer 的 useAvailableAgents
  * 重拉 roster,OMP 入口在下拉里即时出现(不必重启 Cindy)。

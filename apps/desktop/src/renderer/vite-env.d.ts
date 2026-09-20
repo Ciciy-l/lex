@@ -107,8 +107,9 @@ interface NewMakerWorktreeBranchPreferenceSnapshot {
 interface EnvCheckResult {
   claudeCode: { status: 'passed' | 'failed'; path?: string; error?: string };
   codex: { status: 'passed' | 'failed' | 'skipped'; path?: string; error?: string };
-  /** pi 可选实验 agent:failed 不影响 allPassed；本次启动会禁用 pi。 */
+  /** pi / omp 可选运行时:failed 不影响 allPassed；后台网络恢复后会自动重试。 */
   pi?: { status: 'passed' | 'failed' | 'skipped'; path?: string; error?: string };
+  omp?: { status: 'passed' | 'failed' | 'skipped'; path?: string; error?: string };
   /** bundled ripgrep(必需):failed 时 allPassed=false,splash 进失败态可重试 (#1956)。 */
   ripgrep?: { status: 'passed' | 'failed' | 'skipped'; error?: string };
   allPassed: boolean;
@@ -445,14 +446,14 @@ interface BinaryDownloadProgressPayload {
   failed?: boolean;
   /** DownloadError code (e.g. 'NETWORK', 'CHECKSUM', 'HTTP_4XX', 'manifest_failed'). */
   error?: string;
-  /** D 场景（两个及以上需要下载）: 当前阶段 1 / 2 / 3；B/C 场景缺省。 */
-  step?: 1 | 2 | 3;
-  /** D 场景 = 本次需要下载的二进制段数(2 或 3)；B/C 场景缺省。 */
-  totalSteps?: 2 | 3;
+  /** D 场景（两个及以上需要下载）: 当前阶段 1 / 2 / 3 / 4；B/C 场景缺省。 */
+  step?: 1 | 2 | 3 | 4;
+  /** D 场景 = 本次需要下载的二进制段数(2、3 或 4)；B/C 场景缺省。 */
+  totalSteps?: 2 | 3 | 4;
   /** step 切换瞬间的同步信号——splash 收到立即 set 进度=0，禁用 transition 动画。 */
   reset?: boolean;
   /** 失败/调试文案使用，标识当前推进度的 vendor。 */
-  vendor?: 'claude' | 'codex' | 'pi';
+  vendor?: 'claude' | 'codex' | 'pi' | 'omp';
 }
 
 /* ── App Update Progress ── */

@@ -119,8 +119,8 @@ jobs:
               if not isinstance(source, dict):
                   raise SystemExit(f"pinned runtime snapshot is missing platform {platform}")
               result = {}
-              required = {'claudeCode', 'codex', 'codexPackage', 'pi'}
-              for key in ('claudeCode', 'codex', 'codexPackage', 'ripgrep', 'pi'):
+              required = {'claudeCode', 'codex', 'codexPackage', 'pi', 'omp'}
+              for key in ('claudeCode', 'codex', 'codexPackage', 'ripgrep', 'pi', 'omp'):
                   value = source.get(key)
                   if not isinstance(value, dict):
                       if key in required:
