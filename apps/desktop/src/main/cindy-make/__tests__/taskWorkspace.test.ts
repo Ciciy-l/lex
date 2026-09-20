@@ -17,12 +17,9 @@ const trustedVerifier = async (_userData: string, workingDir: string) => ({
 
 function isSameTestPath(left: string, right: string): boolean {
   const normalize = (value: string) => {
-    let resolved = path.resolve(value);
+    const resolved = path.resolve(value);
     if (process.platform === 'win32') {
-      // fs.realpath may expose the Win32 extended-length namespace while the
-      // synthetic Git output stays in its ordinary absolute-path form.
-      resolved = resolved.replace(/^[\\/]{2}\?[\\/]/, '');
-      return resolved.toLocaleLowerCase('en-US');
+      return path.toNamespacedPath(resolved).toLocaleLowerCase('en-US');
     }
     return resolved;
   };
@@ -231,6 +228,25 @@ describe('verifyCindyMakeWorktree', () => {
       }),
     ).resolves.toBeNull();
   });
+
+  it.runIf(process.platform === 'win32')(
+    'accepts an equivalent Windows namespaced worktree path',
+    async () => {
+      const git = gitFor();
+      await expect(
+        verifyCindyMakeWorktree(
+          userData,
+          path.toNamespacedPath(worktree),
+          new AbortController().signal,
+          {
+            processEnvironment: {},
+            gitExecutable: path.join(userData, 'managed-git'),
+            git,
+          },
+        ),
+      ).resolves.toEqual({ path: await realpath(worktree), branch: 'cindy-make/run-1' });
+    },
+  );
 
   it('rejects a task path replaced by a symlink or Windows junction before host Git runs', async () => {
     const foreign = await mkdtemp(path.join(os.tmpdir(), 'cindy-make-foreign-'));

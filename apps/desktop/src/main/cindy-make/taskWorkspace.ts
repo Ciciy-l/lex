@@ -42,13 +42,12 @@ async function exists(file: string): Promise<boolean> {
 }
 
 function normalizePathForComparison(value: string): string {
-  let resolved = path.resolve(value);
+  const resolved = path.resolve(value);
   if (process.platform === 'win32') {
     // Native realpath may return a Win32 extended-length path while Git and
-    // other callers report the equivalent ordinary absolute path. Keep path
-    // comparisons namespace-agnostic before applying Windows case folding.
-    resolved = resolved.replace(/^[\\/]{2}\?[\\/]/, '');
-    return resolved.toLocaleLowerCase('en-US');
+    // other callers report the equivalent ordinary absolute path. Convert
+    // both representations to the same namespace before case folding.
+    return path.toNamespacedPath(resolved).toLocaleLowerCase('en-US');
   }
   return resolved;
 }
@@ -410,8 +409,8 @@ export async function prepareCindyMakeWorkspace(
 
 /** Lexical prefilter only; host-owned operations must call verifyCindyMakeWorktree. */
 export function isCindyMakeWorktreePath(userData: string, workingDir: string): boolean {
-  const root = makeWorktreesRoot(userData);
-  const relative = path.relative(root, path.resolve(workingDir));
+  const root = normalizePathForComparison(makeWorktreesRoot(userData));
+  const relative = path.relative(root, normalizePathForComparison(workingDir));
   return (
     relative.length > 0 &&
     !relative.startsWith('..') &&
