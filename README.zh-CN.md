@@ -5,11 +5,11 @@
   </picture>
 </p>
 
-<p align="center"><strong>把主对话、CLI Agent、文件、Git 与 Worker 放进同一个本地工作台。</strong></p>
+<p align="center"><strong>把主对话、四种 Agent 引擎、文件、Git 与 Worker 放进同一个本地工作台。</strong></p>
 
 <p align="center">
   基于 <a href="https://github.com/makecindy/cindy">Cindy</a> 的社区桌面发行版。<br>
-  保留理解工作的主对话，也给每一个 Agent 一个真正的工作台。
+  保留理解工作的主对话，也让 Claude Code、Codex、Pi 与 OMP 都拥有真正的工作台。
 </p>
 
 <p align="center">
@@ -32,6 +32,9 @@ Lex 保留 Cindy 的主对话、Agent Loop、插件、远程控制和在线服�
 加入面向开发者的桌面原生工作台。你可以一边通过对话推进工作，一边在同一个窗口里查看
 和控制真正执行任务的工具。
 
+Claude Code、Codex、Pi 与 OMP 是这个工作台中的同等 Agent 引擎，无论是在本机还是已配置的
+SSH 主机上工作，都能沿用同一套工作方式。
+
 Lex 由社区独立维护，与 XD Inc. 或 Cindy 项目不存在隶属、授权或官方背书关系。桌面产品、
 官网、安装包和更新通道使用 **Lex** 名称；由 Cindy 提供的账号与在线服务则有意继续使用
 **Cindy** 名称。
@@ -41,7 +44,7 @@ Lex 由社区独立维护，与 XD Inc. 或 Cindy 项目不存在隶属、授权
 | 区域 | 可以做什么 |
 | --- | --- |
 | **内容页签** | 终端、文件、浏览器、Worker 对话与 Git 工作区（Git 图谱 / 审查）均在 Cindy 原有内容区打开，不再创建一套相互竞争的第二内容区。 |
-| **CLI 启动** | 通过 `+` 菜单在独立页签中启动 Claude Code、Codex、Pi 或本机已有 Shell；Shell 来自实际环境检测，不会写死。 |
+| **CLI 启动** | 通过 `+` 菜单在独立页签中启动 Claude Code、Codex、Pi、OMP 或本机已有 Shell；Shell 来自实际环境检测，不会写死。 |
 | **终端布局** | 拆分和缩放窗格、拖动调整位置、重命名页签、搜索输出，并可临时最大化需要专注的窗格。 |
 | **长任务运行** | 隐藏窗格、切换页签或收起工作区不会终止 PTY；停止进程始终需要明确操作。 |
 | **文件** | 浏览项目文件树；单击预览、双击固定，预览文件一旦编辑也会自动固定。 |

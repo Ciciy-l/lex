@@ -1958,6 +1958,18 @@
       "note": "模型协议对比中的 OpenAI API 官方名称。保留英文以区别普通消息或回答。"
     },
     {
+      "id": "omp-agent-engine",
+      "status": "proposed",
+      "en": "OMP",
+      "translations": {
+        "zh-CN": "OMP",
+        "zh-TW": "OMP",
+        "ja": "OMP",
+        "ko": "OMP"
+      },
+      "note": "Lex 支持的 Agent 引擎之一。OMP 是其公开名称，所有语言保持 OMP，不扩写或改译。"
+    },
+    {
       "id": "model-native-api",
       "status": "proposed",
       "en": "Native API",

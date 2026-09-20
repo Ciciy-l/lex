@@ -5,11 +5,11 @@
   </picture>
 </p>
 
-<p align="center"><strong>A local workspace for conversations, CLI agents, files, Git, and Workers.</strong></p>
+<p align="center"><strong>A local workspace for conversations, four Agent engines, files, Git, and Workers.</strong></p>
 
 <p align="center">
   A community desktop distribution based on <a href="https://github.com/makecindy/cindy">Cindy</a>.<br>
-  Keep the conversation that understands your work, and give every agent a real workspace.
+  Keep the conversation that understands your work, and give Claude Code, Codex, Pi, and OMP a real workspace.
 </p>
 
 <p align="center">
@@ -33,6 +33,9 @@ integration, then adds a desktop-native developer workspace. It is designed for 
 who want to talk through a task and keep the tools doing that task visible in the same
 window.
 
+Claude Code, Codex, Pi, and OMP are first-class Agent engines in that workspace, whether
+you work locally or on a configured SSH host.
+
 Lex is independently maintained and is not affiliated with or endorsed by XD Inc. or
 the Cindy project. The desktop product, website, installer, and update channel are
 **Lex**. Cindy-backed accounts and online services deliberately retain the **Cindy**
@@ -43,7 +46,7 @@ name.
 | Area | What you can do |
 | --- | --- |
 | **Content tabs** | Open terminals, files, the browser, Worker conversations, and the Git workspace (Git Graph / Review) in Cindy's existing content area. Lex does not create a second competing workspace. |
-| **CLI launch** | Use the `+` menu to start Claude Code, Codex, Pi, or an installed local Shell in a dedicated tab. Shell choices are detected from the computer instead of being hard-coded. |
+| **CLI launch** | Use the `+` menu to start Claude Code, Codex, Pi, OMP, or an installed local Shell in a dedicated tab. Shell choices are detected from the computer instead of being hard-coded. |
 | **Terminal layout** | Split panes, resize or drag them into place, rename tabs, search output, and temporarily maximize the pane that needs attention. |
 | **Long-running work** | Hide a pane, switch tabs, or collapse the workspace without terminating its PTY. Stopping a process remains an explicit action. |
 | **Files** | Browse the project tree, single-click to preview, double-click to keep a file open, and automatically keep a preview once it is edited. |
