@@ -53,13 +53,13 @@ describe('Pi binary distribution contract', () => {
     expect(binaries).toContain('localVersionResolver: cfg.preserveLocalVersion');
   });
 
-  it('does not expose an old Pi cache through the binary-version IPC', () => {
+  it('does not expose an old optional-runtime cache through the binary-version IPC', () => {
     const binaryVersion = fs.readFileSync(
       path.join(desktopRoot, 'src/main/maker-ipc/binary-version.ts'),
       'utf8',
     );
 
-    expect(binaryVersion).toContain("if (kind === 'pi') return null;");
+    expect(binaryVersion).toContain("if (kind === 'pi' || kind === 'omp') return null;");
   });
 
   it('schedules Pi recovery after a failed optional prepare', () => {
