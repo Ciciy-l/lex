@@ -1479,7 +1479,7 @@
       "xai": {
         "logoutConfirm": {
           "title": "xAI(SuperGrok) 연결을 해제할까요?",
-          "description": "Cindy에서 이 Grok 구독을 사용할 수 없게 됩니다.",
+          "description": "{{appName}}에서 이 Grok 구독을 사용할 수 없게 됩니다.",
           "confirm": "연결 해제",
           "cancel": "취소"
         },
@@ -1796,7 +1796,7 @@
         },
         "deleteConfirm": {
           "title": "제공자를 삭제할까요?",
-          "description": "Cindy에서 “{{name}}”을 사용할 수 없게 됩니다. 메시지 기록은 유지되며 나중에 다시 추가할 수 있습니다.",
+          "description": "{{appName}}에서 “{{name}}”을 사용할 수 없게 됩니다. 메시지 기록은 유지되며 나중에 다시 추가할 수 있습니다.",
           "confirm": "삭제",
           "cancel": "취소"
         },
@@ -2087,7 +2087,7 @@
         },
         "logoutConfirm": {
           "title": "“{{name}}” 연결을 해제할까요?",
-          "description": "Cindy에서 “{{name}}”을 사용할 수 없게 됩니다. 제공자는 유지되며 나중에 다시 연결할 수 있습니다.",
+          "description": "{{appName}}에서 “{{name}}”을 사용할 수 없게 됩니다. 제공자는 유지되며 나중에 다시 연결할 수 있습니다.",
           "confirm": "연결 해제",
           "cancel": "취소"
         }
@@ -3317,7 +3317,7 @@
         "stateUnavailable": "{{appName}}가 Pi 확장 상태를 읽지 못했습니다. {{appName}}를 다시 시작한 뒤 다시 시도하세요.",
         "runtimeConvergencePartial": "Pi 확장 변경 사항은 저장되었지만 일부 로컬 Pi 작업에서 이전 확장이 계속 실행 중일 수 있습니다. Pi를 다시 사용하기 전에 {{appName}}를 다시 시작하세요.",
         "nativeCommandFailed": "Pi 기본 패키지 명령에 실패했습니다. 소스나 버전을 확인한 뒤 다시 시도하세요.",
-        "runtimeRetirementFailed": "Pi 확장을 새로 고치지 못했습니다. Pi를 다시 사용하기 전에 Cindy를 다시 시작하세요."
+        "runtimeRetirementFailed": "Pi 확장을 새로 고치지 못했습니다. Pi를 다시 사용하기 전에 {{appName}}를 다시 시작하세요."
       },
       "success": {
         "install": "Pi 확장을 설치했습니다. 실행 중인 로컬 Pi 작업을 중지했으며 새 Pi 작업에서 사용할 수 있습니다.",
@@ -5726,13 +5726,13 @@
         },
         "resetConfirm": {
           "title": "개인 소스를 정리할까요?",
-          "description": "Cindy가 관리하는 소스 디렉터리를 삭제합니다. 개인 버전 브랜치와 아직 패키징하지 않은 모든 변경도 함께 삭제됩니다. 필요하면 나중에 소스를 다시 준비할 수 있습니다.",
+          "description": "{{appName}}이(가) 관리하는 소스 디렉터리를 삭제합니다. 개인 버전 브랜치와 아직 패키징하지 않은 모든 변경도 함께 삭제됩니다. 필요하면 나중에 소스를 다시 준비할 수 있습니다.",
           "confirm": "소스 정리",
           "cancel": "취소"
         },
         "branch": "개인 버전 브랜치",
         "baseCommit": "기준선",
-        "description": "개인 버전 Cindy의 소스 사본입니다. 개인 버전을 만들 때마다 개인 버전 브랜치에서 독립 작업 디렉터리를 만들고, 테스트를 통과한 변경을 여기로 병합합니다. 이 디렉터리 자체를 직접 수정하지는 않습니다.",
+        "description": "개인 버전 {{appName}}의 소스 사본입니다. 개인 버전을 만들 때마다 개인 버전 브랜치에서 독립 작업 디렉터리를 만들고, 테스트를 통과한 변경을 여기로 병합합니다. 이 디렉터리 자체를 직접 수정하지는 않습니다.",
         "stop": "중지"
       },
       "description": "아래 카드에서 이 컴퓨터의 환경을 확인하고 필요한 휴대용 도구를 설치할 수 있습니다. 네이티브 컴파일 도구가 없으면 공식 설치 안내를 표시합니다.",
@@ -5770,9 +5770,9 @@
       "requestChanges": "수정 요청",
       "planFeedbackPlaceholder": "피드백(선택)"
     },
-    "controlledBy": "{{name}}이(가) Cindy에 연결됨",
-    "controlledByMultiple": "기기 {{count}}대가 Cindy에 연결됨",
-    "controlledTooltip": "Cindy 세션에 연결된 기기입니다. 이 수는 데스크톱 마우스와 키보드를 제어하는 기기 수가 아닙니다. 접근 권한을 철회할 수 있습니다.",
+    "controlledBy": "{{name}}이(가) {{appName}}에 연결됨",
+    "controlledByMultiple": "기기 {{count}}대가 {{appName}}에 연결됨",
+    "controlledTooltip": "{{appName}} 세션에 연결된 기기입니다. 이 수는 데스크톱 마우스와 키보드를 제어하는 기기 수가 아닙니다. 접근 권한을 철회할 수 있습니다.",
     "revokeAccess": "권한 철회",
     "viewControllers": "보기",
     "collapseControlledNotice": "원격 제어 알림 접기",
@@ -7687,11 +7687,11 @@
       "generate": "파트너 생성",
       "generating": "파트너를 구상하고 있어요…",
       "generationFailed": "생성하지 못했습니다. 입력 내용은 남아 있으니 다시 시도해 주세요.",
-      "modelRequired": "먼저 Cindy에서 사용 가능한 기본 모델을 선택해 주세요.",
-      "cindyDescription": "Cindy 사용과 도구 연결을 도와드리고 함께 일을 마무리할게요.",
-      "cindySummary": "Cindy 관리, 도구 연결, 일 마무리.",
-      "openCindy": "Cindy 열기",
-      "addCindy": "Cindy 추가",
+      "modelRequired": "먼저 {{appName}}에서 사용 가능한 기본 모델을 선택해 주세요.",
+      "cindyDescription": "{{appName}} 사용과 도구 연결을 도와드리고 함께 일을 마무리할게요.",
+      "cindySummary": "{{appName}} 관리, 도구 연결, 일 마무리.",
+      "openCindy": "{{appName}} 열기",
+      "addCindy": "{{appName}} 추가",
       "done": "완료",
       "editName": "이름 편집",
       "duplicateName": "같은 이름의 파트너가 있습니다. 구분하기 쉬운 이름을 선택해 주세요.",
@@ -12776,7 +12776,7 @@
       },
       "decisionHint": {
         "wait": "이 과정은 중지되었습니다. 알림 구독이나 자동 업데이트는 설정되지 않았습니다.",
-        "personal": "선택이 기록되었습니다. Cindy가 소스 디렉터리에서 구현용 세션을 만들고 있습니다."
+        "personal": "선택이 기록되었습니다. {{appName}}이(가) 소스 디렉터리에서 구현용 세션을 만들고 있습니다."
       },
       "failure": {
         "network": "GitHub에 연결할 수 없습니다. 네트워크를 확인하고 다시 시도하세요.",
@@ -12804,14 +12804,14 @@
       "errors": {
         "unsupportedVersion": "현재 버전 형식은 지원되지 않습니다.",
         "tagNotFound": "현재 버전에 필요한 태그를 찾지 못했습니다.",
-        "dirty": "소스 디렉터리에 커밋되지 않은 변경이 있습니다. 설정�� Cindy Make에서 소스를 정리한 뒤 다시 시도하세요.",
+        "dirty": "소스 디렉터리에 커밋되지 않은 변경이 있습니다. 설정�� {{appName}} Make에서 소스를 정리한 뒤 다시 시도하세요.",
         "gitFailed": "Git으로 소스를 준비하지 못했습니다.",
         "cancelled": "소스 준비가 중지되었습니다.",
         "localCommits": "소스에 업스트림에 포함되지 않은 로컬 커밋 또는 스태시가 있습니다. 정리하기 전에 보관하거나 백업하세요.",
         "environmentNotReady": "빌드 환경이 준비되지 않았습니다. 필요한 도구를 확인하세요.",
         "gitUnavailable": "Git을 사용할 수 없습니다. 환경 카드에서 Git을 확인하고 설치한 후 다시 시도하세요.",
         "installFailed": "의존성 설치에 실패했습니다. 다시 시도하세요.",
-        "locked": "일부 파일이 다른 프로그램에서 사용 중이라 삭제할 수 없습니다. 해당 프로그램을 닫거나 Cindy를 다시 시작한 뒤 재시도하세요."
+        "locked": "일부 파일이 다른 프로그램에서 사용 중이라 삭제할 수 없습니다. 해당 프로그램을 닫거나 {{appName}}을(를) 다시 시작한 뒤 재시도하세요."
       },
       "gitProgress": {
         "counting": "개체 수 계산 중",

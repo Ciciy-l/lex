@@ -1479,7 +1479,7 @@
       "xai": {
         "logoutConfirm": {
           "title": "Disconnect xAI (SuperGrok)?",
-          "description": "Cindy will no longer use this Grok subscription.",
+          "description": "{{appName}} will no longer use this Grok subscription.",
           "confirm": "Disconnect",
           "cancel": "Cancel"
         },
@@ -1796,7 +1796,7 @@
         },
         "deleteConfirm": {
           "title": "Delete provider?",
-          "description": "Cindy will no longer use “{{name}}”. Message history is kept, and you can add the provider again later.",
+          "description": "{{appName}} will no longer use “{{name}}”. Message history is kept, and you can add the provider again later.",
           "confirm": "Delete",
           "cancel": "Cancel"
         },
@@ -2088,7 +2088,7 @@
         },
         "logoutConfirm": {
           "title": "Disconnect “{{name}}”?",
-          "description": "Cindy will no longer use “{{name}}”. The provider is kept so you can reconnect later.",
+          "description": "{{appName}} will no longer use “{{name}}”. The provider is kept so you can reconnect later.",
           "confirm": "Disconnect",
           "cancel": "Cancel"
         }
@@ -3318,7 +3318,7 @@
         "stateUnavailable": "{{appName}} could not read the Pi extension state. Restart {{appName}} and try again.",
         "runtimeConvergencePartial": "The Pi extension change was saved, but some local Pi tasks may still be running the old extension. Restart {{appName}} before using Pi again.",
         "nativeCommandFailed": "Pi's package command failed. Check the source or version and try again.",
-        "runtimeRetirementFailed": "Pi extensions could not be refreshed. Restart Cindy before using Pi again."
+        "runtimeRetirementFailed": "Pi extensions could not be refreshed. Restart {{appName}} before using Pi again."
       },
       "success": {
         "install": "Pi extension installed. Active local Pi tasks were stopped; start a Pi task to use it.",
@@ -5734,7 +5734,7 @@
         },
         "branch": "Personal branch",
         "baseCommit": "Baseline",
-        "description": "The source copy behind your personal Cindy build. Each build task gets its own workspace branched from the personal branch, and tested changes merge back; this folder itself is never edited directly.",
+        "description": "The source copy behind your personal {{appName}} build. Each build task gets its own workspace branched from the personal branch, and tested changes merge back; this folder itself is never edited directly.",
         "stop": "Stop"
       },
       "description": "The card below checks this computer and lets you install missing portable tools. Native compiler prerequisites show an official installation guide.",
@@ -5772,9 +5772,9 @@
       "requestChanges": "Request changes",
       "planFeedbackPlaceholder": "Feedback (optional)"
     },
-    "controlledBy": "{{name}} is connected to Cindy",
-    "controlledByMultiple": "{{count}} devices are connected to Cindy",
-    "controlledTooltip": "These devices are connected to Cindy sessions. This count does not indicate who controls the desktop mouse and keyboard. You can revoke access.",
+    "controlledBy": "{{name}} is connected to {{appName}}",
+    "controlledByMultiple": "{{count}} devices are connected to {{appName}}",
+    "controlledTooltip": "These devices are connected to {{appName}} sessions. This count does not indicate who controls the desktop mouse and keyboard. You can revoke access.",
     "revokeAccess": "Revoke",
     "viewControllers": "View",
     "collapseControlledNotice": "Collapse remote control notice",
@@ -7689,11 +7689,11 @@
       "generate": "Create teammate",
       "generating": "Shaping your teammate…",
       "generationFailed": "Could not generate your teammate. Your idea is still here; please try again.",
-      "modelRequired": "Select an available default model in Cindy first.",
-      "cindyDescription": "I can help you use Cindy, connect your tools, and get things done together.",
-      "cindySummary": "Manage Cindy, connect tools, and get things done.",
-      "openCindy": "Open Cindy",
-      "addCindy": "Add Cindy",
+      "modelRequired": "Select an available default model in {{appName}} first.",
+      "cindyDescription": "I can help you use {{appName}}, connect your tools, and get things done together.",
+      "cindySummary": "Manage {{appName}}, connect tools, and get things done.",
+      "openCindy": "Open {{appName}}",
+      "addCindy": "Add {{appName}}",
       "done": "Done",
       "editName": "Edit name",
       "duplicateName": "That name is taken. Choose a name you can easily tell apart.",
@@ -12793,7 +12793,7 @@
       },
       "decisionHint": {
         "wait": "This workflow has stopped. No subscription or automatic update was created.",
-        "personal": "Your choice is recorded. Cindy is creating a code session in the source directory."
+        "personal": "Your choice is recorded. {{appName}} is creating a code session in the source directory."
       },
       "failure": {
         "network": "Could not reach GitHub. Check your connection and retry.",
@@ -12821,14 +12821,14 @@
       "errors": {
         "unsupportedVersion": "This build version is not supported.",
         "tagNotFound": "The required version tag was not found.",
-        "dirty": "The source checkout has uncommitted changes. Clear the source under Settings → Cindy Make and retry.",
+        "dirty": "The source checkout has uncommitted changes. Clear the source under Settings → {{appName}} Make and retry.",
         "gitFailed": "Git could not prepare the source checkout.",
         "cancelled": "Source preparation stopped.",
         "localCommits": "The source contains local commits or stashes not included upstream. Keep or back them up before clearing.",
         "environmentNotReady": "The build environment is not ready. Check the required tools.",
         "gitUnavailable": "Git is unavailable. Check and install Git in the environment card, then retry.",
         "installFailed": "Dependency install failed. Please retry.",
-        "locked": "Some files are in use by another program and could not be removed. Close it or restart Cindy, then retry."
+        "locked": "Some files are in use by another program and could not be removed. Close it or restart {{appName}}, then retry."
       },
       "gitProgress": {
         "counting": "Counting objects",

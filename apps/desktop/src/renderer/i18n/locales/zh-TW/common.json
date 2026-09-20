@@ -1479,7 +1479,7 @@
       "xai": {
         "logoutConfirm": {
           "title": "斷開 xAI(SuperGrok)？",
-          "description": "中斷後，Cindy 將無法使用這份 Grok 訂閱。",
+          "description": "中斷後，{{appName}} 將無法使用這份 Grok 訂閱。",
           "confirm": "中斷連線",
           "cancel": "取消"
         },
@@ -1796,7 +1796,7 @@
         },
         "deleteConfirm": {
           "title": "刪除供應商？",
-          "description": "刪除後，Cindy 將無法再使用「{{name}}」。歷史訊息會保留，之後可以重新新增。",
+          "description": "刪除後，{{appName}} 將無法再使用「{{name}}」。歷史訊息會保留，之後可以重新新增。",
           "confirm": "刪除",
           "cancel": "取消"
         },
@@ -2087,7 +2087,7 @@
         },
         "logoutConfirm": {
           "title": "中斷「{{name}}」的連線？",
-          "description": "中斷後，Cindy 將無法使用「{{name}}」。供應商會保留，之後可以重新連線。",
+          "description": "中斷後，{{appName}} 將無法使用「{{name}}」。供應商會保留，之後可以重新連線。",
           "confirm": "中斷連線",
           "cancel": "取消"
         }
@@ -3317,7 +3317,7 @@
         "stateUnavailable": "{{appName}} 無法讀取 Pi 擴充功能狀態。請重新啟動 {{appName}} 後重試。",
         "runtimeConvergencePartial": "Pi 擴充功能變更已儲存，但部分本機 Pi 任務可能仍在執行舊擴充功能。請重新啟動 {{appName}} 後再使用 Pi。",
         "nativeCommandFailed": "Pi 原生套件命令失敗。請檢查來源或版本後重試。",
-        "runtimeRetirementFailed": "Pi 擴充功能未能完成重新整理。請重新啟動 Cindy 後再使用 Pi。"
+        "runtimeRetirementFailed": "Pi 擴充功能未能完成重新整理。請重新啟動 {{appName}} 後再使用 Pi。"
       },
       "success": {
         "install": "Pi 擴充功能已安裝。執行中的本機 Pi 任務已停止；新建 Pi 任務即可使用。",
@@ -5726,13 +5726,13 @@
         },
         "resetConfirm": {
           "title": "清理個人原始碼？",
-          "description": "這會刪除 Cindy 管理的原始碼目錄，包括個人版分支和所有尚未打包的修改。清理後如需使用，請再次點擊準備原始碼。",
+          "description": "這會刪除 {{appName}} 管理的原始碼目錄，包括個人版分支和所有尚未打包的修改。清理後如需使用，請再次點擊準備原始碼。",
           "confirm": "清理原始碼",
           "cancel": "取消"
         },
         "branch": "個人版分支",
         "baseCommit": "基線",
-        "description": "Cindy 個人版的原始碼副本。製作個人版時會從個人版分支建立獨立的開發目錄，修改經測試後合併回來；這個目錄本身不用來改程式碼。",
+        "description": "{{appName}} 個人版的原始碼副本。製作個人版時會從個人版分支建立獨立的開發目錄，修改經測試後合併回來；這個目錄本身不用來改程式碼。",
         "stop": "停止"
       },
       "description": "下方卡片會檢查本機環境，並可安裝缺少的可攜工具。原生編譯工具缺失時會顯示官方下載指引。",
@@ -5770,9 +5770,9 @@
       "requestChanges": "要求修改",
       "planFeedbackPlaceholder": "修改意見(可選)"
     },
-    "controlledBy": "{{name}} 已連接到 Cindy",
-    "controlledByMultiple": "{{count}} 臺裝置已連接到 Cindy",
-    "controlledTooltip": "這些裝置連接了 Cindy 的任務，不代表正在控制桌面滑鼠和鍵盤。你可以撤銷其存取權限。",
+    "controlledBy": "{{name}} 已連接到 {{appName}}",
+    "controlledByMultiple": "{{count}} 臺裝置已連接到 {{appName}}",
+    "controlledTooltip": "這些裝置連接了 {{appName}} 的任務，不代表正在控制桌面滑鼠和鍵盤。你可以撤銷其存取權限。",
     "revokeAccess": "撤銷權限",
     "viewControllers": "檢視",
     "collapseControlledNotice": "收起遠端控制提示",
@@ -7687,11 +7687,11 @@
       "generate": "產生夥伴",
       "generating": "正在構思夥伴…",
       "generationFailed": "暫時無法產生，請保留你的想法再試一次。",
-      "modelRequired": "請先在 Cindy 中選擇可用的預設模型。",
-      "cindyDescription": "我會幫你使用 Cindy、連接工具，也會和你一起把事情做完。",
-      "cindySummary": "管理 Cindy，連接工具，把事情做完。",
-      "openCindy": "開啟 Cindy",
-      "addCindy": "加入 Cindy",
+      "modelRequired": "請先在 {{appName}} 中選擇可用的預設模型。",
+      "cindyDescription": "我會幫你使用 {{appName}}、連接工具，也會和你一起把事情做完。",
+      "cindySummary": "管理 {{appName}}，連接工具，把事情做完。",
+      "openCindy": "開啟 {{appName}}",
+      "addCindy": "加入 {{appName}}",
       "done": "完成",
       "editName": "編輯名字",
       "duplicateName": "已有同名夥伴，換一個更容易分辨的名字吧。",
@@ -9997,7 +9997,7 @@
         "switched": "已切換任務分支",
         "switchedWithDraft": "已切換分支，原問題已放回輸入框",
         "runningBlocked": "當前輪結束後才能切換任務分支。",
-        "remoteBlocked": "請先重連或升級遠端電腦上的 Cindy，再切換分支。",
+        "remoteBlocked": "請先重連或升級遠端電腦上的 {{appName}}，再切換分支。",
         "filesWarning": "切換隻改變對話上下文，不會回滾工作區檔案。",
         "summarize": "離開當前分支時生成摘要（會呼叫模型）",
         "summaryFocus": "可選：摘要重點，例如保留錯誤處理結論",
@@ -12776,7 +12776,7 @@
       },
       "decisionHint": {
         "wait": "本次流程已停止，尚未訂閱通知或設定自動更新。",
-        "personal": "選擇已記錄，Cindy 正在原始碼目錄中建立實作任務。"
+        "personal": "選擇已記錄，{{appName}} 正在原始碼目錄中建立實作任務。"
       },
       "failure": {
         "network": "無法連線 GitHub，請檢查網路後重試。",
@@ -12804,14 +12804,14 @@
       "errors": {
         "unsupportedVersion": "目前版本格式不受支援。",
         "tagNotFound": "目前版本所需的 tag 不存在。",
-        "dirty": "原始碼目錄有未提交改動。請在設定的 Cindy Make 裡清理原始碼後重試。",
+        "dirty": "原始碼目錄有未提交改動。請在設定的 {{appName}} Make 裡清理原始碼後重試。",
         "gitFailed": "Git 無法準備原始碼目錄。",
         "cancelled": "原始碼準備已停止。",
         "localCommits": "原始碼中有尚未包含在上游的本機提交或暫存記錄，請保留或備份後再清理。",
         "environmentNotReady": "建置環境尚未就緒，請檢查所需工具。",
         "gitUnavailable": "Git 無法使用，請先在環境卡片中檢查並安裝 Git，再重試。",
         "installFailed": "相依套件安裝失敗，請重試。",
-        "locked": "部分檔案正被其他程式佔用，無法刪除。請關閉相關程式或重新啟動 Cindy 後重試。"
+        "locked": "部分檔案正被其他程式佔用，無法刪除。請關閉相關程式或重新啟動 {{appName}} 後重試。"
       },
       "gitProgress": {
         "counting": "正在統計物件",

@@ -1479,7 +1479,7 @@
       "xai": {
         "logoutConfirm": {
           "title": "xAI(SuperGrok)を切断しますか?",
-          "description": "Cindy はこの Grok サブスクリプションを使用できなくなります。",
+          "description": "{{appName}} はこの Grok サブスクリプションを使用できなくなります。",
           "confirm": "接続を解除",
           "cancel": "キャンセル"
         },
@@ -1796,7 +1796,7 @@
         },
         "deleteConfirm": {
           "title": "プロバイダーを削除しますか？",
-          "description": "Cindy は「{{name}}」を使用できなくなります。メッセージ履歴は保持され、後から再追加できます。",
+          "description": "{{appName}} は「{{name}}」を使用できなくなります。メッセージ履歴は保持され、後から再追加できます。",
           "confirm": "削除",
           "cancel": "キャンセル"
         },
@@ -2087,7 +2087,7 @@
         },
         "logoutConfirm": {
           "title": "「{{name}}」の接続を解除しますか？",
-          "description": "Cindy は「{{name}}」を使用できなくなります。プロバイダーは保持され、後から再接続できます。",
+          "description": "{{appName}} は「{{name}}」を使用できなくなります。プロバイダーは保持され、後から再接続できます。",
           "confirm": "接続を解除",
           "cancel": "キャンセル"
         }
@@ -3317,7 +3317,7 @@
         "stateUnavailable": "{{appName}} は Pi 拡張機能の状態を読み取れませんでした。{{appName}} を再起動して再試行してください。",
         "runtimeConvergencePartial": "Pi 拡張機能の変更は保存されましたが、一部のローカル Pi タスクが古い拡張機能を実行中の可能性があります。Pi を再び使用する前に {{appName}} を再起動してください。",
         "nativeCommandFailed": "Pi のネイティブパッケージコマンドが失敗しました。ソースまたはバージョンを確認してください。",
-        "runtimeRetirementFailed": "Pi 拡張機能を更新できませんでした。Pi を再び使用する前に Cindy を再起動してください。"
+        "runtimeRetirementFailed": "Pi 拡張機能を更新できませんでした。Pi を再び使用する前に {{appName}} を再起動してください。"
       },
       "success": {
         "install": "Pi 拡張機能をインストールしました。実行中のローカル Pi タスクを停止しました。新しい Pi タスクで利用できます。",
@@ -5726,13 +5726,13 @@
         },
         "resetConfirm": {
           "title": "個人用ソースを削除しますか？",
-          "description": "Cindy が管理するソースディレクトリを削除します。個人版ブランチと、まだパッケージ化していないすべての変更も含まれます。必要になったら、もう一度ソースを準備できます。",
+          "description": "{{appName}} が管理するソースディレクトリを削除します。個人版ブランチと、まだパッケージ化していないすべての変更も含まれます。必要になったら、もう一度ソースを準備できます。",
           "confirm": "ソースを削除",
           "cancel": "キャンセル"
         },
         "branch": "個人版ブランチ",
         "baseCommit": "ベースライン",
-        "description": "個人版 Cindy のソースコピーです。個人版を作るたびに個人版ブランチから独立した作業ディレクトリを作成し、テスト済みの変更をここへマージします。このディレクトリ自体を直接編集することはありません。",
+        "description": "個人版 {{appName}} のソースコピーです。個人版を作るたびに個人版ブランチから独立した作業ディレクトリを作成し、テスト済みの変更をここへマージします。このディレクトリ自体を直接編集することはありません。",
         "stop": "停止"
       },
       "description": "下のカードで本機の環境を確認し、不足するポータブルツールをインストールできます。ネイティブなコンパイラが不足している場合は公式の案内を表示します。",
@@ -5770,9 +5770,9 @@
       "requestChanges": "修正を依頼",
       "planFeedbackPlaceholder": "フィードバック(任意)"
     },
-    "controlledBy": "{{name}} が Cindy に接続中",
-    "controlledByMultiple": "{{count}} 台のデバイスが Cindy に接続中",
-    "controlledTooltip": "Cindy のセッションに接続しているデバイスです。この数はデスクトップのマウスやキーボードを操作している台数ではありません。アクセス権限を撤回できます。",
+    "controlledBy": "{{name}} が {{appName}} に接続中",
+    "controlledByMultiple": "{{count}} 台のデバイスが {{appName}} に接続中",
+    "controlledTooltip": "{{appName}} のセッションに接続しているデバイスです。この数はデスクトップのマウスやキーボードを操作している台数ではありません。アクセス権限を撤回できます。",
     "revokeAccess": "権限を撤回",
     "viewControllers": "表示",
     "collapseControlledNotice": "リモート操作の通知を折りたたむ",
@@ -7687,11 +7687,11 @@
       "generate": "パートナーを生成",
       "generating": "パートナーを考えています…",
       "generationFailed": "生成できませんでした。入力内容は残っています。もう一度お試しください。",
-      "modelRequired": "まず Cindy で利用可能な既定のモデルを選択してください。",
-      "cindyDescription": "Cindy の使い方やツールの接続をお手伝いし、一緒にやり遂げます。",
-      "cindySummary": "Cindy の管理、ツールの接続、仕事のお手伝い。",
-      "openCindy": "Cindy を開く",
-      "addCindy": "Cindy を追加",
+      "modelRequired": "まず {{appName}} で利用可能な既定のモデルを選択してください。",
+      "cindyDescription": "{{appName}} の使い方やツールの接続をお手伝いし、一緒にやり遂げます。",
+      "cindySummary": "{{appName}} の管理、ツールの接続、仕事のお手伝い。",
+      "openCindy": "{{appName}} を開く",
+      "addCindy": "{{appName}} を追加",
       "done": "完了",
       "editName": "名前を編集",
       "duplicateName": "同じ名前のパートナーがいます。区別しやすい名前を選んでください。",
@@ -12776,7 +12776,7 @@
       },
       "decisionHint": {
         "wait": "このフローは停止しました。通知の購読や自動更新は設定していません。",
-        "personal": "選択を記録しました。Cindy がソースディレクトリで実装用のセッションを作成しています。"
+        "personal": "選択を記録しました。{{appName}} がソースディレクトリで実装用のセッションを作成しています。"
       },
       "failure": {
         "network": "GitHub に接続できません。接続を確認して再試行してください。",
@@ -12804,14 +12804,14 @@
       "errors": {
         "unsupportedVersion": "現在のバージョン形式はサポートされていません。",
         "tagNotFound": "現在のバージョンに必要なタグが見つかりません。",
-        "dirty": "ソースディレクトリに未コミットの変更があります。設定の Cindy Make でソースをクリアしてから再試行してください。",
+        "dirty": "ソースディレクトリに未コミットの変更があります。設定の {{appName}} Make でソースをクリアしてから再試行してください。",
         "gitFailed": "Git でソースを準備できませんでした。",
         "cancelled": "ソースの準備を停止しました。",
         "localCommits": "ソースに上流に含まれないローカルコミットまたはスタッシュがあります。削除する前に保存またはバックアップしてください。",
         "environmentNotReady": "ビルド環境の準備ができていません。必要なツールを確認してください。",
         "gitUnavailable": "Git を利用できません。環境カードで Git を確認してインストールし、再試行してください。",
         "installFailed": "依存関係のインストールに失敗しました。再試行してください。",
-        "locked": "一部のファイルが他のプログラムで使用中のため削除できません。そのプログラムを閉じるか Cindy を再起動してから再試行してください。"
+        "locked": "一部のファイルが他のプログラムで使用中のため削除できません。そのプログラムを閉じるか {{appName}} を再起動してから再試行してください。"
       },
       "gitProgress": {
         "counting": "オブジェクトを集計中",
