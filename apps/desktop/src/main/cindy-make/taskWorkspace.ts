@@ -41,16 +41,27 @@ async function exists(file: string): Promise<boolean> {
   }
 }
 
+function normalizePathForComparison(value: string): string {
+  let resolved = path.resolve(value);
+  if (process.platform === 'win32') {
+    // Native realpath may return a Win32 extended-length path while Git and
+    // other callers report the equivalent ordinary absolute path. Keep path
+    // comparisons namespace-agnostic before applying Windows case folding.
+    resolved = resolved.replace(/^[\\/]{2}\?[\\/]/, '');
+    return resolved.toLocaleLowerCase('en-US');
+  }
+  return resolved;
+}
+
 function samePath(left: string, right: string): boolean {
-  const normalize = (value: string) => {
-    const resolved = path.resolve(value);
-    return process.platform === 'win32' ? resolved.toLocaleLowerCase('en-US') : resolved;
-  };
-  return normalize(left) === normalize(right);
+  return normalizePathForComparison(left) === normalizePathForComparison(right);
 }
 
 function isDescendantPath(parent: string, child: string): boolean {
-  const relative = path.relative(parent, child);
+  const relative = path.relative(
+    normalizePathForComparison(parent),
+    normalizePathForComparison(child),
+  );
   return relative.length > 0 && !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
