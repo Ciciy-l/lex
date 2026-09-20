@@ -12,6 +12,12 @@ Lex has two desktop packaging paths:
   ad-hoc branch testing. It produces a short-lived, versionless `0.0.0` Actions
   Artifact only; it does not enter the public update channel.
 
+Before creating a versioned tag, wait for the `client-ci` **push** run on the
+exact merged `main` commit to succeed. `desktop-release-auto` verifies that
+immutable result rather than reinstalling dependencies and rerunning the full
+source-level test suite. It still performs release-specific checks, signing
+preflight, and native packaging on every supported desktop platform.
+
 Versioned unsigned releases are clearly labelled in their Release title and
 notes. Windows packages are unsigned; macOS apps use ad-hoc signing and their
 DMG container is unsigned, so first installation can trigger SmartScreen or
@@ -61,7 +67,7 @@ base64 -i Lex-Developer-ID.p12 | tr -d '\\n'
 Lex retains Cindy's original Git history. The current release-only baseline is
 the immutable Cindy `v0.1.86` snapshot
 `40162c508ff10b0f5d3398fd4af5db82dd39f319`, recorded in
-`CINDY-SYNC-20260919.md`. The release quality gate explicitly excludes
+`CINDY-SYNC-20260919.md`. The release eligibility gate explicitly excludes
 ancestors of this exact snapshot with `--upstream-baseline` and prints the
 excluded count. This is an accepted imported-history exception, **not** a claim
 that those commits passed DCO. It neither rewrites upstream history nor supplies

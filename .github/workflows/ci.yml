@@ -186,6 +186,11 @@ jobs:
       - name: Run mobile scope guard
         run: pnpm --filter mobile test:scope
 
+      # Release eligibility reuses this exact main CI result rather than
+      # installing dependencies and rerunning the full source suite on a tag.
+      - name: Validate Lex release and website contracts
+        run: pnpm exec node scripts/__tests__/lex-product-release-baseline.test.mjs
+
   # Linux 单测使用与 Windows 相同的确定性 Vitest 分片。两个分片分别覆盖每个
   # workspace 经 Vitest 切分后的测试文件，并集等于完整 unit tier；不重复 test:runner。
   linux-unit-shards:
