@@ -21,6 +21,7 @@ on:
           - signed
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -36,6 +37,7 @@ jobs:
     name: Resolve version and signing mode
     runs-on: ubuntu-latest
     outputs:
+      release_commit: ${{ steps.target.outputs.release_commit }}
       version: ${{ steps.version.outputs.version }}
       signing_mode: ${{ steps.mode.outputs.signing_mode }}
       signing_ready: ${{ steps.mode.outputs.signing_ready }}
@@ -46,6 +48,7 @@ jobs:
           fetch-depth: 0
 
       - name: Verify release target is merged into main
+        id: target
         shell: bash
         run: |
           set -euo pipefail
@@ -56,6 +59,7 @@ jobs:
             echo 'Merge the release commit into main before tagging or dispatching this workflow.' >&2
             exit 1
           fi
+          echo "release_commit=$release_commit" >> "$GITHUB_OUTPUT"
 
       - name: Resolve release version
         id: version
@@ -165,66 +169,51 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-  quality:
-    name: Release quality gate
+  eligibility:
+    name: Release eligibility gate
+    needs: resolve-release
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-      ELECTRON_OVERRIDE_DIST_PATH: "${{ github.workspace }}/.electron-stub-dist"
+    timeout-minutes: 10
     steps:
-      - name: Checkout
+      # PR and main CI already run the full source-level suite. A tag can still
+      # be pushed manually, so require a successful main push run for this exact
+      # immutable commit instead of rerunning the suite before packaging.
+      - name: Require successful main CI for release target
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ needs.resolve-release.outputs.release_commit }}
+        run: |
+          set -euo pipefail
+          run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$RELEASE_COMMIT" --event push --status success --limit 100 --json databaseId,headBranch,headSha,event,conclusion --jq ".[] | select(.headSha == \"$RELEASE_COMMIT\" and .headBranch == \"main\" and .event == \"push\" and .conclusion == \"success\") | .databaseId" | sed -n '1p')"
+          if [ -z "$run_id" ]; then
+            echo "Release target $RELEASE_COMMIT has no successful main client-ci run." >&2
+            echo 'Wait for the matching main CI run to pass, then rerun this release workflow.' >&2
+            exit 1
+          fi
+          echo "Matched successful main client-ci run $run_id for $RELEASE_COMMIT." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Checkout release target
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          lfs: true
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
-        with:
-          run_install: false
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Install bundled ripgrep for workspace tests
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: pnpm install:ripgrep
-
-      - name: Check DCO and repository invariants
+      - name: Check release target DCO
         run: |
           # Accepted immutable Cindy v0.1.86 snapshot. This is an imported
           # history exception, not a DCO certification; never use a moving ref.
           # Newer upstream history and Lex-authored commits remain checked.
-          pnpm check:dco -- --base "${GITHUB_SHA}^1" --head "$GITHUB_SHA" --upstream-baseline 40162c508ff10b0f5d3398fd4af5db82dd39f319
-          pnpm check:endpoints
-          pnpm check:i18n
-          pnpm check:i18n-glossary
-          pnpm check:brand-terminology
-
-      - name: Typecheck desktop
-        env:
-          NODE_OPTIONS: "--max-old-space-size=6144"
-        run: pnpm --filter desktop typecheck
-
-      - name: Run unit tests
-        run: pnpm test:unit
-
-      - name: Validate Lex release and website contracts
-        run: pnpm exec node scripts/__tests__/lex-product-release-baseline.test.mjs
+          node scripts/check-dco.mjs --base "${{ needs.resolve-release.outputs.release_commit }}^1" --head "${{ needs.resolve-release.outputs.release_commit }}" --upstream-baseline 40162c508ff10b0f5d3398fd4af5db82dd39f319
 
   package:
     name: Package ${{ matrix.platform }}
     needs:
-      - quality
+      - eligibility
       - resolve-release
     strategy:
       fail-fast: false
