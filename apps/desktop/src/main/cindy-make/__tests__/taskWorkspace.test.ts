@@ -15,15 +15,11 @@ const trustedVerifier = async (_userData: string, workingDir: string) => ({
   branch: `cindy-make/${path.basename(workingDir)}`,
 });
 
-function isSameTestPath(left: string, right: string): boolean {
-  const normalize = (value: string) => {
-    const resolved = path.resolve(value);
-    if (process.platform === 'win32') {
-      return path.toNamespacedPath(resolved).toLocaleLowerCase('en-US');
-    }
-    return resolved;
-  };
-  return normalize(left) === normalize(right);
+async function isSameTestPath(left: string, right: string): Promise<boolean> {
+  // Match the filesystem identities used by the verifier. Lexical normalization
+  // cannot expand Windows 8.3 temp paths or aliases in a temporary parent.
+  const [canonicalLeft, canonicalRight] = await Promise.all([realpath(left), realpath(right)]);
+  return canonicalLeft === canonicalRight;
 }
 
 describe('prepareCindyMakeWorkspace', () => {
@@ -188,20 +184,20 @@ describe('verifyCindyMakeWorktree', () => {
       topology.worktreeGitDirectory ?? path.join(sourceCommon, 'worktrees', 'run-1');
     return vi.fn(async (_gitExecutable: string, _env: NodeJS.ProcessEnv, args: string[], cwd: string) => {
       if (args.join(' ') === 'remote get-url origin') {
-        expect(isSameTestPath(cwd, source)).toBe(true);
+        expect(await isSameTestPath(cwd, source)).toBe(true);
         return CINDY_SOURCE_REPOSITORY;
       }
       if (args.join(' ') === 'rev-parse --abbrev-ref HEAD') {
-        return isSameTestPath(cwd, source) ? 'cindy-personal' : 'cindy-make/run-1';
+        return (await isSameTestPath(cwd, source)) ? 'cindy-personal' : 'cindy-make/run-1';
       }
       if (args.join(' ') === 'rev-parse --show-toplevel') {
-        return isSameTestPath(cwd, source) ? source : worktreeTopLevel;
+        return (await isSameTestPath(cwd, source)) ? source : worktreeTopLevel;
       }
       if (args.join(' ') === 'rev-parse --git-common-dir') {
-        return isSameTestPath(cwd, source) ? sourceCommon : worktreeCommon;
+        return (await isSameTestPath(cwd, source)) ? sourceCommon : worktreeCommon;
       }
       if (args.join(' ') === 'rev-parse --git-dir') {
-        return isSameTestPath(cwd, source) ? sourceCommon : worktreeGitDirectory;
+        return (await isSameTestPath(cwd, source)) ? sourceCommon : worktreeGitDirectory;
       }
       if (args.join(' ') === 'worktree list --porcelain') {
         return `worktree ${source}\nbranch refs/heads/cindy-personal\n\nworktree ${worktree}\nbranch ${registrationBranch}\n`;
@@ -247,6 +243,32 @@ describe('verifyCindyMakeWorktree', () => {
       ).resolves.toEqual({ path: await realpath(worktree), branch: 'cindy-make/run-1' });
     },
   );
+
+  it('verifies a worktree when the temporary parent has a filesystem alias', async () => {
+    const physicalUserData = userData;
+    const aliasRoot = await mkdtemp(path.join(os.tmpdir(), 'cindy-make-parent-alias-'));
+    const alias = path.join(aliasRoot, 'profile');
+    try {
+      await symlink(physicalUserData, alias, process.platform === 'win32' ? 'junction' : 'dir');
+      userData = alias;
+      source = path.join(alias, 'cindy-make', 'source');
+      worktree = path.join(alias, 'cindy-make', 'worktrees', 'run-1');
+      const git = gitFor();
+      const result = await verifyCindyMakeWorktree(userData, worktree, new AbortController().signal, {
+        processEnvironment: {},
+        gitExecutable: path.join(userData, 'managed-git'),
+        git,
+      });
+      // Include the mock calls so a caught mock failure cannot hide behind null.
+      expect(result, JSON.stringify(git.mock.calls)).toEqual({
+        path: await realpath(worktree),
+        branch: 'cindy-make/run-1',
+      });
+    } finally {
+      userData = physicalUserData;
+      await rm(aliasRoot, { recursive: true, force: true });
+    }
+  });
 
   it('rejects a task path replaced by a symlink or Windows junction before host Git runs', async () => {
     const foreign = await mkdtemp(path.join(os.tmpdir(), 'cindy-make-foreign-'));
