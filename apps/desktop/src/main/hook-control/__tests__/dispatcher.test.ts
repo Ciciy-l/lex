@@ -246,11 +246,11 @@ function makeDispatcher(overrides?: {
 
 describe('post-terminal runtime recovery delivery', () => {
   it.each([
-    ['en', 'Pi extensions could not be refreshed. Restart Cindy before using Pi again.'],
-    ['zh-CN', 'Pi 扩展未能完成刷新。请重启 Cindy 后再使用 Pi。'],
-    ['zh-TW', 'Pi 擴充功能未能完成重新整理。請重新啟動 Cindy 後再使用 Pi。'],
-    ['ja', 'Pi 拡張機能を更新できませんでした。Pi を再び使用する前に Cindy を再起動してください。'],
-    ['ko', 'Pi 확장을 새로 고치지 못했습니다. Pi를 다시 사용하기 전에 Cindy를 다시 시작하세요.'],
+    ['en', 'Pi extensions could not be refreshed. Restart Lex before using Pi again.'],
+    ['zh-CN', 'Pi 扩展未能完成刷新。请重启 Lex 后再使用 Pi。'],
+    ['zh-TW', 'Pi 擴充功能未能完成重新整理。請重新啟動 Lex 後再使用 Pi。'],
+    ['ja', 'Pi 拡張機能を更新できませんでした。Pi を再び使用する前に Lex を再起動してください。'],
+    ['ko', 'Pi 확장을 새로 고치지 못했습니다. Pi를 다시 사용하기 전에 Lex를 다시 시작하세요.'],
   ] as const)('delivers localized %s recovery after the observer unsubscribes, without replay', async (locale, expected) => {
     setMainLocale(locale);
     let terminal!: () => void;

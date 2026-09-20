@@ -1147,7 +1147,7 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
       closeFailure.resolve();
       await waitForAssertion(() => expect(session.getStatus()).toBe('error'));
       expect(mocks.feishuIm.sendText).toHaveBeenCalledExactlyOnceWith('ou_user',
-        'Pi 扩展未能完成刷新。请重启 Cindy 后再使用 Pi。', { threadTs: undefined });
+        'Pi 扩展未能完成刷新。请重启 Lex 后再使用 Pi。', { threadTs: undefined });
       expect(complete).toHaveBeenCalledOnce();
       expect(handle.send).toHaveBeenCalledOnce();
     } finally {

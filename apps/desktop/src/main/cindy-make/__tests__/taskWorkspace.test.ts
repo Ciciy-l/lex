@@ -15,6 +15,14 @@ const trustedVerifier = async (_userData: string, workingDir: string) => ({
   branch: `cindy-make/${path.basename(workingDir)}`,
 });
 
+function isSameTestPath(left: string, right: string): boolean {
+  const normalize = (value: string) => {
+    const resolved = path.resolve(value);
+    return process.platform === 'win32' ? resolved.toLocaleLowerCase('en-US') : resolved;
+  };
+  return normalize(left) === normalize(right);
+}
+
 describe('prepareCindyMakeWorkspace', () => {
   let userData: string;
   beforeEach(async () => {
@@ -177,20 +185,20 @@ describe('verifyCindyMakeWorktree', () => {
       topology.worktreeGitDirectory ?? path.join(sourceCommon, 'worktrees', 'run-1');
     return vi.fn(async (_gitExecutable: string, _env: NodeJS.ProcessEnv, args: string[], cwd: string) => {
       if (args.join(' ') === 'remote get-url origin') {
-        expect(cwd).toBe(source);
+        expect(isSameTestPath(cwd, source)).toBe(true);
         return CINDY_SOURCE_REPOSITORY;
       }
       if (args.join(' ') === 'rev-parse --abbrev-ref HEAD') {
-        return cwd === source ? 'cindy-personal' : 'cindy-make/run-1';
+        return isSameTestPath(cwd, source) ? 'cindy-personal' : 'cindy-make/run-1';
       }
       if (args.join(' ') === 'rev-parse --show-toplevel') {
-        return cwd === source ? source : worktreeTopLevel;
+        return isSameTestPath(cwd, source) ? source : worktreeTopLevel;
       }
       if (args.join(' ') === 'rev-parse --git-common-dir') {
-        return cwd === source ? sourceCommon : worktreeCommon;
+        return isSameTestPath(cwd, source) ? sourceCommon : worktreeCommon;
       }
       if (args.join(' ') === 'rev-parse --git-dir') {
-        return cwd === source ? sourceCommon : worktreeGitDirectory;
+        return isSameTestPath(cwd, source) ? sourceCommon : worktreeGitDirectory;
       }
       if (args.join(' ') === 'worktree list --porcelain') {
         return `worktree ${source}\nbranch refs/heads/cindy-personal\n\nworktree ${worktree}\nbranch ${registrationBranch}\n`;
