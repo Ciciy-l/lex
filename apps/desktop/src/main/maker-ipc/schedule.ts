@@ -74,6 +74,7 @@ import { isTrustedAppRendererEvent } from '../security/trustedAppRenderer.js';
 import { getAgentIslandService } from '../agent-island/service.js';
 import { getSessionProvider } from '../maker-host/session-provider-store.js';
 import { getActiveCatalog } from '../maker-host/active-catalog.js';
+import { isMakerAgentKind } from '../../shared/agentKindConversion.js';
 import { MAKER_INVOKE, MAKER_PUSH } from './channels.js';
 import {
   resolveBoundSessionGenerationRoute,
@@ -473,9 +474,7 @@ export function registerScheduleHandlers(getMaker?: () => Maker | null): void {
     const maker = getMaker?.();
     if (!maker) throwIpcError('INTERNAL', 'maker not ready for hook script generation');
     const workingDir = await resolveHookWorkingDir(body);
-    const requestedAgentKind: AgentKind | undefined = body.agentKind === 'codex'
-      || body.agentKind === 'claude-code'
-      || body.agentKind === 'pi'
+    const requestedAgentKind: AgentKind | undefined = isMakerAgentKind(body.agentKind)
       ? body.agentKind
       : undefined;
     const targetSessionId = typeof body.targetSessionId === 'string' && body.targetSessionId.trim()

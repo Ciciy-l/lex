@@ -89,7 +89,7 @@ export {
   OmpCommandCatalog,
   parseOmpCommands,
 } from './omp/commands.js';
-export { startOmpProcess } from './omp/process-host.js';
+export { startOmpProcess, startOmpRemoteProcess } from './omp/process-host.js';
 export { OmpAgent } from './omp/index.js';
 export {
   OmpPermissionBridge,
@@ -109,7 +109,14 @@ export type {
   OmpProcessHostOptions,
   OmpProcessSpawner,
   OmpProcessSpawnRequest,
+  OmpRemoteProcessHostOptions,
+  OmpRemoteTransport,
 } from './omp/process-host.js';
+export type {
+  OmpRemoteFileOps,
+  RemoteAgentFileOps,
+  WritableRemoteAgentFileOps,
+} from './base-agent.js';
 export {
   canReuseCodexHostForCredentialMode,
   canReuseHostForCredentialMode,

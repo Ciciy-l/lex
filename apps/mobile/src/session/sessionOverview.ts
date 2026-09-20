@@ -61,7 +61,9 @@ export function summarizeSessionOverview(input: SessionActionStripInput): Sessio
         ? 'Codex'
         : input.session.agentKind === 'pi'
           ? 'Pi'
-          : 'Claude Code',
+          : input.session.agentKind === 'omp'
+            ? 'OMP'
+            : 'Claude Code',
       input.session.model,
       input.session.permissionMode,
       input.session.fastMode ? 'Fast' : null,

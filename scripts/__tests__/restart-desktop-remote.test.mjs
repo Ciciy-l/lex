@@ -849,6 +849,49 @@ test("desktop whoami identifies multiple passive previews sharing one userData",
 	}]);
 });
 
+test("desktop whoami keeps quoted profile paths intact even when they contain /prefetch text", () => {
+	const previewRoot = path.resolve("/repo/cindy-quoted-prefetch-preview");
+	// This is a logical POSIX path embedded in a process command line. The test
+	// exercises quoting, not the host filesystem, so it remains valid on every
+	// CI platform.
+	const userData = "/tmp/quoted /prefetch:4 profile";
+	const worktrees = [{ rootDir: previewRoot, branch: "dash/quoted-prefetch" }];
+	const electronMain = path.join(previewRoot, "node_modules", "electron", "dist", "Electron");
+	const helper = path.join(previewRoot, "node_modules", "electron", "helper");
+	const appPath = path.join(previewRoot, "apps", "desktop");
+	const processes = [
+		{ pid: 10, ppid: 9, command: `${electronMain} .` },
+		{ pid: 11, ppid: 10, command: `${helper} --type=renderer --user-data-dir="${userData}" --app-path="${appPath}"` },
+		{ pid: 9, ppid: 8, command: `node ${path.join(previewRoot, "apps", "desktop", "scripts", "dev-remote-env.mjs")} electron-forge start` },
+	];
+
+	const [instance] = identifyDesktopProcesses(processes, worktrees);
+	assert.equal(instance?.userDataDir, userData);
+});
+
+test("desktop whoami strips Chromium Windows /prefetch tails from helper userData paths", { skip: process.platform !== "win32" }, () => {
+	const previewRoot = path.resolve("/repo/cindy-prefetch-preview");
+	const userData = path.join(os.tmpdir(), "cindy-prefetch-user-data");
+	const worktrees = [{ rootDir: previewRoot, branch: "dash/prefetch" }];
+	const electronMain = path.join(previewRoot, "node_modules", "electron", "dist", "Electron");
+	const helper = path.join(previewRoot, "node_modules", "electron", "helper");
+	const appPath = path.join(previewRoot, "apps", "desktop");
+	const processes = [
+		{ pid: 10, ppid: 9, command: `${electronMain} .` },
+		// This is the ordering observed on Windows: crashpad appears before the
+		// renderer, so it supplies the profile path for the process scan.
+		{ pid: 11, ppid: 10, command: `${helper} --type=crashpad-handler --user-data-dir=${userData} /prefetch:4 --no-rate-limit` },
+		{ pid: 12, ppid: 10, command: `${helper} --type=renderer --user-data-dir="${userData}" --app-path="${appPath}" /prefetch:1` },
+		{ pid: 9, ppid: 8, command: `node ${path.join(previewRoot, "apps", "desktop", "scripts", "dev-remote-env.mjs")} electron-forge start` },
+	];
+
+	const [instance] = identifyDesktopProcesses(processes, worktrees);
+	assert.equal(instance?.pid, 10);
+	assert.equal(instance?.ready, true);
+	assert.equal(instance?.mode, "remote");
+	assert.equal(instance?.userDataDir, userData);
+});
+
 test("passive previews do not use a one-slot userData lock", () => {
 	const bootstrap = fs.readFileSync(
 		new URL("../../apps/desktop/src/main/bootstrap-electron.ts", import.meta.url),

@@ -1,6 +1,7 @@
 export const BOT_MODEL_CHAIN_MAX = 5;
 
-export type BotHarness = 'claude' | 'codex' | 'pi';
+/** A persisted Bot route uses the same engine set as ordinary Maker sessions. */
+export type BotHarness = 'claude' | 'codex' | 'pi' | 'omp';
 
 /** One complete, ordered Bot runtime route. */
 export interface BotModelRoute {
@@ -20,7 +21,9 @@ export function botModelRouteRuntimeKey(
 }
 
 export function normalizeBotHarness(value: unknown): BotHarness {
-  return value === 'codex' || value === 'pi' || value === 'claude' ? value : 'claude';
+  return value === 'codex' || value === 'pi' || value === 'omp' || value === 'claude'
+    ? value
+    : 'claude';
 }
 
 export function normalizeBotModelRoute(value: unknown): BotModelRoute | null {

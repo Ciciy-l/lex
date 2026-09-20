@@ -10,6 +10,7 @@ import {
 } from '@cindy/model-providers';
 
 import type { ProviderService } from '../maker-host/provider-service.js';
+import { usesControllerProviderProxyForSsh } from '../../shared/sshAgentProviderRouting.js';
 import {
   providerRouteRequiresExplicitSelection,
   type OrcaWorkerProviderRoutingContext,
@@ -73,7 +74,12 @@ export async function readOrcaWorkerProviderRoutingContext(deps: {
         requiresExplicitRoute: providerRouteRequiresExplicitSelection(
           provider.routing[agent]?.authStrategy,
         ),
+        // Remote OMP reaches this controller-owned catalog through its own
+        // authenticated reverse-forward, so a provider that is local-only for
+        // a native SSH adapter is still routable for OMP. Other engines retain
+        // the existing direct-provider restriction.
         localOnlyForSsh:
+          !usesControllerProviderProxyForSsh(agent) &&
           isLocalOnlyProviderForAgent(provider, agent),
       };
     });

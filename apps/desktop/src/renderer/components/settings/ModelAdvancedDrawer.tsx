@@ -19,13 +19,15 @@ import { localizedModelName, localizedBrandName } from '@/lib/modelDisplayNames'
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { AlertTriangle, Check, CircleHelp, Minus, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, CircleHelp, Minus, Trash2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { cn } from '@/lib/utils';
+import { providerViewToCustomProviderConfig, updateCustomProvider } from '@/lib/customProviders';
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem } from '@/components/ui/dropdown-menu';
 import { MODEL_HARNESS_COLOR } from '@/lib/modelHarnessPresentation';
 import { ModelCompatibilityNotice } from '@/components/new-chat/ModelCompatibilityNotice';
-import { MODEL_PROTOCOL_LABEL } from '@/lib/modelProtocolLabel';
+import { MODEL_PROTOCOL_LABEL, MODEL_PROTOCOL_OPTIONS } from '@/lib/modelProtocolLabel';
 import { toast } from '@/lib/toast';
 import { Tip } from '@/components/ui/tooltip';
 import { Switch } from '@/components/ui/switch';
@@ -52,6 +54,8 @@ import { EFFORT_TIER_COLORS } from '@/themes/effortTierColors';
 
 import {
   classifyVisionCapability,
+  providerWireProtocolForApi,
+  providerBaseUrlForApi,
   clampEffortToSupported,
   EFFORT_VALUES,
   isAgentSelectableModel,
@@ -66,7 +70,7 @@ import type {
   ProviderView,
 } from '@cindy/model-providers';
 
-import { MANAGED_OLLAMA_PROVIDER_ID } from '../../../shared/localModelRuntime';
+import { isLocalRuntimeBetaProviderId, MANAGED_OLLAMA_PROVIDER_ID } from '../../../shared/localModelRuntime';
 import { modelBrand } from './modelManagementPresentation';
 import { ModelPriceOverrideDialog } from './ModelPriceOverrideDialog';
 import type { UnionModelRow } from './UnifiedModelList';
@@ -210,6 +214,7 @@ export function ModelAdvancedDrawer({
   const selectionAvailable = provider.connected && !provider.suspended;
   const locale = i18n.resolvedLanguage ?? i18n.language ?? 'en';
   const [priceDialogOpen, setPriceDialogOpen] = useState(false);
+  const [protocolSaving, setProtocolSaving] = useState(false);
   const titleRef = useRef<HTMLHeadingElement>(null);
   // 开关/档位写的是 renderer 本地存储，订阅 version 才能在写后重渲染。
   useModelVisibilityVersion();
@@ -255,11 +260,44 @@ export function ModelAdvancedDrawer({
     [contextAgent, contextModel, provider.id, row, chatAgents],
   );
   const ctx = useModelContextLimit(open ? contextTarget : null);
+  const setModelApi = async (agent: AgentKind, api: PiModelApi) => {
+    if (protocolSaving || provider.source !== 'user' || provider.auth?.native || !row?.byAgent[agent]) return;
+    const config = providerViewToCustomProviderConfig(provider);
+    const runtime = config.runtimes[agent];
+    const model = runtime?.models.find(m => m.id === row.byAgent[agent]!.id);
+    if (!runtime || !model) return;
+    model.api = api;
+    if (agent === 'pi') model.piApi = api;
+    const wire = providerWireProtocolForApi(api);
+    if (!wire) return;
+    const existingRoute = { ...(model.route ?? {}) };
+    delete existingRoute.requestPath;
+    model.route = {
+      ...existingRoute,
+      baseUrl: providerBaseUrlForApi(model.route?.baseUrl ?? runtime.baseUrl, api),
+      wireProtocol: wire,
+    };
+    setProtocolSaving(true);
+    try {
+      const result = await updateCustomProvider(config, {}, { source: 'manual-settings' });
+      if (!result.ok) toast.error(t('settings.providers.custom.toast.saveFailed'));
+    }
+    catch { toast.error(t('settings.providers.custom.toast.saveFailed')); }
+    finally { setProtocolSaving(false); }
+  };
+
 
   const [ctxDraft, setCtxDraft] = useState('');
   const ctxDirtyRef = useRef(false);
   const defaultWindow = contextAgent === 'codex' && ctx.codexContext
     ? ctx.codexContext.contextWindow : contextModel?.contextWindow ?? 0;
+  // The editor guard is not a native request-capacity limit. Keep small/local
+  // model windows selectable and never derive this floor from a saved override.
+  // Local runtimes own their loaded window; their catalog maximum cannot set an editor floor.
+  const modelWindows = chatAgents.map((agent) => row?.byAgent[agent]?.contextWindow)
+    .filter((window): window is number => typeof window === 'number' && Number.isFinite(window) && window > 0);
+  const minimumContextK = isLocalRuntimeBetaProviderId(provider.id)
+    ? 1 : Math.max(1, Math.floor(Math.min(100_000, ...modelWindows) / 1000));
   const routeWindow = primaryModel?.contextWindowMax ?? primaryModel?.contextWindow ?? 0;
   const effectiveLimit = ctx.limit ?? (defaultWindow > 0 ? defaultWindow : null);
   useEffect(() => {
@@ -274,8 +312,8 @@ export function ModelAdvancedDrawer({
   const parsedK = Number(ctxDraft.trim());
   const parsedTokens = parsedK * 1000;
   const ctxInvalid =
-    ctxDraft.trim() !== '' &&
-    (!Number.isSafeInteger(parsedK) || parsedTokens < 1000 || parsedTokens > 100_000_000);
+    ctxDirtyRef.current && ctxDraft.trim() !== '' &&
+    (!Number.isSafeInteger(parsedK) || parsedK < minimumContextK || parsedTokens > 100_000_000);
   const commitCtxDraft = useCallback(() => {
     if (!ctxDirtyRef.current || ctxInvalid || ctx.loading) return;
     ctxDirtyRef.current = false;
@@ -338,7 +376,7 @@ export function ModelAdvancedDrawer({
   const price = pricePresentationOf(primaryAgent, primaryModel);
   const protocols = modelProtocolComparison(provider, row.byAgent);
   const protocolLabel = (api: PiModelApi | null) =>
-    api ? MODEL_PROTOCOL_LABEL[api] : t('settings.providers.models.advanced.undeclared');
+    api ? MODEL_PROTOCOL_LABEL[api] ?? null : t('settings.providers.models.advanced.undeclared');
   const displayedLimit = ctxDirtyRef.current
     ? ctxDraft.trim() === ''
       ? defaultWindow
@@ -452,14 +490,14 @@ export function ModelAdvancedDrawer({
                           {t('settings.providers.models.manage.connectionRequired')}
                         </p>
                       )}
-                      <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1 text-11">
+                      {protocols.reference && protocolLabel(protocols.reference) && <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1 text-11">
                         <span className="text-[var(--text-tertiary)]">
                           {t('settings.providers.models.advanced.protocol.reference')}
                         </span>
                         <span className="text-[var(--text-secondary)]">
                           {protocolLabel(protocols.reference)}
                         </span>
-                      </div>
+                      </div>}
                       {provider.agents.map((agent) => {
                         const model = row.byAgent[agent];
                         // Missing catalog membership proves no configured route, not upstream incompatibility.
@@ -512,15 +550,32 @@ export function ModelAdvancedDrawer({
                                   id={protocolId}
                                   className="mt-0.5 text-11 leading-4 text-[var(--text-tertiary)]"
                                 >
-                                  {protocolLabel(protocol.outbound)}
-                                  {' · '}
-                                  {compatibility ? (
-                                    <ModelCompatibilityNotice />
-                                  ) : (
-                                    t(
+                                  {provider.source === 'user' && !provider.auth?.native && !model?.catalogPresetId && supported ? (
+                                    <DropdownMenu>
+                                      <DropdownMenuTrigger asChild>
+                                        <button type="button" disabled={protocolSaving}
+                                          aria-label={`${AGENT_LABEL[agent]} · ${t('settings.providers.custom.fields.wireProtocol')}`}
+                                          className="rounded-full px-2 py-1 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]">
+                                          {protocolLabel(protocol.outbound)} <ChevronDown size={12} className="inline" aria-hidden />
+                                        </button>
+                                      </DropdownMenuTrigger>
+                                      <DropdownMenuContent className="z-[10003]" align="start">
+                                        <DropdownMenuRadioGroup value={protocol.outbound ?? ''}
+                                          onValueChange={value => void setModelApi(agent, value as PiModelApi)}>
+                                          {MODEL_PROTOCOL_OPTIONS.map(([api, label]) => <DropdownMenuRadioItem key={api} value={api}>{label}</DropdownMenuRadioItem>)}
+                                        </DropdownMenuRadioGroup>
+                                      </DropdownMenuContent>
+                                    </DropdownMenu>
+                                  ) : protocolLabel(protocol.outbound)}
+                                  {/* Missing manufacturer metadata does not make a configured
+                                      outbound protocol unconfirmed. Keep that distinction in
+                                      the manufacturer reference when one is declared. */}
+                                  {(protocol.mode !== 'unknown' || !protocol.outbound) && <>
+                                    {protocolLabel(protocol.outbound) && ' · '}
+                                    {compatibility ? <ModelCompatibilityNotice /> : t(
                                       `settings.providers.models.advanced.protocol.${protocol.mode}`,
-                                    )
-                                  )}
+                                    )}
+                                  </>}
                                 </p>
                               )}
                             </div>
@@ -704,6 +759,7 @@ export function ModelAdvancedDrawer({
                             <p role="status" className="mt-1.5 text-12 text-[var(--warning-fg)]">
                               {t(
                                 `settings.providers.models.advanced.${ctxInvalid ? 'contextInvalid' : ctx.error ? 'contextWriteFailed' : 'contextMixed'}`,
+                                { min: minimumContextK },
                               )}
                             </p>
                           )}

@@ -97,6 +97,8 @@ export interface PiTranslateContext {
   getPriceVariant?: () => 'standard' | 'priority';
   /** get_state 拿到的 contextWindow(模型切换时更新)。 */
   contextWindow: number;
+  /** Applied compaction budget; separate from the native request capacity. */
+  workingContextWindow?: number;
   /** turn 内累计 input+output;turn 结束 reset。 */
   turnTokens: number;
   /** turn 内 usage 分量累计(did-turn-end / ghost 订阅上报用);agent_start reset。 */
@@ -288,7 +290,7 @@ export function rollbackPiHostAbortRequest(
   if (ctx.hostAbortRequestTokens.size === 0) ctx.hostAbortRequestGeneration = null;
 }
 
-function isCurrentTurnHostAbortRequested(ctx: PiTranslateContext): boolean {
+export function isCurrentTurnHostAbortRequested(ctx: PiTranslateContext): boolean {
   return ctx.hostAbortRequestGeneration === ctx.turnGeneration
     && ctx.hostAbortRequestTokens.size > 0;
 }
@@ -347,7 +349,8 @@ export function usageSnapshotOf(ctx: PiTranslateContext): UsageSnapshot {
     {
       tokenUsage: ctx.turnTokens,
       contextTokens: ctx.contextTokens,
-      contextWindow: ctx.contextWindow,
+      contextWindow: ctx.workingContextWindow && ctx.workingContextWindow > 0
+        ? Math.min(ctx.workingContextWindow, ctx.contextWindow) : ctx.contextWindow,
       costUsd: ctx.costUsd,
     },
     {
@@ -543,6 +546,11 @@ function assistantTextOf(message: PiAssistantMessage): string {
   return parts.join('\n\n');
 }
 
+/** Pi's explicit request failure, distinct from a bare or Host-requested abort. */
+function isPiAbortedRequest(error: string): boolean {
+  return /^Request was aborted[.!]?$/i.test(error.trim());
+}
+
 function piAssistantErrorOf(rawError: string): PiPendingAssistantError {
   const signals = extractNonSecretErrorSignals(rawError);
   const redactedError = redactSensitiveText(rawError);
@@ -553,7 +561,7 @@ function piAssistantErrorOf(rawError: string): PiPendingAssistantError {
     ...(signals.usageLimit ? { usageLimit: true } : {}),
     ...(isContextOverflowErrorMessage(redactedError)
       ? { reason: CONTEXT_OVERFLOW_REASON }
-      : isStreamInterruptedErrorMessage(redactedError)
+      : isStreamInterruptedErrorMessage(redactedError) || isPiAbortedRequest(redactedError)
         ? { reason: UPSTREAM_STREAM_INTERRUPTED_REASON }
         : {}),
   };
@@ -566,6 +574,7 @@ function isPiTransientAssistantFailure(message: PiAssistantMessage): boolean {
   return errorMessage.length > 0 && (
     isNetworkishErrorMessage(errorMessage)
     || isStreamInterruptedErrorMessage(errorMessage)
+    || isPiAbortedRequest(errorMessage)
   );
 }
 

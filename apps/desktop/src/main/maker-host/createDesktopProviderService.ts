@@ -1,3 +1,4 @@
+import { readProviderPresentation } from './provider-presentation-store.js';
 import { filterLegacyGptContextProfiles } from './legacy-context-profiles.js';
 import { subscriptionAccountKind, subscriptionAccountState, isXaiSubscriptionProviderId, getValidClaudeAccountOAuth, resetSubscriptionAccountCaches } from './subscription-account-auth.js';
 /**
@@ -109,14 +110,23 @@ import {
   readCustomProviderHeaders,
   readCustomProviderKey,
 } from '../secrets/providerSecretStore.js';
-import { hasClaudeAiOAuth, hasClaudeAiOAuthUnbound } from './claude-credentials-store.js';
+import {
+  hasClaudeAiOAuth,
+  hasClaudeAiOAuthUnbound,
+  readClaudeAiOAuth,
+} from './claude-credentials-store.js';
 import { getValidClaudeAiOAuth } from './claude-oauth-refresh.js';
 import {
   getGrokAccessToken,
   hasGrokOAuthLogin,
+  grokAccountIdentity,
   recoverGrokAuthAfterRejection,
   resetGrokOAuthMemoryCache,
 } from './grok-oauth-login.js';
+import {
+  notifyOpenAiMediaCredentialChanged,
+  refreshOpenAiMediaModels,
+} from './model-discovery/openai-media.js';
 import { clearXaiMediaModels } from './model-discovery/xai-media.js';
 import { getAuthState } from '../authManager.js';
 import { getActiveAppSession } from '../appSessionState.js';
@@ -124,6 +134,7 @@ import { filterProviderCatalogForAccount } from './provider-access-policy.js';
 import { getAppCapabilities } from '../appCapabilities.js';
 import {
   claimDetectedNativeProviderAuth,
+  getNativeProviderAuthSource,
   migrateLegacyNativeProviderAuthBindings,
 } from './nativeProviderAuthBinding.js';
 import { hasLegacyOwnerNamespaceClaim } from '../ownerNamespaceMigration.js';
@@ -440,6 +451,7 @@ function handleProviderSecretsCleared(): void {
   clearDiscoveredProviderModels();
   clearXaiDiscoveredModels();
   clearXaiMediaModels();
+  notifyOpenAiMediaCredentialChanged();
 }
 
 /**
@@ -545,6 +557,7 @@ export function ensureActiveCatalogLoaded(): Promise<Catalog> {
         // 无 LKG / 刷新失败时 active-catalog 才继续使用 server Catalog → bundled 救急。
         await loadXaiModelsFromDiskCache();
         void refreshXaiModelsFromHttp();
+        void refreshOpenAiMediaModels();
         activeLoaded = true;
         return catalog;
       })
@@ -987,6 +1000,7 @@ export function getDesktopProviderService(): ProviderService {
   }
   if (singleton) return singleton;
   singleton = createProviderService({
+    getProviderPresentation: readProviderPresentation,
     getCatalog: getDesktopSelectableCatalog,
     connection: {
       xd: () => getAppCapabilities().canUseCindyGateway && readClaudeApiKey() != null,
@@ -1037,7 +1051,24 @@ export function getDesktopProviderService(): ProviderService {
     genericOAuthConnected: (providerId) => hasGenericOAuthLogin(storedCustomProviderId(providerId)),
     codexAccountConnected: (providerId) => codexAccountState(providerId).authenticated,
     subscriptionAccountConnected: (providerId) => subscriptionAccountState(providerId).authenticated,
-    subscriptionAccountInfo: async (providerId) => ({ source: 'oauth', identity: subscriptionAccountState(providerId).identity }),
+    subscriptionAccountInfo: async (providerId) => {
+      if (providerId === 'anthropic') {
+        const oauth = readClaudeAiOAuth();
+        const source = getNativeProviderAuthSource('anthropic');
+        return {
+          source: source === 'native-harness-inherited' ? 'local'
+            : source === 'explicit-provider-oauth' ? 'oauth' : 'unknown',
+          identity: typeof oauth?.identity === 'string' ? oauth.identity : undefined,
+        };
+      }
+      if (providerId === 'xai') {
+        return {
+          source: 'oauth',
+          identity: hasGrokOAuthLogin() ? grokAccountIdentity('xai') : undefined,
+        };
+      }
+      return { source: 'oauth', identity: subscriptionAccountState(providerId).identity };
+    },
     openAiAccountInfo: async (providerId) => {
       const state = providerId === 'openai' ? await desktopCodexAuthAdapter.readAccountPresentationState() : codexAccountState(providerId);
       return {

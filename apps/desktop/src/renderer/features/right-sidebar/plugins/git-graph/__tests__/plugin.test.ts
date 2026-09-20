@@ -14,12 +14,17 @@ beforeEach(async () => {
   store.openTab.mockReset();
   store.patchTabState.mockReset();
   registry = await import('../../../registry');
-  await import('../../../plugins');
+  // The legacy graph must stay absent after the canonical Git workspace is
+  // registered. Importing every unrelated right-sidebar plugin made this
+  // focused contract depend on their complete lazy-import graph and could
+  // exceed Vitest's hook budget under the full Desktop shard.
+  await import('../../../plugins/review');
 });
 
 afterEach(() => registry._resetTabKindRegistry());
 
 it('does not register legacy Graph as a second top-level tab while opening the canonical Git tab', async () => {
+  expect(registry.getTabKind('review')).not.toBeNull();
   const plugin = registry.getTabKind('git-graph');
   expect(plugin).toBeNull();
   expect(registry.listTabKindMenuMetas()).not.toContainEqual(

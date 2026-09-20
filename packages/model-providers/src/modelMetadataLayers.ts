@@ -4,6 +4,7 @@ import type {
   ModelRegistryEntry,
   ModelRegistryRoute,
   ModelEffort,
+  ModelReferencePriceGroup,
 } from "./modelAccessBean.js";
 
 /** Data only. Membership, credentials, routing and billed prices never inherit. */
@@ -20,11 +21,15 @@ export interface ModelMetadata {
   defaultEffort?: ModelEffort | null;
   supportsFastMode?: boolean;
   supportsImageInput?: boolean;
+  supportsToolCalls?: boolean;
+  reasoningRequired?: boolean;
 }
 export interface BaseModel {
   id: string;
   aliases: string[];
   defaults: ModelMetadata;
+  /** V5 manufacturer reference tariffs; never actual account billing. */
+  referencePriceGroups?: ModelReferencePriceGroup[];
 }
 export const MODEL_METADATA_FIELDS = [
   "mode",
@@ -39,6 +44,8 @@ export const MODEL_METADATA_FIELDS = [
   "defaultEffort",
   "supportsFastMode",
   "supportsImageInput",
+  "supportsToolCalls",
+  "reasoningRequired",
 ] as const;
 const efforts = new Set([
   "minimal",
@@ -372,6 +379,7 @@ export interface DiscoveredModel {
   id: string;
   name: string;
   contextWindow?: number;
+  discoveredCost?: import("./types.js").ModelCost;
   discoveredMetadata?: ModelMetadata;
 }
 export function mergeDiscoveredRuntimeModels(
@@ -393,13 +401,15 @@ export function mergeDiscoveredRuntimeModels(
         id: model.id,
         name: model.name,
         discoveredMetadata,
+        ...(model.discoveredCost ? { discoveredCost: model.discoveredCost } : {}),
         ...(hideNew ? { defaultEnabled: false } : {}),
       });
     else
       models[index] = {
         ...models[index],
         ...(!models[index].discoveredMetadata ? { nameExplicit: true } : {}),
-        discoveredMetadata,
+        discoveredMetadata: mergeModelMetadata(models[index].discoveredMetadata, discoveredMetadata),
+        ...(model.discoveredCost ? { discoveredCost: model.discoveredCost } : {}),
       };
   }
   return models;
@@ -429,4 +439,23 @@ export function runtimeUserModelMetadata(
       ? { defaultEffort: m.reasoningDefaultEffort }
       : {}),
   });
+}
+
+/** Select a whole tariff; missing cache fields never borrow from another source. */
+export function referencePricesForRoute(
+  registry: ModelRegistry,
+  entry: ModelRegistryEntry,
+  route: ModelRegistryRoute,
+  officialOnly = false,
+) {
+  // Before V5 the official tariff lived on the route.
+  if (
+    registry.schemaVersion < 5 ||
+    (!officialOnly && route.referencePrices !== undefined)
+  )
+    return route.referencePrices;
+  if (!entry.modelRef || !route.referencePriceGroup) return undefined;
+  return findBaseModel(registry, entry.modelRef)?.referencePriceGroups?.find(
+    (group) => group.id === route.referencePriceGroup,
+  )?.prices;
 }

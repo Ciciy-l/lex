@@ -42,7 +42,7 @@ import { readClaudeApiKey } from './auth-adapters.js';
 import { createLogger } from '../logger.js';
 import { resolveOmpBinaryPath } from './omp-runtime.js';
 import { createWindowsOmpProcessSpawner } from './omp-process-containment.js';
-import { deriveOmpProxySessionToken } from './pi-proxy-session-token.js';
+import { deriveOmpProxySessionToken } from './omp-proxy-session-token.js';
 
 const log = createLogger('omp-host');
 
@@ -189,15 +189,20 @@ export function resolveOmpWireProtocol(
   // 模型级覆盖优先(与 Cindy 各处 route 解析同口径)。
   for (const provider of scoped) {
     const wire = provider.models.omp?.find((entry) => entry.id === model)?.route?.wireProtocol;
-    if (wire) return wire;
+    if (isOmpWireProtocol(wire)) return wire;
   }
   // 其次供应商对该 agent 的默认协议。
   for (const provider of scoped) {
     const wire = provider.routing.omp?.wireProtocol;
-    if (wire) return wire;
+    if (isOmpWireProtocol(wire)) return wire;
   }
   // 兜底与历史语义一致:OMP 走本机 proxy 的 Anthropic 前门。
   return 'anthropic-messages';
+}
+
+/** OMP's managed loopback bridge has no Google-native front door. */
+function isOmpWireProtocol(value: unknown): value is OmpWireProtocol {
+  return value === 'anthropic-messages' || value === 'openai-responses' || value === 'openai-chat';
 }
 
 /**
@@ -223,6 +228,8 @@ export function buildOmpManagedModelsYaml(params: {
   sessionId: string;
   model: string;
   token: string;
+  /** Remote OMP sessions replace the local loopback authority with their SSH forward. */
+  baseUrl?: string;
   /** 该会话选中的供应商(catalog provider id);缺省时协议解析退化为跨全部供应商搜模型。 */
   providerId?: string | null;
   /** 显式指定上游协议(测试用);不给则按模型/供应商解析。 */
@@ -236,7 +243,7 @@ export function buildOmpManagedModelsYaml(params: {
   const wireProtocol =
     params.wireProtocol ?? resolveOmpWireProtocol(params.model, params.providerId);
   const yaml = buildOmpCindyModelsYaml({
-    baseUrl: getClaudeEndpoint(),
+    baseUrl: params.baseUrl ?? getClaudeEndpoint(),
     // 必须翻译:Cindy 的 `openai-chat` 在 OMP 里叫 `openai-completions`,透传会让
     // OMP 整份 models.yml 被拒(见 ompApiForWireProtocol 注释)。
     api: ompApiForWireProtocol(wireProtocol),
@@ -264,37 +271,71 @@ export interface BuildOmpAgentOpts {
   reviewAutoPermissionAction?: AgentDeps['reviewAutoPermissionAction'];
   mcpProviders?: AgentDeps['mcpProviders'];
   makerMemory?: AgentDeps['makerMemory'];
+  /** SSH-only hooks; all core hooks must be present for remote-only registration. */
+  resolveRemoteOmpRuntime?: AgentDeps['resolveRemoteOmpRuntime'];
+  getRemoteOmpTransport?: AgentDeps['getRemoteOmpTransport'];
+  getRemoteOmpFileOps?: AgentDeps['getRemoteOmpFileOps'];
+  getRemoteAgentFileOps?: AgentDeps['getRemoteAgentFileOps'];
+  openRemoteOmpProviderForward?: AgentDeps['openRemoteOmpProviderForward'];
+  getRemoteOmpAgentProxyEnv?: AgentDeps['getRemoteOmpAgentProxyEnv'];
 }
 
 /**
- * 构造 OmpAgent;二进制不在位(未 opt-in 安装 / 版本对不上基线)返回 null ——
- * 本次启动不注册 omp,对 Cindy 其余功能零影响。
+ * Construct OmpAgent when either an audited local runtime is available or the
+ * complete SSH runtime contract is supplied. Remote-only registration never
+ * manufactures a local binary path: a local start still fails closed at the
+ * maker-core process boundary.
  */
 export function buildOmpAgent(opts: BuildOmpAgentOpts): OmpAgent | null {
   const binaryPath = resolveOmpBinaryPath();
-  if (!binaryPath) {
-    log.warn('omp binary unavailable; omp agent disabled for this launch');
+  let spawnOmpProcess: AgentDeps['spawnOmpProcess'] | undefined;
+  // `resolveOmpBinaryPath` deliberately uses null for an unavailable audited
+  // runtime. Do not confuse that with an executable path merely because the
+  // value is defined: remote-only registration must remain possible while a
+  // local start still fails closed.
+  let localRuntimeReady = typeof binaryPath === 'string' && binaryPath.length > 0;
+  if (binaryPath && process.platform === 'win32') {
+    const spawner = createWindowsOmpProcessSpawner();
+    if (spawner === null) {
+      localRuntimeReady = false;
+      log.warn('omp Windows containment helper unavailable; local OMP starts disabled');
+    } else {
+      spawnOmpProcess = spawner;
+    }
+  }
+
+  const remoteRuntimeReady = Boolean(
+    opts.resolveRemoteOmpRuntime
+      && opts.getRemoteOmpTransport
+      && opts.getRemoteOmpFileOps
+      && opts.getRemoteAgentFileOps
+      && opts.openRemoteOmpProviderForward,
+  );
+  if (!localRuntimeReady && !remoteRuntimeReady) {
+    log.warn('omp has neither an audited local runtime nor a complete SSH runtime contract; agent disabled');
     return null;
   }
-  const spawnOmpProcess = process.platform === 'win32'
-    ? createWindowsOmpProcessSpawner()
-    : undefined;
-  if (spawnOmpProcess === null) {
-    log.warn('omp Windows containment helper unavailable; omp agent disabled for this launch');
-    return null;
-  }
-  log.info('omp agent enabled', { binaryPath });
-  return new OmpAgent({
+  log.info('omp agent enabled', {
+    ...(localRuntimeReady ? { localRuntime: binaryPath } : {}),
+    ...(remoteRuntimeReady ? { remoteRuntime: true } : {}),
+  });
+
+  const localRuntimeDeps: Pick<
+    AgentDeps,
+    'allowRemoteOnlyRuntime' | 'resolveOmpLocalBinaryPath' | 'spawnOmpProcess'
+  > = localRuntimeReady
+    ? {
+        // Each local spawn repeats the audited resolve. A construction-time
+        // path is never treated as a later execution capability.
+        resolveOmpLocalBinaryPath: () => resolveOmpBinaryPath() ?? undefined,
+        ...(spawnOmpProcess ? { spawnOmpProcess } : {}),
+      }
+    : { allowRemoteOnlyRuntime: true };
+
+  const agentDeps: AgentDeps = {
     auth: desktopOmpAuthAdapter,
     runtimeConfig: buildDesktopOmpRuntimeConfig(),
-    // 每次 spawn 都重新走固定 pin 的路径与摘要校验；构造期通过的旧路径
-    // 不能在被替换/删除后作为后备继续执行。
-    get binaryPath(): string {
-      const verified = resolveOmpBinaryPath();
-      if (!verified)
-        throw new Error('OMP runtime is no longer available or failed verification');
-      return verified;
-    },
+    ...localRuntimeDeps,
     logger: opts.logger,
     turnChangeCapture: opts.turnChangeCapture,
     registerLocalAgentProcess: opts.registerLocalAgentProcess,
@@ -307,7 +348,12 @@ export function buildOmpAgent(opts: BuildOmpAgentOpts): OmpAgent | null {
     // Native project capabilities need a usable command/terminal environment,
     // but never a clone of Desktop's credentials or arbitrary process flags.
     resolveOmpExecutableEnvironment: () => buildDesktopOmpExecutableEnvironment(),
-    spawnOmpProcess,
+    resolveRemoteOmpRuntime: opts.resolveRemoteOmpRuntime,
+    getRemoteOmpTransport: opts.getRemoteOmpTransport,
+    getRemoteOmpFileOps: opts.getRemoteOmpFileOps,
+    getRemoteAgentFileOps: opts.getRemoteAgentFileOps,
+    openRemoteOmpProviderForward: opts.openRemoteOmpProviderForward,
+    getRemoteOmpAgentProxyEnv: opts.getRemoteOmpAgentProxyEnv,
     // Share only the cross-agent Skill source. OMP config, auth and session
     // state remain inside the per-runtime managed HOME above.
     resolveOmpGlobalSkillsRoot: () => path.join(os.homedir(), '.agents', 'skills'),
@@ -329,9 +375,26 @@ export function buildOmpAgent(opts: BuildOmpAgentOpts): OmpAgent | null {
         model: context.model,
         token,
         providerId: context.providerId,
+        baseUrl: context.remoteBaseUrl,
       });
     },
-  });
+  };
+  if (localRuntimeReady) {
+    // Object spread eagerly evaluates accessors, so declaring this getter in
+    // localRuntimeDeps would capture the once-verified path. Keep it on the
+    // actual dependency object instead: status checks and local starts both
+    // re-validate the pinned runtime immediately before using it.
+    Object.defineProperty(agentDeps, 'binaryPath', {
+      enumerable: true,
+      get(): string {
+        const verified = resolveOmpBinaryPath();
+        if (!verified)
+          throw new Error('OMP runtime is no longer available or failed verification');
+        return verified;
+      },
+    });
+  }
+  return new OmpAgent(agentDeps);
 }
 
 function buildDesktopOmpRuntimeConfig(): AgentDeps['runtimeConfig'] {

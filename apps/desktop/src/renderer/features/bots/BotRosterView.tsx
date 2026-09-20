@@ -32,13 +32,15 @@ interface BotRosterViewProps {
   onCreated?: (bot: BotProfile) => void;
   onClose?: () => void;
   restoreFocus?: () => void;
+  /** Render the same creation flow as a route instead of a modal. */
+  inline?: boolean;
 }
 
 /**
  * The only teammate creation surface. Templates fill this same basic profile
  * draft; they never branch into a second editor or expose runtime internals.
  */
-export function BotRosterView({ onCreated, onClose, restoreFocus }: BotRosterViewProps = {}) {
+export function BotRosterView({ onCreated, onClose, restoreFocus, inline = false }: BotRosterViewProps = {}) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const bots = useBotProfiles();
@@ -179,6 +181,134 @@ export function BotRosterView({ onCreated, onClose, restoreFocus }: BotRosterVie
     if (onClose) onClose();
     else navigate('/bots');
   };
+  const content = (
+    <>
+      {providerOnboarding.visible ? (
+        <>
+          {inline ? (
+            <h1 className="sr-only">{t('onboarding.connectProvider.title')}</h1>
+          ) : (
+            <Dialog.Title className="sr-only">{t('onboarding.connectProvider.title')}</Dialog.Title>
+          )}
+          <ConnectProviderCard dismissible={false} />
+        </>
+      ) : invitedBot ? (
+        <>
+          {inline ? (
+            <h1 className="sr-only">{t('bots.invitation.title')}</h1>
+          ) : (
+            <Dialog.Title className="sr-only">{t('bots.invitation.title')}</Dialog.Title>
+          )}
+          <BotInvitationWelcome bot={invitedBot} />
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={close}
+              className="h-9 rounded-full px-4 text-13 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
+            >
+              {t('bots.invitation.leave')}
+            </button>
+          </div>
+        </>
+      ) : (
+        <form className="min-w-0" onSubmit={(event) => void submit(event)}>
+          {inline ? (
+            <h1 className="text-20 font-medium text-[var(--text-primary)]">
+              {t('bots.roster.customTitle')}
+            </h1>
+          ) : (
+            <Dialog.Title className="text-20 font-medium text-[var(--text-primary)]">
+              {t('bots.roster.customTitle')}
+            </Dialog.Title>
+          )}
+          <fieldset
+            disabled={creating || avatarBusy}
+            className="mt-6 min-w-0 space-y-6 disabled:opacity-70"
+          >
+            <label className="block text-12 text-[var(--text-secondary)]">
+              {t('bots.createWizard.chooseTemplate')}
+              <span className="relative mt-1.5 block">
+                <select
+                  value={templateId}
+                  onChange={(event) => applyTemplate(event.target.value as BotTemplateChoiceId)}
+                  className="h-10 w-full appearance-none rounded-full border border-[var(--border-default)] bg-[var(--surface)] pl-4 pr-10 text-14 text-[var(--text-primary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+                >
+                  {BOT_TEMPLATE_CHOICES.map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {t(`bots.createWizard.templates.${template.translationKey}.title`)}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown
+                  size={14}
+                  aria-hidden="true"
+                  className="pointer-events-none absolute right-4 top-3 text-[var(--text-secondary)]"
+                />
+              </span>
+            </label>
+            <BotBasicProfileFields
+              autoFocusName
+              value={profile}
+              onChange={(next) => setProfile((current) => ({ ...current, ...next }))}
+              onChooseAvatar={() => fileInput.current?.click()}
+              avatarBusy={avatarBusy}
+              avatarPreview={profile.avatarData}
+            />
+            <input
+              ref={fileInput}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              className="hidden"
+              aria-label={t('bots.profile.changeAvatar')}
+              onChange={chooseAvatar}
+            />
+          </fieldset>
+          {modelChain !== null ? (
+            <BotModelChainEditor label={t('bots.settingsTabs.model')} value={modelChain} onChange={setModelChain} onNavigateToProviders={() => navigate('/settings?tab=providers')} disabled={creating || avatarBusy} />
+          ) : null}
+          {avatarError ? (
+            <p className="mt-3 text-12 text-[var(--text-danger)]" role="alert">
+              {t('bots.profile.avatarSelectionFailed')}
+            </p>
+          ) : null}
+
+          {error ? (
+            <p className="mt-3 text-12 text-[var(--text-danger)]" role="alert">
+              {error}
+            </p>
+          ) : null}
+
+          <div className="mt-6 flex justify-end gap-2">
+            <button
+              type="button"
+              disabled={creating}
+              onClick={close}
+              className="h-9 rounded-full border border-[var(--border-default)] px-5 text-12 text-[var(--text-primary)] hover:bg-[var(--surface-hover)] disabled:opacity-50"
+            >
+              {t('commonUi.confirmDialog.cancel')}
+            </button>
+            <button
+              type="submit"
+              disabled={creating || avatarBusy || profile.name.trim().length === 0 || modelChain?.length === 0}
+              className="inline-flex h-9 shrink-0 items-center gap-2 rounded-full bg-[var(--accent-cta-bg)] px-6 text-12 font-medium text-[var(--accent-pure-cta-fg)] transition-opacity hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
+            >
+              {creating ? <Spinner size={14} /> : null}
+              {t('bots.roster.create')}
+            </button>
+          </div>
+        </form>
+      )}
+    </>
+  );
+  if (inline) {
+    return (
+      <main className="flex h-full items-center justify-center overflow-y-auto bg-[var(--surface)] px-6 py-6 text-[var(--text-primary)]" role="main">
+        <div className="w-full max-w-[440px] rounded-xl border border-[var(--border-default)] bg-[var(--confirm-bg)] p-5">
+          {content}
+        </div>
+      </main>
+    );
+  }
   return (
     <Dialog.Root
       open
@@ -198,107 +328,7 @@ export function BotRosterView({ onCreated, onClose, restoreFocus }: BotRosterVie
           }}
           className="fixed left-1/2 top-1/2 z-50 max-h-[85vh] w-[calc(100vw-32px)] max-w-[440px] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-[var(--border-default)] bg-[var(--confirm-bg)] p-5 outline-none"
         >
-          {providerOnboarding.visible ? (
-            <>
-              <Dialog.Title className="sr-only">{t('onboarding.connectProvider.title')}</Dialog.Title>
-              <ConnectProviderCard dismissible={false} />
-            </>
-          ) : invitedBot ? (
-            <>
-              <Dialog.Title className="sr-only">{t('bots.invitation.title')}</Dialog.Title>
-              <BotInvitationWelcome bot={invitedBot} />
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={close}
-                  className="h-9 rounded-full px-4 text-13 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
-                >
-                  {t('bots.invitation.leave')}
-                </button>
-              </div>
-            </>
-          ) : (
-            <form className="min-w-0" onSubmit={(event) => void submit(event)}>
-              <Dialog.Title className="text-20 font-medium text-[var(--text-primary)]">
-                {t('bots.roster.customTitle')}
-              </Dialog.Title>
-              <fieldset
-                disabled={creating || avatarBusy}
-                className="mt-6 min-w-0 space-y-6 disabled:opacity-70"
-              >
-                <label className="block text-12 text-[var(--text-secondary)]">
-                  {t('bots.createWizard.chooseTemplate')}
-                  <span className="relative mt-1.5 block">
-                    <select
-                      value={templateId}
-                      onChange={(event) => applyTemplate(event.target.value as BotTemplateChoiceId)}
-                      className="h-10 w-full appearance-none rounded-full border border-[var(--border-default)] bg-[var(--surface)] pl-4 pr-10 text-14 text-[var(--text-primary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
-                    >
-                      {BOT_TEMPLATE_CHOICES.map((template) => (
-                        <option key={template.id} value={template.id}>
-                          {t(`bots.createWizard.templates.${template.translationKey}.title`)}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown
-                      size={14}
-                      aria-hidden="true"
-                      className="pointer-events-none absolute right-4 top-3 text-[var(--text-secondary)]"
-                    />
-                  </span>
-                </label>
-                <BotBasicProfileFields
-                  autoFocusName
-                  value={profile}
-                  onChange={(next) => setProfile((current) => ({ ...current, ...next }))}
-                  onChooseAvatar={() => fileInput.current?.click()}
-                  avatarBusy={avatarBusy}
-                  avatarPreview={profile.avatarData}
-                />
-                <input
-                  ref={fileInput}
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp"
-                  className="hidden"
-                  aria-label={t('bots.profile.changeAvatar')}
-                  onChange={chooseAvatar}
-                />
-              </fieldset>
-              {modelChain !== null ? (
-                <BotModelChainEditor label={t('bots.settingsTabs.model')} value={modelChain} onChange={setModelChain} onNavigateToProviders={() => navigate('/settings?tab=providers')} disabled={creating || avatarBusy} />
-              ) : null}
-              {avatarError ? (
-                <p className="mt-3 text-12 text-[var(--text-danger)]" role="alert">
-                  {t('bots.profile.avatarSelectionFailed')}
-                </p>
-              ) : null}
-
-              {error ? (
-                <p className="mt-3 text-12 text-[var(--text-danger)]" role="alert">
-                  {error}
-                </p>
-              ) : null}
-
-              <div className="mt-6 flex justify-end gap-2">
-                <button
-                  type="button"
-                  disabled={creating}
-                  onClick={close}
-                  className="h-9 rounded-full border border-[var(--border-default)] px-5 text-12 text-[var(--text-primary)] hover:bg-[var(--surface-hover)] disabled:opacity-50"
-                >
-                  {t('commonUi.confirmDialog.cancel')}
-                </button>
-                <button
-                  type="submit"
-                  disabled={creating || avatarBusy || profile.name.trim().length === 0 || modelChain?.length === 0}
-                  className="inline-flex h-9 shrink-0 items-center gap-2 rounded-full bg-[var(--accent-cta-bg)] px-6 text-12 font-medium text-[var(--accent-pure-cta-fg)] transition-opacity hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
-                >
-                  {creating ? <Spinner size={14} /> : null}
-                  {t('bots.roster.create')}
-                </button>
-              </div>
-            </form>
-          )}
+          {content}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

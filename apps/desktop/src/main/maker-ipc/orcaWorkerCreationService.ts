@@ -1,8 +1,10 @@
 import type { AgentKind } from '@cindy/maker-core';
 import type { AuthStrategy } from '@cindy/model-providers';
+import path from 'node:path';
 
 import { isCredentialModeSwitchBusyError } from '../maker-host/codex-credential-switch.js';
 import { isSubscriptionDirectModel } from '../../shared/subscriptionModels.js';
+import { usesControllerProviderProxyForSsh } from '../../shared/sshAgentProviderRouting.js';
 import type { DispatchWorkerTaskResult, OrcaWorkerEffort, OrcaWorkerStatus } from './orcaTeamService.js';
 import type { MakerSessionCreateOpts } from './sessionRequest.js';
 import {
@@ -188,6 +190,8 @@ export interface OrcaWorkerCreateParams {
    */
   providerId?: string | null;
   initialTask?: string;
+  /** Existing absolute directory on the Worker's host; omission inherits Lead. */
+  workingDir?: string;
   /** 显式值用于本次创建；缺省读取全局 Worker 创建偏好。 */
   workerPermissionMode?: OrcaWorkerPermissionMode;
 }
@@ -207,6 +211,8 @@ export interface OrcaWorkerCreationDeps {
   getLeadSessionRow(leadSessionId: string): Promise<OrcaLeadSessionSnapshot | null>;
   getWorkerDefaults(agent: AgentKind): OrcaWorkerDefaultsSnapshot;
   getWorkerPermissionMode(): OrcaWorkerPermissionMode;
+  /** Validate existence and target project policy before reserving or bootstrapping. */
+  resolveWorkerWorkingDir(dir: string, lead: OrcaLeadSessionSnapshot): Promise<string>;
   getAvailableModels(agent: AgentKind): OrcaWorkerModelCapabilities[];
   /**
    * 从同一次 provider registry 读取构造 Worker 路由上下文。
@@ -639,23 +645,13 @@ export function createOrcaWorkerCreationService(deps: OrcaWorkerCreationDeps): O
         limit: limitSnapshot(settings.workerHardLimit, activeCount),
       };
     }
-    // SSH OMP is deliberately unsupported.  Enforce that before provider lookup,
-    // remote preparation, reservation, or bootstrap so a rejected request never
-    // reaches an SSH install/start path.  Device Link executes on the controlled
-    // device as a local session and therefore has remoteHostId=null here.
+    // Every registered engine follows the same Lead/Worker lifecycle here.
+    // SSH workers retain their Lead's remote host and work directory; the
+    // engine adapter supplies its own managed remote runtime underneath.
     const lead = await deps.getLeadSessionRow(params.leadSessionId);
     if (!lead) {
       return { ok: false, errorCode: 'NOT_FOUND', message: `lead session ${params.leadSessionId} not found` };
     }
-    if (lead.remoteHostId && params.agent === 'omp') {
-      return {
-        ok: false,
-        errorCode: 'INVALID_PARAMS',
-        message:
-          'OMP Workers are not supported for SSH remote sessions. Choose Claude Code, Codex, or Pi, or create the OMP Worker locally.',
-      };
-    }
-
     const availableModels = deps.getAvailableModels(params.agent);
     // 标准面板显式选定的来源(非空 string)直接生效,由下方精确 preflight 把关「已连接且
     // 提供该模型」;空串/null/undefined 一律按未显式处理(与 IPC 边界同口径,service 作为
@@ -704,6 +700,19 @@ export function createOrcaWorkerCreationService(deps: OrcaWorkerCreationDeps): O
       };
     }
 
+    let workingDir = lead.workingDir ?? '';
+    if (params.workingDir !== undefined) {
+      const requested = typeof params.workingDir === 'string' ? params.workingDir : '';
+      const paths = lead.remoteHostId ? path.posix : path;
+      if (!requested || requested.length > 4096 || requested.includes('\0') || !paths.isAbsolute(requested)) {
+        return { ok: false, errorCode: 'INVALID_PARAMS', message: 'working_dir must be an existing absolute directory on the Worker host' };
+      }
+      try {
+        workingDir = await deps.resolveWorkerWorkingDir(requested, lead);
+      } catch {
+        return { ok: false, errorCode: 'INVALID_PARAMS', message: 'working_dir is unavailable or collaboration is disabled for that directory; no Worker was started' };
+      }
+    }
     const defaults = deps.getWorkerDefaults(params.agent);
     const workerDefaultProviderId =
       typeof defaults.providerId === 'string' && defaults.providerId.trim()
@@ -892,14 +901,12 @@ export function createOrcaWorkerCreationService(deps: OrcaWorkerCreationDeps): O
       };
     }
 
-    // SSH 远端 worker 的模型/来源兼容闸 (codex-connector R23 P2):remote
-    // transport 不经本地 proxy — subscription-direct 模型 (chatgpt/xai) 与
-    // chat-bridged codex 供应商 (wireProtocol=openai-chat, 其 Responses→Chat
-    // 翻译只挂在本地 codex-proxy) 送到远端必失败。ChatInput 对 remoteHostId
-    // 已用 excludeSubscriptionDirect / excludeChatBridgedCodex 隐藏
-    // (renderer/lib/providerModels.ts 同语义), worker 创建 (UI popover 与
-    // MCP 调用) 在此统一拒绝, 失败提前到创建前而非远端运行期。
-    if (lead.remoteHostId) {
+    // SSH native adapters connect to their providers remotely, so their local
+    // bridge-only routes remain unavailable. OMP is different: its isolated
+    // runtime writes the controller proxy into models.yml and reaches it via a
+    // managed reverse-forward. Keep this admission check aligned with that
+    // actual transport rather than treating every remoteHostId alike.
+    if (lead.remoteHostId && !usesControllerProviderProxyForSsh(params.agent)) {
       if (isSubscriptionDirectModel(resolved.model)) {
         return {
           ok: false,
@@ -1035,12 +1042,12 @@ export function createOrcaWorkerCreationService(deps: OrcaWorkerCreationDeps): O
       const workerOpts = deps.buildCreateOptsWithStderr({
         id: workerSessionId,
         agentKind: params.agent,
-        // Worker 与 Lead 共享同一种 workspace 语义。dialogue Lead 虽然已有 main 自动分配
-        // 的运行目录,也不能把 Worker 落成 project,否则侧栏分组和项目能力都会误判。
-        workspaceKind: lead.workspaceKind,
-        workingDir: lead.workingDir ?? '',
+        // 未指定目录时保留 Lead 的 workspace 语义（包括 dialogue 托管目录）。
+        // 显式选择目录才使用 project，并在 bootstrap 前完成校验。
+        workspaceKind: params.workingDir === undefined ? lead.workspaceKind : 'project',
+        workingDir,
         // remote lead 的 worker 继承 remoteHostId:在同一台远端主机上 spawn,
-        // 与 lead 共享远端 workingDir;本地 lead 不带此字段 (本地 worker)。
+        // workingDir 在该远端校验；本地 lead 不带此字段（本地 worker）。
         ...(lead.remoteHostId ? { remoteHostId: lead.remoteHostId } : {}),
         model: resolved.model,
         providerId: resolved.providerId,

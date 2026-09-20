@@ -26,7 +26,7 @@ const TOAST_DURATION_FAILED_MS = 8000;
 
 interface ToastKey {
   hostId: string;
-  agentKind: 'codex' | 'claude-code' | 'pi';
+  agentKind: 'codex' | 'claude-code' | 'pi' | 'omp';
 }
 
 function makeKey(k: ToastKey): string {
@@ -36,9 +36,10 @@ function makeKey(k: ToastKey): string {
 /** in-flight toast id 表; phase=started 写入, done/failed 清除。 */
 const activeToastIds = new Map<string, string>();
 
-function friendlyAgentName(agentKind: 'codex' | 'claude-code' | 'pi'): string {
+function friendlyAgentName(agentKind: 'codex' | 'claude-code' | 'pi' | 'omp'): string {
   if (agentKind === 'codex') return 'Codex';
   if (agentKind === 'pi') return 'Pi';
+  if (agentKind === 'omp') return 'OMP';
   return 'Claude Code';
 }
 
@@ -46,7 +47,7 @@ function friendlyAgentName(agentKind: 'codex' | 'claude-code' | 'pi'): string {
  * 根据上一条 InstallProgressEvent.kind 决定 toast 副文案。only 切到两个"明显
  * 阶段"避免抖动; 其它 kind 不改文案 (返回 null = "保持上次")。
  */
-function phaseText(eventKind: string | undefined, hostId: string, agentKind: 'codex' | 'claude-code' | 'pi'): string | null {
+function phaseText(eventKind: string | undefined, hostId: string, agentKind: 'codex' | 'claude-code' | 'pi' | 'omp'): string | null {
   switch (eventKind) {
     case 'node-install-start':
     case 'node-download':

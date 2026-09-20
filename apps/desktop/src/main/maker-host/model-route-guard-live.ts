@@ -76,7 +76,8 @@ function tombstoneGuardOptions(
 /**
  * Headless 调度的实时来源快照：
  * - 给定 modelId 时按模型选择器同一 rail 物化实际 provider；
- * - 未给 modelId 时为 Pi 取首个可聊天模型，并把 providerId/model 成对返回。
+ * - 未给 modelId 时为没有静态默认模型的 agent 取首个可聊天模型，并把
+ *   providerId/model 成对返回。
  * 这样 spawn 凭证、proxy endpoint 与会话持久化不会各自重新猜一次默认来源。
  */
 export async function resolveDefaultScheduleRoute(

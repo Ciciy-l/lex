@@ -201,7 +201,8 @@ describe('OmpTranslator terminal and error frames', () => {
     expect(instance.isStreaming()).toBe(true);
     expect(instance.translate({ type: 'agent_end', isTerminal: false }).kind).toBe('ignored');
     const done = instance.translate({ type: 'agent_end', isTerminal: true });
-    expect(events(done)[0]?.type).toBe('done');
+    expect(events(done).map((event) => event.type)).toEqual(['status', 'done']);
+    expect(events(done)[0]?.data).toMatchObject({ status: 'Done', isRunning: false });
     expect(instance.isStreaming()).toBe(false);
   });
 

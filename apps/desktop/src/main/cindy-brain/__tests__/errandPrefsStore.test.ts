@@ -61,6 +61,10 @@ describe('normalizeConfig(单插件配置清洗)', () => {
     expect(__testing.normalizeConfig({ agentKind: 'pi' })).toEqual({ agentKind: 'pi' });
   });
 
+  it('OMP 是合法的代办 agent', () => {
+    expect(__testing.normalizeConfig({ agentKind: 'omp' })).toEqual({ agentKind: 'omp' });
+  });
+
   it('非对象入参 → 空配置', () => {
     expect(__testing.normalizeConfig(null)).toEqual({});
     expect(__testing.normalizeConfig('x')).toEqual({});

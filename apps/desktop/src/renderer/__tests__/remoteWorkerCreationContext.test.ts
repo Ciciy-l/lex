@@ -22,12 +22,30 @@ describe('remote Orca Worker creation context', () => {
 
     expect(popover).toContain("useAgentCapabilities('claude-code', deviceId)");
     expect(popover).toContain("useAgentCapabilities('codex', deviceId)");
+    expect(popover).toContain("useAgentCapabilities('omp', deviceId)");
     expect(popover).toContain('useDeviceProviders(deviceId)');
     expect(popover).toContain(
       'providersUnsupported: deviceId ? remoteProviders.unsupported : false',
     );
     expect(popover).toContain('!remoteModelListBlocked');
     expect(popover).toContain('deviceId={deviceId}');
+  });
+
+  it('keeps OMP selectable for SSH workers and remote project drafts', () => {
+    const popover = read('features/cc-agent/CreateWorkerPopover.tsx');
+    const draft = read('features/cc-agent/NewMakerDraftRoute.tsx');
+
+    expect(popover).not.toContain("hiddenVendors={sshRemote ? ['omp'] : undefined}");
+    expect(popover).not.toContain(".filter((kind) => kind !== 'omp')");
+    expect(popover).toContain('unifiedAgents={pickerAgents}');
+    expect(draft).not.toContain("if (draftVendor === 'omp')");
+    expect(popover).toContain(
+      'sshRemote === true && !usesControllerProviderProxyForSsh(agent)',
+    );
+    expect(draft).toContain(
+      '!!effectiveRemoteHostId && !usesControllerProviderProxyForSsh(capabilityAgentKind)',
+    );
+    expect(draft).toContain('requiresDirectSshProviderRoute,');
   });
 
   it('blocks existing remote session sends while the model catalog is loading or failed', () => {

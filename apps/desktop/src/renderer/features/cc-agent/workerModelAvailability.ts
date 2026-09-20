@@ -21,15 +21,14 @@ export interface SelectWorkerModelsOptions {
   /** Local-only provider model visibility. Device-link peers own their own visibility choices. */
   isVisible?: (providerId: string, model: CatalogModel) => boolean;
   /**
-   * 过滤订阅直连模型(chatgpt/ / xai/)。SSH 远程 Lead(remoteHostId)必须传 true:
-   * bridge 只挂在本地 compat-proxy,远程走 remoteEndpoint 不经翻译,选了必失败
-   * (与 ChatInput 的同名开关同口径;main 侧 orcaWorkerCreationService 会拒绝,
-   * 这里在提交前就把不可路由的选项藏起来)。
+   * 过滤订阅直连模型(chatgpt/ / xai/)。仅直连型 SSH Lead 传 true：其 bridge
+   * 只挂在本地 compat-proxy。OMP 经控制端代理的受管 reverse-forward，因此
+   * 调用方必须为 OMP 保持 false；Main 仍在创建边界验证最终路由。
    */
   excludeSubscriptionDirect?: boolean;
   /**
-   * 过滤 `wireProtocol: 'openai-chat'` 的 Codex 供应商:Responses→Chat 桥只挂在本地
-   * codex-proxy,SSH 远程走 daemon transport 不经它。SSH 远程 Lead 必须传 true。
+   * 过滤 `wireProtocol: 'openai-chat'` 的直连型 SSH 供应商：Responses→Chat 桥
+   * 只挂在本地 codex-proxy。OMP 使用控制端代理，不能传此限制。
    */
   excludeChatBridgedCodex?: boolean;
 }
@@ -59,8 +58,9 @@ export function selectWorkerModels({
 
   if (!deviceId) {
     // SSH 远程 Lead 与本地共用这份 provider 清单(worker 继承 remoteHostId 在远端
-    // spawn,但目录快照来自本机) — 先按 SSH 口径剔除仅本地可桥接的来源,再取并集,
-    // 与 selectVisibleModels 的 excludeProvider 语义一致(同 id 另有可路由来源仍补上)。
+    // spawn,但目录快照来自本机)。直连型引擎先剔除仅本地可桥接的来源；OMP
+    // 通过控制端代理保留这些来源。与 selectVisibleModels 的 excludeProvider
+    // 语义一致(同 id 另有可路由来源仍补上)。
     const routedProviders = filterChatBridgedCodexProviders(
       providers,
       agent,

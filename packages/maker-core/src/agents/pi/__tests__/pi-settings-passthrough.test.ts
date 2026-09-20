@@ -63,6 +63,13 @@ describe('mergePiUserSettingsPassthrough (#3643)', () => {
     expect(merged.npmCommand).toEqual(['npm']);
   });
 
+  it('lets an explicit user shellPath override the host fallback', () => {
+    const withHostFallback = buildPiSettingsJsonContent(128_000, 75, [], undefined, 'D:/Git/bin/bash.exe');
+    const stable = JSON.stringify({ shellPath: 'C:/cygwin64/bin/bash.exe' });
+    const merged = JSON.parse(mergePiUserSettingsPassthrough(withHostFallback, stable));
+    expect(merged.shellPath).toBe('C:/cygwin64/bin/bash.exe');
+  });
+
   it('falls back to the built content when the existing file is missing or corrupt', () => {
     expect(mergePiUserSettingsPassthrough(built, null)).toBe(built);
     expect(mergePiUserSettingsPassthrough(built, '')).toBe(built);

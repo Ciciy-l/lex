@@ -54,6 +54,7 @@ import { buildForcedFailureRun } from './forcedFailureRun';
 import { ScriptScheduleRunner } from './script-runner';
 import { SchedulerScriptCapabilityBroker } from './script-capability-broker';
 import { DesktopNotifier } from './notifier';
+import { sendFeishuSessionNotification } from '../im/feishu/notificationOrigin';
 import { withScheduleLock } from './scheduleLock';
 import { wecomGroupNotificationService } from '../wecomGroupNotification';
 import { runSchedulerStartup } from './scheduler-startup-lifecycle';
@@ -97,6 +98,9 @@ async function startSchedulerInternal(deps: StartSchedulerDeps): Promise<Schedul
   const storage = new DrizzleScheduleStorage(deps.getDb);
   _storage = storage;
   const notifier = new DesktopNotifier({
+    sendFeishuSessionNotification: async (sessionId, text) => {
+      await sendFeishuSessionNotification(deps.feishuIm, sessionId, text);
+    },
     getMainWindow: deps.getMainWindow,
     feishuIm: deps.feishuIm,
     logger: deps.logger,

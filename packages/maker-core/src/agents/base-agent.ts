@@ -58,7 +58,7 @@ import type {
   OmpSessionCredentials,
   OmpSessionExecutableEnvironment,
 } from './omp/launch-plan.js';
-import type { OmpProcessSpawner } from './omp/process-host.js';
+import type { OmpProcessSpawner, OmpRemoteTransport } from './omp/process-host.js';
 import type { AuthAdapter } from '../interfaces/auth-adapter.js';
 import type { AgentRuntimeConfig } from '../interfaces/runtime-config.js';
 import type { Logger } from '../interfaces/logger.js';
@@ -196,6 +196,10 @@ export type PiNativeApi =
   | 'openai-responses'
   | 'openai-completions'
   | 'google-generative-ai'
+  | 'bedrock-converse-stream'
+  | 'azure-openai-responses'
+  | 'google-vertex'
+  | 'mistral-conversations'
   /** PI's native ChatGPT subscription adapter; not a portable BYOM protocol. */
   | 'openai-codex-responses';
 
@@ -259,14 +263,25 @@ export interface RemoteAgentFileOps {
   listDir(dir: string): Promise<string[]>;
   /** Bounded UTF-8 read used for remote runtime metadata such as SKILL.md. */
   readFile(file: string, maxBytes?: number): Promise<string>;
+  /** Bounded UTF-8 tail for native history receipts; absent on older hosts. */
+  readFileTail?(file: string, maxBytes: number): Promise<string>;
   /** Hash the complete remote file without transferring its contents to the client. */
   sha256File(file: string): Promise<string>;
 }
 
-export interface PiRemoteFileOps extends RemoteAgentFileOps {
+/** Mutable subset used by native sessions that materialize managed files on SSH. */
+export interface WritableRemoteAgentFileOps extends RemoteAgentFileOps {
   mkdirp(dir: string): Promise<void>;
   writeFile(file: string, content: string, mode?: number): Promise<void>;
   rm(fileOrDir: string, opts?: { recursive?: boolean }): Promise<void>;
+}
+
+/** Compatibility name retained for Pi's existing public host contract. */
+export type PiRemoteFileOps = WritableRemoteAgentFileOps;
+
+/** OMP additionally projects the shared Skill directory into its private HOME. */
+export interface OmpRemoteFileOps extends WritableRemoteAgentFileOps {
+  linkDirectory(source: string, target: string): Promise<void>;
 }
 
 /** Gateway rows carry only host-resolved API/compat metadata, never a native provider endpoint. */
@@ -281,6 +296,8 @@ export type PiGatewayModelSpec = Pick<
  * 解析产出;PiAgent 写进 models.json 的独立 provider 块,并按 model→provider 路由 set_model。
  */
 export interface PiNativeProviderSpec {
+  /** Pi adapter identity; the user connection retains its independent ID and credential. */
+  adapterProvider?: string;
   /** PI runtime provider id(slug,禁与网关 provider `cindy` 撞名)。 */
   id: string;
   /** Cindy catalog / persisted provider id; defaults to the runtime id. */
@@ -372,6 +389,14 @@ export interface PiExtraSpawnConfigContext {
 
 export type CodexSubagentRoutingProfile = 'default' | 'configured' | 'oauth-default' | 'smart';
 
+/**
+ * Session facts the host may consult when building per-thread MCP config
+ * overrides (e.g. hiding a session-purpose server from ordinary threads).
+ */
+export interface CodexSessionMcpConfigInput {
+  vendorOptions?: Record<string, unknown>;
+}
+
 export interface CodexExtraSpawnConfig {
   extraArgs: string[];
   extraEnv: Record<string, string>;
@@ -409,7 +434,10 @@ export interface CodexExtraSpawnConfig {
    * config only supplies the unbound base URL; thread/start|resume must add the
    * opaque route identity for the concrete Session using this callback.
    */
-  buildSessionMcpConfig?: (sessionInstanceId: string) => Record<string, unknown>;
+  buildSessionMcpConfig?: (
+    sessionInstanceId: string,
+    session?: CodexSessionMcpConfigInput,
+  ) => Record<string, unknown>;
   codexProxyActive?: boolean;
   /**
    * ChatGPT 订阅直连的内部 OpenAI transport identity，仅 oauth-bearer spawn 下发。
@@ -630,7 +658,7 @@ export interface PiExtensionUiStrings {
 }
 
 export interface PiManagedPackageRuntimeConvergence {
-  runtimeConvergence: 'complete' | 'partial';
+  runtimeConvergence: 'complete' | 'partial' | 'deferred';
   recoveryAction?: 'restart-cindy-to-refresh-packages';
 }
 
@@ -663,11 +691,17 @@ export interface AgentDeps {
   auth: AuthAdapter;
   runtimeConfig: AgentRuntimeConfig;
   /**
-   * Agent CLI 二进制绝对路径。host 在构造 agent 前必须已经把二进制 provisioned 好
-   * (splash 阶段下载/解压); maker-core 自己不下载、不解析 manifest, 拿到就用。
-   * 缺省 / 空串 → BaseAgent 构造期立即抛错, 不让 session 进半就绪状态。
+   * Agent CLI 二进制绝对路径。host 通常在构造 agent 前已经把本机二进制
+   * provisioned 好 (splash 阶段下载/解压); maker-core 自己不下载、不解析
+   * manifest, 拿到就用。
+   *
+   * Only an explicitly remote-only adapter may omit it, together with
+   * allowRemoteOnlyRuntime. Local process starts still use
+   * requireLocalBinaryPath() and fail closed.
    */
-  binaryPath: string;
+  binaryPath?: string;
+  /** Explicit opt-in for an adapter that can execute exclusively on SSH. */
+  allowRemoteOnlyRuntime?: boolean;
   logger: Logger;
 
   /**
@@ -714,6 +748,16 @@ export interface AgentDeps {
    */
   resolveOmpAgentHome?: (remoteHostId?: string | null) => string | undefined;
   /**
+   * OMP-only: resolves the already-probed remote native runtime and the two
+   * remote paths that are safe to use for one managed OMP session. The values
+   * are remote POSIX paths even when Desktop itself runs on Windows.
+   */
+  resolveRemoteOmpRuntime?: (remoteHostId: string) => Promise<{
+    binaryPath: string;
+    agentHome: string;
+    userHome: string;
+  }>;
+  /**
    * OMP-only: explicit non-secret process-launch values.  The host chooses the
    * small PATH/shell/locale whitelist; maker-core never clones process.env.
    */
@@ -724,6 +768,31 @@ export interface AgentDeps {
    * The callback is Main-only and never exposed through Renderer IPC.
    */
   spawnOmpProcess?: OmpProcessSpawner;
+  /** OMP-only: create a direct SSH JSONL transport for a remote OMP process. */
+  getRemoteOmpTransport?: (
+    remoteHostId: string,
+    opts: {
+      remoteBinaryPath: string;
+      args: string[];
+      cwd: string;
+      env: Record<string, string>;
+      logger: AgentDeps['logger'];
+    },
+  ) => OmpRemoteTransport | Promise<OmpRemoteTransport>;
+  /** OMP-only: mutable remote files for settings, models, prompts and Skill projection. */
+  getRemoteOmpFileOps?: (remoteHostId: string) => OmpRemoteFileOps;
+  /**
+   * OMP-only: acquire the reverse-forwarded Cindy compatibility endpoint used
+   * by one remote runtime. The lease stays live until that runtime is closed.
+   */
+  openRemoteOmpProviderForward?: (remoteHostId: string) => Promise<{
+    baseUrl: string;
+    release(): Promise<void>;
+  }>;
+  /** OMP-only: optional remote agent-proxy variables; never copied from Desktop env. */
+  getRemoteOmpAgentProxyEnv?: (remoteHostId: string) => Promise<Record<string, string> | null>;
+  /** Re-resolve the local audited runtime immediately before a local OMP spawn. */
+  resolveOmpLocalBinaryPath?: () => string | undefined;
   /**
    * OMP-only: the shared native Skill root to project into the managed OMP
    * HOME.  This is a source directory, never an OMP config/auth root.
@@ -745,6 +814,10 @@ export interface AgentDeps {
     sessionId?: string;
     providerId?: string | null;
     model: string;
+    /** Present only for an SSH OMP session. */
+    remoteHostId?: string;
+    /** Reverse-forwarded remote loopback endpoint for this runtime. */
+    remoteBaseUrl?: string;
   }) => string | undefined;
 
   /**
@@ -780,13 +853,18 @@ export interface AgentDeps {
 
   /**
    * Pi-only: host callback after a package mutation receipt has been queued/sent.
-   * Desktop publishes a bounded convergence outcome before retiring the caller,
-   * then retires its exact stale local ordinary Pi snapshot. Native package
-   * success remains authoritative.
+   * Desktop retires idle instances and defers busy captured instances until
+   * their product turn settles. A sent receipt is not proof Pi consumed it.
+   * Native package success remains authoritative; deferred is not a failure.
+   * publishOutcome returns the exact queued event so the Host can retain its
+   * caller lease until Session dispatches that receipt (not a persistence ACK).
+   * The event factory supplies a fresh complete receipt for eventual retirement
+   * failure, without writing into the possibly closed caller queue.
    */
   onPiManagedPackageMutationSettled?: (
     callerSessionId: string | undefined,
-    publishOutcome: (outcome: PiManagedPackageRuntimeConvergence) => void,
+    publishOutcome: (outcome: PiManagedPackageRuntimeConvergence) => AgentEvent,
+    createRetirementFailureEvent: () => AgentEvent,
   ) => Promise<void>;
 
   /**
@@ -1030,6 +1108,8 @@ export interface AgentDeps {
     ctx: {
       providerId?: string;
       codexHome?: string;
+      /** Actual native config/history root; credential/catalog preparation keeps codexHome above. */
+      runtimeCodexHome?: string;
       accountHostKey?: string;
       remoteHostId?: string;
       credentialMode?: AgentCredentialMode;
@@ -1322,7 +1402,9 @@ export interface AgentDeps {
    */
   prepareCodexResumeSession?: (threadId: string, context?: { codexHome: string; providerId?: string }) => Promise<string | void>;
   recordCodexThreadLocation?: (threadId: string, codexHome: string, rolloutPath?: string) => Promise<void>;
-  resolveCodexThreadStorageHome?: (threadId: string) => Promise<string | undefined>;
+  resolveCodexThreadStorage?: (threadId: string) => Promise<{ historyHome: string; sqliteHome: string } | undefined>;
+  /** Freeze the owner/account scope before async host startup; never expose tokens to the renderer. */
+  createCodexAuthTokenReader?: (providerId?: string) => () => Promise<import('./codex/app-server/external-auth.js').CodexChatgptTokens>;
 
   /**
    * Codex 专用:把已拼好的产品级 system prompt 同步登记到 host 的 codex proxy registry。
@@ -1873,6 +1955,24 @@ export interface StartSessionOptions {
    */
   reviewMode?: true;
   /**
+   * Host-controlled reduction for a narrowly scoped, non-interactive probe.
+   *
+   * OMP normally receives the session's explicitly adapted host-tool surface.
+   * A managed connectivity check must prove the provider/runtime path without
+   * granting that temporary process any host tools, so it asks OMP to publish
+   * an empty `set_host_tools` roster instead. This is intentionally a stricter
+   * capability setting, never a way to add or widen a tool surface.
+   */
+  disableHostTools?: boolean;
+  /**
+   * Main-owned, nonpersistent connectivity probe. This is deliberately a
+   * tightening-only switch: native adapters must use a fresh private runtime
+   * directory, avoid user/project customization discovery, and never treat it
+   * as authorization for a normal task. OMP currently consumes it for its
+   * managed SSH Quick Test.
+   */
+  isolatedProbe?: boolean;
+  /**
    * Exact local files or directories that a host-owned Review may inspect in
    * addition to workingDir. Adapters must treat files as exact grants and
    * directories as subtree grants; this is narrower than extraDirs, whose
@@ -2403,6 +2503,11 @@ export interface AgentSessionHandle {
    * 默认实现为 false (capability 缺失时 host 不该问)。
    */
   isTurnRunning?(): boolean;
+  /** A provider-owned preparatory turn still precedes the accepted user input.
+   * Host timeouts must not resume it with a generic CONTINUE. Read synchronously
+   * before abort clears the provider's existing preparation state.
+   */
+  isPreparingUserTurn?(): boolean;
 }
 
 export abstract class BaseAgent {
@@ -2420,7 +2525,7 @@ export abstract class BaseAgent {
   protected memoryOverride: boolean | undefined;
 
   constructor(protected deps: AgentDeps) {
-    if (!deps.binaryPath) {
+    if (!deps.binaryPath && !deps.allowRemoteOnlyRuntime) {
       throw new Error(
         `${this.constructor.name}: binaryPath is required at construction (host must provision binary before instantiating agent)`,
       );
@@ -2634,6 +2739,7 @@ export abstract class BaseAgent {
    * 拉完整分页快照。返回值表示快照是否仍属于当前 host 且已由宿主成功应用。
    */
   async refreshLocalModels(_options?: RefreshLocalModelsOptions): Promise<boolean> {
+    void _options;
     return false;
   }
 
@@ -2642,6 +2748,7 @@ export abstract class BaseAgent {
    * Codex implements this through the app-server control plane.
    */
   async readAccountRateLimits(_providerId?: string): Promise<AccountRateLimitsResponse> {
+    void _providerId;
     return this.throwNotSupported('account:rate-limits:read', 'not-implemented');
   }
 
@@ -2651,6 +2758,7 @@ export abstract class BaseAgent {
     _providerId?: string,
   ): Promise<ConsumeAccountRateLimitResetCreditResponse> {
     void params;
+    void _providerId;
     return this.throwNotSupported('account:rate-limit-reset:consume', 'not-implemented');
   }
 
@@ -2662,9 +2770,21 @@ export abstract class BaseAgent {
     this.deps.auth.cancelLogin?.();
   }
 
-  /** 同步取 binary path (host 注入时已存在, 构造期校验过)。供 maker:agent:status 用。 */
-  getBinaryPath(): string {
-    return this.deps.binaryPath;
+  /**
+   * Local runtime status for maker:agent:status. A remote-only adapter
+   * reports null rather than fabricating a local path for an SSH executable.
+   */
+  getBinaryPath(): string | null {
+    return this.deps.binaryPath ?? null;
+  }
+
+  /** Require the local executable at the exact local spawn boundary. */
+  protected requireLocalBinaryPath(): string {
+    const binaryPath = this.deps.binaryPath;
+    if (typeof binaryPath !== 'string' || !binaryPath) {
+      throw new Error(`${this.constructor.name}: local binaryPath is unavailable`);
+    }
+    return binaryPath;
   }
 
   // ── Memory 控制 (子类实现) ─────────────────────────────────────────────

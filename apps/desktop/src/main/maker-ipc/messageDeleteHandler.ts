@@ -11,6 +11,7 @@
 import { buildHandoffText, type HandoffSourceMessage } from './agentHandoff.js';
 import { MAKER_INVOKE } from './channels.js';
 import type { IpcHandlerRegistry } from './ipcHandlerRegistry.js';
+import { agentKindDisplayLabel } from '../../shared/agentKindConversion.js';
 import type {
   MessageDeletionTarget,
   SubagentTurnDeletionWindow,
@@ -71,10 +72,6 @@ export interface MessageDeleteHandlerDeps {
   };
 }
 
-function engineLabel(agentKind: string): string {
-  return agentKind === 'codex' ? 'Codex' : agentKind === 'pi' ? 'Pi' : 'Claude Code';
-}
-
 export async function performMessageDeletion(
   deps: MessageDeleteHandlerDeps,
   params: { sessionId: unknown; clientId: unknown },
@@ -132,7 +129,7 @@ export async function performMessageDeletion(
     }
     const deletedClientIds = new Set(target.deletedClientIds);
     const remaining = source.filter((message) => !deletedClientIds.has(message.clientId));
-    const label = engineLabel(sessionRow.agentKind);
+    const label = agentKindDisplayLabel(sessionRow.agentKind);
     const handoff = buildHandoffText(remaining, {
       fromLabel: label,
       toLabel: label,

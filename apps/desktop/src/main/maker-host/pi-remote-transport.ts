@@ -32,6 +32,8 @@ import { probeRemoteAgent, probePiManager } from '@cindy/maker-remote-ssh';
 
 import { piManagerEnsure, piManagerKill } from './pi-manager-client.js';
 import type {
+  OmpRemoteFileOps,
+  OmpRemoteTransport,
   PiTransport,
   PiTransportCloseInfo,
   PiLineHandler,
@@ -61,6 +63,23 @@ export interface SshPiTransportOptions {
   logger: Logger;
   /** ssh exec + 首个 stdout 字节的总等待预算。默认 15s。 */
   handshakeTimeoutMs?: number;
+}
+
+/**
+ * OMP uses the same audited SSH JSONL channel primitive as Pi's direct mode,
+ * but it never enters Pi's manager/daemon protocol. Keeping this public shape
+ * separate makes the process/runtime identity explicit at the host boundary.
+ */
+export type SshOmpTransportOptions = SshPiTransportOptions;
+
+/**
+ * Internal extension of PiTransport for direct SSH commands. Pi's consumer
+ * treats a requested close as terminal. OMP's remote lifecycle is stricter:
+ * it needs the SSH command channel's actual close as exit evidence.
+ */
+interface SshJsonlChannelTransport extends PiTransport {
+  onPhysicalClose(handler: PiCloseHandler): () => void;
+  onTransportClose(handler: PiCloseHandler): () => void;
 }
 
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 15_000;
@@ -131,6 +150,18 @@ export async function resolveRemotePiBinaryPath(host: RemoteHost): Promise<strin
  * 删走 rm。pi 进程在远端读这些文件,host 侧必须把写/读/删落到远端机器。
  */
 export function createRemotePiFileOps(remoteHost: RemoteHost): PiRemoteFileOps {
+  async function readBounded(file: string, maxBytes: number, fromEnd: boolean): Promise<string> {
+    const boundedBytes = Math.max(1, Math.min(Math.trunc(maxBytes), 4_194_304));
+    const script = `P=${shellQuote(file)}; case "$P" in '$HOME'/*) H=$(printf '%s' "$HOME"); [ "\${P#\\$HOME}" != "$P" ] && P="\${H}\${P#\\$HOME}";; esac; [ -f "$P" ] || exit 44; ${fromEnd ? 'tail' : 'head'} -c ${boundedBytes} "$P"`;
+    const result = await remoteHost.exec(`bash -c ${shellQuote(script)}`, {
+      timeoutMs: 10_000,
+      label: 'agent-remote-read-file',
+    });
+    if (result.exitCode !== 0) {
+      throw new Error(`remote read failed (exit ${result.exitCode})`);
+    }
+    return result.stdout;
+  }
   return {
     async mkdirp(dir: string): Promise<void> {
       // 轮 22 CRITICAL:远端 agentHome 是字面 $HOME/... —— 必须用**远端** HOME
@@ -220,18 +251,8 @@ fi
       throw new Error('remote stat returned an invalid response');
     },
 
-    async readFile(file: string, maxBytes = 1_048_576): Promise<string> {
-      const boundedBytes = Math.max(1, Math.min(Math.trunc(maxBytes), 4_194_304));
-      const script = `P=${shellQuote(file)}; case "$P" in '$HOME'/*) H=$(printf '%s' "$HOME"); [ "\${P#\\$HOME}" != "$P" ] && P="\${H}\${P#\\$HOME}";; esac; [ -f "$P" ] || exit 44; head -c ${boundedBytes} "$P"`;
-      const result = await remoteHost.exec(`bash -c ${shellQuote(script)}`, {
-        timeoutMs: 10_000,
-        label: 'agent-remote-read-file',
-      });
-      if (result.exitCode !== 0) {
-        throw new Error(`remote read failed (exit ${result.exitCode})`);
-      }
-      return result.stdout;
-    },
+    readFile: (file, maxBytes = 1_048_576) => readBounded(file, maxBytes, false),
+    readFileTail: (file, maxBytes) => readBounded(file, maxBytes, true),
 
     async sha256File(file: string): Promise<string> {
       const script = [
@@ -283,11 +304,53 @@ fi
 }
 
 /**
+ * Neutral name for the same audited SSH file-operation primitive. Pi keeps
+ * its legacy export above; other engines can share the implementation without
+ * adopting Pi's runtime/config identity.
+ */
+export const createRemoteAgentFileOps = createRemotePiFileOps;
+
+/**
+ * OMP needs the generic writable remote-file contract plus a narrow, safe
+ * directory projection primitive for its private runtime HOME. It deliberately
+ * does not reuse Pi's config or daemon directories. OMP's core validates both
+ * paths as absolute remote POSIX paths before this adapter is reached.
+ */
+export function createRemoteOmpFileOps(remoteHost: RemoteHost): OmpRemoteFileOps {
+  const base = createRemotePiFileOps(remoteHost);
+  return {
+    ...base,
+    async linkDirectory(source: string, target: string): Promise<void> {
+      // Only replace an existing symlink. A regular file or directory at the
+      // managed target is a conflict, not permission to recursively delete it.
+      const script = [
+        `SOURCE=${shellQuote(source)}`,
+        `TARGET=${shellQuote(target)}`,
+        `[ -d "$SOURCE" ] || exit 44`,
+        `if [ -L "$TARGET" ]; then rm -- "$TARGET"; elif [ -e "$TARGET" ]; then exit 45; fi`,
+        `mkdir -p "$(dirname "$TARGET")"`,
+        `ln -s -- "$SOURCE" "$TARGET"`,
+      ].join('\n');
+      const result = await remoteHost.exec(`bash -c ${shellQuote(script)}`, {
+        timeoutMs: 15_000,
+        label: 'omp-remote-link-directory',
+      });
+      if (result.exitCode !== 0) {
+        const detail = result.stderr.trim().slice(0, 200);
+        throw new Error(
+          `remote OMP Skill projection failed (exit ${result.exitCode})${detail ? `: ${detail}` : ''}`,
+        );
+      }
+    },
+  };
+}
+
+/**
  * createSshPiTransport — 直连模式:远端直接 spawn `pi --mode rpc`,ssh exec 桥 stdio。
  * 断链即进程终止(无 daemon 持久),重连 = 重新 spawn + switch_session resume。
  */
 export function createSshPiTransport(opts: SshPiTransportOptions): PiTransport {
-  return createSshPiChannelTransport(
+  return createSshJsonlChannelTransport(
     opts,
     (o) => {
       // wrapper:stdin 前段 = env block(read 到空行 break + export), 之后 exec pi ——
@@ -317,7 +380,50 @@ export function createSshPiTransport(opts: SshPiTransportOptions): PiTransport {
       envViaFile: undefined,
       daemonSessionId: undefined,
     }),
+    'pi',
   );
+}
+
+/**
+ * Direct SSH transport for OMP's native `--mode rpc` JSONL protocol. Unlike
+ * Pi this always owns one command channel and has no manager/daemon fallback.
+ */
+export function createSshOmpTransport(opts: SshOmpTransportOptions): OmpRemoteTransport {
+  const transport = createSshJsonlChannelTransport(
+    opts,
+    (o) => {
+      const args = o.args.map(shellQuote).join(' ');
+      const script = `
+        while IFS= read -r LINE; do
+          [ -z "$LINE" ] && break
+          KEY=${'${LINE%%=*}'}
+          case "$KEY" in
+            [A-Za-z_][A-Za-z0-9_]*) VAL=${'${LINE#*=}'}; export "$KEY"="$VAL" ;;
+          esac
+        done
+        cd ${shellQuote(o.cwd)} || exit 1
+        exec ${shellQuote(o.binaryPath)} ${args}
+      `.trim();
+      return `bash -c ${shellQuote(script)}`;
+    },
+    (o) => ({
+      envViaStdin: o.env,
+      envViaFile: undefined,
+      daemonSessionId: undefined,
+    }),
+    'omp',
+  );
+  return {
+    writeLine: (line) => transport.writeLine(line),
+    onLine: (handler) => transport.onLine(handler),
+    // OMP must not mistake a local kill request for proof that the remote
+    // command exited. The shared JSONL transport still fences writes
+    // immediately, but only the SSH channel's close event reaches the OMP
+    // lifecycle as actual-exit evidence.
+    onClose: (handler) => transport.onPhysicalClose(() => handler()),
+    onTransportClose: (handler) => transport.onTransportClose(() => handler()),
+    close: () => transport.close('omp ssh transport close()'),
+  };
 }
 
 /**
@@ -328,7 +434,7 @@ export function createSshPiTransport(opts: SshPiTransportOptions): PiTransport {
  */
 async function buildPiManagerDaemonCmd(
   opts: SshPiTransportOptions,
-  chanOpts: SshPiChannelOptions,
+  chanOpts: SshJsonlChannelOptions,
   logger: Logger,
 ): Promise<string> {
   const sessionId = chanOpts.daemonSessionId!;
@@ -476,7 +582,7 @@ export function createSshPiDaemonTransport(opts: SshPiTransportOptions & {
     opts.logger.warn('pi daemon: no daemonSessionId for this session — falling back to direct transport (no persistence)');
     return createSshPiTransport(opts);
   }
-  return createSshPiChannelTransport(
+  return createSshJsonlChannelTransport(
     opts,
     (o) => {
       // 直连 wrapper 不用于 daemon 模式;daemon ensure 的 --cmd 由这里构造。
@@ -487,10 +593,11 @@ export function createSshPiDaemonTransport(opts: SshPiTransportOptions & {
       envViaFile: o.env,
       daemonSessionId: opts.daemonSessionId,
     }),
+    'pi',
   );
 }
 
-interface SshPiChannelOptions {
+interface SshJsonlChannelOptions {
   /** stdin env block(直连模式;首条命令前写入)。 */
   envViaStdin: Record<string, string | undefined> | undefined;
   /** env-file 内容(daemon 模式;ensure 时写入远端文件)。 */
@@ -504,12 +611,13 @@ interface SshPiChannelOptions {
  *   - 直连:execStream 跑 wrapper(bash env block + exec pi)
  *   - daemon:execStream 跑 `daemon proxy --sock <path>`(桥已持有 pi 的 socket)
  */
-function createSshPiChannelTransport(
+function createSshJsonlChannelTransport(
   opts: SshPiTransportOptions,
   buildDirectCmd: (o: SshPiTransportOptions) => string,
-  buildChannelOpts: (o: SshPiTransportOptions) => SshPiChannelOptions,
-): PiTransport {
-  const logger = opts.logger.child('pi-ssh-transport');
+  buildChannelOpts: (o: SshPiTransportOptions) => SshJsonlChannelOptions,
+  agentLabel: 'pi' | 'omp',
+): SshJsonlChannelTransport {
+  const logger = opts.logger.child(`${agentLabel}-ssh-transport`);
   const handshakeTimeoutMs = opts.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS;
 
   let channel: ExecStreamHandle | null = null;
@@ -520,6 +628,13 @@ function createSshPiChannelTransport(
 
   const lineHandlers = new Set<PiLineHandler>();
   const closeHandlers = new Set<PiCloseHandler>();
+  let transportCloseInfo: PiTransportCloseInfo | undefined;
+  const transportCloseHandlers = new Set<PiCloseHandler>();
+  // Physical channel close is deliberately separate from generic transport
+  // closure: queue overflow / a local close request must fence Pi writes, but
+  // they are not proof that a remote OMP command has exited.
+  const physicalCloseHandlers = new Set<PiCloseHandler>();
+  let physicalCloseInfo: PiTransportCloseInfo | undefined;
   const stderrHandlers = new Set<(line: string) => void>();
   const pendingWrites: Array<{ line: string; resolve: () => void; reject: (err: Error) => void }> = [];
   /** stdout 行切分缓冲(ssh channel 文本块可能跨行/半行)。 */
@@ -548,15 +663,27 @@ function createSshPiChannelTransport(
   const fireClose = (info: PiTransportCloseInfo): void => {
     if (closed) return;
     closed = true;
+    transportCloseInfo = info;
     flushStdoutTail();
     if (handshakeTimer) { clearTimeout(handshakeTimer); handshakeTimer = null; }
     clearBackpressureTimer();
     drainListenerAttached = false;
-    const err = new Error(`pi ssh transport closed: ${info.reason}`);
+    const err = new Error(`${agentLabel} ssh transport closed: ${info.reason}`);
     for (const w of pendingWrites.splice(0)) w.reject(err);
     try { channel?.kill(); } catch { /* best-effort */ }
     channel = null;
     for (const handler of closeHandlers) {
+      try { handler(info); } catch { /* handler should not throw */ }
+    }
+    for (const handler of transportCloseHandlers) {
+      try { handler(info); } catch { /* handler should not throw */ }
+    }
+  };
+
+  const firePhysicalClose = (info: PiTransportCloseInfo): void => {
+    if (physicalCloseInfo) return;
+    physicalCloseInfo = info;
+    for (const handler of physicalCloseHandlers) {
       try { handler(info); } catch { /* handler should not throw */ }
     }
   };
@@ -613,7 +740,7 @@ function createSshPiChannelTransport(
       fireClose({
         code: null,
         signal: null,
-        reason: 'pi ssh write backpressure timeout (channel stuck?)',
+        reason: `${agentLabel} ssh write backpressure timeout (channel stuck?)`,
       });
     }, 30_000);
     backpressureTimer.unref?.();
@@ -631,7 +758,7 @@ function createSshPiChannelTransport(
   };
 
   const writeLine = (line: string): Promise<void> => {
-    if (closed) return Promise.reject(new Error('pi ssh transport already closed'));
+    if (closed) return Promise.reject(new Error(`${agentLabel} ssh transport already closed`));
     // 轮 40-w4 MEDIUM-1:队列溢出 = channel 卡住(建立阶段挂死或消费不及),
     // 关闭 transport 让上层走 onClose 重连 —— 比无界增长(闭包/内存)和
     // 卡住恢复后批量 drain 已超时旧请求都好。
@@ -639,9 +766,9 @@ function createSshPiChannelTransport(
       fireClose({
         code: null,
         signal: null,
-        reason: `pi ssh write queue overflow (${MAX_PENDING_WRITES} pending — channel stuck?)`,
+        reason: `${agentLabel} ssh write queue overflow (${MAX_PENDING_WRITES} pending — channel stuck?)`,
       });
-      return Promise.reject(new Error('pi ssh transport write queue overflow'));
+      return Promise.reject(new Error(`${agentLabel} ssh transport write queue overflow`));
     }
     return new Promise<void>((resolve, reject) => {
       pendingWrites.push({ line, resolve, reject });
@@ -707,12 +834,12 @@ function createSshPiChannelTransport(
         // 16MB guard, 双实现契约不一致)。远端路径更不可信 —— 超限丢弃缓冲并
         // 关闭(继续解析已无意义, 且防 OOM)。
         if (stdoutBuffer.length > SSH_JSONL_MAX_BUFFER_CHARS) {
-          logger.warn('pi ssh stdout buffer exceeded limit — closing transport', {
+          logger.warn(`${agentLabel} ssh stdout buffer exceeded limit — closing transport`, {
             hostId: opts.remoteHost.id,
             bytes: stdoutBuffer.length,
           });
           stdoutBuffer = '';
-          fireClose({ code: null, signal: null, reason: 'pi ssh stdout buffer overflow (no newline in stream)' });
+          fireClose({ code: null, signal: null, reason: `${agentLabel} ssh stdout buffer overflow (no newline in stream)` });
           return;
         }
         while (true) {
@@ -734,7 +861,7 @@ function createSshPiChannelTransport(
           // 轮 40-w4-t5 CRITICAL:direct fallback 的 stderr 绕过 daemon 侧 scrub,
           // 进桌面日志前 key-aware 脱敏(env 凭证/64-hex sessionToken)。
           const redacted = redactCredentialText(trimmed);
-          logger.warn('pi ssh stderr', { line: redacted.slice(0, 500) });
+          logger.warn(`${agentLabel} ssh stderr`, { line: redacted.slice(0, 500) });
           fireStderr(redacted);
         }
       });
@@ -742,12 +869,14 @@ function createSshPiChannelTransport(
         // 尾部 flush 统一由 fireClose 里的 flushStdoutTail 执行(幂等)——
         // 这里不再自己 flush:fireClose 可能已被其它路径(队列溢出/缓冲超限/
         // error)先触发, 由 flushStdoutTail 保证任何 close 路径都收尾帧。
+        const reason = info.signal
+          ? `ssh channel closed (signal=${info.signal})`
+          : `ssh channel closed (exit code=${info.code ?? 'null'})`;
+        const signal = (info.signal ?? null) as NodeJS.Signals | null;
+        const closeInfo = { code: info.code ?? null, signal, reason };
+        firePhysicalClose(closeInfo);
         if (!closed) {
-          const reason = info.signal
-            ? `ssh channel closed (signal=${info.signal})`
-            : `ssh channel closed (exit code=${info.code ?? 'null'})`;
-          const signal = (info.signal ?? null) as NodeJS.Signals | null;
-          fireClose({ code: info.code ?? null, signal, reason });
+          fireClose(closeInfo);
         }
       });
       ch.onError((err) => {
@@ -762,7 +891,7 @@ function createSshPiChannelTransport(
       // "(err as Error).message" 产出 "undefined"(R7 审计 M-2)。
       // 轮 40-w4-t16 HIGH(日志盲区):失败分支必须留结构化日志 —— 否则现场
       // 无法区分 buildCmd/execStream/env/首字节超时, 连不上被折叠成黑盒。
-      logger.error('pi ssh transport setup failed', {
+      logger.error(`${agentLabel} ssh transport setup failed`, {
         hostId: opts.remoteHost.id,
         stage: 'setup',
         channelEstablished: channel !== null,
@@ -800,7 +929,7 @@ function createSshPiChannelTransport(
     }
     const reason = `ssh handshake timeout after ${handshakeTimeoutMs}ms (channel established: ${channel !== null})`;
     // 轮 40-w4-t16 HIGH(日志盲区):timeout 分支留诊断上下文(阶段/hostId)。
-    logger.error('pi ssh handshake timeout', {
+    logger.error(`${agentLabel} ssh handshake timeout`, {
       hostId: opts.remoteHost.id,
       stage: 'handshake',
       timeoutMs: handshakeTimeoutMs,
@@ -834,7 +963,25 @@ function createSshPiChannelTransport(
       return () => { closeHandlers.delete(handler); };
     },
 
-    async close(reason = 'pi ssh transport close()'): Promise<void> {
+    onPhysicalClose(handler: PiCloseHandler): () => void {
+      if (physicalCloseInfo) {
+        try { handler(physicalCloseInfo); } catch { /* handler should not throw */ }
+        return () => undefined;
+      }
+      physicalCloseHandlers.add(handler);
+      return () => { physicalCloseHandlers.delete(handler); };
+    },
+
+    onTransportClose(handler: PiCloseHandler): () => void {
+      if (transportCloseInfo) {
+        try { handler(transportCloseInfo); } catch { /* handler should not throw */ }
+        return () => undefined;
+      }
+      transportCloseHandlers.add(handler);
+      return () => { transportCloseHandlers.delete(handler); };
+    },
+
+    async close(reason = `${agentLabel} ssh transport close()`): Promise<void> {
       if (closed) return;
       fireClose({ code: null, signal: null, reason });
     },

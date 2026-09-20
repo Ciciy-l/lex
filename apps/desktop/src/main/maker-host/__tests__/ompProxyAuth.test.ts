@@ -46,9 +46,8 @@ vi.mock('../claude-fast-mode-log', () => ({
 }));
 
 // 派生确定性化:安全存储在测试环境不可用,这里钉成可预测的值。
-vi.mock('../pi-proxy-session-token.js', () => ({
+vi.mock('../omp-proxy-session-token.js', () => ({
   deriveOmpProxySessionToken: (sessionId: string) => `omp-tok-${sessionId}`,
-  derivePiProxySessionToken: (sessionId: string) => `pi-tok-${sessionId}`,
 }));
 
 import type { RoutingDecision } from '@cindy/anthropic-compat-proxy';

@@ -18,8 +18,28 @@ export const makeToolProbe: Record<MakeToolId, [string, string[]]> = {
 export interface MakeToolchainEnvironment extends MakeDoctorEnvironment {
   useTool: (id: MakeToolId, executable: string) => void;
   validateTool: (id: MakeToolId, executable: string, signal: AbortSignal) => Promise<boolean>;
+  /** Absolute executable selected by a successful probe; undefined until selected. */
+  selectedToolPath: (id: MakeToolId) => string | undefined;
   /** Available to subsequent source/build steps, without process.env mutation. */
   processEnvironment: () => NodeJS.ProcessEnv;
+}
+
+/**
+ * Resolve required Make tools before passing the scoped PATH to another
+ * process. `processEnvironment()` alone intentionally does not select a
+ * managed fallback, so callers that will spawn Git/pnpm must use this first.
+ */
+export async function resolveMakeToolchainProcessEnvironment(
+  environment: MakeToolchainEnvironment,
+  required: readonly MakeToolId[],
+  signal: AbortSignal,
+): Promise<NodeJS.ProcessEnv | null> {
+  for (const id of required) {
+    const [command, args] = makeToolProbe[id];
+    const probe = await environment.probe(command, args, signal);
+    if (checkMakeToolVersion(id, probe, environment.platform).status !== 'passed') return null;
+  }
+  return environment.processEnvironment();
 }
 
 /** Prefer working system tools, then reuse an already installed managed tool. This is read-only. */
@@ -34,6 +54,7 @@ export function selectMakeToolchainEnvironment(
   const env: MakeToolchainEnvironment = {
     ...base,
     processEnvironment: () => processEnvironment(selected),
+    selectedToolPath: (id) => selected[id],
     useTool: (id, executable) => {
       selected[id] = executable;
       managed.add(id);

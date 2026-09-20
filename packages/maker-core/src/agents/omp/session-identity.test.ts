@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { OmpAgent } from './index.js';
 import type { OmpProcessSpawnRequest } from './process-host.js';
 import type { AgentDeps } from '../base-agent.js';
+import type { McpProvider } from '../../interfaces/mcp-provider.js';
 import type { Logger } from '../../interfaces/logger.js';
 
 const silentLogger: Logger = {
@@ -70,8 +71,8 @@ function fakeOmpProcess(reportedSessionFile: string): FakeOmpProcess {
         return;
       }
       commands.push(request);
-      if (request.type === 'new_session' || request.type === 'switch_session') respond(request);
       if (request.type === 'get_state') respond(request, { sessionFile: reportedSessionFile });
+      else respond(request);
       callback();
     },
   });
@@ -106,7 +107,11 @@ function fakeOmpProcess(reportedSessionFile: string): FakeOmpProcess {
   };
 }
 
-function agentFor(root: string, fake: FakeOmpProcess): OmpAgent {
+function agentFor(
+  root: string,
+  fake: FakeOmpProcess,
+  mcpProviders?: McpProvider[],
+): OmpAgent {
   const deps: AgentDeps = {
     auth: {
       getState: async () => ({ authenticated: false }),
@@ -117,6 +122,7 @@ function agentFor(root: string, fake: FakeOmpProcess): OmpAgent {
     runtimeConfig: {},
     binaryPath: globalThis.process.execPath,
     logger: silentLogger,
+    mcpProviders,
     resolveOmpAgentHome: () => path.join(root, 'agent-home'),
     spawnOmpProcess: fake.spawn,
     resolveOmpExecutableEnvironment: () =>
@@ -134,6 +140,49 @@ function commandTypes(process: FakeOmpProcess): string[] {
 }
 
 describe('OMP upstream session identity', () => {
+  it('uses an empty host-tool roster for a host-owned ephemeral probe only', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'omp-session-identity-'));
+    const provider: McpProvider = {
+      name: 'ordinary-host-tools',
+      toOmpRpcHostTools: () => [{
+        name: 'ordinary_host_tool',
+        description: 'ordinary host tool',
+        parameters: { type: 'object', properties: {} },
+        execute: async () => ({ content: [{ type: 'text', text: 'ok' }] }),
+      }],
+    };
+    try {
+      const workspace = path.join(root, 'workspace');
+      const sessionFile = path.join(root, 'sessions', 'probe.jsonl');
+      await mkdir(workspace, { recursive: true });
+
+      const probeProcess = fakeOmpProcess(sessionFile);
+      const probe = await agentFor(root, probeProcess, [provider]).startSession({
+        sessionId: 'ephemeral-probe',
+        workingDir: workspace,
+        model: 'test-model',
+        disableHostTools: true,
+      });
+      expect(probeProcess.commands.find((command) => command.type === 'set_host_tools')).toMatchObject({
+        tools: [],
+      });
+      await probe.close({ reason: 'navigation' });
+
+      const normalProcess = fakeOmpProcess(path.join(root, 'sessions', 'normal.jsonl'));
+      const normal = await agentFor(root, normalProcess, [provider]).startSession({
+        sessionId: 'ordinary-session',
+        workingDir: workspace,
+        model: 'test-model',
+      });
+      expect(normalProcess.commands.find((command) => command.type === 'set_host_tools')).toMatchObject({
+        tools: [expect.objectContaining({ name: 'ordinary_host_tool' })],
+      });
+      await normal.close({ reason: 'navigation' });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('rejects a relative new-session path before it can be adopted or retried', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'omp-session-identity-'));
     try {

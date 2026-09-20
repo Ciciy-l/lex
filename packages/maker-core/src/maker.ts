@@ -23,7 +23,7 @@ import { clearTimeout as clearNodeTimeout, setTimeout as setNodeTimeout } from '
 
 import type { AgentKind } from './types/common.js';
 import type { Capabilities } from './types/capabilities.js';
-import type { ForkSdkSessionOptions, ForkSdkSessionResult } from './types/events.js';
+import type { AgentEvent, ForkSdkSessionOptions, ForkSdkSessionResult } from './types/events.js';
 import type {
   ScanAtResourcesOptions,
   ScanAtResourcesResult,
@@ -163,6 +163,31 @@ export interface CreateSessionOptions extends StartSessionOptions {
   id?: string;
 }
 
+/**
+ * Main-only, nonpersistent agent start.
+ *
+ * This exists for bounded host diagnostics that still need a real managed
+ * runtime (for example an OMP SSH provider connectivity check). It never
+ * creates a Session row, invokes normal lifecycle hooks, publishes a Session,
+ * or appears in `listActiveSessions()`.
+ */
+export interface StartEphemeralSessionOptions
+  extends Omit<StartSessionOptions, 'sessionId' | 'sessionInstanceId'> {
+  agentKind: AgentKind;
+  /** Optional host-generated business id for a session-bound credential bridge. */
+  sessionId?: string;
+}
+
+export interface EphemeralSession {
+  /** Opaque business identity used only during this managed runtime. */
+  readonly sessionId: string;
+  /** Unique identity for this exact in-memory process incarnation. */
+  readonly sessionInstanceId: string;
+  readonly handle: AgentSessionHandle;
+  /** Idempotent teardown; failed closes remain retryable until shutdown. */
+  close(opts?: AgentSessionTeardownOptions): Promise<void>;
+}
+
 export type MakerSessionCloseReason =
   | 'requested'
   | 'agent-switch'
@@ -297,21 +322,22 @@ async function mergePiRuntimeSkillStatuses(
     const baseDir = command.sourceInfo.baseDir;
     if (command.source !== 'skill' || !command.name.startsWith('skill:')) continue;
     const skillName = command.name.slice('skill:'.length);
+    // Explicit --skill is `project` on Windows and `temporary` on macOS.
+    // Match that provenance by path first so frontmatter aliases still load.
+    const explicitPath = piExplicitSkillRuntimePath(command);
+    if (explicitPath) {
+      loadedExplicitSkills.set(canonicalRuntimePath(explicitPath), command.name);
+      if (typeof command.sourceInfo.path === 'string') {
+        loadedExplicitSkills.set(canonicalRuntimePath(command.sourceInfo.path), command.name);
+      }
+      continue;
+    }
     if (command.sourceInfo.scope === 'project' && typeof baseDir === 'string') {
       loadedLegacyProjectSkills.set(
         [skillName, canonicalRuntimePath(baseDir)].join('\0'),
         command.name,
       );
       continue;
-    }
-    // Pinned Pi reports explicit --skill with a paired baseDir + SKILL.md path.
-    // The shared helper rejects partial/mismatched provenance before a
-    // user/global collision can mark a project scanner result loaded. Match
-    // explicit resources by path because frontmatter names need not equal
-    // their containing folder names.
-    const explicitPath = piExplicitSkillRuntimePath(command);
-    if (explicitPath) {
-      loadedExplicitSkills.set(canonicalRuntimePath(explicitPath), command.name);
     }
   }
   if (
@@ -330,8 +356,9 @@ async function mergePiRuntimeSkillStatuses(
       if (skill.scope === 'repo' && skill.path) {
         const canonicalSkillPath = canonicalRuntimePath(skill.path);
         if (!changedProjectSkills.has(canonicalSkillPath)) {
-          runtimeCommandName = loadedExplicitSkills.get(canonicalSkillPath)
-            ?? [skill.path, path.dirname(path.dirname(skill.path))]
+          runtimeCommandName = loadedExplicitSkills.get(canonicalRuntimePath(skill.path))
+            ?? loadedExplicitSkills.get(canonicalRuntimePath(path.dirname(skill.path)))
+            ?? [skill.path, path.dirname(skill.path), path.dirname(path.dirname(skill.path))]
               .map(canonicalRuntimePath)
               .map((skillPath) => loadedLegacyProjectSkills.get([skill.name, skillPath].join('\0')))
               .find((commandName) => commandName !== undefined);
@@ -390,6 +417,12 @@ interface FailedHandleCleanup {
   onCleaned?: () => void;
 }
 
+interface EphemeralSessionEntry {
+  readonly session: EphemeralSession;
+  readonly agentKind: AgentKind;
+  closePromise?: Promise<void>;
+}
+
 export class Maker {
   protected readonly agents: Partial<Record<AgentKind, BaseAgent>>;
   protected readonly storage: SessionStorage;
@@ -408,6 +441,8 @@ export class Maker {
   >();
   /** All create paths, including anonymous ids, that may still publish or quarantine a handle. */
   private readonly pendingSessionCreations = new Set<Promise<Session>>();
+  /** Nonpersistent managed starts that must also settle behind shutdown's barrier. */
+  private readonly pendingEphemeralStarts = new Set<Promise<EphemeralSession>>();
   /** Once shutdown starts, no new handle may race past its creation barrier. */
   private shutdownStarted = false;
   /**
@@ -421,6 +456,8 @@ export class Maker {
    * create 必须先把它确认关闭，不能丢失所有权后再 spawn 一个并存进程。
    */
   private readonly failedHandleCleanups = new Map<string, FailedHandleCleanup>();
+  /** Live nonpersistent handles, kept solely so process shutdown can close them. */
+  private readonly ephemeralSessions = new Map<string, EphemeralSessionEntry>();
   /**
    * Codex 0.145 会忽略已加载 thread 的 thread/resume.config。不同 Cindy task
    * 若同时复用同一 native thread，后启动者会继续使用前一 Session 的 MCP URL，
@@ -555,6 +592,117 @@ export class Maker {
     } finally {
       this.pendingSessionCreations.delete(creation);
     }
+  }
+
+  /**
+   * Start one managed runtime without publishing or persisting a product
+   * session. This deliberately bypasses every lifecycle hook: those hooks own
+   * task rows, worktree leases, Bot state, and other durable product effects.
+   */
+  async startEphemeralSession(opts: StartEphemeralSessionOptions): Promise<EphemeralSession> {
+    if (this.shutdownStarted) {
+      throw new Error('Maker is shutting down; refusing to start an ephemeral session');
+    }
+    const start = this.startEphemeralSessionWhileRunning(opts);
+    this.pendingEphemeralStarts.add(start);
+    try {
+      return await start;
+    } finally {
+      this.pendingEphemeralStarts.delete(start);
+    }
+  }
+
+  private async startEphemeralSessionWhileRunning(
+    opts: StartEphemeralSessionOptions,
+  ): Promise<EphemeralSession> {
+    const suppliedSessionId = opts.sessionId;
+    if (
+      suppliedSessionId !== undefined
+      && (
+        typeof suppliedSessionId !== 'string'
+        || suppliedSessionId.trim().length === 0
+        || suppliedSessionId.length > 256
+        || suppliedSessionId.includes('\0')
+      )
+    ) {
+      throw new Error('Invalid ephemeral session id');
+    }
+    const sessionId = suppliedSessionId ?? generateSessionId();
+    const sessionInstanceId = generateSessionId();
+    const agent = this.requireAgent(opts.agentKind);
+    const { agentKind, ...startOptions } = opts;
+    delete startOptions.sessionId;
+    let handle: AgentSessionHandle;
+    try {
+      handle = await agent.startSession({
+        ...startOptions,
+        sessionId,
+        sessionInstanceId,
+      });
+    } catch (error) {
+      if (error instanceof AgentStartupCleanupPendingError) {
+        // The adapter owns this unpublished process until it reports exit. No
+        // lifecycle hook is appropriate here, but its rejection must still be
+        // observed so a failed diagnostic never becomes a host-level unhandled
+        // rejection.
+        void error.whenStopped.catch((cleanupError) => {
+          this.logger.warn('ephemeral adapter startup cleanup remains unconfirmed', {
+            sessionId,
+            agentKind,
+            error: String(cleanupError),
+          });
+        });
+      }
+      throw error instanceof AgentStartupStoppedError ? error.cause : error;
+    }
+
+    let closePromise: Promise<void> | undefined;
+    let closeSucceeded = false;
+    const close = (closeOpts?: AgentSessionTeardownOptions): Promise<void> => {
+      if (closePromise) return closePromise;
+      if (closeSucceeded) return Promise.resolve();
+      const current = Promise.resolve().then(() => handle.close(closeOpts));
+      closePromise = current.then(
+        () => {
+          closeSucceeded = true;
+          if (this.ephemeralSessions.get(sessionInstanceId) === entry) {
+            this.ephemeralSessions.delete(sessionInstanceId);
+          }
+        },
+        (error) => {
+          // Keep the entry visible for a later explicit retry or shutdown.
+          closePromise = undefined;
+          throw error;
+        },
+      );
+      if (entry) entry.closePromise = closePromise;
+      return closePromise;
+    };
+    const session: EphemeralSession = Object.freeze({
+      sessionId,
+      sessionInstanceId,
+      handle,
+      close,
+    });
+    const entry: EphemeralSessionEntry = { session, agentKind };
+    this.ephemeralSessions.set(sessionInstanceId, entry);
+
+    // `startEphemeralSession` registered its promise before the adapter's first
+    // await. If shutdown won while it was starting, close the just-returned
+    // handle rather than leaking an invisible child process.
+    if (this.shutdownStarted) {
+      try {
+        await session.close({ reason: 'app-quit' });
+      } catch (error) {
+        this.logger.warn('failed to close ephemeral handle after shutdown race', {
+          sessionId,
+          agentKind,
+          error: String(error),
+        });
+      }
+      throw new Error('Maker is shutting down; discarded an ephemeral session');
+    }
+    return session;
   }
 
   private async createSessionWhileRunning(opts: CreateSessionOptions): Promise<Session> {
@@ -1176,12 +1324,19 @@ export class Maker {
   async closeSessionIfCurrent(
     session: Session,
     reason: Exclude<MakerSessionCloseReason, 'unexpected'> = 'requested',
-  ): Promise<void> {
+    opts?: { afterCurrentTurn?: boolean; failureEvent?: () => AgentEvent },
+  ): Promise<'closed' | 'deferred' | void> {
     if (this.activeSessions.get(session.id) !== session) return;
-    // First closer owns the cause. A later concurrent close must not relabel
-    // a user-requested close as an internal replacement (or vice versa).
-    if (!this.closeReasons.has(session)) this.closeReasons.set(session, reason);
+    // Deferred internal retirement is only intent. An explicit closer may
+    // take ownership until Session actually starts teardown; after that the
+    // cause stays fixed even if exit confirmation fails or another close races.
+    const previousReason = this.closeReasons.get(session);
+    if (previousReason === undefined || (
+      previousReason === 'runtime-refresh' && !opts?.afterCurrentTurn && !session.hasStartedClosing()
+    )) this.closeReasons.set(session, reason);
+    if (opts?.afterCurrentTurn) return session.closeAfterCurrentTurn(opts);
     await session.close();
+    return 'closed';
     // status listener 会自动清理 activeSessions 并 emit
   }
 
@@ -1243,6 +1398,8 @@ export class Maker {
     // must not consume the entire host quit window before their detach begins.
     const initialSessionSnapshot = Array.from(this.activeSessions.values());
     const initialSessionIdentities = new Set(initialSessionSnapshot);
+    const initialEphemeralSnapshot = Array.from(this.ephemeralSessions.values());
+    const initialEphemeralIdentities = new Set(initialEphemeralSnapshot);
     const queueSessionDetaches = (
       sessions: readonly Session[],
       phase: 'initial' | 'late',
@@ -1262,6 +1419,21 @@ export class Maker {
           }),
       );
     };
+    const queueEphemeralCloses = (
+      entries: readonly EphemeralSessionEntry[],
+      phase: 'initial' | 'late',
+    ): Array<Promise<void>> => entries.map((entry) =>
+      Promise.resolve()
+        .then(() => entry.session.close(teardown))
+        .catch((e) => {
+          errors.push({ kind: `ephemeral-${phase}`, name: entry.session.sessionId, error: e });
+          sessionFailures.push({
+            sessionId: entry.session.sessionId,
+            agentKind: entry.agentKind,
+            error: e,
+          });
+        }),
+    );
 
     // Queue agent-level process shutdown and the initial Session snapshot
     // before waiting for session creation. PiAgent.dispose() owns its startup
@@ -1274,11 +1446,15 @@ export class Maker {
         }),
     );
     const initialSessionDetaches = queueSessionDetaches(initialSessionSnapshot, 'initial');
+    const initialEphemeralCloses = queueEphemeralCloses(initialEphemeralSnapshot, 'initial');
 
     // createSession registers its promise before yielding. Blocking new calls
     // above makes this a stable barrier: after it settles, every handle started
     // before shutdown is active, closed, or present in failedHandleCleanups.
-    const creationSnapshot = Array.from(this.pendingSessionCreations);
+    const creationSnapshot = [
+      ...this.pendingSessionCreations,
+      ...this.pendingEphemeralStarts,
+    ];
     await Promise.allSettled(creationSnapshot);
 
     const finalAgentDisposes = agentEntries.map(([kind, agent], index) =>
@@ -1295,6 +1471,9 @@ export class Maker {
     const lateSessionSnapshot = Array.from(this.activeSessions.values())
       .filter((session) => !initialSessionIdentities.has(session));
     const lateSessionDetaches = queueSessionDetaches(lateSessionSnapshot, 'late');
+    const lateEphemeralSnapshot = Array.from(this.ephemeralSessions.values())
+      .filter((entry) => !initialEphemeralIdentities.has(entry));
+    const lateEphemeralCloses = queueEphemeralCloses(lateEphemeralSnapshot, 'late');
     const failedHandleCleanupSnapshot = Array.from(this.failedHandleCleanups.entries());
 
     const failedHandleCloses = failedHandleCleanupSnapshot.map(([sessionId, entry]) =>
@@ -1307,9 +1486,11 @@ export class Maker {
 
     await Promise.allSettled([
       ...initialSessionDetaches,
+      ...initialEphemeralCloses,
       ...finalAgentDisposes,
       ...failedHandleCloses,
       ...lateSessionDetaches,
+      ...lateEphemeralCloses,
     ]);
 
     // Session close notifications enqueue host-owned cleanup (for example
@@ -1568,9 +1749,13 @@ export class Maker {
       return { binaryReady: false, binaryPath: null, authReady: false };
     }
     const auth = await agent.getAuthState();
+    // Runtime-backed adapters may verify their executable when this status is
+    // read. Take one coherent snapshot rather than invoking that verification
+    // twice and potentially reporting two different states.
+    const binaryPath = agent.getBinaryPath();
     return {
-      binaryReady: !!agent.getBinaryPath(),
-      binaryPath: agent.getBinaryPath(),
+      binaryReady: !!binaryPath,
+      binaryPath,
       authReady: auth.authenticated,
       identity: auth.identity,
     };

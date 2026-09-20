@@ -49,7 +49,7 @@ vi.mock('../omp-runtime.js', () => ({
   resolveOmpBinaryPath: () => '/bin/omp',
 }));
 
-vi.mock('../pi-proxy-session-token.js', () => ({
+vi.mock('../omp-proxy-session-token.js', () => ({
   deriveOmpProxySessionToken: (sessionId: string) => `omp-tok-${sessionId}`,
 }));
 
@@ -177,6 +177,18 @@ describe('buildOmpManagedModelsYaml', () => {
   it('points the provider at the local loopback proxy', () => {
     const yaml = buildOmpManagedModelsYaml({ sessionId: 'sess-1', model: 'm1', token: SECRET });
     expect(yaml).toContain(env.endpoint);
+  });
+
+  it('uses the managed SSH reverse-forward endpoint for a remote runtime', () => {
+    const remoteBaseUrl = 'http://127.0.0.1:48001/anthropic';
+    const yaml = buildOmpManagedModelsYaml({
+      sessionId: 'sess-1',
+      model: 'm1',
+      token: SECRET,
+      baseUrl: remoteBaseUrl,
+    });
+    expect(yaml).toContain(remoteBaseUrl);
+    expect(yaml).not.toContain(env.endpoint);
   });
 
   it('translates the session wire protocol into the api value OMP accepts', () => {

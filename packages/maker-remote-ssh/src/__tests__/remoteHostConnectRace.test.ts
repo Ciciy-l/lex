@@ -151,10 +151,9 @@ describe('RemoteHost arm/disconnect race', () => {
 
     await assertion;
     expect(host.getStatus()).toBe('disconnected');
-    // record 不得误标 armed (愿望保留,重连后 rearm 重新发起)。
-    expect(host.listRemoteForwards()).toEqual([
-      { localHost: '127.0.0.1', localPort: 38080, remotePort: 47921, armed: false },
-    ]);
+    // A stale arm never received a lease, so its record must be dropped rather
+    // than rearmed on a later connection without an owning caller.
+    expect(host.listRemoteForwards()).toEqual([]);
     // 旧连接上刚绑上的野监听必须立刻拆除。
     expect(client.unforwardInCalls).toContainEqual({ addr: '127.0.0.1', port: 47921 });
   });

@@ -19,7 +19,7 @@ import { refreshCustomProvidersIntoCatalog } from './createDesktopProviderServic
 import { acquireWorktreeRuntimeLease, releaseWorktreeRuntimeLease, type WorktreeRuntimeLease } from '../worktree/runtimeLeases';
 import { readCodexContextWindowInfo } from './codex-context-window.js';
 import { app, BrowserWindow } from 'electron';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import fsSync from 'node:fs';
 import path from 'node:path';
@@ -29,9 +29,11 @@ import {
   ClaudeCodeAgent,
   CodexAgent,
   configureDefaultImageResizer,
+  generateSessionId,
   type AgentKind,
   type McpProvider,
 } from '@cindy/maker-core';
+import { PINNED_OMP_VERSION, probeRemoteAgent } from '@cindy/maker-remote-ssh';
 import type { ProviderView } from '@cindy/model-providers';
 import {
   getActiveCatalog,
@@ -50,6 +52,17 @@ import { effectiveXdGatewayBaseUrl } from '../model-access/effectiveEndpoint.js'
 import { listCustomMcpRuntimeGenerations } from './custom-mcp-store.js';
 
 import { createMessage } from '../localDb/ipc/messages.js';
+import { createCindyMakeMcpProvider } from '../cindy-make/mcpProvider.js';
+import {
+  commitVerifiedCindyMakeChanges,
+  createCindyMakeCompletionTracker,
+} from '../cindy-make/completion.js';
+import { verifyCindyMakeWorktree } from '../cindy-make/taskWorkspace.js';
+import { runSourceGit } from '../cindy-make/sourceGit.js';
+import {
+  createMakeToolchainEnvironment,
+  resolveMakeToolchainProcessEnvironment,
+} from '../cindy-make/toolchainEnvironment.js';
 import { getMessagesForHistory } from '../localDb/chatHistoryReader.js';
 import { getWorkerLink, updateWorkerStatus } from '../localDb/orcaTeamStore.js';
 import { cleanupSessionTempAttachments } from '../maker-ipc/normalizeAttachments.js';
@@ -99,6 +112,7 @@ import {
   getCodexHome,
   readClaudeApiKey,
 } from './auth-adapters.js';
+import { syncOpenAiMediaAfterCodexAuthChange } from './model-discovery/openai-media.js';
 import {
   desktopSessionStorage,
   readCodexHistoryHasProductPrompt,
@@ -128,7 +142,9 @@ import {
 } from '../remote-ssh/agent-proxy.js';
 import {
   createSshPiDaemonTransport,
+  createRemoteOmpFileOps,
   createRemotePiFileOps,
+  createSshOmpTransport,
   resolveRemotePiBinaryPath,
 } from './pi-remote-transport.js';
 import { ensurePiManagerInstalled } from './pi-manager-client.js';
@@ -161,7 +177,7 @@ import { buildOmpAgent } from './omp-host.js';
 import { refreshOmpRuntime, subscribeOmpRuntime } from './omp-runtime.js';
 import {
   captureLocalPiPackageRuntimeInvalidationSnapshot,
-  invalidateLocalPiPackageRuntimeSnapshot,
+  settleLocalPiPackageRuntimeSnapshot,
   type PiPackageRuntimeInvalidationSnapshot,
 } from './pi-package-runtime-invalidation.js';
 import { clearChatgptBridgeCredentialCache } from './anthropic-responses-bridge-host.js';
@@ -323,10 +339,17 @@ import {
   withRehydrateCloseSuppressed,
 } from './rehydrateCloseSuppression.js';
 import {
+  clearSessionProvider,
   freezeSessionProviderAtStart,
   getSessionProvider,
   hydrateSessionProvider,
+  setSessionProvider,
 } from './session-provider-store.js';
+import {
+  runManagedRemoteOmpQuickTest as runManagedRemoteOmpQuickTestWithDeps,
+  type ManagedRemoteOmpQuickTestOptions,
+  type RemoteOmpQuickTestResult,
+} from './omp-remote-quick-test.js';
 import { prepareLocalCodexCredentialModeSwitch } from './codex-credential-switch.js';
 import { createDesktopOrcaTeamStoreAdapter } from './orcaTeamStoreAdapter.js';
 import { broadcastOrcaWorkerChanged } from './orcaWorkerBroadcast.js';
@@ -542,6 +565,12 @@ const staleInvalidatedCcSessions = new Set<string>();
  * ensureRemoteForward 顺延探测,断线重连由 RemoteHost re-arm 保持。
  */
 const PI_MCP_FORWARD_PORT_START = 47981;
+/**
+ * OMP's managed provider bridge gets its own remote listener. It is separate
+ * from Pi's MCP forwards and Codex's daemon config bridge so one engine can
+ * never replace another engine's endpoint.
+ */
+const OMP_PROVIDER_FORWARD_PORT = 48001;
 /**
  * 本进程见过的 bridge 实例 — ensureCodexMcpBridgeStartedForRemote 据此检测
  * bridge 重建并清空 forcedFreshCcBridgeSessions (旧 bridge 的
@@ -803,6 +832,10 @@ function createDesktopBotCapabilityService() {
   });
 }
 
+export function listBotCreationCapabilities(input: Parameters<ReturnType<typeof createBotCapabilityService>['forCreation']>[0]) {
+  return createDesktopBotCapabilityService().forCreation(input);
+}
+
 /** Settings IPC reuses the model-side catalog at its save boundary. */
 export async function validateBotCapabilityAdditions(update: BotCapabilityUpdate): Promise<void> {
   await createDesktopBotCapabilityService().validateAdditions(update);
@@ -918,7 +951,7 @@ export function getMaker(): Maker {
     const pluginRegistry = createPluginRegistry();
 
     const resolveIOSSimulatorAccess = (context?: IOSSimulatorMcpCallContext) => {
-      const workingDir = context?.workingDir?.trim() || null;
+      const workingDir = context?.workingDir?.trim() ? context.workingDir : null;
       // Product access is the installed plugin (enable + workdir disable).
       // Leftover Tools-page `builtinTools['ios-simulator']` must not gate runtime.
       return getIOSSimulatorPluginAccessDecision(workingDir);
@@ -1069,6 +1102,68 @@ export function getMaker(): Maker {
       dispatchInterAgentMessage,
     } satisfies OrcaBridgeMcpDeps;
     const orcaWorkerBridgeProvider = createOrcaWorkerBridgeMcpProvider(orcaBridgeDeps);
+    // Cindy Make 个人版任务专属工具:只有 sessions.source='cindy-make' 的任务在
+    // bootstrapSession 时拿到 vendorOptions 标记;Claude 据标记决定注册,Pi 按会话
+    // 剔出 server 列表,Codex 按线程下发 enabled=false,工具调用再按标记 fail-closed。
+    // 完成卡片在本轮 turn 结束后才落库,保证它排在模型最后一段回复之后。
+    const cindyMakeCompletionTracker = createCindyMakeCompletionTracker({
+      getSession: (sessionId) => _maker?.getSession(sessionId),
+      collectFacts: async (sessionId) => {
+        const userData = app.getPath('userData');
+        const meta = await _maker?.getSessionMeta(sessionId);
+        if (!meta?.workDir) {
+          throw new Error('session working directory is not a Cindy Make worktree');
+        }
+        const env = await createMakeToolchainEnvironment(userData);
+        const processEnvironment = await resolveMakeToolchainProcessEnvironment(
+          env,
+          ['git'],
+          AbortSignal.timeout(60_000),
+        );
+        const gitExecutable = env.selectedToolPath('git');
+        if (!processEnvironment || !gitExecutable || !path.isAbsolute(gitExecutable)) {
+          throw new Error('Cindy Make Git is unavailable');
+        }
+        const verify = async () => {
+          const verified = await verifyCindyMakeWorktree(
+            userData,
+            meta.workDir,
+            AbortSignal.timeout(60_000),
+            { processEnvironment, gitExecutable },
+          );
+          if (verified) return verified;
+          throw new Error('session working directory is not a registered Cindy Make worktree');
+        };
+        // The helper fails before its first Git action and then repeats this
+        // check before every command, so a replaced worktree cannot borrow the
+        // trusted completion path between status and commit.
+        const title = meta.title?.trim();
+        return commitVerifiedCindyMakeChanges(
+          verify,
+          (args, workingDir) =>
+            runSourceGit(
+              gitExecutable,
+              processEnvironment,
+              args,
+              workingDir,
+              AbortSignal.timeout(60_000),
+            ),
+          `Cindy Make: ${title || sessionId}`,
+        );
+      },
+      persist: (sessionId, meta) =>
+        createMessage(sessionId, {
+          clientId: randomUUID(),
+          role: 'assistant',
+          content: '',
+          agentMeta: { cindyMakeCompletion: meta },
+        }).then(() => undefined),
+      logger: desktopMakerLogger,
+    });
+    const cindyMakeProvider = createCindyMakeMcpProvider({
+      reportCompletion: cindyMakeCompletionTracker.report,
+      logger: desktopMakerLogger,
+    });
 
     // logger 不 pre-child agent kind —— agent 内部会自己 child(this.kind),
     // host 这里再 child 一次会变成 maker/claude-code/claude-code。
@@ -1090,6 +1185,7 @@ export function getMaker(): Maker {
     const claudeMcpProviders = [
       ...createDesktopMcpProviders(makerMemoryProviderDeps),
       orcaWorkerBridgeProvider,
+      cindyMakeProvider,
     ];
     _mcpProviders['claude-code'] = claudeMcpProviders;
     // agent Bash 命令的全局并发闸门(跨所有本地 cc session / worker / subagent 共享)。
@@ -1399,6 +1495,7 @@ export function getMaker(): Maker {
     const codexMcpProviders = [
       ...createDesktopMcpProviders(makerMemoryProviderDeps),
       orcaWorkerBridgeProvider,
+      cindyMakeProvider,
     ];
     _mcpProviders.codex = codexMcpProviders;
     const resolveDesiredCodexSubagentRoutingSignature = async (ctx: {
@@ -1626,7 +1723,7 @@ export function getMaker(): Maker {
         }
         const browserCompanion = isControlPlane || isReview
           ? null
-          : await prepareCodexBrowserCompanion({ codexHome: effectiveCodexHome });
+          : await prepareCodexBrowserCompanion({ codexHome: ctx.runtimeCodexHome ?? effectiveCodexHome });
         const browserCompanionSpawnConfig =
           resolveCodexBrowserCompanionSpawnConfig(browserCompanion);
         mcpExtraArgs.push(...browserCompanionSpawnConfig.extraArgs);
@@ -1877,12 +1974,26 @@ export function getMaker(): Maker {
         const locations = new CodexThreadLocations(path.join(codexAccountHome('thread-index'), 'locations'));
         return await locations.read(threadId) ?? await prepareExternalCodexSessionForResume(threadId);
       },
-      resolveCodexThreadStorageHome: async (threadId) => {
+      resolveCodexThreadStorage: async (threadId) => {
         if (!getActiveAppSession().dataOwnerId) return;
-        return new CodexThreadLocations(path.join(codexAccountHome('thread-index'), 'locations')).readStorageHome(threadId, {
+        const ownerScope = activeOwnerScopeKey();
+        const storage = await new CodexThreadLocations(path.join(codexAccountHome('thread-index'), 'locations')).readStorage(threadId, {
           home: getCodexHome(),
           prepare: prepareExternalCodexSessionForResume,
         });
+        if (activeOwnerScopeKey() !== ownerScope) throw new Error('Codex history owner changed during preparation');
+        return storage;
+      },
+      createCodexAuthTokenReader: (providerId) => {
+        const ownerScope = activeOwnerScopeKey();
+        return async () => {
+          if (isAppSessionBoundaryPending() || activeOwnerScopeKey() !== ownerScope) throw new Error('Codex authentication owner changed');
+          const state = await desktopCodexAuthAdapter.getState({ credentialMode: 'oauth-bearer', providerId });
+          if (isAppSessionBoundaryPending() || activeOwnerScopeKey() !== ownerScope) throw new Error('Codex authentication owner changed');
+          const credentials = state.authenticated ? desktopCodexAuthAdapter.readOneShotCreds(providerId) : null;
+          if (!credentials) throw new Error('Codex account credentials are unavailable');
+          return { accessToken: credentials.accessToken, chatgptAccountId: credentials.accountId };
+        };
       },
       recordCodexThreadLocation: async (threadId, storageHome, rolloutPath) => {
         if (!rolloutPath || !getActiveAppSession().dataOwnerId) return;
@@ -1924,6 +2035,11 @@ export function getMaker(): Maker {
       // 远端 transport — SSH 连接已有 ConnectionPool (remote-ssh feature 起的) 管,
       // 这里包一层把 RemoteHost + SshDaemonTransport 装起来。
       // 远端机器没在 pool / 未连接 → 抛错, CodexAgent 把它当 startSession 失败传上去。
+      getRemoteAgentFileOps: (remoteHostId) => {
+        const remoteHost = getRemoteSshPool().get(remoteHostId);
+        if (!remoteHost) throw new Error(`remote SSH host "${remoteHostId}" is not connected`);
+        return createRemotePiFileOps(remoteHost);
+      },
       getRemoteCodexTransport: (remoteHostId) => {
         const remoteHost = getRemoteSshPool().get(remoteHostId);
         if (!remoteHost) {
@@ -2115,6 +2231,7 @@ export function getMaker(): Maker {
     const piMcpProviders = [
       ...createDesktopMcpProviders(makerMemoryProviderDeps),
       orcaWorkerBridgeProvider,
+      cindyMakeProvider,
     ];
     _mcpProviders.pi = piMcpProviders;
     // OMP shares the same provider composition as Claude/Codex/Pi.  Its core
@@ -2125,6 +2242,7 @@ export function getMaker(): Maker {
     const ompMcpProviders = [
       ...createDesktopMcpProviders(makerMemoryProviderDeps),
       orcaWorkerBridgeProvider,
+      cindyMakeProvider,
     ];
     _mcpProviders.omp = ompMcpProviders;
     // 用户自定义 MCP:三个 agent 都必须注册其实际持有的数组引用，再统一做初始 refresh。
@@ -2165,9 +2283,8 @@ export function getMaker(): Maker {
       mcpProviders: piMcpProviders,
       makerMemory: makerMemoryManager,
       // Fence in-flight startups at the durable package edge, but do not close
-      // the current caller before maker-core queues its host-owned receipt and
-      // sends the extension response. The settled callback below retires only
-      // the exact local runtimes captured at the mutation's latest byte edge.
+      // the current caller. The settled callback requests retirement of the
+      // captured runtimes only after their current product turns settle.
       onPiManagedPackageMutationCommitted: async (phase = 'commit') => {
         const maker = _maker;
         if (!maker) return;
@@ -2181,7 +2298,7 @@ export function getMaker(): Maker {
           pendingPiPackageRuntimeSnapshots.push(snapshot);
         }
       },
-      onPiManagedPackageMutationSettled: async (callerSessionId, publishOutcome) => {
+      onPiManagedPackageMutationSettled: async (callerSessionId, publishOutcome, createRetirementFailureEvent) => {
         const partial = () => publishOutcome({
           runtimeConvergence: 'partial',
           recoveryAction: 'restart-cindy-to-refresh-packages',
@@ -2192,34 +2309,9 @@ export function getMaker(): Maker {
           partial();
           return;
         }
-        const callerEntries = snapshot.entries.filter(({ session }) => session.id === callerSessionId);
-        const siblingEntries = snapshot.entries.filter(({ session }) => session.id !== callerSessionId);
-        let siblingFailed = false;
-        try {
-          const siblingResult = await invalidateLocalPiPackageRuntimeSnapshot(
-            maker,
-            { entries: siblingEntries },
-          );
-          siblingFailed = siblingResult.failedSessionIds.length > 0;
-        } catch {
-          siblingFailed = true;
-        }
-        const initiallyPartial = siblingFailed
-          || callerEntries.length === 0
-          || callerEntries.some(({ metadataFailed }) => metadataFailed);
-        if (initiallyPartial) partial();
-        else publishOutcome({ runtimeConvergence: 'complete' });
-
-        if (callerEntries.length === 0) return;
-        try {
-          const callerResult = await invalidateLocalPiPackageRuntimeSnapshot(
-            maker,
-            { entries: callerEntries },
-          );
-          if (!initiallyPartial && callerResult.failedSessionIds.length > 0) partial();
-        } catch {
-          if (!initiallyPartial) partial();
-        }
+        // The receipt has been sent, not necessarily consumed by Pi. Keep the
+        // caller and busy siblings alive until their owned turn settles.
+        await settleLocalPiPackageRuntimeSnapshot(maker, snapshot, callerSessionId, publishOutcome, createRetirementFailureEvent);
       },
       getGhostRosterPrompt,
       // 仅为命中视觉桥目标的 Pi 模型注册 Layer C 工具。
@@ -2415,9 +2507,35 @@ export function getMaker(): Maker {
     const piAgent = buildPiAgentForDesktop();
     if (piAgent) makerAgents.pi = piAgent;
 
-    // omp(实验性,opt-in 二进制):与 pi 同一条降级链 —— 二进制在位才注册;
-    // 缺失时 agents map 不含 omp,既有环境零影响,新建入口也会据
-    // listAvailableAgents 把 OMP 从引擎下拉里隐掉(不会白屏/不会莫名报错)。
+    // OMP has an audited local opt-in runtime, and an independent managed SSH
+    // runtime. The latter owns its own HOME/models.yml/provider forward and
+    // direct JSONL channel; it does not reuse Pi's daemon or Codex's app-server.
+    const requireRemoteOmpHost = (remoteHostId: string) => {
+      const remoteHost = getRemoteSshPool().get(remoteHostId);
+      if (!remoteHost) {
+        throw new Error(`remote SSH host "${remoteHostId}" not found in pool — connect it first under Settings → Remote`);
+      }
+      if (remoteHost.getStatus() !== 'ready') {
+        throw new Error(`remote SSH host "${remoteHostId}" is not connected (status=${remoteHost.getStatus()}) — connect it under Settings → Remote first`);
+      }
+      return remoteHost;
+    };
+    const requireRemoteOmpPath = (value: unknown, label: string): string => {
+      if (
+        typeof value !== 'string'
+        || value.length === 0
+        || value.length > 4096
+        || value.includes('\0')
+        || !path.posix.isAbsolute(value)
+      ) {
+        throw new Error(`remote OMP ${label} must be an absolute POSIX path`);
+      }
+      const normalized = path.posix.normalize(value);
+      if (normalized === '/') {
+        throw new Error(`remote OMP ${label} must not be the filesystem root`);
+      }
+      return normalized;
+    };
     const buildOmpAgentForDesktop = () => buildOmpAgent({
       logger: desktopMakerLogger,
       turnChangeCapture: {
@@ -2431,6 +2549,89 @@ export function getMaker(): Maker {
       },
       mcpProviders: ompMcpProviders,
       makerMemory: makerMemoryManager,
+      resolveRemoteOmpRuntime: async (remoteHostId) => {
+        const remoteHost = requireRemoteOmpHost(remoteHostId);
+        const probe = await probeRemoteAgent(remoteHost, 'omp');
+        const expectedVersion = `omp/${PINNED_OMP_VERSION}`;
+        if (!probe.installed || probe.installedVersion !== expectedVersion || !probe.binaryPath) {
+          throw new Error(
+            `OMP ${expectedVersion} is not installed and verified on remote host ${remoteHostId}`,
+          );
+        }
+        const installDir = requireRemoteOmpPath(probe.installDir, 'install directory');
+        const installParent = path.posix.dirname(installDir);
+        if (path.posix.basename(installParent) !== '.xdt-server') {
+          throw new Error('remote OMP installer returned an unexpected install layout');
+        }
+        const userHome = requireRemoteOmpPath(path.posix.dirname(installParent), 'user home');
+        const binaryPath = requireRemoteOmpPath(probe.binaryPath, 'binary path');
+        const expectedBinaryPath = path.posix.join(installDir, 'omp', 'omp');
+        if (binaryPath !== expectedBinaryPath) {
+          throw new Error('remote OMP installer returned an unexpected binary path');
+        }
+        return Object.freeze({
+          binaryPath,
+          // This state is intentionally distinct from the runtime binary and
+          // from Pi's agent root. Each core runtime adds its own opaque child.
+          agentHome: path.posix.join(installDir, 'omp-agent-home'),
+          userHome,
+        });
+      },
+      getRemoteOmpTransport: (remoteHostId, { remoteBinaryPath, args, cwd, env, logger }) =>
+        createSshOmpTransport({
+          remoteHost: requireRemoteOmpHost(remoteHostId),
+          binaryPath: remoteBinaryPath,
+          args,
+          cwd,
+          env,
+          logger,
+        }),
+      getRemoteOmpFileOps: (remoteHostId) =>
+        createRemoteOmpFileOps(requireRemoteOmpHost(remoteHostId)),
+      getRemoteAgentFileOps: (remoteHostId) =>
+        createRemoteOmpFileOps(requireRemoteOmpHost(remoteHostId)),
+      openRemoteOmpProviderForward: async (remoteHostId) => {
+        const remoteHost = requireRemoteOmpHost(remoteHostId);
+        let localEndpoint: URL;
+        try {
+          localEndpoint = new URL(getClaudeEndpoint());
+        } catch {
+          throw new Error('OMP remote provider forward requires a valid local loopback endpoint');
+        }
+        const localHost = localEndpoint.hostname.replace(/^\[|\]$/gu, '');
+        const localPort = Number(localEndpoint.port);
+        if (
+          !['http:', 'https:'].includes(localEndpoint.protocol)
+          || !['127.0.0.1', '::1', 'localhost'].includes(localHost)
+          || !Number.isInteger(localPort)
+          || localPort < 1
+          || localPort > 65535
+          || localEndpoint.username
+          || localEndpoint.password
+        ) {
+          throw new Error('OMP remote provider forward requires an explicit local loopback endpoint');
+        }
+        const forward = await remoteHost.ensureRemoteForward({
+          localHost,
+          localPort,
+          preferredRemotePort: OMP_PROVIDER_FORWARD_PORT,
+          exactRemotePort: true,
+        });
+        const remoteEndpoint = new URL(localEndpoint.toString());
+        remoteEndpoint.hostname = '127.0.0.1';
+        remoteEndpoint.port = String(forward.remotePort);
+        let released = false;
+        return Object.freeze({
+          baseUrl: remoteEndpoint.toString(),
+          release: async () => {
+            if (released) return;
+            released = true;
+            await forward.close();
+          },
+        });
+      },
+      getRemoteOmpAgentProxyEnv: async (remoteHostId) =>
+        getRemoteAgentProxyEnv(requireRemoteOmpHost(remoteHostId)),
     });
     const ompAgent = buildOmpAgentForDesktop();
     if (ompAgent) makerAgents.omp = ompAgent;
@@ -2844,6 +3045,27 @@ export function getMakerIfReady(): Maker | null {
   return _maker;
 }
 
+/**
+ * Run the Settings SSH OMP quick test through the same managed runtime used by
+ * an ordinary remote OMP session. The helper deliberately owns no IPC surface
+ * and no durable task lifecycle.
+ */
+export async function runManagedRemoteOmpQuickTest(
+  options: ManagedRemoteOmpQuickTestOptions,
+): Promise<RemoteOmpQuickTestResult> {
+  return runManagedRemoteOmpQuickTestWithDeps(
+    {
+      ensureProviderReady: ensureCurrentAccountProviderReadiness,
+      listProviders: () => getDesktopProviderService().listProviders({ allowSideEffects: false }),
+      generateSessionId,
+      setSessionProvider,
+      clearSessionProvider,
+      startEphemeralSession: (startOptions) => getMaker().startEphemeralSession(startOptions),
+    },
+    options,
+  );
+}
+
 /** Register Pi after a managed runtime retry and notify local renderers. */
 export function registerPiAgentIfAvailable(): boolean {
   const register = _registerPiAgent;
@@ -3074,6 +3296,7 @@ export async function finalizeCodexAfterAuthModeChange(): Promise<void> {
   // 「已登录 + models_cache 还没落盘」——必须排在上面的 cache 重读之后,否则被空快照覆盖。
   resetCodexModelBackfillState();
   await requestCodexModelBackfill();
+  syncOpenAiMediaAfterCodexAuthChange();
   await broadcastCodexAuthStateChanged();
 }
 

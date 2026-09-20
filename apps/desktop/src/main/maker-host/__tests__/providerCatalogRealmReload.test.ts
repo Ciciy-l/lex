@@ -94,6 +94,7 @@ vi.mock('../../authManager.js', () => ({
 vi.mock('../../appSessionState.js', () => ({
   getActiveAppSession: () => ({ mode: 'signed-out', dataOwnerId: h.owner }),
   activeOwnerScopeKey: () => `signed-out:${h.owner ?? 'none'}`,
+  isAppSessionBoundaryPending: () => false,
   ownerScopedUserDataPath: (...segments: string[]) =>
     path.join(os.tmpdir(), 'provider-catalog-realm-reload', h.owner, ...segments),
 }));
@@ -137,6 +138,7 @@ vi.mock('../../secrets/providerSecretStore.js', () => ({
   genericOAuthSecretIo: {},
   readCustomProviderHeaders: () => null,
   readCustomProviderKey: () => null,
+  getProviderSecretStore: () => ({ get: () => null }),
   setProviderSecretsClearedListener: () => undefined,
   addProviderSecretsClearedListener: () => undefined,
 }));

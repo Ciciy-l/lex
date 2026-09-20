@@ -1,7 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { BUNDLED_CATALOG, buildRegistry, type Catalog } from '@cindy/model-providers';
+import {
+  BUNDLED_CATALOG,
+  buildRegistry,
+  isLocalOnlyProviderForAgent,
+  type Catalog,
+  type CatalogModel,
+} from '@cindy/model-providers';
 import { describe, expect, it, vi } from 'vitest';
 
 import { readOrcaWorkerProviderRoutingContext } from '../orcaProviderRoutingContext.js';
@@ -75,13 +81,61 @@ describe('Orca provider routing snapshot wiring', () => {
     expect(routing.availability[nativeAgent].find((provider) => provider.id === brand)?.localOnlyForSsh).toBe(false);
   });
 
+  it('keeps an otherwise local-only OAuth source routable for remote OMP Workers', async () => {
+    const openai = BUNDLED_CATALOG.providers.find((provider) => provider.id === 'openai')!;
+    // The bundled OpenAI OAuth catalog intentionally starts with an empty
+    // discovered list, so provide one valid synthetic OMP model here.
+    const seed: CatalogModel = {
+      id: 'chatgpt/gpt-5.5',
+      name: 'GPT-5.5',
+      contextWindow: 272_000,
+      efforts: ['low', 'medium', 'high', 'xhigh'],
+      defaultEffort: 'high',
+      mode: 'chat' as const,
+    };
+    const account = {
+      ...openai,
+      id: 'user-openai-account',
+      agents: [...openai.agents, 'omp' as const],
+      auth: { method: 'oauth' as const, native: 'codex' as const },
+      routing: { ...openai.routing, omp: openai.routing.codex! },
+      models: { ...openai.models, omp: [{ ...seed }] },
+    };
+    const catalog: Catalog = { ...BUNDLED_CATALOG, providers: [account] };
+
+    // This source would be unsafe for native SSH adapters, but remote OMP
+    // reaches the controller provider proxy through its own reverse-forward.
+    expect(isLocalOnlyProviderForAgent(account, 'omp')).toBe(true);
+    const routing = await readOrcaWorkerProviderRoutingContext({
+      providerService: {
+        listProviders: vi.fn(async () => buildRegistry(catalog, { [account.id]: true })),
+      },
+      getCatalog: () => catalog,
+    });
+    expect(routing.availability.omp.find((provider) => provider.id === account.id)).toMatchObject({
+      localOnlyForSsh: false,
+      models: [seed.id],
+    });
+  });
+
   it('rejects SSH account switching before deferring or replacing the running route', () => {
     const guard = registerSource.indexOf("throwIpcError('INVALID_PARAMS', 'This provider requires local execution')");
     expect(guard).toBeGreaterThan(-1);
-    expect(registerSource.slice(guard - 450, guard)).toContain('runtimeStatus.remoteHostId');
-    expect(registerSource.slice(guard - 300, guard)).toContain('isLocalOnlyProviderForAgent');
+    const remoteGuardStart = registerSource.lastIndexOf('if (runtimeStatus.remoteHostId)', guard);
+    expect(remoteGuardStart).toBeGreaterThan(-1);
+    const remoteGuard = registerSource.slice(remoteGuardStart, guard);
+    expect(remoteGuard).toContain('runtimeStatus.remoteHostId');
+    expect(remoteGuard).toContain('isLocalOnlyProviderForAgent');
     expect(registerSource.indexOf('const deferLockedSelection =', guard)).toBeGreaterThan(guard);
     expect(registerSource.indexOf('const previousRuntime =', guard)).toBeGreaterThan(guard);
+  });
+
+  it('keeps the remote set-model guard agent-aware for controller-proxy OMP', () => {
+    const guard = registerSource.indexOf("throwIpcError('INVALID_PARAMS', 'This provider requires local execution')");
+    expect(guard).toBeGreaterThan(-1);
+    const surrounding = registerSource.slice(guard - 520, guard);
+    expect(surrounding).toContain('!usesControllerProviderProxyForSsh(targetAgent)');
+    expect(surrounding).toContain('isLocalOnlyProviderForAgent(target, targetAgent)');
   });
 
   it('waits for the first Anthropic claim and routes the discovered model from the same full snapshot', async () => {

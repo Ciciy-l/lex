@@ -17,51 +17,44 @@ afterEach(async () => {
 });
 
 describe('seedBotTemplateSkills', () => {
-  it.each([
-    ['cindy', 'prepare-office-deliverables', '办公成果制作'],
-    ['dash', 'make-executive-decisions', '高管决策'],
-    ['lizi', 'deliver-engineering-changes', '开发交付'],
-  ] as const)(
-    'installs the %s preset as a real Bot-owned Skill',
-    async (templateId, slug, name) => {
-      const result = await seedBotTemplateSkills(userDataDir, `bot-${templateId}`, templateId);
+  it('installs the Cindy preset as real Bot-owned Skills', async () => {
+    const result = await seedBotTemplateSkills(userDataDir, 'bot-cindy', 'cindy');
 
-      expect(result.completedNow).toBe(true);
-      expect(result.skills).toHaveLength(3);
-      expect(result.skills[0]?.created).toBe(true);
-      expect(await readBotSkill(userDataDir, `bot-${templateId}`, slug)).toMatchObject({
-        name,
-        description: expect.any(String),
-        body: expect.stringContaining(`# ${name}`),
-      });
-      expect(result.skills.some(({ record }) => record.body.includes('文档工具'))).toBe(true);
-    },
-  );
+    expect(result.completedNow).toBe(true);
+    expect(result.skills).toHaveLength(3);
+    expect(result.skills[0]?.created).toBe(true);
+    expect(await readBotSkill(userDataDir, 'bot-cindy', 'prepare-office-deliverables')).toMatchObject({
+      name: '办公成果制作',
+      description: expect.any(String),
+      body: expect.stringContaining('# 办公成果制作'),
+    });
+    expect(result.skills.some(({ record }) => record.body.includes('文档工具'))).toBe(true);
+  });
 
   it('does not restore bundled text over a Skill the user has changed', async () => {
-    await saveBotSkill(userDataDir, 'bot-lizi', {
-      name: '开发交付',
-      description: '用户自己的技术流程。',
+    await saveBotSkill(userDataDir, 'bot-cindy', {
+      name: '办公成果制作',
+      description: '用户自己的交付流程。',
       body: '先读我的团队约定。',
-      slug: 'deliver-engineering-changes',
+      slug: 'prepare-office-deliverables',
     });
 
-    const result = await seedBotTemplateSkills(userDataDir, 'bot-lizi', 'lizi');
+    const result = await seedBotTemplateSkills(userDataDir, 'bot-cindy', 'cindy');
     expect(result.skills[0]?.created).toBe(false);
-    expect((await readBotSkill(userDataDir, 'bot-lizi', 'deliver-engineering-changes'))?.body).toBe(
+    expect((await readBotSkill(userDataDir, 'bot-cindy', 'prepare-office-deliverables'))?.body).toBe(
       '先读我的团队约定。',
     );
   });
 
   it('does not reinstall a bundled Skill the user deletes after setup completed', async () => {
-    await seedBotTemplateSkills(userDataDir, 'bot-dash', 'dash');
-    await deleteBotSkill(userDataDir, 'bot-dash', 'make-executive-decisions');
+    await seedBotTemplateSkills(userDataDir, 'bot-cindy', 'cindy');
+    await deleteBotSkill(userDataDir, 'bot-cindy', 'prepare-office-deliverables');
 
-    expect(await seedBotTemplateSkills(userDataDir, 'bot-dash', 'dash')).toEqual({
+    expect(await seedBotTemplateSkills(userDataDir, 'bot-cindy', 'cindy')).toEqual({
       completedNow: false,
       skills: [],
     });
-    expect(await readBotSkill(userDataDir, 'bot-dash', 'make-executive-decisions')).toBeNull();
+    expect(await readBotSkill(userDataDir, 'bot-cindy', 'prepare-office-deliverables')).toBeNull();
   });
 
   it('adds newly bundled Skills without restoring a legacy Skill the user deleted', async () => {

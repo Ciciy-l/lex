@@ -149,7 +149,7 @@ export interface ReviewFailureReason {
 }
 
 export interface PreparedReviewRun {
-  sourceAgentKind: 'cc' | 'codex' | 'pi';
+  sourceAgentKind: 'cc' | 'codex' | 'pi' | 'omp';
   prompt: string;
   targetKind: ReviewTargetKind;
   prepareLaunch(): Promise<PreparedReviewLaunch>;

@@ -279,13 +279,34 @@ function githubPullRequestBase(env) {
   }
 }
 
+/**
+ * 当前分支若追踪某个远端 main，则它才是本仓发布 migration 的正确基线。
+ *
+ * Lex 同时保留 Cindy 的 origin remote；不能因为它叫 origin 就把 Cindy 的 main
+ * 当成 Lex 已发布历史。只接受形如 lex/main 的追踪分支，避免 feature branch 被误当作冻结基线。
+ */
+function currentMainTrackingUpstream(repoRoot) {
+  try {
+    const upstream = runGit(repoRoot, [
+      'rev-parse',
+      '--abbrev-ref',
+      '--symbolic-full-name',
+      '@{upstream}',
+    ]).trim();
+    return upstream.endsWith('/main') ? upstream : null;
+  } catch {
+    return null;
+  }
+}
+
 /** 新仓尚无首个 commit 时允许无 main 基线；固定 manifest 仍会保护迁入历史。 */
 export function resolveMainBaseline(repoRoot, env = process.env) {
   const candidates = [
     env.XDT_MIGRATION_BASE_REF,
     githubPullRequestBase(env),
-    'origin/main',
+    currentMainTrackingUpstream(repoRoot),
     'main',
+    'origin/main',
   ].filter(Boolean);
   for (const candidate of candidates) {
     try {

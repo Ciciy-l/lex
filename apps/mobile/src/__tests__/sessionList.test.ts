@@ -115,6 +115,15 @@ describe('sessionList', () => {
     });
   });
 
+  it('uses the OMP label for an OMP session row', () => {
+    const item = toRemoteSessionListItem(session('omp-session', {
+      agentKind: 'omp',
+      model: 'minimax/MiniMax-M2.5',
+    }), new Date('2026-01-01T00:10:00.000Z').getTime());
+
+    expect(item.subtitle).toContain('OMP · minimax/MiniMax-M2.5');
+  });
+
   it('formats sidebar activity time with desktop sidebar density', () => {
     const now = new Date('2026-01-01T12:00:00.000Z').getTime();
 

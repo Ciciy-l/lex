@@ -20,6 +20,7 @@ import type { AgentInputReference } from '@cindy/maker-shared/agent-input-projec
 import { requiresFullAccessConfirmation } from '@cindy/maker-shared/permission-mode';
 import { ImageLightbox } from '@/components/chat/ImageLightbox';
 import { ImageHoverPreview } from '@/components/chat/ImageHoverPreview';
+import { CindyMakeCommandDialog } from '@/components/chat/CindyMakeCommandDialog';
 import { formatBytes, TextLightbox } from '@/components/chat/TextLightbox';
 import { AttachmentTypeThumb } from './AttachmentTypeThumb';
 import { FullAccessConfirmContent } from './FullAccessConfirmContent';
@@ -284,6 +285,7 @@ import type { Effort, PermissionMode } from '@/lib/userPreferences.types';
 import { getAppShortcutCombos } from '@/lib/appShortcutStore';
 import { getNextPermissionMode } from '@/lib/permissionModeCycle';
 import { matchesKeyboardEvent } from '../../../shared/appShortcuts';
+import { usesControllerProviderProxyForSsh } from '../../../shared/sshAgentProviderRouting';
 import {
   getComposerSendShortcutPreference,
   getComposerSendShortcutLabel,
@@ -1158,6 +1160,7 @@ export function ChatInput({
   const deviceLinkDeviceId = _deviceLinkDeviceId;
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const [makeDialogSessionId, setMakeDialogSessionId] = useState<string | null>(null);
   const { preference: composerSendShortcutPreference } = useComposerSendShortcutPreference();
   // ── 推荐提示词 ────────────────────────────────────────────────────
   // 设置开关:通过 shared hook 订阅,与 TipsSection 同源,切换后立即生效。
@@ -5248,7 +5251,7 @@ export function ChatInput({
             hydratedHistoryDocumentRef.current = null;
             draftRef.current = null;
             if (sourceStorageKey) clearComposerDraft(sourceStorageKey);
-            if (!sourceSessionId) navigate(`/cc-agent/${makeResult.sessionId}`);
+            setMakeDialogSessionId(makeResult.sessionId);
             return;
           }
         }
@@ -5731,7 +5734,7 @@ export function ChatInput({
         };
         const restoreRemoteComposerAndRelease = () => {
           try {
-            restoreOptimisticallyClearedComposer();
+            if (sourceSessionId) restoreOptimisticallyClearedComposer();
           } finally {
             releaseRemoteComposerTransition();
           }
@@ -5740,15 +5743,21 @@ export function ChatInput({
         // the user bubble. Device-link already did this; local/SSH used to wait
         // until onSend resolved, so the same text sat in both the transcript
         // and the composer while enqueue / effort / slash / auth settled.
-        try {
-          clearSentComposer();
-        } catch (error) {
-          restoreRemoteComposerAndRelease();
-          throw error;
-        }
-        dispatchSendClearedKeysRef.current.add(sendInFlightKey);
-        if (lockCurrentComposer && storageKeyForDraftRef.current === sourceStorageKey) {
-          setAllowTypeDuringSend(true);
+        // Home owns the asynchronous creation handoff: onSend returns false
+        // while it is still creating the session, then clears the draft itself.
+        // Keep that draft intact instead of clearing and restoring it as though
+        // an existing-session send had failed.
+        if (sourceSessionId) {
+          try {
+            clearSentComposer();
+          } catch (error) {
+            restoreRemoteComposerAndRelease();
+            throw error;
+          }
+          dispatchSendClearedKeysRef.current.add(sendInFlightKey);
+          if (lockCurrentComposer && storageKeyForDraftRef.current === sourceStorageKey) {
+            setAllowTypeDuringSend(true);
+          }
         }
         if (
           optimisticallyClearRemoteComposer &&
@@ -5845,6 +5854,7 @@ export function ChatInput({
           restoreRemoteComposerAndRelease();
           return;
         }
+        if (!sourceSessionId) clearSentComposer();
         releaseRemoteComposerTransition();
         markRecentPluginUsage();
       } finally {
@@ -8205,6 +8215,13 @@ export function ChatInput({
 
   return (
     <div className="relative flex w-full flex-col items-center gap-4" data-chat-input-root>
+      <CindyMakeCommandDialog
+        sessionId={makeDialogSessionId}
+        open={makeDialogSessionId !== null}
+        onOpenChange={(open) => {
+          if (!open) setMakeDialogSessionId(null);
+        }}
+      />
       {/* 计划模式激活态 chip(输入框上方,与 GoalIndicator 同形)。-mb-2 抵一部分
           root gap-4,让 chip 与输入框间距接近 GoalIndicator 的节奏。 */}
       {planModeEntry && planModeEnabled && (
@@ -8904,12 +8921,16 @@ export function ChatInput({
                         : undefined
                     }
                     deviceId={deviceLinkDeviceId ?? undefined}
-                    // SSH 远程会话隐藏订阅直连模型(chatgpt/ / xai/):bridge 只挂在本地 compat-proxy,
-                    // 远程模式走 remoteEndpoint 不经翻译,选了必失败。
-                    excludeSubscriptionDirect={!!remoteHostId}
-                    // 同理隐藏 openai-chat 桥接的 Codex 供应商(DeepSeek / Kimi / GLM 等):
-                    // Responses→Chat 桥只挂在本地 codex-proxy,SSH 远程走 daemon 不经它。
-                    excludeChatBridgedCodex={!!remoteHostId}
+                    // OMP's SSH runtime reaches the controller proxy through a
+                    // managed reverse-forward, so preserve its proxy-backed
+                    // routes. The other SSH adapters keep their direct-route
+                    // exclusions.
+                    excludeSubscriptionDirect={
+                      !!remoteHostId && !usesControllerProviderProxyForSsh(agentKind)
+                    }
+                    excludeChatBridgedCodex={
+                      !!remoteHostId && !usesControllerProviderProxyForSsh(agentKind)
+                    }
                     dense={effectiveDenseToolbar}
                     // 意图期与 activeModel 同一份目标快照(null = 跟随目标引擎默认路由);
                     // 无意图才回到会话 runtime 的 selectedProviderId。

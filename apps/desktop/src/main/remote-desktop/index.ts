@@ -14,6 +14,7 @@ import {
 } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { loadDesktopIceServers } from './iceConfig';
+import { remoteCredentialHost } from './credentialHost';
 import {
   isDesktopPermission,
   REMOTE_DESKTOP_OFFER_BUDGET,
@@ -44,6 +45,8 @@ import {
   readDesktopDisplayModes,
   setDesktopDisplayMode,
   readDesktopInputPermission,
+  readDesktopLockState,
+  lockDesktopScreen,
   requestDesktopInputPermission,
 } from './inputHost';
 import { getDeepLinkMainWindow } from '../deepLink';
@@ -118,7 +121,9 @@ let pending: {
   reject(error: Error): void;
   timer: ReturnType<typeof setTimeout>;
 } | null = null;
-const input = new DesktopInputHost(() => remoteDesktop.stop());
+// A dead input helper or a refused injection is an input failure, not a session
+// failure: release control and keep the lease, capture and media running.
+const input = new DesktopInputHost(() => remoteDesktop.releaseControl());
 function stopVideo(): void {
   offerGeneration++;
   videoAttempt = undefined;
@@ -276,6 +281,24 @@ async function ice(request: RemoteDesktopIceRequest): Promise<RemoteDesktopIceRe
   return parseDesktopIceReply(result);
 }
 
+export async function requestRemoteDesktop(peer: string, value: unknown): Promise<unknown> {
+  const settings = readDeviceLinkSettings();
+  if (!settings.remoteControlEnabled || !settings.remoteDesktopEnabled || settings.revokedControllers.includes(peer))
+    throw new Error('DESKTOP_UNAVAILABLE');
+  if (process.platform === 'darwin' && value !== null && typeof value === 'object' && 'op' in value && value.op === 'credential' && 'version' in value && value.version === 1 && 'kind' in value) {
+    if (value.kind === 'status') return { version: 1, state: await readDesktopLockState() };
+    if (value.kind === 'prepare') {
+      const credentials = remoteCredentialHost.currentToken?.();
+      if (!credentials) throw new Error('CREDENTIAL_INVALID_IDENTITY');
+      const descriptor = await remoteCredentialHost.configure(credentials.realm, credentials.membership, credentials.authDevice, credentials.token);
+      return { version: 1, ready: true, descriptor };
+    }
+  }
+  return process.platform === 'darwin' && value !== null && typeof value === 'object' && 'op' in value && value.op === 'credential'
+    ? remoteCredentialHost.request(peer, value, body => remoteDesktop.request(peer, body))
+    : remoteDesktop.request(peer, value);
+}
+
 export const remoteDesktop = new RemoteDesktopController({
   authorized: (peer) => {
     const settings = readDeviceLinkSettings();
@@ -292,6 +315,7 @@ export const remoteDesktop = new RemoteDesktopController({
     return {
       version: 1,
       cursorOverlay: process.platform === 'darwin',
+      lockOnExit: process.platform === 'darwin',
       clipboardContent: process.platform === 'darwin' || process.platform === 'win32',
       clipboardText: process.platform === 'darwin' || process.platform === 'win32',
       videoSettings: true,
@@ -346,8 +370,25 @@ export const remoteDesktop = new RemoteDesktopController({
   displayModes: readDesktopDisplayModes,
   resolution: setDesktopDisplayMode,
   startInput: (displayId) => input.start(displayId),
-  input: (events) => input.input(events),
+  input: (events) => {
+    try {
+      input.input(events);
+    } catch (error) {
+      // The input host refused before injecting anything (helper gone, or this
+      // lease's display is unavailable). Release control so the host and the
+      // viewer agree, and so taking control again genuinely restarts the
+      // helper instead of being skipped as "already controlling".
+      remoteDesktop.releaseControl();
+      throw error;
+    }
+  },
   stopInput: () => input.stop(),
+  ...(process.platform === 'darwin' ? {
+    lockScreen: async (isCurrent: () => boolean, signal: AbortSignal) => {
+      await input.release();
+      await lockDesktopScreen(isCurrent, signal);
+    },
+  } : {}),
   offer,
   ice,
   stopVideo,

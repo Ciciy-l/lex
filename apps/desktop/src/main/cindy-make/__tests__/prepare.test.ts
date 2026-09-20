@@ -35,6 +35,7 @@ function harness(present: MakeToolId[] = []) {
       available.add(id);
     },
     validateTool: vi.fn(async () => true),
+    selectedToolPath: () => undefined,
     processEnvironment: () => ({}),
   };
   const install = vi.fn<NonNullable<Parameters<typeof prepareCindyMakeEnvironment>[5]>>(

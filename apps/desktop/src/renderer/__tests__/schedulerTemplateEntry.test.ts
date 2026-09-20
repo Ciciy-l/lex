@@ -335,6 +335,23 @@ describe('Scheduler template entry', () => {
     expect(createSchedule).not.toHaveBeenCalled();
   });
 
+  it('keeps OMP selected when opening a usage-limit recovery Automation', async () => {
+    routerMocks.location.state = usageLimitScheduleNavigationState({
+      kind: 'usage-limit-recovery',
+      requestId: 'request-omp',
+      sessionId: 'session-omp',
+      agentKind: 'omp',
+      resetAtMs: null,
+    });
+
+    render(createElement(SchedulerPage));
+
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
+    expect(screen.getByTestId('agent-kind').textContent).toBe('omp');
+    expect(screen.getByTestId('cron-expr').textContent).toBe('');
+    expect(createSchedule).not.toHaveBeenCalled();
+  });
+
   it('插件请求打开预填的创建表单,但不创建任务', async () => {
     routerMocks.location.state = pluginScheduleNavigationState({
       kind: 'plugin-schedule-draft',

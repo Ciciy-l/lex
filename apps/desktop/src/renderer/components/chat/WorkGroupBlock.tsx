@@ -19,6 +19,7 @@
  * 时长缺失(老历史数据没有 createdAt)时退化为「工作过程」文案,不显示时间。
  */
 
+import { CHAT_CHEVRON_TRANSITION_CLASS } from './chatChrome';
 import {
   Fragment,
   useCallback,
@@ -169,11 +170,12 @@ function ThinkingActivityRow({
       data-live-work-activity="thinking"
       data-message-client-id={activity.key}
       data-work-thinking-expandable={canExpand ? 'true' : 'false'}
+      data-scroll-disclosure-header=""
       disabled={!canExpand}
       aria-expanded={canExpand ? expanded : undefined}
       onClick={() => setExpanded((value) => !value)}
       className={cn(
-        'flex w-full min-w-0 gap-[6px] px-2 py-[3px] text-left outline-none',
+        'flex w-full min-w-0 gap-1.5 px-2 py-[3px] text-left outline-none',
         ACTIVITY_ROW_RADIUS_CLASS,
         expanded ? 'items-start' : 'items-center',
         canExpand
@@ -206,7 +208,7 @@ function ThinkingActivityRow({
           <ChevronRight
             size={13}
             className={cn(
-              'transition-transform duration-[var(--motion-fast,150ms)]',
+              CHAT_CHEVRON_TRANSITION_CLASS,
               expanded && 'rotate-90',
             )}
           />
@@ -384,9 +386,10 @@ export function WorkGroupBlock({
         <button
           type="button"
           onClick={canToggle ? onToggle : undefined}
+          data-scroll-disclosure-header=""
           disabled={!canToggle}
           className={cn(
-            'flex w-full items-center gap-[6px] py-[2px]',
+            'flex w-full items-center gap-1.5 py-[2px]',
             'select-none',
             'text-left',
             canToggle && 'cursor-pointer hover:opacity-80 transition-opacity',
@@ -417,7 +420,7 @@ export function WorkGroupBlock({
               size={14}
               className={cn(
                 'shrink-0 text-[var(--msg-tool-card-chevron)]',
-                'transition-transform duration-[var(--motion-fast,150ms)]',
+                CHAT_CHEVRON_TRANSITION_CLASS,
                 effectiveExpanded && 'rotate-90',
               )}
             />

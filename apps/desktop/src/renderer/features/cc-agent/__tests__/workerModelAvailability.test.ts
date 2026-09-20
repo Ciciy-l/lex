@@ -1,4 +1,4 @@
-import type { ProviderView } from '@cindy/model-providers';
+import type { AgentKind, ProviderView } from '@cindy/model-providers';
 import { describe, expect, it } from 'vitest';
 
 import type { AgentCapabilities, ModelDescriptor } from '@/hooks/useAgentCapabilities';
@@ -18,7 +18,7 @@ const capabilities = (models: ModelDescriptor[]): AgentCapabilities =>
 const provider = (
   id: string,
   connected: boolean,
-  agent: 'claude-code' | 'codex',
+  agent: AgentKind,
   models: ModelDescriptor[],
 ): ProviderView =>
   ({
@@ -231,5 +231,26 @@ describe('selectWorkerModels', () => {
         excludeChatBridgedCodex: true,
       }).map((entry) => entry.id),
     ).toEqual(['claude-opus-4-8']);
+  });
+
+  it('keeps controller-proxy-backed OMP providers when the generic SSH source filter is active', () => {
+    const subscription = model('chatgpt/gpt-5.5');
+    const proxied = {
+      ...provider('user-openai-account', true, 'omp', [subscription]),
+      auth: { method: 'oauth', native: 'codex' },
+    } as ProviderView;
+
+    expect(
+      selectWorkerModels({
+        agent: 'omp',
+        capabilities: capabilities([subscription]),
+        providers: [proxied],
+        providersLoading: false,
+        providersError: null,
+        // The shared provider filter must remain agent-aware even if a caller
+        // has only the legacy generic SSH flag available.
+        excludeChatBridgedCodex: true,
+      }).map((entry) => entry.id),
+    ).toEqual(['chatgpt/gpt-5.5']);
   });
 });

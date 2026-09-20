@@ -1,5 +1,5 @@
 /**
- * 会话分享导出编排:把一个本机会话(cc / codex / pi)打成 .xdtshare 文件。
+ * 会话分享导出编排:把一个本机会话(cc / codex / pi / omp)打成 .xdtshare 文件。
  *
  * 数据三层的收集策略:
  *   1. 本地 DB:session 行(白名单字段)+ messages(含 rewind 链,忠实快照;
@@ -7,7 +7,8 @@
  *      不得携带,否则用户清掉敏感内容后分享会静默泄漏);
  *   2. vendor 转录:cc 按三源并集 sdkSessionId 逐个定位 jsonl(fork 链全带),
  *      codex dump state 三表行 + rollout 文件;Pi 将本机绝对 JSONL 路径映射为
- *      便携 id 后落包;找不到的记 manifest(保真度降档);
+ *      便携 id 后落包;OMP 只分享 Lex DB 历史,绝不携带本机 session-file
+ *      路径或原生恢复状态;找不到的记 manifest(保真度降档);
  *   3. 媒体:5 种协议 URL 全收集,托管缓存类(image/video/model)与绝对路径
  *      引用类(file/audio)分别解析落包,单文件失败记缺失不阻断。
  *
@@ -49,6 +50,7 @@ import {
   XDTSHARE_MIN_READER_VERSION,
   XDTSHARE_ORCA_MIN_READER_VERSION,
   type XdtshareFidelity,
+  type XdtshareAgentKind,
   type XdtshareManifest,
   type XdtshareManifestEntry,
   type XdtshareOrcaManifest,
@@ -183,6 +185,44 @@ function rewritePiAgentMetaForExport(
   }
 }
 
+/**
+ * OMP persists its native session identity as an absolute local file path.
+ * Share bundles preserve the product history but never make that capability
+ * portable, including if an older OMP event happened to retain it in metadata.
+ */
+function rewriteOmpAgentMetaForExport(agentMeta: string | null): string | null {
+  if (!agentMeta) return agentMeta;
+  try {
+    const parsed = JSON.parse(agentMeta) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    stripSdkSessionIds(parsed as Record<string, unknown>);
+    return JSON.stringify(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function stripSdkSessionIds(value: Record<string, unknown> | unknown[]): void {
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      if (!child || typeof child !== 'object') continue;
+      stripSdkSessionIds(
+        Array.isArray(child) ? child : child as Record<string, unknown>,
+      );
+    }
+    return;
+  }
+  for (const [key, child] of Object.entries(value)) {
+    if (key === 'sdkSessionId') {
+      delete value[key];
+      continue;
+    }
+    if (child && typeof child === 'object') {
+      stripSdkSessionIds(Array.isArray(child) ? child : child as Record<string, unknown>);
+    }
+  }
+}
+
 /** 阶段 A 的转录候选(只 stat 不读,pi 的 zipPath 留空到阶段 B 定)。 */
 interface TranscriptCandidate {
   sdkSessionId: string;
@@ -308,6 +348,10 @@ async function collectSessionPhaseA(
         candidates.push({ sdkSessionId: absPath, zipPath: '', absPath, bytes });
       }
     }
+  } else if (session.agentKind === 'omp') {
+    // OMP's `sdkSessionId` is a local absolute session-file path. It is not a
+    // portable session id and must never enter a shared bundle or be resumed
+    // on a different machine. The DB history remains shareable.
   } else {
     activeSdkSessionId = session.sdkSessionId;
     sdkSessionIds = session.sdkSessionId ? [session.sdkSessionId] : [];
@@ -379,6 +423,11 @@ async function readSessionPhaseB(a: SessionPhaseA): Promise<SessionPhaseB> {
       ...message,
       agentMeta: rewritePiAgentMetaForExport(message.agentMeta, piPortableIds),
     }));
+  } else if (session.agentKind === 'omp') {
+    bundleMessages = a.messages.map((message) => ({
+      ...message,
+      agentMeta: rewriteOmpAgentMetaForExport(message.agentMeta),
+    }));
   }
   return { transcriptFiles, bundleMessages, sdkSessionIds, activeSdkSessionId, refs };
 }
@@ -424,7 +473,8 @@ async function collectOrcaWorkerSources(
     if (
       workerSession.agentKind !== 'cc' &&
       workerSession.agentKind !== 'codex' &&
-      workerSession.agentKind !== 'pi'
+      workerSession.agentKind !== 'pi' &&
+      workerSession.agentKind !== 'omp'
     ) {
       throw codedError(
         'SHARE_EXPORT_FAILED',
@@ -460,7 +510,12 @@ export async function exportSessionShare(
       'orca worker sessions cannot be exported directly; export the lead session',
     );
   }
-  if (session.agentKind !== 'cc' && session.agentKind !== 'codex' && session.agentKind !== 'pi') {
+  if (
+    session.agentKind !== 'cc' &&
+    session.agentKind !== 'codex' &&
+    session.agentKind !== 'pi' &&
+    session.agentKind !== 'omp'
+  ) {
     throw codedError('PRECONDITION_FAILED', `unsupported agentKind: ${session.agentKind}`);
   }
 
@@ -595,7 +650,11 @@ export async function exportSessionShare(
   const allRefs = allB.flatMap((b) => b.refs);
   const foundCount = allRefs.filter((t) => t.path !== null).length;
   let fidelity: XdtshareFidelity;
+  const includesOmp = allA.some((phase) => phase.session.agentKind === 'omp');
   if (allRefs.length === 0 || foundCount === 0) fidelity = 'db-only';
+  // An OMP member has no safe portable native session state. Other team
+  // members may remain resumable, but the whole graph cannot claim full.
+  else if (includesOmp) fidelity = 'partial';
   else if (foundCount === allRefs.length) fidelity = 'full';
   else fidelity = 'partial';
 
@@ -657,7 +716,7 @@ export async function exportSessionShare(
         teamStatus: orcaSources.teamStatus,
         workers: workerSources.map((w, i): XdtshareOrcaWorkerManifest => ({
           index: i,
-          agentKind: w.session.agentKind as 'cc' | 'codex' | 'pi',
+          agentKind: w.session.agentKind as XdtshareAgentKind,
           title: w.session.title,
           role: w.record.role,
           label: w.record.label,
@@ -679,7 +738,7 @@ export async function exportSessionShare(
     appVersion: safeAppVersion(),
     platform: process.platform,
     exportedAt: new Date().toISOString(),
-    agentKind: session.agentKind as 'cc' | 'codex' | 'pi',
+    agentKind: session.agentKind as XdtshareAgentKind,
     title: session.title,
     workspaceKind: session.workspaceKind === 'dialogue' ? 'dialogue' : 'project',
     originalWorkingDir: session.workingDir,
@@ -758,7 +817,7 @@ function buildSessionSnapshot(
     // Pi 的 DB 值是源机绝对路径，只能写入上面生成的便携 id。转录缺失时
     // 保持 null，避免 fallback 又把绝对路径塞回包内。
     sdkSessionId:
-      session.agentKind === 'pi'
+      session.agentKind === 'pi' || session.agentKind === 'omp'
         ? activeSdkSessionId
         : (activeSdkSessionId ?? session.sdkSessionId),
     totalTokenUsage: session.totalTokenUsage,

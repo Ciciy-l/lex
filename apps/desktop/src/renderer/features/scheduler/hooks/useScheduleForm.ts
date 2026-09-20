@@ -85,7 +85,7 @@ function defaultScheduleFormPrefs(): ScheduleFormPrefs {
       'claude-code': EMPTY_AGENT_PREFS,
       codex: EMPTY_AGENT_PREFS,
       pi: EMPTY_AGENT_PREFS,
-      // OMP 接入:默认值照抄 Pi(尚未在 UI 里暴露 OMP 选项)。
+      // OMP 与 Pi 一样依赖当前已连接来源，不能伪造 Claude 静态默认。
       omp: EMPTY_AGENT_PREFS,
     },
   };
@@ -97,7 +97,13 @@ function loadScheduleFormPrefs(): ScheduleFormPrefs {
     const raw = window.localStorage.getItem(SCHEDULE_FORM_PREFS_KEY);
     if (!raw) return defaultScheduleFormPrefs();
     const parsed = JSON.parse(raw) as Partial<ScheduleFormPrefs>;
-    const agentKind = parsed.agentKind === 'codex' ? 'codex' : parsed.agentKind === 'pi' ? 'pi' : 'claude-code';
+    const agentKind = parsed.agentKind === 'codex'
+      ? 'codex'
+      : parsed.agentKind === 'pi'
+        ? 'pi'
+        : parsed.agentKind === 'omp'
+          ? 'omp'
+          : 'claude-code';
     const workingDir = typeof parsed.workingDir === 'string' ? parsed.workingDir : '';
     const workspaceKind = normalizePrefsWorkspaceKind(parsed.workspaceKind, workingDir);
     return {
@@ -109,7 +115,7 @@ function loadScheduleFormPrefs(): ScheduleFormPrefs {
         'claude-code': sanitizeAgentPrefs(parsed.lastByAgent?.['claude-code']),
         codex: sanitizeAgentPrefs(parsed.lastByAgent?.codex),
         pi: sanitizeAgentPrefs(parsed.lastByAgent?.pi),
-        // OMP 接入:落盘旧值不存在时按 Pi 的空值口径补齐。
+        // 落盘旧值不存在时按动态模型引擎的空值口径补齐。
         omp: sanitizeAgentPrefs(parsed.lastByAgent?.omp),
       },
     };
@@ -158,8 +164,12 @@ export function getScheduleAgentPrefs(agentKind: ScheduleFormState['agentKind'])
  * 的事故见 2026-06 踩坑:任务里看着选了 Opus 4.8,实际每次跑 4.7)。
  */
 export function schedulerFallbackModel(agentKind: ScheduleFormState['agentKind']): string {
-  // Pi 的来源/模型来自动态连接目录；没有能与 providerId 解耦的静态默认。
-  return agentKind === 'codex' ? 'gpt-5.5' : agentKind === 'pi' ? '' : 'claude-sonnet-4-6';
+  // Pi / OMP 的来源与模型来自动态连接目录；没有能与 providerId 解耦的静态默认。
+  return agentKind === 'codex'
+    ? 'gpt-5.5'
+    : agentKind === 'pi' || agentKind === 'omp'
+      ? ''
+      : 'claude-sonnet-4-6';
 }
 
 /**
@@ -172,7 +182,9 @@ export function schedulerFallbackModel(agentKind: ScheduleFormState['agentKind']
 export function getScheduleDefaultModel(agentKind: ScheduleFormState['agentKind']): string {
   const prefs = getScheduleAgentPrefs(agentKind);
   if (prefs.model.trim()) return prefs.model;
-  const chatLast = getPersistedVendorModel(agentKind === 'codex' ? 'codex' : agentKind === 'pi' ? 'pi' : 'cc');
+  const chatLast = getPersistedVendorModel(
+    agentKind === 'codex' ? 'codex' : agentKind === 'pi' ? 'pi' : agentKind === 'omp' ? 'omp' : 'cc',
+  );
   if (chatLast.trim()) return chatLast;
   return schedulerFallbackModel(agentKind);
 }

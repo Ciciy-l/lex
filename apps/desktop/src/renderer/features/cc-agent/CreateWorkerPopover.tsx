@@ -47,6 +47,7 @@ import {
   ORCA_WORKER_PERMISSION_MODES,
   type OrcaWorkerPermissionMode,
 } from '../../../shared/orca-worker-permission-mode';
+import { usesControllerProviderProxyForSsh } from '../../../shared/sshAgentProviderRouting';
 import { selectWorkerModels } from './workerModelAvailability';
 
 const PREDEFINED_ROLES = ['developer', 'designer', 'reviewer', 'tester', 'merger'] as const;
@@ -75,10 +76,10 @@ export interface CreateWorkerPopoverProps {
   /** device-link controlled device; omitted for a local Lead session. */
   deviceId?: string;
   /**
-   * SSH 远程 Lead(session.remoteHostId 非空):模型清单按 SSH 口径过滤 ——
-   * 订阅直连(chatgpt/ / xai/)与 openai-chat 桥接 Codex 供应商的桥只挂在本地
-   * proxy,远端不经翻译,选了必被 main 侧 remote-worker guard 拒绝
-   * (codex review R28)。提交前就在面板里藏掉,与 ChatInput 同口径。
+   * SSH 远程 Lead(session.remoteHostId 非空):CC/Codex/Pi 的模型清单按直连
+   * SSH 口径过滤。OMP 例外：其私有 models.yml 指向控制端兼容代理，经受管
+   * reverse-forward 路由，不应被直连供应商限制隐藏。Main 仍会在创建前校验
+   * 实际 provider/model 路由。
    */
   sshRemote?: boolean;
   /** 开启新协同时必须确认执行端支持权限偏好；已有旧版远程 Team 创建 Worker 仍兼容旧行为。 */
@@ -130,6 +131,8 @@ export function CreateWorkerPopover({
   const activeCapabilitiesState =
     agent === 'codex' ? codexCaps : agent === 'pi' ? piCaps : agent === 'omp' ? ompCaps : ccCaps;
   const activeCaps = activeCapabilitiesState.capabilities;
+  const requiresDirectSshProviderRoute =
+    sshRemote === true && !usesControllerProviderProxyForSsh(agent);
   const supportsWorkerPermissionModeSelection =
     !deviceId || activeCaps?.supportsOrcaWorkerPermissionMode === true;
   const remoteWorkerPermissionModeUnsupported =
@@ -145,8 +148,8 @@ export function CreateWorkerPopover({
       providersLoading,
       providersError,
       providersUnsupported: deviceId ? remoteProviders.unsupported : false,
-      excludeSubscriptionDirect: sshRemote === true,
-      excludeChatBridgedCodex: sshRemote === true,
+      excludeSubscriptionDirect: requiresDirectSshProviderRoute,
+      excludeChatBridgedCodex: requiresDirectSshProviderRoute,
       isVisible: deviceId
         ? undefined
         : (providerId, catalogModel) => isModelEnabled(agent, providerId, catalogModel),
@@ -159,7 +162,7 @@ export function CreateWorkerPopover({
     providersError,
     providersLoading,
     remoteProviders.unsupported,
-    sshRemote,
+    requiresDirectSshProviderRoute,
     visibilityVersion,
   ]);
   const currentModel = activeModels.find((m) => m.id === model);
@@ -181,9 +184,9 @@ export function CreateWorkerPopover({
       filterChatBridgedCodexProviders(
         connectedProvidersForAgent(providers, agent),
         agent,
-        sshRemote === true && !deviceId,
+        requiresDirectSshProviderRoute,
       ),
-    [agent, deviceId, providers, sshRemote],
+    [agent, providers, requiresDirectSshProviderRoute],
   );
   const narrowProviderSource = useCallback(
     (candidate: string | null, modelId: string): string | null => {
@@ -728,7 +731,6 @@ export function CreateWorkerPopover({
               value={vendorKey}
               width={220}
               ariaLabel={t('orca.createWorker.agentLabel')}
-              hiddenVendors={sshRemote ? ['omp'] : undefined}
               onChange={(next) => {
                 if (next === 'cc') updateAgent('claude-code');
                 else if (next === 'codex' || next === 'pi' || next === 'omp') updateAgent(next);
@@ -752,11 +754,7 @@ export function CreateWorkerPopover({
               )}
               <ModelSelector
                 fastModeConfigurable={['codex', 'pi']}
-                unifiedAgents={
-                  sshRemote
-                    ? (pickerAgents ?? ['claude-code', 'codex', 'pi']).filter((kind) => kind !== 'omp')
-                    : pickerAgents
-                }
+                unifiedAgents={pickerAgents}
                 onUnifiedSelect={deviceId && remoteProviders.unsupported ? undefined : (selection) => {
                   const nextAgent = selection.engine === 'cc' ? 'claude-code' : selection.engine;
                   updateAgent(nextAgent);
@@ -771,11 +769,11 @@ export function CreateWorkerPopover({
                 onEffortChange={updateEffort}
                 vendorKey={vendorKey}
                 deviceId={deviceId}
-                // SSH 远程 Lead:与 ChatInput 同口径藏掉仅本地可桥接的模型/来源
-                // (订阅直连接本地 compat-proxy,openai-chat 桥接 Codex 接本地
-                // codex-proxy,远端都不经翻译)—— 否则提交才被 main 侧 guard 拒绝。
-                excludeSubscriptionDirect={sshRemote === true}
-                excludeChatBridgedCodex={sshRemote === true}
+                // OMP Workers use the controller proxy through their managed
+                // reverse-forward. Other SSH Worker engines keep the native
+                // direct-provider compatibility filter.
+                excludeSubscriptionDirect={requiresDirectSshProviderRoute}
+                excludeChatBridgedCodex={requiresDirectSshProviderRoute}
                 popoverSide="bottom"
                 currentProviderId={
                   sshRemote === true ? narrowProviderSource(providerSource, model) : providerSource

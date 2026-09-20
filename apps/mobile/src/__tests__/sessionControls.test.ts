@@ -42,6 +42,10 @@ describe('sessionControls', () => {
       agentKind: 'codex',
       fastMode: true,
     });
+    expect(buildContextUsageCreateOpts(session({ agentKind: 'omp', model: 'minimax/MiniMax-M2.5' }))).toMatchObject({
+      agentKind: 'omp',
+      model: 'minimax/MiniMax-M2.5',
+    });
   });
 
   it('exposes local Codex quota controls only for local subscription sessions', () => {

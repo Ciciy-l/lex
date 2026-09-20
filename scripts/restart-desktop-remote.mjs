@@ -28,7 +28,11 @@ const rootDir = path.resolve(__dirname, '..');
 const gracefulTimeoutMs = 3000;
 const forceTimeoutMs = 5000;
 const pollIntervalMs = 150;
-const startupReadyTimeoutMs = 120_000;
+// A cold Vite optimization plus Electron's first database migration can exceed
+// two minutes on Windows. Keep the bounded readiness contract, but leave room
+// for that legitimate first boot rather than abandoning a healthy isolated dev
+// instance before it can publish its ready status.
+const startupReadyTimeoutMs = 300_000;
 export const ISOLATED_AUTH_LAUNCH_PROOF_FILE = '.isolated-auth-launch-proof.json';
 const isolatedAuthLaunchProofTtlMs = 10 * 60_000;
 const forceKillLabel = process.platform === 'win32' ? 'taskkill /F /T' : 'kill -9';
@@ -892,6 +896,7 @@ export function devEnvPrefix(env = process.env, platform = process.platform) {
     ['XDT_WIRE_DIAGNOSTICS_STRICT', env.XDT_WIRE_DIAGNOSTICS_STRICT],
     ['CINDY_IOS_SIMULATOR_NATIVE_H264', env.CINDY_IOS_SIMULATOR_NATIVE_H264],
     ['CINDY_IOS_SIMULATOR_NATIVE_HID', env.CINDY_IOS_SIMULATOR_NATIVE_HID],
+    ['CINDY_REMOTE_CREDENTIALS_SIGNING_IDENTITY', env.CINDY_REMOTE_CREDENTIALS_SIGNING_IDENTITY],
     ['XDT_TAPDB_DEV', env.XDT_TAPDB_DEV],
     // 端点清单来源覆写:--endpoints-cdn(dev 走线上 CDN)/ local 模式的
     // endpoint.local.json 文件路径,均由主进程 clientEndpointsService 消费。

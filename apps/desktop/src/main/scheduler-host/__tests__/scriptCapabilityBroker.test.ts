@@ -436,11 +436,11 @@ describe('SchedulerScriptCapabilityBroker', () => {
     expect(result).toMatchObject({ target_session_id: 'session-1', wake_kind: 'created' });
   });
 
-  it('resolves blank Pi script-dispatch defaults as one model/provider route', async () => {
+  it.each(['pi', 'omp'] as const)('resolves blank %s script-dispatch defaults as one model/provider route', async (agentKind) => {
     sendToSessionMock.mockResolvedValue({
       ok: true,
-      targetSessionId: 'session-pi',
-      agentKind: 'pi',
+      targetSessionId: `session-${agentKind}`,
+      agentKind,
       wakeKind: 'created',
       targetTitle: 'Pi task',
       targetLastUserSendAt: null,
@@ -452,30 +452,30 @@ describe('SchedulerScriptCapabilityBroker', () => {
     const broker = new SchedulerScriptCapabilityBroker({ resolveDefaultModelRoute });
 
     await broker.call(
-      { method: 'sessions.dispatch', params: { message: 'run Pi task' } },
+      { method: 'sessions.dispatch', params: { message: `run ${agentKind} task` } },
       new Set(['sessions.dispatch']),
-      { schedule: schedule({ agentKind: 'pi', model: undefined, providerId: 'local-byom' }) },
+      { schedule: schedule({ agentKind, model: undefined, providerId: 'local-byom' }) },
     );
 
-    expect(resolveDefaultModelRoute).toHaveBeenCalledWith('pi', 'local-byom');
+    expect(resolveDefaultModelRoute).toHaveBeenCalledWith(agentKind, 'local-byom');
     expect(sendToSessionMock).toHaveBeenCalledWith(expect.objectContaining({
       createDefaults: expect.objectContaining({
-        agentKind: 'pi',
+        agentKind,
         model: 'byom/qwen3-coder',
         providerId: 'local-byom',
       }),
     }));
   });
 
-  it('rejects blank Pi script-dispatch defaults before opening a session when no source is connected', async () => {
+  it.each(['pi', 'omp'] as const)('rejects blank %s script-dispatch defaults before opening a session when no source is connected', async (agentKind) => {
     const broker = new SchedulerScriptCapabilityBroker({
       resolveDefaultModelRoute: vi.fn(async () => null),
     });
 
     await expect(broker.call(
-      { method: 'sessions.dispatch', params: { message: 'run Pi task' } },
+      { method: 'sessions.dispatch', params: { message: `run ${agentKind} task` } },
       new Set(['sessions.dispatch']),
-      { schedule: schedule({ agentKind: 'pi', model: undefined, providerId: undefined }) },
+      { schedule: schedule({ agentKind, model: undefined, providerId: undefined }) },
     )).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
     expect(sendToSessionMock).not.toHaveBeenCalled();
   });

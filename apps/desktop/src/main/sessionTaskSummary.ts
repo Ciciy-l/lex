@@ -342,7 +342,7 @@ async function generateSummaryOnce(sessionId: string): Promise<void> {
     const tier = pickTier({ inactiveMs, messageCount, isScheduled });
 
     const agentKind =
-      session.agentKind === 'codex' || session.agentKind === 'pi'
+      session.agentKind === 'codex' || session.agentKind === 'pi' || session.agentKind === 'omp'
         ? session.agentKind
         : 'claude-code';
     const prompt = SUMMARY_PROMPT(session.title, userMsg, assistantMsg, tier);

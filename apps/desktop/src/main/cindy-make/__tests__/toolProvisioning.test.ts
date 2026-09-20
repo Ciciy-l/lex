@@ -5,7 +5,10 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { DownloadError } from '../../downloader/index.js';
 import { makeToolCatalog } from '../toolCatalog.js';
 import { installedMakeTool, installMakeTool } from '../toolInstaller.js';
-import { selectMakeToolchainEnvironment } from '../toolchainEnvironment.js';
+import {
+  resolveMakeToolchainProcessEnvironment,
+  selectMakeToolchainEnvironment,
+} from '../toolchainEnvironment.js';
 import { makeToolProcessEnvironment } from '../doctorEnvironment.js';
 
 vi.mock('../../logger.js', () => ({
@@ -202,4 +205,34 @@ describe('compatible local tool reuse and scoped environment', () => {
       expect(env.processEnvironment().SELECTED_NODE).toBe(source === 'system' ? system : cached);
     },
   );
+
+  it('selects managed Git before handing its PATH to a workspace operation', async () => {
+    const system = path.join(temp, 'system', 'git');
+    const managed = path.join(temp, 'managed', 'git');
+    const probed: string[] = [];
+    const env = selectMakeToolchainEnvironment(
+      (tools) => ({
+        platform: 'linux',
+        arch: 'x64',
+        storage: vi.fn(),
+        native: vi.fn(),
+        probe: async () => {
+          const file = tools.git ?? system;
+          probed.push(file);
+          return {
+            status: 'ok' as const,
+            path: file,
+            stdout: file === managed ? 'git version 2.45.0' : 'git version 1.9.0',
+          };
+        },
+      }),
+      { git: managed },
+      (paths) => ({ SELECTED_GIT: paths.git }),
+    );
+
+    await expect(
+      resolveMakeToolchainProcessEnvironment(env, ['git'], new AbortController().signal),
+    ).resolves.toEqual({ SELECTED_GIT: managed });
+    expect(probed).toEqual([system, managed]);
+  });
 });

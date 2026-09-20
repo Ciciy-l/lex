@@ -7,9 +7,10 @@ import {
   BaseAgent,
   type AgentDeps,
   type AgentSessionHandle,
+  type OmpRemoteFileOps,
   type StartSessionOptions,
 } from '../base-agent.js';
-import { NotSupportedError, type Capabilities } from '../../types/capabilities.js';
+import type { Capabilities } from '../../types/capabilities.js';
 import type {
   McpProviderContext,
   OmpHostToolDefinition,
@@ -41,7 +42,11 @@ import {
 } from './permission-map.js';
 import { OmpPermissionBridge } from './permission-bridge.js';
 import { OmpHostToolBridge } from './host-tools.js';
-import { startOmpProcess, type OmpProcessHost } from './process-host.js';
+import {
+  startOmpProcess,
+  startOmpRemoteProcess,
+  type OmpProcessHost,
+} from './process-host.js';
 import type { OmpProcessState } from './process-lifecycle.js';
 import { terminateOmpProcessTree } from './process-tree.js';
 import {
@@ -61,6 +66,7 @@ import {
   currentDisabledSkillLaunchPaths,
   snapshotDisabledSkillLaunch,
 } from '../shared/skill-activation.js';
+import { scanRemoteOmpSkills } from '../shared/remote-skill-scanner.js';
 
 /**
  * OMP Agent —— Lex 的第四个 coding agent（上游 `can1357/oh-my-pi` v18.1.18）。
@@ -82,19 +88,31 @@ const INITIAL_COMMAND_CATALOG_WAIT_MS = 1_000;
 const STARTUP_FRAME_BUFFER = 256;
 const MAX_APPEND_SYSTEM_PROMPT_BYTES = 256 * 1024;
 
-const REMOTE_UNSUPPORTED = {
-  supported: false,
-  reason: 'not-implemented',
-  message: 'OMP cannot run on a remote host in this version.',
-} as const;
+interface ResolvedRemoteOmpRuntime {
+  readonly remoteHostId: string;
+  readonly binaryPath: string;
+  readonly agentHome: string;
+  readonly userHome: string;
+  readonly fileOps: OmpRemoteFileOps;
+}
+
+interface RemoteOmpProviderForward {
+  readonly baseUrl: string;
+  release(): Promise<void>;
+}
 
 /**
  * Derive an opaque, deterministic child root for one live Maker session
  * instance. The identifier never becomes a path component, so even direct
  * harness callers cannot escape the host-owned OMP runtime root.
  */
-export function createOmpSessionRuntimeHome(baseHome: string, instanceId: string): string {
-  return path.join(baseHome, 'runtimes', opaquePathKey(instanceId));
+export function createOmpSessionRuntimeHome(
+  baseHome: string,
+  instanceId: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const implementation = platform === 'win32' ? path.win32 : path.posix;
+  return implementation.join(baseHome, 'runtimes', opaquePathKey(instanceId));
 }
 
 export class OmpAgent extends BaseAgent {
@@ -143,7 +161,14 @@ export class OmpAgent extends BaseAgent {
   override async listAgentSkills(
     opts: ListAgentSkillsOptions,
   ): Promise<ListAgentSkillsResult> {
-    if (opts.remoteHostId) return { skills: [] };
+    if (opts.remoteHostId) {
+      const fileOps = this.deps.getRemoteAgentFileOps?.(opts.remoteHostId);
+      if (!fileOps) throw new Error('OMP remote Skill discovery requires remote file operations');
+      return this.filterActiveSkillCommands(
+        await scanRemoteOmpSkills({ fileOps, workingDir: opts.workingDir }),
+        opts.remoteHostId,
+      );
+    }
     const { items, errors } = await scanOmpCustomizations({
       workingDirs: opts.workingDir ? [opts.workingDir] : [],
       forceReload: opts.forceReload,
@@ -172,8 +197,22 @@ export class OmpAgent extends BaseAgent {
   }
 
   override async startSession(opts: StartSessionOptions): Promise<AgentSessionHandle> {
-    if (opts.remoteHostId) {
-      throw new NotSupportedError('omp:remote-session', { ...REMOTE_UNSUPPORTED });
+    const remoteHostId = normalizeRemoteHostId(opts.remoteHostId);
+    const isolatedProbe = opts.isolatedProbe === true;
+    if (isolatedProbe && opts.disableHostTools !== true) {
+      throw new Error('OMP isolated probes require an empty host-tool surface');
+    }
+    if (remoteHostId && !this.deps.resolveRemoteOmpRuntime) {
+      throw new Error('OMP remote sessions require a host-provided remote runtime resolver');
+    }
+    if (remoteHostId && !this.deps.getRemoteOmpTransport) {
+      throw new Error('OMP remote sessions require a host-provided SSH transport');
+    }
+    if (remoteHostId && !this.deps.getRemoteOmpFileOps) {
+      throw new Error('OMP remote sessions require remote file operations');
+    }
+    if (remoteHostId && !this.deps.openRemoteOmpProviderForward) {
+      throw new Error('OMP remote sessions require a managed provider forward');
     }
     // OMP host-tool handlers are registered once for this process and capture
     // their MCP context. Keep an always-present, session-owned object so a
@@ -207,7 +246,7 @@ export class OmpAgent extends BaseAgent {
     // engines. OMP names a disabled Skill in settings, so resolve the current
     // native discovery view before the process starts rather than treating a
     // disabled path as an arbitrary command name.
-    const disabledSkillPaths = opts.botRuntimeProfile || opts.reviewMode === true
+    const disabledSkillPaths = remoteHostId || opts.botRuntimeProfile || opts.reviewMode === true
       ? []
       : [...(this.deps.getDisabledSkillPaths?.() ?? [])];
     const disabledSkillLaunch = snapshotDisabledSkillLaunch(disabledSkillPaths);
@@ -228,8 +267,13 @@ export class OmpAgent extends BaseAgent {
         });
       }
     }
-    const executableEnvironment = this.deps.resolveOmpExecutableEnvironment?.();
-    const globalSkillsRoot = this.resolveGlobalSkillsRoot();
+    // A remote process inherits only its remote shell's ordinary baseline, plus
+    // the explicit plan env below. Never send Desktop PATH/locale values over
+    // SSH: they are local-machine facts and can carry incompatible paths.
+    const executableEnvironment = remoteHostId
+      ? undefined
+      : this.deps.resolveOmpExecutableEnvironment?.();
+    const globalSkillsRoot = remoteHostId ? undefined : this.resolveGlobalSkillsRoot();
     // The first runtime keeps Maker's instance identity. A restart gets a new
     // opaque root so one process cannot inherit another's startup files.
     const firstRuntimeInstanceId = opts.sessionInstanceId?.trim() || randomUUID();
@@ -247,7 +291,13 @@ export class OmpAgent extends BaseAgent {
       mcpCallerKind: 'root',
       mcpCallerAttested: true,
     };
-    const hostToolDefinitions = this.resolveHostTools(mcpContext);
+    // A host-owned ephemeral connectivity probe deliberately validates only the
+    // managed runtime/provider path. It must not expose normal MCP-backed host
+    // tools merely because the model happens to choose a tool-shaped response.
+    // Ordinary OMP sessions retain the full explicitly adapted tool roster.
+    const hostToolDefinitions = opts.disableHostTools === true
+      ? Object.freeze([] as OmpHostToolDefinition[])
+      : this.resolveHostTools(mcpContext);
 
     const createRuntime = async (input: {
       readonly permissionMode: PermissionMode;
@@ -256,31 +306,14 @@ export class OmpAgent extends BaseAgent {
     }): Promise<OmpSessionRuntime> => {
       const runtimeInstanceId = runtimeNumber === 0 ? firstRuntimeInstanceId : randomUUID();
       runtimeNumber += 1;
-      const runtimeHome = this.resolveSessionAgentHome(runtimeInstanceId);
       const appendSystemPromptKey = appendSystemPrompt === undefined
         ? undefined
         : opaquePathKey(runtimeInstanceId);
       const commandCatalog = new OmpCommandCatalog();
-      const plan = createOmpSessionLaunchPlan({
-        roots: {
-          home: runtimeHome,
-          workingDir: opts.workingDir,
-          platform: process.platform,
-          ...(executableEnvironment?.systemRoot === undefined
-            ? {}
-            : { windowsSystemRoot: executableEnvironment.systemRoot }),
-        },
-        permissionMode: input.permissionMode,
-        model: { provider: OMP_CINDY_PROVIDER_ID, model: opts.model },
-        ...(executableEnvironment === undefined ? {} : { executableEnvironment }),
-        ...(disabledSkillNames.length === 0 ? {} : { disabledSkillNames }),
-        ...(appendSystemPromptKey === undefined
-          ? {}
-          : { appendSystemPromptKey }),
-        ...(this.resolveCredentials(opts.sessionId, sourceProviderId) ?? {}),
-      });
-
+      let remoteRuntime: ResolvedRemoteOmpRuntime | undefined;
+      let remoteProviderForward: RemoteOmpProviderForward | undefined;
       let cleanupRuntimeFiles: (() => Promise<void>) | undefined;
+      let cleanupIsolatedRuntimeHome: () => Promise<void> = async () => undefined;
       let host: OmpProcessHost | undefined;
       let hostTools: OmpHostToolBridge | undefined;
       let unregisterCommandCatalog: () => void = () => undefined;
@@ -306,6 +339,62 @@ export class OmpAgent extends BaseAgent {
       };
 
       try {
+        if (remoteHostId) {
+          remoteRuntime = await this.resolveRemoteRuntime(remoteHostId);
+          const providerForward = await this.deps.openRemoteOmpProviderForward!(remoteHostId);
+          try {
+            remoteProviderForward = validateRemoteOmpProviderForward(providerForward);
+          } catch (error) {
+            await providerForward?.release?.().catch(() => undefined);
+            throw error;
+          }
+        }
+        const remoteProxyEnvironment = remoteHostId
+          ? await this.deps.getRemoteOmpAgentProxyEnv?.(remoteHostId)
+          : null;
+        const runtimeHome = remoteRuntime
+          ? createOmpSessionRuntimeHome(remoteRuntime.agentHome, runtimeInstanceId, 'linux')
+          : this.resolveSessionAgentHome(runtimeInstanceId);
+        // A connectivity probe must never start beneath a real remote project
+        // or user HOME. OMP's native customization walker stops at its process
+        // HOME, so a freshly-created child cwd gives it a hard discovery
+        // boundary without changing normal project-session semantics.
+        const runtimeWorkingDir = isolatedProbe
+          ? (remoteRuntime
+              ? path.posix.join(runtimeHome, 'workdir')
+              : path.join(runtimeHome, 'workdir'))
+          : opts.workingDir;
+        cleanupIsolatedRuntimeHome = async (): Promise<void> => {
+          if (!isolatedProbe) return;
+          if (remoteRuntime) {
+            await remoteRuntime.fileOps.rm(runtimeHome, { recursive: true });
+            return;
+          }
+          await fs.rm(runtimeHome, { recursive: true, force: true });
+        };
+        const plan = createOmpSessionLaunchPlan({
+          roots: {
+            home: runtimeHome,
+            workingDir: runtimeWorkingDir,
+            // Remote SSH hosts follow the existing POSIX remote contract. Both
+            // supported remote OS families use POSIX paths and env layout.
+            platform: remoteRuntime ? 'linux' : process.platform,
+            ...(executableEnvironment?.systemRoot === undefined
+              ? {}
+              : { windowsSystemRoot: executableEnvironment.systemRoot }),
+          },
+          permissionMode: input.permissionMode,
+          model: { provider: OMP_CINDY_PROVIDER_ID, model: opts.model },
+          ...(executableEnvironment === undefined ? {} : { executableEnvironment }),
+          ...(remoteProxyEnvironment === null || remoteProxyEnvironment === undefined
+            ? {}
+            : { remoteProxyEnvironment }),
+          ...(disabledSkillNames.length === 0 ? {} : { disabledSkillNames }),
+          ...(appendSystemPromptKey === undefined
+            ? {}
+            : { appendSystemPromptKey }),
+          ...(this.resolveCredentials(opts.sessionId, sourceProviderId) ?? {}),
+        });
         cleanupRuntimeFiles = await this.materializeRuntimeFiles(
           plan,
           opts.sessionId,
@@ -313,8 +402,11 @@ export class OmpAgent extends BaseAgent {
           opts.model,
           appendSystemPrompt,
           globalSkillsRoot,
+          remoteRuntime,
+          remoteProviderForward?.baseUrl,
+          isolatedProbe,
         );
-        host = await this.spawnHost(plan, forwardFrame, forwardExit);
+        host = await this.spawnHost(plan, forwardFrame, forwardExit, remoteRuntime);
         const activeHost = host;
         const translator = new OmpTranslator({ logger: this.deps.logger });
         const bridge = new OmpPermissionBridge({
@@ -328,9 +420,15 @@ export class OmpAgent extends BaseAgent {
           respond: (id, result) =>
             activeHost.client.respondToHostTool(id, result, result.isError === true),
         });
+        const sessionPathPlatform: NodeJS.Platform = remoteRuntime ? 'linux' : process.platform;
         const sessionFile = input.resumeSessionFile === undefined || input.permitInitialRecovery
-          ? await this.establishSession(activeHost, opts, translator)
-          : await this.resumeExistingSession(activeHost, input.resumeSessionFile, translator);
+          ? await this.establishSession(activeHost, opts, translator, sessionPathPlatform)
+          : await this.resumeExistingSession(
+              activeHost,
+              input.resumeSessionFile,
+              translator,
+              sessionPathPlatform,
+            );
         // A fresh process has no retained bridge surface. Register even an empty
         // set after new/switch_session and before a prompt can be sent.
         const { response: hostToolsResponse } = activeHost.client.request(
@@ -371,7 +469,15 @@ export class OmpAgent extends BaseAgent {
               try {
                 return await activeHost.stopAndWait();
               } finally {
-                await cleanupRuntimeFiles?.();
+                try {
+                  await cleanupRuntimeFiles?.();
+                } finally {
+                  try {
+                    await cleanupIsolatedRuntimeHome();
+                  } finally {
+                    await remoteProviderForward?.release();
+                  }
+                }
               }
             })();
             return stopAndDisposePromise;
@@ -383,6 +489,8 @@ export class OmpAgent extends BaseAgent {
         unregisterCommandCatalog();
         await host?.stopAndWait().catch(() => false);
         await cleanupRuntimeFiles?.().catch(() => undefined);
+        await cleanupIsolatedRuntimeHome().catch(() => undefined);
+        await remoteProviderForward?.release().catch(() => undefined);
         throw error;
       }
     };
@@ -424,6 +532,7 @@ export class OmpAgent extends BaseAgent {
     plan: OmpSessionLaunchPlan,
     onFrame: (frame: Readonly<Record<string, unknown>>) => void,
     onExit: (state: OmpProcessState) => void,
+    remoteRuntime?: ResolvedRemoteOmpRuntime,
   ): Promise<OmpProcessHost> {
     let settleReady: (() => void) | undefined;
     let failReady: ((error: Error) => void) | undefined;
@@ -431,46 +540,63 @@ export class OmpAgent extends BaseAgent {
       settleReady = resolve;
       failReady = reject;
     });
-    const timer = setTimeout(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined = undefined;
+    const onEvent = (frame: Readonly<Record<string, unknown>>) => {
+      if (frame.type === 'ready') {
+        if (timer) clearTimeout(timer);
+        settleReady?.();
+      }
+      onFrame(frame);
+    };
+    const onState = (state: OmpProcessState) => {
+      this.deps.logger.debug('omp process state', {
+        state,
+        ...(remoteRuntime ? { remoteHostId: remoteRuntime.remoteHostId } : {}),
+      });
+      if (state === 'exited' || state === 'exit-unconfirmed') {
+        if (timer) clearTimeout(timer);
+        failReady?.(new Error('OMP process exited before the RPC handshake'));
+        onExit(state);
+      }
+    };
+    const host = remoteRuntime
+      ? startOmpRemoteProcess({
+          transport: await this.deps.getRemoteOmpTransport!(remoteRuntime.remoteHostId, {
+            remoteBinaryPath: remoteRuntime.binaryPath,
+            args: [...plan.arguments],
+            cwd: plan.roots.workingDir,
+            env: { ...plan.environment },
+            logger: this.deps.logger,
+          }),
+          onEvent,
+          onState,
+        })
+      : startOmpProcess({
+          executablePath: this.resolveLocalBinaryPath(),
+          workingDirectory: plan.roots.workingDir,
+          arguments: plan.arguments,
+          environment: plan.environment,
+          // POSIX must give the managed session its own process group so an OMP
+          // extension, MCP, LSP, or PTY descendant cannot survive the root.
+          detached: process.platform !== 'win32',
+          ownsProcessTree: true,
+          spawnProcess: this.deps.spawnOmpProcess,
+          terminateProcessTree: terminateOmpProcessTree,
+          onEvent,
+          onState,
+        });
+    timer = setTimeout(() => {
       failReady?.(new Error('OMP did not complete its RPC handshake in time'));
     }, READY_TIMEOUT_MS);
-
-    const host = startOmpProcess({
-      executablePath: this.deps.binaryPath,
-      workingDirectory: plan.roots.workingDir,
-      arguments: plan.arguments,
-      environment: plan.environment,
-      // POSIX must give the managed session its own process group so an OMP
-      // extension, MCP, LSP, or PTY descendant cannot survive the root.
-      detached: process.platform !== 'win32',
-      ownsProcessTree: true,
-      spawnProcess: this.deps.spawnOmpProcess,
-      terminateProcessTree: terminateOmpProcessTree,
-      onEvent: (frame) => {
-        if (frame.type === 'ready') {
-          clearTimeout(timer);
-          settleReady?.();
-        }
-        onFrame(frame);
-      },
-      onState: (state: OmpProcessState) => {
-        this.deps.logger.debug('omp process state', { state });
-        if (state === 'exited' || state === 'exit-unconfirmed') {
-          clearTimeout(timer);
-          failReady?.(new Error('OMP process exited before the RPC handshake'));
-          onExit(state);
-        }
-      },
-    });
 
     try {
       await ready;
     } catch (error) {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       await host.stopAndWait().catch(() => false);
       throw error;
     }
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
     return host;
   }
 
@@ -484,11 +610,12 @@ export class OmpAgent extends BaseAgent {
     host: OmpProcessHost,
     opts: StartSessionOptions,
     translator: OmpTranslator,
+    sessionPathPlatform: NodeJS.Platform = process.platform,
   ): Promise<string> {
     const resume = opts.resumeSessionId;
     let sessionFile: string | undefined;
     if (typeof resume === 'string' && resume.length > 0) {
-      if (!isOmpSessionFilePath(resume)) {
+      if (!isOmpSessionFilePath(resume, sessionPathPlatform)) {
         // A persisted SDK id is untrusted input on the way back into OMP.
         // Never allow a legacy/corrupt relative path to resolve against the
         // native process cwd and attach an unrelated project history.
@@ -500,8 +627,8 @@ export class OmpAgent extends BaseAgent {
             RPC_TIMEOUT_MS,
           );
           await response;
-          const resumed = await this.readSessionFile(host, translator);
-          if (resumed !== undefined && !sameOmpSessionFile(resumed, resume)) {
+          const resumed = await this.readSessionFile(host, translator, sessionPathPlatform);
+          if (resumed !== undefined && !sameOmpSessionFile(resumed, resume, sessionPathPlatform)) {
             // A successful RPC response that points at another history is not an
             // invalid/missing resume.  Never clear the stored id or silently
             // attach this Lex task to a different upstream session.
@@ -526,7 +653,7 @@ export class OmpAgent extends BaseAgent {
     if (sessionFile === undefined) {
       const { response } = host.client.request({ type: 'new_session' }, RPC_TIMEOUT_MS);
       await response;
-      sessionFile = await this.readSessionFile(host, translator);
+      sessionFile = await this.readSessionFile(host, translator, sessionPathPlatform);
     }
     if (sessionFile === undefined) throw new Error('OMP did not report a session file');
     return sessionFile;
@@ -541,16 +668,17 @@ export class OmpAgent extends BaseAgent {
     host: OmpProcessHost,
     expectedSessionFile: string,
     translator: OmpTranslator,
+    sessionPathPlatform: NodeJS.Platform = process.platform,
   ): Promise<string> {
-    if (!isOmpSessionFilePath(expectedSessionFile))
+    if (!isOmpSessionFilePath(expectedSessionFile, sessionPathPlatform))
       throw new OmpResumeIdentityMismatchError();
     const { response } = host.client.request(
       { type: 'switch_session', sessionPath: expectedSessionFile },
       RPC_TIMEOUT_MS,
     );
     await response;
-    const resumed = await this.readSessionFile(host, translator);
-    if (resumed === undefined || !sameOmpSessionFile(resumed, expectedSessionFile)) {
+    const resumed = await this.readSessionFile(host, translator, sessionPathPlatform);
+    if (resumed === undefined || !sameOmpSessionFile(resumed, expectedSessionFile, sessionPathPlatform)) {
       throw new OmpResumeIdentityMismatchError();
     }
     return resumed;
@@ -559,6 +687,7 @@ export class OmpAgent extends BaseAgent {
   private async readSessionFile(
     host: OmpProcessHost,
     translator: OmpTranslator,
+    sessionPathPlatform: NodeJS.Platform = process.platform,
   ): Promise<string | undefined> {
     const { response } = host.client.request({ type: 'get_state' }, RPC_TIMEOUT_MS);
     const state = await response;
@@ -568,7 +697,7 @@ export class OmpAgent extends BaseAgent {
       const window = readContextWindow(data);
       if (window !== undefined) translator.setContextWindow(window);
     }
-    return readSessionPath(data);
+    return readSessionPath(data, sessionPathPlatform);
   }
 
   private resolveAgentHome(): string {
@@ -592,6 +721,66 @@ export class OmpAgent extends BaseAgent {
   /** Each live process gets a private HOME/config/agent/session directory. */
   private resolveSessionAgentHome(instanceId: string): string {
     return createOmpSessionRuntimeHome(this.resolveAgentHome(), instanceId);
+  }
+
+  /** Resolve the local audited binary at the last possible moment before spawn. */
+  private resolveLocalBinaryPath(): string {
+    const resolved = this.deps.resolveOmpLocalBinaryPath?.() ?? this.requireLocalBinaryPath();
+    if (
+      typeof resolved !== 'string' ||
+      !resolved ||
+      resolved.includes('\0') ||
+      !path.isAbsolute(resolved)
+    ) {
+      throw new Error('OMP local runtime is unavailable or failed verification');
+    }
+    return resolved;
+  }
+
+  private async resolveRemoteRuntime(remoteHostId: string): Promise<ResolvedRemoteOmpRuntime> {
+    const runtime = await this.deps.resolveRemoteOmpRuntime!(remoteHostId);
+    const fileOps = this.deps.getRemoteOmpFileOps!(remoteHostId);
+    if (!runtime || typeof runtime !== 'object' || !fileOps) {
+      throw new Error('OMP remote runtime is unavailable');
+    }
+    const requireRemotePath = (value: unknown, name: string): string => {
+      if (
+        typeof value !== 'string' ||
+        !value ||
+        value.includes('\0') ||
+        !path.posix.isAbsolute(value) ||
+        path.posix.normalize(value) === '/'
+      ) {
+        throw new Error('OMP remote ' + name + ' must be an absolute non-root POSIX path');
+      }
+      return path.posix.normalize(value);
+    };
+    return Object.freeze({
+      remoteHostId,
+      binaryPath: requireRemotePath(runtime.binaryPath, 'binary'),
+      agentHome: requireRemotePath(runtime.agentHome, 'agent home'),
+      userHome: requireRemotePath(runtime.userHome, 'user home'),
+      fileOps,
+    });
+  }
+
+  private async projectRemoteGlobalSkills(
+    remoteRuntime: ResolvedRemoteOmpRuntime,
+    targetRoot: string,
+  ): Promise<void> {
+    try {
+      const sourceRoot = path.posix.join(remoteRuntime.userHome, '.agents', 'skills');
+      const source = await remoteRuntime.fileOps.stat(sourceRoot);
+      if (!source || source.isFile) return;
+      await remoteRuntime.fileOps.linkDirectory(sourceRoot, targetRoot);
+    } catch (error) {
+      // Skills are optional native discovery input. A remote filesystem
+      // conflict must not stop an otherwise valid coding session.
+      this.deps.logger.warn('omp remote shared global Skills projection unavailable', {
+        remoteHostId: remoteRuntime.remoteHostId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private registerCommandCatalog(
@@ -684,52 +873,92 @@ export class OmpAgent extends BaseAgent {
     model: string,
     appendSystemPrompt: string | undefined,
     globalSkillsRoot: string | undefined,
+    remoteRuntime?: ResolvedRemoteOmpRuntime,
+    remoteBaseUrl?: string,
+    isolatedProbe = false,
   ): Promise<() => Promise<void>> {
     let cleaned = false;
     const cleanupSystemPrompt = async () => {
       if (cleaned || plan.roots.systemPromptFile === undefined) return;
       cleaned = true;
       try {
-        await fs.unlink(plan.roots.systemPromptFile);
+        if (remoteRuntime) {
+          await remoteRuntime.fileOps.rm(plan.roots.systemPromptFile);
+        } else {
+          await fs.unlink(plan.roots.systemPromptFile);
+        }
       } catch (error) {
         const code = (error as { code?: unknown } | undefined)?.code;
         if (code !== 'ENOENT') {
           this.deps.logger.warn('omp system prompt cleanup failed', {
+            ...(remoteRuntime ? { remoteHostId: remoteRuntime.remoteHostId } : {}),
             code: typeof code === 'string' ? code : 'unknown',
           });
         }
       }
     };
     try {
-      await fs.mkdir(plan.roots.agent, { recursive: true });
-      await fs.mkdir(plan.roots.sessions, { recursive: true });
-      const projectedSkills = await projectOmpGlobalSkills({
-        sourceRoot: globalSkillsRoot,
-        targetRoot: plan.roots.globalSkillsDirectory,
-      });
-      if (projectedSkills.status === 'conflict' || projectedSkills.status === 'error') {
-        // Skills are a native optional resource: a local projection conflict
-        // must not make an otherwise usable project session fail to start.
-        this.deps.logger.warn('omp shared global Skills projection unavailable', {
-          status: projectedSkills.status,
-        });
-      }
-      await fs.writeFile(plan.roots.settingsFile, plan.settingsYaml, {
-        encoding: 'utf8',
-        mode: 0o600,
-      });
-      if (plan.roots.systemPromptFile !== undefined) {
-        if (appendSystemPrompt === undefined)
-          throw new Error('OMP system prompt plan and content are inconsistent');
-        await fs.mkdir(plan.roots.systemPromptDirectory, { recursive: true });
-        await fs.writeFile(plan.roots.systemPromptFile, appendSystemPrompt, {
+      if (remoteRuntime) {
+        await remoteRuntime.fileOps.mkdirp(plan.roots.agent);
+        await remoteRuntime.fileOps.mkdirp(plan.roots.sessions);
+        if (isolatedProbe) {
+          await remoteRuntime.fileOps.mkdirp(plan.roots.workingDir);
+        } else {
+          await this.projectRemoteGlobalSkills(remoteRuntime, plan.roots.globalSkillsDirectory);
+        }
+        await remoteRuntime.fileOps.writeFile(plan.roots.settingsFile, plan.settingsYaml, 0o600);
+      } else {
+        await fs.mkdir(plan.roots.agent, { recursive: true });
+        await fs.mkdir(plan.roots.sessions, { recursive: true });
+        if (isolatedProbe) {
+          await fs.mkdir(plan.roots.workingDir, { recursive: true });
+        } else {
+          const projectedSkills = await projectOmpGlobalSkills({
+            sourceRoot: globalSkillsRoot,
+            targetRoot: plan.roots.globalSkillsDirectory,
+          });
+          if (projectedSkills.status === 'conflict' || projectedSkills.status === 'error') {
+            // Skills are a native optional resource: a local projection conflict
+            // must not make an otherwise usable project session fail to start.
+            this.deps.logger.warn('omp shared global Skills projection unavailable', {
+              status: projectedSkills.status,
+            });
+          }
+        }
+        await fs.writeFile(plan.roots.settingsFile, plan.settingsYaml, {
           encoding: 'utf8',
           mode: 0o600,
         });
       }
-      const modelsYaml = this.deps.resolveOmpModelsYaml?.({ sessionId, providerId, model });
+      if (plan.roots.systemPromptFile !== undefined) {
+        if (appendSystemPrompt === undefined)
+          throw new Error('OMP system prompt plan and content are inconsistent');
+        if (remoteRuntime) {
+          await remoteRuntime.fileOps.mkdirp(plan.roots.systemPromptDirectory);
+          await remoteRuntime.fileOps.writeFile(
+            plan.roots.systemPromptFile,
+            appendSystemPrompt,
+            0o600,
+          );
+        } else {
+          await fs.mkdir(plan.roots.systemPromptDirectory, { recursive: true });
+          await fs.writeFile(plan.roots.systemPromptFile, appendSystemPrompt, {
+            encoding: 'utf8',
+            mode: 0o600,
+          });
+        }
+      }
+      const modelsYaml = this.deps.resolveOmpModelsYaml?.({
+        sessionId,
+        providerId,
+        model,
+        ...(remoteRuntime ? { remoteHostId: remoteRuntime.remoteHostId } : {}),
+        ...(remoteBaseUrl ? { remoteBaseUrl } : {}),
+      });
       if (modelsYaml === undefined) {
         this.deps.logger.warn('omp models.yml was not provided; only built-in providers are usable');
+      } else if (remoteRuntime) {
+        await remoteRuntime.fileOps.writeFile(plan.roots.modelsFile, modelsYaml, 0o600);
       } else {
         await fs.writeFile(plan.roots.modelsFile, modelsYaml, { encoding: 'utf8', mode: 0o600 });
       }
@@ -797,11 +1026,14 @@ export class OmpAgent extends BaseAgent {
  * 会话文件绝对路径。`switch_session` 只接受 `sessionPath`，因此必须拿到它，
  * 而不是上游的 `sessionId`（架构 §5）。
  */
-function readSessionPath(data: unknown): string | undefined {
+function readSessionPath(
+  data: unknown,
+  sessionPathPlatform: NodeJS.Platform = process.platform,
+): string | undefined {
   if (!isOmpRecord(data)) return undefined;
   for (const key of ['sessionFile', 'sessionPath', 'session_file']) {
     const value = data[key];
-    if (isOmpSessionFilePath(value)) return value;
+    if (isOmpSessionFilePath(value, sessionPathPlatform)) return value;
   }
   return undefined;
 }
@@ -812,7 +1044,10 @@ function readSessionPath(data: unknown): string | undefined {
  * arbitrary string: a relative path would otherwise be interpreted beneath
  * the next process cwd.
  */
-function isOmpSessionFilePath(value: unknown): value is string {
+function isOmpSessionFilePath(
+  value: unknown,
+  sessionPathPlatform: NodeJS.Platform = process.platform,
+): value is string {
   if (
     typeof value !== 'string' ||
     value.length === 0 ||
@@ -824,12 +1059,12 @@ function isOmpSessionFilePath(value: unknown): value is string {
   ) {
     return false;
   }
-  const implementation = process.platform === 'win32' ? path.win32 : path.posix;
+  const implementation = sessionPathPlatform === 'win32' ? path.win32 : path.posix;
   if (!implementation.isAbsolute(value)) return false;
   // `\\history.jsonl` is only rooted at whichever drive happens to be
   // current for a Windows process. Unlike a drive-qualified or UNC path it is
   // not a stable identity that can safely survive a later restart.
-  if (process.platform === 'win32') {
+  if (sessionPathPlatform === 'win32') {
     const root = implementation.parse(implementation.normalize(value)).root;
     if (root === '\\' || root === '/') return false;
   }
@@ -847,12 +1082,19 @@ class OmpResumeIdentityMismatchError extends Error {
  * JSONL may be unavailable to `realpath` until its first write. Windows path
  * spelling is case-insensitive; POSIX remains exact after normalization.
  */
-function sameOmpSessionFile(left: string, right: string): boolean {
-  if (!isOmpSessionFilePath(left) || !isOmpSessionFilePath(right)) return false;
-  const implementation = process.platform === 'win32' ? path.win32 : path.posix;
+function sameOmpSessionFile(
+  left: string,
+  right: string,
+  sessionPathPlatform: NodeJS.Platform = process.platform,
+): boolean {
+  if (
+    !isOmpSessionFilePath(left, sessionPathPlatform) ||
+    !isOmpSessionFilePath(right, sessionPathPlatform)
+  ) return false;
+  const implementation = sessionPathPlatform === 'win32' ? path.win32 : path.posix;
   const normalizedLeft = implementation.normalize(left);
   const normalizedRight = implementation.normalize(right);
-  return process.platform === 'win32'
+  return sessionPathPlatform === 'win32'
     ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
     : normalizedLeft === normalizedRight;
 }
@@ -896,6 +1138,48 @@ async function waitForInitialOmpCommandCatalog(refresh: Promise<void>): Promise<
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+function normalizeRemoteHostId(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (
+    typeof value !== 'string' ||
+    !value.trim() ||
+    value.length > 256 ||
+    value.includes('\0') ||
+    Array.from(value).some((character) => character.charCodeAt(0) < 32)
+  ) {
+    throw new Error('Invalid OMP remote host identity');
+  }
+  return value.trim();
+}
+
+function validateRemoteOmpProviderForward(value: unknown): RemoteOmpProviderForward {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('OMP remote provider forward is unavailable');
+  const candidate = value as Partial<RemoteOmpProviderForward>;
+  if (typeof candidate.baseUrl !== 'string' || typeof candidate.release !== 'function')
+    throw new Error('OMP remote provider forward is unavailable');
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate.baseUrl);
+  } catch {
+    throw new Error('OMP remote provider forward must provide a loopback URL');
+  }
+  const host = parsed.hostname.replace(/^\[|\]$/gu, '');
+  const port = Number(parsed.port);
+  if (
+    !['127.0.0.1', '::1', 'localhost'].includes(host) ||
+    !Number.isInteger(port) ||
+    port < 1 ||
+    port > 65535 ||
+    parsed.username ||
+    parsed.password ||
+    candidate.baseUrl.length > 2048
+  ) {
+    throw new Error('OMP remote provider forward must provide a loopback URL');
+  }
+  return Object.freeze({ baseUrl: candidate.baseUrl, release: candidate.release });
 }
 
 /** An opaque filename key; neither session identity nor prompt text appears in a path. */

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { once } from 'node:events';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createServer, request as httpRequest } from 'node:http';
+import { Transform } from 'node:stream';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -35,6 +36,8 @@ const mockState = vi.hoisted(() => {
       error: vi.fn(),
     },
     createAnthropicCompatProxy: vi.fn(),
+    createPiProviderFetch: vi.fn(() => vi.fn()),
+    handlePiProviderRequest: vi.fn(async () => undefined),
     createResponsesChatHandler: vi.fn(() => ({ handle: vi.fn(async () => undefined) })),
     createResponsesAnthropicHandler: vi.fn(() => ({ handle: vi.fn(async () => undefined) })),
     injectionTransform: vi.fn<(body: unknown, ctx: unknown) => unknown | null>(() => null),
@@ -54,6 +57,8 @@ const mockState = vi.hoisted(() => {
   return state;
 });
 
+vi.mock('../pi-provider-transport.js', async importOriginal => ({ ...await importOriginal<typeof import('../pi-provider-transport.js')>(), createPiProviderFetch: mockState.createPiProviderFetch, handlePiProviderRequest: mockState.handlePiProviderRequest }));
+
 vi.mock('electron', () => ({
   app: {
     isPackaged: false,
@@ -71,6 +76,8 @@ vi.mock('../../logger.js', () => ({
   getLogLevel: () => mockState.logLevel,
   getLogDir: () => mockState.logDir,
 }));
+
+vi.mock('../grok-oauth-login.js', async (importOriginal) => ({ ...await importOriginal<typeof import('../grok-oauth-login.js')>(), peekGrokAccessToken: () => 'fixture-xai-token' }));
 
 vi.mock('../../usageBroadcaster.js', () => ({
   recordXaiRateLimitSnapshot: mockState.recordXaiRateLimitSnapshot,
@@ -708,6 +715,7 @@ describe('chatBridgeCapabilitiesForRoute', () => {
       'https://api.deepseek.com/v1',
       'deepseek-chat',
     );
+    expect(capabilities.reasoningField).toBeUndefined();
     expect(capabilities.passthroughFields).not.toContain('n');
     expect(capabilities.passthroughFields).not.toContain('logprobs');
     expect(capabilities.passthroughFields).not.toContain('top_logprobs');
@@ -885,19 +893,13 @@ describe('chatBridgeCapabilitiesForRoute', () => {
       parsedBody,
       res,
     });
-    const bridgeHandler = mockState.createResponsesChatHandler.mock.results.at(-1)?.value as {
-      handle: ReturnType<typeof vi.fn>;
-    };
-    expect(bridgeHandler.handle).toHaveBeenCalledWith({
-      parsedBody: {
-        ...parsedBody,
-        instructions: [
-          ...originalInstructions,
-          { type: 'input_text', text: '\n\nPRODUCT_PROMPT' },
-        ],
-      },
-      res,
-    });
+    expect(mockState.createPiProviderFetch).toHaveBeenCalledWith(expect.objectContaining({
+      apiKey: 'moonshot-key', row: expect.objectContaining({ id: 'kimi-k3', supportsImageInput: true }),
+    }));
+    expect(mockState.handlePiProviderRequest).toHaveBeenCalledWith(expect.any(Function), {
+      ...parsedBody,
+      instructions: [...originalInstructions, { type: 'input_text', text: '\n\nPRODUCT_PROMPT' }],
+    }, res);
 
     clearSessionProvider('session-kimi-image');
     setCustomProviderKeyReader(() => null);
@@ -1111,35 +1113,58 @@ describe('chatBridgeCapabilitiesForRoute', () => {
     ));
 
     expect(decision).toEqual(expect.objectContaining({ localHandler: expect.any(Function) }));
-    expect(mockState.createResponsesAnthropicHandler).toHaveBeenCalledWith(
-      expect.objectContaining({
-        upstreamBase: 'https://api.anthropic.com',
-        buildHeaders: expect.any(Function),
-      }),
-      expect.anything(),
-    );
-    const anthropicHandlerCalls = mockState.createResponsesAnthropicHandler.mock.calls as unknown as Array<[
-      {
-        promptCaching: boolean;
-        automaticPromptCaching: boolean;
-        strictTools: boolean;
-        buildHeaders: () => Promise<Record<string, string>>;
-      },
-    ]>;
-    const config = anthropicHandlerCalls.at(-1)?.[0];
-    expect(config).toBeDefined();
-    if (!config) throw new Error('Anthropic bridge config was not captured');
-    expect(await config.buildHeaders()).toEqual({
-      'x-api-key': 'anthropic-key',
-      authorization: 'Bearer anthropic-key',
-    });
-    expect(config.promptCaching).toBe(true);
-    expect(config.automaticPromptCaching).toBe(true);
-    expect(config.strictTools).toBe(true);
+    const body = { model: 'claude-sonnet-4-6', input: [{ role: 'user', content: 'hello' }] };
+    await (decision as { localHandler: (input: unknown) => Promise<void> }).localHandler({ rawBody: Buffer.from(JSON.stringify(body)), parsedBody: body, res: {} });
+    expect(mockState.createPiProviderFetch).toHaveBeenCalledWith(expect.objectContaining({
+      apiKey: 'anthropic-key', row: expect.objectContaining({ id: 'claude-sonnet-4-6', execution: { pi: expect.objectContaining({
+        api: 'anthropic-messages', compat: expect.objectContaining({ supportsStrictTools: true }),
+      }) } }),
+      headers: expect.objectContaining({ 'anthropic-beta': 'context-1m-2025-08-07' }),
+    }));
 
     clearSessionProvider('session-anthropic');
     setCustomProviderKeyReader(() => null);
     setCustomProviders([]);
+  });
+
+  it.each(['individual', 'business', 'enterprise'].flatMap(account => ['anthropic-messages', 'openai-responses'].map(api => ({ account, api }))))('keeps the Copilot adapter for $api on the $account host', async ({ account, api }) => {
+    const host = await freshCodexProxyHost();
+    const { setCustomProviders } = await import('../active-catalog.js');
+    const { setOAuthTokenReader } = await import('../provider-route.js');
+    const { setSessionProvider, clearSessionProvider } = await import('../session-provider-store.js');
+    const { buildUserProvider, providerPresetOAuth, PROVIDER_MODEL_CATALOG, providerModelAdapterId } = await import('@cindy/model-providers');
+    const row = PROVIDER_MODEL_CATALOG.providers['github-copilot'].find(model => model.execution.pi.api === api)!;
+    const token = `fixture-token;proxy-ep=proxy.${account}.githubcopilot.com;`;
+    setCustomProviders([buildUserProvider({ id: 'copilot-account', name: 'Copilot',
+      auth: { method: 'oauth', oauth: providerPresetOAuth('github-copilot')! },
+      runtimes: { codex: { baseUrl: row.upstream, catalogPresetId: 'github-copilot',
+        wireProtocol: api as 'anthropic-messages' | 'openai-responses', models: [{ id: row.id, name: row.name, api: api as 'anthropic-messages' | 'openai-responses' }] } },
+    })]);
+    setOAuthTokenReader(() => token);
+    host.registerComposed('session-copilot', 'thread-copilot', 'PRODUCT_PROMPT');
+    setSessionProvider('session-copilot', 'copilot-account');
+    host.setCodexProxyAuthInjection('env-key');
+    try {
+      const body = { model: row.id, input: [{ role: 'user', content: 'hello' }] };
+      const decision = await host.createModelRoutingTransform()(body, {
+        reqId: 1, method: 'POST', url: '/responses', headers: { 'thread-id': 'thread-copilot' },
+      });
+      expect(decision).toEqual(expect.objectContaining({ localHandler: expect.any(Function) }));
+      await (decision as { localHandler: (input: unknown) => Promise<void> }).localHandler({
+        rawBody: Buffer.from(JSON.stringify(body)), parsedBody: body, res: {},
+      });
+      expect(mockState.createPiProviderFetch).toHaveBeenLastCalledWith(expect.objectContaining({
+        apiKey: token,
+        upstream: `https://api.${account}.githubcopilot.com`,
+        row: expect.objectContaining({ id: row.id, upstream: row.upstream }),
+      }));
+      const nativeOptions = (mockState.createPiProviderFetch.mock.calls as unknown as Array<[{ row: typeof row }]>).at(-1)![0];
+      expect(providerModelAdapterId(nativeOptions.row)).toBe('github-copilot');
+    } finally {
+      clearSessionProvider('session-copilot');
+      setOAuthTokenReader(() => null);
+      setCustomProviders([]);
+    }
   });
 
   it('routes the built-in Anthropic subscription through the bridge with host-owned Claude.ai OAuth', async () => {
@@ -2705,13 +2730,13 @@ describe('codex proxy host', () => {
         // upstream 是函数形态(每请求现取,model-access 下发可运行期换 endpoint);
         // 断言其当前求值 = 网关 base + /v1
         upstream: expect.any(Function),
-        // [encrypted activeStrip, image generation activeStrip, provider-aware Guardian reviewer, locked Subagent route, instructions 注入, locked Subagent exec guard, Gateway 原生 web_search, 跨来源压缩块兼容, xAI ModelInput activeStrip, exec function adapter, strict gateway history 兼容, xAI ModelInput sanitize, DeepSeek V4 custom tool 兼容, xAI Responses 兼容, XD Gateway Grok 兼容, ByteDance Seed tool 兼容, MiniMax effort 兼容, provider model rewrite, 视觉桥(controller 未注入 → 短路透传), 工具 ID 校正, stripNonAnthropicFields]
+        // [encrypted activeStrip, image generation activeStrip, provider-aware Guardian reviewer, locked Subagent route, instructions 注入, locked Subagent exec guard, Gateway 原生 web_search, 跨来源压缩块兼容, xAI ModelInput activeStrip, exec function adapter, strict gateway history 兼容, xAI ModelInput sanitize, DeepSeek V4 custom tool 兼容, xAI Responses 兼容, XD Gateway Grok 兼容, ByteDance Seed tool 兼容, MiniMax effort 兼容, provider model rewrite, provider 参数归一, 视觉桥(controller 未注入 → 短路透传), 工具 ID 校正, stripNonAnthropicFields]
         transformRequest: [
           expect.any(Function), expect.any(Function), expect.any(Function), expect.any(Function), expect.any(Function),
           expect.any(Function), expect.any(Function), expect.any(Function), expect.any(Function), expect.any(Function),
           expect.any(Function), expect.any(Function), expect.any(Function), expect.any(Function), expect.any(Function),
           expect.any(Function), expect.any(Function), expect.any(Function), expect.any(Function),
-          expect.any(Function), expect.any(Function),
+          expect.any(Function), expect.any(Function), expect.any(Function),
         ],
         transformResponse: expect.any(Function),
         routingTransform: expect.any(Function),
@@ -2945,6 +2970,86 @@ describe('codex proxy host', () => {
       host.unregister('session-bad-ids'); host.unregister('session-good-ids');
       await host.disposeCodexProxy();
       await new Promise<void>(resolve => wss.close(() => resolve()));
+      upstream.closeAllConnections();
+      await new Promise<void>(resolve => upstream.close(() => resolve()));
+    }
+  });
+
+  it('repairs null array fields in passthrough Responses SSE before Codex parses them (#4251)', async () => {
+    const host = await freshCodexProxyHost();
+    // Minimal reproduction from #4251: a third-party model behind the Responses passthrough
+    // serializes `reasoning.summary` / `message.content` as null, which Codex 0.153 rejects.
+    const upstreamEvents = [
+      { type: 'response.output_item.added', output_index: 0, item: { id: 'rs_1', type: 'reasoning', status: 'in_progress', summary: null } },
+      { type: 'response.output_item.added', output_index: 1, item: { id: 'msg_2', type: 'message', status: 'in_progress', role: 'assistant', content: null } },
+      { type: 'response.output_text.delta', item_id: 'msg_2', output_index: 1, content_index: 0, delta: '我查一下' },
+      { type: 'response.output_item.added', output_index: 2, item: { id: 'fc_3', type: 'function_call', status: 'in_progress', call_id: 'call_3', name: 'exec', arguments: '' } },
+      { type: 'response.function_call_arguments.done', item_id: 'fc_3', output_index: 2, arguments: JSON.stringify({ input: 'ls' }) },
+      { type: 'response.output_item.done', output_index: 2, item: { id: 'fc_3', type: 'function_call', status: 'completed', call_id: 'call_3', name: 'exec', arguments: JSON.stringify({ input: 'ls' }) } },
+      { type: 'response.completed', response: { id: 'resp_1', output: [
+        { id: 'rs_1', type: 'reasoning', summary: null },
+        { id: 'msg_2', type: 'message', role: 'assistant', content: null },
+      ], usage: { input_tokens: 1, output_tokens: 1 } } },
+    ];
+    const upstream = createServer(async (req, res) => {
+      for await (const chunk of req) void chunk;
+      res.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
+      for (const event of upstreamEvents) res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+      res.end();
+    });
+    await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve));
+    const upstreamUrl = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
+    const actual = await vi.importActual<typeof import('@cindy/anthropic-compat-proxy')>('@cindy/anthropic-compat-proxy');
+    mockState.createAnthropicCompatProxy.mockImplementation((opts: Parameters<typeof actual.createAnthropicCompatProxy>[0]) =>
+      actual.createAnthropicCompatProxy({
+        ...opts,
+        upstream: upstreamUrl,
+        resolveOutboundProxy: () => null,
+        routingTransform: async (body, ctx) => ({ ...(await opts.routingTransform?.(body, ctx)), upstreamOverride: upstreamUrl }),
+      }),
+    );
+    host.setCodexProxyAuthInjection('oauth-bearer');
+    try {
+      await host.ensureCodexProxyReady();
+      const proxyUrl = host.getCodexProxyEndpoint()!;
+      const post = (body: Record<string, unknown>) => new Promise<string>((resolve, reject) => {
+        const req = httpRequest(proxyUrl + '/v1/responses', { method: 'POST', headers: { 'content-type': 'application/json' } }, res => {
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk: Buffer) => chunks.push(chunk));
+          res.once('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+        });
+        req.once('error', reject);
+        req.end(JSON.stringify(body));
+      });
+      const parse = (raw: string) => raw.split('\n\n').filter(Boolean).map(frame =>
+        JSON.parse(frame.split('\n').find(line => line.startsWith('data: '))!.slice(6)) as {
+          type: string; item?: Record<string, unknown>; response?: { output: Array<Record<string, unknown>> };
+        });
+
+      // Plain passthrough: only the repair stage is active.
+      const plain = parse(await post({ model: 'gpt-6', stream: true, input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] }] }));
+      expect(plain.map(event => event.type)).toEqual(upstreamEvents.map(event => event.type));
+      expect(plain[0]?.item).toEqual({ id: 'rs_1', type: 'reasoning', status: 'in_progress', summary: [] });
+      expect(plain[1]?.item).toEqual({ id: 'msg_2', type: 'message', status: 'in_progress', role: 'assistant', content: [] });
+      expect(plain[3]?.item).toEqual(upstreamEvents[3]!.item); // function_call passes through untouched
+      expect(plain[6]?.response?.output).toEqual([
+        { id: 'rs_1', type: 'reasoning', summary: [] },
+        { id: 'msg_2', type: 'message', role: 'assistant', content: [] },
+      ]);
+
+      // Wiring: the proxy-level transformResponse only wraps plain SSE bodies. Chaining with the
+      // exec custom-tool adapter is covered by the responses-chat-bridge unit tests.
+      const proxyOpts = mockState.createAnthropicCompatProxy.mock.calls[0]![0] as {
+        transformResponse: (ctx: Record<string, unknown>) => unknown;
+      };
+      const responseCtx = (contentType: string) => ({
+        reqId: 999, method: 'POST', url: '/v1/responses', upstreamBase: upstreamUrl, status: 200,
+        requestHeaders: {}, responseHeaders: { 'content-type': contentType }, requestBody: Buffer.alloc(0),
+      });
+      expect(proxyOpts.transformResponse(responseCtx('application/json'))).toBeNull();
+      expect(proxyOpts.transformResponse(responseCtx('text/event-stream'))).toBeInstanceOf(Transform);
+    } finally {
+      await host.disposeCodexProxy();
       upstream.closeAllConnections();
       await new Promise<void>(resolve => upstream.close(() => resolve()));
     }
@@ -4098,7 +4203,9 @@ describe('codex proxy host', () => {
       reasoning: { effort: 'high', summary: 'auto' },
       tools: [
         { type: 'function', name: 'read_file' },
-        { type: 'web_search', filters: { allowed_domains: ['docs.x.ai'] }, enable_image_search: true },
+        // Namespace tools now survive through OpenCodex's reversible flattening.
+        { type: 'function', name: 'multi_agent_v1__close_agent' },
+        { type: 'web_search', filters: { allowed_domains: ['docs.x.ai'] }, enable_image_search: true, user_location: { type: 'approximate', country: 'US' } },
         // Codex 不知道 xAI 还有 x_search;由 host 恒定补在末尾,Grok 才有 X 的实时视野。
         { type: 'x_search' },
       ],
@@ -5549,6 +5656,7 @@ describe('codex proxy host', () => {
       tools: [
         { type: 'function', name: 'exec_command' },
         { type: 'function', name: 'write_stdin' },
+        { type: 'function', name: 'multi_agent_v1__close_agent' },
         { type: 'web_search' },
       ],
       tool_choice: 'auto',
@@ -5637,6 +5745,7 @@ describe('codex proxy host', () => {
       reasoning: { effort: 'high' },
       tools: [
         { type: 'function', name: 'exec_command' },
+        { type: 'function', name: 'mcp__example__read' },
         { type: 'web_search' },
       ],
       input: [
@@ -5733,7 +5842,7 @@ describe('codex proxy host', () => {
 
     expect(current).toEqual({
       model: 'doubao-seed-2-1-pro-260628',
-      tools: [{ type: 'function', name: 'exec_command' }],
+      tools: [{ type: 'function', name: 'exec_command' }, { type: 'function', name: 'mcp__example__read' }],
       input: 'hello',
     });
   });
@@ -6268,7 +6377,7 @@ describe('codex proxy host', () => {
     await host.ensureCodexProxyReady();
 
     const transforms = mockState.createAnthropicCompatProxy.mock.calls[0]?.[0]?.transformRequest ?? [];
-    expect(transforms).toHaveLength(22); // encrypted activeStrip, image generation activeStrip, provider-aware Guardian reviewer, locked Subagent route, instructions 注入, locked Subagent exec guard, Gateway 原生 web_search, 跨来源压缩块兼容, xAI ModelInput activeStrip, exec function adapter, strict gateway history 兼容, xAI ModelInput sanitize, DeepSeek V4 custom tool 兼容, xAI Responses 兼容, XD Gateway Grok 兼容, ByteDance Seed tool 兼容, MiniMax effort 兼容, provider model rewrite, 视觉桥(短路), 工具 ID 校正, stripNonAnthropicFields, dump
+    expect(transforms).toHaveLength(23); // encrypted activeStrip, image generation activeStrip, provider-aware Guardian reviewer, locked Subagent route, instructions 注入, locked Subagent exec guard, Gateway 原生 web_search, 跨来源压缩块兼容, xAI ModelInput activeStrip, exec function adapter, strict gateway history 兼容, xAI ModelInput sanitize, DeepSeek V4 custom tool 兼容, xAI Responses 兼容, XD Gateway Grok 兼容, ByteDance Seed tool 兼容, MiniMax effort 兼容, provider model rewrite, provider 参数归一, 视觉桥(短路), 工具 ID 校正, stripNonAnthropicFields, dump
     const ctx = {
       method: 'POST',
       url: '/v1/responses',
@@ -6336,6 +6445,9 @@ describe('codex proxy host', () => {
 
   it('records xAI rate-limit headers from Codex proxy upstream responses', async () => {
     const host = await freshCodexProxyHost();
+    const { setSessionProvider, clearSessionProvider } = await import('../session-provider-store.js');
+    host.registerComposed('session-rate-xai', 'thread-xai', 'PRODUCT_PROMPT');
+    setSessionProvider('session-rate-xai', 'xai');
     mockState.createAnthropicCompatProxy.mockResolvedValueOnce({
       url: 'http://127.0.0.1:43210',
       dispose: vi.fn(async () => undefined),
@@ -6351,6 +6463,7 @@ describe('codex proxy host', () => {
       upstreamBase: 'https://api.x.ai/v1',
       status: 200,
       requestHeaders: { 'thread-id': 'thread-xai' },
+      outboundHeaders: { authorization: 'Bearer fixture-xai-token' },
       responseHeaders: {
         'content-type': 'application/json',
         'x-ratelimit-limit-requests': '100',
@@ -6366,7 +6479,8 @@ describe('codex proxy host', () => {
       remainingRequests: 88,
       limitTokens: 1000000,
       remainingTokens: 900000,
-    });
+    }, 'xai');
+    clearSessionProvider('session-rate-xai');
   });
 
   it('observes streaming provider service_tier from response.completed SSE', async () => {

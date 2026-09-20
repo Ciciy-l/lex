@@ -220,6 +220,68 @@ describe('validateCustomProviderConfig (per-runtime)', () => {
     expect(result.ok).toBe(true);
   });
 
+  it.each(['anthropic-messages', 'openai-responses', 'openai-chat'] as const)(
+    'accepts the supported OMP proxy protocol %s',
+    (wireProtocol) => {
+      expect(
+        validateCustomProviderConfig({
+          ...valid,
+          runtimes: {
+            omp: {
+              baseUrl: 'https://omp.example.test/v1',
+              wireProtocol,
+              models: [{ id: 'm', name: 'M' }],
+            },
+          },
+        }),
+      ).toEqual({ ok: true });
+    },
+  );
+
+  it('rejects Google-native routes for OMP before they can reach its proxy', () => {
+    expect(
+      validateCustomProviderConfig({
+        ...valid,
+        runtimes: {
+          omp: {
+            baseUrl: 'https://omp.example.test/v1',
+            wireProtocol: 'google-generative-ai',
+            models: [{ id: 'm', name: 'M' }],
+          },
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      code: 'INVALID_PARAMS',
+      message: "runtime 'omp' wireProtocol invalid",
+    });
+    expect(
+      validateCustomProviderConfig({
+        ...valid,
+        runtimes: {
+          omp: {
+            baseUrl: 'https://omp.example.test/v1',
+            wireProtocol: 'anthropic-messages',
+            models: [
+              {
+                id: 'm',
+                name: 'M',
+                route: {
+                  baseUrl: 'https://omp.example.test/v1',
+                  wireProtocol: 'google-generative-ai',
+                },
+              },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      code: 'INVALID_PARAMS',
+      message: "runtime 'omp' model.route.wireProtocol invalid",
+    });
+  });
+
   it('rejects runtime with bad baseUrl / missing model fields', () => {
     expect(
       validateCustomProviderConfig({
@@ -714,6 +776,7 @@ describe('custom-provider-store CRUD (per-runtime)', () => {
             { id: 'a', name: 'A', contextWindow: 1_000_000 },
             { id: 'a', name: 'A dup' },
             { id: 'hidden', name: 'Hidden', defaultEnabled: false },
+            { id: 'checked', name: 'Checked', defaultEnabled: true },
           ],
           headers: { 'X-Org': 'acme' },
         },
@@ -723,6 +786,7 @@ describe('custom-provider-store CRUD (per-runtime)', () => {
     expect(got?.runtimes.codex?.models).toEqual([
       { id: 'a', name: 'A', contextWindow: 1_000_000 },
       { id: 'hidden', name: 'Hidden', defaultEnabled: false },
+      { id: 'checked', name: 'Checked', defaultEnabled: true },
     ]);
     expect(got?.runtimes.codex?.headers).toBeUndefined();
   });
@@ -1263,6 +1327,40 @@ describe('custom-provider-store CRUD (per-runtime)', () => {
     ).toEqual({ runtimes: storedRuntimes });
   });
 
+  it('drops unsupported legacy OMP Google protocol hints when reading', async () => {
+    mountDb();
+    raw!
+      .prepare(
+        `INSERT INTO custom_providers
+        (id, name, runtimes, auth, sort_order, created_at, updated_at)
+       VALUES (?, ?, ?, NULL, 0, 1, 1)`,
+      )
+      .run(
+        'legacy-omp-google',
+        'Legacy OMP Google',
+        JSON.stringify({
+          omp: {
+            baseUrl: 'https://omp.example.test/v1',
+            wireProtocol: 'google-generative-ai',
+            models: [
+              {
+                id: 'm',
+                name: 'M',
+                route: {
+                  baseUrl: 'https://omp.example.test/v1',
+                  wireProtocol: 'google-generative-ai',
+                },
+              },
+            ],
+          },
+        }),
+      );
+
+    const loaded = await getCustomProvider('legacy-omp-google');
+    expect(loaded?.runtimes.omp?.wireProtocol).toBeUndefined();
+    expect(loaded?.runtimes.omp?.models[0]?.route).toBeUndefined();
+  });
+
   it('round-trips a validated exact inference request path', async () => {
     mountDb();
     await createCustomProvider({
@@ -1342,19 +1440,19 @@ describe('custom-provider-store CRUD (per-runtime)', () => {
     ).toBe(false);
   });
 
-  it('rejects unsupported protocol/runtime combinations', () => {
+  it.each(['openai-chat', 'openai-responses', 'anthropic-messages'] as const)('accepts Claude portable protocol %s through its native or bridge path', wireProtocol => {
     expect(
       validateCustomProviderConfig({
         ...valid,
         runtimes: {
           'claude-code': {
             baseUrl: 'https://v.ai/chat',
-            wireProtocol: 'openai-chat',
+            wireProtocol,
             models: [{ id: 'm', name: 'M' }],
           },
         },
       }).ok,
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('update returns null when row absent', async () => {
@@ -1597,6 +1695,7 @@ describe('supplier metadata persistence', () => {
               contextWindow: 2000,
               supportsImageInput: false,
               discoveredMetadata: metadata,
+              discoveredCost: { input: 0.7, output: 1.4, cacheRead: 0 },
             },
           ],
         },
@@ -1610,6 +1709,7 @@ describe('supplier metadata persistence', () => {
       contextWindow: 2000,
       supportsImageInput: false,
       discoveredMetadata: metadata,
+              discoveredCost: { input: 0.7, output: 1.4, cacheRead: 0 },
     });
     const next = {
       ...saved!,
@@ -1632,5 +1732,25 @@ describe('supplier metadata persistence', () => {
       supportsImageInput: false,
       discoveredMetadata: { contextWindow: 3000 },
     });
+    await updateCustomProvider(valid.id, {
+      ...next, runtimes: { codex: { ...next.runtimes.codex, baseUrl: 'https://different.example/v1' } },
+    });
+    const moved = (await getCustomProvider(valid.id))?.runtimes.codex?.models[0];
+    expect(moved?.discoveredCost).toBeUndefined();
+    expect(moved?.contextWindow).toBe(2000);
+
   });
+});
+
+
+it('persists and reloads Google runtime/model routes without converting them to Chat', async () => {
+  mountDb();
+  const config: CustomProviderConfig = { id: 'google-roundtrip', name: 'Google', runtimes: {
+    pi: { baseUrl: 'https://generativelanguage.googleapis.com/v1beta', wireProtocol: 'google-generative-ai', models: [{
+      id: 'new-gemini', name: 'Gemini', api: 'google-generative-ai',
+      route: { baseUrl: 'https://generativelanguage.googleapis.com/v1beta', wireProtocol: 'google-generative-ai' },
+    }] },
+  } };
+  await createCustomProvider(config);
+  expect((await getCustomProvider(config.id))?.runtimes).toEqual(config.runtimes);
 });

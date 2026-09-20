@@ -226,6 +226,7 @@ const { buildPlainFile, sealPayload } = await import('../xdtshareCrypto.js');
 const OLD_SESSION_ID = 'old-session-id';
 const SID = 'aaaaaaaa-1111-2222-3333-444444444444';
 const PI_SID = 'pi-0123456789abcdef0123456789abcdef.jsonl';
+const OMP_SESSION_FILE = path.join(tmpRoot, 'omp-home', 'sessions', 'private-session.jsonl');
 const IMAGE_URL = `xdt-image://${OLD_SESSION_ID}/img-1.png`;
 
 /** 老包媒体入总仓后消息里的新地址 = 字节指纹(与 ingest mock 同算法)。 */
@@ -241,7 +242,7 @@ interface BundleOverrides {
   /** 覆盖 session.json snapshot 字段(导出方会话配置不进导入行的语义测试)。 */
   session?: Record<string, unknown>;
   omitTranscript?: boolean;
-  agentKind?: 'cc' | 'codex' | 'pi';
+  agentKind?: 'cc' | 'codex' | 'pi' | 'omp';
   /** 伪造 media-map 里 image entry 的 filename 字段(路径穿越攻击面测试)。 */
   imageFilenameOverride?: string;
   /** 额外加一条不同 old host 的图片 URL(fork 祖先链多 host 测试)。 */
@@ -252,15 +253,19 @@ interface BundleOverrides {
   looseAudio?: { bytes: Buffer };
   /** v1 旧包没有逐消息 agentKind。 */
   omitMessageAgentKind?: boolean;
-  /** 协同包:附带一个 Worker(cc 或 codex),manifest 升到 v2 + orca 段。 */
-  orcaWorker?: { agentKind: 'cc' | 'codex'; status?: 'idle' | 'running' | 'done' | 'error' };
+  /** 协同包:附带一个 Worker,manifest 升到 v2 + orca 段。 */
+  orcaWorker?: {
+    agentKind: 'cc' | 'codex' | 'pi' | 'omp';
+    status?: 'idle' | 'running' | 'done' | 'error';
+  };
 }
 
 const WORKER_SID = 'bbbbbbbb-1111-2222-3333-555555555555';
 
 async function buildBundle(overrides: BundleOverrides = {}): Promise<Buffer> {
   const agentKind = overrides.agentKind ?? 'cc';
-  const sdkSessionId = agentKind === 'pi' ? PI_SID : SID;
+  const sdkSessionId = agentKind === 'pi' ? PI_SID : agentKind === 'omp' ? null : SID;
+  const messageSdkSessionId = agentKind === 'omp' ? OMP_SESSION_FILE : sdkSessionId;
   const zip = new JSZip();
   const extraImageText = overrides.extraImage ? ` 祖先图 ${overrides.extraImage}` : '';
   const blobHash = overrides.blob
@@ -290,8 +295,14 @@ async function buildBundle(overrides: BundleOverrides = {}): Promise<Buffer> {
       role: 'assistant',
       content: '"ok"',
       toolUseId: null,
-      agentMeta: `{"sdkSessionId":"${sdkSessionId}"}`,
-      ...(overrides.omitMessageAgentKind ? {} : { agentKind: agentKind === 'pi' ? 'pi' : 'codex' }),
+      agentMeta: JSON.stringify(
+        agentKind === 'omp'
+          ? { sdkSessionId: messageSdkSessionId, nested: { sdkSessionId: messageSdkSessionId } }
+          : { sdkSessionId: messageSdkSessionId },
+      ),
+      ...(overrides.omitMessageAgentKind
+        ? {}
+        : { agentKind: agentKind === 'pi' || agentKind === 'omp' ? agentKind : 'codex' }),
       createdAt: 1700000000200,
       rewindAt: null,
     },
@@ -303,8 +314,10 @@ async function buildBundle(overrides: BundleOverrides = {}): Promise<Buffer> {
       ? `transcripts/claude/${SID}.jsonl`
       : agentKind === 'pi'
         ? `transcripts/pi/${PI_SID}`
-        : `transcripts/codex/rollout-x-${SID}.jsonl`;
-  if (!overrides.omitTranscript) zip.file(transcriptPath, '{"line":1}\n');
+        : agentKind === 'codex'
+          ? `transcripts/codex/rollout-x-${SID}.jsonl`
+          : null;
+  if (!overrides.omitTranscript && transcriptPath) zip.file(transcriptPath, '{"line":1}\n');
   if (agentKind === 'codex') {
     zip.file('codex-state/thread.json', JSON.stringify({ threads: [{ id: SID }], threadDynamicTools: [], threadSpawnEdges: [] }));
   }
@@ -354,7 +367,11 @@ async function buildBundle(overrides: BundleOverrides = {}): Promise<Buffer> {
     const workerTranscriptPath =
       workerAgent === 'cc'
         ? `orca/workers/0/transcripts/claude/${WORKER_SID}.jsonl`
-        : `orca/workers/0/transcripts/codex/rollout-w-${WORKER_SID}.jsonl`;
+        : workerAgent === 'pi'
+          ? `orca/workers/0/transcripts/pi/${PI_SID}`
+          : workerAgent === 'codex'
+            ? `orca/workers/0/transcripts/codex/rollout-w-${WORKER_SID}.jsonl`
+            : null;
     zip.file(
       'orca/workers/0/session.json',
       JSON.stringify({ title: 'Worker 快照', createdAt: 1700000001000, userSendAt: 1700000001100, totalTokenUsage: 42 }),
@@ -367,13 +384,16 @@ async function buildBundle(overrides: BundleOverrides = {}): Promise<Buffer> {
         role: 'user',
         content: JSON.stringify([{ type: 'text', text: `派活,同图 ${IMAGE_URL}` }]),
         toolUseId: null,
-        agentMeta: null,
+        agentMeta:
+          workerAgent === 'omp'
+            ? JSON.stringify({ nested: { sdkSessionId: OMP_SESSION_FILE } })
+            : null,
         agentKind: workerAgent,
         createdAt: 1700000001200,
         rewindAt: null,
       }),
     );
-    zip.file(workerTranscriptPath, '{"worker-line":1}\n');
+    if (workerTranscriptPath) zip.file(workerTranscriptPath, '{"worker-line":1}\n');
     if (workerAgent === 'codex') {
       zip.file(
         'orca/workers/0/codex-state/thread.json',
@@ -391,10 +411,12 @@ async function buildBundle(overrides: BundleOverrides = {}): Promise<Buffer> {
           label: 'dev-1',
           status: overrides.orcaWorker.status ?? 'running',
           focused: true,
-          sdkSessionIds: [WORKER_SID],
-          activeSdkSessionId: WORKER_SID,
+          sdkSessionIds: workerAgent === 'omp' ? [] : [WORKER_SID],
+          activeSdkSessionId: workerAgent === 'omp' ? null : WORKER_SID,
           counts: { messages: 1 },
-          transcripts: [{ sdkSessionId: WORKER_SID, path: workerTranscriptPath }],
+          transcripts: workerTranscriptPath
+            ? [{ sdkSessionId: workerAgent === 'pi' ? PI_SID : WORKER_SID, path: workerTranscriptPath }]
+            : [],
         },
       ],
     };
@@ -410,12 +432,20 @@ async function buildBundle(overrides: BundleOverrides = {}): Promise<Buffer> {
     title: '分享会话',
     workspaceKind: 'project',
     originalWorkingDir: '/old/machine/proj',
-    sdkSessionIds: [sdkSessionId],
-    activeSdkSessionId: sdkSessionId,
-    exportFidelity: overrides.omitTranscript ? 'db-only' : 'full',
+    sdkSessionIds: agentKind === 'omp' ? [] : [sdkSessionId],
+    activeSdkSessionId: agentKind === 'omp' ? null : sdkSessionId,
+    exportFidelity:
+      agentKind === 'omp' || overrides.omitTranscript
+        ? 'db-only'
+        : overrides.orcaWorker?.agentKind === 'omp'
+          ? 'partial'
+          : 'full',
     counts: { messages: 2, media: 2 },
     entries: [],
-    transcripts: [{ sdkSessionId, path: overrides.omitTranscript ? null : transcriptPath }],
+    transcripts:
+      agentKind === 'omp'
+        ? []
+        : [{ sdkSessionId, path: overrides.omitTranscript ? null : transcriptPath }],
     ...overrides.manifest,
   };
   zip.file('manifest.json', JSON.stringify(manifest));
@@ -1214,6 +1244,61 @@ describe('sessionShareImport', () => {
     expect(dbMock.queryCalls).toHaveLength(0);
   });
 
+  it('OMP bundle imports only DB history with the local dynamic model and no native resume path', async () => {
+    const filePath = await writeBundleFile(await buildBundle({ agentKind: 'omp' }));
+    const inspect = await inspectShareFile(filePath);
+    if (inspect.encrypted) return;
+    expect(inspect.preview.agentKind).toBe('omp');
+    expect(inspect.preview.fidelity).toBe('db-only');
+
+    const result = await commitShareImport({
+      draftId: inspect.draftId,
+      workingDir: newWorkdir,
+      sharedMediaRootOverride: sharedMediaRoot,
+      draftPrefs: {
+        model: 'connected-provider/omp-model',
+        providerId: 'connected-provider',
+        fastMode: true,
+      },
+    });
+
+    expect(result.fidelity).toBe('db-only');
+    expect(codexMock.importCalls).toHaveLength(0);
+    const txArgs = dbMock.txCalls[0].args as {
+      session: Record<string, unknown>;
+      messages: Array<{ agentMeta: string | null }>;
+    };
+    expect(txArgs.session).toMatchObject({
+      agentKind: 'omp',
+      model: 'connected-provider/omp-model',
+      providerId: 'connected-provider',
+      sdkSessionId: null,
+      fastMode: false,
+    });
+    const meta = JSON.parse(txArgs.messages[1].agentMeta ?? '{}') as Record<string, unknown>;
+    expect(meta.sdkSessionId).toBeUndefined();
+    expect((meta.nested as Record<string, unknown>).sdkSessionId).toBeUndefined();
+    expect(txArgs.messages[1].agentMeta).not.toContain(OMP_SESSION_FILE);
+    expect(dbMock.queryCalls).toHaveLength(0);
+  });
+
+  it('OMP bundle rejects an empty local model before any database write', async () => {
+    const filePath = await writeBundleFile(await buildBundle({ agentKind: 'omp' }));
+    const inspect = await inspectShareFile(filePath);
+    if (inspect.encrypted) return;
+
+    await expect(
+      commitShareImport({
+        draftId: inspect.draftId,
+        workingDir: newWorkdir,
+        draftPrefs: { model: '   ' },
+      }),
+    ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+
+    expect(dbMock.txCalls).toHaveLength(0);
+    expect(codexMock.importCalls).toHaveLength(0);
+  });
+
   it('pi transcript write is rolled back when the DB transaction fails', async () => {
     dbMock.txError = new Error('disk full');
     const filePath = await writeBundleFile(await buildBundle({ agentKind: 'pi' }));
@@ -1411,7 +1496,7 @@ describe('sessionShareImport', () => {
       workers: Array<{
         record: Record<string, unknown>;
         session: Record<string, unknown>;
-        messages: Array<{ content: string }>;
+        messages: Array<{ content: string; agentMeta?: string | null }>;
       }>;
     };
   }
@@ -1472,6 +1557,59 @@ describe('sessionShareImport', () => {
     // Worker 消息同样过媒体 URL 重写(共享同一张图,重写到同一 blob 地址)
     expect(worker.messages[0].content).toContain(blobUrlOf(IMG1_BYTES));
     expect(worker.messages[0].content).not.toContain('xdt-image://');
+  });
+
+  it('orca bundle: OMP lead and OMP Worker share the local dynamic model without native resume data', async () => {
+    const filePath = await writeBundleFile(
+      await buildBundle({ agentKind: 'omp', orcaWorker: { agentKind: 'omp' } }),
+    );
+    const inspect = await inspectShareFile(filePath);
+    if (inspect.encrypted) return;
+
+    const result = await commitShareImport({
+      draftId: inspect.draftId,
+      workingDir: newWorkdir,
+      sharedMediaRootOverride: sharedMediaRoot,
+      draftPrefs: { model: 'connected-provider/omp-team-model', fastMode: true },
+    });
+
+    expect(result.fidelity).toBe('db-only');
+    expect(codexMock.importCalls).toHaveLength(0);
+    const txArgs = dbMock.txCalls[0].args as OrcaTxArgs;
+    const worker = txArgs.orca!.workers[0];
+    expect(txArgs.session).toMatchObject({
+      agentKind: 'omp',
+      model: 'connected-provider/omp-team-model',
+      sdkSessionId: null,
+      fastMode: false,
+    });
+    expect(worker.session).toMatchObject({
+      agentKind: 'omp',
+      model: 'connected-provider/omp-team-model',
+      sdkSessionId: null,
+      fastMode: false,
+      permissionMode: 'auto',
+    });
+    const workerMeta = JSON.parse(worker.messages[0].agentMeta ?? '{}') as Record<string, unknown>;
+    expect((workerMeta.nested as Record<string, unknown>).sdkSessionId).toBeUndefined();
+  });
+
+  it('orca bundle rejects an OMP Worker below a different-engine lead before any database write', async () => {
+    const filePath = await writeBundleFile(
+      await buildBundle({ orcaWorker: { agentKind: 'omp' } }),
+    );
+    const inspect = await inspectShareFile(filePath);
+    if (inspect.encrypted) return;
+
+    await expect(
+      commitShareImport({
+        draftId: inspect.draftId,
+        workingDir: newWorkdir,
+        draftPrefs: { model: 'lead-model' },
+      }),
+    ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+
+    expect(dbMock.txCalls).toHaveLength(0);
   });
 
   it('orca bundle: worker resume id conflict → SHARE_CONFLICT; overwrite soft-deletes it', async () => {

@@ -84,6 +84,12 @@ describe('search_chat_history tool', () => {
     expect(args.fromMs).toBeNull();
   });
 
+  it('passes an OMP agent filter to the shared history query', async () => {
+    const { registry, searchChatHistory } = setup(makeResult());
+    await registry.call('search_chat_history', { query: 'OMP conversation', agent_kind: 'omp' });
+    expect(searchChatHistory).toHaveBeenCalledWith(expect.objectContaining({ agentKind: 'omp' }));
+  });
+
   it('非法 from ISO → INVALID_ARGS, 不调 host', async () => {
     const { registry, searchChatHistory } = setup(makeResult());
     const res = await registry.call('search_chat_history', { query: 'x', from: 'not-a-date' });

@@ -358,7 +358,7 @@ export class SchedulerScriptCapabilityBroker implements ScriptCapabilityBroker {
         if (!service) fail('HOST_NOT_READY', 'session dispatch service is not ready');
         const schedule = context.schedule;
         const explicitProviderId = schedule.providerId?.trim() || null;
-        const dynamicDefaultRoute = !schedule.model?.trim() && schedule.agentKind === 'pi'
+        const dynamicDefaultRoute = !schedule.model?.trim() && !defaultModelFor(schedule.agentKind)
           ? await this.deps.resolveDefaultModelRoute?.(
               schedule.agentKind,
               explicitProviderId,
@@ -367,7 +367,12 @@ export class SchedulerScriptCapabilityBroker implements ScriptCapabilityBroker {
         const model = schedule.model?.trim()
           || dynamicDefaultRoute?.model
           || defaultModelFor(schedule.agentKind);
-        if (!model) fail('PRECONDITION_FAILED', 'Pi has no connected model source');
+        if (!model) {
+          fail(
+            'PRECONDITION_FAILED',
+            `No connected model source for ${schedule.agentKind}`,
+          );
+        }
         const result = await service.sendToSession({
           targetSessionId:
             typeof params.target_session_id === 'string' && params.target_session_id.trim()

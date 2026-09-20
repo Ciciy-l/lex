@@ -183,3 +183,49 @@ export async function scanRemotePiSkills(input: {
   for (const skill of sources) deduped.set(`${skill.scope}\0${skill.path}`, skill);
   return { skills: [...deduped.values()].sort((a, b) => a.name.localeCompare(b.name)) };
 }
+
+/**
+ * Remote counterpart of OMP's local Skill scanner. OMP treats the shared
+ * ~/.agents/skills root as user-scoped, then recognizes five project layouts
+ * while walking from the remote working directory up to the nearest Git
+ * boundary. Every operation goes through RemoteAgentFileOps; no Desktop fs
+ * path is ever consulted for an SSH session.
+ */
+export async function scanRemoteOmpSkills(input: {
+  fileOps: RemoteAgentFileOps;
+  workingDir?: string;
+}): Promise<ListAgentSkillsResult> {
+  const sources: AgentSkillCommand[] = await scanSkillDirectories({
+    fileOps: input.fileOps,
+    root: '$HOME/.agents/skills',
+    scope: 'user',
+    runtimeCommandPrefix: 'skill:',
+  });
+  if (input.workingDir && path.posix.isAbsolute(input.workingDir)) {
+    let current = path.posix.resolve(input.workingDir);
+    const layouts: ReadonlyArray<readonly string[]> = [
+      ['.omp', 'skills'],
+      ['.agents', 'skills'],
+      ['.claude', 'skills'],
+      ['.codex', 'skills'],
+      ['.github', 'skills'],
+    ];
+    while (true) {
+      for (const layout of layouts) {
+        sources.push(...await scanSkillDirectories({
+          fileOps: input.fileOps,
+          root: path.posix.join(current, ...layout),
+          scope: 'repo',
+          runtimeCommandPrefix: 'skill:',
+        }));
+      }
+      if (await input.fileOps.stat(path.posix.join(current, '.git'))) break;
+      const parent = path.posix.dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+  }
+  const deduped = new Map<string, AgentSkillCommand>();
+  for (const skill of sources) deduped.set(skill.scope + '\0' + skill.path, skill);
+  return { skills: [...deduped.values()].sort((a, b) => a.name.localeCompare(b.name)) };
+}

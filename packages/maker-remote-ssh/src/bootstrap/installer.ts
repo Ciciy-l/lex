@@ -18,6 +18,7 @@
 import type { RemoteHost } from '../RemoteHost.js';
 import claudeLatest from '../../../../tools/claude/latest.json';
 import codexLatest from '../../../../tools/codex/latest.json';
+import ompLatest from '../../../../tools/omp/latest.json';
 import piLatest from '../../../../tools/pi/latest.json';
 import {
   BOOTSTRAP_SH,
@@ -29,10 +30,12 @@ import {
 
 export { REMOTE_SERVER_SCHEMA_VERSION };
 
-export type RemoteAgentKind = 'claude-code' | 'codex' | 'pi';
+/** SSH remote hosts are POSIX; OMP uses a pinned native asset. */
+export type RemoteAgentKind = 'claude-code' | 'codex' | 'pi' | 'omp';
 
 export const PINNED_CLAUDE_CODE_VERSION = claudeLatest.version;
 export const PINNED_CODEX_RELEASE_VERSION = codexLatest.version;
+export const PINNED_OMP_VERSION = ompLatest.version;
 export const PINNED_PI_VERSION = piLatest.version;
 
 export interface ProbeResult {
@@ -75,6 +78,207 @@ export type InstallProgressEvent =
 // 5-minute cap is generous but bounded.
 const INSTALL_TIMEOUT_MS = 5 * 60_000;
 const PROBE_TIMEOUT_MS = 15_000;
+
+// ── OMP 专用安装（固定 native release asset，不经 Node/npm）───────────────────
+//
+// OMP 的远端运行时和本地 opt-in runtime 使用同一份 tools/omp/latest.json pin。
+// SSH host 只支持 Darwin/Linux，因此只传四个 POSIX asset；Windows asset 不会被
+// 误带进远端安装路径。
+
+const OMP_PROBE_SH = `#!/usr/bin/env bash
+set -u
+SERVER_VER="\${1:-}"
+OMP_VERSION="\${2:-}"
+URL_DARWIN_ARM64="\${3:-}"
+SHA_DARWIN_ARM64="\${4:-}"
+SIZE_DARWIN_ARM64="\${5:-}"
+URL_DARWIN_X64="\${6:-}"
+SHA_DARWIN_X64="\${7:-}"
+SIZE_DARWIN_X64="\${8:-}"
+URL_LINUX_ARM64="\${9:-}"
+SHA_LINUX_ARM64="\${10:-}"
+SIZE_LINUX_ARM64="\${11:-}"
+URL_LINUX_X64="\${12:-}"
+SHA_LINUX_X64="\${13:-}"
+SIZE_LINUX_X64="\${14:-}"
+INSTALL_DIR="$HOME/.xdt-server/$SERVER_VER"
+BIN_PATH="$INSTALL_DIR/omp/omp"
+printf 'INSTALL_DIR %s\\n' "$INSTALL_DIR"
+case "$(uname -s)" in
+  Darwin) OS_TAG="darwin" ;;
+  Linux)  OS_TAG="linux" ;;
+  *)      printf 'NOT_INSTALLED\\n'; exit 0 ;;
+esac
+case "$(uname -m)" in
+  arm64|aarch64) ARCH_TAG="arm64" ;;
+  x86_64|amd64)  ARCH_TAG="x64" ;;
+  *)             printf 'NOT_INSTALLED\\n'; exit 0 ;;
+esac
+case "$OS_TAG-$ARCH_TAG" in
+  darwin-arm64) URL="$URL_DARWIN_ARM64"; SHA="$SHA_DARWIN_ARM64"; SIZE="$SIZE_DARWIN_ARM64" ;;
+  darwin-x64)   URL="$URL_DARWIN_X64"; SHA="$SHA_DARWIN_X64"; SIZE="$SIZE_DARWIN_X64" ;;
+  linux-arm64)  URL="$URL_LINUX_ARM64"; SHA="$SHA_LINUX_ARM64"; SIZE="$SIZE_LINUX_ARM64" ;;
+  linux-x64)    URL="$URL_LINUX_X64"; SHA="$SHA_LINUX_X64"; SIZE="$SIZE_LINUX_X64" ;;
+  *)            printf 'NOT_INSTALLED\\n'; exit 0 ;;
+esac
+case "$SHA" in *[!0-9a-f]*|'') printf 'ERROR invalid pinned sha256\\n'; exit 6 ;; esac
+[ "\${#SHA}" -eq 64 ] || { printf 'ERROR invalid pinned sha256\\n'; exit 6; }
+case "$SIZE" in *[!0-9]*|'') printf 'ERROR invalid pinned size\\n'; exit 6 ;; esac
+[ "$SIZE" -ge 1024 ] || { printf 'ERROR invalid pinned size\\n'; exit 6; }
+EXPECTED_URL="https://github.com/can1357/oh-my-pi/releases/download/v$OMP_VERSION/omp-$OS_TAG-$ARCH_TAG"
+[ "$URL" = "$EXPECTED_URL" ] || { printf 'ERROR invalid pinned asset url\\n'; exit 6; }
+verify_pinned_file() {
+  F="$1"
+  [ -f "$F" ] || return 1
+  [ "$(wc -c < "$F" | tr -d '[:space:]')" = "$SIZE" ] || return 1
+  if command -v sha256sum >/dev/null 2>&1; then
+    ACTUAL_SHA="$(sha256sum "$F" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    ACTUAL_SHA="$(shasum -a 256 "$F" | awk '{print $1}')"
+  elif command -v openssl >/dev/null 2>&1; then
+    ACTUAL_SHA="$(openssl dgst -sha256 "$F" | awk '{print $NF}')"
+  else
+    return 1
+  fi
+  [ "$ACTUAL_SHA" = "$SHA" ]
+}
+if [ -x "$BIN_PATH" ] && verify_pinned_file "$BIN_PATH"; then
+  V="$("$BIN_PATH" --version 2>/dev/null | head -1 || true)"
+  if [ "$V" = "omp/$OMP_VERSION" ]; then
+    printf 'READY %s\\n' "$V"
+    exit 0
+  fi
+fi
+printf 'NOT_INSTALLED\\n'
+exit 0
+`;
+
+const OMP_INSTALL_SH = `#!/usr/bin/env bash
+set -u
+SERVER_VER="\${1:-}"
+OMP_VERSION="\${2:-}"
+URL_DARWIN_ARM64="\${3:-}"
+SHA_DARWIN_ARM64="\${4:-}"
+SIZE_DARWIN_ARM64="\${5:-}"
+URL_DARWIN_X64="\${6:-}"
+SHA_DARWIN_X64="\${7:-}"
+SIZE_DARWIN_X64="\${8:-}"
+URL_LINUX_ARM64="\${9:-}"
+SHA_LINUX_ARM64="\${10:-}"
+SIZE_LINUX_ARM64="\${11:-}"
+URL_LINUX_X64="\${12:-}"
+SHA_LINUX_X64="\${13:-}"
+SIZE_LINUX_X64="\${14:-}"
+INSTALL_DIR="$HOME/.xdt-server/$SERVER_VER"
+BIN_PATH="$INSTALL_DIR/omp/omp"
+printf 'INSTALL_DIR %s\\n' "$INSTALL_DIR"
+
+case "$(uname -s)" in
+  Darwin) OS_TAG="darwin" ;;
+  Linux)  OS_TAG="linux" ;;
+  *)      printf 'ERROR unsupported OS: %s\\n' "$(uname -s)"; exit 6 ;;
+esac
+case "$(uname -m)" in
+  arm64|aarch64) ARCH_TAG="arm64" ;;
+  x86_64|amd64)  ARCH_TAG="x64" ;;
+  *)             printf 'ERROR unsupported arch: %s\\n' "$(uname -m)"; exit 6 ;;
+esac
+case "$OS_TAG-$ARCH_TAG" in
+  darwin-arm64) URL="$URL_DARWIN_ARM64"; SHA="$SHA_DARWIN_ARM64"; SIZE="$SIZE_DARWIN_ARM64" ;;
+  darwin-x64)   URL="$URL_DARWIN_X64"; SHA="$SHA_DARWIN_X64"; SIZE="$SIZE_DARWIN_X64" ;;
+  linux-arm64)  URL="$URL_LINUX_ARM64"; SHA="$SHA_LINUX_ARM64"; SIZE="$SIZE_LINUX_ARM64" ;;
+  linux-x64)    URL="$URL_LINUX_X64"; SHA="$SHA_LINUX_X64"; SIZE="$SIZE_LINUX_X64" ;;
+  *)            printf 'ERROR no asset for %s-%s\\n' "$OS_TAG" "$ARCH_TAG"; exit 6 ;;
+esac
+
+case "$SHA" in *[!0-9a-f]*|'') printf 'ERROR invalid pinned sha256\\n'; exit 6 ;; esac
+[ "\${#SHA}" -eq 64 ] || { printf 'ERROR invalid pinned sha256\\n'; exit 6; }
+case "$SIZE" in *[!0-9]*|'') printf 'ERROR invalid pinned size\\n'; exit 6 ;; esac
+[ "$SIZE" -ge 1024 ] || { printf 'ERROR invalid pinned size\\n'; exit 6; }
+EXPECTED_URL="https://github.com/can1357/oh-my-pi/releases/download/v$OMP_VERSION/omp-$OS_TAG-$ARCH_TAG"
+[ "$URL" = "$EXPECTED_URL" ] || { printf 'ERROR invalid pinned asset url\\n'; exit 6; }
+
+verify_pinned_file() {
+  F="$1"
+  [ -f "$F" ] || return 1
+  [ "$(wc -c < "$F" | tr -d '[:space:]')" = "$SIZE" ] || return 1
+  if command -v sha256sum >/dev/null 2>&1; then
+    ACTUAL_SHA="$(sha256sum "$F" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    ACTUAL_SHA="$(shasum -a 256 "$F" | awk '{print $1}')"
+  elif command -v openssl >/dev/null 2>&1; then
+    ACTUAL_SHA="$(openssl dgst -sha256 "$F" | awk '{print $NF}')"
+  else
+    return 1
+  fi
+  [ "$ACTUAL_SHA" = "$SHA" ]
+}
+
+# A matching version is diagnostic only. Reuse requires the current platform
+# asset's exact pinned byte identity as well.
+if [ -x "$BIN_PATH" ] && verify_pinned_file "$BIN_PATH"; then
+  V="$("$BIN_PATH" --version 2>/dev/null | head -1 || true)"
+  if [ "$V" = "omp/$OMP_VERSION" ]; then
+    printf 'READY %s\\n' "$V"
+    exit 0
+  fi
+fi
+
+printf 'INSTALL_START omp\\n'
+TMP="$INSTALL_DIR/.omp-download-$$"
+cleanup_tmp() { rm -rf "$TMP"; }
+mkdir -p "$TMP" || { printf 'ERROR cannot create install directory\\n'; exit 7; }
+if command -v curl >/dev/null 2>&1; then
+  curl -fsSL -o "$TMP/omp" "$URL" || { printf 'ERROR download failed\\n'; cleanup_tmp; exit 7; }
+elif command -v wget >/dev/null 2>&1; then
+  wget -q -O "$TMP/omp" "$URL" || { printf 'ERROR download failed\\n'; cleanup_tmp; exit 7; }
+else
+  printf 'ERROR neither curl nor wget found\\n'; cleanup_tmp; exit 7
+fi
+
+verify_pinned_file "$TMP/omp" || { printf 'ERROR downloaded runtime does not match pin\\n'; cleanup_tmp; exit 7; }
+printf 'INSTALL_LOG sha256 and size verified\\n'
+chmod 700 "$TMP/omp" || { printf 'ERROR chmod failed\\n'; cleanup_tmp; exit 7; }
+V="$("$TMP/omp" --version 2>/dev/null | head -1 || true)"
+[ "$V" = "omp/$OMP_VERSION" ] || { printf 'ERROR runtime version mismatch\\n'; cleanup_tmp; exit 7; }
+
+# Promote as a directory swap. The old runtime remains available until the
+# new verified one is in place; a failed rename rolls the old directory back.
+mkdir -p "$TMP/runtime" || { printf 'ERROR staging failed\\n'; cleanup_tmp; exit 7; }
+mv "$TMP/omp" "$TMP/runtime/omp" || { printf 'ERROR staging failed\\n'; cleanup_tmp; exit 7; }
+mkdir -p "$INSTALL_DIR" || { printf 'ERROR cannot create install directory\\n'; cleanup_tmp; exit 7; }
+OLD="$INSTALL_DIR/omp.old-$$"
+if [ -e "$INSTALL_DIR/omp" ]; then
+  mv "$INSTALL_DIR/omp" "$OLD" || { printf 'ERROR backup failed\\n'; cleanup_tmp; exit 7; }
+fi
+if ! mv "$TMP/runtime" "$INSTALL_DIR/omp"; then
+  printf 'ERROR promote failed\\n'
+  [ -e "$OLD" ] && mv "$OLD" "$INSTALL_DIR/omp" || true
+  cleanup_tmp
+  exit 7
+fi
+if ! verify_pinned_file "$BIN_PATH"; then
+  printf 'ERROR promoted runtime does not match pin\\n'
+  rm -rf "$INSTALL_DIR/omp"
+  [ -e "$OLD" ] && mv "$OLD" "$INSTALL_DIR/omp" || true
+  cleanup_tmp
+  exit 7
+fi
+V="$("$BIN_PATH" --version 2>/dev/null | head -1 || true)"
+if [ "$V" != "omp/$OMP_VERSION" ]; then
+  printf 'ERROR promoted runtime version mismatch\\n'
+  rm -rf "$INSTALL_DIR/omp"
+  [ -e "$OLD" ] && mv "$OLD" "$INSTALL_DIR/omp" || true
+  cleanup_tmp
+  exit 7
+fi
+rm -rf "$OLD"
+cleanup_tmp
+: > "$INSTALL_DIR/.installed-omp"
+printf 'INSTALL_DONE\\n'
+printf 'READY %s\\n' "$V"
+exit 0
+`;
 
 // ── pi 专用安装(CDN/GitHub release tar.gz 整包,不经 bundled Node/npm)─────────
 //
@@ -187,6 +391,7 @@ export async function probeRemoteAgent(
   agentKind: RemoteAgentKind,
 ): Promise<ProbeResult> {
   if (agentKind === 'pi') return probeRemotePi(host);
+  if (agentKind === 'omp') return probeRemoteOmp(host);
   const probeScript = String.raw`#!/usr/bin/env bash
 set -u
 AGENT_KIND="${'$'}{1:-}"
@@ -262,6 +467,7 @@ export async function installRemoteAgent(
   onEvent: (event: InstallProgressEvent) => void = () => {},
 ): Promise<InstallResult> {
   if (agentKind === 'pi') return installRemotePi(host, onEvent);
+  if (agentKind === 'omp') return installRemoteOmp(host, onEvent);
   const state = blankState(agentKind);
   onEvent({ kind: 'probe' });
 
@@ -305,7 +511,13 @@ export async function uninstallRemoteAgent(
 ): Promise<void> {
   // 拼远端命令前把 agentKind 收窄回字面量白名单;"$HOME/..." 需远端展开,
   // 不能整体单引号(CodeQL js/shell-command-constructed-from-input)。
-  const kind: RemoteAgentKind = agentKind === 'codex' ? 'codex' : agentKind === 'pi' ? 'pi' : 'claude-code';
+  const kind: RemoteAgentKind = agentKind === 'codex'
+    ? 'codex'
+    : agentKind === 'pi'
+      ? 'pi'
+      : agentKind === 'omp'
+        ? 'omp'
+        : 'claude-code';
   // pi 是整包目录分发(非 npm/standalone),卸载 = 删整个 pi/ 目录 + sentinel。
   // 连带删 pi-manager 目录 + pi-oneshot(one-shot 测试目录)。
   // 旧 host 的 pi-daemon 目录(python daemon 时代残留, 含旧 env-file 凭证)也
@@ -390,6 +602,14 @@ export async function uninstallRemoteAgent(
     );
     return;
   }
+  if (agentKind === 'omp') {
+    const installDir = `"$HOME/.xdt-server/${REMOTE_SERVER_SCHEMA_VERSION}"`;
+    await host.exec(
+      `rm -rf ${installDir}/omp ${installDir}/omp-agent-home && rm -f ${installDir}/.installed-omp`,
+      { timeoutMs: 10_000, label: 'uninstall-omp' },
+    );
+    return;
+  }
   await host.exec(
     `rm -f "$HOME/.xdt-server/${REMOTE_SERVER_SCHEMA_VERSION}/.installed-${kind}"`,
     { timeoutMs: 10_000, label: 'uninstall' },
@@ -452,6 +672,103 @@ async function installRemotePi(
   const ready = result.exitCode === 0 && state.installed;
   if (!ready && !state.error) {
     state.error = result.stderr.trim() || `install exited ${result.exitCode}`;
+    onEvent({ kind: 'error', message: state.error });
+  }
+  return { ...state, ready };
+}
+
+const OMP_POSIX_ASSET_KEYS = [
+  'darwin-arm64',
+  'darwin-x64',
+  'linux-arm64',
+  'linux-x64',
+] as const;
+
+type OmpPosixAssetKey = (typeof OMP_POSIX_ASSET_KEYS)[number];
+
+interface OmpRuntimeAssetPin {
+  readonly url: string;
+  readonly sha256: string;
+  readonly size: number;
+}
+
+/**
+ * Read the local audited pin once and reject a malformed repository entry
+ * before any remote command is assembled. The shell repeats the URL/size/SHA
+ * checks so a malformed argument cannot weaken an already-connected host.
+ */
+function ompRuntimeAsset(key: OmpPosixAssetKey): OmpRuntimeAssetPin {
+  const asset = (ompLatest as {
+    runtimeAssets?: Record<string, Partial<OmpRuntimeAssetPin>>;
+  }).runtimeAssets?.[key];
+  const url = asset?.url;
+  const sha256 = asset?.sha256;
+  const size = asset?.size;
+  const expectedUrl = 'https://github.com/can1357/oh-my-pi/releases/download/v'
+    + PINNED_OMP_VERSION + '/omp-' + key;
+  if (
+    url !== expectedUrl ||
+    typeof sha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/u.test(sha256) ||
+    typeof size !== 'number' ||
+    !Number.isSafeInteger(size) ||
+    size < 1024
+  ) {
+    throw new Error('tools/omp/latest.json has an invalid pinned remote runtime asset for ' + key);
+  }
+  return { url, sha256, size };
+}
+
+async function probeRemoteOmp(host: RemoteHost): Promise<ProbeResult> {
+  const state = blankState('omp');
+  const assetArguments = OMP_POSIX_ASSET_KEYS.flatMap((key) => {
+    const asset = ompRuntimeAsset(key);
+    return [asset.url, asset.sha256, String(asset.size)];
+  });
+  const args = [REMOTE_SERVER_SCHEMA_VERSION, PINNED_OMP_VERSION, ...assetArguments]
+    .map(shellQuoteArg)
+    .join(' ');
+  const result = await host.exec('bash -l -s -- ' + args, {
+    input: OMP_PROBE_SH,
+    timeoutMs: PROBE_TIMEOUT_MS,
+  });
+  for (const line of result.stdout.split(/\r?\n/)) {
+    if (!line) continue;
+    parseProbeLine(line, state, 'omp');
+  }
+  if (result.exitCode !== 0 && !state.error) {
+    state.error = result.stderr.trim() || 'probe exited ' + result.exitCode;
+  }
+  return state;
+}
+
+async function installRemoteOmp(
+  host: RemoteHost,
+  onEvent: (event: InstallProgressEvent) => void = () => {},
+): Promise<InstallResult> {
+  const state = blankState('omp');
+  onEvent({ kind: 'probe' });
+  const assetArguments = OMP_POSIX_ASSET_KEYS.flatMap((key) => {
+    const asset = ompRuntimeAsset(key);
+    return [asset.url, asset.sha256, String(asset.size)];
+  });
+  const args = [
+    REMOTE_SERVER_SCHEMA_VERSION,
+    PINNED_OMP_VERSION,
+    ...assetArguments,
+  ].map(shellQuoteArg).join(' ');
+  const result = await host.exec('bash -l -s -- ' + args, {
+    input: OMP_INSTALL_SH,
+    timeoutMs: INSTALL_TIMEOUT_MS,
+  });
+  for (const line of result.stdout.split(/\r?\n/)) {
+    if (!line) continue;
+    const event = parseInstallLine(line, state, 'omp');
+    if (event) onEvent(event);
+  }
+  const ready = result.exitCode === 0 && state.installed;
+  if (!ready && !state.error) {
+    state.error = result.stderr.trim() || 'install exited ' + result.exitCode;
     onEvent({ kind: 'error', message: state.error });
   }
   return { ...state, ready };
@@ -599,6 +916,7 @@ function shellQuoteArg(s: string): string {
 function binaryName(kind: RemoteAgentKind): string {
   if (kind === 'codex') return 'codex';
   if (kind === 'pi') return 'pi';
+  if (kind === 'omp') return 'omp';
   return 'claude';
 }
 
@@ -617,6 +935,9 @@ function binaryPathFor(kind: RemoteAgentKind, installDir: string): string {
   }
   if (kind === 'pi') {
     return `${installDir}/pi/pi`;
+  }
+  if (kind === 'omp') {
+    return `${installDir}/omp/omp`;
   }
   return `${installDir}/node_modules/.bin/${binaryName(kind)}`;
 }

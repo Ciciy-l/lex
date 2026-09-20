@@ -1324,8 +1324,8 @@
     },
     {
       "id": "engine-badge-omp",
-      "light": "#2dd4bf",
-      "dark": "#2dd4bf"
+      "light": "#9e54d9",
+      "dark": "#9e54d9"
     },
     {
       "id": "perm-item-selected-bg",

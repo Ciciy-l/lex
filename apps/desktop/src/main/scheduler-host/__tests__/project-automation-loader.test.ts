@@ -122,6 +122,7 @@ describe('project automation explicit Harness reconciliation', () => {
   it.each([
     { override: {}, valid: true },
     { override: { modelAgentKind: 'pi', model: 'test-model' }, valid: true },
+    { override: { modelAgentKind: 'omp', model: 'test-model' }, valid: true },
     { override: { modelAgentKind: 'invalid', model: 'test-model' }, valid: false },
     { override: { modelAgentKind: 'pi' }, valid: false },
   ])('loads version 1 project files with compatible Harness validation: %j', async ({ override, valid }) => {

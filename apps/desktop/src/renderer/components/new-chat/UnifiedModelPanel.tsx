@@ -29,6 +29,7 @@ import { UnifiedFlyoutHost } from './UnifiedFlyoutHost';
 import { UnifiedModelRail } from './UnifiedModelRail';
 import { useUnifiedRowActions } from './useUnifiedRowActions';
 import { UnifiedModelRow } from './UnifiedModelRow';
+import { ModelSourceUsageProvider } from './ModelSourceDetails';
 import {
   anchorKey,
   favoriteMatchesSelection,
@@ -897,7 +898,7 @@ export function UnifiedModelPanel({
       if (price?.kind === 'free') return { kind: 'free' };
       if (price?.kind !== 'priced') return null;
       // 符号个数按**标准价**判(original;折扣不改变模型的价格档),点亮几格按折扣比例
-      // 取整;颜色只由点亮格数决定(见 UnifiedModelRow priceDisplay 头注)。
+      // 取整；费用统一使用中性色。
       const basis = price.original ?? price.current;
       const discountPct = price.discount !== undefined ? Math.round(price.discount * 100) : 0;
       return {
@@ -951,7 +952,7 @@ export function UnifiedModelPanel({
     [widthSizerActive, entries, favorites, effectiveEngineOf, providerOrder],
   );
 
-  return (
+  const panelContent = (
     <div
       className="flex min-h-0 min-w-0 shrink"
       style={{ height: `${listMaxHeight ?? 428}px` }}
@@ -1076,6 +1077,9 @@ export function UnifiedModelPanel({
                       entry={row.entry}
                       anchor={row.anchor}
                       config={config}
+                      {...(effectiveRail.kind === 'all' || effectiveRail.kind === 'favorites'
+                        ? { sourceLabel: providerLabel(row.entry.providerId) }
+                        : {})}
                       selected={isSelectedRow(row.anchor, row.entry)}
                       active={sameAnchor(flyAnchor, row.anchor)}
                       isFavoriteRow={!!row.favorite}
@@ -1146,6 +1150,7 @@ export function UnifiedModelPanel({
                       entry={row.entry}
                       anchor={row.anchor}
                       config={config}
+                      sourceLabel={providerLabel(row.entry.providerId)}
                       selected={false}
                       active={false}
                       isFavoriteRow={!!row.favorite}
@@ -1231,5 +1236,10 @@ export function UnifiedModelPanel({
         </UnifiedFlyoutHost>
       )}
     </div>
+  );
+  return (
+    <ModelSourceUsageProvider providers={providers} enabled={localProviderUsage}>
+      {panelContent}
+    </ModelSourceUsageProvider>
   );
 }

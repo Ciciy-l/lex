@@ -537,6 +537,13 @@ describe('RemoteHost remote forwarding — exactRemotePort (固定端口)', () =
       }),
     ).rejects.toThrow(/remote port forwarding failed/);
     expect(client.forwardInCalls).toEqual([{ addr: '127.0.0.1', port: 45000 }]);
+    // A failed first arm has no lease. It must not remain as a zero-ref wish
+    // and silently become a listener after the next reconnect.
+    expect(host.listRemoteForwards()).toEqual([]);
+    const reconnectClient = new FakeClient();
+    (host as unknown as { client: unknown }).client = reconnectClient;
+    await (host as unknown as { rearmForwards(): Promise<void> }).rearmForwards();
+    expect(reconnectClient.forwardInCalls).toEqual([]);
   });
 
   it('rejects exactRemotePort without preferredRemotePort at the entrance', async () => {
@@ -546,6 +553,99 @@ describe('RemoteHost remote forwarding — exactRemotePort (固定端口)', () =
       host.ensureRemoteForward({ localHost: '127.0.0.1', localPort: 7890, exactRemotePort: true }),
     ).rejects.toThrow(/exactRemotePort requires preferredRemotePort/);
     expect(client.forwardInCalls).toHaveLength(0);
+  });
+
+  it('keeps fixed ports distinct when OMP and Pi share the controller endpoint', async () => {
+    const client = new FakeClient();
+    const host = makeReadyHost(client);
+    const omp = await host.ensureRemoteForward({
+      localHost: '127.0.0.1',
+      localPort: 48765,
+      preferredRemotePort: 48001,
+      exactRemotePort: true,
+    });
+    const pi = await host.ensureRemoteForward({
+      localHost: '127.0.0.1',
+      localPort: 48765,
+      preferredRemotePort: 47989,
+      exactRemotePort: true,
+    });
+
+    expect(omp.remotePort).toBe(48001);
+    expect(pi.remotePort).toBe(47989);
+    expect(client.forwardInCalls.map((call) => call.port)).toEqual([48001, 47989]);
+
+    // Lease accounting remains independent even though the local target is shared.
+    await omp.close();
+    expect(host.listRemoteForwards()).toMatchObject([{ remotePort: 47989, armed: true }]);
+    await pi.close();
+    expect(host.listRemoteForwards()).toEqual([]);
+  });
+
+  it('does not unbind an existing exact listener when a second target loses that port', async () => {
+    const boundPorts = new Set<number>();
+    const client = new FakeClient((port) => {
+      if (boundPorts.has(port)) return false;
+      boundPorts.add(port);
+      return true;
+    });
+    const host = makeReadyHost(client);
+    const first = await host.ensureRemoteForward({
+      localHost: '127.0.0.1',
+      localPort: 48765,
+      preferredRemotePort: 48001,
+      exactRemotePort: true,
+    });
+
+    await expect(host.ensureRemoteForward({
+      localHost: '127.0.0.1',
+      localPort: 48766,
+      preferredRemotePort: 48001,
+      exactRemotePort: true,
+    })).rejects.toThrow(/remote port forwarding failed/);
+
+    expect(client.unforwardInCalls).toEqual([]);
+    expect(host.listRemoteForwards()).toMatchObject([
+      { localPort: 48765, remotePort: 48001, armed: true },
+    ]);
+    await first.close();
+  });
+
+  it('does not unbind the successful lease when an offline competing lease loses on re-arm', async () => {
+    const boundPorts = new Set<number>();
+    const client = new FakeClient((port) => {
+      if (boundPorts.has(port)) return false;
+      boundPorts.add(port);
+      return true;
+    });
+    const host = new RemoteHost(HOST_CONFIG, { logger: noopLogger });
+    const first = await host.ensureRemoteForward({
+      localHost: '127.0.0.1',
+      localPort: 48765,
+      preferredRemotePort: 48001,
+      exactRemotePort: true,
+    });
+    const second = await host.ensureRemoteForward({
+      localHost: '127.0.0.1',
+      localPort: 48766,
+      preferredRemotePort: 48001,
+      exactRemotePort: true,
+    });
+
+    (host as unknown as { status: string }).status = 'ready';
+    (host as unknown as { client: unknown }).client = client;
+    await (host as unknown as { rearmForwards(): Promise<void> }).rearmForwards();
+    expect(host.listRemoteForwards()).toMatchObject([
+      { localPort: 48765, remotePort: 48001, armed: true },
+      { localPort: 48766, remotePort: 48001, armed: false },
+    ]);
+
+    await second.close();
+    expect(client.unforwardInCalls).toEqual([]);
+    expect(host.listRemoteForwards()).toMatchObject([
+      { localPort: 48765, remotePort: 48001, armed: true },
+    ]);
+    await first.close();
   });
 
   it('exact mode seeds the fixed port even when the record previously drifted (PR #992 copilot)', async () => {

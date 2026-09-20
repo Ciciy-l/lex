@@ -33,6 +33,7 @@ import {
   removeManagedHost,
   updateManagedHostFields,
   installRemoteAgent,
+  PINNED_OMP_VERSION,
   PINNED_PI_VERSION,
   probeRemoteAgent,
   uninstallRemoteAgent,
@@ -124,7 +125,11 @@ import {
   removeRemoteMcpForwardPref,
 } from './codex-remote-mcp.js';
 import { ensureDaemonRunning } from '../maker-host/cc-manager-client.js';
-import { getMakerIfReady, softCloseCcSessionsForHost } from '../maker-host/index.js';
+import {
+  getMakerIfReady,
+  runManagedRemoteOmpQuickTest,
+  softCloseCcSessionsForHost,
+} from '../maker-host/index.js';
 import { withRehydrateCloseSuppressed } from '../maker-host/rehydrateCloseSuppression.js';
 import { RemoteHostHydrationQueue } from './hydration-queue.js';
 
@@ -242,7 +247,7 @@ export interface CcMgrUpgradeAvailablePushPayload {
   agent: 'cc' | 'pi';
 }
 
-const VALID_AGENT_KINDS: ReadonlyArray<RemoteAgentKind> = ['claude-code', 'codex', 'pi'];
+const VALID_AGENT_KINDS: ReadonlyArray<RemoteAgentKind> = ['claude-code', 'codex', 'pi', 'omp'];
 
 let pool: ConnectionPool | null = null;
 let initPromise: Promise<void> | null = null;
@@ -370,20 +375,23 @@ export async function ensureRemoteHostReady(id: string): Promise<void> {
  * 消息发送前都跑 ~80ms 的 SSH stat。卸载/重装不通过这里走的话会 stale,但
  * 重装路径(InstallRemoteAgentPanel)结束时会刷新 hosts list, 那条路径不依赖
  * 本 cache, 用户不会卡。
- * 版本维度:pi 记录 probe 时的 installedVersion —— pin 变化(客户端升级)后
- * 旧版本不得命中 cache, 必须穿透重新 probe 触发升级(R5 配置审计 H-6)。
+ * 版本维度:Pi 与 OMP 记录 probe 时的 installedVersion —— pin 变化(客户端升级)后
+ * 旧版本不得命中 cache, 必须穿透重新 probe 触发升级。
  */
 const remoteAgentInstalledCache = new Map<
   string,
   Map<RemoteAgentKind, { installedVersion: string | null }>
 >();
 
-/** cache 命中判定:pi 额外要求版本与 pin 一致(v 前缀两种写法都认)。 */
+/** Cache hits for pinned native runtimes require the exact current version. */
 function isAgentCacheHit(
   cached: Map<RemoteAgentKind, { installedVersion: string | null }> | undefined,
   agentKind: RemoteAgentKind,
 ): boolean {
   if (!cached || !cached.has(agentKind)) return false;
+  if (agentKind === 'omp') {
+    return cached.get(agentKind)?.installedVersion === `omp/${PINNED_OMP_VERSION}`;
+  }
   if (agentKind !== 'pi') return true;
   const v = cached.get(agentKind)?.installedVersion ?? null;
   return v !== null && (v === PINNED_PI_VERSION || v === `v${PINNED_PI_VERSION}`);
@@ -394,9 +402,9 @@ function isAgentCacheHit(
  * 把"binary not installed"这类问题从 daemon 启动失败的 stack trace 转成 renderer
  * 能正确 toast 的 SSH_AGENT_NOT_INSTALLED IPC error, 引导用户去 Settings 安装。
  *
- * Claude Code 首次检查走完整 probeRemoteAgent,确保 Cindy 管理的远端 runtime
- * 与当前 pin 一致；否则客户端升级后旧 binary 会永久命中 `test -x`。Codex 仍
- * 只做存在性检查。两者命中内存 cache 后续都是 ~0ms。
+ * Claude Code、Pi 与 OMP 首次检查走完整 probeRemoteAgent；其中 Pi 与 OMP
+ * 还要求与当前固定 pin 一致。Codex 仍只做存在性检查。命中内存 cache 后续
+ * 都是 ~0ms。
  */
 export async function ensureRemoteAgentInstalled(
   hostId: string,
@@ -413,9 +421,10 @@ export async function ensureRemoteAgentInstalled(
 
   let ok: boolean;
   let installedVersion: string | null = null;
-  if (agentKind === 'claude-code' || agentKind === 'pi') {
+  if (agentKind === 'claude-code' || agentKind === 'pi' || agentKind === 'omp') {
     const probe = await probeRemoteAgent(host, agentKind);
-    ok = probe.installed;
+    ok = probe.installed
+      && (agentKind !== 'omp' || probe.installedVersion === `omp/${PINNED_OMP_VERSION}`);
     installedVersion = probe.installedVersion;
   } else {
     const binPath = '$HOME/.xdt-server/v1/codex-home/packages/standalone/current/codex';
@@ -426,7 +435,13 @@ export async function ensureRemoteAgentInstalled(
     ok = result.stdout.trim() === 'OK';
   }
   if (!ok) {
-    const friendlyKind = agentKind === 'codex' ? 'Codex' : agentKind === 'pi' ? 'Pi' : 'Claude Code';
+    const friendlyKind = agentKind === 'codex'
+      ? 'Codex'
+      : agentKind === 'pi'
+        ? 'Pi'
+        : agentKind === 'omp'
+          ? 'OMP'
+          : 'Claude Code';
     throwIpcError(
       'SSH_AGENT_NOT_INSTALLED',
       `远端 ${hostId} 还没安装 ${friendlyKind}。请到 设置 → 远端机器 → 展开 ${hostId} → ${friendlyKind} 那行点"安装"。`,
@@ -1580,6 +1595,39 @@ export function registerRemoteSshIpc(): void {
     const prompt = requireString(obj.prompt, 'prompt');
     const host = requireConnectedHost(id);
 
+    // OMP has the same Quick Test entry as the other engines, but it cannot
+    // use their generic shell one-shot. Its provider/session bridge exists
+    // only inside a managed OMP runtime, so create one nonpersistent managed
+    // session with an empty host-tool roster instead.
+    if (agentKind === 'omp') {
+      const probe = await probeRemoteAgent(host, 'omp');
+      if (
+        !probe.installed
+        || !probe.binaryPath
+        || probe.installedVersion !== `omp/${PINNED_OMP_VERSION}`
+      ) {
+        throwIpcError(
+          'SSH_AGENT_NOT_INSTALLED',
+          `OMP ${PINNED_OMP_VERSION} is not installed on ${id}; click Install first`,
+        );
+      }
+      try {
+        const result = await runManagedRemoteOmpQuickTest({
+          hostId: id,
+          prompt,
+        });
+        return { result };
+      } catch {
+        // The managed helper may observe runtime/provider diagnostics that are
+        // useful locally but must not be reflected into Settings (where they
+        // could reveal a remote path or provider detail).
+        throwIpcError(
+          'SSH_EXEC_FAILED',
+          'OMP remote quick test failed. Check the OMP installation and connected model provider, then retry.',
+        );
+      }
+    }
+
     // Verify agent is installed first so we can give a precise error.
     const probe = await probeRemoteAgent(host, agentKind);
     if (!probe.installed || !probe.binaryPath) {
@@ -2040,6 +2088,14 @@ export function registerRemoteSshIpc(): void {
   log.info('remote-ssh IPC registered', { home: os.homedir() });
 }
 
+/** Validate an existing Worker directory using the host filesystem, not local fs. */
+export async function probeRemoteWorkingDirectory(hostId: string, inputPath: string): Promise<string> {
+  await ensureRemoteHostReady(hostId);
+  const result = await statRemotePath(requireConnectedHost(hostId), inputPath);
+  if (result.kind !== 'dir') throw new Error('Remote working directory is unavailable');
+  return result.resolvedPath;
+}
+
 /**
  * stat-remote-path — POSIX-bash-driven stat that also expands a leading `~`
  * or `~/...` to `$HOME` safely (no `eval`, no command injection).
@@ -2060,6 +2116,7 @@ async function statRemotePath(
   host: RemoteHost,
   inputPath: string,
 ): Promise<{ kind: 'dir' | 'file' | 'missing'; resolvedPath: string }> {
+  if (/[\r\n\0]/.test(inputPath)) throw new Error('Remote path contains unsupported control characters');
   // 归一化为绝对路径:
   // - 存在的目录 → cd && pwd -P (展开 symlink 与相对路径,与 daemon cwd 契约一致)
   // - 存在的文件 → parent cd && pwd -P + basename
@@ -2072,28 +2129,38 @@ case "$1" in
   '~'|'~/'*) p="$HOME${'$'}{1:1}" ;;
   *)         p="$1" ;;
 esac
+case "$p" in
+  *$'\\r'*|*$'\\n'*) exit 64 ;;
+esac
 abs_for() {
   local target="$1"
   if [ -d "$target" ]; then
-    (cd "$target" && pwd -P)
+    (cd -P -- "$target" && printf '%s' "$PWD")
   else
     local parent base
     parent="$(dirname -- "$target")"
     base="$(basename -- "$target")"
     if [ -d "$parent" ]; then
-      printf '%s/%s' "$(cd "$parent" && pwd -P)" "$base"
+      (cd -P -- "$parent" && printf '%s/%s' "$PWD" "$base")
     else
       printf '%s' "$target"
     fi
   fi
 }
 if [ -d "$p" ]; then
-  printf 'dir %s\\n' "$(abs_for "$p")"
+  kind=dir
 elif [ -e "$p" ]; then
-  printf 'file %s\\n' "$(abs_for "$p")"
+  kind=file
 else
-  printf 'missing %s\\n' "$(abs_for "$p")"
+  kind=missing
 fi
+# Preserve trailing newlines until validation, including symlink targets.
+resolved="$(abs_for "$p" && printf '.')" || exit 64
+resolved="${'$'}{resolved%.}"
+case "$resolved" in
+  *$'\\r'*|*$'\\n'*) exit 64 ;;
+esac
+printf '%s %s\\n' "$kind" "$resolved"
 `;
   const result = await host.exec(
     `bash -c ${shellQuoteSh(script)} _ ${shellQuoteSh(inputPath)}`,
@@ -2102,7 +2169,9 @@ fi
   if (result.exitCode !== 0) {
     throw new Error(`bash exit=${result.exitCode}: ${result.stderr.trim().slice(0, 200) || '(no stderr)'}`);
   }
-  const line = result.stdout.trim().split(/\r?\n/).pop() ?? '';
+  // Shell startup can print banners before the final protocol line. Remove
+  // only its terminator: trailing spaces belong to the path, not the framing.
+  const line = result.stdout.replace(/\r?\n$/, '').split(/\r?\n/).pop() ?? '';
   // Allow spaces in the resolved path — only split on the first space.
   const spaceIdx = line.indexOf(' ');
   if (spaceIdx < 0) {
@@ -2378,22 +2447,22 @@ function oneShotCommand(
     script = `
       while IFS= read -r LINE; do
         [ -z "$LINE" ] && break
-        # 轮 42 P2(codex-connector):export "$LINE" 赋值时不递归展开 \$HOME,
-        # 值为 \$HOME/... 的 env(如 PI_CODING_AGENT_DIR)会以字面 \$HOME 传给
-        # 远端 agent(找不到 models.json → Unknown provider)。对 \$HOME/ 前缀
-        # 显式展开为 \$HOME/... (只改前缀, 无 eval, 注入安全)。
-        # 注意: pattern 用纯 POSIX glob(*=\$HOME/*), **禁用 extglob**(?(...)
+        # 轮 42 P2(codex-connector):export "$LINE" 赋值时不递归展开 $HOME,
+        # 值为 $HOME/... 的 env(如 PI_CODING_AGENT_DIR)会以字面 $HOME 传给
+        # 远端 agent(找不到 models.json → Unknown provider)。对 $HOME/ 前缀
+        # 显式展开为 $HOME/... (只改前缀, 无 eval, 注入安全)。
+        # 注意: pattern 用纯 POSIX glob(*=$HOME/*), **禁用 extglob**(?(...)
         # 在 Bash 默认 extglob=off 时是语法错误, 会让整个 wrapper 失败)。
-        # 注意2(轮 42 P2 fresh evidence):pattern/参数展开里的 \$HOME 必须转义成
-        # 字面 \$ —— 不转义时 bash 会把 pattern 里的 \$HOME 先展开成 /home/user,
-        # 匹配不到 env 值里的字面 \$HOME 前缀(KEY 取整行, models.json 仍找不到)。
-        # KEY/value 里的 \$KEY / \$HOME 保持展开(前者取变量名, 后者取实际 home)。
+        # 注意2(轮 42 P2 fresh evidence):pattern/参数展开里的 $HOME 必须转义成
+        # 字面 $ —— 不转义时 bash 会把 pattern 里的 $HOME 先展开成 /home/user,
+        # 匹配不到 env 值里的字面 $HOME 前缀(KEY 取整行, models.json 仍找不到)。
+        # KEY/value 里的 $KEY / $HOME 保持展开(前者取变量名, 后者取实际 home)。
         # 转义层级:JS 模板里反斜杠+左花括号输出参数展开标记, 反斜杠+反斜杠+美元符
         # 输出字面美元符(bash 不展开)。
         case "$LINE" in
           *=\\$HOME/*)
             KEY="\${LINE%%=\\$HOME/*}"
-            export "\$KEY"="$HOME/\${LINE#*=\\$HOME/}"
+            export "$KEY"="$HOME/\${LINE#*=\\$HOME/}"
             ;;
           *) export "$LINE" ;;
         esac

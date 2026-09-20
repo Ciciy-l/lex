@@ -145,7 +145,9 @@ export function localizeRemoteSessionListItem(
     ? 'Codex'
     : item.session.agentKind === 'pi'
       ? 'Pi'
-      : 'Claude Code';
+      : item.session.agentKind === 'omp'
+        ? 'OMP'
+        : 'Claude Code';
   const localizedItems = item.automationGroup?.items.map((member) => localizeRemoteSessionListItem(member, now));
   const localizedChildren = localizedItems?.map((member) => ({
     sessionId: member.session.id,

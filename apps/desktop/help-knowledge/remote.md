@@ -10,7 +10,7 @@ Settings > **Remote & device control** has two parts: **SSH remote workspaces** 
 
 - **Add a host** with the **+** button: give it an alias, hostname (IP or domain), user, port (default 22), and an auth method (SSH agent or a key file). Hosts from your `~/.ssh/config` also show up automatically; you can re-read that file at any time.
 - Once a host connects (status dot turns green), expand it to:
-  - **Install the agents** (Claude Code / Codex) on the remote machine, and run a quick test prompt against them.
+  - **Install the agents** (Claude Code, Codex, Pi, or OMP) on the remote machine, and run a quick test prompt against them. OMP's test uses its normal managed runtime and provider bridge inside a fresh private directory; it does not run a bare shell command or use remote project/global-Skill discovery.
   - **Start a remote session** — enter a working directory on the remote (defaults to `~`); the app creates the directory if needed and opens a normal session whose agent runs **on the remote machine** with that remote working directory. It appears in your sidebar like any other session.
 - The agent-facing SSH tools (via the `cindy-ssh` plugin) reuse these **same** configured hosts — if a tool reports the host isn't found, add it here first.
 

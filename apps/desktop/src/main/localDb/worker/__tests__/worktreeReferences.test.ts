@@ -25,7 +25,7 @@ describe('machine-local task reference reader', () => {
   }
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'cindy-task-reference-test-'));
-    currentPath = path.join(root, 'cindy-current.db');
+    currentPath = path.join(root, 'lex-current.db');
     fs.writeFileSync(currentPath, 'test fixture placeholder');
     current = { transaction: <T>(callback: () => T) => callback, prepare: (sql: string) => ({ all: () => sql === 'PRAGMA database_list'
       ? [{ name: 'main', file: currentPath }]
@@ -40,8 +40,9 @@ describe('machine-local task reference reader', () => {
   const read = () => readLocalWorktreeReferences(current, ReadOnlyDatabase as unknown as DatabaseConstructor, 'test-native-binding');
 
   it('aggregates current and other local databases through read-only handles without changing owners', () => {
+    fs.writeFileSync(path.join(root, 'lex-other.db'), '');
+    fs.writeFileSync(path.join(root, 'xdt-maker-legacy.db'), '');
     fs.writeFileSync(path.join(root, 'cindy-other.db'), '');
-    fs.writeFileSync(path.join(root, 'xdt-legacy.db'), '');
     fs.writeFileSync(path.join(root, 'unrelated.db'), '');
     const rows = read();
     expect(rows.filter((row) => row.currentDatabase)).toHaveLength(1);
@@ -57,7 +58,7 @@ describe('machine-local task reference reader', () => {
     }
   });
   it('does not return a partial view when another database cannot be queried', () => {
-    fs.writeFileSync(path.join(root, 'cindy-other.db'), '');
+    fs.writeFileSync(path.join(root, 'lex-other.db'), '');
     otherQuery.mockImplementation(() => { throw new Error('locked database'); });
     expect(read).toThrow('locked database');
     expect(closed).toHaveBeenCalledTimes(1);
@@ -68,16 +69,16 @@ describe('machine-local task reference reader', () => {
     expect(read).toThrow('profile database catalog');
   });
   it('rejects a source created during the scan', () => {
-    fs.writeFileSync(path.join(root, 'cindy-other.db'), '');
+    fs.writeFileSync(path.join(root, 'lex-other.db'), '');
     otherQuery.mockImplementation((sql: string) => {
       if (sql === 'PRAGMA table_info(sessions)') return schemaRows();
-      fs.writeFileSync(path.join(root, 'cindy-new.db'), '');
+      fs.writeFileSync(path.join(root, 'lex-new.db'), '');
       return [];
     });
     expect(read).toThrow('catalog changed');
   });
   it('rejects a directory masquerading as a database', () => {
-    fs.mkdirSync(path.join(root, 'cindy-other.db'));
+    fs.mkdirSync(path.join(root, 'lex-other.db'));
     expect(read).toThrow('regular file');
   });
 });
@@ -93,7 +94,7 @@ describe('historical task reference schemas (isolated SQLite)', () => {
   ];
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'cindy-legacy-reference-db-'));
-    current = new Database(path.join(root, 'cindy-current.db'));
+    current = new Database(path.join(root, 'lex-current.db'));
     current.exec([initialSchema, ...additions].join(';'));
   });
   afterEach(() => {
@@ -104,7 +105,7 @@ describe('historical task reference schemas (isolated SQLite)', () => {
   it('reads pre-0005, pre-0007 and pre-0038 databases without changing them or dropping terminal references', () => {
     const before = new Map<string, Buffer>();
     for (let count = 0; count < additions.length; count += 1) {
-      const file = path.join(root, `xdt-legacy-${count}.db`);
+      const file = path.join(root, `xdt-maker-legacy-${count}.db`);
       const legacy = new Database(file);
       try {
         legacy.exec([initialSchema, ...additions.slice(0, count)].join(';'));
@@ -139,7 +140,7 @@ describe('historical task reference schemas (isolated SQLite)', () => {
     `${initialSchema};${additions[0]};${additions[2]}`,
     'CREATE TABLE unrelated (id TEXT)',
   ])('rejects incomplete or unrecognized schemas instead of ignoring that database: %s', (sql) => {
-    const file = path.join(root, 'cindy-unknown.db');
+    const file = path.join(root, 'lex-unknown.db');
     const legacy = new Database(file);
     try { legacy.exec(sql); } finally { legacy.close(); }
     expect(() => readLocalWorktreeReferences(current, Database)).toThrow('unsupported task reference schema');

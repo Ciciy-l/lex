@@ -5,6 +5,7 @@
  * 最小化插件面板恢复入口(按需) / 搜索。
  *   - 新建 / 自动任务:项目(cc-agent)视图的动作 —— 在任意视图点击都跳回项目视图并执行。
  *   - Plugins:主视图切换(navigateToView),命中当前视图时高亮。
+ *   - 伙伴:原位切换为「返回任务」动作,随目标更换文案和图标,不显示选中高亮。
  *   - 搜索(SidebarInlineSearch):静息态与其余行同款「🔍 搜索」;hover / 聚焦
  *     就地展开成搜索框,结果由下方功能槽(CCAgentSidebarUpper)替换列表绘制。搜索状态经
  *     ConversationSearchProvider 的 context 共享(行在此、结果在功能槽,两者是兄弟子树)。
@@ -21,7 +22,7 @@
 
 import { useCallback } from 'react';
 import { ArrowLeft, Bot, CirclePlus, Plug, Timer } from 'lucide-react';
-import { useNavigate, useMatch } from 'react-router-dom';
+import { useLocation, useNavigate, useMatch } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
 import { cn } from '@/lib/utils';
@@ -31,6 +32,7 @@ import { GhostPanelRestoreEntry } from '@/cindy-brain/GhostPanelRestoreEntry';
 import { useActiveMainView } from '@/hooks/useActiveMainView';
 import { useExperimentalFlag } from '@/hooks/useExperimentalFeatures';
 import { SidebarInlineSearch } from '@/features/cc-agent/sidebar/SidebarInlineSearch';
+import { SidebarIconButton } from './SidebarIconButton';
 import { useConversationSearchContext } from '@/features/cc-agent/sidebar/conversationSearchContext';
 import { GhostMainViewNavEntries } from './GhostMainViewNavEntries';
 
@@ -53,7 +55,7 @@ const ROW_ACTIVE_CLASS =
  *   - 'scrollable':渲染其余行(自动任务 / 插件 / 按需恢复入口 / 搜索),由 cc-agent
  *     的侧栏滚动容器在列表最上方绘制。
  */
-export type SidebarTopNavSection = 'all' | 'pinned' | 'scrollable';
+export type SidebarTopNavSection = 'all' | 'pinned' | 'scrollable' | 'rail';
 
 export function SidebarTopNav({
   section = 'all',
@@ -62,6 +64,7 @@ export function SidebarTopNav({
 } = {}): React.ReactElement {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const { activeKey, navigateToView } = useActiveMainView();
   const { enabled: teammatesEnabled } = useExperimentalFlag('teammates');
   const onScheduleMatch = useMatch('/cc-agent/scheduled');
@@ -83,8 +86,8 @@ export function SidebarTopNav({
   // 用户在 plugins / 设置等视图输入搜索时,先切回 cc-agent 视图,结果才有处显示(同视图为 no-op)。
   const ensureConversationView = useCallback(() => navigateToView('cc-agent'), [navigateToView]);
 
-  const showPinned = section !== 'scrollable';
-  const showScrollable = section !== 'pinned';
+  const showPinned = section !== 'scrollable' && section !== 'rail';
+  const showScrollable = section !== 'pinned' && section !== 'rail';
   const pinSearch = section === 'scrollable' && search.query.trim().length > 0;
   const automationsRow = showScrollable ? (
     <button
@@ -129,29 +132,45 @@ export function SidebarTopNav({
       {hasGhostUnread && <AttentionDot size={6} className="ml-auto mr-0.5" />}
     </button>
   ) : null;
-  // 伙伴默认不占用主导航；但人在伙伴页时，始终保留同位置的返回动作，确保旧深链、
-  // 已有伙伴任务和刚关闭实验开关的用户都能明确回到此前的任务视图。
-  const botsRow =
-    showScrollable && (teammatesEnabled || activeKey === 'bots') ? (
-      <button
-        onClick={() => navigateToView(activeKey === 'bots' ? 'cc-agent' : 'bots')}
-        className={cn(ROW_CLASS, activeKey === 'bots' && ROW_ACTIVE_CLASS)}
-        aria-label={activeKey === 'bots' ? t('bots.backToTasks') : t('sidebar.tabs.bots')}
-      >
-        {activeKey === 'bots' ? (
-          <ArrowLeft
-            size={15}
-            strokeWidth={1.8}
-            className="shrink-0 text-sidebar-item-active-foreground"
-          />
-        ) : (
-          <Bot size={15} strokeWidth={1.8} className="shrink-0 text-[var(--sidebar-nav-text)]" />
-        )}
-        <span className="leading-none">
-          {activeKey === 'bots' ? t('bots.backToTasks') : t('sidebar.tabs.bots')}
-        </span>
-      </button>
-    ) : null;
+  // `activeKey` is intentionally sticky for the other navigation rows, but this
+  // action must describe the actual destination. Settings and other auxiliary
+  // routes should continue to offer entry to Teammates, not a stale return.
+  const isBotsView = location.pathname === '/bots' || location.pathname.startsWith('/bots/');
+  const botsActionLabel = t(isBotsView ? 'bots.backToTasks' : 'sidebar.tabs.bots');
+  const BotsActionIcon = isBotsView ? ArrowLeft : Bot;
+  // Lex keeps teammate management experimental by default. Deep links and an
+  // already-open workspace still expose the return action, so disabling the flag
+  // never strands an existing teammate task.
+  const showBotsAction = teammatesEnabled || isBotsView;
+  const botsRow = showScrollable && showBotsAction ? (
+    <button
+      onClick={() => navigateToView(isBotsView ? 'cc-agent' : 'bots')}
+      className={ROW_CLASS}
+      aria-label={botsActionLabel}
+    >
+      <BotsActionIcon
+        size={15}
+        strokeWidth={1.8}
+        className="shrink-0 text-[var(--sidebar-nav-text)]"
+      />
+      <span className="leading-none">{botsActionLabel}</span>
+    </button>
+  ) : null;
+  if (section === 'rail') {
+    // The bots feature owns the rail tile while its route is active. Reuse
+    // that tile for the return action instead of rendering a duplicate here.
+    if (!teammatesEnabled || isBotsView) return <></>;
+    return (
+      <div className="flex shrink-0 justify-center px-2 pt-2 pb-1">
+        <SidebarIconButton
+          icon={BotsActionIcon}
+          label={botsActionLabel}
+          variant="rail"
+          onClick={() => navigateToView(isBotsView ? 'cc-agent' : 'bots')}
+        />
+      </div>
+    );
+  }
   const mainViewRows = showScrollable ? <GhostMainViewNavEntries variant="row" /> : null;
   const restoreRow = showScrollable ? (
     <GhostPanelRestoreEntry variant="row" className={ROW_CLASS} />

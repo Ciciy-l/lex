@@ -65,11 +65,11 @@ vi.mock('../omp-process-containment.js', () => ({
   } : null),
 }));
 
-vi.mock('../pi-proxy-session-token.js', () => ({
+vi.mock('../omp-proxy-session-token.js', () => ({
   deriveOmpProxySessionToken: (sessionId: string) => `omp-tok-${sessionId}`,
 }));
 
-import { buildOmpAgent } from '../omp-host';
+import { buildOmpAgent, type BuildOmpAgentOpts } from '../omp-host';
 
 function createStorage(): SessionStorage {
   const rows = new Map<string, SessionMeta>();
@@ -112,8 +112,32 @@ function createLogger(): AgentDeps['logger'] {
 }
 
 /** 与 maker-host/index.ts 完全同形的注册逻辑:非 null 才注册。 */
-function registerAgents(): string[] {
-  const ompAgent = buildOmpAgent({ logger: createLogger() });
+function remoteOnlyRuntimeHooks(): Pick<
+  BuildOmpAgentOpts,
+  | 'resolveRemoteOmpRuntime'
+  | 'getRemoteOmpTransport'
+  | 'getRemoteOmpFileOps'
+  | 'getRemoteAgentFileOps'
+  | 'openRemoteOmpProviderForward'
+> {
+  return {
+    resolveRemoteOmpRuntime: async () => ({
+      binaryPath: '/remote/.xdt-server/v1/omp/omp',
+      agentHome: '/remote/.xdt-server/v1/omp-agent-home',
+      userHome: '/remote',
+    }),
+    getRemoteOmpTransport: () => ({}) as never,
+    getRemoteOmpFileOps: () => ({}) as never,
+    getRemoteAgentFileOps: () => ({}) as never,
+    openRemoteOmpProviderForward: async () => ({
+      baseUrl: 'http://127.0.0.1:48001',
+      release: async () => undefined,
+    }),
+  };
+}
+
+function registerAgents(opts: Omit<BuildOmpAgentOpts, 'logger'> = {}): string[] {
+  const ompAgent = buildOmpAgent({ logger: createLogger(), ...opts });
   const maker = new Maker({
     agents: ompAgent === null ? {} : { omp: ompAgent },
     storage: createStorage(),
@@ -136,6 +160,26 @@ describe('OMP registration gate', () => {
     const available = registerAgents();
     expect(available).not.toContain('omp');
     expect(available).toEqual([]);
+  });
+
+  it('registers a remote-only OMP adapter without fabricating a local binary path', () => {
+    env.binaryPath = null;
+    const agent = buildOmpAgent({ logger: createLogger(), ...remoteOnlyRuntimeHooks() });
+    expect(agent).not.toBeNull();
+    expect(agent?.getBinaryPath()).toBeNull();
+    expect(registerAgents(remoteOnlyRuntimeHooks())).toContain('omp');
+  });
+
+  it('does not register remote-only OMP when a required SSH hook is missing', () => {
+    env.binaryPath = null;
+    const hooks = remoteOnlyRuntimeHooks();
+    expect(
+      buildOmpAgent({
+        logger: createLogger(),
+        ...hooks,
+        getRemoteOmpFileOps: undefined,
+      }),
+    ).toBeNull();
   });
 
   it.runIf(process.platform === 'win32')(

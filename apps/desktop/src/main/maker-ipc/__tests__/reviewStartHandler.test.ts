@@ -243,6 +243,33 @@ describe('maker:review:start IPC lifecycle', () => {
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps OMP as the source and reviewer engine while preserving the isolated review contract', async () => {
+    const harness = new IpcHarness();
+    const reviewer = new FakeReviewer();
+    const launch = makeLaunch({
+      reviewerCreateOpts: {
+        ...makeLaunch().reviewerCreateOpts,
+        agentKind: 'omp',
+        permissionMode: 'ask',
+        reviewMode: true,
+      },
+    });
+    const deps = makeDeps(reviewer, {
+      prepareRun: vi.fn(async () => makePreparedRun(launch, { sourceAgentKind: 'omp' })),
+    });
+    registerReviewStartHandler(harness, deps);
+
+    await expect(harness.invoke(MAKER_INVOKE.START_REVIEW, reviewRequest())).resolves.toMatchObject({
+      ok: true,
+    });
+    expect(deps.createSourceCard).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceAgentKind: 'omp' }),
+    );
+    expect(deps.startReviewer).toHaveBeenCalledWith(
+      expect.objectContaining({ agentKind: 'omp', permissionMode: 'ask', reviewMode: true }),
+    );
+  });
+
   it('accepts a provider done emitted synchronously before send returns', async () => {
     const harness = new IpcHarness();
     const reviewer = new FakeReviewer();
