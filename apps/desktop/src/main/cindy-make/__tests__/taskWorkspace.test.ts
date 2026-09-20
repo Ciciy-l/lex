@@ -17,8 +17,14 @@ const trustedVerifier = async (_userData: string, workingDir: string) => ({
 
 function isSameTestPath(left: string, right: string): boolean {
   const normalize = (value: string) => {
-    const resolved = path.resolve(value);
-    return process.platform === 'win32' ? resolved.toLocaleLowerCase('en-US') : resolved;
+    let resolved = path.resolve(value);
+    if (process.platform === 'win32') {
+      // fs.realpath may expose the Win32 extended-length namespace while the
+      // synthetic Git output stays in its ordinary absolute-path form.
+      resolved = resolved.replace(/^[\\/]{2}\?[\\/]/, '');
+      return resolved.toLocaleLowerCase('en-US');
+    }
+    return resolved;
   };
   return normalize(left) === normalize(right);
 }
