@@ -8025,6 +8025,8 @@
       "trigger": {
         "currentAndNext": "현재: {{current}}\n다음 메시지: {{next}}",
         "placeholder": "모델 선택",
+        "loading": "모델을 불러오는 중…",
+        "unresolved": "모델 정보를 사용할 수 없음",
         "aria": "모델 선택. 현재: {{model}}",
         "ariaWithEffort": "모델 선택. 현재: {{model}}, 추론 강도: {{effort}}",
         "pendingAria": "모델 선택. 다음 메시지: {{agent}} · {{model}}",

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   loadCapabilities: vi.fn(),
   beginProviders: vi.fn(),
   commitProviders: vi.fn(),
+  failProviders: vi.fn(),
   providersCurrent: vi.fn(),
   loadProviders: vi.fn(),
   initializeVisibility: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock('@/hooks/useAgentCapabilities', () => ({
 vi.mock('@/lib/providersSnapshotStore', () => ({
   beginProvidersRefresh: mocks.beginProviders,
   commitProvidersSnapshot: mocks.commitProviders,
+  failProvidersRefresh: mocks.failProviders,
   isProvidersRefreshCurrent: mocks.providersCurrent,
   loadProvidersSnapshot: mocks.loadProviders,
 }));
@@ -76,6 +78,7 @@ describe('refreshLocalCatalogSnapshot', () => {
     expect(mocks.commitProviders).not.toHaveBeenCalled();
     expect(mocks.commitCapabilities).not.toHaveBeenCalled();
     expect(mocks.warn).toHaveBeenCalledOnce();
+    expect(mocks.failProviders).toHaveBeenCalledWith(1);
   });
 
   it('keeps the last valid snapshot when capabilities loading fails', async () => {
@@ -86,6 +89,22 @@ describe('refreshLocalCatalogSnapshot', () => {
     expect(mocks.commitProviders).not.toHaveBeenCalled();
     expect(mocks.commitCapabilities).not.toHaveBeenCalled();
     expect(mocks.warn).toHaveBeenCalledOnce();
+  });
+
+  it('waits for sibling reads after a failure before starting the trailing round', async () => {
+    const slow = deferred<unknown[]>();
+    mocks.loadProviders.mockRejectedValueOnce(new Error('failed')).mockResolvedValue({ providers: [] });
+    mocks.loadCapabilities.mockReturnValueOnce(slow.promise).mockResolvedValue([]);
+    const first = refreshLocalCatalogSnapshot();
+    await vi.waitFor(() => expect(mocks.loadProviders).toHaveBeenCalledOnce());
+    const latest = refreshLocalCatalogSnapshot();
+    await Promise.resolve();
+    expect(mocks.loadProviders).toHaveBeenCalledOnce();
+    slow.resolve([]);
+    await Promise.all([first, latest]);
+    expect(mocks.loadProviders).toHaveBeenCalledTimes(2);
+    expect(mocks.commitProviders).toHaveBeenCalledOnce();
+    expect(mocks.failProviders).not.toHaveBeenCalled();
   });
 
   it('does not commit capabilities when the provider snapshot owner is stale', async () => {

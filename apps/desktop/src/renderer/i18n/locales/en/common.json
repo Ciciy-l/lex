@@ -8027,6 +8027,8 @@
       "trigger": {
         "currentAndNext": "Current: {{current}}\nNext message: {{next}}",
         "placeholder": "Select model",
+        "loading": "Loading model…",
+        "unresolved": "Model Details Unavailable",
         "aria": "Select model. Current: {{model}}",
         "ariaWithEffort": "Select model. Current: {{model}}, effort: {{effort}}",
         "pendingAria": "Select model. Next message: {{agent}} · {{model}}",

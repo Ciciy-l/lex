@@ -16158,6 +16158,7 @@ function mirrorSessionFields(
         fastMode?: unknown;
         planModeEnabled?: unknown;
         agentKind?: unknown;
+        runtimeEffective?: unknown;
         providerId?: unknown;
         agentSwitchIntent?: unknown;
         agentSwitchIntentCanceled?: unknown;
@@ -16184,7 +16185,11 @@ function mirrorSessionFields(
   ) {
     const nextKind = dbToMakerAgentKind(patch.agentKind);
     setState(sessionId, (s) => {
-      const intentApplied = s.agentSwitchIntent?.target === nextKind;
+      // New hosts publish the full runtime snapshot before explicitly clearing
+      // the consumed intent with CAS. An agent-kind match alone may belong to
+      // an older switch to the same engine, not the user's latest model choice.
+      const intentApplied = !('runtimeEffective' in patch) &&
+        !('agentSwitchIntent' in patch) && s.agentSwitchIntent?.target === nextKind;
       if (s.agentKind === nextKind && !intentApplied) return s;
       return {
         ...s,
