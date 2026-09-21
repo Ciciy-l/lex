@@ -3,9 +3,11 @@
  *
  * 开发 checkout 中,OMP 仍不是 postinstall 必下资产：开发者通过
  * `pnpm install:omp` / `pnpm update:omp` 将它放进
- * `apps/omp-bin/<platform>/`。正式 Lex 则在启动页放行后自动把
- * `tools/omp/latest.json` 固定的上游版本下载到受管 userData 目录；两种来源
- * 都会在使用前重新校验尺寸与 SHA-256。因此「有没有 OMP」是运行时**三态**,不是布尔:
+ * `apps/omp-bin/<platform>/`。正式 Lex 与 claude/codex/pi 走同一条启动页串行
+ * 下载队列，只是源不同：读构建期固定的 `config/lex-agent-runtime-assets.json`，
+ * 其中 OMP 的 `file` 直接是 `tools/omp/latest.json` 固定的上游 GitHub Release
+ * 绝对 URL，落点是受管 userData 目录。两种来源都会在使用前重新校验尺寸与
+ * SHA-256。因此「有没有 OMP」是运行时**三态**,不是布尔:
  *
  *   · not-ready   —— 没装(dev 全新 checkout 的默认态)
  *   · downloading —— 正在拉(下载器经 noteOmpRuntimeDownloadStarted 上报)
@@ -15,10 +17,13 @@
  * 判定的**纯函数**是 `classifyOmpRuntime`(可单测、不碰 fs);本模块只负责采集
  * facts(fs / electron / 子进程)并广播。
  *
- * 三态如何到 UI:OMP 只有 ready 才被 `buildOmpAgent` 注册进 maker;renderer 的
+ * 三态如何到 UI:只有 `ready`(本地运行时就绪)或 `failed/platform-unsupported`
+ * (平台本来就没有资产,只能走 SSH)才被 `buildOmpAgent` 注册进 maker;renderer 的
  * `useAvailableAgents` 读 `maker:list-available-agents`,`AgentSelect` 据此把未
  * 注册的引擎从下拉里隐掉 —— 未就绪时用户**看不到** OMP 入口,不可能创建出
  * `Agent 'omp' is not registered` 的会话(不会白屏,也不会莫名报错)。
+ * 本地运行时「还没到手」时 `buildOmpAgent` 必须**什么都不注册**(见 omp-host 的注释),
+ * 等下载校验通过后由 `registerOmpAgentIfAvailable` 补注册带本地运行时的完整 agent。
  */
 
 import { execFile } from 'node:child_process';
@@ -27,7 +32,8 @@ import { promisify } from 'node:util';
 
 import { OMP_COMPATIBILITY_BASELINE, parseOmpVersionOutput } from '@cindy/maker-core';
 
-import { getCachedBinaryStatus } from '../agent-binaries/index.js';
+import { buildShipsOmpRuntime, getCachedBinaryStatus } from '../agent-binaries/index.js';
+import { isRetryableOptionalRuntimePrepareError } from '../agent-binaries/pi-runtime-recovery.js';
 import { createLogger } from '../logger.js';
 import { getPlatformKey } from '../manifestService.js';
 import {
@@ -202,7 +208,8 @@ function computeSnapshot(): OmpRuntimeSnapshot {
   const binaryUsable = binaryPath !== null;
   return classifyOmpRuntime({
     platformKey,
-    platformSupported: SUPPORTED_PLATFORM_KEYS.has(platformKey),
+    // latest.json 有 6 平台,构建资产表只发 4 个;缺资产的平台按「平台不支持」算。
+    platformSupported: SUPPORTED_PLATFORM_KEYS.has(platformKey) && buildShipsOmpRuntime(platformKey),
     binaryPath,
     binaryUsable,
     reportedVersion: binaryUsable && probedPath === binaryPath ? probedVersion : null,
@@ -232,6 +239,50 @@ function publish(next: OmpRuntimeSnapshot): OmpRuntimeSnapshot {
  */
 export function getOmpRuntimeSnapshot(): OmpRuntimeSnapshot {
   return cachedSnapshot ?? computeSnapshot();
+}
+
+/**
+ * **现算**三态(不读缓存、不跑子进程、不触发下载)。
+ *
+ * 给 buildOmpAgent 判断「本地运行时只是还没下好」用。这里必须绕开缓存:
+ * cachedSnapshot 在 Maker 构造那一刻就被 publish 固定,而 OMP 的受管下载是在那
+ * 之后才完成的 —— 读缓存会把已经就绪的运行时判成 not-ready,反而让补注册永远
+ * 失败(rc.2 的 remote-only 占位故障就是这样锁死的)。
+ */
+export function peekOmpRuntimeSnapshot(): OmpRuntimeSnapshot {
+  return computeSnapshot();
+}
+
+/**
+ * 本地 OMP 运行时是否「还不能注册」—— 即这台机器上的本地运行时还没就位,而且
+ * 它仍有到来的可能。
+ *
+ * 判定必须和 recovery 的「值不值得重试」用同一把尺子(`isRetryableOptionalRuntimePrepareError`),
+ * 否则两边会对「本地还有没有希望」给出不同答案:
+ *
+ *  - `ready` → 已就绪,直接注册带本地运行时的 agent。
+ *  - `platform-unsupported` → 平台本来就没有资产,本地运行时永远不可能出现,
+ *    SSH 是唯一通路,允许 remote-only 注册。
+ *  - `download-failed` 且错误码**可重试**(网络类)→ 受管下载还会重试,必须推迟注册。
+ *  - `download-failed` 且错误码**不可重试**(HTTP_4XX / CHECKSUM / DISK / asset_* /
+ *    version-mismatch)→ recovery 已经放弃,本地已无希望,允许 remote-only 注册走 SSH。
+ *  - `not-installed` / `downloading` → 还在等,推迟注册。
+ *
+ * 为什么必须推迟:`Maker.registerAgent` 是加法幂等的,先注册的 agent 在整个进程内
+ * 换不掉。一旦在二进制落盘前注册了 remote-only agent,之后下载校验通过也补不进来
+ * (rc.2 的实际故障),本地 OMP 会一直处于「下拉里有人、本地一起就失败」的状态。
+ */
+export function isLocalOmpRuntimePending(snapshot: OmpRuntimeSnapshot): boolean {
+  if (snapshot.state === 'ready') return false;
+  // 本地已无希望:平台本来就没有资产,或二进制在位但 `--version` 对不上基线 ——
+  // 两者重试都救不回来,允许 remote-only 注册走 SSH。
+  if (snapshot.reason === 'platform-unsupported' || snapshot.reason === 'version-mismatch') {
+    return false;
+  }
+  if (snapshot.reason === 'download-failed') {
+    return isRetryableOptionalRuntimePrepareError(snapshot.detail ?? undefined);
+  }
+  return true;
 }
 
 /**

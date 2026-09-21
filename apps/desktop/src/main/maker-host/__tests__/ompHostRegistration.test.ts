@@ -19,6 +19,10 @@ import type { SessionMeta, SessionStorage } from '@cindy/maker-core';
 const env = vi.hoisted(() => ({
   binaryPath: '/bin/omp' as string | null,
   containmentAvailable: true,
+  /** omp-runtime 三态的 reason;null = ready。由各测试显式设定。 */
+  runtimeReason: null as string | null,
+  /** download-failed 时随 reason 一起上报的错误码。 */
+  runtimeDetail: null as string | null,
 }));
 
 vi.mock('electron', () => ({
@@ -55,8 +59,36 @@ vi.mock('../active-catalog.js', () => ({
 vi.mock('../auth-adapters.js', () => ({ readClaudeApiKey: () => 'gw-key' }));
 
 // 被测的就是这个解析器的返回值:null = 运行时未就绪。
+// peekOmpRuntimeSnapshot / isLocalOmpRuntimePending 是与 omp-runtime 同形的最小
+// 替身 —— 真实三态推导由 ompRuntime.test.ts 覆盖,这里只关心 buildOmpAgent 如何消费它。
 vi.mock('../omp-runtime.js', () => ({
   resolveOmpBinaryPath: () => env.binaryPath,
+  peekOmpRuntimeSnapshot: () => ({
+    state:
+      env.runtimeReason === null
+        ? 'ready'
+        : env.runtimeReason === 'platform-unsupported'
+          ? 'failed'
+          : 'not-ready',
+    reason: env.runtimeReason,
+    binaryPath: env.binaryPath,
+    version: null,
+    detail: env.runtimeDetail,
+  }),
+  isLocalOmpRuntimePending: (snapshot: { state: string; reason: string | null; detail?: string | null }) => {
+    if (snapshot.state === 'ready') return false;
+    if (snapshot.reason === 'platform-unsupported' || snapshot.reason === 'version-mismatch') {
+      return false;
+    }
+    // 与 pi-runtime-recovery 的 isRetryableOptionalRuntimePrepareError 同形。
+    if (snapshot.reason === 'download-failed') {
+      return snapshot.detail === 'manifest_failed'
+        || snapshot.detail === 'NETWORK'
+        || snapshot.detail === 'HTTP_5XX'
+        || snapshot.detail === 'ABORTED';
+    }
+    return true;
+  },
 }));
 
 vi.mock('../omp-process-containment.js', () => ({
@@ -149,6 +181,7 @@ function registerAgents(opts: Omit<BuildOmpAgentOpts, 'logger'> = {}): string[] 
 describe('OMP registration gate', () => {
   it('registers omp when its runtime is ready', () => {
     env.binaryPath = '/bin/omp';
+    env.runtimeReason = null;
     expect(buildOmpAgent({ logger: createLogger() })).not.toBeNull();
     expect(registerAgents()).toContain('omp');
   });
@@ -156,22 +189,90 @@ describe('OMP registration gate', () => {
   it('leaves omp out of the available agent list when the runtime is not ready', () => {
     // 未 opt-in 安装 / 版本对不上基线 → resolveOmpBinaryPath 返回 null。
     env.binaryPath = null;
+    env.runtimeReason = 'not-installed';
     expect(buildOmpAgent({ logger: createLogger() })).toBeNull();
     const available = registerAgents();
     expect(available).not.toContain('omp');
     expect(available).toEqual([]);
   });
 
-  it('registers a remote-only OMP adapter without fabricating a local binary path', () => {
+  it('registers remote-only OMP only when the platform has no OMP asset at all', () => {
+    // platform-unsupported 是唯一终态:这台机器永远不可能有本地运行时,
+    // SSH 是唯一通路。其余"本地还没到手"的情况都必须推迟注册。
     env.binaryPath = null;
+    env.runtimeReason = 'platform-unsupported';
     const agent = buildOmpAgent({ logger: createLogger(), ...remoteOnlyRuntimeHooks() });
     expect(agent).not.toBeNull();
     expect(agent?.getBinaryPath()).toBeNull();
     expect(registerAgents(remoteOnlyRuntimeHooks())).toContain('omp');
   });
 
+  it('keeps the slot free after a failed managed download so a later retry can register', () => {
+    env.binaryPath = null;
+    env.runtimeReason = 'download-failed';
+    env.runtimeDetail = 'NETWORK';
+    expect(buildOmpAgent({ logger: createLogger(), ...remoteOnlyRuntimeHooks() })).toBeNull();
+    expect(registerAgents(remoteOnlyRuntimeHooks())).not.toContain('omp');
+  });
+
+  it('falls back to remote-only once the managed download failed for good', () => {
+    // 不可重试的终态(HTTP_4XX / CHECKSUM / asset_*)→ recovery 已放弃,本地无希望,
+    // 允许 remote-only 注册,SSH 仍然可用(否则引擎会直接从列表里消失)。
+    env.binaryPath = null;
+    env.runtimeReason = 'download-failed';
+    env.runtimeDetail = 'CHECKSUM';
+    expect(buildOmpAgent({ logger: createLogger(), ...remoteOnlyRuntimeHooks() })).not.toBeNull();
+    expect(registerAgents(remoteOnlyRuntimeHooks())).toContain('omp');
+  });
+
+  it('defers registration while the local runtime is still downloading', () => {
+    // rc.2 的实际故障:Maker 在受管下载完成前构造,buildOmpAgent 靠 SSH 契约
+    // 仍然成功并注册一个 remote-only agent;而 Maker.registerAgent 是加法幂等的,
+    // 之后二进制下好也换不掉它,本地 OMP 在整个进程内都是死的。所以「还在等下载」
+    // 时必须什么都不注册,把位置留给下载完成后的本地版 agent。
+    env.binaryPath = null;
+    env.runtimeReason = 'downloading';
+    expect(buildOmpAgent({ logger: createLogger(), ...remoteOnlyRuntimeHooks() })).toBeNull();
+    expect(registerAgents(remoteOnlyRuntimeHooks())).not.toContain('omp');
+  });
+
+  it('hands the slot to the local-capable agent once the runtime becomes ready', () => {
+    env.binaryPath = null;
+    env.runtimeReason = 'downloading';
+    expect(registerAgents(remoteOnlyRuntimeHooks())).not.toContain('omp');
+
+    env.binaryPath = '/ud/omp/18.1.18/omp';
+    env.runtimeReason = null;
+    expect(buildOmpAgent({ logger: createLogger(), ...remoteOnlyRuntimeHooks() })).not.toBeNull();
+    expect(registerAgents(remoteOnlyRuntimeHooks())).toContain('omp');
+  });
+
+  it('never lets a remote-only registration block the later local one', () => {
+    // 直接钉住 Maker.registerAgent 的加法契约:一旦 remote-only agent 占了位,
+    // 之后再注册本地版会返回 false 且原地不动 —— 这正是 rc.2 锁死本地 OMP 的机制。
+    // 所以「本地还没到手」时 buildOmpAgent 必须返回 null,一个 agent 都不注册。
+    const maker = new Maker({
+      agents: {},
+      storage: createStorage(),
+      logger: createLogger(),
+    });
+    env.binaryPath = null;
+    env.runtimeReason = 'downloading';
+    expect(buildOmpAgent({ logger: createLogger(), ...remoteOnlyRuntimeHooks() })).toBeNull();
+    expect(maker.listAvailableAgents()).not.toContain('omp');
+
+    env.binaryPath = '/ud/omp/18.1.18/omp';
+    env.runtimeReason = null;
+    const local = buildOmpAgent({ logger: createLogger(), ...remoteOnlyRuntimeHooks() });
+    expect(local).not.toBeNull();
+    expect(maker.registerAgent('omp', local!)).toBe(true);
+    // 第二次注册同类 agent 会被拒 —— 占位是不可逆的。
+    expect(maker.registerAgent('omp', local!)).toBe(false);
+  });
+
   it('does not register remote-only OMP when a required SSH hook is missing', () => {
     env.binaryPath = null;
+    env.runtimeReason = 'platform-unsupported';
     const hooks = remoteOnlyRuntimeHooks();
     expect(
       buildOmpAgent({
@@ -186,6 +287,7 @@ describe('OMP registration gate', () => {
     'leaves omp unregistered when its required Windows containment helper is unavailable',
     () => {
       env.binaryPath = '/bin/omp';
+      env.runtimeReason = null;
       env.containmentAvailable = false;
       expect(buildOmpAgent({ logger: createLogger() })).toBeNull();
       expect(registerAgents()).not.toContain('omp');
@@ -195,6 +297,7 @@ describe('OMP registration gate', () => {
 
   it('does not retain a construction-time binary path after verification stops passing', () => {
     env.binaryPath = '/bin/omp';
+    env.runtimeReason = null;
     const agent = buildOmpAgent({ logger: createLogger() });
     expect(agent).not.toBeNull();
 
@@ -206,6 +309,7 @@ describe('OMP registration gate', () => {
 
   it('never lets an unregistered omp reach session creation', async () => {
     env.binaryPath = null;
+    env.runtimeReason = 'not-installed';
     const maker = new Maker({
       agents: {},
       storage: createStorage(),

@@ -539,14 +539,16 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
     async peekNeedsDownload(opts): Promise<boolean> {
       // 不发起任何下载——只读构建内置 runtime snapshot + 本地 isInstalled 检查。
       // App 更新 manifest 属于独立的 Lex 更新通道，绝不能成为 CLI runtime
-      // 首启或版本判定的前置条件。任何异常 / snapshot 缺失 → 返回 true（保守地
-      // 走 prepare()，让其内部的完整错误处理接管）。optionalAsset vendor 例外:
-      // snapshot 有但缺该字段 = 平台没发这个可选资产,
-      // 不存在可下载的东西,返回 false(不计入 splash 下载步数;prepare 会以
-      // asset_missing 快速失败交调用方降级)。
+      // 首启或版本判定的前置条件。任何异常 → 返回 true（保守地走 prepare()，
+      // 让其内部的完整错误处理接管）。optionalAsset vendor 例外:snapshot 缺该字段、
+      // 或整个平台都没有 snapshot = 平台没发这个可选资产,不存在可下载的东西,
+      // 返回 false(不计入 splash 下载步数;prepare 会以 asset_missing / manifest_failed
+      // 快速失败交调用方降级)。
       try {
         const manifest = getRuntimeManifest();
-        if (!manifest) return true;
+        // 整个平台都没有 snapshot 时,必需资产保守地走 prepare() 让它自己报错;
+        // 可选资产(pi / omp)反过来——没有可下载的东西,不该在启动页占一个下载段。
+        if (!manifest) return config.optionalAsset !== true;
         const asset = getVendorAsset(manifest, config.manifestField);
         if (!asset) return config.optionalAsset !== true;
         if (!isAllowedAsset(asset)) return false;

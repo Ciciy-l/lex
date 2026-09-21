@@ -41,7 +41,7 @@ import { getActiveCatalog } from './active-catalog.js';
 import { getClaudeEndpoint } from './anthropic-compat-proxy-host.js';
 import { readClaudeApiKey } from './auth-adapters.js';
 import { createLogger } from '../logger.js';
-import { resolveOmpBinaryPath } from './omp-runtime.js';
+import { isLocalOmpRuntimePending, peekOmpRuntimeSnapshot, resolveOmpBinaryPath } from './omp-runtime.js';
 import { createWindowsOmpProcessSpawner } from './omp-process-containment.js';
 import { deriveOmpProxySessionToken } from './omp-proxy-session-token.js';
 
@@ -286,9 +286,22 @@ export interface BuildOmpAgentOpts {
  * complete SSH runtime contract is supplied. Remote-only registration never
  * manufactures a local binary path: a local start still fails closed at the
  * maker-core process boundary.
+ *
+ * The one case that must register **nothing** is "this machine's local runtime has
+ * not arrived yet". `Maker.registerAgent` is additive and idempotent, so the first
+ * registration wins for the whole process lifetime: a remote-only agent registered
+ * while the managed download is in flight can never be replaced, and the verified
+ * binary that lands seconds later is dead weight. Returning null here lets the
+ * managed prepare register a local-capable agent once the bytes are verified.
+ * `platform-unsupported` is the only exception — that machine can never have a
+ * local OMP runtime, so SSH is its only path.
  */
 export function buildOmpAgent(opts: BuildOmpAgentOpts): OmpAgent | null {
-  const binaryPath = resolveOmpBinaryPath();
+  // peekOmpRuntimeSnapshot (not the cached snapshot): the cache is published
+  // when the Maker is constructed, which is exactly the moment the managed
+  // OMP download has not finished yet.
+  const runtime = peekOmpRuntimeSnapshot();
+  const binaryPath = runtime.binaryPath;
   let spawnOmpProcess: AgentDeps['spawnOmpProcess'] | undefined;
   // `resolveOmpBinaryPath` deliberately uses null for an unavailable audited
   // runtime. Do not confuse that with an executable path merely because the
@@ -303,6 +316,16 @@ export function buildOmpAgent(opts: BuildOmpAgentOpts): OmpAgent | null {
     } else {
       spawnOmpProcess = spawner;
     }
+  }
+
+  // 本地运行时「还没到手」时什么都不注册:Maker.registerAgent 是加法幂等的,
+  // 先占位的 agent 在整个进程内换不掉(rc.2 就是这样把 remote-only 锁死的)。
+  if (!localRuntimeReady && isLocalOmpRuntimePending(runtime)) {
+    log.info('omp local runtime has not arrived yet; deferring registration to the managed prepare', {
+      state: runtime.state,
+      reason: runtime.reason,
+    });
+    return null;
   }
 
   const remoteRuntimeReady = Boolean(

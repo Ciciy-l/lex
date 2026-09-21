@@ -278,7 +278,14 @@ OMP 设置启动期加载，`setPermissionMode(mode)` 落地为：**当前 turn 
 
 ### 6.4 用户可见行为
 
-按 PRD §8.3 五态执行：未安装角标 + 确认框（"约 150–200 MB"）+ 字节进度；失败置灰 + 脱敏 tooltip + 重试；版本不匹配按校验失败处理；取消清理半成品；**绝不进启动 splash 阻塞链**；已有 OMP 会话在运行时缺失时 composer 只读 + 错误条，**不自动切引擎**。
+按 PRD §8.3 五态执行：未安装角标 + 确认框（"约 150–200 MB"）+ 字节进度；失败置灰 + 脱敏 tooltip + 重试；版本不匹配按校验失败处理；取消清理半成品；**进启动页串行下载链但不把它打进失败态**：OMP 与 claude／codex／pi 共用同一条受管下载队列（同一 provisioner、同一 SHA-256 门，只是源为上游 GitHub Release），显示真实字节进度，配独立有界 deadline（`OMP_AGENT_INSTALL_STARTUP_DEADLINE_MS`，当前 90s）——慢网下启动页会带着真实进度等满这段预算，这是已知代价；超时或网络类失败转后台按网络恢复重试，不可重试的终态退回 remote-only；已有 OMP 会话在运行时缺失时 composer 只读 + 错误条，**不自动切引擎**。
+
+> 顺序约束（rc.2 实际故障）：OMP 的准备必须**早于** Maker 构造。`Maker.registerAgent`
+> 是加法幂等的，先注册的 remote-only agent 在整个进程内换不掉；若 Maker 在二进制落盘前
+> 构造，本地 OMP 会永远接不进去。因此除 `ready` 与「本地已无希望」外，`buildOmpAgent`
+> 一律**什么都不注册**，把位置留给下载完成后的本地版 agent。「本地已无希望」=
+> `platform-unsupported`，或 `download-failed` 且错误码不可重试（与 recovery 的
+> `isRetryableOptionalRuntimePrepareError` 同一把尺子）。
 
 ---
 

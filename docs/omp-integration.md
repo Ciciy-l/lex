@@ -209,8 +209,17 @@ runtime 也会重新核对固定版本、精确大小和 SHA-256；不会因 `.v
 开发者可显式运行 `pnpm install:omp`（或 `pnpm update:omp -- --platform=<platform>`）
 把当前平台二进制放入 `apps/omp-bin/<platform>/`。OMP 不在 postinstall、默认开发启动
 或默认运行时列表里，因此不会自动下载约 150–200 MB 的上游二进制，也不会从 PATH、Pi
-目录或用户安装中寻找替代品。该脚本目前只为后续受管 runtime 提供经过校验的开发来源；
-Lex 打包版仍须把同一 pin 通过 Lex 的固定 CDN runtime snapshot 发布后才能使用。
+目录或用户安装中寻找替代品。正式 Lex 安装包则复用 `agent-binaries` 的同一条受管链：
+启动页串行队列读取构建期固定的 `config/lex-agent-runtime-assets.json`，其中 `omp`
+条目的 `file` 直接是 `tools/omp/latest.json` 固定的上游 GitHub Release URL（与
+claude／codex／pi 只差源，下载、size 与 SHA-256 校验、进度广播与 `.verified` 标记
+完全同构），落到 `userData/omp/<version>/`。
+
+**平台边界**：`tools/omp/latest.json` 列了 6 个平台，但构建资产表只发 4 个
+（`win32-x64`／`darwin-x64`／`darwin-arm64`／`linux-x64`）。`linux-arm64`／
+`win32-arm64` 上没有 `omp` 条目，受管准备不可能成功：`buildShipsOmpRuntime()` 据此把
+它们判为「平台不支持」，启动页不出下载段、不排重试，OMP 只能走 SSH。dev 态不受此限
+（`pnpm install:omp` 支持全部 6 平台）。
 
 第五阶段新增 Desktop Main 的 `omp-probe-runtime.ts`，它只会在开发模式解析
 `apps/omp-bin/<platform>/omp`（Windows 为 `omp.exe`），对照上述固定 version、平台、

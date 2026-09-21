@@ -87,10 +87,10 @@ const LINUX_AGENT_INSTALL_STARTUP_DEADLINE_MS = 5 * 60_000;
 // Pi 是可选能力。首启可以给它一小段时间从 CDN 准备，但网络异常时不能让
 // 整个宿主应用一直停在启动页；到期后取消本次下载并禁用本次 Pi。
 const PI_AGENT_INSTALL_STARTUP_DEADLINE_MS = 60_000;
-// OMP is also optional: its upstream binary is larger than Pi's, so its first
-// managed prepare deliberately runs after the splash path. An unavailable
-// network must never keep Lex on the splash screen; focus/timer recovery uses
-// the same bounded managed provisioner.
+// OMP 也是可选能力，与 Pi 同族：首启在 splash 串行队列里给它一段有界预算自动准备，
+// 网络异常时不能让整个宿主应用一直停在启动页；到期后取消本次下载（.part 保留，
+// 后台 recovery 断点续传），本次不注册 omp。预算比 Pi 宽是因为上游是 GitHub Release
+// 而非国内可达的 Cindy CDN，同样字节数慢得多。
 const OMP_AGENT_INSTALL_STARTUP_DEADLINE_MS = 90_000;
 
 /** Preserve actionable saved-account failures across Electron serialization. */
@@ -230,6 +230,7 @@ import {
   prepare as binaryPrepare,
   peekNeedsDownload as binaryPeekNeedsDownload,
   broadcastResetForStep as binaryBroadcastResetForStep,
+  buildShipsOmpRuntime,
   type AgentBinaryKind,
   type PrepareResult,
 } from './agent-binaries';
@@ -596,6 +597,11 @@ import {
   registerOmpAgentIfAvailable,
 } from './maker-host/index.js';
 import { createOptionalRuntimeRecovery, createPiRuntimeRecovery } from './agent-binaries/pi-runtime-recovery.js';
+import {
+  noteOmpRuntimeDownloadFailed,
+  noteOmpRuntimeDownloadStarted,
+  noteOmpRuntimeDownloadSucceeded,
+} from './maker-host/omp-runtime.js';
 import { logRequiredRuntimeFailure } from './environment-check-diagnostics.js';
 import { createDynamicMaker } from './maker-host/dynamic-maker.js';
 import { ensureBundledRipgrepReady } from './maker-host/runtime-configs.js';
@@ -5888,14 +5894,42 @@ const registerIpcHandlers = () => {
     },
     logWarn: (message, error) => console.warn(`[bootstrap-electron] ${message}`, error ?? ''),
   });
+  /**
+   * OMP 受管准备的唯一入口（splash 段与后台 recovery 共用）。
+   *
+   * 除了发起下载，还必须把结果回报给 omp-runtime 的三态机。否则
+   * `noteOmpRuntimeDownload*` 在正式包里永远没人调用，下载失败会被当成
+   * 「只是还没装」，于是 buildOmpAgent 既拿不到本地运行时、也不肯退回
+   * remote-only 注册（它无法区分「在等下载」和「本地已无希望」），SSH 兜底
+   * 跟着一起失效。
+   */
+  const prepareOmpRuntime = (opts: {
+    signal?: AbortSignal;
+    broadcastProgress?: boolean;
+    step?: 1 | 2 | 3 | 4;
+    totalSteps?: 2 | 3 | 4;
+  }): Promise<PrepareResult> => {
+    noteOmpRuntimeDownloadStarted('managed OMP runtime prepare');
+    return binaryPrepare('omp', { broadcastFailure: false, ...opts }).then(
+      (result) => {
+        if (result.ready && result.path) noteOmpRuntimeDownloadSucceeded();
+        else noteOmpRuntimeDownloadFailed(result.error ?? 'omp runtime unavailable');
+        return result;
+      },
+      (err: unknown) => {
+        noteOmpRuntimeDownloadFailed(err instanceof Error ? err.message : String(err));
+        throw err;
+      },
+    );
+  };
   const ompRuntimeRecovery = createOptionalRuntimeRecovery({
     runtimeName: 'OMP',
     isOnline: () => net.isOnline(),
-    prepare: async () => binaryPrepare('omp', {
-      broadcastFailure: false,
-      broadcastProgress: false,
-      signal: AbortSignal.timeout(OMP_AGENT_INSTALL_STARTUP_DEADLINE_MS),
-    }),
+    prepare: () =>
+      prepareOmpRuntime({
+        broadcastProgress: false,
+        signal: AbortSignal.timeout(OMP_AGENT_INSTALL_STARTUP_DEADLINE_MS),
+      }),
     register: () => registerOmpAgentIfAvailable(),
     onRegistered: () => {
       console.info('[bootstrap-electron] OMP runtime recovered and agent registered');
@@ -6125,11 +6159,11 @@ const registerIpcHandlers = () => {
     // 这里不再直启，避免 scheduler 在账号模型发现完成前抢先选路由。
   };
 
-  // Environment check IPC handler — 顺序检查 claude → codex → pi 三个 vendor binary。
+  // Environment check IPC handler — 顺序检查 claude → codex → pi → omp 四个 vendor binary。
   // 提前 peekNeedsDownload 决定 (x/y) 标签：两个及以上需要下载时给 step/totalSteps，
   // 否则不带标签（splash 显示单一 "唤醒 Cindy 中..." 文案）。
-  // pi 是可选实验 agent:清单无资产 / 下载失败都不算环境检查失败(失败不广播
-  // failed payload),本次不注册 pi。
+  // pi / omp 是可选 agent:清单无资产 / 下载失败都不算环境检查失败(失败不广播
+  // failed payload),本次不注册对应 agent。
   ipcMain.handle('check-environment', async () => {
     // splash 首个 invoke = renderer 存活的强信号(与 renderer:log 双保险)。
     rendererBootGuard?.markAlive();
@@ -6143,8 +6177,11 @@ const registerIpcHandlers = () => {
         : undefined;
 
     // ── Phase 0: peek 各 vendor 是否需要下载（决定 (x/y) 标签）────────────────
+    // omp 与 claude/codex/pi 同链：都是构建期固定的受管运行时，只差下载源
+    // （Cindy CDN 相对路径 vs 上游 GitHub Release 绝对 URL）。把它并进同一条
+    // 串行队列，启动页才会出现真实的 OMP 下载进度；它自身的失败仍不阻塞启动。
     const needySteps: AgentBinaryKind[] = [];
-    for (const kind of ['claude-code', 'codex', 'pi'] as const) {
+    for (const kind of ['claude-code', 'codex', 'pi', 'omp'] as const) {
       try {
         if (await binaryPeekNeedsDownload(kind)) needySteps.push(kind);
       } catch {
@@ -6152,10 +6189,10 @@ const registerIpcHandlers = () => {
       }
     }
     const isMultiDownload = needySteps.length >= 2;
-    const totalSteps = Math.min(needySteps.length, 3) as 2 | 3;
-    const stepOptsFor = (kind: AgentBinaryKind): { step?: 1 | 2 | 3; totalSteps?: 2 | 3 } =>
+    const totalSteps = Math.min(needySteps.length, 4) as 2 | 3 | 4;
+    const stepOptsFor = (kind: AgentBinaryKind): { step?: 1 | 2 | 3 | 4; totalSteps?: 2 | 3 | 4 } =>
       isMultiDownload && needySteps.includes(kind)
-        ? { step: (needySteps.indexOf(kind) + 1) as 1 | 2 | 3, totalSteps }
+        ? { step: (needySteps.indexOf(kind) + 1) as 1 | 2 | 3 | 4, totalSteps }
         : {};
     // 上一段真的发生过下载、且当前段也要下载时,先广播 reset payload 让 splash
     // 进度条瞬间归零(不走 transition 动画),随后当前段从 0% 开始正常累加。
@@ -6289,12 +6326,14 @@ const registerIpcHandlers = () => {
     resetBeforeSegment('pi', claudeRes.downloaded === true || codexRes.downloaded === true);
 
     let piInfo: { status: 'passed' | 'failed'; path?: string; error?: string };
+    let piDownloaded = false;
     try {
       const piRes = await binaryPrepare('pi', {
         ...stepOptsFor('pi'),
         broadcastFailure: false,
         signal: piInstallSignal,
       });
+      piDownloaded = piRes.downloaded === true;
       piInfo =
         piRes.ready && piRes.path
           ? { status: 'passed' as const, path: piRes.path }
@@ -6312,21 +6351,65 @@ const registerIpcHandlers = () => {
       );
     }
 
+    // ── Phase 4: omp 段（可选,失败不阻塞启动）──────────────────────────────────
+    // 与 pi 同构，但有两点实质不同：
+    //  1. 它必须在 registerMakerIpcsAfterSplash() **之前**跑完。Maker 构造时
+    //     buildOmpAgent 只认「本地运行时已就位」，缺二进制时它退回 remote-only
+    //     注册；而 Maker.registerAgent 是加法幂等的，先注册的 remote-only agent
+    //     在整个进程内换不掉（rc.2 的实际故障：二进制下好了也接不进 Maker）。
+    //  2. 上游是 GitHub Release，体积 ~161MB。给它独立的有界 deadline：超时只是
+    //     本次不注册 omp，剩下的交给后台 recovery 断点续传；失败是否排重试见下方
+    //     ompRetryable。任何一种都不会把 splash 打进失败态，Claude/Codex/Pi 与
+    //     Cindy 本身照常可用。
+    const ompInstallSignal = app.isPackaged
+      ? AbortSignal.timeout(OMP_AGENT_INSTALL_STARTUP_DEADLINE_MS)
+      : undefined;
+    resetBeforeSegment(
+      'omp',
+      claudeRes.downloaded === true || codexRes.downloaded === true || piDownloaded,
+    );
+
+    let ompInfo: { status: 'passed' | 'failed'; path?: string; error?: string };
+    try {
+      const ompRes = await prepareOmpRuntime({
+        ...stepOptsFor('omp'),
+        signal: ompInstallSignal,
+      });
+      ompInfo =
+        ompRes.ready && ompRes.path
+          ? { status: 'passed' as const, path: ompRes.path }
+          : { status: 'failed' as const, error: ompRes.error ?? 'omp binary not available' };
+    } catch (err: unknown) {
+      ompInfo = {
+        status: 'failed' as const,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+    if (ompInfo.status === 'failed') {
+      // 是否值得后台重试,和 buildOmpAgent 的注册闸用同一把尺子:
+      //  - dev 态:二进制随时可能被 `pnpm install:omp` 补上,没有错误码能表达这件事,
+      //    显式保持可重试 —— 否则跑着的时候装好 OMP 也不会自动出现在引擎列表里;
+      //  - 打包态但这次构建没带该平台的 OMP 资产:重试不可能成功,别排;
+      //  - 其余打包态:交给错误码(网络类重试,校验/协议类不重试)。
+      const ompRetryable = !app.isPackaged
+        ? true
+        : buildShipsOmpRuntime()
+          ? undefined
+          : false;
+      ompRuntimeRecovery.markUnavailable(ompInfo.error, { retryable: ompRetryable });
+      console.warn(
+        `[bootstrap-electron] omp binary prepare failed (non-fatal, recovery scheduled): ${ompInfo.error}`,
+      );
+    }
+
     // 必装 binary 都 ready,现在才能安全构造 Maker 单例并挂 maker:* / 相关 IPC。
     await registerMakerIpcsAfterSplash();
-
-    // OMP is intentionally not part of splash's serial download queue. Its
-    // runtime is still prepared automatically in release builds, but waiting
-    // for a GitHub download here would make Claude/Codex/Pi unusable for up to
-    // the OMP deadline. start is single-flight and registers OMP dynamically
-    // only after the managed binary has passed its fixed-pin byte verification.
-    void ompRuntimeRecovery.start('startup-after-maker-ipcs');
 
     return {
       claudeCode: { status: 'passed' as const, path: claudeRes.path },
       codex: { status: 'passed' as const, path: codexRes.path },
       pi: piInfo,
-      omp: { status: 'skipped' as const },
+      omp: ompInfo,
       ripgrep: { status: 'passed' as const },
       allPassed: true,
       platform,

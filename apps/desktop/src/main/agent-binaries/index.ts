@@ -206,6 +206,22 @@ function isLinuxFallbackEligible(kind: AgentBinaryKind): kind is 'claude-code' |
   return kind === 'claude-code' || kind === 'codex';
 }
 
+/**
+ * 这次构建是否为 <platformKey> 带了 OMP 资产。
+ *
+ * `tools/omp/latest.json` 列了 6 个平台,但 `config/lex-agent-runtime-assets.json`
+ * 只发其中 4 个。缺资产的平台上受管准备**不可能成功**:按「平台不支持」处理,启动页
+ * 才不会出一个必然失败的 `(x/4)` 下载段,也不会陷入永远成功的 30s 重试循环。
+ *
+ * dev 态恒为 true —— 那边的 OMP 来自 `apps/omp-bin/<platform>/`(开发者显式
+ * `pnpm install:omp`),不受构建资产表约束,`tools/omp/update.mjs` 支持全部 6 平台。
+ */
+export function buildShipsOmpRuntime(platformKey: string = getPlatformKey()): boolean {
+  if (!app.isPackaged) return true;
+  const manifest = getRuntimeManifest(platformKey);
+  return manifest !== null && getVendorAsset(manifest, 'omp') !== undefined;
+}
+
 const CONFIG: Record<AgentBinaryKind, AgentBinaryConfig> = {
   'claude-code': {
     vendorKey: 'claude',
