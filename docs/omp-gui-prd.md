@@ -294,7 +294,7 @@ OMP 特有、需要在 UI 上表达的只有四类：
 | 阶段 | 来源 | 落点 |
 | --- | --- | --- |
 | 开发 | `pnpm install:omp`（→ `tools/omp/update.mjs`，从 GitHub Release 下载，sha256 + size + URL 三重复核） | `apps/omp-bin/<platform>/omp`（Windows `omp.exe`） |
-| 打包发行 | Cindy CDN（`https://hotfix.cindy.app/cindy`）+ `config/lex-agent-runtime-assets.json` 新增 `omp` 字段 | `userData/omp/<version>/omp(.exe)` |
+| 打包发行 | 同一份 `config/lex-agent-runtime-assets.json`，但 `omp` 条目的 `file` 是上游 GitHub Release 绝对 URL（非 Cindy CDN 相对路径） | `userData/omp/<version>/omp(.exe)` |
 
 ### 8.2 具体改动清单
 
@@ -313,7 +313,7 @@ OMP 特有、需要在 UI 上表达的只有四类：
 
 | 情况 | 行为 |
 | --- | --- |
-| 首次使用（未下载） | 引擎选择器 OMP 条目带"未安装"角标；点击 → 确认框「OMP 运行时未安装（约 150–200 MB），是否现在下载？」→ 下载中显示字节进度与速度。**绝不放在启动 splash 阻塞链路上**（与其它必装 runtime 不同）。 |
+| 首次使用（未下载） | 引擎选择器 OMP 条目带"未安装"角标；点击 → 确认框「OMP 运行时未安装（约 150–200 MB），是否现在下载？」→ 下载中显示字节进度与速度。**改为进启动 splash 串行下载链，但不阻塞它**：OMP 与 claude／codex／pi 共用同一条受管下载队列（同一 provisioner 与 SHA-256 门，只差源为上游 GitHub Release），显示真实字节进度与 `(x/4)` 段标签，配独立有界 deadline（当前 90s）；超时或失败都不把启动页打进失败态，只让本次不注册 OMP，网络类失败转后台按网络恢复重试，不可重试的终态退回 remote-only（SSH 仍可用）。**注意：慢网下启动页会带着真实字节进度等满这段预算，这是已知代价。** |
 | 下载失败 / sha256 不符 / size 不符 | 条目置灰 + tooltip「OMP 运行时不可用：<脱敏原因>」+ 「重试」。已有 OMP 会话 → composer 只读 + 错误条，**不自动切回其它 agent**。 |
 | 版本不匹配（本地 `--version` ≠ pin） | 按校验失败处理，同上。不启动、不降级。 |
 | 下载中途取消 | 清理半成品，回到"未安装"态。 |

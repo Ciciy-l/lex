@@ -47,6 +47,14 @@ vi.mock('../auth-adapters.js', () => ({
 
 vi.mock('../omp-runtime.js', () => ({
   resolveOmpBinaryPath: () => '/bin/omp',
+  peekOmpRuntimeSnapshot: () => ({
+    state: 'ready',
+    reason: null,
+    binaryPath: '/bin/omp',
+    version: null,
+    detail: null,
+  }),
+  isLocalOmpRuntimePending: () => false,
 }));
 
 vi.mock('../omp-proxy-session-token.js', () => ({

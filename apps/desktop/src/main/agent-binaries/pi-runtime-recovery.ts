@@ -3,8 +3,14 @@ import type { PrepareResult } from './types.js';
 /** Retry delay for an optional Pi runtime that missed the startup network. */
 export const PI_RUNTIME_RECOVERY_RETRY_MS = 30_000;
 
-/** Only errors that may change when connectivity returns are worth retrying. */
-export function isRetryablePiPrepareError(error?: string): boolean {
+/**
+ * Only errors that may change when connectivity returns are worth retrying.
+ *
+ * Shared by every optional runtime (Pi, OMP): it is the single yardstick for
+ * "will a retry help?", so the registration gate and the retry scheduler can
+ * never disagree about whether a runtime is still expected to arrive.
+ */
+export function isRetryableOptionalRuntimePrepareError(error?: string): boolean {
   return error === 'manifest_failed'
     || error === 'NETWORK'
     || error === 'HTTP_5XX'
@@ -31,8 +37,14 @@ export interface PiRuntimeRecovery {
    * the runtime remains unavailable; a recovered runtime is left alone.
    */
   start(reason?: string): Promise<boolean>;
-  /** Mark the startup prepare as unavailable and begin background recovery. */
-  markUnavailable(error?: string): void;
+  /**
+   * Mark the startup prepare as unavailable and begin background recovery.
+   *
+   * `options.retryable` overrides the error-code classification for callers that
+   * know better: a dev-only runtime can appear at any moment (`pnpm install:omp`
+   * while the app is live), which no error code can express.
+   */
+  markUnavailable(error?: string, options?: { retryable?: boolean }): void;
   /** Try recovery immediately; returns true only when Pi was registered. */
   retryNow(reason?: string): Promise<boolean>;
   /** Stop future retries during app shutdown or test cleanup. */
@@ -85,9 +97,9 @@ export function createPiRuntimeRecovery(options: PiRuntimeRecoveryOptions): PiRu
       return recovery.retryNow(reason);
     },
 
-    markUnavailable(error) {
+    markUnavailable(error, opts) {
       disabled = true;
-      retryable = isRetryablePiPrepareError(error);
+      retryable = opts?.retryable ?? isRetryableOptionalRuntimePrepareError(error);
       if (!retryable && retryTimer !== null) {
         cancel(retryTimer);
         retryTimer = null;

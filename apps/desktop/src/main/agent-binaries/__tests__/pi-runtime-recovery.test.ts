@@ -137,4 +137,35 @@ describe('Pi runtime recovery', () => {
     expect(recovery.isDisabled()).toBe(true);
     recovery.dispose();
   });
+
+  it('honours an explicit retryable override for a permanent-looking error', () => {
+    // dev 态 OMP:二进制随时可能被 pnpm install:omp 补上,没有错误码能表达这件事。
+    const schedule = vi.fn(() => 0);
+    const cancel = vi.fn();
+    const recovery = createPiRuntimeRecovery({
+      isOnline: () => true,
+      prepare: vi.fn(async () => ({ ready: false, error: 'asset_missing' })),
+      register: () => true,
+      onRegistered: vi.fn(),
+      setTimeout: schedule as unknown as typeof setTimeout,
+      clearTimeout: cancel as unknown as typeof clearTimeout,
+    });
+
+    recovery.markUnavailable('omp dev binary not found for win32-x64', { retryable: true });
+    expect(schedule).toHaveBeenCalledOnce();
+    expect(recovery.isDisabled()).toBe(true);
+    recovery.dispose();
+
+    const strict = createPiRuntimeRecovery({
+      isOnline: () => true,
+      prepare: vi.fn(async () => ({ ready: false, error: 'asset_missing' })),
+      register: () => true,
+      onRegistered: vi.fn(),
+      setTimeout: schedule as unknown as typeof setTimeout,
+      clearTimeout: cancel as unknown as typeof clearTimeout,
+    });
+    strict.markUnavailable('omp dev binary not found for win32-x64', { retryable: false });
+    expect(schedule).toHaveBeenCalledOnce();
+    strict.dispose();
+  });
 });

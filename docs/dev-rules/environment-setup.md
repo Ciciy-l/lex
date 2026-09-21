@@ -27,7 +27,13 @@ pnpm install
 `pnpm install` 的 postinstall 会按当前平台 **best-effort 自动下载 Desktop runtime
 二进制**（claude／codex／ripgrep／pi，不入 git；失败只告警不阻断）。OMP 开发态仍
 保持显式 `pnpm install:omp`，避免每个全新 checkout 都拉取其较大的上游制品；正式
-Lex 安装包则会在启动页放行后按固定版本、大小和 SHA-256 自动准备 OMP，失败不阻断其它引擎。dev 启动前
+Lex 安装包则在启动页与 claude／codex／pi 走同一条串行下载队列，按固定版本、大小和
+SHA-256 自动准备 OMP（带真实字节进度），并配独立的有界 deadline
+（`OMP_AGENT_INSTALL_STARTUP_DEADLINE_MS`，当前 90s）——上游是 GitHub Release、
+单平台约 161MB，慢网下启动页会**带着真实进度**等满这段预算，超时或失败都不把
+splash 打进失败态，也不阻断其它引擎。超时/网络类失败转为后台按网络恢复重试；
+不可重试的终态（HTTP_4XX、CHECKSUM、DISK、`asset_*`、版本不符）不排重试，OMP 退回
+remote-only 注册，SSH 仍可用。dev 启动前
 的 guard 会按同一份 runtime kind 清单再确认：全新 clone／worktree 缺少任何一项时都会
 自动补下载，仍无法准备才会中止 dev 启动并给出明确错误。
 正常情况下无需手动安装二进制。
