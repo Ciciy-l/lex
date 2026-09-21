@@ -1,16 +1,16 @@
 {
   "app": {
-    "version": "0.1.3-rc.1",
-    "releaseNotes": "Lex 0.1.3-rc.1",
+    "version": "0.1.3-rc.2",
+    "releaseNotes": "Lex 0.1.3-rc.2",
     "hotfix": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.3-rc.1/Lex-0.1.3-rc.1-macOS-Apple-Silicon-Auto-Update.zip",
-      "sha256": "c2b8c00e8ac007abd6294ef024c8853f7921fff63988c7c16a858730d1286704",
-      "size": 254973000
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.3-rc.2/Lex-0.1.3-rc.2-macOS-Apple-Silicon-Auto-Update.zip",
+      "sha256": "68fe2f97413d1d0b695267a15573b059d1751471ded9c1b6bc878b4ece2b614f",
+      "size": 254972591
     },
     "installer": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.3-rc.1/Lex-0.1.3-rc.1-macOS-Apple-Silicon.dmg",
-      "sha256": "797c5161a471f01609c1e9a6d4286fa3b6369ac11f10c7a0d3f43e5b74c96758",
-      "size": 280960813
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.3-rc.2/Lex-0.1.3-rc.2-macOS-Apple-Silicon.dmg",
+      "sha256": "cf0a63d08dffdeef96505c18ffbc944b4d26ba49a75d303f226c7c335b50d0b1",
+      "size": 280960728
     }
   },
   "claudeCode": {
@@ -38,5 +38,11 @@
     "file": "https://hotfix.cindy.app/cindy/pi/0.84.4/darwin-arm64/pi.dist.tar.gz",
     "sha256": "5bf0ce75418f64f3c97b843028c2f7314a8c964849e221a00c7e5585eff00f94",
     "size": 31646076
+  },
+  "omp": {
+    "version": "18.1.18",
+    "file": "https://github.com/can1357/oh-my-pi/releases/download/v18.1.18/omp-darwin-arm64",
+    "sha256": "035a35dcb249edb939fa02b74fc7c0df9b2eb659079349fbffb188e1b558957a",
+    "size": 135659152
   }
 }

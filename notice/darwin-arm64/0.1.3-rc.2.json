@@ -1,0 +1,56 @@
+{
+  "version": "0.1.3-rc.2",
+  "date": "2026-09-21",
+  "contentByLocale": {
+    "zh-CN": {
+      "intro": "Lex 0.1.3-rc.2 版本日志",
+      "topics": [
+        {
+          "id": "omp-runtime-provisioning",
+          "title": "OMP 运行时自动准备",
+          "text": "在正式安装版的启动界面放行后，如本机尚未有已验证的 OMP 运行时，Lex 会在后台自动下载并校验固定版本的所需运行时，不会阻塞启动界面。准备完成后即可使用本机 OMP，后续启动会复用并再次校验本地副本。"
+        }
+      ]
+    },
+    "zh-TW": {
+      "intro": "Lex 0.1.3-rc.2 版本日誌",
+      "topics": [
+        {
+          "id": "omp-runtime-provisioning",
+          "title": "OMP 執行階段自動準備",
+          "text": "在正式安裝版的啟動畫面放行後，如果本機尚未有已驗證的 OMP 執行階段，Lex 會在背景自動下載並驗證固定版本的所需執行階段，不會阻塞啟動畫面。準備完成後即可使用本機 OMP，後續啟動會重複使用並再次驗證本機副本。"
+        }
+      ]
+    },
+    "en": {
+      "intro": "Lex 0.1.3-rc.2 release notes",
+      "topics": [
+        {
+          "id": "omp-runtime-provisioning",
+          "title": "OMP Runtime Setup",
+          "text": "After the startup screen is released in a packaged Lex app, if a verified local OMP runtime is not already available, Lex automatically downloads and verifies the pinned runtime in the background without blocking startup. Once it is ready, local OMP can be used; later launches reuse and verify the local copy again."
+        }
+      ]
+    },
+    "ja": {
+      "intro": "Lex 0.1.3-rc.2 バージョン情報",
+      "topics": [
+        {
+          "id": "omp-runtime-provisioning",
+          "title": "OMP ランタイムの自動準備",
+          "text": "正式版の Lex で起動画面が表示を完了した後、検証済みのローカル OMP ランタイムがない場合、Lex は起動を妨げずバックグラウンドで固定バージョンのランタイムを自動的にダウンロードして検証します。準備が完了するとローカル OMP を使用でき、その後の起動ではローカルコピーを再利用して再検証します。"
+        }
+      ]
+    },
+    "ko": {
+      "intro": "Lex 0.1.3-rc.2 버전 정보",
+      "topics": [
+        {
+          "id": "omp-runtime-provisioning",
+          "title": "OMP 런타임 자동 준비",
+          "text": "정식 Lex 앱에서 시작 화면이 해제된 뒤 검증된 로컬 OMP 런타임이 없으면, Lex는 시작을 막지 않고 백그라운드에서 고정 버전 런타임을 자동으로 다운로드하고 검증합니다. 준비가 끝나면 로컬 OMP를 사용할 수 있으며 이후 실행에서는 로컬 사본을 재사용하고 다시 검증합니다."
+        }
+      ]
+    }
+  }
+}
