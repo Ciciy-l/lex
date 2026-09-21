@@ -151,6 +151,57 @@ describe('createBinaryProvisioner emit 时序', () => {
       timeout: { connectMs: 3_000 },
     }));
   });
+
+  it('writes a verified raw asset directly to its executable path', async () => {
+    const installSubdir = `factory-raw-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const binaryName = 'omp';
+    mocks.download.mockImplementation(async (opts: DownloadOpts) => {
+      fs.mkdirSync(path.dirname(opts.targetPath), { recursive: true });
+      fs.writeFileSync(opts.targetPath, 'raw binary');
+      return {
+        path: opts.targetPath,
+        size: 10,
+        sha256: FAKE_SHA,
+        fromCache: false,
+        durationMs: 1,
+        resumedFromBytes: 0,
+      };
+    });
+    const provisioner = createBinaryProvisioner({
+      vendorKey: 'claude',
+      manifestField: 'claudeCode',
+      installSubdir,
+      artifact: { kind: 'raw', binaryName },
+    });
+
+    try {
+      const result = await provisioner.prepare();
+      expect(result).toMatchObject({ ready: true });
+      expect(fs.readFileSync(result.binaryPath, 'utf8')).toBe('raw binary');
+      expect(fs.existsSync(path.join(path.dirname(result.binaryPath), '.verified'))).toBe(true);
+    } finally {
+      const { app } = await import('electron');
+      fs.rmSync(path.join(app.getPath('userData'), installSubdir), { recursive: true, force: true });
+    }
+  });
+
+  it('does not download an asset rejected by its immutable metadata gate', async () => {
+    const validator = vi.fn(() => false);
+    const provisioner = createBinaryProvisioner({
+      vendorKey: 'claude',
+      manifestField: 'claudeCode',
+      installSubdir: `factory-invalid-asset-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      artifact: { kind: 'raw', binaryName: 'omp' },
+      assetValidator: validator,
+    });
+
+    await expect(provisioner.prepare()).resolves.toMatchObject({
+      ready: false,
+      error: 'asset_invalid',
+    });
+    expect(validator).toHaveBeenCalledOnce();
+    expect(mocks.download).not.toHaveBeenCalled();
+  });
 });
 
 

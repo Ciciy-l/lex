@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,6 +8,8 @@ const env = vi.hoisted(() => ({
   container: null as string | null,
   packaged: false,
 }));
+
+const originalResourcesPath = Object.getOwnPropertyDescriptor(process, 'resourcesPath');
 
 vi.mock('electron', () => ({
   app: {
@@ -39,6 +41,16 @@ function makeContainer(): string {
   return container;
 }
 
+function makePackagedContainer(): string {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'lex-omp-packaged-container-'));
+  roots.push(root);
+  const container = path.join(root, 'tools', 'omp-process-container', 'cindy-omp-process-container.exe');
+  mkdirSync(path.dirname(container), { recursive: true });
+  writeFileSync(container, Buffer.alloc(2048, 1), { flag: 'w' });
+  Object.defineProperty(process, 'resourcesPath', { value: root, configurable: true });
+  return container;
+}
+
 describe.runIf(process.platform === 'win32')('OMP Windows process containment', () => {
   beforeEach(() => {
     env.packaged = false;
@@ -48,12 +60,15 @@ describe.runIf(process.platform === 'win32')('OMP Windows process containment', 
 
   afterEach(() => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+    if (originalResourcesPath) Object.defineProperty(process, 'resourcesPath', originalResourcesPath);
+    else Reflect.deleteProperty(process, 'resourcesPath');
   });
 
-  it('resolves only a regular, development helper and rejects packaged execution', () => {
+  it('resolves a regular helper from the fixed development or packaged resource path', () => {
     expect(resolveWindowsOmpProcessContainer()).toBe(env.container);
     env.packaged = true;
-    expect(resolveWindowsOmpProcessContainer()).toBeNull();
+    const packaged = makePackagedContainer();
+    expect(resolveWindowsOmpProcessContainer()).toBe(packaged);
   });
 
   it('spawns the fixed native container with explicit argv, cwd, and isolated environment', () => {

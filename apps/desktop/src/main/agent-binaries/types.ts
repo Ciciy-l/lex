@@ -46,6 +46,21 @@ export interface BinaryProvisionerConfig {
    * runtime 降级。探针失败只表示候选不可用于仲裁，原 manifest 流程照常继续。
    */
   localVersionResolver?: (binaryPath: string, signal?: AbortSignal) => Promise<string | null>;
+  /**
+   * Optional immutable-source gate.  It runs before a manifest asset is used
+   * for a local lookup or a network download, so a build that pins one upstream
+   * binary cannot be redirected by a changed snapshot field.
+   */
+  assetValidator?: (asset: { version: string; file: string; sha256: string; size: number }, platformKey: string) => boolean;
+  /**
+   * Optional byte-level validation for the exact snapshot version already on
+   * disk.  The normal `.verified` marker says a provisioner finished once; a
+   * fixed raw runtime additionally needs this gate before it can be reused.
+   */
+  verifyInstalledBinary?: (
+    binaryPath: string,
+    asset: { version: string; file: string; sha256: string; size: number },
+  ) => boolean | Promise<boolean>;
 }
 
 // ===== §5.2 VendorRuntimeState =====
@@ -89,9 +104,9 @@ export interface BinaryProvisioner {
 export interface PrepareOpts {
   checkForUpdates?: boolean;
   /** D 场景顺序下载阶段标记，会写进 IPC payload 给 splash 显示 (x/y) 文案。 */
-  step?: 1 | 2 | 3;
-  /** D 场景 = 本次需要下载的 vendor 数(2 或 3);B/C 场景缺省。 */
-  totalSteps?: 2 | 3;
+  step?: 1 | 2 | 3 | 4;
+  /** D 场景 = 本次需要下载的 vendor 数(2、3 或 4);B/C 场景缺省。 */
+  totalSteps?: 2 | 3 | 4;
   /** false 时不广播 'binary-download-progress' (lazy 调用路径)。缺省 true (splash 路径)。 */
   broadcastProgress?: boolean;
   /**
@@ -120,8 +135,8 @@ export interface BinaryDownloadProgressPayload {
   total?: string;
   failed?: boolean;
   error?: string;
-  step?: 1 | 2 | 3;
-  totalSteps?: 2 | 3;
+  step?: 1 | 2 | 3 | 4;
+  totalSteps?: 2 | 3 | 4;
   reset?: boolean;
   vendor?: VendorKey;
 }

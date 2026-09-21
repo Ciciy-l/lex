@@ -30,6 +30,7 @@ import { installPiBinaryUpdate } from './pi-self-update.js';
 import path from 'node:path';
 import fs from 'node:fs';
 import { app, BrowserWindow } from 'electron';
+import { OMP_COMPATIBILITY_BASELINE } from '@cindy/maker-core';
 import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
 import { createBinaryProvisioner } from './factory.js';
@@ -46,6 +47,10 @@ import { getPlatformKey } from '../manifestService.js';
 import { ProgressNormalizer } from '../updateProgressNormalizer.js';
 import { createLogger } from '../logger.js';
 import { consumeStartupBinaryUpdateMarker } from './startup-update.js';
+import {
+  getPinnedOmpRuntimeAsset,
+  verifyOmpRuntimeFile,
+} from '../maker-host/omp-runtime-verifier.js';
 
 let startupCheckForUpdates: boolean | undefined;
 
@@ -112,7 +117,7 @@ import type {
 // ── kind 配置表 ──────────────────────────────────────────────────────────────
 //
 // agent-binaries 的 kind 直接复用 maker-core AgentKind 字面量
-// ('claude-code' | 'codex' | 'pi'), 跟 maker-core 保持同步; vendorKey 字段是给底层
+// ('claude-code' | 'codex' | 'pi' | 'omp'), 跟 maker-core 保持同步; vendorKey 字段是给底层
 // createBinaryProvisioner 用的内部 enum, 历史叫 'claude' / 'codex' (factory 内部
 // 硬约定, 不改)。
 //
@@ -122,7 +127,7 @@ import type {
 //   - pi:完整目录包含主二进制与 theme/ 等运行时资产；同时它是可选实验 agent，
 //     manifest 缺 pi 字段 / 下载失败都不阻塞启动。
 
-export type AgentBinaryKind = 'claude-code' | 'codex' | 'pi';
+export type AgentBinaryKind = 'claude-code' | 'codex' | 'pi' | 'omp';
 
 interface AgentBinaryConfig {
   vendorKey: VendorKey;            // 底层 createBinaryProvisioner 接受的内部 key
@@ -136,6 +141,69 @@ interface AgentBinaryConfig {
   optionalAsset?: boolean;         // true = manifest 缺字段不算"需要下载"(可选 vendor)
   preserveLocalVersion?: boolean;  // true = 本地真实版本 >= manifest 时保留，禁止降级
   fastNetworkFallback?: boolean;   // true = 短连接单次尝试后尽快进入外层 fallback
+  /** Immutable metadata gate for an upstream raw runtime. */
+  assetValidator?: (asset: { version: string; file: string; sha256: string; size: number }, platformKey: string) => boolean;
+  /** Byte-level check used by the provisioner before reusing a fixed asset. */
+  verifyInstalledBinary?: (
+    binaryPath: string,
+    asset: { version: string; file: string; sha256: string; size: number },
+  ) => boolean;
+  /**
+   * A synchronous execution-side integrity gate for cached / dev paths. Most
+   * runtimes use their verified marker; a fixed, raw upstream artifact can
+   * additionally require its immutable digest before any caller receives it.
+   */
+  verifyCachedBinary?: (binaryPath: string) => boolean;
+}
+
+/**
+ * OMP has exactly one audited upstream baseline. Its raw artifact is already
+ * digest-checked while downloading; repeat that check for every persisted or
+ * development candidate so a marker alone can never revive altered bytes.
+ */
+function verifiedOmpRuntimeVersion(binaryPath: string): string | null {
+  try {
+    const expected = getPinnedOmpRuntimeAsset(getPlatformKey());
+    return expected && verifyOmpRuntimeFile(binaryPath, expected)
+      ? OMP_COMPATIBILITY_BASELINE
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function isPinnedOmpRuntimeAsset(
+  asset: { version: string; file: string; sha256: string; size: number },
+  platformKey: string,
+): boolean {
+  try {
+    const expected = getPinnedOmpRuntimeAsset(platformKey);
+    return expected !== undefined
+      && asset.version === OMP_COMPATIBILITY_BASELINE
+      && asset.file === expected.url
+      && asset.sha256 === expected.sha256
+      && asset.size === expected.size;
+  } catch {
+    return false;
+  }
+}
+
+function verifyPinnedOmpRuntimeAsset(
+  binaryPath: string,
+  asset: { version: string; file: string; sha256: string; size: number },
+): boolean {
+  const platformKey = getPlatformKey();
+  if (!isPinnedOmpRuntimeAsset(asset, platformKey)) return false;
+  try {
+    const expected = getPinnedOmpRuntimeAsset(platformKey);
+    return expected !== undefined && verifyOmpRuntimeFile(binaryPath, expected);
+  } catch {
+    return false;
+  }
+}
+
+function isLinuxFallbackEligible(kind: AgentBinaryKind): kind is 'claude-code' | 'codex' {
+  return kind === 'claude-code' || kind === 'codex';
 }
 
 const CONFIG: Record<AgentBinaryKind, AgentBinaryConfig> = {
@@ -173,6 +241,22 @@ const CONFIG: Record<AgentBinaryKind, AgentBinaryConfig> = {
     optionalAsset: true,
     preserveLocalVersion: true,
   },
+  omp: {
+    vendorKey: 'omp',
+    manifestField: 'omp',
+    installSubdir: 'omp',
+    binaryName: process.platform === 'win32' ? 'omp.exe' : 'omp',
+    devBinDir: 'omp-bin',
+    vendorTag: 'omp',
+    artifactKind: 'raw',
+    // OMP is a selectable engine, not a prerequisite for opening Lex. The
+    // bootstrap downloads it automatically when its platform has a pin, but a
+    // network miss must leave Claude/Codex/Pi usable and retry later.
+    optionalAsset: true,
+    assetValidator: isPinnedOmpRuntimeAsset,
+    verifyInstalledBinary: verifyPinnedOmpRuntimeAsset,
+    verifyCachedBinary: (binaryPath) => verifiedOmpRuntimeVersion(binaryPath) !== null,
+  },
 };
 
 // ── 懒加载的底层 provisioner 实例缓存 ─────────────────────────────────────────
@@ -191,6 +275,8 @@ function getBase(kind: AgentBinaryKind): BinaryProvisioner {
       optionalAsset: cfg.optionalAsset,
       fastNetworkFallback: cfg.fastNetworkFallback,
       localVersionResolver: cfg.preserveLocalVersion ? probeBinaryVersion : undefined,
+      assetValidator: cfg.assetValidator,
+      verifyInstalledBinary: cfg.verifyInstalledBinary,
     });
     baseProvisioners.set(kind, base);
   }
@@ -245,14 +331,20 @@ function formatBytes(bytes: number): string {
 
 export function getCachedBinaryStatus(kind: AgentBinaryKind): CachedBinaryStatus {
   const cfg = CONFIG[kind];
+  const isUsableCachedPath = (candidate: string): boolean => {
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return cfg.verifyCachedBinary?.(candidate) !== false;
+    } catch {
+      return false;
+    }
+  };
   const cachedReadyPath = lastReadyPath.get(kind);
   if (cachedReadyPath) {
-    try {
-      fs.accessSync(cachedReadyPath, fs.constants.X_OK);
+    if (isUsableCachedPath(cachedReadyPath)) {
       return { binaryReady: true, binaryPath: cachedReadyPath };
-    } catch {
-      lastReadyPath.delete(kind);
     }
+    lastReadyPath.delete(kind);
   }
 
   // dev:优先查仓库本地 runtime(apps/<devBinDir>/<platform>/<devBinaryName>)。
@@ -261,14 +353,14 @@ export function getCachedBinaryStatus(kind: AgentBinaryKind): CachedBinaryStatus
       vendorBinDir: cfg.devBinDir,
       binaryName: cfg.devBinaryName ?? cfg.binaryName,
     });
-    if (devPath) return { binaryReady: true, binaryPath: devPath };
+    if (devPath && isUsableCachedPath(devPath)) return { binaryReady: true, binaryPath: devPath };
   }
 
   // packaged Linux 同步快查只看已知私有路径；不能在 renderer-facing 路径
   // 里执行 CLI --version 或 PATH shell lookup。系统 CLI 由 async prepare 发现。
   // pi 不走 Linux runtime fallback(那条链是 cc/codex 官方 CLI 专用),Linux 上的
   // pi 与其它平台一致:只使用内置 snapshot 管理的 CDN 资产。
-  if (kind !== 'pi') {
+  if (isLinuxFallbackEligible(kind)) {
     const linuxFallbackPath = findCachedLinuxRuntimeFallbackBinary(kind);
     if (linuxFallbackPath) return { binaryReady: true, binaryPath: linuxFallbackPath };
   }
@@ -283,7 +375,7 @@ export function getCachedBinaryStatus(kind: AgentBinaryKind): CachedBinaryStatus
     for (const v of versions) {
       const p = path.join(installRoot, v, cfg.binaryName);
       const verified = path.join(installRoot, v, '.verified');
-      if (fs.existsSync(p) && fs.existsSync(verified)) {
+      if (fs.existsSync(verified) && isUsableCachedPath(p)) {
         return { binaryReady: true, binaryPath: p };
       }
     }
@@ -309,9 +401,11 @@ export async function prepare(
       vendorBinDir: cfg.devBinDir,
       binaryName: cfg.devBinaryName ?? cfg.binaryName,
     });
-    if (devPath) {
+    if (devPath && cfg.verifyCachedBinary?.(devPath) !== false) {
       console.log(`[agent-binaries/${kind}] dev fallback hit: ${devPath}`);
-      console.warn(`[agent-binaries/${kind}] dev fallback: SHA256 check SKIPPED — for development only`);
+      if (!cfg.verifyCachedBinary) {
+        console.warn(`[agent-binaries/${kind}] dev fallback: SHA256 check SKIPPED — for development only`);
+      }
       lastReadyPath.set(kind, devPath);
       return { ready: true, path: devPath, downloaded: false };
     }
@@ -328,7 +422,7 @@ export async function prepare(
   // 官方下载)——fallback 才是最终判决。
   // pi 例外:没有官方 CLI fallback 链,Linux 也走下方通用 snapshot 路径
   // (snapshot 缺 pi 字段 → asset_missing 快速失败,由调用方降级)。
-  if (process.platform === 'linux' && app.isPackaged && kind !== 'pi') {
+  if (process.platform === 'linux' && app.isPackaged && isLinuxFallbackEligible(kind)) {
     // Runtime metadata is local, so the shared deadline starts when the first
     // prepare begins instead of including a remote app-update manifest probe.
     if (opts.signal && !linuxRoundStartBySignal.has(opts.signal)) {
@@ -589,7 +683,7 @@ export async function peekNeedsDownload(
   // leg is available; no remote app-update manifest probe belongs on this path.
   // PATH 与版本探测统一留给可取消的 async prepare。
   // pi 各平台统一走 manifest peek(可选资产:manifest 缺字段 → false)。
-  if (process.platform === 'linux' && kind !== 'pi') {
+  if (process.platform === 'linux' && isLinuxFallbackEligible(kind)) {
     const manifest = getRuntimeManifest();
     if (manifest && getVendorAsset(manifest, CONFIG[kind].manifestField)) {
       const needsDownload = await getBase(kind).peekNeedsDownload(opts);
@@ -612,8 +706,8 @@ export async function getInstallState(kind: AgentBinaryKind): Promise<VendorRunt
  */
 export function broadcastResetForStep(
   kind: AgentBinaryKind,
-  step: 1 | 2 | 3,
-  totalSteps: 2 | 3,
+  step: 1 | 2 | 3 | 4,
+  totalSteps: 2 | 3 | 4,
 ): void {
   broadcastBinaryDownloadProgress({
     progress: 0,

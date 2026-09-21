@@ -4,6 +4,7 @@ import {
   getRuntimeAssetBaseUrl,
   getRuntimeManifest,
 } from '../runtime-manifest.js';
+import { getPinnedOmpRuntimeAsset } from '../../maker-host/omp-runtime-verifier.js';
 
 describe('build-pinned agent runtime manifest', () => {
   it.each(['win32-x64', 'darwin-arm64', 'darwin-x64', 'linux-x64'])(
@@ -15,6 +16,14 @@ describe('build-pinned agent runtime manifest', () => {
       expect(manifest?.claudeCode?.file).toContain(`/${platform}/`);
       expect(manifest?.codexPackage?.file).toContain(`/${platform}/`);
       expect(manifest?.pi?.file).toContain(`/${platform}/`);
+      const omp = getPinnedOmpRuntimeAsset(platform);
+      expect(omp).toBeDefined();
+      expect(manifest?.omp).toEqual({
+        version: '18.1.18',
+        file: omp?.url,
+        sha256: omp?.sha256,
+        size: omp?.size,
+      });
     },
   );
 

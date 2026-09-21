@@ -48,12 +48,10 @@ fn root_exit_reclaims_a_grandchild_before_the_container_exits() {
     let container =
         env::var("CARGO_BIN_EXE_cindy-omp-process-container").expect("container test binary");
     let fixture = env::var("CARGO_BIN_EXE_fixture").expect("fixture test binary");
-    // Production accepts only a sibling omp.exe. Stage the test fixture under
-    // that exact name beside the container so this exercises the same guard.
-    let omp = PathBuf::from(&container)
-        .parent()
-        .expect("container directory")
-        .join("omp.exe");
+    // Production keeps the signed containment helper under resources and the
+    // verified OMP runtime under userData.  Stage the fixture in a separate
+    // absolute directory so this test exercises that packaged layout.
+    let omp = root.join("omp.exe");
     fs::copy(&fixture, &omp).expect("stage sibling omp fixture");
     let parent_pid = std::process::id().to_string();
 
@@ -82,6 +80,5 @@ fn root_exit_reclaims_a_grandchild_before_the_container_exits() {
         !process_is_alive(grandchild),
         "grandchild {grandchild} outlived contained OMP root",
     );
-    fs::remove_file(omp).expect("fixture cleanup");
     fs::remove_dir_all(root).expect("test cleanup");
 }

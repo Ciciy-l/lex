@@ -12,6 +12,8 @@ export function isRetryablePiPrepareError(error?: string): boolean {
 }
 
 export interface PiRuntimeRecoveryOptions {
+  /** Display-only label; Pi keeps the historical default, other optional engines reuse this state machine. */
+  runtimeName?: string;
   isOnline: () => boolean;
   prepare: () => Promise<PrepareResult>;
   register: () => boolean;
@@ -23,6 +25,12 @@ export interface PiRuntimeRecoveryOptions {
 }
 
 export interface PiRuntimeRecovery {
+  /**
+   * Begin the optional runtime's first background prepare without making the
+   * caller wait for it. Subsequent calls may prompt an immediate retry while
+   * the runtime remains unavailable; a recovered runtime is left alone.
+   */
+  start(reason?: string): Promise<boolean>;
   /** Mark the startup prepare as unavailable and begin background recovery. */
   markUnavailable(error?: string): void;
   /** Try recovery immediately; returns true only when Pi was registered. */
@@ -40,6 +48,7 @@ export interface PiRuntimeRecovery {
  * have succeeded. Concurrent focus/timer signals share one prepare promise.
  */
 export function createPiRuntimeRecovery(options: PiRuntimeRecoveryOptions): PiRuntimeRecovery {
+  const runtimeName = options.runtimeName ?? 'Pi';
   const retryDelayMs = options.retryDelayMs ?? PI_RUNTIME_RECOVERY_RETRY_MS;
   const schedule = options.setTimeout ?? globalThis.setTimeout;
   const cancel = options.clearTimeout ?? globalThis.clearTimeout;
@@ -48,6 +57,7 @@ export function createPiRuntimeRecovery(options: PiRuntimeRecoveryOptions): PiRu
   let retryable = false;
   let retryTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
   let inFlight: Promise<boolean> | null = null;
+  let started = false;
 
   const logWarn = (message: string, error?: unknown): void => {
     options.logWarn?.(message, error);
@@ -64,6 +74,17 @@ export function createPiRuntimeRecovery(options: PiRuntimeRecoveryOptions): PiRu
   };
 
   const recovery: PiRuntimeRecovery = {
+    start(reason = 'startup') {
+      if (disposed || (started && !disabled)) return Promise.resolve(false);
+      started = true;
+      // The first automatic attempt has no prior prepare result to classify.
+      // Treat it as retryable until the managed provisioner returns a concrete
+      // outcome; retryNow() then applies the usual network/single-flight rules.
+      disabled = true;
+      retryable = true;
+      return recovery.retryNow(reason);
+    },
+
     markUnavailable(error) {
       disabled = true;
       retryable = isRetryablePiPrepareError(error);
@@ -74,8 +95,8 @@ export function createPiRuntimeRecovery(options: PiRuntimeRecoveryOptions): PiRu
       if (error) {
         logWarn(
           retryable
-            ? 'Pi runtime unavailable; scheduling recovery'
-            : 'Pi runtime unavailable; recovery not scheduled for permanent prepare error',
+            ? `${runtimeName} runtime unavailable; scheduling recovery`
+            : `${runtimeName} runtime unavailable; recovery not scheduled for permanent prepare error`,
           error,
         );
       }
@@ -90,7 +111,7 @@ export function createPiRuntimeRecovery(options: PiRuntimeRecoveryOptions): PiRu
       try {
         online = options.isOnline();
       } catch (error) {
-        logWarn('Pi runtime network state probe failed', error);
+        logWarn(`${runtimeName} runtime network state probe failed`, error);
       }
       if (!online) {
         scheduleRetry();
@@ -101,7 +122,7 @@ export function createPiRuntimeRecovery(options: PiRuntimeRecoveryOptions): PiRu
         try {
           const result = await options.prepare();
           if (!result.ready || !result.path) {
-            logWarn(`Pi runtime recovery prepare failed (${reason})`, result.error);
+            logWarn(`${runtimeName} runtime recovery prepare failed (${reason})`, result.error);
             recovery.markUnavailable(result.error);
             return false;
           }
@@ -109,12 +130,16 @@ export function createPiRuntimeRecovery(options: PiRuntimeRecoveryOptions): PiRu
             scheduleRetry();
             return false;
           }
+          if (retryTimer !== null) {
+            cancel(retryTimer);
+            retryTimer = null;
+          }
           disabled = false;
           retryable = false;
           options.onRegistered();
           return true;
         } catch (error) {
-          logWarn(`Pi runtime recovery threw (${reason})`, error);
+          logWarn(`${runtimeName} runtime recovery threw (${reason})`, error);
           recovery.markUnavailable(error instanceof Error ? error.message : String(error));
           return false;
         }
@@ -143,3 +168,12 @@ export function createPiRuntimeRecovery(options: PiRuntimeRecoveryOptions): PiRu
 
   return recovery;
 }
+
+/**
+ * Shared alias for optional engines whose managed runtime may miss a startup
+ * network window. Pi is the original user; OMP uses the same bounded,
+ * single-flight retry contract rather than introducing a second scheduler.
+ */
+export type OptionalRuntimeRecoveryOptions = PiRuntimeRecoveryOptions;
+export type OptionalRuntimeRecovery = PiRuntimeRecovery;
+export const createOptionalRuntimeRecovery = createPiRuntimeRecovery;

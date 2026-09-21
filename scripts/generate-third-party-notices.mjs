@@ -43,6 +43,7 @@ const CARGO_MANIFESTS = [
     "windows-function-key-listener",
     "Cargo.toml",
   ),
+  path.join(DESKTOP_DIR, "native", "omp-process-container", "windows", "Cargo.toml"),
 ];
 
 /** 与 pnpm-workspace.yaml 的客户端 workspace 范围保持一致。 */
@@ -710,6 +711,20 @@ function buildDesktopCommonEntries(apacheText, sharpPackageNames) {
       license: "MIT",
       url: "https://github.com/earendil-works/pi",
       licenseText: MIT_TEXT("MIT License\n\nCopyright (c) 2025 Mario Zechner"),
+    }),
+  );
+
+  // oh-my-pi (OMP) — an immutable upstream Release binary is downloaded to
+  // userData on demand, never embedded in the application package.
+  entries.push(
+    bundledComponent({
+      name: "oh-my-pi (OMP runtime-downloaded binary)",
+      version: readToolVersion("omp"),
+      license: "MIT",
+      url: "https://github.com/can1357/oh-my-pi",
+      licenseText: MIT_TEXT(
+        "MIT License\n\nCopyright (c) 2025 Mario Zechner\nCopyright (c) 2025-2026 Can Bölük",
+      ),
     }),
   );
 

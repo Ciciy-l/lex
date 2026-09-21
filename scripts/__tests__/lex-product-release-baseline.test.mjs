@@ -134,6 +134,7 @@ test('Lex agent runtime snapshot is pinned, complete, and platform-safe', () => 
     codex: readJson('tools/codex/latest.json'),
     codexPackage: readJson('tools/codex-package/latest.json'),
     pi: readJson('tools/pi/latest.json'),
+    omp: readJson('tools/omp/latest.json'),
   };
   const directories = {
     claudeCode: 'claude-code',
@@ -176,6 +177,15 @@ test('Lex agent runtime snapshot is pinned, complete, and platform-safe', () => 
       pins.claudeCode.runtimeAssets[platform].sha256,
       `${platform}/claudeCode upstream binary digest`,
     );
+    const omp = assets.omp;
+    const ompPin = pins.omp.runtimeAssets[platform];
+    assert.ok(omp && typeof omp === 'object', `${platform}/omp`);
+    assert.ok(ompPin && typeof ompPin === 'object', `${platform}/omp pin`);
+    assert.equal(omp.version, pins.omp.version, `${platform}/omp version`);
+    assert.equal(omp.file, ompPin.url, `${platform}/omp official URL`);
+    assert.equal(omp.sha256, ompPin.sha256, `${platform}/omp digest`);
+    assert.equal(omp.size, ompPin.size, `${platform}/omp size`);
+    assert.match(omp.file, /^https:\/\/github\.com\/can1357\/oh-my-pi\/releases\/download\//);
   }
 });
 
@@ -191,7 +201,7 @@ test('Lex update publishing projects the tag-pinned runtime snapshot without net
   assert.match(updates, /manifest_suffixes = \[suffix\] if suffix else \['', '-beta'\]/);
   assert.match(updates, /for output_suffix in manifest_suffixes/);
   assert.match(updates, /RC installs can graduate/);
-  assert.match(updates, /'claudeCode', 'codex', 'codexPackage', 'ripgrep', 'pi'/);
+  assert.match(updates, /'claudeCode', 'codex', 'codexPackage', 'ripgrep', 'pi', 'omp'/);
   assert.doesNotMatch(updates, /urllib\.request|urlopen\(|CINDY_VENDOR_CDN_BASE/);
 
   for (const source of [factory, binaries]) {

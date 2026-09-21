@@ -25,7 +25,9 @@ pnpm install
 ```
 
 `pnpm install` 的 postinstall 会按当前平台 **best-effort 自动下载 Desktop runtime
-二进制**（claude／codex／ripgrep／pi，不入 git；失败只告警不阻断）。dev 启动前
+二进制**（claude／codex／ripgrep／pi，不入 git；失败只告警不阻断）。OMP 开发态仍
+保持显式 `pnpm install:omp`，避免每个全新 checkout 都拉取其较大的上游制品；正式
+Lex 安装包则会在启动页放行后按固定版本、大小和 SHA-256 自动准备 OMP，失败不阻断其它引擎。dev 启动前
 的 guard 会按同一份 runtime kind 清单再确认：全新 clone／worktree 缺少任何一项时都会
 自动补下载，仍无法准备才会中止 dev 启动并给出明确错误。
 正常情况下无需手动安装二进制。
@@ -62,7 +64,7 @@ sudo chmod 4755 chrome-sandbox
 
 - 公开版本不包含内建插件种子；插件通过 SkillHub 或手动安装。不要把任何访问令牌写入
   仓库、Git 配置或脚本。
-- Desktop runtime 二进制（claude／codex／ripgrep／pi）的版本由仓库维护者统一判断与升级；贡献者和
+- Desktop runtime 二进制（claude／codex／ripgrep／pi／omp）的版本由仓库维护者统一判断与升级；贡献者和
   Agent 不要修改 `tools/<kind>/latest.json` 的版本 pin，也不要主动升级二进制。
 - 依赖和命令的事实源是当前 checkout 的 `package.json` 与脚本。文档和脚本冲突时，
   先核对代码并修正文档，不要继续执行已失效命令。

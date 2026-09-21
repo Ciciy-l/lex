@@ -1,11 +1,11 @@
 /**
  * omp-runtime —— OMP 受管运行时的解析与**三态**。
  *
- * 与 cc / codex / pi 不同,OMP 二进制**不是** postinstall 必下资产:
- * `tools/omp/latest.json` pin 了上游 tag(`OMP_COMPATIBILITY_BASELINE`),但只有
- * 显式 `pnpm install:omp` / `pnpm update:omp` 才会把它拉进
- * `apps/omp-bin/<platform>/`(单平台 ~160MB,见 scripts/ensure-agent-binaries.mjs
- * 的 `defaultInstall: false`)。所以「有没有 OMP」是运行时**三态**,不是布尔:
+ * 开发 checkout 中,OMP 仍不是 postinstall 必下资产：开发者通过
+ * `pnpm install:omp` / `pnpm update:omp` 将它放进
+ * `apps/omp-bin/<platform>/`。正式 Lex 则在启动页放行后自动把
+ * `tools/omp/latest.json` 固定的上游版本下载到受管 userData 目录；两种来源
+ * 都会在使用前重新校验尺寸与 SHA-256。因此「有没有 OMP」是运行时**三态**,不是布尔:
  *
  *   · not-ready   —— 没装(dev 全新 checkout 的默认态)
  *   · downloading —— 正在拉(下载器经 noteOmpRuntimeDownloadStarted 上报)
@@ -25,17 +25,14 @@ import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import { app } from 'electron';
-
 import { OMP_COMPATIBILITY_BASELINE, parseOmpVersionOutput } from '@cindy/maker-core';
 
-import { findDevBinary } from '../agent-binaries/dev-fallback.js';
+import { getCachedBinaryStatus } from '../agent-binaries/index.js';
 import { createLogger } from '../logger.js';
 import { getPlatformKey } from '../manifestService.js';
 import {
   getPinnedOmpRuntimeAsset,
   OMP_RUNTIME_PLATFORM_KEYS,
-  verifyOmpRuntimeFile,
   type OmpPinnedRuntimeAsset,
 } from './omp-runtime-verifier.js';
 
@@ -142,13 +139,13 @@ export function ompBinaryName(platformKey: string = getPlatformKey()): string {
  * 解析 OMP 主执行文件绝对路径;不在位返回 null。
  *
  * dev 复用 agent-binaries 的同一查找约定(`apps/omp-bin/<platform>/omp[.exe]`),
- * 打包态读 userData 下的受管落点(CDN 链尚未接入,没装就是 null)。两条路径都
- * 必须重新匹配固定 release pin 的文件尺寸和 SHA-256，不能只信任 marker、PATH
- * 或可执行位。
- * 刻意**不**走 `getReadyBinaryPath('omp')`:OMP 不在 CDN manifest 的必下清单里,
- * 不能让 splash 为它引入一次下载。
+ * 打包态读 userData 下的受管版本目录。两条路径都经过 agent-binaries 的 OMP
+ * 专属固定 SHA-256 校验，不能只信任 marker、PATH 或可执行位。
+ *
+ * OMP 现在和 Pi 一样由受管启动任务自动准备；这里仍只做同步解析，绝不自行下载或
+ * 触发子进程。
  */
-export function resolveOmpBinaryPath(packaged: boolean = app.isPackaged): string | null {
+export function resolveOmpBinaryPath(): string | null {
   const platformKey = getPlatformKey();
   let expected: OmpPinnedRuntimeAsset | undefined;
   try {
@@ -160,10 +157,12 @@ export function resolveOmpBinaryPath(packaged: boolean = app.isPackaged): string
     return null;
   }
   if (!expected) return null;
-  const candidate = !packaged
-    ? findDevBinary({ vendorBinDir: 'omp-bin', binaryName: expected.binaryName })
-    : path.join(app.getPath('userData'), 'omp-bin', platformKey, expected.binaryName);
-  return candidate !== null && verifyOmpRuntimeFile(candidate, expected) ? candidate : null;
+  // getCachedBinaryStatus('omp') is the execution-side gate: unlike the other
+  // marker-based entries it invokes the exact fixed-pin verifier before it
+  // returns a path. Keep this resolver download-free so Maker construction
+  // remains deterministic while optional runtime preparation runs in the background.
+  const cached = getCachedBinaryStatus('omp');
+  return cached.binaryReady && cached.binaryPath ? cached.binaryPath : null;
 }
 
 /**
@@ -197,9 +196,9 @@ let probedVersion: string | null = null;
 
 const listeners = new Set<(snapshot: OmpRuntimeSnapshot) => void>();
 
-function computeSnapshot(packaged: boolean = app.isPackaged): OmpRuntimeSnapshot {
+function computeSnapshot(): OmpRuntimeSnapshot {
   const platformKey = getPlatformKey();
-  const binaryPath = resolveOmpBinaryPath(packaged);
+  const binaryPath = resolveOmpBinaryPath();
   const binaryUsable = binaryPath !== null;
   return classifyOmpRuntime({
     platformKey,
@@ -228,11 +227,11 @@ function publish(next: OmpRuntimeSnapshot): OmpRuntimeSnapshot {
 /**
  * 同步读当前三态(未缓存过就现算一次,不跑子进程)。
  *
- * `packaged` 显式入参(dev / 打包态路径策略不同)—— 默认取 electron,但单测
- * 与未来的诊断入口可以不经过 electron 直接问。
+ * agent-binaries 自己按当前运行态选择开发或正式受管路径；这里不重建第二套
+ * 路径策略，也不会触发下载。
  */
-export function getOmpRuntimeSnapshot(packaged: boolean = app.isPackaged): OmpRuntimeSnapshot {
-  return cachedSnapshot ?? computeSnapshot(packaged);
+export function getOmpRuntimeSnapshot(): OmpRuntimeSnapshot {
+  return cachedSnapshot ?? computeSnapshot();
 }
 
 /**
@@ -242,11 +241,9 @@ export function getOmpRuntimeSnapshot(packaged: boolean = app.isPackaged): OmpRu
  * 已注册的 OMP agent 不会因为这次探测被摘掉(在跑的会话继续跑),但**下一次**
  * `getMaker()`(切账号 / 重启)会看到 failed 而不再注册。
  */
-export async function refreshOmpRuntime(
-  packaged: boolean = app.isPackaged,
-): Promise<OmpRuntimeSnapshot> {
+export async function refreshOmpRuntime(): Promise<OmpRuntimeSnapshot> {
   const platformKey = getPlatformKey();
-  const binaryPath = resolveOmpBinaryPath(packaged);
+  const binaryPath = resolveOmpBinaryPath();
   const binaryUsable = binaryPath !== null;
   let reportedVersion: string | null = null;
   if (binaryUsable && binaryPath !== null) {

@@ -269,7 +269,34 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
     return config.artifact.binaryName;
   }
 
-  async function findUsableLocalBinary(signal?: AbortSignal) {
+  function isAllowedAsset(asset: VendorAsset): boolean {
+    try {
+      return config.assetValidator?.(asset, getPlatformKey()) !== false;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * A completed marker is sufficient for ordinary mutable vendor runtimes.
+   * Immutable raw runtimes attach their own byte-level verifier so a stale
+   * marker cannot turn altered bytes back into an executable.
+   */
+  async function isInstalledForAsset(asset: VendorAsset): Promise<boolean> {
+    const binaryPath = getFinalBinPath(config.installSubdir, asset.version, deriveBinaryName());
+    if (!isInstalled(config.installSubdir, asset.version, deriveBinaryName())) return false;
+    try {
+      return await config.verifyInstalledBinary?.(binaryPath, asset) !== false;
+    } catch {
+      return false;
+    }
+  }
+
+  async function findUsableLocalBinary(asset?: VendorAsset, signal?: AbortSignal) {
+    if (asset && config.verifyInstalledBinary) {
+      const binaryPath = getFinalBinPath(config.installSubdir, asset.version, deriveBinaryName());
+      return await isInstalledForAsset(asset) ? { version: asset.version, binaryPath } : null;
+    }
     return config.localVersionResolver
       ? findPreferredLocalBinary(
           config.installSubdir,
@@ -325,6 +352,16 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
           }, onProgress);
           return { ready: false, binaryPath: '', error: 'asset_missing' };
         }
+        if (!isAllowedAsset(asset)) {
+          emit({
+            status: 'failed',
+            error: {
+              code: 'asset_invalid',
+              message: `manifest field "${config.manifestField}" failed its immutable asset validation`,
+            },
+          }, onProgress);
+          return { ready: false, binaryPath: '', error: 'asset_invalid' };
+        }
         // Reject a manifest asset explicitly scoped to another platform, while
         // keeping compatibility with older manifests whose file path had no
         // platform segment at all.
@@ -342,7 +379,7 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
         emit({ availableVersion: asset.version }, onProgress);
 
         if (opts?.checkForUpdates === false) {
-          const local = await findUsableLocalBinary(opts.signal);
+          const local = await findUsableLocalBinary(asset, opts.signal);
           if (local) {
             emit({ status: 'ready', installedVersion: local.version, binaryPath: local.binaryPath }, onProgress);
             return { ready: true, binaryPath: local.binaryPath };
@@ -369,10 +406,7 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
         // 3.1 未启用真实版本仲裁的 runtime 保持原有 manifest 精确命中流程。
         // 启用仲裁时，探针失败/无效/较旧必须继续下载，以修复残留的 .verified 安装。
         const finalBinPath = getFinalBinPath(config.installSubdir, asset.version, binaryName);
-        if (
-          !config.localVersionResolver &&
-          isInstalled(config.installSubdir, asset.version, binaryName)
-        ) {
+        if (!config.localVersionResolver && await isInstalledForAsset(asset)) {
           emit({
             status: 'ready',
             installedVersion: asset.version,
@@ -440,8 +474,11 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
             try { fs.unlinkSync(downloadDest); } catch { /* ignore */ }
             break;
           }
+          // Raw artifacts are already placed at finalBinPath by the downloader.
+          // Its successful result is SHA-256 and size verified, so there is no
+          // extraction step to perform (OMP uses this form).
           case 'raw':
-            throw new Error('NOT_IMPLEMENTED');
+            break;
         }
 
         // 8. chmod (unix) + marker
@@ -476,9 +513,13 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
         // A proxy that permits manifest URLs but blocks CDN binaries would
         // otherwise leave the user stuck even when a verified local version
         // exists.
+        // Reuse the same selection gate as the normal local path. In
+        // particular, raw pinned runtimes may attach an integrity-aware local
+        // version resolver; falling back to marker-only discovery here would
+        // otherwise bypass it after a transient download failure.
         const localFallback = config.optionalAsset
           ? null
-          : findLatestVerifiedBinary(config.installSubdir, config.artifact.binaryName);
+          : await findUsableLocalBinary(undefined, opts?.signal);
         if (localFallback) {
           emit({
             status: 'ready',
@@ -508,8 +549,9 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
         if (!manifest) return true;
         const asset = getVendorAsset(manifest, config.manifestField);
         if (!asset) return config.optionalAsset !== true;
-        if (opts?.checkForUpdates === false) return await findUsableLocalBinary() === null;
-        return !isInstalled(config.installSubdir, asset.version, deriveBinaryName());
+        if (!isAllowedAsset(asset)) return false;
+        if (opts?.checkForUpdates === false) return await findUsableLocalBinary(asset) === null;
+        return !(await isInstalledForAsset(asset));
       } catch {
         return true;
       }

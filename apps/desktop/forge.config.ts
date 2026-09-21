@@ -795,6 +795,55 @@ function stageRipgrep(targetPlatform: string, targetArch: string): void {
   console.log(`[forge:prePackage] ripgrep ${key} -> ${dest} (${sizeMb} MB)`);
 }
 
+/**
+ * Build and stage the Main-only Windows OMP containment helper. It is a tiny
+ * companion to the downloaded OMP runtime, not the OMP runtime itself: the
+ * latter remains a SHA-256 verified per-user managed download on every
+ * platform. Windows needs this helper because Job assignment must happen
+ * before OMP is resumed; macOS/Linux retain maker-core's native process-group
+ * lifecycle without any extra executable.
+ */
+function buildWindowsOmpProcessContainer(targetPlatform: string, targetArch: string): void {
+  if (process.platform !== 'win32' || targetPlatform !== 'win32') return;
+  const targetByArch: Record<string, string | undefined> = {
+    x64: 'x86_64-pc-windows-msvc',
+    arm64: 'aarch64-pc-windows-msvc',
+  };
+  const target = targetByArch[targetArch];
+  if (!target) {
+    throw new Error(`[forge] unsupported Windows OMP containment target: ${targetArch}`);
+  }
+  const sourceRoot = path.join(__dirname, 'native', 'omp-process-container', 'windows');
+  const manifest = path.join(sourceRoot, 'Cargo.toml');
+  if (!fs.existsSync(manifest)) {
+    throw new Error(`[forge] OMP containment helper source missing at ${manifest}`);
+  }
+  const cargoBin = process.env.USERPROFILE
+    ? path.join(process.env.USERPROFILE, '.cargo', 'bin', 'cargo.exe')
+    : 'cargo';
+  const cargo = fs.existsSync(cargoBin) ? cargoBin : 'cargo';
+  const result = spawnSync(cargo, [
+    'build', '--release', '--locked', '--target', target, '--manifest-path', manifest,
+  ], { stdio: 'inherit' });
+  if (result.error) {
+    throw new Error(`[forge] failed to invoke cargo for OMP containment helper: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    throw new Error(`[forge] OMP containment helper cargo build failed with exit code ${result.status}`);
+  }
+  const binaryName = 'cindy-omp-process-container.exe';
+  const built = path.join(sourceRoot, 'target', target, 'release', binaryName);
+  if (!fs.existsSync(built)) {
+    throw new Error(`[forge] OMP containment helper build succeeded but ${built} is missing`);
+  }
+  const destDir = path.join(__dirname, 'resources', 'tools', 'omp-process-container');
+  const dest = path.join(destDir, binaryName);
+  fs.rmSync(destDir, { recursive: true, force: true });
+  fs.mkdirSync(destDir, { recursive: true });
+  fs.copyFileSync(built, dest);
+  console.log(`[forge:prePackage] OMP Windows containment helper -> ${dest}`);
+}
+
 function extraResourcesForTarget(targetPlatform: string): string[] {
   const base = [
     'resources/icon.png',
@@ -1638,6 +1687,7 @@ const config: ForgeConfig = {
         buildCindyUpdater();
       }
       stageRipgrep(targetPlatform, targetArch);
+      buildWindowsOmpProcessContainer(targetPlatform, targetArch);
       stageAndroidPlatformTools(targetPlatform, targetArch);
       buildWindowsVoiceInputFunctionKeyListener(targetPlatform);
       buildMacIOSSimulatorHelper(platform, arch);

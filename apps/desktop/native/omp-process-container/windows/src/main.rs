@@ -229,17 +229,21 @@ fn parse_launch() -> Result<LaunchSpec> {
     if !Path::new(&executable).is_absolute() {
         return Err(invalid_input());
     }
-    // This helper is deliberately not a generic process runner. Desktop stages
-    // it beside the exact, independently hash-verified OMP executable; only
-    // that sibling `omp.exe` is eligible for containment.
-    let helper = fs::canonicalize(std::env::current_exe().map_err(|_| invalid_input())?)
-        .map_err(|_| invalid_input())?;
-    let helper_parent = helper.parent().ok_or_else(invalid_input)?;
-    let executable = fs::canonicalize(Path::new(&executable)).map_err(|_| invalid_input())?;
-    if (executable.file_name() != Some(OsStr::new(OMP_EXECUTABLE_NAME)))
-        || executable.parent() != Some(helper_parent)
-        || !executable.is_file()
-    {
+    // This helper is deliberately not a generic process runner.  The caller
+    // can only select an absolute, ordinary `omp.exe`; Main separately repeats
+    // the fixed SHA-256 check immediately before every launch.  Packaged Lex
+    // keeps this signed helper in resources while the user-managed runtime
+    // lives under userData, so they must not be required to share a directory.
+    let executable_path = Path::new(&executable);
+    if executable_path.file_name() != Some(OsStr::new(OMP_EXECUTABLE_NAME)) {
+        return Err(invalid_input());
+    }
+    let metadata = fs::symlink_metadata(executable_path).map_err(|_| invalid_input())?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(invalid_input());
+    }
+    let executable = fs::canonicalize(executable_path).map_err(|_| invalid_input())?;
+    if executable.file_name() != Some(OsStr::new(OMP_EXECUTABLE_NAME)) || !executable.is_file() {
         return Err(invalid_input());
     }
     let arguments: Vec<OsString> = args.collect();

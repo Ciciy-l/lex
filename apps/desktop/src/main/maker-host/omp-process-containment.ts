@@ -32,16 +32,19 @@ function isUsableContainer(candidate: string): boolean {
 }
 
 /**
- * OMP is currently an explicit development runtime. Packaged Windows builds
- * fail closed until the helper has a signed, shipped runtime path instead of
- * silently falling back to an unmanaged Node spawn.
+ * A packaged build receives the same narrow helper under resources/tools. It
+ * is signed with the rest of the application executables; if it is absent or
+ * malformed we still fail closed rather than falling back to an unmanaged
+ * Node spawn. Development keeps its separately built repo-local output.
  */
 export function resolveWindowsOmpProcessContainer(): string | null {
-  if (process.platform !== 'win32' || app.isPackaged) return null;
-  const candidate = findDevBinary({
-    vendorBinDir: 'omp-bin',
-    binaryName: CONTAINER_BINARY_NAME,
-  });
+  if (process.platform !== 'win32') return null;
+  const candidate = app.isPackaged
+    ? path.join(process.resourcesPath, 'tools', 'omp-process-container', CONTAINER_BINARY_NAME)
+    : findDevBinary({
+        vendorBinDir: 'omp-bin',
+        binaryName: CONTAINER_BINARY_NAME,
+      });
   return candidate !== null && isUsableContainer(candidate) ? candidate : null;
 }
 
@@ -62,8 +65,8 @@ function validateSpawnRequest(request: Parameters<OmpProcessSpawner>[0]): void {
  * Return the Main-only spawner when the current dev checkout contains its
  * locally built helper. The returned closure re-resolves the fixed dev path on
  * every session, so a removed, symlinked, or undersized helper fails closed
- * after agent registration. Development build outputs are not release-signed;
- * packaged builds remain disabled until a signed runtime path is introduced.
+ * after agent registration. Packaged output resolves only the signed resource
+ * staged by Forge; it never searches PATH or a user-controlled location.
  */
 export function createWindowsOmpProcessSpawner(): OmpProcessSpawner | null {
   if (resolveWindowsOmpProcessContainer() === null) return null;
@@ -71,7 +74,7 @@ export function createWindowsOmpProcessSpawner(): OmpProcessSpawner | null {
     validateSpawnRequest(request);
     const container = resolveWindowsOmpProcessContainer();
     if (container === null) {
-      throw new Error('OMP Windows containment helper is unavailable; run pnpm install:omp');
+      throw new Error('OMP Windows containment helper is unavailable');
     }
     const environment: Record<string, string> = Object.create(null);
     for (const [key, value] of Object.entries(request.environment)) environment[key] = value;
