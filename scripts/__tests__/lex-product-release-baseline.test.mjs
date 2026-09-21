@@ -42,9 +42,16 @@ test('release workflows keep one package while choosing signed or versioned unsi
   assert.match(release, /selected=signed/);
   assert.match(release, /selected=unsigned/);
   assert.match(release, /--no-sign\s+\\?\s*--allow-unsigned/);
-  assert.match(release, /permissions:\n  contents: read/);
+  assert.match(release, /permissions:\n  actions: read\n  contents: read/);
   assert.match(release, /publish:[\s\S]*?permissions:\n      contents: write/);
   assert.match(release, /merge-base --is-ancestor "\$release_commit" origin\/main/);
+  assert.match(release, /release_commit: \$\{\{ steps\.target\.outputs\.release_commit \}\}/);
+  assert.match(release, /Require successful main CI for release target/);
+  assert.match(release, /--workflow ci\.yml --commit "\$RELEASE_COMMIT" --event push --status success/);
+  assert.match(release, /headBranch == \\\"main\\\"/);
+  assert.match(release, /Check release target DCO/);
+  assert.doesNotMatch(release, /Release quality gate/);
+  assert.doesNotMatch(release, /pnpm test:unit/);
   assert.match(release, /Package signed Windows desktop[\s\S]*?CINDY_WIN_SIGN_CMD/);
   assert.doesNotMatch(
     release.match(/Package signed Windows desktop[\s\S]*?Package signed macOS desktop/)?.[0] ?? '',
@@ -59,14 +66,19 @@ test('release workflows keep one package while choosing signed or versioned unsi
   assert.match(preview, /--no-sign/);
   assert.match(
     release,
-    /pnpm check:dco -- --base "\$\{GITHUB_SHA\}\^1" --head "\$GITHUB_SHA"/,
+    /node scripts\/check-dco\.mjs --base "\$\{\{ needs\.resolve-release\.outputs\.release_commit \}\}\^1"/,
   );
   assert.match(preview, /pnpm check:dco -- --base origin\/main --head "\$GITHUB_SHA"/);
   assert.match(release, /--upstream-baseline 40162c508ff10b0f5d3398fd4af5db82dd39f319/);
   assert.doesNotMatch(preview, /--upstream-baseline/);
   assert.doesNotMatch(`${release}\n${preview}`, /^\s*pnpm check:dco\s*$/m);
+  assert.equal(releaseWorkflow.jobs.quality, undefined);
+  assert.equal(releaseWorkflow.jobs.eligibility.needs, 'resolve-release');
+  assert.deepEqual(releaseWorkflow.jobs.package.needs, ['eligibility', 'resolve-release']);
+  assert.match(ci, /Validate Lex release and website contracts/);
+  assert.match(ci, /lex-product-release-baseline\.test\.mjs/);
+
   for (const [name, workflow] of [
-    ['release', releaseWorkflow],
     ['preview', previewWorkflow],
   ]) {
     assert.equal(workflow.jobs.quality.env.ELECTRON_SKIP_BINARY_DOWNLOAD, '1', name);

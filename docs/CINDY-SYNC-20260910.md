@@ -11,7 +11,7 @@
 同步能够可靠识别已整合的 Cindy ancestry。同步本身不创建 Lex 发布 tag，也不发布
 安装包或更新清单。
 
-`desktop-release-auto` 的 release quality gate 将该 SHA 作为
+`desktop-release-auto` 的 release eligibility gate 将该 SHA 作为
 `--upstream-baseline`。该选项只适用于发布检查：它排除该快照及其祖先的导入历史，
 并不为任何上游提交补签、认证 DCO，或放宽普通 PR 的 DCO 要求。快照之后的上游
 提交和所有 Lex 提交仍须按常规规则具备有效 sign-off。不要根据此前同步记录推断
