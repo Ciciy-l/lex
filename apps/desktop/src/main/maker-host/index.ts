@@ -19,7 +19,7 @@ import { refreshCustomProvidersIntoCatalog } from './createDesktopProviderServic
 import { acquireWorktreeRuntimeLease, releaseWorktreeRuntimeLease, type WorktreeRuntimeLease } from '../worktree/runtimeLeases';
 import { readCodexContextWindowInfo } from './codex-context-window.js';
 import { app, BrowserWindow } from 'electron';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import fsSync from 'node:fs';
 import path from 'node:path';
@@ -52,17 +52,6 @@ import { effectiveXdGatewayBaseUrl } from '../model-access/effectiveEndpoint.js'
 import { listCustomMcpRuntimeGenerations } from './custom-mcp-store.js';
 
 import { createMessage } from '../localDb/ipc/messages.js';
-import { createCindyMakeMcpProvider } from '../cindy-make/mcpProvider.js';
-import {
-  commitVerifiedCindyMakeChanges,
-  createCindyMakeCompletionTracker,
-} from '../cindy-make/completion.js';
-import { verifyCindyMakeWorktree } from '../cindy-make/taskWorkspace.js';
-import { runSourceGit } from '../cindy-make/sourceGit.js';
-import {
-  createMakeToolchainEnvironment,
-  resolveMakeToolchainProcessEnvironment,
-} from '../cindy-make/toolchainEnvironment.js';
 import { getMessagesForHistory } from '../localDb/chatHistoryReader.js';
 import { getWorkerLink, updateWorkerStatus } from '../localDb/orcaTeamStore.js';
 import { cleanupSessionTempAttachments } from '../maker-ipc/normalizeAttachments.js';
@@ -1102,69 +1091,6 @@ export function getMaker(): Maker {
       dispatchInterAgentMessage,
     } satisfies OrcaBridgeMcpDeps;
     const orcaWorkerBridgeProvider = createOrcaWorkerBridgeMcpProvider(orcaBridgeDeps);
-    // Cindy Make 个人版任务专属工具:只有 sessions.source='cindy-make' 的任务在
-    // bootstrapSession 时拿到 vendorOptions 标记;Claude 据标记决定注册,Pi 按会话
-    // 剔出 server 列表,Codex 按线程下发 enabled=false,工具调用再按标记 fail-closed。
-    // 完成卡片在本轮 turn 结束后才落库,保证它排在模型最后一段回复之后。
-    const cindyMakeCompletionTracker = createCindyMakeCompletionTracker({
-      getSession: (sessionId) => _maker?.getSession(sessionId),
-      collectFacts: async (sessionId) => {
-        const userData = app.getPath('userData');
-        const meta = await _maker?.getSessionMeta(sessionId);
-        if (!meta?.workDir) {
-          throw new Error('session working directory is not a Cindy Make worktree');
-        }
-        const env = await createMakeToolchainEnvironment(userData);
-        const processEnvironment = await resolveMakeToolchainProcessEnvironment(
-          env,
-          ['git'],
-          AbortSignal.timeout(60_000),
-        );
-        const gitExecutable = env.selectedToolPath('git');
-        if (!processEnvironment || !gitExecutable || !path.isAbsolute(gitExecutable)) {
-          throw new Error('Cindy Make Git is unavailable');
-        }
-        const verify = async () => {
-          const verified = await verifyCindyMakeWorktree(
-            userData,
-            meta.workDir,
-            AbortSignal.timeout(60_000),
-            { processEnvironment, gitExecutable },
-          );
-          if (verified) return verified;
-          throw new Error('session working directory is not a registered Cindy Make worktree');
-        };
-        // The helper fails before its first Git action and then repeats this
-        // check before every command, so a replaced worktree cannot borrow the
-        // trusted completion path between status and commit.
-        const title = meta.title?.trim();
-        return commitVerifiedCindyMakeChanges(
-          verify,
-          (args, workingDir) =>
-            runSourceGit(
-              gitExecutable,
-              processEnvironment,
-              args,
-              workingDir,
-              AbortSignal.timeout(60_000),
-            ),
-          `Cindy Make: ${title || sessionId}`,
-        );
-      },
-      persist: (sessionId, meta) =>
-        createMessage(sessionId, {
-          clientId: randomUUID(),
-          role: 'assistant',
-          content: '',
-          agentMeta: { cindyMakeCompletion: meta },
-        }).then(() => undefined),
-      logger: desktopMakerLogger,
-    });
-    const cindyMakeProvider = createCindyMakeMcpProvider({
-      reportCompletion: cindyMakeCompletionTracker.report,
-      logger: desktopMakerLogger,
-    });
-
     // logger 不 pre-child agent kind —— agent 内部会自己 child(this.kind),
     // host 这里再 child 一次会变成 maker/claude-code/claude-code。
     // endpoint 走 getter 注入: 每次 startSession() 时 env-builder 读 runtimeConfig.endpoint
@@ -1185,7 +1111,6 @@ export function getMaker(): Maker {
     const claudeMcpProviders = [
       ...createDesktopMcpProviders(makerMemoryProviderDeps),
       orcaWorkerBridgeProvider,
-      cindyMakeProvider,
     ];
     _mcpProviders['claude-code'] = claudeMcpProviders;
     // agent Bash 命令的全局并发闸门(跨所有本地 cc session / worker / subagent 共享)。
@@ -1495,7 +1420,6 @@ export function getMaker(): Maker {
     const codexMcpProviders = [
       ...createDesktopMcpProviders(makerMemoryProviderDeps),
       orcaWorkerBridgeProvider,
-      cindyMakeProvider,
     ];
     _mcpProviders.codex = codexMcpProviders;
     const resolveDesiredCodexSubagentRoutingSignature = async (ctx: {
@@ -2231,7 +2155,6 @@ export function getMaker(): Maker {
     const piMcpProviders = [
       ...createDesktopMcpProviders(makerMemoryProviderDeps),
       orcaWorkerBridgeProvider,
-      cindyMakeProvider,
     ];
     _mcpProviders.pi = piMcpProviders;
     // OMP shares the same provider composition as Claude/Codex/Pi.  Its core
@@ -2242,7 +2165,6 @@ export function getMaker(): Maker {
     const ompMcpProviders = [
       ...createDesktopMcpProviders(makerMemoryProviderDeps),
       orcaWorkerBridgeProvider,
-      cindyMakeProvider,
     ];
     _mcpProviders.omp = ompMcpProviders;
     // 用户自定义 MCP:三个 agent 都必须注册其实际持有的数组引用，再统一做初始 refresh。

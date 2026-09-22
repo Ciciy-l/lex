@@ -36,7 +36,6 @@ import {
   Minimize2,
   PanelRightClose,
   PictureInPicture2,
-  Wrench,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { TFunction } from 'i18next';
@@ -155,7 +154,6 @@ const KIND_ICON: Record<BuiltinTabKindId, LucideIcon> = {
   'background-tasks': ListTodo,
   routines: ListTodo,
   'resource-usage': Activity,
-  'cindy-make': Wrench,
 };
 
 const KIND_LABEL_KEY: Record<BuiltinTabKindId, string> = {
@@ -171,7 +169,6 @@ const KIND_LABEL_KEY: Record<BuiltinTabKindId, string> = {
   'background-tasks': 'rightSidebar.tabs.kinds.backgroundTasks',
   routines: 'routines.title',
   'resource-usage': 'rightSidebar.tabs.kinds.resourceUsage',
-  'cindy-make': 'settings.cindyMake.title',
 };
 
 /**

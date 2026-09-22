@@ -122,18 +122,6 @@
       "note": "同账号手机查看和操作电脑真实桌面，独立于 Cindy 内部设备控制授权。"
     },
     {
-      "id": "cindy-make",
-      "status": "proposed",
-      "en": "Lex Make",
-      "translations": {
-        "zh-CN": "Lex Make",
-        "zh-TW": "Lex Make",
-        "ja": "Lex Make",
-        "ko": "Lex Make"
-      },
-      "note": "用户通过内置 /cindy-make 显式开启的 Lex 个人版制作流程，先复用 /cindy-make-doctor 检查本机环境，再按平台补齐缺少的便携工具，并在消息流卡片中保留修改需求；Doctor 自身只检查，上游查询与构建分阶段接入。命令名保持兼容，界面展示使用 Lex Make。"
-    },
-    {
       "id": "cindy-ai-free-tier",
       "status": "proposed",
       "en": "Free tier",

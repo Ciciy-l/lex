@@ -5,7 +5,11 @@ import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import JSZip from 'jszip';
 import * as tar from 'tar';
-import type { MakeToolArtifact } from './toolCatalog.js';
+
+export interface ToolArchiveArtifact {
+  format: 'binary' | 'zip' | 'tar.gz';
+  executable: string;
+}
 
 const MAX_ARCHIVE_BYTES = 160 * 1024 ** 2;
 const MAX_FILE_BYTES = 256 * 1024 ** 2;
@@ -37,10 +41,10 @@ export function safeArchiveLink(name: string, link: string, hard: boolean): void
  * tar handles internal symlinks (Python/Node); ZIP symlinks are not needed by our catalog.
  * Preflight tar entries before any write; bound ZIP expansion while streaming each file.
  */
-export async function extractMakeToolArchive(
+export async function extractToolArchive(
   archive: string,
   destination: string,
-  artifact: Pick<MakeToolArtifact, 'format' | 'executable'>,
+  artifact: ToolArchiveArtifact,
   signal: AbortSignal,
 ): Promise<void> {
   signal.throwIfAborted();
@@ -97,7 +101,6 @@ export async function extractMakeToolArchive(
       strict: true,
       onReadEntry(entry) {
         try {
-          // A harmless top-level './' directory is used by some tar publishers.
           if (entry.type === 'Directory' && /^\.(\/)?$/.test(entry.path)) return;
           safeArchivePath(entry.path);
           if (!['File', 'Directory', 'SymbolicLink', 'Link'].includes(entry.type))

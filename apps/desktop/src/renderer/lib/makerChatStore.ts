@@ -101,7 +101,6 @@ import type {
   GhostSetupErrorCode,
   GhostSetupStepPhase,
 } from '../../shared/ghost';
-import * as messageService from '@/lib/messageService';
 import * as sessionService from '@/lib/sessionService';
 // device-link 透明传输:远程(被控设备)会话的操作/读取走隧道,本地会话零变化。
 import {
@@ -488,8 +487,6 @@ export interface ChatMessage {
    * agentMeta.goalCompletion 派生(仿 fork divider 从 session 元数据派生),重开会话仍在。
    */
   systemCardType?:
-    | 'cindy-make-doctor'
-    | 'cindy-make'
     | 'help'
     | 'cost'
     | 'context'
@@ -499,8 +496,6 @@ export interface ChatMessage {
     | 'cmd'
     | 'goal-complete'
     | 'goal-resumed'
-    /** 个人版制作任务的完成记录,由持久化的 agentMeta.cindyMakeCompletion 派生,重开仍在。 */
-    | 'cindy-make-complete'
     | 'learn'
     | 'review'
     | 'auto-resume'
@@ -14971,14 +14966,10 @@ async function clearSessionAfterGuardImpl(sessionId: string, clearedAt: string):
   await closePromise;
 }
 
-/**
- * F-CMD: Insert a local system card into the message stream.
- * Cindy Make cards are persisted below so the structured card survives reloads;
- * the other command cards remain local-only UI state.
- */
+/** F-CMD: Insert a local system card into the message stream. */
 function insertSystemCard(
   sessionId: string,
-  cardType: 'help' | 'cost' | 'context' | 'pwd' | 'status' | 'compact' | 'cmd' | 'learn' | 'cindy-make-doctor' | 'cindy-make',
+  cardType: 'help' | 'cost' | 'context' | 'pwd' | 'status' | 'compact' | 'cmd' | 'learn',
   data?: Record<string, unknown>,
 ): string | null {
   if (!sessionId) return null;
@@ -15009,49 +15000,7 @@ function insertSystemCard(
       ],
     };
   });
-  if (
-    (cardType === 'cindy-make' || cardType === 'cindy-make-doctor') &&
-    data?.modalOnly !== true
-  ) {
-    enqueueCindyMakeCardPersistence(sessionId, clientId, cardType, data ?? {}, true);
-  }
   return clientId;
-}
-
-const CINDY_MAKE_CARD_MARKER = '__cindyMakeCard';
-const cindyMakeCardQueues = new Map<string, Promise<void>>();
-const cindyMakeNewCards = new Set<string>();
-
-/** Persist Cindy Make's structured card in the same message row that renders it. */
-function enqueueCindyMakeCardPersistence(
-  sessionId: string,
-  clientId: string,
-  cardType: 'cindy-make' | 'cindy-make-doctor',
-  data: Record<string, unknown>,
-  creating = false,
-): void {
-  const key = `${sessionId}:${clientId}`;
-  if (creating) cindyMakeNewCards.add(key);
-  const previous = cindyMakeCardQueues.get(key) ?? Promise.resolve();
-  const next = previous
-    .catch(() => undefined)
-    .then(async () => {
-      const content = { [CINDY_MAKE_CARD_MARKER]: { type: cardType, data } };
-      if (cindyMakeNewCards.has(key)) {
-        await messageService.create(sessionId, {
-          clientId,
-          role: 'assistant',
-          content,
-        });
-        cindyMakeNewCards.delete(key);
-      } else {
-        await messageService.updateContent(sessionId, clientId, content);
-      }
-    })
-    .catch((error) => {
-      log.warn('Failed to persist Cindy Make card:', error);
-    });
-  cindyMakeCardQueues.set(key, next);
 }
 
 /**
@@ -15115,20 +15064,6 @@ function updateSystemCardData(
     };
     return { ...s, messages };
   });
-  const current = getSnapshot(sessionId).messages.find((message) => message.clientId === clientId);
-  if (
-    current?.systemCardType === 'cindy-make' ||
-    current?.systemCardType === 'cindy-make-doctor'
-  ) {
-    if (current.systemCardData?.modalOnly !== true) {
-      enqueueCindyMakeCardPersistence(
-        sessionId,
-        clientId,
-        current.systemCardType,
-        current.systemCardData ?? {},
-      );
-    }
-  }
 }
 
 // Only an accepted Host receipt may commit a question/plan decision. A rejected
@@ -17112,27 +17047,6 @@ function mapServerMessages(serverMsgs: Message[]): ChatMessage[] {
   const ordered = filtered.sort(compareMessageTimeline);
   const legacyUserTurnCosts = projectLegacyUserTurnCosts(ordered);
   const mapped = ordered.map((m) => {
-    const persistedCindyCard =
-      m.role === 'assistant' && m.content && typeof m.content === 'object'
-        ? (m.content as Record<string, unknown>)[CINDY_MAKE_CARD_MARKER]
-        : undefined;
-    if (persistedCindyCard && typeof persistedCindyCard === 'object') {
-      const card = persistedCindyCard as Record<string, unknown>;
-      const type: 'cindy-make' | 'cindy-make-doctor' =
-        card.type === 'cindy-make' ? 'cindy-make' : 'cindy-make-doctor';
-      const data =
-        card.data && typeof card.data === 'object'
-          ? (card.data as Record<string, unknown>)
-          : {};
-      return {
-        clientId: m.clientId,
-        role: 'assistant' as const,
-        content: '',
-        isStreaming: false,
-        systemCardType: type,
-        systemCardData: data,
-      };
-    }
     if (m.role === 'tool_use' && m.content && typeof m.content === 'object') {
       const c = m.content as Record<string, unknown>;
       const { toolName, input: toolInput, toolUseId } = parseMessageToolUse(m);
@@ -17511,17 +17425,6 @@ function mapServerMessages(serverMsgs: Message[]): ChatMessage[] {
         isStreaming: false,
         systemCardType: 'goal-complete' as const,
         systemCardData: { ...m.agentMeta.goalCompletion },
-      };
-    }
-    // 个人版制作任务完成记录:同 goal-complete,从持久 agentMeta 派生成完成卡片。
-    if (m.role === 'assistant' && m.agentMeta?.cindyMakeCompletion) {
-      return {
-        clientId: m.clientId,
-        role: m.role,
-        content: '',
-        isStreaming: false,
-        systemCardType: 'cindy-make-complete' as const,
-        systemCardData: { ...m.agentMeta.cindyMakeCompletion },
       };
     }
     // /goal 提示记录(usageLimited 到点自动续跑)→ 'goal-resumed' system card,同上派生。

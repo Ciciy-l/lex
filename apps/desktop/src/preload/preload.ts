@@ -3847,36 +3847,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openLogsDir: (): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('app:open-logs-dir'),
 
-  // Open <userData>/cindy-make/tools in the OS file manager (Settings → Cindy Make).
-  openCindyMakeToolsDir: (): Promise<{ success: boolean }> =>
-    ipcRenderer.invoke('app:open-cindy-make-tools-dir'),
-
-  getCindyMakeSourceStatus: (): Promise<import('../shared/cindyMakeDoctor').MakeSourceStatus> =>
-    ipcRenderer.invoke('app:get-cindy-make-source-status'),
-
-  openCindyMakeSourceDir: (): Promise<{ success: boolean }> =>
-    ipcRenderer.invoke('app:open-cindy-make-source-dir'),
-
-  // Global source preparation state: pushed to every window, whoever started it.
-  onCindyMakeSourceStatus: (
-    listener: (status: import('../shared/cindyMakeDoctor').MakeSourceStatus) => void,
-  ): (() => void) => {
-    const wrapped = (
-      _event: Electron.IpcRendererEvent,
-      status: import('../shared/cindyMakeDoctor').MakeSourceStatus,
-    ) => listener(status);
-    ipcRenderer.on('cindy-make:source-status', wrapped);
-    return () => ipcRenderer.removeListener('cindy-make:source-status', wrapped);
-  },
-  cancelCindyMakeSource: (): Promise<{ success: boolean }> =>
-    ipcRenderer.invoke('app:cancel-cindy-make-source'),
-
-  // Create the per-task worktree (branch off the personal baseline + install deps).
-  prepareCindyMakeWorkspace: (
-    runId: string,
-  ): Promise<import('../shared/cindyMakeDoctor').MakeTaskWorkspace> =>
-    ipcRenderer.invoke('app:prepare-cindy-make-workspace', runId),
-
   // ── 客户端日志上报(Settings → About)──
   // 真相在 main:是否配置了上报目标、是否已同意隐私政策、开关的 override 状态都由 main
   // 判定,renderer 只消费结论。上传编号由 main 生成并回传,用户报障时口述给我们。
@@ -6062,11 +6032,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
         workingDir?: string;
         args?: string;
         deviceId?: string;
-      } & import('../shared/cindyMakeDoctor').MakeDoctorCommandContext,
+      },
     ): Promise<{
       success: boolean;
       error?: string;
-      doctorReport?: import('../shared/cindyMakeDoctor').MakeDoctorReport;
     }> => ipcRenderer.invoke('maker:execute-desktop-command', name, ctx),
 
     startReview: (input: {
@@ -6152,7 +6121,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onDesktopCommandTriggered: (
       handler: (payload: {
         command: string;
-        doctorReport?: import('../shared/cindyMakeDoctor').MakeDoctorReport;
         sessionId?: string;
         workingDir?: string;
         args?: string;

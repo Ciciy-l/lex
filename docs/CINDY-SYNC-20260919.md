@@ -22,12 +22,6 @@
 - 纳入远程凭证会话与 macOS 自动解锁。它增加 Mobile 原生模块并改变 runtime
   fingerprint，因此现有 Mobile 安装包必须通过冷更新包升级，之后才能接收包含这项
   能力及其后的 OTA。
-- 纳入 Cindy Make 个人工作流。它的受管源始终来自
-  `https://github.com/makecindy/cindy.git`，而不是 Lex 仓库；开发版跟随 Cindy `main`，
-  打包的 Lex 固定使用本同步的 Cindy `v0.1.86`（beta Lex 优先 Cindy beta tag）。
-  `apps/desktop/src/main/cindy-make/upstreamIdentity.ts` 中的
-  `CINDY_MAKE_UPSTREAM_VERSION` 是这项显式基线，后续 Cindy 同步必须连同本记录
-  一起审查和更新，不能用 Lex app version 推导 Cindy Git tag。
 
 ## Lex 产品边界
 

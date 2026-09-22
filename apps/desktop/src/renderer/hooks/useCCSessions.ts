@@ -62,8 +62,6 @@ interface UseCCSessionsReturn {
     remoteHostId?: string;
     /** per-session 来源(供应商)显式选择; null/undefined = 跟随默认路由。透传到 sessionService.create。 */
     providerId?: string | null;
-    /** Only the Cindy Make purpose may be requested from the renderer; Main validates it. */
-    source?: 'cindy-make';
   }) => Promise<Session | null>;
   refreshSessions: () => Promise<Session[]>;
   patchLocal: (id: string, patch: Partial<Session>) => void;
@@ -163,7 +161,6 @@ export function useCCSessions(options?: UseCCSessionsOptions): UseCCSessionsRetu
       remoteHostId?: string;
       /** per-session 来源(供应商)显式选择; null/undefined = 跟随默认路由。透传到 sessionService.create → mapper 落盘。 */
       providerId?: string | null;
-      source?: 'cindy-make';
     }): Promise<Session | null> => {
       try {
         const newSession = await sessionService.create({
