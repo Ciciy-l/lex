@@ -291,6 +291,56 @@ export function setRemoteReviewInputGuard(guard: RemoteReviewInputGuard | null):
   remoteReviewInputGuard = guard;
 }
 
+// Local renderer IPC keeps its sender guard; remote mutations enter the shared action here.
+type RemoteTurnChangeAction = (
+  sessionId: unknown, id: unknown, action: unknown, assertAccess: () => Promise<void>,
+) => Promise<unknown>;
+interface RemoteTurnChangeInvokeContext {
+  readonly client: DeviceLinkClient | null;
+  readonly src: string;
+  readonly linkEpoch: number;
+  readonly ownerScope: ReturnType<typeof broadcastTap.captureDataOwnerBroadcastScope>;
+}
+
+function captureRemoteTurnChangeInvokeContext(
+  client: DeviceLinkClient | null,
+  src: string,
+  linkEpoch = remoteInvokeLinkEpoch.get(src) ?? 0,
+): RemoteTurnChangeInvokeContext {
+  return {
+    client,
+    src,
+    linkEpoch,
+    ownerScope: broadcastTap.captureDataOwnerBroadcastScope(),
+  };
+}
+
+function assertRemoteTurnChangeInvokeContextCurrent(
+  context: RemoteTurnChangeInvokeContext,
+  src: string,
+): void {
+  if (context.src !== src || activeClient !== context.client) {
+    throw new Error('[ACCESS_REVOKED] Device link changed');
+  }
+  if ((remoteInvokeLinkEpoch.get(src) ?? 0) !== context.linkEpoch) {
+    throw new Error('[ACCESS_REVOKED] Device link changed');
+  }
+  if (!readDeviceLinkSettings().remoteControlEnabled) {
+    throw new Error('[REMOTE_DISABLED] Remote control is disabled');
+  }
+  if (isControllerRevoked(src)) {
+    throw new Error('[ACCESS_REVOKED] Access revoked by target device');
+  }
+  if (!broadcastTap.isDataOwnerBroadcastScopeCurrent(context.ownerScope)) {
+    throw new Error('[PRECONDITION_FAILED] Account changed during remote invocation');
+  }
+}
+
+let remoteTurnChangeAction: RemoteTurnChangeAction | null = null;
+export function setRemoteTurnChangeAction(handler: RemoteTurnChangeAction): void {
+  remoteTurnChangeAction = handler;
+}
+
 /**
  * xAI 订阅余量读取器(register.ts 在 usage 面就绪后注入)。该 channel 的 ipcMain
  * handler 挂了 assertTrustedSender(合成 event 必然不可信,那道闸不为远程放宽),
@@ -2388,6 +2438,9 @@ async function handleInvoke(
 ): Promise<void> {
   const cacheKey = `${src}\u0000${requestId}`;
   const invokeLinkEpoch = remoteInvokeLinkEpoch.get(src) ?? 0;
+  const turnChangeContext = payload?.channel === 'maker:turn-change-set:apply'
+    ? captureRemoteTurnChangeInvokeContext(client, src, invokeLinkEpoch)
+    : undefined;
   const fingerprint = JSON.stringify(payload) ?? '';
   const admissionFailure = currentRemoteInvokeAdmissionFailure(src);
   if (admissionFailure) {
@@ -2557,7 +2610,7 @@ async function handleInvoke(
     : () => undefined;
   const handlerStartedAt = Date.now();
   const executionPromise = Promise.resolve()
-    .then(() => executeInvoke(src, payload))
+    .then(() => executeInvoke(src, payload, turnChangeContext))
     .catch((err): InvokeResultPayload => {
       const message = err instanceof Error ? err.message : String(err);
       log.error(`remote invoke escaped execution boundary from ${shortId(src)}: ${message}`);
@@ -2623,8 +2676,9 @@ async function handleInvoke(
 async function executeInvoke(
   src: string,
   payload: InvokePayload | undefined,
+  turnChangeContext?: RemoteTurnChangeInvokeContext,
 ): Promise<InvokeResultPayload> {
-  return await runInvoke(src, payload);
+  return await runInvoke(src, payload, turnChangeContext);
 }
 
 function settleRemoteInvokeWithOrphanDeadline(
@@ -3520,6 +3574,7 @@ function handleSubscriptionFrame(src: string, payload: InvokePayload): InvokeRes
 export async function runInvoke(
   src: string,
   payload: InvokePayload | undefined,
+  turnChangeContext?: RemoteTurnChangeInvokeContext,
 ): Promise<InvokeResultPayload> {
   if (!payload || typeof payload.channel !== 'string') {
     return { ok: false, error: { code: 'INTERNAL', message: 'malformed invoke payload' } };
@@ -3711,7 +3766,8 @@ export async function runInvoke(
 
   try {
     const args = payload.args ?? [];
-    const invocationOwner = broadcastTap.captureDataOwnerBroadcastScope();
+    const invocationOwner = turnChangeContext?.ownerScope
+      ?? broadcastTap.captureDataOwnerBroadcastScope();
     const historyView = (payload.channel === 'local-db:messages:view' || payload.channel === 'local-db:messages:view-intent')
       && typeof args[0] === 'string' ? subscriptions.prepareHistoryView(src, args[0]) : undefined;
     if (hasRemoteBotSessionLookup()) await assertRemoteBotInvocationAllowed(args, payload.channel);
@@ -3730,6 +3786,20 @@ export async function runInvoke(
       // provider:list 的首参只承载隧道能力协商，不进入本机 IPC handler。
       // 对账 listing 走后台读配额，不占满写入名额。
       () => {
+        // Recorded-turn restore is a remote MUTATION: run it directly and lazily, never
+        // inside the background-admission callback and never through the read-coalescing
+        // quota that listing channels use.
+        if (payload.channel === 'maker:turn-change-set:apply') {
+          const executionContext = turnChangeContext
+            ?? captureRemoteTurnChangeInvokeContext(activeClient, src);
+          assertRemoteTurnChangeInvokeContextCurrent(executionContext, src);
+          if (!remoteTurnChangeAction) throw new Error('[UNSUPPORTED_CAPABILITY] Turn restore is unavailable');
+          return remoteTurnChangeAction(args[0], args[1], args[2], async () => {
+            // Recheck after queueing / Git preflight, immediately before the write.
+            await assertRemoteBotInvocationAllowed(args, payload.channel);
+            assertRemoteTurnChangeInvokeContextCurrent(executionContext, src);
+          });
+        }
         const invoke = () => dispatchLocalInvoke(
           payload.channel,
           payload.channel === 'maker:provider:list' ? [] : args,
@@ -3866,6 +3936,7 @@ export const __testing = {
     setBroadcastTapListener(null);
     presenceOfflineCheck = null;
     remoteReviewInputGuard = null;
+    remoteTurnChangeAction = null;
     remoteXaiSubscriptionUsageReader = null;
     remoteClaudeSubscriptionUsageReader = null;
   },

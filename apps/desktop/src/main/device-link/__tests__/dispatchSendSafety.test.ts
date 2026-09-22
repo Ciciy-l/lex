@@ -42,9 +42,10 @@ vi.mock('../settings-store', () => ({
   readDeviceLinkSettings: () => deviceLinkSettings.value,
 }));
 
-import { __testing, runInvoke, wireInboundDispatch } from '../dispatch';
+import { __testing, runInvoke, wireInboundDispatch, setRemoteTurnChangeAction } from '../dispatch';
 import { __testing as registry } from '../invoke-registry';
 import { setRemoteBotSessionLookup } from '../remoteBotSessionBoundary';
+import * as broadcastTap from '../broadcast-tap';
 import { getDeviceLinkInvokeContext } from '../invoke-context';
 import { HistoryViewController, type HistoryViewPage, type HistoryMessageSource } from '@cindy/maker-shared/message-window';
 import * as subscriptions from '../subscriptions';
@@ -944,5 +945,181 @@ describe('remote companion Session visibility at the device-link boundary', () =
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(oldClient.sendPush).not.toHaveBeenCalled();
     expect(newClient.sendPush).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('remote recorded-turn actions', () => {
+  const channel = 'maker:turn-change-set:apply';
+  const invokeFrame = (src: string, id: string) => ({
+    v: PROTOCOL_VERSION,
+    kind: 'invoke',
+    src,
+    id,
+    payload: { channel, args: [`session-${src}`, `change-${id}`, 'undo'] },
+  });
+  const linkCloseFrame = (src: string) => ({
+    v: PROTOCOL_VERSION, kind: 'link-close', src, payload: { reason: 'user' },
+  });
+  const linkOpenFrame = (src: string, id: string) => ({
+    v: PROTOCOL_VERSION, kind: 'link-open', src, id, payload: undefined,
+  });
+
+  it('rejects a scheduled restore after same-peer link close/reopen, while another peer still works', async () => {
+    const client = mkClient();
+    wireInboundDispatch(client as never);
+    const receive = client.onFrame.mock.calls[0]?.[0] as (frame: unknown) => void;
+    if (!receive) throw new Error('inbound frame listener was not registered');
+    const writes: string[] = [];
+    setRemoteTurnChangeAction(async (sessionId, _id, _action, assertAccess) => {
+      await assertAccess();
+      writes.push(String(sessionId));
+      return { changed: true };
+    });
+
+    receive(invokeFrame('peer-old', 'scheduled-old') as never);
+    receive(linkCloseFrame('peer-old') as never);
+    receive(linkOpenFrame('peer-old', 'reopened') as never);
+    receive(invokeFrame('peer-live', 'scheduled-live') as never);
+
+    await vi.waitFor(() => expect(writes).toEqual(['session-peer-live']));
+    expect(writes).not.toContain('session-peer-old');
+  });
+
+  it('rechecks the captured link epoch after the asynchronous Git preflight', async () => {
+    const client = mkClient();
+    wireInboundDispatch(client as never);
+    const receive = client.onFrame.mock.calls[0]?.[0] as (frame: unknown) => void;
+    if (!receive) throw new Error('inbound frame listener was not registered');
+    let markPreflightStarted!: () => void;
+    const preflightStarted = new Promise<void>((resolve) => { markPreflightStarted = resolve; });
+    let releasePreflight!: () => void;
+    const pendingPreflight = new Promise<void>((resolve) => { releasePreflight = resolve; });
+    const writes: string[] = [];
+    setRemoteTurnChangeAction(async (sessionId, _id, _action, assertAccess) => {
+      markPreflightStarted();
+      await pendingPreflight;
+      await assertAccess();
+      writes.push(String(sessionId));
+      return { changed: true };
+    });
+
+    receive(invokeFrame('peer-preflight', 'preflight') as never);
+    await preflightStarted;
+    receive(linkCloseFrame('peer-preflight') as never);
+    receive(linkOpenFrame('peer-preflight', 'preflight-reopened') as never);
+    releasePreflight();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(writes).toEqual([]);
+  });
+
+  it('rejects an old request after activeClient is replaced during preflight', async () => {
+    const oldClient = mkClient();
+    wireInboundDispatch(oldClient as never);
+    const receive = oldClient.onFrame.mock.calls[0]?.[0] as (frame: unknown) => void;
+    if (!receive) throw new Error('inbound frame listener was not registered');
+    let markPreflightStarted!: () => void;
+    const preflightStarted = new Promise<void>((resolve) => { markPreflightStarted = resolve; });
+    let releasePreflight!: () => void;
+    const pendingPreflight = new Promise<void>((resolve) => { releasePreflight = resolve; });
+    const writes: string[] = [];
+    setRemoteTurnChangeAction(async (sessionId, _id, _action, assertAccess) => {
+      markPreflightStarted();
+      await pendingPreflight;
+      await assertAccess();
+      writes.push(String(sessionId));
+      return { changed: true };
+    });
+
+    receive(invokeFrame('peer-replaced', 'old-client') as never);
+    await preflightStarted;
+    const replacementClient = mkClient();
+    wireInboundDispatch(replacementClient as never);
+    releasePreflight();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(writes).toEqual([]);
+  });
+
+  it('rejects the entry owner snapshot if the account boundary changes before scheduling', async () => {
+    const client = mkClient();
+    wireInboundDispatch(client as never);
+    const receive = client.onFrame.mock.calls[0]?.[0] as (frame: unknown) => void;
+    if (!receive) throw new Error('inbound frame listener was not registered');
+    let ownerCurrent = true;
+    const ownerScope = { ownerScopeKey: 'owner-at-entry' };
+    const capture = vi.spyOn(broadcastTap, 'captureDataOwnerBroadcastScope').mockReturnValue(ownerScope);
+    const current = vi.spyOn(broadcastTap, 'isDataOwnerBroadcastScopeCurrent')
+      .mockImplementation((scope) => ownerCurrent && scope.ownerScopeKey === ownerScope.ownerScopeKey);
+    const write = vi.fn();
+    setRemoteTurnChangeAction(async (_sessionId, _id, _action, assertAccess) => {
+      await assertAccess();
+      write();
+      return { changed: true };
+    });
+
+    try {
+      receive(invokeFrame('peer-owner', 'owner-change') as never);
+      ownerCurrent = false;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(write).not.toHaveBeenCalled();
+    } finally {
+      capture.mockRestore();
+      current.mockRestore();
+    }
+  });
+
+  it('uses the shared action without dispatching a synthetic renderer event', async () => {
+    const localHandler = vi.fn(() => { throw new Error('untrusted renderer'); });
+    registry.register(channel, localHandler);
+    const action = vi.fn(async (_session, _id, _action, assertAccess) => {
+      await assertAccess();
+      return { changed: true };
+    });
+    setRemoteTurnChangeAction(action);
+    expect(await runInvoke('ctrl', { channel, args: ['s1', 'change-1', 'undo'] }))
+      .toMatchObject({ ok: true, result: { changed: true } });
+    expect(action).toHaveBeenCalledWith('s1', 'change-1', 'undo', expect.any(Function));
+    expect(localHandler).not.toHaveBeenCalled();
+  });
+
+  it('forwards the action verb verbatim so the host can reject unknown verbs', async () => {
+    // The dispatch shim deliberately does not interpret the verb: the host owns
+    // action validation (undo/reapply only). Here we only assert the argument is
+    // passed through untouched and the local renderer handler is never invoked.
+    const localHandler = vi.fn(() => { throw new Error('untrusted renderer'); });
+    registry.register(channel, localHandler);
+    const action = vi.fn(async (_s, _i, verb) => ({ verb }));
+    setRemoteTurnChangeAction(action);
+    const res = await runInvoke('ctrl', { channel, args: ['s1', 'change-1', 'delete-everything'] });
+    expect(res).toMatchObject({ ok: true });
+    expect(action).toHaveBeenCalledWith('s1', 'change-1', 'delete-everything', expect.any(Function));
+    expect(localHandler).not.toHaveBeenCalled();
+  });
+
+
+  it('surfaces a busy-workspace refusal from the shared action', async () => {
+    const localHandler = vi.fn(() => { throw new Error('untrusted renderer'); });
+    registry.register(channel, localHandler);
+    setRemoteTurnChangeAction(async () => {
+      throw new Error('[SESSION_RUNNING] Wait for the current response to finish.');
+    });
+    const busy = await runInvoke('ctrl', { channel, args: ['s1', 'change-1', 'undo'] });
+    expect(busy).toMatchObject({ ok: false });
+    expect(localHandler).not.toHaveBeenCalled();
+  });
+  it.each(['disabled', 'revoked', 'hidden'] as const)('rechecks %s access before the write', async (reason) => {
+    let hidden = false;
+    setRemoteBotSessionLookup(async () => hidden ? 'hidden' : 'ordinary');
+    const write = vi.fn();
+    setRemoteTurnChangeAction(async (_session, _id, _action, assertAccess) => {
+      if (reason === 'disabled') deviceLinkSettings.value.remoteControlEnabled = false;
+      if (reason === 'revoked') deviceLinkSettings.value.revokedControllers = ['ctrl'];
+      if (reason === 'hidden') hidden = true;
+      await assertAccess();
+      write();
+    });
+    expect(await runInvoke('ctrl', { channel, args: ['s1', 'change-1', 'undo'] }))
+      .toMatchObject({ ok: false });
+    expect(write).not.toHaveBeenCalled();
   });
 });
