@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderView } from '@cindy/model-providers';
+import { setDataOwnerGeneration } from '@/contexts/dataOwnerGeneration';
 
 const mocks = vi.hoisted(() => ({
   beginCapabilities: vi.fn(),
@@ -68,6 +69,7 @@ describe('refreshLocalCatalogSnapshot', () => {
     vi.restoreAllMocks();
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    setDataOwnerGeneration(null, 0);
   });
 
   it('keeps the last valid snapshot when any member of the refresh fails', async () => {
@@ -123,7 +125,7 @@ describe('refreshLocalCatalogSnapshot', () => {
     expect(mocks.commitCapabilities).not.toHaveBeenCalled();
   });
 
-  it('drops an older refresh that finishes after a newer generation', async () => {
+  it('coalesces repeated invalidations into one trailing read and never commits the stale round', async () => {
     const oldProviders = deferred<unknown[]>();
     const oldCapabilities = deferred<unknown[]>();
     const newProviders = deferred<unknown[]>();
@@ -136,18 +138,38 @@ describe('refreshLocalCatalogSnapshot', () => {
       .mockReturnValueOnce(newCapabilities.promise);
 
     const oldRefresh = refreshLocalCatalogSnapshot();
+    await vi.waitFor(() => expect(mocks.loadProviders).toHaveBeenCalledTimes(1));
+    const duplicates = Array.from({ length: 20 }, () => refreshLocalCatalogSnapshot());
     const newRefresh = refreshLocalCatalogSnapshot();
+    expect(mocks.loadProviders).toHaveBeenCalledTimes(1);
+    oldProviders.resolve([{ id: 'old-provider' }]);
+    oldCapabilities.resolve([['codex', { availableModels: [{ id: 'old-model' }] }]]);
+    await vi.waitFor(() => expect(mocks.loadProviders).toHaveBeenCalledTimes(2));
+    expect(mocks.commitProviders).not.toHaveBeenCalled();
     newProviders.resolve([{ id: 'new-provider' }]);
     newCapabilities.resolve([['codex', { availableModels: [{ id: 'new-model' }] }]]);
     await expect(newRefresh).resolves.toBe(true);
-
-    oldProviders.resolve([{ id: 'old-provider' }]);
-    oldCapabilities.resolve([['codex', { availableModels: [{ id: 'old-model' }] }]]);
-    await expect(oldRefresh).resolves.toBe(false);
+    await expect(oldRefresh).resolves.toBe(true);
+    await Promise.all(duplicates);
 
     expect(mocks.commitProviders).toHaveBeenCalledTimes(1);
     expect(mocks.commitProviders.mock.calls[0]?.[1]).toEqual([{ id: 'new-provider' }]);
     expect(mocks.commitCapabilities).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not make a new owner wait for the old owner and drops the old queued refresh', async () => {
+    const old = deferred<unknown[]>();
+    mocks.loadProviders.mockReturnValueOnce(old.promise).mockResolvedValue({ providers: [] });
+    mocks.loadCapabilities.mockResolvedValue([]);
+    const first = refreshLocalCatalogSnapshot();
+    await vi.waitFor(() => expect(mocks.loadProviders).toHaveBeenCalledOnce());
+    const obsolete = refreshLocalCatalogSnapshot();
+    setDataOwnerGeneration('new-owner', 1);
+    await expect(refreshLocalCatalogSnapshot()).resolves.toBe(true);
+    old.resolve([]);
+    await Promise.all([first, obsolete]);
+    expect(mocks.loadProviders).toHaveBeenCalledTimes(2);
+    expect(mocks.commitProviders).toHaveBeenCalledOnce();
   });
 
   it('waits for visibility initialization and rechecks ownership before publishing either snapshot', async () => {

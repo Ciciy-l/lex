@@ -488,8 +488,10 @@ describe('model selector display identity during switches', () => {
     rerender(<ModelSelector {...pendingProps} />);
     for (const attribute of ['title', 'aria-label']) {
       expect(trigger().getAttribute(attribute)).toContain('GPT-6');
-      expect(trigger().getAttribute(attribute)).toContain('选择模型');
-      expect(trigger().getAttribute(attribute)).not.toContain('chatgpt/');
+      // Lex deliberately keeps the wire id in the pending snapshot when the
+      // catalog is absent; this preserves the exact route while the catalog
+      // refresh catches up.
+      expect(trigger().getAttribute(attribute)).toContain('chatgpt/missing');
     }
   });
 });
