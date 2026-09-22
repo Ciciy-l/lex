@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { download } from '../downloader/index.js';
-import { extractMakeToolArchive } from '../cindy-make/toolArchive.js';
+import { extractToolArchive } from './toolArchive.js';
 import { isBinaryVersionNotOlder, probeBinaryVersion } from './binary-version-probe.js';
 
 const failureStages = new WeakMap<object, PiBinaryUpdateFailureStage>();
@@ -15,7 +15,7 @@ export function piBinaryUpdateFailureStage(error: unknown): PiBinaryUpdateFailur
 export interface PiBinaryUpdateDeps {
   fetchRelease(signal: AbortSignal): Promise<unknown>;
   download: typeof download;
-  extract: typeof extractMakeToolArchive;
+  extract: typeof extractToolArchive;
   probe: typeof probeBinaryVersion;
 }
 const defaults: PiBinaryUpdateDeps = {
@@ -27,7 +27,7 @@ const defaults: PiBinaryUpdateDeps = {
     if (!response.ok) throw new Error(`Pi release lookup failed (${response.status})`);
     return response.json();
   },
-  download, extract: extractMakeToolArchive, probe: probeBinaryVersion,
+  download, extract: extractToolArchive, probe: probeBinaryVersion,
 };
 
 export function parsePiRelease(value: unknown, platform: string, arch: string) {

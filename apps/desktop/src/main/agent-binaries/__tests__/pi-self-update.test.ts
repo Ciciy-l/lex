@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { probeBinaryVersion } from '../binary-version-probe.js';
-import { extractMakeToolArchive } from '../../cindy-make/toolArchive.js';
+import { extractToolArchive } from '../toolArchive.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
@@ -115,7 +115,7 @@ it.skipIf(process.env.CINDY_PI_BINARY_UPDATE_SMOKE !== '1')('verifies an officia
       await fs.writeFile(options.targetPath, bytes);
       return { path: options.targetPath, size: bytes.length } as never;
     },
-    extract: extractMakeToolArchive, probe: probeBinaryVersion,
+    extract: extractToolArchive, probe: probeBinaryVersion,
   });
   expect(result.binaryPath.startsWith(root + path.sep)).toBe(true);
   expect(await fs.readFile(path.join(path.dirname(result.binaryPath), '.verified'), 'utf8')).toMatch(/^[a-f0-9]{64}$/);

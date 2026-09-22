@@ -317,20 +317,6 @@ import {
 import * as cindyMediaBlobStore from './cindy-media/blobStore';
 import * as cindyChatAttachments from './cindy-media/chatAttachments';
 import { getFixedDirectoryStats, openOrCreateFixedDirectory } from './cindy-media/fixedDirectory';
-import { openMakeSourceDirectory, openMakeToolsDirectory } from './cindy-make/toolsDirectory';
-import {
-  cancelCindySourcePreparation,
-  makeSourceRoot,
-  readCurrentCindySourceStatus,
-  subscribeCindySourceStatus,
-} from './cindy-make/sourcePreparation.js';
-import { broadcastCindyMakeSourceStatus } from './cindy-make/sourceStatusBroadcast.js';
-import { CINDY_MAKE_RUN_ID_PATTERN } from './cindy-make/sourcePaths.js';
-import { prepareCindyMakeWorkspace } from './cindy-make/taskWorkspace.js';
-import {
-  createMakeToolchainEnvironment,
-  resolveMakeToolchainProcessEnvironment,
-} from './cindy-make/toolchainEnvironment.js';
 import { createStorageIpcHandlers } from './cindy-media/storageIpc';
 import {
   collectDatabaseSizeWarningStatus,
@@ -7496,83 +7482,6 @@ const registerIpcHandlers = () => {
       return { success: true };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  });
-
-  // Settings → Cindy Make: open Cindy's private managed-tool directory.
-  // The path is derived in main so the renderer cannot choose an arbitrary folder.
-  ipcMain.handle(
-    'app:open-cindy-make-tools-dir',
-    async (event): Promise<{ success: boolean }> => {
-      assertTrustedAppRendererEvent(event);
-      return openMakeToolsDirectory(app.getPath('userData'), {
-        openPath: (directory) => shell.openPath(directory),
-      });
-    },
-  );
-
-  ipcMain.handle('app:get-cindy-make-source-status', async (event) => {
-    assertTrustedAppRendererEvent(event);
-    return readCurrentCindySourceStatus(makeSourceRoot(app.getPath('userData')));
-  });
-  // 源码准备是全局单例:进度广播给所有窗口,任意窗口都能停止它。
-  subscribeCindySourceStatus(broadcastCindyMakeSourceStatus);
-  ipcMain.handle('app:cancel-cindy-make-source', async (event): Promise<{ success: boolean }> => {
-    assertTrustedAppRendererEvent(event);
-    return { success: cancelCindySourcePreparation() };
-  });
-
-  ipcMain.handle(
-    'app:open-cindy-make-source-dir',
-    async (event): Promise<{ success: boolean }> => {
-      assertTrustedAppRendererEvent(event);
-      return openMakeSourceDirectory(app.getPath('userData'), {
-        openPath: (directory) => shell.openPath(directory),
-      });
-    },
-  );
-
-  // 个人版制作任务的独立开发目录:从个人版基线建任务分支 + worktree 并安装依赖。
-  // 只认 runId 形状;路径全部由 main 从 userData 派生,renderer 只拿回结果。
-  ipcMain.handle('app:prepare-cindy-make-workspace', async (event, rawRunId: unknown) => {
-    assertTrustedAppRendererEvent(event);
-    if (typeof rawRunId !== 'string' || !CINDY_MAKE_RUN_ID_PATTERN.test(rawRunId)) {
-      throwIpcError('INVALID_PARAMS', 'invalid Cindy Make run id');
-    }
-    const userData = app.getPath('userData');
-    try {
-      const signal = AbortSignal.timeout(20 * 60_000);
-      const env = await createMakeToolchainEnvironment(userData);
-      const processEnvironment = await resolveMakeToolchainProcessEnvironment(
-        env,
-        ['git', 'node', 'pnpm'],
-        signal,
-      );
-      const gitExecutable = env.selectedToolPath('git');
-      if (!processEnvironment || !gitExecutable || !path.isAbsolute(gitExecutable)) {
-        throw Object.assign(new Error('Cindy Make tools are unavailable'), {
-          code: 'environmentNotReady',
-        });
-      }
-      return await prepareCindyMakeWorkspace(userData, rawRunId, signal, {
-        processEnvironment,
-        gitExecutable,
-      });
-    } catch (error) {
-      const code = (error as { code?: unknown } | null)?.code;
-      createSchedulerLogger('cindy-make').warn('workspace preparation failed', {
-        runId: rawRunId,
-        code,
-        message: error instanceof Error ? error.message : String(error),
-      });
-      throwIpcError(
-        code === 'environmentNotReady' ? 'PRECONDITION_FAILED' : 'INTERNAL',
-        code === 'installFailed'
-          ? 'Cindy Make workspace dependency install failed'
-          : code === 'environmentNotReady'
-            ? 'Cindy Make source is not prepared'
-            : 'Cindy Make workspace preparation failed',
-      );
     }
   });
 

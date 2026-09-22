@@ -46,7 +46,6 @@ import { CollaborationSection } from './CollaborationSection';
 import { BuiltinToolsSection } from './BuiltinToolsSection';
 import { ContactsSection } from './contacts/ContactsSection';
 import { ComputerUseSection } from './ComputerUseSection';
-import { CindyMakeSection } from './CindyMakeSection';
 import { useAuth } from '@/contexts/AuthContext';
 import { SettingsCatalogPanel } from './SettingsCatalogPanel';
 import { getLastWorkingDir, subscribeToLastWorkingDir } from '@/state/lastWorkingDir';
@@ -55,7 +54,6 @@ import { BotsGlobalSettingsSection } from '@/features/bots/BotsGlobalSettingsSec
 import { useExperimentalFlag } from '@/hooks/useExperimentalFeatures';
 import { canAccessBillingSettings } from './billingVisibility';
 import { canAccessUsageSettings } from './usageVisibility';
-import { canAccessCindyMakeSettings } from './cindyMakeVisibility';
 import { UsageHistorySection } from './usage/UsageHistorySection';
 
 const DEFAULT_SETTINGS_MENU_WIDTH = 260;
@@ -88,7 +86,6 @@ export function SettingsView() {
   // 用量历史对所有**已登录**身份开放 (local / cloud personal / cloud org),
   // 与 billing 的 canAccessBillingSettings 无关 —— #2785 维护者裁决。
   const canAccessUsage = canAccessUsageSettings({ mode });
-  const canAccessCindyMake = canAccessCindyMakeSettings(import.meta.env.DEV);
 
   const activeTab = useMemo<SettingsTab>(() => {
     const raw = rawTab;
@@ -100,10 +97,9 @@ export function SettingsView() {
     if (raw === 'tina') return 'im-bot';
     if (raw === 'billing' && !canAccessBilling) return 'general';
     if (raw === 'usage' && !canAccessUsage) return 'general';
-    if (raw === 'cindy-make' && !canAccessCindyMake) return 'general';
     if (raw === 'agent-island' && !isMac) return 'general';
     return isSettingsTab(raw) ? raw : 'general';
-  }, [canAccessBilling, canAccessCindyMake, canAccessUsage, isMac, rawTab]);
+  }, [canAccessBilling, canAccessUsage, isMac, rawTab]);
   const piExtensionsPanelOpen =
     activeTab === 'general' &&
     (rawTab === 'pi-extensions' || searchParams.get('openPanel') === 'pi-extensions');
@@ -191,10 +187,9 @@ export function SettingsView() {
         (tabId) =>
           (isMac || tabId !== 'agent-island') &&
           (canAccessBilling || tabId !== 'billing') &&
-          (canAccessUsage || tabId !== 'usage') &&
-          (canAccessCindyMake || tabId !== 'cindy-make'),
+          (canAccessUsage || tabId !== 'usage'),
       ),
-    [canAccessBilling, canAccessCindyMake, canAccessUsage, isMac],
+    [canAccessBilling, canAccessUsage, isMac],
   );
 
   // deep-link: ?section=... → scroll to a section inside the active tab.
@@ -627,16 +622,6 @@ export function SettingsView() {
                 <section aria-label={t('settings.sections.imBot')}>
                   <ImBotSection targetGroup={imBotTargetGroup} />
                 </section>
-              </div>
-            )}
-
-            {canAccessCindyMake && activeTab === 'cindy-make' && (
-              <div
-                role="tabpanel"
-                id="settings-panel-cindy-make"
-                aria-labelledby="settings-tab-cindy-make"
-              >
-                <CindyMakeSection key={`cindy-make:${mode}:${dataOwnerId ?? 'none'}`} />
               </div>
             )}
 

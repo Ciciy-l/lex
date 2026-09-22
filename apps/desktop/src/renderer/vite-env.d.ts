@@ -3007,21 +3007,6 @@ interface ElectronAPI {
    */
   openLogsDir: () => Promise<{ success: boolean; error?: string }>;
 
-  /** Open Cindy's managed Make tools directory (`<userData>/cindy-make/tools`). */
-  openCindyMakeToolsDir: () => Promise<{ success: boolean }>;
-  getCindyMakeSourceStatus: () => Promise<import('../shared/cindyMakeDoctor').MakeSourceStatus>;
-  openCindyMakeSourceDir: () => Promise<{ success: boolean }>;
-  /** Live global source status (Settings and the workflow share one operation). */
-  onCindyMakeSourceStatus: (
-    listener: (status: import('../shared/cindyMakeDoctor').MakeSourceStatus) => void,
-  ) => () => void;
-  /** Stop the running source operation from any window. */
-  cancelCindyMakeSource: () => Promise<{ success: boolean }>;
-  /** Create the per-task worktree for a Cindy Make run; resolves with its path and branch. */
-  prepareCindyMakeWorkspace: (
-    runId: string,
-  ) => Promise<import('../shared/cindyMakeDoctor').MakeTaskWorkspace>;
-
   /**
    * Reveal a file in the OS file manager (Explorer / Finder). Accepts either
    * an `xdt-image://` URL (resolved on the main side) or an absolute file
@@ -4570,8 +4555,6 @@ interface ElectronAPI {
         writableDirs?: string[];
         remoteHostId?: string;
         providerId?: string | null;
-        /** Only the Cindy Make purpose may be requested; Main validates the checkout. */
-        source?: 'cindy-make';
       }) => Promise<import('@/lib/ccAgent.types').Session>;
       get: (id: string) => Promise<import('@/lib/ccAgent.types').Session>;
       resolveReferences: (
@@ -5472,11 +5455,10 @@ interface ElectronAPI {
         workingDir?: string;
         args?: string;
         deviceId?: string;
-      } & import('../shared/cindyMakeDoctor').MakeDoctorCommandContext,
+      },
     ) => Promise<{
       success: boolean;
       error?: string;
-      doctorReport?: import('../shared/cindyMakeDoctor').MakeDoctorReport;
     }>;
 
     startReview: (input: {
@@ -5536,7 +5518,6 @@ interface ElectronAPI {
     onDesktopCommandTriggered: (
       handler: (payload: {
         command: string;
-        doctorReport?: import('../shared/cindyMakeDoctor').MakeDoctorReport;
         sessionId?: string;
         workingDir?: string;
         args?: string;

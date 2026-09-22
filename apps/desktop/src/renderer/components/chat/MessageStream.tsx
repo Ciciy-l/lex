@@ -1470,19 +1470,8 @@ export function selectVisibleMessages(messages: ChatMessage[]): ChatMessage[] {
     : messages;
 }
 
-/**
- * A Cindy Make card is appended as a local assistant system message, but it
- * represents a new command turn for the visible timeline. Treating it as a
- * boundary keeps artifacts from the preceding user turn before the card.
- */
 function isRenderTurnBoundary(message: ChatMessage): boolean {
-  if (message.role === 'user') {
-    return message.delivery !== 'steer' && !message.isSyntheticTrigger;
-  }
-  return (
-    message.role === 'assistant' &&
-    (message.systemCardType === 'cindy-make' || message.systemCardType === 'cindy-make-doctor')
-  );
+  return message.role === 'user' && message.delivery !== 'steer' && !message.isSyntheticTrigger;
 }
 
 export function buildRenderItems(
@@ -1508,8 +1497,7 @@ export function buildRenderItems(
   items: RenderItem[];
   singleResultMap: Map<string, string>;
 } {
-  // Modal-only Cindy Make cards are transient UI state. They stay in the
-  // shared store for the dialog to observe, but never enter the chat timeline.
+  // Modal-only system cards are transient UI state and never enter the chat timeline.
   allMessages = allMessages.filter((message) => message.systemCardData?.modalOnly !== true);
   if (opts?.botSessionId) {
     allMessages = placeBotTaskCardsAfterIntroduction(allMessages, (message) => {

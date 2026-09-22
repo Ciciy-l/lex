@@ -1355,9 +1355,6 @@ export function registerSessionIpc(
       ) ?? undefined;
     await assertRendererSessionSourceAllowed({
       source: bodyObj.source,
-      workingDir: explicitWorkingDir,
-      remoteHostId: createBody?.remoteHostId,
-      userData: app.getPath('userData'),
     });
     const workingDir =
       workspaceKind === 'dialogue' && !explicitWorkingDir

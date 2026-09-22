@@ -15,7 +15,6 @@
  */
 
 import type { DesktopCommandMeta } from '@cindy/maker-core';
-import type { MakeDoctorCommandContext } from '../../shared/cindyMakeDoctor.js';
 
 /**
  * 命令执行上下文 —— 调用方 (renderer 通过 IPC) 把当前会话信息透传过来,
@@ -24,7 +23,7 @@ import type { MakeDoctorCommandContext } from '../../shared/cindyMakeDoctor.js';
  * 字段刻意保留可选 —— 不是所有 desktop command 都关心 sessionId
  * (比如纯应用级的"打开 settings"); 关心的命令自己 narrow / 校验。
  */
-export interface DesktopCommandContext extends MakeDoctorCommandContext {
+export interface DesktopCommandContext {
   /** 触发命令时的 maker session id, 草稿态可为空字符串。 */
   sessionId?: string;
   /** 触发命令时的工作目录, 草稿态可为空字符串。 */

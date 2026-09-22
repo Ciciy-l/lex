@@ -31,7 +31,6 @@ import {
   buildMobileClientPromptNote,
   shouldPrependMobileClientPromptNote,
 } from './mobileClientPromptNote.js';
-import { buildCindyMakeTaskNote } from '../cindy-make/taskNote.js';
 import {
   excludeDirectoryGrantConflicts,
   extraDirsForRuntime,
@@ -464,11 +463,6 @@ export interface MakerSendTransactionDeps {
    * 完整可信度说明见 device-link/invoke-context.ts。
    */
   isMobileClientInvoke?(): boolean;
-  /**
-   * 个人版制作任务(sessions.source='cindy-make')判定,由 host 按持久化来源现读。
-   * 命中时每轮把任务说明追加到 wire 用户消息(不落库、不显示),见 cindy-make/taskNote.ts。
-   */
-  isCindyMakeSession?(sessionId: string): Promise<boolean>;
   log: MakerSendTransactionLog;
 }
 
@@ -1172,15 +1166,7 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
       const withMobileNote = mobileClientNote
         ? prependNoteToWireUserMessage(withPlanReconcile as HandoffWireMessage, mobileClientNote)
         : withPlanReconcile;
-      // 个人版制作任务说明:与手机说明同层、同占位规则(原生命令必须留在消息开头)。
-      const cindyMakeNote =
-        (await deps.isCindyMakeSession?.(sessionId).catch(() => false)) === true &&
-        shouldPrependMobileClientPromptNote(normalized, sess.agentKind)
-          ? buildCindyMakeTaskNote()
-          : null;
-      const outgoing = cindyMakeNote
-        ? prependNoteToWireUserMessage(withMobileNote as HandoffWireMessage, cindyMakeNote)
-        : withMobileNote;
+      const outgoing = withMobileNote;
       const meta = await deps.getSessionMeta(sessionId).catch(() => null);
       let persistUserMessage = readPersistUserMessageOption(so);
       const trustedDesktopQueueReceipt = readTrustedDesktopQueueReceipt(persistUserMessage);

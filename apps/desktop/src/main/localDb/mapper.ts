@@ -47,7 +47,6 @@ import type {
   PreRunHookRunResult,
 } from '@cindy/maker-scheduler';
 import { normalizeSessionSource } from '../../shared/sessionSource.js';
-import type { SessionSource } from '../../shared/sessionSource.js';
 import { normalizeWorkingDirForStorage } from '../../shared/workingDir.js';
 import { isSyntheticTriggerText } from '../../shared/interruptedTurn.js';
 import {
@@ -370,7 +369,7 @@ export function sessionCreateToRow(
          */
         providerId?: string | null;
         /** Main-owned purposes only; the renderer create IPC validates which values it accepts. */
-        source?: 'bot' | 'cindy-make';
+        source?: 'bot';
       }
     | undefined,
   now: number,

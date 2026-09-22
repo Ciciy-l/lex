@@ -44,12 +44,9 @@ import {
   ACTIVITY_ROW_RADIUS_CLASS,
 } from './activityRowChrome';
 import { MarkdownRenderer } from './MarkdownRenderer';
-import { CindyMakeDoctorCard } from './CindyMakeDoctorCard';
 
 interface SystemCardProps {
   cardType:
-    | 'cindy-make-doctor'
-    | 'cindy-make'
     | 'help'
     | 'cost'
     | 'context'
@@ -59,7 +56,6 @@ interface SystemCardProps {
     | 'cmd'
     | 'goal-complete'
     | 'goal-resumed'
-    | 'cindy-make-complete'
     | 'learn'
     | 'review'
     | 'auto-resume'
@@ -1262,64 +1258,6 @@ function ContextRebuildCard({ data }: { data?: Record<string, unknown> }) {
   );
 }
 
-/**
- * 个人版制作任务的完成卡片:Agent 调用 cindy_make.report_complete、本轮回复结束后由
- * Main 落库。整块步骤卡片,与 /cindy-make 弹窗的三步卡同形态;第二阶段的核对、测试与
- * 打包会作为后续步骤长在这张卡上,当前只有「修改源码」一步。内容全部是代码核实的事实
- * (改动文件数、基准 commit、完成时间),不含模型自述。
- */
-function CindyMakeCompleteCard({ data }: { data?: Record<string, unknown> }) {
-  const { t, i18n } = useTranslation();
-  const changedFiles = typeof data?.changedFiles === 'number' ? data.changedFiles : undefined;
-  const commit =
-    typeof data?.commit === 'string' && data.commit ? data.commit.slice(0, 12) : undefined;
-  const reportedAt = typeof data?.reportedAt === 'number' ? data.reportedAt : undefined;
-  const time =
-    reportedAt !== undefined
-      ? new Intl.DateTimeFormat(i18n?.resolvedLanguage ?? i18n?.language, {
-          dateStyle: 'medium',
-          timeStyle: 'short',
-        }).format(reportedAt)
-      : undefined;
-  const branch = typeof data?.branch === 'string' && data.branch ? data.branch : undefined;
-  const meta = [
-    changedFiles !== undefined
-      ? t('cindyMake.complete.changedFiles', { count: changedFiles })
-      : null,
-    branch ? t('cindyMake.complete.branch', { branch }) : null,
-    commit ? t('cindyMake.complete.commit', { commit }) : null,
-    time ?? null,
-  ].filter((part): part is string => typeof part === 'string' && part.length > 0);
-
-  return (
-    <section
-      className="w-full rounded-xl border border-[var(--border-default)] bg-[var(--surface-elevated)] text-14 text-[var(--text-primary)]"
-      aria-label={t('cindyMake.complete.title')}
-    >
-      <div className="flex items-start gap-3 px-4 py-4">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--surface-chip)]">
-          <Check size={18} className="text-[var(--status-success)]" aria-hidden />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-16 font-medium">{t('cindyMake.complete.title')}</p>
-          <p className="mt-0.5 text-13 text-[var(--text-secondary)]">
-            {t('cindyMake.complete.description')}
-          </p>
-        </div>
-      </div>
-      <div className="border-t border-[var(--border-default)] px-4 py-3">
-        <p className="flex items-center gap-2 font-medium">
-          <Check size={14} className="shrink-0 text-[var(--status-success)]" aria-hidden />
-          <span>{t('cindyMake.complete.stepCode')}</span>
-        </p>
-        {meta.length > 0 && (
-          <p className="mt-1 pl-6 text-12 text-[var(--text-secondary)]">{meta.join(' · ')}</p>
-        )}
-      </div>
-    </section>
-  );
-}
-
 const REVIEW_FAILURE_I18N_KEY: Record<ReviewFailureCode, string> = {
   'no-visible-result': 'chat.systemCard.review.noResult',
   'reviewer-closed': 'chat.systemCard.review.failure.reviewerClosed',
@@ -1412,9 +1350,6 @@ export function SystemCard({
   autoResumeInFlight,
 }: SystemCardProps) {
   switch (cardType) {
-    case 'cindy-make-doctor':
-    case 'cindy-make':
-      return <CindyMakeDoctorCard data={data} sessionId={sessionId} />;
     case 'help':
       return <HelpCard data={data} />;
     case 'cost':
@@ -1433,8 +1368,6 @@ export function SystemCard({
       return <GoalCompleteCard data={data} />;
     case 'goal-resumed':
       return <GoalResumedCard data={data as { kind?: string } | undefined} />;
-    case 'cindy-make-complete':
-      return <CindyMakeCompleteCard data={data} />;
     case 'auto-resume': {
       // 同一个卡类型承载两套自愈:带中断上下文的是本份的「重连」记录,没有的是 silent-stop
       // 的「已自动继续」分隔条 —— 后者保持原形态原文案,不被重连三态改写(copilot review)。
