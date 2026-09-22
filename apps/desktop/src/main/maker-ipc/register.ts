@@ -93,7 +93,7 @@ import {
   isAppSessionBoundaryPending,
 } from '../appSessionState.js';
 import { upsertRecentWorkdir } from '../localDb/ipc/recentWorkdirs.js';
-import type { AgentMeta, Session as RendererSession } from '../../renderer/lib/ccAgent.types';
+import type { AgentMeta } from '../../renderer/lib/ccAgent.types';
 import {
   deriveAutoTitleSeed,
   normalizeAgentInputClearBoundaryMs,
@@ -365,7 +365,7 @@ import {
   orcaWorkers,
   sessions,
 } from '../localDb/schema.js';
-import { nextBotModelRoute, normalizeBotModelChain } from '../../shared/botModelChain.js';
+import { nextBotModelRoute } from '../../shared/botModelChain.js';
 import { createBotModelRouteReconciler } from './botModelRouteReconciler.js';
 import { readEffectiveBotModelChain, readEffectiveBotModelSelection } from '../maker-host/bot-model-chain-settings-store.js';
 import {
