@@ -171,6 +171,7 @@ describe('cross-agent committed model projection', () => {
     { agentKind: 'claude-code', model: 'glm-5.3-flash', providerId: 'xd', effort: 'high', fastMode: false },
     { agentKind: 'codex', model: 'gpt-6', providerId: 'openai', effort: 'medium', fastMode: true },
     { agentKind: 'pi', model: 'grok-4.6', providerId: 'xai', effort: 'low', fastMode: false },
+    { agentKind: 'omp', model: 'omp-model', providerId: 'omp-source', effort: 'medium', fastMode: false },
   ];
 
   function harness(initial: SessionRuntimeProfile) {

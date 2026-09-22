@@ -1378,7 +1378,7 @@ function ModelSelectorContentView({
       const markedAgents = entry.candidates.filter((agent) => {
         const wireId = entry.capabilities[agent]?.wireModelId ?? entry.modelId;
         const marked = getModel(provider, wireId, agent)?.newSessionDefault;
-        return Array.isArray(marked) && marked.includes(agent as 'claude-code' | 'codex');
+        return Array.isArray(marked) && marked.includes(agent);
       });
       if (markedAgents.length === 0) continue;
       // 引擎按**该行的推荐引擎**优先取:同一行在 cc / codex 下都带标记时,无脑取候选序
@@ -1389,7 +1389,14 @@ function ModelSelectorContentView({
       seedDefaultFavorite({
         providerId: entry.providerId,
         modelId: entry.modelId,
-        agent: markedAgent === 'claude-code' ? 'cc' : markedAgent === 'codex' ? 'codex' : 'pi',
+        agent:
+          markedAgent === 'claude-code'
+            ? 'cc'
+            : markedAgent === 'codex'
+              ? 'codex'
+              : markedAgent === 'omp'
+                ? 'omp'
+                : 'pi',
       });
       break;
     }
@@ -1432,6 +1439,7 @@ function ModelSelectorContentView({
       cc.capabilities,
       codex.capabilities,
       pi.capabilities,
+      omp.capabilities,
       excludeSubscriptionDirect,
       excludeChatBridgedCodex,
     ],
@@ -1465,9 +1473,11 @@ function ModelSelectorContentView({
           ? (codex.capabilities?.effortLevels ?? [])
           : currentAgentKind === 'pi'
             ? (pi.capabilities?.effortLevels ?? [])
-            : [];
+            : currentAgentKind === 'omp'
+              ? (omp.capabilities?.effortLevels ?? [])
+              : [];
     return new Map(levels.map((e) => [e.id, e.displayName]));
-  }, [currentAgentKind, cc.capabilities, codex.capabilities, pi.capabilities]);
+  }, [currentAgentKind, cc.capabilities, codex.capabilities, pi.capabilities, omp.capabilities]);
   // 档名多语言:i18n 词表(effortLevels.*) → 模型级 effortDisplayNames →
   // capabilities displayName(未知档兜底) → 原 id。
   const effortLabelFor = (m: RowModel, e: Effort) => modelEffortLabel(t, m, e, effortMeta.get(e));
@@ -1479,8 +1489,9 @@ function ModelSelectorContentView({
     if (currentAgentKind === 'claude-code') return !!cc.capabilities?.hasFastMode;
     if (currentAgentKind === 'codex') return !!codex.capabilities?.hasFastMode;
     if (currentAgentKind === 'pi') return !!pi.capabilities?.hasFastMode;
+    if (currentAgentKind === 'omp') return !!omp.capabilities?.hasFastMode;
     return false;
-  }, [currentAgentKind, cc.capabilities, codex.capabilities, pi.capabilities]);
+  }, [currentAgentKind, cc.capabilities, codex.capabilities, pi.capabilities, omp.capabilities]);
   // ── 来源(供应商)栏 ──────────────────────────────────────────────────────
   // 本机 + device-link 远程会话都支持来源分段:providers 已按 deviceId 切到被控端目录,
   // 远程切来源经隧道 set-model(providerId)生效(见 ChatInput.handleProviderChange 的远程分支)。
@@ -2752,10 +2763,12 @@ function ModelSelectorContentView({
           ? (cc.capabilities?.effortLevels ?? [])
           : agent === 'codex'
             ? (codex.capabilities?.effortLevels ?? [])
-            : (pi.capabilities?.effortLevels ?? []);
+            : agent === 'pi'
+              ? (pi.capabilities?.effortLevels ?? [])
+              : (omp.capabilities?.effortLevels ?? []);
       return modelEffortLabel(t, null, value, levels.find((e) => e.id === value)?.displayName);
     },
-    [cc.capabilities, codex.capabilities, pi.capabilities, t],
+    [cc.capabilities, codex.capabilities, pi.capabilities, omp.capabilities, t],
   );
   const unifiedAgentFastCapable = useCallback(
     (agent: AgentKind): boolean =>
@@ -2763,8 +2776,10 @@ function ModelSelectorContentView({
         ? !!cc.capabilities?.hasFastMode
         : agent === 'codex'
           ? !!codex.capabilities?.hasFastMode
-          : !!pi.capabilities?.hasFastMode),
-    [cc.capabilities, codex.capabilities, pi.capabilities, onFastModeChange, onUnifiedSelect, fastModeConfigurable],
+          : agent === 'pi'
+            ? !!pi.capabilities?.hasFastMode
+            : !!omp.capabilities?.hasFastMode),
+    [cc.capabilities, codex.capabilities, pi.capabilities, omp.capabilities, onFastModeChange, onUnifiedSelect, fastModeConfigurable],
   );
 
   if (emptyState) return emptyState;
@@ -3426,7 +3441,7 @@ export function ModelSelector({
   const remoteModelLoadFailed = !!deviceId && remoteModelListStatus === 'error';
   const localModelLoading = !deviceId && !(!providersOverride && localProviders.loadFailed) && (
     (!providersOverride && localProviders.loading) ||
-    (agentKind === 'codex' ? codex.loading : agentKind === 'pi' ? pi.loading : cc.loading)
+    (agentKind === 'codex' ? codex.loading : agentKind === 'pi' ? pi.loading : agentKind === 'omp' ? omp.loading : cc.loading)
   );
   const visibleModels = useMemo(
     () =>
@@ -3523,14 +3538,16 @@ export function ModelSelector({
   const currentAgentKind: AgentKind | null = useMemo(() => {
     if (agentKind) return agentKind;
     if (!currentModel) return null;
-    if (providers.some((p) => providerOffersModel(p, currentModel.id, 'claude-code'))) {
-      return 'claude-code';
-    }
-    if (providers.some((p) => providerOffersModel(p, currentModel.id, 'codex'))) {
-      return 'codex';
-    }
-    return null;
-  }, [currentModel, providers, agentKind]);
+    return resolveVisibleModelAgentKind({
+      modelId: currentModel.id,
+      agentKind,
+      ccModels: cc.capabilities?.availableModels ?? [],
+      codexModels: codex.capabilities?.availableModels ?? [],
+      piModels: pi.capabilities?.availableModels ?? [],
+      ompModels: omp.capabilities?.availableModels ?? [],
+      providers,
+    });
+  }, [currentModel, providers, agentKind, cc.capabilities, codex.capabilities, pi.capabilities, omp.capabilities]);
 
   const effortMeta = useMemo(() => {
     const levels =
@@ -3538,9 +3555,13 @@ export function ModelSelector({
         ? (cc.capabilities?.effortLevels ?? [])
         : currentAgentKind === 'codex'
           ? (codex.capabilities?.effortLevels ?? [])
-          : [];
+          : currentAgentKind === 'pi'
+            ? (pi.capabilities?.effortLevels ?? [])
+            : currentAgentKind === 'omp'
+              ? (omp.capabilities?.effortLevels ?? [])
+              : [];
     return new Map(levels.map((e) => [e.id, e.displayName]));
-  }, [currentAgentKind, cc.capabilities, codex.capabilities]);
+  }, [currentAgentKind, cc.capabilities, codex.capabilities, pi.capabilities, omp.capabilities]);
   // 档名多语言(与列表侧 effortLabelFor 同序):i18n 词表 → 模型级覆盖 → capabilities 英文名 → id。
   const labelOf = (e: Effort) => modelEffortLabel(t, currentModel, e, effortMeta.get(e));
 
