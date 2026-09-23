@@ -299,6 +299,8 @@
       "noDevice": "No device available. Turn on remote control on the desktop, then sync again."
     },
     "alert": {
+      "cacheSaveFailed": "Could not save offline cache",
+      "cacheSaveFailedDetail": "Check the available storage on your phone. You can continue online, but some content may be unavailable offline.",
       "actionFailed": "Action failed",
       "renameFailed": "Rename failed",
       "deleteTitle": "Delete session?",

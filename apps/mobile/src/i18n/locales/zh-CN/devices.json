@@ -299,6 +299,8 @@
       "noDevice": "没有可用设备。请先在电脑端打开远程控制，然后重新同步。"
     },
     "alert": {
+      "cacheSaveFailed": "离线缓存未能保存",
+      "cacheSaveFailedDetail": "请检查手机剩余存储空间。你仍可联网使用，但部分内容可能无法离线查看。",
       "actionFailed": "操作失败",
       "renameFailed": "重命名失败",
       "deleteTitle": "删除任务？",

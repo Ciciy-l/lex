@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const store = vi.hoisted(() => new Map<string, string>());
 
@@ -44,6 +45,7 @@ describe('homeViewPreferenceStore', () => {
     expect((await readHomeViewPreferences()).groupDialogue).toBe(true);
   });
 
+<<<<<<< HEAD
   it('replaces corrupt stored JSON so a later device switch can still save', async () => {
     const { __testing, readHomeViewPreferences, saveHomeViewPreferences } = await import('@/session/homeViewPreferenceStore');
     store.set(__testing.storageKey, 'broken');
@@ -58,6 +60,13 @@ describe('homeViewPreferenceStore', () => {
     await expect(readHomeViewPreferences()).resolves.toMatchObject({
       selectedDevice: { deviceId: 'devB', name: 'devB' },
     });
+=======
+  it('preserves corrupt stored JSON instead of replacing it with defaults on save', async () => {
+    const { __testing, saveHomeViewPreferences } = await import('@/session/homeViewPreferenceStore');
+    store.set(__testing.storageKey, 'broken');
+    await expect(saveHomeViewPreferences({ sortBy: 'priority' })).rejects.toThrow();
+    expect(store.get(__testing.storageKey)).toBe('broken');
+>>>>>>> 2022be6b9 (fix(mobile): 统一消息文件缓存并提示存储失败)
   });
   beforeEach(async () => {
     vi.clearAllMocks();

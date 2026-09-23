@@ -58,6 +58,44 @@ pnpm --filter mobile test:smoke
 
 ## 专项入口
 
+<<<<<<< HEAD
+=======
+### 消息缓存与首页偏好
+
+- iOS、Android 的最近消息窗口统一写入私有 `cache/session-messages-v1/` 文件，
+  不设总容量或按时间淘汰；分页、内存窗口、消息净化与显式删除语义不变。
+  该目录属于可再生缓存，系统低空间回收后会从主机重新获取，不作为消息权威副本。
+- 旧 AsyncStorage 消息按需迁移：仅在文件缺失时读取旧条目，成功原子写入后再删除旧值；
+  失败保留旧条目。回退到旧版不会读取新文件，会重新从主机获取消息。
+  迁移与同一任务的写入／删除共用队列，退出账号等待在途迁移后清理两种存储。
+- 首页分组等偏好继续使用 AsyncStorage。合并保存时读失败不得当成空配置；写失败
+  必须向用户提示，不能把未落盘的选择当成已保存。旧消息只按需迁移，升级首次启动
+  不会立即释放所有旧数据库占用。
+- 文件写入失败（含磁盘空间不足）会提示检查剩余空间，并说明离线内容可能不完整。
+  同一次启动最多提示一次，后台失败延后到前台提示；不把所有 I/O 错误都断言为磁盘已满。
+
+实现见 `src/session/messageCacheStorage.ts`、`mobileSessionMessageCache.ts`、
+`homeViewPreferenceStore.ts`，回归见 `src/__tests__/` 下对应测试。
+
+### 中国大陆版微信个人登录
+
+- 复用 `xdt-wechat-login`：iOS/Android 拉起微信取临时 code，再由 auth-server 交换。
+  PC 使用同一服务端的网站应用扫码入口。登录结果统一进入手机号补绑或身份选择流程。
+- 在 Mobile `.env`（本地）或打包机环境中成对填写
+  `EXPO_PUBLIC_CINDY_WECHAT_APP_ID` 与 `EXPO_PUBLIC_CINDY_WECHAT_UNIVERSAL_LINK`，
+  说明与空值占位见 `apps/mobile/.env.example`。AppID 必须匹配服务端
+  `WECHAT_MOBILE_APPID`；服务端两组 Secret 不进入客户端。自建构建继续继承这两个
+  公开环境变量，不从服务端环境文件读取密钥。
+- 仅 cn 和显式配置的 dev 构建消费微信配置；Global 忽略残留值。全空关闭入口，
+  半配置或非法 Universal Link 在原生配置生成前报错。首次启用需重新出原生包，
+  仅 OTA 无法添加回调配置；按下方冷更规则比对 fingerprint。
+- 真机验证 iOS Universal Link/AASA、Android 包名/签名与 WXEntryActivity，覆盖
+  同意授权、取消、未安装微信、回到前台超时后重试。iOS Simulator 不支持微信授权。
+  iOS 登录页仅在 OpenSDK 确认已安装微信后显示微信入口；Android 保持入口可见，点击时
+  再由原生桥确认微信是否可用。凭据获取前仍须二次检查安装状态，不能只依赖页面显隐。
+  未绑手机号须短信验证，已绑用户免短信；用同一微信在 PC 和两种手机上确认账号一致。
+
+>>>>>>> 2022be6b9 (fix(mobile): 统一消息文件缓存并提示存储失败)
 - 模拟器与真机排错：
   [`simulator-debugging.md`](../../apps/mobile/docs/simulator-debugging.md)。
 

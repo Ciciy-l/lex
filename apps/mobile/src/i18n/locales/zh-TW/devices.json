@@ -299,6 +299,8 @@
       "noDevice": "沒有可用裝置。請先在電腦端開啟遠端控制，然後重新同步。"
     },
     "alert": {
+      "cacheSaveFailed": "離線快取未能儲存",
+      "cacheSaveFailedDetail": "請檢查手機剩餘儲存空間。你仍可連線使用，但部分內容可能無法離線查看。",
       "actionFailed": "操作失敗",
       "renameFailed": "重新命名失敗",
       "deleteTitle": "刪除任務？",
