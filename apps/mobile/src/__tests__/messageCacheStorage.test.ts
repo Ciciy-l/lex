@@ -53,13 +53,14 @@ describe('message cache file migration', () => {
     await storage.setItem('cache.a', 'new');
     expect(await storage.getItem('cache.a')).toBe('new');
   });
-  it('propagates failed legacy deletion without removing the authoritative file', async () => {
-    state.legacy.set('cache.a', 'old');
+  it('removes the file even when deleting an absent legacy entry rejects', async () => {
     state.files.set('cache.a.json', 'new');
     vi.mocked(AsyncStorage.removeItem).mockRejectedValueOnce(new Error('busy'));
     await expect(storage.removeItem('cache.a')).rejects.toThrow();
-    expect(await storage.getItem('cache.a')).toBe('new');
-    await storage.removeItem('cache.a');
+    expect(state.files.size).toBe(0);
+    vi.resetModules();
+    const restarted = (await import('@/session/messageCacheStorage')).messageCacheStorage;
+    expect(await restarted.getItem('cache.a')).toBeNull();
     expect(await storage.getItem('cache.a')).toBeNull();
   });
   it('deletes both backends without writing when the disk is full', async () => {
@@ -78,8 +79,31 @@ describe('message cache file migration', () => {
     if (kind === 'legacy') vi.mocked(AsyncStorage.multiRemove).mockRejectedValueOnce(error);
     if (kind === 'files') io.remove.mockRejectedValueOnce(error);
     await expect(storage.clear('cache')).rejects.toThrow(error);
+    if (kind !== 'files') expect(state.files.size).toBe(0);
+    if (kind === 'files') expect(state.legacy.size).toBe(0);
     await storage.clear('cache');
     expect(await storage.getItem('cache.a')).toBeNull();
+    expect(io.write).not.toHaveBeenCalled();
+  });
+  it('waits for file deletion after legacy failure before rejecting', async () => {
+    vi.mocked(AsyncStorage.removeItem).mockRejectedValueOnce(new Error('legacy unavailable'));
+    let finish!: () => void;
+    io.remove.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+    let settled = false;
+    const deletion = storage.removeItem('cache.a').catch(error => { settled = true; return error; });
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    expect(settled).toBe(false);
+    finish();
+    expect(await deletion).toBeInstanceOf(Error);
+  });
+  it('attempts later files and aggregates independent backend failures', async () => {
+    state.files.set('cache.a.json', 'a'); state.files.set('cache.b.json', 'b');
+    const legacyError = new Error('legacy unavailable');
+    const fileError = new Error('file unavailable');
+    vi.mocked(AsyncStorage.getAllKeys).mockRejectedValueOnce(legacyError);
+    io.remove.mockRejectedValueOnce(fileError);
+    await expect(storage.clear('cache')).rejects.toMatchObject({ errors: [legacyError, fileError] });
+    expect(state.files.has('cache.b.json')).toBe(false);
     expect(io.write).not.toHaveBeenCalled();
   });
   it('does not hide an IO failure by falling back to older data', async () => {

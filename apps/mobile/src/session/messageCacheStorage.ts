@@ -18,6 +18,17 @@ function write(key: string, value: string): Promise<void> {
   return persist(async () => { await (await disk()).write(`${key}.json`, value); });
 }
 
+// Exhaust every deletion before rejecting. One unavailable backend/file must not
+// prevent another from being removed, or let account cleanup finish early.
+async function removeAll(operations: Array<() => Promise<void>>): Promise<void> {
+  const errors: unknown[] = [];
+  for (const operation of operations) {
+    try { await operation(); } catch (error) { errors.push(error); }
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, 'Cache cleanup failed');
+}
+
 // Callers serialize operations per key and fence reads/writes against logout.
 // Both mobile platforms use the same private cache files, with no total quota/TTL.
 export const messageCacheStorage = {
@@ -39,19 +50,21 @@ export const messageCacheStorage = {
     await AsyncStorage.removeItem(key).catch(() => undefined);
   },
   async removeItem(key: string): Promise<void> {
-    await persist(async () => {
-      const files = await disk();
-      // Delete fallback first: deletion must not need free space for a new file.
-      await AsyncStorage.removeItem(key);
-      await files.remove(`${key}.json`);
-    });
+    await persist(() => removeAll([
+      () => AsyncStorage.removeItem(key),
+      async () => { await (await disk()).remove(`${key}.json`); },
+    ]));
   },
   async clear(prefix: string): Promise<void> {
-    await persist(async () => {
-      const files = await disk();
-      const keys = (await AsyncStorage.getAllKeys()).filter(key => key.startsWith(`${prefix}.`));
-      if (keys.length) await AsyncStorage.multiRemove(keys);
-      for (const name of await files.files()) await files.remove(name);
-    });
+    await persist(() => removeAll([
+      async () => {
+        const keys = (await AsyncStorage.getAllKeys()).filter(key => key.startsWith(`${prefix}.`));
+        if (keys.length) await AsyncStorage.multiRemove(keys);
+      },
+      async () => {
+        const files = await disk();
+        await removeAll((await files.files()).map(name => () => files.remove(name)));
+      },
+    ]));
   },
 };
