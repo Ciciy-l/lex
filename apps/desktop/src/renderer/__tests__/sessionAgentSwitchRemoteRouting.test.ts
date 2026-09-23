@@ -885,6 +885,9 @@ describe('ChatInput 的入口门控与调用路由', () => {
     expect(source).toContain(': makerApiFor(sessionId);');
     expect(source).toContain('.getSessionAgentSwitchIntent(sessionId)');
     expect(source).toContain('isAgentSwitchResponseFresh({');
+    expect(source).toContain('let cancelled = false;');
+    expect(source).toContain('cancelled: cancelled || !isSessionScopeCurrent(');
+    expect(source).toContain('cancelled = true;');
     expect(source).toContain(
       'makerChatStore.mirrorAgentSwitchIntent(sessionId, authoritativeIntent)',
     );

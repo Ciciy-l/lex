@@ -260,10 +260,15 @@ describe('ChatInput voice input Enter-to-send contract', () => {
       'const latestStorageKeyRef = useRef<string | undefined>(storageKey);',
     );
     expect(restoreEffectBlock).toContain('if (!hasHydratedRef.current) return;');
-    expect(restoreEffectBlock).toContain('let cancelled = false;');
-    expect(restoreEffectBlock).toContain('!cancelled');
     expect(restoreEffectBlock).toContain('!editor.isDestroyed');
+    expect(restoreEffectBlock).toContain(
+      'isDataOwnerGenerationCurrent(dataOwnerAtTransition)',
+    );
+    expect(restoreEffectBlock).toContain(
+      'storageKeyTransitionSeqRef.current === transitionSeq',
+    );
     expect(restoreEffectBlock).toContain('latestStorageKeyRef.current === storageKey');
+    expect(restoreEffectBlock).not.toContain('let cancelled = false;');
     expect(restoreEffectBlock).toContain('if (!isCurrentTransition()) return;');
     expect(restoreEffectBlock).toContain('restoreNextDraft();');
     expect(restoreEffectBlock).toContain(

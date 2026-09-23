@@ -1833,7 +1833,7 @@ export function ChatInput({
   // 本机 maker。SSH 是另一套引擎生命周期,继续排除。
   useEffect(() => {
     if (!sessionId || remoteHostId) return;
-    const cancelled = false;
+    let cancelled = false;
     const writeSeq = getAgentSwitchWriteSeq(sessionId);
     const intentRev = makerChatStore.getAgentSwitchIntentRev(sessionId);
     const switchApi = deviceLinkDeviceId
