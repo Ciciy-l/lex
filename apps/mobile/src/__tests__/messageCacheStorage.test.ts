@@ -53,13 +53,34 @@ describe('message cache file migration', () => {
     await storage.setItem('cache.a', 'new');
     expect(await storage.getItem('cache.a')).toBe('new');
   });
-  it('keeps a deletion tombstone when legacy deletion fails', async () => {
+  it('propagates failed legacy deletion without removing the authoritative file', async () => {
     state.legacy.set('cache.a', 'old');
+    state.files.set('cache.a.json', 'new');
     vi.mocked(AsyncStorage.removeItem).mockRejectedValueOnce(new Error('busy'));
     await expect(storage.removeItem('cache.a')).rejects.toThrow();
-    expect(await storage.getItem('cache.a')).toBe('[]');
+    expect(await storage.getItem('cache.a')).toBe('new');
     await storage.removeItem('cache.a');
     expect(await storage.getItem('cache.a')).toBeNull();
+  });
+  it('deletes both backends without writing when the disk is full', async () => {
+    state.legacy.set('cache.a', 'old');
+    state.files.set('cache.a.json', 'new');
+    await storage.removeItem('cache.a');
+    expect(state.legacy.size).toBe(0);
+    expect(state.files.size).toBe(0);
+    expect(io.write).not.toHaveBeenCalled();
+  });
+  it.each(['enumerate', 'legacy', 'files'])('propagates %s cleanup failure and supports retry', async kind => {
+    state.legacy.set('cache.a', 'old');
+    state.files.set('cache.a.json', 'new');
+    const error = new Error('storage unavailable');
+    if (kind === 'enumerate') vi.mocked(AsyncStorage.getAllKeys).mockRejectedValueOnce(error);
+    if (kind === 'legacy') vi.mocked(AsyncStorage.multiRemove).mockRejectedValueOnce(error);
+    if (kind === 'files') io.remove.mockRejectedValueOnce(error);
+    await expect(storage.clear('cache')).rejects.toThrow(error);
+    await storage.clear('cache');
+    expect(await storage.getItem('cache.a')).toBeNull();
+    expect(io.write).not.toHaveBeenCalled();
   });
   it('does not hide an IO failure by falling back to older data', async () => {
     state.legacy.set('cache.a', 'old');

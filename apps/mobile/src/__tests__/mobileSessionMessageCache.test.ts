@@ -102,8 +102,32 @@ describe('mobileSessionMessageCache', () => {
     } finally { setMobileAuthOwner(null); }
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
     store.clear();
+    const { setMobileAuthOwner } = await import('@/auth/authOwnerGeneration');
+    setMobileAuthOwner('account-a');
+  });
+
+  it('rejects failed global cleanup and permits a later retry', async () => {
+    const storage = (await import('@/session/messageCacheStorage')).messageCacheStorage;
+    const { clearCachedSessionMessages } = await import('@/session/mobileSessionMessageCache');
+    vi.mocked(storage.clear).mockRejectedValueOnce(new Error('delete failed'));
+    await expect(clearCachedSessionMessages()).rejects.toThrow('delete failed');
+    await expect(clearCachedSessionMessages()).resolves.toBeUndefined();
+  });
+
+  it('does not hydrate or persist while logged out or switching accounts', async () => {
+    const { setMobileAuthOwner, invalidateMobileAuthOwnerForSwitch } = await import('@/auth/authOwnerGeneration');
+    const { cacheSessionMessages, getCachedSessionMessages, captureSessionMessageCacheWriteAuthority } = await import('@/session/mobileSessionMessageCache');
+    const rows = [makeMessage({ id: 'old', createdAt: isoAt(1) })];
+    await cacheSessionMessages('host-a', 'session-1', rows);
+    for (const invalidate of [() => setMobileAuthOwner(null), invalidateMobileAuthOwnerForSwitch]) {
+      invalidate();
+      expect(captureSessionMessageCacheWriteAuthority('host-a', 'session-1')).toBeNull();
+      expect(await getCachedSessionMessages('host-a', 'session-1')).toEqual([]);
+      await cacheSessionMessages('host-a', 'new-session', rows);
+      expect(store.size).toBe(1);
+    }
   });
 
   it('round-trips cached messages for a (host, session) sorted oldest-first', async () => {

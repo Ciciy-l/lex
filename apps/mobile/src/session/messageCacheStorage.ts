@@ -6,12 +6,16 @@ const disk = () => io ??= import('./historyDiskStoreExpo')
   .then(({ createHistoryDiskIO }) => createHistoryDiskIO('session-messages-v1'))
   .catch(error => { io = undefined; throw error; });
 
-async function write(key: string, value: string): Promise<void> {
-  try { await (await disk()).write(`${key}.json`, value); }
+async function persist(operation: () => Promise<void>): Promise<void> {
+  try { await operation(); }
   catch (error) {
     void import('./cacheWriteNotice').then(module => module.notifyCacheWriteFailure()).catch(() => undefined);
     throw error;
   }
+}
+
+function write(key: string, value: string): Promise<void> {
+  return persist(async () => { await (await disk()).write(`${key}.json`, value); });
 }
 
 // Callers serialize operations per key and fence reads/writes against logout.
@@ -35,18 +39,19 @@ export const messageCacheStorage = {
     await AsyncStorage.removeItem(key).catch(() => undefined);
   },
   async removeItem(key: string): Promise<void> {
-    const files = await disk();
-    // Keep a tombstone if legacy deletion fails, so fallback cannot revive it.
-    await write(key, '[]');
-    await AsyncStorage.removeItem(key);
-    await files.remove(`${key}.json`);
+    await persist(async () => {
+      const files = await disk();
+      // Delete fallback first: deletion must not need free space for a new file.
+      await AsyncStorage.removeItem(key);
+      await files.remove(`${key}.json`);
+    });
   },
   async clear(prefix: string): Promise<void> {
-    const files = await disk();
-    const keys = (await AsyncStorage.getAllKeys()).filter(key => key.startsWith(`${prefix}.`));
-    // If legacy cleanup fails, retain tombstones before propagating the error.
-    for (const key of keys) await write(key, '[]');
-    if (keys.length) await AsyncStorage.multiRemove(keys);
-    for (const name of await files.files()) await files.remove(name);
+    await persist(async () => {
+      const files = await disk();
+      const keys = (await AsyncStorage.getAllKeys()).filter(key => key.startsWith(`${prefix}.`));
+      if (keys.length) await AsyncStorage.multiRemove(keys);
+      for (const name of await files.files()) await files.remove(name);
+    });
   },
 };

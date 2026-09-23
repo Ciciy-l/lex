@@ -6,7 +6,7 @@ export function createHistoryDiskIO(directoryName = 'history-views-v1'): History
   const directory = new Directory(Paths.cache, directoryName);
   return {
     async files() {
-      directory.create({ intermediates: true, idempotent: true });
+      if (!directory.exists) return [];
       return directory.list().filter(item => item instanceof File).map(item => item.name);
     },
     async read(name) {

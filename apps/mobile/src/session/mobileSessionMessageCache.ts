@@ -69,11 +69,13 @@ export function captureSessionMessageCacheWriteAuthority(
   // 登出全清从推进 global epoch 到 multiRemove 完成之间禁止铸造新写权。
   // 否则卸载 flush 可在 getAllKeys 已取完快照后创建新 key，并晚于删除落盘。
   if (globalClearInProgress) return null;
+  const owner = getMobileAuthOwner();
+  if (!owner.accountKey) return null;
   const key = safeStorageKey(deviceId, sessionId);
   if (!key) return null;
   return {
     key,
-    owner: getMobileAuthOwner(),
+    owner,
     globalEpoch: globalWriteEpoch,
     keyEpoch: keyWriteEpochs.get(key) ?? 0,
   };
@@ -160,7 +162,7 @@ export function clearCachedSessionMessages(): Promise<void> {
   activeGlobalClear = (async () => {
     await Promise.all([...pendingOperations.values()].map((operation) =>
       operation.catch(() => undefined)));
-    await messageCacheStorage.clear(STORAGE_KEY_PREFIX).catch(() => undefined);
+    await messageCacheStorage.clear(STORAGE_KEY_PREFIX);
     keyWriteEpochs.clear();
   })().finally(() => {
     globalClearInProgress = false;
