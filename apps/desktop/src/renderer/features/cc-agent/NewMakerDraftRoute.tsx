@@ -3507,6 +3507,7 @@ export function NewMakerDraftRoute() {
           // 本地草稿 effectiveDeviceLinkDeviceId 为 undefined → 仍走控制端本机就绪检查(行为不变)。
           const { proceed } = await vendorAuthGate.checkAndConfirm(authVendor, {
             deviceId: effectiveDeviceLinkDeviceId,
+            remoteRuntime: Boolean(effectiveRemoteHostId),
           });
           if (isDeviceLinkDraft && !isCurrentDataOwner()) return;
           if (!proceed) return;
@@ -4542,6 +4543,7 @@ export function NewMakerDraftRoute() {
         }
         const { proceed } = await vendorAuthGate.checkAndConfirm(authVendor, {
           deviceId: effectiveDeviceLinkDeviceId,
+          remoteRuntime: Boolean(effectiveRemoteHostId),
         });
         if (!proceed) return; // 用户取消授权:弹窗关闭即可,不算错误。
         if (isDeviceLinkDraft) {

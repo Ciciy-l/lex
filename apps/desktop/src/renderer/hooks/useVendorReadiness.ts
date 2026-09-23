@@ -26,17 +26,20 @@ export type Readiness = 'ready' | 'unauthenticated' | 'binary-missing' | 'loadin
 export function readinessFromBinaryStatus(
   vendorKey: 'cc' | 'codex' | 'pi' | 'omp',
   binaryReady: boolean,
+  options?: { remoteRuntime?: boolean },
 ): Readiness | null {
-  return vendorKey !== 'cc' && !binaryReady ? 'binary-missing' : null;
+  return vendorKey !== 'cc' && options?.remoteRuntime !== true && !binaryReady
+    ? 'binary-missing'
+    : null;
 }
 
 export function useVendorReadiness(vendorKey: 'cc' | 'codex' | 'pi' | 'omp'): {
   readiness: Readiness;
-  revalidate: (opts?: { includeSuspended?: boolean }) => Promise<Readiness>;
+  revalidate: (opts?: { includeSuspended?: boolean; remoteRuntime?: boolean }) => Promise<Readiness>;
 } {
   const [readiness, setReadiness] = useState<Readiness>('loading');
 
-  const revalidate = useCallback(async (opts?: { includeSuspended?: boolean }): Promise<Readiness> => {
+  const revalidate = useCallback(async (opts?: { includeSuspended?: boolean; remoteRuntime?: boolean }): Promise<Readiness> => {
     const agent: AgentKind =
       vendorKey === 'cc'
         ? 'claude-code'
@@ -49,14 +52,14 @@ export function useVendorReadiness(vendorKey: 'cc' | 'codex' | 'pi' | 'omp'): {
     // 轴 2(codex / pi / omp,正交于来源):本地二进制是运行时前提,缺了连发都发不了 → 优先返回
     // binary-missing。binary 状态走 maker:agent:status(其 authReady 是 codex OAuth 专属,已被
     // 下方 provider 维度的来源判定取代,这里只取 binaryReady)。cc 二进制随包分发,无此轴。
-    if (vendorKey !== 'cc') {
+    if (vendorKey !== 'cc' && opts?.remoteRuntime !== true) {
       setReadiness('loading');
       try {
         const status = (await window.electronAPI.maker.agent.getStatus(agent)) as {
           binaryReady: boolean;
           authReady: boolean;
         };
-        const missing = readinessFromBinaryStatus(vendorKey, status.binaryReady);
+        const missing = readinessFromBinaryStatus(vendorKey, status.binaryReady, opts);
         if (missing) {
           setReadiness(missing);
           return missing;

@@ -3573,6 +3573,7 @@ export function CCAgentSessionView({
           // 已建会话:suspended 来源计入(停用不打断运行中会话,门禁只看凭证连接态,
           // PR #744 review 第十七轮)。
           existingSessionRoute: true,
+          remoteRuntime: Boolean(session?.remoteHostId),
         });
         if (!proceed) return false;
       }
