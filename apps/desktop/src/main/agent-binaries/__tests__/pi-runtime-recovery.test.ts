@@ -1,8 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createPiRuntimeRecovery } from '../pi-runtime-recovery.js';
+import { createPiRuntimeRecovery, isRetryableOptionalRuntimePrepareError } from '../pi-runtime-recovery.js';
 
 describe('Pi runtime recovery', () => {
+  it('classifies missing development OMP binaries as retryable', () => {
+    expect(isRetryableOptionalRuntimePrepareError('omp dev binary not found for win32-x64')).toBe(true);
+    expect(isRetryableOptionalRuntimePrepareError('asset_missing')).toBe(false);
+  });
+
   it('starts an optional runtime in the background without a prior failed prepare', async () => {
     let online = false;
     const prepare = vi.fn(async () => ({ ready: true, path: '/tmp/omp' }));

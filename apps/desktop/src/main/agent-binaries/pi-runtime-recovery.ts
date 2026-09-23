@@ -14,7 +14,8 @@ export function isRetryableOptionalRuntimePrepareError(error?: string): boolean 
   return error === 'manifest_failed'
     || error === 'NETWORK'
     || error === 'HTTP_5XX'
-    || error === 'ABORTED';
+    || error === 'ABORTED'
+    || error?.startsWith('omp dev binary not found for ') === true;
 }
 
 export interface PiRuntimeRecoveryOptions {
