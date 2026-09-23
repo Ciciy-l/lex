@@ -41,7 +41,6 @@ const BOT_SECONDARY_KINDS = new Set<TabKindId>([
   'review',
   'subagents',
   'background-tasks',
-  'terminal',
   'ios-simulator',
 ]);
 
@@ -90,13 +89,6 @@ const MENU_ITEMS: TabKindMenuMeta[] = [
     labelKey: 'rightSidebar.tabs.kinds.iosSimulator',
     icon: Smartphone,
     order: 25,
-    enabled: true,
-  },
-  {
-    kind: 'terminal',
-    labelKey: 'rightSidebar.tabs.kinds.terminal',
-    icon: Terminal,
-    order: 30,
     enabled: true,
   },
 ];
