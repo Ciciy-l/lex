@@ -58,7 +58,7 @@ import type {
   OmpSessionCredentials,
   OmpSessionExecutableEnvironment,
 } from './omp/launch-plan.js';
-import type { OmpProcessSpawner, OmpRemoteTransport } from './omp/process-host.js';
+import type { OmpRemoteTransport } from './omp/process-host.js';
 import type { AuthAdapter } from '../interfaces/auth-adapter.js';
 import type { AgentRuntimeConfig } from '../interfaces/runtime-config.js';
 import type { Logger } from '../interfaces/logger.js';
@@ -762,12 +762,6 @@ export interface AgentDeps {
    * small PATH/shell/locale whitelist; maker-core never clones process.env.
    */
   resolveOmpExecutableEnvironment?: () => OmpSessionExecutableEnvironment | undefined;
-  /**
-   * OMP-only: host-owned native process creation boundary. Desktop supplies a
-   * Windows Job Object container; POSIX keeps the shared process-group path.
-   * The callback is Main-only and never exposed through Renderer IPC.
-   */
-  spawnOmpProcess?: OmpProcessSpawner;
   /** OMP-only: create a direct SSH JSONL transport for a remote OMP process. */
   getRemoteOmpTransport?: (
     remoteHostId: string,

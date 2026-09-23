@@ -27,7 +27,6 @@ import {
   type Server,
   type ServerResponse,
 } from 'node:http';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -36,7 +35,6 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { OmpAgent } from '../index.js';
 import { buildOmpCindyModelsYaml, OMP_CINDY_API_KEY_ENV } from '../models-config.js';
-import type { OmpProcessSpawnRequest } from '../process-host.js';
 import type { AgentDeps, AgentSessionHandle } from '../../base-agent.js';
 import type { Logger } from '../../../interfaces/logger.js';
 import type {
@@ -55,19 +53,7 @@ const OMP_BINARY = path.join(
   `${process.platform}-${process.arch}`,
   process.platform === 'win32' ? 'omp.exe' : 'omp',
 );
-const OMP_WINDOWS_CONTAINER = path.join(
-  REPO_ROOT,
-  'apps',
-  'omp-bin',
-  `${process.platform}-${process.arch}`,
-  'cindy-omp-process-container.exe',
-);
-// Windows production sessions are only allowed through the native Job Object
-// container.  The real-process integration fixture must exercise that same
-// boundary rather than bypass it with a direct Node spawn.
-const ompContainmentAvailable =
-  process.platform !== 'win32' || existsSync(OMP_WINDOWS_CONTAINER);
-const ompAvailable = existsSync(OMP_BINARY) && ompContainmentAvailable;
+const ompAvailable = existsSync(OMP_BINARY);
 
 const MODEL_ID = 'omp-live-model';
 const PROXY_KEY = 'omp-live-proxy-key';
@@ -105,41 +91,6 @@ const silentLogger: Logger = {
   fatal: () => {},
   child: () => silentLogger,
 };
-
-function spawnLiveOmpProcess(
-  request: OmpProcessSpawnRequest,
-): ChildProcessWithoutNullStreams {
-  if (process.platform !== 'win32') {
-    return spawn(request.executablePath, [...request.arguments], {
-      cwd: request.workingDirectory,
-      env: request.environment,
-      shell: false,
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      ...(request.detached === true ? { detached: true } : {}),
-    });
-  }
-
-  return spawn(
-    OMP_WINDOWS_CONTAINER,
-    [
-      '--protocol',
-      '1',
-      '--parent-pid',
-      String(process.pid),
-      '--',
-      request.executablePath,
-      ...request.arguments,
-    ],
-    {
-      cwd: request.workingDirectory,
-      env: request.environment,
-      shell: false,
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    },
-  );
-}
 
 function toRecord(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
@@ -427,7 +378,6 @@ function buildDeps(home: string): AgentDeps {
           }
         : {}),
     }),
-    ...(process.platform === 'win32' ? { spawnOmpProcess: spawnLiveOmpProcess } : {}),
     // 与 desktop host 同口径:凭证只给值、不落盘(models.yml 里只有 env 名)。
     resolveOmpCredentials: () => ({ proxyKey: PROXY_KEY, sessionId: SESSION_ID }),
     resolveOmpModelsYaml: (context) =>

@@ -43,7 +43,6 @@ const CARGO_MANIFESTS = [
     "windows-function-key-listener",
     "Cargo.toml",
   ),
-  path.join(DESKTOP_DIR, "native", "omp-process-container", "windows", "Cargo.toml"),
 ];
 
 /** 与 pnpm-workspace.yaml 的客户端 workspace 范围保持一致。 */

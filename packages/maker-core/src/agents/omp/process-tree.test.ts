@@ -5,10 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { describe, expect, it } from 'vitest';
+import { getOmpProcessIsolationOptions, terminateOmpProcessTree } from './process-tree.js';
 
-import { terminateOmpProcessTree } from './process-tree.js';
-
-async function waitFor<T>(read: () => Promise<T | undefined>, timeoutMs = 3_000): Promise<T> {
+async function waitFor<Value>(read: () => Promise<Value | undefined>, timeoutMs = 3_000): Promise<Value> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const value = await read();
@@ -32,7 +31,20 @@ function isAlive(pid: number): boolean {
   }
 }
 
-describe.runIf(process.platform !== 'win32')('OMP POSIX process-tree containment', () => {
+describe('OMP process isolation capabilities', () => {
+  it('uses ordinary direct-child spawn on Windows', () => {
+    expect(getOmpProcessIsolationOptions('win32')).toEqual({});
+  });
+
+  it('owns a detached process group on POSIX', () => {
+    expect(getOmpProcessIsolationOptions('linux')).toEqual({
+      detached: true,
+      ownsProcessTree: true,
+    });
+  });
+});
+
+describe.runIf(process.platform !== 'win32')('OMP POSIX process-group reaping', () => {
   it('reclaims a grandchild after its detached root has naturally exited', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'omp-process-tree-'));
     const marker = path.join(root, 'grandchild.pid');

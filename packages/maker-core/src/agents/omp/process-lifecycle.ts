@@ -84,8 +84,9 @@ export class OmpProcessLifecycle {
     this.exitTimer = setTimeout(() => {
       if (this.state !== 'draining') return;
       // A direct process can exit while a descendant retains one of its stdio
-      // pipes. Ask the owner to force-reclaim its tree before declaring the
-      // outcome unconfirmed; callers that do not own a group safely no-op.
+      // pipes. Ask a POSIX process-group owner to force-reclaim its group;
+      // ordinary Windows spawn cannot reclaim descendants and remains
+      // unconfirmed until the streams actually close.
       try {
         this.options.requestTermination(true);
       } catch {

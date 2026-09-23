@@ -48,7 +48,10 @@ import {
   type OmpProcessHost,
 } from './process-host.js';
 import type { OmpProcessState } from './process-lifecycle.js';
-import { terminateOmpProcessTree } from './process-tree.js';
+import {
+  getOmpProcessIsolationOptions,
+  terminateOmpProcessTree,
+} from './process-tree.js';
 import {
   OmpSessionHandle,
   type OmpPermissionRuntimeFactory,
@@ -576,11 +579,7 @@ export class OmpAgent extends BaseAgent {
           workingDirectory: plan.roots.workingDir,
           arguments: plan.arguments,
           environment: plan.environment,
-          // POSIX must give the managed session its own process group so an OMP
-          // extension, MCP, LSP, or PTY descendant cannot survive the root.
-          detached: process.platform !== 'win32',
-          ownsProcessTree: true,
-          spawnProcess: this.deps.spawnOmpProcess,
+          ...getOmpProcessIsolationOptions(),
           terminateProcessTree: terminateOmpProcessTree,
           onEvent,
           onState,
