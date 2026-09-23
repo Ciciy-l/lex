@@ -4,46 +4,22 @@ import { OmpProcessLifecycle, type OmpProcessState } from './process-lifecycle.j
 import { OmpRpcClient, type OmpRpcTransport } from './rpc-client.js';
 import { createOmpStreamTransport } from './stream-transport.js';
 
-/**
- * Host-owned OMP process creation request. `maker-core` keeps the common
- * lifecycle and RPC transport, while a platform host may replace the narrow
- * creation boundary to establish native containment before OMP is resumed.
- */
-export interface OmpProcessSpawnRequest {
-  readonly executablePath: string;
-  readonly workingDirectory: string;
-  readonly arguments: readonly string[];
-  readonly environment: Readonly<Record<string, string>>;
-  readonly detached?: boolean;
-}
-
-export type OmpProcessSpawner = (
-  request: OmpProcessSpawnRequest,
-) => ChildProcessWithoutNullStreams;
-
 export interface OmpProcessHostOptions {
   executablePath: string;
   workingDirectory: string;
   arguments: readonly string[];
   environment: Readonly<Record<string, string>>;
   /**
-   * A caller that owns an isolated one-shot process may opt into a detached
-   * process group so its force-termination callback can address descendants on
-   * POSIX. It is deliberately opt-in: ordinary hosts retain Node's default.
+   * A caller may opt into a detached process group on POSIX so its termination
+   * callback can address descendants. Ordinary children retain Node's default.
    */
   detached?: boolean;
   /**
-   * The caller owns every descendant of this process. On POSIX this requires
-   * `detached: true`, which makes the direct child the leader of a private
-   * process group. Windows requires a host-native containment spawner, which
-   * puts OMP in a Job Object before its first instruction is resumed.
+   * The caller can signal the private process group on POSIX. This requires a
+   * detached child; Windows has no equivalent ownership boundary here and uses
+   * best-effort direct-child termination only.
    */
   ownsProcessTree?: boolean;
-  /**
-   * Optional host-native spawn boundary. Desktop uses this on Windows so OMP
-   * enters a kill-on-close Job Object before its first instruction runs.
-   */
-  spawnProcess?: OmpProcessSpawner;
   terminateProcessTree(child: ChildProcessWithoutNullStreams, force: boolean): void;
   onEvent(event: Readonly<Record<string, unknown>>): void;
   onState(state: OmpProcessState): void;
@@ -249,17 +225,9 @@ export function startOmpProcess(options: OmpProcessHostOptions): OmpProcessHost 
     throw new Error('Invalid OMP process-tree ownership setting');
   if (
     options.ownsProcessTree === true &&
-    process.platform !== 'win32' &&
-    options.detached !== true
+    (process.platform === 'win32' || options.detached !== true)
   ) {
     throw new Error('OMP process-tree ownership requires an isolated POSIX process group');
-  }
-  if (
-    options.ownsProcessTree === true
-    && process.platform === 'win32'
-    && typeof options.spawnProcess !== 'function'
-  ) {
-    throw new Error('OMP process-tree ownership requires a Windows containment host');
   }
   const environment: Record<string, string> = Object.create(null);
   for (const [key, value] of Object.entries(options.environment)) {
@@ -280,25 +248,16 @@ export function startOmpProcess(options: OmpProcessHostOptions): OmpProcessHost 
     typeof options.onState !== 'function'
   )
     throw new Error('OMP requires lifecycle callbacks');
-  const spawnRequest: OmpProcessSpawnRequest = Object.freeze({
-    executablePath: options.executablePath,
-    workingDirectory: options.workingDirectory,
-    arguments: Object.freeze([...options.arguments]),
-    environment: Object.freeze({ ...environment }),
-    ...(options.detached === true ? { detached: true } : {}),
-  });
   let child: ChildProcessWithoutNullStreams;
   try {
-    child = options.spawnProcess
-      ? options.spawnProcess(spawnRequest)
-      : spawn(options.executablePath, [...options.arguments], {
-          cwd: options.workingDirectory,
-          env: environment,
-          shell: false,
-          windowsHide: true,
-          stdio: ['pipe', 'pipe', 'pipe'],
-          ...(options.detached === true ? { detached: true } : {}),
-        });
+    child = spawn(options.executablePath, [...options.arguments], {
+      cwd: options.workingDirectory,
+      env: environment,
+      shell: false,
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      ...(options.detached === true ? { detached: true } : {}),
+    });
   } catch {
     throw new Error('OMP process could not be started');
   }
@@ -306,6 +265,7 @@ export function startOmpProcess(options: OmpProcessHostOptions): OmpProcessHost 
   let client: OmpRpcClient | undefined;
   let transport: ReturnType<typeof createOmpStreamTransport> | undefined;
   let directExited = false;
+  let drainCloseCannotConfirm = false;
   const ownsProcessTree = options.ownsProcessTree === true;
   let resourcesClosed = false;
   const closeResources = (): void => {
@@ -327,7 +287,11 @@ export function startOmpProcess(options: OmpProcessHostOptions): OmpProcessHost 
         options.terminateProcessTree(child, force);
     },
     onState: (state) => {
-      if (state === 'stopping' || state === 'exit-unconfirmed') closeResources();
+      if (state === 'stopping' || state === 'exit-unconfirmed') {
+        if (directExited && state === 'exit-unconfirmed')
+          drainCloseCannotConfirm = true;
+        closeResources();
+      }
       try {
         options.onState(state);
       } catch (error) {
@@ -343,8 +307,8 @@ export function startOmpProcess(options: OmpProcessHostOptions): OmpProcessHost 
   child.on('exit', () => {
     directExited = true;
     // The OMP root may exit while a descendant still owns one of its stdio
-    // pipes. Reclaim that private tree now, but keep stdout open below so the
-    // root's already-buffered JSONL tail can still be drained.
+    // pipes. A POSIX process-group owner can reclaim that group now; keep
+    // stdout open so the root's already-buffered JSONL tail can still drain.
     if (ownsProcessTree && child.pid !== undefined) {
       try {
         options.terminateProcessTree(child, true);
@@ -362,7 +326,7 @@ export function startOmpProcess(options: OmpProcessHostOptions): OmpProcessHost 
     if (child.pid === undefined) lifecycle.confirmExit();
   });
   child.on('close', () => {
-    lifecycle.confirmExit();
+    if (!drainCloseCannotConfirm) lifecycle.confirmExit();
     client?.close();
     transport?.close();
   });
@@ -399,6 +363,8 @@ export function startOmpProcess(options: OmpProcessHostOptions): OmpProcessHost 
     pid: child.pid,
     getState: () => lifecycle.getState(),
     stopAndWait: () => {
+      if (directExited && lifecycle.getState() === 'draining')
+        drainCloseCannotConfirm = true;
       const result = lifecycle.stopAndWait();
       shutdown();
       return result;

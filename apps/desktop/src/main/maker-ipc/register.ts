@@ -93,7 +93,7 @@ import {
   isAppSessionBoundaryPending,
 } from '../appSessionState.js';
 import { upsertRecentWorkdir } from '../localDb/ipc/recentWorkdirs.js';
-import type { AgentMeta, Session as RendererSession } from '../../renderer/lib/ccAgent.types';
+import type { AgentMeta } from '../../renderer/lib/ccAgent.types';
 import {
   deriveAutoTitleSeed,
   normalizeAgentInputClearBoundaryMs,
@@ -365,7 +365,7 @@ import {
   orcaWorkers,
   sessions,
 } from '../localDb/schema.js';
-import { nextBotModelRoute, normalizeBotModelChain } from '../../shared/botModelChain.js';
+import { nextBotModelRoute } from '../../shared/botModelChain.js';
 import { createBotModelRouteReconciler } from './botModelRouteReconciler.js';
 import { readEffectiveBotModelChain, readEffectiveBotModelSelection } from '../maker-host/bot-model-chain-settings-store.js';
 import {
@@ -940,6 +940,7 @@ import {
   deferSessionRuntimeAxisMutation,
   getPendingSessionRuntimeMutation,
   getSessionRuntimeControlSnapshot,
+  projectSessionRuntimeControl,
   isPendingSessionRuntimeRouteExplicit,
   mergeSessionRuntimeProfilePatch,
   pickSessionRuntimeFallback,
@@ -1140,26 +1141,6 @@ const interruptedTurnAutoResumeGuard = new InterruptedTurnAutoResumeGuard({
 });
 let settlePendingSessionRuntimeControlHolder: ((sessionId: string, reason: string) => void) | null =
   null;
-
-function projectSessionRuntimeControl(
-  sessionId: string,
-  baseline: SessionRuntimeProfile,
-): Partial<RendererSession> {
-  const control = getSessionRuntimeControlSnapshot(sessionId);
-  const effective = control.effectiveOverride ?? baseline;
-  return {
-    model: effective.model,
-    providerId: effective.providerId,
-    // Keep the legacy top-level wire axis string-compatible while explicitly
-    // clearing stale effort; runtimeEffective retains the semantic null.
-    effort: effective.effort ?? '',
-    fastMode: effective.fastMode,
-    runtimeGeneration: control.generation,
-    runtimeBaseline: baseline,
-    runtimeEffective: effective,
-    runtimePending: control.pending,
-  };
-}
 
 // Schedule 不另建重试状态机：真正的恢复仍由 AgentInputCoordinator +
 // AutoResumeBookkeeping 独占。这里仅把「这一轮 scheduler run 已被普通自动续跑接管」
@@ -12859,6 +12840,28 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           ? sanitizedSendOpts
           : attachTrustedDesktopSendContext(message, sanitizedSendOpts),
       );
+    },
+  );
+
+  // #4513: session 双时间戳「疑似中断」是纯 DB 启发式,对任何在飞 turn 都成立;
+  // renderer 的运行态抑制依赖 status(isRunning) 事件,而消息流与状态流是两条通道,
+  // 事件可能缺失/迟到(协同 worker 视图实测复现)。这里把 main 侧权威运行态暴露
+  // 给 renderer 做一次真值回填:tracker 由 status/done/终止型 error 事件维护,
+  // 再叠加 live runtime 的 isTurnRunning 兜底。进程内存态重启后自然清空,
+  // 不会把「真中断」误报成在飞。
+  ipcMain.handle(
+    MAKER_INVOKE.SESSION_TURN_ACTIVE,
+    (event, sessionId: unknown): { inTurn: boolean } => {
+      assertTrustedAppRendererEvent(event);
+      if (typeof sessionId !== 'string' || sessionId.length === 0) {
+        throwIpcError('INVALID_PARAMS', 'sessionId required');
+      }
+      const live = getMakerIfReady()?.getSession(sessionId);
+      return {
+        inTurn:
+          sessionTurnActivityTracker.isSessionInTurn(sessionId) ||
+          live?.isTurnRunning() === true,
+      };
     },
   );
 

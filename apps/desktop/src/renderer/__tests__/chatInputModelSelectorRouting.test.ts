@@ -352,9 +352,10 @@ describe('ChatInput model source switching wiring', () => {
     expect(selectorBlock).toContain(
       'engineMarkVendor={unifiedPanelActive ? composerEngineMarkVendor : null}',
     );
-    expect(chatInputSource).toContain(
-      'resolveModelSelectorAgentIdentity(runtimeAgentKind, composerSelection.pending ? composerSelection.display.agentKind : null)?.vendorKey ??',
-    );
+    expect(chatInputSource.includes('runtimeAgentKind ? composerSelection.current.agentKind : runtimeAgentKind')).toBe(true);
+    expect(chatInputSource.includes('composerSelection.pending ? composerSelection.display.agentKind : null')).toBe(true);
+    expect(chatInputSource.includes('composerAgentIdentity?.vendorKey ?? null')).toBe(true);
+    expect(selectorBlock).toContain('? composerAgentIdentity');
     // 草稿没有 session 身份可言,当前引擎就是 vendorKey。
     expect(chatInputSource).toContain(': (vendorKey ?? null);');
   });

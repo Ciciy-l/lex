@@ -105,6 +105,8 @@ import {
   chatEligibleSourcesForModel,
   actualSourceIdForModel,
   effectiveSourceIdForModel,
+  findCatalogModel,
+  nativeDefaultSourceId,
   getModel,
   modelSupportsFastMode,
   providerOffersModel,
@@ -317,6 +319,23 @@ function ModelOptionsFloatingPanel({
 
 function providerDisplayName(p: ProviderView, t: (key: string) => string): string {
   return sharedProviderDisplayName(p, t);
+}
+
+/** Display-only alias lookup; implicit choices retain the default-source eligibility/order. */
+function modelDisplayProvider(
+  providers: ProviderView[], providerId: string | null | undefined,
+  modelId: string, agent: AgentKind, actualRoute: boolean,
+): ProviderView | undefined {
+  if (providerId) return providers.find((provider) => provider.id === providerId);
+  const resolveSource = actualRoute ? actualSourceIdForModel : effectiveSourceIdForModel;
+  const eligible = providers.filter((provider) => {
+    // Source eligibility must preserve distinct products such as [1m]. Metadata
+    // may fall back to the base model only after the source has been selected.
+    const model = findCatalogModel(provider, modelId, agent, { exact: true });
+    return model && resolveSource([provider], provider.id, model.id, agent) === provider.id;
+  });
+  const defaultId = nativeDefaultSourceId(eligible, agent);
+  return eligible.find((provider) => provider.id === defaultId);
 }
 
 // 来源供应商 → 单色官方 mark(fill=currentColor)。trigger 默认右间距 + trigger 文字色;
@@ -731,7 +750,7 @@ interface ModelSelectorProps {
   /** 点击当前已选模型行时打开该行的配置浮层，而不是直接收起选择器。 */
   selectedRowClickOpensConfiguration?: boolean;
   /**
-   * modelId 非空但不在可见清单时的 trigger 文案（默认落「选择模型」占位符）。
+   * modelId 非空但不在可见清单时的诊断文案（默认提示模型信息暂不可用）。
    * 供展示已持久化偏好的调用方给出诊断性文案，避免把「存过但当前不可用」显示成「没选过」。
    */
   unknownModelLabel?: (modelId: string) => string;
@@ -1359,7 +1378,7 @@ function ModelSelectorContentView({
       const markedAgents = entry.candidates.filter((agent) => {
         const wireId = entry.capabilities[agent]?.wireModelId ?? entry.modelId;
         const marked = getModel(provider, wireId, agent)?.newSessionDefault;
-        return Array.isArray(marked) && marked.includes(agent as 'claude-code' | 'codex');
+        return Array.isArray(marked) && marked.includes(agent);
       });
       if (markedAgents.length === 0) continue;
       // 引擎按**该行的推荐引擎**优先取:同一行在 cc / codex 下都带标记时,无脑取候选序
@@ -1370,7 +1389,14 @@ function ModelSelectorContentView({
       seedDefaultFavorite({
         providerId: entry.providerId,
         modelId: entry.modelId,
-        agent: markedAgent === 'claude-code' ? 'cc' : markedAgent === 'codex' ? 'codex' : 'pi',
+        agent:
+          markedAgent === 'claude-code'
+            ? 'cc'
+            : markedAgent === 'codex'
+              ? 'codex'
+              : markedAgent === 'omp'
+                ? 'omp'
+                : 'pi',
       });
       break;
     }
@@ -1413,6 +1439,7 @@ function ModelSelectorContentView({
       cc.capabilities,
       codex.capabilities,
       pi.capabilities,
+      omp.capabilities,
       excludeSubscriptionDirect,
       excludeChatBridgedCodex,
     ],
@@ -1446,9 +1473,11 @@ function ModelSelectorContentView({
           ? (codex.capabilities?.effortLevels ?? [])
           : currentAgentKind === 'pi'
             ? (pi.capabilities?.effortLevels ?? [])
-            : [];
+            : currentAgentKind === 'omp'
+              ? (omp.capabilities?.effortLevels ?? [])
+              : [];
     return new Map(levels.map((e) => [e.id, e.displayName]));
-  }, [currentAgentKind, cc.capabilities, codex.capabilities, pi.capabilities]);
+  }, [currentAgentKind, cc.capabilities, codex.capabilities, pi.capabilities, omp.capabilities]);
   // 档名多语言:i18n 词表(effortLevels.*) → 模型级 effortDisplayNames →
   // capabilities displayName(未知档兜底) → 原 id。
   const effortLabelFor = (m: RowModel, e: Effort) => modelEffortLabel(t, m, e, effortMeta.get(e));
@@ -1460,8 +1489,9 @@ function ModelSelectorContentView({
     if (currentAgentKind === 'claude-code') return !!cc.capabilities?.hasFastMode;
     if (currentAgentKind === 'codex') return !!codex.capabilities?.hasFastMode;
     if (currentAgentKind === 'pi') return !!pi.capabilities?.hasFastMode;
+    if (currentAgentKind === 'omp') return !!omp.capabilities?.hasFastMode;
     return false;
-  }, [currentAgentKind, cc.capabilities, codex.capabilities, pi.capabilities]);
+  }, [currentAgentKind, cc.capabilities, codex.capabilities, pi.capabilities, omp.capabilities]);
   // ── 来源(供应商)栏 ──────────────────────────────────────────────────────
   // 本机 + device-link 远程会话都支持来源分段:providers 已按 deviceId 切到被控端目录,
   // 远程切来源经隧道 set-model(providerId)生效(见 ChatInput.handleProviderChange 的远程分支)。
@@ -2733,10 +2763,12 @@ function ModelSelectorContentView({
           ? (cc.capabilities?.effortLevels ?? [])
           : agent === 'codex'
             ? (codex.capabilities?.effortLevels ?? [])
-            : (pi.capabilities?.effortLevels ?? []);
+            : agent === 'pi'
+              ? (pi.capabilities?.effortLevels ?? [])
+              : (omp.capabilities?.effortLevels ?? []);
       return modelEffortLabel(t, null, value, levels.find((e) => e.id === value)?.displayName);
     },
-    [cc.capabilities, codex.capabilities, pi.capabilities, t],
+    [cc.capabilities, codex.capabilities, pi.capabilities, omp.capabilities, t],
   );
   const unifiedAgentFastCapable = useCallback(
     (agent: AgentKind): boolean =>
@@ -2744,8 +2776,10 @@ function ModelSelectorContentView({
         ? !!cc.capabilities?.hasFastMode
         : agent === 'codex'
           ? !!codex.capabilities?.hasFastMode
-          : !!pi.capabilities?.hasFastMode),
-    [cc.capabilities, codex.capabilities, pi.capabilities, onFastModeChange, onUnifiedSelect, fastModeConfigurable],
+          : agent === 'pi'
+            ? !!pi.capabilities?.hasFastMode
+            : !!omp.capabilities?.hasFastMode),
+    [cc.capabilities, codex.capabilities, pi.capabilities, omp.capabilities, onFastModeChange, onUnifiedSelect, fastModeConfigurable],
   );
 
   if (emptyState) return emptyState;
@@ -3405,6 +3439,10 @@ export function ModelSelector({
   });
   const remoteModelLoading = !!deviceId && remoteModelListStatus === 'loading';
   const remoteModelLoadFailed = !!deviceId && remoteModelListStatus === 'error';
+  const localModelLoading = !deviceId && !(!providersOverride && localProviders.loadFailed) && (
+    (!providersOverride && localProviders.loading) ||
+    (agentKind === 'codex' ? codex.loading : agentKind === 'pi' ? pi.loading : agentKind === 'omp' ? omp.loading : cc.loading)
+  );
   const visibleModels = useMemo(
     () =>
       selectVisibleModels({
@@ -3436,18 +3474,38 @@ export function ModelSelector({
   const currentModel = routeModel
     ? { ...routeModel, displayName: routeModel.name, id: modelId }
     : visibleModels.find((m) => m.id === modelId);
-  // 已保存模型即使隐藏、断开或下架，实际任务仍保留模型 ID；偏好字段可通过
-  // unknownModelLabel 提供诊断文案。没有保存选择的入口才显示选择模型占位符。
+  // Wire IDs can differ from catalog IDs during a switch. Resolve display metadata
+  // through the existing alias lookup without changing routing/capability decisions.
+  const displayProvider = agentKind
+    ? modelDisplayProvider(providers, currentProviderId, modelId, agentKind, actualRoute)
+    : undefined;
+  const resolvedModelName = (agentKind ? findCatalogModel(displayProvider, modelId, agentKind)?.name : undefined)
+    ?? currentModel?.displayName;
+  const labelKey = JSON.stringify([deviceId ?? null, currentProviderId ?? null, agentKind, modelId]);
+  const lastModelName = useRef<{ key: string; name: string | undefined } | null>(null);
+  const modelName = resolvedModelName
+    ?? (lastModelName.current?.key === labelKey ? lastModelName.current.name : undefined);
+  useEffect(() => {
+    // Retain only this selection's label through catalog refresh/failure. Never
+    // borrow the previous model, source, engine or device's name for a new choice.
+    lastModelName.current = { key: labelKey, name: modelName };
+  }, [labelKey, modelName]);
+  const localizedName = modelName ? localizedModelName(modelName, t) : undefined;
+  // Explicit diagnostic fields can supply unknownModelLabel; ordinary triggers
+  // must not expose internal wire IDs when no display metadata is available.
   // unknown label 空串/全空白按缺省处理(否则 ?? 不回落,trigger 渲染成空白)。
   const unknownLabel = modelId && unknownModelLabel ? unknownModelLabel(modelId).trim() : '';
   const displayLabel = fallbackOption?.active
     ? fallbackOption.label
-    : ((currentModel ? localizedModelName(currentModel.displayName, t) : undefined) ??
+    : (localizedName ??
       (remoteModelLoading ? t('newChat.modelSelector.remoteLoading') : null) ??
       (remoteModelLoadFailed ? t('newChat.modelSelector.remoteLoadFailedShort') : null) ??
       (unknownLabel !== '' ? unknownLabel : null) ??
-      (actualRoute && modelId ? modelId : null) ??
-      t('newChat.modelSelector.trigger.placeholder'));
+      (modelId
+        ? t(localModelLoading
+            ? 'newChat.modelSelector.trigger.loading'
+            : 'newChat.modelSelector.trigger.unresolved')
+        : t('newChat.modelSelector.trigger.placeholder')));
   const agentName =
     agentIdentity && !fallbackOption?.active
       ? agentIdentity.vendorKey === 'cc'
@@ -3480,14 +3538,16 @@ export function ModelSelector({
   const currentAgentKind: AgentKind | null = useMemo(() => {
     if (agentKind) return agentKind;
     if (!currentModel) return null;
-    if (providers.some((p) => providerOffersModel(p, currentModel.id, 'claude-code'))) {
-      return 'claude-code';
-    }
-    if (providers.some((p) => providerOffersModel(p, currentModel.id, 'codex'))) {
-      return 'codex';
-    }
-    return null;
-  }, [currentModel, providers, agentKind]);
+    return resolveVisibleModelAgentKind({
+      modelId: currentModel.id,
+      agentKind,
+      ccModels: cc.capabilities?.availableModels ?? [],
+      codexModels: codex.capabilities?.availableModels ?? [],
+      piModels: pi.capabilities?.availableModels ?? [],
+      ompModels: omp.capabilities?.availableModels ?? [],
+      providers,
+    });
+  }, [currentModel, providers, agentKind, cc.capabilities, codex.capabilities, pi.capabilities, omp.capabilities]);
 
   const effortMeta = useMemo(() => {
     const levels =
@@ -3495,9 +3555,13 @@ export function ModelSelector({
         ? (cc.capabilities?.effortLevels ?? [])
         : currentAgentKind === 'codex'
           ? (codex.capabilities?.effortLevels ?? [])
-          : [];
+          : currentAgentKind === 'pi'
+            ? (pi.capabilities?.effortLevels ?? [])
+            : currentAgentKind === 'omp'
+              ? (omp.capabilities?.effortLevels ?? [])
+              : [];
     return new Map(levels.map((e) => [e.id, e.displayName]));
-  }, [currentAgentKind, cc.capabilities, codex.capabilities]);
+  }, [currentAgentKind, cc.capabilities, codex.capabilities, pi.capabilities, omp.capabilities]);
   // 档名多语言(与列表侧 effortLabelFor 同序):i18n 词表 → 模型级覆盖 → capabilities 英文名 → id。
   const labelOf = (e: Effort) => modelEffortLabel(t, currentModel, e, effortMeta.get(e));
 
@@ -3611,9 +3675,10 @@ export function ModelSelector({
   // compact 会隐藏断连状态文字；原生 title 仍需保留同一状态，避免鼠标用户悬停
   // 错误图标时只看到模型名、无法判断发送为何被阻断。
   const describeSelection = (selection: SessionRuntimeProfileProjection): string => {
-    const pid = actualSourceIdForModel(providers, selection.providerId, selection.model, selection.agentKind);
-    const provider = providers.find((p) => p.id === (selection.providerId ?? pid));
-    const model = provider ? getModel(provider, selection.model, selection.agentKind) : undefined;
+    const provider = modelDisplayProvider(providers, selection.providerId, selection.model, selection.agentKind, true);
+    const model = findCatalogModel(provider, selection.model, selection.agentKind);
+    const selectionKey = JSON.stringify([deviceId ?? null, selection.providerId, selection.agentKind, selection.model]);
+    const name = selectionKey === labelKey ? localizedName : model?.name ? localizedModelName(model.name, t) : undefined;
     const vendor = selection.agentKind === 'claude-code'
       ? 'Claude Code'
       : selection.agentKind === 'pi'
@@ -3621,7 +3686,10 @@ export function ModelSelector({
         : selection.agentKind === 'omp'
           ? 'OMP'
           : 'Codex';
-    return [vendor, model?.name ?? selection.model, provider ? providerDisplayName(provider, t) : selection.providerId,
+    return [
+      vendor,
+      name ?? (model?.name ? localizedModelName(model.name, t) : selection.model),
+      provider ? providerDisplayName(provider, t) : selection.providerId,
       selection.effort ? modelEffortLabel(t, model, selection.effort) : null,
       selection.fastMode ? t('newChat.modelSelector.meta.fastBadge') : null].filter(Boolean).join(' · ');
   };
@@ -3807,9 +3875,7 @@ export function ModelSelector({
               isCreateAgentVariant ? 'text-12' : dense ? 'text-12' : 'text-13',
             )}
           >
-            {/* 断开来源可能是该模型的唯一提供方 → visibleModels 查不到,回落显示原始 id,
-                    比 "Select model" 占位更能说明「哪个模型的来源断了」。 */}
-            {currentModel ? localizedModelName(currentModel.displayName, t) : modelId}
+            {displayLabel}
           </span>
           {/* 来源断开是**来源**的事,引擎身份位照常保留(规格 §1.2:引擎可见性靠一致的
               结构位,不靠出错才显示)。 */}

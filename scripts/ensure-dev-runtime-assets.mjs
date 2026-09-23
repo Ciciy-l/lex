@@ -216,7 +216,7 @@ async function main() {
   // node-pty 的 spawn-helper 可执行位可能被 pnpm install 剥掉（终端面板会因此报
   // posix_spawnp failed）。best-effort 补回，never throw，不阻断 dev 启动。
   fixNodePtyExecutables({ quiet: true });
-  log(`当前平台 ${platformKey()} 的 Dev 运行资产正常。`);
+  log('当前平台 ' + platformKey() + ' 的 Dev 运行资产检查完成。');
 }
 
 main().catch((e) => {

@@ -18,7 +18,6 @@ import type { SessionMeta, SessionStorage } from '@cindy/maker-core';
 
 const env = vi.hoisted(() => ({
   binaryPath: '/bin/omp' as string | null,
-  containmentAvailable: true,
   /** omp-runtime 三态的 reason;null = ready。由各测试显式设定。 */
   runtimeReason: null as string | null,
   /** download-failed 时随 reason 一起上报的错误码。 */
@@ -67,7 +66,7 @@ vi.mock('../omp-runtime.js', () => ({
     state:
       env.runtimeReason === null
         ? 'ready'
-        : env.runtimeReason === 'platform-unsupported'
+        : env.runtimeReason === 'platform-unsupported' || env.runtimeReason === 'version-mismatch'
           ? 'failed'
           : 'not-ready',
     reason: env.runtimeReason,
@@ -89,12 +88,6 @@ vi.mock('../omp-runtime.js', () => ({
     }
     return true;
   },
-}));
-
-vi.mock('../omp-process-containment.js', () => ({
-  createWindowsOmpProcessSpawner: () => (env.containmentAvailable ? () => {
-    throw new Error('test spawner must not run during registration');
-  } : null),
 }));
 
 vi.mock('../omp-proxy-session-token.js', () => ({
@@ -179,11 +172,20 @@ function registerAgents(opts: Omit<BuildOmpAgentOpts, 'logger'> = {}): string[] 
 }
 
 describe('OMP registration gate', () => {
-  it('registers omp when its runtime is ready', () => {
+  it('registers local omp when its verified runtime is ready', () => {
     env.binaryPath = '/bin/omp';
     env.runtimeReason = null;
     expect(buildOmpAgent({ logger: createLogger() })).not.toBeNull();
     expect(registerAgents()).toContain('omp');
+  });
+
+  it('uses remote-only OMP when a retained local path fails runtime verification', () => {
+    env.binaryPath = '/bin/omp';
+    env.runtimeReason = 'version-mismatch';
+    const agent = buildOmpAgent({ logger: createLogger(), ...remoteOnlyRuntimeHooks() });
+    expect(agent).not.toBeNull();
+    expect(agent?.getBinaryPath()).toBeNull();
+    expect(registerAgents(remoteOnlyRuntimeHooks())).toContain('omp');
   });
 
   it('leaves omp out of the available agent list when the runtime is not ready', () => {
@@ -282,18 +284,6 @@ describe('OMP registration gate', () => {
       }),
     ).toBeNull();
   });
-
-  it.runIf(process.platform === 'win32')(
-    'leaves omp unregistered when its required Windows containment helper is unavailable',
-    () => {
-      env.binaryPath = '/bin/omp';
-      env.runtimeReason = null;
-      env.containmentAvailable = false;
-      expect(buildOmpAgent({ logger: createLogger() })).toBeNull();
-      expect(registerAgents()).not.toContain('omp');
-      env.containmentAvailable = true;
-    },
-  );
 
   it('does not retain a construction-time binary path after verification stops passing', () => {
     env.binaryPath = '/bin/omp';

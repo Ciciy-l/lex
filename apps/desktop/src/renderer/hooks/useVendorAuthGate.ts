@@ -276,7 +276,12 @@ interface UseVendorAuthGateReturn {
    */
   checkAndConfirm: (
     vendor: AgentKind,
-    options?: { purpose?: GatePurpose; deviceId?: string; existingSessionRoute?: boolean },
+    options?: {
+      purpose?: GatePurpose;
+      deviceId?: string;
+      existingSessionRoute?: boolean;
+      remoteRuntime?: boolean;
+    },
   ) => Promise<GateResult>;
 }
 
@@ -293,7 +298,12 @@ export function useVendorAuthGate(): UseVendorAuthGateReturn {
   const checkAndConfirm = useCallback(
     async (
       vendor: AgentKind,
-      options?: { purpose?: GatePurpose; deviceId?: string; existingSessionRoute?: boolean },
+      options?: {
+        purpose?: GatePurpose;
+        deviceId?: string;
+        existingSessionRoute?: boolean;
+        remoteRuntime?: boolean;
+      },
     ): Promise<GateResult> => {
       if (options?.purpose === 'voice-input') {
         const readiness = await window.electronAPI.voiceInput.getReadiness();
@@ -387,6 +397,11 @@ export function useVendorAuthGate(): UseVendorAuthGateReturn {
       // 已建会话的发送门禁计入 suspended 来源(见 useVendorReadiness 注释);草稿不传。
       const readiness = await target.revalidate({
         includeSuspended: options?.existingSessionRoute === true,
+        // SSH sessions execute the engine runtime on the remote host. The local
+        // machine still supplies the selected provider credentials, but its own
+        // OMP/Codex/Pi binary must not gate a remote launch. device-link has its
+        // own remote readiness branch above and still checks the controlled host.
+        remoteRuntime: options?.remoteRuntime === true,
       });
       const dialogCopy = pickCopy(copy, vendor, readiness);
       if (!dialogCopy) return { proceed: true };

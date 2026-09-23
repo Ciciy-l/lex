@@ -107,8 +107,6 @@ export type { OmpCommand, OmpCatalogSnapshot } from './omp/commands.js';
 export type {
   OmpProcessHost,
   OmpProcessHostOptions,
-  OmpProcessSpawner,
-  OmpProcessSpawnRequest,
   OmpRemoteProcessHostOptions,
   OmpRemoteTransport,
 } from './omp/process-host.js';

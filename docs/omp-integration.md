@@ -18,7 +18,7 @@ Lead 负责实现与测试验证，Orca Reviewer 负责独立审查。当前不�
 
 按这些协议编写本仓独立适配代码；未引入上游代码或新增 npm 依赖。
 
-## 当前实现：内部协议基础，尚未开放产品入口
+## 第一阶段记录：内部协议基础，尚未开放产品入口
 
 packages/maker-core/src/agents/omp 下新增：
 
@@ -48,8 +48,8 @@ packages/maker-core/src/agents/omp 下新增：
 真实子进程已经停止。后续进程宿主必须保证字节读取有界，并负责终止、回收和退出确认。
 错误响应不把原始运行时错误直接暴露给调用方；后续诊断需接入宿主脱敏日志。
 
-这两个模块尚未从公共 index 导出，也没有生产消费者。没有引擎注册、GUI、启动器、
-权限桥、持久化、SSH、Mobile、Device Link 或 Orca 接线，不能宣称“已支持 OMP”。
+在该阶段，这两个模块尚未从公共 index 导出，也没有生产消费者；当时没有引擎注册、GUI、
+启动器、权限桥、持久化、SSH、Mobile、Device Link 或 Orca 接线，因此当时不能宣称“已支持 OMP”。
 低层事件不是可信 GUI DTO，宿主必须按事件类型校验和投影，不能直接广播给 Renderer。
 respondToUi 是协议编码能力，不是授权校验：宿主必须跟踪未完成交互、所属会话与窗口，
 拒绝迟到、重复或跨会话响应。open_url 不得自动打开。
@@ -104,12 +104,10 @@ SSH 与设备互联必须显式适配或明确禁用，不能把远程路径或�
 
 生命周期区分 starting、ready、draining、stopping、exit-unconfirmed、exited。30秒启动超时，
 用户停止后3秒升级强制终止请求，10秒仍未确认则返回 false；不会自动重启或重放消息。
-生产 OMP 会话拥有整棵子进程树：macOS／Linux 用独立 process group，按负 PID 发信号；
-Windows 使用 Main-only、同用户权限的原生 Job Object 容器，在 OMP 的第一条指令恢复前
-将它置入 `KILL_ON_JOB_CLOSE` Job。直接 OMP root 自然退出时容器立即回收遗留后代，
-但不关闭 stdout，已缓冲的 JSONL 尾帧仍可 drain；drain 到10秒上限会再强制回收，
-再无 `close` 证据才返回 `exit-unconfirmed`。无 PID 的 spawn error 认为没有创建子进程；
-有 PID 时只在 child close 后确认，不能由 kill 返回值、stdout EOF 或超时推断成功。
+当时的阶段实现曾让 macOS／Linux 用独立 process group，并让 Windows 使用 Main-only Job Object；
+该 Windows helper 后续已移除，以下方“当前生产接入”的普通 Node spawn 合同为准。自然 root exit
+与 stdio close 仍分别处理，已缓冲的 JSONL 尾帧继续 drain；drain 到10秒上限返回
+`exit-unconfirmed`，不能由 kill 返回值、stdout EOF 或超时推断成功。
 
 stderr 当前仅 drain，不解析、缓存或输出原文，避免泄露凭证；可操作脱敏诊断尚未接入。
 RPC/字节通道失败会停止进程并销毁专属三条流，仍等直接进程退出确认。调用者必须核验
@@ -139,18 +137,17 @@ transport beginDrain 忽略随后 stdin close，继续读 stdout 尾帧至 EOF�
 
 ### 当前生产接入（2026-09-18）
 
-下面“第四阶段”及其后的探测说明保留为历史审查记录，不能再当作当前产品能力边界。现在的 OMP 接入遵循与 Claude Code、Codex、Pi 相同的跨平台本地引擎范式：
+下面“第四阶段”及其后的探测说明保留为历史审查记录，不能再当作当前产品能力边界。现在的本地 OMP 接入遵循与 Claude Code、Codex、Pi 相同的跨平台本地引擎范式；SSH 是独立的远程执行路径，由 Desktop host 提供 remote runtime 与 SSH transport：
 
 - 会话在独立的受管 runtime HOME 中启动，模型与认证只经受管 `cindy` provider / loopback proxy；不会读取或复用 Pi、PATH 或用户 `~/.omp` 的凭证和会话配置。
 - 真实工作目录仍是 OMP cwd。项目 MCP、extensions、Skills、Rules、LSP 与 PTY 不再被早期探测旗标关闭，按 OMP 原生发现与执行语义工作；`--no-title` 保留给 Lex 管理任务标题。
 - child env 仍不是 `process.env` 副本：宿主只显式提供 PATH、POSIX shell / terminal / locale，或 Windows SystemRoot、ComSpec、PATHEXT，以及本会话的受管凭证变量。
 - 共享 `~/.agents/skills` 以链接投影到 runtime HOME 的 `.agents/skills`；投影失败不改写现有目录，也不会让会话采用用户 OMP 配置。
-- 进程树所有权沿用同一跨平台合同：macOS／Linux 以独立 process group 收敛；Windows 以
-  Main-only、同用户权限的窄 Job Object helper 在启动前建立 containment。它仅提供生命周期
-  收敛，不是文件系统、网络或权限沙箱；helper 缺失或打包版尚未提供受签名运行时时会
-  fail closed，不会回退到不受管的 Node spawn。
+- 进程启动使用普通 Node spawn 与共享生命周期：macOS／Linux 以 detached process group
+  尽力终止进程组；Windows 只对直系子进程做尽力清理，不提供 OS 级后代回收保证。root 退出后，
+  若后代仍持有 stdio，排空有界结束并报告 `exit-unconfirmed`；signal 成功不等于退出确认。
 
-这是一条本地引擎能力接线，不是 OS 沙箱或对原生项目扩展副作用的额外授权承诺。OMP SSH 仍未支持；完整真实制品和跨平台运行验证继续按发布流程单独验收。
+这段描述的是本地引擎接线，不是 OS 沙箱或对原生项目扩展副作用的额外授权承诺。OMP 仍保留由 Desktop host 注入 remote runtime 与 SSH transport 的远程执行代码路径；它与本地 runtime/spawn 是独立路径。真实发布制品上的跨平台运行仍须按发布流程单独验证。
 
 ### 历史记录：第四阶段隔离探测启动计划（2026-09-12）
 
@@ -217,9 +214,9 @@ claude／codex／pi 只差源，下载、size 与 SHA-256 校验、进度广播�
 
 **平台边界**：`tools/omp/latest.json` 列了 6 个平台，但构建资产表只发 4 个
 （`win32-x64`／`darwin-x64`／`darwin-arm64`／`linux-x64`）。`linux-arm64`／
-`win32-arm64` 上没有 `omp` 条目，受管准备不可能成功：`buildShipsOmpRuntime()` 据此把
-它们判为「平台不支持」，启动页不出下载段、不排重试，OMP 只能走 SSH。dev 态不受此限
-（`pnpm install:omp` 支持全部 6 平台）。
+`win32-arm64` 上没有 `omp` 条目，受管本地 runtime 准备不可能成功：`buildShipsOmpRuntime()` 据此把
+它们判为「平台不支持」，启动页不出下载段、不排重试；只有宿主另行配置可用的 SSH remote runtime
+与 transport 时，才可走远程路径。dev 态不受此限（`pnpm install:omp` 支持全部 6 平台）。
 
 第五阶段新增 Desktop Main 的 `omp-probe-runtime.ts`，它只会在开发模式解析
 `apps/omp-bin/<platform>/omp`（Windows 为 `omp.exe`），对照上述固定 version、平台、
@@ -234,7 +231,7 @@ snapshot 的验收。
 方法。options 字段或 runtime 的纯校验失败时不会创建 sandbox；sandbox 物化阶段自身的失败
 会清理已创建的唯一根。获得预检也不代表已启动或可执行真实项目任务。
 
-### 当前阶段：跨平台内部隔离探测宿主，仍未开放产品入口
+### 历史阶段：跨平台内部隔离探测宿主（未开放产品入口）
 
 `omp-isolated-probe-host.ts` 将前述预检、已存在的 `startOmpProcess()` 和
 `OmpProbeController` 组合成一个仅供 Desktop Main 调用的内部对象。它不注册 AgentKind、
@@ -243,8 +240,8 @@ snapshot 的验收。
 - 每次启动先生成预检，再在 `spawn` 前重新解析并核对同一固定 pin、摘要、大小和二进制
   路径；重核失败时尚未有 child，唯一 sandbox 会被清理。若 `startOmpProcess()` 在创建 child
   后才失败，宿主无法证明 child 不存在，会保留 sandbox 而不是冒险递归删除。
-- 这段历史探测宿主的 Windows `taskkill /T` 设计已被后续产品接入的 Main-only Job Object
-  containment 取代；现行跨平台合同见上文“当前生产接入”。stdout 尾帧与树回收仍分开
+- 这段历史探测宿主最初设想的 Windows `taskkill /T` 曾由 Main-only Job Object containment
+  替代；该 helper 后续已移除并改为普通 Node spawn，现行合同见上文“当前生产接入”。stdout 尾帧与回收仍分开
   结算；该机制不声称 OS 级文件系统、网络或权限隔离。
 - 只有收到兼容的 `ready` 后才由 controller 发出 `get_available_commands` 和 `get_state`；
   原生 UI/tool/URI 交互一律关闭连接，不生成批准响应。调用者只看到冻结后的命令目录、
@@ -252,7 +249,7 @@ snapshot 的验收。
 - `stopAndDispose()` 只在直接 child 的 `close` 已确认时删除这次唯一 sandbox；
   `exit-unconfirmed` 返回 `false` 并保留目录，晚到的确认退出后可显式重试清理。
 
-这仍是开发模式、零 prompt 的内部协议探测准备，不是 OMP 产品支持：没有真实项目执行、
+该隔离探测宿主只是开发模式、零 prompt 的内部协议探测准备，不描述当前 OmpAgent 能力：它本身没有真实项目执行、
 权限桥、GUI、持久化、SSH、Mobile、Device Link、打包 runtime 或发行接线。合成测试不启动
 真实 OMP，也不读取用户 HOME、配置或凭证；Reviewer 继续独立审查最终代码，测试由 Lead 自行执行。
 

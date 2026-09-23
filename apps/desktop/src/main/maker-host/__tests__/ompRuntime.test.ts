@@ -279,6 +279,15 @@ describe('isLocalOmpRuntimePending', () => {
     }
   });
 
+  it('keeps a missing development binary pending so SSH fallback cannot occupy the slot', () => {
+    const snapshot = classifyOmpRuntime(
+      facts({
+        download: { kind: 'failed', detail: 'omp dev binary not found for win32-x64' },
+      }),
+    );
+    expect(isLocalOmpRuntimePending(snapshot)).toBe(true);
+  });
+
   it('falls back to remote-only once the failure is permanent', () => {
     // recovery 已经放弃(不排重试),本地已无希望 → 允许 remote-only 注册走 SSH。
     // 否则一次 HTTP_4XX / CHECKSUM 就会让 OMP 从引擎列表里彻底消失。

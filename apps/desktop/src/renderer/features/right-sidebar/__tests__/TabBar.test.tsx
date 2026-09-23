@@ -117,6 +117,7 @@ describe('workspace + menu', () => {
     const gitBash = await screen.findByRole('menuitem', { name: /^Git Bash/ });
     expect(screen.getAllByRole('menuitem')[0]).toBe(gitBash);
     expect(screen.queryByRole('menuitem', { name: 'PowerShell' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'rightSidebar.tabs.kinds.terminal' })).toBeNull();
     expect(probe).toHaveBeenCalledOnce();
     fireEvent.click(gitBash);
     expect(launch).toHaveBeenCalledExactlyOnceWith('shell', 'gitbash');

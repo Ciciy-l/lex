@@ -40,6 +40,8 @@ vi.mock('react-i18next', async (importOriginal) => ({
         'settings.providers.anthropic.title': 'Anthropic',
         'settings.providers.xd.title': 'Cindy AI',
         'newChat.modelSelector.trigger.placeholder': '选择模型',
+        'newChat.modelSelector.trigger.loading': '正在读取模型…',
+        'newChat.modelSelector.trigger.unresolved': '模型信息暂不可用',
         'newChat.modelSelector.trigger.agent.claudeCode': 'Claude Code',
         'newChat.modelSelector.trigger.agent.codex': 'Codex',
         'newChat.modelSelector.modelListAria': '模型列表',
@@ -1003,6 +1005,9 @@ describe('ModelSelector trigger variants', () => {
     providersRef.providers = [{
       id: 'openai', name: 'OpenAI', connected: true, agents: ['codex'], routing: { codex: {} },
       models: { codex: [{ id: 'gpt-6-astra', name: 'GPT-6 Astra', contextWindow: 1000000, efforts: ['high'], defaultEffort: 'high', supportsFastMode: true }] },
+    }, {
+      id: 'xd', name: 'Gateway', connected: true, agents: [currentAgent], routing: { [currentAgent]: {} },
+      models: { [currentAgent]: [{ id: 'previous-model', name: 'Previous model', efforts: ['high'], supportsFastMode: true }] },
     }];
     try {
       const props = {
@@ -1014,7 +1019,8 @@ describe('ModelSelector trigger variants', () => {
         currentSelection: { agentKind: currentAgent, model: 'previous-model', providerId: 'xd', effort: 'high' as const, fastMode: true },
       };
       const view = render(React.createElement(ModelSelector, props));
-      const trigger = screen.getByRole('button', { name: /Current:.*previous-model/ });
+      const trigger = screen.getByRole('button', { name: /Current:.*Previous model/ });
+      expect(trigger.title).not.toContain('previous-model');
       expect(trigger.title).toContain('Next message: Codex · GPT-6 Astra');
       expect(trigger.title.split('Next message:')[1]).not.toContain('快速');
       expect(trigger.querySelector('[data-model-selection-pending]')).not.toBeNull();
@@ -1056,7 +1062,8 @@ describe('ModelSelector trigger variants', () => {
         onProviderChange: vi.fn(), onNavigateToProviders: vi.fn(), onReconnectSource: navigate, unifiedPanel: true,
       }));
       const trigger = screen.getByRole('button', { name: connected ? /模型不可用/ : /已断开/ });
-      expect(trigger.textContent).toContain(connected ? 'gpt-6-astra' : 'GPT-6 Astra');
+      expect(trigger.textContent).toContain(connected ? '模型信息暂不可用' : 'GPT-6 Astra');
+      expect(trigger.textContent).not.toContain('gpt-6-astra');
       fireEvent.click(trigger);
       const recovery = await screen.findByRole('button', { name: connected ? '管理来源' : '重新连接' });
       fireEvent.click(recovery);
@@ -1766,7 +1773,7 @@ describe('ModelSelector trigger variants', () => {
     expect(trigger.textContent).not.toContain('high');
   });
 
-  it('localizes the placeholder when the current model is unavailable', () => {
+  it('localizes missing model metadata without presenting an empty selection', () => {
     render(
       React.createElement(ModelSelector, {
         modelId: 'missing-model',
@@ -1778,7 +1785,7 @@ describe('ModelSelector trigger variants', () => {
       }),
     );
 
-    expect(screen.getByRole('button', { name: /选择模型/ }).textContent).toContain('选择模型');
+    expect(screen.getByRole('button', { name: /模型信息暂不可用/ }).textContent).toContain('模型信息暂不可用');
   });
 
   it('can hide model effort and Fast editing controls for model-id-only settings', () => {

@@ -1,15 +1,25 @@
 import type { ChildProcess } from 'node:child_process';
 
 /**
- * Terminate the private process tree owned by an OMP session.
+ * Return the process isolation capabilities available to an OMP session.
+ * Windows uses ordinary Node spawn and can only terminate the direct child;
+ * POSIX detached children can be signalled through their private process group.
+ */
+export function getOmpProcessIsolationOptions(
+  platform: NodeJS.Platform = process.platform,
+): { detached?: true; ownsProcessTree?: true } {
+  return platform === 'win32'
+    ? {}
+    : { detached: true, ownsProcessTree: true };
+}
+
+/**
+ * Best-effort termination for an OMP process.
  *
- * Production OMP uses a detached process group on POSIX, so a negative PID
- * reaches every descendant even when the direct OMP process has already
- * exited. Desktop Windows sessions instead use a native, kill-on-close Job
- * Object container: ending its direct container child releases the held Job
- * handle and the operating system reclaims the tree. A direct-child signal
- * remains a best-effort fallback for callers that cannot establish a group
- * boundary.
+ * POSIX OMP sessions use a detached process group, so a negative PID can
+ * signal descendants even after the direct process exits. Windows ordinary
+ * spawn has no equivalent containment boundary and can signal only the direct
+ * child while it is still alive.
  */
 export function terminateOmpProcessTree(
   child: ChildProcess,
@@ -20,9 +30,6 @@ export function terminateOmpProcessTree(
   const signal = force ? 'SIGKILL' : 'SIGTERM';
 
   if (process.platform === 'win32') {
-    // The child is Desktop's narrow native container, not the OMP root. Its
-    // final Job handle is intentionally not inherited by OMP, so terminating
-    // this child cannot leave descendants behind after a natural root exit.
     signalDirectChild(child, signal);
     return;
   }

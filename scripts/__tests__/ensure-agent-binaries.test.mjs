@@ -60,6 +60,15 @@ test('OMP is explicitly installable but never added to the default set', () => {
   assert.match(devGuard, /const OPTIONAL_AGENT_KINDS = OPTIONAL_BINARY_KINDS;/);
 });
 
+test('install:omp only installs the managed OMP runtime', () => {
+  const packageJson = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
+  assert.equal(packageJson.scripts['install:omp'], 'node scripts/ensure-agent-binaries.mjs --kinds=omp');
+  assert.equal(
+    fs.existsSync(new URL('../../tools/omp/build-process-container.mjs', import.meta.url)),
+    false,
+  );
+});
+
 test('OMP refuses marker-only local files and never reuses a sibling binary', async () => {
   const root = tmpDir('ensure-omp-root-');
   const sibling = tmpDir('ensure-omp-sibling-');

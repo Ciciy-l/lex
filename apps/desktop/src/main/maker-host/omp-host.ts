@@ -42,7 +42,6 @@ import { getClaudeEndpoint } from './anthropic-compat-proxy-host.js';
 import { readClaudeApiKey } from './auth-adapters.js';
 import { createLogger } from '../logger.js';
 import { isLocalOmpRuntimePending, peekOmpRuntimeSnapshot, resolveOmpBinaryPath } from './omp-runtime.js';
-import { createWindowsOmpProcessSpawner } from './omp-process-containment.js';
 import { deriveOmpProxySessionToken } from './omp-proxy-session-token.js';
 
 const log = createLogger('omp-host');
@@ -302,21 +301,12 @@ export function buildOmpAgent(opts: BuildOmpAgentOpts): OmpAgent | null {
   // OMP download has not finished yet.
   const runtime = peekOmpRuntimeSnapshot();
   const binaryPath = runtime.binaryPath;
-  let spawnOmpProcess: AgentDeps['spawnOmpProcess'] | undefined;
   // `resolveOmpBinaryPath` deliberately uses null for an unavailable audited
   // runtime. Do not confuse that with an executable path merely because the
   // value is defined: remote-only registration must remain possible while a
   // local start still fails closed.
-  let localRuntimeReady = typeof binaryPath === 'string' && binaryPath.length > 0;
-  if (binaryPath && process.platform === 'win32') {
-    const spawner = createWindowsOmpProcessSpawner();
-    if (spawner === null) {
-      localRuntimeReady = false;
-      log.warn('omp Windows containment helper unavailable; local OMP starts disabled');
-    } else {
-      spawnOmpProcess = spawner;
-    }
-  }
+  const localRuntimeReady =
+    runtime.state === 'ready' && typeof binaryPath === 'string' && binaryPath.length > 0;
 
   // 本地运行时「还没到手」时什么都不注册:Maker.registerAgent 是加法幂等的,
   // 先占位的 agent 在整个进程内换不掉(rc.2 就是这样把 remote-only 锁死的)。
@@ -346,13 +336,12 @@ export function buildOmpAgent(opts: BuildOmpAgentOpts): OmpAgent | null {
 
   const localRuntimeDeps: Pick<
     AgentDeps,
-    'allowRemoteOnlyRuntime' | 'resolveOmpLocalBinaryPath' | 'spawnOmpProcess'
+    'allowRemoteOnlyRuntime' | 'resolveOmpLocalBinaryPath'
   > = localRuntimeReady
     ? {
         // Each local spawn repeats the audited resolve. A construction-time
         // path is never treated as a later execution capability.
         resolveOmpLocalBinaryPath: () => resolveOmpBinaryPath() ?? undefined,
-        ...(spawnOmpProcess ? { spawnOmpProcess } : {}),
       }
     : { allowRemoteOnlyRuntime: true };
 

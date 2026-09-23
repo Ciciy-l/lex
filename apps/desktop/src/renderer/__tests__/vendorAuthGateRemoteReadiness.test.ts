@@ -34,6 +34,14 @@ describe('readinessFromBinaryStatus（本地运行时就绪推导）', () => {
     expect(readinessFromBinaryStatus('pi', true)).toBeNull();
     expect(readinessFromBinaryStatus('omp', true)).toBeNull();
   });
+
+  it('SSH 远端执行不要求控制端安装 OMP/Codex/Pi 二进制', () => {
+    expect(readinessFromBinaryStatus('codex', false, { remoteRuntime: true })).toBeNull();
+    expect(readinessFromBinaryStatus('pi', false, { remoteRuntime: true })).toBeNull();
+    expect(readinessFromBinaryStatus('omp', false, { remoteRuntime: true })).toBeNull();
+    // device-link 会单独读取被控端状态，仍须按被控端二进制门禁。
+    expect(readinessFromBinaryStatus('omp', false)).toBe('binary-missing');
+  });
 });
 
 describe('deriveRemoteReadiness（被控端就绪推导）', () => {

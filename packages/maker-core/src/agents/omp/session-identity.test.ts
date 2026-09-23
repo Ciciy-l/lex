@@ -1,4 +1,4 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -7,8 +7,16 @@ import { PassThrough, Writable } from 'node:stream';
 
 import { describe, expect, it, vi } from 'vitest';
 
+vi.mock('node:child_process', () => ({ spawn: vi.fn() }));
+
+let pendingFakeProcess: FakeOmpProcess | undefined;
+
+vi.mocked(spawn).mockImplementation(() => {
+  if (!pendingFakeProcess) throw new Error('fake OMP process was not selected');
+  return pendingFakeProcess.spawn() as never;
+});
+
 import { OmpAgent } from './index.js';
-import type { OmpProcessSpawnRequest } from './process-host.js';
 import type { AgentDeps } from '../base-agent.js';
 import type { McpProvider } from '../../interfaces/mcp-provider.js';
 import type { Logger } from '../../interfaces/logger.js';
@@ -25,7 +33,7 @@ const silentLogger: Logger = {
 
 interface FakeOmpProcess {
   readonly commands: Array<Record<string, unknown>>;
-  spawn(request: OmpProcessSpawnRequest): ChildProcessWithoutNullStreams;
+  spawn(): ChildProcessWithoutNullStreams;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -112,6 +120,7 @@ function agentFor(
   fake: FakeOmpProcess,
   mcpProviders?: McpProvider[],
 ): OmpAgent {
+  pendingFakeProcess = fake;
   const deps: AgentDeps = {
     auth: {
       getState: async () => ({ authenticated: false }),
@@ -124,7 +133,6 @@ function agentFor(
     logger: silentLogger,
     mcpProviders,
     resolveOmpAgentHome: () => path.join(root, 'agent-home'),
-    spawnOmpProcess: fake.spawn,
     resolveOmpExecutableEnvironment: () =>
       globalThis.process.platform === 'win32'
         ? { systemRoot: globalThis.process.env.SystemRoot ?? 'C:\\Windows' }

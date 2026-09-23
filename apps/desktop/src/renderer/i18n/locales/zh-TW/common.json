@@ -8024,6 +8024,8 @@
       "trigger": {
         "currentAndNext": "目前：{{current}}\n下一則訊息：{{next}}",
         "placeholder": "選擇模型",
+        "loading": "正在讀取模型…",
+        "unresolved": "模型資訊暫時無法使用",
         "aria": "選擇模型。當前：{{model}}",
         "ariaWithEffort": "選擇模型。當前：{{model}}，推理強度：{{effort}}",
         "pendingAria": "選擇模型。下條訊息：{{agent}} · {{model}}",
