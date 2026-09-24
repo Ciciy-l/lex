@@ -72,7 +72,7 @@ Pi 走 `providers[].models.pi`（用户补丁 perAgent.pi 另属合法 schema）
 ## 默认可见性：产品合同与实现差异
 
 [产品合同](configuration-and-overrides.md#模型可见性)：用户开关优先，否则跟随目录 defaultEnabled。
-但 `active-catalog.ts` 的 `selectDefaultModels` 仍可能将订阅/Gateway 的 true 筛成 false；不删除成员或写用户偏好。
+xAI 已直接保留目录默认开关；其他订阅/Gateway 的 `selectDefaultModels` 仍可能将 true 筛成 false，不删除成员或写用户偏好。
 这是待收敛的行为差异，不是合同豁免。排查须同时检查上游值、活动目录值和用户 override；本文不改变行为。
 
 <a id="release"></a>
@@ -159,3 +159,13 @@ OpenAI 原生宿主路由以外的 OMP controller-proxy 与 Pi / Claude Code 原
 剥离新增组与引用字段；V4 保留公共资料、本地域及原覆盖语义。各版本响应有独立 ETag。
 旧服务端仍可返回旧目录，新客户端保留旧格式读取；应先部署服务端再发布客户端。
 本次只迁移已有、已核实的价格，不补猜测价格，不改变 XD 的缺价处理。
+
+## xAI 订阅能力与用量边界
+
+xAI 订阅账号的 `/models` 响应决定当前成员和实报能力。明确空字段保持为空，缺少字段继续表示未知；账号响应中的 `api_backend` 是渠道执行接口证据，不能写成 Registry `nativeApi` 或凭它创建新协议。
+
+Fast 通过独立型号执行时，需在同一供应商、同一引擎上声明 `fastModelId`，且该连接当前返回了未退役的目标型号。目录覆盖完成后再次核对目标可用性。目标缺失或撤下时保留用户的 Fast 偏好，但本次请求按普通型号执行；不能只凭型号名称或 `supportsFastMode` 推断 Fast 映射。
+
+一级资料确认 Grok 4.7 Fast 只在 Cursor 与 Grok Build 通道可用，公共 xAI API 不可用。不得从随包目录为公共 API 路由开启 Fast。对应型号 ID、执行路由、价格、市场和生效日期是独立目录事实，后续数据变更前需逐项核实。
+
+用量估算只使用成功请求实际执行时记录的变体和适用的已核实参考价。有限容量回执按 session、thread 和 token 用量匹配；后续偏好或目录刷新不能重新定价旧请求。XD Gateway 继续使用实际报价，缺少参考价时保持未知。

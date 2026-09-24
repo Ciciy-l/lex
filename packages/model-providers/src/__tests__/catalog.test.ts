@@ -656,6 +656,58 @@ describe("routing wireProtocol per-agent 契约", () => {
   });
 });
 
+describe('Fast execution target declaration', () => {
+  it('accepts absent/null mappings and rejects invalid or self-referential targets', () => {
+    const catalog = structuredClone(BUNDLED_CATALOG);
+    const xai = catalog.providers.find((provider) => provider.id === 'xai')!;
+    const parent = model('xai/fixture-model', {
+      supportsFastMode: true, fastModelId: 'xai/fixture-model-fast',
+    });
+    const target = model('xai/fixture-model-fast');
+    xai.models.codex = [parent, target];
+    expect(parseCatalog(catalog).providers.find((provider) => provider.id === 'xai')
+      ?.models.codex?.find((entry) => entry.id === parent.id)?.fastModelId)
+      .toBe('xai/fixture-model-fast');
+
+    const disabled = structuredClone(catalog);
+    disabled.providers.find((provider) => provider.id === 'xai')!.models.codex![0]!.fastModelId = null;
+    expect(parseCatalog(disabled).providers.find((provider) => provider.id === 'xai')
+      ?.models.codex?.find((entry) => entry.id === parent.id)?.fastModelId).toBeNull();
+
+    for (const invalidTarget of [' ', 'xai/fixture-model']) {
+      const invalid = structuredClone(catalog);
+      invalid.providers.find((provider) => provider.id === 'xai')!.models.codex![0]!.fastModelId = invalidTarget;
+      expect(() => parseCatalog(invalid)).toThrow(/model.fastModelId/);
+    }
+  });
+});
+
+describe('Fast execution target declaration', () => {
+  it('accepts absent/null mappings and rejects invalid or self-referential targets', () => {
+    const catalog = structuredClone(BUNDLED_CATALOG);
+    const xai = catalog.providers.find((provider) => provider.id === 'xai')!;
+    const parent = model('xai/fixture-model', {
+      supportsFastMode: true, fastModelId: 'xai/fixture-model-fast',
+    });
+    const target = model('xai/fixture-model-fast');
+    xai.models.codex = [parent, target];
+    expect(parseCatalog(catalog).providers.find((provider) => provider.id === 'xai')
+      ?.models.codex?.find((entry) => entry.id === parent.id)?.fastModelId)
+      .toBe('xai/fixture-model-fast');
+
+    const disabled = structuredClone(catalog);
+    disabled.providers.find((provider) => provider.id === 'xai')!.models.codex![0]!.fastModelId = null;
+    expect(parseCatalog(disabled).providers.find((provider) => provider.id === 'xai')
+      ?.models.codex?.find((entry) => entry.id === parent.id)?.fastModelId).toBeNull();
+
+    for (const invalidTarget of [' ', 'xai/fixture-model']) {
+      const invalid = structuredClone(catalog);
+      invalid.providers.find((provider) => provider.id === 'xai')!.models.codex![0]!.fastModelId = invalidTarget;
+      expect(() => parseCatalog(invalid)).toThrow(/model.fastModelId/);
+    }
+  });
+});
+
 describe("runtime-injected registry semantics(生产形态:动态清单注入后)", () => {
   const views = buildRegistry(runtimeCatalog(), {
     anthropic: true,

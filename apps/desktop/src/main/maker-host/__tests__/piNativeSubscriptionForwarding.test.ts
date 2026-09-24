@@ -3,6 +3,7 @@ import { zstdCompressSync, zstdDecompressSync } from 'node:zlib';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAnthropicCompatProxy } from '@cindy/anthropic-compat-proxy';
+import { BUNDLED_CATALOG, type CatalogModel } from '@cindy/model-providers';
 
 const { ownerState } = vi.hoisted(() => ({
   ownerState: {
@@ -41,6 +42,9 @@ import {
   getPiNativeSubscriptionHandler,
   type PiNativeSubscriptionHandlerDeps,
 } from '../anthropic-responses-bridge-host.js';
+import { setActiveCatalog, setXaiDiscoveredModels } from '../active-catalog.js';
+import { registerUsagePricing, clearUsagePricing } from '../model-usage-pricing.js';
+import { setSessionFastMode } from '../session-effort-store.js';
 
 function responseRecorder() {
   const response = new EventEmitter() as EventEmitter & {
@@ -89,10 +93,71 @@ function deps(overrides: Partial<PiNativeSubscriptionHandlerDeps> = {}): PiNativ
   };
 }
 
+function installPiFastFixture(availability: 'available' | 'missing' | 'unknown'): void {
+  const catalog = structuredClone(BUNDLED_CATALOG);
+  const xai = catalog.providers.find((provider) => provider.id === 'xai')!;
+  const model = (id: string, fastModelId?: string): CatalogModel => ({
+    id, name: id, contextWindow: 128000, efforts: [], defaultEffort: null,
+    status: 'active', ...(fastModelId ? { fastModelId, supportsFastMode: true } : {}),
+  });
+  xai.models.pi = [model('fixture-grok', 'fixture-grok-fast'), model('fixture-grok-fast')];
+  setActiveCatalog(catalog);
+  setXaiDiscoveredModels(availability === 'unknown' ? null : [
+    { id: 'xai/fixture-grok' },
+    ...(availability === 'available' ? [{ id: 'xai/fixture-grok-fast' }] : []),
+  ]);
+}
+
 describe('PI native subscription forwarding', () => {
   afterEach(() => {
+    setActiveCatalog(BUNDLED_CATALOG);
+    setXaiDiscoveredModels(null);
+    setSessionFastMode('session-fast', false);
+    clearUsagePricing('session-fast');
     ownerState.pending = false;
     ownerState.scope = 'cloud:owner-a:1';
+  });
+
+  it.each([
+    ['fixture-grok', 'available', true, 'fixture-grok-fast'],
+    ['fixture-grok', 'missing', true, 'fixture-grok'],
+    ['fixture-unmapped', 'available', true, 'fixture-unmapped'],
+    ['fixture-grok', 'available', false, 'fixture-grok'],
+  ] as const)('forwards %s Fast=%s to %s', async (model, availability, fast, expected) => {
+    installPiFastFixture(availability);
+    setSessionFastMode('session-fast', fast);
+    const injected = deps();
+    const handler = getPiNativeSubscriptionHandler('xai', 'session-fast', injected);
+    const parsedBody = { model, input: 'OK' };
+    await handler({ rawBody: Buffer.from(JSON.stringify(parsedBody)), parsedBody,
+      ctx: { reqId: 1, method: 'POST', url: '/v1/responses', headers: {} }, res: responseRecorder() } as never);
+    const request = JSON.parse(Buffer.from(vi.mocked(injected.fetch).mock.calls[0][1]!.body as Uint8Array).toString());
+    expect(request.model).toBe(expected);
+    expect(request.service_tier).toBeUndefined();
+  });
+
+  it.each([true, false, null])('prices the actual native execution when Fast availability is %s', async available => {
+    installPiFastFixture(available === null ? 'unknown' : available ? 'available' : 'missing');
+    setSessionFastMode('session-fast', true);
+    const resolvePrice = registerUsagePricing('session-fast');
+    const wire = 'data: ' + JSON.stringify({ type: 'response.completed', response: {
+      usage: { input_tokens: 30, output_tokens: 5, input_tokens_details: { cached_tokens: 10 } },
+    } }) + '\n\n';
+    const injected = deps({ fetch: vi.fn(async () => {
+      setXaiDiscoveredModels(null);
+      setSessionFastMode('session-fast', false);
+      return new Response(wire, { headers: { 'content-type': 'text/event-stream' } });
+    }) });
+    const parsedBody = { model: 'fixture-grok', input: 'OK' };
+    const res = responseRecorder();
+    await getPiNativeSubscriptionHandler('xai', 'session-fast', injected)({
+      rawBody: Buffer.from(JSON.stringify(parsedBody)), parsedBody,
+      ctx: { reqId: 1, method: 'POST', url: '/v1/responses', headers: {} }, res,
+    } as never);
+    const request = JSON.parse(Buffer.from(vi.mocked(injected.fetch).mock.calls[0][1]!.body as Uint8Array).toString());
+    expect(request.model).toBe(available ? 'fixture-grok-fast' : 'fixture-grok');
+    expect(Buffer.concat(res.chunks).toString()).toBe(wire);
+    expect(resolvePrice({ inputTokens: 30, outputTokens: 5, cacheReadTokens: 10 })).toBe(available ? 'priority' : 'standard');
   });
 
   it('forwards Codex Responses bytes unchanged with host-owned ChatGPT auth', async () => {

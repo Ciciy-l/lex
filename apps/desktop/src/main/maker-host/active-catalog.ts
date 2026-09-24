@@ -62,6 +62,8 @@ import {
 } from '@cindy/model-providers';
 
 import { selectDefaultModels } from './model-default-selection.js';
+import type { XaiDiscoveredModel } from './model-discovery/xai-models.js';
+export type { XaiDiscoveredModel } from './model-discovery/xai-models.js';
 
 import { CURRENT_CINDY_REGION } from '../../shared/brandRegion.js';
 import {
@@ -135,17 +137,6 @@ const discoveredByProvider = new Map<string, Partial<Record<AgentKind, CatalogMo
  * `[]` = 本次发现没有条目，不抹除公共声明。成员保存为 canonical `xai/grok-*`，
  * 补充 Claude/Codex 公共声明；Pi 消费显式的逐 Harness 声明。遗漏不构成禁止。
  */
-export interface XaiDiscoveredModel {
-  id: string;
-  name?: string;
-  description?: string;
-  contextWindow?: number;
-  contextWindowVerified?: boolean;
-  maxOutput?: number;
-  efforts?: CatalogModel['efforts'];
-  defaultEffort?: CatalogModel['defaultEffort'];
-}
-
 let xaiDiscoveredModels: XaiDiscoveredModel[] | null = null;
 const xaiAccountModels = new Map<string, XaiDiscoveredModel[]>();
 /**
@@ -927,6 +918,10 @@ function materializeXaiAccountModels(
   return discovered.map((entry, index) => {
     const catalogModel = xaiCatalogModelById(provider, entry.id, agent);
     const registry = modelRegistryMetaFields('xai', agent, entry.id);
+    // A server catalog can lag behind the bundled visibility decision; use the
+    // bundled per-harness value as a sparse fallback, not as account membership.
+    const bundledEntry = findModelRegistryRoute(BUNDLED_CATALOG.modelRegistry, 'xai', entry.id, agent)?.entry;
+    const bundledDefaultEnabled = bundledEntry?.perAgent?.[agent]?.defaultEnabled ?? bundledEntry?.defaultEnabled;
     const { efforts, defaultEffort } = resolveXaiAccountCapabilities(
       entry,
       registry?.efforts ?? catalogModel?.efforts,
@@ -969,7 +964,7 @@ function materializeXaiAccountModels(
         ? { supportsFastMode: registry.supportsFastMode }
         : {}),
       status: registry?.status ?? catalogModel?.status ?? 'active',
-      defaultEnabled: registry?.defaultEnabled ?? catalogModel?.defaultEnabled ?? true,
+      defaultEnabled: registry?.defaultEnabled ?? catalogModel?.defaultEnabled ?? bundledDefaultEnabled ?? true,
     };
   });
 }
@@ -1561,6 +1556,9 @@ function computeMerged(): Catalog {
   // chatgpt/ aliases never hide their sibling Codex route. Explicit user visibility stays external.
   providers = providers.map((provider) => {
     const catalogId = providerCatalogId(provider);
+    // xAI account discovery updates membership, not the independent catalog's
+    // default visibility/order decisions.
+    if (catalogId === 'xai') return provider;
     if (!isOpenAiSubscriptionProvider(provider) &&
       ((provider.source === 'user' && !provider.auth.native) || !['anthropic', 'xai'].includes(catalogId)))
       return provider;
@@ -1732,6 +1730,49 @@ function computeMerged(): Catalog {
       },
     }),
   );
+  // Fast changes the executed model. It needs an explicit same-harness mapping
+  // and current membership of that target for this exact subscription account.
+  providers = providers.map((provider) => {
+    if (providerCatalogId(provider) === 'xai' && provider.auth.method === 'oauth') {
+      const members = provider.id === 'xai' ? xaiDiscoveredModels : xaiAccountModels.get(provider.id);
+      const available = new Set(members?.map((model) => model.id.replace(/^xai\//, '')) ?? []);
+      return {
+        ...provider,
+        models: Object.fromEntries(Object.entries(provider.models).map(([agent, models]) => [
+          agent,
+          models?.map((model) => {
+            const fallback = bundledXai?.models[agent as AgentKind]?.find((candidate) => candidate.id === model.id);
+            const target = model.fastModelId === undefined ? fallback?.fastModelId : model.fastModelId;
+            if (target === undefined) {
+              return model.supportsFastMode === true ? { ...model, supportsFastMode: false } : model;
+            }
+            const targetAvailable = Boolean(target && available.has(target.replace(/^xai\//, '')) &&
+              models?.some((candidate) => candidate.id === target && candidate.status !== 'retired'));
+            return {
+              ...model,
+              fastModelId: target,
+              supportsFastMode: model.supportsFastMode !== false && targetAvailable,
+            };
+          }),
+        ])),
+      };
+    }
+
+    // The verified public xAI API does not provide subscription Fast. Do not
+    // retain a Registry or user override flag for that route in a key connection.
+    let publicFastCapabilityCleared = false;
+    const models = Object.fromEntries(Object.entries(provider.models).map(([agent, entries]) => [
+      agent,
+      entries?.map((model) => {
+        const endpoint = model.route?.baseUrl ?? provider.routing[agent as AgentKind]?.upstream;
+        if (!isPublicXaiApiEndpoint(endpoint) ||
+            (model.supportsFastMode !== true && model.fastModelId === undefined)) return model;
+        publicFastCapabilityCleared = true;
+        return { ...model, fastModelId: null, supportsFastMode: false };
+      }),
+    ]));
+    return publicFastCapabilityCleared ? { ...provider, models } : provider;
+  });
   return { ...b, modelRegistry, providers };
 }
 
@@ -1755,6 +1796,17 @@ function projectLocalModelCatalog(catalog: Catalog) {
     localOverrides.localModels,
     catalog.modelRegistry?.baseModels ?? BUNDLED_CATALOG.modelRegistry!.baseModels,
   );
+}
+
+function isPublicXaiApiEndpoint(endpoint: string | undefined): boolean {
+  if (!endpoint) return false;
+  try {
+    const url = new URL(endpoint);
+    return url.protocol === 'https:' && url.hostname === 'api.x.ai' &&
+      (url.pathname.replace(/\/+$/, '') === '/v1' || url.pathname.startsWith('/v1/'));
+  } catch {
+    return false;
+  }
 }
 
 export function getActiveLocalModelCatalog() {

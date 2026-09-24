@@ -192,6 +192,23 @@ describe('new model generation defaults', () => {
     expect(provider.models.codex![0]!.supportsImageInput).toBeUndefined();
   });
 
+  it('does not expose Fast on the public xAI API, even when shared metadata claims support', () => {
+    const config = {
+      id: 'public-xai-api', name: 'Public xAI API', auth: { method: 'apiKey' as const },
+      runtimes: { codex: { baseUrl: 'https://api.x.ai/v1', wireProtocol: 'openai-responses' as const,
+        models: [{ id: 'fixture-grok', name: 'Grok fixture',
+          discoveredMetadata: { supportsFastMode: true } }] } },
+    };
+    const publicApi = buildUserProvider(config).models.codex![0]!;
+    expect(publicApi.supportsFastMode).toBe(false);
+    expect(publicApi.fastModelId).toBeNull();
+
+    const subscription = buildUserProvider({
+      ...config, id: 'xai-subscription', auth: { method: 'oauth' as const, native: 'xai' as const },
+    }).models.codex![0]!;
+    expect(subscription.supportsFastMode).toBeUndefined();
+  });
+
   it('inherits capabilities from an older model declared on the same connection across engines', () => {
     const exact = providerModelRecord('grok-4.7', 'https://api.x.ai/v1', 'openai-responses')!;
     expect(exact).toBeDefined();
@@ -205,7 +222,7 @@ describe('new model generation defaults', () => {
         contextWindow: exact.contextWindow, efforts: exact.efforts,
         supportsImageInput: exact.supportsImageInput, contextWindowVerified: false,
       });
-      expect(provider.models[agent]![1]!.supportsFastMode).toBeUndefined();
+      expect(provider.models[agent]![1]!.supportsFastMode).not.toBe(true);
     }
   });
 

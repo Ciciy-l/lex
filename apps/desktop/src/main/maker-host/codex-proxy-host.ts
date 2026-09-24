@@ -1,5 +1,7 @@
 import { resolveConversationSessionHeaders, withChatBridgeUserAgent, overrideHeadersCaseInsensitive } from '@cindy/responses-chat-bridge';
-import { providerModelRecord } from '@cindy/model-providers';
+import { providerModelRecord, providerCatalogId, type CatalogModel, type Provider } from '@cindy/model-providers';
+import { captureUsagePricing, createUsagePricingObserver } from './model-usage-pricing.js';
+import { rewriteFastModel } from './model-fast-mode.js';
 import { createPiProviderFetch, handlePiProviderRequest, invocationModelRecord, nativeBridgeApiKey, readBoundedResponseText, requiresNativeProviderAuth } from './pi-provider-transport.js';
 import { normalizeProviderRequest, normalizeMiniMaxResponsesReasoning } from '@cindy/model-compat';
 import { createCodexResponsesCompatibilityAdapter, sanitizeXaiTools, hasCacheOnlySearchProhibition, sanitizeByteDanceSeedTools, normalizeByteDanceSeedInput, sanitizeByteDanceSeedReasoning, normalizeStrictGatewayHistory, sanitizeDeepSeekV4CustomTools } from '@cindy/model-compat';
@@ -1569,16 +1571,35 @@ function xaiRealModelId(model: unknown): string | null {
   return model.includes('/') ? model.slice(model.lastIndexOf('/') + 1) : model;
 }
 
-function supportsXaiReasoning(model: string | null): boolean {
+function xaiCompatProviderId(providerId: string | null | undefined): string | null {
+  if (!providerId) return null;
+  const provider = getActiveCatalog().providers.find((candidate) => candidate.id === providerId);
+  if (!provider) return providerId === 'xai' ? providerId : null;
+  return providerCatalogId(provider) === 'xai' ? providerId : null;
+}
+
+export function resolveXaiCodexCatalogModel(
+  providers: ReadonlyArray<Pick<Provider, 'id' | 'models'>>,
+  providerId: string,
+  namespacedModel: string,
+): CatalogModel | undefined {
+  const findModel = (id: string) => providers.find((provider) => provider.id === id)?.models.codex?.find(
+    (candidate) => candidate.id === namespacedModel,
+  );
+  return findModel(providerId) ?? (providerId === 'xai' ? undefined : findModel('xai'));
+}
+
+function supportsXaiReasoning(model: string | null, providerId = 'xai'): boolean {
   if (!model) return true;
-  const xaiProvider = getActiveCatalog().providers.find((provider) => provider.id === 'xai');
   const namespacedModel = `xai/${model}`;
-  const catalogModel = (xaiProvider?.models.codex ?? []).find((candidate) => candidate.id === namespacedModel);
+  const catalogModel = resolveXaiCodexCatalogModel(getActiveCatalog().providers, providerId, namespacedModel);
   return (catalogModel?.efforts.length ?? 0) > 0;
 }
 
-function stripUnsupportedXaiReasoning(body: Record<string, unknown>): Record<string, unknown> | null {
-  if (supportsXaiReasoning(xaiRealModelId(body.model))) return null;
+function stripUnsupportedXaiReasoning(
+  body: Record<string, unknown>, providerId = 'xai',
+): Record<string, unknown> | null {
+  if (supportsXaiReasoning(xaiRealModelId(body.model), providerId)) return null;
 
   let changed = false;
   const next: Record<string, unknown> = { ...body };
@@ -1718,21 +1739,24 @@ function createByteDanceSeedResponsesCompatTransform(): RequestTransform {
   };
 }
 
-function createXaiResponsesCompatTransform(): RequestTransform {
-  return (body, ctx) => {
+type XaiRequestPricing = Map<number, ReturnType<typeof captureUsagePricing>>;
+
+function createXaiResponsesCompatTransform(pricing: XaiRequestPricing): RequestTransform {
+  const transform: RequestTransform = (body, ctx) => {
     if (!isPlainObject(body)) return null;
     const requestModel = typeof body.model === 'string' ? body.model : '';
     const providerContext = providerContextForRequest(ctx.headers, requestModel);
     const explicitProviderId = providerContext.providerId;
     const inferredProviderId =
       explicitProviderId ?? (typeof body.model === 'string' ? inferProviderIdForModel(body.model, 'codex') : null);
-    if (inferredProviderId !== 'xai') return null;
+    const xaiProviderId = xaiCompatProviderId(inferredProviderId);
+    if (!xaiProviderId) return null;
     // 与路由的 scope 门同源:xai 会话里非 xai/ 前缀的请求会被 resolveSessionRouteDecision
     // 放回默认路由(ChatGPT/网关),body 不能再按 xAI 语义改写(挪 instructions / 剥
     // reasoning 会破坏默认上游的请求),transform 是否生效必须与路由是否捕获一致。
     const wireModel = providerContext.subagentRoute?.catalogModel
       ?? (typeof body.model === 'string' ? body.model : undefined);
-    if (!providerRoutingServesWireModel('xai', 'codex', wireModel)) return null;
+    if (!providerRoutingServesWireModel(xaiProviderId, 'codex', wireModel)) return null;
     let changed = false;
     let current = moveInstructionsIntoInput(body);
     if (current) changed = true;
@@ -1775,21 +1799,34 @@ function createXaiResponsesCompatTransform(): RequestTransform {
       }
     }
 
-    const withoutUnsupportedReasoning = stripUnsupportedXaiReasoning(current);
+    const withoutUnsupportedReasoning = stripUnsupportedXaiReasoning(current, xaiProviderId);
     if (withoutUnsupportedReasoning) {
       current = withoutUnsupportedReasoning;
       changed = true;
     }
 
     const withNormalizedInputItems = sanitizeXaiModelInputBody(current, {
-      supportsReasoning: supportsXaiReasoning(xaiRealModelId(current.model)),
+      supportsReasoning: supportsXaiReasoning(xaiRealModelId(current.model), xaiProviderId),
     });
     if (withNormalizedInputItems) {
       current = withNormalizedInputItems;
       changed = true;
     }
+    const withFast = rewriteFastModel(xaiProviderId, 'codex', current, current.service_tier === 'priority');
+    const sessionId = sessionIdFromHeaders(ctx.headers);
+    if (sessionId && ctx.url.split('?', 1)[0]?.endsWith('/responses') && !isGuardian) {
+      pricing.set(ctx.reqId, captureUsagePricing(sessionId,
+        withFast && withFast.model !== current.model ? 'priority' : 'standard',
+        selectedThreadIdFromHeaders(ctx.headers)));
+    }
+    if (withFast) {
+      current = withFast;
+      changed = true;
+    }
     return changed ? current : null;
   };
+  transform.onRequestSettled = (requestId) => { pricing.delete(requestId); };
+  return transform;
 }
 
 function responsesCompatibilityRouting(
@@ -2188,6 +2225,31 @@ function isXaiUpstream(upstreamBase: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Public xAI API does not provide subscription Fast; consume stale Fast tiers on that route. */
+function createXaiFastSafetyTransform(
+  frozenAuthInjection: CodexProxyAuthInjection | undefined,
+  pricing: XaiRequestPricing,
+): RequestTransform {
+  const transform: RequestTransform = (body, ctx) => {
+    if (!isPlainObject(body) || body.service_tier !== 'priority') return null;
+    const routing = responsesCompatibilityRouting(body, ctx, frozenAuthInjection);
+    if (!routing || !isXaiUpstream(routing.upstream)) return null;
+    const requestModel = typeof body.model === 'string' ? body.model : '';
+    const providerContext = providerContextForRequest(ctx.headers, requestModel);
+    const providerId = providerContext.providerId ?? inferProviderIdForModel(requestModel, 'codex') ?? 'xai';
+    const rewritten = rewriteFastModel(providerId, 'codex', body, true);
+    const sessionId = sessionIdFromHeaders(ctx.headers);
+    const path = ctx.url.split('?', 1)[0] ?? ctx.url;
+    if (sessionId && path.endsWith('/responses') && !guardianParentThreadIdFromHeaders(ctx.headers)) {
+      pricing.set(ctx.reqId, captureUsagePricing(sessionId,
+        rewritten && rewritten.model !== body.model ? 'priority' : 'standard',
+        selectedThreadIdFromHeaders(ctx.headers)));
+    }
+    return rewritten;
+  };
+  return transform;
 }
 
 function maybeRecordXaiRateLimit(ctx: ResponseObserverCtx): void {
@@ -2836,6 +2898,7 @@ export function createModelRoutingTransform(
 function createTransformRequestChain(
   frozenAuthInjection?: CodexProxyAuthInjection,
   execAdapter = createCodexResponsesCompatibilityAdapter(),
+  pricing: XaiRequestPricing = new Map(),
 ): RequestTransform[] {
   const execFunctionAdapterTransform: RequestTransform = (body, ctx) => {
     if (!isPlainObject(body)) return null;
@@ -2907,12 +2970,13 @@ function createTransformRequestChain(
     // ModelInput deserialize 前洗 input[]。订阅直连那条会再洗一次（幂等）。
     createXaiModelInputSanitizeTransform(),
     sanitizeDeepSeekV4CustomTools,
-    createXaiResponsesCompatTransform(),
+    createXaiResponsesCompatTransform(pricing),
     createGatewayGrokResponsesCompatTransform(frozenAuthInjection),
     createByteDanceSeedResponsesCompatTransform(),
     createMiniMaxResponsesCompatTransform(),
     createProviderModelRewriteTransform(),
     providerRequestTransform,
+    createXaiFastSafetyTransform(frozenAuthInjection, pricing),
     // 视觉桥透明替换（层 A，Responses 格式）：controller 未注入时短路透传，零干扰；
     // 注入后把纯文本模型请求 input[] 里的 input_image 转成文字描述。放在 strip 之前与
     // Anthropic 链一致，避免未来 strip 扩展覆盖 Responses input_image 时吃掉图。
@@ -3025,10 +3089,24 @@ function createCodexProxyHandle(
   frozenCustomProviderRoutes?: readonly CodexCustomProviderRoute[],
 ): Promise<ProxyHandle> {
   const execAdapter = createCodexResponsesCompatibilityAdapter();
+  const pricing: XaiRequestPricing = new Map();
+  const route = createModelRoutingTransform(frozenAuthInjection, frozenCustomProviderRoutes);
+  const routeWithUsageEncoding: RoutingTransform = (body, ctx) => {
+    const ensureUsageEncoding = (decision: RoutingDecision | null): RoutingDecision | null => {
+      const path = ctx.url.split('?', 1)[0] ?? ctx.url;
+      if (!decision || decision.localHandler || !isXaiUpstream(decision.upstreamOverride ?? '')
+        || ctx.method !== 'POST' || !path.endsWith('/responses')
+        || guardianParentThreadIdFromHeaders(ctx.headers)) return decision;
+      // The usage observer reads raw response bytes; do not ask xAI to compress them.
+      return { ...decision, headerOverride: { ...decision.headerOverride, 'accept-encoding': 'identity' } };
+    };
+    const decision = route(body, ctx);
+    return decision instanceof Promise ? decision.then(ensureUsageEncoding) : ensureUsageEncoding(decision);
+  };
   return createAnthropicCompatProxy({
     // 默认上游 = gateway(含 /v1)；普通模型 + oauth 由 routingTransform 覆盖到 ChatGPT。
     upstream: () => buildCodexGatewayBaseUrl(),
-    transformRequest: createTransformRequestChain(frozenAuthInjection, execAdapter).map(
+    transformRequest: createTransformRequestChain(frozenAuthInjection, execAdapter, pricing).map(
       (transform): RequestTransform => {
         // Namespaced Responses use a frozen Provider route. Preserve its native
         // fields and model; only repair known tool ID mismatches on this path.
@@ -3063,10 +3141,16 @@ function createCodexProxyHandle(
     // 常规 session proxy 继续读取当前全局 spawn 形态；control-plane proxy 在创建时
     // 冻结自己的形态，两个 app-server 并行时不会互相改写路由。
     routingTransform: withCodexUpstreamRecording(
-      createModelRoutingTransform(frozenAuthInjection, frozenCustomProviderRoutes),
+      routeWithUsageEncoding,
       () => buildCodexGatewayBaseUrl(),
     ),
     responseObserver: composeResponseObservers(
+      (ctx) => {
+        const record = pricing.get(ctx.reqId);
+        return record && ctx.status >= 200 && ctx.status < 300
+          ? createUsagePricingObserver(ctx.responseHeaders['content-type'] ?? '', record)
+          : null;
+      },
       createCodexResponseObserver(),
       createProviderUpstreamErrorObserver({
         agent: 'codex',

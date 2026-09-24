@@ -411,6 +411,17 @@ function toCatalogModel(
   return result;
 }
 
+function isPublicXaiApiEndpoint(endpoint: string | undefined): boolean {
+  if (!endpoint) return false;
+  try {
+    const url = new URL(endpoint);
+    return url.protocol === 'https:' && url.hostname === 'api.x.ai' &&
+      (url.pathname.replace(/\/+$/, '') === '/v1' || url.pathname.startsWith('/v1/'));
+  } catch {
+    return false;
+  }
+}
+
 function defaultWireProtocol(agent: AgentKind): ProviderWireProtocol {
   // pi 默认 openai-chat:BYOM 本地端点(Ollama/vLLM 的 /v1/chat/completions)最常见。
   // 注:pi 走原生 provider 直连,routing.pi 不被 native 路径消费——此默认仅影响(未用的)
@@ -582,6 +593,7 @@ export function buildUserProvider(
           ? piNativeCatalogModelDefaults(rt.piCatalogProviderId, m.id)
           : undefined;
       const wire = m.route?.wireProtocol ?? rt.wireProtocol ?? defaultWireProtocol(agent);
+      const publicXaiApi = native !== 'xai' && isPublicXaiApiEndpoint(m.route?.baseUrl ?? resolvedBaseUrl);
       // Pi's model API overrides the runtime default. Match that actual API, rather than
       // discarding all metadata when a Responses/Gemini model shares a Chat connection.
       // With no explicit model route/API, an exact endpoint + unique ID supplies Pi's API.
@@ -670,6 +682,7 @@ export function buildUserProvider(
           } } : {}),
         } : {}),
         ...(rt.catalogPresetId ? { catalogPresetId: rt.catalogPresetId } : {}),
+        ...(publicXaiApi ? { supportsFastMode: false, fastModelId: null } : {}),
       };
     });
   }

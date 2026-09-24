@@ -123,6 +123,7 @@ import { resolveVisionBackendRoute, setVisionGatewayKeyReader } from './provider
 import { resolveSessionCcDebugFile } from '../logger.js';
 import { resetProviderModelAutoRefreshCooldowns } from './provider-model-auto-refresh.js';
 import { getThinkingEnabledFromMemory } from './newMakerDefaultsCache.js';
+import { registerUsagePricing, clearUsagePricing } from './model-usage-pricing.js';
 import { getSessionFastMode } from './session-effort-store.js';
 import { createSshDaemonTransport } from './codex-remote-transport.js';
 import {
@@ -2713,6 +2714,9 @@ export function getMaker(): Maker {
             );
             if (thinkingEnabled !== undefined) opts.thinkingEnabled = thinkingEnabled;
           }
+          if (opts.agentKind === 'codex' || opts.agentKind === 'pi') {
+            opts.resolveUsagePriceVariant = registerUsagePricing(sessionId);
+          }
           // 主干新增:pi 的价格档跟随会话 Fast 开关。
           if (opts.agentKind === 'pi') {
             opts.getPriceVariant = () => (getSessionFastMode(sessionId) ? 'priority' : 'standard');
@@ -2854,6 +2858,7 @@ export function getMaker(): Maker {
           await writeCodexHistoryHasProductPrompt(sessionId, historyHasProductPrompt);
         },
         onClose: async (sessionId, options) => {
+          clearUsagePricing(sessionId);
           const lease = worktreeRuntimeLeases.get(options);
           if (lease) {
             await releaseWorktreeRuntimeLease(lease).catch((error) => {

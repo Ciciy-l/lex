@@ -27,6 +27,7 @@ import {
   setDiscoveredProviderMediaModels,
   clearDiscoveredProviderModels,
 } from '../active-catalog.js';
+import { parseXaiAccountModels } from '../model-discovery/xai-models.js';
 
 function openaiIds(agent: 'claude-code' | 'codex' | 'pi'): string[] {
   const openai = getActiveCatalog().providers.find((p) => p.id === 'openai');
@@ -92,7 +93,7 @@ describe('active-catalog discovered augment', () => {
   it.each([
     ['anthropic', 'claude', 'claude-sonnet-4-5', 'claude-sonnet-4-6'],
     ['xai', 'xai', 'grok-4.5', 'grok-4.6'],
-  ] as const)('uses the same default selection for builtin and independent %s accounts', (id, native, oldId, newId) => {
+  ] as const)('keeps xAI catalog visibility while retaining Claude selection policy for %s', (id, native, oldId, newId) => {
     const catalog = bundledWithoutRegistry();
     const builtin = catalog.providers.find(provider => provider.id === id)!;
     const models = [fake(oldId), fake(newId)].map(model => ({ ...model, group: id === 'anthropic' ? 'claude' : 'grok' }));
@@ -110,10 +111,10 @@ describe('active-catalog discovered augment', () => {
         .toEqual(listed(builtin.id).map(model => [model.id, model.defaultEnabled]));
       for (const providerId of [builtin.id, account.id]) {
         expect(listed(providerId).find(model => model.id === oldId)?.defaultEnabled,
-          `${providerId}/${agent}: ${listed(providerId).map(model => model.id).join(',')}`).toBe(false);
+          `${providerId}/${agent}: ${listed(providerId).map(model => model.id).join(',')}`).toBe(id === 'xai');
         // Claude's Codex bridge is explicitly disabled by default; keep it disabled.
         expect(listed(providerId).find(model => model.id === newId)?.defaultEnabled)
-          .toBe(!(id === 'anthropic' && agent === 'codex'));
+          .toBe(id === 'xai' || !(id === 'anthropic' && agent === 'codex'));
       }
       expect(listed(api.id).find(model => model.id === oldId)?.defaultEnabled).toBe(true);
     }
@@ -134,6 +135,24 @@ describe('active-catalog discovered augment', () => {
     setXaiDiscoveredModels([{ id: 'xai/grok-account-only' }], account.id);
     clearDiscoveredProviderModels();
     expect(ids()).not.toContain('xai/grok-account-only');
+  });
+
+  it('keeps account channel protocol separate from Registry native API and Pi membership', () => {
+    setActiveCatalog(bundledWithoutRegistry());
+    const discovered = parseXaiAccountModels({ data: [{
+      id: 'fixture-native-model', api_backend: 'responses', context_window: 123456,
+      reasoning_efforts: ['high', 'low'], reasoning_effort: 'high',
+    }] });
+    expect(discovered[0]?.apiBackend).toBe('responses');
+    setXaiDiscoveredModels(discovered);
+
+    const xai = getActiveCatalog().providers.find((provider) => provider.id === 'xai')!;
+    expect(xai.models.codex?.find((model) => model.id === 'xai/fixture-native-model'))
+      .toMatchObject({ contextWindow: 123456, efforts: ['low', 'high'] });
+    expect(xai.models.codex?.find((model) => model.id === 'xai/fixture-native-model')?.nativeApi).toBeUndefined();
+    expect(xai.models['claude-code']?.find((model) => model.id === 'xai/fixture-native-model')?.nativeApi)
+      .toBeUndefined();
+    expect(xai.models.pi?.some((model) => model.id.includes('fixture-native-model'))).toBe(false);
   });
   it('shares OpenAI protocol and Pi metadata with an independent account without sharing identity', () => {
     const account = buildUserProvider({
