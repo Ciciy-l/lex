@@ -1039,6 +1039,7 @@ describe("buildUserProvider (per-runtime)", () => {
           models: [
             { id: "generate", name: "Generate" },
             { id: "input", name: "Input", supportsImageInput: true },
+            { id: "text-only", name: "Text only", supportsImageInput: false },
           ],
         },
       },
@@ -1046,6 +1047,7 @@ describe("buildUserProvider (per-runtime)", () => {
     expect(p.routing.codex?.supportsImageGeneration).toBe(true);
     expect(p.models.codex?.[0]?.supportsImageInput).toBeUndefined();
     expect(p.models.codex?.[1]?.supportsImageInput).toBe(true);
+    expect(p.models.codex?.[2]?.supportsImageInput).toBe(false);
   });
 
   it("does not export unverified CC/Codex efforts for managed Ollama", () => {

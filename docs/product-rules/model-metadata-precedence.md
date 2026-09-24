@@ -47,16 +47,13 @@
 
 OpenAI 本机 Codex 登录与独立授权账号共享 OpenAI 公共目录及桥接规则；
 `providerCatalogId` 仅用于公共定义查找。凭证、发现快照、限额、具体连接的价格及窗口覆盖、
-收藏与可见性继续使用连接实例 ID。三个 Harness 的公共模型资料与接入声明由服务器目录维护；
-客户端原生目录只补旧快照缺失字段及运行时兼容细节，不能作为第二份公共模型白名单。
+收藏与可见性继续使用连接实例 ID。三个 Harness 的在线公共目录由外部 Cindy Model Access 提供；Lex 本仓另维护客户端随包 Registry 与兼容逻辑。客户端 Pi 原生目录按既有接口补足运行时资料，不创建在线服务声明或新路由。
 对使用 Registry 补存在性或 additions-only 的发现路径，未返回某个模型不等于禁止。不能把此结论推广到权威成员快照；按下面的来源表判定。
 
 现有协议保留两种兼容表示：Codex/Claude Code 的 Registry 根与桥接声明，及
 `providers[].models.pi` 的逐 Harness 声明。旧 Registry 的 agents 枚举不能直接加入 Pi；
 顶层 Codex/Claude Code 空数组仍由 Registry 实体化，不能解释成关闭。
-Pi 显式列表决定成员（包括空数组与撤下条目）；缺字段才使用随包兜底，不把其他 Harness
-的名单复制成 Pi 路由。服务器声明的新模型不要求先出现在 Pi SDK 名单中；有明确原生协议
-即可构造 models.json。OpenAI 订阅仍使用专用 Codex Responses 认证传输。
+Pi 显式非空列表提供随包成员基线，显式空数组仍保持关闭；缺字段才使用随包兜底。已有订阅连接可将其账号发现模型投影到已存在且匹配的 Pi 传输，不由此推导新路由，也不把其他 Harness 名单当成执行能力。Pi SDK 导入用于补全已核实的传输资料，不能替代成员或权限判断。OpenAI 订阅仍使用专用 Codex Responses 认证传输。
 
 旧顶层 Pi 条目的静态资料是旧格式兜底，不能标为账号 discovery；
 Registry 的公共定义／显式条目／路由／perAgent 继续覆盖旧默认，账号实报与用户覆盖另行优先。
@@ -128,6 +125,8 @@ Pi 已识别的 OpenAI 订阅连接之间可复用同一运行时：每个账号
 
 `baseModels` 是按公共 ID 的稀疏补丁；`patches` 支持已有订阅、Cindy AI、自定义供应商模型及 Pi。补丁不能凭空增加账号可用模型，尚未出现的条目静置。原有 `additions` 仍只适用于允许实体化的订阅根，不开放 Gateway 伪造。退役条目仍需完整合法 addition 才能复活。
 
+本机完整 `additions` 可显式指定 `agents: ["pi"]`，仅在已有且支持 Pi 的订阅连接上新增 Pi 模型；它沿用该连接的既有 Pi 传输，不创建 BYOM/Gateway 路由，不改变其它 Harness 成员资格。未知图片能力只在 Pi 的对应传输中按未知处理；显式 `supportsImageInput: false` 仍为 text-only。
+
 键中的供应商段使用 `encodeURIComponent` 编码，模型段保持原文。例如旧自定义 xAI 的运行时 ID 是 `custom:xai`，对应键为 `custom%3Axai:grok-model`；`xai:grok-model` 仍指内置 xAI，`custom:xai:grok-model` 仍指供应商 `custom` 的模型 `xai:grok-model`，三者不混用。
 
 `localModels` 支持 `patches`、完整 `additions`、`removedIds`、`featuredIds`；空推荐数组明确不推荐任何模型。名称和包装仍需通过本地域校验，不能下发命令、路径或下载 URL。删除补丁或对应字段就是恢复继承，远端刷新不会写回或删除这些用户字段。
@@ -144,7 +143,7 @@ Pi 已识别的 OpenAI 订阅连接之间可复用同一运行时：每个账号
 
 发布遵循 [维护入口](../dev-rules/model-catalog-maintenance.md#release)，同为 V4 仍须满足 [媒体扩展发布前置条件](../model-registry-v4-media.md#发布前置条件)。
 
-Server `catalog/providers.json` 是数据正本；客户端 `catalog/model-registry.json` 是同 revision、同内容的离线副本。`baseModels`、模型引用和本地域必须随整个 Registry 一起校验、发布和同步，禁止只复制子域造成悬空引用。坏快照、网络失败、回退 revision 和同 revision 冲突沿用上一份合法快照。
+Lex 不拥有 Cindy Model Access 服务端仓库；在线 Catalog 是外部输入，是否更新或部署须由该服务责任方确认。Lex 的 `catalog/model-registry.json` 是本仓维护的完整随包 Registry，不宣称与外部在线 revision 相同。每次随包变更都须保留完整 Registry、递增 `updatedAt` 并校验所有 `baseModels` / `modelRef`，禁止片段更新造成悬空引用。加载时按 revision 选择完整有效 Registry；同 revision 异内容冲突 fail closed 并保留上一份合法快照。外部在线快照较新时可覆盖随包资料，因此本地更新不代表在线客户端已采用。
 
 复用当前目录接口与 Registry V4 协商，不增加请求或数据库表。旧 V1/V2/V3 客户端收到展开后的旧字段；不同资料的多条路由在兼容响应中拆成独立条目，保留上游 ID，额外条目使用派生目录 ID。旧协议不支持的公共引用、覆盖指令与图片字段被移除，空默认以缺省表达。
 

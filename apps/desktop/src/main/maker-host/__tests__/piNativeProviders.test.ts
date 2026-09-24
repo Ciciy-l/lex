@@ -459,6 +459,7 @@ describe('buildPiNativeProvidersFromConfigs', () => {
       id: 'models-url-only',
       name: 'Models URL Only',
       contextWindow: 64_000,
+      input: ['text', 'image'],
       // 无目录元数据的 Chat Completions 模型默认收敛 system role(#3832)。
       compat: { supportsDeveloperRole: false },
     });
@@ -586,7 +587,7 @@ describe('buildPiNativeProvidersFromConfigs', () => {
 
     expect(providers[0]?.models[0]).toMatchObject({ id: 'server-model', name: 'Server Model' });
     expect(providers[0]?.models[0]).not.toHaveProperty('reasoning');
-    expect(providers[0]?.models[0]).not.toHaveProperty('input');
+    expect(providers[0]?.models[0]).toHaveProperty('input', ['text', 'image']);
   });
 
   it('defaults unknown custom Chat Completions models to system role (#3832)', () => {
@@ -2304,6 +2305,7 @@ describe('buildPiNativeProvidersFromConfigs', () => {
               models: [
                 { id: 'vision', name: 'Vision', supportsImageInput: true },
                 { id: 'legacy', name: 'Legacy' },
+                { id: 'text-only', name: 'Text only', supportsImageInput: false },
               ],
             }),
           },
@@ -2320,7 +2322,8 @@ describe('buildPiNativeProvidersFromConfigs', () => {
         input: ['text', 'image'],
         ...chatDefaultCompat,
       },
-      { id: 'legacy', name: 'Legacy', contextWindow: undefined, ...chatDefaultCompat },
+      { id: 'legacy', name: 'Legacy', contextWindow: undefined, input: ['text', 'image'], ...chatDefaultCompat },
+      { id: 'text-only', name: 'Text only', contextWindow: undefined, input: ['text'], ...chatDefaultCompat },
     ]);
   });
 
@@ -2463,6 +2466,7 @@ describe('buildPiNativeProvidersFromConfigs', () => {
         id: 'reasoner',
         name: 'Reasoner',
         contextWindow: undefined,
+        input: ['text', 'image'],
         reasoning: true,
         thinkingLevelMap: {
           minimal: null,
@@ -2473,7 +2477,7 @@ describe('buildPiNativeProvidersFromConfigs', () => {
           max: null,
         },
       },
-      { id: 'legacy', name: 'Legacy', contextWindow: undefined },
+      { id: 'legacy', name: 'Legacy', contextWindow: undefined, input: ['text', 'image'] },
     ]);
   });
 
@@ -2493,7 +2497,7 @@ describe('buildPiNativeProvidersFromConfigs', () => {
                 {
                   id,
                   name,
-                  ...(visual ? { supportsImageInput: true } : {}),
+                  supportsImageInput: visual,
                   reasoning: true,
                   reasoningEfforts: ['low', 'high', 'max'],
                 },
@@ -2508,7 +2512,7 @@ describe('buildPiNativeProvidersFromConfigs', () => {
       id,
       name,
       contextWindow: undefined,
-      ...(visual ? { input: ['text', 'image'] } : {}),
+      input: visual ? ['text', 'image'] : ['text'],
       reasoning: true,
       thinkingLevelMap: {
         minimal: null,
@@ -2605,7 +2609,8 @@ it('carries every unambiguous portable catalog model into the Pi descriptor', ()
         } },
       }], () => 'test-key');
       expect(providers[0]?.models[0], `${row.upstream} ${row.id}`).toMatchObject({
-        api, input: row.modalities.input.filter(value => value === 'text' || value === 'image'),
+        api,
+        ...(row.modalities ? { input: row.modalities.input.filter(value => value === 'text' || value === 'image') } : {}),
         contextWindow: row.contextWindow, maxTokens: row.maxOutput,
       });
       checked++;

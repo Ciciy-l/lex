@@ -301,6 +301,7 @@ describe('active-catalog discovered augment', () => {
       'grok-4.5',
       'grok-4.6',
       'grok-build-0.1',
+      'grok-4.7',
     ]);
     expect(xai?.models.pi).not.toEqual(xai?.models['claude-code']);
     expect(xai?.models['claude-code']?.find((model) => model.id === 'xai/grok-4.6')).toMatchObject({
@@ -328,6 +329,7 @@ describe('active-catalog discovered augment', () => {
       'grok-4.5',
       'grok-4.6',
       'grok-build-0.1',
+      'grok-4.7',
     ]);
     expect(xai?.models.pi?.find((model) => model.id === 'grok-4.6')).toMatchObject({
       contextWindow: 500_000,
@@ -431,6 +433,7 @@ describe('active-catalog discovered augment', () => {
       'grok-4.5',
       'grok-4.6',
       'grok-build-0.1',
+      'grok-4.7',
     ]);
   });
 

@@ -49,6 +49,25 @@ describe("Pi source import", () => {
     expect(result.providers["new-vendor"][0].cost).not.toHaveProperty("output");
     expect(toCindyCatalog(providers, result.generatedAt)).toEqual(result);
   });
+  it("preserves unknown input modalities separately from explicit text-only models", () => {
+    const { input: _input, ...unknownInput } = model;
+    const result = toCindyCatalog(
+      {
+        vendor: [
+          unknownInput,
+          { ...unknownInput, id: "text-only", input: ["text"] },
+        ],
+      },
+      "2026-09-12T00:00:00Z",
+    );
+    const [unknown, textOnly] = result.providers.vendor;
+    expect(unknown).not.toHaveProperty("modalities");
+    expect(unknown).not.toHaveProperty("supportsImageInput");
+    expect(textOnly).toMatchObject({
+      modalities: { input: ["text"], output: ["text"] },
+      supportsImageInput: false,
+    });
+  });
   it("rejects executable expressions and incomplete input without executing application code", () => {
     expect(() =>
       readBundledCatalog(shard("{ data: process.exit(1) }")),

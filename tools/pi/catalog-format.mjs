@@ -3,6 +3,16 @@ import { piSupportedEfforts } from "../../packages/model-providers/src/piThinkin
 /** Pi is an import source. Persist Cindy's public field names, with transport-specific data
  * confined to execution.pi. Never copy credentials or arbitrary headers into a public catalog. */
 export function toCindyProviderModel(row) {
+  const gemini38Ids = {
+    google: "gemini-3.8-flash",
+    "google-vertex": "gemini-3.8-flash",
+    opencode: "gemini-3.8-flash",
+    "github-copilot": "gemini-3.8-flash",
+    "vercel-ai-gateway": "google/gemini-3.8-flash",
+  };
+  if (Object.hasOwn(gemini38Ids, row.provider) && gemini38Ids[row.provider] === row.id) {
+    row = { ...row, thinkingLevelMap: { ...row.thinkingLevelMap, minimal: null } };
+  }
   const efforts = piSupportedEfforts(row);
   const { id, provider, baseUrl, api } = row;
   if (
@@ -46,8 +56,8 @@ export function toCindyProviderModel(row) {
     upstream: baseUrl ?? "",
     contextWindow: row.contextWindow,
     ...(row.maxTokens > 0 ? { maxOutput: row.maxTokens } : {}),
-    modalities: { input: row.input ?? ["text"], output: ["text"] },
-    supportsImageInput: row.input?.includes("image") ?? false,
+    ...(row.input ? { modalities: { input: row.input, output: ["text"] } } : {}),
+    ...(row.input ? { supportsImageInput: row.input.includes("image") } : {}),
     reasoning: row.reasoning === true,
     efforts,
     // Same product preference as defaultEffortForCapabilities; guarded by the import test.

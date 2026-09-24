@@ -146,9 +146,7 @@ Registry 的全部模型及其 routes，防止只翻译当前默认启用的几�
 ### 本地模型目录
 
 本地模型筛选与更新遵循 [`local-model-selection.md`](../product-rules/local-model-selection.md)。
-Server 维护 Registry V4 的 `localModels`，本仓 `model-registry.json` 仅作离线副本；
-不得重新增加独立的硬编码推荐名单。更新时协调完整 Registry revision 和服务端覆盖源，
-保持旧客户端的版本投影与显式空推荐语义。
+Lex 客户端维护随包 Registry V5 的 `localModels`；外部 Cindy Model Access 可另行下发在线快照，实际状态必须独立确认。不得重新增加独立的硬编码推荐名单。更新时递增并校验完整随包 Registry revision，同时评估外部覆盖源可能以较新 revision 遮盖随包数据；保持旧客户端的版本投影与显式空推荐语义。
 
 ### 原生缓存与简略列表的字段完整性（2026-09-07）
 
@@ -197,6 +195,4 @@ GPT `[1m]` 是旧窗口预设，退出 Desktop 管理和新选择清单；完整
 | 本地候选与推荐               | [localModelCatalog.ts](../../packages/model-providers/src/localModelCatalog.ts)；[localModelRuntime.ts](../../apps/desktop/src/shared/localModelRuntime.ts) `recommendForHost`                                                                                                                                   | [localModelRuntime.test.ts](../../apps/desktop/src/shared/__tests__/localModelRuntime.test.ts)                                                                                                                    |
 | 模型路由进入执行配置         | [runtime-configs.ts](../../apps/desktop/src/main/maker-host/runtime-configs.ts)、[model-plane](../../apps/desktop/src/main/maker-host/model-plane)、[pi-host.ts](../../apps/desktop/src/main/maker-host/pi-host.ts)                                                                                              | host 及 [maker-core 测试入口](../../packages/maker-core/src/agents)                                                                                                                                               |
 
-Server 对应入口为 `model-access-server/src/routes/modelCatalog.ts`、`services/catalogSource.ts` 与本仓独立维护的 contracts。
-先确认 Server 分支是否具备目标能力；不要把本仓解析器直接视为 Server 已部署的实现。
-两仓边界遵守 [协议兼容规则](protocol-compatibility.md)。
+在线目录由外部 Cindy Model Access 提供；本仓只维护客户端解析器及随包目录。不要将客户端解析器或离线数据视为外部服务已声明、实现或部署了目标能力。协议边界遵守 [协议兼容规则](protocol-compatibility.md)。

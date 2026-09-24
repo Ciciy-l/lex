@@ -366,6 +366,7 @@ describe('deriveAvailableModels — dynamic-first catalog contract', () => {
       'xai/grok-4.20-0309-non-reasoning',
       'xai/grok-4.20',
       'xai/grok-code-fast',
+      'xai/grok-4.7',
     ]);
     expect(codex.map((m) => m.id)).toEqual([
       'xai/grok-4.6',
@@ -377,6 +378,7 @@ describe('deriveAvailableModels — dynamic-first catalog contract', () => {
       'xai/grok-4.20-0309-non-reasoning',
       'xai/grok-4.20',
       'xai/grok-code-fast',
+      'xai/grok-4.7',
     ]);
   });
 
@@ -434,6 +436,7 @@ describe('deriveAvailableModels — dynamic-first catalog contract', () => {
       'xai/grok-4.20-0309-non-reasoning',
       'xai/grok-4.20',
       'xai/grok-code-fast',
+      'xai/grok-4.7',
       'gpt-5.5',
     ]);
     // 首见胜出:opus 取 anthropic 条目(supportsFastMode=true),不是 xd 的 false。

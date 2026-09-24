@@ -279,7 +279,7 @@ function parsePiBundledModel(value: unknown): PiBundledModelInfo | null {
     name: typeof value.name === 'string' ? value.name : value.id,
     reasoning: value.reasoning === true,
     ...(thinkingLevelMap && Object.keys(thinkingLevelMap).length > 0 ? { thinkingLevelMap } : {}),
-    input: input.length > 0 ? input : ['text'],
+    input: Array.isArray(value.input) ? input : ['text', 'image'],
     contextWindow:
       typeof value.contextWindow === 'number' && value.contextWindow > 0
         ? value.contextWindow
@@ -689,9 +689,10 @@ export function buildPiSubscriptionNativeProviders(
           ...(model.maxOutput !== undefined || template?.maxTokens !== undefined
             ? { maxTokens: model.maxOutput ?? template?.maxTokens } : {}),
           reasoning: model.efforts.length > 0,
-          input: model.supportsImageInput === undefined
-            ? [...(template?.input ?? ['text'])]
-            : model.supportsImageInput ? ['text', 'image'] : ['text'],
+          input: (model.supportsImageInput ??
+            (model.modalities ? model.modalities.input.includes('image') : template?.input?.includes('image'))) === false
+            ? ['text']
+            : ['text', 'image'],
           thinkingLevelMap: catalogThinkingLevelMap(model.efforts, thinking),
           ...(cost ? { cost: { ...cost } } : {}),
           // Never reuse compatibility fields across different serializers.
@@ -1135,9 +1136,7 @@ function configuredPiModel(model: {
     id: model.id,
     name: model.name,
     contextWindow: model.contextWindow,
-    ...(model.supportsImageInput === true
-      ? { input: ['text', 'image'] as Array<'text' | 'image'> }
-      : {}),
+    input: model.supportsImageInput === false ? ['text'] : ['text', 'image'],
     ...(model.reasoning === true
       ? {
           reasoning: true,
@@ -1271,7 +1270,7 @@ export function buildPiNativeProvidersFromConfigs(
         id: row.id, name: row.name, baseUrl: row.upstream,
         ...row.execution.pi, api: row.execution.pi.api as PiModelApi,
         contextWindow: row.contextWindow, maxTokens: row.maxOutput,
-        input: row.modalities.input.filter((value): value is 'text' | 'image' => value === 'text' || value === 'image'),
+        ...(row.modalities ? { input: row.modalities.input.filter((value): value is 'text' | 'image' => value === 'text' || value === 'image') } : {}),
         reasoning: row.reasoning,
         cost: row.cost?.input !== undefined && row.cost.output !== undefined
           ? { input: row.cost.input, output: row.cost.output,
@@ -1396,9 +1395,11 @@ export function buildPiNativeProvidersFromConfigs(
           contextWindow: m.contextWindow ?? bundledModel?.contextWindow,
           ...(resolved?.maxOutput !== undefined || bundledModel?.maxTokens !== undefined
             ? { maxTokens: resolved?.maxOutput ?? bundledModel?.maxTokens } : {}),
-          ...(m.supportsImageInput !== undefined
-            ? { input: (m.supportsImageInput ? ['text', 'image'] : ['text']) as Array<'text' | 'image'> }
-            : bundledModel?.input ? { input: [...bundledModel.input] } : {}),
+          input: (m.supportsImageInput === false
+            ? ['text']
+            : m.supportsImageInput === true || !bundledModel?.input
+              ? ['text', 'image']
+              : [...bundledModel.input]) as Array<'text' | 'image'>,
           ...(m.reasoning !== undefined || m.reasoningEfforts !== undefined
             ? {
                 reasoning: m.reasoning ?? (m.reasoningEfforts?.length ?? 0) > 0,
@@ -1516,9 +1517,8 @@ export async function buildXaiPiNativeProvider(
       configuredPiModel({
         id: catalogModel.id,
         name: catalogModel.name,
-        supportsImageInput:
-          catalogModel.supportsImageInput === true ||
-          catalogModel.modalities?.input.includes('image') === true,
+        supportsImageInput: catalogModel.supportsImageInput ??
+          (catalogModel.modalities ? catalogModel.modalities.input.includes('image') : undefined),
         reasoning: catalogModel.efforts.length > 0,
         reasoningEfforts: catalogModel.efforts.filter(
           (effort): effort is PiReasoningEffort => effort !== 'ultra',
