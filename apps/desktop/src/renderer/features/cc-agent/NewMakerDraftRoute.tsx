@@ -285,6 +285,7 @@ import { makeMirrorAccessors, replaceScope, clearScope } from '@/state/deviceLin
 import type { ModelMemoryAccessors } from '@/components/new-chat/ModelSelector';
 import { resolveNewMakerDraftRightSidebar } from './newMakerDraftRightSidebar';
 import { resolveNewMakerDraftEffort } from './newMakerDraftModelPrefs';
+import { resolveSshSessionModelSelection, SshModelSelectionError } from './sshSessionModelSelection';
 import { closeAllTabs as closeRightSidebarTabs } from '@/features/right-sidebar/store';
 import { revealOrcaWorkersTab } from '@/features/right-sidebar/plugins/orca-workers/actions';
 import { normalizeProjectKey } from './lib/projectGrouping';
@@ -1245,7 +1246,11 @@ export function NewMakerDraftRoute() {
   } = useAgentCapabilities(capabilityAgentKind, effectiveDeviceLinkDeviceId);
   // device-link「以被控端为准」:远程草稿用被控端经隧道带来的 providers(per-provider,含 fast 能力);
   // 本地草稿用本机 providers。fast 判定统一交给 resolveFastSupported(不在控制端另写远程逻辑)。
-  const { providers: localProviders, loading: localProvidersLoading } = useProviders();
+  const {
+    providers: localProviders,
+    loading: localProvidersLoading,
+    loadFailed: localProvidersLoadFailed,
+  } = useProviders();
   const modelEnginePrefsVersion = useModelEnginePrefsVersion();
   const modelPresetVersion = useProviderModelMemoryVersion();
   const hasLegacyDefaultChoice = useMemo(
@@ -2393,71 +2398,79 @@ export function NewMakerDraftRoute() {
       // 立即建会话记录并 navigate 过去。建会话约定与本文件其它 createSession 路径一致
       // (createSession + makerChatStore.setSessionRuntime + navigate)。
       //
-      // SSH 始终取本地(controller)的 provider/fast/effort 上下文,不复用 device-link 派生值。
-      // providerId 只保留用户显式选中且仍有效的来源,否则 null(默认路由,不固化默认来源)。
-      // 使用 draftInitialModel(用户在 composer 里看到的模型),而不是 chatPrefs.model
-      // (当 device-link 草稿活跃时 chatPrefs.model 是旧的 controller-local 值)。
-      // 直连型 SSH 引擎的 bridge 模型(chatgpt/ / xai/)不可用，需降级。
-      // OMP 使用 controller proxy 的受管 reverse-forward，因此保留这些路由。
-      // 任一候选仍必须在已连接的本地来源中存在，否则 SSH 会话首消息会被阻塞。
-      const sshConnected = filterChatBridgedCodexProviders(
-        connectedProvidersForAgent(localProviders, capabilityAgentKind),
-        capabilityAgentKind,
-        requiresDirectSshProviderRoute,
-      );
-      // admissionFiltered:SSH 候选是「挑一个可路由模型」的清单,停用条目与能力模型
-      // 不参与(降级兜底也不能落到停用模型上,PR #744 review)。
-      const sshVisibleModels = deriveModelsFromProviders(sshConnected, capabilityAgentKind, {
-        admissionFiltered: true,
-      }).filter(
-        (m) => !requiresDirectSshProviderRoute || !isSubscriptionDirectModel(m.id),
-      );
-      let sshModel = draftInitialModel;
-      if (
-        (requiresDirectSshProviderRoute && isSubscriptionDirectModel(sshModel)) ||
-        !sshVisibleModels.some((m) => m.id === sshModel)
-      ) {
-        if (!sshVisibleModels.length) {
-          throw new Error(t('ccAgent.draft.createSessionFailed'));
+      let sshModel: string;
+      let sshProviderId: string | null;
+      let sshEffort: Effort;
+      let sshFastMode: boolean;
+      if (capabilityAgentKind === 'codex') {
+        const selection = resolveSshSessionModelSelection({
+          providers: localProviders,
+          loading: localProvidersLoading,
+          loadFailed: localProvidersLoadFailed,
+          agentKind: capabilityAgentKind,
+          preferred: {
+            model: draftInitialModel,
+            providerId: isDeviceLinkDraft
+              ? (deviceLinkInitial?.providerId ?? null)
+              : chatPrefs.providerId,
+            effort: draftInitialEffort,
+            fastMode: effectiveFastMode,
+          },
+          getPresetEffort: getProviderModelEffort,
+          getPresetFast: getProviderModelFast,
+        });
+        if (!selection.ok) throw new SshModelSelectionError(selection.reason);
+        sshModel = selection.model;
+        sshProviderId = selection.providerId;
+        sshEffort = selection.effort;
+        sshFastMode = selection.fastMode;
+      } else {
+        const sshConnected = filterChatBridgedCodexProviders(
+          connectedProvidersForAgent(localProviders, capabilityAgentKind),
+          capabilityAgentKind,
+          requiresDirectSshProviderRoute,
+        );
+        const sshVisibleModels = deriveModelsFromProviders(sshConnected, capabilityAgentKind, {
+          admissionFiltered: true,
+        }).filter(
+          (candidate) =>
+            !requiresDirectSshProviderRoute || !isSubscriptionDirectModel(candidate.id),
+        );
+        sshModel = draftInitialModel;
+        if (
+          (requiresDirectSshProviderRoute && isSubscriptionDirectModel(sshModel)) ||
+          !sshVisibleModels.some((candidate) => candidate.id === sshModel)
+        ) {
+          if (!sshVisibleModels.length) throw new Error(t('ccAgent.draft.createSessionFailed'));
+          sshModel = sshVisibleModels[0].id;
         }
-        sshModel = sshVisibleModels[0].id;
+        sshProviderId = effectiveSourceIdForModel(
+          sshConnected,
+          chatInitialProviderId ?? null,
+          sshModel,
+          capabilityAgentKind,
+        );
+        const source = sshProviderId
+          ? sshConnected.find((provider) => provider.id === sshProviderId)
+          : undefined;
+        const descriptor = source ? getModel(source, sshModel, capabilityAgentKind) : undefined;
+        sshFastMode = sessionModelSupportsFastMode(
+          sshConnected,
+          sshProviderId,
+          sshModel,
+          capabilityAgentKind,
+        )
+          ? effectiveFastMode
+          : false;
+        sshEffort = resolveNewMakerDraftEffort({
+          currentEffort: draftInitialEffort,
+          presetEffort: sshProviderId
+            ? getProviderModelEffort(capabilityAgentKind, sshProviderId, sshModel)
+            : undefined,
+          efforts: descriptor?.efforts ?? [],
+          defaultEffort: descriptor?.defaultEffort ?? null,
+        });
       }
-      // 使用 chatInitialProviderId(显示给用户的来源,device-link 活跃时取镜像值)而非
-      // chatPrefs.providerId(可能是旧的 controller-local 值)。
-      const rawProviderId = chatInitialProviderId ?? null;
-      const sshLocalSourceId = effectiveSourceIdForModel(
-        sshConnected,
-        rawProviderId,
-        sshModel,
-        capabilityAgentKind,
-      );
-      // 固定已通过 SSH 筛选的实际来源，避免 null 默认路由重新选回被排除的本机账号。
-      const sshProviderId = sshLocalSourceId;
-      // fast mode:来源不支持就关闭;支持时保留用户在 composer 里看到的 effectiveFastMode
-      // (device-link 草稿活跃时来自 dlSel/deviceLinkInitial,本地草稿来自 per-model 记忆)。
-      const sshSourceSupportsFast = sessionModelSupportsFastMode(
-        sshConnected,
-        sshProviderId,
-        sshModel,
-        capabilityAgentKind,
-      );
-      const sshFastMode = sshSourceSupportsFast ? effectiveFastMode : false;
-      // effort: 用 draftInitialEffort(用户在 composer 里看到的值)作 currentEffort,
-      // 再由 resolveNewMakerDraftEffort 按本地 SSH model 支持的 levels 做 clamp。
-      const sshLocalProvider = sshLocalSourceId
-        ? sshConnected.find((p) => p.id === sshLocalSourceId)
-        : undefined;
-      const sshLocalModelDesc = sshLocalProvider
-        ? getModel(sshLocalProvider, sshModel, capabilityAgentKind)
-        : undefined;
-      const sshEffort = resolveNewMakerDraftEffort({
-        currentEffort: draftInitialEffort,
-        presetEffort: sshLocalSourceId
-          ? getProviderModelEffort(capabilityAgentKind, sshLocalSourceId, sshModel)
-          : undefined,
-        efforts: sshLocalModelDesc?.efforts ?? [],
-        defaultEffort: sshLocalModelDesc?.defaultEffort ?? null,
-      });
       try {
         const newSession = await createSession({
           agentKind: draftVendor,
@@ -2548,12 +2561,14 @@ export function NewMakerDraftRoute() {
       chatPrefs,
       chatInitialPermissionMode,
       chatInitialProviderId,
+      deviceLinkInitial?.providerId,
       draftInitialModel,
       draftInitialEffort,
       effectiveFastMode,
       effectiveDeviceLinkDeviceId,
       localProviders,
       localProvidersLoading,
+      localProvidersLoadFailed,
       effectiveCollab,
       capabilityAgentKind,
       effectivePlanMode,

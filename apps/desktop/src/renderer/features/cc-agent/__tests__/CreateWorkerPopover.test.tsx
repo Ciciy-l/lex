@@ -49,6 +49,7 @@ const mocks = vi.hoisted(() => ({
     name: string;
     connected: boolean;
     agents: string[];
+    auth?: { method: 'apiKey' | 'oauth'; native?: 'codex' };
     routing?: Record<string, { wireProtocol?: string }>;
     models: Record<
       string,
@@ -711,7 +712,7 @@ describe('CreateWorkerPopover', () => {
     );
   });
 
-  it('clears a restored chat-bridged Codex provider for SSH worker creation', async () => {
+  it('does not create an SSH Codex worker from a restored chat-bridged source', async () => {
     window.localStorage.setItem(
       'workerCreationPrefs',
       JSON.stringify({
@@ -739,9 +740,72 @@ describe('CreateWorkerPopover', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'orca.createWorker.submit' }));
 
+    expect(onCreate).not.toHaveBeenCalled();
+  });
+
+  it('pins SSH Codex worker creation to the native OpenAI subscription route', async () => {
+    mocks.localProviders = [
+      {
+        id: 'openai',
+        name: 'OpenAI',
+        connected: true,
+        agents: ['codex'],
+        auth: { method: 'oauth' },
+        routing: { codex: { wireProtocol: 'openai-responses' } },
+        models: { codex: [{ id: 'gpt-5.5', efforts: ['high'], defaultEffort: 'high' }], 'claude-code': [] },
+      },
+    ];
+    mocks.modelsByAgent.codex = [model('gpt-5.5')];
+    mocks.capabilitiesByAgent.codex = { availableModels: [{ id: 'gpt-5.5' }] };
+    const onCreate = vi.fn();
+
+    render(<CreateWorkerPopover open sshRemote onClose={vi.fn()} onCreate={onCreate} />);
+    fireEvent.click(screen.getByRole('button', { name: 'orca.createWorker.submit' }));
+
     await waitFor(() =>
-      expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ providerId: null })),
+      expect(onCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'gpt-5.5', providerId: 'openai' }),
+      ),
     );
+  });
+
+  it('rejects an explicitly selected non-native SSH Codex worker source', async () => {
+    window.localStorage.setItem(
+      'workerCreationPrefs',
+      JSON.stringify({
+        lastAgent: 'codex',
+        codex: { model: 'gpt-5.5', effort: 'high', fast: false, providerId: 'xd' },
+      }),
+    );
+    mocks.localProviders = [
+      {
+        id: 'openai',
+        name: 'OpenAI',
+        connected: true,
+        agents: ['codex'],
+        auth: { method: 'oauth' },
+        routing: { codex: { wireProtocol: 'openai-responses' } },
+        models: { codex: [{ id: 'gpt-5.5', efforts: ['high'], defaultEffort: 'high' }], 'claude-code': [] },
+      },
+      {
+        id: 'xd',
+        name: 'XD Gateway',
+        connected: true,
+        agents: ['codex'],
+        models: { codex: [{ id: 'gpt-5.5' }], 'claude-code': [] },
+      },
+    ];
+    mocks.modelsByAgent.codex = [model('gpt-5.5')];
+    mocks.capabilitiesByAgent.codex = { availableModels: [{ id: 'gpt-5.5' }] };
+    const onCreate = vi.fn();
+
+    render(<CreateWorkerPopover open sshRemote onClose={vi.fn()} onCreate={onCreate} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('model-selector').dataset.currentProvider).toBe('xd'),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'orca.createWorker.submit' }));
+
+    expect(onCreate).not.toHaveBeenCalled();
   });
 
   it('restores remembered effort and Fast for the picked row when the panel omits them', async () => {
