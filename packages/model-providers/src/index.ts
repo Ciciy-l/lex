@@ -39,6 +39,7 @@ export type {
 
 export { PI_MODEL_APIS, PI_REASONING_EFFORTS } from "./types.js";
 export { isLocalOnlyProviderForAgent, isOpenAiSubscriptionProvider, providerCatalogId } from './provider-identity.js';
+export { isOfficialXaiApiHost, isOfficialXaiUsApiHost } from './xai-endpoints.js';
 
 export {
   effectivePiWireProtocol,
@@ -93,6 +94,7 @@ export {
   decideModelRegistrySnapshot,
   findModelRegistryRoute,
   resolveModelNativeApi,
+  resolveCatalogModelNativeApi,
   resolveModelReferencePrice,
   resolveBaseModelReferencePrice,
 } from "./modelRegistry.js";
@@ -278,6 +280,7 @@ export {
   registryEntryDefaults,
   expandedRegistryEntries,
   pickModelMetadata,
+  MODEL_METADATA_FIELDS,
   validModelMetadata,
   mergeModelMetadata,
 } from "./modelMetadataLayers.js";

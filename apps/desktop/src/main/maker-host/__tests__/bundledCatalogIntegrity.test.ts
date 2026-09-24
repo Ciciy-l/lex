@@ -1,9 +1,17 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { BUNDLED_CATALOG, type Catalog } from '@cindy/model-providers';
+import { BUNDLED_CATALOG, type Catalog, type CatalogModel } from '@cindy/model-providers';
 import { getActiveCatalog, setActiveCatalog, setDiscoveredCodexModels, setXdGatewayModels } from '../active-catalog.js';
 
 import { filterLegacyGptContextProfiles } from '../legacy-context-profiles.js';
 import { deriveAvailableModels } from '../catalog-to-descriptors.js';
+
+function discoveredOpenAiModels(ids: readonly string[]): CatalogModel[] {
+  return ids.map((id, sortOrder) => ({
+    id, name: id, sortOrder, contextWindow: 272000,
+    efforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultEffort: 'medium',
+    status: 'active', defaultEnabled: true,
+  }));
+}
 
 // Exercise the actual post-merge catalog consumed by model settings. Optional
 // source fields are not required blindly: unknown is distinct from false/zero.
@@ -99,6 +107,7 @@ it('keeps Gateway restrictions, unknown tiers and discounted prices independent 
 
 it('removes GPT window presets from new choices while preserving runtime history and custom providers', () => {
   setActiveCatalog(BUNDLED_CATALOG);
+  setDiscoveredCodexModels(discoveredOpenAiModels(['gpt-5.6-sol']));
   const runtime = getActiveCatalog();
   const openai = runtime.providers.find((p) => p.id === 'openai')!;
   const legacy = openai.models['claude-code']!.find((m) => m.id.endsWith('[1m]'))!;
@@ -116,7 +125,7 @@ it('removes GPT window presets from new choices while preserving runtime history
 
 it('keeps ordinary GPT defaults at 272K while exposing the catalog capacity without a native cache', () => {
   setActiveCatalog(BUNDLED_CATALOG);
-  setDiscoveredCodexModels([]);
+  setDiscoveredCodexModels(discoveredOpenAiModels(['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']));
   const provider = getActiveCatalog().providers.find((p) => p.id === 'openai')!;
   for (const id of ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
     for (const agent of ['codex', 'claude-code'] as const) {

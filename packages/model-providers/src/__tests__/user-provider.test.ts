@@ -140,6 +140,26 @@ describe("buildUserProvider (per-runtime)", () => {
     ).toEqual(source.imageModels);
   });
 
+  it.each([
+    ['https://api.x.ai/v1', true],
+    ['https://us.api.x.ai/v1', true],
+    ['https://api.x.aievil.com/v1', false],
+  ] as const)('applies API Fast restrictions only to exact public hosts (%s)', (baseUrl, restricted) => {
+    const provider = buildUserProvider({
+      id: XAI_API_CUSTOM_PROVIDER_ID,
+      name: 'xAI API',
+      runtimes: {
+        codex: {
+          baseUrl,
+          wireProtocol: 'openai-responses',
+          models: [{ id: 'grok-4.7', name: 'Grok 4.7', discoveredMetadata: { supportsFastMode: true } }],
+        },
+      },
+    });
+    expect(provider.models.codex?.[0]?.supportsFastMode).toBe(restricted ? false : true);
+    if (restricted) expect(provider.models.codex?.[0]?.fastModelId).toBeNull();
+  });
+
   it("does not project Imagine models onto a non-official API-key endpoint", () => {
     const source = BUNDLED_CATALOG.providers.find(
       (provider) => provider.id === "xai",

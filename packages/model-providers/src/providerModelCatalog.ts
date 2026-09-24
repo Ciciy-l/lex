@@ -1,27 +1,27 @@
-import { previousModelGenerations } from './modelGeneration.js';
+import { generationCapabilities, previousModelGenerations } from './modelGeneration.js';
 import { sourceProviderForPreset } from './providerPresetIdentity.js';
 import { providerEndpointBindings } from './providerEndpointTemplate.js';
 import { declaredModelInterface } from './providerInterfaceRoutes.js';
 import interfaceModels from "../catalog/provider-interface-models.json" with { type: "json" };
 import generated from "../catalog/provider-models.json" with { type: "json" };
-import type { ModelMetadata } from "./modelMetadataLayers.js";
+import { pickModelMetadata, type ModelMetadata } from "./modelMetadataLayers.js";
 import type { ModelCost, PiModelApi, ProviderWireProtocol } from "./types.js";
 
-export interface ProviderModelRecord {
+export interface ProviderModelRecord extends ModelMetadata {
   /** Internal fallback provenance, not an upstream capability declaration. */
   inheritedFrom?: string;
   id: string;
   name: string;
   upstream: string;
-  contextWindow: number;
+  contextWindow?: number;
   maxOutput?: number;
   modalities?: { input: string[]; output: string[] };
   supportsImageInput?: boolean;
   /** Connection-scoped declaration; absent does not authorize a Fast request. */
   supportsFastMode?: boolean;
-  reasoning: boolean;
-  efforts: NonNullable<ModelMetadata["efforts"]>;
-  defaultEffort: ModelMetadata["defaultEffort"];
+  reasoning?: boolean;
+  efforts?: NonNullable<ModelMetadata["efforts"]>;
+  defaultEffort?: ModelMetadata["defaultEffort"];
   cost?: ModelCost;
   execution: {
     pi: {
@@ -122,7 +122,7 @@ export function providerModelGenerationRecord(modelId: string, upstream: string,
   if (!previous) return undefined;
   const { cost: _cost, execution, ...metadata } = previous;
   const { headers: _headers, ...parameters } = execution.pi;
-  return { ...metadata, id: modelId, name: modelId, upstream,
+  return { ...generationCapabilities(metadata), id: modelId, name: modelId, upstream,
     ...(previous.id !== modelId ? { inheritedFrom: previous.id } : {}),
     execution: { pi: structuredClone(parameters) } };
 }
@@ -136,16 +136,25 @@ export function providerPresetModelRecord(presetId: string | undefined, modelId:
 }
 
 /** Preserve the upstream adapter identity, independently of a user's connection UUID. */
-export function providerModelAdapterId(row: ProviderModelRecord): string | undefined {
-  const matches = Object.entries(PROVIDER_MODEL_CATALOG.providers).filter(([, rows]) =>
-    rows.some(candidate => candidate.id === row.id && (normalize(candidate.upstream) === normalize(row.upstream) || (candidate.upstream.includes('{') && providerEndpointBindings(candidate.upstream, row.upstream) !== null))
-      && candidate.execution.pi.api === row.execution.pi.api));
+export function providerModelAdapterId(row: ProviderModelRecord, presetId?: string): string | undefined {
+  const presetProvider = presetId ? sourceProviderForPreset(presetId) : undefined;
+  const matches = Object.entries(PROVIDER_MODEL_CATALOG.providers).filter(([provider, rows]) => {
+    const connectionRows = rows.filter(candidate => candidate.execution.pi.api === row.execution.pi.api &&
+      (normalize(candidate.upstream) === normalize(row.upstream) ||
+        (candidate.upstream.includes('{') && providerEndpointBindings(candidate.upstream, row.upstream) !== null) ||
+        (row.inheritedFrom !== undefined && provider === presetProvider)));
+    return connectionRows.some(candidate => candidate.id === row.id) ||
+      // Only the matched connection/preset lends transport identity. Manufacturer
+      // capability fallback on an unrelated relay must not lend its adapter.
+      (row.inheritedFrom !== undefined && previousModelGenerations(row.id, connectionRows, candidate => candidate.id).length > 0);
+  });
   // Duplicated subscription catalogs can share endpoints; never guess between distinct identities.
   return matches.length === 1 ? matches[0][0] : undefined;
 }
 
 export function providerModelMetadata(row: ProviderModelRecord): ModelMetadata {
   return {
+    ...pickModelMetadata(row),
     name: row.name,
     contextWindow: row.contextWindow,
     ...(row.maxOutput ? { maxOutputTokens: row.maxOutput } : {}),
@@ -175,7 +184,7 @@ export function providerCatalogForPi() {
             baseUrl: row.upstream,
             contextWindow: row.contextWindow,
             maxTokens: row.maxOutput,
-            ...(row.modalities ? { input: row.modalities.input } : {}),
+            input: row.modalities?.input,
             reasoning: row.reasoning,
             ...(row.cost ? { cost: row.cost } : {}),
             ...row.execution.pi,

@@ -5641,6 +5641,40 @@ describe('CodexAgent fast mode service tier', () => {
     await handle.close();
   });
 
+  it('uses Standard when a route-scoped receipt is unavailable instead of inheriting Fast', async () => {
+    const agent = new CodexAgent(createDeps());
+    const host = installFakeHost(agent, method => method === Method.TurnStart
+      ? { turn: { id: 'turn-public-us' }, serviceTier: 'priority' }
+      : undefined);
+    const resolveUsagePriceVariant = vi.fn(() => undefined);
+    const handle = await agent.startSession({
+      sessionId: 'session-public-us-pricing',
+      model: 'xai/grok-4.7',
+      fastMode: true,
+      workingDir: '/repo',
+      resolveUsagePriceVariant,
+    });
+    const handlers = host.getThreadHandlers()!;
+    const events: AgentEvent[] = [];
+    void (async () => { for await (const event of handle.events()) events.push(event); })();
+    const sending = handle.send({ type: 'user', content: 'hello' });
+    await waitForExpectation(() => expect(host.request.mock.calls.some(([m]) => m === Method.TurnStart)).toBe(true));
+    handlers.turnStarted!({ threadId: 'start-thread-id', turn: { id: 'turn-public-us' } });
+    handlers.tokenUsageUpdated!({ threadId: 'start-thread-id', turnId: 'turn-public-us', tokenUsage: {
+      total: { totalTokens: 35, inputTokens: 30, outputTokens: 5, cachedInputTokens: 10 },
+      last: { totalTokens: 35, inputTokens: 30, outputTokens: 5, cachedInputTokens: 10 },
+    } });
+    handlers.turnCompleted!({ threadId: 'start-thread-id', turn: { id: 'turn-public-us', status: 'completed' } });
+    await sending;
+    await waitForExpectation(() => expect(events.some(e => e.type === 'done')).toBe(true));
+    expect(resolveUsagePriceVariant).toHaveBeenCalledWith({
+      threadId: 'start-thread-id', inputTokens: 30, outputTokens: 5, cacheReadTokens: 10,
+    });
+    expect((events.find(e => e.type === 'done')?.data as { usage: { segments: unknown[] } }).usage.segments)
+      .toEqual([expect.objectContaining({ inputTokens: 20, outputTokens: 5, cacheReadTokens: 10, priceVariant: 'standard' })]);
+    await handle.close();
+  });
+
 
   it('normalizes app-server priority service tier from thread/start as fast mode', async () => {
     const agent = new CodexAgent(createDeps());

@@ -69,7 +69,8 @@ describe('Pi-owned transport for Cindy harnesses', () => {
 
   it.each(['ant-ling', 'qwen-token-plan', 'zai', 'together'])('sends the actual %s thinking dialect and model limits', async providerId => {
     const row = PROVIDER_MODEL_CATALOG.providers[providerId].find(row => row.reasoning && row.execution.pi.api === 'openai-completions')!;
-    const effort = row.efforts.includes('high') ? 'high' : row.efforts[0];
+    const efforts = row.efforts ?? [];
+    const effort = efforts.includes('high') ? 'high' : efforts[0];
     let sent: Record<string, unknown> | undefined;
     const send = createPiProviderFetch({ row, providerId, apiKey: 'fixture-provider-key', fetchImpl: async (_url, init) => {
       sent = JSON.parse(String(init?.body));

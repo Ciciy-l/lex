@@ -176,13 +176,13 @@ describe('mergeDiscoveredModelsIntoConfig（发现资料刷新并保留用户字
       { id: '', name: 'bad' },
     ]);
     expect(merged?.runtimes['claude-code']?.models).toEqual([
+      { id: 'm2', name: 'M2', discoveredMetadata: { name: 'M2' } },
       {
         id: 'm1',
         name: 'M1',
         nameExplicit: true,
         discoveredMetadata: { name: 'OVERRIDE-IGNORED' },
       },
-      { id: 'm2', name: 'M2', discoveredMetadata: { name: 'M2' } },
     ]);
     // 原配置不被就地修改（纯函数）。
     expect(BASE.runtimes['claude-code']?.models).toEqual([{ id: 'm1', name: 'M1' }]);
@@ -201,9 +201,36 @@ describe('mergeDiscoveredModelsIntoConfig（发现资料刷新并保留用户字
       { id: 'bogus', name: 'Bogus', contextWindow: 0 },
     ]);
     expect(merged?.runtimes['claude-code']?.models).toEqual([
-      { id: 'm1', name: 'M1' },
       { id: 'big', name: 'Big', discoveredMetadata: { name: 'Big', contextWindow: 1_000_000 } },
       { id: 'bogus', name: 'Bogus', discoveredMetadata: { name: 'Bogus' } },
+      { id: 'm1', name: 'M1' },
+    ]);
+  });
+
+  it('partial keeps LKG; complete empty removes discovered-only members but retains user models and edits', () => {
+    const config = {
+      ...BASE,
+      runtimes: {
+        'claude-code': {
+          baseUrl: 'https://api.acme.example/anthropic',
+          models: [
+            { id: 'manual', name: 'Manual' },
+            { id: 'stale', name: 'Stale', discoveredMetadata: { name: 'Stale' } },
+            { id: 'edited', name: 'Edited', nameExplicit: true, discoveredMetadata: { name: 'Old' } },
+          ],
+        },
+      },
+    };
+    const partial = mergeDiscoveredModelsIntoConfig(config, 'claude-code', [
+      { id: 'fresh', name: 'Fresh' },
+    ], false);
+    expect(partial?.runtimes['claude-code']?.models.map((model) => model.id)).toEqual([
+      'fresh', 'manual', 'stale', 'edited',
+    ]);
+
+    const completeEmpty = mergeDiscoveredModelsIntoConfig(config, 'claude-code', [], true);
+    expect(completeEmpty?.runtimes['claude-code']?.models.map((model) => model.id)).toEqual([
+      'manual', 'edited',
     ]);
   });
 });

@@ -264,7 +264,7 @@ describe('new model generation defaults', () => {
     ]);
     for (const agent of ['codex', 'pi', 'claude-code'] as const) {
       expect(provider.models[agent]![1]).toMatchObject({ contextWindow: 32000,
-        contextWindowMax: 32000, contextWindowVerified: true });
+        contextWindowMax: 32000, contextWindowVerified: false });
     }
   });
 

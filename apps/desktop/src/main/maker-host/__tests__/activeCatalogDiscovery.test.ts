@@ -265,12 +265,16 @@ describe('active-catalog discovered augment', () => {
     expect(afterAuth.supportsImageInput).toBeUndefined();
   });
 
-  it('Codex discovery 只进入 Codex 与 Claude bridge，不改写 Pi 名单', () => {
+  it('OpenAI Pi 仅在现有原生 adapter 上投影账号成员，不复制 Codex capabilities', () => {
     setActiveCatalog(BUNDLED_CATALOG);
     setDiscoveredCodexModels([fake('gpt-5.7')]);
     expect(openaiIds('codex')).toContain('gpt-5.7');
     expect(openaiIds('claude-code')).toContain('chatgpt/gpt-5.7');
-    expect(openaiIds('pi')).not.toContain('chatgpt/gpt-5.7');
+    expect(openaiIds('pi')).toContain('chatgpt/gpt-5.7');
+    const piModel = getActiveCatalog().providers.find((provider) => provider.id === 'openai')
+      ?.models.pi?.find((model) => model.id === 'chatgpt/gpt-5.7');
+    expect(piModel?.discoveredMetadata).toBeUndefined();
+    expect(piModel?.supportsFastMode).toBeUndefined();
   });
 
   it('missing Pi declarations use fallback but explicit empty lists remove public Pi membership', () => {
@@ -548,7 +552,10 @@ describe('active-catalog discovered augment', () => {
     setDiscoveredCodexModels([fake('gpt-5.7', 17), fake('gpt-5.5', 20)]);
     expect(openaiIds('codex')).toEqual(['gpt-5.7', 'gpt-5.5']);
     expect(openaiIds('claude-code')).toEqual(['chatgpt/gpt-5.7', 'chatgpt/gpt-5.5']);
-    expect(openaiIds('pi')).toEqual(piBeforeDiscovery);
+    expect(openaiIds('pi').slice(0, 2)).toEqual(['chatgpt/gpt-5.7', 'chatgpt/gpt-5.5']);
+    expect(openaiIds('pi').slice(2)).toEqual(
+      piBeforeDiscovery.filter((id) => !['chatgpt/gpt-5.7', 'chatgpt/gpt-5.5'].includes(id)),
+    );
     // 动态快照决定存在性，且明确返回的运行时能力高于 registry 基线。
     const openai = getActiveCatalog().providers.find((p) => p.id === 'openai');
     expect((openai?.models.codex ?? []).find((m) => m.id === 'gpt-5.5')?.contextWindow).toBe(
@@ -655,19 +662,16 @@ describe('anthropic 发现条目的 modelRegistry 元数据基线', () => {
       anthro('claude-sonnet-4-5', 'Claude Sonnet 4.5', 9),
     ]);
     expect(anthropicList().map((m) => [m.id, m.name])).toEqual([
-      ['claude-opus-5-5', 'Opus 5.5'],
       ['claude-opus-5', 'Claude Opus 5'],
+      ['claude-sonnet-5', 'Claude Sonnet 5'],
       ['claude-fable-5', 'Claude Fable 5'],
       ['claude-opus-4-8', 'Claude Opus 4.8'],
       ['claude-opus-4-7', 'Claude Opus 4.7'],
+      ['claude-sonnet-4-6', 'Claude Sonnet 4.6'],
       ['claude-opus-4-6', 'Claude Opus 4.6'],
       ['claude-opus-4-5', 'Claude Opus 4.5'],
-      ['claude-sonnet-5', 'Claude Sonnet 5'],
-      ['claude-sonnet-4-6', 'Claude Sonnet 4.6'],
-      ['claude-sonnet-4-5', 'Claude Sonnet 4.5'],
       ['claude-haiku-4-5', 'Claude Haiku 4.5'],
-      ['claude-fable-5-1', 'Fable 5.1'],
-      ['claude-mythos-5', 'Mythos 5'],
+      ['claude-sonnet-4-5', 'Claude Sonnet 4.5'],
     ]);
     expect(
       anthropicList('claude-code')
@@ -675,9 +679,9 @@ describe('anthropic 发现条目的 modelRegistry 元数据基线', () => {
         .map((model) => model.id)
         .sort(),
     ).toEqual([
-      'claude-fable-5-1',
+      'claude-fable-5',
       'claude-haiku-4-5',
-      'claude-opus-5-5',
+      'claude-opus-5',
       'claude-sonnet-5',
     ]);
     expect(anthropicList('codex')).toEqual(

@@ -4,9 +4,10 @@ import {
   mergeWithBundled,
   modelProtocolComparison,
   parseCatalog,
+  type CatalogModel,
   type Catalog,
 } from '@cindy/model-providers';
-import { getActiveCatalog, setActiveCatalog, setXdGatewayModels } from '../active-catalog.js';
+import { getActiveCatalog, setActiveCatalog, setDiscoveredCodexModels, setXdGatewayModels } from '../active-catalog.js';
 import { deriveAvailableModels } from '../catalog-to-descriptors.js';
 
 // Contract fixture extracted from cindy-server#581 providers.json at df0c1bd5b07e.
@@ -57,9 +58,15 @@ function serverCatalog(): Catalog {
 
 function accept(incoming: Catalog) {
   setActiveCatalog(mergeWithBundled(incoming), { authorityCatalog: incoming });
+  setDiscoveredCodexModels([{
+    id: 'gpt-6-astra', name: 'GPT-6 Astra', contextWindow: 272000,
+    efforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultEffort: 'medium',
+    status: 'active', defaultEnabled: true,
+  } satisfies CatalogModel]);
 }
 
 afterEach(() => {
+  setDiscoveredCodexModels([]);
   setXdGatewayModels([]);
   setActiveCatalog(BUNDLED_CATALOG);
 });

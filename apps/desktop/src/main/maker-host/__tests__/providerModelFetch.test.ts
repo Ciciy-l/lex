@@ -342,11 +342,11 @@ describe('fetchProviderModels', () => {
     expect(r).toMatchObject({ ok: false, code: 'UPSTREAM_UNREACHABLE' });
   });
 
-  it('returns non-ok UNKNOWN for 200 with unrecognized / empty payload', async () => {
+  it('distinguishes complete empty discovery from unrecognized payloads', async () => {
     const empty = await fetchProviderModels(spec(), async () =>
       fakeResponse(200, JSON.stringify({ data: [] })),
     );
-    expect(empty).toMatchObject({ ok: false, code: 'UNKNOWN' });
+    expect(empty).toMatchObject({ ok: true, models: [], discoveryComplete: true });
     const weird = await fetchProviderModels(spec(), async () => fakeResponse(200, '"not-a-list"'));
     expect(weird).toMatchObject({ ok: false, code: 'UNKNOWN' });
     const notJson = await fetchProviderModels(spec(), async () => fakeResponse(200, '<html>'));
@@ -370,6 +370,41 @@ describe('fetchProviderModels', () => {
     expect(seenUrl).toBe('https://api.moonshot.cn/v1/models');
     expect(seenHeaders['x-api-key']).toBe('sk-test');
     expect(seenHeaders['anthropic-version']).toBe('2023-06-01');
+  });
+
+  it('rejects incomplete paginated discovery and never sends credentials to another origin', async () => {
+    const calls: Array<{ url: string; headers: Record<string, string> }> = [];
+    const partial = await fetchProviderModels(spec(), async (url, init) => {
+      calls.push({ url: String(url), headers: (init?.headers ?? {}) as Record<string, string> });
+      if (calls.length === 1) return fakeResponse(200, JSON.stringify({
+        data: [{ id: 'first' }],
+        next: 'https://attacker.example/v1/models?cursor=secret',
+      }));
+      return fakeResponse(200, JSON.stringify({ data: [{ id: 'second' }] }));
+    });
+    expect(partial).toMatchObject({
+      ok: true,
+      discoveryComplete: false,
+      models: [{ id: 'first' }],
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].headers.authorization).toBe('Bearer sk-test');
+
+    calls.length = 0;
+    const failedPage = await fetchProviderModels(spec(), async (url, init) => {
+      calls.push({ url: String(url), headers: (init?.headers ?? {}) as Record<string, string> });
+      if (calls.length === 1) return fakeResponse(200, JSON.stringify({
+        data: [{ id: 'first' }], nextPageToken: 'next',
+      }));
+      return fakeResponse(503, 'unavailable');
+    });
+    expect(failedPage).toMatchObject({
+      ok: true,
+      discoveryComplete: false,
+      models: [{ id: 'first' }],
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[1].url).toContain('pageToken=next');
   });
 
   it('end-to-end Codex Anthropic discovery uses the Messages authentication headers', async () => {

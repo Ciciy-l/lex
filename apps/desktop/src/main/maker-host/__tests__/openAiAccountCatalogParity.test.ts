@@ -7,11 +7,19 @@ import {
 import { EMPTY_MODEL_CATALOG_OVERRIDES, hasLocalAddition, sanitizeModelCatalogOverrides } from '../model-plane/localCatalogOverrides.js';
 
 const accountId = 'openai-independent';
-function account() {
+function discoveredOpenAiModels(ids: readonly string[], oldSnapshot = false): CatalogModel[] {
+  return ids.map((id, sortOrder) => ({
+    id, name: id === 'gpt-5.6-luna' ? 'GPT-5.6-Luna' : id, sortOrder, contextWindow: 272000,
+    efforts: oldSnapshot || id === 'gpt-5.6-cyber' ? [] : ['medium', 'high', 'xhigh'],
+    defaultEffort: oldSnapshot || id === 'gpt-5.6-cyber' ? null : 'medium',
+    status: 'active', defaultEnabled: true,
+  }));
+}
+function account(ids: readonly string[] = ['gpt-5.6-luna'], oldSnapshot = false) {
   return buildUserProvider({
     id: accountId, name: 'OpenAI', auth: { method: 'oauth', native: 'codex' },
     runtimes: { codex: { baseUrl: 'https://chatgpt.com/backend-api/codex',
-      models: [{ id: 'gpt-5.6-luna', name: 'Luna' }],
+      models: ids.map((id) => ({ id, name: id, ...(oldSnapshot ? { reasoning: false } : {}) })),
     } },
   }, { modelRegistry: BUNDLED_CATALOG.modelRegistry });
 }
@@ -41,7 +49,8 @@ describe('OpenAI account catalog identity', () => {
     provider.models.pi = slugs.map(slug => ({ id: `chatgpt/${slug}`, name: slug,
       contextWindow: 400000, efforts: [], defaultEffort: null, piApi: 'openai-responses' }));
     setActiveCatalog(catalog, { authorityCatalog: catalog });
-    setCustomProviders([account()]);
+    setDiscoveredCodexModels(discoveredOpenAiModels(slugs, oldSnapshot));
+    setCustomProviders([account(slugs, oldSnapshot)]);
     for (const providerId of ['openai', accountId]) {
       for (const agent of ['codex', 'claude-code', 'pi'] as const) {
         for (const slug of slugs) {
@@ -111,6 +120,7 @@ describe('OpenAI account catalog identity', () => {
 
   it('keeps connection-specific local metadata patches separate through catalog refresh', () => {
     setActiveCatalog(BUNDLED_CATALOG);
+    setDiscoveredCodexModels(discoveredOpenAiModels(['gpt-5.6-luna']));
     setCustomProviders([account()]);
     setLocalCatalogOverrides(sanitizeModelCatalogOverrides({ patches: {
       'openai:gpt-5.6-luna': { base: { contextWindow: 111111 } },
@@ -128,6 +138,7 @@ describe('OpenAI account catalog identity', () => {
 
   it.each([123456, 500000])('preserves an explicit %i root window through the Claude bridge', (contextWindow) => {
     setActiveCatalog(BUNDLED_CATALOG);
+    setDiscoveredCodexModels(discoveredOpenAiModels(['gpt-5.6-luna']));
     const configured = account();
     const model = configured.models.codex![0]!;
     model.userModelConfig = { ...model.userModelConfig!, contextWindow };
@@ -147,10 +158,11 @@ it('applies server Pi replacement, removal and missing-field fallback equally to
     efforts: ['low'], defaultEffort: 'low', piApi: 'openai-responses' };
   openai.models.pi = [future];
   setActiveCatalog(catalog, { authorityCatalog: catalog });
-  for (const providerId of ['openai', accountId]) {
-    expect(getActiveCatalog().providers.find(p => p.id === providerId)!.models.pi?.map(m => m.id))
-      .toEqual(['chatgpt/gpt-server-new']);
-  }
+  expect(getActiveCatalog().providers.find(p => p.id === 'openai')!.models.pi?.map(m => m.id))
+    .toEqual(['chatgpt/gpt-server-new']);
+  expect(getActiveCatalog().providers.find(p => p.id === accountId)!.models.pi?.map(m => m.id))
+    .toEqual(['chatgpt/gpt-5.6-luna', 'chatgpt/gpt-server-new']);
+  setDiscoveredCodexModels(discoveredOpenAiModels(['gpt-5.6-luna']));
   openai.models.pi = [];
   setActiveCatalog(structuredClone(catalog), { authorityCatalog: structuredClone(catalog) });
   for (const providerId of ['openai', accountId]) {
@@ -166,6 +178,7 @@ it('applies server Pi replacement, removal and missing-field fallback equally to
 
 
 it('legacy Pi defaults cannot override Registry definitions or per-account user patches', () => {
+  setDiscoveredCodexModels(discoveredOpenAiModels(['gpt-5.6-luna']));
   const catalog = structuredClone(BUNDLED_CATALOG);
   const openai = catalog.providers.find(p => p.id === 'openai')!;
   openai.models.pi = [{ id: 'chatgpt/gpt-5.6-luna', name: 'Remote Luna', contextWindow: 123456,

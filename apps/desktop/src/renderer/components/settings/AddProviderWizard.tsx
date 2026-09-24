@@ -1332,7 +1332,9 @@ export function AddProviderWizard({
             return {
               id: m.id,
               name: m.name,
-              defaultEnabled: m.checked,
+              // Selecting a model follows native-engine defaults; it is not an
+              // explicit opt-in to every compatibility engine carrying the model.
+              ...(!m.checked ? { defaultEnabled: false } : {}),
               discoveredMetadata,
               ...(m.discoveredCosts?.[agent] ? { discoveredCost: m.discoveredCosts[agent] } : {}),
               ...(presetModel?.mode ? { mode: presetModel.mode } : {}),

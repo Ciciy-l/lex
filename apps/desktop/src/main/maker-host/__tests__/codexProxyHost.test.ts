@@ -4285,6 +4285,7 @@ describe('codex proxy host', () => {
       const { setProviderOAuthTokenReader } = await import('../provider-route.js');
       const catalog = structuredClone(BUNDLED_CATALOG);
       const xai = catalog.providers.find(provider => provider.id === 'xai')!;
+      xai.routing.codex!.upstream = 'https://us.api.x.ai/v1';
       const model = (id: string, fastModelId?: string): CatalogModel => ({
         id, name: id, contextWindow: 128000, efforts: ['low'], defaultEffort: 'low', status: 'active' as const,
         ...(fastModelId ? { fastModelId, supportsFastMode: true } : {}),
@@ -4313,7 +4314,7 @@ describe('codex proxy host', () => {
       setProviderOAuthTokenReader(() => 'fixture-xai-token');
       const resolvePrice = registerUsagePricing(sessionId);
       const options = mockState.createAnthropicCompatProxy.mock.calls[0][0];
-      const ctx = { reqId: 1, method: 'POST', url: '/responses', headers: { 'thread-id': threadId } };
+      const ctx = { reqId: 1, method: 'POST', url: '/responses', upstreamBase: 'https://us.api.x.ai/v1', headers: { 'thread-id': threadId } };
       const body = { model: 'xai/fixture-grok', service_tier: 'priority', input: [] };
       let current: unknown = body;
       for (const transform of options.transformRequest) {
@@ -4328,7 +4329,7 @@ describe('codex proxy host', () => {
       expect(decision?.headerOverride?.['accept-encoding']).toBe('identity');
       const observer = options.responseObserver({
         ...ctx,
-        upstreamBase: 'https://api.x.ai/v1',
+        upstreamBase: 'https://us.api.x.ai/v1',
         status: 200,
         requestHeaders: ctx.headers,
         responseHeaders: { 'content-type': 'text/event-stream' },
@@ -4339,6 +4340,8 @@ describe('codex proxy host', () => {
       } }) + String.fromCharCode(10, 10);
       observer?.onData?.(Buffer.from(response));
       observer?.onEnd?.();
+      // The subscription executes a same-account Fast target only when available;
+      // the public US API below is kept Standard and never borrows global pricing.
       expect(resolvePrice({ threadId, inputTokens: 30, outputTokens: 5, cacheReadTokens: 10 }))
         .toBe(available ? 'priority' : 'standard');
       clearUsagePricing(sessionId);
@@ -4357,7 +4360,7 @@ describe('codex proxy host', () => {
       const { setSessionProvider, clearSessionProvider } = await import('../session-provider-store.js');
       const publicProvider = buildUserProvider({
         id: 'public-xai-api-key', name: 'Public xAI API', auth: { method: 'apiKey' }, runtimes: {
-          codex: { baseUrl: 'https://api.x.ai/v1', wireProtocol: 'openai-responses', models: [{
+          codex: { baseUrl: 'https://us.api.x.ai/v1', wireProtocol: 'openai-responses', models: [{
             id: 'fixture-grok', name: 'Fixture Grok',
             discoveredMetadata: { supportsFastMode: true },
           }] },
@@ -4376,7 +4379,7 @@ describe('codex proxy host', () => {
       setSessionProvider(sessionId, publicProvider.id);
       const resolvePrice = registerUsagePricing(sessionId);
       const options = mockState.createAnthropicCompatProxy.mock.calls[0][0];
-      const ctx = { reqId: 2, method: 'POST', url: '/responses', headers: { 'thread-id': threadId } };
+      const ctx = { reqId: 2, method: 'POST', url: '/responses', upstreamBase: 'https://us.api.x.ai/v1', headers: { 'thread-id': threadId } };
       let current: unknown = { model: 'fixture-grok', service_tier: 'priority', input: [] };
       for (const transform of options.transformRequest) {
         const next = transform(current, ctx);
@@ -4386,7 +4389,7 @@ describe('codex proxy host', () => {
       expect(current).not.toHaveProperty('service_tier');
       const observer = options.responseObserver({
         ...ctx,
-        upstreamBase: 'https://api.x.ai/v1',
+        upstreamBase: 'https://us.api.x.ai/v1',
         status: 200,
         requestHeaders: ctx.headers,
         responseHeaders: { 'content-type': 'text/event-stream' },
@@ -4398,6 +4401,19 @@ describe('codex proxy host', () => {
       observer?.onData?.(Buffer.from(response));
       observer?.onEnd?.();
       expect(resolvePrice({ threadId, inputTokens: 30, outputTokens: 5, cacheReadTokens: 10 })).toBe('standard');
+      const { resolveTurnCost } = await import('../../usage/turnCostCalculator.js');
+      const estimate = resolveTurnCost({
+        rawModel: 'fixture-grok',
+        tokens: { inputTokens: 30, outputTokens: 5, cacheReadTokens: 10, cacheCreateTokens: 0 },
+        pricing: {
+          xai: { 'fixture-grok': {
+            providerId: 'xai', modelId: 'fixture-grok', currency: 'USD',
+            source: 'provider-reference', approximate: true, inputPerMtok: 5, outputPerMtok: 10,
+          } },
+        },
+        context: { providerId: publicProvider.id, billingRoute: 'provider-api' },
+      });
+      expect(estimate.money).toBeNull();
       clearUsagePricing(sessionId);
       clearSessionProvider(sessionId);
       setCustomProviders([]);

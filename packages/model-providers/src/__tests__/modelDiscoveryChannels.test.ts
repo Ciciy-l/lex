@@ -39,7 +39,7 @@ describe('shared provider discovery', () => {
     }
   });
 
-  it('uses max-only discovery as the first working window, ahead of inherited defaults', () => {
+  it('uses max-only discovery as a current unverified working default without persisting it as an explicit window', () => {
     const discovered = parseModelsListResponse({ data: [{ id: 'gpt-9-sol', max_context_window: 32000 }] })!;
     for (const models of [discovered, mergeDiscoveredRuntimeModels([], discovered)]) {
       for (const agent of ['claude-code', 'codex', 'pi'] as const) {
@@ -47,7 +47,7 @@ describe('shared provider discovery', () => {
           [agent]: { baseUrl: 'https://relay.example/v1', wireProtocol: 'openai-responses', models },
         } }, { modelRegistry: BUNDLED_CATALOG.modelRegistry });
         expect(provider.models[agent]?.[0]).toMatchObject({
-          contextWindow: 32000, contextWindowMax: 32000, contextWindowVerified: true,
+          contextWindow: 32000, contextWindowMax: 32000, contextWindowVerified: false,
         });
       }
     }
@@ -55,7 +55,15 @@ describe('shared provider discovery', () => {
     const refreshed = mergeDiscoveredRuntimeModels(saved, parseModelsListResponse({ data: [
       { id: 'gpt-9-sol', max_context_window: 64000 },
     ] })!);
-    expect(refreshed[0].discoveredMetadata).toMatchObject({ contextWindow: 32000, contextWindowMax: 64000 });
+    expect(refreshed[0].discoveredMetadata).toEqual({ contextWindowMax: 64000 });
+    for (const agent of ['claude-code', 'codex', 'pi'] as const) {
+      const provider = buildUserProvider({ id: 'relay', name: 'Relay', runtimes: {
+        [agent]: { baseUrl: 'https://relay.example/v1', wireProtocol: 'openai-responses', models: refreshed },
+      } }, { modelRegistry: BUNDLED_CATALOG.modelRegistry });
+      expect(provider.models[agent]?.[0]).toMatchObject({
+        contextWindow: 64000, contextWindowMax: 64000, contextWindowVerified: false,
+      });
+    }
   });
 
   it('imports Vercel token prices, output capacity, image inputs and declared effort levels', () => {

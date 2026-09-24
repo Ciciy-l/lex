@@ -147,7 +147,7 @@ export function parseModelsListResponse(
       (Array.isArray(architecture?.input_modalities) && Array.isArray(architecture?.output_modalities)
         ? { input: architecture.input_modalities, output: architecture.output_modalities } : undefined);
     const inputModalities = (modalities as { input?: unknown } | undefined)?.input ?? record.input_modalities;
-    const contextWindowMax = pickModelMetadata({ contextWindowMax: record.max_context_window }).contextWindowMax;
+    const contextWindowMax = pickModelMetadata({ contextWindowMax: record.max_context_window ?? record.contextWindowMax }).contextWindowMax;
     const serviceTiers = record.service_tiers;
     const isVercel = sourceUrl !== undefined && (() => {
       try { const url = new URL(sourceUrl); return url.origin === 'https://ai-gateway.vercel.sh'
@@ -156,7 +156,8 @@ export function parseModelsListResponse(
     // Vercel marks image/video/etc. as type, but Cindy chat import only executes language models.
     // Keep them out of the picker instead of saving a mode that later disappears from every list.
     if (isVercel && record.type !== undefined && record.type !== 'language') continue;
-    const discoveredMetadata = pickModelMetadata({
+    const discoveredMetadata = { ...pickModelMetadata(record), ...pickModelMetadata({
+      nativeApi: record.nativeApi !== undefined ? record.nativeApi : record.native_api,
       ...([rec?.display_name, rec?.name, google?.displayName].some(
         (value) => typeof value === "string" && value.trim().length > 0,
       )
@@ -169,9 +170,7 @@ export function parseModelsListResponse(
       group: record.group,
       contextWindow:
         typeof rawWindow === "number" ? Math.floor(rawWindow) : info.max_input_tokens,
-      contextWindowMax: contextWindowMax !== undefined &&
-        (typeof rawWindow !== 'number' || contextWindowMax >= Math.floor(rawWindow))
-        ? contextWindowMax : undefined,
+      contextWindowMax,
       maxOutputTokens:
         record.max_output_tokens ?? info.max_output_tokens ?? google?.outputTokenLimit ??
         record.maxOutputTokens ??
@@ -209,7 +208,14 @@ export function parseModelsListResponse(
         (Array.isArray(inputModalities) && inputModalities.every(value => typeof value === 'string')
           ? inputModalities.includes("image")
           : undefined),
-    });
+    }) };
+    // Check the normalized pair so every spelling (including model_info) obeys
+    // the same capacity constraint, without discarding the valid working window.
+    if (discoveredMetadata.contextWindowMax !== undefined &&
+      discoveredMetadata.contextWindow !== undefined &&
+      discoveredMetadata.contextWindowMax < discoveredMetadata.contextWindow) {
+      delete discoveredMetadata.contextWindowMax;
+    }
     // OpenRouter and Vercel document USD per token. Never apply these units to arbitrary proxies.
     const prices =
       sourceUrl && (isOpenRouterModelsUrl(sourceUrl) || (isVercel && record.type === 'language'))

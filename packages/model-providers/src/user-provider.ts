@@ -7,6 +7,7 @@ import { PI_MODEL_APIS } from "./types.js";
 import { providerModelRecord, providerModelGenerationRecord, providerPresetModelRecord, providerModelMetadata } from "./providerModelCatalog.js";
 import { BUNDLED_CATALOG, BUILTIN_PROVIDERS } from './builtin.js';
 import { providerMediaField } from "./providerMediaModels.js";
+import { isOfficialXaiApiHost } from './xai-endpoints.js';
 import {
   expandedRegistryEntries,
   resolveModelMetadata,
@@ -85,8 +86,7 @@ function isOfficialXaiApiUpstream(upstream: string | undefined): boolean {
   try {
     const url = new URL(upstream ?? "");
     return (
-      url.protocol === "https:" &&
-      url.hostname === "api.x.ai" &&
+      isOfficialXaiApiHost(upstream) &&
       (url.pathname === "/v1" || url.pathname === "/v1/")
     );
   } catch {
@@ -373,7 +373,6 @@ function toCatalogModel(
     ...(supportsFastMode ? { supportsFastMode: true } : {}),
   };
   const user = runtimeUserModelMetadata(m);
-  const live = m.discoveredMetadata;
   const resolved =
     (modelRegistry?.schemaVersion ?? 0) >= 4 ||
     m.discoveredMetadata ||
@@ -382,40 +381,21 @@ function toCatalogModel(
           modelRegistry ?? undefined,
           metadataProviderId,
           m.id,
-          live,
+          m.discoveredMetadata,
           pickModelMetadata(user),
           agent,
           providerDefaults,
           generationDefaults,
         )
       : pickModelMetadata(user);
-  const result = applyModelMetadata(model, resolved);
-  if (generationDefaults?.contextWindow !== undefined) {
-    // A predecessor's window remains a usable default, not verified capacity
-    // for this model/route. Only this model's own metadata can establish that.
-    const declared = resolveModelMetadata(
-      modelRegistry ?? undefined,
-      metadataProviderId,
-      m.id,
-      live,
-      pickModelMetadata(user),
-      agent,
-      providerDefaults,
-    );
-    if (declared.contextWindow === undefined) {
-      const capacity = declared.contextWindowMax;
-      result.contextWindowVerified = capacity !== undefined &&
-        result.contextWindow !== undefined && result.contextWindow <= capacity;
-    }
-  }
-  return result;
+  return applyModelMetadata(model, resolved);
 }
 
 function isPublicXaiApiEndpoint(endpoint: string | undefined): boolean {
   if (!endpoint) return false;
   try {
     const url = new URL(endpoint);
-    return url.protocol === 'https:' && url.hostname === 'api.x.ai' &&
+    return isOfficialXaiApiHost(endpoint) &&
       (url.pathname.replace(/\/+$/, '') === '/v1' || url.pathname.startsWith('/v1/'));
   } catch {
     return false;
@@ -651,26 +631,28 @@ export function buildUserProvider(
             ? resolveCatalogModelNativeApi(source, baseModel?.id ?? m.id)
             : undefined;
       };
+      const projected = toCatalogModel(
+        m,
+        followsPreset && sameRoute ? preset!.id : config.id,
+        agent,
+        options.modelRegistry,
+        defaults,
+        nativeCodex ? 'openai' : undefined,
+        generationDefaults,
+      );
       const currentDeclaration = resolveDeclaration(registry);
-      // Same fallback as Gateway: Server omissions use local native declarations;
-      // explicit corrections/unknowns win. Never backfill another route's capabilities.
+      // Apply current Server identity after capability projection, including an
+      // explicit unknown. Only absent declarations may use discovery/local fallback.
       const declaration = currentDeclaration !== undefined ? currentDeclaration
+        : projected.nativeApi !== undefined ? projected.nativeApi
         : resolveDeclaration(BUNDLED_CATALOG.modelRegistry);
       const nativeApi = declaration === null || declaration === 'anthropic-messages'
         || declaration === 'openai-responses' || declaration === 'openai-completions'
         || declaration === 'google-generative-ai' ? declaration : undefined;
       return {
-        ...(nativeApi !== undefined ? { nativeApi } : {}),
         ...(imported?.cost ? { cost: imported.cost } : {}),
-        ...toCatalogModel(
-          m,
-          followsPreset && sameRoute ? preset!.id : config.id,
-          agent,
-          options.modelRegistry,
-          defaults,
-          nativeCodex ? 'openai' : undefined,
-          generationDefaults,
-        ),
+        ...projected,
+        ...(nativeApi !== undefined ? { nativeApi } : {}),
         // Projection is not a user edit. Save only the original configuration.
         userModelConfig: structuredClone(storedModel),
         ...(m.api ? { api: m.api, ...(agent === 'pi' ? { piApi: m.api } : {}) } : {}),

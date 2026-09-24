@@ -29,6 +29,7 @@ import {
   readCachedGenericOAuthAccessToken,
   refreshGenericOAuthIfNeeded,
   discoverGenericOAuthModels,
+  discoverGenericOAuthModelSnapshot,
   resetGenericOAuthMemoryCache,
   runGenericOAuthLogin,
   type GenericOAuthStorage,
@@ -647,6 +648,38 @@ describe('discoverGenericOAuthModels', () => {
     expect(fetchCalls[1]?.headers).toEqual({ authorization: 'Bearer at' });
     await discoverGenericOAuthModels('acme', OAUTH);
     expect(fetchCalls[2]?.headers).toEqual({ authorization: 'Bearer at' });
+  });
+
+  it('follows safe same-path pages and marks only full snapshots complete', async () => {
+    seedBlob('acme', { access_token: 'at' });
+    fetchResponder = (url) => url.includes('pageToken=next')
+      ? new Response(JSON.stringify({ data: [{ id: 'second' }] }))
+      : new Response(JSON.stringify({ data: [{ id: 'first' }], nextPageToken: 'next' }));
+    const full = await discoverGenericOAuthModelSnapshot('acme', OAUTH);
+    expect(full).toEqual({ models: [
+      expect.objectContaining({ id: 'first' }),
+      expect.objectContaining({ id: 'second' }),
+    ], complete: true });
+    expect(fetchCalls.map((call) => call.url)).toEqual([
+      'https://api.acme.example/v1/models',
+      'https://api.acme.example/v1/models?pageToken=next',
+    ]);
+    expect(fetchCalls.every((call) => call.headers?.authorization === 'Bearer at')).toBe(true);
+
+    fetchCalls = [];
+    fetchResponder = (url) => url.includes('pageToken=next')
+      ? new Response('unavailable', { status: 503 })
+      : new Response(JSON.stringify({ data: [{ id: 'prefix' }], nextPageToken: 'next' }));
+    const partial = await discoverGenericOAuthModelSnapshot('acme', OAUTH);
+    expect(partial).toMatchObject({ complete: false, models: [{ id: 'prefix' }] });
+
+    fetchCalls = [];
+    fetchResponder = () => new Response(JSON.stringify({
+      data: [{ id: 'prefix' }], next: 'https://evil.example/v1/models?key=leak',
+    }));
+    const unsafeNext = await discoverGenericOAuthModelSnapshot('acme', OAUTH);
+    expect(unsafeNext).toMatchObject({ complete: false, models: [{ id: 'prefix' }] });
+    expect(fetchCalls).toHaveLength(1);
   });
 
   it('显式 discoveryUrl 优先于描述符声明；两者皆缺 → null 不发请求', async () => {

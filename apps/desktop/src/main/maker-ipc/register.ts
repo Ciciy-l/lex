@@ -848,6 +848,7 @@ import {
 import {
   getAnthropicModelDiscoveryFailure,
   refreshAnthropicModelsFromHttp,
+  refreshAnthropicModelsFromProbe,
 } from '../maker-host/model-discovery/anthropic.js';
 import { refreshXaiModelsFromHttp } from '../maker-host/model-discovery/xai.js';
 import { refreshBuiltinProviderModels } from '../maker-host/provider-model-refresh.js';
@@ -864,7 +865,7 @@ import {
 import {
   cancelGenericOAuthLogin,
   deriveModelsDiscoveryUrl,
-  discoverGenericOAuthModels,
+  discoverGenericOAuthModelSnapshot,
   logoutGenericOAuth,
   removeGenericOAuthCredentialsReversibly,
   runGenericOAuthLogin,
@@ -5505,7 +5506,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     refreshProvider: (providerId) =>
       refreshBuiltinProviderModels(providerId, {
         refreshXd: options.refreshXdGatewayModels,
-        refreshAnthropic: refreshAnthropicModelsFromHttp,
+        refreshAnthropic: refreshAnthropicModelsFromProbe,
         refreshOpenAi: () =>
           maker.refreshAgentLocalModels('codex', { credentialMode: 'oauth-bearer' }),
         refreshOpenAiMedia: refreshOpenAiMediaModels,
@@ -5747,7 +5748,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         try {
           const fetched = new Map<
             string,
-            { id: string; name: string; contextWindow?: number }[] | null
+            Awaited<ReturnType<typeof discoverGenericOAuthModelSnapshot>>
           >();
           let customChanged = false;
           for (const agent of provider.agents) {
@@ -5772,16 +5773,17 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             if (!fetched.has(key))
               fetched.set(
                 key,
-                await discoverGenericOAuthModels(storageProviderId, oauth, url, agent),
+                await discoverGenericOAuthModelSnapshot(storageProviderId, oauth, url, agent),
               );
             if (!isCurrent()) break;
-            const models = fetched.get(key);
-            if (!models || models.length === 0) continue;
+            const snapshot = fetched.get(key);
+            if (!snapshot) continue;
+            const { models } = snapshot;
             if (provider.source === 'user') {
               const cfg = await getCustomProvider(storageProviderId);
               if (!isCurrent()) break;
               if (cfg) {
-                const nextCfg = mergeDiscoveredModelsIntoConfig(cfg, agent, models);
+                const nextCfg = mergeDiscoveredModelsIntoConfig(cfg, agent, models, snapshot.complete);
                 if (nextCfg) {
                   const applied = await updateCustomProviderIfUnchanged(
                     storageProviderId,
@@ -5800,6 +5802,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
                 models.map((m) => ({
                   id: m.id,
                   name: m.name,
+                  ...(m.discoveredMetadata ? { discoveredMetadata: m.discoveredMetadata } : {}),
                   // 端点上报的窗口值优先,缺省才落 200K 保守默认(review P1):
                   // 之前无条件写死 200K,发现的 1M 模型仍会显示并按 200K 压缩。
                   contextWindow: m.contextWindow ?? 200_000,
@@ -5807,11 +5810,15 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
                   // 兜底的不标记 —— 否则 resolveVerifiedContextWindow 会拒收缺失
                   // 标记的条目,inflate 的运行期值压不下来(review P1)。
                   ...(m.contextWindow !== undefined ? { contextWindowVerified: true } : {}),
-                  efforts: [],
-                  defaultEffort: null,
+                  efforts: m.discoveredMetadata?.efforts ?? [],
+                  defaultEffort: m.discoveredMetadata?.defaultEffort ?? null,
+                  ...(m.discoveredMetadata?.supportsFastMode !== undefined
+                    ? { supportsFastMode: m.discoveredMetadata.supportsFastMode }
+                    : {}),
                   group: `custom:${providerId}`,
                   defaultEnabled: false,
                 })),
+                snapshot.complete,
               );
             }
           }

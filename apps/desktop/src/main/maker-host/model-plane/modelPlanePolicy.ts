@@ -161,7 +161,7 @@ export interface ModelPlaneRegistryPlan {
    * model id。旧客户端会因没有 canonical root 而安全忽略；理解该语义的新客户端只在
    * route 明确授权的 bridge 中物化，不污染 canonical root（尤其不改 Codex）。
    */
-  consumerAdditions: Map<string, CatalogModel[]>;
+  consumerAdditions: Map<string, { model: CatalogModel; upstreamModelId: string }[]>;
   warnings: ModelPlaneWarning[];
 }
 
@@ -326,7 +326,7 @@ export function planRegistryRoots(registry: ModelRegistry | undefined): ModelPla
         }
         const key = consumerPlanKey(route.providerId, 'claude-code');
         const additions = plan.consumerAdditions.get(key) ?? [];
-        additions.push(materialized);
+        additions.push({ model: materialized, upstreamModelId: route.modelId });
         plan.consumerAdditions.set(key, additions);
         continue;
       }
@@ -559,6 +559,7 @@ function toMaterializedModel(
 export function applyRootRegistryPlan(
   models: readonly CatalogModel[],
   rootPlan: RootRegistryPlan | undefined,
+  materializeRegistry = true,
 ): CatalogModel[] {
   if (!rootPlan) return [...models];
   const existingIds = new Set(models.map((m) => m.id));
@@ -567,6 +568,7 @@ export function applyRootRegistryPlan(
     const overlaid = overlay ? applyExistingRegistryOverlay(m, overlay) : m;
     return rootPlan.retired.has(m.id) ? { ...overlaid, status: 'retired' as const } : overlaid;
   });
+  if (!materializeRegistry) return out;
   for (const addition of rootPlan.additions) {
     if (existingIds.has(addition.id)) continue; // 已有条目走 overlay,不重复追加。
     out.push(addition);

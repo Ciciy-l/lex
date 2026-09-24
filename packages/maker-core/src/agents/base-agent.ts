@@ -487,6 +487,8 @@ export interface CodexLocalCredentialModeSwitchContext {
 
 export interface RefreshLocalModelsOptions {
   providerId?: string;
+  /** Receive a successful, read-only SDK model snapshot for this exact refresh attempt. */
+  onSupportedModels?: (models: unknown[]) => void;
   /**
    * Bind model discovery to a specific local credential route.
    * Codex serves explicit routes from an isolated control-plane host so live

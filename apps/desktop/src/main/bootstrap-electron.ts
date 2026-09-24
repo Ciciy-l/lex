@@ -581,6 +581,7 @@ import {
   waitForInitialCustomMcpRefresh,
   registerPiAgentIfAvailable,
   registerOmpAgentIfAvailable,
+  desktopClaudeAuthAdapter,
 } from './maker-host/index.js';
 import { createOptionalRuntimeRecovery, createPiRuntimeRecovery } from './agent-binaries/pi-runtime-recovery.js';
 import {
@@ -604,6 +605,8 @@ import {
   noteAnthropicSdkSupportedModels,
   refreshAnthropicModelsFromHttp,
   clearAnthropicDiscoveredModels,
+  requestAnthropicModelProbe,
+  syncAnthropicModelsWithAuth,
 } from './maker-host/model-discovery/anthropic.js';
 import {
   clearXaiDiscoveredModels,
@@ -4898,9 +4901,13 @@ const registerIpcHandlers = () => {
     if (signal.aborted || owner !== activeOwnerScopeKey() || isAppSessionBoundaryPending()) return { ok: false, reason: 'login_cancelled', authorized: false };
     if (!reconnectClaudeAiOAuth()) return { ok: false, reason: 'local_unavailable', authorized: false };
     // Binding is the commit point; auxiliary refresh must not prolong the cancellable login.
+    const authState = await desktopClaudeAuthAdapter.getState({ credentialMode: 'oauth-bearer', providerId: 'anthropic' });
+    if (owner !== activeOwnerScopeKey() || isAppSessionBoundaryPending()) return { ok: false, reason: 'login_cancelled', authorized: false };
+    syncAnthropicModelsWithAuth(authState, authState.identity ?? null);
     void broadcastClaudeAuthStateChanged();
     syncClaudeSubscriptionUsageForAuthChange();
     void refreshAnthropicModelsFromHttp();
+    requestAnthropicModelProbe();
     return { ok: true, authorized: hasClaudeAiOAuth() };
   });
   ipcMain.handle(MAKER_IPC_INVOKE.CLAUDE_OAUTH_LOGOUT, async (event, ownerScope?: { dataOwnerId: string | null; ownerGeneration: number }) => {
@@ -4928,6 +4935,7 @@ const registerIpcHandlers = () => {
     syncClaudeSubscriptionUsageForAuthChange();
     // 模型清单动态发现:登出完成前清空清单 + 删磁盘缓存,并等待旧 SDK 写盘收尾。
     await clearAnthropicDiscoveredModels();
+    syncAnthropicModelsWithAuth({ authenticated: false }, null);
     return { authorized: hasClaudeAiOAuth() };
   });
   ipcMain.handle(MAKER_IPC_INVOKE.CLAUDE_OAUTH_CANCEL, async (event, loginKey?: string) => {

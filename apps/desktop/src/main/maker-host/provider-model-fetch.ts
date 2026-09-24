@@ -1,4 +1,5 @@
 import type { DiscoveredModel } from '@cindy/model-providers';
+import { collectModelDiscoveryPages } from './model-discovery-pages.js';
 /**
  * provider-model-fetch —— 供应商「获取模型列表」（自定义供应商表单消费）。
  *
@@ -23,7 +24,6 @@ import {
 import { classifyProviderError, type ProviderErrorCode } from '../../shared/providerErrors.js';
 import {
   deriveModelsDiscoveryUrl,
-  parseModelsListResponse,
   readCachedGenericOAuthAccessToken,
   refreshGenericOAuthIfNeeded,
 } from './generic-oauth.js';
@@ -65,6 +65,8 @@ export interface ProviderModelsFetchResult {
   ok: boolean;
   /** 拉到的模型清单（ok=true 时给出；已按 id 去重;contextWindow 为端点声明的上下文长度,尽力提取）。 */
   models?: DiscoveredModel[];
+  /** false means a valid prefix was read but pagination did not produce a complete authoritative snapshot. */
+  discoveryComplete?: boolean;
   /** 失败分类码（ok=false 时给出）。 */
   code?: ProviderErrorCode;
   /** HTTP 状态码（网络层失败时缺省）。 */
@@ -303,9 +305,20 @@ export async function fetchProviderModels(
       detail: 'models response is not JSON or exceeds the response limit',
     };
   }
-  const models = parseModelsListResponse(json, url);
-  if (!models || models.length === 0) {
-    // 端点 200 但响应不是可识别的模型列表（或为空）——按「模型不存在」类引导用户手填。
+  const pageDeadline = Date.now() + 30_000;
+  const collection = await collectModelDiscoveryPages(json, url, async nextUrl => {
+    const remaining = pageDeadline - Date.now();
+    if (remaining <= 0) throw new Error('catalog deadline exceeded');
+    const response = await fetchImpl(nextUrl, {
+      ...init,
+      redirect: 'error',
+      signal: AbortSignal.timeout(Math.max(1, Math.min(FETCH_TIMEOUT_MS, remaining))),
+    });
+    if (!response.ok) { await response.body?.cancel(); throw new Error('catalog page failed'); }
+    return JSON.parse(await readLimitedBody(response, spec.responseByteLimit ?? 8 * 1024 * 1024));
+  });
+  if (!collection || (!collection.complete && collection.models.length === 0)) {
+    // No valid first page is unknown/failure; it cannot be confused with an authoritative empty list.
     return {
       ok: false,
       code: 'UNKNOWN',
@@ -313,5 +326,5 @@ export async function fetchProviderModels(
       detail: 'no models found in response',
     };
   }
-  return { ok: true, models };
+  return { ok: true, models: collection.models, discoveryComplete: collection.complete };
 }

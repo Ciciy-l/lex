@@ -1,5 +1,5 @@
 import { resolveConversationSessionHeaders, withChatBridgeUserAgent, overrideHeadersCaseInsensitive } from '@cindy/responses-chat-bridge';
-import { providerModelRecord, providerCatalogId, type CatalogModel, type Provider } from '@cindy/model-providers';
+import { providerModelRecord, providerCatalogId, isOfficialXaiApiHost, type CatalogModel, type Provider } from '@cindy/model-providers';
 import { captureUsagePricing, createUsagePricingObserver } from './model-usage-pricing.js';
 import { rewriteFastModel } from './model-fast-mode.js';
 import { createPiProviderFetch, handlePiProviderRequest, invocationModelRecord, nativeBridgeApiKey, readBoundedResponseText, requiresNativeProviderAuth } from './pi-provider-transport.js';
@@ -1128,7 +1128,7 @@ function createChatBridgeDecision(
         const nativeHeaders = overrideHeadersCaseInsensitive(withChatBridgeUserAgent(Object.fromEntries(Object.entries(headers).filter(([name]) =>
           !['authorization', 'x-api-key'].includes(name.toLowerCase())))), resolveConversationSessionHeaders(ctx?.headers));
         if (standard.execution.pi.api === 'anthropic-messages' && (actualModel.endsWith('[1m]')
-          || (isOfficialAnthropicUpstream(standard.upstream) && standard.contextWindow >= 1_000_000))) {
+          || (isOfficialAnthropicUpstream(standard.upstream) && (standard.contextWindow ?? 0) >= 1_000_000))) {
           appendCommaSeparatedHeaderToken(nativeHeaders, 'anthropic-beta', 'context-1m-2025-08-07');
         }
         const nativeFetch = createPiProviderFetch({ row: { ...standard,
@@ -2219,12 +2219,7 @@ function numericHeader(headers: Readonly<Record<string, string>>, name: string):
 // 精确解析 host 判定,不用 startsWith 子串判断——'https://api.x.aievil.com' 也能
 // 通过前缀检查(CodeQL js/incomplete-url-substring-sanitization)。
 function isXaiUpstream(upstreamBase: string): boolean {
-  try {
-    const url = new URL(upstreamBase);
-    return url.protocol === 'https:' && url.hostname === 'api.x.ai';
-  } catch {
-    return false;
-  }
+  return isOfficialXaiApiHost(upstreamBase);
 }
 
 /** Public xAI API does not provide subscription Fast; consume stale Fast tiers on that route. */
@@ -2238,14 +2233,16 @@ function createXaiFastSafetyTransform(
     if (!routing || !isXaiUpstream(routing.upstream)) return null;
     const requestModel = typeof body.model === 'string' ? body.model : '';
     const providerContext = providerContextForRequest(ctx.headers, requestModel);
-    const providerId = providerContext.providerId ?? inferProviderIdForModel(requestModel, 'codex') ?? 'xai';
-    const rewritten = rewriteFastModel(providerId, 'codex', body, true);
+    // Native xAI subscription routes use the preceding account-scoped model mapping.
+    // Public API routes must consume stale priority markers without inferring an OAuth
+    // connection from a Grok model name.
+    if (providerContext.providerId && isXaiSubscriptionProviderId(providerContext.providerId)) return null;
+    const rewritten = { ...body };
+    delete rewritten.service_tier;
     const sessionId = sessionIdFromHeaders(ctx.headers);
     const path = ctx.url.split('?', 1)[0] ?? ctx.url;
     if (sessionId && path.endsWith('/responses') && !guardianParentThreadIdFromHeaders(ctx.headers)) {
-      pricing.set(ctx.reqId, captureUsagePricing(sessionId,
-        rewritten && rewritten.model !== body.model ? 'priority' : 'standard',
-        selectedThreadIdFromHeaders(ctx.headers)));
+      pricing.set(ctx.reqId, captureUsagePricing(sessionId, 'standard', selectedThreadIdFromHeaders(ctx.headers)));
     }
     return rewritten;
   };
