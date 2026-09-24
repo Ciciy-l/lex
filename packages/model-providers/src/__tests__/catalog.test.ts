@@ -39,12 +39,14 @@ const EXPECTED_XAI_IDS = [
   "xai/grok-4.20-0309-non-reasoning",
   "xai/grok-4.20",
   "xai/grok-code-fast",
+  "xai/grok-4.7",
 ];
 const EXPECTED_XAI_PI_IDS = [
   "grok-4.3",
   "grok-4.5",
   "grok-4.6",
   "grok-build-0.1",
+  "grok-4.7",
 ];
 
 function provider(id: string) {

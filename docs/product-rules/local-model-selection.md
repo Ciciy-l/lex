@@ -39,9 +39,8 @@
 
 ## 实现边界与以后更新
 
-- 数据正本：Server 的 `model-access-server/catalog/providers.json` 中
-  `modelRegistry.localModels`；客户端离线副本位于
-  `packages/model-providers/catalog/model-registry.json` 的 `localModels`。
+- 本地随包数据由 Lex 客户端仓维护：`packages/model-providers/catalog/model-registry.json` 的
+  `localModels`。外部 Cindy Model Access 可能另行下发在线快照；客户端离线数据不代表外部已同步或部署。
   算法入口仍为 `apps/desktop/src/shared/localModelRuntime.ts`。
   `featuredIds` 按能力、速度顺序列推荐；`models` 中的候选不会自动补位。
 - 包装的平台限制和内存门槛从活动目录读取；低于推荐门槛或内存未知返回空推荐。
@@ -57,7 +56,7 @@
 
 ## 服务端下发与发布
 
-以下是双方需满足的协议合同，是否已部署按 [发布验收](../dev-rules/model-catalog-maintenance.md#release) 核对。
+以下是客户端与外部目录间的协议合同，不代表外部来源已部署目标数据；实际在线状态按 [发布验收](../dev-rules/model-catalog-maintenance.md#release) 核对。
 
 - 复用现有匿名目录接口，客户端请求 `registrySchemaVersion=4`，本地域为
   `modelRegistry.localModels = { version: 1, models, featuredIds }`。共享 Registry
@@ -68,14 +67,13 @@
   的三个 Qwen3.8 27B 标签，远程数据不能提供命令、路径或任意下载 URL。
 - 明确的空 `models` / `featuredIds` 分别撤下目录 / 推荐；字段缺失表示旧服务端，
   使用随包本地域。网络失败、非法数据和 revision 冲突沿用已有合法快照。
-- 发布顺序为服务端先行、客户端随后。旧客户端默认收到 Registry V2；显式请求
+- 外部在线目录更新需由其责任方协调；Lex 客户端 PR 只更新随包副本。客户端按 revision 选择完整快照，较新在线数据可覆盖较旧随包数据。旧客户端默认收到 Registry V2；显式请求
   V1/V2/V3 时剥离新字段。各响应版本有独立内容 ETag，不能跨版本误命中 304。
-- 每次先在 Server 正本更新取舍记录和本地域，增加整个 Registry 的 `updatedAt`，
-  再把完整 Registry（含 `baseModels` 与 `modelRef`）同步到客户端离线副本，核对同 revision、同内容。
+- 每次在 Lex 随包 Registry 中维护完整取舍记录和本地域，增加整个 Registry 的 `updatedAt`，
+  保留全部 `baseModels` / `modelRef` 并执行完整校验。不要声称与外部在线数据同 revision、同内容；需要在线更新时由外部责任方另行协调。
   同步不改写用户显式档位或供应商实报默认档；历次同步状态见历史记录，不能当作生产发布证据。
-  后续服务端 revision 必须高于已发布版本，禁止只复制本地域或使用相同 revision 发布不同内容。
+  后续随包 revision 必须高于当前内容版本，禁止只复制本地域或使用相同 revision 发布不同内容。
 - 本地与云端接入可用 `modelRef` 引用同一公共型号；量化包装、内存与推荐证据独立留在本地域。
   用户文件可覆盖推荐及单项资料，优先级见 [模型资料优先级](model-metadata-precedence.md)。
-- 若生产配置了 `MODEL_CATALOG_URL`，还须同步该覆盖源；只修改制品内置目录不能证明
-  线上生效。部署后核对 V4 响应、旧版响应与新客户端刷新；离线首次启动核对随包兜底。
+- 若运行环境配置了 `MODEL_CATALOG_URL`，该外部覆盖源优先级与随包版本须单独核对；只修改制品内置目录不能证明线上生效。离线首次启动核对随包兜底。
 - 目录撤下或调整顺序不卸载、切换用户模型，也不修改已有供应商和执行中的配置。

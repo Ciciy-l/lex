@@ -193,6 +193,22 @@
             "defaultEffort": null,
             "status": "deprecated",
             "defaultEnabled": false
+          },
+          {
+            "id": "xai/grok-4.7",
+            "name": "Grok 4.7",
+            "group": "grok",
+            "sortOrder": 47,
+            "contextWindow": 500000,
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ],
+            "defaultEffort": "medium",
+            "status": "active",
+            "supportsImageInput": true
           }
         ],
         "codex": [
@@ -316,6 +332,22 @@
             "defaultEffort": null,
             "status": "deprecated",
             "defaultEnabled": false
+          },
+          {
+            "id": "xai/grok-4.7",
+            "name": "Grok 4.7",
+            "group": "grok",
+            "sortOrder": 47,
+            "contextWindow": 500000,
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ],
+            "defaultEffort": "medium",
+            "status": "active",
+            "supportsImageInput": true
           }
         ],
         "pi": [
@@ -406,6 +438,39 @@
               "output": 2,
               "cacheRead": 0.2,
               "cacheWrite": 0
+            }
+          },
+          {
+            "id": "grok-4.7",
+            "name": "Grok 4.7",
+            "piApi": "openai-responses",
+            "group": "grok",
+            "sortOrder": 47,
+            "contextWindow": 500000,
+            "maxOutput": 500000,
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ],
+            "defaultEffort": "medium",
+            "status": "active",
+            "supportsImageInput": true,
+            "cost": {
+              "input": 2,
+              "output": 6,
+              "cacheRead": 0.5,
+              "cacheWrite": 0,
+              "tiers": [
+                {
+                  "inputTokensAbove": 199999,
+                  "input": 4,
+                  "output": 12,
+                  "cacheRead": 1,
+                  "cacheWrite": 0
+                }
+              ]
             }
           }
         ]
@@ -2211,13 +2276,13 @@
           "baseUrl": "https://api.xiaomimimo.com/anthropic",
           "models": [
             {
-              "id": "mimo-v2.5-pro",
-              "name": "MiMo V2.5 Pro",
+              "id": "mimo-v2.6-pro",
+              "name": "MiMo V2.6 Pro",
               "contextWindow": 1000000
             },
             {
-              "id": "mimo-v2.5",
-              "name": "MiMo V2.5",
+              "id": "mimo-v2.6-flash",
+              "name": "MiMo V2.6 Flash",
               "contextWindow": 1000000
             }
           ]
@@ -2227,13 +2292,13 @@
           "wireProtocol": "openai-chat",
           "models": [
             {
-              "id": "mimo-v2.5-pro",
-              "name": "MiMo V2.5 Pro",
+              "id": "mimo-v2.6-pro",
+              "name": "MiMo V2.6 Pro",
               "contextWindow": 1000000
             },
             {
-              "id": "mimo-v2.5",
-              "name": "MiMo V2.5",
+              "id": "mimo-v2.6-flash",
+              "name": "MiMo V2.6 Flash",
               "contextWindow": 1000000
             }
           ]
@@ -2244,19 +2309,20 @@
           "piCatalogProviderId": "xiaomi",
           "models": [
             {
-              "id": "mimo-v2.5",
-              "name": "MiMo-V2.5",
+              "id": "mimo-v2.6-pro",
+              "name": "MiMo-V2.6-Pro",
               "contextWindow": 1048576,
               "supportsImageInput": true
             },
             {
-              "id": "mimo-v2.5-pro",
-              "name": "MiMo-V2.5-Pro",
-              "contextWindow": 1048576
+              "id": "mimo-v2.6-flash",
+              "name": "MiMo-V2.6-Flash",
+              "contextWindow": 1048576,
+              "supportsImageInput": true
             },
             {
-              "id": "mimo-v2.5-pro-ultraspeed",
-              "name": "MiMo-V2.5-Pro-UltraSpeed",
+              "id": "mimo-v2.6-pro-ultraspeed",
+              "name": "MiMo-V2.6-Pro-UltraSpeed",
               "contextWindow": 1048576
             }
           ]
@@ -2274,13 +2340,13 @@
           "baseUrl": "https://token-plan-cn.xiaomimimo.com/anthropic",
           "models": [
             {
-              "id": "mimo-v2.5-pro",
-              "name": "MiMo V2.5 Pro",
+              "id": "mimo-v2.6-pro",
+              "name": "MiMo V2.6 Pro",
               "contextWindow": 1000000
             },
             {
-              "id": "mimo-v2.5",
-              "name": "MiMo V2.5",
+              "id": "mimo-v2.6-flash",
+              "name": "MiMo V2.6 Flash",
               "contextWindow": 1000000
             }
           ]
@@ -2290,13 +2356,13 @@
           "wireProtocol": "openai-chat",
           "models": [
             {
-              "id": "mimo-v2.5-pro",
-              "name": "MiMo V2.5 Pro",
+              "id": "mimo-v2.6-pro",
+              "name": "MiMo V2.6 Pro",
               "contextWindow": 1000000
             },
             {
-              "id": "mimo-v2.5",
-              "name": "MiMo V2.5",
+              "id": "mimo-v2.6-flash",
+              "name": "MiMo V2.6 Flash",
               "contextWindow": 1000000
             }
           ]
@@ -2307,15 +2373,16 @@
           "piCatalogProviderId": "xiaomi-token-plan-cn",
           "models": [
             {
-              "id": "mimo-v2.5",
-              "name": "MiMo-V2.5",
+              "id": "mimo-v2.6-pro",
+              "name": "MiMo-V2.6-Pro",
               "contextWindow": 1048576,
               "supportsImageInput": true
             },
             {
-              "id": "mimo-v2.5-pro",
-              "name": "MiMo-V2.5-Pro",
-              "contextWindow": 1048576
+              "id": "mimo-v2.6-flash",
+              "name": "MiMo-V2.6-Flash",
+              "contextWindow": 1048576,
+              "supportsImageInput": true
             }
           ]
         }

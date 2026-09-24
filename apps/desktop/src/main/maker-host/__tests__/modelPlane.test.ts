@@ -365,19 +365,27 @@ describe('registry presence 实体化', () => {
     expect(getModelPlaneWarnings()).toEqual([]);
   });
 
-  it('没有 Registry entry 时 Codex discovery 也不会产生 Pi 条目', () => {
+  it('Codex discovery does not leak models into Pi', () => {
     setActiveCatalog(baseCatalog());
     setDiscoveredCodexModels([
-      {
-        id: 'gpt-discovered',
-        name: 'Discovered GPT',
-        contextWindow: 272_000,
-        efforts: ['high'],
-        defaultEffort: 'high',
-      },
+      { id: 'gpt-discovered', name: 'Discovered GPT', contextWindow: 272_000, efforts: ['high'], defaultEffort: 'high' },
     ]);
+    expect(models('openai', 'pi').find(model => model.id === 'chatgpt/gpt-discovered')).toBeUndefined();
+  });
 
-    expect(models('openai', 'pi').find((m) => m.id === 'chatgpt/gpt-discovered')).toBeUndefined();
+  it('materializes a complete Pi-only local addition on an existing subscription route', () => {
+    setActiveCatalog(baseCatalog());
+    const result = sanitizeModelCatalogOverrides({
+      version: 1, additions: {
+        'openai:gpt-local-pi': { agents: ['pi'], base: { name: 'Local Pi model', contextWindow: 128_000, efforts: [], defaultEffort: null } },
+      },
+    });
+    expect(result.invalid).toEqual([]);
+    setLocalCatalogOverrides(result.overrides);
+    expect(models('openai', 'pi').find(model => model.id === 'chatgpt/gpt-local-pi')).toMatchObject({
+      name: 'Local Pi model', piApi: 'openai-responses', contextWindow: 128_000,
+    });
+    expect(models('openai', 'codex').some(model => model.id === 'gpt-local-pi')).toBe(false);
   });
 
   it('status 缺失 = metadata-only,不长实体;retired = tombstone,不长实体', () => {
@@ -921,6 +929,45 @@ describe('本地 override(local 永远最高)', () => {
     expect(models('openai', 'codex').find((m) => m.id === 'gpt-6')?.status).toBe('alpha');
   });
 
+  it.each([
+    ['openai', 'gpt-manual', 'chatgpt/gpt-manual', 'openai-responses'],
+    ['anthropic', 'claude-manual', 'claude-manual', 'anthropic-messages'],
+    ['xai', 'xai/grok-manual', 'grok-manual', 'openai-responses'],
+  ] as const)('accepts a Pi-only user addition for %s and retains it across refreshes', (providerId, inputId, piId, api) => {
+    setActiveCatalog(baseCatalog());
+    const parsed = sanitizeModelCatalogOverrides({ additions: {
+      [providerId + ':' + inputId]: {
+        agents: ['pi'], base: { name: 'User model', contextWindow: 600_000, maxOutput: 12_345,
+          efforts: ['low', 'high'], defaultEffort: 'high', supportsImageInput: true },
+        perAgent: { pi: { contextWindow: 700_000 } },
+      },
+    } });
+    expect(parsed.invalid).toEqual([]);
+    setLocalCatalogOverrides(parsed.overrides);
+    for (let refresh = 0; refresh < 2; refresh++) {
+      expect(models(providerId, 'pi').find(model => model.id === piId)).toMatchObject({
+        name: 'User model', piApi: api, contextWindow: 700_000, maxOutput: 12_345,
+        efforts: ['low', 'high'], defaultEffort: 'high', supportsImageInput: true,
+      });
+      expect(models(providerId, 'codex').some(model => model.id === inputId)).toBe(false);
+      setActiveCatalog(baseCatalog());
+    }
+    setLocalCatalogOverrides(EMPTY_MODEL_CATALOG_OVERRIDES);
+    expect(models(providerId, 'pi').some(model => model.id === piId)).toBe(false);
+  });
+
+  it('rejects Pi additions for Gateway and preserves root-only partial additions', () => {
+    const parsed = sanitizeModelCatalogOverrides({ additions: {
+      'xd:fake-model': { agents: ['pi'], base: { name: 'Local', contextWindow: 500_000, efforts: [], defaultEffort: null } },
+      'openai:gpt-legacy': { base: { name: 'Legacy', contextWindow: 500_000 }, perAgent: { codex: { efforts: ['high'], defaultEffort: 'high' } } },
+    } });
+    expect(parsed.invalid).toEqual(['additions:xd:fake-model']);
+    setLocalCatalogOverrides(parsed.overrides);
+    expect(models('openai', 'codex').some(model => model.id === 'gpt-legacy')).toBe(true);
+    expect(models('openai', 'pi').some(model => model.id === 'chatgpt/gpt-legacy')).toBe(false);
+    expect(models('xd', 'pi').some(model => model.id === 'fake-model')).toBe(false);
+  });
+
   it('dormant patch:宿主不存在时静置,discovery 出现当日生效', () => {
     setActiveCatalog(baseCatalog());
     setLocalCatalogOverrides(
@@ -1042,7 +1089,7 @@ it('preserves the upstream maximum separately from per-harness recommended windo
 });
 
 it.each([{ agents: undefined }, { agents: ['codex', 'pi'] }])(
-  'keeps Pi working defaults when a root addition declares agents $agents',
+  'applies user working defaults to Pi when an addition declares agents $agents',
   ({ agents }) => {
     const catalog = baseCatalog([gpt6Entry()]);
     catalog.providers.find((provider) => provider.id === 'openai')!.models.pi = [
@@ -1072,8 +1119,8 @@ it.each([{ agents: undefined }, { agents: ['codex', 'pi'] }])(
       contextWindow: 450_000,
     });
     expect(models('openai', 'pi').find((model) => model.id === 'chatgpt/gpt-6')).toMatchObject({
-      name: 'Pi authority',
-      contextWindow: 272_000,
+      name: 'Root addition',
+      contextWindow: 450_000,
       contextWindowMax: 1_000_000,
     });
     setLocalCatalogOverrides(

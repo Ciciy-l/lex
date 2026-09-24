@@ -3974,7 +3974,7 @@ describe("Pi provider-aware model routing", () => {
   it.each([
     { input: ["text", "image"] as Array<"text" | "image">, supported: true },
     { input: ["text"] as Array<"text" | "image">, supported: false },
-    { input: undefined, supported: false },
+    { input: undefined, supported: true },
   ])("uses the native ChatGPT image snapshot for models.json, send and steer: $input", async ({ input, supported }) => {
     const modelId = "chatgpt/gpt-5.6-sol";
     const agent = new PiAgent(byomDeps(async () => ({
@@ -4154,7 +4154,7 @@ describe("Pi provider-aware model routing", () => {
           id: "gateway-vision",
           input: ["text", "image"],
         }),
-        expect.objectContaining({ id: "gateway-unknown", input: ["text"] }),
+        expect.objectContaining({ id: "gateway-unknown", input: ["text", "image"] }),
       ]),
     );
 
@@ -4227,11 +4227,13 @@ describe("Pi provider-aware model routing", () => {
       ),
     ).toBe(false);
 
-    // 能力未知同样 fail closed；活动会话只认启动时写入 models.json 的能力快照。
+    // 未知能力默认允许；活动会话只认启动时写入 models.json 的能力快照。
     await handle.setModel!("gateway-unknown", { providerId: null });
-    await expect(handle.send(imageMessage)).rejects.toMatchObject({
-      code: "PI_IMAGE_INPUT_UNSUPPORTED",
-    });
+    captured.requests.length = 0;
+    await handle.send(imageMessage);
+    expect(captured.requests).toContainEqual(expect.objectContaining({
+      type: "prompt", images: [expect.objectContaining({ type: "image" })],
+    }));
     gatewayModels[0]!.supportsImageInput = true;
     await handle.setModel!("gateway-text", { providerId: null });
     await expect(handle.send(imageMessage)).rejects.toMatchObject({

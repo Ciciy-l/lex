@@ -1,11 +1,11 @@
 # 模型配置与下发：架构及维护入口
 
-> 权威入口：先读本页，再按问题打开专题。Server 为独立仓库，文档不代表已部署。
+> 权威入口：先读本页，再按问题打开专题。Cindy Model Access 是外部在线目录来源；本仓维护 Lex 客户端随包目录，不拥有或维护该外部服务。随包目录变更不代表在线目录已更新或已部署。
 
 ## 数据流
 
 ```text
-Server 随包 / 远程目录 → /api/model-catalog/catalog
+Lex 客户端随包目录 / 外部 Cindy Model Access → /api/model-catalog/catalog
     → 执行端加载与缓存 → 合并连接实报、用户覆盖 → 活动目录
     ├─ 选择器 / 管理页
     ├─ 聊天 → Claude Code / Codex / Pi
@@ -17,7 +17,7 @@ Mobile / device-link 使用执行端目录；本地安装状态来自执行机�
 
 ### 配置包含什么
 
-Server 正本是 `model-access-server/catalog/providers.json`。客户端离线文件分别是
+外部 Cindy Model Access 可提供在线完整 Catalog；Lex 客户端不维护该服务端仓库。Lex 随包目录由本仓维护，文件分别是
 [`catalog/providers.json`](../../packages/model-providers/catalog/providers.json)（providers / presets）和
 [`catalog/model-registry.json`](../../packages/model-providers/catalog/model-registry.json)（Registry）。
 逻辑结构如下；具体字段及修改位置见下表：
@@ -47,7 +47,7 @@ Catalog (version)
 | 接入供应商参考报价 | `routes[].referencePrices[]`；`referencePriceGroup` 指向公共型号的官方价组 | Gateway 实价/折扣仍归其计费控制面，不混填缺失字段 |
 | 内置接入或新增连接模板 | `providers[]` 或 `presets[].runtimes` | 不在公共目录保存真实账号密钥 |
 | 本地候选、包装、门槛、推荐 | `localModels.models` / `featuredIds` | 不自动安装、卸载、切换用户模型 |
-| 某个用户的显式设置 | 本机 `model-catalog-overrides.json` 等既有偏好 | 不写回 Server；刷新保留，恢复默认删除 override |
+| 某个用户的显式设置 | 本机 `model-catalog-overrides.json` 等既有偏好 | 不写回在线目录；刷新保留，恢复默认删除 override |
 | 新执行协议、SDK 参数、token 计量 | 本仓对应 host / harness / bridge | 加目录字段不会自动获得执行能力 |
 
 结构例外：条目没有 `models[].defaults`；Registry agents / perAgent 只接受 Claude Code、Codex，
@@ -78,23 +78,23 @@ Pi 走 `providers[].models.pi`（用户补丁 perAgent.pi 另属合法 schema）
 <a id="release"></a>
 ## 更新、下发与验收
 
-来源回退：开发本地文件 → 公共 API / 对应最后有效缓存（LKG）→ 旧 OSS / 对应缓存 → 内置目录。
-Registry 另按 updatedAt 选择整份有效版本，较新内置快照也可能胜出；这与逐字段覆盖不同。
+来源回退：开发本地文件 → 外部 Cindy Model Access 公共 API / 对应最后有效缓存（LKG）→ 旧 OSS / 对应缓存 → Lex 内置随包目录。
+Registry 另按 updatedAt 选择整份有效版本，较新内置快照可覆盖较旧在线快照；较新的在线快照也可能覆盖 Lex 随包更新。相同 revision 内容不一致时拒绝冲突快照并保留上一份合法版本。这与逐字段覆盖不同。
 localModels 整域缺失才用随包本地域，显式空不兜底。
 
-1. **确认目标**：记下 Server/客户端 commit、部署环境、实际目录源、当前 schema/revision、要改的 provider/model/引擎；核实官方资料与该通道实报。本文不是线上状态台账。
-2. **修改责任侧**：在授权范围内先维护 Server 正本，再协调客户端离线 Registry。遇到尚未上线的协议配套，分别记录工作分支、已合并和已部署状态，不混成“已支持”。
-3. **整表同步**：将审阅后的 Server `modelRegistry` 整体同步到客户端 `catalog/model-registry.json`，保持同 updatedAt、同内容。不要复制 Server 整份 providers.json，也不能只复制 localModels 造成悬空引用。新 revision 必须递增且不可变；价格 effectiveFrom / verifiedAt 保留其真实日期。
-4. **先验证兼容再发布**：完整结构过 parseModelRegistry / parseCatalog；确认旧客户端投影。尤其先读 [媒体扩展发布前置条件](../model-registry-v4-media.md#发布前置条件)：同为 V4 并不证明认识新增媒体字段。LKG/内置回退不能代替兼容方案。
-5. **核对真实下发**：检查可选 MODEL_CATALOG_URL 是否覆盖随包基线；部署后读取 `/api/model-catalog/catalog`，核对目标与旧版响应、ETag 和有效 revision。仅改文件、合并 PR、通过 CI 不算下发完成。
+1. **确认目标**：记下 Lex 客户端 commit、实际目录来源、当前 schema/revision、目标 provider/model/engine；核实官方资料与该通道实报。外部 Cindy Model Access 的仓库、配置和部署不由本仓管理，也不能从本地文件推断线上状态。
+2. **修改责任侧**：Lex PR 只维护客户端随包数据和兼容逻辑。需要更新在线 Cindy Model Access 时须由其责任方另行协调；没有该授权时不写外部服务，也不声称在线已发布。协议配套分别记录本仓实现、外部在线目录声明和生产部署状态。
+3. **完整更新随包 Registry**：在 `catalog/model-registry.json` 上保留完整现有 Registry 并加入经核实的完整条目、baseModels、路由与参考价，保证所有 `modelRef` 可解析；为内容变更分配严格递增且不可复用的 `updatedAt`。不复制外部 Catalog 片段，不制造相同 revision 异内容。
+4. **先验证兼容再交付**：完整结构过 parseModelRegistry / parseCatalog；确认旧客户端投影。尤其先读 [媒体扩展发布前置条件](../model-registry-v4-media.md#发布前置条件)：同为 V4 并不证明认识新增媒体字段。覆盖在线旧版本、较新外部快照、同 revision 冲突、LKG 与随包回退；LKG/内置回退不能代替兼容方案。
+5. **核对真实下发**：检查可选 MODEL_CATALOG_URL 是否覆盖随包基线；仅在有授权与可靠环境证据时核实外部 `/api/model-catalog/catalog`。仅改文件、合并 PR、通过 CI 不代表外部在线目录或生产部署已更新。
    同步回归须核对原有直连 route 与历史参考价区间未丢失；覆盖标准/Fast、缓存读写、长输入分档。
    离线默认档与已发布 Server 有差异时逐项披露。原生协议校验须遍历全部 route 和活动目录中的
    订阅 wire 别名，不能仅统计字段填写率；不能从供应商兼容 API 反推未知型号的原生协议。
-6. **验收到运行时**：确认客户端实际接受目标快照，保留用户覆盖；检查选择器、发出的上游 ID/参数及新旧任务。覆盖离线、坏快照、同 revision 冲突与回退版本；刷新不改用户显式型号/档位，工作预算更新按 [运行时细则](model-catalog-runtime.md) 在安全时机应用。
+6. **验收到运行时**：确认客户端实际接受目标快照，保留用户覆盖；检查选择器、发出的上游 ID/参数及新旧任务。刷新不改用户显式型号/档位，工作预算更新按 [运行时细则](model-catalog-runtime.md) 在安全时机应用。
 
 兼容补全只能补缺项：旧快照缺失 nativeApi 可由内置补全；明确协议、null、retired 优先。
 它不改窗口、价格、成员资格，也不从 Gateway wireProtocol 或 Pi piApi 猜原生协议。
-旧格式迁移中若两份 Registry 有差异，必须使用不同 revision 并记录原因，不能伪造同版本一致。
+本仓离线快照与外部在线 Registry 可因发布时序不同而版本不一；必须使用各自真实 revision 并披露差异，不能伪造外部同步或同版本一致。
 
 ## 通用供应商导入
 

@@ -12,8 +12,8 @@ export interface ProviderModelRecord {
   upstream: string;
   contextWindow: number;
   maxOutput?: number;
-  modalities: { input: string[]; output: string[] };
-  supportsImageInput: boolean;
+  modalities?: { input: string[]; output: string[] };
+  supportsImageInput?: boolean;
   reasoning: boolean;
   efforts: NonNullable<ModelMetadata["efforts"]>;
   defaultEffort: ModelMetadata["defaultEffort"];
@@ -108,8 +108,8 @@ export function providerModelMetadata(row: ProviderModelRecord): ModelMetadata {
     name: row.name,
     contextWindow: row.contextWindow,
     ...(row.maxOutput ? { maxOutputTokens: row.maxOutput } : {}),
-    modalities: row.modalities,
-    supportsImageInput: row.supportsImageInput,
+    ...(row.modalities ? { modalities: row.modalities } : {}),
+    ...(row.supportsImageInput !== undefined ? { supportsImageInput: row.supportsImageInput } : {}),
     efforts: row.efforts,
     defaultEffort: row.defaultEffort,
     ...(row.execution.pi.thinkingLevelMap?.off === null
@@ -133,7 +133,7 @@ export function providerCatalogForPi() {
             baseUrl: row.upstream,
             contextWindow: row.contextWindow,
             maxTokens: row.maxOutput,
-            input: row.modalities.input,
+            ...(row.modalities ? { input: row.modalities.input } : {}),
             reasoning: row.reasoning,
             ...(row.cost ? { cost: row.cost } : {}),
             ...row.execution.pi,

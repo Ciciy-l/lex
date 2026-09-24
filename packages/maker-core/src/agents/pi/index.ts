@@ -2267,7 +2267,7 @@ export class PiAgent extends BaseAgent {
       }
       const modelBaseUrl = endpoint ? piGatewayModelBaseUrl(endpoint, api) : undefined;
       gatewayApiByModel.set(m.id, api);
-      const supportsImageInput = m.supportsImageInput === true;
+      const supportsImageInput = m.supportsImageInput ?? true;
       gatewayImageInputByModel.set(m.id, supportsImageInput);
       const thinkingLevelMap = gatewayThinkingLevelMap(m.efforts, resolvedSpec?.thinkingLevelMap);
       return [{
@@ -5889,14 +5889,14 @@ export class PiAgent extends BaseAgent {
 
     const assertImageInputSupported = (images: readonly PiPromptImage[]): void => {
       if (images.length === 0) return;
-      const supportsImageInput =
+      const input =
         mutablePiProviderId === PI_PROVIDER_ID
-          ? gatewayImageInputByModel.get(mutableModel) === true
+          ? (gatewayImageInputByModel.get(mutableModel) === false ? ['text'] : ['text', 'image'])
           : nativeProviderById
               .get(mutablePiProviderId)
               ?.models.find((candidate) => candidate.id === resolveNativeModelId(mutablePiProviderId, mutableModel))
-              ?.input?.includes('image') === true;
-      if (supportsImageInput) return;
+              ?.input;
+      if (input === undefined || input.includes('image')) return;
       throw new PiImageInputUnsupportedError();
     };
 

@@ -30,6 +30,7 @@ const families: ReadonlyArray<readonly [RegExp, string]> = [
   [/^(?:doubao-)?seed-\d/, 'everydayWork'],
   [/^(?:hy\d|hunyuan(?:-|\d))/, 'readingAndWriting'],
   [/^minimax-/, 'coding'],
+  [/^mimo-/, 'writingAndCoding'],
   [/^muse-spark-/, 'everydayWork'],
   [/^grok-(?:build|code)-/, 'coding'],
   [/^grok-/, 'reasoning'],
