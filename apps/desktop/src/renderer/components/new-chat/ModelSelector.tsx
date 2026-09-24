@@ -3393,23 +3393,23 @@ export function ModelSelector({
   const contentSessionEngineFilter = useMemo(() => {
     if (!sessionEngineFilter) return undefined;
     const { onCrossEngineSelect } = sessionEngineFilter;
+    const switchEngine = async (args: Parameters<typeof onCrossEngineSelect>[0], configuring: boolean): Promise<boolean> => {
+      setKeepOpenForAgentConfirmation(true);
+      try {
+        const applied = await onCrossEngineSelect(args);
+        setOpenWithoutAutoRefresh(configuring || applied === false);
+        return applied !== false;
+      } catch {
+        setOpenWithoutAutoRefresh(true);
+        return false;
+      } finally {
+        setKeepOpenForAgentConfirmation(false);
+      }
+    };
     return {
       ...sessionEngineFilter,
-      onCrossEngineSelect: async (
-        args: Parameters<typeof onCrossEngineSelect>[0],
-      ): Promise<boolean> => {
-        setKeepOpenForAgentConfirmation(true);
-        try {
-          const applied = await onCrossEngineSelect(args);
-          // 成功后收起选单:确认切换已经落成「下一条才生效」的意图,胶囊用「下条：」标明;
-          // 窗口留着会让轨跟着意图翻到目标 Harness,再点任意模型又弹一次确认。
-          // 取消 / 失败留在原地,方便重选。
-          setOpenWithoutAutoRefresh(applied === false);
-          return applied !== false;
-        } finally {
-          setKeepOpenForAgentConfirmation(false);
-        }
-      },
+      onCrossEngineSelect: (args: Parameters<typeof onCrossEngineSelect>[0]) => switchEngine(args, false),
+      onCrossEngineConfigure: (args: Parameters<typeof onCrossEngineSelect>[0]) => switchEngine(args, true),
     };
   }, [sessionEngineFilter, setOpenWithoutAutoRefresh]);
 

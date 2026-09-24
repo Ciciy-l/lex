@@ -11,6 +11,7 @@ import { composeAtomicModelSelection } from '@cindy/model-providers';
 import {
   assessModelSwitchContext,
   MODEL_WINDOW_SWITCH_FORCE_REBUILD_PCT,
+  shouldHandoffAfterContextAssessment,
 } from './modelSwitchAssessment.js';
 
 export type RuntimeModelSwitchGate = {
@@ -95,6 +96,19 @@ export function assessRuntimeModelSwitchGate(
     return { skipRebuild: false, defer: true };
   }
   return { skipRebuild: false, defer: false };
+}
+
+export function shouldSkipColdPiWindowRehydration(input: {
+  contextTokens: number | null | undefined;
+  targetContextWindow: number | null | undefined;
+}): boolean {
+  if (typeof input.contextTokens !== 'number' || !Number.isFinite(input.contextTokens) || input.contextTokens < 0) return false;
+  if (!isPositiveWindow(input.targetContextWindow)) return false;
+  return !shouldHandoffAfterContextAssessment(assessModelSwitchContext({
+    contextTokens: input.contextTokens,
+    targetContextWindow: input.targetContextWindow,
+    autoCompactThresholdPct: MODEL_WINDOW_SWITCH_FORCE_REBUILD_PCT,
+  }));
 }
 
 /** 回合中登记 pending 时写入的运行时快照:必须带上点选时的 effort / Fast,不能等结算再猜。 */

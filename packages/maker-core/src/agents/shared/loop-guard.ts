@@ -1,4 +1,5 @@
 import { createHash, type Hash } from 'node:crypto';
+import { normalizeDisplayCommand } from '@cindy/maker-shared/command-display';
 
 /**
  * 第 1 层(快路径,零误判):连续多少次 name+input+output 完全一字不差,判死循环。
@@ -25,6 +26,10 @@ const DEFAULT_WINDOW_DISTINCT_LIMIT = 2;
 const DEFAULT_ROTATION_WINDOW_SIZE = 16;
 /** 第 3 层:轮转窗口填满后, distinct 指纹数 ≤ 此值即判循环。 */
 const DEFAULT_ROTATION_DISTINCT_LIMIT = 4;
+const STABLE_READ_WINDOW_SIZE = 128;
+const STABLE_READ_DISTINCT_LIMIT = 32;
+const STABLE_READ_MIN_REPEATS = 4;
+const READ_ONLY_TOOL_NAMES = new Set(['Read', 'Grep', 'Glob', 'read', 'grep', 'find', 'ls']);
 /**
  * 第 4 层(契约错误):同一工具连续多少次因**同类参数契约错误**被拒即止损。
  * 与 1-3 层互补:那三层按 name+input 指纹抓"重复同一调用",而 malformed 参数每次
@@ -109,7 +114,31 @@ export function classifyToolContractError(
  * 不能作为模型死循环证据。它本身不进入指纹,但也不重置普通工具的轨迹,
  * 避免模型通过在重复调用间插入轮询来绕过检测。
  */
-const LOOP_GUARD_EXEMPT_TOOL_NAMES = new Set(['TaskOutput']);
+const LOOP_GUARD_EXEMPT_TOOL_NAMES = new Set([
+  'TaskOutput', 'write_stdin', 'wait', 'sleep',
+  'dynamic:functions:write_stdin', 'dynamic:functions:wait',
+  'dynamic:clock:sleep', 'mcp:clock:sleep',
+]);
+
+function isPollingTool(name: string, input: unknown, isError: boolean): boolean {
+  if (LOOP_GUARD_EXEMPT_TOOL_NAMES.has(name)) return true;
+  if (!input || typeof input !== 'object') return false;
+  const record = input as Record<string, unknown>;
+  if (!isError && (name === 'exec' || name === 'Bash' || name === 'bash' || name === 'powershell')) {
+    const command = record.command ?? record.cmd;
+    if (typeof command === 'string') {
+      const script = normalizeDisplayCommand(command) ?? command;
+      const logPath = String.raw`(?:[A-Za-z0-9_./:@%+=,-]+\.log|'[A-Za-z0-9_./ :@%+=,-]+\.log'|"[A-Za-z0-9_./ :@%+=,-]+\.log")`;
+      const tail = new RegExp(String.raw`^(?:/usr/bin/|/bin/)?tail\s+(?:(?:-\d+|-n\s+\d+)\s+)?${logPath}(?:\s+${logPath})*\s*$`);
+      const windowsLogPath = String.raw`(?:[A-Za-z0-9_./\\:@%+=-]+\.log|'[A-Za-z0-9_./\\ :@%+=-]+\.log'|"[A-Za-z0-9_./\\ :@%+=-]+\.log")`;
+      const target = String.raw`(?:(?:-Path|-LiteralPath)\s+)?${windowsLogPath}`;
+      const getContent = new RegExp(String.raw`^Get-Content\s+(?:-Tail\s+\d+\s+${target}|${target}\s+-Tail\s+\d+)\s*$`, 'i');
+      if (script.split(/;|&&/).every((part) => tail.test(part.trim()) || getContent.test(part.trim()))) return true;
+    }
+  }
+  if (name !== 'subagent') return false;
+  return record.action === 'status' || record.action === 'list';
+}
 
 interface PendingToolUse {
   name: string;
@@ -183,6 +212,7 @@ export class ToolLoopGuard {
 
   // 第 2/3 层共用状态: 最近 max(windowSize, rotationWindowSize) 个 name+input 指纹
   private callWindow: string[] = [];
+  private stableReadWindow: string[] = [];
 
   // 第 4 层无批次兼容状态: 最近一次契约错误的 name+类别键与连续计数
   private lastContractKey: string | null = null;
@@ -229,7 +259,7 @@ export class ToolLoopGuard {
     const toolUse = this.pendingToolUses.get(toolUseId);
     this.pendingToolUses.delete(toolUseId);
     if (!toolUse) return { kind: 'ok' };
-    if (LOOP_GUARD_EXEMPT_TOOL_NAMES.has(toolUse.name)) return { kind: 'ok' };
+    if (isPollingTool(toolUse.name, toolUse.input, isError)) return { kind: 'ok' };
 
     // 第 4 层: 同工具同类契约错误连续出现(input 各不相同也计)。放在 1-3 层之前:
     // 它的阈值(3)低于第 1 层(4),同 input 的重复契约错误也应更早止损。
@@ -285,6 +315,24 @@ export class ToolLoopGuard {
 
     // 第 1 层: 连续 name+input+output 完全相同
     const fullFingerprint = fingerprintToolCall(toolUse.name, toolUse.input, output);
+    if (READ_ONLY_TOOL_NAMES.has(toolUse.name)) {
+      this.stableReadWindow.push(fullFingerprint);
+      if (this.stableReadWindow.length > STABLE_READ_WINDOW_SIZE) this.stableReadWindow.shift();
+      if (this.stableReadWindow.length === STABLE_READ_WINDOW_SIZE) {
+        const counts = new Map<string, number>();
+        for (const fingerprint of this.stableReadWindow) {
+          counts.set(fingerprint, (counts.get(fingerprint) ?? 0) + 1);
+        }
+        const repeated = [...counts.values()].reduce((sum, count) =>
+          sum + (count >= STABLE_READ_MIN_REPEATS ? count : 0), 0);
+        if (counts.size <= STABLE_READ_DISTINCT_LIMIT &&
+          repeated >= Math.ceil(STABLE_READ_WINDOW_SIZE * 0.9)) {
+          return { kind: 'hard', reason: 'rotation', count: STABLE_READ_WINDOW_SIZE, toolName: toolUse.name };
+        }
+      }
+    } else {
+      this.stableReadWindow = [];
+    }
     if (fullFingerprint === this.lastFullFingerprint) {
       this.consecutiveStreak += 1;
     } else {
@@ -347,6 +395,7 @@ export class ToolLoopGuard {
     this.lastFullFingerprint = null;
     this.consecutiveStreak = 0;
     this.callWindow = [];
+    this.stableReadWindow = [];
     this.lastContractKey = null;
     this.contractStreak = 0;
     this.resetContractBatchState();

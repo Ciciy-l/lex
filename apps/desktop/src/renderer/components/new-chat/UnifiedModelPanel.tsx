@@ -179,6 +179,7 @@ export interface UnifiedModelPanelProps {
        */
       favoriteUid?: string | null;
     }) => void | boolean | Promise<void | boolean>;
+    onCrossEngineConfigure?: NonNullable<UnifiedModelPanelProps['sessionEngineFilter']>['onCrossEngineSelect'];
   };
   /**
    * 可选「跟随会话」行(opt-in,仅 scheduler 的 heartbeat 绑定会话任务)。
@@ -337,7 +338,7 @@ export function UnifiedModelPanel({
   // 未到时可能回退成 cc),草稿才用 liveAgentKind(= 草稿 vendor)。选中行豁免
   // (keepModel.agent)、isLiveRow 与选中行的 forceEngine 必须用**同一个**口径,否则强制显示
   // 出来的引擎反而让 isLiveRow 判不中(2026-08-14 测试当场抓到)。
-  const liveEngineAgent = sessionAgent ?? liveAgentKind;
+  const liveEngineAgent = sessionEngineFilter?.pendingTarget ?? sessionAgent ?? liveAgentKind;
   /**
    * 选中行豁免(`keepModel`)只对**已建会话**开:
    *   - `scope:'session'` = 面板画的是一个正在跑的会话,它选中的模型即便被下架 / 停用也必须

@@ -85,6 +85,10 @@ apps/desktop/codex-home/
 
 # ── 设计与开发临时产物 ───────────────────────────────────────
 docs/superpowers/
+/.tmp/
+/Templex-precommit-20260910-final/
+/apps/desktop/resources/cli/lex.exe
+/tools/omp/updates/
 
 # ── IDE / 本地知识工具 ───────────────────────────────────────
 .idea/

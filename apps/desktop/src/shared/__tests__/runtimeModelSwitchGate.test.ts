@@ -5,6 +5,7 @@ import {
   applyWithVerifiedModelWindow,
   buildDeferredRuntimeSelectionProfile,
   nextDeferredModelWindowRetry,
+  shouldSkipColdPiWindowRehydration,
 } from '../runtimeModelSwitchGate';
 
 const million = 1_000_000;
@@ -20,6 +21,15 @@ const base = {
   contextTokensKnown: true,
   contextTokens: 450_000,
 };
+
+describe('shouldSkipColdPiWindowRehydration', () => {
+  it('skips only when a known live usage snapshot leaves headroom in the target window', () => {
+    expect(shouldSkipColdPiWindowRehydration({ contextTokens: 100_000, targetContextWindow: 200_000 })).toBe(true);
+    expect(shouldSkipColdPiWindowRehydration({ contextTokens: 180_000, targetContextWindow: 200_000 })).toBe(false);
+    expect(shouldSkipColdPiWindowRehydration({ contextTokens: null, targetContextWindow: 200_000 })).toBe(false);
+    expect(shouldSkipColdPiWindowRehydration({ contextTokens: 100_000, targetContextWindow: null })).toBe(false);
+  });
+});
 
 describe('assessRuntimeModelSwitchGate', () => {
   it.each([

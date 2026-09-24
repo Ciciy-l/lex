@@ -529,6 +529,88 @@ describe("buildUserProvider (per-runtime)", () => {
     });
   });
 
++  it("keeps custom Claude Code and Codex defaults while honoring explicit effort capabilities", () => {
+    const provider = buildUserProvider({
+      id: "effort-boundary",
+      name: "Effort Boundary",
+      runtimes: {
+        "claude-code": {
+          baseUrl: "https://cc.example",
+          models: [
+            { id: "cc-default", name: "CC default" },
+            {
+              id: "cc-explicit",
+              name: "CC explicit",
+              reasoning: true,
+              reasoningEfforts: ["low", "max"],
+              reasoningDefaultEffort: "max",
+            },
+          ],
+        },
+        codex: {
+          baseUrl: "https://codex.example/v1",
+          models: [
+            { id: "codex-default", name: "Codex default" },
+            {
+              id: "codex-explicit",
+              name: "Codex explicit",
+              reasoning: true,
+              reasoningEfforts: ["low", "high", "xhigh"],
+              reasoningDefaultEffort: "xhigh",
+            },
+          ],
+        },
+        pi: {
+          baseUrl: "https://pi.example/v1",
+          models: [{
+            id: "pi-explicit",
+            name: "Pi explicit",
+            reasoning: true,
+            reasoningEfforts: ["low", "high"],
+            reasoningDefaultEffort: "high",
+          }],
+        },
+        omp: {
+          baseUrl: "https://omp.example/v1",
+          models: [{
+            id: "omp-explicit",
+            name: "OMP explicit",
+            reasoning: true,
+            reasoningEfforts: ["medium", "max"],
+            reasoningDefaultEffort: "max",
+          }],
+        },
+      },
+    });
+
+    expect(provider.models["claude-code"]).toMatchObject([
+      {
+        id: "cc-default",
+        efforts: ["low", "medium", "high", "xhigh", "max"],
+        defaultEffort: "medium",
+      },
+      { id: "cc-explicit", efforts: ["low", "max"], defaultEffort: "max" },
+    ]);
+    expect(provider.models.codex).toMatchObject([
+      {
+        id: "codex-default",
+        efforts: ["low", "medium", "high", "xhigh", "max"],
+        defaultEffort: "medium",
+      },
+      {
+        id: "codex-explicit",
+        efforts: ["low", "high", "xhigh"],
+        defaultEffort: "xhigh",
+      },
+    ]);
+    expect(provider.models.pi).toMatchObject([
+      { id: "pi-explicit", efforts: ["low", "high"], defaultEffort: "high" },
+    ]);
+    expect(provider.models.omp).toMatchObject([
+      { id: "omp-explicit", efforts: ["medium", "max"], defaultEffort: "max" },
+    ]);
+  });
+
   it.each(["gpt-5.6-sol", "gpt-5.6-terra"])(
     "inherits equivalent Registry effort metadata across matching entries for %s",
     (modelId) => {
