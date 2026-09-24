@@ -341,6 +341,9 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
   /** Serializes a terminal receipt with a user continuing the same task card. */
   const completionInFlight = new Map<string, Promise<void>>();
   const interactionRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // This service instance is scoped to the current database owner. An in-flight
+  // wake-up may settle after teardown; it must not target the replacement owner.
+  let disposed = false;
   const cleanupRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Live resolver handles remain process-local; the user-visible waiting
    * summary and paused status are persisted on the delegation row. */
@@ -760,6 +763,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         .select({
           status: sessions.status,
           role: botSessionLinks.role,
+          linkArchivedAt: botSessionLinks.archivedAt,
           botId: botSessionLinks.botId,
           profileStatus: botProfiles.status,
         })
@@ -770,6 +774,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         .limit(1);
       return (
         parent?.status === 'active'
+        && parent.linkArchivedAt === null
         && parent.profileStatus === 'active'
         && parent.botId === requestingBotId
         && (parent.role === 'canonical' || parent.role === 'delegation')
@@ -1009,41 +1014,103 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     pending: BotDelegationPendingInteraction & { request: InteractionRequest },
     attempt = 0,
   ): Promise<void> => {
-    const stillPending = () => pendingInteractions.get(row.id)?.requestId === pending.requestId
+    const stillPendingLocally = () => !disposed
+      && pendingInteractions.get(row.id)?.requestId === pending.requestId
       && !pendingInteractions.get(row.id)?.decisionApplied;
-    if (!stillPending()
-      || (row.childSessionId && heldSessionIds.has(row.childSessionId))) return;
-    const requesterSessionId = await requesterLiveSessionId(
-      row.requestingBotId,
-      row.parentSessionId,
-    );
-    if (!stillPending() || (row.childSessionId && heldSessionIds.has(row.childSessionId))) return;
+    const requesterIsHeld = () => !!row.childSessionId && heldSessionIds.has(row.childSessionId);
+    const currentRequestState = async (): Promise<'current' | 'stale' | 'unavailable'> => {
+      if (!stillPendingLocally() || requesterIsHeld()) return 'stale';
+      try {
+        const db = getDbClient().drizzle;
+        const [current] = await db.select({
+          status: botDelegations.status,
+          pendingInteractionJson: botDelegations.pendingInteractionJson,
+          permissionSnapshotJson: botDelegations.permissionSnapshotJson,
+        }).from(botDelegations).where(eq(botDelegations.id, row.id)).limit(1);
+        if (!current || current.status !== 'waiting'
+          || parsePendingInteraction(current.pendingInteractionJson)?.requestId !== pending.requestId
+          || readTaskPause(current)
+          || parseRecord(current.permissionSnapshotJson).taskCancelRequested === true) return 'stale';
+        const [profile] = await db.select({ status: botProfiles.status }).from(botProfiles)
+          .where(eq(botProfiles.id, row.requestingBotId)).limit(1);
+        return profile?.status === 'active' && stillPendingLocally() && !requesterIsHeld()
+          ? 'current' : 'stale';
+      } catch {
+        return stillPendingLocally() && !requesterIsHeld() ? 'unavailable' : 'stale';
+      }
+    };
+    const scheduleRetry = () => {
+      if (!stillPendingLocally() || requesterIsHeld()) return;
+      clearInteractionRetryTimer(row.id);
+      const delay = Math.min(MAX_RETRY_DELAY_MS, 1_000 * 2 ** Math.min(attempt, 6));
+      const timer = setTimeout(() => {
+        interactionRetryTimers.delete(row.id);
+        void notifyRequesterOfInteraction(row, pending, attempt + 1);
+      }, delay);
+      timer.unref?.();
+      interactionRetryTimers.set(row.id, timer);
+    };
+    const stopIfStale = (state: 'current' | 'stale' | 'unavailable'): boolean => {
+      if (state === 'current') return false;
+      if (state === 'stale') clearInteractionRetryTimer(row.id);
+      else scheduleRetry();
+      return true;
+    };
+    const logWakeFailure = (error: unknown) => {
+      log.warn('Bot task interaction wake-up deferred', {
+        delegationId: row.id,
+        requestId: pending.requestId,
+        error: error instanceof Error ? error.name : 'unknown',
+      });
+    };
     const message = [
       `${UI_ACTION_TRIGGER_PREFIX}[任务需要你处理] task_id: ${row.id}`,
       `类型: ${pending.request.kind}`,
       pending.summary,
+      pending.request.kind === 'permission' ? `请求工具: ${pending.request.toolName}` : '',
       '你是用户的代理。能按用户已表达的意图安全决定，就用 `message_session_task` 直接回答；拿不准才用一句人话问用户。不要让用户去子任务窗口处理，也不要复述内部编号。',
-    ].join('\n\n');
-    const dispatched = requesterSessionId
-      ? await deps.dispatch({
-          targetSessionId: requesterSessionId,
-          message,
-          persistedContent: message,
-          clientId: `bot-delegation-interaction:${row.id}:${pending.requestId}`,
-        }).catch(() => null)
-      : null;
-    if (dispatched?.ok) {
-      clearInteractionRetryTimer(row.id);
-      return;
+    ].filter(Boolean).join('\n\n');
+    if (stopIfStale(await currentRequestState())) return;
+    let requesterSessionId: string | null = null;
+    try {
+      requesterSessionId = await requesterLiveSessionId(row.requestingBotId, row.parentSessionId);
+    } catch (error) {
+      logWakeFailure(error);
     }
-    clearInteractionRetryTimer(row.id);
-    const delay = Math.min(MAX_RETRY_DELAY_MS, 1_000 * 2 ** Math.min(attempt, 6));
-    const timer = setTimeout(() => {
-      interactionRetryTimers.delete(row.id);
-      void notifyRequesterOfInteraction(row, pending, attempt + 1);
-    }, delay);
-    timer.unref?.();
-    interactionRetryTimers.set(row.id, timer);
+    if (stopIfStale(await currentRequestState())) return;
+    let dispatched: DispatchResult | null = null;
+    try {
+      dispatched = requesterSessionId
+        ? await deps.dispatch({
+            targetSessionId: requesterSessionId,
+            message,
+            persistedContent: message,
+            clientId: `bot-delegation-interaction:${row.id}:${pending.requestId}`,
+          })
+        : null;
+    } catch (error) {
+      logWakeFailure(error);
+    }
+    if (dispatched?.ok) {
+      // Acceptance in a parent that was deleted or archived during dispatch
+      // does not wake its replacement. The client ID stays fixed for this
+      // decision, so reconciling a replacement cannot answer it twice.
+      if (stopIfStale(await currentRequestState())) return;
+      let currentTarget: string | null = null;
+      try {
+        currentTarget = await requesterLiveSessionId(row.requestingBotId, row.parentSessionId);
+      } catch (error) {
+        logWakeFailure(error);
+      }
+      const state = await currentRequestState();
+      if (stopIfStale(state)) return;
+      if (currentTarget === requesterSessionId) {
+        clearInteractionRetryTimer(row.id);
+        return;
+      }
+    }
+    if (stopIfStale(await currentRequestState())) return;
+    scheduleRetry();
   };
 
   const handleInteractionStartUnserialized = async (
@@ -3136,6 +3203,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
   );
 
   const dispose = (): void => {
+    disposed = true;
     unregisterParentCancellation();
     for (const timer of timers.values()) clearTimeout(timer);
     timers.clear();

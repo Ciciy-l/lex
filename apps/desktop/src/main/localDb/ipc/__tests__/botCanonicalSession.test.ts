@@ -3263,6 +3263,9 @@ describe('Bot Session task end-to-end runtime', () => {
     resolveInteraction?: NonNullable<
       Parameters<typeof createBotDelegationService>[0]['resolveInteraction']
     >;
+    onResultReceiptPersisted?: () => Promise<void>;
+    onCompletionDispatched?: () => Promise<void>;
+    onInteractionDispatched?: () => Promise<void>;
   } = {}) {
     const accountReady = options.accountReady ?? (() => true);
     const started: StartedTurn[] = [];
@@ -3444,7 +3447,14 @@ describe('Bot Session task end-to-end runtime', () => {
           return { ok: true as const, targetSessionId: params.targetSessionId, wakeKind: 'queued' as const };
         }
       }
-      return dispatchDirect(params);
+      const result = await dispatchDirect(params);
+      if (result.ok && params.clientId?.startsWith('bot-delegation-completion:')) {
+        await options.onCompletionDispatched?.();
+      }
+      if (result.ok && params.clientId?.startsWith('bot-delegation-interaction:')) {
+        await options.onInteractionDispatched?.();
+      }
+      return result;
     });
 
     const abortSession = vi.fn(async (id: string): Promise<void> => { coordinator?.stop(id); });
@@ -5004,10 +5014,22 @@ describe('Bot Session task end-to-end runtime', () => {
         kind: 'permission' as const,
         requestId: 'permission-1',
         toolName: 'write_file',
-        input: { path: '/tmp/report.md' },
+        input: {
+          path: '/tmp/report.md',
+          headers: { 'X-Auth': 'opaque-private-credential' },
+          token: 'private-credential-value',
+        },
         title: '写入报告',
       };
       await runtime.delegation.handleInteractionStart(started.childSessionId, request);
+      const wake = runtime.dispatch.mock.calls.find(([params]) =>
+        params.clientId === `bot-delegation-interaction:${started.delegationId}:${request.requestId}`,
+      )?.[0].message;
+      expect(wake).toContain('请求工具: write_file');
+      expect(wake).not.toContain('/tmp/report.md');
+      expect(wake).not.toContain('opaque-private-credential');
+      expect(wake).not.toContain('private-credential-value');
+      expect(wake).not.toContain('请求参数');
       await expect(
         runtime.delegation.getSessionTask('session-1', started.delegationId),
       ).resolves.toMatchObject({
@@ -5018,6 +5040,7 @@ describe('Bot Session task end-to-end runtime', () => {
           pendingInteraction: {
             requestId: 'permission-1',
             kind: 'permission',
+            summary: '写入报告',
           },
         },
       });
@@ -5043,6 +5066,135 @@ describe('Bot Session task end-to-end runtime', () => {
       runtime.dispose();
     }
   });
+
+  it.each(['deleted', 'archived'] as const)(
+    'retries a pending approval wake-up in the replacement canonical task after parent %s', async (parentEnd) => {
+      await seedPair();
+      vi.useFakeTimers();
+      let replacementSessionId: string | undefined;
+      const runtime = createDelegationRuntime({
+        onInteractionDispatched: async () => {
+          if (replacementSessionId) return;
+          if (parentEnd === 'deleted') {
+            h.sqlite!.prepare("DELETE FROM sessions WHERE id = 'session-1'").run();
+          } else {
+            h.sqlite!.prepare("UPDATE sessions SET status = 'archived' WHERE id = 'session-1'").run();
+            h.sqlite!.prepare("UPDATE bot_session_links SET role = 'history', archived_at = 10_000 WHERE session_id = 'session-1' AND role = 'canonical'").run();
+          }
+          const recovered = await invoke('local-db:bots:create-canonical-session', {
+            botId: 'bot-a', expectedCanonicalSessionId: null, expectedProfileVersion: 1,
+          });
+          replacementSessionId = recovered.canonicalSessionId as string;
+        },
+      });
+      try {
+        const task = await runtime.delegation.startSessionTask({
+          callerSessionId: 'session-1', objective: 'Wait for approval before writing.',
+        });
+        if (!task.ok) throw new Error('Task did not start');
+        const request = { kind: 'permission' as const, requestId: 'replacement-approval', toolName: 'write_file', input: {} };
+        await runtime.delegation.handleInteractionStart(task.childSessionId, request);
+        expect(replacementSessionId).toBeTruthy();
+        const wakeId = `bot-delegation-interaction:${task.delegationId}:${request.requestId}`;
+        expect(runtime.dispatch.mock.calls.filter(([params]) => params.clientId === wakeId)
+          .map(([params]) => params.targetSessionId)).toEqual(['session-1']);
+        expect(h.sqlite!.prepare('SELECT 1 FROM messages WHERE session_id = ? AND client_id = ?')
+          .get(replacementSessionId, wakeId)).toBeUndefined();
+
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(h.sqlite!.prepare('SELECT 1 FROM messages WHERE session_id = ? AND client_id = ?')
+          .get(replacementSessionId, wakeId)).toBeTruthy();
+        expect(runtime.started.filter(turn => turn.sessionId === replacementSessionId)).toHaveLength(1);
+        expect(await runtime.delegation.getSessionTask(replacementSessionId!, task.delegationId))
+          .toMatchObject({ task: { status: 'waiting', pendingInteraction: { requestId: request.requestId } } });
+      } finally {
+        runtime.dispose();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each(['answered', 'held', 'paused', 'cancelled', 'owner-changed', 'new-request'] as const)(
+    'does not retry an obsolete approval wake-up after %s', async (state) => {
+      await seedPair();
+      vi.useFakeTimers();
+      let runtime!: ReturnType<typeof createDelegationRuntime>;
+      let taskId = '';
+      let childSessionId = '';
+      let request: { kind: 'permission'; requestId: string; toolName: string; input: Record<string, unknown> } = {
+        kind: 'permission', requestId: 'obsolete-approval', toolName: 'write_file', input: {},
+      };
+      let changed = false;
+      let replacementSessionId: string | undefined;
+      runtime = createDelegationRuntime({
+        taskControl: state === 'held',
+        onInteractionDispatched: async () => {
+          if (changed) return;
+          changed = true;
+          h.sqlite!.prepare("DELETE FROM sessions WHERE id = 'session-1'").run();
+          const recovered = await invoke('local-db:bots:create-canonical-session', {
+            botId: 'bot-a', expectedCanonicalSessionId: null, expectedProfileVersion: 1,
+          });
+          replacementSessionId = recovered.canonicalSessionId as string;
+          if (state === 'owner-changed') {
+            // register tears down this owner-scoped service before the new owner
+            // can receive any completion of the in-flight dispatch.
+            runtime.dispose();
+          } else if (state === 'paused' || state === 'cancelled' || state === 'new-request') {
+            const current = h.sqlite!.prepare('SELECT permission_snapshot_json AS snapshot FROM bot_delegations WHERE id = ?')
+              .get(taskId) as { snapshot: string };
+            const snapshot = JSON.parse(current.snapshot) as Record<string, unknown>;
+            if (state === 'paused') {
+              snapshot.taskPause = { token: 'pause-before-retry', pausedAt: 10_000, previousStatus: 'waiting' };
+            } else if (state === 'cancelled') {
+              snapshot.taskCancelRequested = true;
+            }
+            if (state === 'new-request') {
+              h.sqlite!.prepare('UPDATE bot_delegations SET pending_interaction_json = ? WHERE id = ?')
+                .run(JSON.stringify({ requestId: 'current-approval', kind: 'permission', summary: 'A newer request', raisedAt: 10_000 }), taskId);
+            } else {
+              h.sqlite!.prepare('UPDATE bot_delegations SET permission_snapshot_json = ? WHERE id = ?')
+                .run(JSON.stringify(snapshot), taskId);
+            }
+          }
+        },
+      });
+      try {
+        const task = await runtime.delegation.startSessionTask({
+          callerSessionId: 'session-1', objective: 'Wait for the current approval only.',
+        });
+        if (!task.ok) throw new Error('Task did not start');
+        taskId = task.delegationId;
+        childSessionId = task.childSessionId;
+        await runtime.delegation.handleInteractionStart(childSessionId, request);
+        if (state === 'answered') await runtime.delegation.handleInteractionEnd(childSessionId, request);
+        if (state === 'held') {
+          await runtime.delegation.stopSessionTask(replacementSessionId!, taskId, 'pause');
+        }
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        const messagesFor = (requestId: string) => runtime.dispatch.mock.calls.filter(([params]) =>
+          params.clientId === `bot-delegation-interaction:${taskId}:${requestId}`,
+        );
+        expect(messagesFor('obsolete-approval')).toHaveLength(1);
+        if (state === 'new-request') {
+          expect(messagesFor('current-approval')).toHaveLength(0);
+          expect(JSON.parse(h.sqlite!.prepare('SELECT pending_interaction_json FROM bot_delegations WHERE id = ?')
+            .pluck().get(taskId) as string).requestId).toBe('current-approval');
+        } else if (state === 'owner-changed') {
+          expect(replacementSessionId).toBeTruthy();
+          expect(messagesFor('obsolete-approval')).toHaveLength(1);
+          expect(h.sqlite!.prepare('SELECT 1 FROM messages WHERE session_id = ? AND client_id = ?')
+            .get(replacementSessionId, `bot-delegation-interaction:${taskId}:obsolete-approval`)).toBeUndefined();
+        } else {
+          expect(messagesFor('current-approval')).toHaveLength(0);
+        }
+      } finally {
+        runtime.dispose();
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it('does not charge user-decision time against the Session task deadline', async () => {
     await seedPair();
