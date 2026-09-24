@@ -27,6 +27,10 @@ import { Spinner } from '@/components/ui/spinner';
 import { toast } from '@/lib/toast';
 import { useConfirmDialog } from '@/components/ui/confirm-dialog-provider';
 import { mapIpcErrorToI18nKey } from '@/utils/ipcError';
+import {
+  SshModelSelectionError,
+  sshModelSelectionErrorKeys,
+} from '@/features/cc-agent/sshSessionModelSelection';
 import { useControllableDevices } from '@/hooks/useControllableDevices';
 import { useCCSessions } from '@/hooks/useCCSessions';
 import {
@@ -324,7 +328,11 @@ export function AddRemoteProjectDialog({
       }
       onOpenChange(false);
     } catch (err) {
-      toast.error(t(mapIpcErrorToI18nKey(err, { fallback: 'newChat.addRemoteProject.toast.addFailed' })));
+      toast.error(t(
+        err instanceof SshModelSelectionError
+          ? sshModelSelectionErrorKeys[err.reason]
+          : mapIpcErrorToI18nKey(err, { fallback: 'newChat.addRemoteProject.toast.addFailed' }),
+      ));
     } finally {
       setBusy(false);
     }

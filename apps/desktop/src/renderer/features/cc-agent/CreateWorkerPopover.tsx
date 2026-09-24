@@ -23,6 +23,11 @@ import { useAgentCapabilities } from '@/hooks/useAgentCapabilities';
 import { useDeviceProviders } from '@/hooks/useDeviceProviders';
 import { useProviders } from '@/hooks/useProviders';
 import { filterChatBridgedCodexProviders } from '@/lib/providerModels';
+import {
+  resolveSshSessionModelSelection,
+  sshModelSelectionErrorKeys,
+} from './sshSessionModelSelection';
+import { toast } from '@/lib/toast';
 import { isSidebarWindow } from '@/lib/sidebarWindow';
 import { cn } from '@/lib/utils';
 import { isModelEnabled, useModelVisibilityVersion } from '@/state/modelVisibilityPrefs';
@@ -574,10 +579,29 @@ export function CreateWorkerPopover({
 
   const handleCreate = useCallback(async () => {
     if (!canCreate || submittingRef.current) return;
+    const sshCodexSelection = requiresDirectSshProviderRoute && agent === 'codex'
+      ? resolveSshSessionModelSelection({
+          providers,
+          loading: providersLoading,
+          loadFailed: localProviders.loadFailed || !!providersError,
+          agentKind: agent,
+          preferred: { model, providerId: providerSource, effort, fastMode: fast },
+          getPresetEffort: getProviderModelEffort,
+          getPresetFast: getProviderModelFast,
+        })
+      : null;
+    if (sshCodexSelection && !sshCodexSelection.ok) {
+      toast.error(t(sshModelSelectionErrorKeys[sshCodexSelection.reason]));
+      return;
+    }
     submittingRef.current = true;
     setIsSubmitting(true);
     // 提交前对 (来源, 模型) 再收窄一次:收敛 effect 与提交之间目录可能已变化。
-    const submitProviderId = narrowProviderSource(providerSource, model);
+    const submitProviderId = sshCodexSelection?.ok
+      ? sshCodexSelection.providerId
+      : narrowProviderSource(providerSource, model);
+    const submitEffortValue = sshCodexSelection?.ok ? sshCodexSelection.effort : effort;
+    const submitFastValue = sshCodexSelection?.ok ? sshCodexSelection.fastMode : fast;
     const nextPrefs: WorkerCreationPrefs = {
       ...prefs,
       lastAgent: agent,
@@ -586,8 +610,8 @@ export function CreateWorkerPopover({
         : prefs.workerPermissionMode,
       [agent]: {
         model,
-        effort,
-        fast,
+        effort: submitEffortValue,
+        fast: submitFastValue,
         // device-link 创建不覆盖本地来源记忆(远程面板没有来源维度)。
         providerId: deviceId ? prefs[agent].providerId : submitProviderId,
       },
@@ -604,8 +628,8 @@ export function CreateWorkerPopover({
     const submitEfforts: readonly string[] = submitEffortMeta?.efforts ?? [];
     const submitEffort = submitEfforts.length === 0
       ? undefined
-      : submitEfforts.includes(effort)
-        ? effort
+      : submitEfforts.includes(submitEffortValue)
+        ? submitEffortValue
         : (submitEffortMeta?.defaultEffort ?? undefined);
     try {
       await onCreate({
@@ -613,7 +637,7 @@ export function CreateWorkerPopover({
         agent,
         model,
         effort: submitEffort,
-        fast: currentModelSupportsFast ? fast : undefined,
+        fast: currentModelSupportsFast ? submitFastValue : undefined,
         providerId: submitProviderId,
         initialTask,
         ...(supportsWorkerPermissionModeSelection
@@ -626,6 +650,12 @@ export function CreateWorkerPopover({
     }
   }, [
     canCreate,
+    requiresDirectSshProviderRoute,
+    providers,
+    providersLoading,
+    providersError,
+    localProviders.loadFailed,
+    t,
     prefs,
     activeRole,
     agent,
