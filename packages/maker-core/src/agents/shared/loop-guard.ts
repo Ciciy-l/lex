@@ -115,7 +115,7 @@ export function classifyToolContractError(
  * 避免模型通过在重复调用间插入轮询来绕过检测。
  */
 const LOOP_GUARD_EXEMPT_TOOL_NAMES = new Set([
-  'TaskOutput', 'write_stdin', 'wait', 'sleep',
+  'TaskOutput', 'write_stdin', 'wait', 'sleep', 'collab:wait',
   'dynamic:functions:write_stdin', 'dynamic:functions:wait',
   'dynamic:clock:sleep', 'mcp:clock:sleep',
 ]);

@@ -681,6 +681,26 @@ describe('integrity regression coverage', () => {
 
     expect(onProgress).toHaveBeenCalledWith(bytes.byteLength);
   });
+
+  it('aborts a streamed cache download and removes its temporary file', async () => {
+    const controller = new AbortController();
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      start(stream) { stream.enqueue(Uint8Array.from([1, 2, 3])); },
+      cancel,
+    });
+    netFetchMock.mockResolvedValue({ ok: true, status: 200, body });
+    const pending = downloadToFile(KEY, '/tmp/final.bin', undefined, undefined, controller.signal);
+
+    await vi.waitFor(() => expect(createWriteStreamMock).toHaveBeenCalledOnce());
+    controller.abort();
+    await expect(pending).rejects.toThrow();
+    expect(netFetchMock).toHaveBeenCalledWith('https://oss.example/get', {
+      method: 'GET', signal: controller.signal,
+    });
+    expect(cancel).toHaveBeenCalled();
+    expect(rmMock).toHaveBeenCalledWith(expect.stringMatching(/\.part$/), { force: true });
+  });
 });
 
 /** 像 undici / Chromium 那样把流式 body 抽干后回 200(不抽干 counter 不会 flush)。 */

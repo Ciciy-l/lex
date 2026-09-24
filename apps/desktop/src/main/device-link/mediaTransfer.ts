@@ -576,9 +576,10 @@ export async function downloadToFile(
   destPath: string,
   expected?: AttachmentIntegrity,
   onProgress?: (downloadedBytes: number) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const { getUrl } = await presignGet(key);
-  const resp = await net.fetch(getUrl, { method: 'GET' });
+  const resp = await net.fetch(getUrl, { method: 'GET', signal });
   if (!resp.ok) throw new Error(`OSS GET 失败 (${resp.status})`);
   if (!resp.body) throw new Error('OSS GET 响应无 body');
   const partPath = `${destPath}.${randomUUID()}.part`;
@@ -597,6 +598,7 @@ export async function downloadToFile(
       Readable.fromWeb(resp.body as Parameters<typeof Readable.fromWeb>[0]),
       counter,
       createWriteStream(partPath, { flags: 'wx' }),
+      { signal },
     );
     const sha256 = hasher.digest('hex');
     if (expected && size !== expected.size) {

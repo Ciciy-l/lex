@@ -1835,9 +1835,9 @@ function executeUpdateLinux(debPath: string): void {
   });
 }
 
-async function executeRelaunch(theme: 'light' | 'dark', checkForBinaryUpdates = false): Promise<void> {
+async function executeRelaunch(theme: 'light' | 'dark'): Promise<void> {
   try {
-    await executeRelaunchUnguarded(theme, checkForBinaryUpdates);
+    await executeRelaunchUnguarded(theme);
   } catch (err) {
     log.error('executeRelaunch() failed: %s', err instanceof Error ? err.stack ?? err.message : String(err));
     try {
@@ -1857,7 +1857,7 @@ async function executeRelaunch(theme: 'light' | 'dark', checkForBinaryUpdates = 
   }
 }
 
-async function executeRelaunchUnguarded(theme: 'light' | 'dark', checkForBinaryUpdates: boolean): Promise<void> {
+async function executeRelaunchUnguarded(theme: 'light' | 'dark'): Promise<void> {
   if (isRelaunching) {
     log.info('executeRelaunch() skipped — already in progress');
     return;
@@ -1947,7 +1947,7 @@ async function executeRelaunchUnguarded(theme: 'light' | 'dark', checkForBinaryU
     maskPath(readyFilePath), fs.statSync(readyFilePath).size,
   );
 
-  if (checkForBinaryUpdates && readyVersion) {
+  if (readyVersion) {
     cancelStartupBinaryUpdateCheck = writeStartupBinaryUpdateMarker(app.getPath('userData'), readyVersion);
   }
 
@@ -1990,7 +1990,7 @@ export function initUpdateService(): void {
     // default and the .env'd-out look most users have.
     const resolved = theme === 'light' || theme === 'dark' ? theme : 'dark';
     resolvedRelaunchTheme = resolved;
-    void executeRelaunch(resolved, true);
+    void executeRelaunch(resolved);
   });
 
   ipcMain.handle(

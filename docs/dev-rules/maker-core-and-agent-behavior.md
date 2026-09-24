@@ -11,6 +11,10 @@ Agent 会话的事件流与 prompt 组装中枢，这里的改动会在用户无
 [`electron-security-and-process-boundaries.md`](electron-security-and-process-boundaries.md)，
 Orca 多 Agent 协同另见 [`orca-team-architecture.md`](orca-team-architecture.md)。
 
+## 工具循环误报边界
+
+共享 ToolLoopGuard 保留精确重复、短周期 ping-pong 与较长轮转检测；Claude Code、Pi、Codex 不按“不同参数但同类契约错误连续三次”中断，因为模型可能正在修正调用，且归一事件不总有可靠的响应批次标识。精确相同的工具名、参数、输出连续四次仍会中断。Codex 的 `collab:wait` 是等待轮询，排除在循环指纹之外但不清除普通工具轨迹；其他 collab 操作仍参与检测。回归由 `packages/maker-core/src/agents/shared/loop-guard.test.ts` 与 `packages/maker-core/src/agents/claude-code/__tests__/upstream-idle-watchdog.test.ts` 锁定。
+
 ## 上下文已满时的引擎边界
 
 Claude Code 在同一模型上达到设置页自动压缩阈值且尚未满窗时，由 host 注入 `/compact`；

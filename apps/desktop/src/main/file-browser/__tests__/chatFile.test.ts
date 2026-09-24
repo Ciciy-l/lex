@@ -177,6 +177,7 @@ describe('fetchChatFile — device 来源', () => {
       '/cache/tmp.part',
       undefined,
       expect.any(Function),
+      undefined,
     );
     // 用后删 OSS 对象
     expect(deps.removeRemote).toHaveBeenCalledWith('k1');

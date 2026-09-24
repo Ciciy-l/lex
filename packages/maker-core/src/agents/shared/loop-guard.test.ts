@@ -70,7 +70,7 @@ describe('ToolLoopGuard', () => {
   });
 
   it.each([
-    'write_stdin', 'wait', 'sleep', 'subagent',
+    'write_stdin', 'wait', 'sleep', 'subagent', 'collab:wait',
     'dynamic:functions:write_stdin', 'dynamic:functions:wait',
     'dynamic:clock:sleep', 'mcp:clock:sleep',
   ])('keeps %s polling out of loop fingerprints', (name) => {
@@ -79,6 +79,29 @@ describe('ToolLoopGuard', () => {
       expect(feed(guard, String(i), name, { action: 'status' }, 'running').kind).toBe('ok');
     }
   });
+
+  it('does not let collaboration waits erase repeated ordinary calls', () => {
+    const guard = new ToolLoopGuard();
+    for (let attempt = 0; attempt < 4; attempt++) {
+      expect(feed(guard, 'wait-' + attempt, 'collab:wait', {
+        senderThreadId: 'parent', receiverThreadIds: [],
+      }, 'completed')).toEqual({ kind: 'ok' });
+      const verdict = feed(guard, 'read-' + attempt, 'read', { path: 'same.ts' }, 'unchanged');
+      if (attempt < 3) expect(verdict.kind).toBe('ok');
+      else expect(verdict).toMatchObject({ kind: 'hard', reason: 'consecutive', count: 4 });
+    }
+  });
+
+  it.each(['collab:spawnAgent', 'collab:sendInput', 'collab:resumeAgent', 'collab:closeAgent'])(
+    'still detects repeated non-wait collaboration calls: %s', (name) => {
+      const guard = new ToolLoopGuard();
+      let verdict: ToolLoopGuardVerdict = { kind: 'ok' };
+      for (let attempt = 0; attempt < 4; attempt++) {
+        verdict = feed(guard, String(attempt), name, { senderThreadId: 'parent', receiverThreadIds: ['child'] }, 'completed');
+      }
+      expect(verdict).toMatchObject({ kind: 'hard', reason: 'consecutive', count: 4 });
+    },
+  );
 
   it.each(['exec', 'Bash', 'bash'])('keeps successful log-tail polling alive through %s', (name) => {
     const guard = new ToolLoopGuard();

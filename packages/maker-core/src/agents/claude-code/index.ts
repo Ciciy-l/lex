@@ -2558,7 +2558,9 @@ export class ClaudeCodeAgent extends BaseAgent {
       const scopeKey = parentToolUseId ?? null;
       let guard = toolLoopGuards.get(scopeKey);
       if (!guard) {
-        guard = new ToolLoopGuard();
+        guard = new ToolLoopGuard({
+          contractConsecutiveLimit: Number.POSITIVE_INFINITY,
+        });
         toolLoopGuards.set(scopeKey, guard);
       }
       return guard;

@@ -82,16 +82,18 @@ export function makeSshChunkExecutor(
   workdir: string,
   relPath: string,
 ): FetchExecutor {
-  return async (destPath, progress) => {
+  return async (destPath, progress, signal) => {
     const handle = await fsPromises.open(destPath, 'w');
     try {
       let offset = 0;
       for (;;) {
+        if (signal?.aborted) throw new Error('FILE_PEER_CANCELLED');
         const chunk = await request<{ dataBase64: string; eof: boolean; size: number; mtimeMs: number }>(
           hostId,
           'readFileChunk',
           { workdir, relPath, offset, length: CHUNK_LENGTH },
         );
+        if (signal?.aborted) throw new Error('FILE_PEER_CANCELLED');
         const buf = Buffer.from(chunk.dataBase64, 'base64');
         if (buf.length > 0) {
           await handle.write(buf, 0, buf.length, offset);
