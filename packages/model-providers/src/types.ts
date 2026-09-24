@@ -326,12 +326,12 @@ export interface CatalogModel {
   /** Provider-declared maximum before a per-harness recommended window is applied. */
   contextWindowMax?: number;
   /**
-   * `contextWindow` 是否为**显式声明**的真实上限,而非派生时补的兜底值。
+   * 目录工作窗口是否有目标路由资料支持,而非不受约束的派生兜底值。
    *
    * 目录条目的窗口可能来自产品目录写定 / 上游明示 / 用户填写(都算显式),也可能是
    * 上游不给元数据时补的常量(codex `model/list` 一律 272K、自定义 provider 未填时的
-   * 200K、Anthropic 未知模型启发式)。两者数值上无法区分,但只有前者能用来收敛
-   * 运行期上报的窗口 —— 拿兜底值当上限会把真实窗口压小。
+   * 200K、Anthropic 未知模型启发式)。工作预算实报,或不超过 contextWindowMax 最大容量的
+   * 保守预算可以用于收敛运行期窗口；不能将超出目标路由容量的派生默认当成真实限制。
    *
    * 缺省(undefined)一律按未核实处理。
    *

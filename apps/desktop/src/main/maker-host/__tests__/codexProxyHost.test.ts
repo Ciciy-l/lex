@@ -7772,4 +7772,42 @@ describe('createModelRoutingTransform —— custom Provider native imagegen pre
     ).toBe(true);
     expect(options.routeOpaqueRequestBody({ url: '/images/edits' })).toBe(false);
   });
+
+  it('keeps Sub2API-discovered Grok effort on its exact Responses route', async () => {
+    const host = await freshCodexProxyHost();
+    const { buildUserProvider, parseModelsListResponse, mergeDiscoveredRuntimeModels } = await import('@cindy/model-providers');
+    const { setCustomProviders } = await import('../active-catalog.js');
+    const { setSessionProvider, clearSessionProvider } = await import('../session-provider-store.js');
+    const models = parseModelsListResponse({ data: [{ id: 'grok-4.7',
+      supportsReasoningEffort: true, reasoningEffort: 'high',
+      service_tiers: [{ id: 'priority' }], input_modalities: ['text', 'image'],
+      reasoningEfforts: ['low', 'medium', 'high', 'xhigh'].map(value => ({ value, label: value })),
+    }] })!;
+    const stored = JSON.parse(JSON.stringify(mergeDiscoveredRuntimeModels([], models)));
+    const provider = buildUserProvider({ id: 'sub2api', name: 'Sub2API', runtimes: {
+      codex: { baseUrl: 'https://sub2api.example/custom/v1', wireProtocol: 'openai-responses', models: stored },
+    } });
+    expect(provider.models.codex?.[0]?.supportsFastMode).toBe(true);
+    mockState.createAnthropicCompatProxy.mockResolvedValueOnce({
+      url: 'http://127.0.0.1:43210', dispose: vi.fn(async () => undefined),
+    });
+    host.setCodexProxyAuthInjection('env-key');
+    host.registerComposed('sub2api-session', 'sub2api-thread', '');
+    setSessionProvider('sub2api-session', provider.id);
+    setCustomProviders([provider]);
+    try {
+      await host.ensureCodexProxyReady();
+      let body: unknown = { model: 'grok-4.7', input: [], reasoning: { effort: 'xhigh' }, service_tier: 'priority' };
+      for (const transform of mockState.createAnthropicCompatProxy.mock.calls[0][0].transformRequest) {
+        const next = transform(body, { method: 'POST', url: '/responses', headers: { 'thread-id': 'sub2api-thread' } });
+        if (next !== null && next !== undefined) body = next;
+      }
+      expect(body).toHaveProperty('reasoning.effort', 'xhigh');
+      expect(body).toHaveProperty('service_tier', 'priority');
+      expect(body).toHaveProperty('model', 'grok-4.7');
+    } finally {
+      clearSessionProvider('sub2api-session');
+      setCustomProviders([]);
+    }
+  });
 });

@@ -17,13 +17,16 @@ export function createClaudeProviderBridge(options: {
   protocol: 'openai-chat' | 'openai-responses';
   headers: Readonly<Record<string, string>>;
   efforts: readonly string[];
+  supportsFastMode?: boolean;
   capabilities?: ChatBridgeCapabilities;
   model?: ProviderModelRecord;
   providerId?: string;
   nativeUpstream?: string;
   fetchImpl: typeof fetch;
 }): ResponsesBridgeHandler {
-  const nativeFetch = options.model ? createPiProviderFetch({ row: options.model,
+  const nativeFetch = options.model ? createPiProviderFetch({ row: {
+    ...options.model, supportsFastMode: options.supportsFastMode ?? options.model.supportsFastMode,
+  },
     providerId: options.providerId ?? 'custom',
     upstream: options.nativeUpstream,
     apiKey: nativeBridgeApiKey(options.headers),
@@ -35,7 +38,13 @@ export function createClaudeProviderBridge(options: {
     if (nativeFetch) return nativeFetch(_url, init);
     if (options.protocol === 'openai-responses') return options.fetchImpl(options.url, init);
     const responses = JSON.parse(String(init?.body)) as ResponsesRequest;
-    const translated = translateResponsesRequestWithContext(responses, { capabilities: options.capabilities });
+    const passthroughFields = new Set(options.capabilities?.passthroughFields ?? []);
+    if (options.supportsFastMode === true) passthroughFields.add('service_tier');
+    else passthroughFields.delete('service_tier');
+    const translated = translateResponsesRequestWithContext(responses, { capabilities: {
+      ...options.capabilities,
+      passthroughFields: [...passthroughFields],
+    } });
     const upstream = await options.fetchImpl(options.url, { ...init, body: JSON.stringify(normalizeProviderRequest(translated.request, { harness: 'claude-code', protocol: 'openai-chat', upstreamBase: options.url, model: responses.model }, { reasoningEffortAlreadyMapped: true })) });
     if (!upstream.ok || !upstream.body) return upstream;
     const translator = new ChatSseTranslator(responses.model, { toolContext: translated.toolContext });
@@ -100,6 +109,7 @@ export function createClaudeProviderBridge(options: {
       maxOutputTokensSupported: true,
       supportsReasoning: () => options.efforts.length > 0,
       supportedReasoningEfforts: () => options.efforts,
+      ...(options.supportsFastMode ? { fastServiceTier: 'priority' } : {}),
     }],
     fetchImpl: upstreamFetch,
   });

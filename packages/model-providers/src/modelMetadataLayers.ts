@@ -16,6 +16,8 @@ export interface ModelMetadata {
   description?: string;
   group?: string;
   contextWindow?: number;
+  /** Upstream capacity, distinct from the recommended working window. */
+  contextWindowMax?: number;
   maxOutputTokens?: number;
   efforts?: ModelEffort[];
   defaultEffort?: ModelEffort | null;
@@ -39,6 +41,7 @@ export const MODEL_METADATA_FIELDS = [
   "description",
   "group",
   "contextWindow",
+  "contextWindowMax",
   "maxOutputTokens",
   "efforts",
   "defaultEffort",
@@ -95,7 +98,7 @@ export function validModelMetadata(value: unknown): value is ModelMetadata {
         typeof v === "string" && v.trim().length > 0 && v.length <= maxLength
       );
     }
-    if (["contextWindow", "maxOutputTokens"].includes(key))
+    if (["contextWindow", "contextWindowMax", "maxOutputTokens"].includes(key))
       return typeof v === "number" && Number.isSafeInteger(v) && v > 0;
     if (key === "efforts")
       return (
@@ -119,7 +122,21 @@ export function pickModelMetadata(value: object | undefined): ModelMetadata {
 export function mergeModelMetadata(
   ...layers: (ModelMetadata | undefined)[]
 ): ModelMetadata {
-  return Object.assign({}, ...layers.map(pickModelMetadata));
+  const result: ModelMetadata = {};
+  for (const layer of layers) {
+    const fields = pickModelMetadata(layer);
+    Object.assign(result, fields);
+    // An explicit image-input denial supersedes lower-priority input modalities.
+    // Do not mutate the source catalog or discard unrelated output capabilities.
+    if (fields.supportsImageInput === false && fields.modalities === undefined &&
+        result.modalities?.input.includes('image')) {
+      result.modalities = {
+        ...result.modalities,
+        input: result.modalities.input.filter((modality) => modality !== 'image'),
+      };
+    }
+  }
+  return result;
 }
 export function findBaseModel(
   registry: ModelRegistry | undefined,
@@ -160,6 +177,7 @@ export function resolveModelMetadata(
   user?: ModelMetadata,
   agent?: string,
   providerDefaults?: ModelMetadata,
+  generationDefaults?: ModelMetadata,
 ): ModelMetadata {
   const ids = [modelId];
   if (providerId === "openai" && modelId.startsWith("chatgpt/"))
@@ -197,11 +215,24 @@ export function resolveModelMetadata(
           providerDefaults,
         );
   const result = mergeModelMetadata(
+    generationDefaults,
     defaults,
     live,
     matched?.route.forceOverrides,
     user,
   );
+  const targetLayers = [defaults, live, matched?.route.forceOverrides, user];
+  const targetCapacity = [...targetLayers].reverse()
+    .find((layer) => layer?.contextWindowMax !== undefined)?.contextWindowMax;
+  const targetWorkingWindowDeclared = targetLayers.some(
+    (layer) => layer?.contextWindow !== undefined,
+  );
+  // A new generation's own smaller official capacity bounds an inherited
+  // working window, but does not rewrite an explicit target/user working value.
+  if (!targetWorkingWindowDeclared && generationDefaults?.contextWindow !== undefined
+    && targetCapacity !== undefined && generationDefaults.contextWindow > targetCapacity) {
+    result.contextWindow = targetCapacity;
+  }
   if (result.efforts?.length === 0) result.defaultEffort = null;
   else if (
     result.defaultEffort != null &&
@@ -396,6 +427,15 @@ export function mergeDiscoveredRuntimeModels(
       model.discoveredMetadata ?? model,
     );
     const index = models.findIndex((m) => m.id === model.id);
+    // A capacity-only discovery seeds the initial window. Later capacity refreshes
+    // preserve that working choice unless the reported maximum shrinks below it.
+    const previousWindow = models[index]?.discoveredMetadata?.contextWindow;
+    if (discoveredMetadata.contextWindow === undefined &&
+        discoveredMetadata.contextWindowMax !== undefined &&
+        ((previousWindow === undefined && models[index]?.contextWindow === undefined) ||
+          (previousWindow !== undefined && previousWindow > discoveredMetadata.contextWindowMax))) {
+      discoveredMetadata.contextWindow = discoveredMetadata.contextWindowMax;
+    }
     if (index < 0)
       models.push({
         id: model.id,
