@@ -1,50 +1,135 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 
+import { PLUGIN_MEMBER_UPLOAD_MAX_ARCHIVE_BYTES } from '@cindy/plugin-protocol';
 import { net } from 'electron';
 
-const MAX_PLUGIN_BYTES = 8 * 1024 * 1024;
-const PLUGIN_DOWNLOAD_TIMEOUT_MS = 60_000;
+import { createIpcError } from '../../shared/ipc-errors.js';
 
-/** 下载并校验 `.cindy` 原始字节，写入调用方提供的临时路径。 */
+const PLUGIN_DOWNLOAD_IDLE_TIMEOUT_MS = 60_000;
+const PLUGIN_DOWNLOAD_TOTAL_TIMEOUT_MS = 120_000;
+const PLUGIN_STREAM_CANCEL_TIMEOUT_MS = 250;
+
+async function cancelWithinDeadline(cancel: () => Promise<void>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.resolve().then(cancel).catch(() => undefined),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, PLUGIN_STREAM_CANCEL_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function downloadVerifiedPlugin(
   url: string,
   expected: { sizeBytes: number; sha256: string },
   targetPath: string,
 ): Promise<void> {
-  if (expected.sizeBytes <= 0 || expected.sizeBytes > MAX_PLUGIN_BYTES) {
-    throw new Error(`Plugin 包大小超限: ${expected.sizeBytes}`);
+  if (!Number.isSafeInteger(expected.sizeBytes) || expected.sizeBytes <= 0) {
+    throw createIpcError('GHOST_FILE_INVALID', 'Plugin Release size is invalid');
   }
-  const response = await net.fetch(url, {
-    method: 'GET',
-    cache: 'no-store',
-    redirect: 'error',
-    signal: AbortSignal.timeout(PLUGIN_DOWNLOAD_TIMEOUT_MS),
-  });
-  if (!response.ok) throw new Error(`Plugin 下载失败 (${response.status})`);
-  if (!response.body) throw new Error('Plugin 下载响应体为空');
-  const contentLength = response.headers.get('content-length');
-  if (contentLength !== null && Number(contentLength) !== expected.sizeBytes) {
-    await response.body.cancel().catch(() => undefined);
-    throw new Error('Plugin 下载 Content-Length 与 Release 不一致');
+  if (expected.sizeBytes > PLUGIN_MEMBER_UPLOAD_MAX_ARCHIVE_BYTES) {
+    throw createIpcError('GHOST_FILE_INVALID', 'Plugin archive exceeds 128 MiB');
   }
 
-  const reader = response.body.getReader();
-  const chunks: Buffer[] = [];
-  let size = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > expected.sizeBytes || size > MAX_PLUGIN_BYTES) {
-      await reader.cancel();
-      throw new Error('Plugin 下载字节数超过 Release 声明');
+  const controller = new AbortController();
+  const totalTimer = setTimeout(() => controller.abort(), PLUGIN_DOWNLOAD_TOTAL_TIMEOUT_MS);
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  const resetIdleTimer = () => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => controller.abort(), PLUGIN_DOWNLOAD_IDLE_TIMEOUT_MS);
+  };
+  const network = async <T>(operation: Promise<T>): Promise<T> => {
+    let abortListener: (() => void) | undefined;
+    const aborted = new Promise<never>((_, reject) => {
+      abortListener = () => reject(new Error('Plugin download aborted'));
+      if (controller.signal.aborted) abortListener();
+      else controller.signal.addEventListener('abort', abortListener, { once: true });
+    });
+    try {
+      return await Promise.race([operation, aborted]);
+    } catch {
+      throw createIpcError(
+        controller.signal.aborted ? 'GHOST_DOWNLOAD_TIMEOUT' : 'GHOST_DOWNLOAD_FAILED',
+        controller.signal.aborted ? 'Plugin download timed out' : 'Plugin download failed',
+      );
+    } finally {
+      if (abortListener) controller.signal.removeEventListener('abort', abortListener);
     }
-    chunks.push(Buffer.from(value));
+  };
+
+  resetIdleTimer();
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let file: fs.promises.FileHandle | undefined;
+  let complete = false;
+  try {
+    const response = await network(net.fetch(url, {
+      method: 'GET',
+      cache: 'no-store',
+      redirect: 'error',
+      signal: controller.signal,
+    }));
+    if (!response.ok) {
+      if (response.body) await cancelWithinDeadline(() => response.body!.cancel());
+      throw createIpcError('GHOST_DOWNLOAD_FAILED', 'Plugin download failed');
+    }
+    if (!response.body) {
+      throw createIpcError('GHOST_DOWNLOAD_FAILED', 'Plugin response body is empty');
+    }
+    const contentLength = response.headers.get('content-length');
+    if (contentLength !== null && Number(contentLength) !== expected.sizeBytes) {
+      await cancelWithinDeadline(() => response.body!.cancel());
+      throw createIpcError('GHOST_FILE_INVALID', 'Plugin download Content-Length mismatch');
+    }
+
+    reader = response.body.getReader();
+    resetIdleTimer();
+    file = await fs.promises.open(targetPath, 'wx', 0o600);
+    const hash = crypto.createHash('sha256');
+    let size = 0;
+    while (true) {
+      if (controller.signal.aborted) {
+        throw createIpcError('GHOST_DOWNLOAD_TIMEOUT', 'Plugin download timed out');
+      }
+      const { done, value } = await network(reader.read());
+      if (done) break;
+      size += value.byteLength;
+      if (size > expected.sizeBytes) {
+        throw createIpcError('GHOST_FILE_INVALID', 'Plugin download exceeds Release size');
+      }
+      if (value.byteLength > 0) {
+        resetIdleTimer();
+        hash.update(value);
+        await file.writeFile(value);
+      }
+    }
+    if (controller.signal.aborted) {
+      throw createIpcError('GHOST_DOWNLOAD_TIMEOUT', 'Plugin download timed out');
+    }
+    if (size !== expected.sizeBytes) {
+      throw createIpcError('GHOST_FILE_INVALID', 'Plugin download size mismatch');
+    }
+    if (hash.digest('hex') !== expected.sha256) {
+      throw createIpcError('GHOST_FILE_INVALID', 'Plugin download SHA-256 mismatch');
+    }
+    await file.close();
+    complete = true;
+  } finally {
+    clearTimeout(totalTimer);
+    clearTimeout(idleTimer);
+    if (reader) {
+      await cancelWithinDeadline(() => reader!.cancel());
+      try { reader.releaseLock(); } catch (error) {
+        if (!(error instanceof TypeError)) throw error;
+      }
+    }
+    if (file && !complete) {
+      await file.close().catch(() => undefined);
+      await fs.promises.rm(targetPath, { force: true });
+    }
   }
-  if (size !== expected.sizeBytes) throw new Error('Plugin 下载字节数与 Release 不一致');
-  const bytes = Buffer.concat(chunks, size);
-  const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
-  if (sha256 !== expected.sha256) throw new Error('Plugin 下载 SHA-256 校验失败');
-  await fs.promises.writeFile(targetPath, bytes, { mode: 0o600, flag: 'wx' });
 }

@@ -73,6 +73,7 @@ import {
 } from '@/session/conversationSearch';
 import { useConversationSearch } from '@/session/useConversationSearch';
 import { sessionMatchesProjectDir } from '@/session/mobileHome';
+import { selectVisibleDeviceSessions } from '@/session/mobileHome';
 import { HomeSessionRow } from './index';
 import { RenameSessionModal } from '@/session/RenameSessionModal';
 import { SessionOptionsPresenter } from '@/session/SessionOptionsExpoSheet';
@@ -176,11 +177,7 @@ function DeviceDetailScreenContent() {
   // filter 必须 memo:裸 filter 每次渲染都产新数组,会让下游全部 [sessions, ...] 依赖的
   // useMemo 逐 emit 失效,派生链(索引 → sections → 全列表行)整体重建(2026-07-18
   // 重渲染风暴)。store 层已保证 allSessions 引用在内容未变时稳定,这里不能亲手打破。
-  const sessions = useMemo(() => allSessions.filter((s) =>
-    // 用展示用 canonicalDeviceId(设备归并结果)匹配,与首页项目卡一致 —— 被认领的 stale 会话也能显示,
-    // 数量与卡片相符。deviceLinkDeviceId 仍是物理路由 key(openSession / patch 用它),不参与此处判断。
-    (s.canonicalDeviceId ?? s.deviceLinkDeviceId) === deviceId
-    && (!projectWorkingDir || sessionMatchesProjectDir(s.workingDir, projectWorkingDir))),
+  const sessions = useMemo(() => selectVisibleDeviceSessions(allSessions, deviceId, projectWorkingDir),
   [allSessions, deviceId, projectWorkingDir]);
   const messageVersion = useRemoteMessageVersion();
   const storeVersion = useRemoteSessionStoreVersion();

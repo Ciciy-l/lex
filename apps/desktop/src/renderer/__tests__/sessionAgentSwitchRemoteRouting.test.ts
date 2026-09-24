@@ -1208,7 +1208,7 @@ describe('ChatInput 的入口门控与调用路由', () => {
     expect(selectorSource).not.toContain('(open || keepOpenForAgentConfirmation) && !disabled');
     expect(selectorSource).not.toContain('(open && !disabled) || keepOpenForAgentConfirmation');
     // 切引擎成功后收选单;取消才 setOpen(true) 留在原地。disabled 仍不得参与开关。
-    expect(selectorSource).toContain('setOpenWithoutAutoRefresh(applied === false)');
+    expect(selectorSource).toContain('setOpenWithoutAutoRefresh(configuring || applied === false)');
     expect(selectorSource).toContain(
       "onProviderChange(args.providerId, args.wireModelId, args.effort ?? '', args.config.fast)",
     );

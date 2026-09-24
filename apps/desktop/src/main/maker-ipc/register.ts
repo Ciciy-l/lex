@@ -114,7 +114,9 @@ import {
   buildDeferredRuntimeSelectionProfile,
   nextDeferredModelWindowRetry,
   planUserRuntimeModelSwitch,
+  shouldSkipColdPiWindowRehydration,
 } from '../../shared/runtimeModelSwitchGate.js';
+import { getSessionLastLiveUsage, rememberSessionLastLiveUsage } from './sessionLastLiveUsage.js';
 import type { DesktopCommandContext } from '../commands/index.js';
 import { getDesktopCommandRegistry } from '../commands/index.js';
 import {
@@ -4366,6 +4368,7 @@ const sessionBindings = createSessionBindingLifecycle<WiredSession, WiredSession
     pendingFailedTurnAssistantPersistId.delete(session.id);
   },
   finalizeClosedSession: (session: WiredSession, context) => {
+    rememberSessionLastLiveUsage(session.id, session.getUsageSnapshot?.());
     finalizeSessionClose(context.closedDirectAbortBoundary !== null, {
       clearTurnState: () => {
         sessionTurnActivityTracker.deleteSession(session.id);
@@ -15959,6 +15962,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       let runtimeRouteChanged =
         currentRuntimeModel !== undefined &&
         (currentRuntimeModel !== model || currentProviderId !== targetRouteProviderId);
+      let coldPiRouteWithoutLiveWindowCheck = false;
       if (runtimeAgentKind === 'pi' && runtimeRouteChanged) {
         if (isSessionInTurn(sessionId)) {
           return deferLockedSelection();
@@ -15970,25 +15974,54 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           );
         }
         if (!liveSessionBeforeRouteChange) {
-          try {
-            await rehydrateColdPiRuntimeForWindowVerification(sessionId);
-          } catch {
-            throwIpcError(
-              localModelWindowSwitchErrorCode('MODEL_WINDOW_CURRENT_CONTEXT_UNKNOWN'),
-              'Pi current runtime could not be verified; runtime selection was not changed',
-            );
+          const lastLiveUsage = getSessionLastLiveUsage(sessionId);
+          const targetPiContextWindow = lookupVerifiedContextWindow(
+            (_agentKind, modelId, providerId) =>
+              resolveConfiguredContextWindow(getActiveCatalog(), 'pi', providerId, modelId),
+            model,
+            targetRouteProviderId,
+            'pi',
+          );
+          const skipColdVerification =
+            !!runtimeStatus.sdkSessionId &&
+            shouldSkipColdPiWindowRehydration({
+              contextTokens: lastLiveUsage?.contextTokens,
+              targetContextWindow: targetPiContextWindow,
+            });
+          if (skipColdVerification) {
+            coldPiRouteWithoutLiveWindowCheck = true;
+            log.info('set-model: skipped cold Pi window verification', {
+              sessionId,
+              reason: 'target-window-has-headroom',
+              contextTokens: lastLiveUsage?.contextTokens,
+              targetContextWindow: targetPiContextWindow,
+              capturedAtMs: lastLiveUsage?.capturedAtMs,
+              fromModel: currentRuntimeModel ?? null,
+              toModel: model,
+              currentProviderId,
+              nextProviderId: targetRouteProviderId,
+            });
+          } else {
+            try {
+              await rehydrateColdPiRuntimeForWindowVerification(sessionId);
+            } catch {
+              throwIpcError(
+                localModelWindowSwitchErrorCode('MODEL_WINDOW_CURRENT_CONTEXT_UNKNOWN'),
+                'Pi current runtime could not be verified; runtime selection was not changed',
+              );
+            }
+            liveSessionBeforeRouteChange = maker.getSession(sessionId);
+            if (!liveSessionBeforeRouteChange) {
+              throwIpcError(
+                localModelWindowSwitchErrorCode('MODEL_WINDOW_CURRENT_CONTEXT_UNKNOWN'),
+                'Pi current runtime could not be verified; runtime selection was not changed',
+              );
+            }
+            rehydratedColdPiRuntime = liveSessionBeforeRouteChange;
+            currentRuntimeModel = liveSessionBeforeRouteChange.model;
+            runtimeRouteChanged =
+              currentRuntimeModel !== model || currentProviderId !== targetRouteProviderId;
           }
-          liveSessionBeforeRouteChange = maker.getSession(sessionId);
-          if (!liveSessionBeforeRouteChange) {
-            throwIpcError(
-              localModelWindowSwitchErrorCode('MODEL_WINDOW_CURRENT_CONTEXT_UNKNOWN'),
-              'Pi current runtime could not be verified; runtime selection was not changed',
-            );
-          }
-          rehydratedColdPiRuntime = liveSessionBeforeRouteChange;
-          currentRuntimeModel = liveSessionBeforeRouteChange.model;
-          runtimeRouteChanged =
-            currentRuntimeModel !== model || currentProviderId !== targetRouteProviderId;
         }
       }
       let targetContextWindow: number | undefined;
@@ -16350,7 +16383,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           runtimeAgentKind === 'pi' &&
           runtimeRouteChanged &&
           result.status !== 'deferred' &&
-          !modelWindowRebuilt
+          !modelWindowRebuilt &&
+          !coldPiRouteWithoutLiveWindowCheck
         ) {
           if (!piSessionAfterRouteChange) {
             restoreControlStores();

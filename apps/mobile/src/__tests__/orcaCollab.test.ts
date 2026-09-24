@@ -7,7 +7,7 @@ import {
   classifyOrcaDispatchTool,
   parseOrcaWorkerReport,
 } from '@/session/orcaCollab';
-import { excludeOrcaWorkerSessions } from '@/session/mobileHome';
+import { excludeOrcaWorkerSessions, selectVisibleDeviceSessions } from '@/session/mobileHome';
 import { normalizeRemoteMessages } from '@/session/messageNormalize';
 import type { RemoteMessage, RemoteSession } from '@/session/types';
 
@@ -205,6 +205,17 @@ describe('excludeOrcaWorkerSessions', () => {
       session({ id: 'normal', orcaRole: null }),
     ]);
     expect(kept.map((item) => item.id)).toEqual(['lead', 'normal']);
+  });
+});
+
+describe('selectVisibleDeviceSessions', () => {
+  it('hides workers while retaining visible sessions for the selected device', () => {
+    const visible = selectVisibleDeviceSessions([
+      { orcaRole: 'lead', canonicalDeviceId: 'device-1', deviceLinkDeviceId: 'device-1', workingDir: '/repo' },
+      { orcaRole: 'worker', canonicalDeviceId: 'device-1', deviceLinkDeviceId: 'device-1', workingDir: '/repo' },
+      { orcaRole: null, canonicalDeviceId: 'device-2', deviceLinkDeviceId: 'device-2', workingDir: '/repo' },
+    ], 'device-1');
+    expect(visible.map((item) => item.orcaRole)).toEqual(['lead']);
   });
 });
 

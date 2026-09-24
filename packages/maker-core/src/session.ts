@@ -11,6 +11,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { ToolLoopGuard } from './agents/shared/loop-guard.js';
 import type { ReviewableAction } from './agents/shared/auto-review.js';
 import type { AutoReviewDecision } from './agents/shared/auto-review-decision.js';
 
@@ -358,6 +359,8 @@ export type SessionGracefulStopResult =
 
 type TurnControlState = {
   generation: number;
+  toolLoopGuard: ToolLoopGuard | null;
+  pendingToolLoop: { toolUseId: string; verdict: Extract<ReturnType<ToolLoopGuard['onToolResult']>, { kind: 'hard' }> } | null;
   activeToolIds: Set<string>;
   anonymousActiveTools: number;
   pendingInteractionToolIds: Map<string, number>;
@@ -2124,6 +2127,10 @@ export class Session {
   private beginTurnControl(generation: number): void {
     this.turnControlState = {
       generation,
+      toolLoopGuard: this.agentKind === 'claude-code' ? null : new ToolLoopGuard({
+        contractConsecutiveLimit: Number.POSITIVE_INFINITY,
+      }),
+      pendingToolLoop: null,
       activeToolIds: new Set(),
       anonymousActiveTools: 0,
       pendingInteractionToolIds: new Map(),
@@ -2279,6 +2286,53 @@ export class Session {
    * 并像用户插话一样暂停 goal,scheduler 的 IM 转播则直接忽略,卡片永不 finalize
    * (review #944 第二轮)。
    */
+  private observeToolLoop(event: AgentEvent, generation: number): void {
+    if (event.type !== 'tool_use' && event.type !== 'tool_result_full' && event.type !== 'tool_result') return;
+    const control = this.turnControlState;
+    if (!control?.toolLoopGuard || control.generation !== generation || generation !== this.turnGeneration ||
+      this.status !== 'active' || this.closePromise || event.turnScope === 'background' ||
+      event.sessionInstanceId !== this.instanceId || this.pendingInteractions > 0 ||
+      control.gracefulStopState !== 'none') return;
+    const data = event.data && typeof event.data === 'object'
+      ? event.data as Record<string, unknown>
+      : {};
+    if (data.runtimeActivity === 'snapshot' || data.partial === true) return;
+    if (event.type === 'tool_result') {
+      const pending = control.pendingToolLoop;
+      if (!pending || !Array.isArray(data.toolUseIds) || !data.toolUseIds.includes(pending.toolUseId)) return;
+      control.pendingToolLoop = null;
+      this.interruptToolLoop(pending.verdict, generation);
+      return;
+    }
+    if (typeof data.toolUseId !== 'string' || !data.toolUseId || control.pendingToolLoop) return;
+    if (event.type === 'tool_use') {
+      control.toolLoopGuard.onToolUse(data.toolUseId, data.toolName, data.input);
+      return;
+    }
+    if (typeof data.fullText !== 'string') return;
+    const verdict = control.toolLoopGuard.onToolResult(data.toolUseId, data.fullText, data.isError === true);
+    if (verdict.kind === 'hard') control.pendingToolLoop = { toolUseId: data.toolUseId, verdict };
+  }
+
+  private interruptToolLoop(
+    verdict: Extract<ReturnType<ToolLoopGuard['onToolResult']>, { kind: 'hard' }>,
+    generation: number,
+  ): void {
+    this.fanOutEvent({
+      type: 'error',
+      data: {
+        message: 'Repeated tool calls indicate a tool loop; this turn was interrupted. You can send the next message to continue.',
+        isTerminal: true,
+        reason: 'tool_use_loop_detected',
+        toolLoop: { kind: verdict.reason, count: verdict.count },
+      },
+      source: this.agentKind,
+    });
+    if (generation !== this.turnGeneration) return;
+    void this.abort().catch((error) => {
+      this.logger.warn('tool loop interrupt failed', { error: String(error) });
+    });
+  }
   private isIdleStatusEvent(event: AgentEvent): boolean {
     if (event.type !== 'status') return false;
     const data = event.data as { isRunning?: unknown } | null | undefined;
@@ -2676,6 +2730,7 @@ export class Session {
         try { listener(listenerEvent); } catch (e) { this.logger.error('event listener threw', { error: String(e) }); }
       }
     }
+    if (isCurrentGeneration) this.observeToolLoop(event, resolvedGeneration);
     // A late child update belongs to the completed parent turn. It remains
     // visible to listeners, but must not clear/adopt the current turn or keep
     // its zero-event watchdog alive.

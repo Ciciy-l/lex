@@ -109,6 +109,7 @@ export interface UnifiedRowActionsOptions {
          * (same-engine-reselect 清意图);点同一个目标 Harness 的其它模型则更新意图、不再弹确认。
          */
         pendingTarget?: AgentKind;
+        onCrossEngineConfigure?: NonNullable<UnifiedRowActionsOptions['sessionEngineFilter']>['onCrossEngineSelect'];
         onCrossEngineSelect: (args: {
           providerId: string;
           modelId: string;
@@ -395,7 +396,7 @@ export function useUnifiedRowActions(options: UnifiedRowActionsOptions): Unified
   }): Promise<void> => {
     if (!sessionEngineFilter) return Promise.resolve();
     return runLive(() =>
-      sessionEngineFilter.onCrossEngineSelect({
+      (sessionEngineFilter.onCrossEngineConfigure ?? sessionEngineFilter.onCrossEngineSelect)({
         providerId: args.providerId,
         modelId: args.wireModelId,
         targetAgent: args.targetAgent,
@@ -588,7 +589,7 @@ export function useUnifiedRowActions(options: UnifiedRowActionsOptions): Unified
         if (!shouldCrossEngine(targetAgent)) return;
         // 会话内改选中行的引擎 = 一次跨引擎切换:交给 performAgentSwitch 事务(确认弹窗
         // + 上下文重建)。**不预写全局 override**:用户取消确认时不该留下任何痕迹。
-        return sessionEngineFilter.onCrossEngineSelect({
+        return (sessionEngineFilter.onCrossEngineConfigure ?? sessionEngineFilter.onCrossEngineSelect)({
           providerId: anchor.providerId,
           modelId: next?.wireModelId ?? anchor.modelId,
           targetAgent,
@@ -946,7 +947,9 @@ export function useUnifiedRowActions(options: UnifiedRowActionsOptions): Unified
     if (sessionEngineFilter && shouldCrossEngine(config.agent)) {
       // 收藏锚点一并交出去:会话侧要在事务**真成功后**才把它记成「当前选中的收藏」
       // (取消 / 失败时什么都没换,锚点当然不能动)。同引擎那一路由 onSelect 的 config 带走。
-      return sessionEngineFilter.onCrossEngineSelect({
+      return (configuring && sessionEngineFilter.onCrossEngineConfigure
+        ? sessionEngineFilter.onCrossEngineConfigure
+        : sessionEngineFilter.onCrossEngineSelect)({
         providerId: anchor.providerId,
         modelId: wireModelId,
         targetAgent: config.agent,

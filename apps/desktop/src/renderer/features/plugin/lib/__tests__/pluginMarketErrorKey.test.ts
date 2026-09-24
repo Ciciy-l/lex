@@ -17,6 +17,8 @@ describe('pluginMarketErrorKey', () => {
     ['PERMISSION_DENIED', 'accessDenied'],
     ['UNSUPPORTED_CAPABILITY', 'notConfigured'],
     ['GHOST_FILE_INVALID', 'invalidPackage'],
+    ['GHOST_DOWNLOAD_TIMEOUT', 'downloadTimeout'],
+    ['GHOST_DOWNLOAD_FAILED', 'downloadFailed'],
     ['GHOST_BROKER_REDIRECT_PORT_REQUIRED', 'brokerRedirectPortRequired'],
   ])('maps %s to localized market copy', (code, suffix) => {
     expect(pluginMarketErrorKey(serializedIpcError(code))).toBe(

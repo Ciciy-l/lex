@@ -881,7 +881,12 @@ describe('统一面板 · 会话内形态', () => {
   it('会话内选中行的引擎胶囊 = 跨引擎切换事务,不预写全局 override', async () => {
     // 2026-08-14:选中行强制按会话引擎显示,只写 override 的话显示纹丝不动(假按钮);
     // 且用户取消切换确认时不该留下任何全局痕迹。同引擎轨不提供 Harness 切换,先切到「全部」。
-    renderPanel({ sessionEngineFilter, currentProviderId: 'xd', modelId: 'gpt-5.5' });
+    const onCrossEngineConfigure = vi.fn();
+    renderPanel({
+      sessionEngineFilter: { ...sessionEngineFilter, onCrossEngineConfigure },
+      currentProviderId: 'xd',
+      modelId: 'gpt-5.5',
+    });
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '全部' }));
     });
@@ -889,7 +894,8 @@ describe('统一面板 · 会话内形态', () => {
     await act(async () => {
       fireEvent.click(flyout.querySelector('[data-engine-capsule="cc"]') as HTMLElement);
     });
-    expect(onCrossEngineSelect).toHaveBeenCalledWith({
+    expect(onCrossEngineSelect).not.toHaveBeenCalled();
+    expect(onCrossEngineConfigure).toHaveBeenCalledWith({
       providerId: 'xd',
       modelId: 'gpt-5.5',
       targetAgent: 'claude-code',

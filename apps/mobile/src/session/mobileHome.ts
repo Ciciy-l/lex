@@ -4,6 +4,7 @@ import { mobilePresentationLocalizer } from '@/i18n/presentationLocalizer';
 import { localizeRemoteSessionListItem } from '@/session/sessionList';
 import {
   buildMobileHomePresentation as buildMobileHomePresentationShared,
+  sessionMatchesProjectDir,
   type MobileHomeSessionLike,
   type MobileHomeNoDeviceContext,
   type MobileHomeOptions,
@@ -98,4 +99,12 @@ export function excludeOrcaWorkerSessions<T extends Pick<RemoteSession, 'orcaRol
   sessions: readonly T[],
 ): T[] {
   return sessions.filter((session) => session.orcaRole !== 'worker');
+}
+
+export function selectVisibleDeviceSessions<
+  T extends Pick<RemoteSession, 'orcaRole' | 'canonicalDeviceId' | 'deviceLinkDeviceId' | 'workingDir'>,
+>(sessions: readonly T[], deviceId: string, projectWorkingDir?: string | null): T[] {
+  return excludeOrcaWorkerSessions(sessions).filter((session) =>
+    (session.canonicalDeviceId ?? session.deviceLinkDeviceId) === deviceId
+    && (!projectWorkingDir || sessionMatchesProjectDir(session.workingDir, projectWorkingDir)));
 }
