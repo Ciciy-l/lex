@@ -3898,6 +3898,7 @@ interface ElectronAPI {
         sessionId: string,
       ) => Promise<{
         messages: Record<string, unknown>[];
+        historyView?: string;
         invalidation?: number;
         ownerToken?: string;
         accountCounter?: number;
@@ -3909,6 +3910,7 @@ interface ElectronAPI {
         expectedInvalidation?: number,
         expectedOwnerToken?: string,
         expectedAccountCounter?: number,
+        historyView?: string,
       ) => Promise<{ ok: true; invalidation?: number }>;
       getSessionList: () => Promise<{
         devices: Array<{
@@ -4876,6 +4878,8 @@ interface ElectronAPI {
       resetCollaborationSettings: () => Promise<unknown>;
     };
     messages: {
+      historyView: (sessionId: string, opts?: { before?: string | null; lazyDetails?: boolean }) => Promise<import('@cindy/maker-shared/message-window').HistoryViewPage<import('@/lib/ccAgent.types').Message>>;
+      workDetails: (sessionId: string, ref: import('@cindy/maker-shared/message-window').HistoryWorkReference, opts?: { after?: string | null }) => Promise<import('@cindy/maker-shared/message-window').HistoryDetailPage<import('@/lib/ccAgent.types').Message>>;
       list: (
         sessionId: string,
         opts?: { limit?: number; before?: string; beforeTs?: number },

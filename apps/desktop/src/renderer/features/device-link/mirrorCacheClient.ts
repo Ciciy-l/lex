@@ -97,7 +97,11 @@ function afterProtectedRead<T>(
 }
 
 /** 读某 (设备, 会话) 缓存的最近一页 server rows;未命中 / 出错一律空数组。 */
-export async function readCachedMessages(deviceId: string, sessionId: string): Promise<Message[]> {
+export async function readCachedMessages(
+  deviceId: string,
+  sessionId: string,
+  onHistory?: (value: unknown) => void,
+): Promise<Message[]> {
   const api = bridge();
   if (!api || !deviceId || !sessionId) return [];
   const ownerAtStart = getDataOwnerGeneration();
@@ -124,6 +128,7 @@ export async function readCachedMessages(deviceId: string, sessionId: string): P
       rememberMainInvalidation(sessionId, result?.invalidation);
       rememberOwnerToken(sessionId, result?.ownerToken);
       rememberAccountCounter(sessionId, accountCounter);
+      onHistory?.(result?.historyView);
       return Array.isArray(result?.messages) ? (result.messages as unknown as Message[]) : [];
     } catch (err) {
       log.debug('read cached messages failed', err);
@@ -230,6 +235,7 @@ export function persistCachedMessages(
   expectedInvalidation?: number | Promise<number | undefined>,
   expectedOwnerToken?: string | Promise<string | undefined>,
   expectedAccountCounter?: number | Promise<number | undefined>,
+  historyView?: string,
 ): void {
   const api = bridge();
   if (!api || !deviceId || !sessionId) return;
@@ -238,8 +244,8 @@ export function persistCachedMessages(
     ownerToken: string | undefined,
     accountCounter: number | undefined,
   ): void => {
-    void api
-      .putMessages(
+    const request = historyView === undefined
+      ? api.putMessages(
         deviceId,
         sessionId,
         rows as unknown as Record<string, unknown>[],
@@ -247,6 +253,16 @@ export function persistCachedMessages(
         ownerToken,
         accountCounter,
       )
+      : api.putMessages(
+        deviceId,
+        sessionId,
+        rows as unknown as Record<string, unknown>[],
+        expected,
+        ownerToken,
+        accountCounter,
+        historyView,
+      );
+    void request
       .then((result) => rememberMainInvalidation(sessionId, result?.invalidation))
       .catch((err: unknown) => log.debug('persist cached messages failed', err));
   };

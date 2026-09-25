@@ -687,7 +687,7 @@ export function createMobileMakerTransport({
     ackInterruptedTurn: (sessionId) => call('local-db:sessions:ack-interrupted', [sessionId]),
     regenerateSessionTitle: (sessionId) => call('maker:regenerate-title', [{ sessionId }]),
     listMessages: (sessionId, opts) => call('local-db:messages:list', [sessionId, opts]),
-    readHistoryView: (sessionId, before) => call('local-db:messages:view', [sessionId, { before }]),
+    readHistoryView: (sessionId, before) => call('local-db:messages:view', [sessionId, { before, lazyDetails: true }]),
     readWorkDetails: (sessionId, ref, after) => call('local-db:messages:work-details', [sessionId, ref, { after }]),
     setHistoryExpanded: (sessionId, refs) => call('local-db:messages:view-intent', [sessionId, refs]),
     aroundMessages: (sessionId, messageId, opts) =>

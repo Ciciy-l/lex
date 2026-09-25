@@ -1,5 +1,6 @@
 import type { ImMessageSource } from '../../shared/imMessageSource';
 import { readBotAuthorizationCard } from '../../shared/botAuthorization';
+import { readRemoteHistoryCache, remoteHistoryCacheWriter } from './remoteHistoryCache';
 /**
  * makerChatStore — Module-level store for Maker chat (Claude / Codex), sharded by sessionId.
  * ---------------------------------------------------------------------------
@@ -7991,6 +7992,7 @@ function initGlobalListeners(options: GlobalListenerOptions = {}): void {
   const handleMakerStatusRaw = (raw: unknown, ingress: LiveIngressContext = {}) => {
     if (!isCurrentLiveIngress(ingress)) return;
     const payload = raw as { sessionId?: string; status?: string } | null;
+    if (payload?.sessionId) getRemoteHistoryView(payload.sessionId)?.invalidate();
     if (!payload?.sessionId || payload.status !== 'closed') return;
     bumpInteractionReconcileEpoch(payload.sessionId);
     supersedeInputProjectionRequests(payload.sessionId, { supersedeOperations: true });
@@ -8360,6 +8362,7 @@ function initGlobalListeners(options: GlobalListenerOptions = {}): void {
     const payload = raw as { sessionId?: string; message?: Message } | null;
     if (!payload?.sessionId || !payload.message) return;
     const { sessionId, message } = payload;
+    getRemoteHistoryView(sessionId)?.invalidate();
     if (isBeforeOrAtRendererClearBoundary(sessionId, message.createdAt)) return;
     const [mapped] = mapServerMessages([message]);
     if (!mapped) return;
@@ -8454,6 +8457,7 @@ function initGlobalListeners(options: GlobalListenerOptions = {}): void {
       turnUsageDetails?: unknown;
     } | null;
     if (!p?.sessionId || !p.clientId) return;
+    getRemoteHistoryView(p.sessionId)?.invalidate();
     const turnCostIsEstimate = p.turnCostIsEstimate === true;
     const turnUsageDetails = normalizeTurnUsageDetails(p.turnUsageDetails);
     const normalizedTurnMoney = normalizeRegionalMoney(p.turnMoney);
@@ -11007,12 +11011,15 @@ export function getRemoteHistoryView(sessionId: string) {
 function createRemoteHistoryView(sessionId: string) {
   const existing = getRemoteHistoryView(sessionId);
   const deviceId = remoteProjectsStore.getSessionDeviceId(sessionId);
-  if (!deviceId) return undefined;
+  if (!deviceId && (typeof window === 'undefined' || !window.electronAPI?.localDb?.messages?.historyView)) return undefined;
   if (existing) return existing;
   const entry = remoteHistoryViews.get(sessionId) ?? {
     view: undefined, intentQueue: { tail: Promise.resolve() }, isCurrent: () => false,
   };
   const owner = getDataOwnerGeneration();
+  // Begin the protected disk read before taking write tokens for remote requests.
+  const cached = deviceId ? readRemoteHistoryCache<HistoryChatMessage>(deviceId, sessionId) : Promise.resolve(null);
+  let writeCache: ReturnType<typeof remoteHistoryCacheWriter> | undefined;
   const isCurrent = (): boolean => isDataOwnerGenerationCurrent(owner)
     && remoteProjectsStore.getSessionDeviceId(sessionId) === deviceId
     && remoteHistoryViews.get(sessionId)?.view === view;
@@ -11021,25 +11028,34 @@ function createRemoteHistoryView(sessionId: string) {
   }));
   const call = async <T,>(channel: string, args: unknown[]): Promise<T> => {
     if (!isCurrent()) throw new Error('History source changed');
-    const value = await window.electronAPI.deviceLink.invoke(deviceId, channel, args);
+    const value = deviceId ? await window.electronAPI.deviceLink.invoke(deviceId, channel, args)
+      : channel === 'local-db:messages:view'
+        ? await window.electronAPI.localDb.messages.historyView(sessionId, args[1] as { before?: string; lazyDetails?: boolean })
+        : channel === 'local-db:messages:work-details'
+          ? await window.electronAPI.localDb.messages.workDetails(sessionId, args[1] as import('@cindy/maker-shared/message-window').HistoryWorkReference, args[2] as { after?: string })
+          : undefined;
     if (!isCurrent()) throw new Error('History source changed');
     return value as T;
   };
   const view = new HistoryViewController<HistoryChatMessage>({
     page: async (before) => {
-      const page = await call<HistoryViewPage<Message>>('local-db:messages:view', [sessionId, { before }]);
+      const writer = deviceId ? remoteHistoryCacheWriter(deviceId, sessionId) : undefined;
+      const page = await call<HistoryViewPage<Message>>('local-db:messages:view', [sessionId, { before, lazyDetails: true }]);
       if (page == null) throw new Error('[CHANNEL_NOT_ALLOWED] History view is unavailable');
+      writeCache = writer;
       return { ...page, items: mapHistoryViewMessages(page.items, mapRows) };
     },
     details: async (ref, after) => {
+      const writer = deviceId ? remoteHistoryCacheWriter(deviceId, sessionId) : undefined;
       const page = await call<HistoryDetailPage<Message>>('local-db:messages:work-details', [sessionId, ref, { after }]);
+      writeCache = writer;
       return { ...page, messages: mapRows(page.messages) };
     },
     expanded: async (refs) => {
       // Releasing an old view must still clear its original Host's interest.
       // The existing intent queue orders this after any in-flight expand.
       if (!refs.length) {
-        if (isDataOwnerGenerationCurrent(owner)) {
+        if (deviceId && isDataOwnerGenerationCurrent(owner)) {
           await window.electronAPI.deviceLink.invoke(deviceId, 'local-db:messages:view-intent', [sessionId, []]);
         }
       } else await call<void>('local-db:messages:view-intent', [sessionId, refs]);
@@ -11048,10 +11064,26 @@ function createRemoteHistoryView(sessionId: string) {
   entry.view = view;
   entry.isCurrent = isCurrent;
   remoteHistoryViews.set(sessionId, entry);
-  view.setNetworkAvailable(!isRemoteDeviceMarkedDisconnected(deviceId));
+  view.setNetworkAvailable(!deviceId || !isRemoteDeviceMarkedDisconnected(deviceId));
   view.subscribe(() => {
+    // Keep the debounce handle on the controller instance rather than in this
+    // callback's lexical scope. Besides making replacement views self-contained,
+    // this keeps the recovery callback independently executable in its source
+    // compatibility test (the old host evaluates this body on its own).
+    const timerView = view as typeof view & {
+      __cindyHistoryPersistTimer?: ReturnType<typeof setTimeout>;
+    };
+    if (timerView.__cindyHistoryPersistTimer) clearTimeout(timerView.__cindyHistoryPersistTimer);
     if (!isCurrent() || !sessions.has(sessionId)) return;
     const snapshot = view.getSnapshot();
+    if (isHistoryViewUnavailable(snapshot.error)) {
+      writeCache = undefined;
+    } else if (snapshot.ready && !snapshot.loading && !snapshot.error && writeCache) {
+      const writer = writeCache;
+      timerView.__cindyHistoryPersistTimer = setTimeout(() => {
+        if (isCurrent()) writer(snapshot);
+      }, 1200);
+    }
     if (!snapshot.ready) {
       if (view.isActive() && isHistoryViewUnavailable(snapshot.error)) {
         void reconcileRemoteMessages(sessionId, { force: true }).catch(() => undefined);
@@ -11066,6 +11098,10 @@ function createRemoteHistoryView(sessionId: string) {
       oldestMessageId: snapshot.nextCursor,
       historyWindowHasIsland: false,
     }));
+  });
+  void view.restoreCachedView(async () => {
+    const snapshot = await cached;
+    return isCurrent() ? snapshot : null;
   });
   return view;
 }
@@ -11936,13 +11972,27 @@ function reconcileRemoteMessages(sessionId: string, opts?: {
         }
         if (opts?.force) {
           // readPage starts expanded details without awaiting them. Join those
-          // same reads before hydrating; their cached display may still be old.
-          await Promise.all(historyWorkSummaries(view.getSnapshot().items)
-            .map((summary) => view.loadDetails(summary, { allowCollapsed: true })));
+          // same reads before certifying receipts; their display may still be old.
+          // Historical folded bodies stay lazy. A force recovery must still seal
+          // live rows already on screen when their final push was lost; only
+          // ranges containing those rows may be read without user expansion.
+          const liveRows = opts?.force ? [...rowsAtStart.values()].filter((row) => row.isStreaming) : [];
+          const summaries = historyWorkSummaries(view.getSnapshot().items);
+          const recoveryKeys = new Set(summaries.filter((summary) => liveRows.some((row) => {
+            if (summary.parentToolUseId && !row.parentToolUseId) return false;
+            const createdAt = Date.parse(row.createdAt ?? '');
+            return row.clientId === summary.anchorClientId
+              || (createdAt >= summary.startedAtMs && createdAt <= summary.endedAtMs);
+          })).map((summary) => summary.key));
+          await Promise.all(summaries
+            .filter((summary) => recoveryKeys.has(summary.key) || view.getSnapshot().expanded.has(summary.key))
+            .map((summary) => recoveryKeys.has(summary.key)
+              ? view.loadDetails(summary, { allowCollapsed: true }) : view.loadDetails(summary)));
           if (getRemoteHistoryView(sessionId) !== view || !view.isActive()
             || (_messagesEpoch.get(sessionId) ?? 0) !== epochAtStart) return false;
           const detailsSnapshot = view.getSnapshot();
           const incompleteDetails = historyWorkSummaries(detailsSnapshot.items).some((summary) => {
+            if (!recoveryKeys.has(summary.key) && !detailsSnapshot.expanded.has(summary.key)) return false;
             const detail = detailsSnapshot.details.get(summary.key);
             return !detail?.complete || !!detail.error || detail.revision !== summary.revision;
           });

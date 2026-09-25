@@ -4364,6 +4364,12 @@ function SubagentCard({
   const { colors } = useTheme();
   const { t } = useTranslation();
   const styles = useThemedStyles(makeStyles);
+  const [expanded, toggleExpanded] = useFoldableExpandedState(item.key, false);
+  const deferred = item.deferred;
+  useEffect(() => {
+    deferred?.setVisible?.(expanded, false);
+    return () => deferred?.setVisible?.(false, false);
+  }, [deferred?.owner, deferred?.key, expanded]);
   const title = item.header.subagentType
     ? t('message.renderer.subagentTyped', { type: item.header.subagentType })
     : t('message.renderer.subagent');
@@ -4374,6 +4380,8 @@ function SubagentCard({
   return (
     <CollabCardShell
       blockId={item.key}
+      controlledExpanded={expanded}
+      onControlledToggle={toggleExpanded}
       leadingIcon={<Bot color={colors.textTertiary} size={iconSize.md} strokeWidth={iconStroke.regular} />}
       title={title}
       subtitle={subtitle || undefined}
@@ -4382,6 +4390,18 @@ function SubagentCard({
     >
       {(layout) => (
         <View style={[styles.stack, { gap: layout.stackGap }]}>
+          {deferred?.loading ? <CompactActivityIndicator color={colors.textTertiary} size={iconSize.md} /> : null}
+          {deferred?.failed ? (
+            <MessageListActionButton
+              accessibilityLabel={t('message.renderer.retryPreview')}
+              disabled={deferred.loading}
+              onPress={deferred.retry}
+              style={[styles.payloadOpenButton, { minHeight: MESSAGE_CONTROL_TOUCH_SIZE, minWidth: MESSAGE_CONTROL_TOUCH_SIZE }]}
+              testID="message.subagentDetailsRetry"
+            >
+              <Text style={styles.payloadOpenButtonText}>{t('message.renderer.retryPreview')}</Text>
+            </MessageListActionButton>
+          ) : null}
           {/* 两级展开(与 WorkGroupCard 同规则):内层子卡保持各自折叠头行,按需下钻。 */}
           {item.childItems.map((child) => (
             <RenderItemView key={child.key} item={child} actions={actions} />
@@ -4565,6 +4585,8 @@ function CollabCardShell({
   leadingIcon,
   title,
   subtitle,
+  controlledExpanded,
+  onControlledToggle,
   defaultExpanded = false,
   screenWidth,
   testID,
@@ -4574,6 +4596,8 @@ function CollabCardShell({
   leadingIcon: ReactNode;
   title: string;
   subtitle?: string;
+  controlledExpanded?: boolean;
+  onControlledToggle?: () => void;
   /** 仅无 blockId 时生效(Orca 协同卡默认展开);blockId 存在时由共享记忆决定。 */
   defaultExpanded?: boolean;
   screenWidth?: number;
@@ -4589,6 +4613,8 @@ function CollabCardShell({
       blockId={blockId}
       title={title}
       subtitle={subtitle}
+      controlledExpanded={controlledExpanded}
+      onControlledToggle={onControlledToggle}
       defaultExpanded={defaultExpanded}
       leadingIcon={leadingIcon}
       layout={layout}

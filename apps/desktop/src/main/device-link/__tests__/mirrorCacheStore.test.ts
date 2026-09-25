@@ -15,6 +15,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 import type { MirrorCache } from '../mirrorCacheStore';
+import type { HistoryViewSnapshot } from '@cindy/maker-shared/message-window';
+import { decodeRemoteHistory, encodeRemoteHistory } from '../../../shared/remoteHistoryCache';
 import {
   createMirrorCache,
   MirrorCachePurgeError,
@@ -332,6 +334,69 @@ describe('normalizeDeviceSessions', () => {
 });
 
 describe('readMessages / writeMessages', () => {
+  it('结构化 history view 与 raw rows 共存,并随 revision 更新失效', async () => {
+    const c = rawCache();
+    const source = row('m1', '2026-01-01T00:00:00.000Z');
+    const makeSnapshot = (revision: string): HistoryViewSnapshot<typeof source> => ({
+      items: [
+        {
+          type: 'messages',
+          key: 'messages',
+          messages: [source],
+          deferred: {
+            key: 'work-1',
+            anchorClientId: source.clientId,
+            firstMessageId: source.id,
+            lastMessageId: source.id,
+            startedAtMs: Date.parse(source.createdAt),
+            endedAtMs: Date.parse(source.createdAt),
+            messageCount: 1,
+            toolCount: 0,
+            isStreaming: false,
+            revision,
+          },
+        },
+      ],
+      details: new Map(),
+      expanded: new Set(),
+      nextCursor: null,
+      hasMore: false,
+      ready: true,
+      loading: false,
+      error: null,
+    });
+    const first = makeSnapshot('r1');
+    const firstHistory = encodeRemoteHistory(first);
+    const token = await c.readMessagesWithInvalidation('dev-1', 'sess-1');
+    await c.writeMessages(
+      'dev-1',
+      'sess-1',
+      [source],
+      token.invalidation,
+      token.ownerRoot,
+      token.accountCounter,
+      firstHistory,
+    );
+    const cached = await c.readMessagesWithInvalidation('dev-1', 'sess-1');
+    expect(cached.messages).toHaveLength(1);
+    expect(decodeRemoteHistory(cached.historyView)?.items).toEqual(first.items);
+
+    const second = makeSnapshot('r2');
+    const secondHistory = encodeRemoteHistory(second);
+    await c.writeMessages(
+      'dev-1',
+      'sess-1',
+      [source],
+      cached.invalidation,
+      cached.ownerRoot,
+      cached.accountCounter,
+      secondHistory,
+    );
+    const updated = await c.readMessagesWithInvalidation('dev-1', 'sess-1');
+    expect(updated.historyView).toBe(secondHistory);
+    expect(updated.historyView).not.toBe(firstHistory);
+  });
+
   it('写入后可读回,内容与归一化结果一致', async () => {
     const c = cache();
     await c.writeMessages('dev-1', 'sess-1', [
