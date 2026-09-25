@@ -418,6 +418,98 @@ describe('upstream-response-idle watchdog suspend awareness', () => {
 });
 
 describe('Claude Code tool-loop guard runtime integration', () => {
+  const editErrors = [
+    'The required parameter file_path is missing',
+    'String to replace not found in file.',
+    'Found 2 matches of the string to replace, but replace_all is false.',
+    'No changes to make: old_string and new_string are exactly the same.',
+  ];
+
+  it.each(editErrors.flatMap((output) => [
+    { output, parentToolUseId: undefined },
+    { output, parentToolUseId: 'toolu_edit_agent' },
+  ]))('allows changing Edit inputs after repeated errors: $output, parent=$parentToolUseId', async ({ output, parentToolUseId }) => {
+    const { handle, stream, events, fakeQuery, collected } = await startSessionWithStream();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      await handle.send({ type: 'user', content: 'correct the edit and continue' });
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const id = 'edit-' + attempt;
+        stream.emit({
+          type: 'assistant',
+          parent_tool_use_id: parentToolUseId ?? null,
+          message: { role: 'assistant', content: [{
+            type: 'tool_use', id, name: 'Edit', input: {
+              ...(output === editErrors[0] ? {} : { file_path: 'file.ts' }),
+              old_string: 'before-' + attempt,
+              new_string: output === editErrors[3] ? 'before-' + attempt : 'after-' + attempt,
+            },
+          }] },
+        });
+        stream.emit({
+          type: 'user',
+          parent_tool_use_id: parentToolUseId ?? null,
+          message: { role: 'user', content: [{
+            type: 'tool_result', tool_use_id: id, content: output, is_error: true,
+          }] },
+        });
+        await pumpUntil(() => events.filter((event) => event.type === 'tool_result_full').length === attempt + 1, 'failed edit delivered');
+        expect(toolLoopError(events)).toBeUndefined();
+        expect(fakeQuery.interrupt).not.toHaveBeenCalled();
+        expect(handle.isTurnRunning?.()).toBe(true);
+      }
+      stream.emit(successResult());
+      await pumpUntil(() => handle.isTurnRunning?.() === false, 'correcting turn completed');
+      expect(toolLoopError(events)).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+      stream.end();
+      await handle.close().catch(() => undefined);
+      await collected;
+    }
+  });
+
+  it.each([undefined, 'toolu_edit_agent'])('still interrupts four identical failed edits, parent=%s', async (parentToolUseId) => {
+    const { handle, stream, events, fakeQuery, collected } = await startSessionWithStream();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      await handle.send({ type: 'user', content: 'edit the file' });
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const id = 'same-edit-' + attempt;
+        stream.emit({
+          type: 'assistant',
+          parent_tool_use_id: parentToolUseId ?? null,
+          message: { role: 'assistant', content: [{
+            type: 'tool_use', id, name: 'Edit', input: {
+              file_path: 'file.ts', old_string: 'same', new_string: 'same',
+            },
+          }] },
+        });
+        stream.emit({
+          type: 'user',
+          parent_tool_use_id: parentToolUseId ?? null,
+          message: { role: 'user', content: [{
+            type: 'tool_result', tool_use_id: id, content: editErrors[3], is_error: true,
+          }] },
+        });
+        await pumpUntil(() => events.filter((event) => event.type === 'tool_result_full').length === attempt + 1, 'identical edit delivered');
+        if (attempt < 3) {
+          expect(toolLoopError(events)).toBeUndefined();
+          expect(fakeQuery.interrupt).not.toHaveBeenCalled();
+        }
+      }
+      await pumpUntil(() => fakeQuery.interrupt.mock.calls.length === 1, 'identical edit interrupted');
+      expect(toolLoopError(events)).toMatchObject({ data: {
+        reason: 'tool_use_loop_detected', loopKind: 'consecutive', loopCount: 4,
+      } });
+    } finally {
+      vi.useRealTimers();
+      stream.end();
+      await handle.close().catch(() => undefined);
+      await collected;
+    }
+  });
+
   it('并发 subagent 的相同调用按 parent 隔离，不会聚合成会话级死循环', async () => {
     const { handle, stream, events, fakeQuery, collected } = await startSessionWithStream(
       'claude-opus-5',

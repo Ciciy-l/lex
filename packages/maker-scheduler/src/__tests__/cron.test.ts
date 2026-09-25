@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseCron, nextRun, cronToHuman } from '../engine/cron.js';
+import { parseCron, nextRun, cronToHuman, fromWallClock } from '../engine/cron.js';
 
 describe('parseCron', () => {
   it('expands */5 in minute field', () => {
@@ -196,6 +196,38 @@ describe('nextRun', () => {
     const from = Date.UTC(2026, 9, 31, 16, 0, 1);
     const next = nextRun('0 12 * * *', from, 'America/New_York');
     expect(next).toBe(Date.UTC(2026, 10, 1, 17, 0, 0));
+  });
+
+  it('resolves repeated wall times to their later occurrence in northern and southern zones', () => {
+    expect(fromWallClock(2026, 11, 1, 1, 0, 'America/New_York'))
+      .toBe(Date.UTC(2026, 10, 1, 6, 0, 0));
+    expect(fromWallClock(2026, 4, 5, 2, 30, 'Australia/Sydney'))
+      .toBe(Date.UTC(2026, 3, 4, 16, 30, 0));
+  });
+
+  it('resolves missing spring-forward wall times after the transition', () => {
+    expect(fromWallClock(2026, 3, 8, 2, 30, 'America/New_York'))
+      .toBe(Date.UTC(2026, 2, 8, 7, 30, 0));
+    expect(fromWallClock(2026, 10, 4, 2, 30, 'Australia/Sydney'))
+      .toBe(Date.UTC(2026, 9, 3, 16, 30, 0));
+  });
+
+  it('skips nonexistent hourly slots and continues after spring-forward gaps', () => {
+    expect(nextRun('0 2 * * *', Date.UTC(2026, 2, 8, 5, 0, 0), 'America/New_York'))
+      .toBe(Date.UTC(2026, 2, 9, 6, 0, 0));
+    expect(nextRun('30 2 * * *', Date.UTC(2026, 2, 8, 4, 0, 0), 'America/New_York'))
+      .toBe(Date.UTC(2026, 2, 9, 6, 30, 0));
+  });
+
+  it('keeps every-minute scheduling strictly increasing across both transition days', () => {
+    for (const dayStart of [Date.UTC(2026, 2, 8), Date.UTC(2026, 10, 1)]) {
+      let current = dayStart;
+      for (let iteration = 0; iteration < 2000; iteration++) {
+        const next = nextRun('* * * * *', current, 'America/New_York');
+        expect(next).toBeGreaterThan(current);
+        current = next;
+      }
+    }
   });
 });
 

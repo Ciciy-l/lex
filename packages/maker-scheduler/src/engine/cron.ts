@@ -184,15 +184,36 @@ function tzOffsetMs(epochMs: number, tz: string): number {
   return wallAsUtc - epochSec;
 }
 
-// Convert wall-clock (y,mo,d,h,mi) in tz back to epoch ms. Handles DST edges by re-checking offset.
+function wallClockEquals(
+  epochMs: number,
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  timeZone: string,
+): boolean {
+  const wall = wallClock(epochMs, timeZone);
+  return wall.y === year && wall.mo === month && wall.d === day && wall.h === hour && wall.mi === minute;
+}
+
 // Exported for sibling use (see wallClock comment above).
 export function fromWallClock(y: number, mo: number, d: number, h: number, mi: number, tz: string): number {
   const guess = Date.UTC(y, mo - 1, d, h, mi, 0);
   const off1 = tzOffsetMs(guess, tz);
   const candidate = guess - off1;
   const off2 = tzOffsetMs(candidate, tz);
-  if (off2 === off1) return candidate;
-  return guess - off2;
+  if (off2 === off1) {
+    const offAfter = tzOffsetMs(candidate + 3600_000, tz);
+    if (offAfter !== off1) {
+      const later = guess - offAfter;
+      if (wallClockEquals(later, y, mo, d, h, mi, tz)) return later;
+    }
+    return candidate;
+  }
+  const corrected = guess - off2;
+  if (wallClockEquals(corrected, y, mo, d, h, mi, tz)) return corrected;
+  return guess - Math.min(off1, off2);
 }
 
 // ---------- nextRun ----------

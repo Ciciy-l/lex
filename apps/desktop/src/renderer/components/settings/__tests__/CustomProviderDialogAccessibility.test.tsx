@@ -209,6 +209,47 @@ async function renderNewImageGenerationReloadConfirmation(onSaved = vi.fn(), onC
 }
 
 describe('ProviderConnectionDialog accessibility', () => {
+  it('rebases saved model routes when the connection endpoint changes', async () => {
+    const initial = modelRoutedCodexProvider();
+    initial.runtimes.codex!.models.push({
+      id: 'inherited-route',
+      name: 'Inherited Route',
+      route: {
+        baseUrl: initial.runtimes.codex!.baseUrl,
+        wireProtocol: 'openai-responses',
+        requestPath: '/responses',
+      },
+    });
+    customProviderMocks.readCustomProviderKey.mockResolvedValue(null);
+    const user = userEvent.setup();
+    render(
+      <ProviderConnectionDialog
+        initial={initial}
+        focusAgent="codex"
+        onSaved={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(customProviderMocks.readCustomProviderKey).toHaveBeenCalled());
+
+    const nextBase = 'https://gateway.example.test/v2';
+    const baseUrl = screen.getByPlaceholderText('settings.providers.custom.fields.baseUrlPlaceholder');
+    await user.clear(baseUrl);
+    await user.type(baseUrl, nextBase);
+    await user.click(screen.getByRole('button', { name: 'settings.providers.custom.save' }));
+
+    await waitFor(() => expect(customProviderMocks.updateCustomProvider).toHaveBeenCalledOnce());
+    const saved = customProviderMocks.updateCustomProvider.mock.calls[0]?.[0] as CustomProviderConfig;
+    expect(saved.runtimes.codex?.baseUrl).toBe(nextBase);
+    expect(saved.runtimes.codex?.models.find((model) => model.id === 'glm-5.3')?.route).toMatchObject({
+      baseUrl: 'https://gateway.example.test/api/v1',
+      wireProtocol: 'openai-responses',
+      requestPath: '/responses',
+    });
+    expect(saved.runtimes.codex?.models.find((model) => model.id === 'inherited-route')?.route)
+      .toMatchObject({ baseUrl: nextBase, requestPath: '/responses' });
+  });
+
   it.each(['target-model', 'flux-image-x'])('keeps %s in standard model settings instead of a second editor', async (modelId) => {
     const initial: CustomProviderConfig = {
       id: 'deep-link-provider',

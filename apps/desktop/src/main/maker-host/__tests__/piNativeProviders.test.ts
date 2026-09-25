@@ -44,6 +44,7 @@ import {
   resolvePiBundledModelById,
   resolvePiCindyGatewayModelApi,
   resolvePiCindyGatewayModelSpec,
+  pruneAnthropicCompatForLink,
   type PiBundledModelInfo,
 } from '../pi-host.js';
 import { getActiveCatalog, setActiveCatalog, setDiscoveredCodexModels, setXdGatewayModels } from '../active-catalog.js';
@@ -326,6 +327,74 @@ describe('resolvePiCindyGatewayModelApi', () => {
       });
     },
   );
+});
+
+describe('Anthropic Messages Pi compatibility by link', () => {
+  const compat = {
+    forceAdaptiveThinking: true,
+    supportsStrictTools: true,
+    supportsMidConvoToolChanges: true,
+    supportsMidConvoEffort: true,
+    supportsMidConvoSystemMessages: true,
+    vendorExtension: true,
+  };
+
+  it('prunes only gateway-incompatible bits without mutating shared metadata', () => {
+    const original = structuredClone(compat);
+    expect(pruneAnthropicCompatForLink(compat, 'gateway')).toEqual({
+      forceAdaptiveThinking: true,
+      supportsMidConvoSystemMessages: true,
+      vendorExtension: true,
+    });
+    expect(pruneAnthropicCompatForLink(compat, 'subscription')).toEqual({
+      forceAdaptiveThinking: true,
+      supportsStrictTools: true,
+      supportsMidConvoSystemMessages: true,
+      vendorExtension: true,
+    });
+    expect(compat).toEqual(original);
+
+    setXdGatewayModels([{ id: 'claude-opus-5', agents: ['pi'] }]);
+    for (const context of [undefined, { remote: true }]) {
+      const spec = resolvePiCindyGatewayModelSpec('xd', 'claude-opus-5', context);
+      expect(spec?.api).toBe('anthropic-messages');
+      expect(spec?.compat).not.toHaveProperty('supportsStrictTools');
+      expect(spec?.compat).not.toHaveProperty('supportsMidConvoToolChanges');
+      expect(spec?.compat).not.toHaveProperty('supportsMidConvoEffort');
+    }
+  });
+
+  it('prunes Anthropic subscription compat while leaving a non-Anthropic API unchanged', () => {
+    const catalog = JSON.parse(JSON.stringify(BUNDLED_CATALOG)) as Catalog;
+    const anthropic = catalog.providers.find((provider) => provider.id === 'anthropic')!;
+    const openai = catalog.providers.find((provider) => provider.id === 'openai')!;
+    anthropic.models.pi = [{
+      id: 'claude-opus-5', name: 'Claude Opus 5', contextWindow: 1_000_000,
+      efforts: ['high'], defaultEffort: 'high', piApi: 'anthropic-messages',
+    }];
+    openai.models.pi = [{
+      id: 'chatgpt/gpt-5.6-sol', name: 'GPT-5.6 Sol', contextWindow: 272_000,
+      efforts: ['high'], defaultEffort: 'high', piApi: 'openai-responses',
+    }];
+
+    const { providers } = buildPiSubscriptionNativeProviders(
+      catalog,
+      'http://127.0.0.1:18765',
+      new Map([
+        ['anthropic', new Map([['claude-opus-5', piBundledModel('claude-opus-5', 'anthropic-messages', { compat })]])],
+        ['openai-codex', new Map([['gpt-5.6-sol', piBundledModel('gpt-5.6-sol', 'openai-codex-responses', { compat })]])],
+      ]),
+    );
+    expect(providers.find((provider) => provider.sourceProviderId === 'anthropic')?.models[0]?.compat)
+      .toEqual({
+        forceAdaptiveThinking: true,
+        supportsStrictTools: true,
+        supportsMidConvoSystemMessages: true,
+        vendorExtension: true,
+      });
+    expect(providers.find((provider) => provider.sourceProviderId === 'openai')?.models[0]?.compat)
+      .toEqual(compat);
+  });
 });
 
 describe('buildPiNativeProvidersFromConfigs', () => {

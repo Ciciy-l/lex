@@ -42,8 +42,9 @@ import { createLogger } from '../logger.js';
 import { getRipgrepBinaryPath } from '../maker-host/runtime-configs.js';
 import { remoteInvoke } from '../device-link/index.js';
 import { downloadToFile, removeRemote } from '../device-link/mediaTransfer.js';
-import { fetchRemoteFileToCache, findStaleCached, isInsideCacheDir, putCachedContent, sweepCacheOnStartup } from './remote-file-cache.js';
-import { fetchChatFile, statChatFile, type ChatFileDeps, type ChatFileFetchArgs } from './chat-file.js';
+import { activeOwnerScopeKey, isAppSessionBoundaryPending } from '../appSessionState.js';
+import { fetchRemoteFileToCache, findStaleCached, readCachedFileContent, putCachedContent, sweepCacheOnStartup } from './remote-file-cache.js';
+import { fetchChatFile, statChatFile, type ChatFileDeps, type ChatFileFetchArgs, type ChatFileOwnerScope } from './chat-file.js';
 import { isTransientDeviceExportStatusError } from './device-export-status-error.js';
 import { makeSshChunkExecutor } from './ssh-media.js';
 import { getRemoteFileBrowser } from './remote-deps.js';
@@ -52,6 +53,14 @@ import { throwRemoteFsIpcError } from './remote.js';
 import { watcherManager, type FileTreeEvent } from './watcher.js';
 
 const log = createLogger('file-browser/ipc');
+
+function captureOwnerScope(): ChatFileOwnerScope {
+  const key = activeOwnerScopeKey();
+  return {
+    key,
+    isCurrent: () => !isAppSessionBoundaryPending() && activeOwnerScopeKey() === key,
+  };
+}
 
 export const FILE_BROWSER_INVOKE = {
   /** 大文件取回:>2MiB inline 上限的远程文件拉到本地缓存(SSH 分片 / device OSS)。 */
@@ -163,8 +172,10 @@ async function fetchRemoteBigFile(
     mtimeMs: number;
     remoteHostId?: string | null;
     deviceId?: string | null;
+    scope?: string;
   },
   onProgress: (received: number, total: number, phase?: 'upload' | 'download') => void,
+  signal?: AbortSignal,
 ): Promise<string> {
   if (!args.workdir || !args.relPath || !Number.isFinite(args.size)) {
     throw new Error('bad fetch-remote args');
@@ -173,6 +184,7 @@ async function fetchRemoteBigFile(
     const deviceId = args.deviceId;
     return fetchRemoteFileToCache(
       {
+        scope: args.scope,
         transport: 'device',
         endpointId: deviceId,
         workdir: args.workdir,
@@ -180,7 +192,8 @@ async function fetchRemoteBigFile(
         size: args.size,
         mtimeMs: args.mtimeMs,
       },
-      async (destPath, progress) => {
+      async (destPath, progress, transferSignal) => {
+        if (transferSignal?.aborted) throw new Error('FILE_PEER_CANCELLED');
         // 两段式:Start 立即回 transferId(上传在被控端后台跑,2GB 分钟级,
         // 单次 invoke 的 30s 超时罩不住),轮询 Status 到终态再下载。
         progress(0, args.size);
@@ -191,6 +204,7 @@ async function fetchRemoteBigFile(
         if (!start?.ok || !start.transferId) {
           throw new Error(start?.message ?? 'exportFileStart failed on remote device');
         }
+        if (transferSignal?.aborted) throw new Error('FILE_PEER_CANCELLED');
         const deadline = Date.now() + 30 * 60_000;
         let key: string | null = null;
         // relay 瞬断容忍:被控端的上传不依赖 relay(直连 OSS),断的只是"问进度"
@@ -199,6 +213,7 @@ async function fetchRemoteBigFile(
         let transientFails = 0;
         for (;;) {
           await new Promise((r) => setTimeout(r, 1500));
+          if (transferSignal?.aborted) throw new Error('FILE_PEER_CANCELLED');
           if (Date.now() > deadline) throw new Error('remote upload timed out (30min)');
           let st: { ok: boolean; state?: string; key?: string; message?: string; uploaded?: number };
           try {
@@ -213,6 +228,7 @@ async function fetchRemoteBigFile(
               { op: 'exportFileStatus', workdir: args.workdir, transferId: start.transferId },
             );
             transientFails = 0;
+            if (transferSignal?.aborted) throw new Error('FILE_PEER_CANCELLED');
           } catch (err) {
             const msg = String(err);
             if (isTransientDeviceExportStatusError(err) && ++transientFails <= 20) {
@@ -235,13 +251,14 @@ async function fetchRemoteBigFile(
         try {
           await downloadToFile(res.key, destPath, undefined, (downloaded) => {
             progress(Math.min(downloaded, args.size), args.size, 'download');
-          });
+          }, transferSignal);
           progress(args.size, args.size, 'download');
         } finally {
           void removeRemote(res.key);
         }
       },
       onProgress,
+      signal,
     );
   }
   if (args.remoteHostId) {
@@ -250,6 +267,7 @@ async function fetchRemoteBigFile(
     const mgr = getRemoteFileBrowser();
     return fetchRemoteFileToCache(
       {
+        scope: args.scope,
         transport: 'ssh',
         endpointId: hostId,
         workdir: args.workdir,
@@ -264,6 +282,7 @@ async function fetchRemoteBigFile(
         args.relPath,
       ),
       onProgress,
+      signal,
     );
   }
   throw new Error('fetch-remote requires remoteHostId or deviceId');
@@ -300,8 +319,10 @@ export function registerFileBrowserIpc(): void {
       },
     ) => {
       const wc = event.sender;
+      const ownerScope = captureOwnerScope();
       let lastPush = 0;
       const onProgress = (received: number, total: number, phase?: 'upload' | 'download') => {
+        if (!ownerScope.isCurrent()) return;
         const now = Date.now();
         if (now - lastPush < 100 && received < total) return;
         lastPush = now;
@@ -316,19 +337,29 @@ export function registerFileBrowserIpc(): void {
         }
       };
       try {
-        const cachePath = await fetchRemoteBigFile(args, onProgress);
+        const cachePath = await fetchRemoteBigFile({ ...args, scope: ownerScope.key }, onProgress);
+        if (!ownerScope.isCurrent()) {
+          return { ok: false as const, message: 'FILE_PEER_CANCELLED' };
+        }
         return { ok: true as const, cachePath, stale: false };
       } catch (err) {
+        if (!ownerScope.isCurrent()) {
+          return { ok: false as const, message: 'FILE_PEER_CANCELLED' };
+        }
         // 断线兜底:取回失败但本地有该路径的历史副本 → 降级展示(可能非最新)。
         const transport = args.deviceId ? ('device' as const) : ('ssh' as const);
         const endpointId = args.deviceId ?? args.remoteHostId ?? '';
         if (endpointId) {
           const stalePath = await findStaleCached({
+            scope: ownerScope.key,
             transport,
             endpointId,
             workdir: args.workdir,
             relPath: args.relPath,
           }).catch(() => null);
+          if (!ownerScope.isCurrent()) {
+            return { ok: false as const, message: 'FILE_PEER_CANCELLED' };
+          }
           if (stalePath) {
             log.info('fetch-remote failed, serving stale cache', { relPath: args.relPath });
             return { ok: true as const, cachePath: stalePath, stale: true };
@@ -371,8 +402,10 @@ export function registerFileBrowserIpc(): void {
   };
   ipcMain.handle(FILE_BROWSER_INVOKE.CHAT_FILE_FETCH, async (event, args: ChatFileFetchArgs) => {
     const wc = event.sender;
+    const ownerScope = captureOwnerScope();
     let lastPush = 0;
     const onProgress = (received: number, total: number, phase?: 'upload' | 'download') => {
+      if (!ownerScope.isCurrent()) return;
       const now = Date.now();
       if (now - lastPush < 100 && received < total) return;
       lastPush = now;
@@ -386,7 +419,10 @@ export function registerFileBrowserIpc(): void {
         });
       }
     };
-    const result = await fetchChatFile(args, onProgress, chatFileDeps);
+    const result = await fetchChatFile(args, onProgress, chatFileDeps, ownerScope);
+    if (!ownerScope.isCurrent()) {
+      return { ok: false as const, code: 'FETCH_FAILED' as const, message: 'FILE_PEER_CANCELLED' };
+    }
     if (!result.ok) {
       log.warn('chat-file fetch failed', { code: result.code, absPath: args?.absPath, message: result.message });
     }
@@ -396,9 +432,12 @@ export function registerFileBrowserIpc(): void {
   // chip 点亮预检:远端精确 stat,verdict 见 statChatFile 注释。查询型接口,
   // 任何异常都折叠进 verdict(unknown),不 throw。
   ipcMain.handle(FILE_BROWSER_INVOKE.CHAT_FILE_STAT, async (_event, args: ChatFileFetchArgs) => {
+    const ownerScope = captureOwnerScope();
     try {
-      return { verdict: await statChatFile(args, chatFileDeps) };
+      const verdict = await statChatFile(args, chatFileDeps);
+      return { verdict: ownerScope.isCurrent() ? verdict : 'unknown' as const };
     } catch (err) {
+      if (!ownerScope.isCurrent()) return { verdict: 'unknown' as const };
       log.warn('chat-file stat failed', { absPath: args?.absPath, error: String(err) });
       return { verdict: 'unknown' as const };
     }
@@ -419,6 +458,7 @@ export function registerFileBrowserIpc(): void {
         deviceId?: string | null;
       },
     ) => {
+      const ownerScope = captureOwnerScope();
       const endpointId = args?.deviceId ?? args?.remoteHostId;
       if (!endpointId || !args.workdir || !args.relPath) return { ok: false as const };
       if (typeof args.content !== 'string' || args.content.length > 2_621_440) {
@@ -426,6 +466,7 @@ export function registerFileBrowserIpc(): void {
       }
       await putCachedContent(
         {
+          scope: ownerScope.key,
           transport: args.deviceId ? 'device' : 'ssh',
           endpointId,
           workdir: args.workdir,
@@ -435,7 +476,7 @@ export function registerFileBrowserIpc(): void {
         },
         args.content,
       );
-      return { ok: true as const };
+      return { ok: ownerScope.isCurrent() };
     },
   );
 
@@ -443,38 +484,26 @@ export function registerFileBrowserIpc(): void {
   ipcMain.handle(
     FILE_BROWSER_INVOKE.READ_CACHED,
     async (_event, args: { cachePath: string }) => {
-      if (!args?.cachePath || !isInsideCacheDir(args.cachePath)) {
+      if (!args?.cachePath) {
         return { ok: false as const, message: 'path outside cache dir' };
       }
-      try {
-        const st = await fsPromises.stat(args.cachePath);
-        const CAP = 32 * 1024 * 1024;
-        const handle = await fsPromises.open(args.cachePath, 'r');
-        try {
-          const buf = Buffer.alloc(Math.min(st.size, CAP));
-          // fs.read 可能短读,循环读满(同 file-browser-core readFileChunk 教训:
-          // 单次 read 短读会让尾部残留 0x00,这里还会被误判成二进制)。
-          let filled = 0;
-          while (filled < buf.length) {
-            const { bytesRead } = await handle.read(buf, filled, buf.length - filled, filled);
-            if (bytesRead === 0) break;
-            filled += bytesRead;
-          }
-          if (buf.subarray(0, Math.min(filled, 4096)).includes(0)) {
-            return { ok: true as const, kind: 'binary' as const };
-          }
-          return {
-            ok: true as const,
-            kind: 'text' as const,
-            content: buf.subarray(0, filled).toString('utf8'),
-            truncated: st.size > CAP,
-          };
-        } finally {
-          await handle.close();
-        }
-      } catch (err) {
-        return { ok: false as const, message: String(err) };
+      const ownerScope = captureOwnerScope();
+      const cap = 32 * 1024 * 1024;
+      const cached = await readCachedFileContent(args.cachePath, cap, ownerScope.key);
+      if (!ownerScope.isCurrent()) {
+        return { ok: false as const, message: 'FILE_PEER_CANCELLED' };
       }
+      if (!cached.ok) return cached;
+      if (cached.buffer.subarray(0, Math.min(cached.buffer.length, 4096)).includes(0)) {
+        return ownerScope.isCurrent()
+          ? { ok: true as const, kind: 'binary' as const }
+          : { ok: false as const, message: 'FILE_PEER_CANCELLED' };
+      }
+      const content = cached.buffer.toString('utf8');
+      if (!ownerScope.isCurrent()) {
+        return { ok: false as const, message: 'FILE_PEER_CANCELLED' };
+      }
+      return { ok: true as const, kind: 'text' as const, content, truncated: cached.size > cap };
     },
   );
 

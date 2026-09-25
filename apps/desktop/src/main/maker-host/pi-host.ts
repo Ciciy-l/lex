@@ -670,7 +670,10 @@ export function buildPiSubscriptionNativeProviders(
         const compatibleCorrection = correction?.api === api ? correction : null;
         const thinking = compatibleCorrection?.thinkingLevelMap
           ?? officialThinking?.thinkingLevelMap ?? template?.thinkingLevelMap;
-        const compat = compatibleCorrection?.compat ?? officialThinking?.compat ?? template?.compat;
+        const rawCompat = compatibleCorrection?.compat ?? officialThinking?.compat ?? template?.compat;
+        const compat = sourceProviderId === 'anthropic' && api === 'anthropic-messages'
+          ? pruneAnthropicCompatForLink(rawCompat, 'subscription')
+          : rawCompat;
         const cost = catalogCostForPiNative(model.cost) ?? template?.cost;
         const listedIds = listedModelIdsByProvider?.get(piProviderId)
           ?? listedPiModelIds(bundledModelsByProvider)?.get(piProviderId);
@@ -1085,6 +1088,30 @@ function xaiOfficialCapabilityCorrection(
       supportsReasoningEffort: reasoningCompatEnabled(official.compat),
     },
   };
+}
+
+const GATEWAY_UNSUPPORTED_ANTHROPIC_COMPAT: readonly string[] = [
+  'supportsStrictTools',
+  'supportsMidConvoToolChanges',
+  'supportsMidConvoEffort',
+];
+const SUBSCRIPTION_UNSUPPORTED_ANTHROPIC_COMPAT: readonly string[] = [
+  'supportsMidConvoToolChanges',
+  'supportsMidConvoEffort',
+];
+
+export function pruneAnthropicCompatForLink(
+  compat: Record<string, unknown> | undefined,
+  link: 'gateway' | 'subscription',
+): Record<string, unknown> | undefined {
+  if (!compat) return compat;
+  const unsupported = link === 'gateway'
+    ? GATEWAY_UNSUPPORTED_ANTHROPIC_COMPAT
+    : SUBSCRIPTION_UNSUPPORTED_ANTHROPIC_COMPAT;
+  if (!unsupported.some((key) => key in compat)) return compat;
+  const next = { ...compat };
+  for (const key of unsupported) delete next[key];
+  return next;
 }
 
 function officialPiModels(providerId: string): PiNativeModelSpec[] | null {
@@ -1649,11 +1676,13 @@ export function resolvePiCindyGatewayModelSpec(
   // Remote execution never receives metadata from the Desktop binary probe. The version-matched
   // static client profile remains the second authority and is injected only when its API matches.
   if (context?.remote) {
+    const rawCompat = bundled?.api === api ? bundled.compat : undefined;
+    const compat = api === 'anthropic-messages'
+      ? pruneAnthropicCompatForLink(rawCompat, 'gateway')
+      : rawCompat;
     return {
       api,
-      ...(bundled?.api === api && bundled.compat
-        ? { compat: structuredClone(bundled.compat) }
-        : {}),
+      ...(compat ? { compat: structuredClone(compat) } : {}),
       ...(bundled?.api === api && bundled.samplingParams
         ? { samplingParams: structuredClone(bundled.samplingParams) }
         : {}),
@@ -1668,11 +1697,13 @@ export function resolvePiCindyGatewayModelSpec(
   // probe takes precedence over the checked-in snapshot when both match that API.
   const compatibleBundled = bundled?.api === api ? bundled : undefined;
   const compatibleProbed = probed?.api === api ? probed : undefined;
+  const rawCompat = compatibleProbed?.compat ?? compatibleBundled?.compat;
+  const compat = api === 'anthropic-messages'
+    ? pruneAnthropicCompatForLink(rawCompat, 'gateway')
+    : rawCompat;
   return {
     api,
-    ...(compatibleProbed?.compat ?? compatibleBundled?.compat
-      ? { compat: structuredClone(compatibleProbed?.compat ?? compatibleBundled?.compat) }
-      : {}),
+    ...(compat ? { compat: structuredClone(compat) } : {}),
     ...(compatibleProbed?.samplingParams ?? compatibleBundled?.samplingParams
       ? {
           samplingParams: structuredClone(

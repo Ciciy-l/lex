@@ -134,4 +134,11 @@ describe('nextCronOrMonthlyFire (dispatch)', () => {
     // Standard cron: Feb has no 31, Feb 1 already past → next is March 1 09:00 CST
     expect(result).toBe(Date.UTC(2026, 2, 1, 1, 0));
   });
+
+  it.each([
+    ['America/New_York', Date.UTC(2026, 10, 1, 6, 31, 0), '45 1 1 * *', Date.UTC(2026, 10, 1, 6, 45, 0)],
+    ['Australia/Sydney', Date.UTC(2026, 3, 4, 16, 31, 0), '45 2 5 * *', Date.UTC(2026, 3, 4, 16, 45, 0)],
+  ])('does not skip monthly fires in a DST overlap for %s', (timezone, from, expression, expected) => {
+    expect(nextCronOrMonthlyFire(expression, from, timezone)).toBe(expected);
+  });
 });

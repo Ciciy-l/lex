@@ -42,6 +42,11 @@ export interface ChatFileFetchArgs {
   absPath: string;
 }
 
+export interface ChatFileOwnerScope {
+  key: string;
+  isCurrent(): boolean;
+}
+
 /**
  * 返回形态走规则 13 的 `{success}` 例外:失败时 renderer 需要按 code 分流降级
  * UX(workdir 外占位 / 不存在 / 可重试失败),throw 编码反而丢结构。
@@ -72,6 +77,7 @@ export interface ChatFileDeps {
       mtimeMs: number;
       remoteHostId?: string | null;
       deviceId?: string | null;
+      scope?: string;
     },
     onProgress: FetchProgressFn,
   ): Promise<string>;
@@ -83,6 +89,7 @@ export interface ChatFileDeps {
     destPath: string,
     expected?: undefined,
     onProgress?: (downloadedBytes: number) => void,
+    signal?: AbortSignal,
   ): Promise<void>;
   /** 用后删 OSS 对象(best-effort)。 */
   removeRemote(key: string): void;
@@ -150,10 +157,14 @@ export async function statChatFile(
 /** 取回失败时按路径身份捞最近一次成功副本(断线兜底,与 FETCH_REMOTE 同语义)。 */
 async function staleFallback(
   deps: ChatFileDeps,
-  id: Pick<RemoteFileIdentity, 'transport' | 'endpointId' | 'workdir' | 'relPath'>,
+  id: Pick<RemoteFileIdentity, 'transport' | 'endpointId' | 'workdir' | 'relPath' | 'scope'>,
   err: unknown,
+  ownerScope?: ChatFileOwnerScope,
 ): Promise<ChatFileFetchResult> {
   const stalePath = await deps.findStale(id).catch(() => null);
+  if (ownerScope && !ownerScope.isCurrent()) {
+    return { ok: false, code: 'FETCH_FAILED', message: 'FILE_PEER_CANCELLED' };
+  }
   if (stalePath) return { ok: true, cachePath: stalePath, stale: true, size: -1 };
   return { ok: false, code: 'FETCH_FAILED', message: String(err) };
 }
@@ -166,7 +177,15 @@ export async function fetchChatFile(
   args: ChatFileFetchArgs,
   onProgress: FetchProgressFn,
   deps: ChatFileDeps,
+  ownerScope?: ChatFileOwnerScope,
 ): Promise<ChatFileFetchResult> {
+  const ownerIsCurrent = () => !ownerScope || ownerScope.isCurrent();
+  const cancelled = (): ChatFileFetchResult => ({
+    ok: false,
+    code: 'FETCH_FAILED',
+    message: 'FILE_PEER_CANCELLED',
+  });
+  if (!ownerIsCurrent()) return cancelled();
   const { origin, workdir, absPath } = args ?? ({} as ChatFileFetchArgs);
   if (
     !workdir ||
@@ -187,6 +206,7 @@ export async function fetchChatFile(
     try {
       stat = await deps.sshStat(origin.remoteHostId, workdir, relPath);
     } catch (err) {
+      if (!ownerIsCurrent()) return cancelled();
       // 传输类失败(链路断)≠ 文件不存在:先按路径身份捞历史副本(断线也能
       // 打开已看过的文件),miss 才报错;真 ENOENT 直接 NOT_FOUND。
       if (classifyStatError(err) === 'nonfile') {
@@ -194,19 +214,23 @@ export async function fetchChatFile(
       }
       return staleFallback(
         deps,
-        { transport: 'ssh', endpointId: origin.remoteHostId, workdir, relPath },
+        { transport: 'ssh', endpointId: origin.remoteHostId, workdir, relPath, scope: ownerScope?.key },
         err,
+        ownerScope,
       );
     }
+    if (!ownerIsCurrent()) return cancelled();
     if (stat.type !== 'file') return { ok: false, code: 'NOT_FOUND' };
     try {
       const cachePath = await deps.fetchBigFile(
-        { workdir, relPath, size: stat.size, mtimeMs: stat.mtimeMs, remoteHostId: origin.remoteHostId },
+        { workdir, relPath, size: stat.size, mtimeMs: stat.mtimeMs, remoteHostId: origin.remoteHostId, scope: ownerScope?.key },
         onProgress,
       );
+      if (!ownerIsCurrent()) return cancelled();
       return { ok: true, cachePath, stale: false, size: stat.size };
     } catch (err) {
-      return staleFallback(deps, { transport: 'ssh', endpointId: origin.remoteHostId, workdir, relPath }, err);
+      if (!ownerIsCurrent()) return cancelled();
+      return staleFallback(deps, { transport: 'ssh', endpointId: origin.remoteHostId, workdir, relPath, scope: ownerScope?.key }, err, ownerScope);
     }
   }
 
@@ -216,25 +240,30 @@ export async function fetchChatFile(
     try {
       stat = await deps.deviceStat(origin.deviceId, workdir, relPath);
     } catch (err) {
+      if (!ownerIsCurrent()) return cancelled();
       // 同 ssh 分支:传输类 stat 失败走 stale 兜底,只有真 ENOENT 才 NOT_FOUND。
       if (classifyStatError(err) === 'nonfile') {
         return { ok: false, code: 'NOT_FOUND', message: String(err) };
       }
       return staleFallback(
         deps,
-        { transport: 'device', endpointId: origin.deviceId, workdir, relPath },
+        { transport: 'device', endpointId: origin.deviceId, workdir, relPath, scope: ownerScope?.key },
         err,
+        ownerScope,
       );
     }
+    if (!ownerIsCurrent()) return cancelled();
     if (stat.type !== 'file') return { ok: false, code: 'NOT_FOUND' };
     try {
       const cachePath = await deps.fetchBigFile(
-        { workdir, relPath, size: stat.size, mtimeMs: stat.mtimeMs, deviceId: origin.deviceId },
+        { workdir, relPath, size: stat.size, mtimeMs: stat.mtimeMs, deviceId: origin.deviceId, scope: ownerScope?.key },
         onProgress,
       );
+      if (!ownerIsCurrent()) return cancelled();
       return { ok: true, cachePath, stale: false, size: stat.size };
     } catch (err) {
-      return staleFallback(deps, { transport: 'device', endpointId: origin.deviceId, workdir, relPath }, err);
+      if (!ownerIsCurrent()) return cancelled();
+      return staleFallback(deps, { transport: 'device', endpointId: origin.deviceId, workdir, relPath, scope: ownerScope?.key }, err, ownerScope);
     }
   }
 
@@ -243,6 +272,7 @@ export async function fetchChatFile(
   // relPath 统一正斜杠(Windows 被控端反斜杠路径的 basename/展示归一)。
   const cacheRel = absPath.replace(/\\/g, '/');
   const identity: RemoteFileIdentity = {
+    scope: ownerScope?.key,
     transport: 'device',
     endpointId: origin.deviceId,
     workdir: '',
@@ -258,17 +288,22 @@ export async function fetchChatFile(
   let uploadedKey: string | null = null;
   let consumed = false;
   try {
+    if (!ownerIsCurrent()) return cancelled();
     const fetched = await deps.deviceMediaFetch(origin.deviceId, buildDevicePathUrl(absPath));
     uploadedKey = fetched.ossKey;
+    if (!ownerIsCurrent()) {
+      deps.removeRemote(fetched.ossKey);
+      return cancelled();
+    }
     const cachePath = await deps.fetchToCache(
       { ...identity, size: fetched.size },
-      async (dest, progress) => {
+      async (dest, progress, signal) => {
         consumed = true;
         progress(0, fetched.size);
         try {
           await deps.downloadToFile(fetched.ossKey, dest, undefined, (downloaded) => {
             progress(Math.min(downloaded, fetched.size), fetched.size);
-          });
+          }, signal);
           progress(fetched.size, fetched.size);
         } finally {
           deps.removeRemote(fetched.ossKey);
@@ -276,14 +311,20 @@ export async function fetchChatFile(
       },
       onProgress,
     );
+    if (!ownerIsCurrent()) {
+      if (!consumed) deps.removeRemote(fetched.ossKey);
+      return cancelled();
+    }
     if (!consumed) deps.removeRemote(fetched.ossKey);
     return { ok: true, cachePath, stale: false, size: fetched.size };
   } catch (err) {
     if (uploadedKey && !consumed) deps.removeRemote(uploadedKey);
+    if (!ownerIsCurrent()) return cancelled();
     return staleFallback(
       deps,
-      { transport: 'device', endpointId: origin.deviceId, workdir: '', relPath: cacheRel },
+      { transport: 'device', endpointId: origin.deviceId, workdir: '', relPath: cacheRel, scope: ownerScope?.key },
       err,
+      ownerScope,
     );
   }
 }
