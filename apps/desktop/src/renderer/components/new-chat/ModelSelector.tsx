@@ -601,6 +601,7 @@ export function resolveModelSelectorAgentIdentity(
 interface ModelSelectorProps {
   /** Authoritative surface-specific allowlist (e.g. one-shot or vision routes). */
   providersOverride?: ProviderView[];
+  providersOverrideState?: { status: 'loading' | 'error' | 'ready'; refresh: () => void };
   currentSelection?: SessionRuntimeProfileProjection;
   /** Open recovery for the selected source; generic Add model navigation stays separate. */
   onReconnectSource?: () => void;
@@ -792,6 +793,7 @@ interface ModelSelectorProps {
 
 interface ModelSelectorContentProps {
   providersOverride?: ProviderView[];
+  providersOverrideState?: ModelSelectorProps['providersOverrideState'];
   modelId: string;
   effort: Effort;
   onModelChange: (modelId: string) => void | boolean | Promise<void | boolean>;
@@ -1054,6 +1056,7 @@ export function ModelSelectorContent(props: ModelSelectorContentProps) {
 
 function ModelSelectorContentView({
   providersOverride,
+  providersOverrideState,
   modelId,
   effort,
   onModelChange,
@@ -1194,7 +1197,9 @@ function ModelSelectorContentView({
   const providers = deviceId ? remoteProviders.providers : providersOverride ?? localProviders.providers;
   // Old device-link hosts expose capabilities only. Never substitute local routes.
   const unifiedPanel = useUnifiedPanel && !(deviceId && remoteProviders.unsupported);
-  const providersLoading = deviceId ? remoteProviders.loading : !providersOverride && localProviders.loading;
+  const providersLoading = providersOverrideState
+    ? providersOverrideState.status === 'loading'
+    : deviceId ? remoteProviders.loading : !providersOverride && localProviders.loading;
   const remoteModelListStatus = resolveRemoteModelListStatus({
     deviceId,
     agentKind,
@@ -2782,12 +2787,16 @@ function ModelSelectorContentView({
     [cc.capabilities, codex.capabilities, pi.capabilities, omp.capabilities, onFastModeChange, onUnifiedSelect, fastModeConfigurable],
   );
 
+  if (providersOverrideState && providersOverrideState.status !== 'ready') {
+    return <RemoteModelLoadNotice status={providersOverrideState.status} onRetry={providersOverrideState.refresh} />;
+  }
   if (emptyState) return emptyState;
 
   const hasAnyModel = sections ? sections.length > 0 : (flatModels?.length ?? 0) > 0;
   const trimmedQuery = query.trim();
-  const remoteStatusInList =
-    deviceId && (remoteModelListStatus === 'loading' || remoteModelListStatus === 'error')
+  const remoteStatusInList = providersOverrideState && providersOverrideState.status !== 'ready'
+    ? providersOverrideState.status
+    : deviceId && (remoteModelListStatus === 'loading' || remoteModelListStatus === 'error')
       ? remoteModelListStatus
       : null;
   const showRemoteStatusFooter =
@@ -3240,6 +3249,7 @@ function ModelSelectorContentView({
 
 export function ModelSelector({
   providersOverride,
+  providersOverrideState,
   modelId,
   currentSelection,
   onReconnectSource,
@@ -3339,7 +3349,9 @@ export function ModelSelector({
       const nextOpen = disabled ? false : next;
       const wasOpen = openRef.current;
       openRef.current = nextOpen;
-      if (nextOpen && !wasOpen && !deviceId) {
+      if (nextOpen && !wasOpen && providersOverrideState) {
+        providersOverrideState.refresh();
+      } else if (nextOpen && !wasOpen && !deviceId && !providersOverride) {
         discovery.begin(() =>
           window.electronAPI.maker.requestProviderModelsAutoRefresh('model-selector-open'),
         );
@@ -3350,7 +3362,7 @@ export function ModelSelector({
       }
       setOpen(nextOpen);
     },
-    [deviceId, disabled, discovery, resetDiscoveryPresentation],
+    [deviceId, disabled, discovery, providersOverride, providersOverrideState, resetDiscoveryPresentation],
   );
 
   // AlertDialog 打开时会被 Popover 视作外部交互并请求关闭。Agent 分段确认期间
@@ -3437,9 +3449,9 @@ export function ModelSelector({
     omp,
     providers: remoteProviders,
   });
-  const remoteModelLoading = !!deviceId && remoteModelListStatus === 'loading';
-  const remoteModelLoadFailed = !!deviceId && remoteModelListStatus === 'error';
-  const localModelLoading = !deviceId && !(!providersOverride && localProviders.loadFailed) && (
+  const remoteModelLoading = providersOverrideState?.status === 'loading' || (!!deviceId && remoteModelListStatus === 'loading');
+  const remoteModelLoadFailed = providersOverrideState?.status === 'error' || (!!deviceId && remoteModelListStatus === 'error');
+  const localModelLoading = !deviceId && !providersOverride && !localProviders.loadFailed && (
     (!providersOverride && localProviders.loading) ||
     (agentKind === 'codex' ? codex.loading : agentKind === 'pi' ? pi.loading : agentKind === 'omp' ? omp.loading : cc.loading)
   );
@@ -3587,6 +3599,7 @@ export function ModelSelector({
   // 草稿没有已连接来源时显示连接 CTA；已建任务保留保存的模型和恢复入口。
   // device-link 远程会话不走此 CTA(控制端无法替被控端连来源;hasConnectedSource 是本机口径)。
   const noSource =
+    !providersOverride &&
     !actualRoute &&
     !!onProviderChange &&
     !!onNavigateToProviders &&
@@ -4085,6 +4098,7 @@ export function ModelSelector({
       gatewayPricing={gatewayPricing}
       referencePricing={referencePricing}
       modelAccessAccountTier={modelAccessAccountTier}
+      providersOverrideState={providersOverrideState}
       followSession={
         fallbackOption
           ? {

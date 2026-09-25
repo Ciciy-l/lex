@@ -16,6 +16,7 @@ import { CodexThreadLocations } from './codex-thread-locations.js';
 import { getActiveAppSession } from '../appSessionState.js';
 import { getCustomProvider, updateCustomProviderIfUnchanged } from './custom-provider-store.js';
 import { refreshCustomProvidersIntoCatalog } from './createDesktopProviderService.js';
+import { remoteCodexProvider } from './ssh-codex-models.js';
 import { acquireWorktreeRuntimeLease, releaseWorktreeRuntimeLease, type WorktreeRuntimeLease } from '../worktree/runtimeLeases';
 import { readCodexContextWindowInfo } from './codex-context-window.js';
 import { app, BrowserWindow } from 'electron';
@@ -124,7 +125,11 @@ import { resetProviderModelAutoRefreshCooldowns } from './provider-model-auto-re
 import { getThinkingEnabledFromMemory } from './newMakerDefaultsCache.js';
 import { getSessionFastMode } from './session-effort-store.js';
 import { createSshDaemonTransport } from './codex-remote-transport.js';
-import { getRemoteSshPool, broadcastSilentInstallStatus } from '../remote-ssh/index.js';
+import {
+  getRemoteSshPool,
+  broadcastSilentInstallStatus,
+  ensureRemoteAgentInstalledOrInstall,
+} from '../remote-ssh/index.js';
 import {
   getRemoteAgentProxyEnv,
   reconcileCodexAgentProxyEnv,
@@ -141,6 +146,7 @@ import { createPiRemoteProviderForwardLease } from './pi-remote-provider-forward
 import { openCcManagerSession } from './cc-manager-client.js';
 import { routeInjectedRemoteMcpApprovalsThroughCindy } from './remote-claude-permission-mode.js';
 import { getRemoteClaudeBinaryPath } from '../remote-ssh/cc-manager-install.js';
+import { acquireRemoteCodexActivityAdmission } from '../remote-ssh/codex-install-lifecycle.js';
 import {
   createBashConcurrencyHooks,
   mergeClaudeHooks,
@@ -2676,6 +2682,10 @@ export function getMaker(): Maker {
       // Desktop-specific session 生命周期副作用钩子。maker-core 不知道文件系统细节，
       // 启动前的 Skill 共享与关闭后的清理都由 desktop host 注入。
       lifecycleHooks: {
+        acquireSessionActivityAdmission: ({ agentKind, remoteHostId }) =>
+          agentKind === 'codex' && remoteHostId
+            ? acquireRemoteCodexActivityAdmission(remoteHostId)
+            : undefined,
         prepareStartOptions: async (sessionId, opts) => {
           pendingBotRuntimeSnapshots.delete(sessionId);
           const providerReady = await ensureCurrentAccountProviderReadiness();
@@ -2965,6 +2975,57 @@ export function resetCodexModelBackfillState(): void {
  */
 export function getMakerIfReady(): Maker | null {
   return _maker;
+}
+
+export async function listSshCodexProviders(hostId: string) {
+  const ownerGeneration = getActiveAppSession().generation;
+  const pool = getRemoteSshPool();
+  const remoteHost = pool.get(hostId);
+  if (!remoteHost || remoteHost.getStatus() !== 'ready') {
+    throw new Error('SSH host is not connected');
+  }
+  let connectionChanged = false;
+  const stopListening = remoteHost.onStatus((snapshot) => {
+    if (snapshot.status !== 'ready') connectionChanged = true;
+  });
+  const assertCurrent = () => {
+    if (
+      isAppSessionBoundaryPending() ||
+      connectionChanged ||
+      getActiveAppSession().generation !== ownerGeneration ||
+      pool.get(hostId) !== remoteHost ||
+      remoteHost.getStatus() !== 'ready'
+    ) {
+      throw new Error('SSH model request is stale');
+    }
+  };
+
+  try {
+    assertCurrent();
+    await ensureRemoteAgentInstalledOrInstall(hostId, 'codex');
+    assertCurrent();
+    getMaker();
+    assertCurrent();
+    const agent = _codexAgent;
+    if (!agent) throw new Error('Codex is not ready');
+    const models = await agent.listRemoteModels(hostId);
+    assertCurrent();
+    if (_codexAgent !== agent) throw new Error('Codex runtime changed');
+    return [remoteCodexProvider(models)];
+  } finally {
+    stopListening();
+  }
+}
+
+export async function disposeRemoteCodexHostAfterRestart(
+  hostId: string,
+  ownerGeneration: number,
+): Promise<void> {
+  if (
+    isAppSessionBoundaryPending() ||
+    getActiveAppSession().generation !== ownerGeneration
+  ) return;
+  await _codexAgent?.disposeRemoteHostAfterRestart(hostId);
 }
 
 /**

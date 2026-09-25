@@ -285,7 +285,7 @@ import { makeMirrorAccessors, replaceScope, clearScope } from '@/state/deviceLin
 import type { ModelMemoryAccessors } from '@/components/new-chat/ModelSelector';
 import { resolveNewMakerDraftRightSidebar } from './newMakerDraftRightSidebar';
 import { resolveNewMakerDraftEffort } from './newMakerDraftModelPrefs';
-import { resolveSshSessionModelSelection, SshModelSelectionError } from './sshSessionModelSelection';
+import { loadSshSessionModelSelection, SshModelSelectionError } from './sshSessionModelSelection';
 import { closeAllTabs as closeRightSidebarTabs } from '@/features/right-sidebar/store';
 import { revealOrcaWorkersTab } from '@/features/right-sidebar/plugins/orca-workers/actions';
 import { normalizeProjectKey } from './lib/projectGrouping';
@@ -2332,6 +2332,7 @@ export function NewMakerDraftRoute() {
     async (target: RemoteProjectTarget) => {
       // vendor 由外层 VendorSegmentedSwitcher (draft.vendor) 单一决策 —— dialog 不再让用户选。
       const draftVendor = normalizeDbAgentKind(draft.vendor);
+      const createOwner = getDataOwnerGeneration();
 
       if (target.kind === 'device-link') {
         // device-link:**不**像 SSH 立即建会话(会在被控端留空会话)。改为把当前草稿指向该被控
@@ -2403,22 +2404,22 @@ export function NewMakerDraftRoute() {
       let sshEffort: Effort;
       let sshFastMode: boolean;
       if (capabilityAgentKind === 'codex') {
-        const selection = resolveSshSessionModelSelection({
-          providers: localProviders,
-          loading: localProvidersLoading,
-          loadFailed: localProvidersLoadFailed,
+        const intendedProviderId = chatPrefs.providerId ?? null;
+        const selection = await loadSshSessionModelSelection(target.hostId, {
           agentKind: capabilityAgentKind,
-          preferred: {
-            model: draftInitialModel,
-            providerId: isDeviceLinkDraft
-              ? (deviceLinkInitial?.providerId ?? null)
-              : chatPrefs.providerId,
-            effort: draftInitialEffort,
-            fastMode: effectiveFastMode,
-          },
-          getPresetEffort: getProviderModelEffort,
-          getPresetFast: getProviderModelFast,
+          preferred: { providerId: intendedProviderId },
         });
+        if (!isDataOwnerGenerationCurrent(createOwner)) return;
+        const currentDraft = getDraft();
+        const currentPrefs = currentDraft.lastByVendor[currentDraft.vendor];
+        if (
+          currentDraft.vendor !== draft.vendor ||
+          currentPrefs.providerId !== chatPrefs.providerId ||
+          currentDraft.remoteHostId !== null
+        ) {
+          toast.error(t('settings.remote.startSession.selectionChanged'));
+          return;
+        }
         if (!selection.ok) throw new SshModelSelectionError(selection.reason);
         sshModel = selection.model;
         sshProviderId = selection.providerId;
@@ -2486,6 +2487,7 @@ export function NewMakerDraftRoute() {
           extraDirs: [],
           writableDirs: [],
         });
+        if (capabilityAgentKind === 'codex' && !isDataOwnerGenerationCurrent(createOwner)) return;
         if (!newSession) {
           throw new Error('createSession returned null');
         }
@@ -5718,6 +5720,7 @@ export function NewMakerDraftRoute() {
           submitLabel={t('orca.createWorker.enableCollabSubmit')}
           requireWorkerPermissionModeSupport
           deviceId={effectiveDeviceLinkDeviceId ?? undefined}
+          remoteHostId={effectiveRemoteHostId}
           // SSH 远程草稿(draft.remoteHostId):worker 在远端 spawn,模型清单按 SSH
           // 口径过滤,与本路由 ChatInput 候选及 main 侧 remote-worker guard 同口径。
           sshRemote={!!effectiveRemoteHostId}

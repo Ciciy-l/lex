@@ -204,9 +204,11 @@ describe('bootstrap directory-grant wiring', () => {
     const bootstrapEnd = registerSource.indexOf('\n  // switchFocus', bootstrapStart);
     const bootstrap = registerSource.slice(bootstrapStart, bootstrapEnd);
 
+    const createSession = bootstrap.indexOf('session = await maker.createSession(');
     expect(bootstrap.indexOf('await prepareDirectoryGrantsForBootstrap')).toBeGreaterThanOrEqual(0);
+    expect(createSession).toBeGreaterThanOrEqual(0);
     expect(bootstrap.indexOf('await prepareDirectoryGrantsForBootstrap')).toBeLessThan(
-      bootstrap.indexOf('await maker.createSession(o)'),
+      createSession,
     );
     expect(bootstrap).toContain('if (existing) await persistSessionFields(sessionId, patch);');
     expect(bootstrap).toContain('readPersistedWritableDirs: readSessionWritableDirsFromDb');

@@ -10,7 +10,11 @@ import {
 } from '@cindy/model-providers';
 import { describe, expect, it, vi } from 'vitest';
 
-import { readOrcaWorkerProviderRoutingContext } from '../orcaProviderRoutingContext.js';
+import {
+  readOrcaWorkerProviderRoutingContext,
+  sshCodexWorkerRoutingContext,
+} from '../orcaProviderRoutingContext.js';
+import { remoteCodexProvider } from '../../maker-host/ssh-codex-models.js';
 
 const registerSource = readFileSync(resolve(__dirname, '..', 'register.ts'), 'utf8').replace(
   /\r\n?/g,
@@ -23,17 +27,45 @@ const routingSource = readFileSync(
 
 describe('Orca provider routing snapshot wiring', () => {
   it('delegates routing snapshot construction to the post-claim full-catalog reader', () => {
-    const start = registerSource.indexOf('const getProviderRoutingContext = () =>');
+    const start = registerSource.indexOf(
+      'const getProviderRoutingContext = async (agent?: AgentKind, remoteHostId?: string | null) =>',
+    );
     const end = registerSource.indexOf('const orcaWorkerCreationService', start);
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
     const wiring = registerSource.slice(start, end);
 
     expect(wiring).toContain('readOrcaWorkerProviderRoutingContext');
+    expect(wiring).toContain('sshCodexWorkerRoutingContext');
+    expect(wiring).toContain('readSshCodexModelList');
     expect(wiring).toContain('providerService: getDesktopProviderService()');
     expect(wiring).toContain('getCatalog: getActiveCatalog');
     expect(routingSource).toContain('waitForDiscovery: true');
     expect(registerSource).toContain('getProviderRoutingContext,');
+  });
+
+  it('gives remote SSH Workers only the host-native Codex route', () => {
+    const provider = remoteCodexProvider([{
+      id: 'host-model',
+      model: 'host-model',
+      displayName: 'Host model',
+      description: '',
+      hidden: false,
+      supportedReasoningEfforts: [{ reasoningEffort: 'high', description: 'high' }],
+      defaultReasoningEffort: 'high',
+      additionalSpeedTiers: [],
+      serviceTiers: [],
+      isDefault: true,
+    }]);
+    const routing = sshCodexWorkerRoutingContext([provider]);
+
+    expect(routing.remoteCodexModels).toMatchObject([{ id: 'host-model', defaultEffort: 'high' }]);
+    expect(routing.availability.codex).toMatchObject([{ id: 'openai', models: ['host-model'] }]);
+    expect(routing.availability['claude-code']).toEqual([]);
+    expect(routing.availability.pi).toEqual([]);
+    expect(routing.availability.omp).toEqual([]);
+    expect(routing.resolveDefaultProviderIdForModel('codex', 'host-model')).toBe('openai');
+    expect(routing.resolveDefaultProviderIdForModel('omp', 'host-model')).toBeNull();
   });
 
   it('resumes an idle parent with the stored provider so Bot completions can wake it', () => {

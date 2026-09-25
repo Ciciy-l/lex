@@ -82,10 +82,24 @@ const mocks = vi.hoisted(() => ({
   }>,
   sidebarWindow: false,
   confirm: vi.fn(async () => true),
+  listCodexModels: vi.fn(),
 }));
 
 function model(id: string, efforts = ['high'], defaultEffort = 'high') {
   return { id, efforts, defaultEffort, supportsFastMode: true };
+}
+
+function hostCodexCatalog(...modelIds: string[]) {
+  return [{
+    id: 'openai',
+    name: 'OpenAI Codex',
+    source: 'builtin',
+    connected: true,
+    agents: ['codex'],
+    auth: { method: 'oauth', native: 'codex' },
+    routing: { codex: { upstream: 'https://chatgpt.com/backend-api/codex', authStrategy: 'oauth-passthrough' } },
+    models: { codex: modelIds.map((id) => ({ ...model(id), defaultEnabled: true })) },
+  }];
 }
 
 vi.mock('react-i18next', () => ({
@@ -242,6 +256,15 @@ describe('CreateWorkerPopover', () => {
     mocks.sidebarWindow = false;
     mocks.confirm.mockReset();
     mocks.confirm.mockResolvedValue(true);
+    mocks.listCodexModels.mockReset();
+    mocks.listCodexModels.mockResolvedValue([]);
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      value: { remoteSsh: {
+        listCodexModels: mocks.listCodexModels,
+        onStatusChanged: () => vi.fn(),
+      } },
+    });
   });
 
   afterEach(() => {
@@ -732,18 +755,27 @@ describe('CreateWorkerPopover', () => {
     ];
     mocks.modelsByAgent.codex = [model('gpt-5.5')];
     mocks.capabilitiesByAgent.codex = { availableModels: [{ id: 'gpt-5.5' }] };
+    mocks.listCodexModels.mockResolvedValueOnce(hostCodexCatalog('gpt-5.5'));
     const onCreate = vi.fn();
 
-    render(<CreateWorkerPopover open sshRemote onClose={vi.fn()} onCreate={onCreate} />);
+    render(<CreateWorkerPopover open sshRemote remoteHostId="builder" onClose={vi.fn()} onCreate={onCreate} />);
     await waitFor(() =>
-      expect(screen.getByTestId('model-selector').dataset.currentProvider).toBe(''),
+      expect(screen.getByTestId('model-selector').dataset.currentProvider).toBe('chat-bridge'),
     );
+    expect(screen.getByRole('alert').textContent).toBe('settings.remote.startSession.unsupportedCodexSource');
     fireEvent.click(screen.getByRole('button', { name: 'orca.createWorker.submit' }));
 
     expect(onCreate).not.toHaveBeenCalled();
   });
 
   it('pins SSH Codex worker creation to the native OpenAI subscription route', async () => {
+    window.localStorage.setItem(
+      'workerCreationPrefs',
+      JSON.stringify({
+        lastAgent: 'codex',
+        codex: { model: 'controller-remembered-model', effort: 'low', fast: true, providerId: 'openai' },
+      }),
+    );
     mocks.localProviders = [
       {
         id: 'openai',
@@ -755,16 +787,25 @@ describe('CreateWorkerPopover', () => {
         models: { codex: [{ id: 'gpt-5.5', efforts: ['high'], defaultEffort: 'high' }], 'claude-code': [] },
       },
     ];
-    mocks.modelsByAgent.codex = [model('gpt-5.5')];
-    mocks.capabilitiesByAgent.codex = { availableModels: [{ id: 'gpt-5.5' }] };
+    mocks.modelsByAgent.codex = [model('gpt-5.5'), model('gpt-5.4', ['low', 'high'], 'low')];
+    mocks.capabilitiesByAgent.codex = { availableModels: [{ id: 'gpt-5.5' }, { id: 'gpt-5.4' }] };
+    mocks.listCodexModels.mockResolvedValueOnce(hostCodexCatalog('gpt-5.5', 'gpt-5.4'));
     const onCreate = vi.fn();
 
-    render(<CreateWorkerPopover open sshRemote onClose={vi.fn()} onCreate={onCreate} />);
+    render(<CreateWorkerPopover open sshRemote remoteHostId="builder" onClose={vi.fn()} onCreate={onCreate} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('model-selector').dataset.currentProvider).toBe('openai'),
+    );
     fireEvent.click(screen.getByRole('button', { name: 'orca.createWorker.submit' }));
 
     await waitFor(() =>
       expect(onCreate).toHaveBeenCalledWith(
-        expect.objectContaining({ model: 'gpt-5.5', providerId: 'openai' }),
+        expect.objectContaining({
+          model: 'gpt-5.5',
+          providerId: 'openai',
+          effort: 'high',
+          fast: false,
+        }),
       ),
     );
   });
@@ -797,12 +838,14 @@ describe('CreateWorkerPopover', () => {
     ];
     mocks.modelsByAgent.codex = [model('gpt-5.5')];
     mocks.capabilitiesByAgent.codex = { availableModels: [{ id: 'gpt-5.5' }] };
+    mocks.listCodexModels.mockResolvedValueOnce(hostCodexCatalog('gpt-5.5'));
     const onCreate = vi.fn();
 
-    render(<CreateWorkerPopover open sshRemote onClose={vi.fn()} onCreate={onCreate} />);
+    render(<CreateWorkerPopover open sshRemote remoteHostId="builder" onClose={vi.fn()} onCreate={onCreate} />);
     await waitFor(() =>
       expect(screen.getByTestId('model-selector').dataset.currentProvider).toBe('xd'),
     );
+    expect(screen.getByRole('alert').textContent).toBe('settings.remote.startSession.unsupportedCodexSource');
     fireEvent.click(screen.getByRole('button', { name: 'orca.createWorker.submit' }));
 
     expect(onCreate).not.toHaveBeenCalled();

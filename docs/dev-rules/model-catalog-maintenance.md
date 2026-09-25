@@ -103,6 +103,32 @@ Pi 上游生成资料统一转换为客户端 `catalog/provider-models.json`，�
 维护命令、覆盖顺序和验收见 [通用供应商目录](provider-catalog-generation.md)。
 渠道多协议与逐模型接口证据见 [供应商接口核查](provider-interface-audit.md)。
 
+## SSH Codex 宿主模型目录
+
+SSH Codex 的新建路由依据所选执行主机自己的 app-server `model/list`，不是控制端的在线目录、
+订阅登录或 Gateway 连接。读取有页数与总时限上限；只把当前远端 Codex native subscription
+投影为 `providerId=openai` / OAuth 路由。读取失败、空目录、断连、账号归属变化或主机重启期间
+一律 fail closed，不借控制端模型/档位/Fast 作为成功回退。目录快照按 owner、host 与请求次序隔离，
+不写入本机公共 catalog，也不包含远端凭证。
+
+设置页与“新建远端项目”创建 Codex 会话时使用远端目录默认模型和远端档位元数据；Fast 初始关闭。
+显式指定了非 OpenAI native 连接时拒绝创建。Worker 可保留在远端目录中仍有效的用户模型选择，
+创建服务始终从 Lead 的 `remoteHostId` 重读远端清单；不存在的模型或其他供应商都不会回落。
+OpenAI 原生宿主路由以外的 OMP controller-proxy 与 Pi / Claude Code 原有 SSH 适配保持各自合同。
+
+普通目录只列 `model/list` 报告为可选的型号。已存在任务仅在存储的远端 host、Codex native thread、
+模型及 provider 身份与恢复请求逐项一致时，可继续使用后来被隐藏的模型；这条恢复例外不授予新建或
+换模权限。远端 Codex 包检查仍对比仓库已有 pin；daemon 被既有 MCP bootstrap 确认重启后，先让
+空闲 Session detach，再逐 host 丢弃旧 app-server 连接，以便目录和下一次执行从新 daemon 恢复。
+此项不修改 pin、不对活跃 turn 强制重启，也不改变 OMP 固定版本或升级策略。
+
+实现导航：`packages/maker-core/src/agents/codex/app-server/list-models.ts`（有界分页）、
+`apps/desktop/src/main/maker-host/ssh-codex-models.ts` 与
+`apps/desktop/src/main/remote-ssh/codex-model-list.ts`（native route 与准入）、
+`apps/desktop/src/renderer/hooks/useSshCodexProviders.ts`（host/owner/迟到结果隔离）；
+关键回归见这些文件邻近的 `__tests__`、`remoteCodexCreation.race.test.tsx`、
+`orcaWorkerCreationService.test.ts` 与 `packages/maker-core/src/agents/codex/index.test.ts`。
+
 ## 按问题继续阅读
 
 | 按需阅读 | 入口 |

@@ -3,6 +3,7 @@ import {
   connectedProvidersForAgent,
   effectiveSourceIdForModel,
   findModelRegistryRoute,
+  isOpenAiSubscriptionProvider,
   isModelSelectableForNewRoute,
   isLocalOnlyProviderForAgent,
   type Catalog,
@@ -13,8 +14,46 @@ import type { ProviderService } from '../maker-host/provider-service.js';
 import { usesControllerProviderProxyForSsh } from '../../shared/sshAgentProviderRouting.js';
 import {
   providerRouteRequiresExplicitSelection,
+  type OrcaWorkerModelCapabilities,
   type OrcaWorkerProviderRoutingContext,
 } from './orcaWorkerCreationService.js';
+
+export function sshCodexWorkerRoutingContext(views: ProviderView[]): OrcaWorkerProviderRoutingContext {
+  const provider = views.find(
+    (candidate) => candidate.id === 'openai' && isOpenAiSubscriptionProvider(candidate),
+  );
+  const models = (provider?.models.codex ?? []).filter((model) =>
+    isModelSelectableForNewRoute(model, { userProvider: provider?.source === 'user' }),
+  );
+  const remoteCodexModels: OrcaWorkerModelCapabilities[] = models.map((model) => ({
+    id: model.id,
+    efforts: model.efforts,
+    defaultEffort: model.defaultEffort,
+    supportsFastMode: model.supportsFastMode,
+  }));
+  const codexAvailability = provider && models.length > 0
+    ? [{
+        id: 'openai',
+        name: provider.name,
+        models: models.map((model) => model.id),
+        fastModels: models.filter((model) => model.supportsFastMode).map((model) => model.id),
+        effortMetaByModel: Object.fromEntries(models.map((model) => [
+          model.id,
+          { efforts: model.efforts, defaultEffort: model.defaultEffort },
+        ])),
+        requiresExplicitRoute: false,
+        localOnlyForSsh: false,
+      }]
+    : [];
+  const modelIds = new Set(models.map((model) => model.id));
+
+  return {
+    remoteCodexModels,
+    availability: { 'claude-code': [], codex: codexAvailability, pi: [], omp: [] },
+    resolveDefaultProviderIdForModel: (agent, model) =>
+      agent === 'codex' && modelIds.has(model) ? 'openai' : null,
+  };
+}
 
 /**
  * Build the Orca worker route snapshot from one post-claim full catalog.

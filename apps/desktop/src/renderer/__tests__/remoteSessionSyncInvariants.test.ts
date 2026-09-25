@@ -114,7 +114,7 @@ describe('CCAgentSessionView 接线不变式', () => {
   });
   it('已有远程 session 断线时跳过来源门禁，远程草稿与本地任务仍保留门禁', () => {
     expect(chatInputSrc).toContain(
-      'const enforceConnectedSourceGate = !sessionId || !deviceLinkDeviceId;',
+      'const enforceConnectedSourceGate = (!sessionId || !deviceLinkDeviceId) && !preserveSshCodexRoute;',
     );
     expect(chatInputSrc).toMatch(
       /const noConnectedSource =\s*enforceConnectedSourceGate &&\s*!!currentModelAgentKind/,

@@ -2803,3 +2803,125 @@ describe('SSH remote worker model/provider compatibility gate (R23 P2)', () => {
       message: expect.stringContaining('not available for SSH remote workers'),
     });
   });
+
+  it('uses the remote SSH Codex host catalog and native provider for Worker defaults', async () => {
+    const remoteModels: OrcaWorkerModelCapabilities[] = [
+      { id: 'host-default', efforts: ['medium', 'high'], defaultEffort: 'high', supportsFastMode: true },
+      { id: 'host-other', efforts: ['low', 'high'], defaultEffort: 'low' },
+    ];
+    const routing: OrcaWorkerProviderRoutingContext = {
+      remoteCodexModels: remoteModels,
+      availability: {
+        'claude-code': [],
+        codex: [{ id: 'openai', name: 'OpenAI Codex', models: remoteModels.map((model) => model.id) }],
+        pi: [],
+        omp: [],
+      },
+      resolveDefaultProviderIdForModel: (agent, model) =>
+        agent === 'codex' && remoteModels.some((candidate) => candidate.id === model) ? 'openai' : null,
+    };
+    const getProviderRoutingContext = vi.fn(async () => routing);
+    const { deps, service } = createDeps({
+      getLeadSessionRow: vi.fn(async () => ({
+        id: 'lead-1',
+        agentKind: 'codex' as const,
+        workspaceKind: 'project' as const,
+        workingDir: '/srv/repo',
+        model: 'host-default',
+        effort: 'high',
+        permissionMode: 'default',
+        fastMode: false,
+        providerId: 'openai',
+        remoteHostId: 'builder',
+      })),
+      getProviderRoutingContext,
+      getAvailableModels: vi.fn(() => [{ id: 'controller-only-model' }]),
+      getWorkerDefaults: vi.fn(() => ({ model: 'controller-only-model', providerId: 'xd' })),
+    });
+
+    await expect(service.createWorker({
+      leadSessionId: 'lead-1',
+      role: 'reviewer',
+      agent: 'codex',
+      label: 'remote-reviewer',
+    })).resolves.toMatchObject({ ok: true });
+    expect(getProviderRoutingContext).toHaveBeenCalledExactlyOnceWith('codex', 'builder');
+    expect(deps.getAvailableModels).not.toHaveBeenCalled();
+    expect(deps.getWorkerDefaults).not.toHaveBeenCalled();
+    expect(deps.bootstrapSession).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'host-default',
+      providerId: 'openai',
+      remoteHostId: 'builder',
+    }));
+  });
+
+  it('does not fall back from an explicit SSH Codex model or provider', async () => {
+    const remoteModels: OrcaWorkerModelCapabilities[] = [
+      { id: 'host-default', efforts: ['high'], defaultEffort: 'high' },
+    ];
+    const routing: OrcaWorkerProviderRoutingContext = {
+      remoteCodexModels: remoteModels,
+      availability: {
+        'claude-code': [],
+        codex: [{ id: 'openai', name: 'OpenAI Codex', models: ['host-default'] }],
+        pi: [],
+        omp: [],
+      },
+      resolveDefaultProviderIdForModel: (agent, model) =>
+        agent === 'codex' && model === 'host-default' ? 'openai' : null,
+    };
+    const { service } = createDeps({
+      getLeadSessionRow: vi.fn(async () => ({
+        id: 'lead-1',
+        agentKind: 'codex' as const,
+        workspaceKind: 'project' as const,
+        workingDir: '/srv/repo',
+        model: 'host-default',
+        effort: 'high',
+        permissionMode: 'default',
+        fastMode: false,
+        providerId: 'openai',
+        remoteHostId: 'builder',
+      })),
+      getProviderRoutingContext: vi.fn(async () => routing),
+    });
+
+    await expect(service.createWorker({
+      leadSessionId: 'lead-1',
+      role: 'reviewer',
+      agent: 'codex',
+      label: 'wrong-model',
+      model: 'controller-only-model',
+      providerId: 'openai',
+    })).resolves.toMatchObject({ ok: false, errorCode: 'INVALID_PARAMS' });
+    await expect(service.createWorker({
+      leadSessionId: 'lead-1',
+      role: 'reviewer',
+      agent: 'codex',
+      label: 'wrong-source',
+      model: 'host-default',
+      providerId: 'custom-provider',
+    })).resolves.toMatchObject({ ok: false, errorCode: 'PROVIDER_ROUTE_UNAVAILABLE' });
+
+    const { service: incompatibleLeadService } = createDeps({
+      getLeadSessionRow: vi.fn(async () => ({
+        id: 'lead-1',
+        agentKind: 'codex' as const,
+        workspaceKind: 'project' as const,
+        workingDir: '/srv/repo',
+        model: 'host-default',
+        effort: 'high',
+        permissionMode: 'default',
+        fastMode: false,
+        providerId: 'custom-provider',
+        remoteHostId: 'builder',
+      })),
+      getProviderRoutingContext: vi.fn(async () => routing),
+    });
+    await expect(incompatibleLeadService.createWorker({
+      leadSessionId: 'lead-1',
+      role: 'reviewer',
+      agent: 'codex',
+      label: 'incompatible-lead-route',
+    })).resolves.toMatchObject({ ok: false, errorCode: 'INVALID_PARAMS' });
+  });
