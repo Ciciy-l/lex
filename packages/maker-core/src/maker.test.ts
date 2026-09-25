@@ -533,6 +533,477 @@ describe('Maker local Pi package generation fence', () => {
   });
 });
 
+describe('Maker session creation owner guard', () => {
+  it('closes an unpublished remote handle without writing a task after its owner becomes stale', async () => {
+    let isCurrent = true;
+    const started = createDeferred<AgentSessionHandle>();
+    const handle = createHandle({ id: 'stale-remote-codex-thread' });
+    handle.close = vi.fn(async () => undefined);
+    const storage = createStorage();
+    const onClose = vi.fn();
+    const startSession = vi.fn(async () => started.promise);
+    const maker = new Maker({
+      agents: { codex: createAgent(startSession) },
+      storage,
+      logger: createLogger(),
+      lifecycleHooks: { onClose },
+    });
+
+    const creating = maker.createSession({
+      id: 'remote-owner-race',
+      agentKind: 'codex',
+      workingDir: '/remote/repo',
+      remoteHostId: 'builder',
+      model: 'gpt-5.4',
+    }, {
+      assertCurrent() {
+        if (!isCurrent) throw new Error('account or SSH host changed');
+      },
+    });
+    await vi.waitFor(() => expect(startSession).toHaveBeenCalledOnce());
+    isCurrent = false;
+    started.resolve(handle);
+
+    await expect(creating).rejects.toThrow('account or SSH host changed');
+    expect(handle.close).toHaveBeenCalledExactlyOnceWith({ reason: 'navigation' });
+    expect(await storage.get('remote-owner-race')).toBeNull();
+    expect(maker.listActiveSessions()).toEqual([]);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('restores the previous resume thread id when ownership changes during metadata update', async () => {
+    let isCurrent = true;
+    const baseStorage = createStorage();
+    await baseStorage.create({
+      id: 'remote-resume-owner-race',
+      agentKind: 'codex',
+      workDir: '/remote/repo',
+      title: 'Existing remote task',
+      model: 'gpt-5.4',
+      remoteHostId: 'builder',
+      sdkSessionId: 'thread-before',
+    });
+    const updateEntered = createDeferred();
+    const allowUpdate = createDeferred();
+    const storage: SessionStorage = {
+      ...baseStorage,
+      async update(id, patch) {
+        updateEntered.resolve();
+        await allowUpdate.promise;
+        return baseStorage.update(id, patch);
+      },
+    };
+    const handle = createHandle({ id: 'thread-after' });
+    handle.close = vi.fn(async () => undefined);
+    const maker = new Maker({
+      agents: { codex: createAgent(vi.fn(async () => handle)) },
+      storage,
+      logger: createLogger(),
+    });
+    const creating = maker.createSession({
+      id: 'remote-resume-owner-race',
+      agentKind: 'codex',
+      workingDir: '/remote/repo',
+      remoteHostId: 'builder',
+      model: 'gpt-5.4',
+      resumeSessionId: 'thread-before',
+    }, {
+      assertCurrent() {
+        if (!isCurrent) throw new Error('account or SSH host changed');
+      },
+    });
+
+    await updateEntered.promise;
+    isCurrent = false;
+    allowUpdate.resolve();
+
+    await expect(creating).rejects.toThrow('account or SSH host changed');
+    expect(await storage.get('remote-resume-owner-race')).toMatchObject({
+      title: 'Existing remote task',
+      sdkSessionId: 'thread-before',
+    });
+    expect(handle.close).toHaveBeenCalledExactlyOnceWith({ reason: 'navigation' });
+    expect(maker.listActiveSessions()).toEqual([]);
+  });
+
+  it('closes a newly published session if the owner changes before createSession returns', async () => {
+    let isCurrent = true;
+    const storage = createStorage();
+    const handle = createHandle({ id: 'published-remote-thread' });
+    handle.close = vi.fn(async () => undefined);
+    const onClose = vi.fn();
+    const maker = new Maker({
+      agents: { codex: createAgent(vi.fn(async () => handle)) },
+      storage,
+      logger: createLogger(),
+      lifecycleHooks: { onClose },
+    });
+    maker.on((event) => {
+      if (event.type === 'session:created') isCurrent = false;
+    });
+
+    await expect(maker.createSession({
+      id: 'published-remote-owner-race',
+      agentKind: 'codex',
+      workingDir: '/remote/repo',
+      remoteHostId: 'builder',
+      model: 'gpt-5.4',
+    }, {
+      assertCurrent() {
+        if (!isCurrent) throw new Error('account or SSH host changed');
+      },
+    })).rejects.toThrow('account or SSH host changed');
+
+    expect(handle.close).toHaveBeenCalledExactlyOnceWith({ reason: 'navigation' });
+    expect(maker.listActiveSessions()).toEqual([]);
+    expect(await storage.get('published-remote-owner-race')).toMatchObject({
+      sdkSessionId: 'published-remote-thread',
+    });
+    await maker.shutdown();
+    expect(onClose).toHaveBeenCalledExactlyOnceWith(
+      'published-remote-owner-race',
+      expect.objectContaining({ remoteHostId: 'builder' }),
+    );
+  });
+
+  it('leaves owner-bound cleanup to Maker shutdown while an account boundary is pending', async () => {
+    let isCurrent = true;
+    const storage = createStorage();
+    const handle = createHandle({ id: 'deferred-remote-thread' });
+    handle.close = vi.fn(async () => undefined);
+    const maker = new Maker({
+      agents: { codex: createAgent(vi.fn(async () => handle)) },
+      storage,
+      logger: createLogger(),
+    });
+    maker.on((event) => {
+      if (event.type === 'session:created') isCurrent = false;
+    });
+
+    await expect(maker.createSession({
+      id: 'deferred-owner-race',
+      agentKind: 'codex',
+      workingDir: '/remote/repo',
+      remoteHostId: 'builder',
+      model: 'gpt-5.4',
+    }, {
+      assertCurrent() {
+        if (!isCurrent) throw new Error('account or SSH host changed');
+      },
+      deferCleanupToOwnerTeardown: () => true,
+    })).rejects.toThrow('account or SSH host changed');
+
+    expect(handle.close).not.toHaveBeenCalled();
+    expect(maker.listActiveSessions()).toHaveLength(1);
+    await maker.shutdown({ reason: 'account-boundary' });
+    expect(handle.close).toHaveBeenCalledExactlyOnceWith({ reason: 'account-boundary' });
+    expect(maker.listActiveSessions()).toEqual([]);
+  });
+
+  it('does not let a stale same-id waiter close the valid creator session', async () => {
+    let waiterCurrent = true;
+    const started = createDeferred<AgentSessionHandle>();
+    const handle = createHandle({ id: 'shared-remote-thread' });
+    handle.close = vi.fn(async () => undefined);
+    const startSession = vi.fn(async () => started.promise);
+    const maker = new Maker({
+      agents: { codex: createAgent(startSession) },
+      storage: createStorage(),
+      logger: createLogger(),
+    });
+    const creator = maker.createSession({
+      id: 'shared-remote-owner-race',
+      agentKind: 'codex',
+      workingDir: '/remote/repo',
+      remoteHostId: 'builder',
+      model: 'gpt-5.4',
+    }, { assertCurrent() {}, ownerGeneration: 1, scopeKey: {} });
+    await vi.waitFor(() => expect(startSession).toHaveBeenCalledOnce());
+    const waiter = maker.createSession({
+      id: 'shared-remote-owner-race',
+      agentKind: 'codex',
+      workingDir: '/remote/repo',
+      remoteHostId: 'builder',
+      model: 'gpt-5.4',
+    }, {
+      assertCurrent() {
+        if (!waiterCurrent) throw new Error('waiter scope changed');
+      },
+      ownerGeneration: 1,
+      scopeKey: {},
+    });
+    waiterCurrent = false;
+    started.resolve(handle);
+
+    const session = await creator;
+    await expect(waiter).rejects.toThrow('waiter scope changed');
+    expect(maker.getSession(session.id)).toBe(session);
+    expect(maker.listActiveSessions()).toEqual([session]);
+    expect(handle.close).not.toHaveBeenCalled();
+    await maker.shutdown();
+  });
+
+  it('retries with a valid waiter after the stale same-id creator is cleaned up', async () => {
+    let creatorCurrent = true;
+    const staleStarted = createDeferred<AgentSessionHandle>();
+    const staleHandle = createHandle({ id: 'stale-shared-thread' });
+    staleHandle.close = vi.fn(async () => undefined);
+    const validHandle = createHandle({ id: 'valid-shared-thread' });
+    validHandle.close = vi.fn(async () => undefined);
+    const startSession = vi.fn()
+      .mockImplementationOnce(async () => staleStarted.promise)
+      .mockImplementationOnce(async () => validHandle);
+    const storage = createStorage();
+    const maker = new Maker({
+      agents: { codex: createAgent(startSession) },
+      storage,
+      logger: createLogger(),
+    });
+    const creator = maker.createSession({
+      id: 'shared-stale-creator',
+      agentKind: 'codex',
+      workingDir: '/remote/repo',
+      remoteHostId: 'builder',
+      model: 'gpt-5.4',
+    }, {
+      assertCurrent() {
+        if (!creatorCurrent) throw new Error('creator scope changed');
+      },
+      ownerGeneration: 1,
+      scopeKey: {},
+    });
+    await vi.waitFor(() => expect(startSession).toHaveBeenCalledOnce());
+    const waiter = maker.createSession({
+      id: 'shared-stale-creator',
+      agentKind: 'codex',
+      workingDir: '/remote/repo',
+      remoteHostId: 'builder',
+      model: 'gpt-5.4',
+    }, { assertCurrent() {}, ownerGeneration: 1, scopeKey: {} });
+    creatorCurrent = false;
+    staleStarted.resolve(staleHandle);
+
+    await expect(creator).rejects.toThrow('creator scope changed');
+    const session = await waiter;
+    expect(startSession).toHaveBeenCalledTimes(2);
+    expect(staleHandle.close).toHaveBeenCalledExactlyOnceWith({ reason: 'navigation' });
+    expect(validHandle.close).not.toHaveBeenCalled();
+    expect(maker.getSession(session.id)).toBe(session);
+    expect(await storage.get('shared-stale-creator')).toMatchObject({
+      sdkSessionId: 'valid-shared-thread',
+    });
+    await maker.shutdown();
+  });
+
+  it('does not close an already published session when its reuser scope goes stale', async () => {
+    const handle = createHandle({ id: 'already-published-thread' });
+    handle.close = vi.fn(async () => undefined);
+    const maker = new Maker({
+      agents: { codex: createAgent(vi.fn(async () => handle)) },
+      storage: createStorage(),
+      logger: createLogger(),
+    });
+    const publishedScopeKey = {};
+    const published = await maker.createSession({
+      id: 'already-published-session',
+      agentKind: 'codex',
+      workingDir: '/remote/repo',
+      remoteHostId: 'builder',
+      model: 'gpt-5.4',
+    }, {
+      assertCurrent() {},
+      ownerGeneration: 1,
+      scopeKey: publishedScopeKey,
+    });
+    let guardChecks = 0;
+
+    await expect(maker.createSession({
+      id: 'already-published-session',
+      agentKind: 'codex',
+      workingDir: '/remote/repo',
+      remoteHostId: 'builder',
+      model: 'gpt-5.4',
+    }, {
+      assertCurrent() {
+        guardChecks += 1;
+        if (guardChecks === 3) throw new Error('reuser scope changed');
+      },
+      ownerGeneration: 1,
+      scopeKey: publishedScopeKey,
+    })).rejects.toThrow('reuser scope changed');
+
+    expect(guardChecks).toBe(3);
+    expect(maker.getSession(published.id)).toBe(published);
+    expect(maker.listActiveSessions()).toEqual([published]);
+    expect(handle.close).not.toHaveBeenCalled();
+    await maker.shutdown();
+  });
+
+  it('closes and recreates an active same-owner session after its SSH host scope changes', async () => {
+    const firstHandle = createHandle({ id: 'first-host-thread' });
+    firstHandle.close = vi.fn(async () => undefined);
+    const secondHandle = createHandle({ id: 'second-host-thread' });
+    secondHandle.close = vi.fn(async () => undefined);
+    const startSession = vi.fn()
+      .mockImplementationOnce(async () => firstHandle)
+      .mockImplementationOnce(async () => secondHandle);
+    const maker = new Maker({
+      agents: { codex: createAgent(startSession) },
+      storage: createStorage(),
+      logger: createLogger(),
+    });
+    const options = {
+      id: 'same-owner-host-change',
+      agentKind: 'codex' as const,
+      workingDir: '/remote/repo',
+      remoteHostId: 'builder',
+      model: 'gpt-5.4',
+    };
+    const firstSession = await maker.createSession(options, {
+      assertCurrent() {},
+      ownerGeneration: 7,
+      scopeKey: {},
+    });
+    const secondSession = await maker.createSession(options, {
+      assertCurrent() {},
+      ownerGeneration: 7,
+      scopeKey: {},
+    });
+
+    expect(secondSession).not.toBe(firstSession);
+    expect(startSession).toHaveBeenCalledTimes(2);
+    expect(firstHandle.close).toHaveBeenCalledExactlyOnceWith({ reason: 'navigation' });
+    expect(secondHandle.close).not.toHaveBeenCalled();
+    expect(maker.getSession('same-owner-host-change')).toBe(secondSession);
+    await maker.shutdown();
+  });
+
+  it('does not close a prior-owner session merely because a new-owner create reuses its id', async () => {
+    const handle = createHandle({ id: 'prior-owner-thread' });
+    handle.close = vi.fn(async () => undefined);
+    const maker = new Maker({
+      agents: { codex: createAgent(vi.fn(async () => handle)) },
+      storage: createStorage(),
+      logger: createLogger(),
+    });
+    const options = {
+      id: 'prior-owner-session',
+      agentKind: 'codex' as const,
+      workingDir: '/remote/repo',
+      remoteHostId: 'builder',
+      model: 'gpt-5.4',
+    };
+    const priorOwnerSession = await maker.createSession(options, {
+      assertCurrent() {},
+      ownerGeneration: 7,
+      scopeKey: {},
+    });
+
+    await expect(maker.createSession(options, {
+      assertCurrent() {},
+      ownerGeneration: 8,
+      scopeKey: {},
+      deferCleanupToOwnerTeardown: () => true,
+    })).rejects.toThrow('previous owner scope');
+
+    expect(maker.getSession('prior-owner-session')).toBe(priorOwnerSession);
+    expect(maker.listActiveSessions()).toEqual([priorOwnerSession]);
+    expect(handle.close).not.toHaveBeenCalled();
+    await maker.shutdown({ reason: 'account-boundary' });
+  });
+
+  it('runs stale storage-read cleanup once', async () => {
+    let isCurrent = true;
+    const baseStorage = createStorage();
+    const getEntered = createDeferred();
+    const allowGet = createDeferred();
+    const storage: SessionStorage = {
+      ...baseStorage,
+      async get(id) {
+        getEntered.resolve();
+        await allowGet.promise;
+        return baseStorage.get(id);
+      },
+    };
+    const handle = createHandle({ id: 'storage-read-stale-thread' });
+    handle.close = vi.fn(async () => undefined);
+    const onStartFailed = vi.fn();
+    const maker = new Maker({
+      agents: { codex: createAgent(vi.fn(async () => handle)) },
+      storage,
+      logger: createLogger(),
+      lifecycleHooks: { onStartFailed },
+    });
+    const creating = maker.createSession({
+      id: 'storage-read-stale-session',
+      agentKind: 'codex',
+      workingDir: '/remote/repo',
+      remoteHostId: 'builder',
+      model: 'gpt-5.4',
+    }, {
+      assertCurrent() {
+        if (!isCurrent) throw new Error('owner changed during storage read');
+      },
+      scopeKey: {},
+    });
+    await getEntered.promise;
+    isCurrent = false;
+    allowGet.resolve();
+
+    await expect(creating).rejects.toThrow('owner changed during storage read');
+    expect(handle.close).toHaveBeenCalledExactlyOnceWith({ reason: 'navigation' });
+    expect(onStartFailed).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      stage: 'storage',
+      runtimeMayBeAlive: false,
+    }));
+    expect(await baseStorage.get('storage-read-stale-session')).toBeNull();
+    expect(maker.listActiveSessions()).toEqual([]);
+  });
+
+  it('holds an injected activity admission across session startup and provider acceptance', async () => {
+    const events: string[] = [];
+    const allowHandleSend = createDeferred();
+    const handle = createHandle({ id: 'admitted-remote-thread' });
+    handle.send = vi.fn(async () => allowHandleSend.promise);
+    const maker = new Maker({
+      agents: { codex: createAgent(vi.fn(async () => handle)) },
+      storage: createStorage(),
+      logger: createLogger(),
+      lifecycleHooks: {
+        acquireSessionActivityAdmission: ({ remoteHostId }) => {
+          events.push('acquire:' + remoteHostId);
+          return () => events.push('release:' + remoteHostId);
+        },
+      },
+    });
+    const session = await maker.createSession({
+      id: 'admitted-remote-session',
+      agentKind: 'codex',
+      workingDir: '/remote/repo',
+      remoteHostId: 'builder',
+      model: 'gpt-5.4',
+    });
+    expect(events).toEqual(['acquire:builder', 'release:builder']);
+
+    const sending = session.send('start a remote turn');
+    await vi.waitFor(() => expect(handle.send).toHaveBeenCalledOnce());
+    expect(events).toEqual([
+      'acquire:builder',
+      'release:builder',
+      'acquire:builder',
+    ]);
+    allowHandleSend.resolve();
+    await expect(sending).resolves.toMatchObject({ accepted: true });
+    expect(events).toEqual([
+      'acquire:builder',
+      'release:builder',
+      'acquire:builder',
+      'release:builder',
+    ]);
+    await maker.shutdown();
+  });
+});
+
 describe('Maker session creation singleflight', () => {
   it('reports the effective runtime cwd when recovering an existing task elsewhere', async () => {
     const storage = createStorage();

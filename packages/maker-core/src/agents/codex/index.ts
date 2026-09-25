@@ -117,6 +117,7 @@ import {
   parseOverloadError,
 } from '../shared/overload-error.js';
 import { isRemoteCompactEncryptedContentError } from '../shared/remote-compact-encrypted-error.js';
+import { listCodexModels } from './app-server/list-models.js';
 import { buildCodexEnv } from './env-builder.js';
 import type { CodexErrorInfo } from './app-server/protocol.js';
 import {
@@ -2660,6 +2661,37 @@ export class CodexAgent extends BaseAgent {
     if (options?.providerId) await this.deps.onCodexLocalModelsListed(models, options.providerId);
     else await this.deps.onCodexLocalModelsListed(models);
     return true;
+  }
+
+  async listRemoteModels(remoteHostId: string): Promise<CodexModelListResponse['data']> {
+    if (!remoteHostId) throw new Error('SSH host is required');
+    const key = hostKey(remoteHostId);
+    const generation = this.hostGenerations.get(key) ?? 0;
+    const host = await this.getHost(remoteHostId);
+    if ((this.hostGenerations.get(key) ?? 0) !== generation) {
+      throw new Error('SSH Codex connection changed');
+    }
+    await host.ensureStartedWithTimeout(CODEX_MODEL_REFRESH_DEADLINE_MS, 'remote model list');
+    if ((this.hostGenerations.get(key) ?? 0) !== generation || this.hosts.get(key) !== host) {
+      throw new Error('SSH Codex connection changed');
+    }
+    const deadline = Date.now() + CODEX_MODEL_REFRESH_DEADLINE_MS;
+    const models = await listCodexModels((cursor) => {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        throw new AppServerRequestTimeoutError('remote model list', CODEX_MODEL_REFRESH_DEADLINE_MS);
+      }
+      return host.request<CodexModelListResponse>(
+        Method.ModelList,
+        { cursor, limit: 100, includeHidden: false },
+        { timeoutMs: Math.min(remaining, CODEX_MODEL_LIST_RPC_TIMEOUT_MS) },
+      );
+    });
+    if (
+      this.hosts.get(key) !== host ||
+      (this.hostGenerations.get(key) ?? 0) !== generation
+    ) throw new Error('SSH Codex connection changed');
+    return models;
   }
 
   /** Read ChatGPT subscription windows and banked reset credits via app-server RPC. */
@@ -14297,6 +14329,15 @@ export class CodexAgent extends BaseAgent {
     const keys = new Set([...this.hosts.keys(), ...this.hostPromises.keys()]);
     await Promise.all([...keys].filter((key) => key.startsWith(prefix)).map((key) =>
       this.retireHostKey(key, 'Codex account credentials changed', { failIfActive: false, logPrefix: 'codex account', throwOnShutdownFailure: true })));
+  }
+
+  async disposeRemoteHostAfterRestart(remoteHostId: string): Promise<void> {
+    if (!remoteHostId) throw new Error('SSH host is required');
+    await this.retireHostKey(hostKey(remoteHostId), 'SSH Codex daemon restarted', {
+      failIfActive: true,
+      logPrefix: 'codex remote restart',
+      throwOnShutdownFailure: true,
+    });
   }
 
   private async disposeLocalHostForCredentialChangeUnlocked(key: string, reason: string): Promise<void> {

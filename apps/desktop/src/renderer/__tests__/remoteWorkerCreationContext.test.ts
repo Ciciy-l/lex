@@ -17,6 +17,21 @@ describe('remote Orca Worker creation context', () => {
     expect(selection).toContain('deriveModelsFromProviders(sshConnected, capabilityAgentKind');
     expect(selection).toMatch(/effectiveSourceIdForModel\(\s*sshConnected,/);
   });
+
+  it('pins new SSH Codex project sessions to the host catalog and guards stale owners', () => {
+    const draft = read('features/cc-agent/NewMakerDraftRoute.tsx');
+    const handlerStart = draft.indexOf('const handleRemoteProjectAdded = useCallback(');
+    const selectionStart = draft.indexOf("if (capabilityAgentKind === 'codex') {", handlerStart);
+    const createStart = draft.indexOf('const newSession = await createSession({', selectionStart);
+    expect(handlerStart).toBeGreaterThan(-1);
+    expect(selectionStart).toBeGreaterThan(handlerStart);
+    expect(createStart).toBeGreaterThan(selectionStart);
+    const selection = draft.slice(selectionStart, createStart);
+    expect(selection).toContain('await loadSshSessionModelSelection(target.hostId');
+    expect(selection).toContain('preferred: { providerId: intendedProviderId }');
+    expect(selection).toContain('if (!isDataOwnerGenerationCurrent(createOwner)) return;');
+    expect(selection).toContain('if (!selection.ok) throw new SshModelSelectionError(selection.reason);');
+  });
   it('scopes capabilities, providers, and the nested model selector to the controlled device', () => {
     const popover = read('features/cc-agent/CreateWorkerPopover.tsx');
 
@@ -51,7 +66,8 @@ describe('remote Orca Worker creation context', () => {
   it('blocks existing remote session sends while the model catalog is loading or failed', () => {
     const chatInput = read('components/new-chat/ChatInput.tsx');
 
-    expect(chatInput).toContain('const remoteModelListStatus = resolveRemoteModelListStatus({');
+    expect(chatInput).toContain('const remoteModelListStatus = sshCodexHostId');
+    expect(chatInput).toContain("sshCodexProviders.status !== 'ready'");
     expect(chatInput).toContain("remoteModelListStatus !== 'ready'");
     expect(chatInput).toContain('if (remoteModelListBlocked) {');
     expect(chatInput).toContain('remoteModelListBlocked ||');

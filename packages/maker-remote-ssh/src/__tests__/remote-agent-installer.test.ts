@@ -1,3 +1,7 @@
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { BOOTSTRAP_SH } from '../bootstrap/bootstrap-script.js';
@@ -39,6 +43,53 @@ describe('remote agent installer', () => {
     expect(calls[0].input).toBe(BOOTSTRAP_SH);
   });
 
+  it.each([
+    { name: 'legacy standalone', complete: false, version: PINNED_CODEX_RELEASE_VERSION, ready: false },
+    { name: 'old full package', complete: true, version: '0.0.1', ready: false },
+    { name: 'current full package', complete: true, version: PINNED_CODEX_RELEASE_VERSION, ready: true },
+  ])('probe and bootstrap agree on $name readiness', async ({ complete, version, ready }) => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'lex-codex-readiness-'));
+    try {
+      const installDir = path.join(root, '.xdt-server', 'v1');
+      const current = path.join(installDir, 'codex-home', 'packages', 'standalone', 'current');
+      const files = complete
+        ? ['codex', 'bin/codex', 'bin/codex-code-mode-host', 'codex-path/rg', 'codex-resources/bwrap', 'codex-package.json']
+        : ['codex'];
+      for (const file of files) {
+        const target = path.join(current, file);
+        mkdirSync(path.dirname(target), { recursive: true });
+        writeFileSync(target, file === 'codex-package.json'
+          ? '{}'
+          : '#!/bin/sh' + String.fromCharCode(10) + 'printf "codex-cli ' + version + String.fromCharCode(92) + 'n"' + String.fromCharCode(10));
+        if (file !== 'codex-package.json') chmodSync(target, 0o755);
+      }
+      writeFileSync(path.join(installDir, '.installed-codex'), '');
+      const outputs: string[] = [];
+      const host = {
+        exec: async (command: string, opts: { input?: string }) => {
+          const args = [...command.matchAll(/'([^']*)'/g)].map((match) => match[1]);
+          expect(args).toContain(PINNED_CODEX_RELEASE_VERSION);
+          const result = spawnSync('bash', ['-s', '--', ...args], {
+            cwd: root,
+            encoding: 'utf8',
+            input: ['export HOME="$PWD"', 'curl() { return 1; }', 'wget() { return 1; }', '']
+              .join(String.fromCharCode(10)) + (opts.input ?? ''),
+          });
+          expect(result.error).toBeUndefined();
+          outputs.push(result.stdout);
+          return { exitCode: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
+        },
+      } as Pick<RemoteHost, 'exec'> as RemoteHost;
+
+      expect((await probeRemoteAgent(host, 'codex')).installed).toBe(ready);
+      expect((await installRemoteAgent(host, 'codex')).ready).toBe(ready);
+      if (!ready) expect(outputs[1]).toContain('INSTALL_START codex-package');
+      else expect(outputs[1]).not.toContain('INSTALL_START');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('runs install.sh with --release when a Codex release arg is present', () => {
     expect(BOOTSTRAP_SH).toContain('INSTALLER_URL="https://github.com/openai/codex/releases/download/rust-v$CODEX_RELEASE/install.sh"');
     expect(BOOTSTRAP_SH).toContain('sh "$INSTALLER_TMP" --release "$CODEX_RELEASE"');
@@ -73,7 +124,7 @@ describe('remote agent installer', () => {
       'NPM_PKG="@anthropic-ai/claude-code@$CLAUDE_RELEASE"',
     );
     expect(calls[1].input).toContain(
-      'Claude Code version ${V%% *} != managed pin $CLAUDE_RELEASE',
+      '$AGENT_KIND version $V does not match managed pin',
     );
   });
 

@@ -85,6 +85,10 @@ export interface SessionStartFailureContext {
 }
 
 export interface SessionLifecycleHooks {
+  acquireSessionActivityAdmission?: (context: {
+    agentKind: AgentKind;
+    remoteHostId: string | null;
+  }) => (() => void) | undefined;
   /**
    * Agent 启动前补齐 start options。该步骤属于正确启动的前置条件，失败会阻断创建。
    * 允许直接修改 options；Maker 会把同一个对象传给 agent 和成功钩子。
@@ -161,6 +165,13 @@ export interface CreateSessionOptions extends StartSessionOptions {
    * local-db:sessions:create, maker 必须复用而不是再生成一个)。
    */
   id?: string;
+}
+
+export interface SessionCreationGuard {
+  assertCurrent(): void;
+  scopeKey?: object;
+  ownerGeneration?: number;
+  deferCleanupToOwnerTeardown?: () => boolean;
 }
 
 /**
@@ -417,6 +428,23 @@ interface FailedHandleCleanup {
   onCleaned?: () => void;
 }
 
+interface SessionCreationResult {
+  session: Session;
+  createdByCaller: boolean;
+}
+
+interface SessionCreationScope {
+  scopeKey: object;
+  ownerGeneration?: number;
+}
+
+interface InFlightSessionCreation {
+  promise: Promise<Session>;
+  scopeKey?: object;
+  settled: Promise<void>;
+  resolveSettled: () => void;
+}
+
 interface EphemeralSessionEntry {
   readonly session: EphemeralSession;
   readonly agentKind: AgentKind;
@@ -429,6 +457,7 @@ export class Maker {
   protected readonly logger: Logger;
   protected readonly lifecycleHooks: SessionLifecycleHooks;
   protected readonly activeSessions = new Map<string, Session>();
+  private readonly sessionCreationScopes = new WeakMap<Session, SessionCreationScope>();
   protected readonly listeners = new Set<MakerEventListener>();
   /**
    * 同一 business session 的启动必须 singleflight。activeSessions 只在所有异步
@@ -437,7 +466,7 @@ export class Maker {
    */
   private readonly inFlightSessionCreations = new Map<
     string,
-    { promise: Promise<Session> }
+    InFlightSessionCreation
   >();
   /** All create paths, including anonymous ids, that may still publish or quarantine a handle. */
   private readonly pendingSessionCreations = new Set<Promise<Session>>();
@@ -581,16 +610,65 @@ export class Maker {
    * 同 id 已有 active Session 或正在创建时直接复用 —— 适配"用户切回老 session
    * 继续聊"以及多个后台入口同时恢复同一会话的场景。
    */
-  async createSession(opts: CreateSessionOptions): Promise<Session> {
+  async createSession(
+    opts: CreateSessionOptions,
+    guard?: SessionCreationGuard,
+  ): Promise<Session> {
     if (this.shutdownStarted) {
       throw new Error('Maker is shutting down; refusing to create a new session');
     }
-    const creation = this.createSessionWhileRunning(opts);
-    this.pendingSessionCreations.add(creation);
+    guard?.assertCurrent();
+    const releaseActivityAdmission = this.lifecycleHooks.acquireSessionActivityAdmission?.({
+      agentKind: opts.agentKind,
+      remoteHostId: opts.remoteHostId ?? null,
+    });
+    const previousSession = opts.id ? this.activeSessions.get(opts.id) : undefined;
+    const creation = this.createSessionWhileRunning(opts, guard);
+    const trackedCreation = creation.then(({ session, createdByCaller }) =>
+      this.validateSessionCreationGuard(
+        session,
+        previousSession,
+        guard,
+        createdByCaller,
+      ),
+    );
+    this.pendingSessionCreations.add(trackedCreation);
     try {
-      return await creation;
+      return await trackedCreation;
     } finally {
-      this.pendingSessionCreations.delete(creation);
+      this.pendingSessionCreations.delete(trackedCreation);
+      releaseActivityAdmission?.();
+    }
+  }
+
+  private async validateSessionCreationGuard(
+    session: Session,
+    previousSession: Session | undefined,
+    guard: SessionCreationGuard | undefined,
+    ownsCreation: boolean,
+  ): Promise<Session> {
+    try {
+      guard?.assertCurrent();
+      return session;
+    } catch (error) {
+      const isNewPublishedSession = ownsCreation
+        && session !== previousSession
+        && this.activeSessions.get(session.id) === session;
+      if (
+        isNewPublishedSession
+        && !this.shutdownStarted
+        && !guard?.deferCleanupToOwnerTeardown?.()
+      ) {
+        try {
+          await session.close({ reason: 'navigation' });
+        } catch (closeError) {
+          this.logger.warn('failed to close session after creation scope changed', {
+            sessionId: session.id,
+            error: String(closeError),
+          });
+        }
+      }
+      throw error;
     }
   }
 
@@ -705,15 +783,19 @@ export class Maker {
     return session;
   }
 
-  private async createSessionWhileRunning(opts: CreateSessionOptions): Promise<Session> {
+  private async createSessionWhileRunning(
+    opts: CreateSessionOptions,
+    guard?: SessionCreationGuard,
+  ): Promise<SessionCreationResult> {
     if (!opts.id) {
-      return this.createSessionOnce(opts);
+      return { session: await this.createSessionOnce(opts, guard), createdByCaller: true };
     }
 
     // Any handle that failed cleanup before publication still owns this
     // business id. Confirm its shutdown before checking/starting live state.
     if (this.failedHandleCleanups.has(opts.id)) {
       await this.retryFailedHandleCleanup(opts.id);
+      guard?.assertCurrent();
     }
 
     // 进程内已经活着或正在启动的 session, 直接复用 (避免 spawn 第二个 SDK)。
@@ -723,32 +805,84 @@ export class Maker {
     const existing = this.activeSessions.get(opts.id);
     if (existing?.getStatus() === 'error') {
       await existing.close();
+      guard?.assertCurrent();
     }
     const reusable = this.activeSessions.get(opts.id);
-    if (reusable) return reusable;
+    if (reusable) {
+      guard?.assertCurrent();
+      const previousScope = this.sessionCreationScopes.get(reusable);
+      if (guard?.scopeKey && previousScope && previousScope.scopeKey !== guard.scopeKey) {
+        const sameOwner = guard.ownerGeneration !== undefined
+          && guard.ownerGeneration === previousScope.ownerGeneration;
+        if (!sameOwner || this.shutdownStarted || guard.deferCleanupToOwnerTeardown?.()) {
+          throw new Error('A session from a previous owner scope is still being retired; retry creation');
+        }
+        await reusable.close({ reason: 'navigation' });
+        guard.assertCurrent();
+        return this.createSessionWhileRunning(opts, guard);
+      }
+      return { session: reusable, createdByCaller: false };
+    }
 
     const inFlight = this.inFlightSessionCreations.get(opts.id);
-    if (inFlight) return inFlight.promise;
+    if (inFlight) {
+      if (inFlight.scopeKey === guard?.scopeKey) {
+        return { session: await inFlight.promise, createdByCaller: false };
+      }
+      await inFlight.promise.catch(() => undefined);
+      await inFlight.settled;
+      guard?.assertCurrent();
+      return this.createSessionWhileRunning(opts, guard);
+    }
 
-    const creation = { promise: this.createSessionOnce(opts) };
+    let resolveSettled!: () => void;
+    const settled = new Promise<void>((resolve) => { resolveSettled = resolve; });
+    const promise = this.createSessionOnce(opts, guard).then((session) =>
+      this.validateSessionCreationGuard(session, undefined, guard, true),
+    );
+    const creation: InFlightSessionCreation = {
+      scopeKey: guard?.scopeKey,
+      settled,
+      resolveSettled: () => resolveSettled(),
+      promise,
+    };
     this.inFlightSessionCreations.set(opts.id, creation);
     try {
-      return await creation.promise;
+      return { session: await creation.promise, createdByCaller: true };
     } finally {
       // entry 身份比较防御未来替换 / 重试逻辑误删更新的占位。
       if (this.inFlightSessionCreations.get(opts.id) === creation) {
         this.inFlightSessionCreations.delete(opts.id);
       }
+      creation.resolveSettled();
     }
   }
 
   /** 执行一次真实 session startup；带 id 的并发去重由 createSession 统一负责。 */
-  private async createSessionOnce(opts: CreateSessionOptions): Promise<Session> {
+  private async createSessionOnce(
+    opts: CreateSessionOptions,
+    guard?: SessionCreationGuard,
+  ): Promise<Session> {
     const agent = this.requireAgent(opts.agentKind);
     const id = opts.id ?? generateSessionId();
     const localPiPackageGeneration = (
       opts.agentKind === 'pi' && !opts.remoteHostId && !opts.reviewMode
     ) ? this.localPiPackageRuntimeGeneration : null;
+    const readStartupScopeFailure = (): { error: unknown } | null => {
+      if (
+        localPiPackageGeneration !== null
+        && localPiPackageGeneration !== this.localPiPackageRuntimeGeneration
+      ) {
+        return { error: new Error('Local Pi runtime startup was invalidated by a package change; retry the task.') };
+      }
+      if (!guard) return null;
+      try {
+        guard.assertCurrent();
+        return null;
+      } catch (error) {
+        return { error };
+      }
+    };
 
     this.logger.debug('createSession ↓', {
       localSessionId: id,
@@ -800,6 +934,33 @@ export class Maker {
         this.pendingLifecycleCloses.delete(cleanup);
       });
     };
+    const closeUnpublishedHandle = async (
+      targetHandle: AgentSessionHandle,
+      error: unknown,
+      stage: SessionStartFailureContext['stage'],
+    ): Promise<never> => {
+      let cleanupFailed = false;
+      try {
+        await targetHandle.close({ reason: 'navigation' });
+      } catch (closeError) {
+        cleanupFailed = true;
+        this.failedHandleCleanups.set(id, {
+          handle: targetHandle,
+          promise: null,
+          onCleaned: () => {
+            codexThreadClaim?.release();
+            notifyStartCleanupSucceeded();
+          },
+        });
+        this.logger.warn('failed to close stale unpublished agent handle', {
+          sessionId: id,
+          error: String(closeError),
+        });
+      }
+      if (!cleanupFailed) codexThreadClaim?.release();
+      await notifyStartFailed(stage, error, cleanupFailed);
+      throw error;
+    };
     if (this.lifecycleHooks.prepareStartOptions) {
       try {
         await this.lifecycleHooks.prepareStartOptions(id, startOpts);
@@ -839,6 +1000,11 @@ export class Maker {
         });
         startOpts.codexHistoryHasProductPrompt = undefined;
       }
+    }
+    const staleBeforeAgentStart = readStartupScopeFailure();
+    if (staleBeforeAgentStart) {
+      await notifyStartFailed('prepare', staleBeforeAgentStart.error);
+      throw staleBeforeAgentStart.error;
     }
     // 把 business sessionId 透传给 agent.startSession, 让 agent 在构造 MCP
     // provider ctx 时塞到 ctx.sessionId 上 (claude-code/index.ts buildMcpServers)。
@@ -899,6 +1065,10 @@ export class Maker {
       }
       throw startupError;
     }
+    const staleAfterAgentStart = readStartupScopeFailure();
+    if (staleAfterAgentStart) {
+      return closeUnpublishedHandle(handle, staleAfterAgentStart.error, 'agent-start');
+    }
     if (opts.agentKind === 'codex' && isClaimableCodexThreadId(handle.id)) {
       try {
         if (codexThreadClaim) {
@@ -939,30 +1109,6 @@ export class Maker {
     // Reject a stale local Pi handle before creating or updating durable task
     // metadata. A startup invalidated by a package mutation was never published
     // and must not leave a ghost task or overwrite an existing sdkSessionId.
-    if (
-      localPiPackageGeneration !== null
-      && localPiPackageGeneration !== this.localPiPackageRuntimeGeneration
-    ) {
-      let cleanupFailed = false;
-      try {
-        await handle.close({ reason: 'navigation' });
-      } catch (closeError) {
-        cleanupFailed = true;
-        this.failedHandleCleanups.set(id, {
-          handle,
-          promise: null,
-          onCleaned: notifyStartCleanupSucceeded,
-        });
-        this.logger.warn('failed to close stale local Pi handle after package mutation', {
-          sessionId: id,
-          error: String(closeError),
-        });
-      }
-      const error = new Error('Local Pi runtime startup was invalidated by a package change; retry the task.');
-      await notifyStartFailed('agent-start', error, cleanupFailed);
-      throw error;
-    }
-
     // 落地元数据 —— storage 已有同 id 的 row 时跳过 insert, 走 update 把 sdkSessionId 写回
     let meta: SessionMeta;
     let existingRowBeforePersistence: SessionMeta | null = null;
@@ -970,6 +1116,10 @@ export class Maker {
     let updatedSdkSessionId = false;
     try {
       existingRowBeforePersistence = opts.id ? await this.storage.get(opts.id) : null;
+      const staleAfterStorageRead = readStartupScopeFailure();
+      if (staleAfterStorageRead) {
+        return closeUnpublishedHandle(handle, staleAfterStorageRead.error, 'storage');
+      }
       if (existingRowBeforePersistence) {
         updatedSdkSessionId = handle.id !== '<pending>'
           && existingRowBeforePersistence.sdkSessionId !== handle.id;
@@ -1026,7 +1176,7 @@ export class Maker {
       throw error;
     }
 
-    const rollbackStaleLocalPiMetadata = async (): Promise<void> => {
+    const rollbackStaleStartupMetadata = async (): Promise<void> => {
       const current = await this.storage.get(id);
       if (createdMetadata) {
         if (current?.createdAt === meta.createdAt && current.sdkSessionId === meta.sdkSessionId) {
@@ -1043,42 +1193,20 @@ export class Maker {
         await this.storage.compareAndClearSdkSessionId(id, handle.id);
       }
     };
-    const rejectStaleLocalPiAfterPersistence = async (): Promise<never> => {
+    const rejectStaleStartupAfterPersistence = async (error: unknown): Promise<never> => {
       try {
-        await rollbackStaleLocalPiMetadata();
+        await rollbackStaleStartupMetadata();
       } catch (error) {
-        this.logger.error('failed to roll back stale local Pi task metadata', {
+        this.logger.error('failed to roll back stale session metadata', {
           sessionId: id,
           error: String(error),
         });
       }
-      let cleanupFailed = false;
-      try {
-        await handle.close({ reason: 'navigation' });
-      } catch (closeError) {
-        cleanupFailed = true;
-        this.failedHandleCleanups.set(id, {
-          handle,
-          promise: null,
-          onCleaned: notifyStartCleanupSucceeded,
-        });
-        this.logger.warn('failed to close stale local Pi handle after package mutation', {
-          sessionId: id,
-          error: String(closeError),
-        });
-      }
-      // This handle was never published. Ordinary onClose may release a task's
-      // worktree and other durable ownership, so it belongs only to published
-      // session closure—not startup rollback.
-      const error = new Error('Local Pi runtime startup was invalidated by a package change; retry the task.');
-      await notifyStartFailed('storage', error, cleanupFailed);
-      throw error;
+      return closeUnpublishedHandle(handle, error, 'storage');
     };
-    if (
-      localPiPackageGeneration !== null
-      && localPiPackageGeneration !== this.localPiPackageRuntimeGeneration
-    ) {
-      return rejectStaleLocalPiAfterPersistence();
+    const staleAfterStorageWrite = readStartupScopeFailure();
+    if (staleAfterStorageWrite) {
+      return rejectStaleStartupAfterPersistence(staleAfterStorageWrite.error);
     }
 
     const delivery = handle.codexProductPromptDelivery;
@@ -1103,6 +1231,10 @@ export class Maker {
         });
       }
     }
+    const staleAfterCodexPromptDelivery = readStartupScopeFailure();
+    if (staleAfterCodexPromptDelivery) {
+      return rejectStaleStartupAfterPersistence(staleAfterCodexPromptDelivery.error);
+    }
 
     if (this.lifecycleHooks.onStartSucceeded) {
       try {
@@ -1115,11 +1247,9 @@ export class Maker {
       }
     }
 
-    if (
-      localPiPackageGeneration !== null
-      && localPiPackageGeneration !== this.localPiPackageRuntimeGeneration
-    ) {
-      return rejectStaleLocalPiAfterPersistence();
+    const staleAfterStartSucceeded = readStartupScopeFailure();
+    if (staleAfterStartSucceeded) {
+      return rejectStaleStartupAfterPersistence(staleAfterStartSucceeded.error);
     }
 
     const session = new Session({
@@ -1137,7 +1267,17 @@ export class Maker {
       remoteHostId: meta.remoteHostId ?? null,
       // 层 B：视觉桥钩子（per-session 优先，否则全局默认；缺省不传 = 零干扰）。
       visionBridge: startOpts.visionBridge ?? this.visionBridge,
+      acquireSendAdmission: () => this.lifecycleHooks.acquireSessionActivityAdmission?.({
+        agentKind: meta.agentKind,
+        remoteHostId: meta.remoteHostId ?? null,
+      }),
     });
+    if (guard?.scopeKey) {
+      this.sessionCreationScopes.set(session, {
+        scopeKey: guard.scopeKey,
+        ownerGeneration: guard.ownerGeneration,
+      });
+    }
 
     // 当 SDK 回填 sdkSessionId 时持久化
     session.onEvent((evt) => {
