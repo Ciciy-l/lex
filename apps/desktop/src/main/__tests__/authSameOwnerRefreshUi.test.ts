@@ -63,4 +63,19 @@ describe('same-owner token refresh keeps the signed-in shell', () => {
       'notifyRendererAuthBoundaryPending();',
     );
   });
+
+  it('marks transient signed-out projections as pending rather than committed logout', () => {
+    const start = authSource.indexOf('function snapshotLoggedOutAuthState');
+    const end = authSource.indexOf('function notifyRenderer()', start);
+    const body = authSource.slice(start, end);
+
+    expect(body).toContain('function snapshotLoggedOutAuthState(ownerBoundaryPending = false)');
+    expect(body).toContain('ownerBoundaryPending,');
+    expect(authSource).toContain(
+      "broadcastToRenderers('auth:state-change', snapshotLoggedOutAuthState(true));",
+    );
+    expect(authSource).toContain(
+      'if (isOwnerChangeShellPending()) return snapshotLoggedOutAuthState(true);',
+    );
+  });
 });
