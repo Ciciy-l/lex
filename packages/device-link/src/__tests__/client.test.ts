@@ -8765,3 +8765,128 @@ describe('定时重发的单趟预算(TRANSPORT_RETRY_PASS_BUDGET)', () => {
     h.client.stop();
   }, 10_000);
 });
+
+describe('confirmed duplicate-open gap repair', () => {
+  it('repairs a lost reply after only the controller reconnects without disturbing another controller', async () => {
+    vi.useFakeTimers();
+    const relay = new MemoryRelay();
+    const sockets = vi.spyOn(relay, 'makeWebSocket');
+    const host = makeRelayClient(relay, 'desktop', { transportRetryIntervalMs: 2000 });
+    const phone = makeRelayClient(relay, 'phone', { transportRetryIntervalMs: 2000 });
+    const healthy = makeRelayClient(relay, 'healthy');
+    const pump = () => relay.settle(async () => { await vi.advanceTimersByTimeAsync(1); });
+    const hostInvocations: Envelope[] = [];
+    const off = host.onFrame((env) => {
+      if (!env.src || !env.id) return;
+      if (env.kind === 'link-open') host.sendLinkAccept(env.src, env.id, { appVersion: '1', allowlistHash: 'hash' });
+      if (env.kind === 'invoke') {
+        hostInvocations.push(env);
+        host.sendInvokeResult(env.src, env.id, {
+          ok: true, result: (env.payload as { channel: string }).channel === 'maker:provider:list' ? 'x'.repeat(100000) : 'fresh',
+        });
+      }
+    });
+    try {
+      for (const client of [host, phone, healthy]) client.start();
+      await vi.advanceTimersByTimeAsync(1); await pump();
+      const open = async (client: DeviceLinkClient) => {
+        const opening = client.openLink('desktop', { controllerName: 'Viewer', protocolVersion: 1, appVersion: '1' });
+        await pump(); await opening;
+      };
+      await open(phone); await open(healthy);
+      relay.dropNext((sender, env) => sender === 'desktop' && env.dst === 'phone' && env.kind === 'invoke-result');
+      const old = phone.invoke('desktop', { channel: 'maker:provider:list', args: [] }, 60000).catch((error) => error);
+      await pump(); await vi.advanceTimersByTimeAsync(1000);
+      const oldInvokeId = hostInvocations.find((env) => env.src === 'phone')!.id;
+      phone.restartConnection('phone-only-reconnect');
+      await vi.advanceTimersByTimeAsync(1); await pump(); await open(phone);
+      const fresh = phone.invoke('desktop', { channel: 'local-db:sessions:list', args: [] }, 12000);
+      const other = healthy.invoke('desktop', { channel: 'local-db:sessions:list', args: [] }, 12000);
+      await pump();
+      await expect(fresh).resolves.toEqual({ ok: true, result: 'fresh' });
+      await expect(other).resolves.toEqual({ ok: true, result: 'fresh' });
+      expect(hostInvocations.filter((env) => env.id === oldInvokeId)).toHaveLength(1);
+      expect(host.isLinkReady('healthy')).toBe(true);
+      expect(sockets.mock.calls.filter((call) => call[0] === 'desktop')).toHaveLength(1);
+      expect(sockets.mock.calls.filter((call) => call[0] === 'healthy')).toHaveLength(1);
+      await old;
+    } finally {
+      off();
+      for (const client of [host, phone, healthy]) client.stop();
+      sockets.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  async function fixture(bytes = 100000, budget = 8) {
+    const harness = makeHarness({ timing: { pingIntervalMs: 600000, transportRetryIntervalMs: 2000, transportRetryPassBudget: budget } });
+    harness.client.start(); await vi.advanceTimersByTimeAsync(1); harness.current().ack();
+    harness.client.onFrame((env) => {
+      if (env.kind === 'link-open' && env.id && env.src)
+        harness.client.sendLinkAccept(env.src, env.id, { appVersion: '1', allowlistHash: 'hash' });
+    });
+    const open = async (id: string, confirm = true) => {
+      harness.current().push({ v: PROTOCOL_VERSION, kind: 'link-open', id, src: 'phone', payload: {
+        controllerName: 'Viewer', protocolVersion: 1, appVersion: '1', transportStreamId: 'phone-stream', transportBaseSeq: 1,
+        capabilities: [DEVICE_LINK_CAPABILITY_RELIABLE_TRANSPORT, ...(confirm ? [DEVICE_LINK_CAPABILITY_RELIABLE_LINK_CONFIRM] : [])],
+      } });
+      await vi.advanceTimersByTimeAsync(1);
+    };
+    const ack = (id?: string, seq = 0, stream?: string) => {
+      const accept = harness.current().sent.filter((env) => env.kind === 'link-accept').at(-1)!;
+      harness.current().push({ v: PROTOCOL_VERSION, kind: 'push', src: 'phone', payload: {
+        channel: DEVICE_LINK_TRANSPORT_ACK_CHANNEL,
+        payload: { streamId: stream ?? (accept.payload as { transportStreamId: string }).transportStreamId, ackSeq: seq, ...(id ? { linkRequestId: id } : {}) },
+      } });
+    };
+    await open('initial'); ack('initial');
+    harness.client.sendInvokeResult('phone', 'head', { ok: true, result: 'x'.repeat(bytes) });
+    const copies = () => harness.current().sent.filter((env) => env.kind === 'invoke-result' && env.id === 'head').length;
+    return { harness, open, ack, copies };
+  }
+
+  it('requires current confirmation and a gap, then repairs the head only once despite duplicate opens and ACKs', async () => {
+    vi.useFakeTimers(); const state = await fixture();
+    try {
+      state.harness.client.sendInvokeResult('phone', 'tail', { ok: true, result: 'tail' });
+      await state.open('stale'); await state.open('current');
+      state.ack(); state.ack('stale'); state.ack('current', 0, 'wrong-stream');
+      expect(state.copies()).toBe(1);
+      state.ack('current'); expect(state.copies()).toBe(2);
+      state.ack('current');
+      for (let index = 0; index < 5; index += 1) { await state.open(`again-${index}`); state.ack(`again-${index}`); }
+      expect(state.copies()).toBe(2);
+      expect(state.harness.current().sent.filter((env) => env.kind === 'invoke-result' && env.id === 'tail')).toHaveLength(1);
+    } finally { state.harness.client.stop(); vi.useRealTimers(); }
+  });
+
+  it.each(['acknowledged', 'legacy', 'backpressure', 'closed', 'oversize'] as const)(
+    'preserves normal retry policy for %s', async (mode) => {
+      vi.useFakeTimers();
+      const state = await fixture(mode === 'oversize' ? MAX_TRANSPORT_CHUNK_BYTES * 2 : 100000, mode === 'oversize' ? 1 : 8);
+      try {
+        const before = state.copies();
+        await state.open('again', mode !== 'legacy');
+        if (mode === 'backpressure') state.harness.current().bufferedAmount = MAX_TRANSPORT_WEBSOCKET_BUFFERED_BYTES;
+        if (mode === 'closed') state.harness.client.closeLink('phone', 'user');
+        state.ack('again', mode === 'acknowledged' ? 1 : 0);
+        expect(state.copies()).toBe(before);
+      } finally { state.harness.client.stop(); vi.useRealTimers(); }
+    },
+  );
+
+  it('rate limits repairs across advancing heads without suppressing later eligible gaps', async () => {
+    vi.useFakeTimers(); const state = await fixture();
+    try {
+      await state.open('first'); state.ack('first'); expect(state.copies()).toBe(2);
+      state.ack(undefined, 1);
+      state.harness.client.sendInvokeResult('phone', 'second', { ok: true, result: 'x'.repeat(100000) });
+      await state.open('too-soon'); state.ack('too-soon', 1);
+      const copies = () => state.harness.current().sent.filter((env) => env.id === 'second' && env.kind === 'invoke-result').length;
+      expect(copies()).toBe(1);
+      await vi.advanceTimersByTimeAsync(2000);
+      await state.open('later'); state.ack('later', 1);
+      expect(copies()).toBe(2);
+    } finally { state.harness.client.stop(); vi.useRealTimers(); }
+  });
+});
