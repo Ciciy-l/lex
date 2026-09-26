@@ -86,6 +86,11 @@ channel 名推断写操作安全。`sessions:get` 与要求 `fresh` 的 `session
 避免复用写入前开始的快照。上述恢复改动不改变 wire 格式或权限边界；IPC 权限仍以 allowlist
 为准。
 
+Mobile 历史读取在 relay 已在线且目标 presence 不是明确不可用时，可以沿既有建链和订阅
+流程尝试恢复。新连接会清空 presence，设备列表读取失败后的「未知」不等于离线，不能阻断
+历史控制器与页面同步；也不能为了放行读取伪造在线快照。明确离线／停用或 relay 未在线时
+仍只展示缓存，授权、撤权和旧代结果拦截继续由原链路处理。
+
 Mobile 的模型目录变化通知由 `apps/mobile/src/device-link/deviceCatalogRefresh.ts` 按设备合并，失效立即推进代次，
 在途读取结算后再补拉最新快照；页面与后台共享能力读取，通知不得清掉物理在途槽后重复发包。
 可靠传输在本地 WebSocket 出现积压时提前暂停数据写入，复用公平预算与短间隔 drain，
