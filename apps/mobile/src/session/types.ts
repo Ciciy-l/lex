@@ -1,4 +1,5 @@
 import type { MobileSessionAgentSwitchIntent } from '@cindy/maker-shared/device-link-contract';
+import type { InputDeliveryProjection } from '@cindy/device-link';
 import type { AgentInputReference } from '@cindy/maker-shared/agent-input-projection';
 import type { RemoteMoney } from '@/session/remoteMoney';
 import type { MobileToolLoopErrorDetails } from '@/session/agentErrorI18n';
@@ -181,6 +182,7 @@ export interface RemoteSerializedAttachment {
 }
 
 export interface QueuedRemoteMessage {
+  durableDelivery?: true;
   clientId: string;
   text: string;
   persistedContent: string;
@@ -235,7 +237,7 @@ export interface QueuedRemoteMessage {
  */
 export type ContinuationInFlightProjectionCapability = 'unknown' | 'legacy' | 'supported';
 
-export interface InputProjection {
+export interface InputProjection extends InputDeliveryProjection {
   sessionId: string;
   pendingQueue: QueuedRemoteMessage[];
   steeringQueueClientIds: string[];

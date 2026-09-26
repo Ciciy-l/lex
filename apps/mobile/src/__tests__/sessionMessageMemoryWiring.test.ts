@@ -8,6 +8,7 @@ function source(path: string): string {
 
 describe('任务消息内存治理页面接线', () => {
   const screen = source('app/sessions/[sessionId].tsx');
+  const outboxBridge = source('src/session/MobileOutboxBridge.tsx');
   const deviceLink = source('src/device-link/DeviceLinkContext.tsx');
 
   it('只有 focus 与 AppState active 同时成立时 enter，离场立即携 authority 撤权', () => {
@@ -86,9 +87,11 @@ describe('任务消息内存治理页面接线', () => {
     expect(screen).toContain('hasOlderMessages && !isScheduleDetail');
     expect(screen).toContain('canLoadEarlier={(historyView.snapshot.ready ? historyView.snapshot.hasMore : hasOlderMessages && messages.length > 0) && !isScheduleDetail}');
     expect(screen).toContain('remoteSessionStore.acquireSessionMessageWork(sessionId, pageHasMessageWork)');
-    expect(screen).toContain('remoteSessionStore.acquireSessionMessageWork(item.sessionId, true)');
     expect(screen).toContain('remoteSessionStore.acquireSessionMessageWork(sessionId, true)');
-    expect(screen.match(/messageWorkLease\.release\(\);/g)).toHaveLength(2);
+    expect(outboxBridge).toContain('remoteSessionStore.acquireSessionMessageWork(');
+    expect(outboxBridge).toMatch(/record\.item\.sessionId,\s*true,/);
+    expect(outboxBridge).toContain('lease.release();');
+    expect(screen.match(/messageWorkLease\.release\(\);/g)).toHaveLength(1);
     for (const signal of [
       'outboxItems.length > 0',
       'pendingUploads.length > 0',

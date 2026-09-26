@@ -24,12 +24,16 @@ describe('mobile cross-device quote wiring', () => {
 
   it('propagates quote metadata through direct and attachment-outbox sends', () => {
     const source = readSource('app/sessions/[sessionId].tsx');
+    const delivery = readSource('src/session/MobileOutboxBridge.tsx');
+    const drafts = readSource('src/session/composerDraftStore.ts');
 
     expect(source).toContain('quotesEncoded: quotesEncodedAtSend');
     expect(source).toContain('pastedTextRanges: pastedTextRangesAtSend');
     expect(source).toContain('slashCommandRanges: slashCommandRangesAtSend');
-    expect(source).toContain('quotesEncoded: item.quotesEncoded');
-    expect(source).toContain('restoreOutboxItemsToDraft([item])');
+    expect(delivery).toContain('quotesEncoded: item.quotesEncoded');
+    expect(source).toContain('draftHandoff: { before: documentBeforeSend, after: documentAfterOptimisticClear }');
+    expect(drafts).toContain('reconcileCommittedComposerDraft(');
+    expect(source).toContain('reconcileMobileOutboxDrafts(sessionId)');
     expect(source).toContain('saveComposerDocumentDraft(\n        draftSessionId,\n        recovery.document,');
     expect(source).toContain('createQueueEditTextState(item)');
     expect(source).toContain('resolveQueueEditTextSubmission(queueEditAtSendStart.textState, documentAtSend)');

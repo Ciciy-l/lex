@@ -161,7 +161,35 @@ describe('newSessionCreation pipeline', () => {
       's21',
       's22',
       's23',
-    ]) dismissNewSessionCreation(id);
+  ]) dismissNewSessionCreation(id);
+  });
+
+  it('hands the first message to the durable app outbox without sending it from the page pipeline', async () => {
+    const maker = makeMaker();
+    const handoff = vi.fn(async () => undefined);
+    startNewSessionCreation(makeParams('s-durable-handoff', maker, {
+      firstMessageClientId: 'durable-first-client',
+      planModeArm: true,
+      transport: {
+        maker: maker as unknown as MobileMakerTransport,
+        openLink: vi.fn(async () => undefined),
+        subscribe: vi.fn(async () => undefined),
+        handoffFirstMessage: handoff,
+      },
+    }));
+
+    await flushPipeline();
+
+    expect(maker.createSession).toHaveBeenCalledWith(expect.objectContaining({ id: 's-durable-handoff' }));
+    expect(handoff).toHaveBeenCalledWith(expect.objectContaining({
+      clientId: 'durable-first-client',
+      text: 'hello world',
+    }));
+    expect(maker.input.enqueue).not.toHaveBeenCalled();
+    expect(maker.setPlanMode).not.toHaveBeenCalled();
+    expect(remoteSessionStore.getSessions().find((session) => session.id === 's-durable-handoff'))
+      .toMatchObject({ pendingLocalCreation: false });
+    expect(getNewSessionCreationTask('s-durable-handoff')).toBeNull();
   });
 
   it('start 同步段即入 store:合成行带 pendingLocalCreation,首条消息以排队气泡上屏', () => {

@@ -16,12 +16,9 @@
  * 本模块只做纯数据变换(node 可单测);上传路由、enqueue RPC、React state 接线
  * 在 [sessionId].tsx。
  *
- * 生命周期边界：队列只拥有尚未开始 enqueue、或能证明请求尚未发出的条目，并在当前
- * 会话页存活期间自动重连续发。正常切任务 / 退屏由页面 cleanup 把这些正文接回草稿；
- * 一旦 enqueue 已开始，所有权转给既有在线发送 / optimistic projection 路径，回执不确定
- * 的写请求绝不重新降级成会丢 clientId 的草稿。若未来要跨页面或跨进程继续自动重试，
- * 必须单独设计可对账的 outbox owner，不能把草稿库当 write-ahead log（它没有消息边界、
- * 附件任务或远端 acceptance 状态）。
+ * 跨页与重启所有权由 durableOutbox.ts / durableOutboxDelivery.ts 管理；本模块只保留
+ * 消息呈现、附件槽位与草稿恢复变换。写入结果未知时必须保留同一 clientId 并等待桌面
+ * 回执或用户核对，不能把不确定请求降级成新草稿再生成另一个 clientId。
  */
 import { i18n } from '@/i18n';
 import type { MobileSessionReference } from '@/session/sessionReferences';
@@ -126,6 +123,7 @@ export interface MobileOutboxItem {
    * store 拿到的已是恢复后的值,消息本身必须仍按发送时刻的档位派发。
    */
   permissionModeAtSend: string;
+  planModeAtSend?: boolean;
   /** 附件槽位(按用户可见顺序);null = 对应上传任务尚未落定。 */
   attachmentSlots: ReadonlyArray<RemoteSerializedAttachment | null>;
   /**
@@ -206,6 +204,7 @@ export function buildOutboxItem(input: {
   pastedTextRanges?: Array<{ start: number; end: number; display: string }>;
   slashCommandRanges?: Array<{ start: number; end: number }>;
   permissionModeAtSend: string;
+  planModeAtSend?: boolean;
   /** 发送时刻已就绪的附件(占前段槽位)。 */
   readyAttachments: readonly RemoteSerializedAttachment[];
   /** 就绪附件的本地预览 uri(与 readyAttachments 对齐;缺失传 null)。 */
@@ -248,6 +247,7 @@ export function buildOutboxItem(input: {
     pastedTextRanges: input.pastedTextRanges ?? [],
     slashCommandRanges: input.slashCommandRanges ?? [],
     permissionModeAtSend: input.permissionModeAtSend,
+    ...(input.planModeAtSend !== undefined ? { planModeAtSend: input.planModeAtSend } : {}),
     attachmentSlots: slots,
     slotMeta,
     slotByLocalId,

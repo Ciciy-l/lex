@@ -3,6 +3,11 @@ import { FailedScheduleNotice } from '@/session/FailedScheduleNotice';
 import { shouldShowFailedScheduleNotice, type FailedScheduleRunSnapshot } from '@cindy/maker-shared/schedule-model';
 import { useRemoteResourceSession } from '@/session/useRemoteResourceSession';
 import { mobileDebugLog } from '@/debug/mobileDebugLog';
+import { getMobileAuthOwner, isMobileAuthOwnerCurrent, subscribeMobileAuthOwner } from '@/auth/authOwnerGeneration';
+import { mobileDurableOutbox, durableOutboxDisplayItem, getCurrentMobileOutboxRecords, reconcileMobileOutboxDrafts } from '@/session/mobileDurableOutbox';
+import { retainOutboxFile, durableOutboxUploadUri, removeOutboxFiles, outboxAttachmentNeedsLocalBytes } from '@/session/durableOutboxFiles';
+import { isDurableOutboxSettled, isDurableOutboxUnsent, observeDurableOutboxSending, type DurableOutboxRecord } from '@/session/durableOutbox';
+import { discardNewSessionUploadedAttachments } from '@/session/newSessionAttachmentCleanup';
 import { isInFlightDeviceLinkError } from '@cindy/device-link';
 import { takeRefinementContextTail, truncateRefinementReply } from '@cindy/voice-input-core';
 import {
@@ -392,16 +397,9 @@ import {
 import {
   buildOutboxItem,
   createOutboxClientId,
-  isSafelyUnsentOutboxEnqueueError,
   outboxDisplayItem,
   outboxItemAttachments,
-  outboxItemReady,
-  outboxItemRetrying,
-  outboxItemWaitingForConnection,
-  outboxItemWithEnqueueFailure,
-  outboxWithUploadResult,
   recoverOutboxItemsToComposerDraft,
-  replaceOutboxItem,
   shouldHoldOutboxDispatchForConnection,
   type MobileOutboxConnectionState,
   type MobileOutboxItem,
@@ -832,22 +830,6 @@ function attachmentIdSetsEqual(
 }
 
 /**
- * 将无法继续派发的 outbox 条目按会话恢复为可见草稿 + 引用 store。
- * marker-bearing body 只留作未编辑重发的隐藏顺序基线，绝不写进输入框。
- */
-function restoreOutboxItemsToDraft(items: readonly MobileOutboxItem[]): void {
-  const itemsBySession = new Map<string, MobileOutboxItem[]>();
-  for (const item of items) {
-    const sessionItems = itemsBySession.get(item.sessionId) ?? [];
-    sessionItems.push(item);
-    itemsBySession.set(item.sessionId, sessionItems);
-  }
-  for (const [draftSessionId, sessionItems] of itemsBySession) {
-    restoreRecoverableItemsToDraft(draftSessionId, sessionItems);
-  }
-}
-
-/**
  * 把一组待发条目按给定顺序合并回某个会话的草稿。
  *
  * 显式收 sessionId(而不是从条目上读)是为了让**不属于 outbox 的消息**也能参与同一次
@@ -1012,6 +994,8 @@ export default function SessionScreen() {
     return () => subscription.remove();
   }, [deviceId, sessionId]);
   const auth = useAuth();
+  const outboxOwner = useSyncExternalStore(subscribeMobileAuthOwner, getMobileAuthOwner, getMobileAuthOwner);
+  const composerOwnerAccountKeyRef = useRef(outboxOwner.accountKey);
   const windowDimensions = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const keyboardState = useMobileKeyboardState();
@@ -1301,8 +1285,9 @@ export default function SessionScreen() {
     discardAllPendingUploads,
     discardAllPendingUploadsForScopeChange,
     waitForPendingUploads,
-    claimActiveUploads,
-    releaseClaimedUploads,
+    beginOutboxAttachmentHandoff,
+    getUploadedSource,
+    releaseUploadedSources,
     waitForPastePlaceholdersSettled,
     hasPastePlaceholders,
     getPendingUploadCount,
@@ -1310,16 +1295,10 @@ export default function SessionScreen() {
     attachmentScopeKey: sessionId,
     getAccessToken: () => auth.getAccessToken(),
     getAttachmentCount: () => attachmentsRef.current.length,
-    onUploaded: (rawAttachment, candidate, localId) => {
+    onUploaded: (rawAttachment, candidate) => {
       // 标注类 candidate:记录「矢量笔迹 + 原图」再编辑真相并打 annotated wire 标。
       const attachment = composerAnnotationsRef.current
         ?.decorateUploadedAttachment(rawAttachment, candidate) ?? rawAttachment;
-      // outbox 域:任务已随乐观消息发出——附件填回对应消息的槽位,不进 composer
-      // 托盘;再编辑真相同步 forget(消息已离开 composer,与发送成功后的清理同语义)。
-      if (routeUploadToOutboxRef.current(localId, { attachment })) {
-        composerAnnotationsRef.current?.forgetAttachment(attachment.id);
-        return;
-      }
       // send() 在 waitForPendingUploads 落定后同步读 ref,而 setState 到 commit 有
       // 微任务延迟——这里派发时同步镜像,保证「上传完成→立即发送」不丢刚落定的附件。
       attachmentsRef.current = [...attachmentsRef.current, attachment];
@@ -1333,10 +1312,7 @@ export default function SessionScreen() {
       }
       setAttachments((current) => [...current, attachment]);
     },
-    onError: (message, context) => {
-      // outbox 域任务的失败路由给对应消息气泡(标失败可重试),不落 composer 错误条。
-      const uploadLocalId = context?.uploadLocalId;
-      if (uploadLocalId && routeUploadToOutboxRef.current(uploadLocalId, { failed: true })) return;
+    onError: (message) => {
       setAttachmentError(message);
     },
     onPicked: () => {
@@ -1344,35 +1320,13 @@ export default function SessionScreen() {
       requestAnimationFrame(() => composerInputRef.current?.focus());
     },
   });
-  // 换会话与退屏的 outbox 回收:未派发条目的文字合并回草稿库(用户已「发出」的文字
-  // 不能静默蒸发,回来时出现在输入框里),在途上传任务丢弃(与托盘退出语义一致,
-  // controller 会中止传输并回收已完成的 OSS 对象),已就绪附件回收中转对象。
-  // 已交接进 pendingQueue / enqueue 在途的消息不在 outbox,不受影响。
-  // deps 安全性:removePendingUpload 是 controller.remove 的稳定引用(controller
-  // useMemo([]) 单例),不会让本 effect 每 render 重建;auth 经 remoteMediaDepsRef 读最新。
+  // Durable records outlive this page; only page-local continuations lose their owner here.
   useEffect(() => {
     outboxSessionAliveRef.current = sessionId;
     return () => {
-      // 先撤存活标记:此后到达的派发失败回插 / 上传结果一律走 salvage 降级,
-      // 不会再写进即将清空的 ref 或下一个会话的 outbox。
       outboxSessionAliveRef.current = null;
-      const items = outboxRef.current;
-      if (items.length === 0) return;
-      outboxRef.current = [];
-      setOutboxItems([]);
-      // 草稿按条目自身归属写回(而非本 effect 捕获的 sessionId):防御性一致。
-      // 引用正文同步恢复 quote store，输入框只接收剥过 marker 的可见文字。
-      restoreOutboxItemsToDraft(items);
-      for (const item of items) {
-        for (const localId of [...item.waitingIds, ...item.failedIds]) removePendingUpload(localId);
-        for (const attachment of outboxItemAttachments(item)) {
-          discardMobileUploadedAttachment(attachment, {
-            getToken: () => remoteMediaDepsRef.current.auth.getAccessToken(),
-          });
-        }
-      }
     };
-  }, [sessionId, removePendingUpload]);
+  }, [sessionId]);
   const [voiceStartPending, setVoiceStartPending] = useState(false);
   const voiceStartPendingSeqRef = useRef(0);
   const voiceStartedOnPressInRef = useRef(false);
@@ -1443,6 +1397,7 @@ export default function SessionScreen() {
     for (const attachment of editing?.stashedAttachments ?? []) {
       attachmentsById.set(attachment.id, attachment);
     }
+    releaseUploadedSources([...attachmentsById.keys()]);
     attachmentsRef.current = [];
     setAttachments([]);
     setAttachmentPreviews({});
@@ -1592,11 +1547,26 @@ export default function SessionScreen() {
   // ref 在 send() 同步段立即置位,后续点击当场拦下(同 new.tsx creatingRef /
   // voiceStopInFlightRef 的既有模式)。
   const sendInFlightRef = useRef(false);
-  // 本地待发队列(outbox):附件仍在上传时点发送,消息立即以待发气泡上屏并入此队,
-  // 附件落定后按 FIFO 逐条真正 enqueue(状态机纯函数在 sessionOutbox.ts)。ref 是
-  // 同步真源(上传回调 / 派发循环 / send 同步段都要读最新值),state 只驱动渲染。
-  const [outboxItems, setOutboxItems] = useState<readonly MobileOutboxItem[]>([]);
-  const outboxRef = useRef<readonly MobileOutboxItem[]>([]);
+  const rawOutboxRecords = useSyncExternalStore(mobileDurableOutbox.subscribe, mobileDurableOutbox.getSnapshot);
+  const durableOutboxRecords = useMemo(() => rawOutboxRecords.filter((record) => record.accountId === outboxOwner.accountKey && !isDurableOutboxSettled(record)), [rawOutboxRecords, outboxOwner]);
+  const outboxItems = useMemo(() => durableOutboxRecords
+    .filter((r) => r.deviceId === deviceId && r.item.sessionId === sessionId && r.accountId === getMobileAuthOwner().accountKey)
+    .map(durableOutboxDisplayItem), [durableOutboxRecords, deviceId, sessionId]);
+  useEffect(() => observeDurableOutboxSending(mobileDurableOutbox, deviceId, sessionId, (record) => {
+    markQueueItemSending(record.prepared!);
+    rememberSentAttachmentPreviews(record.item.clientId, outboxItemAttachments(record.item), (attachment) => {
+      const slot = record.item.attachmentSlots.findIndex((item) => item?.id === attachment.id);
+      const upload = record.uploads.find((item) => item.slot === slot);
+      return upload ? durableOutboxUploadUri(record, upload) : record.item.slotMeta[slot]?.previewUri;
+    });
+  }, (clientId) => {
+    setSendingQueueClientIds((current) => {
+      if (!current.has(clientId)) return current;
+      const next = new Set(current);
+      next.delete(clientId);
+      return next;
+    });
+  }, outboxOwner.accountKey), [outboxOwner, deviceId, sessionId, markQueueItemSending, rememberSentAttachmentPreviews]);
   const pageMessageWorkLeaseRef = useRef<ReturnType<
     typeof remoteSessionStore.acquireSessionMessageWork
   > | null>(null);
@@ -1620,23 +1590,8 @@ export default function SessionScreen() {
   useLayoutEffect(() => {
     pageMessageWorkLeaseRef.current?.update(pageHasMessageWork);
   }, [pageHasMessageWork]);
-  // 派发循环重入锁 + 路由函数的 ref 中转(onUploaded 闭包声明在组件前部,实际
-  // 路由/派发逻辑声明在 send() 附近,经 ref 断开声明顺序依赖,同 composerAnnotationsRef)。
-  const outboxPumpBusyRef = useRef(false);
-  const routeUploadToOutboxRef = useRef<
-    (localId: string, result: { attachment: RemoteSerializedAttachment } | { failed: true }) => boolean
-  >(() => false);
-  // outbox 宿主存活标记:值 = 当前有 outbox 回收责任的 sessionId,cleanup(切会话
-  // 收尸 / 卸载)时置 null。dispatch 失败回插与上传结果路由据此判断条目所属会话
-  // 是否还在场——不在场就降级 salvage,绝不写进别的会话或没人消费的 ref。
+  // Only pre-accept composer continuations belong to this page; delivery belongs to the app.
   const outboxSessionAliveRef = useRef<string | null>(sessionId);
-  // 原地切 session(实例复用)时 render 阶段同步清渲染 state,不闪现旧会话的待发
-  // 气泡;ref 此刻不清——sessionId 键控的 cleanup effect(下方)还要读它做回收。
-  const [prevOutboxSessionId, setPrevOutboxSessionId] = useState(sessionId);
-  if (prevOutboxSessionId !== sessionId) {
-    setPrevOutboxSessionId(sessionId);
-    setOutboxItems([]);
-  }
   const [messageListFollowLatestRequestKey, setMessageListFollowLatestRequestKey] = useState(0);
   const [bottomOverlayContentHeight, setBottomOverlayContentHeight] = useState(0);
   const [topOverlayHeight, setTopOverlayHeight] = useState(0);
@@ -2802,6 +2757,38 @@ export default function SessionScreen() {
     applyComposerDocument(textComposerDocument(value), options);
   }, [applyComposerDocument]);
 
+  useLayoutEffect(() => {
+    const previousAccountKey = composerOwnerAccountKeyRef.current;
+    if (previousAccountKey === outboxOwner.accountKey) return;
+    composerOwnerAccountKeyRef.current = outboxOwner.accountKey;
+    if (!previousAccountKey) return;
+    outboxSessionAliveRef.current = null;
+    const attachmentsOwnedByPreviousAccount = [...attachmentsRef.current];
+    discardAllPendingUploadsForScopeChange();
+    releaseUploadedSources(attachmentsOwnedByPreviousAccount.map((attachment) => attachment.id));
+    discardNewSessionUploadedAttachments(
+      attachmentsOwnedByPreviousAccount,
+      () => remoteMediaDepsRef.current.auth.getAccessToken(),
+    );
+    attachmentsRef.current = [];
+    setAttachments([]);
+    setAttachmentPreviews({});
+    setMediaAssetAttachments({});
+    setAttachmentError(null);
+    setComposerDraftHydrated(true);
+    composerAnnotationsRef.current?.forgetAllAttachments();
+    clearQuotes(sessionId);
+    applyComposerDocument(emptyComposerDocument(), { persist: false });
+    router.replace('/devices');
+  }, [
+    applyComposerDocument,
+    discardAllPendingUploadsForScopeChange,
+    outboxOwner.accountKey,
+    releaseUploadedSources,
+    router,
+    sessionId,
+  ]);
+
   const applyRichComposerChange = useCallback((value: ComposerDocument) => {
     applyComposerDocument(value, queueEditingRef.current ? { persist: false } : undefined);
   }, [applyComposerDocument]);
@@ -2998,11 +2985,11 @@ export default function SessionScreen() {
       ? Promise.resolve()
       : hydrateQuotes(sessionId);
 
-    void Promise.all([
+    void reconcileMobileOutboxDrafts(sessionId).then(() => Promise.all([
       quoteHydration,
       readComposerDocumentDraft(sessionId),
       readComposerDraft(sessionId),
-    ]).then(([, storedDocument, storedDraft]) => {
+    ])).then(([, storedDocument, storedDraft]) => {
       if (cancelled || appliedRouteDraftRef.current !== key) return;
       const hydratedQuotes = [...getQuotes(sessionId)];
       const fallbackText = storedDraft ?? routeDraft ?? '';
@@ -3040,6 +3027,8 @@ export default function SessionScreen() {
       clearQuotes(sessionId);
       applyComposerDocument(nextDocument);
       setComposerDraftHydrated(true);
+    }).catch((error) => {
+      if (!cancelled) setError(formatRemoteError(error));
     });
     return () => {
       cancelled = true;
@@ -3642,9 +3631,19 @@ export default function SessionScreen() {
           style: 'cancel',
           onPress: () => {
             if (!creationTask) return;
+            const ownerAtEdit = getMobileAuthOwner();
             void prepareNewSessionCreationForEdit(sessionId)
-              .then((prepared) => {
-                if (!prepared) return;
+              .then(async (prepared) => {
+                if (!prepared || !isMobileAuthOwnerCurrent(ownerAtEdit) || outboxSessionAliveRef.current !== sessionId) return;
+                const durableFirst = getCurrentMobileOutboxRecords().find((r) => r.item.sessionId === sessionId && r.deviceId === deviceId && r.creation);
+                if (durableFirst) {
+                  const owner = getMobileAuthOwner();
+                  await mobileDurableOutbox.update(durableFirst, { suspended: true, state: 'failed', error: t('session.screen.firstMessageNotSent') });
+                  if (!isMobileAuthOwnerCurrent(owner) || outboxSessionAliveRef.current !== sessionId) return;
+                  dismissNewSessionCreation(sessionId);
+                  router.replace({ pathname: '/sessions/new', params: { recoverySessionId: sessionId, deviceId, deviceName } });
+                  return;
+                }
                 // 创建期间发出的后续消息必须一起带回新建页(review P1):它们此刻在 outbox 里,
                 // 而下一行 dismiss 会连同合成会话行一起删掉——会话页 unmount 时 cleanup 会把它们
                 // 写进那个已经不存在的会话的草稿,用户在新建页看不到、也再也找不回来。
@@ -3711,6 +3710,16 @@ export default function SessionScreen() {
       return;
     }
     if (status === 'enqueue-failed') {
+      const durableFirst = getCurrentMobileOutboxRecords().find((r) => r.item.sessionId === sessionId && r.deviceId === deviceId && r.creation);
+      if (durableFirst) {
+        const owner = getMobileAuthOwner();
+        void mobileDurableOutbox.update(durableFirst, { state: 'queued', suspended: false, error: undefined }).then(() => {
+          if (isMobileAuthOwnerCurrent(owner)) dismissNewSessionCreation(sessionId);
+        }).catch((err) => {
+          if (isMobileAuthOwnerCurrent(owner) && outboxSessionAliveRef.current === sessionId) setError(formatRemoteError(err));
+        });
+        return;
+      }
       // 首条消息没发出,而创建期间用户可能已经发了后续消息(composer 全程可用)。
       //
       // 「首条回输入框 + 后续留在 outbox」是不可恢复的:重试失败的 outbox 条目会把后续
@@ -3759,12 +3768,15 @@ export default function SessionScreen() {
       ? creationTask.firstMessageClientId
       : null;
     const sending = new Set(sendingQueueClientIds);
+    for (const record of durableOutboxRecords) {
+      if (record.item.sessionId === sessionId && record.deviceId === deviceId && record.state !== 'host-owned') sending.add(record.item.clientId);
+    }
     if (!creationPendingClientId || sending.has(creationPendingClientId)) {
       return sending;
     }
     sending.add(creationPendingClientId);
     return sending;
-  }, [creationTask, sendingQueueClientIds]);
+  }, [creationTask, sendingQueueClientIds, durableOutboxRecords, sessionId, deviceId]);
 
   // 已读回执:liveActivity **签名变化且 attention=true**(会话开着时新 turn 完成翻
   // 未读,或 attention 一直为 true 但内容更新——新 turn 完成会经 completed→running→
@@ -5343,6 +5355,7 @@ export default function SessionScreen() {
     });
     // 标注附件退场时同步清「矢量笔迹 + 原图副本」的再编辑真相。
     composerAnnotationsRef.current?.forgetAttachment(id);
+    releaseUploadedSources([id]);
     setAttachmentError(null);
   }, [attachments, auth]);
 
@@ -5395,30 +5408,6 @@ export default function SessionScreen() {
     ));
   }, []);
 
-  // ————— 本地待发队列(outbox):附件上传中消息先上屏 —————
-  // 状态机纯函数在 sessionOutbox.ts;这里只做 React 接线与 enqueue 派发。
-  // 所有更新经此单点:ref(同步真源)与 state(渲染)一起写。
-  const updateOutbox = (updater: (items: readonly MobileOutboxItem[]) => readonly MobileOutboxItem[]) => {
-    const next = updater(outboxRef.current);
-    if (next === outboxRef.current) return;
-    outboxRef.current = next;
-    setOutboxItems(next);
-  };
-
-  /**
-   * 无法回插 outbox 时的兜底(所属会话已离场 / 屏已卸载):文字合并回**条目所属
-   * 会话**的草稿库与引用 store(持久化,不静默蒸发),已就绪附件回收 OSS
-   * 中转对象。派发失败才会走到这里,此时附件必然已全部落定(ready 才派发),
-   * 没有在途任务要清。
-   */
-  const salvageOutboxItem = (item: MobileOutboxItem) => {
-    restoreOutboxItemsToDraft([item]);
-    for (const attachment of outboxItemAttachments(item)) {
-      discardMobileUploadedAttachment(attachment, {
-        getToken: () => remoteMediaDepsRef.current.auth.getAccessToken(),
-      });
-    }
-  };
 
   const readAuthoritativeEnqueueAcceptance = async (targetSessionId: string, clientId: string,
     expectedRemoteEpoch: number) => {
@@ -5438,168 +5427,6 @@ export default function SessionScreen() {
       return accepted;
     } catch {
       return remoteSessionStore.hasAuthoritativeQueuedItemSince(targetSessionId, clientId, expectedRemoteEpoch);
-    }
-  };
-
-  /**
-   * 派发一条就绪的 outbox 条目:构建 queued(权限档用发送时刻快照,model / effort
-   * 等跟随会话最新值)→ 乐观进本地 pendingQueue(待发气泡原位变为排队气泡,同帧
-   * 无跳变)→ enqueue RPC(弱网重试 + 对账,同原发送路径口径)。enqueue 确认未
-   * 应用时条目回 outbox 队首标失败,气泡保留可重试——不恢复草稿(消息还在屏上)。
-   * 全程使用 item.sessionId(而非闭包 sessionId):dispatch 在途窗口用户可能原地
-   * 切会话,消息必须始终发进它所属的会话(review P1)。
-   */
-  const dispatchOutboxItem = async (item: MobileOutboxItem) => {
-    if (outboxSessionAliveRef.current !== item.sessionId) return 'stopped' as const;
-    const messageWorkLease = remoteSessionStore.acquireSessionMessageWork(item.sessionId, true);
-    try {
-    const failItem = (message: string) => {
-      // 归属校验:条目所属会话已离场(切会话 cleanup 已跑 / 屏已卸载)时不回插
-      // 共享 ref——那会把 A 会话的失败气泡画进 B,或写进没人消费的 ref 让文字
-      // 蒸发(review P1)。降级为草稿写回 + 附件回收。
-      if (outboxSessionAliveRef.current !== item.sessionId) {
-        salvageOutboxItem(item);
-        return;
-      }
-      updateOutbox((items) => (
-        items.some((existing) => existing.clientId === item.clientId)
-          ? replaceOutboxItem(items, outboxItemWithEnqueueFailure(item, message))
-          : [outboxItemWithEnqueueFailure(item, message), ...items]
-      ));
-    };
-    const waitForConnection = (error: unknown) => {
-      // 与失败回插同一归属边界：离场后不能把旧会话气泡塞进当前页面，降级回该
-      // 会话的持久草稿；仍在本页则恢复为 uploading/ready，留在 FIFO 队首。
-      if (outboxSessionAliveRef.current !== item.sessionId) {
-        salvageOutboxItem(item);
-        return;
-      }
-      const waiting = outboxItemWaitingForConnection(item);
-      updateOutbox((items) => (
-        items.some((existing) => existing.clientId === item.clientId)
-          ? replaceOutboxItem(items, waiting)
-          : [waiting, ...items]
-      ));
-      setError(formatRemoteError(error));
-    };
-    const sessionNow = remoteSessionStore.getSessions().find((entry) => entry.id === item.sessionId);
-    if (!sessionNow) {
-      failItem(t('session.screen.sessionNotFoundResync'));
-      return;
-    }
-    if (!sessionNow.workingDir) {
-      failItem(t('session.screen.missingWorkingDir'));
-      return;
-    }
-    const sessionAtSend = { ...sessionNow, permissionMode: item.permissionModeAtSend };
-    const queuedDraft = {
-      ...buildQueuedTextMessage(sessionAtSend, item.text, new Date(), item.clientId, {
-        attachments: outboxItemAttachments(item),
-        quotesEncoded: item.quotesEncoded,
-        agentReferences: item.agentReferences,
-        pastedTextRanges: item.pastedTextRanges,
-        slashCommandRanges: item.slashCommandRanges,
-      }),
-      ...(item.sessionRefs && item.sessionRefs.length > 0
-        ? { sessionRefs: [...item.sessionRefs] }
-        : {}),
-    };
-    let queued: QueuedRemoteMessage;
-    try {
-      queued = await prepareMobileQueuedSessionReferences(
-        queuedDraft,
-        invoke,
-        remoteSessionStore.getSessionDeviceId,
-        deviceId,
-      );
-    } catch (err) {
-      // prepare 期间条目仍在 outbox；离场 cleanup 已负责恢复草稿与回收附件，
-      // 这里既不能重复 salvage，也不能让旧 continuation 继续 enqueue。
-      if (outboxSessionAliveRef.current !== item.sessionId) return 'stopped' as const;
-      if (isAutoRecoveringSessionReferencePreparationError(err)) {
-        waitForConnection(err);
-        return 'deferred' as const;
-      }
-      failItem(formatRemoteError(err));
-      return;
-    }
-    if (outboxSessionAliveRef.current !== item.sessionId) return 'stopped' as const;
-    // 乐观交接:进本地 pendingQueue 的同一同步段把条目移出 outbox,气泡原位从
-    // 「发送中」变「排队中」不闪断;enqueue 成功后用权威 projection 覆盖 reconcile。
-    const projectionBeforeSend = remoteSessionStore.getInputProjection(item.sessionId);
-    markQueueItemSending(queued);
-    remoteSessionStore.setInputProjectionOptimistically(item.sessionId, {
-      ...projectionBeforeSend,
-      sessionId: projectionBeforeSend.sessionId || item.sessionId,
-      pendingQueue: [...projectionBeforeSend.pendingQueue, queued],
-    });
-    updateOutbox((items) => items.filter((entry) => entry.clientId !== item.clientId));
-    // outbox 条目的槽位预览接着给排队气泡用:交接后图不能因为换了数据源就消失。
-    rememberSentAttachmentPreviews(
-      item.clientId,
-      outboxItemAttachments(item),
-      (attachment) => {
-        const slotIndex = item.attachmentSlots.findIndex((slot) => slot?.id === attachment.id);
-        return slotIndex >= 0 ? item.slotMeta[slotIndex]?.previewUri : null;
-      },
-    );
-    // outbox 气泡本来就在转圈:交接进 pendingQueue 后 enqueue 仍在途,徽标继续转圈,
-    // 不要在这一帧闪成排队 icon 再回来(也不能谎报「已入队」)。
-    const projectionRemoteEpochAtRequestStart =
-      remoteSessionStore.captureInputProjectionRemoteEpoch(item.sessionId);
-    const projectionEpochAtRequestStart =
-      remoteSessionStore.captureInputProjectionAuthorityEpoch(item.sessionId);
-    try {
-      // 弱网重试与写序边界同 send() 原路径(仅明确可安全重发的瞬时传输错误)。
-      let projection: InputProjection | undefined;
-      for (let attempt = 0; ; attempt++) {
-        try {
-          projection = await maker.input.enqueue(item.sessionId, queued, { sendAtMs: Date.now() });
-          break;
-        } catch (err) {
-          if (
-            attempt >= ENQUEUE_RECONNECT_RETRIES
-            || !isRetryableEnqueueTransportError(err)
-            || isInFlightDeviceLinkError(err)
-          ) throw err;
-          await new Promise((resolve) => setTimeout(resolve, ENQUEUE_RECONNECT_BACKOFF_MS * 2 ** attempt));
-        }
-      }
-      remoteSessionStore.setInputProjectionIfCurrent(
-        item.sessionId,
-        projection,
-        projectionEpochAtRequestStart,
-        projectionRemoteEpochAtRequestStart,
-        queued.clientId,
-      );
-    } catch (err) {
-      // 与原路径同口径:先对账分辨「确实没应用」vs「已应用但响应丢了」。
-      const safeToRetry = isSafelyUnsentOutboxEnqueueError(err);
-      const accepted = await readAuthoritativeEnqueueAcceptance(
-        item.sessionId, queued.clientId, projectionRemoteEpochAtRequestStart,
-      );
-      if (!accepted) {
-        const current = remoteSessionStore.getInputProjection(item.sessionId);
-        remoteSessionStore.setInputProjectionOptimistically(item.sessionId, {
-          ...current,
-          pendingQueue: current.pendingQueue.filter((entry) => entry.clientId !== queued.clientId),
-        });
-        if (safeToRetry) {
-          waitForConnection(err);
-          return 'deferred' as const;
-        }
-        failItem(formatRemoteError(err));
-      }
-    } finally {
-      // 入队确认、回 outbox / 失败，或转交 optimistic projection 等待权威同步后，
-      // 都不再是当前 RPC 在途；收掉 sending 标记，避免后续同 id 气泡悬空转圈。
-      clearQueueItemSending(queued.clientId);
-    }
-    // enqueue / 对账期间离场时，成功路径无需恢复草稿，但旧 pump 也绝不能接着
-    // 消费新任务的 outbox；失败路径已由 failItem / waitForConnection 按 A 收口。
-    if (outboxSessionAliveRef.current !== item.sessionId) return 'stopped' as const;
-    } finally {
-      messageWorkLease.release();
     }
   };
 
@@ -5632,64 +5459,64 @@ export default function SessionScreen() {
     return getNewSessionCreationTask(sessionId) !== null;
   };
 
-  /** FIFO 派发循环:队首就绪(附件齐、无失败)才派发;失败条目留在队首阻塞后续保顺序。 */
-  const pumpOutbox = async () => {
-    if (outboxPumpBusyRef.current) return;
-    outboxPumpBusyRef.current = true;
-    try {
-      for (;;) {
-        const head = outboxRef.current[0];
-        if (!head || !outboxItemReady(head)) return;
-        // 会话未就绪:条目原样留在 outbox(气泡继续转圈,不标失败),就绪时由
-        // 下方的解禁 effect 重新 pump。
-        if (outboxDispatchBlockedNow()) return;
-        updateOutbox((items) => replaceOutboxItem(items, { ...head, phase: 'dispatching' }));
-        const result = await dispatchOutboxItem({ ...head, phase: 'dispatching' });
-        if (result === 'deferred' || result === 'stopped') return;
-      }
-    } finally {
-      outboxPumpBusyRef.current = false;
-    }
-  };
+  const findDurableOutboxRecord = (clientId: string) => getCurrentMobileOutboxRecords().find((record) => (
+    record.accountId === outboxOwner.accountKey
+      && record.deviceId === deviceId
+      && record.item.sessionId === sessionId
+      && record.item.clientId === clientId
+  ));
 
-  // 上传结果路由(hook 的 onUploaded/onError 经 ref 调到最新闭包):localId 属于
-  // outbox 条目 → 填槽/标失败并驱动派发,返回 true;否则返回 false 走 composer 托盘。
-  routeUploadToOutboxRef.current = (localId, result) => {
-    const owner = outboxRef.current.find((item) => item.slotByLocalId[localId] !== undefined);
-    if (!owner) return false;
-    const next = outboxWithUploadResult(outboxRef.current, localId, result);
-    if (next !== outboxRef.current) outboxRef.current = next;
-    // 归属校验:条目属于已离场会话(原地切 session 后 cleanup 尚未跑的一帧窗口)
-    // 时只写 ref 等 cleanup 收尸——不 setState(不把旧会话气泡画进新会话)、不
-    // pump(不派发离场条目);成功产物已填进槽位,cleanup 会统一回收(review P1)。
-    if (owner.sessionId !== sessionId) return true;
-    setOutboxItems(outboxRef.current);
-    void pumpOutbox();
-    return true;
-  };
-
-  /** 重试失败条目:失败附件任务重跑(取新鲜 token),enqueue 失败型直接重新派发。 */
   const retryOutboxItem = (clientId: string) => {
-    const item = outboxRef.current.find((entry) => entry.clientId === clientId);
-    if (!item || item.phase !== 'failed') return;
+    const record = findDurableOutboxRecord(clientId);
+    if (!record || record.state !== 'failed' || record.cancelRequested) return;
+    if (record.creation && !record.prepared && !record.template) {
+      const owner = getMobileAuthOwner();
+      void mobileDurableOutbox.update(record, { suspended: true }).then(() => {
+        if (isMobileAuthOwnerCurrent(owner) && outboxSessionAliveRef.current === sessionId) {
+          router.push({ pathname: '/sessions/new', params: { recoverySessionId: sessionId, deviceId, deviceName } });
+        }
+      }).catch((error) => setError(formatRemoteError(error)));
+      return;
+    }
     setQueueSelectedClientId(null);
-    for (const localId of item.failedIds) retryPendingUpload(localId);
-    updateOutbox((items) => replaceOutboxItem(items, outboxItemRetrying(item)));
-    void pumpOutbox();
+    const owner = getMobileAuthOwner();
+    void mobileDurableOutbox.update(record, {
+      state: record.prepared ? 'confirming' : 'queued',
+      suspended: false,
+      error: undefined,
+    }).catch((error) => {
+      if (isMobileAuthOwnerCurrent(owner) && outboxSessionAliveRef.current === sessionId) {
+        setError(formatRemoteError(error));
+      }
+    });
   };
 
-  /** 删除待发条目:在途上传取消(controller 会回收已完成的 OSS 对象),就绪附件回收。 */
   const removeOutboxItem = (clientId: string) => {
-    const item = outboxRef.current.find((entry) => entry.clientId === clientId);
-    if (!item) return;
-    setQueueSelectedClientId(null);
-    updateOutbox((items) => items.filter((entry) => entry.clientId !== clientId));
-    for (const localId of [...item.waitingIds, ...item.failedIds]) removePendingUpload(localId);
-    for (const attachment of outboxItemAttachments(item)) {
-      discardMobileUploadedAttachment(attachment, { getToken: () => auth.getAccessToken() });
+    const record = findDurableOutboxRecord(clientId);
+    if (!record) return;
+    if (record.creation && !record.prepared && !record.template) {
+      setError(t('session.outbox.creationRecoveryRequired'));
+      return;
     }
-    // 队首失败条目被删除后,后面的条目可能已就绪。
-    void pumpOutbox();
+    setQueueSelectedClientId(null);
+    const owner = getMobileAuthOwner();
+    const remove = async () => {
+      if (isDurableOutboxUnsent(record)) {
+        await mobileDurableOutbox.update(record, {
+          state: 'host-owned',
+          cleanupOutcome: 'cancelled',
+          cancelRequested: true,
+          error: undefined,
+        });
+      } else {
+        await mobileDurableOutbox.update(record, { cancelRequested: true, state: 'confirming' });
+      }
+    };
+    void remove().catch((error) => {
+      if (isMobileAuthOwnerCurrent(owner) && outboxSessionAliveRef.current === sessionId) {
+        setError(formatRemoteError(error));
+      }
+    });
   };
 
   const outboxDisplayItems = useMemo(() => outboxItems.map(outboxDisplayItem), [outboxItems]);
@@ -5710,19 +5537,12 @@ export default function SessionScreen() {
    */
   const takeOutboxForSession = (
     targetSessionId: string,
-    uploads: 'release-to-tray' | 'cancel',
+    _uploads: 'release-to-tray' | 'cancel',
   ): { items: MobileOutboxItem[]; cancelledUploadCount: number } => {
-    const taken = outboxRef.current.filter((item) => item.sessionId === targetSessionId);
-    if (taken.length === 0) return { items: [], cancelledUploadCount: 0 };
-    updateOutbox((items) => items.filter((item) => item.sessionId !== targetSessionId));
-    const pendingLocalIds = taken.flatMap((item) => [...item.waitingIds, ...item.failedIds]);
-    if (uploads === 'release-to-tray') {
-      // 已就绪附件的中转对象由调用方决定是否随草稿保留,不在这里回收。
-      releaseClaimedUploads(pendingLocalIds);
-      return { items: taken, cancelledUploadCount: 0 };
-    }
-    for (const localId of pendingLocalIds) removePendingUpload(localId);
-    return { items: taken, cancelledUploadCount: pendingLocalIds.length };
+    if (getCurrentMobileOutboxRecords().some((record) => (
+      record.deviceId === deviceId && record.item.sessionId === targetSessionId
+    ))) throw new Error(t('session.outbox.restoreFailed'));
+    return { items: [], cancelledUploadCount: 0 };
   };
 
   // 待发送气泡(排队 / 落定 / 本地 outbox)作为消息流末尾的渲染项。
@@ -5943,34 +5763,26 @@ export default function SessionScreen() {
       if (shareOperationSeqRef.current === operationSeq) setConversationShareBusy(false);
     }
   }, [conversationShareBusy, exportConversationSharePng, selectedShareMessages.length, shareSelectionActive, shareSelectionRevision, t]);
-  // 解禁唤醒:会话参数就绪(fresh 元数据到达 / 新建管线收口)的那一帧重新 pump,把
-  // 未就绪期间攒下的待发消息按 FIFO 发出去。渲染态判据与 outboxDispatchBlockedNow
-  // 同构(那个读 store,供异步循环用;这个供 effect 依赖比较用)。
-  // 声明位置在创建管线收口 effect 之后:enqueue-failed 那一帧要先把 outbox 条目标成
-  // 失败挡住队首,再轮到这里 pump,否则后续消息会超车到首条消息前面。
-  const outboxDispatchBlocked = !currentSession
-    || currentSession.cacheSeeded === true
-    || currentSession.pendingLocalCreation === true
-    || creationTask !== null
-    || outboxConnectionDispatchBlocked;
-  useEffect(() => {
-    if (outboxDispatchBlocked) return;
-    void pumpOutbox();
-    // pumpOutbox 是每 render 重建的普通闭包,不入依赖(入了会每帧重跑);它内部读
-    // outboxRef / store 的最新真相,不依赖捕获值。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectionEpoch, outboxDispatchBlocked]);
-
   async function send(options: {
     draftOverride?: string;
     documentOverride?: ComposerDocument;
   } = {}) {
+    const sendOwnerAtStart = getMobileAuthOwner();
+    const isSendOwnerCurrent = () => isMobileAuthOwnerCurrent(sendOwnerAtStart)
+      && !!sendOwnerAtStart.accountKey
+      && outboxOwner.accountKey === sendOwnerAtStart.accountKey
+      && auth.user?.id?.trim() === sendOwnerAtStart.accountId;
+    if (!isSendOwnerCurrent()) return;
+    // A committed outbox item may still own the draft shown during hydration.
+    // Do not submit that snapshot before its durable handoff is reconciled.
+    if (!composerDraftHydrated) return;
     if (
       voiceState === 'listening' &&
       options.draftOverride === undefined &&
       options.documentOverride === undefined
     ) {
       await finishVoiceRecording({ sendAfterTranscribe: true });
+      if (!isSendOwnerCurrent()) return;
       return;
     }
     const commandsAtSend = slashCommandsRef.current;
@@ -6058,10 +5870,15 @@ export default function SessionScreen() {
       && !earlyDesktopCommand
       && runtimeOptions?.planModeSupported !== true
       && permissionModeOrAsk((readSessionRowNow() ?? currentSession).permissionMode) === 'plan';
+    const useDurableOutbox = outboxEligible && !earlyLocalCommand && !earlyDesktopCommand && !legacyPlanRequiresLiveDispatch;
+    const planModeAtSend = runtimeOptions?.planModeSupported === true
+      ? (readSessionRowNow() ?? currentSession).planModeEnabled === true
+      : undefined;
     // 旧协议 Plan 依赖会话级 permissionMode，不能排在既有本地消息后，也不能在
     // 已知断线时托管给自动恢复。必须在乐观清空和任何 await 前拒绝，原草稿原位保留。
     if (legacyPlanRequiresLiveDispatch && (
-      dispatchBlockedAtSend || outboxRef.current.length > 0 || outboxPumpBusyRef.current
+      dispatchBlockedAtSend
+      || outboxItems.length > 0
     )) {
       sendInFlightRef.current = false;
       setSending(false);
@@ -6120,13 +5937,13 @@ export default function SessionScreen() {
     let scopeExitDraftRecovered = false;
     const sendScopeStillAlive = () => outboxSessionAliveRef.current === sessionId;
     const recoverCapturedDraftForScopeExit = () => {
-      if (scopeExitDraftRecovered || !outboxEligible) return;
+      if (scopeExitDraftRecovered || !outboxEligible || useDurableOutbox) return;
       scopeExitDraftRecovered = true;
       // 乐观清空已持久删除 A 草稿；切到 B 后不能再读写共享 composer ref。
       // 直接按捕获的发送快照合并回 A 的草稿库，并保留 A 期间新输入的后续文字。
       restoreRecoverableItemsToDraft(sessionId, [capturedDraftRecoveryItem()]);
     };
-    if (text) applyComposerDocument(documentAfterOptimisticClear);
+    if (text && !useDurableOutbox) applyComposerDocument(documentAfterOptimisticClear);
     // A pasted message link is committed to the editor synchronously, while
     // its readable body is fetched from the source device asynchronously.
     // The optimistic clear above preserves the existing "tap sends this
@@ -6136,7 +5953,7 @@ export default function SessionScreen() {
       documentAtSend,
       resolvePastedSessionLinkLabel,
     );
-    if (!sendScopeStillAlive()) {
+    if (!isSendOwnerCurrent() || !sendScopeStillAlive()) {
       recoverCapturedDraftForScopeExit();
       sendInFlightRef.current = false;
       setSending(false);
@@ -6154,26 +5971,7 @@ export default function SessionScreen() {
     // 可能点 × 放弃或切换编辑目标——等待结束后以快照与最新 ref 比对,不一致则中止
     // 保存,防止编辑文本被当成一条全新消息发出(PR#709 review P1)。
     requestMessageListFollowLatest();
-    // —— 乐观 outbox 路径:附件仍在上传、消息含任务引用(其 capability 读取也可能
-    // 途中断线),或 outbox 已有排队消息时不再原地等待，消息立即以待发气泡上屏，
-    // 条件满足后由派发循环真正入队。豁免场景走
-    // 下方原路径:排队编辑保存(语义是改队列原条目)、纯文本本地命令(/context 等,
-    // 本地卡片无顺序问题;此时 composer 域无在途上传,waitForPendingUploads 秒回)。
-    // 粘贴占位窗口(uploadsInFlight 计入占位数)同样走本分支:先等占位落定再划归,
-    // 见分支内注释——不豁免,否则占位窗口内的发送会经原路径直接 enqueue 超车
-    // outbox 在途消息(greptile review P1)。除占位等待外判断与划归全程同步,无竞态窗。
-    // outboxPumpBusyRef 也算「outbox 在途」:派发起点条目即移出 outbox,enqueue
-    // 弱网重试窗内 outbox 可能为空——此时新消息若走原路径会并发 enqueue 超车
-    // 在途消息,破坏 FIFO(review P1);计入 pump busy 让它同样进 outbox 排队。
-    // 会话参数未就绪(缓存种入 / 新建在途)同样走本分支:此刻 enqueue 不可用,但消息
-    // 照常上屏,由派发循环在就绪后按序发出——composer 不再为此进只读档。
-    const shouldUseLocalOutbox = outboxEligible && !earlyLocalCommand && !earlyDesktopCommand
-      && (sessionRefsAtSend.length > 0 || uploadsInFlight > 0 || outboxRef.current.length > 0
-        || outboxPumpBusyRef.current || dispatchBlockedAtSend);
-    // 旧协议 Plan 依赖会话级 permissionMode，无法安全跨断线 / 页面生命周期托管。
-    // 本 PR 的本地 FIFO 因此只接普通消息与现代 Plan；连接正常且队列为空时，
-    // 旧协议 Plan 即使含附件 / 引用也回落到下方原有在线路径，等待材料后直接派发。
-    const useLocalOutbox = shouldUseLocalOutbox && !legacyPlanRequiresLiveDispatch;
+    const useLocalOutbox = useDurableOutbox;
     if (useLocalOutbox) {
       try {
         // workingDir 校验只对「此刻就能派发」的消息前置:dialogue 会话的工作目录由
@@ -6190,19 +5988,69 @@ export default function SessionScreen() {
         // 发送按钮转圈承载;等待期间 sendInFlightRef 挡住重入。
         if (hasPastePlaceholders()) {
           await waitForPastePlaceholdersSettled();
-          if (!sendScopeStillAlive()) {
+          if (!isSendOwnerCurrent() || !sendScopeStillAlive()) {
             recoverCapturedDraftForScopeExit();
             return;
           }
         }
-        // 划归:当前全部未 claim 上传任务(active + 失败卡)随本条消息走——离开
-        // composer 托盘与限额,产物经 onUploaded/onError 的 localId 路由回填。
-        const claimedUploads = claimActiveUploads();
-        const readyAttachments = attachmentsRef.current;
-        // 本地预览快照(必须在下方清理 previews 映射之前取):outbox 气泡从第一帧
-        // 就以图片形态渲染,不做「附件行→图片」的形态跳变;缺失时渲染层按 ossRef
-        // 查 sentAttachmentThumbStore 兜底。
-        const readyPreviews = readyAttachments.map((attachment) => attachmentPreviews[attachment.id] ?? null);
+        const ownerAtSend = sendOwnerAtStart;
+        if (!ownerAtSend.accountKey) throw new Error('OUTBOX_OWNER_REQUIRED');
+        await mobileDurableOutbox.activate(ownerAtSend.accountKey);
+        if (!isSendOwnerCurrent()) return;
+        const handoff = await beginOutboxAttachmentHandoff();
+        let record: DurableOutboxRecord | undefined;
+        let committed = false;
+        try {
+          const pendingSources = await handoff.prepare();
+          if (!sendScopeStillAlive() || !isSendOwnerCurrent()) return;
+          const readyAttachments = [...attachmentsRef.current];
+          const readyPreviews = readyAttachments.map((attachment) => attachmentPreviews[attachment.id] ?? null);
+          const permissionModeAtSend = permissionModeOrAsk(currentSession.permissionMode);
+          const item = buildOutboxItem({
+            clientId: createOutboxClientId(), sessionId, text, quotesEncoded: quotesEncodedAtSend,
+            sessionRefs: sessionRefsAtSend, agentReferences: agentReferencesAtSend,
+            pastedTextRanges: pastedTextRangesAtSend, slashCommandRanges: slashCommandRangesAtSend ?? [],
+            permissionModeAtSend, planModeAtSend, readyAttachments, readyPreviews,
+            claimedUploads: pendingSources.map(({ localId, source }) => ({ localId, failed: false, kind: source.kind, previewUri: source.uri })),
+          });
+          const clearedAt = currentSession.clearedAt ? Date.parse(currentSession.clearedAt) : null;
+          record = {
+            version: 1, accountId: ownerAtSend.accountKey, deviceId, item, createdAt: Date.now(),
+            draftHandoff: { before: documentBeforeSend, after: documentAfterOptimisticClear },
+            state: 'queued', uploads: [], clearBoundaryMs: clearedAt !== null && Number.isFinite(clearedAt) ? clearedAt : null,
+          };
+          for (let slot = 0; slot < readyAttachments.length; slot++) {
+            const source = getUploadedSource(readyAttachments[slot].id);
+            if (!source && !outboxAttachmentNeedsLocalBytes(readyAttachments[slot])) continue;
+            if (!source) throw new Error(t('session.screen.attachmentsNotCarriedBack', { count: 1 }));
+            record.uploads.push(await retainOutboxFile(record, slot, source));
+          }
+          for (const { localId, source } of pendingSources) {
+            record.uploads.push(await retainOutboxFile(record, item.slotByLocalId[localId]!, source));
+          }
+          if (!sendScopeStillAlive() || !isMobileAuthOwnerCurrent(ownerAtSend)) return;
+          await mobileDurableOutbox.add(record);
+          committed = true;
+          handoff.release(true);
+          // Durable ownership precedes clearing the composer or deleting annotation sources.
+          if (!isSendOwnerCurrent() || !sendScopeStillAlive()) {
+            const stored = readComposerDocumentDraftSync(sessionId);
+            if (stored && composerDocumentsEqual(stored, documentBeforeSend)) {
+              saveComposerDraft(sessionId, '');
+              saveComposerDocumentDraft(sessionId, emptyComposerDocument());
+              clearQuotes(sessionId);
+            }
+            return;
+          }
+          if (composerDocumentsEqual(composerDocumentRef.current, documentBeforeSend)) {
+            applyComposerDocument(documentAfterOptimisticClear);
+          }
+          rememberSentAttachmentPreviews(record.item.clientId, readyAttachments, (attachment) => {
+            const slot = readyAttachments.findIndex((a) => a.id === attachment.id);
+            const upload = record?.uploads.find((u) => u.slot === slot);
+            return record && upload ? durableOutboxUploadUri(record, upload) : readyPreviews[slot] ?? null;
+          });
+          releaseUploadedSources(readyAttachments.map((a) => a.id));
         // 本批映射清理(与原发送成功路径同口径):附件已随消息离开 composer 域。
         const sentAttachmentIds = new Set(readyAttachments.map((attachment) => attachment.id));
         setMediaAssetAttachments((current) => Object.fromEntries(
@@ -6214,35 +6062,26 @@ export default function SessionScreen() {
         for (const attachmentId of sentAttachmentIds) {
           composerAnnotationsRef.current?.forgetAttachment(attachmentId);
         }
-        setAttachments([]);
-        attachmentsRef.current = [];
+        const remainingAttachments = attachmentsRef.current.filter((a) => !sentAttachmentIds.has(a.id));
+        setAttachments(remainingAttachments);
+        attachmentsRef.current = remainingAttachments;
         setAttachmentError(null);
         // plan 一次性语义:权限档快照进条目(派发按快照发),chip 立即恢复——
         // 不等附件上传完,与「消息已发出」的乐观语义一致。
-        const permissionModeAtSend = permissionModeOrAsk(currentSession.permissionMode);
         if (permissionModeAtSend === 'plan') {
           const fallback = runtimeOptions?.permissionOptions.find((option) => option.id !== 'plan')?.id ?? 'ask';
           const remembered = prePlanPermissionModeRef.current;
           const restored = remembered && remembered !== 'plan' ? remembered : fallback;
           void maker.setPermissionMode(sessionId, restored).catch(() => undefined);
         }
-        updateOutbox((items) => [...items, buildOutboxItem({
-          clientId: createOutboxClientId(),
-          sessionId,
-          text,
-          quotesEncoded: quotesEncodedAtSend,
-          sessionRefs: sessionRefsAtSend,
-          agentReferences: agentReferencesAtSend,
-          pastedTextRanges: pastedTextRangesAtSend,
-          slashCommandRanges: slashCommandRangesAtSend ?? [],
-          permissionModeAtSend,
-          readyAttachments,
-          readyPreviews,
-          claimedUploads,
-        })]);
         voiceDictionaryLearningTrackerRef.current?.flush();
         requestMessageListFollowLatest();
-        void pumpOutbox();
+        } finally {
+          handoff.release(committed);
+          if (!committed && record) await removeOutboxFiles(record).catch(() => undefined);
+        }
+      } catch (err) {
+        setError(formatRemoteError(err));
       } finally {
         sendInFlightRef.current = false;
         setSending(false);
@@ -7178,8 +7017,9 @@ export default function SessionScreen() {
       discardMobileUploadedAttachment(attachment, { getToken: () => auth.getAccessToken() });
       discardedIds.add(attachment.id);
     }
+    releaseUploadedSources([...discardedIds]);
     return discardedIds;
-  }, [auth, sessionId]);
+  }, [auth, sessionId, releaseUploadedSources]);
 
   const discardQueueEditTransientAttachments = useCallback((
     editing: QueueEditingState,

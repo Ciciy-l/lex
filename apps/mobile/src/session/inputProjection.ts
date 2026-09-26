@@ -29,6 +29,7 @@ import {
   type QueueRowPresentation,
 } from '@cindy/maker-shared/queue';
 import { mobilePresentationLocalizer } from '@/i18n/presentationLocalizer';
+import { parseInputDeliveryProjection } from '@cindy/device-link';
 export {
   isOrcaQueueItem,
   queueMoveTargetIndex,
@@ -80,12 +81,14 @@ export const EMPTY_INPUT_PROJECTION: InputProjection = Object.freeze({
 export function normalizeInputProjection(value: unknown, fallbackSessionId = ''): InputProjection {
   const record = readRecord(value);
   const pendingQueue = readQueuedMessages(record?.pendingQueue);
+  const delivery = record === null ? undefined : parseInputDeliveryProjection(record);
   const continuationInFlightProjectionCapability = record === null
     ? 'unknown'
     : Object.prototype.hasOwnProperty.call(record, 'continuationTurnClientId')
       ? 'supported'
       : 'legacy';
   return {
+    ...(delivery ?? {}),
     sessionId: readString(record?.sessionId) ?? fallbackSessionId,
     pendingQueue,
     steeringQueueClientIds: readStringArray(record?.steeringQueueClientIds),
@@ -127,6 +130,7 @@ export function buildQueuedTextMessage(
   clientId = createUuid(),
   options: {
     attachments?: readonly RemoteSerializedAttachment[];
+    planMode?: boolean;
     quotesEncoded?: boolean;
     agentReferences?: AgentInputReference[];
     pastedTextRanges?: Array<{ start: number; end: number; display: string }>;
@@ -178,6 +182,7 @@ export function buildQueuedTextMessage(
     },
     createOpts: {
       agentKind,
+      ...(options.planMode !== undefined ? { planMode: options.planMode } : {}),
       workingDir,
       model: session.model,
       effort,
