@@ -30,6 +30,7 @@ export type {
   PiReasoningEffort,
   PiModelApi,
   ProviderPreset,
+  ProviderPresetModel,
   ProviderPresetRuntime,
   PresetSortRegion,
   OAuthAuthorizationCodeDescriptor,
@@ -38,6 +39,7 @@ export type {
 } from "./types.js";
 
 export { PI_MODEL_APIS, PI_REASONING_EFFORTS } from "./types.js";
+export { expandPresetModels } from './presetModels.js';
 export { isLocalOnlyProviderForAgent, isOpenAiSubscriptionProvider, providerCatalogId } from './provider-identity.js';
 export { isOfficialXaiApiHost, isOfficialXaiUsApiHost } from './xai-endpoints.js';
 

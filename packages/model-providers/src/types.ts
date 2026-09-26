@@ -644,6 +644,12 @@ export interface ProviderPresetRuntime {
   piCatalogProviderId?: string;
 }
 
+/** Shared recommendation row optionally scoped/overridden for engines declared by this preset. */
+export interface ProviderPresetModel extends ProviderRuntimeModelConfig {
+  engines?: AgentKind[];
+  engineOverrides?: Partial<Record<AgentKind, Partial<ProviderRuntimeModelConfig>>>;
+}
+
 /**
  * 供应商预设 —— 降低自定义供应商接入摩擦的**纯 UI 模板数据**（不参与路由 / 不是 Provider）。
  *
@@ -679,6 +685,8 @@ export interface ProviderPreset {
    * 创建后会快照进 CustomProviderConfig，不随预设后续更新。
    */
   authMethod?: "apiKey" | "none";
+  /** New shared recommendation format; sanitized at load into legacy per-runtime models. */
+  models?: ProviderPresetModel[];
   /** per-runtime 预填数据（至少一个）。 */
   runtimes: Partial<Record<AgentKind, ProviderPresetRuntime>>;
 }
