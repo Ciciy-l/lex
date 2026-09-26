@@ -8896,10 +8896,11 @@ describe('confirmed duplicate-open gap repair', () => {
         await pump(); await opening;
       };
       await open(phone); await open(healthy);
-      relay.dropNext((sender, env) => sender === 'desktop' && env.dst === 'phone' && env.kind === 'invoke-result');
-      const old = phone.invoke('desktop', { channel: 'maker:provider:list', args: [] }, 60000).catch((error) => error);
+      for (let i = 0; i < 10; i++) relay.dropNext((sender, env) => sender === 'desktop' && env.dst === 'phone' && env.kind === 'invoke-result');
+      const old = Promise.all(Array.from({ length: 10 }, () => phone.invoke('desktop', { channel: 'maker:provider:list', args: [] }, 60000).catch((error) => error)));
       await pump(); await vi.advanceTimersByTimeAsync(1000);
-      const oldInvokeId = hostInvocations.find((env) => env.src === 'phone')!.id;
+      const oldInvokeIds = hostInvocations.filter((env) => env.src === 'phone').map((env) => env.id!);
+      expect(oldInvokeIds).toHaveLength(10);
       phone.restartConnection('phone-only-reconnect');
       await vi.advanceTimersByTimeAsync(1); await pump(); await open(phone);
       const fresh = phone.invoke('desktop', { channel: 'local-db:sessions:list', args: [] }, 12000);
@@ -8907,11 +8908,11 @@ describe('confirmed duplicate-open gap repair', () => {
       await pump();
       await expect(fresh).resolves.toEqual({ ok: true, result: 'fresh' });
       await expect(other).resolves.toEqual({ ok: true, result: 'fresh' });
-      expect(hostInvocations.filter((env) => env.id === oldInvokeId)).toHaveLength(1);
+      expect(hostInvocations.filter((env) => oldInvokeIds.includes(env.id!))).toHaveLength(10);
       expect(host.isLinkReady('healthy')).toBe(true);
       expect(sockets.mock.calls.filter((call) => call[0] === 'desktop')).toHaveLength(1);
       expect(sockets.mock.calls.filter((call) => call[0] === 'healthy')).toHaveLength(1);
-      await old;
+      expect(await old).toEqual(Array.from({ length: 10 }, () => ({ ok: true, result: 'x'.repeat(100000) })));
     } finally {
       off();
       for (const client of [host, phone, healthy]) client.stop();
@@ -8944,7 +8945,7 @@ describe('confirmed duplicate-open gap repair', () => {
     await open('initial'); ack('initial');
     harness.client.sendInvokeResult('phone', 'head', { ok: true, result: 'x'.repeat(bytes) });
     const copies = () => harness.current().sent.filter((env) => env.kind === 'invoke-result' && env.id === 'head').length;
-    return { harness, open, ack, copies };
+    return { h: harness, harness, open, ack, copies };
   }
 
   it('requires current confirmation and a gap, then repairs the head only once despite duplicate opens and ACKs', async () => {
@@ -8990,5 +8991,56 @@ describe('confirmed duplicate-open gap repair', () => {
       await state.open('later'); state.ack('later', 1);
       expect(copies()).toBe(2);
     } finally { state.harness.client.stop(); vi.useRealTimers(); }
+  });
+
+  it('continues the captured backlog only after each repaired head is acknowledged', async () => {
+    vi.useFakeTimers(); const f = await fixture();
+    try {
+      for (let i = 2; i <= 10; i++) f.h.client.sendInvokeResult('phone', `old-${i}`, { ok: true, result: 'old' });
+      await f.open('reconnect'); f.ack('reconnect');
+      const copies = (id: string) => f.h.current().sent.filter(e => e.kind === 'invoke-result' && e.id === id).length;
+      f.h.client.sendInvokeResult('phone', 'new', { ok: true, result: 'new' });
+      expect(copies('old-2')).toBe(1);
+      // A duplicate open must not extend the recovery snapshot to newly queued work.
+      await f.open('again'); f.ack('again');
+      for (let seq = 1; seq < 10; seq++) {
+        f.ack(undefined, seq);
+        expect(copies(`old-${seq + 1}`)).toBe(2);
+        f.ack(undefined, seq);
+        expect(copies(`old-${seq + 1}`)).toBe(2);
+        if (seq < 9) expect(copies(`old-${seq + 2}`)).toBe(1);
+      }
+      f.ack(undefined, 10);
+      expect(copies('new')).toBe(1);
+    } finally { f.h.client.stop(); vi.useRealTimers(); }
+  });
+
+  it.each(['backpressure', 'oversize', 'closed'] as const)('stops ACK-paced repair on %s', async mode => {
+    vi.useFakeTimers(); const f = await fixture(100000, 1);
+    try {
+      f.h.client.sendInvokeResult('phone', 'tail', { ok: true, result: 'x'.repeat(mode === 'oversize' ? MAX_TRANSPORT_CHUNK_BYTES * 2 : 100) });
+      await f.open('again'); f.ack('again');
+      const copies = () => f.h.current().sent.filter(e => e.kind === 'invoke-result' && e.id === 'tail').length;
+      const before = copies();
+      if (mode === 'backpressure') f.h.current().bufferedAmount = MAX_TRANSPORT_WEBSOCKET_BUFFERED_BYTES;
+      if (mode === 'closed') f.h.client.closeLink('phone', 'user');
+      f.ack(undefined, 1);
+      expect(copies()).toBe(before);
+    } finally { f.h.client.stop(); vi.useRealTimers(); }
+  });
+
+  it('does not include an unsent tail in the captured repair prefix', async () => {
+    vi.useFakeTimers(); const f = await fixture();
+    try {
+      for (let seq = 2; seq <= MAX_TRANSPORT_REASSEMBLIES; seq++) {
+        f.h.client.sendInvokeResult('phone', `old-${seq}`, { ok: true, result: 'queued' });
+      }
+      f.h.client.sendInvokeResult('phone', 'unsent', { ok: true, result: 'queued' });
+      const copies = () => f.h.current().sent.filter(e => e.kind === 'invoke-result' && e.id === 'unsent').length;
+      expect(copies()).toBe(0);
+      await f.open('again'); f.ack('again');
+      for (let ackSeq = 1; ackSeq <= MAX_TRANSPORT_REASSEMBLIES; ackSeq++) f.ack(undefined, ackSeq);
+      expect(copies()).toBe(1);
+    } finally { f.h.client.stop(); vi.useRealTimers(); }
   });
 });
