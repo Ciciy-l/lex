@@ -94,7 +94,14 @@ Mobile 历史读取在 relay 已在线且目标 presence 不是明确不可用�
 历史控制器与页面同步；也不能为了放行读取伪造在线快照。明确离线／停用或 relay 未在线时
 仍只展示缓存，授权、撤权和旧代结果拦截继续由原链路处理。
 
-Mobile 的模型目录变化通知由 `apps/mobile/src/device-link/deviceCatalogRefresh.ts` 按设备合并，失效立即推进代次，
+Mobile 明确观察到断网后恢复，或已连接网络类型切换（如蜂窝 → Wi-Fi）时，
+替换本机仍显示 online 的旧连接，避免旧路径上的半开连接额外等待探测超时。
+相同类型的能力通知、仅 Internet reachability 变化和未知网络仍走原探测预算；
+不打断在途握手、不绕过拥塞退避。后台只记录路径变化，回前台再处理；
+期间若新连接已完成握手，则不重复替换。此动作只影响该手机的 relay 连接，
+不由单 peer 超时触发，也不重启被控端与其它控制端的共享连接。
+实现与回归见 Mobile `DeviceLinkContext.tsx`、`historyViewProvider.test.tsx`。
+
 在途读取结算后再补拉最新快照；页面与后台共享能力读取，通知不得清掉物理在途槽后重复发包。
 可靠传输在本地 WebSocket 出现积压时提前暂停数据写入，复用公平预算与短间隔 drain，
 为 ACK／握手保留硬上限之前的余量；不等待 relay 的 1013 才降速，也不对已排空的健康
