@@ -68,6 +68,30 @@ relay 以 close 1013 `inbound backpressure` 主动断连，此时任何「立即
 一起打掉线，由 #1405 收窄止损半径修复。协议兼容、allowlist、单测三层防线对这类问题
 全部免疫，只有 review 时点名问「半径」才拦得住。
 
+## 共享恢复与请求策略
+
+Desktop 的刷新队列按设备与状态合并，并由 `remoteProjectsStore` 的 snapshot/lifecycle epoch
+隔离；Mobile peer recovery 由 `apps/mobile/src/device-link/peerRecoveryScheduler.ts`
+按设备调度。Desktop 的订阅快照与在线判断、Mobile 的后台生命周期与页面恢复仍由各端适配器
+负责。同一设备取消后重新请求恢复，须等待旧物理请求结算；旧结果不能取消新请求，也不能
+恢复已取消的重试。
+
+Desktop 清理某设备的熔断状态不等于该设备已恢复。停用、离线和重置时只清理 UI
+状态，不触发订阅重放或内容刷新；只有正向响应证据（包括成功的单 peer 探测）才触发恢复。排队中的订阅与列表
+刷新同样受设备生命周期代次约束，迟到的失败不得重启已取消的恢复。周期对账复用在途
+读取，新增内容等事件仍可合并成一次后续刷新；不得为了限制整轮等待而缩短弱网请求预算。
+
+请求超时不代表主机操作未执行；peer reset 后是否可重试由调用方的幂等语义决定，不能按
+channel 名推断写操作安全。`sessions:get` 与要求 `fresh` 的 `sessions:list` 必须重新读取，
+避免复用写入前开始的快照。上述恢复改动不改变 wire 格式或权限边界；IPC 权限仍以 allowlist
+为准。
+
+Mobile 的模型目录变化通知由 `apps/mobile/src/device-link/deviceCatalogRefresh.ts` 按设备合并，失效立即推进代次，
+在途读取结算后再补拉最新快照；页面与后台共享能力读取，通知不得清掉物理在途槽后重复发包。
+可靠传输在本地 WebSocket 出现积压时提前暂停数据写入，复用公平预算与短间隔 drain，
+为 ACK／握手保留硬上限之前的余量；不等待 relay 的 1013 才降速，也不对已排空的健康
+socket 固定限速。最大逻辑消息仍可在排空后原子发送，不改变可靠序号和跨版本协议。
+
 ## 模块通过 Remote Resource 接入移动端
 
 面向移动端新增独立产品入口时，默认通过 `@cindy/device-link` 的 Remote Resource
