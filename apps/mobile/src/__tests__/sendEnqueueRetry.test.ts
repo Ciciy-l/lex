@@ -12,11 +12,11 @@ import { describe, expect, it } from 'vitest';
  */
 describe('send enqueue weak-network retry ordering', () => {
   const source = readFileSync(resolve(process.cwd(), 'app/sessions/[sessionId].tsx'), 'utf8');
+  const durableDelivery = readFileSync(resolve(process.cwd(), 'src/session/durableOutboxDelivery.ts'), 'utf8');
 
   /**
-   * 提取全部 enqueue 弱网重试循环体(send 原路径 + outbox 派发路径各一个),
-   * 每个循环以其后最近的 projection store 写入为界。
-   * 两条路径共用同一套写序边界,守卫必须逐个覆盖,不能只查第一个。
+   * 提取仍在页面内进行的直接 enqueue 弱网重试循环。Durable outbox 的不确定
+   * 结果由 app-level receipt reconciliation 按同一 clientId 收敛，不做新消息重发。
    */
   const LOOP_MARKER = 'for (let attempt = 0; ; attempt++) {';
   const extractRetryLoops = (): string[] => {
@@ -34,7 +34,7 @@ describe('send enqueue weak-network retry ordering', () => {
     expect(source).toContain("code === 'NOT_CONNECTED' || code === 'BACKPRESSURE'");
     expect(source).toContain("formatted.includes('[BACKPRESSURE]')");
     const loops = extractRetryLoops();
-    expect(loops).toHaveLength(2);
+    expect(loops).toHaveLength(1);
     for (const loopBody of loops) {
       expect(loopBody).toContain('|| isInFlightDeviceLinkError(err)');
       expect(loopBody).toContain('|| !isRetryableEnqueueTransportError(err)');
@@ -50,5 +50,9 @@ describe('send enqueue weak-network retry ordering', () => {
     for (const loopBody of extractRetryLoops()) {
       expect(loopBody).not.toContain('getProjection');
     }
+    expect(durableDelivery).toContain('enqueueStarted: true');
+    expect(durableDelivery).toContain('record.retrySafe && projection.inputDeliveryVersion === 1');
+    expect(durableDelivery).toContain('if (state === "removed") return await finish(true);');
+    expect(durableDelivery).toContain('state: "failed", error: deps.confirmationMessage');
   });
 });

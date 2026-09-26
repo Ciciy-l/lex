@@ -600,7 +600,7 @@ export interface MobileMakerTransport {
     instructions?: string,
   ): Promise<{ tokensBefore?: number; estimatedTokensAfter?: number; noop?: boolean } | null>;
   input: {
-    getProjection(sessionId: string): Promise<InputProjection>;
+    getProjection(sessionId: string, options?: { deliveryClientIds?: string[] }): Promise<InputProjection>;
     enqueue(sessionId: string, item: QueuedRemoteMessage, opts?: { sendAtMs?: number }): Promise<InputProjection>;
     compact(sessionId: string): Promise<InputProjection>;
     steer(
@@ -612,7 +612,7 @@ export interface MobileMakerTransport {
     resume(sessionId: string): Promise<InputProjection>;
     retryLastError(sessionId: string): Promise<InputProjection>;
     clearError(sessionId: string): Promise<InputProjection>;
-    remove(sessionId: string, clientId: string): Promise<InputProjection>;
+    remove(sessionId: string, clientId: string, options?: { durableDelivery?: true }): Promise<InputProjection & { inputDeliveryCancelled?: boolean }>;
     updateText(
       sessionId: string,
       clientId: string,
@@ -846,7 +846,7 @@ export function createMobileMakerTransport({
         instructions === undefined ? [sessionId] : [sessionId, instructions],
       ),
     input: {
-      getProjection: (sessionId) => call('maker:input:get-projection', [sessionId]),
+      getProjection: (sessionId, options) => call('maker:input:get-projection', options ? [sessionId, options] : [sessionId]),
       enqueue: (sessionId, item, opts) => call('maker:input:enqueue', [sessionId, item, opts]),
       compact: (sessionId) => call('maker:input:compact', [sessionId]),
       steer: (sessionId, item, opts) => call('maker:input:steer', [sessionId, item, opts]),
@@ -854,7 +854,7 @@ export function createMobileMakerTransport({
       resume: (sessionId) => call('maker:input:resume', [sessionId]),
       retryLastError: (sessionId) => call('maker:input:retry-last-error', [sessionId]),
       clearError: (sessionId) => call('maker:input:clear-error', [sessionId]),
-      remove: (sessionId, clientId) => call('maker:input:remove', [sessionId, clientId]),
+      remove: (sessionId, clientId, options) => call('maker:input:remove', options ? [sessionId, clientId, options] : [sessionId, clientId]),
       updateText: (sessionId, clientId, newText, sessionRefs, trustedContexts) =>
         call(
           'maker:input:update-text',

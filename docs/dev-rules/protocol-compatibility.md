@@ -66,6 +66,25 @@ X 快照有请求正文时，按原始 triggerMessageId 排除引用列表中的
   应在两仓分别落地，并用相同的有效／无效 fixture 覆盖边界。
 - 新业务域的契约优先放进所属业务仓库；不要建立新的公共协议仓来重新引入发布耦合。
 
+### Device Link Mobile durable-delivery extension
+
+Mobile durable outbox 使用既有 Device Link 隧道 IPC，不增加 relay kind、frame 字段、
+Server 端行为或数据库 schema。可选 `durableDelivery`: true 标记仅声明客户端请求接收
+持久化确认，不改变旧消息的执行语义；INPUT_GET_PROJECTION 可选携带最多 64 个
+deliveryClientIds，新 Desktop 在持久化队列写入落定后返回
+inputDeliveryVersion: 1 与逐 client ID 的 pending / accepted / removed / unknown
+回执。INPUT_REMOVE 的可选 durable 标记仅在该精确队列项仍可取消时写入现有 messages
+表的无正文 tombstone；已有 user 行或正在执行的项不能被伪报为取消成功。无需新表或 migration。
+
+旧 Desktop 会忽略未知可选输入字段并返回 legacy projection。Mobile 将缺少版本化回执、
+缺失／未知状态和超时都按“未确认”处理：同一条目保留在持久账本中、呈现核对/重试提示，
+不得自动创建新 client ID 或重发不确定的 enqueue。只有新 Desktop 的同 client ID、会话
+归属回执才能安全恢复自动重试；成功取消须在 tombstone 持久化后确认。账号、设备、会话、
+client ID 四元组隔离 Mobile 账本，账号代际变化会使旧异步任务失效。隧道请求仍使用既有
+maker:input:get-projection、maker:input:enqueue 与 maker:input:remove allowlist，
+旧服务端无需识别额外字段。验证需覆盖 Device Link parser fixture、Desktop 队列快照／
+coordinator 行为与 Mobile delivery 状态机；不得把“旧端兼容”误说成旧端支持持久回执。
+
 ### Skill Hub 目录与管理契约
 
 - Desktop 本地技能管理用扫描条目 `id` 区分不同 scope / 项目中的同源记录；启停与卸载

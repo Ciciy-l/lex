@@ -82,9 +82,11 @@ import {
 import {
   CONTROLLER_CAPABILITY_SET_MODEL_EXPLICIT_PROVIDER_NULL_V1,
   DL_SESSION_REFERENCE_CAPABILITY_CHANNEL,
+  readInputDeliveryClientIds,
 } from '@cindy/device-link';
 import { and, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { applyScheduledModelSelection, ScheduledModelSelectionBusyError, type ScheduledModelSelection, type ScheduledModelSelectionLease } from './scheduledModelSelection';
+import { createDurableInputDeliveryBoundary } from './durableInputDeliveryBoundary.js';
 import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
 import {
   activeOwnerScopeKey,
@@ -236,8 +238,11 @@ import { statWorkingDirectory, mkdirWorkingDirectory, realpathWorkingDirectory, 
 import { getMessagesForHistory } from '../localDb/chatHistoryReader.js';
 import {
   awaitAgentInputQueueSnapshotPersistence,
+  hasInputDeliveryCancellation,
   loadAgentInputQueueSnapshot,
   loadAgentInputQueueSnapshotCounts,
+  readInputDeliveryReceipts,
+  saveCancelledInputDelivery,
   saveAgentInputQueueSnapshot,
 } from '../localDb/agentInputQueueSnapshots.js';
 import {
@@ -13801,6 +13806,14 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
     // 队列项未派发即被丢弃(stop/remove/clearSession) → 释放暂存的 accepted 副作用, 防回调表泄漏。
     onDiscardedQueuedMessage: (sessionId, item) => {
+      if (item.durableDelivery === true) {
+        void saveCancelledInputDelivery(sessionId, item.clientId).catch((error) => {
+          log.warn('input delivery cancellation persistence failed', {
+            sessionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      }
       rollbackAgentIslandUserPrompt(sessionId, item.clientId, 'discarded');
       discardQueuedAttachmentOwnership(sessionId, item.clientId);
       orcaInterAgentDispatcher.discardQueuedOrcaInterAgentAcceptedCallback(item.clientId);
@@ -14326,6 +14339,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     }
     const normalized: AgentInputQueuedMessage = { ...msg };
     delete normalized.autoReviewUserText;
+    if (normalized.durableDelivery !== true) delete normalized.durableDelivery;
     const refs = requireSessionRefs(normalized.sessionRefs);
     if (!isDeviceLinkInvoke()) {
       // preload/renderer 不属于可信边界，不能直接注入历史正文。
@@ -14618,9 +14632,30 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     };
   };
 
-  ipcMain.handle(MAKER_INVOKE.INPUT_GET_PROJECTION, async (_e, sessionId: unknown) => {
+  async function awaitDurableInputQueueSnapshotPersistence(sessionId: string): Promise<void> {
+    inputCoordinator.retryQueueSnapshotPersistence(sessionId);
+    await awaitAgentInputQueueSnapshotPersistence(sessionId);
+  }
+
+  const durableInputDeliveryBoundary = createDurableInputDeliveryBoundary({
+    getProjection: (sessionId) => inputCoordinator.getProjection(sessionId),
+    hasKnownClientId: (sessionId, clientId) => inputCoordinator.hasKnownClientId(sessionId, clientId),
+    remove: (sessionId, clientId) => inputCoordinator.remove(sessionId, clientId),
+    persistCancellation: saveCancelledInputDelivery,
+    awaitDurableQueueSnapshot: awaitDurableInputQueueSnapshotPersistence,
+    wasPersisted: remoteInputClientIdWasPersisted,
+    hasCancellation: hasInputDeliveryCancellation,
+  });
+
+  ipcMain.handle(MAKER_INVOKE.INPUT_GET_PROJECTION, async (_e, sessionId: unknown, options?: unknown) => {
     const sid = requireSessionId(sessionId);
     const remote = isDeviceLinkInvoke();
+    let deliveryClientIds: string[] | undefined;
+    try {
+      deliveryClientIds = readInputDeliveryClientIds(options);
+    } catch {
+      throwIpcError('INVALID_PARAMS', 'Invalid deliveryClientIds');
+    }
     assertRemoteInputClearNotInFlight(sid, remote);
     // The queue snapshot is process-local, but the clear boundary is durable.
     // Hydrate it for both renderer and device-link callers before restoring the
@@ -14634,9 +14669,19 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     // 崩溃恢复(issue #761):renderer 打开会话首次取 projection 前,先把持久化的
     // 排队输入读回内存态,返回值即含恢复后的队列,不依赖 push 补发。
     // 失败时仍返回当前内存态 projection(宁可漏恢复也不阻塞会话打开)。
-    await inputCoordinator.ensureQueueRestored(sid).catch(() => undefined);
+    if (deliveryClientIds !== undefined) await inputCoordinator.ensureQueueRestored(sid);
+    else await inputCoordinator.ensureQueueRestored(sid).catch(() => undefined);
     assertRemoteInputClearNotInFlight(sid, remote);
-    return inputCoordinator.getProjection(sid);
+    const projection = inputCoordinator.getProjection(sid);
+    if (deliveryClientIds === undefined) return projection;
+    await awaitDurableInputQueueSnapshotPersistence(sid);
+    const deliveryReceipts = await readInputDeliveryReceipts(sid, deliveryClientIds);
+    assertRemoteInputClearNotInFlight(sid, remote);
+    return {
+      ...inputCoordinator.getProjection(sid),
+      inputDeliveryVersion: 1,
+      deliveryReceipts,
+    };
   });
 
   // device-link 出方向:远程入队消息的 OSS 引用(files[] + persistedContent)在入队前一次性物化成本地
@@ -14696,9 +14741,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       // A concurrent weak-link resend may already own this clientId in the
       // coordinator. Return the current projection before materialising a new
       // copy of its attachments.
-      if (inputCoordinator.hasKnownClientId(sid, parsed.clientId)) {
-        return inputCoordinator.getProjection(sid);
-      }
+      const knownClientProjection = parsed.durableDelivery === true
+        ? await durableInputDeliveryBoundary.knownClient(sid, parsed.clientId, true)
+        : inputCoordinator.hasKnownClientId(sid, parsed.clientId)
+          ? inputCoordinator.getProjection(sid)
+          : null;
+      if (knownClientProjection) return knownClientProjection;
       const materialized = await materializeQueuedOssAttachmentsDeferred(sid, parsed);
       const attachmentOwnerId = registerQueuedAttachmentOwnership(
         sid,
@@ -14741,7 +14789,14 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         // 排队可取消时旧中断提示必须能恢复；accepted 但仍可能 cancelled-before-dispatch
         // 时也不能提前 ack。续跑项本身由 coordinator 插到队首（普通输入仍 FIFO）。
         let duplicate = false;
-        const projection = inputCoordinator.enqueue(sid, queued, {
+        let projection: ReturnType<typeof inputCoordinator.enqueue>;
+        const cleanupUnacceptedMaterialization = async () => {
+          await materialized.cleanupBeforeAcceptance?.();
+          if (attachmentOwnerId) {
+            await discardSpecificQueuedAttachmentOwnership(sid, parsed.clientId, attachmentOwnerId);
+          }
+        };
+        const enqueueNow = () => inputCoordinator.enqueue(sid, queued, {
           ...(opts && typeof opts === 'object' ? (opts as { sendAtMs?: number }) : undefined),
           // INPUT_ENQUEUE 只承载显式用户输入(composer 发送 / UI trigger / device-link
           // 被控端转投的用户消息):崩溃恢复出的暂停队列遇到显式输入即放行,解开
@@ -14752,11 +14807,29 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             duplicate = true;
           },
         });
+        if (parsed.durableDelivery === true) {
+          assertCurrentInputGeneration();
+          assertRemoteInputClearNotInFlight(sid, deviceLinkInvoke);
+          const attempt = await durableInputDeliveryBoundary.enqueueIfAllowed(
+            sid,
+            parsed.clientId,
+            true,
+            cleanupUnacceptedMaterialization,
+            enqueueNow,
+          );
+          assertCurrentInputGeneration();
+          assertRemoteInputClearNotInFlight(sid, deviceLinkInvoke);
+          if (!attempt.enqueued) return attempt.projection;
+          projection = attempt.value;
+        } else {
+          projection = enqueueNow();
+        }
         if (duplicate) {
           if (attachmentOwnerId) {
             await materialized.cleanupBeforeAcceptance?.();
             await discardSpecificQueuedAttachmentOwnership(sid, parsed.clientId, attachmentOwnerId);
           }
+          if (parsed.durableDelivery === true) await awaitDurableInputQueueSnapshotPersistence(sid);
           return projection;
         }
         acceptedByCoordinator = true;
@@ -14765,6 +14838,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         }
         markQueuedAttachmentDurableAfterSnapshot(sid, parsed.clientId, attachmentOwnerId);
         commitAutoTitle();
+        if (parsed.durableDelivery === true) await awaitDurableInputQueueSnapshotPersistence(sid);
         return projection;
       } catch (err) {
         if (!acceptedByCoordinator) {
@@ -15111,11 +15185,17 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       const sid = requireSessionId(sessionId);
       await assertRemoteInputControlBoundary(sid, isDeviceLinkInvoke(), opts);
       const cid = requireClientId(clientId);
-      const result = inputCoordinator.remove(sid, cid);
+      const durable = isDeviceLinkInvoke()
+        && !!opts
+        && typeof opts === 'object'
+        && (opts as { durableDelivery?: unknown }).durableDelivery === true;
+      const result = await durableInputDeliveryBoundary.remove(sid, cid, durable);
       if (!inputCoordinator.hasPendingQueuedWork(sid)) {
         getAgentIslandService()?.notifyQueueEmptied(sid);
       }
-      return result;
+      return durable
+        ? { ...result.projection, inputDeliveryCancelled: result.inputDeliveryCancelled === true }
+        : result.projection;
     },
   );
 

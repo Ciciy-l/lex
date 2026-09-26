@@ -459,6 +459,23 @@ describe('inputProjection', () => {
     });
   });
 
+  it('preserves the optional durable delivery receipt extension and rejects malformed versions', () => {
+    expect(normalizeInputProjection({
+      sessionId: 'delivery',
+      pendingQueue: [],
+      inputDeliveryVersion: 1,
+      deliveryReceipts: [{ clientId: 'client-1', state: 'pending' }],
+    })).toMatchObject({
+      inputDeliveryVersion: 1,
+      deliveryReceipts: [{ clientId: 'client-1', state: 'pending' }],
+    });
+    expect(() => normalizeInputProjection({
+      sessionId: 'bad-delivery',
+      inputDeliveryVersion: 2,
+      deliveryReceipts: [],
+    })).toThrow();
+  });
+
   it('preserves and pauses queue only when Stop sees queued rows', () => {
     const queued = buildQueuedTextMessage(session(), 'later', new Date(), 'q-1');
 
