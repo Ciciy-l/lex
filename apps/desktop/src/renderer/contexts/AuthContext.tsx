@@ -29,6 +29,7 @@ import {
 } from '@/lib/authService';
 import {
   cancelRemoteOptimisticSendsForDataOwnerBoundary,
+  reconcileSessionsAfterDataOwnerRollback,
   setCurrentUserName,
 } from '@/lib/makerChatStore';
 import { isSecondaryWindow } from '@/lib/secondaryWindow';
@@ -123,10 +124,16 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 const log = createLogger('AuthContext');
 
-function publishDataOwnerGeneration(dataOwnerId: string | null, ownerGeneration?: number): void {
+function publishDataOwnerGeneration(
+  dataOwnerId: string | null,
+  ownerGeneration?: number,
+  options?: { finalizeSessions?: boolean },
+): void {
   const previousOwnerId = getDataOwnerGeneration().dataOwnerId;
-  if (previousOwnerId !== dataOwnerId) {
-    cancelRemoteOptimisticSendsForDataOwnerBoundary();
+  const ownerChanged = previousOwnerId !== dataOwnerId;
+  if (ownerChanged || options?.finalizeSessions === true) {
+    if (options) cancelRemoteOptimisticSendsForDataOwnerBoundary(options);
+    else cancelRemoteOptimisticSendsForDataOwnerBoundary();
   }
   setDataOwnerGeneration(dataOwnerId, ownerGeneration);
   recentWorkdirsStore.setDataOwner(getDataOwnerGeneration());
@@ -170,12 +177,14 @@ export function AuthProvider({
   const activeDataOwnerIdRef = useRef<string | null>(null);
   const activeDataOwnerGenerationRef = useRef(0);
   const authStateVersionRef = useRef(0);
+  const hasAppliedAuthStateRef = useRef(false);
+  const pendingOwnerProjectionRef = useRef(false);
 
   // Auth mutations invalidate owner-bound in-flight reads before crossing IPC. If Main rejects
   // the transition, restore the single authoritative owner ref (which successful siblings and
   // newer pushes both update), then rebuild the cache because React state may never have changed.
   const runDataOwnerBoundary = useCallback(async <T,>(operation: () => Promise<T>): Promise<T> => {
-    publishDataOwnerGeneration(null);
+    publishDataOwnerGeneration(null, undefined, { finalizeSessions: false });
     try {
       return await operation();
     } catch (error) {
@@ -185,7 +194,11 @@ export function AuthProvider({
       publishDataOwnerGeneration(
         activeDataOwnerIdRef.current,
         activeDataOwnerGenerationRef.current,
+        { finalizeSessions: false },
       );
+      if (pendingOwnerProjectionRef.current) {
+        void reconcileSessionsAfterDataOwnerRollback();
+      }
       setDataOwnerGenerationState(activeDataOwnerGenerationRef.current);
       setDataOwnerRecoveryEpoch((epoch) => epoch + 1);
       void preloadLocalCatalogSnapshot();
@@ -207,14 +220,72 @@ export function AuthProvider({
 
   const applyIncomingState = useCallback(
     (state: AuthState) => {
-      const ownerChanged = activeDataOwnerIdRef.current !== state.dataOwnerId;
-      publishDataOwnerGeneration(state.dataOwnerId, state.ownerGeneration);
-      if (ownerChanged) {
+      const rendererOwnerGeneration = getDataOwnerGeneration();
+      const signedOutProjection =
+        state.dataOwnerId === null && state.mode === 'signed-out' && !state.canEnterApp;
+      const initialBoundaryPendingProjection =
+        !hasAppliedAuthStateRef.current &&
+        activeDataOwnerIdRef.current === null &&
+        signedOutProjection &&
+        (state.ownerBoundaryPending === true ||
+          (rendererOwnerGeneration.dataOwnerId !== null &&
+            state.ownerGeneration === rendererOwnerGeneration.generation) ||
+          (rendererOwnerGeneration.dataOwnerId === null &&
+            rendererOwnerGeneration.generation === 0 &&
+            state.ownerGeneration > rendererOwnerGeneration.generation));
+      const pendingSignedOutProjection =
+        signedOutProjection &&
+        ((activeDataOwnerIdRef.current !== null &&
+          state.ownerGeneration === activeDataOwnerGenerationRef.current) ||
+          initialBoundaryPendingProjection);
+      if (initialBoundaryPendingProjection && pendingSignedOutProjection) {
+        if (rendererOwnerGeneration.dataOwnerId !== null) {
+          activeDataOwnerIdRef.current = rendererOwnerGeneration.dataOwnerId;
+        }
+        activeDataOwnerGenerationRef.current = state.ownerGeneration;
+      }
+      const initialOwnerHydration =
+        !hasAppliedAuthStateRef.current &&
+        !pendingSignedOutProjection &&
+        !pendingOwnerProjectionRef.current;
+      const unknownOwnerRollbackProjection =
+        pendingOwnerProjectionRef.current &&
+        !pendingSignedOutProjection &&
+        activeDataOwnerIdRef.current === null &&
+        state.dataOwnerId !== null &&
+        state.ownerGeneration === activeDataOwnerGenerationRef.current;
+      const ownerChanged =
+        !pendingSignedOutProjection &&
+        !unknownOwnerRollbackProjection &&
+        activeDataOwnerIdRef.current !== state.dataOwnerId;
+      const ownerRollbackProjection =
+        pendingOwnerProjectionRef.current &&
+        !pendingSignedOutProjection &&
+        (unknownOwnerRollbackProjection ||
+          (activeDataOwnerIdRef.current !== null && !ownerChanged));
+      const committedNullOwnerProjection =
+        pendingOwnerProjectionRef.current &&
+        !pendingSignedOutProjection &&
+        state.dataOwnerId === null &&
+        state.ownerGeneration !== activeDataOwnerGenerationRef.current;
+      const ownerBoundaryCommitted = ownerChanged || committedNullOwnerProjection;
+      if (pendingSignedOutProjection) pendingOwnerProjectionRef.current = true;
+      publishDataOwnerGeneration(
+        state.dataOwnerId,
+        state.ownerGeneration,
+        { finalizeSessions: ownerBoundaryCommitted && !initialOwnerHydration },
+      );
+      if (ownerBoundaryCommitted) {
+        pendingOwnerProjectionRef.current = false;
         sessionsStore.reset();
         clearWorkersCache();
       }
-      activeDataOwnerIdRef.current = state.dataOwnerId;
-      activeDataOwnerGenerationRef.current = state.ownerGeneration;
+      if (ownerRollbackProjection) void reconcileSessionsAfterDataOwnerRollback();
+      if (!pendingSignedOutProjection) {
+        activeDataOwnerIdRef.current = state.dataOwnerId;
+        activeDataOwnerGenerationRef.current = state.ownerGeneration;
+        hasAppliedAuthStateRef.current = true;
+      }
       setDataOwnerGenerationState(state.ownerGeneration);
       setNewMakerDraftOwner(state.dataOwnerId);
       setServiceRealm(state.serviceRealm);
@@ -240,7 +311,7 @@ export function AuthProvider({
           && state.user?.membershipKind === 'org',
       );
       if (chatEmbeddingOwnerChanged) void refreshChatEmbeddingFromMain();
-      if (ownerChanged) {
+      if (ownerBoundaryCommitted || ownerRollbackProjection) {
         setMemorySettingsOwner(state.dataOwnerId);
         void bootstrapMemorySettingsFromMain();
       }
@@ -262,7 +333,7 @@ export function AuthProvider({
           applyIncomingUser(state.user);
         }
       } else {
-        activeUserIdRef.current = null;
+        if (!pendingSignedOutProjection) activeUserIdRef.current = null;
         setUser(null);
         // Both signed-out and local sessions have no Cindy user. Clear any
         // in-progress SSO/OTP step so returning to /login always starts fresh.
