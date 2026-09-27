@@ -416,6 +416,11 @@ import {
   type BotDirectMessageService,
 } from './botDirectMessageService.js';
 import { createBotGroupChatService, type BotGroupChatService } from './botGroupChatService.js';
+import { createBotGroupPlanDecider } from './botGroupPlanDecider.js';
+import { createBotGroupWorkDir, validateExistingBotGroupProjectDirectory } from './botGroupWorkDir.js';
+import { requestUtilityText } from '../utility-model/oneShotCandidates.js';
+import { gitExec } from '../worktree/gitExec.js';
+import { ownerScopedUserDataPath } from '../appSessionState.js';
 import { BOT_GROUP_CLIENT_ID_PREFIX } from '../../shared/botGroupChat.js';
 import { ensureBotGroupLaneSession } from '../localDb/ipc/bots.js';
 import { restartBotRuntime } from './botRuntimeRestart.js';
@@ -9625,6 +9630,29 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
   });
   botGroupChatServiceHolder?.dispose();
+  // 分工 steps run in the group's folder, the 项目文件夹, or one worktree per plan (bot-group-chat.md §7.5).
+  const botGroupWorkDir = createBotGroupWorkDir({
+    ownerRoot: () => ownerScopedUserDataPath(),
+    managedDialogueRoot: () => ownerScopedUserDataPath('dialogues'),
+    detectRepo: async (dir) => {
+      const detected = await worktreeManager.detectCwd(dir);
+      return { gitInstalled: detected.gitInstalled, isGitRepo: detected.isGitRepo };
+    },
+    prepareWorktree: async (projectDir) => {
+      const prepared = await prepareHandoffWorktree({
+        getForSession: worktreeManager.getForSession, listAll: worktreeManager.listAll,
+        detectCwd: worktreeManager.detectCwd, suggestName: worktreeManager.suggestName,
+        listBranches: worktreeManager.listBranches, resolveCommit: worktreeManager.revParseCommit,
+        createWorktree: worktreeManager.createWorktree, createId: () => randomUUID(),
+        resolveFreshSource: resolveFreshSourceBranch,
+      }, undefined, projectDir);
+      return prepared.ok
+        ? { ok: true as const, sessionId: prepared.sessionId, workingDir: prepared.meta.path, branch: prepared.meta.branch }
+        : prepared;
+    },
+    git: async (args, cwd) => (await gitExec(args, cwd, { timeoutMs: 10_000 })).stdout,
+    trashItem: (fullPath) => shell.trashItem(fullPath),
+  });
   botGroupChatServiceHolder = createBotGroupChatService({
     ensureLane: async (input) => {
       try {
@@ -9647,6 +9675,20 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       await Promise.all(sessionIds.map((id) => maker.closeSession(id).catch(() => undefined)));
     },
     hasPendingInteraction: (sessionId) => hasPendingAgentInteractionForSession(sessionId),
+    decidePlan: createBotGroupPlanDecider((prompt, opts) => requestUtilityText(maker, prompt, opts)),
+    workDir: botGroupWorkDir,
+    validateProjectDir: async (dir) => {
+      try {
+        const checked = await validateExistingBotGroupProjectDirectory(dir, {
+          managedDialogueRoot: ownerScopedUserDataPath('dialogues'),
+        });
+        return checked.ok
+          ? { ok: true as const, dir: checked.workingDir }
+          : { ok: false as const, message: checked.message };
+      } catch {
+        return { ok: false as const, message: '项目文件夹不存在' };
+      }
+    },
     captureOwnerScope: captureDataOwnerBroadcastScope,
     isOwnerScopeCurrent: (scope) =>
       isDataOwnerBroadcastScopeCurrent(scope as ReturnType<typeof captureDataOwnerBroadcastScope>),
@@ -9874,6 +9916,26 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   ipcMain.handle(MAKER_INVOKE.BOT_GROUP_STOP, async (event, groupId: unknown) => {
     assertTrustedAppRendererEvent(event);
     return botGroupChatServiceHolder ? botGroupChatServiceHolder.stopRound(groupId) : botGroupNotReady;
+  });
+  ipcMain.handle(MAKER_INVOKE.BOT_GROUP_PLAN_START, async (event, input: unknown) => {
+    assertTrustedAppRendererEvent(event);
+    return botGroupChatServiceHolder ? botGroupChatServiceHolder.startPlan(input) : botGroupNotReady;
+  });
+  ipcMain.handle(MAKER_INVOKE.BOT_GROUP_PLAN_DISMISS, async (event, input: unknown) => {
+    assertTrustedAppRendererEvent(event);
+    return botGroupChatServiceHolder ? botGroupChatServiceHolder.dismissPlan(input) : botGroupNotReady;
+  });
+  ipcMain.handle(MAKER_INVOKE.BOT_GROUP_PLAN_CONTINUE, async (event, input: unknown) => {
+    assertTrustedAppRendererEvent(event);
+    return botGroupChatServiceHolder ? botGroupChatServiceHolder.continuePlan(input) : botGroupNotReady;
+  });
+  ipcMain.handle(MAKER_INVOKE.BOT_GROUP_PLAN_RETRY, async (event, input: unknown) => {
+    assertTrustedAppRendererEvent(event);
+    return botGroupChatServiceHolder ? botGroupChatServiceHolder.retryPlan(input) : botGroupNotReady;
+  });
+  ipcMain.handle(MAKER_INVOKE.BOT_GROUP_PLAN_EDIT, async (event, input: unknown) => {
+    assertTrustedAppRendererEvent(event);
+    return botGroupChatServiceHolder ? botGroupChatServiceHolder.editPlanStep(input) : botGroupNotReady;
   });
   ipcMain.handle(
     MAKER_INVOKE.BOT_DELEGATION_CANCEL,
