@@ -110,6 +110,7 @@ export function OrcaWorkersTabBody({
     leadSessionId: ctx.sessionId,
     deviceId: ctx.deviceLinkDeviceId,
     sshRemote: !!ctx.remoteHostId,
+    remoteHostId: ctx.remoteHostId,
     viewVisible,
     chatRealtime,
     focusWorkerSessionId: state.focusWorkerSessionId,

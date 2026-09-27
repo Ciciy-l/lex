@@ -22,6 +22,7 @@ import { agentKindToVendor } from '@/components/sidebar/VendorIcon';
 import { useAgentCapabilities } from '@/hooks/useAgentCapabilities';
 import { useDeviceProviders } from '@/hooks/useDeviceProviders';
 import { useProviders } from '@/hooks/useProviders';
+import { useSshCodexProviders } from '@/hooks/useSshCodexProviders';
 import { filterChatBridgedCodexProviders } from '@/lib/providerModels';
 import {
   resolveSshSessionModelSelection,
@@ -53,6 +54,7 @@ import {
   type OrcaWorkerPermissionMode,
 } from '../../../shared/orca-worker-permission-mode';
 import { usesControllerProviderProxyForSsh } from '../../../shared/sshAgentProviderRouting';
+import { isSubscriptionDirectModel } from '../../../shared/subscriptionModels';
 import { selectWorkerModels } from './workerModelAvailability';
 
 const PREDEFINED_ROLES = ['developer', 'designer', 'reviewer', 'tester', 'merger'] as const;
@@ -85,8 +87,9 @@ export interface CreateWorkerPopoverProps {
    * SSH 口径过滤。OMP 例外：其私有 models.yml 指向控制端兼容代理，经受管
    * reverse-forward 路由，不应被直连供应商限制隐藏。Main 仍会在创建前校验
    * 实际 provider/model 路由。
-   */
+  */
   sshRemote?: boolean;
+  remoteHostId?: string | null;
   /** 开启新协同时必须确认执行端支持权限偏好；已有旧版远程 Team 创建 Worker 仍兼容旧行为。 */
   requireWorkerPermissionModeSupport?: boolean;
 }
@@ -100,6 +103,7 @@ export function CreateWorkerPopover({
   className,
   deviceId,
   sshRemote,
+  remoteHostId,
   requireWorkerPermissionModeSupport = false,
 }: CreateWorkerPopoverProps) {
   const { t } = useTranslation();
@@ -121,6 +125,8 @@ export function CreateWorkerPopover({
   const [prefsRestored, setPrefsRestored] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submittingRef = useRef(false);
+  const sshModelTouchedRef = useRef(false);
+  const sshDefaultAppliedRef = useRef<string | null>(null);
 
   const ccCaps = useAgentCapabilities('claude-code', deviceId);
   const codexCaps = useAgentCapabilities('codex', deviceId);
@@ -129,9 +135,25 @@ export function CreateWorkerPopover({
   const pickerAgents = useModelPickerAgents(agent, deviceId);
   const localProviders = useProviders();
   const remoteProviders = useDeviceProviders(deviceId);
-  const providers = deviceId ? remoteProviders.providers : localProviders.providers;
-  const providersLoading = deviceId ? remoteProviders.loading : localProviders.loading;
-  const providersError = deviceId ? remoteProviders.error : null;
+  const sshCodexProviderState = useSshCodexProviders(
+    sshRemote && !deviceId ? remoteHostId : null,
+  );
+  const sshCodexRoute = sshRemote === true && !deviceId && agent === 'codex';
+  const providers = deviceId
+    ? remoteProviders.providers
+    : sshRemote && agent === 'codex'
+      ? sshCodexProviderState.providers
+      : localProviders.providers;
+  const providersLoading = deviceId
+    ? remoteProviders.loading
+    : sshRemote && agent === 'codex'
+      ? sshCodexProviderState.status === 'loading'
+      : localProviders.loading;
+  const providersError = deviceId
+    ? remoteProviders.error
+    : sshRemote && agent === 'codex' && sshCodexProviderState.status === 'error'
+      ? 'SSH_CODEX_MODEL_LIST_ERROR'
+      : null;
   const visibilityVersion = useModelVisibilityVersion();
   const activeCapabilitiesState =
     agent === 'codex' ? codexCaps : agent === 'pi' ? piCaps : agent === 'omp' ? ompCaps : ccCaps;
@@ -145,6 +167,24 @@ export function CreateWorkerPopover({
     && activeCaps !== null
     && activeCaps?.supportsOrcaWorkerPermissionMode !== true;
   const activeModels = useMemo(() => {
+    if (sshCodexRoute) {
+      const remoteModels = providers.find((provider) => provider.id === 'openai')?.models.codex ?? [];
+      return remoteModels
+        .filter((model) => !requiresDirectSshProviderRoute || !isSubscriptionDirectModel(model.id))
+        .map((model) => ({
+          id: model.id,
+          displayName: model.name,
+          group: model.group,
+          mode: model.mode,
+          description: model.description,
+          contextWindow: model.contextWindow,
+          efforts: model.efforts ?? [],
+          defaultEffort: model.defaultEffort ?? null,
+          supportsFastMode: model.supportsFastMode,
+          sortOrder: model.sortOrder,
+          defaultEnabled: model.defaultEnabled,
+        }));
+    }
     return selectWorkerModels({
       agent,
       capabilities: activeCaps,
@@ -155,7 +195,7 @@ export function CreateWorkerPopover({
       providersUnsupported: deviceId ? remoteProviders.unsupported : false,
       excludeSubscriptionDirect: requiresDirectSshProviderRoute,
       excludeChatBridgedCodex: requiresDirectSshProviderRoute,
-      isVisible: deviceId
+      isVisible: deviceId || sshCodexRoute
         ? undefined
         : (providerId, catalogModel) => isModelEnabled(agent, providerId, catalogModel),
     });
@@ -168,16 +208,20 @@ export function CreateWorkerPopover({
     providersLoading,
     remoteProviders.unsupported,
     requiresDirectSshProviderRoute,
+    sshCodexRoute,
     visibilityVersion,
   ]);
   const currentModel = activeModels.find((m) => m.id === model);
-  const modelCatalogLoading = activeCapabilitiesState.loading || providersLoading;
+  const modelCatalogLoading = sshCodexRoute
+    ? providersLoading
+    : activeCapabilitiesState.loading || providersLoading;
   const remoteModelListBlocked =
-    !!deviceId &&
-    (activeCapabilitiesState.loading ||
-      activeCapabilitiesState.error !== null ||
-      providersLoading ||
-      (!!providersError && !remoteProviders.unsupported));
+    (!!deviceId &&
+      (activeCapabilitiesState.loading ||
+        activeCapabilitiesState.error !== null ||
+        providersLoading ||
+        (!!providersError && !remoteProviders.unsupported))) ||
+    (sshCodexRoute && (!remoteHostId || sshCodexProviderState.status !== 'ready'));
 
   // 显式来源仅在「已连接、确实提供该模型、且该 (来源, 模型) 未被**停用**」时有效;
   // 其余(断开/下架/停用/换了模型)收窄为 null 交回默认路由解析。停用判据 =
@@ -195,6 +239,7 @@ export function CreateWorkerPopover({
   );
   const narrowProviderSource = useCallback(
     (candidate: string | null, modelId: string): string | null => {
+      if (sshCodexRoute && candidate && candidate !== 'openai') return candidate;
       if (!candidate || (deviceId && remoteProviders.unsupported)) return null;
       const provider = routableProviders.find((p) => p.id === candidate);
       if (!provider || !providerOffersModel(provider, modelId, agent)) return null;
@@ -210,7 +255,7 @@ export function CreateWorkerPopover({
         ? candidate
         : null;
     },
-    [agent, deviceId, remoteProviders.unsupported, routableProviders],
+    [agent, deviceId, remoteProviders.unsupported, routableProviders, sshCodexRoute],
   );
 
   // per-provider Fast 能力:同一 model id 在不同来源下 supportsFastMode 可不同(见
@@ -240,7 +285,7 @@ export function CreateWorkerPopover({
   // 「实际会生效的来源」口径判定,不经历 false 窗口。
   const currentModelSupportsFast = Boolean(
     (agent === 'codex' || agent === 'pi') &&
-      activeCaps?.hasFastMode &&
+      (sshCodexRoute || activeCaps?.hasFastMode) &&
       providerFastSupported(narrowProviderSource(providerSource, model), model),
   );
   // 实际路由来源的 effort 档位表:**显示收敛与提交共用同一口径**,保证面板显示的
@@ -277,13 +322,19 @@ export function CreateWorkerPopover({
     !modelCatalogLoading &&
     (activeCaps !== null || activeCapabilitiesState.error !== null) &&
     activeModels.length === 0;
+  const unsupportedSshCodexSource =
+    sshCodexRoute && !!providerSource && providerSource !== 'openai';
 
   // 打开弹窗时恢复上次选择；initial task 不记忆，避免把旧任务误带到下一次创建。
   useEffect(() => {
     if (!open) {
       setPrefsRestored(false);
+      sshModelTouchedRef.current = false;
+      sshDefaultAppliedRef.current = null;
       return;
     }
+    sshModelTouchedRef.current = false;
+    sshDefaultAppliedRef.current = null;
     const stored = readWorkerCreationPrefs();
     const agentPrefs = stored[stored.lastAgent];
     setPrefs(stored);
@@ -296,6 +347,10 @@ export function CreateWorkerPopover({
     setSelectedWorkerPermissionMode(stored.workerPermissionMode);
     setPrefsRestored(true);
   }, [deviceId, open]);
+
+  useEffect(() => {
+    sshModelTouchedRef.current = false;
+  }, [remoteHostId]);
 
   useEffect(() => {
     if (
@@ -311,8 +366,22 @@ export function CreateWorkerPopover({
     if (!open || !prefsRestored || modelCatalogLoading) return;
     const models = activeModels;
     if (models.length === 0) return;
+    if (sshCodexRoute && providerSource && providerSource !== 'openai') return;
     let selected = models.find((m) => m.id === model);
+    const sshCatalogKey = String(remoteHostId ?? '') + ':' + String(sshCodexProviderState.revision);
+    if (sshCodexRoute && !sshModelTouchedRef.current && sshDefaultAppliedRef.current !== sshCatalogKey) {
+      selected = models[0];
+      setModel(selected.id);
+      sshDefaultAppliedRef.current = sshCatalogKey;
+      setProviderSource('openai');
+      const effortMeta = routeEffortMetaFor(selected.id) ?? selected;
+      const metaEfforts: readonly string[] = effortMeta.efforts;
+      setEffort(effortMeta.defaultEffort ?? metaEfforts[metaEfforts.length - 1] ?? 'medium');
+      setFast(false);
+      return;
+    }
     if (!selected) {
+      if (sshCodexRoute) return;
       // Provider loading has settled, so activeModels is authoritative for both local and remote
       // creation. A capability entry alone does not make a disconnected provider's model usable.
       selected = models[0];
@@ -342,6 +411,11 @@ export function CreateWorkerPopover({
     prefsRestored,
     providerSource,
     routeEffortMetaFor,
+    sshCodexRoute,
+    remoteHostId,
+    sshCodexProviderState.revision,
+    routableProviders,
+    fast,
   ]);
 
   useEffect(() => {
@@ -382,6 +456,7 @@ export function CreateWorkerPopover({
 
   const updateModel = useCallback(
     (nextModel: string) => {
+      if (sshCodexRoute) sshModelTouchedRef.current = true;
       setModel(nextModel);
       // flat 面板换模型(device-link 退化路径):effort 同样按路由来源档位表收敛,
       // 与收敛 effect / 提交同口径,不留显示与派发不一致的窗口。
@@ -398,7 +473,7 @@ export function CreateWorkerPopover({
         setFast(false);
       }
     },
-    [effort, narrowProviderSource, providerFastSupported, providerSource, routeEffortMetaFor],
+    [effort, narrowProviderSource, providerFastSupported, providerSource, routeEffortMetaFor, sshCodexRoute],
   );
 
   // 分段行原子选择 (来源, 模型):与 composer 的 handleProviderChange 同语义。
@@ -407,6 +482,7 @@ export function CreateWorkerPopover({
   // effort/Fast 在选中该行后被丢弃);Fast 还要叠加该来源条目的 per-provider 能力。
   const handleProviderChange = useCallback(
     (providerId: string | null, modelId?: string, reconciledEffort?: Effort, reconciledFast?: boolean) => {
+      if (sshCodexRoute) sshModelTouchedRef.current = true;
       const nextModel = modelId ?? model;
       const narrowed = narrowProviderSource(providerId, nextModel);
       // 「钉/重选当前生效来源」与「切到恰好提供同一模型的另一来源」必须区分
@@ -421,7 +497,7 @@ export function CreateWorkerPopover({
         // 要记入全局 choice —— 该来源槽的 lastModel 可能还指着别的模型,不记会让
         // 其它标准选择器切到该来源时恢复 stale 模型(codex review)。无档模型跳过,
         // 与下方真实切换路径同规则。
-        if (!deviceId && currentModel && currentModel.efforts.length > 0) {
+        if (!deviceId && !sshCodexRoute && currentModel && currentModel.efforts.length > 0) {
           setProviderModelChoice(agent, narrowed, modelId, effort);
         }
         return;
@@ -448,7 +524,7 @@ export function CreateWorkerPopover({
       const validEfforts: readonly string[] = effortMeta.efforts;
       const remembered =
         reconciledEffort ??
-        (!deviceId && providerId ? getProviderModelEffort(agent, providerId, modelId) : undefined);
+        (!deviceId && !sshCodexRoute && providerId ? getProviderModelEffort(agent, providerId, modelId) : undefined);
       let nextEffort: Effort | null = null;
       if (remembered && validEfforts.includes(remembered)) {
         nextEffort = remembered;
@@ -466,7 +542,7 @@ export function CreateWorkerPopover({
       // 其它标准选择器的 resolveSourceSwitch 用它做切来源落点),否则本面板的显式
       // 选择不进全局记忆,别处切到该来源仍恢复旧模型(codex review)。无档模型
       // 跳过 —— store 的 lastModel 依附 effort 记录。
-      if (!deviceId && effortSourceId && nextEffort) {
+      if (!deviceId && !sshCodexRoute && effortSourceId && nextEffort) {
         setProviderModelChoice(agent, effortSourceId, modelId, nextEffort);
       }
       if (!providerFastSupported(narrowed, modelId)) {
@@ -485,6 +561,7 @@ export function CreateWorkerPopover({
       agent,
       currentModel,
       deviceId,
+      sshCodexRoute,
       effort,
       model,
       narrowProviderSource,
@@ -502,33 +579,36 @@ export function CreateWorkerPopover({
   // 失效来源(copilot review;ChatInput 的 effectiveSourceId 同语义);收窄空则回落
   // 该模型的生效默认来源(全局预设本就是跨来源共享)。
   const activeMemorySourceId = deviceId
+    || sshCodexRoute
     ? null
     : narrowProviderSource(providerSource, model)
       ?? effectiveSourceIdForModel(routableProviders, null, model, agent);
   const updateEffort = useCallback(
     (next: Effort) => {
+      if (sshCodexRoute) sshModelTouchedRef.current = true;
       setEffort(next);
       if (activeMemorySourceId && model) {
         setProviderModelEffort(agent, activeMemorySourceId, model, next);
       }
     },
-    [activeMemorySourceId, agent, model],
+    [activeMemorySourceId, agent, model, sshCodexRoute],
   );
   const updateFast = useCallback(
     (enabled: boolean) => {
+      if (sshCodexRoute) sshModelTouchedRef.current = true;
       setFast(enabled);
       if (activeMemorySourceId && model) {
         setProviderModelFast(agent, activeMemorySourceId, model, enabled);
       }
     },
-    [activeMemorySourceId, agent, model],
+    [activeMemorySourceId, agent, model, sshCodexRoute],
   );
 
   // 非选中行 hover 配置(推理强度/Fast)与 composer 共用同一份模型级全局预设。
   // device-link 远程创建不传:被控端记忆需镜像通道,宁可无记忆也不掺控制端本机。
   const modelMemory = useMemo(
     () =>
-      deviceId
+      deviceId || sshCodexRoute
         ? undefined
         : {
             getEffort: getProviderModelEffort,
@@ -537,7 +617,7 @@ export function CreateWorkerPopover({
             getFast: getProviderModelFast,
             setFast: setProviderModelFast,
           },
-    [deviceId],
+    [deviceId, sshCodexRoute],
   );
 
   const activeRole = customRole || role;
@@ -552,6 +632,7 @@ export function CreateWorkerPopover({
     activeRole.length <= 32 &&
     !customRoleError &&
     !remoteModelListBlocked &&
+    !unsupportedSshCodexSource &&
     (!requireWorkerPermissionModeSupport || !remoteWorkerPermissionModeUnsupported) &&
     !!currentModel;
   const resolvedTitle = title ?? t('orca.createWorker.title');
@@ -579,11 +660,11 @@ export function CreateWorkerPopover({
 
   const handleCreate = useCallback(async () => {
     if (!canCreate || submittingRef.current) return;
-    const sshCodexSelection = requiresDirectSshProviderRoute && agent === 'codex'
+    const sshCodexSelection = sshCodexRoute
       ? resolveSshSessionModelSelection({
           providers,
           loading: providersLoading,
-          loadFailed: localProviders.loadFailed || !!providersError,
+      loadFailed: sshCodexProviderState.status === 'error',
           agentKind: agent,
           preferred: { model, providerId: providerSource, effort, fastMode: fast },
           getPresetEffort: getProviderModelEffort,
@@ -650,6 +731,8 @@ export function CreateWorkerPopover({
     }
   }, [
     canCreate,
+    sshCodexRoute,
+    sshCodexProviderState.status,
     requiresDirectSshProviderRoute,
     providers,
     providersLoading,
@@ -756,6 +839,11 @@ export function CreateWorkerPopover({
         </div>
 
         <div className="mb-4 grid gap-4">
+          {unsupportedSshCodexSource && (
+            <div role="alert" className="text-12 text-[var(--error-fg)]">
+              {t(sshModelSelectionErrorKeys['unsupported-codex-source'])}
+            </div>
+          )}
           {deviceId && remoteProviders.unsupported && (
             <VendorSegmentedSwitcher
               value={vendorKey}
@@ -783,6 +871,8 @@ export function CreateWorkerPopover({
                 <FastModeToggle enabled={fast} onToggle={() => setFast((v) => !v)} />
               )}
               <ModelSelector
+                providersOverride={sshCodexRoute ? sshCodexProviderState.providers : undefined}
+                providersOverrideState={sshCodexRoute ? sshCodexProviderState : undefined}
                 fastModeConfigurable={['codex', 'pi']}
                 unifiedAgents={pickerAgents}
                 onUnifiedSelect={deviceId && remoteProviders.unsupported ? undefined : (selection) => {

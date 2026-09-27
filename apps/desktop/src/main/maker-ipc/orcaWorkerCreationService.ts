@@ -100,6 +100,7 @@ export function providerRouteRequiresExplicitSelection(
 
 /** 同一次 provider registry 快照派生出的可用性与默认模型路由，避免两次读取产生竞态。 */
 export interface OrcaWorkerProviderRoutingContext {
+  remoteCodexModels?: OrcaWorkerModelCapabilities[];
   availability: Record<AgentKind, OrcaWorkerProviderSnapshot[]>;
   resolveDefaultProviderIdForModel(agent: AgentKind, model: string): string | null;
 }
@@ -219,7 +220,7 @@ export interface OrcaWorkerCreationDeps {
    * availability 只保留已连接 provider 的最小视图；显式 model 的默认来源解析复用
    * model-providers 的 effectiveSourceIdForModel，避免在创建服务里复制供应商优先级。
    */
-  getProviderRoutingContext(): Promise<OrcaWorkerProviderRoutingContext>;
+  getProviderRoutingContext(agent?: AgentKind, remoteHostId?: string | null): Promise<OrcaWorkerProviderRoutingContext>;
   readClaudeApiKey(): string | null;
   reserveWorkerCreation(input: {
     reservationId: string;
@@ -652,7 +653,19 @@ export function createOrcaWorkerCreationService(deps: OrcaWorkerCreationDeps): O
     if (!lead) {
       return { ok: false, errorCode: 'NOT_FOUND', message: `lead session ${params.leadSessionId} not found` };
     }
-    const availableModels = deps.getAvailableModels(params.agent);
+    const providerRouting = await deps.getProviderRoutingContext(params.agent, lead.remoteHostId);
+    const availableModels = providerRouting.remoteCodexModels ?? deps.getAvailableModels(params.agent);
+    if (
+      providerRouting.remoteCodexModels &&
+      lead.providerId &&
+      lead.providerId !== 'openai'
+    ) {
+      return {
+        ok: false,
+        errorCode: 'INVALID_PARAMS',
+        message: 'SSH Codex Workers require the remote OpenAI subscription route.',
+      };
+    }
     // 标准面板显式选定的来源(非空 string)直接生效,由下方精确 preflight 把关「已连接且
     // 提供该模型」;空串/null/undefined 一律按未显式处理(与 IPC 边界同口径,service 作为
     // 共用内核自防调用方漏归一)。
@@ -660,7 +673,6 @@ export function createOrcaWorkerCreationService(deps: OrcaWorkerCreationDeps): O
       typeof params.providerId === 'string' && params.providerId.trim().length > 0
         ? params.providerId.trim()
         : null;
-    const providerRouting = await deps.getProviderRoutingContext();
     const providerAvailability = providerRouting.availability;
     const agentProviders = providerAvailability[params.agent] ?? [];
     const explicitModelResolution = params.model !== undefined
@@ -713,7 +725,14 @@ export function createOrcaWorkerCreationService(deps: OrcaWorkerCreationDeps): O
         return { ok: false, errorCode: 'INVALID_PARAMS', message: 'working_dir is unavailable or collaboration is disabled for that directory; no Worker was started' };
       }
     }
-    const defaults = deps.getWorkerDefaults(params.agent);
+    const defaults: OrcaWorkerDefaultsSnapshot = providerRouting.remoteCodexModels
+      ? {
+          model: lead.agentKind === 'codex' && availableModels.some((model) => model.id === lead.model)
+            ? lead.model
+            : availableModels[0]?.id,
+          providerId: 'openai',
+        }
+      : deps.getWorkerDefaults(params.agent);
     const workerDefaultProviderId =
       typeof defaults.providerId === 'string' && defaults.providerId.trim()
         ? defaults.providerId.trim()
