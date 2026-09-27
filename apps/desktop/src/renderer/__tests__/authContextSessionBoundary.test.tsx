@@ -250,7 +250,11 @@ describe('AuthContext session cache boundaries', () => {
     });
 
     act(() => mocks.emitAuth({ ...authState(null), ownerGeneration: 1, ownerBoundaryPending: true }));
+    expect(view.result.current.dataOwnerId).toBeNull();
+    expect(getDataOwnerGeneration().dataOwnerId).toBeNull();
     act(() => mocks.emitAuth({ ...authState('account-a'), ownerGeneration: 2 }));
+    expect(view.result.current.dataOwnerId).toBe('account-a');
+    expect(getDataOwnerGeneration().dataOwnerId).toBe('account-a');
     expect(mocks.cancelRemoteOptimisticSendsForDataOwnerBoundary).toHaveBeenLastCalledWith({
       finalizeSessions: false,
     });
@@ -302,6 +306,7 @@ describe('AuthContext session cache boundaries', () => {
       logout = view.result.current.logout();
     });
     act(() => mocks.emitAuth({ ...authState(null), ownerGeneration: 1, ownerBoundaryPending: true }));
+    expect(view.result.current.dataOwnerId).toBeNull();
     expect(mocks.cancelRemoteOptimisticSendsForDataOwnerBoundary).toHaveBeenLastCalledWith({
       finalizeSessions: false,
     });
@@ -314,6 +319,8 @@ describe('AuthContext session cache boundaries', () => {
       await logout;
     });
 
+    expect(view.result.current.dataOwnerId).toBeNull();
+    expect(getDataOwnerGeneration().dataOwnerId).toBeNull();
     expect(mocks.cancelRemoteOptimisticSendsForDataOwnerBoundary).toHaveBeenLastCalledWith({
       finalizeSessions: true,
     });
