@@ -181,6 +181,7 @@ export interface SessionOptions {
    * （见 docs/vision-bridge-design.md 层 B）。
    */
   visionBridge?: VisionBridgeHook;
+  acquireSendAdmission?: () => (() => void) | undefined;
 }
 
 function redactEventForListeners(event: AgentEvent): AgentEvent {
@@ -415,6 +416,7 @@ export class Session {
   private readonly logger: Logger;
   /** 视觉桥钩子（层 B）。缺省 = 未启用，send 完全跳过。 */
   private readonly visionBridge: VisionBridgeHook | undefined;
+  private readonly acquireSendAdmission: (() => (() => void) | undefined) | undefined;
   private permissionModeStateValue: PermissionModeState;
   private permissionModeChangeChain: Promise<void> = Promise.resolve();
   private permissionModeChangesInFlight = 0;
@@ -547,6 +549,7 @@ export class Session {
     this.turnStallMs =
       opts.turnStallMs ?? parseTurnStallMs(process.env.XDT_SESSION_TURN_STALL_MS);
     this.visionBridge = opts.visionBridge;
+    this.acquireSendAdmission = opts.acquireSendAdmission;
 
     // 注入 InteractionResolver 到底层 handle, 转发到 host 维护的 listener。
     // 没接 listener 时按 kind 给出安全默认: 都视作 deny(host 必须接 listener 才能交互)。
@@ -827,6 +830,7 @@ export class Session {
     let previousTurnAttemptToken: number | null = null;
     const turnLifecycleObserver = this.turnLifecycleObserver;
     let turnLifecyclePrepared = false;
+    let releaseSendAdmission: (() => void) | undefined;
     const finishCancelledBeforeDispatch = (): SessionSendResult | null => {
       if (!reservation.cancelled && this.sendReservation === reservation) return null;
       if (this.sendReservation === reservation) this.sendReservation = null;
@@ -849,6 +853,9 @@ export class Session {
       if (beforeProviderStart) await beforeProviderStart();
       const cancelledBeforeAcceptance = finishCancelledBeforeDispatch();
       if (cancelledBeforeAcceptance !== null) return cancelledBeforeAcceptance;
+      releaseSendAdmission = this.acquireSendAdmission?.();
+      const cancelledAfterAdmission = finishCancelledBeforeDispatch();
+      if (cancelledAfterAdmission !== null) return cancelledAfterAdmission;
       await onAccepted?.();
       this.ensureActive();
       const cancelledAfterAcceptance = finishCancelledBeforeDispatch();
@@ -968,6 +975,7 @@ export class Session {
       throw e;
     } finally {
       cleanupExternalAbort();
+      releaseSendAdmission?.();
       if (this.sendReservation === reservation) {
         this.sendReservation = null;
       }

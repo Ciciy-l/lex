@@ -25,7 +25,7 @@
  *   ALREADY_INSTALLED <version> (agent sentinel valid; skip install)
  *   INSTALL_START <package-or-installer>
  *                               (claude-code: npm package name;
- *                                codex: 'codex-standalone' — official curl install.sh)
+ *                                codex: 'codex-package' — official curl install.sh)
  *   INSTALL_LOG <line>          (relayed npm / curl / install.sh line, may repeat)
  *   INSTALL_DONE
  *   READY <version>             (final terminal-success; binary verified)
@@ -130,6 +130,20 @@ export const NODE_DIST_BASE_URL_DEFAULT = 'https://nodejs.org/dist';
  */
 export const CODEX_RELEASE_INSTALLER_URL_BASE = 'https://github.com/openai/codex/releases/download';
 export const CODEX_LATEST_INSTALLER_URL = 'https://chatgpt.com/codex/install.sh';
+
+export const VERIFY_CODEX_LAYOUT_SH = String.raw`verify_codex_layout() {
+  local root
+  root="$(dirname "${'$'}BIN_PATH")"
+  [ -f "${'$'}root/codex-package.json" ] &&
+    [ -x "${'$'}root/bin/codex" ] &&
+    [ -x "${'$'}root/bin/codex-code-mode-host" ] &&
+    [ -x "${'$'}root/codex-path/rg" ] &&
+    [ -d "${'$'}root/codex-resources" ] || return 1
+  if [ "$(uname -s)" = "Linux" ]; then
+    [ -x "${'$'}root/codex-resources/bwrap" ] || return 1
+  fi
+}
+`;
 
 /**
  * Bash script. Args:
@@ -300,8 +314,13 @@ ensure_node() {
 # chmod +x real target 兜底 — npm 装 native binary 偶尔丢 +x mode。
 # 失败时把 stderr + ls / file / head 几行 emit 到 INSTALL_LOG (silent install
 # pipeline 透传到 desktop main log), 不用 ssh 进远端调试。
+${VERIFY_CODEX_LAYOUT_SH}
 verify_binary() {
   if [ ! -L "$BIN_PATH" ] && [ ! -x "$BIN_PATH" ] && [ ! -f "$BIN_PATH" ]; then return 1; fi
+  if [ "$AGENT_KIND" = "codex" ] && ! verify_codex_layout; then
+    emit "INSTALL_LOG incomplete Codex package layout"
+    return 1
+  fi
   _STDERR_LOG="$INSTALL_DIR/.verify-stderr-$$"
 
   # Make sure the real binary (follow symlink) is executable — npm shim 创建
@@ -323,13 +342,14 @@ verify_binary() {
   fi
 
   if [ -n "$V" ] &&
-     { [ "$AGENT_KIND" != "claude-code" ] || [ "${'$'}{V%% *}" = "$CLAUDE_RELEASE" ]; }; then
+     { [ "$AGENT_KIND" != "claude-code" ] || [ "${'$'}{V%% *}" = "$CLAUDE_RELEASE" ]; } &&
+     { [ "$AGENT_KIND" != "codex" ] || [ "${'$'}{V##* }" = "$CODEX_RELEASE" ]; }; then
     emit "READY $V"
     rm -f "$_STDERR_LOG"
     return 0
   fi
   if [ -n "$V" ]; then
-    emit "INSTALL_LOG [verify-fail] Claude Code version ${'$'}{V%% *} != managed pin $CLAUDE_RELEASE"
+    emit "INSTALL_LOG [verify-fail] $AGENT_KIND version $V does not match managed pin"
   fi
   # Diagnostics on failure — these go to INSTALL_LOG so the desktop main process
   # logs them (silent install pipeline forwards INSTALL_LOG lines verbatim).
@@ -368,8 +388,8 @@ fi
 
 # ── install agent ─────────────────────────────────────────────────────────
 # claude-code: bundled-Node + npm install (agent shim needs node at runtime).
-# codex:       official install.sh standalone, isolated under our CODEX_HOME
-#              (daemon mode requires the standalone layout — see top-of-script comment).
+# codex:       official install.sh full package, isolated under CODEX_HOME
+#              (daemon mode requires the managed package layout).
 if [ "$AGENT_KIND" = "claude-code" ]; then
   ensure_node
   # PATH-prepend bundled node so the agent CLI's shebang (#!/usr/bin/env node)
@@ -458,7 +478,7 @@ elif [ "$AGENT_KIND" = "codex" ]; then
       && emit "INSTALL_LOG mirrored existing $HOME/.codex/auth.json -> $CODEX_HOME_DIR/auth.json"
   fi
 
-  emit "INSTALL_START codex-standalone"
+  emit "INSTALL_START codex-package"
   # install.sh respects three env vars to keep everything in our tree:
   #   CODEX_HOME            → tarball extract target + daemon state + auth
   #   CODEX_INSTALL_DIR     → "visible command" symlink dir (we don't add to PATH; daemon uses absolute path)

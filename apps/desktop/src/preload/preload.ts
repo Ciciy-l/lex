@@ -2033,6 +2033,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     mode: 'signed-out' | 'local' | 'cloud';
     dataOwnerId: string | null;
     ownerGeneration: number;
+    ownerBoundaryPending?: boolean;
     canEnterApp: boolean;
     isAuthenticated: boolean;
     isCanary: boolean;
@@ -4507,6 +4508,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     disconnect: (id: string): Promise<{ host: unknown }> =>
       ipcRenderer.invoke('maker:remote-ssh:disconnect', { id }),
     onStatusChanged: fanOutRemoteSshStatus,
+    listCodexModels: (id: string): Promise<import('@cindy/model-providers').ProviderView[]> =>
+      ipcRenderer.invoke('maker:remote-ssh:list-codex-models', { id }),
 
     // ── Phase B: agent on remote ──────────────────────────────────────────
     probeAgent: (

@@ -82,9 +82,11 @@ import {
 import {
   CONTROLLER_CAPABILITY_SET_MODEL_EXPLICIT_PROVIDER_NULL_V1,
   DL_SESSION_REFERENCE_CAPABILITY_CHANNEL,
+  readInputDeliveryClientIds,
 } from '@cindy/device-link';
 import { and, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { applyScheduledModelSelection, ScheduledModelSelectionBusyError, type ScheduledModelSelection, type ScheduledModelSelectionLease } from './scheduledModelSelection';
+import { createDurableInputDeliveryBoundary } from './durableInputDeliveryBoundary.js';
 import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
 import {
   activeOwnerScopeKey,
@@ -236,8 +238,11 @@ import { statWorkingDirectory, mkdirWorkingDirectory, realpathWorkingDirectory, 
 import { getMessagesForHistory } from '../localDb/chatHistoryReader.js';
 import {
   awaitAgentInputQueueSnapshotPersistence,
+  hasInputDeliveryCancellation,
   loadAgentInputQueueSnapshot,
   loadAgentInputQueueSnapshotCounts,
+  readInputDeliveryReceipts,
+  saveCancelledInputDelivery,
   saveAgentInputQueueSnapshot,
 } from '../localDb/agentInputQueueSnapshots.js';
 import {
@@ -434,8 +439,10 @@ import {
   getMakerIfReady,
   getPluginRegistry,
   isBotToolsetAvailable,
+  disposeRemoteCodexHostAfterRestart,
   listBotRuntimeMcpServers,
   preflightBotRuntimeResources,
+  listSshCodexProviders,
   prepareCodexForAuthModeChange,
   prepareCodexForCustomProviderHostChange,
   restartCodexAfterAuthModeChange,
@@ -443,6 +450,11 @@ import {
   setBotCapabilityAgentKindResolver,
   setModelContextRuntimeRefreshListener,
 } from '../maker-host/index.js';
+import {
+  assertSshCodexModel,
+  isVerifiedSshCodexResume,
+  readSshCodexModelList,
+} from '../remote-ssh/codex-model-list.js';
 import {
   readMemorySettingsState,
   resetMemorySettings,
@@ -804,7 +816,10 @@ import {
   refreshActiveCatalogFromSource,
   refreshCustomProvidersIntoCatalog,
 } from '../maker-host/createDesktopProviderService.js';
-import { readOrcaWorkerProviderRoutingContext } from './orcaProviderRoutingContext.js';
+import {
+  readOrcaWorkerProviderRoutingContext,
+  sshCodexWorkerRoutingContext,
+} from './orcaProviderRoutingContext.js';
 import {
   clearSessionProvider,
   getSessionProvider,
@@ -1094,6 +1109,21 @@ import { handleSessionEvent, type SessionEventDependencies } from './sessionEven
 import { installSessionTurnObserver } from './sessionTurnObserver.js';
 
 const log = createLogger('maker-ipc');
+const sshCodexCreationScopeKeys = new WeakMap<object, { identity: string; token: object }>();
+
+function getSshCodexCreationScopeKey(
+  host: object,
+  ownerGeneration: number,
+  hostStatusChangedAt: number,
+): object {
+  const identity = ownerGeneration + ':' + hostStatusChangedAt;
+  const current = sshCodexCreationScopeKeys.get(host);
+  if (current?.identity === identity) return current.token;
+  const token = {};
+  sshCodexCreationScopeKeys.set(host, { identity, token });
+  return token;
+}
+
 const workingDirectoryRecovery = createWorkingDirectoryRecovery({ stat: statWorkingDirectory, mkdir: mkdirWorkingDirectory, realpath: realpathWorkingDirectory }, async (sessionId) =>
   ensureDialogueWorkspaceDir(sessionId, Date.now()));
 
@@ -6518,7 +6548,13 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     agent: AgentKind,
     model: string,
     providerId: string | null,
+    remoteHostId?: string | null,
   ): Promise<string | undefined> {
+    if (agent === 'codex' && remoteHostId) {
+      const providers = await readSshCodexModelList({ id: remoteHostId }, listSshCodexProviders);
+      assertSshCodexModel(providers, model, providerId);
+      return undefined;
+    }
     const verdict = await verdictForModelRoute(agent, model, providerId);
     if (verdict.kind === 'reject') {
       throwIpcError(
@@ -6534,6 +6570,37 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     didInjectOrcaInstructions: boolean;
     didInjectProjectContext: boolean;
   }> {
+    const sshCodexOwnerGeneration = o.agentKind === 'codex' && o.remoteHostId
+      ? getActiveAppSession().generation
+      : null;
+    let sshCodexHostSnapshot: {
+      getStatus(): string;
+      snapshot(): { statusChangedAt: number };
+      onStatus(listener: (snapshot: { status: string }) => void): () => void;
+    } | null = null;
+    let sshCodexHostStatusChangedAt: number | null = null;
+    let sshCodexHostConnectionChanged = false;
+    if (sshCodexOwnerGeneration !== null) {
+      const initialHost = getRemoteSshPool().get(o.remoteHostId!);
+      if (initialHost?.getStatus() === 'ready') {
+        sshCodexHostSnapshot = initialHost;
+        sshCodexHostStatusChangedAt = initialHost.snapshot().statusChangedAt;
+      }
+    }
+    const assertSshCodexOwnerCurrent = () => {
+      if (
+        sshCodexOwnerGeneration !== null &&
+        (isAppSessionBoundaryPending() ||
+          getActiveAppSession().generation !== sshCodexOwnerGeneration ||
+          sshCodexHostConnectionChanged ||
+          (sshCodexHostSnapshot !== null &&
+            (getRemoteSshPool().get(o.remoteHostId!) !== sshCodexHostSnapshot ||
+              sshCodexHostSnapshot.getStatus() !== 'ready' ||
+              sshCodexHostSnapshot.snapshot().statusChangedAt !== sshCodexHostStatusChangedAt)))
+      ) {
+        throwIpcError('PRECONDITION_FAILED', 'Account or SSH host changed while resolving Codex models');
+      }
+    };
     if (o.id && o.workingDir && !o.remoteHostId) {
       o.workingDir = workingDirectoryRecovery.resolve(o.id, o.workingDir);
       await workingDirectoryRecovery.observe(o.id, o.workingDir).catch(() => undefined);
@@ -6544,6 +6611,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       displayReasoning: o.displayReasoning,
     };
     await options.waitForAccountProviderModelsReady();
+    assertSshCodexOwnerCurrent();
     const runtimeOverride =
       typeof o.id === 'string' ? getSessionRuntimeControlSnapshot(o.id).effectiveOverride : null;
     if (runtimeOverride && runtimeOverride.agentKind === o.agentKind) {
@@ -6553,9 +6621,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       o.fastMode = runtimeOverride.fastMode;
     }
     await applyPersistedReviewMode(o);
+    assertSshCodexOwnerCurrent();
     const didInjectOrcaInstructions = o.reviewMode === true ? false : applyOrcaInstructions(o);
     const didInjectProjectContext =
       o.reviewMode === true ? false : await applyProjectContextInjection(o);
+    assertSshCodexOwnerCurrent();
 
     const usingFallback = !!o.id && !!o.workingDir && !o.remoteHostId &&
       workingDirectoryRecovery.isFallback(o.id, o.workingDir);
@@ -6573,13 +6643,16 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         if (existing) await persistSessionFields(sessionId, patch);
       },
     });
+    assertSshCodexOwnerCurrent();
 
     await hydrateProviderIdBeforeSessionStart(o);
+    assertSshCodexOwnerCurrent();
     await ensureManagedOllamaReadyForSession({
       providerId: o.providerId,
       remoteHostId: o.remoteHostId ?? null,
       userDataDir: app.getPath('userData'),
     });
+    assertSshCodexOwnerCurrent();
     // 停用轴准入(PR #744 review):**新建**会话不得路由到用户停用的模型 / 来源。
     // renderer 选择器已过滤,但 create-session 在 device-link allowlist 内,老控制端
     // 可直接点名 —— main 必须自己裁决。resume 豁免(运行中的会话不打断)只给
@@ -6594,27 +6667,116 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (o.resumeSessionId && typeof o.id === 'string' && o.id) {
         try {
           const [row] = await getDbClient()
-            .drizzle.select({ model: sessions.model, providerId: sessions.providerId })
+            .drizzle.select({
+              model: sessions.model,
+              providerId: sessions.providerId,
+              remoteHostId: sessions.remoteHostId,
+              sdkSessionId: sessions.sdkSessionId,
+              agentKind: sessions.agentKind,
+            })
             .from(sessions)
             .where(eq(sessions.id, o.id))
             .limit(1);
-          verifiedResume =
-            !!row && row.model === o.model && (row.providerId ?? null) === (o.providerId ?? null);
+          verifiedResume = o.agentKind === 'codex' && o.remoteHostId
+            ? isVerifiedSshCodexResume(o, row ? {
+                agentKind: dbToMakerAgentKind(row.agentKind),
+                model: row.model,
+                providerId: row.providerId ?? null,
+                remoteHostId: row.remoteHostId,
+                sdkSessionId: row.sdkSessionId,
+              } : undefined)
+            : !!row && row.model === o.model && (row.providerId ?? null) === (o.providerId ?? null);
         } catch {
           verifiedResume = false;
         }
       }
+      assertSshCodexOwnerCurrent();
       if (!verifiedResume) {
-        const reroute = await assertModelRouteUsable(o.agentKind, o.model, o.providerId ?? null);
+        if (o.agentKind === 'codex' && o.remoteHostId) {
+          const currentHost = getRemoteSshPool().get(o.remoteHostId) ?? null;
+          if (!currentHost || currentHost.getStatus() !== 'ready') {
+            throwIpcError('SSH_NOT_CONNECTED', 'SSH host disconnected while resolving Codex model');
+          }
+          if (sshCodexHostSnapshot === null) {
+            sshCodexHostSnapshot = currentHost;
+            sshCodexHostStatusChangedAt = currentHost.snapshot().statusChangedAt;
+          } else {
+            assertSshCodexOwnerCurrent();
+          }
+        }
+        const reroute = await assertModelRouteUsable(
+          o.agentKind,
+          o.model,
+          o.providerId ?? null,
+          o.remoteHostId,
+        );
+        assertSshCodexOwnerCurrent();
         if (reroute && shouldApplyExclusiveProviderRerouteLive(o.providerId)) {
           o.providerId = reroute;
         }
-      } else if (shouldApplyExclusiveProviderRerouteLive(o.providerId)) {
+      } else if (!(o.agentKind === 'codex' && o.remoteHostId) && shouldApplyExclusiveProviderRerouteLive(o.providerId)) {
         const pin = await pinExclusiveSessionProvider(o.agentKind, o.model, o.providerId ?? null);
         if (pin) o.providerId = pin;
       }
     }
-    const session = await maker.createSession(o);
+    if (o.agentKind === 'codex' && o.remoteHostId && sshCodexHostSnapshot === null) {
+      sshCodexHostSnapshot = getRemoteSshPool().get(o.remoteHostId) ?? null;
+      if (!sshCodexHostSnapshot || sshCodexHostSnapshot.getStatus() !== 'ready') {
+        throwIpcError('SSH_NOT_CONNECTED', 'SSH host disconnected before Codex session creation');
+      }
+      sshCodexHostStatusChangedAt = sshCodexHostSnapshot.snapshot().statusChangedAt;
+    }
+    const stopListeningToSshCodexHost = sshCodexHostSnapshot?.onStatus((snapshot) => {
+      if (snapshot.status !== 'ready') sshCodexHostConnectionChanged = true;
+    }) ?? (() => undefined);
+    const sessionBeforeCreate = o.id ? maker.getSession(o.id) : undefined;
+    let session: Awaited<ReturnType<typeof maker.createSession>> | undefined;
+    try {
+      assertSshCodexOwnerCurrent();
+      session = await maker.createSession(
+        o,
+        sshCodexOwnerGeneration === null
+          ? undefined
+          : {
+              assertCurrent: assertSshCodexOwnerCurrent,
+              scopeKey: getSshCodexCreationScopeKey(
+                sshCodexHostSnapshot!,
+                sshCodexOwnerGeneration,
+                sshCodexHostStatusChangedAt!,
+              ),
+              ownerGeneration: sshCodexOwnerGeneration,
+              deferCleanupToOwnerTeardown: () =>
+                isAppSessionBoundaryPending() ||
+                getActiveAppSession().generation !== sshCodexOwnerGeneration,
+            },
+      );
+      assertSshCodexOwnerCurrent();
+    } catch (error) {
+      if (
+        session &&
+        session !== sessionBeforeCreate &&
+        sshCodexOwnerGeneration !== null &&
+        getActiveAppSession().generation === sshCodexOwnerGeneration &&
+        !isAppSessionBoundaryPending() &&
+        (sshCodexHostConnectionChanged ||
+          getRemoteSshPool().get(o.remoteHostId!) !== sshCodexHostSnapshot ||
+          sshCodexHostSnapshot?.getStatus() !== 'ready') &&
+        maker.getSession(session.id) === session
+      ) {
+        try {
+          await session.close({ reason: 'navigation' });
+        } catch (closeError) {
+          log.warn('failed to close SSH Codex session after host changed at creation return', {
+            sessionId: session.id,
+            error: closeError instanceof Error ? closeError.message : String(closeError),
+          });
+        }
+      }
+      throw error;
+    } finally {
+      stopListeningToSshCodexHost();
+    }
+    if (!session) throw new Error('Maker did not return the created session');
     await markProjectContextIfNeeded(session.id, didInjectProjectContext);
     wireSessionToIpc(session);
     markOrcaMcpHydratedIfNeeded(session.id, o);
@@ -7096,6 +7258,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     session?: { agentKind: AgentKind; remoteHostId: string | null } | null;
     createOpts?: unknown;
   }): Promise<{ remoteCodexDaemonRebootstrapped: true } | void> {
+    const ownerGeneration = getActiveAppSession().generation;
     const { session, createOpts } = params;
     // Remote SSH auto-reconnect 前置: 拿 host 是否要联网在 maker-core 之前确定,
     // 避免 remote transport hook 同步抛 "not found in pool"。ensureRemoteHostReady
@@ -7247,12 +7410,16 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         if (
           result.ok &&
           result.daemonRebootstrapped &&
-          !codexRemoteHasLiveTurn(remoteHostIdToEnsure)
+          !codexRemoteHasLiveTurn(remoteHostIdToEnsure) &&
+          !isAppSessionBoundaryPending() &&
+          getActiveAppSession().generation === ownerGeneration
         ) {
           await detachIdleRemoteCodexSessionsOnHost(
             remoteHostIdToEnsure,
             'codex-mcp-daemon-rebootstrap',
+            ownerGeneration,
           );
+          if (isAppSessionBoundaryPending() || getActiveAppSession().generation !== ownerGeneration) return;
           return { remoteCodexDaemonRebootstrapped: true };
         }
       }
@@ -7277,7 +7444,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         (s) =>
           s.remoteHostId === hostId &&
           s.agentKind === 'codex' &&
-          (agentInputCoordinatorHolder?.hasActiveTurnForRewind(s.id) ?? false),
+          (s.isTurnRunning() || agentInputCoordinatorHolder?.hasActiveTurnForRewind(s.id) || false),
       );
   }
   setRemoteCodexLiveTurnChecker(codexRemoteHasLiveTurn);
@@ -7307,7 +7474,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   async function detachIdleRemoteCodexSessionsOnHost(
     hostId: string,
     reason: string,
+    ownerGeneration: number,
   ): Promise<void> {
+    if (isAppSessionBoundaryPending() || getActiveAppSession().generation !== ownerGeneration) return;
     const detachTasks: Array<Promise<void>> = [];
     for (const s of maker.listActiveSessions()) {
       if (s.remoteHostId !== hostId || s.agentKind !== 'codex') continue;
@@ -7324,6 +7493,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       );
     }
     await Promise.all(detachTasks);
+    if (isAppSessionBoundaryPending() || getActiveAppSession().generation !== ownerGeneration) return;
+    await disposeRemoteCodexHostAfterRestart(hostId, ownerGeneration);
   }
 
   // turn 结束后补一次远端 MCP ensure (best-effort):live turn 期间被推迟的
@@ -7333,6 +7504,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   // holder 供各 turn 收口路径调用。远端 CC 走 holder 的 detach 补偿
   // (bridge 重建 / 端口重绑已让 fresh 失效时重建 query)。
   refreshRemoteCodexMcpOnTurnSettledHolder = (sessionId: string): void => {
+    const ownerGeneration = getActiveAppSession().generation;
+    if (isAppSessionBoundaryPending()) return;
     const session = maker.getSession(sessionId);
     const remoteHostId = session?.remoteHostId;
     if (!remoteHostId) return;
@@ -7369,6 +7542,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             await detachIdleRemoteCodexSessionsOnHost(
               remoteHostId,
               'codex-mcp-turn-settled-rebootstrap',
+              ownerGeneration,
             );
           }
         });
@@ -10636,11 +10810,16 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   });
   orcaTeamServiceForEvents = orcaTeamService;
 
-  const getProviderRoutingContext = () =>
-    readOrcaWorkerProviderRoutingContext({
+  const getProviderRoutingContext = async (agent?: AgentKind, remoteHostId?: string | null) => {
+    if (agent === 'codex' && remoteHostId) {
+      const providers = await readSshCodexModelList({ id: remoteHostId }, listSshCodexProviders);
+      return sshCodexWorkerRoutingContext(providers);
+    }
+    return readOrcaWorkerProviderRoutingContext({
       providerService: getDesktopProviderService(),
       getCatalog: getActiveCatalog,
     });
+  };
 
   const orcaWorkerCreationService = createOrcaWorkerCreationService({
     getActiveTeamByLead,
@@ -13801,6 +13980,14 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
     // 队列项未派发即被丢弃(stop/remove/clearSession) → 释放暂存的 accepted 副作用, 防回调表泄漏。
     onDiscardedQueuedMessage: (sessionId, item) => {
+      if (item.durableDelivery === true) {
+        void saveCancelledInputDelivery(sessionId, item.clientId).catch((error) => {
+          log.warn('input delivery cancellation persistence failed', {
+            sessionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      }
       rollbackAgentIslandUserPrompt(sessionId, item.clientId, 'discarded');
       discardQueuedAttachmentOwnership(sessionId, item.clientId);
       orcaInterAgentDispatcher.discardQueuedOrcaInterAgentAcceptedCallback(item.clientId);
@@ -14326,6 +14513,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     }
     const normalized: AgentInputQueuedMessage = { ...msg };
     delete normalized.autoReviewUserText;
+    if (normalized.durableDelivery !== true) delete normalized.durableDelivery;
     const refs = requireSessionRefs(normalized.sessionRefs);
     if (!isDeviceLinkInvoke()) {
       // preload/renderer 不属于可信边界，不能直接注入历史正文。
@@ -14618,9 +14806,30 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     };
   };
 
-  ipcMain.handle(MAKER_INVOKE.INPUT_GET_PROJECTION, async (_e, sessionId: unknown) => {
+  async function awaitDurableInputQueueSnapshotPersistence(sessionId: string): Promise<void> {
+    inputCoordinator.retryQueueSnapshotPersistence(sessionId);
+    await awaitAgentInputQueueSnapshotPersistence(sessionId);
+  }
+
+  const durableInputDeliveryBoundary = createDurableInputDeliveryBoundary({
+    getProjection: (sessionId) => inputCoordinator.getProjection(sessionId),
+    hasKnownClientId: (sessionId, clientId) => inputCoordinator.hasKnownClientId(sessionId, clientId),
+    remove: (sessionId, clientId) => inputCoordinator.remove(sessionId, clientId),
+    persistCancellation: saveCancelledInputDelivery,
+    awaitDurableQueueSnapshot: awaitDurableInputQueueSnapshotPersistence,
+    wasPersisted: remoteInputClientIdWasPersisted,
+    hasCancellation: hasInputDeliveryCancellation,
+  });
+
+  ipcMain.handle(MAKER_INVOKE.INPUT_GET_PROJECTION, async (_e, sessionId: unknown, options?: unknown) => {
     const sid = requireSessionId(sessionId);
     const remote = isDeviceLinkInvoke();
+    let deliveryClientIds: string[] | undefined;
+    try {
+      deliveryClientIds = readInputDeliveryClientIds(options);
+    } catch {
+      throwIpcError('INVALID_PARAMS', 'Invalid deliveryClientIds');
+    }
     assertRemoteInputClearNotInFlight(sid, remote);
     // The queue snapshot is process-local, but the clear boundary is durable.
     // Hydrate it for both renderer and device-link callers before restoring the
@@ -14634,9 +14843,19 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     // 崩溃恢复(issue #761):renderer 打开会话首次取 projection 前,先把持久化的
     // 排队输入读回内存态,返回值即含恢复后的队列,不依赖 push 补发。
     // 失败时仍返回当前内存态 projection(宁可漏恢复也不阻塞会话打开)。
-    await inputCoordinator.ensureQueueRestored(sid).catch(() => undefined);
+    if (deliveryClientIds !== undefined) await inputCoordinator.ensureQueueRestored(sid);
+    else await inputCoordinator.ensureQueueRestored(sid).catch(() => undefined);
     assertRemoteInputClearNotInFlight(sid, remote);
-    return inputCoordinator.getProjection(sid);
+    const projection = inputCoordinator.getProjection(sid);
+    if (deliveryClientIds === undefined) return projection;
+    await awaitDurableInputQueueSnapshotPersistence(sid);
+    const deliveryReceipts = await readInputDeliveryReceipts(sid, deliveryClientIds);
+    assertRemoteInputClearNotInFlight(sid, remote);
+    return {
+      ...inputCoordinator.getProjection(sid),
+      inputDeliveryVersion: 1,
+      deliveryReceipts,
+    };
   });
 
   // device-link 出方向:远程入队消息的 OSS 引用(files[] + persistedContent)在入队前一次性物化成本地
@@ -14696,9 +14915,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       // A concurrent weak-link resend may already own this clientId in the
       // coordinator. Return the current projection before materialising a new
       // copy of its attachments.
-      if (inputCoordinator.hasKnownClientId(sid, parsed.clientId)) {
-        return inputCoordinator.getProjection(sid);
-      }
+      const knownClientProjection = parsed.durableDelivery === true
+        ? await durableInputDeliveryBoundary.knownClient(sid, parsed.clientId, true)
+        : inputCoordinator.hasKnownClientId(sid, parsed.clientId)
+          ? inputCoordinator.getProjection(sid)
+          : null;
+      if (knownClientProjection) return knownClientProjection;
       const materialized = await materializeQueuedOssAttachmentsDeferred(sid, parsed);
       const attachmentOwnerId = registerQueuedAttachmentOwnership(
         sid,
@@ -14741,7 +14963,14 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         // 排队可取消时旧中断提示必须能恢复；accepted 但仍可能 cancelled-before-dispatch
         // 时也不能提前 ack。续跑项本身由 coordinator 插到队首（普通输入仍 FIFO）。
         let duplicate = false;
-        const projection = inputCoordinator.enqueue(sid, queued, {
+        let projection: ReturnType<typeof inputCoordinator.enqueue>;
+        const cleanupUnacceptedMaterialization = async () => {
+          await materialized.cleanupBeforeAcceptance?.();
+          if (attachmentOwnerId) {
+            await discardSpecificQueuedAttachmentOwnership(sid, parsed.clientId, attachmentOwnerId);
+          }
+        };
+        const enqueueNow = () => inputCoordinator.enqueue(sid, queued, {
           ...(opts && typeof opts === 'object' ? (opts as { sendAtMs?: number }) : undefined),
           // INPUT_ENQUEUE 只承载显式用户输入(composer 发送 / UI trigger / device-link
           // 被控端转投的用户消息):崩溃恢复出的暂停队列遇到显式输入即放行,解开
@@ -14752,11 +14981,29 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             duplicate = true;
           },
         });
+        if (parsed.durableDelivery === true) {
+          assertCurrentInputGeneration();
+          assertRemoteInputClearNotInFlight(sid, deviceLinkInvoke);
+          const attempt = await durableInputDeliveryBoundary.enqueueIfAllowed(
+            sid,
+            parsed.clientId,
+            true,
+            cleanupUnacceptedMaterialization,
+            enqueueNow,
+          );
+          assertCurrentInputGeneration();
+          assertRemoteInputClearNotInFlight(sid, deviceLinkInvoke);
+          if (!attempt.enqueued) return attempt.projection;
+          projection = attempt.value;
+        } else {
+          projection = enqueueNow();
+        }
         if (duplicate) {
           if (attachmentOwnerId) {
             await materialized.cleanupBeforeAcceptance?.();
             await discardSpecificQueuedAttachmentOwnership(sid, parsed.clientId, attachmentOwnerId);
           }
+          if (parsed.durableDelivery === true) await awaitDurableInputQueueSnapshotPersistence(sid);
           return projection;
         }
         acceptedByCoordinator = true;
@@ -14765,6 +15012,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         }
         markQueuedAttachmentDurableAfterSnapshot(sid, parsed.clientId, attachmentOwnerId);
         commitAutoTitle();
+        if (parsed.durableDelivery === true) await awaitDurableInputQueueSnapshotPersistence(sid);
         return projection;
       } catch (err) {
         if (!acceptedByCoordinator) {
@@ -15111,11 +15359,17 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       const sid = requireSessionId(sessionId);
       await assertRemoteInputControlBoundary(sid, isDeviceLinkInvoke(), opts);
       const cid = requireClientId(clientId);
-      const result = inputCoordinator.remove(sid, cid);
+      const durable = isDeviceLinkInvoke()
+        && !!opts
+        && typeof opts === 'object'
+        && (opts as { durableDelivery?: unknown }).durableDelivery === true;
+      const result = await durableInputDeliveryBoundary.remove(sid, cid, durable);
       if (!inputCoordinator.hasPendingQueuedWork(sid)) {
         getAgentIslandService()?.notifyQueueEmptied(sid);
       }
-      return result;
+      return durable
+        ? { ...result.projection, inputDeliveryCancelled: result.inputDeliveryCancelled === true }
+        : result.projection;
     },
   );
 
@@ -15712,28 +15966,55 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         currentProviderId,
       );
       let effectiveProviderId = requestedProviderId;
+      let sshCodexProviders: Awaited<ReturnType<typeof readSshCodexModelList>> | null = null;
+      const sshCodexHostSnapshot = runtimeStatus.remoteHostId && runtimeStatus.agentKind === 'codex'
+        ? getRemoteSshPool().get(runtimeStatus.remoteHostId) ?? null
+        : null;
+      if (runtimeStatus.remoteHostId && runtimeStatus.agentKind === 'codex') {
+        if (!sshCodexHostSnapshot || sshCodexHostSnapshot.getStatus() !== 'ready') {
+          throwIpcError('SSH_NOT_CONNECTED', 'SSH host disconnected while checking Codex model route');
+        }
+        sshCodexProviders = await readSshCodexModelList(
+          { id: runtimeStatus.remoteHostId },
+          listSshCodexProviders,
+        );
+        if (supersededByOwnerBoundary()) return { deferred: false, superseded: true };
+        if (
+          getRemoteSshPool().get(runtimeStatus.remoteHostId) !== sshCodexHostSnapshot ||
+          sshCodexHostSnapshot.getStatus() !== 'ready'
+        ) {
+          throwIpcError('SSH_NOT_CONNECTED', 'SSH host changed while checking Codex model route');
+        }
+      }
       if (routeExplicit) {
         const dbAgentKind = getSessionDbAgentKind(sessionId);
         if (dbAgentKind) {
           // 停用轴准入只依赖目标路由(guard = 显式目标 ?? 恢复出的源),与源 provider
           // 的 DB 查询成败无关 —— 查询失败只能放弃独占 pin 重裁决,不能跳过准入。
-          const reroute = await assertModelRouteUsable(
-            dbToMakerAgentKind(dbAgentKind),
-            model,
-            guardProviderId,
-          );
-          effectiveProviderId = resolveExclusiveSetModelReroute(
-            requestedProviderId,
-            currentProviderId,
-            reroute,
-            persistedProviderKnown,
-            getActiveCatalog().providers,
-          );
+          const routeAgent = dbToMakerAgentKind(dbAgentKind);
+          if (sshCodexProviders) {
+            assertSshCodexModel(sshCodexProviders, model, guardProviderId);
+          } else {
+            const reroute = await assertModelRouteUsable(
+              routeAgent,
+              model,
+              guardProviderId,
+              runtimeStatus.remoteHostId,
+            );
+            effectiveProviderId = resolveExclusiveSetModelReroute(
+              requestedProviderId,
+              currentProviderId,
+              reroute,
+              persistedProviderKnown,
+              getActiveCatalog().providers,
+            );
+          }
         }
       }
       if (runtimeStatus.remoteHostId) {
         const targetId = effectiveProviderId === undefined ? currentProviderId : effectiveProviderId;
-        const target = getActiveCatalog().providers.find((provider) => provider.id === targetId);
+        const target = sshCodexProviders?.find((provider) => provider.id === targetId)
+          ?? getActiveCatalog().providers.find((provider) => provider.id === targetId);
         const targetAgent = dbToMakerAgentKind(runtimeStatus.agentKind);
         if (
           target &&
@@ -15757,7 +16038,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           effectiveProviderId === null
             ? null
             : (normalizeSessionProviderId(effectiveProviderId) ?? currentProviderId);
-        const runtimeProviders = await getDesktopProviderService().listProviders({
+        const runtimeProviders = sshCodexProviders ?? await getDesktopProviderService().listProviders({
           allowSideEffects: false,
           catalog: getActiveCatalog(),
         });

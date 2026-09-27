@@ -3,18 +3,24 @@ import { describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   getDbClient: vi.fn(),
+  getCurrentDbClientSnapshot: vi.fn(),
 }));
 
 vi.mock('../client/current', () => ({
   getDbClient: mocks.getDbClient,
+  getCurrentDbClientSnapshot: mocks.getCurrentDbClientSnapshot,
 }));
 
 import {
   AgentInputQueueSnapshotTooLargeError,
   awaitAgentInputQueueSnapshotPersistence,
+  hasInputDeliveryCancellation,
+  readInputDeliveryReceipts,
   loadAgentInputQueueSnapshotCounts,
+  saveCancelledInputDelivery,
   saveAgentInputQueueSnapshot,
 } from '../agentInputQueueSnapshots.js';
+import { agentInputQueueSnapshots, messages } from '../schema.js';
 import type { AgentInputQueuedMessage } from '../../../shared/agentInputQueue.js';
 
 function deferred<T>() {
@@ -58,8 +64,43 @@ function installDb(
   const where = vi.fn(() => Promise.resolve());
   const del = vi.fn(() => ({ where }));
   const db = { insert, delete: del };
-  mocks.getDbClient.mockReturnValue({ drizzle: db });
+  const client = { drizzle: db };
+  mocks.getDbClient.mockReturnValue(client);
+  mocks.getCurrentDbClientSnapshot.mockReturnValue({ client, clientEpoch: 1 });
   return { db, insert, onConflictDoUpdate };
+}
+
+function installDeliveryDb(initialMessages: Array<{
+  sessionId: string;
+  clientId: string;
+  role: string;
+  rewindAt: number | null;
+}> = [], clientEpoch = 1, beforeInsert: () => Promise<void> = async () => {}) {
+  const snapshotRows: Array<{ sessionId: string; payload: string }> = [];
+  const messageRows = new Map(initialMessages.map((row) => [row.sessionId + ':' + row.clientId, row]));
+  const drizzle = {
+    insert: vi.fn(() => ({
+      values: vi.fn((row: { sessionId: string; clientId: string; role: string; rewindAt: number | null }) => ({
+        onConflictDoNothing: vi.fn(async () => {
+          await beforeInsert();
+          const key = row.sessionId + ':' + row.clientId;
+          if (!messageRows.has(key)) messageRows.set(key, row);
+        }),
+      })),
+    })),
+    select: vi.fn(() => ({
+      from: (table: unknown) => ({
+        where: async () => table === agentInputQueueSnapshots
+          || (table as { _?: { name?: string } } | null)?._?.name === 'agent_input_queue_snapshots'
+          ? snapshotRows
+          : [...messageRows.values()],
+      }),
+    })),
+  };
+  const client = { drizzle };
+  mocks.getDbClient.mockReturnValue(client);
+  mocks.getCurrentDbClientSnapshot.mockReturnValue({ client, clientEpoch });
+  return { drizzle, snapshotRows, messageRows, client };
 }
 
 describe('agent input queue snapshot durability boundary', () => {
@@ -138,6 +179,71 @@ describe('agent input queue snapshot durability boundary', () => {
       'session-2',
     ]);
     expect(query.mock.calls[0]?.[0]).not.toContain('SELECT payload');
+  });
+
+  it('persists cancellation tombstones and returns exact removed receipts', async () => {
+    const { messageRows } = installDeliveryDb();
+
+    await expect(saveCancelledInputDelivery('delivery-session', 'delivery-client'))
+      .resolves.toBe(true);
+    expect(messageRows.get('delivery-session:delivery-client')).toMatchObject({
+      sessionId: 'delivery-session',
+      clientId: 'delivery-client',
+      role: 'message_tombstone',
+    });
+    await expect(readInputDeliveryReceipts('delivery-session', ['delivery-client']))
+      .resolves.toEqual([{ clientId: 'delivery-client', state: 'removed' }]);
+  });
+
+  it('publishes a cancellation replay fence before the tombstone write and survives a new DB epoch', async () => {
+    const gate = deferred<void>();
+    const { client } = installDeliveryDb([], 1, () => gate.promise);
+    const cancelled = saveCancelledInputDelivery('delivery-race-session', 'delivery-race-client');
+
+    expect(hasInputDeliveryCancellation('delivery-race-session', 'delivery-race-client')).toBe(true);
+    gate.resolve();
+    await expect(cancelled).resolves.toBe(true);
+
+    mocks.getCurrentDbClientSnapshot.mockReturnValue({ client, clientEpoch: 2 });
+    await expect(readInputDeliveryReceipts('delivery-race-session', ['delivery-race-client']))
+      .resolves.toEqual([{ clientId: 'delivery-race-client', state: 'removed' }]);
+  });
+
+  it('does not report an accepted message as cancelled when its client ID already exists', async () => {
+    installDeliveryDb([{
+      sessionId: 'delivery-session-existing',
+      clientId: 'delivery-client-existing',
+      role: 'user',
+      rewindAt: null,
+    }]);
+
+    await expect(saveCancelledInputDelivery('delivery-session-existing', 'delivery-client-existing'))
+      .resolves.toBe(false);
+    await expect(readInputDeliveryReceipts('delivery-session-existing', ['delivery-client-existing']))
+      .resolves.toEqual([{ clientId: 'delivery-client-existing', state: 'accepted' }]);
+  });
+
+  it('reports only user rows as accepted and distinguishes restored queue snapshots from unknown IDs', async () => {
+    const { snapshotRows } = installDeliveryDb([{
+      sessionId: 'delivery-session-roles',
+      clientId: 'delivery-client-non-user',
+      role: 'thinking',
+      rewindAt: null,
+    }]);
+    snapshotRows.push({
+      sessionId: 'delivery-session-roles',
+      payload: JSON.stringify([queued('pending', 'delivery-client-pending')]),
+    });
+
+    await expect(readInputDeliveryReceipts('delivery-session-roles', [
+      'delivery-client-non-user',
+      'delivery-client-pending',
+      'delivery-client-unknown',
+    ])).resolves.toEqual([
+      { clientId: 'delivery-client-non-user', state: 'unknown' },
+      { clientId: 'delivery-client-pending', state: 'pending' },
+      { clientId: 'delivery-client-unknown', state: 'unknown' },
+    ]);
   });
 
   it('matches restore de-duplication and clear-boundary filtering for cold queued counts', async () => {

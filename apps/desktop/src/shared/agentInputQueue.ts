@@ -221,6 +221,7 @@ export interface AgentInputQueuedMessage {
   /** Host-captured authored text before plugin/reference decoration; omitted from wire projections. */
   autoReviewUserText?: string;
   clientId: string;
+  durableDelivery?: true;
   text: string;
   /**
    * Host-owned receipt for the first acceptance boundary.  The controlled

@@ -69,14 +69,17 @@ describe('AuthContext auth-state races', () => {
     expect(source).toContain('clearWorkersCache();');
   });
 
-  it('publishes a data-owner generation at every auth boundary', () => {
+  it('distinguishes pending, committed and rolled-back owner projections', () => {
     expect(source).toContain('cancelRemoteOptimisticSendsForDataOwnerBoundary();');
     expect(source).toContain('setDataOwnerGeneration(dataOwnerId, ownerGeneration);');
     expect(source).toContain('recentWorkdirsStore.setDataOwner(getDataOwnerGeneration());');
     expect(source).toContain('invalidateProvidersSnapshot();');
     expect(source).toContain(
-      'publishDataOwnerGeneration(state.dataOwnerId, state.ownerGeneration);',
+      '{ finalizeSessions: ownerBoundaryCommitted && !initialOwnerHydration },',
     );
+    expect(source).toContain('state.ownerBoundaryPending === true');
+    expect(source).toContain('const ownerBoundaryCommitted = ownerChanged || committedNullOwnerProjection;');
+    expect(source).toContain('if (ownerRollbackProjection) void reconcileSessionsAfterDataOwnerRollback();');
     expect(source).toContain(
       '// Invalidate in-flight remote sends before the confirmation dialog resolves.',
     );

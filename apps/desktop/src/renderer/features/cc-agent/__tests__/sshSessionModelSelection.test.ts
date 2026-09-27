@@ -62,6 +62,19 @@ describe('SSH native session model selection', () => {
     });
   });
 
+  it('uses the remote host default and its effort metadata when there is no explicit model choice', () => {
+    const hostDefault = model('host-default', { supportsFastMode: true });
+    expect(resolve([provider('openai', [hostDefault, model('other')], 'codex', true)], {
+      preferred: { providerId: 'openai' },
+    })).toMatchObject({
+      ok: true,
+      model: 'host-default',
+      providerId: 'openai',
+      effort: 'high',
+      fastMode: false,
+    });
+  });
+
   it('does not replace a missing or SSH-unroutable explicit model', () => {
     expect(resolve([provider('openai', [model('another-model')], 'codex', true)])).toEqual({
       ok: false,

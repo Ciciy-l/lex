@@ -11,10 +11,12 @@
  * (宁可让上层保留可重试的输入,不把未持久化误报成成功)。
  */
 
-import { eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+import type { InputDeliveryReceipt } from '@cindy/device-link';
 
-import { getDbClient } from './client/current';
-import { agentInputQueueSnapshots } from './schema';
+import { getDbClient, getCurrentDbClientSnapshot, type CurrentDbClientSnapshot } from './client/current';
+import { agentInputQueueSnapshots, messages } from './schema';
 import { createLogger } from '../logger';
 import {
   sanitizeQueuedMessageForPersistence,
@@ -31,6 +33,44 @@ const SNAPSHOT_COUNT_QUERY_BATCH_SIZE = 200;
 const _writeChains = new Map<string, Promise<void>>();
 /** 当前 session 最近一次写操作的真实结果(保留 reject 供 durable boundary 等待者观察)。 */
 const _latestWriteResults = new Map<string, Promise<void>>();
+const pendingCancellations = new Map<string, Set<string>>();
+const cancelledDeliveryIds = new Map<string, Set<string>>();
+
+function queueOwner(): CurrentDbClientSnapshot {
+  const owner = getCurrentDbClientSnapshot();
+  if (!owner) throw new Error('DbClient not ready');
+  return owner;
+}
+
+function assertQueueOwner(owner: CurrentDbClientSnapshot): void {
+  if (getCurrentDbClientSnapshot()?.clientEpoch !== owner.clientEpoch) {
+    throw new Error('DbClient not ready');
+  }
+}
+
+const queueKey = (owner: CurrentDbClientSnapshot, sessionId: string): string =>
+  owner.clientEpoch + ':' + sessionId;
+
+async function flushCancellations(owner: CurrentDbClientSnapshot, sessionId: string): Promise<void> {
+  const key = queueKey(owner, sessionId);
+  const intents = pendingCancellations.get(key);
+  if (!intents) return;
+  for (const clientId of intents) {
+    assertQueueOwner(owner);
+    const now = Date.now();
+    await owner.client.drizzle.insert(messages).values({
+      id: randomUUID(),
+      sessionId,
+      clientId,
+      role: 'message_tombstone',
+      content: 'null',
+      createdAt: now,
+      rewindAt: now,
+    }).onConflictDoNothing();
+    intents.delete(clientId);
+  }
+  if (!intents.size) pendingCancellations.delete(key);
+}
 
 /**
  * A queue snapshot that cannot fit in the durable row is not a successful
@@ -53,31 +93,42 @@ export class AgentInputQueueSnapshotTooLargeError extends Error {
   }
 }
 
-function chainWrite(sessionId: string, op: () => Promise<void>): Promise<void> {
-  const prev = _writeChains.get(sessionId) ?? Promise.resolve();
-  const opResult = prev.then(op);
+function chainWrite(
+  sessionId: string,
+  kind: 'snapshot' | 'cancellation',
+  op: (owner: CurrentDbClientSnapshot) => Promise<void>,
+): Promise<void> {
+  const owner = queueOwner();
+  const key = queueKey(owner, sessionId);
+  const prev = _writeChains.get(key) ?? Promise.resolve();
+  const opResult = prev.then(async () => {
+    assertQueueOwner(owner);
+    if (pendingCancellations.has(key)) await flushCancellations(owner, sessionId);
+    await op(owner);
+    assertQueueOwner(owner);
+  });
   // The operation promise is returned to the caller and may be intentionally
   // observed later through awaitAgentInputQueueSnapshotPersistence(). Attach a
   // no-op rejection observer now so a fire-and-forget caller cannot create an
   // unhandled-rejection warning while the durable waiter still sees the error.
   void opResult.catch(() => undefined);
   const chainNext = opResult.catch(() => undefined).finally(() => {
-    if (_writeChains.get(sessionId) === chainNext) _writeChains.delete(sessionId);
+    if (_writeChains.get(key) === chainNext) _writeChains.delete(key);
   });
   // Keep a settled failure visible to the next durable-boundary waiter until
   // a later successful write replaces it.  Treating a rejected write as
   // "nothing pending" would let attachment ownership advance past a snapshot
   // that never became crash-recoverable.
-  void opResult.then(
+  if (kind === 'snapshot') void opResult.then(
     () => {
-      if (_latestWriteResults.get(sessionId) === opResult) {
-        _latestWriteResults.delete(sessionId);
+      if (_latestWriteResults.get(key) === opResult) {
+        _latestWriteResults.delete(key);
       }
     },
     () => undefined,
   );
-  _writeChains.set(sessionId, chainNext);
-  _latestWriteResults.set(sessionId, opResult);
+  _writeChains.set(key, chainNext);
+  if (kind === 'snapshot') _latestWriteResults.set(key, opResult);
   return opResult;
 }
 
@@ -92,7 +143,7 @@ function chainWrite(sessionId: string, op: () => Promise<void>): Promise<void> {
  * with no pending write is already at the latest known durable boundary.
  */
 export function awaitAgentInputQueueSnapshotPersistence(sessionId: string): Promise<void> {
-  return _latestWriteResults.get(sessionId) ?? Promise.resolve();
+  return _latestWriteResults.get(queueKey(queueOwner(), sessionId)) ?? Promise.resolve();
 }
 
 function stripInlineBase64(items: AgentInputQueuedMessage[]): AgentInputQueuedMessage[] {
@@ -123,9 +174,9 @@ export function saveAgentInputQueueSnapshot(
   sessionId: string,
   items: AgentInputQueuedMessage[],
 ): Promise<void> {
-  return chainWrite(sessionId, async () => {
+  return chainWrite(sessionId, 'snapshot', async (owner) => {
     try {
-      const db = getDbClient().drizzle;
+      const db = owner.client.drizzle;
       if (items.length === 0) {
         await db
           .delete(agentInputQueueSnapshots)
@@ -164,6 +215,74 @@ export function saveAgentInputQueueSnapshot(
       });
       throw err;
     }
+  });
+}
+
+export function hasInputDeliveryCancellation(sessionId: string, clientId: string): boolean {
+  return cancelledDeliveryIds.get(queueKey(queueOwner(), sessionId))?.has(clientId) === true;
+}
+
+export async function saveCancelledInputDelivery(
+  sessionId: string,
+  clientId: string,
+): Promise<boolean> {
+  const owner = queueOwner();
+  const key = queueKey(owner, sessionId);
+  const intents = pendingCancellations.get(key) ?? new Set<string>();
+  intents.add(clientId);
+  pendingCancellations.set(key, intents);
+  const cancelled = cancelledDeliveryIds.get(key) ?? new Set<string>();
+  cancelled.add(clientId);
+  cancelledDeliveryIds.set(key, cancelled);
+  await chainWrite(sessionId, 'cancellation', async () => undefined);
+  const rows = await owner.client.drizzle
+    .select({ role: messages.role })
+    .from(messages)
+    .where(and(eq(messages.sessionId, sessionId), eq(messages.clientId, clientId)));
+  assertQueueOwner(owner);
+  if (!rows[0]) throw new Error('Input delivery cancellation unavailable');
+  return rows[0].role === 'message_tombstone';
+}
+
+export async function readInputDeliveryReceipts(
+  sessionId: string,
+  clientIds: string[],
+): Promise<InputDeliveryReceipt[]> {
+  const owner = queueOwner();
+  const key = queueKey(owner, sessionId);
+  if (pendingCancellations.has(key)) {
+    await chainWrite(sessionId, 'cancellation', async () => undefined);
+  }
+  await awaitAgentInputQueueSnapshotPersistence(sessionId);
+  assertQueueOwner(owner);
+  if (clientIds.length === 0) return [];
+  const snapshots = await owner.client.drizzle
+    .select({ payload: agentInputQueueSnapshots.payload })
+    .from(agentInputQueueSnapshots)
+    .where(eq(agentInputQueueSnapshots.sessionId, sessionId));
+  assertQueueOwner(owner);
+  let raw: unknown = [];
+  if (snapshots[0]) raw = JSON.parse(snapshots[0].payload);
+  if (!Array.isArray(raw)) throw new Error('Input delivery snapshot unavailable');
+  const pending = new Set(
+    raw.filter(isRestorableQueuedMessage).map((item) => item.clientId),
+  );
+  const rows = await owner.client.drizzle
+    .select({ clientId: messages.clientId, role: messages.role, rewindAt: messages.rewindAt })
+    .from(messages)
+    .where(and(eq(messages.sessionId, sessionId), inArray(messages.clientId, clientIds)));
+  assertQueueOwner(owner);
+  const persisted = new Map(rows.map((row) => [row.clientId, row]));
+  return clientIds.map((clientId) => {
+    const row = persisted.get(clientId);
+    return {
+      clientId,
+      state: row?.role === 'message_tombstone' || (row?.role === 'user' && row.rewindAt !== null)
+        ? 'removed'
+        : row?.role === 'user'
+          ? 'accepted'
+          : pending.has(clientId) ? 'pending' : 'unknown',
+    };
   });
 }
 

@@ -34,17 +34,16 @@ describe('mobile sending queue badge', () => {
 
   it('feeds the in-flight enqueue set into the pending bubbles', () => {
     const source = readSource(SCREEN);
+    const bridge = readSource('src/session/MobileOutboxBridge.tsx');
 
     expect(source).toContain('sendingClientIds: sendingQueueBadgeClientIds,');
-    // 直发路径与 outbox 交接路径各 mark 一次,各自在 finally 收掉。
-    expect(source.match(/markQueueItemSending\(queued\);/g)).toHaveLength(2);
-    // Both send entries reserve the user slot before publishing the optimistic
-    // queue (and before enqueue can deliver an assistant event).
-    expect(source.match(/markQueueItemSending\(queued\);\s+remoteSessionStore\.setInputProjectionOptimistically/g)).toHaveLength(2);
-    // Only enqueue reserves a slot; queue recovery must not infer a boundary
-    // from either current messages or a previous committed render.
+    // 直发路径同步预留；持久 outbox 通过 sender store 观测已持久化的发送记录。
+    expect(source.match(/markQueueItemSending\(queued\);/g)).toHaveLength(1);
+    expect(source.match(/markQueueItemSending\(queued\);\s+remoteSessionStore\.setInputProjectionOptimistically/g)).toHaveLength(1);
+    expect(source).toContain('observeDurableOutboxSending(mobileDurableOutbox');
+    expect(source).toContain('markQueueItemSending(record.prepared!);');
     expect(source.match(/appendOptimisticUserMessage\(/g)).toHaveLength(1);
-    expect(source.match(/clearQueueItemSending\(queued\.clientId\);/g)).toHaveLength(2);
+    expect(source.match(/clearQueueItemSending\(queued\.clientId\);/g)).toHaveLength(1);
     expect(source).toContain('} finally {\n        // 成功、对账认定已入队、回滚 throw 三条路径都算「不再在途」');
     // 新建会话乐观管线在跑时,首条消息同样是「已上屏未确认」。
     expect(source).toContain("creationTask?.status === 'running'");

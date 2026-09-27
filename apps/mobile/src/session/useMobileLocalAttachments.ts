@@ -18,6 +18,7 @@ import { useTranslation } from 'react-i18next';
 import { Platform } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
+import { retainComposerAttachmentFile } from './durableOutboxFiles';
 import * as ImagePicker from 'expo-image-picker';
 import { formatRemoteError } from '@/device-link/remoteStatus';
 import { canBrowsePhotoLibraryDirectly } from '@/session/photoLibraryPolicy';
@@ -91,6 +92,9 @@ async function deleteLocalUris(uris: readonly string[]): Promise<void> {
 }
 
 export interface UseMobileLocalAttachmentsResult {
+  beginOutboxAttachmentHandoff: () => Promise<ReturnType<MobileLocalAttachmentUploadController['beginHandoff']>>;
+  getUploadedSource: (id: string) => MobileLocalAttachmentUploadCandidate | undefined;
+  releaseUploadedSources: (ids: readonly string[]) => void;
   /** 上传中的附件(托盘渲染 pending 卡)。 */
   pendingUploads: readonly PendingLocalAttachmentUpload[];
   /**
@@ -186,6 +190,9 @@ export function useMobileLocalAttachments(
   // 回调经 ref 转发,controller 单例化的同时始终调到最新一次 render 的闭包。
   const optionsRef = useRef(options);
   optionsRef.current = options;
+  const uploadedSourcesRef = useRef(new Map<string, MobileLocalAttachmentUploadCandidate>());
+  const stagingUrisRef = useRef(new Set<string>());
+  const stagingOwnerRef = useRef(Date.now().toString() + '-' + Math.random().toString(36).slice(2));
   // scope-change discard 与普通 removeAll 不同：除了清当前队列，还要让旧 render
   // 持有的 picker / 粘贴 / 标注闭包永久过期。不能只比 sessionId：A → B → A 时
   // 最早 A 的超慢异步结果仍是同 id，必须靠单调 generation 区分两次进入。
@@ -268,8 +275,8 @@ export function useMobileLocalAttachments(
       else assertMobileDocumentSize(size);
     },
     upload: (candidate, fileUri, opts) => uploadMobileAttachmentFromFile(candidate, fileUri, opts),
-    discard: (attachment) => discardMobileUploadedAttachment(attachment, {
-      getToken: () => optionsRef.current.getAccessToken(),
+    discard: (attachment, token) => discardMobileUploadedAttachment(attachment, {
+      getToken: () => token === undefined ? optionsRef.current.getAccessToken() : Promise.resolve(token),
     }),
     onPendingChange: setPendingUploads,
     onUploaded: async (attachment, candidate, uploadedUri, localId, localUris, isActive) => {
@@ -308,6 +315,23 @@ export function useMobileLocalAttachments(
         for (const uri of localUris) pastedImageLocalUrisRef.current.add(uri);
       }
       if (!isActive()) return;
+      const stageUri = await retainComposerAttachmentFile(stagingOwnerRef.current, attachment.id, uploadedUri, attachment.size);
+      stagingUrisRef.current.add(stageUri);
+      if (!isActive()) {
+        await FileSystem.deleteAsync(stageUri, { idempotent: true });
+        stagingUrisRef.current.delete(stageUri);
+        return;
+      }
+      uploadedSourcesRef.current.set(attachment.id, {
+        ...candidate,
+        uri: stageUri,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+        resolve: undefined,
+        skipPreprocess: true,
+        cleanupLocalUris: undefined,
+      });
       optionsRef.current.onUploaded(attachment, deliveredCandidate, localId);
       if (candidate.cleanupLocalUris) {
         // 只有持久缩略图已经接管 composer / sent-message 预览后才删源文件；
@@ -373,7 +397,10 @@ export function useMobileLocalAttachments(
 
   useEffect(() => () => {
     controller.dispose();
-    const pastedUris = [...pastedImageLocalUrisRef.current];
+    const pastedUris = [...pastedImageLocalUrisRef.current].filter((uri) => !controller.isRetainingUri(uri));
+    void deleteLocalUris([...stagingUrisRef.current]);
+    stagingUrisRef.current.clear();
+    uploadedSourcesRef.current.clear();
     pastedImageLocalUrisRef.current.clear();
     if (pastedUris.length > 0) void deleteLocalUris(pastedUris);
     if (pastePlaceholderTimerRef.current) {
@@ -559,6 +586,25 @@ export function useMobileLocalAttachments(
   };
 
   return {
+    beginOutboxAttachmentHandoff: async () => {
+      for (;;) {
+        await controller.waitForDelivering();
+        try { return controller.beginHandoff(); }
+        catch (error) {
+          if (!(error instanceof Error) || error.message !== 'ATTACHMENT_DELIVERING') throw error;
+        }
+      }
+    },
+    getUploadedSource: (id) => uploadedSourcesRef.current.get(id),
+    releaseUploadedSources: (ids) => {
+      for (const id of ids) {
+        const source = uploadedSourcesRef.current.get(id);
+        if (!source) continue;
+        uploadedSourcesRef.current.delete(id);
+        stagingUrisRef.current.delete(source.uri);
+        void deleteLocalUris([source.uri]);
+      }
+    },
     pendingUploads,
     pastePlaceholderCount,
     beginPastePlaceholders,
