@@ -11,7 +11,7 @@ import { SimpleStackHeader, simpleScreenSafeAreaEdges } from '@/platform/chrome'
 import { goBackGuarded } from '@/utils/backGuard';
 import { useRouter } from 'expo-router';
 import { useTheme, useThemedStyles, type ThemeColors } from '@/theme';
-import { fontWeight, radius, spacing, typeScale } from '@/theme/tokens';
+import { fontWeight, lineHeight, radius, spacing, typeScale } from '@/theme/tokens';
 
 type Value = string | boolean;
 type Values = Record<string, Value>;
@@ -321,6 +321,6 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   optionSelected: { backgroundColor: colors.surfaceChip, borderColor: colors.borderStrong },
   optionText: { color: colors.textPrimary, fontSize: typeScale.footnote },
   markdown: { paddingHorizontal: spacing.xs },
-  note: { color: colors.textSecondary, fontSize: typeScale.footnote, lineHeight: typeScale.footnote * 1.5 },
+  note: { color: colors.textSecondary, fontSize: typeScale.footnote, lineHeight: lineHeight.caption },
   error: { color: colors.errorText, fontSize: typeScale.footnote },
 });

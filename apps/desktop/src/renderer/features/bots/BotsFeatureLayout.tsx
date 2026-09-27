@@ -5,6 +5,8 @@ import { useOwnTopNavScrollableRows } from '../feature-context';
 import { useRemoteBotSync } from './useRemoteBots';
 import { BotsSidebar } from './BotsSidebar';
 import { BotSettingsDrawer } from './BotSettingsDrawer';
+import { BotGroupSettingsDrawer } from './BotGroupSettingsDrawer';
+import { startBotGroupSync } from './botGroupStore';
 import { refreshBotProfiles } from './botStore';
 
 export function BotsFeatureLayout() {
@@ -23,6 +25,8 @@ export function BotsFeatureLayout() {
       unsubscribeLifecycle();
     };
   }, []);
+  // 群聊列表(侧栏分组与群设置共用)跟随 main 的 onBotGroupChanged 推送刷新。
+  useEffect(() => startBotGroupSync(), []);
   const shellContext = useOutletContext<{
     sidebarWidth?: number;
     rightSidebarCollapsed?: boolean;
@@ -44,6 +48,7 @@ export function BotsFeatureLayout() {
       <BotsSidebar />
       <Outlet context={shellContext} />
       <BotSettingsDrawer />
+      <BotGroupSettingsDrawer />
     </>
   );
 }

@@ -17,6 +17,7 @@ import { getDbClient, tryGetDbClient } from '../client/current';
 import type {
   BotsReparentDelegationsResult,
   BotsReplaceCanonicalSessionResult,
+  BotGroupsCreateLaneResult,
 } from '../client/tx/types.js';
 import {
   botDelegations,
@@ -86,7 +87,8 @@ import { createMessage } from './messages.js';
 import { BOT_DELEGATION_CLIENT_ID } from '../../../shared/botCollaboration.js';
 
 import { generateBotCreationDraft, readBotCreationDraft, generateBotCreationAvatar } from '../../maker-ipc/botCreationDraft.js';
-import { botInvitationProgress } from '../../../shared/botInvitation.js';
+import { botInvitationProgress, type BotInvitationProgress } from '../../../shared/botInvitation.js';
+import { botGroupLaneRouteKey } from '../../../shared/botGroupChat.js';
 import { queueBotInvitation as enqueueBotInvitation } from '../../maker-ipc/botInvitation.js';
 import { getMakerIfReady, validateBotCapabilityAdditions } from '../../maker-host/index.js';
 import type { BotCapabilityUpdate } from '../../maker-ipc/botCapabilityService.js';
@@ -253,6 +255,110 @@ export async function createBotCanonicalSession(
   return result;
 }
 
+export type EnsureBotGroupLaneResult =
+  | { ok: true; sessionId: string; created: boolean }
+  | { ok: false; errorCode: 'MEMBER_UNAVAILABLE' | 'NO_MODEL'; message: string };
+
+/**
+ * The Bot's hidden lane for one group chat (docs/product-rules/bot-group-chat.md).
+ * Same Profile, Home workspace and model chain as the canonical Chat; never a
+ * second canonical Session and never visible in the task list.
+ */
+export async function ensureBotGroupLaneSession(input: {
+  botId: string;
+  groupId: string;
+  title: string;
+}): Promise<EnsureBotGroupLaneResult> {
+  const owner = captureBotOperationOwner();
+  const client = getDbClient();
+  const db = client.drizzle;
+  const routeKey = botGroupLaneRouteKey(input.groupId);
+  const [existing] = await db
+    .select({ sessionId: botSessionLinks.sessionId })
+    .from(botSessionLinks)
+    .innerJoin(sessions, eq(sessions.id, botSessionLinks.sessionId))
+    .where(and(
+      eq(botSessionLinks.botId, input.botId),
+      eq(botSessionLinks.role, 'group'),
+      eq(botSessionLinks.routeKey, routeKey),
+      isNull(botSessionLinks.archivedAt),
+      eq(sessions.source, 'bot'),
+      eq(sessions.status, 'active'),
+    ))
+    .limit(1);
+  if (existing) return { ok: true, sessionId: existing.sessionId, created: false };
+  const [profile] = await db.select().from(botProfiles).where(eq(botProfiles.id, input.botId)).limit(1);
+  if (!profile || profile.status !== 'active') {
+    return { ok: false, errorCode: 'MEMBER_UNAVAILABLE', message: '伙伴当前不可用' };
+  }
+  const [profileVersion] = await db
+    .select()
+    .from(botProfileVersions)
+    .where(and(
+      eq(botProfileVersions.botId, input.botId),
+      eq(botProfileVersions.version, profile.currentVersion),
+    ))
+    .limit(1);
+  if (!profileVersion) return { ok: false, errorCode: 'MEMBER_UNAVAILABLE', message: '伙伴资料版本不存在' };
+  const config = parseJson(profileVersion.capabilitiesJson);
+  const primaryRoute = (await readEffectiveBotModelChain(config))[0] ?? null;
+  if (!primaryRoute) return { ok: false, errorCode: 'NO_MODEL', message: '伙伴还没有可用模型' };
+  const workspaceKind = 'dialogue' as const;
+  const workingDir = await ensureBotWorkspaceDir(owner.userDataDir, input.botId, app.getPath('userData'));
+  const now = Date.now();
+  const sessionId = resolveBusinessSessionId(undefined);
+  const routeFields = botSessionRouteFields(config, primaryRoute);
+  const row = {
+    ...sessionCreateToRow(
+      sessionId,
+      {
+        workspaceKind,
+        workingDir,
+        ...routeFields,
+        model: routeFields.model ?? undefined,
+        remoteHostId: undefined,
+        source: 'bot',
+      },
+      now,
+    ),
+    title: input.title,
+  };
+  const gitSafety = readGitSafetySettings();
+  await ensureProjectGitInitialized({
+    workingDir,
+    workspaceKind,
+    remoteHostId: null,
+    sessionId,
+    autoSnapshotEnabled: gitSafety.autoSnapshotEnabled,
+    source: 'local-db:bots:create-group-lane',
+  });
+  owner.assertCurrent();
+  const result = await client.tx<BotGroupsCreateLaneResult>('bots.createGroupLane', {
+    botId: input.botId,
+    groupId: input.groupId,
+    routeKey,
+    session: {
+      id: row.id,
+      title: row.title,
+      workingDir: row.workingDir ?? null,
+      workspaceKind: row.workspaceKind,
+      model: row.model ?? undefined,
+      effort: row.effort,
+      fastMode: row.fastMode,
+      permissionMode: row.permissionMode,
+      agentKind: row.agentKind,
+      remoteHostId: null,
+      providerId: row.providerId ?? null,
+      extraDirs: row.extraDirs,
+      source: row.source,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    },
+  });
+  owner.assertCurrent();
+  return { ok: true, sessionId: result.sessionId, created: result.created };
+}
+
 /**
  * Canonical identity is owned by bot_session_links(role=canonical). The
  * bot_profiles.canonical_session_id column is retained only as a compatibility
@@ -391,6 +497,38 @@ function defaultBotModelForConfig(config: Record<string, unknown>): string | nul
 
 function botSessionPermissionMode(config: Record<string, unknown>): 'ask' | 'auto' | 'bypassPermissions' {
   return config.permissions === 'trusted' ? 'bypassPermissions' : config.permissions === 'auto' ? 'auto' : 'ask';
+}
+
+type BotPrimaryRoute = Awaited<ReturnType<typeof readEffectiveBotModelChain>>[number];
+
+/** Session runtime fields every Bot-owned Chat (canonical or group lane) starts from. */
+function botSessionRouteFields(config: Record<string, unknown>, primaryRoute: BotPrimaryRoute | null) {
+  return {
+    model:
+      primaryRoute?.model ??
+      (typeof config.model === 'string'
+        ? config.model.trim()
+        : defaultBotModelForConfig(config)),
+    providerId:
+      primaryRoute?.providerId ??
+      (typeof config.providerId === 'string' && config.providerId.trim()
+        ? config.providerId.trim()
+        : config.providerId === null
+          ? null
+          : botSessionAgentKind(primaryRoute ?? config) === 'pi'
+            ? NEW_BOT_DEFAULT_PI_PROVIDER
+            : undefined),
+    effort:
+      primaryRoute?.effort ||
+      (typeof config.effort === 'string' && config.effort.trim()
+        ? config.effort.trim()
+        : botSessionAgentKind(primaryRoute ?? config) === 'pi'
+          ? NEW_BOT_DEFAULT_PI_EFFORT
+          : undefined),
+    fastMode: primaryRoute?.fastMode ?? config.fastMode === true,
+    agentKind: botSessionAgentKind(primaryRoute ?? config),
+    permissionMode: botSessionPermissionMode(config),
+  };
 }
 
 function readText(value: unknown, field: string, max = MAX_TEXT, required = false): string {
@@ -716,7 +854,13 @@ async function readProfile(
           id: row.id,
           title: row.title,
           kind:
-            link.role === 'canonical' ? 'chat' : link.role === 'delegation' ? 'worker' : 'history',
+            link.role === 'canonical'
+              ? 'chat'
+              : link.role === 'delegation'
+                ? 'worker'
+                : link.role === 'group'
+                  ? 'group'
+                  : 'history',
           updatedAt: row.updatedAt,
           status: row.status,
           role: link.role,
@@ -1597,10 +1741,11 @@ export function registerBotIpc(): void {
       .where(eq(botProfiles.id, botId))
       .limit(1);
     if (!profile) throwIpcError('NOT_FOUND', 'Bot 不存在');
+    // Group lanes only hold hidden group turns; the group chat itself is the user's record.
     const links = await db
       .select({ sessionId: botSessionLinks.sessionId })
       .from(botSessionLinks)
-      .where(eq(botSessionLinks.botId, botId));
+      .where(and(eq(botSessionLinks.botId, botId), ne(botSessionLinks.role, 'group')));
     return searchConversations(
       {
         query,
