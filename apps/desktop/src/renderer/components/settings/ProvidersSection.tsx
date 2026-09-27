@@ -2626,6 +2626,7 @@ export function ProvidersSection() {
               style={{ borderColor: 'var(--settings-theme-card-border)' }}
             >
               <button
+                id="settings-search-settings-providers-addProvider"
                 ref={addProviderButtonRef}
                 type="button"
                 onClick={() => setWizard({})}

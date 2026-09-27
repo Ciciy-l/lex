@@ -35,11 +35,12 @@
  * 颜色全部走主题 token; 状态徽章沿用「个人」栏的 --settings-badge-* 语义色。
  */
 
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Check, ChevronDown, Plus, Trash2 } from 'lucide-react';
 
 import { Switch } from '@/components/ui/switch';
+import { useSettingsSearchNavigation } from './SettingsSearchNavigation';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -452,6 +453,7 @@ export function workspaceRowsToMap(
 
 export function HookConnectionsSection() {
   const { t } = useTranslation();
+  const { entry, activation } = useSettingsSearchNavigation();
   const [hook, setHook] = useState<SlackHookView | null>(null);
   /** 工作目录行的本地编辑态(别名输入中不被状态推送打断, blur 时提交)。 */
   const [rows, setRows] = useState<Array<{ alias: string; dir: string }>>([]);
@@ -462,7 +464,13 @@ export function HookConnectionsSection() {
    * 全收起 —— 收起行自带状态徽章与绑定摘要。打开渠道开关时自动展开对应卡,
    * 让授权进度与兜底动作(复制链接 / 安装引导)立即可见。
    */
-  const [expandedCard, setExpandedCard] = useState<CindyImCard | null>(null);
+  const targetCard = (['slack', 'telegram', 'x'] as const).find(
+    (card) => entry?.targetId === 'cindy-im-' + card,
+  ) ?? null;
+  const [expandedCard, setExpandedCard] = useState<CindyImCard | null>(targetCard);
+  useLayoutEffect(() => {
+    if (targetCard) setExpandedCard(targetCard);
+  }, [activation, targetCard]);
   const [slackAuthActionPending, setSlackAuthActionPending] = useState(false);
   const slackAuthActionInFlightRef = useRef(false);
   const toggleCard = (card: CindyImCard) =>

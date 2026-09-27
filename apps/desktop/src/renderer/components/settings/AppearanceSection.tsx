@@ -512,6 +512,7 @@ export function AppearanceSection() {
       >
         {/* Appearance mode */}
         <p
+          id="settings-search-settings-appearance-modeLabel"
           className="text-13 font-medium text-[var(--settings-section-sublabel)]"
           style={{ letterSpacing: '0.12px' }}
         >
@@ -569,6 +570,7 @@ export function AppearanceSection() {
           />
         </div>
 
+        <div id="settings-search-settings-appearance-themeLabel">
         <FamilyDropdown
           label={t('settings.appearance.themeLabel')}
           ariaLabel={t('settings.appearance.themeAriaLabel')}
@@ -577,9 +579,11 @@ export function AppearanceSection() {
           onSelect={setFamily}
           getLabel={getFamilyLabel}
         />
+        </div>
 
         <div className="flex flex-col gap-2 pt-1">
           <p
+            id="settings-search-settings-appearance-localThemes-title"
             className="text-13 font-medium text-[var(--settings-section-sublabel)]"
             style={{ letterSpacing: '0.12px' }}
           >
@@ -631,6 +635,7 @@ export function AppearanceSection() {
           'border border-[var(--settings-theme-card-border)]',
         )}
       >
+        <div id="settings-search-settings-appearance-font-uiFamily-label">
         <FontFamilyPicker
           label={t('settings.appearance.font.uiFamily.label')}
           description={t('settings.appearance.font.uiFamily.description')}
@@ -642,6 +647,7 @@ export function AppearanceSection() {
           onChange={setUiFamily}
           onReset={resetUiFamily}
         />
+        </div>
 
         <div className="h-px bg-[var(--settings-input-border)]" />
 
@@ -649,6 +655,7 @@ export function AppearanceSection() {
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p
+                id="settings-search-settings-appearance-font-uiSize-label"
                 className="text-13 font-medium text-[var(--settings-section-sublabel)]"
                 style={{ letterSpacing: '0.12px' }}
               >
@@ -715,6 +722,7 @@ export function AppearanceSection() {
 
         <div className="h-px bg-[var(--settings-input-border)]" />
 
+        <div id="settings-search-settings-appearance-font-codeFamily-label">
         <FontFamilyPicker
           label={t('settings.appearance.font.codeFamily.label')}
           description={t('settings.appearance.font.codeFamily.description')}
@@ -727,6 +735,7 @@ export function AppearanceSection() {
           onChange={setCodeFamily}
           onReset={resetCodeFamily}
         />
+        </div>
 
         <div className="h-px bg-[var(--settings-input-border)]" />
 
@@ -734,6 +743,7 @@ export function AppearanceSection() {
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p
+                id="settings-search-settings-appearance-font-codeSize-label"
                 className="text-13 font-medium text-[var(--settings-section-sublabel)]"
                 style={{ letterSpacing: '0.12px' }}
               >
@@ -811,6 +821,7 @@ export function AppearanceSection() {
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 flex-col gap-1">
             <p
+              id="settings-search-settings-appearance-sidebarCardMode-label"
               className="text-13 font-medium text-[var(--settings-section-sublabel)]"
               style={{ letterSpacing: '0.12px' }}
             >
@@ -836,6 +847,7 @@ export function AppearanceSection() {
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 flex-col gap-1">
             <p
+              id="settings-search-settings-appearance-sidebarMainListMode-label"
               className="text-13 font-medium text-[var(--settings-section-sublabel)]"
               style={{ letterSpacing: '0.12px' }}
             >
@@ -860,6 +872,7 @@ export function AppearanceSection() {
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 flex-col gap-1">
             <p
+              id="settings-search-settings-appearance-ghostPanelRestore-label"
               className="text-13 font-medium text-[var(--settings-section-sublabel)]"
               style={{ letterSpacing: '0.12px' }}
             >
