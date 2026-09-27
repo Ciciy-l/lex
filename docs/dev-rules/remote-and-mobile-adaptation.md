@@ -134,6 +134,16 @@ socket 固定限速。最大逻辑消息仍可在排空后原子发送，不改�
 实现见 `packages/device-link/src/client.ts` 的 `sendInvokeResult`，多控制端回归见同包
 `src/__tests__/client.test.ts`。
 
+Mobile 的 provider 目录失效先按设备合并，再进入同一 peer 恢复调度；relay、前后台、
+设备 presence、撤权或关闭状态不允许时只保留必要的调度状态，不直接发送目录请求。
+前台和单设备恢复唤醒尚未完成的读取；断线、撤权、永久关闭、设备移除及 Provider 销毁
+取消对应待办，取消后的 wake 不复活旧读取。session 重连先恢复正在查看的任务，再补首页
+列表；某设备本轮遇到瞬时传输失败即停下，把下一次尝试交回该 peer 的退避，不排入后续快照。
+
+远程桌面输入代表用户刚看到的画面，不按持久任务补发。未发送输入超过两秒即丢弃并释放
+控制；重新取得控制会隔离旧批次与迟到 ACK。实时数据通道拥塞时不得改走 relay 超车，
+发送失败也不重放同一批；旧控制批次的迟到完成不能 ACK 或释放新批次。
+
 ## 模块通过 Remote Resource 接入移动端
 
 面向移动端新增独立产品入口时，默认通过 `@cindy/device-link` 的 Remote Resource

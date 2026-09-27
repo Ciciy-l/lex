@@ -130,6 +130,7 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
   const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
   const cursorImage = find("cursor-image");
   let pending = [],
+    pendingSince = 0,
     sending = false,
     cx = 0.5,
     cy = 0.5,
@@ -493,6 +494,7 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
   }
   function queue(event) {
     if (!control) return;
+    if (!pending.length) pendingSince = performance.now();
     if (config.desktop && (event.kind === "button" || event.kind === "scroll"))
       flushClipboardModifier();
     // Remote visibility can remain hidden after synthetic mouse movement. Wake
@@ -520,7 +522,21 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
     }
   }
   function flush() {
-    if (!pending.length || sending) return;
+    if (!pending.length) return;
+    // Input is an intent about the picture the user saw, not durable work.
+    // Never replay old clicks/typing after a stalled ACK or data channel drains.
+    if (performance.now() - pendingSince >= 2000) {
+      pending = [];
+      control = false;
+      release();
+      updateMouseButtons();
+      post({ type: "inputOverflow" });
+      return;
+    }
+    if (sending) return;
+    // Do not route around a congested live data channel: the relay could
+    // overtake its already-buffered key/button events and reorder input.
+    if (pc?.connectionState === "connected" && dc?.readyState === "open" && dc.bufferedAmount >= 16384) return;
     const events = pending.splice(0, 64),
       sequence = ++seq;
     if (
@@ -529,7 +545,14 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
       dc.readyState === "open" &&
       dc.bufferedAmount < 16384
     ) {
-      dc.send(JSON.stringify({ sequence, events }));
+      try {
+        dc.send(JSON.stringify({ sequence, events }));
+      } catch {
+        pending = [];
+        control = false;
+        release();
+        post({ type: "inputOverflow" });
+      }
     } else {
       sending = true;
       post({ type: "input", sequence, events });
@@ -1677,6 +1700,10 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
       }
       case "control":
         release();
+        // A new control intent abandons the previous relay batch. Advance the
+        // existing sequence fence so a late old ACK cannot unlock a new batch.
+        seq++;
+        sending = false;
         control = message.enabled;
         if (!control) showKeyboard(false);
         pending = [];

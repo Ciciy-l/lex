@@ -63,6 +63,7 @@ const transport = vi.hoisted(() => {
     statusChanged: (status: DeviceLinkStatus) => void = () => {};
     presenceChanged: (snapshot: PresenceSnapshot) => void = () => {};
     peerReset: Parameters<DeviceLinkClient['onPeerTransportReset']>[0] = () => {};
+    frame: Parameters<DeviceLinkClient['onFrame']>[0] = () => {};
     openLink = vi.fn<(deviceId: string) => Promise<LinkAcceptPayload>>();
     invoke = vi.fn(async () => ({ ok: true, result: 'history page' }));
     start = vi.fn();
@@ -78,7 +79,7 @@ const transport = vi.hoisted(() => {
     onPresenceChanged(listener: Client['presenceChanged']) { this.presenceChanged = listener; return () => {}; }
     onPeerTransportReset(listener: Client['peerReset']) { this.peerReset = listener; return () => {}; }
     onConnectionIssue = () => () => {};
-    onFrame = () => () => {};
+    onFrame(listener: Client['frame']) { this.frame = listener; return () => {}; }
     onReliableFrameBeforeLink = () => () => {};
   }
   return { Client, clients: [] as Client[] };
@@ -118,6 +119,33 @@ beforeEach(async () => {
   await act(async () => render());
 });
 afterEach(async () => { await act(async () => root.unmount()); });
+
+describe('pending catalog recovery', () => {
+  it.each(['foreground', 'peer response'] as const)('wakes a blocked invalidation on %s before its long retry timer expires', async (recovery) => {
+    vi.useFakeTimers();
+    try {
+      const client = transport.clients[0];
+      client.openLink.mockResolvedValue(accepted(supported));
+      await act(async () => {
+        if (recovery === 'foreground') {
+          networkEvents.state = 'background'; networkEvents.app('background');
+        } else unresponsiveDevicesStore.markUnresponsive('host');
+        client.frame({ v: 1, kind: 'push', src: 'host', dst: 'mobile',
+          payload: { channel: 'maker:provider:changed', payload: {} } } as Parameters<typeof client.frame>[0]);
+        await vi.advanceTimersByTimeAsync(60000);
+      });
+      expect(client.invoke).not.toHaveBeenCalled();
+      await act(async () => {
+        if (recovery === 'foreground') {
+          networkEvents.state = 'active'; networkEvents.app('active');
+        } else unresponsiveDevicesStore.clearUnresponsive('host');
+        await vi.advanceTimersByTimeAsync(50);
+      });
+      expect(client.invoke).toHaveBeenCalledWith('host', expect.objectContaining({ channel: 'maker:provider:list' }), undefined);
+      expect(client.invoke).toHaveBeenCalledWith('host', expect.objectContaining({ channel: 'maker:get-capabilities' }), undefined);
+    } finally { unresponsiveDevicesStore.clearAll(); vi.useRealTimers(); }
+  });
+});
 
 describe('pending probe reply recovery', () => {
   afterEach(() => {

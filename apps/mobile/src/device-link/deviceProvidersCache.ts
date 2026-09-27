@@ -238,6 +238,17 @@ export function evictDeviceProviders(deviceId: string): void {
 }
 
 /**
+ * Invalidate a provider push without notifying mounted hooks to start parallel
+ * reads. The serialized catalog refresher owns the replacement request.
+ */
+export function invalidateDeviceProvidersForRefresh(deviceId: string): void {
+  cache.delete(deviceId);
+  inflight.delete(deviceId);
+  freshInflight.delete(deviceId);
+  deviceGen.set(deviceId, (deviceGen.get(deviceId) ?? 0) + 1);
+}
+
+/**
  * 读某设备当前的缓存代际(evict 一次 +1)。useDeviceProviders 的 ready 判定用:
  * 置位 readyFor 时记录当时代际,之后代际不一致 = 目录已被驱逐、正在重拉(或重拉失败),
  * ready 必须为 false —— 否则旧 payload 会在重拉窗口期继续被当作就绪目录(codex review P2)。
