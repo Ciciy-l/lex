@@ -1953,7 +1953,7 @@ describe('new session worktree wiring (source locks)', () => {
       recovery,
     );
     const sessionId = newSource.indexOf(
-      'const sessionId = createNewSessionId();',
+      'const sessionId = recovering?.item.sessionId ?? createNewSessionId();',
       pendingGuard,
     );
     const worktreeCreate = newSource.indexOf(
@@ -2189,8 +2189,8 @@ describe('submit guard catalog wiring (source locks)', () => {
       slice.split(failOpen).length - 1;
     expect(failOpenCount(createSlice)).toBe(2); // 哨兵 + 耗尽
     expect(failOpenCount(goalSlice)).toBe(5); // 哨兵 + prepare 耗尽 + started 后耗尽 + 鉴权降级 re-fence + 设备切换 re-fence
-    // create:apply 后零 await 直至 handoff(同一 turn)。Standards P1:endpoint 必须
-    // 在 apply 之后(endpoint 前移会让空 slice 假通过零 await)。
+    // create:本地 durable first-message 文件/ledger 落定后才启动 createSession 管线；
+    // final catalog apply 后不得再发起 provider/catalog 刷新。
     const createApply = createSlice.indexOf('applyGuard(guardResult);');
     const createHandoff = createSlice.indexOf('startNewSessionCreation({');
     expect(createApply).toBeGreaterThan(-1);
@@ -2198,7 +2198,9 @@ describe('submit guard catalog wiring (source locks)', () => {
     const createBetween = createSlice
       .slice(createApply, createHandoff)
       .replace(/\/\/[^\n]*/g, '');
-    expect(createBetween).not.toMatch(/await /);
+    expect(createBetween).not.toMatch(/maker.listProviders|fetchDeviceProvidersFresh|resolveSubmitGuardCatalog/);
+    expect(createBetween).toContain('await mobileDurableOutbox.activate');
+    expect(createBetween).toContain('await mobileDurableOutbox.add');
     // goal:最后核对后零 await 至 createSession(apply 前的 downgrade 分支是切换时早退,不在此段)
     const goalApply = goalSlice.indexOf('applyGuard(guardResult);');
     const goalCreate = goalSlice.indexOf('const created = await maker.createSession');
