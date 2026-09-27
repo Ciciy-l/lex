@@ -217,6 +217,13 @@
   "settings": {
     "title": "Settings",
     "back": "Back",
+    "search": {
+      "placeholder": "Search settings or keywords…",
+      "ariaLabel": "Search settings",
+      "resultsLabel": "Settings search results",
+      "clear": "Clear search",
+      "noResults": "No matching settings"
+    },
     "defaults": {
       "customizedBadge": "Custom",
       "restore": "Restore default",

@@ -137,6 +137,7 @@ export function AboutSection() {
 
       {/* Info Card */}
       <div
+        id="settings-search-settings-about-appVersionLabel"
         className={cn(
           'flex flex-col rounded-xl',
           'bg-[var(--settings-theme-card-bg)]',
@@ -401,7 +402,7 @@ export function AutoUpdateToggleRow() {
     return (
       <div className="flex flex-col gap-1.5 px-[18px] py-4">
         <div className="flex min-w-0 flex-col gap-1">
-          <span className="text-13 text-[var(--settings-section-sublabel)]">
+          <span id="settings-search-settings-about-autoUpdateLabel" className="text-13 text-[var(--settings-section-sublabel)]">
             {t('settings.about.autoUpdateLabel')}
           </span>
           <p className="text-12 leading-[1.4] text-[var(--settings-section-sublabel)] opacity-70">
@@ -446,7 +447,7 @@ export function AutoUpdateToggleRow() {
     <div className="flex flex-col gap-1.5 px-[18px] py-4">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
-          <span className="text-13 text-[var(--settings-section-sublabel)]">
+          <span id="settings-search-settings-about-autoUpdateLabel" className="text-13 text-[var(--settings-section-sublabel)]">
             {t('settings.about.autoUpdateLabel')}
           </span>
           <p className="text-12 leading-[1.4] text-[var(--settings-section-sublabel)] opacity-70">
@@ -522,7 +523,7 @@ function AnalyticsToggleRow() {
     <div className="flex flex-col gap-1.5 px-[18px] py-4">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
-          <span className="text-13 text-[var(--settings-section-sublabel)]">
+          <span id="settings-search-settings-about-analyticsLabel" className="text-13 text-[var(--settings-section-sublabel)]">
             {t('settings.about.analyticsLabel')}
           </span>
           <p className="text-12 leading-[1.4] text-[var(--settings-section-sublabel)] opacity-70">
@@ -571,7 +572,7 @@ function DebugLogToggleRow() {
   return (
     <div className="flex flex-col gap-1.5 px-[18px] py-4">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-13 text-[var(--settings-section-sublabel)]">
+        <span id="settings-search-settings-about-debugLogLabel" className="text-13 text-[var(--settings-section-sublabel)]">
           {t('settings.about.debugLogLabel')}
         </span>
         <Switch
@@ -601,7 +602,7 @@ function OpenLogsRow() {
 
   return (
     <div className="flex items-center justify-between gap-3 px-[18px] py-4">
-      <span className="text-13 text-[var(--settings-section-sublabel)]">
+      <span id="settings-search-settings-about-logsDirLabel" className="text-13 text-[var(--settings-section-sublabel)]">
         {t('settings.about.logsDirLabel')}
       </span>
       <button
@@ -676,7 +677,7 @@ function CrashAutoUploadToggleRow() {
     <div className="flex flex-col gap-1.5 px-[18px] py-4">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
-          <span className="text-13 text-[var(--settings-section-sublabel)]">
+          <span id="settings-search-settings-about-logUpload-crashAutoLabel" className="text-13 text-[var(--settings-section-sublabel)]">
             {t('settings.about.logUpload.crashAutoLabel')}
           </span>
           <p className="text-12 leading-[1.4] text-[var(--settings-section-sublabel)] opacity-70">
@@ -758,7 +759,7 @@ function UploadLogsRow() {
           文字块中间;与标签对齐才和同页其它「标签 + 按钮」行(日志目录 / 服务条款)读起来一致。 */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
-          <span className="text-13 text-[var(--settings-section-sublabel)]">
+          <span id="settings-search-settings-about-logUpload-uploadLabel" className="text-13 text-[var(--settings-section-sublabel)]">
             {t('settings.about.logUpload.uploadLabel')}
           </span>
           <p className="text-12 leading-[1.4] text-[var(--settings-section-sublabel)] opacity-70">

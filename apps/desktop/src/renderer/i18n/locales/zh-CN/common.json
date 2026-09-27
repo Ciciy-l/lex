@@ -217,6 +217,13 @@
   "settings": {
     "title": "设置",
     "back": "返回",
+    "search": {
+      "placeholder": "搜索设置或关键词…",
+      "ariaLabel": "搜索设置",
+      "resultsLabel": "设置搜索结果",
+      "clear": "清除搜索",
+      "noResults": "没有找到匹配的设置"
+    },
     "defaults": {
       "customizedBadge": "已自定义",
       "restore": "恢复默认",

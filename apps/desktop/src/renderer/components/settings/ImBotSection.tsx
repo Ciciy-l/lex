@@ -19,10 +19,11 @@
  */
 
 import { Lightbulb } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useAuth } from '@/contexts/AuthContext';
+import { useSettingsSearchNavigation } from './SettingsSearchNavigation';
 import { DiscordBotSection } from './DiscordBotSection';
 import { DingTalkBotSection } from './DingTalkBotSection';
 import { FeishuBotSection } from './FeishuBotSection';
@@ -40,6 +41,8 @@ import {
 
 /** 「IM 机器人」页面分区 id(与 ?imGroup= 参数共用)。 */
 export type ImBotSettingsGroup = 'cindy' | 'personal';
+
+type PersonalBotChannel = 'wechat' | 'wecom' | 'feishu' | 'discord' | 'telegram' | 'dingtalk';
 
 /** 分区标题的 i18n key。 */
 const IM_BOT_GROUP_LABEL_KEY: Record<ImBotSettingsGroup, string> = {
@@ -71,16 +74,22 @@ function PersonalGroupContent({
   showDiscord,
   showLark,
   showTelegram,
+  targetChannel,
+  activation,
 }: {
   showDiscord: boolean;
   showLark: boolean;
   showTelegram: boolean;
+  targetChannel: PersonalBotChannel | null;
+  activation: number;
 }) {
-  const [expandedChannel, setExpandedChannel] = useState<
-    'wechat' | 'wecom' | 'feishu' | 'discord' | 'telegram' | 'dingtalk' | null
-  >(null);
+  const [expandedChannel, setExpandedChannel] = useState<PersonalBotChannel | null>(targetChannel);
 
-  const toggle = (channel: 'wechat' | 'wecom' | 'feishu' | 'discord' | 'telegram' | 'dingtalk') => {
+  useLayoutEffect(() => {
+    if (targetChannel) setExpandedChannel(targetChannel);
+  }, [activation, targetChannel]);
+
+  const toggle = (channel: PersonalBotChannel) => {
     setExpandedChannel((current) => (current === channel ? null : channel));
   };
 
@@ -116,6 +125,7 @@ function PersonalGroupContent({
 export function ImBotSection({ targetGroup }: { targetGroup: ImBotSettingsGroup | null }) {
   const { t } = useTranslation();
   const { mode, dataOwnerId, serviceRealm, user } = useAuth();
+  const { entry, activation } = useSettingsSearchNavigation();
   const identity: ImBotIdentity = {
     region: serviceRealm,
     mode,
@@ -125,6 +135,9 @@ export function ImBotSection({ targetGroup }: { targetGroup: ImBotSettingsGroup 
   const discordVisible = showDiscordBot(identity);
   const larkVisible = showLarkBot(identity);
   const telegramVisible = showTelegramBot(identity);
+  const targetChannel = (
+    ['wechat', 'wecom', 'feishu', 'discord', 'telegram', 'dingtalk'] as const
+  ).find((channel) => entry?.targetId === 'personal-im-' + channel) ?? null;
   const cindySectionRef = useRef<HTMLElement | null>(null);
   const personalSectionRef = useRef<HTMLElement | null>(null);
   const effectiveTargetGroup = targetGroup
@@ -194,6 +207,8 @@ export function ImBotSection({ targetGroup }: { targetGroup: ImBotSettingsGroup 
             showDiscord={discordVisible}
             showLark={larkVisible}
             showTelegram={telegramVisible}
+            targetChannel={targetChannel}
+            activation={activation}
           />
         </section>
       </div>
