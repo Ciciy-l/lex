@@ -29,6 +29,7 @@ export interface OrcaWorkerPanelProps {
    * 避免冷启动 / relay 重连竞态把远端上限误当成本机可调。
    */
   deviceId?: string | null;
+  remoteHostId?: string | null;
   /** SSH 远程 Lead:worker 创建面板的模型清单按 SSH 口径过滤(见 CreateWorkerPopover.sshRemote)。 */
   sshRemote?: boolean;
   /** tab active && RSB 未折叠 && 窗口可见。挂载但不可见时不能清红点 / ack 消息。 */
@@ -55,6 +56,7 @@ function sameVisibleSessionPayload(
 export function OrcaWorkerPanel({
   leadSessionId,
   deviceId,
+  remoteHostId,
   sshRemote,
   viewVisible,
   chatRealtime = true,
@@ -211,6 +213,7 @@ export function OrcaWorkerPanel({
         onCreate={handleCreateWorker}
         deviceId={deviceId ?? undefined}
         sshRemote={sshRemote}
+        remoteHostId={remoteHostId}
       />
     </div>
   );

@@ -1,14 +1,9 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CatalogModel, ProviderView } from '@cindy/model-providers';
 import { StartRemoteSessionPanel } from '@/components/settings/RemoteHostDetail';
-import {
-  beginProvidersRefresh,
-  commitProvidersSnapshot,
-  invalidateProvidersSnapshot,
-} from '@/lib/providersSnapshotStore';
 import { setDataOwnerGeneration } from '@/contexts/dataOwnerGeneration';
 
 const mocks = vi.hoisted(() => ({
@@ -19,7 +14,9 @@ const mocks = vi.hoisted(() => ({
   confirm: vi.fn(),
   stat: vi.fn(),
   mkdir: vi.fn(),
-  prefs: vi.fn(),
+  listModels: vi.fn(),
+  statusChanged: null as null | ((snapshot: { config: { id: string }; status: string }) => void),
+  stopStatus: vi.fn(),
 }));
 
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
@@ -29,15 +26,6 @@ vi.mock('@/lib/sessionService', () => ({ create: mocks.create }));
 vi.mock('@/components/ui/confirm-dialog-provider', () => ({
   useConfirmDialog: () => ({ confirm: mocks.confirm }),
 }));
-vi.mock('@/state/newMakerDraft', () => ({
-  getDraft: () => ({ lastByVendor: { codex: mocks.prefs() } }),
-  getFastModeForModel: () => false,
-}));
-vi.mock('@/state/providerModelMemory', () => ({
-  getProviderModelEffort: () => undefined,
-  getProviderModelFast: () => undefined,
-}));
-
 function model(id: string): CatalogModel {
   return {
     id,
@@ -66,26 +54,16 @@ function nativeProvider(models: CatalogModel[]): ProviderView {
   };
 }
 
-function publish(models: CatalogModel[]) {
-  commitProvidersSnapshot(beginProvidersRefresh(), {
-    dataOwnerId: 'owner',
-    ownerGeneration: 1,
-    providerOrder: ['openai'],
-    providers: [nativeProvider(models)],
-  });
-}
-
-function start() {
-  render(<StartRemoteSessionPanel hostId="remote-host" />);
+function start(hostId = 'remote-host') {
+  const view = render(<StartRemoteSessionPanel hostId={hostId} />);
   fireEvent.click(screen.getByRole('button', { name: 'settings.remote.startSession.start' }));
+  return view;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   setDataOwnerGeneration('owner', 1);
-  invalidateProvidersSnapshot();
-  publish([model('selected-model'), model('other-valid-model')]);
-  mocks.prefs.mockReturnValue({ model: 'selected-model', providerId: null, effort: 'low' });
+  mocks.listModels.mockResolvedValue([nativeProvider([model('host-default'), model('other-valid-model')])]);
   mocks.create.mockResolvedValue({ id: 'created-session' });
   mocks.stat.mockResolvedValue({ kind: 'dir', resolvedPath: '/remote/project' });
   mocks.mkdir.mockResolvedValue({ resolvedPath: '/remote/project' });
@@ -94,6 +72,11 @@ beforeEach(() => {
     configurable: true,
     value: {
       remoteSsh: {
+        listCodexModels: mocks.listModels,
+        onStatusChanged: (callback: typeof mocks.statusChanged) => {
+          mocks.statusChanged = callback;
+          return mocks.stopStatus;
+        },
         statRemotePath: mocks.stat,
         mkdirPRemote: mocks.mkdir,
       },
@@ -107,7 +90,7 @@ afterEach(() => {
 });
 
 describe('settings SSH Codex creation race', () => {
-  it('stops creation when the valid draft model changes during remote path validation', async () => {
+  it('stops creation when the host default route changes during remote path validation', async () => {
     let releaseStat!: (result: { kind: 'dir'; resolvedPath: string }) => void;
     const delayedStat = new Promise<{ kind: 'dir'; resolvedPath: string }>((resolve) => {
       releaseStat = resolve;
@@ -117,11 +100,9 @@ describe('settings SSH Codex creation race', () => {
     start();
     await waitFor(() => expect(mocks.stat).toHaveBeenCalledTimes(1));
 
-    mocks.prefs.mockReturnValue({
-      model: 'other-valid-model',
-      providerId: 'openai',
-      effort: 'high',
-    });
+    mocks.listModels.mockResolvedValueOnce([
+      nativeProvider([model('other-valid-model'), model('host-default')]),
+    ]);
     releaseStat({ kind: 'dir', resolvedPath: '/remote/project' });
 
     await waitFor(() =>
@@ -140,12 +121,64 @@ describe('settings SSH Codex creation race', () => {
       workingDir: '/remote/project',
       workspaceKind: 'project',
       permissionMode: 'auto',
-      model: 'selected-model',
+      model: 'host-default',
       providerId: 'openai',
-      effort: 'low',
+      effort: 'high',
       fastMode: false,
       remoteHostId: 'remote-host',
     });
+  });
+
+  it('does not use controller preferences when the remote model list fails', async () => {
+    mocks.listModels.mockRejectedValueOnce(new Error('private remote failure'));
+
+    start();
+
+    await waitFor(() =>
+      expect(mocks.error).toHaveBeenCalledWith('settings.remote.startSession.modelCatalogFailed'),
+    );
+    expect(mocks.stat).not.toHaveBeenCalled();
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
+  it('stops after an account generation change during remote path validation', async () => {
+    let releaseStat!: (result: { kind: 'dir'; resolvedPath: string }) => void;
+    mocks.stat.mockReturnValueOnce(new Promise((resolve) => { releaseStat = resolve; }));
+
+    start();
+    await waitFor(() => expect(mocks.stat).toHaveBeenCalledOnce());
+    setDataOwnerGeneration('owner-b', 2);
+    releaseStat({ kind: 'dir', resolvedPath: '/remote/project' });
+
+    await waitFor(() => expect(mocks.create).not.toHaveBeenCalled());
+    expect(mocks.navigate).not.toHaveBeenCalled();
+  });
+
+  it('stops after the selected host changes during remote path validation', async () => {
+    let releaseStat!: (result: { kind: 'dir'; resolvedPath: string }) => void;
+    mocks.stat.mockReturnValueOnce(new Promise((resolve) => { releaseStat = resolve; }));
+
+    const view = start('remote-host');
+    await waitFor(() => expect(mocks.stat).toHaveBeenCalledOnce());
+    view.rerender(<StartRemoteSessionPanel hostId="other-host" />);
+    releaseStat({ kind: 'dir', resolvedPath: '/remote/project' });
+
+    await waitFor(() => expect(mocks.create).not.toHaveBeenCalled());
+    expect(mocks.navigate).not.toHaveBeenCalled();
+  });
+
+  it('stops after the SSH host disconnects during remote path validation', async () => {
+    let releaseStat!: (result: { kind: 'dir'; resolvedPath: string }) => void;
+    mocks.stat.mockReturnValueOnce(new Promise((resolve) => { releaseStat = resolve; }));
+
+    start();
+    await waitFor(() => expect(mocks.stat).toHaveBeenCalledOnce());
+    act(() => mocks.statusChanged?.({ config: { id: 'remote-host' }, status: 'disconnected' }));
+    releaseStat({ kind: 'dir', resolvedPath: '/remote/project' });
+
+    await waitFor(() => expect(mocks.create).not.toHaveBeenCalled());
+    expect(mocks.navigate).not.toHaveBeenCalled();
+    expect(mocks.stopStatus).toHaveBeenCalledOnce();
   });
 
   it('does not create a session when the confirmed missing directory becomes a file', async () => {

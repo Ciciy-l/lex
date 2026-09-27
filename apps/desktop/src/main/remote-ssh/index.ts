@@ -32,7 +32,8 @@ import {
   readSshConfigDetailed,
   removeManagedHost,
   updateManagedHostFields,
-  installRemoteAgent,
+  installRemoteAgent as installRemoteAgentPackage,
+  PINNED_CODEX_RELEASE_VERSION,
   PINNED_OMP_VERSION,
   PINNED_PI_VERSION,
   probeRemoteAgent,
@@ -125,17 +126,39 @@ import {
   removeRemoteMcpForwardPref,
 } from './codex-remote-mcp.js';
 import { ensureDaemonRunning } from '../maker-host/cc-manager-client.js';
+import { getRemoteCodexLiveTurnChecker } from '../maker-host/remote-session-start-ensure.js';
 import {
   getMakerIfReady,
+  listSshCodexProviders,
   runManagedRemoteOmpQuickTest,
   softCloseCcSessionsForHost,
 } from '../maker-host/index.js';
+import { readSshCodexModelList } from './codex-model-list.js';
+import { prepareRemoteAgentInstall, withRemoteCodexInstallation } from './codex-install-lifecycle.js';
 import { withRehydrateCloseSuppressed } from '../maker-host/rehydrateCloseSuppression.js';
 import { RemoteHostHydrationQueue } from './hydration-queue.js';
 
 export { redactSshSensitiveText };
 
 const log = createLogger('remote-ssh/ipc');
+
+async function installRemoteAgent(
+  host: RemoteHost,
+  agentKind: RemoteAgentKind,
+  onProgress: (event: InstallProgressEvent) => void,
+): Promise<InstallResult> {
+  const install = async (): Promise<InstallResult> => {
+    await prepareRemoteAgentInstall(agentKind, {
+      isInstalled: async () => (await probeRemoteAgent(host, 'codex')).installed,
+      hasLiveTurn: () => getRemoteCodexLiveTurnChecker()?.(host.id) ?? true,
+      stopDaemon: () => killRemoteCodexDaemon(host),
+    });
+    return installRemoteAgentPackage(host, agentKind, onProgress);
+  };
+  return agentKind === 'codex'
+    ? withRemoteCodexInstallation(host.id, install)
+    : install();
+}
 /**
  * pi-manager daemon 的空闲回收阈值(与 packages/maker-pi-manager 的
  * PiSessionRegistry 默认 idleTimeoutMs 对齐, 1_800_000 = 30min)。
@@ -159,6 +182,7 @@ export const REMOTE_SSH_INVOKE = {
   RUN_AGENT_ONE_SHOT: 'maker:remote-ssh:run-agent-one-shot',
   // Phase B+ — Codex credential sync
   CHECK_CODEX_AUTH: 'maker:remote-ssh:check-codex-auth',
+  LIST_CODEX_MODELS: 'maker:remote-ssh:list-codex-models',
   SYNC_CODEX_AUTH: 'maker:remote-ssh:sync-codex-auth',
   // Phase B++ — SSH key setup wizard
   LIST_LOCAL_KEYS: 'maker:remote-ssh:list-local-keys',
@@ -392,6 +416,9 @@ function isAgentCacheHit(
   if (agentKind === 'omp') {
     return cached.get(agentKind)?.installedVersion === `omp/${PINNED_OMP_VERSION}`;
   }
+  if (agentKind === 'codex') {
+    return cached.get(agentKind)?.installedVersion === PINNED_CODEX_RELEASE_VERSION;
+  }
   if (agentKind !== 'pi') return true;
   const v = cached.get(agentKind)?.installedVersion ?? null;
   return v !== null && (v === PINNED_PI_VERSION || v === `v${PINNED_PI_VERSION}`);
@@ -402,8 +429,8 @@ function isAgentCacheHit(
  * 把"binary not installed"这类问题从 daemon 启动失败的 stack trace 转成 renderer
  * 能正确 toast 的 SSH_AGENT_NOT_INSTALLED IPC error, 引导用户去 Settings 安装。
  *
- * Claude Code、Pi 与 OMP 首次检查走完整 probeRemoteAgent；其中 Pi 与 OMP
- * 还要求与当前固定 pin 一致。Codex 仍只做存在性检查。命中内存 cache 后续
+ * Claude Code、Codex、Pi 与 OMP 首次检查走完整 probeRemoteAgent；Codex / Pi / OMP
+ * 还要求与当前固定 pin 一致。命中内存 cache 后续
  * 都是 ~0ms。
  */
 export async function ensureRemoteAgentInstalled(
@@ -419,20 +446,14 @@ export async function ensureRemoteAgentInstalled(
     throwIpcError('SSH_NOT_CONNECTED', `ssh host ${hostId} not connected`);
   }
 
-  let ok: boolean;
+  let ok = false;
   let installedVersion: string | null = null;
-  if (agentKind === 'claude-code' || agentKind === 'pi' || agentKind === 'omp') {
+  if (agentKind === 'claude-code' || agentKind === 'codex' || agentKind === 'pi' || agentKind === 'omp') {
     const probe = await probeRemoteAgent(host, agentKind);
     ok = probe.installed
+      && (agentKind !== 'codex' || probe.installedVersion === PINNED_CODEX_RELEASE_VERSION)
       && (agentKind !== 'omp' || probe.installedVersion === `omp/${PINNED_OMP_VERSION}`);
     installedVersion = probe.installedVersion;
-  } else {
-    const binPath = '$HOME/.xdt-server/v1/codex-home/packages/standalone/current/codex';
-    const result = await host.exec(`test -x ${binPath} && echo OK || echo MISSING`, {
-      timeoutMs: 5_000,
-      label: 'check-agent-installed',
-    });
-    ok = result.stdout.trim() === 'OK';
   }
   if (!ok) {
     const friendlyKind = agentKind === 'codex'
@@ -1752,6 +1773,11 @@ export function registerRemoteSshIpc(): void {
   });
 
   // ── Codex auth sync (Phase B+) ───────────────────────────────────────────
+
+  ipcMain.handle(REMOTE_SSH_INVOKE.LIST_CODEX_MODELS, async (event, args: unknown) => {
+    assertTrustedAppRendererEvent(event);
+    return readSshCodexModelList(args, listSshCodexProviders);
+  });
 
   ipcMain.handle(REMOTE_SSH_INVOKE.CHECK_CODEX_AUTH, async (_event, args: unknown) => {
     const obj = requireObject(args);

@@ -325,6 +325,7 @@ import type { SelectableVendor } from '@/lib/agentVendors';
 import { useAvailableAgents } from '@/hooks/useAvailableAgents';
 import { useConnectedSource } from '@/hooks/useConnectedSource';
 import { useProviders } from '@/hooks/useProviders';
+import { useSshCodexProviders, type SshCodexProvidersState } from '@/hooks/useSshCodexProviders';
 import { useDeviceProviders } from '@/hooks/useDeviceProviders';
 import { chatEligibleSourcesForModel, effectiveSourceIdForModel } from '@cindy/model-providers';
 import {
@@ -510,6 +511,8 @@ interface ChatInputProps {
    * desktop + agent-builtin 命令、关闭 @ 文件面板。null/undefined = 本地。
    */
   remoteHostId?: string | null;
+  /** Shared SSH Codex host catalog from a containing draft route, when already loaded there. */
+  sshCodexProvidersOverride?: SshCodexProvidersState;
   /**
    * device-link 远程会话所属被控端 id(与 SSH remoteHostId 互斥)。非空 = 控制端在远程操控,
    * 此时模型 / fast / effort / 权限档 等**能力全部从被控端读**(经隧道),控制端"忘掉"本地能力。
@@ -1083,6 +1086,7 @@ export function ChatInput({
   sessionOrcaRole,
   initialWorkingDir,
   remoteHostId,
+  sshCodexProvidersOverride,
   deviceLinkDeviceId: _deviceLinkDeviceId,
   modelMemoryOverride,
   initialModel,
@@ -1907,9 +1911,20 @@ export function ChatInput({
   }, [activeModel, agentKind, runtimeEffective, composerSelection.pending, composerSelection.display.agentKind, ccCaps.capabilities, codexCaps.capabilities, piCaps.capabilities, ompCaps.capabilities]);
   // 供应商连接态。effectiveSourceId / sendProviderId / dispatchSend 预检用它。device-link 远程会话 /
   // 草稿用**被控端**供应商目录(隧道),否则用本机(两 hook 都无条件调用,按 deviceLinkDeviceId 取)。
+  const sshCodexHostId = currentModelAgentKind === 'codex' && !deviceLinkDeviceId
+    ? remoteHostId
+    : null;
+  const localSshCodexProviders = useSshCodexProviders(
+    sshCodexProvidersOverride ? null : sshCodexHostId,
+  );
+  const sshCodexProviders = sshCodexProvidersOverride ?? localSshCodexProviders;
   const localProviders = useProviders();
   const remoteProviders = useDeviceProviders(deviceLinkDeviceId ?? undefined);
-  const providers = deviceLinkDeviceId ? remoteProviders.providers : localProviders.providers;
+  const providers = deviceLinkDeviceId
+    ? remoteProviders.providers
+    : sshCodexHostId
+      ? sshCodexProviders.providers
+      : localProviders.providers;
   const sendProviders = filterChatBridgedCodexProviders(
     providers,
     currentModelAgentKind ?? 'codex',
@@ -1923,18 +1938,22 @@ export function ChatInput({
   // 本机沿用 useConnectedSource 的加载态；device-link 必须同时等待被控端 capabilities 与
   // provider 目录，且真实读取失败时 fail closed。只有结构化 unsupported 才允许旧端回退。
   const { loading: localProvidersLoading } = useConnectedSource(currentModelAgentKind, activeModel);
-  const remoteModelListStatus = resolveRemoteModelListStatus({
-    deviceId: deviceLinkDeviceId ?? undefined,
-    agentKind: currentModelAgentKind,
-    cc: ccCaps,
-    codex: codexCaps,
-    pi: piCaps,
-    omp: ompCaps,
-    providers: remoteProviders,
-  });
+  const remoteModelListStatus = sshCodexHostId
+    ? sshCodexProviders.status
+    : resolveRemoteModelListStatus({
+        deviceId: deviceLinkDeviceId ?? undefined,
+        agentKind: currentModelAgentKind,
+        cc: ccCaps,
+        codex: codexCaps,
+        pi: piCaps,
+        omp: ompCaps,
+        providers: remoteProviders,
+      });
   const providersLoading = deviceLinkDeviceId
     ? remoteModelListStatus === 'loading'
-    : localProvidersLoading;
+    : sshCodexHostId
+      ? sshCodexProviders.status === 'loading'
+      : localProvidersLoading;
   // 统一模型选择器(model-selector-unified M5 / M6)在 composer 上的开关 —— **能力级**那一半
   // 下方还会核对任务引擎是否已确认；不再叠加本地样式偏好。
   //
@@ -1961,9 +1980,15 @@ export function ChatInput({
   // 已有 device-link 任务在断链时仍有 pinned deviceId + renderer outbox 可接住发送，
   // 不能因为被控端 provider 目录暂时拉不到就禁用 composer。远程草稿没有既有 session
   // 可以排队，仍与本地任务一样保留来源门禁。
-  const enforceConnectedSourceGate = !sessionId || !deviceLinkDeviceId;
+  const preserveSshCodexRoute = !!sessionId && !!sshCodexHostId && !!activeModel &&
+    activeModel === (runtimeEffective?.model ?? initialModel) &&
+    (activeProviderId ?? null) ===
+      (runtimeEffective ? runtimeEffective.providerId ?? null : initialProviderId ?? null) &&
+    (!activeProviderId || activeProviderId === 'openai');
+  const enforceConnectedSourceGate = (!sessionId || !deviceLinkDeviceId) && !preserveSshCodexRoute;
   const remoteModelListBlocked =
-    !!deviceLinkDeviceId && enforceConnectedSourceGate && remoteModelListStatus !== 'ready';
+    (!!deviceLinkDeviceId && enforceConnectedSourceGate && remoteModelListStatus !== 'ready') ||
+    (!!sshCodexHostId && !preserveSshCodexRoute && sshCodexProviders.status !== 'ready');
   // chatEligibleSourcesForModel(不是裸 sourcesForModel):非聊天模型即便"存在于某个
   // 已连接来源"也不算有可发送来源(issue #882 第 3 点,2026-07 review)——否则 Send
   // 会对着一个 image/embedding 端点放行,而不是显示这里的"去连接"空态。已建会话
@@ -1995,6 +2020,7 @@ export function ChatInput({
   const selectedSourceDisconnected =
     !!sessionId &&
     !deviceLinkDeviceId &&
+    !preserveSshCodexRoute &&
     isSelectedSourceDisconnected({
       providers,
       agent: currentModelAgentKind,
@@ -2029,7 +2055,7 @@ export function ChatInput({
   const modelMemory = useMemo<ModelMemoryAccessors | undefined>(() => {
     // device-link 远程草稿 / 会话:用纯显示镜像 override(读被控端全局预设、写穿被控端)。
     if (modelMemoryOverride) return modelMemoryOverride;
-    if (deviceLinkDeviceId) return undefined;
+    if (deviceLinkDeviceId || sshCodexHostId) return undefined;
     return {
       getEffort: getProviderModelEffort,
       setEffort: setProviderModelEffort,
@@ -2043,12 +2069,13 @@ export function ChatInput({
       clearEffort: clearProviderModelEffort,
       clearFast: clearProviderModelFast,
     };
-  }, [deviceLinkDeviceId, modelMemoryOverride]);
+  }, [deviceLinkDeviceId, modelMemoryOverride, sshCodexHostId]);
 
   // 把「用户在当前来源下选定的 (model, effort)」记进模型全局预设,供其它非活跃行和之后的
   // 模型切换恢复。agent / 来源缺失(未知模型 / 0 已连接来源)/ device-link 无镜像时静默跳过。
   const rememberProviderChoice = useCallback(
     (modelId: string, eff: Effort) => {
+      if (sshCodexHostId) return;
       const kind = currentModelAgentKind;
       if (kind && effectiveSourceId && modelId) {
         if (modelMemory?.setChoice) {
@@ -2058,7 +2085,7 @@ export function ChatInput({
         }
       }
     },
-    [currentModelAgentKind, effectiveSourceId, modelMemory, deviceLinkDeviceId],
+    [currentModelAgentKind, effectiveSourceId, modelMemory, deviceLinkDeviceId, sshCodexHostId],
   );
 
   const folderOpen = folderPickerOpen ?? internalFolderOpen;
@@ -5266,7 +5293,10 @@ export function ChatInput({
         // device-link 模型清单未结算或真实读取失败时禁止发送。模型选择器会同步显示
         // loading / error；这里兜住快捷键、语音等间接派发入口，避免旧快照继续路由。
         if (remoteModelListBlocked) {
-          if (remoteModelListStatus === 'error') {
+          if (
+            remoteModelListStatus === 'error' ||
+            (sshCodexHostId && sshCodexProviders.status === 'error')
+          ) {
             toast.error(t('newChat.modelSelector.remoteLoadFailed'));
           } else {
             toast.warning(t('newChat.modelSelector.remoteLoading'));
@@ -5963,16 +5993,18 @@ export function ChatInput({
   // (异步 sanitize 完成前) 本实例切换也不丢记忆。
   const getRememberedEffort = useCallback(
     (modelId: string): Effort | undefined => {
+      if (sshCodexHostId) return undefined;
       return rememberedEffortByModel?.[modelId] ?? effortByModelRef.current.get(modelId);
     },
-    [rememberedEffortByModel],
+    [rememberedEffortByModel, sshCodexHostId],
   );
   const setRememberedEffort = useCallback(
     (modelId: string, effort: Effort): void => {
+      if (sshCodexHostId) return;
       effortByModelRef.current.set(modelId, effort);
       onRememberedEffortChange?.(modelId, effort);
     },
-    [onRememberedEffortChange],
+    [onRememberedEffortChange, sshCodexHostId],
   );
 
   // 解析某模型的 effort 档 / 默认档 —— **本地显式来源按 (provider, agent, model) 精确查目录**。
@@ -6029,7 +6061,7 @@ export function ChatInput({
       resolveFastSupported({
         deviceId: deviceLinkDeviceId ?? undefined,
         deviceProviders: remoteProviders.providers,
-        localProviders: localProviders.providers,
+        localProviders: sshCodexHostId ? sshCodexProviders.providers : localProviders.providers,
         capabilities:
           currentModelAgentKind === 'codex'
             ? codexCaps.capabilities
@@ -6044,6 +6076,8 @@ export function ChatInput({
       }),
     [
       deviceLinkDeviceId,
+      sshCodexHostId,
+      sshCodexProviders.providers,
       remoteProviders.providers,
       localProviders.providers,
       currentModelAgentKind,
@@ -6081,6 +6115,7 @@ export function ChatInput({
     ) => {
       const agentKind = opts.agentKind ?? currentModelAgentKind;
       if (!sessionId || !agentKind || !modelId) return;
+      if (sshCodexHostId && agentKind === 'codex') return;
       const activeProviderId =
         opts.activeProviderId !== undefined ? opts.activeProviderId : selectedProviderId;
       const memoryProviderId =
@@ -6134,7 +6169,7 @@ export function ChatInput({
           log.warn('session draft model preference sync failed:', err);
         });
     },
-    [sessionId, deviceLinkDeviceId, currentModelAgentKind, selectedProviderId, effectiveSourceId],
+    [sessionId, deviceLinkDeviceId, currentModelAgentKind, selectedProviderId, effectiveSourceId, sshCodexHostId],
   );
 
   const persistFastModeChange = useCallback(
@@ -8741,6 +8776,8 @@ export function ChatInput({
                     : useNarrowToolbar ? 'min-w-0 shrink' : undefined}
                 >
                   {!sessionModelLoading && <ModelSelector
+                    providersOverride={sshCodexHostId ? sshCodexProviders.providers : undefined}
+                    providersOverrideState={sshCodexHostId ? sshCodexProviders : undefined}
                     // 选中态一律是会话 / 草稿持有的 **wire model id**(sessions.model 或
                     // lastByVendor.model)。面板行的归一化 id 只活在面板内部 —— 从这里递进去
                     // 会让"当前选中的那一行"在合并行上错位,也会把归一化 id 顺着
@@ -8759,7 +8796,7 @@ export function ChatInput({
                             effectiveSourceId,
                             activeModel,
                           ) ??
-                          (!deviceLinkDeviceId
+                          (!deviceLinkDeviceId && !sshCodexHostId
                             ? getProviderModelThinking(
                                 currentModelAgentKind,
                                 effectiveSourceId,
@@ -8778,7 +8815,7 @@ export function ChatInput({
                             activeModel,
                             enabled,
                           );
-                        } else if (!deviceLinkDeviceId) {
+                        } else if (!deviceLinkDeviceId && !sshCodexHostId) {
                           setProviderModelThinking(
                             currentModelAgentKind,
                             effectiveSourceId,

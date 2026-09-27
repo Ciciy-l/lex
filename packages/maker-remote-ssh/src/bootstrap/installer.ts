@@ -26,6 +26,7 @@ import {
   NODE_DIST_BASE_URL_DEFAULT,
   PROBE_BUNDLED_NODE_SH,
   REMOTE_SERVER_SCHEMA_VERSION,
+  VERIFY_CODEX_LAYOUT_SH,
 } from './bootstrap-script.js';
 
 export { REMOTE_SERVER_SCHEMA_VERSION };
@@ -397,6 +398,7 @@ set -u
 AGENT_KIND="${'$'}{1:-}"
 SERVER_VER="${'$'}{2:-v1}"
 CLAUDE_RELEASE="${'$'}{3:-}"
+CODEX_RELEASE="${'$'}{4:-}"
 case "$AGENT_KIND" in
   claude-code) BIN_NAME="claude" ;;
   codex)       BIN_NAME="codex"  ;;
@@ -414,6 +416,7 @@ if [ "$AGENT_KIND" = "codex" ]; then
 else
   BIN_PATH="$INSTALL_DIR/node_modules/.bin/$BIN_NAME"
 fi
+${VERIFY_CODEX_LAYOUT_SH}
 printf 'INSTALL_DIR %s\n' "$INSTALL_DIR"
 ${PROBE_BUNDLED_NODE_SH}
 # PATH-prepend bundled node so the agent shim's \`env node\` resolves to it
@@ -421,9 +424,13 @@ ${PROBE_BUNDLED_NODE_SH}
 # silently fail and we'll report NOT_INSTALLED, which is the right outcome.
 export PATH="$NODE_DIR/bin:$PATH"
 if [ -f "$SENTINEL" ] && { [ -x "$BIN_PATH" ] || [ -f "$BIN_PATH" ]; }; then
+  if [ "$AGENT_KIND" = "codex" ] && ! verify_codex_layout; then
+    printf 'NOT_INSTALLED\n'; exit 0
+  fi
   V="$("$BIN_PATH" --version 2>/dev/null | head -1 || true)"
   if [ -n "$V" ]; then
-    if [ "$AGENT_KIND" != "claude-code" ] || [ "${'$'}{V%% *}" = "$CLAUDE_RELEASE" ]; then
+    if { [ "$AGENT_KIND" != "claude-code" ] || [ "${'$'}{V%% *}" = "$CLAUDE_RELEASE" ]; } &&
+       { [ "$AGENT_KIND" != "codex" ] || [ "${'$'}{V##* }" = "$CODEX_RELEASE" ]; }; then
       printf 'READY %s\n' "$V"
       exit 0
     fi
@@ -439,6 +446,7 @@ printf 'NOT_INSTALLED\n'; exit 0
     agentKind,
     REMOTE_SERVER_SCHEMA_VERSION,
     PINNED_CLAUDE_CODE_VERSION,
+    PINNED_CODEX_RELEASE_VERSION,
   ].map(shellQuoteArg).join(' ');
   const result = await host.exec(`bash -l -s -- ${args}`, {
     input: probeScript,
