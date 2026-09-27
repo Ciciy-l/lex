@@ -824,6 +824,8 @@ function installFakeHost(
     // 直接委托 ensureStarted (超时语义由 host.test.ts 的真 transport 覆盖)。
     ensureStartedWithTimeout: vi.fn(async (_timeoutMs: number, _label: string) => ensureStarted()),
     request,
+    activeSubscriptions: 0,
+    retire: vi.fn(async () => {}),
     subscribeThread,
     unsubscribeThread,
     hasThreadSubscription,
@@ -4023,6 +4025,93 @@ describe('CodexAgent.listCustomizations', () => {
 });
 
 describe('CodexAgent.refreshLocalModels', () => {
+  it('retires only the SSH Codex host explicitly restarted by the remote daemon path', async () => {
+    const agent = new CodexAgent(createDeps());
+    const host = installFakeHost(agent);
+    const otherHost = { getStatus: () => 'ready', retire: vi.fn(async () => {}) };
+    const hosts = (agent as unknown as { hosts: Map<string, unknown> }).hosts;
+    hosts.set('remote:builder', host);
+    hosts.set('remote:other-builder', otherHost);
+
+    await agent.disposeRemoteHostAfterRestart('builder');
+
+    expect(host.retire).toHaveBeenCalledOnce();
+    expect(otherHost.retire).not.toHaveBeenCalled();
+    expect(hosts.has('remote:builder')).toBe(false);
+    expect(hosts.get('remote:other-builder')).toBe(otherHost);
+    hosts.clear();
+    await agent.dispose();
+  });
+
+  it('refuses to retire an SSH Codex host while a session remains attached', async () => {
+    const agent = new CodexAgent(createDeps());
+    const host = installFakeHost(agent);
+    host.activeSubscriptions = 1;
+    (agent as unknown as { hosts: Map<string, unknown> }).hosts.set('remote:builder', host);
+
+    await expect(agent.disposeRemoteHostAfterRestart('builder')).rejects.toThrow('active Codex session');
+    expect(host.retire).not.toHaveBeenCalled();
+    (agent as unknown as { hosts: Map<string, unknown> }).hosts.clear();
+    await agent.dispose();
+  });
+
+  it('lists models from the requested SSH host without publishing them locally', async () => {
+    const published = vi.fn();
+    const agent = new CodexAgent(createDeps({}, { onCodexLocalModelsListed: published }));
+    const remoteModel = {
+      id: 'remote-model',
+      model: 'remote-model',
+      displayName: 'Remote model',
+      description: '',
+      hidden: false,
+      supportedReasoningEfforts: [],
+      defaultReasoningEffort: 'high' as const,
+      additionalSpeedTiers: [],
+      serviceTiers: [],
+      isDefault: true,
+    };
+    const host = installFakeHost(agent, (method) =>
+      method === Method.ModelList ? { data: [remoteModel], nextCursor: null } : undefined,
+    );
+    (agent as unknown as { hosts: Map<string, unknown> }).hosts.set('remote:builder', host);
+
+    await expect(agent.listRemoteModels('builder')).resolves.toEqual([remoteModel]);
+    const modelListCalls = host.request.mock.calls as unknown as Array<
+      [string, unknown, { timeoutMs: number }]
+    >;
+    const modelListCall = modelListCalls.find(([method]) => method === Method.ModelList);
+    expect(modelListCall?.[1]).toEqual({ cursor: null, limit: 100, includeHidden: false });
+    expect(modelListCall?.[2]?.timeoutMs).toBeGreaterThan(0);
+    expect(modelListCall?.[2]?.timeoutMs).toBeLessThanOrEqual(20_000);
+    expect(published).not.toHaveBeenCalled();
+    (agent as unknown as { hosts: Map<string, unknown> }).hosts.clear();
+    await agent.dispose();
+  });
+
+  it('discards a model snapshot when its SSH app-server host is replaced mid-read', async () => {
+    let startRead!: () => void;
+    let releaseRead!: () => void;
+    const started = new Promise<void>((resolve) => { startRead = resolve; });
+    const pendingPage = new Promise<void>((resolve) => { releaseRead = resolve; });
+    const agent = new CodexAgent(createDeps());
+    const host = installFakeHost(agent, async (method) => {
+      if (method !== Method.ModelList) return undefined;
+      startRead();
+      await pendingPage;
+      return { data: [], nextCursor: null };
+    });
+    const hosts = (agent as unknown as { hosts: Map<string, unknown> }).hosts;
+    hosts.set('remote:builder', host);
+    const request = agent.listRemoteModels('builder');
+    await started;
+    hosts.set('remote:builder', {});
+    releaseRead();
+
+    await expect(request).rejects.toThrow('connection changed');
+    hosts.clear();
+    await agent.dispose();
+  });
+
   it('uses an isolated OpenAI control-plane host without closing provider-oauth sessions', async () => {
     const onCodexLocalModelsListed = vi.fn().mockResolvedValue(undefined);
     const prepareCodexLocalCredentialModeSwitch = vi.fn(async () => {});

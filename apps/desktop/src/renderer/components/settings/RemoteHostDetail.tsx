@@ -13,7 +13,7 @@
  * that's Phase C (RemoteAgent as a BaseAgent subclass).
  */
 
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { CheckCircle2, AlertCircle, Play, Upload, Sparkles, Waypoints } from 'lucide-react';
@@ -27,14 +27,8 @@ import * as sessionService from '@/lib/sessionService';
 import { buildCodexSyncWarning } from '@/utils/codexAuthSync';
 import { remoteSshHostsStore } from '@/lib/remoteSshHostsStore';
 import {
-  getCachedProvidersSnapshot,
-  hasProvidersSnapshotLoadFailed,
-} from '@/lib/providersSnapshotStore';
-import { getDraft, getFastModeForModel } from '@/state/newMakerDraft';
-import { getProviderModelEffort, getProviderModelFast } from '@/state/providerModelMemory';
-import {
   isSameSshSessionModelSelection,
-  resolveSshSessionModelSelection,
+  loadSshSessionModelSelection,
   sshModelSelectionErrorKeys,
 } from '@/features/cc-agent/sshSessionModelSelection';
 import {
@@ -391,6 +385,8 @@ export function StartRemoteSessionPanel({ hostId }: StartRemoteSessionPanelProps
   const { confirm } = useConfirmDialog();
   const [workdir, setWorkdir] = useState<string>('~');
   const [busy, setBusy] = useState(false);
+  const currentHostId = useRef(hostId);
+  currentHostId.current = hostId;
 
   const handleStart = useCallback(async () => {
     if (busy) return;
@@ -400,28 +396,31 @@ export function StartRemoteSessionPanel({ hostId }: StartRemoteSessionPanelProps
       return;
     }
     setBusy(true);
+    let ownerIsCurrent = () => true;
+    let stopHostWatch: (() => void) | null = null;
     try {
       const owner = getDataOwnerGeneration();
-      const resolveSelection = () => {
-        const snapshot = getCachedProvidersSnapshot();
-        const prefs = getDraft().lastByVendor.codex;
-        return resolveSshSessionModelSelection({
-          providers: snapshot?.providers ?? [],
-          loading: !snapshot,
-          loadFailed: hasProvidersSnapshotLoadFailed(),
-          agentKind: 'codex',
-          preferred: { ...prefs, fastMode: getFastModeForModel(prefs.model) },
-          getPresetEffort: getProviderModelEffort,
-          getPresetFast: getProviderModelFast,
-        });
-      };
-      const initialSelection = resolveSelection();
+      let hostGenerationChanged = false;
+      stopHostWatch = window.electronAPI.remoteSsh.onStatusChanged((snapshot) => {
+        if (snapshot.config.id === hostId && snapshot.status !== 'ready') {
+          hostGenerationChanged = true;
+        }
+      });
+      ownerIsCurrent = () =>
+        isDataOwnerGenerationCurrent(owner) &&
+        currentHostId.current === hostId &&
+        !hostGenerationChanged;
+      const resolveSelection = () => loadSshSessionModelSelection(hostId);
+      const initialSelection = await resolveSelection();
+      if (!ownerIsCurrent()) return;
       if (!initialSelection.ok) {
         toast.error(t(sshModelSelectionErrorKeys[initialSelection.reason]));
         return;
       }
-      const ensureSelectionUnchanged = () => {
-        const current = resolveSelection();
+      const ensureSelectionUnchanged = async () => {
+        if (!ownerIsCurrent()) return false;
+        const current = await resolveSelection();
+        if (!ownerIsCurrent()) return false;
         if (!current.ok) {
           toast.error(t(sshModelSelectionErrorKeys[current.reason]));
           return false;
@@ -440,6 +439,7 @@ export function StartRemoteSessionPanel({ hostId }: StartRemoteSessionPanelProps
       // canonical workingDir below so the session metadata never carries an
       // unexpanded tilde (cleaner for codex agent + future browser inspect).
       const stat = await window.electronAPI.remoteSsh.statRemotePath(hostId, dir);
+      if (!ownerIsCurrent()) return;
       let resolvedPath = stat.resolvedPath;
       if (stat.kind === 'file') {
         toast.error(t('settings.remote.startSession.errorWorkdirIsFile', { path: resolvedPath }));
@@ -456,9 +456,10 @@ export function StartRemoteSessionPanel({ hostId }: StartRemoteSessionPanelProps
           cancelText: t('settings.remote.add.cancel'),
         });
         if (!ok) return;
-        if (!isDataOwnerGenerationCurrent(owner)) return;
-        if (!ensureSelectionUnchanged()) return;
+        if (!ownerIsCurrent()) return;
+        if (!(await ensureSelectionUnchanged())) return;
         const confirmedStat = await window.electronAPI.remoteSsh.statRemotePath(hostId, dir);
+        if (!ownerIsCurrent()) return;
         if (confirmedStat.resolvedPath !== resolvedPath) {
           toast.error(t('settings.remote.startSession.selectionChanged'));
           return;
@@ -468,8 +469,10 @@ export function StartRemoteSessionPanel({ hostId }: StartRemoteSessionPanelProps
           return;
         }
         if (confirmedStat.kind === 'missing') {
-          if (!ensureSelectionUnchanged()) return;
+          if (!(await ensureSelectionUnchanged())) return;
+          if (!ownerIsCurrent()) return;
           const mk = await window.electronAPI.remoteSsh.mkdirPRemote(hostId, dir);
+          if (!ownerIsCurrent()) return;
           if (mk.resolvedPath !== resolvedPath) {
             toast.error(t('settings.remote.startSession.selectionChanged'));
             return;
@@ -478,6 +481,7 @@ export function StartRemoteSessionPanel({ hostId }: StartRemoteSessionPanelProps
         }
       }
       const finalStat = await window.electronAPI.remoteSsh.statRemotePath(hostId, dir);
+      if (!ownerIsCurrent()) return;
       if (finalStat.resolvedPath !== resolvedPath) {
         toast.error(t('settings.remote.startSession.selectionChanged'));
         return;
@@ -490,8 +494,9 @@ export function StartRemoteSessionPanel({ hostId }: StartRemoteSessionPanelProps
         toast.error(t('settings.remote.startSession.selectionChanged'));
         return;
       }
-      if (!isDataOwnerGenerationCurrent(owner)) return;
-      const selection = resolveSelection();
+      if (!ownerIsCurrent()) return;
+      const selection = await resolveSelection();
+      if (!ownerIsCurrent()) return;
       if (!selection.ok) {
         toast.error(t(sshModelSelectionErrorKeys[selection.reason]));
         return;
@@ -517,13 +522,16 @@ export function StartRemoteSessionPanel({ hostId }: StartRemoteSessionPanelProps
         fastMode: selection.fastMode,
         remoteHostId: hostId,
       });
+      if (!isDataOwnerGenerationCurrent(owner) || currentHostId.current !== hostId) return;
       toast.success(t('settings.remote.startSession.created', { hostId }));
       navigate(`/cc-agent/${session.id}`);
     } catch (err) {
+      if (!ownerIsCurrent()) return;
       toast.error(
         t(mapIpcErrorToI18nKey(err, { fallback: 'settings.remote.startSession.createFailed' })),
       );
     } finally {
+      stopHostWatch?.();
       setBusy(false);
     }
   }, [hostId, workdir, navigate, t, confirm, busy]);

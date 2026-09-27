@@ -3973,6 +3973,7 @@ interface ElectronAPI {
     connect: (id: string) => Promise<{ host: RemoteHostSnapshot | null }>;
     disconnect: (id: string) => Promise<{ host: RemoteHostSnapshot | null }>;
     onStatusChanged: (cb: (snap: RemoteHostSnapshot) => void) => () => void;
+    listCodexModels: (id: string) => Promise<import('@cindy/model-providers').ProviderView[]>;
     // Phase B: agent-on-remote
     probeAgent: (id: string, kind: RemoteAgentKind) => Promise<{ probe: RemoteAgentProbe }>;
     installAgent: (
