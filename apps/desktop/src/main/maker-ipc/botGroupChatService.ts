@@ -128,6 +128,11 @@ export interface BotGroupChatServiceDeps {
     & Partial<Pick<BotGroupWorkDir, 'validate' | 'sameIdentity'>>;
   /** Existing local directory usable as a 项目文件夹 (same rules as new-task projects). */
   validateProjectDir?: (dir: string) => Promise<{ ok: true; dir: string } | { ok: false; message: string }>;
+  /**
+   * A 分工 step stopped for the user: finished (继续, or the whole plan is done) or not
+   * finished (重试). Phones are notified from here (bot-group-chat.md §8.3).
+   */
+  onStepSettled?: (event: BotGroupStepSettledEvent, ownerScope?: DataOwnerBroadcastScope) => void;
   captureOwnerScope?: () => DataOwnerBroadcastScope;
   isOwnerScopeCurrent?: (scope: DataOwnerBroadcastScope) => boolean;
   onChanged?: (payload: BotGroupChangedPayload, ownerScope?: DataOwnerBroadcastScope) => void;
@@ -136,6 +141,22 @@ export interface BotGroupChatServiceDeps {
   memberTurnTimeoutMs?: number;
   stepTurnTimeoutMs?: number;
   log?: { warn: (message: string, meta?: Record<string, unknown>) => void };
+}
+
+export interface BotGroupStepSettledEvent {
+  groupId: string;
+  groupName: string;
+  /** Every member of the group, so a controller push can apply the same visibility rule as its list. */
+  memberBotIds: string[];
+  planId: string;
+  position: number;
+  botName: string;
+  task: string;
+  outcome: 'done' | 'failed';
+  /** The last step finished: the whole plan is done. */
+  planDone: boolean;
+  /** Timestamp written by the settling transaction; stable for this step attempt. */
+  settledAt: number;
 }
 
 interface MemberRow {
@@ -218,6 +239,16 @@ function failure(errorCode: BotGroupErrorCode, message: string): BotGroupFailure
 
 function readId(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 && value.length <= MAX_ID_CHARS ? value : null;
+}
+
+/** A bounded, opaque create intent. It is an idempotency key, not a resource/action grant. */
+function readCreateRequestId(value: unknown): string | null {
+  return typeof value === 'string'
+    && value.length >= 16
+    && value.length <= 80
+    && /^[A-Za-z0-9_-]+$/.test(value)
+    ? value
+    : null;
 }
 
 function readName(value: unknown): string | null {
@@ -417,6 +448,14 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
   const waiters = new Map<string, LaneWaiter>();
   /** Lanes whose last group turn was stopped or timed out; the next prompt says so once. */
   const interruptedLanes = new Set<string>();
+  /**
+   * Creation is not part of the group schema: keep a bounded process-local receipt so a
+   * controller can reconcile a lost ACK without creating a second group. The service is
+   * owner-scoped by its registration lifecycle, so a new owner/host service gets a fresh
+   * receipt namespace. A request id is also tied to its normalized form intent; reusing it
+   * for different data is rejected rather than retargeting the original group.
+   */
+  const createReceipts = new Map<string, { intent: string; result: Promise<BotGroupCreateResult> }>();
   let disposed = false;
 
   const toGroupRow = (row: typeof botGroups.$inferSelect): GroupRow => ({
@@ -1227,6 +1266,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       const authorName = members.find((member) => member.botId === step.botId)?.name ?? step.botName;
       const done = outcome.kind === 'done';
       const isLast = position === steps.length - 1;
+      const settledAt = now();
       const result = await getDbClient().tx('botGroups.settleStep', {
         planId,
         position,
@@ -1254,9 +1294,25 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
             planId,
           }),
         endMessage: done && isLast ? messageRow({ groupId, kind: 'plan-end', authorKind: 'system', planId }) : null,
-        now: now(),
+        now: settledAt,
       });
-      if (result.settled) emit(groupId, 'messages', scope);
+      if (!result.settled) return;
+      emit(groupId, 'messages', scope);
+      const group = await readGroup(groupId);
+      if (group && scopeIsCurrent(scope)) {
+        deps.onStepSettled?.({
+          groupId,
+          groupName: group.name,
+          memberBotIds: members.map((member) => member.botId),
+          planId,
+          position,
+          botName: authorName,
+          task: step.task,
+          outcome: outcome.kind,
+          planDone: done && isLast,
+          settledAt,
+        }, scope);
+      }
     };
 
     try {
@@ -1635,19 +1691,39 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     const raw = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
     const name = readName(raw.name);
     const botIds = readBotIds(raw.botIds);
+    const requestId = raw.requestId === undefined ? null : readCreateRequestId(raw.requestId);
     if (!name) return failure('INVALID_PARAMS', '请填写群名称');
     if (!botIds) return failure('INVALID_PARAMS', '伙伴列表无效');
-    const invalid = memberCountFailure(botIds.length) ?? await unavailableBots(botIds);
-    if (invalid) return invalid;
-    const scope = captureScope();
-    const groupId = createId();
-    try {
-      await getDbClient().tx('botGroups.create', { groupId, name, botIds, now: now() });
-    } catch (error) {
-      return txFailure(error);
+    if (raw.requestId !== undefined && !requestId) return failure('INVALID_PARAMS', '创建请求无效');
+    const intent = JSON.stringify([name, botIds]);
+    const existing = requestId ? createReceipts.get(requestId) : undefined;
+    if (existing) {
+      return existing.intent === intent
+        ? existing.result
+        : failure('INVALID_PARAMS', '创建请求已用于另一组成员');
     }
-    emit(groupId, 'created', scope);
-    return { ok: true, groupId };
+
+    const result = (async (): Promise<BotGroupCreateResult> => {
+      try {
+        const invalid = memberCountFailure(botIds.length) ?? await unavailableBots(botIds);
+        if (invalid) return invalid;
+        const scope = captureScope();
+        const groupId = createId();
+        await getDbClient().tx('botGroups.create', { groupId, name, botIds, now: now() });
+        emit(groupId, 'created', scope);
+        return { ok: true, groupId };
+      } catch (error) {
+        return txFailure(error);
+      }
+    })();
+    if (!requestId) return result;
+    const receipt = { intent, result };
+    createReceipts.set(requestId, receipt);
+    const settled = await result;
+    // Failed attempts did not create a durable group; permit a deliberate retry with the
+    // same intent while retaining successful receipts for ACK-loss reconciliation.
+    if (!settled.ok && createReceipts.get(requestId) === receipt) createReceipts.delete(requestId);
+    return settled;
   };
 
   const updateGroup = async (input: unknown): Promise<BotGroupMutationResult> => {

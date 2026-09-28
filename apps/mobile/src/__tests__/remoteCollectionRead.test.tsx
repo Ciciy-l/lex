@@ -31,6 +31,10 @@ vi.mock('lucide-react-native', () => ({ ChevronRight: () => null }));
 vi.mock('@/components/AppText', () => ({ Text: 'span' }));
 vi.mock('@/components/RemoteCompanionAvatar', () => ({ RemoteCompanionAvatar: () => null }));
 vi.mock('@/components/MobilePrimitives', () => ({ MainWindowEmptyState: () => null, StatusDot: () => null }));
+// The generic resource screen test exercises navigation only.  Group-list UI is
+// covered by BotGroupList tests; keep its native sheet/avatar graph out of this
+// jsdom fixture so the existing Expo-native mocks remain intentionally narrow.
+vi.mock('@/session/BotGroupList', () => ({ BotGroupSection: () => null }));
 vi.mock('@/platform/chrome', () => ({ SimpleStackHeader: () => null, simpleScreenSafeAreaEdges: () => [] }));
 vi.mock('@/auth/AuthContext', () => ({ useAuth: () => ({ user: { id: 'owner' }, accountGeneration: 1 }) }));
 vi.mock('@/device-link/remoteStatus', () => ({ formatRemoteError: String }));

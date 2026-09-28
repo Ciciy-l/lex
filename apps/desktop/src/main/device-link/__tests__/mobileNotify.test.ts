@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { NOTIFY_TITLE_MAX_LENGTH } from '@cindy/device-link';
-import { MobileNotifyDeduper, buildSessionNotifyPayload } from '../mobileNotify';
+import { NOTIFY_TITLE_MAX_LENGTH, NOTIFY_BODY_MAX_LENGTH, NOTIFY_DEEP_LINK_MAX_LENGTH } from '@cindy/device-link';
+import { MobileNotifyDeduper, buildBotGroupNotifyPayload, buildSessionNotifyPayload } from '../mobileNotify';
 
 describe('buildSessionNotifyPayload', () => {
   const base = {
@@ -78,5 +78,26 @@ describe('MobileNotifyDeduper', () => {
     expect(deduper.shouldSend('s1', 'needs-reply', 0)).toBe(true);
     expect(deduper.shouldSend('s1', 'done', 1)).toBe(true);
     expect(deduper.shouldSend('s2', 'done', 2)).toBe(true);
+  });
+});
+
+describe('buildBotGroupNotifyPayload', () => {
+  it('opens the group on the phone and folds per (device, group)', () => {
+    const payload = buildBotGroupNotifyPayload({
+      groupId: 'g 1',
+      title: '官网介绍页',
+      body: '咪咪做完了「策划」，等你继续',
+      selfDeviceId: 'desk-1',
+    });
+    expect(payload).toMatchObject({
+      category: 'session-needs-reply',
+      title: '官网介绍页',
+      body: '咪咪做完了「策划」，等你继续',
+      deepLink: '/companions/groups/g%201?deviceId=desk-1',
+    });
+    expect(payload.collapseId).toBe(createHash('sha256').update('desk-1:bot-group:g 1').digest('hex').slice(0, 32));
+    expect(buildBotGroupNotifyPayload({ groupId: 'g', title: ' ', body: 'x', selfDeviceId: 'd' }).title).toBe('g');
+    expect(buildBotGroupNotifyPayload({ groupId: 'g', title: 'x'.repeat(500), body: 'y', selfDeviceId: 'd' }).title)
+      .toHaveLength(NOTIFY_TITLE_MAX_LENGTH);
   });
 });

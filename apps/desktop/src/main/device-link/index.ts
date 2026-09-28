@@ -128,6 +128,7 @@ import { resetAll as resetSubscriptionRefs, snapshotSubscriptions } from './subs
 import { getControllersForTopic } from './subscriptions';
 import {
   MobileNotifyDeduper,
+  buildBotGroupNotifyPayload,
   buildSessionNotifyPayload,
   type MobileSessionEventKind,
 } from './mobileNotify';
@@ -1850,6 +1851,32 @@ export function sendMobileSessionNotify(payload: {
   if (sent) {
     log.debug(`mobile notify sent: session=${payload.sessionId.slice(0, 8)} kind=${payload.kind}`);
   }
+  return sent;
+}
+
+/** Phone push for a 分工 step that stopped for the user (bot-group-chat.md §8.3). */
+export function sendMobileBotGroupNotify(payload: {
+  groupId: string;
+  title: string;
+  body: string;
+  /** Unique per settled step, so a redo of the same step notifies again. */
+  eventId: string;
+  generation?: number;
+}): boolean {
+  if (!client) return false;
+  if (payload.generation !== undefined && payload.generation !== mobileNotifyGeneration) return false;
+  const selfDeviceId = client.getSelfDeviceId();
+  if (!selfDeviceId) return false;
+  const key = `bot-group:${payload.groupId}`;
+  const now = Date.now();
+  if (!mobileNotifyDeduper.shouldSend(key, 'needs-reply', now, payload.eventId)) return false;
+  const sent = client.sendNotify(buildBotGroupNotifyPayload({
+    groupId: payload.groupId,
+    title: payload.title,
+    body: payload.body,
+    selfDeviceId,
+  }));
+  if (sent) mobileNotifyDeduper.recordSent(key, 'needs-reply', now, payload.eventId);
   return sent;
 }
 

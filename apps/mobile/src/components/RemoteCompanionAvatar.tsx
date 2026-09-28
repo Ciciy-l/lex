@@ -16,7 +16,14 @@ const presets: Record<string, number> = {
   'cindy://avatar/preset/lizi': require('../../assets/bot-presets/lizi.png'),
 };
 
-export function RemoteCompanionAvatar({ avatar, deviceId, name, online }: { avatar?: RemoteResourceAvatar; deviceId: string; name: string; online: boolean }) {
+export function RemoteCompanionAvatar({ avatar, deviceId, name, online, size = 40, framed = false }: {
+  avatar?: RemoteResourceAvatar;
+  deviceId: string;
+  name: string;
+  online: boolean;
+  size?: number;
+  framed?: boolean;
+}) {
   const { colors } = useTheme();
   const auth = useAuth();
   const { invoke } = useDeviceLink();
@@ -38,7 +45,7 @@ export function RemoteCompanionAvatar({ avatar, deviceId, name, online }: { avat
     return () => { cancelled = true; };
   }, [auth.apiFetch, avatar?.kind, binding, deviceId, invoke, online, value]);
   const source = presets[value] || (image?.binding === binding ? { uri: image.uri } : null);
-  if (source && !failed) return <Image source={source} onError={() => setFailed(true)} style={styles.image} />;
-  return <Text style={{ color: colors.textPrimary, fontSize: typeScale.body }}>{avatar?.kind === 'emoji' ? value : avatar?.fallbackText || Array.from(name)[0]}</Text>;
+  if (source && !failed) return <Image source={source} onError={() => setFailed(true)} style={[styles.image, { width: size, height: size, borderRadius: size / 2 }]} />;
+  return <Text style={{ color: colors.textPrimary, fontSize: Math.max(typeScale.caption, size * 0.44), ...(framed ? { textAlign: 'center' as const } : {}) }}>{avatar?.kind === 'emoji' ? value : avatar?.fallbackText || Array.from(name)[0]}</Text>;
 }
 const styles = StyleSheet.create({ image: { width: 40, height: 40, borderRadius: radius.pill } });

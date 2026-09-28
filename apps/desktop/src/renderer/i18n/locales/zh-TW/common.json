@@ -662,6 +662,11 @@
       "feishuHint": "透過已繫結的飛書或 Lark 機器人，向你私聊傳送一條訊息；僅在視窗失焦時傳送。",
       "feishuDisabledHint": "需要先在「飛書 / Lark 機器人」中配置 bot 並向它傳送一條訊息以完成繫結。",
       "feishuAria": "切換任務完成的飛書通知",
+      "botGroupPlan": {
+        "stepDone": "{{name}}做完了「{{task}}」，等你繼續",
+        "stepFailed": "{{name}}沒做完「{{task}}」，可以重試",
+        "planDone": "分工全部做完了，最後一步是{{name}}的「{{task}}」"
+      },
       "sessionEvent": {
         "untitled": "未命名任務",
         "done": "已完成 ✓",
@@ -7667,7 +7672,7 @@
       "nameLabel": "群聊名稱",
       "waitingConfirm": "{{name}}在等你確認",
       "loadFailedTitle": "無法載入這個群聊",
-      "loadFailedDescription": "Cindy 暫時讀不到這個群聊的訊息。你可以重試，或返回夥伴頁。",
+      "loadFailedDescription": "{{appName}} 暫時讀不到這個群聊的訊息。你可以重試，或返回夥伴頁。",
       "unavailableTitle": "這個群聊已無法使用",
       "unavailableDescription": "它可能已被刪除。返回夥伴頁可以開啟其他群聊和夥伴。",
       "sidebar": {
@@ -7798,7 +7803,7 @@
         "memberLimit": "一個群聊需要 2–6 位夥伴",
         "memberUnavailable": "有夥伴現在無法使用，換一位再試",
         "notFound": "這個群聊已不存在",
-        "hostNotReady": "Cindy 還在準備中，請稍後重試",
+        "hostNotReady": "{{appName}} 還在準備中，請稍後重試",
         "planOpen": "正在分工，做完或停止後才能安排新的",
         "planClosed": "這個安排已經結束或更新了"
       },

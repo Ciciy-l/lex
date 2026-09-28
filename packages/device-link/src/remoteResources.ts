@@ -76,6 +76,8 @@ export interface RemoteResourceDisplay {
   lastReplyAt?: number;
   avatar?: RemoteResourceAvatar;
   status?: RemoteResourceStatus;
+  /** Optional public generation state; controllers must treat unknown phases as neutral. */
+  generation?: { phase: string; startedAt: number | null };
   badges?: RemoteResourceBadge[];
 }
 
@@ -109,6 +111,8 @@ export interface RemoteActionField {
 export interface RemoteActionDescriptor {
   id: string;
   label: RemoteText;
+  /** The host may expose a visible action that is currently unavailable. */
+  disabled?: boolean;
   tone?: 'neutral' | 'primary' | 'destructive' | string;
   confirmation?: {
     title: RemoteText;

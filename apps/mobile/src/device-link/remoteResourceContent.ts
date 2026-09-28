@@ -5,9 +5,9 @@ function record(value: unknown): Record<string, unknown> | null {
 }
 function string(value: unknown, max: number): value is string { return typeof value === 'string' && value.length <= max; }
 function text(value: unknown): RemoteText | null {
-  if (string(value, 20_000)) return value;
+  if (string(value, 20_000) && value.length > 0) return value;
   const object = record(value);
-  if (!object || !string(object.fallback, 20_000)) return null;
+  if (!object || !string(object.fallback, 20_000) || object.fallback.length === 0) return null;
   const translations = record(object.translations);
   if (!translations) return { fallback: object.fallback };
   if (Object.keys(translations).length > 32 || Object.entries(translations).some(([locale, value]) => locale.length > 64 || !string(value, 20_000))) return null;
@@ -36,7 +36,7 @@ export function normalizeRemoteActions(raw: unknown): RemoteActionDescriptor[] {
   if (!Array.isArray(raw) || raw.length > 256 || JSON.stringify(raw).length > 5_000_000) return [];
   return raw.flatMap((value) => {
     const object = record(value), label = text(object?.label);
-    if (!object || !string(object.id, 512) || !object.id || label === null) return [];
+    if (!object || !string(object.id, 160) || !object.id || label === null) return [];
     const action: RemoteActionDescriptor = { id: object.id, label, ...(object.disabled !== undefined ? { disabled: object.disabled !== false } : {}) };
     if (string(object.tone, 64)) action.tone = object.tone;
     if (object.confirmation !== undefined) {

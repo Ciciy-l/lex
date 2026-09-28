@@ -12,6 +12,7 @@ import composer from './composer.json';
 import deviceLink from './deviceLink.json';
 import devices from './devices.json';
 import files from './files.json';
+import groupChat from './groupChat.json';
 import home from './home.json';
 import interaction from './interaction.json';
 import message from './message.json';
@@ -30,6 +31,7 @@ export default {
   deviceLink,
   devices,
   files,
+  groupChat,
   home,
   interaction,
   message,

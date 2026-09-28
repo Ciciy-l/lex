@@ -108,7 +108,10 @@ type RestorablePlanViewerState = Exclude<MobilePlanViewerState, 'minimized'>;
 export function InteractionPanel({
   safeAreaBottomInset = 0,
   collapse,
+  companion = false,
+  companionIdentity,
   deviceId,
+  embedded = false,
   fillAvailableHeight = false,
   sessionId,
   interactions,
@@ -120,6 +123,10 @@ export function InteractionPanel({
   readOnlyReason,
 }: {
   safeAreaBottomInset?: number;
+  /** Compact placement below a speaking companion; retained for host parity. */
+  embedded?: boolean;
+  companion?: boolean;
+  companionIdentity?: { name: string; avatar: ReactNode };
   /**
    * 收起能力:整组给或整组不给。
    *
@@ -143,6 +150,9 @@ export function InteractionPanel({
   readOnlyReason?: string | null;
   onError(message: string | null): void;
 }) {
+  void embedded;
+  void companion;
+  void companionIdentity;
   const styles = useThemedStyles(makeStyles);
   const { colors } = useTheme();
   const { t } = useTranslation();

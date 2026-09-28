@@ -225,6 +225,21 @@ describe('botGroupChatService', () => {
     ]);
   });
 
+  it('reconciles concurrent lost-ACK create requests without creating a second group', async () => {
+    const harness = createHarness(() => 'NO_REPLY');
+    const requestId = 'intent-duplicate-1';
+    const [first, second] = await Promise.all([
+      harness.service.createGroup({ name: '同一意图', botIds: ['mimi', 'abu'], requestId }),
+      harness.service.createGroup({ name: '同一意图', botIds: ['mimi', 'abu'], requestId }),
+    ]);
+    expect(first).toEqual(second);
+    expect(first).toMatchObject({ ok: true });
+    const listed = await harness.service.listGroups();
+    expect(listed.ok && listed.groups).toHaveLength(1);
+    await expect(harness.service.createGroup({ name: '另一意图', botIds: ['mimi', 'abu'], requestId }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'INVALID_PARAMS' });
+  });
+
   it('in sequential mode lets every member answer in turn, rotates the next circle, and ends when a circle is silent', async () => {
     const replies: Record<string, string[]> = {
       mimi: ['先定个大框架', 'NO_REPLY'],
@@ -769,6 +784,36 @@ describe('botGroupChatService 分工', () => {
     expect(lanePrompt.sessionId).toBe('lane-xiaoman');
     expect(lanePrompt.prompt).toContain(JSON.stringify(path.join('/work/site-wt', '需求说明.md')).slice(1, -1));
     expect(lanePrompt.prompt).toContain('not in your own workspace');
+  });
+
+  it('reports every settled step so phones can be told', async () => {
+    const onStepSettled = vi.fn();
+    let fail = true;
+    const harness = createHarness((botId) => (botId === 'xiaoman' && fail ? null : '好了'), {
+      decidePlan: async () => ({ needsPlan: true, steps: [{ botId: 'mimi', task: '策划' }, { botId: 'xiaoman', task: '设计' }] }),
+      workDir: fakeWorkDir(),
+      onStepSettled,
+    });
+    const groupId = await createGroup(harness);
+    const plan = await proposePlan(harness, groupId);
+    await harness.service.startPlan({ groupId, planId: plan.id });
+    await waitForIdle(harness, groupId);
+    await harness.service.continuePlan({ groupId, planId: plan.id });
+    await vi.waitFor(() => expect(harness.dispatches.at(-1)!.botId).toBe('xiaoman'));
+    const call = harness.dispatches.at(-1)!;
+    await harness.service.settleLaneTurn({ sessionId: call.sessionId, activeInputClientId: call.clientId, outcome: 'error', resultText: '' });
+    await waitForIdle(harness, groupId);
+    fail = false;
+    await harness.service.retryPlan({ groupId, planId: plan.id });
+    await waitForIdle(harness, groupId);
+    expect(onStepSettled.mock.calls.map(([event]) => [event.botName, event.task, event.outcome, event.planDone])).toEqual([
+      ['咪咪', '策划', 'done', false],
+      ['小满', '设计', 'failed', false],
+      ['小满', '设计', 'done', true],
+    ]);
+    expect(onStepSettled.mock.calls[0]![0]).toMatchObject({ groupId, groupName: '周末出游', planId: plan.id, position: 0 });
+    // The whole group, so the push can apply the phone's member-visibility rule.
+    expect([...onStepSettled.mock.calls[0]![0].memberBotIds].sort()).toEqual(['abu', 'mimi', 'xiaoman']);
   });
 
   it('a plain message after a step asks the same Bot to redo it, and later steps read the new hand-off', async () => {

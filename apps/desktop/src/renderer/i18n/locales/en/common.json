@@ -662,6 +662,11 @@
       "feishuHint": "Sends a private message via the linked Feishu or Lark bot; only when the window is unfocused.",
       "feishuDisabledHint": "First set up the bot in \"Feishu / Lark Bot\" and DM it once to complete binding.",
       "feishuAria": "Toggle session-done FeiShu notifications",
+      "botGroupPlan": {
+        "stepDone": "{{name}} finished “{{task}}” — continue when ready",
+        "stepFailed": "{{name}} didn't finish “{{task}}” — you can retry",
+        "planDone": "The work split is done; the last step was {{name}}’s “{{task}}”"
+      },
       "sessionEvent": {
         "untitled": "Untitled session",
         "done": "Completed ✓",
@@ -7669,7 +7674,7 @@
       "nameLabel": "Group Name",
       "waitingConfirm": "{{name}} is waiting for your go-ahead",
       "loadFailedTitle": "Couldn’t Load This Group Chat",
-      "loadFailedDescription": "Cindy can’t read this group chat right now. Try again, or go back to Teammates.",
+      "loadFailedDescription": "{{appName}} can’t read this group chat right now. Try again, or go back to Teammates.",
       "unavailableTitle": "This Group Chat Is No Longer Available",
       "unavailableDescription": "It may have been deleted. Go back to Teammates to open another group chat or teammate.",
       "sidebar": {
@@ -7800,7 +7805,7 @@
         "memberLimit": "A group chat needs 2–6 teammates",
         "memberUnavailable": "One of these teammates is unavailable. Choose another and try again.",
         "notFound": "This group chat no longer exists",
-        "hostNotReady": "Cindy is still getting ready. Try again in a moment.",
+        "hostNotReady": "{{appName}} is still getting ready. Try again in a moment.",
         "planOpen": "A work split is underway. Finish or stop it before starting another.",
         "planClosed": "This plan has already ended or been updated."
       },

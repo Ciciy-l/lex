@@ -21,6 +21,12 @@ import { botGroupApi, refreshBotGroups } from './botGroupStore';
 import { BOT_GROUP_MAX_MEMBERS, BOT_GROUP_MIN_MEMBERS, botGroupErrorKey } from './botGroupPresentation';
 import { useBotProfiles, type BotProfile } from './botStore';
 
+function createBotGroupRequestId(): string {
+  const cryptoLike = globalThis.crypto as { randomUUID?: () => string } | undefined;
+  if (typeof cryptoLike?.randomUUID === 'function') return cryptoLike.randomUUID();
+  return 'group-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 14);
+}
+
 /** Local Bots that may appear in the picker; archived and deleting ones never do. */
 function pickableBots(bots: readonly BotProfile[]): BotProfile[] {
   return bots
@@ -52,6 +58,7 @@ export function BotGroupCreateDialog({
   const busyRef = useRef(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const firstMemberRef = useRef<HTMLButtonElement>(null);
+  const requestIdRef = useRef<string | null>(null);
 
   // Speaking order follows the picker's order, not the click order.
   const orderedSelection = candidates
@@ -94,7 +101,8 @@ export function BotGroupCreateDialog({
     const owner = getDataOwnerGeneration();
     try {
       if (!api) throw new Error('Bot group IPC is unavailable');
-      const result = await api.createBotGroup({ name: trimmed, botIds: orderedSelection });
+      const requestId = requestIdRef.current ?? (requestIdRef.current = createBotGroupRequestId());
+      const result = await api.createBotGroup({ name: trimmed, botIds: orderedSelection, requestId });
       if (!isDataOwnerGenerationCurrent(owner)) return;
       if (!result.ok) {
         setSubmitError(t(botGroupErrorKey(result.errorCode, 'bots.groupChat.create.failed')));

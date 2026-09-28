@@ -92,10 +92,11 @@ describe('BotGroupCreateDialog', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'bots.groupChat.create.submit' }));
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith('g-new'));
-    expect(mocks.createBotGroup).toHaveBeenCalledWith({
+    expect(mocks.createBotGroup).toHaveBeenCalledWith(expect.objectContaining({
       name: '周末出游',
       botIds: ['a', 'b', 'c', 'd', 'e', 'f'],
-    });
+      requestId: expect.any(String),
+    }));
     expect(mocks.refreshBotGroups).toHaveBeenCalled();
   });
 

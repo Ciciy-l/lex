@@ -662,6 +662,11 @@
       "feishuHint": "通过已绑定的飞书或 Lark 机器人，向你私聊发送一条消息；仅在窗口失焦时发送。",
       "feishuDisabledHint": "需要先在「飞书 / Lark 机器人」中配置 bot 并向它发送一条消息以完成绑定。",
       "feishuAria": "切换任务完成的飞书通知",
+      "botGroupPlan": {
+        "stepDone": "{{name}}做完了「{{task}}」，等你继续",
+        "stepFailed": "{{name}}没做完「{{task}}」，可以重试",
+        "planDone": "分工全部做完了，最后一步是{{name}}的「{{task}}」"
+      },
       "sessionEvent": {
         "untitled": "未命名任务",
         "done": "已完成 ✓",
@@ -7667,7 +7672,7 @@
       "nameLabel": "群名称",
       "waitingConfirm": "{{name}}在等你确认",
       "loadFailedTitle": "无法加载这个群聊",
-      "loadFailedDescription": "Cindy 暂时读不到这个群的消息。你可以重试，或返回伙伴页。",
+      "loadFailedDescription": "{{appName}} 暂时读不到这个群的消息。你可以重试，或返回伙伴页。",
       "unavailableTitle": "这个群聊已不可用",
       "unavailableDescription": "它可能已被删除。返回伙伴页可以打开其他群聊和伙伴。",
       "sidebar": {
@@ -7798,7 +7803,7 @@
         "memberLimit": "一个群需要 2–6 位伙伴",
         "memberUnavailable": "有伙伴现在不可用，换一位再试",
         "notFound": "这个群聊已不存在",
-        "hostNotReady": "Cindy 还在准备中，请稍后重试",
+        "hostNotReady": "{{appName}} 还在准备中，请稍后重试",
         "planOpen": "正在分工，做完或停止后才能安排新的",
         "planClosed": "这个安排已经结束或更新了"
       },
