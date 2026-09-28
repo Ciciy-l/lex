@@ -180,3 +180,43 @@ Cindy 的 Seed 2.1 Pro 默认协议基准补为 `openai-completions`；这表示
 - 09-07 目录核对曾记录：客户端先递增 Registry，Server 同步待完成。详见 [该次核对](model-catalog-audit-2026-09-07.md)。
 - 09-08 本地目录配套工作曾记录：客户端已有型号、协议资料和 medium 默认策略同步到 Server 工作分支，两份随包 Registry 一致。该记录仅证明当时工作快照一致，不证明 PR 合并或环境部署。
 - 两条记录不能推导今天的状态。后续核验应记录客户端 commit、Server commit、Registry updatedAt、环境和接口响应；缺少证据的项写未验证。
+
+## 2026-09-28：GPT-6 Sol / Luna 与 Opus 5.5 随包目录批次
+
+本批只改 Lex 客户端随包 Registry 与其客户端适配代码，随包 revision 递增为 `2026-09-28T00:00:00.001Z`。
+该 revision 高于本批对照的 v0.1.93 上游随包 revision `2026-09-23T00:00:00.005Z`；
+**外部在线目录当前实际提供的 revision 未核实**（本次未请求该服务），因此不断言谁更新、是否已含同批条目或已部署。
+随包目录与在线目录按整份快照比较 updatedAt：较新者生效，相同 revision 而内容不一致时拒绝该快照并保留上一份。
+请求侧已按 [媒体目录协商](model-registry-v4-media.md) 携带 `registryMedia=1`，避免外部服务继续返回冻结的兼容快照。
+
+| 型号 | 采用的官方依据 | 边界 |
+| --- | --- | --- |
+| GPT-6 Sol / Luna | [OpenAI 定价](https://developers.openai.com/api/docs/pricing)的 Standard 与 Fast 表及[模型页](https://developers.openai.com/api/docs/models)；1,050,000 上下文、128,000 输出、272,001 起的阶梯输入价 | 页面另列 Batch / Flex 半价表，不并入 Standard；Fast 按官方 2 倍写入 |
+| Opus 5.5 | [Claude 定价](https://platform.claude.com/docs/en/about-claude/pricing)：标准 4 / 20、缓存读 0.20、写 5、1h 写 8 | 官方 Fast 只公布输入 8 / 输出 40，缓存列未在该表给出，故 Fast 缓存字段保持未知，不按倍数推算 |
+
+Fast 能力不由参考价决定：Opus 5.5 的 `supportsFastMode` 与 Opus 5 一致保持关闭，
+订阅是否可用 Fast 仍按各连接实报与账号权限判定。目录条目本身不授予连接准入、推理能力或 Pi / OMP 路由。
+Opus 5.5 参与 [responses-anthropic-bridge](../packages/responses-anthropic-bridge/src/translate-request.ts) 的 adaptive thinking 与
+真实 `xhigh` 档位映射，并在导入 Claude Code 会话时保留为独立 catalog id，不并入 Opus 5。
+
+### 与上游同批改动的取舍
+
+上游同批还改动了既有型号的参考价。逐条对照本仓随包目录后的结论是：
+
+- **本批经核验需补**：仅上述三个新条目。
+- **已有路由、参考价待单独核验**：XD Muse Spark 1.2 与腾讯 HY4 preview 在本仓已有对应 `models[]` 条目与 XD 路由，
+  但尚未关联 `referencePriceGroup`，也没有公共型号参考价组。本批不补；补入前需按官方页面单独核验，
+  属价格审计批次，不在本次三模型范围内。
+- **另专题暂缓（逐条依据）**：
+  - Kimi K3 与 `xd/moonshotai-kimi-k3`：本仓已有条目与路由，缺的是 2026-09-23 起的写入价与旧价 `effectiveUntil`；
+    需另行核验官方页面后按价格审计补入。
+  - Kimi K2.8 preview：上游为接入条目（`moonshot-kimi-code` / `kimi-for-coding`），本仓无该 provider 与该路由，
+    且其上游审计自身也未给出厂商官方价；新增接入属路由决策，不在本批范围。
+  - Muse Spark 1.3 与 Gemini 3.8 Flash：上游只补 `baseModels` 公共资料，未新增 `models[]` 接入条目；
+    本仓这两个型号同样只出现在 Pi 侧目录（`catalog/provider-models.json`）而没有 Registry 条目或接入路由，
+    需先决定是否纳入公共型号，再按官方页面核验并补参考价，不在本批范围。
+- **不随批次改动**：Grok 4.7 的 `defaultEffort` 在本仓自 #4288 起即为 `medium`，上游 v0.1.92 与 v0.1.93 均为 `high`，
+  与本批无关，属本仓既有选择。
+
+新增条目不改变 Pi 目录、引擎运行时版本固定、自定义 Claude Code / Codex 的五档推理 fallback，
+也不改变四引擎（含 OMP controller proxy 与 SSH 路由）的既有边界。

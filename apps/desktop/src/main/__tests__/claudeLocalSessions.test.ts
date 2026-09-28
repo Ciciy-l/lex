@@ -413,6 +413,33 @@ describe('parseClaudeCodeMessageLine', () => {
     expect(rows[0].agentMeta).toMatchObject({ model: 'claude-opus-5' });
   });
 
+  it.each([
+    'claude-opus-5-5',
+    'claude-opus-5-5-20260922',
+    'claude-opus-5-5[1m]',
+    'claude-opus-5-5-20260922[1m]',
+  ])('keeps %s as its own catalog id instead of collapsing into opus-5', (model) => {
+    const rows = parseClaudeCodeMessageLine(
+      line({
+        type: 'assistant',
+        uuid: 'assistant-opus55',
+        message: {
+          id: 'msg_opus55',
+          model,
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 1, output_tokens: 1 },
+          content: [{ type: 'text', text: 'ok' }],
+        },
+      }),
+      10,
+      sdkSessionId,
+      'claude-sonnet-4-6',
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].agentMeta).toMatchObject({ model: 'claude-opus-5-5' });
+  });
+
   it('maps Claude task notifications back to tool_result instead of user text', () => {
     const rows = parseClaudeCodeMessageLine(
       line({

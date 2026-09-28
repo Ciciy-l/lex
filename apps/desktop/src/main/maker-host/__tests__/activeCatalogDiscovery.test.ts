@@ -636,6 +636,7 @@ describe('anthropic 发现条目的 modelRegistry 元数据基线', () => {
       anthro('claude-sonnet-4-5', 'Claude Sonnet 4.5', 9),
     ]);
     expect(anthropicList().map((m) => [m.id, m.name])).toEqual([
+      ['claude-opus-5-5', 'Opus 5.5'],
       ['claude-opus-5', 'Claude Opus 5'],
       ['claude-fable-5', 'Claude Fable 5'],
       ['claude-opus-4-8', 'Claude Opus 4.8'],
@@ -654,7 +655,12 @@ describe('anthropic 发现条目的 modelRegistry 元数据基线', () => {
         .filter((model) => model.defaultEnabled !== false)
         .map((model) => model.id)
         .sort(),
-    ).toEqual(['claude-fable-5-1', 'claude-haiku-4-5', 'claude-opus-5', 'claude-sonnet-5']);
+    ).toEqual([
+      'claude-fable-5-1',
+      'claude-haiku-4-5',
+      'claude-opus-5-5',
+      'claude-sonnet-5',
+    ]);
     expect(anthropicList('codex')).toEqual(
       anthropicList('claude-code').map((model) => ({
         ...model,

@@ -106,6 +106,19 @@ function runtimeCatalog(): Catalog {
 }
 
 describe("resolveCatalogUrl", () => {
+  it("opts explicit catalog endpoints into media without changing unrelated query parameters", () => {
+    const resolved = new URL(
+      resolveCatalogUrl({
+        url: "https://example.com/api/model-catalog/catalog?region=cn&registryMedia=0&registrySchemaVersion=4",
+      })!,
+    );
+    expect(Object.fromEntries(resolved.searchParams)).toEqual({
+      region: "cn",
+      registryMedia: "1",
+      registrySchemaVersion: "5",
+    });
+  });
+
   it("prefers explicit url", () => {
     expect(
       resolveCatalogUrl({ url: "https://x/y.json", baseUrl: "https://b" }),
@@ -115,7 +128,7 @@ describe("resolveCatalogUrl", () => {
     expect(
       resolveCatalogUrl({ baseUrl: "https://model-access.example.com/" }),
     ).toBe(
-      "https://model-access.example.com/api/model-catalog/catalog?registrySchemaVersion=5",
+      "https://model-access.example.com/api/model-catalog/catalog?registrySchemaVersion=5&registryMedia=1",
     );
   });
   it("builds the migration OSS fallback URL", () => {
@@ -1042,7 +1055,7 @@ describe("loadCatalog", () => {
     );
     expect(fetchText).toHaveBeenNthCalledWith(
       1,
-      "https://model-access.example.com/api/model-catalog/catalog?registrySchemaVersion=5",
+      "https://model-access.example.com/api/model-catalog/catalog?registrySchemaVersion=5&registryMedia=1",
       15_000,
     );
     expect(fetchText).toHaveBeenNthCalledWith(
@@ -1102,7 +1115,7 @@ describe("loadCatalog", () => {
     );
     expect(fetchText).toHaveBeenNthCalledWith(
       1,
-      "https://model-access.example.com/api/model-catalog/catalog?registrySchemaVersion=5",
+      "https://model-access.example.com/api/model-catalog/catalog?registrySchemaVersion=5&registryMedia=1",
       15_000,
     );
     expect(fetchText).toHaveBeenNthCalledWith(
@@ -1160,7 +1173,7 @@ describe("loadCatalog", () => {
     );
     expect(fetchText).toHaveBeenNthCalledWith(
       1,
-      "https://model-access.example.com/api/model-catalog/catalog?registrySchemaVersion=5",
+      "https://model-access.example.com/api/model-catalog/catalog?registrySchemaVersion=5&registryMedia=1",
       15_000,
     );
     expect(fetchText).toHaveBeenNthCalledWith(
@@ -1189,7 +1202,7 @@ describe("loadCatalog", () => {
     );
     expect(fetchText).toHaveBeenCalledTimes(1);
     expect(fetchText).toHaveBeenCalledWith(
-      "https://model-access.example.com/api/model-catalog/catalog?registrySchemaVersion=5",
+      "https://model-access.example.com/api/model-catalog/catalog?registrySchemaVersion=5&registryMedia=1",
       15_000,
     );
     expect(cat.version).toBe(BUNDLED_CATALOG.version);
