@@ -59,6 +59,7 @@ const MAX_TIMEOUT_MS = 24 * 60 * 60_000;
 const MAX_OBJECTIVE_CHARS = 12_000;
 const MAX_RESULT_CHARS = 12_000;
 const MAX_RETRY_DELAY_MS = 60_000;
+const LEGACY_FOLLOW_UP_WRAPPER = 'Continue the same Session task with the requester’s follow-up.\n\nPrevious objective:\n';
 /** 对方停在要人拍板的地方时,超时不计时;每隔这么久再看一眼有没有答完。 */
 const WAITING_TIMEOUT_GRACE_MS = 5 * 60_000;
 const MAX_ARTIFACTS = 64;
@@ -293,6 +294,45 @@ function parsePendingInteraction(
   } catch {
     return null;
   }
+}
+
+/** A task's immutable goal and current run supplement are stored independently. */
+interface SessionTaskInputSnapshot {
+  runSequence: number;
+  originalObjective: string | null;
+  followUp: string | null;
+}
+
+function readSessionTaskInput(
+  row: Pick<DelegationRow, 'permissionSnapshotJson' | 'runSequence'>,
+): SessionTaskInputSnapshot | null {
+  const input = parseRecord(row.permissionSnapshotJson).taskInput as Partial<SessionTaskInputSnapshot> | undefined;
+  if (!input || input.runSequence !== row.runSequence
+    || input.originalObjective === undefined || input.followUp === undefined
+    || (input.originalObjective !== null && (typeof input.originalObjective !== 'string'
+      || input.originalObjective.length > MAX_OBJECTIVE_CHARS))
+    || (input.followUp !== null && (typeof input.followUp !== 'string'
+      || input.followUp.length > MAX_INTERJECTION_CHARS))) return null;
+  return {
+    runSequence: input.runSequence,
+    originalObjective: input.originalObjective,
+    followUp: input.followUp,
+  };
+}
+
+function taskObjectiveContext(
+  row: Pick<DelegationRow, 'objective' | 'permissionSnapshotJson' | 'runSequence'>,
+): string {
+  const input = readSessionTaskInput(row);
+  const legacyWrapper = !input && row.runSequence > 1
+    && row.objective.startsWith(LEGACY_FOLLOW_UP_WRAPPER);
+  const objective = input ? input.originalObjective : legacyWrapper ? null : row.objective;
+  return [
+    objective !== null
+      ? `Objective:\n${objective}`
+      : 'The original objective could not be recovered from the stored initial input. Consult the existing task history; do not infer it from legacy continuation wrappers.',
+    input?.followUp ? `Requester follow-up:\n${input.followUp}` : '',
+  ].filter(Boolean).join('\n\n');
 }
 
 /**
@@ -1231,12 +1271,17 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     id: string;
     objective: string;
     contextRefsJson: string;
+    permissionSnapshotJson: string;
+    runSequence: number;
   }): string => [
     `You are running an independent ${BRAND_NAME} Session task started from the user's Bot task.`,
     `Task ID: ${row.id}`,
-    `Objective:\n${row.objective}`,
+    taskObjectiveContext(row),
     parseStringArray(row.contextRefsJson).length
       ? `Context references:\n${parseStringArray(row.contextRefsJson).join('\n')}`
+      : '',
+    readSessionTaskInput(row)?.followUp
+      ? 'Continue from the existing task history. Apply the new follow-up without repeating completed actions.'
       : '',
     'Work independently in this task\'s own workspace.',
     'The parent Bot is acting for the user: permission prompts, questions and plan reviews you raise are answered there (or by the user directly). Ask through the normal tools when you genuinely need a decision; otherwise keep going.',
@@ -1364,11 +1409,16 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       await failDelegationDispatch(row, 'CALLER_PERMISSION_UNAVAILABLE: 伙伴权限已变更，任务未启动');
       return { ok: false, status: 'failed' };
     }
+    const initialClientId = `bot-delegation-start:${row.id}`;
+    const clientId = row.runSequence > 1
+      ? `${initialClientId}:run:${row.runSequence}` : initialClientId;
     const dispatched = await deps.dispatch({
       targetSessionId: row.childSessionId,
       message: buildDelegationPrompt(row),
-      persistedContent: row.objective,
-      clientId: `bot-delegation-start:${row.id}`,
+      // The row stores only the current supplement, never the rendered prompt.
+      persistedContent: readSessionTaskInput(row)?.followUp ?? row.objective,
+      clientId,
+      ...(row.parentSessionId ? { dispatcherSessionId: row.parentSessionId } : {}),
       onAccepted: async () => {
         const acceptedAt = now();
         const [accepted] = await db
@@ -1554,19 +1604,23 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       if (changed) await deliverCompletion({ ...row, status: 'failed', lastError });
       return;
     }
+    // Restore can be retried within the same host after a transient failure or
+    // duplicate owner wake. An already-running child is proof that this runtime
+    // accepted the recovery input; never enqueue a second continuation.
+    if (deps.taskControl?.isActive(row.childSessionId)) return;
 
     const resumeEpoch = child.activeTurnStartedAt ?? row.acceptedAt ?? row.createdAt;
     const clientId = `bot-delegation-resume:${row.id}:${resumeEpoch}`;
     const message = [
       `The previous Session task turn was interrupted by a ${BRAND_NAME} host restart.`,
-      'Inspect the existing task history, continue the original objective, and return the final result.',
+      'Inspect the existing task history and accepted follow-ups, continue the unfinished work, and return the final result. Do not repeat completed tool actions; verify their recorded outcomes before continuing.',
       `Task ID: ${row.id}`,
-      `Objective:\n${row.objective}`,
+      taskObjectiveContext(row),
     ].join('\n\n');
     const dispatched = await deps.dispatch({
       targetSessionId: row.childSessionId,
       message,
-      persistedContent: row.objective,
+      persistedContent: 'Continue the interrupted Session task from its saved history without repeating completed actions.',
       clientId,
     });
     if (dispatched.ok) {
@@ -1758,7 +1812,10 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       },
     };
     const createdAt = plan.createdAt;
-    const permissionSnapshotJson = JSON.stringify(plan);
+    const permissionSnapshotJson = JSON.stringify({
+      ...plan,
+      taskInput: { runSequence: 1, originalObjective: input.objective, followUp: null } satisfies SessionTaskInputSnapshot,
+    });
     const childRow = {
       ...sessionCreateToRow(
         childSessionId,
@@ -2431,12 +2488,47 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       completionTarget: { parentSessionId: callerSessionId },
       limits: { ...oldPlan.limits, deadlineAt },
     };
-    const continuationObjective = [
-      'Continue the same Session task with the requester’s follow-up.',
-      `Previous objective:\n${row.objective.slice(0, 5_000)}`,
-      row.resultSummary ? `Previous result:\n${row.resultSummary.slice(0, 4_000)}` : '',
-      `Requester follow-up:\n${trimmed}`,
-    ].filter(Boolean).join('\n\n').slice(0, MAX_OBJECTIVE_CHARS);
+    const previousInput = readSessionTaskInput(row);
+    let originalObjective = previousInput ? previousInput.originalObjective : row.objective;
+    if (!previousInput && row.runSequence > 1
+      && row.objective.startsWith(LEGACY_FOLLOW_UP_WRAPPER)) {
+      // Recover only the exact first user row from this child Session. Never parse
+      // user text delimiters or pull a same-ID row from another Session.
+      const [initial] = await db.select({ content: messages.content }).from(messages)
+        .innerJoin(sessions, eq(sessions.id, messages.sessionId))
+        .where(and(eq(messages.sessionId, row.childSessionId),
+          eq(messages.clientId, `bot-delegation-start:${row.id}`), eq(messages.role, 'user'),
+          isNull(messages.rewindAt),
+          sql`(${sessions.clearedAt} IS NULL OR ${messages.createdAt} > ${sessions.clearedAt})`))
+        .limit(1);
+      originalObjective = initial?.content && initial.content.length <= MAX_OBJECTIVE_CHARS
+        ? initial.content : null;
+    }
+    // Keep legacy data verbatim when the first request cannot be proven, but do
+    // not turn its nested wrapper into a new objective.
+    const continuationObjective = originalObjective ?? row.objective;
+    const taskInput: SessionTaskInputSnapshot = {
+      runSequence: row.runSequence + 1,
+      originalObjective,
+      followUp: trimmed,
+    };
+    const nextState: Record<string, unknown> = {
+      ...parseRecord(row.permissionSnapshotJson),
+      ...nextPlan,
+      taskInput,
+      taskAcceptedInputIds: [],
+    };
+    // Only this explicit terminal follow-up starts a new run, so retire its old
+    // pause/cancel/resume intent and acceptance retry receipt. Keep historical
+    // stop-request reporting and the transaction's other authority fields.
+    delete nextState.taskCancelRequested;
+    delete nextState.taskPause;
+    delete nextState.taskResume;
+    delete nextState.taskResumedAt;
+    delete nextState.taskExecution;
+    delete nextState.taskDispatchRetry;
+    delete nextState.taskRecoveryRetry;
+    const nextSnapshot = JSON.stringify(nextState);
     const childSessionId = resolveBusinessSessionId(undefined);
     try {
       clearCompletionRetryTimer(row.id);
@@ -2457,7 +2549,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         parentSessionId: callerSessionId,
         childSessionId,
         objective: continuationObjective,
-        permissionSnapshotJson: JSON.stringify(nextPlan),
+        permissionSnapshotJson: nextSnapshot,
         targetBotId: null,
         targetProfileVersion: null,
         session: {
@@ -2516,7 +2608,8 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         parentSessionId: callerSessionId,
         childSessionId,
         objective: continuationObjective,
-        permissionSnapshotJson: JSON.stringify(nextPlan),
+        permissionSnapshotJson: nextSnapshot,
+        runSequence: row.runSequence + 1,
         createdAt: reopenedAt,
       };
       if (reopened.previousParentSessionId !== callerSessionId) {
