@@ -264,7 +264,7 @@ describe('device-link controller mirror — end-to-end scenarios', () => {
     expect(host.invoke.mock.calls.filter(([, channel]) => channel === 'local-db:messages:list')).toHaveLength(2);
   });
 
-  it('does not turn an external queue departure into a local pending bubble', async () => {
+  it.each([false, true])('reconciles an external queue departure without a local pending bubble (persisted=%s)', async (persisted) => {
     const s = sid();
     host.enableHistoryView();
     host.seedSession(s);
@@ -278,17 +278,23 @@ describe('device-link controller mirror — end-to-end scenarios', () => {
     };
     host.push('maker:input:projection', { ...emptyProjection(s), pendingQueue: [queued] });
     expect(makerChatStore.getSnapshot(s).pendingQueue).toHaveLength(1);
-    host.push('maker:input:projection', emptyProjection(s));
-    expect(makerChatStore.getSnapshot(s).messages).toEqual([]);
-
     const origin = { kind: 'scheduler' as const, scheduleId: 'schedule', scheduleName: 'PR check', runId: 'run' };
-    host.hostMessage(s, {
+    if (persisted) host.hostMessage(s, {
       ...dbMessage(s, 'scheduled-db', 'Check the PR', '2026-09-17T00:00:00Z', 'user'),
       clientId: queued.clientId, agentMeta: { origin },
     }, { lossy: true });
-    await getRemoteHistoryView(s)!.refresh();
+    const historyPageCalls = () => host.invoke.mock.calls.filter(([, channel]) => channel === 'local-db:messages:view');
+    const callsBeforeDeparture = historyPageCalls().length;
+    host.push('maker:input:projection', emptyProjection(s));
+    expect(makerChatStore.getSnapshot(s).messages).toEqual([]);
+    await vi.waitFor(() => expect(historyPageCalls()).toHaveLength(callsBeforeDeparture + 1));
+    await flush(); await flush();
     const rows = makerChatStore.getSnapshot(s).messages;
-    expect(rows).toHaveLength(1);
+    expect(rows).toHaveLength(persisted ? 1 : 0);
+    if (!persisted) {
+      makerChatStore.purgeSession(s);
+      return;
+    }
     expect(rows[0]).toMatchObject({ automationOrigin: origin });
     expect(rows[0].isPendingPersist).toBeUndefined();
     expect(rows[0]).not.toHaveProperty('localSendPrecedingClientIds');
