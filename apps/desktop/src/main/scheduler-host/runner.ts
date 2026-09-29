@@ -2762,6 +2762,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
   ): TurnCompletionWaiter {
     const sessionId = initialSession.id;
     let assistantText = '';
+    let lastTextWasCodexCommentary = false;
     let stopped = false;
     let stopListeningTurn: (() => void) | undefined;
     const turnFinished = new Promise<void>((resolve, reject) => {
@@ -2861,8 +2862,19 @@ export class MakerScheduleRunner implements ScheduleRunner {
           return;
         }
         if (ev.type === 'text') {
-          const data = ev.data as { text?: string; isFinal?: boolean } | null;
+          const data = ev.data as {
+            text?: string; isFinal?: boolean; isFullText?: boolean; phase?: string;
+          } | null;
           if (data && typeof data.text === 'string') {
+            // A separate empty Codex final item does not replace the already
+            // completed commentary. Every other empty final remains authoritative.
+            const emptyCodexAnswer = lastTextWasCodexCommentary
+              && ev.source === 'codex' && data.phase === 'final_answer'
+              && data.isFinal === true && data.isFullText === true && !data.text.trim();
+            lastTextWasCodexCommentary = ev.source === 'codex'
+              && data.phase === 'commentary' && data.isFinal === true
+              && data.isFullText === true && !!data.text.trim();
+            if (emptyCodexAnswer) return;
             if (data.isFinal) assistantText = data.text;
             else assistantText += data.text;
           }
