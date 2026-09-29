@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import {
   ArrowLeft,
   Bot,
+  Brain,
   Camera,
   Check,
   ChevronRight,
@@ -19,6 +20,7 @@ import {
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useBotTranslation } from './botPronounContext';
 
+import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { useProviders } from '@/hooks/useProviders';
 import { useAvailableAgents } from '@/hooks/useAvailableAgents';
@@ -52,6 +54,7 @@ import { BotInvitationWelcome } from './BotInvitationWelcome';
 import { BotModelChainEditor } from './BotModelChainEditor';
 import { BotCapabilitySettings } from './BotCapabilitySettings';
 import { BotRoutines } from './BotRoutines';
+import { BotMemorySettings } from './BotMemorySettings';
 import {
   botSettingsChanges,
   normalizeBotSettingsPayload,
@@ -128,22 +131,27 @@ export function BotSettings({
     | 'history'
     | 'advanced'
     | 'routines'
+    | 'memory'
   >('home');
   const routineLeaveRef = useRef<(() => Promise<boolean>) | null>(null);
+  const memoryLeaveRef = useRef<(() => Promise<boolean>) | null>(null);
+  const memoryBackRef = useRef<(() => Promise<boolean>) | null>(null);
   const pageTitle =
-    page === 'model'
-      ? t('bots.settingsTabs.model')
-      : page === 'routines'
-        ? t('routines.title')
-        : page === 'history'
-          ? t('bots.historySearch.title')
-          : page === 'advanced'
-            ? t('bots.homeFolder.title')
-            : page === 'capabilities'
-              ? t('bots.capabilities.title')
-              : page === 'personality'
-                ? t('bots.profile.personality')
-                : t('bots.profile.title');
+    page === 'memory'
+      ? t('bots.memory.title')
+      : page === 'model'
+        ? t('bots.settingsTabs.model')
+        : page === 'routines'
+          ? t('routines.title')
+          : page === 'history'
+            ? t('bots.historySearch.title')
+            : page === 'advanced'
+              ? t('bots.homeFolder.title')
+              : page === 'capabilities'
+                ? t('bots.capabilities.title')
+                : page === 'personality'
+                  ? t('bots.profile.personality')
+                  : t('bots.profile.title');
   const [folderError, setFolderError] = useState<string | null>(null);
   const avatarInFlight = useRef(false);
   const [avatarBusy, setAvatarBusy] = useState(false);
@@ -206,6 +214,7 @@ export function BotSettings({
     if (avatarInFlight.current) return false;
     await autosave.flush();
     if (autosave.isDirty()) return false;
+    if (!((await memoryLeaveRef.current?.()) ?? true)) return false;
     return (await routineLeaveRef.current?.()) ?? true;
   }, [autosave.flush, autosave.isDirty]);
   useEffect(() => {
@@ -216,7 +225,7 @@ export function BotSettings({
     };
   }, [beforeCloseRef, canLeave]);
   const go = (next: typeof page) => {
-    if (!autosave.isDirty() && !routineLeaveRef.current) {
+    if (!autosave.isDirty() && !routineLeaveRef.current && !memoryLeaveRef.current) {
       setPage(next);
       return;
     }
@@ -334,6 +343,7 @@ export function BotSettings({
   const settingsRows = [
     ['profile', Info, t('bots.profile.title')],
     ['personality', UserRound, t('bots.profile.personality')],
+    ['memory', Brain, t('bots.memory.title')],
     ['model', Sparkles, t('bots.settingsTabs.model')],
     ['capabilities', Settings2, t('bots.capabilities.title')],
     ['routines', Clock3, t('routines.title')],
@@ -348,7 +358,12 @@ export function BotSettings({
             <div className="flex min-w-0 items-center gap-2">
               <button
                 type="button"
-                onClick={() => void go('home')}
+                onClick={() =>
+                  void (async () => {
+                    if (page === 'memory' && (await memoryBackRef.current?.())) return;
+                    go('home');
+                  })()
+                }
                 aria-label={t('bots.settingsBack')}
                 className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"
               >
@@ -573,7 +588,9 @@ export function BotSettings({
                 <p className="mt-1 break-words text-11 leading-5 text-[var(--text-tertiary)] [overflow-wrap:anywhere]">
                   {t('bots.homeFolder.contents')}
                 </p>
-                <button
+                <Button
+                  variant="secondary"
+                  size="lg"
                   type="button"
                   disabled={!bot.homeDir}
                   onClick={() => {
@@ -584,18 +601,19 @@ export function BotSettings({
                         setFolderError(result.error ?? t('bots.homeFolder.openFailed'));
                     });
                   }}
-                  className="mt-3 h-9 rounded-full border border-[var(--border-default)] px-3 text-11 text-[var(--text-primary)] hover:bg-[var(--surface-hover)] disabled:opacity-50"
                 >
                   {t('bots.homeFolder.open')}
-                </button>
+                </Button>
                 {!capabilities.memory ? (
-                  <button
+                  <Button
+                    variant="secondary"
+                    size="lg"
                     type="button"
+                    className="ml-2 mt-3"
                     onClick={() => updateCapability('memory', true)}
-                    className="ml-2 mt-3 h-9 rounded-full border border-[var(--border-default)] px-3 text-11 text-[var(--text-primary)] hover:bg-[var(--surface-hover)]"
                   >
                     {t('bots.memoryRecovery.action')}
-                  </button>
+                  </Button>
                 ) : null}
                 {folderError ? (
                   <p className="mt-2 text-11 text-[var(--text-danger)]" role="alert">
@@ -605,6 +623,16 @@ export function BotSettings({
               </div>
             </div>
           </div>
+        ) : null}
+        {page === 'memory' ? (
+          <BotMemorySettings
+            botId={bot.id}
+            botName={name}
+            memoryEnabled={capabilities.memory}
+            onMemoryEnabledChange={(enabled) => updateCapability('memory', enabled)}
+            backRef={memoryBackRef}
+            leaveRef={memoryLeaveRef}
+          />
         ) : null}
         {page === 'routines' ? (
           <BotRoutines embedded botId={bot.id} beforeLeaveRef={routineLeaveRef} />
