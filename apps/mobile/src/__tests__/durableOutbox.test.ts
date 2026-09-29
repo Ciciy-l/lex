@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { buildQueuedTextMessage } from '@/session/inputProjection';
 import { buildOutboxItem } from '@/session/sessionOutbox';
-import type { RemoteSession } from '@/session/types';
+import type { RemoteSession, RemoteSerializedAttachment } from '@/session/types';
 import {
   createDurableOutbox,
   type DurableOutboxRecord,
@@ -304,6 +304,112 @@ describe('durable mobile outbox', () => {
     expect(enqueue).not.toHaveBeenCalled();
     expect(cleanup).toHaveBeenCalledTimes(1);
     expect(store.getSnapshot()).toEqual([]);
+  });
+
+  it('cancels an upload-in-flight row without enqueueing or losing a late upload result', async () => {
+    const store = createDurableOutbox(new MemoryStorage());
+    const base = makeRecord({ enqueueStarted: false });
+    const record: DurableOutboxRecord = {
+      ...base,
+      item: { ...base.item, attachmentSlots: [null] },
+      uploads: [{ slot: 0, fileName: 'draft.png', name: 'draft.png', mimeType: 'image/png', kind: 'image', size: 1 }],
+    };
+    await store.activate(record.accountId);
+    await store.add(record);
+
+    const uploadStarted = deferred<void>();
+    const uploadGate = deferred<RemoteSerializedAttachment>();
+    const uploaded: RemoteSerializedAttachment = {
+      id: 'upload-1', name: 'draft.png', path: '/remote/draft.png', ext: '.png', size: 1,
+      category: 'image', mimeType: 'image/png',
+    };
+    const enqueue = vi.fn();
+    const discardUploads = vi.fn();
+    const cleanup = vi.fn(async (_current: DurableOutboxRecord, cancelled: boolean) => {
+      expect(cancelled).toBe(true);
+    });
+    const delivery = makeDelivery(store, {
+      upload: async () => { uploadStarted.resolve(); return uploadGate.promise; },
+      enqueue,
+      discardUploads,
+      cleanup,
+    });
+
+    const firstRun = delivery.run();
+    await uploadStarted.promise;
+    const current = store.getSnapshot()[0]!;
+    await store.update(current, { state: 'confirming', cancelRequested: true });
+    uploadGate.resolve(uploaded);
+    await firstRun;
+
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(discardUploads).toHaveBeenCalledExactlyOnceWith(record, [uploaded]);
+    delivery.wake();
+    await delivery.run();
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(cleanup).toHaveBeenCalledExactlyOnceWith(expect.anything(), true);
+    expect(store.getSnapshot()).toEqual([]);
+  });
+
+  it.each([
+    { receipt: 'pending' as const, cancellationAccepted: true, removed: true },
+    { receipt: 'accepted' as const, cancellationAccepted: false, removed: false },
+    { receipt: 'removed' as const, cancellationAccepted: false, removed: true },
+    { receipt: 'unknown' as const, cancellationAccepted: false, removed: false },
+  ])('reconciles cancellation during enqueue with a $receipt host receipt', async ({ receipt, cancellationAccepted, removed }) => {
+    const store = createDurableOutbox(new MemoryStorage());
+    const record = makeRecord();
+    await store.activate(record.accountId);
+    await store.add(record);
+
+    const enqueueStarted = deferred<void>();
+    const enqueueGate = deferred<void>();
+    let receiptState: 'pending' | 'accepted' | 'removed' | 'unknown' = 'unknown';
+    const enqueue = vi.fn(async () => {
+      enqueueStarted.resolve();
+      await enqueueGate.promise;
+      return deliveryProjection(record);
+    });
+    const cancel = vi.fn(async () => cancellationAccepted);
+    const cleanup = vi.fn(async (_current: DurableOutboxRecord, _cancelled: boolean) => undefined);
+    const accepted = vi.fn(async () => undefined);
+    const delivery = makeDelivery(store, {
+      projection: async (current) => deliveryProjection(current, receiptState),
+      enqueue, cancel, cleanup, accepted,
+    });
+
+    const firstRun = delivery.run();
+    await enqueueStarted.promise;
+    const current = store.getSnapshot()[0]!;
+    await store.update(current, { state: 'confirming', cancelRequested: true });
+    receiptState = receipt;
+    enqueueGate.resolve();
+    await firstRun;
+
+    delivery.wake();
+    await delivery.run();
+    expect(enqueue).toHaveBeenCalledOnce();
+    if (receipt === 'removed') {
+      expect(cancel).not.toHaveBeenCalled();
+    } else {
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(cancel).toHaveBeenCalledWith(expect.objectContaining({ item: expect.objectContaining({ clientId: record.item.clientId }) }));
+    }
+    if (removed) {
+      expect(cleanup).toHaveBeenCalledExactlyOnceWith(expect.anything(), true);
+      expect(store.getSnapshot()).toEqual([]);
+    } else {
+      expect(cleanup).not.toHaveBeenCalled();
+      expect(store.getSnapshot()[0]).toMatchObject({
+        state: 'host-owned',
+        retrySafe: true,
+        cancelRequested: false,
+      });
+      expect(accepted).toHaveBeenCalledOnce();
+      delivery.wake();
+      await delivery.run();
+      expect(enqueue).toHaveBeenCalledOnce();
+    }
   });
 
   it('settles a persisted user row after history confirms it without creating another enqueue', async () => {

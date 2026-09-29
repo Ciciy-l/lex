@@ -396,6 +396,7 @@ import {
 } from '@/session/sentMessageImagePreviews';
 import {
   buildOutboxItem,
+  canCancelOutboxRecord,
   createOutboxClientId,
   outboxDisplayItem,
   outboxItemAttachments,
@@ -5521,8 +5522,13 @@ export default function SessionScreen() {
       }
     });
   };
-
-  const outboxDisplayItems = useMemo(() => outboxItems.map(outboxDisplayItem), [outboxItems]);
+  const outboxDisplayItems = useMemo(() => outboxItems.map((item) => {
+    const record = findDurableOutboxRecord(item.clientId);
+    return {
+      ...outboxDisplayItem(item),
+      canCancel: canCancelOutboxRecord(record),
+    };
+  }), [outboxItems, deviceId, sessionId]);
 
   /**
    * 取出并清空某会话的 outbox 条目(创建失败的两条收尾路径都要用)。

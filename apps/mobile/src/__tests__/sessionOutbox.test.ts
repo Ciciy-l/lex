@@ -3,6 +3,7 @@ import { DeviceLinkError } from '@cindy/device-link';
 import { i18n } from '@/i18n';
 import {
   buildOutboxItem,
+  canCancelOutboxRecord,
   createOutboxClientId,
   isSafelyUnsentOutboxEnqueueError,
   outboxDisplayItem,
@@ -371,6 +372,14 @@ describe('outboxItemRetrying / outboxItemWithEnqueueFailure', () => {
 });
 
 describe('outboxDisplayItem', () => {
+  it('keeps first creation cancellable only after a recovery payload exists, preserving legacy rows', () => {
+    expect(canCancelOutboxRecord(undefined)).toBe(true);
+    expect(canCancelOutboxRecord({})).toBe(true);
+    expect(canCancelOutboxRecord({ creation: { draft: {} } })).toBe(false);
+    expect(canCancelOutboxRecord({ creation: { draft: {} }, prepared: {} })).toBe(true);
+    expect(canCancelOutboxRecord({ creation: { draft: {} }, template: {} })).toBe(true);
+  });
+
   it('上传进度与失败文案', () => {
     let item = buildOutboxItem({
       clientId: 'c-1',
