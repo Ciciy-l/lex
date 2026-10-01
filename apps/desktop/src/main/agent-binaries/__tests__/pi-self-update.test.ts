@@ -111,6 +111,26 @@ describe('Pi standalone core update', () => {
     expect(logWarn).toHaveBeenCalledWith('Pi Host binary update failed', { stage: 'publish', code: 'EPERM' });
     expect(JSON.stringify(logWarn.mock.calls)).not.toContain(root);
   });
+  it('does not invoke a successful rename when the install signal is already aborted', async () => {
+    const aborted = new AbortController();
+    aborted.abort();
+    const rename = vi.spyOn(fs, 'rename').mockResolvedValue(undefined);
+    await expect(renameWithTransientRetry('a', 'b', {
+      platform: 'win32', signal: aborted.signal, delaysMs: [1],
+    })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(rename).not.toHaveBeenCalled();
+  });
+  it('does not retry if the install signal aborts as the backoff completes', async () => {
+    const controller = new AbortController();
+    const rename = vi.spyOn(fs, 'rename')
+      .mockRejectedValueOnce(Object.assign(new Error('EPERM'), { code: 'EPERM' }))
+      .mockResolvedValue(undefined);
+    await expect(renameWithTransientRetry('a', 'b', {
+      platform: 'win32', signal: controller.signal, delaysMs: [1],
+      waitBeforeRetry: async () => { controller.abort(); },
+    })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(rename).toHaveBeenCalledTimes(1);
+  });
   it('bounds Windows rename retries to transient codes and the install signal', async () => {
     const signal = new AbortController().signal;
     const eperm = vi.spyOn(fs, 'rename').mockRejectedValue(Object.assign(new Error('EPERM'), { code: 'EPERM' }));
@@ -122,7 +142,7 @@ describe('Pi standalone core update', () => {
     eperm.mockReset().mockRejectedValue(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
     const aborted = new AbortController(); aborted.abort();
     await expect(renameWithTransientRetry('a', 'b', { platform: 'win32', signal: aborted.signal, delaysMs: [60_000] })).rejects.toMatchObject({ name: 'AbortError' });
-    expect(eperm).toHaveBeenCalledTimes(1);
+    expect(eperm).not.toHaveBeenCalled();
   });
   it('leaves the old installation usable when version verification fails', async () => {
     const { root, current, deps } = await fixture();

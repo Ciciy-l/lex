@@ -23,11 +23,18 @@ const TRANSIENT_RENAME_CODES = new Set(['EPERM', 'EBUSY', 'EACCES']);
 export const PI_PUBLISH_RENAME_RETRY_DELAYS_MS: readonly number[] = [250, 500, 1000, 2000, 3000, 3000];
 
 export async function renameWithTransientRetry(
-  from: string, to: string, options: { platform: string; signal: AbortSignal; delaysMs?: readonly number[] },
+  from: string, to: string, options: {
+    platform: string;
+    signal: AbortSignal;
+    delaysMs?: readonly number[];
+    waitBeforeRetry?: (delayMs: number) => Promise<void>;
+  },
 ): Promise<void> {
   // Elsewhere EPERM/EACCES are real permission failures; retrying only delays the error.
   const delays = options.platform === 'win32' ? options.delaysMs ?? PI_PUBLISH_RENAME_RETRY_DELAYS_MS : [];
   for (let attempt = 0; ; attempt += 1) {
+    // fs.rename cannot be cancelled, so do not start it after the install budget expires.
+    options.signal.throwIfAborted();
     try {
       await fs.rename(from, to);
       if (attempt > 0) log.info('Pi publish rename succeeded after transient retry', { attempts: attempt + 1 });
@@ -36,7 +43,7 @@ export async function renameWithTransientRetry(
       const code = errorCode(error);
       if (attempt >= delays.length || !TRANSIENT_RENAME_CODES.has(code)) throw error;
       log.warn('Pi publish rename hit transient error; retrying', { code, attempt: attempt + 1, delayMs: delays[attempt] });
-      await delay(delays[attempt], undefined, { signal: options.signal });
+      await (options.waitBeforeRetry ?? ((delayMs) => delay(delayMs, undefined, { signal: options.signal })))(delays[attempt]);
     }
   }
 }
