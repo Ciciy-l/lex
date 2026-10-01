@@ -4212,6 +4212,53 @@ describe('streaming response validity gate (#2242)', () => {
     expect(result).toEqual({ status: 200, text: `${firstEvent}${remainder}` });
   });
 
+  it.each([
+    { name: 'exactly at the cap', eventBytes: 8 * 1024 * 1024 },
+    { name: 'near the cap', eventBytes: 8 * 1024 * 1024 - 128 },
+  ])('counts cross-chunk UTF-8 by wire bytes for an inferred event $name', async ({ eventBytes }) => {
+    const prefix = Buffer.from('event: response.created\ndata: ', 'utf8');
+    const suffix = Buffer.from('\n\n', 'utf8');
+    const character = Buffer.from('汉', 'utf8');
+    const filler = Buffer.alloc(eventBytes - prefix.length - suffix.length - character.length, 0x78);
+    const expectedBody = Buffer.concat([prefix, filler, character, suffix]).toString('utf8');
+    const splitCharacterChunkIds: Array<number | null> = [null, null, null];
+    let upstreamChunkId = 0;
+    const upstream = await startFakeUpstream((_idx, _body, res) => {
+      res.writeHead(200); // Intentionally omit Content-Type so the proxy must infer SSE.
+      res.socket?.setNoDelay(true);
+      res.flushHeaders();
+      res.write(prefix);
+      res.write(filler);
+      const writeCharacterByte = (index: number): void => {
+        res.write(character.subarray(index, index + 1));
+        if (index + 1 === character.length) {
+          res.end(suffix);
+        } else {
+          // Separate HTTP chunks make the UTF-8 split deterministic at IncomingMessage.
+          setTimeout(() => writeCharacterByte(index + 1), 5);
+        }
+      };
+      writeCharacterByte(0);
+    });
+    upstreamClose = upstream.close;
+    proxy = await createAnthropicCompatProxy({
+      upstream: upstream.url,
+      responseObserver: () => ({
+        onData: (chunk) => {
+          for (let index = 0; index < character.length; index += 1) {
+            if (chunk.includes(character.readUInt8(index))) splitCharacterChunkIds[index] = upstreamChunkId;
+          }
+          upstreamChunkId += 1;
+        },
+      }),
+    });
+
+    const result = await post(proxy.url, { model: 'test-model', stream: true });
+    expect(result).toEqual({ status: 200, text: expectedBody });
+    expect(splitCharacterChunkIds).not.toContain(null);
+    expect(new Set(splitCharacterChunkIds).size).toBe(character.length);
+  });
+
   it('rejects a complete inferred first event that exceeds its byte budget', async () => {
     const body = `event: response.created\ndata: ${'x'.repeat(8 * 1024 * 1024)}\n\n`;
     const upstream = await startFakeUpstream((_idx, _body, res) => {

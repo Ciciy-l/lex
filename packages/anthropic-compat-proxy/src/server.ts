@@ -18,6 +18,7 @@ import { createServer, request as httpRequest, type ClientRequest, type Incoming
 import { request as httpsRequest } from 'node:https';
 import type { Socket, TcpSocketConnectOpts } from 'node:net';
 import type { Transform } from 'node:stream';
+import { StringDecoder } from 'node:string_decoder';
 import { URL } from 'node:url';
 import { brotliDecompressSync, gunzipSync, inflateRawSync, inflateSync } from 'node:zlib';
 
@@ -1533,6 +1534,7 @@ function forward(
     const pendingChunks: Buffer[] = [];
     let pendingBytes = 0;
     let pendingText = '';
+    const inferredSseDecoder = new StringDecoder('utf8');
     let inferredSseEventStart = 0;
     let inferredSseBoundarySearchOffset = 0;
     let inferredSseEventBytes = 0;
@@ -1650,7 +1652,9 @@ function forward(
         pendingBytes += chunk.length;
         if (!isSse) {
           if (canInferSse) {
-            pendingText += chunk.toString('utf8');
+            // Preserve UTF-8 characters split across transport chunks. Re-encoding
+            // replacement characters would inflate the inferred event's wire-byte budget.
+            pendingText += inferredSseDecoder.write(chunk);
             // Fast-path the common first field. SSE_PREFIX_RE also admits BOM and
             // comment preambles before that field.
             const hasSsePrefix = pendingText.startsWith('event:')
