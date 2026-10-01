@@ -6,6 +6,17 @@ export type TurnChangeProvider = 'codex' | 'claude-code' | 'pi' | 'omp';
 export type TurnChangeSetState = 'complete' | 'partial';
 export type TurnChangeWorkspaceState = 'applied' | 'undone';
 export type TurnChangeAction = 'undo' | 'reapply';
+
+/**
+ * The only turn-change actions a host may accept. Kept next to the type so every
+ * entry point (local IPC and remote Device Link) validates with the same list instead
+ * of each site re-deriving `action === 'undo'` and silently treating junk as reapply.
+ */
+export const TURN_CHANGE_ACTIONS: readonly TurnChangeAction[] = ['undo', 'reapply'];
+
+export function isTurnChangeAction(value: unknown): value is TurnChangeAction {
+  return typeof value === 'string' && (TURN_CHANGE_ACTIONS as readonly string[]).includes(value);
+}
 export type TurnChangeIncompleteReason =
   | 'opaque-tool'
   | 'outside-workspace'

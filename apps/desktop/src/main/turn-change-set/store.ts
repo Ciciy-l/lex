@@ -7,6 +7,7 @@ import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import type { AgentEvent, TurnDiffEventData } from '@cindy/maker-core';
+import { isTurnChangeAction } from '../../shared/turnChangeSet.js';
 import type {
   PersistedTurnChangeSetV1,
   TurnChangeAction,
@@ -765,6 +766,7 @@ function broadcastUpdated(
   ownerScope = broadcastTap.captureDataOwnerBroadcastScope(),
 ): void {
   if (!broadcastTap.isDataOwnerBroadcastScopeCurrent(ownerScope)) return;
+  broadcastTap.tapWindowBroadcast(MAKER_PUSH.TURN_CHANGE_SET_UPDATED, payload, ownerScope.ownerStamp);
   for (const win of BrowserWindow.getAllWindows()) {
     if (win.isDestroyed()) continue;
     try {
@@ -1334,7 +1336,12 @@ export function applyTurnChangeSetAction(
   id: string,
   action: TurnChangeAction,
   ownerScope = broadcastTap.captureDataOwnerBroadcastScope(),
+  assertCanApply?: () => Promise<void>,
 ): Promise<TurnChangeActionResult> {
+  // Defence in depth: the store must never read an unknown verb as reapply.
+  if (!isTurnChangeAction(action)) {
+    throw new TurnChangeSetActionError('unsupported', 'Invalid turn change-set action');
+  }
   const releaseSessionDir = retainSessionDir(sessionId);
   const operation = (async () => {
     try {
@@ -1387,12 +1394,16 @@ export function applyTurnChangeSetAction(
                 'The workspace no longer matches the recorded patch.',
               );
             }
+            await assertCanApply?.();
+            assertOwnerScopeCurrent(ownerScope);
             await persistWorkspaceState(sessionId, id, nextState);
             const summary = toSummary(value, nextState);
             broadcastUpdated({ sessionId, summary }, ownerScope);
             return { action, changed: false, summary };
           }
 
+          await assertCanApply?.();
+          assertOwnerScopeCurrent(ownerScope);
           await applyRecordedPatch(value, revert);
           await persistWorkspaceState(sessionId, id, nextState);
           const summary = toSummary(value, nextState);

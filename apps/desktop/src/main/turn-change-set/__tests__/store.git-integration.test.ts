@@ -35,6 +35,7 @@ vi.mock('../../device-link/broadcast-tap.js', () => ({
   tapWindowBroadcast: mocks.send,
 }));
 
+import type { TurnChangeAction } from '../../../shared/turnChangeSet.js';
 import {
   TurnChangeSetActionError,
   applyTurnChangeSetAction,
@@ -113,6 +114,11 @@ describe('turn change-set sidecar store', () => {
 
     await vi.waitFor(async () => expect(await listTurnChangeSets('session-1')).toHaveLength(1));
     const [summary] = await listTurnChangeSets('session-1');
+    expect(mocks.send).toHaveBeenCalledWith(
+      'maker:turn-change-set:updated',
+      expect.objectContaining({ sessionId: 'session-1', summary }),
+      undefined,
+    );
     expect(summary).toMatchObject({
       anchorClientId: 'user-1',
       provider: 'codex',
@@ -476,6 +482,90 @@ describe('turn change-set sidecar store', () => {
     expect(await fs.readFile(target, 'utf8')).toBe('head\ntail\n');
   });
 
+  it.each(['applied', 'undone'] as const)(
+    'rejects an unknown action verb in the %s workspace state without touching files',
+    async (startState) => {
+      // The verb must be refused by an explicit whitelist, not incidentally by a
+      // wrong-state guard: without that, store.ts reads any non-'undo' value as reapply.
+      const target = path.join(workdir, 'verb.txt');
+      await fs.writeFile(target, 'before\n');
+      await beginTurnChangeSet({ sessionId: 'session-1', anchorClientId: 'user-1', provider: 'pi', cwd: workdir });
+      await captureKnownFileBefore({ sessionId: 'session-1', provider: 'pi', cwd: workdir, targetPath: 'verb.txt' });
+      await fs.writeFile(target, 'after\n');
+      await finalizeTurnChangeSet('session-1', null, 'complete');
+      const [recorded] = await listTurnChangeSets('session-1');
+      // Drive the set into the requested state so the verb check is the only thing that can fail.
+      if (startState === 'undone') {
+        await applyTurnChangeSetAction('session-1', recorded!.id, 'undo');
+      }
+      expect((await listTurnChangeSets('session-1'))[0]?.workspaceState).toBe(startState);
+      const before = await fs.readFile(target, 'utf8');
+      expect(() =>
+        applyTurnChangeSetAction('session-1', recorded!.id, 'delete-everything' as TurnChangeAction),
+      ).toThrow(TurnChangeSetActionError);
+      // Neither the workspace file nor the recorded state may move.
+      expect(await fs.readFile(target, 'utf8')).toBe(before);
+      expect((await listTurnChangeSets('session-1'))[0]?.workspaceState).toBe(startState);
+    },
+  );
+
+  it('refuses to apply when the working tree no longer matches the recorded patch', async () => {
+    // A patch is immutable: if the user edited the file after the turn recorded it,
+    // undo must fail closed rather than clobber their later change.
+    const target = path.join(workdir, 'conflict.txt');
+    await fs.writeFile(target, 'before\n');
+    await beginTurnChangeSet({ sessionId: 'session-1', anchorClientId: 'user-1', provider: 'pi', cwd: workdir });
+    await captureKnownFileBefore({ sessionId: 'session-1', provider: 'pi', cwd: workdir, targetPath: 'conflict.txt' });
+    await fs.writeFile(target, 'after\n');
+    await finalizeTurnChangeSet('session-1', null, 'complete');
+    const [recorded] = await listTurnChangeSets('session-1');
+    // Simulate a later user edit that invalidates the recorded diff.
+    await fs.writeFile(target, 'user-edited-later\n');
+    await expect(applyTurnChangeSetAction('session-1', recorded!.id, 'undo')).rejects.toThrow();
+    expect(await fs.readFile(target, 'utf8')).toBe('user-edited-later\n');
+  });
+
+  it('never applies a recorded change for a remote (SSH) workspace', async () => {
+    // The controlled side owns the workdir; an SSH remoteHostId has no local snapshot
+    // to apply against, so restore must stay unsupported there.
+    mocks.query.mockImplementation(async (sql: string, params?: readonly unknown[]) => {
+      if (sql.includes('working_dir AS workingDir')) {
+        return [{ workingDir: workdir, remoteHostId: 'ssh-host-1' }];
+      }
+      if (sql.includes('SELECT id FROM sessions')) return [{ id: String(params?.[0] ?? 'session-1') }];
+      if (sql.includes('client_id IN')) return [{ clientId: 'user-1' }];
+      return [];
+    });
+    const target = path.join(workdir, 'ssh.txt');
+    await fs.writeFile(target, 'before\n');
+    await beginTurnChangeSet({ sessionId: 'session-1', anchorClientId: 'user-1', provider: 'pi', cwd: workdir });
+    await captureKnownFileBefore({ sessionId: 'session-1', provider: 'pi', cwd: workdir, targetPath: 'ssh.txt' });
+    await fs.writeFile(target, 'after\n');
+    await finalizeTurnChangeSet('session-1', null, 'complete');
+    const [recorded] = await listTurnChangeSets('session-1');
+    await expect(applyTurnChangeSetAction('session-1', recorded!.id, 'undo')).rejects.toThrow();
+    expect(await fs.readFile(target, 'utf8')).toBe('after\n');
+  });
+  it('checks write admission after preflight and preserves files when access was revoked', async () => {
+    const target = path.join(workdir, 'access.txt');
+    await fs.writeFile(target, 'before\n');
+    await beginTurnChangeSet({ sessionId: 'session-1', anchorClientId: 'user-1', provider: 'pi', cwd: workdir });
+    await captureKnownFileBefore({ sessionId: 'session-1', provider: 'pi', cwd: workdir, targetPath: 'access.txt' });
+    await fs.writeFile(target, 'after\n');
+    await finalizeTurnChangeSet('session-1', null, 'complete');
+    const [recorded] = await listTurnChangeSets('session-1');
+    const assertAccess = vi.fn(async () => { throw new Error('access revoked'); });
+    await expect(applyTurnChangeSetAction('session-1', recorded!.id, 'undo', undefined, assertAccess))
+      .rejects.toThrow('access revoked');
+    expect(assertAccess).toHaveBeenCalledOnce();
+    expect(await fs.readFile(target, 'utf8')).toBe('after\n');
+    expect((await listTurnChangeSets('session-1'))[0]?.workspaceState).toBe('applied');
+    await applyTurnChangeSetAction('session-1', recorded!.id, 'undo');
+    expect(await fs.readFile(target, 'utf8')).toBe('before\n');
+    await applyTurnChangeSetAction('session-1', recorded!.id, 'reapply');
+    expect(await fs.readFile(target, 'utf8')).toBe('after\n');
+  });
+
   it('reports a missing Git executable without changing the workspace', async () => {
     const target = path.join(workdir, 'missing-git.ts');
     await fs.writeFile(target, 'new\n', 'utf8');
@@ -760,6 +850,7 @@ describe('turn change-set sidecar store', () => {
     await finalizeTurnChangeSet('session-1', 'turn-owner', 'complete');
     const [recorded] = await listTurnChangeSets('session-1');
     mocks.ownerCurrent = false;
+    mocks.send.mockClear();
 
     await expect(applyTurnChangeSetAction('session-1', recorded!.id, 'undo'))
       .rejects.toMatchObject({ kind: 'busy' } satisfies Partial<TurnChangeSetActionError>);
