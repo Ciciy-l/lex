@@ -18,7 +18,6 @@ import { createServer, request as httpRequest, type ClientRequest, type Incoming
 import { request as httpsRequest } from 'node:https';
 import type { Socket, TcpSocketConnectOpts } from 'node:net';
 import type { Transform } from 'node:stream';
-import { StringDecoder } from 'node:string_decoder';
 import { URL } from 'node:url';
 import { brotliDecompressSync, gunzipSync, inflateRawSync, inflateSync } from 'node:zlib';
 
@@ -1528,13 +1527,14 @@ function forward(
     const STREAM_GATE_PENDING_CAP_BYTES = 64 * 1024;
     const STREAM_GATE_INFERRED_EVENT_CAP_BYTES = 8 * 1024 * 1024;
     const SSE_EVENT_MARKER_RE = /(^|\r?\n)(event|data):/;
-    const SSE_PREFIX_RE = /^\uFEFF?(?:(?:|:[^\r\n]*)\r?\n)*(?:event|data):/;
-    const SSE_DATA_FIELD_RE = /(?:^\uFEFF?|\r?\n)data:/;
+    // The inference scanner uses latin1 so each JS string index is one original wire byte.
+    const SSE_PREFIX_BYTES_RE = /^(?:\u00EF\u00BB\u00BF)?(?:(?:|:[^\r\n]*)\r?\n)*(?:event|data):/;
+    const SSE_DATA_FIELD_BYTES_RE = /(?:^(?:\u00EF\u00BB\u00BF)?|\r?\n)data:/;
     let streamGateCommitted = false;
     const pendingChunks: Buffer[] = [];
     let pendingBytes = 0;
     let pendingText = '';
-    const inferredSseDecoder = new StringDecoder('utf8');
+    let pendingWireText = '';
     let inferredSseEventStart = 0;
     let inferredSseBoundarySearchOffset = 0;
     let inferredSseEventBytes = 0;
@@ -1588,6 +1588,7 @@ function forward(
       for (const chunk of pendingChunks) dest.write(chunk);
       pendingChunks.length = 0;
       pendingText = '';
+      pendingWireText = '';
       if (responseTransforms.length > 0) {
         // 客户端断开 / 上游故障收口时把 transform 一并拆掉,避免上游继续灌进无消费者的流。
         clientRes.on('close', () => responseTransforms.forEach((transform) => transform.destroy()));
@@ -1652,14 +1653,14 @@ function forward(
         pendingBytes += chunk.length;
         if (!isSse) {
           if (canInferSse) {
-            // Preserve UTF-8 characters split across transport chunks. Re-encoding
-            // replacement characters would inflate the inferred event's wire-byte budget.
-            pendingText += inferredSseDecoder.write(chunk);
-            // Fast-path the common first field. SSE_PREFIX_RE also admits BOM and
+            // Keep a byte-for-code-unit mirror: delimiters and field names are ASCII,
+            // while latin1 guarantees each offset remains an exact original wire byte.
+            pendingWireText += chunk.toString('latin1');
+            // Fast-path the common first field. SSE_PREFIX_BYTES_RE also admits BOM and
             // comment preambles before that field.
-            const hasSsePrefix = pendingText.startsWith('event:')
-              || pendingText.startsWith('data:')
-              || SSE_PREFIX_RE.test(pendingText);
+            const hasSsePrefix = pendingWireText.startsWith('event:')
+              || pendingWireText.startsWith('data:')
+              || SSE_PREFIX_BYTES_RE.test(pendingWireText);
             // A field prefix alone cannot dispatch an event: wait for a
             // data-containing block to end in a blank line, including across
             // chunks. Scan only newly appended text so a large valid first
@@ -1667,28 +1668,26 @@ function forward(
             if (hasSsePrefix) {
               while (true) {
                 const boundary = [
-                  { value: '\n\n', offset: pendingText.indexOf('\n\n', inferredSseBoundarySearchOffset) },
-                  { value: '\n\r\n', offset: pendingText.indexOf('\n\r\n', inferredSseBoundarySearchOffset) },
-                  { value: '\r\n\n', offset: pendingText.indexOf('\r\n\n', inferredSseBoundarySearchOffset) },
-                  { value: '\r\n\r\n', offset: pendingText.indexOf('\r\n\r\n', inferredSseBoundarySearchOffset) },
+                  { value: '\n\n', offset: pendingWireText.indexOf('\n\n', inferredSseBoundarySearchOffset) },
+                  { value: '\n\r\n', offset: pendingWireText.indexOf('\n\r\n', inferredSseBoundarySearchOffset) },
+                  { value: '\r\n\n', offset: pendingWireText.indexOf('\r\n\n', inferredSseBoundarySearchOffset) },
+                  { value: '\r\n\r\n', offset: pendingWireText.indexOf('\r\n\r\n', inferredSseBoundarySearchOffset) },
                 ].filter((candidate) => candidate.offset !== -1)
                   .sort((left, right) => left.offset - right.offset)[0];
                 if (!boundary) {
-                  // Retain three trailing characters to catch a delimiter
+                  // Retain three trailing bytes to catch a delimiter
                   // split across chunks (\n\n or \r\n\r\n).
                   inferredSseBoundarySearchOffset = Math.max(
                     inferredSseEventStart,
-                    pendingText.length - 3,
+                    pendingWireText.length - 3,
                   );
                   break;
                 }
-                const completeEvent = pendingText.slice(inferredSseEventStart, boundary.offset);
-                inferredSseEventBytes += Buffer.byteLength(
-                  pendingText.slice(inferredSseEventStart, boundary.offset + boundary.value.length),
-                );
+                const completeEvent = pendingWireText.slice(inferredSseEventStart, boundary.offset);
+                inferredSseEventBytes += boundary.offset + boundary.value.length - inferredSseEventStart;
                 inferredSseEventStart = boundary.offset + boundary.value.length;
                 inferredSseBoundarySearchOffset = inferredSseEventStart;
-                if (SSE_DATA_FIELD_RE.test(completeEvent)) {
+                if (SSE_DATA_FIELD_BYTES_RE.test(completeEvent)) {
                   // The cap applies through the first complete data event, not to
                   // trailing bytes in the same transport chunk. Reject a complete
                   // oversized event before committing its buffered response.

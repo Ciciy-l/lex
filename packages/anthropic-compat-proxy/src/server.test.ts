@@ -4222,6 +4222,11 @@ describe('streaming response validity gate (#2242)', () => {
     const filler = Buffer.alloc(eventBytes - prefix.length - suffix.length - character.length, 0x78);
     const expectedBody = Buffer.concat([prefix, filler, character, suffix]).toString('utf8');
     const splitCharacterChunkIds: Array<number | null> = [null, null, null];
+    const observedCharacterBytes = Array.from({ length: character.length }, () => {
+      let resolveObserved!: () => void;
+      const promise = new Promise<void>((resolve) => { resolveObserved = resolve; });
+      return { promise, resolveObserved };
+    });
     let upstreamChunkId = 0;
     const upstream = await startFakeUpstream((_idx, _body, res) => {
       res.writeHead(200); // Intentionally omit Content-Type so the proxy must infer SSE.
@@ -4231,12 +4236,12 @@ describe('streaming response validity gate (#2242)', () => {
       res.write(filler);
       const writeCharacterByte = (index: number): void => {
         res.write(character.subarray(index, index + 1));
-        if (index + 1 === character.length) {
-          res.end(suffix);
-        } else {
-          // Separate HTTP chunks make the UTF-8 split deterministic at IncomingMessage.
-          setTimeout(() => writeCharacterByte(index + 1), 5);
-        }
+        // Wait until the proxy has observed this byte before sending the next, so
+        // the OS cannot coalesce these writes into a false-positive single chunk.
+        void observedCharacterBytes[index]!.promise.then(() => {
+          if (index + 1 === character.length) res.end(suffix);
+          else writeCharacterByte(index + 1);
+        });
       };
       writeCharacterByte(0);
     });
@@ -4246,7 +4251,10 @@ describe('streaming response validity gate (#2242)', () => {
       responseObserver: () => ({
         onData: (chunk) => {
           for (let index = 0; index < character.length; index += 1) {
-            if (chunk.includes(character.readUInt8(index))) splitCharacterChunkIds[index] = upstreamChunkId;
+            if (chunk.includes(character.readUInt8(index))) {
+              splitCharacterChunkIds[index] = upstreamChunkId;
+              observedCharacterBytes[index]!.resolveObserved();
+            }
           }
           upstreamChunkId += 1;
         },
