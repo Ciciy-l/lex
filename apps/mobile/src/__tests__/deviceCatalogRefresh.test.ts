@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderView } from '@cindy/model-providers/registry';
+import { MOBILE_AGENT_KINDS } from '@/device-link/mobileMakerTransport';
 
 beforeEach(() => { vi.resetModules(); vi.useFakeTimers(); });
 afterEach(() => vi.useRealTimers());
@@ -94,17 +95,25 @@ describe('catalog invalidation under a slow device link', () => {
     const last = deferred<ReturnType<typeof catalog>>();
     const firstCaps = deferred<unknown>();
     const readProviders = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(last.promise);
-    const readCapabilities = vi.fn().mockReturnValue(firstCaps.promise);
+    const ompStale = { availableModels: [{ id: 'omp-stale' }] };
+    const ompFresh = { availableModels: [{ id: 'omp-fresh' }] };
+    let freshCapabilities = false;
+    const readCapabilities = vi.fn((_id: string, agent: string) => freshCapabilities
+      ? Promise.resolve(agent === 'omp' ? ompFresh : null)
+      : firstCaps.promise);
     const published = vi.fn();
+    const ompUpdated = vi.fn();
     cache.subscribeDeviceProviders('a', published);
+    const offOmp = caps.subscribeAgentCapabilities('a', 'omp', ompUpdated);
     const refresh = createDeviceCatalogRefresh({ readProviders, readCapabilities, connectionEpoch: () => 7 });
     for (let i = 0; i < 4; i++) { refresh.notify('a'); await vi.advanceTimersByTimeAsync(2); }
     await flush();
     expect(readProviders).toHaveBeenCalledTimes(1);
-    expect(readCapabilities).toHaveBeenCalledTimes(3);
+    expect(readCapabilities).toHaveBeenCalledTimes(MOBILE_AGENT_KINDS.length);
+    expect(readCapabilities.mock.calls.map(([, agent]) => agent)).toEqual([...MOBILE_AGENT_KINDS]);
     // A mounted page joins the same capability read as the push refresh.
     const pageRead = vi.fn();
-    const joined = caps.fetchAgentCapabilities('a', 'codex', pageRead);
+    const joined = caps.fetchAgentCapabilities('a', 'omp', pageRead);
     for (let i = 0; i < 10; i++) refresh.notify('a');
     await flush();
     expect(readProviders).toHaveBeenCalledTimes(1);
@@ -113,16 +122,26 @@ describe('catalog invalidation under a slow device link', () => {
     expect(published).not.toHaveBeenCalled();
     expect(cache.getDeviceFetchEpoch('a')).toBeUndefined();
     expect(readProviders).toHaveBeenCalledTimes(1); // Whole batch still settling.
-    firstCaps.resolve(null);
+    freshCapabilities = true;
+    firstCaps.resolve(ompStale);
     await joined;
     await flush();
     expect(pageRead).not.toHaveBeenCalled();
     expect(readProviders).toHaveBeenCalledTimes(2);
-    expect(readCapabilities).toHaveBeenCalledTimes(6);
+    expect(readCapabilities).toHaveBeenCalledTimes(MOBILE_AGENT_KINDS.length * 2);
+    expect(readCapabilities.mock.calls.map(([, agent]) => agent)).toEqual([
+      ...MOBILE_AGENT_KINDS, ...MOBILE_AGENT_KINDS,
+    ]);
+    expect(caps.getCachedAgentCapabilities(caps.buildAgentCapabilitiesCacheKey('a', 'omp')))
+      .toMatchObject({ availableModels: [{ id: 'omp-fresh', label: 'omp-fresh' }] });
+    expect(ompUpdated).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      availableModels: [expect.objectContaining({ id: 'omp-fresh' })],
+    }));
     last.resolve(catalog('latest'));
     await flush();
     expect(published).toHaveBeenCalledExactlyOnceWith(catalog('latest'));
     expect(cache.getDeviceFetchEpoch('a')).toBe(7);
+    offOmp();
     refresh.dispose();
   });
 

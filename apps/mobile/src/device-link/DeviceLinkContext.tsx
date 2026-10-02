@@ -65,6 +65,7 @@ import {
 } from '@/device-link/linkClose';
 import { resolveMobileInvokeTimeoutMs } from '@/device-link/invokeTimeouts';
 import { createDeviceCatalogRefresh } from '@/device-link/deviceCatalogRefresh';
+import { MOBILE_AGENT_KINDS } from '@/device-link/mobileMakerTransport';
 import {
   classifySnapshotBatchFailure,
   rehydrateDeviceLinkPeer,
@@ -1615,7 +1616,7 @@ async function refreshDeviceCapabilities(
 ): Promise<void> {
   const generation = getAgentCapabilitiesGeneration(deviceId);
   await Promise.allSettled(
-    (['claude-code', 'codex', 'pi', 'omp'] as const).map(async (agentKind) => {
+    MOBILE_AGENT_KINDS.map(async (agentKind) => {
       const raw = await sendInvokeWithAccessHandling<unknown>(
         client,
         deviceId,

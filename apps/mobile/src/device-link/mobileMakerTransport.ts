@@ -62,7 +62,8 @@ export interface SendOptions {
   throwOnStartFailure?: boolean;
 }
 
-export type MobileAgentKind = 'claude-code' | 'codex' | 'pi' | 'omp';
+export const MOBILE_AGENT_KINDS = ['claude-code', 'codex', 'pi', 'omp'] as const;
+export type MobileAgentKind = (typeof MOBILE_AGENT_KINDS)[number];
 
 export interface CreateSessionOptions {
   agentKind: MobileAgentKind;
