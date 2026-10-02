@@ -5,7 +5,7 @@
  *   1. 窗口失焦 / 隐藏时跳过 90s 周期刷新——没人在看,后台空转的查询(GitHub
  *      配额 + device-link 隧道)纯属浪费;回到前台由既有的 focus 监听立即全量
  *      补一次,数据不停留在过期态。
- *   2. 设备明确断线时跳过远程隧道查询——失败路径刻意不写 TTL 时间戳(瞬断要
+ *   2. 设备明确断线或处于 unresponsive 熔断时跳过远程隧道查询——失败路径刻意不写 TTL 时间戳(瞬断要
  *      立即重试),但长离线下就成了每周期一轮注定失败的调用 + 告警日志;断线
  *      标记本地同步可得,先看一眼再发。fail-open:shard 缺失(尚未建立 / 设备
  *      已移除)照常尝试,不能把首次查询吞掉。
@@ -38,12 +38,12 @@ describe('PR 状态刷新的省流门控', () => {
     expect(prRefsSource).toContain("window.addEventListener('focus', refreshAll)");
   });
 
-  it('远程引用与状态查询都先看设备断线标记', () => {
+  it('远程引用与状态查询都先看断线和 unresponsive 标记', () => {
     // 引用拉取(fetchRefsForRemoteSession):deviceId 是必传参,直接判。
-    expect(prRefsSource).toContain('if (isRemoteDeviceMarkedDisconnected(deviceId)) return;');
+    expect(prRefsSource).toContain('if (isRemoteDeviceMarkedDisconnected(deviceId) || unresponsiveDevicesStore.has(deviceId)) return;');
     // 状态查询(fetchStatusesForRefs 的远程分支):deviceId 可空,先短路。
     expect(prRefsSource).toContain(
-      'if (deviceId && isRemoteDeviceMarkedDisconnected(deviceId)) return;',
+      'if (deviceId && (isRemoteDeviceMarkedDisconnected(deviceId) || unresponsiveDevicesStore.has(deviceId))) return;',
     );
     expect(prRefsSource).toContain('store.applyStatuses(sessionId, results)');
   });

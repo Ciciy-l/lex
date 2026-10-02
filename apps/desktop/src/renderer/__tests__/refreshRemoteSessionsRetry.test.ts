@@ -22,6 +22,7 @@ import {
   isTransientRemoteError,
 } from '@/features/device-link/refreshRemoteSessions';
 import { remoteProjectsStore } from '@/features/device-link/remoteProjectsStore';
+import { unresponsiveDevicesStore } from '@/features/device-link/unresponsiveDevicesStore';
 import {
   applyRemoteSessionActivity,
   clearRemoteSessionActivity,
@@ -40,6 +41,7 @@ beforeEach(() => {
 
 afterEach(() => {
   remoteProjectsStore.clear();
+  unresponsiveDevicesStore.clearAll();
   clearRemoteSessionActivity();
   vi.unstubAllGlobals();
 });
@@ -96,6 +98,55 @@ function deferred<T>() {
 }
 
 describe('refresh lifecycle cancellation', () => {
+  it('keeps a cached mirror and does not read an open-circuit peer while healthy peers continue', async () => {
+    const slow = did();
+    const healthy = did();
+    const cached = session('cached');
+    remoteProjectsStore.setDeviceSessions(slow, 'Slow', [cached]);
+    unresponsiveDevicesStore.apply(slow, true);
+    invoke.mockImplementation(async (peer: string, channel: string) => {
+      expect(peer).toBe(healthy);
+      return channel === 'maker:schedule:list-sidebar-index-runs' ? { runs: [] } : [session('fresh')];
+    });
+
+    await expect(refreshRemoteDeviceSessions(slow, 'Slow', { scope: 'both' })).resolves.toBe('gave-up');
+    expect(invoke).not.toHaveBeenCalled();
+    expect(remoteProjectsStore.getDeviceSessions(slow).map((row) => row.id)).toEqual([cached.id]);
+    unresponsiveDevicesStore.apply(slow, false);
+    await expect(refreshRemoteDeviceSessions(healthy, 'Healthy', { scope: 'both' })).resolves.toBe('ok');
+    expect(invoke.mock.calls.every(([peer]) => peer === healthy)).toBe(true);
+  });
+
+  it('does not apply a list or start schedule reads when the circuit opens while list is in flight', async () => {
+    const device = did();
+    const cached = session('cached');
+    const pending = deferred<Session[]>();
+    remoteProjectsStore.setDeviceSessions(device, 'Host', [cached]);
+    invoke.mockImplementation((peer: string, channel: string) => {
+      expect(peer).toBe(device);
+      if (channel === 'local-db:sessions:list') {
+        unresponsiveDevicesStore.apply(device, true);
+        return pending.promise;
+      }
+      return Promise.resolve({ runs: [] });
+    });
+    const refresh = refreshRemoteDeviceSessions(device, 'Host', { scope: 'both' });
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledOnce());
+    pending.resolve([session('stale')]);
+    await expect(refresh).resolves.toBe('gave-up');
+    expect(invoke).toHaveBeenCalledOnce();
+    expect(remoteProjectsStore.getDeviceSessions(device).map((row) => row.id)).toEqual([cached.id]);
+  });
+
+  it('ends the retry chain when main opens the circuit during backoff', async () => {
+    const device = did();
+    invoke.mockRejectedValue(new Error('DbClient not ready'));
+    const sleep = vi.fn(async () => { unresponsiveDevicesStore.apply(device, true); });
+    await expect(refreshRemoteDeviceSessions(device, undefined, { sleep })).resolves.toBe('gave-up');
+    expect(invoke).toHaveBeenCalledOnce();
+    expect(sleep).toHaveBeenCalledOnce();
+  });
+
   it.each(['removeDevice', 'markDeviceDisconnected', 'markAllDisconnected', 'clear'] as const)(
     '%s cancels queued strong refreshes, while another peer remains usable', async (action) => {
       const device = did();

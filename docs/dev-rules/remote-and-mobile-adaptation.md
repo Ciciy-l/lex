@@ -90,6 +90,22 @@ Desktop 清理某设备的熔断状态不等于该设备已恢复。停用、离
 取消的恢复。周期对账复用在途读取，新增内容等事件仍可合并成一次后续刷新。
 读取，新增内容等事件仍可合并成一次后续刷新；不得为了限制整轮等待而缩短弱网请求预算。
 
+Desktop 熔断标记为 unresponsive 的设备暂停 sessions:list、schedule index、PR 引用/状态及后台
+能力目录预取，保留最近一次有效镜像；健康 peer 继续独立刷新。熔断在 subscribe 或 sessions:list
+等待期间打开时，bootstrap 收尾为失败状态并保持旧镜像。只有权威 list 成功后，才按 capabilities、
+providers、Git safety 顺序预取，每步重新检查 owner、设备生命周期、eligible 与熔断状态；失败列表
+不会当成空列表，也不会启动这些附加读取。周期 reconciler 排除熔断设备；停止或切换 Provider 后，
+旧 promise 的完成不再记退避或启动新请求。main 的 onResponsiveness/recovered 触发一次 fresh
+bootstrap。以上是远程读取 admission；用户已授权的独立写入仍按原有权限与生命周期守卫执行。
+
+Desktop 的 unresponsive 熔断打开时，暂停该设备的 sessions:list、schedule index、PR 引用/状态与
+后台能力预取，保留最近一次有效镜像；其它健康 peer 继续刷新。熔断在 subscribe 或 sessions:list
+等待期间打开时，bootstrap 收尾为失败状态并保留旧镜像。只有权威列表读取成功后才依次预取
+capabilities、providers、Git safety；每次读取前重新核对 owner、设备生命周期、eligible 和熔断状态。
+失败的列表不当成空列表，也不启动附加读取。周期 reconciler 排除熔断设备；停止或切换 Provider 后，
+迟到的 refresh 结果不再更新退避或启动请求。main 的 onResponsiveness/recovered 触发一次 fresh
+bootstrap。这些门控只保护读取；用户已授权的独立写操作继续走原权限与生命周期检查。
+
 请求超时不代表主机操作未执行；peer reset 后是否可重试由调用方的幂等语义决定，不能按
 channel 名推断写操作安全。`sessions:get` 与要求 `fresh` 的 `sessions:list` 必须重新读取，
 避免复用写入前开始的快照。上述恢复改动不改变 wire 格式或权限边界；IPC 权限仍以 allowlist

@@ -369,6 +369,27 @@ describe('startRemoteSessionsReconciler', () => {
     at = 8_000;
     expect(backoff.shouldAttempt('dev-b')).toBe(true);
   });
+
+  it.each(['resolved', 'rejected'] as const)('ignores a late %s after the reconciler stops', async (outcome) => {
+    vi.useFakeTimers();
+    const backoff = createReconcileBackoff({ baseMs: 1_000, jitter: (delay) => delay });
+    const report = vi.spyOn(backoff, 'report');
+    let resolve!: (value: string) => void;
+    let reject!: (error: Error) => void;
+    const pending = new Promise<string>((yes, no) => { resolve = yes; reject = no; });
+    const refresh = vi.fn(() => pending);
+    const reconciler = startRemoteSessionsReconciler(() => new Map([['peer', 'Peer']]), refresh, 1_000, backoff);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(refresh).toHaveBeenCalledOnce();
+    reconciler.stop();
+    if (outcome === 'resolved') resolve('gave-up');
+    else reject(new Error('late timeout'));
+    await vi.advanceTimersByTimeAsync(0);
+    reconciler.wake();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(report).not.toHaveBeenCalled();
+  });
 });
 
 describe('resolveIneligibleRemoteProjectAction', () => {

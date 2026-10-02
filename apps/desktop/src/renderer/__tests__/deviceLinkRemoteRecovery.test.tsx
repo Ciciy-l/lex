@@ -2,11 +2,12 @@
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const authState = vi.hoisted(() => ({ dataOwnerId: 'test-owner' as string | null }));
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({
     isAuthenticated: true,
     deviceId: 'self',
-    dataOwnerId: 'test-owner',
+    dataOwnerId: authState.dataOwnerId,
   }),
 }));
 vi.mock('@/hooks/useAgentCapabilities', () => ({
@@ -35,6 +36,11 @@ vi.mock('@/lib/logger', () => ({
 
 import { useDeviceLinkRemoteProjects } from '@/features/device-link/useDeviceLinkRemoteProjects';
 import { remoteProjectsStore } from '@/features/device-link/remoteProjectsStore';
+import { unresponsiveDevicesStore } from '@/features/device-link/unresponsiveDevicesStore';
+import { revokedDevicesStore } from '@/features/device-link/revokedDevicesStore';
+import { prefetchDeviceCapabilities } from '@/hooks/useAgentCapabilities';
+import { prefetchDeviceProviders } from '@/hooks/useDeviceProviders';
+import { prefetchDeviceGitSafetySettings } from '@/hooks/useGitSafetySettings';
 
 /** Real hook/store/refresh orchestration with independent controllable peer transports. */
 const peers = ['slow', 'healthy'].map((deviceId) => ({
@@ -72,6 +78,9 @@ const control = (enabled: boolean) =>
 
 beforeEach(() => {
   vi.useFakeTimers();
+  authState.dataOwnerId = 'test-owner';
+  unresponsiveDevicesStore.clearAll();
+  revokedDevicesStore.clearAll();
   listeners = {};
   subscribe.mockReset().mockResolvedValue({});
   invoke
@@ -80,6 +89,9 @@ beforeEach(() => {
       channel === 'maker:schedule:list-sidebar-index-runs' ? { runs: [] } : [],
     );
   getState.mockReset().mockResolvedValue({ linkStatus: 'online', disabledControlDeviceIds: [] });
+  vi.mocked(prefetchDeviceCapabilities).mockReset().mockResolvedValue(undefined);
+  vi.mocked(prefetchDeviceProviders).mockReset().mockResolvedValue(undefined);
+  vi.mocked(prefetchDeviceGitSafetySettings).mockReset().mockResolvedValue(undefined);
   const events = Object.fromEntries(
     [
       'onResponsivenessChanged',
@@ -113,10 +125,85 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   remoteProjectsStore.clear();
+  unresponsiveDevicesStore.clearAll();
+  revokedDevicesStore.clearAll();
   vi.useRealTimers();
 });
 
 describe('multi-device recovery lifecycle', () => {
+  it('gates only the open-circuit peer and prefetches its data serially after one recovery', async () => {
+    const cached = { id: 'cached-session', title: 'Cached' } as any;
+    remoteProjectsStore.setDeviceSessions('slow', 'Slow', [cached]);
+    unresponsiveDevicesStore.apply('slow', true);
+    const prefetchOrder: string[] = [];
+    vi.mocked(prefetchDeviceCapabilities).mockImplementation(async (deviceId) => { prefetchOrder.push('cap:' + deviceId); });
+    vi.mocked(prefetchDeviceProviders).mockImplementation(async (deviceId) => { prefetchOrder.push('providers:' + deviceId); });
+    vi.mocked(prefetchDeviceGitSafetySettings).mockImplementation(async (deviceId) => { prefetchOrder.push('git:' + deviceId); });
+
+    renderHook(() => useDeviceLinkRemoteProjects());
+    await settle();
+
+    expect(subscribe.mock.calls.filter(([deviceId]) => deviceId === 'slow')).toHaveLength(0);
+    expect(invoke.mock.calls.filter(([deviceId]) => deviceId === 'slow')).toHaveLength(0);
+    expect(remoteProjectsStore.getDeviceSessions('slow').map((session) => session.id)).toEqual(['cached-session']);
+    expect(prefetchOrder).toEqual(['cap:healthy', 'providers:healthy', 'git:healthy']);
+    expect(invoke.mock.calls.some(([deviceId, channel]) => deviceId === 'healthy' && channel === 'local-db:sessions:list')).toBe(true);
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(invoke.mock.calls.filter(([deviceId]) => deviceId === 'slow')).toHaveLength(0);
+
+    act(() => listeners.onResponsivenessChanged({ deviceId: 'slow', unresponsive: false, recovered: true }));
+    await settle();
+    expect(subscribe.mock.calls.filter(([deviceId]) => deviceId === 'slow')).toHaveLength(1);
+    expect(invoke.mock.calls.filter(([deviceId, channel]) => deviceId === 'slow' && channel === 'local-db:sessions:list')).toHaveLength(1);
+    expect(prefetchOrder).toEqual([
+      'cap:healthy', 'providers:healthy', 'git:healthy',
+      'cap:slow', 'providers:slow', 'git:slow',
+    ]);
+  });
+
+  it('does not prefetch when a peer list fails, while a healthy peer completes normally', async () => {
+    const cached = { id: 'cached-session', title: 'Cached' } as any;
+    remoteProjectsStore.setDeviceSessions('slow', 'Slow', [cached]);
+    const prefetchOrder: string[] = [];
+    vi.mocked(prefetchDeviceCapabilities).mockImplementation(async (deviceId) => { prefetchOrder.push('cap:' + deviceId); });
+    vi.mocked(prefetchDeviceProviders).mockImplementation(async (deviceId) => { prefetchOrder.push('providers:' + deviceId); });
+    vi.mocked(prefetchDeviceGitSafetySettings).mockImplementation(async (deviceId) => { prefetchOrder.push('git:' + deviceId); });
+    invoke.mockImplementation(async (deviceId: string, channel: string) => {
+      if (deviceId === 'slow' && channel === 'local-db:sessions:list')
+        throw new Error('[CHANNEL_NOT_ALLOWED] old host');
+      return channel === 'maker:schedule:list-sidebar-index-runs' ? { runs: [] } : [];
+    });
+
+    renderHook(() => useDeviceLinkRemoteProjects());
+    await settle();
+    expect(prefetchOrder).toEqual(['cap:healthy', 'providers:healthy', 'git:healthy']);
+    expect(remoteProjectsStore.getDeviceSessions('slow').map((session) => session.id)).toEqual(['cached-session']);
+    expect(remoteProjectsStore.getBootstrapLoadingDeviceIds().has('slow')).toBe(false);
+  });
+
+  it.each(['revoke', 'owner', 'lifecycle'] as const)('stops later prefetches after a slow capability read loses its %s gate', async (gate) => {
+    const slowCapabilities = deferred<void>();
+    vi.mocked(prefetchDeviceCapabilities).mockImplementation(async (deviceId) => {
+      if (deviceId === 'slow') await slowCapabilities.promise;
+    });
+    const view = renderHook(() => useDeviceLinkRemoteProjects());
+    await settle();
+    expect(prefetchDeviceCapabilities).toHaveBeenCalledWith('slow');
+    expect(prefetchDeviceProviders).not.toHaveBeenCalledWith('slow');
+    expect(prefetchDeviceGitSafetySettings).not.toHaveBeenCalledWith('slow');
+
+    if (gate === 'revoke') act(() => listeners.onAccessRevoked({ deviceId: 'slow' }));
+    else if (gate === 'owner') {
+      authState.dataOwnerId = 'next-owner';
+      view.rerender();
+    } else remoteProjectsStore.removeDevice('slow');
+
+    slowCapabilities.resolve();
+    await settle();
+    expect(prefetchDeviceProviders).not.toHaveBeenCalledWith('slow');
+    expect(prefetchDeviceGitSafetySettings).not.toHaveBeenCalledWith('slow');
+  });
+
   it('slow subscription does not delay a healthy peer, and disable cancels queued bootstrap', async () => {
     const slow = deferred<object>();
     subscribe.mockImplementation((peer: string) =>

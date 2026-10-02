@@ -19,6 +19,7 @@ vi.mock('@/lib/logger', () => ({
 }));
 
 import { PrRefsProvider, usePrRefsForSession, usePrActions, usePrStatuses } from '../PrRefsContext';
+import { unresponsiveDevicesStore } from '@/features/device-link/unresponsiveDevicesStore';
 
 function RefCount() {
   return <div>{usePrRefsForSession('session-local').length}</div>;
@@ -63,17 +64,45 @@ describe('PrRefsProvider local owner', () => {
   });
 });
 
-function RemoteRefs() {
+function RemoteRefs({ sessionId = 'remote-child', deviceId = 'home' }: { sessionId?: string; deviceId?: string } = {}) {
   const { registerPrConsumer, invalidateRemotePrRefs } = usePrActions();
-  const refs = usePrRefsForSession('remote-child');
-  useEffect(() => registerPrConsumer('remote-child', 'home'), [registerPrConsumer]);
-  return (
-    <button onClick={() => invalidateRemotePrRefs('remote-child')}>remote:{refs.length}</button>
-  );
+  const refs = usePrRefsForSession(sessionId);
+  useEffect(() => registerPrConsumer(sessionId, deviceId), [registerPrConsumer, sessionId, deviceId]);
+  return <button onClick={() => invalidateRemotePrRefs(sessionId)}>remote:{refs.length}</button>;
 }
 
 describe('remote task association invalidation', () => {
   afterEach(cleanup);
+  it('suppresses PR reads for an open circuit without delaying a healthy peer, then permits a fresh read', async () => {
+    mocks.listAllPrRefs.mockResolvedValue([]);
+    const invoke = vi.fn(async () => []);
+    window.electronAPI = {
+      gitContext: { listAllPrRefs: mocks.listAllPrRefs, onPrRefsChanged: mocks.onPrRefsChanged },
+      deviceLink: { invoke },
+    } as any;
+    unresponsiveDevicesStore.apply('slow', true);
+    const view = render(
+      <PrRefsProvider>
+        <RemoteRefs sessionId="slow-session" deviceId="slow" />
+        <RemoteRefs sessionId="healthy-session" deviceId="healthy" />
+      </PrRefsProvider>,
+    );
+    try {
+      await waitFor(() => expect(invoke).toHaveBeenCalledOnce());
+      expect(invoke).toHaveBeenCalledWith('healthy', 'git-context:pr-refs:list', ['healthy-session']);
+      expect(invoke).not.toHaveBeenCalledWith('slow', expect.anything(), expect.anything());
+      const buttons = screen.getAllByRole('button', { name: 'remote:0' });
+      await act(async () => fireEvent.click(buttons[0]));
+      expect(invoke).toHaveBeenCalledOnce();
+      unresponsiveDevicesStore.apply('slow', false);
+      await act(async () => fireEvent.click(buttons[0]));
+      await waitFor(() => expect(invoke).toHaveBeenCalledTimes(2));
+      expect(invoke).toHaveBeenLastCalledWith('slow', 'git-context:pr-refs:list', ['slow-session']);
+    } finally {
+      view.unmount();
+      unresponsiveDevicesStore.clearAll();
+    }
+  });
   it.each([false, true])(
     'refreshes empty refs without waiting for TTL (in flight: %s)',
     async (inFlight) => {

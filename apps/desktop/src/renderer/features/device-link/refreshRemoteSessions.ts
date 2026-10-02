@@ -24,6 +24,7 @@ import { DEVICE_LINK_RECONCILIATION_PROBE_MARKER } from '@cindy/maker-shared/dev
 import type { RemoteSessionListSessionLike } from '@cindy/maker-shared/session-list';
 import { remoteProjectsStore, type RemoteSessionStatus } from './remoteProjectsStore';
 import { removeRemoteSessionActivityEntry } from './remoteSessionActivityStore';
+import { unresponsiveDevicesStore } from './unresponsiveDevicesStore';
 import type { CachedDeviceSessionsSnapshot } from './mirrorCacheClient';
 
 const log = createLogger('device-link-refresh');
@@ -276,6 +277,9 @@ export async function refreshRemoteDeviceSessions(
   name?: string,
   opts: RefreshOptions = {},
 ): Promise<RefreshResult> {
+  // Main-process probing owns recovery while this circuit is open. Keep the
+  // existing mirror and do not start another list/retry chain from a window.
+  if (unresponsiveDevicesStore.has(deviceId)) return 'gave-up';
   const status = opts.status ?? 'active';
   const taskKey = refreshTaskKey(deviceId, status);
   const lifecycleEpoch = remoteProjectsStore.getDeviceLifecycleEpoch(deviceId);
@@ -357,6 +361,7 @@ async function probeMissingSessionStatuses(
   missingSessionIds: readonly string[],
   status: RemoteSessionStatus,
 ): Promise<void> {
+  if (unresponsiveDevicesStore.has(deviceId)) return;
   const queueKey = refreshTaskKey(deviceId, status);
   const queue = reconcileMissingStatusProbeQueue(queueKey, missingSessionIds);
   if (queue.length === 0) return;
@@ -379,6 +384,7 @@ async function probeMissingSessionStatuses(
       }
     }),
   );
+  if (unresponsiveDevicesStore.has(deviceId)) return;
   // 更强的 refresh / remove / disconnect 已使本轮失效时，不应用迟到的补查结果。
   if (!remoteProjectsStore.isLatestSnapshotEpoch(deviceId, epoch, status)) return;
   const terminalIds = new Set<string>();
@@ -437,6 +443,7 @@ async function runRefreshRemoteDeviceSessions(
   let timeoutAttempts = 0;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (unresponsiveDevicesStore.has(deviceId)) return 'gave-up';
     // 被一次更新的重拉取代(期间又发起了新的 refresh)→ 停手,交给那一次(也避免无谓重试)。
     if (!remoteProjectsStore.isLatestSnapshotEpoch(deviceId, epoch, status)) return 'superseded';
     try {
@@ -457,6 +464,9 @@ async function runRefreshRemoteDeviceSessions(
         // 乱序保护:本次拉取已不是最新一次 → 丢弃,别覆盖更新的结果。
         if (!remoteProjectsStore.isLatestSnapshotEpoch(deviceId, epoch, status))
           return 'superseded';
+        // The circuit may have opened while this list request was in flight.
+        // Do not let its late response replace the last known mirror.
+        if (unresponsiveDevicesStore.has(deviceId)) return 'gave-up';
         const sessions = parseRemoteSessionList(value, status);
         // Companions are fetched by resource:get + sessions:get, not by the
         // ordinary task list. Keep their live state and reconcile them by id,
@@ -493,6 +503,7 @@ async function runRefreshRemoteDeviceSessions(
       }
       if (!remoteProjectsStore.isLatestSnapshotEpoch(deviceId, epoch, status)) return 'superseded';
       if (opts.scope === 'schedule' || opts.scope === 'both') {
+        if (unresponsiveDevicesStore.has(deviceId)) return 'gave-up';
         try {
           const raw = await window.electronAPI.deviceLink.invoke(
             deviceId,
@@ -501,6 +512,7 @@ async function runRefreshRemoteDeviceSessions(
           );
           if (!remoteProjectsStore.isLatestSnapshotEpoch(deviceId, epoch, status))
             return 'superseded';
+          if (unresponsiveDevicesStore.has(deviceId)) return 'gave-up';
           if (
             !raw ||
             typeof raw !== 'object' ||
@@ -527,6 +539,7 @@ async function runRefreshRemoteDeviceSessions(
       if (!remoteProjectsStore.isLatestSnapshotEpoch(deviceId, epoch, status)) {
         return 'superseded';
       }
+      if (unresponsiveDevicesStore.has(deviceId)) return 'gave-up';
       const message = err instanceof Error ? err.message : String(err);
       // 访问被撤销:语义性终态,不重试、也不静默 give-up —— 让调用方 handleRevoked(见 ACCESS_REVOKED_MARKER)。
       if (message.includes(ACCESS_REVOKED_MARKER)) {
