@@ -6073,10 +6073,15 @@ export default function SessionScreen() {
         ? null
         : parsedDesktopCommandAtSend;
     // A known hidden model requires an explicit choice before consuming the draft or enqueueing.
-    const selectionAtSend = readSessionRowNow() ?? currentSession;
+    const sessionAtSend = readSessionRowNow() ?? currentSession;
+    const intentAtSend = sessionAtSend.agentSwitchIntent;
+    // Cross-agent picks take effect on the next message; validate that chosen target.
+    const selectionAtSend = intentAtSend
+      ? { agentKind: intentAtSend.targetAgentKind, model: intentAtSend.model, providerId: intentAtSend.providerId }
+      : { agentKind: resolveSessionAgentKind(sessionAtSend), model: sessionAtSend.model, providerId: sessionAtSend.providerId };
     if (!earlyLocalCommand && !earlyDesktopCommand && modelNeedsReselection(
       getCachedDeviceProviders(deviceId)?.modelVisibilityOverrides,
-      resolveSessionAgentKind(selectionAtSend), selectionAtSend.model, selectionAtSend.providerId,
+      selectionAtSend.agentKind, selectionAtSend.model, selectionAtSend.providerId,
     )) {
       setError(t('session.common.modelHiddenReselect', { model: selectionAtSend.model }));
       setModelSheetOpen(true);
