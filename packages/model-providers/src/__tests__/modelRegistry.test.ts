@@ -1,14 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import { BUNDLED_CATALOG } from "../builtin.js";
-import { expandedRegistryEntries } from "../modelMetadataLayers.js";
+import { expandedRegistryEntries, resolveModelMetadata } from "../modelMetadataLayers.js";
 import {
   compareModelRegistryRevisions,
   findModelRegistryRoute,
+  resolveBaseModelReferencePrice,
   resolveModelReferencePrice,
 } from "../modelRegistry.js";
 
-const registry = BUNDLED_CATALOG.modelRegistry;
+const registry = BUNDLED_CATALOG.modelRegistry!;
 
 describe("model registry", () => {
   it.each([
@@ -107,6 +108,87 @@ describe("model registry", () => {
         "claude-code",
       ),
     ).toBeUndefined();
+  });
+
+  it("keeps XD split identities compatible with saved routes, aliases, selection labels, and user overrides", () => {
+    const splitRoutes = [
+      ["claude-fable-5", "xd/claude-fable-5", "claude-code"],
+      ["claude-opus-5", "xd/claude-opus-5", "claude-code"],
+      ["claude-opus-4-8", "xd/claude-opus-4-8", "claude-code"],
+      ["claude-opus-4-7", "xd/claude-opus-4-7", "claude-code"],
+      ["claude-opus-4-6", "xd/claude-opus-4-6", "claude-code"],
+      ["claude-opus-4-5", "xd/claude-opus-4-5", "claude-code"],
+      ["claude-sonnet-5", "xd/claude-sonnet-5", "claude-code"],
+      ["claude-sonnet-4-6", "xd/claude-sonnet-4-6", "claude-code"],
+      ["claude-sonnet-4-5", "xd/claude-sonnet-4-5", "claude-code"],
+      ["claude-haiku-4-5", "xd/claude-haiku-4-5", "claude-code"],
+      ["deepseek/deepseek-v4-pro", "xd/deepseek-deepseek-v4-pro", "codex"],
+      ["deepseek/deepseek-v4-flash", "xd/deepseek-deepseek-v4-flash", "codex"],
+      ["gpt-5.4-nano", "xd/gpt-5.4-nano", "codex"],
+    ] as const;
+    for (const [oldRouteId, newEntryId, agent] of splitRoutes) {
+      const resolved = findModelRegistryRoute(registry, "xd", oldRouteId, agent);
+      expect(resolved, oldRouteId).toMatchObject({
+        entry: { id: newEntryId },
+        route: { providerId: "xd", modelId: oldRouteId },
+      });
+      // The row label is still the entry name; changing the registry identity must not
+      // replace a saved selection with an opaque xd/* label.
+      expect(resolved?.entry.name).not.toMatch(/^xd\//);
+    }
+
+    const kimiAlias = registry.baseModels?.find(
+      (model) => model.id === "xd/moonshotai-kimi-k3",
+    );
+    expect(kimiAlias?.aliases).toContain("moonshot/kimi-k3");
+    expect(
+      resolveModelMetadata(registry, "xd", "moonshot/kimi-k3", undefined, {
+        name: "Saved Kimi label",
+        contextWindow: 12_345,
+      }),
+    ).toMatchObject({ name: "Saved Kimi label", contextWindow: 12_345 });
+    expect(
+      resolveModelMetadata(registry, "xd", "claude-opus-5", undefined, {
+        contextWindow: 12_346,
+        efforts: ["low"],
+        defaultEffort: "low",
+      }),
+    ).toMatchObject({
+      contextWindow: 12_346,
+      efforts: ["low"],
+      defaultEffort: "low",
+    });
+  });
+
+  it("keeps every XD split route mapped to its independent entry and upstream reference", () => {
+    const splitRoutes = registry.models.flatMap((entry) =>
+      entry.id.startsWith("xd/")
+        ? entry.routes
+            .filter((route) => route.providerId === "xd")
+            .map((route) => ({ entry, route }))
+        : [],
+    );
+    expect(splitRoutes.length).toBeGreaterThan(0);
+    for (const { entry, route } of splitRoutes) {
+      const resolved = findModelRegistryRoute(
+        registry,
+        route.providerId,
+        route.modelId,
+        route.agents[0],
+      );
+      expect(resolved, `${route.providerId}/${route.modelId}`).toMatchObject({
+        entry: {
+          id: entry.id,
+          modelRef: entry.modelRef,
+          name: entry.name,
+        },
+        route: {
+          providerId: route.providerId,
+          modelId: route.modelId,
+        },
+      });
+      expect(resolved?.entry.name).not.toMatch(/^xd\//);
+    }
   });
 
   it("normalizes the ChatGPT bridge id and selects OpenAI long-context bands", () => {
@@ -215,6 +297,62 @@ describe("model registry", () => {
         at: "2026-09-01",
       })?.price,
     ).toMatchObject({ inputPerMtok: 2, outputPerMtok: 10 });
+  });
+
+  it("documents xAI 200k boundaries and keeps Fast pricing unknown without an effective date", () => {
+    expect(
+      resolveModelReferencePrice(registry, "xai", "xai/grok-4.7", {
+        inputTokens: 199_999,
+      }),
+    ).toMatchObject({ price: { inputPerMtok: 2, outputPerMtok: 6 } });
+    for (const inputTokens of [200_000, 200_001]) {
+      expect(
+        resolveModelReferencePrice(registry, "xai", "xai/grok-4.7", {
+          inputTokens,
+        }),
+        `Grok 4.7 input boundary ${inputTokens}`,
+      ).toMatchObject({ price: { inputPerMtok: 4, outputPerMtok: 12 } });
+    }
+    // xAI publishes Fast's numeric table but not a historical effective date. The
+    // resolver contract requires effectiveFrom, so no date-free or tag-date tariff
+    // is exposed at either boundary.
+    expect(
+      resolveModelReferencePrice(registry, "xai", "xai/grok-4.7-build-fast", {
+        inputTokens: 200_000,
+      }),
+    ).toBeUndefined();
+    expect(
+      resolveModelReferencePrice(registry, "xai", "xai/grok-4.7-build-fast", {
+        inputTokens: 200_001,
+      }),
+    ).toBeUndefined();
+    expect(
+      registry.baseModels?.find((model) => model.id === "xai/grok-4.7-build-fast"),
+    ).not.toHaveProperty("referencePriceGroups");
+    expect(
+      registry.models.find((model) => model.id === "xai/grok-4.7-build-fast")?.routes,
+    ).not.toEqual(expect.arrayContaining([expect.objectContaining({ referencePriceGroup: "global" })]));
+  });
+
+  it("applies the documented Gemini 3.8 Flash Standard cutover at 2027-01-01", () => {
+    expect(
+      resolveBaseModelReferencePrice(registry, "google/gemini-3.8-flash", {
+        priceGroup: "global",
+        at: "2026-12-31",
+      }),
+    ).toBeUndefined();
+    expect(
+      resolveBaseModelReferencePrice(registry, "gemini-3.8-flash", {
+        priceGroup: "global",
+        at: "2027-01-01",
+      }),
+    ).toMatchObject({
+      price: {
+        inputPerMtok: 1.5,
+        outputPerMtok: 7.5,
+        cacheReadPerMtok: 0.15,
+      },
+    });
   });
 
   it("resolves DeepSeek BYOK cache-hit pricing for both runtimes", () => {

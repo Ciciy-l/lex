@@ -907,7 +907,8 @@ describe('MiniMax OpenAI Responses 预设契约 (issue #345)', () => {
     const preset = BUNDLED_CATALOG.presets?.find((candidate) => candidate.id === id);
     expect(preset?.docsUrl).toBe(docsUrl);
     expect(preset?.runtimes['claude-code']?.baseUrl).toMatch(/\/anthropic$/);
-    // 以线上服务端推荐清单为准（M2 系列仍在官方文档中）。
+    // v0.1.96 tag-bounded local recommendation snapshot; docsUrl is provenance,
+    // not a claim that this test or catalog synchronizes with a live server.
     const expected = [
       { id: 'MiniMax-M3', name: 'MiniMax-M3', contextWindow: 1_000_000, supportsImageInput: true },
       ...['MiniMax-M2.7', 'MiniMax-M2.7-highspeed', 'MiniMax-M2.5', 'MiniMax-M2.5-highspeed',
@@ -1082,7 +1083,8 @@ describe('官方渠道预设契约', () => {
     const codingPlan = preset('aliyun-bailian-coding');
     const personalTokenPlan = preset('aliyun-bailian-token-plan-cn');
     const teamTokenPlan = preset('aliyun-bailian-token-plan-team-cn');
-    // 官方套餐清单（2026-09-26 核对）；窗口取官方最大输入，默认开思考的取思考模式最大输入。
+    // v0.1.96 tag-bounded local snapshot (source check 2026-09-26); see the C2
+    // ledger for which fields were rechecked and which remain unknown.
     const qwen = (id: string, name: string, image: boolean) =>
       ({ id, name, contextWindow: 983_616, supportsImageInput: image });
     const codingPlanModels = [

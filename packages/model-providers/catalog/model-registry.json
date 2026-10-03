@@ -2289,8 +2289,7 @@
         {
           "providerId": "xai",
           "modelId": "xai/grok-4.7-build-fast",
-          "agents": ["claude-code", "codex"],
-          "referencePriceGroup": "global"
+          "agents": ["claude-code", "codex"]
         }
       ],
       "nativeApi": "openai-responses",
@@ -6282,45 +6281,10 @@
         "group": "grok",
         "contextWindow": 500000,
         "efforts": ["low", "medium", "high", "xhigh"],
-        "defaultEffort": "medium",
-        "supportsImageInput": true,
-        "supportsFastMode": false
-      },
-      "referencePriceGroups": [
-        {
-          "id": "global",
-          "prices": [
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 4,
-              "outputPerMtok": 12,
-              "cacheReadPerMtok": 1,
-              "maxInputTokens": 200001,
-              "effectiveFrom": "2026-09-24",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://docs.x.ai/developers/pricing",
-                "verifiedAt": "2026-10-02"
-              }
-            },
-            {
-              "currency": "USD",
-              "variant": "standard",
-              "inputPerMtok": 6,
-              "outputPerMtok": 18,
-              "cacheReadPerMtok": 1.5,
-              "minInputTokens": 200001,
-              "effectiveFrom": "2026-09-24",
-              "source": {
-                "kind": "provider-official",
-                "url": "https://docs.x.ai/developers/pricing",
-                "verifiedAt": "2026-10-02"
-              }
-            }
-          ]
-        }
-      ]
+      "defaultEffort": "medium",
+      "supportsImageInput": true,
+      "supportsFastMode": false
+      }
     },
     {
       "id": "moonshotai/kimi-k2.8-preview",
