@@ -1,5 +1,4 @@
-import { createHash } from 'node:crypto';
-import { FILE_PEER_CHANNEL, TASK_MIGRATION_CHANNEL, encodeProviderCatalogPage } from '@cindy/device-link';
+import { FILE_PEER_CHANNEL, TASK_MIGRATION_CHANNEL } from '@cindy/device-link';
 import { requestFilePeer, stopFilePeers } from './filePeer';
 import { requestTaskMigration } from '../task-migration/service';
 import { normalizeProviderOrder } from "../../shared/providerOrder.js";
@@ -73,6 +72,7 @@ import {
   type ProviderLogoKind,
   type ProviderLogoRouting,
 } from '@cindy/model-providers/branding';
+import { isModelVisible } from '@cindy/model-providers/sections';
 import { app } from 'electron';
 import { remoteDesktop, requestRemoteDesktop } from '../remote-desktop';
 import { remoteCredentialHost } from '../remote-desktop/credentialHost';
@@ -553,19 +553,36 @@ function projectRoutingForDisplay(
  * availability marker so both current and independently-updated legacy Mobile clients keep the
  * published provider model shape.
  */
-function projectModelsForController(models: unknown): unknown {
+function projectModelsForController(
+  models: unknown,
+  providerId: string,
+  visibility: Record<string, boolean>,
+): unknown {
   if (!models || typeof models !== 'object' || Array.isArray(models)) return models;
   return Object.fromEntries(
-    Object.entries(models as Record<string, unknown>).map(([agent, value]) => {
-      if (!Array.isArray(value)) return [agent, value];
-      const projected = value.flatMap((model) => {
-        if (!model || typeof model !== 'object' || Array.isArray(model)) return [model];
-        const { availability, ...legacyModel } = model as Record<string, unknown>;
-        return availability === 'requires_payment' ? [] : [legacyModel];
-      });
-      return [agent, projected];
-    }),
+    Object.entries(models as Record<string, unknown>).map(([agent, value]) => [
+      agent, projectVisibleModelList(value, providerId, agent, visibility),
+    ]),
   );
+}
+
+/** Apply the same owner preferences as the picker before paying the transport cost. */
+function projectVisibleModelList(
+  value: unknown,
+  providerId: string,
+  agent: string,
+  visibility: Record<string, boolean>,
+): unknown {
+  if (!Array.isArray(value)) return value;
+  return value.flatMap((model) => {
+    if (!model || typeof model !== 'object' || Array.isArray(model)) return [model];
+    const { availability, ...legacyModel } = model as Record<string, unknown>;
+    const visible = isModelVisible(
+      visibility[`${agent}:${providerId}:${legacyModel.id}`],
+      typeof legacyModel.defaultEnabled === 'boolean' ? legacyModel.defaultEnabled : undefined,
+    );
+    return availability === 'requires_payment' || !visible ? [] : [legacyModel];
+  });
 }
 
 /**
@@ -629,6 +646,14 @@ function projectInvokeResultForTunnel(
   if (channel !== 'maker:provider:list') return result;
   const r = result as { providers?: unknown; modelVisibilityOverrides?: unknown; providerOrder?: unknown };
   if (!Array.isArray(r.providers)) return result;
+  const modelVisibilityOverrides = r.modelVisibilityOverrides
+    && typeof r.modelVisibilityOverrides === 'object'
+    && !Array.isArray(r.modelVisibilityOverrides)
+    ? Object.fromEntries(
+        Object.entries(r.modelVisibilityOverrides)
+          .filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean'),
+      )
+    : undefined;
   const providers = (r.providers as Record<string, unknown>[]).map((p) => {
     const rest = { ...p };
     const logoKind = typeof p.id === 'string'
@@ -642,23 +667,23 @@ function projectInvokeResultForTunnel(
     ) {
       rest.logoKind = logoKind;
     }
-    rest.models = projectModelsForController(p.models);
+    const providerId = typeof p.id === 'string' ? p.id : '';
+    const visibility = modelVisibilityOverrides ?? {};
+    rest.models = projectModelsForController(p.models, providerId, visibility);
+    // Media uses the same preference key as the host visibility snapshot.
+    const mediaAgent = Array.isArray(p.agents) && typeof p.agents[0] === 'string'
+      ? p.agents[0] : 'claude-code';
+    for (const field of ['imageModels', 'videoModels', 'audioModels', 'embeddingModels'] as const) {
+      if (Array.isArray(p[field])) rest[field] = projectVisibleModelList(p[field], providerId, mediaAgent, visibility);
+    }
     rest.routing = projectRoutingForDisplay(p.routing);
     return rest;
   });
-  const modelVisibilityOverrides = r.modelVisibilityOverrides
-    && typeof r.modelVisibilityOverrides === 'object'
-    && !Array.isArray(r.modelVisibilityOverrides)
-    ? Object.fromEntries(
-        Object.entries(r.modelVisibilityOverrides)
-          .filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean'),
-      )
-    : undefined;
-  return encodeProviderCatalogPage(args, {
+  return {
     providers,
     ...(modelVisibilityOverrides !== undefined ? { modelVisibilityOverrides } : {}),
     ...(Array.isArray(r.providerOrder) ? { providerOrder: normalizeProviderOrder(r.providerOrder) } : {}),
-  }, json => createHash('sha256').update(json).digest('hex'));
+  };
 }
 
 /** 持有 client 的引用(转发 push 用);wireInboundDispatch 接入时设置。 */

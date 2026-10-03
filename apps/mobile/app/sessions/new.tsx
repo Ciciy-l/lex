@@ -6084,7 +6084,9 @@ export default function NewRemoteSessionScreen() {
                   ) : null}
                 </View>
               ) : null}
-              <View style={styles.composerToolbarWrap}>
+              <View style={[styles.composerToolbarWrap, composerCardActive && {
+                minHeight: COMPOSER_CARD_CHROME_HEIGHT + MOBILE_COMPOSER_INPUT_SINGLE_LINE_HEIGHT,
+              }]}>
                 <MobileComposerInputRow
                   accessibilityLabel={t('session.new.firstMessagePlaceholder')}
                   bodyScrollGesture={composerResize.scrollGesture}
@@ -6573,7 +6575,13 @@ function NewComposerPaletteFrame({
   const { t } = useTranslation();
   const hasRows = Array.isArray(children) ? children.length > 0 : !!children;
   return (
-    <View style={styles.palettePanel} testID={testID}>
+    <ScrollView
+      style={styles.palettePanel}
+      contentContainerStyle={styles.paletteContent}
+      keyboardShouldPersistTaps="handled"
+      nestedScrollEnabled
+      testID={testID}
+    >
       {loading ? (
         <View style={styles.paletteStatusRow}>
           <ActivityIndicator color={colors.textSecondary} />
@@ -6586,7 +6594,7 @@ function NewComposerPaletteFrame({
       ) : (
         <Text style={styles.paletteStatusText}>{emptyText}</Text>
       )}
-    </View>
+    </ScrollView>
   );
 }
 
@@ -7071,8 +7079,11 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     borderColor: colors.border,
     borderRadius: radius.container,
     borderWidth: StyleSheet.hairlineWidth,
-    gap: spacing.xs,
+    flexShrink: 1,
     maxHeight: 220,
+  },
+  paletteContent: {
+    gap: spacing.xs,
     padding: spacing.sm,
   },
   paletteRow: {

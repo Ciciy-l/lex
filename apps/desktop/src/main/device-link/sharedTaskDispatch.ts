@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import { isSharedTaskPeer, parseSharedTaskPeer, isSharedTaskAttachment, type InvokePayload, type InvokeResultPayload, type SharedTaskQueueItem } from '@cindy/device-link';
 import type { SharedTaskHost } from './sharedTaskHost.js';
-import { isProviderCatalogCursor, PROVIDER_CATALOG_PAGES_CAPABILITY } from '@cindy/device-link';
 
 export type SharedTaskPeerCapture = NonNullable<ReturnType<SharedTaskHost['capturePeer']>>;
 export interface SharedTaskInteractionCapture {
@@ -398,10 +397,8 @@ export function assertSharedTaskInvoke(
     if (channel === 'maker:get-capabilities' && !['claude-code', 'codex', 'pi', 'omp'].includes(String(args[0]))) deny();
     if (channel === 'maker:provider:list' && args[0] !== undefined) {
       const options = record(args[0]);
-      if (!options || Object.keys(options).some((key) => key !== 'capabilities' && key !== 'catalogPage') ||
+      if (!options || Object.keys(options).some((key) => key !== 'capabilities') ||
           !Array.isArray(options.capabilities) || options.capabilities.some((item) => typeof item !== 'string')) deny();
-      if (options.catalogPage !== undefined && (!options.capabilities.includes(PROVIDER_CATALOG_PAGES_CAPABILITY)
-        || !isProviderCatalogCursor(options.catalogPage))) deny();
     }
     return;
   }

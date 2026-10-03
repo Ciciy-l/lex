@@ -1,7 +1,6 @@
 import { ROUTED_KINDS, SHARED_TASK_RELAY_CAPABILITY } from '@cindy/device-link-protocol';
 import { isPeerResetRetryableReadChannel, isBackgroundInvoke, bypassInvokeScheduling } from './invokePolicy.js';
 import { InvokeScheduler } from './invokeScheduler.js';
-import { readProviderCatalog } from './providerCatalogTransport.js';
 import { encodeSharedTaskEnvelope, decodeSharedTaskEnvelope } from './sharedTaskEnvelope.js';
 import { isSharedTaskPeer } from './sharedTaskPeer.js';
 import { CongestionSendBudget } from './congestionSendBudget.js';
@@ -1356,15 +1355,6 @@ export class DeviceLinkClient {
 
   /** 控制端:远程 invoke,等待 invoke-result */
   async invoke(
-    dst: string,
-    payload: InvokePayload,
-    timeoutMs?: number,
-    options?: { preSend?: () => void },
-  ): Promise<InvokeResultPayload> {
-    return readProviderCatalog(payload, page => this.invokeOnce(dst, page, timeoutMs, options));
-  }
-
-  private async invokeOnce(
     dst: string,
     payload: InvokePayload,
     timeoutMs?: number,

@@ -42,4 +42,3 @@ export * from './peerAttachment.js';
 export * from './taskMigration.js';
 export * from './invokePolicy.js';
 export * from './modelFavorites.js';
-export * from './providerCatalogTransport.js';

@@ -397,16 +397,13 @@ Mobile 原生 fingerprint 输入，服务端无需改动。
 仅接受任务 ID 和明确的目录（null 表示移到对话）。不开放远程 sessions 原始 patch；
 旧宿主拒绝未知 action，不回退到控制端本机执行。
 
-## 模型目录分段读取
+## 远程模型目录按显示设置过滤
 
-`maker:provider:list` 通过请求的 `capabilities: ['provider-catalog-pages-v1']` 协商分段响应。
-主机先完成原有授权、路由凭证剥离和模型投影，再将完整 JSON 按至多 256 Ki 个 UTF-16
-码元分段；`provider-catalog-page-v1` 携带 `revision`（完整投影的 SHA-256）、`offset`、
-`total` 与 `data`。后续请求的可选 `catalogPage: { offset, revision }` 必须匹配当前目录，
-每次仍执行授权与投影，目录改变则明确失败，不拼接不同快照。控制端仅在完整重组后发布目录，
-限制重组至 64 Mi 个码元；单段即使全部需要 JSON 转义也低于既有 2 MiB 帧限制。
+`maker:provider:list` 在执行主机完成既有授权和账号快照读取后，先按同一快照中的
+`modelVisibilityOverrides` 与模型 `defaultEnabled` 过滤，再通过原有响应格式传输。
+判定复用共享 `isModelVisible`：用户显式开关优先，否则跟随目录默认；不限制已开启模型的
+数量、不修改用户偏好。聊天模型按 agent/provider/model 区分，媒体模型沿用主机的显示设置键。
+未开启模型不再传给控制端；供应商结构、连接状态、顺序及开启模型的能力配置保留。
 
-共享 DeviceLinkClient 为手机和远程桌面统一协商与重组，保留模型、顺序、偏好和能力字段。
-旧主机忽略能力声明并返回原格式；旧控制端不声明能力，新主机也返回原格式。共享任务仍要求
-`history.read`，游标不增加权限。服务端、relay、传输帧限制和 Mobile 原生指纹均不改变；
-超大目录的完整修复需要执行主机及控制端均升级，单端回退保留原有大小限制。
+这是执行主机的投影修复，旧 Mobile 和远控 Desktop 无需新增能力协商即可接收。
+不增加分页、客户端重组或重试，不提高传输大小上限；本机 Desktop 设置仍读取完整目录。

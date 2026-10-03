@@ -3,8 +3,6 @@
  * 握手 / 请求配对 / 超时 / relay-error / 重连退避 / 心跳僵死 / token 缺失。
  */
 import { describe, it, expect, vi } from 'vitest';
-import { createHash } from 'node:crypto';
-import { encodeProviderCatalogPage } from '../providerCatalogTransport.js';
 import { DeviceLinkClient, computeReconnectDelayMs, type WsLike } from '../client.js';
 import {
   PROTOCOL_VERSION,
@@ -965,27 +963,6 @@ describe('DeviceLinkClient', () => {
       payload: { ok: true, result: ['s1'] },
     });
     await expect(p).resolves.toMatchObject({ ok: true, result: ['s1'] });
-    h.client.stop();
-  });
-  it('assembles provider pages through invoke and checks ownership before each page', async () => {
-    const h = makeHarness();
-    h.client.start();
-    await tick();
-    h.current().ack();
-    const preSend = vi.fn();
-    const value = { providers: [{ id: 'custom', models: { pi: [{ id: 'model', description: 'x'.repeat(300000) }] } }] };
-    const pending = h.client.invoke('dev-b', { channel: 'maker:provider:list', args: [] }, undefined, { preSend });
-    for (let i = 0; i < 2; i++) {
-      const sent = h.current().sent.filter(e => e.kind === 'invoke')[i];
-      expect(sent).toBeDefined();
-      const request = sent.payload as { args: unknown[] };
-      h.current().push({ v: PROTOCOL_VERSION, kind: 'invoke-result', id: sent.id, src: 'dev-b',
-        payload: { ok: true, result: encodeProviderCatalogPage(request.args, value,
-          json => createHash('sha256').update(json).digest('hex')) } });
-      await tick();
-    }
-    await expect(pending).resolves.toEqual({ ok: true, result: value });
-    expect(preSend).toHaveBeenCalledTimes(2);
     h.client.stop();
   });
 
