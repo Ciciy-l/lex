@@ -12,6 +12,17 @@ function capture(): SharedTaskPeerCapture {
 }
 afterEach(() => { setSharedTaskQueueReader(null); setSharedTaskInteractionReader(null); });
 describe('sharedTask dispatch scope', () => {
+  it('authorizes each provider page as a history read and rejects malformed cursors', () => {
+    const options = { capabilities: ['provider-catalog-pages-v1'], catalogPage: { offset: 262144, revision: 'a'.repeat(64) } };
+    const request = { channel: 'maker:provider:list', args: [options] };
+    expect(() => assertSharedTaskInvoke(capture(), request)).not.toThrow();
+    expect(() => assertSharedTaskInvoke({ ...capture(), authorize: () => false }, request)).toThrow('PERMISSION_DENIED');
+    for (const invalid of [
+      { ...options, catalogPage: { offset: -1, revision: 'a'.repeat(64) } },
+      { ...options, capabilities: [] },
+      { ...options, path: '/private' },
+    ]) expect(() => assertSharedTaskInvoke(capture(), { ...request, args: [invalid] })).toThrow('PERMISSION_DENIED');
+  });
   it('reads subagent context only through the shared parent task', () => {
     for (const channel of ['local-db:subagent-runs:list', 'local-db:subagent-runs:detail', 'local-db:subagent-runs:transcript']) {
       const request = { sessionId: 'task', provider: 'pi', runIdOrAlias: 'child' };

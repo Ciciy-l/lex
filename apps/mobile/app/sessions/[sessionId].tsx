@@ -91,7 +91,6 @@ import {
 } from 'react-native';
 import { Text, TextInput } from '@/components/AppText';
 import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
-import { GestureDetector } from '@/platform/gestureHandler';
 import { MobileAgentMark } from '@/components/MobileAgentMark';
 import { mobileInteractionStyles } from '@/components/mobileInteractionStyles';
 import { SessionHeaderNativeBack, SessionHeaderNativeActions, SessionHeaderNativeTitle, SessionHeaderNativeBlur } from '@/session/SessionHeaderNativeControls';
@@ -11029,17 +11028,6 @@ function SessionComposerInput({
                   unframed={!nativeComposerFrameAvailable}
                   style={styles.composerScrollFrame}
                 >
-                <GestureDetector gesture={composerResize.scrollGesture}>
-                <ScrollView
-                  ref={composerScrollViewRef}
-                  contentContainerStyle={styles.composerScrollContent}
-                  keyboardShouldPersistTaps="handled"
-                  scrollEnabled={composerScrollEnabled}
-                  showsVerticalScrollIndicator={composerScrollEnabled}
-                  style={styles.composerScroll}
-                  testID="session.composerScroll"
-                >
-
                 <View style={[
                   styles.composerSurface,
                   compactComposer && !composerCardActive && styles.composerSurfaceCompact,
@@ -11047,6 +11035,10 @@ function SessionComposerInput({
                   <MobileComposerInputRow
                     key={sessionId}
                     frameOutside={nativeComposerFrameAvailable}
+                    bodyScrollGesture={composerResize.scrollGesture}
+                    bodyScrollRef={composerScrollViewRef}
+                    bodyScrollTestID="session.composerScroll"
+                    bodyScrollEnabled={composerScrollEnabled}
                     collapsedHeight={composerDock.enabled ? composerDock.pillHeight : undefined}
                     onCollapsedPress={composerPillOpen.onCollapsedPress}
                     accessibilityLabel={t('session.screen.composerPlaceholder')}
@@ -11134,8 +11126,6 @@ function SessionComposerInput({
                     voicePlacement={composerVoicePlacement}
                   />
                 </View>
-                </ScrollView>
-                </GestureDetector>
                 </ComposerFrame>
               </Reanimated.View>
 
@@ -12085,18 +12075,12 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     paddingBottom: spacing.xs,
     paddingTop: spacing.sm,
   },
-  composerScroll: {
-    flexShrink: 1,
-    maxHeight: '100%',
-  },
   composerScrollFrame: {
     flexShrink: 1,
     overflow: 'visible',
   },
-  composerScrollContent: {
-    gap: spacing.sm,
-  },
   composerSurface: {
+    flexShrink: 1,
     gap: 6,
   },
   composerSurfaceCompact: {

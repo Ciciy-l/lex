@@ -352,7 +352,7 @@ import { MobileModelIconMark } from '@/session/MobileProviderMark';
 import { draftModelMemoryFor, hydrateDraftModelMemory } from '@/session/draftModelMemory';
 import { effortLabelFromRuntime, rowFastEditable } from '@/session/modelPickerRows';
 import { useTheme, useThemedStyles, type ThemeColors } from '@/theme';
-import { fontWeight, iconSize, iconStroke, lineHeight, radius, spacing, typeScale } from '@/theme/tokens';
+import { fontWeight, iconSize, iconStroke, lineHeight, navigationChrome, radius, spacing, typeScale } from '@/theme/tokens';
 
 const COMPOSER_INPUT_MULTILINE_CONTENT_THRESHOLD = 34;
 // composer 除输入区外的 chrome 高度估算（输入行上下 padding + 边框），
@@ -6014,7 +6014,13 @@ export default function NewRemoteSessionScreen() {
               </Text>
             ) : null}
 
-            <View style={styles.composerCard} testID="newSession.composer">
+          </ScrollView>
+            <View style={[styles.composerCard, {
+              maxHeight: Math.max(COMPOSER_CARD_CHROME_HEIGHT + MOBILE_COMPOSER_INPUT_SINGLE_LINE_HEIGHT, windowDimensions.height
+                - (keyboardState.visible ? keyboardState.height : safeAreaInsets.bottom)
+                - safeAreaInsets.top - navigationChrome.target - spacing.xl),
+              paddingBottom: composerDock.enabled ? 0 : spacing.md,
+            }]} testID="newSession.composer">
               {composerTrigger.kind === 'slash' ? (
                 <NewComposerPaletteFrame
                   emptyText={t('session.common.noMatchingCommands')}
@@ -6081,6 +6087,8 @@ export default function NewRemoteSessionScreen() {
               <View style={styles.composerToolbarWrap}>
                 <MobileComposerInputRow
                   accessibilityLabel={t('session.new.firstMessagePlaceholder')}
+                  bodyScrollGesture={composerResize.scrollGesture}
+                  bodyScrollEnabled={!composerResize.dragging}
                   accessoryAbove={attachments.length > 0 || pendingUploads.length > 0 || pastePlaceholderCount > 0 ? renderComposerAttachmentTray() : null}
                   autoFocus={visualFocusComposer}
                   entryTransitionId={entryMorph?.id}
@@ -6179,7 +6187,6 @@ export default function NewRemoteSessionScreen() {
                 />
               </View>
             </View>
-          </ScrollView>
           {composerDock.enabled ? (
             <DockKeyboardBottomSpacer restingBottom={composerDock.restingBottom} keyboardGap={composerDock.keyboardGap} />
           ) : null}
@@ -7190,6 +7197,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     ...MOBILE_COMPOSER_DRAFT_TEXT_STYLE,
   },
   composerToolbarWrap: {
+    flexShrink: 1,
     position: 'relative',
     zIndex: 30,
   },

@@ -18,6 +18,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { connectedProvidersForAgent, pickRecommendedAgent, type ProviderView } from '@cindy/model-providers';
 import { TEST_XD_GATEWAY_BASE_URL as XD_GATEWAY_BASE_URL } from '../../../test/vitest/clientEndpointsFixture';
 
+// The projection never reads persistence; avoid loading Electron through transitive stores.
+vi.mock('electron-store', () => ({ default: class {} }));
 vi.mock('electron', () => ({
   app: {
     getAppPath: () => '/tmp/xdt-maker-test/app',
@@ -34,6 +36,7 @@ vi.mock('../../logger', () => ({
 }));
 
 import { __testing } from '../dispatch';
+import { readProviderCatalog } from '@cindy/device-link';
 
 const project = (result: unknown) =>
   __testing.projectInvokeResultForTunnel('maker:provider:list', result) as {
@@ -97,6 +100,15 @@ function xdProviderWithFullRouting() {
 }
 
 describe('projectInvokeResultForTunnel — maker:provider:list 投影', () => {
+  it('pages only the credential-free projection and preserves all model options', async () => {
+    const value = { providers: [xdProviderWithFullRouting()], modelVisibilityOverrides: { hidden: false } };
+    const result = await readProviderCatalog({ channel: 'maker:provider:list', args: [] }, async payload => ({
+      ok: true, result: __testing.projectInvokeResultForTunnel(payload.channel, value, true, payload.args),
+    }));
+    expect(result).toEqual({ ok: true, result: projectForCurrentController(value) });
+    expect(JSON.stringify(result)).not.toContain('leak-me');
+    expect(JSON.stringify(result)).not.toContain(XD_GATEWAY_BASE_URL);
+  });
   it('keeps the remote native Codex preference after stripping OAuth execution details', () => {
     const model = {
       id: 'gpt-6-astra', name: 'GPT-6 Astra', contextWindow: 400000,

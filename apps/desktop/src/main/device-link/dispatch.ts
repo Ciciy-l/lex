@@ -1,4 +1,5 @@
-import { FILE_PEER_CHANNEL, TASK_MIGRATION_CHANNEL } from '@cindy/device-link';
+import { createHash } from 'node:crypto';
+import { FILE_PEER_CHANNEL, TASK_MIGRATION_CHANNEL, encodeProviderCatalogPage } from '@cindy/device-link';
 import { requestFilePeer, stopFilePeers } from './filePeer';
 import { requestTaskMigration } from '../task-migration/service';
 import { normalizeProviderOrder } from "../../shared/providerOrder.js";
@@ -653,11 +654,11 @@ function projectInvokeResultForTunnel(
           .filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean'),
       )
     : undefined;
-  return {
+  return encodeProviderCatalogPage(args, {
     providers,
     ...(modelVisibilityOverrides !== undefined ? { modelVisibilityOverrides } : {}),
     ...(Array.isArray(r.providerOrder) ? { providerOrder: normalizeProviderOrder(r.providerOrder) } : {}),
-  };
+  }, json => createHash('sha256').update(json).digest('hex'));
 }
 
 /** 持有 client 的引用(转发 push 用);wireInboundDispatch 接入时设置。 */
