@@ -7,8 +7,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
 function malformedScope(model: unknown, declared: readonly string[]): boolean {
-  if (!isRecord(model)) return false;
+  if (!isRecord(model)) return true;
   if (model.engines !== undefined && (!Array.isArray(model.engines) || model.engines.length === 0 ||
+      new Set(model.engines).size !== model.engines.length ||
       !model.engines.every((agent) => isAgent(agent) && declared.includes(agent)))) return true;
   return model.engineOverrides !== undefined && (!isRecord(model.engineOverrides) ||
     !Object.entries(model.engineOverrides).every(([agent, override]) =>
@@ -18,10 +19,15 @@ function malformedScope(model: unknown, declared: readonly string[]): boolean {
 /** Expand the new shared preset list, leaving legacy runtime.models documents untouched. */
 export function expandPresetModels<T>(preset: T): T {
   if (!isRecord(preset) || !Array.isArray(preset.models)) return preset;
-  const runtimes = isRecord(preset.runtimes) ? preset.runtimes : {};
+  if (!isRecord(preset.runtimes)) return preset;
+  const runtimes = preset.runtimes;
   const sharedModels = preset.models as unknown[];
   const declared = Object.keys(runtimes);
-  if (sharedModels.some((model) => malformedScope(model, declared))) return preset;
+  if (
+    declared.length === 0
+    || Object.values(runtimes).some((runtime) => !isRecord(runtime))
+    || sharedModels.some((model) => malformedScope(model, declared))
+  ) return preset;
   const expanded = Object.fromEntries(Object.entries(runtimes).map(([agent, runtime]) => {
     if (!isRecord(runtime)) return [agent, runtime];
     const models = sharedModels.flatMap((value) => {

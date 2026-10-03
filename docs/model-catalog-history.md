@@ -220,3 +220,10 @@ Opus 5.5 参与 [responses-anthropic-bridge](../packages/responses-anthropic-bri
 
 新增条目不改变 Pi 目录、引擎运行时版本固定、自定义 Claude Code / Codex 的五档推理 fallback，
 也不改变四引擎（含 OMP controller proxy 与 SSH 路由）的既有边界。
+
+## 2026-10-04：C2 tag 内模型数据与本地候选复核
+
+本轮只在 v0.1.96 tag 边界内收敛 #5039 与 #5050/#5060/#5063/#5119/#5145 的已核实
+数据 hunk；完整一级材料、未知项、包装字节与未同步边界见
+[本地模型复核](local-model-audit-2026-09-24.md) 与 C2 来源台账。新增候选不会自动
+安装、切换或授予账号准入；Registry 参考价不替代 XD Gateway 实际报价。

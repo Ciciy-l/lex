@@ -32,7 +32,7 @@ describe('Cindy v0.1.92 model catalog selection', () => {
     ]));
     expect(preset.runtimes.pi?.models?.find(model => model.id === 'mimo-v2.6-pro')).toMatchObject({ supportsImageInput: true });
     expect(preset.runtimes.pi?.models?.find(model => model.id === 'mimo-v2.6-flash')).toMatchObject({ supportsImageInput: true });
-    expect(preset.runtimes.pi?.models?.find(model => model.id === 'mimo-v2.6-pro-ultraspeed')?.supportsImageInput).toBeUndefined();
+    expect(preset.runtimes.pi?.models?.find(model => model.id === 'mimo-v2.6-pro-ultraspeed')?.supportsImageInput).toBe(true);
   });
 
   it.each(['github-copilot', 'google', 'google-vertex', 'opencode', 'vercel-ai-gateway'])(

@@ -47,6 +47,43 @@ describe('shared preset model declarations', () => {
     expect(catalog.presets?.[0]).not.toHaveProperty('models');
   });
 
+  it('does not partially expand malformed runtimes or mutate a legacy models array', () => {
+    const malformed = {
+      id: 'bad-runtime', name: 'Bad runtime',
+      models: [{ id: 'shared', name: 'Shared' }],
+      runtimes: { codex: null },
+    };
+    expect(expandPresetModels(malformed)).toBe(malformed);
+    expect(sanitizePresets([malformed])).toEqual([]);
+
+    const legacy = {
+      id: 'stale-runtime-models', name: 'Stale runtime models',
+      models: [{ id: 'shared', name: 'Shared' }],
+      runtimes: {
+        codex: {
+          baseUrl: 'https://example.test/v1',
+          wireProtocol: 'openai-responses' as const,
+          models: [{ id: 'legacy', name: 'Legacy' }],
+          modelsUrl: 'https://example.test/v1/models',
+        },
+      },
+    };
+    const expanded = expandPresetModels(legacy);
+    expect(expanded.runtimes.codex.models).toEqual([{ id: 'shared', name: 'Shared' }]);
+    expect(legacy.models).toEqual([{ id: 'shared', name: 'Shared' }]);
+    expect(legacy.runtimes.codex.models).toEqual([{ id: 'legacy', name: 'Legacy' }]);
+    expect(sanitizePresets([legacy])).toMatchObject([{
+      runtimes: {
+        codex: {
+          baseUrl: 'https://example.test/v1',
+          wireProtocol: 'openai-responses',
+          modelsUrl: 'https://example.test/v1/models',
+          models: [{ id: 'shared', name: 'Shared' }],
+        },
+      },
+    }]);
+  });
+
   it('rejects malformed engine scoping and overrides as a whole preset', () => {
     const runtimeSet = { 'claude-code': { baseUrl: 'https://example.test/anthropic', models: [] }, codex: { baseUrl: 'https://example.test/v1', models: [] } };
     for (const restriction of [
@@ -62,6 +99,12 @@ describe('shared preset model declarations', () => {
       expect(expandPresetModels(preset)).toBe(preset);
       expect(sanitizePresets([preset])).toEqual([]);
     }
+
+    const primitiveModel = {
+      id: 'bad-model', name: 'Bad model', runtimes: runtimeSet, models: [null],
+    };
+    expect(expandPresetModels(primitiveModel)).toBe(primitiveModel);
+    expect(sanitizePresets([primitiveModel])).toEqual([]);
   });
 
   it('allows only OMP models when OMP is declared by that preset', () => {

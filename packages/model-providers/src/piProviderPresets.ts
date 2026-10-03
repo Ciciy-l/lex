@@ -2,6 +2,7 @@ import { alignModelApiRoute, providerInterfaceModelRoute, providerInterfaceDefau
 import { compatibilityProtocol, selectCompatibilityRoute } from '@cindy/model-compat/protocol';
 import { PI_PROVIDER_PRESET_IDS as existingConnections, sourceProviderForPreset } from './providerPresetIdentity.js';
 import { PROVIDER_MODEL_CATALOG } from './providerModelCatalog.js';
+import { expandPresetModels } from './presetModels.js';
 import { PI_MODEL_APIS } from './types.js';
 import type { ProviderPreset, PiModelApi } from './types.js';
 
@@ -36,7 +37,10 @@ export function withClaudeProviderRuntime(preset: ProviderPreset): ProviderPrese
 
 /** Add concrete portable connections; cloud identity/OAuth providers require their own setup. */
 export function appendPiProviderPresets(presets: readonly ProviderPreset[]): ProviderPreset[] {
-  const portablePresets = presets.map(withClaudeProviderRuntime);
+  // Bundled providers.json is imported before parseCatalog; materialize the shared list at this
+  // consumption boundary as well as in sanitizePresets so Pi/bridge augmentation never reads a
+  // stale legacy `runtime.models` array from the new-format source document.
+  const portablePresets = presets.map((preset) => withClaudeProviderRuntime(expandPresetModels(preset)));
   const out = portablePresets.map(preset => {
     const sourceId = sourceProviderForPreset(preset.id);
     const rows = PROVIDER_MODEL_CATALOG.providers[sourceId];
