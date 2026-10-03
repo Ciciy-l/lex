@@ -120,7 +120,10 @@ describe('projectInvokeResultForTunnel — maker:provider:list 投影', () => {
     expect(output.providers[1].models).toEqual({ codex: [models[0], models[2], models[4]], pi: [models[0], models[2], models[4]] });
     for (const field of ['imageModels', 'videoModels', 'audioModels', 'embeddingModels']) expect(a[field]).toEqual(expected);
     expect(output.providerOrder).toEqual(['b', 'a']);
-    expect(output.modelVisibilityOverrides).toEqual(input.modelVisibilityOverrides);
+    expect(output.modelVisibilityOverrides).toMatchObject({
+      ...input.modelVisibilityOverrides, 'codex:a:default-off': false, 'pi:b:default-on': true,
+    });
+    expect(input.modelVisibilityOverrides).not.toHaveProperty('codex:a:default-off');
     expect(input.providers[0].models.codex).toHaveLength(5);
     expect(project({ ...input, modelVisibilityOverrides: { 'codex:a:manual-on': false } }).providers[0].models)
       .toEqual({ codex: [models[0], models[2], models[4]], pi: [models[0], models[2], models[4]] });

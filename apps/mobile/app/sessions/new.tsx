@@ -1,4 +1,5 @@
 import { resolveWorkspacePickerFrame, type WorkspacePickerFrame } from '@/session/workspacePickerPlacement';
+import { modelNeedsReselection } from '@/session/modelReselection';
 import { isRemoteTaskSuggestionId } from '@/session/remoteTaskSuggestionsModel';
 import { stripTrailingPathSeparators } from '@cindy/maker-shared/path-text';
 import { takeRefinementContextTail } from '@cindy/voice-input-core';
@@ -1033,6 +1034,7 @@ export default function NewRemoteSessionScreen() {
         modelRows: rowsNow,
         currentEffort,
         catalogReady: catalogReadyRef.current,
+        visibilityOverrides: deviceProvidersRef.current.modelVisibilityOverrides,
       });
       return {
         model: next.model,
@@ -1136,6 +1138,7 @@ export default function NewRemoteSessionScreen() {
       // modelRows 按当前 draft.agentKind 构建;最近会话若是另一个 agent,纯函数内不做来源校验。
       rowsAgentKind: draft.agentKind,
       catalogReady: deviceProviders.ready,
+      visibilityOverrides: deviceProviders.modelVisibilityOverrides,
       providersUnsupported: deviceProviders.unsupported,
       // provider-aware 模式只用经过可见性过滤的 rows;目录确实不可用时才回退
       // capabilities(上游 main 移植,merge 2026-08-07)。
@@ -1186,7 +1189,7 @@ export default function NewRemoteSessionScreen() {
     return () => {
       cancelled = true;
     };
-  }, [capabilities?.availableModels, deviceProviders.loading, draft.effort, draft.permissionMode, draft.agentKind, modelRows, deviceProviders.ready, deviceProviders.unsupported, modelSections.connected.length, newSessionPreferences, newSessionPreferencesLoaded, selectedDeviceId, sessions]);
+  }, [capabilities?.availableModels, deviceProviders.loading, draft.effort, draft.permissionMode, draft.agentKind, modelRows, deviceProviders.ready, deviceProviders.modelVisibilityOverrides, deviceProviders.unsupported, modelSections.connected.length, newSessionPreferences, newSessionPreferencesLoaded, selectedDeviceId, sessions]);
 
   // 目录就绪后的来源终检(codex review P1):自动默认/恢复在目录加载期信任的来源可能已失效
   // (provider 被删/断开/模型下架),就绪后必须复核——联合回退整对 (model, providerId)
@@ -1201,6 +1204,7 @@ export default function NewRemoteSessionScreen() {
         { model: current.model, providerId: current.providerId },
         current.agentKind,
         true,
+        deviceProviders.modelVisibilityOverrides,
       );
       const pairChanged = resolved.model !== current.model || resolved.providerId !== current.providerId;
       if (!pairChanged) return current;
@@ -1213,7 +1217,7 @@ export default function NewRemoteSessionScreen() {
         ...(current.fastMode ? { fastMode: false } : {}),
       };
     });
-  }, [deviceProviders.ready, modelRows]);
+  }, [deviceProviders.ready, deviceProviders.modelVisibilityOverrides, modelRows]);
   const draftContent = useMemo(
     // pending(乐观上传中)也算数:拍完照立刻点创建是常见路径,create() 里会等它们落定。
     () => ({ attachmentCount: attachments.length + pendingUploads.length }),
@@ -3821,6 +3825,7 @@ export default function NewRemoteSessionScreen() {
           modelRows: rowsNow,
           currentEffort: current.effort,
           catalogReady: catalogReadyRef.current,
+          visibilityOverrides: deviceProvidersRef.current.modelVisibilityOverrides,
         });
         return {
           ...current,
@@ -4208,6 +4213,13 @@ export default function NewRemoteSessionScreen() {
       setError(t('session.menu.aiRenameOffline'));
       return;
     }
+    if (deviceProvidersRef.current.ready && modelNeedsReselection(
+      deviceProvidersRef.current.modelVisibilityOverrides, draft.agentKind, draft.model, draft.providerId,
+    )) {
+      setError(t('session.common.modelHiddenReselect', { model: draft.model }));
+      setModelSheetOpen(true);
+      return;
+    }
     const worktreeIntent = captureWorktreeCreateIntent();
     if (!isWorktreeCreateIntentCurrent(worktreeIntent)) {
       setError(t(resolveWorktreeCreateErrorKey()));
@@ -4548,7 +4560,10 @@ export default function NewRemoteSessionScreen() {
             selectedProviderId: effectiveDraft.providerId,
           }).sections),
         });
-        const applyGuard = (g: { rows: readonly ProviderModelRow[]; catalogKnown: boolean }): void => {
+        const applyGuard = (g: { rows: readonly ProviderModelRow[]; catalogKnown: boolean; visibilityOverrides?: Record<string, boolean> }): void => {
+          if (g.catalogKnown && modelNeedsReselection(g.visibilityOverrides, effectiveDraft.agentKind, effectiveDraft.model, effectiveDraft.providerId)) {
+            throw new Error(t('session.common.modelHiddenReselect', { model: effectiveDraft.model }));
+          }
           const resolved = resolveRecentModelAndProvider(
             g.rows,
             guardSelected(),
@@ -4584,7 +4599,7 @@ export default function NewRemoteSessionScreen() {
         };
         // 有界稳定循环:每轮 await 返回后同步核对 genAt,稳定才退出(≤3)。
         // 哨兵初值必被首轮循环覆盖(for 循环体至少执行一次),消除 null 收窄。
-        let guardResult: { rows: readonly ProviderModelRow[]; catalogKnown: boolean; genAt: number } = {
+        let guardResult: { rows: readonly ProviderModelRow[]; catalogKnown: boolean; genAt: number; visibilityOverrides?: Record<string, boolean> } = {
           rows: [], catalogKnown: false, genAt: getDeviceProvidersGen(guardDeviceId),
         };
         for (let pass = 0; pass < 3; pass += 1) {
@@ -4708,6 +4723,9 @@ export default function NewRemoteSessionScreen() {
         // 鉴权 fresh 之后联合校验 (model, providerId)(codex review P2):建链/鉴权
         // 期间工作站可能已替换 provider——patch 覆盖本次创建,不再向已删除来源发。
         revalidateDraftAfterAuth: async (fresh) => {
+          if (modelNeedsReselection(fresh.modelVisibilityOverrides, effectiveDraft.agentKind, effectiveDraft.model, effectiveDraft.providerId)) {
+            throw new Error(t('session.common.modelHiddenReselect', { model: effectiveDraft.model }));
+          }
           const rows = flattenProviderSections(buildMobileModelSections({
             providers: fresh.providers,
             agentKind: effectiveDraft.agentKind,
@@ -4853,6 +4871,13 @@ export default function NewRemoteSessionScreen() {
     }
     if (!draft.model.trim()) {
       setGoalError(t('session.new.enterModel'));
+      return;
+    }
+    if (deviceProvidersRef.current.ready && modelNeedsReselection(
+      deviceProvidersRef.current.modelVisibilityOverrides, draft.agentKind, draft.model, draft.providerId,
+    )) {
+      setGoalError(t('session.common.modelHiddenReselect', { model: draft.model }));
+      setModelSheetOpen(true);
       return;
     }
     const worktreeIntent = captureWorktreeCreateIntent();
@@ -5140,7 +5165,10 @@ export default function NewRemoteSessionScreen() {
           selectedProviderId: effectiveDraft.providerId,
         }).sections),
       });
-      const applyGuard = (g: { rows: readonly ProviderModelRow[]; catalogKnown: boolean }): void => {
+      const applyGuard = (g: { rows: readonly ProviderModelRow[]; catalogKnown: boolean; visibilityOverrides?: Record<string, boolean> }): void => {
+        if (g.catalogKnown && modelNeedsReselection(g.visibilityOverrides, effectiveDraft.agentKind, effectiveDraft.model, effectiveDraft.providerId)) {
+          throw new Error(t('session.common.modelHiddenReselect', { model: effectiveDraft.model }));
+        }
         const resolved = resolveRecentModelAndProvider(
           g.rows,
           guardSelected(),
@@ -5186,7 +5214,7 @@ export default function NewRemoteSessionScreen() {
       // 有界稳定循环(独立 review round-21 Spec P1):每轮 await 返回后**同步**核对
       // genAt,稳定才退出(≤3)。
       // 哨兵初值必被首轮循环覆盖(for 循环体至少执行一次),消除 null 收窄。
-      let guardResult: { rows: readonly ProviderModelRow[]; catalogKnown: boolean; genAt: number } = {
+      let guardResult: { rows: readonly ProviderModelRow[]; catalogKnown: boolean; genAt: number; visibilityOverrides?: Record<string, boolean> } = {
         rows: [], catalogKnown: false, genAt: getDeviceProvidersGen(guardDeviceId),
       };
       for (let pass = 0; pass < 3; pass += 1) {

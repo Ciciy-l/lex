@@ -581,6 +581,7 @@ function projectVisibleModelList(
       visibility[`${agent}:${providerId}:${legacyModel.id}`],
       typeof legacyModel.defaultEnabled === 'boolean' ? legacyModel.defaultEnabled : undefined,
     );
+    visibility[`${agent}:${providerId}:${legacyModel.id}`] = visible;
     return availability === 'requires_payment' || !visible ? [] : [legacyModel];
   });
 }
@@ -653,7 +654,7 @@ function projectInvokeResultForTunnel(
         Object.entries(r.modelVisibilityOverrides)
           .filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean'),
       )
-    : undefined;
+    : {};
   const providers = (r.providers as Record<string, unknown>[]).map((p) => {
     const rest = { ...p };
     const logoKind = typeof p.id === 'string'

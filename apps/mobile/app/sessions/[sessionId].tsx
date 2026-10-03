@@ -1,4 +1,6 @@
 import { useCompanionDisplayResource } from '@/session/CompanionWorkingStatus';
+import { modelNeedsReselection } from '@/session/modelReselection';
+import { getCachedDeviceProviders } from '@/device-link/deviceProvidersCache';
 import { MountOnFirstOpen } from '@/session/MountOnFirstOpen';
 import { companionConversationItems } from '@/session/companionConversationPresentation';
 import { HomeHeaderGlassButton } from '@/session/HomeHeaderGlassButton';
@@ -6070,6 +6072,20 @@ export default function SessionScreen() {
       && pendingSkillAtSend.name === parsedDesktopCommandAtSend.name
         ? null
         : parsedDesktopCommandAtSend;
+    // A known hidden model requires an explicit choice before consuming the draft or enqueueing.
+    const selectionAtSend = readSessionRowNow() ?? currentSession;
+    if (!earlyLocalCommand && !earlyDesktopCommand && modelNeedsReselection(
+      getCachedDeviceProviders(deviceId)?.modelVisibilityOverrides,
+      resolveSessionAgentKind(selectionAtSend), selectionAtSend.model, selectionAtSend.providerId,
+    )) {
+      setError(t('session.common.modelHiddenReselect', { model: selectionAtSend.model }));
+      setModelSheetOpen(true);
+      sendInFlightRef.current = false;
+      setSending(false);
+      if (options.documentOverride) applyComposerDocument(options.documentOverride);
+      else if (options.draftOverride !== undefined) setComposerDraft(options.draftOverride);
+      return;
+    }
     // 需要远端会话的命令在会话建成前必须挡住(review P1)。
     //
     // 命令走的是下方「豁免 outbox」的原路径:/context 直接向被控端取用量、/learn 直接

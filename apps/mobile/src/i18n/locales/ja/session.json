@@ -6,6 +6,7 @@
     "dismissTitle": "過去の失敗通知を閉じる"
   },
   "common": {
+    "modelHiddenReselect": "{{model}} はオフになっています。送信する前に、有効なモデルを選んでください。",
     "cancel": "キャンセル",
     "delete": "削除",
     "openContextPanel": "コンテキストパネルを開く",

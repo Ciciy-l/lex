@@ -6,6 +6,7 @@
     "dismissTitle": "關閉歷史失敗提示"
   },
   "common": {
+    "modelHiddenReselect": "{{model}} 已關閉，請選擇已開啟的模型後再傳送。",
     "cancel": "取消",
     "delete": "刪除",
     "openContextPanel": "開啟上下文面板",

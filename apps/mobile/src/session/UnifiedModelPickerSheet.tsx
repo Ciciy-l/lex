@@ -1,3 +1,4 @@
+import { modelNeedsReselection } from './modelReselection';
 import { mobileProviderAccountTitle } from "./mobileModelRowPresentation";
 import { mobileCostMarks, quotaCountdown } from "./mobileModelRowPresentation";
 import { useMobileModelQuotas } from "./useMobileModelQuotas";
@@ -637,7 +638,8 @@ export function UnifiedModelPickerSheet(
       ]}
       groups={groups}
       busy={busy || !!p.disabled || !prefs.ready}
-      error={error}
+      error={error ?? (p.providersReady && modelNeedsReselection(p.modelVisibilityOverrides, p.agentKind, p.activeModelId, p.selectedProviderId)
+        ? t('session.common.modelHiddenReselect', { model: p.activeModelId }) : null)}
       loading={!!p.loading}
       emptyHint={p.emptyHint ?? t("models.picker.noResults")}
       onSelect={select}

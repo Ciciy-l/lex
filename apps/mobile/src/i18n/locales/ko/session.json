@@ -6,6 +6,7 @@
     "dismissTitle": "이전 실패 알림 닫기"
   },
   "common": {
+    "modelHiddenReselect": "{{model}} 모델이 꺼져 있습니다. 보내기 전에 켜져 있는 모델을 선택하세요.",
     "cancel": "취소",
     "delete": "삭제",
     "openContextPanel": "컨텍스트 패널 열기",
