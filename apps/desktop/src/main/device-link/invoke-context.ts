@@ -13,6 +13,12 @@ import * as subscriptions from './subscriptions.js';
 
 export interface DeviceLinkInvokeContext {
   controllerDeviceId: string;
+  /** Active transport identity captured with the invocation. */
+  client?: unknown;
+  /** Link generation captured at dispatch time; remote resources recheck it before mutation. */
+  linkEpoch?: number;
+  /** Fail-closed check for queued resource reads/writes. */
+  assertCurrent?: () => void;
   channel: string;
   /**
    * 控制端平台(presence 登记的 `PresenceSnapshot.platform`);未登记时 undefined。

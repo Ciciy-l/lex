@@ -3777,7 +3777,27 @@ export async function runInvoke(
     const result = await runDeviceLinkInvokeContext(
       {
         controllerDeviceId: src,
+        client: activeClient,
         channel: payload.channel,
+        linkEpoch: remoteInvokeLinkEpoch.get(src) ?? 0,
+        assertCurrent: (() => {
+          const invokeClient = activeClient;
+          const invokeEpoch = remoteInvokeLinkEpoch.get(src) ?? 0;
+          return () => {
+            if (activeClient !== invokeClient || (remoteInvokeLinkEpoch.get(src) ?? 0) !== invokeEpoch) {
+              throw new Error('[ACCESS_REVOKED] Device link changed');
+            }
+            if (!readDeviceLinkSettings().remoteControlEnabled) {
+              throw new Error('[REMOTE_DISABLED] Remote control is disabled');
+            }
+            if (isControllerRevoked(src)) {
+              throw new Error('[ACCESS_REVOKED] Access revoked by target device');
+            }
+            if (!broadcastTap.isDataOwnerBroadcastScopeCurrent(invocationOwner)) {
+              throw new Error('[PRECONDITION_FAILED] Account changed during remote invocation');
+            }
+          };
+        })(),
         // 平台按 server 盖章的 src 查本机 presence 登记表,不采信控制端自报的任何
         // 帧内字段(allowlist 只挡 channel 不挡 args,见下方 dispatchLocalInvoke 前的说明)。
         controllerPlatform: getControllerPlatform(src),

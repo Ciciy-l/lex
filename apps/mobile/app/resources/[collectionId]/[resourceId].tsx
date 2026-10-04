@@ -17,6 +17,7 @@ import type { RemoteSession } from '@/session/types';
 import { useTheme, useThemedStyles, type ThemeColors } from '@/theme';
 import { spacing, typeScale } from '@/theme/tokens';
 import { goBackGuarded } from '@/utils/backGuard';
+import { RemoteBotMemoryPage } from '@/session/RemoteBotMemoryPage';
 
 function firstParam(value: string | string[] | undefined): string {
   return Array.isArray(value) ? value[0] ?? '' : value ?? '';
@@ -69,6 +70,10 @@ export default function RemoteResourceResolverScreen() {
         kind: resourceKind,
       }, i18n.language);
       if (resolveGenerationRef.current !== generation || currentBinding.current !== binding) return;
+      const memoryLink = resourceKind === 'bot'
+        ? response.links.find((item) => item.rel === 'memories')
+        : undefined;
+      const memoryRef = memoryLink?.target.kind === 'resource' ? memoryLink.target.ref : null;
       const link = response.links.find((item) => item.rel === 'conversation');
       const target = link?.target as RemoteSessionLinkTarget | undefined;
       if (!target || target.kind !== 'session' || typeof target.sessionId !== 'string') {
@@ -90,6 +95,7 @@ export default function RemoteResourceResolverScreen() {
           resourceCollectionId: collectionId,
           resourceId,
           resourceKind,
+          ...(memoryRef ? { remoteMemoryResourceId: memoryRef.id } : {}),
         },
       });
     } catch (cause) {
@@ -98,9 +104,14 @@ export default function RemoteResourceResolverScreen() {
   }, [binding, collectionId, deviceId, deviceName, host, i18n.language, invoke, resourceId, resourceKind, router, t]);
 
   useEffect(() => {
+    if (resourceKind === 'bot' && resourceId.startsWith('settings:')) return undefined;
     void resolveConversation();
     return () => { resolveGenerationRef.current += 1; };
-  }, [attempt, resolveConversation]);
+  }, [attempt, resolveConversation, resourceId, resourceKind]);
+
+  if (resourceKind === 'bot' && resourceId.startsWith('settings:')) {
+    return <RemoteBotMemoryPage host={host} resourceId={resourceId} title={title} />;
+  }
 
   return (
     <SafeAreaView edges={simpleScreenSafeAreaEdges()} style={styles.safeArea} testID="remoteResourceResolver.screen">

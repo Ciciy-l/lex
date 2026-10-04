@@ -33,7 +33,9 @@ describe('remote resource discovery', () => {
   });
 
   it('advertises only primitives implemented by the current mobile shell', () => {
-    expect(MOBILE_REMOTE_RESOURCE_PRIMITIVES).toEqual(['status', 'session-link']);
+    expect(MOBILE_REMOTE_RESOURCE_PRIMITIVES).toEqual([
+      'status', 'session-link', 'search', 'list', 'form', 'action', 'markdown',
+    ]);
   });
 
   it('merges host-advertised home collections without knowing their feature module', async () => {

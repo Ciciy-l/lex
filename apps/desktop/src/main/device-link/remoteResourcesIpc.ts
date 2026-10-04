@@ -27,7 +27,12 @@ function requireRemoteContext(expectedChannel: string): RemoteResourceHostContex
   if (!context || context.channel !== expectedChannel) {
     throwIpcError('PERMISSION_DENIED', 'remote resource API is only available through device-link');
   }
-  return { controllerDeviceId: context.controllerDeviceId };
+  return {
+    controllerDeviceId: context.controllerDeviceId,
+    ...(context.client !== undefined ? { client: context.client } : {}),
+    ...(context.linkEpoch !== undefined ? { linkEpoch: context.linkEpoch } : {}),
+    ...(context.assertCurrent ? { assertCurrent: context.assertCurrent } : {}),
+  };
 }
 
 function rethrowRegistryError(error: unknown): never {

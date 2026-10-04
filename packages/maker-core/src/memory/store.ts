@@ -182,10 +182,16 @@ export class MakerMemoryStore {
     filename: string,
     expectedUpdatedAt: string,
     changes: Pick<WriteOptions, 'title' | 'description' | 'body'>,
+    options?: { mutationGuard?: () => void },
   ): Promise<MemoryRecord> {
     this.assertScopeOk();
     await this.init();
-    const saved = await this.storage.update(filename, expectedUpdatedAt, changes);
+    const saved = await this.storage.update(filename, expectedUpdatedAt, changes, {
+      mutationGuard: () => {
+        this.assertScopeOk();
+        options?.mutationGuard?.();
+      },
+    });
     await this.syncWrite({ ok: true, filename });
     return saved;
   }
@@ -211,10 +217,19 @@ export class MakerMemoryStore {
     return result;
   }
 
-  async delete(filename: string, expectedUpdatedAt?: string): Promise<void> {
+  async delete(
+    filename: string,
+    expectedUpdatedAt?: string,
+    options?: { mutationGuard?: () => void },
+  ): Promise<void> {
     this.assertScopeOk();
     await this.init();
-    await this.storage.delete(filename, expectedUpdatedAt);
+    await this.storage.delete(filename, expectedUpdatedAt, {
+      mutationGuard: () => {
+        this.assertScopeOk();
+        options?.mutationGuard?.();
+      },
+    });
     // storage await 后、FTS 同步前复核 (review #2388 Codex 15th P1)
     this.assertScopeOk();
     try {

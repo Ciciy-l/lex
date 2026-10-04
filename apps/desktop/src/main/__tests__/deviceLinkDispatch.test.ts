@@ -143,7 +143,15 @@ describe('runInvoke 双层校验', () => {
       ok: true,
       result: {
         active: true,
-        context: { controllerDeviceId: 'ctrl-a', channel: 'maker:list-active' },
+        context: expect.objectContaining({
+          controllerDeviceId: 'ctrl-a',
+          channel: 'maker:list-active',
+          client: null,
+          linkEpoch: 0,
+          controllerPlatform: undefined,
+          historyView: undefined,
+          assertCurrent: expect.any(Function),
+        }),
       },
     });
     expect(isDeviceLinkInvoke()).toBe(false);

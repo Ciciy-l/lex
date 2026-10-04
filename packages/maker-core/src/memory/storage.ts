@@ -312,9 +312,16 @@ export class MemoryStorage {
     filename: string,
     expectedUpdatedAt: string,
     changes: Pick<WriteOptions, 'title' | 'description' | 'body'>,
+    options?: { mutationGuard?: () => void },
   ): Promise<MemoryRecord> {
     return this.mutate(async () => {
       const current = await this.checkVersion(filename, expectedUpdatedAt);
+      // The caller's per-operation authorization is deliberately checked inside
+      // the shared mutation queue, immediately before the write.  The store's
+      // scopeCheck remains the global owner guard; this narrower check protects
+      // a remote controller that was revoked while it waited behind another
+      // memory mutation.
+      options?.mutationGuard?.();
       await this.writeFile({
         ...changes, type: current.frontmatter.type, name: current.slug, mode: 'update',
       }, filename);
@@ -412,9 +419,22 @@ export class MemoryStorage {
     return result;
   }
 
-  async delete(filename: string, expectedUpdatedAt?: string): Promise<void> {
+  async delete(
+    filename: string,
+    expectedUpdatedAt?: string,
+    options?: { mutationGuard?: () => void },
+  ): Promise<void> {
+    return this.deleteWithGuard(filename, expectedUpdatedAt, options);
+  }
+
+  async deleteWithGuard(
+    filename: string,
+    expectedUpdatedAt?: string,
+    options?: { mutationGuard?: () => void },
+  ): Promise<void> {
     return this.mutate(async () => {
       if (expectedUpdatedAt !== undefined) await this.checkVersion(filename, expectedUpdatedAt);
+      options?.mutationGuard?.();
       await this.deleteFile(filename);
     });
   }

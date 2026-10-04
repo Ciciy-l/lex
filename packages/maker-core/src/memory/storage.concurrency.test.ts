@@ -100,4 +100,23 @@ describe('conditional memory mutations', () => {
     await storage.write({ ...seed, mode: 'update', body: 'Recovered' });
     expect((await storage.read(filename)).body).toBe('Recovered');
   });
+
+  it.each(['update', 'delete'] as const)('runs the per-operation guard inside the shared queue before %s changes disk', async (operation) => {
+    const opened = await storage.read(filename);
+    let guardCalls = 0;
+    const mutationGuard = () => {
+      guardCalls += 1;
+      if (guardCalls === 1) throw new Error('remote controller revoked');
+    };
+    if (operation === 'update') {
+      await expect(storage.update(filename, opened.frontmatter.updatedAt, {
+        title: 'Mine', description: 'Mine', body: 'Mine',
+      }, { mutationGuard })).rejects.toThrow('remote controller revoked');
+    } else {
+      await expect(storage.delete(filename, opened.frontmatter.updatedAt, { mutationGuard }))
+        .rejects.toThrow('remote controller revoked');
+    }
+    expect(guardCalls).toBe(1);
+    expect((await storage.read(filename)).body).toBe('Original');
+  });
 });

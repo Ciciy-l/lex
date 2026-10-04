@@ -12,6 +12,7 @@ import { isInFlightDeviceLinkError } from '@cindy/device-link';
 import { takeRefinementContextTail, truncateRefinementReply } from '@cindy/voice-input-core';
 import {
   ArrowDown,
+  Brain,
   Camera,
   Check,
   ChevronDown,
@@ -910,6 +911,7 @@ export default function SessionScreen() {
     notificationResponse?: string;
     deviceId?: string;
     deviceName?: string;
+    remoteMemoryResourceId?: string;
     draft?: string;
     goalError?: string;
     goalObjective?: string;
@@ -935,6 +937,7 @@ export default function SessionScreen() {
   // 新发起的请求作废旧请求。
   const rewindRequestSeqRef = useRef(0);
   const deviceName = readRouteParam(params.deviceName) ?? deviceId;
+  const remoteMemoryResourceId = readRouteParam(params.remoteMemoryResourceId);
   const routeDraft = readRouteParam(params.draft);
   const routeFocusClientId = readRouteParam(params.focusClientId);
   const routeFocusComposerRequestKey = readRouteParam(params.focusComposerRequestKey);
@@ -8775,6 +8778,19 @@ export default function SessionScreen() {
                   params: { deviceId, deviceName },
                 });
               }}
+              onOpenRemoteMemory={remoteMemoryResourceId && deviceId ? () => {
+                router.push({
+                  pathname: '/resources/[collectionId]/[resourceId]',
+                  params: {
+                    collectionId: 'teammates',
+                    resourceId: remoteMemoryResourceId,
+                    resourceKind: 'bot',
+                    deviceId,
+                    deviceName,
+                    title: t('devices.companionProfile.memory.title', { defaultValue: 'Saved Memories' }),
+                  },
+                });
+              } : undefined}
               onToggleSearch={() => {
                 if (searchOpen) closeSearch();
                 else setSearchOpen(true);
@@ -9563,6 +9579,7 @@ function SessionHeaderBar({
   onOpenSettings,
   onOpenUsage,
   onOpenRemoteDesktop,
+  onOpenRemoteMemory,
   onToggleSearch,
   pendingCount,
   queueCount,
@@ -9594,6 +9611,7 @@ function SessionHeaderBar({
   onOpenSettings(): void;
   onOpenUsage(): void;
   onOpenRemoteDesktop(): void;
+  onOpenRemoteMemory?: () => void;
   onToggleSearch(): void;
   pendingCount: number;
   queueCount: number;
@@ -9699,6 +9717,14 @@ function SessionHeaderBar({
       </View>
 
       <View style={styles.sessionHeaderActions}>
+        {onOpenRemoteMemory ? <SessionHeaderIconButton
+          accessibilityLabel={t('devices.companionProfile.memory.title', { defaultValue: 'Saved Memories' })}
+          active={false}
+          disabled={!currentSession}
+          icon={Brain}
+          onPress={currentSession ? onOpenRemoteMemory : undefined}
+          testID="session.remoteMemory"
+        /> : null}
         <SessionHeaderIconButton
           accessibilityLabel={t('remoteDesktop.title')}
           active={false}
