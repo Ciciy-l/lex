@@ -208,6 +208,77 @@ describe('local-db:messages:list cursor', () => {
     sqlite.prepare('UPDATE messages SET content = ? WHERE id = ?').run(JSON.stringify({ text: 'edited '.repeat(1000), durationMs: 10 }), '2');
     expect(await invoke('local-db:messages:view', { lazyDetails: true })).not.toEqual(page);
   });
+
+  it('keeps lazy pages and detail references isolated across sessions', async () => {
+    const sqlite = createDb();
+    sqlite.prepare('INSERT INTO sessions (id, cleared_at) VALUES (?, NULL), (?, NULL)').run('s1', 's2');
+    const insert = sqlite.prepare(
+      'INSERT INTO messages (id, client_id, session_id, role, content, tool_use_id, agent_meta, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    );
+    const sessionRows = (sessionId: string, prefix: string) => {
+      const ids: string[] = [];
+      const add = (id: string, role: string, content: unknown, toolUseId: string | null, agentMeta: unknown, createdAt: number) => {
+        ids.push(id);
+        insert.run(id, id, sessionId, role, JSON.stringify(content), toolUseId, agentMeta ? JSON.stringify(agentMeta) : null, createdAt);
+      };
+      add(`${prefix}-user`, 'user', `${prefix}-question`, null, null, 1);
+      add(`${prefix}-tool`, 'tool_use', { toolName: 'Agent', input: { description: `${prefix} worker` } }, 'agent', null, 2);
+      for (let index = 0; index < 4; index += 1) {
+        add(`${prefix}-detail-${index}`, 'thinking',
+          { text: `${prefix}-private-${'x'.repeat(120_000)}`, durationMs: 10 }, null,
+          { parentUuid: 'agent', model: `${prefix}-model` }, 3 + index);
+      }
+      add(`${prefix}-assistant`, 'assistant', `${prefix}-answer`, null, null, 20);
+      return ids;
+    };
+    const s1Ids = sessionRows('s1', 's1');
+    const s2Ids = sessionRows('s2', 's2');
+    registerMessageIpc();
+    const invoke = (sessionId: string, channel: string, ...args: unknown[]) =>
+      runDeviceLinkInvokeContext({ controllerDeviceId: 'd', channel }, () => h.handlers.get(channel)!({}, sessionId, ...args));
+    const details = (sessionId: string, ref: unknown, opts: unknown = {}) =>
+      invoke(sessionId, 'local-db:messages:work-details', ref, opts) as Promise<HistoryDetailPage<HistoryMessageSource>>;
+
+    const s1Page = await invoke('s1', 'local-db:messages:view', { lazyDetails: true }) as HistoryViewPage<HistoryMessageSource>;
+    const s1Payload = JSON.stringify(s1Page);
+    expect(s1Payload).toContain('s1-answer');
+    expect(s1Payload).not.toContain('s2-answer');
+    expect(s1Payload).not.toContain('s2-private-');
+    const card = s1Page.items.find((item) => item.type === 'messages' && item.deferred);
+    if (card?.type !== 'messages' || !card.deferred) throw new Error('Missing s1 subagent');
+    expect(card.deferred.parentToolUseId).toBe('agent');
+
+    const ref = card.deferred;
+    await expect(details('s1', { ...ref, firstMessageId: s2Ids[1] })).rejects.toThrow('[NOT_FOUND]');
+    await expect(details('s1', { ...ref, lastMessageId: s2Ids.at(-1) })).rejects.toThrow('[NOT_FOUND]');
+    await expect(details('s1', ref, { after: s2Ids[2] })).rejects.toThrow('[NOT_FOUND]');
+
+    const s1DetailIds: string[] = [];
+    let after: string | undefined;
+    let pageCount = 0;
+    do {
+      const page = await details('s1', ref, after ? { after } : {});
+      pageCount += 1;
+      s1DetailIds.push(...page.messages.map((row) => row.id));
+      expect(JSON.stringify(page)).not.toContain('s2-');
+      after = page.nextCursor ?? undefined;
+    } while (after);
+    expect(pageCount).toBeGreaterThan(1);
+    expect(s1DetailIds.length).toBeGreaterThanOrEqual(4);
+    expect(s1DetailIds.every((id) => id.startsWith('s1-'))).toBe(true);
+    expect(new Set(s1DetailIds)).toEqual(new Set(s1Ids.filter((id) => id.includes('-detail-'))));
+
+    const s2Page = await invoke('s2', 'local-db:messages:view', { lazyDetails: true }) as HistoryViewPage<HistoryMessageSource>;
+    expect(JSON.stringify(s2Page)).toContain('s2-answer');
+    expect(JSON.stringify(s2Page)).not.toContain('s1-answer');
+
+    sqlite.prepare('UPDATE sessions SET cleared_at = ? WHERE id = ?').run(10_000, 's1');
+    await expect(details('s1', ref)).rejects.toThrow('[NOT_FOUND]');
+    sqlite.prepare('UPDATE sessions SET cleared_at = NULL WHERE id = ?').run('s1');
+    sqlite.prepare('UPDATE messages SET rewind_at = ? WHERE session_id = ?').run(20_000, 's1');
+    await expect(details('s1', ref)).rejects.toThrow('[NOT_FOUND]');
+  });
+
   it('keeps a command larger than the scan budget folded without losing its trailing artifact or full details', async () => {
     const sqlite = createDb();
     sqlite.prepare('INSERT INTO sessions (id, cleared_at) VALUES (?, NULL)').run('s1');
