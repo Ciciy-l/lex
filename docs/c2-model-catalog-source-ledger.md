@@ -67,32 +67,32 @@
 
 ## `providers.json` 实际语义 diff 与一级页面核对
 
-`8a28edd4^..8a28edd4` 的 2882 行变化不是 28 个预设全部换端点：它把每个预设的推荐型号从各 runtime 的旧 `runtimes.*.models` 投影为一份顶层 `models`，再由 `expandPresetModels` 按 `engines`/`engineOverrides` 展开。下表的“旧 runtime 移除”是源格式中的旧数组成员；同名成员由展开结果继续提供，不等同于供应商下线。`+` 是顶层推荐清单新增/替换的型号；`w` 是候选记录的窗口，`img` 是图片字段，`R` 是 Pi reasoning 档位，`?` 是该字段未声明。窗口、图片和努力字段来自 tag-bounded source hunk；若页面核对没有给出同一精确值，台账将其作为 tag snapshot/unknown，不把观察日或服务端当前清单写成历史事实。
+`8a28edd4^..8a28edd4` 的 2882 行变化首先按 `aad281ca` 的旧 runtime 展开，再与当前顶层 `models` 通过 `expandPresetModels` 的真实结果做语义 diff。顶层格式变化（旧数组移到共享清单）不算成员下线；只有展开后仍缺失的旧成员才算缺口。本轮工作树已把没有一级材料证明下线的旧成员恢复为原 runtime scope/字段；新成员只在页面确认对应产品或通道时保留，无法确认的窗口、图片和 effort 留空（未知），不因“tag snapshot”变成默认能力。`w`/`img`/`R` 仅描述实际写入字段，`?` 表示未声明。
 
-| 预设 | 顶层 `models`（+ 型号；`w`/`img`/`R`） | 旧 runtime 型号移除（union） | 保留的协议/路由字段 |
+| 预设 | 语义 diff 后的实际处理（展开后的成员与字段） | 未核实/不新增的内容 | 保留的协议/路由字段 |
 | --- | --- | --- | --- |
 | `sub2api` | `models: []` | 无 | 三个 runtime 仍为 `{endpoint}/v1`、`openai-responses`、models URL。 |
-| `openrouter` | `z-ai/glm-5.2(w1048576,img0)`、`moonshotai/kimi-k2.6(262144,1)`、`deepseek/deepseek-v4-pro(1048576,0,E=claude-code|pi)`、`qwen/qwen3.8-27b(1000000,1)`、`qwen/qwen3.8-2.4t-a95b(1048576,0)`、`qwen/qwen3.8-flash(1000000,1)` | `z-ai/glm-5.2`, `moonshotai/kimi-k2.6`, `deepseek/deepseek-v4-pro` | Claude/OpenAI-compatible base URLs、Pi `openai-chat` 与 models URL不变。 |
-| `deepseek` | `deepseek-flash(1048576,1,R=low|high|max→high)`、`deepseek-v4-pro(1048576,0,R=high|max→high)` | `deepseek-v4-flash`, `deepseek-v4-flash-vision-exp`, `deepseek-v4-pro` | Claude Anthropic endpoint；Codex/Pi `openai-chat`、models URL、Pi catalog `deepseek` 不变。 |
-| `zhipu-glm-cn` / `zhipu-glm-global` | `glm-5.3-flash(1000000,1)`、`glm-5.3(1000000,0)`、`glm-5.2(?)`、`glm-5.1(?)` | 两区均 `glm-5.2`, `glm-5.1` | Claude Anthropic；Codex/Pi `openai-chat`；各自区域 base URL 不变。 |
-| `moonshot-kimi-cn` / `moonshot-kimi-global` | `kimi-k3(1048576,1,R=low|high|max→max)`、`kimi-k2.7-code(262144,1)`、`kimi-k2.7-code-highspeed(262144,1)`、`kimi-k2.6(262144,1)` | `kimi-k3`, `kimi-k2.7-code`, `kimi-k2.6`，以及 Pi 旧专属 `kimi-k2-0711-preview`, `kimi-k2-0905-preview`, `kimi-k2-thinking`, `kimi-k2-thinking-turbo`, `kimi-k2-turbo-preview`, `kimi-k2.5` | Claude/Kimi Anthropic endpoints；Codex/Pi `openai-chat`、区域 models URL、Pi catalog 不变。 |
-| `moonshot-kimi-code` | `kimi-for-coding(1048576,1,R=low|high|max→max)`、`kimi-for-coding-highspeed(262144,1)`、`k3(262144,1,R=low|high|max→high)` | `kimi-for-coding`, `kimi-for-coding-highspeed`, `k3`, `k3-256k`（Pi 旧清单） | Claude/Codex endpoints、Codex `openai-chat`、Pi `anthropic-messages` 与 `kimi-coding` catalog 不变。 |
-| `minimax-cn` / `minimax-global` | `MiniMax-M3(1000000,1)`；`MiniMax-M2.7`, `M2.7-highspeed`, `M2.5`, `M2.5-highspeed`, `M2.1`, `M2.1-highspeed`, `M2` 均 `(204800,0)` | `MiniMax-M3`, `MiniMax-M2.5`, `MiniMax-M2.7`, `MiniMax-M2.7-highspeed`（按 runtime 实际列表） | Claude/Codex base URL；Pi `anthropic-messages` 与区域 Pi catalog 不变。 |
-| `aliyun-bailian-coding` | `qwen3.7-plus(983616,1)`, `qwen3.6-plus(983616,1)`, `kimi-k2.5(229376,1)`, `glm-5(169984,0)`, `MiniMax-M2.5(196608,0)`, `qwen3-coder-next(204800,0)`, `qwen3-coder-plus(997952,0)` | `qwen3.7-plus`, `qwen3-coder-next`, `qwen3-coder-plus` | Claude Anthropic、Codex/Pi `openai-chat`；Coding Plan base/model URL 保留。 |
-| `aliyun-bailian-token-plan-cn` | `qwen3.8-max(983616,1,R=low|medium|xhigh→medium)`, `qwen3.8-flash(983616,1,R=low|medium|xhigh→medium)`, `qwen3.7-max(983616,0)`, `qwen3.7-plus(983616,1)`, `qwen3.6-flash(983616,1)`, `deepseek-v4.1-flash(1000000,1)`, `deepseek-v4-pro(1000000,0,R=high|max→high)`, `glm-5.3(1048576,0)`, `glm-5.2(1048576,0,R=high|max→high)` | `qwen3.8-max-preview`, `qwen3.7-max`, `qwen3.7-plus`, `qwen3.6-flash`, `glm-5.2`, `deepseek-v4-pro`, 以及 Pi 旧 `MiniMax-M2.5`, `deepseek-v3.2`, `deepseek-v4-flash`, `deepseek-v4-flash-0731`, `deepseek-v4-pro-0813`, `kimi-k2.5`, `kimi-k2.6`, `kimi-k2.7-code`, `qwen3.8-flash`, `qwen3.8-max` | Claude Anthropic、Codex/Pi `openai-chat`、Token Plan models URL 与 Pi catalog 保留。 |
-| `aliyun-bailian-token-plan-team-cn` | `qwen3.8-max(983616,1,R=low|medium|xhigh→medium)`, `qwen3.8-flash(983616,1,R=low|medium|xhigh→medium)`, `qwen3.7-max(983616,0)`, `qwen3.7-plus(983616,1)`, `qwen3.6-plus(983616,1)`, `qwen3.6-flash(983616,1)`, `deepseek-v4.1-flash(1000000,1)`, `deepseek-v4-pro(1000000,0,R=high|max→high)`, `deepseek-v4-flash(1000000,0,R=high|max→high)`, `kimi-k2.7-code/k2.6/k2.5(229376,1)`, `glm-5.3/glm-5.2(1048576,0；5.2 R=high|max→high)`, `glm-5.1/glm-5(169984,0,R=high|max→high)`, `MiniMax-M2.5(196608,0)` | `qwen3.8-max-preview`, `qwen3.7-max`, `qwen3.7-plus`, `qwen3.6-plus`, `qwen3.6-flash`, `deepseek-v4-pro`, `deepseek-v4-flash`, `deepseek-v3.2`, `kimi-k2.7-code`, `kimi-k2.6`, `kimi-k2.5`, `glm-5.2`, `glm-5.1`, `glm-5`, `MiniMax-M2.5`, 以及 Pi 的 `deepseek-v4-flash-0731`, `deepseek-v4-pro-0813`, `qwen3.8-flash`, `qwen3.8-max` | Claude Anthropic、Codex/Pi `openai-chat`、Token Plan models URL 与 Pi catalog 保留。 |
+| `openrouter` | 基线 6 个 runtime 型号及其已批准窗口/图片字段保留；tag 新增的 Qwen3.8 3 个型号（与基线清单重叠）不扩写额外能力。 | 未新增 OpenRouter route/member；不把 P1 动态页当精确能力证据。 | Claude/OpenAI-compatible base URLs、Pi `openai-chat` 与 models URL不变。 |
+| `deepseek` | 基线 `deepseek-v4-flash`、`deepseek-v4-flash-vision-exp`、`deepseek-v4-pro` 的 runtime scope/窗口/reasoning 保留；P2 明确映射的 `deepseek-flash` 新模型保留官方确认的 1,048,576 窗口/图片声明，并以 Codex override 显式关闭图片；旧 `deepseek-v4-flash` 与 vision-exp 继续隐藏。 | 未由 P2 证明的新增 effort/route 不扩写；vision-exp 保持 Pi-only。 | Claude Anthropic endpoint；Codex/Pi `openai-chat`、models URL、Pi catalog `deepseek` 不变。 |
+| `zhipu-glm-cn` / `zhipu-glm-global` | 基线 `glm-5.2`/`glm-5.1` 保留；P3 确认的 `glm-5.3`/`glm-5.3-flash` 成员保留，窗口/图片不再升级为新声明（`?`）。 | 不新增未经 P3/快照支持的 route/member。 | Claude Anthropic；Codex/Pi `openai-chat`；各自区域 base URL 不变。 |
+| `moonshot-kimi-cn` / `moonshot-kimi-global` | K3/K2.7/K2.6 与 tag 新增 highspeed 保留；旧 Pi `kimi-k2-0711-preview`、`k2-0905-preview`、`k2-thinking`、`k2-thinking-turbo`、`k2-turbo-preview`、`k2.5` 全部恢复原 scope/窗口/img。 | K2.8 历史窗口与新价格仍未知，不把观察日写入 registry。 | Claude/Kimi endpoints；Codex/Pi `openai-chat`、区域 models URL、Pi catalog 不变。 |
+| `moonshot-kimi-code` | 旧 `kimi-for-coding`/highspeed/k3 的基线展示名、窗口和图片能力保留；Pi-only `k3-256k` 恢复，`k3` 为 262,144/img/reasoning。 | Kimi Code 新型号/窗口未经 P4 精确证明不扩写；K2.8 仍沿用已批准 tag 值，不把观察日写成生效日。 | Claude/Codex endpoints、Codex `openai-chat`、Pi `anthropic-messages` 与 `kimi-coding` catalog 不变。 |
+| `minimax-cn` / `minimax-global` | 只保留基线 M3/M2.7/M2.7-highspeed/M2.5；M3 的 Pi 1,048,576/img 与其他 runtime 的旧窗口分开表达。 | tag 新增但 P5 未证明 route/窗口的 M2.5-highspeed、M2.1、M2.1-highspeed、M2 均不成为可调用入口。 | Claude/Codex base URL；Pi `anthropic-messages` 与区域 Pi catalog 不变。 |
+| `aliyun-bailian-coding` | P6 确认的 Qwen 3.7/3.6、Kimi K2.5、GLM-5、MiniMax M2.5、Coder Next/Plus 成员保留；只有页面确认的图片能力写入，其余窗口/effort 保持 `?`。 | 不以 tag 窗口或线上推荐替代一级事实；未知能力不默认化。 | Claude Anthropic、Codex/Pi `openai-chat`；Coding Plan base/model URL 保留。 |
+| `aliyun-bailian-token-plan-cn` | 新 Qwen3.8、DeepSeek-V4.1-Flash、GLM-5.3 成员保留；旧 `qwen3.8-max-preview`、Pi MiniMax/DeepSeek/GLM/Kimi/Qwen 型号及原窗口全部恢复。 | 页面未给精确窗口的新增字段为 `?`；不删除存量 Pi snapshot，也不新增未知区域 route。 | Claude Anthropic、Codex/Pi `openai-chat`、Token Plan models URL 与 Pi catalog 保留。 |
+| `aliyun-bailian-token-plan-team-cn` | 同上；恢复 `qwen3.8-max-preview`、`deepseek-v3.2`、Pi `deepseek-v4-flash-0731`/`v4-pro-0813` 等旧成员；Codex 图片 bridge 仍显式关闭。 | 预设清单不宣称外部同步；新成员未核实能力保持 `?`。 | Claude Anthropic、Codex/Pi `openai-chat`、Token Plan models URL 与 Pi catalog 保留。 |
 | `google-gemini-api` | `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.5-flash-lite` 均 `w1000000,img=?` | 同三型号从 Codex/Pi 旧 runtime 数组移出 | OpenAI-compatible endpoint、Codex/Pi `openai-chat` 与 models URL保留。 |
 | `litellm` / `lmstudio` / `llamacpp` / `vllm` | 均 `models: []`，无新增事实 | 无 | 本地 endpoint、协议和 `baseUrlEditable` 不变。 |
 | `longcat` | `LongCat-2.0(w1000000,img=?)` | `LongCat-2.0` | Claude/Codex endpoint 与 Pi `openai-chat` 保留。 |
-| `zhipu-coding-plan-cn` / `zai-coding-plan-global` | `glm-5.3[1m](1000000,0,E=claude-code)`, `glm-5.3-flash[1m](1000000,1,E=claude-code)`, `glm-5.3(1000000,0,E=codex|pi,R=low|high|max→high)`, `glm-5.3-flash(1000000,1,E=codex|pi,R=low|high|max→high)` | CN 旧清单含 `glm-5.3[1m]`, `glm-5.2[1m]`, `glm-5.2`, `glm-5.1`；Global 同前但无 CN 专属 catalog 型号 | Claude Anthropic；Codex/Pi `openai-chat`；CN Codex discovery 与各自 Pi catalog 保留。 |
-| `xiaomi-mimo-api-cn` | `mimo-v2.6-pro(1048576,1)`, `mimo-v2.6-flash(1048576,1)`, `mimo-v2.6-pro-ultraspeed(1048576,1)` | 三型号从 Claude/Codex/Pi 旧数组移出 | Claude endpoint；Codex/Pi `openai-chat`、Pi catalog `xiaomi` 不变。 |
-| `xiaomi-mimo-token-plan-cn` | `mimo-v2.6-pro(1048576,1)`, `mimo-v2.6-flash(1048576,1)` | 两型号从三 runtime 旧数组移出 | Token Plan endpoints、Codex/Pi `openai-chat`、Pi catalog 不变。 |
+| `zhipu-coding-plan-cn` / `zai-coding-plan-global` | 新 5.3/Flash 与 `[1m]` 成员按引擎 scope 保留；CN/global 各自恢复基线 `[1m]`、Claude/Codex `glm-5.1` 与 Pi GLM 清单，CN 独有 `glm-4.6v` 不外推到 Global。Flash Codex bridge 显式 `img=false`，Pi 能力独立。 | 不凭新 tag 把 Global 的 CN-only 成员变成入口；未核实窗口/图片不升级。 | Claude Anthropic；Codex/Pi `openai-chat`；CN discovery 与各自 Pi catalog 保留。 |
+| `xiaomi-mimo-api-cn` | Pro/Flash 保留基线 Claude/Codex/Pi 成员与 1,048,576 窗口；Codex bridge `img=false`。`mimo-v2.6-pro-ultraspeed` 恢复为 Pi-only 并保留图片能力。 | 不把 UltraSpeed 扩成 Claude/Codex route；新窗口/图片无 P10 精确证据不扩写。 | Claude endpoint；Codex/Pi `openai-chat`、Pi catalog `xiaomi` 不变。 |
+| `xiaomi-mimo-token-plan-cn` | Pro/Flash 保留基线三 runtime scope 与上述 per-engine 窗口/图片边界。 | 不从 API 页面推导 Token Plan 额外成员。 | Token Plan endpoints、Codex/Pi `openai-chat`、Pi catalog 不变。 |
 | `volcengine-agent-plan` / `volcengine-coding-plan` | `ark-code-latest(w=?,img=?)` | `ark-code-latest` | 各 Agent/Coding Plan base URL 与 Codex/Pi `openai-chat` 保留。 |
 | `tencentcloud-coding-plan` | `tc-code-latest`, `glm-5`（窗口/图片均 `?`） | `tc-code-latest`, `glm-5` | Claude Anthropic；Codex/Pi `openai-chat`；官方页面明确 Coding Plan 暂不支持多模态，因此不写图片 `true`。 |
-| `opencode-go` | `minimax-m3`, `minimax-m2.7`, `minimax-m2.5`, `qwen3.7-max`, `qwen3.7-plus`, `qwen3.6-plus`（E=claude-code|pi，Pi Anthropic route）；`grok-4.5`, `glm-5.2`, `glm-5.1`, `kimi-k3`, `kimi-k2.7-code`, `kimi-k2.6`, `deepseek-v4-pro`, `deepseek-v4-flash`, `hy3`（E=codex|pi）；`mimo-v2.6-pro/flash(1048576,1,E=codex|pi)` | Codex/Pi 旧列表中的 `mimo-v2.5`, `mimo-v2.5-pro` 被 V2.6 替换；其余旧 IDs 从 runtime 数组移到顶层 | Go base/model URLs、Codex/Pi `openai-chat`，以及 MiniMax/Qwen 的 Pi Anthropic route override 保留。页面写明列表可能变化，不作历史生效承诺。 |
+| `opencode-go` | P12 当前页面明确的 MiMo V2.5/V2.5 Pro 与既有 V2.6 Pro/Flash 成员保留；新 MiMo 型号只声明 Codex/Pi scope，窗口/img 未知；其余旧 IDs 逐 runtime 保持。 | 不把动态“推荐列表”当 Lex 同步或历史生效证据。 | Go base/model URLs、Codex/Pi `openai-chat`，MiniMax/Qwen 的 Pi Anthropic route override 保留。 |
 | `vercel-ai-gateway` | `anthropic/claude-sonnet-4.6`, `openai/gpt-5.4`, `xai/grok-4.5`（窗口/图片 `?`） | 三型号从三 runtime 旧数组移出 | Gateway base/model URLs、Pi `openai-chat` 保留；不把 Vercel 清单当厂商价格或可用性证明。 |
 
-上述 `w/img/R` 是本地 tag snapshot 的字段清单，不是“线上服务端推荐清单”或外部同步结果。2026-10-04 匿名 GET 的可追溯结果如下；HTTP 200 只证明页面可访问和当日页面内容，不能把当日页面倒推成 `2026-09-26` 历史事实：
+上述 `w/img/R` 中，价格历史仍必须有官方 `effectiveFrom`；能力/成员/路由不因没有历史日期就自动变成不可核实。当前候选只把一级页面明确点名的新增或变更写入运行 scope；纯格式迁移与 `aad281ca` 已批准字段不重复取证、不删除。2026-10-04 匿名 GET 的可追溯结果如下；HTTP 200 只证明页面可访问和当日页面内容，不能把当日页面倒推成 `2026-09-26` 历史价格事实：
 
 | 标号 | 官方一级 URL | 观察结果（2026-10-04） |
 | --- | --- | --- |
@@ -101,7 +101,7 @@
 | P3 | https://docs.bigmodel.cn/cn/guide/develop/claude；https://docs.z.ai/devpack/tool/claude | 均 HTTP 200；确认 GLM-5.3/Flash 文档入口；精确窗口与本 tag 历史未由页面回溯。 |
 | P4 | https://platform.moonshot.cn/docs/guide/agent-support；https://platform.moonshot.ai/docs/guide/agent-support；https://www.kimi.com/zh-cn/help/kimi-code/third-party-agents | 均 HTTP 200（有跳转）；确认 Kimi K3/K2.7/K2.6/Kimi Code 型号名称；K2.8 历史起点与套餐窗口仍未知。 |
 | P5 | https://platform.minimaxi.com/docs/api-reference/responses-create；https://platform.minimax.io/docs/api-reference/responses-create | 均 HTTP 200；当前示例显示更新中的 MiniMax 型号，不能证明 tag 中 M2.* 窗口的历史生效日。 |
-| P6 | https://help.aliyun.com/zh/model-studio/coding-plan；https://help.aliyun.com/zh/model-studio/token-plan-personal-overview；https://help.aliyun.com/zh/model-studio/token-plan-team-overview | 均 HTTP 200；Coding Plan 页面明确 Qwen 3.7/3.6、Kimi K2.5、GLM-5、MiniMax M2.5 及图片理解；Token Plan 页面明确 Qwen3.8/DeepSeek 型号和 preview 下线替代；精确窗口仍按 tag snapshot，未以观察日作生效日。 |
+| P6 | https://help.aliyun.com/zh/model-studio/coding-plan；https://help.aliyun.com/zh/model-studio/token-plan-personal-overview；https://help.aliyun.com/zh/model-studio/token-plan-team-overview | 均 HTTP 200；Coding Plan 页面确认 Qwen 3.7/3.6、Kimi K2.5、GLM-5、MiniMax M2.5 与图片理解；Token Plan 页面确认 Qwen3.8/DeepSeek/GLM 成员。精确窗口未由页面逐项回溯，新增窗口保持未知；旧 runtime snapshot 不因缺少当前历史而删除。 |
 | P7 | https://ai.google.dev/gemini-api/docs/openai；https://ai.google.dev/gemini-api/docs/pricing | HTTP 200；OpenAI-compatible endpoint 与价格页可访问，价格日期只采用 pricing 页明确的 `2027-01-01` 段。 |
 | P8 | https://longcat.chat/platform/docs/zh/；https://docs.volcengine.com/docs/82379/2373738；https://www.volcengine.com/docs/82379/1925114 | 均 HTTP 200；页面确认产品入口/型号或套餐路由，未提供本目录精确窗口/图片历史。 |
 | P9 | https://docs.bigmodel.cn/cn/coding-plan/quick-start；https://docs.z.ai/devpack/overview | 均 HTTP 200；确认 coding-plan 文档入口和 GLM-5.3/Flash 线索，精确字段按 tag snapshot；未知不补造。 |
@@ -109,7 +109,15 @@
 | P11 | https://cloud.tencent.com/document/product/1823/130092 | HTTP 200；列出 `tc-code-latest`、`glm-5`，并明确 Coding Plan 暂不支持多模态；故代码不新增图片能力。 |
 | P12 | https://opencode.ai/docs/go/；https://vercel.com/docs/ai-gateway/coding-agents | 均 HTTP 200；OpenCode 页面明确推荐列表可能变化，Vercel 页面为动态 Gateway 文档；不把页面当前列表同步成 Lex 事实。 |
 
-未能从以上页面精确核实的窗口、图片、effort、下线历史和区域路由都保持 `?` 或沿用既有 source snapshot，未新增价格/effectiveFrom；若后续需要把这些 tag 字段升级为当前事实，必须重新取得对应一级材料并单独变更。
+### 逐项语义处理摘要
+
+- **MiniMax**：展开结果与 `aad281ca` 的 Claude/Codex M3+M2.5、Pi M3+M2.7/highspeed 对齐；M3 的 Pi override 写 1,048,576/图片，M2.7/highspeed 只在 Pi 保留 204,800，M2.5 未获窗口/图片新证据。tag 中 M2.5-highspeed、M2.1、M2.1-highspeed、M2 无一级通道确认，故没有新增可调用成员。
+- **百炼**：Coding Plan 页面明确 qwen3.7-plus、qwen3.6-plus、kimi-k2.5 的图片理解；GLM-5、MiniMax-M2.5、Coder Next/Plus 只保留成员，窗口/图片/effort 缺省。Personal/Team Token Plan 页面明确 qwen3.8、qwen3.7-plus、qwen3.6、deepseek-v4.1-flash 与 Team Kimi 的视觉/文本区分；GLM/非视觉 DeepSeek 的 false 是通道能力声明，窗口只沿用已批准基线，preview/0731/0813 仅按旧 runtime scope 恢复。
+- **GLM**：普通 CN/Global 只增加页面明确的 5.3/Flash 成员且不填新能力数值；Coding Plan 维持 CN 的 GLM-4.6V/高速 Pi 成员、Global 不外推 CN-only 成员，5.3-Flash 的 Claude `[1m]` 与 Codex/Pi 图片 bridge 按通道分开，未借套餐页面创建新 route。
+- **MiMo/OpenCode**：MiMo API/Token Plan 保留 Pro/Flash 的现有 runtime 与 Codex 图片关闭，UltraSpeed 仅 Pi；OpenCode Go 页面列出 MiMo V2.5/V2.6 成员但声明列表会变化，故仅置于原有 Codex/Pi route，窗口、图片、effort 不凭动态推荐表补写。
+- **其余 P1/P2/P4/P7/P8/P11/P12**：动态 OpenRouter/Vercel、DeepSeek/Kimi/Gemini/LongCat/Volcengine/Tencent 页面仅用于逐项确认名称、通道或既有边界；新增清单没有一级通道逐项确认时不开放 route，未知字段留空，已验证历史价格和协议不改。
+
+未能从以上页面精确核实的新增窗口、图片、effort、下线历史和区域路由保持缺省/未知；已有 `aad281ca` 成员与字段按基线恢复，不将未知新成员投影到额外 runtime，也未新增价格/effectiveFrom。若后续要把未知字段升级为当前事实，必须重新取得对应一级材料并单独变更。
 
 ## 本轮来源 subset、作者与可追溯完整消息
 

@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { BUNDLED_CATALOG, findModelRegistryRoute } from '@cindy/model-providers';
 
 class MemLocalStorage {
   private store = new Map<string, string>();
@@ -49,6 +50,53 @@ async function loadModule() {
 }
 
 describe('providerModelMemory store', () => {
+  it('读取旧 xd wire-id 选中记录后仍由活动目录解析为新 entry 并保留展示名', async () => {
+    // v2 stores the provider + upstream wire id, never the registry entry id. This
+    // is the persisted shape used before XD entries were split into xd/* identities.
+    memStorage.setItem(
+      'xdt:providerModelMemory:v2',
+      JSON.stringify({
+        'claude-code:xd': {
+          lastModel: 'gpt-5.5',
+          effortByModel: { 'gpt-5.5': 'high' },
+          fastByModel: {},
+          thinkingByModel: {},
+        },
+        'codex:xd': {
+          lastModel: 'codex/gpt-5.5:auto',
+          effortByModel: { 'codex/gpt-5.5:auto': 'medium' },
+          fastByModel: {},
+          thinkingByModel: {},
+        },
+      }),
+    );
+
+    const memory = await loadModule();
+    const choice = memory.getProviderModelChoice('claude-code', 'xd');
+    expect(choice).toEqual({ model: 'gpt-5.5', effort: 'high' });
+
+    const activeRoute = findModelRegistryRoute(
+      BUNDLED_CATALOG.modelRegistry,
+      'xd',
+      choice!.model,
+      'claude-code',
+    );
+    expect(activeRoute).toMatchObject({
+      entry: { id: 'xd/gpt-5.5', name: 'GPT-5.5' },
+      route: { providerId: 'xd', modelId: 'gpt-5.5' },
+    });
+    expect(activeRoute?.entry.name).not.toMatch(/^xd\//);
+
+    const codexChoice = memory.getProviderModelChoice('codex', 'xd');
+    expect(codexChoice).toEqual({ model: 'codex/gpt-5.5:auto', effort: 'medium' });
+    expect(
+      findModelRegistryRoute(BUNDLED_CATALOG.modelRegistry, 'xd', codexChoice!.model, 'codex'),
+    ).toMatchObject({
+      entry: { id: 'xd/codex-gpt-5.5-auto', name: 'GPT-5.5-Auto' },
+      route: { providerId: 'xd', modelId: 'codex/gpt-5.5:auto' },
+    });
+  });
+
   it('默认无记录:getProviderModelChoice 返回 undefined', async () => {
     const { getProviderModelChoice, hasAnyProviderModelOverride } = await loadModule();
     expect(getProviderModelChoice('claude-code', 'xd')).toBeUndefined();

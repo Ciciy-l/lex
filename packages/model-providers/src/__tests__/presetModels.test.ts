@@ -115,4 +115,46 @@ describe('shared preset model declarations', () => {
     expect((expanded.runtimes.pi as { models: unknown[] }).models).toEqual([]);
     expect(sanitizePresets([preset])).toHaveLength(1);
   });
+
+  it('keeps aad281ca runtime members while scoping newly verified routes', () => {
+    const preset = (id: string) => {
+      const value = BUNDLED_CATALOG.presets?.find((candidate) => candidate.id === id);
+      if (!value) throw new Error('missing preset ' + id);
+      return value;
+    };
+    const ids = (id: string, agent: 'claude-code' | 'codex' | 'pi') =>
+      preset(id).runtimes[agent]?.models?.map((model) => model.id) ?? [];
+
+    expect(ids('moonshot-kimi-cn', 'pi')).toEqual(expect.arrayContaining([
+      'kimi-k2-0711-preview',
+      'kimi-k2-0905-preview',
+      'kimi-k2-thinking',
+      'kimi-k2-thinking-turbo',
+      'kimi-k2-turbo-preview',
+      'kimi-k2.5',
+    ]));
+    expect(ids('aliyun-bailian-token-plan-cn', 'pi')).toEqual(expect.arrayContaining([
+      'MiniMax-M2.5',
+      'deepseek-v3.2',
+      'deepseek-v4-flash-0731',
+      'deepseek-v4-pro-0813',
+      'qwen3.6-plus',
+    ]));
+    expect(ids('zhipu-coding-plan-cn', 'pi')).toEqual(expect.arrayContaining([
+      'glm-4.6v',
+      'glm-5.2-highspeed',
+      'glm-5.3-highspeed',
+    ]));
+    expect(ids('zai-coding-plan-global', 'pi')).not.toContain('glm-4.6v');
+
+    expect(ids('xiaomi-mimo-api-cn', 'pi')).toContain('mimo-v2.6-pro-ultraspeed');
+    expect(ids('xiaomi-mimo-api-cn', 'claude-code')).not.toContain('mimo-v2.6-pro-ultraspeed');
+    expect(ids('opencode-go', 'codex')).toEqual(expect.arrayContaining([
+      'mimo-v2.5',
+      'mimo-v2.5-pro',
+      'mimo-v2.6-pro',
+      'mimo-v2.6-flash',
+    ]));
+    expect(ids('minimax-cn', 'claude-code')).not.toContain('MiniMax-M2.1');
+  });
 });
