@@ -751,6 +751,20 @@
       }
     }
   },
+  "companionProfile": {
+    "memory": {
+      "title": "已存记忆",
+      "search": "搜索记忆",
+      "conflict": "这条记忆已在主机上发生变化。",
+      "useLatest": "使用最新内容",
+      "keepMine": "保留我的修改",
+      "edit": "编辑",
+      "delete": "删除",
+      "done": "保存",
+      "deleteConfirmTitle": "删除这条记忆？",
+      "deleteConfirmBody": "删除后无法撤销。"
+    }
+  },
   "companions": {
     "messageSent": "已发送补充消息",
     "privateChat": "与 {{name}} 的私聊",

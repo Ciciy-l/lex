@@ -751,6 +751,20 @@
       }
     }
   },
+  "companionProfile": {
+    "memory": {
+      "title": "保存した記憶",
+      "search": "記憶を検索",
+      "conflict": "この記憶はホスト上で変更されました。",
+      "useLatest": "最新の内容を使う",
+      "keepMine": "自分の変更を残す",
+      "edit": "編集",
+      "delete": "削除",
+      "done": "保存",
+      "deleteConfirmTitle": "この記憶を削除しますか？",
+      "deleteConfirmBody": "この操作は取り消せません。"
+    }
+  },
   "companions": {
     "messageSent": "追加メッセージを送信しました",
     "privateChat": "{{name}} との会話",

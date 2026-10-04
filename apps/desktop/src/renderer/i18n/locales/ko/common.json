@@ -7560,6 +7560,7 @@
       "deleted": "삭제됨",
       "deleteFailed": "삭제하지 못했습니다",
       "changedTitle": "{{name}}이(가) 방금 이 메모리를 업데이트했습니다",
+      "conflict": "이 메모리가 호스트에서 변경되었습니다.",
       "useLatest": "최신 내용 사용",
       "keepMine": "내 변경 유지",
       "saveFailed": "저장하지 못했습니다",

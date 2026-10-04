@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createBotRemoteMemoryResource, invokeBotRemoteMemory } from '../botRemoteMemory.js';
+import {
+  botMemoryEntryResourceId,
+  createBotRemoteMemoryResource,
+  invokeBotRemoteMemory,
+  parseBotMemoryResourceId,
+} from '../botRemoteMemory.js';
 import type { BotMemoryDetail, BotMemorySummary } from '../../../../shared/botMemory.js';
 
 const summary = (filename: string, type: BotMemorySummary['type'], title: string): BotMemorySummary => ({
@@ -63,5 +68,33 @@ describe('remote Bot memory resource', () => {
     await expect(invokeBotRemoteMemory(service, context, 'bot-a', 'feedback_style.md', 'memory-update', {
       title: 'Mine', expectedUpdatedAt: '2026-10-04T00:00:00.000Z',
     })).rejects.toThrow('ACCESS_REVOKED');
+  });
+
+  it('round-trips long bot and filename ids through hashed detail and mutation refs', async () => {
+    const botId = 'bot_' + 'x'.repeat(120);
+    const filename = 'feedback_' + 'memory-'.repeat(8) + 'tail.md';
+    const current = detail(filename, 'Long memory');
+    const service = {
+      list: vi.fn(async () => [summary(filename, 'feedback', current.title)]),
+      read: vi.fn(async () => current),
+      update: vi.fn(async () => current),
+      delete: vi.fn(async () => undefined),
+    };
+    const context = { controllerDeviceId: 'phone-a', linkEpoch: 4, assertCurrent: vi.fn() };
+    const resourceId = botMemoryEntryResourceId(botId, filename);
+    expect(resourceId).toMatch(/\/memory\/h[a-f0-9]{12}$/);
+    expect(parseBotMemoryResourceId(resourceId)).toEqual({
+      botId, entry: resourceId.slice(resourceId.lastIndexOf('/') + 1),
+    });
+    const detailResource = await createBotRemoteMemoryResource(service, context, botId, 'Long bot', undefined, resourceId.slice(resourceId.lastIndexOf('/') + 1));
+    expect(detailResource.ref.id).toBe(resourceId);
+    await invokeBotRemoteMemory(service, context, botId, filename, 'memory-update', {
+      title: 'Updated', body: 'Body', expectedUpdatedAt: current.updatedAt,
+    });
+    await invokeBotRemoteMemory(service, context, botId, filename, 'memory-delete', {
+      expectedUpdatedAt: current.updatedAt,
+    });
+    expect(service.update).toHaveBeenCalledWith(expect.objectContaining({ botId, filename }), expect.any(Function));
+    expect(service.delete).toHaveBeenCalledWith(expect.objectContaining({ botId, filename }), expect.any(Function));
   });
 });

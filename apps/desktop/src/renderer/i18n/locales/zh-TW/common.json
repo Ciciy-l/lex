@@ -7560,6 +7560,7 @@
       "deleted": "已刪除",
       "deleteFailed": "刪除失敗",
       "changedTitle": "{{name}}剛更新了這條記憶",
+      "conflict": "這條記憶已在主機上變更。",
       "useLatest": "使用最新內容",
       "keepMine": "保留我的修改",
       "saveFailed": "沒有儲存成功",

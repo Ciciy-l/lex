@@ -17,6 +17,7 @@ import { useRouter } from 'expo-router';
 interface Entry { id: string; title: string; subtitle?: string; timestamp?: number; resourceId: string }
 interface Group { id: string; title: string; count: number; entries: Entry[] }
 interface FormValue { title: string; body: string; expectedUpdatedAt: string }
+interface RequestToken { generation: number; identity: string; resourceId: string }
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -51,6 +52,18 @@ function formOf(resource: RemoteResource, locale: string): FormValue | null {
     expectedUpdatedAt: typeof values.expectedUpdatedAt === 'string' ? values.expectedUpdatedAt : resource.revision,
   };
 }
+const sameDraft = (form: FormValue | null, draft: FormValue): boolean =>
+  Boolean(form && form.title === draft.title && form.body === draft.body);
+function currentRequest(
+  token: RequestToken,
+  generation: { current: number },
+  identity: { current: string },
+  resource: { current: string },
+): boolean {
+  return token.generation === generation.current
+    && token.identity === identity.current
+    && token.resourceId === resource.current;
+}
 
 export interface RemoteBotMemoryPageProps {
   host: RemoteResourceHostTarget;
@@ -75,80 +88,121 @@ export function RemoteBotMemoryPage({ host, resourceId, title, onBack }: RemoteB
   const [conflict, setConflict] = useState<RemoteResource | null>(null);
   const generation = useRef(0);
   const baseId = useMemo(() => resourceId.includes('/memory/') ? resourceId.slice(0, resourceId.indexOf('/memory/') + '/memory'.length) : resourceId, [resourceId]);
+  const identityKey = host.deviceId + ':' + baseId;
+  const activeIdentity = useRef(identityKey);
+  const activeResource = useRef(baseId);
+  if (activeIdentity.current !== identityKey) {
+    activeIdentity.current = identityKey;
+    activeResource.current = baseId;
+    generation.current += 1;
+  }
+  const tokenFor = (id: string): RequestToken => ({ generation: generation.current, identity: identityKey, resourceId: id });
   const loadList = useCallback(async (filter = query) => {
-    const token = ++generation.current;
+    activeResource.current = baseId;
+    const token = { ...tokenFor(baseId), generation: ++generation.current };
     setError(null);
     try {
       const next = await getRemoteResource(invoke, host, { collectionId: 'teammates', kind: 'bot', id: baseId }, i18n.language, filter);
-      if (generation.current === token) setResource(next);
-    } catch (cause) { if (generation.current === token) setError(formatRemoteError(cause)); }
+      if (currentRequest(token, generation, activeIdentity, activeResource)) setResource(next);
+    } catch (cause) { if (currentRequest(token, generation, activeIdentity, activeResource)) setError(formatRemoteError(cause)); }
   }, [baseId, host, i18n.language, invoke, query]);
   const loadDetail = useCallback(async (id: string) => {
-    const token = ++generation.current;
+    activeResource.current = id;
+    const token = { ...tokenFor(id), generation: ++generation.current };
     setError(null);
-    try { const next = await getRemoteResource(invoke, host, { collectionId: 'teammates', kind: 'bot', id }, i18n.language); if (generation.current === token) { setDetail(next); setDraft(formOf(next, i18n.language)); } }
-    catch (cause) { if (generation.current === token) setError(formatRemoteError(cause)); }
+    try {
+      const next = await getRemoteResource(invoke, host, { collectionId: 'teammates', kind: 'bot', id }, i18n.language);
+      if (currentRequest(token, generation, activeIdentity, activeResource)) { setDetail(next); setDraft(formOf(next, i18n.language)); }
+    }
+    catch (cause) { if (currentRequest(token, generation, activeIdentity, activeResource)) setError(formatRemoteError(cause)); }
   }, [host, i18n.language, invoke]);
   useEffect(() => () => { generation.current += 1; }, []);
+  useEffect(() => {
+    if (activeIdentity.current !== identityKey) return;
+    setDetail(null);
+    setDraft(null);
+    setConflict(null);
+  }, [identityKey]);
   useEffect(() => { if (view === 'list') void loadList(query); }, [loadList, query, view]);
   useEffect(() => { if (view !== 'list') void loadDetail(resourceId); }, [loadDetail, resourceId, view]);
   const openEntry = (id: string) => { setView('detail'); setDetail(null); setConflict(null); void loadDetail(id); };
   const save = async () => {
     if (!detail || !draft || busy) return;
+    const currentDetail = detail;
+    const currentDraft = draft;
+    const token = tokenFor(currentDetail.ref.id);
     setBusy(true); setError(null);
     try {
-      const latest = await getRemoteResource(invoke, host, detail.ref, i18n.language);
+      const latest = await getRemoteResource(invoke, host, currentDetail.ref, i18n.language);
       const latestForm = formOf(latest, i18n.language);
-      if (!latestForm || latest.revision !== draft.expectedUpdatedAt) { setConflict(latest); return; }
+      if (!currentRequest(token, generation, activeIdentity, activeResource)) return;
+      if (!latestForm || latest.revision !== currentDraft.expectedUpdatedAt) { setConflict(latest); return; }
       const input: Record<string, unknown> = { expectedUpdatedAt: latest.revision };
-      if (draft.title !== latestForm.title) input.title = draft.title;
-      if (draft.body !== latestForm.body) input.body = draft.body;
+      if (currentDraft.title !== latestForm.title) input.title = currentDraft.title;
+      if (currentDraft.body !== latestForm.body) input.body = currentDraft.body;
       if (Object.keys(input).length > 1) await invokeRemoteResourceAction(invoke, host, { collectionId: 'teammates', resourceRef: latest.ref, actionId: 'memory-update', input }, i18n.language);
-      const next = await getRemoteResource(invoke, host, latest.ref, i18n.language); setDetail(next); setDraft(formOf(next, i18n.language)); setView('detail');
+      if (!currentRequest(token, generation, activeIdentity, activeResource)) return;
+      const next = await getRemoteResource(invoke, host, latest.ref, i18n.language);
+      if (!currentRequest(token, generation, activeIdentity, activeResource)) return;
+      setDetail(next); setDraft(formOf(next, i18n.language)); setConflict(null); setView('detail');
     } catch (cause) {
-      try { const next = await getRemoteResource(invoke, host, detail.ref, i18n.language); if (next.revision !== draft.expectedUpdatedAt) setConflict(next); else setError(formatRemoteError(cause)); }
-      catch { setError(formatRemoteError(cause)); }
-    } finally { setBusy(false); }
+      if (!currentRequest(token, generation, activeIdentity, activeResource)) return;
+      try {
+        const next = await getRemoteResource(invoke, host, currentDetail.ref, i18n.language);
+        if (!currentRequest(token, generation, activeIdentity, activeResource)) return;
+        const nextForm = formOf(next, i18n.language);
+        if (sameDraft(nextForm, currentDraft)) {
+          setDetail(next); setDraft(nextForm); setConflict(null);
+        } else if (next.revision !== currentDraft.expectedUpdatedAt) setConflict(next);
+        else setError(formatRemoteError(cause));
+      } catch { if (currentRequest(token, generation, activeIdentity, activeResource)) setError(formatRemoteError(cause)); }
+    } finally { if (currentRequest(token, generation, activeIdentity, activeResource)) setBusy(false); }
   };
   const remove = () => {
-    if (!detail || busy) return;
-    Alert.alert(t('devices.companionProfile.memory.deleteConfirmTitle', { defaultValue: 'Delete this memory?' }), t('devices.companionProfile.memory.deleteConfirmBody', { defaultValue: 'This cannot be undone.' }), [
+    if (!detail || !draft || busy) return;
+    const currentDetail = detail;
+    const currentDraft = draft;
+    Alert.alert(t('devices.companionProfile.memory.deleteConfirmTitle'), t('devices.companionProfile.memory.deleteConfirmBody'), [
       { text: t('devices.common.cancel'), style: 'cancel' },
-      { text: t('devices.companionProfile.memory.delete', { defaultValue: 'Delete' }), style: 'destructive', onPress: () => { void (async () => {
+      { text: t('devices.companionProfile.memory.delete'), style: 'destructive', onPress: () => { void (async () => {
+        const token = tokenFor(currentDetail.ref.id);
+        if (!currentRequest(token, generation, activeIdentity, activeResource)) return;
         setBusy(true); setError(null);
         try {
-          const latest = await getRemoteResource(invoke, host, detail.ref, i18n.language);
-          if (latest.revision !== detail.revision) { setConflict(latest); return; }
+          const latest = await getRemoteResource(invoke, host, currentDetail.ref, i18n.language);
+          if (!currentRequest(token, generation, activeIdentity, activeResource)) return;
+          if (latest.revision !== currentDraft.expectedUpdatedAt) { setConflict(latest); return; }
           await invokeRemoteResourceAction(invoke, host, { collectionId: 'teammates', resourceRef: latest.ref, actionId: 'memory-delete', input: { expectedUpdatedAt: latest.revision } }, i18n.language);
-          setView('list'); setDetail(null); setDraft(null); await loadList('');
+          if (!currentRequest(token, generation, activeIdentity, activeResource)) return;
+          activeResource.current = baseId;
+          generation.current += 1;
+          setView('list'); setDetail(null); setDraft(null); setConflict(null); await loadList('');
         } catch (cause) {
           try {
-            const next = await getRemoteResource(invoke, host, detail.ref, i18n.language);
-            if (next.revision !== detail.revision) setConflict(next);
+            if (!currentRequest(token, generation, activeIdentity, activeResource)) return;
+            const next = await getRemoteResource(invoke, host, currentDetail.ref, i18n.language);
+            if (!currentRequest(token, generation, activeIdentity, activeResource)) return;
+            if (next.revision !== currentDraft.expectedUpdatedAt) setConflict(next);
             else setError(formatRemoteError(cause));
-          } catch (readCause) {
-            if (String(readCause).includes('NOT_FOUND') || String(readCause).includes('not found')) {
-              setView('list'); setDetail(null); setDraft(null); await loadList('');
-            } else setError(formatRemoteError(cause));
-          }
-        } finally { setBusy(false); }
+          } catch { if (currentRequest(token, generation, activeIdentity, activeResource)) setError(formatRemoteError(cause)); }
+        } finally { if (currentRequest(token, generation, activeIdentity, activeResource)) setBusy(false); }
       })() } },
     ]);
   };
   const groups = resource ? groupsOf(resource, i18n.language) : [];
-  const goBack = onBack ?? (() => { if (view !== 'list') setView('list'); else goBackGuarded(router); });
+  const goBack = () => { generation.current += 1; activeResource.current = baseId; if (onBack) onBack(); else if (view !== 'list') setView('list'); else goBackGuarded(router); };
   return <SafeAreaView edges={simpleScreenSafeAreaEdges()} style={styles.safeArea}>
-    <SimpleStackHeader backTestID="remoteMemory.back" onBack={goBack} subtitle={host.deviceName} title={title || t('devices.companionProfile.memory.title', { defaultValue: 'Saved Memories' })} titleTestID="remoteMemory.title" />
+    <SimpleStackHeader backTestID="remoteMemory.back" onBack={goBack} subtitle={host.deviceName} title={title || t('devices.companionProfile.memory.title')} titleTestID="remoteMemory.title" />
     <ScrollView contentContainerStyle={styles.content}>
       {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
       {view === 'list' ? <>
-        <TextInput accessibilityLabel={t('devices.companionProfile.memory.search', { defaultValue: 'Search memories' })} value={query} onChangeText={setQuery} placeholder={t('devices.companionProfile.memory.search', { defaultValue: 'Search memories' })} placeholderTextColor={colors.textTertiary} style={styles.input} />
+        <TextInput accessibilityLabel={t('devices.companionProfile.memory.search')} value={query} onChangeText={setQuery} placeholder={t('devices.companionProfile.memory.search')} placeholderTextColor={colors.textTertiary} style={styles.input} />
         {!resource && !error ? <ActivityIndicator color={colors.textSecondary} /> : null}
         {groups.length ? groups.map((group) => <View key={group.id} style={styles.group}><Text accessibilityRole="header" style={styles.groupTitle}>{group.title} <Text style={styles.count}>{group.count}</Text></Text>{group.entries.map((entry, index) => <Pressable key={entry.resourceId} onPress={() => openEntry(entry.resourceId)} style={[styles.row, index > 0 && styles.separator]}><View style={styles.rowMain}><Text style={styles.rowTitle}>{entry.title}</Text>{entry.subtitle ? <Text numberOfLines={2} style={styles.preview}>{entry.subtitle}</Text> : null}</View><Text style={styles.date}>{entry.timestamp ? new Date(entry.timestamp).toLocaleDateString(i18n.language) : ''}</Text></Pressable>)}</View>) : resource ? <Text style={styles.note}>{query.trim() ? t('devices.resources.emptyCopy') : t('devices.resources.emptyTitle')}</Text> : null}
       </> : detail && draft ? <>
-        {conflict ? <View style={styles.notice}><Text style={styles.error}>{t('devices.companionProfile.memory.conflict', { defaultValue: 'This memory changed on the host.' })}</Text><MainWindowActionButton action={{ label: t('devices.companionProfile.memory.useLatest', { defaultValue: 'Use latest' }), onPress: () => { setDetail(conflict); setDraft(formOf(conflict, i18n.language)); setConflict(null); } }} /><MainWindowActionButton action={{ label: t('devices.companionProfile.memory.keepMine', { defaultValue: 'Keep my edits' }), onPress: () => { setConflict(null); } }} /></View> : null}
+        {conflict ? <View style={styles.notice}><Text style={styles.error}>{t('devices.companionProfile.memory.conflict')}</Text><MainWindowActionButton action={{ label: t('devices.companionProfile.memory.useLatest'), onPress: () => { setDetail(conflict); setDraft(formOf(conflict, i18n.language)); setConflict(null); } }} /><MainWindowActionButton action={{ label: t('devices.companionProfile.memory.keepMine'), onPress: () => { if (conflict) setDraft((current) => current ? { ...current, expectedUpdatedAt: conflict.revision } : current); setConflict(null); } }} /></View> : null}
         {view === 'detail' ? <><Text accessibilityRole="header" style={styles.title}>{draft.title}</Text><Text selectable style={styles.body}>{draft.body}</Text></> : <><TextInput editable={!busy} value={draft.title} onChangeText={(value) => setDraft({ ...draft, title: value })} style={styles.input} /><TextInput editable={!busy} multiline value={draft.body} onChangeText={(value) => setDraft({ ...draft, body: value })} style={[styles.input, styles.multiline]} /></>}
-        <View style={styles.actions}>{view === 'detail' ? <><MainWindowActionButton action={{ label: t('devices.companionProfile.memory.edit', { defaultValue: 'Edit' }), disabled: busy, onPress: () => setView('edit') }} /><MainWindowActionButton action={{ label: t('devices.companionProfile.memory.delete', { defaultValue: 'Delete' }), tone: 'danger', disabled: busy, onPress: remove }} /></> : <MainWindowActionButton action={{ label: t('devices.companionProfile.memory.done', { defaultValue: 'Save' }), tone: 'primary', busy, onPress: () => void save() }} />}</View>
+        <View style={styles.actions}>{view === 'detail' ? <><MainWindowActionButton action={{ label: t('devices.companionProfile.memory.edit'), disabled: busy, onPress: () => setView('edit') }} /><MainWindowActionButton action={{ label: t('devices.companionProfile.memory.delete'), tone: 'danger', disabled: busy, onPress: remove }} /></> : <MainWindowActionButton action={{ label: t('devices.companionProfile.memory.done'), tone: 'primary', busy, onPress: () => void save() }} />}</View>
       </> : null}
     </ScrollView>
   </SafeAreaView>;

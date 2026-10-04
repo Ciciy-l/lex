@@ -38,6 +38,39 @@ function pauseNextRead() {
   return { started, release };
 }
 
+function pauseReadAt(targetCall: number) {
+  let calls = 0;
+  let entered!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const read = fs.readFile.bind(fs);
+  vi.spyOn(fs, 'readFile').mockImplementation(async (...args: Parameters<typeof fs.readFile>) => {
+    const result = await read(...args);
+    calls += 1;
+    if (calls === targetCall) {
+      entered();
+      await gate;
+    }
+    return result;
+  });
+  return { started, release };
+}
+
+function pauseNextWrite() {
+  let entered!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const write = fs.writeFile.bind(fs);
+  vi.spyOn(fs, 'writeFile').mockImplementationOnce(async (...args: Parameters<typeof fs.writeFile>) => {
+    entered();
+    await gate;
+    return write(...args);
+  });
+  return { started, release };
+}
+
 describe('conditional memory mutations', () => {
   it.each(['update', 'delete'] as const)('rejects stale %s after an in-flight tool write, across storage instances', async (operation) => {
     const opened = await storage.read(filename);
@@ -118,5 +151,56 @@ describe('conditional memory mutations', () => {
     }
     expect(guardCalls).toBe(1);
     expect((await storage.read(filename)).body).toBe('Original');
+  });
+
+  it('rechecks a revoked operation after the update read window and before writeFile', async () => {
+    const opened = await storage.read(filename);
+    const pause = pauseReadAt(2); // checkVersion read, then writeFile's final raw read
+    let revoked = false;
+    let guardCalls = 0;
+    const mutationGuard = () => {
+      guardCalls += 1;
+      if (revoked) throw new Error('remote controller revoked during read');
+    };
+    const mutation = storage.update(filename, opened.frontmatter.updatedAt, {
+      title: 'Mine', description: 'Mine', body: 'Mine',
+    }, { mutationGuard });
+    await pause.started;
+    revoked = true;
+    pause.release();
+    await expect(mutation).rejects.toThrow('remote controller revoked during read');
+    expect(guardCalls).toBe(2);
+    expect((await storage.read(filename)).body).toBe('Original');
+  });
+
+  it('checks a queued operation after another mutation releases the queue', async () => {
+    const opened = await storage.read(filename);
+    const pause = pauseNextWrite();
+    const blocker = storage.write({
+      type: 'feedback', name: 'queue-blocker', title: 'Blocker', description: 'Blocker', body: 'Blocker',
+    });
+    await pause.started;
+    let revoked = false;
+    const mutation = storage.update(filename, opened.frontmatter.updatedAt, {
+      title: 'Mine', description: 'Mine', body: 'Mine',
+    }, { mutationGuard: () => { if (revoked) throw new Error('remote controller revoked while queued'); } });
+    revoked = true;
+    pause.release();
+    await blocker;
+    await expect(mutation).rejects.toThrow('remote controller revoked while queued');
+    expect((await storage.read(filename)).body).toBe('Original');
+  });
+
+  it('checks delete immediately before unlink after its queue preflight', async () => {
+    const opened = await storage.read(filename);
+    let guardCalls = 0;
+    const mutationGuard = () => {
+      guardCalls += 1;
+      if (guardCalls === 2) throw new Error('remote controller revoked before unlink');
+    };
+    await expect(storage.delete(filename, opened.frontmatter.updatedAt, { mutationGuard }))
+      .rejects.toThrow('remote controller revoked before unlink');
+    expect(guardCalls).toBe(2);
+    await expect(fs.access(path.join(dir, filename))).resolves.toBeUndefined();
   });
 });

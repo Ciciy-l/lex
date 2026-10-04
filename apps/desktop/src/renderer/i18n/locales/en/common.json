@@ -7562,6 +7562,7 @@
       "deleted": "Deleted",
       "deleteFailed": "The memory couldn't be deleted",
       "changedTitle": "{{name}} just updated this memory",
+      "conflict": "This memory changed on the host.",
       "useLatest": "Use latest",
       "keepMine": "Keep my changes",
       "saveFailed": "Not saved",

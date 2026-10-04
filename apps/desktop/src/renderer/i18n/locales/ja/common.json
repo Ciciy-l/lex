@@ -7560,6 +7560,7 @@
       "deleted": "削除しました",
       "deleteFailed": "削除できませんでした",
       "changedTitle": "{{name}}がこのメモリを更新しました",
+      "conflict": "この記憶はホスト上で変更されました。",
       "useLatest": "最新の内容を使う",
       "keepMine": "自分の変更を残す",
       "saveFailed": "保存できませんでした",

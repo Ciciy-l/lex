@@ -7560,6 +7560,7 @@
       "deleted": "已删除",
       "deleteFailed": "删除失败",
       "changedTitle": "{{name}}刚更新了这条记忆",
+      "conflict": "这条记忆已在主机上发生变化。",
       "useLatest": "用最新内容",
       "keepMine": "保留我的修改",
       "saveFailed": "没有保存成功",

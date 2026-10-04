@@ -8,9 +8,22 @@ interface Props { bot: RemoteBot }
 interface Entry { id: string; title: string; subtitle?: string; resourceId: string }
 interface Group { id: string; title: string; count: number; entries: Entry[] }
 interface FormValue { title: string; body: string; expectedUpdatedAt: string }
+interface RequestToken { generation: number; identity: string; resourceId: string }
 const row = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const text = (value: unknown, locale: string): string => typeof value === 'string' ? value : value && typeof value === 'object' ? resolveRemoteText(value as never, locale) : '';
 const remoteError = (cause: unknown): string => cause instanceof Error ? cause.message : String(cause);
+const sameDraft = (form: FormValue | null, draft: FormValue): boolean =>
+  Boolean(form && form.title === draft.title && form.body === draft.body);
+function currentRequest(
+  token: RequestToken,
+  generation: { current: number },
+  identity: { current: string },
+  resource: { current: string },
+): boolean {
+  return token.generation === generation.current
+    && token.identity === identity.current
+    && token.resourceId === resource.current;
+}
 
 function groupsOf(resource: RemoteResource, locale: string): Group[] {
   return (resource.blocks ?? []).filter((block) => block.primitive === 'list').flatMap((block) => {
@@ -46,57 +59,131 @@ export function RemoteBotMemoryView({ bot }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState<RemoteResource | null>(null);
   const generation = useRef(0);
+  const identityKey = bot.deviceId + ':' + bot.id;
+  const activeIdentity = useRef(identityKey);
+  const activeResource = useRef(baseId);
+  if (activeIdentity.current !== identityKey) {
+    activeIdentity.current = identityKey;
+    activeResource.current = baseId;
+    generation.current += 1;
+  }
+  const tokenFor = (resourceId: string): RequestToken => ({
+    generation: generation.current, identity: identityKey, resourceId,
+  });
   const get = useCallback(async (id: string, filter?: string) => {
     const request = { client, ref: { collectionId: 'teammates', kind: 'bot', id }, ...(filter ? { query: filter } : {}) };
     return window.electronAPI.deviceLink.invoke(bot.deviceId, REMOTE_RESOURCE_GET_CHANNEL, [request]) as Promise<RemoteResource>;
   }, [bot.deviceId, client]);
-  const loadList = useCallback(async (filter = query) => { const token = ++generation.current; try { setError(null); const next = await get(baseId, filter); if (generation.current === token) setResource(next); } catch (cause) { if (generation.current === token) setError(remoteError(cause)); } }, [baseId, get, query]);
-  const loadDetail = useCallback(async (id: string) => { const token = ++generation.current; try { setError(null); const next = await get(id); if (generation.current === token) { setDetail(next); setDraft(formOf(next, locale)); } } catch (cause) { if (generation.current === token) setError(remoteError(cause)); } }, [get, locale]);
+  const loadList = useCallback(async (filter = query) => {
+    activeResource.current = baseId;
+    const token = { ...tokenFor(baseId), generation: ++generation.current };
+    try {
+      setError(null);
+      const next = await get(baseId, filter);
+      if (currentRequest(token, generation, activeIdentity, activeResource)) setResource(next);
+    } catch (cause) {
+      if (currentRequest(token, generation, activeIdentity, activeResource)) setError(remoteError(cause));
+    }
+  }, [baseId, get, query]);
+  const loadDetail = useCallback(async (id: string) => {
+    activeResource.current = id;
+    const token = { ...tokenFor(id), generation: ++generation.current };
+    try {
+      setError(null);
+      const next = await get(id);
+      if (currentRequest(token, generation, activeIdentity, activeResource)) {
+        setDetail(next);
+        setDraft(formOf(next, locale));
+      }
+    } catch (cause) {
+      if (currentRequest(token, generation, activeIdentity, activeResource)) setError(remoteError(cause));
+    }
+  }, [get, locale]);
   useEffect(() => () => { generation.current += 1; }, []);
+  useEffect(() => {
+    if (activeIdentity.current !== identityKey) return;
+    setSelected(null);
+    setDetail(null);
+    setDraft(null);
+    setConflict(null);
+  }, [identityKey]);
   useEffect(() => { if (!selected) void loadList(query); }, [loadList, query, selected]);
   const open = (id: string) => { setSelected(id); setDetail(null); setConflict(null); void loadDetail(id); };
   const invoke = async (resourceRef: RemoteResource['ref'], actionId: string, input: Record<string, unknown>) => window.electronAPI.deviceLink.invoke(bot.deviceId, REMOTE_RESOURCE_INVOKE_CHANNEL, [{ client, collectionId: 'teammates', actionId, resourceRef, input }]);
   const save = async () => {
     if (!detail || !draft || busy) return;
+    const currentDetail = detail;
+    const currentDraft = draft;
+    const token = tokenFor(currentDetail.ref.id);
     setBusy(true); setError(null);
     try {
-      const latest = await get(detail.ref.id); const latestForm = formOf(latest, locale);
-      if (!latestForm || latest.revision !== draft.expectedUpdatedAt) { setConflict(latest); return; }
+      const latest = await get(currentDetail.ref.id); const latestForm = formOf(latest, locale);
+      if (!currentRequest(token, generation, activeIdentity, activeResource)) return;
+      if (!latestForm || latest.revision !== currentDraft.expectedUpdatedAt) { setConflict(latest); return; }
       const input: Record<string, unknown> = { expectedUpdatedAt: latest.revision };
-      if (draft.title !== latestForm.title) input.title = draft.title;
-      if (draft.body !== latestForm.body) input.body = draft.body;
+      if (currentDraft.title !== latestForm.title) input.title = currentDraft.title;
+      if (currentDraft.body !== latestForm.body) input.body = currentDraft.body;
       if (Object.keys(input).length > 1) await invoke(latest.ref, 'memory-update', input);
-      const next = await get(latest.ref.id); setDetail(next); setDraft(formOf(next, locale));
+      if (!currentRequest(token, generation, activeIdentity, activeResource)) return;
+      const next = await get(latest.ref.id);
+      if (!currentRequest(token, generation, activeIdentity, activeResource)) return;
+      setDetail(next); setDraft(formOf(next, locale)); setConflict(null);
     } catch (cause) {
-      try { const next = await get(detail.ref.id); if (next.revision !== draft.expectedUpdatedAt) setConflict(next); else setError(remoteError(cause)); } catch { setError(remoteError(cause)); }
-    } finally { setBusy(false); }
+      if (!currentRequest(token, generation, activeIdentity, activeResource)) return;
+      try {
+        const next = await get(currentDetail.ref.id);
+        if (!currentRequest(token, generation, activeIdentity, activeResource)) return;
+        const nextForm = formOf(next, locale);
+        // A timeout may have committed our exact draft. Reconcile it as a
+        // success, but never resend a mutation whose result is unknown.
+        if (sameDraft(nextForm, currentDraft)) {
+          setDetail(next); setDraft(nextForm); setConflict(null);
+        } else if (next.revision !== currentDraft.expectedUpdatedAt) setConflict(next);
+        else setError(remoteError(cause));
+      } catch { if (currentRequest(token, generation, activeIdentity, activeResource)) setError(remoteError(cause)); }
+    } finally { if (currentRequest(token, generation, activeIdentity, activeResource)) setBusy(false); }
   };
   const remove = async () => {
-    if (!detail || !draft || busy || !window.confirm(t('bots.remote.memory.deleteConfirm', { defaultValue: 'Delete this memory?' }))) return;
+    if (!detail || !draft || busy || !window.confirm(t('bots.memory.deleteTitle'))) return;
+    const currentDetail = detail;
+    const currentDraft = draft;
+    const token = tokenFor(currentDetail.ref.id);
     setBusy(true); setError(null);
-    try { const latest = await get(detail.ref.id); if (latest.revision !== draft.expectedUpdatedAt) { setConflict(latest); return; } await invoke(latest.ref, 'memory-delete', { expectedUpdatedAt: latest.revision }); setSelected(null); setDetail(null); setDraft(null); await loadList(''); }
+    try {
+      const latest = await get(currentDetail.ref.id);
+      if (!currentRequest(token, generation, activeIdentity, activeResource)) return;
+      if (latest.revision !== currentDraft.expectedUpdatedAt) { setConflict(latest); return; }
+      await invoke(latest.ref, 'memory-delete', { expectedUpdatedAt: latest.revision });
+      if (!currentRequest(token, generation, activeIdentity, activeResource)) return;
+      activeResource.current = baseId;
+      generation.current += 1;
+      setSelected(null); setDetail(null); setDraft(null); setConflict(null); await loadList('');
+    }
     catch (cause) {
       try {
-        const next = await get(detail.ref.id);
-        if (next.revision !== detail.revision) setConflict(next);
+        if (!currentRequest(token, generation, activeIdentity, activeResource)) return;
+        const next = await get(currentDetail.ref.id);
+        if (!currentRequest(token, generation, activeIdentity, activeResource)) return;
+        if (next.revision !== currentDraft.expectedUpdatedAt) setConflict(next);
         else setError(remoteError(cause));
-      } catch (readCause) {
-        if (String(readCause).includes('NOT_FOUND') || String(readCause).includes('not found')) {
-          setSelected(null); setDetail(null); setDraft(null); await loadList('');
-        } else setError(remoteError(cause));
-      }
-    } finally { setBusy(false); }
+      } catch { if (currentRequest(token, generation, activeIdentity, activeResource)) setError(remoteError(cause)); }
+    } finally { if (currentRequest(token, generation, activeIdentity, activeResource)) setBusy(false); }
   };
   const groups = resource ? groupsOf(resource, locale) : [];
-  const back = () => { if (selected) { setSelected(null); setDetail(null); setDraft(null); setConflict(null); } else navigate(`/bots/remote/${encodeURIComponent(bot.deviceId)}/${encodeURIComponent(bot.id)}`); };
+  const back = () => {
+    generation.current += 1;
+    activeResource.current = baseId;
+    if (selected) { setSelected(null); setDetail(null); setDraft(null); setConflict(null); }
+    else navigate('/bots/remote/' + encodeURIComponent(bot.deviceId) + '/' + encodeURIComponent(bot.id));
+  };
   return <main className="flex h-full min-h-0 flex-col bg-[var(--surface)]">
     <header className="flex items-center gap-3 border-b border-[var(--border-default)] px-4 py-3">
-      <button type="button" aria-label={t('bots.settingsBack', { defaultValue: 'Back' })} className="rounded-[8px] px-2 py-1 text-14 hover:bg-[var(--surface-hover)]" onClick={back}>←</button>
-      <div className="min-w-0"><h1 className="truncate text-16 font-medium text-[var(--text-primary)]">{t('bots.remote.memory.title', { defaultValue: 'Saved Memories' })}</h1><p className="truncate text-12 text-[var(--text-secondary)]">{bot.name} · {bot.deviceName}</p></div>
+      <button type="button" aria-label={t('bots.settingsBack')} className="rounded-[8px] px-2 py-1 text-14 hover:bg-[var(--surface-hover)]" onClick={back}>←</button>
+      <div className="min-w-0"><h1 className="truncate text-16 font-medium text-[var(--text-primary)]">{t('bots.memory.title')}</h1><p className="truncate text-12 text-[var(--text-secondary)]">{bot.name} · {bot.deviceName}</p></div>
     </header>
     <div className="min-h-0 flex-1 overflow-auto p-4">
       {error ? <p role="alert" className="mb-3 rounded-[8px] border border-[var(--status-danger)]/30 p-3 text-13 text-[var(--status-danger)]">{error}</p> : null}
-      {!selected ? <><input aria-label={t('bots.remote.memory.search', { defaultValue: 'Search memories' })} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('bots.remote.memory.search', { defaultValue: 'Search memories' })} className="mb-4 w-full rounded-[8px] border border-[var(--border-default)] bg-[var(--surface-elevated)] px-3 py-2 text-13 text-[var(--text-primary)] outline-none" />{groups.length ? <div className="space-y-4">{groups.map((group) => <section key={group.id}><h2 className="mb-2 text-12 font-medium text-[var(--text-secondary)]">{group.title} <span className="text-[var(--text-tertiary)]">{group.count}</span></h2><div className="divide-y divide-[var(--border-default)] overflow-hidden rounded-[8px] border border-[var(--border-default)]">{group.entries.map((entry) => <button key={entry.resourceId} type="button" className="block w-full px-3 py-3 text-left hover:bg-[var(--surface-hover)]" onClick={() => open(entry.resourceId)}><span className="block text-14 text-[var(--text-primary)]">{entry.title}</span>{entry.subtitle ? <span className="mt-1 block text-12 text-[var(--text-secondary)]">{entry.subtitle}</span> : null}</button>)}</div></section>)}</div> : <p className="text-13 text-[var(--text-secondary)]">{query ? t('bots.remote.memory.noResults', { defaultValue: 'No matching memories' }) : t('bots.remote.memory.empty', { defaultValue: 'No saved memories' })}</p>}</> : detail && draft ? <div className="mx-auto max-w-2xl space-y-4">{conflict ? <div role="alert" className="space-y-3 rounded-[8px] border border-[var(--status-danger)]/40 bg-[var(--surface-elevated)] p-4"><p className="text-13 text-[var(--status-danger)]">{t('bots.remote.memory.conflict', { defaultValue: 'This memory changed on the host.' })}</p><button type="button" className="rounded-[8px] border px-3 py-2 text-13" onClick={() => { setDetail(conflict); setDraft(formOf(conflict, locale)); setConflict(null); }}>{t('bots.remote.memory.useLatest', { defaultValue: 'Use latest' })}</button><button type="button" className="rounded-[8px] border px-3 py-2 text-13" onClick={() => setConflict(null)}>{t('bots.remote.memory.keepMine', { defaultValue: 'Keep my edits' })}</button></div> : null}<input aria-label={t('bots.remote.memory.titleField', { defaultValue: 'Title' })} value={draft.title} disabled={busy} onChange={(event) => setDraft({ ...draft, title: event.target.value })} className="w-full rounded-[8px] border border-[var(--border-default)] bg-[var(--surface-elevated)] px-3 py-2 text-14 text-[var(--text-primary)]" /><textarea aria-label={t('bots.remote.memory.bodyField', { defaultValue: 'Content' })} value={draft.body} disabled={busy} onChange={(event) => setDraft({ ...draft, body: event.target.value })} className="min-h-64 w-full rounded-[8px] border border-[var(--border-default)] bg-[var(--surface-elevated)] px-3 py-2 text-14 text-[var(--text-primary)]" /><div className="flex gap-2"><button type="button" className="rounded-[8px] bg-[var(--accent)] px-3 py-2 text-13 text-white disabled:opacity-50" disabled={busy} onClick={() => void save()}>{t('bots.remote.memory.save', { defaultValue: 'Save' })}</button><button type="button" className="rounded-[8px] border border-[var(--status-danger)] px-3 py-2 text-13 text-[var(--status-danger)] disabled:opacity-50" disabled={busy} onClick={() => void remove()}>{t('bots.remote.memory.delete', { defaultValue: 'Delete' })}</button></div></div> : <p className="text-13 text-[var(--text-secondary)]">{t('ccAgent.common.loading', { defaultValue: 'Loading…' })}</p>}
+      {!selected ? <><input aria-label={t('bots.memory.search')} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('bots.memory.search')} className="mb-4 w-full rounded-[8px] border border-[var(--border-default)] bg-[var(--surface-elevated)] px-3 py-2 text-13 text-[var(--text-primary)] outline-none" />{groups.length ? <div className="space-y-4">{groups.map((group) => <section key={group.id}><h2 className="mb-2 text-12 font-medium text-[var(--text-secondary)]">{group.title} <span className="text-[var(--text-tertiary)]">{group.count}</span></h2><div className="divide-y divide-[var(--border-default)] overflow-hidden rounded-[8px] border border-[var(--border-default)]">{group.entries.map((entry) => <button key={entry.resourceId} type="button" className="block w-full px-3 py-3 text-left hover:bg-[var(--surface-hover)]" onClick={() => open(entry.resourceId)}><span className="block text-14 text-[var(--text-primary)]">{entry.title}</span>{entry.subtitle ? <span className="mt-1 block text-12 text-[var(--text-secondary)]">{entry.subtitle}</span> : null}</button>)}</div></section>)}</div> : <p className="text-13 text-[var(--text-secondary)]">{query ? t('bots.memory.noResults') : t('bots.memory.empty')}</p>}</> : detail && draft ? <div className="mx-auto max-w-2xl space-y-4">{conflict ? <div role="alert" className="space-y-3 rounded-[8px] border border-[var(--status-danger)]/40 bg-[var(--surface-elevated)] p-4"><p className="text-13 text-[var(--status-danger)]">{t('bots.memory.conflict')}</p><button type="button" className="rounded-[8px] border px-3 py-2 text-13" onClick={() => { setDetail(conflict); setDraft(formOf(conflict, locale)); setConflict(null); }}>{t('bots.memory.useLatest')}</button><button type="button" className="rounded-[8px] border px-3 py-2 text-13" onClick={() => { if (conflict) setDraft((current) => current ? { ...current, expectedUpdatedAt: conflict.revision } : current); setConflict(null); }}>{t('bots.memory.keepMine')}</button></div> : null}<input aria-label={t('bots.memory.titleLabel')} value={draft.title} disabled={busy} onChange={(event) => setDraft({ ...draft, title: event.target.value })} className="w-full rounded-[8px] border border-[var(--border-default)] bg-[var(--surface-elevated)] px-3 py-2 text-14 text-[var(--text-primary)]" /><textarea aria-label={t('bots.memory.bodyLabel')} value={draft.body} disabled={busy} onChange={(event) => setDraft({ ...draft, body: event.target.value })} className="min-h-64 w-full rounded-[8px] border border-[var(--border-default)] bg-[var(--surface-elevated)] px-3 py-2 text-14 text-[var(--text-primary)]" /><div className="flex gap-2"><button type="button" className="rounded-[8px] bg-[var(--accent)] px-3 py-2 text-13 text-white disabled:opacity-50" disabled={busy} onClick={() => void save()}>{t('bots.save')}</button><button type="button" className="rounded-[8px] border border-[var(--status-danger)] px-3 py-2 text-13 text-[var(--status-danger)] disabled:opacity-50" disabled={busy} onClick={() => void remove()}>{t('bots.memory.delete')}</button></div></div> : <p className="text-13 text-[var(--text-secondary)]">{t('ccAgent.common.loading', { defaultValue: 'Loading…' })}</p>}
     </div>
   </main>;
 }

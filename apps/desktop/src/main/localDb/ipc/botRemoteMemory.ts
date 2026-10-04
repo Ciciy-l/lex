@@ -50,7 +50,10 @@ export const memoryCopy = {
   deleted: text('Memory deleted', '记忆已删除', '記憶を刪除しました', '記憶を削除しました', '기억을 삭제했습니다'),
 };
 
+// The suffix bound belongs to the filename contract (slug <= 64), so the
+// complete entry id is longer than 64 for the user/feedback prefixes.
 const entryPattern = /^(user|feedback|project|reference)_[a-z0-9_-]{1,64}$/;
+const hashEntryPattern = /^h[a-f0-9]{12}$/;
 const memoryPattern = /^settings:([A-Za-z0-9_-]{1,128})\/memory(?:\/([a-z0-9_-]{1,80}))?$/;
 const idFor = (botId: string, entry?: string) => `settings:${botId}/memory${entry ? `/${entry}` : ''}`;
 const refFor = (id: string) => ({ collectionId: BOT_MEMORY_COLLECTION_ID, kind: 'bot', id });
@@ -66,7 +69,7 @@ export function parseBotMemoryResourceId(id: string): { botId: string; entry?: s
   const match = memoryPattern.exec(id);
   if (!match) return null;
   const entry = match[2];
-  if (entry && !entryPattern.test(entry)) return null;
+    if (entry && !entryPattern.test(entry) && !hashEntryPattern.test(entry)) return null;
   return { botId: match[1], ...(entry ? { entry } : {}) };
 }
 
@@ -135,7 +138,7 @@ export function createBotRemoteMemoryResource(
         display: { title: memoryCopy.memories, subtitle: botName }, links: [], blocks,
       };
     }
-    if (!entryPattern.test(entry) && !/^h[a-f0-9]{12}$/.test(entry)) return notFound();
+    if (!entryPattern.test(entry) && !hashEntryPattern.test(entry)) return notFound();
     let filename = `${entry}.md`;
     if (entry.startsWith('h')) {
       const all = await service.list(botId, undefined, guard);
