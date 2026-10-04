@@ -32,6 +32,7 @@ import {
   configureDefaultImageResizer,
   generateSessionId,
   type AgentKind,
+  type InteractionRequest,
   type McpProvider,
 } from '@cindy/maker-core';
 import { PINNED_OMP_VERSION, probeRemoteAgent } from '@cindy/maker-remote-ssh';
@@ -56,6 +57,8 @@ import { createMessage } from '../localDb/ipc/messages.js';
 import { getMessagesForHistory } from '../localDb/chatHistoryReader.js';
 import { getWorkerLink, updateWorkerStatus } from '../localDb/orcaTeamStore.js';
 import { cleanupSessionTempAttachments } from '../maker-ipc/normalizeAttachments.js';
+import { HOST_CONFIRM_TIMEOUT_MS } from '../maker-ipc/hostConfirmTiming.js';
+import { requestHostInteraction } from '../maker-ipc/interactionRouter.js';
 import { markKnownOrcaWorkerSession } from '../maker-ipc/orcaManualInterrupt.js';
 import { markOrcaMcpHydratedIfNeeded } from '../maker-ipc/orcaMcpHydrationCache.js';
 import { preparePersistedOrcaSessionStart } from '../maker-ipc/orcaSessionStartOptions.js';
@@ -980,6 +983,10 @@ export function getMaker(): Maker {
         return {
           permissionMode: permission.mode,
           remoteHostId: session.remoteHostId,
+          isCurrent: () =>
+            _maker?.getSession(sessionId) === session
+            && session.getStatus() === 'active'
+            && !isAppSessionBoundaryPending(),
           reviewAction: async (action: import('@cindy/maker-core').ReviewableAction) => {
             const decision = await session.reviewHostPermissionAction(action);
             return _maker?.getSession(sessionId) === session
@@ -987,6 +994,21 @@ export function getMaker(): Maker {
               : { verdict: 'block' as const, reason: 'The task instance changed during review.' };
           },
         };
+      },
+      // Host-initiated install consent uses the existing permission-card route;
+      // Full Access is intentionally not an exemption for plugin permissions.
+      requestHostPermission: async (
+        sessionId: string,
+        sessionInstanceId: string,
+        request: Extract<InteractionRequest, { kind: 'permission' }>,
+        signal: AbortSignal,
+      ) => {
+        const session = _maker?.getSession(sessionId);
+        if (!session || session.instanceId !== sessionInstanceId) return null;
+        const bounded = AbortSignal.any([signal, AbortSignal.timeout(HOST_CONFIRM_TIMEOUT_MS)]);
+        return session.runHostInteraction(request, () =>
+          requestHostInteraction(session, request, bounded),
+        );
       },
     };
     const orcaTeamStoreAdapter = createDesktopOrcaTeamStoreAdapter({

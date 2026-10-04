@@ -28,6 +28,7 @@ import {
   ChevronRight,
   MessageCircle,
   Plus,
+  ShieldAlert,
   SlidersHorizontal,
   Sparkles,
   Store,
@@ -398,6 +399,8 @@ export function GhostPluginPage({
   const { confirm } = useConfirmDialog();
   const showPluginMarketActionError = useCallback(
     async (error: unknown) => {
+      // 用户在安装确认框里取消不是失败，不弹错误提示。
+      if (extractIpcError(error)?.code === 'MUTATION_CANCELLED') return;
       toast.error(t(pluginMarketErrorKey(error)));
     },
     [t],
@@ -570,6 +573,11 @@ export function GhostPluginPage({
   }, [clearPluginCatalogScrollRestore, refreshMarket, mode, dataOwnerId]);
   const refreshMarketOnForeground = useCallback(() => refreshMarket(true), [refreshMarket]);
   usePluginMarketForegroundRefresh(refreshMarketOnForeground, lastMarketRefreshAtRef);
+  useEffect(() => {
+    return window.electronAPI.pluginMarket.onUpdateConsentHoldsChanged(() => {
+      void refreshMarket(true).catch(() => undefined);
+    });
+  }, [refreshMarket]);
   useEffect(() => {
     if (installedGhostMarketKeyRef.current === installedGhostMarketKey) return;
     installedGhostMarketKeyRef.current = installedGhostMarketKey;
@@ -1733,6 +1741,7 @@ export function GhostPluginPage({
                         item={item}
                         sourceLabel={t(`settings.ghosts.page.origin.${item.origin}`)}
                         updateVersion={item.marketUpdate?.version}
+                        updateNeedsConsent={item.marketUpdate?.updateRequiresConsent === true}
                         updateBusy={
                           (item.marketUpdate !== null && marketBusyId !== null) || batchRunning
                         }
@@ -1762,6 +1771,7 @@ export function GhostPluginPage({
                             item={item}
                             sourceLabel={t(`settings.ghosts.page.origin.${item.origin}`)}
                             updateVersion={item.marketUpdate?.version}
+                            updateNeedsConsent={item.marketUpdate?.updateRequiresConsent === true}
                             updateBusy={
                               (item.marketUpdate !== null && marketBusyId !== null) || batchRunning
                             }
@@ -2250,6 +2260,7 @@ export function GhostPluginCard({
   item,
   sourceLabel,
   updateVersion,
+  updateNeedsConsent = false,
   updateBusy = false,
   updatePending = false,
   onUpdate,
@@ -2262,6 +2273,8 @@ export function GhostPluginCard({
   sourceLabel?: string;
   /** 市场存在新版本时的目标版本;与 onUpdate 同时提供。 */
   updateVersion?: string;
+  /** 新版本权限变多、后台更新已暂停等用户确认(Main 按真实包判定)。 */
+  updateNeedsConsent?: boolean;
   updateBusy?: boolean;
   /** 本卡正在更新:更新胶囊换成 Spinner。 */
   updatePending?: boolean;
@@ -2357,6 +2370,12 @@ export function GhostPluginCard({
               {' · '}
               <Check size={11} className="inline" aria-hidden="true" />
               {t('settings.ghosts.page.upToDate')}
+            </span>
+          ) : updateNeedsConsent ? (
+            <span className="inline-flex items-center gap-1 text-[var(--text-secondary)]">
+              {' · '}
+              <ShieldAlert size={11} className="inline" aria-hidden="true" />
+              {t('settings.ghosts.installConsent.updateNeedsConsent')}
             </span>
           ) : null}
           {!enabled ? ` · ${t('settings.ghosts.disabledTag')}` : ''}
