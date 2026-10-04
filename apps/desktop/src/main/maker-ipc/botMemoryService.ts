@@ -52,6 +52,8 @@ export interface BotMemoryServiceDeps {
   clearTimer?: (handle: unknown) => void;
 }
 
+export type BotMemoryOperationGuard = () => void;
+
 const isBotMemoryType = (value: string): value is BotMemoryType =>
   (BOT_MEMORY_TYPES as readonly string[]).includes(value);
 
@@ -138,13 +140,16 @@ export function createBotMemoryService(deps: BotMemoryServiceDeps) {
 
   async function storeOf(
     botId: string,
+    operationGuard?: BotMemoryOperationGuard,
   ): Promise<{ store: MakerMemoryStore; owner: BotMemoryOwner }> {
     const owner = await deps.readBot(botId);
     if (!owner) throwIpcError('NOT_FOUND', 'Teammate not found');
     try {
       owner.assertCurrent?.();
+      operationGuard?.();
       const store = await deps.getStore(buildBotMemoryScopeKey(botId));
       owner.assertCurrent?.();
+      operationGuard?.();
       return { store, owner };
     } catch (error) {
       return translateStoreError(error);
@@ -190,14 +195,18 @@ export function createBotMemoryService(deps: BotMemoryServiceDeps) {
   }
 
   return {
-    async list(botId: string, rawQuery?: unknown): Promise<BotMemorySummary[]> {
-      const { store } = await storeOf(botId);
+    async list(botId: string, rawQuery?: unknown, operationGuard?: BotMemoryOperationGuard): Promise<BotMemorySummary[]> {
+      const { store } = await storeOf(botId, operationGuard);
+      operationGuard?.();
       const query = typeof rawQuery === 'string' ? rawQuery.trim().slice(0, 200) : '';
       try {
         if (!query) {
-          return (await store.list()).flatMap((record) => toSummary(record) ?? []).sort(byNewest);
+          const records = await store.list();
+          operationGuard?.();
+          return records.flatMap((record) => toSummary(record) ?? []).sort(byNewest);
         }
         const hits = await store.search(query, { limit: SEARCH_LIMIT });
+        operationGuard?.();
         const entries: BotMemorySummary[] = [];
         for (const hit of hits) {
           if (!isBotMemoryType(hit.type)) continue;
@@ -206,6 +215,7 @@ export function createBotMemoryService(deps: BotMemoryServiceDeps) {
             if (error instanceof MemoryError && error.code === 'not-found') return null;
             throw error;
           });
+          operationGuard?.();
           const summary = record ? toSummary(record) : null;
           if (summary) entries.push(summary);
         }
@@ -215,13 +225,15 @@ export function createBotMemoryService(deps: BotMemoryServiceDeps) {
       }
     },
 
-    async read(botId: string, rawFilename: unknown): Promise<BotMemoryDetail> {
+    async read(botId: string, rawFilename: unknown, operationGuard?: BotMemoryOperationGuard): Promise<BotMemoryDetail> {
       const filename = readFilename(rawFilename);
-      const { store } = await storeOf(botId);
-      return toDetail(await store.read(filename).catch(translateStoreError));
+      const { store } = await storeOf(botId, operationGuard);
+      const detail = toDetail(await store.read(filename).catch(translateStoreError));
+      operationGuard?.();
+      return detail;
     },
 
-    async update(input: BotMemoryUpdateInput): Promise<BotMemoryDetail> {
+    async update(input: BotMemoryUpdateInput, operationGuard?: BotMemoryOperationGuard): Promise<BotMemoryDetail> {
       const filename = readFilename(input.filename);
       const expected = readExpected(input.expectedUpdatedAt);
       if (typeof input.title !== 'string' || typeof input.body !== 'string') {
@@ -235,8 +247,10 @@ export function createBotMemoryService(deps: BotMemoryServiceDeps) {
       if (!body || Buffer.byteLength(body, 'utf8') > BOT_MEMORY_BODY_MAX_BYTES) {
         throwIpcError('INVALID_PARAMS', 'Invalid memory content');
       }
-      const { store, owner } = await storeOf(input.botId);
+      const { store, owner } = await storeOf(input.botId, operationGuard);
       return serialized(`${input.botId}/${filename}`, async () => {
+        owner.assertCurrent?.();
+        operationGuard?.();
         const current = await readCurrent(store, filename, expected);
         const type = current.frontmatter.type;
         if (!isBotMemoryType(type)) throwIpcError('NOT_FOUND', 'Memory not found');
@@ -246,20 +260,36 @@ export function createBotMemoryService(deps: BotMemoryServiceDeps) {
             ? current.frontmatter.description
             : botMemoryDescriptionFromBody(body) || title;
         const saved = toDetail(await store
-          .update(filename, expected, { title, description, body })
+          .update(filename, expected, { title, description, body }, {
+            mutationGuard: () => {
+              owner.assertCurrent?.();
+              operationGuard?.();
+            },
+          })
           .catch(translateStoreError));
+        owner.assertCurrent?.();
+        operationGuard?.();
         scheduleRefresh(owner);
         return saved;
       });
     },
 
-    async delete(input: BotMemoryDeleteInput): Promise<void> {
+    async delete(input: BotMemoryDeleteInput, operationGuard?: BotMemoryOperationGuard): Promise<void> {
       const filename = readFilename(input.filename);
       const expected = readExpected(input.expectedUpdatedAt);
-      const { store, owner } = await storeOf(input.botId);
+      const { store, owner } = await storeOf(input.botId, operationGuard);
       await serialized(`${input.botId}/${filename}`, async () => {
+        owner.assertCurrent?.();
+        operationGuard?.();
         await readCurrent(store, filename, expected);
-        await store.delete(filename, expected).catch(translateStoreError);
+        await store.delete(filename, expected, {
+          mutationGuard: () => {
+            owner.assertCurrent?.();
+            operationGuard?.();
+          },
+        }).catch(translateStoreError);
+        owner.assertCurrent?.();
+        operationGuard?.();
       });
       scheduleRefresh(owner);
     },

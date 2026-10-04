@@ -4156,6 +4156,208 @@ describe('streaming response validity gate (#2242)', () => {
     expect(upstream.bodies[1]).toContain('Remember the test code');
   });
 
+  it('accepts a large complete first SSE event without Content-Type', async () => {
+    const created = JSON.stringify({
+      type: 'response.created',
+      response: { instructions: 'large-context-fixture '.repeat(12_000), output: [] },
+    });
+    const body = `event: response.created\ndata: ${created}\n\ndata: {"type":"response.completed"}\n\n`;
+    expect(Buffer.byteLength(body)).toBeGreaterThan(64 * 1024);
+    const upstream = await startFakeUpstream((_idx, _body, res) => {
+      res.writeHead(200); // Intentionally omit Content-Type for the Codex HTTP fallback.
+      res.write(body.slice(0, 80 * 1024));
+      setImmediate(() => res.end(body.slice(80 * 1024)));
+    });
+    upstreamClose = upstream.close;
+    proxy = await createAnthropicCompatProxy({ upstream: upstream.url });
+
+    const response = await fetch(`${proxy.url}/responses`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'test-model', stream: true }),
+    });
+    const responseText = await response.text();
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('text/event-stream');
+    expect(responseText).toBe(body);
+    expect(upstream.bodies).toHaveLength(1);
+  });
+
+  it('bounds an unfinished inferred SSE event with its dedicated error code', async () => {
+    const body = `event: response.created\ndata: ${'x'.repeat(8 * 1024 * 1024)}`;
+    const upstream = await startFakeUpstream((_idx, _body, res) => {
+      res.writeHead(200); // Intentionally omit Content-Type.
+      res.end(body);
+    });
+    upstreamClose = upstream.close;
+    proxy = await createAnthropicCompatProxy({ upstream: upstream.url });
+
+    const result = await post(proxy.url, { model: 'test-model', stream: true });
+    expect(result.status).toBe(502);
+    expect(JSON.parse(result.text).error.code).toBe('sse_inference_limit_exceeded');
+  });
+
+  it('commits a complete inferred event before rejecting bytes after its cap', async () => {
+    const prefix = 'event: response.created\ndata: ';
+    const firstEvent = `${prefix}${'x'.repeat(8 * 1024 * 1024 - Buffer.byteLength(prefix) - 18)}\n\n`;
+    const remainder = 'data: {"type":"response.completed"}\n\n';
+    const upstream = await startFakeUpstream((_idx, _body, res) => {
+      res.writeHead(200); // Intentionally omit Content-Type.
+      res.end(`${firstEvent}${remainder}`);
+    });
+    upstreamClose = upstream.close;
+    proxy = await createAnthropicCompatProxy({ upstream: upstream.url });
+
+    const result = await post(proxy.url, { model: 'test-model', stream: true });
+    expect(result).toEqual({ status: 200, text: `${firstEvent}${remainder}` });
+  });
+
+  it.each([
+    { name: 'exactly at the cap', eventBytes: 8 * 1024 * 1024 },
+    { name: 'near the cap', eventBytes: 8 * 1024 * 1024 - 128 },
+  ])('counts cross-chunk UTF-8 by wire bytes for an inferred event $name', async ({ eventBytes }) => {
+    const prefix = Buffer.from('event: response.created\ndata: ', 'utf8');
+    const suffix = Buffer.from('\n\n', 'utf8');
+    const character = Buffer.from('汉', 'utf8');
+    const filler = Buffer.alloc(eventBytes - prefix.length - suffix.length - character.length, 0x78);
+    const expectedBody = Buffer.concat([prefix, filler, character, suffix]).toString('utf8');
+    const splitCharacterChunkIds: Array<number | null> = [null, null, null];
+    const observedCharacterBytes = Array.from({ length: character.length }, () => {
+      let resolveObserved!: () => void;
+      const promise = new Promise<void>((resolve) => { resolveObserved = resolve; });
+      return { promise, resolveObserved };
+    });
+    let upstreamChunkId = 0;
+    const upstream = await startFakeUpstream((_idx, _body, res) => {
+      res.writeHead(200); // Intentionally omit Content-Type so the proxy must infer SSE.
+      res.socket?.setNoDelay(true);
+      res.flushHeaders();
+      res.write(prefix);
+      res.write(filler);
+      const writeCharacterByte = (index: number): void => {
+        res.write(character.subarray(index, index + 1));
+        // Wait until the proxy has observed this byte before sending the next, so
+        // the OS cannot coalesce these writes into a false-positive single chunk.
+        void observedCharacterBytes[index]!.promise.then(() => {
+          if (index + 1 === character.length) res.end(suffix);
+          else writeCharacterByte(index + 1);
+        });
+      };
+      writeCharacterByte(0);
+    });
+    upstreamClose = upstream.close;
+    proxy = await createAnthropicCompatProxy({
+      upstream: upstream.url,
+      responseObserver: () => ({
+        onData: (chunk) => {
+          for (let index = 0; index < character.length; index += 1) {
+            if (chunk.includes(character.readUInt8(index))) {
+              splitCharacterChunkIds[index] = upstreamChunkId;
+              observedCharacterBytes[index]!.resolveObserved();
+            }
+          }
+          upstreamChunkId += 1;
+        },
+      }),
+    });
+
+    const result = await post(proxy.url, { model: 'test-model', stream: true });
+    expect(result).toEqual({ status: 200, text: expectedBody });
+    expect(splitCharacterChunkIds).not.toContain(null);
+    expect(new Set(splitCharacterChunkIds).size).toBe(character.length);
+  });
+
+  it('rejects a complete inferred first event that exceeds its byte budget', async () => {
+    const body = `event: response.created\ndata: ${'x'.repeat(8 * 1024 * 1024)}\n\n`;
+    const upstream = await startFakeUpstream((_idx, _body, res) => {
+      res.writeHead(200); // Intentionally omit Content-Type.
+      res.end(body);
+    });
+    upstreamClose = upstream.close;
+    proxy = await createAnthropicCompatProxy({ upstream: upstream.url });
+
+    const result = await post(proxy.url, { model: 'test-model', stream: true });
+    expect(result.status).toBe(502);
+    expect(JSON.parse(result.text).error.code).toBe('sse_inference_limit_exceeded');
+  });
+
+  it('aborts a buffered inferred event when the downstream client disconnects', async () => {
+    let observedPrefix = false;
+    let upstreamClosed = false;
+    const upstreamResponse: { current: ServerResponse | null } = { current: null };
+    const eventSeen = Buffer.from('event: response.created');
+    const events: Array<Record<string, unknown>> = [];
+    const upstream = await startFakeUpstream((_idx, _body, res) => {
+      upstreamResponse.current = res;
+      res.once('close', () => { upstreamClosed = true; });
+      res.writeHead(200); // Intentionally omit Content-Type and the event terminator.
+      res.write(`event: response.created\ndata: ${'x'.repeat(128 * 1024)}`);
+    });
+    upstreamClose = upstream.close;
+    proxy = await createAnthropicCompatProxy({
+      upstream: upstream.url,
+      responseObserver: () => ({
+        onData: (chunk) => {
+          if (chunk.includes(eventSeen)) observedPrefix = true;
+        },
+      }),
+      routingTransform: () => ({
+        forwardLifecycle: {
+          onStart: () => events.push({ type: 'start' }),
+          onFailure: (failure) => events.push({ type: 'failure', failure }),
+        },
+      }),
+    });
+
+    const controller = new AbortController();
+    try {
+      const request = fetch(`${proxy.url}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'test-model', stream: true }),
+        signal: controller.signal,
+      }).catch((error: unknown) => error);
+      await vi.waitFor(() => expect(observedPrefix).toBe(true), { timeout: 3_000 });
+      controller.abort();
+      expect(await request).toBeInstanceOf(Error);
+      await vi.waitFor(() => expect(upstreamClosed).toBe(true), { timeout: 3_000 });
+      expect(events).toEqual([
+        { type: 'start' },
+        { type: 'failure', failure: 'client-aborted' },
+      ]);
+    } finally {
+      controller.abort();
+      upstreamResponse.current?.destroy();
+    }
+  });
+
+  it('infers a complete event with mixed LF and CRLF event delimiters', async () => {
+    const body = 'event: response.created\ndata: {}\n\r\n';
+    const upstream = await startFakeUpstream((_idx, _body, res) => {
+      res.writeHead(200); // Intentionally omit Content-Type.
+      res.end(body);
+    });
+    upstreamClose = upstream.close;
+    proxy = await createAnthropicCompatProxy({ upstream: upstream.url });
+
+    const result = await post(proxy.url, { model: 'test-model', stream: true });
+    expect(result).toEqual({ status: 200, text: body });
+  });
+
+  it('still rejects a large unfinished inferred SSE event below its cap', async () => {
+    const body = `event: response.created\ndata: ${'x'.repeat(128 * 1024)}`;
+    const upstream = await startFakeUpstream((_idx, _body, res) => {
+      res.writeHead(200); // Intentionally omit Content-Type.
+      res.end(body);
+    });
+    upstreamClose = upstream.close;
+    proxy = await createAnthropicCompatProxy({ upstream: upstream.url });
+
+    const result = await post(proxy.url, { model: 'test-model', stream: true });
+    expect(result.status).toBe(502);
+    expect(JSON.parse(result.text).error.code).toBe('non_sse_stream_response');
+  });
+
   it.each([
     { name: 'JSON without MIME', body: '{"ok":true}', headers: {} },
     { name: 'HTML containing an SSE line', body: '<html>\ndata: fake\n</html>', headers: {} },
@@ -4266,5 +4468,27 @@ describe('streaming response validity gate (#2242)', () => {
     proxy = await createAnthropicCompatProxy({ upstream: upstream.url });
 
     await expect(post(proxy.url, { model: 'test-model', stream: true })).rejects.toThrow();
+  });
+});
+
+describe('anthropic-compat-proxy stream gate pending-buffer boundary', () => {
+  it('commits every gated byte when the pending buffer lands exactly on the gate cap', async () => {
+    // 回归:入队条件曾是 `pendingBytes < CAP` 而拒收条件是 `> CAP` —— 累计恰好
+    // 落在 64KiB(回环读常见块大小)时, 后续 chunk 只计数不入队; 事件标记在这些
+    // chunk 里到达并提交后, 它们被永久跳过, 客户端收到中间有缺口的 200 SSE。
+    const pad = 'x'.repeat(64 * 1024);
+    const marker = 'event: message_start\ndata: {"type":"message_start"}\n\n';
+    const upstream = await startFakeUpstream((_idx, _body, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write(pad);
+      res.write(marker);
+      res.end();
+    });
+    upstreamClose = upstream.close;
+    proxy = await createAnthropicCompatProxy({ upstream: upstream.url });
+    const result = await post(proxy.url, { model: 'test-model', stream: true });
+
+    expect(result.status).toBe(200);
+    expect(result.text).toBe(pad + marker);
   });
 });

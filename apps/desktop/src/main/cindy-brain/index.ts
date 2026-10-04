@@ -296,6 +296,14 @@ import {
   getForgeOidcInstallConfirmBridge,
   initForgeOidcInstallConfirmBridge,
 } from './forgeOidcInstallConfirmBridge.js';
+import {
+  abortAllGhostInstallConsentPrompts,
+  assertGhostInstallConsent,
+  obtainGhostInstallConsent,
+  type GhostInstallConsentDecision,
+  type GhostInstallConsentPrompt,
+} from './ghostInstallConsent.js';
+import { GhostInstallConsentWindowBridge } from './ghostInstallConsentWindowBridge.js';
 import { GhostNetworkSlot } from './networkSlot.js';
 import {
   type ConnectionAudienceResolution,
@@ -1018,6 +1026,8 @@ export async function interruptGhostCallsForAccountBoundary(): Promise<void> {
   getGhostGrantConfirmBridge()?.cleanupAll('session_aborted');
   getGhostConfirmDialogBridge()?.cancelAll();
   getForgeOidcInstallConfirmBridge()?.cancelAll();
+  installConsentWindowBridge.cancelAll();
+  abortAllGhostInstallConsentPrompts();
   runtimeSingleton?.destroyAll();
   resetNodeRuntimeBrokerForAccountBoundary();
   // Library 会话一并作废:关 db worker + 作废 handle——在途写入已在串行链上
@@ -3008,6 +3018,53 @@ let confirmSlotSingleton: GhostConfirmSlot | null = null;
 /** 意识确认弹窗通道(main → **单个**窗口;renderer 用主机同款 ConfirmDialog 渲染)。 */
 export const GHOST_CONFIRM_CHANNEL = 'ghosts:confirm-request';
 export const FORGE_OIDC_INSTALL_CONFIRM_CHANNEL = 'forge-oidc-install:confirm-request';
+/** 用户在窗口里发起安装时的确认请求与收起通知(main → 发起安装的那个窗口)。 */
+export const GHOST_INSTALL_CONSENT_REQUEST_CHANNEL = 'ghosts:install-consent:request';
+export const GHOST_INSTALL_CONSENT_DISMISSED_CHANNEL = 'ghosts:install-consent:dismissed';
+
+const installConsentWindowBridge = new GhostInstallConsentWindowBridge();
+const trackedInstallConsentRequesters = new WeakSet<WebContents>();
+
+function trackInstallConsentRequester(contents: WebContents): void {
+  if (trackedInstallConsentRequesters.has(contents)) return;
+  trackedInstallConsentRequesters.add(contents);
+  const requesterId = contents.id;
+  const cancelPending = (): void => installConsentWindowBridge.cancelRequester(requesterId);
+  contents.once('destroyed', cancelPending);
+  contents.on('render-process-gone', cancelPending);
+  contents.on('did-start-navigation', (_event, _url, isSameDocument, isMainFrame) => {
+    if (isMainFrame && !isSameDocument) cancelPending();
+  });
+}
+
+/**
+ * 发起安装的受信窗口上的确认提示。确认框只投给这个窗口，也只接受它的回答；
+ * 调用方必须已经用 assertTrustedAppRendererEvent 核验过该 webContents。
+ */
+export function createWindowGhostInstallConsentPrompt(
+  contents: WebContents,
+): GhostInstallConsentPrompt {
+  return (request) => {
+    if (contents.isDestroyed()) return Promise.reject(new Error('窗口已关闭'));
+    trackInstallConsentRequester(contents);
+    const ownerStamp = getGhostOwnerPushStamp();
+    return installConsentWindowBridge.request(
+      {
+        id: contents.id,
+        send: (payload) => {
+          if (contents.isDestroyed()) return false;
+          sendGhostContentsPush(contents, GHOST_INSTALL_CONSENT_REQUEST_CHANNEL, payload, ownerStamp);
+          return true;
+        },
+        dismiss: (requestId) => {
+          if (contents.isDestroyed()) return;
+          sendGhostContentsPush(contents, GHOST_INSTALL_CONSENT_DISMISSED_CHANNEL, { requestId });
+        },
+      },
+      request,
+    );
+  };
+}
 
 function ensureForgeOidcInstallConfirmBridge() {
   return (
@@ -5690,7 +5747,9 @@ export async function installAndDock(
   opts: {
     ghostId: string;
     enable?: boolean;
-    expectedPackageSha256?: string;
+    expectedPackageSha256: string;
+    /** 锁外求得的用户确认与它所依据的 manifest；锁内按真实包复核。 */
+    consent: { decision: GhostInstallConsentDecision; manifest: GhostManifest };
     trustOverride?: GhostHostTrustOverride;
   },
 ): Promise<InstalledGhost> {
@@ -5703,18 +5762,23 @@ async function installAndDockLocked(
   opts: {
     ghostId: string;
     enable?: boolean;
-    expectedPackageSha256?: string;
+    expectedPackageSha256: string;
+    consent: { decision: GhostInstallConsentDecision; manifest: GhostManifest };
     trustOverride?: GhostHostTrustOverride;
     installOrigin?: 'agent-forge';
   },
 ): Promise<InstalledGhost> {
+  assertGhostInstallConsent(
+    opts.consent.decision,
+    manager.list().find((ghost) => ghost.manifest.id === opts.ghostId),
+    opts.consent.manifest,
+    opts.expectedPackageSha256,
+  );
   // 初始启用态由入口显式传入；当前用户导入与市场首装都传 true，覆盖更新
   // 则走 manager.update 延续既有状态。保留 false 缺省以兼容内部受控调用方。
   const result = await manager.install(lizFilePath, {
     initiallyEnabled: opts.enable ?? false,
-    ...(opts.expectedPackageSha256
-      ? { expectedPackageSha256: opts.expectedPackageSha256 }
-      : {}),
+    expectedPackageSha256: opts.expectedPackageSha256,
     ...(opts.trustOverride ? { trustOverride: opts.trustOverride } : {}),
     ...(opts.installOrigin ? { installOrigin: opts.installOrigin } : {}),
   });
@@ -5765,17 +5829,28 @@ async function updateLocalGhostPackageLocked(
   inspected: InspectedGhostPackage,
   expectedPackageSha256: string,
   expectedInstalledApproval: string,
+  consent: GhostInstallConsentDecision,
   installOrigin?: 'agent-forge',
+  isCurrent?: () => boolean,
 ): Promise<InstalledGhost> {
+  if (isCurrent?.() === false) {
+    throwIpcError('PRECONDITION_FAILED', '任务权限已变化，这次插件安装授权已失效。请用当前任务权限重试。');
+  }
   const runtime = getGhostRuntime();
   const marketLedger = getPluginMarketLedger().bind(
     ownerScopedUserDataPath('plugin-market', 'ledger.v1.json'),
   );
   const previousGhost = manager.list().find((g) => g.manifest.id === inspected.manifest.id);
+  // 锁内按真实包与现读受体复核锁外求得的确认；熄灯之前拒绝，不打断正在用的旧版本。
+  assertGhostInstallConsent(consent, previousGhost, inspected.manifest, expectedPackageSha256);
   runtime.stop(inspected.manifest.id);
   // 等待失败表示旧进程仍可能存活；此时不能恢复 resident，否则会产生
   // 两份后台进程。仅在确认退出后的更新阶段失败时恢复旧版本。
   await getGhostNodeRuntimeBroker().stopAndWait(inspected.manifest.id);
+  if (isCurrent?.() === false) {
+    if (previousGhost) spawnIfResident(previousGhost);
+    throwIpcError('PRECONDITION_FAILED', '任务权限已变化，这次插件安装授权已失效。请用当前任务权限重试。');
+  }
   let marketRecord: PluginMarketInstallationRecord | null;
   try {
     marketRecord = marketLedger.installationForGhost(inspected.manifest.id);
@@ -5887,7 +5962,15 @@ async function updateLocalGhostPackageLocked(
  */
 export async function installOrUpdateLocalGhostPackageFromForge(
   cindyFilePath: string,
-  expected: { ghostId: string; packageSha256: string },
+  expected: {
+    ghostId: string;
+    packageSha256: string;
+    /** 向发起安装的任务投确认卡；Agent 安装无论任务权限档都要用户确认。 */
+    consentPrompt: GhostInstallConsentPrompt;
+    /** packing 租约内捕获的 owner；确认与等锁都不持租约，落位前用这份身份取新租约。 */
+    mutationOwner: ActiveAppSession;
+    isCurrent?: () => boolean;
+  },
 ): Promise<{ ghost: InstalledGhost; action: 'installed' | 'updated' }> {
   const manager = getGhostManager();
   const inspected = await manager.inspect(cindyFilePath);
@@ -5909,6 +5992,12 @@ export async function installOrUpdateLocalGhostPackageFromForge(
     inspected.manifest,
     installOrigin ? { installOrigin } : undefined,
   );
+  const consent = await obtainGhostInstallConsent(
+    { mode: 'prompt', prompt: expected.consentPrompt, initiator: 'agent', origin: 'forge' },
+    manager.list().find((ghost) => ghost.manifest.id === inspected.manifest.id),
+    inspected.manifest,
+    inspected.packageSha256,
+  );
   const confirmFacts = forgeOidcInstallConfirmFacts(inspected.manifest, membershipKind);
   if (confirmFacts) {
     let confirmed = false;
@@ -5921,38 +6010,52 @@ export async function installOrUpdateLocalGhostPackageFromForge(
       throwIpcError('MUTATION_CANCELLED', '用户取消了企业身份插件安装');
     }
   }
+  if (expected.isCurrent?.() === false) {
+    throwIpcError('PRECONDITION_FAILED', '任务权限已变化，这次插件安装授权已失效。请用当前任务权限重试。');
+  }
 
   return withGhostInstallLock(inspected.manifest.id, async () => {
-    const installed = manager.list().find((ghost) => ghost.manifest.id === inspected.manifest.id);
-    if (!installed) {
-      return {
-        ghost: await installAndDockLocked(manager, cindyFilePath, {
-          ghostId: inspected.manifest.id,
-          enable: true,
-          expectedPackageSha256: expected.packageSha256,
-          ...(installOrigin ? { installOrigin } : {}),
-        }).then((ghost) => {
-          try {
-            markGhostRecommendationInstalled(ghost.manifest.id);
-          } catch {
-            log.warn('ghost recommendation install history unavailable');
-          }
-          return ghost;
-        }),
-        action: 'installed',
-      };
+    if (expected.isCurrent?.() === false) {
+      throwIpcError('PRECONDITION_FAILED', '任务权限已变化，这次插件安装授权已失效。请用当前任务权限重试。');
     }
-    return {
-      ghost: await updateLocalGhostPackageLocked(
-        manager,
-        cindyFilePath,
-        inspected,
-        expected.packageSha256,
-        ghostInstallApprovalToken(installed.approval),
-        installOrigin,
-      ),
-      action: 'updated',
-    };
+    const releaseMutation = beginGhostMutation(expected.mutationOwner);
+    try {
+      const installed = manager.list().find((ghost) => ghost.manifest.id === inspected.manifest.id);
+      if (!installed) {
+        return {
+          ghost: await installAndDockLocked(manager, cindyFilePath, {
+            ghostId: inspected.manifest.id,
+            enable: true,
+            expectedPackageSha256: expected.packageSha256,
+            consent: { decision: consent, manifest: inspected.manifest },
+            ...(installOrigin ? { installOrigin } : {}),
+          }).then((ghost) => {
+            try {
+              markGhostRecommendationInstalled(ghost.manifest.id);
+            } catch {
+              log.warn('ghost recommendation install history unavailable');
+            }
+            return ghost;
+          }),
+          action: 'installed',
+        };
+      }
+      return {
+          ghost: await updateLocalGhostPackageLocked(
+            manager,
+            cindyFilePath,
+            inspected,
+            expected.packageSha256,
+            ghostInstallApprovalToken(installed.approval),
+            consent,
+            installOrigin,
+            expected.isCurrent,
+          ),
+        action: 'updated',
+      };
+    } finally {
+      releaseMutation();
+    }
   });
 }
 
@@ -5975,6 +6078,8 @@ export async function installOrUpdateMarketGhostPackage(
   expected: {
     ghostId: string;
     version: string;
+    /** 锁外求得的确认结论；在真正落位前按真实包/受体复核。 */
+    consent: GhostInstallConsentDecision;
     /** receipt 模型并发护栏:更新分支比对 receipt 派生 token(与 main 硬化叠加,决策 A)。 */
     expectedInstalledApproval?: string;
     /**
@@ -6012,6 +6117,7 @@ async function installOrUpdateMarketGhostPackageLocked(
   expected: {
     ghostId: string;
     version: string;
+    consent: GhostInstallConsentDecision;
     expectedInstalledApproval?: string;
     /** Same Host-built org server-market fact as the exported entry; not first-install only. */
     pendingMarketRecord?: GhostFirstPartyPendingMarketRecord;
@@ -6094,11 +6200,17 @@ async function installOrUpdateMarketGhostPackageLocked(
               inspected.packageSha256,
             ),
           }
-        : undefined,
+      : undefined,
     );
 
-    // Manifest 能力只用于 Host 注册、校验和运行时守门。用户点击安装后不再
-    // 经过插件级权限确认；自定义活目录还必须通过上面的打包窗口一致性校验。
+    // 用户确认在锁外求得；这里用即将落位的真实包与锁内现读的受体复核，确认后
+    // 包内容或已装版本变了就拒绝，后台更新遇到需要确认的扩权由上层放弃本轮。
+    assertGhostInstallConsent(
+      expected.consent,
+      installed,
+      inspected.manifest,
+      inspected.packageSha256,
+    );
     // Hold the owner-stability lease only for the actual Ghost filesystem
     // mutation.
     releaseMutation = beginGhostMutation(mutationOwner);
@@ -6116,6 +6228,7 @@ async function installOrUpdateMarketGhostPackageLocked(
         ghostId: expected.ghostId,
         enable: true,
         expectedPackageSha256: inspected.packageSha256,
+        consent: { decision: expected.consent, manifest: inspected.manifest },
         ...(trustOverride ? { trustOverride } : {}),
       });
       await expected.afterCommitInLock?.(installedGhost, commitEvidence);
@@ -7037,6 +7150,24 @@ export function registerGhostIpc(): void {
     return { handled: bridge.resolve(p.requestId, p.confirmed) };
   });
 
+  // 安装／更新确认框的回答只认发起安装的那个窗口(按 webContents id 绑定)。
+  ipcMain.handle('ghosts:install-consent:resolve', async (event, raw: unknown) => {
+    assertTrustedAppRendererEvent(event);
+    const p = raw as { requestId?: unknown; confirmed?: unknown } | null;
+    if (
+      !p ||
+      typeof p.requestId !== 'string' ||
+      p.requestId.length === 0 ||
+      p.requestId.length > 128 ||
+      typeof p.confirmed !== 'boolean'
+    ) {
+      throwIpcError('INVALID_PARAMS', 'invalid plugin install confirmation');
+    }
+    return {
+      handled: installConsentWindowBridge.resolve(event.sender.id, p.requestId, p.confirmed),
+    };
+  });
+
   // ── 意识聊天卡片取件(卡槽③;宿主 renderer 历史回放用)──────────────
   // 查询型 handler:无卡返回 { card: null },renderer 据此降级为通用媒体
   // 渲染(远程会话/被 GC 的历史卡都走这条),不抛 NOT_FOUND——规则 13 的
@@ -7506,7 +7637,19 @@ export function registerGhostIpc(): void {
     rejectReservedGhostId(probe.manifest.id);
     rejectBrokerWithoutDeclaredRedirectPort(probe.manifest);
     rejectUnauthorizedTokenBroker(probe.manifest);
-    // Node 等高风险能力在插件详情中如实展示；安装事务不追加能力确认弹窗。
+    // 首装一律先在发起安装的窗口里请用户确认插件权限；确认在任何锁与 owner 租约
+    // 之外等待，落位前由 installAndDock 在锁内按同一份包复核。
+    const consent = await obtainGhostInstallConsent(
+      {
+        mode: 'prompt',
+        prompt: createWindowGhostInstallConsentPrompt(event.sender),
+        initiator: 'user',
+        origin: 'local-file',
+      },
+      manager.list().find((ghost) => ghost.manifest.id === probe.manifest.id),
+      probe.manifest,
+      probe.packageSha256,
+    );
     const enable = installOpts?.enable === true;
     // owner 租约在锁外整段持有(防中途 owner 切换把落位写进新 owner);按 ghostId 的
     // 互斥锁由 installAndDock 自动获取(卡点),这里传 id 即可。二者语义不同,叠加保留。
@@ -7517,6 +7660,7 @@ export function registerGhostIpc(): void {
           ghostId: probe.manifest.id,
           enable,
           expectedPackageSha256,
+          consent: { decision: consent, manifest: probe.manifest },
         }).then((ghost) => {
           try {
             markGhostRecommendationInstalled(ghost.manifest.id);
@@ -7566,6 +7710,18 @@ export function registerGhostIpc(): void {
     rejectReservedGhostId(inspected.manifest.id);
     rejectBrokerWithoutDeclaredRedirectPort(inspected.manifest);
     rejectUnauthorizedTokenBroker(inspected.manifest);
+    // 新版本权限变多时先请用户确认；权限没变多的更新不打扰。
+    const consent = await obtainGhostInstallConsent(
+      {
+        mode: 'prompt',
+        prompt: createWindowGhostInstallConsentPrompt(event.sender),
+        initiator: 'user',
+        origin: 'local-file',
+      },
+      manager.list().find((ghost) => ghost.manifest.id === inspected.manifest.id),
+      inspected.manifest,
+      inspected.packageSha256,
+    );
     // 从熄灯到换版收尾整段持 owner 租约:熄灯之后每一步都在改"当前 owner"的插件世界,
     // 中途 owner 切换落定会把后半段(update 落盘/停靠/点火)写进新 owner。租约在锁外,
     // 与市场/本地装入/卸载共用的按 ghostId 互斥叠加(二者语义不同,决策 A 都保留)。
@@ -7580,6 +7736,7 @@ export function registerGhostIpc(): void {
             inspected,
             expectedPackageSha256,
             expectedInstalledApproval,
+            consent,
           ),
         ),
       };

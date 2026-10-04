@@ -16,7 +16,7 @@ const desktopTransform = vm.runInNewContext(
   fillHeight?: boolean,
 ) => { x: number; y: number; width: number; height: number; scale: number };
 
-function viewer() {
+function viewer(rtc = false) {
   const messages: Array<{
     type: string;
     epoch: string;
@@ -65,11 +65,24 @@ function viewer() {
   const intervals: Array<() => void> = [];
   const frames = new Map<number, () => void>();
   let id = 0;
+  const dataChannel = { readyState: "open", bufferedAmount: 0, send: vi.fn(), close() {} };
+  class Peer {
+    connectionState = "connected";
+    localDescription = { sdp: "offer" };
+    iceGatheringState = "complete";
+    createDataChannel() { return dataChannel; }
+    addTransceiver() {}
+    async createOffer() { return { sdp: "offer" }; }
+    async setLocalDescription() {}
+    async getStats() { return new Map(); }
+    close() {}
+  }
   let now = 0;
   const source = remoteDesktopViewerHtml("#fff", "#111").match(
     /<script>([\s\S]*)<\/script>/,
   )![1];
   vm.runInNewContext(source, {
+    RTCPeerConnection: Peer,
     Date: { now: () => now },
     performance: { now: () => now },
     matchMedia: () => ({ matches: false }),
@@ -82,6 +95,7 @@ function viewer() {
       documentElement: { style: { setProperty() {} } },
     },
     window: {
+      RTCPeerConnection: rtc ? Peer : undefined,
       ReactNativeWebView: {
         postMessage: (text: string) => messages.push(JSON.parse(text)),
       },
@@ -103,6 +117,7 @@ function viewer() {
     cancelAnimationFrame: (key: number) => frames.delete(key),
   });
   return {
+    dataChannel,
     messages,
     elements,
     send: (message: object) =>
@@ -149,6 +164,72 @@ function viewer() {
 }
 
 describe("remote desktop viewport", () => {
+  it("drops queued input after its two-second deadline and ignores old ACKs after control resumes", () => {
+    const v = viewer();
+    v.send({ type: "control", enabled: true });
+    v.send({ type: "events", events: [{ kind: "text", text: "first" }] });
+    const first = v.messages.filter((m) => m.type === "input").at(-1)!;
+    v.send({ type: "events", events: [{ kind: "text", text: "stale" }] });
+    v.frame(2001);
+    v.flush();
+    expect(v.messages.filter((m) => m.type === "inputOverflow")).toHaveLength(1);
+    v.send({ type: "events", events: [{ kind: "text", text: "ignored" }] });
+    expect(v.messages.flatMap((m) => m.events ?? [])).toEqual([{ kind: "text", text: "first" }]);
+
+    v.send({ type: "control", enabled: true });
+    v.send({ type: "events", events: [{ kind: "text", text: "fresh" }] });
+    v.send({ type: "events", events: [{ kind: "text", text: "next" }] });
+    v.send({ type: "ack", epoch: first.epoch, sequence: first.sequence });
+    v.flush();
+    expect(v.messages.filter((m) => m.type === "input")).toHaveLength(2);
+    v.ack();
+    v.flush();
+    expect(v.messages.filter((m) => m.type === "input")).toHaveLength(3);
+  });
+
+  it("holds relay input behind a congested live data channel and drops it if it expires", () => {
+    const v = viewer(true);
+    v.send({ type: "init", epoch: "one", width: 1920, height: 1080 });
+    const iceConfig = v.messages.find((m) => m.type === "iceConfig") as { attemptId?: string } | undefined;
+    expect(iceConfig?.attemptId).toBeDefined();
+    v.send({ type: "iceConfig", epoch: "one", attemptId: iceConfig!.attemptId, iceServers: [] });
+    v.send({ type: "control", enabled: true });
+
+    v.dataChannel.bufferedAmount = 16384;
+    v.send({ type: "events", events: [{ kind: "text", text: "queued" }] });
+    expect(v.dataChannel.send).not.toHaveBeenCalled();
+    expect(v.messages.filter((m) => m.type === "input")).toHaveLength(0);
+    v.dataChannel.bufferedAmount = 0;
+    v.flush();
+    expect(v.dataChannel.send).toHaveBeenCalledOnce();
+    expect(JSON.parse(v.dataChannel.send.mock.calls[0][0]).events).toEqual([{ kind: "text", text: "queued" }]);
+
+    v.dataChannel.bufferedAmount = 16384;
+    v.send({ type: "events", events: [{ kind: "text", text: "expired" }] });
+    v.frame(2001);
+    v.flush();
+    v.dataChannel.bufferedAmount = 0;
+    v.flush();
+    expect(v.dataChannel.send).toHaveBeenCalledOnce();
+    expect(v.messages.filter((m) => m.type === "input")).toHaveLength(0);
+    expect(v.messages.filter((m) => m.type === "inputOverflow")).toHaveLength(1);
+  });
+
+  it("does not reroute a failed data-channel batch to the relay", () => {
+    const v = viewer(true);
+    v.send({ type: "init", epoch: "one", width: 1920, height: 1080 });
+    const iceConfig = v.messages.find((m) => m.type === "iceConfig") as { attemptId?: string } | undefined;
+    expect(iceConfig?.attemptId).toBeDefined();
+    v.send({ type: "iceConfig", epoch: "one", attemptId: iceConfig!.attemptId, iceServers: [] });
+    v.send({ type: "control", enabled: true });
+    v.dataChannel.send.mockImplementationOnce(() => { throw new Error("channel closed"); });
+    v.send({ type: "events", events: [{ kind: "text", text: "stale" }] });
+    v.flush();
+    expect(v.dataChannel.send).toHaveBeenCalledOnce();
+    expect(v.messages.filter((m) => m.type === "input")).toHaveLength(0);
+    expect(v.messages.filter((m) => m.type === "inputOverflow")).toHaveLength(1);
+  });
+
   it.each([
     ["left", 0],
     ["right", 2],

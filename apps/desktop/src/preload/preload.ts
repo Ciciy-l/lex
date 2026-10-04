@@ -557,6 +557,9 @@ const fanOutCorruptionRestored = createIpcFanOut('local-db:corruption-restored')
 const fanOutPluginRemovalNoticeAvailable = createIpcFanOut(
   'plugin-market:removal-notice-available',
 );
+const fanOutPluginUpdateConsentHoldsChanged = createIpcFanOut(
+  'plugin-market:update-consent-holds-changed',
+);
 // #37: release 端检测到 schema drift 时一次性 toast 提示开发者切回 dev 自动修复
 const fanOutSchemaDriftWarning = createIpcFanOut('local-db:schema-drift-warning');
 const fanOutProjectAliasesChanged = createIpcFanOut('local-db:project-aliases:changed');
@@ -696,6 +699,9 @@ const fanOutGhostUnreadSnapshot = createIpcFanOut('ghosts:unread-snapshot');
 // main 只投单个窗口(不广播),所以这里落地的窗口就是该弹框的唯一归属。
 const fanOutGhostConfirmRequest = createIpcFanOut('ghosts:confirm-request');
 const fanOutForgeOidcInstallConfirmRequest = createIpcFanOut('forge-oidc-install:confirm-request');
+// 插件安装／更新确认(main 只投给发起安装的那个窗口;超时或取消时再发 dismissed 收起)。
+const fanOutGhostInstallConsentRequest = createIpcFanOut('ghosts:install-consent:request');
+const fanOutGhostInstallConsentDismissed = createIpcFanOut('ghosts:install-consent:dismissed');
 // 插件预览开页(preview 槽:renderer 在右侧栏开 web-browser 标签)。
 const fanOutGhostPreviewOpen = createIpcFanOut('ghosts:preview-open');
 // 插件自动化草稿(agent 槽 schedule 加档:renderer 开自动化创建面板并预填)。
@@ -1398,6 +1404,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       confirmed: boolean,
     ): Promise<{ handled: boolean }> =>
       ipcRenderer.invoke('forge-oidc-install:resolve-confirm', { requestId, confirmed }),
+    onInstallConsentRequest: fanOutGhostInstallConsentRequest,
+    onInstallConsentDismissed: fanOutGhostInstallConsentDismissed,
+    resolveInstallConsent: (
+      requestId: string,
+      confirmed: boolean,
+    ): Promise<{ handled: boolean }> =>
+      ipcRenderer.invoke('ghosts:install-consent:resolve', { requestId, confirmed }),
     onPreviewOpen: fanOutGhostPreviewOpen,
     onScheduleDraft: fanOutGhostScheduleDraft,
     getCard: (
@@ -1502,6 +1515,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       import('../shared/pluginMarket').PluginRemovalUserNotice | null
     > => ipcRenderer.invoke('plugin-market:consume-removal-notice'),
     onRemovalNoticeAvailable: fanOutPluginRemovalNoticeAvailable,
+    onUpdateConsentHoldsChanged: fanOutPluginUpdateConsentHoldsChanged,
     listSources: (): Promise<import('../shared/pluginMarket').MarketSourceSummary[]> =>
       ipcRenderer.invoke('plugin-market:list-sources'),
     pickLocalSource: (
@@ -4378,6 +4392,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         sessionId: string,
       ): Promise<{
         messages: Record<string, unknown>[];
+        historyView?: string;
         invalidation?: number;
         ownerToken?: string;
         accountCounter?: number;
@@ -4400,6 +4415,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         expectedInvalidation?: number,
         expectedOwnerToken?: string,
         expectedAccountCounter?: number,
+        historyView?: string,
       ): Promise<{ ok: true; invalidation?: number }> =>
         ipcRenderer.invoke('device-link:mirror-cache:messages:put', {
           deviceId,
@@ -4408,6 +4424,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
           expectedInvalidation,
           expectedOwnerToken,
           expectedAccountCounter,
+          historyView,
         }),
       /** 读侧边栏远程会话列表快照 */
       getSessionList: (): Promise<{
@@ -5451,6 +5468,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('maker:collaboration-settings:reset'),
     },
     messages: {
+      historyView: (sessionId: string, opts?: { before?: string | null; lazyDetails?: boolean }): Promise<unknown> =>
+        ipcRenderer.invoke('local-db:messages:view', sessionId, opts),
+      workDetails: (sessionId: string, ref: unknown, opts?: { after?: string | null }): Promise<unknown> =>
+        ipcRenderer.invoke('local-db:messages:work-details', sessionId, ref, opts),
       list: (
         sessionId: string,
         opts?: { limit?: number; before?: string; beforeTs?: number },

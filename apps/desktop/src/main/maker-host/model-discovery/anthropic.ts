@@ -51,6 +51,7 @@ import type { CatalogModel, Effort, ProviderModelDiscoveryFailure } from '@cindy
 import { createLogger } from '../../logger.js';
 import {
   getActiveCatalog,
+  getCindyAnthropicModelName,
   getCindyModelContextWindow,
   getCindyModelEffortBaseline,
   setAnthropicDiscoveredModels,
@@ -75,6 +76,8 @@ const MAX_MODEL_PAGES = 5;
 
 /** 最近一次生效的发现结果(含缓存加载),合并时的能力字段保留源。 */
 let lastApplied: CatalogModel[] = [];
+/** Distinguishes a successful empty account snapshot from no snapshot/failure. */
+let hasSuccessfulSnapshot = false;
 /**
  * 能力字段由 HTTP / SDK 明确声明过的模型 id。effort / fastMode 必须分开记账,因为上游
  * 可能只返回其中一项；旧版缓存里的 low/medium/high 既可能是合成默认,也可能是上游实值,
@@ -142,6 +145,48 @@ function generationCanApply(generation: number, models: CatalogModel[]): boolean
  */
 function normalizeModelId(raw: string): string {
   return raw.replace(/\[[^\]]*\]$/, '').replace(/-20\d{6}$/, '');
+}
+
+const unresolvedAliasLogged = new Set<string>();
+
+/** Resolve SDK family aliases only when their description carries a precise version. */
+function resolveSdkModelId(value: string, description: unknown): string | null {
+  const normalized = normalizeModelId(value);
+  if (normalized.startsWith('claude-')) return normalized;
+  const alias = normalized.toLowerCase();
+  const match = typeof description === 'string'
+    ? /^(?:Claude\s+)?([A-Za-z]+)\s+(\d+)(?:\.(\d+))?(?![\w.])/.exec(description.trim())
+    : null;
+  const family = match?.[1]?.toLowerCase();
+  const id = match && family && (alias === 'default' || alias === family)
+    ? `claude-${family}-${match[2]}${match[3] !== undefined ? `-${match[3]}` : ''}`
+    : null;
+  const known = id !== null && getCindyAnthropicModelName(id) !== null;
+  if (!known) {
+    const key = `${value}\u0000${String(description)}`;
+    if (!unresolvedAliasLogged.has(key)) {
+      unresolvedAliasLogged.add(key);
+      log.info(id ? 'anthropic SDK model alias resolved outside the catalog' : 'anthropic SDK model alias has no parsable version; skipped', { value, candidate: id });
+    }
+  }
+  return id;
+}
+
+function parseClaudeModelId(id: string): { family: string; version: string } | null {
+  const match = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?$/.exec(id);
+  return match ? { family: match[1]!, version: match[3] !== undefined ? `${match[2]}.${match[3]}` : match[2]! } : null;
+}
+
+function displayNameMatchesModelId(name: string, id: string): boolean {
+  const parsed = parseClaudeModelId(id);
+  if (!parsed) return false;
+  const escaped = parsed.version.replace('.', '\\.');
+  return new RegExp(`(^|[^\\d.])${escaped}($|[^\\d.])`).test(name);
+}
+
+function labelFromClaudeModelId(id: string): string | null {
+  const parsed = parseClaudeModelId(id);
+  return parsed ? `${parsed.family[0]!.toUpperCase()}${parsed.family.slice(1)} ${parsed.version}` : null;
 }
 
 /**
@@ -316,9 +361,12 @@ export function mapAnthropicSdkModels(raw: unknown): SdkMappedModel[] {
       supportsFastMode?: unknown;
     };
     if (typeof e.value !== 'string' || e.value.length === 0) continue;
-    const id = normalizeModelId(e.value);
-    if (!id.startsWith('claude') || seen.has(id)) continue;
+    const id = resolveSdkModelId(e.value, e.description);
+    if (!id || seen.has(id)) continue;
     seen.add(id);
+    const reportedName = typeof e.displayName === 'string' && displayNameMatchesModelId(e.displayName, id)
+      ? e.displayName
+      : undefined;
     const hasEffortInfo = e.supportsEffort !== undefined || e.supportedEffortLevels !== undefined;
     const hasFastModeInfo = e.supportsFastMode !== undefined;
     const fallback = fallbackEffortBaseline(id);
@@ -348,13 +396,13 @@ export function mapAnthropicSdkModels(raw: unknown): SdkMappedModel[] {
       model: {
         id,
         discoveredMetadata: pickModelMetadata({
-          name: e.displayName,
+          name: reportedName,
           description: e.description,
           efforts:
             e.supportsEffort === false ? [] : (toEfforts(e.supportedEffortLevels) ?? undefined),
           supportsFastMode: e.supportsFastMode,
         }),
-        name: typeof e.displayName === 'string' && e.displayName.length > 0 ? e.displayName : id,
+        name: reportedName ?? getCindyAnthropicModelName(id) ?? labelFromClaudeModelId(id) ?? id,
         group: 'anthropic',
         sortOrder: out.length,
         ...(typeof e.description === 'string' && e.description.length > 0
@@ -520,8 +568,10 @@ async function applyModels(
   generation = authGeneration,
   nextExplicitEffortIds: ReadonlySet<string> = explicitEffortModelIds,
   nextExplicitFastModeIds: ReadonlySet<string> = explicitFastModeModelIds,
+  successfulSnapshot = true,
 ): Promise<boolean> {
   if (!generationCanApply(generation, models)) return false;
+  hasSuccessfulSnapshot = successfulSnapshot;
   const modelIds = new Set(models.map((model) => model.id));
   const normalizedExplicitEffortIds = new Set(
     [...nextExplicitEffortIds].filter((id) => modelIds.has(id)),
@@ -635,7 +685,10 @@ export async function loadAnthropicModelsFromDiskCache(): Promise<void> {
         typeof (m as CatalogModel).contextWindow === 'number' &&
         Array.isArray((m as CatalogModel).efforts),
     );
-    if (valid.length === 0) return;
+    if (valid.length === 0) {
+      if (models.length === 0) await applyModels([], false, generation, new Set(), new Set());
+      return;
+    }
     // 归一化自愈:修复前的 SDK 捕获会把 claude-fable-5[1m] 这类脏 id 落盘。按当前口径
     // 清洗 + first-wins 去重,启动加载即恢复来源匹配,不等下一次动态捕获才纠正。
     const validIds = new Set<string>();
@@ -684,10 +737,16 @@ export async function loadAnthropicModelsFromDiskCache(): Promise<void> {
       // 里(命中目录的窗口不进那张表)时,会得到一个「已核实」的猜测值 —— 例如 Haiku 残留
       // 200K 而运行期真实 1M,反倒把上报值压小。这也是上面那条刷新不变量的要求。
       const { contextWindowVerified: _staleProvenance, ...rest } = model;
+      const cachedName = model.discoveredMetadata?.name;
+      const staleName = cachedName !== undefined && !displayNameMatchesModelId(cachedName, model.id);
+      const { name: _staleName, ...cachedMetadata } = model.discoveredMetadata ?? {};
       return {
         ...rest,
+        ...(staleName || !displayNameMatchesModelId(model.name, model.id)
+          ? { name: getCindyAnthropicModelName(model.id) ?? labelFromClaudeModelId(model.id) ?? model.id }
+          : {}),
         discoveredMetadata:
-          model.discoveredMetadata ??
+          (model.discoveredMetadata && staleName ? cachedMetadata : model.discoveredMetadata) ??
           pickModelMetadata({
             contextWindow: explicitWindows.get(model.id),
             efforts: restoredExplicitEffortIds.has(model.id) ? model.efforts : undefined,
@@ -718,11 +777,18 @@ export async function loadAnthropicModelsFromDiskCache(): Promise<void> {
  * 未登录 Claude.ai 时不得注入(否则登出被击穿 / 纯网关用户长出 anthropic 清单)。
  * 按 id 合并:条目带能力信息则覆盖,否则保留已精化条目;HTTP 明说过的窗口不回退。
  */
-export function noteAnthropicSdkSupportedModels(raw: unknown): void {
-  if (!hasClaudeAiOAuth()) return;
-  const generation = authGeneration;
+export function noteAnthropicSdkSupportedModels(raw: unknown, generation: number = authGeneration): void {
+  if (!hasClaudeAiOAuth() || generation !== authGeneration) return;
   const mapped = mapAnthropicSdkModels(raw);
-  if (mapped.length === 0) return;
+  if (mapped.length === 0) {
+    // A successfully reported empty SDK catalog is authoritative. Invalid or missing
+    // payloads remain no-ops; they do not erase the last known-good account snapshot.
+    if (Array.isArray(raw) && raw.length === 0) {
+      explicitWindows.clear();
+      void applyModels([], true, generation, new Set(), new Set());
+    }
+    return;
+  }
   const mappedWithWindows = mapped.map(({ model, hasEffortInfo, hasFastModeInfo }) => {
     const explicit = explicitWindows.get(model.id);
     // explicitWindows 存的是 HTTP 明说过的 max_input_tokens —— 恢复它时必须连
@@ -816,6 +882,86 @@ export function noteAnthropicSdkSupportedModels(raw: unknown): void {
     (err) => {
       log.warn('apply anthropic SDK models failed', { error: String(err) });
     },
+  );
+}
+
+type AnthropicModelProbe = (onModels: (models: unknown[]) => void) => Promise<boolean>;
+let modelProbe: AnthropicModelProbe | null = null;
+let probeInflight: { generation: number; promise: Promise<boolean> } | null = null;
+let lastAuthIdentity: string | null = null;
+let lastCredentialGeneration: string | null = null;
+
+/** Replace/unregister the maker-owned probe; late results from its previous registration become stale. */
+export function setAnthropicModelProbe(probe: AnthropicModelProbe | null): void {
+  modelProbe = probe;
+  probeInflight = null;
+}
+
+/** Actively query only supportedModels(), with result adoption bound to the starting auth/maker generation. */
+export function refreshAnthropicModelsFromProbe(): Promise<boolean> {
+  const probe = modelProbe;
+  if (!probe || !hasClaudeAiOAuth()) return Promise.resolve(false);
+  const generation = authGeneration;
+  if (probeInflight?.generation === generation) return probeInflight.promise;
+  const isCurrent = () => modelProbe === probe && generation === authGeneration && hasClaudeAiOAuth();
+  let delivered = false;
+  const promise = probe((models) => {
+    if (!isCurrent() || delivered || !Array.isArray(models)) return;
+    delivered = true;
+    noteAnthropicSdkSupportedModels(models, generation);
+  })
+    .then(async (applied) => {
+      if (!applied || !delivered || !isCurrent()) return false;
+      await waitForAnthropicDiscoveryIdleForTest();
+      return isCurrent();
+    })
+    .finally(() => {
+      if (probeInflight?.promise === promise) probeInflight = null;
+    });
+  probeInflight = { generation, promise };
+  return promise;
+}
+
+/** Whether an SDK/cache snapshot has been adopted for the currently bound account. */
+export function hasAnthropicDiscoveredModels(): boolean {
+  return hasSuccessfulSnapshot;
+}
+
+/** Login/status notifications are only wakeups; identity and credentials come from the bound AuthAdapter. */
+export function syncAnthropicModelsWithAuth(
+  status: { authenticated: boolean; identity?: string },
+  credentialGeneration: string | null,
+): void {
+  if (!status.authenticated) {
+    lastAuthIdentity = null;
+    lastCredentialGeneration = null;
+    void clearAnthropicDiscoveredModels().catch(() => undefined);
+    return;
+  }
+  const identity = status.identity ?? credentialGeneration ?? 'anthropic:bound';
+  const switched = lastAuthIdentity !== null && lastAuthIdentity !== identity;
+  const credentialChanged = lastCredentialGeneration !== null &&
+    lastCredentialGeneration !== credentialGeneration;
+  lastAuthIdentity = identity;
+  lastCredentialGeneration = credentialGeneration;
+  if (switched) {
+    void clearAnthropicDiscoveredModels().catch(() => undefined).then(() => requestAnthropicModelProbe());
+    return;
+  }
+  if (credentialChanged) {
+    authGeneration += 1;
+    probeInflight = null;
+    httpRefreshInflight = null;
+    cancelHttpRetry();
+  }
+  requestAnthropicModelProbe();
+}
+
+/** Background refresh used after maker readiness, auth binding, and status changes. */
+export function requestAnthropicModelProbe(): void {
+  void refreshAnthropicModelsFromProbe().then(
+    (applied) => { if (!applied) log.info('anthropic supportedModels probe had no current result'); },
+    (error: unknown) => log.warn('anthropic supportedModels probe failed', { error: String(error) }),
   );
 }
 
@@ -1191,8 +1337,18 @@ export function refreshAnthropicModelsFromHttp(options?: {
         );
         return false;
       }
-      noteDiscoveryFailure(gen, 'empty');
-      return false;
+      if (entries.length > 0) {
+        noteDiscoveryFailure(gen, 'upstream', `payload listed ${entries.length} entries but none mapped to a usable model`);
+        return false;
+      }
+      explicitWindows.clear();
+      explicitEffortModelIds.clear();
+      explicitFastModeModelIds.clear();
+      resetHttpShrinkStreak();
+      clearDiscoveryFailure();
+      const applied = await applyModels([], true, gen, new Set(), new Set());
+      if (applied && gen === authGeneration) noteDiscoveryFailure(gen, 'empty');
+      return applied;
     }
     // 退化判定必须先于任何状态写入:被拒快照连 explicitWindows 也不许污染,
     // 否则后续 SDK 捕获会把退化响应带来的窗口值用作精确记账(review P2)。
@@ -1248,7 +1404,7 @@ export async function clearAnthropicDiscoveredModels(): Promise<void> {
   explicitEffortModelIds.clear();
   explicitFastModeModelIds.clear();
   resetHttpShrinkStreak();
-  await applyModels([], false, generation);
+  await applyModels([], false, generation, new Set(), new Set(), false);
   // 首次发现就失败时 lastApplied 本来就是空,applyModels([]) 会走「清单没变」早退、不广播。
   // 本地窗口碰巧还能靠 auth 事件刷新,但那个事件不过 device-link —— 配对的手机 / 控制端会
   // 一直留着旧的失败理由。失败态由有变无时补一次通知,让两边都收敛(PR #548 review)。
@@ -1266,6 +1422,11 @@ export function waitForAnthropicDiscoveryIdleForTest(): Promise<void> {
 /** 仅测试:重置模块态。 */
 export function resetAnthropicDiscoveryForTest(): void {
   lastApplied = [];
+  hasSuccessfulSnapshot = false;
+  modelProbe = null;
+  probeInflight = null;
+  lastAuthIdentity = null;
+  lastCredentialGeneration = null;
   explicitWindows.clear();
   explicitEffortModelIds.clear();
   explicitFastModeModelIds.clear();

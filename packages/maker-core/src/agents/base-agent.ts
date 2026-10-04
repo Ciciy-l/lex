@@ -221,6 +221,8 @@ export interface PiNativeModelCost {
 
 /** BYOM:写进 pi models.json 的一个模型(原生 provider 块内)。 */
 export interface PiNativeModelSpec {
+  /** Current connection's explicit support for OpenAI priority service tier. */
+  supportsFastMode?: boolean;
   /** Cindy/public model id used by provider-aware routing and the UI. */
   id: string;
   /** PI provider's native model id; omitted when it is identical to id. */
@@ -485,6 +487,8 @@ export interface CodexLocalCredentialModeSwitchContext {
 
 export interface RefreshLocalModelsOptions {
   providerId?: string;
+  /** Receive a successful, read-only SDK model snapshot for this exact refresh attempt. */
+  onSupportedModels?: (models: unknown[]) => void;
   /**
    * Bind model discovery to a specific local credential route.
    * Codex serves explicit routes from an isolated control-plane host so live
@@ -1882,6 +1886,13 @@ export interface StartSessionOptions {
    * prices already-started requests with the tariff they actually used.
    */
   getPriceVariant?: () => 'standard' | 'priority';
+  /** Match completed proxy usage to its actual execution tariff, before preference-based pricing. */
+  resolveUsagePriceVariant?: (usage: {
+    threadId?: string;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+  }) => 'standard' | 'priority' | undefined;
   /** Pi + thinking-toggle 模型：false 时启动即关思考。缺省保持模型默认（开）。 */
   thinkingEnabled?: boolean;
   /**

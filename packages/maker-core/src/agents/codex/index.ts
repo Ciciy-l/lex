@@ -11562,6 +11562,12 @@ export class CodexAgent extends BaseAgent {
             generation: usageExecutionGeneration,
             total: { ...cumulativeTotal },
           });
+          const resolvedPriceVariant = opts.resolveUsagePriceVariant?.({
+            threadId: params.threadId,
+            inputTokens: totalInput,
+            outputTokens: last.outputTokens ?? 0,
+            cacheReadTokens: cached,
+          });
           usageTracker.ingestApiCallUsage({
             inputTokens: uncachedInput,
             // outputTokens already includes the reasoning subset. Adding
@@ -11571,11 +11577,20 @@ export class CodexAgent extends BaseAgent {
             cacheCreateTokens: cacheWrite,
             reasoningTokens: last.reasoningOutputTokens ?? 0,
             model: turnOriginByTurnId.get(params.turnId)?.model ?? activeTurnModel ?? mutableModel,
-            priceVariant: isFastServiceTier(
-              turnServiceTier !== undefined ? turnServiceTier : mutableServiceTier,
-            )
-              ? 'priority'
-              : 'standard',
+            // A host resolver is route-scoped.  An undefined receipt means
+            // that route has no verified execution tariff; do not infer a
+            // global Fast price from mutable session state.  Standalone
+            // native Codex callers without a resolver retain the native tier
+            // fallback for backwards compatibility.
+            priceVariant: resolvedPriceVariant ?? (
+              opts.resolveUsagePriceVariant
+                ? 'standard'
+                : (isFastServiceTier(
+                  turnServiceTier !== undefined ? turnServiceTier : mutableServiceTier,
+                )
+                  ? 'priority'
+                  : 'standard')
+            ),
           });
           // Input/cache-only segments still belong in the ledger, but cannot
           // pair already reported output with a later generation denominator.

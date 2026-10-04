@@ -607,6 +607,7 @@ import {
 import { usesControllerProviderProxyForSsh } from '../../shared/sshAgentProviderRouting.js';
 import { readWorkflowProgressForSession } from '../workflow-progress/reader.js';
 import { AgentInputCoordinator } from './agent-input-coordinator.js';
+import { bindSilentStopContinuationGeneration } from './silentStopContinuationBinding.js';
 import { notePromptPredictionSessionStopped } from './promptPredictionStopLedger.js';
 import {
   estimateReferenceTokens,
@@ -847,6 +848,7 @@ import {
 import {
   getAnthropicModelDiscoveryFailure,
   refreshAnthropicModelsFromHttp,
+  refreshAnthropicModelsFromProbe,
 } from '../maker-host/model-discovery/anthropic.js';
 import { refreshXaiModelsFromHttp } from '../maker-host/model-discovery/xai.js';
 import { refreshBuiltinProviderModels } from '../maker-host/provider-model-refresh.js';
@@ -863,7 +865,7 @@ import {
 import {
   cancelGenericOAuthLogin,
   deriveModelsDiscoveryUrl,
-  discoverGenericOAuthModels,
+  discoverGenericOAuthModelSnapshot,
   logoutGenericOAuth,
   removeGenericOAuthCredentialsReversibly,
   runGenericOAuthLogin,
@@ -985,7 +987,7 @@ import {
   type MemoryChangeParts,
 } from './deferredCodexRestart.js';
 import {
-  createDeferredRestartAppliedWake,
+  createDeferredRestartSettledWake,
   createDeferredRestartQueueGate,
 } from './deferredRestartQueueWiring.js';
 import {
@@ -4220,6 +4222,11 @@ async function surfaceSilentStopExhaustedBanner(sessionId: string): Promise<void
   log.warn('silent-stop auto-resume exhausted — surfaced continue banner', { sessionId });
 }
 
+/**
+ * silent-stop 续跑的 generation 绑定/回滚接线已抽到 silentStopContinuationBinding.ts
+ * (可单测,行为测试用真实 sendHostTurnContinuation 驱动)。
+ */
+
 async function handleSilentStopTurnEnd(
   session: NonNullable<ReturnType<Maker['getSession']>>,
   doneAt: number,
@@ -4243,6 +4250,24 @@ async function handleSilentStopTurnEnd(
   }
   const decision = silentStopAutoResumeGuard.onSilentStop(session.id, doneAt);
   if (decision.action === 'resume') {
+    const coordinatorAtReservation = agentInputCoordinatorHolder;
+    const ownerSessionIsCurrent = () => coordinatorAtReservation !== null
+      && agentInputCoordinatorHolder === coordinatorAtReservation
+      && getMakerIfReady()?.getSession(session.id) === session;
+    // 续跑绕过 send 事务:generation 的绑定/失败回滚接线集中在 binding 对象
+    // (bindSilentStopContinuationGeneration,见该文件头)。漏掉任一半边会让
+    // 协调器残留的 activeTurn 与续跑的真实 done 永久失配，输入边界卡在忙
+    // (僵尸 activeTurn)。声明在 try 外，未派发/抛出两条失败收口都要用。
+    const binding = bindSilentStopContinuationGeneration(session.id, {
+      isCurrent: ownerSessionIsCurrent,
+      noteHostTurnContinuation: (bindingSessionId, generation) =>
+        coordinatorAtReservation?.noteHostTurnContinuation(bindingSessionId, generation),
+      noteHostTurnContinuationFailed: (bindingSessionId, adoptedGeneration) =>
+        coordinatorAtReservation?.noteHostTurnContinuationFailed(
+          bindingSessionId,
+          adoptedGeneration,
+        ),
+    });
     try {
       // The next Claude running boundary belongs to the same user-visible turn.
       // Mark it before send(), which may synchronously emit status events.
@@ -4253,6 +4278,9 @@ async function handleSilentStopTurnEnd(
         {
           origin: turnOrigin,
           onDispatching: () => advanceRuntimeRecoveryNotice(session),
+          // 预约(onTurnReserved)在 binding.sendOpts；语义与不变量见
+          // silentStopContinuationBinding.ts 文件头。
+          ...binding.sendOpts,
           onAccepted: async () => {
             await createDbMessage(session.id, {
               clientId,
@@ -4288,6 +4316,10 @@ async function handleSilentStopTurnEnd(
       });
       if (!outcome.dispatched) {
         silentStopAutoResumeGuard.noteResumeSendFailed(session.id);
+        // Session 在派发确认前失败会回滚 turnGeneration;绑定必须跟着回滚,
+        // 否则失败收口合成的 done 会因 generation 不匹配被 ownership 守卫丢弃,
+        // 形成与本次修复对称的反向僵尸(输入边界永久忙)。
+        binding.rollbackBinding();
         log.warn('silent-stop auto-resume send not accepted', {
           sessionId: session.id,
           reason: outcome.reason,
@@ -4299,6 +4331,7 @@ async function handleSilentStopTurnEnd(
       }
     } catch (err) {
       silentStopAutoResumeGuard.noteResumeSendFailed(session.id);
+      binding.rollbackBinding();
       log.warn('silent-stop auto-resume send failed', {
         sessionId: session.id,
         error: err instanceof Error ? err.message : String(err),
@@ -5473,7 +5506,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     refreshProvider: (providerId) =>
       refreshBuiltinProviderModels(providerId, {
         refreshXd: options.refreshXdGatewayModels,
-        refreshAnthropic: refreshAnthropicModelsFromHttp,
+        refreshAnthropic: refreshAnthropicModelsFromProbe,
         refreshOpenAi: () =>
           maker.refreshAgentLocalModels('codex', { credentialMode: 'oauth-bearer' }),
         refreshOpenAiMedia: refreshOpenAiMediaModels,
@@ -5715,7 +5748,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         try {
           const fetched = new Map<
             string,
-            { id: string; name: string; contextWindow?: number }[] | null
+            Awaited<ReturnType<typeof discoverGenericOAuthModelSnapshot>>
           >();
           let customChanged = false;
           for (const agent of provider.agents) {
@@ -5740,16 +5773,17 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             if (!fetched.has(key))
               fetched.set(
                 key,
-                await discoverGenericOAuthModels(storageProviderId, oauth, url, agent),
+                await discoverGenericOAuthModelSnapshot(storageProviderId, oauth, url, agent),
               );
             if (!isCurrent()) break;
-            const models = fetched.get(key);
-            if (!models || models.length === 0) continue;
+            const snapshot = fetched.get(key);
+            if (!snapshot) continue;
+            const { models } = snapshot;
             if (provider.source === 'user') {
               const cfg = await getCustomProvider(storageProviderId);
               if (!isCurrent()) break;
               if (cfg) {
-                const nextCfg = mergeDiscoveredModelsIntoConfig(cfg, agent, models);
+                const nextCfg = mergeDiscoveredModelsIntoConfig(cfg, agent, models, snapshot.complete);
                 if (nextCfg) {
                   const applied = await updateCustomProviderIfUnchanged(
                     storageProviderId,
@@ -5768,6 +5802,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
                 models.map((m) => ({
                   id: m.id,
                   name: m.name,
+                  ...(m.discoveredMetadata ? { discoveredMetadata: m.discoveredMetadata } : {}),
                   // 端点上报的窗口值优先,缺省才落 200K 保守默认(review P1):
                   // 之前无条件写死 200K,发现的 1M 模型仍会显示并按 200K 压缩。
                   contextWindow: m.contextWindow ?? 200_000,
@@ -5775,11 +5810,15 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
                   // 兜底的不标记 —— 否则 resolveVerifiedContextWindow 会拒收缺失
                   // 标记的条目,inflate 的运行期值压不下来(review P1)。
                   ...(m.contextWindow !== undefined ? { contextWindowVerified: true } : {}),
-                  efforts: [],
-                  defaultEffort: null,
+                  efforts: m.discoveredMetadata?.efforts ?? [],
+                  defaultEffort: m.discoveredMetadata?.defaultEffort ?? null,
+                  ...(m.discoveredMetadata?.supportsFastMode !== undefined
+                    ? { supportsFastMode: m.discoveredMetadata.supportsFastMode }
+                    : {}),
                   group: `custom:${providerId}`,
                   defaultEnabled: false,
                 })),
+                snapshot.complete,
               );
             }
           }
@@ -14042,8 +14081,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     hasPendingCredentialSwitch: createDeferredRestartQueueGate({
       hasPendingCredentialSwitchEntry: (sessionId) =>
         pendingCredentialSwitchHolder?.has(sessionId) === true,
-      isDeferredRestartPending: () => deferredCodexRestartHolder?.isPending() === true,
-      listActiveSessions: () => maker.listActiveSessions(),
+      isSessionRestarting: (sessionId) =>
+        deferredCodexRestartHolder?.isSessionRestarting(sessionId) === true,
     }),
     emitProjection: (projection) => {
       broadcastToAllWindows(MAKER_PUSH.INPUT_PROJECTION, projection);
@@ -14335,9 +14374,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   });
 
   // Memory 设置变更撞上 Codex busy 时的延迟软重启登记(见 deferredCodexRestart.ts)。
-  // 与 pendingCredentialSwitchService 共用 turn 结束 / 会话关闭边界接线;pending
-  // 期间本地 Codex live 会话的排队派发被上方 coordinator 的 hasPendingCredentialSwitch
-  // 谓词挡住,兑现后由 onApplied 逐个唤醒。
+  // 与 pendingCredentialSwitchService 共用 turn 结束 / 会话关闭边界接线。
+  // 等待其它任务空闲时不阻塞输入；只在实际重启期间挡住相关会话的派发，
+  // 成功或失败收口后均唤醒，避免全局设置变化冻结无关任务。
   const deferredCodexRestartService = new DeferredCodexRestartService({
     restart: restartCodexAfterAuthModeChange,
     hasBusyLocalCodexSession: () =>
@@ -14354,7 +14393,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         .listActiveSessions()
         .filter((session) => session.agentKind === 'codex' && !session.remoteHostId)
         .map((session) => session.id),
-    onApplied: createDeferredRestartAppliedWake({
+    onQueueGateReleased: createDeferredRestartSettledWake({
       wakeSession: (sessionId, reason) => inputCoordinator.wakeSession(sessionId, reason),
     }),
     logger: log,
@@ -17608,19 +17647,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           log.debug('set-fast-mode: session not found, no-op', { sessionId });
           return remoteResponse;
         }
-        if (sess.agentKind === 'pi') {
-          // Pi 的 ChatGPT 请求不从 pi 请求体携带 Fast，而是由上面的 session store
-          // 在 compat-proxy 决策点闭包进 responses bridge prefs。到这里已经即时生效，
-          // 无需向 pi RPC 再发一份不存在的 set_fast_mode 控制命令。
-          await commitRuntimeAxisAfterPersistence({
-            persist: persistFastMode,
-            commit: commitFastMode,
-            assertCanCommit: assertOwnerCurrent,
-          });
-          log.debug('set-fast-mode: pi responses bridge state updated', { sessionId, enabled });
-          return remoteResponse;
-        }
-        if (sess.agentKind !== 'codex') {
+        if (sess.agentKind !== 'codex' && sess.agentKind !== 'pi') {
           await commitRuntimeAxisAfterPersistence({
             persist: persistFastMode,
             commit: commitFastMode,

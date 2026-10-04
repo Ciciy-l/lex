@@ -185,7 +185,17 @@ import {
   legacyNoSlotsGhostManifestDigest,
   type PluginMarketInstallationRecord,
 } from '../ledger';
-import { organizationDefaultTakeoverEligibility, PluginMarketService } from '../service';
+import {
+  organizationDefaultTakeoverEligibility,
+  PluginMarketService,
+  serverDefaultInstallEligibility,
+  type PluginMarketInstallContext,
+} from '../service';
+
+/** 显式安装的 Main 侧上下文：测试里用户总是确认，确认流程本身另有专门用例。 */
+const TEST_INSTALL_CONTEXT: PluginMarketInstallContext = {
+  consent: { prompt: async () => true, initiator: 'user' },
+};
 import type { PluginMarketApi } from '../api';
 import { createOrganizationPrefixStore } from '../organizationPrefixStore';
 
@@ -896,7 +906,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     });
     await expect(h.service.detail(organizationPlugin.id)).rejects.toThrow('[NOT_FOUND]');
     await expect(
-      h.service.install(publicPlugin.id, reviewedInstallOptions(publicPlugin)),
+      h.service.install(publicPlugin.id, reviewedInstallOptions(publicPlugin), TEST_INSTALL_CONTEXT),
     ).rejects.toThrow('[PRECONDITION_FAILED]');
     expect(runtime.install).not.toHaveBeenCalled();
   });
@@ -1553,11 +1563,12 @@ describe('PluginMarketService migration and defaultInstall', () => {
     await expect(
       h.service.install(item.id, {
         expectedReleaseId: item.currentRelease.id,
-      }),
+      }, TEST_INSTALL_CONTEXT),
     ).resolves.toMatchObject({ ghost: { manifest: { id: 'cindy-test' } } });
     expect(runtime.install).toHaveBeenCalledWith(expect.stringMatching(/\.cindy$/), {
       ghostId: 'cindy-test',
       version: '1.0.0',
+      consent: { mode: 'confirmed', key: expect.any(String) },
       afterCommitInLock: expect.any(Function),
     });
   });
@@ -1583,7 +1594,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       dir: '/userData/cindy-brain/cindy-test',
       enabled: true,
     });
-    await expect(h.service.install(item.id, reviewedInstallOptions(item))).resolves.toMatchObject({
+    await expect(h.service.install(item.id, reviewedInstallOptions(item), TEST_INSTALL_CONTEXT)).resolves.toMatchObject({
       ghost: { manifest: { id: 'cindy-test' } },
     });
     expect(runtime.install).toHaveBeenCalledTimes(1);
@@ -1638,7 +1649,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       h.service.install(item.id, {
         expectedReleaseId: item.currentRelease.id,
         expectedManifest: reviewedManifest,
-      }),
+      }, TEST_INSTALL_CONTEXT),
     ).resolves.toMatchObject({ ghost: { manifest: actualManifest } });
     expect(runtime.install.mock.calls[0]?.[1]).not.toHaveProperty('manifestCap');
   });
@@ -1662,7 +1673,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       h.service.install(item.id, {
         expectedReleaseId: item.currentRelease.id,
         expectedManifest: normalizedBrokerManifest,
-      }),
+      }, TEST_INSTALL_CONTEXT),
     ).rejects.toThrow('[GHOST_BROKER_REDIRECT_PORT_REQUIRED]');
     expect(h.api.download).not.toHaveBeenCalled();
     expect(runtime.install).not.toHaveBeenCalled();
@@ -1679,11 +1690,12 @@ describe('PluginMarketService migration and defaultInstall', () => {
     });
     const h = harness([item]);
 
-    const { ghost } = await h.service.install(item.id, reviewedInstallOptions(item));
+    const { ghost } = await h.service.install(item.id, reviewedInstallOptions(item), TEST_INSTALL_CONTEXT);
 
     expect(runtime.install).toHaveBeenCalledWith(expect.stringMatching(/\.cindy$/), {
       ghostId: 'cindy-test',
       version: '1.0.0',
+      consent: { mode: 'confirmed', key: expect.any(String) },
       afterCommitInLock: expect.any(Function),
     });
     // 安装入口用目录 summary 做 detail 身份绑定(防止把 A 的确认导向 B 的内容),
@@ -1711,7 +1723,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     await orgHarness.service.install(orgItem.id, {
       ...reviewedInstallOptions(orgItem),
       expectedManifest: manifest('acme-tool'),
-    });
+    }, TEST_INSTALL_CONTEXT);
     expect(runtime.install).toHaveBeenCalledWith(
       expect.stringMatching(/\.cindy$/),
       expect.objectContaining({
@@ -1745,7 +1757,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       enabled: true,
     });
     const publicHarness = harness([publicItem]);
-    await publicHarness.service.install(publicItem.id, reviewedInstallOptions(publicItem));
+    await publicHarness.service.install(publicItem.id, reviewedInstallOptions(publicItem), TEST_INSTALL_CONTEXT);
     expect(runtime.install.mock.calls[0]?.[1]).not.toHaveProperty('pendingMarketRecord');
 
     runtime.install.mockReset();
@@ -1756,7 +1768,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       enabled: true,
     });
     const personalHarness = harness([personalItem]);
-    await personalHarness.service.install(personalItem.id, reviewedInstallOptions(personalItem));
+    await personalHarness.service.install(personalItem.id, reviewedInstallOptions(personalItem), TEST_INSTALL_CONTEXT);
     expect(runtime.install.mock.calls[0]?.[1]).not.toHaveProperty('pendingMarketRecord');
   });
 
@@ -1776,7 +1788,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       enabled: true,
     });
 
-    await expect(h.service.install(item.id, reviewedInstallOptions(item))).resolves.toMatchObject({
+    await expect(h.service.install(item.id, reviewedInstallOptions(item), TEST_INSTALL_CONTEXT)).resolves.toMatchObject({
       ghost: {
         manifest: {
           setup: { requires: [{ anyOf: [{ kind: 'secret', key: 'api_key' }] }] },
@@ -1797,7 +1809,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     const h = harness([selected, other]);
 
     await expect(
-      h.service.install(selected.id, reviewedInstallOptions(selected)),
+      h.service.install(selected.id, reviewedInstallOptions(selected), TEST_INSTALL_CONTEXT),
     ).resolves.toMatchObject({ ghost: { manifest: { id: selected.ghostId } } });
     expect(h.api.detail).toHaveBeenCalledWith(selected.id);
     // 安装入口用目录 summary 绑定 detail 身份,共享 ghostId 的另一条目也一并取回。
@@ -1813,7 +1825,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     });
     const h = harness([github]);
 
-    await h.service.install(github.id, reviewedInstallOptions(github));
+    await h.service.install(github.id, reviewedInstallOptions(github), TEST_INSTALL_CONTEXT);
 
     expect(runtime.install.mock.calls[0]?.[1]).toMatchObject({
       ghostId: 'cindy-github',
@@ -1828,10 +1840,11 @@ describe('PluginMarketService migration and defaultInstall', () => {
       enabled: true,
     });
     const ordinaryHarness = harness([ordinary]);
-    await ordinaryHarness.service.install(ordinary.id, reviewedInstallOptions(ordinary));
+    await ordinaryHarness.service.install(ordinary.id, reviewedInstallOptions(ordinary), TEST_INSTALL_CONTEXT);
     expect(runtime.install.mock.calls[0]?.[1]).toEqual({
       ghostId: 'cindy-test',
       version: '1.0.0',
+      consent: { mode: 'confirmed', key: expect.any(String) },
       afterCommitInLock: expect.any(Function),
     });
   });
@@ -1871,7 +1884,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       expectedReleaseId: item.currentRelease.id,
       expectedManifest: rawManifest as unknown as GhostManifest,
       allowSourceReplacement: false,
-    });
+    }, TEST_INSTALL_CONTEXT);
 
     expect(h.ledger.installationForGhost(item.ghostId)).toMatchObject({
       manifestDigest: ghostManifestDigest(rawManifest),
@@ -2279,7 +2292,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     });
     const h = harness([item]);
 
-    await h.service.install(item.id, reviewedInstallOptions(item));
+    await h.service.install(item.id, reviewedInstallOptions(item), TEST_INSTALL_CONTEXT);
 
     expect(runtime.install.mock.calls[0]?.[1]).not.toHaveProperty('manifestCap');
   });
@@ -2323,7 +2336,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     await h.service.install(item.id, {
       ...reviewedInstallOptions(item),
       expectedInstalledApproval: APPROVED_INSTALL_TOKEN,
-    });
+    }, TEST_INSTALL_CONTEXT);
 
     expect(runtime.install.mock.calls[0]?.[1]).not.toHaveProperty('manifestCap');
   });
@@ -2356,7 +2369,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       h.service.install(item.id, {
         ...reviewedInstallOptions(item, true),
         expectedInstalledApproval: APPROVED_INSTALL_TOKEN,
-      }),
+      }, TEST_INSTALL_CONTEXT),
     ).rejects.toThrow('placement failed');
     expect(h.ledger.installationForGhost(item.ghostId)).toEqual(previousRecord);
     expect(h.ledger.isDefaultInstallSuppressed('user-1', item.id)).toBe(false);
@@ -2369,7 +2382,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       h.service.install(item.id, {
         ...reviewedInstallOptions(item, true),
         expectedInstalledApproval: APPROVED_INSTALL_TOKEN,
-      }),
+      }, TEST_INSTALL_CONTEXT),
     ).rejects.toThrow('notification failed after placement');
     expect(h.ledger.installationForGhost(item.ghostId)).toMatchObject({ installed: false });
     expect(h.ledger.isDefaultInstallSuppressed('user-1', item.id)).toBe(true);
@@ -2386,7 +2399,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       h.service.install(item.id, {
         ...reviewedInstallOptions(item, true),
         expectedInstalledApproval: APPROVED_INSTALL_TOKEN,
-      }),
+      }, TEST_INSTALL_CONTEXT),
     ).resolves.toMatchObject({
       ghost: { manifest: { version: '2.0.0' } },
     });
@@ -2424,7 +2437,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     await h.service.install(item.id, {
       ...reviewedInstallOptions(item),
       expectedInstalledApproval: APPROVED_INSTALL_TOKEN,
-    });
+    }, TEST_INSTALL_CONTEXT);
 
     expect(runtime.install.mock.calls[0]?.[1]).not.toHaveProperty('manifestCap');
   });
@@ -2547,6 +2560,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
   });
 
   it('silently upgrades a default package whose detail manifest contains normalized setup', async () => {
+    setCurrentOrganization('cindy');
     const item = summary({
       scope: 'organization',
       organizationId: 'org-1',
@@ -2665,6 +2679,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
   });
 
   it('silently upgrades plugins whose market manifest expands capabilities', async () => {
+    setCurrentOrganization('cindy');
     const item = summary({
       scope: 'organization',
       organizationId: 'org-1',
@@ -3101,7 +3116,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     });
     const h = harness([item]);
 
-    await expect(h.service.install(item.id, reviewedInstallOptions(item))).resolves.toMatchObject({
+    await expect(h.service.install(item.id, reviewedInstallOptions(item), TEST_INSTALL_CONTEXT)).resolves.toMatchObject({
       ghost: { manifest: { id: 'cindy-test' }, enabled: false },
     });
     expect(h.api.download).toHaveBeenCalledWith(item.id, item.currentRelease.id);
@@ -3126,7 +3141,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     });
 
     const order: string[] = [];
-    const installing = h.service.install(item.id, reviewedInstallOptions(item));
+    const installing = h.service.install(item.id, reviewedInstallOptions(item), TEST_INSTALL_CONTEXT);
     // 等安装推进到持锁并阻塞在 runtime.install 上。
     await vi.waitFor(() => expect(runtime.install).toHaveBeenCalled());
     const outsider = withGhostInstallLock(item.ghostId, async () => {
@@ -3158,7 +3173,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     });
     const h = harness([item]);
 
-    await expect(h.service.install(item.id, reviewedInstallOptions(item))).rejects.toThrow(
+    await expect(h.service.install(item.id, reviewedInstallOptions(item), TEST_INSTALL_CONTEXT)).rejects.toThrow(
       '[NOT_FOUND]',
     );
     expect(h.api.detail).not.toHaveBeenCalled();
@@ -3193,7 +3208,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     const item = summary({ ghostId: 'cindy-art', defaultInstall: true });
     const h = harness([item]);
 
-    await expect(h.service.install(item.id, reviewedInstallOptions(item))).rejects.toThrow(
+    await expect(h.service.install(item.id, reviewedInstallOptions(item), TEST_INSTALL_CONTEXT)).rejects.toThrow(
       '[PERMISSION_DENIED]',
     );
     expect(h.api.detail).not.toHaveBeenCalled();
@@ -3649,7 +3664,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       h.service.install(item.id, {
         ...reviewedInstallOptions(item, true),
         expectedInstalledApproval: APPROVED_INSTALL_TOKEN,
-      }),
+      }, TEST_INSTALL_CONTEXT),
     ).resolves.toMatchObject({
       ghost: { manifest: { id: item.ghostId } },
     });
@@ -3695,7 +3710,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       h.service.install(item.id, {
         ...reviewedInstallOptions(item, true),
         expectedInstalledApproval: APPROVED_INSTALL_TOKEN,
-      }),
+      }, TEST_INSTALL_CONTEXT),
     ).rejects.toThrow('[PRECONDITION_FAILED]');
 
     expect(h.api.download).toHaveBeenCalledTimes(1);
@@ -3722,7 +3737,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       };
     });
 
-    await expect(h.service.install(item.id, reviewedInstallOptions(item))).rejects.toThrow(
+    await expect(h.service.install(item.id, reviewedInstallOptions(item), TEST_INSTALL_CONTEXT)).rejects.toThrow(
       '[PRECONDITION_FAILED]',
     );
     expect(runtime.install).not.toHaveBeenCalled();
@@ -3764,7 +3779,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       h.service.install(item.id, {
         ...reviewedInstallOptions(item),
         expectedInstalledApproval: APPROVED_INSTALL_TOKEN,
-      }),
+      }, TEST_INSTALL_CONTEXT),
     ).resolves.toMatchObject({
       ghost: { manifest: { version: '2.0.0' } },
     });
@@ -3801,7 +3816,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       h.service.install(item.id, {
         ...reviewedInstallOptions(item),
         expectedInstalledApproval: APPROVED_INSTALL_TOKEN,
-      }),
+      }, TEST_INSTALL_CONTEXT),
     ).rejects.toThrow('[PRECONDITION_FAILED]');
     expect(runtime.install).not.toHaveBeenCalled();
   });
@@ -3840,7 +3855,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       h.service.install(item.id, {
         ...reviewedInstallOptions(item),
         expectedInstalledApproval: APPROVED_INSTALL_TOKEN,
-      }),
+      }, TEST_INSTALL_CONTEXT),
     ).rejects.toThrow('[PRECONDITION_FAILED]');
     expect(runtime.install).not.toHaveBeenCalled();
   });
@@ -3864,7 +3879,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       },
     });
 
-    await expect(h.service.install(reviewed.id, reviewedInstallOptions(reviewed))).rejects.toThrow(
+    await expect(h.service.install(reviewed.id, reviewedInstallOptions(reviewed), TEST_INSTALL_CONTEXT)).rejects.toThrow(
       '[PRECONDITION_FAILED]',
     );
     expect(h.api.download).not.toHaveBeenCalled();
@@ -3881,7 +3896,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       sizeBytes: item.currentRelease.sizeBytes,
     });
 
-    await expect(h.service.install(item.id, reviewedInstallOptions(item))).rejects.toThrow(
+    await expect(h.service.install(item.id, reviewedInstallOptions(item), TEST_INSTALL_CONTEXT)).rejects.toThrow(
       '[PRECONDITION_FAILED]',
     );
     expect(runtime.install).not.toHaveBeenCalled();
@@ -3905,7 +3920,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       };
     });
 
-    await expect(h.service.install(item.id, reviewedInstallOptions(item))).rejects.toThrow(
+    await expect(h.service.install(item.id, reviewedInstallOptions(item), TEST_INSTALL_CONTEXT)).rejects.toThrow(
       '[PRECONDITION_FAILED]',
     );
     expect(runtime.install).not.toHaveBeenCalled();
@@ -3930,7 +3945,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       return installedGhost;
     });
 
-    await expect(h.service.install(item.id, reviewedInstallOptions(item))).resolves.toMatchObject({
+    await expect(h.service.install(item.id, reviewedInstallOptions(item), TEST_INSTALL_CONTEXT)).resolves.toMatchObject({
       ghost: { manifest: { id: item.ghostId } },
     });
     expect(h.ledger.installationForGhost(item.ghostId)).toMatchObject({
@@ -4028,6 +4043,45 @@ function installRuntimeGhost(
 }
 
 describe('organization default Plugin takeover', () => {
+  it('requires current server eligibility before granting a default-install exemption', () => {
+    const owner = { mode: 'cloud' as const, dataOwnerId: 'user-1', generation: 1 };
+    const base = {
+      owner,
+      plugin: organizationDefaultSummary(),
+      currentOrganization: { organizationId: 'org-1', pluginPrefix: 'acme' },
+      uniqueGhostId: true,
+      runtimeAvailable: true,
+      optedOut: false,
+      builtinRemoved: false,
+      busy: false,
+    };
+    expect(serverDefaultInstallEligibility(base)).toEqual({ eligible: true });
+    expect(
+      serverDefaultInstallEligibility({
+        ...base,
+        currentOrganization: null,
+      }),
+    ).toEqual({ eligible: false, reason: 'not-current-organization-default' });
+    expect(
+      serverDefaultInstallEligibility({
+        ...base,
+        currentOrganization: { organizationId: 'org-2', pluginPrefix: 'acme' },
+      }),
+    ).toEqual({ eligible: false, reason: 'not-current-organization-default' });
+    expect(
+      serverDefaultInstallEligibility({
+        ...base,
+        plugin: { ...base.plugin, ghostId: 'other-tool' },
+      }),
+    ).toEqual({ eligible: false, reason: 'not-current-organization-default' });
+    expect(
+      serverDefaultInstallEligibility({
+        ...base,
+        uniqueGhostId: false,
+      }),
+    ).toEqual({ eligible: false, reason: 'duplicate-ghost-id' });
+  });
+
   it('re-downloads and replaces a same-release bad target record without writing opt-out', async () => {
     setCurrentOrganization();
     const item = organizationDefaultSummary();
@@ -4853,16 +4907,245 @@ describe('market detail 响应身份绑定', () => {
     h.api.detail.mockImplementation(async () =>
       detail({ ...item, id: 'plg_other', ghostId: 'cindy-other' }),
     );
-    await expect(h.service.install(item.id, reviewedInstallOptions(item))).rejects.toThrow(
+    await expect(h.service.install(item.id, reviewedInstallOptions(item), TEST_INSTALL_CONTEXT)).rejects.toThrow(
       '[PRECONDITION_FAILED]',
     );
     // 只换 ghostId、id 相同也要拒:可见性与 ghostId 冲突判定都基于目录 summary。
     h.api.detail.mockImplementation(async () => detail({ ...item, ghostId: 'cindy-other' }));
-    await expect(h.service.install(item.id, reviewedInstallOptions(item))).rejects.toThrow(
+    await expect(h.service.install(item.id, reviewedInstallOptions(item), TEST_INSTALL_CONTEXT)).rejects.toThrow(
       '[PRECONDITION_FAILED]',
     );
     await expect(h.service.detail(item.id)).rejects.toThrow('[PRECONDITION_FAILED]');
     h.api.detail.mockImplementation(async () => detail({ ...item, id: 'plg_other' }));
     await expect(h.service.detail(item.id)).rejects.toThrow('[PRECONDITION_FAILED]');
+  });
+});
+
+describe('PluginMarketService install consent', () => {
+  function upgradeFixture(options: { defaultInstall?: boolean; nextCapabilities?: readonly ('notify' | 'fs')[] }) {
+    setCurrentOrganization('cindy');
+    const item = summary({
+      scope: 'organization',
+      organizationId: 'org-1',
+      defaultInstall: options.defaultInstall ?? false,
+      currentRelease: { ...summary().currentRelease, id: 'release-2', version: '2.0.0' },
+    });
+    const oldManifest = manifest(item.ghostId, '1.0.0');
+    const installDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cindy-market-consent-'));
+    roots.push(installDir);
+    fs.writeFileSync(path.join(installDir, 'ghost.json'), JSON.stringify(oldManifest));
+    runtime.ghosts = [{ manifest: oldManifest, dir: installDir, enabled: true }];
+    const h = harness([item]);
+    const nextManifest = manifest(item.ghostId, '2.0.0', options.nextCapabilities ?? ['notify']);
+    h.api.detail.mockImplementation(async () => {
+      runtime.inspectedManifest = nextManifest;
+      return { ...item, currentRelease: { ...item.currentRelease, manifest: nextManifest } };
+    });
+    h.ledger.upsertInstallation({
+      ...recordForTest(item),
+      releaseId: 'release-1',
+      version: '1.0.0',
+      manifestDigest: ghostManifestDigest(oldManifest),
+    });
+    runtime.install.mockImplementation(async () => {
+      const ghost = { manifest: nextManifest, dir: installDir, enabled: true };
+      runtime.ghosts = [ghost];
+      return ghost;
+    });
+    return { item, h };
+  }
+
+  it('pauses a background update that adds permissions and keeps the old version', async () => {
+    const { h } = upgradeFixture({ nextCapabilities: ['notify', 'fs'] });
+
+    const first = await h.service.snapshot();
+    expect(first.items[0]).toMatchObject({ installState: 'update-available', updateRequiresConsent: true });
+    await h.service.snapshot();
+
+    expect(runtime.install).not.toHaveBeenCalled();
+    expect(h.api.download).toHaveBeenCalledTimes(1);
+    expect(h.ledger.installationForGhost('cindy-test')).toMatchObject({ releaseId: 'release-1' });
+  });
+
+  it('notifies after deferred reconciliation records a new consent hold', async () => {
+    const { h } = upgradeFixture({ nextCapabilities: ['notify', 'fs'] });
+    const onConsentHoldsChanged = vi.fn();
+
+    const first = await h.service.snapshot({
+      deferReconciliation: true,
+      onConsentHoldsChanged,
+    });
+    expect(first.items[0]).toMatchObject({ installState: 'update-available' });
+    expect(first.items[0]?.updateRequiresConsent).not.toBe(true);
+
+    await vi.waitFor(() => expect(onConsentHoldsChanged).toHaveBeenCalledOnce());
+  });
+
+  it('does not notify again when deferred reconciliation finds an existing consent hold', async () => {
+    const { h } = upgradeFixture({ nextCapabilities: ['notify', 'fs'] });
+    await h.service.snapshot();
+    const onConsentHoldsChanged = vi.fn();
+
+    await h.service.snapshot({
+      deferReconciliation: true,
+      onConsentHoldsChanged,
+    });
+    await vi.waitFor(() => expect(h.api.download).toHaveBeenCalledTimes(1));
+    expect(onConsentHoldsChanged).not.toHaveBeenCalled();
+  });
+
+  it('keeps silent background updates when permissions do not grow', async () => {
+    const { h } = upgradeFixture({});
+
+    await expect(h.service.snapshot()).resolves.toMatchObject({
+      items: [{ installState: 'installed', version: '2.0.0' }],
+    });
+    expect(runtime.install).toHaveBeenCalledWith(
+      expect.stringMatching(/\.cindy$/),
+      expect.objectContaining({ consent: { mode: 'unprompted' } }),
+    );
+  });
+
+  it('updates server default installs silently even when permissions grow', async () => {
+    const { h } = upgradeFixture({ defaultInstall: true, nextCapabilities: ['notify', 'fs'] });
+
+    await h.service.snapshot();
+
+    expect(runtime.install).toHaveBeenCalledWith(
+      expect.stringMatching(/\.cindy$/),
+      expect.objectContaining({ consent: { mode: 'exempt', reason: 'server-default-install' } }),
+    );
+  });
+
+  it('holds an organization update when the current server eligibility is absent', async () => {
+    const { h } = upgradeFixture({ defaultInstall: true, nextCapabilities: ['notify', 'fs'] });
+    runtime.currentOrganization = null;
+
+    const snapshot = await h.service.snapshot();
+
+    expect(runtime.install).not.toHaveBeenCalled();
+    expect(h.api.download).toHaveBeenCalledTimes(1);
+    expect(snapshot.items[0]).toMatchObject({
+      installState: 'update-available',
+      updateRequiresConsent: true,
+    });
+  });
+
+  it('does not silently grow permissions after the user opted out of default install', async () => {
+    const { item, h } = upgradeFixture({ defaultInstall: true, nextCapabilities: ['notify', 'fs'] });
+    h.ledger.markRemoved(item.ghostId, 'user-1');
+    h.ledger.upsertInstallation({
+      ...recordForTest(item),
+      releaseId: 'release-1',
+      version: '1.0.0',
+      installed: true,
+      manifestDigest: ghostManifestDigest(manifest(item.ghostId, '1.0.0')),
+    });
+
+    const first = await h.service.snapshot();
+
+    expect(first.items[0]).toMatchObject({
+      installState: 'update-available',
+      updateRequiresConsent: true,
+    });
+    expect(runtime.install).not.toHaveBeenCalled();
+  });
+
+  it('does not hold the plugin mutation while waiting for install confirmation', async () => {
+    const item = summary();
+    const h = harness([item]);
+    const waiting = deferred();
+    let promptStarted = false;
+    const prompt = vi.fn(async () => {
+      promptStarted = true;
+      await waiting.promise;
+      return true;
+    });
+    runtime.install.mockImplementation(async () => {
+      const ghost = {
+        manifest: manifest(item.ghostId),
+        dir: '/userData/cindy-brain/cindy-test',
+        enabled: true,
+      };
+      runtime.ghosts = [ghost];
+      return ghost;
+    });
+
+    const installPromise = h.service.install(item.id, reviewedInstallOptions(item), {
+      consent: { prompt, initiator: 'user' },
+    });
+    await vi.waitFor(() => expect(promptStarted).toBe(true));
+    await expect(h.service.uninstall(item.id)).rejects.toThrow('[NOT_FOUND]');
+    waiting.resolve();
+    await expect(installPromise).resolves.toMatchObject({
+      ghost: { manifest: { id: item.ghostId } },
+    });
+  });
+
+  it('asks before a manual update that adds permissions and cancels when declined', async () => {
+    const { item, h } = upgradeFixture({ nextCapabilities: ['notify', 'fs'] });
+    await h.service.snapshot();
+    const prompt = vi.fn(async () => false);
+
+    await expect(
+      h.service.install(
+        item.id,
+        {
+          ...reviewedInstallOptions(item),
+          expectedInstalledApproval: 'approved:00000000-0000-4000-8000-000000000001',
+        },
+        { consent: { prompt, initiator: 'user' } },
+      ),
+    ).rejects.toMatchObject({ code: 'MUTATION_CANCELLED' });
+
+    expect(prompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        initiator: 'user',
+        origin: 'market',
+        facts: expect.objectContaining({ kind: 'update', previousVersion: '1.0.0', version: '2.0.0' }),
+      }),
+    );
+    expect(runtime.install).not.toHaveBeenCalled();
+    expect(h.ledger.installationForGhost('cindy-test')).toMatchObject({ releaseId: 'release-1' });
+  });
+
+  it('does not ask again for a manual update without new permissions', async () => {
+    const { item, h } = upgradeFixture({});
+    const prompt = vi.fn(async () => true);
+
+    await h.service.install(
+      item.id,
+      {
+        ...reviewedInstallOptions(item),
+        expectedInstalledApproval: 'approved:00000000-0000-4000-8000-000000000001',
+      },
+      { consent: { prompt, initiator: 'agent' } },
+    );
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect(runtime.install).toHaveBeenCalledOnce();
+  });
+
+  it('asks before every first install, including installs requested by an Agent', async () => {
+    const item = summary();
+    const h = harness([item]);
+    const prompt = vi.fn(async () => true);
+    runtime.install.mockImplementation(async () => {
+      const ghost = { manifest: manifest(item.ghostId), dir: '/userData/cindy-brain/cindy-test', enabled: true };
+      runtime.ghosts = [ghost];
+      return ghost;
+    });
+
+    await h.service.install(item.id, reviewedInstallOptions(item), {
+      consent: { prompt, initiator: 'agent' },
+    });
+
+    expect(prompt).toHaveBeenCalledWith(
+      expect.objectContaining({ initiator: 'agent', origin: 'market', facts: expect.objectContaining({ kind: 'install' }) }),
+    );
+    expect(runtime.install).toHaveBeenCalledWith(
+      expect.stringMatching(/\.cindy$/),
+      expect.objectContaining({ consent: { mode: 'confirmed', key: expect.any(String) } }),
+    );
   });
 });

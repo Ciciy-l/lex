@@ -63,6 +63,7 @@ import {
   type AgentDeps,
   type StartSessionOptions,
   type OneShotOptions,
+  type RefreshLocalModelsOptions,
   type SendOptions,
   type TurnPermissionPolicy,
 } from '../base-agent.js';
@@ -1004,6 +1005,72 @@ export class ClaudeCodeAgent extends BaseAgent {
 
   async scanAtResources(opts: ScanAtResourcesOptions): Promise<ScanAtResourcesResult> {
     return scanClaudeAtResources(opts.workingDir, opts.cap, opts.query);
+  }
+
+  /** Read the authenticated SDK model list without sending a prompt or loading any saved settings. */
+  override async refreshLocalModels(options?: RefreshLocalModelsOptions): Promise<boolean> {
+    const deliver = options?.onSupportedModels ?? supportedModelsListener;
+    if (!deliver) return false;
+    const log = this.deps.logger.child('claude-code/supportedModels');
+    const authOptions = {
+      credentialMode: 'oauth-bearer' as const,
+      ...(options?.providerId ? { providerId: options.providerId } : {}),
+    };
+    let probeDir: string | null = null;
+    let query: Query | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const abortController = new AbortController();
+    const idleInput = createAsyncQueue<never>();
+    try {
+      const authAtStart = await this.deps.auth.getState(authOptions);
+      if (!authAtStart.authenticated) return false;
+      const credentialGeneration = this.deps.auth.captureCredentialGeneration?.() ?? null;
+      probeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cindy-claude-models-'));
+      const env = await buildClaudeEnv(this.deps.auth, this.deps.runtimeConfig, {
+        credentialMode: 'oauth-bearer',
+        sessionProviderId: options?.providerId ?? null,
+        subagentModel: null,
+      });
+      // Force both the CLI config directory and its setting source to the empty probe.
+      // The credential itself comes only from the existing AuthAdapter above.
+      env.CLAUDE_CONFIG_DIR = probeDir;
+      query = sdkQuery({
+        prompt: idleInput as unknown as Parameters<typeof sdkQuery>[0]['prompt'],
+        options: {
+          abortController,
+          cwd: probeDir,
+          pathToClaudeCodeExecutable: this.deps.binaryPath,
+          env,
+          settingSources: [],
+          tools: [],
+          mcpServers: {},
+          persistSession: false,
+        },
+      });
+      const models = await Promise.race([
+        query.supportedModels(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('supportedModels probe timed out')), 30_000);
+        }),
+      ]);
+      const authAtEnd = await this.deps.auth.getState(authOptions);
+      const currentGeneration = this.deps.auth.captureCredentialGeneration?.() ?? null;
+      if (!Array.isArray(models) || !authAtEnd.authenticated ||
+          authAtEnd.identity !== authAtStart.identity || currentGeneration !== credentialGeneration) {
+        return false;
+      }
+      deliver(models);
+      return true;
+    } catch (error) {
+      log.warn('supportedModels probe failed', { error: error instanceof Error ? error.message : String(error) });
+      return false;
+    } finally {
+      if (timer) clearTimeout(timer);
+      idleInput.end();
+      try { query?.close(); } catch { /* The short-lived SDK query may already be closed. */ }
+      abortController.abort();
+      if (probeDir) await fs.rm(probeDir, { recursive: true, force: true }).catch(() => undefined);
+    }
   }
 
   /**

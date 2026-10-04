@@ -1,6 +1,14 @@
-import { AUTO_REVIEW_SOURCE_CONTENT, AUTO_REVIEW_USER_INTENT, appendAutoReviewUserIntent } from '@cindy/maker-core';
+import {
+  AUTO_REVIEW_SOURCE_CONTENT,
+  AUTO_REVIEW_USER_INTENT,
+  appendAutoReviewUserIntent,
+  Session,
+  type AgentEvent,
+  type AgentSessionHandle,
+} from '@cindy/maker-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentInputCoordinator } from '../agent-input-coordinator.js';
+import { bindSilentStopContinuationGeneration } from '../silentStopContinuationBinding.js';
 import { createOrcaInterAgentDispatcher } from '../orcaInterAgentDispatcher.js';
 import {
   createOrcaTeamService,
@@ -982,6 +990,140 @@ function createHarness(opts?: {
       fn: ((sessionId: string, clientIds: string[]) => Promise<Set<string>>) | undefined,
     ) {
       getPersistedClientIds = fn;
+    },
+  };
+}
+
+/** Bridges the real maker-core Session reservation/event boundary into the real coordinator. */
+function createRealSessionCoordinatorBridge(h: ReturnType<typeof createHarness>) {
+  const sessionId = 'silent-stop-real-session';
+  const queuedEvents: AgentEvent[] = [];
+  const terminalEvents: Array<{ type: 'done' | 'error'; generation: number | undefined }> = [];
+  let releaseEvents: (() => void) | null = null;
+  let eventsClosed = false;
+  let shuttingDown = false;
+  let providerRunning = false;
+  let continuationInFlight = false;
+  let continuationTerminal: 'done' | 'error' | null = null;
+  let suppressSilentStopDone = true;
+
+  const emit = (event: AgentEvent) => {
+    queuedEvents.push(event);
+    releaseEvents?.();
+    releaseEvents = null;
+  };
+  const logger = {
+    trace: vi.fn(), debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), fatal: vi.fn(),
+    child: () => logger,
+  };
+  const handle = {
+    id: 'provider-thread',
+    agentKind: 'pi',
+    model: 'test-model',
+    send: vi.fn(async () => {
+      providerRunning = true;
+      h.setRunning(true);
+      if (continuationInFlight && continuationTerminal) {
+        providerRunning = false;
+        emit({ type: 'status', data: { isRunning: false }, source: 'pi' } as AgentEvent);
+        emit({
+          type: continuationTerminal,
+          data: continuationTerminal === 'done'
+            ? { result: 'continued successfully' }
+            : { message: 'early continuation error', reason: 'provider_error' },
+          source: 'pi',
+        } as AgentEvent);
+        await flush();
+      }
+    }),
+    abort: vi.fn(async () => { providerRunning = false; }),
+    close: vi.fn(async () => {
+      providerRunning = false;
+      eventsClosed = true;
+      releaseEvents?.();
+    }),
+    isTurnRunning: () => providerRunning,
+    setInteractionResolver: vi.fn(),
+    async *events() {
+      try {
+        while (!eventsClosed) {
+          while (queuedEvents.length > 0) yield queuedEvents.shift()!;
+          await new Promise<void>((resolve) => { releaseEvents = resolve; });
+        }
+      } finally {
+        releaseEvents = null;
+      }
+    },
+  } as unknown as AgentSessionHandle;
+  const session = new Session({
+    id: sessionId,
+    sessionInstanceId: 'harness-session',
+    agentKind: 'pi',
+    workDir: process.cwd(),
+    handle,
+    capabilities: {} as never,
+    logger,
+    turnStallMs: 0,
+  });
+  const unsubscribe = session.onEvent((event) => {
+    if (shuttingDown || (event.type !== 'done' && event.type !== 'error')) return;
+    const observed = session.getObservedCurrentTurnTerminal();
+    h.setTurnGeneration(session.getTurnGeneration());
+    h.setObservedCurrentTurnTerminal(observed);
+    terminalEvents.push({ type: event.type, generation: event.sessionTurnGeneration });
+    if (suppressSilentStopDone && event.type === 'done') {
+      suppressSilentStopDone = false;
+      return;
+    }
+    const data = event.data as { message?: unknown } | null;
+    h.coordinator.onTurnEvent(
+      sessionId,
+      event.type,
+      typeof data?.message === 'string' ? data.message : undefined,
+      undefined,
+      {
+        sessionTurnGeneration: event.sessionTurnGeneration,
+        sessionInstanceId: event.sessionInstanceId,
+      },
+    );
+  });
+  h.setAgentKind('pi');
+  h.sendToAgent.mockImplementation(async (id, message, _createOpts, sendOpts) => {
+    await persistQueuedUserMessage(id, sendOpts);
+    const result = await session.send(message as never, {
+      onTurnReserved: (generation) => {
+        h.setTurnGeneration(generation);
+        sendOpts.onVendorTurnReserved?.(generation);
+      },
+      signal: sendOpts.signal,
+    });
+    return result.accepted ? sendSuccess('maker-core-session') : sessionDispatchFailure(result.reason);
+  });
+
+  return {
+    session,
+    terminalEvents,
+    emitSilentStopDone() {
+      providerRunning = false;
+      emit({ type: 'status', data: { isRunning: false }, source: 'pi' } as AgentEvent);
+      emit({ type: 'done', data: { result: 'silent-stop boundary' }, source: 'pi' } as AgentEvent);
+    },
+    setContinuation(terminal: 'done' | 'error' | null) {
+      continuationInFlight = true;
+      continuationTerminal = terminal;
+    },
+    finishContinuation() {
+      continuationInFlight = false;
+      continuationTerminal = null;
+    },
+    async dispose() {
+      shuttingDown = true;
+      h.setRunning(false);
+      h.coordinator.onSessionClosed(sessionId);
+      unsubscribe();
+      eventsClosed = true;
+      releaseEvents?.();
+      await session.close().catch(() => {});
     },
   };
 }
@@ -8020,6 +8162,343 @@ describe('AgentInputCoordinator steer transaction', () => {
       vi.useRealTimers();
     }
   });
+
+  it('settles leftover activeTurn after a host continuation adopts the new vendor generation', async () => {
+    // silent-stop 自动续跑用 sendHostTurnContinuation 绕过 send 事务；它必须在预约时
+    // 把新 vendor generation 交给协调器，否则续跑的真实 done 会被 ownership 守卫丢弃，
+    // 残留 activeTurn 永久挡住队列（2026-09-24 僵尸 activeTurn 事故）。
+    vi.useFakeTimers();
+    try {
+      const h = createHarness();
+      const sid = 'host-continuation-generation-adopted';
+      h.coordinator.enqueue(sid, makeItem('q-1', 'first'));
+      await flush();
+
+      h.setTurnGeneration(1);
+      h.coordinator.noteHostTurnContinuation(sid, 1);
+      h.setRunning(false);
+      h.setObservedCurrentTurnTerminal({ kind: 'done', generation: 1 });
+
+      h.coordinator.enqueue(sid, makeItem('q-2', 'queued-after-continuation'));
+      await flush();
+      // 续跑的终态还没到 → 队列仍被 activeTurn 挡住。
+      expect(h.sendToAgent).toHaveBeenCalledTimes(1);
+
+      h.coordinator.onTurnEvent(sid, 'done', undefined, undefined, {
+        sessionTurnGeneration: 1,
+        sessionInstanceId: 'harness-session',
+      });
+      await flush();
+
+      expect(h.sendToAgent).toHaveBeenCalledTimes(2);
+      expect(h.sendToAgent.mock.calls[1]?.[1]).toEqual({
+        type: 'user',
+        content: 'queued-after-continuation',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('restores the pre-continuation binding when the host continuation send fails before dispatch', async () => {
+    // 续跑预约后 send 在派发确认前失败：Session 回滚 turnGeneration，
+    // settleSilentStopDone 的合成 done 没有 generation，绑定必须同步回滚，
+    // 否则它会被 ownership 守卫丢弃，形成反向僵尸。
+    vi.useFakeTimers();
+    try {
+      const h = createHarness();
+      const sid = 'host-continuation-send-rejected-rollback';
+      h.coordinator.enqueue(sid, makeItem('q-1', 'first'));
+      await flush();
+
+      h.setTurnGeneration(1);
+      h.coordinator.noteHostTurnContinuation(sid, 1);
+      h.setTurnGeneration(0);
+      h.coordinator.noteHostTurnContinuationFailed(sid, 1);
+
+      h.setRunning(false);
+      h.setObservedCurrentTurnTerminal({ kind: 'done', generation: 0 });
+      h.coordinator.onTurnEvent(sid, 'done');
+      h.coordinator.enqueue(sid, makeItem('q-2', 'queued-after-failed-continuation'));
+      await flush();
+
+      expect(h.sendToAgent).toHaveBeenCalledTimes(2);
+      expect(h.sendToAgent.mock.calls[1]?.[1]).toEqual({
+        type: 'user',
+        content: 'queued-after-failed-continuation',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not restore a binding that no longer matches the failed continuation', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = createHarness();
+      const sid = 'host-continuation-rollback-superseded';
+      h.coordinator.enqueue(sid, makeItem('q-1', 'first'));
+      await flush();
+
+      h.setTurnGeneration(1);
+      h.coordinator.noteHostTurnContinuation(sid, 1);
+      // 绑定又被改写成 2 之后，针对 1 的失败回滚必须放手。
+      h.setTurnGeneration(2);
+      h.coordinator.noteHostTurnContinuation(sid, 2);
+      h.coordinator.noteHostTurnContinuationFailed(sid, 1);
+
+      h.setRunning(false);
+      h.setObservedCurrentTurnTerminal({ kind: 'done', generation: 2 });
+      h.coordinator.enqueue(sid, makeItem('q-2', 'queued-after-superseded-rollback'));
+      await flush();
+      h.coordinator.onTurnEvent(sid, 'done', undefined, undefined, {
+        sessionTurnGeneration: 2,
+        sessionInstanceId: 'harness-session',
+      });
+      await flush();
+
+      expect(h.sendToAgent).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps ignoring the pre-continuation generation terminal after the host continuation adopts a new one', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = createHarness();
+      const sid = 'host-continuation-old-generation-still-ignored';
+      h.coordinator.enqueue(sid, makeItem('q-1', 'first'));
+      await flush();
+
+      h.setTurnGeneration(1);
+      h.coordinator.noteHostTurnContinuation(sid, 1);
+      h.setRunning(false);
+      h.coordinator.enqueue(sid, makeItem('q-2', 'queued-after-old-generation-done'));
+      await flush();
+
+      // 改绑必须是一次单向采纳：旧代 (0) 的迟到 done 仍然不得结清 leftover。
+      h.coordinator.onTurnEvent(sid, 'done', undefined, undefined, {
+        sessionTurnGeneration: 0,
+        sessionInstanceId: 'harness-session',
+      });
+      await flush();
+      expect(h.sendToAgent).toHaveBeenCalledTimes(1);
+
+      h.setObservedCurrentTurnTerminal({ kind: 'done', generation: 1 });
+      h.coordinator.onTurnEvent(sid, 'done', undefined, undefined, {
+        sessionTurnGeneration: 1,
+        sessionInstanceId: 'harness-session',
+      });
+      await flush();
+      expect(h.sendToAgent).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('host continuation notification does not adopt a generation before the vendor dispatch is confirmed', async () => {
+    // sending 形态仍属 #3383 的 fail-closed 窗口：派发未确认前不得改写绑定。
+    vi.useFakeTimers();
+    try {
+      const h = createHarness();
+      const sid = 'host-continuation-pre-dispatch';
+      let releaseSend!: () => void;
+      h.sendToAgent.mockImplementationOnce(async (sessionId, _message, _createOpts, sendOpts) => {
+        sendOpts.onVendorTurnReserved?.(1);
+        await new Promise<void>((resolve) => {
+          releaseSend = resolve;
+        });
+        return { kind: 'session-dispatch', dispatched: true } as never;
+      });
+      h.coordinator.enqueue(sid, makeItem('q-1', 'first'));
+      await flush();
+
+      h.coordinator.noteHostTurnContinuation(sid, 7);
+      releaseSend();
+      await flush();
+
+      h.setRunning(false);
+      h.setObservedCurrentTurnTerminal({ kind: 'done', generation: 1 });
+      h.coordinator.enqueue(sid, makeItem('q-2', 'queued-after-dispatch'));
+      await flush();
+
+      h.coordinator.onTurnEvent(sid, 'done', undefined, undefined, {
+        sessionTurnGeneration: 1,
+        sessionInstanceId: 'harness-session',
+      });
+      await flush();
+
+      expect(h.sendToAgent).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('host continuation notification without a dispatched activeTurn does not hijack the next dispatch generation', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = createHarness();
+      const sid = 'host-continuation-idle-noop';
+      // 空闲期误调(理论上不该发生)：不得留下待生效的绑定。
+      h.coordinator.noteHostTurnContinuation(sid, 3);
+
+      h.coordinator.enqueue(sid, makeItem('q-1', 'first'));
+      await flush();
+
+      h.setRunning(false);
+      h.setObservedCurrentTurnTerminal({ kind: 'done', generation: 0 });
+      h.coordinator.onTurnEvent(sid, 'done', undefined, undefined, {
+        sessionTurnGeneration: 0,
+        sessionInstanceId: 'harness-session',
+      });
+      h.coordinator.enqueue(sid, makeItem('q-2', 'after-idle-notification'));
+      await flush();
+
+      expect(h.sendToAgent).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['done', 'error'] as const)(
+    'real Session plus coordinator settles an early continuation %s on the reserved generation',
+    async (terminalType) => {
+      vi.useFakeTimers();
+      const h = createHarness();
+      const real = createRealSessionCoordinatorBridge(h);
+      const sid = 'silent-stop-real-session';
+      const makePiItem = (clientId: string, text: string) => makeItem(clientId, text, {
+        createOpts: {
+          agentKind: 'pi', workingDir: '/repo', model: 'grok-4.5', effort: 'medium',
+          permissionMode: 'default', userPrompt: '', makerMemoryEnabled: false,
+          displayReasoning: 'summarized',
+        },
+      });
+      try {
+        h.coordinator.enqueue(sid, makePiItem('initial', 'original request'));
+        await vi.waitFor(() => expect(h.sendToAgent).toHaveBeenCalledTimes(1));
+        expect(real.session.getTurnGeneration()).toBe(1);
+        h.coordinator.enqueue(sid, makePiItem('queued-after-silent-stop', 'continue the existing work'));
+        await flush();
+        expect(h.sendToAgent).toHaveBeenCalledTimes(1);
+
+        real.emitSilentStopDone();
+        await vi.waitFor(() => expect(real.session.getObservedCurrentTurnTerminal())
+          .toMatchObject({ kind: 'done', generation: 1 }));
+        // The host owns this silent-stop terminal and keeps the coordinator's
+        // accepted input active while its continuation is reserved.
+        expect(h.sendToAgent).toHaveBeenCalledTimes(1);
+
+        const binding = bindSilentStopContinuationGeneration(sid, {
+          noteHostTurnContinuation: (sessionId, generation) => {
+            h.setTurnGeneration(generation);
+            h.coordinator.noteHostTurnContinuation(sessionId, generation);
+          },
+          noteHostTurnContinuationFailed: (sessionId, generation) => {
+            h.setTurnGeneration(real.session.getTurnGeneration());
+            h.coordinator.noteHostTurnContinuationFailed(sessionId, generation);
+          },
+        });
+        real.setContinuation(terminalType);
+        const result = await real.session.sendHostTurnContinuation('continue', binding.sendOpts);
+        real.finishContinuation();
+        expect(result.accepted).toBe(true);
+        await vi.waitFor(() => expect(real.terminalEvents).toContainEqual({ type: terminalType, generation: 2 }));
+        expect(real.session.getTurnGeneration()).toBe(2);
+
+        h.setRunning(false);
+        if (terminalType === 'done') {
+          h.coordinator.wakeSession(sid, 'real-session-continuation-settled');
+          await vi.waitFor(() => expect(h.sendToAgent).toHaveBeenCalledTimes(2));
+          expect(h.sendToAgent.mock.calls[1]?.[1]).toEqual({
+            type: 'user', content: 'continue the existing work',
+          });
+        } else {
+          await vi.waitFor(() => expect(h.coordinator.getProjection(sid)).toMatchObject({
+            error: 'early continuation error', recovery: { kind: 'active-turn' },
+          }));
+          expect(h.sendToAgent).toHaveBeenCalledTimes(1);
+        }
+      } finally {
+        await real.dispose();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each(['cancel-after-reservation', 'throw-before-provider'] as const)(
+    'real Session rollback lets the coordinator settle its synthesized done after %s',
+    async (failureMode) => {
+      vi.useFakeTimers();
+      const h = createHarness();
+      const real = createRealSessionCoordinatorBridge(h);
+      const sid = 'silent-stop-real-session';
+      const makePiItem = (clientId: string, text: string) => makeItem(clientId, text, {
+        createOpts: {
+          agentKind: 'pi', workingDir: '/repo', model: 'grok-4.5', effort: 'medium',
+          permissionMode: 'default', userPrompt: '', makerMemoryEnabled: false,
+          displayReasoning: 'summarized',
+        },
+      });
+      const adopted = vi.fn((sessionId: string, generation: number) => {
+        h.setTurnGeneration(generation);
+        h.coordinator.noteHostTurnContinuation(sessionId, generation);
+      });
+      const rolledBack = vi.fn((sessionId: string, generation: number) => {
+        h.setTurnGeneration(real.session.getTurnGeneration());
+        h.coordinator.noteHostTurnContinuationFailed(sessionId, generation);
+      });
+      try {
+        h.coordinator.enqueue(sid, makePiItem('initial', 'original request'));
+        await vi.waitFor(() => expect(h.sendToAgent).toHaveBeenCalledTimes(1));
+        h.coordinator.enqueue(sid, makePiItem('queued-after-silent-stop', 'continue the existing work'));
+        await flush();
+        real.emitSilentStopDone();
+        await vi.waitFor(() => expect(real.session.getObservedCurrentTurnTerminal())
+          .toMatchObject({ kind: 'done', generation: 1 }));
+
+        const binding = bindSilentStopContinuationGeneration(sid, {
+          noteHostTurnContinuation: adopted,
+          noteHostTurnContinuationFailed: rolledBack,
+        });
+        if (failureMode === 'cancel-after-reservation') {
+          const controller = new AbortController();
+          const result = await real.session.sendHostTurnContinuation('continue', {
+            ...binding.sendOpts,
+            signal: controller.signal,
+            afterTurnReserved: () => controller.abort(),
+          });
+          expect(result.accepted).toBe(false);
+        } else {
+          await expect(real.session.sendHostTurnContinuation('continue', {
+            ...binding.sendOpts,
+            beforeProviderStart: () => { throw new Error('continuation preparation failed'); },
+          })).rejects.toThrow('continuation preparation failed');
+        }
+
+        expect(adopted).toHaveBeenCalledExactlyOnceWith(sid, 2);
+        expect(real.session.getTurnGeneration()).toBe(1);
+        binding.rollbackBinding();
+        expect(rolledBack).toHaveBeenCalledExactlyOnceWith(sid, 2);
+        h.setTurnGeneration(real.session.getTurnGeneration());
+        h.setObservedCurrentTurnTerminal(real.session.getObservedCurrentTurnTerminal());
+        h.setRunning(false);
+
+        // register's settleSilentStopDone is synthetic: it has no vendor stamp,
+        // so the coordinator must have restored the captured generation itself.
+        h.coordinator.onTurnEvent(sid, 'done');
+        h.coordinator.wakeSession(sid, 'synthetic-silent-stop-done');
+        await vi.waitFor(() => expect(h.sendToAgent).toHaveBeenCalledTimes(2));
+        expect(h.sendToAgent.mock.calls[1]?.[1]).toEqual({
+          type: 'user', content: 'continue the existing work',
+        });
+      } finally {
+        await real.dispose();
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it('does not recover leftover activeTurn from a later-generation error callback', async () => {
     vi.useFakeTimers();

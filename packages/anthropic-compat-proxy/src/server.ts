@@ -1520,16 +1520,24 @@ function forward(
     // 失败语义(finishClientAfterUpstreamFailure → destroy),不补成正常结束。
     // 只约束显式流式请求:非流式 JSON 响应照旧字节透传,零行为变化。
     const gateStreamValidity = requestDeclaredStream && status >= 200 && status < 300;
-    // 合法 SSE 的首个事件必然远早于此(Anthropic 首行即 event: message_start);
-    // 上限只为封顶「持续输出无事件垃圾」时的内存与延迟。
+    // 合法 Anthropic SSE 的首个事件必然远早于此(首行即 event: message_start);
+    // 上限只为封顶「持续输出无事件垃圾」时的内存与延迟。缺 MIME 的 Responses
+    // 回退流必须等到完整事件才能确认，response.created 会回显长 instructions，
+    // 所以仅在已确认 SSE 前缀后使用独立且仍有界的首事件预算。
     const STREAM_GATE_PENDING_CAP_BYTES = 64 * 1024;
+    const STREAM_GATE_INFERRED_EVENT_CAP_BYTES = 8 * 1024 * 1024;
     const SSE_EVENT_MARKER_RE = /(^|\r?\n)(event|data):/;
-    const SSE_PREFIX_RE = /^\uFEFF?(?:(?:|:[^\r\n]*)\r?\n)*(?:event|data):/;
-    const SSE_DATA_FIELD_RE = /(?:^\uFEFF?|\r?\n)data:/;
+    // The inference scanner uses latin1 so each JS string index is one original wire byte.
+    const SSE_PREFIX_BYTES_RE = /^(?:\u00EF\u00BB\u00BF)?(?:(?:|:[^\r\n]*)\r?\n)*(?:event|data):/;
+    const SSE_DATA_FIELD_BYTES_RE = /(?:^(?:\u00EF\u00BB\u00BF)?|\r?\n)data:/;
     let streamGateCommitted = false;
     const pendingChunks: Buffer[] = [];
     let pendingBytes = 0;
     let pendingText = '';
+    let pendingWireText = '';
+    let inferredSseEventStart = 0;
+    let inferredSseBoundarySearchOffset = 0;
+    let inferredSseEventBytes = 0;
     const commitStreamResponse = (): void => {
       if (streamGateCommitted || upstreamFailureHandled || clientAborted || clientRes.destroyed) return;
       // Resolve the final MIME before constructing an adapter, and construct it
@@ -1580,6 +1588,7 @@ function forward(
       for (const chunk of pendingChunks) dest.write(chunk);
       pendingChunks.length = 0;
       pendingText = '';
+      pendingWireText = '';
       if (responseTransforms.length > 0) {
         // 客户端断开 / 上游故障收口时把 transform 一并拆掉,避免上游继续灌进无消费者的流。
         clientRes.on('close', () => responseTransforms.forEach((transform) => transform.destroy()));
@@ -1635,24 +1644,83 @@ function forward(
       }
       if (!streamGateCommitted) {
         // 门控中(未提交):积累待发字节并判定是否可提交。
-        if (pendingBytes < STREAM_GATE_PENDING_CAP_BYTES) {
-          pendingChunks.push(chunk);
-          pendingBytes += chunk.length;
-        } else {
-          pendingBytes += chunk.length;
-        }
+        // 无条件入缓冲:曾用 `pendingBytes < CAP` 做入队条件, 累计恰好落在 CAP
+        // (64KiB, 回环读的常见块大小)时, 后续 chunk 只计数不入队 —— 一旦事件
+        // 标记在这些 chunk 里到达并提交, 这些字节被永久跳过, 客户端收到中间
+        // 有缺口的 200 SSE。任何把 pendingBytes 推过上限的 chunk 都会在该
+        // chunk 内提交或按 502 拒收, 缓冲仍有界(至多 CAP + 单 chunk 溢出)。
+        pendingChunks.push(chunk);
+        pendingBytes += chunk.length;
         if (!isSse) {
           if (canInferSse) {
-            pendingText += chunk.toString('utf8');
-            // A field prefix alone cannot dispatch an event: keep buffering until
-            // a data-containing block ends in a blank line, including across chunks.
-            const completeEvents = pendingText.split(/\r?\n\r?\n/);
-            completeEvents.pop(); // The final block has no terminating blank line yet.
-            if (SSE_PREFIX_RE.test(pendingText) && completeEvents.some((event) => SSE_DATA_FIELD_RE.test(event))) {
-              respHeaders['content-type'] = 'text/event-stream';
-              commitStreamResponse();
+            // Keep a byte-for-code-unit mirror: delimiters and field names are ASCII,
+            // while latin1 guarantees each offset remains an exact original wire byte.
+            pendingWireText += chunk.toString('latin1');
+            // Fast-path the common first field. SSE_PREFIX_BYTES_RE also admits BOM and
+            // comment preambles before that field.
+            const hasSsePrefix = pendingWireText.startsWith('event:')
+              || pendingWireText.startsWith('data:')
+              || SSE_PREFIX_BYTES_RE.test(pendingWireText);
+            // A field prefix alone cannot dispatch an event: wait for a
+            // data-containing block to end in a blank line, including across
+            // chunks. Scan only newly appended text so a large valid first
+            // event cannot turn into repeated whole-buffer work.
+            if (hasSsePrefix) {
+              while (true) {
+                const boundary = [
+                  { value: '\n\n', offset: pendingWireText.indexOf('\n\n', inferredSseBoundarySearchOffset) },
+                  { value: '\n\r\n', offset: pendingWireText.indexOf('\n\r\n', inferredSseBoundarySearchOffset) },
+                  { value: '\r\n\n', offset: pendingWireText.indexOf('\r\n\n', inferredSseBoundarySearchOffset) },
+                  { value: '\r\n\r\n', offset: pendingWireText.indexOf('\r\n\r\n', inferredSseBoundarySearchOffset) },
+                ].filter((candidate) => candidate.offset !== -1)
+                  .sort((left, right) => left.offset - right.offset)[0];
+                if (!boundary) {
+                  // Retain three trailing bytes to catch a delimiter
+                  // split across chunks (\n\n or \r\n\r\n).
+                  inferredSseBoundarySearchOffset = Math.max(
+                    inferredSseEventStart,
+                    pendingWireText.length - 3,
+                  );
+                  break;
+                }
+                const completeEvent = pendingWireText.slice(inferredSseEventStart, boundary.offset);
+                inferredSseEventBytes += boundary.offset + boundary.value.length - inferredSseEventStart;
+                inferredSseEventStart = boundary.offset + boundary.value.length;
+                inferredSseBoundarySearchOffset = inferredSseEventStart;
+                if (SSE_DATA_FIELD_BYTES_RE.test(completeEvent)) {
+                  // The cap applies through the first complete data event, not to
+                  // trailing bytes in the same transport chunk. Reject a complete
+                  // oversized event before committing its buffered response.
+                  if (inferredSseEventBytes > STREAM_GATE_INFERRED_EVENT_CAP_BYTES) {
+                    const code = 'sse_inference_limit_exceeded';
+                    upstreamResponseTerminal = 'error';
+                    observerError(new Error(`invalid streaming response (${code})`));
+                    rejectInvalidStreamResponse(code, { bytes: totalBytes });
+                    upstreamReq.destroy(new Error(`invalid streaming response (${code})`));
+                    return;
+                  }
+                  respHeaders['content-type'] = 'text/event-stream';
+                  commitStreamResponse();
+                  return;
+                }
+              }
+            }
+            const pendingCap = hasSsePrefix
+              ? STREAM_GATE_INFERRED_EVENT_CAP_BYTES
+              : STREAM_GATE_PENDING_CAP_BYTES;
+            if (pendingBytes > pendingCap) {
+              const code = hasSsePrefix
+                ? 'sse_inference_limit_exceeded'
+                : 'non_sse_stream_response';
+              upstreamResponseTerminal = 'error';
+              observerError(new Error(`invalid streaming response (${code})`));
+              rejectInvalidStreamResponse(code, { bytes: totalBytes });
+              upstreamReq.destroy(new Error(`invalid streaming response (${code})`));
               return;
             }
+            // A valid prefix is waiting only for the terminator of its first data
+            // event; do not also apply the generic non-SSE 64 KiB limit below.
+            if (hasSsePrefix) return;
           }
           // 非 SSE 2xx:留在门控里等 end 统一转 502(有界缓冲做 errorType 诊断);
           // 超上限说明上游在持续输出非流式字节,立刻转 502 并切断上游。

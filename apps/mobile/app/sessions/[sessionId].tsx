@@ -12,6 +12,7 @@ import { isInFlightDeviceLinkError } from '@cindy/device-link';
 import { takeRefinementContextTail, truncateRefinementReply } from '@cindy/voice-input-core';
 import {
   ArrowDown,
+  Brain,
   Camera,
   Check,
   ChevronDown,
@@ -396,6 +397,7 @@ import {
 } from '@/session/sentMessageImagePreviews';
 import {
   buildOutboxItem,
+  canCancelOutboxRecord,
   createOutboxClientId,
   outboxDisplayItem,
   outboxItemAttachments,
@@ -909,6 +911,7 @@ export default function SessionScreen() {
     notificationResponse?: string;
     deviceId?: string;
     deviceName?: string;
+    remoteMemoryResourceId?: string;
     draft?: string;
     goalError?: string;
     goalObjective?: string;
@@ -934,6 +937,7 @@ export default function SessionScreen() {
   // 新发起的请求作废旧请求。
   const rewindRequestSeqRef = useRef(0);
   const deviceName = readRouteParam(params.deviceName) ?? deviceId;
+  const remoteMemoryResourceId = readRouteParam(params.remoteMemoryResourceId);
   const routeDraft = readRouteParam(params.draft);
   const routeFocusClientId = readRouteParam(params.focusClientId);
   const routeFocusComposerRequestKey = readRouteParam(params.focusComposerRequestKey);
@@ -1014,7 +1018,10 @@ export default function SessionScreen() {
   const revokedDevices = useRevokedDevices();
   const unresponsiveDevices = useUnresponsiveDevices();
   const maker = useMobileMakerTransport(deviceId);
-  const remoteHistoryAvailable = status === 'online' && getPresenceAvailability(deviceId) === true;
+  // A failed roster read leaves presence unknown after reconnect. Allow the
+  // existing link/subscription path to establish reachability instead of
+  // blocking both history and sync until a presence change happens to arrive.
+  const remoteHistoryAvailable = status === 'online' && getPresenceAvailability(deviceId) !== false;
   // Unknown presence while connecting is loading, not evidence of a lost computer.
   const showCachedHistoryNotice = status !== 'connecting'
     && (status !== 'online' || getPresenceAvailability(deviceId) === false);
@@ -5518,8 +5525,13 @@ export default function SessionScreen() {
       }
     });
   };
-
-  const outboxDisplayItems = useMemo(() => outboxItems.map(outboxDisplayItem), [outboxItems]);
+  const outboxDisplayItems = useMemo(() => outboxItems.map((item) => {
+    const record = findDurableOutboxRecord(item.clientId);
+    return {
+      ...outboxDisplayItem(item),
+      canCancel: canCancelOutboxRecord(record),
+    };
+  }), [outboxItems, deviceId, sessionId]);
 
   /**
    * 取出并清空某会话的 outbox 条目(创建失败的两条收尾路径都要用)。
@@ -8766,6 +8778,19 @@ export default function SessionScreen() {
                   params: { deviceId, deviceName },
                 });
               }}
+              onOpenRemoteMemory={remoteMemoryResourceId && deviceId ? () => {
+                router.push({
+                  pathname: '/resources/[collectionId]/[resourceId]',
+                  params: {
+                    collectionId: 'teammates',
+                    resourceId: remoteMemoryResourceId,
+                    resourceKind: 'bot',
+                    deviceId,
+                    deviceName,
+                    title: t('devices.companionProfile.memory.title', { defaultValue: 'Saved Memories' }),
+                  },
+                });
+              } : undefined}
               onToggleSearch={() => {
                 if (searchOpen) closeSearch();
                 else setSearchOpen(true);
@@ -9554,6 +9579,7 @@ function SessionHeaderBar({
   onOpenSettings,
   onOpenUsage,
   onOpenRemoteDesktop,
+  onOpenRemoteMemory,
   onToggleSearch,
   pendingCount,
   queueCount,
@@ -9585,6 +9611,7 @@ function SessionHeaderBar({
   onOpenSettings(): void;
   onOpenUsage(): void;
   onOpenRemoteDesktop(): void;
+  onOpenRemoteMemory?: () => void;
   onToggleSearch(): void;
   pendingCount: number;
   queueCount: number;
@@ -9690,6 +9717,14 @@ function SessionHeaderBar({
       </View>
 
       <View style={styles.sessionHeaderActions}>
+        {onOpenRemoteMemory ? <SessionHeaderIconButton
+          accessibilityLabel={t('devices.companionProfile.memory.title', { defaultValue: 'Saved Memories' })}
+          active={false}
+          disabled={!currentSession}
+          icon={Brain}
+          onPress={currentSession ? onOpenRemoteMemory : undefined}
+          testID="session.remoteMemory"
+        /> : null}
         <SessionHeaderIconButton
           accessibilityLabel={t('remoteDesktop.title')}
           active={false}

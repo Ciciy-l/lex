@@ -1,5 +1,13 @@
 import { getBotAuthorizationService } from '../maker-ipc/botAuthorizationService.js';
 import { isBotAuthorizationSession } from '../maker-ipc/botAuthorizationHost.js';
+import { createPluginMarketAgentTools } from '../plugin-market/agentTools.js';
+import type { GhostInstallConsentPrompt } from '../cindy-brain/ghostInstallConsent.js';
+import {
+  createTaskInstallConsentPrompt,
+  type HostPermissionRequester,
+} from '../cindy-brain/ghostInstallConsentInteraction.js';
+import type { PluginMarketService } from '../plugin-market/service.js';
+import { throwIpcError } from '../utils/ipcValidate.js';
 /**
  * ghost.ts — cindy-tools ghost 总机的 host 侧接线(docs/dev-rules/plugin-security-and-authoring.md)。
  * ---------------------------------------------------------------------------
@@ -182,6 +190,8 @@ async function packForgeSource(
 export interface GhostGrantLiveSessionState {
   permissionMode: PermissionMode | null;
   remoteHostId: string | null;
+  /** Current task instance/permission generation; absent means fail closed for install. */
+  isCurrent?: () => boolean;
   reviewAction?: (action: ReviewableAction) => Promise<AutoReviewDecision>;
 }
 
@@ -195,6 +205,7 @@ export interface ToolResultImageDescription {
 }
 
 export interface CindyGhostsHostDeps {
+  pluginMarket?: Pick<PluginMarketService, 'snapshot' | 'detail' | 'install'>;
   createMediaDownloadContext?: (sessionId: string, sessionInstanceId: string) => MediaDownloadContext | undefined;
   /** 当前 Desktop 版本；Forge scaffold 用它生成具体插件包的默认最低版本。 */
   getAppVersion?: () => string;
@@ -206,6 +217,8 @@ export interface CindyGhostsHostDeps {
     sessionId: string,
     sessionInstanceId: string,
   ) => GhostGrantLiveSessionState | null;
+  /** 向当前任务投一张宿主权限确认卡；Full Access 也必须经过此卡。 */
+  requestHostPermission?: HostPermissionRequester;
   /**
    * 把工具结果里的图片（cindy-media:// 地址）转成文字描述（视觉桥，最佳努力）。
    * host 侧注入；内部判定视觉桥是否启用、当前 session 模型是否命中、blob 是否可读。
@@ -305,8 +318,8 @@ async function buildGhostSessionContext(
 /* ────────────────────────────────────────────────────────────────────────
  * Forge C-4 门:Forge 做的是**本机文件写**,裸 MCP workingDir 只是标签,不能
  * 直接交给 fs。权威 session 行决定它是否本机、是否当前可写(远程/只读/plan 一律
- * fail closed)。owner lease 在首个 await 前捕获、持到 scaffold/pack + 装入确认
- * 转交结束,账号 teardown 会等它释放。
+ * fail closed)。owner lease 在首个 await 前捕获、持到 scaffold/pack 完成；显式安装
+ * 会在确认等待前释放它，落位事务自行重新取锁/租约。
  * ──────────────────────────────────────────────────────────────────────── */
 
 type ForgeSessionFsGate =
@@ -317,11 +330,13 @@ type ForgeSessionFsGate =
       message: string;
     };
 
-async function withForgeOwnerLease<T>(operation: () => Promise<T>): Promise<T> {
+async function withForgeOwnerLease<T>(
+  operation: (owner: ReturnType<typeof captureGhostMutationOwnerForMcp>) => Promise<T>,
+): Promise<T> {
   const owner = captureGhostMutationOwnerForMcp();
   const release = acquireGhostMutationLeaseForMcp(owner);
   try {
-    return await operation();
+    return await operation(owner);
   } finally {
     release();
   }
@@ -1354,7 +1369,74 @@ export function getCindyGhostsMcpDeps(
 ): CindyGhostsMcpDeps {
   const resolveSessionContext = (): LiziMcpSessionContext | undefined =>
     getLiziMcpSessionContext() ?? sessionCtx;
+  const installConsentPrompt = (): GhostInstallConsentPrompt => {
+    const context = resolveSessionContext();
+    return createTaskInstallConsentPrompt(
+      context?.sessionId && context.sessionInstanceId
+        ? { sessionId: context.sessionId, sessionInstanceId: context.sessionInstanceId }
+        : null,
+      hostDeps.requestHostPermission,
+    );
+  };
+  const marketTools = hostDeps.pluginMarket && createPluginMarketAgentTools({
+    market: hostDeps.pluginMarket,
+    installedState: (ghostId) => {
+      const visibility = classifyGhostVisibility(
+        ghostId,
+        resolveSessionContext()?.workingDir ?? null,
+        ghostVisibilityDeps,
+      );
+      return {
+        exists: getGhostManager().list().some((ghost) => ghost.manifest.id === ghostId),
+        errorCode: visibility.ok ? null : visibility.errorCode,
+      };
+    },
+    captureRead: () => {
+      const owner = getActiveAppSession();
+      const assertCurrent = () => {
+        const current = getActiveAppSession();
+        if (
+          isAppSessionBoundaryPending()
+          || owner.generation !== current.generation
+          || owner.mode !== current.mode
+          || owner.dataOwnerId !== current.dataOwnerId
+        ) {
+          throwIpcError('PRECONDITION_FAILED', 'The active account changed during plugin discovery');
+        }
+      };
+      assertCurrent();
+      return assertCurrent;
+    },
+    captureInstall: (signal) => {
+      const context = resolveSessionContext();
+      const live = context?.sessionId && context.sessionInstanceId
+        ? hostDeps.getLiveSessionGrantState?.(context.sessionId, context.sessionInstanceId)
+        : null;
+      const assertCurrent = () => {
+        if (
+          signal?.aborted
+          || !live?.permissionMode
+          || live.isCurrent?.() !== true
+          || workdirWriteVerdict(live.permissionMode, false) === 'deny'
+        ) {
+          throwIpcError('PERMISSION_DENIED', 'Plugin install requires a current writable task outside Plan mode');
+        }
+      };
+      assertCurrent();
+      // Confirmation can wait for minutes. Do not retain the owner mutation lease;
+      // the market commit boundary takes its own lock and lease after confirmation.
+      captureGhostMutationOwnerForMcp();
+      return { assertCurrent, release: () => undefined, consentPrompt: installConsentPrompt() };
+    },
+  });
   return {
+    ...(marketTools
+      ? {
+          searchMarket: (query: string) => marketTools.search(query),
+          installMarket: (request: { pluginId: string; releaseId: string }, signal?: AbortSignal) =>
+            marketTools.install(request, signal),
+        }
+      : {}),
     connectAccount: async (target) => {
       const context = resolveSessionContext();
       const sessionId = ghostSetupInteractionSessionId(context);
@@ -2009,46 +2091,60 @@ export function getCindyGhostsMcpDeps(
       });
     },
     async forgeInstall({ dir, iconSource }): Promise<CindyForgeInstallResult> {
-      return withForgeOwnerLease(async () => {
+      const prepared = await withForgeOwnerLease(async (mutationOwner) => {
         const gate = await getForgeSessionFsGate(resolveSessionContext());
         if (!gate.ok) return gate;
         const attempt = await packForgeSource(dir, gate.workingDir, iconSource);
         if (!attempt.ok) return attempt.result;
         const { packed, iconNote } = attempt;
-        try {
-          const installed = await installOrUpdateLocalGhostPackageFromForge(
-            packed.cindyPath,
-            {
-              ghostId: packed.manifest.id,
-              packageSha256: createHash('sha256').update(packed.buf).digest('hex'),
-            },
-          );
-          log.info('ghost forge install completed', {
-            dir,
-            id: installed.ghost.manifest.id,
-            version: installed.ghost.manifest.version,
-            action: installed.action,
-          });
-          return {
-            ok: true,
-            action: installed.action,
-            id: installed.ghost.manifest.id,
-            name: installed.ghost.manifest.name,
-            version: installed.ghost.manifest.version,
-            enabled: installed.ghost.enabled,
-            note:
-              installed.action === 'installed'
-                ? `${iconNote}插件已完成校验、打包和安装，并已启用。`
-                : `${iconNote}插件已完成校验、打包和原位更新；原有启用状态、配置与数据保持不变。`,
-          };
-        } catch (err) {
-          return {
-            ok: false,
-            errorCode: isIpcError(err) ? err.code : 'INTERNAL',
-            message: err instanceof Error ? err.message : String(err),
-          };
-        }
+        // Consent can wait for minutes. Return the packed bytes and owner snapshot
+        // first so no owner mutation lease is held while the Host card is pending.
+        return { ok: true as const, packed, iconNote, mutationOwner };
       });
+      if (!prepared.ok) return prepared;
+
+      const context = resolveSessionContext();
+      const live = context?.sessionId && context.sessionInstanceId
+        ? hostDeps.getLiveSessionGrantState?.(context.sessionId, context.sessionInstanceId)
+        : null;
+      const isCurrent = () => live?.isCurrent?.() === true;
+      const { packed, iconNote, mutationOwner } = prepared;
+      try {
+        const installed = await installOrUpdateLocalGhostPackageFromForge(
+          packed.cindyPath,
+          {
+            ghostId: packed.manifest.id,
+            packageSha256: createHash('sha256').update(packed.buf).digest('hex'),
+            consentPrompt: installConsentPrompt(),
+            mutationOwner,
+            isCurrent,
+          },
+        );
+        log.info('ghost forge install completed', {
+          dir,
+          id: installed.ghost.manifest.id,
+          version: installed.ghost.manifest.version,
+          action: installed.action,
+        });
+        return {
+          ok: true,
+          action: installed.action,
+          id: installed.ghost.manifest.id,
+          name: installed.ghost.manifest.name,
+          version: installed.ghost.manifest.version,
+          enabled: installed.ghost.enabled,
+          note:
+            installed.action === 'installed'
+              ? `${iconNote}插件已完成校验、打包和安装，并已启用。`
+              : `${iconNote}插件已完成校验、打包和原位更新；原有启用状态、配置与数据保持不变。`,
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          errorCode: isIpcError(err) ? err.code : 'INTERNAL',
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
     },
     async forgePublish({ token }): Promise<CindyForgePublishResult> {
       const boundaryPending = isAppSessionBoundaryPending();

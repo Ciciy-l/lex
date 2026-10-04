@@ -196,3 +196,13 @@ GPT `[1m]` 是旧窗口预设，退出 Desktop 管理和新选择清单；完整
 | 模型路由进入执行配置         | [runtime-configs.ts](../../apps/desktop/src/main/maker-host/runtime-configs.ts)、[model-plane](../../apps/desktop/src/main/maker-host/model-plane)、[pi-host.ts](../../apps/desktop/src/main/maker-host/pi-host.ts)                                                                                              | host 及 [maker-core 测试入口](../../packages/maker-core/src/agents)                                                                                                                                               |
 
 在线目录由外部 Cindy Model Access 提供；本仓只维护客户端解析器及随包目录。不要将客户端解析器或离线数据视为外部服务已声明、实现或部署了目标能力。协议边界遵守 [协议兼容规则](protocol-compatibility.md)。
+
+## Sub2API 发现与新代际默认
+
+Sub2API 预设使用用户填写的端点，不提供公共地址、密钥或型号清单。发现请求通过 models?client_version=0.147.0 获取 Codex 形状的清单。只有同一认证端点返回 404 或 405 时才移除 client_version 重试；认证、限流或服务错误不能静默回退到普通清单。
+
+context_window 是工作窗口，max_context_window 是该连接实报的最大容量。最大容量只保存到 discoveredMetadata.contextWindowMax，不写入 Registry defaults。两个字段同时出现时保留工作窗口；只报告容量时才可将其作为初始窗口。明确的空思考档位、supportsReasoningEffort: false、service_tiers: []、拒绝图片和 null 默认值都保留为明确声明；缺字段或格式错误仍是未知。
+
+buildUserProvider 可从同一连接或当前绑定预设中已经声明的旧数字代际，补齐新发现型号缺失的能力默认。型号系列、变体、端点、请求路径和协议都必须相同。只窄化归一已知公共命名空间；私有命名空间、尺寸、日期后缀、Sol/Luna 与 Fast 变体保持独立。按旧型号从远到近合并，使最近的合格前代按字段优先。
+
+继承的工作窗口、输出上限、模态、工具调用与思考声明只是目录投影默认，不是账号实报或用户编辑。不得继承型号身份、成员资格、默认启用状态、价格、最大容量或 Fast 可用性。目标型号明确的 false、空数组、null、账号实报、route override 和用户 override 保持原有优先级。适配器复用只能为相同端点和协议提供序列化参数，不能选择新传输。只有目标型号实际声明支持 Fast 时才允许发送 Fast 参数。

@@ -1,5 +1,5 @@
 import { providerOAuthContract } from '@cindy/model-providers';
-import { parseModelsListResponse, isOpenRouterModelsUrl, type DiscoveredModel } from '@cindy/model-providers';
+import { isOpenRouterModelsUrl, type DiscoveredModel } from '@cindy/model-providers';
 /**
  * generic-oauth —— 目录 `auth.oauth` 描述符驱动的通用 OAuth Runner。
  *
@@ -34,6 +34,7 @@ import {
 } from '../oauthResultPage.js';
 import { desktopMakerLogger } from './logger-adapter.js';
 import { outboundFetch } from './outbound-fetch.js';
+import { collectModelDiscoveryPages, type ModelDiscoveryPageCollection } from './model-discovery-pages.js';
 
 const log = desktopMakerLogger.child('generic-oauth');
 
@@ -827,7 +828,9 @@ export function deriveModelsDiscoveryUrl(baseUrl: string): string {
   url.hash = '';
   let pathname = url.pathname;
   while (pathname.length > 1 && pathname.endsWith('/')) pathname = pathname.slice(0, -1);
-  url.pathname = /\/v\d+$/i.test(pathname)
+  // Codex-compatible relays (including Sub2API) expose /models directly under
+  // /backend-api/codex; inserting /v1 makes discovery fail while inference works.
+  url.pathname = /(?:\/v\d+|\/backend-api\/codex)$/i.test(pathname)
     ? `${pathname}/models`
     : `${pathname === '/' ? '' : pathname}/v1/models`;
   return url.toString();
@@ -841,12 +844,37 @@ export function deriveModelsDiscoveryUrl(baseUrl: string): string {
  * （含 GET /v1/models）都强制要求 `anthropic-version`，缺失直接 400 → 发现静默失败；
  * 与 provider-diagnostics.buildProbeRequest 的 cc 分支同口径。
  */
-export async function discoverGenericOAuthModels(
+const MAX_GENERIC_MODEL_PAGE_BYTES = 8 * 1024 * 1024;
+
+async function readBoundedJson(response: Response): Promise<unknown> {
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > MAX_GENERIC_MODEL_PAGE_BYTES) throw new Error('catalog page too large');
+  if (!response.body) throw new Error('catalog page has no body');
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_GENERIC_MODEL_PAGE_BYTES) {
+      await reader.cancel();
+      throw new Error('catalog page too large');
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+export async function discoverGenericOAuthModelSnapshot(
   providerId: string,
   oauth: OAuthProviderDescriptor,
   discoveryUrl?: string,
   agent?: AgentKind,
-): Promise<DiscoveredModel[] | null> {
+): Promise<ModelDiscoveryPageCollection | null> {
   const url = discoveryUrl ?? oauth.modelsDiscoveryUrl;
   if (!url) return null;
   const token = readCachedGenericOAuthAccessToken(providerId, oauth);
@@ -857,6 +885,7 @@ export async function discoverGenericOAuthModels(
   try {
     res = await io.fetchImpl(url, {
       headers,
+      redirect: 'error',
       signal: AbortSignal.timeout(REFRESH_FETCH_TIMEOUT_MS),
     });
   } catch {
@@ -864,12 +893,29 @@ export async function discoverGenericOAuthModels(
   }
   if (!res.ok) return null;
   let json: unknown;
-  try {
-    json = await res.json();
-  } catch {
-    return null;
-  }
-  return parseModelsListResponse(json, url);
+  try { json = await readBoundedJson(res); } catch { return null; }
+  const deadline = Date.now() + 30_000;
+  return collectModelDiscoveryPages(json, url, async (nextUrl) => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error('catalog deadline exceeded');
+    const page = await io.fetchImpl(nextUrl, {
+      headers,
+      redirect: 'error',
+      signal: AbortSignal.timeout(Math.min(REFRESH_FETCH_TIMEOUT_MS, remaining)),
+    });
+    if (!page.ok) { await page.body?.cancel(); throw new Error('catalog page failed'); }
+    return readBoundedJson(page);
+  });
+}
+
+/** Compatibility wrapper for callers that only need prefix models; authority-aware sync uses the snapshot API. */
+export async function discoverGenericOAuthModels(
+  providerId: string,
+  oauth: OAuthProviderDescriptor,
+  discoveryUrl?: string,
+  agent?: AgentKind,
+): Promise<DiscoveredModel[] | null> {
+  return (await discoverGenericOAuthModelSnapshot(providerId, oauth, discoveryUrl, agent))?.models ?? null;
 }
 
 

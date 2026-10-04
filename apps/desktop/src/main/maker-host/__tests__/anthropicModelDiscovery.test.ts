@@ -58,6 +58,9 @@ import {
   refreshAnthropicModelsFromHttp,
   getAnthropicModelDiscoveryFailure,
   setAnthropicDiscoveryFailureListener,
+  hasAnthropicDiscoveredModels,
+  refreshAnthropicModelsFromProbe,
+  setAnthropicModelProbe,
   clearAnthropicDiscoveredModels,
   resetAnthropicDiscoveryForTest,
   waitForAnthropicDiscoveryIdleForTest,
@@ -521,6 +524,30 @@ describe('noteAnthropicSdkSupportedModels(登录态门控 + 合并纪律)', () =
       { value: 'claude-opus-4-8', displayName: 'Opus 4.8', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high'] },
     ]);
     expect(anthropicIds()).toEqual(['claude-opus-4-8']);
+  });
+
+  it('resolves SDK family aliases only from a matching explicit version, never from context-size text', () => {
+    const mapped = mapAnthropicSdkModels([
+      { value: 'opus', description: 'Opus 6.2 · general reasoning', displayName: 'Opus (1M context)' },
+      { value: 'sonnet', description: 'Opus 6.2 · general reasoning', displayName: 'Sonnet 6.2' },
+      { value: 'fable', description: 'Fable 5.2 · coding model', displayName: 'Fable' },
+      { value: 'default', description: 'Sonnet · current model' },
+    ]);
+    expect(mapped.map(({ model }) => model.id)).toEqual(['claude-opus-6-2', 'claude-fable-5-2']);
+    expect(mapped[0]?.model.name).toBe('Opus 6.2');
+    expect(mapped[1]?.model.name).toBe('Fable 5.2');
+  });
+
+  it('登录账号成功返回空 SDK 清单时撤回旧成员', async () => {
+    noteAnthropicSdkSupportedModels([
+      { value: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    ]);
+    await waitForAnthropicDiscoveryIdleForTest();
+    expect(anthropicIds()).toContain('claude-opus-4-8');
+
+    noteAnthropicSdkSupportedModels([]);
+    await waitForAnthropicDiscoveryIdleForTest();
+    expect(anthropicIds()).toEqual([]);
   });
 
   it('直接换号边界先清旧账号清单与缓存,新账号发现失败也不继承(review P1 回归)', async () => {
@@ -1068,6 +1095,47 @@ describe('noteAnthropicSdkSupportedModels(登录态门控 + 合并纪律)', () =
   });
 });
 
+describe('Anthropic maker-bound supportedModels probe', () => {
+  beforeEach(() => {
+    resetAnthropicDiscoveryForTest();
+    setAnthropicDiscoveredModels([]);
+    authState.loggedIn = true;
+    oauthRefreshMock.getValidClaudeAiOAuth.mockReset();
+    oauthRefreshMock.getValidClaudeAiOAuth.mockResolvedValue(null);
+  });
+  afterEach(async () => {
+    setAnthropicModelProbe(null);
+    await clearAnthropicDiscoveredModels();
+    await waitForAnthropicDiscoveryIdleForTest();
+    resetAnthropicDiscoveryForTest();
+    setAnthropicDiscoveredModels([]);
+    await fsp.rm(TEST_USER_DATA, { recursive: true, force: true });
+  });
+
+  it('accepts a successful empty list but discards a result after auth generation changes', async () => {
+    noteAnthropicSdkSupportedModels([{ value: 'claude-opus-5', displayName: 'Opus 5' }]);
+    await waitForAnthropicDiscoveryIdleForTest();
+    expect(hasAnthropicDiscoveredModels()).toBe(true);
+
+    let deliver: ((models: unknown[]) => void) | undefined;
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
+    setAnthropicModelProbe(async (onModels) => { deliver = onModels; await pending; return true; });
+    const probe = refreshAnthropicModelsFromProbe();
+    await clearAnthropicDiscoveredModels();
+    deliver?.([{ value: 'claude-fable-5' }]);
+    finish();
+    await expect(probe).resolves.toBe(false);
+    expect(anthropicIds()).toEqual([]);
+    expect(hasAnthropicDiscoveredModels()).toBe(false);
+
+    setAnthropicModelProbe(async (onModels) => { onModels([]); return true; });
+    await expect(refreshAnthropicModelsFromProbe()).resolves.toBe(true);
+    expect(hasAnthropicDiscoveredModels()).toBe(true);
+    expect(anthropicIds()).toEqual([]);
+  });
+});
+
 describe('HTTP 发现失败的归因与选择性重试', () => {
   const okResponse = {
     ok: true,
@@ -1304,12 +1372,17 @@ describe('HTTP 发现失败的归因与选择性重试', () => {
     expect(getAnthropicModelDiscoveryFailure()).toBeNull();
   });
 
-  it('答复正常但没有可用模型归 empty', async () => {
+  it('权威成功空清单撤销 LKG，并与拉取失败保留状态区分', async () => {
+    noteAnthropicSdkSupportedModels([{ value: 'claude-opus-4-8', displayName: 'Opus 4.8' }]);
+    await waitForAnthropicDiscoveryIdleForTest();
+    expect(anthropicIds()).toContain('claude-opus-4-8');
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [], has_more: false }) }),
     );
-    await refreshAnthropicModelsFromHttp();
+    await expect(refreshAnthropicModelsFromHttp()).resolves.toBe(true);
+    expect(anthropicIds()).toEqual([]);
+    expect(hasAnthropicDiscoveredModels()).toBe(true);
     expect(getAnthropicModelDiscoveryFailure()?.kind).toBe('empty');
   });
 

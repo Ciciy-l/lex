@@ -6,10 +6,12 @@ import {
   REMOTE_RESOURCE_PROTOCOL_VERSION,
   resolveRemoteText,
   type RemoteActionInvokeResponse,
+  type RemoteActionDescriptor,
   type RemoteCollectionDescriptor,
   type RemoteCollectionItem,
   type RemoteCollectionListResponse,
   type RemoteResourceAvatar,
+  type RemoteResourceBlock,
   type RemoteResourceDisplay,
   type RemoteResourceLink,
   type RemoteResourceClientDescriptor,
@@ -25,6 +27,11 @@ import type { RemoteInvoke } from './mobileMakerTransport';
 export const MOBILE_REMOTE_RESOURCE_PRIMITIVES = [
   'status',
   'session-link',
+  'search',
+  'list',
+  'form',
+  'action',
+  'markdown',
 ] as const;
 
 export interface RemoteResourceHostTarget {
@@ -168,6 +175,49 @@ function normalizeRemoteLink(value: unknown): RemoteResourceLink | null {
   if (!normalizedTarget) return null;
   const label = normalizeRemoteText(record.label, 512);
   return { rel, target: normalizedTarget, ...(label ? { label } : {}) };
+}
+
+function normalizeRemoteAction(value: unknown): RemoteActionDescriptor | null {
+  const record = recordOf(value);
+  const id = boundedString(record?.id, MAX_REMOTE_ID_CHARS);
+  const label = normalizeRemoteText(record?.label, 512);
+  if (!record || !id || !label) return null;
+  const fields = Array.isArray(record.fields) ? record.fields.slice(0, 32).flatMap((candidate) => {
+    const field = recordOf(candidate);
+    const fieldId = boundedString(field?.id, MAX_REMOTE_ID_CHARS);
+    const fieldLabel = normalizeRemoteText(field?.label, 512);
+    const kind = boundedString(field?.kind, 64);
+    if (!field || !fieldId || !fieldLabel || !kind) return [];
+    return [{
+      id: fieldId, label: fieldLabel, kind,
+      ...(field.required === true ? { required: true } : {}),
+      ...(normalizeRemoteText(field.placeholder, 512) ? { placeholder: normalizeRemoteText(field.placeholder, 512)! } : {}),
+    }];
+  }) : undefined;
+  const confirmation = recordOf(record.confirmation);
+  const confirmationTitle = normalizeRemoteText(confirmation?.title, 512);
+  const confirmationBody = normalizeRemoteText(confirmation?.body, 2_000);
+  const confirmationLabel = normalizeRemoteText(confirmation?.confirmLabel, 512);
+  return {
+    id, label,
+    ...(typeof record.disabled === 'boolean' ? { disabled: record.disabled } : {}),
+    ...(typeof record.tone === 'string' ? { tone: record.tone } : {}),
+    ...(fields ? { fields } : {}),
+    ...(confirmationTitle ? { confirmation: { title: confirmationTitle, ...(confirmationBody ? { body: confirmationBody } : {}), ...(confirmationLabel ? { confirmLabel: confirmationLabel } : {}) } } : {}),
+  };
+}
+
+function normalizeRemoteBlock(value: unknown): RemoteResourceBlock | null {
+  const record = recordOf(value);
+  const id = boundedString(record?.id, MAX_REMOTE_ID_CHARS);
+  const primitive = boundedString(record?.primitive, MAX_REMOTE_ID_CHARS);
+  const fallbackMarkdown = boundedString(record?.fallbackMarkdown, 200_000, true);
+  if (!record || !id || !primitive || fallbackMarkdown === null) return null;
+  return {
+    id, primitive, fallbackMarkdown,
+    ...(normalizeRemoteText(record.title, 512) ? { title: normalizeRemoteText(record.title, 512)! } : {}),
+    ...(record.data !== undefined ? { data: record.data } : {}),
+  };
 }
 
 function validDescriptor(value: unknown): RemoteCollectionDescriptor | null {
@@ -322,10 +372,12 @@ export async function getRemoteResource(
   target: RemoteResourceHostTarget,
   ref: RemoteResourceRef,
   locale?: string,
+  query?: string,
 ): Promise<RemoteResource> {
   const raw = await invoke<unknown>(target.deviceId, REMOTE_RESOURCE_GET_CHANNEL, [{
     client: clientDescriptor(locale),
     ref,
+    ...(query ? { query } : {}),
   }]);
   const normalized = normalizeRemoteCollectionItem(raw, ref.collectionId);
   if (!normalized || normalized.ref.kind !== ref.kind || normalized.ref.id !== ref.id) {
@@ -337,7 +389,7 @@ export async function getRemoteResource(
 function normalizeRemoteCollectionItem(
   candidate: unknown,
   collectionId: string,
-): RemoteCollectionItem | null {
+): RemoteResource | null {
   const item = recordOf(candidate);
   const ref = normalizeRemoteRef(item?.ref);
   const display = normalizeRemoteDisplay(item?.display);
@@ -349,7 +401,19 @@ function normalizeRemoteCollectionItem(
         return normalized ? [normalized] : [];
       })
     : [];
-  return { ref, display, links, revision };
+  const actions = Array.isArray(item.actions)
+    ? item.actions.slice(0, 32).flatMap((action) => {
+      const normalized = normalizeRemoteAction(action);
+      return normalized ? [normalized] : [];
+    })
+    : [];
+  const blocks = Array.isArray(item.blocks)
+    ? item.blocks.slice(0, 64).flatMap((block) => {
+      const normalized = normalizeRemoteBlock(block);
+      return normalized ? [normalized] : [];
+    })
+    : [];
+  return { ref, display, links, revision, ...(actions.length ? { actions } : {}), ...(blocks.length ? { blocks } : {}) };
 }
 
 export function normalizeRemoteCollectionItems(

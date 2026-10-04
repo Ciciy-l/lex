@@ -256,9 +256,10 @@ describe('deriveAvailableModels — dynamic-first catalog contract', () => {
       efforts: ['low'],
       defaultEffort: 'low',
     });
+    // Flattened capabilities keep the custom route's same-connection inherited limit.
     expect(flatModels.find((m) => m.id === 'grok-4.5')).toMatchObject({
-      efforts: [],
-      defaultEffort: null,
+      efforts: ['low'],
+      defaultEffort: 'low',
     });
   });
 
@@ -273,7 +274,7 @@ describe('deriveAvailableModels — dynamic-first catalog contract', () => {
           pi: {
             baseUrl: 'http://127.0.0.1:11434/v1',
             wireProtocol: 'openai-responses',
-            models: [{ id: 'grok-4.5', name: 'Grok 4.5 without reasoning' }],
+            models: [{ id: 'grok-4.5', name: 'Grok 4.5 without reasoning', reasoning: false }],
           },
         },
       }),

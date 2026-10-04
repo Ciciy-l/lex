@@ -7,7 +7,7 @@ import { existsSync } from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 
-import { BUNDLED_CATALOG, PROVIDER_MODEL_CATALOG, providerModelRecord, buildUserProvider, providerPresetOAuth, type Catalog } from '@cindy/model-providers';
+import { BUNDLED_CATALOG, PROVIDER_MODEL_CATALOG, providerModelRecord, buildUserProvider, providerPresetOAuth, parseModelsListResponse, mergeDiscoveredRuntimeModels, type Catalog, type ProviderRuntimeModelConfig } from '@cindy/model-providers';
 
 // Account discovery persistence is outside this runtime/route fixture.
 vi.mock('../model-discovery/xai.js', () => ({
@@ -2688,6 +2688,53 @@ it('carries every unambiguous portable catalog model into the Pi descriptor', ()
   expect(checked).toBeGreaterThan(1000);
 });
 
+it('carries exact Sub2API discovery capabilities into the native Pi runtime', () => {
+  const discovered = mergeDiscoveredRuntimeModels([], parseModelsListResponse({ data: [{
+    id: 'private-model', name: 'Private Model', context_window: 272000, max_context_window: 1050000,
+    max_output_tokens: 128000, input_modalities: ['text', 'image'],
+    service_tiers: [{ id: 'priority' }], supported_reasoning_levels: [
+      { effort: 'high' }, { effort: 'max' },
+    ],
+  }] })!);
+  const config = { id: 'sub2api-test', name: 'Sub2API', runtimes: { pi: {
+    baseUrl: 'https://relay.example/custom/v1', wireProtocol: 'openai-responses' as const,
+    models: discovered,
+  } } };
+  const provider = buildUserProvider(config);
+  const result = buildPiNativeProvidersFromConfigs([config], () => 'fixture-key', undefined, undefined,
+    { ...BUNDLED_CATALOG, providers: [provider] });
+  expect(provider.models.pi?.[0]).toMatchObject({ contextWindow: 272000, contextWindowMax: 1050000,
+    efforts: ['high', 'max'], supportsFastMode: true });
+  expect(result.providers[0]?.models[0]).toMatchObject({ id: 'private-model',
+    contextWindow: 272000, maxTokens: 128000, input: ['text', 'image'], supportsFastMode: true,
+    reasoning: true, thinkingLevelMap: { high: 'high', max: 'max' } });
+});
+
+it('materializes same-connection generation defaults in native Pi without persisting them as discovery', () => {
+  const models: ProviderRuntimeModelConfig[] = [
+    { id: 'private-6-sol', name: 'Old', discoveredMetadata: {
+      contextWindow: 64000, maxOutputTokens: 32000, supportsImageInput: true,
+      efforts: ['low', 'high'], defaultEffort: 'high',
+    } },
+    { id: 'private-7-sol', name: 'New' },
+  ];
+  const config = { id: 'sub2api-generation', name: 'Sub2API', runtimes: { pi: {
+    baseUrl: 'https://relay.example/v1', wireProtocol: 'openai-responses' as const,
+    models,
+  } } };
+  const provider = buildUserProvider(config, { modelRegistry: {
+    schemaVersion: 4, updatedAt: '2026-09-24T00:00:00Z', models: [],
+  } });
+  const target = provider.models.pi?.[1];
+  expect(target).toMatchObject({ id: 'private-7-sol', contextWindow: 64000, maxOutput: 32000,
+    supportsImageInput: true, efforts: ['low', 'high'], defaultEffort: 'high' });
+  expect(target?.discoveredMetadata?.contextWindow).toBeUndefined();
+  const result = buildPiNativeProvidersFromConfigs([config], () => 'fixture-key', undefined, undefined,
+    { ...BUNDLED_CATALOG, providers: [provider] });
+  expect(result.providers[0]?.models[1]).toMatchObject({ id: 'private-7-sol',
+    contextWindow: 64000, maxTokens: 32000, input: ['text', 'image'], reasoning: true,
+    thinkingLevelMap: { low: 'low', high: 'high' } });
+});
 
 it('launches a new Azure deployment with the bound connection API and configured context', () => {
   const preset = BUNDLED_CATALOG.presets!.find(preset => preset.id === 'azure-openai-responses')!;

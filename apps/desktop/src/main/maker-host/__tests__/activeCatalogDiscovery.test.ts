@@ -27,6 +27,7 @@ import {
   setDiscoveredProviderMediaModels,
   clearDiscoveredProviderModels,
 } from '../active-catalog.js';
+import { parseXaiAccountModels } from '../model-discovery/xai-models.js';
 
 function openaiIds(agent: 'claude-code' | 'codex' | 'pi'): string[] {
   const openai = getActiveCatalog().providers.find((p) => p.id === 'openai');
@@ -92,7 +93,7 @@ describe('active-catalog discovered augment', () => {
   it.each([
     ['anthropic', 'claude', 'claude-sonnet-4-5', 'claude-sonnet-4-6'],
     ['xai', 'xai', 'grok-4.5', 'grok-4.6'],
-  ] as const)('uses the same default selection for builtin and independent %s accounts', (id, native, oldId, newId) => {
+  ] as const)('keeps xAI catalog visibility while retaining Claude selection policy for %s', (id, native, oldId, newId) => {
     const catalog = bundledWithoutRegistry();
     const builtin = catalog.providers.find(provider => provider.id === id)!;
     const models = [fake(oldId), fake(newId)].map(model => ({ ...model, group: id === 'anthropic' ? 'claude' : 'grok' }));
@@ -110,10 +111,10 @@ describe('active-catalog discovered augment', () => {
         .toEqual(listed(builtin.id).map(model => [model.id, model.defaultEnabled]));
       for (const providerId of [builtin.id, account.id]) {
         expect(listed(providerId).find(model => model.id === oldId)?.defaultEnabled,
-          `${providerId}/${agent}: ${listed(providerId).map(model => model.id).join(',')}`).toBe(false);
+          `${providerId}/${agent}: ${listed(providerId).map(model => model.id).join(',')}`).toBe(id === 'xai');
         // Claude's Codex bridge is explicitly disabled by default; keep it disabled.
         expect(listed(providerId).find(model => model.id === newId)?.defaultEnabled)
-          .toBe(!(id === 'anthropic' && agent === 'codex'));
+          .toBe(id === 'xai' || !(id === 'anthropic' && agent === 'codex'));
       }
       expect(listed(api.id).find(model => model.id === oldId)?.defaultEnabled).toBe(true);
     }
@@ -134,6 +135,24 @@ describe('active-catalog discovered augment', () => {
     setXaiDiscoveredModels([{ id: 'xai/grok-account-only' }], account.id);
     clearDiscoveredProviderModels();
     expect(ids()).not.toContain('xai/grok-account-only');
+  });
+
+  it('keeps account channel protocol separate from Registry native API and Pi membership', () => {
+    setActiveCatalog(bundledWithoutRegistry());
+    const discovered = parseXaiAccountModels({ data: [{
+      id: 'fixture-native-model', api_backend: 'responses', context_window: 123456,
+      reasoning_efforts: ['high', 'low'], reasoning_effort: 'high',
+    }] });
+    expect(discovered[0]?.apiBackend).toBe('responses');
+    setXaiDiscoveredModels(discovered);
+
+    const xai = getActiveCatalog().providers.find((provider) => provider.id === 'xai')!;
+    expect(xai.models.codex?.find((model) => model.id === 'xai/fixture-native-model'))
+      .toMatchObject({ contextWindow: 123456, efforts: ['low', 'high'] });
+    expect(xai.models.codex?.find((model) => model.id === 'xai/fixture-native-model')?.nativeApi).toBeUndefined();
+    expect(xai.models['claude-code']?.find((model) => model.id === 'xai/fixture-native-model')?.nativeApi)
+      .toBeUndefined();
+    expect(xai.models.pi?.some((model) => model.id.includes('fixture-native-model'))).toBe(false);
   });
   it('shares OpenAI protocol and Pi metadata with an independent account without sharing identity', () => {
     const account = buildUserProvider({
@@ -246,12 +265,16 @@ describe('active-catalog discovered augment', () => {
     expect(afterAuth.supportsImageInput).toBeUndefined();
   });
 
-  it('Codex discovery 只进入 Codex 与 Claude bridge，不改写 Pi 名单', () => {
+  it('OpenAI Pi 仅在现有原生 adapter 上投影账号成员，不复制 Codex capabilities', () => {
     setActiveCatalog(BUNDLED_CATALOG);
     setDiscoveredCodexModels([fake('gpt-5.7')]);
     expect(openaiIds('codex')).toContain('gpt-5.7');
     expect(openaiIds('claude-code')).toContain('chatgpt/gpt-5.7');
-    expect(openaiIds('pi')).not.toContain('chatgpt/gpt-5.7');
+    expect(openaiIds('pi')).toContain('chatgpt/gpt-5.7');
+    const piModel = getActiveCatalog().providers.find((provider) => provider.id === 'openai')
+      ?.models.pi?.find((model) => model.id === 'chatgpt/gpt-5.7');
+    expect(piModel?.discoveredMetadata).toBeUndefined();
+    expect(piModel?.supportsFastMode).toBeUndefined();
   });
 
   it('missing Pi declarations use fallback but explicit empty lists remove public Pi membership', () => {
@@ -529,7 +552,10 @@ describe('active-catalog discovered augment', () => {
     setDiscoveredCodexModels([fake('gpt-5.7', 17), fake('gpt-5.5', 20)]);
     expect(openaiIds('codex')).toEqual(['gpt-5.7', 'gpt-5.5']);
     expect(openaiIds('claude-code')).toEqual(['chatgpt/gpt-5.7', 'chatgpt/gpt-5.5']);
-    expect(openaiIds('pi')).toEqual(piBeforeDiscovery);
+    expect(openaiIds('pi').slice(0, 2)).toEqual(['chatgpt/gpt-5.7', 'chatgpt/gpt-5.5']);
+    expect(openaiIds('pi').slice(2)).toEqual(
+      piBeforeDiscovery.filter((id) => !['chatgpt/gpt-5.7', 'chatgpt/gpt-5.5'].includes(id)),
+    );
     // 动态快照决定存在性，且明确返回的运行时能力高于 registry 基线。
     const openai = getActiveCatalog().providers.find((p) => p.id === 'openai');
     expect((openai?.models.codex ?? []).find((m) => m.id === 'gpt-5.5')?.contextWindow).toBe(
@@ -636,19 +662,16 @@ describe('anthropic 发现条目的 modelRegistry 元数据基线', () => {
       anthro('claude-sonnet-4-5', 'Claude Sonnet 4.5', 9),
     ]);
     expect(anthropicList().map((m) => [m.id, m.name])).toEqual([
-      ['claude-opus-5-5', 'Opus 5.5'],
       ['claude-opus-5', 'Claude Opus 5'],
+      ['claude-sonnet-5', 'Claude Sonnet 5'],
       ['claude-fable-5', 'Claude Fable 5'],
       ['claude-opus-4-8', 'Claude Opus 4.8'],
       ['claude-opus-4-7', 'Claude Opus 4.7'],
+      ['claude-sonnet-4-6', 'Claude Sonnet 4.6'],
       ['claude-opus-4-6', 'Claude Opus 4.6'],
       ['claude-opus-4-5', 'Claude Opus 4.5'],
-      ['claude-sonnet-5', 'Claude Sonnet 5'],
-      ['claude-sonnet-4-6', 'Claude Sonnet 4.6'],
-      ['claude-sonnet-4-5', 'Claude Sonnet 4.5'],
       ['claude-haiku-4-5', 'Claude Haiku 4.5'],
-      ['claude-fable-5-1', 'Fable 5.1'],
-      ['claude-mythos-5', 'Mythos 5'],
+      ['claude-sonnet-4-5', 'Claude Sonnet 4.5'],
     ]);
     expect(
       anthropicList('claude-code')
@@ -656,9 +679,9 @@ describe('anthropic 发现条目的 modelRegistry 元数据基线', () => {
         .map((model) => model.id)
         .sort(),
     ).toEqual([
-      'claude-fable-5-1',
+      'claude-fable-5',
       'claude-haiku-4-5',
-      'claude-opus-5-5',
+      'claude-opus-5',
       'claude-sonnet-5',
     ]);
     expect(anthropicList('codex')).toEqual(

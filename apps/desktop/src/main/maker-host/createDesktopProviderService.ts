@@ -71,8 +71,11 @@ import {
 } from './codex-model-discovery.js';
 import {
   getAnthropicModelDiscoveryFailure,
+  hasAnthropicDiscoveredModels,
   loadAnthropicModelsFromDiskCache,
+  refreshAnthropicModelsFromProbe,
   refreshAnthropicModelsFromHttp,
+  requestAnthropicModelProbe,
 } from './model-discovery/anthropic.js';
 import {
   clearXaiDiscoveredModels,
@@ -934,10 +937,11 @@ function refreshAnthropicCatalogAfterClaim(): Promise<void> {
   if (anthropicClaimDiscoveryInflight) return anthropicClaimDiscoveryInflight;
 
   const flight = (async () => {
-    // 启动期两条加载都可能因尚未绑定而早退。先恢复最后一次成功的磁盘清单，再刷新
-    // HTTP；任一失败都保留已有目录，不把连接态读取整条打穿。
+    // Restore LKG before probing the current maker's bound OAuth adapter. With no cache,
+    // wait for the first supportedModels snapshot so routing callers do not see stale registry members.
     await loadAnthropicModelsFromDiskCache().catch(() => undefined);
-    await refreshAnthropicModelsFromHttp().catch(() => false);
+    if (hasAnthropicDiscoveredModels()) requestAnthropicModelProbe();
+    else await refreshAnthropicModelsFromProbe().catch(() => false);
   })();
   anthropicClaimDiscoveryInflight = flight;
   const clear = () => {

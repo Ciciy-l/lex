@@ -233,7 +233,7 @@ export default function RemoteDesktopScreen() {
   const [network, setNetwork] = useState<DesktopNetworkStats | null>(null);
   const frameBusy = useRef<string | null>(null);
   const unlockFrame = useRef<((presented: boolean) => void) | null>(null);
-  const inputBusy = useRef<string | null>(null);
+  const inputBusy = useRef<{ lease: string } | null>(null);
   const [lease, setLease] = useState<RemoteDesktopLease | null>(null);
   exitLock.current =
     lockOnExitLoaded && lockOnExit && caps?.lockOnExit === true;
@@ -294,10 +294,11 @@ export default function RemoteDesktopScreen() {
   const [keyPage, setKeyPage] = useState(0);
   const [comboMode, setComboMode] = useState(true);
   const [modifiers, setModifiers] = useState<string[]>([]);
-  const send = useCallback(
-    (message: object) => webview.current?.postMessage(JSON.stringify(message)),
-    [],
-  );
+  const send = useCallback((message: object) => {
+    const command = message as Record<string, unknown>;
+    if (command.type === "control" || command.type === "stop") inputBusy.current = null;
+    webview.current?.postMessage(JSON.stringify(message));
+  }, []);
   useEffect(() => {
     const enabled =
       keyboard && !fullKeys && focused && Boolean(lease?.controlling);
@@ -1224,7 +1225,7 @@ export default function RemoteDesktopScreen() {
         };
         if (
           !current.controlling ||
-          inputBusy.current === current.lease ||
+          inputBusy.current?.lease === current.lease ||
           !Number.isSafeInteger(message.sequence) ||
           !Array.isArray(message.events) ||
           message.events.length > 64 ||
@@ -1233,7 +1234,9 @@ export default function RemoteDesktopScreen() {
           send(ack);
           return;
         }
-        inputBusy.current = current.lease;
+        const batch = { lease: current.lease };
+        inputBusy.current = batch;
+        const ownsBatch = () => active.current === current && inputBusy.current === batch;
         void request({
           op: "input",
           lease: current.lease,
@@ -1241,11 +1244,12 @@ export default function RemoteDesktopScreen() {
           events: message.events,
         })
           .catch((cause) => {
-            if (active.current !== current) return;
+            if (!ownsBatch()) return;
             resolveControlFailure(cause);
           })
           .finally(() => {
-            if (inputBusy.current === current.lease) inputBusy.current = null;
+            if (!ownsBatch()) return;
+            inputBusy.current = null;
             send(ack);
           });
         break;

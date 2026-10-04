@@ -132,7 +132,11 @@ it('keeps generated defaults consistent with Cindy model preferences', async () 
   const { PROVIDER_MODEL_CATALOG } = await import('../providerModelCatalog.js');
   const { defaultEffortForCapabilities } = await import('../effortResolution.js');
   for (const model of Object.values(PROVIDER_MODEL_CATALOG.providers).flat()) {
-    expect(model.defaultEffort, model.id).toBe(defaultEffortForCapabilities(model.efforts));
+    if (model.efforts !== undefined) {
+      expect(model.defaultEffort, model.id).toBe(defaultEffortForCapabilities(model.efforts));
+    } else {
+      expect(model.defaultEffort, model.id).toBeUndefined();
+    }
   }
 });
 

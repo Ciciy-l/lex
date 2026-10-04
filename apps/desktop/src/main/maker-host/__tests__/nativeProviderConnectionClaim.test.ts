@@ -73,6 +73,8 @@ vi.mock('../grok-oauth-login.js', () => ({
 
 vi.mock('../model-discovery/anthropic.js', () => ({
   loadAnthropicModelsFromDiskCache: h.loadAnthropicDiskCache,
+  hasAnthropicDiscoveredModels: () => false,
+  refreshAnthropicModelsFromProbe: h.refreshAnthropicModels,
   refreshAnthropicModelsFromHttp: h.refreshAnthropicModels,
   getAnthropicModelDiscoveryFailure: () => h.anthropicDiscoveryFailure,
 }));

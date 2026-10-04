@@ -752,6 +752,20 @@
       }
     }
   },
+  "companionProfile": {
+    "memory": {
+      "title": "저장된 기억",
+      "search": "기억 검색",
+      "conflict": "이 메모리가 호스트에서 변경되었습니다.",
+      "useLatest": "최신 내용 사용",
+      "keepMine": "내 변경 유지",
+      "edit": "편집",
+      "delete": "삭제",
+      "done": "저장",
+      "deleteConfirmTitle": "이 기억을 삭제할까요?",
+      "deleteConfirmBody": "이 작업은 취소할 수 없습니다."
+    }
+  },
   "companions": {
     "messageSent": "추가 메시지를 보냈습니다",
     "privateChat": "{{name}} 님과의 대화",

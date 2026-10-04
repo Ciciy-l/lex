@@ -751,6 +751,20 @@
       }
     }
   },
+  "companionProfile": {
+    "memory": {
+      "title": "Saved Memories",
+      "search": "Search memories",
+      "conflict": "This memory changed on the host.",
+      "useLatest": "Use latest",
+      "keepMine": "Keep my edits",
+      "edit": "Edit",
+      "delete": "Delete",
+      "done": "Save",
+      "deleteConfirmTitle": "Delete this memory?",
+      "deleteConfirmBody": "This cannot be undone."
+    }
+  },
   "companions": {
     "messageSent": "Message sent",
     "privateChat": "Private chat with {{name}}",

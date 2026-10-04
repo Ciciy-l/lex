@@ -13,6 +13,7 @@
 import { projectProviderMediaModels } from './providerMediaModels.js';
 import { validModelMetadata } from './modelMetadataLayers.js';
 import { parseModelRegistry } from './modelAccessValidator.js';
+import { expandPresetModels } from './presetModels.js';
 
 import { PI_MODEL_APIS, PI_REASONING_EFFORTS } from './types.js';
 import type {
@@ -31,7 +32,7 @@ import { isProviderRequestPath } from './provider-url.js';
 
 export { BUNDLED_CATALOG, BUILTIN_PROVIDERS } from './builtin.js';
 
-const AGENT_KINDS: readonly AgentKind[] = ['claude-code', 'codex', 'pi'];
+const AGENT_KINDS: readonly AgentKind[] = ['claude-code', 'codex', 'pi', 'omp'];
 const EFFORTS: readonly Effort[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 const WIRE_PROTOCOLS = ['anthropic-messages', 'openai-responses', 'openai-chat', 'google-generative-ai'] as const;
 
@@ -154,6 +155,10 @@ function validateModel(
   }
   if (m.api !== undefined) {
     assert(isPiModelApi(m.api), `model.api invalid for '${m.id}'`);
+  }
+  if (m.fastModelId !== undefined && m.fastModelId !== null) {
+    assert(typeof m.fastModelId === 'string' && m.fastModelId.trim().length > 0 && m.fastModelId !== m.id,
+      `model.fastModelId invalid for '${m.id}'`);
   }
   if (m.piApi !== undefined) {
     assert(isPiModelApi(m.piApi), `model.piApi invalid for '${m.id}'`);
@@ -529,6 +534,11 @@ function validateModelConsistency(catalog: Catalog): void {
 /** 单条预设是否合法（结构完整、至少一个合法 runtime）。 */
 function isValidPreset(v: unknown): v is ProviderPreset {
   if (!v || typeof v !== 'object') return false;
+  const raw = v as Record<string, unknown>;
+  // Shared `models` declarations are expanded by sanitizePresets before validation.
+  // If expansion rejected malformed engine scoping it leaves the source object intact;
+  // retaining this guard prevents that unexpanded document from passing as a legacy preset.
+  if (raw.models !== undefined) return false;
   const p = v as Record<string, unknown>;
   if (typeof p.id !== 'string' || p.id.length === 0) return false;
   if (typeof p.name !== 'string' || p.name.length === 0) return false;
@@ -724,7 +734,8 @@ export function sanitizePresets(input: unknown): ProviderPreset[] {
   if (!Array.isArray(input)) return [];
   const out: ProviderPreset[] = [];
   const seen = new Set<string>();
-  for (const v of input) {
+  for (const raw of input) {
+    const v = expandPresetModels(raw);
     if (!isValidPreset(v) || seen.has(v.id)) continue;
     seen.add(v.id);
     // 可选呈现字段逐项归一化,**不许分支 continue**:多个字段同时非法时早退会漏清洗

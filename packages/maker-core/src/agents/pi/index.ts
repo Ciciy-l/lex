@@ -3246,6 +3246,32 @@ export class PiAgent extends BaseAgent {
     // 时定型,会话中途 setModel 后子代理会继续用启动时的旧模型(greptile P1),而 BYOM /
     // 本地 provider 不一起传还会让同名模型落到错误 endpoint(codex P2,pi-harness §3 要求
     // BYOM 直连原生 provider)。扩展每次派子代理现读本文件。
+    const requestPrefsFile = joinRemotePosixPath(runtimeDir, 'request-prefs-' + runtimeInstanceId + '.json');
+    const fastModels = nativeProviders.flatMap(provider => provider.models
+      .filter(model => model.supportsFastMode === true)
+      .map(model => ({ provider: provider.id, id: model.wireId ?? model.id })));
+    let requestPrefsWriteChain: Promise<void> = Promise.resolve();
+    let requestPrefsSnapshot: string | undefined;
+    let requestPrefsClosed = false;
+    let nativeFastEnabled = opts.getPriceVariant?.() === 'priority';
+    const writeRequestPrefs = (fast = opts.getPriceVariant ? opts.getPriceVariant() === 'priority' : nativeFastEnabled): Promise<void> => {
+      if (requestPrefsClosed) return Promise.reject(new Error('Pi request preferences are closed'));
+      if (fastModels.length === 0) return Promise.resolve();
+      const snapshot = JSON.stringify({ fast, models: fastModels });
+      if (requestPrefsSnapshot === snapshot) return requestPrefsWriteChain;
+      requestPrefsSnapshot = snapshot;
+      const write = requestPrefsWriteChain.catch(() => {}).then(async () => {
+        try {
+          await writeFile(requestPrefsFile, snapshot);
+          nativeFastEnabled = fast;
+        } catch (error) {
+          if (requestPrefsSnapshot === snapshot) requestPrefsSnapshot = undefined;
+          throw error;
+        }
+      });
+      requestPrefsWriteChain = write;
+      return write;
+    };
     const subagentRuntimeFile = joinRemotePosixPath(
       runtimeDir,
       `subagent-${sid ?? `anon-${process.pid}-${Date.now()}`}-${runtimeInstanceId}${remote ? `-${permissionSnapshotHash}` : ''}.json`,
@@ -3258,8 +3284,10 @@ export class PiAgent extends BaseAgent {
     const cleanupRuntimeFiles = (): void => {
       if (runtimeFilesCleaned) return;
       runtimeFilesCleaned = true;
+      requestPrefsClosed = true;
       void rmPath(permissionFile);
       void rmPath(subagentRuntimeFile);
+      if (fastModels.length > 0) void requestPrefsWriteChain.finally(() => rmPath(requestPrefsFile)).catch(() => {});
     };
     // 权限档写入串行化 + 代际跳过。并发/连续切档(本地与远程控制端同时切,或用户快速连点)时,
     // 无串行的 fs.writeFile 可能让较早的 Full-access 写在较新的 Ask 写之后落盘 —— bridge 每次
@@ -3361,6 +3389,7 @@ export class PiAgent extends BaseAgent {
       return run;
     };
     await writePermissionFile(requestedPermissionSnapshot);
+    await writeRequestPrefs();
 
     // 子代理运行期快照的写入:代际串行,最新意图胜出(理由同权限档 —— 并发/连续 setModel
     // 时无串行的 writeFile 可能让较早的模型写在较新的之后落盘,子代理就会读到过期模型)。
@@ -3779,6 +3808,7 @@ export class PiAgent extends BaseAgent {
     const queue: AsyncQueue<AgentEvent> = createAsyncQueue<AgentEvent>();
     const ctx: PiTranslateContext = createPiTranslateContext(this.deps.logger);
     ctx.getPriceVariant = opts.getPriceVariant;
+    ctx.resolveUsagePriceVariant = opts.resolveUsagePriceVariant;
     ctx.workingContextWindow = startupWorkingContextWindow;
     const contextModeRoot = findContextModePackageRoot([
       ...nativePackageRoots,
@@ -5063,6 +5093,7 @@ export class PiAgent extends BaseAgent {
         // 扩展照旧现读快照,能力不受影响。
         CINDY_SUBAGENT_ENV.runtimeFile,
         CINDY_SUBAGENT_ENV.ownerId,
+        'CINDY_PI_MODEL_REQUEST_PREFS_FILE',
         // 受管工具路径同属控制面：不得让获批 bash 改写/替换后影响后续自动放行的 grep/find。
         ...(managedRipgrepPath ? [PI_MANAGED_RG_PATH_ENV] : []),
         // The bridge replaces Pi's built-in bash tool, so it receives the
@@ -5112,6 +5143,7 @@ export class PiAgent extends BaseAgent {
         [PI_BASH_PACKAGE_HOME_ENV]: bashPackageHome,
         ...(typeof runtimeShellPath === 'string' ? { [PI_BASH_SHELL_PATH_ENV]: runtimeShellPath } : {}),
         CINDY_PI_PERMISSION_FILE: permissionFile,
+        ...(fastModels.length > 0 ? { CINDY_PI_MODEL_REQUEST_PREFS_FILE: requestPrefsFile } : {}),
         ...(allowPiPackageManagement ? { [PI_PACKAGE_MANAGEMENT_ENV]: piPackageManagementToken } : {}),
         // 轮 40-w4-t12 HIGH-1:review-only 启动标记 —— 独立于权限文件(文件损坏/
         // 缺失时 bridge 仍保留 reviewOnly 语义, 不降级成普通 ask;见
@@ -6536,6 +6568,7 @@ export class PiAgent extends BaseAgent {
       async send(message: UserMessage, sendOpts?: SendOptions): Promise<void> {
         rejectIfCancelled(sendOpts, 'send');
         await waitForSessionRpcIdle();
+        await writeRequestPrefs();
         rejectIfCancelled(sendOpts, 'send');
         if (sendOpts) handle.validateSendOptions?.(sendOpts);
         // 本轮策略覆盖:无策略显式清 null,不继承上一轮渠道策略(§7.2.5);内部续跑
@@ -7078,6 +7111,11 @@ export class PiAgent extends BaseAgent {
         }));
         if (!resp.success) throw new Error(`pi set_thinking_level failed: ${resp.error ?? 'unknown'}`);
         mutableEffort = effort;
+      },
+
+      async setFastMode(enabled: boolean): Promise<void> {
+        if (reviewMode) return;
+        await writeRequestPrefs(enabled);
       },
 
       getEffort() {

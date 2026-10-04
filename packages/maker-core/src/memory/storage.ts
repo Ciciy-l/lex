@@ -312,12 +312,19 @@ export class MemoryStorage {
     filename: string,
     expectedUpdatedAt: string,
     changes: Pick<WriteOptions, 'title' | 'description' | 'body'>,
+    options?: { mutationGuard?: () => void },
   ): Promise<MemoryRecord> {
     return this.mutate(async () => {
       const current = await this.checkVersion(filename, expectedUpdatedAt);
+      // The caller's per-operation authorization is deliberately checked inside
+      // the shared mutation queue, immediately before the write.  The store's
+      // scopeCheck remains the global owner guard; this narrower check protects
+      // a remote controller that was revoked while it waited behind another
+      // memory mutation.
+      options?.mutationGuard?.();
       await this.writeFile({
         ...changes, type: current.frontmatter.type, name: current.slug, mode: 'update',
-      }, filename);
+      }, filename, options?.mutationGuard);
       // Return the revision this edit wrote, never a subsequent tool write.
       return this.read(filename);
     });
@@ -343,7 +350,11 @@ export class MemoryStorage {
     return current;
   }
 
-  private async writeFile(opts: WriteOptions, filename: string): Promise<WriteResult> {
+  private async writeFile(
+    opts: WriteOptions,
+    filename: string,
+    mutationGuard?: () => void,
+  ): Promise<WriteResult> {
     this.validateOpts(opts);
     const fullPath = path.join(this.dir, filename);
 
@@ -394,6 +405,10 @@ export class MemoryStorage {
     // tryReadRaw 的 await 窗口后、真正写盘前复核 owner scope (review #2388
     // Codex 8th P1): 边界不得把 shard 写入旧 owner 根。
     this.beforeFileWrite?.();
+    // The owner check above protects the store root.  Re-run the narrower
+    // operation guard after the final awaited read so a revoked remote
+    // controller cannot write the prepared bytes to disk.
+    mutationGuard?.();
     await fs.writeFile(fullPath, fileText, 'utf8');
     // shard write 后、索引重建前复核 (review #2388 Codex 12th P1): writeFile
     // await 期间边界可能发生, 不得继续在旧 owner 下 rebuildIndex / 返回成功。
@@ -412,19 +427,35 @@ export class MemoryStorage {
     return result;
   }
 
-  async delete(filename: string, expectedUpdatedAt?: string): Promise<void> {
+  async delete(
+    filename: string,
+    expectedUpdatedAt?: string,
+    options?: { mutationGuard?: () => void },
+  ): Promise<void> {
+    return this.deleteWithGuard(filename, expectedUpdatedAt, options);
+  }
+
+  async deleteWithGuard(
+    filename: string,
+    expectedUpdatedAt?: string,
+    options?: { mutationGuard?: () => void },
+  ): Promise<void> {
     return this.mutate(async () => {
       if (expectedUpdatedAt !== undefined) await this.checkVersion(filename, expectedUpdatedAt);
-      await this.deleteFile(filename);
+      options?.mutationGuard?.();
+      await this.deleteFile(filename, options?.mutationGuard);
     });
   }
 
-  private async deleteFile(filename: string): Promise<void> {
+  private async deleteFile(filename: string, mutationGuard?: () => void): Promise<void> {
     this.assertSafeFilename(filename);
     const fullPath = path.join(this.dir, filename);
     // 删除前复核 (review #2388 Codex 14th P1): 单次预检只保护 delete 开始瞬间,
     // 边界在 fs.unlink / rebuildIndex 之间发生仍会删旧 owner 文件并重建索引。
     this.beforeFileWrite?.();
+    // Keep the operation guard adjacent to unlink as well as in the queue
+    // preflight.  A controller can be revoked after the version check.
+    mutationGuard?.();
     try {
       await fs.unlink(fullPath);
     } catch (e) {

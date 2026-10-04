@@ -56,12 +56,15 @@ interface FakeSessionHarness {
   emit(event: AgentEvent): void;
 }
 
-function createSessionHarness(sendImpl: SendImpl): FakeSessionHarness {
+function createSessionHarness(
+  sendImpl: SendImpl,
+  agentKind: Session['agentKind'] = 'codex',
+): FakeSessionHarness {
   const listeners: Array<(event: AgentEvent) => void> = [];
   const vendorOptions: Record<string, unknown> = {};
   const session = {
     id: 'scheduler-session',
-    agentKind: 'codex',
+    agentKind,
     send: vi.fn<SendImpl>(sendImpl),
     setVendorOptions: vi.fn(async (patch: Record<string, unknown>) => {
       Object.assign(vendorOptions, patch);
@@ -191,6 +194,80 @@ describe('MakerScheduleRunner silent-run notification skip', () => {
     await fireToCompletion(runner, h);
 
     expect(notifier.notify).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['', '  \n'])(
+    'does not replay completed Codex commentary after a separate empty final (%j)',
+    async (emptyFinal) => {
+      const h = createSessionHarness(acceptingSend(), 'codex');
+      const { runner, notifier } = createRunnerHarness(h.session, { silenced: true });
+      const pending = runner.fire(
+        baseSchedule({ agentKind: 'codex', silentWhenIdle: true }),
+        createFireContext(),
+      );
+      await vi.waitFor(() => expect(mocks.createMessage).toHaveBeenCalled());
+      h.emit({ type: 'text', source: 'codex', data: {
+        text: 'Checking the PR.', isFinal: true, isFullText: true, phase: 'commentary',
+      } });
+      h.emit({ type: 'text', source: 'codex', data: {
+        text: emptyFinal, isFinal: true, isFullText: true, phase: 'final_answer',
+      } });
+      h.emit({ type: 'done', source: 'codex', data: { result: 'Checking the PR.' } });
+      await expect(pending).resolves.toMatchObject({ resultText: 'Checking the PR.' });
+      expect(notifier.notify).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    {
+      label: 'Claude Code stream',
+      agentKind: 'claude-code' as const,
+      source: 'claude-code' as const,
+      emptyFinal: { text: '', isFinal: true },
+    },
+    {
+      label: 'Codex authoritative final',
+      agentKind: 'codex' as const,
+      source: 'codex' as const,
+      emptyFinal: { text: '', isFinal: true, isFullText: true, phase: 'final_answer' },
+    },
+    {
+      label: 'Pi full result',
+      agentKind: 'pi' as const,
+      source: 'pi' as const,
+      emptyFinal: { text: '', isFinal: true, isFullText: true },
+    },
+    {
+      label: 'OMP full result',
+      agentKind: 'omp' as const,
+      source: 'omp' as const,
+      emptyFinal: { text: '', isFinal: true, isFullText: true },
+    },
+    {
+      label: 'legacy event without source or phase',
+      agentKind: 'codex' as const,
+      source: undefined,
+      emptyFinal: { text: '', isFinal: true, isFullText: true },
+    },
+  ])('lets an authoritative empty final retract prior deltas ($label)', async ({ agentKind, source, emptyFinal }) => {
+    const h = createSessionHarness(acceptingSend(), agentKind);
+    const { runner, notifier } = createRunnerHarness(h.session, { silenced: false });
+    const pending = runner.fire(
+      // The harness has no installed provider registry for Pi / OMP defaults.
+      // An explicit model lets this test stay focused on their real event sources.
+      baseSchedule({ agentKind, model: 'grok-4.5' }),
+      createFireContext(),
+    );
+    await vi.waitFor(() => expect(mocks.createMessage).toHaveBeenCalled());
+    const emitText = (data: unknown): AgentEvent => source
+      ? { type: 'text', source, data }
+      : { type: 'text', data };
+    h.emit(emitText({ text: 'Retracted partial', isFinal: false }));
+    h.emit(emitText(emptyFinal));
+    h.emit(source ? { type: 'done', source, data: {} } : { type: 'done', data: {} });
+    const result = await pending;
+    expect(result.resultText).toBeUndefined();
+    expect(JSON.stringify(notifier.notify.mock.calls)).not.toContain('Retracted partial');
   });
 
   it('scheduler turn 绑定 host-owned runId,收尾后清理', async () => {

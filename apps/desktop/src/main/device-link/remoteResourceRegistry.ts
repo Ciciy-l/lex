@@ -14,6 +14,11 @@ import { REMOTE_RESOURCE_PROTOCOL_VERSION } from '@cindy/device-link';
 export interface RemoteResourceHostContext {
   /** Server-stamped device id. Providers may use it for per-controller view state, never auth. */
   controllerDeviceId: string;
+  /** Active transport identity captured by dispatch; never supplied by the peer. */
+  client?: unknown;
+  /** Captured device-link generation and owner guard for async resource operations. */
+  linkEpoch?: number;
+  assertCurrent?: () => void;
 }
 
 export interface RemoteResourceProvider {

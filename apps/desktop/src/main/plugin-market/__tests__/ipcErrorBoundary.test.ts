@@ -136,12 +136,16 @@ describe('Plugin Market IPC error boundary', () => {
     expect(serviceSource).toContain(
       'await this.applyDefaultInstalls(plugins, currentOrganization, owner, ledger)',
     );
-    expect(serviceSource).toContain('await this.applyAutomaticUpgrades(plugins, customDiscovery.entries, owner, ledger)');
+    expect(serviceSource).toContain('await this.applyAutomaticUpgrades(');
+    expect(serviceSource).toContain('currentOrganization,');
     expect(serviceSource).toContain('if (error instanceof SilentUpgradeBusyError) {');
 
     expect(registerSource).toContain('deferReconciliation: true');
+    expect(registerSource).toContain('plugin-market:update-consent-holds-changed');
+    expect(registerSource).toContain('onConsentHoldsChanged:');
     expect(ghostPluginPageSource).toContain('const installedGhostMarketKey = useMemo(');
     expect(ghostPluginPageSource).toContain('void refreshMarket(true).catch(() => undefined);');
+    expect(ghostPluginPageSource).toContain('onUpdateConsentHoldsChanged');
 
     const ownerTaskStart = bootstrapSource.indexOf(
       'authManager.setStableOwnerPostCommitTask(async ({ reason, scopeKey, dataOwnerId }) => {',

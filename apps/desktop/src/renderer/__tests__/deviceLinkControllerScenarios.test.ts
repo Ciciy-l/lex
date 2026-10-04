@@ -264,6 +264,43 @@ describe('device-link controller mirror — end-to-end scenarios', () => {
     expect(host.invoke.mock.calls.filter(([, channel]) => channel === 'local-db:messages:list')).toHaveLength(2);
   });
 
+  it.each([false, true])('reconciles an external queue departure without a local pending bubble (persisted=%s)', async (persisted) => {
+    const s = sid();
+    host.enableHistoryView();
+    host.seedSession(s);
+    remoteProjectsStore.setDeviceSessions(DEVICE_ID, 'Mac A', [{ id: s } as Session]);
+    makerChatStore.enterView(s);
+    makerChatStore.ensureInitialMessages(s);
+    await flush(); await flush();
+    const queued = {
+      clientId: 'scheduled-input', text: 'Check the PR', persistedContent: 'Check the PR',
+      chatMessage: { clientId: 'scheduled-input', role: 'user', content: 'Check the PR', createdAt: '2026-09-17T00:00:00Z' },
+    };
+    host.push('maker:input:projection', { ...emptyProjection(s), pendingQueue: [queued] });
+    expect(makerChatStore.getSnapshot(s).pendingQueue).toHaveLength(1);
+    const origin = { kind: 'scheduler' as const, scheduleId: 'schedule', scheduleName: 'PR check', runId: 'run' };
+    if (persisted) host.hostMessage(s, {
+      ...dbMessage(s, 'scheduled-db', 'Check the PR', '2026-09-17T00:00:00Z', 'user'),
+      clientId: queued.clientId, agentMeta: { origin },
+    }, { lossy: true });
+    const historyPageCalls = () => host.invoke.mock.calls.filter(([, channel]) => channel === 'local-db:messages:view');
+    const callsBeforeDeparture = historyPageCalls().length;
+    host.push('maker:input:projection', emptyProjection(s));
+    expect(makerChatStore.getSnapshot(s).messages).toEqual([]);
+    await vi.waitFor(() => expect(historyPageCalls()).toHaveLength(callsBeforeDeparture + 1));
+    await flush(); await flush();
+    const rows = makerChatStore.getSnapshot(s).messages;
+    expect(rows).toHaveLength(persisted ? 1 : 0);
+    if (!persisted) {
+      makerChatStore.purgeSession(s);
+      return;
+    }
+    expect(rows[0]).toMatchObject({ automationOrigin: origin });
+    expect(rows[0].isPendingPersist).toBeUndefined();
+    expect(rows[0]).not.toHaveProperty('localSendPrecedingClientIds');
+    makerChatStore.purgeSession(s);
+  });
+
   it.each([[false, false, false], [false, true, false], [true, false, false], [true, true, false], [true, false, true], [true, true, true], [true, false, 'during'], [true, true, 'during']])('hands lost terminal text to history (projected=%s, concurrent=%s, inactive=%s)', async (projected, concurrent, inactive) => {
     const s = sid();
     if (projected) host.enableHistoryView();
@@ -1178,7 +1215,38 @@ describe('device-link controller mirror — end-to-end scenarios', () => {
     view.setActive(false);
   });
 
-  it('force reconciliation hydrates a terminal row from a collapsed work range', async () => {
+  it('seals a displayed live row without fetching an older collapsed work range', async () => {
+    const s = sid();
+    host.enableHistoryView();
+    const older = [dbMessage(s, 'old-u', 'old question', '2026-09-08T00:00:00Z', 'user'),
+      { ...dbMessage(s, 'old-thought', '', '2026-09-08T00:00:01Z', 'thinking'), content: { text: 'old hidden body', durationMs: 500 } },
+      dbMessage(s, 'old-answer', 'old answer', '2026-09-08T00:00:02Z'),
+      dbMessage(s, 'question', 'new question', '2026-09-08T00:00:03Z', 'user')];
+    host.seedSession(s, {}, older);
+    remoteProjectsStore.setDeviceSessions(DEVICE_ID, 'Mac A', [{ id: s } as Session]);
+    makerChatStore.enterView(s);
+    makerChatStore.ensureInitialMessages(s);
+    await flush(); await flush();
+    const startedAt = Date.parse('2026-09-08T00:00:04Z');
+    host.push('maker:event', { sessionId: s, event: { type: 'thinking', data: { blockId: 'client-thought', stage: 'start', startedAt } } });
+    host.push('maker:event', { sessionId: s, event: { type: 'thinking', data: { blockId: 'client-thought', stage: 'delta', text: 'live prefix' } } });
+    const terminal = { ...dbMessage(s, 'thought', '', new Date(startedAt).toISOString(), 'thinking'),
+      content: { text: 'sealed thought', durationMs: 1000, finishedAt: startedAt + 1000 } };
+    host.seedSession(s, {}, [...older, terminal, dbMessage(s, 'answer', 'final answer', '2026-09-08T00:00:06Z')]);
+    host.invoke.mockClear();
+    await expect(makerChatStore.reconcileRemoteMessages(s, { force: true })).resolves.toBe(true);
+    const state = makerChatStore.getSnapshot(s);
+    expect(state.messages.find((row) => row.clientId === 'client-thought')).toMatchObject({ content: 'sealed thought', isStreaming: false });
+    expect(state.messages.some((row) => row.clientId === 'client-old-thought')).toBe(false);
+    const view = getRemoteHistoryView(s)!;
+    expect(view.getSnapshot().expanded.size).toBe(0);
+    expect([...view.getSnapshot().details.values()].flatMap((detail) => detail.messages.map((row) => row.clientId))).toEqual(['client-thought']);
+    expect(host.invoke.mock.calls.filter(([, channel]) => channel === 'local-db:messages:work-details')).toHaveLength(1);
+    expect(host.invoke).not.toHaveBeenCalledWith(DEVICE_ID, 'local-db:messages:list', expect.anything());
+    makerChatStore.purgeSession(s);
+  });
+
+  it('force reconciliation leaves completed historical work folded until expansion', async () => {
     const s = sid();
     host.enableHistoryView();
     const history = [dbMessage(s, 'u', 'question', '2026-06-15T00:00:00.000Z', 'user'),
@@ -1197,12 +1265,18 @@ describe('device-link controller mirror — end-to-end scenarios', () => {
       'client-u', 'client-answer',
     ]);
 
+    host.invoke.mockClear();
     await makerChatStore.reconcileRemoteMessages(s, { force: true });
 
     expect(makerChatStore.getSnapshot(s).messages.map((row) => row.clientId)).toEqual([
-      'client-u', 'client-thought', 'client-answer',
+      'client-u', 'client-answer',
     ]);
+    expect(host.invoke).not.toHaveBeenCalledWith(DEVICE_ID, 'local-db:messages:work-details', expect.anything());
     expect(view.getSnapshot().expanded.has(group.key)).toBe(false);
+    view.setExpanded(group.key, true);
+    await flush();
+    expect(makerChatStore.getSnapshot(s).messages.find((row) => row.clientId === 'client-thought'))
+      .toMatchObject({ content: 'terminal body', isStreaming: false });
     view.setActive(false);
   });
 
@@ -1279,6 +1353,14 @@ describe('device-link controller mirror — end-to-end scenarios', () => {
       if (args[1] === channelToHold) await new Promise<void>(resolve => { releases.push(resolve); });
       return value;
     });
+    if (path === 'raw-fallback') {
+      // A failed visible detail requires fallback; folded historical work does not.
+      const view = getRemoteHistoryView(s)!;
+      await view.refresh();
+      const group = view.getSnapshot().items.find((item) => item.type === 'work')!;
+      view.setExpanded(group.key, true);
+      await flush();
+    }
     const first = makerChatStore.reconcileRemoteMessages(s, { force: true });
     await vi.waitFor(() => expect(releases).toHaveLength(1));
     const second = makerChatStore.reconcileRemoteMessages(s, { force: true });

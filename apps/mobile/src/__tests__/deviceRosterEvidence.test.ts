@@ -16,12 +16,14 @@ function fixture() {
   visit(source);
   if (!expression) throw new Error('Missing roster consumer');
   const client = { getStatus: () => 'online' };
+  const catalogRefreshDeviceIds = new Set<string>();
+  const catalogRefresh = { cancel: vi.fn() };
   const bindings = { client, clientRef: { current: client }, connectionEpochRef: { current: 1 },
     presenceAvailabilityEpochsRef: { current: { next: 0, byDevice: new Map<string, number>() } },
     remoteResponseEvidenceEpochs: { next: 0, byDevice: new Map<string, number>() },
     presenceAvailableByDeviceRef: { current: new Map<string, boolean>() },
     presenceUnavailableVerdictsRef: { current: new Map<string, { kind: string }>() },
-    applyPresence: vi.fn(),
+    applyPresence: vi.fn(), catalogRefreshDeviceIds, catalogRefresh,
   };
   const compiled = ts.transpileModule(`const create = ${expression.getText(source)};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   const create = new Function(...Object.keys(bindings), `${compiled}\nreturn create;`)(...Object.values(bindings));
@@ -57,4 +59,12 @@ it('rejects stale offline REST evidence after a response, presence update or con
     f.apply([device]);
     expect(f.applyPresence).not.toHaveBeenCalled();
   }
+});
+
+it('cancels catalog refresh work for a device removed from the authoritative roster', () => {
+  const f = fixture();
+  f.catalogRefreshDeviceIds.add('host');
+  f.apply([]);
+  expect(f.catalogRefresh.cancel).toHaveBeenCalledExactlyOnceWith('host');
+  expect(f.catalogRefreshDeviceIds.has('host')).toBe(false);
 });

@@ -1,6 +1,6 @@
 import { REMOTE_RESOURCE_GET_CHANNEL, type RemoteResourceGetRequest } from '@cindy/device-link';
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { CCAgentSessionView } from '@/features/cc-agent/CCAgentSessionView';
 import { remoteProjectsStore } from '@/features/device-link/remoteProjectsStore';
@@ -9,11 +9,14 @@ import { Spinner } from '@/components/ui/spinner';
 import { BotAvatar } from './BotAvatar';
 import { parseRemoteBots, type RemoteBot } from './remoteBotRoster';
 import { markRemoteBotRead, useRemoteBots } from './useRemoteBots';
+import { RemoteBotMemoryView } from './RemoteBotMemoryView';
 
 /** The session id comes from the host's collection, never from an arbitrary URL. */
 export function RemoteBotSessionView() {
   const { deviceId, botId } = useParams();
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const bots = useRemoteBots();
   const bot = bots.find((row) => row.id === botId && row.deviceId === deviceId);
   const [ready, setReady] = useState<RemoteBot | null>(null);
@@ -21,12 +24,13 @@ export function RemoteBotSessionView() {
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
   const sessionId = bot?.sessionId;
+  const showMemory = searchParams.get('memory') === '1';
   useEffect(() => {
     let disposed = false;
     setFailed(false);
     if (!deviceId || !bot?.online) return;
     const request: RemoteResourceGetRequest = {
-      client: { protocolVersion: 1, primitives: ['status', 'session-link'] },
+      client: { protocolVersion: 1, primitives: ['status', 'session-link', 'search', 'list', 'form', 'action'] },
       ref: { collectionId: 'teammates', kind: 'bot', id: bot.id },
     };
     void (async () => {
@@ -84,15 +88,27 @@ export function RemoteBotSessionView() {
     return () => document.removeEventListener('visibilitychange', read);
   }, [bot?.deviceId, bot?.id, bot?.lastReplyAt, bot?.sessionId, ready?.sessionId, validatedSessionId]);
 
+  if (showMemory && bot && bot.id === botId && bot.deviceId === deviceId) {
+    return <RemoteBotMemoryView bot={bot} />;
+  }
   if (bot && !failed && ready?.sessionId && ready.id === botId && ready.deviceId === deviceId) {
     return (
-      <CCAgentSessionView
-        key={`${deviceId}:${ready.sessionId}`}
-        sessionIdProp={ready.sessionId}
-        routeOwner
-        botIdentity={ready}
-        readOnly={!bot.online || validatedSessionId !== bot.sessionId || failed}
-      />
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="flex shrink-0 justify-end border-b border-[var(--border-default)] px-3 py-1">
+          <button type="button" className="rounded-[8px] px-2 py-1 text-12 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]" onClick={() => navigate(`?memory=1`)}>
+            {t('bots.remote.memory.title', { defaultValue: 'Saved memories' })}
+          </button>
+        </div>
+        <div className="min-h-0 flex-1">
+          <CCAgentSessionView
+            key={`${deviceId}:${ready.sessionId}`}
+            sessionIdProp={ready.sessionId}
+            routeOwner
+            botIdentity={ready}
+            readOnly={!bot.online || validatedSessionId !== bot.sessionId || failed}
+          />
+        </div>
+      </div>
     );
   }
   return (

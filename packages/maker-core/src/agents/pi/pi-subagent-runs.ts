@@ -2647,6 +2647,16 @@ async function resumeClaimedPiSubagentRun(
     await fs.writeFile(path.join(childConfigHome, 'models.json'), modelsJson, { mode: 0o600, flag: 'wx' });
     await fs.writeFile(bridgeExtension, bridgeSource, { mode: 0o600, flag: 'wx' });
     await writeAtomicJson(permissionFile, launch.permissionSnapshot);
+    // Resume requires a live parent. Missing preferences mean no current Fast
+    // capability, not permission to resurrect the prior run's capability snapshot.
+    const liveRequestPrefsFile = launch.env.CINDY_PI_MODEL_REQUEST_PREFS_FILE;
+    delete config.requestPrefsFile;
+    if (liveRequestPrefsFile) {
+      const requestPrefs = await fs.readFile(liveRequestPrefsFile);
+      const requestPrefsFile = path.join(runDir, 'request-prefs.json');
+      await fs.writeFile(requestPrefsFile, requestPrefs, { mode: 0o600, flag: 'wx' });
+      config.requestPrefsFile = requestPrefsFile;
+    }
     await fs.writeFile(runnerFile, runnerSource, { mode: 0o600, flag: 'wx' });
     await Promise.all([
       fs.chmod(runDir, 0o700).catch(() => undefined),

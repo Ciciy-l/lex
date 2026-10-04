@@ -1,22 +1,27 @@
+import { generationCapabilities, previousModelGenerations } from './modelGeneration.js';
 import { sourceProviderForPreset } from './providerPresetIdentity.js';
 import { providerEndpointBindings } from './providerEndpointTemplate.js';
 import { declaredModelInterface } from './providerInterfaceRoutes.js';
 import interfaceModels from "../catalog/provider-interface-models.json" with { type: "json" };
 import generated from "../catalog/provider-models.json" with { type: "json" };
-import type { ModelMetadata } from "./modelMetadataLayers.js";
+import { pickModelMetadata, type ModelMetadata } from "./modelMetadataLayers.js";
 import type { ModelCost, PiModelApi, ProviderWireProtocol } from "./types.js";
 
-export interface ProviderModelRecord {
+export interface ProviderModelRecord extends ModelMetadata {
+  /** Internal fallback provenance, not an upstream capability declaration. */
+  inheritedFrom?: string;
   id: string;
   name: string;
   upstream: string;
-  contextWindow: number;
+  contextWindow?: number;
   maxOutput?: number;
   modalities?: { input: string[]; output: string[] };
   supportsImageInput?: boolean;
-  reasoning: boolean;
-  efforts: NonNullable<ModelMetadata["efforts"]>;
-  defaultEffort: ModelMetadata["defaultEffort"];
+  /** Connection-scoped declaration; absent does not authorize a Fast request. */
+  supportsFastMode?: boolean;
+  reasoning?: boolean;
+  efforts?: NonNullable<ModelMetadata["efforts"]>;
+  defaultEffort?: ModelMetadata["defaultEffort"];
   cost?: ModelCost;
   execution: {
     pi: {
@@ -52,7 +57,12 @@ for (const [provider, declaration] of Object.entries(interfaceModels)) {
 
 const byEndpointAndId = new Map<string, ProviderModelRecord[]>();
 const apisByEndpoint = new Map<string, Set<string>>();
-const normalize = (url: string) => url.trim().replace(/\/+$/, "");
+const normalize = (url: string) => {
+  const trimmed = url.trim();
+  let end = trimmed.length;
+  while (end > 0 && trimmed.charCodeAt(end - 1) === 47) end--;
+  return trimmed.slice(0, end);
+};
 for (const rows of Object.values(PROVIDER_MODEL_CATALOG.providers)) {
   for (const row of rows) {
     const endpoint = normalize(row.upstream);
@@ -69,7 +79,8 @@ for (const rows of Object.values(PROVIDER_MODEL_CATALOG.providers)) {
   }
 }
 
-/** Exact route identity, shared by every harness. No fuzzy names or cross-proxy borrowing. */
+const generationRows = Object.values(PROVIDER_MODEL_CATALOG.providers).flat();
+/** Exact route identity, shared by every harness. */
 export function providerModelRecord(
   modelId: string,
   upstream: string,
@@ -86,6 +97,36 @@ export function providerModelRecord(
   return matches?.length === 1 ? matches[0] : undefined;
 }
 
+/** A new generation reuses parameters, but keeps its own connection and identity. */
+export function providerModelGenerationRecord(modelId: string, upstream: string, protocol?: ProviderWireProtocol | PiModelApi, presetId?: string): ProviderModelRecord | undefined {
+  const api = protocol === 'openai-chat' ? 'openai-completions' : protocol;
+  // Transport must already be selected; inheritance never changes a connection's API.
+  if (!api) return undefined;
+  const endpointRows = generationRows
+    .filter(row => normalize(row.upstream) === normalize(upstream) && row.execution.pi.api === api);
+  const presetRows = presetId ? (PROVIDER_MODEL_CATALOG.providers[sourceProviderForPreset(presetId)] ?? [])
+    .filter(row => normalize(row.upstream) === normalize(upstream) && row.execution.pi.api === api) : [];
+  // Capabilities and adapters may only come from this exact upstream path and API.
+  const candidates = [...endpointRows, ...presetRows];
+  const uniqueById = new Map<string, ProviderModelRecord>();
+  const ambiguous = new Set<string>();
+  for (const candidate of candidates) {
+    const existing = uniqueById.get(candidate.id);
+    if (!existing) uniqueById.set(candidate.id, candidate);
+    else if (JSON.stringify(existing) !== JSON.stringify(candidate)) ambiguous.add(candidate.id);
+  }
+  for (const id of ambiguous) uniqueById.delete(id);
+  const uniqueCandidates = [...uniqueById.values()];
+  const previous = uniqueById.get(modelId)
+    ?? previousModelGenerations(modelId, uniqueCandidates, row => row.id).at(-1);
+  if (!previous) return undefined;
+  const { cost: _cost, execution, ...metadata } = previous;
+  const { headers: _headers, ...parameters } = execution.pi;
+  return { ...generationCapabilities(metadata), id: modelId, name: modelId, upstream,
+    ...(previous.id !== modelId ? { inheritedFrom: previous.id } : {}),
+    execution: { pi: structuredClone(parameters) } };
+}
+
 /** Account-specific endpoints may still explicitly reference a maintained connection template. */
 export function providerPresetModelRecord(presetId: string | undefined, modelId: string, api?: PiModelApi): ProviderModelRecord | undefined {
   if (!presetId) return undefined;
@@ -95,21 +136,31 @@ export function providerPresetModelRecord(presetId: string | undefined, modelId:
 }
 
 /** Preserve the upstream adapter identity, independently of a user's connection UUID. */
-export function providerModelAdapterId(row: ProviderModelRecord): string | undefined {
-  const matches = Object.entries(PROVIDER_MODEL_CATALOG.providers).filter(([, rows]) =>
-    rows.some(candidate => candidate.id === row.id && (normalize(candidate.upstream) === normalize(row.upstream) || (candidate.upstream.includes('{') && providerEndpointBindings(candidate.upstream, row.upstream) !== null))
-      && candidate.execution.pi.api === row.execution.pi.api));
+export function providerModelAdapterId(row: ProviderModelRecord, presetId?: string): string | undefined {
+  const presetProvider = presetId ? sourceProviderForPreset(presetId) : undefined;
+  const matches = Object.entries(PROVIDER_MODEL_CATALOG.providers).filter(([provider, rows]) => {
+    const connectionRows = rows.filter(candidate => candidate.execution.pi.api === row.execution.pi.api &&
+      (normalize(candidate.upstream) === normalize(row.upstream) ||
+        (candidate.upstream.includes('{') && providerEndpointBindings(candidate.upstream, row.upstream) !== null) ||
+        (row.inheritedFrom !== undefined && provider === presetProvider)));
+    return connectionRows.some(candidate => candidate.id === row.id) ||
+      // Only the matched connection/preset lends transport identity. Manufacturer
+      // capability fallback on an unrelated relay must not lend its adapter.
+      (row.inheritedFrom !== undefined && previousModelGenerations(row.id, connectionRows, candidate => candidate.id).length > 0);
+  });
   // Duplicated subscription catalogs can share endpoints; never guess between distinct identities.
   return matches.length === 1 ? matches[0][0] : undefined;
 }
 
 export function providerModelMetadata(row: ProviderModelRecord): ModelMetadata {
   return {
+    ...pickModelMetadata(row),
     name: row.name,
     contextWindow: row.contextWindow,
     ...(row.maxOutput ? { maxOutputTokens: row.maxOutput } : {}),
     ...(row.modalities ? { modalities: row.modalities } : {}),
     ...(row.supportsImageInput !== undefined ? { supportsImageInput: row.supportsImageInput } : {}),
+    ...(row.supportsFastMode !== undefined ? { supportsFastMode: row.supportsFastMode } : {}),
     efforts: row.efforts,
     defaultEffort: row.defaultEffort,
     ...(row.execution.pi.thinkingLevelMap?.off === null
@@ -133,7 +184,7 @@ export function providerCatalogForPi() {
             baseUrl: row.upstream,
             contextWindow: row.contextWindow,
             maxTokens: row.maxOutput,
-            ...(row.modalities ? { input: row.modalities.input } : {}),
+            input: row.modalities?.input,
             reasoning: row.reasoning,
             ...(row.cost ? { cost: row.cost } : {}),
             ...row.execution.pi,

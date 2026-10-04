@@ -8,6 +8,7 @@ import type {
 import type { BotRemoteResourceSource } from './bots.js';
 import { isBotVisibleRemotely } from './botRemoteVisibility.js';
 import { isManagedBotAvatarUrl } from '../../../shared/botAvatarValue.js';
+import { memoryCopy } from './botRemoteMemory.js';
 
 export const TEAMMATES_REMOTE_COLLECTION_ID = 'teammates';
 export const BOT_REMOTE_RESOURCE_KIND = 'bot';
@@ -124,12 +125,17 @@ export function botRemoteCollectionItemFromSource(
         ? { badges: [{ accessibilityLabel: ATTENTION_COPY, tone: 'warning' as const }] }
         : {}),
     },
-    links: source.canonicalSessionId
-      ? [{
-          rel: 'conversation',
-          target: { kind: 'session', sessionId: source.canonicalSessionId },
-        }]
-      : [],
+    links: [
+      ...(source.canonicalSessionId ? [{
+        rel: 'conversation',
+        target: { kind: 'session' as const, sessionId: source.canonicalSessionId },
+      }] : []),
+      {
+        rel: 'memories',
+        target: { kind: 'resource' as const, ref: { collectionId: TEAMMATES_REMOTE_COLLECTION_ID, kind: BOT_REMOTE_RESOURCE_KIND, id: `settings:${source.id}/memory` } },
+        label: memoryCopy.memories,
+      },
+    ],
     revision: sourceRevision(source),
   };
 }
@@ -146,8 +152,9 @@ export function visibleBotRemoteResourceSources(
     });
 }
 
-export function botRemoteResourceFromSource(source: BotRemoteResourceSource): RemoteResource {
+export function botRemoteResourceFromSource(source: BotRemoteResourceSource, includeMemory = false): RemoteResource {
   const item = botRemoteCollectionItemFromSource(source);
+  if (!includeMemory) item.links = item.links.filter((link) => link.rel !== 'memories');
   return {
     ...item,
     ...(source.description

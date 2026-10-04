@@ -751,6 +751,20 @@
       }
     }
   },
+  "companionProfile": {
+    "memory": {
+      "title": "已存記憶",
+      "search": "搜尋記憶",
+      "conflict": "這條記憶已在主機上變更。",
+      "useLatest": "使用最新內容",
+      "keepMine": "保留我的修改",
+      "edit": "編輯",
+      "delete": "刪除",
+      "done": "儲存",
+      "deleteConfirmTitle": "刪除這條記憶？",
+      "deleteConfirmBody": "刪除後無法復原。"
+    }
+  },
   "companions": {
     "messageSent": "已傳送補充訊息",
     "privateChat": "與 {{name}} 的私聊",

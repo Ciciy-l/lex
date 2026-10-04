@@ -403,7 +403,11 @@ beforeEach(() => {
   dirDepositMock.mockClear();
   saveDepositMock.mockClear();
   liveGrantStateMock.mockReset();
-  liveGrantStateMock.mockReturnValue({ permissionMode: 'auto', remoteHostId: null });
+  liveGrantStateMock.mockReturnValue({
+    permissionMode: 'auto',
+    remoteHostId: null,
+    isCurrent: () => true,
+  });
   callCindyMediaMock.mockReset();
   alsSessionContextMock.mockReset();
   logWarnMock.mockClear();
@@ -518,6 +522,9 @@ describe('Forge session workdir gate', () => {
     expect(forgeInstallPackageMock).toHaveBeenCalledWith(cindyPath, {
       ghostId: 'demo',
       packageSha256: createHash('sha256').update(bytes).digest('hex'),
+      consentPrompt: expect.any(Function),
+      mutationOwner: { mode: 'local', dataOwnerId: 'test', generation: 0 },
+      isCurrent: expect.any(Function),
     });
     expect(result).toMatchObject({
       ok: true,
@@ -526,6 +533,37 @@ describe('Forge session workdir gate', () => {
       enabled: true,
     });
     expect(completeForgePackStagingMock).not.toHaveBeenCalled();
+  });
+
+  it('releases the Forge owner lease before install consent can wait', async () => {
+    let finishInstall!: () => void;
+    const installPending = new Promise<void>((resolve) => { finishInstall = resolve; });
+    const installStarted = new Promise<void>((resolve) => {
+      forgeInstallPackageMock.mockImplementationOnce(async () => {
+        resolve();
+        // Keep the mocked install pending as a stand-in for the Host consent card.
+        await installPending;
+        return {
+          action: 'installed',
+          ghost: {
+            enabled: true,
+            manifest: { id: 'demo', name: 'Demo', version: '1.0.0' },
+          },
+        };
+      });
+    });
+    packGhostDirMock.mockResolvedValueOnce({
+      ok: true,
+      buf: Buffer.from('packed'),
+      cindyPath: path.join(WORKDIR, 'plugin-src', 'demo-1.0.0.cindy'),
+      manifest: { id: 'demo', name: 'Demo', version: '1.0.0' },
+    });
+
+    const operation = makeDeps().forgeInstall({ dir: path.join(WORKDIR, 'plugin-src') });
+    await installStarted;
+    expect(releaseMutationMock).toHaveBeenCalledTimes(1);
+    finishInstall();
+    await expect(operation).resolves.toMatchObject({ ok: true, action: 'installed' });
   });
 
   it('does not suggest organization publishing to a personal account after default pack', async () => {

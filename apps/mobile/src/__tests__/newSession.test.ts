@@ -1195,10 +1195,12 @@ describe('new session model', () => {
     const transportSource = readTextLf(
       resolve(process.cwd(), 'src/device-link/mobileMakerTransport.ts'), 'utf8');
     expect(transportSource).toContain("listAvailableAgents: () => call('maker:list-available-agents', [])");
+    expect(transportSource).toContain("export const MOBILE_AGENT_KINDS = ['claude-code', 'codex', 'pi', 'omp'] as const;");
     const deviceLinkContextSource = readTextLf(
       resolve(process.cwd(), 'src/device-link/DeviceLinkContext.tsx'), 'utf8',
     );
-    expect(deviceLinkContextSource).toContain("['claude-code', 'codex', 'pi', 'omp'] as const");
+    expect(deviceLinkContextSource).toContain("import { MOBILE_AGENT_KINDS } from '@/device-link/mobileMakerTransport';");
+    expect(deviceLinkContextSource).toContain('MOBILE_AGENT_KINDS.map(async (agentKind) =>');
   });
 
   it('uses safe per-agent permission defaults for new interactive sessions', () => {

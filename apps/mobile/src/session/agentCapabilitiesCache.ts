@@ -12,6 +12,7 @@ import type { MobileAgentCapabilities } from '@/session/agentCapabilities';
 const cache = new Map<string, MobileAgentCapabilities>();
 const deviceGen = new Map<string, number>();
 const listeners = new Map<string, Set<(value: MobileAgentCapabilities) => void>>();
+const fetches = new Map<string, { generation: number; promise: Promise<unknown> }>();
 
 export function buildAgentCapabilitiesCacheKey(deviceId: string, agentKind: string): string {
   return `${deviceId} ${agentKind}`;
@@ -24,6 +25,24 @@ export function getCachedAgentCapabilities(key: string): MobileAgentCapabilities
 /** 捕获设备当前能力代际；请求完成时必须带回同一代际才能提交。 */
 export function getAgentCapabilitiesGeneration(deviceId: string): number {
   return deviceGen.get(deviceId) ?? 0;
+}
+
+/** Serialize one device/agent read, while allowing a new generation to replace stale work. */
+export function fetchAgentCapabilities(
+  deviceId: string,
+  agentKind: string,
+  fetcher: () => Promise<unknown>,
+): Promise<unknown> {
+  const key = buildAgentCapabilitiesCacheKey(deviceId, agentKind);
+  const generation = getAgentCapabilitiesGeneration(deviceId);
+  const current = fetches.get(key);
+  if (current?.generation === generation) return current.promise;
+  const entry = { generation, promise: Promise.resolve().then(fetcher) };
+  fetches.set(key, entry);
+  void entry.promise.finally(() => {
+    if (fetches.get(key) === entry) fetches.delete(key);
+  }).catch(() => undefined);
+  return entry.promise;
 }
 
 export function isAgentCapabilitiesGenerationCurrent(
@@ -75,7 +94,7 @@ export function evictAgentCapabilitiesForDevice(deviceId: string): void {
 /** 清空缓存(登出账号隔离用;测试亦复用)。 */
 export function resetAgentCapabilitiesCache(): void {
   const deviceIds = new Set(deviceGen.keys());
-  for (const key of [...cache.keys(), ...listeners.keys()]) {
+  for (const key of [...cache.keys(), ...listeners.keys(), ...fetches.keys()]) {
     const separator = key.lastIndexOf(' ');
     if (separator > 0) deviceIds.add(key.slice(0, separator));
   }

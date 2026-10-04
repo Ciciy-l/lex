@@ -3263,6 +3263,9 @@ describe('Bot Session task end-to-end runtime', () => {
     resolveInteraction?: NonNullable<
       Parameters<typeof createBotDelegationService>[0]['resolveInteraction']
     >;
+    onResultReceiptPersisted?: () => Promise<void>;
+    onCompletionDispatched?: () => Promise<void>;
+    onInteractionDispatched?: () => Promise<void>;
   } = {}) {
     const accountReady = options.accountReady ?? (() => true);
     const started: StartedTurn[] = [];
@@ -3444,7 +3447,14 @@ describe('Bot Session task end-to-end runtime', () => {
           return { ok: true as const, targetSessionId: params.targetSessionId, wakeKind: 'queued' as const };
         }
       }
-      return dispatchDirect(params);
+      const result = await dispatchDirect(params);
+      if (result.ok && params.clientId?.startsWith('bot-delegation-completion:')) {
+        await options.onCompletionDispatched?.();
+      }
+      if (result.ok && params.clientId?.startsWith('bot-delegation-interaction:')) {
+        await options.onInteractionDispatched?.();
+      }
+      return result;
     });
 
     const abortSession = vi.fn(async (id: string): Promise<void> => { coordinator?.stop(id); });
@@ -4356,13 +4366,18 @@ describe('Bot Session task end-to-end runtime', () => {
     vi.useFakeTimers();
     let readbacks = 0;
     let failReadback = false;
-    const runtime = createDelegationRuntime({ taskControl: true, reconcileWorktree: async () => {
+    const reconcileWorktree = async () => {
       if (failReadback && ++readbacks === 2) throw new Error('fixture second readback unavailable');
-    } });
+    };
+    let runtime = createDelegationRuntime({ taskControl: true, reconcileWorktree });
     try {
       const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Recover the interrupted turn.' });
       if (!task.ok) throw new Error('missing task');
       failReadback = true;
+      // A host restart replaces the service, which drops the previous in-memory
+      // running-turn state while keeping the SQLite acceptance timestamps.
+      runtime.dispose();
+      runtime = createDelegationRuntime({ taskControl: true, reconcileWorktree });
       await runtime.delegation.restore();
       const resumeCalls = () => runtime.dispatch.mock.calls.filter(([params]) => params.clientId?.startsWith(`bot-delegation-resume:${task.delegationId}:`));
       expect(resumeCalls()).toHaveLength(0);
@@ -5004,10 +5019,22 @@ describe('Bot Session task end-to-end runtime', () => {
         kind: 'permission' as const,
         requestId: 'permission-1',
         toolName: 'write_file',
-        input: { path: '/tmp/report.md' },
+        input: {
+          path: '/tmp/report.md',
+          headers: { 'X-Auth': 'opaque-private-credential' },
+          token: 'private-credential-value',
+        },
         title: '写入报告',
       };
       await runtime.delegation.handleInteractionStart(started.childSessionId, request);
+      const wake = runtime.dispatch.mock.calls.find(([params]) =>
+        params.clientId === `bot-delegation-interaction:${started.delegationId}:${request.requestId}`,
+      )?.[0].message;
+      expect(wake).toContain('请求工具: write_file');
+      expect(wake).not.toContain('/tmp/report.md');
+      expect(wake).not.toContain('opaque-private-credential');
+      expect(wake).not.toContain('private-credential-value');
+      expect(wake).not.toContain('请求参数');
       await expect(
         runtime.delegation.getSessionTask('session-1', started.delegationId),
       ).resolves.toMatchObject({
@@ -5018,6 +5045,7 @@ describe('Bot Session task end-to-end runtime', () => {
           pendingInteraction: {
             requestId: 'permission-1',
             kind: 'permission',
+            summary: '写入报告',
           },
         },
       });
@@ -5042,6 +5070,362 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally {
       runtime.dispose();
     }
+  });
+
+  it.each(['deleted', 'archived'] as const)(
+    'retries a pending approval wake-up in the replacement canonical task after parent %s', async (parentEnd) => {
+      await seedPair();
+      vi.useFakeTimers();
+      let replacementSessionId: string | undefined;
+      const runtime = createDelegationRuntime({
+        onInteractionDispatched: async () => {
+          if (replacementSessionId) return;
+          if (parentEnd === 'deleted') {
+            h.sqlite!.prepare("DELETE FROM sessions WHERE id = 'session-1'").run();
+          } else {
+            h.sqlite!.prepare("UPDATE sessions SET status = 'archived' WHERE id = 'session-1'").run();
+            h.sqlite!.prepare("UPDATE bot_session_links SET role = 'history', archived_at = 10_000 WHERE session_id = 'session-1' AND role = 'canonical'").run();
+          }
+          const recovered = await invoke('local-db:bots:create-canonical-session', {
+            botId: 'bot-a', expectedCanonicalSessionId: null, expectedProfileVersion: 1,
+          });
+          replacementSessionId = recovered.canonicalSessionId as string;
+        },
+      });
+      try {
+        const task = await runtime.delegation.startSessionTask({
+          callerSessionId: 'session-1', objective: 'Wait for approval before writing.',
+        });
+        if (!task.ok) throw new Error('Task did not start');
+        const request = { kind: 'permission' as const, requestId: 'replacement-approval', toolName: 'write_file', input: {} };
+        await runtime.delegation.handleInteractionStart(task.childSessionId, request);
+        expect(replacementSessionId).toBeTruthy();
+        const wakeId = `bot-delegation-interaction:${task.delegationId}:${request.requestId}`;
+        expect(runtime.dispatch.mock.calls.filter(([params]) => params.clientId === wakeId)
+          .map(([params]) => params.targetSessionId)).toEqual(['session-1']);
+        expect(h.sqlite!.prepare('SELECT 1 FROM messages WHERE session_id = ? AND client_id = ?')
+          .get(replacementSessionId, wakeId)).toBeUndefined();
+
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(h.sqlite!.prepare('SELECT 1 FROM messages WHERE session_id = ? AND client_id = ?')
+          .get(replacementSessionId, wakeId)).toBeTruthy();
+        expect(runtime.started.filter(turn => turn.sessionId === replacementSessionId)).toHaveLength(1);
+        expect(await runtime.delegation.getSessionTask(replacementSessionId!, task.delegationId))
+          .toMatchObject({ task: { status: 'waiting', pendingInteraction: { requestId: request.requestId } } });
+      } finally {
+        runtime.dispose();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each(['answered', 'held', 'paused', 'cancelled', 'owner-changed', 'new-request'] as const)(
+    'does not retry an obsolete approval wake-up after %s', async (state) => {
+      await seedPair();
+      vi.useFakeTimers();
+      let runtime!: ReturnType<typeof createDelegationRuntime>;
+      let taskId = '';
+      let childSessionId = '';
+      let request: { kind: 'permission'; requestId: string; toolName: string; input: Record<string, unknown> } = {
+        kind: 'permission', requestId: 'obsolete-approval', toolName: 'write_file', input: {},
+      };
+      let changed = false;
+      let replacementSessionId: string | undefined;
+      runtime = createDelegationRuntime({
+        taskControl: state === 'held',
+        onInteractionDispatched: async () => {
+          if (changed) return;
+          changed = true;
+          h.sqlite!.prepare("DELETE FROM sessions WHERE id = 'session-1'").run();
+          const recovered = await invoke('local-db:bots:create-canonical-session', {
+            botId: 'bot-a', expectedCanonicalSessionId: null, expectedProfileVersion: 1,
+          });
+          replacementSessionId = recovered.canonicalSessionId as string;
+          if (state === 'owner-changed') {
+            // register tears down this owner-scoped service before the new owner
+            // can receive any completion of the in-flight dispatch.
+            runtime.dispose();
+          } else if (state === 'paused' || state === 'cancelled' || state === 'new-request') {
+            const current = h.sqlite!.prepare('SELECT permission_snapshot_json AS snapshot FROM bot_delegations WHERE id = ?')
+              .get(taskId) as { snapshot: string };
+            const snapshot = JSON.parse(current.snapshot) as Record<string, unknown>;
+            if (state === 'paused') {
+              snapshot.taskPause = { token: 'pause-before-retry', pausedAt: 10_000, previousStatus: 'waiting' };
+            } else if (state === 'cancelled') {
+              snapshot.taskCancelRequested = true;
+            }
+            if (state === 'new-request') {
+              h.sqlite!.prepare('UPDATE bot_delegations SET pending_interaction_json = ? WHERE id = ?')
+                .run(JSON.stringify({ requestId: 'current-approval', kind: 'permission', summary: 'A newer request', raisedAt: 10_000 }), taskId);
+            } else {
+              h.sqlite!.prepare('UPDATE bot_delegations SET permission_snapshot_json = ? WHERE id = ?')
+                .run(JSON.stringify(snapshot), taskId);
+            }
+          }
+        },
+      });
+      try {
+        const task = await runtime.delegation.startSessionTask({
+          callerSessionId: 'session-1', objective: 'Wait for the current approval only.',
+        });
+        if (!task.ok) throw new Error('Task did not start');
+        taskId = task.delegationId;
+        childSessionId = task.childSessionId;
+        await runtime.delegation.handleInteractionStart(childSessionId, request);
+        if (state === 'answered') await runtime.delegation.handleInteractionEnd(childSessionId, request);
+        if (state === 'held') {
+          await runtime.delegation.stopSessionTask(replacementSessionId!, taskId, 'pause');
+        }
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        const messagesFor = (requestId: string) => runtime.dispatch.mock.calls.filter(([params]) =>
+          params.clientId === `bot-delegation-interaction:${taskId}:${requestId}`,
+        );
+        expect(messagesFor('obsolete-approval')).toHaveLength(1);
+        if (state === 'new-request') {
+          expect(messagesFor('current-approval')).toHaveLength(0);
+          expect(JSON.parse(h.sqlite!.prepare('SELECT pending_interaction_json FROM bot_delegations WHERE id = ?')
+            .pluck().get(taskId) as string).requestId).toBe('current-approval');
+        } else if (state === 'owner-changed') {
+          expect(replacementSessionId).toBeTruthy();
+          expect(messagesFor('obsolete-approval')).toHaveLength(1);
+          expect(h.sqlite!.prepare('SELECT 1 FROM messages WHERE session_id = ? AND client_id = ?')
+            .get(replacementSessionId, `bot-delegation-interaction:${taskId}:obsolete-approval`)).toBeUndefined();
+        } else {
+          expect(messagesFor('current-approval')).toHaveLength(0);
+        }
+      } finally {
+        runtime.dispose();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it('keeps the full original objective and newest follow-up separate across repeated runs', async () => {
+    await seedPair();
+    const runtime = createDelegationRuntime();
+    const objective = 'Original objective\n' + 'O'.repeat(11_981);
+    const childSessionIds: string[] = [];
+    const followUps: string[] = [];
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective });
+      if (!task.ok) throw new Error('missing task');
+      let childSessionId = task.childSessionId;
+      childSessionIds.push(childSessionId);
+
+      for (let index = 1; index <= 70; index += 1) {
+        await runtime.settleChild(childSessionId, 'Completed action ' + index + ': ' + 'R'.repeat(100));
+        const followUp = 'Follow-up ' + index + ': ' + 'F'.repeat(3_960) + '\nKEEP THIS END';
+        followUps.push(followUp);
+        const reopened = await runtime.delegation.messageSessionTask('session-1', task.delegationId, {
+          kind: 'message', text: followUp,
+        });
+        if (!reopened.ok || !reopened.childSessionId) throw new Error('follow-up did not reopen the task');
+        expect(reopened.childSessionId).not.toBe(childSessionId);
+        childSessionId = reopened.childSessionId;
+        childSessionIds.push(childSessionId);
+
+        const sent = runtime.dispatch.mock.calls
+          .filter(([input]) => input.targetSessionId === childSessionId).at(-1)?.[0];
+        expect(sent).toBeDefined();
+        expect(sent?.persistedContent).toBe(followUp);
+        expect(sent?.message).toContain(objective);
+        expect(sent?.message).toContain(followUp);
+        expect(sent?.message).not.toContain('Previous objective:');
+        expect(sent?.message).not.toContain('Previous result:');
+        expect(sent?.message).not.toContain('R'.repeat(100));
+        expect(sent?.clientId).toBe('bot-delegation-start:' + task.delegationId + ':run:' + (index + 1));
+        if (index > 1) expect(sent?.message).not.toContain('Follow-up ' + (index - 1) + ':');
+
+        const stored = h.sqlite!.prepare('SELECT objective, run_sequence AS runSequence, permission_snapshot_json AS snapshot FROM bot_delegations WHERE id = ?')
+          .get(task.delegationId) as { objective: string; runSequence: number; snapshot: string };
+        expect(stored.objective).toBe(objective);
+        expect(stored.runSequence).toBe(index + 1);
+        expect(JSON.parse(stored.snapshot).taskInput).toEqual({
+          runSequence: index + 1, originalObjective: objective, followUp,
+        });
+      }
+
+      const userRows = childSessionIds.flatMap(sessionId => h.sqlite!.prepare(
+        "SELECT content FROM messages WHERE session_id = ? AND role = 'user' ORDER BY rowid",
+      ).all(sessionId) as Array<{ content: string }>);
+      expect(userRows).toHaveLength(71);
+      expect(userRows[0]?.content).toBe(objective);
+      for (let index = 1; index <= 70; index += 1) expect(userRows[index]?.content).toBe(followUps[index - 1]);
+    } finally { runtime.dispose(); }
+  });
+
+  it('keeps active queued supplements ordered and deduplicated without changing the objective', async () => {
+    await seedPair();
+    const runtime = createDelegationRuntime();
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Stable objective.' });
+      if (!task.ok) throw new Error('missing task');
+      for (const index of [1, 1, 2, 2]) {
+        expect(await runtime.delegation.messageSessionTask('session-1', task.delegationId, {
+          kind: 'message', text: 'Queued requirement ' + index + '.', idempotencyKey: 'input-' + index,
+        })).toMatchObject({ ok: true });
+      }
+      const inputs = h.sqlite!.prepare("SELECT content FROM messages WHERE session_id = ? AND role = 'user' ORDER BY rowid")
+        .all(task.childSessionId) as Array<{ content: string }>;
+      expect(inputs).toHaveLength(3);
+      expect(inputs[0]?.content).toBe('Stable objective.');
+      expect(inputs[1]?.content).toContain('Queued requirement 1.');
+      expect(inputs[2]?.content).toContain('Queued requirement 2.');
+      expect(h.sqlite!.prepare('SELECT objective, run_sequence AS runSequence FROM bot_delegations WHERE id = ?')
+        .get(task.delegationId)).toEqual({ objective: 'Stable objective.', runSequence: 1 });
+      expect(runtime.started.filter(turn => turn.sessionId === task.childSessionId)).toHaveLength(3);
+    } finally { runtime.dispose(); }
+  });
+
+  it('clears prior stop intent only when an explicit terminal follow-up reopens the run', async () => {
+    await seedPair();
+    const runtime = createDelegationRuntime();
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Original task.' });
+      if (!task.ok) throw new Error('missing task');
+      await runtime.settleChild(task.childSessionId, 'Original result.');
+      const oldSnapshot = JSON.parse(h.sqlite!.prepare('SELECT permission_snapshot_json FROM bot_delegations WHERE id = ?')
+        .pluck().get(task.delegationId) as string) as Record<string, unknown>;
+      const oldStopRequest = { requested_at: 9_000, status: 'requested', turn_generation: 7 };
+      const pausedSnapshot = {
+        ...oldSnapshot,
+        taskPause: { token: 'old-pause', pausedAt: 9_000, previousStatus: 'waiting' },
+        taskCancelRequested: true,
+        taskResume: { token: 'old-resume', text: 'old input' },
+        taskResumedAt: 9_001,
+        taskStopRequest: oldStopRequest,
+      };
+      const previousJson = JSON.stringify(pausedSnapshot);
+      h.sqlite!.prepare('UPDATE bot_delegations SET permission_snapshot_json = ? WHERE id = ?').run(previousJson, task.delegationId);
+
+      expect(await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'resume' }))
+        .toMatchObject({ ok: false, errorCode: 'NOT_PAUSED' });
+      expect(h.sqlite!.prepare('SELECT permission_snapshot_json FROM bot_delegations WHERE id = ?').pluck().get(task.delegationId))
+        .toBe(previousJson);
+
+      const followUp = 'Explicitly requested new follow-up.';
+      const reopened = await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: followUp });
+      if (!reopened.ok || !reopened.childSessionId) throw new Error('explicit follow-up did not reopen the task');
+      const stored = JSON.parse(h.sqlite!.prepare('SELECT permission_snapshot_json FROM bot_delegations WHERE id = ?')
+        .pluck().get(task.delegationId) as string) as Record<string, unknown>;
+      expect(stored.taskPause).toBeUndefined();
+      expect(stored.taskCancelRequested).toBeUndefined();
+      expect(stored.taskResume).toBeUndefined();
+      expect(stored.taskResumedAt).toBeUndefined();
+      expect(stored.taskStopRequest).toEqual(oldStopRequest);
+      expect(stored.taskInput).toEqual({ runSequence: 2, originalObjective: 'Original task.', followUp });
+      const sent = runtime.dispatch.mock.calls.filter(([input]) => input.targetSessionId === reopened.childSessionId).at(-1)?.[0];
+      expect(sent?.persistedContent).toBe(followUp);
+      expect(sent?.message).toContain('Original task.');
+      expect(sent?.message).toContain(followUp);
+    } finally { runtime.dispose(); }
+  });
+
+  it.each(['available', 'missing', 'rewound', 'cleared', 'wrong-session', 'malformed-input'] as const)(
+    'recovers a legacy objective only from its exact unmodified initial row (%s)', async history => {
+      await seedPair();
+      const runtime = createDelegationRuntime();
+      const objective = 'Keep the original\\n  formatting and Requester follow-up: literal text.';
+      try {
+        const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective });
+        if (!task.ok) throw new Error('missing task');
+        await runtime.settleChild(task.childSessionId, 'Old work done.');
+        const legacyWrapper = 'Continue the same Session task with the requester’s follow-up.\n\nPrevious objective:\n';
+        const legacy = legacyWrapper.repeat(60) + 'truncated legacy text';
+        const currentSnapshot = JSON.parse(h.sqlite!.prepare('SELECT permission_snapshot_json FROM bot_delegations WHERE id = ?')
+          .pluck().get(task.delegationId) as string) as Record<string, unknown>;
+        delete currentSnapshot.taskInput;
+        h.sqlite!.prepare('UPDATE bot_delegations SET objective = ?, run_sequence = 5, permission_snapshot_json = ? WHERE id = ?')
+          .run(legacy, JSON.stringify(currentSnapshot), task.delegationId);
+        const firstId = 'bot-delegation-start:' + task.delegationId;
+        if (history === 'missing') h.sqlite!.prepare('DELETE FROM messages WHERE session_id = ? AND client_id = ?').run(task.childSessionId, firstId);
+        if (history === 'rewound') h.sqlite!.prepare('UPDATE messages SET rewind_at = 20000 WHERE session_id = ? AND client_id = ?').run(task.childSessionId, firstId);
+        if (history === 'cleared') h.sqlite!.prepare('UPDATE sessions SET cleared_at = 20000 WHERE id = ?').run(task.childSessionId);
+        if (history === 'wrong-session') h.sqlite!.prepare('UPDATE messages SET session_id = ? WHERE session_id = ? AND client_id = ?').run('session-1', task.childSessionId, firstId);
+        if (history === 'malformed-input') {
+          currentSnapshot.taskInput = { runSequence: 4, originalObjective: 'Fabricated goal', followUp: 'Fabricated request' };
+          h.sqlite!.prepare('UPDATE bot_delegations SET permission_snapshot_json = ? WHERE id = ?').run(JSON.stringify(currentSnapshot), task.delegationId);
+        }
+        const oldRows = h.sqlite!.prepare('SELECT id, content FROM messages WHERE session_id = ? ORDER BY rowid').all(task.childSessionId);
+        const followUp = 'Only this new request.';
+        const reopened = await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: followUp });
+        if (!reopened.ok || !reopened.childSessionId) throw new Error('follow-up did not reopen the task');
+        const sent = runtime.dispatch.mock.calls.filter(([input]) => input.targetSessionId === reopened.childSessionId).at(-1)?.[0];
+        expect(sent?.persistedContent).toBe(followUp);
+        expect(sent?.message).not.toContain(legacy);
+        if (history === 'available' || history === 'malformed-input') expect(sent?.message).toContain(objective);
+        else {
+          expect(sent?.message).toContain('could not be recovered');
+          expect(sent?.message).not.toContain(objective);
+        }
+        expect(h.sqlite!.prepare('SELECT objective FROM bot_delegations WHERE id = ?').pluck().get(task.delegationId))
+          .toBe(history === 'available' || history === 'malformed-input' ? objective : legacy);
+        expect(h.sqlite!.prepare('SELECT id, content FROM messages WHERE session_id = ? ORDER BY rowid').all(task.childSessionId).slice(0, oldRows.length))
+          .toEqual(oldRows);
+      } finally { runtime.dispose(); }
+    },
+  );
+
+  it('refuses to reopen with malformed plan JSON without changing old data', async () => {
+    await seedPair();
+    const runtime = createDelegationRuntime();
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Preserve this task.' });
+      if (!task.ok) throw new Error('missing task');
+      await runtime.settleChild(task.childSessionId, 'Completed result.');
+      h.sqlite!.prepare('UPDATE bot_delegations SET permission_snapshot_json = ? WHERE id = ?').run('{', task.delegationId);
+      const beforeRows = h.sqlite!.prepare('SELECT id, client_id AS clientId, content FROM messages WHERE session_id = ? ORDER BY rowid').all(task.childSessionId);
+      const beforeDispatches = runtime.dispatch.mock.calls.length;
+      const result = await runtime.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: 'Do more work.' });
+      expect(result).toMatchObject({ ok: false, errorCode: 'SESSION_TASK_HISTORY_INCOMPLETE' });
+      expect(runtime.dispatch.mock.calls).toHaveLength(beforeDispatches);
+      expect(h.sqlite!.prepare('SELECT status, child_session_id AS childSessionId, objective, permission_snapshot_json AS snapshot FROM bot_delegations WHERE id = ?')
+        .get(task.delegationId)).toEqual({ status: 'completed', childSessionId: task.childSessionId, objective: 'Preserve this task.', snapshot: '{' });
+      expect(h.sqlite!.prepare('SELECT id, client_id AS clientId, content FROM messages WHERE session_id = ? ORDER BY rowid').all(task.childSessionId))
+        .toEqual(beforeRows);
+    } finally { runtime.dispose(); }
+  });
+
+  it.each(['queued', 'accepted'] as const)('restores the current follow-up after restart at the %s boundary without replaying completed work', async boundary => {
+    await seedPair();
+    let unavailable = false;
+    const before = createDelegationRuntime({ transientUnavailable: () => unavailable });
+    const objective = 'Stable original objective.';
+    const followUp = 'Now verify the existing change; do not apply it again.';
+    const task = await before.delegation.startSessionTask({ callerSessionId: 'session-1', objective });
+    if (!task.ok) throw new Error('missing task');
+    await before.settleChild(task.childSessionId, 'The tool already applied the change.');
+    before.advance(1_000);
+    unavailable = boundary === 'queued';
+    const reopened = await before.delegation.messageSessionTask('session-1', task.delegationId, { kind: 'message', text: followUp });
+    if (!reopened.ok || !reopened.childSessionId) throw new Error('follow-up did not reopen the task');
+    const childSessionId = reopened.childSessionId;
+    expect(h.sqlite!.prepare('SELECT objective, run_sequence AS runSequence FROM bot_delegations WHERE id = ?')
+      .get(task.delegationId)).toEqual({ objective, runSequence: 2 });
+    before.dispose();
+    const after = createDelegationRuntime({ startTime: 20_000, taskControl: true });
+    try {
+      await after.delegation.restore();
+      const sent = after.dispatch.mock.calls.filter(([input]) => input.targetSessionId === childSessionId).at(-1)?.[0];
+      expect(sent).toBeDefined();
+      expect(sent?.message).toContain(objective);
+      expect(sent?.message).toContain(followUp);
+      if (boundary === 'queued') expect(sent?.persistedContent).toBe(followUp);
+      else {
+        expect(sent?.message).toContain('Do not repeat completed tool actions');
+        expect(sent?.persistedContent).toBe('Continue the interrupted Session task from its saved history without repeating completed actions.');
+        expect(sent?.persistedContent).not.toBe(objective);
+        expect(sent?.persistedContent).not.toBe(followUp);
+      }
+      const followUpRows = h.sqlite!.prepare("SELECT COUNT(*) FROM messages WHERE session_id = ? AND role = 'user' AND content = ?")
+        .pluck().get(childSessionId, followUp);
+      expect(followUpRows).toBe(1);
+      const callsBeforeRestore = after.dispatch.mock.calls.length;
+      await after.delegation.restore();
+      expect(after.dispatch.mock.calls).toHaveLength(callsBeforeRestore);
+      expect(after.started.filter(turn => turn.sessionId === childSessionId)).toHaveLength(1);
+    } finally { after.dispose(); }
   });
 
   it('does not charge user-decision time against the Session task deadline', async () => {

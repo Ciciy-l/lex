@@ -351,6 +351,19 @@ async function rewriteQueued(item: unknown): Promise<unknown> {
  * 抛错由 handleInvoke 转 MEDIA_TRANSFER_FAILED。
  */
 export async function rewriteOutboundMedia(channel: string, args: unknown[]): Promise<unknown[]> {
+  const steerOpts = args[2];
+  if (
+    channel === 'maker:input:steer' &&
+    steerOpts &&
+    typeof steerOpts === 'object' &&
+    !Array.isArray(steerOpts) &&
+    (steerOpts as { removeFromQueue?: unknown }).removeFromQueue === true
+  ) {
+    // The host selects its authoritative queue item by clientId. Attachment
+    // URLs in the projected row belong to that host, not this controller;
+    // uploading them again would resolve remote cache URLs against local disk.
+    return args;
+  }
   const isQueued = QUEUED_SHAPE_CHANNELS.has(channel);
   const isMessage = MESSAGE_SHAPE_CHANNELS.has(channel);
   if (!isQueued && !isMessage) return args;

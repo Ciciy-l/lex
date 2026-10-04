@@ -32,7 +32,7 @@ describe('Cindy v0.1.92 model catalog selection', () => {
     ]));
     expect(preset.runtimes.pi?.models?.find(model => model.id === 'mimo-v2.6-pro')).toMatchObject({ supportsImageInput: true });
     expect(preset.runtimes.pi?.models?.find(model => model.id === 'mimo-v2.6-flash')).toMatchObject({ supportsImageInput: true });
-    expect(preset.runtimes.pi?.models?.find(model => model.id === 'mimo-v2.6-pro-ultraspeed')?.supportsImageInput).toBeUndefined();
+    expect(preset.runtimes.pi?.models?.find(model => model.id === 'mimo-v2.6-pro-ultraspeed')?.supportsImageInput).toBe(true);
   });
 
   it.each(['github-copilot', 'google', 'google-vertex', 'opencode', 'vercel-ai-gateway'])(
@@ -43,13 +43,13 @@ describe('Cindy v0.1.92 model catalog selection', () => {
       expect(source.execution.pi.thinkingLevelMap).toMatchObject({ minimal: null });
       const row = piCatalog.providers[provider].find(model => model.id === rowId)!;
       const converted = toCindyProviderModel({
-        ...row, cost: undefined, reasoning: true,
+        ...row, contextWindow: row.contextWindow ?? 200_000, cost: undefined, reasoning: true,
         thinkingLevelMap: { ...row.thinkingLevelMap, minimal: 'minimal' },
       });
       expect(converted.efforts).toEqual(['low', 'medium', 'high']);
       expect(converted.defaultEffort).toBe('medium');
       expect(converted.execution.pi.thinkingLevelMap?.minimal).toBeNull();
-      const unrelated = toCindyProviderModel({ ...row, cost: undefined, id: 'gemini-3-flash-preview', reasoning: true, thinkingLevelMap: undefined });
+      const unrelated = toCindyProviderModel({ ...row, contextWindow: row.contextWindow ?? 200_000, cost: undefined, id: 'gemini-3-flash-preview', reasoning: true, thinkingLevelMap: undefined });
       expect(unrelated.efforts).toContain('minimal');
     },
   );

@@ -702,12 +702,12 @@ export function initDeviceLinkService(options: DeviceLinkServiceOptions = {}): v
         throw new Error('[DEVICE_LINK_NOT_CONNECTED] device-link client not initialized');
       return client.invoke(deviceId, { channel, args }, INVOKE_TIMEOUT_OVERRIDES_MS[channel]);
     },
-    onUnresponsiveChanged: (deviceId, unresponsive) => {
-      broadcast(DEVICE_LINK_PUSH.RESPONSIVENESS_CHANGED, { deviceId, unresponsive });
+    onUnresponsiveChanged: (deviceId, unresponsive, recovered) => {
+      broadcast(DEVICE_LINK_PUSH.RESPONSIVENESS_CHANGED, { deviceId, unresponsive, recovered });
       // 恢复时主动重放该设备的订阅:熔断 open 期间 subscribe 都被快速失败挡掉了,
       // 不重放的话 push 驱动的列表 / 会话镜像会一直缺流,直到用户手动重试。
       // linkTornDown 闸:teardown 的 resetAll 也会触发本回调,那时不能再发订阅。
-      if (!unresponsive && !linkTornDown && client?.getStatus() === 'online') {
+      if (recovered && !linkTornDown && client?.getStatus() === 'online') {
         replayActiveSubscriptions(`responsiveness-recovered:${deviceId.slice(0, 8)}`, deviceId);
       }
     },

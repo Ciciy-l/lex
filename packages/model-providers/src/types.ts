@@ -326,12 +326,12 @@ export interface CatalogModel {
   /** Provider-declared maximum before a per-harness recommended window is applied. */
   contextWindowMax?: number;
   /**
-   * `contextWindow` 是否为**显式声明**的真实上限,而非派生时补的兜底值。
+   * 目录工作窗口是否有目标路由资料支持,而非不受约束的派生兜底值。
    *
    * 目录条目的窗口可能来自产品目录写定 / 上游明示 / 用户填写(都算显式),也可能是
    * 上游不给元数据时补的常量(codex `model/list` 一律 272K、自定义 provider 未填时的
-   * 200K、Anthropic 未知模型启发式)。两者数值上无法区分,但只有前者能用来收敛
-   * 运行期上报的窗口 —— 拿兜底值当上限会把真实窗口压小。
+   * 200K、Anthropic 未知模型启发式)。工作预算实报,或不超过 contextWindowMax 最大容量的
+   * 保守预算可以用于收敛运行期窗口；不能将超出目标路由容量的派生默认当成真实限制。
    *
    * 缺省(undefined)一律按未核实处理。
    *
@@ -387,6 +387,10 @@ export interface CatalogModel {
    * 不能读跨 provider 拍平去重后的列表（那只保留首个 provider 的值，会错）。
    */
   supportsFastMode?: boolean;
+  /** Same-provider, same-harness catalog model used for Fast. null explicitly disables mapping.
+   * Unlike a service tier, this changes the upstream model; availability must be checked per account.
+   */
+  fastModelId?: string | null;
   /**
    * 该模型在 Codex 下使用的模型级兼容 bridge 协议。
    *
@@ -576,10 +580,7 @@ export interface Provider {
  * contextWindow 缺省时由 `buildUserProvider` 使用保守默认；预设可显式携带厂商文档确认的值，
  * 并随用户配置持久化，避免已知长上下文模型被错误降级。
  */
-export interface ProviderRuntimeModelConfig extends Pick<
-  ModelMetadata,
-  "mode" | "modalities" | "officialDocs"
-> {
+export interface ProviderRuntimeModelConfig extends ModelMetadata {
   discoveredMetadata?: ModelMetadata;
   discoveredCost?: ModelCost;
   nameExplicit?: boolean;
@@ -643,6 +644,12 @@ export interface ProviderPresetRuntime {
   piCatalogProviderId?: string;
 }
 
+/** Shared recommendation row optionally scoped/overridden for engines declared by this preset. */
+export interface ProviderPresetModel extends ProviderRuntimeModelConfig {
+  engines?: AgentKind[];
+  engineOverrides?: Partial<Record<AgentKind, Partial<ProviderRuntimeModelConfig>>>;
+}
+
 /**
  * 供应商预设 —— 降低自定义供应商接入摩擦的**纯 UI 模板数据**（不参与路由 / 不是 Provider）。
  *
@@ -678,6 +685,8 @@ export interface ProviderPreset {
    * 创建后会快照进 CustomProviderConfig，不随预设后续更新。
    */
   authMethod?: "apiKey" | "none";
+  /** New shared recommendation format; sanitized at load into legacy per-runtime models. */
+  models?: ProviderPresetModel[];
   /** per-runtime 预填数据（至少一个）。 */
   runtimes: Partial<Record<AgentKind, ProviderPresetRuntime>>;
 }

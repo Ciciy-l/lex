@@ -179,6 +179,8 @@ export interface RemoteCollectionListResponse {
 export interface RemoteResourceGetRequest {
   client: RemoteResourceClientDescriptor;
   ref: RemoteResourceRef;
+  /** Optional filter for a resource that advertises the portable search primitive. */
+  query?: string;
 }
 
 export interface RemoteActionInvokeRequest {
@@ -335,7 +337,10 @@ export function parseRemoteResourceGetRequest(value: unknown): RemoteResourceGet
   if (!record) return null;
   const client = parseRemoteResourceClientDescriptor(record.client);
   const ref = parseRemoteResourceRef(record.ref);
-  return client && ref ? { client, ref } : null;
+  if (!client || !ref) return null;
+  if (record.query === undefined || record.query === '') return { client, ref };
+  const query = boundedText(record.query, MAX_QUERY_CHARS);
+  return query ? { client, ref, query } : null;
 }
 
 export function parseRemoteActionInvokeRequest(value: unknown): RemoteActionInvokeRequest | null {

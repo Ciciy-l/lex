@@ -1320,6 +1320,19 @@ interface ElectronAPI {
       requestId: string,
       confirmed: boolean,
     ) => Promise<{ handled: boolean }>;
+    /** 插件安装／更新确认(只投给发起安装的窗口)。第二个参数是 owner 推送戳。 */
+    onInstallConsentRequest: (
+      callback: (
+        payload: import('../shared/ghostInstallConsent').GhostInstallConsentRequest,
+        ownerStamp?: unknown,
+      ) => void,
+    ) => () => void;
+    /** Main 已结算(超时、取消或账号切换)某次确认，窗口应收起对应确认框。 */
+    onInstallConsentDismissed: (callback: (payload: { requestId: string }) => void) => () => void;
+    resolveInstallConsent: (
+      requestId: string,
+      confirmed: boolean,
+    ) => Promise<{ handled: boolean }>;
     /** Plugin 快捷行最近使用顺序(最新在前,首帧同步读取避免排序跳变)。 */
     recentUsageSync: () => { ids: string[] };
     /** 成功发送一次 Plugin 指令后记录最近使用。 */
@@ -1693,6 +1706,7 @@ interface ElectronAPI {
       import('../shared/pluginMarket').PluginRemovalUserNotice | null
     >;
     onRemovalNoticeAvailable: (callback: () => void) => () => void;
+    onUpdateConsentHoldsChanged: (callback: () => void) => () => void;
     listSources: () => Promise<import('../shared/pluginMarket').MarketSourceSummary[]>;
     pickLocalSource: (
       defaultPath?: string,
@@ -3885,7 +3899,7 @@ interface ElectronAPI {
     onPeerLinkReset?: (cb: (payload: { deviceId: string }) => void) => () => void;
     /** 控制端:目标设备「无响应」熔断状态翻转(弱网 / 对端卡死;presence 可能仍在线) */
     onResponsivenessChanged: (
-      cb: (payload: { deviceId: string; unresponsive: boolean }) => void,
+      cb: (payload: { deviceId: string; unresponsive: boolean; recovered?: boolean }) => void,
     ) => () => void;
     /**
      * 控制端:远程会话镜像的本地冷缓存(main 落 userData,见
@@ -3898,6 +3912,7 @@ interface ElectronAPI {
         sessionId: string,
       ) => Promise<{
         messages: Record<string, unknown>[];
+        historyView?: string;
         invalidation?: number;
         ownerToken?: string;
         accountCounter?: number;
@@ -3909,6 +3924,7 @@ interface ElectronAPI {
         expectedInvalidation?: number,
         expectedOwnerToken?: string,
         expectedAccountCounter?: number,
+        historyView?: string,
       ) => Promise<{ ok: true; invalidation?: number }>;
       getSessionList: () => Promise<{
         devices: Array<{
@@ -4876,6 +4892,8 @@ interface ElectronAPI {
       resetCollaborationSettings: () => Promise<unknown>;
     };
     messages: {
+      historyView: (sessionId: string, opts?: { before?: string | null; lazyDetails?: boolean }) => Promise<import('@cindy/maker-shared/message-window').HistoryViewPage<import('@/lib/ccAgent.types').Message>>;
+      workDetails: (sessionId: string, ref: import('@cindy/maker-shared/message-window').HistoryWorkReference, opts?: { after?: string | null }) => Promise<import('@cindy/maker-shared/message-window').HistoryDetailPage<import('@/lib/ccAgent.types').Message>>;
       list: (
         sessionId: string,
         opts?: { limit?: number; before?: string; beforeTs?: number },

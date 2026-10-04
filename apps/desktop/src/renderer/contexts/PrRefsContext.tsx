@@ -41,6 +41,7 @@ import type { PrStatusResult, SessionPrRef } from '@/lib/gitContext.types';
 import { prStatusKey, MAX_STATUS_QUERIES, PR_STATUS_REFRESH_INTERVAL_MS } from '@/lib/prStatus';
 import { useAuth } from '@/contexts/AuthContext';
 import { isRemoteDeviceMarkedDisconnected } from '@/features/device-link/remoteProjectsStore';
+import { unresponsiveDevicesStore } from '@/features/device-link/unresponsiveDevicesStore';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('PrRefsContext');
@@ -389,6 +390,7 @@ export function PrRefsProvider({ children }: { children: ReactNode }) {
     if (inFlightSessions.current.get(sessionId) === gen) return;
     inFlightSessions.current.set(sessionId, gen);
     void (async () => {
+      let remoteDeviceId: string | undefined;
       try {
         const queries = refs.map((r) => ({ owner: r.owner, repo: r.repo, prNumber: r.prNumber }));
         // 远程路由的 deviceId 兜底顺序:簿记表 → 消费者注册表(owner 切换清簿记后,
@@ -396,19 +398,22 @@ export function PrRefsProvider({ children }: { children: ReactNode }) {
         const deviceId =
           remoteDeviceBySession.current.get(sessionId) ??
           prConsumers.current.get(sessionId)?.deviceId;
+        remoteDeviceId = deviceId;
         // 设备明确断线时不发注定失败的隧道调用(fail-open:shard 缺失照常尝试)。
         // 不写任何状态,重连后的下一个触发点(周期 / 聚焦 / 引用到位)自然恢复。
-        if (deviceId && isRemoteDeviceMarkedDisconnected(deviceId)) return;
+        if (deviceId && (isRemoteDeviceMarkedDisconnected(deviceId) || unresponsiveDevicesStore.has(deviceId))) return;
         const results = deviceId
           ? ((await window.electronAPI.deviceLink.invoke(deviceId, 'git-context:pr-status', [
               { sessionId, queries },
-            ])) as PrStatusResult[])
+          ])) as PrStatusResult[])
           : await window.electronAPI.gitContext.getPrStatuses(queries);
+        if (deviceId && unresponsiveDevicesStore.has(deviceId)) return;
         if (gen !== ownerGenRef.current) return; // owner 已切换:旧账号结果整体丢弃
         if (!Array.isArray(results)) return;
         store.applyStatuses(sessionId, results);
         store.setRefreshError(sessionId, 'statuses', false);
       } catch (err) {
+        if (remoteDeviceId && unresponsiveDevicesStore.has(remoteDeviceId)) return;
         if (gen === ownerGenRef.current) store.setRefreshError(sessionId, 'statuses', true);
         log.warn('pr statuses fetch failed', String(err));
       } finally {
@@ -440,7 +445,7 @@ export function PrRefsProvider({ children }: { children: ReactNode }) {
     // 以便瞬断立即重试,但长离线下就成了每个周期一轮注定失败的隧道调用 + 告警日志;
     // 断线判定本地同步可得,先看一眼再发(2026-08-13 用户裁决)。fail-open:
     // shard 缺失(尚未建立 / 设备已移除)照常尝试,语义见 isRemoteDeviceMarkedDisconnected。
-    if (isRemoteDeviceMarkedDisconnected(deviceId)) return;
+    if (isRemoteDeviceMarkedDisconnected(deviceId) || unresponsiveDevicesStore.has(deviceId)) return;
     const gen = ownerGenRef.current;
     // 同代在飞才挡(见 inFlightSessions 注释)。
     if (remoteRefsInFlight.current.get(sessionId) === gen) return;
@@ -458,6 +463,7 @@ export function PrRefsProvider({ children }: { children: ReactNode }) {
           'git-context:pr-refs:list',
           [sessionId],
         )) as SessionPrRef[];
+        if (unresponsiveDevicesStore.has(deviceId)) return;
         // owner 已切换:结果与簿记(时间戳会抑制新 owner 的重查)都不能落。
         if (gen !== ownerGenRef.current) return;
         if (remoteRefsInvalidated.current.has(sessionId)) return;
@@ -471,6 +477,7 @@ export function PrRefsProvider({ children }: { children: ReactNode }) {
           fetchStatusesForRefs(sessionId, refs);
         }
       } catch (err) {
+        if (unresponsiveDevicesStore.has(deviceId)) return;
         // 断链/超时:不写时间戳,下个刷新周期(或行重挂载)立即重试。
         if (gen === ownerGenRef.current && !remoteRefsInvalidated.current.has(sessionId)) {
           store.setRefreshError(sessionId, 'refs', true);

@@ -171,8 +171,19 @@ export interface MobileOutboxDisplayItem {
   fileCount: number;
   fileNames?: string[];
   failed: boolean;
+  /** False while a first-message creation record still owns recovery of the draft. */
+  canCancel?: boolean;
   /** 失败原因(附件失败给统一文案,enqueue 失败给 RPC 错误)。 */
   errorText: string | null;
+}
+
+/** First-message creation keeps cancellation with its recovery owner until prepared. */
+export function canCancelOutboxRecord(record: {
+  creation?: unknown;
+  prepared?: unknown;
+  template?: unknown;
+} | null | undefined): boolean {
+  return !(record?.creation && !record.prepared && !record.template);
 }
 
 /**

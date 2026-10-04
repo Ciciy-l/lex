@@ -7,6 +7,7 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CatalogModel } from '@cindy/model-providers';
 import { TEST_XD_GATEWAY_BASE_URL as XD_GATEWAY_BASE_URL } from '../../../test/vitest/clientEndpointsFixture';
 
 type Registry = {
@@ -162,12 +163,14 @@ async function freshCodexProxyHost() {
 }
 
 // CI 忙时本文件首次 import SUT 要付 Vitest transform 整个模块图的冷启动钱:Linux 分片
-// 实测超默认 5s,Windows 分片超 15s,继续抬单测超时只是把死亡线后推。这笔成本属于环境
-// 冷启动,不属于任何断言 —— 文件级 beforeAll 先把模块图焐热(hook 超时独立计),之后各
-// 用例里 resetModules + import 只剩模块求值开销,回到默认超时内。
+// 实测超默认 5s,Windows 分片超 15s。满载 Windows shard 2/2 曾在 60s 文件级 hook
+// 上超时(本文件不 import maker-host/index,与产品改动无关)。这笔成本属于环境
+// 冷启动,不属于任何断言 —— 文件级 beforeAll 先把模块图焐热(hook 超时独立计;
+// Windows 给 120s,其它平台仍 60s),之后各用例里 resetModules + import 只剩模块
+// 求值开销,回到默认超时内。
 beforeAll(async () => {
   await import('../codex-proxy-host.js');
-}, 60_000);
+}, process.platform === 'win32' ? 120_000 : 60_000);
 
 describe('withCodexUpstreamRecording', () => {
   const DEFAULT_UPSTREAM = 'https://gateway.example/v1';
@@ -2730,13 +2733,14 @@ describe('codex proxy host', () => {
         // upstream 是函数形态(每请求现取,model-access 下发可运行期换 endpoint);
         // 断言其当前求值 = 网关 base + /v1
         upstream: expect.any(Function),
-        // [encrypted activeStrip, image generation activeStrip, provider-aware Guardian reviewer, locked Subagent route, instructions 注入, locked Subagent exec guard, Gateway 原生 web_search, 跨来源压缩块兼容, xAI ModelInput activeStrip, exec function adapter, strict gateway history 兼容, xAI ModelInput sanitize, DeepSeek V4 custom tool 兼容, xAI Responses 兼容, XD Gateway Grok 兼容, ByteDance Seed tool 兼容, MiniMax effort 兼容, provider model rewrite, provider 参数归一, 视觉桥(controller 未注入 → 短路透传), 工具 ID 校正, stripNonAnthropicFields]
+        // [encrypted activeStrip, image generation activeStrip, provider-aware Guardian reviewer, locked Subagent route, instructions 注入, locked Subagent exec guard, Gateway 原生 web_search, 跨来源压缩块兼容, xAI ModelInput activeStrip, exec function adapter, strict gateway history 兼容, xAI ModelInput sanitize, DeepSeek V4 custom tool 兼容, xAI Responses 兼容, XD Gateway Grok 兼容, ByteDance Seed tool 兼容, MiniMax effort 兼容, provider model rewrite, provider 参数归一, xAI Fast safety, 视觉桥(controller 未注入 → 短路透传), 工具 ID 校正, stripNonAnthropicFields]
         transformRequest: [
           expect.any(Function), expect.any(Function), expect.any(Function), expect.any(Function), expect.any(Function),
           expect.any(Function), expect.any(Function), expect.any(Function), expect.any(Function), expect.any(Function),
           expect.any(Function), expect.any(Function), expect.any(Function), expect.any(Function), expect.any(Function),
           expect.any(Function), expect.any(Function), expect.any(Function), expect.any(Function),
           expect.any(Function), expect.any(Function), expect.any(Function),
+          expect.any(Function),
         ],
         transformResponse: expect.any(Function),
         routingTransform: expect.any(Function),
@@ -2759,7 +2763,7 @@ describe('codex proxy host', () => {
     const requestScopedTransforms = proxyOpts.transformRequest.filter(
       (transform) => transform.onRequestSettled,
     );
-    expect(requestScopedTransforms).toHaveLength(1);
+    expect(requestScopedTransforms).toHaveLength(2);
     expect(requestScopedTransforms[0]?.errorMode).toBe('reject-request');
     const strip = mockState.createAnthropicCompatProxy.mock.calls[0][0].transformRequest.at(-1);
     const body = { model: 'gpt-5', input: [] };
@@ -4273,6 +4277,150 @@ describe('codex proxy host', () => {
       clearSessionProvider(sessionId);
       return current;
     }
+
+    it.each([true, false])('routes only a returned same-account Fast target and prices its completed usage (available=%s)', async available => {
+      const host = await freshCodexProxyHost();
+      const { BUNDLED_CATALOG } = await import('@cindy/model-providers');
+      const { setActiveCatalog, setCustomProviders, setXaiDiscoveredModels } = await import('../active-catalog.js');
+      const { registerUsagePricing, clearUsagePricing } = await import('../model-usage-pricing.js');
+      const { setSessionProvider, clearSessionProvider } = await import('../session-provider-store.js');
+      const { setProviderOAuthTokenReader } = await import('../provider-route.js');
+      const catalog = structuredClone(BUNDLED_CATALOG);
+      const xai = catalog.providers.find(provider => provider.id === 'xai')!;
+      xai.routing.codex!.upstream = 'https://us.api.x.ai/v1';
+      const model = (id: string, fastModelId?: string): CatalogModel => ({
+        id, name: id, contextWindow: 128000, efforts: ['low'], defaultEffort: 'low', status: 'active' as const,
+        ...(fastModelId ? { fastModelId, supportsFastMode: true } : {}),
+      });
+      xai.models.codex = [
+        model('xai/fixture-grok', 'xai/fixture-grok-fast'),
+        model('xai/fixture-grok-fast'),
+      ];
+      const account = { ...xai, id: 'xai-second', source: 'user' as const,
+        auth: { method: 'oauth' as const, native: 'xai' as const } };
+      setActiveCatalog(catalog);
+      setCustomProviders([account]);
+      setXaiDiscoveredModels([
+        { id: 'xai/fixture-grok', contextWindow: 128000 },
+        ...(available ? [{ id: 'xai/fixture-grok-fast', contextWindow: 128000 }] : []),
+      ], account.id);
+      mockState.createAnthropicCompatProxy.mockResolvedValueOnce({
+        url: 'http://127.0.0.1:43210', dispose: vi.fn(async () => undefined),
+      });
+      host.setCodexProxyAuthInjection('provider-oauth');
+      await host.ensureCodexProxyReady();
+      const sessionId = 'xai-fast-session-' + available;
+      const threadId = 'xai-fast-thread-' + available;
+      host.registerComposed(sessionId, threadId, 'PRODUCT_PROMPT');
+      setSessionProvider(sessionId, account.id);
+      setProviderOAuthTokenReader(() => 'fixture-xai-token');
+      const resolvePrice = registerUsagePricing(sessionId);
+      const options = mockState.createAnthropicCompatProxy.mock.calls[0][0];
+      const ctx = { reqId: 1, method: 'POST', url: '/responses', upstreamBase: 'https://us.api.x.ai/v1', headers: { 'thread-id': threadId } };
+      const body = { model: 'xai/fixture-grok', service_tier: 'priority', input: [] };
+      let current: unknown = body;
+      for (const transform of options.transformRequest) {
+        const next = transform(current, ctx);
+        if (next !== null && next !== undefined) current = next;
+      }
+      const outbound = current as Record<string, unknown>;
+      expect(outbound.model).toBe(available ? 'fixture-grok-fast' : 'fixture-grok');
+      expect(outbound.service_tier).toBeUndefined();
+
+      const decision = await options.routingTransform(body, ctx);
+      expect(decision?.headerOverride?.['accept-encoding']).toBe('identity');
+      const observer = options.responseObserver({
+        ...ctx,
+        upstreamBase: 'https://us.api.x.ai/v1',
+        status: 200,
+        requestHeaders: ctx.headers,
+        responseHeaders: { 'content-type': 'text/event-stream' },
+        requestBody: Buffer.from(JSON.stringify(outbound)),
+      });
+      const response = 'data: ' + JSON.stringify({ type: 'response.completed', response: {
+        usage: { input_tokens: 30, output_tokens: 5, input_tokens_details: { cached_tokens: 10 } },
+      } }) + String.fromCharCode(10, 10);
+      observer?.onData?.(Buffer.from(response));
+      observer?.onEnd?.();
+      // The subscription executes a same-account Fast target only when available;
+      // the public US API below is kept Standard and never borrows global pricing.
+      expect(resolvePrice({ threadId, inputTokens: 30, outputTokens: 5, cacheReadTokens: 10 }))
+        .toBe(available ? 'priority' : 'standard');
+      clearUsagePricing(sessionId);
+      clearSessionProvider(sessionId);
+      setProviderOAuthTokenReader(() => null);
+      setXaiDiscoveredModels(null, account.id);
+      setCustomProviders([]);
+      setActiveCatalog(BUNDLED_CATALOG);
+    });
+
+    it('does not send a stale Fast tier to a public xAI API-key connection', async () => {
+      const host = await freshCodexProxyHost();
+      const { BUNDLED_CATALOG, buildUserProvider } = await import('@cindy/model-providers');
+      const { setActiveCatalog, setCustomProviders } = await import('../active-catalog.js');
+      const { registerUsagePricing, clearUsagePricing } = await import('../model-usage-pricing.js');
+      const { setSessionProvider, clearSessionProvider } = await import('../session-provider-store.js');
+      const publicProvider = buildUserProvider({
+        id: 'public-xai-api-key', name: 'Public xAI API', auth: { method: 'apiKey' }, runtimes: {
+          codex: { baseUrl: 'https://us.api.x.ai/v1', wireProtocol: 'openai-responses', models: [{
+            id: 'fixture-grok', name: 'Fixture Grok',
+            discoveredMetadata: { supportsFastMode: true },
+          }] },
+        },
+      });
+      setActiveCatalog(BUNDLED_CATALOG);
+      setCustomProviders([publicProvider]);
+      mockState.createAnthropicCompatProxy.mockResolvedValueOnce({
+        url: 'http://127.0.0.1:43210', dispose: vi.fn(async () => undefined),
+      });
+      host.setCodexProxyAuthInjection('env-key');
+      await host.ensureCodexProxyReady();
+      const sessionId = 'xai-public-fast-session';
+      const threadId = 'xai-public-fast-thread';
+      host.registerComposed(sessionId, threadId, 'PRODUCT_PROMPT');
+      setSessionProvider(sessionId, publicProvider.id);
+      const resolvePrice = registerUsagePricing(sessionId);
+      const options = mockState.createAnthropicCompatProxy.mock.calls[0][0];
+      const ctx = { reqId: 2, method: 'POST', url: '/responses', upstreamBase: 'https://us.api.x.ai/v1', headers: { 'thread-id': threadId } };
+      let current: unknown = { model: 'fixture-grok', service_tier: 'priority', input: [] };
+      for (const transform of options.transformRequest) {
+        const next = transform(current, ctx);
+        if (next !== null && next !== undefined) current = next;
+      }
+      expect(current).toMatchObject({ model: 'fixture-grok' });
+      expect(current).not.toHaveProperty('service_tier');
+      const observer = options.responseObserver({
+        ...ctx,
+        upstreamBase: 'https://us.api.x.ai/v1',
+        status: 200,
+        requestHeaders: ctx.headers,
+        responseHeaders: { 'content-type': 'text/event-stream' },
+        requestBody: Buffer.from(JSON.stringify(current)),
+      });
+      const response = 'data: ' + JSON.stringify({ type: 'response.completed', response: {
+        usage: { input_tokens: 30, output_tokens: 5, input_tokens_details: { cached_tokens: 10 } },
+      } }) + String.fromCharCode(10, 10);
+      observer?.onData?.(Buffer.from(response));
+      observer?.onEnd?.();
+      expect(resolvePrice({ threadId, inputTokens: 30, outputTokens: 5, cacheReadTokens: 10 })).toBe('standard');
+      const { resolveTurnCost } = await import('../../usage/turnCostCalculator.js');
+      const estimate = resolveTurnCost({
+        rawModel: 'fixture-grok',
+        tokens: { inputTokens: 30, outputTokens: 5, cacheReadTokens: 10, cacheCreateTokens: 0 },
+        pricing: {
+          xai: { 'fixture-grok': {
+            providerId: 'xai', modelId: 'fixture-grok', currency: 'USD',
+            source: 'provider-reference', approximate: true, inputPerMtok: 5, outputPerMtok: 10,
+          } },
+        },
+        context: { providerId: publicProvider.id, billingRoute: 'provider-api' },
+      });
+      expect(estimate.money).toBeNull();
+      clearUsagePricing(sessionId);
+      clearSessionProvider(sessionId);
+      setCustomProviders([]);
+      setActiveCatalog(BUNDLED_CATALOG);
+    });
 
     it('请求原本没有 tools 时也补上 x_search(Grok 默认就该能搜 X)', async () => {
       const out = (await runXaiTransforms('no-tools', {
@@ -6377,7 +6525,7 @@ describe('codex proxy host', () => {
     await host.ensureCodexProxyReady();
 
     const transforms = mockState.createAnthropicCompatProxy.mock.calls[0]?.[0]?.transformRequest ?? [];
-    expect(transforms).toHaveLength(23); // encrypted activeStrip, image generation activeStrip, provider-aware Guardian reviewer, locked Subagent route, instructions 注入, locked Subagent exec guard, Gateway 原生 web_search, 跨来源压缩块兼容, xAI ModelInput activeStrip, exec function adapter, strict gateway history 兼容, xAI ModelInput sanitize, DeepSeek V4 custom tool 兼容, xAI Responses 兼容, XD Gateway Grok 兼容, ByteDance Seed tool 兼容, MiniMax effort 兼容, provider model rewrite, provider 参数归一, 视觉桥(短路), 工具 ID 校正, stripNonAnthropicFields, dump
+    expect(transforms).toHaveLength(24); // includes the xAI Fast safety transform
     const ctx = {
       method: 'POST',
       url: '/v1/responses',
@@ -7771,5 +7919,43 @@ describe('createModelRoutingTransform —— custom Provider native imagegen pre
       }),
     ).toBe(true);
     expect(options.routeOpaqueRequestBody({ url: '/images/edits' })).toBe(false);
+  });
+
+  it('keeps Sub2API-discovered Grok effort on its exact Responses route', async () => {
+    const host = await freshCodexProxyHost();
+    const { buildUserProvider, parseModelsListResponse, mergeDiscoveredRuntimeModels } = await import('@cindy/model-providers');
+    const { setCustomProviders } = await import('../active-catalog.js');
+    const { setSessionProvider, clearSessionProvider } = await import('../session-provider-store.js');
+    const models = parseModelsListResponse({ data: [{ id: 'grok-4.7',
+      supportsReasoningEffort: true, reasoningEffort: 'high',
+      service_tiers: [{ id: 'priority' }], input_modalities: ['text', 'image'],
+      reasoningEfforts: ['low', 'medium', 'high', 'xhigh'].map(value => ({ value, label: value })),
+    }] })!;
+    const stored = JSON.parse(JSON.stringify(mergeDiscoveredRuntimeModels([], models)));
+    const provider = buildUserProvider({ id: 'sub2api', name: 'Sub2API', runtimes: {
+      codex: { baseUrl: 'https://sub2api.example/custom/v1', wireProtocol: 'openai-responses', models: stored },
+    } });
+    expect(provider.models.codex?.[0]?.supportsFastMode).toBe(true);
+    mockState.createAnthropicCompatProxy.mockResolvedValueOnce({
+      url: 'http://127.0.0.1:43210', dispose: vi.fn(async () => undefined),
+    });
+    host.setCodexProxyAuthInjection('env-key');
+    host.registerComposed('sub2api-session', 'sub2api-thread', '');
+    setSessionProvider('sub2api-session', provider.id);
+    setCustomProviders([provider]);
+    try {
+      await host.ensureCodexProxyReady();
+      let body: unknown = { model: 'grok-4.7', input: [], reasoning: { effort: 'xhigh' }, service_tier: 'priority' };
+      for (const transform of mockState.createAnthropicCompatProxy.mock.calls[0][0].transformRequest) {
+        const next = transform(body, { method: 'POST', url: '/responses', headers: { 'thread-id': 'sub2api-thread' } });
+        if (next !== null && next !== undefined) body = next;
+      }
+      expect(body).toHaveProperty('reasoning.effort', 'xhigh');
+      expect(body).toHaveProperty('service_tier', 'priority');
+      expect(body).toHaveProperty('model', 'grok-4.7');
+    } finally {
+      clearSessionProvider('sub2api-session');
+      setCustomProviders([]);
+    }
   });
 });

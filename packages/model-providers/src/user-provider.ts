@@ -1,11 +1,13 @@
+import { previousModelGenerations, generationCapabilities } from './modelGeneration.js';
 import { alignModelApiRoute, providerInterfaceModelRoute, hasDeclaredProviderInterface, providerWireProtocolForApi, providerBaseUrlForApi } from './providerInterfaceRoutes.js';
 import { nativeModelAgents } from './modelProtocol.js';
 import { resolveCatalogModelNativeApi, resolveModelNativeApi } from './modelRegistry.js';
 import { providerEndpointBindings, bindProviderEndpoint, bindProviderPresetRuntime, canonicalProviderEndpoint } from './providerEndpointTemplate.js';
 import { PI_MODEL_APIS } from "./types.js";
-import { providerModelRecord, providerPresetModelRecord, providerModelMetadata } from "./providerModelCatalog.js";
+import { providerModelRecord, providerModelGenerationRecord, providerPresetModelRecord, providerModelMetadata } from "./providerModelCatalog.js";
 import { BUNDLED_CATALOG, BUILTIN_PROVIDERS } from './builtin.js';
 import { providerMediaField } from "./providerMediaModels.js";
+import { isOfficialXaiApiHost } from './xai-endpoints.js';
 import {
   expandedRegistryEntries,
   resolveModelMetadata,
@@ -84,8 +86,7 @@ function isOfficialXaiApiUpstream(upstream: string | undefined): boolean {
   try {
     const url = new URL(upstream ?? "");
     return (
-      url.protocol === "https:" &&
-      url.hostname === "api.x.ai" &&
+      isOfficialXaiApiHost(upstream) &&
       (url.pathname === "/v1" || url.pathname === "/v1/")
     );
   } catch {
@@ -308,9 +309,12 @@ function toCatalogModel(
   modelRegistry: ModelRegistry | null | undefined,
   providerDefaults?: ModelMetadata,
   metadataProviderId = providerId,
+  generationDefaults?: ModelMetadata,
 ): CatalogModel {
   // 显式 runtime 能力优先：reasoning:true 才导出 efforts；false = 明确无思考档。
   // 字段缺省才走历史 fallback（Pi 空档 / 其它自定义 Provider 的 CUSTOM_EFFORTS）。
+  // 新代际缺项可沿同系列/变体/协议继承；本型号目录、实报和用户配置优先。
+  // 显式 false/[]/null 仍是本型号的声明，不会由旧型号补回。
   const efforts: Effort[] =
     m.reasoning === true
       ? [...(m.reasoningEfforts ?? [])]
@@ -327,6 +331,11 @@ function toCatalogModel(
     (modelRegistry?.schemaVersion ?? 0) < 4 &&
     registrySupportsFastMode(modelRegistry, m.id, agent);
   const effectiveEfforts = registryEfforts?.efforts ?? efforts;
+  const reportedCapacity = m.discoveredMetadata?.contextWindowMax;
+  const contextWindow = m.contextWindow ?? Math.min(
+    DEFAULT_CUSTOM_CONTEXT_WINDOW,
+    reportedCapacity ?? DEFAULT_CUSTOM_CONTEXT_WINDOW,
+  );
   const defaultEffort =
     registryEfforts !== undefined
       ? registryEfforts.defaultEffort
@@ -344,10 +353,11 @@ function toCatalogModel(
     name: m.name,
     ...(agent === "pi" && m.piApi ? { piApi: m.piApi } : {}),
     ...(m.route ? { route: { ...m.route } } : {}),
-    contextWindow: m.contextWindow ?? DEFAULT_CUSTOM_CONTEXT_WINDOW,
+    contextWindow,
     // 用户自己填了才算显式声明;走 DEFAULT_CUSTOM_CONTEXT_WINDOW 兜底的不标记 ——
     // 那是「仅用于展示」的保守默认,不能拿去收敛运行期上报的窗口。
-    ...(m.contextWindow !== undefined ? { contextWindowVerified: true } : {}),
+    ...(m.contextWindow !== undefined || m.discoveredMetadata?.contextWindow !== undefined ||
+        reportedCapacity !== undefined ? { contextWindowVerified: true } : {}),
     // 显式配置的窗口打标:编辑表单回转配置时必须与「缺省物化成的默认值」可区分,
     // 哪怕用户显式填的恰好等于当前默认(未来默认升级后显式值要原样保留)。
     ...(m.contextWindow !== undefined ? { contextWindowExplicit: true } : {}),
@@ -366,7 +376,7 @@ function toCatalogModel(
   const resolved =
     (modelRegistry?.schemaVersion ?? 0) >= 4 ||
     m.discoveredMetadata ||
-    providerDefaults
+    providerDefaults || (generationDefaults && Object.keys(generationDefaults).length > 0)
       ? resolveModelMetadata(
           modelRegistry ?? undefined,
           metadataProviderId,
@@ -375,9 +385,21 @@ function toCatalogModel(
           pickModelMetadata(user),
           agent,
           providerDefaults,
+          generationDefaults,
         )
       : pickModelMetadata(user);
   return applyModelMetadata(model, resolved);
+}
+
+function isPublicXaiApiEndpoint(endpoint: string | undefined): boolean {
+  if (!endpoint) return false;
+  try {
+    const url = new URL(endpoint);
+    return isOfficialXaiApiHost(endpoint) &&
+      (url.pathname.replace(/\/+$/, '') === '/v1' || url.pathname.startsWith('/v1/'));
+  } catch {
+    return false;
+  }
 }
 
 function defaultWireProtocol(agent: AgentKind): ProviderWireProtocol {
@@ -498,6 +520,9 @@ export function buildUserProvider(
     // This lends only the endpoint protocol, never another model's window or capabilities.
     const presetApis = new Set<ProviderRuntimeModelConfig['api']>(followsPreset ? presetRuntime.models.map(model => model.api ?? model.piApi) : []);
     const presetApi = presetApis.size === 1 ? [...presetApis][0] : undefined;
+    const registrySources = [BUNDLED_CATALOG.modelRegistry, options.modelRegistry].filter(
+      (source): source is ModelRegistry => source != null,
+    );
     models[agent] = rt.models.map((storedModel) => {
       // Old ID-only imports must pick up newly known per-model interfaces too.
       // An explicit model API/path remains a user choice, not a preset default.
@@ -548,6 +573,7 @@ export function buildUserProvider(
           ? piNativeCatalogModelDefaults(rt.piCatalogProviderId, m.id)
           : undefined;
       const wire = m.route?.wireProtocol ?? rt.wireProtocol ?? defaultWireProtocol(agent);
+      const publicXaiApi = native !== 'xai' && isPublicXaiApiEndpoint(m.route?.baseUrl ?? resolvedBaseUrl);
       // Pi's model API overrides the runtime default. Match that actual API, rather than
       // discarding all metadata when a Responses/Gemini model shares a Chat connection.
       // With no explicit model route/API, an exact endpoint + unique ID supplies Pi's API.
@@ -559,14 +585,40 @@ export function buildUserProvider(
             ? providerPresetModelRecord(rt.catalogPresetId, m.id) : undefined)
           ?? (followsPreset && sameRoute && m.api && presetModel?.api === m.api
             ? providerPresetModelRecord(preset?.id, m.id, m.api) : undefined)
+          ?? providerModelGenerationRecord(m.id, m.route?.baseUrl ?? resolvedBaseUrl, m.api ?? m.piApi ?? wire, followsPreset ? preset?.id : undefined)
         : undefined;
-      const importedApi = imported &&
+      // Existing catalog identities keep their established execution path. A
+      // predecessor supplies parameters, not permission to switch their adapter.
+      const keepExistingApi = imported?.inheritedFrom && registrySources.some(source => findBaseModel(source, m.id));
+      const importedApi = imported && !keepExistingApi &&
         PI_MODEL_APIS.some(api => api === imported.execution.pi.api)
           ? imported.execution.pi.api as NonNullable<ProviderRuntimeModelConfig['piApi']>
           : !m.route && presetApi ? presetApi
           : wire === 'google-generative-ai' ? 'google-generative-ai' : undefined;
+      // Recompute inherited defaults from this exact connection route. Do not use
+      // a global Registry predecessor to invent account/provider capabilities.
+      const protocol = m.api ?? m.piApi ?? (wire === 'openai-chat' ? 'openai-completions' : wire);
+      const generationCandidates: Array<{ id: string; metadata: ModelMetadata }> = [];
+      for (const candidate of previousModelGenerations(m.id, [...(followsPreset ? presetRuntime.models : []), ...rt.models], candidate => candidate.id)) {
+        const candidateWire = candidate.route?.wireProtocol ?? rt.wireProtocol ?? defaultWireProtocol(agent);
+        const candidateProtocol = candidate.api ?? candidate.piApi ??
+          (candidateWire === 'openai-chat' ? 'openai-completions' : candidateWire);
+        if (candidateProtocol !== protocol ||
+            withoutTrailingSlashes(candidate.route?.baseUrl ?? resolvedBaseUrl) !== withoutTrailingSlashes(m.route?.baseUrl ?? resolvedBaseUrl) ||
+            (candidate.route?.requestPath ?? rt.requestPath) !== (m.route?.requestPath ?? rt.requestPath)) continue;
+        const candidateRow = providerModelRecord(candidate.id, candidate.route?.baseUrl ?? resolvedBaseUrl, candidateProtocol);
+        generationCandidates.push({ id: candidate.id, metadata: mergeModelMetadata(
+          candidateRow ? providerModelMetadata(candidateRow) : undefined,
+          candidate.discoveredMetadata,
+          runtimeUserModelMetadata(candidate),
+        ) });
+      }
+      const generationDefaults = mergeModelMetadata(
+        ...previousModelGenerations(m.id, generationCandidates, candidate => candidate.id)
+          .map(candidate => generationCapabilities(candidate.metadata)),
+      );
       const defaults = imported || catalogDefaults || presetDefaults
-        ? mergeModelMetadata(imported ? providerModelMetadata(imported) : undefined, catalogDefaults, presetDefaults)
+        ? mergeModelMetadata(imported && !imported.inheritedFrom ? providerModelMetadata(imported) : undefined, catalogDefaults, presetDefaults)
         : undefined;
       // A verified catalog identity can reuse the manufacturer's declaration.
       // Execution protocols and prices still belong to this exact connection.
@@ -579,25 +631,28 @@ export function buildUserProvider(
             ? resolveCatalogModelNativeApi(source, baseModel?.id ?? m.id)
             : undefined;
       };
+      const projected = toCatalogModel(
+        m,
+        followsPreset && sameRoute ? preset!.id : config.id,
+        agent,
+        options.modelRegistry,
+        defaults,
+        nativeCodex ? 'openai' : undefined,
+        generationDefaults,
+      );
       const currentDeclaration = resolveDeclaration(registry);
-      // Same fallback as Gateway: Server omissions use local native declarations;
-      // explicit corrections/unknowns win. Never backfill another route's capabilities.
+      // Apply current Server identity after capability projection, including an
+      // explicit unknown. Only absent declarations may use discovery/local fallback.
       const declaration = currentDeclaration !== undefined ? currentDeclaration
+        : projected.nativeApi !== undefined ? projected.nativeApi
         : resolveDeclaration(BUNDLED_CATALOG.modelRegistry);
       const nativeApi = declaration === null || declaration === 'anthropic-messages'
         || declaration === 'openai-responses' || declaration === 'openai-completions'
         || declaration === 'google-generative-ai' ? declaration : undefined;
       return {
-        ...(nativeApi !== undefined ? { nativeApi } : {}),
         ...(imported?.cost ? { cost: imported.cost } : {}),
-        ...toCatalogModel(
-          m,
-          followsPreset && sameRoute ? preset!.id : config.id,
-          agent,
-          options.modelRegistry,
-          defaults,
-          nativeCodex ? 'openai' : undefined,
-        ),
+        ...projected,
+        ...(nativeApi !== undefined ? { nativeApi } : {}),
         // Projection is not a user edit. Save only the original configuration.
         userModelConfig: structuredClone(storedModel),
         ...(m.api ? { api: m.api, ...(agent === 'pi' ? { piApi: m.api } : {}) } : {}),
@@ -609,6 +664,7 @@ export function buildUserProvider(
           } } : {}),
         } : {}),
         ...(rt.catalogPresetId ? { catalogPresetId: rt.catalogPresetId } : {}),
+        ...(publicXaiApi ? { supportsFastMode: false, fastModelId: null } : {}),
       };
     });
   }

@@ -22,6 +22,7 @@ import {
   isTransientRemoteError,
 } from '@/features/device-link/refreshRemoteSessions';
 import { remoteProjectsStore } from '@/features/device-link/remoteProjectsStore';
+import { unresponsiveDevicesStore } from '@/features/device-link/unresponsiveDevicesStore';
 import {
   applyRemoteSessionActivity,
   clearRemoteSessionActivity,
@@ -40,6 +41,7 @@ beforeEach(() => {
 
 afterEach(() => {
   remoteProjectsStore.clear();
+  unresponsiveDevicesStore.clearAll();
   clearRemoteSessionActivity();
   vi.unstubAllGlobals();
 });
@@ -94,6 +96,103 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
+
+describe('refresh lifecycle cancellation', () => {
+  it('keeps a cached mirror and does not read an open-circuit peer while healthy peers continue', async () => {
+    const slow = did();
+    const healthy = did();
+    const cached = session('cached');
+    remoteProjectsStore.setDeviceSessions(slow, 'Slow', [cached]);
+    unresponsiveDevicesStore.apply(slow, true);
+    invoke.mockImplementation(async (peer: string, channel: string) => {
+      expect(peer).toBe(healthy);
+      return channel === 'maker:schedule:list-sidebar-index-runs' ? { runs: [] } : [session('fresh')];
+    });
+
+    await expect(refreshRemoteDeviceSessions(slow, 'Slow', { scope: 'both' })).resolves.toBe('gave-up');
+    expect(invoke).not.toHaveBeenCalled();
+    expect(remoteProjectsStore.getDeviceSessions(slow).map((row) => row.id)).toEqual([cached.id]);
+    unresponsiveDevicesStore.apply(slow, false);
+    await expect(refreshRemoteDeviceSessions(healthy, 'Healthy', { scope: 'both' })).resolves.toBe('ok');
+    expect(invoke.mock.calls.every(([peer]) => peer === healthy)).toBe(true);
+  });
+
+  it('does not apply a list or start schedule reads when the circuit opens while list is in flight', async () => {
+    const device = did();
+    const cached = session('cached');
+    const pending = deferred<Session[]>();
+    remoteProjectsStore.setDeviceSessions(device, 'Host', [cached]);
+    invoke.mockImplementation((peer: string, channel: string) => {
+      expect(peer).toBe(device);
+      if (channel === 'local-db:sessions:list') {
+        unresponsiveDevicesStore.apply(device, true);
+        return pending.promise;
+      }
+      return Promise.resolve({ runs: [] });
+    });
+    const refresh = refreshRemoteDeviceSessions(device, 'Host', { scope: 'both' });
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledOnce());
+    pending.resolve([session('stale')]);
+    await expect(refresh).resolves.toBe('gave-up');
+    expect(invoke).toHaveBeenCalledOnce();
+    expect(remoteProjectsStore.getDeviceSessions(device).map((row) => row.id)).toEqual([cached.id]);
+  });
+
+  it('ends the retry chain when main opens the circuit during backoff', async () => {
+    const device = did();
+    invoke.mockRejectedValue(new Error('DbClient not ready'));
+    const sleep = vi.fn(async () => { unresponsiveDevicesStore.apply(device, true); });
+    await expect(refreshRemoteDeviceSessions(device, undefined, { sleep })).resolves.toBe('gave-up');
+    expect(invoke).toHaveBeenCalledOnce();
+    expect(sleep).toHaveBeenCalledOnce();
+  });
+
+  it.each(['removeDevice', 'markDeviceDisconnected', 'markAllDisconnected', 'clear'] as const)(
+    '%s cancels queued strong refreshes, while another peer remains usable', async (action) => {
+      const device = did();
+      const pending = deferred<Session[]>();
+      invoke.mockImplementation((peer: string) => peer === device ? pending.promise : Promise.resolve([session('healthy')]));
+      const first = refreshRemoteDeviceSessions(device);
+      const queued = refreshRemoteDeviceSessions(device);
+      if (action === 'removeDevice' || action === 'markDeviceDisconnected') remoteProjectsStore[action](device);
+      else remoteProjectsStore[action]();
+      await expect(refreshRemoteDeviceSessions(did())).resolves.toBe('ok');
+      pending.resolve([session('cancelled')]);
+      expect(await Promise.all([first, queued])).toEqual(['superseded', 'superseded']);
+      expect(invoke.mock.calls.filter(([peer]) => peer === device)).toHaveLength(1);
+      expect(remoteProjectsStore.getDeviceSessions(device)).toEqual([]);
+    },
+  );
+
+  it('re-enabling waits for the old physical request, then reads a fresh snapshot', async () => {
+    const device = did();
+    const pending = deferred<Session[]>();
+    invoke.mockReturnValueOnce(pending.promise).mockResolvedValue([session('fresh')]);
+    const old = refreshRemoteDeviceSessions(device);
+    const queued = refreshRemoteDeviceSessions(device);
+    remoteProjectsStore.removeDevice(device);
+    const renewed = refreshRemoteDeviceSessions(device);
+    expect(invoke).toHaveBeenCalledTimes(1);
+    pending.resolve([session('stale')]);
+    expect(await Promise.all([old, queued, renewed])).toEqual(['superseded', 'superseded', 'ok']);
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(remoteProjectsStore.getDeviceSessions(device).map(row => row.id)).toEqual(['fresh']);
+  });
+
+  it('weak-network reads retain a fresh follow-up for new events', async () => {
+    const device = did();
+    const pending = deferred<Session[]>();
+    invoke.mockReturnValueOnce(pending.promise).mockResolvedValue([session('created-during-read')]);
+    const old = refreshRemoteDeviceSessions(device);
+    const tick = refreshRemoteDeviceSessions(device, undefined, { coalescingMode: 'weak' });
+    const changed = refreshRemoteDeviceSessions(device);
+    expect(invoke).toHaveBeenCalledTimes(1);
+    pending.resolve([session('old')]);
+    await Promise.all([old, tick, changed]);
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(remoteProjectsStore.getDeviceSessions(device).map(row => row.id)).toEqual(['created-during-read']);
+  });
+});
 
 describe('isTransientRemoteError', () => {
   it('瞬态标记 → true', () => {
@@ -1011,6 +1110,49 @@ describe('refreshRemoteDeviceSessions retry', () => {
     await expect(Promise.all([bootstrap, periodic])).resolves.toEqual(['ok', 'ok']);
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(remoteProjectsStore.getMergedRemoteSessions().map((s) => s.id)).toEqual(['fresh']);
+  });
+});
+
+describe('queued refresh cancellation', () => {
+  // Renderer-local coverage: one controller, two target devices. This is not
+  // the shared-host topology. Transport isolation with two controllers sharing
+  // one host (including a silent/non-ACKing controller) is covered separately
+  // in packages/device-link/src/__tests__/client.test.ts.
+  it.each(['disconnect', 'disconnect-all', 'remove', 'clear'] as const)(
+    'does not revive a queued refresh after %s; another target in the same controller still works',
+    async (action) => {
+      const device = did();
+      const otherTarget = did();
+      remoteProjectsStore.setDeviceSessions(device, 'Remote', [session('cached')]);
+      const pending = deferred<Session[]>();
+      invoke.mockReturnValueOnce(pending.promise).mockResolvedValue([]);
+      const first = refreshRemoteDeviceSessions(device, 'Remote', { sleep: noSleep });
+      const queued = refreshRemoteDeviceSessions(device, 'Remote', { sleep: noSleep });
+      if (action === 'disconnect') remoteProjectsStore.markDeviceDisconnected(device);
+      if (action === 'disconnect-all') remoteProjectsStore.markAllDisconnected();
+      if (action === 'remove') remoteProjectsStore.removeDevice(device);
+      if (action === 'clear') remoteProjectsStore.clear();
+      await expect(refreshRemoteDeviceSessions(otherTarget)).resolves.toBe('ok');
+      pending.resolve([session('stale')]);
+      await expect(Promise.all([first, queued])).resolves.toEqual(['superseded', 'superseded']);
+      expect(invoke.mock.calls.filter(([peer]) => peer === device)).toHaveLength(1);
+      expect(remoteProjectsStore.getDeviceIds()).not.toContain(device);
+      expect(remoteProjectsStore.getDeviceIds()).toContain(otherTarget);
+    },
+  );
+
+  it('accepts a new refresh after reconnect while the stale read is still in flight', async () => {
+    const device = did();
+    const pending = deferred<Session[]>();
+    invoke.mockReturnValueOnce(pending.promise).mockResolvedValue([session('fresh')]);
+    const first = refreshRemoteDeviceSessions(device, 'Remote', { sleep: noSleep });
+    const queued = refreshRemoteDeviceSessions(device, 'Remote', { sleep: noSleep });
+    remoteProjectsStore.markDeviceDisconnected(device);
+    const reconnected = refreshRemoteDeviceSessions(device, 'Remote', { sleep: noSleep });
+    pending.resolve([session('stale')]);
+    await expect(Promise.all([first, queued, reconnected])).resolves.toEqual(['superseded', 'superseded', 'ok']);
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(remoteProjectsStore.getDeviceSessions(device).map((s) => s.id)).toEqual(['fresh']);
   });
 });
 
