@@ -2472,6 +2472,16 @@ export async function createAnthropicCompatProxy(opts: ProxyOptions): Promise<Pr
             logger,
             parsedForTransforms,
           );
+      if (decision?.transformRequestBody) {
+        const rewritten = await decision.transformRequestBody(
+          transformed ?? bodyForTransforms,
+          transformCtx,
+        );
+        transformed = rewritten.body;
+        if (rewritten.contentType) {
+          route.headerOverride = { ...route.headerOverride, 'content-type': rewritten.contentType };
+        }
+      }
     } catch (err) {
       transformsCompleted = true;
       notifyTransformSettlement();

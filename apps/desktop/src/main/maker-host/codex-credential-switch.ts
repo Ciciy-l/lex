@@ -66,6 +66,7 @@ function credentialFamilyFromAuthInjection(
 }
 
 interface LocalAgentSession {
+  codexHostKey?: string;
   id: string;
   agentKind: AgentKind;
   remoteHostId?: string | null;
@@ -78,6 +79,8 @@ interface LocalCredentialModeSwitchMaker {
 }
 
 export interface PrepareLocalCodexCredentialModeSwitchInput {
+  /** Restrict arbitration to the host being replaced, preserving sibling hosts. */
+  hostKey?: string;
   maker: LocalCredentialModeSwitchMaker;
   isSessionInTurn?: (sessionId: string) => boolean;
   signal?: AbortSignal;
@@ -403,7 +406,10 @@ export async function prepareLocalCodexCredentialModeSwitch(
   input: PrepareLocalCodexCredentialModeSwitchInput,
 ): Promise<PrepareLocalCodexCredentialModeSwitchResult> {
   throwIfCredentialSwitchAborted(input.signal);
-  const localCodexSessions = input.maker.listActiveSessions().filter(isLocalCodexSession);
+  const localCodexSessions = input.maker.listActiveSessions().filter((session) =>
+    isLocalCodexSession(session) &&
+    (input.hostKey === undefined || (session.codexHostKey ?? 'local') === input.hostKey),
+  );
   const busySessions = localCodexSessions.filter((session) =>
     isSessionBusy(session, input.isSessionInTurn),
   );

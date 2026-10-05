@@ -107,6 +107,7 @@ import {
   bindNativeProviderAuth,
   claimDetectedNativeProviderAuth,
   isNativeProviderAuthBound,
+  captureNativeProviderAuthorizationGeneration,
   isNativeProviderAuthRevoked,
   isNativeProviderAuthSelfAuthorized,
   isNativeProviderAuthSharedSystemCredential,
@@ -253,6 +254,14 @@ export function chatgptAccountIdFromIdToken(idToken: string): string | null {
   if (workspaceId) return workspaceId;
   const sub = readChatgptIdTokenClaims(idToken)?.sub;
   return typeof sub === 'string' && sub.length > 0 ? sub : null;
+}
+
+/** HTTP header identity only; workspace/recovery checks must keep the strict parser. */
+export function chatgptAccountIdFromTokens(
+  tokens: { account_id?: unknown; id_token?: unknown } | undefined,
+): string | null {
+  if (typeof tokens?.account_id === 'string' && tokens.account_id.length > 0) return tokens.account_id;
+  return typeof tokens?.id_token === 'string' ? chatgptAccountIdFromIdToken(tokens.id_token) : null;
 }
 
 /**
@@ -1711,6 +1720,39 @@ export class DesktopCodexAuthAdapter implements AuthAdapter {
   captureCredentialGeneration(): string | null {
     const fingerprint = currentCodexCredentialGeneration(path.join(this.codexHome, 'auth.json'));
     return fingerprint ? JSON.stringify(fingerprint) : null;
+  }
+
+  /** Bind a host-owned request to the same credential and durable authorization as native Codex. */
+  captureOAuthDispatchProof(accessToken: string, accountId: string | null, providerId = 'openai'): (() => boolean) | null {
+    const independent = providerId !== 'openai';
+    const authenticated = () => independent
+      ? codexAccountState(providerId).authenticated : this.hasCodexOAuthLoginReadOnly();
+    if (!authenticated()) return null;
+    const home = independent ? codexAccountHome(providerId) : this.codexHome;
+    const authPath = path.join(home, 'auth.json');
+    const credential = () => {
+      const value = currentCodexCredentialGeneration(authPath);
+      return value ? JSON.stringify(value) : null;
+    };
+    // Independent accounts authorize against their existing account record;
+    // inherited OpenAI uses the native provider authorization record.
+    const authorization = () => independent
+      ? JSON.stringify(currentCodexCredentialGeneration(path.join(home, 'account.json')))
+      : captureNativeProviderAuthorizationGeneration('openai');
+    const credentialGeneration = credential();
+    const authorizationGeneration = authorization();
+    if (!credentialGeneration || !authorizationGeneration || authorizationGeneration === 'null') return null;
+    try {
+      const raw = fs.readFileSync(authPath, 'utf8');
+      const auth = JSON.parse(raw) as { tokens?: { access_token?: unknown; account_id?: unknown; id_token?: unknown } };
+      if (auth.tokens?.access_token !== accessToken || chatgptAccountIdFromTokens(auth.tokens) !== accountId) return null;
+    } catch {
+      return null;
+    }
+    const isCurrent = () => authenticated()
+      && credential() === credentialGeneration
+      && authorization() === authorizationGeneration;
+    return isCurrent() ? isCurrent : null;
   }
 
   /** Bracket one account-level RPC with compare-and-commit recovery confirmation. */

@@ -40,7 +40,7 @@ import { getActiveCatalog } from './active-catalog.js';
 import { outboundFetch } from './outbound-fetch.js';
 import { getGrokAccessToken, peekGrokAccessToken } from './grok-oauth-login.js';
 import { invalidateXaiBridgeAuth } from './xai-auth-invalidation-host.js';
-import { chatgptAccountIdFromIdToken, desktopCodexAuthAdapter } from './auth-adapters.js';
+import { chatgptAccountIdFromTokens, desktopCodexAuthAdapter } from './auth-adapters.js';
 import { codexAccountHome, codexAccountState, invalidateCodexAccount, isOpenAiSubscriptionProviderId } from './codex-account-auth.js';
 import {
   bearerAccessTokenFromHeaders,
@@ -111,12 +111,6 @@ function jwtExpSec(token: string | undefined): number | null {
   } catch {
     return null;
   }
-}
-
-/** tokens.account_id 优先;回落解 id_token(复用 auth-adapters 的 claim 解析,单点维护)。 */
-function accountIdFrom(tokens: NonNullable<CodexAuthFile['tokens']>): string | null {
-  if (typeof tokens.account_id === 'string' && tokens.account_id.length > 0) return tokens.account_id;
-  return typeof tokens.id_token === 'string' ? chatgptAccountIdFromIdToken(tokens.id_token) : null;
 }
 
 function isExpired(accessToken: string | undefined): boolean {
@@ -276,7 +270,7 @@ export async function getChatgptBridgeAuth(providerId = 'openai'): Promise<{ acc
     const refreshed = await refreshIfNeeded(authPath, current);
     throwIfOwnerBoundDispatchUnsafe(scopeAtStart);
     if (!codexAccountState(providerId).authenticated || !refreshed.tokens?.access_token) throw new Error('OpenAI account changed during authentication');
-    return { accessToken: refreshed.tokens.access_token, accountId: accountIdFrom(refreshed.tokens) };
+    return { accessToken: refreshed.tokens.access_token, accountId: chatgptAccountIdFromTokens(refreshed.tokens) };
   }
   const now = Date.now();
   if (_authCache && now - _authCache.readAt < AUTH_CACHE_TTL_MS && !isExpired(_authCache.accessToken)) {
@@ -303,13 +297,34 @@ export async function getChatgptBridgeAuth(providerId = 'openai'): Promise<{ acc
   obj = await refreshIfNeeded(authPath, obj);
   throwIfOwnerBoundDispatchUnsafe(scopeAtStart);
   const accessToken = obj.tokens?.access_token;
-  const accountId = obj.tokens ? accountIdFrom(obj.tokens) : null;
+  const accountId = chatgptAccountIdFromTokens(obj.tokens);
   if (!accessToken) {
     _authCache = null;
     throw new Error('codex auth.json 缺 access_token');
   }
   _authCache = { accessToken, accountId, readAt: now };
   return _authCache;
+}
+
+/** A deferred child request must revalidate both credential and authorization at dispatch/retry. */
+export async function getChatgptBridgeAuthForDispatch(providerId = 'openai'): Promise<{
+  accessToken: string; accountId: string | null; canDispatch(): boolean;
+}> {
+  const ownerScope = activeOwnerScopeKey();
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const auth = await getChatgptBridgeAuth(providerId);
+    throwIfOwnerBoundDispatchUnsafe(ownerScope);
+    const proof = desktopCodexAuthAdapter.captureOAuthDispatchProof(auth.accessToken, auth.accountId, providerId);
+    if (proof) return {
+      ...auth,
+      canDispatch: () => ownerScope === activeOwnerScopeKey()
+        && !isAppSessionBoundaryPending() && proof(),
+    };
+    // The existing cache can straddle native account replacement. Only a fresh,
+    // proven credential may produce a new decision; the old decision stays invalid.
+    clearChatgptBridgeCredentialCache();
+  }
+  throw new Error('OpenAI authorization changed while preparing the child request');
 }
 
 /** codex(ChatGPT 订阅)provider 配置:chatgpt/ 前缀 → codex 后端,注入订阅 OAuth + codex 专属头。 */

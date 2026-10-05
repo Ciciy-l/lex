@@ -111,6 +111,17 @@ export interface RewindCommitArgs {
   preserveMessageUuid?: string;
   /** Replacement SDK session/thread id to persist atomically with rewind. */
   sdkSessionId?: string;
+  /**
+   * Codex thread/rollback 或分页 fork 换出新 thread 时,把保留消息 agent_meta 里
+   * `nativeForkAnchor.sdkSessionId` 从旧 thread 重映射到新 thread(pairs,语义同
+   * fork.session 的同名字段),否则后续回退/fork 会把这些锚点当异线程丢弃。
+   */
+  nativeForkAnchorSessionMap?: Array<[string, string]>;
+  /**
+   * 读历史时看到的 sessions.cleared_at。提交时必须仍相同，否则 /clear 竞态整单回滚。
+   * 省略或 null 表示当时会话未被清空。
+   */
+  expectedClearedAt?: number | null;
   now: number;
 }
 
@@ -1289,3 +1300,5 @@ export type DbTxResultByName = {
   'skillUsage.applyMutation': undefined;
   'session.importShare': { messageCount: number };
 };
+
+

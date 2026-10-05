@@ -2160,6 +2160,10 @@ function rewindCommit(db: Database.Database, args: unknown): void {
     typeof payload.sdkSessionId === 'string' && payload.sdkSessionId ? payload.sdkSessionId : null;
   const requireLatestUser = payload.requireLatestUser === true;
   const now = expectNumber(payload.now, 'now');
+  const expectedClearedAt =
+    payload.expectedClearedAt === undefined || payload.expectedClearedAt === null
+      ? null
+      : expectNumber(payload.expectedClearedAt, 'expectedClearedAt');
   const rows = db
     .prepare(
       `SELECT id, client_id, role, created_at, agent_meta, tool_use_id
@@ -2214,6 +2218,25 @@ function rewindCommit(db: Database.Database, args: unknown): void {
       )
     : null;
   const transaction = db.transaction(() => {
+    const session = db
+      .prepare('SELECT cleared_at FROM sessions WHERE id = ?')
+      .get(sessionId) as { cleared_at: number | null } | undefined;
+    if (!session) {
+      throw Object.assign(new Error(`Session missing: ${sessionId}`), { code: 'NOT_FOUND' });
+    }
+    const currentClearedAt = session.cleared_at ?? null;
+    if ((currentClearedAt ?? -1) !== (expectedClearedAt ?? -1)) {
+      throw Object.assign(
+        new Error(`CLEAR_GENERATION_CHANGED: clear-boundary changed for ${sessionId}`),
+        { code: 'PRECONDITION_FAILED' },
+      );
+    }
+    if (currentClearedAt !== null && targetCreatedAt <= currentClearedAt) {
+      throw Object.assign(
+        new Error(`CLEAR_GENERATION_CHANGED: target is at or before /clear for ${sessionId}`),
+        { code: 'PRECONDITION_FAILED' },
+      );
+    }
     for (const id of idsToRewind) updateMessage.run(now, id);
     if (rewindSubagentByParent && rewindParentlessSubagentTail) {
       const rewoundIds = new Set(idsToRewind);
