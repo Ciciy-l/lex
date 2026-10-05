@@ -149,6 +149,17 @@ describe('saveBotSkill — 形成', () => {
     );
   });
 
+  it('checks the operation guard immediately before filesystem mutation', async () => {
+    await saveBotSkill(userDataDir, 'bot-1', SAMPLE);
+    let revoked = false;
+    const guard = () => { if (revoked) throw new Error('REMOTE_REVOKED'); };
+    revoked = true;
+    await expect(saveBotSkill(userDataDir, 'bot-1', { ...SAMPLE, body: 'must not land' }, guard)).rejects.toThrow('REMOTE_REVOKED');
+    expect((await readBotSkill(userDataDir, 'bot-1', 'weekly-report'))?.body).toContain('Pull the merged PRs');
+    await expect(deleteBotSkill(userDataDir, 'bot-1', 'weekly-report', guard)).rejects.toThrow('REMOTE_REVOKED');
+    expect(await readBotSkill(userDataDir, 'bot-1', 'weekly-report')).not.toBeNull();
+  });
+
   it('rejects an empty field, an oversize body and an unusable name', async () => {
     await expect(saveBotSkill(userDataDir, 'bot-1', { ...SAMPLE, body: '  ' })).rejects.toThrow(
       BotSkillStoreError,

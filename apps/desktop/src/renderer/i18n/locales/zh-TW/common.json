@@ -7700,6 +7700,14 @@
       "offlineDescription": "{{name}} 暫時離線，{{device}} 重新連線後就能繼續聊。",
       "preparing": "正在等夥伴準備好…"
     },
+    "remoteSettings": {
+      "discardDescription": "要放棄尚未儲存的夥伴設定嗎？",
+      "loadFailed": "無法載入最新的夥伴設定。",
+      "conflict": "主機上的夥伴設定已變更，請查看最新設定後再儲存。",
+      "saveFailed": "夥伴設定儲存失敗。",
+      "unsupported": "此主機不支援夥伴設定。",
+      "empty": "沒有可用的夥伴設定。"
+    },
     "capabilities": {
       "title": "能力",
       "search": "搜尋能力",

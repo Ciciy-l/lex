@@ -23,6 +23,26 @@ export const TEAMMATES_TITLE: RemoteLocalizedText = {
   },
 };
 
+const SETTINGS_LINK_LABEL: RemoteLocalizedText = {
+  fallback: 'Settings',
+  translations: {
+    'zh-CN': '设置',
+    'zh-TW': '設定',
+    ja: '設定',
+    ko: '설정',
+  },
+};
+
+const CREATE_TITLE: RemoteLocalizedText = {
+  fallback: 'New Teammate',
+  translations: {
+    'zh-CN': '创建伙伴',
+    'zh-TW': '建立夥伴',
+    ja: 'チームメイトを作成',
+    ko: '팀원 만들기',
+  },
+};
+
 const STATUS_COPY: Readonly<Record<string, RemoteResourceStatus>> = {
   active: {
     label: {
@@ -82,6 +102,7 @@ function resourceRef(id: string) {
 function sourceRevision(source: BotRemoteResourceSource): string {
   return [
     source.currentVersion,
+    source.invitation?.stage ?? '',
     source.updatedAt,
     source.lastMessageAt ?? 0,
     source.lastReplyAt ?? 0,
@@ -135,8 +156,26 @@ export function botRemoteCollectionItemFromSource(
         target: { kind: 'resource' as const, ref: { collectionId: TEAMMATES_REMOTE_COLLECTION_ID, kind: BOT_REMOTE_RESOURCE_KIND, id: `settings:${source.id}/memory` } },
         label: memoryCopy.memories,
       },
+      {
+        rel: 'settings',
+        target: { kind: 'resource' as const, ref: { collectionId: TEAMMATES_REMOTE_COLLECTION_ID, kind: BOT_REMOTE_RESOURCE_KIND, id: 'settings:' + source.id } },
+        label: SETTINGS_LINK_LABEL,
+      },
     ],
     revision: sourceRevision(source),
+  };
+}
+
+/** A form-capable controller can start creation from the collection itself. */
+export function botRemoteCreateCollectionItem(): RemoteCollectionItem {
+  return {
+    ref: resourceRef('create'),
+    display: {
+      title: CREATE_TITLE,
+      avatar: { kind: 'text', value: '', fallbackText: '+' },
+    },
+    links: [],
+    revision: 'create-v1',
   };
 }
 

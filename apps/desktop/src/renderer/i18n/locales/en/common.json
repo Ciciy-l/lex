@@ -7702,6 +7702,14 @@
       "offlineDescription": "{{name}} is offline. Reconnect {{device}} to continue.",
       "preparing": "Waiting for this teammate to get ready…"
     },
+    "remoteSettings": {
+      "discardDescription": "Discard the unsaved changes to this teammate’s settings?",
+      "loadFailed": "Could not load the latest teammate settings.",
+      "conflict": "This teammate changed on the host. Review the latest settings before saving again.",
+      "saveFailed": "Teammate settings could not be saved.",
+      "unsupported": "This host does not support teammate settings.",
+      "empty": "No teammate settings are available."
+    },
     "capabilities": {
       "title": "Capabilities",
       "search": "Search capabilities",

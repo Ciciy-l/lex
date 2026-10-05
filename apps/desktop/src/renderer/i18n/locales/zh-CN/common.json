@@ -7700,6 +7700,14 @@
       "offlineDescription": "{{name}} 暂时离线，{{device}} 重新联网后就能继续聊。",
       "preparing": "正在等伙伴准备好…"
     },
+    "remoteSettings": {
+      "discardDescription": "要放弃尚未保存的伙伴设置吗？",
+      "loadFailed": "无法加载最新的伙伴设置。",
+      "conflict": "主机上的伙伴设置已变化，请查看最新设置后再保存。",
+      "saveFailed": "伙伴设置保存失败。",
+      "unsupported": "此主机不支持伙伴设置。",
+      "empty": "没有可用的伙伴设置。"
+    },
     "capabilities": {
       "title": "能力",
       "search": "搜索能力",

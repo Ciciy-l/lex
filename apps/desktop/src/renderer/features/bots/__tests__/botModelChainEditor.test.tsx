@@ -278,6 +278,18 @@ describe('BotModelChainEditor', () => {
     expect(modelSelectorProps.mock.lastCall?.[0].unifiedAgents).toEqual(['pi', 'claude-code', 'omp']);
   });
 
+  it('binds remote model editing to the selected host and does not seed a local default', () => {
+    const onChange = vi.fn();
+    const view = render(<BotModelChainEditor value={[primary]} onChange={onChange} remote deviceId="host-1" />);
+    expect(modelSelectorProps.mock.lastCall?.[0]).toMatchObject({ deviceId: 'host-1', modelId: 'primary-model' });
+    const fallbacks = expand(view.container);
+    fireEvent.click(fallbacks.getByText('bots.modelChain.add'));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(modelSelectorProps.mock.lastCall?.[0]).toMatchObject({ deviceId: 'host-1', modelId: '' });
+    fireEvent.click(fallbacks.getByText('choose-official-codex-model'));
+    expect(onChange).toHaveBeenLastCalledWith([primary, expect.objectContaining({ model: 'gpt-5.6-sol' })]);
+  });
+
   it('writes depth and fast mode to the selected route without changing its model', () => {
     const route = { harness: 'codex' as const, model: 'gpt-5.6-sol',
       providerId: 'openai', effort: 'medium', fastMode: false };

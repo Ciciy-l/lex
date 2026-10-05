@@ -188,7 +188,7 @@ async function readTextSlot(absPath: string): Promise<string> {
  * 直接 `writeFile` 的话,写到一半断电会留下一个**半截的 SOUL.md** —— 伙伴下次
  * 启动就带着半句话的身份。rename 在同一文件系统上是原子的,要么旧的要么新的。
  */
-async function writeTextAtomic(absPath: string, content: string): Promise<void> {
+async function writeTextAtomic(absPath: string, content: string, beforeWrite?: () => void): Promise<void> {
   const bytes = Buffer.byteLength(content, 'utf8');
   if (bytes > BOT_PROFILE_TEXT_MAX_BYTES) {
     throw new BotProfileFolderError(
@@ -196,6 +196,7 @@ async function writeTextAtomic(absPath: string, content: string): Promise<void> 
       `content exceeds ${BOT_PROFILE_TEXT_MAX_BYTES} bytes`,
     );
   }
+  beforeWrite?.();
   await fs.mkdir(path.dirname(absPath), { recursive: true });
   /*
     临时文件名要**每次都不同**。只带 pid 的话,同一进程里两处并发写同一个槽
@@ -204,8 +205,10 @@ async function writeTextAtomic(absPath: string, content: string): Promise<void> 
     文件不会损坏,但会静默丢一次保存。
   */
   const tmp = `${absPath}.tmp-${process.pid}-${(writeSeq += 1)}`;
+  beforeWrite?.();
   await fs.writeFile(tmp, content, 'utf8');
   try {
+    beforeWrite?.();
     await fs.rename(tmp, absPath);
   } catch (cause) {
     // rename 失败时别把临时文件留在伙伴的家里 —— 那是用户会打开看的目录。
@@ -273,20 +276,21 @@ export async function writeBotProfileFolder(
   userDataDir: string,
   botId: string,
   patch: BotProfileFolderPatch,
+  beforeWrite?: () => void,
 ): Promise<void> {
   const at = (relative: string) => resolveInside(userDataDir, botId, relative);
   const writes: Array<Promise<void>> = [];
   if (patch.identitySource !== undefined) {
-    writes.push(writeTextAtomic(at(SLOT.soul), patch.identitySource));
+    writes.push(writeTextAtomic(at(SLOT.soul), patch.identitySource, beforeWrite));
   }
   if (patch.userContextSource !== undefined) {
-    writes.push(writeTextAtomic(at(SLOT.userContext), patch.userContextSource));
+    writes.push(writeTextAtomic(at(SLOT.userContext), patch.userContextSource, beforeWrite));
   }
   if (patch.systemPromptOverride !== undefined) {
-    writes.push(writeTextAtomic(at(SLOT.systemPrompt), patch.systemPromptOverride));
+    writes.push(writeTextAtomic(at(SLOT.systemPrompt), patch.systemPromptOverride, beforeWrite));
   }
   if (patch.config !== undefined) {
-    writes.push(writeTextAtomic(at(SLOT.config), `${JSON.stringify(patch.config, null, 2)}\n`));
+    writes.push(writeTextAtomic(at(SLOT.config), `${JSON.stringify(patch.config, null, 2)}\n`, beforeWrite));
   }
   await Promise.all(writes);
 }

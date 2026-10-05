@@ -164,13 +164,14 @@ async function syncBotProfileFolder(
   identitySource: string,
   config: Record<string, unknown>,
   userDataDir = ownerScopedUserDataPath(),
+  operationGuard?: () => void,
 ): Promise<void> {
   const { userContextSource } = config;
   try {
     await writeBotProfileFolder(userDataDir, botId, {
       identitySource,
       userContextSource: typeof userContextSource === 'string' ? userContextSource : '',
-    });
+    }, operationGuard);
   } catch (cause) {
     log.warn('write bot profile folder failed', { botId, error: String(cause) });
   }
@@ -766,6 +767,7 @@ export interface BotRemoteResourceSource {
   activityAt: number;
   currentVersion: number;
   updatedAt: number;
+  invitation?: import('../../../shared/botInvitation.js').BotInvitationProgress;
 }
 
 async function readBotRemoteResourceSource(
@@ -778,6 +780,14 @@ async function readBotRemoteResourceSource(
   if (!profile) throwIpcError('NOT_FOUND', 'Bot 不存在');
   const { canonicalSessionId } = await reconcileCanonicalLink(botId, client);
   owner.assertCurrent();
+  const [version] = await db
+    .select({ capabilitiesJson: botProfileVersions.capabilitiesJson })
+    .from(botProfileVersions)
+    .where(and(
+      eq(botProfileVersions.botId, botId),
+      eq(botProfileVersions.version, profile.currentVersion),
+    ))
+    .limit(1);
   const [canonical] = canonicalSessionId ? await db
     .select({ clearedAt: sessions.clearedAt, updatedAt: sessions.updatedAt })
     .from(sessions).where(eq(sessions.id, canonicalSessionId)).limit(1) : [];
@@ -804,6 +814,9 @@ async function readBotRemoteResourceSource(
     activityAt: Math.max(profile.createdAt, latest.createdAt ?? 0, canonical?.updatedAt ?? 0),
     currentVersion: profile.currentVersion,
     updatedAt: profile.updatedAt,
+    ...(botInvitationProgress(parseJson(version?.capabilitiesJson ?? '{}').invitation)
+      ? { invitation: botInvitationProgress(parseJson(version?.capabilitiesJson ?? '{}').invitation) }
+      : {}),
   };
 }
 
@@ -847,6 +860,99 @@ export async function listBotRemoteResourceSources(): Promise<BotRemoteResourceS
 
 export async function getBotRemoteResourceSource(botId: string): Promise<BotRemoteResourceSource> {
   return readBotRemoteResourceSource(getDbClient(), botId);
+}
+
+/**
+ * Narrow settings projection for device-link management.  Runtime snapshots,
+ * credentials, home paths and the full capability JSON stay on the host.
+ */
+export async function getBotRemoteSettingsSource(botId: string) {
+  const owner = captureBotOperationOwner();
+  const client = getDbClient();
+  const source = await readBotRemoteResourceSource(client, botId);
+  owner.assertCurrent();
+  if (!isBotVisibleRemotely(source)) throwIpcError('NOT_FOUND', 'Bot 不存在');
+  const [version] = await client.drizzle
+    .select()
+    .from(botProfileVersions)
+    .where(and(
+      eq(botProfileVersions.botId, botId),
+      eq(botProfileVersions.version, source.currentVersion),
+    ))
+    .limit(1);
+  if (!version) throwIpcError('NOT_FOUND', 'Bot Profile 版本不存在');
+  const config = parseJson(version.capabilitiesJson);
+  const modelChain = await readEffectiveBotModelChain(config);
+  owner.assertCurrent();
+  const strings = (value: unknown): string[] => Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : [];
+  return {
+    source,
+    identity: version.identitySource,
+    userContext: typeof config.userContextSource === 'string' ? config.userContextSource : '',
+    memory: config.memory !== false,
+    permissions: config.permissions === 'trusted' || config.permissions === 'auto' ? config.permissions : 'ask',
+    modelChain,
+    followsDefault: !(Array.isArray(config.modelChainOverride) && config.modelChainOverride.length > 0)
+      && (config.modelChainOverride === null || config.modelOverride === null
+        || (!Array.isArray(config.modelChainOverride) && !Array.isArray(config.modelChain) && typeof config.model !== 'string')),
+    skills: strings(config.skills),
+    connections: strings(config.mcpServers),
+    toolsets: strings(config.toolsets),
+  };
+}
+
+/** Shared image write used by the remote editor; bytes are validated before this boundary. */
+export async function setBotProfileAvatar(
+  botId: string,
+  image: { buffer: Buffer; mimeType: string },
+  expectedVersion?: number,
+  expectedAvatar?: string,
+  operationGuard?: () => void,
+) {
+  const ownerBoundary = captureBotOperationOwner();
+  operationGuard?.();
+  const client = getDbClient();
+  const db = client.drizzle;
+  const [current] = await db.select().from(botProfiles).where(eq(botProfiles.id, botId)).limit(1);
+  if (!current) throwIpcError('NOT_FOUND', 'Bot 不存在');
+  if (expectedVersion !== undefined && current.currentVersion !== expectedVersion) {
+    throwIpcError('PRECONDITION_FAILED', 'Teammate changed');
+  }
+  if (current.status === 'archived' || current.status === 'deleting') {
+    throwIpcError('PRECONDITION_FAILED', 'Bot 不能修改头像');
+  }
+  const [version] = await db.select().from(botProfileVersions).where(and(
+    eq(botProfileVersions.botId, botId),
+    eq(botProfileVersions.version, current.currentVersion),
+  )).limit(1);
+  if (!version) throwIpcError('PRECONDITION_FAILED', 'Bot Profile 版本不存在');
+  ownerBoundary.assertCurrent();
+  const written = await storeTeammateAvatarImage(image, db, () => {
+    ownerBoundary.assertCurrent();
+    operationGuard?.();
+  });
+  ownerBoundary.assertCurrent();
+  operationGuard?.();
+  const now = Date.now();
+  await client.tx('bots.updateProfile', {
+    id: botId,
+    avatar: written.url,
+    identitySource: version.identitySource,
+    capabilitiesJson: version.capabilitiesJson,
+    profileContentChanged: false,
+    expectedCurrentVersion: current.currentVersion,
+    ...(expectedAvatar !== undefined ? { expectedAvatar } : {}),
+    botAvatarRef: { id: randomUUID(), hash: written.hash, createdAt: now },
+    now,
+  });
+  ownerBoundary.assertCurrent();
+  operationGuard?.();
+  const profile = await readProfile(client, botId);
+  ownerBoundary.assertCurrent();
+  broadcastBotProfileChanged({ botId, change: 'updated' });
+  return profile;
 }
 
 /** Upper bound on how many Bot read positions one list call may carry. */
@@ -945,7 +1051,7 @@ export async function recoverActiveTeammateInvitations(): Promise<void> {
 }
 
 /** Main-owned creation path shared by the renderer and Bot runtime tools. */
-export async function createBotProfile(raw: unknown) {
+export async function createBotProfile(raw: unknown, operationGuard?: () => void) {
   const body =
     raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   const draftEntry = body.creationDraftToken ? readBotCreationDraft(body.creationDraftToken) : undefined;
@@ -992,6 +1098,7 @@ export async function createBotProfile(raw: unknown) {
     userDataDir: ownerScopedUserDataPath(),
   };
   const assertCreationOwnerStillCurrent = () => {
+    operationGuard?.();
     if (
       isAppSessionBoundaryPending() ||
       activeOwnerScopeKey() !== creationOwnerBoundary.scopeKey
@@ -1080,6 +1187,7 @@ export async function createBotProfile(raw: unknown) {
     identitySource,
     persistedCapabilities,
     creationOwnerBoundary.userDataDir,
+    assertCreationOwnerStillCurrent,
   );
   assertCreationOwnerStillCurrent();
   const profile = await readProfile(client, id);
@@ -1090,13 +1198,16 @@ export async function createBotProfile(raw: unknown) {
 
 /** Shared profile mutation for trusted settings and owner-bound capability selection. */
 export async function updateBotProfile(raw: unknown, expectedVersion?: number,
-  validateAdditions?: (update: BotCapabilityUpdate) => Promise<void>) {
+  validateAdditions?: (update: BotCapabilityUpdate) => Promise<void>,
+  operationGuard?: () => void) {
   const body =
     raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   const id = readText(body.id, 'botId', 128, true);
   const owner = captureBotOperationOwner();
+  operationGuard?.();
   const client = getDbClient();
   if (body.retryInvitation === true) {
+    operationGuard?.();
     queueBotInvitation(id, true);
     return readProfile(client, id);
   }
@@ -1214,6 +1325,7 @@ export async function updateBotProfile(raw: unknown, expectedVersion?: number,
   await validateAdditions?.({ botId: id, canonicalSessionId: current.canonicalSessionId,
     previous, next: normalizedNextConfig });
   owner.assertCurrent();
+  operationGuard?.();
   await client.tx('bots.updateProfile', {
     id,
     ...(patch.displayName !== undefined ? { displayName: patch.displayName } : {}),
@@ -1234,8 +1346,13 @@ export async function updateBotProfile(raw: unknown, expectedVersion?: number,
     now,
   });
   owner.assertCurrent();
-  await syncBotProfileFolder(id, nextIdentitySource, normalizedNextConfig, owner.userDataDir);
+  operationGuard?.();
+  await syncBotProfileFolder(id, nextIdentitySource, normalizedNextConfig, owner.userDataDir, () => {
+    owner.assertCurrent();
+    operationGuard?.();
+  });
   owner.assertCurrent();
+  operationGuard?.();
   if (profileContentChanged) {
     const [canonical] = await db
       .select({ sessionId: botSessionLinks.sessionId })

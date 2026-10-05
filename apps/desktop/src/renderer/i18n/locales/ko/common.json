@@ -7700,6 +7700,14 @@
       "offlineDescription": "{{name}} 님이 오프라인입니다. {{device}}에 다시 연결하면 계속할 수 있어요.",
       "preparing": "준비가 끝나기를 기다리고 있어요…"
     },
+    "remoteSettings": {
+      "discardDescription": "저장하지 않은 팀원 설정을 버릴까요?",
+      "loadFailed": "최신 팀원 설정을 불러오지 못했습니다.",
+      "conflict": "호스트에서 팀원이 변경되었습니다. 최신 설정을 확인한 후 다시 저장하세요.",
+      "saveFailed": "팀원 설정을 저장하지 못했습니다.",
+      "unsupported": "이 호스트는 팀원 설정을 지원하지 않습니다.",
+      "empty": "사용할 수 있는 팀원 설정이 없습니다."
+    },
     "capabilities": {
       "title": "기능",
       "search": "기능 검색",

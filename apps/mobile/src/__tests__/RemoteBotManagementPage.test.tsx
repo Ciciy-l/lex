@@ -1,0 +1,133 @@
+// @vitest-environment jsdom
+import { act, createElement } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const h = vi.hoisted(() => ({
+  get: vi.fn(),
+  invoke: vi.fn(),
+}));
+
+vi.mock('react-native', () => ({
+  Alert: {
+    alert: (_title: unknown, _body: unknown, buttons: Array<{ onPress?: () => void }> = []) => buttons.at(-1)?.onPress?.(),
+  },
+  ActivityIndicator: () => createElement('span', { 'data-testid': 'loading' }),
+  Pressable: ({ children, onPress, disabled }: any) => createElement('button', { onClick: onPress, disabled }, children),
+  ScrollView: ({ children }: any) => createElement('div', {}, children),
+  StyleSheet: { create: (value: unknown) => value, hairlineWidth: 1 },
+  Switch: ({ value, onValueChange, disabled }: any) => createElement('input', { type: 'checkbox', checked: value, disabled, onChange: (event: any) => onValueChange(event.currentTarget.checked) }),
+  View: ({ children }: any) => createElement('div', {}, children),
+}));
+vi.mock('@/components/AppText', () => ({
+  Text: ({ children, ...props }: any) => createElement('span', props, children),
+  TextInput: ({ value, onChangeText, style: _style, editable: _editable, multiline: _multiline, placeholderTextColor: _placeholderTextColor, ...props }: any) => createElement('input', { ...props, value, onChange: (event: any) => onChangeText(event.currentTarget.value) }),
+}));
+vi.mock('@/components/MobilePrimitives', () => ({
+  MainWindowActionButton: ({ action }: any) => createElement('button', { onClick: action.onPress, disabled: action.disabled }, action.label),
+}));
+vi.mock('@/device-link/DeviceLinkContext', () => ({ useDeviceLink: () => ({ invoke: h.invoke }) }));
+vi.mock('@/device-link/remoteResources', () => ({
+  getRemoteResource: (...args: any[]) => h.get(...args),
+  invokeRemoteResourceAction: (...args: any[]) => h.invoke(...args),
+}));
+vi.mock('@/device-link/remoteStatus', () => ({ formatRemoteError: (error: unknown) => String(error) }));
+vi.mock('@/platform/chrome', () => ({
+  SimpleStackHeader: ({ onBack, title }: any) => createElement('button', { 'data-testid': 'back', onClick: onBack }, title),
+  simpleScreenSafeAreaEdges: [],
+}));
+vi.mock('@/utils/backGuard', () => ({ goBackGuarded: vi.fn() }));
+vi.mock('expo-router', () => ({ useRouter: () => ({}) }));
+vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }) }));
+vi.mock('@/theme', () => ({
+  useTheme: () => ({ colors: { textSecondary: '', textTertiary: '', textPrimary: '', surface: '', surfaceElevated: '', border: '', borderStrong: '', surfaceChip: '', errorText: '' } }),
+  useThemedStyles: () => ({ safeArea: {}, content: {}, group: {}, form: {}, groupTitle: {}, row: {}, rowTitle: {}, chevron: {}, field: {}, label: {}, input: {}, multiline: {}, toggleRow: {}, selectRow: {}, options: {}, option: {}, optionSelected: {}, optionText: {}, markdown: {}, note: {}, error: {} }),
+}));
+vi.mock('@/theme/tokens', () => ({ fontWeight: { medium: '500' }, radius: { container: 1, control: 1, pill: 1 }, spacing: { lg: 1, md: 1, sm: 1, xs: 1 }, typeScale: { body: 1, footnote: 1, title: 1 } }));
+
+import { RemoteBotManagementPage } from '@/session/RemoteBotManagementPage';
+
+const hostA = { deviceId: 'desktop-a', deviceName: 'A' };
+const hostB = { deviceId: 'desktop-b', deviceName: 'B' };
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+};
+const resource = (id: string, name: string, includeChild = false) => ({
+  ref: { collectionId: 'teammates', kind: 'bot', id },
+  revision: name,
+  display: { title: name },
+  links: [],
+  blocks: [
+    ...(includeChild ? [{ id: 'children', primitive: 'list', fallbackMarkdown: '', data: { entries: [{ id: 'child', title: 'Child', resourceId: 'child' }] } }] : []),
+    { id: 'profile', primitive: 'form', fallbackMarkdown: '', data: { actionId: 'save', values: { name } } },
+  ],
+  actions: [{ id: 'save', label: 'Save', fields: [{ id: 'name', label: 'Name', kind: 'text' }] }],
+});
+
+let root: Root;
+let node: HTMLDivElement;
+const flush = async () => { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); };
+
+beforeEach(() => {
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+  node = document.createElement('div');
+  document.body.append(node);
+  root = createRoot(node);
+  h.get.mockReset();
+  h.invoke.mockReset().mockResolvedValue({ effects: [] });
+});
+afterEach(async () => {
+  await act(async () => root.unmount());
+  node.remove();
+});
+
+describe('RemoteBotManagementPage request boundary', () => {
+  it('ignores a late resource response after switching hosts', async () => {
+    const first = deferred<any>();
+    const oldChild = deferred<any>();
+    const nextHost = deferred<any>();
+    h.get.mockReturnValueOnce(first.promise).mockReturnValueOnce(oldChild.promise).mockReturnValueOnce(nextHost.promise);
+    await act(async () => root.render(createElement(RemoteBotManagementPage, { host: hostA, resourceId: 'bot-a' })));
+    first.resolve(resource('bot-a', 'A', true));
+    await flush();
+    const child = [...node.querySelectorAll('button')].find((button) => button.textContent?.includes('Child'));
+    expect(child).toBeTruthy();
+    await act(async () => (child as HTMLButtonElement).click());
+    await act(async () => root.render(createElement(RemoteBotManagementPage, { host: hostB, resourceId: 'bot-b' })));
+    nextHost.resolve(resource('bot-b', 'B'));
+    await flush();
+    oldChild.resolve(resource('child', 'OLD CHILD'));
+    await flush();
+    expect(node.textContent).toContain('B');
+    expect(node.textContent).not.toContain('OLD CHILD');
+  });
+
+  it('keeps a draft when navigating away and returning to the same host/resource', async () => {
+    const base = deferred<any>();
+    const child = deferred<any>();
+    const returned = deferred<any>();
+    h.get.mockReturnValueOnce(base.promise).mockReturnValueOnce(child.promise).mockReturnValueOnce(returned.promise);
+    await act(async () => root.render(createElement(RemoteBotManagementPage, { host: hostA, resourceId: 'bot-a' })));
+    base.resolve(resource('bot-a', 'Original', true));
+    await flush();
+    const input = node.querySelector('input:not([type="checkbox"])') as HTMLInputElement;
+    expect(input).toBeTruthy();
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(input, 'Local draft');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const open = [...node.querySelectorAll('button')].find((button) => button.textContent?.includes('Child'));
+    await act(async () => (open as HTMLButtonElement).click());
+    child.resolve(resource('child', 'Child'));
+    await flush();
+    await act(async () => (node.querySelector('[data-testid="back"]') as HTMLButtonElement).click());
+    returned.resolve(resource('bot-a', 'Original', true));
+    await flush();
+    expect((node.querySelector('input:not([type="checkbox"])') as HTMLInputElement).value).toBe('Local draft');
+  });
+});

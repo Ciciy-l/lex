@@ -58,6 +58,8 @@ export interface BotSkillServiceDeps {
   userDataDir?: string;
   ownerScopeKey?: () => string;
   ownerBoundaryPending?: () => boolean;
+  /** Optional remote-operation lease checked at each filesystem mutation boundary. */
+  operationGuard?: () => void;
   requestRefresh?: typeof requestBotRuntimeEpochRefresh;
   resolveBotId?: (callerSessionId: string) => Promise<
     | { ok: true; botId: string; canonicalSessionId?: string | null }
@@ -187,13 +189,15 @@ export async function saveBotSkillForSession(
     const owner = await (deps.resolveBotId ?? defaultResolveBotId)(params.callerSessionId);
     if (!owner.ok) return owner;
     assertOwnerBoundary(deps, boundary);
+    deps.operationGuard?.();
     const { record, created } = await saveBotSkill(await skillHomeOf(deps, owner.botId, boundary), owner.botId, {
       name: params.name,
       description: params.description,
       body: params.body,
       ...(params.slug ? { slug: params.slug } : {}),
-    });
+    }, deps.operationGuard);
     assertOwnerBoundary(deps, boundary);
+    deps.operationGuard?.();
     const refreshed = await (deps.requestRefresh ?? requestBotRuntimeEpochRefresh)(
       owner.canonicalSessionId ?? params.callerSessionId, 'resource',
     );
@@ -238,7 +242,8 @@ export async function listBotSkillsForBot(
   deps: BotSkillServiceDeps = {},
 ): Promise<BotSkillWireSummary[]> {
   const boundary = captureOwnerBoundary(deps);
-  const result = (await listBotSkills(await skillHomeOf(deps, botId, boundary), botId)).map(toWire);
+  deps.operationGuard?.();
+  const result = (await listBotSkills(await skillHomeOf(deps, botId, boundary), botId, deps.operationGuard)).map(toWire);
   assertOwnerBoundary(deps, boundary);
   return result;
 }
@@ -250,7 +255,8 @@ export async function readBotSkillForBot(
   deps: BotSkillServiceDeps = {},
 ): Promise<BotSkillDetail | null> {
   const boundary = captureOwnerBoundary(deps);
-  const record = await readBotSkill(await skillHomeOf(deps, botId, boundary), botId, slug);
+  deps.operationGuard?.();
+  const record = await readBotSkill(await skillHomeOf(deps, botId, boundary), botId, slug, deps.operationGuard);
   assertOwnerBoundary(deps, boundary);
   return record
     ? {
@@ -270,7 +276,8 @@ export async function deleteBotSkillForBot(
   deps: BotSkillServiceDeps = {},
 ): Promise<boolean> {
   const boundary = captureOwnerBoundary(deps);
-  const deleted = await deleteBotSkill(await skillHomeOf(deps, botId, boundary), botId, slug);
+  deps.operationGuard?.();
+  const deleted = await deleteBotSkill(await skillHomeOf(deps, botId, boundary), botId, slug, deps.operationGuard);
   assertOwnerBoundary(deps, boundary);
   return deleted;
 }

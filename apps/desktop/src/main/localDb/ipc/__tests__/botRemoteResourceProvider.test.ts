@@ -4,6 +4,8 @@ import type { BotRemoteResourceSource } from '../bots.js';
 const db = vi.hoisted(() => ({
   get: vi.fn(),
   list: vi.fn(),
+  settings: vi.fn(),
+  skills: vi.fn(),
   memory: {
     list: vi.fn(),
     read: vi.fn(),
@@ -14,7 +16,14 @@ const db = vi.hoisted(() => ({
 vi.mock('../bots.js', () => ({
   getBotRemoteResourceSource: db.get,
   listBotRemoteResourceSources: db.list,
+  getBotRemoteSettingsSource: db.settings,
   getBotMemoryService: () => db.memory,
+}));
+vi.mock('../../../maker-ipc/botSkillService.js', () => ({
+  listBotSkillsForBot: db.skills,
+  readBotSkillForBot: vi.fn(),
+  saveBotSkillForSession: vi.fn(),
+  deleteBotSkillForBot: vi.fn(),
 }));
 
 import { remoteResourceRegistry } from '../../../device-link/remoteResourceRegistry.js';
@@ -39,7 +48,7 @@ it('rejects a previously discovered hidden companion and allows it again after r
 
   await expect(get()).resolves.toMatchObject({
     display: { title: 'Sora' },
-    links: [{ rel: 'conversation', target: { kind: 'session', sessionId: 'session-1' } }],
+    links: expect.arrayContaining([{ rel: 'conversation', target: { kind: 'session', sessionId: 'session-1' } }]),
   });
   source.hiddenAt = 200;
   expect((await list()).items).toEqual([]);
@@ -72,6 +81,45 @@ it('routes the existing Bot resource provider to owner-bound memory resources', 
   expect(resource.ref.id).toBe('settings:bot-1/memory');
   expect(resource.blocks?.find((block) => block.id === 'memory-feedback')?.data).toMatchObject({ count: 1 });
   expect(db.memory.list).toHaveBeenCalledWith('bot-1', undefined, expect.any(Function));
+});
+
+it('advertises a reachable create resource only to form-capable controllers', async () => {
+  const source: BotRemoteResourceSource = {
+    id: 'bot-1', name: 'Sora', description: 'Designer', avatar: '', avatarColor: 'teal', status: 'active',
+    canonicalSessionId: 'session-1', lastMessagePreview: '', lastMessageAt: 100, lastMessageRole: 'assistant',
+    needsAttention: false, hiddenAt: null, pinnedAt: null, activityAt: 100, currentVersion: 1, updatedAt: 100,
+  };
+  db.list.mockResolvedValue([source]);
+  const context = { controllerDeviceId: 'phone-create' };
+  await expect(remoteResourceRegistry.list(context, {
+    client: { protocolVersion: 1, primitives: ['markdown'] }, collectionId: 'teammates', limit: 20,
+  })).resolves.toMatchObject({ items: [{ ref: { id: 'bot-1' } }] });
+  await expect(remoteResourceRegistry.list(context, {
+    client: { protocolVersion: 1, primitives: ['form'] }, collectionId: 'teammates', limit: 20,
+  })).resolves.toMatchObject({ items: [{ ref: { id: 'create' }, display: { title: { fallback: 'New Teammate' } } }, { ref: { id: 'bot-1' } }] });
+});
+
+it('keeps the settings namespace ref when projecting the host settings resource', async () => {
+  const source: BotRemoteResourceSource = {
+    id: 'bot-1', name: 'Sora', description: 'Designer', avatar: '', avatarColor: 'teal', status: 'active',
+    canonicalSessionId: 'session-1', lastMessagePreview: '', lastMessageAt: 100, lastMessageRole: 'assistant',
+    needsAttention: false, hiddenAt: null, pinnedAt: null, activityAt: 100, currentVersion: 1, updatedAt: 100,
+  };
+  db.get.mockResolvedValue(source);
+  db.settings.mockResolvedValue({
+    source, identity: '', userContext: '', memory: true, permissions: 'ask', modelChain: [],
+    followsDefault: true, skills: [], connections: [], toolsets: [],
+  });
+  db.skills.mockResolvedValue([]);
+  const peer = {};
+  const client = { protocolVersion: 1, primitives: ['form', 'list', 'action', 'markdown'] };
+  const resource = await remoteResourceRegistry.get(
+    { controllerDeviceId: 'phone-settings', client: peer, linkEpoch: 1, assertCurrent: vi.fn() },
+    { client, ref: { collectionId: 'teammates', kind: 'bot', id: 'settings:bot-1' } },
+  );
+  expect(resource.ref.id).toBe('settings:bot-1');
+  expect(resource.blocks?.some((block) => block.id === 'avatar')).toBe(true);
+  expect(resource.blocks?.some((block) => block.id === 'skills')).toBe(true);
 });
 
 it('keeps long bot and filename ids reachable through list, detail, update, and delete', async () => {

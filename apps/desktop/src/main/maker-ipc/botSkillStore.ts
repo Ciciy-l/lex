@@ -219,7 +219,11 @@ export function parseBotSkillFile(source: string): {
  * frontmatter。只迁移这一个可精确识别的三字段旧格式，正文与用户编辑全部保留；
  * 含有任何其它字段的手写 Skill 不动。
  */
-async function readCompatibleBotSkillSource(filePath: string, slug: string): Promise<string> {
+async function readCompatibleBotSkillSource(
+  filePath: string,
+  slug: string,
+  beforeWrite?: () => void,
+): Promise<string> {
   const source = await fs.readFile(filePath, 'utf8');
   const normalized = source.replace(/\r\n/g, '\n');
   const match = /^---\n([\s\S]*?)\n---\n?/.exec(normalized);
@@ -241,6 +245,7 @@ async function readCompatibleBotSkillSource(filePath: string, slug: string): Pro
     updatedAt: parsed.updatedAt,
     body: parsed.body,
   });
+  beforeWrite?.();
   await fs.writeFile(filePath, migrated, 'utf8');
   return migrated;
 }
@@ -264,10 +269,13 @@ function renderPluginManifest(botId: string): string {
   )}\n`;
 }
 
-async function ensureLayout(userDataDir: string, botId: string): Promise<void> {
+async function ensureLayout(userDataDir: string, botId: string, beforeWrite?: () => void): Promise<void> {
   const root = botSkillRootDir(userDataDir, botId);
+  beforeWrite?.();
   await fs.mkdir(path.join(root, 'skills'), { recursive: true });
+  beforeWrite?.();
   await fs.mkdir(path.join(root, '.claude-plugin'), { recursive: true });
+  beforeWrite?.();
   await fs.writeFile(
     path.join(root, '.claude-plugin', 'plugin.json'),
     renderPluginManifest(botId),
@@ -296,6 +304,7 @@ async function readSkillFilePath(skillDir: string): Promise<string | null> {
 export async function listBotSkills(
   userDataDir: string,
   botId: string,
+  beforeWrite?: () => void,
 ): Promise<BotSkillSummary[]> {
   const dir = botSkillsDir(userDataDir, botId);
   let entries: string[];
@@ -313,7 +322,7 @@ export async function listBotSkills(
     if (!filePath) continue;
     let parsed: ReturnType<typeof parseBotSkillFile>;
     try {
-      parsed = parseBotSkillFile(await readCompatibleBotSkillSource(filePath, slug));
+      parsed = parseBotSkillFile(await readCompatibleBotSkillSource(filePath, slug, beforeWrite));
     } catch {
       continue;
     }
@@ -334,11 +343,12 @@ export async function readBotSkill(
   userDataDir: string,
   botId: string,
   slug: string,
+  beforeWrite?: () => void,
 ): Promise<BotSkillRecord | null> {
   const skillDir = resolveSkillDir(userDataDir, botId, slug);
   const filePath = await readSkillFilePath(skillDir);
   if (!filePath) return null;
-  const parsed = parseBotSkillFile(await readCompatibleBotSkillSource(filePath, slug));
+  const parsed = parseBotSkillFile(await readCompatibleBotSkillSource(filePath, slug, beforeWrite));
   return {
     slug,
     name: parsed.name || slug,
@@ -458,9 +468,10 @@ export async function saveBotSkill(
   userDataDir: string,
   botId: string,
   input: BotSkillWriteInput,
+  beforeWrite?: () => void,
 ): Promise<{ record: BotSkillRecord; created: boolean }> {
   const { name, description, body, slug, updatedAt } = normalizeBotSkillWriteInput(input);
-  const existing = await listBotSkills(userDataDir, botId);
+  const existing = await listBotSkills(userDataDir, botId, beforeWrite);
   const created = !existing.some((item) => item.slug === slug);
   if (created && existing.length >= BOT_SKILL_MAX_COUNT) {
     throw new BotSkillStoreError(
@@ -468,12 +479,15 @@ export async function saveBotSkill(
       `this Bot already has ${BOT_SKILL_MAX_COUNT} skills; delete one before adding another`,
     );
   }
-  await ensureLayout(userDataDir, botId);
+  beforeWrite?.();
+  await ensureLayout(userDataDir, botId, beforeWrite);
   const skillDir = resolveSkillDir(userDataDir, botId, slug);
+  beforeWrite?.();
   await fs.mkdir(skillDir, { recursive: true });
   const filePath = path.join(skillDir, 'SKILL.md');
   // 只写 SKILL.md,不去删同目录的 skill.md:macOS / Windows 的文件系统大小写不敏感,
   // 那条「清理」会把刚写好的这份自己删掉。读取一侧本来就优先 SKILL.md。
+  beforeWrite?.();
   await fs.writeFile(
     filePath,
     renderBotSkillFile({ slug, name, description, updatedAt, body }),
@@ -490,6 +504,7 @@ export async function deleteBotSkill(
   userDataDir: string,
   botId: string,
   slug: string,
+  beforeWrite?: () => void,
 ): Promise<boolean> {
   const skillDir = resolveSkillDir(userDataDir, botId, slug);
   try {
@@ -497,6 +512,7 @@ export async function deleteBotSkill(
   } catch {
     return false;
   }
+  beforeWrite?.();
   await fs.rm(skillDir, { recursive: true, force: true });
   return true;
 }

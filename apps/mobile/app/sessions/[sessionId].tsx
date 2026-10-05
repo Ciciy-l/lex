@@ -912,6 +912,7 @@ export default function SessionScreen() {
     deviceId?: string;
     deviceName?: string;
     remoteMemoryResourceId?: string;
+    remoteSettingsResourceId?: string;
     draft?: string;
     goalError?: string;
     goalObjective?: string;
@@ -938,6 +939,7 @@ export default function SessionScreen() {
   const rewindRequestSeqRef = useRef(0);
   const deviceName = readRouteParam(params.deviceName) ?? deviceId;
   const remoteMemoryResourceId = readRouteParam(params.remoteMemoryResourceId);
+  const remoteSettingsResourceId = readRouteParam(params.remoteSettingsResourceId);
   const routeDraft = readRouteParam(params.draft);
   const routeFocusClientId = readRouteParam(params.focusClientId);
   const routeFocusComposerRequestKey = readRouteParam(params.focusComposerRequestKey);
@@ -8791,6 +8793,19 @@ export default function SessionScreen() {
                   },
                 });
               } : undefined}
+              onOpenRemoteSettings={remoteSettingsResourceId && deviceId ? () => {
+                router.push({
+                  pathname: '/resources/[collectionId]/[resourceId]',
+                  params: {
+                    collectionId: 'teammates',
+                    resourceId: remoteSettingsResourceId,
+                    resourceKind: 'bot',
+                    deviceId,
+                    deviceName,
+                    title: t('bots.settings', { defaultValue: 'Settings' }),
+                  },
+                });
+              } : undefined}
               onToggleSearch={() => {
                 if (searchOpen) closeSearch();
                 else setSearchOpen(true);
@@ -9580,6 +9595,7 @@ function SessionHeaderBar({
   onOpenUsage,
   onOpenRemoteDesktop,
   onOpenRemoteMemory,
+  onOpenRemoteSettings,
   onToggleSearch,
   pendingCount,
   queueCount,
@@ -9612,6 +9628,7 @@ function SessionHeaderBar({
   onOpenUsage(): void;
   onOpenRemoteDesktop(): void;
   onOpenRemoteMemory?: () => void;
+  onOpenRemoteSettings?: () => void;
   onToggleSearch(): void;
   pendingCount: number;
   queueCount: number;
@@ -9717,6 +9734,14 @@ function SessionHeaderBar({
       </View>
 
       <View style={styles.sessionHeaderActions}>
+        {onOpenRemoteSettings ? <SessionHeaderIconButton
+          accessibilityLabel={t('bots.settings', { defaultValue: 'Settings' })}
+          active={false}
+          disabled={!currentSession}
+          icon={Settings}
+          onPress={currentSession ? onOpenRemoteSettings : undefined}
+          testID="session.remoteSettings"
+        /> : null}
         {onOpenRemoteMemory ? <SessionHeaderIconButton
           accessibilityLabel={t('devices.companionProfile.memory.title', { defaultValue: 'Saved Memories' })}
           active={false}

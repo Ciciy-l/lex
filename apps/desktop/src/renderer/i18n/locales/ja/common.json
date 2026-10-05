@@ -7700,6 +7700,14 @@
       "offlineDescription": "{{name}} はオフラインです。{{device}} が再接続すると続けられます。",
       "preparing": "準備ができるのを待っています…"
     },
+    "remoteSettings": {
+      "discardDescription": "保存していないチームメイト設定を破棄しますか？",
+      "loadFailed": "最新のチームメイト設定を読み込めませんでした。",
+      "conflict": "ホスト上でチームメイトが変更されました。最新の設定を確認してから再度保存してください。",
+      "saveFailed": "チームメイト設定を保存できませんでした。",
+      "unsupported": "このホストはチームメイト設定に対応していません。",
+      "empty": "利用できるチームメイト設定はありません。"
+    },
     "capabilities": {
       "title": "機能",
       "search": "機能を検索",

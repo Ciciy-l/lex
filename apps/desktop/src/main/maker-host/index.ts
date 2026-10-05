@@ -843,6 +843,15 @@ export async function validateBotCapabilityAdditions(update: BotCapabilityUpdate
   await createDesktopBotCapabilityService().validateAdditions(update);
 }
 
+/** Portable settings projection used by the remote Bot editor. */
+export async function listBotSettingsCapabilities(input: {
+  callerSessionId: string;
+  kind: 'skill' | 'mcp' | 'toolset';
+}) {
+  const result = await createDesktopBotCapabilityService().list(input);
+  return result.ok ? result.capabilities : [];
+}
+
 /** Get the plugin registry singleton (delegates to plugins/index.ts module-level cache). */
 export function getPluginRegistry() {
   return createPluginRegistry();
