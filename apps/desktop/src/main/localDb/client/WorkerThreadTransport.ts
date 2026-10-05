@@ -2533,6 +2533,7 @@ interface PendingRpc {
 interface QueuedRpc {
   req: RpcRequest;
   transferList: unknown[];
+  beforeDispatch?: () => void;
   resolve: (value: unknown) => void;
   reject: (err: Error) => void;
   /** RPC 总预算从进入 transport 开始计,而不是等 dispatch 后才开始。 */
@@ -2622,7 +2623,12 @@ export class WorkerThreadTransport implements DbTransport {
     this.worker = this.spawnWorker();
   }
 
-  send<R = unknown>(op: string, args?: unknown, transferList?: unknown[]): Promise<R> {
+  send<R = unknown>(
+    op: string,
+    args?: unknown,
+    transferList?: unknown[],
+    beforeDispatch?: () => void,
+  ): Promise<R> {
     if (this.closed || this.closing) {
       return Promise.reject(
         createDbTransportError(DB_TRANSPORT_NOT_SENT, 'db worker transport is closed'),
@@ -2635,6 +2641,7 @@ export class WorkerThreadTransport implements DbTransport {
       const queued: QueuedRpc = {
         req,
         transferList: transferList ?? [],
+        beforeDispatch,
         resolve: resolve as (value: unknown) => void,
         reject,
         budgetStartedAtMs: Date.now(),
@@ -2788,6 +2795,16 @@ export class WorkerThreadTransport implements DbTransport {
   private dispatch(item: QueuedRpc): void {
     const { id, op } = item.req;
     if (item.queueTimeout) clearTimeout(item.queueTimeout);
+    try {
+      // This is the actual host-side submission boundary. The callback is
+      // intentionally kept out of RpcRequest so worker/inline transports have
+      // the same owner-lease semantics without serializing a function.
+      item.beforeDispatch?.();
+    } catch (error) {
+      item.reject(toError(error));
+      this.drainQueue();
+      return;
+    }
     const onTimeout = (): void => {
       const pending = this.pending.get(id);
       if (!pending) return;

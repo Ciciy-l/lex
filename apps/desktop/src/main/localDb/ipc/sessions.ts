@@ -2355,6 +2355,7 @@ export async function deleteBotProfileAndDetachSessionsInDb(
   botId: string,
   sessionIds: string[],
   keepTaskHistory: boolean,
+  operationGuard?: () => void,
 ): Promise<void> {
   const ids = [...new Set(sessionIds)];
   const ownerScope = captureOwnerScope();
@@ -2364,6 +2365,7 @@ export async function deleteBotProfileAndDetachSessionsInDb(
       botId,
       sessionIds: ids,
       keepTaskHistory,
+      operationGuard,
     });
   const committed =
     ids.length > 0 ? await withSessionRouteLocks(ids, commitDeletion) : await commitDeletion();

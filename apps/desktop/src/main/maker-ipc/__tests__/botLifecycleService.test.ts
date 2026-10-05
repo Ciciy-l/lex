@@ -360,6 +360,7 @@ describe('Bot lifecycle coordinator', () => {
       'bot-1',
       expect.arrayContaining(['canonical', 'delegation-session']),
       true,
+      undefined,
     );
     expect(row(sqlite, 'sessions', 'canonical')).toMatchObject({
       source: 'desktop',
@@ -380,6 +381,7 @@ describe('Bot lifecycle coordinator', () => {
       'bot-1',
       expect.arrayContaining(['canonical', 'delegation-session']),
       false,
+      undefined,
     );
     expect(result).toMatchObject({ action: 'delete', status: 'deleted' });
   });

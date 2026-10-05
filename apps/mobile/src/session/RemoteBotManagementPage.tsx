@@ -31,6 +31,12 @@ function blockAction(resource: RemoteResource, block: RemoteResourceBlock): Remo
   const actionId = dataOf(block).actionId;
   return typeof actionId === 'string' ? resource.actions?.find((action) => action.id === actionId) : undefined;
 }
+
+function createActionRequestId(): string {
+  const cryptoLike = globalThis.crypto as { randomUUID?: () => string } | undefined;
+  if (typeof cryptoLike?.randomUUID === 'function') return cryptoLike.randomUUID();
+  return `remote-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
+}
 function valuesOf(resource: RemoteResource, block: RemoteResourceBlock): Values {
   const values = row(dataOf(block).values);
   const action = blockAction(resource, block);
@@ -64,6 +70,7 @@ export function RemoteBotManagementPage({ host, resourceId, title, onBack }: Rem
   const generationRef = useRef(0);
   const activeIdRef = useRef(resourceId);
   const operationRef = useRef(0);
+  const actionRequestIdsRef = useRef<Record<string, string>>({});
   activeIdRef.current = activeId;
   const baseId = resourceId;
   const draftKey = (id: string) => `${host.deviceId}:${id}`;
@@ -121,6 +128,10 @@ export function RemoteBotManagementPage({ host, resourceId, title, onBack }: Rem
     const operation = ++operationRef.current;
     const operationResourceId = activeIdRef.current;
     const operationGeneration = generationRef.current;
+    const requestKey = `${host.deviceId}:${operationResourceId}:${action.id}`;
+    const requestId = action.id === 'create'
+      ? (actionRequestIdsRef.current[requestKey] ??= createActionRequestId())
+      : undefined;
     setBusy(true);
     setError(null);
     try {
@@ -128,9 +139,10 @@ export function RemoteBotManagementPage({ host, resourceId, title, onBack }: Rem
         collectionId: 'teammates',
         resourceRef: resource?.ref,
         actionId: action.id,
-        input,
+        input: requestId ? { ...input, requestId } : input,
       }, i18n.language);
       if (operationRef.current !== operation || generationRef.current !== operationGeneration || activeIdRef.current !== operationResourceId) return;
+      if (requestId) delete actionRequestIdsRef.current[requestKey];
       const navigation = response.effects?.find((effect) => effect.kind === 'navigate');
       if (navigation?.kind === 'navigate' && navigation.target.kind === 'resource'
         && navigation.target.ref.collectionId === 'teammates' && navigation.target.ref.kind === 'bot') {

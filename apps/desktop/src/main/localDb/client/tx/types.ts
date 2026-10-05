@@ -45,6 +45,7 @@ export type DbTxName =
   | 'bots.reopenDelegation'
   | 'bots.pauseLifecycle'
   | 'bots.resumeLifecycle'
+  | 'bots.recordLifecycleEvent'
   | 'bots.archiveLifecycle'
   | 'bots.deleteProfile'
   | 'bots.assertNoSharedHistory'
@@ -795,6 +796,14 @@ export interface BotsLifecycleTransitionArgs {
   at: number;
   eventId: string;
 }
+export interface BotsRecordLifecycleEventArgs {
+  id: string;
+  botId: string;
+  sessionId: string | null;
+  eventType: string;
+  payloadJson: string;
+  createdAt: number;
+}
 export interface BotsArchiveLifecycleArgs extends BotsLifecycleTransitionArgs {
   expectedProfileStatus: string;
   worktreeDisposition: string;
@@ -1200,6 +1209,7 @@ export type DbTxArgsByName = {
   'bots.reopenDelegation': BotsReopenDelegationArgs;
   'bots.pauseLifecycle': BotsLifecycleTransitionArgs;
   'bots.resumeLifecycle': BotsLifecycleTransitionArgs;
+  'bots.recordLifecycleEvent': BotsRecordLifecycleEventArgs;
   'bots.archiveLifecycle': BotsArchiveLifecycleArgs;
   'bots.deleteProfile': BotsDeleteProfileArgs;
   'bots.assertNoSharedHistory': { botId: string };
@@ -1276,6 +1286,7 @@ export type DbTxResultByName = {
   'bots.reopenDelegation': BotsReopenDelegationResult;
   'bots.pauseLifecycle': undefined;
   'bots.resumeLifecycle': undefined;
+  'bots.recordLifecycleEvent': undefined;
   'bots.archiveLifecycle': { sessions: number };
   'bots.deleteProfile': { sessionIds: string[]; status: 'archived' | 'deleted' };
   'bots.assertNoSharedHistory': undefined;

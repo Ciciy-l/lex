@@ -130,4 +130,64 @@ describe('RemoteBotManagementPage request boundary', () => {
     await flush();
     expect((node.querySelector('input:not([type="checkbox"])') as HTMLInputElement).value).toBe('Local draft');
   });
+
+  it('keeps one create requestId across an ACK-loss retry', async () => {
+    const createResource = {
+      ref: { collectionId: 'teammates', kind: 'bot', id: 'create' },
+      revision: '1',
+      display: { title: 'Create' },
+      links: [],
+      blocks: [{ id: 'create', primitive: 'form', fallbackMarkdown: '', data: { actionId: 'create', values: { name: 'New Bot', avatarImageBase64: 'image' } } }],
+      actions: [{ id: 'create', label: 'Create', fields: [
+        { id: 'name', label: 'Name', kind: 'text' },
+        { id: 'avatarImageBase64', label: 'Avatar', kind: 'text' },
+      ] }],
+    };
+    h.get.mockResolvedValue(createResource);
+    const firstAttempt = deferred<any>();
+    h.invoke.mockReset().mockReturnValueOnce(firstAttempt.promise).mockResolvedValue({ effects: [] });
+    await act(async () => root.render(createElement(RemoteBotManagementPage, { host: hostA, resourceId: 'create' })));
+    await flush();
+    const create = [...node.querySelectorAll('button')].find((button) => button.textContent === 'Create' && !button.dataset.testid);
+    expect(create).toBeTruthy();
+    await act(async () => (create as HTMLButtonElement).click());
+    await flush();
+    const firstInput = h.invoke.mock.calls[0]?.[2]?.input;
+    expect(firstInput.requestId).toMatch(/^[A-Za-z0-9_-]{16,80}$/);
+    firstAttempt.reject(new Error('ACK lost'));
+    await flush();
+    await act(async () => (create as HTMLButtonElement).click());
+    await flush();
+    const secondInput = h.invoke.mock.calls[1]?.[2]?.input;
+    expect(secondInput.requestId).toBe(firstInput.requestId);
+  });
+
+  it('ignores a late action response after switching to another host', async () => {
+    const action = deferred<any>();
+    h.get.mockResolvedValueOnce(resource('bot-a', 'A')).mockResolvedValueOnce(resource('bot-b', 'B'));
+    h.invoke.mockReturnValueOnce(action.promise);
+    await act(async () => root.render(createElement(RemoteBotManagementPage, { host: hostA, resourceId: 'bot-a' })));
+    await flush();
+    const save = [...node.querySelectorAll('button')].find((button) => button.textContent === 'Save');
+    expect(save).toBeTruthy();
+    await act(async () => (save as HTMLButtonElement).click());
+    await act(async () => root.render(createElement(RemoteBotManagementPage, { host: hostB, resourceId: 'bot-b' })));
+    await flush();
+    action.resolve({ effects: [{ kind: 'toast', message: 'old host' }] });
+    await flush();
+    expect(node.textContent).toContain('B');
+    expect(node.textContent).not.toContain('old host');
+  });
+
+  it('shows an old host capability as an unsupported resource instead of a fake action', async () => {
+    h.get.mockResolvedValue({
+      ...resource('bot-a', 'A'),
+      blocks: [{ id: 'unsupported', primitive: 'action', fallbackMarkdown: 'Unsupported host', data: { actionId: 'save' } }],
+      actions: [],
+    });
+    await act(async () => root.render(createElement(RemoteBotManagementPage, { host: hostA, resourceId: 'bot-a' })));
+    await flush();
+    expect(node.textContent).toContain('Unsupported host');
+    expect([...node.querySelectorAll('button')].some((button) => button.textContent === 'Save')).toBe(false);
+  });
 });

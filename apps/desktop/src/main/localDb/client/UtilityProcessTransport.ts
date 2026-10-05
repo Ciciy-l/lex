@@ -11,10 +11,16 @@ export class UtilityProcessTransport implements DbTransport {
     // Escape hatch placeholder. MR1 verifies interface parity only.
   }
 
-  send<R = unknown>(op: string, args?: unknown, transferList?: unknown[]): Promise<R> {
+  send<R = unknown>(
+    op: string,
+    args?: unknown,
+    transferList?: unknown[],
+    beforeDispatch?: () => void,
+  ): Promise<R> {
     void op;
     void args;
     void transferList;
+    void beforeDispatch;
     throw new Error('UtilityProcessTransport is not implemented yet, escape hatch placeholder');
   }
 

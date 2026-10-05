@@ -70,7 +70,12 @@ const getEditor = createBotRemoteEditors({ ...deps,
     }
     deps.assertOwner(owner);
     if (source.status !== 'active') throwIpcError('PRECONDITION_FAILED', 'Teammate unavailable');
-    if (!source.canonicalSessionId && (!source.invitation || source.invitation.stage === 'ready')) await botStore.createBotCanonicalSession({ botId: source.id, expectedCanonicalSessionId: null, expectedProfileVersion: source.currentVersion });
+    if (!source.canonicalSessionId && (!source.invitation || source.invitation.stage === 'ready')) {
+      await botStore.createBotCanonicalSession(
+        { botId: source.id, expectedCanonicalSessionId: null, expectedProfileVersion: source.currentVersion },
+        operationGuard,
+      );
+    }
     deps.assertOwner(owner);
     operationGuard?.();
   },

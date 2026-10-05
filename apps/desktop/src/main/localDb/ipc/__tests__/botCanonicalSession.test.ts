@@ -2765,6 +2765,28 @@ describe('Bot canonical Session lifecycle', () => {
     ).toBe('active');
   });
 
+  it('fails closed when a queued canonical reconciliation is revoked at dispatch', async () => {
+    const baseTx = h.tx!;
+    let guardCalls = 0;
+    h.tx = async (name, args, _transferList?: unknown[], beforeDispatch?: () => void) => {
+      if (name === 'bots.reconcileCanonicalLink') beforeDispatch?.();
+      return baseTx(name, args);
+    };
+    try {
+      await expect(createBotCanonicalSession({
+        botId: 'bot-1',
+        expectedCanonicalSessionId: null,
+        expectedProfileVersion: 1,
+      }, () => {
+        guardCalls += 1;
+        if (guardCalls === 6) throw new Error('remote operation revoked');
+      })).rejects.toThrow('remote operation revoked');
+    } finally {
+      h.tx = baseTx;
+    }
+    expect(h.sqlite!.prepare("SELECT COUNT(*) FROM sessions WHERE source = 'bot'").pluck().get()).toBe(0);
+  });
+
   it('recovers a soft-deleted canonical without resurrecting the deleted Session', async () => {
     await invoke('local-db:bots:create-canonical-session', {
       botId: 'bot-1',

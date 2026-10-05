@@ -234,19 +234,21 @@ type CanonicalLinkReconciliation = {
 };
 
 let createBotCanonicalSessionImpl:
-  ((input: CreateBotCanonicalSessionInput) => Promise<CreateBotCanonicalSessionResult>) | null =
+  ((input: CreateBotCanonicalSessionInput, operationGuard?: () => void) => Promise<CreateBotCanonicalSessionResult>) | null =
   null;
 
 /** Main-side canonical creator shared by first creation, restore and missing-task repair. */
 export async function createBotCanonicalSession(
   input: CreateBotCanonicalSessionInput,
+  operationGuard?: () => void,
 ): Promise<CreateBotCanonicalSessionResult> {
   if (!createBotCanonicalSessionImpl) {
     throwIpcError('PRECONDITION_FAILED', 'Bot 数据服务尚未初始化');
   }
   const owner = captureBotOperationOwner();
   owner.assertCurrent();
-  const result = await createBotCanonicalSessionImpl(input);
+  operationGuard?.();
+  const result = await createBotCanonicalSessionImpl(input, operationGuard);
   owner.assertCurrent();
   return result;
 }
@@ -259,13 +261,29 @@ export async function createBotCanonicalSession(
 async function reconcileCanonicalLink(
   botId: string,
   client = getDbClient(),
+  operationGuard?: () => void,
 ): Promise<CanonicalLinkReconciliation> {
+  let guardFailed = false;
+  const guard = () => {
+    if (!operationGuard) return;
+    try {
+      operationGuard();
+    } catch (error) {
+      guardFailed = true;
+      throw error;
+    }
+  };
   try {
-    return await client.tx<CanonicalLinkReconciliation>('bots.reconcileCanonicalLink', {
-      botId,
-      now: Date.now(),
-    });
+    guard();
+    return await client.tx<CanonicalLinkReconciliation>(
+      'bots.reconcileCanonicalLink',
+      { botId, now: Date.now() },
+      undefined,
+      guard,
+    );
   } catch (error) {
+    if (guardFailed) throw error;
+    if ((error as { code?: string }).code === 'PRECONDITION_FAILED') throw error;
     // A failed reconciliation must never make us guess a Session. Consumers
     // treat this as a closed recovery state and surface health/repair UI.
     log.warn('canonical link reconciliation failed closed', { botId, error: String(error) });
@@ -283,7 +301,20 @@ async function reconcileCanonicalLink(
  * 挂在开新任务之前 —— 那正是「下一轮」的起点。整个过程失败不阻断开任务:最坏是
  * 这一轮还用旧身份,下一轮再收。
  */
-export async function reconcileBotProfileFolder(botId: string): Promise<void> {
+export async function reconcileBotProfileFolder(
+  botId: string,
+  operationGuard?: () => void,
+): Promise<void> {
+  let guardFailed = false;
+  const guard = () => {
+    if (!operationGuard) return;
+    try {
+      operationGuard();
+    } catch (error) {
+      guardFailed = true;
+      throw error;
+    }
+  };
   const userDataDir = ownerScopedUserDataPath();
   const legacyUserDataDir = app.getPath('userData');
   const client = getDbClient();
@@ -320,17 +351,24 @@ export async function reconcileBotProfileFolder(botId: string): Promise<void> {
         await migrateBotProfileFolder(userDataDir, id, seed, legacyUserDataDir);
       },
       deriveVersion: async (input) => {
-        await client.tx('bots.updateProfile', {
-          id: input.botId,
-          identitySource: input.identitySource,
-          capabilitiesJson: safeJson(input.config),
-          profileContentChanged: true,
-          expectedCurrentVersion: input.expectedCurrentVersion,
-          now: Date.now(),
-        });
+        guard();
+        await client.tx(
+          'bots.updateProfile',
+          {
+            id: input.botId,
+            identitySource: input.identitySource,
+            capabilitiesJson: safeJson(input.config),
+            profileContentChanged: true,
+            expectedCurrentVersion: input.expectedCurrentVersion,
+            now: Date.now(),
+          },
+          undefined,
+          guard,
+        );
       },
     });
   } catch (cause) {
+    if (guardFailed) throw cause;
     log.warn('reconcile bot profile folder failed', { botId, error: String(cause) });
   }
 }
@@ -946,7 +984,7 @@ export async function setBotProfileAvatar(
     ...(expectedAvatar !== undefined ? { expectedAvatar } : {}),
     botAvatarRef: { id: randomUUID(), hash: written.hash, createdAt: now },
     now,
-  });
+  }, undefined, operationGuard);
   ownerBoundary.assertCurrent();
   operationGuard?.();
   const profile = await readProfile(client, botId);
@@ -1162,7 +1200,7 @@ export async function createBotProfile(raw: unknown, operationGuard?: () => void
     identitySource,
     capabilitiesJson: safeJson(persistedCapabilities),
     now,
-  });
+  }, undefined, operationGuard);
   } catch (error) {
     assertCreationOwnerStillCurrent();
     if (templateId === 'cindy' && (error as { code?: string }).code === 'ALREADY_EXISTS') {
@@ -1344,7 +1382,7 @@ export async function updateBotProfile(raw: unknown, expectedVersion?: number,
       isManagedBotAvatarUrl(current.avatar) &&
       !isManagedBotAvatarUrl(patch.avatar),
     now,
-  });
+  }, undefined, operationGuard);
   owner.assertCurrent();
   operationGuard?.();
   await syncBotProfileFolder(id, nextIdentitySource, normalizedNextConfig, owner.userDataDir, () => {
@@ -1592,6 +1630,7 @@ export function registerBotIpc(): void {
 
   const createBotCanonicalSessionUnlocked = async (
     input: CreateBotCanonicalSessionInput,
+    operationGuard?: () => void,
   ): Promise<CreateBotCanonicalSessionResult> => {
     const botId = readText(input.botId, 'botId', 128, true);
     const expectedCanonicalSessionId = input.expectedCanonicalSessionId;
@@ -1607,7 +1646,7 @@ export function registerBotIpc(): void {
     if (profile.status !== 'active' && profile.status !== 'paused') {
       throwIpcError('PRECONDITION_FAILED', `Bot 当前状态为 ${profile.status}`);
     }
-    const canonicalResolution = await reconcileCanonicalLink(botId, client);
+    const canonicalResolution = await reconcileCanonicalLink(botId, client, operationGuard);
     const authoritativeCanonicalSessionId = canonicalResolution.canonicalSessionId;
     const recoverableCompatibilityMirror =
       input.recoverMissingOnly === true &&
@@ -1710,6 +1749,7 @@ export function registerBotIpc(): void {
     let archivedCanonicalSessionId: string | null = null;
     let created = false;
     owner.assertCurrent();
+    operationGuard?.();
     const result = await client.tx<BotsReplaceCanonicalSessionResult>(
       'bots.replaceCanonicalSession',
       {
@@ -1740,6 +1780,8 @@ export function registerBotIpc(): void {
         },
         now,
       },
+      undefined,
+      operationGuard,
     );
     canonicalSessionId = result.canonicalSessionId;
     archivedCanonicalSessionId = result.archivedCanonicalSessionId;
@@ -1761,6 +1803,8 @@ export function registerBotIpc(): void {
           nextParentSessionId: canonicalSessionId,
           now: Date.now(),
         },
+        undefined,
+        operationGuard,
       );
       if (reparented.delegationIds.length > 0) {
         const rows = await db
@@ -1815,21 +1859,26 @@ export function registerBotIpc(): void {
     };
   };
 
-  const createBotCanonicalSessionPrepared = async (input: CreateBotCanonicalSessionInput) => {
+  const createBotCanonicalSessionPrepared = async (
+    input: CreateBotCanonicalSessionInput,
+    operationGuard?: () => void,
+  ) => {
     const owner = captureBotOperationOwner();
     // Bring legacy pointer-only profiles into the link registry before any
     // create/replace CAS. Once a canonical link exists, the worker transaction
     // compares against that link rather than trusting the compatibility mirror.
-    await reconcileCanonicalLink(input.botId);
+    operationGuard?.();
+    await reconcileCanonicalLink(input.botId, getDbClient(), operationGuard);
     owner.assertCurrent();
+    operationGuard?.();
     const previousSessionId = input.expectedCanonicalSessionId;
-    if (!previousSessionId) return createBotCanonicalSessionUnlocked(input);
+    if (!previousSessionId) return createBotCanonicalSessionUnlocked(input, operationGuard);
     return coordinateBotCanonicalReplacement(previousSessionId, () =>
-      createBotCanonicalSessionUnlocked(input),
+      createBotCanonicalSessionUnlocked(input, operationGuard),
     );
   };
 
-  createBotCanonicalSessionImpl = async (input) => {
+  createBotCanonicalSessionImpl = async (input, operationGuard) => {
     const owner = captureBotOperationOwner();
     /*
       解析主任务前先把家里的文件收进来。用户拿编辑器改完 SOUL.md、
@@ -1839,9 +1888,11 @@ export function registerBotIpc(): void {
       放在锁外面:它只读文件、按需派生版本,不碰 canonical 指针,与替换协调器
       要保护的东西不重叠。失败已在内部吞掉并记一笔,最坏是这一轮还用旧身份。
     */
-    await reconcileBotProfileFolder(input.botId);
+    operationGuard?.();
+    await reconcileBotProfileFolder(input.botId, operationGuard);
     owner.assertCurrent();
-    return createBotCanonicalSessionPrepared(input);
+    operationGuard?.();
+    return createBotCanonicalSessionPrepared(input, operationGuard);
   };
 
   ipcMain.handle('local-db:bots:create-canonical-session', async (event, raw: unknown) => {

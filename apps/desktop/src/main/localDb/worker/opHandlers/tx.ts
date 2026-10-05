@@ -131,6 +131,8 @@ export function tx(db: Database.Database, args: unknown): unknown {
       return botsPauseLifecycle(db, txArgs);
     case 'bots.resumeLifecycle':
       return botsResumeLifecycle(db, txArgs);
+    case 'bots.recordLifecycleEvent':
+      return botsRecordLifecycleEvent(db, txArgs);
     case 'bots.archiveLifecycle':
       return botsArchiveLifecycle(db, txArgs);
     case 'bots.deleteProfile':
@@ -3479,6 +3481,20 @@ function remapForkedAgentMeta(
     if (mapped) next.nativeForkAnchor = { ...nativeForkAnchor, sdkSessionId: mapped };
   }
   return JSON.stringify(next);
+}
+
+function botsRecordLifecycleEvent(db: Database.Database, args: unknown): void {
+  const p = asRecord(args, 'bots.recordLifecycleEvent args');
+  db.prepare(`INSERT INTO bot_lifecycle_events
+    (id, bot_id, session_id, event_type, payload_json, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)` ).run(
+      expectString(p.id, 'id'),
+      expectString(p.botId, 'botId'),
+      nullableString(p.sessionId),
+      expectString(p.eventType, 'eventType'),
+      expectString(p.payloadJson, 'payloadJson'),
+      expectNumber(p.createdAt, 'createdAt'),
+    );
 }
 
 function remapNativeForkAnchorAgentMeta(

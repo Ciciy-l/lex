@@ -117,6 +117,33 @@ describe('WorkerThreadTransport', () => {
     }
   });
 
+  it('runs a queued mutation guard at dispatch without serializing it to the worker', async () => {
+    const transport = new WorkerThreadTransport({
+      useInlineWorker: true,
+      maxInFlightRpcs: 1,
+      maxQueuedRpcs: 1,
+    });
+    let revoked = false;
+    try {
+      const active = transport.send('sleep', { ms: 40 });
+      const queued = transport.send(
+        'exec',
+        { sql: 'CREATE TABLE guarded_write (id INTEGER PRIMARY KEY)' },
+        undefined,
+        () => {
+          if (revoked) throw new Error('remote operation revoked');
+        },
+      );
+      revoked = true;
+      await expect(active).resolves.toEqual({ slept: 40 });
+      await expect(queued).rejects.toThrow('remote operation revoked');
+      await expect(transport.send('query', { sql: "SELECT name FROM sqlite_master WHERE name = 'guarded_write'" }))
+        .resolves.toEqual([]);
+    } finally {
+      await transport.close();
+    }
+  });
+
   it('counts queue wait against the RPC timeout budget', async () => {
     const transport = new WorkerThreadTransport({
       useInlineWorker: true,

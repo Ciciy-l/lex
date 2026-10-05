@@ -10,11 +10,7 @@ import type {
 } from '../../shared/botLifecycle.js';
 import { getDbClient } from '../localDb/client/current.js';
 import { deleteBotProfileAndDetachSessionsInDb } from '../localDb/ipc/sessions.js';
-import {
-  botLifecycleEvents,
-  botProfiles,
-  botSessionLinks,
-} from '../localDb/schema.js';
+import { botProfiles, botSessionLinks } from '../localDb/schema.js';
 import { removeBotProfileFolder } from './botProfileFolder.js';
 import { withBotProfileLocks } from './botProfileLock.js';
 import { createLogger } from '../logger.js';
@@ -39,6 +35,7 @@ export interface BotLifecycleServiceDeps {
     botId: string,
     sessionIds: string[],
     keepTaskHistory: boolean,
+    operationGuard?: BotLifecycleOperationGuard,
   ) => Promise<void>;
   /** Rebuild only the canonical runtime; retain the product task and all Bot data. */
   restartRuntime?: (sessionId: string, assertOwnerCurrent: () => void) => Promise<void>;
@@ -162,7 +159,6 @@ export function createBotLifecycleService(deps: BotLifecycleServiceDeps) {
     if (profile.status === 'archived' || profile.status === 'deleting') {
       throwIpcError('PRECONDITION_FAILED', `Bot 当前状态为 ${profile.status}`);
     }
-    const db = getDbClient().drizzle;
     const at = now();
     operationGuard?.();
     await getDbClient().tx('bots.pauseLifecycle', {
@@ -171,7 +167,7 @@ export function createBotLifecycleService(deps: BotLifecycleServiceDeps) {
       expectedProfileStatus: profile.status,
       at,
       eventId: randomUUID(),
-    });
+    }, undefined, operationGuard);
 
     operationGuard?.();
     const delegationService = deps.getDelegationService();
@@ -186,14 +182,14 @@ export function createBotLifecycleService(deps: BotLifecycleServiceDeps) {
     const warnings = [...closed.warnings];
     const completedAt = now();
     operationGuard?.();
-    await db.insert(botLifecycleEvents).values({
+    await getDbClient().tx('bots.recordLifecycleEvent', {
       id: randomUUID(),
       botId,
       sessionId: canonicalSessionId,
       eventType: warnings.length > 0 ? 'paused-with-warnings' : 'paused',
       payloadJson: JSON.stringify({ warnings }),
       createdAt: completedAt,
-    });
+    }, undefined, operationGuard);
     const result = lifecycleResult(
       botId,
       'pause',
@@ -222,7 +218,7 @@ export function createBotLifecycleService(deps: BotLifecycleServiceDeps) {
       expectedProfileStatus: profile.status,
       at,
       eventId: randomUUID(),
-    });
+    }, undefined, operationGuard);
     const result = lifecycleResult(botId, 'resume', 'active', {});
     await notifyLifecycleChanged(botId, 'resume');
     await deps.onResumed?.(botId);
@@ -260,7 +256,7 @@ export function createBotLifecycleService(deps: BotLifecycleServiceDeps) {
       expectedProfileStatus: profile.status,
       at: now(),
       eventId: randomUUID(),
-    });
+    }, undefined, operationGuard);
     assertOwnerCurrent();
     await notifyLifecycleChanged(botId, 'restart');
     return lifecycleResult(botId, 'restart', 'active', { sessions: 1 });
@@ -297,7 +293,7 @@ export function createBotLifecycleService(deps: BotLifecycleServiceDeps) {
       worktreeDisposition: request.worktreeDisposition ?? 'retain',
       at,
       eventId: randomUUID(),
-    });
+    }, undefined, operationGuard);
     broadcastBotRemoteResourceChanged(request.botId);
 
     return { warnings: [] };
@@ -326,7 +322,7 @@ export function createBotLifecycleService(deps: BotLifecycleServiceDeps) {
     // The profile lock excludes concurrent shared-history writers until deletion finishes.
     // The final transaction retains its own guard as the database safety boundary.
     operationGuard?.();
-    await getDbClient().tx('bots.assertNoSharedHistory', { botId: request.botId });
+    await getDbClient().tx('bots.assertNoSharedHistory', { botId: request.botId }, undefined, operationGuard);
     assertOwnerUnchanged();
     let preparationWarnings: string[] = [];
     if (profile.status !== 'archived') {
@@ -361,6 +357,7 @@ export function createBotLifecycleService(deps: BotLifecycleServiceDeps) {
       request.botId,
       sessionIds,
       request.keepTaskHistory === true,
+      operationGuard,
     );
 
     /*
