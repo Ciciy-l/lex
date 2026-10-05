@@ -2525,10 +2525,20 @@ interface PendingRpc {
   resolve: (value: unknown) => void;
   reject: (err: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
-  /** Guarded mutations own an exclusive dispatch barrier until this RPC settles. */
-  barrierItem?: QueuedRpc;
   /** 当前预算窗口的起点(挂钟)。跨睡眠重武装时会重置,见 evaluateRpcTimeout。 */
   sentAtMs: number;
+  background: boolean;
+}
+
+/**
+ * A request remains here from a successful postMessage until the worker sends
+ * its response (or the worker is known to have terminated). This is separate
+ * from PendingRpc: a caller timeout only settles its promise; it cannot prove
+ * that the worker stopped executing the request.
+ */
+interface OutstandingRpc {
+  /** Guarded mutations own an exclusive dispatch barrier until the worker settles. */
+  barrierItem?: QueuedRpc;
   background: boolean;
 }
 
@@ -2615,6 +2625,8 @@ export class WorkerThreadTransport implements DbTransport {
   private closing = false;
   private vecLoaded = false;
   private readonly pending = new Map<number, PendingRpc>();
+  /** Posted RPCs whose worker reply has not arrived yet, including timed-out callers. */
+  private readonly outstanding = new Map<number, OutstandingRpc>();
   private readonly queued: QueuedRpc[] = [];
   /**
    * A guarded mutation waits for every RPC already posted to the worker, and
@@ -2667,7 +2679,7 @@ export class WorkerThreadTransport implements DbTransport {
         reject(
           createDbTransportError(
             DB_TRANSPORT_NOT_SENT,
-            `db worker RPC queue overloaded: op="${op}" inFlight=${this.pending.size}` +
+            `db worker RPC queue overloaded: op="${op}" inFlight=${this.outstanding.size}` +
               ` queued=${this.queued.length}` +
               ` backgroundInFlight=${this.backgroundPendingCount()}` +
               ` backgroundQueued=${this.backgroundQueuedCount()}`,
@@ -2697,7 +2709,7 @@ export class WorkerThreadTransport implements DbTransport {
 
   async close(): Promise<void> {
     if (this.closed || this.closing) return;
-    const canCloseGracefully = this.pending.size === 0 && this.queued.length === 0;
+    const canCloseGracefully = this.outstanding.size === 0 && this.queued.length === 0;
     const gracefulClose = canCloseGracefully ? this.send('closeDb') : null;
     // closeDb 仅在 transport 空闲时直发。已有 backlog 时不再把关闭请求排到队尾,
     // 直接拒绝遗留工作并 terminate,避免登出 / 退出被慢 RPC 拖住。
@@ -2752,8 +2764,8 @@ export class WorkerThreadTransport implements DbTransport {
 
   private backgroundPendingCount(): number {
     let count = 0;
-    for (const pending of this.pending.values()) {
-      if (pending.background) count += 1;
+    for (const outstanding of this.outstanding.values()) {
+      if (outstanding.background) count += 1;
     }
     return count;
   }
@@ -2767,7 +2779,7 @@ export class WorkerThreadTransport implements DbTransport {
   }
 
   private canDispatchImmediately(item: QueuedRpc): boolean {
-    if (this.pending.size >= this.maxInFlightRpcs) return false;
+    if (this.outstanding.size >= this.maxInFlightRpcs) return false;
     if (item.background && this.backgroundPendingCount() >= this.maxBackgroundInFlightRpcs) {
       return false;
     }
@@ -2836,8 +2848,11 @@ export class WorkerThreadTransport implements DbTransport {
         pending.timeout = setTimeout(onTimeout, this.rpcTimeoutMs);
         return;
       }
+      // A caller timeout only settles the caller's promise. The worker may
+      // still be executing (or waiting on SQLite), so the outstanding record
+      // and any guarded dispatch barrier stay until the real reply or a
+      // confirmed worker termination arrives.
       this.pending.delete(id);
-      this.releaseDispatchBarrier(item);
       pending.reject(
         createDbTransportError(
           DB_TRANSPORT_OUTCOME_UNKNOWN,
@@ -2856,6 +2871,9 @@ export class WorkerThreadTransport implements DbTransport {
       timeout,
       sentAtMs: item.budgetStartedAtMs,
       background: item.background,
+    });
+    this.outstanding.set(id, {
+      background: item.background,
       barrierItem: this.dispatchBarrier === item ? item : undefined,
     });
     try {
@@ -2863,6 +2881,7 @@ export class WorkerThreadTransport implements DbTransport {
     } catch (err) {
       clearTimeout(timeout);
       this.pending.delete(id);
+      this.outstanding.delete(id);
       this.releaseDispatchBarrier(item);
       item.reject(createDbTransportError(DB_TRANSPORT_NOT_SENT, toError(err).message, err));
       this.drainQueue();
@@ -2875,7 +2894,7 @@ export class WorkerThreadTransport implements DbTransport {
     // every later request until its response/timeout/termination releases it.
     if (this.dispatchBarrier !== null && barrierIndex < 0) return undefined;
     const availableBeforeBarrier = barrierIndex < 0 ? this.queued.length : barrierIndex;
-    if (barrierIndex === 0 && this.pending.size > 0) return undefined;
+    if (barrierIndex === 0 && this.outstanding.size > 0) return undefined;
 
     const interactiveIndex = this.queued.findIndex((item) => !item.background);
     if (interactiveIndex >= 0 && interactiveIndex < availableBeforeBarrier) {
@@ -2893,17 +2912,17 @@ export class WorkerThreadTransport implements DbTransport {
     }
     if (barrierIndex !== 0) return undefined;
     const barrier = this.dispatchBarrier;
-    if (!barrier || this.pending.size > 0 || !this.canDispatchImmediately(barrier)) return undefined;
+    if (!barrier || this.outstanding.size > 0 || !this.canDispatchImmediately(barrier)) return undefined;
     this.queued.splice(barrierIndex, 1);
     return barrier;
   }
 
   private isBlockedByDispatchBarrier(item: QueuedRpc): boolean {
     if (this.dispatchBarrier === null) {
-      return item.beforeDispatch !== undefined && (this.pending.size > 0 || this.queued.length > 0);
+      return item.beforeDispatch !== undefined && (this.outstanding.size > 0 || this.queued.length > 0);
     }
     if (this.dispatchBarrier === item) {
-      return this.pending.size > 0 || this.queued.length > 0;
+      return this.outstanding.size > 0 || this.queued.length > 0;
     }
     return this.dispatchBarrier !== item;
   }
@@ -2917,7 +2936,7 @@ export class WorkerThreadTransport implements DbTransport {
   }
 
   private drainQueue(): void {
-    while (!this.closed && this.pending.size < this.maxInFlightRpcs) {
+    while (!this.closed && this.outstanding.size < this.maxInFlightRpcs) {
       const next = this.takeNextQueued();
       if (!next) return;
       this.dispatch(next);
@@ -2980,19 +2999,27 @@ export class WorkerThreadTransport implements DbTransport {
 
   private handleMessage(msg: WorkerMessage): void {
     if ('id' in msg) {
+      const outstanding = this.outstanding.get(msg.id);
+      if (!outstanding) return;
+      this.outstanding.delete(msg.id);
+      if (outstanding.barrierItem) this.releaseDispatchBarrier(outstanding.barrierItem);
+
+      // A late response for a caller that already timed out still proves the
+      // worker is no longer executing this RPC, but must not settle the
+      // caller's promise a second time.
       const pending = this.pending.get(msg.id);
-      if (!pending) return;
-      this.pending.delete(msg.id);
-      clearTimeout(pending.timeout);
-      if (pending.barrierItem) this.releaseDispatchBarrier(pending.barrierItem);
-      if (msg.ok) {
-        pending.resolve(msg.result);
-      } else {
-        const err = Object.assign(new Error(msg.error.message), {
-          code: msg.error.code,
-          stack: msg.error.stack,
-        });
-        pending.reject(err);
+      if (pending) {
+        this.pending.delete(msg.id);
+        clearTimeout(pending.timeout);
+        if (msg.ok) {
+          pending.resolve(msg.result);
+        } else {
+          const err = Object.assign(new Error(msg.error.message), {
+            code: msg.error.code,
+            stack: msg.error.stack,
+          });
+          pending.reject(err);
+        }
       }
       this.drainQueue();
       return;
@@ -3021,6 +3048,10 @@ export class WorkerThreadTransport implements DbTransport {
       pending.reject(pendingError);
     }
     this.pending.clear();
+    // Worker error/exit/termination is the only point at which an
+    // outstanding RPC may be forgotten without a real reply. Caller timeouts
+    // never reach this branch merely by removing their promise from pending.
+    this.outstanding.clear();
     for (const queued of this.queued.splice(0)) {
       if (queued.queueTimeout) clearTimeout(queued.queueTimeout);
       queued.reject(queuedError);

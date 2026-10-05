@@ -190,17 +190,55 @@ describe('WorkerThreadTransport', () => {
     }
   });
 
-  it('releases a timed-out admitted guard so later work can drain', async () => {
+  it('keeps a timed-out admitted guard blocked until the worker replies', async () => {
     const transport = new WorkerThreadTransport({
       useInlineWorker: true,
       maxQueuedRpcs: 3,
-      rpcTimeoutMs: 80,
+      rpcTimeoutMs: 200,
     });
     try {
-      const guarded = transport.send('sleep', { ms: 220 }, undefined, () => undefined);
-      const follower = transport.send('query', { sql: 'SELECT 1 AS n' });
+      const guarded = transport.send('sleep', { ms: 320 }, undefined, () => undefined);
       await expect(guarded).rejects.toMatchObject({ code: DB_TRANSPORT_OUTCOME_UNKNOWN });
+      let followerSettled = false;
+      const follower = transport.send('query', { sql: 'SELECT 1 AS n' });
+      void follower.then(() => { followerSettled = true; });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(followerSettled).toBe(false);
       await expect(follower).resolves.toEqual([{ n: 1 }]);
+    } finally {
+      await transport.close();
+    }
+  });
+
+  it('keeps a timed-out ordinary RPC outstanding before dispatching a guarded mutation', async () => {
+    const transport = new WorkerThreadTransport({
+      useInlineWorker: true,
+      maxQueuedRpcs: 3,
+      rpcTimeoutMs: 200,
+    });
+    let guardRan = false;
+    let revoked = false;
+    try {
+      const ordinary = transport.send('sleep', { ms: 320 });
+      await expect(ordinary).rejects.toMatchObject({ code: DB_TRANSPORT_OUTCOME_UNKNOWN });
+      revoked = true;
+      const guarded = transport.send(
+        'exec',
+        { sql: 'CREATE TABLE timeout_guarded_write (id INTEGER PRIMARY KEY)' },
+        undefined,
+        () => {
+          guardRan = true;
+          if (revoked) throw new Error('remote operation revoked');
+        },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(guardRan).toBe(false);
+      await expect(guarded).rejects.toThrow('remote operation revoked');
+      await expect(
+        transport.send('query', {
+          sql: "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'timeout_guarded_write'",
+        }),
+      ).resolves.toEqual([]);
     } finally {
       await transport.close();
     }
@@ -275,6 +313,61 @@ describe('WorkerThreadTransport', () => {
     await expect(transport.send('query', { sql: 'SELECT 1' })).rejects.toMatchObject({
       code: DB_TRANSPORT_NOT_SENT,
     });
+  });
+
+  it('marks a postMessage failure as not sent and does not retain it as outstanding', async () => {
+    const transport = new WorkerThreadTransport({ useInlineWorker: true });
+    const worker = (transport as unknown as {
+      worker: { postMessage: (...args: never[]) => void };
+    }).worker;
+    const originalPostMessage = worker.postMessage;
+    try {
+      worker.postMessage = () => { throw new Error('synthetic post failure'); };
+      await expect(transport.send('query', { sql: 'SELECT 1' })).rejects.toMatchObject({
+        code: DB_TRANSPORT_NOT_SENT,
+        message: 'synthetic post failure',
+      });
+      worker.postMessage = originalPostMessage;
+      await expect(transport.send('query', { sql: 'SELECT 1 AS n' })).resolves.toEqual([{ n: 1 }]);
+    } finally {
+      worker.postMessage = originalPostMessage;
+      await transport.close();
+    }
+  });
+
+  it('ignores duplicate late replies after a caller timeout while clearing the worker record once', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xdt-db-worker-late-reply-'));
+    const workerScriptPath = path.join(dir, 'late-reply-worker.cjs');
+    fs.writeFileSync(
+      workerScriptPath,
+      [
+        "const { parentPort } = require('node:worker_threads');",
+        'parentPort.on(\'message\', (request) => {',
+        "  if (request.op === 'closeDb') { parentPort.postMessage({ id: request.id, ok: true }); return; }",
+        '  setTimeout(() => {',
+        "    parentPort.postMessage({ id: request.id, ok: true, result: { reply: 'late' } });",
+        "    parentPort.postMessage({ id: request.id, ok: true, result: { reply: 'duplicate' } });",
+        '  }, 160);',
+        '});',
+      ].join('\\n'),
+      'utf8',
+    );
+    const transport = new WorkerThreadTransport({ workerScriptPath, rpcTimeoutMs: 40 });
+    let resolveCount = 0;
+    let rejectCount = 0;
+    try {
+      const request = transport.send('delayed').then(
+        () => { resolveCount += 1; },
+        () => { rejectCount += 1; },
+      );
+      await expect(request).resolves.toBeUndefined();
+      await new Promise((resolve) => setTimeout(resolve, 220));
+      expect(resolveCount).toBe(0);
+      expect(rejectCount).toBe(1);
+    } finally {
+      await transport.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('transfers ArrayBuffer ownership through postMessage transferList', async () => {
