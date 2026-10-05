@@ -2525,6 +2525,8 @@ interface PendingRpc {
   resolve: (value: unknown) => void;
   reject: (err: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
+  /** Guarded mutations own an exclusive dispatch barrier until this RPC settles. */
+  barrierItem?: QueuedRpc;
   /** 当前预算窗口的起点(挂钟)。跨睡眠重武装时会重置,见 evaluateRpcTimeout。 */
   sentAtMs: number;
   background: boolean;
@@ -2614,6 +2616,12 @@ export class WorkerThreadTransport implements DbTransport {
   private vecLoaded = false;
   private readonly pending = new Map<number, PendingRpc>();
   private readonly queued: QueuedRpc[] = [];
+  /**
+   * A guarded mutation waits for every RPC already posted to the worker, and
+   * no request submitted after it may pass while it is admitted/executed.
+   * This stays in the host process so callbacks are never structured-cloned.
+   */
+  private dispatchBarrier: QueuedRpc | null = null;
   private readonly eventListeners = new Map<EventName, Set<(payload: unknown) => void>>();
   private readonly terminatedListeners = new Set<(info: DbTransportTerminationInfo) => void>();
   private readonly opts: WorkerThreadTransportOptions;
@@ -2647,11 +2655,15 @@ export class WorkerThreadTransport implements DbTransport {
         budgetStartedAtMs: Date.now(),
         background,
       };
-      if (this.canDispatchImmediately(queued)) {
+      if (beforeDispatch !== undefined && this.dispatchBarrier === null) {
+        this.dispatchBarrier = queued;
+      }
+      if (this.canDispatchImmediately(queued) && !this.isBlockedByDispatchBarrier(queued)) {
         this.dispatch(queued);
         return;
       }
       if (!this.canEnqueue(queued)) {
+        this.releaseDispatchBarrier(queued);
         reject(
           createDbTransportError(
             DB_TRANSPORT_NOT_SENT,
@@ -2781,13 +2793,15 @@ export class WorkerThreadTransport implements DbTransport {
         return;
       }
       this.queued.splice(index, 1);
+      this.releaseDispatchBarrier(item);
       item.reject(
         createDbTransportError(
           DB_TRANSPORT_NOT_SENT,
           `db worker RPC queue timeout: op="${item.req.op}" id=${item.req.id}` +
-            ` exceeded ${this.rpcTimeoutMs / 1000}s total budget`,
+          ` exceeded ${this.rpcTimeoutMs / 1000}s total budget`,
         ),
       );
+      this.drainQueue();
     };
     item.queueTimeout = setTimeout(onTimeout, this.rpcTimeoutMs);
   }
@@ -2801,6 +2815,7 @@ export class WorkerThreadTransport implements DbTransport {
       // the same owner-lease semantics without serializing a function.
       item.beforeDispatch?.();
     } catch (error) {
+      this.releaseDispatchBarrier(item);
       item.reject(toError(error));
       this.drainQueue();
       return;
@@ -2822,6 +2837,7 @@ export class WorkerThreadTransport implements DbTransport {
         return;
       }
       this.pending.delete(id);
+      this.releaseDispatchBarrier(item);
       pending.reject(
         createDbTransportError(
           DB_TRANSPORT_OUTCOME_UNKNOWN,
@@ -2840,31 +2856,64 @@ export class WorkerThreadTransport implements DbTransport {
       timeout,
       sentAtMs: item.budgetStartedAtMs,
       background: item.background,
+      barrierItem: this.dispatchBarrier === item ? item : undefined,
     });
     try {
       this.worker.postMessage(item.req, item.transferList as never);
     } catch (err) {
       clearTimeout(timeout);
       this.pending.delete(id);
+      this.releaseDispatchBarrier(item);
       item.reject(createDbTransportError(DB_TRANSPORT_NOT_SENT, toError(err).message, err));
       this.drainQueue();
     }
   }
 
   private takeNextQueued(): QueuedRpc | undefined {
+    const barrierIndex = this.dispatchBarrier === null ? -1 : this.queued.indexOf(this.dispatchBarrier);
+    // The barrier was removed from the queue and posted to the worker. Hold
+    // every later request until its response/timeout/termination releases it.
+    if (this.dispatchBarrier !== null && barrierIndex < 0) return undefined;
+    const availableBeforeBarrier = barrierIndex < 0 ? this.queued.length : barrierIndex;
+    if (barrierIndex === 0 && this.pending.size > 0) return undefined;
+
     const interactiveIndex = this.queued.findIndex((item) => !item.background);
-    if (interactiveIndex >= 0) {
+    if (interactiveIndex >= 0 && interactiveIndex < availableBeforeBarrier) {
       const next = this.queued[interactiveIndex];
       if (!this.canDispatchImmediately(next)) return undefined;
       this.queued.splice(interactiveIndex, 1);
       return next;
     }
     const backgroundIndex = this.queued.findIndex((item) => item.background);
-    if (backgroundIndex < 0) return undefined;
-    const next = this.queued[backgroundIndex];
-    if (!this.canDispatchImmediately(next)) return undefined;
-    this.queued.splice(backgroundIndex, 1);
-    return next;
+    if (backgroundIndex >= 0 && backgroundIndex < availableBeforeBarrier) {
+      const next = this.queued[backgroundIndex];
+      if (!this.canDispatchImmediately(next)) return undefined;
+      this.queued.splice(backgroundIndex, 1);
+      return next;
+    }
+    if (barrierIndex !== 0) return undefined;
+    const barrier = this.dispatchBarrier;
+    if (!barrier || this.pending.size > 0 || !this.canDispatchImmediately(barrier)) return undefined;
+    this.queued.splice(barrierIndex, 1);
+    return barrier;
+  }
+
+  private isBlockedByDispatchBarrier(item: QueuedRpc): boolean {
+    if (this.dispatchBarrier === null) {
+      return item.beforeDispatch !== undefined && (this.pending.size > 0 || this.queued.length > 0);
+    }
+    if (this.dispatchBarrier === item) {
+      return this.pending.size > 0 || this.queued.length > 0;
+    }
+    return this.dispatchBarrier !== item;
+  }
+
+  private releaseDispatchBarrier(item: QueuedRpc): void {
+    if (this.dispatchBarrier !== item) return;
+    this.dispatchBarrier = null;
+    // Preserve ordering for a later guarded mutation before draining normal
+    // requests that were admitted after it.
+    this.dispatchBarrier = this.queued.find((queued) => queued.beforeDispatch !== undefined) ?? null;
   }
 
   private drainQueue(): void {
@@ -2935,6 +2984,7 @@ export class WorkerThreadTransport implements DbTransport {
       if (!pending) return;
       this.pending.delete(msg.id);
       clearTimeout(pending.timeout);
+      if (pending.barrierItem) this.releaseDispatchBarrier(pending.barrierItem);
       if (msg.ok) {
         pending.resolve(msg.result);
       } else {
@@ -2975,6 +3025,7 @@ export class WorkerThreadTransport implements DbTransport {
       if (queued.queueTimeout) clearTimeout(queued.queueTimeout);
       queued.reject(queuedError);
     }
+    this.dispatchBarrier = null;
   }
 
   private emitTerminated(info: DbTransportTerminationInfo): void {

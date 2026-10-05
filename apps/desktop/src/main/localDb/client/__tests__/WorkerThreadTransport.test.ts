@@ -120,7 +120,6 @@ describe('WorkerThreadTransport', () => {
   it('runs a queued mutation guard at dispatch without serializing it to the worker', async () => {
     const transport = new WorkerThreadTransport({
       useInlineWorker: true,
-      maxInFlightRpcs: 1,
       maxQueuedRpcs: 1,
     });
     let revoked = false;
@@ -142,6 +141,88 @@ describe('WorkerThreadTransport', () => {
     } finally {
       await transport.close();
     }
+  });
+
+  it('holds later ordinary RPCs behind a guarded mutation with production concurrency', async () => {
+    const transport = new WorkerThreadTransport({
+      useInlineWorker: true,
+      maxQueuedRpcs: 4,
+    });
+    const order: string[] = [];
+    try {
+      const active = transport.send('sleep', { ms: 70 });
+      const guarded = transport.send(
+        'exec',
+        { sql: 'CREATE TABLE guarded_barrier (id INTEGER PRIMARY KEY)' },
+        undefined,
+        () => { order.push('guard-dispatch'); },
+      ).then(() => { order.push('guard-complete'); });
+      const follower = transport.send('query', { sql: "SELECT name FROM sqlite_master WHERE name = 'guarded_barrier'" })
+        .then(() => { order.push('follower-complete'); });
+
+      await expect(active).resolves.toEqual({ slept: 70 });
+      await Promise.all([guarded, follower]);
+      expect(order).toEqual(['guard-dispatch', 'guard-complete', 'follower-complete']);
+    } finally {
+      await transport.close();
+    }
+  });
+
+  it('releases a rejected guarded dispatch so later work is not starved', async () => {
+    const transport = new WorkerThreadTransport({
+      useInlineWorker: true,
+      maxQueuedRpcs: 3,
+    });
+    try {
+      const active = transport.send('sleep', { ms: 70 });
+      const guarded = transport.send(
+        'exec',
+        { sql: 'CREATE TABLE rejected_barrier (id INTEGER PRIMARY KEY)' },
+        undefined,
+        () => { throw new Error('guard no longer valid'); },
+      );
+      const follower = transport.send('query', { sql: 'SELECT 1 AS n' });
+      await expect(guarded).rejects.toThrow('guard no longer valid');
+      await expect(active).resolves.toEqual({ slept: 70 });
+      await expect(follower).resolves.toEqual([{ n: 1 }]);
+    } finally {
+      await transport.close();
+    }
+  });
+
+  it('releases a timed-out admitted guard so later work can drain', async () => {
+    const transport = new WorkerThreadTransport({
+      useInlineWorker: true,
+      maxQueuedRpcs: 3,
+      rpcTimeoutMs: 80,
+    });
+    try {
+      const guarded = transport.send('sleep', { ms: 220 }, undefined, () => undefined);
+      const follower = transport.send('query', { sql: 'SELECT 1 AS n' });
+      await expect(guarded).rejects.toMatchObject({ code: DB_TRANSPORT_OUTCOME_UNKNOWN });
+      await expect(follower).resolves.toEqual([{ n: 1 }]);
+    } finally {
+      await transport.close();
+    }
+  });
+
+  it('rejects a guarded barrier and its followers when the worker fails', async () => {
+    const transport = new WorkerThreadTransport({ useInlineWorker: true, maxQueuedRpcs: 3 });
+    const guarded = transport.send('sleep', { ms: 1_000 }, undefined, () => undefined);
+    const follower = transport.send('query', { sql: 'SELECT 1 AS n' });
+    await transport.terminateForTest();
+    await expect(guarded).rejects.toMatchObject({ code: DB_TRANSPORT_OUTCOME_UNKNOWN });
+    await expect(follower).rejects.toMatchObject({ code: DB_TRANSPORT_NOT_SENT });
+  });
+
+  it('closes a guarded barrier without leaving followers pending', async () => {
+    const transport = new WorkerThreadTransport({ useInlineWorker: true, maxQueuedRpcs: 3 });
+    const guarded = transport.send('sleep', { ms: 1_000 }, undefined, () => undefined);
+    const follower = transport.send('query', { sql: 'SELECT 1 AS n' });
+    const guardedRejection = expect(guarded).rejects.toMatchObject({ code: DB_TRANSPORT_OUTCOME_UNKNOWN });
+    const followerRejection = expect(follower).rejects.toMatchObject({ code: DB_TRANSPORT_NOT_SENT });
+    await expect(transport.close()).resolves.toBeUndefined();
+    await Promise.all([guardedRejection, followerRejection]);
   });
 
   it('counts queue wait against the RPC timeout budget', async () => {

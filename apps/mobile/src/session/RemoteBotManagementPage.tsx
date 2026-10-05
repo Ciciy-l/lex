@@ -31,6 +31,19 @@ function blockAction(resource: RemoteResource, block: RemoteResourceBlock): Remo
   const actionId = dataOf(block).actionId;
   return typeof actionId === 'string' ? resource.actions?.find((action) => action.id === actionId) : undefined;
 }
+/**
+ * bindResource deliberately replaces public action ids with opaque grants.
+ * The operationActions map is the only trusted display-to-operation mapping;
+ * never infer creation from the opaque id itself.
+ */
+function blockOperation(resource: RemoteResource, block: RemoteResourceBlock, action: RemoteActionDescriptor): string | undefined {
+  const operationActions = row(dataOf(block).operationActions);
+  const operation = Object.entries(operationActions).find(([, actionId]) => actionId === action.id)?.[0];
+  // A creation resource is itself the semantic scope; older hosts may not
+  // expose operationActions, but must still never require the opaque grant id
+  // to equal "create".
+  return operation ?? (resource.ref.id === 'create' ? 'create' : undefined);
+}
 
 function createActionRequestId(): string {
   const cryptoLike = globalThis.crypto as { randomUUID?: () => string } | undefined;
@@ -71,10 +84,17 @@ export function RemoteBotManagementPage({ host, resourceId, title, onBack }: Rem
   const activeIdRef = useRef(resourceId);
   const operationRef = useRef(0);
   const actionRequestIdsRef = useRef<Record<string, string>>({});
+  const resourceRef = useRef<RemoteResource | null>(null);
+  const mountedRef = useRef(true);
+  const pendingConfirmationRef = useRef<number | null>(null);
   activeIdRef.current = activeId;
+  resourceRef.current = resource;
   const baseId = resourceId;
   const draftKey = (id: string) => `${host.deviceId}:${id}`;
   const activeDraft = drafts[draftKey(activeId)] ?? {};
+  const clearCreateIntent = (id: string): void => {
+    if (id === 'create') delete actionRequestIdsRef.current[`${host.deviceId}:create:create`];
+  };
 
   const load = useCallback(async (id: string) => {
     const generation = ++generationRef.current;
@@ -94,6 +114,7 @@ export function RemoteBotManagementPage({ host, resourceId, title, onBack }: Rem
   }, [host, i18n.language, invoke]);
 
   useEffect(() => {
+    pendingConfirmationRef.current = null;
     operationRef.current += 1;
     setBusy(false);
     activeIdRef.current = resourceId;
@@ -103,6 +124,8 @@ export function RemoteBotManagementPage({ host, resourceId, title, onBack }: Rem
   }, [load, resourceId, host.deviceId]);
 
   useEffect(() => () => {
+    mountedRef.current = false;
+    pendingConfirmationRef.current = null;
     generationRef.current += 1;
     operationRef.current += 1;
   }, []);
@@ -112,9 +135,30 @@ export function RemoteBotManagementPage({ host, resourceId, title, onBack }: Rem
     setDrafts((current) => ({ ...current, [key]: { ...(current[key] ?? {}), [field]: value } }));
   };
 
-  const invokeAction = async (action: RemoteActionDescriptor, input: Values) => {
-    if (busy) return;
+  const invokeAction = async (action: RemoteActionDescriptor, input: Values, operationKey?: string) => {
+    if (busy || pendingConfirmationRef.current !== null) return;
+    const capturedOperation = ++operationRef.current;
+    const capturedResourceId = activeIdRef.current;
+    const capturedGeneration = generationRef.current;
+    const capturedResource = resourceRef.current;
+    const capturedHost = host;
+    const capturedHostId = host.deviceId;
+    const capturedActionId = action.id;
+    const capturedResourceRef = capturedResource?.ref;
+    const capturedRevision = capturedResource?.revision;
+    const capturedInput = { ...input };
+    if (!capturedResource || !capturedResourceRef) return;
+    const capturedOperationKey = operationKey ?? (capturedResource.ref.id === 'create' ? 'create' : action.id);
+    const isCurrent = () => mountedRef.current
+      && operationRef.current === capturedOperation
+      && generationRef.current === capturedGeneration
+      && activeIdRef.current === capturedResourceId
+      && host === capturedHost
+      && host.deviceId === capturedHostId
+      && resourceRef.current === capturedResource
+      && capturedResource.revision === capturedRevision;
     if (action.confirmation) {
+      pendingConfirmationRef.current = capturedOperation;
       const confirmed = await new Promise<boolean>((resolve) => Alert.alert(
         text(action.confirmation?.title, i18n.language),
         action.confirmation?.body ? text(action.confirmation.body, i18n.language) : undefined,
@@ -123,25 +167,24 @@ export function RemoteBotManagementPage({ host, resourceId, title, onBack }: Rem
           { text: text(action.confirmation?.confirmLabel ?? action.label, i18n.language), style: action.tone === 'destructive' ? 'destructive' : 'default', onPress: () => resolve(true) },
         ],
       ));
-      if (!confirmed) return;
+      if (pendingConfirmationRef.current === capturedOperation) pendingConfirmationRef.current = null;
+      if (!confirmed || !isCurrent()) return;
     }
-    const operation = ++operationRef.current;
-    const operationResourceId = activeIdRef.current;
-    const operationGeneration = generationRef.current;
-    const requestKey = `${host.deviceId}:${operationResourceId}:${action.id}`;
-    const requestId = action.id === 'create'
+    if (!isCurrent()) return;
+    const requestKey = `${capturedHostId}:${capturedResourceId}:${capturedOperationKey}`;
+    const requestId = capturedOperationKey === 'create' && capturedResource.ref.id === 'create'
       ? (actionRequestIdsRef.current[requestKey] ??= createActionRequestId())
       : undefined;
     setBusy(true);
     setError(null);
     try {
-      const response = await invokeRemoteResourceAction(invoke, host, {
+      const response = await invokeRemoteResourceAction(invoke, capturedHost, {
         collectionId: 'teammates',
-        resourceRef: resource?.ref,
-        actionId: action.id,
-        input: requestId ? { ...input, requestId } : input,
+        resourceRef: capturedResourceRef,
+        actionId: capturedActionId,
+        input: requestId ? { ...capturedInput, requestId } : capturedInput,
       }, i18n.language);
-      if (operationRef.current !== operation || generationRef.current !== operationGeneration || activeIdRef.current !== operationResourceId) return;
+      if (!isCurrent()) return;
       if (requestId) delete actionRequestIdsRef.current[requestKey];
       const navigation = response.effects?.find((effect) => effect.kind === 'navigate');
       if (navigation?.kind === 'navigate' && navigation.target.kind === 'resource'
@@ -157,19 +200,21 @@ export function RemoteBotManagementPage({ host, resourceId, title, onBack }: Rem
       }
       setDrafts((current) => {
         const next = { ...current };
-        delete next[draftKey(operationResourceId)];
+        delete next[draftKey(capturedResourceId)];
         return next;
       });
-      await load(operationResourceId);
+      await load(capturedResourceId);
     } catch (cause) {
-      if (operationRef.current === operation) setError(formatRemoteError(cause));
+      if (isCurrent()) setError(formatRemoteError(cause));
     } finally {
-      if (operationRef.current === operation) setBusy(false);
+      if (operationRef.current === capturedOperation) setBusy(false);
     }
   };
 
   const blocks = resource?.blocks ?? [];
   const openEntry = (id: string) => {
+    clearCreateIntent(activeIdRef.current);
+    pendingConfirmationRef.current = null;
     operationRef.current += 1;
     setBusy(false);
     activeIdRef.current = id;
@@ -178,9 +223,11 @@ export function RemoteBotManagementPage({ host, resourceId, title, onBack }: Rem
     void load(id);
   };
   const goBack = () => {
+    clearCreateIntent(activeIdRef.current);
+    pendingConfirmationRef.current = null;
+    operationRef.current += 1;
+    setBusy(false);
     if (activeId !== baseId) {
-      operationRef.current += 1;
-      setBusy(false);
       activeIdRef.current = baseId;
       setActiveId(baseId);
       setResource(null);
@@ -242,7 +289,7 @@ export function RemoteBotManagementPage({ host, resourceId, title, onBack }: Rem
                     <TextInput editable={!busy} multiline={field.kind === 'multiline'} value={typeof value === 'string' ? value : ''} onChangeText={(next) => updateDraft(field.id, next)} placeholder={field.placeholder ? text(field.placeholder, i18n.language) : undefined} placeholderTextColor={colors.textTertiary} style={[styles.input, field.kind === 'multiline' && styles.multiline]} />
                   </View>;
                 })}
-                <MainWindowActionButton action={{ label: text(action.label, i18n.language), busy, disabled: busy, tone: action.tone === 'destructive' ? 'danger' : 'primary', onPress: () => void invokeAction(action, activeDraft) }} />
+                <MainWindowActionButton action={{ label: text(action.label, i18n.language), busy, disabled: busy, tone: action.tone === 'destructive' ? 'danger' : 'primary', onPress: () => void invokeAction(action, activeDraft, blockOperation(resource!, block, action)) }} />
               </View>
             );
           }

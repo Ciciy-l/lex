@@ -27,7 +27,18 @@ function fixture() {
 describe('portable teammate editors', () => {
   it('keeps the same durable create identity across a lost ACK, but separates paired controllers and owners', async () => {
     const f = fixture(); const input = { name: '小助手', avatarImageBase64: 'aGVsbG8=', requestId: 'same-intent-12345678' };
-    await f.send(await f.resource('create'), input); await f.send(await f.resource('create'), input);
+    const first = await f.resource('create');
+    const second = await f.resource('create');
+    const firstData = first.blocks![0].data as { actionId: string; operationActions: Record<string, string> };
+    const secondData = second.blocks![0].data as { actionId: string; operationActions: Record<string, string> };
+    expect(first.actions![0].id).not.toBe('create');
+    expect(second.actions![0].id).not.toBe('create');
+    expect(first.actions![0].id).not.toBe(second.actions![0].id);
+    expect(firstData.actionId).toBe(first.actions![0].id);
+    expect(secondData.actionId).toBe(second.actions![0].id);
+    expect(firstData.operationActions.create).toBe(first.actions![0].id);
+    expect(secondData.operationActions.create).toBe(second.actions![0].id);
+    await f.send(first, input); await f.send(second, input);
     const calls = vi.mocked(f.deps.create).mock.calls;
     expect(calls[0][0]).toEqual(calls[1][0]);
     expect(calls[0][0]).toMatchObject({ name: '小助手', locale: 'zh-CN' });

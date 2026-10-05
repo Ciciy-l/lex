@@ -6,11 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
   get: vi.fn(),
   invoke: vi.fn(),
+  alertButtons: null as Array<{ onPress?: () => void }> | null,
 }));
 
 vi.mock('react-native', () => ({
   Alert: {
-    alert: (_title: unknown, _body: unknown, buttons: Array<{ onPress?: () => void }> = []) => buttons.at(-1)?.onPress?.(),
+    alert: (_title: unknown, _body: unknown, buttons: Array<{ onPress?: () => void }> = []) => { h.alertButtons = buttons; },
   },
   ActivityIndicator: () => createElement('span', { 'data-testid': 'loading' }),
   Pressable: ({ children, onPress, disabled }: any) => createElement('button', { onClick: onPress, disabled }, children),
@@ -78,6 +79,7 @@ beforeEach(() => {
   root = createRoot(node);
   h.get.mockReset();
   h.invoke.mockReset().mockResolvedValue({ effects: [] });
+  h.alertButtons = null;
 });
 afterEach(async () => {
   await act(async () => root.unmount());
@@ -132,18 +134,26 @@ describe('RemoteBotManagementPage request boundary', () => {
   });
 
   it('keeps one create requestId across an ACK-loss retry', async () => {
+    const firstGrant = 'create-grant-a';
+    const refreshedGrant = 'create-grant-b';
     const createResource = {
       ref: { collectionId: 'teammates', kind: 'bot', id: 'create' },
       revision: '1',
       display: { title: 'Create' },
       links: [],
-      blocks: [{ id: 'create', primitive: 'form', fallbackMarkdown: '', data: { actionId: 'create', values: { name: 'New Bot', avatarImageBase64: 'image' } } }],
-      actions: [{ id: 'create', label: 'Create', fields: [
+      blocks: [{ id: 'create', primitive: 'form', fallbackMarkdown: '', data: { actionId: firstGrant, operationActions: { create: firstGrant }, values: { name: 'New Bot', avatarImageBase64: 'image' } } }],
+      actions: [{ id: firstGrant, label: 'Create', fields: [
         { id: 'name', label: 'Name', kind: 'text' },
         { id: 'avatarImageBase64', label: 'Avatar', kind: 'text' },
       ] }],
     };
-    h.get.mockResolvedValue(createResource);
+    const refreshedResource = {
+      ...createResource,
+      blocks: [{ ...createResource.blocks[0], data: { ...createResource.blocks[0].data, actionId: refreshedGrant, operationActions: { create: refreshedGrant } } }],
+      actions: [{ ...createResource.actions[0], id: refreshedGrant }],
+      revision: '2',
+    };
+    h.get.mockResolvedValueOnce(createResource).mockResolvedValueOnce(refreshedResource);
     const firstAttempt = deferred<any>();
     h.invoke.mockReset().mockReturnValueOnce(firstAttempt.promise).mockResolvedValue({ effects: [] });
     await act(async () => root.render(createElement(RemoteBotManagementPage, { host: hostA, resourceId: 'create' })));
@@ -153,12 +163,18 @@ describe('RemoteBotManagementPage request boundary', () => {
     await act(async () => (create as HTMLButtonElement).click());
     await flush();
     const firstInput = h.invoke.mock.calls[0]?.[2]?.input;
+    expect(h.invoke.mock.calls[0]?.[2]?.actionId).toBe(firstGrant);
     expect(firstInput.requestId).toMatch(/^[A-Za-z0-9_-]{16,80}$/);
     firstAttempt.reject(new Error('ACK lost'));
     await flush();
-    await act(async () => (create as HTMLButtonElement).click());
+    await act(async () => root.render(createElement(RemoteBotManagementPage, { host: { ...hostA, deviceName: 'A refreshed' }, resourceId: 'create' })));
+    await flush();
+    const refreshedCreate = [...node.querySelectorAll('button')].find((button) => button.textContent === 'Create' && !button.dataset.testid);
+    expect(refreshedCreate).toBeTruthy();
+    await act(async () => (refreshedCreate as HTMLButtonElement).click());
     await flush();
     const secondInput = h.invoke.mock.calls[1]?.[2]?.input;
+    expect(h.invoke.mock.calls[1]?.[2]?.actionId).toBe(refreshedGrant);
     expect(secondInput.requestId).toBe(firstInput.requestId);
   });
 
@@ -177,6 +193,48 @@ describe('RemoteBotManagementPage request boundary', () => {
     await flush();
     expect(node.textContent).toContain('B');
     expect(node.textContent).not.toContain('old host');
+  });
+
+  it('does not invoke a captured confirmation after switching host or resource', async () => {
+    const confirmationResource = {
+      ...resource('bot-a', 'A'),
+      blocks: [{ id: 'delete', primitive: 'action', fallbackMarkdown: '', data: { actionId: 'delete-grant' } }],
+      actions: [{ id: 'delete-grant', label: 'Delete', tone: 'destructive', confirmation: { title: 'Delete', body: 'Confirm' } }],
+    };
+    h.get.mockResolvedValueOnce(confirmationResource).mockResolvedValueOnce(resource('bot-b', 'B'));
+    await act(async () => root.render(createElement(RemoteBotManagementPage, { host: hostA, resourceId: 'bot-a' })));
+    await flush();
+    const deleteButton = [...node.querySelectorAll('button')].find((button) => button.textContent === 'Delete');
+    expect(deleteButton).toBeTruthy();
+    await act(async () => (deleteButton as HTMLButtonElement).click());
+    expect(h.alertButtons).toHaveLength(2);
+    await act(async () => root.render(createElement(RemoteBotManagementPage, { host: hostB, resourceId: 'bot-b' })));
+    await flush();
+    await act(async () => h.alertButtons?.at(-1)?.onPress?.());
+    expect(h.invoke).not.toHaveBeenCalled();
+  });
+
+  it('invalidates a pending confirmation on return and ignores duplicate taps', async () => {
+    const confirmationResource = {
+      ...resource('bot-a', 'A'),
+      blocks: [{ id: 'delete', primitive: 'action', fallbackMarkdown: '', data: { actionId: 'delete-grant' } }],
+      actions: [{ id: 'delete-grant', label: 'Delete', tone: 'destructive', confirmation: { title: 'Delete', body: 'Confirm' } }],
+    };
+    const onBack = vi.fn();
+    h.get.mockResolvedValue(confirmationResource);
+    await act(async () => root.render(createElement(RemoteBotManagementPage, { host: hostA, resourceId: 'bot-a', onBack })));
+    await flush();
+    const deleteButton = [...node.querySelectorAll('button')].find((button) => button.textContent === 'Delete');
+    expect(deleteButton).toBeTruthy();
+    await act(async () => {
+      (deleteButton as HTMLButtonElement).click();
+      (deleteButton as HTMLButtonElement).click();
+    });
+    expect(h.alertButtons).toHaveLength(2);
+    await act(async () => (node.querySelector('[data-testid="back"]') as HTMLButtonElement).click());
+    expect(onBack).toHaveBeenCalledTimes(1);
+    await act(async () => h.alertButtons?.at(-1)?.onPress?.());
+    expect(h.invoke).not.toHaveBeenCalled();
   });
 
   it('shows an old host capability as an unsupported resource instead of a fake action', async () => {
