@@ -224,7 +224,6 @@ interface TestSessionRow {
   createdAt: number;
   updatedAt: number;
 }
-
 describe('db worker tx handlers', () => {
   beforeAll(async () => {
     workerBundleDir = fs.mkdtempSync(path.join(os.tmpdir(), 'xdt-db-tx-worker-'));
@@ -3669,4 +3668,3 @@ async function insertJob(
   );
   return Number(info.lastInsertRowid);
 }
-

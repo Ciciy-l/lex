@@ -292,7 +292,11 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
     }
   }
 
-  async function findUsableLocalBinary(asset?: VendorAsset, signal?: AbortSignal) {
+  async function findUsableLocalBinary(
+    asset?: VendorAsset,
+    signal?: AbortSignal,
+    enforceAssetVersion = false,
+  ) {
     if (asset && config.verifyInstalledBinary) {
       const binaryPath = getFinalBinPath(config.installSubdir, asset.version, deriveBinaryName());
       return await isInstalledForAsset(asset) ? { version: asset.version, binaryPath } : null;
@@ -301,7 +305,7 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
       ? findPreferredLocalBinary(
           config.installSubdir,
           deriveBinaryName(),
-          undefined,
+          enforceAssetVersion ? asset?.version : undefined,
           resolveLocalVersion,
           signal,
         )
@@ -315,6 +319,7 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
 
     async prepare(opts) {
       const onProgress = opts?.onProgress;
+      let requestedAsset: VendorAsset | undefined;
       try {
         const binaryName = deriveBinaryName();
         // 1. Read the build-pinned runtime snapshot. App update channels are a
@@ -342,6 +347,7 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
 
         // 3. 取 vendor asset
         const asset: VendorAsset | undefined = getVendorAsset(manifest, config.manifestField);
+        requestedAsset = asset;
         if (!asset) {
           emit({
             status: 'failed',
@@ -519,7 +525,7 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
         // otherwise bypass it after a transient download failure.
         const localFallback = config.optionalAsset
           ? null
-          : await findUsableLocalBinary(undefined, opts?.signal);
+          : await findUsableLocalBinary(requestedAsset, opts?.signal, true);
         if (localFallback) {
           emit({
             status: 'ready',

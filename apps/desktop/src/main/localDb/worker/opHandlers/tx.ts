@@ -2158,6 +2158,9 @@ function rewindCommit(db: Database.Database, args: unknown): void {
     typeof payload.preserveMessageUuid === 'string' ? payload.preserveMessageUuid : null;
   const sdkSessionId =
     typeof payload.sdkSessionId === 'string' && payload.sdkSessionId ? payload.sdkSessionId : null;
+  const nativeForkAnchorSessionMap = normalizeNativeForkAnchorSessionMap(
+    payload.nativeForkAnchorSessionMap,
+  );
   const requireLatestUser = payload.requireLatestUser === true;
   const now = expectNumber(payload.now, 'now');
   const expectedClearedAt =
@@ -2238,6 +2241,18 @@ function rewindCommit(db: Database.Database, args: unknown): void {
       );
     }
     for (const id of idsToRewind) updateMessage.run(now, id);
+    if (nativeForkAnchorSessionMap.size > 0) {
+      const updateAgentMeta = db.prepare('UPDATE messages SET agent_meta = ? WHERE id = ?');
+      const rewoundIds = new Set(idsToRewind);
+      for (const row of rows) {
+        if (rewoundIds.has(row.id)) continue;
+        const remapped = remapNativeForkAnchorAgentMeta(
+          row.agent_meta,
+          nativeForkAnchorSessionMap,
+        );
+        if (remapped !== row.agent_meta) updateAgentMeta.run(remapped, row.id);
+      }
+    }
     if (rewindSubagentByParent && rewindParentlessSubagentTail) {
       const rewoundIds = new Set(idsToRewind);
       const parentToolUseIds = new Set(
@@ -3464,6 +3479,31 @@ function remapForkedAgentMeta(
     if (mapped) next.nativeForkAnchor = { ...nativeForkAnchor, sdkSessionId: mapped };
   }
   return JSON.stringify(next);
+}
+
+function remapNativeForkAnchorAgentMeta(
+  raw: string | null,
+  nativeForkAnchorSessionMap: Map<string, string>,
+): string | null {
+  if (!raw || raw === 'null') return raw;
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return raw;
+  }
+  const anchor = parsed.nativeForkAnchor;
+  if (
+    parsed.turnCompleted !== true ||
+    !isRecord(anchor) ||
+    anchor.agentKind !== 'codex' ||
+    anchor.kind !== 'turn' ||
+    typeof anchor.id !== 'string' ||
+    !anchor.id ||
+    typeof anchor.sdkSessionId !== 'string'
+  ) return raw;
+  const mapped = nativeForkAnchorSessionMap.get(anchor.sdkSessionId);
+  return mapped ? JSON.stringify({ ...parsed, nativeForkAnchor: { ...anchor, sdkSessionId: mapped } }) : raw;
 }
 
 function normalizeStringSet(value: unknown, label: string): Set<string> {

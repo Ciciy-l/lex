@@ -4,6 +4,7 @@ import path from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { create as createTar } from 'tar';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import codexPackageLatest from '../../../../../../tools/codex-package/latest.json';
 
 const mocks = vi.hoisted(() => ({
   download: vi.fn(),
@@ -106,6 +107,9 @@ describe('fresh-install runtime bootstrap', () => {
     ).toBe(true);
     expect(fs.existsSync(claudeResult.binaryPath)).toBe(true);
     expect(fs.existsSync(codexResult.binaryPath)).toBe(true);
+    expect(codexResult.binaryPath).toContain(
+      path.join(codexPackageLatest.version, 'bin'),
+    );
     expect(mocks.fetchAppManifest).not.toHaveBeenCalled();
   });
 
@@ -129,6 +133,9 @@ describe('fresh-install runtime bootstrap', () => {
 
       expect(claude.ready, JSON.stringify(claude)).toBe(true);
       expect(codex.ready, JSON.stringify(codex)).toBe(true);
+      expect(codex.path).toContain(
+        path.join('codex-package', codexPackageLatest.version, 'bin'),
+      );
       expect(mocks.fetchAppManifest).not.toHaveBeenCalled();
     } finally {
       getPathSpy.mockRestore();

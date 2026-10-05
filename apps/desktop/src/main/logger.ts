@@ -47,8 +47,6 @@ import { app } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import util from 'node:util';
-import { BoundedLogWriter } from './bounded-log-writer.js';
-import { CcDebugRawTailer } from './cc-debug-raw-tailer.js';
 
 import { LOG_RETENTION_DAYS } from '../shared/logRetention';
 import {
@@ -120,18 +118,6 @@ const SESSIONS_DIR = 'sessions';
 const MAX_OPEN_SESSION_SLOTS = 32;
 const sessionSlots = new Map<string, DailySlot>();
 let logRootDir = '';
-const agentLogWriter = new BoundedLogWriter();
-let droppedAgentRecords = 0;
-const ccDebugRawTailer = new CcDebugRawTailer(writeCcDebugLine);
-
-/** Called once per local CC process; release on that process's exit/error. */
-export function trackSessionCcDebugFile(file: string, sessionId = ''): () => void {
-  return ccDebugRawTailer.register(file, sessionId);
-}
-
-export function setCcDebugTailingEnabled(enabled: boolean): void {
-  ccDebugRawTailer.setEnabled(enabled);
-}
 
 // scope 路由: maker-host adapter 用 'maker' / 'maker/xxx' 作为根 scope,
 // renderer 转发会被加 'r:' 前缀, 所以 'r:maker' / 'r:maker/xxx' 也算。
@@ -577,10 +563,6 @@ function ensureDailySlot(slot: DailySlot, now: Date): void {
   slot.dateKey = key;
   try {
     slot.stream = fs.createWriteStream(dailyLogPath(slot, key), { flags: 'a' });
-    const stream = slot.stream;
-    stream.on('error', () => {
-      if (slot.stream === stream) slot.stream = null;
-    });
   } catch (err) {
     origStderr(`[logger] failed to open ${slot.prefix}${key}${slot.ext}: ${(err as Error).message}\n`);
     slot.stream = null;
@@ -649,35 +631,20 @@ function writeMainLine(line: string): void {
 
 // agent NDJSON 写入点: maker/proxy (经 emit) 与 cc-debug (经 writeCcDebugLine) 都汇到这里。
 // 有 sessionId → 写 sessions/<id>/<date>.ndjson; 无 → 写 logs 根 agent-<date>.ndjson。
-function writeAgentRecord(rec: Omit<AgentLogRecord, 'seq'>, retryable = false): boolean {
-  // Bound serialization too. Raw debug is already fragmented by the tailer.
-  const msg = rec.msg.length > 128 * 1024
-    ? `${rec.msg.slice(0, 128 * 1024)} [log record truncated]` : rec.msg;
-  const full = { ...rec, msg, seq: agentSeq, ...(droppedAgentRecords ? { droppedRecords: droppedAgentRecords } : {}) };
-  const line = `${JSON.stringify(full)}\n`;
-  const rejected = (): false => {
-    // Raw diagnostics remain on disk and the tailer retries; other synchronous
-    // producers cannot wait, so report omitted records on the next accepted one.
-    if (!retryable) droppedAgentRecords = Math.min(Number.MAX_SAFE_INTEGER, droppedAgentRecords + 1);
-    return false;
-  };
-  // Check before opening a new session stream: LRU eviction must not turn a
-  // saturated writer into an unbounded queue of pending open/close operations.
-  if (!agentLogWriter.canAccept(line)) return rejected();
+function writeAgentRecord(rec: Omit<AgentLogRecord, 'seq'>): void {
   const slot = rec.sessionId ? sessionAgentSlot(rec.sessionId) : agentSlot;
-  if (!slot) return rejected();
+  if (!slot) return;
   ensureDailySlot(slot, new Date(rec.ts));
-  if (!slot.stream || !agentLogWriter.write(slot.stream, line)) return rejected();
-  agentSeq++;
-  droppedAgentRecords = 0;
-  return true;
+  if (!slot.stream) return;
+  const full: AgentLogRecord = { ...rec, seq: agentSeq++ };
+  try { slot.stream.write(`${JSON.stringify(full)}\n`); } catch { /* stream broken — silent */ }
 }
 
 // cc 子进程 debug 行 (格式 "<UTC-ISO> [LEVEL] [scope?] msg") 解析归一化后汇入 agent 流。
 // 由 bootstrap-electron 的 cc-debug tailer 逐行调用, sessionId 来自 raw 文件所在的
 // sessions/<id>/ 目录 (per-session debugFile)。无 sessionId 时归根 agent 流。
 const CC_DEBUG_LINE_RE = /^(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s+\[(\w+)\]\s*(?:\[([^\]]+)\])?\s*([\s\S]*)$/;
-export function writeCcDebugLine(rawLine: string, sessionId = ''): boolean {
+export function writeCcDebugLine(rawLine: string, sessionId = ''): void {
   const m = CC_DEBUG_LINE_RE.exec(rawLine);
   let ts: number;
   let level: LogLevel;
@@ -695,7 +662,7 @@ export function writeCcDebugLine(rawLine: string, sessionId = ''): boolean {
     scope = 'cc';
     msg = rawLine;
   }
-  return writeAgentRecord({ ts, tz: -new Date(ts).getTimezoneOffset(), level, source: 'cc-debug', scope, sessionId, msg }, true);
+  writeAgentRecord({ ts, tz: -new Date(ts).getTimezoneOffset(), level, source: 'cc-debug', scope, sessionId, msg });
 }
 
 function emit(level: LogLevel, scope: string, args: unknown[]): void {

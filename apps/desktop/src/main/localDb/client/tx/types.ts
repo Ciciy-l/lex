@@ -1300,5 +1300,3 @@ export type DbTxResultByName = {
   'skillUsage.applyMutation': undefined;
   'session.importShare': { messageCount: number };
 };
-
-

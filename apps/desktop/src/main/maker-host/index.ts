@@ -122,7 +122,7 @@ import { createToolResultImageDescriptor } from '../vision-bridge/tool-result-im
 import * as blobStore from '../cindy-media/blobStore.js';
 import { buildPiVisionBridgeEnv } from '../vision-bridge/pi-vision-bridge-env.js';
 import { captureCodexLocalAuthPolicy, resolveVisionBackendRoute, setVisionGatewayKeyReader } from './provider-route.js';
-import { resolveSessionCcDebugFile, trackSessionCcDebugFile } from '../logger.js';
+import { resolveSessionCcDebugFile } from '../logger.js';
 import { resetProviderModelAutoRefreshCooldowns } from './provider-model-auto-refresh.js';
 import { getThinkingEnabledFromMemory } from './newMakerDefaultsCache.js';
 import { registerUsagePricing, clearUsagePricing } from './model-usage-pricing.js';
@@ -3488,4 +3488,3 @@ export async function shutdownLspServerPool(): Promise<void> {
 
 // re-exports for IPC layer
 export { desktopClaudeAuthAdapter, desktopCodexAuthAdapter };
-
