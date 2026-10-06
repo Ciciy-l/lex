@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  closeOwnedSharedTasksInJournal,
   closeSharedTasksInJournalForSession,
   createSharedTaskJournal,
   finalizePreparedSharedTasks,
@@ -64,6 +65,17 @@ describe('sharedTask authority journal', () => {
     expect(records.filter((item) => item.sessionId === 'session').every((item) => item.terminal)).toBe(true);
     expect(records.find((item) => item.sharedTaskId === 'other-share')?.terminal).toBe(false);
     expect(await closeSharedTasksInJournalForSession(writer, 'unshared')).toEqual([]);
+  });
+  it('closes only host-owned snapshots when no relay runtime is bound', async () => {
+    await journal.recordAuthority(snapshot());
+    await journal.recordAuthority({ ...snapshot(), sharedTaskId: 'foreign', ownerAccountId: 'other-owner' });
+    const writer = {
+      async exec(sql: string, params = []) { return db.prepare(sql).run(...params); },
+      async query<T>(sql: string, params: unknown[] = []) { return db.prepare(sql).all(...params) as T[]; },
+    };
+    await expect(closeOwnedSharedTasksInJournal(writer, 'owner', 'desktop')).resolves.toEqual(['sharedTask']);
+    expect((await journal.latest()).find((item) => item.sharedTaskId === 'sharedTask')?.terminal).toBe(true);
+    expect((await journal.latest()).find((item) => item.sharedTaskId === 'foreign')?.terminal).toBe(false);
   });
   it('retains membership changes and reads only the latest authority', async () => {
     expect(await journal.recordAuthority(snapshot())).toBe(true);

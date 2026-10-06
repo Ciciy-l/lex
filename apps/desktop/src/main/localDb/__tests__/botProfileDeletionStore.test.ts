@@ -44,9 +44,23 @@ describe('Bot profile deletion transaction', () => {
         status TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       );
+      CREATE TABLE shared_task_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        shared_task_id TEXT NOT NULL,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        revision INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        terminal INTEGER NOT NULL,
+        snapshot TEXT,
+        recorded_at INTEGER NOT NULL,
+        closure_token TEXT
+      );
+      CREATE UNIQUE INDEX shared_task_events_revision_idx
+        ON shared_task_events(shared_task_id, kind, revision);
       CREATE TABLE bot_session_links (
         bot_id TEXT NOT NULL REFERENCES bot_profiles(id) ON DELETE CASCADE,
-        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        role TEXT NOT NULL DEFAULT 'canonical'
       );
       CREATE TABLE messages (
         id TEXT PRIMARY KEY,
@@ -77,9 +91,13 @@ describe('Bot profile deletion transaction', () => {
         ('route', 'bot', 'archived', 1),
         ('ordinary', 'desktop', 'active', 1);
       INSERT INTO messages VALUES ('message-1', 'canonical', 'Retained transcript');
-      INSERT INTO bot_session_links VALUES
+      INSERT INTO bot_session_links (bot_id, session_id) VALUES
         ('bot-1', 'canonical'),
         ('bot-1', 'route');
+      INSERT INTO shared_task_events
+        (shared_task_id, session_id, revision, kind, terminal, snapshot, recorded_at)
+      VALUES ('shared-canonical', 'canonical', 1, 'authority', 0,
+        '{"sharedTaskId":"shared-canonical","sessionId":"canonical","ownerAccountId":"owner-a","hostDeviceId":"host-a","revision":1,"status":"active","guests":[]}', 1);
       INSERT INTO media_refs VALUES
         ('avatar-ref', 'bot-avatar', 'bot-1'),
         ('other-ref', 'bot-avatar', 'bot-2');
@@ -211,6 +229,8 @@ describe('Bot profile deletion transaction', () => {
       .toEqual({ source: 'desktop', status: 'archived' });
     expect(sqlite.prepare("SELECT source, status FROM sessions WHERE id = 'route'").get())
       .toEqual({ source: 'desktop', status: 'archived' });
+    expect(sqlite.prepare("SELECT kind, terminal, closure_token FROM shared_task_events WHERE shared_task_id = 'shared-canonical' AND kind = 'local-close'").get())
+      .toEqual({ kind: 'local-close', terminal: 1, closure_token: null });
     expect(sqlite.prepare('SELECT * FROM messages').all()).toEqual([
       { id: 'message-1', session_id: 'canonical', content: 'Retained transcript' },
     ]);

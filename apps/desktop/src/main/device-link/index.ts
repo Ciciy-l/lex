@@ -146,6 +146,7 @@ import {
   setContactsDeviceLinkOwnerActive,
 } from '../contacts-sync/driver';
 import { invokeWithClosedLinkRecovery, requiresSessionLink } from './linkRecovery';
+import { startSharedTaskRuntime, stopSharedTaskRuntime } from './sharedTaskRuntime.js';
 import {
   createResponsivenessTracker,
   isDeviceResponsivenessProbeEligible,
@@ -164,6 +165,18 @@ const relayDnsLookup = createDnsFallbackLookup({ log });
 // localhost:3335)。惰性函数而非模块级常量——远程清单在 app.ready 内解析。
 // 注意:不回退到 apiBaseUrl —— device-link 已从主 server 摘除,主 server 没有这组端点。
 const WS_PATH = '/api/device-link/ws';
+
+function startSharedTaskRuntimeForCurrentClient(): void {
+  const currentClient = client;
+  if (!currentClient) return;
+  // S3a restores profile-local host state only. Guest relay dispatch and
+  // capability publication remain closed until the later host stage.
+  startSharedTaskRuntime({
+    client: currentClient,
+    revoke: () => undefined,
+    changed: () => undefined,
+  });
+}
 
 /** relay REST base(media presign / devices 等);供 mediaTransfer / ipc 复用。 */
 export function deviceLinkApiBase(): string {
@@ -1080,6 +1093,7 @@ export function initDeviceLinkService(options: DeviceLinkServiceOptions = {}): v
       // 认领成功但期间已登出:不连(登出路径已 stop 仲裁,这里是 tick 竞态兜底)
       if (!authManager.getAuthState().isAuthenticated) return;
       linkTornDown = false;
+      startSharedTaskRuntimeForCurrentClient();
       client?.start();
       stopNetworkWatch?.();
       stopNetworkWatch = watchNetworkChanges(() => {
@@ -1254,6 +1268,7 @@ export function getMobileNotifyGeneration(): number {
  * 同进程换账号登录还会把上一账号的控制端串到新账号。
  */
 function teardownActiveLink(): void {
+  void stopSharedTaskRuntime().catch((error) => log.warn('sharedTask runtime teardown failed', error));
   remoteCredentialHost.dispose();
   stopNetworkWatch?.();
   stopNetworkWatch = null;
@@ -1311,6 +1326,12 @@ function cancelSubscriptionReplay(deviceId: string): void {
 
 export function getDeviceLinkStatus(): DeviceLinkStatus {
   return client?.getStatus() ?? 'stopped';
+}
+
+/** Retry host-runtime startup after a profile DB becomes ready. */
+export function ensureSharedTaskRuntime(): void {
+  if (!arbiter?.isOwner() || !authManager.getAuthState().isAuthenticated) return;
+  startSharedTaskRuntimeForCurrentClient();
 }
 
 /** 当前被熔断判定为「无响应」的目标设备(控制端本地判定,供 getState / UI 镜像)。 */

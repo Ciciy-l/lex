@@ -75,6 +75,24 @@ export async function closeSharedTasksInJournalForSession(db: Pick<DbClient, 'ex
   return rows.map((row) => row.shared_task_id);
 }
 
+/** Close host-owned journal snapshots even when no relay runtime is bound. */
+export async function closeOwnedSharedTasksInJournal(
+  db: Pick<DbClient, 'exec' | 'query'>,
+  ownerAccountId: string,
+  hostDeviceId: string,
+): Promise<string[]> {
+  const journal = createSharedTaskJournal(db);
+  const ids: string[] = [];
+  for (const item of await journal.latest()) {
+    if (item.terminal || !item.snapshot ||
+        item.snapshot.ownerAccountId !== ownerAccountId ||
+        item.snapshot.hostDeviceId !== hostDeviceId) continue;
+    await journal.close(item.snapshot);
+    ids.push(item.sharedTaskId);
+  }
+  return ids;
+}
+
 export interface SharedTaskJournalEntry {
   sharedTaskId: string;
   sessionId: string;

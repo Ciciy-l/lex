@@ -57,6 +57,16 @@ const cindyMediaMock = vi.hoisted(() => ({
 const legacyImageMock = vi.hoisted(() => ({
   removeSessionCalls: [] as string[],
 }));
+const closeSharedTaskForTask = vi.hoisted(() => vi.fn());
+const prepareSharedTaskClosureForTask = vi.hoisted(() => vi.fn());
+const rollbackPreparedSharedTaskClosure = vi.hoisted(() => vi.fn());
+const finalizePreparedSharedTaskClosure = vi.hoisted(() => vi.fn());
+vi.mock('../../device-link/sharedTaskRuntime.js', () => ({
+  closeSharedTaskForTask,
+  prepareSharedTaskClosureForTask,
+  rollbackPreparedSharedTaskClosure,
+  finalizePreparedSharedTaskClosure,
+}));
 
 vi.mock('electron', () => ({
   app: { getPath: () => tmpRoot, getVersion: () => '9.9.9' },
@@ -461,6 +471,10 @@ async function writeBundleFile(bytes: Buffer, password?: string): Promise<string
 
 describe('sessionShareImport', () => {
   beforeEach(async () => {
+    closeSharedTaskForTask.mockReset().mockResolvedValue(undefined);
+    prepareSharedTaskClosureForTask.mockReset().mockResolvedValue(null);
+    rollbackPreparedSharedTaskClosure.mockReset().mockResolvedValue(undefined);
+    finalizePreparedSharedTaskClosure.mockReset().mockResolvedValue(undefined);
     dbMock.conflictRow = null;
     dbMock.conflictForResumeId = null;
     dbMock.conflictGraphRows = [];

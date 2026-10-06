@@ -4,6 +4,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createServer } from 'node:http';
 
 const mocks = vi.hoisted(() => ({
   netFetch: vi.fn(),
@@ -202,6 +203,38 @@ describe('serverApiFetch', () => {
       }),
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED', statusCode: 401 });
     expect(mocks.invalidateSession).toHaveBeenCalledWith('resource-unauthorized-after-refresh');
+  });
+
+  it('localhost fixture 覆盖重试前边界，并让旧 token 401 不影响新会话', async () => {
+    let requestCount = 0;
+    const server = createServer((_request, response) => {
+      requestCount += 1;
+      response.statusCode = 401;
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({ error: { code: requestCount === 1 ? 'TOKEN_EXPIRED' : 'UNAUTHORIZED' } }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('localhost fixture did not bind');
+    mocks.getAccessToken.mockReturnValueOnce('old-token').mockReturnValueOnce('new-token');
+    mocks.refresh.mockResolvedValue(true);
+    mocks.netFetch.mockImplementation((url: string, init: RequestInit) => fetch(url, init));
+    const beforeAttempt = vi.fn();
+    try {
+      await expect(
+        serverApiFetch('/api/device-link/shared-tasks', {
+          baseUrl: `http://127.0.0.1:${address.port}`,
+          skipSessionInvalidation: true,
+          beforeAttempt,
+        }),
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED', statusCode: 401 });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+    expect(requestCount).toBe(2);
+    expect(mocks.refresh).toHaveBeenCalledTimes(1);
+    expect(beforeAttempt).toHaveBeenCalledTimes(3);
+    expect(mocks.invalidateSession).not.toHaveBeenCalled();
   });
 
   it.each([
