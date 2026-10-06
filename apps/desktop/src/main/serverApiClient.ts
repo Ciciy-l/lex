@@ -160,6 +160,10 @@ export async function serverApiFetch<T>(apiPath: string, opts: ApiFetchOptions):
       (errCode === 'ACCOUNT_UNAVAILABLE' ||
         (refreshedAndRetried && isRefreshableUnauthorizedCode(errCode)))
     ) {
+      // Session invalidation mutates global auth state. Recheck the request's
+      // captured owner/region immediately before that side effect so an old
+      // in-flight 401 cannot log out the account that replaced it.
+      opts.beforeAttempt?.();
       void authManager.invalidateSession(
         errCode === 'ACCOUNT_UNAVAILABLE'
           ? 'account-unavailable'

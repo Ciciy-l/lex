@@ -145,14 +145,25 @@ export async function closeSharedTasksBeforeLogout(): Promise<void> {
   const outgoing = binding;
   const db = getCurrentDbClientSnapshot();
   if (!db) return;
-  const ownerAccountId = outgoing?.ownerAccountId ?? getCurrentUserId();
+  // A stopped binding remains available while the next profile DB is being
+  // opened. Never let that stale object supply the owner or region for the
+  // current database: use the DbClient snapshot as the profile authority and
+  // only reuse host-local state when every identity edge still matches.
+  const ownerAccountId = db.userId || getCurrentUserId();
   if (!ownerAccountId) return;
-  const region = outgoing?.region ?? getActiveAuthRealm();
+  const region = getActiveAuthRealm();
+  const bindingMatchesCurrentDb = Boolean(
+    outgoing &&
+    outgoing.database === db.client &&
+    outgoing.dbEpoch === db.clientEpoch &&
+    outgoing.ownerAccountId === ownerAccountId &&
+    outgoing.region === region,
+  );
   const close = captureSharedTaskBoundaryClose(ownerAccountId, region);
-  const ids = outgoing && outgoing.dbEpoch === db.clientEpoch && outgoing.database === db.client
+  const ids = bindingMatchesCurrentDb && outgoing
     ? await outgoing.host.closeLocallyForBoundary()
     : await closeOwnedSharedTasksInJournal(db.client, ownerAccountId, getDeviceId());
-  if (outgoing && outgoing.dbEpoch === db.clientEpoch && outgoing.database === db.client) {
+  if (bindingMatchesCurrentDb && outgoing) {
     await outgoing.stop();
   }
   if (close) {
@@ -167,9 +178,12 @@ export async function closeSharedTasksBeforeLogout(): Promise<void> {
 export async function closeSharedTaskForTask(sessionId: string, database: unknown): Promise<void> {
   const db = getCurrentDbClientSnapshot();
   if (!db || db.client !== database) return;
-  const outgoing = binding?.database === db.client && binding.dbEpoch === db.clientEpoch ? binding : null;
-  const ownerAccountId = getCurrentUserId();
-  const close = ownerAccountId ? captureSharedTaskBoundaryClose(ownerAccountId, getActiveAuthRealm()) : null;
+  const candidate = binding;
+  const ownerAccountId = db.userId || getCurrentUserId();
+  const region = getActiveAuthRealm();
+  const outgoing = candidate && candidate.database === db.client && candidate.dbEpoch === db.clientEpoch &&
+    candidate.ownerAccountId === ownerAccountId && candidate.region === region ? candidate : null;
+  const close = ownerAccountId ? captureSharedTaskBoundaryClose(ownerAccountId, region) : null;
   const localIds = outgoing ? await outgoing.host.closeLocallyForBoundary(sessionId) : [];
   const journalIds = await closeSharedTasksInJournalForSession(db.client, sessionId);
   const ids = new Set([...localIds, ...journalIds]);

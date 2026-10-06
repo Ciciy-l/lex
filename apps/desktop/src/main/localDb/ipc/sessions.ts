@@ -246,6 +246,16 @@ async function finalizeSharedTaskClosure(
   await finalizePreparedSharedTaskClosure(dbClient, prepared);
 }
 
+function assertSharedTaskClosureLeaseAvailable(
+  prepared: SharedTaskClosurePreparation | null,
+): void {
+  // A terminal local-close is already durable and is not a competing lease;
+  // only another process's unfinished prepare must block the legacy fallback.
+  if (prepared?.status === 'occupied' || prepared?.lease === 'occupied') {
+    throwIpcError('PRECONDITION_FAILED', 'Shared task closure is already pending');
+  }
+}
+
 async function requestWorktreeRecycle(
   sessionId: string,
   resources: readonly string[] = [],
@@ -1930,6 +1940,7 @@ export async function updateSessionInDb(
         } else {
           const prepared = terminal ? await prepareSharedTaskClosure(sid, dbClient) : null;
           try {
+            assertSharedTaskClosureLeaseAvailable(prepared);
             await writeSessionPatch(db, sid, setObj, p.status);
           } catch (error) {
             await rollbackSharedTaskClosure(dbClient, prepared);
@@ -2134,6 +2145,7 @@ export async function patchSessionMetaInDb(
     } else {
       const prepared = terminal ? await prepareSharedTaskClosure(sessionId, dbClient) : null;
       try {
+        assertSharedTaskClosureLeaseAvailable(prepared);
         await writeSessionPatch(db, sessionId, setObj, patch.status);
       } catch (error) {
         await rollbackSharedTaskClosure(dbClient, prepared);
@@ -2473,6 +2485,7 @@ export async function deleteBotProfileAndDetachSessionsInDb(
   try {
     for (const id of ids) {
       const closure = await prepareSharedTaskClosure(id, dbClient);
+      assertSharedTaskClosureLeaseAvailable(closure);
       if (closure) prepared.push(closure);
     }
     committed = ids.length > 0 ? await withSessionRouteLocks(ids, commitDeletion) : await commitDeletion();

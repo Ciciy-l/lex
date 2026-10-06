@@ -24,7 +24,6 @@ import { isClaudeProjectKeyExact, sanitizeClaudeProjectKey } from '@cindy/maker-
 import { app } from 'electron';
 
 import type { DbClient } from '../localDb/client/DbClient.js';
-import type { PreparedSharedTaskClosure } from '../localDb/sharedTasks.js';
 import { isDbTransportOutcomeUnknown } from '../localDb/client/DbTransport.js';
 import type {
   SessionImportShareMessageRow,
@@ -94,30 +93,6 @@ interface ShareDraft {
 }
 
 const drafts = new Map<string, ShareDraft>();
-
-async function prepareSharedTaskClosureForImport(
-  dbClient: DbClient,
-  sessionId: string,
-): Promise<PreparedSharedTaskClosure | null> {
-  const { prepareSharedTaskClosureForTask } = await import('../device-link/sharedTaskRuntime.js');
-  return prepareSharedTaskClosureForTask(sessionId, dbClient);
-}
-
-async function rollbackSharedTaskClosureForImport(
-  dbClient: DbClient,
-  prepared: PreparedSharedTaskClosure,
-): Promise<void> {
-  const { rollbackPreparedSharedTaskClosure } = await import('../device-link/sharedTaskRuntime.js');
-  await rollbackPreparedSharedTaskClosure(dbClient, prepared);
-}
-
-async function finalizeSharedTaskClosureForImport(
-  dbClient: DbClient,
-  prepared: PreparedSharedTaskClosure,
-): Promise<void> {
-  const { finalizePreparedSharedTaskClosure } = await import('../device-link/sharedTaskRuntime.js');
-  await finalizePreparedSharedTaskClosure(dbClient, prepared);
-}
 
 function sweepExpiredDrafts(): void {
   const now = Date.now();
@@ -652,7 +627,6 @@ export async function commitShareImport(
   const finalTxState: {
     outcome: 'not-started' | 'in-flight' | 'committed';
   } = { outcome: 'not-started' };
-  const preparedSharedTaskClosures: PreparedSharedTaskClosure[] = [];
 
   try {
     // 0. 覆盖导入命中的旧 session 不在编排层提前软删。patchSessionMetaInDb
@@ -971,13 +945,6 @@ export async function commitShareImport(
       conflictExisting.map((session) => session.id),
       async () => {
         assertStillValid();
-        // The overwrite transaction soft-deletes the old graph. A reversible
-        // local-close fence is acquired on the same profile immediately before
-        // that transaction, then finalized only after the replacement commits.
-        for (const existing of conflictExisting) {
-          const prepared = await prepareSharedTaskClosureForImport(dbClient, existing.id);
-          if (prepared) preparedSharedTaskClosures.push(prepared);
-        }
         finalTxState.outcome = 'in-flight';
         await dbClient.tx('session.importShare', {
           session: buildSessionRow({
@@ -999,18 +966,27 @@ export async function commitShareImport(
           ...(orcaTxArgs ? { orca: orcaTxArgs } : {}),
         });
         finalTxState.outcome = 'committed';
-        for (const prepared of preparedSharedTaskClosures) {
-          await finalizeSharedTaskClosureForImport(dbClient, prepared);
-        }
-        if (preparedSharedTaskClosures.length > 0) {
-          const { closeSharedTaskForTask } = await import('../device-link/sharedTaskRuntime.js');
-          for (const existing of conflictExisting) await closeSharedTaskForTask(existing.id, dbClient);
-        }
-        // The transaction is now durable. Consume the in-memory draft before
-        // revalidating the owner so a stale completion cannot be retried into
-        // another profile and duplicate the already committed import.
+        // session.importShare closes replaced sessions in the same SQLite
+        // transaction. Consume the draft at that durable commit edge before
+        // any best-effort relay cleanup can fail or the owner can switch.
         drafts.delete(opts.draftId);
-        assertStillValid();
+        if (conflictExisting.length > 0) {
+          try {
+            const { closeSharedTaskForTask } = await import('../device-link/sharedTaskRuntime.js');
+            for (const existing of conflictExisting) {
+              await closeSharedTaskForTask(existing.id, dbClient).catch((error) => {
+                log.warn('shared-task import relay cleanup deferred', {
+                  sessionId: existing.id,
+                  error: error instanceof Error ? error.message : String(error),
+                });
+              });
+            }
+          } catch (error) {
+            log.warn('shared-task import relay cleanup unavailable', {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
       },
     );
 
@@ -1061,13 +1037,6 @@ export async function commitShareImport(
       });
     } else if (finalTxState.outcome !== 'committed') {
       await rollback();
-      for (const prepared of preparedSharedTaskClosures) {
-        await rollbackSharedTaskClosureForImport(dbClient, prepared).catch((rollbackError) => {
-          log.warn('shared-task import closure rollback failed', {
-            error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
-          });
-        });
-      }
     }
     const code = (err as { code?: unknown }).code;
     if (typeof code === 'string' && code !== 'ALREADY_EXISTS') throw err;

@@ -33,12 +33,14 @@ export async function prepareSharedTasksForSession(
     return { sessionId, marker, rowIds: [], status: 'none', lease: 'none' };
   }
   await db.exec(PREPARE_SHARED_TASKS_FOR_SESSION_SQL, [Date.now(), marker, sessionId]);
-  const rows = await db.query<{ id: number }>(
-    "SELECT id FROM shared_task_events WHERE session_id = ? AND kind = 'local-close' AND revision = 0 AND terminal = 0 AND closure_token = ?",
-    [sessionId, marker],
+  const rows = await db.query<{ id: number; terminal: number; closure_token: string | null }>(
+    "SELECT id, terminal, closure_token FROM shared_task_events WHERE session_id = ? AND kind = 'local-close' AND revision = 0",
+    [sessionId],
   );
-  const status = rows.length > 0 ? 'acquired' : 'occupied';
-  return { sessionId, marker, rowIds: rows.map((row) => row.id), status, lease: status };
+  const acquired = rows.filter((row) => row.terminal === 0 && row.closure_token === marker);
+  const hasTerminal = rows.some((row) => row.terminal === 1);
+  const status = acquired.length > 0 ? 'acquired' : hasTerminal ? 'none' : 'occupied';
+  return { sessionId, marker, rowIds: acquired.map((row) => row.id), status, lease: status };
 }
 
 /** Remove only a prepare whose terminal session write did not commit. */
