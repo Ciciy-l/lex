@@ -54,9 +54,18 @@ interface Entry {
   presigned: PresignPutResponse;
   extension: string;
   expiresAtMs: number;
-  state: 'prepared' | 'in-flight' | 'committed';
+  state: 'prepared' | 'in-flight' | 'expired' | 'committed';
   expired: boolean;
   timer: ReturnType<typeof setTimeout>;
+  cleanupPromise?: Promise<void>;
+  cleanupAttempts: number;
+}
+
+interface PendingCleanup {
+  receipt: string;
+  key: string;
+  attempts: number;
+  promise?: Promise<void>;
 }
 
 interface PendingPrepare {
@@ -67,6 +76,7 @@ interface PendingPrepare {
 
 const MAX_PER_PEER = 64;
 const MAX_ENTRIES = 512;
+const MAX_PENDING_CLEANUP = 512;
 const MAX_BYTES = 2 * 1024 * 1024 * 1024;
 const DEFAULT_TTL_MS = 10 * 60_000;
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -87,16 +97,22 @@ function validContext(context: BotGroupAttachmentUploadContext): void {
 }
 
 function sameBinding(left: BotGroupAttachmentUploadContext, right: BotGroupAttachmentUploadContext): boolean {
-  // `client` is the connection identity captured by Device Link.  Tests and
-  // local callers may omit it, but when both sides provide it a new connection
-  // must not inherit an old receipt.
+  // `client` is the connection identity captured by Device Link.  A caller may
+  // omit it only when the receipt itself was created without one; once a grant
+  // carries a client, omitting it must not weaken the binding.
   return left.controllerDeviceId === right.controllerDeviceId
     && left.groupId === right.groupId
     && left.intent === right.intent
     && left.attachmentId === right.attachmentId
     && left.ownerToken === right.ownerToken
     && left.linkEpoch === right.linkEpoch
-    && (left.client === undefined || right.client === undefined || left.client === right.client);
+    && (left.client === undefined && right.client === undefined || left.client === right.client);
+}
+
+function sameContent(left: BotGroupAttachmentUploadContext, right: BotGroupAttachmentUploadContext): boolean {
+  return left.size === right.size
+    && left.sha256 === right.sha256
+    && left.mimeType === right.mimeType;
 }
 
 function expiresAtMs(value: string): number | null {
@@ -111,6 +127,10 @@ export function createBotGroupAttachmentUploadRegistry(deps: {
   ttlMs?: number;
 } = {}) {
   const entries = new Map<string, Entry>();
+  // Cleanup failures must not turn an already durable group message into a
+  // failed send. Keep only opaque receipt-indexed records in this bounded map;
+  // raw relay keys never leave this process or appear in logs.
+  const pendingCleanup = new Map<string, PendingCleanup>();
   // Keep a single presign request for one stable intent.  The prepare call can
   // be replayed after a lost ACK, and two concurrent replays must not create
   // two remote objects before either one reaches the registry.
@@ -126,9 +146,63 @@ export function createBotGroupAttachmentUploadRegistry(deps: {
     if (entries.get(entry.receipt) === entry) entries.delete(entry.receipt);
   };
 
-  const releaseSource = async (entry: Entry): Promise<void> => {
-    removeEntry(entry);
-    await release(entry.presigned.key);
+  const attemptEntryCleanup = (entry: Entry): Promise<void> => {
+    if (entry.cleanupPromise) return entry.cleanupPromise;
+    const cleanup = (async () => {
+      try {
+        await release(entry.presigned.key);
+        if (entries.get(entry.receipt) === entry && entry.state === 'expired') removeEntry(entry);
+      } catch (error) {
+        entry.cleanupAttempts += 1;
+        throw error;
+      } finally {
+        entry.cleanupPromise = undefined;
+      }
+    })();
+    entry.cleanupPromise = cleanup;
+    return cleanup;
+  };
+
+  const attemptPendingCleanup = (record: PendingCleanup): Promise<void> => {
+    if (record.promise) return record.promise;
+    const cleanup = (async () => {
+      try {
+        await release(record.key);
+        if (pendingCleanup.get(record.receipt) === record) pendingCleanup.delete(record.receipt);
+      } catch {
+        // Best effort only: the durable message/ref is already committed. Keep
+        // the bounded opaque record so a later registry operation can retry.
+        record.attempts += 1;
+      } finally {
+        record.promise = undefined;
+      }
+    })();
+    record.promise = cleanup;
+    return cleanup;
+  };
+
+  const queuePendingCleanup = (receipt: string, key: string): void => {
+    const existing = pendingCleanup.get(receipt);
+    if (existing) {
+      void attemptPendingCleanup(existing).catch(() => undefined);
+      return;
+    }
+    // A relay object has its own server-side expiry. Never let local cleanup
+    // bookkeeping grow without bound if the remote endpoint stays unavailable.
+    if (pendingCleanup.size >= MAX_PENDING_CLEANUP) return;
+    const record: PendingCleanup = { receipt, key, attempts: 0 };
+    pendingCleanup.set(receipt, record);
+    void attemptPendingCleanup(record).catch(() => undefined);
+  };
+
+  const expirePrepared = (entry: Entry): void => {
+    if (entry.state === 'committed' || entry.state === 'in-flight') return;
+    entry.expired = true;
+    entry.state = 'expired';
+    clearTimeout(entry.timer);
+    // Timer/find cleanup is deliberately detached but always caught. A failed
+    // delete leaves the expired entry available for an explicit retry.
+    void attemptEntryCleanup(entry).catch(() => undefined);
   };
 
   const scheduleExpiry = (entry: Entry): void => {
@@ -143,7 +217,7 @@ export function createBotGroupAttachmentUploadRegistry(deps: {
         entry.expired = true;
         return;
       }
-      void releaseSource(entry);
+      expirePrepared(entry);
     }, Math.max(1, Math.min(ttl, Math.max(1, entry.expiresAtMs - now()))));
   };
 
@@ -161,13 +235,19 @@ export function createBotGroupAttachmentUploadRegistry(deps: {
     return total;
   };
 
+  const retryPendingCleanup = async (): Promise<void> => {
+    await Promise.all([...pendingCleanup.values()].map((record) => attemptPendingCleanup(record)));
+  };
+
   const prepare = async (context: BotGroupAttachmentUploadContext, ext: string): Promise<BotGroupAttachmentUploadGrant> => {
+    void retryPendingCleanup().catch(() => undefined);
     validContext(context);
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/.test(ext)) throw invalid('INVALID_EXT');
     context.assertCurrent?.();
     for (const entry of entries.values()) {
       if (entry.context.intent === context.intent && entry.context.attachmentId === context.attachmentId) {
-        if (!sameBinding(entry.context, context) || entry.extension !== ext || entry.expired || entry.state === 'committed') throw invalid('INTENT_REUSED');
+        if (!sameBinding(entry.context, context) || !sameContent(entry.context, context)
+          || entry.extension !== ext || entry.expired || entry.state === 'committed') throw invalid('INTENT_REUSED');
         context.assertCurrent?.();
         return {
           receipt: entry.receipt, putUrl: entry.presigned.putUrl, expiresAt: new Date(entry.expiresAtMs).toISOString(),
@@ -180,6 +260,7 @@ export function createBotGroupAttachmentUploadRegistry(deps: {
       item.context.intent === context.intent
       && item.context.attachmentId === context.attachmentId
       && sameBinding(item.context, context)
+      && sameContent(item.context, context)
       && item.extension === ext);
     if (matchingPending) {
       const grant = await matchingPending.promise;
@@ -216,7 +297,7 @@ export function createBotGroupAttachmentUploadRegistry(deps: {
         entry = {
           receipt: randomBytes(32).toString('base64url'),
           hostInstanceId, context: { ...context }, extension: ext, presigned: response, expiresAtMs: expires,
-          state: 'prepared', expired: false, timer: setTimeout(() => undefined, 1),
+          state: 'prepared', expired: false, cleanupAttempts: 0, timer: setTimeout(() => undefined, 1),
         };
         entries.set(entry.receipt, entry);
         scheduleExpiry(entry);
@@ -246,17 +327,23 @@ export function createBotGroupAttachmentUploadRegistry(deps: {
     }
   };
 
-  const find = (receipt: string, context: BotGroupAttachmentUploadContext): Entry => {
+  const find = (receipt: string, context: BotGroupAttachmentUploadContext, allowExpiredCleanup = false): Entry => {
     if (!receipt || receipt.length > 256) throw invalid('INVALID_RECEIPT');
     const entry = entries.get(receipt);
-    if (!entry || entry.hostInstanceId !== hostInstanceId || entry.expired || entry.state === 'committed') throw invalid('RECEIPT_EXPIRED');
+    if (!entry || entry.hostInstanceId !== hostInstanceId) throw invalid('RECEIPT_EXPIRED');
+    // Binding must be checked before expiry cleanup so a wrong peer/owner can
+    // never trigger deletion of another controller's relay object.
+    if (!sameBinding(entry.context, context) || !sameContent(entry.context, context)) throw invalid('RECEIPT_BINDING');
+    context.assertCurrent?.();
     if (now() >= entry.expiresAtMs) {
-      entry.expired = true;
-      void releaseSource(entry);
+      if (entry.state === 'in-flight') entry.expired = true;
+      else expirePrepared(entry);
+      if (!allowExpiredCleanup) throw invalid('RECEIPT_EXPIRED');
+    }
+    if (entry.expired || entry.state === 'expired' || entry.state === 'committed') {
+      if (allowExpiredCleanup && entry.state === 'expired') return entry;
       throw invalid('RECEIPT_EXPIRED');
     }
-    if (!sameBinding(entry.context, context) || entry.context.size !== context.size || entry.context.sha256 !== context.sha256) throw invalid('RECEIPT_BINDING');
-    context.assertCurrent?.();
     return entry;
   };
 
@@ -276,12 +363,22 @@ export function createBotGroupAttachmentUploadRegistry(deps: {
         settled = true;
         entry.state = 'committed';
         removeEntry(entry);
-        await release(entry.presigned.key);
+        // Message/refs are already durable at this point. Relay deletion is
+        // best-effort and retained for a bounded retry; it cannot reject the
+        // caller or trigger a resend.
+        queuePendingCleanup(entry.receipt, entry.presigned.key);
       },
       rollback: async () => {
         if (settled) return;
         settled = true;
         if (entries.get(entry.receipt) !== entry) return;
+        if (entry.expired || now() >= entry.expiresAtMs) {
+          entry.expired = true;
+          entry.state = 'expired';
+          clearTimeout(entry.timer);
+          void attemptEntryCleanup(entry).catch(() => undefined);
+          return;
+        }
         entry.state = 'prepared';
         entry.expired = false;
         scheduleExpiry(entry);
@@ -290,12 +387,22 @@ export function createBotGroupAttachmentUploadRegistry(deps: {
   };
 
   const cancel = async (receipt: string, context: BotGroupAttachmentUploadContext): Promise<void> => {
-    const entry = find(receipt, context);
+    const entry = find(receipt, context, true);
+    if (entry.state === 'expired') {
+      // A failed remote delete leaves this same-bound receipt as a retryable
+      // cleanup record, never as a reusable upload authorization.
+      await attemptEntryCleanup(entry);
+      return;
+    }
     if (entry.state !== 'prepared') throw invalid('NOT_CANCELABLE');
-    await releaseSource(entry);
+    expirePrepared(entry);
+    await attemptEntryCleanup(entry);
   };
 
-  return { hostInstanceId, prepare, consume, cancel, size: () => entries.size };
+  return {
+    hostInstanceId, prepare, consume, cancel, size: () => entries.size,
+    pendingCleanupSize: () => pendingCleanup.size, retryPendingCleanup,
+  };
 }
 
 export type BotGroupAttachmentUploadRegistry = ReturnType<typeof createBotGroupAttachmentUploadRegistry>;

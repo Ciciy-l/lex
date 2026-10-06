@@ -211,4 +211,107 @@ describe('host-issued group attachment upload receipts', () => {
     expect(registry.size()).toBe(0);
     expect(h.removed).toEqual([key]);
   });
+
+  it('does not let an intent replay change content or weaken the client binding', async () => {
+    const registry = createBotGroupAttachmentUploadRegistry({
+      presignPut: h.presign!,
+      removeRemote: async (key) => { h.removed.push(key); },
+    });
+    const upload = context({ client: {} });
+    const grant = await registry.prepare(upload, 'png');
+
+    for (const changed of [
+      { size: 10 },
+      { sha256: 'b'.repeat(64) },
+      { mimeType: 'application/pdf' },
+      { client: undefined },
+    ]) {
+      await expect(registry.prepare({ ...upload, ...changed }, 'png'))
+        .rejects.toThrow('BOT_GROUP_UPLOAD_INTENT_REUSED');
+    }
+    await expect(registry.prepare(upload, 'jpg'))
+      .rejects.toThrow('BOT_GROUP_UPLOAD_INTENT_REUSED');
+    await registry.cancel(grant.receipt, upload);
+    expect(h.removed).toHaveLength(1);
+  });
+
+  it('keeps an expired in-flight source until the original lease settles', async () => {
+    let clock = Date.now();
+    const key = `${baseUrl}/objects/in-flight.png`;
+    const registry = createBotGroupAttachmentUploadRegistry({
+      presignPut: async () => ({ putUrl: key, key, expiresAt: new Date(clock + 10_000).toISOString() }),
+      removeRemote: async (released) => { h.removed.push(released); },
+      now: () => clock,
+      ttlMs: 60_000,
+    });
+    const upload = context();
+    const grant = await registry.prepare(upload, 'png');
+    const lease = await registry.consume(grant.receipt, upload);
+    clock += 10_001;
+
+    // The timer is intentionally not advanced; find() observes the fake clock.
+    await expect(registry.consume(grant.receipt, upload))
+      .rejects.toThrow('BOT_GROUP_UPLOAD_RECEIPT_EXPIRED');
+    await expect(registry.cancel(grant.receipt, { ...upload, controllerDeviceId: 'peer-b' }))
+      .rejects.toThrow('BOT_GROUP_UPLOAD_RECEIPT_BINDING');
+    await expect(registry.cancel(grant.receipt, upload))
+      .rejects.toThrow('BOT_GROUP_UPLOAD_RECEIPT_EXPIRED');
+    expect(h.removed).toEqual([]);
+
+    await lease.commit();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(h.removed).toEqual([key]);
+    expect(registry.pendingCleanupSize()).toBe(0);
+  });
+
+  it('keeps failed cleanup retryable and never rejects a durable commit', async () => {
+    let fail = true;
+    const registry = createBotGroupAttachmentUploadRegistry({
+      presignPut: h.presign!,
+      removeRemote: async (key) => {
+        if (fail) throw new Error('relay unavailable');
+        h.removed.push(key);
+      },
+    });
+    const upload = context();
+    const grant = await registry.prepare(upload, 'png');
+    const lease = await registry.consume(grant.receipt, upload);
+
+    await expect(lease.commit()).resolves.toBeUndefined();
+    await Promise.resolve();
+    expect(registry.size()).toBe(0);
+    expect(registry.pendingCleanupSize()).toBe(1);
+    expect(h.removed).toEqual([]);
+
+    fail = false;
+    await registry.retryPendingCleanup();
+    expect(registry.pendingCleanupSize()).toBe(0);
+    expect(h.removed).toEqual([lease.ref.ossKey]);
+  });
+
+  it('retries an expired prepared cancellation without restoring the grant', async () => {
+    let clock = Date.now();
+    let fail = true;
+    const key = `${baseUrl}/objects/cancel-retry.png`;
+    const registry = createBotGroupAttachmentUploadRegistry({
+      presignPut: async () => ({ putUrl: key, key, expiresAt: new Date(clock + 10).toISOString() }),
+      removeRemote: async (released) => {
+        if (fail) throw new Error('relay unavailable');
+        h.removed.push(released);
+      },
+      now: () => clock,
+      ttlMs: 60_000,
+    });
+    const upload = context();
+    const grant = await registry.prepare(upload, 'png');
+    clock += 11;
+    await expect(registry.cancel(grant.receipt, upload)).rejects.toThrow('relay unavailable');
+    expect(registry.size()).toBe(1);
+    fail = false;
+    await expect(registry.cancel(grant.receipt, upload)).resolves.toBeUndefined();
+    expect(registry.size()).toBe(0);
+    expect(h.removed).toEqual([key]);
+    await expect(registry.consume(grant.receipt, upload)).rejects.toThrow('BOT_GROUP_UPLOAD_RECEIPT_EXPIRED');
+  });
 });
