@@ -5,7 +5,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import type { SharedTaskSnapshot } from '@cindy/device-link';
+import { sharedTaskGuestPeer, type SharedTaskApi, type SharedTaskDetail, type SharedTaskSnapshot } from '@cindy/device-link';
 import {
   closeSharedTasksInJournalForSession,
   createSharedTaskJournal,
@@ -15,9 +15,14 @@ import {
 } from '../sharedTasks.js';
 import { WorkerThreadTransport } from '../client/WorkerThreadTransport.js';
 import { buildDbWorkerBundle } from './dbWorkerTestUtils.js';
+import { SharedTaskHost } from '../../device-link/sharedTaskHost.js';
 
 type RpcTransport = Pick<WorkerThreadTransport, 'send'>;
 type ExecResult = { changes: number; lastInsertRowid: number | bigint };
+type JournalDb = {
+  exec(sql: string, params?: unknown[]): Promise<ExecResult>;
+  query<T>(sql: string, params?: unknown[]): Promise<T[]>;
+};
 
 function seedProfile(root: string, sessions: string[]): { dbPath: string; drizzleDir: string } {
   const drizzleDir = path.join(root, 'drizzle');
@@ -57,8 +62,15 @@ function seedProfile(root: string, sessions: string[]): { dbPath: string; drizzl
   return { dbPath, drizzleDir };
 }
 
-function journalFor(transport: RpcTransport) {
+function journalForDb(db: JournalDb) {
   return createSharedTaskJournal({
+    exec: (sql, params = []) => db.exec(sql, params),
+    query: <T>(sql: string, params: unknown[] = []) => db.query<T>(sql, params),
+  });
+}
+
+function journalFor(transport: RpcTransport) {
+  return journalForDb({
     exec: (sql, params = []) => transport.send<ExecResult>('exec', { sql, params }),
     query: <T>(sql: string, params: unknown[] = []) => transport.send<T[]>('query', { sql, params }),
   });
@@ -160,6 +172,152 @@ describe('SharedTask profile journal over real worker and inline transports', ()
       await Promise.all([peerA.close(), peerAInline.close(), peerB.close()]);
       fs.rmSync(profileARoot, { recursive: true, force: true });
       fs.rmSync(profileBRoot, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('rejects a same-revision authority race before the host installs the losing snapshot', async () => {
+    const root = fs.mkdtempSync(path.join(workerRoot, 'authority-race-'));
+    const profile = seedProfile(root, ['session']);
+    const options = {
+      workerScriptPath, dbPath: profile.dbPath, drizzleDir: profile.drizzleDir,
+      betterSqliteModulePath: require.resolve('better-sqlite3'),
+    };
+    const peerA = new WorkerThreadTransport(options);
+    let peerB!: WorkerThreadTransport;
+    try {
+      await peerA.send('query', { sql: 'SELECT 1 AS ready' });
+      peerB = new WorkerThreadTransport(options);
+      await peerB.send('query', { sql: 'SELECT 1 AS ready' });
+      const rawA: JournalDb = {
+        exec: (sql, params = []) => peerA.send<ExecResult>('exec', { sql, params }),
+        query: <T>(sql: string, params: unknown[] = []) => peerA.send<T[]>('query', { sql, params }),
+      };
+      const journalB = journalFor(peerB);
+      let enterWrite!: () => void;
+      let releaseWrite!: () => void;
+      const entered = new Promise<void>((resolve) => { enterWrite = resolve; });
+      const released = new Promise<void>((resolve) => { releaseWrite = resolve; });
+      let gated = true;
+      const journalA = journalForDb({
+        exec: async (sql, params = []) => {
+          if (gated && sql.includes("INSERT INTO shared_task_events")) {
+            gated = false;
+            enterWrite();
+            await released;
+          }
+          return rawA.exec(sql, params);
+        },
+        query: rawA.query,
+      });
+      const losingDetail: SharedTaskDetail = {
+        ...snapshot('shared-race', 'session', 'account-a'),
+        guests: [{ memberId: 'guest-a', accountId: 'guest-a-account', version: 1, deviceIds: ['phone-a'] }],
+        title: 'Task', memberLabels: [],
+      };
+      const winningSnapshot = {
+        ...snapshot('shared-race', 'session', 'account-a'),
+        guests: [{ memberId: 'guest-b', accountId: 'guest-b-account', version: 1, deviceIds: ['phone-b'] }],
+      };
+      const api = {
+        create: async () => ({ sharedTaskId: 'shared-race', revision: 1 }),
+        list: async () => [],
+        get: async () => losingDetail,
+        invite: async () => ({ sharedTaskId: 'shared-race', invitation: 'x'.repeat(43) }),
+        join: async () => ({ sharedTaskId: 'shared-race', memberId: 'guest-b', status: 'joined' as const, created: true }),
+        remove: async () => ({ memberId: 'guest-a', status: 'removed' as const }),
+        leave: async () => ({ memberId: 'guest-a', status: 'left' as const }),
+        close: async () => ({ sharedTaskId: 'shared-race', status: 'closed' as const }),
+      } satisfies SharedTaskApi;
+      const host = new SharedTaskHost({
+        api, journal: journalA, ownerAccountId: 'account-a', hostDeviceId: 'desktop',
+        isCurrent: () => true, readSession: async (id) => ({ id, title: 'Task', status: 'active' }),
+        revoke: () => undefined, changed: () => undefined,
+      });
+      const refresh = host.refresh('shared-race');
+      await entered;
+      await expect(journalB.recordAuthority(winningSnapshot)).resolves.toBe(true);
+      releaseWrite();
+      await expect(refresh).rejects.toThrow('conflict');
+      expect(host.capturePeer(sharedTaskGuestPeer('shared-race', 'guest-a', 'phone-a'))).toBeNull();
+      await expect(journalB.latest()).resolves.toEqual([expect.objectContaining({
+        sharedTaskId: 'shared-race', terminal: false, snapshot: winningSnapshot,
+      })]);
+      await host.dispose();
+    } finally {
+      await Promise.all([peerA.close(), peerB?.close()]);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('keeps close identity checks at the SQLite write boundary and fences old prepare ownership', async () => {
+    const root = fs.mkdtempSync(path.join(workerRoot, 'close-race-'));
+    const profile = seedProfile(root, ['session']);
+    const options = {
+      workerScriptPath, dbPath: profile.dbPath, drizzleDir: profile.drizzleDir,
+      betterSqliteModulePath: require.resolve('better-sqlite3'),
+    };
+    const peerA = new WorkerThreadTransport(options);
+    let peerB!: WorkerThreadTransport;
+    try {
+      await peerA.send('query', { sql: 'SELECT 1 AS ready' });
+      peerB = new WorkerThreadTransport(options);
+      await peerB.send('query', { sql: 'SELECT 1 AS ready' });
+      const rawA: JournalDb = {
+        exec: (sql, params = []) => peerA.send<ExecResult>('exec', { sql, params }),
+        query: <T>(sql: string, params: unknown[] = []) => peerA.send<T[]>('query', { sql, params }),
+      };
+      const rawB: JournalDb = {
+        exec: (sql, params = []) => peerB.send<ExecResult>('exec', { sql, params }),
+        query: <T>(sql: string, params: unknown[] = []) => peerB.send<T[]>('query', { sql, params }),
+      };
+      const journalA = journalForDb(rawA);
+      const journalB = journalForDb(rawB);
+      const identityA = snapshot('close-race', 'session', 'account-a');
+      await journalA.recordAuthority(identityA);
+      let enterClose!: () => void;
+      let releaseClose!: () => void;
+      const entered = new Promise<void>((resolve) => { enterClose = resolve; });
+      const released = new Promise<void>((resolve) => { releaseClose = resolve; });
+      const gatedClose = journalForDb({
+        exec: async (sql, params = []) => {
+          if (sql.includes("INSERT INTO shared_task_events") && sql.includes("'local-close'")) {
+            enterClose();
+            await released;
+          }
+          return rawA.exec(sql, params);
+        },
+        query: rawA.query,
+      });
+      const closing = gatedClose.close(identityA);
+      await entered;
+      // Simulate an authority response from another owner which raced after
+      // close's old read. The guarded close must see this row at its write.
+      const other = { ...snapshot('close-race', 'session', 'account-b'), revision: 2 };
+      await rawB.exec(
+        `INSERT INTO shared_task_events (shared_task_id, session_id, revision, kind, terminal, snapshot, recorded_at) VALUES (?, ?, ?, 'authority', 0, ?, ?)`,
+        [other.sharedTaskId, other.sessionId, other.revision, JSON.stringify(other), 2],
+      );
+      releaseClose();
+      await expect(closing).rejects.toThrow('identity');
+      await expect(journalB.latest()).resolves.toEqual([expect.objectContaining({
+        sharedTaskId: 'close-race', terminal: false, snapshot: other,
+      })]);
+
+      const first = await prepareSharedTasksForSession(rawA, 'session');
+      await rollbackPreparedSharedTasks(rawA, first);
+      const second = await prepareSharedTasksForSession(rawB, 'session');
+      expect(first.marker).not.toBe(second.marker);
+      expect(first.rowIds).not.toEqual(second.rowIds);
+      // Even if a stale process presents the current row id, its old marker
+      // cannot finalize or remove a later process's preparation.
+      await finalizePreparedSharedTasks(rawA, { ...first, rowIds: second.rowIds });
+      await rollbackPreparedSharedTasks(rawA, { ...first, rowIds: second.rowIds });
+      expect((await journalA.latest()).find((item) => item.sharedTaskId === 'close-race')).toMatchObject({ terminal: false });
+      await finalizePreparedSharedTasks(rawB, second);
+      expect((await journalA.latest()).find((item) => item.sharedTaskId === 'close-race')).toMatchObject({ terminal: true });
+    } finally {
+      await Promise.all([peerA.close(), peerB?.close()]);
+      fs.rmSync(root, { recursive: true, force: true });
     }
   }, 60_000);
 });

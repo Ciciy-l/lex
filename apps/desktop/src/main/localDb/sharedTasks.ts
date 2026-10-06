@@ -1,20 +1,18 @@
+import { randomUUID } from 'node:crypto';
 import { parseSharedTaskSnapshot, type SharedTaskIdentity, type SharedTaskSnapshot } from '@cindy/device-link';
 import type { DbClient } from './client/DbClient.js';
 import { CLOSE_SHARED_TASKS_FOR_SESSION_SQL, PREPARE_SHARED_TASKS_FOR_SESSION_SQL } from './sharedTaskClosureSql.js';
 
-let closureMarker = 0;
-
-function nextClosureMarker(): number {
-  // Keep markers distinct even when several terminal transitions happen in
-  // the same millisecond. The marker only identifies rows from one prepare.
-  const now = Date.now() * 1000;
-  closureMarker = Math.max(closureMarker + 1, now);
-  return closureMarker;
+function nextClosureMarker(): string {
+  // recorded_at is also the ownership marker for prepared rows. A timestamp
+  // plus a process-local counter is not unique when two profile workers
+  // prepare at the same instant, so use an opaque cross-process nonce.
+  return randomUUID();
 }
 
 export interface PreparedSharedTaskClosure {
   sessionId: string;
-  marker: number;
+  marker: string;
   rowIds: number[];
 }
 
@@ -53,8 +51,8 @@ export async function finalizePreparedSharedTasks(
   if (prepared.rowIds.length === 0) return;
   const placeholders = prepared.rowIds.map(() => '?').join(',');
   await db.exec(
-    "UPDATE shared_task_events SET terminal = 1 WHERE id IN (" + placeholders + ") AND session_id = ? AND kind = 'local-close' AND revision = 0 AND terminal = 0",
-    [...prepared.rowIds, prepared.sessionId],
+    "UPDATE shared_task_events SET terminal = 1 WHERE id IN (" + placeholders + ") AND session_id = ? AND kind = 'local-close' AND revision = 0 AND terminal = 0 AND recorded_at = ?",
+    [...prepared.rowIds, prepared.sessionId, prepared.marker],
   );
 }
 
@@ -81,34 +79,57 @@ export class SharedTaskJournalConflictError extends Error {
   }
 }
 
+type SharedTaskJournalRow = {
+  session_id: string;
+  kind: 'authority' | 'local-close';
+  revision: number;
+  terminal: number;
+  snapshot: string | null;
+};
+
+function sameSnapshot(left: SharedTaskSnapshot, right: SharedTaskSnapshot): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function assertAuthorityRowsCompatible(rows: SharedTaskJournalRow[], snapshot: SharedTaskSnapshot): void {
+  for (const row of rows) {
+    if (row.session_id !== snapshot.sessionId) {
+      throw new SharedTaskJournalConflictError('SharedTask journal scope mismatch');
+    }
+    if (!row.snapshot) continue;
+    const stored = parseSharedTaskSnapshot(JSON.parse(row.snapshot));
+    if (stored.ownerAccountId !== snapshot.ownerAccountId || stored.hostDeviceId !== snapshot.hostDeviceId) {
+      throw new SharedTaskJournalConflictError('SharedTask journal identity mismatch');
+    }
+  }
+}
+
+function classifyAuthorityWrite(rows: SharedTaskJournalRow[], snapshot: SharedTaskSnapshot): boolean {
+  assertAuthorityRowsCompatible(rows, snapshot);
+  for (const row of rows) {
+    if (row.terminal === 1 || row.kind === 'local-close') return false;
+    if (row.kind !== 'authority') continue;
+    if (row.revision === snapshot.revision) {
+      const stored = row.snapshot ? parseSharedTaskSnapshot(JSON.parse(row.snapshot)) : null;
+      if (stored && sameSnapshot(stored, snapshot)) return false;
+      throw new SharedTaskJournalConflictError();
+    }
+    if (row.revision > snapshot.revision) return false;
+  }
+  // An INSERT ... SELECT which reported no changes must have observed a row
+  // (or a unique conflict). Treat an impossible empty/incomplete read as an
+  // error rather than silently classifying a lost write as stale.
+  throw new SharedTaskJournalConflictError('SharedTask journal write could not be classified');
+}
+
 /** Bound to one profile's DbClient; never resolves a different account after an await. */
 export function createSharedTaskJournal(db: Pick<DbClient, 'exec' | 'query'>, now: () => number = Date.now) {
   return {
     async recordAuthority(value: SharedTaskSnapshot): Promise<boolean> {
       const snapshot = parseSharedTaskSnapshot(value);
-      const existing = await db.query<{
-        session_id: string;
-        kind: 'authority' | 'local-close';
-        revision: number;
-        terminal: number;
-        snapshot: string | null;
-      }>(
-        'SELECT session_id, kind, revision, terminal, snapshot FROM shared_task_events WHERE shared_task_id = ?',
-        [snapshot.sharedTaskId],
-      );
-      for (const row of existing) {
-        if (row.session_id !== snapshot.sessionId) throw new SharedTaskJournalConflictError('SharedTask journal scope mismatch');
-        if (!row.snapshot) continue;
-        const stored = parseSharedTaskSnapshot(JSON.parse(row.snapshot));
-        if (stored.ownerAccountId !== snapshot.ownerAccountId || stored.hostDeviceId !== snapshot.hostDeviceId) {
-          throw new SharedTaskJournalConflictError('SharedTask journal identity mismatch');
-        }
-        if (row.kind === 'authority' && row.revision === snapshot.revision && JSON.stringify(stored) !== JSON.stringify(snapshot)) {
-          throw new SharedTaskJournalConflictError();
-        }
-      }
-      // A single atomic statement records both the recovery snapshot and its
-      // membership audit entry. A terminal record permanently fences late replies.
+      // The predicate is evaluated by SQLite at the write boundary. Do not
+      // split this into a pre-read followed by an INSERT: another profile
+      // worker may commit a same-revision snapshot between those operations.
       const result = await db.exec(`
         INSERT INTO shared_task_events (shared_task_id, session_id, revision, kind, terminal, snapshot, recorded_at)
         SELECT ?, ?, ?, 'authority', ?, ?, ?
@@ -124,33 +145,41 @@ export function createSharedTaskJournal(db: Pick<DbClient, 'exec' | 'query'>, no
       `, [snapshot.sharedTaskId, snapshot.sessionId, snapshot.revision, snapshot.status === 'closed' ? 1 : 0,
         JSON.stringify(snapshot), now(), snapshot.sharedTaskId, snapshot.sessionId, snapshot.revision,
         snapshot.ownerAccountId, snapshot.hostDeviceId]);
-      return result.changes > 0;
+      if (result.changes > 0) return true;
+      const rows = await db.query<SharedTaskJournalRow>(
+        'SELECT session_id, kind, revision, terminal, snapshot FROM shared_task_events WHERE shared_task_id = ?',
+        [snapshot.sharedTaskId],
+      );
+      return classifyAuthorityWrite(rows, snapshot);
     },
     async close(identity: SharedTaskIdentity): Promise<void> {
       // Revision zero is reserved for a local closure, not a server revision.
       // Never manufacture a higher authority revision from the local clock.
       const checked = parseSharedTaskSnapshot({ ...identity, revision: 1, status: 'closed', guests: [] });
-      const existing = await db.query<{ session_id: string; snapshot: string | null }>(
-        'SELECT session_id, snapshot FROM shared_task_events WHERE shared_task_id = ?',
-        [checked.sharedTaskId],
-      );
-      for (const row of existing) {
-        if (row.session_id !== checked.sessionId) throw new Error('SharedTask journal scope mismatch');
-        if (row.snapshot) {
-          const stored = parseSharedTaskSnapshot(JSON.parse(row.snapshot));
-          if (stored.ownerAccountId !== checked.ownerAccountId || stored.hostDeviceId !== checked.hostDeviceId) {
-            throw new Error('SharedTask journal identity mismatch');
-          }
-        }
-      }
-      await db.exec(`
+      // Keep immutable identity checks in this statement too. A pre-read can
+      // become stale while another worker records a different authority.
+      const result = await db.exec(`
         INSERT INTO shared_task_events (shared_task_id, session_id, revision, kind, terminal, snapshot, recorded_at)
         SELECT ?, ?, 0, 'local-close', 1, NULL, ?
-        WHERE NOT EXISTS (SELECT 1 FROM shared_task_events WHERE shared_task_id = ? AND session_id <> ?)
+        WHERE NOT EXISTS (
+          SELECT 1 FROM shared_task_events
+          WHERE shared_task_id = ? AND (session_id <> ? OR (snapshot IS NOT NULL AND (
+            COALESCE(json_extract(snapshot, '$.ownerAccountId'), '') <> ?
+            OR COALESCE(json_extract(snapshot, '$.hostDeviceId'), '') <> ?
+          )))
+        )
         ON CONFLICT (shared_task_id, kind, revision) DO UPDATE SET
           terminal = 1,
           recorded_at = excluded.recorded_at
-      `, [checked.sharedTaskId, checked.sessionId, now(), checked.sharedTaskId, checked.sessionId]);
+      `, [checked.sharedTaskId, checked.sessionId, now(), checked.sharedTaskId, checked.sessionId,
+        checked.ownerAccountId, checked.hostDeviceId]);
+      if (result.changes > 0) return;
+      const rows = await db.query<SharedTaskJournalRow>(
+        'SELECT session_id, kind, revision, terminal, snapshot FROM shared_task_events WHERE shared_task_id = ?',
+        [checked.sharedTaskId],
+      );
+      assertAuthorityRowsCompatible(rows, { ...checked, revision: 1, status: 'closed', guests: [] });
+      throw new SharedTaskJournalConflictError('SharedTask closure write was rejected');
     },
     async latest(): Promise<SharedTaskJournalEntry[]> {
       const rows = await db.query<{ shared_task_id: string; session_id: string; terminal: number; snapshot: string | null }>(`

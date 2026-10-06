@@ -2,7 +2,7 @@ import {
   parseSharedTaskSnapshot, parseSharedTaskPeer, type SharedTaskApi, type SharedTaskCaller,
   type SharedTaskDetail, type SharedTaskIdentity, type SharedTaskQueueItem,
 } from '@cindy/device-link';
-import type { SharedTaskJournal } from '../localDb/sharedTasks.js';
+import { SharedTaskJournalConflictError, type SharedTaskJournal } from '../localDb/sharedTasks.js';
 import { isIpcError } from '../../shared/ipc-errors.js';
 import { SharedTaskAccess } from './sharedTaskAccess.js';
 
@@ -107,15 +107,27 @@ export class SharedTaskHost {
         if (entry.identity[key] !== snapshot[key]) throw new Error('SharedTask scope changed');
       }
     }
-    await this.options.journal.recordAuthority(snapshot);
+    const recorded = await this.options.journal.recordAuthority(snapshot);
     this.assertSessionOpen(snapshot.sessionId, generation);
     if (this.closed.has(snapshot.sharedTaskId)) return;
     // A local close could have been persisted by another host callback while
     // this write awaited; never treat a rejected insert as permission to grant.
     const latest = (await this.options.journal.latest()).find((item) => item.sharedTaskId === snapshot.sharedTaskId);
     this.assertSessionOpen(snapshot.sessionId, generation);
-    if (!latest || latest.terminal && snapshot.status !== 'closed' || this.closed.has(snapshot.sharedTaskId)) return;
-    if (!latest.snapshot || latest.snapshot.revision !== snapshot.revision) return;
+    if (!latest || this.closed.has(snapshot.sharedTaskId)) return;
+    // A rejected/stale journal write is never permission to install the
+    // in-memory grant. Match the complete normalized snapshot, not just its
+    // revision: two authority payloads can legitimately race at one revision.
+    if (!latest.snapshot) return;
+    if (latest.snapshot.revision > snapshot.revision) return;
+    if (latest.snapshot.revision < snapshot.revision ||
+      JSON.stringify(latest.snapshot) !== JSON.stringify(snapshot)) {
+      if (!recorded && latest.snapshot.revision === snapshot.revision) {
+        throw new SharedTaskJournalConflictError('SharedTask authority snapshot was not persisted');
+      }
+      return;
+    }
+    if (latest.terminal && snapshot.status !== 'closed') return;
     if (!entry) {
       entry = { identity: snapshot, access: new SharedTaskAccess(snapshot), detail: null };
       this.entries.set(snapshot.sharedTaskId, entry);
