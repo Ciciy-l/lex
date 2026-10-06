@@ -26,3 +26,8 @@ export * from './remoteDesktopIceConfig.js';
 export * from './remoteClipboard.js';
 export * from './remoteCursor.js';
 export * from './inputDelivery.js';
+export * from './sharedTask.js';
+export * from './sharedTaskApi.js';
+export * from './sharedTaskEnvelope.js';
+export * from './sharedTaskPeer.js';
+export * from './sharedTaskProbe.js';
