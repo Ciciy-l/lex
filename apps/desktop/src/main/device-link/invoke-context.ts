@@ -10,6 +10,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { isMobilePlatform } from './controllerPlatform';
 import * as subscriptions from './subscriptions.js';
+import type { SharedTaskPeerCapture } from './sharedTaskDispatch.js';
 
 export interface DeviceLinkInvokeContext {
   controllerDeviceId: string;
@@ -17,6 +18,10 @@ export interface DeviceLinkInvokeContext {
   client?: unknown;
   /** Link generation captured at dispatch time; remote resources recheck it before mutation. */
   linkEpoch?: number;
+  /** Host-verified shared-task identity and revocation fence; never populated from wire args. */
+  sharedTask?: SharedTaskPeerCapture;
+  /** Setting mutations may be admitted before their native rollback completes. */
+  sharedTaskSetting?: { admitted: boolean };
   /** Fail-closed check for queued resource reads/writes. */
   assertCurrent?: () => void;
   channel: string;

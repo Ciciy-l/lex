@@ -1043,9 +1043,27 @@ import {
 } from '../device-link/dispatch.js';
 import {
   deviceLinkInvokeControllerSupports,
+  getDeviceLinkInvokeContext,
   isDeviceLinkInvoke,
   isMobileControllerInvoke,
 } from '../device-link/invoke-context.js';
+import {
+  assertSharedTaskQueueMutation, assertSharedTaskQueuedInputCurrent, stampSharedTaskInput,
+} from './sharedTaskInput.js';
+import { createSharedTaskContextUsageGuard } from './sharedTaskContextUsage.js';
+import { createSharedTaskSettingGuard } from './sharedTaskSetting.js';
+import {
+  assertSharedTaskInteractionResolveCurrent,
+  setSharedTaskInteractionReader,
+  setSharedTaskQueueReader,
+} from '../device-link/sharedTaskDispatch.js';
+
+function captureSharedTaskSettingGuard(sessionId: string) {
+  const context = getDeviceLinkInvokeContext();
+  return createSharedTaskSettingGuard(
+    context?.sharedTask, sessionId, context?.sharedTaskSetting ?? { admitted: false },
+  );
+}
 import {
   attachMainOwnedInputBoundary,
   buildMobileClientPromptNote,
@@ -8393,6 +8411,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   }
 
   const agentSwitchDeps: MakerSessionAgentSwitchHandlerDeps = {
+    captureSharedTaskSettingGuard,
     withSessionLock: withSendToSessionLock,
     // 停用轴边界裁决:目标路由被停用 → 抛错;隐式默认落点被停用 → 返回启用替代来源。
     assertModelRouteUsable: (agent, model, providerId) =>
@@ -13315,12 +13334,21 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (typeof sessionId !== 'string' || sessionId.length === 0) {
         throwIpcError('INVALID_PARAMS', 'sessionId required');
       }
+      const contextUsageGuard = createSharedTaskContextUsageGuard(
+        getDeviceLinkInvokeContext()?.sharedTask, sessionId,
+      );
+      contextUsageGuard.assertCurrent();
       let sess = maker.getSession(sessionId);
       if (!sess) {
         if (!createOpts) {
           throwIpcError('NOT_FOUND', `Session ${sessionId} is not running`);
         }
-        const co = buildCreateOptsWithStderr({ ...(createOpts as CreateOpts), id: sessionId });
+        const trustedCreateOpts = await contextUsageGuard.resolveCreateOpts(
+          createOpts,
+          () => readSharedTaskTaskCreateOpts(sessionId),
+        );
+        contextUsageGuard.assertCurrent();
+        const co = buildCreateOptsWithStderr({ ...(trustedCreateOpts as CreateOpts), id: sessionId });
         // session-agent-switch:先按 DB 行校正再判 claude-only——否则切到 codex 后
         // 残留的 claude createOpts 会在这里 spawn 出旧引擎的 live session 并被后续
         // send 复用(会话被劫持回旧引擎,2026-07-20 审计实锤)。
@@ -13379,6 +13407,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             err instanceof Error ? err.message : 'context usage lazy create failed',
           );
         }
+        contextUsageGuard.assertCurrent();
       }
       if (
         sess.agentKind !== 'claude-code' &&
@@ -13390,8 +13419,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           `Agent ${sess.agentKind} does not support context usage`,
         );
       }
+      contextUsageGuard.assertCurrent();
       try {
-        return await sess.getContextUsage();
+        const usage = await sess.getContextUsage();
+        contextUsageGuard.assertCurrent();
+        return usage;
       } catch (err) {
         if (err instanceof Error && err.name === 'NotSupportedError') {
           throwIpcError('UNSUPPORTED_CAPABILITY', err.message);
@@ -14311,6 +14343,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
     onUserMessageRewritten: (sessionId, item, info) => (revokeTrustedDesktopQueueOrigin(item), broadcastGhostMessageRewritten({ sessionId, clientId: item.clientId, ...info })),
     beforeDispatchUserTurn: async (sessionId, item) => {
+      assertSharedTaskQueuedInputCurrent(sessionId, item);
       autoResumeBookkeeping.markReplacementDispatching(sessionId, item.clientId);
       const liveSession = maker.getSession(sessionId);
       if (liveSession) {
@@ -14359,6 +14392,32 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     getPersistedClientIds: getPersistedInputClientIds,
   });
   agentInputCoordinatorHolder = inputCoordinator;
+  setSharedTaskQueueReader((sessionId, clientId) => {
+    const item = inputCoordinator.getProjection(sessionId).pendingQueue.find(
+      (pending) => pending.clientId === clientId,
+    );
+    return item
+      ? {
+        sessionId,
+        authorAccountId: item.sharedTaskAuthor?.accountId ?? '',
+        state: 'pending',
+        attachments: item.files,
+      }
+      : undefined;
+  });
+  setSharedTaskInteractionReader((requestId) => {
+    const entry = pendingInteractionResolvers.get(requestId);
+    const request = entry?.request;
+    if (!entry || entry.migrated || !request ||
+        (request.kind !== 'permission' && request.kind !== 'ask_user_question' && request.kind !== 'plan_review')) {
+      return undefined;
+    }
+    return {
+      sessionId: entry.sessionId,
+      kind: request.kind,
+      ...(request.kind === 'permission' ? { toolName: request.toolName, suggestions: request.suggestions } : {}),
+    };
+  });
   getAgentIslandService()?.setCompletionDeferResolver((sessionId) =>
     inputCoordinator.hasPendingQueuedWork(sessionId),
   );
@@ -14802,6 +14861,49 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     return normalized;
   };
 
+  async function readSharedTaskTaskCreateOpts(sid: string): Promise<AgentInputCreateOpts> {
+    const [row] = await getDbClient().drizzle.select().from(sessions).where(eq(sessions.id, sid)).limit(1);
+    if (!row || row.status !== 'active' || !row.workingDir) {
+      throwIpcError('NOT_FOUND', 'SharedTask task unavailable');
+    }
+    return {
+      agentKind: dbToMakerAgentKind(row.agentKind),
+      workingDir: row.workingDir,
+      model: row.model,
+      providerId: row.providerId,
+      effort: row.effort,
+      permissionMode: row.permissionMode,
+      fastMode: row.fastMode,
+      planMode: row.planModeEnabled,
+      remoteHostId: row.remoteHostId ?? undefined,
+      resumeSessionId: row.sdkSessionId ?? undefined,
+      orcaRole: row.orcaRole,
+    };
+  }
+
+  const prepareSharedTaskInput = async (sid: string, item: AgentInputQueuedMessage) => {
+    const sharedTask = getDeviceLinkInvokeContext()?.sharedTask;
+    if (!sharedTask) return item;
+    return stampSharedTaskInput(item, sharedTask, await readSharedTaskTaskCreateOpts(sid));
+  };
+
+  /**
+   * The invoke gate runs before attachment hydration and queue restoration.  This
+   * second check is intentionally kept at the synchronous coordinator boundary:
+   * an async preparation can outlive a guest removal, and the coordinator does
+   * not know about relay membership by itself.
+   */
+  const assertSharedTaskQueueMutationAtBoundary = (
+    sessionId: string,
+    operation: 'input.send' | 'input.edit' | 'input.withdraw' | 'agent.stop',
+    item?: AgentInputQueuedMessage,
+  ): void => {
+    const sharedTask = getDeviceLinkInvokeContext()?.sharedTask;
+    assertSharedTaskQueueMutation(sharedTask, sessionId, operation, item);
+  };
+  const readSharedTaskPendingItem = (sessionId: string, clientId: string): AgentInputQueuedMessage | undefined =>
+    inputCoordinator.getProjection(sessionId).pendingQueue.find((item) => item.clientId === clientId);
+
   ipcMain.handle(DL_SESSION_REFERENCE_CAPABILITY_CHANNEL, () => ({ supported: true, version: 1 }));
 
   /**
@@ -15130,7 +15232,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       await assertReviewExternalInputAllowed(sid);
       const deviceLinkInvoke = isDeviceLinkInvoke();
       if (!deviceLinkInvoke) assertTrustedAppRendererEvent(event);
-      const parsed = requireQueuedMessage(item);
+      const parsed = await prepareSharedTaskInput(sid, requireQueuedMessage(item));
       assertRemoteInputClearNotInFlight(sid, deviceLinkInvoke);
       const clearBoundaryPrecondition = readRemoteInputClearBoundaryPrecondition(opts);
       if (!deviceLinkInvoke) await observeLocalInputClearBoundary(sid);
@@ -15233,6 +15335,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           }
         };
         const enqueueNow = () => inputCoordinator.enqueue(sid, queued, {
+          // The queue mutation itself is the authorization linearization point.
+          // Evaluate this while building the exact options object, immediately
+          // before inputCoordinator.enqueue is called.
+          ...(assertSharedTaskQueueMutationAtBoundary(sid, 'input.send', queued), {}),
           ...(opts && typeof opts === 'object' ? (opts as { sendAtMs?: number }) : undefined),
           // INPUT_ENQUEUE 只承载显式用户输入(composer 发送 / UI trigger / device-link
           // 被控端转投的用户消息):崩溃恢复出的暂停队列遇到显式输入即放行,解开
@@ -15326,12 +15432,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               touchUserSend?: boolean;
             } & AgentInputClearBoundaryOpts)
           : undefined;
-      const parsed = requireQueuedMessage(item, {
+      const parsed = await prepareSharedTaskInput(sid, requireQueuedMessage(item, {
         // A device-link projection intentionally omits the trusted snapshot;
         // Only the explicit remove-from-queue steer path may reattach it from
         // the main-owned row; all other IPC paths remain fail-closed here.
         allowMissingTrustedContexts: deviceLinkInvoke && steerOpts?.removeFromQueue === true,
-      });
+      }));
       assertRemoteInputClearNotInFlight(sid, deviceLinkInvoke);
       const clearBoundaryPrecondition = readRemoteInputClearBoundaryPrecondition(opts);
       if (!deviceLinkInvoke) await observeLocalInputClearBoundary(sid);
@@ -15485,7 +15591,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             attachmentOwnerId,
           );
         }
-        const runSteer = () => inputCoordinator.steer(sid, queued, steerOpts);
+        const runSteer = () => inputCoordinator.steer(
+          (assertSharedTaskQueueMutationAtBoundary(sid, 'input.send', queued), sid),
+          queued,
+          steerOpts,
+        );
         const accepted = await (deviceLinkInvoke
           ? runSteer()
           : trustedDesktopSteerText.run(queued.text, runSteer));
@@ -15542,6 +15652,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     const sid = requireSessionId(sessionId);
     const remote = isDeviceLinkInvoke();
     await assertRemoteInputControlBoundary(sid, remote, opts, 'stop');
+    assertSharedTaskQueueMutationAtBoundary(sid, 'agent.stop');
     if (!remote) reviewRunControl.noteReviewerStopRequested(sid);
     // Main 是本机窗口与 Device Link 控制端的 Stop 汇合点；先记账再触发 abort，
     // 任何 renderer 后续请求推荐都会从同一 ledger fail-closed。
@@ -15575,6 +15686,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   ipcMain.handle(MAKER_INVOKE.INPUT_RESUME, async (_e, sessionId: unknown, opts?: unknown) => {
     const sid = requireSessionId(sessionId);
     await assertRemoteInputControlBoundary(sid, isDeviceLinkInvoke(), opts);
+    assertSharedTaskQueueMutationAtBoundary(sid, 'input.send');
     return inputCoordinator.resume(sid);
   });
 
@@ -15583,6 +15695,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     async (_e, sessionId: unknown, opts?: unknown) => {
       const sid = requireSessionId(sessionId);
       await assertRemoteInputControlBoundary(sid, isDeviceLinkInvoke(), opts);
+      assertSharedTaskQueueMutationAtBoundary(sid, 'input.send');
       return inputCoordinator.retryLastError(sid);
     },
   );
@@ -15621,6 +15734,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       const sid = requireSessionId(sessionId);
       await assertRemoteInputControlBoundary(sid, isDeviceLinkInvoke(), opts);
       const cid = requireClientId(clientId);
+      assertSharedTaskQueueMutationAtBoundary(
+        sid, 'input.withdraw', readSharedTaskPendingItem(sid, cid),
+      );
       const durable = isDeviceLinkInvoke()
         && !!opts
         && typeof opts === 'object'
@@ -15660,6 +15776,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           'remote session references were not resolved by the controller',
         );
       }
+      assertSharedTaskQueueMutationAtBoundary(
+        sid, 'input.edit', readSharedTaskPendingItem(sid, cid),
+      );
       return inputCoordinator.updateText(
         sid,
         cid,
@@ -15705,6 +15824,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (parsed.clientId !== cid) {
         throwIpcError('INVALID_PARAMS', 'queued.clientId must match clientId');
       }
+      assertSharedTaskQueueMutationAtBoundary(
+        sid, 'input.edit', readSharedTaskPendingItem(sid, cid),
+      );
       // Do not download/materialise an edit for a row that has already left the
       // pending queue.  The row can disappear while the async preparation is in
       // flight as well; updateContentWithResult below handles that second race.
@@ -15738,6 +15860,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           assertExpectedRemoteInputClearBoundary(sid, clearBoundaryPrecondition, row);
         }
         assertCurrentInputGeneration();
+        assertSharedTaskQueueMutationAtBoundary(
+          sid, 'input.edit', readSharedTaskPendingItem(sid, cid),
+        );
         const result = inputCoordinator.updateContentWithResult(
           sid,
           cid,
@@ -15780,7 +15905,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       }
       const sid = requireSessionId(sessionId);
       await assertRemoteInputControlBoundary(sid, isDeviceLinkInvoke(), opts);
-      return inputCoordinator.move(sid, requireClientId(clientId), targetIndex);
+      const cid = requireClientId(clientId);
+      assertSharedTaskQueueMutationAtBoundary(
+        sid, 'input.edit', readSharedTaskPendingItem(sid, cid),
+      );
+      return inputCoordinator.move(sid, cid, targetIndex);
     },
   );
 
@@ -15789,6 +15918,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     async (_e, sessionId: unknown, expanded: unknown, opts?: unknown) => {
       const sid = requireSessionId(sessionId);
       await assertRemoteInputControlBoundary(sid, isDeviceLinkInvoke(), opts);
+      assertSharedTaskQueueMutationAtBoundary(sid, 'input.send');
       return inputCoordinator.setExpanded(sid, expanded === true);
     },
   );
@@ -15807,7 +15937,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     async (_e, sessionId: unknown, clientId: unknown, locked: unknown, opts?: unknown) => {
       const sid = requireSessionId(sessionId);
       await assertRemoteInputControlBoundary(sid, isDeviceLinkInvoke(), opts);
-      return inputCoordinator.setEditLock(sid, requireClientId(clientId), locked === true);
+      const cid = requireClientId(clientId);
+      assertSharedTaskQueueMutationAtBoundary(
+        sid, 'input.edit', readSharedTaskPendingItem(sid, cid),
+      );
+      return inputCoordinator.setEditLock(sid, cid, locked === true);
     },
   );
 
@@ -15965,6 +16099,13 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     MAKER_INVOKE.RESOLVE_INTERACTION,
     async (event, requestId: unknown, decision: unknown) => {
       if (typeof requestId !== 'string') throwIpcError('INVALID_PARAMS', 'requestId required');
+      const sharedTask = getDeviceLinkInvokeContext()?.sharedTask;
+      if (sharedTask) {
+        // Validate the exact pending card before any resolver/bridge can consume
+        // it.  The capture is host-authored and remains the authority after the
+        // renderer has had time to display the card.
+        assertSharedTaskInteractionResolveCurrent(sharedTask, [requestId, decision]);
+      }
       if (
         isPluginSetupInteractionDecision(decision) &&
         !parseGhostSetupInteractionCommand(decision)
@@ -16047,6 +16188,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     if (typeof sessionId !== 'string' || typeof model !== 'string') {
       throwIpcError('INVALID_PARAMS', 'sessionId + model required');
     }
+    const sharedTaskSetting = captureSharedTaskSettingGuard(sessionId);
+    sharedTaskSetting();
     const normalizedWireArgs =
       internalOptions.source === 'user'
         ? normalizeDeviceLinkSetModelWireArgs(
@@ -16105,6 +16248,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       { effort: SessionRuntimeProfile['effort']; fastMode: boolean } | undefined;
     const runtimeOwnerEpoch = captureSessionRuntimeControlOwnerEpoch();
     const assertRuntimeOwnerCurrent = (): void => {
+      sharedTaskSetting();
       internalOptions.assertSelectionCurrent?.();
       if (!sessionRuntimeControlOwnerEpochMatches(runtimeOwnerEpoch)) {
         throwIpcError(
@@ -16125,6 +16269,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     // 覆盖用户刚选的新 route，形成 DB 与进程内路由分叉。
     const applyLocked = async () => {
       await assertReviewSettingsUnlocked(sessionId);
+      sharedTaskSetting();
       if (supersededByOwnerBoundary()) {
         return { deferred: false, superseded: true };
       }
@@ -16388,6 +16533,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         if (supersededByOwnerBoundary()) {
           return { deferred: false, superseded: true };
         }
+        sharedTaskSetting.admit();
         const generation = routeExplicit
           ? acceptSessionRuntimeMutation({
               sessionId,
@@ -16687,6 +16833,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           let confirmationContextTokens: number | undefined;
           let preparation: ModelWindowSwitchPreparationResult;
           try {
+            // runtimeAgentKind !== 'pi' is guaranteed by the enclosing branch.
+            sharedTaskSetting.admit();
             preparation = await contextOverflowRolloverHolder.prepareModelWindowSwitch(sessionId, {
               contextWindow: targetContextWindow!,
               recheckTargetPressure: true,
@@ -16967,6 +17115,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           }
         };
         assertRuntimeOwnerCurrent();
+        sharedTaskSetting.admit();
         const result = routeExplicit
           ? await applyRuntimeSetModelChange({
               maker,
@@ -17459,8 +17608,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     if (typeof sessionId !== 'string' || typeof effort !== 'string') {
       throwIpcError('INVALID_PARAMS', 'sessionId + effort required');
     }
+    const sharedTaskSetting = captureSharedTaskSettingGuard(sessionId);
+    sharedTaskSetting();
     const runtimeOwnerEpoch = captureSessionRuntimeControlOwnerEpoch();
     const assertOwnerCurrent = () => {
+      sharedTaskSetting();
       if (!sessionRuntimeControlOwnerEpochMatches(runtimeOwnerEpoch)) {
         throwIpcError(
           'PRECONDITION_FAILED',
@@ -17494,6 +17646,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       const userIntent = agentSwitchPending.get(sessionId);
       if (userIntent?.sameAgentSelection) {
         assertOwnerCurrent();
+        sharedTaskSetting.admit();
         const result = await agentSwitchDeps.selectSameAgentModel!(sessionId,
           { ...userIntent, effort: effort }, false);
         if (remoteResponse) markRemoteSettingPersistedInsideHandler(remoteResponse);
@@ -17511,6 +17664,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       };
       const sess = maker.getSession(sessionId);
       if (!sess) {
+        sharedTaskSetting.admit();
         await commitRuntimeAxisAfterPersistence({
           persist: persistEffort,
           commit: commitEffort,
@@ -17525,6 +17679,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       // 持久化不受影响:本地由 renderer sessionService.update 落盘,远程由 device-link
       // dispatch 的 persistRemoteSetting 按请求值落被控端 DB,重建时生效。
       if (pendingCredentialSwitchHolder?.has(sessionId)) {
+        sharedTaskSetting.admit();
         await commitRuntimeAxisAfterPersistence({
           persist: persistEffort,
           commit: commitEffort,
@@ -17537,6 +17692,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         const previousProfile = remoteInvoke
           ? (await readSessionRuntimeProfiles(sessionId))?.effective
           : undefined;
+        sharedTaskSetting.admit();
         const result = await applyRuntimeEffortWithRecovery({
           applyRuntime: () =>
             sess.setEffort(
@@ -17896,8 +18052,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (typeof sessionId !== 'string' || typeof enabled !== 'boolean') {
         throwIpcError('INVALID_PARAMS', 'sessionId + enabled required');
       }
+      const sharedTaskSetting = captureSharedTaskSettingGuard(sessionId);
+      sharedTaskSetting();
       const runtimeOwnerEpoch = captureSessionRuntimeControlOwnerEpoch();
       const assertOwnerCurrent = () => {
+        sharedTaskSetting();
         if (!sessionRuntimeControlOwnerEpochMatches(runtimeOwnerEpoch)) {
           throwIpcError(
             'PRECONDITION_FAILED',
@@ -17931,6 +18090,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         const userIntent = agentSwitchPending.get(sessionId);
         if (userIntent?.sameAgentSelection) {
           assertOwnerCurrent();
+          sharedTaskSetting.admit();
           const result = await agentSwitchDeps.selectSameAgentModel!(sessionId,
             { ...userIntent, fastMode: enabled }, false);
           if (remoteResponse) markRemoteSettingPersistedInsideHandler(remoteResponse);
@@ -17946,6 +18106,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         };
         const sess = maker.getSession(sessionId);
         if (!sess) {
+          sharedTaskSetting.admit();
           await commitRuntimeAxisAfterPersistence({
             persist: persistFastMode,
             commit: commitFastMode,
@@ -17955,6 +18116,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           return remoteResponse;
         }
         if (sess.agentKind !== 'codex' && sess.agentKind !== 'pi') {
+          sharedTaskSetting.admit();
           await commitRuntimeAxisAfterPersistence({
             persist: persistFastMode,
             commit: commitFastMode,
@@ -17968,6 +18130,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         }
         // 同 set-effort:pending 凭证切换期间不触碰仍在跑的旧 turn,持久化走各自 DB 路径。
         if (pendingCredentialSwitchHolder?.has(sessionId)) {
+          sharedTaskSetting.admit();
           await commitRuntimeAxisAfterPersistence({
             persist: persistFastMode,
             commit: commitFastMode,
@@ -17979,6 +18142,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         const previousProfile = remoteInvoke
           ? (await readSessionRuntimeProfiles(sessionId))?.effective
           : undefined;
+        sharedTaskSetting.admit();
         await sess.setFastMode(enabled);
         await commitRuntimeAxisAfterPersistence({
           persist: persistFastMode,
@@ -18024,9 +18188,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (typeof sessionId !== 'string' || typeof enabled !== 'boolean') {
         throwIpcError('INVALID_PARAMS', 'sessionId + enabled required');
       }
+      const sharedTaskSetting = captureSharedTaskSettingGuard(sessionId);
+      sharedTaskSetting();
       await assertReviewSettingsUnlocked(sessionId);
       const sess = maker.getSession(sessionId);
       if (!sess) return;
+      sharedTaskSetting.admit();
       await sess.setThinkingEnabled(enabled);
     },
   );

@@ -370,6 +370,7 @@ export class SharedTaskHost {
     const author = Object.freeze({
       sharedTaskId: peer.sharedTaskId, sessionId: entry.identity.sessionId,
       memberId: member.memberId, accountId: member.accountId,
+      deviceId: peer.deviceId,
       displayName: entry.detail!.memberLabels.find((label) => label.memberId === member.memberId)?.displayName ?? member.accountId,
     });
     const isCurrent = () => !this.disposed && this.options.isCurrent() && captured.isCurrent();

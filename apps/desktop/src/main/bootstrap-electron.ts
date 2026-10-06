@@ -505,6 +505,8 @@ import { issueWritableDirectoryPickerGrant } from './maker-ipc/writableDirectory
 import {
   initDeviceLinkService,
   ensureSharedTaskRuntime,
+  getDeviceLinkStatus,
+  isSharedTaskAvailable,
   releaseDeviceLinkOwnershipBeforeLogout,
   handleDeviceLinkSystemResume,
 } from './device-link';
@@ -527,6 +529,8 @@ import { getMirrorCache, MirrorCachePurgeError } from './device-link/mirrorCache
 import { drainPurgeQueue, enqueuePurge } from './device-link/mirrorCachePurgeQueue';
 import { assertCaptureHealthy } from './device-link/invoke-registry';
 import { registerRemoteResourcesIpc } from './device-link/remoteResourcesIpc';
+import { registerSharedTaskIpc } from './device-link/sharedTaskIpc.js';
+import { requireSharedTaskHost } from './device-link/sharedTaskRuntime.js';
 // worktree-parallel-sessions: IPC 注册 + close-session 内的 fire-and-forget 删除钩子
 import {
   registerWorktreeIpc,
@@ -6030,6 +6034,15 @@ const registerIpcHandlers = () => {
         waitForAccountProviderModelsReady: waitForCurrentAccountProviderModelsReady,
         onProviderModelAutoRefreshConfigured: markMakerProviderRefreshConfigured,
       });
+      // SharedTask management remains a local owner/profile operation.  The
+      // adapter is gated by the server-negotiated capability and current
+      // profile-bound host; no guest/ordinary remote IPC fallback is opened.
+      registerSharedTaskIpc(
+        () => isSharedTaskAvailable() && (() => {
+          try { requireSharedTaskHost(); return true; } catch { return false; }
+        })(),
+        () => getDeviceLinkStatus() === 'online',
+      );
       registerMakerTitleIpc({ isSessionTurnPendingCompletion });
       registerAuxiliaryModelSettingsIpc();
       registerMakerHelpIpc(ipcMaker);

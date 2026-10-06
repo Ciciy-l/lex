@@ -406,6 +406,20 @@ export async function ghostCanRead(
   return row.length > 0;
 }
 
+/** Shared-task reads use existing session provenance; a blob hash grants no access. */
+export async function sessionCanRead(
+  hash: string,
+  sessionId: string,
+  db: LedgerDb = defaultDb(),
+): Promise<boolean> {
+  const rows = await db.select({ one: sql`1` }).from(mediaRefs).where(and(
+    eq(mediaRefs.hash, hash),
+    or(eq(mediaRefs.originSessionId, sessionId),
+      and(eq(mediaRefs.refKind, 'session-attachment'), eq(mediaRefs.refId, sessionId))),
+  )).limit(1).all();
+  return rows.length > 0;
+}
+
 /**
  * 某意识寄存物的账面字节占用(deposit 配额判定唯一依据)。
  *

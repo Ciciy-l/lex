@@ -9,6 +9,7 @@
  */
 
 import { stripChatQuoteMarkerLines } from '@cindy/maker-shared/chat-quotes';
+import type { SharedTaskAuthor } from '@cindy/maker-shared';
 import { MENTION_TOKEN_SPLIT, parseMentionToken } from '@cindy/maker-shared/mention-ref';
 import {
   describeAgentInputReference,
@@ -218,6 +219,8 @@ export interface RecoveryCheckpoint {
 }
 
 export interface AgentInputQueuedMessage {
+  /** Host-stamped attribution, retained in durable queue snapshots and messages. */
+  sharedTaskAuthor?: SharedTaskAuthor;
   /** Host-captured authored text before plugin/reference decoration; omitted from wire projections. */
   autoReviewUserText?: string;
   clientId: string;

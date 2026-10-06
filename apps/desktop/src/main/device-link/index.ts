@@ -17,6 +17,7 @@ import { app, BrowserWindow } from 'electron';
 import WebSocket from 'ws';
 import {
   DeviceLinkClient,
+  SHARED_TASK_CAPABILITY,
   CONTROLLER_CAPABILITY_MAKER_EVENT_BATCH_V1,
   CONTROLLER_CAPABILITY_SESSION_TEXT_SNAPSHOT_V1,
   CONTROLLER_CAPABILITY_PROVIDER_LOGO_KINDS_V2,
@@ -1326,6 +1327,24 @@ function cancelSubscriptionReplay(deviceId: string): void {
 
 export function getDeviceLinkStatus(): DeviceLinkStatus {
   return client?.getStatus() ?? 'stopped';
+}
+
+/**
+ * Availability for owner-side SharedTask entry points.  The negotiated
+ * capability is not a durable promise: a cached marker must not make an
+ * offline, torn-down, or logged-out relay look usable to IPC callers.
+ */
+export function isSharedTaskAvailable(): boolean {
+  return client?.getStatus() === 'online'
+    && !linkTornDown
+    && authManager.getAuthState().isAuthenticated
+    && client.hasServerCapability(SHARED_TASK_CAPABILITY) === true;
+}
+
+/** Server-negotiated SharedTask support; callers must still require a current
+ * profile-bound host before exposing owner operations. */
+export function hasSharedTaskCapability(): boolean {
+  return client?.hasServerCapability(SHARED_TASK_CAPABILITY) === true;
 }
 
 /** Retry host-runtime startup after a profile DB becomes ready. */

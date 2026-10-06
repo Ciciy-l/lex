@@ -15,6 +15,7 @@ import { createLogger } from '../logger.js';
 import { throwIpcError } from '../utils/ipcValidate.js';
 import { captureSharedTaskBoundaryClose, sharedTaskApi } from './sharedTaskApi.js';
 import { SharedTaskHost, type SharedTaskCreationState } from './sharedTaskHost.js';
+import { setSharedTaskDispatchHost } from './sharedTaskDispatch.js';
 
 const log = createLogger('shared-task');
 
@@ -122,10 +123,12 @@ export function startSharedTaskRuntime(options: {
     stop() {
       stopped = true;
       clearInterval(timer);
+      if (binding?.host === host) setSharedTaskDispatchHost(null);
       return host.dispose();
     },
   };
   binding = next;
+  setSharedTaskDispatchHost(host);
   void refresh();
 }
 

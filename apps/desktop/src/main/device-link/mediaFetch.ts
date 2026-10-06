@@ -289,12 +289,18 @@ function rememberUpload(url: string, entry: UploadCacheEntry): void {
  *   invoke 帧 inline 返回(不经 OSS);不可缩(gif/svg/解码失败/超限)自动退回原图路径。
  *   老被控端不识别该字段,自然回落原图 ossKey,控制端两种回包都要兼容。
  */
-export async function fetchLocalMediaToOss(arg: unknown): Promise<MediaFetchResult> {
+export async function fetchLocalMediaToOss(
+  arg: unknown,
+  assertAuthorized?: () => void | Promise<void>,
+): Promise<MediaFetchResult> {
   const record = arg && typeof arg === 'object'
     ? arg as { url?: unknown; skipCache?: unknown; thumbnail?: unknown }
     : {};
   const url = record.url;
   if (typeof url !== 'string' || !url) throw new Error('media:fetch 缺少 url');
+  // Keep shared-task checks inside this function: SSH materialization,
+  // thumbnail rendering, and upload all cross await boundaries.
+  await assertAuthorized?.();
   const skipCache = record.skipCache === true;
   const isPathMedia = url.startsWith('xdt-file://') || url.startsWith('xdt-audio://');
   const sshOrigin = isPathMedia ? await parseSshMediaOrigin(url) : null;
@@ -313,6 +319,7 @@ export async function fetchLocalMediaToOss(arg: unknown): Promise<MediaFetchResu
       }
       : undefined;
     const materialized = await materializeSshRemoteMedia(sshOrigin, url, undefined, sshLimits);
+    await assertAuthorized?.();
     if (!materialized.ok) {
       throw new Error(`SSH 媒体取回失败（${materialized.status}）：${materialized.message}`);
     }
@@ -320,6 +327,7 @@ export async function fetchLocalMediaToOss(arg: unknown): Promise<MediaFetchResu
     mimeType = materialized.mime;
   } else {
     ({ absPath, mimeType } = resolveLocalMedia(url));
+    await assertAuthorized?.();
   }
   // For file/audio schemes the requested URL path carries the semantic
   // extension; if it resolves through a symlink whose target has a different
@@ -374,6 +382,7 @@ export async function fetchLocalMediaToOss(arg: unknown): Promise<MediaFetchResu
   // 远端 stat 判过,这里只管本机分支(realpath 后 stat,与后续上传读的是同一个 inode)。
   if (constraints.maxBytes !== null && !sshOrigin) {
     const sizeStat = await stat(absPath);
+    await assertAuthorized?.();
     if (sizeStat.size > constraints.maxBytes) {
       log.warn(`media:fetch rejected oversize ${sizeStat.size}B > ${constraints.maxBytes}B ${url.slice(0, 60)}`);
       throw new Error(`资源超出取件大小上限(${sizeStat.size} > ${constraints.maxBytes} 字节)`);
@@ -388,6 +397,7 @@ export async function fetchLocalMediaToOss(arg: unknown): Promise<MediaFetchResu
       const inputStat = await stat(absPath);
       if (inputStat.size > 0 && inputStat.size <= THUMB_INPUT_MAX_BYTES) {
         const thumb = await withRenderTimeout(thumbnailRenderer(absPath), THUMB_RENDER_TIMEOUT_MS);
+        await assertAuthorized?.();
         if (thumb && thumb.byteLength > 0 && thumb.byteLength <= THUMB_INLINE_MAX_BYTES) {
           log.debug(`media:fetch thumb ${url.slice(0, 40)} → inline ${thumb.byteLength}B`);
           return {
@@ -412,6 +422,7 @@ export async function fetchLocalMediaToOss(arg: unknown): Promise<MediaFetchResu
   let st: { size: number; mtimeMs: number } | null = null;
   if (cacheable) {
     st = await stat(absPath);
+    await assertAuthorized?.();
     if (!skipCache) {
       const hit = lookupUploadCache(url, st.size, st.mtimeMs, Date.now());
       if (hit) {
@@ -425,6 +436,9 @@ export async function fetchLocalMediaToOss(arg: unknown): Promise<MediaFetchResu
     ...(mimeType ? { contentType: mimeType } : {}),
     ...(uploadExtHint ? { extHint: uploadExtHint } : {}),
   });
+  // Do not return a relay credential after membership was revoked while the
+  // upload was in flight. The bounded relay expiry/recycler owns that object.
+  await assertAuthorized?.();
   if (cacheable && st) {
     rememberUpload(url, {
       ossKey: uploaded.key,
