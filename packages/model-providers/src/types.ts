@@ -384,6 +384,13 @@ export interface CatalogModel {
   effortDisplayNames?: Partial<Record<Effort, string>>;
   /** 默认 effort；null = 不支持。 */
   defaultEffort: Effort | null;
+  /**
+   * true = 该 (provider, agent) 下没有任何来源声明过推理档位：用户/运行时没填 reasoning，
+   * 目录、发现元数据与用户元数据也都没有 efforts。此时 `efforts: []` 只是占位，不等于
+   * 「明确无档位」（reasoning:false 或已声明空列表）；准入校验不得据此把显式档位判成
+   * valid: none（#5535）。
+   */
+  effortsUnknown?: boolean;
   /** 思考只有开/关两档时，选择器显示开关而不是档位列表。 */
   thinkingToggle?: boolean;
   /**

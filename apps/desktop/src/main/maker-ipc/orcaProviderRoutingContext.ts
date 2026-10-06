@@ -39,7 +39,7 @@ export function sshCodexWorkerRoutingContext(views: ProviderView[]): OrcaWorkerP
         fastModels: models.filter((model) => model.supportsFastMode).map((model) => model.id),
         effortMetaByModel: Object.fromEntries(models.map((model) => [
           model.id,
-          { efforts: model.efforts, defaultEffort: model.defaultEffort },
+          { efforts: model.efforts, defaultEffort: model.defaultEffort, ...(model.effortsUnknown === true ? { effortsUnknown: true } : {}) },
         ])),
         requiresExplicitRoute: false,
         localOnlyForSsh: false,
@@ -107,7 +107,12 @@ export async function readOrcaWorkerProviderRoutingContext(deps: {
         effortMetaByModel: Object.fromEntries(
           models.map((model) => [
             model.id,
-            { efforts: model.efforts, defaultEffort: model.defaultEffort },
+            {
+              efforts: model.efforts,
+              defaultEffort: model.defaultEffort,
+              // 未声明档位要随快照进入准入,否则自定义来源的占位 [] 会被当成明确无档位(#5535)。
+              ...(model.effortsUnknown === true ? { effortsUnknown: true } : {}),
+            },
           ]),
         ),
         requiresExplicitRoute: providerRouteRequiresExplicitSelection(

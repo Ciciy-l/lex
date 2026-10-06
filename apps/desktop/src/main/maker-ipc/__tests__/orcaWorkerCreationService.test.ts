@@ -1485,6 +1485,43 @@ describe('OrcaWorkerCreationService', () => {
     expect(deps.addOrUpdateWorker).not.toHaveBeenCalled();
   });
 
+  it('keeps an explicit effort for a custom model whose capabilities were never declared (#5535)', async () => {
+    // 自定义来源只填了 id/name:目录与路由快照都没有档位声明,[] 只是占位而不是 valid: none。
+    const model = 'custom/step-5-preview';
+    const { deps, service } = createDeps({
+      getAvailableModels: vi.fn((agent: AgentKind) => (
+        agent === 'claude-code'
+          ? [{ id: model, efforts: [], defaultEffort: null, effortsUnknown: true }]
+          : [{ id: 'gpt-5.5', efforts: ['low', 'medium', 'high', 'xhigh'], defaultEffort: 'high', supportsFastMode: true }]
+      )),
+      getProviderRoutingContext: vi.fn(async () => providerRoutingContext({
+        'claude-code': [{
+          id: 'custom-anthropic',
+          name: 'Custom Anthropic Messages',
+          models: [model],
+          effortMetaByModel: { [model]: { efforts: [], defaultEffort: null, effortsUnknown: true } },
+          requiresExplicitRoute: true,
+        }],
+        codex: [{ id: 'xd', name: 'XD Gateway', models: ['gpt-5.5'] }],
+      })),
+    });
+
+    await expect(
+      service.createWorker({
+        leadSessionId: 'lead-1',
+        role: 'reviewer',
+        agent: 'claude-code',
+        label: 'reviewer',
+        model,
+        effort: 'medium',
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      resolved: { model, effort: 'medium' },
+    });
+    expect(deps.buildCreateOptsWithStderr).toHaveBeenCalledWith(expect.objectContaining({ model, effort: 'medium' }));
+  });
+
   it('rejects explicit minimal effort for a Claude Code worker at the creation boundary', async () => {
     const { deps, service } = createDeps();
 

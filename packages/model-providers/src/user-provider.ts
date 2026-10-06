@@ -388,7 +388,15 @@ function toCatalogModel(
           generationDefaults,
         )
       : pickModelMetadata(user);
-  return applyModelMetadata(model, resolved);
+  // 「未声明」与「明确无档位」要分开（#5535）：用户/运行时 reasoning、目录继承、发现或用户
+  // 元数据任一来源给过 efforts 就算已声明；都没有时 `efforts: []` 只是占位，打上
+  // effortsUnknown 让准入校验不要把显式档位判成 valid: none。
+  const effortsDeclared =
+    m.reasoning !== undefined ||
+    registryEfforts !== undefined ||
+    resolved.efforts !== undefined;
+  const projected = applyModelMetadata(model, resolved);
+  return effortsDeclared ? projected : { ...projected, effortsUnknown: true };
 }
 
 function isPublicXaiApiEndpoint(endpoint: string | undefined): boolean {

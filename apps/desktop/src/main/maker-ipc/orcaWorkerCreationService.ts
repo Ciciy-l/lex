@@ -78,7 +78,10 @@ export interface OrcaWorkerProviderSnapshot {
    * 元数据,effort 归一保留拍平清单解析(兼容旧组装方)。
    */
   effortMetaByModel?: Readonly<
-    Record<string, { efforts: readonly string[]; defaultEffort: string | null }>
+    Record<
+      string,
+      { efforts: readonly string[]; defaultEffort: string | null; effortsUnknown?: boolean }
+    >
   >;
   /** true 表示该来源必须写入 session provider store 才能注入自己的 API key/OAuth token。 */
   requiresExplicitRoute?: boolean;
@@ -110,6 +113,8 @@ export interface OrcaWorkerModelCapabilities {
   id: string;
   efforts?: readonly string[];
   defaultEffort?: string | null;
+  /** true = 没有任何来源声明过档位,efforts 只是占位;显式档位交给引擎裁决而不是拒绝(#5535)。 */
+  effortsUnknown?: boolean;
   supportsFastMode?: boolean;
 }
 
@@ -475,6 +480,9 @@ function normalizeResolvedEffort(params: {
   const defaultEffort = model.defaultEffort ?? null;
   if (effort == null) return { ok: true, effort: defaultEffort };
   if (validEfforts.includes(effort)) return { ok: true, effort };
+  // 未声明档位(#5535):目录与路由来源都没说过这个模型支持什么,[] 只是占位。显式档位
+  // 原样交给引擎/供应商裁决,不再以 valid: none 拒绝;明确无档位(已声明空表)仍走下方拒绝。
+  if (explicit && model.effortsUnknown === true) return { ok: true, effort };
   if (effort === 'minimal' && !explicit && validEfforts.includes('low')) {
     return { ok: true, effort: 'low' };
   }
@@ -914,6 +922,7 @@ export function createOrcaWorkerCreationService(deps: OrcaWorkerCreationDeps): O
           id: resolved.model,
           efforts: routeEffortMeta.efforts,
           defaultEffort: routeEffortMeta.defaultEffort,
+          effortsUnknown: routeEffortMeta.effortsUnknown,
         },
         effort: params.effort ?? defaults.effort ?? lead.effort,
         explicit: params.effort !== undefined,

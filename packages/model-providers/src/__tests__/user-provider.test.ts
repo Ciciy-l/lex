@@ -346,6 +346,92 @@ describe("buildUserProvider (per-runtime)", () => {
     });
   });
 
+  it.each(["claude-code", "codex", "pi"] as const)(
+    "%s leaves unknown reasoning unspecified and preserves declared capabilities",
+    (agent) => {
+      for (const modelRegistry of [
+        undefined,
+        LEGACY_REGISTRY,
+        BUNDLED_CATALOG.modelRegistry,
+      ]) {
+        const models = [
+          { id: "unknown-model", name: "Unknown" },
+          {
+            id: "discovered-model",
+            name: "Discovered",
+            discoveredMetadata: {
+              efforts: ["low", "high"] as const,
+              defaultEffort: "high" as const,
+            },
+          },
+          {
+            id: "configured-model",
+            name: "Configured",
+            reasoning: true,
+            reasoningEfforts: ["high", "max"] as const,
+            reasoningDefaultEffort: "max" as const,
+            discoveredMetadata: {
+              efforts: ["low"] as const,
+              defaultEffort: "low" as const,
+            },
+          },
+          {
+            id: "disabled-model",
+            name: "Disabled",
+            reasoning: false,
+            discoveredMetadata: {
+              efforts: ["high"] as const,
+              defaultEffort: "high" as const,
+            },
+          },
+        ];
+        const config: CustomProviderConfig = {
+          id: "unknown-provider",
+          name: "Unknown provider",
+          runtimes: {
+            [agent]: { baseUrl: "https://unknown.example/v1", models },
+          },
+        };
+        const before = structuredClone(config);
+        const provider = buildUserProvider(config, { modelRegistry });
+        expect(provider.models[agent]).toEqual([
+          expect.objectContaining({
+            id: "unknown-model",
+            efforts: [],
+            defaultEffort: null,
+            // 没有任何来源声明过档位:[] 只是占位,准入不得当成明确无档位(#5535)。
+            effortsUnknown: true,
+          }),
+          expect.objectContaining({
+            id: "discovered-model",
+            efforts: ["low", "high"],
+            defaultEffort: "high",
+          }),
+          expect.objectContaining({
+            id: "configured-model",
+            efforts: ["high", "max"],
+            defaultEffort: "max",
+          }),
+          expect.objectContaining({
+            id: "disabled-model",
+            efforts: [],
+            defaultEffort: null,
+          }),
+        ]);
+        expect(config).toEqual(before);
+        expect(provider.models[agent]?.[0].userModelConfig).not.toHaveProperty(
+          "reasoning",
+        );
+        // 发现元数据、显式 reasoning:true 与 reasoning:false 都算已声明,不带「未知」标记。
+        for (const index of [1, 2, 3]) {
+          expect(provider.models[agent]?.[index]).not.toHaveProperty(
+            "effortsUnknown",
+          );
+        }
+      }
+    },
+  );
+
   it("projects a model-specific protocol route into the provider catalog", () => {
     const provider = buildUserProvider({
       ...codexOnly,
@@ -544,8 +630,9 @@ describe("buildUserProvider (per-runtime)", () => {
     // custom/my-model → no registry match → CUSTOM_EFFORTS for codex
     expect(p.models.codex?.[0]).toMatchObject({
       id: "custom/my-model",
-      efforts: ["low", "medium", "high", "xhigh", "max"],
-      defaultEffort: "medium",
+      efforts: [],
+      defaultEffort: null,
+      effortsUnknown: true,
     });
   });
 
