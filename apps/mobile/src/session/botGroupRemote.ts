@@ -343,6 +343,7 @@ export function parseBotGroupChatData(value: unknown): BotGroupRemoteChatData | 
     plans,
     // Older computers would drop attachments on `send`; only an explicit yes offers them.
     supportsAttachments: record.supportsAttachments === true,
+    supportsAttachmentUpload: record.supportsAttachmentUpload === true,
   };
 }
 

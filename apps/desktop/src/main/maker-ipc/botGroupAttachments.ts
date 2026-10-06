@@ -6,8 +6,9 @@
  *   in the same transaction that deletes the group. Each member's Session adds its usual
  *   `session-attachment` reference when the turn is saved.
  * - A file picked on this computer stays where it is, exactly as in a task message.
- * - A phone's upload is fetched once; when it is not an image it is kept in the group's
- *   folder (`bot-groups/<groupId>/attachments/`), which goes to the trash with the group.
+ * - A phone's upload is fetched once; supported image/video/audio bytes enter cindy-media,
+ *   while non-media files are kept in the group's folder (`bot-groups/<groupId>/attachments/`),
+ *   which goes to the trash with the group.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -36,6 +37,7 @@ import {
   type BotGroupFailure,
 } from '../../shared/botGroupChat.js';
 import type { BotGroupPreparedAttachments } from './botGroupChatService.js';
+import type { BotGroupAttachmentUploadLease, BotGroupAttachmentUploadRegistry } from './botGroupAttachmentUploadRegistry.js';
 
 const CATEGORIES: ReadonlySet<string> = new Set<BotGroupAttachmentCategory>(['image', 'pdf', 'text', 'office', 'file']);
 const MAX_ID_CHARS = 128;
@@ -47,7 +49,11 @@ interface AttachmentEntry {
   path: string;
   category: BotGroupAttachmentCategory;
   mimeType: string;
+  size: number;
+  sha256: string | null;
   url: string | null;
+  uploadReceipt: string | null;
+  uploadIntent: string | null;
   annotated: boolean;
 }
 
@@ -60,17 +66,21 @@ function readEntry(value: unknown): AttachmentEntry | null {
   const raw = value as Record<string, unknown>;
   const name = typeof raw.originalName === 'string' && raw.originalName.trim() ? raw.originalName : raw.name;
   if (typeof name !== 'string' || !name.trim() || name.length > MAX_NAME_CHARS) return null;
-  if (typeof raw.path !== 'string' || typeof raw.mimeType !== 'string') return null;
+  if ((raw.path !== undefined && typeof raw.path !== 'string') || typeof raw.mimeType !== 'string') return null;
   if (typeof raw.category !== 'string' || !CATEGORIES.has(raw.category)) return null;
   if (raw.url !== undefined && typeof raw.url !== 'string') return null;
   const id = typeof raw.id === 'string' && raw.id.length > 0 && raw.id.length <= MAX_ID_CHARS ? raw.id : randomUUID();
   return {
     id,
     name: name.trim(),
-    path: raw.path,
+    path: typeof raw.path === 'string' ? raw.path : '',
     category: raw.category as BotGroupAttachmentCategory,
     mimeType: raw.mimeType,
+    size: typeof raw.size === 'number' && Number.isSafeInteger(raw.size) ? raw.size : 0,
+    sha256: typeof raw.sha256 === 'string' ? raw.sha256 : null,
     url: typeof raw.url === 'string' ? raw.url : null,
+    uploadReceipt: typeof raw.uploadReceipt === 'string' ? raw.uploadReceipt : null,
+    uploadIntent: typeof raw.uploadIntent === 'string' ? raw.uploadIntent : null,
     annotated: raw.annotated === true,
   };
 }
@@ -169,6 +179,7 @@ export interface BotGroupAttachmentStore {
     attachments: readonly unknown[];
     controllerDeviceId?: string;
     operationGuard?: () => void;
+    remoteContext?: { ownerToken: string; client?: unknown; linkEpoch?: number; groupRevision?: string };
   }) => Promise<BotGroupPreparedAttachments | BotGroupFailure>;
 }
 
@@ -180,6 +191,7 @@ export interface RemoteAttachmentAuthorizationContext {
 
 export function createBotGroupAttachmentStore(deps: {
   ownerRoot: () => string;
+  attachmentUploads?: BotGroupAttachmentUploadRegistry;
   /** Verifies a server-issued upload capability; absent means fail closed. */
   verifyRemoteAttachment?: (
     ref: RemoteAttachment,
@@ -203,10 +215,12 @@ export function createBotGroupAttachmentStore(deps: {
       return invalid();
     }
     let compensationScope: MediaRefCompensationScope | undefined;
-    try {
-      compensationScope = deps.captureCompensationScope?.();
-    } catch {
-      return invalid();
+    if (input.operationGuard) {
+      try {
+        compensationScope = deps.captureCompensationScope?.();
+      } catch {
+        return invalid();
+      }
     }
     const assertCurrent = async (): Promise<void> => {
       input.operationGuard?.();
@@ -217,6 +231,7 @@ export function createBotGroupAttachmentStore(deps: {
     const refIds: string[] = [];
     const folders: string[] = [];
     const uploads: string[] = [];
+    const remoteLeases: BotGroupAttachmentUploadLease[] = [];
     const folderIdentities = new Map<string, DirectoryIdentity>();
     let discarded = false;
     let committed = false;
@@ -248,6 +263,9 @@ export function createBotGroupAttachmentStore(deps: {
           // Never follow a replaced directory/junction during cleanup.
         }
       }
+      // A failed or transport-unknown message must retain the host-issued
+      // upload source for reconciliation/retry; only commit releases it.
+      for (const lease of remoteLeases.splice(0)) await lease.rollback().catch(() => undefined);
     };
 
     /** The group's reference to an image already in the media store (once per group). */
@@ -287,39 +305,67 @@ export function createBotGroupAttachmentStore(deps: {
 
     /** Sent by a phone: only its own uploads are accepted, never a path on this computer. */
     const remote = async (entry: AttachmentEntry): Promise<BotGroupAttachment | null> => {
-      const refText = entry.url ?? entry.path;
-      const ref = parseRemoteAttachmentRef(refText);
-      if (!ref || ref.size === undefined || ref.sha256 === undefined) return null;
-      if (!input.controllerDeviceId || !deps.verifyRemoteAttachment) {
-        // AttachmentOssRef currently contains no authenticated uploader, owner,
-        // target-host, intent, or signed capability. A key prefix/self-reported
-        // peer is not an authorization check. Fail closed until the relay can
-        // provide a verifiable capability.
-        throw new Error('FILE_PEER_UNVERIFIED');
+      let ref: RemoteAttachment;
+      if (entry.uploadReceipt) {
+        if (!input.controllerDeviceId || !deps.attachmentUploads || !input.remoteContext) {
+          throw new Error('FILE_PEER_UNVERIFIED');
+        }
+        const lease = await deps.attachmentUploads.consume(entry.uploadReceipt, {
+          controllerDeviceId: input.controllerDeviceId,
+          groupId: input.groupId,
+          intent: entry.uploadIntent ?? '',
+          attachmentId: entry.id,
+          size: entry.size,
+          sha256: entry.sha256 ?? '',
+          mimeType: entry.mimeType,
+          ...input.remoteContext,
+          assertCurrent: input.operationGuard,
+        });
+        remoteLeases.push(lease);
+        ref = lease.ref;
+      } else {
+        // Legacy OSS references do not carry an authenticated issuing peer.
+        // They remain accepted only for an explicitly supplied verifier (the
+        // production group store does not install one), never by key prefix.
+        const refText = entry.url ?? entry.path;
+        const parsed = parseRemoteAttachmentRef(refText);
+        if (!parsed || parsed.size === undefined || parsed.sha256 === undefined) return null;
+        if (!input.controllerDeviceId || !deps.verifyRemoteAttachment) throw new Error('FILE_PEER_UNVERIFIED');
+        const authorized = await deps.verifyRemoteAttachment(parsed, { groupId: input.groupId, controllerDeviceId: input.controllerDeviceId, ownerRoot });
+        await assertCurrent();
+        if (!authorized) throw new Error('FILE_PEER_DENIED');
+        ref = parsed;
       }
-      const authorized = await deps.verifyRemoteAttachment(ref, {
-        groupId: input.groupId,
-        controllerDeviceId: input.controllerDeviceId,
-        ownerRoot,
-      });
       await assertCurrent();
-      if (!authorized) throw new Error('FILE_PEER_DENIED');
       if (isDangerousAttachmentName(entry.name)) throw new Error('FILE_PEER_UNSAFE_NAME');
       const mimeType = ref.mimeType ?? entry.mimeType;
       const dirResult = await ensureSafeDirectoryChain(ownerIdentity, ['bot-groups', input.groupId, 'attachments'], assertCurrent);
       const dir = dirResult.path;
+      // The owner-root check alone is not enough: a group attachment directory
+      // can be replaced by a junction/symlink while the relay download is
+      // awaiting the network.  Recheck the captured directory identity at every
+      // asynchronous boundary before allowing bytes or refs to become durable.
+      const assertAttachmentDirectory = async (): Promise<void> => {
+        await assertCurrent();
+        await assertDirectoryIdentity(dirResult.identity);
+      };
       const incoming = path.join(dir, `.incoming-${randomUUID()}`);
       try {
-        await assertCurrent();
+        await assertAttachmentDirectory();
         await materializeRemoteAttachment(ref, incoming, integrityFor(ref));
-        await assertCurrent();
+        await assertAttachmentDirectory();
         if (await isRegularFile(incoming) === null) throw new Error('FILE_PEER_INVALID_FILE');
-        if (ref.ossKey) uploads.push(ref.ossKey);
+        await assertAttachmentDirectory();
+        // A registry lease owns release/rollback of the host-issued object.
+        // Keep the legacy list only for verifier-backed refs, otherwise commit
+        // would release the same object once through `uploads` and once through
+        // the lease state machine.
+        if (!entry.uploadReceipt && ref.ossKey) uploads.push(ref.ossKey);
         const buffer = await fs.readFile(incoming);
-        await assertCurrent();
+        await assertAttachmentDirectory();
         const detectedMime = sniffMediaMime(buffer, mimeType);
         if (detectedMime && blobStore.supportedMime(detectedMime)) {
-          await assertCurrent();
+          await assertAttachmentDirectory();
           if (input.operationGuard && !compensationScope) throw new Error('FILE_PEER_OWNER_SCOPE_UNAVAILABLE');
           const written = await ingestMedia({
             buffer,
@@ -328,21 +374,23 @@ export function createBotGroupAttachmentStore(deps: {
             ...(input.operationGuard ? { assertStillValid: () => { input.operationGuard?.(); compensationScope?.assertStillValid(); } } : {}),
             ...(compensationScope ? { refCompensationScope: compensationScope } : {}),
           }, db);
-          await assertCurrent();
+          await assertAttachmentDirectory();
           refIds.push(...written.refIds);
           const size = await isRegularFile(blobStore.resolveSafe(written.url).absPath) ?? 0;
-          await assertCurrent();
+          await assertAttachmentDirectory();
           return { id: entry.id, name: entry.name, category: detectedMime.startsWith('image/') ? 'image' : 'file', mimeType: detectedMime, size, url: written.url, path: null, ...(entry.annotated ? { annotated: true } : {}) };
         }
-        await assertCurrent();
+        await assertAttachmentDirectory();
         const folderResult = await ensureSafeDirectoryChain(dirResult.identity, [randomUUID()], assertCurrent);
         const folder = folderResult.path;
         folders.push(folder);
         folderIdentities.set(folder, folderResult.identity);
         const file = path.join(folder, safeAttachmentFileName(entry.name));
-        await assertCurrent();
+        await assertAttachmentDirectory();
+        await assertDirectoryIdentity(folderResult.identity);
         await fs.rename(incoming, file);
-        await assertCurrent();
+        await assertAttachmentDirectory();
+        await assertDirectoryIdentity(folderResult.identity);
         const size = await isRegularFile(file) ?? 0;
         if (size <= 0) throw new Error('FILE_PEER_INVALID_FILE');
         const category = entry.category === 'image' ? 'file' : entry.category;
@@ -386,6 +434,7 @@ export function createBotGroupAttachmentStore(deps: {
           return;
         }
         for (const key of uploads.splice(0)) await removeRemote(key).catch(() => undefined);
+        for (const lease of remoteLeases.splice(0)) await lease.commit().catch(() => undefined);
       },
       discard,
     };

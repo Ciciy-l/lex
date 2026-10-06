@@ -49,7 +49,7 @@ import { ComposerToolbarLeftGroup, ComposerToolbarSpacer, MobileComposerInputRow
 import { nextBotGroupSendAttempt, type BotGroupSendAttempt } from './botGroupRemote';
 import { canBrowsePhotoLibraryDirectly } from './photoLibraryPolicy';
 import type { RemoteSerializedAttachment } from './types';
-import { useBotGroupComposerAttachments } from './useBotGroupComposerAttachments';
+import { useBotGroupComposerAttachments, type BotGroupUploadGrant } from './useBotGroupComposerAttachments';
 
 const CONTROL_SIZE = 34;
 const CONTROL_HIT_SLOP = { top: 8, bottom: 8, left: 8, right: 8 } as const;
@@ -71,7 +71,7 @@ type MentionOption =
   | { kind: 'member'; label: string; member: BotGroupMemberView };
 
 export function BotGroupComposer({
-  groupId, members, identityFor, deviceId, online, running, planState, attachmentsSupported, onSend, onStop,
+  groupId, members, identityFor, deviceId, online, running, planState, attachmentsSupported, onSend, onStop, prepareUpload, cancelUpload,
 }: {
   groupId: string;
   members: readonly BotGroupMemberView[];
@@ -80,11 +80,13 @@ export function BotGroupComposer({
   online: boolean;
   running: boolean;
   planState: BotGroupComposerPlanState | null;
-  /** The computer takes attachments on `send` (`BotGroupRemoteChatData.supportsAttachments`). */
+  /** The computer accepts receipt-backed group attachments on `send`. */
   attachmentsSupported: boolean;
   /** Rejects with the host's error; the draft (and its tag) come back and the attachments stay. */
   onSend(input: BotGroupSendInput): Promise<void>;
   onStop(): Promise<void>;
+  prepareUpload?: (input: { attachmentId: string; intent: string; name: string; size: number; sha256: string; mimeType: string; ext: string }) => Promise<BotGroupUploadGrant>;
+  cancelUpload?: (input: { receipt: string; attachmentId: string; intent: string; size: number; sha256: string; mimeType: string }) => Promise<void>;
 }) {
   const { t } = useTranslation();
   const { colors } = useTheme();
@@ -109,6 +111,8 @@ export function BotGroupComposer({
     attachmentScopeKey: `bot-group:${groupId}`,
     deviceId,
     onPicked: () => { setSheetOpen(false); focusInput(); },
+    prepareUpload,
+    cancelUpload,
   });
   const attachmentsEnabled = attachmentsSupported && online;
   // Paste handlers stay mounted for the whole screen (the input would remount otherwise); they

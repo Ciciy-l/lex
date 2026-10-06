@@ -61,6 +61,14 @@ export interface UseMobileLocalAttachmentsOptions {
    */
   attachmentScopeKey?: string;
   getAccessToken: () => Promise<string | null>;
+  /** Optional host-specific two-phase upload; normal chats keep the server presign path. */
+  upload?: (
+    candidate: { id?: string; name: string; size: number; mimeType?: string },
+    fileUri: string,
+    opts: { token: string; signal?: AbortSignal },
+  ) => Promise<RemoteSerializedAttachment>;
+  /** Optional matching cleanup for host-issued upload receipts. */
+  discard?: (attachment: RemoteSerializedAttachment, token?: string | null) => void;
   /** 当前已入列附件数(限额用;pending 由 hook 自己计入)。 */
   getAttachmentCount: () => number;
   /** 单个上传成功:页面把 attachment 入列;图片按 candidate.uri 记预览映射,
@@ -274,10 +282,14 @@ export function useMobileLocalAttachments(
       if (candidate.kind === 'image') assertMobileImageSize(size);
       else assertMobileDocumentSize(size);
     },
-    upload: (candidate, fileUri, opts) => uploadMobileAttachmentFromFile(candidate, fileUri, opts),
-    discard: (attachment, token) => discardMobileUploadedAttachment(attachment, {
-      getToken: () => token === undefined ? optionsRef.current.getAccessToken() : Promise.resolve(token),
-    }),
+    upload: (candidate, fileUri, opts) => optionsRef.current.upload
+      ? optionsRef.current.upload(candidate, fileUri, opts)
+      : uploadMobileAttachmentFromFile(candidate, fileUri, opts),
+    discard: (attachment, token) => optionsRef.current.discard
+      ? optionsRef.current.discard(attachment, token)
+      : discardMobileUploadedAttachment(attachment, {
+        getToken: () => token === undefined ? optionsRef.current.getAccessToken() : Promise.resolve(token),
+      }),
     onPendingChange: setPendingUploads,
     onUploaded: async (attachment, candidate, uploadedUri, localId, localUris, isActive) => {
       const candidateScopeKey = candidate.attachmentScopeKey;
@@ -289,9 +301,8 @@ export function useMobileLocalAttachments(
         // 已越过 controller 的最后取消检查点，这里仍按 candidate 的原 owner 拒收。
         // task 已被 removeAll 标记时由 controller 统一回收，避免这里重复 DELETE。
         if (!isActive()) return;
-        discardMobileUploadedAttachment(attachment, {
-          getToken: () => optionsRef.current.getAccessToken(),
-        });
+        if (optionsRef.current.discard) optionsRef.current.discard(attachment);
+        else discardMobileUploadedAttachment(attachment, { getToken: () => optionsRef.current.getAccessToken() });
         if (candidate.cleanupLocalUris) void candidate.cleanupLocalUris(localUris).catch(() => undefined);
         return;
       }
@@ -300,15 +311,15 @@ export function useMobileLocalAttachments(
       // 实际上传的文件拷进自有目录记映射,气泡用本地图顶上。
       let deliveredCandidate = candidate;
       if (candidate.kind === 'image') {
-        const ossRef = attachment.url ?? attachment.path;
+        const ossRef = attachment.url ?? attachment.path ?? '';
         if (candidate.cleanupLocalUris) {
           // 粘贴源文件需要回收:先等持久缩略图完成接管，才能安全删源文件。
-          await registerSentAttachmentThumb(ossRef, uploadedUri || candidate.uri);
+          if (ossRef) await registerSentAttachmentThumb(ossRef, uploadedUri || candidate.uri);
           const durablePreviewUri = ossRef ? getSentAttachmentThumbUri(ossRef) : null;
           if (durablePreviewUri) deliveredCandidate = { ...candidate, uri: durablePreviewUri };
         } else {
           // 相册 / 相机原有路径不拥有源文件，保持 fire-and-forget，不拉长上传落定时间。
-          void registerSentAttachmentThumb(ossRef, uploadedUri || candidate.uri);
+          if (ossRef) void registerSentAttachmentThumb(ossRef, uploadedUri || candidate.uri);
         }
       }
       if (candidate.cleanupLocalUris) {

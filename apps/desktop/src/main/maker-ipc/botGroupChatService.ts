@@ -130,6 +130,7 @@ export interface BotGroupChatServiceDeps {
     controllerDeviceId?: string;
     /** The guard is checked at every asynchronous attachment side-effect boundary. */
     operationGuard?: BotGroupOperationGuard;
+    remoteContext?: { ownerToken: string; client?: unknown; linkEpoch?: number; groupRevision?: string };
   }) => Promise<BotGroupPreparedAttachments | BotGroupFailure>;
   /** Stop the lane's current turn and drop its pending group inputs. */
   abortLane: (sessionId: string) => Promise<void>;
@@ -289,6 +290,13 @@ export interface BotGroupMutationOptions {
   expectedPlanUpdatedAt?: number;
   /** Upload source identity; never persisted in a group message. */
   controllerDeviceId?: string;
+  /** Remote connection identity used by host-issued attachment receipts. */
+  remoteContext?: {
+    ownerToken: string;
+    client?: unknown;
+    linkEpoch?: number;
+    groupRevision?: string;
+  };
 }
 
 function guardSnapshot(options?: BotGroupMutationOptions) {
@@ -2133,6 +2141,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
           attachments: attachmentInputs,
           ...(options?.controllerDeviceId ? { controllerDeviceId: options.controllerDeviceId } : {}),
           ...(options?.operationGuard ? { operationGuard: options.operationGuard } : {}),
+          ...(options?.remoteContext ? { remoteContext: options.remoteContext } : {}),
         });
         assertOperation(options);
       } catch (error) {

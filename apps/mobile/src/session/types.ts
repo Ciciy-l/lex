@@ -124,7 +124,7 @@ export interface RemoteMessage {
   systemCardType?: 'help' | 'context' | 'cost' | 'pwd' | 'status' | 'compact' | 'cmd' | 'goal-complete' | 'goal-resumed' | 'context-rebuild' | 'auto-resume' | 'learn' | 'agent-switch';
 }
 
-export type RemoteAttachmentCategory = 'image' | 'pdf' | 'text' | 'office';
+export type RemoteAttachmentCategory = 'image' | 'pdf' | 'text' | 'office' | 'file';
 
 export interface RemoteFileRef {
   name: string;
@@ -168,6 +168,10 @@ export interface RemoteSerializedAttachment {
   category: RemoteAttachmentCategory;
   mimeType: string;
   url?: string;
+  /** Opaque host-issued receipt for group uploads; never a raw OSS key. */
+  uploadReceipt?: string;
+  /** Stable upload/send intent; retries reuse it. */
+  uploadIntent?: string;
   originalName?: string;
   base64?: string;
   textContent?: string;

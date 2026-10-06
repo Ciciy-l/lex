@@ -420,6 +420,8 @@ import { createBotGroupChatService, type BotGroupChatService } from './botGroupC
 import { createBotGroupPlanDecider } from './botGroupPlanDecider.js';
 import { createBotGroupWorkDir, validateExistingBotGroupProjectDirectory } from './botGroupWorkDir.js';
 import { createBotGroupAttachmentStore } from './botGroupAttachments.js';
+import { createBotGroupAttachmentUploadRegistry } from './botGroupAttachmentUploadRegistry.js';
+import { captureMediaRefCompensationScope } from '../cindy-media/refCompensationJournal.js';
 import { botGroupMembersVisibleRemotely, registerBotGroupRemoteResourceProvider } from './botGroupRemoteResourceProvider.js';
 import { broadcastBotGroupRemoteResourceChanged } from './botGroupRemoteResourceInvalidation.js';
 import { getBotGroupStepNotificationBody } from '../sessionNotificationCopy.js';
@@ -9636,7 +9638,14 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   });
   botGroupChatServiceHolder?.dispose();
   // 分工 steps run in the group's folder, the 项目文件夹, or one worktree per plan (bot-group-chat.md §7.5).
-  const botGroupAttachments = createBotGroupAttachmentStore({ ownerRoot: () => ownerScopedUserDataPath() });
+  // Group uploads use a host-memory receipt registry. Raw OSS keys and signed
+  // URLs never enter the remote resource payload or durable database.
+  const botGroupAttachmentUploads = createBotGroupAttachmentUploadRegistry();
+  const botGroupAttachments = createBotGroupAttachmentStore({
+    ownerRoot: () => ownerScopedUserDataPath(),
+    attachmentUploads: botGroupAttachmentUploads,
+    captureCompensationScope: () => captureMediaRefCompensationScope(),
+  });
   const botGroupWorkDir = createBotGroupWorkDir({
     ownerRoot: () => ownerScopedUserDataPath(),
     managedDialogueRoot: () => ownerScopedUserDataPath('dialogues'),
@@ -9749,7 +9758,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     log,
   });
   // Phones reach groups through the Remote Resource protocol (bot-group-chat.md §8).
-  registerBotGroupRemoteResourceProvider(() => botGroupChatServiceHolder);
+  registerBotGroupRemoteResourceProvider(() => botGroupChatServiceHolder, botGroupAttachmentUploads);
   botDelegationServiceHolder?.dispose();
   botDelegationServiceHolder = createBotDelegationService({
     taskControl: {

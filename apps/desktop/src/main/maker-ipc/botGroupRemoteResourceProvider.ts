@@ -33,9 +33,11 @@ import {
   TEAMMATES_REMOTE_COLLECTION_ID,
 } from '../localDb/ipc/botRemoteResourceProjection.js';
 import { isBotVisibleRemotely } from '../localDb/ipc/botRemoteVisibility.js';
+import { isDangerousAttachmentName } from '../../shared/attachmentSafety.js';
 import { botProfiles } from '../localDb/schema.js';
 import {
   BOT_GROUP_CHAT_PRIMITIVE,
+  BOT_GROUP_ATTACHMENT_UPLOAD_CAPABILITY,
   BOT_GROUP_MEMBER_LINK_REL,
   BOT_GROUP_REMOTE_COLLECTION_ID,
   BOT_GROUP_REMOTE_RESOURCE_KIND,
@@ -46,6 +48,7 @@ import {
   type BotGroupSummary,
 } from '../../shared/botGroupChat.js';
 import type { BotGroupChatService, BotGroupMutationOptions } from './botGroupChatService.js';
+import type { BotGroupAttachmentUploadGrant, BotGroupAttachmentUploadRegistry } from './botGroupAttachmentUploadRegistry.js';
 
 const FALLBACK_MESSAGES = 20;
 const FALLBACK_MESSAGE_CHARS = 280;
@@ -169,7 +172,7 @@ export function botGroupRemoteItem(group: BotGroupSummary): RemoteCollectionItem
 }
 
 /** Host paths stay on the computer; the phone gets the folder name and attachment names only. */
-export function botGroupRemoteChatData(detail: BotGroupDetail): BotGroupRemoteChatData {
+export function botGroupRemoteChatData(detail: BotGroupDetail, attachmentUploadSupported = false): BotGroupRemoteChatData {
   const portableFileName = (value: string): string | null => {
     const normalized = value.replaceAll('\\', '/');
     const name = normalized.slice(normalized.lastIndexOf('/') + 1);
@@ -187,6 +190,7 @@ export function botGroupRemoteChatData(detail: BotGroupDetail): BotGroupRemoteCh
     })),
     plans: detail.plans.map((plan) => ({ ...plan, workDir: null })),
     supportsAttachments: true,
+    ...(attachmentUploadSupported ? { supportsAttachmentUpload: true } : {}),
   };
 }
 
@@ -243,6 +247,13 @@ async function assertBotsVisible(botIds: readonly string[]): Promise<void> {
   }
 }
 
+function uploadFailure(error: unknown): never {
+  const message = error instanceof Error && /^BOT_GROUP_UPLOAD_[A-Z_]+$/.test(error.message)
+    ? error.message
+    : 'ATTACHMENT_UPLOAD_FAILED';
+  throw new RemoteResourceRegistryError('INVALID_PARAMS', message);
+}
+
 interface RemoteGroupSnapshot {
   detail: BotGroupDetail;
   revision: string;
@@ -270,6 +281,7 @@ function remoteOptions(
   operationGuard: (() => void) | undefined,
   planId?: string,
   controllerDeviceId?: string,
+  remoteContext?: { ownerToken: string; client?: unknown; linkEpoch?: number },
 ): BotGroupMutationOptions | undefined {
   if (!operationGuard) return undefined;
   const plan = planId ? snapshot.detail.plans.find((candidate) => candidate.id === planId) : undefined;
@@ -279,6 +291,7 @@ function remoteOptions(
     expectedMemberBotIds: snapshot.memberBotIds,
     ...(plan ? { expectedPlanId: plan.id, expectedPlanUpdatedAt: plan.updatedAt } : {}),
     ...(controllerDeviceId ? { controllerDeviceId } : {}),
+    ...(remoteContext ? { remoteContext: { ...remoteContext, groupRevision: snapshot.revision } } : {}),
   };
 }
 
@@ -292,7 +305,10 @@ function callService<TInput, TResult>(
 
 let registered = false;
 
-export function registerBotGroupRemoteResourceProvider(service: () => BotGroupChatService | null): void {
+export function registerBotGroupRemoteResourceProvider(
+  service: () => BotGroupChatService | null,
+  attachmentUploads?: BotGroupAttachmentUploadRegistry,
+): void {
   if (registered) return;
   registered = true;
 
@@ -311,7 +327,9 @@ export function registerBotGroupRemoteResourceProvider(service: () => BotGroupCh
         throw new RemoteResourceRegistryError('NOT_FOUND', 'Account changed');
       }
     };
-    return { scope, guarded, assertCurrent, operationGuard: guarded ? assertCurrent : undefined };
+    let ownerToken = 'owner:unknown';
+    try { ownerToken = JSON.stringify(scope); } catch { /* keep conservative fallback */ }
+    return { scope, guarded, assertCurrent, operationGuard: guarded ? assertCurrent : undefined, ownerToken };
   };
 
   /** The group, if a phone may see it right now. */
@@ -329,6 +347,7 @@ export function registerBotGroupRemoteResourceProvider(service: () => BotGroupCh
       resourceKind: BOT_GROUP_REMOTE_RESOURCE_KIND,
       title: localized(COPY.title),
       icon: { name: 'users', fallbackText: '••' },
+      ...(attachmentUploads ? { capabilities: [BOT_GROUP_ATTACHMENT_UPLOAD_CAPABILITY] } : {}),
       actions: [{ id: 'create' satisfies BotGroupRemoteActionId, label: localized(COPY.title) }],
     },
 
@@ -366,7 +385,7 @@ export function registerBotGroupRemoteResourceProvider(service: () => BotGroupCh
               id: 'chat',
               primitive: BOT_GROUP_CHAT_PRIMITIVE,
               fallbackMarkdown: fallbackMarkdown(detail),
-              data: botGroupRemoteChatData(detail),
+              data: botGroupRemoteChatData(detail, attachmentUploads !== undefined),
             }
             // Older controllers can still read the conversation.
             : { id: 'chat', primitive: 'markdown', fallbackMarkdown: fallbackMarkdown(detail) },
@@ -391,6 +410,8 @@ export function registerBotGroupRemoteResourceProvider(service: () => BotGroupCh
         Array.isArray(input.botIds) ? input.botIds.filter((id): id is string => typeof id === 'string') : [];
       const allowedKeys: Record<string, readonly string[]> = {
         create: ['name', 'botIds', 'requestId'],
+        'prepare-upload': ['attachmentId', 'intent', 'name', 'size', 'sha256', 'mimeType', 'ext'],
+        'cancel-upload': ['receipt', 'attachmentId', 'intent', 'size', 'sha256', 'mimeType'],
         send: ['text', 'mentions', 'clientId', 'division', 'attachments'],
         continue: [],
         stop: [],
@@ -440,12 +461,73 @@ export function registerBotGroupRemoteResourceProvider(service: () => BotGroupCh
       if (actionId === 'plan-edit' && typeof input.botId === 'string') await assertBotsVisible([input.botId]);
       lease.assertCurrent();
       const current = ownerService();
+      if (actionId === 'prepare-upload') {
+        if (!attachmentUploads || !context.controllerDeviceId) {
+          throw new RemoteResourceRegistryError('UNSUPPORTED_CAPABILITY', 'ATTACHMENT_UPLOAD_UNSUPPORTED');
+        }
+        const attachmentId = typeof input.attachmentId === 'string' ? input.attachmentId : '';
+        const intent = typeof input.intent === 'string' ? input.intent : '';
+        const name = typeof input.name === 'string' ? input.name : '';
+        const size = typeof input.size === 'number' ? input.size : 0;
+        const sha256 = typeof input.sha256 === 'string' ? input.sha256 : '';
+        const mimeType = typeof input.mimeType === 'string' ? input.mimeType : '';
+        const ext = typeof input.ext === 'string' ? input.ext : '';
+        if (!attachmentId || !intent || !name || !size || !sha256 || !mimeType || !ext) {
+          throw new RemoteResourceRegistryError('INVALID_PARAMS', 'INVALID_PARAMS');
+        }
+        // Reject unsafe names before asking the relay for a signed object.  The
+        // same policy is enforced again while materialising the receipt, but a
+        // preflight failure avoids issuing a capability that can never become a
+        // valid group message.
+        const nameExt = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toLowerCase() : 'bin';
+        if (name.length > 255 || name === '.' || name === '..' || name.includes('/') || name.includes('\\')
+          || /[\u0000-\u001f<>:"|?*]/.test(name) || isDangerousAttachmentName(name)
+          || ext.toLowerCase() !== nameExt) {
+          throw new RemoteResourceRegistryError('INVALID_PARAMS', 'INVALID_PARAMS');
+        }
+        let grant: BotGroupAttachmentUploadGrant;
+        try {
+          grant = await attachmentUploads.prepare({
+            controllerDeviceId: context.controllerDeviceId, groupId, intent, attachmentId, size, sha256, mimeType,
+            ownerToken: lease.ownerToken, client: context.client, linkEpoch: context.linkEpoch,
+            groupRevision: snapshot.revision, assertCurrent: lease.assertCurrent,
+          }, ext);
+        } catch (error) {
+          uploadFailure(error);
+        }
+        lease.assertCurrent();
+        return { effects: [], data: grant };
+      }
+      if (actionId === 'cancel-upload') {
+        if (!attachmentUploads || !context.controllerDeviceId) {
+          throw new RemoteResourceRegistryError('UNSUPPORTED_CAPABILITY', 'ATTACHMENT_UPLOAD_UNSUPPORTED');
+        }
+        const receipt = typeof input.receipt === 'string' ? input.receipt : '';
+        const cancelContext = {
+          controllerDeviceId: context.controllerDeviceId, groupId,
+          intent: typeof input.intent === 'string' ? input.intent : '',
+          attachmentId: typeof input.attachmentId === 'string' ? input.attachmentId : '',
+          size: typeof input.size === 'number' ? input.size : 0,
+          sha256: typeof input.sha256 === 'string' ? input.sha256 : '',
+          mimeType: typeof input.mimeType === 'string' ? input.mimeType : '',
+          ownerToken: lease.ownerToken, client: context.client, linkEpoch: context.linkEpoch,
+          groupRevision: snapshot.revision, assertCurrent: lease.assertCurrent,
+        };
+        try {
+          await attachmentUploads.cancel(receipt, cancelContext);
+        } catch (error) {
+          uploadFailure(error);
+        }
+        lease.assertCurrent();
+        return { effects: [{ kind: 'refresh-resource', ref: groupRef(groupId) }] };
+      }
       const planInput = { groupId, planId: input.planId };
       const options = remoteOptions(
         snapshot,
         lease.operationGuard,
         typeof input.planId === 'string' ? input.planId : undefined,
         actionId === 'send' ? context.controllerDeviceId : undefined,
+        { ownerToken: lease.ownerToken, client: context.client, linkEpoch: context.linkEpoch },
       );
       let result: { ok: true } | BotGroupFailure;
       switch (actionId) {

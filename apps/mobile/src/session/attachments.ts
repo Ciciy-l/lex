@@ -9,6 +9,11 @@ export const MOBILE_MAX_ATTACHMENTS = 20;
 export const MOBILE_MAX_ATTACHMENT_BYTES = 30 * 1024 * 1024;
 
 const SUPPORTED_IMAGE_EXTS = new Set(['.jpeg', '.jpg', '.png', '.gif', '.webp']);
+// Device Link's existing file picker accepts common media files too.  They
+// remain the generic `file` category on the wire; the host sniffs their bytes
+// before deciding whether to place them in cindy-media.
+const SUPPORTED_VIDEO_EXTS = new Set(['.mp4', '.m4v', '.mov', '.webm']);
+const SUPPORTED_AUDIO_EXTS = new Set(['.mp3', '.wav', '.m4a', '.ogg']);
 const SUPPORTED_DOC_EXTS = new Set(['.pdf']);
 const SUPPORTED_OFFICE_EXTS = new Set(['.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx']);
 
@@ -117,6 +122,7 @@ export function extractRemoteFileExt(name: string): string {
 export function categorizeMobileAttachment(name: string): MobileAttachmentCategory | null {
   const ext = extractRemoteFileExt(name);
   if (SUPPORTED_IMAGE_EXTS.has(ext)) return 'image';
+  if (SUPPORTED_VIDEO_EXTS.has(ext) || SUPPORTED_AUDIO_EXTS.has(ext)) return 'file';
   if (SUPPORTED_DOC_EXTS.has(ext)) return 'pdf';
   if (SUPPORTED_OFFICE_EXTS.has(ext)) return 'office';
   if (SUPPORTED_TEXT_EXTS.has(ext)) return 'text';
@@ -145,6 +151,13 @@ export function mimeTypeForMobileAttachment(
   if (lower === '.png') return 'image/png';
   if (lower === '.gif') return 'image/gif';
   if (lower === '.webp') return 'image/webp';
+  if (lower === '.mp4' || lower === '.m4v') return 'video/mp4';
+  if (lower === '.mov') return 'video/quicktime';
+  if (lower === '.webm') return 'video/webm';
+  if (lower === '.mp3') return 'audio/mpeg';
+  if (lower === '.wav') return 'audio/wav';
+  if (lower === '.m4a') return 'audio/mp4';
+  if (lower === '.ogg') return 'audio/ogg';
   return 'application/octet-stream';
 }
 
@@ -204,6 +217,34 @@ export function buildMobileUploadedAttachment(input: {
     mimeType,
     ...(category === 'image' ? { url: ref } : {}),
     originalName: name,
+  };
+}
+
+/** Build a group attachment after a host-issued prepare-upload grant.
+ * The receipt is the only remote reference sent over Device Link; the signed
+ * URL/key never enters the message payload.
+ */
+export function buildMobilePreparedGroupAttachment(input: {
+  receipt: string;
+  intent: string;
+  name: string;
+  size: number;
+  sha256: string;
+  mimeType?: string;
+  id?: string;
+}): RemoteSerializedAttachment | null {
+  if (!input.receipt.trim() || !input.intent.trim()) return null;
+  if (!Number.isFinite(input.size) || input.size <= 0 || input.size > MOBILE_MAX_ATTACHMENT_BYTES) return null;
+  const name = basenameRemotePath(input.name).trim();
+  if (!name) return null;
+  const category = categorizeMobileAttachment(name);
+  if (!category) return null;
+  const ext = extractRemoteFileExt(name);
+  return {
+    id: input.id ?? `mobile-group-upload:${input.intent}:${input.receipt}`,
+    name, path: '', ext, size: input.size, sha256: input.sha256, category,
+    mimeType: input.mimeType?.trim() || mimeTypeForMobileAttachment(ext, category),
+    uploadReceipt: input.receipt, uploadIntent: input.intent, originalName: name,
   };
 }
 

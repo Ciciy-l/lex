@@ -15,15 +15,25 @@ const h = vi.hoisted(() => ({
   requests: 0,
   removed: [] as string[],
   revoke: null as (() => void) | null,
+  presignCalls: 0,
 }));
 
 let userData = '';
+let baseUrlForTests = '';
 vi.mock('electron', () => ({ app: { getPath: () => userData } }));
 vi.mock('../../localDb/client/current.js', () => ({
   getDbClient: () => ({ drizzle: h.db }),
 }));
 vi.mock('../../device-link/mediaTransfer.js', () => ({
   removeRemote: vi.fn(async (key: string) => { h.removed.push(key); }),
+  presignPutForRemoteAttachment: vi.fn(async (size: number, ext: string, contentType: string) => {
+    const response = await fetch(`${baseUrlForTests}/presign`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ size, ext, contentType }),
+    });
+    return await response.json();
+  }),
 }));
 vi.mock('../../device-link/remoteAttachment.js', () => ({
   parseRemoteAttachmentRef: (value: string) => parseAttachmentOssRef(value),
@@ -44,6 +54,7 @@ vi.mock('../../device-link/remoteAttachment.js', () => ({
 
 const schema = await import('../../localDb/schema.js');
 const { createBotGroupAttachmentStore } = await import('../botGroupAttachments.js');
+const { createBotGroupAttachmentUploadRegistry } = await import('../botGroupAttachmentUploadRegistry.js');
 
 const MIGRATION_0070 = path.resolve(__dirname, '../../../../drizzle/0070_woozy_harpoon.sql');
 const { default: migration0071 } = (await import('../../../../drizzle/scripts/0071_bright_ultron')) as {
@@ -110,9 +121,31 @@ describe('bot group attachment real ledger/media boundary', () => {
 
   beforeAll(async () => {
     userData = await fsp.mkdtemp(path.join(os.tmpdir(), 'bot-group-media-integration-'));
-    server = http.createServer((request, response) => {
-      h.requests += 0;
-      const bytes = files.get(request.url ?? '');
+    server = http.createServer(async (request, response) => {
+      const requestPath = request.url ?? '';
+      if (request.method === 'POST' && requestPath === '/presign') {
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { ext: string; size: number; contentType: string };
+        h.presignCalls += 1;
+        const keyPath = `/objects/${h.presignCalls}.${body.ext}`;
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({
+          putUrl: `${baseUrlForTests}${keyPath}`,
+          key: `${baseUrlForTests}${keyPath}`,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        }));
+        return;
+      }
+      if (request.method === 'PUT' && requestPath.startsWith('/objects/')) {
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        files.set(requestPath, Buffer.concat(chunks));
+        response.statusCode = 200;
+        response.end();
+        return;
+      }
+      const bytes = files.get(requestPath);
       if (!bytes) { response.statusCode = 404; response.end(); return; }
       response.statusCode = 200;
       response.end(bytes);
@@ -121,6 +154,7 @@ describe('bot group attachment real ledger/media boundary', () => {
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('missing test server address');
     baseUrl = `http://127.0.0.1:${address.port}`;
+    baseUrlForTests = baseUrl;
   });
 
   afterAll(async () => {
@@ -133,6 +167,7 @@ describe('bot group attachment real ledger/media boundary', () => {
     h.requests = 0;
     h.removed = [];
     h.revoke = null;
+    h.presignCalls = 0;
     files.clear();
     await fsp.mkdir(path.join(userData, 'owner'), { recursive: true });
   });
@@ -229,5 +264,55 @@ describe('bot group attachment real ledger/media boundary', () => {
     expect(result).toMatchObject({ ok: false, errorCode: 'INVALID_PARAMS' });
     expect(h.db.select().from(schema.mediaRefs).all()).toHaveLength(0);
     expect(h.removed).toEqual([]);
+  });
+
+  it('runs host receipt → local HTTP PUT/GET → real SQLite media ledger, preserving retry sources', async () => {
+    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7]);
+    const sha256 = digest(bytes);
+    const client = {};
+    const uploadContext = {
+      controllerDeviceId: 'peer-a', groupId: 'group-a', intent: 'stable-send-1', attachmentId: 'image-1',
+      size: bytes.length, sha256, mimeType: 'image/png', ownerToken: 'owner-a', client, linkEpoch: 3, groupRevision: 'r1',
+    };
+    const uploads = createBotGroupAttachmentUploadRegistry();
+    const attachment = {
+      id: uploadContext.attachmentId, name: 'photo.png', path: '', category: 'image' as const, mimeType: uploadContext.mimeType,
+      size: bytes.length, sha256, uploadReceipt: '', uploadIntent: uploadContext.intent,
+    };
+    const scopedStore = () => createBotGroupAttachmentStore({
+      ownerRoot: () => path.join(userData, 'owner'),
+      attachmentUploads: uploads,
+      captureCompensationScope: () => ({
+        journalDir: path.join(userData, 'ref-journal'), ownerStorageKey: 'a'.repeat(20), assertStillValid: () => undefined,
+      }),
+    });
+
+    const grant = await uploads.prepare(uploadContext, 'png');
+    attachment.uploadReceipt = grant.receipt;
+    const wrongPeer = await scopedStore().prepare({
+      groupId: 'group-a', controllerDeviceId: 'peer-b', remoteContext: { ownerToken: 'owner-a', client, linkEpoch: 3, groupRevision: 'r1' },
+      attachments: [attachment],
+    });
+    expect(wrongPeer).toMatchObject({ ok: false });
+    expect(h.requests).toBe(0);
+
+    const first = await scopedStore().prepare({
+      groupId: 'group-a', controllerDeviceId: 'peer-a', operationGuard: () => undefined,
+      remoteContext: { ownerToken: 'owner-a', client, linkEpoch: 3, groupRevision: 'r1' }, attachments: [attachment],
+    });
+    expect(first).toMatchObject({ ok: false });
+    expect(uploads.size()).toBe(1);
+
+    await expect(fetch(grant.putUrl, { method: 'PUT', body: bytes })).resolves.toMatchObject({ ok: true });
+    const retried = await scopedStore().prepare({
+      groupId: 'group-a', controllerDeviceId: 'peer-a', operationGuard: () => undefined,
+      remoteContext: { ownerToken: 'owner-a', client, linkEpoch: 3, groupRevision: 'r1' }, attachments: [attachment],
+    });
+    expect(retried).toMatchObject({ ok: true });
+    if (!retried.ok) throw new Error(retried.message);
+    expect(retried.attachments[0]?.url).toContain('cindy-media://blobs/');
+    expect(h.db.select().from(schema.mediaRefs).all()).toHaveLength(1);
+    await retried.commit();
+    expect(h.removed).toEqual([`${baseUrl}/objects/1.png`]);
   });
 });

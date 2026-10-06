@@ -27,9 +27,11 @@ vi.mock('../../device-link/broadcast-tap.js', () => ({
 import { remoteResourceRegistry } from '../../device-link/remoteResourceRegistry.js';
 import { createBotGroupChatService, type BotGroupChatService } from '../botGroupChatService.js';
 import { registerBotGroupRemoteResourceProvider } from '../botGroupRemoteResourceProvider.js';
+import { createBotGroupAttachmentUploadRegistry } from '../botGroupAttachmentUploadRegistry.js';
 import { BOT_GROUP_REMOTE_COLLECTION_ID, BOT_GROUP_REMOTE_RESOURCE_KIND } from '../../../shared/botGroupChat.js';
 
 const remoteClient = { protocolVersion: 1, primitives: [], locale: 'en' };
+const remoteConnection = {};
 
 function seedSchema(dbPath: string): void {
   const db = new Database(dbPath);
@@ -63,7 +65,7 @@ function ref(id: string) {
 }
 
 function context(assertCurrent: () => void = () => undefined) {
-  return { controllerDeviceId: 'peer-a', client: {}, linkEpoch: 1, assertCurrent };
+  return { controllerDeviceId: 'peer-a', client: remoteConnection, linkEpoch: 1, assertCurrent };
 }
 
 describe('bot-group remote resource to worker boundary', () => {
@@ -74,6 +76,7 @@ describe('bot-group remote resource to worker boundary', () => {
   let peerA: WorkerThreadTransport;
   let peerB: WorkerThreadTransport;
   let service: BotGroupChatService;
+  let uploadRegistry: ReturnType<typeof createBotGroupAttachmentUploadRegistry>;
 
   beforeAll(async () => {
     rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'xdt-bot-group-remote-'));
@@ -85,15 +88,28 @@ describe('bot-group remote resource to worker boundary', () => {
     createMigratedSmokeDb(dbPath);
     seedSchema(dbPath);
     const options = { workerScriptPath, dbPath, drizzleDir, betterSqliteModulePath: require.resolve('better-sqlite3') };
+    // SQLite initialization itself opens the schema/migration connection.
+    // Establish peer A's readiness before opening peer B so this fixture does
+    // not manufacture a startup lock race that production startup serializes.
     peerA = new WorkerThreadTransport(options);
+    await peerA.send('query', { sql: 'SELECT 1' });
     peerB = new WorkerThreadTransport(options);
+    await peerB.send('query', { sql: 'SELECT 1' });
     h.client = clientFor(peerA);
     service = createBotGroupChatService({
       ensureLane: async ({ botId }) => ({ ok: true as const, sessionId: 'lane-' + botId }),
       dispatch: async () => ({ ok: true as const, targetSessionId: 'lane', wakeKind: 'queued' }),
       abortLane: async () => undefined,
     });
-    registerBotGroupRemoteResourceProvider(() => service);
+    uploadRegistry = createBotGroupAttachmentUploadRegistry({
+      presignPut: async (size, ext, contentType) => ({
+        putUrl: `https://upload.invalid/${ext}/${size}`,
+        key: `opaque-key/${ext}/${size}`,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+      removeRemote: async () => undefined,
+    });
+    registerBotGroupRemoteResourceProvider(() => service, uploadRegistry);
   });
 
   beforeEach(async () => {
@@ -205,5 +221,42 @@ describe('bot-group remote resource to worker boundary', () => {
       client: remoteClient, collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, actionId: 'update', resourceRef: ref(groupId),
       input: { name: '撤权后的合法新操作' },
     })).resolves.toMatchObject({ effects: [{ kind: 'refresh-resource' }] });
+  });
+
+  it('exposes only the host-issued upload receipt through the real resource provider', async () => {
+    const created = await remoteResourceRegistry.invoke(context(), {
+      client: remoteClient, collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, actionId: 'create',
+      input: { name: '上传授权群', botIds: ['mimi', 'abu'], requestId: 'peer-a-upload-01' },
+    });
+    const groupId = (created.effects[1] as any).target.ref.id as string;
+    const input = {
+      attachmentId: 'attachment-01', intent: 'send-intent-01', name: 'photo.png', size: 9,
+      sha256: 'a'.repeat(64), mimeType: 'image/png', ext: 'png',
+    };
+    await expect(remoteResourceRegistry.invoke(context(), {
+      client: remoteClient, collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, actionId: 'prepare-upload',
+      resourceRef: ref(groupId), input: { ...input, key: 'raw-oss-key' },
+    })).rejects.toMatchObject({ code: 'INVALID_PARAMS' });
+    const prepared = await remoteResourceRegistry.invoke(context(), {
+      client: remoteClient, collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, actionId: 'prepare-upload',
+      resourceRef: ref(groupId), input,
+    });
+    expect(prepared.data).toMatchObject({
+      attachmentId: input.attachmentId, intent: input.intent, size: input.size, sha256: input.sha256,
+    });
+    expect(prepared.data).not.toHaveProperty('key');
+    expect(prepared.data).not.toHaveProperty('presigned');
+    const receipt = (prepared.data as { receipt: string }).receipt;
+    const cancelInput = { receipt, attachmentId: input.attachmentId, intent: input.intent, size: input.size, sha256: input.sha256, mimeType: input.mimeType };
+    await expect(remoteResourceRegistry.invoke({ ...context(), controllerDeviceId: 'peer-b' }, {
+      client: remoteClient, collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, actionId: 'cancel-upload',
+      resourceRef: ref(groupId), input: cancelInput,
+    })).rejects.toMatchObject({ code: 'INVALID_PARAMS' });
+    expect(uploadRegistry.size()).toBe(1);
+    await expect(remoteResourceRegistry.invoke(context(), {
+      client: remoteClient, collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, actionId: 'cancel-upload',
+      resourceRef: ref(groupId), input: cancelInput,
+    })).resolves.toMatchObject({ effects: [{ kind: 'refresh-resource' }] });
+    expect(uploadRegistry.size()).toBe(0);
   });
 });

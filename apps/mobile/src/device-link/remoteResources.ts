@@ -226,6 +226,12 @@ function validDescriptor(value: unknown): RemoteCollectionDescriptor | null {
   const iconRecord = recordOf(record.icon);
   const iconName = boundedString(iconRecord?.name, MAX_REMOTE_ID_CHARS);
   const iconFallbackText = boundedString(iconRecord?.fallbackText, 64, true);
+  const capabilities = Array.isArray(record.capabilities)
+    ? record.capabilities.flatMap((item) => {
+      const capability = boundedString(item, MAX_REMOTE_ID_CHARS);
+      return capability ? [capability] : [];
+    })
+    : undefined;
   return {
     id,
     resourceKind,
@@ -234,6 +240,7 @@ function validDescriptor(value: unknown): RemoteCollectionDescriptor | null {
     ...(iconName && iconFallbackText !== null
       ? { icon: { name: iconName, fallbackText: iconFallbackText } }
       : {}),
+    ...(capabilities && capabilities.length > 0 ? { capabilities: [...new Set(capabilities)] } : {}),
   };
 }
 

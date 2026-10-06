@@ -60,6 +60,7 @@ import {
   useBotGroupIdentities,
 } from './BotGroupAvatars';
 import { BotGroupComposer, type BotGroupSendInput } from './BotGroupComposer';
+import type { BotGroupUploadGrant } from './useBotGroupComposerAttachments';
 import { BotGroupMessageAttachments } from './BotGroupMessageAttachments';
 import { BotGroupMarkdownText, BotGroupUserText } from './BotGroupMessageText';
 import {
@@ -94,6 +95,19 @@ type PlanPending = { planId: string; action: BotGroupPlanAction | 'edit' };
 /** Follow new messages while the reader is within this distance of the bottom. */
 const STICK_TO_BOTTOM_PX = 48;
 
+function uploadGrantFromResponse(value: unknown): BotGroupUploadGrant | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const strings = ['receipt', 'putUrl', 'expiresAt', 'attachmentId', 'intent', 'sha256', 'mimeType'] as const;
+  if (strings.some((key) => typeof record[key] !== 'string' || !(record[key] as string))) return null;
+  if (typeof record.size !== 'number' || !Number.isSafeInteger(record.size) || record.size <= 0) return null;
+  return {
+    receipt: record.receipt as string, putUrl: record.putUrl as string, expiresAt: record.expiresAt as string,
+    attachmentId: record.attachmentId as string, intent: record.intent as string, size: record.size,
+    sha256: record.sha256 as string, mimeType: record.mimeType as string,
+  };
+}
+
 export function BotGroupChatScreen({ deviceId, deviceName, groupId }: { deviceId: string; deviceName: string; groupId: string }) {
   const { t, i18n } = useTranslation();
   const { colors } = useTheme();
@@ -102,6 +116,15 @@ export function BotGroupChatScreen({ deviceId, deviceName, groupId }: { deviceId
   const { user, accountGeneration } = useAuth();
   const host = useMemo<RemoteResourceHostTarget>(() => ({ deviceId, deviceName: deviceName || deviceId }), [deviceId, deviceName]);
   const chat = useBotGroupChat(host, groupId);
+  const prepareUpload = useCallback(async (input: { attachmentId: string; intent: string; name: string; size: number; sha256: string; mimeType: string; ext: string }) => {
+    const response = await chat.act('prepare-upload', input);
+    const grant = uploadGrantFromResponse(response.data);
+    if (!grant) throw new Error('GROUP_ATTACHMENT_UPLOAD_INVALID');
+    return grant;
+  }, [chat.act]);
+  const cancelUpload = useCallback(async (input: { receipt: string; attachmentId: string; intent: string; size: number; sha256: string; mimeType: string }) => {
+    await chat.act('cancel-upload', input);
+  }, [chat.act]);
   const identity = useBotGroupIdentities(deviceId);
   const resolveMedia = useBotGroupRemoteMedia(deviceId);
   const [settings, setSettings] = useState(false);
@@ -290,7 +313,10 @@ export function BotGroupChatScreen({ deviceId, deviceName, groupId }: { deviceId
       </ScrollView>
       <BotGroupComposer groupId={group.id} members={group.members} identityFor={identityFor} deviceId={deviceId} online={chat.online}
         running={group.round.status === 'running'} planState={botGroupComposerPlanState(openBotGroupPlan(group))}
-        attachmentsSupported={group.supportsAttachments === true} onSend={send} onStop={stop} />
+        attachmentsSupported={group.supportsAttachmentUpload === true}
+        prepareUpload={group.supportsAttachmentUpload === true ? prepareUpload : undefined}
+        cancelUpload={group.supportsAttachmentUpload === true ? cancelUpload : undefined}
+        onSend={send} onStop={stop} />
     </KeyboardAvoidingView>;
   }
 

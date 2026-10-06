@@ -149,6 +149,8 @@ export interface RemoteCollectionDescriptor {
   resourceKind: string;
   title: RemoteText;
   placement?: string;
+  /** Additive capability names; older controllers ignore unknown entries. */
+  capabilities?: string[];
   icon?: {
     name: string;
     fallbackText: string;
@@ -203,6 +205,8 @@ export type RemoteActionEffect =
 
 export interface RemoteActionInvokeResponse {
   effects: RemoteActionEffect[];
+  /** Optional action result. Providers keep this portable and bounded. */
+  data?: unknown;
 }
 
 export interface RemoteResourceChangedPayload {

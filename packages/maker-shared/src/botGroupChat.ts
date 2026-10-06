@@ -76,8 +76,9 @@ export type BotGroupAttachmentCategory = 'image' | 'pdf' | 'text' | 'office' | '
 /**
  * An attachment as a composer hands it over, in the same serialized shape as a task
  * message attachment. On this computer `path` is the local file (a pasted image has a
- * placeholder) and an image carries its `cindy-media://` `url`; a phone sends its upload
- * reference in `path` (and `url` for an image).
+ * placeholder) and an image carries its `cindy-media://` `url`; a legacy phone sent its
+ * upload reference in `path` (and `url` for an image), while receipt-backed uploads use
+ * `uploadReceipt`/`uploadIntent` and leave `path` empty.
  */
 export interface BotGroupAttachmentInput {
   id: string;
@@ -88,6 +89,10 @@ export interface BotGroupAttachmentInput {
   category: BotGroupAttachmentCategory;
   mimeType: string;
   url?: string;
+  /** Host-issued opaque upload receipt. Raw OSS keys are never accepted for group messages. */
+  uploadReceipt?: string;
+  /** Stable send/upload intent used for lost-ACK reconciliation. */
+  uploadIntent?: string;
   originalName?: string;
   /** The image carries the user's drawn annotations (same meaning as in task messages). */
   annotated?: boolean;
@@ -324,6 +329,7 @@ export const BOT_GROUP_REMOTE_COLLECTION_ID = 'bot-groups';
 export const BOT_GROUP_REMOTE_RESOURCE_KIND = 'bot-group';
 /** Block primitive whose `data` is `BotGroupRemoteChatData`; only sent to controllers declaring it. */
 export const BOT_GROUP_CHAT_PRIMITIVE = 'bot-group-chat';
+export const BOT_GROUP_ATTACHMENT_UPLOAD_CAPABILITY = 'bot-group-attachments-upload-v1';
 /** Collection item link to each member (`teammates` resource), in member order. */
 export const BOT_GROUP_MEMBER_LINK_REL = 'member';
 
@@ -337,6 +343,8 @@ export const BOT_GROUP_MEMBER_LINK_REL = 'member';
  */
 export type BotGroupRemoteActionId =
   | 'create'
+  | 'prepare-upload'
+  | 'cancel-upload'
   | 'send'
   | 'continue'
   | 'stop'
@@ -360,6 +368,8 @@ export interface BotGroupRemoteChatData extends BotGroupDetail {
    * drop them). Attachment `path`s are always null here.
    */
   supportsAttachments?: boolean;
+  /** New two-phase host-issued upload capability; absent on older hosts. */
+  supportsAttachmentUpload?: boolean;
 }
 
 export const BOT_GROUP_CLIENT_ID_PREFIX = 'bot-group:';

@@ -519,7 +519,7 @@ describe('group attachments', () => {
   });
 
   it('opens the 1:1 attachment panel with 安排分工 next to it, and keeps the plan condition', async () => {
-    await render(group({ openPlan: null, supportsAttachments: true }));
+    await render(group({ openPlan: null, supportsAttachments: true, supportsAttachmentUpload: true }));
     expect(byId('botGroup.composer.menu')).toBeNull();
     await click('botGroup.composer.more');
     expect(byId('botGroup.contextSheet')?.getAttribute('aria-label')).toBe('groupChat.composer.more');
@@ -537,7 +537,7 @@ describe('group attachments', () => {
     await click('botGroup.contextSheetPhotos');
     expect(h.local.enqueueUploads).toHaveBeenCalledWith([expect.objectContaining({ kind: 'image', uri: 'ph://asset-1', sourceId: 'asset-1' })], expect.anything());
     // While a plan runs the row explains why instead of adding the tag.
-    const running = group({ supportsAttachments: true,
+    const running = group({ supportsAttachments: true, supportsAttachmentUpload: true,
       openPlan: { id: 'p1', status: 'running', currentStep: 0, stepCount: 2, currentBotName: '咪咪', currentStepStatus: 'running' } });
     running.plans[0] = { ...running.plans[0]!, status: 'running', currentStep: 0 };
     await render(running);
@@ -551,7 +551,7 @@ describe('group attachments', () => {
       h.local.setPending([{ localId: 'l1', kind: 'image', previewUri: 'file:///tmp/a.jpg', name: 'a.jpg', size: 10 }]);
       h.local.options.onPicked();
     });
-    await render(group({ openPlan: null, supportsAttachments: true }));
+    await render(group({ openPlan: null, supportsAttachments: true, supportsAttachmentUpload: true }));
     await click('botGroup.composer.more');
     await click('botGroup.contextSheetPhotoRow');
     expect(h.local.addImages).toHaveBeenLastCalledWith('library');
@@ -576,7 +576,7 @@ describe('group attachments', () => {
   });
 
   it('sends attachments without text and keeps them when the send fails', async () => {
-    await render(group({ openPlan: null, supportsAttachments: true, round: { status: 'running', speakers: [], canContinue: false } }));
+    await render(group({ openPlan: null, supportsAttachments: true, supportsAttachmentUpload: true, round: { status: 'running', speakers: [], canContinue: false } }));
     const file = uploaded('att-2', 'spec.pdf', 'pdf');
     await finishUpload(file);
     await focusComposer();
@@ -594,8 +594,24 @@ describe('group attachments', () => {
     expect(byId('tray.attachment.att-2')).toBeNull();
   });
 
+  it('cancels a host receipt when a pending group upload is removed', async () => {
+    await render(group({ openPlan: null, supportsAttachments: true, supportsAttachmentUpload: true }));
+    const receipt = {
+      ...uploaded('att-receipt', 'photo.png'), path: '', uploadReceipt: 'opaque-receipt', uploadIntent: 'send-intent',
+      sha256: 'a'.repeat(64),
+    };
+    await finishUpload(receipt);
+    await focusComposer();
+    await click('tray.attachment.att-receipt');
+    expect(h.chat.act).toHaveBeenLastCalledWith('cancel-upload', {
+      receipt: 'opaque-receipt', attachmentId: 'att-receipt', intent: 'send-intent',
+      size: 10, sha256: 'a'.repeat(64), mimeType: 'image/jpeg',
+    });
+    expect(h.discarded).toEqual([]);
+  });
+
   it('does not send while an upload failed, and reclaims a removed upload', async () => {
-    await render(group({ openPlan: null, supportsAttachments: true }));
+    await render(group({ openPlan: null, supportsAttachments: true, supportsAttachmentUpload: true }));
     const photo = uploaded('att-3', 'b.jpg');
     await finishUpload(photo);
     await focusComposer();
@@ -610,7 +626,7 @@ describe('group attachments', () => {
   });
 
   it('reclaims unsent uploads when the chat closes', async () => {
-    await render(group({ openPlan: null, supportsAttachments: true }));
+    await render(group({ openPlan: null, supportsAttachments: true, supportsAttachmentUpload: true }));
     const photo = uploaded('att-4', 'c.jpg');
     await finishUpload(photo);
     await act(async () => root.unmount());

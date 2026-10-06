@@ -91,7 +91,7 @@ function mimeOf(ext: string): string {
   return MIME_BY_EXT[ext] ?? 'application/octet-stream';
 }
 
-interface PresignPutResponse {
+export interface PresignPutResponse {
   putUrl: string;
   key: string;
   expiresAt: string;
@@ -111,7 +111,7 @@ export interface UploadResult {
 }
 
 /** 向 relay server 申请上传预签名。 */
-async function presignPut(
+export async function presignPutForRemoteAttachment(
   size: number,
   ext: string,
   contentType: string,
@@ -122,6 +122,14 @@ async function presignPut(
     body: { size, ext, contentType },
     baseUrl: deviceLinkApiBase,
   });
+}
+
+async function presignPut(
+  size: number,
+  ext: string,
+  contentType: string,
+): Promise<PresignPutResponse> {
+  return presignPutForRemoteAttachment(size, ext, contentType);
 }
 
 /** 向 relay server 申请下载预签名(server 校验请求方 == key 内嵌 userId)。 */
@@ -160,6 +168,11 @@ function hostOf(url: string): string {
   } catch {
     return '<invalid-url>';
   }
+}
+
+/** Keep relay object identifiers out of logs; the signed URL/key is a bearer secret. */
+function keyTag(key: string): string {
+  return createHash('sha256').update(key).digest('hex').slice(0, 12);
 }
 
 /**
@@ -481,7 +494,7 @@ export async function uploadLocalFile(
     await removeRemote(key);
     throw error;
   }
-  log.debug(`uploaded key=${key} size=${size} ct=${contentType} integrity=sha256`);
+  log.debug(`uploaded keyTag=${keyTag(key)} size=${size} ct=${contentType} integrity=sha256`);
   return { key, size, contentType, sha256 };
 }
 
@@ -507,7 +520,7 @@ export async function uploadBuffer(
   ) as ArrayBuffer;
   const sha256 = createHash('sha256').update(bytes).digest('hex');
   await putBytesToOss(putUrl, { create: () => ab }, contentType);
-  log.debug(`uploaded(buffer) key=${key} size=${size} ct=${contentType} integrity=sha256`);
+  log.debug(`uploaded(buffer) keyTag=${keyTag(key)} size=${size} ct=${contentType} integrity=sha256`);
   return { key, size, contentType, sha256 };
 }
 
@@ -630,9 +643,9 @@ export async function removeRemote(key: string): Promise<void> {
       body: { key },
       baseUrl: deviceLinkApiBase,
     });
-    log.debug(`removed key=${key}`);
+    log.debug(`removed keyTag=${keyTag(key)}`);
   } catch (err) {
-    log.warn(`removeRemote failed key=${key}: ${String(err)}`);
+    log.warn(`removeRemote failed keyTag=${keyTag(key)}: ${String(err)}`);
   }
 }
 
