@@ -256,7 +256,7 @@
       "steering": "插话发送中",
       "orcaTitle": "协同队列 {{index}}",
       "title": "队列 {{index}}",
-      "orcaReadOnly": "协同消息由桌面端编排，手机端只读显示。",
+      "orcaEditDisabled": "协同消息不支持编辑。",
       "busy": "队列操作同步中，完成后再继续操作。",
       "steeringDisabled": "插话正在发送到当前这一轮，等电脑端回应后再操作。",
       "editLocked": "这条队列消息正在编辑中，完成后再操作。",

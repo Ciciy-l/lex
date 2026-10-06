@@ -140,13 +140,17 @@ export function buildQueueRowPresentation(input: {
   const syntheticEditReason = syntheticKind
     ? presentationText(localizer, 'message.queuePresentation.row.syntheticEditDisabled', '系统指令消息不支持编辑或插话发送。')
     : null;
+  // 协同成员发来的消息不能改写(对齐桌面 canEdit=false),但可以插话:插话不改正文与来源。
+  const orcaEditReason = orcaOrigin
+    ? presentationText(localizer, 'message.queuePresentation.row.orcaEditDisabled', '协同消息不支持编辑。')
+    : null;
 
   return {
     actions: {
       moveUp: queueRowAction(baseDisabledReason, moveUpTarget, presentationText(localizer, 'message.queuePresentation.row.first', '已经是队列第一条。')),
       moveDown: queueRowAction(baseDisabledReason, moveDownTarget, presentationText(localizer, 'message.queuePresentation.row.last', '已经是队列最后一条。')),
       steer: queueRowAction(baseDisabledReason ?? syntheticEditReason),
-      edit: queueRowAction(baseDisabledReason ?? syntheticEditReason),
+      edit: queueRowAction(baseDisabledReason ?? syntheticEditReason ?? orcaEditReason),
       remove: queueRowAction(baseDisabledReason),
     },
     editLocked,
@@ -256,7 +260,6 @@ function queueRowBaseDisabledReason(input: {
   steering: boolean;
 }, localizer?: PresentationLocalizer): string | null {
   if (input.readOnlyReason) return input.readOnlyReason;
-  if (input.orcaOrigin) return presentationText(localizer, 'message.queuePresentation.row.orcaReadOnly', '协同消息由桌面端编排，手机端只读显示。');
   if (input.busy) return presentationText(localizer, 'message.queuePresentation.row.busy', '队列操作同步中，完成后再继续操作。');
   if (input.steering) return presentationText(localizer, 'message.queuePresentation.row.steeringDisabled', '插话正在发送到当前 turn，等待桌面端回流后再操作。');
   if (input.editLocked) return presentationText(localizer, 'message.queuePresentation.row.editLocked', '这条队列消息正在编辑中，完成后再操作。');
@@ -273,7 +276,6 @@ function queueRowHint(input: {
   syntheticKind?: 'continue' | 'generic' | null;
 }, localizer?: PresentationLocalizer): string | null {
   if (input.readOnlyReason) return input.readOnlyReason;
-  if (input.orcaOrigin) return presentationText(localizer, 'message.queuePresentation.row.orcaReadOnly', '协同消息由桌面端编排，手机端只读显示。');
   if (input.syntheticKind) return presentationText(localizer, 'message.queuePresentation.row.syntheticHint', '这是系统自动生成的指令，可以取消，但不能编辑或插话发送。');
   if (input.steering) return presentationText(localizer, 'message.queuePresentation.row.steeringHint', '插话正在发送到当前 turn，暂时不能编辑或移动。');
   if (input.editLocked) return presentationText(localizer, 'message.queuePresentation.row.editHint', '这条消息正在编辑中，桌面端会暂停自动发送。');

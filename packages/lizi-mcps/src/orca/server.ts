@@ -3,12 +3,13 @@
  * ---------------------------------------------------------------------------
  * In-process MCP server (`cindy_orca`) 暴露多 worker 协同(Orca team)控制工具。
  *
- * 暴露 18 个 Orca 工具（15 个 team 控制 + 3 个只读诊断；直接 server.tool()
+ * 暴露 20 个 Orca 工具（17 个 team 控制 + 3 个只读诊断；直接 server.tool()
  * 注册到顶层,不走 list_tools/call_tool 入口）:
  *   start_team / create_worker / create_workers / send_to_worker / interrupt_worker /
  *   get_worker_queue_status / update_queued_message / cancel_queued_message /
- *   merge_queued_messages / list_workers / switch_focus /
- *   idle_worker / end_team / archive_worker / list_available_models
+ *   merge_queued_messages / steer_queued_message / move_queued_message /
+ *   list_workers / switch_focus / idle_worker / end_team / archive_worker /
+ *   list_available_models
  *
  * 为什么直接注册而非走入口:协同工具藏在 list_tools/call_tool 后面时, 模型在用户
  * 说"开协同 / 派 worker"时往往发现不了 start_team, 反而误抓直接可见的
@@ -52,12 +53,17 @@ import {
   registerUpdateQueuedMessageTool,
   registerCancelQueuedMessageTool,
   registerMergeQueuedMessagesTool,
+  registerSteerQueuedMessageTool,
+  registerMoveQueuedMessageTool,
   registerIdleWorkerTool,
   registerEndTeamTool,
   registerArchiveWorkerTool,
   registerListAvailableModelsTool,
   type ModelDescriptor,
+  type OrcaMessageDelivery,
   type QueuedMessageControlErrorCode,
+  type QueuedMessageSteerReason,
+  type SteerFallbackReason,
   type WorkerQueuedMessageEntry,
   type WorkerSummary,
 } from '../xdt-helper/index.js';
@@ -68,7 +74,7 @@ import { errorPayload, okPayload } from '../xdt-helper/_payload.js';
 // ── Host deps ──────────────────────────────────────────────────────────────
 
 /**
- * 协同(team)控制类工具的 host 回调集合。注入即注册 cindy_orca 的完整 18 工具清单
+ * 协同(team)控制类工具的 host 回调集合。注入即注册 cindy_orca 的完整 20 工具清单
  * (per-session 闭包绑定 ctx)。
  *
  * 回调返 Result 而非抛 Promise<T>: 让 host 能用 `HOST_NOT_READY` errorCode 表达
@@ -124,14 +130,18 @@ export interface OrcaMcpDeps {
     callerLeadSessionId: string;
     targetSessionId: string;
     message: string;
+    /** 仅模型显式选择时传入;缺省等价 'queue'。 */
+    delivery?: OrcaMessageDelivery;
   }) => Promise<
     ControlResult<
       {
         agentKind: ControlWorkerAgent;
-        wakeKind: 'resumed' | 'already-active' | 'queued';
+        wakeKind: 'resumed' | 'already-active' | 'queued' | 'steered';
         targetTitle: string | null;
         targetLastUserSendAt: string | null;
         queuedMessageId?: string;
+        /** 请求 steer 但消息进了队列时的原因。 */
+        steerFallbackReason?: SteerFallbackReason;
       },
       'NOT_FOUND' | 'ARCHIVED' | 'DELETED' | 'BUSY' | 'AGENT_NOT_READY' | 'INVALID_ARGS'
     >
@@ -154,14 +164,16 @@ export interface OrcaMcpDeps {
       queuePaused: boolean;
     }>
   >;
-  /** 列出 worker 输入队列中排队的消息(lead 自己的条目含正文)。 */
+  /** 列出 worker 输入队列中排队的消息;省略 workerRef 时列出调用方自身输入队列。 */
   listWorkerQueuedMessages: (params: {
     callerLeadSessionId: string;
-    workerRef: string;
+    workerRef?: string;
   }) => Promise<
     ControlResult<
       {
-        workerId: string;
+        /** 读取调用方自身队列时为 null。 */
+        workerId: string | null;
+        /** 被读取队列所属 session(自身队列时为调用方的 session id)。 */
         workerSessionId: string;
         status: string;
         isWorking: boolean;
@@ -204,6 +216,37 @@ export interface OrcaMcpDeps {
       },
       QueuedMessageControlErrorCode | 'QUEUE_CHANGED'
     > & { messages?: WorkerQueuedMessageEntry[] }
+  >;
+  /**
+   * 把一条排队协同消息转为插话。workerRef 省略时操作调用方自身队列里的协同消息;
+   * 没插成时消息留在队列,返回 delivery=queued + reason。
+   */
+  steerWorkerQueuedMessage: (params: {
+    callerLeadSessionId: string;
+    workerRef?: string;
+    queuedMessageId: string;
+  }) => Promise<
+    ControlResult<
+      {
+        workerId: string | null;
+        queuedMessageId: string;
+        delivery: 'steered' | 'queued';
+        reason?: QueuedMessageSteerReason;
+      },
+      QueuedMessageControlErrorCode
+    >
+  >;
+  /** 调整一条排队协同消息的位置(返回实际最终位置);workerRef 省略时操作调用方自身队列。 */
+  moveWorkerQueuedMessage: (params: {
+    callerLeadSessionId: string;
+    workerRef?: string;
+    queuedMessageId: string;
+    position: number;
+  }) => Promise<
+    ControlResult<
+      { workerId: string | null; queuedMessageId: string; position: number },
+      QueuedMessageControlErrorCode
+    >
   >;
   /** 主动将 worker 设为 idle。 */
   idleWorker: (params: { callerLeadSessionId: string; workerId: string }) => Promise<
@@ -478,6 +521,14 @@ function registerOrcaTools(
   registerMergeQueuedMessagesTool(sink, {
     getSessionContext,
     mergeWorkerQueuedMessages: deps.mergeWorkerQueuedMessages,
+  });
+  registerSteerQueuedMessageTool(sink, {
+    getSessionContext,
+    steerWorkerQueuedMessage: deps.steerWorkerQueuedMessage,
+  });
+  registerMoveQueuedMessageTool(sink, {
+    getSessionContext,
+    moveWorkerQueuedMessage: deps.moveWorkerQueuedMessage,
   });
   registerIdleWorkerTool(sink, {
     getSessionContext,

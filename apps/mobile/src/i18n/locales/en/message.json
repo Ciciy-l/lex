@@ -256,7 +256,7 @@
       "steering": "Sending interjection",
       "orcaTitle": "Collaboration queue {{index}}",
       "title": "Queue {{index}}",
-      "orcaReadOnly": "Collaboration messages are orchestrated on the desktop and are read-only on mobile.",
+      "orcaEditDisabled": "Collaboration messages can't be edited.",
       "busy": "Queue changes are syncing. Try again when syncing finishes.",
       "steeringDisabled": "The interjection is being sent to the current turn. Wait for the desktop response before changing it.",
       "editLocked": "This queued message is being edited. Try again when editing finishes.",

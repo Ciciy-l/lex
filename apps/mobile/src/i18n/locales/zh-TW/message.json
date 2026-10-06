@@ -256,7 +256,7 @@
       "steering": "插話傳送中",
       "orcaTitle": "協同佇列 {{index}}",
       "title": "佇列 {{index}}",
-      "orcaReadOnly": "協同訊息由桌面端編排，手機端唯讀顯示。",
+      "orcaEditDisabled": "協同訊息不支援編輯。",
       "busy": "佇列操作同步中，完成後再繼續操作。",
       "steeringDisabled": "插話正在傳送到目前這一輪，等電腦端回應後再操作。",
       "editLocked": "這條佇列訊息正在編輯中，完成後再操作。",
