@@ -51,7 +51,9 @@ export type DbTxName =
   | 'bots.assertNoSharedHistory'
   | 'bots.createGroupLane'
   | 'botGroups.create'
+  | 'botGroups.mutate'
   | 'botGroups.setMembers'
+  | 'botGroups.markSeen'
   | 'botGroups.delete'
   | 'botGroups.archiveLanes'
   | 'botGroups.appendMessage'
@@ -794,6 +796,46 @@ export interface BotGroupsCreateArgs {
   name: string;
   botIds: string[];
   now: number;
+  /** Snapshot captured by a remote resource action; checked inside the SQLite transaction. */
+  expectedMemberBotIds?: string[];
+}
+
+export interface BotGroupsGuardSnapshot {
+  /** The group updated_at observed while the remote resource was read. */
+  expectedGroupUpdatedAt?: number;
+  /** Exact visible member set observed by the remote controller. */
+  expectedMemberBotIds?: string[];
+  /** Plan identity/revision observed by the remote controller, when applicable. */
+  expectedPlanId?: string;
+  expectedPlanUpdatedAt?: number;
+}
+
+export type BotGroupsMutateKind =
+  | 'update-group'
+  | 'update-plan-workdir'
+  | 'begin-step'
+  | 'dismiss-plan'
+  | 'stop-plan'
+  | 'reassign-step';
+
+export interface BotGroupsMutateArgs extends BotGroupsGuardSnapshot {
+  kind: BotGroupsMutateKind;
+  groupId: string;
+  planId?: string;
+  position?: number;
+  now: number;
+  patch?: {
+    name?: string;
+    replyMode?: 'all' | 'mentioned';
+    speakingMode?: 'auto' | 'sequential';
+    organizerBotId?: string | null;
+    projectDir?: string | null;
+  };
+  workDir?: string;
+  branch?: string | null;
+  expectedPlanStatus?: 'proposed' | 'waiting' | 'running';
+  botId?: string;
+  botName?: string;
 }
 
 export interface BotGroupsSetMembersArgs {
@@ -803,6 +845,8 @@ export interface BotGroupsSetMembersArgs {
   /** 分工 Sessions (`<prefix><planId>`) of removed members are archived with their lanes. */
   planRouteKeyPrefix?: string;
   now: number;
+  expectedGroupUpdatedAt?: number;
+  expectedMemberBotIds?: string[];
 }
 
 export interface BotGroupsSetMembersResult {
@@ -814,6 +858,8 @@ export interface BotGroupsDeleteArgs {
   routeKey: string;
   planRouteKeyPrefix?: string;
   now: number;
+  expectedGroupUpdatedAt?: number;
+  expectedMemberBotIds?: string[];
 }
 
 export interface BotGroupsArchiveLanesArgs {
@@ -825,6 +871,16 @@ export interface BotGroupsArchiveLanesArgs {
 
 export interface BotGroupsAppendMessageArgs {
   message: BotGroupsMessageRow;
+  expectedGroupUpdatedAt?: number;
+  expectedMemberBotIds?: string[];
+}
+
+export interface BotGroupsMarkSeenArgs {
+  groupId: string;
+  botId: string;
+  deliveredThrough: number;
+  expectedGroupUpdatedAt?: number;
+  expectedMemberBotIds?: string[];
 }
 
 export interface BotGroupsMessageRow {
@@ -855,6 +911,8 @@ export interface BotGroupsCreatePlanArgs {
   steps: Array<{ botId: string; botName: string; task: string }>;
   message: BotGroupsMessageRow;
   now: number;
+  expectedGroupUpdatedAt?: number;
+  expectedMemberBotIds?: string[];
 }
 
 export interface BotGroupsCreatePlanResult {
@@ -877,6 +935,9 @@ export interface BotGroupsSettleStepArgs {
   /** Appended after `message` when the last step finishes. */
   endMessage: BotGroupsMessageRow | null;
   now: number;
+  expectedGroupUpdatedAt?: number;
+  expectedMemberBotIds?: string[];
+  expectedPlanUpdatedAt?: number;
 }
 
 export interface BotGroupsSettleStepResult {
@@ -887,6 +948,9 @@ export interface BotGroupsRemovePlanStepArgs {
   planId: string;
   position: number;
   now: number;
+  expectedGroupUpdatedAt?: number;
+  expectedMemberBotIds?: string[];
+  expectedPlanUpdatedAt?: number;
 }
 
 export interface BotGroupsAppendMessageResult {
@@ -1342,10 +1406,12 @@ export type DbTxArgsByName = {
   'bots.assertNoSharedHistory': { botId: string };
   'bots.createGroupLane': BotGroupsCreateLaneArgs;
   'botGroups.create': BotGroupsCreateArgs;
+  'botGroups.mutate': BotGroupsMutateArgs;
   'botGroups.setMembers': BotGroupsSetMembersArgs;
   'botGroups.delete': BotGroupsDeleteArgs;
   'botGroups.archiveLanes': BotGroupsArchiveLanesArgs;
   'botGroups.appendMessage': BotGroupsAppendMessageArgs;
+  'botGroups.markSeen': BotGroupsMarkSeenArgs;
   'botGroups.createPlan': BotGroupsCreatePlanArgs;
   'botGroups.settleStep': BotGroupsSettleStepArgs;
   'botGroups.removePlanStep': BotGroupsRemovePlanStepArgs;
@@ -1428,10 +1494,12 @@ export type DbTxResultByName = {
   'bots.assertNoSharedHistory': undefined;
   'bots.createGroupLane': BotGroupsCreateLaneResult;
   'botGroups.create': undefined;
+  'botGroups.mutate': { updated: boolean };
   'botGroups.setMembers': BotGroupsSetMembersResult;
   'botGroups.delete': { archivedSessionIds: string[] };
   'botGroups.archiveLanes': { archivedSessionIds: string[] };
   'botGroups.appendMessage': BotGroupsAppendMessageResult;
+  'botGroups.markSeen': undefined;
   'botGroups.createPlan': BotGroupsCreatePlanResult;
   'botGroups.settleStep': BotGroupsSettleStepResult;
   'botGroups.removePlanStep': { removed: boolean };

@@ -3,6 +3,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tx as runTx } from '../../localDb/worker/opHandlers/tx.js';
 
 const h = vi.hoisted(() => ({
   sqlite: null as import('better-sqlite3').Database | null,
@@ -1175,5 +1176,66 @@ describe('分工 decision and step brief', () => {
     expect(brief).toContain('did not finish');
     expect(brief).not.toContain('never push');
     expect(brief.match(/<\/untrusted-data>/g)).toHaveLength(4);
+  });
+});
+
+describe('remote group SQLite guard boundary', () => {
+  beforeEach(() => {
+    h.sqlite = createDatabase();
+    runTx(h.sqlite, { name: 'botGroups.create', args: {
+      groupId: 'guarded', name: '守卫群', botIds: ['mimi', 'abu'], now: 10, expectedMemberBotIds: ['mimi', 'abu'],
+    } });
+  });
+
+  afterEach(() => h.sqlite?.close());
+
+  it('rejects a stale group revision and a hidden member in the worker transaction', () => {
+    h.sqlite!.prepare('UPDATE bot_groups SET name = ?, updated_at = ? WHERE id = ?').run('本地更新', 11, 'guarded');
+    expect(() => runTx(h.sqlite!, {
+      name: 'botGroups.appendMessage',
+      args: {
+        message: {
+          id: 'guard-msg', groupId: 'guarded', kind: 'message', authorKind: 'user', authorBotId: null, authorName: '',
+          content: '不应写入', mentionsJson: '{}', noticeCode: null, clientId: 'guard-client', filesJson: '[]', createdAt: 12,
+        },
+        expectedGroupUpdatedAt: 10, expectedMemberBotIds: ['mimi', 'abu'],
+      },
+    })).toThrow(expect.objectContaining({ code: 'PRECONDITION_FAILED' }));
+    h.sqlite!.prepare('UPDATE bot_groups SET updated_at = ? WHERE id = ?').run(10, 'guarded');
+    h.sqlite!.prepare('UPDATE bot_profiles SET hidden_at = ? WHERE id = ?').run(12, 'abu');
+    expect(() => runTx(h.sqlite!, {
+      name: 'botGroups.appendMessage',
+      args: {
+        message: {
+          id: 'hidden-msg', groupId: 'guarded', kind: 'message', authorKind: 'user', authorBotId: null, authorName: '',
+          content: '隐藏成员不应写入', mentionsJson: '{}', noticeCode: null, clientId: 'hidden-client', filesJson: '[]', createdAt: 13,
+        },
+        expectedGroupUpdatedAt: 10, expectedMemberBotIds: ['mimi', 'abu'],
+      },
+    })).toThrow(expect.objectContaining({ code: 'PRECONDITION_FAILED' }));
+    expect(h.sqlite!.prepare('SELECT COUNT(*) AS count FROM bot_group_messages WHERE group_id = ?').get('guarded')).toEqual({ count: 0 });
+  });
+
+  it('keeps a remote create from writing after the guard changes during preparation', async () => {
+    const service = createBotGroupChatService({
+      ensureLane: async () => ({ ok: true as const, sessionId: 'lane' }),
+      dispatch: async () => ({ ok: true as const, targetSessionId: 'lane', wakeKind: 'queued' }),
+      abortLane: async () => undefined,
+    });
+    let first = true;
+    const result = await service.createGroup(
+      { name: '撤权后不应创建', botIds: ['mimi', 'abu'], requestId: 'guarded-create-intent' },
+      {
+        expectedMemberBotIds: ['mimi', 'abu'],
+        operationGuard: () => {
+          if (first) {
+            first = false;
+            h.sqlite!.prepare('UPDATE bot_profiles SET hidden_at = ? WHERE id = ?').run(20, 'abu');
+          }
+        },
+      },
+    );
+    expect(result).toMatchObject({ ok: false, errorCode: 'INVALID_PARAMS' });
+    expect(h.sqlite!.prepare('SELECT COUNT(*) AS count FROM bot_groups').get()).toEqual({ count: 1 });
   });
 });

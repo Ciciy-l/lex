@@ -11,6 +11,8 @@ import type {
   BotGroupsCreatePlanArgs,
   BotGroupsCreatePlanResult,
   BotGroupsDeleteArgs,
+  BotGroupsMarkSeenArgs,
+  BotGroupsMutateArgs,
   BotGroupsMessageRow,
   BotGroupsRemovePlanStepArgs,
   BotGroupsSetMembersArgs,
@@ -53,6 +55,58 @@ function optionalString(value: unknown, field: string): string | null {
   return value === undefined || value === null ? null : requireString(value, field);
 }
 
+function assertVisibleBots(db: Database.Database, botIds: readonly string[]): void {
+  if (botIds.length === 0) return;
+  const placeholders = botIds.map(() => '?').join(',');
+  const profiles = db.prepare('SELECT id, status, hidden_at AS hiddenAt FROM bot_profiles WHERE id IN (' + placeholders + ')')
+    .all(...botIds) as Array<{ id: string; status: string; hiddenAt: number | null }>;
+  if (profiles.length !== botIds.length || profiles.some((profile) => profile.hiddenAt !== null || profile.status === 'archived')) {
+    throw coded('群成员已不可见，请刷新后重试', 'PRECONDITION_FAILED');
+  }
+}
+
+/** Recheck a remote resource snapshot inside the same SQLite transaction as a write. */
+function assertGroupSnapshot(
+  db: Database.Database,
+  groupId: string,
+  args: {
+    expectedGroupUpdatedAt?: number;
+    expectedMemberBotIds?: string[];
+    expectedPlanId?: string;
+    expectedPlanUpdatedAt?: number;
+  },
+): void {
+  const group = db.prepare('SELECT id, updated_at AS updatedAt FROM bot_groups WHERE id = ?').get(groupId) as
+    { id: string; updatedAt: number } | undefined;
+  if (!group) throw coded('群聊不存在', 'NOT_FOUND');
+  if (args.expectedGroupUpdatedAt !== undefined && group.updatedAt !== args.expectedGroupUpdatedAt) {
+    throw coded('群聊已更新，请刷新后重试', 'PRECONDITION_FAILED');
+  }
+  if (args.expectedMemberBotIds !== undefined) {
+    const current = (db.prepare('SELECT bot_id AS botId FROM bot_group_members WHERE group_id = ? ORDER BY position ASC')
+      .all(groupId) as Array<{ botId: string }>).map((row) => row.botId);
+    if (JSON.stringify(current) !== JSON.stringify(args.expectedMemberBotIds)) {
+      throw coded('群成员已更新，请刷新后重试', 'PRECONDITION_FAILED');
+    }
+    const placeholders = args.expectedMemberBotIds.map(() => '?').join(',');
+    if (placeholders) {
+      const profiles = db.prepare('SELECT id, status, hidden_at AS hiddenAt FROM bot_profiles WHERE id IN (' + placeholders + ')')
+        .all(...args.expectedMemberBotIds) as Array<{ id: string; status: string; hiddenAt: number | null }>;
+      if (profiles.length !== args.expectedMemberBotIds.length || profiles.some((profile) => profile.hiddenAt !== null || profile.status === 'archived')) {
+        throw coded('群成员已不可见，请刷新后重试', 'PRECONDITION_FAILED');
+      }
+    }
+  }
+  if (args.expectedPlanId !== undefined) {
+    const plan = db.prepare('SELECT group_id AS groupId, updated_at AS updatedAt FROM bot_group_plans WHERE id = ?')
+      .get(args.expectedPlanId) as { groupId: string; updatedAt: number } | undefined;
+    if (!plan || plan.groupId !== groupId) throw coded('分工不属于此群', 'PRECONDITION_FAILED');
+    if (args.expectedPlanUpdatedAt !== undefined && plan.updatedAt !== args.expectedPlanUpdatedAt) {
+      throw coded('分工已更新，请刷新后重试', 'PRECONDITION_FAILED');
+    }
+  }
+}
+
 /** Lanes (`routeKey`) and, with a prefix, the group's 分工 Sessions (`<prefix><planId>`). */
 function archiveLanes(
   db: Database.Database,
@@ -86,6 +140,17 @@ export function botGroupsCreate(db: Database.Database, args: BotGroupsCreateArgs
   const now = requireNumber(args.now, 'now');
   db.transaction(() => {
     assertActiveBots(db, botIds);
+    if (args.expectedMemberBotIds !== undefined && JSON.stringify(botIds) !== JSON.stringify(args.expectedMemberBotIds)) {
+      throw coded('群成员已更新，请刷新后重试', 'PRECONDITION_FAILED');
+    }
+    if (args.expectedMemberBotIds !== undefined) {
+      const placeholders = args.expectedMemberBotIds.map(() => '?').join(',');
+      const profiles = db.prepare('SELECT hidden_at AS hiddenAt, status FROM bot_profiles WHERE id IN (' + placeholders + ')')
+        .all(...args.expectedMemberBotIds) as Array<{ hiddenAt: number | null; status: string }>;
+      if (profiles.length !== args.expectedMemberBotIds.length || profiles.some((profile) => profile.hiddenAt !== null || profile.status === 'archived')) {
+        throw coded('群成员已不可见，请刷新后重试', 'PRECONDITION_FAILED');
+      }
+    }
     db.prepare(`INSERT INTO bot_groups (id, name, reply_mode, created_at, updated_at)
       VALUES (?, ?, 'all', ?, ?)`).run(groupId, name, now, now);
     const insert = db.prepare(`INSERT INTO bot_group_members
@@ -106,11 +171,13 @@ export function botGroupsSetMembers(
   return db.transaction(() => {
     const group = db.prepare('SELECT id FROM bot_groups WHERE id = ?').get(groupId);
     if (!group) throw coded('群聊不存在', 'NOT_FOUND');
+    assertGroupSnapshot(db, groupId, args);
     const current = (db.prepare('SELECT bot_id AS botId FROM bot_group_members WHERE group_id = ?')
       .all(groupId) as Array<{ botId: string }>).map((row) => row.botId);
     const added = botIds.filter((botId) => !current.includes(botId));
     const removed = current.filter((botId) => !botIds.includes(botId));
     assertActiveBots(db, added);
+    if (args.expectedMemberBotIds !== undefined) assertVisibleBots(db, added);
     const latest = db.prepare('SELECT COALESCE(MAX(sequence), 0) AS sequence FROM bot_group_messages WHERE group_id = ?')
       .get(groupId) as { sequence: number };
     const remove = db.prepare('DELETE FROM bot_group_members WHERE group_id = ? AND bot_id = ?');
@@ -134,6 +201,7 @@ export function botGroupsDelete(db: Database.Database, args: BotGroupsDeleteArgs
   const planPrefix = optionalString(args.planRouteKeyPrefix, 'planRouteKeyPrefix');
   const now = requireNumber(args.now, 'now');
   return db.transaction(() => {
+    assertGroupSnapshot(db, groupId, args);
     const deleted = db.prepare('DELETE FROM bot_groups WHERE id = ?').run(groupId);
     if (deleted.changes !== 1) throw coded('群聊不存在', 'NOT_FOUND');
     return { archivedSessionIds: archiveLanes(db, routeKey, null, now, planPrefix) };
@@ -180,7 +248,97 @@ export function botGroupsAppendMessage(
   db: Database.Database,
   args: BotGroupsAppendMessageArgs,
 ): BotGroupsAppendMessageResult {
-  return db.transaction(() => insertMessage(db, args.message))();
+  return db.transaction(() => {
+    assertGroupSnapshot(db, args.message.groupId, args);
+    return insertMessage(db, args.message);
+  })();
+}
+
+/** Advance a member's delivery cursor only after the corresponding turn was accepted.
+ * The cursor is a group-owned write, so remote callers must use the same transaction
+ * snapshot/dispatch guard as other group mutations.
+ */
+export function botGroupsMarkSeen(db: Database.Database, args: BotGroupsMarkSeenArgs): void {
+  const groupId = requireString(args.groupId, 'groupId');
+  const botId = requireString(args.botId, 'botId');
+  const deliveredThrough = requireNumber(args.deliveredThrough, 'deliveredThrough');
+  db.transaction(() => {
+    assertGroupSnapshot(db, groupId, args);
+    db.prepare(`UPDATE bot_group_members
+      SET last_seen_sequence = ?
+      WHERE group_id = ? AND bot_id = ? AND last_seen_sequence < ?`)
+      .run(deliveredThrough, groupId, botId, deliveredThrough);
+  })();
+}
+
+/** Small guarded mutations that cannot be expressed through a plain drizzle write. */
+export function botGroupsMutate(db: Database.Database, args: BotGroupsMutateArgs): { updated: boolean } {
+  const groupId = requireString(args.groupId, 'groupId');
+  const now = requireNumber(args.now, 'now');
+  return db.transaction(() => {
+    assertGroupSnapshot(db, groupId, args);
+    if (args.kind === 'update-group') {
+      const patch = args.patch ?? {};
+      const assignments: string[] = [];
+      const values: unknown[] = [];
+      if (patch.name !== undefined) { assignments.push('name = ?'); values.push(requireString(patch.name, 'patch.name')); }
+      if (patch.replyMode !== undefined) { assignments.push('reply_mode = ?'); values.push(patch.replyMode); }
+      if (patch.speakingMode !== undefined) { assignments.push('speaking_mode = ?'); values.push(patch.speakingMode); }
+      if (patch.organizerBotId !== undefined) { assignments.push('organizer_bot_id = ?'); values.push(patch.organizerBotId); }
+      if (patch.projectDir !== undefined) { assignments.push('project_dir = ?'); values.push(patch.projectDir); }
+      if (assignments.length === 0) throw coded('没有可保存的群设置', 'INVALID_PARAMS');
+      assignments.push('updated_at = ?'); values.push(now, groupId);
+      const result = db.prepare(`UPDATE bot_groups SET ${assignments.join(', ')} WHERE id = ?`).run(...values);
+      return { updated: result.changes === 1 };
+    }
+    const planId = requireString(args.planId, 'planId');
+    if (args.kind === 'update-plan-workdir') {
+      const workDir = requireString(args.workDir, 'workDir');
+      const branch = args.branch ?? null;
+      const changed = db.prepare('UPDATE bot_group_plans SET work_dir = ?, branch = ?, updated_at = ? WHERE id = ? AND group_id = ?')
+        .run(workDir, branch, now, planId, groupId);
+      return { updated: changed.changes === 1 };
+    }
+    const plan = db.prepare('SELECT group_id AS groupId, status, current_step AS currentStep FROM bot_group_plans WHERE id = ?')
+      .get(planId) as { groupId: string; status: string; currentStep: number | null } | undefined;
+    if (!plan || plan.groupId !== groupId) throw coded('分工不属于此群', 'PRECONDITION_FAILED');
+    if (args.kind === 'begin-step') {
+      const position = requireNumber(args.position, 'position');
+      if (args.expectedPlanStatus !== undefined && plan.status !== args.expectedPlanStatus) return { updated: false };
+      const step = db.prepare('SELECT status FROM bot_group_plan_steps WHERE plan_id = ? AND position = ?').get(planId, position) as { status: string } | undefined;
+      const allowedStepStatuses = plan.status === 'waiting' ? ['pending', 'failed', 'done'] : ['pending', 'failed'];
+      if (!step || !allowedStepStatuses.includes(step.status)) return { updated: false };
+      db.prepare("UPDATE bot_group_plans SET status = 'running', current_step = ?, updated_at = ? WHERE id = ?")
+        .run(position, now, planId);
+      db.prepare("UPDATE bot_group_plan_steps SET status = 'running', started_at = ?, finished_at = NULL WHERE plan_id = ? AND position = ?")
+        .run(now, planId, position);
+      return { updated: true };
+    }
+    if (args.kind === 'dismiss-plan') {
+      const changed = db.prepare("UPDATE bot_group_plans SET status = 'dismissed', updated_at = ? WHERE id = ? AND status = 'proposed'")
+        .run(now, planId);
+      return { updated: changed.changes === 1 };
+    }
+    if (args.kind === 'stop-plan') {
+      db.prepare("UPDATE bot_group_plan_steps SET status = 'pending', finished_at = NULL WHERE plan_id = ? AND status = 'running'")
+        .run(planId);
+      const changed = db.prepare("UPDATE bot_group_plans SET status = 'stopped', updated_at = ? WHERE id = ? AND status IN ('running', 'waiting')")
+        .run(now, planId);
+      return { updated: changed.changes === 1 };
+    }
+    if (args.kind === 'reassign-step') {
+      const position = requireNumber(args.position, 'position');
+      const botId = requireString(args.botId, 'botId');
+      const botName = requireString(args.botName, 'botName');
+      assertActiveBots(db, [botId]);
+      const statuses = plan.status === 'proposed' ? ['pending'] : ['pending', 'failed'];
+      const marks = statuses.map(() => '?').join(',');
+      const changed = db.prepare(`UPDATE bot_group_plan_steps SET bot_id = ?, bot_name = ? WHERE plan_id = ? AND position = ? AND status IN (${marks})`)
+        .run(botId, botName, planId, position, ...statuses);
+      return { updated: changed.changes === 1 };
+    }
+    throw coded('未知群聊变更', 'INVALID_PARAMS');
+  })();
 }
 
 export function botGroupsCreatePlan(
@@ -193,6 +351,7 @@ export function botGroupsCreatePlan(
   if (!Array.isArray(args.steps) || args.steps.length === 0) throw new Error('steps must not be empty');
   if (args.message.groupId !== groupId || args.message.planId !== planId) throw new Error('message must belong to the plan');
   return db.transaction(() => {
+    assertGroupSnapshot(db, groupId, args);
     const superseded = (db.prepare(`SELECT id FROM bot_group_plans WHERE group_id = ? AND status = 'proposed'`)
       .all(groupId) as Array<{ id: string }>).map((row) => row.id);
     // A running or waiting plan must end first; the service never proposes over one.
@@ -231,6 +390,9 @@ export function botGroupsSettleStep(
     const plan = db.prepare('SELECT status, current_step AS currentStep FROM bot_group_plans WHERE id = ?')
       .get(planId) as { status: string; currentStep: number | null } | undefined;
     if (!plan || plan.status !== args.expectedPlanStatus || plan.currentStep !== position) return { settled: false };
+    const planGroup = db.prepare('SELECT group_id AS groupId FROM bot_group_plans WHERE id = ?').get(planId) as { groupId: string } | undefined;
+    if (!planGroup) return { settled: false };
+    assertGroupSnapshot(db, planGroup.groupId, { ...args, expectedPlanId: planId });
     const posted = args.message ? insertMessage(db, args.message) : null;
     // A finished step's hand-off is what later steps read; a failure keeps the previous one.
     db.prepare(`UPDATE bot_group_plan_steps
@@ -254,8 +416,9 @@ export function botGroupsRemovePlanStep(
   const position = requireNumber(args.position, 'position');
   const now = requireNumber(args.now, 'now');
   return db.transaction(() => {
-    const plan = db.prepare('SELECT status FROM bot_group_plans WHERE id = ?').get(planId) as { status: string } | undefined;
+    const plan = db.prepare('SELECT group_id AS groupId, status, updated_at AS updatedAt FROM bot_group_plans WHERE id = ?').get(planId) as { groupId: string; status: string; updatedAt: number } | undefined;
     if (!plan || plan.status !== 'proposed') return { removed: false };
+    assertGroupSnapshot(db, plan.groupId, { ...args, expectedPlanId: planId, expectedPlanUpdatedAt: args.expectedPlanUpdatedAt });
     const count = db.prepare('SELECT COUNT(*) AS n FROM bot_group_plan_steps WHERE plan_id = ?').get(planId) as { n: number };
     if (count.n <= 1) return { removed: false };
     const deleted = db.prepare('DELETE FROM bot_group_plan_steps WHERE plan_id = ? AND position = ?').run(planId, position);

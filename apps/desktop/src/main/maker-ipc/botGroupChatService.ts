@@ -241,6 +241,17 @@ function readId(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 && value.length <= MAX_ID_CHARS ? value : null;
 }
 
+/** Host-side lease/revision guard supplied by a remote resource action. */
+export type BotGroupOperationGuard = () => void;
+
+export interface BotGroupMutationOptions {
+  operationGuard?: BotGroupOperationGuard;
+  expectedGroupUpdatedAt?: number;
+  expectedMemberBotIds?: readonly string[];
+  expectedPlanId?: string;
+  expectedPlanUpdatedAt?: number;
+}
+
 /** A bounded, opaque create intent. It is an idempotency key, not a resource/action grant. */
 function readCreateRequestId(value: unknown): string | null {
   return typeof value === 'string'
@@ -483,6 +494,13 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
   const captureScope = () => deps.captureOwnerScope?.();
   const scopeIsCurrent = (scope: DataOwnerBroadcastScope | undefined) =>
     !scope || !deps.isOwnerScopeCurrent || deps.isOwnerScopeCurrent(scope);
+  const guardSnapshot = (options?: BotGroupMutationOptions) => ({
+    ...(options?.expectedGroupUpdatedAt === undefined ? {} : { expectedGroupUpdatedAt: options.expectedGroupUpdatedAt }),
+    ...(options?.expectedMemberBotIds === undefined ? {} : { expectedMemberBotIds: [...options.expectedMemberBotIds] }),
+    ...(options?.expectedPlanId === undefined ? {} : { expectedPlanId: options.expectedPlanId }),
+    ...(options?.expectedPlanUpdatedAt === undefined ? {} : { expectedPlanUpdatedAt: options.expectedPlanUpdatedAt }),
+  });
+  const assertOperation = (options?: BotGroupMutationOptions): void => options?.operationGuard?.();
 
   const emit = (groupId: string, change: BotGroupChange, scope?: DataOwnerBroadcastScope) => {
     if (!scopeIsCurrent(scope)) return;
@@ -704,7 +722,13 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     clientId?: string | null;
     planId?: string | null;
     files?: string[];
-  }) => getDbClient().tx('botGroups.appendMessage', { message: messageRow(message) });
+  }, options?: BotGroupMutationOptions) => {
+    assertOperation(options);
+    return getDbClient().tx('botGroups.appendMessage', {
+      message: messageRow(message),
+      ...guardSnapshot(options),
+    }, undefined, options?.operationGuard);
+  };
 
   const messageRow = (message: {
     groupId: string;
@@ -734,9 +758,10 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     createdAt: now(),
   });
 
-  const postNotice = async (groupId: string, member: MemberRow, notice: BotGroupNoticeCode, scope?: DataOwnerBroadcastScope) => {
+  const postNotice = async (groupId: string, member: MemberRow, notice: BotGroupNoticeCode, scope?: DataOwnerBroadcastScope, options?: BotGroupMutationOptions) => {
     if (!scopeIsCurrent(scope)) return;
-    await appendMessage({ groupId, kind: 'notice', authorKind: 'system', authorBotId: member.botId, authorName: member.name, noticeCode: notice });
+    assertOperation(options);
+    await appendMessage({ groupId, kind: 'notice', authorKind: 'system', authorBotId: member.botId, authorName: member.name, noticeCode: notice }, options);
     emit(groupId, 'messages', scope);
   };
 
@@ -799,8 +824,11 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     round: ActiveRound,
     mentioned: 'you' | 'everyone' | null,
     scope: DataOwnerBroadcastScope | undefined,
+    operationGuard?: BotGroupOperationGuard,
   ): Promise<TurnOutcome> => {
+    try { operationGuard?.(); } catch { return { kind: 'cancelled' }; }
     const lane = await deps.ensureLane({ botId: member.botId, groupId: group.id, title: group.name });
+    try { operationGuard?.(); } catch { return { kind: 'cancelled' }; }
     if (round.cancelled || !scopeIsCurrent(scope)) return { kind: 'cancelled' };
     if (!lane.ok) return { kind: 'failed', notice: 'member-unavailable' };
     // A lane must never act on a stale, looser permission profile than its Bot now has.
@@ -810,6 +838,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       deps.log?.warn('Bot group lane permission sync failed', { groupId: group.id, error: String(error) });
       return round.cancelled ? { kind: 'cancelled' } : { kind: 'failed', notice: 'member-failed' };
     }
+    try { operationGuard?.(); } catch { return { kind: 'cancelled' }; }
 
     const db = getDbClient().drizzle;
     const [seen] = await db
@@ -862,6 +891,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
 
     // The awaits above leave a window in which the user may have superseded this round.
     // From here to dispatch nothing awaits, so a live round owns the lane it registers.
+    try { operationGuard?.(); } catch { return { kind: 'cancelled' }; }
     if (round.cancelled || !scopeIsCurrent(scope)) return { kind: 'cancelled' };
     round.speakers.set(member.botId, lane.sessionId);
     emit(group.id, 'round', scope);
@@ -872,17 +902,19 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       prompt,
       clientId: BOT_GROUP_CLIENT_ID.memberTurn(group.id, createId(), member.botId),
       timeoutMs: turnTimeoutMs,
-      isCancelled: () => round.cancelled,
+      isCancelled: () => {
+        if (round.cancelled) return true;
+        try { operationGuard?.(); return false; } catch { return true; }
+      },
       afterDispatch: async () => {
         if (!scopeIsCurrent(scope)) return;
-        await db
-          .update(botGroupMembers)
-          .set({ lastSeenSequence: deliveredThrough })
-          .where(and(
-            eq(botGroupMembers.groupId, group.id),
-            eq(botGroupMembers.botId, member.botId),
-            lt(botGroupMembers.lastSeenSequence, deliveredThrough),
-          ));
+        operationGuard?.();
+        await getDbClient().tx('botGroups.markSeen', {
+          groupId: group.id,
+          botId: member.botId,
+          deliveredThrough,
+          expectedMemberBotIds: peers.map((current) => current.botId),
+        }, undefined, operationGuard);
       },
     });
   };
@@ -937,13 +969,17 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     /** A broadcast question: the first circle answers it independently and concurrently. */
     parallelFirstCircle: boolean;
     scope: DataOwnerBroadcastScope | undefined;
+    operationGuard?: BotGroupOperationGuard;
   }): Promise<void> => {
     const runtime = runtimeFor(input.groupId);
     const round: ActiveRound = { id: createId(), cancelled: false, speakers: new Map(), dropped: new Set() };
     runtime.round = round;
     emit(input.groupId, 'round', input.scope);
     let posted = 0;
-    const live = () => !round.cancelled && !disposed && scopeIsCurrent(input.scope);
+    const live = () => {
+      if (round.cancelled || disposed || !scopeIsCurrent(input.scope)) return false;
+      try { input.operationGuard?.(); return true; } catch { return false; }
+    };
 
     /** One member's turn; true when it posted a message. */
     const takeTurn = async (botId: string): Promise<boolean> => {
@@ -955,7 +991,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       // Removed, paused or deleted since the round started: skip quietly.
       if (!member || member.status !== 'active') return false;
       const mentioned = input.mentions.all ? 'everyone' : input.mentions.botIds.includes(botId) ? 'you' : null;
-      const outcome = await runMemberTurn(group, member, members, round, mentioned, input.scope);
+      const outcome = await runMemberTurn(group, member, members, round, mentioned, input.scope, input.operationGuard);
       round.speakers.delete(botId);
       if (!live()) return false;
       let spoke = false;
@@ -969,12 +1005,12 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
           authorBotId: member.botId,
           authorName: member.name,
           content: clampChars(outcome.text, MAX_BOT_REPLY_CHARS),
-        });
+        }, { operationGuard: input.operationGuard });
         spoke = true;
         emit(input.groupId, 'messages', input.scope);
       } else if (outcome.kind === 'failed') {
         round.dropped.add(botId);
-        await postNotice(input.groupId, member, outcome.notice, input.scope);
+        await postNotice(input.groupId, member, outcome.notice, input.scope, { operationGuard: input.operationGuard });
       }
       emit(input.groupId, 'round', input.scope);
       return spoke;
@@ -1003,7 +1039,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
           kind: 'round-end',
           authorKind: 'system',
           mentions: { all: false, botIds: input.responders },
-        });
+        }, { operationGuard: input.operationGuard });
         emit(input.groupId, 'messages', input.scope);
       }
     } catch (error) {
@@ -1022,6 +1058,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     mentions: BotGroupMention;
     parallelFirstCircle: boolean;
     scope?: DataOwnerBroadcastScope;
+    operationGuard?: BotGroupOperationGuard;
   }) => {
     if (input.responders.length === 0) return;
     void runRound({ ...input, scope: input.scope });
@@ -1058,25 +1095,23 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
   };
 
   /** 停止 / 结束分工: the plan ends; finished steps and their files stay. */
-  const stopPlan = async (groupId: string, scope?: DataOwnerBroadcastScope): Promise<boolean> => {
+  const stopPlan = async (groupId: string, scope?: DataOwnerBroadcastScope, options?: BotGroupMutationOptions): Promise<boolean> => {
+    assertOperation(options);
     // Read before halting: once the step leaves memory, restart recovery would take it for a crash.
     const plan = await readOpenPlanRow(groupId);
     await haltStep(groupId);
     if (!plan || plan.status === 'proposed') return false;
-    const db = getDbClient().drizzle;
     const at = now();
     // Stopping is the user's choice, not a failure: the interrupted step simply did not happen.
-    await db
-      .update(botGroupPlanSteps)
-      .set({ status: 'pending', finishedAt: null })
-      .where(and(eq(botGroupPlanSteps.planId, plan.id), eq(botGroupPlanSteps.status, 'running')));
-    const updated = await db
-      .update(botGroupPlans)
-      .set({ status: 'stopped', updatedAt: at })
-      .where(and(eq(botGroupPlans.id, plan.id), inArray(botGroupPlans.status, ['running', 'waiting'])))
-      .returning({ id: botGroupPlans.id });
-    if (updated.length === 0 || !scopeIsCurrent(scope)) return updated.length > 0;
-    await appendMessage({ groupId, kind: 'notice', authorKind: 'system', noticeCode: 'plan-stopped', planId: plan.id });
+    const stopped = await getDbClient().tx('botGroups.mutate', {
+      kind: 'stop-plan', groupId, planId: plan.id, now: at,
+      expectedPlanId: options?.expectedPlanId ?? plan.id,
+      expectedPlanUpdatedAt: options?.expectedPlanUpdatedAt,
+      expectedGroupUpdatedAt: options?.expectedGroupUpdatedAt,
+      expectedMemberBotIds: options?.expectedMemberBotIds === undefined ? undefined : [...options.expectedMemberBotIds],
+    }, undefined, options?.operationGuard);
+    if (!stopped.updated || !scopeIsCurrent(scope)) return stopped.updated;
+    await appendMessage({ groupId, kind: 'notice', authorKind: 'system', noticeCode: 'plan-stopped', planId: plan.id }, options);
     emit(groupId, 'messages', scope);
     emit(groupId, 'plan', scope);
     return true;
@@ -1116,6 +1151,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     /** `auto` only: the ordinary round when no split is needed. */
     fallback: (() => void) | null;
     scope?: DataOwnerBroadcastScope;
+    operationGuard?: BotGroupOperationGuard;
   }) => {
     const runtime = runtimeFor(input.group.id);
     const planning: PlanningState = { cancelled: false, organizerBotId: input.organizer.botId, abort: new AbortController() };
@@ -1153,6 +1189,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     await serialize(groupId, async () => {
       const runtime = runtimeFor(groupId);
       if (planning.cancelled || disposed || !scopeIsCurrent(input.scope)) return;
+      try { input.operationGuard?.(); } catch { return; }
       if (runtime.planning === planning) runtime.planning = null;
       emit(groupId, 'round', input.scope);
       // No plan: an automatic check chats as usual; an explicit request always hears why.
@@ -1188,6 +1225,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       if (steps.length === 0 || !organizer) return noPlan();
       planning.organizerBotId = organizer.botId;
       if (!scopeIsCurrent(input.scope)) return;
+      try { input.operationGuard?.(); } catch { return; }
       const planId = createId();
       try {
         await getDbClient().tx('botGroups.createPlan', {
@@ -1208,7 +1246,9 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
             planId,
           }),
           now: now(),
-        });
+          expectedGroupUpdatedAt: group.updatedAt,
+          expectedMemberBotIds: members.map((member) => member.botId),
+        }, undefined, input.operationGuard);
       } catch (error) {
         deps.log?.warn('Bot group plan could not be saved', { groupId, error: String(error) });
         return noPlan();
@@ -1224,7 +1264,9 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     step: StepRow,
     notes: StepNotes | null,
     scope?: DataOwnerBroadcastScope,
+    options?: BotGroupMutationOptions,
   ): Promise<void> => {
+    assertOperation(options);
     const runtime = runtimeFor(plan.groupId);
     const active: ActiveStep = {
       groupId: plan.groupId,
@@ -1236,26 +1278,36 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       notes: [],
     };
     runtime.step = active;
-    const db = getDbClient().drizzle;
     const at = now();
-    await db
-      .update(botGroupPlans)
-      .set({ status: 'running', currentStep: step.position, updatedAt: at })
-      .where(eq(botGroupPlans.id, plan.id));
-    await db
-      .update(botGroupPlanSteps)
-      .set({ status: 'running', startedAt: at, finishedAt: null })
-      .where(and(eq(botGroupPlanSteps.planId, plan.id), eq(botGroupPlanSteps.position, step.position)));
+    let begun: { updated: boolean };
+    try {
+      begun = await getDbClient().tx('botGroups.mutate', {
+        kind: 'begin-step', groupId: plan.groupId, planId: plan.id, position: step.position,
+        expectedPlanStatus: plan.status === 'proposed' || plan.status === 'waiting' ? plan.status : 'running',
+        now: at, ...guardSnapshot(options),
+      }, undefined, options?.operationGuard);
+    } catch (error) {
+      if (runtime.step === active) runtime.step = null;
+      deps.log?.warn('Bot group plan step admission failed', { groupId: plan.groupId, error: String(error) });
+      return;
+    }
+    if (!begun.updated) {
+      if (runtime.step === active) runtime.step = null;
+      return;
+    }
     emit(plan.groupId, 'plan', scope);
     emit(plan.groupId, 'round', scope);
-    void runStep(active, notes, scope);
+    void runStep(active, notes, scope, options);
   };
 
-  const runStep = async (active: ActiveStep, initialNotes: StepNotes | null, scope?: DataOwnerBroadcastScope) => {
+  const runStep = async (active: ActiveStep, initialNotes: StepNotes | null, scope?: DataOwnerBroadcastScope, options?: BotGroupMutationOptions) => {
     const { groupId, planId, position } = active;
     const runtime = runtimeFor(groupId);
     let leftoverNotes: string[] = [];
-    const live = () => !active.cancelled && !disposed && scopeIsCurrent(scope) && runtime.step === active;
+    const live = () => {
+      if (active.cancelled || disposed || !scopeIsCurrent(scope) || runtime.step !== active) return false;
+      try { options?.operationGuard?.(); return true; } catch { return false; }
+    };
 
     const settle = async (outcome: { kind: 'done'; text: string; files: string[] } | { kind: 'failed'; notice: BotGroupNoticeCode }) => {
       if (!live()) return;
@@ -1267,6 +1319,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       const done = outcome.kind === 'done';
       const isLast = position === steps.length - 1;
       const settledAt = now();
+      assertOperation(options);
       const result = await getDbClient().tx('botGroups.settleStep', {
         planId,
         position,
@@ -1295,7 +1348,9 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
           }),
         endMessage: done && isLast ? messageRow({ groupId, kind: 'plan-end', authorKind: 'system', planId }) : null,
         now: settledAt,
-      });
+        expectedGroupUpdatedAt: options?.expectedGroupUpdatedAt,
+        expectedMemberBotIds: options?.expectedMemberBotIds === undefined ? undefined : [...options.expectedMemberBotIds],
+      }, undefined, options?.operationGuard);
       if (!result.settled) return;
       emit(groupId, 'messages', scope);
       const group = await readGroup(groupId);
@@ -1330,6 +1385,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       let branch = plan.branch;
       let ownerSessionId: string | undefined;
       if (!workDir) {
+        assertOperation(options);
         const prepared = deps.workDir
           ? await deps.workDir.prepare({ groupId, projectDir: group.projectDir })
             .catch((error: unknown) => ({ ok: false as const, message: String(error) }))
@@ -1342,10 +1398,12 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
         workDir = prepared.workDir;
         branch = prepared.branch;
         ownerSessionId = prepared.ownerSessionId ?? undefined;
-        await getDbClient()
-          .drizzle.update(botGroupPlans)
-          .set({ workDir, branch, updatedAt: now() })
-          .where(eq(botGroupPlans.id, planId));
+        assertOperation(options);
+        await getDbClient().tx('botGroups.mutate', {
+          kind: 'update-plan-workdir', groupId, planId, workDir, branch, now: now(),
+          expectedGroupUpdatedAt: options?.expectedGroupUpdatedAt,
+          expectedMemberBotIds: options?.expectedMemberBotIds === undefined ? undefined : [...options.expectedMemberBotIds],
+        }, undefined, options?.operationGuard);
       }
 
       // A persisted plan is resumed after process restart. Validate the recorded
@@ -1379,6 +1437,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
         title: group.name,
         plan: { planId, workDir, sessionId: ownerSessionId },
       });
+      try { options?.operationGuard?.(); } catch { return; }
       if (!live()) return;
       if (!lane.ok) return await settle({ kind: 'failed', notice: 'member-unavailable' });
       active.sessionId = lane.sessionId;
@@ -1389,6 +1448,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
         deps.log?.warn('Bot group plan session permission sync failed', { groupId, error: String(error) });
         return await settle({ kind: 'failed', notice: 'member-failed' });
       }
+      try { options?.operationGuard?.(); } catch { return; }
 
       const before = deps.workDir ? await deps.workDir.snapshot(workDir).catch(() => new Map<string, string>()) : new Map<string, string>();
       let notes = initialNotes;
@@ -1396,6 +1456,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       let files: string[] = [];
       for (;;) {
         if (!live()) return;
+        assertOperation(options);
         if (validateWorkDir) {
           const beforeDispatch = await validateWorkDir(workDir).catch(() => ({ ok: false as const, message: '无法访问项目工作目录' }));
           if (!beforeDispatch.ok || (workDirIdentity && !sameWorkDirIdentity(workDirIdentity, beforeDispatch.identity))) {
@@ -1506,10 +1567,11 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     return { groupId: readId(raw.groupId), planId: readId(raw.planId), raw };
   };
 
-  const planAction = async (action: BotGroupPlanAction, input: unknown): Promise<BotGroupMutationResult> => {
+  const planAction = async (action: BotGroupPlanAction, input: unknown, options?: BotGroupMutationOptions): Promise<BotGroupMutationResult> => {
     const { groupId, planId } = readPlanActionInput(input);
     if (!groupId || !planId) return failure('INVALID_PARAMS', '参数无效');
     return serialize(groupId, async () => {
+      assertOperation(options);
       const plan = await readOpenPlan(groupId);
       if (!plan || plan.id !== planId) return failure('PLAN_CLOSED', '这个安排已经结束或被替换');
       const steps = await readSteps(planId);
@@ -1517,20 +1579,21 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       const scope = captureScope();
       if (action === 'start') {
         if (plan.status !== 'proposed' || !steps[0]) return failure('PLAN_CLOSED', '这个安排已经开始了');
-        await beginStep(plan, steps[0], null, scope);
+        await beginStep(plan, steps[0], null, scope, options);
         return { ok: true } as const;
       }
       if (action === 'dismiss') {
         if (plan.status === 'proposed') {
-          await getDbClient()
-            .drizzle.update(botGroupPlans)
-            .set({ status: 'dismissed', updatedAt: now() })
-            .where(and(eq(botGroupPlans.id, planId), eq(botGroupPlans.status, 'proposed')));
+          const dismissed = await getDbClient().tx('botGroups.mutate', {
+            kind: 'dismiss-plan', groupId, planId, now: now(),
+            ...guardSnapshot(options),
+          }, undefined, options?.operationGuard);
+          if (!dismissed.updated) return failure('PLAN_CLOSED', '这个安排已经结束或被替换');
           emit(groupId, 'plan', scope);
           return { ok: true } as const;
         }
         if (plan.status === 'waiting') {
-          await stopPlan(groupId, scope);
+          await stopPlan(groupId, scope, options);
           return { ok: true } as const;
         }
         return failure('PLAN_CLOSED', '分工正在进行，请先停止');
@@ -1539,20 +1602,21 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       if (action === 'continue') {
         const next = steps.find((step) => step.position === current.position + 1);
         if (current.status !== 'done' || !next) return failure('PLAN_CLOSED', '现在不能继续');
-        await beginStep(plan, next, null, scope);
+        await beginStep(plan, next, null, scope, options);
         return { ok: true } as const;
       }
       if (current.status !== 'failed') return failure('PLAN_CLOSED', '这一步已经做完了');
-      await beginStep(plan, current, null, scope);
+      await beginStep(plan, current, null, scope, options);
       return { ok: true } as const;
     });
   };
 
-  const editPlanStep = async (input: unknown): Promise<BotGroupMutationResult> => {
+  const editPlanStep = async (input: unknown, options?: BotGroupMutationOptions): Promise<BotGroupMutationResult> => {
     const { groupId, planId, raw } = readPlanActionInput(input);
     const position = typeof raw.position === 'number' && Number.isInteger(raw.position) ? raw.position : null;
     if (!groupId || !planId || position === null) return failure('INVALID_PARAMS', '参数无效');
     return serialize(groupId, async () => {
+      assertOperation(options);
       const plan = await readOpenPlan(groupId);
       if (!plan || plan.id !== planId || (plan.status !== 'proposed' && plan.status !== 'waiting')) {
         return failure('PLAN_CLOSED', '现在不能修改这个安排');
@@ -1560,7 +1624,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       const scope = captureScope();
       if (raw.action === 'remove') {
         if (plan.status !== 'proposed') return failure('PLAN_CLOSED', '只能在开始前删掉步骤');
-        const { removed } = await getDbClient().tx('botGroups.removePlanStep', { planId, position, now: now() });
+        const { removed } = await getDbClient().tx('botGroups.removePlanStep', { planId, position, now: now(), ...guardSnapshot(options) }, undefined, options?.operationGuard);
         if (!removed) return failure('INVALID_PARAMS', '至少要留一步');
       } else if (raw.action === 'reassign') {
         const botId = readId(raw.botId);
@@ -1568,16 +1632,11 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
         if (!member) return failure('MEMBER_UNAVAILABLE', '这位伙伴现在不能接这一步');
         // After 开始, only a step not yet done can change hands (e.g. its Bot left, then 重试).
         const reassignable: Array<'pending' | 'failed'> = plan.status === 'proposed' ? ['pending'] : ['pending', 'failed'];
-        const updated = await getDbClient()
-          .drizzle.update(botGroupPlanSteps)
-          .set({ botId: member.botId, botName: member.name })
-          .where(and(
-            eq(botGroupPlanSteps.planId, planId),
-            eq(botGroupPlanSteps.position, position),
-            inArray(botGroupPlanSteps.status, reassignable),
-          ))
-          .returning({ position: botGroupPlanSteps.position });
-        if (updated.length === 0) return failure('PLAN_CLOSED', '这一步已经做完或不存在');
+        const updated = await getDbClient().tx('botGroups.mutate', {
+          kind: 'reassign-step', groupId, planId, position, botId: member.botId, botName: member.name, now: now(),
+          ...guardSnapshot(options),
+        }, undefined, options?.operationGuard);
+        if (!updated.updated) return failure('PLAN_CLOSED', '这一步已经做完或不存在');
       } else {
         return failure('INVALID_PARAMS', '参数无效');
       }
@@ -1684,10 +1743,11 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     const code = (error as { code?: unknown } | null)?.code;
     if (code === 'NOT_FOUND') return failure('NOT_FOUND', '群聊不存在');
     if (code === 'MEMBER_UNAVAILABLE') return failure('MEMBER_UNAVAILABLE', '有伙伴已不可用，请刷新后重试');
+    if (code === 'PRECONDITION_FAILED') return failure('INVALID_PARAMS', '群聊内容已变化，请刷新后重试');
     return failure('INTERNAL', '群聊操作失败，请重试');
   };
 
-  const createGroup = async (input: unknown): Promise<BotGroupCreateResult> => {
+  const createGroup = async (input: unknown, options?: BotGroupMutationOptions): Promise<BotGroupCreateResult> => {
     const raw = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
     const name = readName(raw.name);
     const botIds = readBotIds(raw.botIds);
@@ -1705,11 +1765,13 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
 
     const result = (async (): Promise<BotGroupCreateResult> => {
       try {
+        assertOperation(options);
         const invalid = memberCountFailure(botIds.length) ?? await unavailableBots(botIds);
         if (invalid) return invalid;
+        assertOperation(options);
         const scope = captureScope();
         const groupId = createId();
-        await getDbClient().tx('botGroups.create', { groupId, name, botIds, now: now() });
+        await getDbClient().tx('botGroups.create', { groupId, name, botIds, now: now(), ...guardSnapshot(options) }, undefined, options?.operationGuard);
         emit(groupId, 'created', scope);
         return { ok: true, groupId };
       } catch (error) {
@@ -1726,10 +1788,11 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     return settled;
   };
 
-  const updateGroup = async (input: unknown): Promise<BotGroupMutationResult> => {
+  const updateGroup = async (input: unknown, options?: BotGroupMutationOptions): Promise<BotGroupMutationResult> => {
     const raw = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
     const groupId = readId(raw.groupId);
     if (!groupId) return failure('INVALID_PARAMS', 'groupId 无效');
+    assertOperation(options);
     const patch: {
       name?: string;
       replyMode?: BotGroupReplyMode;
@@ -1775,36 +1838,41 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
         patch.projectDir = checked.dir;
       }
     }
+    assertOperation(options);
     const scope = captureScope();
-    const updated = await getDbClient()
-      .drizzle.update(botGroups)
-      .set(patch)
-      .where(eq(botGroups.id, groupId))
-      .returning({ id: botGroups.id });
-    if (updated.length === 0) return failure('NOT_FOUND', '群聊不存在');
+    try {
+      const updated = await getDbClient().tx('botGroups.mutate', {
+        kind: 'update-group', groupId, now: patch.updatedAt, patch, ...guardSnapshot(options),
+      }, undefined, options?.operationGuard);
+      if (!updated.updated) return failure('NOT_FOUND', '群聊不存在');
+    } catch (error) {
+      return txFailure(error);
+    }
     emit(groupId, 'updated', scope);
     return { ok: true };
   };
 
-  const setMembers = async (input: unknown): Promise<BotGroupMutationResult> => {
+  const setMembers = async (input: unknown, options?: BotGroupMutationOptions): Promise<BotGroupMutationResult> => {
     const raw = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
     const groupId = readId(raw.groupId);
     const botIds = readBotIds(raw.botIds);
     if (!groupId || !botIds) return failure('INVALID_PARAMS', '成员列表无效');
     return serialize(groupId, async () => {
+      assertOperation(options);
       const members = await readMembers(groupId);
       const added = botIds.filter((id) => !members.some((member) => member.botId === id));
       const countFailure = memberCountFailure(botIds.length);
       if (countFailure) return countFailure;
       const unavailable = await unavailableBots(added);
       if (unavailable) return unavailable;
+      assertOperation(options);
       const scope = captureScope();
       const removed = members.filter((member) => !botIds.includes(member.botId)).map((member) => member.botId);
       const runtime = runtimes.get(groupId);
       const speakers = runtime?.round?.speakers;
       if (speakers && removed.some((botId) => speakers.has(botId))) await cancelRound(groupId, scope);
       if (runtime?.planning && removed.includes(runtime.planning.organizerBotId)) cancelPlanning(groupId);
-      if (runtime?.step && removed.includes(runtime.step.botId)) await stopPlan(groupId, scope);
+      if (runtime?.step && removed.includes(runtime.step.botId)) await stopPlan(groupId, scope, options);
       let archived: string[];
       try {
         archived = (await getDbClient().tx('botGroups.setMembers', {
@@ -1813,24 +1881,28 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
           routeKey: botGroupLaneRouteKey(groupId),
           planRouteKeyPrefix: botGroupPlanRouteKeyPrefix(groupId),
           now: now(),
-        })).archivedSessionIds;
+          ...guardSnapshot(options),
+        }, undefined, options?.operationGuard)).archivedSessionIds;
       } catch (error) {
         return txFailure(error);
       }
       if (archived.length > 0) await deps.closeLanes?.(archived).catch(() => undefined);
+      assertOperation(options);
       emit(groupId, 'updated', scope);
       return { ok: true } as const;
     });
   };
 
-  const deleteGroup = async (groupIdInput: unknown): Promise<BotGroupMutationResult> => {
+  const deleteGroup = async (groupIdInput: unknown, options?: BotGroupMutationOptions): Promise<BotGroupMutationResult> => {
     const groupId = readId(groupIdInput);
     if (!groupId) return failure('INVALID_PARAMS', 'groupId 无效');
     return serialize(groupId, async () => {
+      assertOperation(options);
       const scope = captureScope();
       await cancelRound(groupId, scope);
       cancelPlanning(groupId);
       await haltStep(groupId);
+      assertOperation(options);
       let archived: string[];
       try {
         archived = (await getDbClient().tx('botGroups.delete', {
@@ -1838,12 +1910,14 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
           routeKey: botGroupLaneRouteKey(groupId),
           planRouteKeyPrefix: botGroupPlanRouteKeyPrefix(groupId),
           now: now(),
-        })).archivedSessionIds;
+          ...guardSnapshot(options),
+        }, undefined, options?.operationGuard)).archivedSessionIds;
       } catch (error) {
         return txFailure(error);
       }
       runtimes.delete(groupId);
       if (archived.length > 0) await deps.closeLanes?.(archived).catch(() => undefined);
+      assertOperation(options);
       // The group's own folder goes to the system trash, never straight to deletion (§7.5).
       // Owner scope may change while the DB/close awaits above. Never resolve the trash
       // path against a new owner's userData after the old group was deleted.
@@ -1876,7 +1950,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
   const isParallelBroadcast = (group: GroupRow, mentions: BotGroupMention, responders: string[]) =>
     group.speakingMode === 'auto' && responders.length > 1 && (mentions.all || mentions.botIds.length === 0);
 
-  const sendMessage = async (input: unknown): Promise<BotGroupSendResult> => {
+  const sendMessage = async (input: unknown, options?: BotGroupMutationOptions): Promise<BotGroupSendResult> => {
     const raw = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
     const groupId = readId(raw.groupId);
     const clientId = readId(raw.clientId);
@@ -1884,6 +1958,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     if (!groupId || !clientId) return failure('INVALID_PARAMS', '参数无效');
     if (!text) return failure('INVALID_PARAMS', '消息不能为空');
     if (Array.from(text).length > BOT_GROUP_MESSAGE_MAX_CHARS) return failure('INVALID_PARAMS', '消息过长');
+    assertOperation(options);
     const rawMentions = raw.mentions && typeof raw.mentions === 'object' ? (raw.mentions as Record<string, unknown>) : null;
     const inputMentions: BotGroupMention | null = rawMentions
       ? { all: rawMentions.all === true, botIds: readBotIds(rawMentions.botIds) ?? [] }
@@ -1898,10 +1973,11 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       if (division && openPlan && openPlan.status !== 'proposed') {
         return failure('PLAN_OPEN', '群里还有没做完的分工，请先做完或结束');
       }
+      assertOperation(options);
       const scope = captureScope();
       let appended: { id: string; sequence: number; created: boolean };
       try {
-        appended = await appendMessage({ groupId, kind: 'message', authorKind: 'user', content: text, mentions, clientId });
+        appended = await appendMessage({ groupId, kind: 'message', authorKind: 'user', content: text, mentions, clientId }, options);
       } catch (error) {
         return txFailure(error);
       }
@@ -1912,7 +1988,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       emit(groupId, 'messages', scope);
       for (const member of members) {
         if (member.status !== 'active' && mentions.botIds.includes(member.botId)) {
-          await postNotice(groupId, member, 'member-unavailable', scope);
+          await postNotice(groupId, member, 'member-unavailable', scope, options);
         }
       }
       const responders = respondersFor(group, members, mentions);
@@ -1922,6 +1998,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
         mentions,
         parallelFirstCircle: isParallelBroadcast(group, mentions, responders),
         scope,
+        operationGuard: options?.operationGuard,
       });
       // Naming specific Bots is ordinary chat; everything else goes through 分工 routing (§7.2–7.4),
       // including 「@所有人」 and groups where only mentioned Bots reply.
@@ -1932,6 +2009,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       }
       const organizer = effectiveOrganizer(group.organizerBotId, members);
       const planning = (mode: PlanDecisionMode, revisePlan: PlanRow | null, fallback: (() => void) | null) => {
+        assertOperation(options);
         if (!organizer) {
           fallback?.();
           return;
@@ -1946,6 +2024,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
           revisePlan,
           fallback,
           scope,
+          operationGuard: options?.operationGuard,
         });
       };
       if (division) {
@@ -1967,10 +2046,11 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     });
   };
 
-  const continueRound = async (groupIdInput: unknown): Promise<BotGroupMutationResult> => {
+  const continueRound = async (groupIdInput: unknown, options?: BotGroupMutationOptions): Promise<BotGroupMutationResult> => {
     const groupId = readId(groupIdInput);
     if (!groupId) return failure('INVALID_PARAMS', 'groupId 无效');
     return serialize(groupId, async () => {
+      assertOperation(options);
       if (runtimes.get(groupId)?.round) return { ok: true } as const;
       const group = await readGroup(groupId);
       if (!group) return failure('NOT_FOUND', '群聊不存在');
@@ -1987,19 +2067,21 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
         mentions: { all: false, botIds: [] },
         parallelFirstCircle: false,
         scope: captureScope(),
+        operationGuard: options?.operationGuard,
       });
       return { ok: true } as const;
     });
   };
 
-  const stopRound = async (groupIdInput: unknown): Promise<BotGroupMutationResult> => {
+  const stopRound = async (groupIdInput: unknown, options?: BotGroupMutationOptions): Promise<BotGroupMutationResult> => {
     const groupId = readId(groupIdInput);
     if (!groupId) return failure('INVALID_PARAMS', 'groupId 无效');
     return serialize(groupId, async () => {
+      assertOperation(options);
       const scope = captureScope();
       await cancelRound(groupId, scope);
       if (cancelPlanning(groupId)) emit(groupId, 'round', scope);
-      if (runtimes.get(groupId)?.step) await stopPlan(groupId, scope);
+      if (runtimes.get(groupId)?.step) await stopPlan(groupId, scope, options);
       return { ok: true } as const;
     });
   };
@@ -2034,10 +2116,10 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     sendMessage,
     continueRound,
     stopRound,
-    startPlan: (input: unknown) => planAction('start', input),
-    dismissPlan: (input: unknown) => planAction('dismiss', input),
-    continuePlan: (input: unknown) => planAction('continue', input),
-    retryPlan: (input: unknown) => planAction('retry', input),
+    startPlan: (input: unknown, options?: BotGroupMutationOptions) => planAction('start', input, options),
+    dismissPlan: (input: unknown, options?: BotGroupMutationOptions) => planAction('dismiss', input, options),
+    continuePlan: (input: unknown, options?: BotGroupMutationOptions) => planAction('continue', input, options),
+    retryPlan: (input: unknown, options?: BotGroupMutationOptions) => planAction('retry', input, options),
     editPlanStep,
     settleLaneTurn,
     dispose,

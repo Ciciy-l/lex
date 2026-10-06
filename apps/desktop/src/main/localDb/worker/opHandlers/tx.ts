@@ -34,6 +34,8 @@ import {
   botGroupsCreate,
   botGroupsCreatePlan,
   botGroupsDelete,
+  botGroupsMarkSeen,
+  botGroupsMutate,
   botGroupsRemovePlanStep,
   botGroupsSetMembers,
   botGroupsSettleStep,
@@ -154,6 +156,8 @@ export function tx(db: Database.Database, args: unknown): unknown {
       return botsCreateGroupLane(db, txArgs as BotGroupsCreateLaneArgs);
     case 'botGroups.create':
       return botGroupsCreate(db, txArgs as Parameters<typeof botGroupsCreate>[1]);
+    case 'botGroups.mutate':
+      return botGroupsMutate(db, txArgs as Parameters<typeof botGroupsMutate>[1]);
     case 'botGroups.setMembers':
       return botGroupsSetMembers(db, txArgs as Parameters<typeof botGroupsSetMembers>[1]);
     case 'botGroups.delete':
@@ -162,6 +166,8 @@ export function tx(db: Database.Database, args: unknown): unknown {
       return botGroupsArchiveLanes(db, txArgs as Parameters<typeof botGroupsArchiveLanes>[1]);
     case 'botGroups.appendMessage':
       return botGroupsAppendMessage(db, txArgs as Parameters<typeof botGroupsAppendMessage>[1]);
+    case 'botGroups.markSeen':
+      return botGroupsMarkSeen(db, txArgs as Parameters<typeof botGroupsMarkSeen>[1]);
     case 'botGroups.createPlan':
       return botGroupsCreatePlan(db, txArgs as Parameters<typeof botGroupsCreatePlan>[1]);
     case 'botGroups.settleStep':

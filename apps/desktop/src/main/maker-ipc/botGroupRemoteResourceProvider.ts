@@ -24,6 +24,7 @@ import {
 } from '../device-link/broadcast-tap.js';
 import {
   RemoteResourceRegistryError,
+  type RemoteResourceHostContext,
   remoteResourceRegistry,
 } from '../device-link/remoteResourceRegistry.js';
 import { getDbClient } from '../localDb/client/current.js';
@@ -44,7 +45,7 @@ import {
   type BotGroupRemoteChatData,
   type BotGroupSummary,
 } from '../../shared/botGroupChat.js';
-import type { BotGroupChatService } from './botGroupChatService.js';
+import type { BotGroupChatService, BotGroupMutationOptions } from './botGroupChatService.js';
 
 const FALLBACK_MESSAGES = 20;
 const FALLBACK_MESSAGE_CHARS = 280;
@@ -168,8 +169,18 @@ export function botGroupRemoteItem(group: BotGroupSummary): RemoteCollectionItem
 
 /** Host paths stay on the computer; the phone gets the folder name only. */
 export function botGroupRemoteChatData(detail: BotGroupDetail): BotGroupRemoteChatData {
+  const portableFileName = (value: string): string | null => {
+    const normalized = value.replaceAll('\\', '/');
+    const name = normalized.slice(normalized.lastIndexOf('/') + 1);
+    if (!name || name === '.' || name === '..' || name.includes('\0') || name.includes(':')) return null;
+    return name;
+  };
   return {
     ...detail,
+    messages: detail.messages.map((message) => ({
+      ...message,
+      files: message.files.map(portableFileName).filter((name): name is string => name !== null),
+    })),
     projectDir: null,
     projectDirName: detail.projectDir ? path.basename(detail.projectDir) : null,
     plans: detail.plans.map((plan) => ({ ...plan, workDir: null })),
@@ -227,6 +238,54 @@ async function assertBotsVisible(botIds: readonly string[]): Promise<void> {
   }
 }
 
+interface RemoteGroupSnapshot {
+  detail: BotGroupDetail;
+  revision: string;
+  updatedAt: number;
+  memberBotIds: string[];
+}
+
+function remoteGroupSnapshot(detail: BotGroupDetail): RemoteGroupSnapshot {
+  return {
+    detail,
+    revision: botGroupRemoteItem(detail).revision,
+    updatedAt: detail.updatedAt,
+    memberBotIds: detail.members.map((member) => member.botId),
+  };
+}
+
+function actionKeys(input: Record<string, unknown>, allowed: readonly string[]): void {
+  if (Object.keys(input).some((key) => !allowed.includes(key))) {
+    throw new RemoteResourceRegistryError('INVALID_PARAMS', 'INVALID_PARAMS');
+  }
+}
+
+function remoteOptions(
+  snapshot: RemoteGroupSnapshot,
+  operationGuard: (() => void) | undefined,
+  planId?: string,
+): BotGroupMutationOptions | undefined {
+  if (!operationGuard) return undefined;
+  const plan = planId ? snapshot.detail.plans.find((candidate) => candidate.id === planId) : undefined;
+  return {
+    operationGuard,
+    expectedGroupUpdatedAt: snapshot.updatedAt,
+    expectedMemberBotIds: snapshot.memberBotIds,
+    ...(plan ? { expectedPlanId: plan.id, expectedPlanUpdatedAt: plan.updatedAt } : {}),
+  };
+}
+
+function callService<TInput, TResult>(
+  fn: (input: TInput, options?: BotGroupMutationOptions) => Promise<TResult>,
+  input: TInput,
+  options: BotGroupMutationOptions | undefined,
+): Promise<TResult> {
+  // Electron-free tests and local callers historically pass a one-argument
+  // service contract. Real device-link contexts always carry assertCurrent and
+  // therefore receive the guarded two-argument path.
+  return options ? fn(input, options) : fn(input);
+}
+
 let registered = false;
 
 export function registerBotGroupRemoteResourceProvider(service: () => BotGroupChatService | null): void {
@@ -237,6 +296,18 @@ export function registerBotGroupRemoteResourceProvider(service: () => BotGroupCh
     const current = service();
     if (!current) throw new RemoteResourceRegistryError('NOT_FOUND', 'HOST_NOT_READY');
     return current;
+  };
+
+  const leaseFor = (context: RemoteResourceHostContext) => {
+    const scope = captureDataOwnerBroadcastScope();
+    const guarded = context.assertCurrent !== undefined || context.client !== undefined || context.linkEpoch !== undefined;
+    const assertCurrent = (): void => {
+      context.assertCurrent?.();
+      if (!isDataOwnerBroadcastScopeCurrent(scope)) {
+        throw new RemoteResourceRegistryError('NOT_FOUND', 'Account changed');
+      }
+    };
+    return { scope, guarded, assertCurrent, operationGuard: guarded ? assertCurrent : undefined };
   };
 
   /** The group, if a phone may see it right now. */
@@ -257,18 +328,20 @@ export function registerBotGroupRemoteResourceProvider(service: () => BotGroupCh
       actions: [{ id: 'create' satisfies BotGroupRemoteActionId, label: localized(COPY.title) }],
     },
 
-    async list(_context, request) {
-      const scope = captureDataOwnerBroadcastScope();
+    async list(context, request) {
+      const lease = leaseFor(context);
+      lease.assertCurrent();
       const result = await requireService().listGroups();
       if (!result.ok) refuse(result);
       const groups = await visibleGroups(result.groups);
-      if (!isDataOwnerBroadcastScopeCurrent(scope)) throw new RemoteResourceRegistryError('NOT_FOUND', 'Account changed');
+      lease.assertCurrent();
       const query = request.query?.trim().toLocaleLowerCase() ?? '';
       const matched = query
         ? groups.filter((group) =>
           [group.name, ...group.members.map((member) => member.name)].some((value) => value.toLocaleLowerCase().includes(query)))
         : groups;
       const items = matched.slice(0, request.limit ?? 200).map(botGroupRemoteItem);
+      lease.assertCurrent();
       return {
         collectionId: BOT_GROUP_REMOTE_COLLECTION_ID,
         revision: items.map((item) => item.revision).join('|'),
@@ -276,10 +349,11 @@ export function registerBotGroupRemoteResourceProvider(service: () => BotGroupCh
       };
     },
 
-    async get(_context, request) {
-      const scope = captureDataOwnerBroadcastScope();
+    async get(context, request) {
+      const lease = leaseFor(context);
+      lease.assertCurrent();
       const detail = await readVisibleGroup(request.ref.id);
-      if (!isDataOwnerBroadcastScopeCurrent(scope)) throw new RemoteResourceRegistryError('NOT_FOUND', 'Account changed');
+      lease.assertCurrent();
       const resource: RemoteResource = {
         ...botGroupRemoteItem(detail),
         blocks: [
@@ -294,29 +368,52 @@ export function registerBotGroupRemoteResourceProvider(service: () => BotGroupCh
             : { id: 'chat', primitive: 'markdown', fallbackMarkdown: fallbackMarkdown(detail) },
         ],
       };
+      lease.assertCurrent();
       return resource;
     },
 
-    async invoke(_context, request): Promise<RemoteActionInvokeResponse> {
+    async invoke(context, request): Promise<RemoteActionInvokeResponse> {
       // Checks read the current account's data; a switch before the write must not let them
       // authorize a change to the next account.
-      const scope = captureDataOwnerBroadcastScope();
+      const lease = leaseFor(context);
+      lease.assertCurrent();
       const ownerService = (): BotGroupChatService => {
-        if (!isDataOwnerBroadcastScopeCurrent(scope)) throw new RemoteResourceRegistryError('NOT_FOUND', 'Account changed');
+        lease.assertCurrent();
         return requireService();
       };
       const actionId = request.actionId as BotGroupRemoteActionId;
       const input = recordOf(request.input);
       const botIdsInput = (): string[] =>
         Array.isArray(input.botIds) ? input.botIds.filter((id): id is string => typeof id === 'string') : [];
+      const allowedKeys: Record<string, readonly string[]> = {
+        create: ['name', 'botIds', 'requestId'],
+        send: ['text', 'mentions', 'clientId', 'division'],
+        continue: [],
+        stop: [],
+        update: ['name', 'replyMode', 'speakingMode', 'organizerBotId'],
+        'set-members': ['botIds'],
+        delete: [],
+        'plan-start': ['planId'],
+        'plan-dismiss': ['planId'],
+        'plan-continue': ['planId'],
+        'plan-retry': ['planId'],
+        'plan-edit': ['planId', 'position', 'action', 'botId'],
+      };
+      if (!allowedKeys[actionId]) throw new RemoteResourceRegistryError('INVALID_PARAMS', 'INVALID_PARAMS');
+      actionKeys(input, allowedKeys[actionId]);
 
       if (actionId === 'create') {
         const botIds = botIdsInput();
         await assertBotsVisible(botIds);
+        lease.assertCurrent();
         const createInput: Record<string, unknown> = { name: input.name, botIds };
         if (typeof input.requestId === 'string') createInput.requestId = input.requestId;
-        const created = await ownerService().createGroup(createInput);
+        const createOptions = lease.operationGuard
+          ? { operationGuard: lease.operationGuard, expectedMemberBotIds: botIds } satisfies BotGroupMutationOptions
+          : undefined;
+        const created = await callService(ownerService().createGroup, createInput, createOptions);
         if (!created.ok) refuse(created);
+        lease.assertCurrent();
         return {
           effects: [
             { kind: 'refresh-collection', collectionId: BOT_GROUP_REMOTE_COLLECTION_ID },
@@ -330,28 +427,31 @@ export function registerBotGroupRemoteResourceProvider(service: () => BotGroupCh
         : null;
       if (!groupId) throw new RemoteResourceRegistryError('INVALID_PARAMS', 'INVALID_PARAMS');
       // Every action re-checks that the phone may still see this group, and any teammate it names.
-      await readVisibleGroup(groupId);
+      const snapshot = remoteGroupSnapshot(await readVisibleGroup(groupId));
+      lease.assertCurrent();
       if (actionId === 'update' && typeof input.organizerBotId === 'string') await assertBotsVisible([input.organizerBotId]);
       if (actionId === 'set-members') await assertBotsVisible(botIdsInput());
       if (actionId === 'plan-edit' && typeof input.botId === 'string') await assertBotsVisible([input.botId]);
+      lease.assertCurrent();
       const current = ownerService();
       const planInput = { groupId, planId: input.planId };
+      const options = remoteOptions(snapshot, lease.operationGuard, typeof input.planId === 'string' ? input.planId : undefined);
       let result: { ok: true } | BotGroupFailure;
       switch (actionId) {
         case 'send':
-          result = await current.sendMessage({
+          result = await callService(current.sendMessage, {
             groupId,
             text: input.text,
             mentions: input.mentions,
             clientId: input.clientId,
             division: input.division === true,
-          });
+          }, options);
           break;
         case 'continue':
-          result = await current.continueRound(groupId);
+          result = await callService(current.continueRound, groupId, options);
           break;
         case 'stop':
-          result = await current.stopRound(groupId);
+          result = await callService(current.stopRound, groupId, options);
           break;
         case 'update': {
           // A phone cannot point the group at a folder on this computer.
@@ -359,35 +459,35 @@ export function registerBotGroupRemoteResourceProvider(service: () => BotGroupCh
           for (const key of ['name', 'replyMode', 'speakingMode', 'organizerBotId'] as const) {
             if (input[key] !== undefined) patch[key] = input[key];
           }
-          result = await current.updateGroup(patch);
+          result = await callService(current.updateGroup, patch, options);
           break;
         }
         case 'set-members':
-          result = await current.setMembers({ groupId, botIds: botIdsInput() });
+          result = await callService(current.setMembers, { groupId, botIds: botIdsInput() }, options);
           break;
         case 'delete':
-          result = await current.deleteGroup(groupId);
+          result = await callService(current.deleteGroup, groupId, options);
           if (!result.ok) refuse(result);
+          lease.assertCurrent();
           return { effects: [{ kind: 'refresh-collection', collectionId: BOT_GROUP_REMOTE_COLLECTION_ID }] };
         case 'plan-start':
-          result = await current.startPlan(planInput);
+          result = await callService(current.startPlan, planInput, options);
           break;
         case 'plan-dismiss':
-          result = await current.dismissPlan(planInput);
+          result = await callService(current.dismissPlan, planInput, options);
           break;
         case 'plan-continue':
-          result = await current.continuePlan(planInput);
+          result = await callService(current.continuePlan, planInput, options);
           break;
         case 'plan-retry':
-          result = await current.retryPlan(planInput);
+          result = await callService(current.retryPlan, planInput, options);
           break;
         case 'plan-edit':
-          result = await current.editPlanStep({ ...planInput, position: input.position, action: input.action, botId: input.botId });
+          result = await callService(current.editPlanStep, { ...planInput, position: input.position, action: input.action, botId: input.botId }, options);
           break;
-        default:
-          throw new RemoteResourceRegistryError('INVALID_PARAMS', 'INVALID_PARAMS');
       }
       if (!result.ok) refuse(result);
+      lease.assertCurrent();
       return { effects: [{ kind: 'refresh-resource', ref: groupRef(groupId) }] };
     },
   });

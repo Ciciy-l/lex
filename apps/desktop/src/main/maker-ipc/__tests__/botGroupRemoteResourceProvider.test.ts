@@ -188,9 +188,13 @@ describe('bot group remote resources', () => {
   it('never lets a phone set a folder or reach a hidden teammate', async () => {
     await remoteResourceRegistry.invoke(context, {
       client: client(), collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, actionId: 'update', resourceRef: ref('g1'),
-      input: { name: '新名字', projectDir: '/etc', organizerBotId: 'abu' },
+      input: { name: '新名字', organizerBotId: 'abu' },
     });
     expect(service.updateGroup).toHaveBeenCalledWith({ groupId: 'g1', name: '新名字', organizerBotId: 'abu' });
+    await expect(remoteResourceRegistry.invoke(context, {
+      client: client(), collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, actionId: 'update', resourceRef: ref('g1'),
+      input: { name: '不应静默丢弃', projectDir: '/etc' },
+    })).rejects.toMatchObject({ code: 'INVALID_PARAMS' });
     await expect(remoteResourceRegistry.invoke(context, {
       client: client(), collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, actionId: 'set-members', resourceRef: ref('g1'),
       input: { botIds: ['mimi', 'ghost'] },
@@ -242,5 +246,44 @@ describe('bot group remote resources', () => {
       { kind: 'refresh-collection', collectionId: BOT_GROUP_REMOTE_COLLECTION_ID },
       { kind: 'navigate', target: { kind: 'resource', ref: ref('g9') } },
     ]);
+  });
+
+  it('binds remote mutations to the captured lease and group snapshot', async () => {
+    const assertCurrent = vi.fn();
+    const remoteContext = { controllerDeviceId: 'phone-guarded', client: {}, linkEpoch: 7, assertCurrent };
+    await remoteResourceRegistry.invoke(remoteContext, {
+      client: client(), collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, actionId: 'update', resourceRef: ref('g1'),
+      input: { name: '守卫后的名字' },
+    });
+    expect(service.updateGroup).toHaveBeenCalledWith(
+      { groupId: 'g1', name: '守卫后的名字' },
+      expect.objectContaining({
+        operationGuard: expect.any(Function),
+        expectedGroupUpdatedAt: 40,
+        expectedMemberBotIds: ['mimi', 'abu'],
+      }),
+    );
+    expect(assertCurrent.mock.calls.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('rejects unknown remote fields and never returns absolute hand-off paths', async () => {
+    const remoteContext = { controllerDeviceId: 'phone-strict', client: {}, linkEpoch: 8, assertCurrent: vi.fn() };
+    await expect(remoteResourceRegistry.invoke(remoteContext, {
+      client: client(), collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, actionId: 'update', resourceRef: ref('g1'),
+      input: { name: '不允许', projectDir: 'C:\\secret' },
+    })).rejects.toMatchObject({ code: 'INVALID_PARAMS' });
+    const withHostPath = detail({
+      messages: detail().messages.map((message, index) => index === 1
+        ? { ...message, files: ['/Users/me/site/secret.txt', '..\\nested\\draft.md'] }
+        : message),
+    });
+    service.getGroup.mockResolvedValue({ ok: true, group: withHostPath });
+    const rich = await remoteResourceRegistry.get(remoteContext, {
+      client: client([BOT_GROUP_CHAT_PRIMITIVE]),
+      ref: ref('g1'),
+    });
+    const data = rich.blocks?.[0]?.data as ReturnType<typeof botGroupRemoteChatData>;
+    expect(data.messages[1]?.files).toEqual(['secret.txt', 'draft.md']);
+    expect(JSON.stringify(rich)).not.toContain('/Users/me/site');
   });
 });
