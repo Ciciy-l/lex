@@ -265,6 +265,37 @@ export const sessions = sqliteTable(
 );
 
 /**
+ * Profile-local SharedTask authority/closure journal.
+ *
+ * Rows are only trusted snapshots recorded from the authenticated authority;
+ * a disk row never grants access by itself.  Revision zero is reserved for
+ * local-close fences, while authority revisions are server supplied.
+ */
+export const sharedTaskEvents = sqliteTable(
+  'shared_task_events',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    sharedTaskId: text('shared_task_id').notNull(),
+    sessionId: text('session_id')
+      .notNull()
+      .references((): AnySQLiteColumn => sessions.id, { onDelete: 'cascade' }),
+    revision: integer('revision').notNull(),
+    kind: text('kind', { enum: ['authority', 'local-close'] }).notNull(),
+    terminal: integer('terminal', { mode: 'boolean' }).notNull(),
+    snapshot: text('snapshot'),
+    recordedAt: integer('recorded_at').notNull(),
+  },
+  (table) => ({
+    uniqueRevision: uniqueIndex('shared_task_events_revision_idx').on(
+      table.sharedTaskId,
+      table.kind,
+      table.revision,
+    ),
+    bySession: index('shared_task_events_session_idx').on(table.sessionId, table.id),
+  }),
+);
+
+/**
  * Cindy Bots 的 Profile 权威记录。
  *
  * Renderer 只能通过 local-db:bots:* 读取/修改，不能把 Bot 身份或 canonical
