@@ -214,6 +214,15 @@ describe('bot group remote resources', () => {
     expect(service.stopRound).not.toHaveBeenCalled();
   });
 
+  it('requires the group resource kind as well as its collection', async () => {
+    await expect(remoteResourceRegistry.invoke(context, {
+      client: client(), collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, actionId: 'stop',
+      resourceRef: { collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, kind: 'bot', id: 'g1' },
+    })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(service.getGroup).not.toHaveBeenCalled();
+    expect(service.stopRound).not.toHaveBeenCalled();
+  });
+
   it('writes nothing once the computer has switched accounts during the checks', async () => {
     // The first owner check runs after the visibility reads; by then the account has changed.
     h.ownerCurrent = () => false;

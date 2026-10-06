@@ -423,6 +423,8 @@ export function registerBotGroupRemoteResourceProvider(service: () => BotGroupCh
       }
 
       const groupId = request.resourceRef?.collectionId === BOT_GROUP_REMOTE_COLLECTION_ID
+        && request.resourceRef.kind === BOT_GROUP_REMOTE_RESOURCE_KIND
+        && typeof request.resourceRef.id === 'string'
         ? request.resourceRef.id
         : null;
       if (!groupId) throw new RemoteResourceRegistryError('INVALID_PARAMS', 'INVALID_PARAMS');

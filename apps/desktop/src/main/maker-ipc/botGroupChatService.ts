@@ -913,7 +913,10 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
           groupId: group.id,
           botId: member.botId,
           deliveredThrough,
-          expectedMemberBotIds: peers.map((current) => current.botId),
+          // Local group lanes may contain roster-hidden Bots (hidden is a roster
+          // display flag, not a revocation). A remote operation carries the
+          // visibility snapshot and must recheck it in the worker transaction.
+          ...(operationGuard ? { expectedMemberBotIds: peers.map((current) => current.botId) } : {}),
         }, undefined, operationGuard);
       },
     });

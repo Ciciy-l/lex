@@ -270,6 +270,18 @@ describe('botGroupChatService', () => {
     expect(harness.dispatches[0]!.prompt).toContain('NO_REPLY');
   });
 
+  it("keeps a locally addressable roster-hidden member's delivery cursor writable", async () => {
+    const harness = createHarness(() => 'NO_REPLY');
+    const groupId = await createGroup(harness, ['mimi', 'abu']);
+    h.sqlite!.prepare('UPDATE bot_profiles SET hidden_at = ? WHERE id = ?').run(20, 'abu');
+    await harness.service.sendMessage({
+      groupId, text: '隐藏伙伴也能继续工作', mentions: { all: false, botIds: [] }, clientId: 'hidden-local-1',
+    });
+    await waitForIdle(harness, groupId);
+    expect(h.sqlite!.prepare('SELECT last_seen_sequence AS lastSeen FROM bot_group_members WHERE group_id = ? AND bot_id = ?').get(groupId, 'abu'))
+      .toEqual({ lastSeen: 1 });
+  });
+
   it('a broadcast thinks in parallel first, then members answer each other in turn', async () => {
     const replies: Record<string, string[]> = {
       mimi: ['咪咪的看法', 'NO_REPLY'],
