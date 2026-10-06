@@ -25,6 +25,7 @@ import {
 } from './botGroupDivision.js';
 import type { BotGroupWorkDir, WorkDirIdentity } from './botGroupWorkDir.js';
 import {
+  BOT_GROUP_ATTACHMENTS_MAX,
   BOT_GROUP_CLIENT_ID,
   BOT_GROUP_MAX_MEMBERS,
   BOT_GROUP_MESSAGE_MAX_CHARS,
@@ -35,6 +36,8 @@ import {
   botGroupPlanRouteKeyPrefix,
   isBotGroupNoReplyText,
   isBotGroupPlanOpen,
+  type BotGroupAttachment,
+  type BotGroupAttachmentCategory,
   type BotGroupChange,
   type BotGroupChangedPayload,
   type BotGroupCreateResult,
@@ -66,6 +69,8 @@ const MAX_CIRCLES_PER_ROUND = 3;
 const MAX_BOT_MESSAGES_PER_ROUND = 10;
 const MEMBER_TURN_TIMEOUT_MS = 5 * 60_000;
 const MAX_DELTA_MESSAGES = 30;
+/** Attachments sent with one member turn; the newest win when unseen messages carry more. */
+const MAX_TURN_ATTACHMENTS = 40;
 const MAX_DELTA_MESSAGE_CHARS = 4_000;
 const MAX_BOT_REPLY_CHARS = 16_000;
 const PREVIEW_CHARS = 80;
@@ -103,14 +108,26 @@ export interface BotGroupChatServiceDeps {
     title: string;
     plan?: { planId: string; workDir: string; sessionId?: string };
   }) => Promise<LaneResult>;
-  /** Same hidden, durable input path as Bot DMs. */
+  /** Same hidden, durable input path as Bot DMs; attachments go with the turn like a task message's. */
   dispatch: (params: {
     targetSessionId: string;
     message: string;
     persistedContent: string;
     clientId: string;
+    attachments?: BotGroupAttachment[];
     onAccepted: () => void | Promise<void>;
   }) => Promise<DispatchResult>;
+  /**
+   * Turns a composer's attachments into stored ones (bot-group-chat.md §3.1): images end up
+   * in the media store under this group, files stay where they are on this computer or, from
+   * a phone, land in the group's folder.
+   */
+  prepareAttachments?: (input: {
+    groupId: string;
+    attachments: readonly unknown[];
+    /** Set when a phone sent them; its uploads are only accepted from that phone. */
+    controllerDeviceId?: string;
+  }) => Promise<BotGroupPreparedAttachments | BotGroupFailure>;
   /** Stop the lane's current turn and drop its pending group inputs. */
   abortLane: (sessionId: string) => Promise<void>;
   /** Archived lanes are closed in the runtime as well. */
@@ -143,6 +160,15 @@ export interface BotGroupChatServiceDeps {
   log?: { warn: (message: string, meta?: Record<string, unknown>) => void };
 }
 
+export interface BotGroupPreparedAttachments {
+  ok: true;
+  attachments: BotGroupAttachment[];
+  /** The message was posted: the phone's cloud copies are no longer needed. */
+  commit: () => void;
+  /** Nothing was posted: undo this batch. */
+  discard: () => Promise<void>;
+}
+
 export interface BotGroupStepSettledEvent {
   groupId: string;
   groupName: string;
@@ -155,7 +181,7 @@ export interface BotGroupStepSettledEvent {
   outcome: 'done' | 'failed';
   /** The last step finished: the whole plan is done. */
   planDone: boolean;
-  /** Timestamp written by the settling transaction; stable for this step attempt. */
+  /** Stable event timestamp used by remote notification de-duplication. */
   settledAt: number;
 }
 
@@ -213,6 +239,12 @@ interface PlanningState {
   abort: AbortController;
 }
 
+/** A user message addressed to a 分工 step: its text and what was attached to it. */
+interface StepNote {
+  text: string;
+  attachments: BotGroupAttachment[];
+}
+
 /** The one 分工 step in progress (docs/product-rules/bot-group-chat.md §7.4). */
 interface ActiveStep {
   groupId: string;
@@ -222,13 +254,15 @@ interface ActiveStep {
   sessionId: string | null;
   cancelled: boolean;
   /** User messages sent while the step runs; the same Bot continues with them. */
-  notes: string[];
+  notes: StepNote[];
 }
 
 interface GroupRuntime {
   round: ActiveRound | null;
   planning: PlanningState | null;
   step: ActiveStep | null;
+  /** Notes and attachments that were not consumed by a failed step attempt. */
+  carriedNotes: { planId: string; position: number; notes: StepNote[] } | null;
   /** Serializes user actions (send / continue / stop / membership / delete). */
   tail: Promise<unknown>;
 }
@@ -250,9 +284,22 @@ export interface BotGroupMutationOptions {
   expectedMemberBotIds?: readonly string[];
   expectedPlanId?: string;
   expectedPlanUpdatedAt?: number;
+  /** Upload source identity; never persisted in a group message. */
+  controllerDeviceId?: string;
 }
 
-/** A bounded, opaque create intent. It is an idempotency key, not a resource/action grant. */
+function guardSnapshot(options?: BotGroupMutationOptions) {
+  return {
+    ...(options?.expectedGroupUpdatedAt === undefined ? {} : { expectedGroupUpdatedAt: options.expectedGroupUpdatedAt }),
+    ...(options?.expectedMemberBotIds === undefined ? {} : { expectedMemberBotIds: [...options.expectedMemberBotIds] }),
+    ...(options?.expectedPlanId === undefined ? {} : { expectedPlanId: options.expectedPlanId }),
+    ...(options?.expectedPlanUpdatedAt === undefined ? {} : { expectedPlanUpdatedAt: options.expectedPlanUpdatedAt }),
+  };
+}
+
+const assertOperation = (options?: BotGroupMutationOptions): void => options?.operationGuard?.();
+
+/** A bounded opaque idempotency key for remote group creation. */
 function readCreateRequestId(value: unknown): string | null {
   return typeof value === 'string'
     && value.length >= 16
@@ -292,6 +339,40 @@ function parseFiles(json: string | null | undefined): string[] {
   } catch {
     return [];
   }
+}
+
+const ATTACHMENT_CATEGORIES: ReadonlySet<string> = new Set<BotGroupAttachmentCategory>(['image', 'pdf', 'text', 'office', 'file']);
+
+/** Stored attachments (bot-group-chat.md §3.1); malformed entries are dropped. */
+export function parseAttachments(json: string | null | undefined): BotGroupAttachment[] {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json ?? '[]');
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item): BotGroupAttachment[] => {
+    if (!item || typeof item !== 'object') return [];
+    const entry = item as Record<string, unknown>;
+    if (typeof entry.id !== 'string' || typeof entry.name !== 'string' || typeof entry.mimeType !== 'string'
+      || typeof entry.category !== 'string' || !ATTACHMENT_CATEGORIES.has(entry.category)) return [];
+    return [{
+      id: entry.id,
+      name: entry.name,
+      category: entry.category as BotGroupAttachmentCategory,
+      mimeType: entry.mimeType,
+      size: typeof entry.size === 'number' && Number.isFinite(entry.size) ? entry.size : 0,
+      url: typeof entry.url === 'string' ? entry.url : null,
+      path: typeof entry.path === 'string' ? entry.path : null,
+      ...(entry.annotated === true ? { annotated: true } : {}),
+    }];
+  });
+}
+
+function uniqueAttachments(attachments: readonly BotGroupAttachment[]): BotGroupAttachment[] {
+  const seen = new Set<string>();
+  return attachments.filter((attachment) => !seen.has(attachment.id) && seen.add(attachment.id));
 }
 
 function planStatus(status: string): BotGroupPlanStatus {
@@ -401,11 +482,18 @@ export function buildMemberTurnPrompt(input: {
   botName: string;
   peerNames: string[];
   mentioned: 'you' | 'everyone' | null;
-  /** `files`: absolute paths of what a 分工 step produced (they live in the plan's work directory). */
-  messages: Array<{ from: string; text: string; files?: string[] }>;
+  /**
+   * `files`: absolute paths of what a 分工 step produced (they live in the plan's work directory).
+   * `attachments`: names of what the user attached; the attachments come with this turn.
+   */
+  messages: Array<{ from: string; text: string; files?: string[]; attachments?: string[] }>;
   omitted: number;
   /** The Bot's previous turn in this group was stopped or timed out before it was posted. */
   previousTurnInterrupted?: boolean;
+  /** Attachments of messages left out above; they come with this turn too. */
+  earlierAttachments?: string[];
+  /** Older attachments that do not come with this turn (too many at once). */
+  attachmentsLeftOut?: number;
 }): string {
   const lines = [
     `[Cindy group chat "${input.groupName.replace(/["\\\r\n]/g, ' ')}"]`,
@@ -423,6 +511,18 @@ export function buildMemberTurnPrompt(input: {
   if (input.omitted > 0) lines.push(`(${input.omitted} earlier messages were omitted.)`);
   if (input.messages.some((message) => message.files && message.files.length > 0)) {
     lines.push("Files listed with a message were made during a 分工 step and live at those paths, not in your own workspace; open them there when you need them.");
+  }
+  if (input.messages.some((message) => message.attachments && message.attachments.length > 0)) {
+    lines.push('Attachments listed with a message come with this turn.');
+  }
+  if (input.earlierAttachments && input.earlierAttachments.length > 0) {
+    lines.push(
+      'The omitted earlier messages carried these attachments; they come with this turn too:',
+      untrustedJsonBlock(input.earlierAttachments),
+    );
+  }
+  if (input.attachmentsLeftOut && input.attachmentsLeftOut > 0) {
+    lines.push(`(${input.attachmentsLeftOut} older attachments are not included; ask the user if you need them.)`);
   }
   if (input.previousTurnInterrupted) {
     lines.push('Your previous turn in this group was stopped before it was posted; the group never saw it.');
@@ -459,13 +559,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
   const waiters = new Map<string, LaneWaiter>();
   /** Lanes whose last group turn was stopped or timed out; the next prompt says so once. */
   const interruptedLanes = new Set<string>();
-  /**
-   * Creation is not part of the group schema: keep a bounded process-local receipt so a
-   * controller can reconcile a lost ACK without creating a second group. The service is
-   * owner-scoped by its registration lifecycle, so a new owner/host service gets a fresh
-   * receipt namespace. A request id is also tied to its normalized form intent; reusing it
-   * for different data is rejected rather than retargeting the original group.
-   */
+  /** Successful create receipts let a lost remote ACK reconcile without creating a second group. */
   const createReceipts = new Map<string, { intent: string; result: Promise<BotGroupCreateResult> }>();
   let disposed = false;
 
@@ -478,7 +572,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
   const runtimeFor = (groupId: string): GroupRuntime => {
     let runtime = runtimes.get(groupId);
     if (!runtime) {
-      runtime = { round: null, planning: null, step: null, tail: Promise.resolve() };
+      runtime = { round: null, planning: null, step: null, carriedNotes: null, tail: Promise.resolve() };
       runtimes.set(groupId, runtime);
     }
     return runtime;
@@ -494,13 +588,6 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
   const captureScope = () => deps.captureOwnerScope?.();
   const scopeIsCurrent = (scope: DataOwnerBroadcastScope | undefined) =>
     !scope || !deps.isOwnerScopeCurrent || deps.isOwnerScopeCurrent(scope);
-  const guardSnapshot = (options?: BotGroupMutationOptions) => ({
-    ...(options?.expectedGroupUpdatedAt === undefined ? {} : { expectedGroupUpdatedAt: options.expectedGroupUpdatedAt }),
-    ...(options?.expectedMemberBotIds === undefined ? {} : { expectedMemberBotIds: [...options.expectedMemberBotIds] }),
-    ...(options?.expectedPlanId === undefined ? {} : { expectedPlanId: options.expectedPlanId }),
-    ...(options?.expectedPlanUpdatedAt === undefined ? {} : { expectedPlanUpdatedAt: options.expectedPlanUpdatedAt }),
-  });
-  const assertOperation = (options?: BotGroupMutationOptions): void => options?.operationGuard?.();
 
   const emit = (groupId: string, change: BotGroupChange, scope?: DataOwnerBroadcastScope) => {
     if (!scopeIsCurrent(scope)) return;
@@ -551,6 +638,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     noticeCode: (row.noticeCode as BotGroupNoticeCode | null) ?? null,
     planId: row.planId ?? null,
     files: parseFiles(row.filesJson),
+    attachments: parseAttachments(row.attachmentsJson),
     createdAt: row.createdAt,
   });
 
@@ -663,11 +751,16 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       .where(and(eq(botGroupMessages.groupId, groupId), eq(botGroupMessages.kind, 'message')))
       .orderBy(desc(botGroupMessages.sequence))
       .limit(1);
-    return { latest, latestSpoken };
+    const [latestReply] = await db.select({ createdAt: botGroupMessages.createdAt })
+      .from(botGroupMessages)
+      .where(and(eq(botGroupMessages.groupId, groupId), eq(botGroupMessages.authorKind, 'bot'),
+        eq(botGroupMessages.kind, 'message')))
+      .orderBy(desc(botGroupMessages.sequence)).limit(1);
+    return { latest, latestSpoken, lastReplyAt: latestReply?.createdAt ?? 0 };
   };
 
   const summarize = async (group: GroupRow): Promise<BotGroupSummary> => {
-    const [members, { latestSpoken }, openPlan] = await Promise.all([
+    const [members, { latestSpoken, lastReplyAt }, openPlan] = await Promise.all([
       readMembers(group.id),
       latestMessages(group.id),
       readOpenPlan(group.id),
@@ -696,11 +789,13 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
         }
         : null,
       planningBotId: planning && !planning.cancelled ? planning.organizerBotId : null,
+      lastReplyAt,
       lastMessage: latestSpoken
         ? {
             authorKind: latestSpoken.authorKind,
             authorName: latestSpoken.authorName,
-            preview: preview(latestSpoken.content),
+            preview: preview(latestSpoken.content
+              || parseAttachments(latestSpoken.attachmentsJson).map((attachment) => attachment.name).join(', ')),
             createdAt: latestSpoken.createdAt,
           }
         : null,
@@ -722,6 +817,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     clientId?: string | null;
     planId?: string | null;
     files?: string[];
+    attachments?: BotGroupAttachment[];
   }, options?: BotGroupMutationOptions) => {
     assertOperation(options);
     return getDbClient().tx('botGroups.appendMessage', {
@@ -742,6 +838,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     clientId?: string | null;
     planId?: string | null;
     files?: string[];
+    attachments?: BotGroupAttachment[];
   }) => ({
     id: createId(),
     groupId: message.groupId,
@@ -755,6 +852,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     clientId: message.clientId ?? null,
     planId: message.planId ?? null,
     filesJson: JSON.stringify(message.files ?? []),
+    attachmentsJson: JSON.stringify(message.attachments ?? []),
     createdAt: now(),
   });
 
@@ -846,6 +944,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       .from(botGroupMembers)
       .where(and(eq(botGroupMembers.groupId, group.id), eq(botGroupMembers.botId, member.botId)))
       .limit(1);
+    try { operationGuard?.(); } catch { return { kind: 'cancelled' }; }
     if (!seen) return { kind: 'failed', notice: 'member-unavailable' };
     const delta = await db
       .select()
@@ -856,6 +955,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
         gt(botGroupMessages.sequence, seen.lastSeenSequence),
       ))
       .orderBy(asc(botGroupMessages.sequence));
+    try { operationGuard?.(); } catch { return { kind: 'cancelled' }; }
     // A Bot's own replies are already in its lane; in a parallel circle it has not seen
     // the others' replies yet, so progress is tracked by delivery, never by authorship.
     const others = delta.filter((row) => row.authorBotId !== member.botId);
@@ -870,6 +970,11 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
           .map((row) => [row.id, row.workDir] as const)
         : [],
     );
+    // Every unseen message's attachments must be delivered, even when its text was
+    // truncated from the prompt. Keep the newest 40 attachment identities for one turn.
+    const delivered = uniqueAttachments(others.flatMap((row) => parseAttachments(row.attachmentsJson)));
+    const attachments = delivered.slice(-MAX_TURN_ATTACHMENTS);
+    const shownIds = new Set(recent.flatMap((row) => parseAttachments(row.attachmentsJson).map((attachment) => attachment.id)));
     const prompt = buildMemberTurnPrompt({
       groupName: group.name,
       botName: member.name,
@@ -878,13 +983,17 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       messages: recent.map((row) => {
         const workDir = row.planId ? workDirs.get(row.planId) : undefined;
         const files = workDir ? parseFiles(row.filesJson).map((file) => path.join(workDir, ...file.split('/'))) : [];
+        const attached = parseAttachments(row.attachmentsJson).map((attachment) => attachment.name);
         return {
           from: row.authorKind === 'user' ? 'user' : row.authorName,
           text: clampChars(row.content, MAX_DELTA_MESSAGE_CHARS),
           ...(files.length > 0 ? { files } : {}),
+          ...(attached.length > 0 ? { attachments: attached } : {}),
         };
       }),
       omitted: others.length - recent.length,
+      earlierAttachments: attachments.filter((attachment) => !shownIds.has(attachment.id)).map((attachment) => attachment.name),
+      attachmentsLeftOut: delivered.length - attachments.length,
       previousTurnInterrupted: interruptedLanes.delete(lane.sessionId),
     });
     const deliveredThrough = delta.at(-1)?.sequence ?? seen.lastSeenSequence;
@@ -900,12 +1009,11 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       groupId: group.id,
       sessionId: lane.sessionId,
       prompt,
+      attachments,
       clientId: BOT_GROUP_CLIENT_ID.memberTurn(group.id, createId(), member.botId),
       timeoutMs: turnTimeoutMs,
-      isCancelled: () => {
-        if (round.cancelled) return true;
-        try { operationGuard?.(); return false; } catch { return true; }
-      },
+      isCancelled: () => round.cancelled,
+      operationGuard,
       afterDispatch: async () => {
         if (!scopeIsCurrent(scope)) return;
         operationGuard?.();
@@ -913,10 +1021,6 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
           groupId: group.id,
           botId: member.botId,
           deliveredThrough,
-          // Local group lanes may contain roster-hidden Bots (hidden is a roster
-          // display flag, not a revocation). A remote operation carries the
-          // visibility snapshot and must recheck it in the worker transaction.
-          ...(operationGuard ? { expectedMemberBotIds: peers.map((current) => current.botId) } : {}),
         }, undefined, operationGuard);
       },
     });
@@ -927,9 +1031,11 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     groupId: string;
     sessionId: string;
     prompt: string;
+    attachments?: BotGroupAttachment[];
     clientId: string;
     timeoutMs: number;
     isCancelled: () => boolean;
+    operationGuard?: BotGroupOperationGuard;
     afterDispatch?: () => Promise<void>;
   }): Promise<TurnOutcome> => {
     let settle!: (outcome: TurnOutcome) => void;
@@ -938,6 +1044,10 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     // Register before dispatch: an idle lane may finish before dispatch returns.
     cancelWaiter(turn.sessionId);
     waiters.set(turn.sessionId, waiter);
+    try { turn.operationGuard?.(); } catch {
+      if (waiters.get(turn.sessionId) === waiter) waiters.delete(turn.sessionId);
+      return { kind: 'cancelled' };
+    }
     let dispatched: DispatchResult;
     try {
       dispatched = await deps.dispatch({
@@ -945,6 +1055,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
         message: turn.prompt,
         persistedContent: `${UI_ACTION_TRIGGER_PREFIX}${turn.prompt}`,
         clientId: turn.clientId,
+        ...(turn.attachments && turn.attachments.length > 0 ? { attachments: turn.attachments } : {}),
         onAccepted: () => { waiter.accepted = true; },
       });
     } catch (error) {
@@ -955,6 +1066,10 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       deps.log?.warn('Bot group turn was not accepted', { groupId: turn.groupId, errorCode: dispatched.errorCode });
       if (turn.isCancelled()) return { kind: 'cancelled' };
       return { kind: 'failed', notice: dispatched.errorCode === 'BOT_GROUP_WORKDIR_UNAVAILABLE' ? 'workdir-unavailable' : 'member-failed' };
+    }
+    try { turn.operationGuard?.(); } catch {
+      if (waiters.get(turn.sessionId) === waiter) cancelWaiter(turn.sessionId);
+      return { kind: 'cancelled' };
     }
     await turn.afterDispatch?.().catch(() => undefined);
     if (turn.isCancelled()) {
@@ -974,15 +1089,13 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     scope: DataOwnerBroadcastScope | undefined;
     operationGuard?: BotGroupOperationGuard;
   }): Promise<void> => {
+    try { input.operationGuard?.(); } catch { return; }
     const runtime = runtimeFor(input.groupId);
     const round: ActiveRound = { id: createId(), cancelled: false, speakers: new Map(), dropped: new Set() };
     runtime.round = round;
     emit(input.groupId, 'round', input.scope);
     let posted = 0;
-    const live = () => {
-      if (round.cancelled || disposed || !scopeIsCurrent(input.scope)) return false;
-      try { input.operationGuard?.(); return true; } catch { return false; }
-    };
+    const live = () => !round.cancelled && !disposed && scopeIsCurrent(input.scope);
 
     /** One member's turn; true when it posted a message. */
     const takeTurn = async (botId: string): Promise<boolean> => {
@@ -1070,7 +1183,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
 
   // ---- 分工 (docs/product-rules/bot-group-chat.md §7) -----------------------
 
-  type StepNotes = { kind: 'redo' | 'more' | 'retry'; texts: string[] };
+  type StepNotes = { kind: 'redo' | 'more' | 'retry'; notes: StepNote[] };
 
   const cancelPlanning = (groupId: string): boolean => {
     const runtime = runtimes.get(groupId);
@@ -1099,7 +1212,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
 
   /** 停止 / 结束分工: the plan ends; finished steps and their files stay. */
   const stopPlan = async (groupId: string, scope?: DataOwnerBroadcastScope, options?: BotGroupMutationOptions): Promise<boolean> => {
-    assertOperation(options);
+    try { options?.operationGuard?.(); } catch { return false; }
     // Read before halting: once the step leaves memory, restart recovery would take it for a crash.
     const plan = await readOpenPlanRow(groupId);
     await haltStep(groupId);
@@ -1149,6 +1262,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     members: MemberRow[];
     mode: PlanDecisionMode;
     requestText: string;
+    requestAttachments: BotGroupAttachment[];
     requestSequence: number;
     revisePlan: PlanRow | null;
     /** `auto` only: the ordinary round when no split is needed. */
@@ -1170,6 +1284,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     const groupId = input.group.id;
     let decision: PlanDecision | null = null;
     try {
+      input.operationGuard?.();
       const usable = input.members.filter((member) => member.status === 'active');
       const currentSteps = input.revisePlan
         ? (await readSteps(input.revisePlan.id)).map((step) => ({ botId: step.botId, task: step.task }))
@@ -1182,6 +1297,9 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
           members: usable.map((member) => ({ botId: member.botId, name: member.name, description: member.description })),
           recent: await recentChat(groupId, input.requestSequence),
           request: input.requestText,
+          ...(input.requestAttachments.length > 0
+            ? { requestAttachments: input.requestAttachments.map((attachment) => attachment.name) }
+            : {}),
           currentSteps,
         }, planning.abort.signal);
       }
@@ -1191,8 +1309,8 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     }
     await serialize(groupId, async () => {
       const runtime = runtimeFor(groupId);
-      if (planning.cancelled || disposed || !scopeIsCurrent(input.scope)) return;
       try { input.operationGuard?.(); } catch { return; }
+      if (planning.cancelled || disposed || !scopeIsCurrent(input.scope)) return;
       if (runtime.planning === planning) runtime.planning = null;
       emit(groupId, 'round', input.scope);
       // No plan: an automatic check chats as usual; an explicit request always hears why.
@@ -1201,34 +1319,29 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
           input.fallback?.();
           return;
         }
-        const latestGroup = await readGroup(groupId);
-        const latestMembers = latestGroup ? await readMembers(groupId) : [];
-        const organizer = (latestGroup && effectiveOrganizer(latestGroup.organizerBotId, latestMembers)) ?? input.organizer;
-        if (!scopeIsCurrent(input.scope)) return;
         await appendMessage({
           groupId,
           kind: 'notice',
           authorKind: 'system',
-          authorBotId: organizer.botId,
-          authorName: organizer.name,
+          authorBotId: input.organizer.botId,
+          authorName: input.organizer.name,
           noticeCode: 'plan-failed',
-        });
+        }, { operationGuard: input.operationGuard });
         emit(groupId, 'messages', input.scope);
       };
       if (!decision?.needsPlan) return noPlan();
-      const group = await readGroup(groupId);
-      const members = group ? await readMembers(groupId) : [];
-      if (!group) return noPlan();
-      // The chosen organizer can become paused while the auxiliary model is thinking.
-      // Resolve the fallback at the commit boundary, not from the stale planning input.
-      const organizer = effectiveOrganizer(group.organizerBotId, members);
+      // The request message updates the group row before the async decision
+      // returns.  Re-read at the commit boundary for an accurate guarded CAS.
+      const latestGroup = await readGroup(groupId);
+      const members = latestGroup ? await readMembers(groupId) : [];
+      if (!latestGroup) return noPlan();
+      const currentOrganizer = effectiveOrganizer(latestGroup.organizerBotId, members);
+      if (!currentOrganizer) return noPlan();
+      planning.organizerBotId = currentOrganizer.botId;
       const byId = new Map(members.filter((member) => member.status === 'active').map((member) => [member.botId, member]));
       const steps = decision.steps.filter((step) => byId.has(step.botId));
       // Members may have left or paused while the organizer was deciding.
-      if (steps.length === 0 || !organizer) return noPlan();
-      planning.organizerBotId = organizer.botId;
-      if (!scopeIsCurrent(input.scope)) return;
-      try { input.operationGuard?.(); } catch { return; }
+      if (steps.length === 0) return noPlan();
       const planId = createId();
       try {
         await getDbClient().tx('botGroups.createPlan', {
@@ -1236,21 +1349,27 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
             id: planId,
             groupId,
             requestText: input.revisePlan?.requestText ?? input.requestText,
-            organizerBotId: organizer.botId,
-            organizerName: organizer.name,
+            // A revision keeps the request's attachments and adds the comment's (§3.1).
+            attachmentsJson: JSON.stringify(uniqueAttachments([
+              ...(input.revisePlan ? parseAttachments(input.revisePlan.attachmentsJson) : []),
+              ...input.requestAttachments,
+            ])),
+            organizerBotId: currentOrganizer.botId,
+            organizerName: currentOrganizer.name,
           },
           steps: steps.map((step) => ({ botId: step.botId, botName: byId.get(step.botId)!.name, task: step.task })),
           message: messageRow({
             groupId,
             kind: 'plan',
             authorKind: 'bot',
-            authorBotId: organizer.botId,
-            authorName: organizer.name,
+            authorBotId: currentOrganizer.botId,
+            authorName: currentOrganizer.name,
             planId,
           }),
           now: now(),
-          expectedGroupUpdatedAt: group.updatedAt,
-          expectedMemberBotIds: members.map((member) => member.botId),
+          ...(input.operationGuard
+            ? guardSnapshot({ operationGuard: input.operationGuard, expectedGroupUpdatedAt: latestGroup.updatedAt, expectedMemberBotIds: members.map((member) => member.botId) })
+            : {}),
         }, undefined, input.operationGuard);
       } catch (error) {
         deps.log?.warn('Bot group plan could not be saved', { groupId, error: String(error) });
@@ -1265,12 +1384,21 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
   const beginStep = async (
     plan: PlanRow,
     step: StepRow,
-    notes: StepNotes | null,
+    given: StepNotes | null,
     scope?: DataOwnerBroadcastScope,
     options?: BotGroupMutationOptions,
   ): Promise<void> => {
     assertOperation(options);
     const runtime = runtimeFor(plan.groupId);
+    // Notes and attachments from an attempt that failed before consuming them are
+    // delivered first on the next retry of the same step.
+    const carried = runtime.carriedNotes?.planId === plan.id && runtime.carriedNotes.position === step.position
+      ? runtime.carriedNotes.notes
+      : [];
+    runtime.carriedNotes = null;
+    const notes: StepNotes | null = carried.length > 0
+      ? { kind: given?.kind ?? 'retry', notes: [...carried, ...(given?.notes ?? [])] }
+      : given;
     const active: ActiveStep = {
       groupId: plan.groupId,
       planId: plan.id,
@@ -1306,7 +1434,9 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
   const runStep = async (active: ActiveStep, initialNotes: StepNotes | null, scope?: DataOwnerBroadcastScope, options?: BotGroupMutationOptions) => {
     const { groupId, planId, position } = active;
     const runtime = runtimeFor(groupId);
-    let leftoverNotes: string[] = [];
+    let leftoverNotes: StepNote[] = [];
+    /** Notes from the current attempt that have not yet been consumed by a successful turn. */
+    let inFlight: StepNote[] = initialNotes?.notes ?? [];
     const live = () => {
       if (active.cancelled || disposed || !scopeIsCurrent(scope) || runtime.step !== active) return false;
       try { options?.operationGuard?.(); return true; } catch { return false; }
@@ -1314,6 +1444,10 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
 
     const settle = async (outcome: { kind: 'done'; text: string; files: string[] } | { kind: 'failed'; notice: BotGroupNoticeCode }) => {
       if (!live()) return;
+      if (outcome.kind === 'failed') {
+        const unused = [...inFlight, ...active.notes.splice(0)];
+        runtime.carriedNotes = unused.length > 0 ? { planId, position, notes: unused } : null;
+      }
       const steps = await readSteps(planId);
       const step = steps.find((row) => row.position === position);
       if (!step) return;
@@ -1374,6 +1508,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     };
 
     try {
+      assertOperation(options);
       const plan = await readPlan(planId);
       if (!plan || plan.status !== 'running') return;
       const steps = await readSteps(planId);
@@ -1409,24 +1544,16 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
         }, undefined, options?.operationGuard);
       }
 
-      // A persisted plan is resumed after process restart. Validate the recorded
-      // directory before creating the lane; never silently fall back to Bot Home.
       const validateWorkDir = deps.workDir?.validate;
       const sameWorkDirIdentity = deps.workDir?.sameIdentity ?? ((left: WorkDirIdentity, right: WorkDirIdentity) =>
         left.realPath === right.realPath && left.device === right.device && left.inode === right.inode);
       let workDirIdentity: WorkDirIdentity | null = null;
       if (validateWorkDir) {
         const checked = await validateWorkDir(workDir).catch((error: unknown) => ({
-          ok: false as const,
-          message: error instanceof Error ? error.message : String(error),
+          ok: false as const, message: error instanceof Error ? error.message : String(error),
         }));
         if (!live()) return;
-        if (!checked.ok) {
-          deps.log?.warn('Bot group plan work directory identity unavailable', { groupId, message: checked.message });
-          return await settle({ kind: 'failed', notice: 'workdir-unavailable' });
-        }
-        // A newly prepared directory is canonicalized by prepare; a persisted path
-        // must not silently change spelling or physical target between launches.
+        if (!checked.ok) return await settle({ kind: 'failed', notice: 'workdir-unavailable' });
         if (path.resolve(checked.workDir) !== path.resolve(workDir)) {
           deps.log?.warn('Bot group plan work directory changed', { groupId, workDir, resolved: checked.workDir });
           return await settle({ kind: 'failed', notice: 'workdir-unavailable' });
@@ -1457,23 +1584,33 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       let notes = initialNotes;
       let text = '';
       let files: string[] = [];
+      // The request's attachments come with a step's first message; a redo already had them.
+      let withRequestAttachments = initialNotes?.kind !== 'redo';
       for (;;) {
         if (!live()) return;
         assertOperation(options);
+        inFlight = notes?.notes ?? [];
         if (validateWorkDir) {
           const beforeDispatch = await validateWorkDir(workDir).catch(() => ({ ok: false as const, message: '无法访问项目工作目录' }));
           if (!beforeDispatch.ok || (workDirIdentity && !sameWorkDirIdentity(workDirIdentity, beforeDispatch.identity))) {
             return await settle({ kind: 'failed', notice: 'workdir-unavailable' });
           }
         }
-        const brief = await buildBrief(plan, group, member, position, workDir, branch, notes);
+        const brief = await buildBrief(plan, group, member, position, workDir, branch, notes, withRequestAttachments);
+        const attachments = uniqueAttachments([
+          ...(withRequestAttachments ? parseAttachments(plan.attachmentsJson) : []),
+          ...(notes?.notes.flatMap((note) => note.attachments) ?? []),
+        ]);
+        withRequestAttachments = false;
         const outcome = await dispatchAndWait({
           groupId,
           sessionId: lane.sessionId,
           prompt: brief,
+          attachments,
           clientId: BOT_GROUP_CLIENT_ID.planStep(groupId, planId, position, createId()),
           timeoutMs: stepTimeoutMs,
           isCancelled: () => !live(),
+          operationGuard: options?.operationGuard,
         });
         if (!live() || outcome.kind === 'cancelled') return;
         if (outcome.kind === 'failed') return await settle({ kind: 'failed', notice: outcome.notice });
@@ -1495,7 +1632,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
           // Notes sent while the files were being listed still belong to this step.
           if (active.notes.length === 0) break;
         }
-        notes = { kind: 'more', texts: active.notes.splice(0) };
+        notes = { kind: 'more', notes: active.notes.splice(0) };
       }
       await settle({ kind: 'done', text, files });
       // Anything sent while the hand-off was being saved becomes a redo of this step (below).
@@ -1508,12 +1645,12 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       emit(groupId, 'plan', scope);
       emit(groupId, 'round', scope);
       if (leftoverNotes.length > 0 && !active.cancelled && !disposed) {
-        const texts = leftoverNotes;
+        const late = leftoverNotes;
         void serialize(groupId, async () => {
           const plan = await readOpenPlan(groupId);
           if (!plan || plan.id !== planId || plan.status !== 'waiting' || plan.currentStep !== position) return;
           const step = (await readSteps(planId)).find((row) => row.position === position && row.status === 'done');
-          if (step) await beginStep(plan, step, { kind: 'redo', texts }, scope);
+          if (step) await beginStep(plan, step, { kind: 'redo', notes: late }, scope);
         }).catch((error) => deps.log?.warn('Bot group late step notes were not delivered', { groupId, error: String(error) }));
       }
     }
@@ -1527,6 +1664,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     workDir: string,
     branch: string | null,
     notes: StepNotes | null,
+    withRequestAttachments: boolean,
   ): Promise<string> => {
     const steps = await readSteps(plan.id);
     const resultIds = steps
@@ -1540,6 +1678,8 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       groupName: group.name,
       botName: member.name,
       request: plan.requestText,
+      attachments: parseAttachments(plan.attachmentsJson).map((attachment) => attachment.name),
+      attachmentsIncluded: withRequestAttachments,
       steps: steps.map((step) => ({
         position: step.position,
         botName: step.botName,
@@ -1561,7 +1701,13 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       recent: await recentChat(group.id, (latest?.sequence ?? 0) + 1),
       workDir,
       branch,
-      userNotes: notes ?? undefined,
+      userNotes: notes
+        ? {
+          kind: notes.kind,
+          texts: notes.notes.map((note) => note.text).filter((text) => text.length > 0),
+          attachments: notes.notes.flatMap((note) => note.attachments.map((attachment) => attachment.name)),
+        }
+        : undefined,
     });
   };
 
@@ -1573,6 +1719,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
   const planAction = async (action: BotGroupPlanAction, input: unknown, options?: BotGroupMutationOptions): Promise<BotGroupMutationResult> => {
     const { groupId, planId } = readPlanActionInput(input);
     if (!groupId || !planId) return failure('INVALID_PARAMS', '参数无效');
+    assertOperation(options);
     return serialize(groupId, async () => {
       assertOperation(options);
       const plan = await readOpenPlan(groupId);
@@ -1587,11 +1734,9 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       }
       if (action === 'dismiss') {
         if (plan.status === 'proposed') {
-          const dismissed = await getDbClient().tx('botGroups.mutate', {
-            kind: 'dismiss-plan', groupId, planId, now: now(),
-            ...guardSnapshot(options),
+          await getDbClient().tx('botGroups.mutate', {
+            kind: 'dismiss-plan', groupId, planId, now: now(), ...guardSnapshot(options),
           }, undefined, options?.operationGuard);
-          if (!dismissed.updated) return failure('PLAN_CLOSED', '这个安排已经结束或被替换');
           emit(groupId, 'plan', scope);
           return { ok: true } as const;
         }
@@ -1618,6 +1763,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     const { groupId, planId, raw } = readPlanActionInput(input);
     const position = typeof raw.position === 'number' && Number.isInteger(raw.position) ? raw.position : null;
     if (!groupId || !planId || position === null) return failure('INVALID_PARAMS', '参数无效');
+    assertOperation(options);
     return serialize(groupId, async () => {
       assertOperation(options);
       const plan = await readOpenPlan(groupId);
@@ -1637,7 +1783,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
         const reassignable: Array<'pending' | 'failed'> = plan.status === 'proposed' ? ['pending'] : ['pending', 'failed'];
         const updated = await getDbClient().tx('botGroups.mutate', {
           kind: 'reassign-step', groupId, planId, position, botId: member.botId, botName: member.name, now: now(),
-          ...guardSnapshot(options),
+          expectedPlanStatus: plan.status, ...guardSnapshot(options),
         }, undefined, options?.operationGuard);
         if (!updated.updated) return failure('PLAN_CLOSED', '这一步已经做完或不存在');
       } else {
@@ -1760,12 +1906,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     if (raw.requestId !== undefined && !requestId) return failure('INVALID_PARAMS', '创建请求无效');
     const intent = JSON.stringify([name, botIds]);
     const existing = requestId ? createReceipts.get(requestId) : undefined;
-    if (existing) {
-      return existing.intent === intent
-        ? existing.result
-        : failure('INVALID_PARAMS', '创建请求已用于另一组成员');
-    }
-
+    if (existing) return existing.intent === intent ? existing.result : failure('INVALID_PARAMS', '创建请求已用于另一组成员');
     const result = (async (): Promise<BotGroupCreateResult> => {
       try {
         assertOperation(options);
@@ -1785,8 +1926,6 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     const receipt = { intent, result };
     createReceipts.set(requestId, receipt);
     const settled = await result;
-    // Failed attempts did not create a durable group; permit a deliberate retry with the
-    // same intent while retaining successful receipts for ACK-loss reconciliation.
     if (!settled.ok && createReceipts.get(requestId) === receipt) createReceipts.delete(requestId);
     return settled;
   };
@@ -1922,12 +2061,8 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       if (archived.length > 0) await deps.closeLanes?.(archived).catch(() => undefined);
       assertOperation(options);
       // The group's own folder goes to the system trash, never straight to deletion (§7.5).
-      // Owner scope may change while the DB/close awaits above. Never resolve the trash
-      // path against a new owner's userData after the old group was deleted.
-      if (scopeIsCurrent(scope)) {
-        await deps.workDir?.trashGroupFolder(groupId).catch((error) =>
-          deps.log?.warn('Bot group folder could not be moved to trash', { groupId, error: String(error) }));
-      }
+      await deps.workDir?.trashGroupFolder(groupId).catch((error) =>
+        deps.log?.warn('Bot group folder could not be moved to trash', { groupId, error: String(error) }));
       emit(groupId, 'deleted', scope);
       return { ok: true } as const;
     });
@@ -1953,13 +2088,18 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
   const isParallelBroadcast = (group: GroupRow, mentions: BotGroupMention, responders: string[]) =>
     group.speakingMode === 'auto' && responders.length > 1 && (mentions.all || mentions.botIds.length === 0);
 
+  /** `controllerDeviceId`: the phone that sent it (its uploads are checked against it). */
   const sendMessage = async (input: unknown, options?: BotGroupMutationOptions): Promise<BotGroupSendResult> => {
     const raw = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
     const groupId = readId(raw.groupId);
     const clientId = readId(raw.clientId);
     const text = typeof raw.text === 'string' ? raw.text.trim() : '';
+    const attachmentInputs = raw.attachments === undefined ? [] : raw.attachments;
     if (!groupId || !clientId) return failure('INVALID_PARAMS', '参数无效');
-    if (!text) return failure('INVALID_PARAMS', '消息不能为空');
+    if (!Array.isArray(attachmentInputs) || attachmentInputs.length > BOT_GROUP_ATTACHMENTS_MAX) {
+      return failure('INVALID_PARAMS', '附件无效');
+    }
+    if (!text && attachmentInputs.length === 0) return failure('INVALID_PARAMS', '消息不能为空');
     if (Array.from(text).length > BOT_GROUP_MESSAGE_MAX_CHARS) return failure('INVALID_PARAMS', '消息过长');
     assertOperation(options);
     const rawMentions = raw.mentions && typeof raw.mentions === 'object' ? (raw.mentions as Record<string, unknown>) : null;
@@ -1967,7 +2107,51 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       ? { all: rawMentions.all === true, botIds: readBotIds(rawMentions.botIds) ?? [] }
       : null;
     const division = raw.division === true;
-    return serialize(groupId, async () => {
+    // A resend of a posted message returns it before anything is stored again.
+    const [posted] = await getDbClient().drizzle
+      .select({ id: botGroupMessages.id })
+      .from(botGroupMessages)
+      .where(and(eq(botGroupMessages.groupId, groupId), eq(botGroupMessages.clientId, clientId)))
+      .limit(1);
+    if (posted) return { ok: true, messageId: posted.id } as const;
+    // Pin the whole batch to the account/owner that accepted it. A switch while the
+    // phone upload is fetched must neither write into nor clean up the next owner.
+    const owner = captureScope();
+    if (!scopeIsCurrent(owner)) return failure('NOT_FOUND', '群聊不存在');
+    // Stored outside the group's queue: a phone upload may take a while to fetch.
+    let prepared: Omit<BotGroupPreparedAttachments, 'ok'> = { attachments: [], commit: () => undefined, discard: async () => undefined };
+    if (attachmentInputs.length > 0) {
+      if (!deps.prepareAttachments) return failure('INVALID_PARAMS', '附件无效');
+      assertOperation(options);
+      let result: BotGroupPreparedAttachments | BotGroupFailure | undefined;
+      try {
+        result = await deps.prepareAttachments({
+          groupId,
+          attachments: attachmentInputs,
+          ...(options?.controllerDeviceId ? { controllerDeviceId: options.controllerDeviceId } : {}),
+        });
+        assertOperation(options);
+      } catch (error) {
+        if (result?.ok) await result.discard().catch(() => undefined);
+        throw error;
+      }
+      if (!result) return failure('INVALID_PARAMS', '附件无效');
+      if (!result.ok) return result;
+      prepared = result;
+    }
+    if (!scopeIsCurrent(owner)) {
+      await prepared.discard().catch(() => undefined);
+      return failure('NOT_FOUND', '群聊不存在');
+    }
+    const attachments = prepared.attachments;
+    const discard = () => prepared.discard().catch((error) =>
+      deps.log?.warn('Bot group attachments were not cleaned up', { groupId, error: String(error) }));
+    let sent: BotGroupSendResult;
+    let posting = false;
+    try {
+      sent = await serialize(groupId, async () => {
+      if (!scopeIsCurrent(owner)) return failure('NOT_FOUND', '群聊不存在');
+      assertOperation(options);
       const group = await readGroup(groupId);
       if (!group) return failure('NOT_FOUND', '群聊不存在');
       const members = await readMembers(groupId);
@@ -1977,21 +2161,28 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
         return failure('PLAN_OPEN', '群里还有没做完的分工，请先做完或结束');
       }
       assertOperation(options);
-      const scope = captureScope();
+      const scope = owner;
       let appended: { id: string; sequence: number; created: boolean };
       try {
-        appended = await appendMessage({ groupId, kind: 'message', authorKind: 'user', content: text, mentions, clientId }, options);
+        appended = await appendMessage({ groupId, kind: 'message', authorKind: 'user', content: text, mentions, clientId, attachments });
       } catch (error) {
         return txFailure(error);
       }
-      if (!appended.created) return { ok: true, messageId: appended.id } as const;
+      if (!appended.created) {
+        await discard();
+        return { ok: true, messageId: appended.id } as const;
+      }
+      // From this point the message owns the batch. Keep its references even if a
+      // later cancellation/notification side effect fails.
+      posting = true;
+      prepared.commit();
       // A new user message supersedes whatever the group was saying or deciding.
       await cancelRound(groupId, scope);
       if (cancelPlanning(groupId)) emit(groupId, 'round', scope);
       emit(groupId, 'messages', scope);
       for (const member of members) {
         if (member.status !== 'active' && mentions.botIds.includes(member.botId)) {
-          await postNotice(groupId, member, 'member-unavailable', scope, options);
+          await postNotice(groupId, member, 'member-unavailable', scope);
         }
       }
       const responders = respondersFor(group, members, mentions);
@@ -2023,6 +2214,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
           members,
           mode,
           requestText: text,
+          requestAttachments: attachments,
           requestSequence: appended.sequence,
           revisePlan,
           fallback,
@@ -2036,17 +2228,26 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
         planning('revise', openPlan, null);
       } else if (openPlan?.status === 'running') {
         const step = runtimes.get(groupId)?.step;
-        if (step && step.planId === openPlan.id) step.notes.push(text);
+        if (step && step.planId === openPlan.id) step.notes.push({ text, attachments });
       } else if (openPlan?.status === 'waiting') {
         const current = (await readSteps(openPlan.id)).find((step) => step.position === openPlan.currentStep);
-        if (current) await beginStep(openPlan, current, { kind: current.status === 'failed' ? 'retry' : 'redo', texts: [text] }, scope);
+        if (current) await beginStep(openPlan, current, { kind: current.status === 'failed' ? 'retry' : 'redo', notes: [{ text, attachments }] }, scope, options);
       } else if (deps.decidePlan && members.filter((member) => member.status === 'active').length >= 2) {
         planning('auto', null, chatRound);
       } else {
         chatRound();
       }
       return { ok: true, messageId: appended.id } as const;
-    });
+      });
+    } catch (error) {
+      // Until the message is durably appended the batch belongs to no message. Once
+      // posted, discard would remove references that the timeline still needs.
+      if (!posting) await discard();
+      throw error;
+    }
+    // Nothing was posted: this batch belongs to no message.
+    if (!sent.ok) await discard();
+    return sent;
   };
 
   const continueRound = async (groupIdInput: unknown, options?: BotGroupMutationOptions): Promise<BotGroupMutationResult> => {

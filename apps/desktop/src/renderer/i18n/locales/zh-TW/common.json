@@ -7729,7 +7729,10 @@
         "placeholderDivision": "說說要做成什麼，負責人會先分好工…",
         "placeholderPlanProposed": "想換人或改步驟，直接說…",
         "placeholderPlanWaiting": "想讓{{name}}改改，直接說…",
-        "placeholderPlanRunning": "說的話會帶給正在做的{{name}}…"
+        "placeholderPlanRunning": "說的話會帶給正在做的{{name}}…",
+        "tooManyAttachments": "附件太多了，一則訊息最多 {{max}} 個",
+        "attachmentsFailed": "附件沒能送出，請檢查檔案是否還在，或移除後重試",
+        "folderNotSupported": "資料夾不能作為附件，請選擇其中的檔案"
       },
       "timeline": {
         "loadEarlier": "查看更早的訊息",

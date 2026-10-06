@@ -7729,7 +7729,10 @@
         "placeholderDivision": "하고 싶은 일을 적어 주세요. 담당자가 먼저 역할을 나눕니다…",
         "placeholderPlanProposed": "담당이나 단계를 바꾸려면 그냥 말해 주세요…",
         "placeholderPlanWaiting": "{{name}} 님에게 고칠 점이 있으면 그냥 말해 주세요…",
-        "placeholderPlanRunning": "보내는 말은 작업 중인 {{name}} 님에게 전달됩니다…"
+        "placeholderPlanRunning": "보내는 말은 작업 중인 {{name}} 님에게 전달됩니다…",
+        "tooManyAttachments": "첨부 파일이 너무 많습니다. 메시지 하나에 최대 {{max}}개까지 보낼 수 있습니다",
+        "attachmentsFailed": "첨부 파일을 보내지 못했습니다. 파일이 아직 있는지 확인하거나, 제거한 후 다시 시도하세요",
+        "folderNotSupported": "폴더는 첨부할 수 없습니다. 폴더 안의 파일을 선택하세요"
       },
       "timeline": {
         "loadEarlier": "이전 메시지 보기",

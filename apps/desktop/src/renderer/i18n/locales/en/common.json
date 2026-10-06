@@ -7731,7 +7731,10 @@
         "placeholderDivision": "Describe what to get done. The organizer will split the work first…",
         "placeholderPlanProposed": "To change who does what, just say so…",
         "placeholderPlanWaiting": "Want {{name}} to change something? Just say so…",
-        "placeholderPlanRunning": "What you say goes to {{name}}, who’s working on it…"
+        "placeholderPlanRunning": "What you say goes to {{name}}, who’s working on it…",
+        "tooManyAttachments": "Too many attachments. The limit is {{max}} per message.",
+        "attachmentsFailed": "Attachments not sent. Check that the files still exist, or remove them and try again.",
+        "folderNotSupported": "Folders can’t be attached. Choose the files inside instead."
       },
       "timeline": {
         "loadEarlier": "Show Earlier Messages",

@@ -18,7 +18,7 @@ export type PreparedWorkDir =
   | { ok: true; workDir: string; branch: string | null; ownerSessionId: string | null }
   | { ok: false; message: string };
 
-/** The physical directory identity held while a plan step is running. */
+/** Physical identity held while a plan step is running. */
 export interface WorkDirIdentity {
   realPath: string;
   device: string;
@@ -31,7 +31,6 @@ export type WorkDirValidation =
 
 export interface BotGroupWorkDirDeps {
   ownerRoot: () => string;
-  /** Root of app-managed dialogue workspaces; those are runtime dirs, not projects. */
   managedDialogueRoot?: () => string;
   /** Whether an existing directory is inside a git repository. */
   detectRepo: (dir: string) => Promise<{ gitInstalled: boolean; isGitRepo: boolean }>;
@@ -69,43 +68,23 @@ async function isExistingDirectory(dir: string): Promise<boolean> {
   }
 }
 
-export function botGroupFolderPath(ownerRoot: string, groupId: string): string {
-  return path.join(ownerRoot, 'bot-groups', groupId, 'files');
-}
-
 async function readWorkDirIdentity(dir: string): Promise<WorkDirValidation> {
-  if (!path.isAbsolute(dir) || dir.includes('\0')) {
-    return { ok: false, message: '项目工作目录路径无效' };
-  }
+  if (!path.isAbsolute(dir) || dir.includes('\0')) return { ok: false, message: '项目工作目录路径无效' };
   const lexical = path.resolve(dir);
   try {
-    // Do not accept the final directory as a link. Parent links are allowed because
-    // relocated userData roots are legitimate; realpath below fixes their physical
-    // spelling before we hold the identity.
     const lexicalStat = await lstat(lexical);
-    if (!lexicalStat.isDirectory() || lexicalStat.isSymbolicLink()) {
-      return { ok: false, message: '项目工作目录不是普通目录' };
-    }
+    if (!lexicalStat.isDirectory() || lexicalStat.isSymbolicLink()) return { ok: false, message: '项目工作目录不是普通目录' };
     const physical = await realpath(lexical);
     const physicalStat = await lstat(physical);
-    if (!physicalStat.isDirectory() || physicalStat.isSymbolicLink()) {
-      return { ok: false, message: '项目工作目录不是普通目录' };
-    }
+    if (!physicalStat.isDirectory() || physicalStat.isSymbolicLink()) return { ok: false, message: '项目工作目录不是普通目录' };
     return {
       ok: true,
       workDir: physical,
-      identity: {
-        realPath: physical,
-        device: String(physicalStat.dev),
-        inode: String(physicalStat.ino),
-      },
+      identity: { realPath: physical, device: String(physicalStat.dev), inode: String(physicalStat.ino) },
     };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    return {
-      ok: false,
-      message: code === 'ENOENT' ? '项目工作目录不存在' : '无法访问项目工作目录',
-    };
+    return { ok: false, message: code === 'ENOENT' ? '项目工作目录不存在' : '无法访问项目工作目录' };
   }
 }
 
@@ -133,24 +112,27 @@ async function isManagedDialogueWorkspace(dir: string, root: string | undefined)
   }
 }
 
-/** Validate an explicitly chosen project without creating or falling back to another directory. */
 export async function validateExistingBotGroupProjectDirectory(
   workingDir: string,
   options: { managedDialogueRoot?: string } = {},
-): Promise<
-  { ok: true; workingDir: string } | { ok: false; message: string }
-> {
+): Promise<{ ok: true; workingDir: string } | { ok: false; message: string }> {
   const checked = await readWorkDirIdentity(workingDir);
   if (!checked.ok) {
-    return {
-      ok: false,
-      message: checked.message === '项目工作目录不存在' ? '项目文件夹不存在' : checked.message.replace('项目工作目录', '项目文件夹'),
-    };
+    return { ok: false, message: checked.message === '项目工作目录不存在' ? '项目文件夹不存在' : checked.message.replace('项目工作目录', '项目文件夹') };
   }
   if (await isManagedDialogueWorkspace(checked.workDir, options.managedDialogueRoot)) {
     return { ok: false, message: '应用托管的对话工作目录不能作为项目文件夹' };
   }
   return { ok: true, workingDir: checked.workDir };
+}
+
+export function botGroupFolderPath(ownerRoot: string, groupId: string): string {
+  return path.join(ownerRoot, 'bot-groups', groupId, 'files');
+}
+
+/** Files a phone attached to the group's messages; trashed with the group like `files`. */
+export function botGroupAttachmentsPath(ownerRoot: string, groupId: string): string {
+  return path.join(ownerRoot, 'bot-groups', groupId, 'attachments');
 }
 
 /** Signature per relative path (POSIX separators): mtime + size; git trees also keep HEAD. */
@@ -219,8 +201,6 @@ export function createBotGroupWorkDir(deps: BotGroupWorkDirDeps) {
     if (await isManagedDialogueWorkspace(project.workDir, deps.managedDialogueRoot?.())) {
       return { ok: false, message: '应用托管的对话工作目录不能作为项目文件夹' };
     }
-    // Keep the injectable existence predicate for isolated callers, but always pass the
-    // canonical path to repository detection and direct execution.
     if (!(await isDirectory(input.projectDir))) return { ok: false, message: '项目文件夹不存在' };
     const projectDir = project.workDir;
     // A git project must never be edited in place; when its state is unknown, fail closed.
@@ -263,8 +243,6 @@ export function createBotGroupWorkDir(deps: BotGroupWorkDirDeps) {
       for (const entry of entries) {
         if (snapshot.size >= SNAPSHOT_MAX_FILES) return;
         const full = path.join(dir, entry.name);
-        // lstat rather than Dirent.isDirectory(): Windows junctions can report as
-        // directories on some Node/libuv combinations. Never recurse through links.
         const entryStat = await lstat(full).catch(() => null);
         if (!entryStat || entryStat.isSymbolicLink()) continue;
         if (entryStat.isDirectory()) {
@@ -319,7 +297,7 @@ export function createBotGroupWorkDir(deps: BotGroupWorkDirDeps) {
       const committed = await deps
         .git(['diff', '--name-only', '-z', '--diff-filter=AMR', fromHead, toHead], workDir)
         .catch(() => '');
-      for (const file of committed.split('\0').filter(isSafeRelativeFile).slice(0, SNAPSHOT_MAX_FILES)) {
+      for (const file of committed.split('\0').filter(Boolean).slice(0, SNAPSHOT_MAX_FILES)) {
         if (changed.has(file)) continue;
         const sig = await signature(path.join(workDir, file));
         if (sig) changed.set(file, Number(sig.split(':')[0]) || 0);
@@ -343,14 +321,7 @@ export function createBotGroupWorkDir(deps: BotGroupWorkDirDeps) {
     if (await isDirectory(groupRoot)) await deps.trashItem(groupRoot);
   };
 
-  return {
-    prepare,
-    validate: readWorkDirIdentity,
-    sameIdentity: sameWorkDirIdentity,
-    snapshot,
-    changedFiles,
-    trashGroupFolder,
-  };
+  return { prepare, validate: readWorkDirIdentity, sameIdentity: sameWorkDirIdentity, snapshot, changedFiles, trashGroupFolder };
 }
 
 export type BotGroupWorkDir = ReturnType<typeof createBotGroupWorkDir>;

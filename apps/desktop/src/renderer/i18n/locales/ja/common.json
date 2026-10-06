@@ -7729,7 +7729,10 @@
         "placeholderDivision": "やりたいことを書いてください。まとめ役が先に役割を分けます…",
         "placeholderPlanProposed": "担当や手順を変えたいときは、そのまま話しかけてください…",
         "placeholderPlanWaiting": "{{name}} に直してほしいことがあれば、そのまま話しかけてください…",
-        "placeholderPlanRunning": "送った内容は作業中の {{name}} に届きます…"
+        "placeholderPlanRunning": "送った内容は作業中の {{name}} に届きます…",
+        "tooManyAttachments": "添付ファイルが多すぎます。1 件のメッセージにつき最大 {{max}} 個です",
+        "attachmentsFailed": "添付ファイルを送信できませんでした。ファイルが残っているか確認するか、削除してから再試行してください",
+        "folderNotSupported": "フォルダーは添付できません。中のファイルを選んでください"
       },
       "timeline": {
         "loadEarlier": "以前のメッセージを表示",

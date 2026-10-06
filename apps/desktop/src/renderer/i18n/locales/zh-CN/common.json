@@ -7729,7 +7729,10 @@
         "placeholderDivision": "说说要做成什么，负责人会先分好工…",
         "placeholderPlanProposed": "想换人或改步骤，直接说…",
         "placeholderPlanWaiting": "想让{{name}}改改，直接说…",
-        "placeholderPlanRunning": "说的话会带给正在做的{{name}}…"
+        "placeholderPlanRunning": "说的话会带给正在做的{{name}}…",
+        "tooManyAttachments": "附件太多了，一条消息最多 {{max}} 个",
+        "attachmentsFailed": "附件没能发出去，请检查文件是否还在，或移除后重试",
+        "folderNotSupported": "文件夹不能作为附件，请选择其中的文件"
       },
       "timeline": {
         "loadEarlier": "查看更早的消息",

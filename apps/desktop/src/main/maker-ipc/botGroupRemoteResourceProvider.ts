@@ -144,6 +144,7 @@ export function botGroupRemoteItem(group: BotGroupSummary): RemoteCollectionItem
       subtitle: group.members.map((member) => member.name).join('、'),
       ...(preview ? { preview } : {}),
       timestamp: group.lastMessage?.createdAt ?? group.updatedAt,
+      lastReplyAt: group.lastReplyAt,
       ...(busy ? { generation: { phase: 'processing', startedAt: null } } : {}),
     },
     links: group.members.map((member) => ({
@@ -167,7 +168,7 @@ export function botGroupRemoteItem(group: BotGroupSummary): RemoteCollectionItem
   };
 }
 
-/** Host paths stay on the computer; the phone gets the folder name only. */
+/** Host paths stay on the computer; the phone gets the folder name and attachment names only. */
 export function botGroupRemoteChatData(detail: BotGroupDetail): BotGroupRemoteChatData {
   const portableFileName = (value: string): string | null => {
     const normalized = value.replaceAll('\\', '/');
@@ -177,22 +178,26 @@ export function botGroupRemoteChatData(detail: BotGroupDetail): BotGroupRemoteCh
   };
   return {
     ...detail,
+    projectDir: null,
+    projectDirName: detail.projectDir ? path.basename(detail.projectDir) : null,
     messages: detail.messages.map((message) => ({
       ...message,
       files: message.files.map(portableFileName).filter((name): name is string => name !== null),
+      attachments: message.attachments.map((attachment) => ({ ...attachment, path: null })),
     })),
-    projectDir: null,
-    projectDirName: detail.projectDir ? path.basename(detail.projectDir) : null,
     plans: detail.plans.map((plan) => ({ ...plan, workDir: null })),
+    supportsAttachments: true,
   };
 }
 
 function fallbackMarkdown(detail: BotGroupDetail): string {
   const lines = detail.messages
-    .filter((message) => message.kind === 'message' && message.content.trim())
+    .filter((message) => message.kind === 'message' && (message.content.trim() || message.attachments.length > 0))
     .slice(-FALLBACK_MESSAGES)
     .map((message) => {
-      const text = message.content.replace(/\s+/g, ' ').trim();
+      // Older phones cannot show attachments; they still see what was attached.
+      const attached = message.attachments.map((attachment) => `📎 ${attachment.name}`).join(' ');
+      const text = [message.content.replace(/\s+/g, ' ').trim(), attached].filter(Boolean).join(' ');
       const clipped = Array.from(text).length > FALLBACK_MESSAGE_CHARS
         ? `${Array.from(text).slice(0, FALLBACK_MESSAGE_CHARS - 1).join('')}…`
         : text;
@@ -264,6 +269,7 @@ function remoteOptions(
   snapshot: RemoteGroupSnapshot,
   operationGuard: (() => void) | undefined,
   planId?: string,
+  controllerDeviceId?: string,
 ): BotGroupMutationOptions | undefined {
   if (!operationGuard) return undefined;
   const plan = planId ? snapshot.detail.plans.find((candidate) => candidate.id === planId) : undefined;
@@ -272,6 +278,7 @@ function remoteOptions(
     expectedGroupUpdatedAt: snapshot.updatedAt,
     expectedMemberBotIds: snapshot.memberBotIds,
     ...(plan ? { expectedPlanId: plan.id, expectedPlanUpdatedAt: plan.updatedAt } : {}),
+    ...(controllerDeviceId ? { controllerDeviceId } : {}),
   };
 }
 
@@ -280,9 +287,6 @@ function callService<TInput, TResult>(
   input: TInput,
   options: BotGroupMutationOptions | undefined,
 ): Promise<TResult> {
-  // Electron-free tests and local callers historically pass a one-argument
-  // service contract. Real device-link contexts always carry assertCurrent and
-  // therefore receive the guarded two-argument path.
   return options ? fn(input, options) : fn(input);
 }
 
@@ -387,7 +391,7 @@ export function registerBotGroupRemoteResourceProvider(service: () => BotGroupCh
         Array.isArray(input.botIds) ? input.botIds.filter((id): id is string => typeof id === 'string') : [];
       const allowedKeys: Record<string, readonly string[]> = {
         create: ['name', 'botIds', 'requestId'],
-        send: ['text', 'mentions', 'clientId', 'division'],
+        send: ['text', 'mentions', 'clientId', 'division', 'attachments'],
         continue: [],
         stop: [],
         update: ['name', 'replyMode', 'speakingMode', 'organizerBotId'],
@@ -437,7 +441,12 @@ export function registerBotGroupRemoteResourceProvider(service: () => BotGroupCh
       lease.assertCurrent();
       const current = ownerService();
       const planInput = { groupId, planId: input.planId };
-      const options = remoteOptions(snapshot, lease.operationGuard, typeof input.planId === 'string' ? input.planId : undefined);
+      const options = remoteOptions(
+        snapshot,
+        lease.operationGuard,
+        typeof input.planId === 'string' ? input.planId : undefined,
+        actionId === 'send' ? context.controllerDeviceId : undefined,
+      );
       let result: { ok: true } | BotGroupFailure;
       switch (actionId) {
         case 'send':
@@ -447,7 +456,8 @@ export function registerBotGroupRemoteResourceProvider(service: () => BotGroupCh
             mentions: input.mentions,
             clientId: input.clientId,
             division: input.division === true,
-          }, options);
+            ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
+          }, options ?? (context.controllerDeviceId ? { controllerDeviceId: context.controllerDeviceId } : undefined));
           break;
         case 'continue':
           result = await callService(current.continueRound, groupId, options);
@@ -487,6 +497,8 @@ export function registerBotGroupRemoteResourceProvider(service: () => BotGroupCh
         case 'plan-edit':
           result = await callService(current.editPlanStep, { ...planInput, position: input.position, action: input.action, botId: input.botId }, options);
           break;
+        default:
+          throw new RemoteResourceRegistryError('INVALID_PARAMS', 'INVALID_PARAMS');
       }
       if (!result.ok) refuse(result);
       lease.assertCurrent();

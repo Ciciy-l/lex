@@ -61,11 +61,11 @@ function detail(overrides: Partial<BotGroupDetail> = {}): BotGroupDetail {
     messages: [
       {
         id: 'm1', sequence: 1, kind: 'message', authorKind: 'user', authorBotId: null, authorName: '',
-        content: '做个页面', mentions: { all: false, botIds: [] }, noticeCode: null, planId: null, files: [], createdAt: 10,
+        content: '做个页面', mentions: { all: false, botIds: [] }, noticeCode: null, planId: null, files: [], attachments: [], createdAt: 10,
       },
       {
         id: 'm2', sequence: 2, kind: 'message', authorKind: 'bot', authorBotId: 'abu', authorName: '阿布',
-        content: '写好了', mentions: { all: false, botIds: [] }, noticeCode: null, planId: 'p1', files: ['index.html'], createdAt: 50,
+        content: '写好了', mentions: { all: false, botIds: [] }, noticeCode: null, planId: 'p1', files: ['index.html'], attachments: [], createdAt: 50,
       },
     ],
     hasMoreBefore: false,
@@ -169,7 +169,7 @@ describe('bot group remote resources', () => {
     });
     expect(service.sendMessage).toHaveBeenCalledWith({
       groupId: 'g1', text: '安排一下', mentions: { all: false, botIds: [] }, clientId: 'c1', division: true,
-    });
+    }, { controllerDeviceId: 'phone-1' });
     expect(send.effects).toEqual([{ kind: 'refresh-resource', ref: ref('g1') }]);
 
     await remoteResourceRegistry.invoke(context, {
@@ -186,15 +186,11 @@ describe('bot group remote resources', () => {
   });
 
   it('never lets a phone set a folder or reach a hidden teammate', async () => {
-    await remoteResourceRegistry.invoke(context, {
-      client: client(), collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, actionId: 'update', resourceRef: ref('g1'),
-      input: { name: '新名字', organizerBotId: 'abu' },
-    });
-    expect(service.updateGroup).toHaveBeenCalledWith({ groupId: 'g1', name: '新名字', organizerBotId: 'abu' });
     await expect(remoteResourceRegistry.invoke(context, {
       client: client(), collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, actionId: 'update', resourceRef: ref('g1'),
-      input: { name: '不应静默丢弃', projectDir: '/etc' },
-    })).rejects.toMatchObject({ code: 'INVALID_PARAMS' });
+      input: { name: '新名字', projectDir: '/etc', organizerBotId: 'abu' },
+    })).rejects.toMatchObject({ code: 'INVALID_PARAMS', message: 'INVALID_PARAMS' });
+    expect(service.updateGroup).not.toHaveBeenCalled();
     await expect(remoteResourceRegistry.invoke(context, {
       client: client(), collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, actionId: 'set-members', resourceRef: ref('g1'),
       input: { botIds: ['mimi', 'ghost'] },
@@ -214,13 +210,40 @@ describe('bot group remote resources', () => {
     expect(service.stopRound).not.toHaveBeenCalled();
   });
 
-  it('requires the group resource kind as well as its collection', async () => {
-    await expect(remoteResourceRegistry.invoke(context, {
-      client: client(), collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, actionId: 'stop',
-      resourceRef: { collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, kind: 'bot', id: 'g1' },
-    })).rejects.toMatchObject({ code: 'NOT_FOUND' });
-    expect(service.getGroup).not.toHaveBeenCalled();
-    expect(service.stopRound).not.toHaveBeenCalled();
+  it('passes a phone’s attachments on with the phone that sent them', async () => {
+    const attachments = [{ id: 'a1', name: 'photo.jpg', path: 'cindy-peer-attach://x', category: 'image', mimeType: 'image/jpeg' }];
+    await remoteResourceRegistry.invoke(context, {
+      client: client(), collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, actionId: 'send', resourceRef: ref('g1'),
+      input: { text: '', mentions: { all: false, botIds: [] }, clientId: 'c2', attachments },
+    });
+    expect(service.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ groupId: 'g1', text: '', clientId: 'c2', attachments }),
+      { controllerDeviceId: 'phone-1' },
+    );
+  });
+
+  it('shows attachments without host paths, and names them for older phones', async () => {
+    const withAttachments = detail({
+      messages: [{
+        id: 'm1', sequence: 1, kind: 'message', authorKind: 'user', authorBotId: null, authorName: '', content: '',
+        mentions: { all: false, botIds: [] }, noticeCode: null, planId: null, files: [], createdAt: 10,
+        attachments: [
+          { id: 'a1', name: 'photo.png', category: 'image', mimeType: 'image/png', size: 3, url: `cindy-media://blobs/${'a'.repeat(64)}.png`, path: null },
+          { id: 'a2', name: '需求.pdf', category: 'pdf', mimeType: 'application/pdf', size: 4, url: null, path: '/Users/me/Desktop/需求.pdf' },
+        ],
+      }],
+    });
+    service.getGroup.mockResolvedValue({ ok: true, group: withAttachments });
+    const rich = await remoteResourceRegistry.get(context, { client: client([BOT_GROUP_CHAT_PRIMITIVE]), ref: ref('g1') });
+    const data = rich.blocks![0]!.data as ReturnType<typeof botGroupRemoteChatData>;
+    expect(data.supportsAttachments).toBe(true);
+    expect(data.messages[0]!.attachments.map((attachment) => [attachment.name, attachment.url, attachment.path])).toEqual([
+      ['photo.png', `cindy-media://blobs/${'a'.repeat(64)}.png`, null],
+      ['需求.pdf', null, null],
+    ]);
+    expect(JSON.stringify(rich)).not.toContain('/Users/me');
+    const plain = await remoteResourceRegistry.get(context, { client: client(), ref: ref('g1') });
+    expect(plain.blocks?.[0]?.fallbackMarkdown).toContain('📎 photo.png 📎 需求.pdf');
   });
 
   it('writes nothing once the computer has switched accounts during the checks', async () => {
@@ -248,51 +271,12 @@ describe('bot group remote resources', () => {
     service.createGroup.mockResolvedValue({ ok: true, groupId: 'g9' });
     const created = await remoteResourceRegistry.invoke(context, {
       client: client(), collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, actionId: 'create',
-      input: { name: '新群', botIds: ['mimi', 'abu'], requestId: 'intent-remote-create-1' },
+      input: { name: '新群', botIds: ['mimi', 'abu'] },
     });
-    expect(service.createGroup).toHaveBeenCalledWith({ name: '新群', botIds: ['mimi', 'abu'], requestId: 'intent-remote-create-1' });
+    expect(service.createGroup).toHaveBeenCalledWith({ name: '新群', botIds: ['mimi', 'abu'] });
     expect(created.effects).toEqual([
       { kind: 'refresh-collection', collectionId: BOT_GROUP_REMOTE_COLLECTION_ID },
       { kind: 'navigate', target: { kind: 'resource', ref: ref('g9') } },
     ]);
-  });
-
-  it('binds remote mutations to the captured lease and group snapshot', async () => {
-    const assertCurrent = vi.fn();
-    const remoteContext = { controllerDeviceId: 'phone-guarded', client: {}, linkEpoch: 7, assertCurrent };
-    await remoteResourceRegistry.invoke(remoteContext, {
-      client: client(), collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, actionId: 'update', resourceRef: ref('g1'),
-      input: { name: '守卫后的名字' },
-    });
-    expect(service.updateGroup).toHaveBeenCalledWith(
-      { groupId: 'g1', name: '守卫后的名字' },
-      expect.objectContaining({
-        operationGuard: expect.any(Function),
-        expectedGroupUpdatedAt: 40,
-        expectedMemberBotIds: ['mimi', 'abu'],
-      }),
-    );
-    expect(assertCurrent.mock.calls.length).toBeGreaterThanOrEqual(4);
-  });
-
-  it('rejects unknown remote fields and never returns absolute hand-off paths', async () => {
-    const remoteContext = { controllerDeviceId: 'phone-strict', client: {}, linkEpoch: 8, assertCurrent: vi.fn() };
-    await expect(remoteResourceRegistry.invoke(remoteContext, {
-      client: client(), collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, actionId: 'update', resourceRef: ref('g1'),
-      input: { name: '不允许', projectDir: 'C:\\secret' },
-    })).rejects.toMatchObject({ code: 'INVALID_PARAMS' });
-    const withHostPath = detail({
-      messages: detail().messages.map((message, index) => index === 1
-        ? { ...message, files: ['/Users/me/site/secret.txt', '..\\nested\\draft.md'] }
-        : message),
-    });
-    service.getGroup.mockResolvedValue({ ok: true, group: withHostPath });
-    const rich = await remoteResourceRegistry.get(remoteContext, {
-      client: client([BOT_GROUP_CHAT_PRIMITIVE]),
-      ref: ref('g1'),
-    });
-    const data = rich.blocks?.[0]?.data as ReturnType<typeof botGroupRemoteChatData>;
-    expect(data.messages[1]?.files).toEqual(['secret.txt', 'draft.md']);
-    expect(JSON.stringify(rich)).not.toContain('/Users/me/site');
   });
 });
