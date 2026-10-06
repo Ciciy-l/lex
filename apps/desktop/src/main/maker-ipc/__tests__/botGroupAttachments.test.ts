@@ -82,6 +82,7 @@ beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'bot-group-attachments-'));
   h.blobDir = path.join(root, 'blobs');
   await fs.mkdir(h.blobDir);
+  await fs.mkdir(path.join(root, 'owner'), { recursive: true });
   await fs.writeFile(path.join(h.blobDir, `${hash}.png`), 'png');
   h.refs = [];
   h.removed = [];
@@ -92,7 +93,13 @@ afterEach(async () => {
   await fs.rm(root, { recursive: true, force: true });
 });
 
-const store = () => createBotGroupAttachmentStore({ ownerRoot: () => path.join(root, 'owner') });
+// This unit fixture represents a verifier supplied by the future relay
+// capability contract. Production wiring intentionally omits it until the
+// server can prove authenticated uploader/owner/target binding.
+const store = () => createBotGroupAttachmentStore({
+  ownerRoot: () => path.join(root, 'owner'),
+  verifyRemoteAttachment: async () => true,
+});
 
 describe('bot group attachment store', () => {
   it('references this computer’s images once per group and keeps picked files in place', async () => {
@@ -201,6 +208,17 @@ describe('bot group attachment store', () => {
       attachments: [{ id: 'p', name: 'x.pdf', path: 'upload://peer-x.pdf', category: 'pdf', mimeType: 'application/pdf' }],
     });
     expect(result).toEqual({ ok: false, errorCode: 'INVALID_PARAMS', message: 'FILE_PEER_DENIED' });
+  });
+
+  it('fails closed when the existing OSS reference has no verifiable uploader capability', async () => {
+    h.uploads.set('photo.png', 'png');
+    const unverified = createBotGroupAttachmentStore({ ownerRoot: () => path.join(root, 'owner') });
+    const result = await unverified.prepare({
+      groupId: 'g1',
+      controllerDeviceId: 'phone-1',
+      attachments: [{ id: 'p', name: 'photo.png', path: 'upload://oss-photo.png', category: 'image', mimeType: 'image/png' }],
+    });
+    expect(result).toEqual({ ok: false, errorCode: 'INVALID_PARAMS', message: 'FILE_PEER_UNVERIFIED' });
   });
 
   it('turns any name into one safe path segment', () => {

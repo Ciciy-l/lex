@@ -17,6 +17,7 @@ import {
 } from '../localDb/schema.js';
 import { UI_ACTION_TRIGGER_PREFIX } from '../../shared/interruptedTurn.js';
 import { untrustedJsonBlock } from '../../shared/untrustedPrompt.js';
+import { isDbTransportOutcomeUnknown } from '../localDb/client/DbTransport.js';
 import {
   buildPlanStepBrief,
   type PlanDecision,
@@ -127,6 +128,8 @@ export interface BotGroupChatServiceDeps {
     attachments: readonly unknown[];
     /** Set when a phone sent them; its uploads are only accepted from that phone. */
     controllerDeviceId?: string;
+    /** The guard is checked at every asynchronous attachment side-effect boundary. */
+    operationGuard?: BotGroupOperationGuard;
   }) => Promise<BotGroupPreparedAttachments | BotGroupFailure>;
   /** Stop the lane's current turn and drop its pending group inputs. */
   abortLane: (sessionId: string) => Promise<void>;
@@ -164,7 +167,7 @@ export interface BotGroupPreparedAttachments {
   ok: true;
   attachments: BotGroupAttachment[];
   /** The message was posted: the phone's cloud copies are no longer needed. */
-  commit: () => void;
+  commit: () => void | Promise<void>;
   /** Nothing was posted: undo this batch. */
   discard: () => Promise<void>;
 }
@@ -2129,6 +2132,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
           groupId,
           attachments: attachmentInputs,
           ...(options?.controllerDeviceId ? { controllerDeviceId: options.controllerDeviceId } : {}),
+          ...(options?.operationGuard ? { operationGuard: options.operationGuard } : {}),
         });
         assertOperation(options);
       } catch (error) {
@@ -2144,8 +2148,16 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       return failure('NOT_FOUND', '群聊不存在');
     }
     const attachments = prepared.attachments;
+    let preservePrepared = false;
     const discard = () => prepared.discard().catch((error) =>
       deps.log?.warn('Bot group attachments were not cleaned up', { groupId, error: String(error) }));
+    const discardIfSafe = () => {
+      // A DB transport timeout does not prove whether append committed. Keep
+      // this batch (including relay sources) for read-only reconciliation;
+      // deleting it here could destroy the only safe retry source.
+      if (preservePrepared) return Promise.resolve();
+      return discard();
+    };
     let sent: BotGroupSendResult;
     let posting = false;
     try {
@@ -2163,19 +2175,45 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
       assertOperation(options);
       const scope = owner;
       let appended: { id: string; sequence: number; created: boolean };
+      let appendOutcomeUnknown = false;
       try {
-        appended = await appendMessage({ groupId, kind: 'message', authorKind: 'user', content: text, mentions, clientId, attachments });
+        appended = await appendMessage({ groupId, kind: 'message', authorKind: 'user', content: text, mentions, clientId, attachments }, options);
       } catch (error) {
-        return txFailure(error);
+        if (!isDbTransportOutcomeUnknown(error)) return txFailure(error);
+        appendOutcomeUnknown = true;
+        // The transport keeps the posted RPC outstanding until its real worker
+        // reply. The read below is therefore reconciliation, never a mutation
+        // retry. If the read is still unavailable, retain the whole prepared
+        // batch rather than guessing that append failed.
+        try {
+          const [known] = await getDbClient().drizzle
+            .select({ id: botGroupMessages.id, sequence: botGroupMessages.sequence })
+            .from(botGroupMessages)
+            .where(and(eq(botGroupMessages.groupId, groupId), eq(botGroupMessages.clientId, clientId)))
+            .limit(1);
+          if (!known) {
+            preservePrepared = true;
+            return failure('INTERNAL', '消息提交结果未知，请刷新后核对');
+          }
+          appended = { id: known.id, sequence: known.sequence, created: false };
+        } catch {
+          preservePrepared = true;
+          return failure('INTERNAL', '消息提交结果未知，请刷新后核对');
+        }
       }
       if (!appended.created) {
-        await discard();
+        if (appendOutcomeUnknown) {
+          posting = true;
+          await prepared.commit();
+        } else {
+          await discardIfSafe();
+        }
         return { ok: true, messageId: appended.id } as const;
       }
       // From this point the message owns the batch. Keep its references even if a
       // later cancellation/notification side effect fails.
       posting = true;
-      prepared.commit();
+      await prepared.commit();
       // A new user message supersedes whatever the group was saying or deciding.
       await cancelRound(groupId, scope);
       if (cancelPlanning(groupId)) emit(groupId, 'round', scope);
@@ -2242,11 +2280,11 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     } catch (error) {
       // Until the message is durably appended the batch belongs to no message. Once
       // posted, discard would remove references that the timeline still needs.
-      if (!posting) await discard();
+      if (!posting) await discardIfSafe();
       throw error;
     }
     // Nothing was posted: this batch belongs to no message.
-    if (!sent.ok) await discard();
+    if (!sent.ok) await discardIfSafe();
     return sent;
   };
 
