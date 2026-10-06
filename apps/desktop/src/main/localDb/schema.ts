@@ -284,6 +284,8 @@ export const sharedTaskEvents = sqliteTable(
     terminal: integer('terminal', { mode: 'boolean' }).notNull(),
     snapshot: text('snapshot'),
     recordedAt: integer('recorded_at').notNull(),
+    /** Opaque per-prepare ownership marker; never store it in the numeric timestamp. */
+    closureToken: text('closure_token'),
   },
   (table) => ({
     uniqueRevision: uniqueIndex('shared_task_events_revision_idx').on(

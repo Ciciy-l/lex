@@ -47,7 +47,8 @@ function seedProfile(root: string, sessions: string[]): { dbPath: string; drizzl
         kind TEXT NOT NULL,
         terminal INTEGER NOT NULL,
         snapshot TEXT,
-        recorded_at INTEGER NOT NULL
+        recorded_at INTEGER NOT NULL,
+        closure_token TEXT
       );
       CREATE UNIQUE INDEX shared_task_events_revision_idx
         ON shared_task_events(shared_task_id, kind, revision);

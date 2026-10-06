@@ -22,6 +22,7 @@ beforeEach(() => {
   db.pragma('foreign_keys = ON');
   db.exec("CREATE TABLE sessions (id TEXT PRIMARY KEY); INSERT INTO sessions VALUES ('session'), ('other-session')");
   db.exec(readFileSync(resolve(process.cwd(), 'drizzle/0112_amused_guardsmen.sql'), 'utf8'));
+  db.exec(readFileSync(resolve(process.cwd(), 'drizzle/0113_yummy_maelstrom.sql'), 'utf8'));
   journal = createSharedTaskJournal({
     async exec(sql, params = []) { return db.prepare(sql).run(...params); },
     async query<T>(sql: string, params: unknown[] = []) { return db.prepare(sql).all(...params) as T[]; },
@@ -38,6 +39,8 @@ describe('sharedTask authority journal', () => {
     };
     const prepared = await prepareSharedTasksForSession(writer, 'session');
     expect(prepared.rowIds).toHaveLength(1);
+    expect(prepared.status).toBe('acquired');
+    expect(prepared.marker).toMatch(/^[0-9a-f-]{36}$/);
     expect(await journal.latest()).toMatchObject([{ terminal: false }]);
     await rollbackPreparedSharedTasks(writer, prepared);
     expect(await journal.latest()).toMatchObject([{ terminal: false }]);
@@ -132,6 +135,7 @@ describe('sharedTask authority journal', () => {
     const second = await prepareSharedTasksForSession(writer, 'session');
     expect(first.rowIds).toHaveLength(1);
     expect(second.rowIds).toEqual([]);
+    expect(second.status).toBe('occupied');
     await finalizePreparedSharedTasks(writer, second);
     expect(await journal.latest()).toMatchObject([{ terminal: false }]);
     await rollbackPreparedSharedTasks(writer, second);

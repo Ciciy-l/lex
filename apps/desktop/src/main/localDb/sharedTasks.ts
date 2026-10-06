@@ -14,6 +14,9 @@ export interface PreparedSharedTaskClosure {
   sessionId: string;
   marker: string;
   rowIds: number[];
+  /** Explicitly distinguishes a lease from an existing prepare or no rows. */
+  status: 'acquired' | 'occupied' | 'none';
+  lease: 'acquired' | 'occupied' | 'none';
 }
 
 /** Persist the local-close fence before a session enters a terminal state. */
@@ -22,12 +25,20 @@ export async function prepareSharedTasksForSession(
   sessionId: string,
 ): Promise<PreparedSharedTaskClosure> {
   const marker = nextClosureMarker();
-  await db.exec(PREPARE_SHARED_TASKS_FOR_SESSION_SQL, [marker, sessionId]);
+  const sourceRows = await db.query<{ shared_task_id: string }>(
+    "SELECT DISTINCT shared_task_id FROM shared_task_events WHERE session_id = ?",
+    [sessionId],
+  );
+  if (sourceRows.length === 0) {
+    return { sessionId, marker, rowIds: [], status: 'none', lease: 'none' };
+  }
+  await db.exec(PREPARE_SHARED_TASKS_FOR_SESSION_SQL, [Date.now(), marker, sessionId]);
   const rows = await db.query<{ id: number }>(
-    "SELECT id FROM shared_task_events WHERE session_id = ? AND kind = 'local-close' AND revision = 0 AND terminal = 0 AND recorded_at = ?",
+    "SELECT id FROM shared_task_events WHERE session_id = ? AND kind = 'local-close' AND revision = 0 AND terminal = 0 AND closure_token = ?",
     [sessionId, marker],
   );
-  return { sessionId, marker, rowIds: rows.map((row) => row.id) };
+  const status = rows.length > 0 ? 'acquired' : 'occupied';
+  return { sessionId, marker, rowIds: rows.map((row) => row.id), status, lease: status };
 }
 
 /** Remove only a prepare whose terminal session write did not commit. */
@@ -38,7 +49,7 @@ export async function rollbackPreparedSharedTasks(
   if (prepared.rowIds.length === 0) return;
   const placeholders = prepared.rowIds.map(() => '?').join(',');
   await db.exec(
-    "DELETE FROM shared_task_events WHERE id IN (" + placeholders + ") AND session_id = ? AND kind = 'local-close' AND revision = 0 AND terminal = 0 AND recorded_at = ?",
+    "DELETE FROM shared_task_events WHERE id IN (" + placeholders + ") AND session_id = ? AND kind = 'local-close' AND revision = 0 AND terminal = 0 AND closure_token = ?",
     [...prepared.rowIds, prepared.sessionId, prepared.marker],
   );
 }
@@ -51,7 +62,7 @@ export async function finalizePreparedSharedTasks(
   if (prepared.rowIds.length === 0) return;
   const placeholders = prepared.rowIds.map(() => '?').join(',');
   await db.exec(
-    "UPDATE shared_task_events SET terminal = 1 WHERE id IN (" + placeholders + ") AND session_id = ? AND kind = 'local-close' AND revision = 0 AND terminal = 0 AND recorded_at = ?",
+    "UPDATE shared_task_events SET terminal = 1, closure_token = NULL WHERE id IN (" + placeholders + ") AND session_id = ? AND kind = 'local-close' AND revision = 0 AND terminal = 0 AND closure_token = ?",
     [...prepared.rowIds, prepared.sessionId, prepared.marker],
   );
 }
@@ -131,8 +142,8 @@ export function createSharedTaskJournal(db: Pick<DbClient, 'exec' | 'query'>, no
       // split this into a pre-read followed by an INSERT: another profile
       // worker may commit a same-revision snapshot between those operations.
       const result = await db.exec(`
-        INSERT INTO shared_task_events (shared_task_id, session_id, revision, kind, terminal, snapshot, recorded_at)
-        SELECT ?, ?, ?, 'authority', ?, ?, ?
+        INSERT INTO shared_task_events (shared_task_id, session_id, revision, kind, terminal, snapshot, recorded_at, closure_token)
+        SELECT ?, ?, ?, 'authority', ?, ?, ?, NULL
         WHERE NOT EXISTS (
           SELECT 1 FROM shared_task_events
           WHERE shared_task_id = ? AND (terminal = 1 OR kind = 'local-close' OR session_id <> ?
@@ -159,8 +170,8 @@ export function createSharedTaskJournal(db: Pick<DbClient, 'exec' | 'query'>, no
       // Keep immutable identity checks in this statement too. A pre-read can
       // become stale while another worker records a different authority.
       const result = await db.exec(`
-        INSERT INTO shared_task_events (shared_task_id, session_id, revision, kind, terminal, snapshot, recorded_at)
-        SELECT ?, ?, 0, 'local-close', 1, NULL, ?
+        INSERT INTO shared_task_events (shared_task_id, session_id, revision, kind, terminal, snapshot, recorded_at, closure_token)
+        SELECT ?, ?, 0, 'local-close', 1, NULL, ?, NULL
         WHERE NOT EXISTS (
           SELECT 1 FROM shared_task_events
           WHERE shared_task_id = ? AND (session_id <> ? OR (snapshot IS NOT NULL AND (
