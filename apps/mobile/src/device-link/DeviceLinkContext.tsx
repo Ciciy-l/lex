@@ -10,6 +10,8 @@ import { mobileDebugLog } from '@/debug/mobileDebugLog';
 import {
   DeviceLinkClient,
   DeviceLinkError,
+  SHARED_TASK_CAPABILITY,
+  sharedTaskTopics,
   CONTROLLER_CAPABILITY_MAKER_EVENT_BATCH_V1,
   CONTROLLER_CAPABILITY_SESSION_TEXT_SNAPSHOT_V1,
   CONTROLLER_CAPABILITY_PROVIDER_LOGO_KINDS_V2,
@@ -154,6 +156,8 @@ import { createVisualMockDeviceLinkContext, seedVisualMockStore } from '@/debug/
 
 export interface DeviceLinkContextValue {
   status: DeviceLinkStatus;
+  /** Shared-task host capability is opt-in; undefined means not negotiated. */
+  sharedTaskAvailable?: boolean;
   /** Peers with queued, running, or retrying recovery work. Read-only UI projection. */
   recoveringDeviceIds: ReadonlySet<string>;
   /** 连接层可分类的失败原因(鉴权失效/被顶号/超限/版本不符);null = 无异常 */
@@ -203,6 +207,10 @@ const recoveryDiagnostics = new WeakMap<DeviceLinkClient, ReturnType<typeof crea
  * 被控端按能力缺失降级)。被控端只在看到对应能力后才发送新 wire 形状。
  */
 const CONTROLLER_CAPABILITIES = [
+  // Shared-task is a controller-side scoped transport capability.  The host
+  // must still advertise the capability before a scoped peer is usable; this
+  // does not publish the production host feature by itself.
+  SHARED_TASK_CAPABILITY,
   CONTROLLER_CAPABILITY_SESSION_TEXT_SNAPSHOT_V1,
   CONTROLLER_CAPABILITY_PROVIDER_LOGO_KINDS_V2,
   // maker:event 微批:被控端把同一会话的连续事件合并成一帧,本端拆包后逐条消费
@@ -397,6 +405,8 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
   // 发起代仍为当前代时登记远端 ACK,避免迟到成功覆盖较新的 unsubscribe。
   const backgroundReleaseGenerationRef = useRef(0);
   const [status, setStatus] = useState<DeviceLinkStatus>('stopped');
+  /** Relay capability is explicit; undefined means not negotiated/offline. */
+  const [sharedTaskAvailable, setSharedTaskAvailable] = useState<boolean | undefined>();
   const [connectionIssue, setConnectionIssue] = useState<DeviceLinkConnectionIssue | null>(null);
   const [presenceVersion, setPresenceVersion] = useState(0);
   const [connectionEpoch, setConnectionEpoch] = useState(0);
@@ -828,6 +838,7 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
       presenceUnavailableVerdictsRef.current.clear();
       backgroundReleaseInFlightRef.current = false;
       setStatus('stopped');
+      setSharedTaskAvailable(undefined);
       setConnectionIssue(null);
       // 登出 / 进程内切号:清掉所有 per-account 残留,避免下一个账号串到上一个账号的数据。
       // - 供应商目录是 module 级单例缓存(useDeviceProviders 按 deviceId 命中),不随组件卸载清;
@@ -856,6 +867,9 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
       getWsUrl: () => deviceLinkWsUrl(),
       getToken: auth.getAccessToken,
       getHello: () => ({
+        // Mobile is a scoped-task controller.  A host must separately
+        // negotiate the capability before this is usable.
+        capabilities: [SHARED_TASK_CAPABILITY],
         deviceName: mobileDeviceName(),
         platform: Platform.OS,
         appVersion: Constants.expoConfig?.version ?? '0.0.0',
@@ -934,6 +948,12 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
     const offIssue = client.onConnectionIssue(setConnectionIssue);
     const offStatus = client.onStatusChange((next) => {
       setStatus(next);
+      // Older test doubles (and an older runtime loaded during a hot update)
+      // do not expose the capability query.  Missing evidence is explicitly
+      // unsupported/unknown, never permission to use shared-task transport.
+      const supportsSharedTask = typeof client.hasServerCapability === 'function'
+        && client.hasServerCapability(SHARED_TASK_CAPABILITY);
+      setSharedTaskAvailable(next === 'online' ? supportsSharedTask : undefined);
       if (next !== 'online') {
         catalogRefresh.clear();
         catalogRefreshDeviceIds.clear();
@@ -1443,6 +1463,7 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
   }, [sendOpenLinkOnce]);
 
   const subscribe = useCallback(async (owner: string, deviceId: string, topics: string[]) => {
+    topics = sharedTaskTopics(deviceId, topics);
     // `owner` is the stable id of the mounted consumer (e.g. `session:<id>`). Tracking is
     // idempotent per (owner, topic), so resync/retry resubscribes don't accumulate. The
     // server subscribe is idempotent, so it's safe to (re)send the requested topics.
@@ -1455,6 +1476,7 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
   }, [sendTrackedSubscribe]);
 
   const unsubscribe = useCallback(async (owner: string, deviceId: string, topics: string[]) => {
+    topics = sharedTaskTopics(deviceId, topics);
     // Drop only this owner's hold; release (server unsubscribe) the topics whose last owner
     // just left. If a focused screen blurs before subscribe acknowledgement, a later cleanup may
     // ask to unsubscribe an already-released owner; resend only topics that are currently unheld
@@ -1481,12 +1503,13 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<DeviceLinkContextValue>(() => ({
     status,
+    sharedTaskAvailable,
     recoveringDeviceIds,
     connectionIssue,
     presenceVersion,
     connectionEpoch,
     lastPresenceSnapshot,
-    getSubscriptionIdentity: (deviceId, topics) => remoteSubscribedTopicsRef.current.identity(deviceId, topics),
+    getSubscriptionIdentity: (deviceId, topics) => remoteSubscribedTopicsRef.current.identity(deviceId, sharedTaskTopics(deviceId, topics)),
     getPresenceAvailability,
     readDeviceList,
     openLink,
@@ -1510,6 +1533,7 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
     reopenLink,
     presenceVersion,
     status,
+    sharedTaskAvailable,
     subscribe,
     unsubscribe,
     subscribeRemoteAgentRoster,

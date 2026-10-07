@@ -120,6 +120,7 @@ import { unregisterPushTokenBestEffort } from '@/notifications/pushNotifications
 import { resetAgentCapabilitiesCache } from '@/session/agentCapabilitiesCache';
 import { resetComposerPaletteCache } from '@/session/composerPaletteCache';
 import { clearRemoteResourceCache } from '@/device-link/remoteResourceCache';
+import { clearClipboardInvitationHistory } from '@/device-link/clipboardInvitationHistory';
 import { clearCachedHomeListSnapshot } from '@/session/mobileHomeListCache';
 import { setMobileAuthOwner } from '@/auth/authOwnerGeneration';
 import { updateCredentialAccessToken } from '@/remote-desktop/credentialIdentity';
@@ -2654,6 +2655,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const clearLocalSession = useCallback(async (
     options: { persistedAuthAlreadyCleared?: boolean } = {},
   ) => {
+    // Retire the old account's digest-only invitation history synchronously
+    // before any logout await.  The history store fences older reads/writes,
+    // so a late clipboard persistence cannot resurrect data after logout.
+    const previousClipboardAccountKey = userRef.current?.id
+      ? accountVaultKey(activeAuthRealmRef.current, userRef.current.id)
+      : '';
+    const clipboardHistoryCleanup = previousClipboardAccountKey
+      ? clearClipboardInvitationHistory(previousClipboardAccountKey)
+      : Promise.resolve();
     // 任何登录态清除路径(logout / terminateSession / 账号注销 / ACCOUNT_UNAVAILABLE)
     // 都先 best-effort 注销移动推送 token —— 只挂在 logout 会漏掉终止路径,设备会
     // 继续收到旧账号的任务通知。token 此刻可能已失效(账号不可用),失败静默,
@@ -2666,6 +2676,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     authGenerationRef.current += 1;
     loginFlowEpochRef.current += 1;
     refreshInFlightRef.current = null;
+    await clipboardHistoryCleanup.catch(() => undefined);
     await unregisterPushTokenBestEffort(
       accessTokenRef.current,
       activeAuthRealmRef.current,
@@ -3023,13 +3034,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       path: string,
       opts: Omit<ApiFetchOptions, 'token'>,
     ): Promise<T> => {
+      // Capture-sensitive callers (shared-task management, close-only cleanup)
+      // must not acquire or use a token after their account scope changed.
+      opts.assertCurrent?.();
       const token = await getAccessToken();
       if (!token) throw new Error('UNAUTHENTICATED');
       try {
         return await apiFetchRaw<T>(path, { ...opts, token });
       } catch (error) {
+        opts.assertCurrent?.();
         if (!(error instanceof ApiError) || error.status !== 401) throw error;
         if (error.code === 'ACCOUNT_UNAVAILABLE') {
+          opts.assertCurrent?.();
           if (userRef.current) {
             await terminateSession('ACCOUNT_UNAVAILABLE');
           }
@@ -3037,14 +3053,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         if (!isRefreshableUnauthorizedCode(error.code)) throw error;
 
+        opts.assertCurrent?.();
         const fresh = await refresh();
+        opts.assertCurrent?.();
         if (!fresh) {
+          opts.assertCurrent?.();
           if (userRef.current) await terminateSession();
           throw error;
         }
         try {
           return await apiFetchRaw<T>(path, { ...opts, token: fresh });
         } catch (retryError) {
+          opts.assertCurrent?.();
           if (
             retryError instanceof ApiError &&
             retryError.status === 401 &&

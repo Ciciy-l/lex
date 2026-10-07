@@ -1394,6 +1394,7 @@ export function mobileCatalogSurfaces() {
     ['files', '任务文件与预览', ['files/[sessionId].tsx', 'files/preview/[sessionId].tsx']],
     ['automations', '自动化', ['automations/[deviceId].tsx']],
     ['settings', '设置（含调试与日志上传可见入口）', ['settings.tsx']],
+    ['shared-task', '共享任务管理与邀请', ['shared-session.tsx']],
     ['auth', '登录与添加账号', ['(auth)/login.tsx', 'add-account.tsx']],
     ['account-deletion', '账号注销', ['account-deletion.tsx']],
   ];

@@ -1010,6 +1010,19 @@ export default function SettingsScreen() {
           </View>
         </View>
 
+        <SettingsGroup title={t('sharedTask.manageSharing')}>
+          {[
+            <ActionInfoRow
+              accessibilityLabel={t('sharedTask.manageSharing')}
+              key="shared-tasks"
+              label={t('sharedTask.manageSharing')}
+              onPress={() => router.push({ pathname: '/shared-session', params: { mode: 'manage' } })}
+              testID="settings.sharedTasks.row"
+              value={t('sharedTask.tabOwned')}
+            />,
+          ]}
+        </SettingsGroup>
+
         {/* 版本:只保留统一检查入口;允许整包分发时先查整包,否则直接查热更。 */}
         <SettingsGroup title={t('settings.version.sectionTitle')}>
           {[

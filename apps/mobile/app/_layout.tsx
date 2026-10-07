@@ -74,11 +74,16 @@ import {
   isPrecreatedWorktreeRegistrationInFlight,
   recoverPendingPrecreatedWorktrees,
 } from '@/session/precreatedWorktreeRecovery';
+import { usePendingSharedTaskInvitationIntent } from '@/device-link/sharedTaskInvitationIntent';
+import { useClipboardSharedTaskInvitation } from '@/device-link/useClipboardSharedTaskInvitation';
+import { ClipboardSharedTaskPrompt } from '@/session/ClipboardSharedTaskPrompt';
 
 function NavigationGate() {
   const auth = useAuth();
   const router = useRouter();
   const segments = useSegments();
+  const pendingSharedTaskInvitation = usePendingSharedTaskInvitationIntent();
+  useClipboardSharedTaskInvitation(auth.initialized && auth.isAuthenticated, segments.join('/') === 'shared-session');
   const { mode, colors } = useTheme();
   const { releaseSplash, splashActive } = useStartupSplash();
   // iOS 状态栏样式走 react-native-screens 的 VC-based 通道(Info.plist 已翻
@@ -123,7 +128,10 @@ function NavigationGate() {
     if (auth.isAuthenticated && inAuthGroup) {
       router.replace('/');
     }
-  }, [auth.initialized, auth.isAuthenticated, router, segments]);
+    else if (auth.isAuthenticated && pendingSharedTaskInvitation?.source === 'link' && segments.join('/') !== 'shared-session') {
+      router.replace('/shared-session');
+    }
+  }, [auth.initialized, auth.isAuthenticated, pendingSharedTaskInvitation, router, segments]);
 
   useEffect(() => {
     if (!auth.isAuthenticated || !auth.accountDeletionRestored) return;
@@ -167,6 +175,9 @@ function NavigationGate() {
           options={{ animation: 'fade', gestureEnabled: false }}
         />
       </Stack>
+      {auth.initialized && auth.isAuthenticated && !splashActive
+        ? <ClipboardSharedTaskPrompt accountName={auth.user?.name} />
+        : null}
     </NavigationThemeProvider>
   );
 }
