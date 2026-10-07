@@ -56,6 +56,21 @@ raw history 降级。任务列表活动推送不变，当前轮的正文、工�
 
 ## 事实来源
 
+### Lex SharedTask v2 客户端接线
+
+Desktop 和 Mobile 在 hello 与任务连接握手中声明 `shared-task-v2`，只有服务端明确协商
+同版本能力时才启用跨账号任务路由。普通同账号远控保持原许可与开关；共享任务仅订阅其
+精确 `session:<id>`，恢复探测读取已鉴权任务快照中的单个 Session，不读取主机任务列表。
+成员撤权只清理对应 task/member 的连接和在途状态，不重启共享 relay，也不影响其他成员。
+
+Desktop 从可靠握手取得的主机 stream 变化生成本地 source epoch，在业务推送交付前登记并
+随本地 IPC 传给 Renderer，供 host 重启后的 owner generation 比较使用。该 epoch 不接收
+peer payload 自报值，也不新增 relay wire 字段。未协商的旧端继续返回不支持。
+
+SharedTask 新 raw OSS/语音附件仍缺可验证上传归属合同，继续拒绝；群聊 G4 的 host receipt
+与已有授权 task ledger/history 媒体读取不受影响。客户端接线不证明真实服务端已部署，
+服务端/账号/实机验证必须与本地合成 relay、SQLite fixture 证据分别报告。
+
 | 内容 | 权威来源 |
 |---|---|
 | hook 双工任务协议 | 客户端 `packages/slack-hook-protocol`；服务端仓同名本地 package，desktop hook-control 与 slack／telegram／x hook server 分别消费本仓实现 |

@@ -9095,7 +9095,16 @@ describe('physical addressing with explicit shared task scope', () => {
     h.client.start(); await tick(); h.current().ack([SHARED_TASK_RELAY_CAPABILITY]);
     const peers = ['desktop', sharedTaskHostPeer('task-a', 'desktop'), sharedTaskHostPeer('task-b', 'desktop')];
     const received: string[] = [];
-    h.client.onFrame(env => { if (env.kind === 'push') received.push(env.src!); });
+    const acceptedStreams = new Map<string, string>();
+    const accepted = vi.fn((peer: string, stream: string) => { acceptedStreams.set(peer, stream); });
+    const releaseAccepted = h.client.onPeerStreamAccepted(accepted);
+    h.client.onFrame(env => {
+      if (env.kind === 'push') {
+        // The trusted source generation must be installed before business pushes.
+        expect(acceptedStreams.get(env.src!)).toBe('same-remote-stream');
+        received.push(env.src!);
+      }
+    });
     const inbound = (index: number, env: Envelope): Envelope => ({ ...env, src: 'desktop', dst: 'dev-self',
       ...(index ? { sharedTask: { sharedTaskId: index === 1 ? 'task-a' : 'task-b', source: { role: 'host' as const }, target: { role: 'guest' as const, memberId: 'member' } } } : {}),
     });
@@ -9115,6 +9124,8 @@ describe('physical addressing with explicit shared task scope', () => {
       }
       await tick();
       expect(received).toEqual(peers);
+      expect(accepted.mock.calls).toEqual(peers.map(peer => [peer, 'same-remote-stream']));
+      releaseAccepted();
       const acks = h.current().sent.filter(env => parseTransportAck(env));
       expect(acks).toHaveLength(3);
       expect(acks.map(env => env.sharedTask?.sharedTaskId)).toEqual([undefined, 'task-a', 'task-b']);

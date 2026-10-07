@@ -17,6 +17,9 @@ import { app, BrowserWindow } from 'electron';
 import WebSocket from 'ws';
 import {
   DeviceLinkClient,
+  parseSharedTaskPeer,
+  probeSharedTaskHost,
+  sharedTaskTopics,
   SHARED_TASK_CAPABILITY,
   CONTROLLER_CAPABILITY_MAKER_EVENT_BATCH_V1,
   CONTROLLER_CAPABILITY_SESSION_TEXT_SNAPSHOT_V1,
@@ -44,7 +47,7 @@ import {
 import { DEVICE_LINK_VOICE_DICTIONARY_SNAPSHOT_CHANNEL } from '@cindy/maker-shared/device-link-contract';
 import * as authManager from '../authManager';
 import { remoteCredentialHost } from '../remote-desktop/credentialHost';
-import { getActiveDataOwnerPushStamp } from '../appSessionState.js';
+import { getActiveDataOwnerPushStamp, activeOwnerScopeKey, isAppSessionBoundaryPending } from '../appSessionState.js';
 import { createLogger } from '../logger';
 import { onQuit } from '../lifecycle';
 import { getCurrentDbClientUserId } from '../localDb/client/current';
@@ -126,7 +129,7 @@ import {
 } from '../voice-input/dictionarySyncDriver';
 import { onVoiceInputDictionaryChanged } from '../voice-input/VoiceInputDataStore';
 import { resetAll as resetSubscriptionRefs, snapshotSubscriptions } from './subscriptionRefcount';
-import { getControllersForTopic } from './subscriptions';
+import { getControllersForTopic, getKnownControllerIds } from './subscriptions';
 import {
   MobileNotifyDeduper,
   buildBotGroupNotifyPayload,
@@ -148,6 +151,7 @@ import {
 } from '../contacts-sync/driver';
 import { invokeWithClosedLinkRecovery, requiresSessionLink } from './linkRecovery';
 import { startSharedTaskRuntime, stopSharedTaskRuntime } from './sharedTaskRuntime.js';
+import { sharedTaskApi } from './sharedTaskApi.js';
 import {
   createResponsivenessTracker,
   isDeviceResponsivenessProbeEligible,
@@ -170,12 +174,29 @@ const WS_PATH = '/api/device-link/ws';
 function startSharedTaskRuntimeForCurrentClient(): void {
   const currentClient = client;
   if (!currentClient) return;
-  // S3a restores profile-local host state only. Guest relay dispatch and
-  // capability publication remain closed until the later host stage.
+  const ownerId = authManager.getCurrentUserId();
+  const ownerRealm = authManager.getActiveAuthRealm();
   startSharedTaskRuntime({
     client: currentClient,
-    revoke: () => undefined,
-    changed: () => undefined,
+    revoke(sharedTaskId, memberId) {
+      // The callback owns this client, never a later account's global client.
+      if (client !== currentClient || authManager.getCurrentUserId() !== ownerId
+          || authManager.getActiveAuthRealm() !== ownerRealm) return;
+      for (const id of getKnownControllerIds()) {
+        const peer = parseSharedTaskPeer(id);
+        if (peer?.role !== 'guest' || peer.sharedTaskId !== sharedTaskId
+            || (memberId !== undefined && peer.memberId !== memberId)) continue;
+        purgeRevokedController(id);
+        forgetControllerInvokeState(id);
+        currentClient.closeLink(id, 'revoked', 'inbound');
+      }
+    },
+    changed(sharedTaskId) {
+      if (client === currentClient && authManager.getCurrentUserId() === ownerId
+          && authManager.getActiveAuthRealm() === ownerRealm && !isAppSessionBoundaryPending()) {
+        broadcast('shared-task:changed', { sharedTaskId });
+      }
+    },
   });
 }
 
@@ -363,6 +384,9 @@ function refreshControllerDisplayNamesFromDirectory(generation: number): Promise
 }
 
 let client: DeviceLinkClient | null = null;
+// Trusted local handshake generations; never read these from peer payloads.
+const sharedHostStreams = new Map<string, { streamId: string; epoch: number }>();
+let sharedHostSourceEpoch = 0;
 
 /**
  * transport-timeout 重开循环(控制端):被控端瞬时重置后 relay/presence 都不会
@@ -513,6 +537,7 @@ const RESPONSIVENESS_PROBE_TICK_MS = 5_000;
  * 必须用同一份 —— 只在一处声明会让另一条路径静默降级(mobile 侧 review 实测过这个坑)。
  */
 const CONTROLLER_CAPABILITIES = [
+  SHARED_TASK_CAPABILITY,
   CONTROLLER_CAPABILITY_SESSION_TEXT_SNAPSHOT_V1,
   CONTROLLER_CAPABILITY_PROVIDER_LOGO_KINDS_V2,
   CONTROLLER_CAPABILITY_SET_MODEL_EXPLICIT_PROVIDER_NULL_V1,
@@ -672,6 +697,7 @@ export function initDeviceLinkService(options: DeviceLinkServiceOptions = {}): v
       return ok ? authManager.getAccessToken() : null;
     },
     getHello: (): HelloPayload => ({
+      capabilities: [SHARED_TASK_CAPABILITY],
       deviceName: deviceName(),
       platform: process.platform,
       appVersion: app.getVersion(),
@@ -715,6 +741,21 @@ export function initDeviceLinkService(options: DeviceLinkServiceOptions = {}): v
     probeInvoke: (deviceId, channel, args) => {
       if (!client)
         throw new Error('[DEVICE_LINK_NOT_CONNECTED] device-link client not initialized');
+      if (parseSharedTaskPeer(deviceId)) {
+        const probeClient = client;
+        const scope = activeOwnerScopeKey();
+        const connectionEpoch = probeClient.getConnectionEpoch();
+        return probeSharedTaskHost(deviceId, {
+          isCurrent: () => client === probeClient && arbiter?.isOwner() === true
+            && probeClient.getConnectionEpoch() === connectionEpoch
+            && !isAppSessionBoundaryPending() && activeOwnerScopeKey() === scope
+            && !revokedByRemote.has(deviceId),
+          get: (sharedTaskId) => sharedTaskApi.get(sharedTaskId),
+          openLink: () => probeClient.isLinkReady(deviceId) ? Promise.resolve()
+            : openRemoteLink(deviceId, { observed: false }),
+          invoke: (probeChannel, probeArgs) => probeClient.invoke(deviceId, { channel: probeChannel, args: probeArgs }),
+        });
+      }
       return client.invoke(deviceId, { channel, args }, INVOKE_TIMEOUT_OVERRIDES_MS[channel]);
     },
     onUnresponsiveChanged: (deviceId, unresponsive, recovered) => {
@@ -945,6 +986,11 @@ export function initDeviceLinkService(options: DeviceLinkServiceOptions = {}): v
   // busy presence:每 5s 探一次本机是否有 turn 在跑,变化才上报(dedupe by value)
   startBusyReporting();
 
+  client.onPeerStreamAccepted((peer, streamId) => {
+    if (parseSharedTaskPeer(peer)?.role !== 'host' || sharedHostStreams.get(peer)?.streamId === streamId) return;
+    sharedHostStreams.set(peer, { streamId, epoch: ++sharedHostSourceEpoch });
+  });
+
   // 控制端:被控端转发回来的 push 帧 → re-broadcast 给 renderer 远程视图,
   // 带上来源 deviceId(src),renderer 据此把事件路由到对应远程设备的 store
   client.onFrame((env: Envelope) => {
@@ -970,6 +1016,7 @@ export function initDeviceLinkService(options: DeviceLinkServiceOptions = {}): v
     }
     if (env.kind !== 'push') return;
     const p = env.payload as PushPayload;
+    const sourceEpoch = sharedHostStreams.get(env.src)?.epoch;
     // 词典同步帧在 main 侧消费,不转给 renderer —— 它不是远程视图事件,
     // renderer 也不该看到别的设备的同步状态。
     if (p?.channel === DL_VOICE_DICTIONARY_SYNC_CHANNEL) {
@@ -1010,6 +1057,7 @@ export function initDeviceLinkService(options: DeviceLinkServiceOptions = {}): v
           channel: MAKER_PUSH.EVENT,
           payload: event,
           ...(p.ownerStamp ? { ownerStamp: p.ownerStamp } : {}),
+          ...(sourceEpoch !== undefined ? { sourceEpoch } : {}),
         });
       }
       return;
@@ -1019,6 +1067,7 @@ export function initDeviceLinkService(options: DeviceLinkServiceOptions = {}): v
       channel: p.channel,
       payload: p.payload,
       ...(p.ownerStamp ? { ownerStamp: p.ownerStamp } : {}),
+      ...(sourceEpoch !== undefined ? { sourceEpoch } : {}),
     });
   });
 
@@ -1287,6 +1336,7 @@ function teardownActiveLink(): void {
   subscriptionReplayScheduler.teardown();
   presenceAvailableByDevice.clear();
   revokedByRemote.clear();
+  sharedHostStreams.clear();
   // 词典同步驱动是进程级的,**不随单次链路起停**:多实例仲裁的 demote → acquire
   // 只会 client.start(),不会重跑 initDeviceLinkService,在这里 stop 掉它会让词典
   // 同步在降级过一次之后永久失效。清空 presence 就够了 —— 没有对端就不会发送,
@@ -1773,6 +1823,7 @@ export async function remoteSubscribe(
   deviceId: string,
   topics: string[],
 ): Promise<InvokeResultPayload> {
+  topics = sharedTaskTopics(deviceId, topics);
   assertNotStandby();
   assertRemoteControlTargetEnabled(deviceId);
   if (!client) throw new Error('[DEVICE_LINK_NOT_CONNECTED] device-link client not initialized');
@@ -1831,6 +1882,7 @@ export async function remoteUnsubscribe(
   deviceId: string,
   topics: string[],
 ): Promise<InvokeResultPayload> {
+  topics = sharedTaskTopics(deviceId, topics);
   assertNotStandby();
   if (!client) throw new Error('[DEVICE_LINK_NOT_CONNECTED] device-link client not initialized');
   return client.invoke(deviceId, { channel: DL_UNSUBSCRIBE_CHANNEL, args: [{ topics }] });

@@ -109,6 +109,8 @@ export interface HelloPayload {
   remoteControlEnabled: boolean;
   busy: boolean;
   deviceInfo?: DeviceInfo;
+  /** Optional endpoint capabilities; sharedTask requires explicit bilateral support. */
+  capabilities?: string[];
 }
 
 /** hello-ack 帧 payload(server→client) */
