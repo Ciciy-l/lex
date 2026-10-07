@@ -24,12 +24,16 @@ let joinedItems = [joinedTask];
 beforeEach(() => {
   vi.clearAllMocks(); setDataOwnerGeneration('guest'); ownedItems = [...owned]; joinedItems = [joinedTask];
   state.account.mockImplementation(async ({ action, sharedTaskId }) => {
+    if (action === 'status') return { status: 'ready' };
     if (action === 'owned') return ownedItems;
     if (action === 'list') return joinedItems;
     if (action === 'join') return { sharedTaskId: joinedTask.sharedTaskId, memberId: 'member-1', status: 'joined' };
     if (action === 'get') return { ...joinedTask, status: 'active' };
     if (action === 'leave') { joinedItems = joinedItems.filter(item => item.sharedTaskId !== sharedTaskId); return {}; }
-    if (action === 'close') { ownedItems = ownedItems.filter(item => item.sharedTaskId !== sharedTaskId); return { closed: [sharedTaskId], failed: [] }; }
+    if (action === 'close') {
+      if (sharedTaskId) { ownedItems = ownedItems.filter(item => item.sharedTaskId !== sharedTaskId); return { closed: [sharedTaskId], failed: [] }; }
+      const closed = ownedItems.map(item => item.sharedTaskId); ownedItems = []; return { closed, failed: [] };
+    }
   });
   state.getSessions.mockReturnValue([]);
   state.captureRead.mockReturnValue(Object.assign(() => true, { mergeActivity: (value: unknown) => value }));
@@ -108,7 +112,7 @@ it('loads an owned remote task before navigation without replacing the device li
   const close = vi.fn();
   render(<MemoryRouter><SharedTaskDialog open presentation="settings" onOpenChange={close} /></MemoryRouter>);
   fireEvent.click(await screen.findByRole('button', { name: owned[1].title }));
-  const otherPeer = sharedTaskHostPeer('own-2', 'other-pc');
+  const otherPeer = 'other-pc';
   await waitFor(() => expect(state.invoke).toHaveBeenCalledWith(otherPeer, 'local-db:sessions:get', ['other-task']));
   expect(close).not.toHaveBeenCalled(); expect(state.pin).not.toHaveBeenCalled();
   const session = { id: 'other-task', title: 'Remote task contents' };
@@ -192,26 +196,27 @@ it.each(['closeAllKeep', 'cancelOperation'])('cancels in the same window through
   expect(state.account).not.toHaveBeenCalledWith(expect.objectContaining({ action: 'close' }));
 });
 it.each(['response', 'rejection'])('retries only failed confirmed tasks after a partial %s', async failure => {
-  const original = state.invoke.getMockImplementation()!;
+  const original = state.account.getMockImplementation()!;
   let secondAttempt = false;
-  state.invoke.mockImplementation(async (...args) => {
-    const command = args[2][0];
-    if (command.action !== 'close' || command.sharedTaskId !== 'own-2' || secondAttempt) return original(...args);
+  state.account.mockImplementation(async (command: { action: string; all?: boolean }) => {
+    if (command.action !== 'close' || command.all !== true) return original(command);
+    if (secondAttempt) { ownedItems = []; return { closed: ['own-1', 'own-2'], failed: [] }; }
     secondAttempt = true;
     if (failure === 'rejection') throw new Error('offline');
-    return { ok: false };
+    return { closed: ['own-1'], failed: [{ sharedTaskId: 'own-2' }] };
   });
   open(); await closeAll(); click('closeAllAction');
-  await waitFor(() => expect(visibleText(owned[0].title)).toHaveLength(0));
+  if (failure === 'response') await waitFor(() => expect(visibleText(owned[0].title)).toHaveLength(0));
+  else expect(visibleText(owned[0].title)).toHaveLength(1);
   expect(visibleText(owned[1].title)).toHaveLength(1);
-  click('closeAllAction'); await screen.findByText('sharedTask.ownedEmptyTitle');
-  expect(state.account.mock.calls.map(([c]) => c).filter(c => c.action === 'close')).toEqual([
-    { action: 'close', sharedTaskId: 'own-1' },
-  ]);
-  expect(state.invoke.mock.calls).toEqual([
-    [sharedTaskHostPeer('own-2', 'other-pc'), 'maker:shared-task', [{ action: 'close', sharedTaskId: 'own-2' }]],
-    [sharedTaskHostPeer('own-2', 'other-pc'), 'maker:shared-task', [{ action: 'close', sharedTaskId: 'own-2' }]],
-  ]);
+  click('closeAllAction');
+  if (failure === 'response') await screen.findByText('sharedTask.ownedEmptyTitle');
+  else expect(screen.getByText('sharedTask.closeAllTitle')).toBeTruthy();
+  expect(state.account.mock.calls.map(([c]) => c).filter(c => c.action === 'close')).toEqual(
+    failure === 'response'
+      ? [{ action: 'close', all: true }, { action: 'close', all: true }]
+      : [{ action: 'close', all: true }],
+  );
 });
 it.each(['account', 'unmount'])('stops the batch after %s invalidation', async invalidation => {
   let finish!: (value: unknown) => void;

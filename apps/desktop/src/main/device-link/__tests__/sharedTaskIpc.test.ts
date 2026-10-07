@@ -11,7 +11,8 @@ const h = vi.hoisted(() => ({
   host: { activeSharedTaskIds: vi.fn(() => []), open: vi.fn(), close: vi.fn() },
 }));
 vi.mock('electron', () => ({ ipcMain: { handle: (channel: string, handler: (event: unknown, raw: unknown) => Promise<unknown>) => h.handlers.set(channel, handler) } }));
-vi.mock('../../authManager.js', () => ({ getCurrentUserId: () => 'owner' }));
+vi.mock('../../authManager.js', () => ({ getCurrentUserId: () => 'owner', getActiveAuthRealm: () => 'global' }));
+vi.mock('../../appSessionState.js', () => ({ activeOwnerScopeKey: () => 'owner-scope' }));
 vi.mock('../../security/trustedAppRenderer.js', () => ({ assertTrustedAppRendererEvent: h.trusted }));
 vi.mock('../invoke-context.js', () => ({ getDeviceLinkInvokeContext: () => h.context }));
 vi.mock('../sharedTaskRuntime.js', () => ({ requireSharedTaskHost: () => h.host }));
@@ -62,6 +63,34 @@ describe('shared-task IPC availability', () => {
     await expect(state()).resolves.toEqual({ available: true, detail: null });
     await expect(invoke(SHARED_TASK_ACCOUNT_CHANNEL, { action: 'owned' })).resolves.toEqual([]);
     expect(h.list).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports capability state without polling the account API', async () => {
+    let relay = true; let capable = false;
+    registerSharedTaskIpc(() => true, () => relay, () => capable);
+    await expect(invoke(SHARED_TASK_ACCOUNT_CHANNEL, { action: 'status' }))
+      .resolves.toEqual({ status: 'unsupported' });
+    expect(h.list).not.toHaveBeenCalled();
+    capable = true;
+    await expect(invoke(SHARED_TASK_ACCOUNT_CHANNEL, { action: 'status' }))
+      .resolves.toEqual({ status: 'ready' });
+    relay = false;
+    await expect(invoke(SHARED_TASK_ACCOUNT_CHANNEL, { action: 'status' }))
+      .resolves.toEqual({ status: 'offline' });
+  });
+
+  it('routes an owned remote close over the physical host and rejects a guest context', async () => {
+    const openLink = vi.fn(async () => undefined);
+    const invokeRemote = vi.fn(async () => ({ ok: true, result: { ok: true } }));
+    h.list.mockResolvedValue([{ sharedTaskId: 'share', sessionId: 'session', ownerAccountId: 'owner', hostDeviceId: 'other-pc', title: 'x', revision: 1 }]);
+    registerSharedTaskIpc(() => true, () => true, () => true, { openLink, invoke: invokeRemote });
+    await expect(invoke(SHARED_TASK_ACCOUNT_CHANNEL, { action: 'close', sharedTaskId: 'share' }))
+      .resolves.toEqual({ closed: ['share'], failed: [] });
+    expect(openLink).toHaveBeenCalledWith('other-pc');
+    expect(invokeRemote).toHaveBeenCalledWith('other-pc', SHARED_TASK_HOST_CHANNEL, [{ action: 'close', sharedTaskId: 'share' }]);
+    h.context = { sharedTask: {} };
+    await expect(invoke(SHARED_TASK_HOST_CHANNEL, { action: 'close', sharedTaskId: 'share' }))
+      .rejects.toMatchObject({ code: 'PERMISSION_DENIED' });
   });
 
   it('retains the guest and tunneled-account permission guards before availability', async () => {

@@ -8,11 +8,13 @@ export type SharedTaskHostCommand =
   | { action: 'invite' | 'close'; sharedTaskId: string }
   | { action: 'remove'; sharedTaskId: string; memberId: string };
 export type SharedTaskAccountCommand =
+  | { action: 'status' }
   | { action: 'list' }
   | { action: 'owned' }
   | { action: 'close'; sharedTaskId?: string; all?: true }
   | { action: 'get' | 'leave'; sharedTaskId: string }
   | { action: 'join'; invitation: string; displayName: string };
+export type SharedTaskAccountStatus = { status: 'ready' | 'unsupported' | 'offline' | 'unknown' };
 export interface SharedTaskHostState {
   available: boolean;
   detail: SharedTaskDetail | null;

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Crown, FileText, Plus } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { isSharedTaskPeer, sharedTaskHostPeer, type SharedTaskOwnedItem } from '@cindy/device-link';
+import { isSharedTaskPeer, type SharedTaskOwnedItem } from '@cindy/device-link';
 import { SessionCard } from '@/features/cc-agent/sidebar/SessionCard';
 import { SessionItem } from '@/features/cc-agent/sidebar/SessionItem';
 import { sessionActivityMs } from '@/features/cc-agent/lib/dateSessionGrouping';
@@ -93,7 +93,7 @@ export function SharedTasksSection({ activeSessionId, localSessions = [], runnin
   const rows = useMemo(() => {
     const result: SharedTaskRow[] = [];
     for (const item of owned) {
-      const peer = item.local ? undefined : sharedTaskHostPeer(item.sharedTaskId, item.hostDeviceId);
+      const peer = item.local ? undefined : item.hostDeviceId;
       const session = item.local
         ? localSessions.find(candidate => candidate.id === item.sessionId && !candidate.deviceLinkDeviceId)
         : sessions.find(candidate => candidate.id === item.sessionId && candidate.deviceLinkDeviceId === peer);
@@ -106,7 +106,7 @@ export function SharedTasksSection({ activeSessionId, localSessions = [], runnin
       const ownedMirror = owned.some(item => item.sessionId === session.id &&
         (item.local
           ? !session.deviceLinkDeviceId
-          : session.deviceLinkDeviceId === sharedTaskHostPeer(item.sharedTaskId, item.hostDeviceId)));
+          : session.deviceLinkDeviceId === item.hostDeviceId));
       if (ownedMirror) continue;
       result.push({ key: session.id, role: 'joined', session, order: result.length });
     }
@@ -125,7 +125,7 @@ export function SharedTasksSection({ activeSessionId, localSessions = [], runnin
     const current = () => captured === epoch.current && isDataOwnerGenerationCurrent(owner);
     pending.current = true; setOpening(item.sharedTaskId);
     try {
-      const peer = item.local ? undefined : sharedTaskHostPeer(item.sharedTaskId, item.hostDeviceId);
+      const peer = item.local ? undefined : item.hostDeviceId;
       if (peer && !sessions.some(session => session.id === item.sessionId && session.deviceLinkDeviceId === peer)) {
         await window.electronAPI.deviceLink.openLink(peer);
         if (!current()) return;

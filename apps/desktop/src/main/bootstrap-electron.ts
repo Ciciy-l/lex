@@ -507,6 +507,7 @@ import {
   ensureSharedTaskRuntime,
   getDeviceLinkStatus,
   isSharedTaskAvailable,
+  hasSharedTaskCapability,
   releaseDeviceLinkOwnershipBeforeLogout,
   handleDeviceLinkSystemResume,
 } from './device-link';
@@ -6042,6 +6043,11 @@ const registerIpcHandlers = () => {
           try { requireSharedTaskHost(); return true; } catch { return false; }
         })(),
         () => getDeviceLinkStatus() === 'online',
+        () => hasSharedTaskCapability(),
+        {
+          openLink: deviceLinkIpcDeps().openLink,
+          invoke: deviceLinkIpcDeps().invoke,
+        },
       );
       registerMakerTitleIpc({ isSessionTurnPendingCompletion });
       registerAuxiliaryModelSettingsIpc();

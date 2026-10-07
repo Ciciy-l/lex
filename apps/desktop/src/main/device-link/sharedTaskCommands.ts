@@ -1,4 +1,4 @@
-import type { SharedTaskApi, SharedTaskCloseResult, SharedTaskHostState, SharedTaskOwnedItem } from '@cindy/device-link';
+import type { SharedTaskApi, SharedTaskCloseResult, SharedTaskHostState, SharedTaskListItem, SharedTaskOwnedItem } from '@cindy/device-link';
 import type { SharedTaskHost } from './sharedTaskHost.js';
 import { requireString, throwIpcError } from '../utils/ipcValidate.js';
 
@@ -41,8 +41,13 @@ export async function executeSharedTaskAccountCommand(raw: unknown, api: SharedT
   /** Shared tasks hosted by THIS profile; closable through the local host journal. */
   hostedIds?(): string[];
   closeHosted?(sharedTaskId: string): Promise<void>;
+  /** Other devices use the ordinary same-account host connection. */
+  closeRemoteHosted?(sharedTaskId: string, hostDeviceId: string): Promise<void>;
+  /** Captured account/region generation; a changed scope stops the batch. */
+  isCurrent?(): boolean;
 }): Promise<unknown> {
   const input = command(raw);
+  if (input.action === 'status') throwIpcError('INVALID_PARAMS', 'SharedTask status must be handled by the IPC boundary');
   if (input.action === 'list') return (await api.list()).filter((item) => item.ownerAccountId !== accountId);
   if (input.action === 'owned') {
     if (!accountId) return [] satisfies SharedTaskOwnedItem[];
@@ -53,15 +58,46 @@ export async function executeSharedTaskAccountCommand(raw: unknown, api: SharedT
   }
   if (input.action === 'close') {
     const result: SharedTaskCloseResult = { closed: [], failed: [] };
+    const isCurrent = deps?.isCurrent ?? (() => true);
+    if (!isCurrent()) return result;
+    // One authoritative list is captured before any close starts. Renderer
+    // targets and hostDeviceId are never trusted for ownership or routing.
+    const snapshot = (await api.list()).map((item): SharedTaskListItem => Object.freeze({ ...item }));
+    // The list itself crossed an async account boundary. Do not turn a late
+    // response from the old account into a close batch for the new one.
+    if (!isCurrent()) return result;
+    const owned = new Map(snapshot
+      .filter((item) => item.ownerAccountId === accountId)
+      .map((item) => [item.sharedTaskId, item] as const));
     const targets = input.all === true
-      ? (await api.list()).filter((item) => item.ownerAccountId === accountId).map((item) => item.sharedTaskId)
-      : [id(input.sharedTaskId)];
-    for (const sharedTaskId of targets) {
+      ? [...owned.values()]
+      : (() => {
+        const sharedTaskId = id(input.sharedTaskId);
+        const item = owned.get(sharedTaskId);
+        return item ? [item] : [{ sharedTaskId } as SharedTaskListItem];
+      })();
+    const locallyHosted = new Set(deps?.hostedIds?.() ?? []);
+    for (const target of targets) {
+      const sharedTaskId = target.sharedTaskId;
+      if (!isCurrent()) break;
+      if (!owned.has(sharedTaskId)) {
+        result.failed.push({ sharedTaskId });
+        continue;
+      }
       try {
         // Locally hosted tasks must go through the host so the closure is
         // journaled and guests are revoked before the server answers.
-        if (deps?.hostedIds?.().includes(sharedTaskId) && deps.closeHosted) await deps.closeHosted(sharedTaskId);
-        else await api.close(sharedTaskId);
+        if (locallyHosted.has(sharedTaskId)) {
+          if (!deps?.closeHosted) throw new Error('Local SharedTask host is unavailable');
+          await deps.closeHosted(sharedTaskId);
+        } else {
+          if (!deps?.closeRemoteHosted) throw new Error('Remote SharedTask host is unavailable');
+          await deps.closeRemoteHosted(sharedTaskId, target.hostDeviceId);
+        }
+        if (!isCurrent()) {
+          result.failed.push({ sharedTaskId });
+          break;
+        }
         result.closed.push(sharedTaskId);
       } catch { result.failed.push({ sharedTaskId }); }
     }

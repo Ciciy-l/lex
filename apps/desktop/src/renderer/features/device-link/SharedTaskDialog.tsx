@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import {
   parseSharedTaskPeer, sharedTaskHostPeer, sharedTaskAccountName, SHARED_TASK_HOST_CHANNEL,
-  type SharedTaskDetail, type SharedTaskHostCommand,
+  type SharedTaskCloseResult, type SharedTaskDetail, type SharedTaskHostCommand,
   type SharedTaskHostState, type SharedTaskListItem, type SharedTaskOwnedItem,
 } from '@cindy/device-link';
 import { Button } from '@/components/ui/button';
@@ -195,18 +195,17 @@ export function SharedTaskDialog({ open, onOpenChange, session, returnFocus, ini
   const manage = (item: SharedTaskOwnedItem) => {
     detailOrigin.current = { element: document.activeElement as HTMLElement, scroll: panel.current?.scrollTop ?? 0, taskId: item.sharedTaskId };
     setTarget({ sessionId: item.sessionId, title: item.title, sharedTaskId: item.sharedTaskId,
-      // An account-owned task hosted on another device still uses the
-      // task-scoped peer. Passing the physical device id here would fall back
-      // to ordinary same-account remote control and could expose host-wide
-      // resources to the management dialog.
-      deviceId: item.local ? undefined : sharedTaskHostPeer(item.sharedTaskId, item.hostDeviceId),
+      // Account-owned tasks use the ordinary authenticated same-account link.
+      // The task-scoped peer is reserved for a joined guest and is rejected by
+      // the host management allowlist.
+      deviceId: item.local ? undefined : item.hostDeviceId,
       connect: !item.local });
   };
   const changed = () => window.dispatchEvent(new Event('cindy:shared-task-owned-changed'));
   const detail = state?.detail?.status === 'active' ? state.detail : null;
   const deviceName = (item: { local: boolean; hostDeviceId: string; sharedTaskId?: string }) => item.local
     ? t('sharedTask.thisDevice')
-    : remoteProjectsStore.getDeviceName(item.sharedTaskId
+    : remoteProjectsStore.getDeviceName(item.sharedTaskId && target?.guestId === item.sharedTaskId
       ? sharedTaskHostPeer(item.sharedTaskId, item.hostDeviceId)
       : item.hostDeviceId) || t('sharedTask.otherDevice');
   const confirmAction = () => void run(async current => {
@@ -216,14 +215,30 @@ export function SharedTaskDialog({ open, onOpenChange, session, returnFocus, ini
     if (snapshot.kind === 'close') {
       const failed: SharedTaskOwnedItem[] = [];
       const closed: string[] = [];
-      for (const item of snapshot.targets) {
-        if (!current()) return;
+      if (snapshot.all) {
         try {
-          const succeeded = await closeOwnedSharedTask(item.sharedTaskId, item.local ? undefined : item.hostDeviceId, current);
+          // Main freezes and verifies the complete owner batch once. It routes
+          // each local/remote target through the correct host boundary and
+          // stops if the account scope changes.
+          const result = await window.electronAPI.sharedTask.account({ action: 'close', all: true }) as SharedTaskCloseResult;
           if (!current()) return;
-          if (succeeded) closed.push(item.sharedTaskId);
-          else failed.push(item);
-        } catch { if (!current()) return; failed.push(item); }
+          const closedIds = new Set(result.closed);
+          const failedIds = new Set(result.failed.map(item => item.sharedTaskId));
+          for (const item of snapshot.targets) {
+            if (closedIds.has(item.sharedTaskId)) closed.push(item.sharedTaskId);
+            else if (failedIds.has(item.sharedTaskId) || !closedIds.has(item.sharedTaskId)) failed.push(item);
+          }
+        } catch { if (!current()) return; failed.push(...snapshot.targets); }
+      } else {
+        for (const item of snapshot.targets) {
+          if (!current()) return;
+          try {
+            const succeeded = await closeOwnedSharedTask(item.sharedTaskId, item.local ? undefined : item.hostDeviceId, current);
+            if (!current()) return;
+            if (succeeded) closed.push(item.sharedTaskId);
+            else failed.push(item);
+          } catch { if (!current()) return; failed.push(item); }
+        }
       }
       setOwned(items => items?.filter(item => !closed.includes(item.sharedTaskId)) ?? null);
       setConfirm(failed.length ? { ...snapshot, targets: failed } : null);
@@ -281,7 +296,7 @@ export function SharedTaskDialog({ open, onOpenChange, session, returnFocus, ini
   const openTask = (sharedTaskId: string) => void run(current => enterTask(sharedTaskId, current));
   const openOwnedTask = (item: SharedTaskOwnedItem) => void run(async current => {
     if (!item.local) {
-      const peer = sharedTaskHostPeer(item.sharedTaskId, item.hostDeviceId);
+      const peer = item.hostDeviceId;
       await window.electronAPI.deviceLink.openLink(peer);
       if (!current()) return;
       const readIsCurrent = remoteProjectsStore.captureSessionRead(peer, item.sessionId);

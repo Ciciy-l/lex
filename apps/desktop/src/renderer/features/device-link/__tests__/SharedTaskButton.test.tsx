@@ -139,19 +139,14 @@ it('closes only the task captured by the confirmation', async () => {
   expect(state.account).toHaveBeenCalledWith({ action: 'close', sharedTaskId: 'st1' });
   expect(state.account).not.toHaveBeenCalledWith({ action: 'close', sharedTaskId: 'replacement' });
 });
-it('cancels a remote detail through its owning host before reporting success', async () => {
-  let finish!: (value: unknown) => void;
-  state.invoke.mockImplementation(async (_device, _channel, [command]) => command.action === 'close'
-    ? new Promise(resolve => { finish = resolve; })
-    : { available: true, detail: { ...detail, hostDeviceId: 'other-pc' } });
+it('cancels a remote-owned detail through the account adapter before reporting success', async () => {
+  state.invoke.mockResolvedValue({ available: true, detail: { ...detail, hostDeviceId: 'other-pc' } });
   await openWindow({ ...ownerSession, deviceLinkDeviceId: 'other-pc' });
   click('cancelSharing'); click('cancelSharing');
-  const otherPeer = sharedTaskHostPeer(detail.sharedTaskId, 'other-pc');
-  await waitFor(() => expect(state.invoke).toHaveBeenCalledWith(otherPeer, SHARED_TASK_HOST_CHANNEL, [{ action: 'close', sharedTaskId: detail.sharedTaskId }]));
-  expect(toast.success).not.toHaveBeenCalled();
-  expect(state.account).not.toHaveBeenCalledWith(expect.objectContaining({ action: 'close' }));
-  await act(async () => finish({ ok: true }));
+  await waitFor(() => expect(state.account).toHaveBeenCalledWith({ action: 'close', sharedTaskId: detail.sharedTaskId }));
   await waitFor(() => expect(toast.success).toHaveBeenCalledWith('sharedTask.closedToast'));
+  expect(state.invoke).not.toHaveBeenCalledWith('other-pc', SHARED_TASK_HOST_CHANNEL,
+    [{ action: 'close', sharedTaskId: detail.sharedTaskId }]);
 });
 it.each(['invite', 'remove'])('ignores late %s responses after account change', async operation => {
   let finish!: (value: unknown) => void;
@@ -176,9 +171,8 @@ it.each([false, true])('manages any owned list item using its own session and de
   await openWindow(); click('back'); await screen.findByRole('button', { name: 'sharedTask.manage' }); click('manage');
   await screen.findByRole('button', { name: 'sharedTask.invite' });
   if (remote) {
-    const otherPeer = sharedTaskHostPeer(other.sharedTaskId, other.hostDeviceId);
-    expect(state.openLink).toHaveBeenCalledWith(otherPeer);
-    expect(state.invoke).toHaveBeenCalledWith(otherPeer, SHARED_TASK_HOST_CHANNEL, [{ action: 'state', sessionId: 'other-session' }]);
+    expect(state.openLink).toHaveBeenCalledWith(other.hostDeviceId);
+    expect(state.invoke).toHaveBeenCalledWith(other.hostDeviceId, SHARED_TASK_HOST_CHANNEL, [{ action: 'state', sessionId: 'other-session' }]);
   } else expect(state.host).toHaveBeenCalledWith({ action: 'state', sessionId: 'other-session' });
   expect(screen.getByRole('heading', { name: 'Other Task' })).toBeTruthy();
 });

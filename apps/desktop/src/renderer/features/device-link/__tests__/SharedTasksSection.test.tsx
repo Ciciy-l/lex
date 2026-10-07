@@ -32,7 +32,7 @@ beforeEach(() => {
   vi.clearAllMocks(); setDataOwnerGeneration('guest');
   state.mode = 'list';
   state.sessions = [guestTask, { id: 'own-device-task', title: 'Own device task', deviceLinkDeviceId: 'my-computer' } as Session];
-  state.account.mockResolvedValue([]);
+  state.account.mockImplementation(async ({ action }: { action: string }) => action === 'status' ? { status: 'ready' } : []);
   Object.assign(window, { electronAPI: { sharedTask: { account: state.account }, deviceLink: { openLink: state.openLink } } });
 });
 afterEach(cleanup);
@@ -84,8 +84,8 @@ it('keeps undiscovered host tasks navigable and only hydrates from the matching 
   expect(screen.queryByText('Wrong preview')).toBeNull();
   fireEvent.click(fallback);
   await waitFor(() => expect(select).toHaveBeenCalledWith(item.sessionId));
-  expect(state.openLink).toHaveBeenCalledWith(sharedTaskHostPeer(item.sharedTaskId, item.hostDeviceId));
-  state.sessions = [{ id: item.sessionId, title: item.title, preview: 'Host preview', deviceLinkDeviceId: sharedTaskHostPeer(item.sharedTaskId, item.hostDeviceId) } as Session];
+  expect(state.openLink).toHaveBeenCalledWith(item.hostDeviceId);
+  state.sessions = [{ id: item.sessionId, title: item.title, preview: 'Host preview', deviceLinkDeviceId: item.hostDeviceId } as Session];
   rerender(<SharedTasksSection onSelect={select} />);
   expect(screen.getByTestId('ordinary-list-row').textContent).toContain('Host preview');
   fireEvent.click(screen.getByTestId('ordinary-list-row'));

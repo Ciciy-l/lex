@@ -150,6 +150,10 @@ export const DL_VOICE_DICTIONARY_GET_CHANNEL = 'device-link:voice:dictionary:get
  * M4 将扩展 scheduler / orca worker / rewind / usage 等完整控制面。
  */
 const CORE_INVOKE_CHANNELS: readonly string[] = [
+  // Owner-only SharedTask management over an ordinary same-account physical
+  // connection. Shared-task scoped peers are denied by the host admission gate
+  // and do not inherit this channel's owner capability.
+  'maker:shared-task',
   // —— 会话生命周期 ——
   'maker:create-session',
   'maker:close-session',
