@@ -347,11 +347,12 @@ export function assertSharedTaskReferences(
         !(typeof child === 'string' && existing.has(child))) {
       const isBoundSharedAttachment = typeof child === 'string' &&
         !!sharedTaskId && isSharedTaskAttachment(child, sharedTaskId) &&
-        !!options?.attachmentVerifier && !!options.attachmentBinding &&
-        options.attachmentVerifier(child, options.attachmentBinding);
-      // The OSS parser/prefix is intentionally not an authorization grant.
-      // Without a server-issued binding verifier, new raw refs fail closed;
-      // existing host-owned pending-row refs remain covered by existing.
+        (!options?.attachmentVerifier || !!options.attachmentBinding &&
+          options.attachmentVerifier(child, options.attachmentBinding));
+      // Task-namespace admission, not proof of uploader/device identity.
+      // Current membership is checked above; materialization must still obtain
+      // an authenticated server presign-get before reading any object bytes.
+      // SharedTask v2 shares uploads within a task (upstream contract).
       if (!isBoundSharedAttachment) deny();
     }
     // Persisted reference chips are another input to host-side hydration.

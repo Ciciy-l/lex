@@ -67,9 +67,17 @@ Desktop 从可靠握手取得的主机 stream 变化生成本地 source epoch，
 随本地 IPC 传给 Renderer，供 host 重启后的 owner generation 比较使用。该 epoch 不接收
 peer payload 自报值，也不新增 relay wire 字段。未协商的旧端继续返回不支持。
 
-SharedTask 新 raw OSS/语音附件仍缺可验证上传归属合同，继续拒绝；群聊 G4 的 host receipt
-与已有授权 task ledger/history 媒体读取不受影响。客户端接线不证明真实服务端已部署，
-服务端/账号/实机验证必须与本地合成 relay、SQLite fixture 证据分别报告。
+SharedTask 附件沿用 v0.1.96-beta 上游客户端合同：已鉴权的 presign-put 请求追加
+sharedTaskId，服务端签发该任务命名空间的 OSS key；主机只接收当前已授权成员发来的
+同任务引用，实际下载仍必须通过已鉴权 presign-get。任务路径解析不是独立权限凭证，
+也不证明上传字节来自某台物理设备。未识别任务范围、返回普通账号 key 的旧服务端在 PUT
+前明确拒绝，不退回普通账号上传。图片、文件和录音文件共用这条附件通路。
+Desktop 使用每调用 AsyncLocalStorage 隔离上传范围，取件缓存按任务隔离；Mobile 的
+picker、预处理和持久发件箱恢复都保留发起任务。访客编辑只复用主机确认的本人待发附件。
+语音转文字仍使用发起账号的既有语音服务，识别文本按普通共享任务输入发送，不调用
+主机的私有语音配置或额外开放语音 IPC。群聊 G4 的 host receipt 合同不变。
+客户端接线不证明真实服务端已部署，服务端/账号/实机验证必须与本地合成 relay、SQLite
+fixture 证据分别报告。来源及对旧阻塞结论的更正见 shared-task-upload-source-appendix.md。
 
 | 内容 | 权威来源 |
 |---|---|

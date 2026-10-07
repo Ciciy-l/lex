@@ -201,7 +201,7 @@ describe('sharedTask dispatch scope', () => {
     ]) expect(() => assertSharedTaskReferences(value, 'task')).toThrow();
     expect(() => assertSharedTaskReferences({ agentReferences: [{ kind: 'message', sessionId: 'task' }] }, 'task')).not.toThrow();
   });
-  it('does not treat a shared-task OSS prefix as attachment ownership without an authenticated binding', () => {
+  it('admits only current-task OSS references for authenticated server download, without claiming device provenance', () => {
     const ref = buildAttachmentOssRef({
       ossKey: 'cindy/device-link/shared-task/sharedTask/opaque/file',
       size: 1,
@@ -213,7 +213,11 @@ describe('sharedTask dispatch scope', () => {
       channel: 'maker:input:update-content',
       args: ['task', 'message', { files: [{ url: ref }] }],
     };
-    expect(() => assertSharedTaskInvoke({ ...capture(), authorize: () => true }, payload)).toThrow('PERMISSION_DENIED');
+    expect(() => assertSharedTaskInvoke({ ...capture(), authorize: () => true }, payload)).not.toThrow();
+    expect(() => assertSharedTaskInvoke({ ...capture(), isCurrent: () => false }, payload)).toThrow();
+    expect(() => assertSharedTaskInvoke({ ...capture(), authorize: () => false }, payload)).toThrow();
+    const other = buildAttachmentOssRef({ ossKey: 'cindy/device-link/shared-task/other/opaque/file' });
+    expect(() => assertSharedTaskInvoke({ ...capture(), authorize: () => true }, { ...payload, args: ['task', 'message', { files: [{ url: other }] }] })).toThrow();
     const verify = (value: string, binding: { sharedTaskId: string; sessionId: string; memberId: string; accountId: string; deviceId: string }) =>
       value === ref && binding.sharedTaskId === 'sharedTask' && binding.sessionId === 'task' &&
       binding.memberId === 'member' && binding.accountId === 'guest' && binding.deviceId === 'phone';

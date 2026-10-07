@@ -33,6 +33,7 @@ import { getSensitiveMediaBlocklist, isPathAllowedAgainst } from '../filePathPol
 import { materializeSshRemoteMedia } from '../file-browser/ssh-media.js';
 import { getSessionFsSnapshot } from '../localDb/ipc/sessions.js';
 import { uploadLocalFile } from './mediaTransfer.js';
+import { sharedTaskMediaId } from './sharedTaskMediaContext.js';
 import { createLogger } from '../logger.js';
 import type { SharedTaskMediaCaptureContext } from './sharedTaskMediaAccess.js';
 
@@ -450,12 +451,13 @@ export async function fetchLocalMediaToOss(
 
   // cindy-media 地址=内容指纹,永不变更,是最理想的上传去重键。
   const cacheable = url.startsWith('xdt-image://') || url.startsWith('cindy-media://');
+  const cacheKey = sharedTaskMediaId() ? JSON.stringify([sharedTaskMediaId(), url]) : url;
   let st: { size: number; mtimeMs: number } | null = null;
   if (cacheable) {
     st = await stat(absPath);
     await recheckAuthorization();
     if (!skipCache) {
-      const hit = lookupUploadCache(url, st.size, st.mtimeMs, Date.now());
+      const hit = lookupUploadCache(cacheKey, st.size, st.mtimeMs, Date.now());
       if (hit) {
         log.debug(`media:fetch cache hit ${url.slice(0, 40)} → ossKey=${hit.ossKey}`);
         return { ossKey: hit.ossKey, mimeType: hit.mimeType, size: hit.size };
@@ -473,7 +475,7 @@ export async function fetchLocalMediaToOss(
   // upload was in flight. The bounded relay expiry/recycler owns that object.
   await recheckAuthorization();
   if (cacheable && st) {
-    rememberUpload(url, {
+    rememberUpload(cacheKey, {
       ossKey: uploaded.key,
       mimeType: uploaded.contentType,
       size: uploaded.size,

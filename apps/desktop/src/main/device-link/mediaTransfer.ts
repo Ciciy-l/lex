@@ -23,6 +23,8 @@
  *   - 下载:整文件下载(小媒体)用 arrayBuffer;range 流式(视频/音频)返回**原始 OSS Response**,
  *     由调用方(`cindy-remote-media://` handler)透传其 body 流,绝不在此 buffer 整个视频。
  */
+import { buildAttachmentOssRef, isSharedTaskAttachment } from '@cindy/device-link';
+import { assertSharedTaskUploadCurrent, sharedTaskMediaId } from './sharedTaskMediaContext.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { readFile, rename, rm, stat } from 'node:fs/promises';
@@ -117,11 +119,19 @@ export async function presignPutForRemoteAttachment(
   contentType: string,
 ): Promise<PresignPutResponse> {
   requireAppCapability('canUseDeviceLink', 'Device Link requires a Cindy account.');
-  return serverApiFetch<PresignPutResponse>(PRESIGN_PUT_PATH, {
+  assertSharedTaskUploadCurrent();
+  const task = sharedTaskMediaId();
+  const result = await serverApiFetch<PresignPutResponse>(PRESIGN_PUT_PATH, {
     method: 'POST',
-    body: { size, ext, contentType },
+    body: { size, ext, contentType, ...(task ? { sharedTaskId: task } : {}) },
+    ...(task ? { beforeAttempt: assertSharedTaskUploadCurrent } : {}),
     baseUrl: deviceLinkApiBase,
   });
+  assertSharedTaskUploadCurrent();
+  if (task && !isSharedTaskAttachment(buildAttachmentOssRef({ ossKey: result.key }), task)) {
+    throw new Error('Shared task upload is not supported by this server');
+  }
+  return result;
 }
 
 async function presignPut(

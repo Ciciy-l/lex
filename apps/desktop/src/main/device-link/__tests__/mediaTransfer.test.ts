@@ -722,3 +722,38 @@ function webBody(bytes: Uint8Array): ReadableStream<Uint8Array> {
     },
   });
 }
+
+
+describe('SharedTask presign scope', () => {
+  it('isolates overlapping tasks and ordinary uploads through awaits', async () => {
+    const { withSharedTaskMedia } = await import('../sharedTaskMediaContext.js');
+    const { presignPutForRemoteAttachment } = await import('../mediaTransfer.js');
+    apiFetch.mockImplementation(async (_path, opts) => {
+      await Promise.resolve();
+      const task = opts.body.sharedTaskId;
+      return { putUrl: 'https://oss.test/put', key: task ? 'cindy/device-link/shared-task/' + task + '/guest/file' : KEY };
+    });
+    const result = await Promise.all([
+      withSharedTaskMedia('a', () => presignPutForRemoteAttachment(1, 'png', 'image/png')),
+      withSharedTaskMedia('b', () => presignPutForRemoteAttachment(1, 'm4a', 'audio/mp4')),
+      presignPutForRemoteAttachment(1, 'pdf', 'application/pdf'),
+    ]);
+    expect(result.map(row => row.key)).toEqual(['cindy/device-link/shared-task/a/guest/file', 'cindy/device-link/shared-task/b/guest/file', KEY]);
+  });
+  it('does not PUT when an old server ignores the task or the account changes during presign', async () => {
+    const { withSharedTaskMedia } = await import('../sharedTaskMediaContext.js');
+    await expect(withSharedTaskMedia('a', () => uploadBuffer(Buffer.from('a'), { ext: 'png' }))).rejects.toThrow('not supported');
+    expect(undiciFetchMock).not.toHaveBeenCalled();
+    let current = true;
+    apiFetch.mockImplementation(async () => { current = false; return { putUrl: 'https://oss.test/put', key: 'cindy/device-link/shared-task/a/guest/file' }; });
+    await expect(withSharedTaskMedia('a', () => uploadBuffer(Buffer.from('a'), { ext: 'png' }), () => {
+      if (!current) throw new Error('account changed');
+    })).rejects.toThrow('account changed');
+    expect(undiciFetchMock).not.toHaveBeenCalled();
+  });
+  it('server rejection on presign-get prevents reading object bytes', async () => {
+    apiFetch.mockRejectedValue(new Error('PERMISSION_DENIED'));
+    await expect(downloadToBuffer('cindy/device-link/shared-task/a/guest/file')).rejects.toThrow('PERMISSION_DENIED');
+    expect(netFetchMock).not.toHaveBeenCalled();
+  });
+});

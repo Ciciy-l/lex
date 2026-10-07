@@ -23,6 +23,8 @@ import {
 } from './outboundImageCompress';
 import { buildLegacyAttachmentOssRef, parseAttachmentOssRef } from '../../shared/attachmentOssRef';
 
+import { sharedTaskMediaId } from './sharedTaskMediaContext.js';
+
 const log = createLogger('device-link:outboundMedia');
 
 /**
@@ -306,9 +308,15 @@ function rewritePersistedContent(json: string, refMap: Map<string, string>): str
  * 被控端 reload 历史裂图(PR #166 review)。chatMessage 在被控端不落库/不广播,无需改。
  * 去重:每个附件按其 url/path 标识只上传一次 OSS,files[] 与 persistedContent 共用同一引用。
  */
-async function rewriteQueued(item: unknown): Promise<unknown> {
+async function rewriteQueued(item: unknown, existing: ReadonlySet<string> = new Set()): Promise<unknown> {
   if (!item || typeof item !== 'object') return item;
-  const it = item as { files?: unknown; persistedContent?: unknown };
+  let it = item as { files?: unknown; persistedContent?: unknown; chatMessage?: unknown };
+  if (sharedTaskMediaId() && it.chatMessage && typeof it.chatMessage === 'object') {
+    const preview = { ...it.chatMessage } as Record<string, unknown>;
+    for (const key of ['images', 'files', 'retryFiles', 'retryMentions']) delete preview[key];
+    it = { ...it, chatMessage: preview };
+    item = it;
+  }
   if (!Array.isArray(it.files) || it.files.length === 0) return item; // 无 files[] → 无附件
 
   // 原始 ref(url 或 path 字符串)→ OSS 引用;同一附件只传一次,供 files[] + persistedContent 复用。
@@ -316,6 +324,10 @@ async function rewriteQueued(item: unknown): Promise<unknown> {
 
   const files: unknown[] = [];
   for (const f of it.files) {
+    if (f && typeof f === 'object' && existing.has(sourceRefKey(f as AttachmentSource))) {
+      files.push(f);
+      continue;
+    }
     if (
       f &&
       typeof f === 'object' &&
@@ -350,7 +362,12 @@ async function rewriteQueued(item: unknown): Promise<unknown> {
  * 出方向附件改写入口:仅对携带附件的 channel 处理,返回新 args(不原地改 caller 数组)。
  * 抛错由 handleInvoke 转 MEDIA_TRANSFER_FAILED。
  */
-export async function rewriteOutboundMedia(channel: string, args: unknown[]): Promise<unknown[]> {
+export async function rewriteOutboundMedia(channel: string, args: unknown[], existing?: ReadonlySet<string>): Promise<unknown[]> {
+  if (sharedTaskMediaId() && channel === 'maker:input:update-content') {
+    const next = [...args];
+    next[2] = await rewriteQueued(next[2], existing);
+    return next;
+  }
   const steerOpts = args[2];
   if (
     channel === 'maker:input:steer' &&

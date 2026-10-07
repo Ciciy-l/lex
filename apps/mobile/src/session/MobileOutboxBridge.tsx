@@ -7,7 +7,7 @@ import {
   subscribeMobileAuthOwner,
 } from "@/auth/authOwnerGeneration";
 import { useDeviceLink } from "@/device-link/DeviceLinkContext";
-import { readInputDeliveryCancelled } from "@cindy/device-link";
+import { parseSharedTaskPeer, readInputDeliveryCancelled } from "@cindy/device-link";
 import {
   createMobileMakerTransport,
   type RemoteInvoke,
@@ -244,7 +244,7 @@ export function MobileOutboxBridge() {
         const attachment = await uploadMobileAttachmentFromFile(
           upload,
           durableOutboxUploadUri(r, upload),
-          { token },
+          { token, sharedTaskId: parseSharedTaskPeer(r.deviceId)?.sharedTaskId },
         );
         if (!isCurrent() || !mobileDurableOutbox.getSnapshot().includes(r)) {
           // Use the captured credential for this old owner's object, never a new account's token.

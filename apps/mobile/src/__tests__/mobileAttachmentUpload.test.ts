@@ -596,3 +596,30 @@ describe('mobileAttachmentUpload', () => {
     await vi.waitFor(() => expect(failingFetch).toHaveBeenCalled());
   });
 });
+
+
+describe('SharedTask uploads use the upstream authenticated task namespace', () => {
+  it.each(['photo.png', 'recording.m4a', 'notes.pdf'])('threads the scope through actual file upload: %s', async name => {
+    const key = 'cindy/device-link/shared-task/task-a/guest/file';
+    const apiFetch = vi.fn(async () => ({ putUrl: 'https://oss.test/upload', key, expiresAt: '' }));
+    const uploadFile = vi.fn(async () => ({ status: 200 }));
+    const result = await uploadMobileAttachmentFromFile({ name, size: 3 }, 'file:///fixture', {
+      token: 'guest-token', sharedTaskId: 'task-a',
+      deps: { apiFetch: apiFetch as unknown as typeof apiFetchRaw, uploadFile, readFileChunk },
+    });
+    expect(apiFetch).toHaveBeenCalledWith('/api/device-link/media/presign-put', expect.objectContaining({
+      token: 'guest-token', body: expect.objectContaining({ sharedTaskId: 'task-a' }),
+    }));
+    expect(uploadFile).toHaveBeenCalledTimes(1);
+    expect(parseAttachmentOssRef(result.path!)?.ossKey).toBe(key);
+  });
+  it.each(['cindy/device-link/user/file', 'cindy/device-link/shared-task/task-b/guest/file'])('rejects an ignored or cross-task scope before PUT: %s', async key => {
+    const apiFetch = vi.fn(async () => ({ putUrl: 'https://oss.test/upload', key, expiresAt: '' }));
+    const uploadFile = vi.fn(async () => ({ status: 200 }));
+    await expect(uploadMobileAttachmentFromFile({ name: 'a.pdf', size: 3 }, 'file:///fixture', {
+      token: 'guest-token', sharedTaskId: 'task-a',
+      deps: { apiFetch: apiFetch as unknown as typeof apiFetchRaw, uploadFile, readFileChunk },
+    })).rejects.toThrow();
+    expect(uploadFile).not.toHaveBeenCalled();
+  });
+});

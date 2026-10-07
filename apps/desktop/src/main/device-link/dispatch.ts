@@ -101,6 +101,7 @@ import {
   refreshSharedTaskPeer,
 } from './sharedTaskDispatch.js';
 import { assertSharedTaskMedia } from './sharedTaskMediaAccess.js';
+import { withSharedTaskMedia } from './sharedTaskMediaContext.js';
 import { runAsBackgroundDbRpc } from '../localDb/client/rpcAdmission.js';
 import { fetchLocalMediaToOss } from './mediaFetch';
 import { transcribeRemoteVoiceInput } from './voiceTranscribe';
@@ -3848,7 +3849,7 @@ async function executeRemoteInvoke(
       : undefined;
     try {
       const result = assertMedia
-        ? await fetchLocalMediaToOss(mediaRequest, assertMedia)
+        ? await withSharedTaskMedia(sharedTask?.author.sharedTaskId, () => fetchLocalMediaToOss(mediaRequest, assertMedia))
         : await fetchLocalMediaToOss(mediaRequest);
       if (sharedTask && (!sharedTask.isCurrent() || !assertMedia)) {
         throw new Error('[PERMISSION_DENIED] Shared task media access denied');

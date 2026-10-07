@@ -13,6 +13,7 @@
  *   - 附件限额计算要把 pendingUploads.length 算进去;
  *   - 页面卸载时 hook 自动 dispose(在途上传完成后回收 OSS 中转对象)。
  */
+import { parseSharedTaskPeer } from '@cindy/device-link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Platform } from 'react-native';
@@ -60,6 +61,7 @@ export interface UseMobileLocalAttachmentsOptions {
    * 标注异步入口与上传完成结果不得写入新作用域。省略时保持旧的单作用域行为。
    */
   attachmentScopeKey?: string;
+  deviceId?: string;
   getAccessToken: () => Promise<string | null>;
   /** Optional host-specific two-phase upload; normal chats keep the server presign path. */
   upload?: (
@@ -284,7 +286,7 @@ export function useMobileLocalAttachments(
     },
     upload: (candidate, fileUri, opts) => optionsRef.current.upload
       ? optionsRef.current.upload(candidate, fileUri, opts)
-      : uploadMobileAttachmentFromFile(candidate, fileUri, opts),
+      : uploadMobileAttachmentFromFile(candidate, fileUri, { ...opts, sharedTaskId: candidate.sharedTaskId }),
     discard: (attachment, token) => optionsRef.current.discard
       ? optionsRef.current.discard(attachment, token)
       : discardMobileUploadedAttachment(attachment, {
@@ -395,13 +397,12 @@ export function useMobileLocalAttachments(
   ) => {
     if (!isAttachmentScopeActive()) return;
     controller.enqueue(
-      attachmentScopeKey == null
-        ? candidates
-        : candidates.map((candidate) => ({
-            ...candidate,
-            attachmentScopeGeneration,
-            attachmentScopeKey,
-          })),
+      candidates.map((candidate) => ({
+        ...candidate,
+        attachmentScopeGeneration,
+        attachmentScopeKey,
+        sharedTaskId: parseSharedTaskPeer(optionsRef.current.deviceId ?? '')?.sharedTaskId,
+      })),
       opts,
     );
   };
