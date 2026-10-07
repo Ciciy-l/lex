@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { SharedTaskApi, SharedTaskListItem } from '@cindy/device-link';
+import { SHARED_TASK_CLOSE_MAX_TARGETS, type SharedTaskApi, type SharedTaskListItem } from '@cindy/device-link';
 import { executeSharedTaskAccountCommand } from '../sharedTaskCommands.js';
 
 function listItem(sharedTaskId: string, overrides: Partial<SharedTaskListItem> = {}): SharedTaskListItem {
@@ -51,7 +51,7 @@ describe('sharedTask account commands', () => {
       if (new Set(['c']).has(sharedTaskId)) throw new Error('host offline');
     });
     const listSpy = api([listItem('a'), listItem('b', { hostDeviceId: 'device-b' }), listItem('c', { hostDeviceId: 'device-b' })], new Set(['c']));
-    const result = await executeSharedTaskAccountCommand({ action: 'close', all: true }, listSpy, 'owner',
+    const result = await executeSharedTaskAccountCommand({ action: 'close', sharedTaskIds: ['a', 'b', 'c'] }, listSpy, 'owner',
       { hostedIds: () => ['a'], closeHosted, closeRemoteHosted });
     expect(closeHosted).toHaveBeenCalledTimes(1);
     expect(closeRemoteHosted).toHaveBeenNthCalledWith(1, 'b', 'device-b');
@@ -77,7 +77,7 @@ describe('sharedTask account commands', () => {
       current = false;
     });
     const listSpy = api([listItem('a', { hostDeviceId: 'device-a' }), listItem('b', { hostDeviceId: 'device-b' })]);
-    const promise = executeSharedTaskAccountCommand({ action: 'close', all: true }, listSpy, 'owner', { closeRemoteHosted, isCurrent: () => current });
+    const promise = executeSharedTaskAccountCommand({ action: 'close', sharedTaskIds: ['a', 'b'] }, listSpy, 'owner', { closeRemoteHosted, isCurrent: () => current });
     await vi.waitFor(() => expect(closeRemoteHosted).toHaveBeenCalledWith('a', 'device-a'));
     release();
     await expect(promise).resolves.toEqual({ closed: [], failed: [{ sharedTaskId: 'a' }] });
@@ -90,7 +90,7 @@ describe('sharedTask account commands', () => {
     listSpy.list = vi.fn(() => new Promise<SharedTaskListItem[]>(resolve => { release = resolve; })) as typeof listSpy.list;
     let current = true;
     const closeRemoteHosted = vi.fn(async () => undefined);
-    const pending = executeSharedTaskAccountCommand({ action: 'close', all: true }, listSpy, 'owner', {
+    const pending = executeSharedTaskAccountCommand({ action: 'close', sharedTaskIds: ['late'] }, listSpy, 'owner', {
       closeRemoteHosted,
       isCurrent: () => current,
     });
@@ -99,6 +99,30 @@ describe('sharedTask account commands', () => {
     release([listItem('late', { hostDeviceId: 'device-b' })]);
     await expect(pending).resolves.toEqual({ closed: [], failed: [] });
     expect(closeRemoteHosted).not.toHaveBeenCalled();
+  });
+
+  it('closes only the explicitly confirmed IDs when a later list item appears', async () => {
+    const list = [listItem('a'), listItem('b')];
+    const closeRemoteHosted = vi.fn(async (sharedTaskId: string) => {
+      if (sharedTaskId === 'a') list.push(listItem('new'));
+    });
+    const listSpy = api(list);
+    const result = await executeSharedTaskAccountCommand({ action: 'close', sharedTaskIds: ['a', 'b'] }, listSpy, 'owner', { closeRemoteHosted });
+    expect(result).toEqual({ closed: ['a', 'b'], failed: [] });
+    expect(closeRemoteHosted).toHaveBeenCalledTimes(2);
+    expect(closeRemoteHosted).not.toHaveBeenCalledWith('new', expect.anything());
+  });
+
+  it('deduplicates an explicit batch and rejects unbounded or legacy all commands', async () => {
+    const closeRemoteHosted = vi.fn(async () => undefined);
+    const listSpy = api([listItem('a')]);
+    await expect(executeSharedTaskAccountCommand({ action: 'close', sharedTaskIds: ['a', 'a'] }, listSpy, 'owner', { closeRemoteHosted }))
+      .resolves.toEqual({ closed: ['a'], failed: [] });
+    expect(closeRemoteHosted).toHaveBeenCalledTimes(1);
+    await expect(executeSharedTaskAccountCommand({ action: 'close', sharedTaskIds: Array.from({ length: SHARED_TASK_CLOSE_MAX_TARGETS + 1 }, () => 'a') }, listSpy, 'owner', { closeRemoteHosted }))
+      .rejects.toMatchObject({ code: 'INVALID_PARAMS' });
+    await expect(executeSharedTaskAccountCommand({ action: 'close', all: true }, listSpy, 'owner', { closeRemoteHosted }))
+      .rejects.toMatchObject({ code: 'INVALID_PARAMS' });
   });
 
   it('still rejects unknown account commands', async () => {

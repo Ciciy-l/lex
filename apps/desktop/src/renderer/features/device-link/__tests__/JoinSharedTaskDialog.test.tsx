@@ -23,7 +23,7 @@ let ownedItems = [...owned];
 let joinedItems = [joinedTask];
 beforeEach(() => {
   vi.clearAllMocks(); setDataOwnerGeneration('guest'); ownedItems = [...owned]; joinedItems = [joinedTask];
-  state.account.mockImplementation(async ({ action, sharedTaskId }) => {
+  state.account.mockImplementation(async ({ action, sharedTaskId, sharedTaskIds }) => {
     if (action === 'status') return { status: 'ready' };
     if (action === 'owned') return ownedItems;
     if (action === 'list') return joinedItems;
@@ -31,8 +31,9 @@ beforeEach(() => {
     if (action === 'get') return { ...joinedTask, status: 'active' };
     if (action === 'leave') { joinedItems = joinedItems.filter(item => item.sharedTaskId !== sharedTaskId); return {}; }
     if (action === 'close') {
-      if (sharedTaskId) { ownedItems = ownedItems.filter(item => item.sharedTaskId !== sharedTaskId); return { closed: [sharedTaskId], failed: [] }; }
-      const closed = ownedItems.map(item => item.sharedTaskId); ownedItems = []; return { closed, failed: [] };
+      const ids = sharedTaskIds ?? (sharedTaskId ? [sharedTaskId] : []);
+      ownedItems = ownedItems.filter(item => !ids.includes(item.sharedTaskId));
+      return { closed: ids, failed: [] };
     }
   });
   state.getSessions.mockReturnValue([]);
@@ -198,9 +199,9 @@ it.each(['closeAllKeep', 'cancelOperation'])('cancels in the same window through
 it.each(['response', 'rejection'])('retries only failed confirmed tasks after a partial %s', async failure => {
   const original = state.account.getMockImplementation()!;
   let secondAttempt = false;
-  state.account.mockImplementation(async (command: { action: string; all?: boolean }) => {
-    if (command.action !== 'close' || command.all !== true) return original(command);
-    if (secondAttempt) { ownedItems = []; return { closed: ['own-1', 'own-2'], failed: [] }; }
+  state.account.mockImplementation(async (command: { action: string; sharedTaskIds?: string[] }) => {
+    if (command.action !== 'close' || !command.sharedTaskIds) return original(command);
+    if (secondAttempt) { ownedItems = []; return { closed: command.sharedTaskIds, failed: [] }; }
     secondAttempt = true;
     if (failure === 'rejection') throw new Error('offline');
     return { closed: ['own-1'], failed: [{ sharedTaskId: 'own-2' }] };
@@ -209,13 +210,14 @@ it.each(['response', 'rejection'])('retries only failed confirmed tasks after a 
   if (failure === 'response') await waitFor(() => expect(visibleText(owned[0].title)).toHaveLength(0));
   else expect(visibleText(owned[0].title)).toHaveLength(1);
   expect(visibleText(owned[1].title)).toHaveLength(1);
+  if (failure === 'rejection') await screen.findByText('sharedTask.closeAllTitle');
   click('closeAllAction');
   if (failure === 'response') await screen.findByText('sharedTask.ownedEmptyTitle');
   else expect(screen.getByText('sharedTask.closeAllTitle')).toBeTruthy();
   expect(state.account.mock.calls.map(([c]) => c).filter(c => c.action === 'close')).toEqual(
     failure === 'response'
-      ? [{ action: 'close', all: true }, { action: 'close', all: true }]
-      : [{ action: 'close', all: true }],
+      ? [{ action: 'close', sharedTaskIds: ['own-1', 'own-2'] }, { action: 'close', sharedTaskIds: ['own-2'] }]
+      : [{ action: 'close', sharedTaskIds: ['own-1', 'own-2'] }, { action: 'close', sharedTaskIds: ['own-1', 'own-2'] }],
   );
 });
 it.each(['account', 'unmount'])('stops the batch after %s invalidation', async invalidation => {

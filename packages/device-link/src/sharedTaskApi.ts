@@ -3,6 +3,8 @@ import { sharedTaskDeviceId } from './protocol.js';
 
 export const SHARED_TASK_HOST_CHANNEL = 'maker:shared-task';
 export const SHARED_TASK_ACCOUNT_CHANNEL = 'shared-task:account';
+/** A close confirmation is a bounded, immutable batch. */
+export const SHARED_TASK_CLOSE_MAX_TARGETS = 128;
 export type SharedTaskHostCommand =
   | { action: 'state' | 'open'; sessionId: string }
   | { action: 'invite' | 'close'; sharedTaskId: string }
@@ -11,7 +13,8 @@ export type SharedTaskAccountCommand =
   | { action: 'status' }
   | { action: 'list' }
   | { action: 'owned' }
-  | { action: 'close'; sharedTaskId?: string; all?: true }
+  | { action: 'close'; sharedTaskId: string }
+  | { action: 'close'; sharedTaskIds: readonly string[] }
   | { action: 'get' | 'leave'; sharedTaskId: string }
   | { action: 'join'; invitation: string; displayName: string };
 export type SharedTaskAccountStatus = { status: 'ready' | 'unsupported' | 'offline' | 'unknown' };

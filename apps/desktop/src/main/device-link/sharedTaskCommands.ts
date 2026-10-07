@@ -1,4 +1,4 @@
-import type { SharedTaskApi, SharedTaskCloseResult, SharedTaskHostState, SharedTaskListItem, SharedTaskOwnedItem } from '@cindy/device-link';
+import { SHARED_TASK_CLOSE_MAX_TARGETS, type SharedTaskApi, type SharedTaskCloseResult, type SharedTaskHostState, type SharedTaskListItem, type SharedTaskOwnedItem } from '@cindy/device-link';
 import type { SharedTaskHost } from './sharedTaskHost.js';
 import { requireString, throwIpcError } from '../utils/ipcValidate.js';
 
@@ -10,6 +10,27 @@ function id(value: unknown): string {
   const text = requireString(value, 'identifier');
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(text)) throwIpcError('INVALID_PARAMS', 'Invalid sharedTask identifier');
   return text;
+}
+function closeTargetIds(input: Record<string, unknown>): string[] {
+  // A close confirmation always carries an explicit immutable batch. The old
+  // `all` flag is intentionally rejected: resolving it here would turn a
+  // confirmed snapshot into a new, potentially larger server-side list.
+  if (input.all !== undefined) throwIpcError('INVALID_PARAMS', 'SharedTask close targets are required');
+  const hasSingle = input.sharedTaskId !== undefined;
+  const hasBatch = input.sharedTaskIds !== undefined;
+  if (hasSingle === hasBatch) throwIpcError('INVALID_PARAMS', 'Exactly one sharedTask close target form is required');
+  if (hasSingle) return [id(input.sharedTaskId)];
+  if (!Array.isArray(input.sharedTaskIds) || input.sharedTaskIds.length === 0
+      || input.sharedTaskIds.length > SHARED_TASK_CLOSE_MAX_TARGETS) {
+    throwIpcError('INVALID_PARAMS', 'Invalid sharedTask close target list');
+  }
+  const seen = new Set<string>();
+  const targets: string[] = [];
+  for (const value of input.sharedTaskIds) {
+    const sharedTaskId = id(value);
+    if (!seen.has(sharedTaskId)) { seen.add(sharedTaskId); targets.push(sharedTaskId); }
+  }
+  return targets;
 }
 /** Owner management is never exposed through guest task invoke permissions. */
 export async function executeSharedTaskHostCommand(raw: unknown, deps: {
@@ -60,6 +81,7 @@ export async function executeSharedTaskAccountCommand(raw: unknown, api: SharedT
     const result: SharedTaskCloseResult = { closed: [], failed: [] };
     const isCurrent = deps?.isCurrent ?? (() => true);
     if (!isCurrent()) return result;
+    const targetIds = closeTargetIds(input);
     // One authoritative list is captured before any close starts. Renderer
     // targets and hostDeviceId are never trusted for ownership or routing.
     const snapshot = (await api.list()).map((item): SharedTaskListItem => Object.freeze({ ...item }));
@@ -69,13 +91,7 @@ export async function executeSharedTaskAccountCommand(raw: unknown, api: SharedT
     const owned = new Map(snapshot
       .filter((item) => item.ownerAccountId === accountId)
       .map((item) => [item.sharedTaskId, item] as const));
-    const targets = input.all === true
-      ? [...owned.values()]
-      : (() => {
-        const sharedTaskId = id(input.sharedTaskId);
-        const item = owned.get(sharedTaskId);
-        return item ? [item] : [{ sharedTaskId } as SharedTaskListItem];
-      })();
+    const targets = targetIds.map((sharedTaskId) => owned.get(sharedTaskId) ?? { sharedTaskId } as SharedTaskListItem);
     const locallyHosted = new Set(deps?.hostedIds?.() ?? []);
     for (const target of targets) {
       const sharedTaskId = target.sharedTaskId;

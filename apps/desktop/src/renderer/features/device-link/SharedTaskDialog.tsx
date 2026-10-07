@@ -18,7 +18,6 @@ import { toast } from '@/lib/toast';
 import { bindSharedTaskPushOwner, resetRemoteDataOwnerPushFence } from '@/lib/remoteDataOwnerPushFence';
 import { remoteProjectsStore, isRemoteDeviceMarkedDisconnected } from './remoteProjectsStore';
 import { sharedTaskErrorKey } from './sharedTaskCompatibility';
-import { closeOwnedSharedTask } from './closeOwnedSharedTask';
 
 type Tab = 'join' | 'joined' | 'owned';
 type Target = { sessionId: string; title: string; deviceId?: string; sharedTaskId?: string; guestId?: string; connect?: boolean };
@@ -215,31 +214,20 @@ export function SharedTaskDialog({ open, onOpenChange, session, returnFocus, ini
     if (snapshot.kind === 'close') {
       const failed: SharedTaskOwnedItem[] = [];
       const closed: string[] = [];
-      if (snapshot.all) {
-        try {
-          // Main freezes and verifies the complete owner batch once. It routes
-          // each local/remote target through the correct host boundary and
-          // stops if the account scope changes.
-          const result = await window.electronAPI.sharedTask.account({ action: 'close', all: true }) as SharedTaskCloseResult;
-          if (!current()) return;
-          const closedIds = new Set(result.closed);
-          const failedIds = new Set(result.failed.map(item => item.sharedTaskId));
-          for (const item of snapshot.targets) {
-            if (closedIds.has(item.sharedTaskId)) closed.push(item.sharedTaskId);
-            else if (failedIds.has(item.sharedTaskId) || !closedIds.has(item.sharedTaskId)) failed.push(item);
-          }
-        } catch { if (!current()) return; failed.push(...snapshot.targets); }
-      } else {
+      try {
+        // The renderer sends only the IDs captured by the confirmation. Main
+        // verifies ownership and resolves physical host/local routing from its
+        // own authoritative snapshot; it never expands this batch via `all`.
+        const result = await window.electronAPI.sharedTask.account({
+          action: 'close', sharedTaskIds: snapshot.targets.map(item => item.sharedTaskId),
+        }) as SharedTaskCloseResult;
+        if (!current()) return;
+        const closedIds = new Set(result.closed);
         for (const item of snapshot.targets) {
-          if (!current()) return;
-          try {
-            const succeeded = await closeOwnedSharedTask(item.sharedTaskId, item.local ? undefined : item.hostDeviceId, current);
-            if (!current()) return;
-            if (succeeded) closed.push(item.sharedTaskId);
-            else failed.push(item);
-          } catch { if (!current()) return; failed.push(item); }
+          if (closedIds.has(item.sharedTaskId)) closed.push(item.sharedTaskId);
+          else failed.push(item);
         }
-      }
+      } catch { if (!current()) return; failed.push(...snapshot.targets); }
       setOwned(items => items?.filter(item => !closed.includes(item.sharedTaskId)) ?? null);
       setConfirm(failed.length ? { ...snapshot, targets: failed } : null);
       if (closed.length) { changed(); toast.success(t('sharedTask.closedToast', { count: closed.length })); }

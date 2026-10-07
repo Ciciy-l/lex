@@ -28,10 +28,10 @@ beforeEach(() => {
   vi.clearAllMocks(); setDataOwnerGeneration('owner');
   state.host.mockResolvedValue({ available: true, detail });
   state.openLink.mockResolvedValue(undefined); state.closeLink.mockResolvedValue(undefined);
-  state.account.mockImplementation(async ({ action, sharedTaskId }) => {
+  state.account.mockImplementation(async ({ action, sharedTaskId, sharedTaskIds }) => {
     if (action === 'owned') return [{ ...detail, local: true }];
     if (action === 'get') return detail;
-    if (action === 'close') return { closed: [sharedTaskId], failed: [] };
+    if (action === 'close') return { closed: sharedTaskIds ?? (sharedTaskId ? [sharedTaskId] : []), failed: [] };
     return [];
   });
   Object.assign(window, { electronAPI: { deviceLink: { invoke: state.invoke, openLink: state.openLink, closeLink: state.closeLink }, sharedTask: { host: state.host, account: state.account } } });
@@ -136,14 +136,14 @@ it('closes only the task captured by the confirmation', async () => {
   state.host.mockImplementation(async () => ({ available: true, detail: current }));
   await openWindow(); click('cancelSharing'); current = { ...detail, sharedTaskId: 'replacement' };
   await act(async () => vi.advanceTimersByTimeAsync(5000)); click('cancelSharing'); await act(async () => {});
-  expect(state.account).toHaveBeenCalledWith({ action: 'close', sharedTaskId: 'st1' });
-  expect(state.account).not.toHaveBeenCalledWith({ action: 'close', sharedTaskId: 'replacement' });
+  expect(state.account).toHaveBeenCalledWith({ action: 'close', sharedTaskIds: ['st1'] });
+  expect(state.account).not.toHaveBeenCalledWith({ action: 'close', sharedTaskIds: ['replacement'] });
 });
 it('cancels a remote-owned detail through the account adapter before reporting success', async () => {
   state.invoke.mockResolvedValue({ available: true, detail: { ...detail, hostDeviceId: 'other-pc' } });
   await openWindow({ ...ownerSession, deviceLinkDeviceId: 'other-pc' });
   click('cancelSharing'); click('cancelSharing');
-  await waitFor(() => expect(state.account).toHaveBeenCalledWith({ action: 'close', sharedTaskId: detail.sharedTaskId }));
+  await waitFor(() => expect(state.account).toHaveBeenCalledWith({ action: 'close', sharedTaskIds: [detail.sharedTaskId] }));
   await waitFor(() => expect(toast.success).toHaveBeenCalledWith('sharedTask.closedToast'));
   expect(state.invoke).not.toHaveBeenCalledWith('other-pc', SHARED_TASK_HOST_CHANNEL,
     [{ action: 'close', sharedTaskId: detail.sharedTaskId }]);
