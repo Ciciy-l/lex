@@ -31,3 +31,4 @@ export * from './sharedTaskApi.js';
 export * from './sharedTaskEnvelope.js';
 export * from './sharedTaskPeer.js';
 export * from './sharedTaskProbe.js';
+export * from './sharedTaskInvitation.js';

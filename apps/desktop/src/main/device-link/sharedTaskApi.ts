@@ -1,5 +1,8 @@
 import {
+  buildSharedTaskInvitationLink,
   createSharedTaskApi,
+  parseSharedTaskInvitation,
+  sharedTaskAccountName,
   SharedTaskScopeChangedError,
 } from '@cindy/device-link';
 import { activeOwnerScopeKey, isAppSessionBoundaryPending } from '../appSessionState.js';
@@ -68,7 +71,32 @@ const accountApi = createSharedTaskApi({
   },
 });
 
-export const sharedTaskApi = accountApi;
+export const sharedTaskApi = {
+  ...accountApi,
+  async invite(sharedTaskId: string) {
+    const result = await accountApi.invite(sharedTaskId);
+    return {
+      ...result,
+      invitationLink: buildSharedTaskInvitationLink(
+        result.invitation,
+        getClientEndpoint('deviceLinkApiBaseUrl'),
+      ),
+    };
+  },
+  async join(input: string, _displayName: string) {
+    const parsed = parseSharedTaskInvitation(
+      input,
+      getClientEndpoint('deviceLinkApiBaseUrl'),
+    );
+    if (!parsed.ok) {
+      throwIpcError(
+        parsed.reason === 'different-server' ? 'REGION_MISMATCH' : 'INVALID_PARAMS',
+        'Invalid shared task invitation or service mismatch',
+      );
+    }
+    return accountApi.join(parsed.invitation, sharedTaskAccountName(getAuthState().user?.name));
+  },
+};
 
 /**
  * Capture the outgoing credentials for close-only cleanup. This adapter never

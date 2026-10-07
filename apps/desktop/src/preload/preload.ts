@@ -5,6 +5,12 @@ import type { BotToolsetContext } from '../shared/botRemoteCapabilities';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { DESKTOP_LOCAL, type RemoteDesktopApi } from '../shared/remoteDesktop';
 import { DEVICE_LINK_PUSH } from '../shared/deviceLinkIpc';
+import {
+  SHARED_TASK_ACCOUNT_CHANNEL,
+  SHARED_TASK_HOST_CHANNEL,
+  type SharedTaskAccountCommand,
+  type SharedTaskHostCommand,
+} from '@cindy/device-link';
 import type { MobileCodexRateLimitsResult } from '@cindy/maker-shared/device-link-contract';
 import type { AppearanceSettings } from '../shared/appearanceSettings';
 import type {
@@ -3708,6 +3714,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         | { type: 'new-session'; workingDir: string }
         | { type: 'share-import'; filePath: string }
         | { type: 'provider-import'; importId: string }
+        | { type: 'shared-task-join'; invitation: string; server: string }
         | { type: 'settings'; tab: 'voice-input' | 'providers'; connect?: string },
     ) => void,
   ): (() => void) =>
@@ -3722,8 +3729,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
         tab?: unknown;
         connect?: unknown;
         messageClientId?: unknown;
+        invitation?: unknown;
+        server?: unknown;
       };
-      if (p.type === 'session' && typeof p.id === 'string' && p.id.length > 0) {
+      if (p.type === 'shared-task-join' && typeof p.invitation === 'string' && typeof p.server === 'string') {
+        callback({ type: 'shared-task-join', invitation: p.invitation, server: p.server });
+      } else if (p.type === 'session' && typeof p.id === 'string' && p.id.length > 0) {
         callback({
           type: 'session',
           id: p.id,
@@ -3780,6 +3791,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     | { type: 'new-session'; workingDir: string }
     | { type: 'share-import'; filePath: string }
     | { type: 'provider-import'; importId: string }
+    | { type: 'shared-task-join'; invitation: string; server: string }
     | { type: 'settings'; tab: 'voice-input' | 'providers'; connect?: string }
     | null
   > => ipcRenderer.invoke('deep-link:take-pending'),
@@ -4459,6 +4471,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
       clear: (deviceId: string): Promise<{ ok: true }> =>
         ipcRenderer.invoke('device-link:mirror-cache:clear', { deviceId }),
     },
+  },
+
+  /** Shared-task management uses dedicated owner/account IPC channels. */
+  sharedTask: {
+    host: (command: SharedTaskHostCommand): Promise<unknown> =>
+      ipcRenderer.invoke(SHARED_TASK_HOST_CHANNEL, command),
+    account: (command: SharedTaskAccountCommand): Promise<unknown> =>
+      ipcRenderer.invoke(SHARED_TASK_ACCOUNT_CHANNEL, command),
   },
 
   // ── Remote SSH (Phase A) ───────────────────────────────────────────────

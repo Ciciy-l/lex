@@ -80,6 +80,7 @@ import type { SessionMoveTarget } from './sidebar/sessionMoveTarget';
 import { SessionShareExportDialog } from './sidebar/SessionShareExportDialog';
 import { SessionBranchTreeDialog } from './SessionBranchTreeDialog';
 import { useRemoteProjectSessions } from '@/features/device-link/remoteProjectsStore';
+import { SharedTaskButton } from '@/features/device-link/SharedTaskButton';
 import { isRemoteSessionWriteBlocked } from './lib/remoteSessionWriteGuard';
 import { Tip } from '@/components/ui/tooltip';
 
@@ -581,6 +582,8 @@ export function SessionContentHeader({
           {displayTitle}
         </span>
       )}
+
+      {!isEmpty && !session.orcaRole && <SharedTaskButton session={session} />}
 
       {!isEditing && !readOnly && (
         // 菜单打开就把归档/删除的 dirty 预检发出去:用户从展开菜单到点条目至少

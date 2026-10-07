@@ -64,6 +64,43 @@ function providerImportUrl(scheme: 'cindy' | 'xdt-maker'): string {
   return `${scheme}://provider/import?v=1&data=${Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')}`;
 }
 
+describe('shared task invitation handoff', () => {
+  it('buffers cold-start invitations and redacts every invitation argv copy', () => {
+    const invitation = 'A'.repeat(43);
+    const url = `cindy://shared-task/join?invitation=${invitation}&server=${encodeURIComponent('https://relay.example.test')}`;
+    setDeepLinkMainWindow(null);
+    handleIncomingDeepLink(url, 'test');
+    expect(takePendingDeepLink()).toEqual({
+      type: 'shared-task-join', invitation, server: 'https://relay.example.test',
+    });
+    const argv = ['cindy.exe', url, `xdt-maker://shared-task/join?invitation=${'B'.repeat(43)}&server=https%3A%2F%2Frelay.example.test`];
+    redactConsumedDeepLinkInArgv(argv);
+    expect(argv).toEqual(['cindy.exe', 'cindy://consumed', 'cindy://consumed']);
+  });
+
+  it('keeps live invitations in the pending handoff so login and renderer races consume once', () => {
+    const send = vi.fn();
+    const win = {
+      isDestroyed: () => false, isVisible: () => true, isMinimized: () => false,
+      show: vi.fn(), restore: vi.fn(), moveTop: vi.fn(), focus: vi.fn(), setAlwaysOnTop: vi.fn(),
+      webContents: { isLoading: () => false, send },
+    };
+    setDeepLinkMainWindow(win as unknown as BrowserWindow);
+    try {
+      const invitation = 'C'.repeat(43);
+      handleIncomingDeepLink(
+        `cindy://shared-task/join?invitation=${invitation}&server=https%3A%2F%2Frelay.example.test`,
+        'test',
+      );
+      expect(send).toHaveBeenCalledWith('deep-link:navigate', expect.objectContaining({ type: 'shared-task-join' }));
+      expect(takePendingDeepLink()).toMatchObject({ type: 'shared-task-join', invitation });
+      expect(takePendingDeepLink()).toBeNull();
+    } finally {
+      setDeepLinkMainWindow(null);
+    }
+  });
+});
+
 describe('user-initiated main-window focus', () => {
   it('activates and raises the target window before focusing on Windows', () => {
     const calls: string[] = [];
@@ -139,6 +176,20 @@ describe('parseDeepLink', () => {
       type: 'project',
       workingDir: 'C:\\Some Path\\proj',
     });
+  });
+
+  it('parses shared-task custom-scheme handoff without accepting unsupported schemes', () => {
+    const invitation = 'A'.repeat(43);
+    const server = 'https://api.example.test/device-link';
+    expect(parseDeepLink(
+      `cindy://shared-task/join?invitation=${invitation}&server=${encodeURIComponent(server)}`,
+    )).toEqual({ type: 'shared-task-join', invitation, server });
+    expect(parseDeepLink(
+      `xdt-maker://shared-task/join?invitation=${invitation}&server=${encodeURIComponent(server)}`,
+    )).toEqual({ type: 'shared-task-join', invitation, server });
+    expect(parseDeepLink(
+      `cindycn://shared-task/join?invitation=${invitation}&server=${encodeURIComponent(server)}`,
+    )).toBeNull();
   });
 
   it('builds project links with RFC 3986 strict encoding and round-trips (review P2)', () => {

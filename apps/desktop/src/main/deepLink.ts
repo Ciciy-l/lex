@@ -49,6 +49,7 @@ import {
   isDeepLinkProviderConnectId,
   matchDeepLinkPrefix,
 } from '../shared/deepLinkSchemes';
+import { parseSharedTaskInvitationIntent } from '@cindy/device-link';
 import { cancelProviderImport, createProviderImportDraftFromRest } from './provider-import/providerImport';
 
 const log = createLogger('deepLink');
@@ -74,6 +75,8 @@ export type DeepLinkPayload =
   | { type: 'share-import'; filePath: string }
   /** 外部 URL 内的凭证已在 Main 转成短期草稿；跨进程只传随机 id。 */
   | { type: 'provider-import'; importId: string }
+  /** Shared-task invitation handoff. The token is kept out of logs and URLs after parsing. */
+  | { type: 'shared-task-join'; invitation: string; server: string }
   /**
    * 设置页导航。两个来源:
    *   1. 主进程内部发起(全局浮层等独立窗口把用户带回主窗口的准确设置页);
@@ -102,6 +105,10 @@ export function parseDeepLink(url: string): DeepLinkPayload | null {
   if (typeof url !== 'string') return null;
   const prefix = matchDeepLinkPrefix(url);
   if (prefix === null) return null;
+  const sharedTask = parseSharedTaskInvitationIntent(url);
+  if (sharedTask) {
+    return { type: 'shared-task-join', invitation: sharedTask.invitation, server: sharedTask.server };
+  }
   const rest = url.slice(prefix.length);
   // provider/import 是双段精确路径，必须在通用 type/value 解析前消费。
   if (rest.startsWith('provider/')) {
@@ -288,7 +295,9 @@ export function handleIncomingDeepLink(url: string, source: string): void {
     log.warn('ignoring unparseable deep link', { source });
     return;
   }
-  log.info('received deep link', { source, payload });
+  // Invitation secrets are intentionally omitted from telemetry. The renderer receives
+  // the validated token only through the in-memory handoff below.
+  log.info('received deep link', { source, payload: safeDeepLinkLog(payload) });
   dispatchDeepLink(payload);
 }
 
@@ -406,6 +415,10 @@ export function sendMainWindowMessage(channel: string, payload: unknown): boolea
   return true;
 }
 
+function safeDeepLinkLog(payload: DeepLinkPayload): DeepLinkPayload | { type: 'shared-task-join' } {
+  return payload.type === 'shared-task-join' ? { type: payload.type } : payload;
+}
+
 function dispatchDeepLink(payload: DeepLinkPayload, shouldFocus = true): void {
   // 纯前台意图:main 进程内消化。冷启动时窗口还没建,app 启动流程本身会前台,直接丢弃。
   if (payload.type === 'focus') {
@@ -416,7 +429,7 @@ function dispatchDeepLink(payload: DeepLinkPayload, shouldFocus = true): void {
   const windowReady = win && !win.isDestroyed() && win.webContents && !win.webContents.isLoading();
   // A loaded login/LocalDbGate page has no MainLayout listener yet. Imports stay
   // in the existing pending slot until the authenticated consumer takes them.
-  if (!windowReady || payload.type === 'provider-import') {
+  if (!windowReady || payload.type === 'provider-import' || payload.type === 'shared-task-join') {
     // 保留"用户最后意图"语义:同一次冷启动如果先后入站多条 (例如 argv 同时含
     // deep link URL 和 --open-folder, 现实场景极罕见但 bootstrap 两条 scan 都
     // 会触发),后到的覆盖前者。但 warn log 留下排查线索,事后能从日志识别这种
@@ -426,12 +439,12 @@ function dispatchDeepLink(payload: DeepLinkPayload, shouldFocus = true): void {
         cancelProviderImport(pendingDeepLink.importId);
       }
       log.warn('overwriting buffered pending payload', {
-        previous: pendingDeepLink,
-        next: payload,
+        previous: safeDeepLinkLog(pendingDeepLink),
+        next: safeDeepLinkLog(payload),
       });
     }
     pendingDeepLink = payload;
-    log.debug('buffered pending deep link until renderer pull', payload);
+    log.debug('buffered pending deep link until renderer pull', safeDeepLinkLog(payload));
     // Agent-key first tap may switch in the background. A buffered deep link
     // from that path must not steal the frontmost app.
     if (!windowReady) {
@@ -458,7 +471,7 @@ export function takePendingDeepLink(): DeepLinkPayload | null {
   if (!pendingDeepLink) return null;
   const payload = pendingDeepLink;
   pendingDeepLink = null;
-  log.info('renderer pulled pending deep link', payload);
+  log.info('renderer pulled pending deep link', safeDeepLinkLog(payload));
   return payload;
 }
 
@@ -486,7 +499,7 @@ export function redactConsumedDeepLinkInArgv(argv: string[], deepLink?: string):
   for (let i = argv.length - 1; i >= 0; i -= 1) {
     const arg = argv[i];
     const prefix = typeof arg === 'string' ? matchDeepLinkPrefix(arg) : null;
-    if (arg !== deepLink && !(prefix && arg.slice(prefix.length).startsWith('provider/'))) continue;
+    if (arg !== deepLink && !(prefix && /^(provider\/|shared-task\/|shared-session\?)/.test(arg.slice(prefix.length)))) continue;
     argv[i] = `${DEEP_LINK_PRIMARY_SCHEME}://consumed`;
   }
 }

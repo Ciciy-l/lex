@@ -2925,6 +2925,7 @@ interface ElectronAPI {
         | { type: 'new-session'; workingDir: string }
         | { type: 'share-import'; filePath: string }
         | { type: 'provider-import'; importId: string }
+        | { type: 'shared-task-join'; invitation: string; server: string }
         | { type: 'settings'; tab: 'voice-input' | 'providers'; connect?: string },
     ) => void,
   ) => () => void;
@@ -2941,6 +2942,7 @@ interface ElectronAPI {
     | { type: 'new-session'; workingDir: string }
     | { type: 'share-import'; filePath: string }
     | { type: 'provider-import'; importId: string }
+    | { type: 'shared-task-join'; invitation: string; server: string }
     | { type: 'settings'; tab: 'voice-input' | 'providers'; connect?: string }
     | null
   >;
@@ -3947,6 +3949,12 @@ interface ElectronAPI {
       /** 清掉一台设备的缓存;deviceId 必填(登出的整体清理由 main 在账号边界自己做) */
       clear: (deviceId: string) => Promise<{ ok: true }>;
     };
+  };
+
+  /** Owner/account scoped SharedTask management; guest task IPC is separate. */
+  sharedTask: {
+    host: (command: import('@cindy/device-link').SharedTaskHostCommand) => Promise<unknown>;
+    account: (command: import('@cindy/device-link').SharedTaskAccountCommand) => Promise<unknown>;
   };
 
   // ── Remote SSH (Phase A) ───────────────────────────────────────────────

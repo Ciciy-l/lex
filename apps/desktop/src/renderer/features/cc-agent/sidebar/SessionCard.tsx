@@ -28,7 +28,7 @@ import type {
   ReactNode,
   RefObject,
 } from 'react';
-import { Archive, ChevronRight, EllipsisVertical, Undo } from 'lucide-react';
+import { Archive, ChevronRight, Crown, EllipsisVertical, Undo } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 
@@ -159,6 +159,7 @@ export const SessionCard = memo(function SessionCard({
   variant = 'card',
   isFirst = false,
   hideBottomDivider = false,
+  sharedTaskRole,
 }: SessionCardProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -197,7 +198,7 @@ export const SessionCard = memo(function SessionCard({
   const remoteIconConnectionStatus = session.deviceLinkDeviceId
     ? (session.deviceLinkConnectionStatus ?? 'connected')
     : null;
-  const remoteWritesBlocked = isRemoteSessionWriteBlocked(session);
+  const remoteWritesBlocked = sharedTaskRole === 'joined' || isRemoteSessionWriteBlocked(session);
   const isAutomationGenerated = isAutomationGeneratedSession(session);
   const boundSchedules = useSessionBoundSchedules(session.id);
   const showScheduleBindingBadge = boundSchedules.length > 0;
@@ -611,6 +612,11 @@ export const SessionCard = memo(function SessionCard({
   const titlePrefixNode = (
     <>
       {statusIconNode}
+      {sharedTaskRole === 'owned' ? (
+        <span className={CARD_TITLE_META_SLOT_CLASS} data-testid={'shared-task-role-slot-owned-' + session.id}>
+          <Crown size={12} strokeWidth={1.8} className="text-[var(--warning-fg)]" aria-label={t('sharedTask.roleHost')} />
+        </span>
+      ) : null}
       {showScheduleBindingBadge || showAutomationTimer ? (
         <span className={CARD_TITLE_META_SLOT_CLASS}>{renderAutomationMeta(10)}</span>
       ) : null}
