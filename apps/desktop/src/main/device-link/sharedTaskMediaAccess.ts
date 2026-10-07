@@ -3,8 +3,7 @@ import { realpath } from 'node:fs/promises';
 import { parseBlobUrl } from '../cindy-media/blobStore.js';
 import { sessionCanRead } from '../cindy-media/ledger.js';
 import { getSessionFsSnapshot } from '../localDb/ipc/sessions.js';
-import * as currentDb from '../localDb/client/current.js';
-import { getDbClient } from '../localDb/client/current.js';
+import { getCurrentDbClientSnapshot } from '../localDb/client/current.js';
 import type { DbClient } from '../localDb/client/DbClient.js';
 import type { SharedTaskPeerCapture } from './sharedTaskDispatch.js';
 
@@ -19,32 +18,47 @@ export interface SharedTaskMediaCaptureContext {
 }
 function deny(): never { throw new Error('[PERMISSION_DENIED] Media does not belong to this shared task'); }
 
-function readDbSnapshot(): ReturnType<typeof currentDb.getCurrentDbClientSnapshot> | null {
-  try {
-    return currentDb.getCurrentDbClientSnapshot?.() ?? null;
-  } catch {
-    // Older isolated fixtures mock only getDbClient; production exports the
-    // snapshot helper and therefore takes the strict identity path.
-    return null;
+/**
+ * Legacy generated-media URLs are authorized only as complete host-authored
+ * tokens.  SQL's instr() is only a cheap candidate filter; these checks must
+ * reject a URL used as the prefix of a longer URL and must not mistake the
+ * letters t/r/n from an escaped whitespace literal for delimiters.
+ */
+function containsExactLegacyMediaUrl(content: string, url: string): boolean {
+  const punctuationBoundaries = new Set(['\"', "'", '<', '>', '(', ')', '[', ']', '{', '}']);
+  const isUrlContinuation = (char: string | undefined): boolean =>
+    char !== undefined && /[A-Za-z0-9._~:/?#[\]@!$&'*+=%-]/u.test(char);
+  const isTokenBoundary = (char: string | undefined): boolean =>
+    char === undefined || /\s/u.test(char) || punctuationBoundaries.has(char) || char === '\\';
+  let offset = 0;
+  while (offset <= content.length - url.length) {
+    const index = content.indexOf(url, offset);
+    if (index < 0) return false;
+    const previous = index > 0 ? content[index - 1] : undefined;
+    const next = content[index + url.length];
+    if (!isUrlContinuation(previous) && !isUrlContinuation(next) &&
+        isTokenBoundary(previous) && isTokenBoundary(next)) return true;
+    offset = index + Math.max(1, url.length);
   }
+  return false;
+}
+
+function readDbSnapshot(): ReturnType<typeof getCurrentDbClientSnapshot> {
+  return getCurrentDbClientSnapshot();
 }
 
 function captureDb(): SharedTaskMediaCaptureContext {
   const snapshot = readDbSnapshot();
-  // Test-only/legacy callers can run before the profile snapshot helper is
-  // available. Production always has a snapshot, and only that path gets the
-  // strict owner/epoch comparison below.
-  const db = snapshot?.client ?? getDbClient();
+  if (!snapshot) deny();
   return {
-    db,
-    userId: snapshot?.userId ?? '',
-    clientEpoch: snapshot?.clientEpoch ?? -1,
+    db: snapshot.client,
+    userId: snapshot.userId,
+    clientEpoch: snapshot.clientEpoch,
   };
 }
 
 function assertCaptureCurrent(capture: SharedTaskPeerCapture, context: SharedTaskMediaCaptureContext): void {
   if (!capture.isCurrent() || !capture.authorize('attachment.read')) deny();
-  if (context.clientEpoch < 0) return;
   const now = readDbSnapshot();
   if (!now || now.client !== context.db || now.userId !== context.userId || now.clientEpoch !== context.clientEpoch) deny();
 }
@@ -60,9 +74,7 @@ export async function assertSharedTaskMedia(
   const sessionId = capture.author.sessionId;
   const blob = parseBlobUrl(url);
   if (blob) {
-    const readable = context.db.drizzle
-      ? await sessionCanRead(blob.hash, sessionId, context.db.drizzle)
-      : await sessionCanRead(blob.hash, sessionId);
+    const readable = await sessionCanRead(blob.hash, sessionId, context.db.drizzle);
     assertCaptureCurrent(capture, context);
     if (!readable) deny();
     return context;
@@ -79,12 +91,7 @@ export async function assertSharedTaskMedia(
       [sessionId, url],
     );
     assertCaptureCurrent(capture, context);
-    const present = rows.some((row) => {
-      const index = row.content.indexOf(url);
-      if (index < 0) return false;
-      const next = row.content[index + url.length];
-      return next === undefined || [... ' \\t\\r\\n\"\'<> {}()[]\\\\'].includes(next);
-    });
+    const present = rows.some((row) => containsExactLegacyMediaUrl(row.content, url));
     if (!present) deny();
     return context;
   }

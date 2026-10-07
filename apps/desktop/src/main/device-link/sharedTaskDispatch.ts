@@ -38,6 +38,20 @@ export function captureSharedTaskPeer(source: string): SharedTaskPeerCapture | n
   return host?.capturePeer(source) ?? null;
 }
 
+/**
+ * Claim a pending interaction at the host's one-shot consumption boundary.
+ * The caller performs its capture/decision checks immediately before calling
+ * this helper; deleting from the authoritative map is synchronous, so two
+ * guests racing the same card cannot both consume it. A failed claim is not a
+ * retry signal and must not invoke the agent resolver a second time.
+ */
+export function claimSharedTaskInteraction<T>(pending: Map<string, T>, requestId: string): T | null {
+  const entry = pending.get(requestId);
+  if (!entry) return null;
+  pending.delete(requestId);
+  return entry;
+}
+
 /** Only confirmed membership loss may evict a guest's shared task on the client. */
 export function sharedTaskAccessFailure(source: string, capture?: SharedTaskPeerCapture | null): InvokeResultPayload {
   const status = host?.peerStatus(source) ?? 'unavailable';
@@ -182,6 +196,14 @@ export function sharedTaskOwnedQueueReferences(capture: SharedTaskPeerCapture, c
   return result;
 }
 
+/** Resolve the host-owned pending row for either the wire id or its scoped id. */
+function sharedTaskQueueItem(capture: SharedTaskPeerCapture, clientId: unknown): SharedTaskQueueItem | undefined {
+  if (typeof clientId !== 'string') return undefined;
+  const scoped = sharedTaskScopedClientId(capture, clientId);
+  return readQueueItem?.(capture.author.sessionId, scoped)
+    ?? (scoped === clientId ? undefined : readQueueItem?.(capture.author.sessionId, clientId));
+}
+
 /** Queue/durable-delivery identity is local to the task member. */
 export function sharedTaskScopedClientId(capture: SharedTaskPeerCapture, clientId: string): string {
   if (/^shared-task:[0-9a-f]{64}$/.test(clientId)) return clientId;
@@ -194,6 +216,105 @@ export function sharedTaskScopedClientId(capture: SharedTaskPeerCapture, clientI
   ].join(String.fromCharCode(0));
   const digest = createHash('sha256').update(scope).digest('hex');
   return 'shared-task:' + digest;
+}
+
+/**
+ * A controller keeps its stable raw clientId.  The host queue uses a scoped
+ * receipt instead, so two guests may intentionally choose the same raw id.
+ * Normalize only the local IPC arguments; request fingerprints and wire ACKs
+ * continue to use the raw payload and therefore retain normal retry semantics.
+ */
+export function normalizeSharedTaskInvokeArgs(
+  capture: SharedTaskPeerCapture,
+  channel: string,
+  args: readonly unknown[],
+): unknown[] {
+  if (args[0] !== capture.author.sessionId) return [...args];
+  const next = [...args];
+  const mapId = (value: unknown): unknown =>
+    typeof value === 'string' ? sharedTaskScopedClientId(capture, value) : value;
+  const mapItem = (value: unknown): unknown => {
+    const item = record(value);
+    if (!item || typeof item.clientId !== 'string') return value;
+    const clientId = sharedTaskScopedClientId(capture, item.clientId);
+    const chatMessage = record(item.chatMessage);
+    return {
+      ...item,
+      clientId,
+      sharedTaskWireClientId: item.sharedTaskWireClientId ?? (clientId === item.clientId ? undefined : item.clientId),
+      ...(chatMessage ? { chatMessage: { ...chatMessage, clientId } } : {}),
+    };
+  };
+  if (channel === 'maker:input:update-content') {
+    next[1] = mapId(next[1]);
+    next[2] = mapItem(next[2]);
+  } else if (
+    channel === 'maker:input:update-text' ||
+    channel === 'maker:input:move' ||
+    channel === 'maker:input:set-edit-lock' ||
+    channel === 'maker:input:remove'
+  ) {
+    next[1] = mapId(next[1]);
+  } else if (channel === 'maker:input:get-projection') {
+    const options = record(next[1]);
+    const deliveryClientIds = options?.deliveryClientIds;
+    if (Array.isArray(deliveryClientIds)) {
+      next[1] = {
+        ...options,
+        deliveryClientIds: deliveryClientIds.map(mapId),
+      };
+    }
+  }
+  return next;
+}
+
+/**
+ * Restore only controller-facing delivery ids after a shared-task IPC handler
+ * has operated on scoped ids.  The host queue/database never receives the raw
+ * id, while the wire ACK/reconcile contract remains stable across retries.
+ */
+export function restoreSharedTaskProjectionResult(
+  channel: string,
+  result: unknown,
+  wireArgs: readonly unknown[],
+  localArgs: readonly unknown[],
+  capture?: SharedTaskPeerCapture,
+): unknown {
+  const projectionChannels = new Set([
+    'maker:input:get-projection', 'maker:input:enqueue', 'maker:input:steer',
+    'maker:input:stop', 'maker:input:resume', 'maker:input:retry-last-error',
+    'maker:input:remove', 'maker:input:update-text', 'maker:input:update-content',
+    'maker:input:move', 'maker:input:set-expanded', 'maker:input:set-edit-lock',
+  ]);
+  if (!projectionChannels.has(channel) || !result || typeof result !== 'object' || Array.isArray(result)) {
+    return result;
+  }
+  const wireOptions = record(wireArgs[1]);
+  const localOptions = record(localArgs[1]);
+  let wireIds = Array.isArray(wireOptions?.deliveryClientIds)
+    ? wireOptions.deliveryClientIds.filter((id): id is string => typeof id === 'string')
+    : [];
+  let localIds = Array.isArray(localOptions?.deliveryClientIds)
+    ? localOptions.deliveryClientIds.filter((id): id is string => typeof id === 'string')
+    : [];
+  if (wireIds.length === 0 && localIds.length === 0 && capture &&
+      (channel === 'maker:input:enqueue' || channel === 'maker:input:steer')) {
+    const rawItem = record(wireArgs[1]);
+    if (typeof rawItem?.clientId === 'string') {
+      wireIds = [rawItem.clientId];
+      localIds = [sharedTaskScopedClientId(capture, rawItem.clientId)];
+    }
+  }
+  const projection = result as Record<string, unknown>;
+  if (!Array.isArray(projection.deliveryReceipts) || wireIds.length !== localIds.length) return result;
+  const byLocalId = new Map(localIds.map((id, index) => [id, wireIds[index]]));
+  const receipts = projection.deliveryReceipts.map((receipt: unknown) => {
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) return receipt;
+    const row = receipt as Record<string, unknown>;
+    const wireId = typeof row.clientId === 'string' ? byLocalId.get(row.clientId) : undefined;
+    return wireId ? { ...row, clientId: wireId } : row;
+  });
+  return { ...projection, deliveryReceipts: receipts };
 }
 
 interface SharedTaskReferenceOptions {
@@ -301,8 +422,8 @@ export function assertSharedTaskInvoke(
   if (phase === 'result') {
     if (!capture.authorize('history.read')) deny();
   } else {
-    if (!capture.authorize(operation, queueItem ?? (typeof args[1] === 'string'
-      ? readQueueItem?.(sessionId, args[1]) : undefined))) deny();
+    if (!capture.authorize(operation, queueItem ?? sharedTaskQueueItem(capture, typeof args[1] === 'string'
+      ? args[1] : record(args[1])?.clientId))) deny();
     const existing = sharedTaskOwnedQueueReferences(capture, typeof args[1] === 'string' ? args[1] : record(args[1])?.clientId);
     assertSharedTaskReferences(args.slice(1), sessionId, 0, capture.author.sharedTaskId, existing, {
       attachmentVerifier: capture.verifyAttachment,

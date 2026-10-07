@@ -32,7 +32,9 @@ export function stampSharedTaskInput(
   // The wire clientId is a controller-local value. Keep the same value
   // idempotent for one member, but scope the host queue/message identity so
   // another guest choosing the same clientId cannot deduplicate or edit it.
-  const scopedClientId = sharedTaskScopedClientId(capture, item.clientId);
+  const wireClientId = item.clientId;
+  const scopedClientId = sharedTaskScopedClientId(capture, wireClientId);
+  stamped.sharedTaskWireClientId = wireClientId;
   stamped.clientId = scopedClientId;
   stamped.chatMessage = { ...stamped.chatMessage, clientId: scopedClientId };
   stamped.workingDir = task.workingDir;

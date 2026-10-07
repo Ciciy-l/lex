@@ -94,6 +94,8 @@ import {
   captureSharedTaskPeer,
   captureSharedTaskPush,
   assertSharedTaskInvoke,
+  normalizeSharedTaskInvokeArgs,
+  restoreSharedTaskProjectionResult,
   sharedTaskMetadataTopic,
   sharedTaskAccessFailure,
   refreshSharedTaskPeer,
@@ -1873,7 +1875,9 @@ function forwardPush(channel: string, payload: unknown, ownerStamp?: PushOwnerSt
       }
       projected = mobilePayload;
     }
-    return isSharedTaskPeer(dst) ? redactSharedGuestPush(channel, projected) : projected;
+    return isSharedTaskPeer(dst)
+      ? redactSharedGuestPush(channel, projected, captureSharedTaskPeer(dst)?.author)
+      : projected;
   };
   const historySessionId = readPushSessionId(remotePayload);
   const deferred = historySessionId !== null && isDeferredHistoryPush(channel, remotePayload,
@@ -2960,13 +2964,24 @@ function sanitizeMessageInvokeResult(
   result: InvokeResultPayload,
   channel: string | undefined,
   sharedTaskGuest = false,
+  sharedTaskScope?: Parameters<typeof redactInputProjectionForSharedGuest>[1],
+  sharedTaskRequestedClientIds?: readonly string[],
 ): InvokeResultPayload {
   const sanitizeRow = (record: Record<string, unknown>): Record<string, unknown> => {
     const sanitized = sanitizeRemoteMessage(record);
     return sharedTaskGuest ? redactMessageRowForSharedGuest(sanitized) : sanitized;
   };
-  if (sharedTaskGuest && result.ok && channel === 'maker:input:get-projection') {
-    const projection = redactInputProjectionForSharedGuest(result.result);
+  const sharedTaskProjectionChannels = new Set([
+    'maker:input:get-projection',
+    'maker:input:enqueue', 'maker:input:steer', 'maker:input:stop',
+    'maker:input:resume', 'maker:input:retry-last-error', 'maker:input:remove',
+    'maker:input:update-text', 'maker:input:update-content', 'maker:input:move',
+    'maker:input:set-expanded', 'maker:input:set-edit-lock',
+  ]);
+  if (sharedTaskGuest && result.ok && channel && sharedTaskProjectionChannels.has(channel)) {
+    const projection = redactInputProjectionForSharedGuest(
+      result.result, sharedTaskScope, sharedTaskRequestedClientIds,
+    );
     return projection === result.result ? result : { ok: true, result: projection };
   }
   if (result.ok && (channel === 'local-db:messages:view' || channel === 'local-db:messages:work-details')) {
@@ -3041,6 +3056,15 @@ async function sendAuthorizedInvokeResultSafe(
   return sendInvokeResultSafe(...args);
 }
 
+function readSharedTaskRequestedClientIds(args: readonly unknown[]): readonly string[] | undefined {
+  const options = args[1];
+  if (!options || typeof options !== 'object' || Array.isArray(options)) return undefined;
+  const values = (options as { deliveryClientIds?: unknown }).deliveryClientIds;
+  return Array.isArray(values)
+    ? values.filter((value): value is string => typeof value === 'string')
+    : undefined;
+}
+
 /**
  * 发送 invoke-result,并对「结果帧超 MAX_FRAME_BYTES」和本地发送背压兜底。
  * sendInvokeResult → sendEnvelope 在结果超限时抛 PAYLOAD_TOO_LARGE;若不接住,异常会冒泡到
@@ -3062,6 +3086,10 @@ function sendInvokeResultSafe(
   const key = `${src}\u0000${requestId}`;
   const normalized = sanitizeMessageInvokeResult(
     normalizeInvokeResultForWire(result), channel, isSharedTaskPeer(src),
+    isSharedTaskPeer(src) ? captureSharedTaskPeer(src)?.author : undefined,
+    isSharedTaskPeer(src) && args && channel === 'maker:input:get-projection'
+      ? readSharedTaskRequestedClientIds(args)
+      : undefined,
   );
   const proactive =
     subscriptions.controllerSupports(src, DEVICE_LINK_CAPABILITY_COMPACT_MESSAGE_HISTORY_V1) &&
@@ -3975,6 +4003,9 @@ async function executeRemoteInvoke(
     // device-link context would silently drop guest identity before IPC
     // handlers, queue guards, and setting/interaction admission run.
     const parentInvokeContext = getDeviceLinkInvokeContext();
+    const localArgs = parentInvokeContext?.sharedTask
+      ? normalizeSharedTaskInvokeArgs(parentInvokeContext.sharedTask, payload.channel, args)
+      : args;
     const invocationOwner = turnChangeContext?.ownerScope
       ?? broadcastTap.captureDataOwnerBroadcastScope();
     const historyView = (payload.channel === 'local-db:messages:view' || payload.channel === 'local-db:messages:view-intent')
@@ -4037,11 +4068,14 @@ async function executeRemoteInvoke(
         }
         const invoke = () => dispatchLocalInvoke(
           payload.channel,
-          payload.channel === 'maker:provider:list' ? [] : args,
+          payload.channel === 'maker:provider:list' ? [] : localArgs,
         );
-        return COALESCE_REMOTE_INVOKE_CHANNELS.has(payload.channel)
+        const result = COALESCE_REMOTE_INVOKE_CHANNELS.has(payload.channel)
           ? runAsBackgroundDbRpc(invoke)
           : invoke();
+        return Promise.resolve(result).then((value) => restoreSharedTaskProjectionResult(
+          payload.channel, value, args, localArgs, parentInvokeContext?.sharedTask,
+        ));
       },
     );
     if (hasRemoteBotSessionLookup()) await assertRemoteBotInvocationAllowed(args, payload.channel);

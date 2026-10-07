@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InteractionDecision, InteractionRequest } from '@cindy/maker-core';
+import { claimSharedTaskInteraction } from '../device-link/sharedTaskDispatch.js';
 
 // Execute the production listener and control adapter without booting Electron.
 const source = readFileSync(new URL('../maker-ipc/register.ts', import.meta.url), 'utf8');
@@ -54,6 +55,7 @@ function harness() {
     handleAgentIslandInteractionAfterBroadcast: vi.fn(), handleAgentIslandInteractionDismissed: vi.fn(),
     dismissRendererInteraction: dismiss, persistInteractionDecision: vi.fn(),
     goalAskAnswerObserver: null, ghostSetupInteractionBridge: { cleanupForSession: vi.fn() },
+    claimSharedTaskInteraction,
   };
   const runtime = new Function(...Object.keys(deps), compiled)(...Object.values(deps)) as {
     install: (session: { id: string }) => void;

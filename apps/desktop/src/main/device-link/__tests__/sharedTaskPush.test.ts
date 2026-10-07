@@ -15,6 +15,7 @@ import { __testing } from '../dispatch';
 import * as subscriptions from '../subscriptions';
 import { setSharedTaskDispatchHost } from '../sharedTaskDispatch';
 import type { SharedTaskHost } from '../sharedTaskHost';
+import { redactInputProjectionForSharedGuest } from '../sharedTaskMessageOrigin';
 
 const guestA = sharedTaskGuestPeer('sharedTask-a', 'member-a', 'device-a');
 const guestB = sharedTaskGuestPeer('sharedTask-b', 'member-b', 'device-b');
@@ -152,6 +153,32 @@ describe('shared task metadata uses only its authorized task subscription', () =
 });
 
 describe('shared task guests never see the owner private message sources', () => {
+  it('does not leak another guest queue mapping or delivery receipt', () => {
+    const own = {
+      clientId: 'shared-task:own-host-id', sharedTaskWireClientId: 'same-client-id',
+      sharedTaskAuthor: { sharedTaskId: 'shared-task', sessionId: 'task-a', memberId: 'member-a', accountId: 'guest-a' },
+    };
+    const other = {
+      clientId: 'shared-task:other-host-id', sharedTaskWireClientId: 'same-client-id',
+      sharedTaskAuthor: { sharedTaskId: 'shared-task', sessionId: 'task-a', memberId: 'member-b', accountId: 'guest-b' },
+    };
+    const projected = redactInputProjectionForSharedGuest({
+      pendingQueue: [own, other],
+      steeringQueueClientIds: [own.clientId, other.clientId],
+      deliveryReceipts: [
+        { clientId: own.clientId, state: 'accepted' },
+        { clientId: other.clientId, state: 'accepted' },
+      ],
+    }, {
+      sharedTaskId: 'shared-task', sessionId: 'task-a', memberId: 'member-a', accountId: 'guest-a',
+    });
+    expect(projected.pendingQueue).toEqual([{
+      clientId: 'same-client-id', sharedTaskAuthor: own.sharedTaskAuthor,
+    }]);
+    expect(projected.steeringQueueClientIds).toEqual(['same-client-id']);
+    expect(projected.deliveryReceipts).toEqual([{ clientId: 'same-client-id', state: 'accepted' }]);
+  });
+
   const privateOrigin = {
     kind: 'session',
     senderSessionId: 'owner-private-task',

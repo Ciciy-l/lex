@@ -221,6 +221,14 @@ export interface RecoveryCheckpoint {
 export interface AgentInputQueuedMessage {
   /** Host-stamped attribution, retained in durable queue snapshots and messages. */
   sharedTaskAuthor?: SharedTaskAuthor;
+  /**
+   * Host-owned mapping for a shared-task input. The queue identity is scoped
+   * before it reaches the coordinator, while the controller must continue to
+   * reconcile ACKs and edit/remove intents with its original wire id. This is
+   * never accepted from a controller and is stripped at shared-task projection
+   * boundaries.
+   */
+  sharedTaskWireClientId?: string;
   /** Host-captured authored text before plugin/reference decoration; omitted from wire projections. */
   autoReviewUserText?: string;
   clientId: string;

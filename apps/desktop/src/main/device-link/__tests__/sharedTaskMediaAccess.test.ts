@@ -1,7 +1,11 @@
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const deps = vi.hoisted(() => ({ read: vi.fn(), session: vi.fn(), realpath: vi.fn(), query: vi.fn() }));
-vi.mock('../../localDb/client/current.js', () => ({ getDbClient: () => ({ query: deps.query }) }));
+const deps = vi.hoisted(() => ({
+  read: vi.fn(), session: vi.fn(), realpath: vi.fn(), query: vi.fn(), snapshot: vi.fn(),
+}));
+vi.mock('../../localDb/client/current.js', () => ({
+  getCurrentDbClientSnapshot: deps.snapshot,
+}));
 vi.mock('node:fs/promises', () => ({ realpath: deps.realpath }));
 vi.mock('../../cindy-media/blobStore.js', () => ({ parseBlobUrl: (url: string) => url === 'cindy-media://blobs/hash.png' ? { hash: 'hash' } : null }));
 vi.mock('../../cindy-media/ledger.js', () => ({ sessionCanRead: deps.read }));
@@ -15,6 +19,8 @@ const capture: SharedTaskPeerCapture = {
 };
 beforeEach(() => {
   vi.resetAllMocks(); current = true;
+  const db = { query: deps.query, drizzle: {} };
+  deps.snapshot.mockReturnValue({ client: db, userId: 'test-user', clientEpoch: 1 });
   deps.realpath.mockImplementation(async (value: string) => path.resolve(value));
   deps.session.mockResolvedValue({ workingDir: path.resolve('workspace'), remoteHostId: null });
   deps.query.mockResolvedValue([]);
@@ -28,6 +34,12 @@ describe('shared task media access', () => {
     expect(deps.query.mock.calls[0][1]).toEqual(['task', url]);
     deps.query.mockResolvedValue([{ content: url + '.other' }]);
     await expect(assertSharedTaskMedia(url, capture)).rejects.toThrow('PERMISSION_DENIED');
+    for (const separator of ['\t', '\n', '\\t']) {
+      deps.query.mockResolvedValue([{ content: 'prefix ' + url + separator + ' suffix' }]);
+      await assertSharedTaskMedia(url, capture);
+    }
+    deps.query.mockResolvedValue([{ content: 'prefix ' + url + 'foo' }]);
+    await expect(assertSharedTaskMedia(url, capture)).rejects.toThrow('PERMISSION_DENIED');
     deps.query.mockResolvedValue([]);
     await expect(assertSharedTaskMedia(url, capture)).rejects.toThrow('PERMISSION_DENIED');
   });
@@ -36,7 +48,7 @@ describe('shared task media access', () => {
     await expect(assertSharedTaskMedia('cindy-media://blobs/hash.png', capture)).rejects.toThrow('PERMISSION_DENIED');
     deps.read.mockResolvedValue(true);
     await assertSharedTaskMedia('cindy-media://blobs/hash.png', capture);
-    expect(deps.read).toHaveBeenLastCalledWith('hash', 'task');
+    expect(deps.read).toHaveBeenLastCalledWith('hash', 'task', expect.anything());
   });
   it('rechecks membership after asynchronous ledger reads', async () => {
     deps.read.mockImplementation(async () => { current = false; return true; });
@@ -60,5 +72,9 @@ describe('shared task media access', () => {
   it('keeps legacy task image history scoped to its actual session', async () => {
     await assertSharedTaskMedia('xdt-image://task/photo.png', capture);
     await expect(assertSharedTaskMedia('xdt-image://other/photo.png', capture)).rejects.toThrow();
+  });
+  it('fails closed when the profile-bound database snapshot is unavailable', async () => {
+    deps.snapshot.mockReturnValue(null);
+    await expect(assertSharedTaskMedia('cindy-media://blobs/hash.png', capture)).rejects.toThrow('PERMISSION_DENIED');
   });
 });

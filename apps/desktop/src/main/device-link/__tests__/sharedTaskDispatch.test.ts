@@ -1,7 +1,7 @@
 import { sharedTaskGuestPeer } from '@cindy/device-link';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildAttachmentOssRef } from '@cindy/device-link';
-import { assertSharedTaskInteractionResolveCurrent, assertSharedTaskInvoke, assertSharedTaskReferences, captureSharedTaskPush, setSharedTaskInteractionReader, setSharedTaskQueueReader, sharedTaskScopedClientId, type SharedTaskInteractionCapture, type SharedTaskPeerCapture } from '../sharedTaskDispatch.js';
+import { assertSharedTaskInteractionResolveCurrent, assertSharedTaskInvoke, assertSharedTaskReferences, captureSharedTaskPush, claimSharedTaskInteraction, setSharedTaskInteractionReader, setSharedTaskQueueReader, sharedTaskScopedClientId, type SharedTaskInteractionCapture, type SharedTaskPeerCapture } from '../sharedTaskDispatch.js';
 
 function capture(): SharedTaskPeerCapture {
   return {
@@ -125,6 +125,37 @@ describe('sharedTask dispatch scope', () => {
     expect(() => assertSharedTaskInvoke(capture(), { channel: 'maker:resolve-interaction', args })).not.toThrow();
     active = false;
     expect(() => assertSharedTaskInteractionResolveCurrent(capture(), args)).toThrow('PERMISSION_DENIED');
+  });
+  it('claims one pending interaction under a two-guest race and rechecks revoke before consume', async () => {
+    const pending = new Map([['request-race', { sessionId: 'task', kind: 'permission' as const }]]);
+    const args: unknown[] = ['request-race', { kind: 'permission', behavior: 'allow' }];
+    let active = true;
+    const peer: SharedTaskPeerCapture = { ...capture(), isCurrent: () => active, authorize: () => active };
+    setSharedTaskInteractionReader(() => pending.get('request-race'));
+    const gate = Promise.resolve();
+    const consume = async (): Promise<boolean> => {
+      assertSharedTaskInteractionResolveCurrent(peer, args);
+      await gate;
+      // Production registerMakerIpc performs this same synchronous claim after
+      // the final capture check; a late revoke cannot turn a stale admission
+      // into a successful resolver call.
+      try {
+        assertSharedTaskInteractionResolveCurrent(peer, args);
+      } catch {
+        return false;
+      }
+      return claimSharedTaskInteraction(pending, 'request-race') !== null;
+    };
+    const raced = await Promise.all([consume(), consume()]);
+    expect(raced.sort()).toEqual([false, true]);
+    expect(pending.size).toBe(0);
+
+    pending.set('request-race', { sessionId: 'task', kind: 'permission' });
+    active = true;
+    assertSharedTaskInteractionResolveCurrent(peer, args);
+    active = false;
+    expect(() => assertSharedTaskInteractionResolveCurrent(peer, args)).toThrow('PERMISSION_DENIED');
+    expect(claimSharedTaskInteraction(pending, 'request-race')).not.toBeNull();
   });
   it.each(['permission', 'ask_user_question', 'plan_review'] as const)('rejects a revoked guest with a still-pending %s request', (kind) => {
     const pending = { sessionId: 'task', kind, toolName: 'Bash' };

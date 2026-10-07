@@ -1054,6 +1054,7 @@ import { createSharedTaskContextUsageGuard } from './sharedTaskContextUsage.js';
 import { createSharedTaskSettingGuard } from './sharedTaskSetting.js';
 import {
   assertSharedTaskInteractionResolveCurrent,
+  claimSharedTaskInteraction,
   setSharedTaskInteractionReader,
   setSharedTaskQueueReader,
 } from '../device-link/sharedTaskDispatch.js';
@@ -2473,9 +2474,8 @@ initGhostSetupCoordinator({
 });
 
 function clearPendingInteraction(requestId: string): PendingInteractionEntry | null {
-  const entry = pendingInteractionResolvers.get(requestId);
+  const entry = claimSharedTaskInteraction(pendingInteractionResolvers, requestId);
   if (!entry) return null;
-  pendingInteractionResolvers.delete(requestId);
   if (entry.timeoutId) clearTimeout(entry.timeoutId);
   return entry;
 }
