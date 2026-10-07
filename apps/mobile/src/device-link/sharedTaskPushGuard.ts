@@ -20,22 +20,35 @@ interface Lease extends SharedTaskPushScope {
   readonly token: number;
 }
 
-const leases = new Map<string, Lease>();
+const leases = new Map<string, Map<number, Lease>>();
 let nextToken = 0;
 
-/** Register one task/session lease; an older lease for the same peer is replaced. */
+/** Independent list and foreground consumers retain their own authorization. */
 export function registerSharedTaskPushScope(scope: SharedTaskPushScope): () => void {
   const peer = parseSharedTaskPeer(scope.peer);
   if (!peer || peer.role !== 'host'
       || peer.sharedTaskId !== scope.sharedTaskId
       || peer.deviceId !== scope.hostDeviceId
-      || !scope.owner.accountKey
+      || !scope.owner.accountKey || !isMobileAuthOwnerCurrent(scope.owner)
       || !Number.isSafeInteger(scope.connectionEpoch) || scope.connectionEpoch < 0
       || !scope.sessionId) return () => undefined;
   const lease: Lease = { ...scope, token: ++nextToken };
-  leases.set(scope.peer, lease);
+  let consumers = leases.get(scope.peer);
+  const previous = consumers?.values().next().value;
+  if (previous && isMobileAuthOwnerCurrent(previous.owner)
+      && previous.connectionEpoch > scope.connectionEpoch) return () => undefined;
+  if (!previous || previous.connectionEpoch !== scope.connectionEpoch
+      || previous.sessionId !== scope.sessionId
+      || previous.owner.accountKey !== scope.owner.accountKey
+      || previous.owner.generation !== scope.owner.generation) {
+    consumers = new Map();
+    leases.set(scope.peer, consumers);
+  }
+  consumers!.set(lease.token, lease);
   return () => {
-    if (leases.get(scope.peer)?.token === lease.token) leases.delete(scope.peer);
+    if (leases.get(scope.peer) !== consumers) return;
+    consumers!.delete(lease.token);
+    if (consumers!.size === 0) leases.delete(scope.peer);
   };
 }
 
@@ -51,7 +64,7 @@ export function isSharedTaskPushAllowed(
 ): boolean {
   const peer = parseSharedTaskPeer(peerValue);
   if (!peer || peer.role !== 'host' || connectionEpoch === undefined) return false;
-  const lease = leases.get(peerValue);
+  const lease = leases.get(peerValue)?.values().next().value;
   if (!lease || lease.connectionEpoch !== connectionEpoch || !isMobileAuthOwnerCurrent(lease.owner)) return false;
   if (peer.sharedTaskId !== lease.sharedTaskId || peer.deviceId !== lease.hostDeviceId) return false;
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;

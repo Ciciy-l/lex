@@ -12,6 +12,31 @@ beforeEach(() => {
 });
 
 describe('shared-task push route guard', () => {
+  it('keeps list pushes active after the foreground task releases its subscription', () => {
+    const scope = { peer, sharedTaskId: 'task-a', sessionId: 'session-a', hostDeviceId: 'host-a',
+      owner: getMobileAuthOwner(), connectionEpoch: 7 };
+    const releaseList = registerSharedTaskPushScope(scope);
+    const releaseForeground = registerSharedTaskPushScope(scope);
+    releaseForeground();
+    releaseForeground();
+    expect(isSharedTaskPushAllowed(peer, { sessionId: 'session-a' }, 7)).toBe(true);
+    releaseList();
+    expect(isSharedTaskPushAllowed(peer, { sessionId: 'session-a' }, 7)).toBe(false);
+  });
+
+  it('does not let late old-account or old-connection registration replace a current consumer', () => {
+    const scope = { peer, sharedTaskId: 'task-a', sessionId: 'session-a', hostDeviceId: 'host-a',
+      owner: getMobileAuthOwner(), connectionEpoch: 7 };
+    registerSharedTaskPushScope({ ...scope, connectionEpoch: 8 });
+    const releaseLate = registerSharedTaskPushScope(scope);
+    releaseLate();
+    expect(isSharedTaskPushAllowed(peer, { sessionId: 'session-a' }, 8)).toBe(true);
+    setMobileAuthOwner('account-b');
+    registerSharedTaskPushScope({ ...scope, owner: getMobileAuthOwner(), connectionEpoch: 9 });
+    registerSharedTaskPushScope({ ...scope, connectionEpoch: 10 });
+    expect(isSharedTaskPushAllowed(peer, { sessionId: 'session-a' }, 9)).toBe(true);
+  });
+
   it('accepts only the registered task/session and connection lease', () => {
     const owner = getMobileAuthOwner();
     registerSharedTaskPushScope({
