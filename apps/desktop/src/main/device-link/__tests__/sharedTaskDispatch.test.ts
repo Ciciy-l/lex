@@ -1,6 +1,7 @@
 import { sharedTaskGuestPeer } from '@cindy/device-link';
 import { afterEach, describe, expect, it } from 'vitest';
-import { assertSharedTaskInteractionResolveCurrent, assertSharedTaskInvoke, assertSharedTaskReferences, captureSharedTaskPush, setSharedTaskInteractionReader, setSharedTaskQueueReader, type SharedTaskInteractionCapture, type SharedTaskPeerCapture } from '../sharedTaskDispatch.js';
+import { buildAttachmentOssRef } from '@cindy/device-link';
+import { assertSharedTaskInteractionResolveCurrent, assertSharedTaskInvoke, assertSharedTaskReferences, captureSharedTaskPush, setSharedTaskInteractionReader, setSharedTaskQueueReader, sharedTaskScopedClientId, type SharedTaskInteractionCapture, type SharedTaskPeerCapture } from '../sharedTaskDispatch.js';
 
 function capture(): SharedTaskPeerCapture {
   return {
@@ -168,6 +169,30 @@ describe('sharedTask dispatch scope', () => {
       { persistedContent: JSON.stringify({ images: [{ url: 'cindy-media://blobs/private.png' }] }) },
     ]) expect(() => assertSharedTaskReferences(value, 'task')).toThrow();
     expect(() => assertSharedTaskReferences({ agentReferences: [{ kind: 'message', sessionId: 'task' }] }, 'task')).not.toThrow();
+  });
+  it('does not treat a shared-task OSS prefix as attachment ownership without an authenticated binding', () => {
+    const ref = buildAttachmentOssRef({
+      ossKey: 'cindy/device-link/shared-task/sharedTask/opaque/file',
+      size: 1,
+      sha256: 'a'.repeat(64),
+      mimeType: 'image/png',
+    });
+    setSharedTaskQueueReader(() => ({ sessionId: 'task', authorAccountId: 'guest', state: 'pending' }));
+    const payload = {
+      channel: 'maker:input:update-content',
+      args: ['task', 'message', { files: [{ url: ref }] }],
+    };
+    expect(() => assertSharedTaskInvoke({ ...capture(), authorize: () => true }, payload)).toThrow('PERMISSION_DENIED');
+    const verify = (value: string, binding: { sharedTaskId: string; sessionId: string; memberId: string; accountId: string; deviceId: string }) =>
+      value === ref && binding.sharedTaskId === 'sharedTask' && binding.sessionId === 'task' &&
+      binding.memberId === 'member' && binding.accountId === 'guest' && binding.deviceId === 'phone';
+    expect(() => assertSharedTaskInvoke({ ...capture(), authorize: () => true, verifyAttachment: verify }, payload)).not.toThrow();
+  });
+  it('scopes same controller clientId by shared task member', () => {
+    const first = capture();
+    const second = { ...capture(), author: { ...capture().author, memberId: 'other-member' } };
+    expect(sharedTaskScopedClientId(first, 'same-client')).not.toBe(sharedTaskScopedClientId(second, 'same-client'));
+    expect(sharedTaskScopedClientId(first, 'same-client')).toBe(sharedTaskScopedClientId(first, 'same-client'));
   });
   it('reads queue ownership from the host and allows results after successful withdrawal', () => {
     const payload = { channel: 'maker:input:remove', args: ['task', 'message'] };

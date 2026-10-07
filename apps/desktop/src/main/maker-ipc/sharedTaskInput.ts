@@ -2,6 +2,7 @@ import type { AgentInputCreateOpts, AgentInputQueuedMessage } from '../../shared
 import type { SharedTaskPeerCapture } from '../device-link/sharedTaskDispatch.js';
 import {
   assertSharedTaskReferences, captureSharedTaskPeer, sharedTaskOwnedQueueReferences,
+  sharedTaskScopedClientId,
 } from '../device-link/sharedTaskDispatch.js';
 import { sharedTaskGuestPeer } from '@cindy/device-link';
 
@@ -16,9 +17,24 @@ export function stampSharedTaskInput(
   if (!task || !capture.isCurrent() || !capture.authorize('input.send')) {
     throw new Error('[PERMISSION_DENIED] SharedTask task access denied');
   }
-  assertSharedTaskReferences(item, capture.author.sessionId, 0, capture.author.sharedTaskId, sharedTaskOwnedQueueReferences(capture, item.clientId));
+  assertSharedTaskReferences(item, capture.author.sessionId, 0, capture.author.sharedTaskId, sharedTaskOwnedQueueReferences(capture, item.clientId), {
+    attachmentVerifier: capture.verifyAttachment,
+    attachmentBinding: {
+      sharedTaskId: capture.author.sharedTaskId,
+      sessionId: capture.author.sessionId,
+      memberId: capture.author.memberId,
+      accountId: capture.author.accountId,
+      deviceId: capture.author.deviceId,
+    },
+  });
   // Only content comes from the guest. The task owns runtime/bootstrap settings.
   stamped.createOpts = { ...task };
+  // The wire clientId is a controller-local value. Keep the same value
+  // idempotent for one member, but scope the host queue/message identity so
+  // another guest choosing the same clientId cannot deduplicate or edit it.
+  const scopedClientId = sharedTaskScopedClientId(capture, item.clientId);
+  stamped.clientId = scopedClientId;
+  stamped.chatMessage = { ...stamped.chatMessage, clientId: scopedClientId };
   stamped.workingDir = task.workingDir;
   stamped.permissionMode = task.permissionMode ?? 'ask';
   stamped.model = task.model;
@@ -27,7 +43,10 @@ export function stampSharedTaskInput(
   // Leaving any of them on a queued item would let a controller manufacture
   // recovery/ack semantics after the host has admitted ordinary content.
   delete stamped.autoReviewUserText;
-  delete stamped.durableDelivery;
+  // durableDelivery is an accepted host protocol request, not untrusted
+  // provenance. requireQueuedMessage already normalizes it to the sole
+  // supported literal true; preserve it so the durable queue receipt and
+  // ACK-loss reconciliation remain active for shared tasks.
   delete stamped.originalSyntheticTrigger;
   delete stamped.fromMobileClient;
   delete stamped.fromDeviceLinkClient;

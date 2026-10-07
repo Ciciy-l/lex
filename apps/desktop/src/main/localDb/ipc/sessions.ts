@@ -961,14 +961,16 @@ export async function getSessionRowSnapshot(id: string): Promise<SessionRowSnaps
  * 由它映射派生)、plan 开关、远程工作区标记。失败 swallow 返 null(调用方按
  * 「会话不存在」拒绝写入,不抛)。
  */
-export async function getSessionFsSnapshot(id: string): Promise<{
+export async function getSessionFsSnapshot(id: string, capturedDb?: Pick<DbClient, 'drizzle'>): Promise<{
   workingDir: string | null;
   permissionMode: string;
   planModeEnabled: boolean;
   remoteHostId: string | null;
 } | null> {
   try {
-    const db = getDbClient().drizzle;
+    // Shared-task media reads pass the profile-bound client captured before
+    // their first await. Legacy callers omit it and retain the current DB.
+    const db = capturedDb?.drizzle ?? getDbClient().drizzle;
     const [row] = await db
       .select({
         workingDir: sessions.workingDir,

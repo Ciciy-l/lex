@@ -3806,9 +3806,17 @@ async function executeRemoteInvoke(
   if (payload.channel === DL_MEDIA_FETCH_CHANNEL) {
     const mediaRequest = (payload.args ?? [])[0];
     const sharedTask = isSharedTaskPeer(src) ? captureSharedTaskPeer(src) : null;
+    let sharedMediaContext: import('./sharedTaskMediaAccess.js').SharedTaskMediaCaptureContext | undefined;
     const assertMedia = sharedTask && mediaRequest && typeof mediaRequest === 'object'
       && typeof (mediaRequest as { url?: unknown }).url === 'string'
-      ? async () => { await assertSharedTaskMedia((mediaRequest as { url: string }).url, sharedTask); }
+      ? async () => {
+        sharedMediaContext = await assertSharedTaskMedia(
+          (mediaRequest as { url: string }).url,
+          sharedTask,
+          sharedMediaContext,
+        );
+        return sharedMediaContext;
+      }
       : undefined;
     try {
       const result = assertMedia

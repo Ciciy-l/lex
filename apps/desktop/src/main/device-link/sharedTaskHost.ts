@@ -5,6 +5,7 @@ import {
 import { SharedTaskJournalConflictError, type SharedTaskJournal } from '../localDb/sharedTasks.js';
 import { isIpcError } from '../../shared/ipc-errors.js';
 import { SharedTaskAccess } from './sharedTaskAccess.js';
+import type { SharedTaskAttachmentBinding, SharedTaskAttachmentVerifier } from './sharedTaskDispatch.js';
 
 interface HostedSharedTask {
   identity: SharedTaskIdentity;
@@ -31,6 +32,8 @@ export interface SharedTaskHostOptions {
   /** Teardown only the affected sharedTask/member, not the shared relay connection. */
   revoke(sharedTaskId: string, memberId?: string): void;
   changed(sharedTaskId: string): void;
+  /** Optional server-bound attachment verifier; absent means raw OSS refs are unsupported. */
+  verifySharedTaskAttachment?: SharedTaskAttachmentVerifier;
 }
 /** One task-hosting Desktop generation. Never grants access from disk alone. */
 export class SharedTaskHost {
@@ -378,6 +381,13 @@ export class SharedTaskHost {
       author, isCurrent,
       authorize: (operation: string, queueItem?: SharedTaskQueueItem) =>
         isCurrent() && entry.access.authorize(caller, author.sessionId, operation, queueItem).allowed,
+      ...(this.options.verifySharedTaskAttachment ? {
+        verifyAttachment: (value: string, binding: SharedTaskAttachmentBinding) =>
+          isCurrent() && binding.sharedTaskId === author.sharedTaskId &&
+          binding.sessionId === author.sessionId && binding.memberId === author.memberId &&
+          binding.accountId === author.accountId && binding.deviceId === author.deviceId &&
+          this.options.verifySharedTaskAttachment!(value, binding),
+      } : {}),
     };
   }
 

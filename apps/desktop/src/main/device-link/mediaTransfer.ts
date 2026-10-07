@@ -395,11 +395,15 @@ export async function uploadLocalFile(
   opts: {
     contentType?: string;
     extHint?: string;
+    /** Shared-task owner/membership fence before each irreversible upload stage. */
+    assertAuthorized?: () => void | Promise<void>;
     /** 可选上传进度(已送入 HTTP 栈的字节数,略超前于真实网络进度)。 */
     onProgress?: (uploadedBytes: number) => void;
   } = {},
 ): Promise<UploadResult> {
+  await opts.assertAuthorized?.();
   const st = await stat(localPath);
+  await opts.assertAuthorized?.();
   if (!st.isFile()) throw new Error(`不是文件: ${localPath}`);
   const size = st.size;
   if (size > MAX_MEDIA_BYTES) {
@@ -408,14 +412,18 @@ export async function uploadLocalFile(
   const ext =
     opts.extHint !== undefined ? opts.extHint.replace(/^\.+/, '').toLowerCase() : extOf(localPath);
   const contentType = opts.contentType ?? mimeOf(ext);
+  await opts.assertAuthorized?.();
   const { putUrl, key } = await presignPut(size, ext, contentType);
+  await opts.assertAuthorized?.();
   let sha256: string;
 
   try {
     if (size <= STREAM_THRESHOLD) {
       // 小媒体:读进 Buffer 整体 PUT(成熟稳定路径)。整体 PUT 无中间粒度,
       // 完成时一次性回调。
+      await opts.assertAuthorized?.();
       const buf = await readFile(localPath);
+      await opts.assertAuthorized?.();
       if (buf.byteLength !== size) {
         throw new Error(`文件在上传前发生变化:预期 ${size} 字节,实际 ${buf.byteLength} 字节`);
       }
@@ -423,6 +431,7 @@ export async function uploadLocalFile(
       // Buffer body 可重放:换栈重试直接复用同一份字节(fetch 不 transfer ArrayBuffer),
       // 也没有需要释放的底层资源。
       await putBytesToOss(putUrl, { create: () => exactArrayBuffer(buf) }, contentType);
+      await opts.assertAuthorized?.();
       opts.onProgress?.(size);
     } else {
       // 大媒体:磁盘流式 PUT,避免整文件进内存;经计数 Transform 上报进度。
@@ -478,7 +487,9 @@ export async function uploadLocalFile(
         // 已缓冲的数据,每次换栈上传都漏一个。
         dispose: () => attempts.at(-1)?.dispose(),
       };
+      await opts.assertAuthorized?.();
       await putBytesToOss(putUrl, bodySource, contentType);
+      await opts.assertAuthorized?.();
       const uploadedAttempt = attempts.at(-1);
       if (!uploadedAttempt || uploadedAttempt.sent !== size) {
         // Cleanup is centralized below so transport and source-stream errors use the same path.

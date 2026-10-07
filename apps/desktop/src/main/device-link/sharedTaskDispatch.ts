@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { isSharedTaskPeer, parseSharedTaskPeer, isSharedTaskAttachment, type InvokePayload, type InvokeResultPayload, type SharedTaskQueueItem } from '@cindy/device-link';
 import type { SharedTaskHost } from './sharedTaskHost.js';
 
@@ -8,6 +9,25 @@ export interface SharedTaskInteractionCapture {
   toolName?: string;
   suggestions?: unknown[];
 }
+
+/**
+ * A parser result is only a shape check. A raw OSS attachment becomes usable
+ * by a shared-task guest only when the host has a verifier for the
+ * authenticated server binding that issued it. The binding is explicit so a
+ * future server adapter cannot verify only the OSS key/prefix or a renderer
+ * supplied member id.
+ */
+export interface SharedTaskAttachmentBinding {
+  sharedTaskId: string;
+  sessionId: string;
+  memberId: string;
+  accountId: string;
+  deviceId: string;
+}
+export type SharedTaskAttachmentVerifier = (
+  value: string,
+  binding: SharedTaskAttachmentBinding,
+) => boolean;
 let host: SharedTaskHost | null = null;
 let readQueueItem: ((sessionId: string, clientId: string) => (SharedTaskQueueItem & { attachments?: unknown }) | undefined) | null = null;
 let readInteractionSession: ((requestId: string) => SharedTaskInteractionCapture | undefined) | null = null;
@@ -150,7 +170,10 @@ export function assertSharedTaskInteractionResolveCurrent(
  * set comes exclusively from this member's current host-owned pending row. */
 export function sharedTaskOwnedQueueReferences(capture: SharedTaskPeerCapture, clientId: unknown): ReadonlySet<string> {
   const result = new Set<string>();
-  const item = typeof clientId === 'string' ? readQueueItem?.(capture.author.sessionId, clientId) : undefined;
+  const ids = typeof clientId === 'string'
+    ? [sharedTaskScopedClientId(capture, clientId), clientId]
+    : [];
+  const item = ids.map((id) => readQueueItem?.(capture.author.sessionId, id)).find(Boolean);
   if (!item || !capture.authorize('input.edit', item)) return result;
   if (Array.isArray(item.attachments)) for (const file of item.attachments) {
     const row = record(file);
@@ -159,11 +182,37 @@ export function sharedTaskOwnedQueueReferences(capture: SharedTaskPeerCapture, c
   return result;
 }
 
+/** Queue/durable-delivery identity is local to the task member. */
+export function sharedTaskScopedClientId(capture: SharedTaskPeerCapture, clientId: string): string {
+  if (/^shared-task:[0-9a-f]{64}$/.test(clientId)) return clientId;
+  const scope = [
+    capture.author.sharedTaskId,
+    capture.author.sessionId,
+    capture.author.memberId,
+    capture.author.accountId,
+    clientId,
+  ].join(String.fromCharCode(0));
+  const digest = createHash('sha256').update(scope).digest('hex');
+  return 'shared-task:' + digest;
+}
+
+interface SharedTaskReferenceOptions {
+  attachmentVerifier?: SharedTaskAttachmentVerifier;
+  attachmentBinding?: SharedTaskAttachmentBinding;
+}
+
 /** Input reference metadata is consumed before Agent execution, under host authority. */
-export function assertSharedTaskReferences(value: unknown, sessionId: string, depth = 0, sharedTaskId?: string, existing: ReadonlySet<string> = new Set()): void {
+export function assertSharedTaskReferences(
+  value: unknown,
+  sessionId: string,
+  depth = 0,
+  sharedTaskId?: string,
+  existing: ReadonlySet<string> = new Set(),
+  options?: SharedTaskReferenceOptions,
+): void {
   if (depth > 32) deny();
   if (Array.isArray(value)) {
-    for (const child of value) assertSharedTaskReferences(child, sessionId, depth + 1, sharedTaskId, existing);
+    for (const child of value) assertSharedTaskReferences(child, sessionId, depth + 1, sharedTaskId, existing, options);
     return;
   }
   const row = record(value);
@@ -174,13 +223,22 @@ export function assertSharedTaskReferences(value: unknown, sessionId: string, de
     // Native Agent tools retain normal task permissions; client references are
     // direct host reads and must come from this task's authorized upload area.
     if ((key === 'path' || key === 'url') && child !== undefined && child !== null && child !== '' &&
-        !(typeof child === 'string' && (existing.has(child) || sharedTaskId && isSharedTaskAttachment(child, sharedTaskId)))) deny();
+        !(typeof child === 'string' && existing.has(child))) {
+      const isBoundSharedAttachment = typeof child === 'string' &&
+        !!sharedTaskId && isSharedTaskAttachment(child, sharedTaskId) &&
+        !!options?.attachmentVerifier && !!options.attachmentBinding &&
+        options.attachmentVerifier(child, options.attachmentBinding);
+      // The OSS parser/prefix is intentionally not an authorization grant.
+      // Without a server-issued binding verifier, new raw refs fail closed;
+      // existing host-owned pending-row refs remain covered by existing.
+      if (!isBoundSharedAttachment) deny();
+    }
     // Persisted reference chips are another input to host-side hydration.
     if (key === 'persistedContent' && typeof child === 'string') {
       let parsed: unknown;
       try { parsed = JSON.parse(child); } catch { continue; }
-      assertSharedTaskReferences(parsed, sessionId, depth + 1, sharedTaskId, existing);
-    } else if (child && typeof child === 'object') assertSharedTaskReferences(child, sessionId, depth + 1, sharedTaskId, existing);
+      assertSharedTaskReferences(parsed, sessionId, depth + 1, sharedTaskId, existing, options);
+    } else if (child && typeof child === 'object') assertSharedTaskReferences(child, sessionId, depth + 1, sharedTaskId, existing, options);
   }
 }
 
@@ -246,7 +304,16 @@ export function assertSharedTaskInvoke(
     if (!capture.authorize(operation, queueItem ?? (typeof args[1] === 'string'
       ? readQueueItem?.(sessionId, args[1]) : undefined))) deny();
     const existing = sharedTaskOwnedQueueReferences(capture, typeof args[1] === 'string' ? args[1] : record(args[1])?.clientId);
-    assertSharedTaskReferences(args.slice(1), sessionId, 0, capture.author.sharedTaskId, existing);
+    assertSharedTaskReferences(args.slice(1), sessionId, 0, capture.author.sharedTaskId, existing, {
+      attachmentVerifier: capture.verifyAttachment,
+      attachmentBinding: {
+        sharedTaskId: capture.author.sharedTaskId,
+        sessionId: capture.author.sessionId,
+        memberId: capture.author.memberId,
+        accountId: capture.author.accountId,
+        deviceId: capture.author.deviceId,
+      },
+    });
   }
 }
 

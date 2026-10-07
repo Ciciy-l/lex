@@ -24,6 +24,19 @@ describe('sharedTask input uses the task Agent authority', () => {
     expect(result.sharedTaskAuthor).toEqual(author);
     expect(result.userName).toBe('Guest');
   });
+  it('preserves the host-recognized durable delivery request while stripping caller provenance', () => {
+    const result = stampSharedTaskInput({
+      ...item,
+      durableDelivery: true,
+      fromDeviceLinkClient: true,
+      fromMobileClient: true,
+      origin: { kind: 'orca', senderLabel: 'forged' },
+    }, capture, item.createOpts);
+    expect(result.durableDelivery).toBe(true);
+    expect(result).not.toHaveProperty('fromDeviceLinkClient');
+    expect(result).not.toHaveProperty('fromMobileClient');
+    expect(result).not.toHaveProperty('origin');
+  });
   it('strips a forged author from ordinary local input and rejects revoked preparation', () => {
     expect(stampSharedTaskInput({ ...item, sharedTaskAuthor: author }, undefined, undefined)).not.toHaveProperty('sharedTaskAuthor');
     expect(() => stampSharedTaskInput(item, { ...capture, isCurrent: () => false }, item.createOpts)).toThrow();
