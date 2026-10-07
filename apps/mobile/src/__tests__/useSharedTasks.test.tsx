@@ -8,7 +8,7 @@ import { useSharedTasks } from '@/device-link/useSharedTasks';
 
 const state = vi.hoisted(() => ({
   auth: { isAuthenticated: true, accountGeneration: 1 },
-  link: { status: 'online', sharedTaskAvailable: false as boolean | undefined, openLink: vi.fn(), closeLink: vi.fn(), invoke: vi.fn() },
+  link: { status: 'online', sharedTaskAvailable: false as boolean | undefined, connectionEpoch: 1, openLink: vi.fn(), closeLink: vi.fn(), invoke: vi.fn(), subscribe: vi.fn(async () => undefined), unsubscribe: vi.fn(async () => undefined) },
   api: { list: vi.fn<() => Promise<SharedTaskListItem[]>>(async () => []) },
   store: { getSessions: vi.fn(() => []), removeDevice: vi.fn(), setDeviceSessions: vi.fn() },
 }));
@@ -31,6 +31,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   state.auth.isAuthenticated = true; state.auth.accountGeneration = 1;
   state.link.status = 'online'; state.link.sharedTaskAvailable = false;
+  state.link.connectionEpoch = 1;
   state.api.list.mockResolvedValue([]); state.store.getSessions.mockReturnValue([]);
   state.link.invoke.mockResolvedValue({ id: joined.sessionId });
   setMobileAuthOwner('owner');
@@ -84,5 +85,39 @@ describe('mobile shared-task authority polling', () => {
     finish([own]);
     await act(async () => Promise.resolve());
     expect(result).toEqual([]);
+  });
+
+  it('uses only the task session topic and retries a failed subscription on the next poll', async () => {
+    state.link.sharedTaskAvailable = true;
+    state.api.list.mockResolvedValue([joined]);
+    state.link.subscribe.mockRejectedValueOnce(new Error('temporary subscribe failure'));
+    await render();
+    const peer = sharedTaskHostPeer(joined.sharedTaskId, joined.hostDeviceId);
+    expect(state.link.subscribe).toHaveBeenCalledWith(
+      expect.stringContaining(`shared-task:${joined.sharedTaskId}:`),
+      peer,
+      [`session:${joined.sessionId}`],
+    );
+    expect(state.link.invoke).not.toHaveBeenCalled();
+    state.link.subscribe.mockResolvedValue(undefined);
+    await act(async () => vi.advanceTimersByTimeAsync(5_000));
+    expect(state.link.subscribe).toHaveBeenCalledTimes(2);
+    expect(state.link.invoke).toHaveBeenCalledWith(peer, 'local-db:sessions:get', [joined.sessionId]);
+  });
+
+  it('does not let a late old lease cleanup close a replacement task lease', async () => {
+    state.link.sharedTaskAvailable = true;
+    let finishOpen!: () => void;
+    state.api.list.mockResolvedValue([joined]);
+    state.link.openLink.mockImplementationOnce(() => new Promise<void>(resolve => { finishOpen = resolve; }));
+    await render();
+    const replacement = { ...joined, sessionId: 'task-replacement', revision: joined.revision + 1 };
+    state.api.list.mockResolvedValue([replacement]);
+    await act(async () => vi.advanceTimersByTimeAsync(5_000));
+    finishOpen();
+    await act(async () => Promise.resolve());
+    expect(state.link.closeLink).not.toHaveBeenCalled();
+    const replacementPeer = sharedTaskHostPeer(replacement.sharedTaskId, replacement.hostDeviceId);
+    expect(state.link.openLink).toHaveBeenCalledWith(replacementPeer);
   });
 });

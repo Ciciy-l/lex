@@ -9,9 +9,10 @@ export function isSharedTaskGone(error: unknown): boolean {
 export function watchSharedTaskAccess(options: {
   sharedTaskId: string;
   sessionId: string;
-  read(): Promise<{ sharedTaskId: string; sessionId: string; status: string }>;
+  read(): Promise<{ sharedTaskId: string; sessionId: string; status: string; hostDeviceId?: string }>;
   isCurrent(): boolean;
   onRevoked(): void;
+  onAuthorized?: (detail: { sharedTaskId: string; sessionId: string; status: string; hostDeviceId?: string }) => void;
   delayMs?: number;
   setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
@@ -33,6 +34,8 @@ export function watchSharedTaskAccess(options: {
       const detail = await options.read();
       if (!current()) return;
       if (detail.sharedTaskId === options.sharedTaskId && detail.sessionId === options.sessionId
+          && detail.status === 'active') options.onAuthorized?.(detail);
+      else if (detail.sharedTaskId === options.sharedTaskId && detail.sessionId === options.sessionId
           && detail.status === 'closed') revoke();
     } catch (error) {
       // Timeout, offline, expired login and unsupported routes are not revocation.

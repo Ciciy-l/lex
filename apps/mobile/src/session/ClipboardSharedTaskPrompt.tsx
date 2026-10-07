@@ -16,11 +16,11 @@ export function ClipboardSharedTaskPrompt({ accountName }: { accountName?: strin
   const invitation = usePendingSharedTaskInvitationIntent();
   const { t } = useTranslation();
   const styles = useThemedStyles(makeStyles);
-  const owner = getMobileAuthOwner();
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   if (invitation?.source !== 'clipboard') return null;
   const onShow = () => {
+    const owner = getMobileAuthOwner();
     if (!mounted.current || !owner.accountKey || !isMobileAuthOwnerCurrent(owner)
         || getPendingSharedTaskInvitationIntent()?.id !== invitation.id) return;
     void rememberClipboardInvitation(owner.accountKey, invitationDigest(invitation.invitation));

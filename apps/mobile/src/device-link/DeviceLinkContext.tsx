@@ -21,6 +21,9 @@ import {
   FILE_BROWSER_EVENT_CHANNEL,
   PROTOCOL_VERSION,
   REMOTE_RESOURCE_CHANGED_CHANNEL,
+  parseSharedTaskPeer,
+  parseSharedTaskSnapshot,
+  probeSharedTaskHost,
   parseRemoteResourceChangedPayload,
   type DeviceLinkConnectionIssue,
   type DeviceLinkStatus,
@@ -37,6 +40,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { deviceLinkWsUrl, DEVICE_LINK_API_BASE_URL } from '@/config/env';
 import { MOBILE_VISUAL_MOCK_ENABLED } from '@/config/env';
 import { useAuth } from '@/auth/AuthContext';
+import { getMobileAuthOwner, isMobileAuthOwnerCurrent } from '@/auth/authOwnerGeneration';
 import {
   applyAccessRevokedFrame,
   withAccessRevokedHandling,
@@ -112,6 +116,7 @@ import {
 import { remoteSessionStore } from '@/session/remoteSessionStore';
 import { applyMobileVoiceDictionarySnapshot } from '@/session/mobileVoiceDictionaryCache';
 import { revokedDevicesStore } from '@/device-link/revokedDevicesStore';
+import { isSharedTaskPushAllowed } from '@/device-link/sharedTaskPushGuard';
 import {
   acquireDeviceSendSlot,
   buildDeviceResponsivenessProbeArgs,
@@ -556,6 +561,48 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
   const probeUnresponsiveDevice = useCallback(
     async (client: DeviceLinkClient, deviceId: string): Promise<void> => {
       try {
+        const sharedPeer = parseSharedTaskPeer(deviceId);
+        if (sharedPeer?.role === 'host') {
+          // Shared peers are never allowed to prove liveness through the
+          // device-wide sessions list.  Reconcile the authenticated task
+          // snapshot first, then read only that task's session.
+          const owner = getMobileAuthOwner();
+          const epoch = connectionEpochRef.current;
+          const isCurrent = () => !!owner.accountKey
+            && client === clientRef.current
+            && client.getStatus() === 'online'
+            && connectionEpochRef.current === epoch
+            && isMobileAuthOwnerCurrent(owner);
+          await probeSharedTaskHost(deviceId, {
+            isCurrent,
+            get: async (sharedTaskId) => {
+              if (!isCurrent()) throw new DeviceLinkError('ACCESS_REVOKED', 'Shared task probe scope changed');
+              const value = await auth.apiFetch<unknown>(
+                '/api/device-link/shared-tasks/' + encodeURIComponent(sharedTaskId),
+                { baseUrl: DEVICE_LINK_API_BASE_URL, cache: 'no-store', timeoutMs: 12_000 },
+              );
+              if (!isCurrent()) throw new DeviceLinkError('ACCESS_REVOKED', 'Shared task probe scope changed');
+              const snapshot = parseSharedTaskSnapshot(value);
+              if (snapshot.sharedTaskId !== sharedTaskId || snapshot.hostDeviceId !== sharedPeer.deviceId) {
+                throw new DeviceLinkError('ACCESS_REVOKED', 'Shared task probe scope mismatch');
+              }
+              return {
+                sharedTaskId: snapshot.sharedTaskId,
+                sessionId: snapshot.sessionId,
+                status: snapshot.status,
+              };
+            },
+            openLink: () => sendOpenLinkOnce(client, deviceId, true).request,
+            invoke: (channel, args) => sendInvokeWithAccessHandling(
+              client,
+              deviceId,
+              channel,
+              args,
+              { allowProbe: true },
+            ),
+          });
+          return;
+        }
         await sendOpenLinkOnce(client, deviceId, true).request;
         await sendInvokeWithAccessHandling(
           client,
@@ -568,7 +615,7 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
         // swallow — settle 已在 sendOpenLink / sendInvoke 内完成。
       }
     },
-    [sendOpenLinkOnce],
+    [auth.apiFetch, sendOpenLinkOnce],
   );
 
   const hasOutboundPeerRecoveryIntent = useCallback((
@@ -1111,6 +1158,7 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
     };
     const offFrame = client.onFrame((env) => routeFrame(env, {
       currentDataOwnerId: currentDataOwnerIdRef.current,
+      connectionEpoch: connectionEpochRef.current,
       onAccessRevoked: (deviceId) => {
         catalogRefreshDeviceIds.delete(deviceId);
         clearOnePresenceWipeTimer(presenceWipeTimersRef.current, deviceId);
@@ -1554,6 +1602,7 @@ function VisualMockDeviceLinkProvider({ children }: { children: ReactNode }) {
 
 export function routeFrame(env: Envelope, handlers: {
   currentDataOwnerId?: string | null;
+  connectionEpoch?: number;
   onAccessRevoked?: (deviceId: string) => void;
   onLinkClosed?: (deviceId: string, reason?: string) => void;
   onProviderChanged?: (deviceId: string) => void;
@@ -1569,6 +1618,8 @@ export function routeFrame(env: Envelope, handlers: {
   }
   if (peerLinkClosed) return;
   if (env.kind !== 'push' || !env.src) return;
+  const sharedPeer = parseSharedTaskPeer(env.src);
+  if (sharedPeer && !isSharedTaskPushAllowed(env.src, (env.payload as PushPayload).payload, handlers.connectionEpoch)) return;
   const push = env.payload as PushPayload;
   if (push.channel === 'maker:provider:changed') {
     handlers.onProviderChanged?.(env.src);
@@ -1951,10 +2002,17 @@ async function sendInvoke<T>(
     throw err;
   }
   // 收到 invoke-result 帧即为目标设备真实回包(即使 ok:false 的业务错误)。但
-  // dispatch 特判通道(media/voice)的成功不走 IPC/DB 路径,且持有探测席位时
-  // 只有指定探测通道能关熔断(纯内存 IPC handler 的回包不算)——按通道 +
-  // 席位分类收尾(review P1 多轮收敛,见 classifyDeviceSendSuccess)。
-  settleDeviceSend(deviceId, slot, classifyDeviceSendSuccess(channel, slot.decision === 'probe'));
+  // dispatch 特判通道(media/voice)的成功不走 IPC/DB 路径;普通半开请求仍不能
+  // 关熔断。显式 probe(包括 shared-task 精确 session 读)才可把真实 DB 回包
+  // 作为恢复证据——shared guest 禁止使用全局 sessions list。
+  // `allowProbe` is also used by the task-scoped shared-task probe.  That
+  // probe intentionally reads local-db:sessions:get instead of the forbidden
+  // device-wide list, so the explicit probe intent (not the channel name) is
+  // what keeps a half-open breaker from being closed by an unrelated request.
+  settleDeviceSend(deviceId, slot, classifyDeviceSendSuccess(
+    channel,
+    opts?.allowProbe === true || slot.decision === 'probe',
+  ));
   if (isInvokeResultReachabilityEvidence(result)) {
     markRemoteResponseEvidence(deviceId);
   }

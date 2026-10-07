@@ -34,6 +34,20 @@ describe('mobile shared-task access reconciliation', () => {
     expect(watch.onRevoked).not.toHaveBeenCalled();
   });
 
+  it('reports active authority only while the watch is current', async () => {
+    const onAuthorized = vi.fn();
+    const watch = watchSharedTaskAccess({
+      ...active,
+      read: async () => ({ ...active, hostDeviceId: 'host' }),
+      isCurrent: () => true,
+      onRevoked: vi.fn(),
+      onAuthorized,
+    });
+    await Promise.resolve();
+    expect(onAuthorized).toHaveBeenCalledWith({ ...active, hostDeviceId: 'host' });
+    watch();
+  });
+
   it.each([
     new ApiError('UNAUTHORIZED', 401, 'login expired'),
     new ApiError('ROUTE_NOT_FOUND', 404, 'unsupported'),

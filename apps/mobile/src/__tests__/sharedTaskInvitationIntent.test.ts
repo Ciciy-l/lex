@@ -45,6 +45,26 @@ describe('mobile shared-task invitation handoff', () => {
     expect(confirmed?.id).not.toBe(visible!.id);
   });
 
+  it('retires a bound clipboard offer on logout before confirmation', () => {
+    setMobileAuthOwner('account');
+    expect(receiveSharedTaskInvitationIntent(url, 'clipboard')).toBe(true);
+    const visible = getPendingSharedTaskInvitationIntent();
+    setMobileAuthOwner(null);
+    expect(getPendingSharedTaskInvitationIntent()).toBeNull();
+    confirmClipboardSharedTaskInvitation(visible!.id);
+    expect(getPendingSharedTaskInvitationIntent()).toBeNull();
+  });
+
+  it('does not let an old clipboard confirmation promote under a new account', () => {
+    setMobileAuthOwner('first-account');
+    expect(receiveSharedTaskInvitationIntent(url, 'clipboard')).toBe(true);
+    const visible = getPendingSharedTaskInvitationIntent();
+    setMobileAuthOwner('second-account');
+    expect(getPendingSharedTaskInvitationIntent()).toBeNull();
+    confirmClipboardSharedTaskInvitation(visible!.id);
+    expect(getPendingSharedTaskInvitationIntent()).toBeNull();
+  });
+
   it('expires memory-only links and does not accept malformed input', () => {
     expect(receiveSharedTaskInvitationIntent('cindy://shared-session?invitation=bad')).toBe(false);
     expect(getPendingSharedTaskInvitationIntent()).toBeNull();
