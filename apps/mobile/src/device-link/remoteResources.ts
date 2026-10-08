@@ -401,6 +401,7 @@ export async function getRemoteResource(
       }
       return block;
     }
+    if (['routine-list', 'routine-detail'].includes(block.primitive) && supportedPrimitives.includes(block.primitive)) return block;
     if (block.primitive === 'session-controls') {
       const data = recordOf(block.data);
       return {

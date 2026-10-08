@@ -26,6 +26,8 @@ const STORAGE_KEY = 'xdtm:draftModelMemory:v1';
  * sessionModelMirror 的 accessors,组件本身不耦合具体存储。
  */
 export interface MobileModelMemoryAccessors {
+  clearEffort?(agent: AgentKind, providerId: string, modelId: string): void;
+  clearFast?(agent: AgentKind, providerId: string, modelId: string): void;
   getEffort(agent: AgentKind, providerId: string, modelId: string): string | undefined;
   setEffort(agent: AgentKind, providerId: string, modelId: string, effort: string): void;
   getFast(agent: AgentKind, providerId: string, modelId: string): boolean | undefined;
@@ -148,6 +150,14 @@ export function draftModelMemoryFor(deviceId: string): MobileModelMemoryAccessor
     getEffort: (agent, providerId, modelId) => {
       if (!deviceId || !providerId || !modelId) return undefined;
       return getSlot(deviceId, agent, providerId, false)?.effortByModel[modelId];
+    },
+    clearEffort: (agent, providerId, modelId) => {
+      const slot = getSlot(deviceId, agent, providerId, false);
+      if (slot && modelId in slot.effortByModel) { delete slot.effortByModel[modelId]; persist(); }
+    },
+    clearFast: (agent, providerId, modelId) => {
+      const slot = getSlot(deviceId, agent, providerId, false);
+      if (slot && modelId in slot.fastByModel) { delete slot.fastByModel[modelId]; persist(); }
     },
     setEffort: (agent, providerId, modelId, effort) => {
       if (!deviceId || !providerId || !modelId || !effort) return;

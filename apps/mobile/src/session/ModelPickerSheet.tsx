@@ -1,3 +1,4 @@
+import { UnifiedModelPickerSheet, type UnifiedMobilePickerOptions } from './UnifiedModelPickerSheet';
 /**
  * ModelPickerSheet —— 模型 + 权限的可拖动底部浮窗(新建会话页与会话页 composer 共用)。
  *
@@ -71,8 +72,10 @@ const SECONDARY_SLIDE_DURATION_MS = 180;
 const EMPTY_FLAT_OPTIONS: readonly MobileModelOption[] = [];
 
 export interface ModelPickerSheetProps {
+  unified?: UnifiedMobilePickerOptions;
   visible: boolean;
   onClose(): void;
+  onClosed?(): void;
   // —— 模型目录(与旧 drop-up 面板同口径) ——
   providers: readonly ProviderView[];
   /** 被控端「模型显示/隐藏」override 快照(useDeviceProviders 透传);undefined = 不过滤。 */
@@ -126,9 +129,15 @@ export interface ModelPickerSheetProps {
   testID?: string;
 }
 
-export function ModelPickerSheet({
+export function ModelPickerSheet(props: ModelPickerSheetProps) {
+  if (props.unified && !props.providersUnsupported) return <UnifiedModelPickerSheet {...props} unified={props.unified} />;
+  return <LegacyModelPickerSheet {...props} />;
+}
+
+function LegacyModelPickerSheet({
   visible,
   onClose,
+  onClosed,
   providers,
   modelVisibilityOverrides,
   flatOptions,

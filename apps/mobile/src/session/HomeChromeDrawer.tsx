@@ -51,6 +51,9 @@ import {
   typeScale,
 } from "@/theme/tokens";
 
+import { HomeModeSwitch } from './HomeModeSwitch';
+import type { HomeMode } from './homeViewPreferenceStore';
+
 const DRAWER_CLOSE_DISTANCE_RATIO = 1 / 3;
 const DRAWER_CLOSE_VELOCITY = -800;
 const DRAWER_MAX_WIDTH = 320;
@@ -67,6 +70,8 @@ export function HomeChromeDrawer({
   onOpenSettings,
   onLogout,
   loggingOut = false,
+  mode = 'tasks',
+  onModeChange,
   open,
   user,
 }: {
@@ -81,6 +86,8 @@ export function HomeChromeDrawer({
   onOpenSettings(): void;
   onLogout(): void;
   loggingOut?: boolean;
+  mode?: HomeMode;
+  onModeChange?(mode: HomeMode): void;
   open: boolean;
   user: {
     avatar: string | null;
@@ -307,6 +314,7 @@ export function HomeChromeDrawer({
           </View>
 
           <View style={styles.divider} />
+          {onModeChange ? <HomeModeSwitch mode={mode} onModeChange={onModeChange} /> : null}
 
           <Pressable
             accessibilityLabel={t("devices.list.a11y.openSearch")}

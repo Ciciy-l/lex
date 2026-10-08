@@ -1,3 +1,4 @@
+import { MainWindowActionButton } from '@/components/MobilePrimitives';
 /**
  * 远程文件 Quick Look 预览。
  *
@@ -48,6 +49,7 @@ import { useMobileMakerTransport } from '@/device-link/useMobileMakerTransport';
 import type { FileBrowserReadFileResult, MobileMakerTransport } from '@/device-link/mobileMakerTransport';
 import { isAbsolutePathShape, pathDisplayName } from '@/session/chatPathCandidate';
 import { adaptTextFilePreviewResult, fetchRemoteAbsFileOnce, fetchRemoteAbsFileToUrl } from '@/session/remoteAbsFileFetch';
+import { preparePdfPreviewSource } from '@/session/pdfPreviewSource';
 import { formatByteSize, isHtmlFilePreviewCandidate } from '@/session/filePreview';
 import { joinRemotePath } from '@/session/htmlLocalResources';
 import { decodeGzipBase64Text, mergePathIntoComposerDraft, shareMimeForFileName } from '@/session/fileBrowserActions';
@@ -90,7 +92,7 @@ const NOTICE_DISMISS_MS = 2500;
 type TextPreviewState =
   | { status: 'loading' }
   | { status: 'ready'; lines: string[]; truncated: boolean; totalLines: number; content?: string }
-  | { status: 'unavailable'; reason: string; oversize?: boolean };
+  | { status: 'unavailable'; reason: string; oversize?: boolean; retryable?: boolean };
 
 /**
  * 「渲染态」可用的两类文本:markdown 与 HTML。两者共用同一套双态机(下面
@@ -204,8 +206,9 @@ export default function RemoteFilePreviewScreen() {
   // 卸载标记:导出轮询最长 2 分钟,用户中途离开页面时必须中止循环,
   // 不能靠 busyLabel(只防并发)兜底。
   const unmountedRef = useRef(false);
-  useEffect(() => () => {
-    unmountedRef.current = true;
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => { unmountedRef.current = true; };
   }, []);
 
   // deviceUnresponsive 进依赖(review P1):深链进入且无缓存会话时,首次
@@ -248,7 +251,7 @@ export default function RemoteFilePreviewScreen() {
         setError(null);
       })
       .catch((err) => setError(formatRemoteError(err)));
-  }, [deviceId, deviceUnresponsive, knownSession, maker, openLink, sessionId]);
+  }, [deviceId, deviceUnresponsive, knownSession, maker, openLink, recoveryEpoch, sessionId]);
 
   // absPath 单文件模式:不列目录,直接以合成 item 装单页 pager。
   useEffect(() => {
@@ -556,7 +559,13 @@ export default function RemoteFilePreviewScreen() {
           title={pathDisplayName(singleAbsPath ?? initialRelPath)}
         />
         <View style={styles.centerFill}>
-          {error ? <Text style={styles.hintText}>{error}</Text> : <ActivityIndicator color={colors.textTertiary} />}
+          {error ? <>
+            <Text style={styles.hintText}>{t('files.preview.readFailed')}</Text>
+            <MainWindowActionButton action={{ label: t('files.preview.retry'), onPress: () => {
+              setError(null);
+              setRecoveryEpoch((epoch) => epoch + 1);
+            } }} />
+          </> : <ActivityIndicator color={colors.textTertiary} />}
         </View>
       </SafeAreaView>
     );
@@ -817,6 +826,7 @@ function AvPreviewPage({
   const { t } = useTranslation();
   const [url, setUrl] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const [requestEpoch, setRequestEpoch] = useState(0);
   const requestedRef = useRef(false);
 
   useEffect(() => {
@@ -835,10 +845,11 @@ function AvPreviewPage({
     return () => {
       cancelled = true;
     };
-  }, [active, exportToUrl, item.mtimeMs, item.relPath, workdir]);
+  }, [active, exportToUrl, item.mtimeMs, item.relPath, requestEpoch, workdir]);
 
   if (failure) {
-    return <UnsupportedPage item={item} onDownload={onDownload} reason={t('files.preview.fetchAvFailed', { detail: failure })} />;
+    return <UnsupportedPage item={item} onDownload={onDownload} reason={t('files.preview.readFailed')}
+      onRetry={() => { requestedRef.current = false; setRequestEpoch((epoch) => epoch + 1); }} />;
   }
   if (!url) {
     return (
@@ -885,6 +896,8 @@ function PdfPreviewPage({
   const [failure, setFailure] = useState<string | null>(null);
   const [requestEpoch, setRequestEpoch] = useState(0);
   const requestedRef = useRef(false);
+  const releaseSourceRef = useRef<(() => void) | undefined>(undefined);
+  useEffect(() => () => releaseSourceRef.current?.(), []);
   const latestRecoveryEpochRef = useRef(recoveryEpoch);
   const requestedAtRecoveryEpochRef = useRef(recoveryEpoch);
 
@@ -908,8 +921,12 @@ function PdfPreviewPage({
     let cancelled = false;
     setFailure(null);
     void exportToUrl(item.relPath, item.mtimeMs)
-      .then((next) => {
-        if (!cancelled) setUrl(next);
+      .then(preparePdfPreviewSource)
+      .then((source) => {
+        if (cancelled) { source.release(); return; }
+        releaseSourceRef.current?.();
+        releaseSourceRef.current = source.release;
+        setUrl(source.uri);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -924,7 +941,8 @@ function PdfPreviewPage({
   const pdfSource = useMemo(() => (url ? { uri: url } : null), [url]);
 
   if (failure) {
-    return <UnsupportedPage item={item} onDownload={onDownload} reason={t('files.preview.fetchPdfFailed', { detail: failure })} />;
+    return <UnsupportedPage item={item} onDownload={onDownload} reason={t('files.preview.readFailed')}
+      onRetry={() => { requestedRef.current = false; setRequestEpoch((epoch) => epoch + 1); }} />;
   }
   if (!pdfSource) {
     return (
@@ -934,7 +952,7 @@ function PdfPreviewPage({
       </View>
     );
   }
-  return <WebView source={pdfSource} style={styles.pdfView} testID="filePreview.pdfView" />;
+  return <WebView source={pdfSource} originWhitelist={['https://*', 'http://*', 'file://*']} style={styles.pdfView} testID="filePreview.pdfView" />;
 }
 
 /**
@@ -1022,7 +1040,7 @@ function TextPreviewPage({
           } else if (res.code === 'BINARY_FILE') {
             setState({ status: 'unavailable', reason: t('files.preview.binaryFile') });
           } else {
-            setState({ status: 'unavailable', reason: res.message ?? t('files.preview.readFailed') });
+            setState({ status: 'unavailable', reason: t('files.preview.readFailed'), retryable: true });
           }
           return;
         }
@@ -1043,7 +1061,7 @@ function TextPreviewPage({
       .catch((err) => {
         if (cancelled) return;
         loadedRef.current = false; // 传输层瞬断允许重进重试
-        setState({ status: 'unavailable', reason: formatRemoteError(err) });
+        setState({ status: 'unavailable', reason: t('files.preview.readFailed'), retryable: true });
       });
     return () => {
       cancelled = true;
@@ -1284,10 +1302,12 @@ function ImagePreviewPage({
 function UnsupportedPage({
   item,
   onDownload,
+  onRetry,
   reason,
 }: {
   item: FileBrowserGridItem;
   onDownload(): void;
+  onRetry?: () => void;
   reason: string;
 }) {
   const styles = useThemedStyles(makeStyles);
@@ -1301,7 +1321,7 @@ function UnsupportedPage({
       <Text style={styles.bigName}>{item.name}</Text>
       <Text style={styles.bigMeta}>{item.metaLabel}</Text>
       <Text style={styles.hintText}>{reason}</Text>
-      <Pressable
+      {onRetry ? <MainWindowActionButton action={{ label: t('files.preview.retry'), onPress: onRetry }} /> : <Pressable
         accessibilityLabel={t('files.preview.a11yExportShareFile')}
         onPress={onDownload}
         style={({ pressed }) => [styles.ctaBtn, pressed && styles.pressed]}
@@ -1309,7 +1329,7 @@ function UnsupportedPage({
       >
         <ArrowDownToLine color={colors.ctaText} size={iconSize.md} strokeWidth={iconStroke.regular} />
         <Text style={styles.ctaLabel}>{t('files.preview.exportShare')}</Text>
-      </Pressable>
+      </Pressable>}
     </View>
   );
 }

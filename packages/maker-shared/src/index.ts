@@ -59,3 +59,5 @@ export * from './workActivityProjection.js';
 export * from './worktreePaths.js';
 export * from './sessionPrRefs.js';
 export * from './sharedTask.js';
+
+export * from './workingStatus.js';
