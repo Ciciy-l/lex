@@ -134,6 +134,12 @@ try {
 function withoutPiSecrets(env: Record<string, string | undefined>): Record<string, string | undefined> {
   const clean = { ...env };
   for (const name of SECRET_ENV_NAMES) delete clean[name];
+  // A provider added after session start was absent from the original host-generated list.
+  for (const name of Object.keys(clean)) {
+    if (/^CINDY_PI_KEY_[A-Z0-9_]+$/.test(name)
+      || name === 'CINDY_PI_SESSION_TOKEN' || name === 'CINDY_PI_API_KEY'
+      || name === 'CINDY_PI_OPENAI_PROXY_KEY' || name === 'CINDY_PI_XAI_PROXY_API_KEY') delete clean[name];
+  }
   return clean;
 }
 
@@ -3586,7 +3592,47 @@ function nativeFastPayload(payload, model) {
 }
 
 export default async function cindyBridge(pi: any) {
-  await registerCindyNativeProviderAdapters(pi);
+  const nativeProviderAdapters = await registerCindyNativeProviderAdapters(pi);
+  const initialNativeSettings = typeof pi.getSettings === 'function' ? undefined
+    : JSON.parse(readFileSync(path.join(process.env.PI_CODING_AGENT_DIR, 'settings.json'), 'utf8'));
+  pi.registerCommand('cindy-native-provider-refresh', {
+    description: 'Cindy internal native provider refresh',
+    handler: async (args: string, ctx: any) => {
+      const nonce = args.trim();
+      if (!/^[A-Za-z0-9_-]{16,128}$/.test(nonce)) return;
+      let code: 'INVALID_PAYLOAD' | 'APPLY_FAILED' | undefined;
+      let mutationStarted = false;
+      let runtimeSettings;
+      try {
+        const raw = await ctx.ui.input('cindy:provider-refresh', JSON.stringify({ nonce }));
+        let inspect = false;
+        try { const request = JSON.parse(raw); inspect = request?.nonce === nonce && request?.operation === 'inspect'; }
+        catch { /* The normal snapshot parser rejects invalid JSON. */ }
+        const snapshot = inspect ? undefined : parseCindyProviderRefreshSnapshot(raw, nonce);
+        if (!inspect && !snapshot) {
+          code = 'INVALID_PAYLOAD';
+        } else if (snapshot) {
+          mutationStarted = true;
+          await nativeProviderAdapters.refresh(snapshot, ctx, SECRET_ENV_NAMES);
+        }
+        if (!code) {
+          // getSettings returns a copy. Never reach into Pi's private session or
+          // pretend a settings.json rewrite changed the live SettingsManager.
+          const settings = typeof pi.getSettings === 'function' ? pi.getSettings() : initialNativeSettings;
+          runtimeSettings = { version: piCodingAgent.VERSION, compaction: settings.compaction ?? {} };
+        }
+      } catch {
+        code = mutationStarted ? 'APPLY_FAILED' : 'INVALID_PAYLOAD';
+      }
+      // RPC prompt swallows extension command exceptions. The host must see an
+      // explicit, nonce-bound receipt before accepting a refreshed catalog.
+      try {
+        await ctx.ui.input('cindy:provider-refresh-ack', JSON.stringify(
+          code ? { nonce, ok: false, code } : { nonce, ok: true, runtimeSettings },
+        ));
+      } catch { /* A missing receipt forces the host to retire this process. */ }
+    },
+  });
   if (!currentPermissionState().reviewOnly) registerCindyQuestionTool(pi);
   pi.on('before_provider_request', (event, ctx) => {
     const payload = astraResponsesPayload(event.payload, ctx.model) ?? event.payload;

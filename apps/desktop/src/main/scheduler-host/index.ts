@@ -36,6 +36,7 @@ import {
 import { getAgentIslandService } from '../agent-island/service.js';
 import { getDesktopNotificationsEnabled } from '../notificationService.js';
 import {
+  applyPiImModelSelectionUnderLock,
   acquirePendingAgentSwitchForDirectSend,
   broadcastSessionCreated,
   cancelSchedulerAutoResume,
@@ -116,6 +117,7 @@ async function startSchedulerInternal(deps: StartSchedulerDeps): Promise<Schedul
     beforeDispatchUserTurn: deps.beforeDispatchUserTurn,
     onUndispatchedUserTurn: deps.onUndispatchedUserTurn,
     acquirePendingAgentSwitch: acquirePendingAgentSwitchForDirectSend,
+    applyPiModelSelectionUnderLock: applyPiImModelSelectionUnderLock,
     resolveModelSelection: resolveScheduledModelSelectionLive,
     onSessionCreated: broadcastSessionCreated,
     // 停用轴裁决:每次 fire 前判保存路由是否已被用户停用(见 runner deps 注释)。

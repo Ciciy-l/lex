@@ -7,6 +7,7 @@ import { createRecoveryDiagnostics, settleMeasuredSnapshot, type RecoveryPhase }
 import { confirmTrackedSubscription, SubscriptionAcknowledgements } from './subscriptionAcknowledgements';
 import { AppState, Platform } from 'react-native';
 import { mobileDebugLog } from '@/debug/mobileDebugLog';
+import { dispatchCredentialSwitchOutcome } from '@/session/credentialSwitchOutcome';
 import {
   DeviceLinkClient,
   DeviceLinkError,
@@ -1621,6 +1622,7 @@ export function routeFrame(env: Envelope, handlers: {
   const sharedPeer = parseSharedTaskPeer(env.src);
   if (sharedPeer && !isSharedTaskPushAllowed(env.src, (env.payload as PushPayload).payload, handlers.connectionEpoch)) return;
   const push = env.payload as PushPayload;
+  dispatchCredentialSwitchOutcome(env.src, push.channel, push.payload);
   if (push.channel === 'maker:provider:changed') {
     handlers.onProviderChanged?.(env.src);
     return;
