@@ -955,6 +955,7 @@ export default function SessionScreen() {
   const params = useLocalSearchParams<{
     sessionId: string;
     notificationResponse?: string;
+    resourceKind?: string;
     deviceId?: string;
     deviceName?: string;
     remoteMemoryResourceId?: string;
