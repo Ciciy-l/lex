@@ -23,11 +23,12 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
       fy,
       fillHeight = false,
     ) {
-      const scale =
-        (fillHeight
-          ? vh / Math.max(1, dh)
-          : Math.min(vw / Math.max(1, dw), vh / Math.max(1, dh))) *
-        Math.max(1, Math.min(5, zoom));
+      const fit = fillHeight
+        ? vh / Math.max(1, dh)
+        : Math.min(vw / Math.max(1, dw), vh / Math.max(1, dh));
+      // Pinch stops at two viewer points per desktop point, never below fit.
+      const maxZoom = Math.max(1, 2 / fit);
+      const scale = fit * Math.max(1, Math.min(maxZoom, zoom));
       const width = dw * scale;
       const height = dh * scale;
       const x =
@@ -38,7 +39,7 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
         height <= vh
           ? (vh - height) / 2
           : Math.min(0, Math.max(vh - height, vh / 2 - fy * height));
-      return { x, y, width, height, scale };
+      return { x, y, width, height, scale, maxZoom };
     };
   /* END TRANSFORM */ const networkStats =
     /* BEGIN NETWORK_STATS */
@@ -249,7 +250,7 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
       zoom,
       fx,
       fy,
-      fillHeight,
+      config.desktop ? fillHeight : false,
     );
     return {
       ...r,
@@ -257,12 +258,17 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
       y: stage.clientHeight / 2 - fy * r.height,
     };
   };
+  // 0 at fit, 1 at the pinch limit for the current viewport and display.
+  const zoomProgress = (r = layout()) =>
+    r.maxZoom > 1
+      ? Math.max(0, Math.min(1, (zoom - 1) / (r.maxZoom - 1)))
+      : 0;
   function panBounds(r) {
     const vw = viewportWidth(),
       vh = stage.clientHeight;
     // Grow extra resting travel continuously from zero at fit to 180 screen
     // points at maximum zoom. Never count the unused space of a fitting axis.
-    const clearance = (180 * (Math.max(1, Math.min(5, zoom)) - 1)) / 4;
+    const clearance = 180 * zoomProgress(r);
     const axis = (viewport, content) =>
       content <= viewport
         ? {
@@ -298,7 +304,7 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
   function rubber(v, min, max, inverse = false) {
     const edge = bounded(v, min, max),
       d = v - edge;
-    const reach = 40 + 10 * (Math.max(1, Math.min(5, zoom)) - 1);
+    const reach = 40 + 40 * zoomProgress();
     return (
       edge +
       Math.sign(d) *
@@ -779,15 +785,24 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
         }
       } else {
         multi.candidate = null;
-        if (!multi.kind && travel > 8 && travel > span) multi.kind = "scroll";
+        if (!multi.kind && travel > 8 && travel > span) {
+          multi.kind = "scroll";
+          multi.restX = 0;
+          multi.restY = 0;
+          multi.aimed = mode !== "touch";
+        }
       }
     }
     if (multi.kind === "pinch") {
       manualViewMoved = true;
       cursorNeedsEntry = true;
+      const { maxZoom } = layout();
       zoom = Math.max(
         1,
-        Math.min(5, (multi.zoom * next.d) / Math.max(1, multi.d)),
+        Math.min(
+          maxZoom,
+          (Math.min(maxZoom, multi.zoom) * next.d) / Math.max(1, multi.d),
+        ),
       );
       const r = layout();
       fx =
@@ -804,13 +819,31 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
     } else if (multi.kind === "scroll") {
       const dx = next.x - multi.lastX,
         dy = next.y - multi.lastY;
-      if (control && mode !== "pan")
-        queue({
-          kind: "scroll",
-          dx: Math.max(-2000, Math.min(2000, -dx)),
-          dy: Math.max(-2000, Math.min(2000, -dy)),
-        });
-      else pan(dx, dy);
+      if (control && mode !== "pan") {
+        // Hosts scroll whatever is under the desktop cursor. Touch mode has no
+        // visible pointer, so aim it at the fingers once they are over the
+        // desktop; like taps, scrolling over the letterbox does nothing.
+        if (!multi.aimed && insideDesktop(next)) {
+          const p = point(next);
+          cx = p.x;
+          cy = p.y;
+          queue({ kind: "move", x: cx, y: cy });
+          multi.aimed = true;
+        }
+        // Hosts inject whole pixels; carry fractions so slow drags still scroll.
+        const sx = multi.restX - dx,
+          sy = multi.restY - dy,
+          wx = Math.trunc(sx),
+          wy = Math.trunc(sy);
+        multi.restX = sx - wx;
+        multi.restY = sy - wy;
+        if (multi.aimed && (wx || wy))
+          queue({
+            kind: "scroll",
+            dx: Math.max(-2000, Math.min(2000, wx)),
+            dy: Math.max(-2000, Math.min(2000, wy)),
+          });
+      } else pan(dx, dy);
     }
     if (multi.kind) {
       multi.lastX = next.x;
