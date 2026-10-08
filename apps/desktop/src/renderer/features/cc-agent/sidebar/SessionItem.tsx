@@ -1,3 +1,4 @@
+import { SessionTaskMenu } from './SessionTaskMenu';
 /**
  * SessionItem — 单条 CCS 会话行
  * ---------------------------------------------------------------------------
@@ -44,19 +45,15 @@ import { usePrActions, usePrRefsForSession } from '@/contexts/PrRefsContext';
 import { SessionTooltip } from './SessionTooltip';
 import {
   DropdownMenu,
-  DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
-  MENU_CONTENT_CLASS,
   MENU_ITEM_CLASS,
   MENU_ROW_CLASS,
-  MENU_SEPARATOR_CLASS,
   MENU_SUB_CONTENT_CLASS,
 } from './menuStyles';
 import { toast } from '@/lib/toast';
@@ -1246,110 +1243,14 @@ export const SessionItem = memo(function SessionItem({
               }}
             />
           </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="start"
-            sideOffset={2}
-            onClick={(e) => e.stopPropagation()}
-            // 统一菜单 surface(menuStyles)。min-w-32:基线 128px,长 label
-            // (如「复制 SDK Session ID」)按 Radix 内容自适应,避免被截断。
-            className={cn(MENU_CONTENT_CLASS, 'min-w-32 overflow-hidden')}
-          >
-            {isArchived ? (
-              <>
-                {/* Archived 变体：Rename / Unarchive / [Copy Session ID submenu] / Delete */}
-                <DropdownMenuItem
-                  disabled={remoteWritesBlocked}
-                  onSelect={handleRenameSelect}
-                  className={MENU_ITEM_CLASS}
-                >
-                  {t('ccAgent.sidebar.sessionMenu.rename')}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={remoteWritesBlocked}
-                  onSelect={handleUnarchiveSelect}
-                  className={MENU_ITEM_CLASS}
-                >
-                  {t('ccAgent.sidebar.sessionMenu.unarchive')}
-                </DropdownMenuItem>
-                {exportShareMenuItem}
-                {copySessionIdSubmenu}
-                <DropdownMenuSeparator className={MENU_SEPARATOR_CLASS} />
-                <DropdownMenuItem
-                  disabled={remoteWritesBlocked}
-                  onSelect={handleDeleteSelect}
-                  className={MENU_ITEM_CLASS}
-                >
-                  {t('ccAgent.sidebar.sessionMenu.delete')}
-                </DropdownMenuItem>
-              </>
-            ) : isEmpty ? (
-              <>
-                {/* Draft 变体：Rename / [Copy Session ID submenu] / Delete */}
-                <DropdownMenuItem
-                  disabled={remoteWritesBlocked}
-                  onSelect={handleRenameSelect}
-                  className={MENU_ITEM_CLASS}
-                >
-                  {t('ccAgent.sidebar.sessionMenu.rename')}
-                </DropdownMenuItem>
-                {copySessionIdSubmenu}
-                <DropdownMenuSeparator className={MENU_SEPARATOR_CLASS} />
-                <DropdownMenuItem
-                  disabled={remoteWritesBlocked}
-                  onSelect={handleDeleteSelect}
-                  className={MENU_ITEM_CLASS}
-                >
-                  {t('ccAgent.sidebar.sessionMenu.delete')}
-                </DropdownMenuItem>
-              </>
-            ) : (
-              <>
-                {/* 标准 / Pinned 变体：Pin↔Unpin / Rename / [Copy Session ID submenu] / Archived / Delete */}
-                <DropdownMenuItem
-                  disabled={remoteWritesBlocked}
-                  onSelect={handlePinSelect}
-                  className={MENU_ITEM_CLASS}
-                >
-                  {isPinned
-                    ? t('ccAgent.sidebar.sessionMenu.unpin')
-                    : t('ccAgent.sidebar.sessionMenu.pin')}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={remoteWritesBlocked}
-                  onSelect={handleRenameSelect}
-                  className={MENU_ITEM_CLASS}
-                >
-                  {t('ccAgent.sidebar.sessionMenu.rename')}
-                </DropdownMenuItem>
-                {moveToProjectSubmenu}
-                <DropdownMenuSeparator className={MENU_SEPARATOR_CLASS} />
-                {copySessionIdSubmenu}
-                <DropdownMenuItem
-                  disabled={remoteWritesBlocked}
-                  onSelect={handleOpenInNewWindowSelect}
-                  className={MENU_ITEM_CLASS}
-                >
-                  {t('ccAgent.sidebar.sessionMenu.openInNewWindow')}
-                </DropdownMenuItem>
-                {exportShareMenuItem}
-                <DropdownMenuSeparator className={MENU_SEPARATOR_CLASS} />
-                <DropdownMenuItem
-                  disabled={remoteWritesBlocked}
-                  onSelect={handleArchiveSelect}
-                  className={MENU_ITEM_CLASS}
-                >
-                  {t('ccAgent.sidebar.sessionMenu.archived')}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={remoteWritesBlocked}
-                  onSelect={handleDeleteSelect}
-                  className={MENU_ITEM_CLASS}
-                >
-                  {t('ccAgent.sidebar.sessionMenu.delete')}
-                </DropdownMenuItem>
-              </>
-            )}
-          </DropdownMenuContent>
+          <SessionTaskMenu key={`${session.deviceLinkDeviceId ?? ''}:${session.id}`}
+            session={session} open={menuPos !== null} sideOffset={2} writeBlocked={remoteWritesBlocked}
+            returnFocus={() => rowRef.current?.focus()}
+            onRename={handleRenameSelect} onPin={handlePinSelect}
+            onArchive={handleArchiveSelect} onUnarchive={handleUnarchiveSelect} onDelete={handleDeleteSelect}
+            onOpenInNewWindow={handleOpenInNewWindowSelect}
+            move={moveToProjectSubmenu} tags={null} copy={copySessionIdSubmenu} exportShare={exportShareMenuItem}
+          />
         </DropdownMenu>
       )}
 
