@@ -169,6 +169,7 @@ function createRunnerHarness(
   };
   const maker = {
     createSession: vi.fn(async () => session),
+    getSession: vi.fn(() => session),
     getSessionMeta: vi.fn(async () => null),
     isSessionAlive: vi.fn(() => false),
     closeSession: vi.fn(async () => undefined),

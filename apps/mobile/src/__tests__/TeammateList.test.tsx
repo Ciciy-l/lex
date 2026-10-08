@@ -63,7 +63,8 @@ it('uses a concise recovery notice, not device IDs or transport diagnostics', as
   expect(node.textContent).not.toMatch(/private-device-id|DEVICE_UNRESPONSIVE|circuit open|Computer identity/);
   expect(node.querySelector('[data-testid="teammates.refresh"]')).not.toBeNull();
   expect(node.textContent).toContain('devices.resources.hostOffline');
-  expect(node.textContent).not.toContain('Last reply');
+  // Desktop parity: the cached reply stays readable while the host is offline.
+  expect(node.textContent).toContain('Last reply');
 });
 it('shows readable message previews rather than Markdown delimiters or link targets', async () => {
   const formatted = { ...item, item: { ...item.item, display: {

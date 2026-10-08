@@ -281,6 +281,7 @@ it('persistent setup shows actual steps and errors, retires desktop instructions
 
 
 it('persistent setup cancellation waits for a host terminal update and allows retry after failure', async () => {
+  routeParams.deviceId = 'd1';
   let receipt!: (value: { accepted: boolean }) => void;
   const authorization = { kind: 'plugin_setup', requestId: 'setup-1', revision: 1,
     ghost: { id: 'test-plugin', name: 'Test Plugin' },

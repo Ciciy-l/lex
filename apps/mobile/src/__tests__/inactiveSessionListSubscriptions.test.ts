@@ -10,10 +10,12 @@ describe('inactive session list subscriptions', () => {
   it('gates both mounted list routes by navigation focus', () => {
     for (const path of ['src/session/HomeSurface.tsx', 'app/devices/[deviceId].tsx']) {
       const screen = source(path);
-      expect(screen).toContain('const screenFocused = useIsFocused();');
+      expect(screen).toContain(path === 'src/session/HomeSurface.tsx'
+        ? 'const screenFocused = useIsFocused() && (props.active ?? true);'
+        : 'const screenFocused = useIsFocused();');
       expect(screen).toContain(
         path === 'src/session/HomeSurface.tsx'
-          ? '<RemoteSessionStoreSubscriptionGate enabled={screenFocused && props.active !== false}>'
+          ? '<RemoteSessionStoreSubscriptionGate enabled={screenFocused}>'
           : '<RemoteSessionStoreSubscriptionGate enabled={screenFocused}>',
       );
     }

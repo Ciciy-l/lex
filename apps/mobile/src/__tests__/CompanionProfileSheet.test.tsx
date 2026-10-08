@@ -7,7 +7,7 @@ vi.mock('react-native', () => ({ Platform: { OS: 'ios' }, StyleSheet: { create: 
 vi.mock('expo-router', () => ({ useRouter: () => ({ push: h.push }) }));
 vi.mock('expo-crypto', () => ({ randomUUID: () => 'test-id' }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }) }));
-vi.mock('lucide-react-native', () => Object.fromEntries(['Brain','Check','ChevronRight','Clock3','FileText','MessageCircle','Search','Settings2','Sparkles','UserRound'].map(key => [key, () => null])));
+vi.mock('lucide-react-native', () => Object.fromEntries(['ImagePlus','ChevronDown','Brain','Check','ChevronRight','Clock3','FileText','MessageCircle','Search','Settings2','Sparkles','UserRound'].map(key => [key, () => null])));
 vi.mock('@/auth/AuthContext', () => ({ useAuth: () => ({ accountGeneration: h.account }) }));
 vi.mock('@/device-link/DeviceLinkContext', () => ({ useDeviceLink: () => ({ invoke: h.invoke, openLink: h.openLink }) }));
 vi.mock('@/device-link/remoteResources', () => ({ invokeRemoteResourceAction: (...args: unknown[]) => h.invoke(...args) }));
@@ -23,6 +23,7 @@ vi.mock('@/session/companionProfileData', async original => ({ ...await original
 vi.mock('@/session/CompanionProfileNativeView', () => ({ CompanionProfileNativeView: (p: any) => { h.view = p; return p.models; } }));
 vi.mock('@/session/CompanionCreateNativeView', () => ({ CompanionCreateNativeView: (p: any) => { h.create = p; return null; } }));
 vi.mock('@/session/CompanionModelChain', () => ({ readCompanionModelChain: (v: string) => JSON.parse(v || '[]'), CompanionModelChain: (p: any) => { h.model = p; return null; }, CompanionModelPicker: (p: any) => { h.picker = p; return null; } }));
+vi.mock('@/platform/chrome/NativePullDownMenu', () => ({ NativePullDownMenu: () => null, usesNativePullDownMenu: () => true }));
 import { CompanionProfileSheet, CompanionCreateSheet } from '@/session/CompanionProfileSheet';
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const resource = { ref: { collectionId: 'teammates', kind: 'bot', id: 'bot' }, display: { title: 'Cindy' }, links: [], revision: 'v1' };

@@ -114,7 +114,7 @@ describe('mobile message content desktop-first surface', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/session/MessageRenderer.tsx'), 'utf8');
     const tokenSource = readFileSync(resolve(process.cwd(), 'src/theme/tokens.ts'), 'utf8');
 
-    expect(tokenSource).toContain('code: 15');
+    expect(tokenSource).toContain('bodySmall: 15');
     expect(source).toContain('messageText: { color: colors.textPrimary, fontSize: typeScale.bodyLarge, lineHeight: lineHeight.bodyLarge }');
     expect(source.match(/fontSize: typeScale\.code/g)).toHaveLength(4);
   });

@@ -1127,7 +1127,8 @@ describe('registerSkillhubIpc usage handlers', () => {
 
     expect(readSkillRawFile).toHaveBeenCalledWith({
       filePath: mdPath,
-      attestedRoot: fs.realpathSync(builtInRoot),
+      attestedRoot: process.platform === 'win32'
+        ? fs.realpathSync.native(builtInRoot).toLowerCase() : fs.realpathSync(builtInRoot),
     });
     expect(getLocalSkillUsageSummary).toHaveBeenCalledWith({
       skillName: 'cindy-skill-creator',

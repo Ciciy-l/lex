@@ -2287,9 +2287,7 @@ describe('session-agent-switch handoff injection', () => {
     const opts = vi.mocked(session.send).mock.calls[0]![1]!;
     expect(opts[AUTO_REVIEW_SOURCE_CONTENT]).toBe('修吧。');
     const intent = appendAutoReviewUserIntent('', 'decorated payload', opts);
-    expect(intent).toContain('修复伙伴未读状态，不要部署。');
-    expect(intent).toContain('修吧。');
-    expect(intent).not.toContain('assistant handoff');
+    expect(intent).toEqual({ earlierUserMessages: ['修复伙伴未读状态，不要部署。'], currentUserMessage: '修吧。' });
   });
 
   it('persists empty plugin authorship rather than promoting plugin instructions', async () => {
@@ -2760,7 +2758,7 @@ describe('session-agent-switch handoff injection', () => {
       // 切换已关闭旧引擎 live session → drain 时拿不到,走 lazy-create。
       getSession: vi.fn(() => {
         callOrder.push('getSession');
-        return undefined;
+        return newEngineSession ?? undefined;
       }),
       applyPendingAgentSwitch: vi.fn(async () => {
         callOrder.push('applySwitch');

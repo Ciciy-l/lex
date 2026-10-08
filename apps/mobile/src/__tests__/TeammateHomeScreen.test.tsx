@@ -23,7 +23,7 @@ vi.mock('react-native', async () => {
 });
 vi.mock('expo-router', () => ({ Stack: { Screen: () => null }, useIsFocused: () => h.focused, useNavigation: () => ({ getState: () => ({ routes: [] }) }), useRouter: () => ({ dismissTo: h.dismissTo, replace: h.replace }) }));
 vi.mock('react-native-safe-area-context', () => ({ SafeAreaView: 'div' }));
-vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }) }));
 vi.mock('lucide-react-native', () => ({ Menu: () => null }));
 vi.mock('@/components/AppText', () => ({ Text: 'span' }));
 vi.mock('@/auth/AuthContext', () => ({ useAuth: () => h.auth }));
@@ -82,9 +82,9 @@ describe('teammate home entry', () => {
     await render(); expect(h.nav.openTeammate).not.toHaveBeenCalled(); expect(h.nav.rememberTeammate).not.toHaveBeenCalled();
     h.roster.error = null; h.roster.authoritative = true; h.roster.isOnline.mockReturnValue(true); await render(); expect(h.nav.openTeammate).not.toHaveBeenCalled();
   });
-  it('does not hijack a roster the user started searching while initial synchronization was pending', async () => {
+  it('does not hijack a roster the user refreshed while initial synchronization was pending', async () => {
     h.roster.loading = true; await render();
-    await act(async () => h.list.onInteract()); h.roster.loading = false; await render();
+    await act(async () => h.list.onRefresh()); h.roster.loading = false; await render();
     expect(h.nav.openTeammate).not.toHaveBeenCalled();
   });
   it.each(['refresh', 'back', 'mode'])('does not hijack reconnect after %s', async (action) => {
@@ -94,7 +94,7 @@ describe('teammate home entry', () => {
     if (action === 'mode') { h.nav.mode = 'tasks'; await render(); }
     h.roster.authoritative = true; h.roster.isOnline.mockReturnValue(true); await render();
     expect(h.nav.openTeammate).not.toHaveBeenCalled();
-    expect(h.roster.refresh).toHaveBeenCalledTimes(1);
+    expect(h.roster.refresh).toHaveBeenCalledTimes(action === 'refresh' ? 1 : 0);
     // Choosing a row still opens it.
     await act(async () => h.list.onSelect(teammate));
     expect(h.nav.openTeammate).toHaveBeenCalledExactlyOnceWith(teammate);

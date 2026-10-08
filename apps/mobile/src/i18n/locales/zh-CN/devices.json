@@ -1028,6 +1028,8 @@
     "awaiting": "等你确认",
     "emptyCopyCreate": "伙伴会记得你们聊过的事，也能帮你在电脑上做事。",
     "taskResult": "任务结果",
-    "collapseResult": "收起结果"
+    "collapseResult": "收起结果",
+    "directLimitReached": "本轮伙伴对话已到上限，双方已回到各自的主任务",
+    "directUnavailable": "这条伙伴对话已不可用。"
   }
 }

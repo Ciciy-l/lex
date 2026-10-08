@@ -40,7 +40,7 @@ function renderChildren(count: number, anchor: number, old = false) {
     buildHomeProjectChildOffsets, estimateHomeSessionRowHeight: () => 60,
     shouldWindowHomeProjectChildren, resolveHomeProjectChildWindow,
     PROJECT_CHILD_WINDOW_THRESHOLD: 20, PROJECT_CHILD_WINDOW_OVERSCAN: 4, PROJECT_CHILD_WINDOW_SIZE: 15,
-    Reanimated: { View: 'animated-view' }, View: 'view', HomeProjectWindowAnchorTracker: 'tracker',
+    Reanimated: { View: 'animated-view' }, View: 'view', HomeProjectWindowAnchorTracker: 'tracker', AutomationWindowAnchorTracker: 'tracker',
     HomeSessionRow: 'row', SwipeableSessionRow: 'swipe', Fragment,
     Pressable: 'button', Text: 'text', ChevronRight: 'chevron', iconSize: {}, iconStroke: {},
   };

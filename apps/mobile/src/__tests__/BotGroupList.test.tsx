@@ -193,7 +193,7 @@ describe('create from the teammate page + menu', () => {
 
   it('reuses one create intent when the first acknowledgement is lost, then opens the reconciled group', async () => {
     const value = await render();
-    await click('botGroups.create');
+    await click('teammates.createMenu.action.group:mac');
     await act(async () => { h.inputs['botGroup.create.name'].onChangeText('官网'); });
     await click('botGroup.create.member.abu');
     await click('botGroup.create.member.mimi');

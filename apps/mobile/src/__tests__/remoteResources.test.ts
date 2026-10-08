@@ -216,7 +216,7 @@ describe('portable task controls', () => {
         { id: 'bad-confirm', label: 'Bad', confirmation: { title: '' } },
         { id: 'bad-body', label: 'Bad', confirmation: { title: 'Sure?', body: 42 } },
         { id: 'null-confirm', label: 'Bad', confirmation: null },
-        { id: 'x'.repeat(161), label: 'Too long' },
+        { id: 'x'.repeat(513), label: 'Too long' },
       ],
       blocks: [
         { id: 'workflow', primitive: 'session-controls', fallbackMarkdown: 'Installing dependencies', data: { input: 'blocked', busy: true, path: '/private' } },

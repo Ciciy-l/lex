@@ -1028,6 +1028,8 @@
     "awaiting": "Needs your OK",
     "emptyCopyCreate": "Teammates remember what you talked about and can get things done on your computer.",
     "taskResult": "Task result",
-    "collapseResult": "Hide result"
+    "collapseResult": "Hide result",
+    "directLimitReached": "This teammate conversation reached its limit; both teammates returned to their main tasks",
+    "directUnavailable": "This teammate conversation is no longer available."
   }
 }

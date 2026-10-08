@@ -571,19 +571,19 @@ it('keeps image-only and linked results available from the mobile receipt', asyn
   const { CompanionTaskResultCard } = await import('@/session/CompanionTaskResultCard');
   const meta = { ...message.companion!.meta, role: 'delegation-result', childSessionId: 'child',
     result: { runSequence: 1, status: 'completed', workingDir: '/child-task',
-      text: '![chart](./chart.png) [Report](https://example.com/report.pdf)', artifacts: [] } } as any;
+      text: '![chart](./chart.png) [Report](https://example.com/report.pdf)', artifacts: [{ absolutePath: '/child-task/chart.png' }] } } as any;
   await act(async () => root.render(createElement(CompanionTaskResultCard, { meta, deviceId: 'home' })));
   await act(async () => node.querySelector('button')!.click());
   expect(node.textContent).toContain('![chart](./chart.png)');
   expect(node.textContent).not.toContain('devices.companions.noWrittenResult');
-  const chart = [...node.querySelectorAll('button')].find(button => button.textContent === 'chart')!;
+  const chart = [...node.querySelectorAll('button')].find(button => button.textContent === 'chart.png')!;
   await act(async () => chart.click());
   expect(h.push).toHaveBeenCalledWith({ pathname: '/files/preview/[sessionId]', params: {
-    sessionId: 'child', deviceId: 'home', absPath: '/child-task/./chart.png',
+    sessionId: 'child', deviceId: 'home', absPath: '/child-task/chart.png',
   } });
-  const report = [...node.querySelectorAll('button')].find(button => button.textContent === 'Report')!;
-  await act(async () => report.click());
-  expect(h.openURL).toHaveBeenCalledWith('https://example.com/report.pdf');
+  // Without a supplied Markdown renderer, fallback text stays readable and does not mint link actions.
+  expect(node.textContent).toContain('https://example.com/report.pdf');
+  expect(h.openURL).not.toHaveBeenCalled();
 });
 
 it('does not offer a local result link until the child file is verified', async () => {
@@ -593,16 +593,16 @@ it('does not offer a local result link until the child file is verified', async 
   const { CompanionTaskResultCard } = await import('@/session/CompanionTaskResultCard');
   const meta = { ...message.companion!.meta, role: 'delegation-result', childSessionId: 'child',
     result: { runSequence: 1, status: 'completed', workingDir: '/child-task',
-      text: '[Chart](./chart.png)', artifacts: [] } } as any;
+      text: '[Chart](./chart.png)', artifacts: [{ absolutePath: '/child-task/chart.png' }] } } as any;
   await act(async () => root.render(createElement(CompanionTaskResultCard, { meta, deviceId: 'home' })));
   await act(async () => node.querySelector('button')!.click());
   expect(node.textContent).toContain('Chart');
-  expect([...node.querySelectorAll('button')].some(button => button.textContent === 'Chart')).toBe(false);
+  expect([...node.querySelectorAll('button')].some(button => button.textContent === 'chart.png')).toBe(false);
   await act(async () => completeStat({ kind: 'file', resolvedPath: '/child-task/chart.png' }));
-  const chart = [...node.querySelectorAll('button')].find(button => button.textContent === 'Chart')!;
+  const chart = [...node.querySelectorAll('button')].find(button => button.textContent === 'chart.png')!;
   await act(async () => chart.click());
   expect(h.push).toHaveBeenCalledWith({ pathname: '/files/preview/[sessionId]', params: {
-    sessionId: 'child', deviceId: 'home', absPath: '/child-task/./chart.png',
+    sessionId: 'child', deviceId: 'home', absPath: '/child-task/chart.png',
   } });
 });
 
@@ -634,7 +634,7 @@ it('reveals frozen failure details only after opening the result and its details
   expect(node.textContent).not.toContain('TIMEOUT:');
   await act(async () => node.querySelector('button')!.click());
   expect(node.textContent).not.toContain('TIMEOUT:');
-  const details = Array.from(node.querySelectorAll('button')).find(button => button.textContent === 'interaction.companion.details');
+  const details = Array.from(node.querySelectorAll('button')).find(button => button.textContent === 'devices.companions.errorDetails');
   await act(async () => details!.click());
   expect(node.textContent).toContain('TIMEOUT: upstream did not finish');
 });

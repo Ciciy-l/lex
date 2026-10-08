@@ -141,6 +141,7 @@ function createRunnerHarness(
   const notifier: Notifier = { notify: vi.fn(async () => undefined) };
   const maker = {
     createSession: vi.fn(async () => session),
+    getSession: vi.fn(() => session),
     getSessionMeta: vi.fn(async () => opts.sessionMeta ?? null),
     isSessionAlive: vi.fn(() => false),
     closeSession: vi.fn(async () => undefined),

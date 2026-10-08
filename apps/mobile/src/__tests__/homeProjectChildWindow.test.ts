@@ -149,8 +149,8 @@ describe('home project child window', () => {
     };
     for (const platform of ['android', 'ios']) {
       for (const grouped of [false, true]) {
-        expect(readBatch('initialNumToRender', platform, grouped)).toBe(platform === 'android' && grouped ? 4 : 12);
-        expect(readBatch('maxToRenderPerBatch', platform, grouped)).toBe(platform === 'android' && grouped ? 2 : 12);
+        expect(readBatch('initialNumToRender', platform, grouped)).toBe(12);
+        expect(readBatch('maxToRenderPerBatch', platform, grouped)).toBe(12);
       }
     }
     expect(source).toContain('updateCellsBatchingPeriod={32}');

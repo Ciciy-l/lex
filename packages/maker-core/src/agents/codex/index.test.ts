@@ -21236,8 +21236,10 @@ describe('CodexAgent MCP thread context hooks', () => {
       command: 'npm install express',
       cwd: '/repo',
     });
-    expect(seenIntents.at(-1)).toContain('ORIGINAL_INTENT_MARKER');
-    expect(seenIntents.at(-1)).not.toContain('DRIFT_INTENT_MARKER');
+    expect(seenIntents.at(-1)).toEqual({
+      earlierUserMessages: ['ORIGINAL_INTENT_MARKER'],
+      currentUserMessage: 'Clarifications:\n- Pick one → Keep going',
+    });
     await handle.close();
   });
 

@@ -623,7 +623,7 @@ describe('cindy-bridge extension source', () => {
       expect(CINDY_BRIDGE_EXTENSION_SOURCE).not.toContain(
         "if (credentialRead && permission.mode === 'bypassPermissions')",
       );
-      expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain("if (permission.mode === 'bypassPermissions') return;");
+      expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain("if (permission.mode === 'bypassPermissions' && !controlPlaneWrite) return;");
       expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain('await ctx.ui.input(');
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
@@ -1756,13 +1756,15 @@ describe('cindy-bridge extension source', () => {
       "if (event.toolName === 'cindy_pi_extension' || event.toolName === 'cindy_pi_command') return;",
     );
     expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain(
-      "if (permission.mode === 'bypassPermissions') return;",
+      "if (permission.mode === 'bypassPermissions' && !controlPlaneWrite) return;",
     );
   });
 
-  it('hard-blocks writes only in read-only reference roots, not external writable roots', () => {
+  it('routes control-plane writes to confirmation and preserves canonical write evidence', () => {
     const source = CINDY_BRIDGE_EXTENSION_SOURCE;
-    const readOnlyGate = source.indexOf('permission.readOnlyRoots.some((root) =>');
+    const readOnlyGate = source.indexOf('const controlPlaneWrite = Boolean(');
+    expect(source).toContain('...(controlPlaneWrite ? { controlPlaneWrite: true } : {})');
+    expect(source).not.toContain('permission.readOnlyRoots.some((root) =>');
     const credentialGate = source.indexOf('const environRead = isCindyShellTool(event.toolName)', readOnlyGate);
     expect(readOnlyGate).toBeGreaterThan(-1);
     expect(credentialGate).toBeGreaterThan(readOnlyGate);

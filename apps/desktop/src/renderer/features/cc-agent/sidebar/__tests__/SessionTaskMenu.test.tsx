@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import { useRef, useState } from 'react';
+import { MemoryRouter } from 'react-router-dom';
+import { setDataOwnerGeneration } from '@/contexts/dataOwnerGeneration';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { sharedTaskHostPeer } from '@cindy/device-link';
@@ -18,15 +20,9 @@ vi.mock('react-i18next', () => ({
 vi.mock('@/features/device-link/remoteProjectsStore', () => ({
   remoteProjectsStore: { removeDevice: vi.fn() },
 }));
-vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ dataOwnerId: 'owner' }) }));
+vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ dataOwnerId: 'owner', isAuthenticated: true }) }));
 vi.mock('@/lib/toast', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
-vi.mock('@/features/device-link/JoinSharedTaskDialog', () => ({
-  JoinSharedTaskDialog: ({ onOpenChange }: { onOpenChange: (open: boolean) => void }) => (
-    <div role="dialog" aria-label="join">
-      <button onClick={() => onOpenChange(false)}>Cancel join</button>
-    </div>
-  ),
-}));
+
 
 const session = { id: 'task', title: 'Task', status: 'active' } as Session;
 function Harness({ target = session, blocked = false }: { target?: Session; blocked?: boolean }) {
@@ -34,7 +30,7 @@ function Harness({ target = session, blocked = false }: { target?: Session; bloc
   const trigger = useRef<HTMLButtonElement>(null);
   const slot = (text: string) => <DropdownMenuItem>{text}</DropdownMenuItem>;
   return (
-    <div onClick={state.rowClick}>
+    <MemoryRouter><div onClick={state.rowClick}>
       <DropdownMenu open={open} onOpenChange={setOpen}>
         <DropdownMenuTrigger ref={trigger}>More</DropdownMenuTrigger>
         <SessionTaskMenu
@@ -54,7 +50,7 @@ function Harness({ target = session, blocked = false }: { target?: Session; bloc
           exportShare={slot('export')}
         />
       </DropdownMenu>
-    </div>
+    </div></MemoryRouter>
   );
 }
 function openMenu() {
@@ -65,9 +61,10 @@ function labels() {
 }
 beforeEach(() => {
   vi.clearAllMocks();
+  setDataOwnerGeneration('owner');
   state.host.mockResolvedValue({ available: false, detail: null });
   Object.assign(window, {
-    electronAPI: { sharedTask: { host: state.host, account: vi.fn().mockResolvedValue([]) } },
+    electronAPI: { sharedTask: { host: state.host, account: vi.fn().mockImplementation(async ({ action }) => action === 'get' ? null : []) } },
   });
 });
 afterEach(cleanup);
@@ -131,7 +128,7 @@ it('keeps the guest menu limited to shared-task management', () => {
   expect(screen.queryByRole('separator')).toBeNull();
 });
 
-it('keeps the rejoin flow mounted when shared-task management closes', async () => {
+it('keeps the rejoin form mounted in shared-task management after the menu closes', async () => {
   render(
     <Harness target={{ ...session, deviceLinkDeviceId: sharedTaskHostPeer('share', 'device') }} />,
   );
@@ -139,8 +136,9 @@ it('keeps the rejoin flow mounted when shared-task management closes', async () 
   openMenu();
   fireEvent.click(screen.getByRole('menuitem', { name: 'title' }));
   fireEvent.click(await screen.findByRole('button', { name: 'rejoin' }));
-  expect(screen.getByRole('dialog', { name: 'join' })).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: 'Cancel join' }));
+  expect(screen.queryByRole('menu')).toBeNull();
+  expect(within(screen.getByRole('dialog')).getByRole('textbox', { name: /invitation/ })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'dismiss' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   await waitFor(() => expect(document.activeElement).toBe(more));
   expect(state.rowClick).not.toHaveBeenCalled();

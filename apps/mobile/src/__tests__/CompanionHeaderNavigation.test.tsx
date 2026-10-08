@@ -33,6 +33,7 @@ vi.mock('@/session/HomeHeaderGlassButton', () => ({ HomeHeaderGlassButton: ({ on
 vi.mock('@/session/CompanionPresenceRing', () => ({ CompanionPresenceRing: ({ active }: any) => active ? createElement('i', { 'data-testid': 'ring' }) : null }));
 vi.mock('@/session/CompanionProfileSheet', () => ({ CompanionProfileSheet: (props: unknown) => { h.profile = props; return null; } }));
 vi.mock('@/session/useTeammateNavigation', () => ({ useTeammateNavigation: () => ({ chooseMode: h.chooseMode }) }));
+vi.mock('@/session/CompanionAutomationSheet', () => ({ CompanionAutomationSheet: () => null }));
 import { CompanionHeader } from '@/session/CompanionHeader';
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let root: Root; let host: HTMLDivElement;

@@ -105,7 +105,7 @@ it.each(['owned', 'joined'] as const)('suppresses context menus within the %s gr
   </div>);
   const heading = await screen.findByRole('button', { name: 'sharedTask.title' });
   const title = role === 'owned' ? 'Hosted task' : 'Joined task';
-  for (const target of [heading, screen.getByText(title), screen.getByRole('region')]) {
+  for (const target of [heading, await screen.findByText(title), screen.getByRole('region')]) {
     const event = createEvent.contextMenu(target);
     fireEvent(target, event);
     expect(event.defaultPrevented).toBe(true);

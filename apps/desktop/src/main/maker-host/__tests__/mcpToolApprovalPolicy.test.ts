@@ -51,6 +51,7 @@ describe('desktop Claude read-only allowlist', () => {
       'mcp__cindy__ghost_info',
       'mcp__cindy__ghost_manual',
       'mcp__cindy__ghost_forge_guide',
+      'mcp__cindy__ghost_market_search',
       'mcp__cindy_browser__list_tools',
       'mcp__cindy_android__list_tools',
       'mcp__cindy_ios_simulator__list_tools',

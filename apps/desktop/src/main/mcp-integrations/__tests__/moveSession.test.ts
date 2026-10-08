@@ -106,11 +106,11 @@ describe('moveSession host', () => {
   it('uses the shared update path for moving projects and preserves cwd when removing grouping', async () => {
     expect(await run(directory)).toMatchObject({
       ok: true,
-      workingDir: directory.replaceAll('\\', '/'),
+      workingDir: path.resolve(directory),
       workspaceKind: 'project',
     });
     expect(h.saved).toHaveBeenLastCalledWith({
-      workingDir: directory.replaceAll('\\', '/'),
+      workingDir: path.resolve(directory),
       workspaceKind: 'project',
     });
     expect(await run(null)).toMatchObject({

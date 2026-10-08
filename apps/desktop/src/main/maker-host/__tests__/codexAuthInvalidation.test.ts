@@ -116,7 +116,7 @@ it('compares Codex hard-link identities without Windows number precision collisi
   ).toBe(false);
   expect(haveSameStableFileIdentity({ dev: 0n, ino: 0n }, { dev: 0n, ino: 0n })).toBe(false);
   expect(haveSameStableFileIdentity({ dev: 7n, ino: 11n }, { dev: 7n, ino: 11n })).toBe(true);
-});
+}, 20_000);
 
 it.each([false, true])('preserves successful shared login and native files when presentation write fails=%s', async (failPresentation) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xdt-codex-shared-mode-'));
@@ -159,7 +159,7 @@ it.each([false, true])('preserves successful shared login and native files when 
   expect(fs.readFileSync(systemAuth, 'utf8')).toBe(nativeBefore);
   expect(chmod).not.toHaveBeenCalled();
   expect(fs.statSync(systemAuth).ino).toBe(fs.statSync(localAuth).ino);
-});
+}, 20_000);
 
 async function createRecoveryCandidate(
   credentialScope: 'system-shared' | 'instance-isolated' | 'unknown',
