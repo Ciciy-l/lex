@@ -12117,7 +12117,8 @@
         "rename": "Rename",
         "fix": "Fix",
         "republish": "Re-publish",
-        "abandonPending": "Stop waiting"
+        "abandonPending": "Stop waiting",
+        "editPublication": "Edit Publication Details"
       },
       "API_KEY_MISSING": {
         "title": "API key not configured",
@@ -12141,15 +12142,15 @@
       },
       "OSS_PUT_FAILED": {
         "title": "Upload failed",
-        "message": "Network error, please retry"
+        "message": "The upload service could not receive the file. Check your connection and retry uploading. If it continues, start a new publication."
       },
       "OSS_PUT_EXPIRED": {
         "title": "Upload link expired",
         "message": "Upload link expired, please re-publish"
       },
       "VERSION_RACE": {
-        "title": "Version conflict",
-        "message": "Auto-retry failed, please retry later"
+        "title": "Version Already Taken",
+        "message": "This version is already published or being processed. Choose an unused version number and publish again."
       },
       "CHECKSUM_MISMATCH": {
         "title": "Checksum failed",
@@ -12161,15 +12162,15 @@
       },
       "PACK_FAILED": {
         "title": "Packaging failed",
-        "message": "The skill package was not created. Please retry."
+        "message": "Check that the local Skill files are readable, remove unnecessary large files, and publish again."
       },
       "OSS_OBJECT_NOT_FOUND": {
         "title": "Uploaded file lost",
         "message": "Server cannot find the uploaded file, please retry"
       },
       "MANIFEST_INVALID": {
-        "title": "Invalid SKILL.md format",
-        "message": "SKILL.md must start with YAML frontmatter and include name and description fields"
+        "title": "Invalid Skill Package",
+        "message": "Check SKILL.md and the package files using the reason below, then fix them and publish again."
       },
       "CANCELLED": {
         "title": "Cancelled",
@@ -12184,12 +12185,56 @@
         "message": "Choose a visibility supported by the current publishing identity"
       },
       "INTERNAL": {
-        "title": "Server error",
-        "message": "Publish failed, please retry later"
+        "title": "Publication Incomplete",
+        "message": "An unexpected error occurred. Retry later, or contact support if it continues."
       },
       "UNKNOWN": {
         "title": "Unknown error",
         "message": "Publish failed ({{code}}), please retry"
+      },
+      "SKILL_DELETED": {
+        "title": "Skill Name Reserved After Deletion",
+        "message": "A Skill with this name was deleted, but its name is still reserved. Rename your Skill and publish again."
+      },
+      "SKILL_UNPUBLISHED": {
+        "title": "Skill Unpublished",
+        "message": "The Skill was unpublished during upload, stopping this publication. Check its publication status and publish again."
+      },
+      "AUTH_REQUIRED": {
+        "title": "Sign-In Required",
+        "message": "You are signed out or your sign-in has expired. Sign in and publish again."
+      },
+      "PERMISSION_DENIED": {
+        "title": "No Permission to Publish",
+        "message": "Switch to an authorized publishing identity, or ask the Skill author or organization administrator to check your access."
+      },
+      "INVALID_PARAMS": {
+        "title": "Invalid Publication Details",
+        "message": "Update the publication details using the reason below, then publish again."
+      },
+      "SKILL_FILE_TOO_LARGE": {
+        "title": "Skill Package Exceeds Limits",
+        "message": "Limits: 32 MiB compressed, 50 MiB unpacked, 2 MiB for SKILL.md, and 2000 archive entries. Reduce the package and publish again."
+      },
+      "NETWORK_ERROR": {
+        "title": "Cannot Connect to Publishing Service",
+        "message": "Check your network connection and retry publishing."
+      },
+      "RATE_LIMITED": {
+        "title": "Too Many Publish Requests",
+        "message": "Wait a moment and retry publishing."
+      },
+      "SERVICE_UNAVAILABLE": {
+        "title": "Publishing Service Unavailable",
+        "message": "Retry publishing later. Contact support if the problem continues."
+      },
+      "PUBLISH_BUSY": {
+        "title": "Another Skill Is Being Published",
+        "message": "Wait for the current publication to finish before publishing this Skill."
+      },
+      "REQUEST_REJECTED": {
+        "title": "Publication Request Rejected",
+        "message": "Check the publication details and publish again. If it keeps failing, contact support."
       }
     },
     "scanResult": {

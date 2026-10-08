@@ -12090,7 +12090,8 @@
         "rename": "去改名",
         "fix": "去改",
         "republish": "重新发布",
-        "abandonPending": "放弃等待"
+        "abandonPending": "放弃等待",
+        "editPublication": "修改发布信息"
       },
       "API_KEY_MISSING": {
         "title": "未配置 API key",
@@ -12114,15 +12115,15 @@
       },
       "OSS_PUT_FAILED": {
         "title": "上传失败",
-        "message": "网络异常，请重试"
+        "message": "上传服务未能接收文件。请检查网络后重试上传；持续失败时请重新发布"
       },
       "OSS_PUT_EXPIRED": {
         "title": "上传链接过期",
         "message": "上传链接已过期，请重新发布"
       },
       "VERSION_RACE": {
-        "title": "版本冲突",
-        "message": "自动重试已失败，请稍后重试"
+        "title": "版本号已被占用",
+        "message": "该版本已发布或正在处理。请选择未使用的版本号后重新发布"
       },
       "CHECKSUM_MISMATCH": {
         "title": "校验失败",
@@ -12134,15 +12135,15 @@
       },
       "PACK_FAILED": {
         "title": "打包失败",
-        "message": "未能完成 Skill 打包，请重试"
+        "message": "请确认本地技能文件可以读取，精简不必要的大文件后重新发布"
       },
       "OSS_OBJECT_NOT_FOUND": {
         "title": "上传文件丢失",
         "message": "服务器找不到上传的文件，请重试"
       },
       "MANIFEST_INVALID": {
-        "title": "SKILL.md 格式不正确",
-        "message": "SKILL.md 文件必须以 YAML frontmatter 开头，并包含 name 和 description 字段"
+        "title": "技能包不符合要求",
+        "message": "请按下方原因检查 SKILL.md 和包内文件，修改后重新发布"
       },
       "CANCELLED": {
         "title": "已取消",
@@ -12157,12 +12158,56 @@
         "message": "请选择当前发布身份支持的可见范围"
       },
       "INTERNAL": {
-        "title": "服务器错误",
-        "message": "发布失败，请稍后重试"
+        "title": "发布未完成",
+        "message": "发生未预期的异常，请稍后重试；持续失败时请联系支持"
       },
       "UNKNOWN": {
         "title": "未知错误",
         "message": "发布失败 ({{code}})，请重试"
+      },
+      "SKILL_DELETED": {
+        "title": "同名技能已删除",
+        "message": "同名技能已被删除，但名称仍被占用。请修改技能名称后重新发布"
+      },
+      "SKILL_UNPUBLISHED": {
+        "title": "技能已下架",
+        "message": "技能在上传期间被下架，本次发布已停止。请确认发布状态后重新发布"
+      },
+      "AUTH_REQUIRED": {
+        "title": "需要登录",
+        "message": "当前登录状态已失效或尚未登录，请登录后重新发布"
+      },
+      "PERMISSION_DENIED": {
+        "title": "当前账号没有发布权限",
+        "message": "请切换到有权限的发布身份，或联系技能作者、组织管理员确认权限"
+      },
+      "INVALID_PARAMS": {
+        "title": "发布信息不符合要求",
+        "message": "请按下方原因修改发布信息后重新发布"
+      },
+      "SKILL_FILE_TOO_LARGE": {
+        "title": "技能包超过限制",
+        "message": "压缩包最多 32 MiB，解压后最多 50 MiB，SKILL.md 最多 2 MiB，包内最多 2000 个条目。请精简后重新发布"
+      },
+      "NETWORK_ERROR": {
+        "title": "无法连接发布服务",
+        "message": "请检查网络连接后重试发布"
+      },
+      "RATE_LIMITED": {
+        "title": "发布请求过于频繁",
+        "message": "请稍等片刻再重试发布"
+      },
+      "SERVICE_UNAVAILABLE": {
+        "title": "发布服务暂不可用",
+        "message": "请稍后重试发布；持续失败时请联系支持"
+      },
+      "PUBLISH_BUSY": {
+        "title": "已有技能正在发布",
+        "message": "请等待当前发布结束后再发布此技能"
+      },
+      "REQUEST_REJECTED": {
+        "title": "发布请求被拒绝",
+        "message": "请检查发布信息后重新发布；持续失败时请联系支持"
       }
     },
     "scanResult": {

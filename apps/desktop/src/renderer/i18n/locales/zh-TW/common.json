@@ -12090,7 +12090,8 @@
         "rename": "去改名",
         "fix": "去改",
         "republish": "重新發布",
-        "abandonPending": "放棄等待"
+        "abandonPending": "放棄等待",
+        "editPublication": "修改發布資訊"
       },
       "API_KEY_MISSING": {
         "title": "未配置 API key",
@@ -12114,15 +12115,15 @@
       },
       "OSS_PUT_FAILED": {
         "title": "上傳失敗",
-        "message": "網路異常，請重試"
+        "message": "上傳服務未能接收檔案。請檢查網路後重試上傳；若持續失敗，請重新發布"
       },
       "OSS_PUT_EXPIRED": {
         "title": "上傳連結過期",
         "message": "上傳連結已過期，請重新發布"
       },
       "VERSION_RACE": {
-        "title": "版本衝突",
-        "message": "自動重試已失敗，請稍後重試"
+        "title": "版本號已被占用",
+        "message": "該版本已發布或正在處理。請選擇未使用的版本號後重新發布"
       },
       "CHECKSUM_MISMATCH": {
         "title": "校驗失敗",
@@ -12134,15 +12135,15 @@
       },
       "PACK_FAILED": {
         "title": "打包失敗",
-        "message": "未能完成 Skill 打包，請重試"
+        "message": "請確認本地技能檔案可以讀取，精簡不必要的大型檔案後重新發布"
       },
       "OSS_OBJECT_NOT_FOUND": {
         "title": "上傳檔案丟失",
         "message": "伺服器找不到上傳的檔案，請重試"
       },
       "MANIFEST_INVALID": {
-        "title": "SKILL.md 格式不正確",
-        "message": "SKILL.md 檔案必須以 YAML frontmatter 開頭，並包含 name 和 description 欄位"
+        "title": "技能套件不符合要求",
+        "message": "請依下方原因檢查 SKILL.md 與套件內檔案，修改後重新發布"
       },
       "CANCELLED": {
         "title": "已取消",
@@ -12157,12 +12158,56 @@
         "message": "請選擇目前發佈身分支援的可見範圍"
       },
       "INTERNAL": {
-        "title": "伺服器錯誤",
-        "message": "釋出失敗，請稍後重試"
+        "title": "發布未完成",
+        "message": "發生未預期的異常，請稍後重試；若持續失敗，請聯絡支援"
       },
       "UNKNOWN": {
         "title": "未知錯誤",
         "message": "釋出失敗 ({{code}})，請重試"
+      },
+      "SKILL_DELETED": {
+        "title": "同名技能已刪除",
+        "message": "同名技能已被刪除，但名稱仍被占用。請修改技能名稱後重新發布"
+      },
+      "SKILL_UNPUBLISHED": {
+        "title": "技能已下架",
+        "message": "技能在上傳期間被下架，本次發布已停止。請確認發布狀態後重新發布"
+      },
+      "AUTH_REQUIRED": {
+        "title": "需要登入",
+        "message": "目前登入狀態已失效或尚未登入，請登入後重新發布"
+      },
+      "PERMISSION_DENIED": {
+        "title": "目前帳號沒有發布權限",
+        "message": "請切換至有權限的發布身分，或聯絡技能作者、組織管理員確認權限"
+      },
+      "INVALID_PARAMS": {
+        "title": "發布資訊不符合要求",
+        "message": "請依下方原因修改發布資訊後重新發布"
+      },
+      "SKILL_FILE_TOO_LARGE": {
+        "title": "技能套件超過限制",
+        "message": "壓縮檔最多 32 MiB，解壓後最多 50 MiB，SKILL.md 最多 2 MiB，套件內最多 2000 個項目。請精簡後重新發布"
+      },
+      "NETWORK_ERROR": {
+        "title": "無法連線至發布服務",
+        "message": "請檢查網路連線後重試發布"
+      },
+      "RATE_LIMITED": {
+        "title": "發布請求過於頻繁",
+        "message": "請稍候再重試發布"
+      },
+      "SERVICE_UNAVAILABLE": {
+        "title": "發布服務暫時無法使用",
+        "message": "請稍後重試發布；若持續失敗，請聯絡支援"
+      },
+      "PUBLISH_BUSY": {
+        "title": "已有技能正在發布",
+        "message": "請等待目前發布結束後再發布此技能"
+      },
+      "REQUEST_REJECTED": {
+        "title": "發布請求遭拒",
+        "message": "請檢查發布資訊後重新發布；若持續失敗，請聯絡支援團隊"
       }
     },
     "scanResult": {
