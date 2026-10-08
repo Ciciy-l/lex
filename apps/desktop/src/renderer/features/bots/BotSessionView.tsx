@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useBotProfiles } from './botStore';
 import { ArrowLeft, CircleAlert, RefreshCcw } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -16,7 +17,7 @@ type BotSessionGate =
   | {
       kind: 'ready';
       mentions: ComposerBotMention[];
-      identity: BotChatIdentity;
+      identity: import('./botChatPresentation').BotChatBinding;
       /** True only for the Bot's own canonical chat (not a mounted channel route). */
       isCanonical: boolean;
       /** Read position captured before opening advances it; null when entry had no unread replies. */
@@ -78,6 +79,26 @@ function BotSessionGateView() {
   const [reloadVersion, setReloadVersion] = useState(0);
   const [gate, setGate] = useState<BotSessionGate>({ kind: 'loading' });
   useBotIslandVisibleSession(gate.kind === 'ready' ? sessionId ?? null : null);
+  // The gate proves ownership once; name and avatar edited in settings must
+  // still reach the open chat's header and composer.
+  const liveProfile = useBotProfiles().find((profile) => profile.id === botId);
+  const liveName = liveProfile?.name;
+  const liveAvatar = liveProfile?.avatar;
+  const liveAvatarColor = liveProfile?.avatarColor;
+  const gateIdentity = gate.kind === 'ready' ? gate.identity : null;
+  const identity = useMemo(
+    () =>
+      gateIdentity && liveName !== undefined
+        ? {
+            ...gateIdentity,
+            name: liveName,
+            avatar: liveAvatar ?? gateIdentity.avatar,
+            avatarColor: liveAvatarColor ?? gateIdentity.avatarColor,
+          }
+        : gateIdentity,
+    [gateIdentity, liveName, liveAvatar, liveAvatarColor],
+  );
+
 
   useEffect(() => {
     let cancelled = false;
@@ -139,7 +160,7 @@ function BotSessionGateView() {
           isCanonical: activeProjection?.role === 'canonical',
           unreadBoundaryAt:
             activeProjection?.role === 'canonical' && unreadCount > 0 ? lastReadAt : null,
-          identity: { ...readBotChatIdentity(bot, botId), sessionId: activeProjection?.role === 'canonical' ? sessionId : null },
+          identity: { ...readBotChatIdentity(bot, botId), sessionId },
           mentions: Array.isArray(bots)
             ? bots
                 .map((candidate) => readBotMention(candidate, botId))
@@ -246,7 +267,7 @@ function BotSessionGateView() {
       <div className="min-w-0 flex-1">
         <CCAgentSessionView
           botMentions={gate.mentions}
-          botIdentity={gate.identity}
+          botIdentity={identity ?? gate.identity}
           botUnreadBoundaryAt={gate.unreadBoundaryAt}
         />
       </div>

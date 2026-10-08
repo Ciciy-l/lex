@@ -2455,8 +2455,11 @@ export class AgentInputCoordinator {
     const sameVendorTurn =
       steerVendorTurnGeneration !== null &&
       this.deps.getTurnGeneration?.(sessionId) === steerVendorTurnGeneration;
+    const replyInputClientIds = accepted.activeTurn === steeringTurn
+      ? this.getActiveInputClientIds(sessionId) : [];
     accepted.activeTurn = {
       item,
+      replyInputClientIds: [...new Set([...replyInputClientIds, item.clientId])],
       delivery: 'steer',
       messageUuid,
       createdAt,

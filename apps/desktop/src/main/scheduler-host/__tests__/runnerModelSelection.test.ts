@@ -66,6 +66,7 @@ vi.mock('../../localDb/ipc/messages.js', () => ({
 }));
 
 vi.mock('../../localDb/ipc/sessions.js', () => ({
+  getSessionFsSnapshot: vi.fn(async () => ({ permissionMode: 'ask', planModeEnabled: false })),
   getSessionRowSnapshot: mocks.getSessionRowSnapshot,
   touchUserSendInDb: vi.fn().mockResolvedValue(undefined),
 }));
@@ -121,6 +122,8 @@ function createSessionHarness(): FakeSessionHarness {
   );
   const setEffort = vi.fn(async () => undefined);
   const session = {
+    stablePermissionModeState: { mode: 'ask', generation: 0 },
+    stablePlanModeState: { enabled: false, generation: 0 },
     id: 'scheduler-session',
     agentKind: 'claude-code',
     model: 'claude-sonnet-4-6',

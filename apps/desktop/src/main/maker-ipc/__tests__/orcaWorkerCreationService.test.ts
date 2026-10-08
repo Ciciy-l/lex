@@ -216,7 +216,7 @@ describe('SSH Codex Worker catalog', () => {
     const models = ['remote-default', 'remote-lead', 'remote-next'].map((id) => ({
       id, efforts: ['low'], defaultEffort: 'low', supportsFastMode: false,
     }));
-    const routing = sshCodexWorkerRoutingContext([{ name: 'Remote', models: { codex: models } } as ProviderView]);
+    const routing = sshCodexWorkerRoutingContext([{ id: 'openai', name: 'Remote', auth: { method: 'oauth', native: 'codex' }, models: { codex: models } } as ProviderView]);
     const { deps, service } = createDeps({
       getLeadSessionRow: vi.fn(async () => ({ id: 'lead-1', agentKind: 'codex' as const, workspaceKind: 'project' as const,
         workingDir: '/srv/repo', model: 'remote-lead', effort: 'low', permissionMode: 'default',

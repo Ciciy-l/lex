@@ -489,7 +489,7 @@ interface CCAgentSessionViewProps {
    * 顶栏换成伙伴 lockup、assistant 气泡挂 TA 的头像、输入框使用伙伴称呼，保留标准权限入口。
    * 判定仍与 `session.source === 'bot'` 双重成立才生效——URL 不是身份。
    */
-  botIdentity?: BotChatIdentity;
+  botIdentity?: import('../bots/botChatPresentation').BotChatBinding;
   /** Entry-time read boundary for a Bot chat; preserved after the live read position advances. */
   botUnreadBoundaryAt?: number | null;
 }
@@ -946,7 +946,7 @@ export function CCAgentSessionView({
   // 「这是一场跟伙伴的对话」的单一判据:路由声明的身份 + 任务自己的 source 双重成立。
   // 只有 URL 说了不算 —— 那是导航投影,不是身份。
   const botChatIdentity: BotChatIdentity | null =
-    botIdentity && session?.source === 'bot' ? botIdentity : null;
+    botIdentity && botIdentity.sessionId === sessionId ? botIdentity : null;
   // 伙伴没有 RunningStatusBar，折叠呼吸灯继续留在输入框上方，不能随状态行一起消失。
   const showCenteredControlledBanner =
     hasControlledBanner && (!controlledBannerCollapsed || Boolean(botChatIdentity));

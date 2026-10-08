@@ -201,6 +201,7 @@ function createSessionHarness(sendImpl: SendImpl): FakeSessionHarness {
       };
     },
     stablePermissionModeState: { mode: 'ask', generation: 0 },
+    stablePlanModeState: { enabled: false, generation: 0 },
     abort: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
   } as unknown as Session;
@@ -706,6 +707,7 @@ describe('MakerScheduleRunner queued dispatch (busy bound session)', () => {
 
       Object.assign(acceptedSession.session, {
         stablePermissionModeState: { mode: 'ask', generation: 1 },
+        stablePlanModeState: { enabled: currentPlan, generation: 1 },
       });
       mocks.getSessionFsSnapshot.mockResolvedValue({
         permissionMode: 'ask',

@@ -19,7 +19,7 @@ describe('queued scheduler pre-send preparation', () => {
     const lockBody = source.slice(source.indexOf('const sendToAgentAccepted: typeof'),
       source.indexOf('contextOverflowRolloverHolder =', source.indexOf('const sendToAgentAccepted: typeof')));
     expect(lockBody.indexOf('runSchedulerQueuedPreparation(')).toBeGreaterThan(lockBody.indexOf('withSendToSessionLock('));
-    expect(lockBody.indexOf('runSchedulerQueuedPreparation(')).toBeLessThan(lockBody.lastIndexOf('sendToAgentAcceptedUnlocked(...args));'));
+    expect(lockBody.indexOf('runSchedulerQueuedPreparation(')).toBeLessThan(lockBody.lastIndexOf('sendToAgentAcceptedUnlocked(...args);'));
   });
 
   it('rejects the queued send on preparation failure and reports it once', async () => {

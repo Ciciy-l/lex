@@ -764,7 +764,7 @@ describe('applyRuntimeSetModelChange', () => {
     });
 
     expect(result).toEqual({ status: 'applied', retiredRuntime: true });
-    expect(closeSession).toHaveBeenCalledWith(sessionId, 'runtime-refresh');
+    expect(closeSession).toHaveBeenCalledWith(sessionId);
     expect(setModel).not.toHaveBeenCalled();
     expect(getSessionProvider(sessionId)).toBe('deepseek');
   });
@@ -1380,7 +1380,7 @@ describe('applyRuntimeSetModelChange', () => {
     expect(registerPendingCredentialSwitch).toHaveBeenCalledWith(sessionId, { model: 'same-model', providerId: 'xd', forceSessionRebuild: true });
     busy = false;
     await expect(applyRuntimeSetModelChange(input)).resolves.toEqual({ status: 'applied', retiredRuntime: true });
-    expect(closeSession).toHaveBeenCalledExactlyOnceWith(sessionId, 'runtime-refresh');
+    expect(closeSession).toHaveBeenCalledExactlyOnceWith(sessionId);
     expect(setModel).not.toHaveBeenCalled();
     expect(getSessionProvider(sessionId)).toBe('xd');
     expect(cleanup).not.toHaveBeenCalled();

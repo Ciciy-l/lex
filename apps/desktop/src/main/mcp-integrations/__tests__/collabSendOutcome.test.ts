@@ -39,6 +39,7 @@ vi.mock('../../maker-ipc/register.js', () => ({
 }));
 
 vi.mock('@cindy/mcps', () => ({
+  setSessionPathAuthorizer: vi.fn(),
   createLiziMcpProviders: vi.fn((config: Record<string, unknown>) => {
     mockState.capturedProvidersConfig = config;
     return [
