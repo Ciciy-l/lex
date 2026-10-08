@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const managedEnvKeys = [
+  'LEX_MOBILE_BUILD',
+  'LEX_MOBILE_VERSION',
   'CINDY_CN_APP_STORE_ID',
   'CINDY_GLOBAL_APP_STORE_ID',
   'EAS_BUILD_PROFILE',
@@ -49,6 +51,23 @@ afterEach(() => {
 });
 
 describe('mobile native app config', () => {
+  it('builds Lex with its own package, version and disabled OTA without changing service callbacks', () => {
+    const buildConfig = require(resolve(process.cwd(), 'app.config.js'));
+    process.env.LEX_MOBILE_BUILD = '1';
+    process.env.LEX_MOBILE_VERSION = '0.1.97';
+    process.env.EXPO_PUBLIC_CINDY_AUTH_REGION = 'global';
+    const config = buildConfig();
+    expect(config.name).toBe('Lex');
+    expect(config.android.package).toBe('io.github.ciciyl.lex');
+    expect(config.android.versionCode).toBe(1009799);
+    expect(config.version).toBe('0.1.97');
+    expect(config.scheme).toBe('cindy');
+    expect(config.updates).toEqual({ enabled: false });
+    expect(config.extra.cindy.tapdb).toBeUndefined();
+    process.env.EAS_PROJECT_ID = 'unrelated-project';
+    expect(() => buildConfig()).toThrow('cannot inherit');
+  });
+
   it('defaults to the CN app identity and requires an explicit Global build', () => {
     const appJson = JSON.parse(
       readFileSync(resolve(process.cwd(), 'app.json'), 'utf8'),

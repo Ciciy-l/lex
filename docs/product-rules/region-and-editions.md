@@ -2,18 +2,18 @@
 
 > **状态**：权威产品规则（authoritative）
 > **适用范围**：Lex 的安装身份、更新渠道、登录、端点选择、区域文案与发布流程
-> **最后变更**：2026-09-03，产品所有者确认采用单一 Lex 发行版
+> **最后变更**：2026-10-08，产品所有者确认扩展 Android 发行并采用独立路线
 
 ## 1. 产品关系
 
-Lex 是基于开源 Cindy 客户端构建、由社区独立维护的桌面发行版。Lex 拥有自己的
+Lex 是基于开源 Cindy 客户端构建、由社区独立维护的桌面与移动端发行版。Lex 拥有自己的
 产品名、安装身份、用户数据目录、官网、支持入口和更新渠道；账号、订阅、云模型、
 对象存储、语音、Device Link 与远程控制等在线能力由 Cindy 官方服务提供。
 
 这两个维度必须分开：
 
-- **Lex product identity**：一个安装包、一个正式 app/bundle ID、一个用户数据目录、
-  一个版本号、一个 GitHub Release 和一个自动更新通道。
+- **Lex product identity**：每个平台一个安装包、一个正式 app/bundle ID、一个用户数据目录、
+  一个版本号和一个 GitHub Release；桌面保留自动更新，Android 首版通过 APK 升级。
 - **Cindy service realm**：`global` 或 `cn`，是登录会话及账号凭证的属性，不是 Lex
   的发行版、下载版本或系统身份。
 
@@ -94,8 +94,12 @@ Cindy 账号”。这不是品牌不一致，而是必须保留的责任边界�
 
 ## 6. Mobile 与内部兼容名
 
-- 当前里程碑只发行 Lex Desktop。仓库中的 Mobile 代码仍属于上游 Cindy 客户端；
-  对外可说明 Lex Desktop 能配合 Cindy 官方移动端，不发布“Lex Mobile”。
+- 产品所有者于 2026-10-08 扩展发行范围：Lex Desktop 与 Lex Mobile Android 随同一个
+  GitHub Release 发布。Android 使用独立包名 io.github.ciciyl.lex 和持久签名密钥，
+  不覆盖 Cindy 安装，不迁移其私有数据；每个平台不按服务区拆包。
+- 首版 Lex Mobile 禁用 OTA，通过后续 APK 升级；账号与远程服务继续由 Cindy 提供。
+  iOS 尚无公开安装渠道，Apple 签名及分发完成前不得展示可安装 IPA 的承诺。
+- Lex 沿自己的路线发展，上游改为按需手动引入安全、稳定性与兼容修复，不再每周同步新特性。
 - `@cindy/*`、`CINDY_*`、`cindy://`、存储键和协议字段属于上游同步或服务兼容层，
   不做机械改名。只有用户可见的产品身份归 Lex。
 - `CindyRegion` 作为历史构建/兼容类型可以暂时保留，但不能再被解释为两个 Lex

@@ -1,8 +1,7 @@
 name: sync-cindy-upstream
 
 on:
-  schedule:
-    - cron: "17 2 * * 1"
+  # Lex follows its own roadmap; upstream adoption is an explicit maintainer action.
   workflow_dispatch:
 
 permissions:

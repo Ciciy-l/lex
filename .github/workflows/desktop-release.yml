@@ -88,6 +88,25 @@ jobs:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: node scripts/lex-release-notices.mjs "$RELEASE_VERSION"
 
+      - name: Preflight Android release identity
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          LEX_ANDROID_KEYSTORE_BASE64: ${{ secrets.LEX_ANDROID_KEYSTORE_BASE64 }}
+          LEX_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.LEX_ANDROID_KEYSTORE_PASSWORD }}
+          LEX_ANDROID_KEY_ALIAS: ${{ secrets.LEX_ANDROID_KEY_ALIAS }}
+          LEX_ANDROID_KEY_PASSWORD: ${{ secrets.LEX_ANDROID_KEY_PASSWORD }}
+          LEX_ANDROID_CERT_SHA256: ${{ vars.LEX_ANDROID_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          node -e 'require("./scripts/shared/lex-mobile-config.cjs").androidVersionCode(process.env.RELEASE_VERSION)'
+          for name in LEX_ANDROID_KEYSTORE_BASE64 LEX_ANDROID_KEYSTORE_PASSWORD LEX_ANDROID_KEY_ALIAS LEX_ANDROID_KEY_PASSWORD LEX_ANDROID_CERT_SHA256; do
+            if [ -z "${!name}" ]; then
+              echo "Missing $name; configure the persistent Android signing identity before releasing." >&2
+              exit 1
+            fi
+          done
+
       - name: Select automatic signing mode
         id: mode
         shell: bash
@@ -400,10 +419,24 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  android:
+    name: Package Android
+    needs: [eligibility, resolve-release]
+    uses: ./.github/workflows/mobile-android.yml
+    with:
+      version: ${{ needs.resolve-release.outputs.version }}
+      signed: true
+    secrets:
+      LEX_ANDROID_KEYSTORE_BASE64: ${{ secrets.LEX_ANDROID_KEYSTORE_BASE64 }}
+      LEX_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.LEX_ANDROID_KEYSTORE_PASSWORD }}
+      LEX_ANDROID_KEY_ALIAS: ${{ secrets.LEX_ANDROID_KEY_ALIAS }}
+      LEX_ANDROID_KEY_PASSWORD: ${{ secrets.LEX_ANDROID_KEY_PASSWORD }}
+
   publish:
     name: Create GitHub Release draft
     needs:
       - package
+      - android
       - resolve-release
     runs-on: ubuntu-latest
     permissions:
@@ -458,7 +491,7 @@ jobs:
             --target "$GITHUB_SHA" \
             "${release_flags[@]}" \
             --draft --title "Lex ${tag} (${SIGNING_MODE})" \
-            --notes "Automated multi-platform Lex release. Build mode: ${SIGNING_MODE}. ${notes} Review assets before publishing."
+            --notes "Automated multi-platform Lex release. Desktop build mode: ${SIGNING_MODE}. ${notes} Android APK uses the persistent Lex release signing identity. iOS is not distributed in this release. Review assets before publishing."
           while IFS= read -r -d '' file; do
             gh release upload "$tag" "$file" --repo "$GITHUB_REPOSITORY" --clobber
           done < <(find dist -type f ! -name build-info.json ! -name SHA256SUMS.txt -print0)

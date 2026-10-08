@@ -8,7 +8,7 @@
 <p align="center"><strong>A local workspace for conversations, four Agent engines, files, Git, and Workers.</strong></p>
 
 <p align="center">
-  A community desktop distribution based on <a href="https://github.com/makecindy/cindy">Cindy</a>.<br>
+  A community desktop and mobile distribution based on <a href="https://github.com/makecindy/cindy">Cindy</a>.<br>
   Keep the conversation that understands your work, and give Claude Code, Codex, Pi, and OMP a real workspace.
 </p>
 
@@ -67,6 +67,7 @@ platform from [GitHub Releases](https://github.com/Ciciy-l/lex/releases):
 | macOS Apple Silicon | `Lex-…-macOS-Apple-Silicon.dmg` |
 | macOS Intel | `Lex-…-macOS-Intel.dmg` |
 | Linux x64 | `Lex-…-Linux-x64.deb` |
+| Android | `Lex-…-Android.apk` (when present in the published release) |
 
 Files ending in `Auto-Update.zip` are resources for Lex's in-app updater, not the
 recommended manual installer.
@@ -76,7 +77,7 @@ package manager may therefore show a warning. Signing status and release stabili
 separate: a signed RC is still a prerelease. To receive RC updates in the app, enable
 the **beta** update channel; the stable channel does not receive prereleases.
 
-### First run
+### First run on desktop
 
 1. Install Lex and open it.
 2. Sign in with a Cindy account, or choose **Skip Sign-In** for local-only use.
@@ -86,8 +87,7 @@ the **beta** update channel; the stable channel does not receive prereleases.
 
 ## One app, two Cindy service regions
 
-There is one Lex installer, application identity, user-data profile, version, and
-update channel. The account selected at sign-in determines the Cindy service region:
+Each platform has one Lex edition and installation identity; service regions do not split downloads. The account selected at sign-in determines the Cindy service region:
 
 - **Global** for Global Cindy accounts;
 - **Mainland China** for Mainland China Cindy accounts;
@@ -107,8 +107,14 @@ or update channel. Skipping sign-in leaves Cindy server-backed features unavaila
 
 Cindy online services remain subject to Cindy's own terms, regional availability, and
 support. Lex does not operate those services or sell a separate subscription. The
-current release scope is **Lex Desktop**; it can continue to work with the official
-Cindy mobile client.
+release pipeline covers **Lex Desktop and Lex Mobile for Android**. Scan the QR on the
+[mobile download page](https://ciciy-l.github.io/lex/#mobile-download) for published APKs.
+Android requires Cindy sign-in to connect to your desktop; it does not run desktop
+Agent engines locally. Lex Mobile uses its own package and upgrades through APKs,
+with OTA disabled. iOS is not available yet; it needs a TestFlight/App Store channel.
+
+Lex follows its own roadmap. Upstream security and compatibility fixes are adopted
+selectively; weekly automatic upstream synchronization is disabled.
 
 ## Privacy and telemetry
 

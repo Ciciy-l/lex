@@ -1,13 +1,14 @@
 # Releasing Lex
 
-Lex has two desktop packaging paths:
+Lex has a combined desktop/Android release path and a desktop-only preview path:
 
 - **Versioned release (recommended)**: `desktop-release-auto` is triggered by a
   `v*` tag or manually with a SemVer version. Its default `auto` mode checks the
-  complete signing configuration. If every required credential exists, it builds
+  complete desktop signing configuration. If every required desktop credential exists, it builds
   a signed/notarized release; otherwise it deliberately builds a versioned
   unsigned release. Both modes create the same normal GitHub Release and update
-  manifest, so early testing builds can update normally.
+  manifest, so early testing builds can update normally. Android always requires
+  its own persistent signing credentials, even when desktop mode is unsigned.
 - **Local preview artifact**: `desktop-preview-unsigned` remains available for
   ad-hoc branch testing. It produces a short-lived, versionless `0.0.0` Actions
   Artifact only; it does not enter the public update channel.
@@ -16,7 +17,7 @@ Before creating a versioned tag, wait for the `client-ci` **push** run on the
 exact merged `main` commit to succeed. `desktop-release-auto` verifies that
 immutable result rather than reinstalling dependencies and rerunning the full
 source-level test suite. It still performs release-specific checks, signing
-preflight, and native packaging on every supported desktop platform.
+preflight, and native packaging on every supported desktop platform and Android.
 
 Versioned unsigned releases are clearly labelled in their Release title and
 notes. Windows packages are unsigned; macOS apps use ad-hoc signing and their
@@ -130,10 +131,79 @@ warning text and install on a test machine. Publish the release only after the
 assets are acceptable. The `release.published` event then generates the update
 manifest automatically.
 
+## Android packages in the same release
+
+The existing desktop-release-auto workflow now builds desktop and Android in parallel
+and creates one draft only after **all** packages succeed. Android is required, including
+when desktop uses unsigned mode. No workflow publishes a release automatically.
+The Android asset is named Lex-<version>-Android.apk and is covered by SHA256SUMS.txt.
+The reusable .github/workflows/mobile-android.yml uses hosted Linux, JDK 17, Expo
+prebuild and Gradle assembleRelease; it compiles arm64-v8a, armeabi-v7a and x86_64.
+PR runs compile the production JS/native release without signing, and never upload
+that unsigned APK as an installable artifact. This is a compile gate, not device testing.
+
+Before the first release configure repository Actions secrets:
+
+| Secret | Value |
+| --- | --- |
+| LEX_ANDROID_KEYSTORE_BASE64 | Base64 encoding of the permanent Lex release keystore |
+| LEX_ANDROID_KEYSTORE_PASSWORD | Keystore password |
+| LEX_ANDROID_KEY_ALIAS | Release key alias |
+| LEX_ANDROID_KEY_PASSWORD | Key password |
+
+Also set the repository Actions **variable** LEX_ANDROID_CERT_SHA256 to the public
+certificate SHA-256 (64 hex digits, no colons). Obtain it independently from the intended
+release certificate, for example with keytool -list -v using interactive password entry.
+Back up the original keystore outside the repository; keep the same certificate for
+all later APKs. Never upload keys in issues/chat or commit them. The runner stores the
+keystore under RUNNER_TEMP with restrictive permissions and removes it in an always
+step. It verifies the final APK signature/certificate, package ID, version and release
+label before uploading. Missing configuration stops release before desktop packaging.
+No debug key or generated replacement key is used for releases.
+
+Lex Mobile has display name Lex and package ID io.github.ciciyl.lex, independent
+from Cindy's com.xd.cindy installation/data. LEX_MOBILE_BUILD=1 selects this variant;
+ordinary upstream/dev config stays unchanged. The Android versionName is the release
+version. Version codes deterministically order alpha.N < beta.N < rc.N < stable;
+N must be 1..29, major 0..20, minor 0..99, patch 0..9999. Other prerelease forms are
+rejected. The code is major*100000000 + minor*1000000 + patch*100 + channelSlot.
+Always publish a higher SemVer; rebuilds cannot replace an existing release.
+
+The variant deliberately disables EAS/self-host OTA and requires APK upgrades. It
+cannot consume Cindy's mobile update bundles. This is a new native installation,
+not an OTA migration of official Cindy installations; no private user data is copied.
+It keeps Cindy service endpoints, protocol fields and the cindy:// callback scheme for
+compatibility. When both apps are installed Android can ask which app opens a Cindy
+link; select Lex. Deep-link/OAuth coexistence needs real-device verification. Native
+social-login provider credentials are not inherited: email/phone flows remain available
+subject to the account realm; social login needs provider registration for the Lex
+package and certificate. This change does not configure a push service or new backend.
+
+The homepage QR opens its stable mobile download section without third-party QR
+requests. Only a published Release containing a Lex Android APK gets a direct link;
+older desktop-only releases fall back to the release list. Website deployment continues
+to follow the existing published-release workflow. Publishing the first APK is required
+before there is a public mobile installer.
+
+## iOS distribution
+
+This change does not produce a public IPA or claim iOS installability. A normal iPhone
+cannot install an arbitrary GitHub IPA. A future iOS distribution needs a Lex App ID,
+Apple Developer membership, iOS distribution certificate/provisioning, App Store Connect
+configuration and TestFlight/App Store review. Desktop macOS Developer ID certificates
+are not iOS signing credentials. The homepage states that iOS is not yet available;
+add the real TestFlight/App Store URL when that channel exists. iOS Simulator builds
+are not phone installation packages.
+
 ## Upstream synchronization
 
+Lex now follows an independent roadmap. Adopt upstream security, compatibility and
+stability fixes selectively; new feature integration is no longer scheduled weekly.
+The manual sync workflow is retained for deliberate snapshots and still opens a PR.
+
+
 `.github/workflows/upstream-sync.yml` fetches
-`makecindy/cindy:main` every Monday at 02:17 UTC and on demand. It pins a snapshot
+`makecindy/cindy:main` only on explicit workflow dispatch. It pins a snapshot
 on a new `sync/cindy-<sha>-<run>-<attempt>` branch and opens a PR into Lex `main`.
 Before merging, a trusted main preflight checks for updater, potential system
 prompt, plugin-foundation and mobile-native changes. A match opens or reuses an

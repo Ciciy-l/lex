@@ -8,7 +8,7 @@
 <p align="center"><strong>把主对话、四种 Agent 引擎、文件、Git 与 Worker 放进同一个本地工作台。</strong></p>
 
 <p align="center">
-  基于 <a href="https://github.com/makecindy/cindy">Cindy</a> 的社区桌面发行版。<br>
+  基于 <a href="https://github.com/makecindy/cindy">Cindy</a> 的社区桌面与移动端发行版。<br>
   保留理解工作的主对话，也让 Claude Code、Codex、Pi 与 OMP 都拥有真正的工作台。
 </p>
 
@@ -65,6 +65,7 @@ Lex 当前处于**早期预览**阶段。请从
 | macOS Apple Silicon | `Lex-…-macOS-Apple-Silicon.dmg` |
 | macOS Intel | `Lex-…-macOS-Intel.dmg` |
 | Linux x64 | `Lex-…-Linux-x64.deb` |
+| Android | `Lex-…-Android.apk`（以已发布版本实际提供为准） |
 
 以 `Auto-Update.zip` 结尾的文件供 Lex 应用内更新器使用，不是推荐的手动安装包。
 
@@ -72,7 +73,7 @@ Lex 当前处于**早期预览**阶段。请从
 可能显示警告。签名状态与版本稳定性彼此独立：已经签名的 RC 仍然是预发布版。若希望在应用
 内接收 RC 更新，需要启用 **beta** 更新通道；稳定通道不会接收预发布版本。
 
-### 第一次使用
+### 桌面端第一次使用
 
 1. 安装并打开 Lex；
 2. 登录 Cindy 账号，或选择「跳过登录」仅使用本地能力；
@@ -81,7 +82,7 @@ Lex 当前处于**早期预览**阶段。请从
 
 ## 一个应用，两种 Cindy 服务区
 
-Lex 只维护一个安装包、应用身份、用户数据目录、版本号和更新通道。登录时选择的账号决定
+Lex 在每个平台只维护一个发行版和安装身份，不按服务区拆分下载。登录时选择的账号决定
 Cindy 服务区：
 
 - Global Cindy 账号选择 **Global**；
@@ -100,7 +101,13 @@ Cindy 服务区：
 | 源码基础与上游修复 | Cindy 开源项目 |
 
 Cindy 在线服务受其官方条款、区域可用性和支持政策约束。Lex 不运营这些服务，也不销售另一套
-订阅。当前发行范围是 **Lex Desktop**；它可以继续配合 Cindy 官方移动端使用。
+订阅。发版流程现覆盖 **Lex Desktop 与 Lex Mobile Android**。可扫描
+[移动端下载页](https://ciciy-l.github.io/lex/#mobile-download)的二维码查看已发布 APK。
+Android 需登录 Cindy 账号连接桌面设备，不在手机上本地运行桌面 Agent 引擎。
+Lex Mobile 使用独立包名，通过新 APK 升级，暂不启用 OTA。iOS 尚未开放安装，
+需要后续配置 TestFlight / App Store 分发。
+
+Lex 将沿自己的路线发展，按需引入上游安全、稳定性和兼容修复，已停用每周自动同步。
 
 ## 隐私与遥测
 

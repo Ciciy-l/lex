@@ -1,0 +1,125 @@
+name: lex-android
+
+on:
+  pull_request:
+    paths:
+      - 'apps/mobile/**'
+      - 'packages/**'
+      - 'pnpm-lock.yaml'
+      - 'scripts/build-lex-android.mjs'
+      - 'scripts/shared/lex-mobile-config.cjs'
+      - 'scripts/__tests__/lex-mobile-release.test.mjs'
+      - 'website/**'
+      - 'config/**'
+      - 'apps/desktop/resources/icon-master-1024.png'
+      - 'package.json'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/mobile-android.yml'
+      - '.github/workflows/desktop-release.yml'
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      signed:
+        required: true
+        type: boolean
+    secrets:
+      LEX_ANDROID_KEYSTORE_BASE64:
+        required: false
+      LEX_ANDROID_KEYSTORE_PASSWORD:
+        required: false
+      LEX_ANDROID_KEY_ALIAS:
+        required: false
+      LEX_ANDROID_KEY_PASSWORD:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Android release compilation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CI: '1'
+      LEX_MOBILE_BUILD: '1'
+      LEX_MOBILE_VERSION: ${{ inputs.version || '0.1.0-alpha.1' }}
+      LEX_ANDROID_SIGNED: ${{ inputs.signed && '1' || '0' }}
+      EXPO_PUBLIC_CINDY_AUTH_REGION: global
+      EXPO_NO_DOTENV: '1'
+      XDT_SKIP_AGENT_BIN_INSTALL: '1'
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      NODE_OPTIONS: '--max-old-space-size=4096'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: true
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          run_install: false
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Select runner JDK and Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "$JAVA_HOME_17_X64"
+          test -d "$ANDROID_HOME"
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
+      - name: Require persistent release signing identity
+        if: inputs.signed
+        env:
+          KEYSTORE: ${{ secrets.LEX_ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.LEX_ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.LEX_ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.LEX_ANDROID_KEY_PASSWORD }}
+          CERT_SHA256: ${{ vars.LEX_ANDROID_CERT_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in KEYSTORE STORE_PASSWORD KEY_ALIAS KEY_PASSWORD CERT_SHA256; do
+            if [ -z "${!name}" ]; then
+              echo "Missing Android signing setting: $name. See docs/RELEASING-LEX.md." >&2
+              exit 1
+            fi
+          done
+          umask 077
+          printf '%s' "$KEYSTORE" | base64 --decode > "$RUNNER_TEMP/lex-android.keystore"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify mobile release contracts
+        run: node --test scripts/__tests__/lex-mobile-release.test.mjs
+      - name: Compile unsigned release for PR
+        if: '!inputs.signed'
+        env:
+          LEX_MOBILE_VERSION: '0.1.0-alpha.1'
+        run: node scripts/build-lex-android.mjs
+      - name: Build and verify signed release APK
+        if: inputs.signed
+        env:
+          XDT_ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/lex-android.keystore
+          XDT_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.LEX_ANDROID_KEYSTORE_PASSWORD }}
+          XDT_ANDROID_KEY_ALIAS: ${{ secrets.LEX_ANDROID_KEY_ALIAS }}
+          XDT_ANDROID_KEY_PASSWORD: ${{ secrets.LEX_ANDROID_KEY_PASSWORD }}
+          LEX_ANDROID_CERT_SHA256: ${{ vars.LEX_ANDROID_CERT_SHA256 }}
+        run: node scripts/build-lex-android.mjs
+      - name: Upload installable APK
+        if: inputs.signed
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mobile-android-${{ inputs.version }}
+          path: dist/android/Lex-${{ inputs.version }}-Android.apk
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove signing material
+        if: always()
+        shell: bash
+        run: rm -f -- "$RUNNER_TEMP/lex-android.keystore"
