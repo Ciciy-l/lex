@@ -57,10 +57,13 @@ export function isPluginTeamPlanWithinBudget(plan: unknown): boolean {
   } catch { return false; }
 }
 export type PluginTaskRequest =
-  | { type: 'tasks-request'; kind: 'capabilities' }
+  | { type: 'tasks-request'; kind: 'capabilities' | 'models' }
+  | { type: 'tasks-request'; kind: 'setModel'; taskId: string; expectedRevision: number; route: PluginTaskRoute }
   | {
       type: 'tasks-request';
       kind: 'create';
+      /** Optional active tool-call context; Host resolves its task and checks plugin ownership. */
+      callId?: string;
       requestKey: string;
       title: string;
       route?: PluginTaskRoute;

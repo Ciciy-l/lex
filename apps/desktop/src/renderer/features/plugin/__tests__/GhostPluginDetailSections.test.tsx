@@ -143,7 +143,7 @@ const detail: GhostPluginDetail = {
   tools: [],
   hasSettingsUi: false,
   cindyCapabilities: [],
-  hasErrand: false,
+  hasTaskPreferences: false,
   panelMinWidth: 320,
   installDir: '/tmp/cindy-brain/builtin.example',
   trust: {

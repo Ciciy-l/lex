@@ -54,6 +54,8 @@ interface PermissionSelectorProps {
   disabledModes?: Partial<Record<PermissionMode, string>>;
   /** Restrict the shared picker to a smaller product-approved subset. */
   allowedModes?: readonly PermissionMode[];
+  /** Show a retained legacy value honestly instead of presenting the first available mode as selected. */
+  fallbackModeLabel?: string;
 }
 
 /**
@@ -116,6 +118,7 @@ export function PermissionSelector({
   ariaContext,
   disabledModes,
   allowedModes,
+  fallbackModeLabel,
 }: PermissionSelectorProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -129,7 +132,7 @@ export function PermissionSelector({
     (option) => allowedModes === undefined || allowedModes.includes(option.id),
   );
   const effectiveMode =
-    options.length > 0 ? normalizeMode(permissionMode, options) : permissionMode;
+    options.length > 0 && !fallbackModeLabel ? normalizeMode(permissionMode, options) : permissionMode;
   const current = options.find((o) => o.id === effectiveMode);
   const TriggerIcon = PERMISSION_ICONS[effectiveMode] ?? Hand;
   const triggerTone = getModeTone(effectiveMode);
@@ -145,7 +148,7 @@ export function PermissionSelector({
       defaultValue: option?.description ?? '',
     });
   };
-  const triggerLabel = labelOf(current, effectiveMode);
+  const triggerLabel = !current && fallbackModeLabel ? fallbackModeLabel : labelOf(current, effectiveMode);
   const triggerDescription = descriptionOf(current, effectiveMode);
   const isCreateAgentVariant = visualVariant === 'create-agent';
   const isFieldTrigger = triggerVariant === 'field';
