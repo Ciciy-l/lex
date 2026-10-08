@@ -1,10 +1,11 @@
+import { MountOnFirstOpen } from './MountOnFirstOpen';
 import type { HomeMode } from './homeViewPreferenceStore';
 import { RemoteTaskSuggestions } from '@/session/RemoteTaskSuggestions';
 import { countHomeSuggestionSessions, remoteTaskSuggestionsMode, type RemoteTaskSuggestionId } from '@/session/remoteTaskSuggestionsModel';
 import { cacheRemoteResourceHome, readRemoteResourceSnapshot } from '@/device-link/remoteResourceCache';
 import { canBrowseMobileHomeDevice } from '@/session/mobileHome';
 import { useFocusEffect, useIsFocused } from 'expo-router';
-import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
+import { Fragment, createContext, useContext, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -12,6 +13,7 @@ import {
   AppState,
   Easing,
   Modal,
+  Platform,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Pressable,
@@ -49,7 +51,7 @@ import {
   X,
 } from 'lucide-react-native';
 import { Gesture, GestureDetector } from '@/platform/gestureHandler';
-import Reanimated, { runOnJS, useAnimatedReaction, useAnimatedStyle, useSharedValue, type SharedValue } from 'react-native-reanimated';
+import Reanimated, { measure, useAnimatedRef, type AnimatedRef, runOnJS, useAnimatedReaction, useAnimatedStyle, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -222,7 +224,7 @@ import {
   useRemoteHomeStatusVersion,
   useRemoteMessageVersion,
   useRemoteSessionMessagePreview,
-  useRemoteSessions,
+  useRemoteHomeSessions,
   useSessionRunning,
 } from '@/session/remoteSessionStore';
 import { dataPropsEqual, mapContentEqual } from '@/utils/valueEquality';
@@ -350,6 +352,7 @@ class HomeSyncScopeSupersededError extends Error {
   }
 }
 
+export const HomeListViewportContext = createContext<{ scrollY: SharedValue<number>; viewportHeight: number } | null>(null);
 export function MobileHome({ active = true, onModeChange }: { active?: boolean; onModeChange?(mode: HomeMode): void }) {
   const routeFocused = useIsFocused();
   const screenFocused = routeFocused && active;
@@ -388,7 +391,7 @@ function HomeScreenContent({ active, onModeChange }: { active: boolean; onModeCh
     unsubscribe,
   } = useDeviceLink();
   const revokedDevices = useRevokedDevices();
-  const sessions = useRemoteSessions();
+  const sessions = useRemoteHomeSessions();
   const syncInFlightRef = useRef<Promise<void> | null>(null);
   const syncQueuedRef = useRef<{ visible?: boolean } | null>(null);
   const loadHomeRef = useRef<(options?: { visible?: boolean }) => Promise<void>>(async () => undefined);
@@ -505,6 +508,7 @@ function HomeScreenContent({ active, onModeChange }: { active: boolean; onModeCh
   const [projectDrag, setProjectDrag] = useState<ProjectDragSession | null>(null);
   const projectDragY = useSharedValue(0);
   const homeScrollY = useSharedValue(0);
+  const childViewport = useMemo(() => ({ scrollY: homeScrollY, viewportHeight: screenHeight }), [homeScrollY, screenHeight]);
   const [dialogueShowAll, setDialogueShowAll] = useState(false);
   const [priorityHoldEpoch, setPriorityHoldEpoch] = useState(0);
   // deviceId of the revoked-access device whose explanation tip is open (null = closed).
@@ -1739,6 +1743,9 @@ function HomeScreenContent({ active, onModeChange }: { active: boolean; onModeCh
     () => collectHomePriorityContext(homePriorityItems, runningSessionIds, homeViewedPriorityHold),
     [homePriorityItems, priorityHoldEpoch, runningSessionIds],
   );
+  const priorityContextRef = useRef(priorityContext);
+  priorityContextRef.current = priorityContext;
+  const sortPriorityContext = sortBy === 'priority' ? priorityContext : undefined;
   useEffect(() => {
     if (!leftHomeForSessionRef.current) return;
     // 首页留在导航栈中时仍会收到详情页任务的运行 / 等待状态更新。同步推进 hold,
@@ -1749,14 +1756,22 @@ function HomeScreenContent({ active, onModeChange }: { active: boolean; onModeCh
     setPriorityHoldEpoch((epoch) => epoch + 1);
   }, [priorityContext]);
   const selectedHostOrder = selectedDeviceId ? hostProjectOrders.get(selectedDeviceId) : undefined;
-  const hostManualProjectOrder = selectedDeviceId && selectedHostOrder
-    ? controllerKeysFromHost(selectedDeviceId, selectedHostOrder)
-    : [];
-  const displayed = resolveDisplayedProjectOrder(
-    resolveProjectOrderWriteScope(selectedDeviceId ? [selectedDeviceId] : 'all', 'local'),
-    selectedHostOrder,
-    { manualProjectOrder, projectOrder },
-    hostManualProjectOrder,
+  const hostManualProjectOrder = useMemo(
+    () => selectedDeviceId && selectedHostOrder
+      ? controllerKeysFromHost(selectedDeviceId, selectedHostOrder)
+      : [],
+    [selectedDeviceId, selectedHostOrder],
+  );
+  // The resolver copies the order array. Resolve only when its inputs change:
+  // a new array here invalidates every section even on a menu/focus update.
+  const displayed = useMemo(
+    () => resolveDisplayedProjectOrder(
+      resolveProjectOrderWriteScope(selectedDeviceId ? [selectedDeviceId] : 'all', 'local'),
+      selectedHostOrder,
+      { manualProjectOrder, projectOrder },
+      hostManualProjectOrder,
+    ),
+    [selectedDeviceId, selectedHostOrder, manualProjectOrder, projectOrder, hostManualProjectOrder],
   );
   const displayedProjectOrder = displayed.projectOrder;
   const displayedManualProjectOrder = displayed.manualProjectOrder;
@@ -1765,11 +1780,11 @@ function HomeScreenContent({ active, onModeChange }: { active: boolean; onModeCh
       dialogueTitle: t('devices.list.menu.dialogueFolder'),
       groupDialogue,
       manualProjectOrder: displayedManualProjectOrder,
-      priorityContext,
+      priorityContext: sortPriorityContext,
       projectOrder: displayedProjectOrder,
       sortBy,
     }),
-    [displayedManualProjectOrder, displayedProjectOrder, groupByProject, groupDialogue, home, pinnedCollapsed, priorityContext, sortBy, t],
+    [displayedManualProjectOrder, displayedProjectOrder, groupByProject, groupDialogue, home, pinnedCollapsed, sortPriorityContext, sortBy, t],
   );
   const sections = useMemo(() => {
     if (!shouldReplaceListWithSearchResults(searchQuery, indexedSearch.status)) return homeSections;
@@ -1929,8 +1944,8 @@ function HomeScreenContent({ active, onModeChange }: { active: boolean; onModeCh
   const openSession = useCallback((item: RemoteSessionListItem) => {
     // 有行处于滑开状态时,点击(本行或他行)只负责收起,不进会话(iOS 列表滑动操作惯例)。
     if (swipeRegistry.closeOpenRow()) return;
-    holdViewedPriorityRank(homeViewedPriorityHold, item.session.id, priorityContext);
-    advanceViewedPriorityHold(homeViewedPriorityHold, item.session.id, priorityContext, Date.now());
+    holdViewedPriorityRank(homeViewedPriorityHold, item.session.id, priorityContextRef.current);
+    advanceViewedPriorityHold(homeViewedPriorityHold, item.session.id, priorityContextRef.current, Date.now());
     leftHomeForSessionRef.current = true;
     setPriorityHoldEpoch((epoch) => epoch + 1);
     const session = item.session as RemoteSession;
@@ -2479,6 +2494,7 @@ function HomeScreenContent({ active, onModeChange }: { active: boolean; onModeCh
     ? (headerHeight ?? 0)
     : (headerHeight ?? edgePadding.paddingTop + HOME_HEADER_MIN_HEIGHT);
   return (
+    <HomeListViewportContext.Provider value={childViewport}>
     <View
       ref={homeRootRef}
       style={[styles.safeArea, { paddingLeft: edgePadding.paddingLeft, paddingRight: edgePadding.paddingRight }]}
@@ -2622,8 +2638,8 @@ function HomeScreenContent({ active, onModeChange }: { active: boolean; onModeCh
         sections={sections}
         style={styles.homeList}
         keyExtractor={(item) => item.key}
-        initialNumToRender={HOME_LIST_INITIAL_RENDER_COUNT}
-        maxToRenderPerBatch={HOME_LIST_RENDER_BATCH_SIZE}
+        initialNumToRender={Platform.OS === 'android' && groupByProject ? 4 : HOME_LIST_INITIAL_RENDER_COUNT}
+        maxToRenderPerBatch={Platform.OS === 'android' && groupByProject ? 2 : HOME_LIST_RENDER_BATCH_SIZE}
         updateCellsBatchingPeriod={32}
         windowSize={HOME_LIST_WINDOW_SIZE}
         refreshControl={
@@ -2767,15 +2783,15 @@ function HomeScreenContent({ active, onModeChange }: { active: boolean; onModeCh
         </Pressable>
       )}
 
-      <RevokedAccessTip
+      <MountOnFirstOpen open={revokedTipDeviceName != null}>{() => <RevokedAccessTip
         deviceName={revokedTipDeviceName}
         retrying={revokedTipDeviceId !== null && retryingDeviceIds.has(revokedTipDeviceId)}
         onClose={() => setRevokedTipDeviceId(null)}
         onRetry={() => {
           if (revokedTipDeviceId) void retryRevokedDevice(revokedTipDeviceId);
         }}
-      />
-      <DeviceMenuModal
+      />}</MountOnFirstOpen>
+      <MountOnFirstOpen open={deviceMenuOpen}>{() => <DeviceMenuModal
         collections={remoteHomeCollections}
         connectionStates={deviceConnectionStates}
         filters={home.deviceFilters}
@@ -2811,8 +2827,8 @@ function HomeScreenContent({ active, onModeChange }: { active: boolean; onModeCh
         }}
         topOffset={chromeHeight}
         visible={deviceMenuOpen}
-      />
-      <HomeChromeDrawer
+      />}</MountOnFirstOpen>
+      <MountOnFirstOpen open={chromeMenuOpen}>{() => <HomeChromeDrawer
         mode="tasks"
         onModeChange={onModeChange}
         closeInstant={chromeMenuCloseInstant}
@@ -2856,8 +2872,8 @@ function HomeScreenContent({ active, onModeChange }: { active: boolean; onModeCh
         onLogout={() => void logout()}
         open={chromeMenuOpen}
         user={user}
-      />
-      <AccountSwitcherSheet
+      />}</MountOnFirstOpen>
+      <MountOnFirstOpen open={accountSwitcherOpen}>{() => <AccountSwitcherSheet
         hasRunningTasks={runningSessionIds.size > 0}
         onAddAccount={() => {
           pendingAccountSwitcherActionRef.current = () => {
@@ -2873,8 +2889,8 @@ function HomeScreenContent({ active, onModeChange }: { active: boolean; onModeCh
           action?.();
         }}
         visible={accountSwitcherOpen}
-      />
-      <ConversationSearchFilterSheet
+      />}</MountOnFirstOpen>
+      <MountOnFirstOpen open={searchFilterOpen}>{() => <ConversationSearchFilterSheet
         activeCount={indexedSearch.activeFilterCount}
         agentKind={indexedSearch.agentFilter}
         lastActivity={indexedSearch.lastActivityFilter}
@@ -2892,8 +2908,8 @@ function HomeScreenContent({ active, onModeChange }: { active: boolean; onModeCh
         status={indexedSearch.statusFilter}
         topOffset={chromeHeight}
         visible={searchFilterOpen}
-      />
-      <HomeDisplaySettingsModal
+      />}</MountOnFirstOpen>
+      <MountOnFirstOpen open={displaySettingsOpen}>{() => <HomeDisplaySettingsModal
         groupByProject={groupByProject}
         groupDialogue={groupDialogue}
         onChangeView={applyDisplayView}
@@ -2903,16 +2919,16 @@ function HomeScreenContent({ active, onModeChange }: { active: boolean; onModeCh
         statusFilter={statusFilter}
         topOffset={chromeHeight}
         visible={displaySettingsOpen}
-      />
-      <SessionOptionsPresenter
+      />}</MountOnFirstOpen>
+      <MountOnFirstOpen open={actionSheetSession !== null}>{() => <SessionOptionsPresenter
         onAction={handleSessionSheetAction}
         onClose={() => setActionSheetSession(null)}
         onClosed={handleSessionSheetClosed}
         pinnedAt={actionSheetSession?.pinnedAt}
         status={actionSheetSession?.status}
         visible={actionSheetSession !== null}
-      />
-      <RenameSessionModal
+      />}</MountOnFirstOpen>
+      <MountOnFirstOpen open={renameSessionTarget !== null}>{() => <RenameSessionModal
         draft={renameSessionDraft}
         onCancel={closeRenameSession}
         onChangeDraft={setRenameSessionDraft}
@@ -2920,8 +2936,9 @@ function HomeScreenContent({ active, onModeChange }: { active: boolean; onModeCh
         // 乐观提交:确认即关弹窗,不存在挂起中的保存态。
         saving={false}
         visible={renameSessionTarget !== null}
-      />
+      />}</MountOnFirstOpen>
     </View>
+    </HomeListViewportContext.Provider>
   );
 }
 
@@ -4149,9 +4166,35 @@ function AutomationGroupChildren({
     isSessionRunning: (sessionId) => remoteSessionStore.isSessionRunning(sessionId),
   });
   const hasViewAllRow = hiddenCount > 0 && !!onOpenGroup;
+  const viewport = useContext(HomeListViewportContext);
+  const childrenRef = useAnimatedRef<View>();
+  const layoutRevision = useSharedValue(0);
+  const headerHeight = useSharedValue(0);
+  const [windowAnchor, setWindowAnchor] = useState(-1);
+  const childOffsets = buildHomeProjectChildOffsets(visibleItems.map(estimateHomeSessionRowHeight));
+  const windowingEnabled = shouldWindowHomeProjectChildren({
+    collapsed: false, itemCount: visibleItems.length,
+    scrollTrackingAvailable: viewport !== null, threshold: PROJECT_CHILD_WINDOW_THRESHOLD,
+  });
+  const range = windowingEnabled
+    ? windowAnchor >= 0
+      ? resolveHomeProjectChildWindow({ anchor: windowAnchor, childOffsets,
+        overscan: PROJECT_CHILD_WINDOW_OVERSCAN, windowSize: PROJECT_CHILD_WINDOW_SIZE })
+      : { start: 0, end: 0, leadingSpacerHeight: 0, trailingSpacerHeight: childOffsets.at(-1) ?? 0 }
+    : { start: 0, end: visibleItems.length, leadingSpacerHeight: 0, trailingSpacerHeight: 0 };
   return (
-    <View style={styles.automationGroupChildren} testID={childrenTestID ?? `${testID}.automationGroupChildren`}>
-      {visibleItems.map((child, index) => {
+    <Reanimated.View ref={childrenRef} collapsable={false}
+      onLayout={() => { if (windowingEnabled) layoutRevision.value += 1; }}
+      style={styles.automationGroupChildren} testID={childrenTestID ?? `${testID}.automationGroupChildren`}>
+      {windowingEnabled && viewport ? <AutomationWindowAnchorTracker
+        childOffsets={childOffsets} onAnchorChange={setWindowAnchor}
+        projectHeaderHeight={headerHeight} projectLayoutRevision={layoutRevision}
+        projectRef={childrenRef} scrollY={viewport.scrollY} viewportHeight={viewport.viewportHeight}
+      /> : null}
+      {range.leadingSpacerHeight > 0 ? <View pointerEvents="none" style={{ height: range.leadingSpacerHeight }} /> : null}
+      {visibleItems.slice(range.start, range.end).map((child, renderedIndex) => {
+        const index = range.start + renderedIndex;
+        const key = windowingEnabled ? `${group.key}:window:${renderedIndex}` : child.session.id;
         const row = (
           <HomeSessionRow
             deepIndented
@@ -4162,10 +4205,10 @@ function AutomationGroupChildren({
             titleTestIDPrefix={titleTestIDPrefix}
           />
         );
-        if (!swipe) return <Fragment key={child.session.id}>{row}</Fragment>;
+        if (!swipe) return <Fragment key={key}>{row}</Fragment>;
         return (
           <SwipeableSessionRow
-            key={child.session.id}
+            key={key}
             onArchive={swipe.onArchive}
             onShowOptions={swipe.onShowOptions}
             onTogglePin={swipe.onTogglePin}
@@ -4177,6 +4220,7 @@ function AutomationGroupChildren({
           </SwipeableSessionRow>
         );
       })}
+      {range.trailingSpacerHeight > 0 ? <View pointerEvents="none" style={{ height: range.trailingSpacerHeight }} /> : null}
       {hasViewAllRow ? (
         <Pressable
           accessibilityLabel={t('devices.list.viewAllRuns', { count: group.sessionCount })}
@@ -4195,7 +4239,7 @@ function AutomationGroupChildren({
           <ChevronRight color={colors.textTertiary} size={iconSize.action} strokeWidth={iconStroke.regular} />
         </Pressable>
       ) : null}
-    </View>
+    </Reanimated.View>
   );
 }
 
@@ -4993,3 +5037,50 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     width: CINDY_LIST_FAB_SIZE,
   },
 });
+
+function AutomationWindowAnchorTracker({
+  childOffsets,
+  onAnchorChange,
+  projectHeaderHeight,
+  projectLayoutRevision,
+  projectRef,
+  scrollY,
+  viewportHeight,
+}: {
+  childOffsets: readonly number[];
+  onAnchorChange(anchor: number): void;
+  projectHeaderHeight: SharedValue<number>;
+  projectLayoutRevision: SharedValue<number>;
+  projectRef: AnimatedRef<View>;
+  scrollY: SharedValue<number>;
+  viewportHeight: number;
+}) {
+  useAnimatedReaction(
+    () => {
+      // Both layout and scrolling invalidate the measurement. Read pageY on
+      // the UI thread, in screen coordinates; never combine an asynchronous
+      // measureInWindow result with a newer scroll offset.
+      const revision = projectLayoutRevision.value;
+      const offset = scrollY.value;
+      if (revision === 0 || !Number.isFinite(offset)) return null;
+      const layout = measure(projectRef);
+      if (!layout || !Number.isFinite(layout.pageY)) return null;
+      return resolveHomeProjectChildAnchor({
+        childOffsets,
+        projectHeaderHeight: projectHeaderHeight.value,
+        projectTop: layout.pageY,
+        shift: PROJECT_CHILD_WINDOW_SHIFT,
+        viewportHeight,
+        viewportTop: 0,
+      });
+    },
+    (next, previous) => {
+      // A temporarily unavailable native view is not evidence that its rows
+      // left the viewport. Keep the last bounded window until measured again.
+      if (next === null || next === previous) return;
+      runOnJS(onAnchorChange)(next);
+    },
+    [childOffsets, onAnchorChange, projectHeaderHeight, projectLayoutRevision, projectRef, scrollY, viewportHeight],
+  );
+  return null;
+}

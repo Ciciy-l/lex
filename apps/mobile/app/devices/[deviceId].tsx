@@ -1,5 +1,6 @@
 import { useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useSharedValue } from 'react-native-reanimated';
 import {
   ActivityIndicator,
   AppState,
@@ -75,6 +76,7 @@ import { useConversationSearch } from '@/session/useConversationSearch';
 import { sessionMatchesProjectDir } from '@/session/mobileHome';
 import { selectVisibleDeviceSessions } from '@/session/mobileHome';
 import { HomeSessionRow } from './index';
+import { HomeListViewportContext } from '@/session/HomeSurface';
 import { RenameSessionModal } from '@/session/RenameSessionModal';
 import { SessionOptionsPresenter } from '@/session/SessionOptionsExpoSheet';
 import { SwipeableSessionRow, type SessionSwipeControls } from '@/session/SwipeableSessionRow';
@@ -117,14 +119,20 @@ type RemoteListStatusFilter = Extract<RemoteSessionStatusFilter, 'active' | 'arc
 
 export default function DeviceDetailScreen() {
   const screenFocused = useIsFocused();
+  const scrollY = useSharedValue(0);
+  const { height: viewportHeight } = useWindowDimensions();
+  const viewport = useMemo(() => ({ scrollY, viewportHeight }), [scrollY, viewportHeight]);
   return (
     <RemoteSessionStoreSubscriptionGate enabled={screenFocused}>
-      <DeviceDetailScreenContent />
+      <HomeListViewportContext.Provider value={viewport}>
+        <DeviceDetailScreenContent />
+      </HomeListViewportContext.Provider>
     </RemoteSessionStoreSubscriptionGate>
   );
 }
 
 function DeviceDetailScreenContent() {
+  const viewport = useContext(HomeListViewportContext);
   const screenFocused = useIsFocused();
   const screenFocusedRef = useRef(screenFocused);
   screenFocusedRef.current = screenFocused;
@@ -806,6 +814,8 @@ function DeviceDetailScreenContent() {
           )}
         </View>
         <SectionList
+          onScroll={(event) => { if (viewport) viewport.scrollY.value = event.nativeEvent.contentOffset.y; }}
+          scrollEventThrottle={16}
           sections={displaySections}
           keyExtractor={(item) => item.automationGroup?.key ?? item.session.id}
           // Fabric can reattach a clipped Swipeable child before its old native parent removes it.
@@ -1161,6 +1171,8 @@ function DeviceDetailScreenContent() {
       </View>
 
       <SectionList
+          onScroll={(event) => { if (viewport) viewport.scrollY.value = event.nativeEvent.contentOffset.y; }}
+          scrollEventThrottle={16}
         sections={displaySections}
         keyExtractor={(item) => item.automationGroup?.key ?? item.session.id}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={loadSessions} />}

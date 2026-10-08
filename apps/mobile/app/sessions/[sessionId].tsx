@@ -1,3 +1,4 @@
+import { MountOnFirstOpen } from '@/session/MountOnFirstOpen';
 import { getActiveMobileSessionRealm } from '@/config/env';
 import { FailedScheduleNotice } from '@/session/FailedScheduleNotice';
 import { shouldShowFailedScheduleNotice, type FailedScheduleRunSnapshot } from '@cindy/maker-shared/schedule-model';
@@ -8912,7 +8913,7 @@ export default function SessionScreen() {
           </View>
         </View>
         {currentSession && !sessionManagedByHost ? (
-          <SessionMenuSheet
+          <MountOnFirstOpen open={settingsOpen}>{() => <SessionMenuSheet
             usageReader={maker}
             accountProvider={accountProvider}
             accountUsage={localCodexRateLimitControl ? accountUsage : null}
@@ -8962,7 +8963,7 @@ export default function SessionScreen() {
             readOnlyReason={collaborationReadOnlyReason}
             session={currentSession}
             visible={settingsOpen}
-          />
+          />}</MountOnFirstOpen>
         ) : null}
         <PiSessionTreeSheet
           disabledReason={remoteSessionRunning
@@ -9000,7 +9001,7 @@ export default function SessionScreen() {
           shareBusy={chipShareBusy}
           target={chipMenuTarget}
         />
-        <ContextSheet
+        <MountOnFirstOpen open={contextSheetOpen}>{() => <ContextSheet
           footer={contextSheetView !== 'goal' && pendingMediaAssets.length > 0 ? (
             <ContextSheetFooterButton
               disabled={!canUseComposer}
@@ -9133,9 +9134,9 @@ export default function SessionScreen() {
               testID="session.contextSheetGoalView"
             />
           )}
-        </ContextSheet>
+        </ContextSheet>}</MountOnFirstOpen>
         {currentSession && !sessionManagedByHost && runtimeOptions && modelSheetSelection && modelSheetRuntimeOptions ? (
-          <ModelPickerSheet
+          <MountOnFirstOpen open={modelSheetOpen && canUseRemoteSessionControls}>{() => <ModelPickerSheet
             activeModelId={modelSheetSelection.model}
             existingSessionRoute
 
@@ -9179,7 +9180,7 @@ export default function SessionScreen() {
             selectedProviderId={modelSheetSelection.providerId}
             testID="session.modelSheet"
             visible={modelSheetOpen && canUseRemoteSessionControls}
-          />
+          />}</MountOnFirstOpen>
         ) : null}
         {/* 权限模式独立浮窗(composer 权限图标钮点开;列表复用 MobilePermissionPickerList,
             选择走 confirmFullAccessChange + maker:set-permission-mode 后关浮窗)。 */}

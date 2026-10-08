@@ -10,6 +10,19 @@ import { isDefaultDraftSessionTitle } from './sessionTitle.js';
 import { getSessionListCollapseView } from './sessionListCollapse.js';
 import { collapseWorktreeDirForGrouping } from './worktreePaths.js';
 
+let sessionListCollator: Intl.Collator | undefined;
+/** Call when the host resumes after system locale/region preferences may change. */
+export function clearSessionListCollator(): void {
+  sessionListCollator = undefined;
+}
+
+/** Same default-locale ordering as localeCompare, without constructing an ICU
+ * collator for every comparison on Android/Hermes. */
+export function compareSessionListStrings(left: string, right: string): number {
+  sessionListCollator ??= new Intl.Collator();
+  return sessionListCollator.compare(left, right);
+}
+
 export interface RemoteSessionListSessionLike extends SessionInterruptionState {
   _count?: { messages?: number } | null;
   agentKind: 'cc' | 'codex' | string;
@@ -395,7 +408,7 @@ function buildProjectSections(
     list.push(item);
     projectGroups.set(key, list);
   }
-  for (const [workingDir, data] of [...projectGroups].sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [workingDir, data] of [...projectGroups].sort(([a], [b]) => compareSessionListStrings(a, b))) {
     sections.push({
       key: `project:${workingDir}`,
       title: projectTitle(workingDir),
@@ -761,7 +774,7 @@ function normalizeInlinePreview(value: string): string | null {
 function compareSessions(a: RemoteSession, b: RemoteSession): number {
   const pinnedDiff = Number(!!b.pinnedAt) - Number(!!a.pinnedAt);
   if (pinnedDiff !== 0) return pinnedDiff;
-  return lastActivity(b).localeCompare(lastActivity(a));
+  return compareSessionListStrings(lastActivity(b), lastActivity(a));
 }
 
 function normalizeSearchQuery(value: string | undefined): string {
@@ -887,7 +900,7 @@ function toAutomationGroupListItem(
   // 用它的时间会让上游(首页项目卡 latestActivityAt、日期分桶、行右侧时间)把整组排成旧活动。
   const latestActivityAt = group.reduce(
     (latest, item) =>
-      item.lastActivityAt.localeCompare(latest) > 0 ? item.lastActivityAt : latest,
+      compareSessionListStrings(item.lastActivityAt, latest) > 0 ? item.lastActivityAt : latest,
     primary.lastActivityAt,
   );
   return {
