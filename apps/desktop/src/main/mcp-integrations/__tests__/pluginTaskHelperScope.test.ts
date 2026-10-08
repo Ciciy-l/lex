@@ -204,7 +204,7 @@ it.each(['codex', 'claude-code', 'pi'] as const)('blocks helper discovery and gu
   const listSessionQueue = vi.fn(), sendToSession = vi.fn(), messageAgent = vi.fn();
   const server = createXdtHelperMcpServer({ resolveSurface: f.resolve, history,
     sessionQueue: { listSessionQueue, listSessionQueuedCounts: vi.fn() }, sendToSession,
-    botMessaging: { messageAgent, checkMessage: vi.fn() } },
+    botMessaging: { messageAgent } },
   { agentKind, workingDir: '/answer', sessionId: 'worker' });
   const client = new Client({ name: 'plugin-helper-scope', version: '1' });
   const [ct, st] = InMemoryTransport.createLinkedPair();

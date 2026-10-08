@@ -1,3 +1,4 @@
+import { normalizeAutoReviewUserIntent, createAutoReviewActionContext, type AutoReviewUserIntent } from '../shared/auto-review-decision.js';
 /**
  * CodexAgent — 路线 A 完整版 (Phase 1+2+3+4 全打通)。
  *
@@ -102,6 +103,7 @@ import {
   isSystemPermissionDenialReason,
   formatPermissionDenial,
   resolveAutoReviewDecision,
+  withAutoReviewContext,
   toolAutoReviewAction,
   type AutoReviewDecision,
 } from '../shared/auto-review-decision.js';
@@ -1115,7 +1117,7 @@ interface LiveAskUserRequest {
   continuationStarted: boolean;
   permissionPolicy: TurnPermissionPolicy | null;
   capabilitySelectionText: string;
-  autoReviewIntent: string;
+  autoReviewIntent: AutoReviewUserIntent;
 }
 
 function normalizeServiceTier(serviceTier: ServiceTier | null | undefined): ServiceTier | null | undefined {
@@ -1310,7 +1312,7 @@ const CODEX_INTERACTION_CONTINUATION = Symbol('codexInteractionContinuation');
 const YIELD_CONTINUATION_MAX_ATTEMPTS = 2;
 type CodexInternalSendOptions = SendOptions & {
   [CODEX_INHERITED_CAPABILITY_SELECTION]?: string;
-  [CODEX_AUTO_REVIEW_INTENT]?: string;
+  [CODEX_AUTO_REVIEW_INTENT]?: AutoReviewUserIntent;
   [CODEX_YIELD_CONTINUATION]?: number;
   [CODEX_INTERNAL_CONTINUATION]?: true;
   [CODEX_INTERACTION_CONTINUATION]?: true;
@@ -1338,7 +1340,7 @@ type YieldContinuationClaim = {
   continuationTurnId: string | null;
   permissionPolicy: TurnPermissionPolicy | null;
   capabilitySelectionText: string;
-  autoReviewIntent: string;
+  autoReviewIntent: AutoReviewUserIntent;
   deferredPlanText: string | null;
   deferredPlanTurnId: string | null;
   deferredPlanCapabilitySelectionText: string;
@@ -4763,17 +4765,21 @@ assertRouteCurrent();
      * host 侧的 provider route 与它必须同步,窗口上限按 (provider, model) 解析。
      */
     let mutableProviderId: string | null | undefined = opts.providerId;
-    let currentAutoReviewIntent = '';
+    let currentAutoReviewIntent: AutoReviewUserIntent = '';
+    let autoReviewIntentInitialized = false;
+    const autoReviewActionContext = createAutoReviewActionContext();
     const autoReviewContext = () => activeTurnPermissionPolicy?.autoReviewContext
       ?? (activeTurnPermissionPolicy?.origin.kind === 'im'
         ? { requesterAuthority: 'unknown' as const, source: 'direct' as const }
         : undefined);
     // Authorization belongs to the accepted input, not the foreground policy's lifetime.
     let currentAutoReviewAuthority: ReturnType<typeof autoReviewContext>;
-    const priorAutoReviewIntent = () => JSON.stringify(currentAutoReviewAuthority ?? null) === JSON.stringify(autoReviewContext() ?? null) ? currentAutoReviewIntent : '';
+    const priorAutoReviewIntent = () => !autoReviewIntentInitialized ? undefined : JSON.stringify(currentAutoReviewAuthority ?? null) === JSON.stringify(autoReviewContext() ?? null) ? currentAutoReviewIntent : '';
     const autoReviewDecisionCache = new Map<string, Promise<AutoReviewDecision>>();
-    const setAutoReviewIntent = (content: UserMessage['content'], source = { authority: currentAutoReviewAuthority }): void => {
-      currentAutoReviewIntent = extractAutoReviewUserIntent(content);
+    const setAutoReviewIntent = (content: AutoReviewUserIntent, source = { authority: currentAutoReviewAuthority }): void => {
+      autoReviewActionContext.advance(typeof content !== 'string' && JSON.stringify(currentAutoReviewAuthority ?? null) === JSON.stringify(source.authority ?? null));
+      currentAutoReviewIntent = normalizeAutoReviewUserIntent(content);
+      autoReviewIntentInitialized = true;
       currentAutoReviewAuthority = source.authority && { ...source.authority };
       autoReviewDecisionCache.clear();
     // 每条新用户消息 = 新一轮,提示重新武装。ErrorBanner 那份只活到下一条非 error 事件
@@ -5526,7 +5532,7 @@ assertRouteCurrent();
     // 关掉抹平 → fail-closed(不把远端 /private/tmp 误当 /tmp 区内)。本地用真实 process.platform。
     // 定义在此(startSession 作用域,opts=session)以避开 awaitApprovalDecision 内层 opts 的遮蔽。
     const sessionReviewPlatform: NodeJS.Platform = opts.remoteHostId ? 'linux' : process.platform;
-    const reviewAutoAction = (action: ReviewableAction): Promise<AutoReviewDecision> => {
+    const reviewAutoAction = (action: ReviewableAction, hostAutoApprove = false, hostShortcutOnly = false): Promise<AutoReviewDecision> => {
       const directoryGeneration = autoReviewDirectoryGeneration;
       const request = {
         sessionId: opts.sessionId,
@@ -5537,6 +5543,7 @@ assertRouteCurrent();
         // model so the exact current provider route remains resolvable.
         model: mutableCatalogModel ?? mutableModel,
         userIntent: currentAutoReviewIntent,
+        precedingBlockedActions: autoReviewActionContext.precedingBlockedActions,
         ...(currentAutoReviewAuthority ? { authorizationContext: currentAutoReviewAuthority } : {}),
         action,
         workspaceRoots: runtimeWorkspaceRoots().filter(
@@ -5547,23 +5554,34 @@ assertRouteCurrent();
         ),
         platform: sessionReviewPlatform,
       };
-      const key = JSON.stringify(request);
-      const cached = autoReviewDecisionCache.get(key);
-      const pending = cached ?? resolveAutoReviewDecision(
-          request,
-          this.deps.reviewAutoPermissionAction,
-        );
-      if (!cached) autoReviewDecisionCache.set(key, pending);
-      return pending.then((decision) => (
-        autoReviewDecisionCache.get(key) !== pending
-          ? { verdict: 'block', reason: 'User instructions changed; retry against the latest authorization.' }
-          : directoryGeneration === autoReviewDirectoryGeneration
-          ? decision
-          : {
-              verdict: 'block',
-              reason: 'Directory permissions changed; retry with the current scope.',
-            }
-      ));
+      let key: string | undefined;
+      let pending: Promise<AutoReviewDecision> | undefined;
+      return withAutoReviewContext(request, this.deps.reviewAutoPermissionAction, (prepared) => {
+        if (request.userIntent !== currentAutoReviewIntent || request.authorizationContext !== (currentAutoReviewAuthority ?? undefined)) {
+          return Promise.resolve({ verdict: 'block', reason: 'User instructions changed; retry against the current request.' });
+        }
+        key = JSON.stringify([prepared, hostAutoApprove, hostShortcutOnly]);
+        const cached = autoReviewDecisionCache.get(key);
+        pending = cached ?? resolveAutoReviewDecision(
+            prepared,
+            this.deps.reviewAutoPermissionAction,
+            hostAutoApprove,
+            hostShortcutOnly,
+          );
+        if (!cached) autoReviewDecisionCache.set(key, pending);
+        return pending;
+      }, (decision) => {
+        if (!pending || !key) return decision;
+        if (request.userIntent !== currentAutoReviewIntent || request.authorizationContext !== (currentAutoReviewAuthority ?? undefined)
+            || autoReviewDecisionCache.get(key) !== pending) {
+          return { verdict: 'block', reason: 'User instructions changed; retry against the latest authorization.' };
+        }
+        if (directoryGeneration !== autoReviewDirectoryGeneration) {
+          return { verdict: 'block', reason: 'Directory permissions changed; retry with the current scope.' };
+        }
+        autoReviewActionContext.record(action, decision);
+        return decision;
+      });
     };
     const readonlyReferencesConfig = (): Record<string, unknown> => ({
       [`permissions.${READONLY_REFERENCES_PERMISSION_PROFILE}`]: {
@@ -7361,7 +7379,7 @@ assertRouteCurrent();
       const planRequestAutoReviewIntent = currentAutoReviewIntent;
       const planFollowUpSendOptions = (
         additionalSelectionText = '',
-        autoReviewIntent?: string,
+        autoReviewIntent?: AutoReviewUserIntent,
       ): CodexInternalSendOptions => ({
         ...(activeTurnPermissionPolicy
           ? { turnPermissionPolicy: activeTurnPermissionPolicy }
@@ -7460,9 +7478,9 @@ assertRouteCurrent();
         if (closed) return;
         await sendInteractionContinuation(requestId,
           { type: 'user', content: feedback },
-          // 修订轮同样带上原始审查意图快照:否则 send 会把 auto-review intent 覆盖成这条修改意见,
-          // 下一次计划获批后 implementation reviewer 拿到的是"修改意见+计划"而非原始用户请求(codex 报)。
-          planFollowUpSendOptions(feedback, planRequestAutoReviewIntent),
+          // Keep the original request and genuine rejection restrictions together;
+          // internal continuation text must not replace either part of authority.
+          planFollowUpSendOptions(feedback, appendAutoReviewUserIntent(planRequestAutoReviewIntent, feedback)),
           'plan revision turn failed to start',
         );
       } catch (e) {
@@ -7486,6 +7504,7 @@ assertRouteCurrent();
       opts?: {
         forcePrompt?: boolean;
         autoReviewAction?: ReviewableAction;
+        hostAutoApprove?: boolean;
         itemId?: string;
       },
     ): Promise<{ decision: ApprovalDecision; reason?: string }> {
@@ -7517,10 +7536,8 @@ assertRouteCurrent();
               : 'The permission confirmation could not be completed. No user rejection was received.';
           emitAutoReviewRuntimeNotice(`[${code}] ${text}`);
         };
-        let forcePrompt =
-          opts?.forcePrompt === true ||
-          (req.kind === 'permission' &&
-            forceTurnConfirmation(req.toolName, req.input));
+        const turnPolicyForcePrompt = req.kind === 'permission' && forceTurnConfirmation(req.toolName, req.input);
+        let forcePrompt = opts?.forcePrompt === true || turnPolicyForcePrompt;
         let unavailableHandoff = false;
         let approvalRequest = req;
         // Full access 的普通审批不应打断用户。Auto 在已验证路由上由 app-server
@@ -7537,8 +7554,9 @@ assertRouteCurrent();
         // Every Auto approval callback uses the shared reviewer, including
         // policy turns and MCP actions. Static green decisions stay local;
         // AI allow/block are silent and ask uses the existing interaction path.
+        const reviewPermissionMode = mutablePermissionMode;
         if (
-          mutablePermissionMode === 'auto' &&
+          (reviewPermissionMode === 'auto' || (opts?.hostAutoApprove === true && !forcePrompt)) &&
           req.kind === 'permission'
         ) {
           const reviewThreadId = threadId;
@@ -7562,6 +7580,8 @@ assertRouteCurrent();
               !opts?.autoReviewAction || (forcePrompt && opts.autoReviewAction.kind !== 'other')
                 ? toolAutoReviewAction(req.toolName, req.input, req.description)
                 : opts.autoReviewAction,
+              opts?.hostAutoApprove === true && !forcePrompt,
+              reviewPermissionMode !== 'auto',
             );
           } finally {
             if (pendingApprovals.get(requestId) === reviewEntry) pendingApprovals.delete(requestId);
@@ -7583,12 +7603,19 @@ assertRouteCurrent();
           // (codex review P1;与已修复的 Pi / Claude 线程同口径)。cast 破 TS 收窄:TS 不建模
           // await 期间经 setPermissionMode 的重赋值,仍视此处为 'auto';运行期确实可能已变。
           const modeAfterReview = mutablePermissionMode as PermissionMode;
-          if (modeAfterReview === 'bypassPermissions') return 'accept';
-          if (modeAfterReview !== 'auto') {
+          if (modeAfterReview === 'bypassPermissions') {
+            if (turnPolicyForcePrompt) {
+              denialReason = formatPermissionDenial('system', 'Permission mode changed; retry within the authorized turn scope.');
+              reportMcpDenial('system');
+              return 'decline';
+            }
+            return 'accept';
+          }
+          if (modeAfterReview !== reviewPermissionMode) {
             forcePrompt = true;
           } else if (decision.verdict === 'allow') {
             return 'accept';
-          } else if (decision.verdict === 'block') {
+          } else if (reviewPermissionMode === 'auto' && decision.verdict === 'block') {
             denialReason = formatPermissionDenial('auto', decision.reason);
             // Keep the denial, but distinguish it from a user decision in Cindy.
             reportMcpDenial('auto-review');
@@ -7812,7 +7839,7 @@ assertRouteCurrent();
     async function startAskUserContinuation(
       live: LiveAskUserRequest,
       answers: Record<string, string>,
-      autoReviewIntent?: string,
+      autoReviewIntent?: AutoReviewUserIntent,
     ): Promise<void> {
       if (closed) return;
       if (await waitForYieldContinuationIdle()) return;
@@ -9004,16 +9031,6 @@ assertRouteCurrent();
         `mcp:${params.serverName}`,
         policyPermissionInput,
       );
-      if (approvalPolicy === 'auto-approve' && !turnPolicyForcePrompt) {
-        log.debug('mcp elicitation auto-approved by host policy', {
-          serverName: params.serverName,
-          mode: params.mode,
-          toolName: policyPermissionInput.toolName,
-          innerToolName: mcpInnerToolName(params),
-        });
-        return { action: 'accept', content: null, _meta: null };
-      }
-
       const meta = mcpElicitationMeta(params);
       const toolTitle = stringFromMeta(meta, 'tool_title');
       const innerToolName = mcpInnerToolName(params);
@@ -9044,6 +9061,7 @@ assertRouteCurrent();
         {
           forcePrompt:
             turnPolicyForcePrompt || approvalPolicy === 'prompt-each-time',
+          hostAutoApprove: approvalPolicy === 'auto-approve',
           // Display text is not execution evidence. An absent argument payload
           // must hit the shared missing-evidence denial, never reach AI as a
           // seemingly complete action made only of server/title/message fields.
@@ -9626,7 +9644,7 @@ assertRouteCurrent();
       };
       const approvalPolicy = classifyMcpToolApprovalPolicy(approvalContext);
       const hostApprovalPresentation = mcpToolApprovalPresentation(approvalContext);
-      if (approvalPolicy !== 'auto-approve') {
+      {
         const requestId = `dynamic-tool:${serverName}:${params.turnId}:${params.callId}`;
         const decision = await awaitApprovalDecision(
           params.threadId,
@@ -9646,6 +9664,7 @@ assertRouteCurrent();
           },
           {
             forcePrompt: approvalPolicy === 'prompt-each-time',
+            hostAutoApprove: approvalPolicy === 'auto-approve',
             ...(toolUseId ? { itemId: toolUseId } : {}),
           },
         );
@@ -14175,6 +14194,7 @@ assertRouteCurrent();
       getPlanMode() {
         return mutablePlanMode;
       },
+      getExecutionPlanMode() { return mutablePlanMode || planCycleActive || currentTurnPlanModeActive; },
 
       async setFastMode(enabled: boolean) {
         if (reviewMode) return;

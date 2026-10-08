@@ -1,10 +1,11 @@
+import { restoreAutoReviewUserIntent, type AutoReviewHistoryMessage } from '../maker-ipc/autoReviewUserIntent.js';
 import {
   ScheduledModelSelectionBusyError,
   type ScheduledModelSelection,
   type ScheduledModelSelectionLease,
 } from '../maker-ipc/scheduledModelSelection';
 import { UI_ACTION_TRIGGER_PREFIX } from '../../shared/interruptedTurn.js';
-import { routinePermissionSnapshot } from './routinePermission.js';
+import { routinePermissionSnapshot } from '../maker-host/routinePermission.js';
 /**
  * Phase 3: MakerScheduleRunner
  *
@@ -244,6 +245,7 @@ export interface SchedulerQueueDeps {
 }
 
 export interface MakerScheduleRunnerDeps {
+  readAutoReviewHistory?: (sessionId: string) => Promise<AutoReviewHistoryMessage[]>;
   maker: Maker;
   getDb: () => SchedulerDrizzleDb;
   notifier: Notifier;
@@ -975,8 +977,8 @@ export class MakerScheduleRunner implements ScheduleRunner {
       ? (dynamicDefaultRoute?.providerId ?? null)
       : null;
     let routinePermissions =
-      schedule.source === 'bot' ? await this.readRoutinePermissions(sessionId) : null;
-    if (schedule.source === 'bot' && !routinePermissions)
+      (schedule.source === 'bot' || schedule.targetSessionId) ? await this.readRoutinePermissions(sessionId) : null;
+    if ((schedule.source === 'bot' || schedule.targetSessionId) && !routinePermissions)
       return this.deferFire(schedule, sessionId, 'routine-permission-unavailable');
     // fastMode 对 Codex / Pi 生效（Claude Code / OMP 忽略此字段）；
     // 确保「不影响 Claude」。heartbeat 沿用 session meta 里的 fast 态，非 heartbeat 取 schedule。
@@ -1220,7 +1222,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
     // The worktree path can also await filesystem work, so cancellation may
     // have arrived after the preceding guard.  Never create a late session.
     throwIfFireAborted(ctx.signal, 'session creation');
-    if (schedule.source === 'bot') {
+    if (schedule.source === 'bot' || schedule.targetSessionId) {
       routinePermissions = await this.readRoutinePermissions(sessionId);
       if (!routinePermissions)
         return this.deferFire(schedule, sessionId, 'routine-permission-unavailable');
@@ -1687,7 +1689,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
           setSessionProvider(session.id, verdict.providerId);
         }
       }
-      if (schedule.source === 'bot') {
+      if (schedule.source === 'bot' || schedule.targetSessionId) {
         routinePermissions = await this.readRoutinePermissions(session.id, session);
         if (!routinePermissions) {
           waiter.stopListening();
@@ -1703,6 +1705,19 @@ export class MakerScheduleRunner implements ScheduleRunner {
       }
       const sendResult = await session.send(outgoingMessage as never, {
         origin,
+        ...(schedule.targetSessionId || schedule.source === 'bot' ? {
+          resolveAutoReviewUserIntent: async () => {
+            const intent = restoreAutoReviewUserIntent(await this.deps.readAutoReviewHistory?.(session.id).catch(() => []) ?? []);
+            const current = await this.readRoutinePermissions(session.id, session);
+            if (!current || current.permissionMode !== routinePermissions?.permissionMode || current.planMode !== routinePermissions?.planMode)
+              throw new RoutineDispatchDeferredError('Heartbeat modes changed during preparation');
+            return intent;
+          },
+          onDispatching: () => {
+            if (!routinePermissions || !routinePermissionSnapshot(session, {permissionMode: routinePermissions.permissionMode, planModeEnabled: routinePermissions.planMode}))
+              throw new RoutineDispatchDeferredError('Heartbeat modes changed before dispatch');
+          },
+        } : {}),
         planMode: routinePermissions?.planMode ?? false,
         onAccepted: async () => {
           // createSession 之后到真正 dispatch 之间仍会 await 模型切换、baseline
@@ -1728,7 +1743,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
                 schedule.source === 'bot'
                   ? `${UI_ACTION_TRIGGER_PREFIX}${schedule.prompt}`
                   : schedule.prompt,
-              agentMeta: { origin },
+              agentMeta: { origin, autoReviewUserText: { kind: 'scheduled-continuation' } },
             });
           } catch (err) {
             throw new SchedulerOnAcceptedError(err);

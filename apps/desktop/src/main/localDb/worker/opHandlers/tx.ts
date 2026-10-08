@@ -1,3 +1,5 @@
+import { botsPersistSessionPermission } from '../../botSessionPermissionSql.js';
+import { batchAutoReviewProjection, readAutoReviewProjectionTransaction } from '../../autoReviewProjection.js';
 import { normalizeBotName } from '../../../../shared/botCreation.js';
 import { inferBotTemplatePresetId } from '../../../../shared/botTemplatePreset.js';
 // inproc 回滚口：仅在 XDT_DB_INPROC=true 时使用。
@@ -48,11 +50,18 @@ const MAX_ATTEMPTS = 5;
 const RETRY_BACKOFF_MS = [1_000, 5_000, 30_000, 5 * 60_000, 30 * 60_000];
 
 export function tx(db: Database.Database, args: unknown): unknown {
+  const name = expectString(asRecord(args, 'tx args').name, 'name');
+  return batchAutoReviewProjection(db, name, () => dispatchTransaction(db, args));
+}
+
+function dispatchTransaction(db: Database.Database, args: unknown): unknown {
   const payload = asRecord(args, 'tx args');
   const name = expectString(payload.name, 'name') as DbTxName;
   const txArgs = payload.args;
 
   switch (name) {
+    case 'authorization.readProjection':
+      return readAutoReviewProjectionTransaction(db, txArgs);
     case 'codex.importMessages':
       return codexImportMessages(db, txArgs);
     case 'claude.importMessages':
@@ -151,6 +160,8 @@ export function tx(db: Database.Database, args: unknown): unknown {
       return botsRecordLifecycleEvent(db, txArgs);
     case 'bots.archiveLifecycle':
       return botsArchiveLifecycle(db, txArgs);
+    case 'bots.persistSessionPermission':
+      return botsPersistSessionPermission(db, txArgs);
     case 'bots.deleteProfile':
       return botsDeleteProfile(db, txArgs);
     case 'bots.assertNoSharedHistory':

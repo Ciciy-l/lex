@@ -1,3 +1,4 @@
+import type { AutoReviewUserIntent } from './shared/auto-review-decision.js';
 /**
  * BaseAgent — Claude Code / Codex 等具体 agent 的统一抽象。
  *
@@ -2059,6 +2060,9 @@ export const AUTO_REVIEW_SOURCE_CONTENT = Symbol('cindy.auto-review-source-conte
 /** Host-restored user authorization for this send; never accepted from wire options. */
 export const AUTO_REVIEW_USER_INTENT = Symbol('cindy.auto-review-user-intent');
 
+/** Main-attested continuation: retain initialized live intent, including an explicit empty reset. */
+export const AUTO_REVIEW_DELEGATED_CONTINUATION = Symbol('autoReviewDelegatedContinuation');
+
 /** Main-only selection from the original input for a retained-history continuation. */
 export const INHERITED_CAPABILITY_SELECTION = Symbol('cindy.inherited-capability-selection');
 
@@ -2074,7 +2078,8 @@ export interface MainOwnedSendContext {
  */
 export interface SendOptions {
   readonly [AUTO_REVIEW_SOURCE_CONTENT]?: UserMessage['content'];
-  readonly [AUTO_REVIEW_USER_INTENT]?: string;
+  readonly [AUTO_REVIEW_USER_INTENT]?: AutoReviewUserIntent;
+  readonly [AUTO_REVIEW_DELEGATED_CONTINUATION]?: true;
   readonly [INHERITED_CAPABILITY_SELECTION]?: string;
   /** Host-authenticated metadata; never accept an equivalent string-keyed wire field. */
   readonly [MAIN_OWNED_SEND_CONTEXT]?: MainOwnedSendContext;
@@ -2469,6 +2474,7 @@ export interface AgentSessionHandle {
 
   /** 当前 maker 进程内记录的计划模式状态；不支持的 agent 不实现。 */
   getPlanMode?(): boolean | null;
+  getExecutionPlanMode?(): boolean | null;
 
   /**
    * 把当前会话导出成 HTML 文件,返回写入的绝对路径。

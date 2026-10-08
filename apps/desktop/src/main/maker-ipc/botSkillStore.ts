@@ -36,6 +36,8 @@ import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
 /** 一个技能在磁盘上的完整形态。 */
 export interface BotSkillRecord {
+  /** Absent for legacy active skills; imported disabled entries must set false. */
+  enabled?: boolean;
   /** 目录名,同时是删除 / 更新时的稳定标识。 */
   slug: string;
   /** frontmatter.name —— 展示用的技能名。 */
@@ -468,10 +470,10 @@ export async function seedBotSkillIfMissing(
  */
 const skillWrites = new Map<string, Promise<unknown>>();
 export async function saveBotSkill(
-  userDataDir: string, botId: string, input: BotSkillWriteInput,
+  userDataDir: string, botId: string, input: BotSkillWriteInput, beforeWrite?: () => void,
 ): Promise<{ record: BotSkillRecord; created: boolean }> {
   const key = botSkillRootDir(userDataDir, botId);
-  const pending = (skillWrites.get(key) ?? Promise.resolve()).catch(() => {}).then(() => writeBotSkill(userDataDir, botId, input));
+  const pending = (skillWrites.get(key) ?? Promise.resolve()).catch(() => {}).then(() => writeBotSkill(userDataDir, botId, input, beforeWrite));
   skillWrites.set(key, pending);
   try { return await pending; }
   finally { if (skillWrites.get(key) === pending) skillWrites.delete(key); }

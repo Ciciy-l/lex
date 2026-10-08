@@ -52,6 +52,8 @@ export interface MessageAutomationOrigin {
  * 只接受 SDK 自己分配的 uuid，所以这是 fork 的唯一主键。
  */
 export interface CcMeta {
+  /** Host captured authority receipt, never accepted from renderer writes. */
+  autoReviewUserText?: string | { kind: 'scheduled-continuation' | 'delegated-continuation' };
   botLearning?: import('@cindy/maker-shared/bot-learning').BotLearningReceipt[];
   uuid?: string;
   parentUuid?: string;

@@ -8741,7 +8741,7 @@ export function ChatInput({
                   visualVariant={isCreateAgentVariant ? 'create-agent' : 'default'}
                 />
                 <PermissionSelector
-                  footer={sessionId && !getSessionDeviceId(sessionId) && !deviceLinkDeviceId && !sharedGuest ? <PluginWriteAccessRecovery key={sessionId} sessionId={sessionId} onGranted={onPermissionModeDidChange} /> : undefined}
+                  footer={sessionId && !getSessionDeviceId(sessionId) && !deviceLinkDeviceId ? <PluginWriteAccessRecovery key={sessionId} sessionId={sessionId} onGranted={onPermissionModeDidChange} /> : undefined}
                   permissionMode={activePermissionMode}
                   onPermissionModeChange={handlePermissionModeChange}
                   vendorKey={vendorKey}

@@ -4076,6 +4076,51 @@ describe('pi auto-review dispatch & spawn config (mocked pi process)', () => {
   });
 
 
+  it('re-resolves Host plugin scope before cached approvals and blocks revocation', async () => {
+    let active = true;
+    const review = Object.assign(vi.fn(async (_request: AutoReviewRequest) => ({ verdict: 'allow' as const })), {
+      prepareRequest: async (request: AutoReviewRequest): Promise<AutoReviewRequest> => active
+        ? {...request, userIntent: '', delegatedTask: {source:'approved-plugin',pluginId:'eval',role:'worker',task:'Run project tests',workingDir:cwd,authorizationRevision:'scope-1'}}
+        : {...request, authorizationError:'Plugin Auto authorization revoked'},
+    });
+    const handle = await start('auto', review);
+    try {
+      await handle.send({type:'user',content:'[From Orca Lead] run tests'}, {[AUTO_REVIEW_SOURCE_CONTENT]:''});
+      const action = {kind:'exec' as const,command:'./runtime/node lab/preflight.cjs',cwd};
+      expect(await handle.reviewAutoPermissionAction!(action)).toMatchObject({verdict:'allow'});
+      expect(await handle.reviewAutoPermissionAction!(action)).toMatchObject({verdict:'allow'});
+      expect(review).toHaveBeenCalledOnce();
+      expect(review.mock.calls[0][0].userIntent).toBe('');
+      expect(review.mock.calls[0][0].delegatedTask?.task).toBe('Run project tests');
+      active = false;
+      expect(await handle.reviewAutoPermissionAction!(action)).toMatchObject({verdict:'block'});
+      expect(review).toHaveBeenCalledOnce();
+    } finally { await handle.close(); }
+  });
+
+  it('passes flat task history and actual blocked plugin actions after a natural steer, then invalidates on revocation', async () => {
+    const review = vi.fn(async (_request: AutoReviewRequest) => ({ verdict: 'block' as const }));
+    const handle = await start('auto', review);
+    const exercise = 'For this writing test, use no tools and modify no data.';
+    const search = 'Now search for the latest portable chargers.';
+    const action = { kind: 'other' as const, description: JSON.stringify({ toolName: 'mcp__cindy__ghost_market_install', input: { plugin_id: 'official-search', release_id: 'selected-release' } }) };
+    try {
+      await handle.send({ type: 'user', content: exercise });
+      await handle.steer!({ type: 'user', content: search });
+      await handle.reviewAutoPermissionAction!(action);
+      await handle.steer!({ type: 'user', content: '没事儿，你可以用' });
+      await handle.reviewAutoPermissionAction!(action);
+      expect(review.mock.calls[1][0]).toMatchObject({
+        userIntent: { earlierUserMessages: [exercise, search], currentUserMessage: '没事儿，你可以用' },
+        precedingBlockedActions: [action],
+      });
+      await handle.steer!({ type: 'user', content: 'Do not install anything. Only inspect.' });
+      await handle.reviewAutoPermissionAction!(action);
+      expect(review).toHaveBeenCalledTimes(3);
+      expect(review.mock.calls[2][0].userIntent).toMatchObject({ currentUserMessage: 'Do not install anything. Only inspect.' });
+    } finally { await handle.close(); }
+  });
+
   it.each(['allow', 'ask'] as const)('invalidates old %s when identical text refers to a new attachment', async (verdict) => {
     let release!: (decision: { verdict: 'allow' | 'ask' }) => void;
     const reviewer = vi.fn().mockImplementationOnce(() => new Promise<{ verdict: 'allow' | 'ask' }>((resolve) => { release = resolve; }))
@@ -4455,6 +4500,47 @@ describe('pi auto-review dispatch & spawn config (mocked pi process)', () => {
       orcaWorkflowId: 'team-1',
       orcaLeadSessionId: 's1',
     });
+  });
+
+  it.each((['auto', 'acceptEdits', 'ask'] as const).flatMap(permissionMode =>
+    (['ordinary', 'allow', 'block', 'ask', 'revoked', 'unavailable', 'late-revoke', 'late-scope', 'confirmed'] as const)
+      .map(scenario => ({ permissionMode, scenario }))))('delegated trusted MCP main keeps live authorization: $permissionMode/$scenario', async ({ permissionMode, scenario }) => {
+    let active = scenario !== 'revoked' && scenario !== 'confirmed';
+    let revision = 'scope-1';
+    let preparations = 0;
+    const review = Object.assign(vi.fn(async (_request: AutoReviewRequest) => {
+      if (scenario === 'late-revoke') active = false;
+      if (scenario === 'late-scope') revision = 'scope-2';
+      return { verdict: scenario === 'block' ? 'block' as const : scenario === 'ask' ? 'ask' as const : 'allow' as const };
+    }), { prepareRequest: vi.fn(async (request: AutoReviewRequest): Promise<AutoReviewRequest> => {
+      if (++preparations === 2 && permissionMode !== 'auto') {
+        if (scenario === 'late-revoke') active = false;
+        if (scenario === 'late-scope') revision = 'scope-2';
+      }
+      if (scenario === 'unavailable') throw new Error('Host storage unavailable');
+      if (scenario === 'ordinary') return request;
+      // Prove a previously ordinary shortcut cannot cross a late Host change.
+      if (permissionMode !== 'auto' && preparations === 1 && scenario.startsWith('late-')) return request;
+      return active ? { ...request, delegatedTask: { source: 'approved-plugin', pluginId: 'eval', role: 'worker',
+        task: 'Run the approved evaluation only', workingDir: cwd, authorizationRevision: revision } }
+        : { ...request, authorizationError: 'Plugin authorization revoked' };
+    }) });
+    const handle = await start(permissionMode, review, false, { serverNames: ['cindy_scheduler'], policy: () => 'auto-approve' });
+    try {
+      const resolver = vi.fn(async () => ({ kind: 'permission', behavior: scenario === 'confirmed' ? 'allow' : 'deny' }) as const);
+      handle.setInteractionResolver(resolver);
+      await handle.send({ type: 'user', content: 'Run this evaluation; do not create schedules.' });
+      firePermissionRequest('delegated-mcp', 'mcp__cindy_scheduler__call_tool', { name: 'schedule_create', args: { prompt: 'outside task scope' } });
+      await vi.waitFor(() => expect(captured.sent).toContainEqual(expect.objectContaining({ type: 'extension_ui_response', id: 'delegated-mcp' })));
+      expect(captured.sent).toContainEqual(expect.objectContaining({ id: 'delegated-mcp', confirmed: scenario === 'ordinary' || (permissionMode === 'auto' ? scenario === 'allow' : scenario === 'confirmed') }));
+      expect(review.prepareRequest).toHaveBeenCalled();
+      expect(review).toHaveBeenCalledTimes(permissionMode !== 'auto' || ['ordinary', 'revoked', 'unavailable', 'confirmed'].includes(scenario) ? 0 : 1);
+      expect(resolver).toHaveBeenCalledTimes((permissionMode === 'auto' ? ['ask', 'unavailable'].includes(scenario) : scenario !== 'ordinary') ? 1 : 0);
+      if (review.mock.calls.length) {
+        expect(review.mock.calls[0]![0].delegatedTask?.pluginId).toBe('eval');
+        expect(JSON.stringify(review.mock.calls[0]![0].action)).toContain('schedule_create');
+      }
+    } finally { await handle.close(); }
   });
 
   it('reviews actual operations for MCP servers the host policy does not trust', async () => {

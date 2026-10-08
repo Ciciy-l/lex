@@ -61,3 +61,5 @@ export * from './sessionPrRefs.js';
 export * from './sharedTask.js';
 
 export * from './workingStatus.js';
+
+export * from './filePresentation.js';

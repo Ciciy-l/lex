@@ -23,7 +23,7 @@ export function PluginWriteAccessRecovery({ sessionId, onGranted }: {
     return () => { active = false; mounted.current = false; };
   }, [sessionId]);
   if (!available) return null;
-  return <Button variant="secondary" tone="quiet" className="mt-1 w-full justify-start" disabled={pending} onClick={async () => {
+  return <Button variant="secondary" className="mt-1 w-full justify-start" disabled={pending} onClick={async () => {
     if (busy.current) return;
     busy.current = true;
     setPending(true);

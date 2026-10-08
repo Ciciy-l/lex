@@ -30,7 +30,7 @@ import { redactSensitiveText } from '@cindy/maker-shared/error-redaction';
 import { isUnsupportedResponsesImageErrorPayload } from '@cindy/responses-chat-bridge';
 import { isPiImageInputUnsupportedError } from '../../shared/inputError.js';
 import { createLogger } from '../logger.js';
-import { readAutoReviewUserText } from './autoReviewUserIntent.js';
+import { AUTO_REVIEW_DELEGATED_CONTINUATION, readAutoReviewUserText } from './autoReviewUserIntent.js';
 import { createMessage as createDbMessage } from '../localDb/ipc/messages.js';
 import { touchUserSendInDb } from '../localDb/ipc/sessions.js';
 import {
@@ -106,6 +106,11 @@ const TERMINAL_DONE_FALLBACK_DELAY_MS = 250;
 const REWIND_BOUNDARY_POLL_INTERVAL_MS = 100;
 
 type QueuedAttachment = NonNullable<AgentInputQueuedMessage['files']>[number];
+
+/** Typed Host continuations carry provenance, never user-authored permission text. */
+function queuedAutoReviewText(item: AgentInputQueuedMessage): string {
+  return typeof item.autoReviewUserText === 'string' ? item.autoReviewUserText : '';
+}
 
 function isMakerImageAttachment(file: Pick<QueuedAttachment, 'category' | 'ext'>): boolean {
   return getAgentInputAttachmentBlockType(file.category, file.ext) === 'image';
@@ -192,6 +197,7 @@ function hasRetryableQueuedContent(item: AgentInputQueuedMessage): boolean {
 }
 
 export interface AgentInputSendOpts {
+  readonly [AUTO_REVIEW_DELEGATED_CONTINUATION]?: true;
   readonly [AUTO_REVIEW_SOURCE_CONTENT]?: string;
   readonly [AUTO_REVIEW_USER_INTENT]?: string;
   messageUuid?: string;
@@ -574,6 +580,8 @@ export interface AgentInputCoordinatorDeps {
 interface ActiveTurn {
   /** Retained after steering receipt cleanup until this turn ends. */
   latestSteeringClientId?: string;
+  acceptedSteeringItem?: AgentInputQueuedMessage;
+  replyInputClientIds?: string[];
   item: AgentInputQueuedMessage | null;
   delivery: AgentInputDelivery;
   messageUuid: string;
@@ -1092,12 +1100,13 @@ export class AgentInputCoordinator {
     clientId: string; autoResume?: boolean; retrySourceClientId?: string; authoredText?: string; originKind?: string;
   } | null {
     const active = this.states.get(sessionId)?.activeTurn;
-    const item = active?.item;
+    const item = active?.acceptedSteeringItem ?? active?.item;
     // Native tools may arrive before sendToAgent returns its dispatch acknowledgement.
     if (!item) return null;
-    return { clientId: item.clientId, autoResume: item.autoResume, authoredText: item.autoReviewUserText,
+    return { clientId: item.clientId, autoResume: item.autoResume,
+      authoredText: typeof item.autoReviewUserText === 'string' ? item.autoReviewUserText : undefined,
       originKind: item.origin?.kind,
-      retrySourceClientId: item.retrySourceClientId ?? item.supersedesUserClientId };
+      retrySourceClientId: item.supersedesUserClientId };
   }
 
   /** Inputs consumed by this native turn, excluding queued work and stale generations. */
@@ -1107,7 +1116,7 @@ export class AgentInputCoordinator {
       && vendorGeneration !== active.vendorTurnGeneration)) return [];
     const item = active.item;
     return [...new Set([...(active.replyInputClientIds ?? []),
-      item?.clientId, item?.retrySourceClientId, item?.supersedesUserClientId].filter((id): id is string => !!id))];
+      item?.clientId, item?.supersedesUserClientId].filter((id): id is string => !!id))];
   }
 
   getProjection(sessionId: string): AgentInputProjection {
@@ -2080,7 +2089,7 @@ export class AgentInputCoordinator {
     // steer ack 期间原 turn 可能先收到 terminal 事件并清掉 activeTurn。owner 是本次
     // 注入开始时就已确定的 vendor-turn 身份，必须在 await 前快照，不能等 ack 后再从
     // 可能已经清空的 activeTurn 读取。
-    if (state.activeTurn) state.activeTurn.latestSteeringClientId = item.clientId;
+    const steeringTurn = state.activeTurn;
     const steerContinuationOwnerClientId = state.activeTurn?.continuationOwnerClientId ?? null;
     const steerVendorTurnGeneration = this.deps.getTurnGeneration?.(sessionId) ?? null;
     this.clearErrorUnlessQueueHeadBlocked(state, item.clientId);
@@ -2199,9 +2208,12 @@ export class AgentInputCoordinator {
         referenceContexts,
       );
       await this.deps.steerToAgent(sessionId, buildMakerUserMessage(item, referenceContexts), {
-        [AUTO_REVIEW_SOURCE_CONTENT]: item.autoReviewUserText ?? '',
-        ...(readAutoReviewUserText(item.persistedContent) === null
-          ? { [AUTO_REVIEW_USER_INTENT]: item.autoReviewUserText ?? '' } : {}),
+        ...(item.sharedTaskAuthor ? { sharedTaskAuthor: item.sharedTaskAuthor } : {}),
+        [AUTO_REVIEW_SOURCE_CONTENT]: queuedAutoReviewText(item),
+        ...(item.autoReviewUserText && typeof item.autoReviewUserText === 'object' && item.autoReviewUserText.kind === 'delegated-continuation'
+          ? { [AUTO_REVIEW_DELEGATED_CONTINUATION]: true as const } : {}),
+        ...(typeof item.autoReviewUserText !== 'object' && readAutoReviewUserText(item.persistedContent) === null
+          ? { [AUTO_REVIEW_USER_INTENT]: queuedAutoReviewText(item) } : {}),
         messageUuid,
         userName: item.userName,
         signal: AbortSignal.any([inputBoundarySignal, steerAbort.signal]),
@@ -2343,6 +2355,11 @@ export class AgentInputCoordinator {
       return finishSteerRequest(false);
     }
     const accepted = this.getState(sessionId);
+    if (steeringTurn && accepted.activeTurn === steeringTurn && accepted.generation === steerGeneration) {
+      steeringTurn.latestSteeringClientId = item.clientId;
+      steeringTurn.acceptedSteeringItem = item;
+      steeringTurn.replyInputClientIds = [...new Set([...(steeringTurn.replyInputClientIds ?? []), item.clientId])];
+    }
     const ownsCurrentSteerMarker = this.isCurrentSteerRequest(
       accepted,
       item.clientId,
@@ -4523,7 +4540,9 @@ export class AgentInputCoordinator {
       // post-dispatch acknowledgements must remain older than that marker.
       const preVendorDispatchAt = Math.max(0, Date.now() - 1);
       const result = await this.deps.sendToAgent(sessionId, makerUserMessage, head.createOpts, {
-        [AUTO_REVIEW_SOURCE_CONTENT]: head.autoReviewUserText ?? '',
+        [AUTO_REVIEW_SOURCE_CONTENT]: queuedAutoReviewText(head),
+        ...(head.autoReviewUserText && typeof head.autoReviewUserText === 'object' && head.autoReviewUserText.kind === 'delegated-continuation'
+          ? { [AUTO_REVIEW_DELEGATED_CONTINUATION]: true as const } : {}),
         messageUuid: active.messageUuid,
         userName: head.userName,
         throwOnStartFailure: true,

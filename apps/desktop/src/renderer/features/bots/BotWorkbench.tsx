@@ -719,7 +719,7 @@ function ProjectPicker({
           {t('bots.workbench.emptyTitle', { name: botName })}
         </h2>
         {onCancel ? (
-          <Button variant="secondary" size="sm" tone="quiet" compact onClick={onCancel}>
+          <Button variant="secondary" size="md" onClick={onCancel}>
             {t('bots.workbench.cancelAdd')}
           </Button>
         ) : null}
@@ -764,9 +764,7 @@ function ProjectPicker({
         {tiers.folded.length > 0 ? (
           <Button
             variant="secondary"
-            size="sm"
-            tone="quiet"
-            compact
+            size="md"
             className="-ml-3 self-start"
             aria-expanded={showFolded}
             onClick={() => setShowFolded((value) => !value)}
@@ -805,9 +803,7 @@ function ProjectPicker({
       ) : null}
       <Button
         variant="secondary"
-        size="sm"
-        tone="quiet"
-        compact
+        size="md"
         className="-ml-3 mt-2.5"
         disabled={busy}
         onClick={() => void pickFolder()}

@@ -1,3 +1,6 @@
+import { botsPersistSessionPermission } from '../botSessionPermissionSql.js';
+import { createAutoReviewIntentProjection } from '@cindy/maker-shared/auto-review-intent';
+import { batchAutoReviewProjection, readAutoReviewProjection } from '../autoReviewProjection.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
@@ -18,6 +21,10 @@ import { TASK_DATABASE_FILE_PREFIXES } from '../worker/worktreeReferences.js';
 import { CLOSE_SHARED_TASKS_FOR_SESSION_SQL } from '../sharedTaskClosureSql.js';
 
 const WORKER_CODE = `
+const botsPersistSessionPermission = ${botsPersistSessionPermission.toString()};
+const createAutoReviewIntentProjection = ${createAutoReviewIntentProjection.toString()};
+const readAutoReviewProjection = ${readAutoReviewProjection.toString()};
+const batchAutoReviewProjection = ${batchAutoReviewProjection.toString()};
 const CLOSE_SHARED_TASKS_FOR_SESSION_SQL = ${JSON.stringify(CLOSE_SHARED_TASKS_FOR_SESSION_SQL)};
 // 旧版 inline worker fallback。默认运行时走 .vite/build/dbWorker.js；
 // 这段只作为打包路径回滚口保留，后续验证 macOS / Windows packaged 后删除。
@@ -417,9 +424,17 @@ const MAX_ATTEMPTS = 5;
 const RETRY_BACKOFF_MS = [1000, 5000, 30000, 5 * 60000, 30 * 60000];
 
 function dispatchTx(readyDb, payload) {
+  return batchAutoReviewProjection(readyDb, expectString(asRecord(payload, 'tx args').name, 'name'), () => dispatchTransaction(readyDb, payload));
+}
+
+function dispatchTransaction(readyDb, payload) {
   const request = asRecord(payload, 'tx args');
   const name = expectString(request.name, 'name');
   switch (name) {
+    case 'bots.persistSessionPermission':
+      return botsPersistSessionPermission(readyDb, request.args);
+    case 'authorization.readProjection':
+      return readAutoReviewProjection(readyDb, request.args, createAutoReviewIntentProjection);
     case 'codex.importMessages':
       return codexImportMessages(readyDb, request.args);
     case 'claude.importMessages':

@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button';
 import { shouldShowOpenPathError } from '../../../shared/openPathResult';
 /**
  * Plugin detail presentation for configuration, Tools, permissions, and factual metadata.
@@ -531,7 +532,7 @@ export function GhostPluginDetailView({
 
         {detail.permissions.length > 0 ? <PermissionSummary items={detail.permissions} /> : null}
         {enabled && ghost?.manifest.agent?.tasks === true && ghost.taskCapabilityApproved !== true ? (
-          <Button variant="secondary" size="sm" className="mt-4" disabled={taskApprovalPending} onClick={async () => {
+          <Button variant="secondary" size="md" className="mt-4" disabled={taskApprovalPending} onClick={async () => {
             setTaskApprovalPending(true);
             try {
               await window.electronAPI.ghosts.requestTaskApproval(detail.id);

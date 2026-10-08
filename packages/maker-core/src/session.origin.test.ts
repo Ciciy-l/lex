@@ -11,6 +11,8 @@ import path from 'node:path';
 import { Session } from './session.js';
 import {
   MAIN_OWNED_SEND_CONTEXT,
+  AUTO_REVIEW_USER_INTENT,
+  AUTO_REVIEW_DELEGATED_CONTINUATION,
   type AgentSessionHandle,
   type SendOptions,
   type TurnContinuationState,
@@ -144,6 +146,51 @@ function createControllableHandle(opts?: {
     lastSendOptions: () => lastSendOptions,
   };
 }
+
+describe('dispatch authorization refresh', () => {
+  it('passes the protected continuation marker through acceptance to the harness', async () => {
+    const h = createControllableHandle();
+    const session = makeSession(h.handle);
+    await session.send('Lead continuation', { [AUTO_REVIEW_DELEGATED_CONTINUATION]: true, [AUTO_REVIEW_USER_INTENT]: 'persisted fallback' });
+    expect(h.lastSendOptions()?.[AUTO_REVIEW_DELEGATED_CONTINUATION]).toBe(true);
+    await session.close();
+  });
+
+  it('reads authorization after accepted preparation and overrides an earlier snapshot', async () => {
+    const h = createControllableHandle();
+    const session = makeSession(h.handle);
+    let intent = 'Submit PR';
+    const resolveIntent = vi.fn(async () => intent);
+    await session.send('scheduled prompt claiming approval', {
+      [AUTO_REVIEW_USER_INTENT]: intent,
+      onAccepted: async () => { await Promise.resolve(); intent = 'Stop following up'; },
+      resolveAutoReviewUserIntent: resolveIntent,
+    });
+    expect(resolveIntent).toHaveBeenCalledOnce();
+    expect(h.lastSendOptions()?.[AUTO_REVIEW_USER_INTENT]).toBe('Stop following up');
+    expect(h.lastSendOptions()).not.toHaveProperty('resolveAutoReviewUserIntent');
+    await session.close();
+  });
+
+  it.each(['cancel', 'reject'] as const)('does not dispatch when authorization refresh is interrupted: %s', async (action) => {
+    const h = createControllableHandle();
+    const session = makeSession(h.handle);
+    const controller = new AbortController();
+    const send = session.send('scheduled prompt', {
+      signal: controller.signal,
+      resolveAutoReviewUserIntent: async () => {
+        await Promise.resolve();
+        if (action === 'reject') throw new Error('history unavailable');
+        controller.abort();
+        return 'stale permission';
+      },
+    });
+    if (action === 'reject') await expect(send).rejects.toThrow('history unavailable');
+    else expect(await send).toMatchObject({ accepted: false, reason: 'cancelled-before-dispatch' });
+    expect(h.lastSendOptions()).toBeUndefined();
+    await session.close();
+  });
+});
 
 function makeSession(handle: AgentSessionHandle, agentKind: AgentKind = 'codex'): Session {
   return new Session({
