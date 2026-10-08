@@ -461,13 +461,12 @@ function defaultCapabilities(
     harness: primary.harness,
     modelChain: globalChain,
     modelChainOverride: null,
-    // A Bot starts with its own/profile capabilities, not the entire Cindy
-    // environment. Explicit grants remain available through the advanced UI.
+    // Share ordinary Agent tools; retain the companion’s own learned Skills.
     skillMode: 'allowlist',
     skillsExcluded: [],
-    toolsetMode: 'allowlist',
+    toolsetMode: 'inherit',
     toolsets: [],
-    mcpMode: 'allowlist',
+    mcpMode: 'inherit',
     mcpServers: [],
     memory: true,
     // 新建伙伴默认放手做(产品裁决 2026-08-18)。**只作用于「新建」**:读取既有
@@ -833,6 +832,16 @@ export async function runBotLifecycleAction(
     }
   }
   return result;
+}
+
+export async function ensureBotProfilesLoaded(refresh = false): Promise<BotProfile[]> {
+  ensureProfileOwner();
+  const owner = getDataOwnerGeneration();
+  if (refresh) refreshBotProfiles();
+  else if (!profileListLoaded && !hydrated) trackHydration();
+  await waitForHydration();
+  assertCurrentOwner(owner);
+  return getBotProfiles();
 }
 
 export function hasLoadedBotProfiles(): boolean {

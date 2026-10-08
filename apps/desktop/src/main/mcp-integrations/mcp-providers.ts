@@ -1,4 +1,7 @@
 import { resolveHelperSurface } from './helperSurface.js';
+import { createProject } from './createProject.js';
+import { createMoveSession } from './moveSession.js';
+import { listProjects, renameProject, removeProject } from './projectManagement.js';
 import { activeOwnerScopeKey, getActiveAppSession, isAppSessionBoundaryPending } from '../appSessionState.js';
 import type { createBotCapabilityService } from '../maker-ipc/botCapabilityService.js';
 import { routineTools } from '../routines/service.js';
@@ -12,6 +15,7 @@ import {
   type LiziMcpProvider,
   type LiziMcpSessionContext,
   type LspServerPool,
+  type XdtHelperMcpDeps,
   type SshHostSnapshotLike,
 } from '@cindy/mcps';
 import type { OrcaMcpDeps } from '@cindy/mcps';
@@ -37,7 +41,7 @@ import { getSlackToolBridge } from '../hook-control/slackToolBridge.js';
 import { createLogger } from '../logger.js';
 import { getScheduler } from '../scheduler-host/index.js';
 import { stabilizeHookCommand } from '../scheduler-host/hook-script-generator.js';
-import { searchSessionsFn } from '../maker-host/session-search.js';
+import { searchSessionsWithBotScope } from '../maker-host/session-search.js';
 import { readLspModeSettings } from '../maker-host/lsp-mode-store.js';
 import {
   tryGetBotDelegationService,
@@ -63,7 +67,13 @@ import {
   listBotSkillsForSession,
   saveBotSkillForSession,
 } from '../maker-ipc/botSkillService.js';
-import { runBotWorkbenchTool, type BotWorkbenchSendDeps } from '../maker-ipc/botWorkbenchTools.js';
+import {
+  addBotWorkbenchProjectForCaller,
+  removeBotWorkbenchProjectForCaller,
+  runBotWorkbenchTool,
+  type BotWorkbenchSendDeps,
+} from '../maker-ipc/botWorkbenchTools.js';
+import { createTaskToolCallAuthorizer } from '../maker-ipc/taskToolCallAuthorizer.js';
 import {
   patchSessionMetaInDb,
   renameSessionTitlesInDb,
@@ -87,6 +97,7 @@ import { getPluginMarketService } from '../plugin-market/service.js';
 import { botLearningTracker } from '../maker-ipc/botLearningTracker.js';
 
 export interface DesktopMcpProvidersDeps {
+  runtimeCapabilities?: XdtHelperMcpDeps['runtimeCapabilities'];
   botCapabilities: Pick<ReturnType<typeof createBotCapabilityService>, 'list' | 'select'>;
   createMediaDownloadContext?: CindyGhostsHostDeps['createMediaDownloadContext'];
   /** 当前 Desktop 版本，供 Forge 为具体插件包生成默认 minCindyVersion。 */
@@ -157,12 +168,6 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
           }
         : { ok: false as const, errorCode: result.errorCode, message: result.message };
     }),
-    stopSessionTurn: wrap(async (svc, params) => {
-      const result = await svc.stopSessionTurn(params);
-      return result.ok
-        ? { ok: true as const, status: result.status }
-        : { ok: false as const, errorCode: result.errorCode, message: result.message };
-    }),
     startBackgroundTask: async ({ callerSessionId, workingDir, title, objective }) => {
       const svc = tryGetBotDelegationService();
       if (!svc) return { ok: false, errorCode: 'HOST_NOT_READY', message: 'Session task service not initialized' };
@@ -171,6 +176,16 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
         ? { ok: true as const, sessionId: result.childSessionId }
         : { ok: false as const, errorCode: result.errorCode, message: result.message };
     },
+  };
+
+  const authorizeTaskToolCall = createTaskToolCallAuthorizer({
+    getDb: () => (isAppSessionBoundaryPending() ? null : tryGetDbClient()),
+    isScopeCurrent: (db) => !isAppSessionBoundaryPending() && db === tryGetDbClient(),
+  });
+  // Companion history uses the same account scope as ordinary task history.
+  const botReadsAccountHistory = async (sessionId: string | undefined): Promise<boolean> => {
+    const result = await authorizeTaskToolCall({ sessionId, server: 'cindy_helper', tool: 'history', args: {} });
+    return result.ok;
   };
 
   const withAccountDataAccess = async <T>(sessionId: string | undefined, operation: (assertCurrent: () => Promise<void>) => Promise<T>): Promise<T> => {
@@ -309,6 +324,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
     },
     scheduler: {
       withAccountDataAccess,
+      authorizeCall: authorizeTaskToolCall,
       getScheduler: () => getScheduler(),
       // 前置检查脚本统一安装服务:落盘路径/协议/自测与 UI「AI 生成」共用同一实现
       // (hook-script-generator)。lazy import:该链上有 electron app 依赖,且 maker
@@ -389,7 +405,9 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
           throw new Error('Task history search is unavailable for plugin-managed tasks');
         if (isAppSessionBoundaryPending() || dbClient !== tryGetDbClient())
           throw new Error('Task history caller unavailable');
-        const hits = await searchSessionsFn(query, opts);
+        const hits = await searchSessionsWithBotScope(query, opts, {
+          botAccountWide: await botReadsAccountHistory(opts.callerSessionId),
+        });
         if (isAppSessionBoundaryPending() || dbClient !== tryGetDbClient())
           throw new Error('Task history caller unavailable');
         if (await resolveHelperSurface(dbClient, opts.callerSessionId, getSessionInputProvenance) === 'restricted')
@@ -436,7 +454,12 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
     // 启动早期跑, 那时 registerMakerIpc 还没执行, holder 是 null; 回调真正被调时
     // (LLM 调工具时) registerMakerIpc 早已执行完毕, holder 已 ready。
     xdtHelper: {
+      runtimeCapabilities: deps.runtimeCapabilities,
       logger: createLogger('mcp/cindy_helper'),
+      createProject,
+      moveSession: createMoveSession(isSessionInTurn),
+      projectManagement: { list: listProjects, rename: renameProject, remove: removeProject },
+      authorizeCall: authorizeTaskToolCall,
       resolveSurface: async ({ sessionId }) => {
         const dbClient = tryGetDbClient();
         if (!dbClient || isAppSessionBoundaryPending()) return 'restricted';
@@ -715,19 +738,22 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
         },
         list: (params) => listBotSkillsForSession(params),
       },
-      // 工作台:伙伴继续 / 停止主人交给它的项目里的任务。授权在 botWorkbenchAccess 里逐次
-      // 确定性校验;投递与停止复用 send_to_session / stop_session_turn 的同一条宿主路径。
+      // 工作台:伙伴继续主人交给它的项目里的任务,或按主人本人的话记下 / 移除项目。授权在
+      // botWorkbenchAccess 里逐次确定性校验;投递复用 send_to_session 的同一条宿主路径。
+      // 停止走通用的 stop_session_turn。
       botWorkbench: {
         get: (params) => runBotWorkbenchTool(workbenchSend, (access) => access.get(params)),
         read: (params) => runBotWorkbenchTool(workbenchSend, (access) => access.read(params)),
         set: (params) => runBotWorkbenchTool(workbenchSend, (access) => access.set(params)),
         setMany: (params) => runBotWorkbenchTool(workbenchSend, (access) => access.setMany(params)),
         continueTask: (params) => runBotWorkbenchTool(workbenchSend, (access) => access.continueTask(params)),
-        stopTask: (params) => runBotWorkbenchTool(workbenchSend, (access) => access.stopTask(params)),
+        addProject: (params) => addBotWorkbenchProjectForCaller(params),
+        removeProject: (params) => removeBotWorkbenchProjectForCaller(params),
       },
       history: {
         resolveSessionScope: async ({ callerSessionId, callerMemoryScopeKey }) => {
           try {
+            if (await botReadsAccountHistory(callerSessionId)) return { ok: true, sessionIds: null };
             const sessionIds = await resolveBotHistorySessionIds(
               callerSessionId,
               callerMemoryScopeKey,
@@ -789,11 +815,17 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
   // 用 plugin registry gate 包装每个 provider 的 isEnabled。
   // essential plugin 始终放行；非 essential plugin 按 project → user → default 判定。
   // provider name(如 'lizi_jira') 会先映射成用户可见的 plugin id(如 'jira')。
-  const gated = providers.map((p) => {
+  const gated: LiziMcpProvider[] = providers.map((p) => {
     const originalIsEnabled = p.isEnabled;
     const pluginId = pluginIdForProviderName(p.name);
+    const declaration = pluginRegistry.getPlugins().find((entry) => entry.id === pluginId);
     return {
       ...p,
+      capability: {
+        title: declaration?.name ?? p.name,
+        description: declaration?.description ?? '',
+        source: 'builtin' as const,
+      },
       isEnabled: (ctx: LiziMcpSessionContext) => {
         // Codex 与 Pi 的共享 app-server / bridge 在还没有 thread/workdir 的阶段构建
         // MCP 工具清单。普通工具必须先全部注册，真正调用时由 HTTP bridge 按新会话
@@ -852,6 +884,10 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
 
   gated.push({
     name: 'cindy',
+    capability: {
+      title: 'Plugins and media', description: 'Discover installed plugins, their tools, accounts and media capabilities.',
+      source: 'builtin', discovery: { tool: 'ghost_list' },
+    },
     isEnabled: () => true,
     // ctx 闭包进 deps:claude in-process 路径的 tool-call 没有 ALS 语境,
     // 目录过户(workdir 钳制)与卡片 session 锚定都靠这份按 session 绑定的

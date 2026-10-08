@@ -6243,9 +6243,6 @@ assertRouteCurrent();
         'features.goals': false,
         // Bot memory and delegation remain scoped to the Lex Profile and Session.
         ...(opts.botRuntimeProfile ? {
-          'features.multi_agent': false,
-          'features.multi_agent_v2': false,
-          'agents.enabled': false,
           'memories.generate_memories': false,
           'memories.use_memories': false,
         } : {}),

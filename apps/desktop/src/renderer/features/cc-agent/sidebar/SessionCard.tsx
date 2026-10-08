@@ -95,6 +95,7 @@ import {
 } from '@/features/scheduler/lib/scheduleSidebarIndexRuns';
 import { projectSidebarSessionActivity, resolveSidebarRightStatus } from './sidebarRightStatus';
 import { Tip } from '@/components/ui/tooltip';
+import { BotFollowMark, useSessionFollowers } from '@/features/bots/BotFollowMark';
 import { SidebarRightStatusIndicator } from './SidebarRightStatusIndicator';
 import { shouldPrefetchSessionOnPointerDown } from './sessionSwitchPrefetch';
 import {
@@ -163,6 +164,8 @@ export const SessionCard = memo(function SessionCard({
 }: SessionCardProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const followers = useSessionFollowers(session);
+  const hasTitleMarks = followers.length > 0;
   // mod+1..9 序号徽标:模块 store 按 sessionId 精准订阅,非按住态恒为 null。
   const ordinalBadgeLabel = useSessionOrdinalBadge(session.id);
   // 灵动岛同源的 per-session 实时活动(执行中逐步活动 + 等待交互态)。
@@ -786,6 +789,7 @@ export const SessionCard = memo(function SessionCard({
                         })
                       : displayTitle}
                   </SidebarTitleMarquee>
+                  <BotFollowMark followers={followers} />
                   {remoteIconKind && (
                     <RemoteProjectIcon
                       kind={remoteIconKind}
@@ -943,7 +947,21 @@ export const SessionCard = memo(function SessionCard({
             data-split-group-drag-handle={splitDragHandleActive ? 'true' : undefined}
             data-no-drag={splitDragHandleActive ? 'true' : undefined}
             draggable={splitDragHandleActive}
-            className="relative"
+            className={cn(
+              'relative flex items-start',
+              // 右上操作钮浮在内容上方:浮出时标题行右侧让出操作钮宽度(两枚固定
+              // 24px 图标钮),标题让位、紧跟标题的标签色球不被盖住。让位条件与操作钮
+              // 显隐同源(卡片 hover / 操作钮自身 focus-within / 菜单);卡片本身获得
+              // 焦点时操作钮不显示,也不让位。确认胶囊宽度随语言变化,另由下方同款
+              // 隐形占位按实际宽度让位。
+              !remoteWritesBlocked &&
+                !isEditing &&
+                !archivePending &&
+                hasTitleMarks &&
+                (menuPos !== null
+                  ? 'pr-14'
+                  : 'group-hover/card:pr-14 peer-focus-within/card-actions:pr-14'),
+            )}
           >
             <div
               className={cn(
@@ -965,6 +983,7 @@ export const SessionCard = memo(function SessionCard({
                   })
                 : displayTitle}
             </div>
+            {!isEditing && hasTitleMarks ? <span className="flex h-[1.22em] shrink-0 items-center gap-1.5 text-12"><BotFollowMark followers={followers} /></span> : null}
             {isEditing && (
               <SessionRenameInput
                 sessionId={session.id}

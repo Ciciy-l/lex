@@ -29,6 +29,7 @@ vi.mock('../../logger.js', () => ({
 
 vi.mock('../../maker-ipc/register.js', () => ({
   tryGetOrcaCollabService: () => mockState.collabService,
+  isSessionInTurn: () => false,
 }));
 
 vi.mock('@cindy/mcps', () => ({
@@ -171,7 +172,7 @@ describe('collab send outcome semantics', () => {
       botCapabilities,
       getMakerMemoryManager: vi.fn(),
       lspPool: {} as never,
-      pluginRegistry: { isEnabled: () => false } as never,
+      pluginRegistry: { isEnabled: () => false, getPlugins: () => [] } as never,
       resolveIOSSimulatorAccess: () => ({ allowed: true }),
       invokeRemote: vi.fn(),
     });
@@ -344,7 +345,7 @@ describe('collab send outcome semantics', () => {
       botCapabilities,
       getMakerMemoryManager: vi.fn(),
       lspPool: {} as never,
-      pluginRegistry: { isEnabled: () => true } as never,
+      pluginRegistry: { isEnabled: () => true, getPlugins: () => [] } as never,
       resolveIOSSimulatorAccess: () => ({ allowed: true }),
       invokeRemote: vi.fn(),
     });
@@ -394,7 +395,7 @@ describe('collab send outcome semantics', () => {
       botCapabilities,
       getMakerMemoryManager: vi.fn(),
       lspPool: {} as never,
-      pluginRegistry: { isEnabled: () => true } as never,
+      pluginRegistry: { isEnabled: () => true, getPlugins: () => [] } as never,
       resolveIOSSimulatorAccess: () => ({ allowed: true }),
       invokeRemote: vi.fn(),
     });
@@ -455,7 +456,7 @@ describe('collab send outcome semantics', () => {
       botCapabilities,
       getMakerMemoryManager: vi.fn(),
       lspPool: {} as never,
-      pluginRegistry: { isEnabled: () => true } as never,
+      pluginRegistry: { isEnabled: () => true, getPlugins: () => [] } as never,
       resolveIOSSimulatorAccess: () => ({ allowed: true }),
       invokeRemote: vi.fn(),
     });
@@ -513,7 +514,7 @@ describe('collab send outcome semantics', () => {
       botCapabilities,
       getMakerMemoryManager: vi.fn(),
       lspPool: {} as never,
-      pluginRegistry: { isEnabled: () => true } as never,
+      pluginRegistry: { isEnabled: () => true, getPlugins: () => [] } as never,
       resolveIOSSimulatorAccess: () => ({ allowed: true }),
       invokeRemote: vi.fn(),
     });
@@ -550,7 +551,7 @@ describe('collab send outcome semantics', () => {
       botCapabilities,
       getMakerMemoryManager: vi.fn(),
       lspPool: {} as never,
-      pluginRegistry: { isEnabled: () => true } as never,
+      pluginRegistry: { isEnabled: () => true, getPlugins: () => [] } as never,
       resolveIOSSimulatorAccess: () => ({ allowed: true }),
       invokeRemote: vi.fn(),
     });

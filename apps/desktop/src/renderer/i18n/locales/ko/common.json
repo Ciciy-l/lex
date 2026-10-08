@@ -8222,7 +8222,8 @@
         "failed": "끝내지 못했습니다",
         "paused": "일시 중지됨",
         "disabled": "꺼짐"
-      }
+      },
+      "followingMark": "이 프로젝트 담당: {{names}}"
     },
     "learning": {
       "memory": "기억했어요: {{title}}",

@@ -8222,7 +8222,8 @@
         "failed": "沒做完",
         "paused": "已暫停",
         "disabled": "已停用"
-      }
+      },
+      "followingMark": "{{names}}在跟進這個專案"
     },
     "learning": {
       "memory": "已記住：{{title}}",

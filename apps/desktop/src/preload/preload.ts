@@ -5341,6 +5341,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
           ipcRenderer.invoke('local-db:bots:workbench:read-task', botId, taskId),
         candidates: (botId: string): Promise<unknown> =>
           ipcRenderer.invoke('local-db:bots:workbench:candidates', botId),
+        followScopes: (): Promise<unknown> =>
+          ipcRenderer.invoke('local-db:bots:workbench:follow-scopes'),
       },
       listSkills: (botId: string): Promise<import('../shared/botSkill').BotSkillSummary[]> =>
         ipcRenderer.invoke('local-db:bots:skills:list', botId),

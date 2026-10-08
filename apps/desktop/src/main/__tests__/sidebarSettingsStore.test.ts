@@ -199,6 +199,20 @@ describe('sidebarSettingsStore', () => {
     fs.rmSync(harness.root, { recursive: true, force: true });
   });
 
+  it('restores a local project through the host entry with platform identity and owner fencing', async () => {
+    const { restoreLocalProjectVisibility } = await import('../sidebarSettingsStore');
+    await hiddenHandler(request({ projectKey: 'C:/workspace/Alpha', hidden: true }));
+    const owner = request({});
+    expect(await restoreLocalProjectVisibility('c:/WORKSPACE/alpha', owner)).toBe(true);
+    expect(loadSnapshot().hiddenProjectKeys).toEqual([]);
+    expect(harness.send).toHaveBeenLastCalledWith('sidebar-settings:hidden-project-keys-changed', [], owner);
+    expect(await restoreLocalProjectVisibility('C:/workspace/Alpha', owner)).toBe(false);
+    setSession('cloud', 'owner-b');
+    await expect(restoreLocalProjectVisibility('C:/workspace/Alpha', owner)).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+    });
+  });
+
   it('isolates pinned and hidden state by owner', async () => {
     await pinnedHandler(
       request({

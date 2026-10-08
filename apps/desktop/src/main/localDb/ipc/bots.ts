@@ -45,6 +45,7 @@ import {
   writeBotModelChainSettings,
 } from '../../maker-host/bot-model-chain-settings-store.js';
 import { extractMessagePreview, sessionCreateToRow, sessionToCamel } from '../mapper.js';
+import { normalizeBotToolCapabilities } from '../../../shared/botCapabilitySelection.js';
 import {
   botProfileContentChanged,
   botProfileModelSelectionChanged,
@@ -65,6 +66,7 @@ import {
   addBotWorkbenchDirectory,
   broadcastBotWorkbenchChanged,
   readBotWorkbench,
+  readBotWorkbenchDirectoryPaths,
   removeBotWorkbenchDirectory,
 } from '../../maker-ipc/botWorkbenchService.js';
 import {
@@ -857,11 +859,11 @@ async function readProfile(
       skillsExcluded: Array.isArray(config.skillsExcluded)
         ? config.skillsExcluded.filter((item): item is string => typeof item === 'string')
         : [],
-      toolsetMode: 'allowlist',
+      toolsetMode: normalizeBotToolCapabilities(config).toolsetMode,
       toolsets: Array.isArray(config.toolsets)
         ? config.toolsets.filter((item): item is string => typeof item === 'string')
         : [],
-      mcpMode: 'allowlist',
+      mcpMode: normalizeBotToolCapabilities(config).mcpMode,
       mcpServers: Array.isArray(config.mcpServers)
         ? config.mcpServers.filter((item): item is string => typeof item === 'string')
         : [],
@@ -1211,9 +1213,10 @@ async function defaultNewBotCapabilities(): Promise<Record<string, unknown>> {
     modelChainOverride: null,
     skillMode: 'allowlist',
     skillsExcluded: [],
-    toolsetMode: 'allowlist',
+    toolCapabilityVersion: 1,
+    toolsetMode: 'inherit',
     toolsets: [],
-    mcpMode: 'allowlist',
+    mcpMode: 'inherit',
     mcpServers: [],
     memory: true,
     permissions: 'auto',
@@ -1316,10 +1319,13 @@ export async function createBotProfile(raw: unknown, operationGuard?: () => void
   }
   const persistedCapabilities = normalizeBotModelCapabilitiesOrThrow({
     permissions: 'auto',
+    toolsetMode: 'inherit',
+    mcpMode: 'inherit',
     ...(hasRequestedCapabilities ? {} : await defaultNewBotCapabilities()),
     ...requestedCapabilities,
+    toolCapabilityVersion: 1,
     skills,
-    ...(draftEntry ? { skillMode: 'allowlist', mcpMode: 'allowlist', mcpServers: draftEntry.draft.mcpRefs, toolsetMode: 'allowlist', toolsets: draftEntry.draft.toolsetRefs } : {}),
+    ...(draftEntry ? { skillMode: 'allowlist', mcpMode: 'inherit', mcpServers: draftEntry.draft.mcpRefs, toolsetMode: 'inherit', toolsets: draftEntry.draft.toolsetRefs } : {}),
     userContextSource,
     ...(gender ? { gender } : {}),
   });
@@ -2121,6 +2127,22 @@ export function registerBotIpc(): void {
     owner.assertCurrent();
     if (result.ok) broadcastBotWorkbenchChanged(botId);
     return result;
+  });
+  // 侧栏「<伙伴>在跟进」:每个在用的本机伙伴接手了哪些项目。只给路径列表,不做文件系统探测,
+  // 也不带判断与会话内容;渲染层按任务的工作目录自己匹配。
+  ipcMain.handle('local-db:bots:workbench:follow-scopes', async (event) => {
+    assertTrustedAppRendererEvent(event);
+    const owner = captureBotOperationOwner();
+    const bots = await getDbClient().drizzle
+      .select({ id: botProfiles.id })
+      .from(botProfiles)
+      .where(eq(botProfiles.status, 'active'));
+    const scopes = await Promise.all(bots.map(async (bot) => ({
+      botId: bot.id,
+      directories: await readBotWorkbenchDirectoryPaths(owner.userDataDir, bot.id),
+    })));
+    owner.assertCurrent();
+    return scopes.filter((scope) => scope.directories.length > 0);
   });
   // 工作台详情视图:只读一件任务的最近内容(有界)。范围限于该伙伴已接手的项目,
   // 外部会话只读转录尾部,不写库、不导入。

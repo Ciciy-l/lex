@@ -8222,7 +8222,8 @@
         "failed": "完了しませんでした",
         "paused": "一時停止中",
         "disabled": "オフ"
-      }
+      },
+      "followingMark": "このプロジェクトの担当: {{names}}"
     },
     "learning": {
       "memory": "記憶しました：{{title}}",
