@@ -46,7 +46,7 @@ describe('build-pinned agent runtime manifest', () => {
   it('keeps the legacy standalone pin distinct from the desktop package pin', () => {
     const manifest = getRuntimeManifest('win32-x64');
 
-    expect(manifest?.codexPackage?.version).toBe('0.156.0');
+    expect(manifest?.codexPackage?.version).toBe('0.159.2');
     expect(manifest?.codex?.version).toBe('0.145.0');
     expect(manifest?.codex?.version).not.toBe(manifest?.codexPackage?.version);
   });

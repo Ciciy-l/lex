@@ -1531,6 +1531,7 @@ const FALLBACK_MODEL_BY_AGENT: Record<'cc' | 'codex' | 'pi' | 'omp', string> = {
   cc: 'claude-sonnet-4-6',
   codex: 'gpt-5.4',
   pi: 'gpt-5.4',
+  omp: 'gpt-5.4',
 };
 
 /**

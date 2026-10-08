@@ -1,3 +1,4 @@
+import { ServerApiError } from '../serverApiClient.js';
 import fs from 'node:fs';
 import { t } from '../i18n.js';
 import { throwIpcError } from '../utils/ipcValidate';

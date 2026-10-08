@@ -1,3 +1,4 @@
+import type { SessionPathAuthorization, SessionPathAuthorizationRequest } from '@cindy/mcps';
 import { getBotAuthorizationService } from '../maker-ipc/botAuthorizationService.js';
 import { isBotAuthorizationSession } from '../maker-ipc/botAuthorizationHost.js';
 import { createPluginMarketAgentTools } from '../plugin-market/agentTools.js';
@@ -400,14 +401,21 @@ async function requestGrantConfirm(params: {
   sessionInstanceId: string | null;
   lane: GhostGrantLane;
   items: GhostGrantFileItem[];
+  toolName?: string;
+  operation?: 'read' | 'write';
   getLiveSessionGrantState?: CindyGhostsHostDeps['getLiveSessionGrantState'];
 }): Promise<
-  | { ok: true; approvalSource: GhostGrantApprovalSource; allowDirs?: boolean }
+  | { ok: true; approvalSource: GhostGrantApprovalSource; allowDirs?: boolean; isCurrent?: () => boolean }
   | { ok: false; message: string }
 > {
+  let isCurrent: (() => boolean) | undefined;
+  const expired = () => isCurrent?.() === false;
+  const denied = { ok: false as const, message: GRANT_AUTHORIZATION_CHANGED_MESSAGE };
   if (params.sessionId && params.sessionInstanceId && params.getLiveSessionGrantState) {
     try {
       const live = params.getLiveSessionGrantState(params.sessionId, params.sessionInstanceId);
+      isCurrent = live?.isCurrent;
+      if (expired()) return denied;
       // 远程会话的 workingDir 是另一台机器上的路径。即使档位为 Full Access,
       // 也不能据此静默读取本机同名/任意路径;保留原确认边界。
       if (live?.permissionMode === 'bypassPermissions' && !live.remoteHostId) {
@@ -417,17 +425,20 @@ async function requestGrantConfirm(params: {
           count: params.items.length,
           grantSource: 'full-access',
         });
-        return { ok: true, approvalSource: 'full-access' };
+        return { ok: true, approvalSource: 'full-access', isCurrent };
       }
       if (live?.permissionMode === 'auto' && live.reviewAction) {
         const decision = await live.reviewAction(toolAutoReviewAction('plugin_file_handoff', {
           ghostId: params.ghostId,
           lane: params.lane,
+          ...(params.toolName ? { sourceTool: params.toolName } : {}),
+          ...(params.operation ? { operation: params.operation } : {}),
           files: params.items.map(({ absPath, size, mimeType, isDirectory }) => ({ absPath, size, mimeType, isDirectory })),
         }, live.remoteHostId ? 'These are files on the controller, NOT the remote task filesystem.' : undefined));
+        if (expired()) return denied;
         if (decision.verdict === 'allow') {
           log.info('ghost grant: AI approved outside-workdir handoff', { ghostId: params.ghostId, lane: params.lane, grantSource: 'auto-review' });
-          return { ok: true, approvalSource: 'auto-review' };
+          return { ok: true, approvalSource: 'auto-review', isCurrent };
         }
         if (decision.verdict === 'block') return { ok: false, message: decision.reason ?? 'Automatic review denied this file handoff.' };
       }
@@ -441,6 +452,7 @@ async function requestGrantConfirm(params: {
       });
     }
   }
+  if (expired()) return denied;
   const bridge = getGhostGrantConfirmBridge();
   if (!bridge) {
     return {
@@ -461,9 +473,12 @@ async function requestGrantConfirm(params: {
     ghostName: ghostDisplayName(params.ghostId),
     lane: params.lane,
     items: params.items,
+    ...(params.toolName ? { sourceTool: params.toolName } : {}),
+    ...(params.operation ? { operation: params.operation } : {}),
   });
+  if (expired()) return denied;
   if (decision.confirmed) {
-    return { ok: true, approvalSource: 'user', allowDirs: decision.allowDirs };
+    return { ok: true, approvalSource: 'user', allowDirs: decision.allowDirs, isCurrent };
   }
   return {
     ok: false,
@@ -2237,4 +2252,83 @@ export function getCindyGhostsMcpDeps(
     },
     logger: log,
   };
+}
+
+const CINDY_SESSION_FS_GRANT_ID = 'cindy-session-fs';
+const GRANT_AUTHORIZATION_CHANGED_MESSAGE = 'Task or Plan permissions changed; retry with the current scope.';
+function requireLiveSessionInstance(
+  sessionId: string | undefined,
+  sessionInstanceId: string | undefined,
+  getLiveSessionGrantState?: CindyGhostsHostDeps['getLiveSessionGrantState'],
+): { ok: true; sessionId: string; sessionInstanceId: string } | { ok: false; message: string } {
+  if (!sessionId || !sessionInstanceId || !getLiveSessionGrantState) {
+    return {
+      ok: false,
+      message: '当前调用无法确认任务实例，不能读写工作目录外的路径。请在本机已打开的任务里重试。',
+    };
+  }
+  try {
+    if (!getLiveSessionGrantState(sessionId, sessionInstanceId)) {
+      return {
+        ok: false,
+        message: '当前任务实例已失效，不能读写工作目录外的路径。请用当前任务重试。',
+      };
+    }
+  } catch {
+    return {
+      ok: false,
+      message: '当前任务权限状态读不到，不能读写工作目录外的路径。请用当前任务重试。',
+    };
+  }
+  return { ok: true, sessionId, sessionInstanceId };
+}
+
+function denyOutsideSessionPath(reason: string): SessionPathAuthorization {
+  return { allowed: false, reason };
+}
+
+export async function authorizeDesktopSessionPath(
+  request: SessionPathAuthorizationRequest,
+  getLiveSessionGrantState?: CindyGhostsHostDeps['getLiveSessionGrantState'],
+): Promise<SessionPathAuthorization> {
+  if (request.remoteHostId) {
+    return {
+      allowed: false,
+      reason: '远程会话不能授权控制端本机路径。请改用当前任务工作目录内的路径，或在本机会话中重试。',
+    };
+  }
+  const live = requireLiveSessionInstance(request.sessionId, request.sessionInstanceId, getLiveSessionGrantState);
+  if (!live.ok) return denyOutsideSessionPath(live.message);
+  let size = 0;
+  let isDirectory = false;
+  try {
+    const stat = fs.statSync(request.path);
+    isDirectory = stat.isDirectory();
+    size = stat.size;
+  } catch {
+    /* write targets may not exist yet */
+  }
+  const granted = await requestGrantConfirm({
+    ghostId: CINDY_SESSION_FS_GRANT_ID,
+    sessionId: live.sessionId,
+    sessionInstanceId: live.sessionInstanceId,
+    lane: 'outside_workdir',
+    items: [{
+      name: path.basename(request.path) || request.path,
+      absPath: request.path,
+      size,
+      isDirectory,
+    }],
+    toolName: request.toolName,
+    operation: request.operation,
+    getLiveSessionGrantState,
+  });
+  if (!granted.ok) return denyOutsideSessionPath(granted.message);
+  if (!granted.isCurrent) {
+    return denyOutsideSessionPath('当前任务实例已失效，不能读写工作目录外的路径。请用当前任务重试。');
+  }
+  if (granted.isCurrent() === false) {
+    return { allowed: false, reason: GRANT_AUTHORIZATION_CHANGED_MESSAGE };
+  }
+  return { allowed: true, isCurrent: granted.isCurrent };
 }

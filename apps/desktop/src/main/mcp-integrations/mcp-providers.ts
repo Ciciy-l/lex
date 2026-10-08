@@ -1,3 +1,4 @@
+import { authorizeDesktopSessionPath } from './ghost.js';
 import { resolveHelperSurface } from './helperSurface.js';
 import { createProject } from './createProject.js';
 import { createMoveSession } from './moveSession.js';
@@ -10,6 +11,7 @@ import { and, eq } from 'drizzle-orm';
 
 import {
   createLiziMcpProviders,
+  setSessionPathAuthorizer,
   resolveLiziMcpSessionContext,
   type IOSSimulatorMcpAccessDecision,
   type LiziMcpProvider,
@@ -142,6 +144,7 @@ export interface DesktopMcpProvidersDeps {
 }
 
 export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMcpProvider[] {
+  setSessionPathAuthorizer(request => authorizeDesktopSessionPath(request, deps.getLiveSessionGrantState));
   const { pluginRegistry } = deps;
   let redactSshText: ((snapshot: SshHostSnapshotLike, text: string) => string) | undefined;
   const loadRemoteSsh = async () => {

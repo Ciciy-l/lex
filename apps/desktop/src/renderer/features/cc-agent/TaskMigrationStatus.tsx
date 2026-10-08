@@ -49,7 +49,7 @@ export function TaskMigrationStatus({ session }: { session: Session }) {
   return (
     <>
       <Button
-        size="sm"
+        size="md"
         variant="secondary"
         className="max-w-64 truncate [-webkit-app-region:no-drag]"
         onClick={() => setOpen(true)}

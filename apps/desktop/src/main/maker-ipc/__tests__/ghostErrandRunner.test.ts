@@ -144,13 +144,13 @@ describe('Pi 代办路由', () => {
 });
 
 describe('OMP 代办路由', () => {
-  it('读取 OMP 草稿默认并创建 OMP 会话，不回落到 Claude', async () => {
+  it('通过普通任务解析器创建 OMP 会话，不回落到 Claude', async () => {
     const createSession = vi.fn(async () => 'sess-omp');
-    const getDraftDefaults = vi.fn(() => ({ model: 'omp-model', providerId: 'minimax' }));
+    const resolveExecution = vi.fn(async () => ({ agentKind: 'omp' as const, model: 'omp-model', providerId: 'minimax', fastMode: false }));
     const { deps, emitters } = makeDeps({
       readConfig: () => ({ agentKind: 'omp' }),
       createSession,
-      getDraftDefaults,
+      resolveExecution,
     });
     const runner = createGhostErrandRunner(deps);
     const pending = runner(REQUEST);
@@ -158,7 +158,7 @@ describe('OMP 代办路由', () => {
     emitters.get('sess-omp')!.emit(doneEvent());
     await pending;
 
-    expect(getDraftDefaults).toHaveBeenCalledWith('omp');
+    expect(resolveExecution).toHaveBeenCalledWith({ agentKind: 'omp' }, REQUEST.sourceSessionId, undefined);
     expect(createSession).toHaveBeenCalledWith(
       expect.objectContaining({ agentKind: 'omp', model: 'omp-model', providerId: 'minimax' }),
     );

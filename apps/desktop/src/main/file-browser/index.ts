@@ -285,7 +285,6 @@ async function fetchRemoteBigFile(
               }
               return { ossKey: key, size: args.size, mimeType: 'application/octet-stream' };
             },
-            signal: transferSignal,
           },
         );
         if (transferSignal?.aborted || !ownerScope.isCurrent()) { if ('path' in fetched) await fetched.dispose(); throw new Error('FILE_PEER_CANCELLED'); }
@@ -421,7 +420,6 @@ export function registerFileBrowserIpc(): void {
         lastPush = now;
         if (!wc.isDestroyed()) {
           wc.send(FILE_BROWSER_PUSH.TRANSFER, {
-            signal: transferSignal,
             workdir: args.workdir,
             relPath: args.relPath,
             received,
@@ -450,7 +448,6 @@ export function registerFileBrowserIpc(): void {
             scope: ownerScope.key,
             transport,
             endpointId,
-            signal: transferSignal,
             workdir: args.workdir,
             relPath: args.relPath,
           }).catch(() => null);
@@ -678,7 +675,6 @@ export function registerFileBrowserIpc(): void {
     try {
       const data = args.remoteHostId
         ? await getRemoteFileBrowser().request(args.remoteHostId, 'readFile', {
-            signal: transferSignal,
             workdir: args.workdir,
             relPath: args.relPath,
           })
@@ -719,7 +715,6 @@ export function registerFileBrowserIpc(): void {
     try {
       const result = args.remoteHostId
         ? await getRemoteFileBrowser().request(args.remoteHostId, 'writeFile', {
-            signal: transferSignal,
             workdir: args.workdir,
             relPath: args.relPath,
             content: args.content,
@@ -736,7 +731,6 @@ export function registerFileBrowserIpc(): void {
     try {
       const stat = args.remoteHostId
         ? await getRemoteFileBrowser().request(args.remoteHostId, 'createFile', {
-            signal: transferSignal,
             workdir: args.workdir,
             relPath: args.relPath,
           })
@@ -752,7 +746,6 @@ export function registerFileBrowserIpc(): void {
     try {
       const stat = args.remoteHostId
         ? await getRemoteFileBrowser().request(args.remoteHostId, 'createFolder', {
-            signal: transferSignal,
             workdir: args.workdir,
             relPath: args.relPath,
           })

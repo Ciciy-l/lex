@@ -7,7 +7,7 @@ import { ensureProjectGitInitialized } from '../git-snapshot/projectGitBootstrap
 import { readGitSafetySettings } from '../maker-host/git-safety-settings-store.js';
 import { normalizeWorkingDirForStorage } from '../../shared/workingDir.js';
 
-export type SessionOpenBody = NonNullable<Parameters<typeof sessionCreateToRow>[1]>;
+export type SessionOpenBody = NonNullable<Parameters<typeof sessionCreateToRow>[1]> & { title?: string };
 export type OpenedSessionRow = ReturnType<typeof sessionCreateToRow> & { model: string };
 type ModelAdmission = (body: SessionOpenBody) => Promise<SessionOpenBody>;
 let admitModel: ModelAdmission | null = null;
@@ -57,7 +57,7 @@ export async function openSession<T = void>(input: {
   assertCurrent();
   const mapped = sessionCreateToRow(id, { ...prepared, ...input.finalize?.() }, now);
   if (!mapped.model) throw new Error('任务模型不可用，请重新选择');
-  const row = { ...mapped, model: mapped.model, ...(input.source ? { source: input.source } : {}) };
+  const row = { ...mapped, ...(prepared.title !== undefined ? { title: prepared.title } : {}), model: mapped.model, ...(input.source ? { source: input.source } : {}) };
   input.onPersistenceStarted?.();
   let value: T;
   if (commit) value = await commit(row, assertCurrent);

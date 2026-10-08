@@ -7,7 +7,7 @@ import {
   type DesktopInput,
   type RemoteDesktopCursor,
 } from '@cindy/device-link';
-import { DESKTOP_AUDIO_RETRY_MS, type DesktopCaptureApi } from '../../../shared/remoteDesktop';
+import { type DesktopCaptureApi } from '../../../shared/remoteDesktop';
 import {
   desktopVideoFramerate,
   desktopVideoProfile,

@@ -166,7 +166,7 @@ export function GhostCardLinkConfirm({
         <div className="mt-2.5 flex items-center justify-end gap-1.5">
           <Button
             variant="secondary"
-            size="sm"
+            size="md"
            
             type="button"
             autoFocus
@@ -174,7 +174,7 @@ export function GhostCardLinkConfirm({
           >
             {t('chat.ghostCall.linkConfirmCancel')}
           </Button>
-          <Button variant="secondary" size="sm" type="button" onClick={onConfirm}>
+          <Button variant="secondary" size="md" type="button" onClick={onConfirm}>
             {t('chat.ghostCall.linkConfirmOpen')}
           </Button>
         </div>

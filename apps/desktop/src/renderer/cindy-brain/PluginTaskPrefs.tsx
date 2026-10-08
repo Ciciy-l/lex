@@ -145,7 +145,7 @@ export function PluginTaskPrefs({
           <span className="text-12 leading-4 text-[var(--text-secondary)]">
             {t(`settings.ghosts.detail.errandPrefs.${customized ? 'sourceCustom' : 'sourceDefault'}`)}
           </span>
-          {customized ? <Button type="button" variant="secondary" size="sm" disabled={saving}
+          {customized ? <Button type="button" variant="secondary" size="md" disabled={saving}
             onClick={() => save({ permissionMode: config.permissionMode, workingDir: config.workingDir })}>
             {t('settings.ghosts.detail.errandPrefs.restoreModel')}
           </Button> : null}
@@ -249,7 +249,6 @@ export function PluginTaskPrefs({
           <Button
             variant="secondary"
             size="md"
-            compact
             type="button"
             onClick={() => void pickWorkingDir()}
             className="shrink-0"

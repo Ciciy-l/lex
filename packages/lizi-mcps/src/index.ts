@@ -51,3 +51,5 @@ export * from './computer/index.js';
 export * from './contacts/approval.js';
 
 export { TEAMMATE_CONTROL_GUIDANCE, BOT_CONTROL_GUIDANCE, type BotControlState } from './xdt-helper/bot_capabilities.js';
+
+export * from './session-path-auth.js';

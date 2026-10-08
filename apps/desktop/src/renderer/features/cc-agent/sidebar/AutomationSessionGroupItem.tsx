@@ -737,7 +737,7 @@ export const AutomationSessionGroupItem = memo(function AutomationSessionGroupIt
                         align="end"
                         sideOffset={2}
                         onClick={(event) => event.stopPropagation()}
-                        className={cn(MENU_CONTENT_CLASS, 'min-w-36 overflow-hidden')}
+                        className={'min-w-36 overflow-hidden'}
                       >
                         {canMarkRead && (
                           <DropdownMenuItem

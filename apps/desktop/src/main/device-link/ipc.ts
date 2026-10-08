@@ -1340,7 +1340,7 @@ export function registerDeviceLinkIpc(deps: DeviceLinkIpcDeps = defaultDeps()): 
     const p = (payload ?? {}) as { deviceId?: unknown };
     return handleCloseLink(deps, p.deviceId);
   });
-  ipcMain.handle(DEVICE_LINK_INVOKE.INVOKE, (_e, payload: unknown) => {
+  ipcMain.handle(DEVICE_LINK_INVOKE.INVOKE, (e, payload: unknown) => {
     requireDeviceLinkCapability();
     const p = (payload ?? {}) as { deviceId?: unknown; channel?: unknown; args?: unknown };
     if (p.channel === 'maker:review:start') {

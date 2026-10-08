@@ -1,3 +1,5 @@
+import { ensureProjectGitInitialized } from '../git-snapshot/projectGitBootstrap.js';
+import { readGitSafetySettings } from '../maker-host/git-safety-settings-store.js';
 import { openSession } from '../localDb/sessionOpening.js';
 import { controlOwnedSessionExecution, isSameSessionExecution, withdrawOwnedSessionInputs } from './sessionExecutionOwnership.js';
 import { existsSync, statSync } from 'node:fs';

@@ -306,7 +306,6 @@ function extractIpcUserMessageText(message: IpcUserMessage): string {
 export interface MakerSendTransactionSession {
   readonly stablePermissionModeState?: Session['stablePermissionModeState'];
   readonly stablePlanModeState?: Session['stablePlanModeState'];
-  instanceId?: string;
   hostStartupPreferences?: CreateOpts['hostStartupPreferences'];
   id: string;
   /** Exact in-memory incarnation; a reused session id must not inherit turn grants. */

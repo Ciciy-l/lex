@@ -58,7 +58,7 @@ export async function nativeCaptureStream(
       observe(bitmap);
       // A fallback frame includes the pointer in its pixels. Clear the last
       // independent cursor so switching backends cannot leave two pointers.
-      cursor(typeof frame === 'string' ? null : frame.cursor);
+      cursor(typeof frame === 'string' ? null : frame?.cursor);
       lastFrame = performance.now();
       return true;
     } finally {

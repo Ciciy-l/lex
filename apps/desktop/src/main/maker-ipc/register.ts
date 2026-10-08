@@ -1,3 +1,4 @@
+import { resolveSafe as resolveCindyMediaUrl } from '../cindy-media/blobStore.js';
 import { getSessionFsSnapshot } from '../localDb/ipc/sessions.js';
 import { isModelSelectableForNewRoute } from '@cindy/model-providers';
 import { resolveVerifiedContextWindow } from '../maker-host/catalog-to-descriptors.js';
@@ -6839,7 +6840,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     return verdict.kind === 'reroute' ? verdict.providerId : undefined;
   }
 
-  async function bootstrapSession(o: CreateOpts): Promise<{
+  async function bootstrapSession(o: CreateOpts, assertOpeningCurrent?: () => void): Promise<{
     session: Awaited<ReturnType<typeof maker.createSession>>;
     didInjectOrcaInstructions: boolean;
     didInjectProjectContext: boolean;
@@ -6862,6 +6863,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       }
     }
     const assertSshCodexOwnerCurrent = () => {
+      assertOpeningCurrent?.();
       if (
         sshCodexOwnerGeneration !== null &&
         (isAppSessionBoundaryPending() ||
@@ -7010,7 +7012,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       session = await maker.createSession(
         o,
         sshCodexOwnerGeneration === null
-          ? undefined
+          ? (assertOpeningCurrent ? { assertCurrent: assertOpeningCurrent } : undefined)
           : {
               assertCurrent: assertSshCodexOwnerCurrent,
               scopeKey: getSshCodexCreationScopeKey(
