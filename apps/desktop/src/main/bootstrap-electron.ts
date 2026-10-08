@@ -1,4 +1,5 @@
 import { registerFilePeerIpc } from './device-link/filePeer';
+import { registerTaskMigrationIpc } from './task-migration/service';
 import { registerLoginItemIpc } from './login-item-ipc.js';
 import { retainProviderPresentationAfterAuthChange } from './maker-host/provider-presentation-store.js';
 import { codexAccountState } from './maker-host/codex-account-auth.js';
@@ -28,7 +29,7 @@ import {
   type WebContents,
 } from 'electron';
 import { resolveVibrancyConfig } from './vibrancyConfig';
-import { getSessionThinkingSnapshots, getHistoryToolName } from './messagePersistBroadcaster';
+import { getSessionThinkingSnapshots, getHistoryToolName, drainPersistQueue } from './messagePersistBroadcaster';
 import { applyVibrancyToSecondaryWindows } from './secondary-windows';
 import {
   rememberResolvedAppTheme,
@@ -685,6 +686,7 @@ import {
   registerMakerIpc as registerMakerCoreIpc,
   restoreBotRuntimeForCurrentOwner,
   isSessionTurnPendingCompletion,
+  isSessionInTurn,
   stopOrcaIdleWatcher,
   setGoalClearObserver,
   setGoalDeferredResumeCancelObserver,
@@ -693,6 +695,7 @@ import {
   setGoalAskAnswerObserver,
   withSendToSessionLock,
 } from './maker-ipc/register.js';
+import { moveSessionProjectFromHost } from './mcp-integrations/moveSession.js';
 import { cleanupActiveReviewArtifactSnapshots } from './reviewer/reviewArtifactSnapshot.js';
 import { MAKER_INVOKE as MAKER_IPC_INVOKE, MAKER_PUSH, MAKER_SEND } from './maker-ipc/channels.js';
 import {
@@ -9239,6 +9242,13 @@ app.on('ready', async () => {
   // owning modules above; future collections/actions do not add tunnel channels.
   registerRemoteResourcesIpc();
   registerDeviceLinkIpc();
+  registerTaskMigrationIpc((sessionId, workingDir, assertAuthority) =>
+    moveSessionProjectFromHost(isSessionInTurn, sessionId, workingDir, assertAuthority),
+    {
+      isBusy: (id) => isSessionInTurn(id) || isSessionTurnPendingCompletion(id),
+      drain: drainPersistQueue,
+    },
+  );
   registerFilePeerIpc();
   registerRemoteDesktopIpc(isGlobalVoiceInputOverlaySender);
   void startupPurgeDrain

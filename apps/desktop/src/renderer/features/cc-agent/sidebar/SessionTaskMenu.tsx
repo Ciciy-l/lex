@@ -1,3 +1,6 @@
+import { AddRemoteProjectDialog } from '@/components/new-chat/AddRemoteProjectDialog';
+import { TaskMoveSubmenu, moveRemoteTaskProject, type TaskMoveDestination } from './TaskMoveSubmenu';
+import { TaskMigrationDialog } from './TaskMigrationDialog';
 import { useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { isSharedTaskPeer } from '@cindy/device-link';
@@ -10,6 +13,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { isEmptyDraftSession } from '../lib/sessionDisplayTitle';
 import { MENU_CONTENT_CLASS, MENU_ITEM_CLASS, MENU_SEPARATOR_CLASS } from './menuStyles';
+
+type MenuDialog = 'shared' | { kind: 'migration'; destination?: TaskMoveDestination } | { kind: 'browse-project' };
 
 interface Props {
   session: Session;
@@ -31,7 +36,7 @@ interface Props {
 
 /** One menu order for the header, text rows and cards. Keep row-specific action handlers. */
 export function SessionTaskMenu(props: Props) {
-  const [dialog, setDialog] = useState<'shared' | null>(null);
+  const [dialog, setDialog] = useState<MenuDialog | null>(null);
   // Do not mount sharing controls for every idle sidebar row.
   if (!props.open && !dialog) return null;
   return <ActiveSessionTaskMenu {...props} dialog={dialog} setDialog={setDialog} />;
@@ -55,8 +60,8 @@ function ActiveSessionTaskMenu({
   dialog,
   setDialog,
 }: Props & {
-  dialog: 'shared' | null;
-  setDialog: (dialog: 'shared' | null) => void;
+  dialog: MenuDialog | null;
+  setDialog: (dialog: MenuDialog | null) => void;
 }) {
   const { t } = useTranslation();
   const guest = isSharedTaskPeer(session.deviceLinkDeviceId ?? '');
@@ -90,7 +95,9 @@ function ActiveSessionTaskMenu({
               !empty &&
               item(session.pinnedAt != null ? 'unpin' : 'pin', onPin, writeBlocked)}
             {item('rename', onRename, writeBlocked)}
-            {move}
+            {!archived && !empty && !session.remoteHostId && <TaskMoveSubmenu session={session} disabled={writeBlocked}
+              localProjects={move} onMigration={destination => setDialog({ kind: 'migration', destination })}
+              onBrowseRemote={() => setDialog({ kind: 'browse-project' })} />}
             {tags}
             {separator}
             {copy}
@@ -118,6 +125,15 @@ function ActiveSessionTaskMenu({
           </>
         )}
       </DropdownMenuContent>
+      {typeof dialog === 'object' && dialog?.kind === 'migration' && <TaskMigrationDialog
+        session={session} destination={dialog.destination} onDismiss={() => { setDialog(null); requestAnimationFrame(returnFocus); }} />}
+      {typeof dialog === 'object' && dialog?.kind === 'browse-project' && session.deviceLinkDeviceId && <AddRemoteProjectDialog
+        open onOpenChange={open => { if (!open) setDialog(null); }} initialDeviceId={session.deviceLinkDeviceId} fixedDeviceId={session.deviceLinkDeviceId}
+        title={t('ccAgent.sidebar.sessionMenu.moveToProject')} confirmText={t('ccAgent.sidebar.sessionMenu.moveToProject')} errorText={t('taskMove.failed')}
+        onProjectAdded={async target => {
+          if (target.kind !== 'device-link' || target.deviceId !== session.deviceLinkDeviceId) throw new Error('MIGRATION_ACCESS_REVOKED');
+          await moveRemoteTaskProject(session, target.path);
+        }} />}
       {dialog === 'shared' && (
         <SharedTaskButton
           session={session}

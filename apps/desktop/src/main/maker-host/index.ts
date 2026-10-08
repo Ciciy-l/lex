@@ -12,8 +12,8 @@ import { clearCodexAccountUsageSnapshot } from '../usageBroadcaster.js';
  */
 
 import { createMediaDownloadContext } from '../cindy-media/mediaDownloadApproval.js';
-import { isCodexAccountProvider, codexAccountHome, setCodexAccountRetirement } from './codex-account-auth.js';
-import { CodexThreadLocations } from './codex-thread-locations.js';
+import { isCodexAccountProvider, setCodexAccountRetirement } from './codex-account-auth.js';
+import { ownerCodexThreadLocations, readCodexThreadStorageReadOnly } from './codex-thread-storage.js';
 import { getActiveAppSession, activeOwnerScopeKey, isAppSessionBoundaryPending } from '../appSessionState.js';
 import { remoteCodexProvider } from './ssh-codex-models.js';
 import { getActiveAuthRealm } from '../authManager.js';
@@ -1989,13 +1989,14 @@ export function getMaker(): Maker {
       unregisterCodexMcpThreadContext,
       prepareCodexResumeSession: async (threadId) => {
         if (!getActiveAppSession().dataOwnerId) return prepareExternalCodexSessionForResume(threadId);
-        const locations = new CodexThreadLocations(path.join(codexAccountHome('thread-index'), 'locations'));
-        return await locations.read(threadId) ?? await prepareExternalCodexSessionForResume(threadId);
+        return await ownerCodexThreadLocations().read(threadId) ?? await prepareExternalCodexSessionForResume(threadId);
       },
-      resolveCodexThreadStorage: async (threadId) => {
-        if (!getActiveAppSession().dataOwnerId) return;
+      resolveCodexThreadStorage: async (threadId, options) => {
+        if (!getActiveAppSession().dataOwnerId) return options?.readOnly ? readCodexThreadStorageReadOnly(threadId) : undefined;
         const ownerScope = activeOwnerScopeKey();
-        const storage = await new CodexThreadLocations(path.join(codexAccountHome('thread-index'), 'locations')).readStorage(threadId, {
+        const storage = options?.readOnly
+          ? await readCodexThreadStorageReadOnly(threadId)
+          : await ownerCodexThreadLocations().readStorage(threadId, {
           home: getCodexHome(),
           prepare: prepareExternalCodexSessionForResume,
         });
@@ -2015,8 +2016,7 @@ export function getMaker(): Maker {
       },
       recordCodexThreadLocation: async (threadId, storageHome, rolloutPath) => {
         if (!rolloutPath || !getActiveAppSession().dataOwnerId) return;
-        const locations = new CodexThreadLocations(path.join(codexAccountHome('thread-index'), 'locations'));
-        await locations.record(threadId, rolloutPath, storageHome);
+        await ownerCodexThreadLocations().record(threadId, rolloutPath, storageHome);
       },
       registerCodexSystemPromptForThread: ({
         sessionId,

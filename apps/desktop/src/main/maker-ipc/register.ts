@@ -833,6 +833,7 @@ import {
   type ModelWindowSwitchPreparationResult,
 } from './contextOverflowRollover.js';
 import { classifyCodexHistoryOversized } from '../maker-host/codex-local-sessions.js';
+import { readCodexThreadStorageReadOnly } from '../maker-host/codex-thread-storage.js';
 import { hydrateQueuedAgentReferences } from './agentInputReferences.js';
 import { agentHandoffPending } from './agentHandoffPendingSingleton.js';
 import { clearSealedCodexPlanState, readCodexPlanState } from '../localDb/codexPlanState.js';
@@ -13794,7 +13795,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       const dbSnapshot = getCurrentDbClientSnapshot();
       let committed = false;
       try {
-        const classified = await classifyCodexHistoryOversized(threadId);
+        const storage = await readCodexThreadStorageReadOnly(threadId).catch(() => null);
+        const classified = storage === null ? 'unknown' : await classifyCodexHistoryOversized(threadId, storage);
         if (
           !isDataOwnerBroadcastScopeCurrent(ownerScope) ||
           !dbSnapshot ||

@@ -19,13 +19,38 @@ export function createMoveSession(
         message: 'Cannot move the calling task while it is running.',
       };
     }
+    return moveSessionProject(isSessionRunning, callerSessionId, sessionId, workingDir);
+  };
+}
+
+/** Trusted UI entry: identity/remote-control authority is checked by the host route.
+ * Unlike a running agent, the UI may move its selected task itself.
+ */
+export function moveSessionProjectFromHost(
+  isSessionRunning: (sessionId: string) => boolean,
+  sessionId: string,
+  workingDir: string | null,
+  assertAuthority: () => void,
+) {
+  assertAuthority();
+  return moveSessionProject(isSessionRunning, sessionId, sessionId, workingDir, assertAuthority);
+}
+
+async function moveSessionProject(
+  isSessionRunning: (sessionId: string) => boolean,
+  contextSessionId: string,
+  sessionId: string,
+  workingDir: string | null,
+  assertAuthority: () => void = () => {},
+) {
     const directory = workingDir === null ? null : validateLocalProjectDirectory(workingDir);
     if (directory && !directory.ok) return directory;
     const targetDir = directory?.workingDir ?? null;
-    return withLocalProjectContext(callerSessionId, async (context) => {
+    return withLocalProjectContext(contextSessionId, async (context) => {
       let workers: Array<{ sessionId: string }> = [];
       const assertMoveAllowed = () => {
         context.assertCurrent();
+        assertAuthority();
         if (
           isSessionRunning(sessionId) ||
           workers.some((worker) => isSessionRunning(worker.sessionId))
@@ -45,6 +70,7 @@ export function createMoveSession(
           .where(eq(sessions.id, sessionId))
           .limit(1);
         context.assertCurrent();
+        assertAuthority();
         if (!target) throwIpcError('NOT_FOUND', 'Task does not exist in this account.');
         if (target.remoteHostId)
           throwIpcError('UNSUPPORTED_CAPABILITY', 'Remote tasks cannot be moved.');
@@ -63,6 +89,7 @@ export function createMoveSession(
           .where(eq(botSessionLinks.sessionId, sessionId))
           .limit(1);
         context.assertCurrent();
+        assertAuthority();
         if (target.source === 'bot' || botLink)
           throwIpcError('UNSUPPORTED_CAPABILITY', 'Bot tasks use their own managed workspace.');
         workers =
@@ -82,7 +109,7 @@ export function createMoveSession(
           ? { workspaceKind: 'dialogue' }
           : { workspaceKind: 'project', workingDir: targetDir };
       const updated = await updateSessionInDb(sessionId, patch, undefined, {
-        assertCurrent: context.assertCurrent,
+        assertCurrent: () => { context.assertCurrent(); assertAuthority(); },
         beforeUpdate,
         beforeWrite: assertMoveAllowed,
       });
@@ -93,5 +120,4 @@ export function createMoveSession(
         workspaceKind: updated.workspaceKind ?? 'project',
       };
     });
-  };
 }

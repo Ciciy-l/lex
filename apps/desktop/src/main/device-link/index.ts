@@ -1,3 +1,4 @@
+import { resolveRemoteInvokeTimeoutMs } from '@cindy/device-link';
 /**
  * device-link host —— 跨设备远程控制的 main 进程接线层。
  *
@@ -757,7 +758,7 @@ export function initDeviceLinkService(options: DeviceLinkServiceOptions = {}): v
           invoke: (probeChannel, probeArgs) => probeClient.invoke(deviceId, { channel: probeChannel, args: probeArgs }),
         });
       }
-      return client.invoke(deviceId, { channel, args }, INVOKE_TIMEOUT_OVERRIDES_MS[channel]);
+      return client.invoke(deviceId, { channel, args }, resolveRemoteInvokeTimeoutMs(channel, args, 'desktop'));
     },
     onUnresponsiveChanged: (deviceId, unresponsive, recovered) => {
       broadcast(DEVICE_LINK_PUSH.RESPONSIVENESS_CHANGED, { deviceId, unresponsive, recovered });
@@ -1808,7 +1809,7 @@ export async function remoteInvoke(
       options?.preSend?.();
       if (accelerated) return accelerated;
     }
-    return client.invoke(deviceId, { channel, args }, INVOKE_TIMEOUT_OVERRIDES_MS[channel]);
+    return client.invoke(deviceId, { channel, args }, resolveRemoteInvokeTimeoutMs(channel, args, 'desktop'));
   };
   const run = (): Promise<InvokeResultPayload> =>
     invokeWithClosedLinkRecovery(

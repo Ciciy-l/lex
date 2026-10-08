@@ -39,3 +39,5 @@ export { FILE_PEER_RUNTIME_SOURCE } from './filePeerRuntimeSource.js';
 export * from './peerTransferCooldown.js';
 export * from './peerInvoke.js';
 export * from './peerAttachment.js';
+export * from './taskMigration.js';
+export * from './invokePolicy.js';

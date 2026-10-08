@@ -64,6 +64,10 @@ interface Props {
    * 未指名(从通用入口打开)时才由用户自己在下拉里选。
    */
   initialDeviceId?: string | null;
+  fixedDeviceId?: string;
+  title?: string;
+  confirmText?: string;
+  errorText?: string;
   /**
    * 当前 draft 选中的 agent(由父层的 VendorSegmentedSwitcher 决定,dialog 不选 vendor)。
    * 轮 35 CRITICAL:Pi 已支持 SSH 远端(startSession 全量支持 remoteHostId)——
@@ -78,6 +82,10 @@ export function AddRemoteProjectDialog({
   open,
   onOpenChange,
   initialDeviceId,
+  fixedDeviceId,
+  title,
+  confirmText,
+  errorText,
   agentVendor,
   onProjectAdded,
 }: Props) {
@@ -116,8 +124,10 @@ export function AddRemoteProjectDialog({
       deviceName: d.name,
       label: d.name,
     }));
-    return [...ssh, ...dev];
-  }, [excludeSsh, sshHosts, devices]);
+    return fixedDeviceId
+      ? dev.filter(target => target.kind === 'device' && target.deviceId === fixedDeviceId)
+      : [...ssh, ...dev];
+  }, [excludeSsh, sshHosts, devices, fixedDeviceId]);
 
   const sshTargets = useMemo(() => targets.filter((tg) => tg.kind === 'ssh'), [targets]);
   const deviceTargets = useMemo(() => targets.filter((tg) => tg.kind === 'device'), [targets]);
@@ -328,7 +338,7 @@ export function AddRemoteProjectDialog({
       }
       onOpenChange(false);
     } catch (err) {
-      toast.error(t(
+      toast.error(errorText ?? t(
         err instanceof SshModelSelectionError
           ? sshModelSelectionErrorKeys[err.reason]
           : mapIpcErrorToI18nKey(err, { fallback: 'newChat.addRemoteProject.toast.addFailed' }),
@@ -336,7 +346,7 @@ export function AddRemoteProjectDialog({
     } finally {
       setBusy(false);
     }
-  }, [selectedTarget, adapter, path, confirm, onProjectAdded, onOpenChange, t]);
+  }, [selectedTarget, adapter, path, confirm, onProjectAdded, onOpenChange, t, errorText]);
 
   const noTargets = targets.length === 0;
   // Pi 过滤掉 SSH 后无任何可用目标时,通用空态提示「加个 SSH 主机」是误导(Pi 用不了 SSH)。
@@ -379,7 +389,7 @@ export function AddRemoteProjectDialog({
                 className="text-15 font-medium"
                 style={{ color: 'var(--text-primary)' }}
               >
-                {t('newChat.addRemoteProject.title')}
+                {title ?? t('newChat.addRemoteProject.title')}
               </Dialog.Title>
               <Dialog.Close asChild disabled={busy}>
                 <button
@@ -718,7 +728,7 @@ export function AddRemoteProjectDialog({
               )}
             >
               {busy && <Spinner size={12} />}
-              {t('newChat.addRemoteProject.add')}
+              {confirmText ?? t('newChat.addRemoteProject.add')}
             </button>
           </div>
         </Dialog.Content>

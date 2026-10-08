@@ -1,4 +1,5 @@
 import { SessionTaskMenu } from './sidebar/SessionTaskMenu';
+import { TaskMigrationStatus } from './TaskMigrationStatus';
 /**
  * SessionContentHeader — 会话视图注入 ContentHeader 的中部内容
  * ---------------------------------------------------------------------------
@@ -640,32 +641,18 @@ export function SessionContentHeader({
             }
             move={
               canMoveToProject && (
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger className={MENU_ROW_CLASS}>
-                    <span className="flex-1">{t('ccAgent.sidebar.sessionMenu.moveToProject')}</span>
-                    <ChevronRight
-                      size={14}
-                      className="ml-2 shrink-0 text-[var(--cmd-palette-item-meta)]"
-                    />
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent
-                    sideOffset={4}
-                    className={cn(MENU_SUB_CONTENT_CLASS, 'w-[320px] overflow-hidden')}
-                  >
-                    <SessionProjectMoveSubmenu
-                      projectOptions={projectOptions}
-                      currentWorkingDir={
-                        session.workspaceKind === 'project' ? session.workingDir : null
-                      }
-                      isDialogue={session.workspaceKind === 'dialogue'}
-                      onSelectProject={(workingDir) =>
-                        void handleMoveSession({ kind: 'project', workingDir })
-                      }
-                      onBrowseProject={() => void handleMoveSession({ kind: 'browseProject' })}
-                      onMoveToDialogue={() => void handleMoveSession({ kind: 'dialogue' })}
-                    />
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
+                <SessionProjectMoveSubmenu
+                  projectOptions={projectOptions}
+                  currentWorkingDir={
+                    session.workspaceKind === 'project' ? session.workingDir : null
+                  }
+                  isDialogue={session.workspaceKind === 'dialogue'}
+                  onSelectProject={(workingDir) =>
+                    void handleMoveSession({ kind: 'project', workingDir })
+                  }
+                  onBrowseProject={() => void handleMoveSession({ kind: 'browseProject' })}
+                  onMoveToDialogue={() => void handleMoveSession({ kind: 'dialogue' })}
+                />
               )
             }
           />
@@ -674,6 +661,7 @@ export function SessionContentHeader({
 
       {/* session-git-pr-context:当前分支 + 关联 PR 徽标(非 git 目录 / dialogue 会话自动隐藏) */}
       <GitContextBadge session={session} />
+      <TaskMigrationStatus session={session} />
 
       {/* 导出 .cshare 弹窗:仅打开时挂载,与 SessionItem 同款。 */}
       {shareExportOpen && (
