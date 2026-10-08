@@ -5417,7 +5417,10 @@
         "nodeChildSpawnDetail": "只能啟動它自己包裡申報過的 JS 檔案(與主程式同樣的本機權限)，不能執行任意命令；插件停用或退出時子處理程序一併關閉。",
         "skill": "為 AI 助手新增技能「{{name}}」",
         "skillDetail": "技能是一份指令檔案，AI 會把它當作自己的指令載入執行，擁有你的全部權限，對 Claude Code 與 Codex、所有專案都生效——不受本插件沙箱約束。插件啟用期間持續可用，停用或解除安裝即移除；僅對某個資料夾關閉本插件不會隱藏它。此處無法預覽技能全文——請只安裝你信任的插件。",
-        "routineEvents": "例行任務事件"
+        "routineEvents": "例行任務事件",
+        "agentTasksRequest": "確認任務權限",
+        "agentTasks": "可建立和管理本插件的 Cindy 任務",
+        "agentTasksDetail": "可傳送訊息、讀取結果和停止本插件的執行，任務對你可見。沿用插件的 AI 配置，可能產生模型費用；不授予其他任務的存取權。"
       },
       "connections": {
         "confirmTitle": "新增連線地址",
@@ -8928,7 +8931,8 @@
           "cancel": "保留當前 Agent",
           "dontShowAgain": "下次不再提醒"
         }
-      }
+      },
+      "retryPluginWriteAccess": "重新確認插件寫入權限"
     },
     "agentSelect": {
       "label": "引擎",
@@ -13155,5 +13159,15 @@
       "contains": "包含",
       "not-equals": "不等於"
     }
+  },
+  "pluginTaskWriteAccess": {
+    "title": "允許此插件的 AI 修改檔案？",
+    "message": "允許「{{name}}」的 AI 修改檔案並繼續？",
+    "detail": "將此插件的 AI 權限設為「允許修改」，後續任務也會沿用此選擇。獨立工作目錄不是系統沙箱；命令仍遵循 Cindy 的權限檢查。你可以隨時在插件 AI 設定中改回唯讀。",
+    "allow": "允許並繼續",
+    "cancel": "暫不允許",
+    "autoTitle": "啟用 Auto 自動審批",
+    "autoMessage": "允許「{{name}}」使用 Auto 自動審批？",
+    "autoDetail": "主任務與 Worker 的操作將交由 Cindy 自動審批。需要人工確認或遭拒時仍會暫停；這不是完全存取。此選擇儲存到插件 AI 設定，不變更其他任務的全域權限。"
   }
 }

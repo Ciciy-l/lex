@@ -5417,7 +5417,10 @@
         "nodeChildSpawnDetail": "只能启动它自己包里申报过的 JS 文件(与主程序同样的本机权限)，不能执行任意命令；插件停用或退出时子进程一并关闭。",
         "skill": "为 AI 助手添加技能「{{name}}」",
         "skillDetail": "技能是一份指令文件，AI 会把它当作自己的指令加载执行，拥有你的全部权限，对 Claude Code 与 Codex、所有项目都生效——不受本插件沙箱约束。插件启用期间持续可用，停用或卸载即移除；仅对某个文件夹关闭本插件不会隐藏它。此处无法预览技能全文——请只安装你信任的插件。",
-        "routineEvents": "例行任务事件"
+        "routineEvents": "例行任务事件",
+        "agentTasksRequest": "确认任务权限",
+        "agentTasks": "可创建和管理本插件的 Cindy 任务",
+        "agentTasksDetail": "可发送消息、读取结果和停止本插件的执行，任务对你可见。沿用插件的 AI 配置，可能产生模型费用；不授予其他任务的访问权。"
       },
       "connections": {
         "confirmTitle": "添加连接地址",
@@ -8928,7 +8931,8 @@
           "cancel": "保留当前 Agent",
           "dontShowAgain": "下次不再提醒"
         }
-      }
+      },
+      "retryPluginWriteAccess": "重新确认插件写权限"
     },
     "agentSelect": {
       "label": "引擎",
@@ -13155,5 +13159,15 @@
       "contains": "包含",
       "not-equals": "不等于"
     }
+  },
+  "pluginTaskWriteAccess": {
+    "autoTitle": "启用 Auto 自动审批",
+    "autoMessage": "允许“{{name}}”使用 Auto 自动审批？",
+    "autoDetail": "主任务和 Worker 的操作将交由 Cindy 自动审批。审批要求人工确认或拒绝时仍会暂停；这不是完全访问。此选择保存到插件 AI 设置，不改变其他任务的全局权限。",
+    "title": "允许插件的 AI 修改文件？",
+    "message": "允许“{{name}}”的 AI 修改文件并继续？",
+    "detail": "将此插件的 AI 权限设为“允许修改”，后续任务沿用此选择。独立作答目录不是系统沙箱；命令仍遵循 Cindy 的权限检查。你可以随时在插件 AI 设置中改回只读。",
+    "allow": "允许并继续",
+    "cancel": "暂不允许"
   }
 }

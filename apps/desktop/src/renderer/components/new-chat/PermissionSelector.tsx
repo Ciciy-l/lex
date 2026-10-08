@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Hand,
   CodeXml,
@@ -22,6 +22,8 @@ import {
 import type { PermissionMode } from '@/lib/userPreferences.types';
 
 interface PermissionSelectorProps {
+  /** Optional Host task action, mounted only while the menu is visible. */
+  footer?: ReactNode;
   permissionMode: PermissionMode;
   onPermissionModeChange: (mode: PermissionMode) => void;
   // OMP 接入:会话引擎可能是 omp,vendor 口径同步放宽为四元组。
@@ -101,6 +103,7 @@ function getModeTone(mode: PermissionMode): 'auto' | 'bypassPermissions' | null 
  *     危险档配色只此一份,设置页不得再私搭一套下拉。
  */
 export function PermissionSelector({
+  footer,
   permissionMode,
   onPermissionModeChange,
   vendorKey = 'cc',
@@ -406,6 +409,7 @@ export function PermissionSelector({
           )}
         >
           {optionsList}
+          {open && !disabled ? footer : null}
         </PopoverContent>
       </Popover>
     );
@@ -425,6 +429,7 @@ export function PermissionSelector({
       trigger={triggerButton}
     >
       {optionsList}
+      {open && !disabled ? footer : null}
     </MorphPopover>
   );
 }

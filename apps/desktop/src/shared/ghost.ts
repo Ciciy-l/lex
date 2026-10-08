@@ -204,6 +204,7 @@ export interface GhostCardNeeds {
 export interface GhostAgentNeeds {
   background?: boolean;
   errand?: boolean;
+  tasks?: boolean;
   /**
    * schedule = 「可以请你新建自动化任务」(2026-08-04)。
    *
@@ -1578,6 +1579,8 @@ export function isGhostInstallApprovalToken(value: unknown): value is string {
 
 /** 已装入主机的插件(批准清单 + 安装位置 + 启用态)。 */
 export interface InstalledGhost {
+  /** Host receipt fact, not a manifest declaration. Missing means tasks need confirmation. */
+  taskCapabilityApproved?: true;
   manifest: GhostManifest;
   /** 安装目录绝对路径(userData/brain/<id>)。 */
   dir: string;
@@ -1947,6 +1950,9 @@ export function ghostPermissionItems(manifest: GhostManifest): GhostPermissionIt
         labelKey: 'agentErrand',
         detailKey: 'agentErrandDetail',
       });
+    }
+    if (manifest.agent?.tasks === true) {
+      items.unshift({ key: 'agent:tasks', kind: 'agent', labelKey: 'agentTasks', detailKey: 'agentTasksDetail' });
     }
     // 「可以请你新建自动化任务」:独立 key 单列一档。理由同 badge/errand ——
     // diffGhostPermissionItems 按 key + detail 比对,若并进任何既有 key,已装插件
@@ -3722,6 +3728,15 @@ export function resolveGhostManifestLocale(
  * 顶层字段原样保留但不解释、不展示、不授权。任何已知字段不合格都给出 reason。
  */
 export function validateGhostManifest(value: unknown): ManifestValidation {
+  return validateGhostManifestInput(value, false);
+}
+
+/** Installed snapshots retain historical unknown tasks data without granting it. */
+export function validateInstalledGhostManifest(value: unknown): ManifestValidation {
+  return validateGhostManifestInput(value, true);
+}
+
+function validateGhostManifestInput(value: unknown, preserveHistoricalTasks: boolean): ManifestValidation {
   const preparation = prepareGhostManifestForValidation(value);
   if (!preparation.ok) return preparation;
   const prepared = preparation.prepared;
@@ -4300,7 +4315,7 @@ export function validateGhostManifest(value: unknown): ManifestValidation {
     }
     const agentRaw = raw.agent as Record<string, unknown>;
     const unknownAgentField = Object.keys(agentRaw).find(
-      (key) => key !== 'background' && key !== 'errand' && key !== 'schedule',
+      (key) => key !== 'background' && key !== 'errand' && key !== 'schedule' && key !== 'tasks',
     );
     if (unknownAgentField) {
       return {
@@ -4314,19 +4329,23 @@ export function validateGhostManifest(value: unknown): ManifestValidation {
     if (agentRaw.errand !== undefined && typeof agentRaw.errand !== 'boolean') {
       return { ok: false, reason: 'agent.errand 必须是布尔值' };
     }
+    if (!preserveHistoricalTasks && agentRaw.tasks !== undefined && typeof agentRaw.tasks !== 'boolean') {
+      return { ok: false, reason: 'agent.tasks must be boolean' };
+    }
     if (agentRaw.schedule !== undefined && typeof agentRaw.schedule !== 'boolean') {
       return { ok: false, reason: 'agent.schedule 必须是布尔值' };
     }
-    if (agentRaw.background !== true && agentRaw.errand !== true && agentRaw.schedule !== true) {
+    if (agentRaw.background !== true && agentRaw.errand !== true && agentRaw.schedule !== true && agentRaw.tasks !== true) {
       return {
         ok: false,
         reason:
-          'agent 能力详单只有 background: true / errand: true / schedule: true 三项加档；仅需用户点击触发时请省略 agent 字段',
+          'agent 能力详单只有 background: true / errand: true / schedule: true / tasks: true 四项加档；仅需用户点击触发时请省略 agent 字段',
       };
     }
     agent = {
       ...(agentRaw.background === true ? { background: true } : {}),
       ...(agentRaw.errand === true ? { errand: true } : {}),
+      ...(agentRaw.tasks === true ? { tasks: true } : {}),
       ...(agentRaw.schedule === true ? { schedule: true } : {}),
     };
   }
@@ -6041,7 +6060,7 @@ export function validateNormalizedGhostManifest(raw: unknown): ManifestValidatio
   // after a rollback. Still accept normalized snapshots produced by affected dev
   // builds and passed between current Host code paths.
   const authorInput = isPlainObject(raw) ? withLegacyAuthorSlots(raw) : raw;
-  const authorResult = validateGhostManifest(authorInput);
+  const authorResult = validateInstalledGhostManifest(authorInput);
   if (authorResult.ok || !isPlainObject(raw) || raw.setup === undefined) return authorResult;
   if (!isPlainObject(raw.setup) || !Array.isArray(raw.setup.requires)) {
     return { ok: false, reason: '标准化清单 setup 必须是带 requires 数组的对象' };
@@ -6073,7 +6092,7 @@ export function validateNormalizedGhostManifest(raw: unknown): ManifestValidatio
     requires.push({ anyOf });
   }
 
-  return validateGhostManifest({ ...withLegacyAuthorSlots(raw), setup: { requires } });
+  return validateInstalledGhostManifest({ ...withLegacyAuthorSlots(raw), setup: { requires } });
 }
 
 /** 把无 slots 的 v2 运行时投影还原成旧客户端能读取的作者清单。 */

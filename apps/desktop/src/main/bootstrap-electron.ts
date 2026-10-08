@@ -677,6 +677,7 @@ import {
   clearDeferredCodexRestartForOwnerBoundary,
   clearWorkingDirectoryRecoveryForOwnerBoundary,
   collectAgentInputQueueScanTexts,
+  flushPluginTaskLifecycle,
   createAutomationUserTurnGitBaselineHooks,
   registerModelVisibilitySyncIpc,
   registerMakerIpc as registerMakerCoreIpc,
@@ -1963,6 +1964,7 @@ async function teardownAuthAccountBoundary(reason: string): Promise<void> {
             `[bootstrap-electron] release device-link ownership on ${reason} failed (non-fatal):`, err,
           ),
         });
+        await flushPluginTaskLifecycle();
         await lifecycleDbClientManager.dispose(reason);
     } finally {
       releaseEndedSuppression();
@@ -1988,6 +1990,7 @@ async function teardownAuthAccountBoundary(reason: string): Promise<void> {
     ),
   });
   try {
+    await flushPluginTaskLifecycle();
     await lifecycleDbClientManager.dispose(reason);
   } finally {
     try {
@@ -9686,7 +9689,10 @@ onQuit('ios-simulator-host', disposeIOSSimulatorHost, 'async');
 onQuit('ios-simulator-ownership-registry', flushIOSSimulatorOwnershipRegistry, 'async');
 
 // Post-async 阶段: 串行跑, 确保依赖 async 阶段产物的清理 (WAL checkpoint by close)。
-onQuit('db-client', () => lifecycleDbClientManager.dispose('quit'), 'post-async');
+onQuit('db-client', async () => {
+  await flushPluginTaskLifecycle();
+  await lifecycleDbClientManager.dispose('quit');
+}, 'post-async');
 onQuit('local-db-close', () => localDbCloseDb(), 'post-async');
 
 installQuitHandler(6000);

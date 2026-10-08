@@ -47,6 +47,7 @@ import type { PreparedSessionEvent } from './sessionEventPreparation.js';
 import type { SessionDeliveryResult } from './sessionEventDelivery.js';
 import { isSessionErrorSuppressed } from './sessionErrorSuppression.js';
 export interface FinishSessionTerminalEventDeps {
+  readonly onPluginTaskTerminal?: (sessionId: string, execution: { instanceId: string; generation: number }, outcome: 'completed' | 'failed' | 'cancelled' | 'interrupted', outputMessageId?: string) => void;
   readonly botDelegationServiceHolder: Pick<BotDelegationService, 'settleSession'> | null;
   /** Resolves a Bot group member turn when its hidden group lane finishes. */
   readonly botGroupChatServiceHolder?: Pick<BotGroupChatService, 'settleLaneTurn'> | null;
@@ -457,6 +458,22 @@ export function finishSessionTerminalEvent(
       // Capture before queue-drain microtasks can promote the follow-up turn.
       const botDelegationHadPendingInputAtTerminal =
         (deps.agentInputCoordinatorHolder?.getQueueControlSnapshot(session.id).pendingQueue.length ?? 0) > 0;
+      // Recovery-owned terminals are settled by their owner (deferred auth /
+      // gateway persistence, overflow surface, or auto-resume abandonment).
+      const unsuccessfulBoundary =
+        isTerminalTurnErrorEvent(event) || !isSuccessfulAssistantReplyDoneData(event.data);
+      if (typeof event.sessionTurnGeneration === 'number' && !autoResumeSuppressesPersist) {
+        const nativeStatus = (event.data as { status?: unknown } | null)?.status;
+        const outcome = !isTerminalTurnErrorEvent(event)
+          && (nativeStatus === 'cancelled' || nativeStatus === 'interrupted')
+          ? nativeStatus : unsuccessfulBoundary ? 'failed' : 'completed';
+        // Settle the precise native outcome before generic unsuccessful-turn
+        // bookkeeping can enqueue its fallback failure for the same execution.
+        deps.onPluginTaskTerminal?.(session.id, {
+          instanceId: event.sessionInstanceId ?? session.instanceId,
+          generation: event.sessionTurnGeneration,
+        }, outcome, turnAssistantPersistId ?? undefined);
+      }
       // Group lane turns are attributed by the accepted input, captured before the queue drains.
       const groupLaneInputClientId =
         deps.agentInputCoordinatorHolder?.getActiveInputClientId?.(session.id, event.sessionTurnGeneration) ?? null;

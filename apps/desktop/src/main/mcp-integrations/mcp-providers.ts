@@ -1,3 +1,4 @@
+import { resolveHelperSurface } from './helperSurface.js';
 import { activeOwnerScopeKey, getActiveAppSession, isAppSessionBoundaryPending } from '../appSessionState.js';
 import type { createBotCapabilityService } from '../maker-ipc/botCapabilityService.js';
 import { routineTools } from '../routines/service.js';
@@ -42,6 +43,8 @@ import {
   tryGetBotDelegationService,
   tryGetBotDirectMessageService,
   tryGetOrcaCollabService,
+  isSessionInTurn,
+  getSessionInputProvenance,
 } from '../maker-ipc/register.js';
 import { createBotProfile } from '../localDb/ipc/bots.js';
 import { submitGithubIssueForSession } from '../github-issue/index.js';
@@ -169,6 +172,21 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
     },
   };
 
+  const withAccountDataAccess = async <T>(sessionId: string | undefined, operation: (assertCurrent: () => Promise<void>) => Promise<T>): Promise<T> => {
+    const dbClient = tryGetDbClient();
+    if (!dbClient || !sessionId) throw new Error('Account data caller unavailable');
+    const assertAccess = async () => {
+      if (isAppSessionBoundaryPending() || dbClient !== tryGetDbClient()) throw new Error('Account changed');
+      if (await resolveHelperSurface(dbClient, sessionId, getSessionInputProvenance) === 'restricted')
+        throw new Error('Account data is unavailable for plugin-managed tasks');
+      if (isAppSessionBoundaryPending() || dbClient !== tryGetDbClient()) throw new Error('Account changed');
+    };
+    await assertAccess();
+    const result = await operation(assertAccess);
+    await assertAccess();
+    return result;
+  };
+
   const providers = createLiziMcpProviders({
     // 先传完整内置列表；按会话启停由下面的 isEnabled 包装处理。
     enabled: BUILTIN_LIZI_MCP_IDS,
@@ -284,10 +302,12 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
     // 注册表取用(静态 import ipc.ts 会与 maker-host 闭环, 见 slackToolBridge
     // 模块头); 未注册 = null, provider isEnabled fail-closed。
     slackHook: {
+      withAccountDataAccess,
       getBridge: () => getSlackToolBridge(),
       logger: createLogger('mcp/cindy_slack'),
     },
     scheduler: {
+      withAccountDataAccess,
       getScheduler: () => getScheduler(),
       // 前置检查脚本统一安装服务:落盘路径/协议/自测与 UI「AI 生成」共用同一实现
       // (hook-script-generator)。lazy import:该链上有 electron app 依赖,且 maker
@@ -353,13 +373,32 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
       logger: createLogger('mcp/cindy_ssh'),
     },
     memory: {
+      withAccountDataAccess,
       getManager: deps.getMakerMemoryManager,
-      searchSessions: searchSessionsFn,
+      searchSessions: async (query, opts = {}) => {
+        const dbClient = tryGetDbClient();
+        if (!dbClient || isAppSessionBoundaryPending() || !opts.callerSessionId)
+          throw new Error('Task history caller unavailable');
+        // session_search bypasses cindy_helper, so share its ownership predicate.
+        if (await resolveHelperSurface(dbClient, opts.callerSessionId, getSessionInputProvenance) === 'restricted')
+          throw new Error('Task history search is unavailable for plugin-managed tasks');
+        if (isAppSessionBoundaryPending() || dbClient !== tryGetDbClient())
+          throw new Error('Task history caller unavailable');
+        const hits = await searchSessionsFn(query, opts);
+        if (isAppSessionBoundaryPending() || dbClient !== tryGetDbClient())
+          throw new Error('Task history caller unavailable');
+        if (await resolveHelperSurface(dbClient, opts.callerSessionId, getSessionInputProvenance) === 'restricted')
+          throw new Error('Task history search is unavailable for plugin-managed tasks');
+        if (isAppSessionBoundaryPending() || dbClient !== tryGetDbClient())
+          throw new Error('Task history caller unavailable');
+        return hits;
+      },
       logger: createLogger('mcp/cindy_memory'),
     },
     // 智能通讯录: 全局单库 manager 懒加载单例; 开关现读 settings store —
     // 每次 session start 时 provider isEnabled 评估, 关着时 server 整个不注册。
     contacts: {
+      withAccountDataAccess,
       getManager: getDesktopContactsManager,
       isEnabled: () => readContactsSettings().enabled,
       // 系统通讯录读取仅 macOS 注入(JXA); 缺省时 contacts_import_system 工具不注册。
@@ -395,19 +434,10 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
       logger: createLogger('mcp/cindy_helper'),
       resolveSurface: async ({ sessionId }) => {
         const dbClient = tryGetDbClient();
-        if (!dbClient) return 'restricted';
-        const [owned] = await dbClient.drizzle
-          .select({ role: botSessionLinks.role })
-          .from(botSessionLinks)
-          .innerJoin(sessions, eq(sessions.id, botSessionLinks.sessionId))
-          .where(
-            and(
-              eq(botSessionLinks.sessionId, sessionId),
-              eq(sessions.source, 'bot'),
-            ),
-          )
-          .limit(1);
-        return owned ? 'bot' : 'default';
+        if (!dbClient || isAppSessionBoundaryPending()) return 'restricted';
+        const surface = await resolveHelperSurface(dbClient, sessionId, getSessionInputProvenance);
+        if (isAppSessionBoundaryPending() || dbClient !== tryGetDbClient()) return 'restricted';
+        return surface;
       },
       sessionQueue: {
         listSessionQueue: wrap((service, sessionId: string) => service.listSessionQueue(sessionId)),

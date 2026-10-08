@@ -244,6 +244,7 @@ function harness() {
   });
   const activity = new SessionTurnActivityTracker();
   const deps = {
+    onPluginTaskTerminal: vi.fn(),
     log,
     botCompactRuntimeRefreshCoordinator: { noteBoundary: vi.fn() },
     attemptBotCompactRuntimeRefresh: vi.fn(),
