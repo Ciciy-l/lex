@@ -435,3 +435,17 @@ describe('durable mobile outbox', () => {
     expect(store.getSnapshot()).toEqual([]);
   });
 });
+
+it.each(['{broken', 'null'])('preserves corrupt outbox bytes and loads valid work (%s)', async corrupt => {
+  const storage = new MemoryStorage();
+  const seed = createDurableOutbox(storage);
+  await seed.activate('realm:user-a');
+  await seed.add(makeRecord());
+  const [key] = await storage.getAllKeys();
+  await storage.setItem(key, corrupt);
+  const loaded = createDurableOutbox(storage);
+  await loaded.activate('realm:user-a');
+  await loaded.add(makeRecord({ clientId: 'client-2' }));
+  expect(await storage.getItem(key)).toBe(corrupt);
+  expect(loaded.getSnapshot().map(row => row.item.clientId)).toEqual(['client-2']);
+});
