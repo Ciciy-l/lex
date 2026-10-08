@@ -747,15 +747,15 @@
       },
       "wallpaper": {
         "title": "壁纸",
-        "description": "为整个应用选择 Cindy 场景或自己的图片，主题保持独立。",
+        "description": "为整个应用选择 {{appName}} 场景或自己的图片，主题保持独立。",
         "reset": "恢复默认",
         "aria": "壁纸选择",
         "nonePreview": "无",
         "options": {
           "none": "无",
-          "cindy-window": "Cindy · 窗边陪伴",
-          "cindy-studio": "Cindy · 未来工作室",
-          "cindy-dream": "Cindy · 梦境漫游",
+          "cindy-window": "{{appName}} · 窗边陪伴",
+          "cindy-studio": "{{appName}} · 未来工作室",
+          "cindy-dream": "{{appName}} · 梦境漫游",
           "custom": "自定义壁纸"
         },
         "overlayLabel": "遮罩",
@@ -2516,7 +2516,7 @@
         "manualModel": "模型 ID（无法自动获取时填写）"
       },
       "llamacpp": {
-        "ownedElsewhere": "模型服务正在另一个 Cindy 实例中运行。请在那里下载模型或修改上下文，或先在该实例停止服务。",
+        "ownedElsewhere": "模型服务正在另一个 {{appName}} 实例中运行。请在那里下载模型或修改上下文，或先在该实例停止服务。",
         "primaryPick": "主推 · 先试这个",
         "recommendReason": "优先试用 {{name}}，这是为这台机器选出的能力主推型号。",
         "recommendCaveat": "此 GGUF 包装的本机速度和峰值内存仍待实测，下载大小不等于运行内存。",
@@ -2547,7 +2547,7 @@
           "start": "正在启动 llama.cpp…"
         },
         "installAndConnect": "安装并连接",
-        "installDescription": "Cindy 会安装 llama.cpp。下载模型后，使用时自动启动服务。",
+        "installDescription": "{{appName}} 会安装 llama.cpp。下载模型后，使用时自动启动服务。",
         "manualConnect": "连接已有服务",
         "manageRuntime": "管理服务",
         "restartHint": "下载模型或修改上下文后，在「管理服务」中重启以应用更改。重启会中断正在进行的生成。",
@@ -8136,14 +8136,14 @@
       "cancelAdd": "取消",
       "projectTasks_other": "{{count}} 个任务",
       "projectAutomations_other": "{{count}} 个自动化",
-      "sourceCindy_other": "Cindy {{count}} 个任务",
+      "sourceCindy_other": "{{appName}} {{count}} 个任务",
       "sourceClaude_other": "Claude Code {{count}} 个任务",
       "sourceCodex_other": "Codex {{count}} 个任务",
       "moreProjects": "还有 {{count}} 个",
       "hideMoreProjects": "收起",
       "grant": "{{name}}可以查看、继续和停止 {{project}} 里的{{scope}}，也会替你开新任务。",
       "grantTasks_other": "{{count}} 个任务",
-      "grantCindy_other": "Cindy 的 {{count}} 个任务",
+      "grantCindy_other": "{{appName}} 的 {{count}} 个任务",
       "grantClaude_other": "Claude Code 的 {{count}} 个任务",
       "grantCodex_other": "Codex 的 {{count}} 个任务",
       "grantAutomations_other": "{{count}} 个自动化",
@@ -13219,10 +13219,10 @@
   "pluginTaskWriteAccess": {
     "autoTitle": "启用 Auto 自动审批",
     "autoMessage": "允许“{{name}}”使用 Auto 自动审批？",
-    "autoDetail": "主任务和 Worker 的操作将交由 Cindy 自动审批。审批要求人工确认或拒绝时仍会暂停；这不是完全访问。此选择保存到插件 AI 设置，不改变其他任务的全局权限。",
+    "autoDetail": "主任务和 Worker 的操作将交由 {{appName}} 自动审批。审批要求人工确认或拒绝时仍会暂停；这不是完全访问。此选择保存到插件 AI 设置，不改变其他任务的全局权限。",
     "title": "允许插件的 AI 修改文件？",
     "message": "允许“{{name}}”的 AI 修改文件并继续？",
-    "detail": "将此插件的 AI 权限设为“允许修改”，后续任务沿用此选择。独立作答目录不是系统沙箱；命令仍遵循 Cindy 的权限检查。你可以随时在插件 AI 设置中改回只读。",
+    "detail": "将此插件的 AI 权限设为“允许修改”，后续任务沿用此选择。独立作答目录不是系统沙箱；命令仍遵循 {{appName}} 的权限检查。你可以随时在插件 AI 设置中改回只读。",
     "allow": "允许并继续",
     "cancel": "暂不允许"
   }

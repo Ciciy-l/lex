@@ -747,15 +747,15 @@
       },
       "wallpaper": {
         "title": "Wallpaper",
-        "description": "Choose a Cindy scene or your own image for the whole app, independently of the theme.",
+        "description": "Choose a {{appName}} scene or your own image for the whole app, independently of the theme.",
         "reset": "Reset",
         "aria": "Wallpaper selection",
         "nonePreview": "None",
         "options": {
           "none": "None",
-          "cindy-window": "Cindy · Window Companion",
-          "cindy-studio": "Cindy · Future Atelier",
-          "cindy-dream": "Cindy · Dream Voyage",
+          "cindy-window": "{{appName}} · Window Companion",
+          "cindy-studio": "{{appName}} · Future Atelier",
+          "cindy-dream": "{{appName}} · Dream Voyage",
           "custom": "Custom wallpaper"
         },
         "overlayLabel": "Overlay",
@@ -2517,7 +2517,7 @@
         "manualModel": "Model IDs (if discovery is unavailable)"
       },
       "llamacpp": {
-        "ownedElsewhere": "The model service is running in another Cindy instance. Download models or change context there, or stop its service first.",
+        "ownedElsewhere": "The model service is running in another {{appName}} instance. Download models or change context there, or stop its service first.",
         "primaryPick": "Primary pick · try this first",
         "recommendReason": "Start with {{name}}, the shared catalog’s capability pick selected for this computer.",
         "recommendCaveat": "This GGUF build still needs local speed and peak-memory testing; download size is not runtime memory use.",
@@ -2535,7 +2535,7 @@
         "repository": "Hugging Face Repository",
         "findFiles": "Find Model Files",
         "file": "GGUF File",
-        "shards": "For split models, Cindy downloads all parts. The size above is for the selected part. Text models are supported; vision projectors are not downloaded.",
+        "shards": "For split models, {{appName}} downloads all parts. The size above is for the selected part. Text models are supported; vision projectors are not downloaded.",
         "download": "Download Model",
         "models": "Downloaded Models",
         "empty": "Choose a model above or enter a Hugging Face repository to download your first model.",
@@ -2548,7 +2548,7 @@
           "start": "Starting llama.cpp…"
         },
         "installAndConnect": "Install and Connect",
-        "installDescription": "Cindy will install llama.cpp. Download a model, and the service starts automatically when you use it.",
+        "installDescription": "{{appName}} will install llama.cpp. Download a model, and the service starts automatically when you use it.",
         "manualConnect": "Connect an Existing Service",
         "manageRuntime": "Manage Service",
         "restartHint": "After downloading models or changing context, use Manage Service to restart and apply the changes. Restarting interrupts ongoing generation.",
@@ -8140,8 +8140,8 @@
       "projectTasks_other": "{{count}} sessions",
       "projectAutomations_one": "{{count}} automation",
       "projectAutomations_other": "{{count}} automations",
-      "sourceCindy_one": "{{count}} Cindy session",
-      "sourceCindy_other": "{{count}} Cindy sessions",
+      "sourceCindy_one": "{{count}} {{appName}} session",
+      "sourceCindy_other": "{{count}} {{appName}} sessions",
       "sourceClaude_one": "{{count}} Claude Code session",
       "sourceClaude_other": "{{count}} Claude Code sessions",
       "sourceCodex_one": "{{count}} Codex session",
@@ -8151,8 +8151,8 @@
       "grant": "{{name}} can view, continue and stop {{scope}} in {{project}}, and will start new sessions for you.",
       "grantTasks_one": "{{count}} session",
       "grantTasks_other": "{{count}} sessions",
-      "grantCindy_one": "{{count}} Cindy session",
-      "grantCindy_other": "{{count}} Cindy sessions",
+      "grantCindy_one": "{{count}} {{appName}} session",
+      "grantCindy_other": "{{count}} {{appName}} sessions",
       "grantClaude_one": "{{count}} Claude Code session",
       "grantClaude_other": "{{count}} Claude Code sessions",
       "grantCodex_one": "{{count}} Codex session",
@@ -13247,10 +13247,10 @@
   "pluginTaskWriteAccess": {
     "autoTitle": "Enable Auto approval",
     "autoMessage": "Allow “{{name}}” to use Auto approval?",
-    "autoDetail": "Cindy will review coordinator and Worker actions automatically. Actions requiring confirmation or denied actions still pause. This is not Full access. The choice is saved in plugin AI settings without changing global permissions for other tasks.",
+    "autoDetail": "{{appName}} will review coordinator and Worker actions automatically. Actions requiring confirmation or denied actions still pause. This is not Full access. The choice is saved in plugin AI settings without changing global permissions for other tasks.",
     "title": "Allow this plugin’s AI to edit files?",
     "message": "Allow the AI in “{{name}}” to edit files and continue?",
-    "detail": "This sets the plugin’s AI permission to Allow edits for future tasks too. A separate working directory is not a system sandbox; commands still follow Cindy permission checks. You can switch back to read-only in the plugin’s AI settings.",
+    "detail": "This sets the plugin’s AI permission to Allow edits for future tasks too. A separate working directory is not a system sandbox; commands still follow {{appName}} permission checks. You can switch back to read-only in the plugin’s AI settings.",
     "allow": "Allow and continue",
     "cancel": "Not now"
   }

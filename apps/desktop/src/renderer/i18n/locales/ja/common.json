@@ -747,15 +747,15 @@
       },
       "wallpaper": {
         "title": "壁紙",
-        "description": "アプリ全体に Cindy の壁紙や自分の画像を設定できます。テーマは独立して選べます。",
+        "description": "アプリ全体に {{appName}} の壁紙や自分の画像を設定できます。テーマは独立して選べます。",
         "reset": "デフォルトに戻す",
         "aria": "壁紙の選択",
         "nonePreview": "なし",
         "options": {
           "none": "なし",
-          "cindy-window": "Cindy · 窓辺のひととき",
-          "cindy-studio": "Cindy · 未来のアトリエ",
-          "cindy-dream": "Cindy · 夢の旅",
+          "cindy-window": "{{appName}} · 窓辺のひととき",
+          "cindy-studio": "{{appName}} · 未来のアトリエ",
+          "cindy-dream": "{{appName}} · 夢の旅",
           "custom": "カスタム壁紙"
         },
         "overlayLabel": "オーバーレイ",
@@ -2516,7 +2516,7 @@
         "manualModel": "モデル ID（自動取得できない場合）"
       },
       "llamacpp": {
-        "ownedElsewhere": "モデルサービスは別の Cindy インスタンスで実行中です。モデルのダウンロードやコンテキストの変更はそちらで行うか、先にそのサービスを停止してください。",
+        "ownedElsewhere": "モデルサービスは別の {{appName}} インスタンスで実行中です。モデルのダウンロードやコンテキストの変更はそちらで行うか、先にそのサービスを停止してください。",
         "primaryPick": "第一候補 · まず試す",
         "recommendReason": "共通カタログがこのパソコン向けに選んだ性能重視の {{name}} から始めてください。",
         "recommendCaveat": "この GGUF 版のローカル速度とピークメモリは未検証です。ダウンロードサイズは実行時メモリ使用量ではありません。",
@@ -2547,7 +2547,7 @@
           "start": "llama.cpp を起動中…"
         },
         "installAndConnect": "インストールして接続",
-        "installDescription": "Cindy が llama.cpp をインストールします。モデルをダウンロードすると、使用時にサービスが自動で起動します。",
+        "installDescription": "{{appName}} が llama.cpp をインストールします。モデルをダウンロードすると、使用時にサービスが自動で起動します。",
         "manualConnect": "既存のサービスに接続",
         "manageRuntime": "サービスを管理",
         "restartHint": "モデルのダウンロードやコンテキストの変更後は、「サービスを管理」で再起動すると変更が反映されます。再起動すると進行中の生成が中断されます。",
@@ -8136,14 +8136,14 @@
       "cancelAdd": "キャンセル",
       "projectTasks_other": "{{count}} 件のセッション",
       "projectAutomations_other": "{{count}} 件の自動化",
-      "sourceCindy_other": "Cindy {{count}} 件のセッション",
+      "sourceCindy_other": "{{appName}} {{count}} 件のセッション",
       "sourceClaude_other": "Claude Code {{count}} 件のセッション",
       "sourceCodex_other": "Codex {{count}} 件のセッション",
       "moreProjects": "ほか {{count}} 件",
       "hideMoreProjects": "閉じる",
       "grant": "{{name}} は {{project}} の{{scope}}を確認・続行・停止でき、新しいセッションも代わりに始めます。",
       "grantTasks_other": "{{count}} 件のセッション",
-      "grantCindy_other": "Cindy の {{count}} 件のセッション",
+      "grantCindy_other": "{{appName}} の {{count}} 件のセッション",
       "grantClaude_other": "Claude Code の {{count}} 件のセッション",
       "grantCodex_other": "Codex の {{count}} 件のセッション",
       "grantAutomations_other": "{{count}} 件の自動化",
@@ -13219,11 +13219,11 @@
   "pluginTaskWriteAccess": {
     "title": "このプラグインの AI にファイルの編集を許可しますか？",
     "message": "「{{name}}」の AI にファイルの編集を許可して続行しますか？",
-    "detail": "このプラグインの AI 権限を編集可能に変更します。今後のタスクにも適用されます。独立した作業ディレクトリはシステムのサンドボックスではなく、コマンドには引き続き Cindy の権限チェックが適用されます。プラグインの AI 設定でいつでも読み取り専用に戻せます。",
+    "detail": "このプラグインの AI 権限を編集可能に変更します。今後のタスクにも適用されます。独立した作業ディレクトリはシステムのサンドボックスではなく、コマンドには引き続き {{appName}} の権限チェックが適用されます。プラグインの AI 設定でいつでも読み取り専用に戻せます。",
     "allow": "許可して続行",
     "cancel": "今は許可しない",
     "autoTitle": "Auto 自動承認を有効化",
     "autoMessage": "「{{name}}」で Auto 自動承認を使用しますか？",
-    "autoDetail": "主タスクと Worker の操作を Cindy が自動審査します。確認が必要な操作や拒否された操作は停止します。完全アクセスではありません。他のタスクの全体設定は変更しません。"
+    "autoDetail": "主タスクと Worker の操作を {{appName}} が自動審査します。確認が必要な操作や拒否された操作は停止します。完全アクセスではありません。他のタスクの全体設定は変更しません。"
   }
 }
