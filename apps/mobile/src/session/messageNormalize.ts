@@ -234,7 +234,7 @@ export function normalizeRemoteMessages(
 
       const task = readBotCollaborationMeta(message.agentMeta?.botCollaboration);
       const direct = readBotDirectMessageMeta(message.agentMeta?.botDirectMessage);
-      const isTaskTrace = task?.role === 'delegation-request' || task?.role === 'interjection';
+      const isTaskTrace = task?.role === 'delegation-request' || task?.role === 'delegation-result' || task?.role === 'interjection';
       if (isTaskTrace || direct) {
         result.push({
           key: messageNormalizeKey(message), source: message, kind: 'system', role: message.role,

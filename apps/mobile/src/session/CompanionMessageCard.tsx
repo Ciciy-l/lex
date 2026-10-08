@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { CompanionTaskResultCard } from './CompanionTaskResultCard';
+import { Component, useEffect, useState, type ReactNode } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Linking, Pressable, StyleSheet, View } from 'react-native';
 import {
@@ -41,6 +42,9 @@ export function CompanionMessageCard({ message }: { message: NormalizedRemoteMes
   const styles = useThemedStyles(makeStyles);
   const card = message.companion;
   if (!card) return null;
+  if (card.kind === 'task' && card.meta.role === 'delegation-result') {
+    return <CompanionTaskResultCard meta={card.meta} deviceId={deviceId} />;
+  }
   if (card.kind === 'task' && card.meta.role === 'delegation-request') {
     return (
       <CompanionTaskCard

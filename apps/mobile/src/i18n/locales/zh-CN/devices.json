@@ -978,7 +978,9 @@
       "retryFailed": "暂时无法重试，请稍后再试。",
       "leave": "先去忙",
       "avatarSkipped": "暂时用了默认头像，你随时可以换一张。"
-    }
+    },
+    "viewResult": "查看结果",
+    "noWrittenResult": "没有文字结果。"
   },
   "companionProfile": {
     "avatar": "头像",

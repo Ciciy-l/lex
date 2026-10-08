@@ -978,7 +978,9 @@
       "retryFailed": "지금은 다시 시도할 수 없어요. 잠시 후 시도해 주세요.",
       "leave": "잠시 나가기",
       "avatarSkipped": "지금은 기본 아바타를 사용해요. 언제든 바꿀 수 있어요."
-    }
+    },
+    "viewResult": "결과 보기",
+    "noWrittenResult": "텍스트 결과가 없습니다."
   },
   "companionProfile": {
     "avatar": "아바타",

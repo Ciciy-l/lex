@@ -978,7 +978,9 @@
       "retryFailed": "暫時無法重試，請稍後再試。",
       "leave": "先去忙",
       "avatarSkipped": "暫時用了預設頭像，你隨時可以換一張。"
-    }
+    },
+    "viewResult": "查看結果",
+    "noWrittenResult": "沒有文字結果。"
   },
   "companionProfile": {
     "avatar": "頭像",

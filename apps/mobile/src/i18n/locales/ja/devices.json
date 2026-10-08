@@ -978,7 +978,9 @@
       "retryFailed": "再試行できませんでした。少し待ってお試しください。",
       "leave": "いったん離れる",
       "avatarSkipped": "今は初期アバターを使っています。いつでも変更できます。"
-    }
+    },
+    "viewResult": "結果を見る",
+    "noWrittenResult": "テキストの結果はありません。"
   },
   "companionProfile": {
     "avatar": "アバター",
