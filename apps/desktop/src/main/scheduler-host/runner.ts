@@ -2511,7 +2511,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
       throw new QueuedRouteDisabledError('Scheduled model route changed before queued dispatch');
     }
     if (!this.deps.applyPiModelSelectionUnderLock) {
-      throw new QueuedPiRouteSyncError('Scheduled Pi model selection is not available');
+      throw new QueuedNativeRouteSyncError('Scheduled Pi model selection is not available');
     }
     const applied = await this.deps.applyPiModelSelectionUnderLock(
       sessionId, model, providerId,
@@ -2519,7 +2519,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
       { refreshPiConfiguration: true, source: 'agent' },
     );
     if (applied.status !== 'applied') {
-      throw new QueuedPiRouteSyncError('Scheduled Pi model selection was deferred');
+      throw new QueuedNativeRouteSyncError('Scheduled Pi model selection was deferred');
     }
     return { model, providerId };
   }
@@ -2682,7 +2682,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
       if (!preparedPiRoute || live.model !== preparedPiRoute.model ||
         getSessionProvider(live.id) !== preparedPiRoute.providerId ||
         targetModel !== preparedPiRoute.model || nextProviderId !== preparedPiRoute.providerId) {
-        throw new QueuedPiRouteSyncError('Scheduled Pi route changed after preparation');
+        throw new QueuedNativeRouteSyncError('Scheduled Pi route changed after preparation');
       }
     }
     let modelApplied = true;

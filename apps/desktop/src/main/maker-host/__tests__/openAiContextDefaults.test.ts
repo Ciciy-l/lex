@@ -56,7 +56,7 @@ describe('all OpenAI routes share the daily context default', () => {
     expect(original.runtimes.codex!.models[0].discoveredMetadata?.contextWindow).toBe(1_024_000);
   });
 
-  it.each(['user', 'organization', undefined] as const)('covers %s connections, public aliases and future OpenAI families', source => {
+  it.each(['user', 'builtin', undefined] as const)('covers %s connections, public aliases and future OpenAI families', source => {
     setActiveCatalog(BUNDLED_CATALOG);
     const ids = ['gpt-6-astra', 'openai/gpt-6-astra', 'codex/gpt-7-astra', 'chatgpt/gpt-7-astra', 'o5', 'openai/o5-pro', 'codex-next'];
     const provider = buildUserProvider(config(mergeDiscoveredRuntimeModels([], parseModelsListResponse({ data: ids.map(id => ({
@@ -99,7 +99,7 @@ describe('all OpenAI routes share the daily context default', () => {
     for (const agent of agents) expect(row(agent)).toMatchObject({ contextWindow: 272_000, contextWindowMax: 872_000 });
   });
 
-  it.each(['user', 'organization'] as const)('keeps known non-OpenAI identities ahead of GPT-like names on %s connections', source => {
+  it.each(['user', 'builtin'] as const)('keeps known non-OpenAI identities ahead of GPT-like names on %s connections', source => {
     const catalog = structuredClone(BUNDLED_CATALOG) as Catalog;
     catalog.modelRegistry!.baseModels!.push({
       id: 'other/vendor-model', aliases: ['codex-other', 'o99'],

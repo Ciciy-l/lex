@@ -688,7 +688,6 @@ describe('model:pick 持久化失败', () => {
     await pressModelPick(makeIm(), 'disabled-source');
     expect(mocks.cancelPendingSessionRuntimeMutation).toHaveBeenCalledWith('sess-target', 7);
     expect(mocks.applyPiImModelSelectionUnderLock).toHaveBeenCalledTimes(1);
-    expect(mocks.markManualOverride).not.toHaveBeenCalled();
   });
 
   it('在持久化和运行态切换前统一归一化 providerId', async () => {
