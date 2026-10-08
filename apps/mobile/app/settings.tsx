@@ -112,7 +112,7 @@ import {
 } from '@/session/SettingsGroupRows';
 import { useSettingsDeviceDirectory } from '@/session/settingsDeviceDirectory';
 import { confirmLogout } from '@/session/confirmLogout';
-import { THEME_PREFERENCES, useTheme, useThemedStyles, type ThemeColors } from '@/theme';
+import { useTheme, useThemedStyles, type ThemeColors } from '@/theme';
 import { fontWeight, iconSize, iconStroke, lineHeight, radius, spacing, typeScale } from '@/theme/tokens';
 import { remoteSessionStore } from '@/session/remoteSessionStore';
 import { useGuardedPush } from '@/utils/useGuardedPush';
@@ -860,7 +860,7 @@ export default function SettingsScreen() {
             }))}
             onAction={selectLanguage}
           >
-            <LanguagePickerRow
+            <ChoicePickerRow
               expanded={languagePickerOpen}
               label={t('settings.language.title')}
               onPress={usesNativePullDownMenu() ? () => undefined : openLanguagePicker}

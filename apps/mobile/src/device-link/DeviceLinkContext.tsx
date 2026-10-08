@@ -1,3 +1,4 @@
+import { isSharedTaskPeer } from '@cindy/device-link';
 import Constants from 'expo-constants';
 import { tryMobilePeerInvoke, resetMobilePeer } from './peerFileRegistry';
 import { isHistoryViewUnavailable } from '@cindy/maker-shared/message-window';

@@ -14,7 +14,6 @@ export function HomeHeaderGlassButton({
   disabled = false,
   onPress,
   testID,
-  disabled = false,
   prominent = false,
   size = navigationChrome.target,
 }: {
@@ -23,7 +22,6 @@ export function HomeHeaderGlassButton({
   disabled?: boolean;
   onPress(): void;
   testID: string;
-  disabled?: boolean;
   prominent?: boolean;
   size?: number;
   artworkSize?: number;

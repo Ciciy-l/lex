@@ -147,14 +147,6 @@ function getSlot(deviceId: string, agent: AgentKind, providerId: string, create:
 /** 取某被控设备的草稿记忆读写器(注入模型选择列表)。deviceId 空 → 全 no-op/undefined。 */
 export function draftModelMemoryFor(deviceId: string): MobileModelMemoryAccessors {
   return {
-    clearEffort: (agent, providerId, modelId) => {
-      const slot = getSlot(deviceId, agent, providerId, false);
-      if (slot) { delete slot.effortByModel[modelId]; persist(); }
-    },
-    clearFast: (agent, providerId, modelId) => {
-      const slot = getSlot(deviceId, agent, providerId, false);
-      if (slot) { delete slot.fastByModel[modelId]; persist(); }
-    },
     getEffort: (agent, providerId, modelId) => {
       if (!deviceId || !providerId || !modelId) return undefined;
       return getSlot(deviceId, agent, providerId, false)?.effortByModel[modelId];

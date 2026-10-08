@@ -22,7 +22,6 @@ import {
   Alert,
   Animated,
   AppState,
-  Platform,
   Modal,
   Platform,
   type NativeScrollEvent,
@@ -4610,9 +4609,9 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   headerTitle: {
     color: colors.textPrimary,
     flexShrink: 1,
-    fontSize: typeScale.listTitle,
+    fontSize: typeScale.title,
     fontWeight: fontWeight.semibold,
-    lineHeight: lineHeight.listTitleCompact,
+    lineHeight: lineHeight.title,
   },
   deviceMenuPanelCenter: {
     alignSelf: 'center',
@@ -4802,7 +4801,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     color: colors.textSecondary,
     fontSize: typeScale.caption,
     fontWeight: fontWeight.medium,
-    lineHeight: lineHeight.code,
+    lineHeight: lineHeight.bodySmall,
   },
   projectGroup: {
     backgroundColor: colors.surface,

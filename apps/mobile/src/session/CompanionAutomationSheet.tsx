@@ -264,6 +264,6 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   group: { marginVertical: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
   input: { minHeight: 44, padding: spacing.md, color: colors.textPrimary, backgroundColor: colors.surfaceElevated, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: radius.pill, fontSize: typeScale.body },
   clockInput: { width: 64, textAlign: 'center' },
-  multiline: { minHeight: 112, textAlignVertical: 'top', borderRadius: radius.control }, empty: { margin: spacing.lg, fontSize: typeScale.listBody, lineHeight: lineHeight.listBody, color: colors.textSecondary },
+  multiline: { minHeight: 112, textAlignVertical: 'top', borderRadius: radius.control }, empty: { margin: spacing.lg, fontSize: typeScale.bodySmall, lineHeight: lineHeight.bodySmall, color: colors.textSecondary },
   error: { color: colors.statusError, fontSize: typeScale.footnote, lineHeight: lineHeight.caption }, disabled: { opacity: 0.45 },
 });

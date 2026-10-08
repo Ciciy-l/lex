@@ -1,3 +1,4 @@
+import { CompanionChoice } from './CompanionChoice';
 import { lineHeight } from '@/theme/tokens';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
@@ -504,6 +505,8 @@ function CompanionProfileForm({ panel, values, onChange, disabled }: { panel: Pr
   })}</>;
 }
 const makeStyles = (colors: ThemeColors) => StyleSheet.create({
+  inline: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  flex: { flex: 1, minWidth: 0 },
   content: { gap: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.xl },
   identity: { flexDirection: 'row', alignItems: 'center', gap: spacing.lg, minHeight: 80 },
   identityText: { flex: 1, gap: spacing.xs },

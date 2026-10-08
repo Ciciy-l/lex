@@ -7,6 +7,7 @@ import { RemoteCompanionAvatar } from '@/components/RemoteCompanionAvatar';
 import { radius, spacing, useThemedStyles, type ThemeColors } from '@/theme';
 import { CHAT_HEADER_MARK_SIZE, ChatIdentityHeader, ChatIdentitySubtitle } from './ChatIdentityHeader';
 import { CompanionPresenceRing } from './CompanionPresenceRing';
+import { CompanionAutomationSheet } from './CompanionAutomationSheet';
 import { CompanionProfileSheet } from './CompanionProfileSheet';
 import { useTeammateNavigation } from './useTeammateNavigation';
 
@@ -32,6 +33,7 @@ function CompanionHeaderContent({ resource, deviceId, deviceName, online, contro
   const styles = useThemedStyles(makeStyles);
   const navigation = useTeammateNavigation();
   const [profile, setProfile] = useState(false);
+  const [automation, setAutomation] = useState(false);
   const pending = useRef<(() => void) | null>(null);
   const name = resolveRemoteText(resource.display.title, i18n.language);
   const afterProfile = (action: () => void) => { pending.current = action; setProfile(false); };
@@ -56,7 +58,11 @@ function CompanionHeaderContent({ resource, deviceId, deviceName, online, contro
     <CompanionProfileSheet visible={profile} onClose={() => setProfile(false)} onClosed={() => { const action = pending.current; pending.current = null; action?.(); }}
       resource={resource} collectionId={resource.ref.collectionId} deviceId={deviceId} deviceName={deviceName} online={online}
       onDeleted={() => void navigation.chooseMode('teammates')}
-      onOpenSearch={() => afterProfile(onSearch)} />
+      onOpenSearch={() => afterProfile(onSearch)}
+      onOpenAutomation={() => afterProfile(() => setAutomation(true))} />
+    <CompanionAutomationSheet visible={automation} onClose={() => setAutomation(false)}
+      collectionId={resource.ref.collectionId} botId={resource.ref.id}
+      deviceId={deviceId} deviceName={deviceName} online={online} />
   </>;
 }
 

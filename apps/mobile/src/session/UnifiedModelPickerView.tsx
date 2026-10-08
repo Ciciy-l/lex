@@ -1,3 +1,4 @@
+import { fontWeight, iconStroke, lineHeight, typeScale, useThemedStyles, type ThemeColors } from "@/theme";
 import type { ReactNode } from "react";
 import {
   Star,
@@ -9,7 +10,7 @@ import {
 import { MobileAgentMark } from "@/components/MobileAgentMark";
 import { MobileModelIconMark, MobileProviderMark } from "./MobileProviderMark";
 import { useState } from "react";
-import { Pressable, ScrollView, View, useWindowDimensions } from "react-native";
+import { StyleSheet, Pressable, ScrollView, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
 import { Text, TextInput } from "@/components/AppText";

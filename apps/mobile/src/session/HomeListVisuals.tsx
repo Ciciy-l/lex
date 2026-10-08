@@ -201,7 +201,7 @@ export const homeListStyles = (colors: ThemeColors) => StyleSheet.create({
   sessionPreview: {
     color: colors.textSecondary,
     flex: 1,
-    fontSize: typeScale.code,
+    fontSize: typeScale.bodySmall,
     fontWeight: fontWeight.regular,
     lineHeight: lineHeight.subtitle,
     minWidth: 0,

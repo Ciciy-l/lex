@@ -410,6 +410,11 @@ function formatTokens(tokens: number): string {
 
 function makeGoalStyles(colors: ThemeColors) {
   return {
+    statusHeader: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: spacing.sm },
+    statusChip: { backgroundColor: colors.surfaceChip, borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
+    statusChipActive: { backgroundColor: colors.cta },
+    statusChipText: { color: colors.textSecondary, fontSize: typeScale.footnote },
+    statusChipTextActive: { color: colors.ctaText },
     groupLabel: {
       color: colors.textTertiary,
       fontSize: typeScale.footnote,

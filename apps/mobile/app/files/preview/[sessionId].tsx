@@ -30,7 +30,6 @@ import { ArrowDownToLine, Copy, Database, File as FileIcon, Info, MessageSquareP
 import {
   ActivityIndicator,
   FlatList,
-  Image,
   Pressable,
   StyleSheet,
   View,
@@ -61,7 +60,6 @@ import type { RemoteMediaSshContext } from '@/session/fileBrowserGallery';
 import { HtmlSnapshotReader } from '@/session/HtmlFileReader';
 import { prepareMobileHtmlPreview, type PrepareMobileHtmlPreview } from '@/session/mobileHtmlPreview';
 import { useHtmlSnapshot } from '@/session/useHtmlSnapshot';
-import { MainWindowActionButton } from '@/components/MobilePrimitives';
 import { FileBrowserSegmentedControl } from '@/session/FileBrowserSegmentedControl';
 import { MarkdownFileReader } from '@/session/MarkdownFileReader';
 import { RemoteMediaPlayerWebView } from '@/session/mediaPlayerWebView';
@@ -1444,7 +1442,7 @@ const makeStyles = (colors: ThemeColors) => {
       minHeight: 40,
       paddingHorizontal: spacing.xl,
     },
-    retryLabel: { color: colors.textPrimary, fontSize: typeScale.code, fontWeight: fontWeight.medium },
+    retryLabel: { color: colors.textPrimary, fontSize: typeScale.bodySmall, fontWeight: fontWeight.medium },
     pdfView: { flex: 1 },
     bigPage: {
       alignItems: 'center',
@@ -1466,7 +1464,7 @@ const makeStyles = (colors: ThemeColors) => {
     hintText: {
       color: colors.textTertiary,
       fontSize: typeScale.footnote,
-      lineHeight: lineHeight.code,
+      lineHeight: lineHeight.bodySmall,
       textAlign: 'center',
     },
     ctaBtn: {
@@ -1480,7 +1478,7 @@ const makeStyles = (colors: ThemeColors) => {
       minHeight: 44,
       paddingHorizontal: spacing.xl,
     },
-    ctaLabel: { color: colors.ctaText, fontSize: typeScale.code, fontWeight: fontWeight.medium },
+    ctaLabel: { color: colors.ctaText, fontSize: typeScale.bodySmall, fontWeight: fontWeight.medium },
     toolbarHairline: { backgroundColor: colors.border, height: StyleSheet.hairlineWidth },
     toolbar: {
       backgroundColor: colors.surface,

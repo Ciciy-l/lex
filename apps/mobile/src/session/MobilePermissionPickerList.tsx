@@ -1,3 +1,4 @@
+import { View } from 'react-native';
 /**
  * MobilePermissionPickerList —— 权限模式下拉的行列表(新建会话页 + 会话内 composer 共用)。
  *
@@ -28,7 +29,8 @@ export interface MobilePermissionPickerListProps {
 
 const makeStyles = (c: ThemeColors) =>
   StyleSheet.create({
-    optionRow: {
+    separator: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border },
+  optionRow: {
       alignItems: 'center',
       borderRadius: radius.pill,
       flexDirection: 'row',
@@ -65,7 +67,7 @@ export function MobilePermissionPickerList({
   const visibleOptions = permissionOptionsForDisplay(options, activeMode);
   return (
     <>
-      {visibleOptions.map((option) => {
+      {visibleOptions.map((option, index) => {
         const presentation = permissionPresentation(option.id, option.label);
         const selected = option.id === activeMode;
         const accent = permissionAccentColor(presentation.accent, colors);

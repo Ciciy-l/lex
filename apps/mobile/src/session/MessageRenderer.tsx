@@ -1,3 +1,5 @@
+import { downloadRemoteMediaShareTemp } from './remoteMediaDiskCacheExpo';
+import { useAuth } from '@/auth/AuthContext';
 import { CompanionMessageActions } from './CompanionMessageActions';
 import { useMessageHistoryActive, useMessageHistoryPositioning } from './messageHistoryActivity';
 import { usePaneViewport } from '@/platform/AdaptiveWindowContext';
@@ -480,7 +482,7 @@ const stylesStatic = StyleSheet.create({
   },
   workActivityIconSlot: {
     alignItems: 'center',
-    height: lineHeight.listBody,
+    height: lineHeight.bodySmall,
     justifyContent: 'center',
     width: iconSize.md,
   },
@@ -7187,6 +7189,7 @@ function MessagePayloadBody({
   if (payload.kind === 'file') {
     return (
       <FilePayloadBody
+            onResolveRemoteMedia={onResolveRemoteMedia}
         layout={payloadLayout}
         onReadTextFilePreview={onReadTextFilePreview}
         payload={payload}
@@ -7403,10 +7406,12 @@ function DiffPayloadPane({
 }
 
 function FilePayloadBody({
+  onResolveRemoteMedia,
   layout,
   payload,
   onReadTextFilePreview,
 }: {
+  onResolveRemoteMedia?: ResolveRemoteMediaFn;
   layout: PayloadBodyLayout;
   payload: Extract<MessagePayload, { kind: 'file' }>;
   onReadTextFilePreview?: (filePath: string) => Promise<RemoteTextFilePreviewResult>;
@@ -7415,6 +7420,40 @@ function FilePayloadBody({
   const { t, i18n: i18nInstance } = useTranslation();
   const styles = useThemedStyles(makeStyles);
   const sourcePath = payload.sourcePath ?? '';
+  const { accountGeneration } = useAuth();
+  const fileContext = useContext(ChatFilePathContext);
+  const [exporting, setExporting] = useState(false);
+  const exportIdentity = JSON.stringify([accountGeneration, fileContext?.deviceId, fileContext?.sessionId, sourcePath]);
+  const exportCurrent = useRef(exportIdentity); exportCurrent.current = exportIdentity;
+  const exportBusy = useRef(false);
+  const exportGeneration = useRef(0);
+  useLayoutEffect(() => {
+    exportCurrent.current = exportIdentity;
+    exportGeneration.current += 1;
+    exportBusy.current = false;
+    setExporting(false);
+    return () => { exportGeneration.current += 1; exportCurrent.current = ''; };
+  }, [exportIdentity, onResolveRemoteMedia]);
+  const exportFile = async () => {
+    if (!onResolveRemoteMedia || exportBusy.current) return;
+    const identity = exportIdentity;
+    const generation = exportGeneration.current;
+    const valid = () => exportCurrent.current === identity && exportGeneration.current === generation;
+    exportBusy.current = true; setExporting(true);
+    try {
+      const resolved = await onResolveRemoteMedia({ kind: 'file', url: sourcePath, previewable: false }, { front: true });
+      if (!valid()) return;
+      const localUri = resolved.url.startsWith('file://') ? resolved.url : await downloadRemoteMediaShareTemp(resolved.url, resolved.mimeType, payload.title);
+      if (!valid()) return;
+      if (!localUri) throw new Error('download failed');
+      const sharing = await import('expo-sharing');
+      if (valid()) await sharing.shareAsync(localUri, { mimeType: resolved.mimeType });
+    } catch {
+      if (valid()) Alert.alert(t('files.browser.shareFailed'));
+    } finally {
+      if (valid()) { exportBusy.current = false; setExporting(false); }
+    }
+  };
   const bodyPresentation = useMemo(
     () => summarizeMessagePayloadBody(payload),
     [i18nInstance.language, payload],
@@ -8440,8 +8479,8 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   markdownInlineCode: {
     color: colors.chatInlineCodeText,
     fontFamily: monoFont,
-    fontSize: typeScale.code,
-    lineHeight: lineHeight.code,
+    fontSize: typeScale.bodySmall,
+    lineHeight: lineHeight.bodySmall,
   },
   // 已验证存在的文件/目录路径 chip:**只加一条下划线,其它什么都不动**
   // (权威规则见 docs/design-rules/DESIGN.md §14.5,对齐 GitHub 的口径 ——
@@ -8543,8 +8582,8 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     color: colors.textPrimary,
     flexShrink: 1,
     fontFamily: monoFont,
-    fontSize: typeScale.code,
-    lineHeight: lineHeight.code,
+    fontSize: typeScale.bodySmall,
+    lineHeight: lineHeight.bodySmall,
     maxWidth: '100%',
   },
   // 语法着色:只上 color,其余(字体/字号/行高)继承 markdownCodeText —— 嵌套 Text
@@ -8577,8 +8616,8 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     borderRightWidth: StyleSheet.hairlineWidth,
     color: colors.textPrimary,
     flexShrink: 0,
-    fontSize: typeScale.code,
-    lineHeight: lineHeight.code,
+    fontSize: typeScale.bodySmall,
+    lineHeight: lineHeight.bodySmall,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
   },
@@ -8787,9 +8826,9 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   foldTitle: { color: colors.textSecondary, fontSize: typeScale.footnote, fontWeight: fontWeight.medium },
   foldTitlePlain: {
     color: colors.textSecondary,
-    fontSize: typeScale.listBody,
+    fontSize: typeScale.bodySmall,
     fontWeight: fontWeight.regular,
-    lineHeight: lineHeight.listBody,
+    lineHeight: lineHeight.bodySmall,
   },
   foldSubtitle: { color: colors.textTertiary, fontSize: typeScale.caption, marginTop: 2 },
   foldBody: { paddingHorizontal: spacing.md, paddingBottom: spacing.md },
@@ -8827,8 +8866,8 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   workThinkingText: { flex: 1, minWidth: 0 },
   workActivityText: {
     color: colors.textSecondary,
-    fontSize: typeScale.listBody,
-    lineHeight: lineHeight.listBody,
+    fontSize: typeScale.bodySmall,
+    lineHeight: lineHeight.bodySmall,
   },
   workThinkingMeasureWrap: {
     left: 0,
@@ -8879,9 +8918,9 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   },
   toolName: {
     color: colors.textSecondary,
-    fontSize: typeScale.listBody,
+    fontSize: typeScale.bodySmall,
     fontWeight: fontWeight.regular,
-    lineHeight: lineHeight.listBody,
+    lineHeight: lineHeight.bodySmall,
   },
   toolNameFlex: { flex: 1, minWidth: 0 },
   toolResult: {
@@ -8988,7 +9027,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     padding: spacing.lg,
   },
   payloadText: { color: colors.textPrimary, fontSize: typeScale.bodyLarge, lineHeight: lineHeight.bodyLarge },
-  payloadMonoText: { fontFamily: monoFont, fontSize: typeScale.footnote, lineHeight: lineHeight.code },
+  payloadMonoText: { fontFamily: monoFont, fontSize: typeScale.footnote, lineHeight: lineHeight.bodySmall },
   payloadDiffHeaderBlock: {
     borderBottomColor: colors.border,
     borderBottomWidth: StyleSheet.hairlineWidth,
@@ -9005,7 +9044,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     color: colors.textSecondary,
     fontFamily: monoFont,
     fontSize: typeScale.footnote,
-    lineHeight: lineHeight.code,
+    lineHeight: lineHeight.bodySmall,
   },
   payloadDiffFilePreviewBlock: {
     borderBottomColor: colors.border,
@@ -9084,7 +9123,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     color: colors.textTertiary,
     fontFamily: monoFont,
     fontSize: typeScale.caption,
-    lineHeight: lineHeight.code,
+    lineHeight: lineHeight.bodySmall,
     marginRight: spacing.sm,
     textAlign: 'right',
     width: 34,
@@ -9092,7 +9131,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   payloadDiffLinePrefix: {
     fontFamily: monoFont,
     fontSize: typeScale.footnote,
-    lineHeight: lineHeight.code,
+    lineHeight: lineHeight.bodySmall,
     marginRight: spacing.sm,
     textAlign: 'center',
     width: 14,
@@ -9108,7 +9147,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     flex: 1,
     fontFamily: monoFont,
     fontSize: typeScale.footnote,
-    lineHeight: lineHeight.code,
+    lineHeight: lineHeight.bodySmall,
   },
   payloadDiffLineTextOld: {
     color: colors.textSecondary,
@@ -9121,7 +9160,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   payloadDiffEmptyLine: {
     color: colors.textTertiary,
     fontSize: typeScale.caption,
-    lineHeight: lineHeight.code,
+    lineHeight: lineHeight.bodySmall,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
   },
@@ -9188,7 +9227,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   todoRowPending: { opacity: 0.72 },
   todoMark: { alignItems: 'center', justifyContent: 'center', width: 22 },
   todoCopy: { flex: 1, minWidth: 0 },
-  todoText: { color: colors.textPrimary, fontSize: typeScale.code, lineHeight: lineHeight.code },
+  todoText: { color: colors.textPrimary, fontSize: typeScale.bodySmall, lineHeight: lineHeight.bodySmall },
   todoPending: { color: colors.textTertiary },
   todoDone: { fontWeight: fontWeight.medium },
 });

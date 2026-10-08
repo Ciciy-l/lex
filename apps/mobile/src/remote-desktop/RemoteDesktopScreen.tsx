@@ -2247,7 +2247,7 @@ const makeStyles = (colors: ThemeColors) =>
     },
     modeTabSelected: { backgroundColor: colors.surfaceElevated },
     modeText: {
-      fontSize: typeScale.listBody,
+      fontSize: typeScale.bodySmall,
       fontWeight: fontWeight.regular,
       color: colors.textTertiary,
     },

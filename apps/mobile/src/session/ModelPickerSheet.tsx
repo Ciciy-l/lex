@@ -5,7 +5,6 @@ import { UnifiedModelPickerSheet, type UnifiedMobilePickerOptions } from './Unif
  * replace its content. Android retains the existing layered SheetSurface flow.
  * Selected-model options apply live; other models retain their remembered options.
  */
-import { UnifiedModelPickerSheet, type UnifiedMobilePickerOptions } from './UnifiedModelPickerSheet';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, Search } from 'lucide-react-native';

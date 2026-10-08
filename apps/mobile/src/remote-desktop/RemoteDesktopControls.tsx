@@ -1,3 +1,4 @@
+import { lineHeight } from "@/theme";
 import { useState } from "react";
 import { Platform, Pressable, StyleSheet, View } from "react-native";
 import SegmentedControl from "@expo/ui/community/segmented-control";

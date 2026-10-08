@@ -1,3 +1,4 @@
+import { lineLimit } from "@expo/ui/swift-ui/modifiers";
 import { useNativeGlassButtonStyle } from "@/platform/chrome/nativeGlassButtonStyle.ios";
 import { Host } from "@expo/ui";
 import {

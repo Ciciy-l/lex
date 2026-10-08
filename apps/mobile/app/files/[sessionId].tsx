@@ -1713,10 +1713,9 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   searchInput: {
     color: colors.textPrimary,
     flex: 1,
-    fontSize: typeScale.code,
+    fontSize: typeScale.bodySmall,
     paddingVertical: spacing.sm,
   },
-  cancelText: { color: colors.textPrimary, fontSize: typeScale.body },
   scopeHint: {
     color: colors.textTertiary,
     fontSize: typeScale.caption,
@@ -1767,7 +1766,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   searchHint: {
     color: colors.textSecondary,
     fontSize: typeScale.footnote,
-    lineHeight: lineHeight.code,
+    lineHeight: lineHeight.bodySmall,
     padding: spacing.lg,
     textAlign: 'center',
   },

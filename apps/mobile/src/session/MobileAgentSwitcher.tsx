@@ -1,3 +1,4 @@
+import { lineHeight } from '@/theme/tokens';
 /**
  * ModelPickerSheet 顶部的 Agent 浏览器。
  * 切段只改变正在浏览的模型目录；选中目标模型后才登记切换意图。

@@ -2,9 +2,9 @@ import { HISTORY_GAP_SPLIT_MS } from '@cindy/maker-shared/history-gap';
 import { collectMobileMarkdownImages } from './messageMarkdown';
 import type { MobileMessageRenderItem } from './messageRenderModel';
 
-const isDelivery = (item: MobileMessageRenderItem) => item.type === 'tool_media' && item.tools.some(tool => !!tool.media?.length || !!tool.files?.length)
+const isDelivery = (item: MobileMessageRenderItem) => item.type === 'tool_media' && item.tools.some(tool => !!tool.media?.length)
   || item.type === 'message' && (!!item.message.attachments?.length || !!item.message.media?.length
-    || !!item.message.files?.length || collectMobileMarkdownImages(item.message.body).length > 0);
+    || collectMobileMarkdownImages(item.message.body).length > 0);
 
 /** Presentation only. The host's persisted messages and lazy history remain intact. */
 export function companionConversationItems(items: readonly MobileMessageRenderItem[]): MobileMessageRenderItem[] {

@@ -1,3 +1,4 @@
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 /**
  * SessionActionSheet —— 首页会话行左滑「选项」触发的底部操作菜单
  * (重命名 / 置顶切换 / 归档 / 删除 + 独立「取消」)。
@@ -177,7 +178,7 @@ export function SessionActionSheet({
               const IconComponent = ACTION_ICONS[item.action];
               const color = item.destructive
                 ? colors.destructive
-                : colors.sheetActionText;
+                : colors.textPrimary;
               return (
                 <Pressable
                   accessibilityLabel={item.label}
@@ -260,11 +261,11 @@ const makeStyles = (colors: ThemeColors) =>
       paddingHorizontal: spacing.lg,
     },
     actionLabel: {
-      color: colors.sheetActionText,
+      color: colors.textPrimary,
       flexShrink: 1,
-      fontSize: typeScale.listBody,
+      fontSize: typeScale.bodySmall,
       fontWeight: fontWeight.semibold,
-      lineHeight: lineHeight.listBody,
+      lineHeight: lineHeight.bodySmall,
     },
     actionLabelDanger: {
       color: colors.destructive,
@@ -279,10 +280,10 @@ const makeStyles = (colors: ThemeColors) =>
       minHeight: 54,
     },
     cancelText: {
-      color: colors.sheetActionText,
-      fontSize: typeScale.listBody,
+      color: colors.textPrimary,
+      fontSize: typeScale.bodySmall,
       fontWeight: fontWeight.semibold,
-      lineHeight: lineHeight.listBody,
+      lineHeight: lineHeight.bodySmall,
     },
     pressed: {
       opacity: 0.72,

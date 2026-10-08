@@ -51,6 +51,7 @@ import { teammateIdentity } from '@/session/teammateNavigation';
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const teammate: HostedRemoteCollectionItem = { key: 'mac:bot', host: { deviceId: 'mac', deviceName: 'Mac' },
   item: { ref: { collectionId: 'teammates', kind: 'bot', id: 'writer' }, revision: '1', display: { title: 'Writer' }, links: [] } };
+let serial = 0;
 let root: Root | undefined;
 async function render() { root ??= createRoot(document.createElement('div')); await act(async () => root!.render(createElement(TeammateHomeScreen))); }
 beforeEach(() => {
@@ -122,7 +123,7 @@ describe('teammate home entry', () => {
 describe('explicit sidebar entry through the home page', () => {
   async function renderHome() {
     root ??= createRoot(document.createElement('div'));
-    await act(async () => root!.render(createElement(HomeScreen)));
+    await act(async () => root!.render(createElement(TeammateHomeScreen)));
   }
   it.each([1, 2])('keeps a %i-companion roster open across refresh and remount until a row is chosen', async count => {
     h.realNavigation = true;

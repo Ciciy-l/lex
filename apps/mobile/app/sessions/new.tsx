@@ -1,3 +1,4 @@
+import { resolveWorkspacePickerFrame, type WorkspacePickerFrame } from '@/session/workspacePickerPlacement';
 import { isRemoteTaskSuggestionId } from '@/session/remoteTaskSuggestionsModel';
 import { stripTrailingPathSeparators } from '@cindy/maker-shared/path-text';
 import { takeRefinementContextTail } from '@cindy/voice-input-core';
@@ -564,6 +565,26 @@ export default function NewRemoteSessionScreen() {
   const [goalBusy, setGoalBusy] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
+  const workspacePickerHostRef = useRef<View>(null);
+  const workspacePickerAnchorRef = useRef<View>(null);
+  const [workspacePickerFrame, setWorkspacePickerFrame] = useState<WorkspacePickerFrame | null>(null);
+  const measureWorkspacePicker = useCallback(() => {
+    if (nativeSelectionSheet || !workspacePickerOpen) return;
+    workspacePickerAnchorRef.current?.measureInWindow((x, y, width, height) => {
+      workspacePickerHostRef.current?.measureInWindow((hostX, hostY, hostWidth, hostHeight) => {
+        setWorkspacePickerFrame(resolveWorkspacePickerFrame(
+          { x, y, width, height },
+          { x: hostX, y: hostY, width: hostWidth, height: hostHeight },
+          spacing.xs,
+        ));
+      });
+    });
+  }, [nativeSelectionSheet, workspacePickerOpen]);
+  useLayoutEffect(() => {
+    if (workspacePickerOpen) measureWorkspacePicker();
+    else setWorkspacePickerFrame(null);
+  }, [workspacePickerOpen, measureWorkspacePicker]);
+
   // 模型浮窗(ContextSheet 同款 Modal;新建页权限已提为独立选择器,浮窗只留模型)。
   const [modelSheetOpen, setModelSheetOpen] = useState(false);
   // 权限模式独立浮窗(composer 工具条权限药丸点开;列表复用 MobilePermissionPickerList)。
@@ -5701,7 +5722,7 @@ export default function NewRemoteSessionScreen() {
                 ) : null}
               </View>
               ) : null}
-              <View style={styles.workspaceSelectorWrap}>
+              <View ref={workspacePickerAnchorRef} style={styles.workspaceSelectorWrap}>
                 <Pressable
                   accessibilityLabel={t('session.new.selectWorkspace')}
                   accessibilityRole="button"

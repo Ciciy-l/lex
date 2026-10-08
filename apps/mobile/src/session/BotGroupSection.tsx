@@ -113,7 +113,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   title: { flex: 1, color: colors.textPrimary, fontSize: typeScale.subtitle, fontWeight: fontWeight.medium, lineHeight: lineHeight.listTitle },
   previewRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-  preview: { flex: 1, color: colors.textSecondary, fontSize: typeScale.listBody, fontWeight: fontWeight.regular, lineHeight: lineHeight.subtitle },
+  preview: { flex: 1, color: colors.textSecondary, fontSize: typeScale.bodySmall, fontWeight: fontWeight.regular, lineHeight: lineHeight.subtitle },
   time: { color: colors.textTertiary, fontSize: typeScale.footnote, fontWeight: fontWeight.regular, lineHeight: lineHeight.body },
   meta: { color: colors.textTertiary, fontSize: typeScale.footnote, fontWeight: fontWeight.regular, lineHeight: lineHeight.body },
 });

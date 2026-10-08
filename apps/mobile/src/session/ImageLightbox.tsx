@@ -1530,7 +1530,7 @@ const styles = StyleSheet.create({
     width: StyleSheet.hairlineWidth,
   },
   actionLabelDisabled: { color: 'rgba(255,255,255,0.35)' },
-  stateText: { color: 'rgba(255, 255, 255, 0.85)', fontSize: typeScale.code },
+  stateText: { color: 'rgba(255, 255, 255, 0.85)', fontSize: typeScale.bodySmall },
   retryButton: {
     borderColor: 'rgba(255, 255, 255, 0.5)',
     borderRadius: radius.pill, // 圆形按钮语义用 pill(胶囊,RN 截半)
@@ -1539,5 +1539,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 8,
   },
-  retryText: { color: '#ffffff', fontSize: typeScale.code },
+  retryText: { color: '#ffffff', fontSize: typeScale.bodySmall },
 });

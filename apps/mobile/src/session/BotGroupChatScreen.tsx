@@ -527,5 +527,5 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   avatarSpacer: { width: BOT_GROUP_MESSAGE_AVATAR_SIZE },
   botColumn: { flex: 1, minWidth: 0, gap: spacing.xs },
   authorRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minHeight: BOT_GROUP_MESSAGE_AVATAR_SIZE },
-  authorName: { flexShrink: 1, color: colors.textPrimary, fontSize: typeScale.listBody, lineHeight: lineHeight.listBody, fontWeight: fontWeight.medium },
+  authorName: { flexShrink: 1, color: colors.textPrimary, fontSize: typeScale.bodySmall, lineHeight: lineHeight.bodySmall, fontWeight: fontWeight.medium },
 });

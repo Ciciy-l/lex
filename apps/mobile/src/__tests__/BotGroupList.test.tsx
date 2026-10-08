@@ -209,7 +209,7 @@ describe('create from the teammate page + menu', () => {
     await click('botGroup.create.submit');
     const secondRequest = h.invoke.mock.calls[1]![2][0];
     expect(secondRequest.input.requestId).toBe(firstRequest.input.requestId);
-    expect(value.onOpenCreated).toHaveBeenCalledWith({ deviceId: 'mac', deviceName: 'Mac' }, 'g-reconciled');
+    expect(value).toHaveBeenCalledWith({ deviceId: 'mac', deviceName: 'Mac' }, 'g-reconciled');
   });
 
   it('shows the host’s reason when it refuses', async () => {

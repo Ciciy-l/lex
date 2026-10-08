@@ -1,3 +1,4 @@
+import { Pencil, Trash2 } from 'lucide-react-native';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { useTranslation } from 'react-i18next';

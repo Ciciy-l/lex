@@ -206,7 +206,7 @@ import {
 } from '@/session/SessionMenuSheet';
 import type { SessionMenuView } from '@/session/sessionMenu';
 import { SessionSearchNative } from '@/session/SessionSearchNative';
-import { isHostManagedSession } from '@/session/hostManagedSession';
+import { useHostManagedSession } from '@/session/hostManagedSession';
 import {
   interactionKind,
   isPendingInteractionCollapsed,
@@ -655,7 +655,7 @@ import {
   shouldFallbackToLegacyCodexUsage,
 } from '@/session/sessionControls';
 import { buildSessionOperationLayout, composerDisabledReasonI18nKey } from '@/session/sessionOperationLayout';
-import { computeVanishedQueueItems, mergeSettlingItems } from '@/session/queueSettling';
+import { computeVanishedQueueItems, mergeSettlingItems, settleEnqueueResult } from '@/session/queueSettling';
 import {
   summarizeSessionOverview,
   type SessionActionStripActionId,
@@ -1539,8 +1539,16 @@ export default function SessionScreen() {
   }
   const markQueueItemSending = useCallback((queued: QueuedRemoteMessage) => {
     const clientId = queued.clientId;
+    setLocallyRemovedQueueClientIds((current) => {
+      if (!current.has(clientId)) return current;
+      const next = new Set(current);
+      next.delete(clientId);
+      return next;
+    });
     const projection = remoteSessionStore.getInputProjection(sessionId);
     const source = remoteSessionStore.getMessages(sessionId);
+    // Capture at send time, not when React later runs the state updater.
+    const observed = latestMessagesRef.current;
     // Match Desktop's idle-send placement. Busy follow-ups retain the existing
     // pending tail until authoritative history supplies their transcript row.
     const busy = projection.pendingQueue.length > 0 || projection.steeringQueueClientIds.length > 0
@@ -1548,7 +1556,7 @@ export default function SessionScreen() {
       || remoteSessionStore.getPendingInteractions(sessionId).length > 0
       || currentTurnHasStreamingAssistant(source);
     if (!busy) setOptimisticUserState((current) => current.sessionId !== sessionId ? current : {
-      sessionId, items: appendOptimisticUserMessage(current.items, source, queued, sessionId),
+      sessionId, items: appendOptimisticUserMessage(current.items, source, queued, sessionId, observed),
     });
     setSendingQueueClientIds((current) => {
       if (current.has(clientId)) return current;
@@ -1557,14 +1565,38 @@ export default function SessionScreen() {
       return next;
     });
   }, [sessionId]);
-  const clearQueueItemSending = useCallback((clientId: string) => {
+  const clearQueueItemSending = useCallback((queued: QueuedRemoteMessage, accepted: boolean, before: InputProjection) => {
+    const clientId = queued.clientId;
     setSendingQueueClientIds((current) => {
       if (!current.has(clientId)) return current;
       const next = new Set(current);
       next.delete(clientId);
       return next;
     });
-  }, []);
+    if (outboxSessionAliveRef.current !== sessionId) return;
+    const projection = remoteSessionStore.getInputProjection(sessionId);
+    const completed = settleEnqueueResult([], queued, accepted, {
+      previous: [...before.pendingQueue, queued],
+      current: projection.pendingQueue,
+      previousSteeringClientIds: new Set(before.steeringQueueClientIds),
+      currentSteeringClientIds: new Set(projection.steeringQueueClientIds),
+      hiddenClientIds: confirmedHistoryUserClientIds(historyView.view.getSnapshot(), remoteSessionStore.getMessages(sessionId)),
+      // Local cancellation is filtered by settlingRetired on the current render;
+      // do not capture its pre-enqueue state across the asynchronous RPC.
+      locallyRemovedClientIds: new Set(),
+    });
+    // The enqueue RPC can finish after drain but before any queued frame commits.
+    // Transfer ownership in the same completion callback, including reconciled ACK loss.
+    if (completed.length > 0) {
+      if (!settlingAddedAtRef.current.has(clientId)) settlingAddedAtRef.current.set(clientId, Date.now());
+    }
+    if (!accepted) {
+      settlingAddedAtRef.current.delete(clientId);
+      setLocallyRemovedQueueClientIds((current) => new Set([...current, clientId]));
+    }
+    setSettlingQueueItems((current) => accepted ? mergeSettlingItems(current, completed)
+      : current.filter((item) => item.clientId !== clientId));
+  }, [sessionId, setSettlingQueueItems, historyView.view]);
   /**
    * 落定判定的基线:上一帧的 pendingQueue 与插队标记。
    *
@@ -2009,7 +2041,9 @@ export default function SessionScreen() {
     () => sessions.find((item) => item.id === sessionId) ?? null,
     [sessionId, sessions],
   );
-  const sessionManagedByHost = isHostManagedSession(currentSession);
+  const sessionManagedByHost = useHostManagedSession(
+    JSON.stringify([auth.accountGeneration, deviceId, sessionId]), currentSession,
+  );
   const composerDeviceProviders = useDeviceProviders(deviceId || undefined, modelSheetOpen);
   const accountProvider = composerDeviceProviders.ready
     ? composerDeviceProviders.providers.find((provider) => provider.id === currentSession?.providerId)
@@ -4396,11 +4430,7 @@ export default function SessionScreen() {
     items: readonly MobileMessageRenderItem[];
     prefix: MobileStreamingRenderPrefixCache | null;
   } | null>(null);
-  const confirmedUserClientIds = useMemo(() => new Set(
-    (historyView.snapshot.ready
-      ? historyViewLeaves(historyView.snapshot.items).flatMap((item) => item.type === 'messages' ? item.messages : [])
-      : messages).filter((message) => message.role === 'user').map((message) => message.clientId),
-  ), [historyView.snapshot, messages]);
+
   const optimisticUsers = useMemo(() => {
     const activeIds = new Set([
       ...inputProjection.pendingQueue.filter((item) => sendingQueueClientIds.has(item.clientId)).map((item) => item.clientId),
@@ -6573,6 +6603,7 @@ export default function SessionScreen() {
       requestMessageListFollowLatest();
       const projectionEpochAtRequestStart =
         remoteSessionStore.captureInputProjectionAuthorityEpoch(sessionId);
+      let enqueueAccepted = false;
       try {
         // 弱网重试:切基站 / 短暂断连时自动补发,不让用户为一次抖动手动重发。
         // 写序边界(codex review P1 + auto-review P1):只有「保证未发出」的
@@ -6599,6 +6630,7 @@ export default function SessionScreen() {
           projectionRemoteEpochAtRequestStart,
           queued.clientId,
         );
+        enqueueAccepted = true;
       } catch (err) {
         // 回滚前先分辨「确实没应用」vs「已应用但响应丢了」:优先 refetch 权威
         // projection 判断。只有权威证据能保留乐观气泡；证据不可用时回到现有
@@ -6606,6 +6638,7 @@ export default function SessionScreen() {
         const accepted = await readAuthoritativeEnqueueAcceptance(
           sessionId, queued.clientId, projectionRemoteEpochAtRequestStart,
         );
+        enqueueAccepted = accepted;
         if (!accepted) {
           // 回滚:按 clientId 精确摘除乐观气泡(期间 projection 可能已被其他事件更新,
           // 不能整体还原快照),并恢复草稿与附件托盘。
@@ -6630,7 +6663,7 @@ export default function SessionScreen() {
       } finally {
         // 成功、对账认定已入队、回滚 throw 三条路径都算「不再在途」:转圈必须收掉,
         // 否则回滚后集合残留、同 clientId 重发时首帧仍是转圈。
-        clearQueueItemSending(queued.clientId);
+        clearQueueItemSending(queued, enqueueAccepted, projectionBeforeSend);
       }
       // 消息已由 A 路径落定；若等待期间切到 B，只停止旧 continuation，不能再用
       // A 的附件 id / plan 状态去清理 B 的 composer UI。

@@ -1,3 +1,4 @@
+import { Zap } from 'lucide-react-native';
 /**
  * MobileModelPickerList —— 模型浮窗一级视图的行列表(新建会话页 + 会话内 composer 共用,
  * 由 ModelPickerSheet 装配)。

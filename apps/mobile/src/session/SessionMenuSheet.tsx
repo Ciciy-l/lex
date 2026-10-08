@@ -981,7 +981,7 @@ function MenuActionRow({
 }) {
   const styles = useThemedStyles(makeStyles);
   const { colors } = useTheme();
-  const color = danger ? colors.destructive : colors.sheetActionText;
+  const color = danger ? colors.destructive : colors.textPrimary;
   return (
     <Pressable
       accessibilityLabel={label}
@@ -1090,12 +1090,12 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     paddingVertical: 2,
   },
   chipText: {
-    color: colors.textSecondary,
+    color: colors.textPrimary,
     fontSize: typeScale.caption,
     fontWeight: fontWeight.medium,
   },
   metaLine: {
-    color: colors.textSecondary,
+    color: colors.textPrimary,
     fontSize: typeScale.caption,
     lineHeight: lineHeight.caption,
   },
@@ -1119,11 +1119,11 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     paddingHorizontal: spacing.lg,
   },
   actionLabel: {
-    color: colors.sheetActionText,
+    color: colors.textPrimary,
     flexShrink: 1,
-    fontSize: typeScale.listBody,
+    fontSize: typeScale.bodySmall,
     fontWeight: fontWeight.semibold,
-    lineHeight: lineHeight.listBody,
+    lineHeight: lineHeight.bodySmall,
   },
   actionLabelDanger: {
     color: colors.destructive,
@@ -1207,11 +1207,11 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     lineHeight: lineHeight.caption,
   },
   infoValueMono: {
-    color: colors.textSecondary,
+    color: colors.textPrimary,
     fontFamily: monoFont,
   },
   infoCaption: {
-    color: colors.textSecondary,
+    color: colors.textPrimary,
     fontSize: typeScale.caption,
     lineHeight: lineHeight.caption,
   },

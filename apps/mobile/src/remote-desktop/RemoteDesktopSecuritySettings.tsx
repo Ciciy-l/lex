@@ -1,3 +1,4 @@
+import { lineHeight } from "@/theme";
 import {
   ActivityIndicator,
   Platform,
@@ -217,79 +218,7 @@ export function RemoteDesktopSecuritySettings(
             {props.notice || t("remoteDesktop.autoUnlockUnavailable")}
           </Text>
         )}
-      {(
-        [
-          {
-            key: "privacyScreen",
-            value: props.privacy,
-            available: props.privacyAvailable,
-            change: props.onPrivacy,
-            hint: props.privacyActive ? "privacyActive" : "privacyScreenHint",
-          },
-          {
-            key: "clipboardSync",
-            value: props.clipboardSync,
-            available: props.clipboardSyncAvailable,
-            change: props.onClipboardSync,
-            hint: "clipboardSyncHint",
-          },
-          {
-            key: "hostMute",
-            value: props.hostMute,
-            available: props.hostMuteAvailable,
-            change: props.onHostMute,
-            hint: "hostMuteHint",
-          },
-        ] as const
-      ).map((item) => (
-        <View
-          key={item.key}
-          style={{
-            ...row,
-            backgroundColor: colors.sheetActionSurface,
-            borderColor: colors.sheetActionBorder,
-            borderWidth: StyleSheet.hairlineWidth,
-            borderRadius: radius.container,
-          }}
-        >
-          <View style={{ flex: 1, gap: spacing.xs }}>
-            <Text
-              style={{ color: colors.textPrimary, fontSize: typeScale.body, lineHeight: lineHeight.body }}
-            >
-              {t(`remoteDesktop.${item.key}`)}
-            </Text>
-            <Text style={hint}>
-              {t(
-                `remoteDesktop.${item.available ? item.hint : "settingUnsupported"}`,
-              )}
-            </Text>
-          </View>
-          <View style={switchSlot}>
-            <NativeSwitch
-              seedColor={colors.inputCaret}
-              accessibilityLabel={t(`remoteDesktop.${item.key}`)}
-              testID={`remoteDesktop.${item.key}`}
-              value={item.value === true}
-              disabled={!item.available && !item.value}
-              onValueChange={(value) => item.change?.(value)}
-            />
-          </View>
-        </View>
-      ))}
-      {props.safetyNotice && (
-        <Text style={alertText} accessibilityRole="alert">
-          {t(`remoteDesktop.${props.safetyNotice}`)}
-        </Text>
-      )}
-      {props.clipboardSync &&
-        props.safetyNotice?.startsWith("clipboardSync") && (
-          <MainWindowActionButton
-            action={{
-              label: t("remoteDesktop.clipboardSyncRetry"),
-              onPress: props.onClipboardSyncRetry,
-            }}
-          />
-        )}
+
     </View>
   );
 }

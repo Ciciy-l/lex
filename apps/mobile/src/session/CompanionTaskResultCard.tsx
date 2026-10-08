@@ -12,7 +12,7 @@ import { motionDuration, motionEasing, useTheme, useThemedStyles, type ThemeColo
 import { useReduceMotionEnabled } from '@/hooks/useReduceMotion';
 import { parseMobileMarkdownInlines } from './messageMarkdown';
 import { fontWeight, iconSize, iconStroke, lineHeight, radius, spacing, typeScale } from '@/theme/tokens';
-import { ChatFilePathContext, type ChatFilePathContextValue, type ChatFilePathTarget } from '@/session/chatFilePathContext';
+import { ChatFilePathContext, type ChatFilePathContextValue } from '@/session/chatFilePathContext';
 import { useDeviceLink } from '@/device-link/DeviceLinkContext';
 import type { RemotePathStatResult } from '@/device-link/mobileMakerTransport';
 import {
@@ -69,7 +69,6 @@ function ResultFileAction({
 
 /** The delegated task's own files: chips in the result resolve against its directory, not the chat's. */
 function useResultFileContext(deviceId: string, childSessionId: string | null | undefined, workdir: string | undefined) {
-  const parent = useContext(ChatFilePathContext);
   const { openLink, invoke } = useDeviceLink();
   const push = useGuardedPush();
   return useMemo<ChatFilePathContextValue | null>(() => {
@@ -94,12 +93,9 @@ function useResultFileContext(deviceId: string, childSessionId: string | null | 
           ...(target.line !== undefined ? { line: String(target.line) } : {}),
         } });
       },
-      // The chat's action menu runs against the child task, not the conversation holding the card.
-      ...(parent?.onLongPressPath ? {
-        onLongPressPath: (target: ChatFilePathTarget) => parent.onLongPressPath?.({ ...target, scope: { sessionId: childSessionId, workdir } }),
-      } : {}),
+      // Child files open in their own task; the parent menu cannot safely act on them.
     };
-  }, [childSessionId, deviceId, invoke, openLink, parent, push, workdir]);
+  }, [childSessionId, deviceId, invoke, openLink, push, workdir]);
 }
 
 /** Frozen result data; legacy receipts may read the existing task title only. */

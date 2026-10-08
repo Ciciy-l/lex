@@ -1,3 +1,4 @@
+import { lineHeight } from '@/theme/tokens';
 import { cacheRemoteResourceItems, readRemoteResourceSnapshot, isRemoteResourceUnread, subscribeRemoteResourceCache, remoteResourceCacheRevision } from '@/device-link/remoteResourceCache';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -407,7 +408,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   },
   body: { flex: 1, gap: spacing.xs, minWidth: 0 },
   titleRow: { alignItems: 'baseline', flexDirection: 'row', gap: spacing.sm },
-  title: { color: colors.textPrimary, flex: 1, fontSize: typeScale.listTitle, fontWeight: fontWeight.semibold },
+  title: { color: colors.textPrimary, flex: 1, fontSize: typeScale.title, fontWeight: fontWeight.semibold },
   time: { color: colors.textTertiary, fontSize: typeScale.footnote },
   subtitle: { color: colors.textSecondary, fontSize: typeScale.body },
   meta: { color: colors.textTertiary, fontSize: typeScale.footnote },

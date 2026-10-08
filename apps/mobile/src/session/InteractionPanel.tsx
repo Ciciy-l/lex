@@ -691,6 +691,7 @@ function PermissionCard({
     [i18nInstance.language, item.request],
   );
   const companion = useContext(CompanionInteractionContext);
+  const companionIdentity = useContext(CompanionIdentityContext);
   const { colors } = useTheme();
   const suggestions = sessionScopedPermissionSuggestions(item.request.suggestions);
   const requestId = readRequestId(item);
@@ -2481,7 +2482,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   planText: {
     color: colors.textPrimary,
     fontSize: typeScale.caption,
-    lineHeight: lineHeight.code,
+    lineHeight: lineHeight.bodySmall,
   },
   planEditor: {
     backgroundColor: colors.surface,
@@ -2490,7 +2491,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     color: colors.textPrimary,
     fontSize: typeScale.caption,
-    lineHeight: lineHeight.code,
+    lineHeight: lineHeight.bodySmall,
     minHeight: 176,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,

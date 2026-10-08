@@ -406,6 +406,6 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   pickerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minHeight: 44, paddingHorizontal: spacing.md },
   everyone: { width: BOT_GROUP_STEP_AVATAR_SIZE, height: BOT_GROUP_STEP_AVATAR_SIZE, borderRadius: radius.pill,
     alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceChip },
-  pickerName: { flex: 1, minWidth: 0, color: colors.textPrimary, fontSize: typeScale.listBody, lineHeight: lineHeight.listBody, fontWeight: fontWeight.medium },
+  pickerName: { flex: 1, minWidth: 0, color: colors.textPrimary, fontSize: typeScale.bodySmall, lineHeight: lineHeight.bodySmall, fontWeight: fontWeight.medium },
   pickerHint: { color: colors.textTertiary, fontSize: typeScale.caption, lineHeight: lineHeight.caption },
 });

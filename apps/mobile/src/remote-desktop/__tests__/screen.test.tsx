@@ -534,7 +534,7 @@ describe("remote desktop controls", () => {
               supported: true,
               busy,
               modesSupported: false,
-              settings: { fps: 30, bitrate: 0, audio: false },
+              settings: { fps: 30, quality: "auto", audio: false },
               onChange,
               readModes: async () => [],
               onResolution: async () => {},

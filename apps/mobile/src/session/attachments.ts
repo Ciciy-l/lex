@@ -250,7 +250,7 @@ export function buildMobilePreparedGroupAttachment(input: {
   id?: string;
 }): RemoteSerializedAttachment | null {
   if (!input.receipt.trim() || !input.intent.trim()) return null;
-  if (!Number.isFinite(input.size) || input.size <= 0 || input.size > MOBILE_MAX_ATTACHMENT_BYTES) return null;
+  if (!Number.isSafeInteger(input.size) || input.size <= 0) return null;
   const name = basenameRemotePath(input.name).trim();
   if (!name) return null;
   const category = categorizeMobileAttachment(name);
