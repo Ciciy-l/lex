@@ -1,4 +1,5 @@
 import { MountOnFirstOpen } from '@/session/MountOnFirstOpen';
+import { companionConversationItems } from '@/session/companionConversationPresentation';
 import { ComposerExpandButton } from '@/session/ComposerExpandButton';
 import { nativeComposerAvailable } from '@/session/ComposerNativeInput';
 import { getActiveMobileSessionRealm } from '@/config/env';
@@ -5687,8 +5688,8 @@ export default function SessionScreen() {
     ],
   );
   const messageListItems = useMemo(
-    () => mergePendingSendItems(renderWindow.items, pendingSendItems, optimisticClientIds),
-    [pendingSendItems, renderWindow.items, optimisticClientIds],
+    () => mergePendingSendItems(companionChat ? companionConversationItems(renderWindow.items) : renderWindow.items, pendingSendItems, optimisticClientIds),
+    [companionChat, pendingSendItems, renderWindow.items, optimisticClientIds],
   );
   const companionWorkingLabel = useCompanionWorkingLabel({ sessionId, deviceId, botId: companionResource?.ref.id ?? '',
     active: companionChat && showComposerActivity, messages, reconnectAttempt: remoteSessionRunStatus.reconnectAttempt });
@@ -5699,10 +5700,11 @@ export default function SessionScreen() {
       : activePendingKind === 'ask_user_question' ? 'answer'
       : activePendingKind === 'plan_review' ? 'planReview' : 'attention'}`)
     : companionWorkingLabel;
-  const hasLiveWorkGroup = messageListItems.some(item => item.type === 'work_group' && item.isStreaming);
+  // Hiding progress can change visible rows without changing the underlying stream structure.
+  const companionItemsStructureKey = companionChat ? messageListItems.map(item => item.key).join('\u0000') : null;
   const messageListStructureKey = useMemo(
     () => ({}),
-    [pendingSendItems, renderItemsStructureKey, optimisticClientIds],
+    [pendingSendItems, renderItemsStructureKey, optimisticClientIds, companionItemsStructureKey],
   );
   const shareExpandableBlockIds = useMemo(
     () => (shareSelectionActive ? collectConversationShareBlockIds(messageListItems) : []),
@@ -9329,7 +9331,7 @@ export default function SessionScreen() {
                     imageAnnotation={collaborationReadOnlyReason ? undefined : composerAnnotations.chatAnnotation}
                     queueFooter={(
                       <>
-                        {companionChat && !hasLiveWorkGroup && !companionInlineInteraction ? <CompanionWorkingStatus label={companionWorkingLabel} /> : null}
+                        {companionChat && !companionInlineInteraction ? <CompanionWorkingStatus label={companionWorkingLabel} /> : null}
                         {companionInlineInteraction && !shareSelectionActive ? <InteractionPanel
                           embedded
                           companion={companionChat}

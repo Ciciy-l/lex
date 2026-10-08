@@ -35,6 +35,7 @@
     "create": "新建"
   },
   "resources": {
+    "connectionUnknown": "连接状态未知",
     "hostOffline": "离线",
     "titleFallback": "资源",
     "loading": "正在加载…",
@@ -950,6 +951,7 @@
       "thinking": "正在思考…",
       "replying": "正在回复…",
       "processing": "正在处理…",
+      "compacting": "正在整理对话…",
       "reading-memory": "正在读取记忆…",
       "saving-memory": "正在保存记忆…",
       "deleting-memory": "正在删除记忆…",
