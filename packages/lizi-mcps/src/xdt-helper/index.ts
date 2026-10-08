@@ -139,6 +139,26 @@ export {
   type BotSkillToolDeps,
 } from './bot_skills.js';
 export {
+  registerBotWorkbenchTools,
+  WORKBENCH_BATCH_MAX,
+  WORKBENCH_MESSAGE_MAX_CHARS,
+  type BotWorkbenchCallbacks,
+  type BotWorkbenchSnapshotWire,
+  type BotWorkbenchToolDeps,
+  type WorkbenchAutomationWire,
+  type WorkbenchDigestWire,
+  type WorkbenchItemWire,
+  type WorkbenchJudgmentInputWire,
+  type WorkbenchJudgmentWire,
+  type WorkbenchProjectBriefWire,
+  type WorkbenchProjectWire,
+  type WorkbenchStopStatusWire,
+  type WorkbenchTaskStateWire,
+  type WorkbenchTaskWire,
+  type WorkbenchTranscriptWire,
+  type WorkbenchVerdictWire,
+} from './bot_workbench.js';
+export {
   registerCreateTeammateTool,
   type CreateTeammateCallbacks,
 } from './create_teammate.js';

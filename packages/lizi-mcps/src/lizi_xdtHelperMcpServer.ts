@@ -64,6 +64,10 @@ import {
   type BotSkillCallbacks,
 } from './xdt-helper/bot_skills.js';
 import {
+  registerBotWorkbenchTools,
+  type BotWorkbenchCallbacks,
+} from './xdt-helper/bot_workbench.js';
+import {
   registerBotCapabilityTools,
   withCindyGatedBotToolDescriptions,
   type BotCapabilityCallbacks,
@@ -618,6 +622,11 @@ export interface XdtHelperMcpDeps {
    * the caller Session.
    */
   botSkills?: BotSkillCallbacks;
+  /**
+   * Bot workbench: read the projects the owner handed to the Bot and continue / stop tasks
+   * inside them. Host resolves the Bot from the caller Session and authorizes every target.
+   */
+  botWorkbench?: BotWorkbenchCallbacks;
   botCapabilities?: BotCapabilityCallbacks;
   /**
    * 官方反馈 issue 提交回调(弹确认卡片 → 用户确认 → POST server)。host 注入后,
@@ -755,6 +764,12 @@ export function createXdtHelperMcpServer(
     registerBotSkillTools(registry, {
       getSessionContext: () => resolveLiziMcpSessionContext(sessionCtx),
       callbacks: deps.botSkills,
+    });
+  }
+  if (deps.botWorkbench) {
+    registerBotWorkbenchTools(registry, {
+      getSessionContext: () => resolveLiziMcpSessionContext(sessionCtx),
+      callbacks: deps.botWorkbench,
     });
   }
 

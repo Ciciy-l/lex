@@ -28,6 +28,7 @@ import {
   Terminal,
   GitFork,
   UsersRound,
+  LayoutGrid,
   ListTodo,
   Plus,
   Puzzle,
@@ -153,6 +154,7 @@ const KIND_ICON: Record<BuiltinTabKindId, LucideIcon> = {
   subagents: Bot,
   'background-tasks': ListTodo,
   routines: ListTodo,
+  'bot-workbench': LayoutGrid,
   'resource-usage': Activity,
 };
 
@@ -168,6 +170,7 @@ const KIND_LABEL_KEY: Record<BuiltinTabKindId, string> = {
   subagents: 'rightSidebar.tabs.kinds.subagents',
   'background-tasks': 'rightSidebar.tabs.kinds.backgroundTasks',
   routines: 'routines.title',
+  'bot-workbench': 'bots.workbench.title',
   'resource-usage': 'rightSidebar.tabs.kinds.resourceUsage',
 };
 

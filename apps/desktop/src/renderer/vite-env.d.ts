@@ -4680,6 +4680,36 @@ interface ElectronAPI {
         session: import('@/lib/ccAgent.types').Session;
       }>;
       history: (botId: string) => Promise<unknown[]>;
+      workbench: {
+        get: (botId: string) => Promise<import('../shared/botWorkbench').BotWorkbench | null>;
+        addDirectory: (
+          botId: string,
+          path: string,
+        ) => Promise<{ ok: true } | { ok: false; errorCode: 'NOT_A_DIRECTORY' | 'TOO_MANY' }>;
+        removeDirectory: (botId: string, path: string) => Promise<void>;
+        readTask: (
+          botId: string,
+          taskId: string,
+        ) => Promise<
+          | { ok: true; taskId: string; transcript: import('../shared/botWorkbench').WorkbenchTranscript }
+          | { ok: false; errorCode: string; message: string }
+        >;
+        candidates: (
+          botId: string,
+        ) => Promise<
+          | {
+              ok: true;
+              candidates: Array<{
+                source: 'claude' | 'codex' | 'pi';
+                id: string;
+                projectDir: string | null;
+                updatedAt: string;
+                archived: boolean;
+              }>;
+            }
+          | { ok: false; errorCode: string; message: string }
+        >;
+      };
       memory: {
         list: (
           botId: string,
@@ -4815,6 +4845,10 @@ interface ElectronAPI {
           existing: number;
         };
         currentProjectDirs: string[];
+        /** 候选与本机已有项目里是 git 仓库的目录。 */
+        gitRepoDirs?: string[];
+        /** 主目录、应用数据目录、系统临时目录(伙伴工作台过滤非项目目录用)。 */
+        pathHints?: { homeDir: string | null; userDataDir: string | null; tempDirs: string[] };
       }>;
       importSelected: (
         items: Array<{ source: 'codex' | 'claude'; id: string }>,
@@ -5194,6 +5228,7 @@ interface ElectronAPI {
     onBotProfileChanged: (
       cb: (payload: { botId: string; change: 'created' | 'updated' }) => void,
     ) => () => void;
+    onBotWorkbenchChanged: (cb: (payload: { botId: string }) => void) => () => void;
     runBotLifecycleAction: (
       request: import('../shared/botLifecycle').BotLifecycleActionRequest,
     ) => Promise<import('../shared/botLifecycle').BotLifecycleActionResult>;

@@ -8116,6 +8116,110 @@
           "prompt": "一個溫暖、幽默的夥伴，願意聽我說生活中的小事，不急著給建議。"
         }
       }
+    },
+    "workbench": {
+      "title": "工作台",
+      "open": "打開工作台",
+      "emptyTitle": "交給{{name}}一個專案",
+      "emptyDescription": "把電腦裡已有的工作交給{{name}}接著做。它會先看一遍專案的文件、最近的提交和 PR、做過的任務，挑出沒做完和值得做的，再問你接著做哪件。",
+      "scanning": "正在尋找電腦上的專案…",
+      "noProjects": "還沒找到有任務的專案，可以選一個資料夾交給{{name}}。",
+      "pickFolder": "選其他資料夾",
+      "cancelAdd": "取消",
+      "projectTasks_other": "{{count}} 個任務",
+      "projectAutomations_other": "{{count}} 個自動化",
+      "sourceCindy_other": "Cindy {{count}} 個任務",
+      "sourceClaude_other": "Claude Code {{count}} 個任務",
+      "sourceCodex_other": "Codex {{count}} 個任務",
+      "moreProjects": "還有 {{count}} 個",
+      "hideMoreProjects": "收起",
+      "grant": "{{name}}可以查看、繼續和停止 {{project}} 裡的{{scope}}，也會替你開新任務。",
+      "grantTasks_other": "{{count}} 個任務",
+      "grantCindy_other": "Cindy 的 {{count}} 個任務",
+      "grantClaude_other": "Claude Code 的 {{count}} 個任務",
+      "grantCodex_other": "Codex 的 {{count}} 個任務",
+      "grantAutomations_other": "{{count}} 個自動化",
+      "grantEverything": "任務和自動化",
+      "handOver": "交給{{name}}",
+      "handoverMessage": "把 {{project}} 交給你了。",
+      "addProject": "再交給{{name}}一個專案",
+      "removeProject": "不再交給{{name}}：{{project}}",
+      "dirMissing": "找不到這個資料夾",
+      "dirUnavailable": "這個資料夾打不開，換一個試試",
+      "tooManyDirs": "最多交給{{name}} {{count}} 個專案",
+      "sendFailed": "沒能傳給{{name}}，請重試",
+      "tasksEmpty": "還沒有需要接著做的任務。",
+      "understanding": "{{name}}正在了解 {{project}}…",
+      "untitled": "未命名任務",
+      "continueMessage": "接著做「{{title}}」：{{text}}",
+      "verdict": {
+        "unfinished": "沒做完",
+        "idea": "聊過沒下文"
+      },
+      "detail": {
+        "back": "返回工作台",
+        "stop": "停止這件任務",
+        "openInTasks": "在任務頁開啟",
+        "placeholder": "補一句，讓{{name}}接著做…",
+        "send": "傳送",
+        "sent": "已經告訴{{name}}了",
+        "judgment": "{{name}}的判斷",
+        "empty": "還沒有可顯示的內容。",
+        "loadFailed": "讀不到這件任務的記錄。",
+        "truncated": "只顯示最近的內容",
+        "ref": "參考",
+        "noRef": "沒有附參考連結。",
+        "openPr": "在 GitHub 開啟 PR #{{number}}",
+        "refBlocked": "這個路徑不在交給夥伴的專案裡，沒有開啟。"
+      },
+      "openTask": "開啟「{{title}}」（{{state}}）",
+      "outputs": "產出",
+      "outputsEmpty": "{{name}}做出的檔案會放在這裡。",
+      "state": {
+        "running": "在做",
+        "waiting": "等你",
+        "queued": "排隊",
+        "stopped": "停著",
+        "automation": "自動化",
+        "done": "做完"
+      },
+      "group": {
+        "waiting": "等你",
+        "running": "在做",
+        "todo": "待做",
+        "done": "做完"
+      },
+      "followUp": {
+        "label": "跟進",
+        "message": "跟進「{{title}}」",
+        "aria": "跟進「{{title}}」"
+      },
+      "olderCount_other": "更早的 {{count}} 個",
+      "kind": {
+        "existing": "原有任務",
+        "delegated": "你交代的",
+        "claudeCode": "來自 Claude Code",
+        "codex": "來自 Codex",
+        "pi": "來自 Pi",
+        "pr": "PR #{{number}}",
+        "issue": "Issue #{{number}}",
+        "idea": "建議",
+        "automationPlain": "自動化"
+      },
+      "cycle": {
+        "manual": "手動",
+        "once": "一次",
+        "event": "事件觸發"
+      },
+      "line": {
+        "waiting": "等你回覆",
+        "queued": "排隊中",
+        "interrupted": "上次沒跑完",
+        "errored": "上次出錯了",
+        "failed": "沒做完",
+        "paused": "已暫停",
+        "disabled": "已停用"
+      }
     }
   },
   "common": {

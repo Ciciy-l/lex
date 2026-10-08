@@ -8118,6 +8118,121 @@
           "prompt": "A warm, funny companion who listens to the little things in my life without rushing to give advice."
         }
       }
+    },
+    "workbench": {
+      "title": "Workbench",
+      "open": "Open workbench",
+      "emptyTitle": "Give {{name}} a project",
+      "emptyDescription": "Hand the work already on your computer to {{name}}. It first looks over the project's docs, recent commits and PRs, and past sessions, picks out what's unfinished or worth doing, and asks which one to continue.",
+      "scanning": "Looking for projects on this computer…",
+      "noProjects": "No projects with sessions yet. Pick a folder to hand to {{name}}.",
+      "pickFolder": "Choose another folder",
+      "cancelAdd": "Cancel",
+      "projectTasks_one": "{{count}} session",
+      "projectTasks_other": "{{count}} sessions",
+      "projectAutomations_one": "{{count}} automation",
+      "projectAutomations_other": "{{count}} automations",
+      "sourceCindy_one": "{{count}} Cindy session",
+      "sourceCindy_other": "{{count}} Cindy sessions",
+      "sourceClaude_one": "{{count}} Claude Code session",
+      "sourceClaude_other": "{{count}} Claude Code sessions",
+      "sourceCodex_one": "{{count}} Codex session",
+      "sourceCodex_other": "{{count}} Codex sessions",
+      "moreProjects": "{{count}} more",
+      "hideMoreProjects": "Show less",
+      "grant": "{{name}} can view, continue and stop {{scope}} in {{project}}, and will start new sessions for you.",
+      "grantTasks_one": "{{count}} session",
+      "grantTasks_other": "{{count}} sessions",
+      "grantCindy_one": "{{count}} Cindy session",
+      "grantCindy_other": "{{count}} Cindy sessions",
+      "grantClaude_one": "{{count}} Claude Code session",
+      "grantClaude_other": "{{count}} Claude Code sessions",
+      "grantCodex_one": "{{count}} Codex session",
+      "grantCodex_other": "{{count}} Codex sessions",
+      "grantAutomations_one": "{{count}} automation",
+      "grantAutomations_other": "{{count}} automations",
+      "grantEverything": "the sessions and automations",
+      "handOver": "Hand to {{name}}",
+      "handoverMessage": "I'm handing {{project}} over to you.",
+      "addProject": "Give {{name}} another project",
+      "removeProject": "Take {{project}} back from {{name}}",
+      "dirMissing": "Folder not found",
+      "dirUnavailable": "This folder can't be opened. Try another one.",
+      "tooManyDirs": "{{name}} can look after up to {{count}} projects",
+      "sendFailed": "Could not send to {{name}}. Try again.",
+      "tasksEmpty": "Nothing to pick up yet.",
+      "understanding": "{{name}} is getting to know {{project}}…",
+      "untitled": "Untitled session",
+      "continueMessage": "Continue “{{title}}”: {{text}}",
+      "verdict": {
+        "unfinished": "Unfinished",
+        "idea": "Not followed up"
+      },
+      "detail": {
+        "back": "Back to workbench",
+        "stop": "Stop this session",
+        "openInTasks": "Open in sessions",
+        "placeholder": "Add a note so {{name}} can continue…",
+        "send": "Send",
+        "sent": "Sent to {{name}}",
+        "judgment": "{{name}}'s take",
+        "empty": "Nothing to show yet.",
+        "loadFailed": "Couldn't read this session.",
+        "truncated": "Showing the most recent part only",
+        "ref": "Reference",
+        "noRef": "No reference attached.",
+        "openPr": "Open PR #{{number}} on GitHub",
+        "refBlocked": "This path is outside the handed-over projects, so it wasn't opened."
+      },
+      "openTask": "Open “{{title}}” ({{state}})",
+      "outputs": "Outputs",
+      "outputsEmpty": "Files {{name}} makes will show up here.",
+      "state": {
+        "running": "Running",
+        "waiting": "Waiting on you",
+        "queued": "Queued",
+        "stopped": "Stopped",
+        "automation": "Automation",
+        "done": "Done"
+      },
+      "group": {
+        "waiting": "Waiting on you",
+        "running": "Running",
+        "todo": "To do",
+        "done": "Done"
+      },
+      "followUp": {
+        "label": "Follow up",
+        "message": "Follow up on “{{title}}”",
+        "aria": "Follow up on “{{title}}”"
+      },
+      "olderCount_one": "{{count}} older",
+      "olderCount_other": "{{count}} older",
+      "kind": {
+        "existing": "Existing session",
+        "delegated": "You asked",
+        "claudeCode": "From Claude Code",
+        "codex": "From Codex",
+        "pi": "From Pi",
+        "pr": "PR #{{number}}",
+        "issue": "Issue #{{number}}",
+        "idea": "Suggestion",
+        "automationPlain": "Automation"
+      },
+      "cycle": {
+        "manual": "Manual",
+        "once": "Once",
+        "event": "On event"
+      },
+      "line": {
+        "waiting": "Waiting for your reply",
+        "queued": "Queued",
+        "interrupted": "Last run didn't finish",
+        "errored": "Last run hit an error",
+        "failed": "Didn't finish",
+        "paused": "Paused",
+        "disabled": "Turned off"
+      }
     }
   },
   "common": {

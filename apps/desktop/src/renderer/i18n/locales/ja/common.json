@@ -8116,6 +8116,110 @@
           "prompt": "温かくユーモアがあり、すぐに助言せず日々の小さな話を聞いてくれるパートナー。"
         }
       }
+    },
+    "workbench": {
+      "title": "ワークベンチ",
+      "open": "ワークベンチを開く",
+      "emptyTitle": "{{name}} にプロジェクトを任せる",
+      "emptyDescription": "このコンピューターにある作業を {{name}} に引き継ぎます。まずプロジェクトのドキュメント、最近のコミットと PR、これまでのセッションに目を通し、終わっていないものややる価値のあるものを選び出してから、どれを続けるか確認します。",
+      "scanning": "このコンピューターのプロジェクトを探しています…",
+      "noProjects": "セッションのあるプロジェクトがまだありません。フォルダーを選んで {{name}} に任せられます。",
+      "pickFolder": "別のフォルダーを選ぶ",
+      "cancelAdd": "キャンセル",
+      "projectTasks_other": "{{count}} 件のセッション",
+      "projectAutomations_other": "{{count}} 件の自動化",
+      "sourceCindy_other": "Cindy {{count}} 件のセッション",
+      "sourceClaude_other": "Claude Code {{count}} 件のセッション",
+      "sourceCodex_other": "Codex {{count}} 件のセッション",
+      "moreProjects": "ほか {{count}} 件",
+      "hideMoreProjects": "閉じる",
+      "grant": "{{name}} は {{project}} の{{scope}}を確認・続行・停止でき、新しいセッションも代わりに始めます。",
+      "grantTasks_other": "{{count}} 件のセッション",
+      "grantCindy_other": "Cindy の {{count}} 件のセッション",
+      "grantClaude_other": "Claude Code の {{count}} 件のセッション",
+      "grantCodex_other": "Codex の {{count}} 件のセッション",
+      "grantAutomations_other": "{{count}} 件の自動化",
+      "grantEverything": "セッションと自動化",
+      "handOver": "{{name}} に任せる",
+      "handoverMessage": "{{project}} を任せます。",
+      "addProject": "{{name}} に別のプロジェクトを任せる",
+      "removeProject": "{{project}} を {{name}} から外す",
+      "dirMissing": "フォルダーが見つかりません",
+      "dirUnavailable": "このフォルダーを開けません。別のフォルダーを選んでください。",
+      "tooManyDirs": "{{name}} に任せられるプロジェクトは最大 {{count}} 件です",
+      "sendFailed": "{{name}} に送信できませんでした。もう一度お試しください。",
+      "tasksEmpty": "続けるべきセッションはまだありません。",
+      "understanding": "{{name}} が {{project}} を把握しています…",
+      "untitled": "無題のセッション",
+      "continueMessage": "「{{title}}」を続けて：{{text}}",
+      "verdict": {
+        "unfinished": "未完了",
+        "idea": "話したまま"
+      },
+      "detail": {
+        "back": "ワークベンチに戻る",
+        "stop": "このセッションを停止",
+        "openInTasks": "セッション画面で開く",
+        "placeholder": "{{name}} に続けてもらう一言…",
+        "send": "送信",
+        "sent": "{{name}} に伝えました",
+        "judgment": "{{name}} の見立て",
+        "empty": "表示できる内容はまだありません。",
+        "loadFailed": "このセッションの記録を読み込めません。",
+        "truncated": "最近の内容のみ表示しています",
+        "ref": "参考",
+        "noRef": "参考リンクはありません。",
+        "openPr": "GitHub で PR #{{number}} を開く",
+        "refBlocked": "このパスは任せたプロジェクトの外にあるため開きませんでした。"
+      },
+      "openTask": "「{{title}}」を開く（{{state}}）",
+      "outputs": "成果物",
+      "outputsEmpty": "{{name}} が作ったファイルはここに表示されます。",
+      "state": {
+        "running": "実行中",
+        "waiting": "返信待ち",
+        "queued": "待機中",
+        "stopped": "停止中",
+        "automation": "自動化",
+        "done": "完了"
+      },
+      "group": {
+        "waiting": "返信待ち",
+        "running": "実行中",
+        "todo": "やること",
+        "done": "完了"
+      },
+      "followUp": {
+        "label": "進める",
+        "message": "「{{title}}」を進めて",
+        "aria": "「{{title}}」を進める"
+      },
+      "olderCount_other": "さらに前の {{count}} 件",
+      "kind": {
+        "existing": "既存のセッション",
+        "delegated": "あなたの依頼",
+        "claudeCode": "Claude Code から",
+        "codex": "Codex から",
+        "pi": "Pi から",
+        "pr": "PR #{{number}}",
+        "issue": "Issue #{{number}}",
+        "idea": "提案",
+        "automationPlain": "自動化"
+      },
+      "cycle": {
+        "manual": "手動",
+        "once": "1 回",
+        "event": "イベント時"
+      },
+      "line": {
+        "waiting": "あなたの返信を待っています",
+        "queued": "待機中",
+        "interrupted": "前回は最後まで実行されませんでした",
+        "errored": "前回エラーが発生しました",
+        "failed": "完了しませんでした",
+        "paused": "一時停止中",
+        "disabled": "オフ"
+      }
     }
   },
   "common": {
