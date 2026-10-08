@@ -825,7 +825,7 @@ function botsCreateGroupLane(db: Database.Database, args: BotGroupsCreateLaneArg
 function botsFinishDelegation(
   db: Database.Database,
   args: unknown,
-): { id: string; parentSessionId: string | null; childSessionId: string | null; status: string } | null {
+): { id: string; parentSessionId: string | null; childSessionId: string | null; targetBotId: string | null; status: string } | null {
   const p = asRecord(args, 'bots.finishDelegation args');
   return db.transaction(() => {
     const values: unknown[] = [
@@ -839,19 +839,15 @@ function botsFinishDelegation(
     const row = db.prepare(`UPDATE bot_delegations SET status = ?, result_summary = ?, output_artifacts_json = ?, last_error = ?
       ${tokenSet}, pending_interaction_json = NULL, completed_at = ?, completion_delivered_at = NULL, updated_at = ?
       WHERE id = ? AND status IN ('queued','running','waiting')
-      RETURNING id, parent_session_id AS parentSessionId, child_session_id AS childSessionId, status`)
+      RETURNING id, parent_session_id AS parentSessionId, child_session_id AS childSessionId, target_bot_id AS targetBotId, status`)
       .get(...values) as
-      | { id: string; parentSessionId: string | null; childSessionId: string | null; status: string }
+      | { id: string; parentSessionId: string | null; childSessionId: string | null; targetBotId: string | null; status: string }
       | undefined;
     if (!row) return null;
-    if (row.childSessionId) {
-      // The delegation terminal transition owns its child task's terminal
-      // archive: `sessions.setStatus` refuses `source = 'bot'` rows on purpose
-      // (generic UI archive must not bypass Bot lifecycle bookkeeping), so the
-      // archive has to happen in this very transaction. Doing it anywhere else
-      // (a follow-up generic write that can also be swallowed) leaves the
-      // child task `active` forever and the guardian reports a supervision
-      // anomaly (PR #2829 QA).
+    if (row.childSessionId && row.targetBotId !== null) {
+      // Only legacy Bot-to-Bot execution containers are archived on completion.
+      // Independent tasks (target_bot_id IS NULL) remain available for the user's
+      // next input or explicit model selection; explicit archive still owns closure.
       db.prepare(`UPDATE sessions SET status = 'archived', updated_at = ?
         WHERE id = ? AND status = 'active'`)
         .run(completedAt, row.childSessionId);

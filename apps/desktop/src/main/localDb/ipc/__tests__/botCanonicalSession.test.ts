@@ -3902,7 +3902,7 @@ describe('Bot Session task end-to-end runtime', () => {
       compilerOptions: { target: ScriptTarget.ES2022 },
     }).outputText;
     const apply = new Function(...Object.keys(deps), js)(...Object.values(deps)) as
-      (id: string, attempt: number, token: number) => Promise<null>;
+      (id: string, attempt: number, token: number) => Promise<{ session: null; outcome: string }>;
     return { apply, pick };
   }
 
@@ -3937,7 +3937,7 @@ describe('Bot Session task end-to-end runtime', () => {
       const recovery = automaticTaskFallback();
       for (const attempt of [1, 2, 3]) {
         const fallback = await recovery.apply(result.childSessionId, attempt, attempt);
-        expect(fallback).toBeNull();
+        expect(fallback).toEqual({ session: null, outcome: 'superseded' });
       }
       expect(recovery.pick).not.toHaveBeenCalled();
       await recovery.apply(inherited.childSessionId, 1, 1);
@@ -3966,7 +3966,7 @@ describe('Bot Session task end-to-end runtime', () => {
       expect(resolveTaskModelSelection).toHaveBeenCalledWith(selection);
       expect(result.modelRoute).toEqual(chosen);
       const recovery = automaticTaskFallback();
-      expect(await recovery.apply(result.childSessionId, 2, 2)).toBeNull();
+      expect(await recovery.apply(result.childSessionId, 2, 2)).toEqual({ session: null, outcome: 'superseded' });
       expect(recovery.pick).not.toHaveBeenCalled();
       expect(runtime.started).toContainEqual({ sessionId: result.childSessionId, agentKind, model: route.model, providerId: route.providerId, effort: 'high', fastMode: 1 });
       const next = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Use the saved default.' });
@@ -6149,6 +6149,7 @@ describe('Bot Session task end-to-end runtime', () => {
         .resolves.toMatchObject({ ok: false, errorCode: 'TASK_ACTIVE' });
       expect(advance).not.toHaveBeenCalled();
       await runtime.delegation.settleSession({ childSessionId: started.childSessionId, outcome: 'error', error: 'Quota exhausted' });
+      expect(h.sqlite!.prepare('SELECT status FROM sessions WHERE id = ?').get(started.childSessionId)).toEqual({ status: 'active' });
       const turnsBeforeSwitch = runtime.started.length;
       const preview = await runtime.delegation.inspectSessionTaskRoute('session-1', started.delegationId);
       expect(preview).toMatchObject({ ok: true, current: { providerId: 'subscription' }, next: { providerId: 'paid' } });
