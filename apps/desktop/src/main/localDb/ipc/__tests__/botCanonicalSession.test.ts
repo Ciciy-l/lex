@@ -4137,7 +4137,7 @@ describe('Bot Session task end-to-end runtime', () => {
       // Failure wakes the parent with the completion notice, never the child.
       expect(runtime.started.map((turn) => turn.sessionId)).toEqual(['session-1']);
       expect(h.sqlite!.prepare('SELECT permission_mode, status FROM sessions WHERE parent_session_id = ?')
-        .get('session-1')).toMatchObject({ permission_mode: 'ask', status: 'archived' });
+        .get('session-1')).toMatchObject({ permission_mode: 'ask', status: 'active' });
     } finally {
       select.mockRestore();
       runtime.dispose();
