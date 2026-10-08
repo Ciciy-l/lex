@@ -1,4 +1,13 @@
 {
+  "pluginInvocation": {
+    "listSeparator": "、",
+    "status": {
+      "running": "呼び出し中…",
+      "called": "呼び出し済み",
+      "done": "完了",
+      "selected": "選択済み"
+    }
+  },
   "renderer": {
     "moreActions": "その他のメッセージ操作",
     "newMessagesToBottom": "新着メッセージあり、最下部へ移動",

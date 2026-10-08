@@ -1,4 +1,13 @@
 {
+  "pluginInvocation": {
+    "listSeparator": ", ",
+    "status": {
+      "running": "호출 중…",
+      "called": "호출됨",
+      "done": "완료됨",
+      "selected": "선택됨"
+    }
+  },
   "renderer": {
     "moreActions": "추가 메시지 작업",
     "newMessagesToBottom": "새 메시지, 맨 아래로 이동",

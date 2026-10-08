@@ -46,6 +46,8 @@ vi.mock('@react-native-async-storage/async-storage', () => ({ default: {
 } }));
 vi.mock('@/session/HomeSurface', () => ({ MobileHome: (props: unknown) => { h.tasks = props; return null; } }));
 vi.mock('@/session/remoteSessionStore', () => ({ remoteSessionStore: { subscribe: () => () => {}, getSessions: () => [] } }));
+vi.mock('@/session/HomeUnreadContext', () => ({ HomeUnreadProvider: ({ children }: any) => children, useHomeRoster: () => null, useHomeUnreadCounts: () => ({ tasks: 0, teammates: 0 }) }));
+import HomeScreen from '../../app/devices/index';
 import { TeammateHomeScreen } from '@/session/TeammateHomeScreen';
 import { teammateIdentity } from '@/session/teammateNavigation';
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -123,7 +125,7 @@ describe('teammate home entry', () => {
 describe('explicit sidebar entry through the home page', () => {
   async function renderHome() {
     root ??= createRoot(document.createElement('div'));
-    await act(async () => root!.render(createElement(TeammateHomeScreen)));
+    await act(async () => root!.render(createElement(HomeScreen)));
   }
   it.each([1, 2])('keeps a %i-companion roster open across refresh and remount until a row is chosen', async count => {
     h.realNavigation = true;

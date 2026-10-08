@@ -116,7 +116,12 @@ describe('mobile message content desktop-first surface', () => {
 
     expect(tokenSource).toContain('bodySmall: 15');
     expect(source).toContain('messageText: { color: colors.textPrimary, fontSize: typeScale.bodyLarge, lineHeight: lineHeight.bodyLarge }');
-    expect(source.match(/fontSize: typeScale\.code/g)).toHaveLength(4);
+    for (const styleName of ['markdownInlineCode', 'markdownCodeText']) {
+      const style = source.slice(source.indexOf(styleName + ': {')).split('},')[0];
+      expect(style).toContain('fontFamily: monoFont');
+      expect(style).toContain('fontSize: typeScale.bodySmall');
+      expect(style).toContain('lineHeight: lineHeight.bodySmall');
+    }
   });
 
   it('keeps message content readable on iPad and phone landscape', () => {

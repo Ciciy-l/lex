@@ -1771,8 +1771,9 @@ describe('cindy-bridge extension source', () => {
     expect(source.slice(readOnlyGate, credentialGate)).not.toContain('permission.writableRoots');
     expect(source).not.toContain('Cindy blocks reading credential or key paths, even with Full access.');
     expect(source).not.toContain('Cindy blocks reading process environment (/proc/*/environ), even with Full access.');
-    expect(source).toContain('const writeInsideAnyGrantedRoot = (roots: readonly string[])');
-    expect(source).toContain('&& !writeInsideWritableRoot');
+    expect(source).toContain('&& FILE_WRITE_BUILTINS.has(event.toolName)');
+    expect(source).toContain('&& (writeInsideAgentHome || writeInsideSubagentRun)');
+    expect(source).toContain("if (permission.mode === 'bypassPermissions' && !controlPlaneWrite) return;");
     expect(source).toContain('resolvedWritePath: writeTargetResolved');
     expect(source).toContain(
       'resolvedWritableRoots: resolveWritableRootsForHost(permission.writableRoots)',

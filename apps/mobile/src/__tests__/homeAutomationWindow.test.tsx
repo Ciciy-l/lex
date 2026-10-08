@@ -89,7 +89,7 @@ it('preserves small previews and the view-all action for old runs', () => {
 it('connects native layout and scroll measurements through the real tracker to rendered rows', () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   const tracker = source.statements.find((node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node)
-    && node.name?.text === 'HomeProjectWindowAnchorTracker')!;
+    && node.name?.text === 'AutomationWindowAnchorTracker')!;
   const trackerCode = ts.transpileModule(tracker.getText(source), {
     compilerOptions: { target: ts.ScriptTarget.ES2022 },
   }).outputText;

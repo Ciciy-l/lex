@@ -202,6 +202,7 @@ describe('MakerScheduleRunner agentMeta automation origin', () => {
     expect(body.role).toBe('user');
     expect(body.content).toBe('check the PR status');
     expect(body.agentMeta).toEqual({
+      autoReviewUserText: { kind: 'scheduled-continuation' },
       origin: {
         kind: 'scheduler',
         scheduleId: 'schedule-1',
