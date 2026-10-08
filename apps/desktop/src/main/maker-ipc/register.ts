@@ -1,3 +1,4 @@
+import { resolveVerifiedContextWindow } from '../maker-host/catalog-to-descriptors.js';
 import { advanceRuntimeRecoveryNotice } from '../im/shared/runtimeRecoveryNotice.js';
 import { configureAppDefaultModelSelection } from './appDefaultModelControl.js';
 import type { BuiltinApiKeyBridgeDeps } from '../secrets/builtinApiKeyBridge.js';
@@ -410,6 +411,7 @@ import {
 import { createAgentResourceSettingsIpc } from './agent-resource-settings-ipc.js';
 import {
   createBotDelegationService,
+  hasExplicitSessionTaskModel,
   type BotDelegationService,
 } from './botDelegationService.js';
 import {
@@ -11848,6 +11850,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       // Do not let a later infrastructure retry replace that pending intent.
       if (profiles.control.pending ||
           !canApplyAutomaticRuntimeSelection(sessionId, profiles.control.generation)) return null;
+      const explicitTaskModel = await hasExplicitSessionTaskModel(sessionId);
+      if (!sessionRuntimeControlOwnerEpochMatches(runtimeOwnerEpoch) || explicitTaskModel) return null;
       // Bot routes are explicit and ordered. They switch on the first recoverable
       // failure and never depend on the generic Session fallback toggle/catalog
       // guesser. Ordinary Sessions keep their existing second-attempt behavior.
@@ -12075,7 +12079,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         baselineProfile: profiles.baseline,
         effectiveProfile: profiles.effective,
         pendingMutation: profiles.pendingMutation,
-        fallbackEnabled: botFallback.isBot
+        fallbackEnabled: await hasExplicitSessionTaskModel(sessionId) ? false : botFallback.isBot
           ? botFallback.candidate !== null
           : readSessionRuntimeFallbackSettings().enabled,
       };

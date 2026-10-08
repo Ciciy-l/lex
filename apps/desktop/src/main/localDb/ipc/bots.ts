@@ -65,7 +65,8 @@ import {
   NEW_BOT_DEFAULT_PI_MODEL,
   NEW_BOT_DEFAULT_PI_PROVIDER,
 } from '../../../shared/botDefaults.js';
-import { normalizeBotModelChain } from '../../../shared/botModelChain.js';
+import { normalizeBotModelChain, readBotTaskModelOverride } from '../../../shared/botModelChain.js';
+import { validateBotTaskModel } from '../../maker-ipc/appDefaultModelControl.js';
 import {
   activeOwnerScopeKey,
   isAppSessionBoundaryPending,
@@ -839,6 +840,7 @@ async function readProfile(
       modelChainOverride: Array.isArray(config.modelChainOverride)
         ? normalizeBotModelChain(config.modelChainOverride)
         : null,
+      ...(config.taskModelOverride !== undefined ? { taskModelOverride: readBotTaskModelOverride(config.taskModelOverride) } : {}),
       skillMode: config.skillMode === 'allowlist' ? 'allowlist' : 'inherit',
       // 跟随全局时被单独关掉的那几项(见 botProfileRuntime 的 excludedSkills)。
       skillsExcluded: Array.isArray(config.skillsExcluded)
@@ -1088,6 +1090,7 @@ export async function getBotRemoteSettingsSource(botId: string) {
     followsDefault: !(Array.isArray(config.modelChainOverride) && config.modelChainOverride.length > 0)
       && (config.modelChainOverride === null || config.modelOverride === null
         || (!Array.isArray(config.modelChainOverride) && !Array.isArray(config.modelChain) && typeof config.model !== 'string')),
+    ...(config.taskModelOverride !== undefined ? { taskModelOverride: readBotTaskModelOverride(config.taskModelOverride) } : {}),
     skills: strings(config.skills),
     connections: strings(config.mcpServers),
     toolsets: strings(config.toolsets),
@@ -1499,6 +1502,13 @@ export async function updateBotProfile(raw: unknown, expectedVersion?: number,
     else delete nextConfig.gender;
   }
   const normalizedNextConfig = normalizeBotModelCapabilitiesOrThrow(nextConfig);
+  if (JSON.stringify(previous.taskModelOverride ?? null) !== JSON.stringify(normalizedNextConfig.taskModelOverride ?? null)) {
+    const taskModel = readBotTaskModelOverride(normalizedNextConfig.taskModelOverride);
+    if (taskModel && !await validateBotTaskModel(taskModel)) {
+      throwIpcError('INVALID_PARAMS', '任务模型不可用，请重新选择模型、来源与引擎');
+    }
+    owner.assertCurrent();
+  }
   const nextIdentitySource =
     body.identitySource !== undefined
       ? readText(body.identitySource, 'identitySource', 12000) ||
