@@ -17,7 +17,7 @@ import { FloatingSheetContext, usePaneViewport } from '@/platform/AdaptiveWindow
 import type { ReactNode, RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronLeft } from 'lucide-react-native';
-import { Pressable, ScrollView, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Pressable, ScrollView, View, type ScrollViewProps, type StyleProp, type ViewStyle } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { GestureDetector } from '@/platform/gestureHandler';
 import { Text } from '@/components/AppText';
@@ -40,6 +40,8 @@ export interface SheetSurfaceProps {
   /** header 下、滚动区上的固定插槽(如搜索框);不传不占位。 */
   pinnedTop?: ReactNode;
   children: ReactNode;
+  /** Replace scrolling content with a virtualized list without nesting scroll views. */
+  renderScrollContent?: (props: Pick<ScrollViewProps, 'style' | 'contentContainerStyle' | 'keyboardShouldPersistTaps' | 'testID'>) => ReactNode;
   /** 固定在面板底部(滚动区之外)的操作区。 */
   footer?: ReactNode;
   /** 暴露内容 ScrollView(打开时滚动到选中行用);不传则内部自管。 */
@@ -65,6 +67,7 @@ export function SheetSurface({
   headerTrailing,
   pinnedTop,
   children,
+  renderScrollContent,
   footer,
   scrollRef,
   heights,
@@ -129,7 +132,12 @@ export function SheetSurface({
       </View>
       </GestureDetector>
       {pinnedTop ? <View style={styles.pinnedTop}>{pinnedTop}</View> : null}
-      <ScrollView
+      {renderScrollContent ? renderScrollContent({
+        contentContainerStyle: styles.contentScrollContent,
+        keyboardShouldPersistTaps: 'handled',
+        style: styles.contentScroll,
+        testID: testID ? `${testID}.scroll` : undefined,
+      }) : <ScrollView
         contentContainerStyle={styles.contentScrollContent}
         keyboardShouldPersistTaps="handled"
         ref={scrollRef}
@@ -137,7 +145,7 @@ export function SheetSurface({
         testID={testID ? `${testID}.scroll` : undefined}
       >
         {children}
-      </ScrollView>
+      </ScrollView>}
       {footer ? (
         <View style={styles.footer} testID={testID ? `${testID}.footer` : undefined}>
           {footer}
