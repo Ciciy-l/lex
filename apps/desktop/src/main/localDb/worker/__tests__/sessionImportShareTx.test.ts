@@ -49,6 +49,21 @@ function createTables(db: Database.Database): void {
       created_at INTEGER NOT NULL,
       rewind_at INTEGER
     );
+    CREATE TABLE shared_task_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+      shared_task_id TEXT NOT NULL,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      revision INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      terminal INTEGER NOT NULL,
+      snapshot TEXT,
+      recorded_at INTEGER NOT NULL,
+      closure_token TEXT
+    );
+    CREATE UNIQUE INDEX shared_task_events_revision_idx
+      ON shared_task_events(shared_task_id, kind, revision);
+    CREATE INDEX shared_task_events_session_idx
+      ON shared_task_events(session_id, id);
     CREATE UNIQUE INDEX uniq_messages_session_client ON messages(session_id, client_id);
     CREATE TABLE orca_teams (
       id TEXT PRIMARY KEY,
@@ -352,12 +367,16 @@ describe('tx session.importShare', () => {
     (args.args as typeof args.args & {
       replaceSessions?: Array<{ id: string; status: 'active' | 'archived' }>;
     }).replaceSessions = [{ id: 'existing-session', status: 'active' }];
+    db.prepare(
+      "INSERT INTO shared_task_events (shared_task_id, session_id, revision, kind, terminal, recorded_at) VALUES ('old-share', 'existing-session', 1, 'authority', 0, 1)",
+    ).run();
 
     tx(db, args);
 
     expect(
       db.prepare('SELECT status FROM sessions WHERE id = ?').get('existing-session'),
     ).toEqual({ status: 'deleted' });
+    expect(db.prepare("SELECT terminal FROM shared_task_events WHERE shared_task_id = 'old-share' AND kind = 'local-close'").get()).toEqual({ terminal: 1 });
     expect(db.prepare('SELECT COUNT(*) AS n FROM sessions').get()).toEqual({ n: 3 });
   });
 
@@ -403,12 +422,16 @@ describe('tx session.importShare', () => {
       replaceSessions?: Array<{ id: string; status: 'active' | 'archived' }>;
     }).replaceSessions = [{ id: 'existing-session', status: 'active' }];
     (args.args.orca.workers[0].session as Record<string, unknown>).title = 42;
+    db.prepare(
+      "INSERT INTO shared_task_events (shared_task_id, session_id, revision, kind, terminal, recorded_at) VALUES ('old-share', 'existing-session', 1, 'authority', 0, 1)",
+    ).run();
 
     expect(() => tx(db, args)).toThrow();
 
     expect(
       db.prepare('SELECT status FROM sessions WHERE id = ?').get('existing-session'),
     ).toEqual({ status: 'archived' });
+    expect(db.prepare("SELECT terminal FROM shared_task_events WHERE shared_task_id = 'old-share' AND kind = 'local-close'").get()).toBeUndefined();
     expect(db.prepare('SELECT COUNT(*) AS n FROM sessions').get()).toEqual({ n: 1 });
     expect(db.prepare('SELECT COUNT(*) AS n FROM orca_teams').get()).toEqual({ n: 0 });
   });

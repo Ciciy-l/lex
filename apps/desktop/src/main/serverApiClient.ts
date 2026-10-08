@@ -45,6 +45,10 @@ export interface ApiFetchOptions {
   token?: string | null;
   /** 跳过 401 自动 refresh（避免无限循环；refresh 自身调用时禁用）。 */
   skipAutoRefresh?: boolean;
+  /** 固定身份的收尾请求不能让旧账号的 401 影响新账号。 */
+  skipSessionInvalidation?: boolean;
+  /** 在每次真实请求及 token refresh 之前运行的请求特定边界检查。 */
+  beforeAttempt?: () => void;
   /**
    * 目标服务 base URL(必传;来自 clientEndpoints 的对应字段或注入方)。
    * 区域相关服务必须传 resolver：401 refresh 可能切换登录区域，重试前要重新
@@ -77,6 +81,7 @@ interface RawResponse<T> {
 }
 
 async function rawFetch<T>(apiPath: string, opts: ApiFetchOptions): Promise<RawResponse<T>> {
+  opts.beforeAttempt?.();
   const baseUrl = typeof opts.baseUrl === 'function' ? opts.baseUrl() : opts.baseUrl;
   const url = baseUrl + apiPath;
   const method = opts.method ?? 'GET';
@@ -139,6 +144,7 @@ export async function serverApiFetch<T>(apiPath: string, opts: ApiFetchOptions):
     firstCode !== 'ACCOUNT_UNAVAILABLE' &&
     isRefreshableUnauthorizedCode(firstCode)
   ) {
+    opts.beforeAttempt?.();
     const refreshed = await authManager.refresh();
     if (refreshed) {
       refreshedAndRetried = true;
@@ -150,10 +156,14 @@ export async function serverApiFetch<T>(apiPath: string, opts: ApiFetchOptions):
     const errCode = readErrorCode(result.data) ?? statusToCode(result.status);
     const errMsg = readErrorMessage(result.data) ?? `请求失败 (${result.status})`;
     if (
-      result.status === 401 &&
+      !opts.skipSessionInvalidation && result.status === 401 &&
       (errCode === 'ACCOUNT_UNAVAILABLE' ||
         (refreshedAndRetried && isRefreshableUnauthorizedCode(errCode)))
     ) {
+      // Session invalidation mutates global auth state. Recheck the request's
+      // captured owner/region immediately before that side effect so an old
+      // in-flight 401 cannot log out the account that replaced it.
+      opts.beforeAttempt?.();
       void authManager.invalidateSession(
         errCode === 'ACCOUNT_UNAVAILABLE'
           ? 'account-unavailable'

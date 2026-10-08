@@ -117,6 +117,152 @@ describe('WorkerThreadTransport', () => {
     }
   });
 
+  it('runs a queued mutation guard at dispatch without serializing it to the worker', async () => {
+    const transport = new WorkerThreadTransport({
+      useInlineWorker: true,
+      maxQueuedRpcs: 1,
+    });
+    let revoked = false;
+    try {
+      const active = transport.send('sleep', { ms: 40 });
+      const queued = transport.send(
+        'exec',
+        { sql: 'CREATE TABLE guarded_write (id INTEGER PRIMARY KEY)' },
+        undefined,
+        () => {
+          if (revoked) throw new Error('remote operation revoked');
+        },
+      );
+      revoked = true;
+      await expect(active).resolves.toEqual({ slept: 40 });
+      await expect(queued).rejects.toThrow('remote operation revoked');
+      await expect(transport.send('query', { sql: "SELECT name FROM sqlite_master WHERE name = 'guarded_write'" }))
+        .resolves.toEqual([]);
+    } finally {
+      await transport.close();
+    }
+  });
+
+  it('holds later ordinary RPCs behind a guarded mutation with production concurrency', async () => {
+    const transport = new WorkerThreadTransport({
+      useInlineWorker: true,
+      maxQueuedRpcs: 4,
+    });
+    const order: string[] = [];
+    try {
+      const active = transport.send('sleep', { ms: 70 });
+      const guarded = transport.send(
+        'exec',
+        { sql: 'CREATE TABLE guarded_barrier (id INTEGER PRIMARY KEY)' },
+        undefined,
+        () => { order.push('guard-dispatch'); },
+      ).then(() => { order.push('guard-complete'); });
+      const follower = transport.send('query', { sql: "SELECT name FROM sqlite_master WHERE name = 'guarded_barrier'" })
+        .then(() => { order.push('follower-complete'); });
+
+      await expect(active).resolves.toEqual({ slept: 70 });
+      await Promise.all([guarded, follower]);
+      expect(order).toEqual(['guard-dispatch', 'guard-complete', 'follower-complete']);
+    } finally {
+      await transport.close();
+    }
+  });
+
+  it('releases a rejected guarded dispatch so later work is not starved', async () => {
+    const transport = new WorkerThreadTransport({
+      useInlineWorker: true,
+      maxQueuedRpcs: 3,
+    });
+    try {
+      const active = transport.send('sleep', { ms: 70 });
+      const guarded = transport.send(
+        'exec',
+        { sql: 'CREATE TABLE rejected_barrier (id INTEGER PRIMARY KEY)' },
+        undefined,
+        () => { throw new Error('guard no longer valid'); },
+      );
+      const follower = transport.send('query', { sql: 'SELECT 1 AS n' });
+      await expect(guarded).rejects.toThrow('guard no longer valid');
+      await expect(active).resolves.toEqual({ slept: 70 });
+      await expect(follower).resolves.toEqual([{ n: 1 }]);
+    } finally {
+      await transport.close();
+    }
+  });
+
+  it('keeps a timed-out admitted guard blocked until the worker replies', async () => {
+    const transport = new WorkerThreadTransport({
+      useInlineWorker: true,
+      maxQueuedRpcs: 3,
+      rpcTimeoutMs: 200,
+    });
+    try {
+      const guarded = transport.send('sleep', { ms: 320 }, undefined, () => undefined);
+      await expect(guarded).rejects.toMatchObject({ code: DB_TRANSPORT_OUTCOME_UNKNOWN });
+      let followerSettled = false;
+      const follower = transport.send('query', { sql: 'SELECT 1 AS n' });
+      void follower.then(() => { followerSettled = true; });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(followerSettled).toBe(false);
+      await expect(follower).resolves.toEqual([{ n: 1 }]);
+    } finally {
+      await transport.close();
+    }
+  });
+
+  it('keeps a timed-out ordinary RPC outstanding before dispatching a guarded mutation', async () => {
+    const transport = new WorkerThreadTransport({
+      useInlineWorker: true,
+      maxQueuedRpcs: 3,
+      rpcTimeoutMs: 200,
+    });
+    let guardRan = false;
+    let revoked = false;
+    try {
+      const ordinary = transport.send('sleep', { ms: 320 });
+      await expect(ordinary).rejects.toMatchObject({ code: DB_TRANSPORT_OUTCOME_UNKNOWN });
+      revoked = true;
+      const guarded = transport.send(
+        'exec',
+        { sql: 'CREATE TABLE timeout_guarded_write (id INTEGER PRIMARY KEY)' },
+        undefined,
+        () => {
+          guardRan = true;
+          if (revoked) throw new Error('remote operation revoked');
+        },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(guardRan).toBe(false);
+      await expect(guarded).rejects.toThrow('remote operation revoked');
+      await expect(
+        transport.send('query', {
+          sql: "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'timeout_guarded_write'",
+        }),
+      ).resolves.toEqual([]);
+    } finally {
+      await transport.close();
+    }
+  });
+
+  it('rejects a guarded barrier and its followers when the worker fails', async () => {
+    const transport = new WorkerThreadTransport({ useInlineWorker: true, maxQueuedRpcs: 3 });
+    const guarded = transport.send('sleep', { ms: 1_000 }, undefined, () => undefined);
+    const follower = transport.send('query', { sql: 'SELECT 1 AS n' });
+    await transport.terminateForTest();
+    await expect(guarded).rejects.toMatchObject({ code: DB_TRANSPORT_OUTCOME_UNKNOWN });
+    await expect(follower).rejects.toMatchObject({ code: DB_TRANSPORT_NOT_SENT });
+  });
+
+  it('closes a guarded barrier without leaving followers pending', async () => {
+    const transport = new WorkerThreadTransport({ useInlineWorker: true, maxQueuedRpcs: 3 });
+    const guarded = transport.send('sleep', { ms: 1_000 }, undefined, () => undefined);
+    const follower = transport.send('query', { sql: 'SELECT 1 AS n' });
+    const guardedRejection = expect(guarded).rejects.toMatchObject({ code: DB_TRANSPORT_OUTCOME_UNKNOWN });
+    const followerRejection = expect(follower).rejects.toMatchObject({ code: DB_TRANSPORT_NOT_SENT });
+    await expect(transport.close()).resolves.toBeUndefined();
+    await Promise.all([guardedRejection, followerRejection]);
+  });
+
   it('counts queue wait against the RPC timeout budget', async () => {
     const transport = new WorkerThreadTransport({
       useInlineWorker: true,
@@ -167,6 +313,61 @@ describe('WorkerThreadTransport', () => {
     await expect(transport.send('query', { sql: 'SELECT 1' })).rejects.toMatchObject({
       code: DB_TRANSPORT_NOT_SENT,
     });
+  });
+
+  it('marks a postMessage failure as not sent and does not retain it as outstanding', async () => {
+    const transport = new WorkerThreadTransport({ useInlineWorker: true });
+    const worker = (transport as unknown as {
+      worker: { postMessage: (...args: never[]) => void };
+    }).worker;
+    const originalPostMessage = worker.postMessage;
+    try {
+      worker.postMessage = () => { throw new Error('synthetic post failure'); };
+      await expect(transport.send('query', { sql: 'SELECT 1' })).rejects.toMatchObject({
+        code: DB_TRANSPORT_NOT_SENT,
+        message: 'synthetic post failure',
+      });
+      worker.postMessage = originalPostMessage;
+      await expect(transport.send('query', { sql: 'SELECT 1 AS n' })).resolves.toEqual([{ n: 1 }]);
+    } finally {
+      worker.postMessage = originalPostMessage;
+      await transport.close();
+    }
+  });
+
+  it('ignores duplicate late replies after a caller timeout while clearing the worker record once', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xdt-db-worker-late-reply-'));
+    const workerScriptPath = path.join(dir, 'late-reply-worker.cjs');
+    fs.writeFileSync(
+      workerScriptPath,
+      [
+        "const { parentPort } = require('node:worker_threads');",
+        'parentPort.on(\'message\', (request) => {',
+        "  if (request.op === 'closeDb') { parentPort.postMessage({ id: request.id, ok: true }); return; }",
+        '  setTimeout(() => {',
+        "    parentPort.postMessage({ id: request.id, ok: true, result: { reply: 'late' } });",
+        "    parentPort.postMessage({ id: request.id, ok: true, result: { reply: 'duplicate' } });",
+        '  }, 160);',
+        '});',
+      ].join('\\n'),
+      'utf8',
+    );
+    const transport = new WorkerThreadTransport({ workerScriptPath, rpcTimeoutMs: 40 });
+    let resolveCount = 0;
+    let rejectCount = 0;
+    try {
+      const request = transport.send('delayed').then(
+        () => { resolveCount += 1; },
+        () => { rejectCount += 1; },
+      );
+      await expect(request).resolves.toBeUndefined();
+      await new Promise((resolve) => setTimeout(resolve, 220));
+      expect(resolveCount).toBe(0);
+      expect(rejectCount).toBe(1);
+    } finally {
+      await transport.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('transfers ArrayBuffer ownership through postMessage transferList', async () => {

@@ -13,6 +13,7 @@ import {
 import { ChevronRight } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
+import { BOT_GROUP_REMOTE_COLLECTION_ID } from '@cindy/maker-shared/botGroupChat';
 import {
   resolveRemoteText,
 } from '@cindy/device-link';
@@ -26,6 +27,7 @@ import { isRemoteResourceHostOnline, readRemoteCollectionCache, writeRemoteColle
 import { useDeviceLink } from '@/device-link/DeviceLinkContext';
 import {
   type HostedRemoteCollectionItem,
+  type RemoteResourceHostTarget,
   listRemoteCollection,
   mergeRemoteCollectionHostShards,
   normalizeRemoteCollectionItems,
@@ -37,6 +39,7 @@ import { goBackGuarded } from '@/utils/backGuard';
 import { useGuardedPush } from '@/utils/useGuardedPush';
 import { useTheme, useThemedStyles, type ThemeColors } from '@/theme';
 import { fontWeight, iconSize, iconStroke, radius, spacing, typeScale } from '@/theme/tokens';
+import { BotGroupSection } from '@/session/BotGroupList';
 
 type HostedResourceItem = HostedRemoteCollectionItem;
 
@@ -77,6 +80,7 @@ export default function RemoteCollectionScreen() {
     unsubscribe,
   } = useDeviceLink();
   const { accountGeneration, user } = useAuth();
+  const isBotGroups = collectionId === BOT_GROUP_REMOTE_COLLECTION_ID;
   useSyncExternalStore(subscribeRemoteResourceCache, remoteResourceCacheRevision);
   const [hydratedOwner, setHydratedOwner] = useState('');
   const cacheOwner = `${user?.id ?? ''}:${accountGeneration}`;
@@ -190,6 +194,13 @@ export default function RemoteCollectionScreen() {
 
   const openItem = useCallback((hosted: HostedResourceItem) => {
     if (!isRemoteResourceHostOnline(relayStatus, getPresenceAvailability(hosted.host.deviceId), replyEpochs[hosted.host.deviceId], connectionEpoch)) return;
+    if (isBotGroups) {
+      guardedPush({
+        pathname: '/companions/groups/[groupId]',
+        params: { groupId: hosted.item.ref.id, deviceId: hosted.host.deviceId, deviceName: hosted.host.deviceName },
+      });
+      return;
+    }
     guardedPush({
       pathname: '/resources/[collectionId]/[resourceId]',
       params: {
@@ -201,7 +212,14 @@ export default function RemoteCollectionScreen() {
         title: resolveRemoteText(hosted.item.display.title, i18n.language),
       },
     });
-  }, [collectionId, connectionEpoch, getPresenceAvailability, guardedPush, i18n.language, relayStatus, replyEpochs]);
+  }, [collectionId, connectionEpoch, getPresenceAvailability, guardedPush, i18n.language, isBotGroups, relayStatus, replyEpochs]);
+
+  const groupIsOnline = useCallback((host: RemoteResourceHostTarget) =>
+    isRemoteResourceHostOnline(relayStatus, getPresenceAvailability(host.deviceId), replyEpochs[host.deviceId], connectionEpoch),
+  [connectionEpoch, getPresenceAvailability, relayStatus, replyEpochs]);
+  const openCreatedGroup = useCallback((host: RemoteResourceHostTarget, groupId: string) => {
+    guardedPush({ pathname: '/companions/groups/[groupId]', params: { groupId, deviceId: host.deviceId, deviceName: host.deviceName } });
+  }, [guardedPush]);
 
   return (
     <SafeAreaView
@@ -220,6 +238,19 @@ export default function RemoteCollectionScreen() {
         <View style={styles.center}>
           <ActivityIndicator color={colors.textSecondary} />
           <Text style={styles.muted}>{t('devices.resources.loading')}</Text>
+        </View>
+      ) : isBotGroups ? (
+        <View style={styles.groupListContainer}>
+          <BotGroupSection
+            createTargets={targets.filter(groupIsOnline)}
+            isOnline={groupIsOnline}
+            items={itemsAccount === accountGeneration ? items : []}
+            onOpen={openItem}
+            onOpenCreated={openCreatedGroup}
+            preferredDeviceId={targets[0]?.deviceId}
+            query=""
+          />
+          {error ? <Text accessibilityRole="alert" style={styles.groupError}>{error}</Text> : null}
         </View>
       ) : (
         <FlatList
@@ -288,6 +319,8 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   center: { alignItems: 'center', flex: 1, gap: spacing.sm, justifyContent: 'center' },
   muted: { color: colors.textSecondary, fontSize: typeScale.footnote },
   listContent: { gap: spacing.sm, padding: spacing.md },
+  groupListContainer: { flex: 1 },
+  groupError: { color: colors.errorText, fontSize: typeScale.footnote, padding: spacing.lg },
   emptyContent: { flexGrow: 1, justifyContent: 'center', padding: spacing.xl },
   row: {
     alignItems: 'center',

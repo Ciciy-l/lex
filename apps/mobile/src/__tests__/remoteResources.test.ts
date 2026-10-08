@@ -3,6 +3,7 @@ import { DeviceLinkError } from '@cindy/device-link';
 
 import {
   MOBILE_REMOTE_RESOURCE_PRIMITIVES,
+  getRemoteResource,
   discoverRemoteHomeCollections,
   remoteResourceDiscoveryTargets,
   isRemoteResourcesUnsupported,
@@ -200,5 +201,63 @@ describe('remote resource route targets', () => {
     expect(parseRemoteResourceTargets('{broken')).toEqual([]);
     expect(parseRemoteResourceTargets(JSON.stringify([{ deviceId: '', deviceName: 'Nope' }])))
       .toEqual([]);
+  });
+});
+
+describe('portable task controls', () => {
+  it('preserves only bounded actions and known primitive data, keeping unknown blocks readable', async () => {
+    const ref = { collectionId: 'workflow', kind: 'session', id: 'task' };
+    const invoke = vi.fn(async () => ({
+      ref, revision: '2', display: { title: 'Test' }, links: [],
+      actions: [
+        { id: 'start', label: 'Start' }, { id: 'continue', label: 'Continue', disabled: true },
+        { id: 'form', label: 'Form', fields: [{ id: 'secret' }] },
+        { id: 'confirm', label: 'Confirm', confirmation: { title: 'Sure?' } },
+        { id: 'bad-confirm', label: 'Bad', confirmation: { title: '' } },
+        { id: 'bad-body', label: 'Bad', confirmation: { title: 'Sure?', body: 42 } },
+        { id: 'null-confirm', label: 'Bad', confirmation: null },
+        { id: 'x'.repeat(161), label: 'Too long' },
+      ],
+      blocks: [
+        { id: 'workflow', primitive: 'session-controls', fallbackMarkdown: 'Installing dependencies', data: { input: 'blocked', busy: true, path: '/private' } },
+        { id: 'future', primitive: 'future-widget', fallbackMarkdown: 'Readable fallback', data: { html: '<script>' } },
+      ],
+    })) as RemoteInvoke;
+    const card = await getRemoteResource(invoke, targets[0], ref);
+    expect(card.actions).toEqual([{ id: 'start', label: 'Start', disabled: false }, { id: 'continue', label: 'Continue', disabled: true }, { id: 'confirm', label: 'Confirm', disabled: false, confirmation: { title: 'Sure?' } }]);
+    expect(card.blocks?.[0].data).toEqual({ input: 'blocked', busy: true });
+    expect(card.blocks?.[1]).toEqual({ id: 'future', primitive: 'future-widget', fallbackMarkdown: 'Readable fallback' });
+    expect(JSON.stringify(card)).not.toContain('/private');
+  });
+});
+
+it('preserves additive public generation state without interpreting unknown future phases', () => {
+  const input = (generation?: unknown) => ({ items: [{ ref: { collectionId: 'teammates', kind: 'bot', id: 'bot' },
+    display: { title: 'Cindy', generation }, links: [], revision: '1' }] });
+  expect(normalizeRemoteCollectionItems(input({ phase: 'replying', startedAt: 123 }), 'teammates')[0].display.generation)
+    .toEqual({ phase: 'replying', startedAt: 123 });
+  expect(normalizeRemoteCollectionItems(input(), 'teammates')[0].display.generation).toBeUndefined();
+  expect(normalizeRemoteCollectionItems(input({ phase: {}, startedAt: Infinity }), 'teammates')[0].display.generation).toBeUndefined();
+});
+
+describe('bot group chat block', () => {
+  const ref = { collectionId: 'bot-groups', kind: 'bot-group', id: 'g1' };
+  const response = {
+    ref, revision: '1', display: { title: '官网介绍页' }, links: [],
+    blocks: [{ id: 'chat', primitive: 'bot-group-chat', fallbackMarkdown: '**阿布**: 写好了', data: { id: 'g1', messages: [{ id: 'm1' }] } }],
+  };
+
+  it('keeps the structured group data only for the screen that declared the primitive', async () => {
+    const invoke = vi.fn(async () => response) as RemoteInvoke;
+    const resource = await getRemoteResource(invoke, targets[0], ref, 'zh-CN', ['bot-group-chat']);
+    expect(resource.blocks?.[0]).toEqual(response.blocks[0]);
+    const request = (invoke as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]![2] as [{ client: { primitives: string[] } }];
+    expect(request[0].client.primitives).toEqual([...MOBILE_REMOTE_RESOURCE_PRIMITIVES, 'bot-group-chat']);
+  });
+
+  it('never hands the group data to an ordinary resource view', async () => {
+    const invoke = vi.fn(async () => response) as RemoteInvoke;
+    const resource = await getRemoteResource(invoke, targets[0], ref);
+    expect(resource.blocks?.[0]).toEqual({ id: 'chat', primitive: 'bot-group-chat', fallbackMarkdown: '**阿布**: 写好了' });
   });
 });

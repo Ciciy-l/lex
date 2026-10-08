@@ -1,6 +1,6 @@
 import { REMOTE_RESOURCE_GET_CHANNEL, type RemoteResourceGetRequest } from '@cindy/device-link';
-import { useEffect, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { useBlocker, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { CCAgentSessionView } from '@/features/cc-agent/CCAgentSessionView';
 import { remoteProjectsStore } from '@/features/device-link/remoteProjectsStore';
@@ -10,6 +10,7 @@ import { BotAvatar } from './BotAvatar';
 import { parseRemoteBots, type RemoteBot } from './remoteBotRoster';
 import { markRemoteBotRead, useRemoteBots } from './useRemoteBots';
 import { RemoteBotMemoryView } from './RemoteBotMemoryView';
+import { RemoteBotSettings } from './RemoteBotSettings';
 
 /** The session id comes from the host's collection, never from an arbitrary URL. */
 export function RemoteBotSessionView() {
@@ -25,6 +26,42 @@ export function RemoteBotSessionView() {
   const [retry, setRetry] = useState(0);
   const sessionId = bot?.sessionId;
   const showMemory = searchParams.get('memory') === '1';
+  const showSettings = searchParams.get('settings') === '1';
+  const beforeCloseRef = useRef<(() => Promise<boolean>) | null>(null);
+  const allowNavigation = useRef(false);
+  const pendingGuard = useRef<Promise<boolean> | null>(null);
+  const blocker = useBlocker(({ currentLocation, nextLocation }) => {
+    if (allowNavigation.current) {
+      allowNavigation.current = false;
+      return false;
+    }
+    return showSettings && beforeCloseRef.current !== null && (
+      currentLocation.pathname !== nextLocation.pathname
+      || currentLocation.search !== nextLocation.search
+    );
+  });
+  useEffect(() => {
+    if (blocker.state !== 'blocked') return;
+    let active = true;
+    const check = pendingGuard.current
+      ?? Promise.resolve().then(() => beforeCloseRef.current?.() ?? true);
+    pendingGuard.current = check;
+    void check.then(
+      allowed => {
+        if (!active) return;
+        if (allowed) blocker.proceed();
+        else blocker.reset();
+      },
+      () => {
+        if (active) blocker.reset();
+      },
+    ).finally(() => {
+      if (pendingGuard.current === check) pendingGuard.current = null;
+    });
+    return () => {
+      active = false;
+    };
+  }, [blocker]);
   useEffect(() => {
     let disposed = false;
     setFailed(false);
@@ -79,6 +116,20 @@ export function RemoteBotSessionView() {
     };
   }, [deviceId, botId, sessionId, bot?.online, bot?.deviceName, retry]);
 
+  const navigateAfterSettings = (target: string) => {
+    const guard = beforeCloseRef.current;
+    if (!guard) {
+      allowNavigation.current = true;
+      navigate(target);
+      return;
+    }
+    void Promise.resolve(guard()).then(allowed => {
+      if (!allowed) return;
+      allowNavigation.current = true;
+      navigate(target);
+    });
+  };
+
   useEffect(() => {
     const read = () => {
       if (document.visibilityState === 'visible' && bot && ready?.id === bot.id && ready.deviceId === bot.deviceId && validatedSessionId === bot.sessionId) markRemoteBotRead(bot.deviceId, bot.id, bot.lastReplyAt ?? 0);
@@ -91,11 +142,26 @@ export function RemoteBotSessionView() {
   if (showMemory && bot && bot.id === botId && bot.deviceId === deviceId) {
     return <RemoteBotMemoryView bot={bot} />;
   }
+  if (showSettings && bot && bot.id === botId && bot.deviceId === deviceId) {
+    return (
+      <RemoteBotSettings
+        bot={bot}
+        beforeCloseRef={beforeCloseRef}
+        onDeleted={() => {
+          allowNavigation.current = true;
+          navigate('/bots');
+        }}
+      />
+    );
+  }
   if (bot && !failed && ready?.sessionId && ready.id === botId && ready.deviceId === deviceId) {
     return (
       <div className="flex h-full min-h-0 flex-col">
         <div className="flex shrink-0 justify-end border-b border-[var(--border-default)] px-3 py-1">
-          <button type="button" className="rounded-[8px] px-2 py-1 text-12 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]" onClick={() => navigate(`?memory=1`)}>
+          <button type="button" className="rounded-[8px] px-2 py-1 text-12 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]" onClick={() => navigateAfterSettings('?settings=1')}>
+            {t('bots.settings', { defaultValue: 'Settings' })}
+          </button>
+          <button type="button" className="rounded-[8px] px-2 py-1 text-12 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]" onClick={() => navigateAfterSettings('?memory=1')}>
             {t('bots.remote.memory.title', { defaultValue: 'Saved memories' })}
           </button>
         </div>

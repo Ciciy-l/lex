@@ -964,6 +964,79 @@ describe('Bot canonical Session lifecycle', () => {
     expect(await remoteList()).toEqual([expect.objectContaining({ id: discovered.id })]);
   });
 
+  it('runs the real remote settings provider with two Bot identities and two peer bindings', async () => {
+    await invoke('local-db:bots:create', {
+      id: 'bot-2', name: 'Second Bot', avatar: '🤖',
+      capabilities: { harness: 'pi', model: 'z-ai/glm-5.3-flash', permissions: 'ask' },
+    });
+    const { registerBotRemoteResourceProvider } = await import('../botRemoteResourceProvider');
+    const { remoteResourceRegistry } = await import('../../../device-link/remoteResourceRegistry');
+    registerBotRemoteResourceProvider();
+    const client = { protocolVersion: 1, primitives: ['form', 'list', 'action', 'markdown'], locale: 'en' };
+    const peerA = {}; const peerB = {};
+    const contextA = { controllerDeviceId: 'remote-peer-a', client: peerA, linkEpoch: 1, assertCurrent: vi.fn() };
+    const contextB = { controllerDeviceId: 'remote-peer-b', client: peerB, linkEpoch: 1, assertCurrent: vi.fn() };
+    const ref = (id: string) => ({ collectionId: 'teammates', kind: 'bot' as const, id: `settings:${id}` });
+    const get = (context: typeof contextA, id: string) => remoteResourceRegistry.get(context, { client, ref: ref(id) });
+    const invokeAction = (context: typeof contextA, resource: any, actionId: string, input: Record<string, unknown>) =>
+      remoteResourceRegistry.invoke(context, { client, collectionId: 'teammates', resourceRef: resource.ref, actionId, input });
+    const profileAction = (resource: any) => {
+      const block = resource.blocks?.find((candidate: any) => candidate.id === 'profile');
+      return (block?.data as { actionId?: string } | undefined)?.actionId;
+    };
+
+    const firstA = await get(contextA, 'bot-1');
+    const firstAction = profileAction(firstA);
+    expect(firstA.ref.id).toBe('settings:bot-1');
+    expect(firstAction).toBeTypeOf('string');
+    // A grant from one paired peer cannot be replayed by the other peer.
+    await expect(invokeAction(contextB, { ...firstA, ref: ref('bot-1') }, firstAction!, { name: 'peer B must not write' }))
+      .rejects.toThrow();
+    expect(h.sqlite!.prepare('SELECT current_version FROM bot_profiles WHERE id = ?').pluck().get('bot-1')).toBe(1);
+
+    const staleB = await get(contextB, 'bot-1');
+    const staleAction = profileAction(staleB);
+    await expect(invokeAction(contextA, firstA, firstAction!, { name: 'peer A update' })).resolves.toBeDefined();
+    expect(h.sqlite!.prepare('SELECT display_name, current_version FROM bot_profiles WHERE id = ?').get('bot-1'))
+      .toEqual({ display_name: 'peer A update', current_version: 2 });
+    // The second peer's real resource revision is now stale; no second DB
+    // version is created even though it previously read the same Bot.
+    await expect(invokeAction(contextB, staleB, staleAction!, { name: 'stale peer B update' }))
+      .rejects.toThrow();
+    expect(h.sqlite!.prepare('SELECT display_name, current_version FROM bot_profiles WHERE id = ?').get('bot-1'))
+      .toEqual({ display_name: 'peer A update', current_version: 2 });
+
+    const secondA = await get(contextA, 'bot-2');
+    const secondAction = profileAction(secondA);
+    await expect(invokeAction(contextA, { ...secondA, ref: ref('bot-1') }, secondAction!, { name: 'cross Bot write' }))
+      .rejects.toThrow();
+    expect(h.sqlite!.prepare('SELECT display_name, current_version FROM bot_profiles WHERE id = ?').get('bot-2'))
+      .toEqual({ display_name: 'Second Bot', current_version: 1 });
+  });
+
+  it('routes canonical Bot form actions through the management provider', async () => {
+    const { registerBotRemoteResourceProvider } = await import('../botRemoteResourceProvider');
+    const { remoteResourceRegistry } = await import('../../../device-link/remoteResourceRegistry');
+    registerBotRemoteResourceProvider();
+    const client = { protocolVersion: 1, primitives: ['form', 'list', 'action', 'markdown'], locale: 'en' };
+    const context = { controllerDeviceId: 'remote-canonical', client: {}, linkEpoch: 1, assertCurrent: vi.fn() };
+    const resource = await remoteResourceRegistry.get(context, {
+      client,
+      ref: { collectionId: 'teammates', kind: 'bot', id: 'bot-1' },
+    });
+    const actionId = (resource.blocks?.find((block) => block.id === 'profile')?.data as { actionId?: string } | undefined)?.actionId;
+    expect(actionId).toBeTypeOf('string');
+    await remoteResourceRegistry.invoke(context, {
+      client,
+      collectionId: 'teammates',
+      resourceRef: resource.ref,
+      actionId: actionId!,
+      input: { name: 'Canonical remote edit' },
+    });
+    expect(h.sqlite!.prepare('SELECT display_name FROM bot_profiles WHERE id = ?').pluck().get('bot-1'))
+      .toBe('Canonical remote edit');
+  });
+
   it('freezes provider, model, effort, and Fast Mode into the canonical Session', async () => {
     await invoke('local-db:bots:create', {
       id: 'bot-model-profile',
@@ -2690,6 +2763,28 @@ describe('Bot canonical Session lifecycle', () => {
         .pluck()
         .get(created.canonicalSessionId),
     ).toBe('active');
+  });
+
+  it('fails closed when a queued canonical reconciliation is revoked at dispatch', async () => {
+    const baseTx = h.tx!;
+    let guardCalls = 0;
+    h.tx = async (name, args, _transferList?: unknown[], beforeDispatch?: () => void) => {
+      if (name === 'bots.reconcileCanonicalLink') beforeDispatch?.();
+      return baseTx(name, args);
+    };
+    try {
+      await expect(createBotCanonicalSession({
+        botId: 'bot-1',
+        expectedCanonicalSessionId: null,
+        expectedProfileVersion: 1,
+      }, () => {
+        guardCalls += 1;
+        if (guardCalls === 6) throw new Error('remote operation revoked');
+      })).rejects.toThrow('remote operation revoked');
+    } finally {
+      h.tx = baseTx;
+    }
+    expect(h.sqlite!.prepare("SELECT COUNT(*) FROM sessions WHERE source = 'bot'").pluck().get()).toBe(0);
   });
 
   it('recovers a soft-deleted canonical without resurrecting the deleted Session', async () => {

@@ -78,6 +78,17 @@ export const cacheRemoteResourceItems = (userId: string, collectionId: string, i
     if (row.item.ref.kind === 'bot' && s.read[key] === undefined) s.read[key] = row.item.display.lastReplyAt ?? 0;
   }
 });
+/** Read one already-hydrated row without introducing async I/O in avatar rendering. */
+export function cachedBotItem(
+  userId: string,
+  collectionId: string,
+  deviceId: string,
+  resourceId: string,
+): HostedRemoteCollectionItem | null {
+  return snapshots.get(userId)?.items[collectionId]?.find((row) =>
+    row.host.deviceId === deviceId && row.item.ref.id === resourceId,
+  ) ?? null;
+}
 export const markRemoteResourceRead = (userId: string, deviceId: string, resourceId: string, at: number) => update(userId, (s) => {
   const key = remoteResourceReadKey(deviceId, resourceId);
   if (Number.isFinite(at) && at >= 0) s.read[key] = Math.max(s.read[key] ?? 0, at);

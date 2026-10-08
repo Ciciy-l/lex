@@ -8,6 +8,7 @@ import type { BotProfile } from './botStore';
 import { runBotLifecycleAction } from './botStore';
 import { Button } from '@/components/ui/button';
 import { BotDeleteDialog } from './BotDeleteDialog';
+import { withoutBotGroupLanes } from './botGroupLane';
 
 /**
  * User-facing Bot management only. Health counters, delivery queues, Routes and
@@ -38,7 +39,8 @@ export function BotLifecycleSettings({
   const [restarted, setRestarted] = useState(false);
   const actionInFlight = useRef(false);
 
-  const archivedSessions = bot.sessions
+  // 群专线即使随群删除被归档，也不是这位伙伴自己的历史任务。
+  const archivedSessions = withoutBotGroupLanes(bot.sessions)
     .filter((item) => item.kind === 'history')
     .sort((a, b) => b.updatedAt - a.updatedAt);
   const isPaused = bot.status === 'paused';

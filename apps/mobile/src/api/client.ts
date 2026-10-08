@@ -19,6 +19,8 @@ export interface ApiFetchOptions {
   body?: unknown;
   timeoutMs?: number;
   cache?: 'no-store';
+  /** Re-check the captured account/region before response side effects. */
+  assertCurrent?: () => void;
 }
 
 const DEFAULT_API_TIMEOUT_MS = 20_000;
@@ -43,6 +45,7 @@ export async function apiFetchRaw<T>(
   path: string,
   opts: ApiFetchOptions,
 ): Promise<T> {
+  opts.assertCurrent?.();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
   if (opts.cache === 'no-store') {
@@ -58,6 +61,8 @@ export async function apiFetchRaw<T>(
   const controller = timeoutMs > 0 ? new AbortController() : null;
   try {
     const requestPromise = (async (): Promise<{ response: Response; data: unknown }> => {
+      // A caller may have awaited token setup since apiFetchRaw entered.
+      opts.assertCurrent?.();
       const nextResponse = await fetch(opts.baseUrl + path, {
         method: opts.method ?? 'GET',
         headers,
@@ -87,6 +92,9 @@ export async function apiFetchRaw<T>(
       : await requestPromise;
     response = result.response;
     data = result.data;
+    // Do not let an old account's response reach the global 401 cleanup hook
+    // or the caller after a logout/account switch.
+    opts.assertCurrent?.();
   } catch (err) {
     if (err instanceof ApiError) throw err;
     if (isAbortError(err)) {
@@ -110,6 +118,10 @@ export async function apiFetchRaw<T>(
     const error = readError(data);
     const code = error.code ?? `HTTP_${response.status}`;
     if (response.status === 401 && code === 'ACCOUNT_UNAVAILABLE') {
+      // The response guard above protects parsing; repeat it at the exact
+      // terminal-auth side-effect boundary so a caller that changed account
+      // while response handling was queued cannot clear the new account.
+      opts.assertCurrent?.();
       try {
         await accountUnavailableHandler?.();
       } catch {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronLeft } from 'lucide-react-native';
 import {
@@ -12,6 +12,7 @@ import {
   type AccessibilityState,
   type PressableProps,
   type StyleProp,
+  type TextStyle,
   type ViewStyle,
 } from 'react-native';
 import { Text } from '@/components/AppText';
@@ -584,14 +585,21 @@ export function RemoteListSyncingPlaceholder({ testID }: { testID?: string }) {
 
 export function MainWindowActionButton({
   action,
+  buttonRef,
   density = 'default',
   grow = false,
+  hitSlop,
   style,
+  textStyle,
 }: {
   action: MainWindowAction;
+  buttonRef?: Ref<View>;
   density?: MainWindowActionDensity;
   grow?: boolean;
+  /** Compact buttons (38pt) inside content rows extend their touch target to 44pt this way. */
+  hitSlop?: PressableProps['hitSlop'];
   style?: StyleProp<ViewStyle>;
+  textStyle?: StyleProp<TextStyle>;
 }) {
   const styles = useThemedStyles(makeStyles);
   const { colors } = useTheme();
@@ -600,6 +608,8 @@ export function MainWindowActionButton({
   const disabled = action.disabled || action.busy || !action.onPress;
   return (
     <Pressable
+      ref={buttonRef}
+      hitSlop={hitSlop}
       accessibilityLabel={action.accessibilityLabel ?? action.label}
       accessibilityRole="button"
       accessibilityState={{
@@ -629,6 +639,7 @@ export function MainWindowActionButton({
           numberOfLines={1}
           style={[
             styles.mainActionButtonText,
+            textStyle,
             compact && styles.mainActionButtonTextCompact,
             tone === 'primary' && styles.mainActionButtonPrimaryText,
             tone === 'danger' && styles.mainActionButtonDangerText,

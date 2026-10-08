@@ -10,11 +10,7 @@ import type {
 } from '../../shared/botLifecycle.js';
 import { getDbClient } from '../localDb/client/current.js';
 import { deleteBotProfileAndDetachSessionsInDb } from '../localDb/ipc/sessions.js';
-import {
-  botLifecycleEvents,
-  botProfiles,
-  botSessionLinks,
-} from '../localDb/schema.js';
+import { botProfiles, botSessionLinks } from '../localDb/schema.js';
 import { removeBotProfileFolder } from './botProfileFolder.js';
 import { withBotProfileLocks } from './botProfileLock.js';
 import { createLogger } from '../logger.js';
@@ -39,6 +35,7 @@ export interface BotLifecycleServiceDeps {
     botId: string,
     sessionIds: string[],
     keepTaskHistory: boolean,
+    operationGuard?: BotLifecycleOperationGuard,
   ) => Promise<void>;
   /** Rebuild only the canonical runtime; retain the product task and all Bot data. */
   restartRuntime?: (sessionId: string, assertOwnerCurrent: () => void) => Promise<void>;
@@ -51,6 +48,9 @@ export interface BotLifecycleServiceDeps {
   /** Refresh hidden runtime services after any lifecycle ownership change. */
   onLifecycleChanged?: (botId: string) => void | Promise<void>;
 }
+
+/** A remote operation lease is checked immediately before each durable side effect. */
+export type BotLifecycleOperationGuard = () => void;
 
 const lifecycleLocks = new Map<
   string,
@@ -153,22 +153,23 @@ export function createBotLifecycleService(deps: BotLifecycleServiceDeps) {
     return { count: ids.length, warnings };
   };
 
-  const pause = async (botId: string): Promise<BotLifecycleActionResult> => {
+  const pause = async (botId: string, operationGuard?: BotLifecycleOperationGuard): Promise<BotLifecycleActionResult> => {
     const profile = await readProfile(botId);
     const canonicalSessionId = await readCanonicalSessionId(botId);
     if (profile.status === 'archived' || profile.status === 'deleting') {
       throwIpcError('PRECONDITION_FAILED', `Bot 当前状态为 ${profile.status}`);
     }
-    const db = getDbClient().drizzle;
     const at = now();
+    operationGuard?.();
     await getDbClient().tx('bots.pauseLifecycle', {
       botId,
       canonicalSessionId,
       expectedProfileStatus: profile.status,
       at,
       eventId: randomUUID(),
-    });
+    }, undefined, operationGuard);
 
+    operationGuard?.();
     const delegationService = deps.getDelegationService();
     const [delegations, closed] = await Promise.all([
       delegationService?.cancelDelegationsForBot(
@@ -180,14 +181,15 @@ export function createBotLifecycleService(deps: BotLifecycleServiceDeps) {
     ]);
     const warnings = [...closed.warnings];
     const completedAt = now();
-    await db.insert(botLifecycleEvents).values({
+    operationGuard?.();
+    await getDbClient().tx('bots.recordLifecycleEvent', {
       id: randomUUID(),
       botId,
       sessionId: canonicalSessionId,
       eventType: warnings.length > 0 ? 'paused-with-warnings' : 'paused',
       payloadJson: JSON.stringify({ warnings }),
       createdAt: completedAt,
-    });
+    }, undefined, operationGuard);
     const result = lifecycleResult(
       botId,
       'pause',
@@ -202,31 +204,33 @@ export function createBotLifecycleService(deps: BotLifecycleServiceDeps) {
     return result;
   };
 
-  const resume = async (botId: string): Promise<BotLifecycleActionResult> => {
+  const resume = async (botId: string, operationGuard?: BotLifecycleOperationGuard): Promise<BotLifecycleActionResult> => {
     const profile = await readProfile(botId);
     const canonicalSessionId = await readCanonicalSessionId(botId);
     if (profile.status === 'archived' || profile.status === 'deleting') {
       throwIpcError('PRECONDITION_FAILED', `Bot 当前状态为 ${profile.status}`);
     }
     const at = now();
+    operationGuard?.();
     await getDbClient().tx('bots.resumeLifecycle', {
       botId,
       canonicalSessionId,
       expectedProfileStatus: profile.status,
       at,
       eventId: randomUUID(),
-    });
+    }, undefined, operationGuard);
     const result = lifecycleResult(botId, 'resume', 'active', {});
     await notifyLifecycleChanged(botId, 'resume');
     await deps.onResumed?.(botId);
     return result;
   };
 
-  const restart = async (botId: string, owner: string): Promise<BotLifecycleActionResult> => {
+  const restart = async (botId: string, owner: string, operationGuard?: BotLifecycleOperationGuard): Promise<BotLifecycleActionResult> => {
     const assertOwnerCurrent = () => {
       if (isAppSessionBoundaryPending() || activeOwnerScopeKey() !== owner) {
         throwIpcError('PRECONDITION_FAILED', 'Bot restart owner changed');
       }
+      operationGuard?.();
     };
     assertOwnerCurrent();
     const profile = await readProfile(botId);
@@ -252,7 +256,7 @@ export function createBotLifecycleService(deps: BotLifecycleServiceDeps) {
       expectedProfileStatus: profile.status,
       at: now(),
       eventId: randomUUID(),
-    });
+    }, undefined, operationGuard);
     assertOwnerCurrent();
     await notifyLifecycleChanged(botId, 'restart');
     return lifecycleResult(botId, 'restart', 'active', { sessions: 1 });
@@ -265,7 +269,7 @@ export function createBotLifecycleService(deps: BotLifecycleServiceDeps) {
   const prepareForDeletion = async (request: {
     botId: string;
     worktreeDisposition?: BotLifecycleActionRequest['worktreeDisposition'];
-  }): Promise<{ warnings: string[] }> => {
+  }, operationGuard?: BotLifecycleOperationGuard): Promise<{ warnings: string[] }> => {
     let profile = await readProfile(request.botId);
     if (profile.status === 'deleting') {
       throwIpcError('PRECONDITION_FAILED', 'Bot 正在永久删除');
@@ -275,12 +279,13 @@ export function createBotLifecycleService(deps: BotLifecycleServiceDeps) {
     }
 
     if (profile.status !== 'paused') {
-      await pause(request.botId);
+      await pause(request.botId, operationGuard);
       profile = await readProfile(request.botId);
     }
 
     const canonicalSessionId = await readCanonicalSessionId(request.botId);
     const at = now();
+    operationGuard?.();
     await getDbClient().tx<{ sessions: number }>('bots.archiveLifecycle', {
       botId: request.botId,
       canonicalSessionId,
@@ -288,7 +293,7 @@ export function createBotLifecycleService(deps: BotLifecycleServiceDeps) {
       worktreeDisposition: request.worktreeDisposition ?? 'retain',
       at,
       eventId: randomUUID(),
-    });
+    }, undefined, operationGuard);
     broadcastBotRemoteResourceChanged(request.botId);
 
     return { warnings: [] };
@@ -296,6 +301,7 @@ export function createBotLifecycleService(deps: BotLifecycleServiceDeps) {
 
   const remove = async (
     request: BotLifecycleActionRequest,
+    operationGuard?: BotLifecycleOperationGuard,
   ): Promise<BotLifecycleActionResult> => {
     const ownerScopeAtEntry = activeOwnerScopeKey();
     const ownerRootAtEntry = ownerScopedUserDataPath();
@@ -315,14 +321,15 @@ export function createBotLifecycleService(deps: BotLifecycleServiceDeps) {
     // Reject known shared history before pausing live work or archiving its canonical link.
     // The profile lock excludes concurrent shared-history writers until deletion finishes.
     // The final transaction retains its own guard as the database safety boundary.
-    await getDbClient().tx('bots.assertNoSharedHistory', { botId: request.botId });
+    operationGuard?.();
+    await getDbClient().tx('bots.assertNoSharedHistory', { botId: request.botId }, undefined, operationGuard);
     assertOwnerUnchanged();
     let preparationWarnings: string[] = [];
     if (profile.status !== 'archived') {
       const prepared = await prepareForDeletion({
         botId: request.botId,
         worktreeDisposition: request.worktreeDisposition ?? 'retain',
-      });
+      }, operationGuard);
       preparationWarnings = prepared.warnings;
     }
 
@@ -332,6 +339,7 @@ export function createBotLifecycleService(deps: BotLifecycleServiceDeps) {
       .from(botSessionLinks)
       .where(eq(botSessionLinks.botId, request.botId));
     const sessionIds = [...new Set(links.map((row) => row.sessionId))];
+    operationGuard?.();
     const [delegations, closed] = await Promise.all([
       deps.getDelegationService()?.cancelDelegationsForBot(
         request.botId,
@@ -341,12 +349,15 @@ export function createBotLifecycleService(deps: BotLifecycleServiceDeps) {
     ]);
 
     assertOwnerUnchanged();
+    operationGuard?.();
     await deps.onBeforeDelete?.(request.botId);
     assertOwnerUnchanged();
+    operationGuard?.();
     await deleteProfileAndDetachSessions(
       request.botId,
       sessionIds,
       request.keepTaskHistory === true,
+      operationGuard,
     );
 
     /*
@@ -358,6 +369,7 @@ export function createBotLifecycleService(deps: BotLifecycleServiceDeps) {
       沉默地留下用户内容是隐私问题,不是小事。
     */
     try {
+      operationGuard?.();
       await removeBotProfileFolder(
         ownerRootAtEntry,
         request.botId,
@@ -378,13 +390,17 @@ export function createBotLifecycleService(deps: BotLifecycleServiceDeps) {
     return result;
   };
 
-  const run = (request: BotLifecycleActionRequest): Promise<BotLifecycleActionResult> => {
+  const run = (request: BotLifecycleActionRequest, beforeRun?: () => Promise<void>, operationGuard?: BotLifecycleOperationGuard): Promise<BotLifecycleActionResult> => {
     const owner = activeOwnerScopeKey();
     return withBotLifecycleLock(request.botId, request.action, async () => {
-      if (request.action === 'pause') return pause(request.botId);
-      if (request.action === 'resume') return resume(request.botId);
-      if (request.action === 'restart') return restart(request.botId, owner);
-      if (request.action === 'delete') return remove(request);
+      if (isAppSessionBoundaryPending() || activeOwnerScopeKey() !== owner) throwIpcError('PRECONDITION_FAILED', 'Account changed');
+      await beforeRun?.();
+      if (isAppSessionBoundaryPending() || activeOwnerScopeKey() !== owner) throwIpcError('PRECONDITION_FAILED', 'Account changed');
+      operationGuard?.();
+      if (request.action === 'pause') return pause(request.botId, operationGuard);
+      if (request.action === 'resume') return resume(request.botId, operationGuard);
+      if (request.action === 'restart') return restart(request.botId, owner, operationGuard);
+      if (request.action === 'delete') return remove(request, operationGuard);
       throwIpcError('PRECONDITION_FAILED', `${request.action} 尚未接入 Bot 生命周期协调器`);
     });
   };
@@ -392,8 +408,21 @@ export function createBotLifecycleService(deps: BotLifecycleServiceDeps) {
   return { run };
 }
 
+let registeredLifecycleService: ReturnType<typeof createBotLifecycleService> | null = null;
+
+/** Remote settings use the same lifecycle coordinator and preserve task history/worktrees. */
+export function runRegisteredBotLifecycleAction(
+  request: BotLifecycleActionRequest,
+  beforeRun: () => Promise<void>,
+  operationGuard?: BotLifecycleOperationGuard,
+) {
+  if (!registeredLifecycleService) throwIpcError('PRECONDITION_FAILED', 'Lifecycle unavailable');
+  return registeredLifecycleService.run(request, beforeRun, operationGuard);
+}
+
 export function registerBotLifecycleHandlers(deps: BotLifecycleServiceDeps): void {
   const service = createBotLifecycleService(deps);
+  registeredLifecycleService = service;
   ipcMain.handle(MAKER_INVOKE.BOT_LIFECYCLE_ACTION, async (event, raw: unknown) => {
     assertTrustedAppRendererEvent(event);
     const body = requireObject(raw, 'request');

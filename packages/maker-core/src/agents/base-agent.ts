@@ -90,6 +90,12 @@ import type { AutoReviewDelegate, AutoReviewDecision, AutoReviewRequest } from '
 import type { ReviewableAction } from './shared/auto-review.js';
 import type { ClaudeSubagentModelAccessResult } from './claude-code/subagent-model-access.js';
 
+export type CodexLocalAuthPolicyResolution = 'isolated' | 'legacy-shared' | {
+  policy: 'isolated' | 'legacy-shared';
+  /** Synchronous check of the host routing transaction that produced this policy. */
+  isCurrent: () => boolean;
+};
+
 export interface AgentCapabilityAdditions {
   /** Extra models exposed by the host for this agent. Existing built-in ids are ignored. */
   availableModels?: readonly ModelDescriptor[];
@@ -474,6 +480,8 @@ export interface LocalAgentProcessRegistration {
 }
 
 export interface CodexLocalCredentialModeSwitchContext {
+  /** Exact local host being replaced; omitted by legacy hosts. */
+  hostKey?: string;
   fromMode?: AgentCredentialMode;
   /**
    * 当前 host 的归一化生效形态(createHost 时按 auth fallback 推出并登记)。
@@ -1070,6 +1078,13 @@ export interface AgentDeps {
     modelId: string,
   ) => number | null;
 
+  /** Local disk-auth policy, independent of the actual Provider credential mode. */
+  resolveCodexLocalAuthPolicy?: (
+    providerId: string | null | undefined,
+    modelId: string,
+    signal?: AbortSignal,
+  ) => CodexLocalAuthPolicyResolution | Promise<CodexLocalAuthPolicyResolution>;
+
   /**
    * Per-model requested context window (user override first, explicit provider default second).
    * A one-session native catalog permits this window without changing sibling routes.
@@ -1111,6 +1126,9 @@ export interface AgentDeps {
       accountHostKey?: string;
       remoteHostId?: string;
       credentialMode?: AgentCredentialMode;
+      /** Frozen disk OAuth policy; independent of the actual Provider credential. */
+      localAuthPolicy?: 'isolated' | 'legacy-shared';
+      hostScopeKey?: string;
       /** Original session request when the shared host was upgraded to a credential superset. */
       requestedCredentialMode?: AgentCredentialMode;
       /** Marks app-server work that must not share the normal local task host. */
@@ -2265,6 +2283,8 @@ export interface AgentSessionHandle {
   ): () => void;
   /** Codex-only: 当前会话绑定的 app-server host 是否经 loopback proxy 出口。 */
   readonly codexProxyActive?: boolean;
+  /** Local runtime identity, never serialized to the remote wire protocol. */
+  readonly codexHostKey?: string;
   /**
    * Codex-only: thread/start 或 thread/resume 响应确认的实际 model provider。
    * 这是 thread 级冻结身份，不随 thread/settings/update 的模型切换改变。
@@ -2718,6 +2738,13 @@ export abstract class BaseAgent {
   async forkSdkSession(opts: ForkSdkSessionOptions): Promise<ForkSdkSessionResult> {
     void opts;
     return this.throwNotSupported('forkSdkSession', 'sdk-missing');
+  }
+
+  async requiresCodexThreadHostTransfer(
+    opts: Pick<StartSessionOptions, 'sessionId' | 'model' | 'providerId' | 'reviewMode' | 'remoteHostId'> & { threadId: string },
+  ): Promise<boolean> {
+    void opts;
+    return false;
   }
 
   // ── Auth 透传到 deps.auth ────────────────────────────────────────────────

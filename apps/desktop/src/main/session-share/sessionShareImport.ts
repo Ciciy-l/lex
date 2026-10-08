@@ -966,11 +966,27 @@ export async function commitShareImport(
           ...(orcaTxArgs ? { orca: orcaTxArgs } : {}),
         });
         finalTxState.outcome = 'committed';
-        // The transaction is now durable. Consume the in-memory draft before
-        // revalidating the owner so a stale completion cannot be retried into
-        // another profile and duplicate the already committed import.
+        // session.importShare closes replaced sessions in the same SQLite
+        // transaction. Consume the draft at that durable commit edge before
+        // any best-effort relay cleanup can fail or the owner can switch.
         drafts.delete(opts.draftId);
-        assertStillValid();
+        if (conflictExisting.length > 0) {
+          try {
+            const { closeSharedTaskForTask } = await import('../device-link/sharedTaskRuntime.js');
+            for (const existing of conflictExisting) {
+              await closeSharedTaskForTask(existing.id, dbClient).catch((error) => {
+                log.warn('shared-task import relay cleanup deferred', {
+                  sessionId: existing.id,
+                  error: error instanceof Error ? error.message : String(error),
+                });
+              });
+            }
+          } catch (error) {
+            log.warn('shared-task import relay cleanup unavailable', {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
       },
     );
 

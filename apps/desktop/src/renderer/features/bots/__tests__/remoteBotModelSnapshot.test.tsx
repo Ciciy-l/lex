@@ -12,6 +12,7 @@ vi.mock('react-router-dom', () => ({
   useParams: () => ({ deviceId: 'snapshot-host', botId: 'writer' }),
   useNavigate: () => vi.fn(),
   useSearchParams: () => [new URLSearchParams()],
+  useBlocker: () => ({ state: 'unblocked', proceed: vi.fn(), reset: vi.fn() }),
 }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock('../useRemoteBots', () => ({

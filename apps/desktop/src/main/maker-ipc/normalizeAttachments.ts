@@ -27,6 +27,9 @@ import * as imageCacheStore from '../imageCacheStore.js';
 import * as cindyMediaBlobStore from '../cindy-media/blobStore.js';
 import * as cindyMediaLedger from '../cindy-media/ledger.js';
 import { ingestMedia } from '../cindy-media/ingest.js';
+import { getDeviceLinkInvokeContext } from '../device-link/invoke-context.js';
+import { getCurrentDbClientSnapshot } from '../localDb/client/current.js';
+import { captureMediaRefCompensationScope } from '../cindy-media/refCompensationJournal.js';
 import { createLogger } from '../logger.js';
 import { isAttachmentOssRef, parseAttachmentOssRef } from '../../shared/attachmentOssRef.js';
 import type { AttachmentIntegrity, AttachmentOssRef } from '../../shared/attachmentOssRef.js';
@@ -619,6 +622,21 @@ async function materializeQueuedOssAttachmentsInternal(
     cleanedUp = true;
     for (const key of ossKeys) void removeRemote(key);
   };
+  const sharedTask = getDeviceLinkInvokeContext()?.sharedTask;
+  const snapshot = sharedTask ? getCurrentDbClientSnapshot() : undefined;
+  const compensationScope = sharedTask ? captureMediaRefCompensationScope() : undefined;
+  const assertCurrent = () => {
+    if (!sharedTask) return;
+    compensationScope?.assertStillValid();
+    const now = getCurrentDbClientSnapshot();
+    if (!snapshot || !now || now.client !== snapshot.client || now.userId !== snapshot.userId ||
+        now.clientEpoch !== snapshot.clientEpoch || sharedTask.author.sessionId !== sessionId ||
+        !sharedTask.isCurrent() || !sharedTask.authorize('input.send')) {
+      throw new Error('[PERMISSION_DENIED] Shared task attachment scope changed');
+    }
+  };
+  assertCurrent();
+  const ledgerDb = snapshot?.client.drizzle;
   const localCleanupCallbacks: MaterializedCleanup[] = [];
   let localCleanedUp = false;
   const cleanupLocalMaterializations = async (): Promise<void> => {
@@ -644,10 +662,13 @@ async function materializeQueuedOssAttachmentsInternal(
     sourcePath: string,
     mimeType: string,
   ): Promise<MaterializedRef> => {
+    assertCurrent();
     const buffer = await fs.readFile(sourcePath);
+    assertCurrent();
     const written = await ingestMedia({
       buffer,
       mimeType,
+      ...(sharedTask ? { assertStillValid: assertCurrent, refCompensationScope: compensationScope } : {}),
       refs: [
         {
           refKind: 'session-attachment',
@@ -656,18 +677,20 @@ async function materializeQueuedOssAttachmentsInternal(
           originKind: 'user',
         },
       ],
-    });
+    }, ledgerDb);
     const refId = written.refIds[0];
     if (refId) {
       localCleanupCallbacks.push(async () => {
-        await cindyMediaLedger.removeRefById(refId);
+        await cindyMediaLedger.removeRefById(refId, ...(ledgerDb ? [ledgerDb] as const : []));
         const removed = await cindyMediaLedger.deleteZeroRefBlobRecord(
           written.hash,
           Date.now() + 1,
+          ...(ledgerDb ? [ledgerDb] as const : []),
         );
         if (removed) await cindyMediaBlobStore.deleteBlobFile(written.hash, written.ext);
       });
     }
+    assertCurrent();
     return { url: written.url, absPath: cindyMediaBlobStore.resolveSafe(written.url).absPath };
   };
   // 物化:被控端本机绝对路径图片(手机文件浏览器发送)读字节入总仓;OSS 引用走
@@ -699,8 +722,11 @@ async function materializeQueuedOssAttachmentsInternal(
     }
     let tmp: string | null = null;
     try {
+      assertCurrent();
       tmp = await ensureTempPath(sessionId, ref.mimeType ?? mimeHint);
+      assertCurrent();
       await downloadToFile(ref.ossKey, tmp, integrityForRef(ref));
+      assertCurrent();
       const mime = ref.mimeType ?? mimeHint;
       let entry: MaterializedRef;
       // 只收图片进总仓:ingestIntoBlobStore 是整读内存(readFile + sha256),
@@ -717,6 +743,7 @@ async function materializeQueuedOssAttachmentsInternal(
         // 非媒体附件维持历史兼容路径落地;规则 25 明确非媒体不进字节仓。
         const originalName =
           ref.originalName && ref.originalName.length > 0 ? ref.originalName : path.basename(tmp);
+        assertCurrent();
         const { url } = await imageCacheStore.copyFromPath({
           sessionId,
           sourcePath: tmp,
@@ -724,6 +751,7 @@ async function materializeQueuedOssAttachmentsInternal(
           lifecycle: 'committed',
         });
         localCleanupCallbacks.push(() => imageCacheStore.removeFile(url));
+        assertCurrent();
         entry = { url, absPath: imageCacheStore.resolveSafe(url).absPath };
       }
       byRef.set(refStr, entry);
@@ -732,7 +760,7 @@ async function materializeQueuedOssAttachmentsInternal(
     } catch (e) {
       log.warn('materialize queued oss attachment failed, leaving ref', { error: String(e) });
       if (isIntegrityMismatch(e)) void removeRemote(ref.ossKey);
-      if (ref.size !== undefined) {
+      if (sharedTask || ref.size !== undefined) {
         throwIpcError(
           'DEVICE_LINK_MEDIA_TRANSFER_FAILED',
           e instanceof Error ? e.message : String(e),

@@ -13,13 +13,21 @@
 //
 // 纯 JS(不进 @expo/fingerprint / 不改 runtimeVersion),可随热更下发。
 
+import { clearSharedTaskInvitationIntent, receiveSharedTaskInvitationIntent } from '@/device-link/sharedTaskInvitationIntent';
+
 export function redirectSystemPath({ path }: { path: string; initial: boolean }): string {
   try {
+    const invitationUrl = /^(?:\/shared-session|\/shared-task\/join)\?/.test(path) ? 'cindy:/' + path : path;
+    if (receiveSharedTaskInvitationIntent(invitationUrl)) return '/shared-session';
     // path 可能是完整 URL('cindycn://auth?code=...')或路径('/auth?code=...'),统一取出 pathname。
     const noScheme = path.replace(/^[a-zA-Z][\w+.-]*:\/\//, '/');
     const pathname = noScheme.split('?')[0].split('#')[0].replace(/\/+$/, '') || '/';
     // 命中 OAuth 回调 → 回首页;其余深链(/sessions/xxx、/devices 等)原样放行。
     if (pathname === '/auth') return '/';
+    if (pathname === '/shared-session' || pathname === '/shared-task/join') {
+      clearSharedTaskInvitationIntent();
+      return '/shared-session';
+    }
     return path;
   } catch {
     return path;

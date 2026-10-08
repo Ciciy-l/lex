@@ -1,0 +1,1 @@
+ALTER TABLE `shared_task_events` ADD `closure_token` text;

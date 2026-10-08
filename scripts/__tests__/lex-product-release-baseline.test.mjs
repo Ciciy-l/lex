@@ -157,7 +157,12 @@ test('Lex agent runtime snapshot is pinned, complete, and platform-safe', () => 
     for (const field of ['claudeCode', 'codex', 'codexPackage', 'pi']) {
       const value = assets[field];
       assert.ok(value && typeof value === 'object', `${platform}/${field}`);
-      assert.equal(value.version, pins[field].version, `${platform}/${field} version`);
+      // The Lex CDN still serves the legacy standalone `codex` 0.145.0
+      // compatibility asset. SSH's official release pin advances independently
+      // to 0.156.0; codex-package is the desktop distribution and must match
+      // its official pin exactly.
+      const expectedVersion = field === 'codex' ? '0.145.0' : pins[field].version;
+      assert.equal(value.version, expectedVersion, `${platform}/${field} version`);
       assert.equal(
         value.file.startsWith(`${directories[field]}/${value.version}/${platform}/`),
         true,
@@ -187,6 +192,8 @@ test('Lex agent runtime snapshot is pinned, complete, and platform-safe', () => 
     assert.equal(omp.size, ompPin.size, `${platform}/omp size`);
     assert.match(omp.file, /^https:\/\/github\.com\/can1357\/oh-my-pi\/releases\/download\//);
   }
+  assert.equal(pins.codex.version, '0.156.0', 'SSH standalone Codex pin');
+  assert.equal(pins.codexPackage.version, '0.156.0', 'desktop Codex package pin');
 });
 
 test('Lex update publishing projects the tag-pinned runtime snapshot without network drift', () => {

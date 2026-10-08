@@ -31,7 +31,7 @@
 
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react';
-import { Archive, ChevronRight, EllipsisVertical, Play, Undo } from 'lucide-react';
+import { Archive, ChevronRight, Crown, EllipsisVertical, Play, Undo } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
@@ -253,6 +253,8 @@ export function SidebarTitleMarquee({ children, className, title }: SidebarTitle
 }
 
 export interface SessionItemProps {
+  /** Shared task presentation. Guests retain navigation but not owner actions. */
+  sharedTaskRole?: 'owned' | 'joined';
   session: Session;
   isActive: boolean;
   /** F-SB-7: Whether this session's agent is currently running. */
@@ -335,6 +337,7 @@ export const SessionItem = memo(function SessionItem({
   matchIndices,
   sourceLabel,
   insideAutomationGroup = false,
+  sharedTaskRole,
 }: SessionItemProps) {
   const { t } = useTranslation();
   const prRefs = usePrRefsForSession(session.id);
@@ -425,7 +428,7 @@ export const SessionItem = memo(function SessionItem({
   const remoteIconConnectionStatus = session.deviceLinkDeviceId
     ? (session.deviceLinkConnectionStatus ?? 'connected')
     : null;
-  const remoteWritesBlocked = isRemoteSessionWriteBlocked(session);
+  const remoteWritesBlocked = sharedTaskRole === 'joined' || isRemoteSessionWriteBlocked(session);
   const isAutomationGenerated = isAutomationGeneratedSession(session);
   // heartbeat schedule 绑定标识(targetSessionId 指向本会话);schedule 删除/过期后
   // schedulesStore 'changed' 刷新 → 列表为空 → 徽章消失。
@@ -993,6 +996,11 @@ export const SessionItem = memo(function SessionItem({
           showAttentionDot={false}
         />
       </span>
+      {sharedTaskRole === 'owned' && (
+        <span className="flex w-3 shrink-0 items-center justify-center" data-testid={'shared-task-role-slot-owned-' + session.id}>
+          <Crown size={12} strokeWidth={1.8} className="text-[var(--warning-fg)]" aria-label={t('sharedTask.roleHost')} />
+        </span>
+      )}
 
       {isEditing ? (
         <SessionRenameInput

@@ -23,6 +23,8 @@
  *   - 下载:整文件下载(小媒体)用 arrayBuffer;range 流式(视频/音频)返回**原始 OSS Response**,
  *     由调用方(`cindy-remote-media://` handler)透传其 body 流,绝不在此 buffer 整个视频。
  */
+import { buildAttachmentOssRef, isSharedTaskAttachment } from '@cindy/device-link';
+import { assertSharedTaskUploadCurrent, sharedTaskMediaId } from './sharedTaskMediaContext.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { readFile, rename, rm, stat } from 'node:fs/promises';
@@ -91,7 +93,7 @@ function mimeOf(ext: string): string {
   return MIME_BY_EXT[ext] ?? 'application/octet-stream';
 }
 
-interface PresignPutResponse {
+export interface PresignPutResponse {
   putUrl: string;
   key: string;
   expiresAt: string;
@@ -111,17 +113,33 @@ export interface UploadResult {
 }
 
 /** 向 relay server 申请上传预签名。 */
-async function presignPut(
+export async function presignPutForRemoteAttachment(
   size: number,
   ext: string,
   contentType: string,
 ): Promise<PresignPutResponse> {
   requireAppCapability('canUseDeviceLink', 'Device Link requires a Cindy account.');
-  return serverApiFetch<PresignPutResponse>(PRESIGN_PUT_PATH, {
+  assertSharedTaskUploadCurrent();
+  const task = sharedTaskMediaId();
+  const result = await serverApiFetch<PresignPutResponse>(PRESIGN_PUT_PATH, {
     method: 'POST',
-    body: { size, ext, contentType },
+    body: { size, ext, contentType, ...(task ? { sharedTaskId: task } : {}) },
+    ...(task ? { beforeAttempt: assertSharedTaskUploadCurrent } : {}),
     baseUrl: deviceLinkApiBase,
   });
+  assertSharedTaskUploadCurrent();
+  if (task && !isSharedTaskAttachment(buildAttachmentOssRef({ ossKey: result.key }), task)) {
+    throw new Error('Shared task upload is not supported by this server');
+  }
+  return result;
+}
+
+async function presignPut(
+  size: number,
+  ext: string,
+  contentType: string,
+): Promise<PresignPutResponse> {
+  return presignPutForRemoteAttachment(size, ext, contentType);
 }
 
 /** 向 relay server 申请下载预签名(server 校验请求方 == key 内嵌 userId)。 */
@@ -160,6 +178,11 @@ function hostOf(url: string): string {
   } catch {
     return '<invalid-url>';
   }
+}
+
+/** Keep relay object identifiers out of logs; the signed URL/key is a bearer secret. */
+function keyTag(key: string): string {
+  return createHash('sha256').update(key).digest('hex').slice(0, 12);
 }
 
 /**
@@ -382,11 +405,15 @@ export async function uploadLocalFile(
   opts: {
     contentType?: string;
     extHint?: string;
+    /** Shared-task owner/membership fence before each irreversible upload stage. */
+    assertAuthorized?: () => void | Promise<void>;
     /** 可选上传进度(已送入 HTTP 栈的字节数,略超前于真实网络进度)。 */
     onProgress?: (uploadedBytes: number) => void;
   } = {},
 ): Promise<UploadResult> {
+  await opts.assertAuthorized?.();
   const st = await stat(localPath);
+  await opts.assertAuthorized?.();
   if (!st.isFile()) throw new Error(`不是文件: ${localPath}`);
   const size = st.size;
   if (size > MAX_MEDIA_BYTES) {
@@ -395,14 +422,18 @@ export async function uploadLocalFile(
   const ext =
     opts.extHint !== undefined ? opts.extHint.replace(/^\.+/, '').toLowerCase() : extOf(localPath);
   const contentType = opts.contentType ?? mimeOf(ext);
+  await opts.assertAuthorized?.();
   const { putUrl, key } = await presignPut(size, ext, contentType);
+  await opts.assertAuthorized?.();
   let sha256: string;
 
   try {
     if (size <= STREAM_THRESHOLD) {
       // 小媒体:读进 Buffer 整体 PUT(成熟稳定路径)。整体 PUT 无中间粒度,
       // 完成时一次性回调。
+      await opts.assertAuthorized?.();
       const buf = await readFile(localPath);
+      await opts.assertAuthorized?.();
       if (buf.byteLength !== size) {
         throw new Error(`文件在上传前发生变化:预期 ${size} 字节,实际 ${buf.byteLength} 字节`);
       }
@@ -410,6 +441,7 @@ export async function uploadLocalFile(
       // Buffer body 可重放:换栈重试直接复用同一份字节(fetch 不 transfer ArrayBuffer),
       // 也没有需要释放的底层资源。
       await putBytesToOss(putUrl, { create: () => exactArrayBuffer(buf) }, contentType);
+      await opts.assertAuthorized?.();
       opts.onProgress?.(size);
     } else {
       // 大媒体:磁盘流式 PUT,避免整文件进内存;经计数 Transform 上报进度。
@@ -465,7 +497,9 @@ export async function uploadLocalFile(
         // 已缓冲的数据,每次换栈上传都漏一个。
         dispose: () => attempts.at(-1)?.dispose(),
       };
+      await opts.assertAuthorized?.();
       await putBytesToOss(putUrl, bodySource, contentType);
+      await opts.assertAuthorized?.();
       const uploadedAttempt = attempts.at(-1);
       if (!uploadedAttempt || uploadedAttempt.sent !== size) {
         // Cleanup is centralized below so transport and source-stream errors use the same path.
@@ -481,7 +515,7 @@ export async function uploadLocalFile(
     await removeRemote(key);
     throw error;
   }
-  log.debug(`uploaded key=${key} size=${size} ct=${contentType} integrity=sha256`);
+  log.debug(`uploaded keyTag=${keyTag(key)} size=${size} ct=${contentType} integrity=sha256`);
   return { key, size, contentType, sha256 };
 }
 
@@ -507,7 +541,7 @@ export async function uploadBuffer(
   ) as ArrayBuffer;
   const sha256 = createHash('sha256').update(bytes).digest('hex');
   await putBytesToOss(putUrl, { create: () => ab }, contentType);
-  log.debug(`uploaded(buffer) key=${key} size=${size} ct=${contentType} integrity=sha256`);
+  log.debug(`uploaded(buffer) keyTag=${keyTag(key)} size=${size} ct=${contentType} integrity=sha256`);
   return { key, size, contentType, sha256 };
 }
 
@@ -630,9 +664,9 @@ export async function removeRemote(key: string): Promise<void> {
       body: { key },
       baseUrl: deviceLinkApiBase,
     });
-    log.debug(`removed key=${key}`);
+    log.debug(`removed keyTag=${keyTag(key)}`);
   } catch (err) {
-    log.warn(`removeRemote failed key=${key}: ${String(err)}`);
+    log.warn(`removeRemote failed keyTag=${keyTag(key)}: ${String(err)}`);
   }
 }
 

@@ -376,3 +376,19 @@ describe('rewriteOutboundMedia — 失败传播', () => {
     ).rejects.toThrow(/clipboard/);
   });
 });
+
+
+describe('SharedTask outbound attachments', () => {
+  it('strips controller-only preview paths and reuses host-owned attachments during edit', async () => {
+    const { withSharedTaskMedia } = await import('../sharedTaskMediaContext.js');
+    const item = { files: [{ path: '/host/existing.pdf' }, { path: '/controller/new.pdf' }],
+      chatMessage: { content: 'hello', files: [{ path: '/controller/private' }], retryFiles: [{ path: '/controller/private' }] } };
+    const result = await withSharedTaskMedia('task', () => rewriteOutboundMedia('maker:input:update-content',
+      ['session', 'message', item], new Set(['/host/existing.pdf'])));
+    expect(uploadLocalFile).toHaveBeenCalledTimes(1);
+    expect(uploadLocalFile).toHaveBeenCalledWith('/controller/new.pdf', {});
+    expect((result[2] as typeof item).files[0]).toEqual({ path: '/host/existing.pdf' });
+    expect((result[2] as typeof item).chatMessage).toEqual({ content: 'hello' });
+    expect(item.chatMessage.files).toHaveLength(1);
+  });
+});

@@ -18,6 +18,7 @@ import { VisionBridgeSection } from './VisionBridgeSection';
 import { ProvidersSection } from './ProvidersSection';
 import { McpServersSection } from './McpServersSection';
 import { RemoteControlSection } from './RemoteControlSection';
+import { SharedTaskDialog } from '@/features/device-link/SharedTaskDialog';
 import { NotificationSection } from './NotificationSection';
 import { WindowBehaviorSection } from './WindowBehaviorSection';
 import { ComposerSendShortcutSection } from './ComposerSendShortcutSection';
@@ -589,6 +590,12 @@ export function SettingsView() {
                 <section aria-label={t('settings.sections.remoteControl')}>
                   <RemoteControlSection />
                 </section>
+              </div>
+            )}
+
+            {activeTab === 'shared-tasks' && (
+              <div role="tabpanel" id="settings-panel-shared-tasks" aria-labelledby="settings-tab-shared-tasks">
+                <SharedTaskDialog open presentation="settings" onOpenChange={() => undefined} />
               </div>
             )}
 

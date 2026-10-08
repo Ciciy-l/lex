@@ -141,6 +141,11 @@ export type IpcErrorCode =
   | 'DEVICE_LINK_DEVICE_UNRESPONSIVE' // 目标设备连续超时被熔断判定无响应(弱网 / 对端卡死),快速失败中
   | 'DEVICE_LINK_VERSION_MISMATCH' // 两端协议/版本不匹配
   | 'DEVICE_LINK_MEDIA_TRANSFER_FAILED' // 远程媒体经 OSS 中转失败(出方向附件上传 / 入方向取媒体)
+  // shared-task account API 的稳定可行动分类；不携带邀请、token 或响应正文。
+  | 'SHARED_TASK_HOST_LIMIT'
+  | 'SHARED_TASK_JOIN_LIMIT'
+  | 'SHARED_TASK_GUEST_LIMIT'
+  | 'SHARED_TASK_SELF_JOIN'
   | 'REMOTE_WORKDIR_INVALID' // 被控端工作目录路径非法
   | 'REMOTE_WORKDIR_NOT_FOUND' // 被控端工作目录不存在
   | 'REMOTE_WORKDIR_NOT_DIRECTORY' // 被控端工作路径存在但不是目录
@@ -374,6 +379,10 @@ const IPC_ERROR_CODES: ReadonlySet<IpcErrorCode> = new Set<IpcErrorCode>([
   'DEVICE_LINK_DEVICE_UNRESPONSIVE',
   'DEVICE_LINK_VERSION_MISMATCH',
   'DEVICE_LINK_MEDIA_TRANSFER_FAILED',
+  'SHARED_TASK_HOST_LIMIT',
+  'SHARED_TASK_JOIN_LIMIT',
+  'SHARED_TASK_GUEST_LIMIT',
+  'SHARED_TASK_SELF_JOIN',
   'REMOTE_WORKDIR_INVALID',
   'REMOTE_WORKDIR_NOT_FOUND',
   'REMOTE_WORKDIR_NOT_DIRECTORY',

@@ -6,7 +6,6 @@ import {
   REMOTE_RESOURCE_PROTOCOL_VERSION,
   resolveRemoteText,
   type RemoteActionInvokeResponse,
-  type RemoteActionDescriptor,
   type RemoteCollectionDescriptor,
   type RemoteCollectionItem,
   type RemoteCollectionListResponse,
@@ -21,6 +20,8 @@ import {
   type RemoteResourceStatus,
   type RemoteText,
 } from '@cindy/device-link';
+import { BOT_GROUP_CHAT_PRIMITIVE, BOT_GROUP_REMOTE_COLLECTION_ID } from '@cindy/maker-shared/botGroupChat';
+import { normalizeRemoteActions } from './remoteResourceContent';
 
 import type { RemoteInvoke } from './mobileMakerTransport';
 
@@ -34,6 +35,21 @@ export const MOBILE_REMOTE_RESOURCE_PRIMITIVES = [
   'markdown',
 ] as const;
 
+/**
+ * Primitives whose whole block data is kept for a dedicated screen that asked for them
+ * (`getRemoteResource(..., supportedPrimitives)`); ordinary resource views never get it.
+ * The screen still validates that data before using it.
+ */
+/** Routines remain a desktop feature; other portable collections stay available. */
+export function isMobileRemoteCollectionSupported(collectionId: string): boolean {
+  return collectionId !== 'routines';
+}
+
+function assertMobileRemoteCollectionSupported(collectionId: string): void {
+  if (!isMobileRemoteCollectionSupported(collectionId)) {
+    throw new Error('Unsupported mobile resource collection');
+  }
+}
 export interface RemoteResourceHostTarget {
   deviceId: string;
   deviceName: string;
@@ -59,10 +75,10 @@ export function remoteResourceDiscoveryTargets(
     .map((device) => ({ deviceId: device.deviceId, deviceName: device.name }));
 }
 
-function clientDescriptor(locale?: string): RemoteResourceClientDescriptor {
+function clientDescriptor(locale?: string, extraPrimitives: readonly string[] = []): RemoteResourceClientDescriptor {
   return {
     protocolVersion: REMOTE_RESOURCE_PROTOCOL_VERSION,
-    primitives: [...MOBILE_REMOTE_RESOURCE_PRIMITIVES],
+    primitives: [...new Set([...MOBILE_REMOTE_RESOURCE_PRIMITIVES, ...extraPrimitives])],
     ...(locale ? { locale } : {}),
   };
 }
@@ -148,6 +164,14 @@ function normalizeRemoteDisplay(value: unknown): RemoteResourceDisplay | null {
   const timestamp = normalizeRemoteTimestamp(record.timestamp);
   const avatar = normalizeRemoteAvatar(record.avatar);
   const status = normalizeRemoteStatus(record.status);
+  const generationRecord = recordOf(record.generation);
+  const generationPhase = boundedString(generationRecord?.phase, 64);
+  const generationStartedAt = generationRecord?.startedAt === null
+    ? null
+    : normalizeRemoteTimestamp(generationRecord?.startedAt);
+  const generation = generationPhase && (generationRecord?.startedAt === null || generationStartedAt !== undefined)
+    ? { phase: generationPhase, startedAt: generationStartedAt ?? null }
+    : undefined;
   return {
     title,
     ...(subtitle ? { subtitle } : {}),
@@ -156,6 +180,7 @@ function normalizeRemoteDisplay(value: unknown): RemoteResourceDisplay | null {
     ...(normalizeRemoteTimestamp(record.lastReplyAt) !== undefined ? { lastReplyAt: record.lastReplyAt as number } : {}),
     ...(avatar ? { avatar } : {}),
     ...(status ? { status } : {}),
+    ...(generation ? { generation } : {}),
   };
 }
 
@@ -175,36 +200,6 @@ function normalizeRemoteLink(value: unknown): RemoteResourceLink | null {
   if (!normalizedTarget) return null;
   const label = normalizeRemoteText(record.label, 512);
   return { rel, target: normalizedTarget, ...(label ? { label } : {}) };
-}
-
-function normalizeRemoteAction(value: unknown): RemoteActionDescriptor | null {
-  const record = recordOf(value);
-  const id = boundedString(record?.id, MAX_REMOTE_ID_CHARS);
-  const label = normalizeRemoteText(record?.label, 512);
-  if (!record || !id || !label) return null;
-  const fields = Array.isArray(record.fields) ? record.fields.slice(0, 32).flatMap((candidate) => {
-    const field = recordOf(candidate);
-    const fieldId = boundedString(field?.id, MAX_REMOTE_ID_CHARS);
-    const fieldLabel = normalizeRemoteText(field?.label, 512);
-    const kind = boundedString(field?.kind, 64);
-    if (!field || !fieldId || !fieldLabel || !kind) return [];
-    return [{
-      id: fieldId, label: fieldLabel, kind,
-      ...(field.required === true ? { required: true } : {}),
-      ...(normalizeRemoteText(field.placeholder, 512) ? { placeholder: normalizeRemoteText(field.placeholder, 512)! } : {}),
-    }];
-  }) : undefined;
-  const confirmation = recordOf(record.confirmation);
-  const confirmationTitle = normalizeRemoteText(confirmation?.title, 512);
-  const confirmationBody = normalizeRemoteText(confirmation?.body, 2_000);
-  const confirmationLabel = normalizeRemoteText(confirmation?.confirmLabel, 512);
-  return {
-    id, label,
-    ...(typeof record.disabled === 'boolean' ? { disabled: record.disabled } : {}),
-    ...(typeof record.tone === 'string' ? { tone: record.tone } : {}),
-    ...(fields ? { fields } : {}),
-    ...(confirmationTitle ? { confirmation: { title: confirmationTitle, ...(confirmationBody ? { body: confirmationBody } : {}), ...(confirmationLabel ? { confirmLabel: confirmationLabel } : {}) } } : {}),
-  };
 }
 
 function normalizeRemoteBlock(value: unknown): RemoteResourceBlock | null {
@@ -231,6 +226,12 @@ function validDescriptor(value: unknown): RemoteCollectionDescriptor | null {
   const iconRecord = recordOf(record.icon);
   const iconName = boundedString(iconRecord?.name, MAX_REMOTE_ID_CHARS);
   const iconFallbackText = boundedString(iconRecord?.fallbackText, 64, true);
+  const capabilities = Array.isArray(record.capabilities)
+    ? record.capabilities.flatMap((item) => {
+      const capability = boundedString(item, MAX_REMOTE_ID_CHARS);
+      return capability ? [capability] : [];
+    })
+    : undefined;
   return {
     id,
     resourceKind,
@@ -239,6 +240,7 @@ function validDescriptor(value: unknown): RemoteCollectionDescriptor | null {
     ...(iconName && iconFallbackText !== null
       ? { icon: { name: iconName, fallbackText: iconFallbackText } }
       : {}),
+    ...(capabilities && capabilities.length > 0 ? { capabilities: [...new Set(capabilities)] } : {}),
   };
 }
 
@@ -330,7 +332,9 @@ export async function discoverRemoteHomeCollections(
   const byId = new Map<string, RemoteHomeCollection>();
   for (const { target, manifest } of discovered) {
     for (const collection of manifest?.collections ?? []) {
-      if (collection.placement !== 'home-scope') continue;
+      // The current mobile home exposes the group collection as a companion scope even though
+      // older hosts omit placement for this additive collection. Other unplaced collections stay hidden.
+      if (collection.placement !== 'home-scope' && collection.id !== BOT_GROUP_REMOTE_COLLECTION_ID) continue;
       const existing = byId.get(collection.id);
       if (existing && existing.resourceKind === collection.resourceKind) {
         existing.targets.push(target);
@@ -372,10 +376,12 @@ export async function getRemoteResource(
   target: RemoteResourceHostTarget,
   ref: RemoteResourceRef,
   locale?: string,
-  query?: string,
+  queryOrSupportedPrimitives?: string | readonly string[],
 ): Promise<RemoteResource> {
+  const query = typeof queryOrSupportedPrimitives === 'string' ? queryOrSupportedPrimitives : undefined;
+  const supportedPrimitives = Array.isArray(queryOrSupportedPrimitives) ? queryOrSupportedPrimitives : [];
   const raw = await invoke<unknown>(target.deviceId, REMOTE_RESOURCE_GET_CHANNEL, [{
-    client: clientDescriptor(locale),
+    client: clientDescriptor(locale, supportedPrimitives),
     ref,
     ...(query ? { query } : {}),
   }]);
@@ -383,7 +389,44 @@ export async function getRemoteResource(
   if (!normalized || normalized.ref.kind !== ref.kind || normalized.ref.id !== ref.id) {
     throw new Error('invalid remote resource response');
   }
-  return normalized;
+  const projectedActions = normalized.actions?.map((action) => ({
+    disabled: action.disabled ?? false,
+    ...action,
+  }));
+  const projectedBlocks = normalized.blocks?.map((block) => {
+    if (block.primitive === BOT_GROUP_CHAT_PRIMITIVE) {
+      if (!supportedPrimitives.includes(BOT_GROUP_CHAT_PRIMITIVE)) {
+        const { data: _data, ...fallback } = block;
+        return fallback;
+      }
+      return block;
+    }
+    if (block.primitive === 'session-controls') {
+      const data = recordOf(block.data);
+      return {
+        ...block,
+        ...(data ? { data: { input: data.input === 'available' ? 'available' : 'blocked', busy: data.busy === true } } : {}),
+      };
+    }
+    // Forms and lists are portable only after the generic bounded normalizer. Unknown
+    // primitives keep their inert Markdown but never carry opaque host data to the phone.
+    if (!['form', 'list', 'search', 'action', 'status', 'session-link', 'markdown'].includes(block.primitive)) {
+      const { data: _data, ...fallback } = block;
+      return fallback;
+    }
+    return block;
+  });
+  const projected = {
+    ...normalized,
+    ...(projectedActions ? { actions: projectedActions } : {}),
+    ...(projectedBlocks ? { blocks: projectedBlocks } : {}),
+  };
+  if (!supportedPrimitives.includes(BOT_GROUP_CHAT_PRIMITIVE)) {
+    return {
+      ...projected,
+    };
+  }
+  return projected;
 }
 
 function normalizeRemoteCollectionItem(
@@ -401,12 +444,7 @@ function normalizeRemoteCollectionItem(
         return normalized ? [normalized] : [];
       })
     : [];
-  const actions = Array.isArray(item.actions)
-    ? item.actions.slice(0, 32).flatMap((action) => {
-      const normalized = normalizeRemoteAction(action);
-      return normalized ? [normalized] : [];
-    })
-    : [];
+  const actions = normalizeRemoteActions(item.actions);
   const blocks = Array.isArray(item.blocks)
     ? item.blocks.slice(0, 64).flatMap((block) => {
       const normalized = normalizeRemoteBlock(block);

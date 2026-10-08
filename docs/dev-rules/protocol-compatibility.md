@@ -56,6 +56,29 @@ raw history 降级。任务列表活动推送不变，当前轮的正文、工�
 
 ## 事实来源
 
+### Lex SharedTask v2 客户端接线
+
+Desktop 和 Mobile 在 hello 与任务连接握手中声明 `shared-task-v2`，只有服务端明确协商
+同版本能力时才启用跨账号任务路由。普通同账号远控保持原许可与开关；共享任务仅订阅其
+精确 `session:<id>`，恢复探测读取已鉴权任务快照中的单个 Session，不读取主机任务列表。
+成员撤权只清理对应 task/member 的连接和在途状态，不重启共享 relay，也不影响其他成员。
+
+Desktop 从可靠握手取得的主机 stream 变化生成本地 source epoch，在业务推送交付前登记并
+随本地 IPC 传给 Renderer，供 host 重启后的 owner generation 比较使用。该 epoch 不接收
+peer payload 自报值，也不新增 relay wire 字段。未协商的旧端继续返回不支持。
+
+SharedTask 附件沿用 v0.1.96-beta 上游客户端合同：已鉴权的 presign-put 请求追加
+sharedTaskId，服务端签发该任务命名空间的 OSS key；主机只接收当前已授权成员发来的
+同任务引用，实际下载仍必须通过已鉴权 presign-get。任务路径解析不是独立权限凭证，
+也不证明上传字节来自某台物理设备。未识别任务范围、返回普通账号 key 的旧服务端在 PUT
+前明确拒绝，不退回普通账号上传。图片、文件和录音文件共用这条附件通路。
+Desktop 使用每调用 AsyncLocalStorage 隔离上传范围，取件缓存按任务隔离；Mobile 的
+picker、预处理和持久发件箱恢复都保留发起任务。访客编辑只复用主机确认的本人待发附件。
+语音转文字仍使用发起账号的既有语音服务，识别文本按普通共享任务输入发送，不调用
+主机的私有语音配置或额外开放语音 IPC。群聊 G4 的 host receipt 合同不变。
+客户端接线不证明真实服务端已部署，服务端/账号/实机验证必须与本地合成 relay、SQLite
+fixture 证据分别报告。来源及对旧阻塞结论的更正见 shared-task-upload-source-appendix.md。
+
 | 内容 | 权威来源 |
 |---|---|
 | hook 双工任务协议 | 客户端 `packages/slack-hook-protocol`；服务端仓同名本地 package，desktop hook-control 与 slack／telegram／x hook server 分别消费本仓实现 |
@@ -299,3 +322,77 @@ coordinator 行为与 Mobile delivery 状态机；不得把“旧端兼容”误
 Seed 2.1 Pro 按火山方舟官方示例选择 Chat Completions 为 Cindy 的标准接入协议，
 依据与全路由覆盖验收见 model-catalog-maintenance.md。
 价格、窗口、推理档位不随此次协议补全修改；协议默认开启策略仍保留用户显式覆盖。
+
+### 远程桌面虚拟显示尺寸回执
+
+`viewerDisplay` 成功响应可附加 `viewerDisplayRequest: { width, height }`，回显本次请求。
+`display.width/height` 始终是系统实际逻辑尺寸，用于画面与输入坐标；macOS 可能选择同一比例的较小逻辑模式。
+客户端仅在回执匹配请求、实际尺寸为有效整数且比例一致时接受这种差异，仍校验 lease 与控制状态。
+缺少回执的旧服务端保持原来的精确尺寸判断；显式 `resolution` 模式不放宽。
+旧客户端仍可处理原来成功的精确尺寸响应；系统调整后的尺寸需要控制端和被控端同时更新。
+不修改请求格式、relay、IPC allowlist 或协议版本。
+
+## 伙伴公开生成状态
+
+`SessionActivityPayload.workingPhase` 与 Remote Resource `display.generation`
+（`phase` / `startedAt`）为可选、瞬时的公开生成类别，不包含 assistant 旁白、工具参数或推理。
+生成结束、等待交互或失败时撤掉生成状态；头像连接状态仍由设备目录和连接层判断。
+列表失效沿用 `maker:remote-resources:changed`，未打开聊天也能重读当前状态；不新增 relay
+消息或权限。各端文案沿用已有 `working:<botId>/<phase>` 只读资源和宿主按轮次、语言共用的
+润色缓存。未知类别显示本地通用生成文案；缺字段的旧主机仍走原有摘要/公开阶段回退。
+旧控制端忽略新增字段，普通聊天不受影响。完整的列表状态一致性需主机和控制端均带此改动；
+服务端无需升级，移动端无原生 fingerprint 变更。正文过滤仅影响伙伴视图，不删除持久消息。
+
+`compacting` 是上述公开阶段的一员，由运行时 `Compacting...` / `Compacting context…`
+状态触发，`compact_boundary` 或恢复生成结束它；不读取压缩摘要。该阶段使用客户端固定的
+“正在整理对话…”本地化文案，不走模型润色，仍沿用原有文字切换节奏。
+
+## 伙伴通知深链
+
+手机推送 `deepLink` 仍是 `/sessions/<sessionId>?deviceId=<hostDeviceId>`。会话属于伙伴的
+canonical 主任务时，宿主额外追加 `resourceCollectionId=teammates&resourceId=<botId>&resourceKind=bot`，
+与伙伴名册打开聊天时的路由参数相同：手机据此按伙伴聊天呈现（伙伴页头、导航与已读），并继续做既有的
+会话来源与主机校验；这些参数不授予任何权限。已发布的手机版本本来就识别这组参数，不需要升级；
+不识别它们的旧控制端仍按普通任务打开。拼接后超过 `NOTIFY_DEEP_LINK_MAX_LENGTH` 时回退为原深链。
+委派的独立 Session 任务和普通任务不带这组参数。不修改 notify 帧结构、relay 或协议版本。
+
+## 伙伴群聊手机端（Remote Resource 与群推送深链）
+
+群聊以新的 Remote Resource collection `bot-groups`（`resourceKind: bot-group`，无 placement）接入控制端，
+列表项的 `links` 以 rel `member` 指向 `teammates` 中的成员。新增可移植原语 `bot-group-chat`：主机只对声明它的
+控制端在 `get` 中输出该块，`data` 为 `@cindy/maker-shared/botGroupChat` 的 `BotGroupRemoteChatData`
+（主机路径置空，只给文件夹名）；未声明的控制端只拿到 `markdown` 块的可读摘要。动作 id 见同文件
+`BotGroupRemoteActionId`，被拒时以群聊错误码作为 registry 错误 message。变化沿用
+`maker:remote-resources:changed`（collection + 该群 ref）。
+
+分工停下时的手机推送沿用 notify 帧与 `session-needs-reply` 类别，深链为
+`/companions/groups/<groupId>?deviceId=<hostDeviceId>`，`collapseId` 为 `(设备, 群)` 摘要。旧手机不识别该深链，
+点开只进入 App；旧主机没有该 collection，新手机不显示群聊入口。未新增 channel、allowlist、relay 类型、
+notify 类别或协议版本，服务端无需升级；Mobile 无原生 fingerprint 变更。
+
+群附件按字段追加演进：`send` 动作的 input 可选携带 `attachments`（与会话消息相同的上传引用形状，
+`cindy-peer-attach://` / `cindy-oss-attach://`，最多 20 个）；主机只接受该手机自己的上传，不接受主机路径。
+消息追加 `attachments`（图片给 `cindy-media://` 地址，`path` 一律为 null）。`BotGroupRemoteChatData` 追加
+`supportsAttachments: true`，新手机只在看到它时提供附件入口；旧主机不回这个字段，新手机不会把附件发给会丢掉
+它们的旧主机。旧手机忽略新字段，Markdown 摘要里列出附件名。图片缩略图沿用既有 `device-link:media:fetch`。
+未新增 channel、allowlist、relay 类型或协议版本。
+
+## 伙伴记忆远程页面与资源内搜索
+
+伙伴设置主资源（声明 `form` 的控制端）追加 `memories` list 块，入口指向 `settings:<botId>/memory`；
+原 `memory` 表单（开关与 USER.md）不变。列表页按类别输出多个 `list` 块：块 `title` 为类别名，`data.count`
+为该类条数，条目追加可选 `subtitle`（正文开头）与 `timestamp`（毫秒）。详情页
+`settings:<botId>/memory/<entry>` 由 `entry` 表单（标题、正文）与 `remove` 动作组成，revision 即该条
+`updatedAt`，动作经既有 `bindResource` 绑定该值；主机服务在存储锁内再次核对。`entry` 取文件名去掉
+`.md`，拼出的 id 超过 160 字符时改为 `h<12 位摘要>`。记忆已不存在时回 registry `NOT_FOUND`，其余 provider
+失败仍按既有边界显示为 `INTERNAL`，控制端据复读判断冲突，不依赖错误码。
+
+`maker:remote-resources:get` 请求可选携带 `query`（同 list，最长 1000 字符，空串等同未传）。新增可移植
+原语 `search`：主机只对声明 `search` 的控制端输出该块（`data.query`、`data.placeholder`），控制端仅在看到
+该块后带 `query` 重读同一资源。旧控制端不声明也不传 `query`，列表页原样可用；旧主机忽略 `query`，也不
+提供记忆页面，新手机显示原有升级提示。未新增 channel、relay 类型、allowlist、权限、数据库迁移或
+Mobile 原生 fingerprint 输入，服务端无需改动。
+
+任务迁移业务通道的 `move-project` action 在任务所属宿主复用项目移动校验与更新，
+仅接受任务 ID 和明确的目录（null 表示移到对话）。不开放远程 sessions 原始 patch；
+旧宿主拒绝未知 action，不回退到控制端本机执行。

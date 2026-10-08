@@ -111,6 +111,11 @@ export interface AgentSwitchSessionRow {
 }
 
 export interface MakerSessionAgentSwitchHandlerDeps {
+  /** Shared-task setting capture; host authority remains the source of truth. */
+  captureSharedTaskSettingGuard?: (sessionId: string) => {
+    (): void;
+    admit(): void;
+  };
   /** Same-engine choices use SET_MODEL validation; only the send boundary applies them. Caller owns the session lock. */
   selectSameAgentModel?(
     sessionId: string,
@@ -392,6 +397,9 @@ export async function performSessionAgentSwitch(
   if (typeof model !== 'string' || model.length === 0) {
     throwIpcError('INVALID_PARAMS', 'model required');
   }
+  const sharedTaskSetting = deps.captureSharedTaskSettingGuard?.(sessionId);
+  sharedTaskSetting?.();
+  const admitSharedTaskSetting = () => sharedTaskSetting?.admit();
   if (providerId !== undefined && providerId !== null && typeof providerId !== 'string') {
     throwIpcError('INVALID_PARAMS', 'providerId must be string | null');
   }
@@ -413,6 +421,7 @@ export async function performSessionAgentSwitch(
       normalizedProviderId = reroute;
     }
   }
+  sharedTaskSetting?.();
 
   const row = await deps.getSessionRow(sessionId);
   throwIfAgentSwitchAborted(signal);
@@ -442,6 +451,7 @@ export async function performSessionAgentSwitch(
     // Only picker calls stage a model choice here. Internal cross-engine apply/recovery
     // callers retain the existing same-engine no-op; send consumes staged choices below.
     if (deps.selectSameAgentModel && !params.applyNow) {
+      admitSharedTaskSetting();
       const result = await deps.selectSameAgentModel(sessionId, {
         targetAgentKind,
         model,
@@ -464,6 +474,7 @@ export async function performSessionAgentSwitch(
     // 顺带清 pending:用户先登记了跨引擎切换、又选回当前引擎 = 改主意取消。
     let sameEngineRevision: number | undefined;
     if (deps.pendingSwitches?.clearIfRevision && pendingRevisionAtStart !== undefined) {
+      admitSharedTaskSetting();
       const clearedRevision = deps.pendingSwitches.clearIfRevision(
         sessionId,
         pendingRevisionAtStart,
@@ -480,6 +491,7 @@ export async function performSessionAgentSwitch(
       sameEngineRevision = clearedRevision;
     } else {
       // 最小测试 harness / 旧内嵌调用方没有修订能力时维持原 no-op 清除语义。
+      admitSharedTaskSetting();
       deps.pendingSwitches?.clear(sessionId);
     }
     deps.onPendingSwitchChanged?.(sessionId, null);
@@ -494,11 +506,15 @@ export async function performSessionAgentSwitch(
 
   // 跨引擎选择比此前登记的凭证切换更新；即使旧切换已在 await close，清掉登记后
   // 它也会在收口前重读并放弃，避免 DB 已是新 agent、内存 route 却被旧 provider 覆盖。
+  sharedTaskSetting?.();
+  admitSharedTaskSetting();
   deps.supersedePendingCredentialSwitch?.(sessionId);
 
   // 意图制:外部调用(非 applyNow)一律只登记意图——空闲/运行中同一语义,
   // 用户反复改选零成本;renderer 乐观显示意图,真切换在下一条消息发送时刻执行。
   // 重复登记 = 覆盖(同一意图的最新表达)。
+  sharedTaskSetting?.();
+  if (params.applyNow || !deps.pendingSwitches) admitSharedTaskSetting();
   if (!params.applyNow && deps.pendingSwitches) {
     const intent: PendingAgentSwitchIntent = {
       ...(params.runtimeSource ? { runtimeSource: params.runtimeSource } : {}),
@@ -508,6 +524,7 @@ export async function performSessionAgentSwitch(
       ...(typeof params.effort === 'string' && params.effort ? { effort: params.effort } : {}),
       ...(typeof params.fastMode === 'boolean' ? { fastMode: params.fastMode } : {}),
     };
+    admitSharedTaskSetting();
     deps.pendingSwitches.set(sessionId, intent);
     deps.onPendingSwitchChanged?.(sessionId, projectPendingAgentSwitchIntent(intent));
     deps.log.info('agent-switch: intent registered (applies on next send)', {
@@ -560,6 +577,7 @@ export async function performSessionAgentSwitch(
   return deps.withCloseSuppressed(sessionId, async () => {
     throwIfAgentSwitchAborted(signal);
     if (live) {
+      admitSharedTaskSetting();
       await deps.closeSession(sessionId);
     }
 
@@ -578,6 +596,7 @@ export async function performSessionAgentSwitch(
     }
 
     // ---- commit point:此后切换生效 ----
+    if (!live) admitSharedTaskSetting();
     await deps.applyAgentSwitchToDb(sessionId, {
       agentKind: toDbKind,
       model,

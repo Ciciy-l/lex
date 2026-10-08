@@ -57,6 +57,16 @@ const cindyMediaMock = vi.hoisted(() => ({
 const legacyImageMock = vi.hoisted(() => ({
   removeSessionCalls: [] as string[],
 }));
+const closeSharedTaskForTask = vi.hoisted(() => vi.fn());
+const prepareSharedTaskClosureForTask = vi.hoisted(() => vi.fn());
+const rollbackPreparedSharedTaskClosure = vi.hoisted(() => vi.fn());
+const finalizePreparedSharedTaskClosure = vi.hoisted(() => vi.fn());
+vi.mock('../../device-link/sharedTaskRuntime.js', () => ({
+  closeSharedTaskForTask,
+  prepareSharedTaskClosureForTask,
+  rollbackPreparedSharedTaskClosure,
+  finalizePreparedSharedTaskClosure,
+}));
 
 vi.mock('electron', () => ({
   app: { getPath: () => tmpRoot, getVersion: () => '9.9.9' },
@@ -461,6 +471,10 @@ async function writeBundleFile(bytes: Buffer, password?: string): Promise<string
 
 describe('sessionShareImport', () => {
   beforeEach(async () => {
+    closeSharedTaskForTask.mockReset().mockResolvedValue(undefined);
+    prepareSharedTaskClosureForTask.mockReset().mockResolvedValue(null);
+    rollbackPreparedSharedTaskClosure.mockReset().mockResolvedValue(undefined);
+    finalizePreparedSharedTaskClosure.mockReset().mockResolvedValue(undefined);
     dbMock.conflictRow = null;
     dbMock.conflictForResumeId = null;
     dbMock.conflictGraphRows = [];
@@ -751,7 +765,7 @@ describe('sessionShareImport', () => {
     ).resolves.toBeDefined();
   });
 
-  it('does not project a committed import after its captured owner changes', async () => {
+  it('consumes a committed import before owner changes and never retries it', async () => {
     let ownerCurrent = true;
     dbMock.afterTxResolve = () => {
       ownerCurrent = false;
@@ -767,8 +781,7 @@ describe('sessionShareImport', () => {
       }
     };
 
-    await expect(
-      rawCommitShareImport(
+    const result = await rawCommitShareImport(
         {
           draftId: inspect.draftId,
           workingDir: newWorkdir,
@@ -784,8 +797,8 @@ describe('sessionShareImport', () => {
             assertStillValid,
           },
         },
-      ),
-    ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+      );
+    expect(result.sessionId).toBeTruthy();
 
     expect(dbMock.txCalls).toHaveLength(1);
     expect(cindyMediaMock.removeSessionRefsCalls).toEqual([]);
@@ -873,6 +886,37 @@ describe('sessionShareImport', () => {
       replaceSessions?: Array<{ id: string; status: 'active' | 'archived' }>;
     };
     expect(txArgs.replaceSessions).toEqual([{ id: 'existing-session', status: 'active' }]);
+  });
+
+  it('keeps a committed overwrite successful when relay cleanup fails', async () => {
+    dbMock.conflictRow = { id: 'existing-session', status: 'active' };
+    closeSharedTaskForTask.mockRejectedValueOnce(new Error('relay close unavailable'));
+    const filePath = await writeBundleFile(await buildBundle());
+    const inspect = await inspectShareFile(filePath);
+    if (inspect.encrypted) return;
+
+    const result = await commitShareImport({
+      draftId: inspect.draftId,
+      workingDir: newWorkdir,
+      projectsRootOverride: projectsRoot,
+      sharedMediaRootOverride: sharedMediaRoot,
+      overwrite: true,
+    });
+
+    expect(result.sessionId).toBeTruthy();
+    expect(closeSharedTaskForTask).toHaveBeenCalledExactlyOnceWith(
+      'existing-session',
+      expect.anything(),
+    );
+    await expect(
+      commitShareImport({
+        draftId: inspect.draftId,
+        workingDir: newWorkdir,
+        projectsRootOverride: projectsRoot,
+        sharedMediaRootOverride: sharedMediaRoot,
+        overwrite: true,
+      }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
   it('overwrite failure leaves replacement entirely to the failed transaction', async () => {

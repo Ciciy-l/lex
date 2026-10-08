@@ -9,8 +9,8 @@ const updateService = readFileSync(new URL('../updateService.ts', import.meta.ur
 const mainLayout = readFileSync(new URL('../../renderer/components/layout/MainLayout.tsx', import.meta.url), 'utf8');
 
 describe('provider import wiring', () => {
-  it('consumes the main pending slot when an import wake-up reaches MainLayout', () => {
-    expect(mainLayout).toMatch(/onDeepLinkNavigate\(\(payload\) => \{\s*if \(payload.type !== 'provider-import'\) \{\s*handleDeepLinkPayload\(payload\);\s*return;\s*\}[\s\S]*?takePendingDeepLink\(\)\.then\(\(pending\) => \{\s*if \(pending\) handleDeepLinkPayload\(pending\);/);
+  it('consumes the main pending slot when an import or invitation wake-up reaches MainLayout', () => {
+    expect(mainLayout).toMatch(/onDeepLinkNavigate\(\(payload\) => \{\s*if \(payload.type !== 'provider-import' && payload.type !== 'shared-task-join'\) \{\s*handleDeepLinkPayload\(payload\);\s*return;\s*\}[\s\S]*?takePendingDeepLink\(\)\.then\(\(pending\) => \{\s*if \(pending\) handleDeepLinkPayload\(pending\);/);
   });
   it('passes sanitized JS argv explicitly instead of replaying Electron native startup arguments', () => {
     for (const source of [bootstrap, updateService]) {

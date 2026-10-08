@@ -188,6 +188,33 @@ export function isOrcaQueueItem(
   return origin?.kind === 'orca';
 }
 
+/**
+ * Shared-task projections must show the durable authored text, not a host-only
+ * provenance prefix. Attachments are represented by a persisted envelope whose
+ * text field is the visible portion.
+ */
+export function queueItemVisibleText(item: {
+  text?: string;
+  persistedContent?: string;
+  files?: readonly unknown[];
+  origin?: unknown;
+}): string {
+  const text = item.text ?? '';
+  const origin = readRecord(item.origin);
+  const kind = origin?.kind;
+  if (kind !== 'scheduler' && kind !== 'session') return text;
+  const persisted = item.persistedContent || text;
+  if (!item.files?.length) return persisted;
+  try {
+    const envelope = JSON.parse(persisted) as unknown;
+    const envelopeText = readRecord(envelope)?.text;
+    if (typeof envelopeText === 'string') return envelopeText;
+  } catch {
+    // The persisted row may already be plain visible text.
+  }
+  return persisted;
+}
+
 function readRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>

@@ -11,11 +11,13 @@ import { radius } from "@/theme/tokens";
 export function HomeHeaderGlassButton({
   accessibilityLabel,
   children,
+  disabled = false,
   onPress,
   testID,
 }: {
   accessibilityLabel: string;
   children: ReactNode;
+  disabled?: boolean;
   onPress(): void;
   testID: string;
 }) {
@@ -27,7 +29,9 @@ export function HomeHeaderGlassButton({
     <Pressable
       accessibilityLabel={accessibilityLabel}
       accessibilityRole="button"
-      onPress={onPress}
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={disabled ? undefined : onPress}
       style={({ pressed }) => [styles.hit, pressed && styles.pressed]}
       testID={testID}
     >

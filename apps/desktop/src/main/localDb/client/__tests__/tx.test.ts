@@ -104,6 +104,20 @@ CREATE TABLE sessions (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
+CREATE TABLE shared_task_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+  shared_task_id TEXT NOT NULL,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  revision INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  terminal INTEGER NOT NULL,
+  snapshot TEXT,
+  recorded_at INTEGER NOT NULL,
+  closure_token TEXT
+);
+CREATE UNIQUE INDEX shared_task_events_revision_idx
+  ON shared_task_events(shared_task_id, kind, revision);
+CREATE INDEX shared_task_events_session_idx ON shared_task_events(session_id, id);
 CREATE TABLE orca_teams (
   id TEXT PRIMARY KEY,
   lead_session_id TEXT NOT NULL,
@@ -224,7 +238,6 @@ interface TestSessionRow {
   createdAt: number;
   updatedAt: number;
 }
-
 describe('db worker tx handlers', () => {
   beforeAll(async () => {
     workerBundleDir = fs.mkdtempSync(path.join(os.tmpdir(), 'xdt-db-tx-worker-'));
@@ -1145,6 +1158,86 @@ describe('db worker tx handlers', () => {
     },
   );
 
+  it.each([false, true])(
+    'rewind.commit remaps surviving native fork anchors to the replacement thread (inline=%s)',
+    async (useInlineWorker) => {
+    await withClient(async (client) => {
+      await seedSession(client, 's1');
+      const keptMeta = JSON.stringify({
+        turnCompleted: true,
+        nativeForkAnchor: { agentKind: 'codex', kind: 'turn', sdkSessionId: 'thread-old', id: 'turn-1' },
+      });
+      const foreignMeta = JSON.stringify({
+        turnCompleted: true,
+        nativeForkAnchor: { agentKind: 'codex', kind: 'turn', sdkSessionId: 'thread-other', id: 'turn-x' },
+      });
+      const droppedMeta = JSON.stringify({
+        turnCompleted: true,
+        nativeForkAnchor: { agentKind: 'codex', kind: 'turn', sdkSessionId: 'thread-old', id: 'turn-2' },
+      });
+      await client.exec(
+        'INSERT INTO messages (id, client_id, session_id, role, content, agent_meta, created_at) VALUES (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)',
+        [
+          'm1', 'c1', 's1', 'assistant', 'kept', keptMeta, 100,
+          'm2', 'c2', 's1', 'assistant', 'foreign', foreignMeta, 150,
+          'm3', 'c3', 's1', 'user', 'target', null, 200,
+          'm4', 'c4', 's1', 'assistant', 'dropped', droppedMeta, 300,
+        ],
+      );
+
+      await client.tx('rewind.commit', {
+        sessionId: 's1',
+        targetCreatedAt: 200,
+        sdkSessionId: 'thread-new',
+        nativeForkAnchorSessionMap: [['thread-old', 'thread-new']],
+        now: 999,
+      });
+
+      const rows = await client.query('SELECT id, rewind_at, agent_meta FROM messages ORDER BY id') as Array<{
+        id: string; rewind_at: number | null; agent_meta: string | null;
+      }>;
+      expect(rows.map((r) => [r.id, r.rewind_at])).toEqual([
+        ['m1', null], ['m2', null], ['m3', 999], ['m4', 999],
+      ]);
+      expect(JSON.parse(rows[0]!.agent_meta!)).toEqual({
+        turnCompleted: true,
+        nativeForkAnchor: { agentKind: 'codex', kind: 'turn', sdkSessionId: 'thread-new', id: 'turn-1' },
+      });
+      // 异线程锚点与被软删的行都不动。
+      expect(rows[1]!.agent_meta).toBe(foreignMeta);
+      expect(rows[3]!.agent_meta).toBe(droppedMeta);
+    }, { useInlineWorker });
+    },
+  );
+
+  it.each([false, true])(
+    'rewind.commit refuses to mutate when the /clear generation has changed (inline=%s)',
+    async (useInlineWorker) => {
+      await withClient(async (client) => {
+        await seedSession(client, 's1');
+        await client.exec(
+          'INSERT INTO messages (id, client_id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)',
+          ['m1', 'c1', 's1', 'user', 'before', 100, 'm2', 'c2', 's1', 'user', 'after-clear', 400],
+        );
+        await client.exec('UPDATE sessions SET cleared_at = ? WHERE id = ?', [250, 's1']);
+
+        await expect(
+          client.tx('rewind.commit', {
+            sessionId: 's1',
+            targetCreatedAt: 100,
+            expectedClearedAt: null,
+            now: 999,
+          }),
+        ).rejects.toThrow(/CLEAR_GENERATION_CHANGED|clear-boundary changed/i);
+
+        await expect(client.query('SELECT id, rewind_at FROM messages ORDER BY id')).resolves.toEqual([
+          { id: 'm1', rewind_at: null },
+          { id: 'm2', rewind_at: null },
+        ]);
+      }, { useInlineWorker });
+    },
+  );
+
   it('rewind.commit uses target message id to avoid same-timestamp over-delete', async () => {
     await withClient(async (client) => {
       await seedSession(client, 's1');
@@ -1713,6 +1806,34 @@ describe('db worker tx handlers', () => {
             { id: 'bot', status: 'active' },
             { id: 'regular', status: 'active' },
           ]);
+        },
+        { useInlineWorker },
+      );
+    },
+  );
+
+  it.each([false, true])(
+    'sessions.setTerminalStatus commits the shared-task closure atomically (inline=%s)',
+    async (useInlineWorker) => {
+      await withClient(
+        async (client) => {
+          await seedSession(client, 'terminal');
+          await client.exec(
+            `INSERT INTO shared_task_events
+             (shared_task_id, session_id, revision, kind, terminal, snapshot, recorded_at)
+             VALUES (?, ?, 1, 'authority', 0, ?, ?)`,
+            ['share-terminal', 'terminal', JSON.stringify({ sharedTaskId: 'share-terminal' }), Date.now()],
+          );
+          await expect(client.tx('sessions.setTerminalStatus', {
+            sessionId: 'terminal', status: 'archived',
+          })).resolves.toEqual(expect.objectContaining({ sessionId: 'terminal', status: 'archived' }));
+          await expect(client.query('SELECT status FROM sessions WHERE id = ?', ['terminal']))
+            .resolves.toEqual([{ status: 'archived' }]);
+          await expect(client.query(
+            `SELECT terminal FROM shared_task_events
+             WHERE shared_task_id = ? AND kind = 'local-close' AND revision = 0`,
+            ['share-terminal'],
+          )).resolves.toEqual([{ terminal: 1 }]);
         },
         { useInlineWorker },
       );

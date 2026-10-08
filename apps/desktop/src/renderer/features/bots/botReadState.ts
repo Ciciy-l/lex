@@ -71,6 +71,11 @@ export function getBotLastReadAt(botId: string): number | null {
   return readStorage()[botId] ?? null;
 }
 
+/** Namespaced read position for a local group timeline (never collides with a Bot id). */
+export function botGroupReadKey(groupId: string): string {
+  return `group:${groupId}`;
+}
+
 /**
  * Mark a Bot conversation read up to `at`. Returns whether the stored position
  * actually moved — callers use that to avoid redundant list refreshes.

@@ -120,6 +120,7 @@ import { UserMessageUrlLink } from './UserMessageUrlLink';
 import { InlineReferenceChip } from './InlineReferenceChip';
 import { QuoteChip } from './QuoteChip';
 import { SentAgentReferenceChip, sentAgentReferenceDisplayLabel } from './SentAgentReferenceChip';
+import { UserAttachmentChip } from './UserAttachmentChip';
 import {
   parseOrcaCommunicationContent,
   resolveHookGroupContext,
@@ -275,7 +276,7 @@ function UserFileChip({
  *   - 安全降级附件 → 仅「另存为…」单项。受控 `.bin` 副本的路径不该经「复制
  *     文件路径 / 打开所在目录」外泄,打开类动作更会绕过降级本身。
  */
-function UserAttachmentChip({
+function LegacyUserAttachmentChip({
   file,
   onOpenTextPreview,
 }: {

@@ -963,3 +963,14 @@ describe('in-flight 取消(abort 传递)', () => {
     handoff.release(false);
   });
 });
+
+
+it('retains the captured SharedTask namespace through preprocessing and upload', async () => {
+  const upload = vi.fn(async c => attachmentFor(c.name));
+  const { deps } = makeDeps({ upload });
+  const controller = createMobileLocalAttachmentUploadController(deps);
+  controller.enqueue([{ ...candidate('photo.jpg'), sharedTaskId: 'task-a' }], { token: 'guest-token' });
+  await controller.waitForIdle();
+  expect(upload).toHaveBeenCalledWith(expect.objectContaining({ sharedTaskId: 'task-a' }), expect.any(String), expect.objectContaining({ token: 'guest-token' }));
+  controller.dispose();
+});

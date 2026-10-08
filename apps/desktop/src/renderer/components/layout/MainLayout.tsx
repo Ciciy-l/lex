@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { buildSharedTaskInvitationLink } from '@cindy/device-link';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
@@ -27,6 +28,8 @@ import { UpdateNoticeDialog } from '@/components/UpdateNoticeDialog';
 import { FeishuConflictDialogHost } from '@/components/feishuBot/FeishuConflictDialogHost';
 import { GlobalDropImportListener } from '@/components/layout/GlobalDropImportListener';
 import { SessionShareImportWizard } from '@/components/settings/SessionShareImportWizard';
+import { JoinSharedTaskDialog } from '@/features/device-link/JoinSharedTaskDialog';
+import { SharedTaskEndedNotice } from '@/features/device-link/SharedTaskEndedNotice';
 import { ControlledBanner } from '@/features/remote-device/ControlledBanner';
 import { CredentialStoreBanner } from '@/components/layout/CredentialStoreBanner';
 import { useDeviceLinkRemoteProjects } from '@/features/device-link/useDeviceLinkRemoteProjects';
@@ -103,6 +106,7 @@ import { resolveSessionRoute } from '@/lib/orcaSessionIdentity';
 import { getBotProfiles } from '@/features/bots/botStore';
 import { botRouteForOwnedSession } from '@/features/bots/botSessionOwners';
 import { remoteProjectsStore } from '@/features/device-link/remoteProjectsStore';
+import { useSharedTaskTasks } from '@/features/device-link/useSharedTaskTasks';
 import {
   isAgentIslandVisibleSessionOwnedByWorkdirBrowseRoute,
   isAgentIslandVisibleSessionOwnedByBotRoute,
@@ -230,6 +234,8 @@ export function MainLayout() {
     id: number;
     filePath: string;
   } | null>(null);
+  const [sharedTaskInvitation, setSharedTaskInvitation] = useState<{ link: string; id: number } | null>(null);
+  const invitationSequence = useRef(0);
   const shareImportRequestSeqRef = useRef(0);
   const openShareImport = useCallback((filePath: string) => {
     shareImportRequestSeqRef.current += 1;
@@ -481,6 +487,11 @@ export function MainLayout() {
   usePluginRemovalNoticeToast();
   // device-link 跨设备远程控制:同账号在线 + 开了被控的设备,其项目自动并入侧边栏
   useDeviceLinkRemoteProjects();
+  // Shared-task guests use a task-scoped peer, not the normal device directory.
+  // Keep this reconciler mounted with the layout so cold starts and account
+  // handovers populate the existing remote session mirror without broadening
+  // the ordinary device listing.
+  useSharedTaskTasks();
 
   // 系统通知点击回调：主进程把窗口拉到前台后广播 sessionId，这里跳路由。
   // 挂在 MainLayout 而不是 App 顶层——这里在 ProtectedRoute + LocalDbGate 之内，
@@ -616,8 +627,16 @@ export function MainLayout() {
         | { type: 'new-session'; workingDir: string }
         | { type: 'share-import'; filePath: string }
         | { type: 'provider-import'; importId: string }
+        | { type: 'shared-task-join'; invitation: string; server: string }
         | { type: 'settings'; tab: 'voice-input' | 'providers'; connect?: string },
     ) => {
+      if (payload.type === 'shared-task-join') {
+        setSharedTaskInvitation({
+          link: buildSharedTaskInvitationLink(payload.invitation, payload.server),
+          id: ++invitationSequence.current,
+        });
+        return;
+      }
       if (payload.type === 'session') {
         navigateToSession(payload.id, payload.messageClientId);
         return;
@@ -659,7 +678,7 @@ export function MainLayout() {
   );
   useEffect(() => {
     const unsubscribe = window.electronAPI.onDeepLinkNavigate((payload) => {
-      if (payload.type !== 'provider-import') {
+      if (payload.type !== 'provider-import' && payload.type !== 'shared-task-join') {
         handleDeepLinkPayload(payload);
         return;
       }
@@ -1642,6 +1661,15 @@ export function MainLayout() {
       )}
       {/* FeiShu Bot conflict dialog -- subscribes to main process push and surfaces a global modal */}
       <FeishuConflictDialogHost />
+      {sharedTaskInvitation && (
+        <JoinSharedTaskDialog
+          key={sharedTaskInvitation.id}
+          open
+          initialInvitation={sharedTaskInvitation.link}
+          onOpenChange={(open) => { if (!open) setSharedTaskInvitation(null); }}
+        />
+      )}
+      <SharedTaskEndedNotice onReturnToTasks={() => navigate('/cc-agent')} />
       {/* 窗口级拖拽兜底:拖 .cshare 进窗口空白处 → 会话导入向导 */}
       <GlobalDropImportListener onOpenShareImport={openShareImport} />
       {shareImportRequest && (

@@ -56,8 +56,17 @@ export interface RemoteSessionLiveActivity {
   sessionId: string;
   phase: RemoteSessionLiveActivityPhase;
   compactDetail: string;
+  /** Optional host-provided fine-grained activity label for companion surfaces. */
+  workingPhase?: string | null;
   interactionKind?: string;
   attention?: boolean;
+}
+
+/** Accept only a bounded host activity token; never render arbitrary payload as a locale key. */
+export function readWorkingPhase(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const phase = value.trim();
+  return phase.length > 0 && phase.length <= 128 ? phase : null;
 }
 
 type RemoteSession = RemoteSessionListSessionLike;

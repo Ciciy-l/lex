@@ -23,6 +23,7 @@ import {
   Copy,
   GitBranch,
   Link2,
+  LogOut,
   Pencil,
   Pin,
   PinOff,
@@ -128,6 +129,13 @@ export interface SessionMenuSheetProps {
   onOpenWorkspace(): void;
   /** Pi 原生会话树入口；只有 host runtime 真正返回 Pi 会话时由父级注入。 */
   onOpenSessionTree?: () => void;
+  /** Shared-task guest action; owner management stays on the host page. */
+  sharedTaskAction?: {
+    label: string;
+    onPress(): void;
+    disabled?: boolean;
+    testID?: string;
+  };
   onTogglePinned(): void;
   onArchive(): void;
   onRestore(): void;
@@ -159,6 +167,7 @@ export function SessionMenuSheet({
   onRegenerateTitle,
   onOpenWorkspace,
   onOpenSessionTree,
+  sharedTaskAction,
   onTogglePinned,
   onArchive,
   onRestore,
@@ -587,6 +596,19 @@ export function SessionMenuSheet({
                 onPress={onOpenSessionTree}
                 testID="session.branchesButton"
                 trailing={<ChevronRight color={colors.textTertiary} size={iconSize.md} strokeWidth={iconStroke.regular} />}
+              />
+            </View>
+          ) : null}
+
+          {sharedTaskAction ? (
+            <View style={styles.actionGroup}>
+              <MenuActionRow
+                danger
+                disabled={sharedTaskAction.disabled}
+                icon={LogOut}
+                label={sharedTaskAction.label}
+                onPress={sharedTaskAction.onPress}
+                testID={sharedTaskAction.testID ?? 'session.sharedTaskLeave'}
               />
             </View>
           ) : null}

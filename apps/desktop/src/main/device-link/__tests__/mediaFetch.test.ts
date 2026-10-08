@@ -604,3 +604,16 @@ describe('__testing.isInsideRealDir', () => {
     expect(inside(path.resolve('/a/bb/c.png'), path.resolve('/a/b'))).toBe(false);
   });
 });
+
+
+it('does not reuse an OSS upload across task namespaces or ordinary owner media', async () => {
+  const { withSharedTaskMedia, sharedTaskMediaId } = await import('../sharedTaskMediaContext.js');
+  imageResolve.mockReturnValue({ absPath: '/cache/a.png', mimeType: 'image/png' });
+  uploadLocalFile.mockImplementation(async () => ({ key: sharedTaskMediaId() ?? 'owner', size: 42, contentType: 'image/png' }));
+  const read = () => fetchLocalMediaToOss({ url: 'xdt-image://session/a.png' });
+  expect((await read()).ossKey).toBe('owner');
+  expect((await withSharedTaskMedia('a', read)).ossKey).toBe('a');
+  expect((await withSharedTaskMedia('b', read)).ossKey).toBe('b');
+  expect((await withSharedTaskMedia('a', read)).ossKey).toBe('a');
+  expect(uploadLocalFile).toHaveBeenCalledTimes(3);
+});

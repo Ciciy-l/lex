@@ -212,6 +212,50 @@ async function withStatusWriteLock<T>(
   return withSessionRouteLock(sessionId, write);
 }
 
+type SharedTaskClosurePreparation = {
+  sessionId: string;
+  marker: string;
+  rowIds: number[];
+  status: 'acquired' | 'occupied' | 'none';
+  lease: 'acquired' | 'occupied' | 'none';
+};
+
+async function prepareSharedTaskClosure(
+  sessionId: string,
+  dbClient: DbClient,
+): Promise<SharedTaskClosurePreparation | null> {
+  const { prepareSharedTaskClosureForTask } = await import('../../device-link/sharedTaskRuntime.js');
+  return prepareSharedTaskClosureForTask(sessionId, dbClient);
+}
+
+async function rollbackSharedTaskClosure(
+  dbClient: DbClient,
+  prepared: SharedTaskClosurePreparation | null,
+): Promise<void> {
+  if (!prepared) return;
+  const { rollbackPreparedSharedTaskClosure } = await import('../../device-link/sharedTaskRuntime.js');
+  await rollbackPreparedSharedTaskClosure(dbClient, prepared);
+}
+
+async function finalizeSharedTaskClosure(
+  dbClient: DbClient,
+  prepared: SharedTaskClosurePreparation | null,
+): Promise<void> {
+  if (!prepared) return;
+  const { finalizePreparedSharedTaskClosure } = await import('../../device-link/sharedTaskRuntime.js');
+  await finalizePreparedSharedTaskClosure(dbClient, prepared);
+}
+
+function assertSharedTaskClosureLeaseAvailable(
+  prepared: SharedTaskClosurePreparation | null,
+): void {
+  // A terminal local-close is already durable and is not a competing lease;
+  // only another process's unfinished prepare must block the legacy fallback.
+  if (prepared?.status === 'occupied' || prepared?.lease === 'occupied') {
+    throwIpcError('PRECONDITION_FAILED', 'Shared task closure is already pending');
+  }
+}
+
 async function requestWorktreeRecycle(
   sessionId: string,
   resources: readonly string[] = [],
@@ -293,6 +337,24 @@ async function writeSessionPatch(
     .where(eq(sessions.id, sessionId));
   if (!existing) throwIpcError('NOT_FOUND', 'Session 不存在');
   throwIpcError('PRECONDITION_FAILED', '已删除的任务不能恢复或归档');
+}
+
+/** Route terminal status plus the shared-task closure through one named DB tx. */
+async function setTerminalSessionStatus(
+  dbClient: DbClient,
+  sessionId: string,
+  status: 'archived' | 'deleted',
+): Promise<void> {
+  try {
+    await dbClient.tx('sessions.setTerminalStatus', { sessionId, status });
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    const message = error instanceof Error ? error.message : String(error);
+    if (code === 'NOT_FOUND' || code === 'INVALID_PARAMS' || code === 'PRECONDITION_FAILED') {
+      throwIpcError(code, message);
+    }
+    throw error;
+  }
 }
 
 export function captureSessionRecycleScope(
@@ -899,14 +961,16 @@ export async function getSessionRowSnapshot(id: string): Promise<SessionRowSnaps
  * 由它映射派生)、plan 开关、远程工作区标记。失败 swallow 返 null(调用方按
  * 「会话不存在」拒绝写入,不抛)。
  */
-export async function getSessionFsSnapshot(id: string): Promise<{
+export async function getSessionFsSnapshot(id: string, capturedDb?: Pick<DbClient, 'drizzle'>): Promise<{
   workingDir: string | null;
   permissionMode: string;
   planModeEnabled: boolean;
   remoteHostId: string | null;
 } | null> {
   try {
-    const db = getDbClient().drizzle;
+    // Shared-task media reads pass the profile-bound client captured before
+    // their first await. Legacy callers omit it and retain the current DB.
+    const db = capturedDb?.drizzle ?? getDbClient().drizzle;
     const [row] = await db
       .select({
         workingDir: sessions.workingDir,
@@ -1868,7 +1932,30 @@ export async function updateSessionInDb(
       p.status,
       async () => {
         if (p.status !== undefined) await assertGenericSessionLifecycleAllowed(db, sid);
-        await writeSessionPatch(db, sid, setObj, p.status);
+        const terminal = p.status === 'archived' || p.status === 'deleted';
+        if (terminal && typeof dbClient.tx === 'function') {
+          const { status: _status, ...nonTerminalPatch } = setObj;
+          await writeSessionPatch(db, sid, nonTerminalPatch, undefined);
+          await setTerminalSessionStatus(dbClient, sid, p.status as 'archived' | 'deleted');
+          const { closeSharedTaskForTask } = await import('../../device-link/sharedTaskRuntime.js');
+          await closeSharedTaskForTask(sid, dbClient);
+        } else {
+          const prepared = terminal ? await prepareSharedTaskClosure(sid, dbClient) : null;
+          try {
+            assertSharedTaskClosureLeaseAvailable(prepared);
+            await writeSessionPatch(db, sid, setObj, p.status);
+          } catch (error) {
+            await rollbackSharedTaskClosure(dbClient, prepared);
+            throw error;
+          }
+          if (terminal) {
+            // The terminal session write is committed; retain the closure marker
+            // if finalization itself fails so the next boundary can reconcile it.
+            await finalizeSharedTaskClosure(dbClient, prepared);
+            const { closeSharedTaskForTask } = await import('../../device-link/sharedTaskRuntime.js');
+            await closeSharedTaskForTask(sid, dbClient);
+          }
+        }
         cleanupSessionRuntimeForTerminalStatus(sid, p.status);
       },
       p.workingDir !== undefined,
@@ -2050,7 +2137,28 @@ export async function patchSessionMetaInDb(
   if (patch.title !== undefined) noteUserTitleWritten(sessionId);
   const { updated, source } = await withStatusWriteLock(db, sessionId, patch.status, async () => {
     if (patch.status !== undefined) await assertGenericSessionLifecycleAllowed(db, sessionId);
-    await writeSessionPatch(db, sessionId, setObj, patch.status);
+    const terminal = patch.status === 'archived' || patch.status === 'deleted';
+    if (terminal && typeof dbClient.tx === 'function') {
+      const { status: _status, ...nonTerminalPatch } = setObj;
+      await writeSessionPatch(db, sessionId, nonTerminalPatch, undefined);
+      await setTerminalSessionStatus(dbClient, sessionId, patch.status as 'archived' | 'deleted');
+      const { closeSharedTaskForTask } = await import('../../device-link/sharedTaskRuntime.js');
+      await closeSharedTaskForTask(sessionId, dbClient);
+    } else {
+      const prepared = terminal ? await prepareSharedTaskClosure(sessionId, dbClient) : null;
+      try {
+        assertSharedTaskClosureLeaseAvailable(prepared);
+        await writeSessionPatch(db, sessionId, setObj, patch.status);
+      } catch (error) {
+        await rollbackSharedTaskClosure(dbClient, prepared);
+        throw error;
+      }
+      if (terminal) {
+        await finalizeSharedTaskClosure(dbClient, prepared);
+        const { closeSharedTaskForTask } = await import('../../device-link/sharedTaskRuntime.js');
+        await closeSharedTaskForTask(sessionId, dbClient);
+      }
+    }
     const row = await selectSessionWithCount(db, sessionId);
     if (!row) throwIpcError('NOT_FOUND', 'Session 不存在');
     if (patch.pinnedAt !== undefined && row.pinnedAt == null) {
@@ -2261,14 +2369,20 @@ export async function setSessionsStatusInDb(
       if (status === 'archived') {
         for (const id of sessionIds) await requestWorktreeRecycle(id, perSession.get(id));
       }
-      const rows = await dbClient.tx('sessions.setStatus', { sessionIds, status }).catch((err) => {
-        const code = (err as { code?: string }).code;
-        const message = err instanceof Error ? err.message : String(err);
-        if (code === 'NOT_FOUND' || code === 'INVALID_PARAMS' || code === 'PRECONDITION_FAILED') {
-          throwIpcError(code, message);
-        }
-        throw err;
+      const rows = await dbClient.tx('sessions.setStatus', status === 'archived'
+        ? { sessionIds, status, closeSharedTasks: true }
+        : { sessionIds, status }).catch((err) => {
+          const code = (err as { code?: string }).code;
+          const message = err instanceof Error ? err.message : String(err);
+          if (code === 'NOT_FOUND' || code === 'INVALID_PARAMS' || code === 'PRECONDITION_FAILED') {
+            throwIpcError(code, message);
+          }
+          throw err;
       });
+      if (status === 'archived') {
+        const { closeSharedTaskForTask } = await import('../../device-link/sharedTaskRuntime.js');
+        for (const item of rows) await closeSharedTaskForTask(item.sessionId, dbClient);
+      }
       for (const item of rows) {
         cleanupSessionRuntimeForTerminalStatus(item.sessionId, item.status);
       }
@@ -2355,20 +2469,40 @@ export async function deleteBotProfileAndDetachSessionsInDb(
   botId: string,
   sessionIds: string[],
   keepTaskHistory: boolean,
+  operationGuard?: () => void,
 ): Promise<void> {
   const ids = [...new Set(sessionIds)];
   const ownerScope = captureOwnerScope();
-  const db = getDbClient().drizzle;
+  const dbClient = getDbClient();
+  const db = dbClient.drizzle;
   const commitDeletion = () =>
     commitBotProfileDeletion({
       botId,
       sessionIds: ids,
       keepTaskHistory,
+      operationGuard,
     });
-  const committed =
-    ids.length > 0 ? await withSessionRouteLocks(ids, commitDeletion) : await commitDeletion();
+  const prepared: SharedTaskClosurePreparation[] = [];
+  let committed: Awaited<ReturnType<typeof commitBotProfileDeletion>>;
+  try {
+    for (const id of ids) {
+      const closure = await prepareSharedTaskClosure(id, dbClient);
+      assertSharedTaskClosureLeaseAvailable(closure);
+      if (closure) prepared.push(closure);
+    }
+    committed = ids.length > 0 ? await withSessionRouteLocks(ids, commitDeletion) : await commitDeletion();
+  } catch (error) {
+    for (const closure of prepared) await rollbackSharedTaskClosure(dbClient, closure);
+    throw error;
+  }
   const status = committed.status;
   const committedSessionIds = [...new Set(committed.sessionIds)];
+
+  for (const closure of prepared) await finalizeSharedTaskClosure(dbClient, closure);
+  if (committedSessionIds.length > 0) {
+    const { closeSharedTaskForTask } = await import('../../device-link/sharedTaskRuntime.js');
+    for (const id of committedSessionIds) await closeSharedTaskForTask(id, dbClient);
+  }
 
   for (const id of committedSessionIds) {
     notifyAgentIslandSessionPatch(id, { status });

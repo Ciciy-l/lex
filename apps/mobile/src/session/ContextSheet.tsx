@@ -27,6 +27,7 @@ import {
   fontWeight,
   iconSize,
   iconStroke,
+  lineHeight,
   radius,
   spacing,
   typeScale,
@@ -44,6 +45,8 @@ export interface ContextSheetProps {
   onBack?: () => void;
   keyboardAvoidingBehavior: 'height' | 'padding' | undefined;
   children: ReactNode;
+  /** Optional media strip rendered above the grouped actions. */
+  media?: ReactNode;
   /** 固定在面板底部（滚动区之外）的操作区，如「加入对话」提交按钮。 */
   footer?: ReactNode;
   testID?: string;
@@ -56,6 +59,7 @@ export function ContextSheet({
   onBack,
   keyboardAvoidingBehavior,
   children,
+  media,
   footer,
   testID,
 }: ContextSheetProps) {
@@ -100,6 +104,7 @@ export function ContextSheet({
         testID={testID}
         title={title}
       >
+        {media}
         {children}
       </SheetSurface>
     </SheetModal>
@@ -143,6 +148,8 @@ export interface ContextSheetRowProps {
   trailing?: 'chevron' | ReactNode;
   disabled?: boolean;
   busy?: boolean;
+  /** Secondary explanatory copy shown below the primary row label. */
+  detail?: string;
   accessibilityHint?: string;
   testID?: string;
 }
@@ -154,6 +161,7 @@ export function ContextSheetRow({
   trailing,
   disabled,
   busy,
+  detail,
   accessibilityHint,
   testID,
 }: ContextSheetRowProps) {
@@ -172,7 +180,10 @@ export function ContextSheetRow({
     >
       <View style={styles.rowLeft}>
         {icon}
-        <Text style={styles.rowLabel}>{label}</Text>
+        <View style={styles.rowLabelColumn}>
+          <Text style={styles.rowLabel}>{label}</Text>
+          {detail ? <Text style={styles.rowDetail}>{detail}</Text> : null}
+        </View>
       </View>
       <View style={styles.rowTrailing}>
         {busy ? (
@@ -284,6 +295,14 @@ function makeContextSheetStyles(colors: ThemeColors) {
       color: colors.textPrimary,
       fontSize: typeScale.body,
       fontWeight: fontWeight.medium,
+    },
+    rowLabelColumn: {
+      minWidth: 0,
+    },
+    rowDetail: {
+      color: colors.textTertiary,
+      fontSize: typeScale.caption,
+      lineHeight: lineHeight.caption,
     },
     rowTrailing: {
       alignItems: 'center' as const,

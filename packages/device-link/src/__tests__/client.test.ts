@@ -7,6 +7,8 @@ import { DeviceLinkClient, computeReconnectDelayMs, type WsLike } from '../clien
 import {
   PROTOCOL_VERSION,
   DeviceLinkError,
+  SHARED_TASK_RELAY_CAPABILITY,
+  sharedTaskHostPeer,
   type Envelope,
   type LinkAcceptPayload,
 } from '../protocol.js';
@@ -67,12 +69,12 @@ class FakeWs implements WsLike {
     this.emit('message', { toString: () => JSON.stringify(env) });
   }
   /** 完成 open + hello-ack 流程 */
-  ack(): void {
+  ack(capabilities?: string[]): void {
     this.emit('open');
     this.push({
       v: PROTOCOL_VERSION,
       kind: 'hello-ack',
-      payload: { serverProtocolVersion: PROTOCOL_VERSION, deviceId: 'dev-self', userId: 'u1' },
+      payload: { serverProtocolVersion: PROTOCOL_VERSION, deviceId: 'dev-self', userId: 'u1', capabilities },
     });
   }
 }
@@ -9084,5 +9086,91 @@ describe('confirmed duplicate-open gap repair', () => {
       for (let ackSeq = 1; ackSeq <= MAX_TRANSPORT_REASSEMBLIES; ackSeq++) f.ack(undefined, ackSeq);
       expect(copies()).toBe(1);
     } finally { f.h.client.stop(); vi.useRealTimers(); }
+  });
+});
+
+describe('physical addressing with explicit shared task scope', () => {
+  it('isolates ordinary remote control and two shared reliable streams on the same host', async () => {
+    const h = makeHarness({ timing: { pingIntervalMs: 60_000, requestTimeoutMs: 5_000, transportRetryIntervalMs: 50 } });
+    h.client.start(); await tick(); h.current().ack([SHARED_TASK_RELAY_CAPABILITY]);
+    const peers = ['desktop', sharedTaskHostPeer('task-a', 'desktop'), sharedTaskHostPeer('task-b', 'desktop')];
+    const received: string[] = [];
+    const acceptedStreams = new Map<string, string>();
+    const accepted = vi.fn((peer: string, stream: string) => { acceptedStreams.set(peer, stream); });
+    const releaseAccepted = h.client.onPeerStreamAccepted(accepted);
+    h.client.onFrame(env => {
+      if (env.kind === 'push') {
+        // The trusted source generation must be installed before business pushes.
+        expect(acceptedStreams.get(env.src!)).toBe('same-remote-stream');
+        received.push(env.src!);
+      }
+    });
+    const inbound = (index: number, env: Envelope): Envelope => ({ ...env, src: 'desktop', dst: 'dev-self',
+      ...(index ? { sharedTask: { sharedTaskId: index === 1 ? 'task-a' : 'task-b', source: { role: 'host' as const }, target: { role: 'guest' as const, memberId: 'member' } } } : {}),
+    });
+    try {
+      for (let index = 0; index < peers.length; index++) {
+        const opened = h.client.openLink(peers[index], { controllerName: 'Test' });
+        const request = h.current().sent.filter(env => env.kind === 'link-open').at(-1)!;
+        expect(request.dst).toBe('desktop');
+        h.current().push(inbound(index, { v: 1, kind: 'link-accept', id: request.id, payload: {
+          appVersion: '1', allowlistHash: 'hash', capabilities: [DEVICE_LINK_CAPABILITY_RELIABLE_TRANSPORT], transportStreamId: 'same-remote-stream',
+        } }));
+        await opened;
+      }
+      for (let index = 0; index < peers.length; index++) {
+        const push = inbound(index, { v: 1, kind: 'push', payload: { channel: 'maker:event', payload: {} } });
+        for (const part of encodeReliableFrames(push, 'same-remote-stream', 1)) h.current().push(part);
+      }
+      await tick();
+      expect(received).toEqual(peers);
+      expect(accepted.mock.calls).toEqual(peers.map(peer => [peer, 'same-remote-stream']));
+      releaseAccepted();
+      const acks = h.current().sent.filter(env => parseTransportAck(env));
+      expect(acks).toHaveLength(3);
+      expect(acks.map(env => env.sharedTask?.sharedTaskId)).toEqual([undefined, 'task-a', 'task-b']);
+      expect(acks.every(env => env.dst === 'desktop')).toBe(true);
+      const settled: number[] = [];
+      const requests = peers.map((peer, index) => h.client.invoke(peer, { channel: 'local-db:sessions:get', args: ['original-session'] })
+        .then(value => { settled.push(index); return value; }));
+      const outbound = h.current().sent.filter(env => env.kind === 'invoke');
+      expect(outbound).toHaveLength(3);
+      h.current().push(inbound(2, { v: 1, kind: 'invoke-result', id: outbound[1].id, payload: { ok: true, result: 'wrong-scope' } }));
+      h.current().push({ v: 1, kind: 'relay-error', id: outbound[1].id,
+        sharedTask: { sharedTaskId: 'task-b', target: { role: 'host' } },
+        payload: { code: 'DEVICE_OFFLINE', message: 'offline', dst: 'desktop' } });
+      await tick(); expect(settled).toEqual([]);
+      for (let index = 0; index < peers.length; index++) {
+        const result = inbound(index, { v: 1, kind: 'invoke-result', id: outbound[index].id, payload: { ok: true, result: index } });
+        for (const part of encodeReliableFrames(result, 'same-remote-stream', 2)) h.current().push(part);
+      }
+      expect(await Promise.all(requests)).toEqual([0, 1, 2].map(result => ({ ok: true, result })));
+      const count = (index: number) => h.current().sent.filter(env => env.kind === 'invoke' && env.id === outbound[index].id).length;
+      const beforeAck = peers.map((_, index) => count(index));
+      const sent = parseTransportPayload(outbound[1].payload)!;
+      h.current().push(inbound(1, { v: 1, kind: 'push', payload: { channel: DEVICE_LINK_TRANSPORT_ACK_CHANNEL,
+        payload: { streamId: sent.meta.streamId, ackSeq: sent.meta.seq } } }));
+      await vi.waitFor(() => { expect(count(0)).toBeGreaterThan(beforeAck[0]); expect(count(2)).toBeGreaterThan(beforeAck[2]); });
+      expect(count(1)).toBe(beforeAck[1]);
+      h.client.closeLink(peers[1], 'user');
+      expect(h.current().sent.at(-1)).toMatchObject({ kind: 'link-close', dst: 'desktop', sharedTask: { sharedTaskId: 'task-a' } });
+      for (const index of [0, 2]) h.client.sendPush(peers[index], 'maker:event', {});
+      expect(h.current().sent.slice(-2).map(env => env.sharedTask?.sharedTaskId)).toEqual([undefined, 'task-b']);
+      expect(h.sockets).toHaveLength(1);
+    } finally { h.client.stop(); }
+  });
+  it('refuses shared frames on an old relay while allowing a legacy prefixed physical device', async () => {
+    const h = makeHarness({ timing: { pingIntervalMs: 60_000 } });
+    h.client.start(); await tick(); h.current().ack();
+    try {
+      await expect(h.client.openLink(sharedTaskHostPeer('task', 'desktop'), { controllerName: 'Test' })).rejects.toMatchObject({ code: 'VERSION_MISMATCH' });
+      expect(h.current().sent.some(env => env.kind === 'link-open')).toBe(false);
+      const device = 'shared-task~task~host';
+      const opened = h.client.openLink(device, { controllerName: 'Test' });
+      const frame = h.current().sent.find(env => env.kind === 'link-open')!;
+      expect(frame.dst).toBe(device); expect(frame.sharedTask).toBeUndefined();
+      h.current().push({ v: 1, kind: 'link-accept', id: frame.id, src: device, payload: { appVersion: '1', allowlistHash: 'hash' } });
+      await opened;
+    } finally { h.client.stop(); }
   });
 });

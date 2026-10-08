@@ -28,8 +28,14 @@ export interface DbClient {
     name: N,
     args: DbTxArgsByName[N],
     transferList?: unknown[],
+    beforeDispatch?: () => void,
   ): Promise<DbTxResultByName[N]>;
-  tx<R = unknown>(name: string, args: unknown, transferList?: unknown[]): Promise<R>;
+  tx<R = unknown>(
+    name: string,
+    args: unknown,
+    transferList?: unknown[],
+    beforeDispatch?: () => void,
+  ): Promise<R>;
   drizzle: BetterSQLite3Database<typeof schema>;
   readonly vecAvailable: boolean;
   dispose(): Promise<void>;
@@ -93,8 +99,8 @@ export async function createDbClient(opts: CreateDbClientOptions = {}): Promise<
       withTransport('queryOne', () => transport.send('queryOne', { sql, params: params ?? [] })),
     exec: (sql, params) =>
       withTransport('exec', () => transport.send('exec', { sql, params: params ?? [] })),
-    tx: (name: string, args: unknown, transferList?: unknown[]) =>
-      withTransport('tx', () => transport.send('tx', { name, args }, transferList)),
+    tx: (name: string, args: unknown, transferList?: unknown[], beforeDispatch?: () => void) =>
+      withTransport('tx', () => transport.send('tx', { name, args }, transferList, beforeDispatch)),
     drizzle: createDrizzleProxy(() => transport) as BetterSQLite3Database<typeof schema>,
     get vecAvailable() {
       return (transport as DbTransport & { isVecAvailable?: boolean }).isVecAvailable ?? false;
@@ -130,8 +136,10 @@ export async function createInprocDbClient(opts: CreateDbClientOptions = {}): Pr
     queryOne: async <T = unknown>(sql: string, params: unknown[] = []) =>
       getRawDb().prepare(sql).get(...params) as T | undefined,
     exec: async (sql, params = []) => getRawDb().prepare(sql).run(...params),
-    tx: async (name: string, args: unknown) =>
-      runInprocTx(getRawDb(), { name, args }) as never,
+    tx: async (name: string, args: unknown, _transferList?: unknown[], beforeDispatch?: () => void) => {
+      beforeDispatch?.();
+      return runInprocTx(getRawDb(), { name, args }) as never;
+    },
     get drizzle() {
       return getDrizzle();
     },

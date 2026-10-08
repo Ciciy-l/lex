@@ -6,6 +6,7 @@ export async function commitBotProfileDeletion(input: {
   botId: string;
   sessionIds: string[];
   keepTaskHistory: boolean;
+  operationGuard?: () => void;
 }): Promise<{ sessionIds: string[]; status: 'archived' | 'deleted' }> {
   const client = getDbClient();
   const owner = activeOwnerScopeKey();
@@ -16,13 +17,15 @@ export async function commitBotProfileDeletion(input: {
       throw new Error('Account changed');
   };
   return withDefaultBotProvisioningLock(ownerRoot, assertOwner, async () => {
+    input.operationGuard?.();
     await markDefaultBotOffered(ownerRoot);
     assertOwner();
+    input.operationGuard?.();
     return client.tx('bots.deleteProfile', {
       botId: input.botId,
       sessionIds: [...new Set(input.sessionIds)],
       keepTaskHistory: input.keepTaskHistory,
       at: Date.now(),
-    });
+    }, undefined, input.operationGuard);
   });
 }

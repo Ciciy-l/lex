@@ -31,6 +31,8 @@ describe('mobile remote file attachments', () => {
     expect(categorizeMobileAttachment('report.docx')).toBe('office');
     expect(categorizeMobileAttachment('SessionScreen.tsx')).toBe('text');
     expect(categorizeMobileAttachment('Dockerfile')).toBe('text');
+    expect(categorizeMobileAttachment('clip.mp4')).toBe('file');
+    expect(categorizeMobileAttachment('voice.m4a')).toBe('file');
     expect(categorizeMobileAttachment('archive.zip')).toBeNull();
   });
 

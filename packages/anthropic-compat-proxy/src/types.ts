@@ -97,6 +97,11 @@ export interface RoutingDecision {
    * classifications and an HTTP status after the real upstream request starts.
    */
   forwardLifecycle?: ForwardLifecycleObserver;
+  /** Optional request-local body rewrite after the regular transform chain. */
+  transformRequestBody?: (
+    body: Buffer,
+    ctx: RequestTransformCtx,
+  ) => { body: Buffer; contentType?: string } | Promise<{ body: Buffer; contentType?: string }>;
 }
 
 /**

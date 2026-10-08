@@ -76,12 +76,13 @@ function makeProvisioner(
   installSubdir: string,
   binaryName: string,
   localVersionResolver: (binaryPath: string) => Promise<string | null>,
+  optionalAsset = true,
 ) {
   return createBinaryProvisioner({
     vendorKey: 'pi',
     manifestField: 'pi',
     installSubdir,
-    optionalAsset: true,
+    optionalAsset,
     artifact: { kind: 'gz', binaryName },
     localVersionResolver,
   });
@@ -245,5 +246,26 @@ describe('local runtime version arbitration', () => {
       binaryPath: exact,
     });
     expect(mocks.download).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not report an older verified install when the pinned asset download fails', async () => {
+    const installSubdir = uniqueInstallSubdir();
+    const oldBinary = await mountVerifiedBinary(installSubdir, '0.84.2', 'pi');
+    mocks.download.mockRejectedValueOnce(new Error('upstream unavailable'));
+
+    const provisioner = makeProvisioner(
+      installSubdir,
+      'pi',
+      async () => '0.84.2',
+      false,
+    );
+    const result = await provisioner.prepare();
+
+    expect(result).toEqual({ ready: false, binaryPath: '', error: 'unknown' });
+    expect(fs.existsSync(oldBinary)).toBe(true);
+    await expect(provisioner.getState()).resolves.toMatchObject({
+      status: 'failed',
+      availableVersion: '0.84.3',
+    });
   });
 });

@@ -1,3 +1,6 @@
+import { SHARED_TASK_RELAY_CAPABILITY } from '@cindy/device-link-protocol';
+import { encodeSharedTaskEnvelope, decodeSharedTaskEnvelope } from './sharedTaskEnvelope.js';
+import { isSharedTaskPeer } from './sharedTaskPeer.js';
 import { CongestionSendBudget } from './congestionSendBudget.js';
 import { PUSH_FORWARD_ALLOWLIST, REMOTE_INVOKE_ALLOWLIST } from './allowlist.js';
 import {
@@ -748,6 +751,7 @@ export class DeviceLinkClient {
   private staleLinkNotifiedAt = new Map<string, number>();
   private presenceHandlers = new Set<(snap: PresenceSnapshot) => void>();
   private frameHandlers = new Set<InboundFrameHandler>();
+  private peerStreamAcceptedHandlers = new Set<(peer: string, streamId: string) => void>();
   private issueHandlers = new Set<(issue: DeviceLinkConnectionIssue | null) => void>();
   private peerRouteStateHandlers = new Set<
     (change: DeviceLinkPeerRouteStateChanged) => void
@@ -998,6 +1002,12 @@ export class DeviceLinkClient {
 
   getStatus(): DeviceLinkStatus {
     return this.status;
+  }
+
+  /** Verified outbound handshake, before recovered business frames are delivered. */
+  onPeerStreamAccepted(cb: (peer: string, streamId: string) => void): () => void {
+    this.peerStreamAcceptedHandlers.add(cb);
+    return () => { this.peerStreamAcceptedHandlers.delete(cb); };
   }
 
   /** 目标设备是否已完成 link-open / link-accept，可安全进入 streaming tier。 */
@@ -2084,7 +2094,8 @@ export class DeviceLinkClient {
       this.log.warn('dropping invalid device-link frame');
       return;
     }
-    const env = parsed;
+    const env = decodeSharedTaskEnvelope(parsed, this.hasServerCapability(SHARED_TASK_RELAY_CAPABILITY));
+    if (!env) { this.log.warn('dropping invalid device-link routing scope'); return; }
     const validForHeartbeat = isValidInboundEnvelope(env);
     // 畸形 invoke / link-close 仍须进入 Desktop 业务层：前者生成结构化拒绝，后者
     // 走既有 fail-generic 的 peer teardown；但两者都不能因此喂活 heartbeat。
@@ -2277,6 +2288,8 @@ export class DeviceLinkClient {
         // 配对要 id + kind 双重命中:仅 id 撞而 kind 不符(如 invoke-result 撞到一个
         // 等 link-accept 的 pending)的帧不得错误 resolve —— 留它超时,本帧当未知帧交 host。
         const p = env.id ? this.pending.get(env.id) : undefined;
+        // A request ID alone cannot authorize a reply from another device or task scope.
+        if (p?.dst && env.src !== p.dst) return true;
         if (p && p.expectKind === env.kind) {
           if (env.kind === 'link-accept' && env.src) {
             const accepted = env.payload as LinkAcceptPayload | undefined;
@@ -2306,6 +2319,12 @@ export class DeviceLinkClient {
             // link),两个方向共享同一份 PeerTransportState——覆盖会让入站方向
             // 的重试耗尽误拆整条共享 relay(字段注释有完整语义)。
             if (peer.reliable) {
+              if (env.src === p.dst && peer.remoteStreamId) {
+                for (const cb of this.peerStreamAcceptedHandlers) {
+                  try { cb(env.src, peer.remoteStreamId); }
+                  catch (error) { this.log.error('peer stream accepted handler threw', error); }
+                }
+              }
               const resume = this.planReliableSendResume(peer);
               this.commitReliableReceiveReady(env.src, peer);
               this.commitReliableSendResume(env.src, peer, resume);
@@ -2333,6 +2352,8 @@ export class DeviceLinkClient {
           || payload.code === 'REMOTE_DISABLED'
         );
         const pending = env.id ? this.pending.get(env.id) : undefined;
+        if (pending && ((payload.dst !== undefined && payload.dst !== pending.dst)
+          || (isSharedTaskPeer(pending.dst) && env.sharedTask === undefined))) return true;
         const routeDeviceId = payload.dst ?? pending?.dst;
         const rememberedGeneration = env.id
           ? this.consumeOutboundRouteGeneration(env.id, routeDeviceId)
@@ -3077,7 +3098,8 @@ export class DeviceLinkClient {
   }
 
   private measureReliableFrames(frames: readonly Envelope[]): number {
-    return frames.reduce((sum, frame) => sum + byteLength(JSON.stringify(frame)), 0);
+    // Budget the physical wire envelope, not the local scoped connection handle.
+    return frames.reduce((sum, frame) => sum + byteLength(JSON.stringify(encodeSharedTaskEnvelope(frame, true))), 0);
   }
 
   /**
@@ -3105,7 +3127,7 @@ export class DeviceLinkClient {
   private sendEnvelope(env: Envelope): void {
     const ws = this.ws;
     if (!ws) throw new DeviceLinkError('NOT_CONNECTED', 'no active connection');
-    const text = JSON.stringify(env);
+    const text = JSON.stringify(encodeSharedTaskEnvelope(env, this.hasServerCapability(SHARED_TASK_RELAY_CAPABILITY)));
     // 按 UTF-8 字节数判定,与服务端 MAX_FRAME_BYTES(Buffer.byteLength)一致。
     // 用 text.length(UTF-16 码元)会与服务端不符:CJK 等多字节内容客户端自检通过、
     // 服务端却 PAYLOAD_TOO_LARGE 丢帧,invoke 只能等 30s 超时而非快速失败。

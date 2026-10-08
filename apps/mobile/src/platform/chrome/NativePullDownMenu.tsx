@@ -31,7 +31,9 @@ export function usesNativePullDownMenu(): boolean {
 function toMenuAction(
   action: NativePullDownAction,
   colors: ThemeColors,
+  inheritedDisabled = false,
 ): MenuAction {
+  const disabled = inheritedDisabled || action.disabled === true;
   return {
     id: action.id,
     title: action.title,
@@ -51,11 +53,11 @@ function toMenuAction(
     ...(action.preferredElementSize
       ? { preferredElementSize: action.preferredElementSize }
       : {}),
-    ...(action.destructive || action.disabled || action.keepPresented
+    ...(action.destructive || disabled || action.keepPresented
       ? {
           attributes: {
             ...(action.destructive ? { destructive: true } : {}),
-            ...(action.disabled ? { disabled: true } : {}),
+            ...(disabled ? { disabled: true } : {}),
             ...(action.keepPresented ? { keepsMenuPresented: true } : {}),
           },
         }
@@ -63,7 +65,7 @@ function toMenuAction(
     ...(action.subactions?.length
       ? {
           subactions: action.subactions.map((item) =>
-            toMenuAction(item, colors),
+            toMenuAction(item, colors, disabled),
           ),
         }
       : {}),
@@ -76,24 +78,29 @@ function toMenuAction(
  */
 export function NativePullDownMenu({
   actions,
+  accessibilityLabel,
   children,
+  disabled = false,
   longPress = false,
   onAction,
   testID,
 }: {
   actions: readonly NativePullDownAction[];
+  accessibilityLabel?: string;
   children: ReactNode;
+  disabled?: boolean;
   longPress?: boolean;
   onAction(id: string): void;
   testID?: string;
 }) {
+  void accessibilityLabel;
   const { colors } = useTheme();
   if (!usesNativePullDownMenu()) return children;
   return (
     <MenuView
-      actions={actions.map((action) => toMenuAction(action, colors))}
+      actions={actions.map((action) => toMenuAction(disabled ? { ...action, disabled: true } : action, colors))}
       onPressAction={({ nativeEvent }) => {
-        if (nativeEvent.event) onAction(nativeEvent.event);
+        if (!disabled && nativeEvent.event) onAction(nativeEvent.event);
       }}
       shouldOpenOnLongPress={longPress}
       testID={testID}

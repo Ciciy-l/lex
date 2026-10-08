@@ -82,6 +82,16 @@ vi.mock('../maker-host/index.js', () => ({
 vi.mock('../maker-ipc/register.js', () => ({
   withSendToSessionLock: h.withSendToSessionLock,
 }));
+// Batch status tests exercise the session/worktree orchestration only. The
+// production archive path closes SharedTask records after its terminal DB
+// transaction; keep that host boundary isolated here so this unit suite does
+// not boot the account-bound runtime or require a live DbClient snapshot.
+vi.mock('../device-link/sharedTaskRuntime.js', () => ({
+  closeSharedTaskForTask: vi.fn().mockResolvedValue(undefined),
+  prepareSharedTaskClosureForTask: vi.fn().mockResolvedValue(null),
+  rollbackPreparedSharedTaskClosure: vi.fn().mockResolvedValue(undefined),
+  finalizePreparedSharedTaskClosure: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock('../worktree/sessionRemovalRecycle.js', () => ({
   isSessionStillRemovable: h.isSessionStillRemovable,
   hasRegisteredWorktreeForSession: h.hasRegisteredWorktreeForSession,

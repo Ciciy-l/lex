@@ -1,5 +1,16 @@
 export interface DbTransport {
-  send<R = unknown>(op: string, args?: unknown, transferList?: unknown[]): Promise<R>;
+  /**
+   * The callback stays in the host process and runs immediately before an
+   * admitted RPC is posted to the worker. It is deliberately not part of the
+   * structured-clone request, so owner/controller leases cannot be bypassed by
+   * a request that waited in the transport queue.
+   */
+  send<R = unknown>(
+    op: string,
+    args?: unknown,
+    transferList?: unknown[],
+    beforeDispatch?: () => void,
+  ): Promise<R>;
 
   on(event: 'log', cb: (payload: LogEvent) => void): void;
   on(event: 'vec-status', cb: (payload: VecStatusEvent) => void): void;

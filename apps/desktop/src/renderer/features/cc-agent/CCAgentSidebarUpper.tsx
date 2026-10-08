@@ -48,7 +48,11 @@ import { projectDraftSessionTitle } from '@cindy/maker-shared/session-title';
 
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
-import { isDataOwnerPushCurrent } from '@/contexts/dataOwnerGeneration';
+import {
+  getDataOwnerGeneration,
+  isDataOwnerGenerationCurrent,
+  isDataOwnerPushCurrent,
+} from '@/contexts/dataOwnerGeneration';
 import { useCCSessions } from '@/hooks/useCCSessions';
 import { useRecentWorkdirs } from '@/hooks/useRecentWorkdirs';
 import { refreshPendingAlerts } from '@/hooks/usePendingAlertAttention';
@@ -67,6 +71,8 @@ import { useOwnTopNavScrollableRows, useSidebarCollapsedState } from '../feature
 import { SidebarTopNav } from '@/components/sidebar/SidebarTopNav';
 import { SidebarFilterPopover } from './sidebar/SidebarFilterPopover';
 import { MainListScopeHeader } from './sidebar/MainListScopeHeader';
+import { SharedTasksSection } from '@/features/device-link/SharedTasksSection';
+import { closeOwnedSharedTask } from '@/features/device-link/closeOwnedSharedTask';
 import { stripTrailingPathSeparators } from '../../../shared/pathText';
 import {
   SessionAttentionUrgencyProvider,
@@ -97,6 +103,7 @@ import { useAnyGhostUnread } from '@/cindy-brain/ghostUnreadStore';
 import { GhostPanelRestoreEntry } from '@/cindy-brain/GhostPanelRestoreEntry';
 import { GhostMainViewNavEntries } from '@/components/sidebar/GhostMainViewNavEntries';
 import {
+  BOT_GROUP_LANE_SESSION,
   botOwnedSessionNotificationTitle,
   findSessionNotificationSession,
   sendSessionEventNotification,
@@ -810,6 +817,10 @@ interface ConfirmState {
   action: 'delete' | 'archive';
   /** P1: 会话 worktree 有未提交更改 → 确认文案追加警告(打开前预检)。 */
   dirtyWorktree: boolean;
+  /** Shared-task owner actions must revoke sharing before the session mutation. */
+  sharedTaskId?: string;
+  sharedTaskHostDeviceId?: string;
+  sharedTaskOwner?: ReturnType<typeof getDataOwnerGeneration>;
 }
 
 const CONFIRM_INITIAL: ConfirmState = {
@@ -817,6 +828,9 @@ const CONFIRM_INITIAL: ConfirmState = {
   sessionId: '',
   action: 'delete',
   dirtyWorktree: false,
+  sharedTaskId: undefined,
+  sharedTaskHostDeviceId: undefined,
+  sharedTaskOwner: undefined,
 };
 
 function ExpandedView({
@@ -1080,6 +1094,8 @@ function ExpandedView({
         return;
       }
       void botOwnedSessionNotificationTitle(sessionId).then((botTitle) => {
+        // 伙伴群专线不发系统通知,确认请求在群聊里提示(docs/product-rules/bot-group-chat.md §3)。
+        if (botTitle === BOT_GROUP_LANE_SESSION) return;
         sendSessionEventNotification(sessionId, botTitle ?? unnamedLabelRef.current, kind);
       });
     },
@@ -2808,7 +2824,11 @@ function ExpandedView({
   });
 
   const handleActionClick = useCallback(
-    async (sessionId: string, action: 'delete' | 'archive' | 'archive-now' | 'unarchive') => {
+    async (
+      sessionId: string,
+      action: 'delete' | 'archive' | 'archive-now' | 'unarchive',
+      sharedTaskId?: string,
+    ) => {
       const session = sessionsByIdRef.current.get(sessionId);
       if (isRemoteSessionWriteBlocked(session)) {
         toast.warning(t('ccAgent.remoteSession.actionsUnavailable'));
@@ -2876,8 +2896,23 @@ function ExpandedView({
             sessionId,
             action: 'archive',
             dirtyWorktree: preflight === 'dirty',
+            sharedTaskId,
+            sharedTaskHostDeviceId: session?.deviceLinkDeviceId,
+            sharedTaskOwner: sharedTaskId ? getDataOwnerGeneration() : undefined,
           });
           return;
+        }
+        if (sharedTaskId) {
+          const owner = getDataOwnerGeneration();
+          const closed = await closeOwnedSharedTask(
+            sharedTaskId,
+            session?.deviceLinkDeviceId,
+            () => isDataOwnerGenerationCurrent(owner),
+          ).catch(() => false);
+          if (!closed) {
+            toast.error(t('sharedTask.closeFailedToast', { count: 1 }));
+            return;
+          }
         }
         // 重定向判定用 viewedSessionId:files 路由下归档「正在浏览的会话」也要
         // 跳离失效的文件视图(codex review;正常路由下两者恒等)。经 ref 读:它随
@@ -2895,6 +2930,17 @@ function ExpandedView({
           (await resolveWorktreeRemovalPreflight(sessionId, session?.deviceLinkDeviceId)) ===
           'dirty';
         setConfirm({ open: true, sessionId, action, dirtyWorktree });
+        if (sharedTaskId) {
+          setConfirm({
+            open: true,
+            sessionId,
+            action,
+            dirtyWorktree,
+            sharedTaskId,
+            sharedTaskHostDeviceId: session?.deviceLinkDeviceId,
+            sharedTaskOwner: getDataOwnerGeneration(),
+          });
+        }
         return;
       }
       await unarchiveSession(sessionId);
@@ -2903,12 +2949,35 @@ function ExpandedView({
   );
 
   const handleConfirm = useCallback(async () => {
-    const { sessionId, action } = confirm;
+    const {
+      sessionId,
+      action,
+      sharedTaskId,
+      sharedTaskHostDeviceId,
+      sharedTaskOwner,
+    } = confirm;
     const session = sessionsById.get(sessionId);
     if (isRemoteSessionWriteBlocked(session)) {
       toast.warning(t('ccAgent.remoteSession.actionsUnavailable'));
       setConfirm(CONFIRM_INITIAL);
       return;
+    }
+    if (sharedTaskId) {
+      if (!sharedTaskOwner || !isDataOwnerGenerationCurrent(sharedTaskOwner)) {
+        toast.error(t('sharedTask.closeFailedToast', { count: 1 }));
+        setConfirm(CONFIRM_INITIAL);
+        return;
+      }
+      const closed = await closeOwnedSharedTask(
+        sharedTaskId,
+        sharedTaskHostDeviceId,
+        () => isDataOwnerGenerationCurrent(sharedTaskOwner),
+      ).catch(() => false);
+      if (!closed) {
+        toast.error(t('sharedTask.closeFailedToast', { count: 1 }));
+        setConfirm(CONFIRM_INITIAL);
+        return;
+      }
     }
     // 重定向判定统一用 viewedSessionId(files 路由下 = 被浏览文件的会话,
     // 正常路由下与 activeSessionId 恒等):从面板删除/归档正在浏览的会话时
@@ -3507,6 +3576,22 @@ function ExpandedView({
           ) : null}
           {/* 搜索时原列表只隐藏、不卸载:置顶段折叠等本地 state 才能保住。 */}
           <div hidden={searchActive} className="flex flex-col gap-2">
+            <SharedTasksSection
+              activeSessionId={activeSessionId}
+              localSessions={sessions}
+              runningSessionIds={runningSessionIds}
+              attachedSessionIds={attachedSessionIds}
+              notifications={sidebarNotifications}
+              onSelect={(id) => {
+                clearNotification(id);
+                navigate('/cc-agent/' + encodeURIComponent(id));
+              }}
+              onAction={(sessionId, action, sharedTaskId) => void handleActionClick(sessionId, action, sharedTaskId)}
+              onRename={handleRename}
+              onTogglePin={handleTogglePin}
+              onMoveSession={handleMoveSession}
+              projectOptions={projectPickerOptions}
+            />
             {remoteSessionBootstrapFailures.length > 0 && !hasVisibleSidebarContent ? (
               <>
                 <MainListScopeHeader

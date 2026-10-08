@@ -60,6 +60,9 @@ function defaultDb(): LedgerDb {
  * 由 profileEdit 用 removeRefsExceptHash 清旧引用,恢复默认头像时 removeRefs 清空。
  * 'bot-avatar':伙伴自定义头像,refId = bot id。头像地址与这条引用由
  * bots.updateProfile 在同一数据库事务里切换,删除伙伴时只清它名下的引用。
+ * 'bot-group-attachment':伙伴群聊消息里的图片附件,refId = 群 id。发送时挂上,
+ * 删群时在 botGroups.delete 同一事务里清掉;各伙伴自己的 Session 另挂
+ * session-attachment,互不牵连(docs/product-rules/bot-group-chat.md §3.1)。
  */
 export type MediaRefKind =
   | 'message'
@@ -72,7 +75,8 @@ export type MediaRefKind =
   | 'import'
   | 'integration-cache'
   | 'profile-avatar'
-  | 'bot-avatar';
+  | 'bot-avatar'
+  | 'bot-group-attachment';
 /** 出生来源类型。 */
 export type MediaOriginKind = 'ghost' | 'tool' | 'user' | 'integration';
 
@@ -400,6 +404,20 @@ export async function ghostCanRead(
     .limit(1)
     .all();
   return row.length > 0;
+}
+
+/** Shared-task reads use existing session provenance; a blob hash grants no access. */
+export async function sessionCanRead(
+  hash: string,
+  sessionId: string,
+  db: LedgerDb = defaultDb(),
+): Promise<boolean> {
+  const rows = await db.select({ one: sql`1` }).from(mediaRefs).where(and(
+    eq(mediaRefs.hash, hash),
+    or(eq(mediaRefs.originSessionId, sessionId),
+      and(eq(mediaRefs.refKind, 'session-attachment'), eq(mediaRefs.refId, sessionId))),
+  )).limit(1).all();
+  return rows.length > 0;
 }
 
 /**

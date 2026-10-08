@@ -1292,7 +1292,8 @@ it('preserves OAuth-discovered prices for every engine when finishing model sele
     }),
   });
   renderWizard('openrouter');
-  fireEvent.click(await screen.findByRole('button', { name: 'settings.providers.button.authorize' }));
+  // Presets load asynchronously; Windows CI can spend over 1s rendering the catalog.
+  fireEvent.click(await screen.findByRole('button', { name: 'settings.providers.button.authorize' }, { timeout: 5_000 }));
   fireEvent.click(await screen.findByText('OAuth discovered model'));
   fireEvent.click(screen.getByRole('button', { name: 'settings.providers.wizard.finish' }));
   await waitFor(() => expect(updateCustomProvider).toHaveBeenCalledOnce());

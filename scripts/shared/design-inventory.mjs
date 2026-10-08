@@ -538,9 +538,9 @@ export function catalogSurfaces() {
     {
       id: 'desktop.bots',
       platform: 'desktop',
-      title: '伙伴（列表 / 对话 / 设置 / 历史 / 伙伴私聊）',
+      title: '伙伴（列表 / 对话 / 设置 / 历史 / 伙伴私聊 / 群聊）',
       productionEntry:
-        'hash `/bots`、`/bots/:botId`、`/bots/roster` 及伙伴当前/历史任务、伙伴私聊路由（BotsFeatureLayout）',
+        'hash `/bots`、`/bots/:botId`、`/bots/roster` 及伙伴当前/历史任务、伙伴私聊、伙伴群聊路由（BotsFeatureLayout）',
       reachableComponents: [
         'BotsHomeView',
         'BotRosterView',
@@ -548,6 +548,9 @@ export function catalogSurfaces() {
         'RemoteBotSessionView',
         'BotHistorySessionView',
         'BotDirectMessageView',
+        'BotGroupChatView',
+        'BotGroupSettingsDrawer',
+        'BotGroupCreateDialog',
         'BotSettingsDrawer',
         'BotBasicProfileFields',
         'BotModelChainEditor',
@@ -564,6 +567,7 @@ export function catalogSurfaces() {
         '/bots/:botId/history/:sessionId',
         '/bots/:botId/session/:sessionId',
         '/bots/roster',
+        '/bots/groups/:groupId',
         '/bots/remote/:deviceId/:botId',
       ],
       routeEntryComponents: {
@@ -573,6 +577,7 @@ export function catalogSurfaces() {
         '/bots/:botId/history/:sessionId': 'BotHistorySessionView',
         '/bots/:botId/session/:sessionId': 'BotSessionView',
         '/bots/roster': 'BotRosterView',
+        '/bots/groups/:groupId': 'BotGroupChatView',
         '/bots/remote/:deviceId/:botId': 'RemoteBotSessionView',
       },
     },
@@ -1383,11 +1388,13 @@ export function mobileCatalogSurfaces() {
     ['remote-desktop', '远程桌面', ['devices/desktop/[deviceId].tsx']],
     ['resources', '远程资源列表与详情', ['resources/[collectionId].tsx', 'resources/[collectionId]/[resourceId].tsx']],
     ['companions.direct', '伙伴私聊回看', ['companions/direct/[threadId].tsx']],
+    ['companions.groups', '伙伴群聊与分工', ['companions/groups/[groupId].tsx']],
     ['chat.session', '任务内容与输入', ['sessions/[sessionId].tsx']],
     ['chat.new', '新建任务', ['sessions/new.tsx']],
     ['files', '任务文件与预览', ['files/[sessionId].tsx', 'files/preview/[sessionId].tsx']],
     ['automations', '自动化', ['automations/[deviceId].tsx']],
     ['settings', '设置（含调试与日志上传可见入口）', ['settings.tsx']],
+    ['shared-task', '共享任务管理与邀请', ['shared-session.tsx']],
     ['auth', '登录与添加账号', ['(auth)/login.tsx', 'add-account.tsx']],
     ['account-deletion', '账号注销', ['account-deletion.tsx']],
   ];

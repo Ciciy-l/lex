@@ -33,7 +33,9 @@ import { getSensitiveMediaBlocklist, isPathAllowedAgainst } from '../filePathPol
 import { materializeSshRemoteMedia } from '../file-browser/ssh-media.js';
 import { getSessionFsSnapshot } from '../localDb/ipc/sessions.js';
 import { uploadLocalFile } from './mediaTransfer.js';
+import { sharedTaskMediaId } from './sharedTaskMediaContext.js';
 import { createLogger } from '../logger.js';
+import type { SharedTaskMediaCaptureContext } from './sharedTaskMediaAccess.js';
 
 const log = createLogger('device-link:mediaFetch');
 
@@ -211,7 +213,10 @@ function isInsideRealDir(realChild: string, realBase: string): boolean {
  * xdt-file/audio URL 上的 SSH 取件上下文。URL 只作声明，真正的 host/workdir
  * 必须按 sessionId 从本地会话库反查，并与 URL 声明逐项一致后才可使用。
  */
-async function parseSshMediaOrigin(url: string): Promise<{ remoteHostId: string; workdir: string } | null> {
+async function parseSshMediaOrigin(
+  url: string,
+  capturedMedia?: SharedTaskMediaCaptureContext,
+): Promise<{ remoteHostId: string; workdir: string } | null> {
   const params = new URL(url).searchParams;
   const hasSessionId = params.has('sessionId');
   const hasRemoteHostId = params.has('remoteHostId');
@@ -226,6 +231,12 @@ async function parseSshMediaOrigin(url: string): Promise<{ remoteHostId: string;
     throw new Error('SSH 媒体参数不完整：sessionId、remoteHostId 和 workdir 必须同时提供');
   }
 
+  if (capturedMedia?.sshOrigin) {
+    if (capturedMedia.sshOrigin.remoteHostId !== remoteHostId || capturedMedia.sshOrigin.workdir !== workdir) {
+      throw new Error('SSH 媒体上下文与共享任务授权不一致');
+    }
+    return capturedMedia.sshOrigin;
+  }
   const snapshot = await getSessionFsSnapshot(sessionId);
   if (!snapshot) throw new Error('SSH 媒体会话不存在');
   const trustedRemoteHostId = snapshot.remoteHostId ?? '';
@@ -289,15 +300,34 @@ function rememberUpload(url: string, entry: UploadCacheEntry): void {
  *   invoke 帧 inline 返回(不经 OSS);不可缩(gif/svg/解码失败/超限)自动退回原图路径。
  *   老被控端不识别该字段,自然回落原图 ossKey,控制端两种回包都要兼容。
  */
-export async function fetchLocalMediaToOss(arg: unknown): Promise<MediaFetchResult> {
+export async function fetchLocalMediaToOss(
+  arg: unknown,
+  assertAuthorized?: () => void | SharedTaskMediaCaptureContext | Promise<void | SharedTaskMediaCaptureContext>,
+): Promise<MediaFetchResult> {
   const record = arg && typeof arg === 'object'
     ? arg as { url?: unknown; skipCache?: unknown; thumbnail?: unknown }
     : {};
   const url = record.url;
   if (typeof url !== 'string' || !url) throw new Error('media:fetch 缺少 url');
+  // Keep shared-task checks inside this function: SSH materialization,
+  // thumbnail rendering, and upload all cross await boundaries. The first
+  // callback result is the captured DB/owner/filesystem context; subsequent
+  // callbacks must return the same capture rather than re-reading globals.
+  let capturedMedia: SharedTaskMediaCaptureContext | undefined;
+  const recheckAuthorization = async (): Promise<void> => {
+    const next = await assertAuthorized?.();
+    if (!next || typeof next !== 'object' || !('db' in next)) return;
+    const context = next as SharedTaskMediaCaptureContext;
+    if (capturedMedia && (capturedMedia.db !== context.db ||
+        capturedMedia.userId !== context.userId || capturedMedia.clientEpoch !== context.clientEpoch)) {
+      throw new Error('[PERMISSION_DENIED] Shared task media profile changed');
+    }
+    capturedMedia = context;
+  };
+  await recheckAuthorization();
   const skipCache = record.skipCache === true;
   const isPathMedia = url.startsWith('xdt-file://') || url.startsWith('xdt-audio://');
-  const sshOrigin = isPathMedia ? await parseSshMediaOrigin(url) : null;
+  const sshOrigin = capturedMedia?.sshOrigin ?? (isPathMedia ? await parseSshMediaOrigin(url, capturedMedia) : null);
   const constraints: PathMediaConstraints = isPathMedia
     ? parsePathMediaConstraints(url)
     : { baseDir: null, maxBytes: null };
@@ -306,13 +336,15 @@ export async function fetchLocalMediaToOss(arg: unknown): Promise<MediaFetchResu
   if (sshOrigin) {
     // SSH 分支的两道约束必须在 materialize **内部**生效:它 stat 完就会把整份文件分片拉进
     // Desktop 磁盘缓存,拉完再判等于流量已经花掉。
-    const sshLimits = constraints.baseDir !== null || constraints.maxBytes !== null
+    const sshLimits = constraints.baseDir !== null || constraints.maxBytes !== null || !!assertAuthorized
       ? {
         ...(constraints.baseDir ? { baseDir: constraints.baseDir } : {}),
         ...(constraints.maxBytes !== null ? { maxBytes: constraints.maxBytes } : {}),
+        ...(assertAuthorized ? { assertAuthorized: recheckAuthorization } : {}),
       }
       : undefined;
     const materialized = await materializeSshRemoteMedia(sshOrigin, url, undefined, sshLimits);
+    await recheckAuthorization();
     if (!materialized.ok) {
       throw new Error(`SSH 媒体取回失败（${materialized.status}）：${materialized.message}`);
     }
@@ -320,6 +352,8 @@ export async function fetchLocalMediaToOss(arg: unknown): Promise<MediaFetchResu
     mimeType = materialized.mime;
   } else {
     ({ absPath, mimeType } = resolveLocalMedia(url));
+    if (capturedMedia?.localPath && isPathMedia) absPath = capturedMedia.localPath;
+    await recheckAuthorization();
   }
   // For file/audio schemes the requested URL path carries the semantic
   // extension; if it resolves through a symlink whose target has a different
@@ -345,6 +379,12 @@ export async function fetchLocalMediaToOss(arg: unknown): Promise<MediaFetchResu
     } catch {
       throw new Error('媒体文件不存在或不可读');
     }
+    // A shared-task capture carries the canonical path proven by the DB
+    // authorization. Re-resolve the exact captured path and reject any
+    // symlink/junction retargeting before the uploader opens it.
+    if (capturedMedia?.localPath && real !== capturedMedia.localPath) {
+      throw new Error('共享任务媒体文件身份已变化');
+    }
     // realpath 再查:挡字面形式看似无害的 symlink 逃逸。
     if (!isPathAllowedAgainst(real, getSensitiveMediaBlocklist())) {
       log.warn(`media:fetch blocked sensitive realpath ${url.slice(0, 60)}`);
@@ -355,7 +395,7 @@ export async function fetchLocalMediaToOss(arg: unknown): Promise<MediaFetchResu
     if (constraints.baseDir) {
       let realBase: string;
       try {
-        realBase = await realpath(constraints.baseDir);
+        realBase = capturedMedia?.localRoot ?? await realpath(constraints.baseDir);
       } catch {
         // 基目录都解析不了就别猜(fail-closed):宁可这一个资源取不到、渲染成破图。
         throw new Error('资源基目录不存在或不可读');
@@ -374,6 +414,7 @@ export async function fetchLocalMediaToOss(arg: unknown): Promise<MediaFetchResu
   // 远端 stat 判过,这里只管本机分支(realpath 后 stat,与后续上传读的是同一个 inode)。
   if (constraints.maxBytes !== null && !sshOrigin) {
     const sizeStat = await stat(absPath);
+    await recheckAuthorization();
     if (sizeStat.size > constraints.maxBytes) {
       log.warn(`media:fetch rejected oversize ${sizeStat.size}B > ${constraints.maxBytes}B ${url.slice(0, 60)}`);
       throw new Error(`资源超出取件大小上限(${sizeStat.size} > ${constraints.maxBytes} 字节)`);
@@ -388,6 +429,7 @@ export async function fetchLocalMediaToOss(arg: unknown): Promise<MediaFetchResu
       const inputStat = await stat(absPath);
       if (inputStat.size > 0 && inputStat.size <= THUMB_INPUT_MAX_BYTES) {
         const thumb = await withRenderTimeout(thumbnailRenderer(absPath), THUMB_RENDER_TIMEOUT_MS);
+        await recheckAuthorization();
         if (thumb && thumb.byteLength > 0 && thumb.byteLength <= THUMB_INLINE_MAX_BYTES) {
           log.debug(`media:fetch thumb ${url.slice(0, 40)} → inline ${thumb.byteLength}B`);
           return {
@@ -409,11 +451,13 @@ export async function fetchLocalMediaToOss(arg: unknown): Promise<MediaFetchResu
 
   // cindy-media 地址=内容指纹,永不变更,是最理想的上传去重键。
   const cacheable = url.startsWith('xdt-image://') || url.startsWith('cindy-media://');
+  const cacheKey = sharedTaskMediaId() ? JSON.stringify([sharedTaskMediaId(), url]) : url;
   let st: { size: number; mtimeMs: number } | null = null;
   if (cacheable) {
     st = await stat(absPath);
+    await recheckAuthorization();
     if (!skipCache) {
-      const hit = lookupUploadCache(url, st.size, st.mtimeMs, Date.now());
+      const hit = lookupUploadCache(cacheKey, st.size, st.mtimeMs, Date.now());
       if (hit) {
         log.debug(`media:fetch cache hit ${url.slice(0, 40)} → ossKey=${hit.ossKey}`);
         return { ossKey: hit.ossKey, mimeType: hit.mimeType, size: hit.size };
@@ -421,12 +465,17 @@ export async function fetchLocalMediaToOss(arg: unknown): Promise<MediaFetchResu
     }
   }
 
-  const uploaded = await uploadLocalFile(absPath, {
+  const uploadOptions = {
     ...(mimeType ? { contentType: mimeType } : {}),
     ...(uploadExtHint ? { extHint: uploadExtHint } : {}),
-  });
+    ...(assertAuthorized ? { assertAuthorized: recheckAuthorization } : {}),
+  };
+  const uploaded = await uploadLocalFile(absPath, uploadOptions);
+  // Do not return a relay credential after membership was revoked while the
+  // upload was in flight. The bounded relay expiry/recycler owns that object.
+  await recheckAuthorization();
   if (cacheable && st) {
-    rememberUpload(url, {
+    rememberUpload(cacheKey, {
       ossKey: uploaded.key,
       mimeType: uploaded.contentType,
       size: uploaded.size,

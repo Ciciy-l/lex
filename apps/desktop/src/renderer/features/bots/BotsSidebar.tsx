@@ -28,7 +28,11 @@ import {
 import { useAgentIslandActivityMap } from '@/state/agentIslandActivity';
 import { useSessionRunningStatus } from '@/hooks/useSessionRunningStatus';
 import { useActiveMainView } from '@/hooks/useActiveMainView';
-import { sendSessionEventNotification } from '@/lib/sessionEventNotification';
+import {
+  BOT_GROUP_LANE_SESSION,
+  botOwnedSessionNotificationTitle,
+  sendSessionEventNotification,
+} from '@/lib/sessionEventNotification';
 import { useSidebarCollapsedState, useRegisterSidebarUpper } from '../feature-context';
 import { SidebarIconButton } from '@/components/sidebar/SidebarIconButton';
 import { useRemoteBots } from './useRemoteBots';
@@ -37,6 +41,8 @@ import { BotConnectionStatus } from './BotConnectionStatus';
 import { BotAvatar } from './BotAvatar';
 import { BotCreateMenu } from './BotCreateMenu';
 import { BotDeleteDialog } from './BotDeleteDialog';
+import { BotGroupSidebarSection } from './BotGroupSidebarSection';
+import { isBotGroupLaneSession, withoutBotGroupLanes } from './botGroupLane';
 import {
   botListSubtitle,
   botListTimestampAt,
@@ -73,7 +79,7 @@ function BotsSidebarContent() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const { botId, sessionId, deviceId } = useParams();
+  const { botId, sessionId, deviceId, groupId } = useParams();
   const remoteBots = useRemoteBots();
   const bots = useBotProfiles();
   const unreadByBotId = useBotUnreadCounts();
@@ -122,20 +128,24 @@ function BotsSidebarContent() {
     // 委派干活发生在子任务,不在主任务。只看 canonical 的话,目标伙伴侧栏会一直是
     // 静默的,发起方却在等 —— 这正是「目标侧执行过程黑洞」在列表上的样子。
     const canonicalSessionId = canonicalBotSessionId(bot);
-    if (canonicalSessionId && islandActivity.get(canonicalSessionId)?.phase === 'running') {
-      return true;
-    }
-    return bot.sessions.some((session) => islandActivity.get(session.id)?.phase === 'running');
+    const canonicalActivity = canonicalSessionId ? islandActivity.get(canonicalSessionId) : undefined;
+    if (canonicalActivity?.phase === 'running') return true;
+    // 群专线在群聊行上显示运行中,不让这位伙伴自己的行也跟着「正在输入…」。
+    return withoutBotGroupLanes(bot.sessions).some((session) => islandActivity.get(session.id)?.phase === 'running');
   };
   const roster = partitionBotRoster(rosterBots, { query, showHidden });
   const showSearch = rosterBots.length + remoteBots.length >= 8 || query.trim().length > 0;
 
-  const sessionOwners = useMemo(() => {
-    const next = new Map<string, { bot: BotProfile; title: string }>();
+  const { sessionOwners, groupLaneSessionIds } = useMemo(() => {
+    const owners = new Map<string, { bot: BotProfile; title: string }>();
+    const lanes = new Set<string>();
     for (const bot of bots) {
-      for (const session of bot.sessions) next.set(session.id, { bot, title: session.title });
+      for (const session of bot.sessions) {
+        if (isBotGroupLaneSession(session)) lanes.add(session.id);
+        else owners.set(session.id, { bot, title: session.title });
+      }
     }
-    return next;
+    return { sessionOwners: owners, groupLaneSessionIds: lanes };
   }, [bots]);
   const activeBotSessionId = useMemo(() => {
     if (sessionId) return sessionId;
@@ -144,6 +154,8 @@ function BotsSidebarContent() {
   }, [botId, bots, sessionId]);
   const fireSessionNotification = useCallback(
     (targetSessionId: string, kind: 'done' | 'error' | 'needs-reply') => {
+      // 群专线不进系统通知(docs/product-rules/bot-group-chat.md §3);需要确认的操作在群里提示。
+      if (groupLaneSessionIds.has(targetSessionId)) return;
       const owner = sessionOwners.get(targetSessionId);
       if (owner) {
         const title =
@@ -158,8 +170,15 @@ function BotsSidebarContent() {
       // Resolve their real title lazily instead of exposing an internal id.
       void sessionService
         .get(targetSessionId)
-        .then((session) => {
+        .then(async (session) => {
           if (isOrcaWorkerSession(session)) return;
+          // 伙伴画像可能还没投影到刚建好的群专线,用库里的最新归属再判一次。
+          if (
+            session.source === 'bot' &&
+            (await botOwnedSessionNotificationTitle(targetSessionId)) === BOT_GROUP_LANE_SESSION
+          ) {
+            return;
+          }
           sendSessionEventNotification(
             targetSessionId,
             projectDraftSessionTitle(session.title, t('ccAgent.common.unnamedSession')),
@@ -174,7 +193,7 @@ function BotsSidebarContent() {
           );
         });
     },
-    [sessionOwners, t],
+    [groupLaneSessionIds, sessionOwners, t],
   );
   const handleSessionDone = useCallback(
     (targetSessionId: string) => fireSessionNotification(targetSessionId, 'done'),
@@ -210,7 +229,7 @@ function BotsSidebarContent() {
   useEffect(() => {
     const botSessionIds = new Set<string>();
     for (const bot of bots) {
-      for (const session of bot.sessions) botSessionIds.add(session.id);
+      for (const session of withoutBotGroupLanes(bot.sessions)) botSessionIds.add(session.id);
     }
     if (botSessionIds.size === 0) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -636,6 +655,15 @@ function BotsSidebarContent() {
             ) : null}
           </div>
         )}
+        {rosterBots.length > 0 ? (
+          <BotGroupSidebarSection
+            bots={bots}
+            islandActivity={islandActivity}
+            now={now}
+            selectedGroupId={groupId}
+            onOpenGroup={(id) => navigate(`/bots/groups/${encodeURIComponent(id)}`)}
+          />
+        ) : null}
       </div>
       <BotDeleteDialog
         bot={deleteTarget}

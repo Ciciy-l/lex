@@ -3,6 +3,13 @@
  * presign-get 下载 → 写临时文件 → block.path 变本地路径 → 用后删 OSS。失败丢该附件。
  */
 import assert from 'node:assert/strict';
+const getInvokeContext = vi.hoisted(() => vi.fn(() => null as unknown));
+const currentSnapshot = vi.hoisted(() => vi.fn());
+const compensation = vi.hoisted(() => ({ assertStillValid: vi.fn() }));
+vi.mock('../device-link/invoke-context.js', () => ({ getDeviceLinkInvokeContext: getInvokeContext }));
+vi.mock('../localDb/client/current.js', () => ({ getCurrentDbClientSnapshot: currentSnapshot }));
+vi.mock('../cindy-media/refCompensationJournal.js', () => ({ captureMediaRefCompensationScope: () => compensation }));
+
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -594,5 +601,35 @@ describe('materializeDirectSendOssAttachments — message + persistUserMessage �
       (out.message as { content: Array<{ path: string }> }).content[0].path,
       '/cache/sess-1/cached-setup.bin',
     );
+  });
+});
+
+
+describe('SharedTask attachment materialization boundaries', () => {
+  it('rejects revoked uploads after download before creating a media ref; preserves retry source', async () => {
+    const snapshot = { client: { drizzle: {} }, userId: 'owner', clientEpoch: 1 };
+    currentSnapshot.mockReturnValue(snapshot);
+    let current = true;
+    getInvokeContext.mockReturnValue({ sharedTask: { author: { sessionId: 'task' }, isCurrent: () => current, authorize: () => true } });
+    downloadToFile.mockImplementationOnce(async () => { current = false; });
+    ingestMedia.mockClear(); removeRemote.mockClear();
+    const ref = buildAttachmentOssRef({ ossKey: 'cindy/device-link/shared-task/shared/guest/file', mimeType: 'image/png', size: 1, sha256: ATTACHMENT_SHA256 });
+    try {
+      await expect(materializeQueuedOssAttachments('task', { files: [{ url: ref }] })).rejects.toThrow('scope changed');
+      expect(ingestMedia).not.toHaveBeenCalled();
+      expect(removeRemote).not.toHaveBeenCalled();
+    } finally { getInvokeContext.mockReturnValue(null); }
+  });
+  it('never ingests a completed old download into a replacement profile', async () => {
+    const old = { client: { drizzle: {} }, userId: 'owner-a', clientEpoch: 1 };
+    currentSnapshot.mockReturnValue(old);
+    getInvokeContext.mockReturnValue({ sharedTask: { author: { sessionId: 'task' }, isCurrent: () => true, authorize: () => true } });
+    downloadToFile.mockImplementationOnce(async () => { currentSnapshot.mockReturnValue({ client: { drizzle: {} }, userId: 'owner-b', clientEpoch: 2 }); });
+    ingestMedia.mockClear();
+    const ref = buildAttachmentOssRef({ ossKey: 'cindy/device-link/shared-task/shared/guest/file', mimeType: 'image/png', size: 1, sha256: ATTACHMENT_SHA256 });
+    try {
+      await expect(materializeQueuedOssAttachments('task', { files: [{ url: ref }] })).rejects.toThrow('scope changed');
+      expect(ingestMedia).not.toHaveBeenCalled();
+    } finally { getInvokeContext.mockReturnValue(null); }
   });
 });

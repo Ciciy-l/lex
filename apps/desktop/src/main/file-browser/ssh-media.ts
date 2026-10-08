@@ -81,6 +81,7 @@ export function makeSshChunkExecutor(
   hostId: string,
   workdir: string,
   relPath: string,
+  beforeRequest?: () => void | Promise<void>,
 ): FetchExecutor {
   return async (destPath, progress, signal) => {
     const handle = await fsPromises.open(destPath, 'w');
@@ -88,11 +89,13 @@ export function makeSshChunkExecutor(
       let offset = 0;
       for (;;) {
         if (signal?.aborted) throw new Error('FILE_PEER_CANCELLED');
+        await beforeRequest?.();
         const chunk = await request<{ dataBase64: string; eof: boolean; size: number; mtimeMs: number }>(
           hostId,
           'readFileChunk',
           { workdir, relPath, offset, length: CHUNK_LENGTH },
         );
+        await beforeRequest?.();
         if (signal?.aborted) throw new Error('FILE_PEER_CANCELLED');
         const buf = Buffer.from(chunk.dataBase64, 'base64');
         if (buf.length > 0) {
@@ -227,7 +230,7 @@ export async function materializeSshRemoteMedia(
    * file-service 现在没有暴露 realpath;这条限制与既有 SSH 媒体边界(toWorkdirRelPosix
    * 也是词法的、侧边栏文件浏览器共用)同级,不是本次新引入的缺口。
    */
-  limits?: { baseDir?: string; maxBytes?: number },
+  limits?: { baseDir?: string; maxBytes?: number; assertAuthorized?: () => void | Promise<void> },
 ): Promise<MaterializedSshRemoteMedia> {
   const abs = extractMediaPathQuery(origUrl);
   if (!abs) return { ok: false, status: 400, message: '媒体 URL 缺少路径语义' };
@@ -259,6 +262,7 @@ export async function materializeSshRemoteMedia(
   if (!mime) return { ok: false, status: 415, message: '该扩展名不是允许的媒体类型' };
 
   try {
+    await limits?.assertAuthorized?.();
     const stat = await deps.request<{ type: 'file' | 'directory'; size: number; mtimeMs: number }>(
       origin.remoteHostId,
       'stat',
@@ -283,7 +287,7 @@ export async function materializeSshRemoteMedia(
         size: stat.size,
         mtimeMs: stat.mtimeMs,
       },
-      makeSshChunkExecutor(deps.request, origin.remoteHostId, origin.workdir, relPath),
+      makeSshChunkExecutor(deps.request, origin.remoteHostId, origin.workdir, relPath, limits?.assertAuthorized),
       noopProgress,
     );
     return { ok: true, cachePath, size: stat.size, mime, relPath };

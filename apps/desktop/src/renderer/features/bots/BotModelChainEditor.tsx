@@ -37,6 +37,7 @@ export function BotModelChainEditor({
   disabled = false,
   hiddenVendors = [],
   remote = false,
+  deviceId,
   label,
   onRestoreDefault,
   onNavigateToProviders,
@@ -46,6 +47,8 @@ export function BotModelChainEditor({
   disabled?: boolean;
   hiddenVendors?: MakerVendor[];
   remote?: boolean;
+  /** Remote settings must resolve candidates from the selected host. */
+  deviceId?: string;
   label?: string;
   onRestoreDefault?: () => void;
   onNavigateToProviders?: () => void;
@@ -99,7 +102,9 @@ export function BotModelChainEditor({
     );
     const vendor = unused ?? visibleVendors[0];
     if (!vendor) return;
-    const route = defaultRoute(vendor);
+    const route = remote
+      ? { harness: harnessFor(vendor), model: '', providerId: null, effort: '', fastMode: false }
+      : defaultRoute(vendor);
     if (route.model) onChange([...routes, route]);
     else setPendingRoute(route);
   };
@@ -112,6 +117,7 @@ export function BotModelChainEditor({
         modelId={route.model}
         effort={route.effort}
         currentProviderId={route.providerId}
+        deviceId={remote ? deviceId : undefined}
         triggerVariant="toolbar"
         popoverSide="bottom"
         ariaContext={t('bots.modelChain.routeLabel', { index: index + 1 })}

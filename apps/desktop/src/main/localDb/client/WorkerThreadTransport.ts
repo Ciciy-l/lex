@@ -15,8 +15,10 @@ import {
 } from './DbTransport.js';
 import { isBackgroundDbRpc } from './rpcAdmission.js';
 import { TASK_DATABASE_FILE_PREFIXES } from '../worker/worktreeReferences.js';
+import { CLOSE_SHARED_TASKS_FOR_SESSION_SQL } from '../sharedTaskClosureSql.js';
 
 const WORKER_CODE = `
+const CLOSE_SHARED_TASKS_FOR_SESSION_SQL = ${JSON.stringify(CLOSE_SHARED_TASKS_FOR_SESSION_SQL)};
 // 旧版 inline worker fallback。默认运行时走 .vite/build/dbWorker.js；
 // 这段只作为打包路径回滚口保留，后续验证 macOS / Windows packaged 后删除。
 const { parentPort, workerData } = require('node:worker_threads');
@@ -458,6 +460,8 @@ function dispatchTx(readyDb, payload) {
       return sessionsRenameTitles(readyDb, request.args);
     case 'sessions.setStatus':
       return sessionsSetStatus(readyDb, request.args);
+    case 'sessions.setTerminalStatus':
+      return sessionsSetTerminalStatus(readyDb, request.args);
     case 'recentWorkdirs.mergeWindowsIdentity':
       return recentWorkdirsMergeWindowsIdentity(readyDb, request.args);
     case 'recentWorkdirs.removeWindowsIdentity':
@@ -1080,6 +1084,7 @@ function sessionsSetStatus(readyDb, args) {
     expectString(id, 'sessionId'),
   );
   const status = expectString(payload.status, 'status');
+  const closeSharedTasks = payload.closeSharedTasks === true;
   if (status !== 'active' && status !== 'archived') {
     throw Object.assign(new Error('invalid status: ' + status), { code: 'INVALID_ARGS' });
   }
@@ -1107,6 +1112,9 @@ function sessionsSetStatus(readyDb, args) {
       }
       const updated = updateSession.get(status, now, sessionId);
       if (!updated) throw Object.assign(new Error('Session 不存在: ' + sessionId), { code: 'NOT_FOUND' });
+      if (closeSharedTasks && status === 'archived') {
+        readyDb.prepare(CLOSE_SHARED_TASKS_FOR_SESSION_SQL).run(now, sessionId);
+      }
       applied.push({
         sessionId: updated.id,
         title: updated.title,
@@ -1118,6 +1126,37 @@ function sessionsSetStatus(readyDb, args) {
       });
     }
     return applied;
+  })();
+}
+
+// Keep this in sync with worker/opHandlers/tx.ts. The closure journal and the
+// terminal status are one SQLite transaction, so a worker outcome is either
+// fully durable or fully rolled back.
+function sessionsSetTerminalStatus(readyDb, args) {
+  const payload = asRecord(args, 'sessions.setTerminalStatus args');
+  const sessionId = expectString(payload.sessionId, 'sessionId');
+  const status = expectString(payload.status, 'status');
+  if (status !== 'archived' && status !== 'deleted') {
+    throw Object.assign(new Error('invalid terminal status: ' + status), { code: 'INVALID_ARGS' });
+  }
+  return readyDb.transaction(() => {
+    const existing = readyDb.prepare(
+      'SELECT id, status, source FROM sessions WHERE id = ? LIMIT 1',
+    ).get(sessionId);
+    if (!existing) throw Object.assign(new Error('Session not found: ' + sessionId), { code: 'NOT_FOUND' });
+    if (existing.status === 'deleted') {
+      throw Object.assign(new Error('Deleted session cannot change status: ' + sessionId), { code: 'PRECONDITION_FAILED' });
+    }
+    if (existing.source === 'bot') {
+      throw Object.assign(new Error('Bot sessions must use Bot lifecycle: ' + sessionId), { code: 'PRECONDITION_FAILED' });
+    }
+    const now = Date.now();
+    readyDb.prepare(CLOSE_SHARED_TASKS_FOR_SESSION_SQL).run(now, sessionId);
+    const updated = readyDb.prepare(
+      'UPDATE sessions SET status = ?, updated_at = ? WHERE id = ? RETURNING id, title, working_dir AS workingDir, workspace_kind AS workspaceKind, remote_host_id AS remoteHostId, source',
+    ).get(status, now, sessionId);
+    if (!updated) throw Object.assign(new Error('Session not found: ' + sessionId), { code: 'NOT_FOUND' });
+    return { ...updated, sessionId: updated.id, status };
   })();
 }
 
@@ -1253,6 +1292,7 @@ function sessionImportShare(readyDb, args) {
     const replacementUpdatedAt = expectNumber(session.updatedAt, 'session.updatedAt');
     for (const replacedSession of replaceSessions) {
       deleteReplacedSession.run(replacementUpdatedAt, replacedSession.id);
+      readyDb.prepare(CLOSE_SHARED_TASKS_FOR_SESSION_SQL).run(replacementUpdatedAt, replacedSession.id);
     }
     let count = insertSessionWithMessages(session, messages);
     if (orca) {
@@ -1632,8 +1672,13 @@ function rewindCommit(readyDb, args) {
   const targetMessageUuid = typeof payload.targetMessageUuid === 'string' ? payload.targetMessageUuid : null;
   const preserveMessageUuid = typeof payload.preserveMessageUuid === 'string' ? payload.preserveMessageUuid : null;
   const sdkSessionId = typeof payload.sdkSessionId === 'string' && payload.sdkSessionId ? payload.sdkSessionId : null;
+  const nativeForkAnchorSessionMap = normalizeNativeForkAnchorSessionMap(payload.nativeForkAnchorSessionMap);
   const requireLatestUser = payload.requireLatestUser === true;
   const now = expectNumber(payload.now, 'now');
+  const expectedClearedAt =
+    payload.expectedClearedAt === undefined || payload.expectedClearedAt === null
+      ? null
+      : expectNumber(payload.expectedClearedAt, 'expectedClearedAt');
   const rows = readyDb.prepare(
     'SELECT id, client_id, role, created_at, agent_meta, tool_use_id FROM messages WHERE session_id = ? AND rewind_at IS NULL',
   ).all(sessionId);
@@ -1669,7 +1714,33 @@ function rewindCommit(readyDb, args) {
     ? readyDb.prepare('UPDATE subagent_runs SET rewind_at = ? WHERE session_id = ? AND rewind_at IS NULL AND parent_tool_use_id IS NULL AND started_at >= ?')
     : null;
   readyDb.transaction(() => {
+    const session = readyDb.prepare('SELECT cleared_at FROM sessions WHERE id = ?').get(sessionId);
+    if (!session) {
+      throw Object.assign(new Error('Session missing: ' + sessionId), { code: 'NOT_FOUND' });
+    }
+    const currentClearedAt = session.cleared_at ?? null;
+    if ((currentClearedAt ?? -1) !== (expectedClearedAt ?? -1)) {
+      throw Object.assign(
+        new Error('CLEAR_GENERATION_CHANGED: clear-boundary changed for ' + sessionId),
+        { code: 'PRECONDITION_FAILED' },
+      );
+    }
+    if (currentClearedAt !== null && targetCreatedAt <= currentClearedAt) {
+      throw Object.assign(
+        new Error('CLEAR_GENERATION_CHANGED: target is at or before /clear for ' + sessionId),
+        { code: 'PRECONDITION_FAILED' },
+      );
+    }
     for (const id of idsToRewind) updateMessage.run(now, id);
+    if (nativeForkAnchorSessionMap.size > 0) {
+      const updateAgentMeta = readyDb.prepare('UPDATE messages SET agent_meta = ? WHERE id = ?');
+      const rewoundIds = new Set(idsToRewind);
+      for (const row of rows) {
+        if (rewoundIds.has(row.id)) continue;
+        const remapped = remapNativeForkAnchorAgentMeta(row.agent_meta, nativeForkAnchorSessionMap);
+        if (remapped !== row.agent_meta) updateAgentMeta.run(remapped, row.id);
+      }
+    }
     if (rewindSubagentByParent && rewindParentlessSubagentTail) {
       const rewoundIds = new Set(idsToRewind);
       const parentToolUseIds = new Set(
@@ -2264,6 +2335,22 @@ function remapForkedAgentMeta(raw, map, legacyTranscriptParentUuids = new Set(),
   return JSON.stringify(next);
 }
 
+function remapNativeForkAnchorAgentMeta(raw, nativeForkAnchorSessionMap) {
+  if (!raw || raw === 'null') return raw;
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch (_) { return raw; }
+  const anchor = parsed.nativeForkAnchor;
+  if (
+    parsed.turnCompleted !== true ||
+    !anchor || typeof anchor !== 'object' || Array.isArray(anchor) ||
+    anchor.agentKind !== 'codex' || anchor.kind !== 'turn' ||
+    typeof anchor.id !== 'string' || !anchor.id ||
+    typeof anchor.sdkSessionId !== 'string'
+  ) return raw;
+  const mapped = nativeForkAnchorSessionMap.get(anchor.sdkSessionId);
+  return mapped ? JSON.stringify({ ...parsed, nativeForkAnchor: { ...anchor, sdkSessionId: mapped } }) : raw;
+}
+
 function normalizeStringSet(value, label) {
   if (value === undefined) return new Set();
   return new Set(expectArray(value, label).map((item, index) => expectString(item, label + '.' + index)));
@@ -2483,9 +2570,22 @@ interface PendingRpc {
   background: boolean;
 }
 
+/**
+ * A request remains here from a successful postMessage until the worker sends
+ * its response (or the worker is known to have terminated). This is separate
+ * from PendingRpc: a caller timeout only settles its promise; it cannot prove
+ * that the worker stopped executing the request.
+ */
+interface OutstandingRpc {
+  /** Guarded mutations own an exclusive dispatch barrier until the worker settles. */
+  barrierItem?: QueuedRpc;
+  background: boolean;
+}
+
 interface QueuedRpc {
   req: RpcRequest;
   transferList: unknown[];
+  beforeDispatch?: () => void;
   resolve: (value: unknown) => void;
   reject: (err: Error) => void;
   /** RPC 总预算从进入 transport 开始计,而不是等 dispatch 后才开始。 */
@@ -2565,7 +2665,15 @@ export class WorkerThreadTransport implements DbTransport {
   private closing = false;
   private vecLoaded = false;
   private readonly pending = new Map<number, PendingRpc>();
+  /** Posted RPCs whose worker reply has not arrived yet, including timed-out callers. */
+  private readonly outstanding = new Map<number, OutstandingRpc>();
   private readonly queued: QueuedRpc[] = [];
+  /**
+   * A guarded mutation waits for every RPC already posted to the worker, and
+   * no request submitted after it may pass while it is admitted/executed.
+   * This stays in the host process so callbacks are never structured-cloned.
+   */
+  private dispatchBarrier: QueuedRpc | null = null;
   private readonly eventListeners = new Map<EventName, Set<(payload: unknown) => void>>();
   private readonly terminatedListeners = new Set<(info: DbTransportTerminationInfo) => void>();
   private readonly opts: WorkerThreadTransportOptions;
@@ -2575,7 +2683,12 @@ export class WorkerThreadTransport implements DbTransport {
     this.worker = this.spawnWorker();
   }
 
-  send<R = unknown>(op: string, args?: unknown, transferList?: unknown[]): Promise<R> {
+  send<R = unknown>(
+    op: string,
+    args?: unknown,
+    transferList?: unknown[],
+    beforeDispatch?: () => void,
+  ): Promise<R> {
     if (this.closed || this.closing) {
       return Promise.reject(
         createDbTransportError(DB_TRANSPORT_NOT_SENT, 'db worker transport is closed'),
@@ -2588,20 +2701,25 @@ export class WorkerThreadTransport implements DbTransport {
       const queued: QueuedRpc = {
         req,
         transferList: transferList ?? [],
+        beforeDispatch,
         resolve: resolve as (value: unknown) => void,
         reject,
         budgetStartedAtMs: Date.now(),
         background,
       };
-      if (this.canDispatchImmediately(queued)) {
+      if (beforeDispatch !== undefined && this.dispatchBarrier === null) {
+        this.dispatchBarrier = queued;
+      }
+      if (this.canDispatchImmediately(queued) && !this.isBlockedByDispatchBarrier(queued)) {
         this.dispatch(queued);
         return;
       }
       if (!this.canEnqueue(queued)) {
+        this.releaseDispatchBarrier(queued);
         reject(
           createDbTransportError(
             DB_TRANSPORT_NOT_SENT,
-            `db worker RPC queue overloaded: op="${op}" inFlight=${this.pending.size}` +
+            `db worker RPC queue overloaded: op="${op}" inFlight=${this.outstanding.size}` +
               ` queued=${this.queued.length}` +
               ` backgroundInFlight=${this.backgroundPendingCount()}` +
               ` backgroundQueued=${this.backgroundQueuedCount()}`,
@@ -2631,7 +2749,7 @@ export class WorkerThreadTransport implements DbTransport {
 
   async close(): Promise<void> {
     if (this.closed || this.closing) return;
-    const canCloseGracefully = this.pending.size === 0 && this.queued.length === 0;
+    const canCloseGracefully = this.outstanding.size === 0 && this.queued.length === 0;
     const gracefulClose = canCloseGracefully ? this.send('closeDb') : null;
     // closeDb 仅在 transport 空闲时直发。已有 backlog 时不再把关闭请求排到队尾,
     // 直接拒绝遗留工作并 terminate,避免登出 / 退出被慢 RPC 拖住。
@@ -2686,8 +2804,8 @@ export class WorkerThreadTransport implements DbTransport {
 
   private backgroundPendingCount(): number {
     let count = 0;
-    for (const pending of this.pending.values()) {
-      if (pending.background) count += 1;
+    for (const outstanding of this.outstanding.values()) {
+      if (outstanding.background) count += 1;
     }
     return count;
   }
@@ -2701,7 +2819,7 @@ export class WorkerThreadTransport implements DbTransport {
   }
 
   private canDispatchImmediately(item: QueuedRpc): boolean {
-    if (this.pending.size >= this.maxInFlightRpcs) return false;
+    if (this.outstanding.size >= this.maxInFlightRpcs) return false;
     if (item.background && this.backgroundPendingCount() >= this.maxBackgroundInFlightRpcs) {
       return false;
     }
@@ -2727,13 +2845,15 @@ export class WorkerThreadTransport implements DbTransport {
         return;
       }
       this.queued.splice(index, 1);
+      this.releaseDispatchBarrier(item);
       item.reject(
         createDbTransportError(
           DB_TRANSPORT_NOT_SENT,
           `db worker RPC queue timeout: op="${item.req.op}" id=${item.req.id}` +
-            ` exceeded ${this.rpcTimeoutMs / 1000}s total budget`,
+          ` exceeded ${this.rpcTimeoutMs / 1000}s total budget`,
         ),
       );
+      this.drainQueue();
     };
     item.queueTimeout = setTimeout(onTimeout, this.rpcTimeoutMs);
   }
@@ -2741,6 +2861,17 @@ export class WorkerThreadTransport implements DbTransport {
   private dispatch(item: QueuedRpc): void {
     const { id, op } = item.req;
     if (item.queueTimeout) clearTimeout(item.queueTimeout);
+    try {
+      // This is the actual host-side submission boundary. The callback is
+      // intentionally kept out of RpcRequest so worker/inline transports have
+      // the same owner-lease semantics without serializing a function.
+      item.beforeDispatch?.();
+    } catch (error) {
+      this.releaseDispatchBarrier(item);
+      item.reject(toError(error));
+      this.drainQueue();
+      return;
+    }
     const onTimeout = (): void => {
       const pending = this.pending.get(id);
       if (!pending) return;
@@ -2757,6 +2888,10 @@ export class WorkerThreadTransport implements DbTransport {
         pending.timeout = setTimeout(onTimeout, this.rpcTimeoutMs);
         return;
       }
+      // A caller timeout only settles the caller's promise. The worker may
+      // still be executing (or waiting on SQLite), so the outstanding record
+      // and any guarded dispatch barrier stay until the real reply or a
+      // confirmed worker termination arrives.
       this.pending.delete(id);
       pending.reject(
         createDbTransportError(
@@ -2777,34 +2912,71 @@ export class WorkerThreadTransport implements DbTransport {
       sentAtMs: item.budgetStartedAtMs,
       background: item.background,
     });
+    this.outstanding.set(id, {
+      background: item.background,
+      barrierItem: this.dispatchBarrier === item ? item : undefined,
+    });
     try {
       this.worker.postMessage(item.req, item.transferList as never);
     } catch (err) {
       clearTimeout(timeout);
       this.pending.delete(id);
+      this.outstanding.delete(id);
+      this.releaseDispatchBarrier(item);
       item.reject(createDbTransportError(DB_TRANSPORT_NOT_SENT, toError(err).message, err));
       this.drainQueue();
     }
   }
 
   private takeNextQueued(): QueuedRpc | undefined {
+    const barrierIndex = this.dispatchBarrier === null ? -1 : this.queued.indexOf(this.dispatchBarrier);
+    // The barrier was removed from the queue and posted to the worker. Hold
+    // every later request until its response/timeout/termination releases it.
+    if (this.dispatchBarrier !== null && barrierIndex < 0) return undefined;
+    const availableBeforeBarrier = barrierIndex < 0 ? this.queued.length : barrierIndex;
+    if (barrierIndex === 0 && this.outstanding.size > 0) return undefined;
+
     const interactiveIndex = this.queued.findIndex((item) => !item.background);
-    if (interactiveIndex >= 0) {
+    if (interactiveIndex >= 0 && interactiveIndex < availableBeforeBarrier) {
       const next = this.queued[interactiveIndex];
       if (!this.canDispatchImmediately(next)) return undefined;
       this.queued.splice(interactiveIndex, 1);
       return next;
     }
     const backgroundIndex = this.queued.findIndex((item) => item.background);
-    if (backgroundIndex < 0) return undefined;
-    const next = this.queued[backgroundIndex];
-    if (!this.canDispatchImmediately(next)) return undefined;
-    this.queued.splice(backgroundIndex, 1);
-    return next;
+    if (backgroundIndex >= 0 && backgroundIndex < availableBeforeBarrier) {
+      const next = this.queued[backgroundIndex];
+      if (!this.canDispatchImmediately(next)) return undefined;
+      this.queued.splice(backgroundIndex, 1);
+      return next;
+    }
+    if (barrierIndex !== 0) return undefined;
+    const barrier = this.dispatchBarrier;
+    if (!barrier || this.outstanding.size > 0 || !this.canDispatchImmediately(barrier)) return undefined;
+    this.queued.splice(barrierIndex, 1);
+    return barrier;
+  }
+
+  private isBlockedByDispatchBarrier(item: QueuedRpc): boolean {
+    if (this.dispatchBarrier === null) {
+      return item.beforeDispatch !== undefined && (this.outstanding.size > 0 || this.queued.length > 0);
+    }
+    if (this.dispatchBarrier === item) {
+      return this.outstanding.size > 0 || this.queued.length > 0;
+    }
+    return this.dispatchBarrier !== item;
+  }
+
+  private releaseDispatchBarrier(item: QueuedRpc): void {
+    if (this.dispatchBarrier !== item) return;
+    this.dispatchBarrier = null;
+    // Preserve ordering for a later guarded mutation before draining normal
+    // requests that were admitted after it.
+    this.dispatchBarrier = this.queued.find((queued) => queued.beforeDispatch !== undefined) ?? null;
   }
 
   private drainQueue(): void {
-    while (!this.closed && this.pending.size < this.maxInFlightRpcs) {
+    while (!this.closed && this.outstanding.size < this.maxInFlightRpcs) {
       const next = this.takeNextQueued();
       if (!next) return;
       this.dispatch(next);
@@ -2867,18 +3039,27 @@ export class WorkerThreadTransport implements DbTransport {
 
   private handleMessage(msg: WorkerMessage): void {
     if ('id' in msg) {
+      const outstanding = this.outstanding.get(msg.id);
+      if (!outstanding) return;
+      this.outstanding.delete(msg.id);
+      if (outstanding.barrierItem) this.releaseDispatchBarrier(outstanding.barrierItem);
+
+      // A late response for a caller that already timed out still proves the
+      // worker is no longer executing this RPC, but must not settle the
+      // caller's promise a second time.
       const pending = this.pending.get(msg.id);
-      if (!pending) return;
-      this.pending.delete(msg.id);
-      clearTimeout(pending.timeout);
-      if (msg.ok) {
-        pending.resolve(msg.result);
-      } else {
-        const err = Object.assign(new Error(msg.error.message), {
-          code: msg.error.code,
-          stack: msg.error.stack,
-        });
-        pending.reject(err);
+      if (pending) {
+        this.pending.delete(msg.id);
+        clearTimeout(pending.timeout);
+        if (msg.ok) {
+          pending.resolve(msg.result);
+        } else {
+          const err = Object.assign(new Error(msg.error.message), {
+            code: msg.error.code,
+            stack: msg.error.stack,
+          });
+          pending.reject(err);
+        }
       }
       this.drainQueue();
       return;
@@ -2907,10 +3088,15 @@ export class WorkerThreadTransport implements DbTransport {
       pending.reject(pendingError);
     }
     this.pending.clear();
+    // Worker error/exit/termination is the only point at which an
+    // outstanding RPC may be forgotten without a real reply. Caller timeouts
+    // never reach this branch merely by removing their promise from pending.
+    this.outstanding.clear();
     for (const queued of this.queued.splice(0)) {
       if (queued.queueTimeout) clearTimeout(queued.queueTimeout);
       queued.reject(queuedError);
     }
+    this.dispatchBarrier = null;
   }
 
   private emitTerminated(info: DbTransportTerminationInfo): void {

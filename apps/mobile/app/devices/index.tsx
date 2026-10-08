@@ -2836,6 +2836,12 @@ function HomeScreenContent() {
           setChromeMenuCloseInstant(true);
           setChromeMenuOpen(false);
         }}
+        onOpenSharedSession={() => {
+          pendingMenuActionRef.current = null;
+          guardedPush({ pathname: '/shared-session', params: { mode: 'manage' } });
+          setChromeMenuCloseInstant(true);
+          setChromeMenuOpen(false);
+        }}
         onOpenSettings={() => {
           pendingMenuActionRef.current = null;
           guardedPush('/settings');

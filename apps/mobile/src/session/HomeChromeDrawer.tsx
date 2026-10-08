@@ -63,6 +63,7 @@ export function HomeChromeDrawer({
   onOpenSearch,
   onOpenAccounts,
   onOpenDevices,
+  onOpenSharedSession,
   onOpenSettings,
   onLogout,
   loggingOut = false,
@@ -76,6 +77,7 @@ export function HomeChromeDrawer({
   onOpenSearch(): void;
   onOpenAccounts(): void;
   onOpenDevices(): void;
+  onOpenSharedSession?(): void;
   onOpenSettings(): void;
   onLogout(): void;
   loggingOut?: boolean;
@@ -322,6 +324,17 @@ export function HomeChromeDrawer({
               {t("devices.list.menu.search")}
             </Text>
           </Pressable>
+
+          {onOpenSharedSession ? <Pressable
+            accessibilityLabel={t('sharedTask.manageSharing')}
+            accessibilityRole="button"
+            onPress={onOpenSharedSession}
+            style={({ pressed }) => [styles.menuRow, pressed && styles.pressed]}
+            testID="home.chromeDrawer.sharedTasks"
+          >
+            <UsersRound color={colors.textSecondary} size={iconSize.md} strokeWidth={iconStroke.regular} />
+            <Text numberOfLines={1} style={styles.menuLabel}>{t('sharedTask.manageSharing')}</Text>
+          </Pressable> : null}
 
           <Pressable
             accessibilityLabel={t('devices.management.title')}

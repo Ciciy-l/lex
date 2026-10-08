@@ -31,6 +31,8 @@ export interface MobileLocalAttachmentUploadCandidate {
   name: string;
   /** 发起上传的 composer 作用域(sessionId 等)；仅供宿主隔离迟到异步结果。 */
   attachmentScopeKey?: string;
+  /** Captured task upload namespace; never read from a later render. */
+  sharedTaskId?: string;
   /** 同一作用域重复进入时也会递增的代际；避免 A → B → A 后接回最早 A 的旧结果。 */
   attachmentScopeGeneration?: number;
   mimeType?: string;
@@ -100,7 +102,7 @@ export interface MobileLocalAttachmentUploadDeps {
   assertSize(size: number, candidate: MobileLocalAttachmentUploadCandidate): void;
   /** 真正的 presign + PUT(uploadMobileAttachmentFromFile);signal 中止时应尽快断掉传输。 */
   upload(
-    candidate: { name: string; size: number; mimeType?: string },
+    candidate: { id?: string; name: string; size: number; mimeType?: string; sharedTaskId?: string },
     fileUri: string,
     opts: { token: string; signal?: AbortSignal },
   ): Promise<RemoteSerializedAttachment>;
@@ -404,7 +406,7 @@ export function createMobileLocalAttachmentUploadController(
         return;
       }
       const attachment = uploadedAttachment = await step(deps.upload(
-        { name: prepared.name, size, mimeType: prepared.mimeType || undefined },
+        { id: task.localId, name: prepared.name, size, mimeType: prepared.mimeType || undefined, ...(source.sharedTaskId ? { sharedTaskId: source.sharedTaskId } : {}) },
         prepared.uri,
         { token, signal },
       ), (late) => deps.discard(late, token));

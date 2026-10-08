@@ -5,6 +5,12 @@ import type { BotToolsetContext } from '../shared/botRemoteCapabilities';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { DESKTOP_LOCAL, type RemoteDesktopApi } from '../shared/remoteDesktop';
 import { DEVICE_LINK_PUSH } from '../shared/deviceLinkIpc';
+import {
+  SHARED_TASK_ACCOUNT_CHANNEL,
+  SHARED_TASK_HOST_CHANNEL,
+  type SharedTaskAccountCommand,
+  type SharedTaskHostCommand,
+} from '@cindy/device-link';
 import type { MobileCodexRateLimitsResult } from '@cindy/maker-shared/device-link-contract';
 import type { AppearanceSettings } from '../shared/appearanceSettings';
 import type {
@@ -781,6 +787,7 @@ const fanOutMakerSessionBackgroundActivityChanged = createIpcFanOut(
 );
 const fanOutBotDelegationChanged = createIpcFanOut('maker:bot-delegation:changed');
 const fanOutBotDirectMessageChanged = createIpcFanOut('maker:bot-direct-message:changed');
+const fanOutBotGroupChanged = createIpcFanOut('maker:bot-group:changed');
 const fanOutBotProfileChanged = createIpcFanOut('maker:bot-profile:changed');
 const fanOutBotLifecycleChanged = createIpcFanOut('maker:bot-lifecycle:changed');
 const fanOutMakerPiPackagesChanged = createIpcFanOut('maker:pi-packages:changed');
@@ -3707,6 +3714,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         | { type: 'new-session'; workingDir: string }
         | { type: 'share-import'; filePath: string }
         | { type: 'provider-import'; importId: string }
+        | { type: 'shared-task-join'; invitation: string; server: string }
         | { type: 'settings'; tab: 'voice-input' | 'providers'; connect?: string },
     ) => void,
   ): (() => void) =>
@@ -3721,8 +3729,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
         tab?: unknown;
         connect?: unknown;
         messageClientId?: unknown;
+        invitation?: unknown;
+        server?: unknown;
       };
-      if (p.type === 'session' && typeof p.id === 'string' && p.id.length > 0) {
+      if (p.type === 'shared-task-join' && typeof p.invitation === 'string' && typeof p.server === 'string') {
+        callback({ type: 'shared-task-join', invitation: p.invitation, server: p.server });
+      } else if (p.type === 'session' && typeof p.id === 'string' && p.id.length > 0) {
         callback({
           type: 'session',
           id: p.id,
@@ -3779,6 +3791,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     | { type: 'new-session'; workingDir: string }
     | { type: 'share-import'; filePath: string }
     | { type: 'provider-import'; importId: string }
+    | { type: 'shared-task-join'; invitation: string; server: string }
     | { type: 'settings'; tab: 'voice-input' | 'providers'; connect?: string }
     | null
   > => ipcRenderer.invoke('deep-link:take-pending'),
@@ -4458,6 +4471,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
       clear: (deviceId: string): Promise<{ ok: true }> =>
         ipcRenderer.invoke('device-link:mirror-cache:clear', { deviceId }),
     },
+  },
+
+  /** Shared-task management uses dedicated owner/account IPC channels. */
+  sharedTask: {
+    host: (command: SharedTaskHostCommand): Promise<unknown> =>
+      ipcRenderer.invoke(SHARED_TASK_HOST_CHANNEL, command),
+    account: (command: SharedTaskAccountCommand): Promise<unknown> =>
+      ipcRenderer.invoke(SHARED_TASK_ACCOUNT_CHANNEL, command),
   },
 
   // ── Remote SSH (Phase A) ───────────────────────────────────────────────
@@ -5670,6 +5691,56 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ): Promise<import('../shared/botDirectMessage').BotDirectMessageThreadResult> =>
       ipcRenderer.invoke('maker:bot-direct-message-thread:get', threadId, viewerBotId),
     onBotDirectMessageChanged: fanOutBotDirectMessageChanged,
+    listBotGroups: (): Promise<import('../shared/botGroupChat').BotGroupListResult> =>
+      ipcRenderer.invoke('maker:bot-group:list'),
+    getBotGroup: (
+      groupId: string,
+      options?: import('../shared/botGroupChat').BotGroupGetOptions,
+    ): Promise<import('../shared/botGroupChat').BotGroupGetResult> =>
+      ipcRenderer.invoke('maker:bot-group:get', groupId, options),
+    createBotGroup: (
+      input: import('../shared/botGroupChat').BotGroupCreateInput,
+    ): Promise<import('../shared/botGroupChat').BotGroupCreateResult> =>
+      ipcRenderer.invoke('maker:bot-group:create', input),
+    updateBotGroup: (
+      input: import('../shared/botGroupChat').BotGroupUpdateInput,
+    ): Promise<import('../shared/botGroupChat').BotGroupMutationResult> =>
+      ipcRenderer.invoke('maker:bot-group:update', input),
+    setBotGroupMembers: (
+      input: import('../shared/botGroupChat').BotGroupSetMembersInput,
+    ): Promise<import('../shared/botGroupChat').BotGroupMutationResult> =>
+      ipcRenderer.invoke('maker:bot-group:set-members', input),
+    deleteBotGroup: (groupId: string): Promise<import('../shared/botGroupChat').BotGroupMutationResult> =>
+      ipcRenderer.invoke('maker:bot-group:delete', groupId),
+    sendBotGroupMessage: (
+      input: import('../shared/botGroupChat').BotGroupSendInput,
+    ): Promise<import('../shared/botGroupChat').BotGroupSendResult> =>
+      ipcRenderer.invoke('maker:bot-group:send', input),
+    continueBotGroupRound: (groupId: string): Promise<import('../shared/botGroupChat').BotGroupMutationResult> =>
+      ipcRenderer.invoke('maker:bot-group:continue', groupId),
+    stopBotGroupRound: (groupId: string): Promise<import('../shared/botGroupChat').BotGroupMutationResult> =>
+      ipcRenderer.invoke('maker:bot-group:stop', groupId),
+    startBotGroupPlan: (
+      input: import('../shared/botGroupChat').BotGroupPlanActionInput,
+    ): Promise<import('../shared/botGroupChat').BotGroupMutationResult> =>
+      ipcRenderer.invoke('maker:bot-group:plan-start', input),
+    dismissBotGroupPlan: (
+      input: import('../shared/botGroupChat').BotGroupPlanActionInput,
+    ): Promise<import('../shared/botGroupChat').BotGroupMutationResult> =>
+      ipcRenderer.invoke('maker:bot-group:plan-dismiss', input),
+    continueBotGroupPlan: (
+      input: import('../shared/botGroupChat').BotGroupPlanActionInput,
+    ): Promise<import('../shared/botGroupChat').BotGroupMutationResult> =>
+      ipcRenderer.invoke('maker:bot-group:plan-continue', input),
+    retryBotGroupPlan: (
+      input: import('../shared/botGroupChat').BotGroupPlanActionInput,
+    ): Promise<import('../shared/botGroupChat').BotGroupMutationResult> =>
+      ipcRenderer.invoke('maker:bot-group:plan-retry', input),
+    editBotGroupPlanStep: (
+      input: import('../shared/botGroupChat').BotGroupPlanEditInput,
+    ): Promise<import('../shared/botGroupChat').BotGroupMutationResult> =>
+      ipcRenderer.invoke('maker:bot-group:plan-edit', input),
+    onBotGroupChanged: fanOutBotGroupChanged,
     onBotProfileChanged: fanOutBotProfileChanged,
     runBotLifecycleAction: (
       request: import('../shared/botLifecycle').BotLifecycleActionRequest,

@@ -40,11 +40,29 @@ describe('bot remote resource projection', () => {
         },
         status: { tone: 'positive' },
       },
-      links: [{
+    });
+    expect(botRemoteCollectionItemFromSource(source).links).toEqual(expect.arrayContaining([
+      {
         rel: 'conversation',
         target: { kind: 'session', sessionId: 'session-1' },
-      }],
-    });
+      },
+      {
+        label: expect.objectContaining({ fallback: 'Saved Memories' }),
+        rel: 'memories',
+        target: {
+          kind: 'resource',
+          ref: { collectionId: 'teammates', kind: 'bot', id: 'settings:bot-1/memory' },
+        },
+      },
+      {
+        label: expect.objectContaining({ fallback: 'Settings' }),
+        rel: 'settings',
+        target: {
+          kind: 'resource',
+          ref: { collectionId: 'teammates', kind: 'bot', id: 'settings:bot-1' },
+        },
+      },
+    ]));
   });
 
   it('uses generic attention presentation without exposing Bot internals', () => {
@@ -64,7 +82,37 @@ describe('bot remote resource projection', () => {
     expect(botRemoteCollectionItemFromSource({
       ...source,
       canonicalSessionId: undefined,
-    }).links).toEqual([]);
+    }).links).toEqual([{
+      label: {
+        fallback: 'Saved Memories',
+        translations: {
+          'zh-CN': '已存记忆',
+          'zh-TW': '已存記憶',
+          ja: '保存した記憶',
+          ko: '저장된 기억',
+        },
+      },
+      rel: 'memories',
+      target: {
+        kind: 'resource',
+        ref: { collectionId: 'teammates', kind: 'bot', id: 'settings:bot-1/memory' },
+      },
+    }, {
+      label: {
+        fallback: 'Settings',
+        translations: {
+          'zh-CN': '设置',
+          'zh-TW': '設定',
+          ja: '設定',
+          ko: '설정',
+        },
+      },
+      rel: 'settings',
+      target: {
+        kind: 'resource',
+        ref: { collectionId: 'teammates', kind: 'bot', id: 'settings:bot-1' },
+      },
+    }]);
   });
 
   it('keeps managed artwork portable without rendering its address as emoji text', () => {

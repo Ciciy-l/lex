@@ -55,6 +55,9 @@ const LOCALE_HOST_BRAND_RE = /XDMaker|XD Maker|xdt-maker|\bLex\b/;
 const LOCALE_CINDY_RE = /\bCindy\b/;
 
 const LOCALE_CINDY_ALLOWED_KEY_PATHS = new Set([
+  // Shared-task authentication and service-region mismatch name the Cindy service.
+  'sharedTask.login',
+  'sharedTask.invitationDifferentServer',
   'settings.userProfile.local.description',
   'settings.userProfile.local.signIn',
   'settings.connections.claude.logoutConfirm.description',

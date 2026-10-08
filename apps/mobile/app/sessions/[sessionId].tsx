@@ -9,6 +9,7 @@ import { retainOutboxFile, durableOutboxUploadUri, removeOutboxFiles, outboxAtta
 import { isDurableOutboxSettled, isDurableOutboxUnsent, observeDurableOutboxSending, type DurableOutboxRecord } from '@/session/durableOutbox';
 import { discardNewSessionUploadedAttachments } from '@/session/newSessionAttachmentCleanup';
 import { isInFlightDeviceLinkError } from '@cindy/device-link';
+import { parseSharedTaskPeer } from '@cindy/device-link';
 import { takeRefinementContextTail, truncateRefinementReply } from '@cindy/voice-input-core';
 import {
   ArrowDown,
@@ -90,6 +91,9 @@ import { hasSessionEntryPreviewMismatch } from '@/session/sessionEntrySyncIndica
 import { resolveEffectiveConnectionError } from '@/components/connectionBannerVisibility';
 import { PaperPlaneIcon } from '@/components/PaperPlaneIcon';
 import { useDeviceLink } from '@/device-link/DeviceLinkContext';
+import { useSharedTaskAccess } from '@/device-link/useSharedTaskAccess';
+import { useLeaveSharedTask } from '@/device-link/useLeaveSharedTask';
+import { SharedTaskEndedState } from '@/session/SharedTaskEndedState';
 import { useRevokedDevices } from '@/device-link/revokedDevicesStore';
 import { useUnresponsiveDevices } from '@/device-link/unresponsiveDevicesStore';
 import {
@@ -912,6 +916,7 @@ export default function SessionScreen() {
     deviceId?: string;
     deviceName?: string;
     remoteMemoryResourceId?: string;
+    remoteSettingsResourceId?: string;
     draft?: string;
     goalError?: string;
     goalObjective?: string;
@@ -938,6 +943,7 @@ export default function SessionScreen() {
   const rewindRequestSeqRef = useRef(0);
   const deviceName = readRouteParam(params.deviceName) ?? deviceId;
   const remoteMemoryResourceId = readRouteParam(params.remoteMemoryResourceId);
+  const remoteSettingsResourceId = readRouteParam(params.remoteSettingsResourceId);
   const routeDraft = readRouteParam(params.draft);
   const routeFocusClientId = readRouteParam(params.focusClientId);
   const routeFocusComposerRequestKey = readRouteParam(params.focusComposerRequestKey);
@@ -980,6 +986,7 @@ export default function SessionScreen() {
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
       const active = nextState === 'active';
+      setAppStateActive(active);
       messageAppActiveRef.current = active;
       if (!active) {
         findRemoteHistoryView(deviceId, sessionId)?.setActive(false);
@@ -1300,6 +1307,7 @@ export default function SessionScreen() {
     getPendingUploadCount,
   } = useMobileLocalAttachments({
     attachmentScopeKey: sessionId,
+    deviceId,
     getAccessToken: () => auth.getAccessToken(),
     getAttachmentCount: () => attachmentsRef.current.length,
     onUploaded: (rawAttachment, candidate) => {
@@ -1973,6 +1981,11 @@ export default function SessionScreen() {
     setCodexResetRetryKey(null);
   }
   const isDeviceAccessRevoked = !!deviceId && revokedDevices.has(deviceId);
+  // A shared peer is revoked by the host through the existing device-link
+  // store.  Derive the ended state from that authoritative local marker so a
+  // late link-close frame and the foreground REST watcher converge identically.
+  const sharedTaskAccessEnded = isDeviceAccessRevoked
+    && parseSharedTaskPeer(deviceId)?.role === 'host';
   // 熔断 open:被控电脑「进程活着但不回包」的半死态;relay status 恒 online,必须单独入参。
   const isDeviceUnresponsive = !!deviceId && unresponsiveDevices.has(deviceId);
   // 熔断已关后残留的 DEVICE_UNRESPONSIVE 错误按陈旧丢弃,且必须一次性解析、
@@ -2178,14 +2191,27 @@ export default function SessionScreen() {
     }, [appStateActive, connectionEpoch, deviceId, hasRenderedMessages, liveAttention, maker, readAckSyncedKey, sessionId]),
   );
   // 写编排只读 reason(fork/rewind、队列编辑、会话设置写、pending interaction):对 lead + worker 都返回。
-  const collaborationReadOnlyReason = useMemo(
+  const collaborationRoleReadOnlyReason = useMemo(
     () => sessionCollaborationReadOnlyReason(currentSession),
     [currentSession?.orcaRole, i18nInstance.language],
   );
+  const collaborationAccessEndedReason = useMemo(
+    () => sharedTaskAccessEnded ? t('sharedTask.accessEndedBody') : null,
+    [sharedTaskAccessEnded, i18nInstance.language, t],
+  );
+  const collaborationReadOnlyReason = collaborationAccessEndedReason ?? collaborationRoleReadOnlyReason;
   // composer(发消息)只读 reason:仅非 lead 的协作角色只读;Lead 返回 null → 可在手机上发文字消息。
-  const composerReadOnlyReason = useMemo(
+  const composerRoleReadOnlyReason = useMemo(
     () => sessionCollaborationComposerReadOnlyReason(currentSession),
     [currentSession?.orcaRole, i18nInstance.language],
+  );
+  const composerAccessEndedReason = useMemo(
+    () => sharedTaskAccessEnded ? t('sharedTask.accessEndedBody') : null,
+    [sharedTaskAccessEnded, i18nInstance.language, t],
+  );
+  const composerReadOnlyReason = useMemo(
+    () => composerAccessEndedReason ?? composerRoleReadOnlyReason,
+    [composerAccessEndedReason, composerRoleReadOnlyReason],
   );
   const activePendingInteraction = useMemo(() => {
     return selectPendingInteractionByRequestId(pending, pendingInteractionActiveRequestId);
@@ -8121,6 +8147,15 @@ export default function SessionScreen() {
   // 自愈返回:canGoBack 与真实栈不一致时(reload 恢复深路由 / 重复压栈残留),
   // GO_BACK 会被静默吞掉,生产表现为"点返回永远没反应"——校验兜底见 useGuardedBack。
   const goBackToHome = useGuardedBack();
+  const sharedTaskPeer = parseSharedTaskPeer(deviceId);
+  const sharedTaskGuest = sharedTaskPeer?.role === 'host';
+  useSharedTaskAccess(deviceId, sessionId, appStateActive);
+  const sharedTaskLeave = useLeaveSharedTask({
+    deviceId,
+    enabled: sharedTaskGuest && !sharedTaskAccessEnded,
+    onLeft: goBackToHome,
+    onError: setError,
+  });
 
   // chip「打开」:文件 → Quick Look 预览页(带行号),目录 → 文件浏览器定位。
   // 点击与长按菜单的「快速预览 / 打开文件浏览器」共用这一条。
@@ -8791,6 +8826,19 @@ export default function SessionScreen() {
                   },
                 });
               } : undefined}
+              onOpenRemoteSettings={remoteSettingsResourceId && deviceId ? () => {
+                router.push({
+                  pathname: '/resources/[collectionId]/[resourceId]',
+                  params: {
+                    collectionId: 'teammates',
+                    resourceId: remoteSettingsResourceId,
+                    resourceKind: 'bot',
+                    deviceId,
+                    deviceName,
+                    title: t('bots.settings', { defaultValue: 'Settings' }),
+                  },
+                });
+              } : undefined}
               onToggleSearch={() => {
                 if (searchOpen) closeSearch();
                 else setSearchOpen(true);
@@ -8860,6 +8908,12 @@ export default function SessionScreen() {
             onOpenSessionTree={currentSession.agentKind === 'pi'
               ? openSessionTreeAfterMenu
               : undefined}
+            sharedTaskAction={sharedTaskGuest ? {
+              label: t('sharedTask.leave'),
+              disabled: sharedTaskLeave.busy || sharedTaskAccessEnded,
+              onPress: sharedTaskLeave.leave,
+              testID: 'session.sharedTaskLeave',
+            } : undefined}
             onRegenerateTitle={() => maker.regenerateSessionTitle(sessionId)}
             onRename={(title) => patchSessionMeta({ title })}
             onRestore={() => patchSessionMeta({ status: 'active' })}
@@ -9400,12 +9454,18 @@ export default function SessionScreen() {
               )}
             </View>
           ) : sessionOperationLayout.composerSlot === 'read-only' ? (
-            <View style={styles.readOnlyComposer} testID="session.collaborationReadOnlyComposer">
-              <Text style={styles.collaborationTitle}>{t('session.screen.readOnlyMode')}</Text>
-              <Text style={styles.collaborationText}>
-                {composerDisabledReason}
-              </Text>
-            </View>
+            sharedTaskAccessEnded ? (
+              <View style={styles.readOnlyComposer} testID="session.sharedTaskEnded">
+                <SharedTaskEndedState onReturnToTasks={goBackToHome} />
+              </View>
+            ) : (
+              <View style={styles.readOnlyComposer} testID="session.collaborationReadOnlyComposer">
+                <Text style={styles.collaborationTitle}>{t('session.screen.readOnlyMode')}</Text>
+                <Text style={styles.collaborationText}>
+                  {composerDisabledReason}
+                </Text>
+              </View>
+            )
           ) : (
             <>
               {/* 消息区还在「正在同步」占位(新建会话第一帧 / 冷开首屏)时不谈运行状态:
@@ -9526,6 +9586,7 @@ export default function SessionScreen() {
           </View>
         </View>
       </ComposerKeyboardAvoidingView>
+      {sharedTaskLeave.dialog}
       {shareSelectionActive && selectedShareMessages.length > 0 ? (
         <ConversationShareSvg
           key={`${shareImages.revision}-${mode}`}
@@ -9580,6 +9641,7 @@ function SessionHeaderBar({
   onOpenUsage,
   onOpenRemoteDesktop,
   onOpenRemoteMemory,
+  onOpenRemoteSettings,
   onToggleSearch,
   pendingCount,
   queueCount,
@@ -9612,6 +9674,7 @@ function SessionHeaderBar({
   onOpenUsage(): void;
   onOpenRemoteDesktop(): void;
   onOpenRemoteMemory?: () => void;
+  onOpenRemoteSettings?: () => void;
   onToggleSearch(): void;
   pendingCount: number;
   queueCount: number;
@@ -9717,6 +9780,14 @@ function SessionHeaderBar({
       </View>
 
       <View style={styles.sessionHeaderActions}>
+        {onOpenRemoteSettings ? <SessionHeaderIconButton
+          accessibilityLabel={t('bots.settings', { defaultValue: 'Settings' })}
+          active={false}
+          disabled={!currentSession}
+          icon={Settings}
+          onPress={currentSession ? onOpenRemoteSettings : undefined}
+          testID="session.remoteSettings"
+        /> : null}
         {onOpenRemoteMemory ? <SessionHeaderIconButton
           accessibilityLabel={t('devices.companionProfile.memory.title', { defaultValue: 'Saved Memories' })}
           active={false}
