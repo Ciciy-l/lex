@@ -70,7 +70,7 @@ export function SessionStatusMark({
 const RUNNING_BREATH_HALF_CYCLE_MS = 750;
 const RUNNING_BREATH_MIN_OPACITY = 0.3;
 
-function SessionStatusPulse({ children, running }: { children: ReactNode; running: boolean }) {
+export function SessionStatusPulse({ children, running }: { children: ReactNode; running: boolean }) {
   const reduceMotion = useReduceMotionEnabled();
   const animate = running && reduceMotion === false;
   const opacity = useRef(new Animated.Value(animate ? RUNNING_BREATH_MIN_OPACITY : 1)).current;
