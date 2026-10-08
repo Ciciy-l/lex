@@ -78,6 +78,7 @@ vi.mock('lucide-react-native', () => ({
   CircleAlert: () => null,
   CircleCheck: () => null,
   ChevronDown: () => null,
+  ChevronRight: () => null,
 }));
 vi.mock('@/auth/AuthContext', () => ({
   useAuth: () => ({ accountGeneration: h.accountGeneration }),

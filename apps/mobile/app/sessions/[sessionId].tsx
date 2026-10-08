@@ -11713,7 +11713,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   keyboard: { flex: 1 },
   sessionChrome: {
     left: 0,
-    overflow: 'hidden',
+    overflow: Platform.OS === 'ios' ? 'visible' : 'hidden',
     position: 'absolute',
     right: 0,
     top: 0,

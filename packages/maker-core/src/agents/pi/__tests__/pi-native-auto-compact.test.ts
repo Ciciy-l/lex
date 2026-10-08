@@ -523,8 +523,8 @@ describe("PiAgent native auto-compaction ownership", () => {
         expect(readSettings()).toMatchObject({ shellPath: expectedShell, packages, transport: "sse" });
         expect(knobs.spawnEnv.CINDY_PI_BASH_SHELL_PATH).toBe(expectedShell);
         expect(JSON.parse(knobs.spawnEnv.CINDY_PI_SECRET_ENV_NAMES!)).toContain("CINDY_PI_BASH_SHELL_PATH");
-        // Recalibration writes settings twice; neither write may clear packages or the shell.
-        knobs.targetRuntimeContextWindow = 500_000;
+        // Native model selection must preserve packages and the shell.
+        knobs.targetRuntimeContextWindow = 1_000_000;
         knobs.verifiedContextWindows = [1_000_000, 1_000_000];
         await handle.setModel!("n");
         expect(readSettings()).toMatchObject({ shellPath: expectedShell, packages });

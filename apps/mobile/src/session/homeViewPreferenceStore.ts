@@ -68,7 +68,7 @@ async function writeHomeViewPreferences(patch: HomeViewPreferencePatch): Promise
       ? normalizeDevice(patch.selectedDevice)
       : current.selectedDevice,
   };
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(serializePreferences(next))).catch(() => undefined);
+  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(serializePreferences(next)));
 }
 
 export async function clearHomeViewPreferences(): Promise<void> {

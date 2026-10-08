@@ -134,7 +134,7 @@ export async function uploadPeerAttachment(
     }
     while (inFlight.length) await settleOldest();
     check();
-    await invoke({ op: "finish", ticket });
+    await invoke({ op: "finish", ticket }, peerAttachmentFinishTimeoutMs(metadata.size));
     check();
     return buildPeerAttachmentRef({ ...metadata, ticket });
   } catch (error) {

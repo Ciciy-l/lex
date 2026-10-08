@@ -319,7 +319,7 @@ describe('mobile session composer desktop-first surface', () => {
     expect(source).toContain('if (!visualOpenSearch) return;');
     expect(source).toContain('setSearchOpen(true);');
     expect(source).toContain('if (visualSearchQuery !== null) setSearchQuery(visualSearchQuery);');
-    expect(source).toContain('autoFocus={MOBILE_VISUAL_MOCK_ENABLED && visible}');
+    expect(source).toContain('autoFocus={visible}');
     expect(composerInputSource).toContain('autoFocus={visualFocusComposer}');
     expect(composerInputSource).toContain('cursorColor={colors.inputCaret}');
     expect(composerInputSource).toContain('selectionColor={colors.inputCaret}');

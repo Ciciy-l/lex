@@ -250,7 +250,7 @@ export function mountRemoteDesktopViewer(root, postMessage, config) {
       zoom,
       fx,
       fy,
-      config.desktop ? fillHeight : false,
+      fillHeight,
     );
     return {
       ...r,

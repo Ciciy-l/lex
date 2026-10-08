@@ -660,8 +660,9 @@ export function registerSkillhubIpc(options: RegisterSkillhubIpcOptions): void {
   ipcMain.handle(
     'skillhub:write-file',
     async (event, params: { filePath: string; content: string }) => {
-      if (!(await findScannedSkillGrant(event, params.filePath))) return scanGrantDenied();
-      if (isBuiltInSkillPath(params.filePath)) {
+      const grant = await findScannedSkillGrant(event, params.filePath);
+      if (!grant) return scanGrantDenied();
+      if (grant.builtIn || isBuiltInSkillPath(params.filePath)) {
         return { success: false, error: 'Cindy built-in Skills are read-only' };
       }
       return writeSkillFile(params);
@@ -689,8 +690,9 @@ export function registerSkillhubIpc(options: RegisterSkillhubIpcOptions): void {
       const ownerScope = activeOwnerScopeKey();
       const canMutate = () =>
         ownerScope === activeOwnerScopeKey() && !isAppSessionBoundaryPending();
-      if (!(await findScannedSkillGrant(event, params.absolutePath))) return scanGrantDenied();
-      if (isBuiltInSkillPath(params.absolutePath)) {
+      const grant = await findScannedSkillGrant(event, params.absolutePath);
+      if (!grant) return scanGrantDenied();
+      if (grant.builtIn || isBuiltInSkillPath(params.absolutePath)) {
         return { success: false, error: 'Cindy built-in Skills are read-only' };
       }
       if (!canMutate()) return { success: false, error: 'Skill mutation context changed' };
@@ -1052,7 +1054,7 @@ export function registerSkillhubIpc(options: RegisterSkillhubIpcOptions): void {
   // 发布 skill（renderer 点"发布"按钮时触发）
   ipcMain.handle('skillhub:publish', async (event, params: PublishParams) => {
     assertTrustedAppRendererEvent(event);
-    if (isBuiltInSkillPath(params.absolutePath)) {
+    if ((await findScannedSkillGrant(event, params.absolutePath))?.builtIn || isBuiltInSkillPath(params.absolutePath)) {
       return {
         success: false as const,
         errorCode: 'INTERNAL' as const,
