@@ -3787,6 +3787,7 @@ export interface SchedulerQueuedPromptRequest {
 export type SchedulerEnqueueResult = { clientId: string } | { duplicate: true } | { retry: true };
 
 interface SchedulerQueueBridge {
+  ensureQueueRestored(sessionId: string): Promise<boolean>;
   isSessionBusy(sessionId: string): boolean;
   hasQueuedPrompt(sessionId: string, scheduleId: string): boolean;
   enqueuePrompt(req: SchedulerQueuedPromptRequest): Promise<SchedulerEnqueueResult>;
@@ -3802,6 +3803,11 @@ const schedulerQueuedPromptPreparations = new Map<string, {
   onPreparing: () => Promise<void>;
   onPreparationFailed?: (error: unknown) => void;
 }>();
+
+export async function ensureSchedulerQueueRestored(sessionId: string): Promise<boolean> {
+  // 桥未就绪时不能把未知队列当成空闲；让 runner 沿用恢复待定的顺延路径。
+  return schedulerQueueBridgeHolder?.ensureQueueRestored(sessionId) ?? false;
+}
 
 export function isSchedulerTargetSessionBusy(sessionId: string): boolean {
   return schedulerQueueBridgeHolder?.isSessionBusy(sessionId) ?? false;
