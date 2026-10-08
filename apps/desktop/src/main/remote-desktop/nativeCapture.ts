@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { desktopVideoFramerate, desktopVideoProfile } from '../../shared/remoteDesktopQuality';
 import { openWindowsDesktopConnection, type WindowsDesktopConnection } from './windowsHost';
 
 const exec = promisify(execFile);
@@ -82,6 +83,8 @@ export class NativeDesktopCapture {
   private cancel: ((error?: Error) => void) | null = null;
 
   async frame(display: string, overlay = false, settings?: RemoteDesktopVideoSettings): Promise<string | RemoteDesktopCursorFrame | null> {
+    const profile = desktopVideoProfile(settings);
+    const fps = desktopVideoFramerate(settings);
     if (process.platform === 'win32') {
       if (this.busy) return null;
       if (this.display && this.display !== display) this.stop();
@@ -116,7 +119,7 @@ export class NativeDesktopCapture {
         if (generation === this.generation) this.busy = false;
       }
     }
-    const config = overlay ? [settings?.fps ?? 30, settings?.bitrate ?? 0].join(':') : '';
+    const config = overlay ? [fps, settings?.quality ?? 'auto'].join(':') : '';
     if (this.child && this.config !== config) this.stop();
     if (process.platform !== 'darwin' || !/^[0-9]{1,10}$/.test(display)) return null;
     if (this.busy) return null;
@@ -127,8 +130,8 @@ export class NativeDesktopCapture {
       if (!this.child) {
         const executable = await binary();
         if (generation !== this.generation) return null;
-        const quality = settings?.bitrate === 20_000_000 ? 0.95 : settings?.bitrate === 8_000_000 ? 0.8 : 0.65;
-        const child = spawn(executable, overlay ? [display, 'cursor-overlay', String(settings?.fps ?? 30), String(quality)] : [display], { stdio: 'pipe' });
+        const args = overlay ? [display, 'cursor-overlay', String(fps), String(profile.jpegQuality), String(profile.physicalMaxEdge), String(profile.maxFrameBytes)] : [display];
+        const child = spawn(executable, args, { stdio: 'pipe' });
         this.child = child;
         this.display = display;
         this.config = config;
@@ -148,6 +151,11 @@ export class NativeDesktopCapture {
         });
       }
       const child = this.child;
+      // macOS overlay frames follow the tier's byte budget; the base64 frame
+      // plus the bounded cursor PNG and JSON keep the historical 1.5 MB margin.
+      const frameBytes = overlay ? profile.maxFrameBytes : 1_000_000;
+      const jpegLimit = Math.ceil(frameBytes / 3) * 4;
+      const textLimit = jpegLimit + 166_664;
       return await new Promise<string | RemoteDesktopCursorFrame | null>((resolve, reject) => {
         let text = '';
         const finish = (frame: string | RemoteDesktopCursorFrame | null, error?: Error) => {
@@ -159,7 +167,7 @@ export class NativeDesktopCapture {
         };
         const receive = (chunk: Buffer) => {
           text += chunk.toString('ascii');
-          if (text.length > (overlay ? 1_500_000 : 240_001)) {
+          if (text.length > (overlay ? textLimit : 240_001)) {
             this.stop();
             return;
           }
@@ -167,8 +175,12 @@ export class NativeDesktopCapture {
           if (overlay) {
             try {
               const value = JSON.parse(text) as RemoteDesktopCursorFrame;
-              if (typeof value.jpeg !== 'string' || value.jpeg.length > 1_333_336 ||
-                  !/^[A-Za-z0-9+/]+={0,2}$/.test(value.jpeg) || (value.cursor !== null && !isRemoteDesktopCursor(value.cursor)))
+              if (
+                typeof value.jpeg !== 'string' ||
+                value.jpeg.length > jpegLimit ||
+                !/^[A-Za-z0-9+/]+={0,2}$/.test(value.jpeg) ||
+                (value.cursor !== null && !isRemoteDesktopCursor(value.cursor))
+              )
                 throw new Error('INVALID_CURSOR_FRAME');
               finish(generation === this.generation ? value : null);
             } catch { this.stop(); }
