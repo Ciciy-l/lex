@@ -89,7 +89,7 @@ function extOf(localPath: string): string {
 }
 
 /** ext → mime,未知回落 application/octet-stream。 */
-function mimeOf(ext: string): string {
+export function mimeOf(ext: string): string {
   return MIME_BY_EXT[ext] ?? 'application/octet-stream';
 }
 
@@ -358,7 +358,9 @@ async function putBytesToOss(
         // 态,把它的 HTTP 码混进用户可见串会把人往权限方向带,而真正卡住的是后面
         // 那跳。默认栈自己被拒时是 non-retriable,状态码照样会原样抛出。
         failures.push(`${transport.name}:HTTP ${err.httpStatus}`);
-        log.warn(`OSS PUT cached fallback rejected host=${host} status=${err.httpStatus}; retrying via undici`);
+        log.warn(
+          `OSS PUT cached fallback rejected host=${host} status=${err.httpStatus}; retrying via undici`,
+        );
         continue;
       }
       // 源文件读盘失败在 fetch 消费 body 时才浮出来,形态与网络失败一样;
@@ -377,7 +379,9 @@ async function putBytesToOss(
       // 否则只要每 30 分钟内传一次文件,TTL 就永远到不了期,undici 再也不被探测。
       if (failures.length > 0) {
         rememberElectronNetPreference(host, Date.now());
-        log.info(`OSS PUT recovered via Electron net host=${host} (undici unusable: ${failures.join('; ')})`);
+        log.info(
+          `OSS PUT recovered via Electron net host=${host} (undici unusable: ${failures.join('; ')})`,
+        );
       }
     } else {
       // undici 又通了:清掉记忆,回到默认顺序。
@@ -407,6 +411,8 @@ export async function uploadLocalFile(
     extHint?: string;
     /** Shared-task owner/membership fence before each irreversible upload stage. */
     assertAuthorized?: () => void | Promise<void>;
+    /** Caller budget, rechecked immediately before preparing the OSS upload. */
+    maxBytes?: number;
     /** 可选上传进度(已送入 HTTP 栈的字节数,略超前于真实网络进度)。 */
     onProgress?: (uploadedBytes: number) => void;
   } = {},
@@ -416,6 +422,12 @@ export async function uploadLocalFile(
   await opts.assertAuthorized?.();
   if (!st.isFile()) throw new Error(`不是文件: ${localPath}`);
   const size = st.size;
+  if (opts.maxBytes !== undefined) {
+    if (!Number.isSafeInteger(opts.maxBytes) || opts.maxBytes < 0) {
+      throw new Error('INVALID_FILE_SIZE_LIMIT');
+    }
+    if (size > opts.maxBytes) throw new Error('REMOTE_FILE_TOO_LARGE');
+  }
   if (size > MAX_MEDIA_BYTES) {
     throw new Error(`文件超过上限 ${Math.round(MAX_MEDIA_BYTES / 1024 / 1024 / 1024)}GB`);
   }
@@ -432,7 +444,20 @@ export async function uploadLocalFile(
       // 小媒体:读进 Buffer 整体 PUT(成熟稳定路径)。整体 PUT 无中间粒度,
       // 完成时一次性回调。
       await opts.assertAuthorized?.();
-      const buf = await readFile(localPath);
+      let buf: Buffer;
+      if (opts.maxBytes !== undefined) {
+        // One extra byte detects growth without reading an arbitrarily enlarged file.
+        const chunks: Buffer[] = [];
+        let received = 0;
+        for await (const chunk of createReadStream(localPath, { end: size })) {
+          received += chunk.length;
+          if (received > size) throw new Error('REMOTE_FILE_TOO_LARGE');
+          chunks.push(chunk);
+        }
+        buf = Buffer.concat(chunks);
+      } else {
+        buf = await readFile(localPath);
+      }
       await opts.assertAuthorized?.();
       if (buf.byteLength !== size) {
         throw new Error(`文件在上传前发生变化:预期 ${size} 字节,实际 ${buf.byteLength} 字节`);
@@ -457,7 +482,10 @@ export async function uploadLocalFile(
       const attempts: StreamAttempt[] = [];
       const bodySource: OssPutBodySource = {
         create(): ReadableStream {
-          const source = createReadStream(localPath);
+          const source = createReadStream(
+            localPath,
+            opts.maxBytes !== undefined ? { end: size } : undefined,
+          );
           const hasher = createHash('sha256');
           const current: StreamAttempt = {
             sent: 0,
@@ -471,6 +499,12 @@ export async function uploadLocalFile(
           const counter = new Transform({
             transform(chunk: Buffer, _enc, cb) {
               current.sent += chunk.length;
+              if (opts.maxBytes !== undefined && current.sent > size) {
+                const error = new Error('REMOTE_FILE_TOO_LARGE');
+                current.sourceError = error;
+                cb(error);
+                return;
+              }
               hasher.update(chunk);
               // 只有当前这跳有资格上报进度(控制端看到的已传字节因此可能回退一次)。
               if (attempts.at(-1) === current) opts.onProgress?.(current.sent);

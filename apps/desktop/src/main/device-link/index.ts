@@ -11,6 +11,7 @@
  */
 
 import os from 'node:os';
+import { tryPeerInvoke } from './filePeer';
 import { watchNetworkChanges } from './networkChanges';
 import path from 'node:path';
 import { app, BrowserWindow } from 'electron';
@@ -1794,6 +1795,19 @@ export async function remoteInvoke(
     assertLinkNotClosedSinceStart();
     options?.preSend?.();
     if (!client) throw new Error('[DEVICE_LINK_NOT_CONNECTED] device-link client not initialized');
+    if (!parseSharedTaskPeer(deviceId)) {
+      const accelerated = await tryPeerInvoke(deviceId, channel, args, (peer, nextChannel, nextArgs) => {
+        assertLinkNotClosedSinceStart();
+        return remoteInvoke(peer, nextChannel, nextArgs, { preSend: () => {
+          assertLinkNotClosedSinceStart();
+          options?.preSend?.();
+        } });
+      });
+      assertRemoteControlTargetEnabled(deviceId);
+      assertLinkNotClosedSinceStart();
+      options?.preSend?.();
+      if (accelerated) return accelerated;
+    }
     return client.invoke(deviceId, { channel, args }, INVOKE_TIMEOUT_OVERRIDES_MS[channel]);
   };
   const run = (): Promise<InvokeResultPayload> =>

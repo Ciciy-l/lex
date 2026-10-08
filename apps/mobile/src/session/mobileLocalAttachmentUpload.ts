@@ -33,6 +33,7 @@ export interface MobileLocalAttachmentUploadCandidate {
   attachmentScopeKey?: string;
   /** Captured task upload namespace; never read from a later render. */
   sharedTaskId?: string;
+  deviceId?: string;
   /** 同一作用域重复进入时也会递增的代际；避免 A → B → A 后接回最早 A 的旧结果。 */
   attachmentScopeGeneration?: number;
   mimeType?: string;
@@ -102,7 +103,7 @@ export interface MobileLocalAttachmentUploadDeps {
   assertSize(size: number, candidate: MobileLocalAttachmentUploadCandidate): void;
   /** 真正的 presign + PUT(uploadMobileAttachmentFromFile);signal 中止时应尽快断掉传输。 */
   upload(
-    candidate: { id?: string; name: string; size: number; mimeType?: string; sharedTaskId?: string },
+    candidate: { id?: string; name: string; size: number; mimeType?: string; sharedTaskId?: string; deviceId?: string },
     fileUri: string,
     opts: { token: string; signal?: AbortSignal },
   ): Promise<RemoteSerializedAttachment>;
@@ -406,7 +407,7 @@ export function createMobileLocalAttachmentUploadController(
         return;
       }
       const attachment = uploadedAttachment = await step(deps.upload(
-        { id: task.localId, name: prepared.name, size, mimeType: prepared.mimeType || undefined, ...(source.sharedTaskId ? { sharedTaskId: source.sharedTaskId } : {}) },
+        { id: task.localId, name: prepared.name, size, mimeType: prepared.mimeType || undefined, ...(source.sharedTaskId ? { sharedTaskId: source.sharedTaskId } : {}), ...(source.deviceId ? { deviceId: source.deviceId } : {}) },
         prepared.uri,
         { token, signal },
       ), (late) => deps.discard(late, token));

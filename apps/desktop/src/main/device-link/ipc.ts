@@ -54,9 +54,10 @@ import {
   waitForNewerControllerDisplayNameDirectoryRefresh,
 } from './index';
 import { getActiveControllers } from './dispatch';
-import { rewriteOutboundMedia } from './outboundMedia';
+import { rewriteOutboundMedia, withPeerAttachmentUpload } from './outboundMedia';
 import { withOutboundReviewConfirmation } from '../maker-ipc/reviewOutboundInput.js';
 import { confirmReviewArtifacts } from '../reviewer/confirmReviewArtifacts.js';
+import { tryUploadPeerAttachment } from './filePeer';
 import { withSharedTaskMedia } from './sharedTaskMediaContext.js';
 import {
   outboundSessionReferencesRequested,
@@ -667,12 +668,12 @@ export async function handleInvoke(
         assertControlTargetEnabled(deps, normalizedDeviceId);
       }
       if (owner !== activeOwnerScopeKey()) throw new Error('Attachment account changed');
-      callArgs = await withSharedTaskMedia(peer?.role === 'host' ? peer.sharedTaskId : undefined,
+      callArgs = await withPeerAttachmentUpload((source, mime) => peer ? Promise.resolve(null) : tryUploadPeerAttachment(normalizedDeviceId, source, mime, deps.invoke), () => withSharedTaskMedia(peer?.role === 'host' ? peer.sharedTaskId : undefined,
         () => existing ? deps.rewriteOutboundMedia!(channel, callArgs, existing) : deps.rewriteOutboundMedia!(channel, callArgs),
         () => {
           if (owner !== activeOwnerScopeKey()) throw new Error('Attachment account changed');
           assertControlTargetEnabled(deps, normalizedDeviceId);
-        });
+        }));
       if (owner !== activeOwnerScopeKey()) throw new Error('Attachment account changed');
     } catch (err) {
 

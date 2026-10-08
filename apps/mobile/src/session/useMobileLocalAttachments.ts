@@ -286,7 +286,7 @@ export function useMobileLocalAttachments(
     },
     upload: (candidate, fileUri, opts) => optionsRef.current.upload
       ? optionsRef.current.upload(candidate, fileUri, opts)
-      : uploadMobileAttachmentFromFile(candidate, fileUri, { ...opts, sharedTaskId: candidate.sharedTaskId }),
+      : uploadMobileAttachmentFromFile(candidate, fileUri, { ...opts, sharedTaskId: candidate.sharedTaskId, deviceId: candidate.deviceId }),
     discard: (attachment, token) => optionsRef.current.discard
       ? optionsRef.current.discard(attachment, token)
       : discardMobileUploadedAttachment(attachment, {
@@ -399,6 +399,7 @@ export function useMobileLocalAttachments(
     controller.enqueue(
       candidates.map((candidate) => ({
         ...candidate,
+        deviceId: optionsRef.current.deviceId,
         attachmentScopeGeneration,
         attachmentScopeKey,
         sharedTaskId: parseSharedTaskPeer(optionsRef.current.deviceId ?? '')?.sharedTaskId,

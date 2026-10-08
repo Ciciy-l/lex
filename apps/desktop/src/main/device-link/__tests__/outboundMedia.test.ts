@@ -8,7 +8,7 @@ import path from 'node:path';
 
 const uploadLocalFile = vi.hoisted(() => vi.fn());
 const uploadBuffer = vi.hoisted(() => vi.fn());
-vi.mock('../mediaTransfer', () => ({ uploadLocalFile, uploadBuffer }));
+vi.mock('../mediaTransfer', () => ({ uploadLocalFile, uploadBuffer, mimeOf: () => 'text/plain' }));
 
 const resolveSafe = vi.hoisted(() => vi.fn());
 vi.mock('../../imageCacheStore', () => ({ resolveSafe }));
@@ -17,9 +17,10 @@ vi.mock('../../logger', () => ({
   createLogger: () => ({ info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() }),
 }));
 
-import { rewriteOutboundMedia, __testing } from '../outboundMedia';
+import { rewriteOutboundMedia, withPeerAttachmentUpload, __testing } from '../outboundMedia';
 import { REVIEW_START_REQUEST_LIMITS } from '../../maker-ipc/reviewStartHandler';
 vi.mock('../../maker-ipc/reviewOutboundInput', () => ({ withPreparedOutboundReview: (request: unknown, upload: (value: unknown) => unknown) => upload(request) }));
+import { buildPeerAttachmentRef, parsePeerAttachmentRef } from '@cindy/device-link';
 import { parseAttachmentOssRef, isAttachmentOssRef } from '../../../shared/attachmentOssRef';
 
 const SHA256 = 'a'.repeat(64);
@@ -41,6 +42,16 @@ beforeEach(() => {
 });
 
 describe('rewriteOutboundMedia — channel gating', () => {
+  it('uses peer staging for exact file bytes, preserves the name and retains OSS fallback', async () => {
+    const direct = vi.fn(async () => buildPeerAttachmentRef({ ticket: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', size: 10, sha256: SHA256, mimeType: 'text/plain' }));
+    const args = ['session', { type: 'user', content: [{ type: 'file', path: '/controller/a.txt', originalName: 'a.txt' }] }];
+    const result = await withPeerAttachmentUpload(direct, () => rewriteOutboundMedia('maker:send', args));
+    const ref = (result[1] as any).content[0].path;
+    expect(parsePeerAttachmentRef(ref)?.originalName).toBe('a.txt');
+    expect(uploadLocalFile).not.toHaveBeenCalled();
+    await withPeerAttachmentUpload(async () => null, () => rewriteOutboundMedia('maker:send', args));
+    expect(uploadLocalFile).toHaveBeenCalledOnce();
+  });
   it.each([
     ['count', () => Array.from({ length: 21 }, () => ({ name: 'a', path: '/controller/a' }))],
     ['metadata', () => [{ name: 'a', path: '/controller/a' }, { name: 'x'.repeat(4097), path: '/controller/b' }]],

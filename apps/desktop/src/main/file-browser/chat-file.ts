@@ -1,3 +1,4 @@
+import { copyFile, writeFile } from 'node:fs/promises';
 /**
  * chat-file.ts — 聊天流文件类交互的远程取回编排(`maker:chat-file:fetch` 的业务体)。
  * ---------------------------------------------------------------------------
@@ -31,8 +32,7 @@ export { toWorkdirRel } from '../../shared/workdirPath.js';
 
 /** 聊天文件取回的远程来源(local 不进本模块——renderer 侧直接走本机路径)。 */
 export type ChatFileOrigin =
-  | { kind: 'device'; deviceId: string }
-  | { kind: 'ssh'; remoteHostId: string };
+  { kind: 'device'; deviceId: string } | { kind: 'ssh'; remoteHostId: string };
 
 export interface ChatFileFetchArgs {
   origin: ChatFileOrigin;
@@ -55,7 +55,11 @@ export interface ChatFileOwnerScope {
  */
 export type ChatFileFetchResult =
   | { ok: true; cachePath: string; stale: boolean; size: number }
-  | { ok: false; code: 'BAD_ARGS' | 'OUTSIDE_WORKDIR' | 'NOT_FOUND' | 'FETCH_FAILED'; message?: string };
+  | {
+      ok: false;
+      code: 'BAD_ARGS' | 'OUTSIDE_WORKDIR' | 'NOT_FOUND' | 'FETCH_FAILED';
+      message?: string;
+    };
 
 /** 远端 stat 结果(file-service 与 device-op statEntry 同形投影)。 */
 export interface ChatFileStat {
@@ -84,7 +88,13 @@ export interface ChatFileDeps {
     onProgress: FetchProgressFn,
   ): Promise<string>;
   /** device workdir 外:被控端 media:fetch(任意绝对路径上 OSS)。 */
-  deviceMediaFetch(deviceId: string, url: string): Promise<{ ossKey: string; size: number }>;
+  deviceMediaFetch(
+    deviceId: string,
+    url: string,
+  ): Promise<
+    | { ossKey: string; size: number; inlineBase64?: string }
+    | { ossKey: string; size: number; path: string; dispose(): Promise<void> }
+  >;
   /** OSS 对象流式直下到本地文件。 */
   downloadToFile(
     key: string,
@@ -184,6 +194,8 @@ async function staleFallback(
   err: unknown,
   ownerScope?: ChatFileOwnerScope,
 ): Promise<ChatFileFetchResult> {
+  if (String(err).includes('FILE_PEER_CANCELLED'))
+    return { ok: false, code: 'FETCH_FAILED', message: String(err) };
   const stalePath = await deps.findStale(id).catch(() => null);
   if (ownerScope && !ownerScope.isCurrent()) {
     return { ok: false, code: 'FETCH_FAILED', message: 'FILE_PEER_CANCELLED' };
@@ -313,6 +325,22 @@ export async function fetchChatFile(
   try {
     if (!ownerIsCurrent()) return cancelled();
     const fetched = await deps.deviceMediaFetch(origin.deviceId, buildDevicePathUrl(absPath));
+    if ('path' in fetched || fetched.inlineBase64 !== undefined) {
+      try {
+        const cachePath = await deps.fetchToCache(
+          { ...identity, size: fetched.size },
+          async (dest, progress) => {
+            if ('path' in fetched) await copyFile(fetched.path, dest);
+            else await writeFile(dest, Buffer.from(fetched.inlineBase64!, 'base64'));
+            progress(fetched.size, fetched.size);
+          },
+          onProgress,
+        );
+        return { ok: true, cachePath, stale: false, size: fetched.size };
+      } finally {
+        if ('path' in fetched) await fetched.dispose();
+      }
+    }
     uploadedKey = fetched.ossKey;
     if (!ownerIsCurrent()) {
       deps.removeRemote(fetched.ossKey);
