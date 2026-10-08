@@ -1,3 +1,4 @@
+import { useSharedTasks } from '@/device-link/useSharedTasks';
 import { MountOnFirstOpen } from './MountOnFirstOpen';
 import type { HomeMode } from './homeViewPreferenceStore';
 import { GlassView } from "expo-glass-effect";

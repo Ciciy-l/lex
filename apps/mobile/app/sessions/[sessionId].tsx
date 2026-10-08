@@ -2219,12 +2219,15 @@ export default function SessionScreen() {
     () => remoteSessionStore.getSessionLiveActivity(sessionId)?.attention === true,
   );
   const hasRenderedMessages = historyView.snapshot.ready ? historyView.snapshot.items.length > 0 : messages.length > 0;
-  const companionResource = useRemoteResourceSession(deviceId, deviceName, sessionId,
+  const companionEntry = useRemoteResourceSession(deviceId, deviceName, sessionId,
     currentSession?.id === sessionId && hasRenderedMessages
       && readAckSyncedKey === `${sessionId}:${connectionEpoch}`
       // A pre-ACK snapshot may omit replies sent before the subscription took effect.
       && contentRecoveryKey !== null && contentSyncedKey === contentRecoveryKey
-      && !outboxRecoverySyncHeld && !loading);
+      && !outboxRecoverySyncHeld && !loading,
+    sessionMetadataSyncedKey === `${sessionId}:${connectionEpoch}`
+      && (readRouteParam(params.resourceKind) !== 'bot' || currentSession?.source === 'bot'));
+  const companionResource = companionEntry.resource;
   const companionChat = companionResource?.ref.kind === 'bot';
   const lastAckKeyRef = useRef<string | null>(null);
   // AppState 门槛:锁屏 / 切后台时导航焦点不变,useFocusEffect 的 cleanup 不会跑,
@@ -2415,7 +2418,7 @@ export default function SessionScreen() {
       setPendingPlanViewerState('half');
     }
   }, [activePendingKind, activePendingRequestId, sessionOperationLayout.composerSlot]);
-  const canUseComposer = sessionOperationLayout.canUseComposer;
+  const canUseComposer = sessionOperationLayout.canUseComposer && companionEntry.ready;
   const canUseRemoteSessionControls = canUseComposer
     && !sessionSettingsLocked
     && !remoteRealtimeControlsUnavailable;
@@ -2426,7 +2429,7 @@ export default function SessionScreen() {
   const composerDisabledReasonKey = composerDisabledReasonI18nKey(
     sessionOperationLayout.composerDisabledReasonSource,
   );
-  const composerDisabledReason = composerDisabledReasonKey
+  const composerDisabledReason = !companionEntry.ready ? t('shared.syncing') : composerDisabledReasonKey
     ? t(composerDisabledReasonKey)
     : sessionOperationLayout.composerDisabledReason;
   // inline 队列操作可用性:旧队列弹层由 showQueue 整体隐藏(离线/被撤销、pending
