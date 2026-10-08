@@ -6490,6 +6490,15 @@ export function handleStreamEvent(
       // Guard against malformed events (Minor #6): empty requestId or plan
       // would produce an un-resolvable pending review. Drop on the floor.
       if (!data.requestId || !data.plan) return state;
+      // Host snapshots and duplicate pushes carry the original request, while
+      // remote plan edits only live here. Replaying the same pending request
+      // must preserve its draft and viewer state until a decision or dismissal.
+      const keepPlanProgress = state.pendingPlanReview?.requestId === data.requestId;
+      const pendingPlan = keepPlanProgress ? state.pendingPlanReview! : {
+        requestId: data.requestId,
+        plan: data.plan,
+        planFilePath: data.planFilePath,
+      };
       // F1-a: plan_review 消息的落库(+ 在飞 assistant flush)已收口 main
       // (onInteractionMessage),renderer 只做 UI:finalize + 用 main 下发的 persistId 建
       // plan_review 气泡(onCreated dedup;answered/feedback 回写命中这条 persistId 单行)。
@@ -6508,8 +6517,8 @@ export function handleStreamEvent(
                     ...m,
                     isStreaming: false,
                     planReviewStatus: 'pending' as const,
-                    planReviewPlan: data.plan,
-                    planReviewFilePath: data.planFilePath,
+                    planReviewPlan: pendingPlan.plan,
+                    planReviewFilePath: pendingPlan.planFilePath,
                     planReviewFeedback: undefined,
                   }
                 : m,
@@ -6526,22 +6535,18 @@ export function handleStreamEvent(
                 isStreaming: false,
                 planReviewStatus: 'pending' as const,
                 planReviewRequestId: data.requestId,
-                planReviewPlan: data.plan,
-                planReviewFilePath: data.planFilePath,
+                planReviewPlan: pendingPlan.plan,
+                planReviewFilePath: pendingPlan.planFilePath,
                 createdAt: new Date().toISOString(),
               },
             ];
 
       return {
         ...finalized,
-        pendingPlanReview: {
-          requestId: data.requestId,
-          plan: data.plan,
-          planFilePath: data.planFilePath,
-        },
+        pendingPlanReview: pendingPlan,
         // Default to expanded + remember as the restore target for minimized
-        planViewerState: 'expanded',
-        lastExpandedPlanViewerState: 'expanded',
+        planViewerState: keepPlanProgress ? state.planViewerState : 'expanded',
+        lastExpandedPlanViewerState: keepPlanProgress ? state.lastExpandedPlanViewerState : 'expanded',
         messages: planMessages,
       };
     }
@@ -9952,11 +9957,19 @@ function reconcilePendingInteractions(
       // Permissions also need subtraction after a lost decision receipt.
       const authoritativePluginSetupIds = new Set<string>();
       const authoritativePermissionIds = new Set<string>();
+      const authoritativeQuestionIds = new Set<string>();
+      const authoritativePlanIds = new Set<string>();
       const authoritativeRemoteDesktopConfirmationIds = new Set<string>();
       for (const item of list) {
         const request = item?.request;
         if (request?.kind === 'permission' && typeof request.requestId === 'string') {
           authoritativePermissionIds.add(request.requestId);
+        }
+        if (request?.kind === 'ask_user_question' && typeof request.requestId === 'string') {
+          authoritativeQuestionIds.add(request.requestId);
+        }
+        if (request?.kind === 'plan_review' && typeof request.requestId === 'string') {
+          authoritativePlanIds.add(request.requestId);
         }
         if (
           request?.kind === 'plugin_setup' &&
@@ -9977,6 +9990,28 @@ function reconcilePendingInteractions(
       }
       if (!isCurrentInteractionReconcile()) return 0;
       setState(sessionId, (state) => {
+        // Missing dismissal pushes must not leave old questions blocking the
+        // composer. Only a successful, current Host snapshot can retire them.
+        const nextAskUser = state.pendingAskUser &&
+          authoritativeQuestionIds.has(state.pendingAskUser.requestId)
+          ? state.pendingAskUser : null;
+        const nextPlanReview = state.pendingPlanReview &&
+          authoritativePlanIds.has(state.pendingPlanReview.requestId)
+          ? state.pendingPlanReview : null;
+        let messagesChanged = false;
+        const messages = state.messages.map((message) => {
+          if (message.askUserStatus === 'pending' && message.askUserRequestId &&
+            !authoritativeQuestionIds.has(message.askUserRequestId)) {
+            messagesChanged = true;
+            return { ...message, askUserStatus: 'expired' as const };
+          }
+          if (message.planReviewStatus === 'pending' && message.planReviewRequestId &&
+            !authoritativePlanIds.has(message.planReviewRequestId)) {
+            messagesChanged = true;
+            return { ...message, planReviewStatus: 'expired' as const };
+          }
+          return message;
+        });
         const nextPermission = state.pendingPermission &&
           authoritativePermissionIds.has(state.pendingPermission.requestId)
           ? state.pendingPermission : null;
@@ -10030,6 +10065,9 @@ function reconcilePendingInteractions(
         if (
           !currentChanged &&
           !queueChanged &&
+          !messagesChanged &&
+          nextAskUser === state.pendingAskUser &&
+          nextPlanReview === state.pendingPlanReview &&
           nextPermission === state.pendingPermission &&
           nextCommand === state.pluginSetupCommandInFlight &&
           promotedRemoteDesktopConfirmation === state.pendingRemoteDesktopConfirmation &&
@@ -10039,6 +10077,13 @@ function reconcilePendingInteractions(
         }
         return {
           ...state,
+          messages: messagesChanged ? messages : state.messages,
+          pendingAskUser: nextAskUser,
+          askUserDraft: nextAskUser ? state.askUserDraft : null,
+          askUserViewerState: nextAskUser ? state.askUserViewerState : 'expanded',
+          pendingPlanReview: nextPlanReview,
+          planViewerState: nextPlanReview ? state.planViewerState : 'expanded',
+          lastExpandedPlanViewerState: nextPlanReview ? state.lastExpandedPlanViewerState : 'expanded',
           pendingPermission: nextPermission,
           pendingPluginSetup: nextCurrent,
           pendingPluginSetupQueue: survivingQueue,
@@ -15303,7 +15348,7 @@ function updateSystemCardData(
 }
 
 // Only an accepted Host receipt may commit a question/plan decision. A rejected
-// or lost receipt leaves the existing card and its draft available for retry.
+// or lost receipt rechecks Host state, keeping a still-pending card and draft.
 const questionDecisionsInFlight = new Set<string>();
 
 function submitQuestionDecision(
@@ -15344,6 +15389,24 @@ function submitQuestionDecision(
       if (state?.pendingAskUser?.requestId !== requestId &&
         state?.pendingPlanReview?.requestId !== requestId) return;
       log.warn('Question decision receipt unavailable', error);
+      // A rejection may mean either an ended request or paused execution.
+      // Read the authoritative snapshot; never infer completion or resend the
+      // answer from a missing receipt. Bound this read just like the submission.
+      if (timer) clearTimeout(timer);
+      try {
+        await Promise.race([
+          reconcilePendingInteractions(sessionId, isCurrent),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error('Interaction reconciliation timeout')), 15_000);
+          }),
+        ]);
+      } catch {
+        // A disconnected Host cannot prove that the request has ended.
+      }
+      if (!isCurrent()) return;
+      const current = sessions.get(sessionId);
+      if (current?.pendingAskUser?.requestId !== requestId &&
+        current?.pendingPlanReview?.requestId !== requestId) return;
       toast.warning(i18n.t('newChat.permissionPrompt.submissionFailed'));
     } finally {
       if (timer) clearTimeout(timer);
