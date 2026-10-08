@@ -113,12 +113,28 @@
       "pendingCount": "보류 중 {{count}}개",
       "readOnly": "읽기 전용",
       "queuePaused": "대기열 일시 중지됨",
-      "status": { "active": "활성", "archived": "보관됨", "deleted": "삭제됨" },
+      "status": {
+        "active": "활성",
+        "archived": "보관됨",
+        "deleted": "삭제됨"
+      },
       "actions": {
-        "settings": { "label": "설정", "a11y": "작업 설정 열기" },
-        "usage": { "label": "사용량", "a11y": "작업 사용량 보기" },
-        "files": { "label": "파일", "a11y": "원격 파일 탐색" },
-        "queue": { "label": "대기열", "a11y": "대기열 패널 열기" },
+        "settings": {
+          "label": "설정",
+          "a11y": "작업 설정 열기"
+        },
+        "usage": {
+          "label": "사용량",
+          "a11y": "작업 사용량 보기"
+        },
+        "files": {
+          "label": "파일",
+          "a11y": "원격 파일 탐색"
+        },
+        "queue": {
+          "label": "대기열",
+          "a11y": "대기열 패널 열기"
+        },
         "search": {
           "label": "검색",
           "openA11y": "메시지 검색",
@@ -434,7 +450,12 @@
         "claude": "Claude 구독",
         "xai": "SuperGrok 구독",
         "gateway": "Cindy AI"
-      }
+      },
+      "credits": "Credits",
+      "creditsRemaining": "{{credits}} 남음",
+      "creditsUnlimited": "무제한",
+      "creditsDepleted": "소진",
+      "creditsAvailable": "사용 가능"
     },
     "refreshContextUsage": "컨텍스트 사용량 새로 고침",
     "currentSessionSpend": "이번 세션",

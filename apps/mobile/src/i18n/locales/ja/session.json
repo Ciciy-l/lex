@@ -119,10 +119,22 @@
         "deleted": "削除済み"
       },
       "actions": {
-        "settings": { "label": "設定", "a11y": "タスク設定を開く" },
-        "usage": { "label": "使用量", "a11y": "タスクの使用量を表示" },
-        "files": { "label": "ファイル", "a11y": "リモートファイルを参照" },
-        "queue": { "label": "キュー", "a11y": "キューパネルを開く" },
+        "settings": {
+          "label": "設定",
+          "a11y": "タスク設定を開く"
+        },
+        "usage": {
+          "label": "使用量",
+          "a11y": "タスクの使用量を表示"
+        },
+        "files": {
+          "label": "ファイル",
+          "a11y": "リモートファイルを参照"
+        },
+        "queue": {
+          "label": "キュー",
+          "a11y": "キューパネルを開く"
+        },
         "search": {
           "label": "検索",
           "openA11y": "メッセージを検索",
@@ -438,7 +450,12 @@
         "claude": "Claude サブスクリプション",
         "xai": "SuperGrok サブスクリプション",
         "gateway": "Cindy AI"
-      }
+      },
+      "credits": "Credits",
+      "creditsRemaining": "残り {{credits}}",
+      "creditsUnlimited": "無制限",
+      "creditsDepleted": "残高なし",
+      "creditsAvailable": "残高あり"
     },
     "refreshContextUsage": "コンテキスト使用量を更新",
     "currentSessionSpend": "今回のセッション",

@@ -36,6 +36,7 @@ import type {
 import type { ProviderView } from '@cindy/model-providers/registry';
 import type { RewindPreviewPayload } from '@/session/rewindPreview';
 import type { MobileRemoteMediaFetchResult } from '@/session/remoteMedia';
+import { NATIVE_SUBSCRIPTION_DEFAULT_PROVIDER_IDS, type NativeSubscriptionAuth } from "@cindy/model-providers/types";
 import type {
   RemoteSchedule,
   RemoteScheduleCreateFromTemplateInput,
@@ -97,6 +98,18 @@ export interface CreateSessionResult {
   capabilities?: unknown;
   usedProjectContext?: boolean;
 }
+
+
+/**
+ * 订阅家族 → 被控端余量快照 channel。ChatGPT 走 Codex 自有控制面
+ * (getCodexRateLimits / getAccountUsage),其余家族各有一个只读快照 channel。
+ * 以 NativeSubscriptionAuth 为键:新增订阅家族时这里漏接会直接编译失败。
+ */
+export type SubscriptionUsageKind = Exclude<NativeSubscriptionAuth, "codex">;
+export const SUBSCRIPTION_USAGE_CHANNELS = {
+  claude: "maker:usage:claude-subscription",
+  xai: "maker:usage:xai-subscription",
+} as const satisfies Record<SubscriptionUsageKind, string>;
 
 export type MobileSlashCommand =
   | { kind: 'agent-builtin'; name: string; description: string }
@@ -468,6 +481,17 @@ export interface MobileMakerTransport {
   getSessionEstimatedValue(sessionId: string): Promise<{ totalValueMoney?: unknown; totalValueUsd?: number }>;
   /** Codex app-server authoritative windows plus banked reset credits and a bound reset offer. */
   getCodexRateLimits(providerId?: string): Promise<MobileCodexRateLimitsResult>;
+  /**
+   * 被控端订阅账号余量快照(只读,cached-first;Claude 5h/周/分模型窗口、SuperGrok 周用量)。
+   * 默认账号不传 providerId;独立账号的回包必须回显同一 providerId,否则按旧被控端处理。
+   * 老被控端 CHANNEL_NOT_ALLOWED → 调用方保留「暂未获取」提示。
+   */
+  getSubscriptionUsage(
+    kind: SubscriptionUsageKind,
+    providerId?: string,
+  ): Promise<unknown>;
+  /** cc 默认路由会话在被控端 proxy 观察到的生效计费路由('gateway' | 'subscription' | null)。 */
+  getClaudeSessionRoute(sessionId: string): Promise<unknown>;
   /** Consume the desktop-issued offer; retries must pass the same idempotency key. */
   resetCodexRateLimits(idempotencyKey: string, providerId?: string): Promise<MobileCodexRateLimitResetResult>;
   /** 网关 API key presence-only 探测(只回 boolean;老被控端 → 调用方按 unknown 处理)。 */
@@ -756,6 +780,24 @@ export function createMobileMakerTransport({
       if (providerId && providerId !== 'openai' && result.providerId !== providerId) throw new Error('PRECONDITION_FAILED: Account scope unsupported');
       return result;
     },
+    getSubscriptionUsage: async (kind, providerId) => {
+      // 默认账号不带参数,兼容只认默认账号的老被控端。
+      const scoped =
+        providerId && providerId !== NATIVE_SUBSCRIPTION_DEFAULT_PROVIDER_IDS[kind];
+      const result = await call<unknown>(
+        SUBSCRIPTION_USAGE_CHANNELS[kind],
+        scoped ? [providerId] : undefined,
+      );
+      if (
+        scoped &&
+        result &&
+        (result as { providerId?: string }).providerId !== providerId
+      )
+        throw new Error("PRECONDITION_FAILED: Account scope unsupported");
+      return result;
+    },
+    getClaudeSessionRoute: (sessionId) =>
+      call("maker:claude-session-route:get", [sessionId]),
     resetCodexRateLimits: async (idempotencyKey, providerId) => {
       const result = await call<MobileCodexRateLimitResetResult>('maker:usage:codex-rate-limit-reset', providerId ? [idempotencyKey, providerId] : [idempotencyKey]);
       if (providerId && providerId !== 'openai' && result.providerId !== providerId) throw new Error('PRECONDITION_FAILED: Account scope unsupported');

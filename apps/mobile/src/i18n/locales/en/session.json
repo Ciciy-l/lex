@@ -119,10 +119,22 @@
         "deleted": "Deleted"
       },
       "actions": {
-        "settings": { "label": "Settings", "a11y": "Open session settings" },
-        "usage": { "label": "Usage", "a11y": "View session usage" },
-        "files": { "label": "Files", "a11y": "Browse remote files" },
-        "queue": { "label": "Queue", "a11y": "Open queue panel" },
+        "settings": {
+          "label": "Settings",
+          "a11y": "Open session settings"
+        },
+        "usage": {
+          "label": "Usage",
+          "a11y": "View session usage"
+        },
+        "files": {
+          "label": "Files",
+          "a11y": "Browse remote files"
+        },
+        "queue": {
+          "label": "Queue",
+          "a11y": "Open queue panel"
+        },
         "search": {
           "label": "Search",
           "openA11y": "Search messages",
@@ -438,7 +450,12 @@
         "claude": "Claude subscription",
         "xai": "SuperGrok subscription",
         "gateway": "Cindy AI"
-      }
+      },
+      "credits": "Credits",
+      "creditsRemaining": "{{credits}} remaining",
+      "creditsUnlimited": "Unlimited",
+      "creditsDepleted": "Depleted",
+      "creditsAvailable": "Available"
     },
     "refreshContextUsage": "Refresh context usage",
     "currentSessionSpend": "This session",

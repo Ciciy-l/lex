@@ -113,12 +113,28 @@
       "pendingCount": "待处理 {{count}}",
       "readOnly": "只读",
       "queuePaused": "队列暂停",
-      "status": { "active": "活跃", "archived": "已归档", "deleted": "已删除" },
+      "status": {
+        "active": "活跃",
+        "archived": "已归档",
+        "deleted": "已删除"
+      },
       "actions": {
-        "settings": { "label": "设置", "a11y": "打开任务设置" },
-        "usage": { "label": "用量", "a11y": "查看任务用量" },
-        "files": { "label": "文件", "a11y": "浏览远程文件" },
-        "queue": { "label": "队列", "a11y": "打开队列面板" },
+        "settings": {
+          "label": "设置",
+          "a11y": "打开任务设置"
+        },
+        "usage": {
+          "label": "用量",
+          "a11y": "查看任务用量"
+        },
+        "files": {
+          "label": "文件",
+          "a11y": "浏览远程文件"
+        },
+        "queue": {
+          "label": "队列",
+          "a11y": "打开队列面板"
+        },
         "search": {
           "label": "搜索",
           "openA11y": "搜索消息",
@@ -434,7 +450,12 @@
         "claude": "Claude 订阅",
         "xai": "SuperGrok 订阅",
         "gateway": "Cindy AI"
-      }
+      },
+      "credits": "Credits",
+      "creditsRemaining": "剩余 {{credits}}",
+      "creditsUnlimited": "不限",
+      "creditsDepleted": "已耗尽",
+      "creditsAvailable": "可用"
     },
     "refreshContextUsage": "刷新上下文用量",
     "currentSessionSpend": "本次任务",

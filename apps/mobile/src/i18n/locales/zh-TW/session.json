@@ -119,10 +119,22 @@
         "deleted": "已刪除"
       },
       "actions": {
-        "settings": { "label": "設定", "a11y": "開啟任務設定" },
-        "usage": { "label": "用量", "a11y": "查看任務用量" },
-        "files": { "label": "檔案", "a11y": "瀏覽遠端檔案" },
-        "queue": { "label": "佇列", "a11y": "開啟佇列面板" },
+        "settings": {
+          "label": "設定",
+          "a11y": "開啟任務設定"
+        },
+        "usage": {
+          "label": "用量",
+          "a11y": "查看任務用量"
+        },
+        "files": {
+          "label": "檔案",
+          "a11y": "瀏覽遠端檔案"
+        },
+        "queue": {
+          "label": "佇列",
+          "a11y": "開啟佇列面板"
+        },
         "search": {
           "label": "搜尋",
           "openA11y": "搜尋訊息",
@@ -438,7 +450,12 @@
         "claude": "Claude 訂閱",
         "xai": "SuperGrok 訂閱",
         "gateway": "Cindy AI"
-      }
+      },
+      "credits": "Credits",
+      "creditsRemaining": "剩餘 {{credits}}",
+      "creditsUnlimited": "不限",
+      "creditsDepleted": "已耗盡",
+      "creditsAvailable": "可用"
     },
     "refreshContextUsage": "重新整理上下文用量",
     "currentSessionSpend": "本次任務",
