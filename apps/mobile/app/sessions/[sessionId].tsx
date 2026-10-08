@@ -5811,6 +5811,8 @@ export default function SessionScreen() {
   }, () => { void loadEarlierMessages(); });
   // Task links and notifications carry no teammate resource; the cached roster row supplies name and avatar.
   const companionDisplay = useCompanionDisplayResource(deviceId, sessionId, companionResource, companionChat);
+  const [companionSettingsRequest, setCompanionSettingsRequest] = useState<{ sessionId: string; ownerGeneration: number; page: 'memory' | 'capabilities'; sequence: number }>();
+  const openCompanionSettings = useCallback((page: 'memory' | 'capabilities') => setCompanionSettingsRequest(previous => ({ sessionId, ownerGeneration: auth.accountGeneration, page, sequence: (previous?.sequence ?? 0) + 1 })), [sessionId, auth.accountGeneration]);
   const companionWorkingLabel = useCompanionWorkingLabel({ sessionId, deviceId, botId: companionDisplay?.ref.id ?? '',
     active: companionChat && showComposerActivity, messages, reconnectAttempt: remoteSessionRunStatus.reconnectAttempt });
   const companionPluginInvocations = useMemo(() => companionChat ? collectCompanionPluginInvocations(projectedMessages) : undefined,
@@ -8984,6 +8986,7 @@ export default function SessionScreen() {
       <CompanionHeader key={`${auth.accountGeneration}:${deviceId}:${companionResource.ref.id}`}
         resource={companionResource} deviceId={deviceId} deviceName={deviceName} online={!remoteUnavailableReason}
         controlsReady={companionEntry.ready}
+        settingsRequest={companionSettingsRequest?.sessionId === sessionId && companionSettingsRequest.ownerGeneration === auth.accountGeneration ? companionSettingsRequest : undefined}
         working={!!companionWorkingLabel}
         onSearch={() => setSearchOpen(true)}
         onBack={goBackToHome} />
@@ -9453,7 +9456,7 @@ export default function SessionScreen() {
                   interactive={!sessionListDrawerOverlayMounted}>
 
                 <ChatFilePathContext.Provider value={chatFilePathContextValue}>
-                  <MessageRenderer companion={companionChat} companionWorkingLabel={companionWorkGroupLabel}
+                  <MessageRenderer companion={companionChat} onOpenCompanionSettings={openCompanionSettings} companionWorkingLabel={companionWorkGroupLabel}
                     companionPluginInvocations={companionPluginInvocations}
                     remoteDeviceId={deviceId}
                     showPluginInvocations={!companionChat && Boolean(currentSession && currentSession.source !== 'bot')}

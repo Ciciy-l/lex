@@ -114,7 +114,7 @@ const moduleConstant = (name: string) => source.statements.find(n => ts.isVariab
   && n.declarationList.declarations.some(d => d.name.getText(source) === name))!.getText(source);
 const compiled = ts.transpileModule(`${moduleConstant('COMPANION_NATIVE_HEADER_OPTIONS')}
 function PageHost({ bindings }) {
-  const { auth, deviceId, sessionId, companionResource, companionEntry, shareSelectionActive, setSearchOpen, goBackToHome, companionWorkingLabel } = bindings;
+  const { auth, deviceId, sessionId, companionResource, companionEntry, shareSelectionActive, setSearchOpen, goBackToHome, companionWorkingLabel, companionSettingsRequest } = bindings;
   const currentSession = null;
   const deviceName = 'PC', remoteUnavailableReason = null, sessionListDrawerOverlayMounted = false;
   ${statements.slice(stateStart, stateEnd).map(n => n.getText(source)).join('\n')}
@@ -156,4 +156,24 @@ it('shows the ordinary task header on non-companion pages and while sharing', as
   expect(host.querySelector('[data-testid="companion.header"]')).toBeNull();
   // The task header keeps its native bar.
   expect(h.screenOptions.some((options) => options.headerShown === false)).toBe(false);
+});
+
+it('opens learning links in the existing profile sheet on the requested page', async () => {
+  await act(async () => root.render(<CompanionHeader resource={resource} deviceId="pc" deviceName="PC" online onBack={() => {}} onSearch={() => {}}
+    settingsRequest={{ page: 'memory', sequence: 1 }} />));
+  expect(h.profile).toMatchObject({ visible: true, initialPage: 'memory' });
+  await act(async () => h.profile.onClose());
+  await act(async () => root.render(<CompanionHeader resource={resource} deviceId="pc" deviceName="PC" online onBack={() => {}} onSearch={() => {}}
+    settingsRequest={{ page: 'capabilities', sequence: 2 }} />));
+  expect(h.profile).toMatchObject({ visible: true, initialPage: 'capabilities' });
+});
+
+it('does not promote a learning request from a previous account generation', async () => {
+  const bindings = { ...pageBindings(), companionSettingsRequest: { sessionId: 'session-a', ownerGeneration: 0, page: 'memory', sequence: 1 } };
+  bindings.companionEntry.ready = true;
+  await showPage(bindings);
+  expect(h.profile.visible).toBe(false);
+  bindings.companionSettingsRequest.ownerGeneration = h.auth.accountGeneration;
+  await showPage(bindings);
+  expect(h.profile).toMatchObject({ visible: true, initialPage: 'memory' });
 });

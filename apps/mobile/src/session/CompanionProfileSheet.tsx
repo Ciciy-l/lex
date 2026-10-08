@@ -28,6 +28,7 @@ import { loadCompanionProfile, profileFormDirty, type CompanionProfileData, type
 const AVATAR_SIZE = 56;
 
 export interface CompanionProfileSheetProps {
+  initialPage?: 'home' | 'memory' | 'capabilities';
   visible: boolean;
   onClose: () => void;
   onClosed?: () => void;
@@ -110,7 +111,7 @@ function CompanionProfileSheetContent(props: CompanionProfileSheetProps) {
     }
   }, [binding, read]);
   useEffect(() => {
-    setModelStage('profile'); setConflict(null); setEditor(null); setEditorPanel(null); setEditorLoading(false); setData(null); setPage('home'); setValues({}); setReceipt(null); setConfirmation(null); setDeleted(false); setError(false); setEditing(false); setBusy(false);
+    setModelStage('profile'); setConflict(null); setEditor(null); setEditorPanel(null); setEditorLoading(false); setData(null); setPage(props.initialPage === 'memory' ? 'memoryEntries' : props.initialPage === 'capabilities' ? 'skills' : 'home'); setValues({}); setReceipt(null); setConfirmation(null); setDeleted(false); setError(false); setEditing(false); setBusy(false);
     return () => { generation.current++; };
   }, [binding]);
   useEffect(() => { if (visible && online) void refresh(); }, [visible, online, refresh]);

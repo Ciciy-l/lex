@@ -8,6 +8,7 @@ import { messageReadingPosition } from './messageReadingPosition';
 import { PluginInvocationHeader } from './PluginInvocationHeader';
 import { companionPluginWorkEntries, type PluginInvocation } from './pluginInvocations';
 import { AuthorizationMessageCard } from './AuthorizationMessageCard';
+import { CompanionLearningFooter } from './CompanionLearningFooter';
 import { CompanionMessageCard } from '@/session/CompanionMessageCard';
 import { CompanionEntering } from '@/session/CompanionEntering';
 import { mobileDebugEnabled, mobileDebugLog } from '@/debug/mobileDebugLog';
@@ -618,6 +619,7 @@ export interface ShareableMessageViewport {
 interface MessageActions {
   companion?: boolean;
   companionWorkingLabel?: string | null;
+  onOpenCompanionSettings?: (page: 'memory' | 'capabilities') => void;
   companionPluginWork?: ReturnType<typeof companionPluginWorkEntries>;
   /** Partner chats keep the user's bubble plain; result and authorization cards remain independent. */
   showPluginInvocations?: boolean;
@@ -674,6 +676,7 @@ interface MessageActions {
 export function MessageRenderer({
   companion = false,
   companionWorkingLabel,
+  onOpenCompanionSettings,
   companionPluginInvocations,
   showPluginInvocations = true,
   remoteDeviceId,
@@ -727,6 +730,7 @@ export function MessageRenderer({
 }: {
   companion?: boolean;
   companionWorkingLabel?: string | null;
+  onOpenCompanionSettings?: (page: 'memory' | 'capabilities') => void;
   companionPluginInvocations?: ReadonlyMap<string, PluginInvocation[]>;
   /** Offscreen preload and disappearing native screens must not replace the user's bookmark. */
   isReadingPositionActive?: () => boolean;
@@ -1631,6 +1635,7 @@ export function MessageRenderer({
   const actions: MessageActions & { firstUserMessageClientId?: string } = useMemo(() => ({
     companion,
     companionWorkingLabel,
+    onOpenCompanionSettings,
     companionPluginWork,
     showPluginInvocations,
     remoteDeviceId,
@@ -1665,6 +1670,7 @@ export function MessageRenderer({
   }), [
     companion,
     companionWorkingLabel,
+    onOpenCompanionSettings,
     companionPluginWork,
     showPluginInvocations,
     remoteDeviceId,
@@ -3589,6 +3595,10 @@ function MessageBubble({
       ) : null}
       {attachmentStripNode}
       {hasBubbleContent || (!attachmentStripNode && messageQuotes.length === 0) ? bubble : null}
+      {actions.companion && item.message.kind === 'assistant' && item.message.body.trim() ? (
+        <CompanionLearningFooter receipts={item.message.source.agentMeta?.botLearning}
+          onOpenSettings={actions.onOpenCompanionSettings} />
+      ) : null}
       {item.message.kind === 'assistant' && item.message.modelMismatch ? (
         // 模型降级提示(对齐桌面 AssistantMessage):所选模型本轮被上游静默替换,
         // 常显在气泡下方,icon 用 warning 橙、文字保持 tertiary 灰阶。
