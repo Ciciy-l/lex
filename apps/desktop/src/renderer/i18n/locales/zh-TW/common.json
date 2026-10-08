@@ -11836,6 +11836,7 @@
       "installed": "已安裝",
       "globalScope": "全域性",
       "sourceSkillhub": "SkillHub",
+      "sourceBuiltIn": "內建",
       "sourceLocal": "本地",
       "import": "匯入技能",
       "importAria": "從本地壓縮包或 SKILL.md 匯入技能",
@@ -11843,6 +11844,16 @@
       "importPickerSubtitle": "{{name}} · {{description}}",
       "importSuccess": "{{name}} 已匯入{{suffix}}",
       "importFailed": "匯入技能失敗"
+    },
+    "builtIn": {
+      "official": "官方",
+      "officialDetail": "由 Cindy 隨應用程式提供並維護。",
+      "skillCreator": {
+        "description": "建立或更新 Cindy 技能，並編寫清楚的說明與所需支援資源。"
+      },
+      "learn": {
+        "description": "從目前任務、描述的工作流程或 SkillHub 技能中提煉可重用技能，並透過 Cindy 的審查流程儲存。"
+      }
     },
     "common": {
       "openFolderFailed": "開啟資料夾失敗",
@@ -12432,6 +12443,7 @@
       "unlinkDescription": "僅移除本機技能入口，原始檔案及修改會保留。",
       "sharedImpact": "共用此技能的其他 Agent 也會受影響。雲端發布和其他安裝位置不受影響。",
       "managedElsewhere": "此技能由其他套件或共用目錄管理，需在其來源處移除",
+      "builtInManaged": "此技能由 Cindy 內建，無法解除安裝",
       "managedByPlugin": "此技能由插件提供，請到所屬插件頁面管理。",
       "cleanupIncomplete": "「{{name}}」的解除安裝清理尚未完成。請重試；重新開啟技能中心後也可繼續。清理完成前無法重新安裝。",
       "retryCleanup": "重試清理",
@@ -12839,7 +12851,8 @@
       "INTERNAL": "內部錯誤，請稍後重試"
     },
     "hub": {
-      "learnButton": "學習此技能"
+      "learnButton": "學習此技能",
+      "disabledHint": "請先在本機技能中啟用內建 Learn 技能。"
     }
   },
   "planMode": {

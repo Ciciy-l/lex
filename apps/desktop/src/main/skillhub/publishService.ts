@@ -212,6 +212,7 @@ export class SkillPublishService {
   async publish(
     params: PublishParams,
     onProgress: ProgressCb = () => {},
+    execution: { isCurrent?: () => boolean } = {},
   ): Promise<{
     success: boolean;
     result?: { name: string; version: string };
@@ -225,7 +226,7 @@ export class SkillPublishService {
     const isPublishOwnerCurrent = () => !isAppSessionBoundaryPending()
       && activeOwnerScopeKey() === publishOwnerScope;
     const emitProgress = (event: PublishProgressEvent) => this.emitProgress(event, onProgress, publishOwnerScope);
-    if (!getAppCapabilities().canUseSkillHubCloud) {
+    if (!getAppCapabilities().canUseSkillHubCloud || execution.isCurrent?.() === false) {
       emitProgress(
         {
           phase: 'failed',
@@ -237,7 +238,7 @@ export class SkillPublishService {
       return { success: false, errorCode: 'CANCELLED' };
     }
     const identityPolicy = await currentSkillhubIdentityPolicy();
-    if (!isPublishOwnerCurrent()) return { success: false, errorCode: 'CANCELLED' };
+    if (!isPublishOwnerCurrent() || execution.isCurrent?.() === false) return { success: false, errorCode: 'CANCELLED' };
     if (!identityPolicy.canWrite) {
       emitProgress(
         {
@@ -297,6 +298,7 @@ export class SkillPublishService {
     const isCancelled = (): boolean =>
       signal.aborted ||
       !getAppCapabilities().canUseSkillHubCloud ||
+      execution.isCurrent?.() === false ||
       !isPublishOwnerCurrent();
 
     let originalSkillMd: string | null = null;

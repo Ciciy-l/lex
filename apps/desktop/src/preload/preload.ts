@@ -3060,6 +3060,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       skills?: import('../main/skillhub/scanner').Skill[];
       sources?: import('../main/skillhub/scanner').SourceReport[];
       pendingCleanups?: Array<{ token: string; name: string }>;
+      learnSkillEnabled?: boolean;
     }> => ipcRenderer.invoke('skillhub:scan', params),
 
     readSkill: (params: {
@@ -6172,11 +6173,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Renderer 通过这四个调用合并三路数据 + 触发 desktop 命令 execute。
     // 老 scanSlashCommands 已下线 —— 数据等价于 listAgentSkills, 改名是为了和
     // listAgentCommands / listDesktopCommands 形成清晰的 "三源 + execute" 命名族。
-    listDesktopCommands: (): Promise<{
+    listDesktopCommands: (ctx?: { deviceId?: string }): Promise<{
       success: boolean;
       error?: string;
       commands?: Array<{ kind: 'desktop'; name: string; description: string }>;
-    }> => ipcRenderer.invoke('maker:list-desktop-commands'),
+    }> => ipcRenderer.invoke('maker:list-desktop-commands', ctx),
 
     executeDesktopCommand: (
       name: string,

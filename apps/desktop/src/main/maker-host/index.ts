@@ -1,4 +1,5 @@
 import { readAgentCapabilityCatalog, RUNTIME_MCP_NAMES_KEY, type AgentCapabilityQuery } from './agentCapabilityCatalog.js';
+import { listCindyManagedSkills, prepareCindyCodexSkills } from './managed-skills.js';
 import { readDisabledSkillPaths } from '../skillhub/activationPreferences';
 import { clearCodexAccountUsageSnapshot } from '../usageBroadcaster.js';
 /**
@@ -25,6 +26,7 @@ import { app, BrowserWindow } from 'electron';
 import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import fsSync from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import {
@@ -1024,6 +1026,17 @@ export function getMaker(): Maker {
       pluginRegistry,
       resolveIOSSimulatorAccess,
       invokeRemote: remoteInvoke,
+      isCurrentLocalSessionInstance: (
+        sessionId: string,
+        sessionInstanceId: string | undefined,
+      ) => {
+        const session = _maker?.getSession(sessionId);
+        return Boolean(sessionInstanceId
+          && session
+          && session.instanceId === sessionInstanceId
+          && session.getStatus() === 'active'
+          && !session.remoteHostId);
+      },
       // 只读活跃 Session 的运行时真相。权限切换是 runtime-first、DB-second，
       // 因此插件过户自动放行不得回退 sessions.permission_mode；会话不再 active
       // 时同样 fail closed。闭包在 MCP tool-call 时执行，此时 _maker 已装配完成。
@@ -1205,6 +1218,7 @@ export function getMaker(): Maker {
     });
     const claudeAgent = new ClaudeCodeAgent({
       getDisabledSkillPaths: readDisabledSkillPaths,
+      getManagedSkills: listCindyManagedSkills,
       auth: desktopClaudeAuthAdapter,
       runtimeConfig: buildDesktopClaudeRuntimeConfig(getClaudeEndpoint),
       binaryPath: claudePath,
@@ -1528,6 +1542,8 @@ export function getMaker(): Maker {
     };
     const codexAgent = new CodexAgent({
       getDisabledSkillPaths: readDisabledSkillPaths,
+      getManagedSkills: listCindyManagedSkills,
+      prepareCodexSkills: prepareCindyCodexSkills,
       auth: desktopCodexAuthAdapter,
       runtimeConfig: desktopCodexRuntimeConfig,
       binaryPath: codexPath,

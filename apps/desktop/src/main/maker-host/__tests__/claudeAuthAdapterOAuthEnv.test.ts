@@ -46,6 +46,11 @@ vi.mock('electron', () => ({
   safeStorage: { isEncryptionAvailable: () => h.encryptionAvailable },
 }));
 
+// Skill discovery is covered by managed-skills.test.ts, not this runtime/auth fixture.
+vi.mock('../managed-skills.js', () => ({
+  listCindyManagedSkills: async () => [],
+  cindyManagedSkillRoots: async () => [],
+}));
 vi.mock('@cindy/maker-core', () => ({}));
 
 vi.mock('../../appCapabilities.js', () => ({
@@ -107,6 +112,12 @@ vi.mock('../../secrets/providerSecretStore.js', () => ({
 vi.mock('../shared-global-skills.js', () => ({
   prepareSharedGlobalSkillLinks: async () => ({ warnings: [] }),
   prepareSharedProjectSkillLinks: async () => ({ warnings: [] }),
+}));
+
+vi.mock('../built-in-skills.js', () => ({
+  prepareBuiltInSkills: async () => ({ descriptors: [], projectionSafe: true, warnings: [] }),
+  refreshBuiltInSharedSkillLinks: async () => ({ warnings: [] }),
+  refreshBuiltInClaudeSkillLinks: async () => ({ warnings: [] }),
 }));
 
 vi.mock('../anthropic-compat-proxy-host.js', () => ({

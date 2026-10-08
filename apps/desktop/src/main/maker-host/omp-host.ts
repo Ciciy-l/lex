@@ -1,3 +1,4 @@
+import { listCindyManagedSkills } from './managed-skills.js';
 /**
  * omp agent 的 desktop host 装配 —— 二进制解析 / 受管根 / 凭证 / models.yml 物化,
  * 集中在本模块,maker-host/index.ts 只做一次 buildOmpAgent() 调用。
@@ -369,6 +370,7 @@ export function buildOmpAgent(opts: BuildOmpAgentOpts): OmpAgent | null {
     getRemoteOmpAgentProxyEnv: opts.getRemoteOmpAgentProxyEnv,
     // Share only the cross-agent Skill source. OMP config, auth and session
     // state remain inside the per-runtime managed HOME above.
+    getManagedSkills: listCindyManagedSkills,
     resolveOmpGlobalSkillsRoot: () => path.join(os.homedir(), '.agents', 'skills'),
     // 凭证只给值、不落盘;没有 sessionId 就无从绑定 token,直接抛错 fail-closed
     // (静默返回 undefined 会让 OMP 起在「没有 Cindy provider」的半残状态)。

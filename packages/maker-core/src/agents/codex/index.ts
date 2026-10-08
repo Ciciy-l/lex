@@ -30,6 +30,7 @@ import { structuredPatch } from 'diff';
 import {
   BaseAgent,
   INHERITED_CAPABILITY_SELECTION,
+  PINNED_SKILL_INVOCATION,
   CodexResumePreparationBlockedError,
   OneShotError,
   AgentNotAuthenticatedError,
@@ -40,11 +41,13 @@ import {
   type CodexExtraSpawnConfig,
   type StartSessionOptions,
   type OneShotOptions,
+  type PinnedSkillInvocation,
   type RefreshLocalModelsOptions,
   type SendOptions,
   type TurnPermissionPolicy,
 } from '../base-agent.js';
 import { skillEntryPath, snapshotDisabledSkillLaunch, currentDisabledSkillLaunchPaths } from '../shared/skill-activation.js';
+import { snapshotManagedSkillGrants } from '../shared/managed-skill-policy.js';
 import type { AgentCredentialMode } from '../../interfaces/auth-adapter.js';
 import type {
   Capabilities,
@@ -1138,13 +1141,33 @@ function skillDescription(skill: SkillMetadata): string | undefined {
 }
 
 function isPaletteVisibleCodexSkill(skill: SkillMetadata): boolean {
-  if (!skill.enabled || skill.scope === 'system' || skill.scope === 'admin') return false;
+  if (!skill.enabled || skill.scope === 'admin') return false;
+
+  if (skill.scope === 'system') {
+    const normalizedPath = skill.path.replace(/\\/g, '/').replace(/\/$/, '');
+    return skill.name.toLowerCase() === 'skill-creator'
+      && /\/skills\/\.system\/skill-creator(?:\/skill\.md)?$/i.test(normalizedPath);
+  }
 
   // Codex plugins can contribute internal skills and currently report them as scope=user.
   // They remain available to Codex's own dispatch, but Cindy's slash palette should only
   // expose installed user/repo skills instead of every plugin implementation detail.
   const normalizedPath = skill.path.replace(/\\/g, '/');
   return !/\/plugins\/cache\/[^/]+\/[^/]+\/[^/]+\/skills\//i.test(normalizedPath);
+}
+
+function paletteVisibleCodexSkills(skills: readonly SkillMetadata[]): SkillMetadata[] {
+  const visible = skills.filter(isPaletteVisibleCodexSkill);
+  const installedNames = new Set(visible
+    .filter((skill) => skill.scope !== 'system')
+    .map((skill) => skill.name.toLowerCase()));
+  return visible.filter((skill) => skill.scope !== 'system' || !installedNames.has(skill.name.toLowerCase()));
+}
+
+function selectInvocableCodexSkill(skills: readonly SkillMetadata[], name: string): SkillMetadata | undefined {
+  const matching = skills.filter((skill) => skill.enabled && skill.name.toLowerCase() === name.toLowerCase());
+  return matching.find((skill) => skill.scope !== 'system' && skill.scope !== 'admin')
+    ?? matching.find(isPaletteVisibleCodexSkill);
 }
 
 function parseLeadingSlashToken(text: string): { name: string; rest: string } | null {
@@ -2034,8 +2057,7 @@ export class CodexAgent extends BaseAgent {
         opts.remoteHostId,
       );
       const out: ListAgentSkillsResult = {
-        skills: skills
-          .filter(isPaletteVisibleCodexSkill)
+        skills: paletteVisibleCodexSkills(skills)
           .map((skill) => ({
             kind: 'agent-skill' as const,
             name: skill.name,
@@ -3537,6 +3559,9 @@ assertRouteCurrent();
     const sid = opts.sessionId ?? '';
     const log = this.deps.logger.child(sid ? `s:${sid}/codex` : 'codex');
     const reviewMode = opts.reviewMode === true;
+    const botSkillGrants = !opts.remoteHostId && !reviewMode
+      ? snapshotManagedSkillGrants(opts.botRuntimeProfile?.skillPolicy) : undefined;
+    let refreshedBotSkillConfig: Record<string, unknown> | undefined;
     if (reviewMode && opts.remoteHostId) {
       throw new Error('Cindy Review currently supports local Codex sessions only');
     }
@@ -5125,6 +5150,24 @@ assertRouteCurrent();
       // 永不返回, UI 无限卡初始化 — 与 request() 的 startup deadline 同款。
       initResp = await host.ensureStartedWithTimeout(CRITICAL_THREAD_RPC_TIMEOUT_MS, 'startSession initialize');
       assertCurrentHost('initialize');
+      if (!opts.remoteHostId && this.deps.prepareCodexSkills) {
+        if (!initResp.codexHome) throw new Error('Codex did not report its local Skill home');
+        await this.deps.prepareCodexSkills(initResp.codexHome);
+        assertCurrentHost('Skill projection refresh');
+        // app-server outlives threads; refreshing files alone leaves its cached
+        // catalog available to the next thread after a plugin is disabled.
+        const refreshed = await this.listSkillsForHost(host, opts.workingDir, true, CRITICAL_THREAD_RPC_TIMEOUT_MS);
+        if (botSkillGrants !== undefined) {
+          const unscopedError = refreshed.errors.find(error => !error.path);
+          if (unscopedError) throw new Error(unscopedError.message);
+          refreshedBotSkillConfig = buildCodexBotSkillConfigOverrides(opts.botRuntimeProfile?.skillPolicy, {
+            grants: botSkillGrants,
+            skills: [...refreshed.skills, ...refreshed.errors.flatMap(error =>
+              error.path ? [{ path: error.path, enabled: false }] : [])],
+          });
+        }
+        assertCurrentHost('Skill catalog reload');
+      }
     } catch (error) {
       releaseHostBindingLeaseIfNeeded();
       // Exhaustion/cancellation of native startup is terminal for this request;
@@ -5419,7 +5462,7 @@ assertRouteCurrent();
     }
     capabilityRoutingConfig = mergeCodexSkillConfigOverrides(
       capabilityRoutingConfig,
-      buildCodexBotSkillConfigOverrides(
+      refreshedBotSkillConfig ?? buildCodexBotSkillConfigOverrides(
         reviewMode ? undefined : opts.botRuntimeProfile?.skillPolicy,
       ),
     );
@@ -6405,23 +6448,51 @@ assertRouteCurrent();
       return undefined;
     }
 
-    const toTurnInput = async (content: UserMessage['content']): Promise<UserInput[]> => {
+    const toTurnInput = async (
+      content: UserMessage['content'],
+      pinnedSkill?: PinnedSkillInvocation,
+    ): Promise<UserInput[]> => {
       if (reviewMode) {
+        if (pinnedSkill) {
+          throw new Error('A pinned Skill invocation is not allowed in review mode');
+        }
         await assertReviewMessageContentPaths(content, opts.workingDir, reviewReadGrants);
         // Review never resolves leading slash text as a user/project Skill. Its
         // prompt and evidence must stay independent from task customizations.
         return toAppServerInput(content, opts.workingDir);
       }
-      if (typeof content !== 'string') return toAppServerInput(content, opts.workingDir);
+      if (typeof content !== 'string') {
+        if (pinnedSkill) {
+          throw new Error('A pinned Skill invocation requires a text command');
+        }
+        return toAppServerInput(content, opts.workingDir);
+      }
 
       const slash = parseLeadingSlashToken(content.trim());
+      if (pinnedSkill) {
+        const normalizedSlashName = slash?.name.toLowerCase();
+        const normalizedSkillName = pinnedSkill.name.toLowerCase();
+        if (
+          !slash
+          || (normalizedSlashName !== normalizedSkillName
+            && normalizedSlashName !== `skill:${normalizedSkillName}`)
+        ) {
+          throw new Error('The pinned Skill does not match the dispatched command');
+        }
+        const inputs: UserInput[] = [{
+          type: 'skill',
+          name: pinnedSkill.name,
+          path: pinnedSkill.path,
+        }];
+        const prompt = slash.rest.trim();
+        if (prompt) inputs.push({ type: 'text', text: prompt });
+        return inputs;
+      }
       if (!slash) return toAppServerInput(content, opts.workingDir);
 
       try {
         const { skills } = await this.listSkillsForCwd(opts.workingDir, false);
-        const skill = skills.find(
-          (item) => item.enabled && item.name.toLowerCase() === slash.name.toLowerCase(),
-        );
+        const skill = selectInvocableCodexSkill(skills, slash.name);
         if (!skill) return toAppServerInput(content, opts.workingDir);
 
         const inputs: UserInput[] = [{ type: 'skill', name: skill.name, path: skill.path }];
@@ -12979,7 +13050,7 @@ assertRouteCurrent();
         }
         let turnInput: TurnStartParams['input'];
         try {
-          turnInput = await toTurnInput(message.content);
+          turnInput = await toTurnInput(message.content, sendOpts?.[PINNED_SKILL_INVOCATION]);
         } catch (e) {
           isTurnStartPending = false;
           flushDeferredTerminalTurnCompletionsIfIdle();

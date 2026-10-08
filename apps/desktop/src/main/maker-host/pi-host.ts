@@ -1,3 +1,4 @@
+import { listCindyManagedSkills } from './managed-skills.js';
 import { readCachedGenericOAuthAccessToken } from './generic-oauth.js';
 import { providerPresetModelRecord, providerModelAdapterId } from '@cindy/model-providers';
 import { readDisabledSkillPaths } from '../skillhub/activationPreferences';
@@ -1897,6 +1898,7 @@ export function buildPiAgent(opts: BuildPiAgentOpts): PiAgent | null {
   log.info('pi agent enabled', { binaryPath });
   return new PiAgent({
     getDisabledSkillPaths: readDisabledSkillPaths,
+      getManagedSkills: listCindyManagedSkills,
     resolveModelContextLimit: (providerId, modelId) => {
       const catalog = getActiveCatalog();
       const source = resolveModelContextProviderId(catalog, 'pi', providerId, modelId);

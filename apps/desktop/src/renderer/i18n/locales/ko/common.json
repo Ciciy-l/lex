@@ -11836,6 +11836,7 @@
       "installed": "설치됨",
       "globalScope": "전역",
       "sourceSkillhub": "SkillHub",
+      "sourceBuiltIn": "내장",
       "sourceLocal": "로컬",
       "import": "스킬 가져오기",
       "importAria": "로컬 zip 또는 SKILL.md에서 스킬 가져오기",
@@ -11843,6 +11844,16 @@
       "importPickerSubtitle": "{{name}} · {{description}}",
       "importSuccess": "{{name}} 가져오기 완료{{suffix}}",
       "importFailed": "스킬 가져오기 실패"
+    },
+    "builtIn": {
+      "official": "공식",
+      "officialDetail": "Cindy가 앱에 포함하고 관리합니다.",
+      "skillCreator": {
+        "description": "명확한 지침과 필요한 지원 리소스를 갖춘 Cindy 스킬을 만들거나 업데이트합니다."
+      },
+      "learn": {
+        "description": "현재 작업, 설명한 워크플로 또는 SkillHub 스킬에서 재사용 가능한 스킬을 추출하고 Cindy 검토 절차를 거쳐 저장합니다."
+      }
     },
     "common": {
       "openFolderFailed": "폴더 열기 실패",
@@ -12432,6 +12443,7 @@
       "unlinkDescription": "로컬 스킬 등록만 제거합니다. 원본 파일과 수정 내용은 유지됩니다.",
       "sharedImpact": "이 스킬을 공유하는 다른 Agent도 영향을 받습니다. 게시된 버전과 다른 위치에 설치된 스킬에는 영향을 주지 않습니다.",
       "managedElsewhere": "이 스킬은 다른 패키지 또는 공유 디렉터리에서 관리됩니다. 원본 위치에서 제거하세요",
+      "builtInManaged": "이 스킬은 Cindy에 내장되어 있어 제거할 수 없습니다",
       "managedByPlugin": "이 스킬은 플러그인이 제공합니다. 해당 플러그인 페이지에서 관리하세요.",
       "cleanupIncomplete": "“{{name}}”의 제거 정리가 완료되지 않았습니다. 다시 시도하거나 나중에 스킬을 다시 열어 계속하세요. 정리가 완료될 때까지 재설치할 수 없습니다.",
       "retryCleanup": "정리 다시 시도",
@@ -12839,7 +12851,8 @@
       "INTERNAL": "내부 오류입니다. 잠시 후 다시 시도해 주세요."
     },
     "hub": {
-      "learnButton": "이 스킬 학습하기"
+      "learnButton": "이 스킬 학습하기",
+      "disabledHint": "이 작업을 사용하려면 로컬 스킬에서 기본 제공 Learn 스킬을 활성화하세요."
     }
   },
   "planMode": {

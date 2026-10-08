@@ -18,7 +18,7 @@ import {
   type SortBy,
   type Visibility,
 } from './hooks/useMarketList';
-import { refresh as refreshSkillhub } from './hooks/useSkillhub';
+import { refresh as refreshSkillhub, useSkillhub } from './hooks/useSkillhub';
 import { MarketManagementDialogs, useMarketManagement } from './hooks/useMarketManagement';
 import { getMarketSelected, setMarketSelected } from './hooks/useMarketSelection';
 import { MarketCard } from './components/MarketCard';
@@ -77,6 +77,7 @@ export function SkillhubMarketListView() {
 function SkillhubMarketListViewInner() {
   const { t } = useTranslation();
   const { user, isInitializing } = useAuth();
+  const { skills: localSkills, learnSkillEnabled } = useSkillhub();
   const identityPolicy = useSkillhubIdentityPolicy(user);
   const location = useLocation();
   const navigate = useNavigate();
@@ -505,6 +506,7 @@ function SkillhubMarketListViewInner() {
           : 'none'}
         onClone={handleClone}
         onManageAction={management.handleManageAction}
+        learnSkillEnabled={learnSkillEnabled}
       />
       <MarketManagementDialogs controller={management} />
     </div>

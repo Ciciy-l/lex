@@ -3233,6 +3233,7 @@ interface ElectronAPI {
       skills?: SkillhubSkill[];
       sources?: SkillhubSourceReport[];
       pendingCleanups?: Array<{ token: string; name: string }>;
+      learnSkillEnabled?: boolean;
     }>;
     readSkill: (params: { mdPath: string }) => Promise<{
       success: boolean;
@@ -5587,7 +5588,7 @@ interface ElectronAPI {
     endSessionDragPreview: (dragEndAtMs?: number) => void;
 
     // ── Palette `/` 命令三源 (palette refactor) ───────────────────────
-    listDesktopCommands: () => Promise<{
+    listDesktopCommands: (ctx?: { deviceId?: string }) => Promise<{
       success: boolean;
       error?: string;
       commands?: Array<{ kind: 'desktop'; name: string; description: string }>;
@@ -5636,6 +5637,7 @@ interface ElectronAPI {
         kind: 'agent-skill';
         name: string;
         description?: string;
+        builtIn?: boolean;
         source: 'user' | 'skill';
         path?: string;
         scope?: string;
@@ -5676,13 +5678,10 @@ interface ElectronAPI {
           timedOut: boolean;
           spawnError?: string;
         };
-        /** /goal、/learn 共用:错误码(goal-usage / goal-no-session / goal-failed;
-         *  learn-usage / learn-busy / learn-failed)。 */
+        /** /goal 专用:错误码(goal-usage / goal-no-session / goal-failed)。 */
         error?: string;
         /** /goal 专用:动作('set'/'cleared'/'open-dialog'=打开新建目标弹窗)。 */
         goalAction?: 'set' | 'cleared' | 'open-dialog';
-        /** /learn 专用:启动成功时的 runId(关联 learn:event 状态流)。 */
-        learnRunId?: string;
       }) => void,
     ) => () => void;
 
@@ -6938,6 +6937,7 @@ interface SkillhubSkill {
   cindyEnabled?: boolean;
   canUninstall?: boolean;
   managedByPlugin?: boolean;
+  builtIn?: boolean;
   uninstallLinkOnly?: boolean;
   discoveryPaths?: string[];
   id: string;

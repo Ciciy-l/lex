@@ -311,6 +311,10 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: pnpm install:ripgrep
 
+      - name: Verify Windows atomic directory-entry replacement
+        if: matrix.shard == 1
+        run: node apps/desktop/scripts/check-windows-atomic-rename.mjs
+
       # 保留 Windows 路径、进程与锁的自测覆盖，但两个分片只执行一次。
       - name: Run Windows test runner self-tests
         if: matrix.shard == 1

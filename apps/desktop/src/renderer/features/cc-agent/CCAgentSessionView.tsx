@@ -177,6 +177,7 @@ import {
   useControlledBy,
 } from '@/features/remote-device/ControlledBanner';
 import {
+  commandsForHelpCard,
   loadAllCommands,
   dispatchCommand,
   leadingSlashInvocation,
@@ -185,6 +186,7 @@ import {
   reconcilePiRuntimeCommandForDispatch,
   reconcilePiRuntimeCommandForDispatchWithRetry,
   rewriteNativeSkillAliasFromCommand,
+  rewriteAgentSkillInvocationForDispatch,
   supportsNativeSkillRuntimeAliases,
   shouldRefreshRuntimeCommandCatalog,
   type UnifiedCommand,
@@ -2434,12 +2436,7 @@ export function CCAgentSessionView({
   const insertHelpCard = useCallback(async () => {
     const commands = await getHelpCommandsSnapshot();
     insertSystemCard('help', {
-      commands: commands.map((c) => ({
-        name: c.name,
-        description: 'description' in c ? c.description : undefined,
-        // help 卡用 source 区分类目: agent-skill 透传原 source, 其余按 kind 简化
-        source: c.kind === 'agent-skill' ? c.source : c.kind,
-      })),
+      commands: commandsForHelpCard(commands),
     });
   }, [getHelpCommandsSnapshot, insertSystemCard]);
 
@@ -2483,23 +2480,6 @@ export function CCAgentSessionView({
           toast.success(t('goal.toast.set'));
         } else if (payload.goalAction === 'cleared') {
           toast.success(t('goal.toast.cleared'));
-        }
-        return;
-      }
-      if (payload.command === 'learn') {
-        // /learn 的蒸馏在独立后台 session 跑(learn-host);这里只反馈启动结果。
-        // 进度与"待审查"入口由 learn:event 状态流驱动(审查面板见 features/learn)。
-        if (payload.error === 'learn-usage') {
-          toast.warning(t('learn.toast.usage'));
-        } else if (payload.error === 'learn-busy') {
-          toast.warning(t('learn.toast.busy'));
-        } else if (payload.error === 'learn-failed') {
-          toast.error(t('learn.toast.failed'));
-        } else if (payload.error === 'remote-unsupported') {
-          toast.warning(t('commands.toast.remoteUnsupported'));
-        } else if (payload.learnRunId) {
-          // 状态卡只存 runId,状态本体由卡片内 useLearnRun 订阅 learn:event 实时刷新。
-          insertSystemCard('learn', { runId: payload.learnRunId });
         }
         return;
       }
@@ -3120,8 +3100,7 @@ export function CCAgentSessionView({
         return {
           handled: false,
           accepted: false,
-          message:
-            rewriteNativeSkillAliasFromCommand(agentKind, message, hit),
+          message: agentKind === 'claude-code' ? rewriteAgentSkillInvocationForDispatch(message, hit) : rewriteNativeSkillAliasFromCommand(agentKind, message, hit),
         };
       }
       // Desktop commands stay `^/` only. A whitespace-prefixed `/help` is not a dispatch.
@@ -4419,22 +4398,23 @@ export function CCAgentSessionView({
     };
   }, [historyLoaded, insertSystemCard, sessionId, learnRestoreKey]);
 
-  // learn 卡跟随最新叙述:提案就绪 / 每轮修订刷新(awaiting-review 的
-  // state-changed)时把本会话的 learn 卡移到消息流末尾 —— 卡片是 /learn 发出
-  // 时插入的,蒸馏长输出把用户视线带到底部后,顶部的「查看提案」入口会被
-  // 错过、误以为已装好(Chris 实测反馈)。移动只调位置不换消息对象。
+  // Learn 现在由 Agent Skill 通过宿主工具启动,不再有 Desktop command payload。
+  // 首个属于本会话的状态事件负责插入卡片；提案就绪 / 每轮修订刷新时再把卡片
+  // 移到消息流末尾,避免蒸馏长输出把「查看提案」入口留在顶部。
   useEffect(() => {
     if (!sessionId) return;
     // subscribeLearnEvents:本机走 learn:event IPC;device-link 远程会话经
     // onRemotePush 消费被控端转发的同名事件(learnTransport 内路由)。
     const off = subscribeLearnEvents(sessionId, (payload) => {
       if (payload.type !== 'state-changed') return;
-      if (payload.run.status !== 'awaiting-review') return;
       if (payload.run.sessionId !== sessionId && payload.run.originSessionId !== sessionId) return;
-      makerChatStore.moveLearnCardToEnd(sessionId, payload.run.runId);
+      insertSystemCard('learn', { runId: payload.run.runId });
+      if (payload.run.status === 'awaiting-review') {
+        makerChatStore.moveLearnCardToEnd(sessionId, payload.run.runId);
+      }
     });
     return off;
-  }, [sessionId]);
+  }, [insertSystemCard, sessionId]);
 
   // session 切换时 reset consumed guard(切到别的 session 后再回来,理论上 pending
   // 已被消费过、Map 也清掉了,但 ref 复用一份是为了 guard 可重入)。

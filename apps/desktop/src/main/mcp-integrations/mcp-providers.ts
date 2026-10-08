@@ -95,6 +95,10 @@ import {
 import { botSessionLinks, sessions } from '../localDb/schema.js';
 import { getPluginMarketService } from '../plugin-market/service.js';
 import { botLearningTracker } from '../maker-ipc/botLearningTracker.js';
+import { isCindyLearnSkillEnabled } from '../skillhub/activationPreferences.js';
+import { getLearnController } from '../learn-host/index.js';
+import { consumeLearnInvocationGrant } from '../learn-host/invocationGrant.js';
+import { createSkillhubAgentTools } from '../skillhub/agentTools.js';
 
 export interface DesktopMcpProvidersDeps {
   runtimeCapabilities?: XdtHelperMcpDeps['runtimeCapabilities'];
@@ -119,6 +123,11 @@ export interface DesktopMcpProvidersDeps {
   ) => GhostGrantLiveSessionState | null;
   /** Agent 发起插件安装时向该任务投宿主权限确认卡；缺失时安装 fail closed。 */
   requestHostPermission?: CindyGhostsHostDeps['requestHostPermission'];
+  /** Reject stale, remote, or already-closed Session tool contexts. */
+  isCurrentLocalSessionInstance?: (
+    sessionId: string,
+    sessionInstanceId: string | undefined,
+  ) => boolean;
   /** 把工具结果图片转成文字描述（视觉桥，最佳努力）。缺失 = 不处理。
    *  返回结构区分「有意跳过」(skipped:true, 视觉桥未开/模型不命中, 不告警)与
    *  「真正尝试但失败」(skipped:false + null, 计入 attemptedCount 供告警)。 */
@@ -460,6 +469,81 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
       moveSession: createMoveSession(isSessionInTurn),
       projectManagement: { list: listProjects, rename: renameProject, remove: removeProject },
       authorizeCall: authorizeTaskToolCall,
+      authorizeSkillLearning: async (request, context) => {
+        if (!isCindyLearnSkillEnabled()) {
+          return {
+            ok: false,
+            errorCode: 'SKILL_DISABLED',
+            message: 'Cindy Learn is disabled in Local Skills.',
+          };
+        }
+        if (!getLearnController()) {
+          return {
+            ok: false,
+            errorCode: 'HOST_NOT_READY',
+            message: 'Cindy Learn is not ready yet.',
+          };
+        }
+        if (!deps.isCurrentLocalSessionInstance?.(
+          request.callerSessionId,
+          context.sessionInstanceId,
+        )) {
+          return {
+            ok: false,
+            errorCode: 'USER_REQUEST_REQUIRED',
+            message: 'Cindy Learn is not authorized for this task instance.',
+          };
+        }
+        return consumeLearnInvocationGrant(request, context.sessionInstanceId);
+      },
+      skillLearning: async ({
+        callerSessionId,
+        input,
+        sourceKind,
+        hubSlug,
+        hubCatalogScope,
+      }) => {
+        try {
+          if (!isCindyLearnSkillEnabled()) {
+            return {
+              ok: false,
+              errorCode: 'SKILL_DISABLED',
+              message: 'Cindy Learn is disabled in Local Skills.',
+            };
+          }
+          // Lazy import avoids coupling provider construction to learn-host startup.
+          // The callback is invoked only after bootstrap has initialized the host.
+          const { getLearnController } = await import('../learn-host/index.js');
+          const controller = getLearnController();
+          if (!controller) {
+            return {
+              ok: false,
+              errorCode: 'HOST_NOT_READY',
+              message: 'Cindy Learn is not ready yet.',
+            };
+          }
+          const { runId } = await controller.startLearn({
+            input,
+            sourceKind,
+            originSessionId: callerSessionId,
+            ...(hubSlug ? { hubSlug } : {}),
+            ...(hubCatalogScope ? { hubCatalogScope } : {}),
+          });
+          return { ok: true, runId };
+        } catch (err) {
+          const rawCode = (err as { code?: unknown })?.code;
+          const errorCode =
+            typeof rawCode === 'string'
+            && ['LEARN_BUSY', 'LEARN_INVALID_STATE', 'INVALID_PARAMS', 'NOT_FOUND'].includes(rawCode)
+              ? rawCode
+              : 'INTERNAL';
+          return {
+            ok: false,
+            errorCode,
+            message: err instanceof Error ? err.message : 'Failed to start Cindy Learn.',
+          };
+        }
+      },
       resolveSurface: async ({ sessionId }) => {
         const dbClient = tryGetDbClient();
         if (!dbClient || isAppSessionBoundaryPending()) return 'restricted';
@@ -750,6 +834,11 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
         addProject: (params) => addBotWorkbenchProjectForCaller(params),
         removeProject: (params) => removeBotWorkbenchProjectForCaller(params),
       },
+      skillhub: createSkillhubAgentTools({
+        isCurrentSession: (context) => !!context.sessionId
+          && deps.isCurrentLocalSessionInstance?.(context.sessionId, context.sessionInstanceId) === true,
+        authorizePath: (request) => authorizeDesktopSessionPath(request, deps.getLiveSessionGrantState),
+      }),
       history: {
         resolveSessionScope: async ({ callerSessionId, callerMemoryScopeKey }) => {
           try {

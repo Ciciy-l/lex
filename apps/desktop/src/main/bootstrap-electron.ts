@@ -571,10 +571,19 @@ import { listAllowedSkillhubProjectRoots } from './skillhub/allowedProjectRoots'
 import { SkillhubMarketService } from './skillhub/marketService';
 import { skillhubAutoSyncService } from './skillhub/autoSyncService';
 import { rehydrateCloseSuppression } from './maker-host/rehydrateCloseSuppression.js';
+import {
+  builtInSkillDescriptors,
+  prepareBuiltInSkills,
+  resolveBundledSystemSkillsRoot,
+} from './maker-host/built-in-skills.js';
+import { isCindyLearnSkillEnabled } from './skillhub/activationPreferences';
+import { prepareSharedGlobalSkillLinks } from './maker-host/shared-global-skills.js';
+import { isCindyLearnSkillEnabled } from './skillhub/activationPreferences';
 // Maker Core 一阶段重构（新链路）—— 静态 import 避免 dynamic import 触发 vite chunking
 // 让 imageProtocol 等需要 app.ready 前注册的模块跑在错误时机。getMaker() 是 lazy 的，
 // 静态 import 不会触发 Maker / Agent 的实例化。
 import {
+  desktopClaudeAuthAdapter,
   getMaker as getMakerCore,
   getMakerIfReady,
   resetMaker,
@@ -1037,7 +1046,12 @@ import {
   resetSchedulerReady,
 } from './maker-ipc/schedule.js';
 import { registerProjectAutomationIpc } from './maker-ipc/project-automation.js';
-import { startGoalController, getGoalController, resetGoalController, getGoalTeardownGeneration } from './goal-host/index.js';
+import {
+  startGoalController,
+  getGoalController,
+  resetGoalController,
+  getGoalTeardownGeneration,
+} from './goal-host/index.js';
 import { startLearnHost, getLearnController, resetLearnController } from './learn-host/index.js';
 import { fetchHubSkillReference } from './learn-host/hubReference.js';
 import { registerLearnIpc, broadcastLearnEvent } from './learn-host/registerIpc.js';
@@ -6108,14 +6122,15 @@ const registerIpcHandlers = () => {
       registerBuiltinDesktopCommands(getDesktopCommandRegistry(), {
         getGoalController,
         getLearnController,
+        isLearnEnabled: isCindyLearnSkillEnabled,
         remoteInvoke: (deviceId, channel, args) =>
           deviceLinkHandleInvoke(deviceLinkIpcDeps(), deviceId, channel, args),
       });
       // desktop-cmd:run —— /cmd 的被控端远程执行 handler(仅隧道 dispatch 消费,
       // 本机 /cmd 仍在 builtins 内联执行,不走 IPC 往返)。
       registerRemoteCmdIpc();
-      // learn:* handler 提前一次性注册(eager,同 goal);handler 内部 getLearnController()
-      // 取单例,invoke 时 controller 已由 startLearnHost 启动。
+      // learn:* handler 提前一次性注册(eager,同 goal);handler 内部读取 controller
+      // 单例,invoke 时 controller 已由 startLearnHost 启动。
       registerLearnIpc();
       // maker:schedule:* handler 提前一次性注册;handler 内部 awaitReady 等真实
       // scheduler 实例(由后续 attemptStartScheduler 通过 attachSchedulerEventListeners
@@ -6804,6 +6819,10 @@ const registerIpcHandlers = () => {
   registerSkillhubIpc({
     getMaker: getMakerCore,
     getManagedSkillRoots: () => getGhostManager().managedRootDirs(),
+    getBuiltInSkills: () => builtInSkillDescriptors(
+      app.getPath('userData'),
+      app.getPath('appData'),
+    ),
     getAllowedProjectRoots: listAllowedSkillhubProjectRoots,
   });
   disposeSkillhubAutoSyncAuthListener = authManager.onAuthStateChange((state) => {
@@ -8542,6 +8561,31 @@ app.on('ready', async () => {
   }
 
   await ensureMainAppPresence('app-ready');
+
+  // Cindy-owned Skills are packaged as immutable resources and copied into a
+  // stable profile-independent path. Home-level projections happen only through
+  // ensureSharedGlobalSkills(), whose stable-owner boundary rejects passive instances;
+  // they never replace a same-name user Skill.
+  try {
+    const prepared = await prepareBuiltInSkills({
+      bundledRoot: resolveBundledSystemSkillsRoot({
+        isPackaged: app.isPackaged,
+        appPath: app.getAppPath(),
+        resourcesPath: process.resourcesPath,
+      }),
+      userDataDir: app.getPath('userData'),
+      appDataDir: app.getPath('appData'),
+    });
+    for (const warning of prepared.warnings) {
+      createLogger('built-in-skills').warn('built-in Skill preparation warning', { warning });
+    }
+    await desktopClaudeAuthAdapter.ensureSharedGlobalSkills();
+  } catch (error) {
+    // A broken optional Skill must not block the desktop from starting.
+    createLogger('built-in-skills').warn('built-in Skill preparation failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 
   // macOS App Translocation fix: when the user launches the app without
   // dragging it to /Applications first, macOS runs it from a read-only

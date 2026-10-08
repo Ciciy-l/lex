@@ -11863,6 +11863,7 @@
       "installed": "Installed",
       "globalScope": "Global",
       "sourceSkillhub": "SkillHub",
+      "sourceBuiltIn": "Built-in",
       "sourceLocal": "Local",
       "import": "Import skill",
       "importAria": "Import a skill from a local zip or SKILL.md",
@@ -11870,6 +11871,16 @@
       "importPickerSubtitle": "{{name}} · {{description}}",
       "importSuccess": "{{name}} imported{{suffix}}",
       "importFailed": "Failed to import skill"
+    },
+    "builtIn": {
+      "official": "Official",
+      "officialDetail": "Included and maintained by Cindy.",
+      "skillCreator": {
+        "description": "Create or update a Cindy Skill with clear instructions and supporting resources."
+      },
+      "learn": {
+        "description": "Distill a reusable Skill from this task, a described workflow, or a SkillHub Skill through Cindy's review flow."
+      }
     },
     "common": {
       "openFolderFailed": "Failed to open folder",
@@ -12459,6 +12470,7 @@
       "unlinkDescription": "Only the local skill entry will be removed. Original files and edits will be kept.",
       "sharedImpact": "Other Agents sharing this skill will also be affected. Published versions and installations elsewhere are unaffected.",
       "managedElsewhere": "This Skill belongs to another package or shared directory. Remove it at its source.",
+      "builtInManaged": "This Skill is included with Cindy and cannot be uninstalled.",
       "managedByPlugin": "This skill is provided by a plugin. Manage it on that plugin’s page.",
       "cleanupIncomplete": "Uninstall cleanup for “{{name}}” is unfinished. Retry now or reopen Skills later to continue. Reinstallation is paused until cleanup completes.",
       "retryCleanup": "Retry cleanup",
@@ -12867,7 +12879,8 @@
       "INTERNAL": "Internal error. Please try again later."
     },
     "hub": {
-      "learnButton": "Learn this skill"
+      "learnButton": "Learn this skill",
+      "disabledHint": "Enable the built-in Learn Skill in Local Skills to use this action."
     }
   },
   "planMode": {

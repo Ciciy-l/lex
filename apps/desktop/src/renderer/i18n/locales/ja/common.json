@@ -11836,6 +11836,7 @@
       "installed": "インストール済み",
       "globalScope": "グローバル",
       "sourceSkillhub": "SkillHub",
+      "sourceBuiltIn": "内蔵",
       "sourceLocal": "ローカル",
       "import": "スキルをインポート",
       "importAria": "ローカルの zip または SKILL.md からスキルをインポート",
@@ -11843,6 +11844,16 @@
       "importPickerSubtitle": "{{name}} · {{description}}",
       "importSuccess": "{{name}} をインポートしました{{suffix}}",
       "importFailed": "スキルのインポートに失敗しました"
+    },
+    "builtIn": {
+      "official": "公式",
+      "officialDetail": "Cindy がアプリに同梱し、管理しています。",
+      "skillCreator": {
+        "description": "明確な手順と必要な補助リソースを備えた Cindy スキルを作成または更新します。"
+      },
+      "learn": {
+        "description": "現在のタスク、説明されたワークフロー、または SkillHub のスキルから再利用可能なスキルを抽出し、Cindy のレビューフローを経て保存します。"
+      }
     },
     "common": {
       "openFolderFailed": "フォルダを開けませんでした",
@@ -12432,6 +12443,7 @@
       "unlinkDescription": "ローカルのスキル登録のみを削除します。元のファイルと編集内容は保持されます。",
       "sharedImpact": "このスキルを共有する他の Agent にも影響します。公開済みバージョンや別の場所のインストールには影響しません。",
       "managedElsewhere": "このスキルは別のパッケージまたは共有ディレクトリで管理されています。提供元で削除してください",
+      "builtInManaged": "このスキルは Cindy に内蔵されているため、アンインストールできません",
       "managedByPlugin": "このスキルはプラグインが提供しています。提供元のプラグインページで管理してください。",
       "cleanupIncomplete": "「{{name}}」のアンインストール後のクリーンアップが未完了です。再試行するか、後でスキルを開き直して続行してください。完了するまで再インストールはできません。",
       "retryCleanup": "整理を再試行",
@@ -12839,7 +12851,8 @@
       "INTERNAL": "内部エラーです。しばらくしてから再試行してください。"
     },
     "hub": {
-      "learnButton": "このスキルを学習"
+      "learnButton": "このスキルを学習",
+      "disabledHint": "この操作を使うには、ローカルスキルで組み込みの Learn スキルを有効にしてください。"
     }
   },
   "planMode": {

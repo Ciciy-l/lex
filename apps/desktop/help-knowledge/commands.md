@@ -7,8 +7,8 @@ Type `/` at the start of the composer to open the command palette.
 
 **What's in the palette (priority order on collisions):**
 
-1. **Your installed skills** (highest priority) — anything in your global or project skills directory (see the Skills topic).
-2. **Built-in app commands** — `/help` (show available commands), `/clear` (clear the current session context — resets the conversation in place without creating a new session), `/cmd` (run a shell command in the working directory), `/issue` (file an issue), `/goal` (start a goal-driven run), `/learn`, `/workflows`, and `/jump-session`.
+1. **Your installed skills and Lex's built-in Skills** (highest priority) — anything in your global or project skills directory, including `/cindy-skill-creator` and `/learn` when enabled (see the Skills topic).
+2. **Built-in app commands** — `/help` (show available commands), `/clear` (clear the current session context — resets the conversation in place without creating a new session), `/cmd` (run a shell command in the working directory), `/issue` (file an issue), `/goal` (start a goal-driven run), `/workflows`, and `/jump-session`.
 3. **The agent's own commands** — e.g. `/compact`, `/agents`, `/memory` (the exact list depends on the agent; Claude Code and Codex each contribute their own).
 
 `/issue` currently submits issues to the Cindy upstream repository; it does not send them to a Lex maintainer inbox. It does not require a GitHub plugin or GitHub account. The confirmation card uses Cindy's official bot by default; if a working account is already configured under **Plugins > Cindy GitHub**, that account appears as an optional submission identity.
