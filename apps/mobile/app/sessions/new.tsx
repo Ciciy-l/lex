@@ -5563,7 +5563,8 @@ export default function NewRemoteSessionScreen() {
             {creating ? <ActivityIndicator color={colors.textSecondary} /> : null}
           </View> : null}
 
-          <View style={styles.bottomCluster}>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.bottomCluster}
+            keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
             <View style={styles.selectorStack}>
               <View style={styles.deviceSelectorWrap}>
               <Pressable
@@ -6122,7 +6123,7 @@ export default function NewRemoteSessionScreen() {
                 />
               </View>
             </View>
-          </View>
+          </ScrollView>
         </View>
       </ComposerKeyboardAvoidingView>
       <ContextSheet
@@ -6537,7 +6538,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     flexShrink: 0,
   },
   bottomCluster: {
-    flex: 1,
+    flexGrow: 1,
     gap: spacing.lg,
     justifyContent: 'flex-end',
     paddingBottom: spacing.md,

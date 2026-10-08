@@ -128,12 +128,13 @@ export function SessionActionSheet({
 
   return (
     <Modal
+      supportedOrientations={["portrait", "portrait-upside-down", "landscape-left", "landscape-right"]}
       animationType="none"
       onRequestClose={onClose}
       transparent
       visible={mounted}
     >
-      <View style={styles.overlay}>
+      <GestureHandlerRootView style={styles.overlay}>
         <Animated.View style={[StyleSheet.absoluteFill, { opacity: progress }]}>
           <BlurBackdrop />
           <Pressable
@@ -210,7 +211,7 @@ export function SessionActionSheet({
             <Text style={styles.cancelText}>{t("session.common.cancel")}</Text>
           </Pressable>
         </Animated.View>
-      </View>
+      </GestureHandlerRootView>
     </Modal>
   );
 }

@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import { useLiquidGlassAvailable } from "@/session/useLiquidGlassAvailable";
 import { useTheme, useThemedStyles, type ThemeColors } from "@/theme";
-import { radius } from "@/theme/tokens";
+import { navigationChrome, radius } from "@/theme/tokens";
 
 export function HomeHeaderGlassButton({
   accessibilityLabel,
@@ -14,14 +14,21 @@ export function HomeHeaderGlassButton({
   disabled = false,
   onPress,
   testID,
+  disabled = false,
+  prominent = false,
+  size = navigationChrome.target,
 }: {
   accessibilityLabel: string;
   children: ReactNode;
   disabled?: boolean;
   onPress(): void;
   testID: string;
+  disabled?: boolean;
+  prominent?: boolean;
+  size?: number;
+  artworkSize?: number;
 }) {
-  const { colors, mode } = useTheme();
+  const { mode, colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const liquidGlass = useLiquidGlassAvailable();
 
@@ -29,10 +36,10 @@ export function HomeHeaderGlassButton({
     <Pressable
       accessibilityLabel={accessibilityLabel}
       accessibilityRole="button"
-      accessibilityState={{ disabled }}
       disabled={disabled}
+      accessibilityState={{ disabled }}
       onPress={disabled ? undefined : onPress}
-      style={({ pressed }) => [styles.hit, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.hit, { width: size, height: size }, prominent && { backgroundColor: colors.cta, borderRadius: radius.pill }, pressed && styles.pressed, disabled && styles.disabled]}
       testID={testID}
     >
       {liquidGlass ? (
@@ -41,7 +48,6 @@ export function HomeHeaderGlassButton({
           glassEffectStyle="regular"
           isInteractive
           style={styles.glass}
-          tintColor={colors.surface}
         >
           <View pointerEvents="none" style={styles.iconSlot}>
             {children}
@@ -58,8 +64,8 @@ const makeStyles = (_colors: ThemeColors) =>
   StyleSheet.create({
     hit: {
       flexShrink: 0,
-      height: 44,
-      width: 44,
+      height: navigationChrome.target,
+      width: navigationChrome.target,
     },
     glass: {
       alignItems: "center",
@@ -73,6 +79,7 @@ const makeStyles = (_colors: ThemeColors) =>
       flex: 1,
       justifyContent: "center",
     },
+    disabled: { opacity: 0.46 },
     pressed: {
       opacity: 0.72,
     },

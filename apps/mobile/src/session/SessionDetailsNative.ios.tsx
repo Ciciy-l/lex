@@ -1,3 +1,4 @@
+import { useNativeGlassButtonStyle } from "@/platform/chrome/nativeGlassButtonStyle.ios";
 import { Host } from "@expo/ui";
 import {
   BottomSheet,
@@ -191,5 +192,44 @@ export function SessionDetailsNativeActions({
         </Host>
       ) : null}
     </View>
+  );
+}
+
+export function SessionDetailsNativeHeading({
+  title,
+  backLabel,
+  onBack,
+}: Pick<SessionDetailsNativeProps, 'title' | 'backLabel' | 'onBack'>) {
+  const glassStyle = useNativeGlassButtonStyle({ shape: 'circle' });
+  return (
+    <HStack
+      modifiers={[
+        padding({
+          top: spacing.lg,
+          bottom: spacing.sm,
+          leading: spacing.lg,
+          trailing: spacing.lg,
+        }),
+      ]}
+    >
+      {onBack ? (
+        <Button
+          label={backLabel}
+          systemImage="chevron.backward"
+          onPress={onBack}
+          modifiers={[
+            labelStyle('iconOnly'),
+            ...glassStyle,
+            frame({ width: 44, height: 44 }),
+          ]}
+        />
+      ) : (
+        <Spacer modifiers={[frame({ width: 44 })]} />
+      )}
+      <Spacer />
+      <Text modifiers={[lineLimit(1)]}>{title}</Text>
+      <Spacer />
+      <Spacer modifiers={[frame({ width: 44, height: 44 })]} />
+    </HStack>
   );
 }

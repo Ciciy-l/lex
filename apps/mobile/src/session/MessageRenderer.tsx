@@ -1,4 +1,7 @@
 import { CompanionMessageActions } from './CompanionMessageActions';
+import { useMessageHistoryActive, useMessageHistoryPositioning } from './messageHistoryActivity';
+import { usePaneViewport } from '@/platform/AdaptiveWindowContext';
+import { messageReadingPosition } from './messageReadingPosition';
 import { PluginInvocationHeader } from './PluginInvocationHeader';
 import { companionPluginWorkEntries, type PluginInvocation } from './pluginInvocations';
 import { AuthorizationMessageCard } from './AuthorizationMessageCard';
@@ -714,6 +717,7 @@ export function MessageRenderer({
   focusedRequestKey,
   queueFooter,
   scrollResetKey,
+  isReadingPositionActive,
   syncingWhileEmpty,
   testID,
   devExposeList,
@@ -773,6 +777,17 @@ export function MessageRenderer({
   const { colors } = useTheme();
   const { t } = useTranslation();
   const styles = useThemedStyles(makeStyles);
+  const historyActive = useMessageHistoryActive();
+  const historyPositioning = useMessageHistoryPositioning();
+  const historyPositioningRef = useRef(historyPositioning);
+  historyPositioningRef.current = historyPositioning;
+  const historyActiveRef = useRef(historyActive);
+  historyActiveRef.current = historyActive;
+  const readingPosition = useMemo(() => scrollResetKey && remoteDeviceId
+    ? messageReadingPosition(remoteDeviceId, scrollResetKey) : null, [remoteDeviceId, scrollResetKey]);
+  const reopeningPosition = useMemo(() => readingPosition?.read(), [readingPosition]);
+  const readingPositionActiveRef = useRef(isReadingPositionActive);
+  readingPositionActiveRef.current = isReadingPositionActive;
   const itemStructureIdentity = itemsStructureKey ?? items;
   const itemsForStructureRef = useRef(items);
   itemsForStructureRef.current = items;
@@ -792,7 +807,7 @@ export function MessageRenderer({
   const listTopPaddingRef = useRef(0);
   const listBottomPaddingRef = useRef(0);
   const shareableMessageViewsRef = useRef(new Map<string, View>());
-  const windowDimensions = useWindowDimensions();
+  const windowDimensions = usePaneViewport();
   const viewportLayout = useMemo(() => buildMobileReadableViewportLayout({
     screenHeight: windowDimensions.height,
     screenWidth: windowDimensions.width,
@@ -800,7 +815,7 @@ export function MessageRenderer({
   const wideContentInset = viewportLayout.wideViewport
     ? Math.max(0, (windowDimensions.width - viewportLayout.contentMaxWidth) / 2)
     : 0;
-  const nearBottomRef = useRef(true);
+  const nearBottomRef = useRef(reopeningPosition?.atEnd ?? true);
   // ── 拖动手势追踪(贴底跟随的意图解除用)──
   // 拖动期间(onScrollBeginDrag ~ onScrollEndDrag)相对起点累计上移超过死区
   // → 立即解除跟随(shouldUnpinMobileFollowOnDrag),不看近底距离阈值——
@@ -868,6 +883,8 @@ export function MessageRenderer({
   // 实际定位完成就直接显示；UI 线程只负责 300ms 兜底，不让繁忙 JS 无限延长隐藏。
   // 揭示沿用唯一 tail follower 的位置校验，不再额外等待或对旧消息做淡入。
   const initialAnchorDoneRef = useRef(false);
+  const reopeningAnchorRef = useRef<{ anchor: MobileHistoryAnchor; expires: number; corrections: number } | null>(null);
+  const reopeningFrameRef = useRef<number | null>(null);
   const initialRevealGenerationRef = useRef(0);
   const initialRevealAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
   const initialRevealProgress = useMemo(
@@ -894,7 +911,7 @@ export function MessageRenderer({
   if (prevScrollResetKeyRef.current !== scrollResetKey) {
     prevScrollResetKeyRef.current = scrollResetKey;
     listMetricsRef.current = { footerSize: 0, headerSize: 0 };
-    nearBottomRef.current = true;
+    nearBottomRef.current = reopeningPosition?.atEnd ?? true;
     isDraggingRef.current = false;
     isMomentumScrollingRef.current = false;
     dragStartOffsetYRef.current = null;
@@ -939,6 +956,7 @@ export function MessageRenderer({
     tailFollowerRef.current?.reset();
     tailFollowerRef.current = null;
     initialAnchorDoneRef.current = false;
+    reopeningAnchorRef.current = null;
     initialRevealGenerationRef.current += 1;
     initialRevealAnimationRef.current?.stop();
     initialRevealAnimationRef.current = null;
@@ -969,16 +987,21 @@ export function MessageRenderer({
   const handleMessageActionSheetOpenChange = useCallback((clientId: string, open: boolean) => {
     if (open) openMessageActionSheetsRef.current.add(clientId);
     else openMessageActionSheetsRef.current.delete(clientId);
+    if (!historyActiveRef.current) return;
     onBlockingOverlayChange?.(
       payloadRef.current !== null || openMessageActionSheetsRef.current.size > 0,
     );
   }, [onBlockingOverlayChange]);
   useEffect(() => {
+    if (!historyActive) {
+      setPayload(null);
+      return;
+    }
     onBlockingOverlayChange?.(
       payload !== null || openMessageActionSheetsRef.current.size > 0,
     );
     return () => onBlockingOverlayChange?.(false);
-  }, [onBlockingOverlayChange, payload]);
+  }, [historyActive, onBlockingOverlayChange, payload]);
   // 关闭回调必须引用稳定:内联闭包每次渲染换新,会经 ImageLightbox 透传成
   // LightboxPage 手势 useMemo 的依赖,流式回复期间每 token 重建手势图,
   // 可能打断进行中的捏合/拖动手势(rule 7)。
@@ -1046,7 +1069,7 @@ export function MessageRenderer({
           metrics: scrollMetricsRef.current,
           stickToLatest: nearBottomRef.current,
           userControllingScroll: isUserControllingScroll(),
-          preservingHistory: readingOlderRef.current,
+          preservingHistory: readingOlderRef.current || !historyPositioningRef.current,
           layoutSettleAt: mvcpSettleAtRef.current,
           animatedScrollUntil: programmaticAnimatedScrollInFlightRef.current
             ? programmaticScrollSettleAtRef.current : 0,
@@ -1073,9 +1096,13 @@ export function MessageRenderer({
     intent: 'follow' | 'explicit' = 'follow',
   ) => {
     // Only an explicit destination supersedes a pending final drag sample.
-    if (intent === 'explicit') dragStartOffsetYRef.current = null;
+    if (intent === 'explicit') {
+      reopeningAnchorRef.current = null;
+      dragStartOffsetYRef.current = null;
+      readingPosition?.write({ anchor: null, atEnd: true });
+    }
     getTailFollower().requestEnd(animated, intent === 'explicit');
-  }, [getTailFollower]);
+  }, [getTailFollower, readingPosition]);
 
   const scrollToOffsetProgrammatically = useCallback((offset: number, animated: boolean) => {
     markProgrammaticScroll(animated);
@@ -1119,6 +1146,34 @@ export function MessageRenderer({
       )
       : null;
   }, [getCurrentHistoryTopOffsetAdjustment]);
+
+  // A seek first uses estimated heights. Correct it only when layout supplies
+  // real positions; never retry from onScroll (which can create a scroll storm).
+  const reconcileReopeningAnchor = useCallback(() => {
+    if (!historyPositioningRef.current || !reopeningAnchorRef.current || reopeningFrameRef.current !== null) return;
+    reopeningFrameRef.current = requestAnimationFrame(() => {
+      reopeningFrameRef.current = null;
+      const pending = reopeningAnchorRef.current;
+      if (!pending || !historyPositioningRef.current) return;
+      if (Date.now() > pending.expires || pending.corrections >= 20) {
+        reopeningAnchorRef.current = null;
+        return;
+      }
+      const state = listRef.current?.getState();
+      if (!state || state.scrollLength <= 0) return;
+      const key = pending.anchor.identityKey
+        ? mobileMessageHistoryRowKeyByIdentity(state.data, pending.anchor.identityKey) ?? pending.anchor.key
+        : pending.anchor.key;
+      const index = state.data.findIndex(item => item.key === key);
+      if (index < 0 || !Number.isFinite(state.sizeAtIndex(index))) return;
+      const target = resolveMobileMessageHistoryAnchorOffset(pending.anchor, state,
+        getCurrentHistoryTopOffsetAdjustment());
+      if (target === null || Math.abs(state.scroll - target) <= MOBILE_ANCHOR_VERIFY_TOLERANCE) return;
+      pending.corrections++;
+      markProgrammaticScroll(false);
+      listRef.current?.scrollToOffset({ offset: target, animated: false });
+    });
+  }, [getCurrentHistoryTopOffsetAdjustment, markProgrammaticScroll]);
 
   const finishHistoryPrependTransaction = useCallback((generation: number) => {
     const transaction = historyPrependTransactionRef.current;
@@ -1503,7 +1558,7 @@ export function MessageRenderer({
   // hydrate / 新注册后 gallery 需要重建,否则点开气泡本地图时 initialUrl 对不上图集条目。
   const sentThumbsVersion = useSentAttachmentThumbsVersion();
   const chatFilePathContext = useContext(ChatFilePathContext);
-  const imageLightboxOpen = payload?.kind === 'media' && payload.media.kind === 'image';
+  const imageLightboxOpen = historyActive && payload?.kind === 'media' && payload.media.kind === 'image';
   const galleryImages = useMemo(
     () => (imageLightboxOpen
       ? collectMobileMessageGalleryImages(
@@ -1781,9 +1836,10 @@ export function MessageRenderer({
       .map((item) => item.clientId);
   }, []);
   useEffect(() => {
+    if (!historyActive) return;
     onVisibleShareableMessageIdsReaderChange?.(readActuallyVisibleShareableMessageIds);
     return () => onVisibleShareableMessageIdsReaderChange?.(null);
-  }, [onVisibleShareableMessageIdsReaderChange, readActuallyVisibleShareableMessageIds]);
+  }, [historyActive, onVisibleShareableMessageIdsReaderChange, readActuallyVisibleShareableMessageIds]);
 
   // 贴底跟随由 handleContentSize 的手动补滚承担(nearBottomRef 是跟随意图的唯一真相);
   // 跳底先命令式 scrollToEnd,随后复用同一轮有界落底校验。
@@ -1813,13 +1869,21 @@ export function MessageRenderer({
     scrollToIndexProgrammatically(target.index, 0.12);
   }, [scrollToIndexProgrammatically]);
 
+  // A retained list must not replay requests issued while another task was active.
+  const followRequestWasActiveRef = useRef(historyActive);
   // Sending and the jump button share the same explicit follow action.
   useEffect(() => {
+    const wasActive = followRequestWasActiveRef.current;
+    followRequestWasActiveRef.current = historyActive;
+    if (!historyActive || !wasActive) {
+      previousFollowLatestRequestKeyRef.current = followLatestRequestKey;
+      return;
+    }
     if (previousFollowLatestRequestKeyRef.current === followLatestRequestKey) return;
     previousFollowLatestRequestKeyRef.current = followLatestRequestKey;
     if (followLatestRequestKey === null || followLatestRequestKey === undefined) return;
     scrollToBottom();
-  }, [followLatestRequestKey, scrollToBottom]);
+  }, [historyActive, followLatestRequestKey, scrollToBottom]);
 
   // 自动加载更早:电平触发判定(shouldAutoLoadEarlier),在所有可能改变判定结果的时机重评估
   // (scroll 事件 / LegendList onStartReached 边沿 / eligibility 变化 effect)。
@@ -1833,7 +1897,7 @@ export function MessageRenderer({
   // 冷开只在列表同时位于 start/end(内容未撑满首屏)时有界补页；真实上翻意图继续沿用
   // 不限页的近顶预取。两条路径都受首项进展去重保护,失败/重复页不会循环打 host。
   const beginLoadEarlier = useCallback(() => {
-    if (!onLoadEarlier) return;
+    if (!historyActiveRef.current || !onLoadEarlier) return;
     const generation = readingOlderRequestGenerationRef.current + 1;
     readingOlderRequestGenerationRef.current = generation;
     const listState = listRef.current?.getState();
@@ -1944,7 +2008,7 @@ export function MessageRenderer({
   }, [flushQueuedLoadEarlier, historyPrependNativeMvcpDisabled]);
 
   const attemptAutoLoadEarlier = useCallback((nativeMetrics?: MessageScrollMetrics) => {
-    if (!onLoadEarlier) return;
+    if (!historyActiveRef.current || !onLoadEarlier) return;
     if (readingOlderRef.current || queuedLoadEarlierRef.current) return;
     // 热路径前置短路(滚动事件每 16ms 评估一次,getState() 每次新建状态对象):没有用户浏览意图
     // 且冷开预算已耗尽、或当前首项已尝试过时不碰 getState。完整判定仍以
@@ -2059,6 +2123,7 @@ export function MessageRenderer({
     event: NativeSyntheticEvent<NativeScrollEvent>,
     isFinalDragSample = false,
   ) => {
+    if (!historyPositioningRef.current) return;
     // Cancellation releases ownership immediately. Only endDrag may still consume its final
     // sample; an ordinary layout/MVCP scroll cannot use the retained origin as user intent.
     const isDragSample = isDraggingRef.current
@@ -2071,6 +2136,21 @@ export function MessageRenderer({
     };
     const previousOffsetY = scrollMetricsRef.current.offsetY;
     scrollMetricsRef.current = metrics;
+    // A native acknowledgment ends reopening, not merely its reveal animation.
+    // Otherwise later measurements keep replaying the old bookmark after the
+    // viewport is already correct (including after the 300ms reveal fallback).
+    const reopening = reopeningAnchorRef.current;
+    if (reopening) {
+      const state = listRef.current?.getState();
+      const target = state ? resolveMobileMessageHistoryAnchorOffset(reopening.anchor,
+        state, getCurrentHistoryTopOffsetAdjustment()) : null;
+      if (target !== null && Math.abs(metrics.offsetY - target) <= MOBILE_ANCHOR_VERIFY_TOLERANCE) {
+        reopeningAnchorRef.current = null;
+        revealPositionedHistory();
+      }
+    }
+    // Preloads need real geometry, but must not publish bookmarks or trigger user work.
+    if (!historyActiveRef.current) return;
     if (mobileDebugEnabled()) mobileDebugLog('debug', 'scroll', 'list scroll', {
       ...metrics, dragging: isDragSample, momentum: isMomentumScrollingRef.current,
       readingOlder: readingOlderRef.current, nearBottom: nearBottomRef.current,
@@ -2082,6 +2162,15 @@ export function MessageRenderer({
         || historyTouchTriggeredRef.current
       ) {
         handoffHistoryPrependToUser();
+        // Loading older messages must not discard the reader's latest position.
+        // Only native user movement may replace the bookmark during a prepend;
+        // layout-only/MVCP events are still ignored here.
+        if (metrics.viewportHeight > 0 && metrics.contentHeight >= metrics.viewportHeight
+          && !programmaticScrollInFlightRef.current
+          && (readingPositionActiveRef.current?.() ?? true)) {
+          const anchor = captureCurrentHistoryAnchor(true);
+          if (anchor) readingPosition?.write({ anchor, atEnd: false });
+        }
       }
       // Prepend layout can transiently report an empty/short content range. Never feed those
       // metrics into near-bottom resolution: it would flip false→true and the next size event
@@ -2142,7 +2231,17 @@ export function MessageRenderer({
     attemptAutoLoadEarlier(metrics);
     // 分享模式:滚动驱动吸顶 check 的几何重判(内部节流,非分享模式直接返回)。
     if (shareSelectionActiveRef.current) scheduleStickyShareCheck();
+    if (initialAnchorDoneRef.current && !programmaticScrollInFlightRef.current && !readingOlderRef.current
+      && (readingPositionActiveRef.current?.() ?? true)) {
+      const anchor = captureCurrentHistoryAnchor(true);
+      if (anchor && !reopeningAnchorRef.current) readingPosition?.write({ anchor, atEnd: nearBottomRef.current });
+    }
   }, [
+    captureCurrentHistoryAnchor,
+    reopeningPosition,
+    getCurrentHistoryTopOffsetAdjustment,
+    revealPositionedHistory,
+    readingPosition,
     attemptAutoLoadEarlier,
     bottomOverlayHeight,
     handoffHistoryPrependToUser,
@@ -2150,6 +2249,7 @@ export function MessageRenderer({
   ]);
 
   const handleHistoryTouchStart = useCallback((event: GestureResponderEvent) => {
+    reopeningAnchorRef.current = null;
     // Android may omit momentum-end when a new finger stops a fling. The new touch owns the
     // ScrollView now, so the old momentum flag must not keep a queued history request suspended.
     isMomentumScrollingRef.current = false;
@@ -2210,6 +2310,7 @@ export function MessageRenderer({
   // 程序化 scrollToEnd 不会触发,故不会误置);同时记录拖动起点 offset,供
   // shouldUnpinMobileFollowOnDrag 判「相对起点累计上移」。
   const handleScrollBeginDrag = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    reopeningAnchorRef.current = null;
     const nativeMetrics = {
       contentHeight: event.nativeEvent.contentSize.height,
       offsetY: event.nativeEvent.contentOffset.y,
@@ -2254,18 +2355,29 @@ export function MessageRenderer({
     isMomentumScrollingRef.current = true;
   }, []);
 
-  const handleMomentumScrollEnd = useCallback(() => {
+  const handleMomentumScrollEnd = useCallback((event?: NativeSyntheticEvent<NativeScrollEvent>) => {
+    // The final native sample can arrive without a matching onScroll event.
+    if (event) handleScroll(event);
     isMomentumScrollingRef.current = false;
     refreshPreviousUserTarget();
     scheduleHistoryPrependUserHandoffSettle();
     scheduleQueuedLoadEarlierFlush();
     runStickToLatestVerify();
   }, [
+    handleScroll,
     refreshPreviousUserTarget,
     runStickToLatestVerify,
     scheduleHistoryPrependUserHandoffSettle,
     scheduleQueuedLoadEarlierFlush,
   ]);
+
+  useEffect(() => {
+    if (!historyPositioning) {
+      tailFollowerRef.current?.reset();
+      return;
+    }
+    getTailFollower().reconcile();
+  }, [historyPositioning, getTailFollower]);
 
   const handleStartReached = useCallback(() => {
     attemptAutoLoadEarlier();
@@ -2288,6 +2400,7 @@ export function MessageRenderer({
 
   const handleListMetricsChange = useCallback((metrics: LegendListMetrics) => {
     listMetricsRef.current = metrics;
+    reconcileReopeningAnchor();
     if (!readingOlderRef.current) return;
     const transaction = historyPrependTransactionRef.current;
     if (!transaction) return;
@@ -2300,7 +2413,7 @@ export function MessageRenderer({
     ) {
       restoreHistoryAnchorOnce(transaction.generation);
     }
-  }, [restoreHistoryAnchorOnce, scheduleHistoryAnchorRestore]);
+  }, [reconcileReopeningAnchor, restoreHistoryAnchorOnce, scheduleHistoryAnchorRestore]);
 
   // 记录 contentHeight 供近底判定 fallback + DEV harness 就绪判定;并承担**唯一的贴底跟随**:
   // 内容长高(流式增长、大块一帧撑高、冷开测量结算)时,用户本就贴底(nearBottomRef,与
@@ -2308,6 +2421,7 @@ export function MessageRenderer({
   // 上翻历史时 nearBottomRef=false,不打断。animated:false → 即时跟随、不排队动画。
   // LegendList 内置 maintainScrollAtEnd 已弃用(见 LegendList props 注释),不存在双机制叠加。
   const handleContentSize = useCallback((_width: number, height: number) => {
+    reconcileReopeningAnchor();
     markMobileMvcpSettle();
     scrollMetricsRef.current = { ...scrollMetricsRef.current, contentHeight: height };
     // readingOlderRef:load-earlier 的 prepend 也会撑高 contentHeight,但那是顶部增长、不该贴底(review P1)。
@@ -2331,6 +2445,7 @@ export function MessageRenderer({
     getTailFollower().contentChanged();
   }, [
     getTailFollower,
+    reconcileReopeningAnchor,
     markMobileMvcpSettle,
     restoreHistoryAnchorOnce,
     scheduleHistoryAnchorRestore,
@@ -2370,9 +2485,31 @@ export function MessageRenderer({
       if (finished) finish();
     });
 
-    // The controller seeks unmeasured rows once and owns all subsequent native correction.
-    scrollToEndProgrammatically(false);
+    // Seek once, then reconcile the bookmark as estimated row heights become measured.
+    const saved = !focusedItemKeyRef.current ? reopeningPosition : undefined;
+    const savedKey = saved?.anchor?.identityKey
+      ? mobileMessageHistoryRowKeyByIdentity(listData, saved.anchor.identityKey) ?? saved.anchor.key
+      : saved?.anchor?.key;
+    const savedIndex = savedKey ? listData.findIndex(item => item.key === savedKey) : -1;
+    if (saved && !saved.atEnd && savedIndex >= 0) {
+      reopeningAnchorRef.current = { anchor: saved.anchor!, expires: Date.now() + 1500, corrections: 0 };
+      nearBottomRef.current = false;
+      setIsAwayFromBottom(true);
+      markProgrammaticScroll(false);
+      // One positioning command, using the same list-owned measurement path as message links.
+      // Do not enable initialScrollIndex: it conflicts with this list's dynamic measurement.
+      void listRef.current?.scrollToIndex({ animated: false, index: savedIndex,
+        viewPosition: 0, viewOffset: saved.anchor!.viewportOffset });
+      reconcileReopeningAnchor();
+    } else {
+      nearBottomRef.current = true;
+      setIsAwayFromBottom(false);
+      scrollToEndProgrammatically(false);
+    }
   }, [
+    reopeningPosition,
+    reconcileReopeningAnchor,
+    markProgrammaticScroll,
     initialRevealProgress,
     listData.length,
     scrollResetKey,
@@ -2384,13 +2521,15 @@ export function MessageRenderer({
   // 竞态误触发自动拉历史),此处不重复。
   useEffect(() => {
     lastAppliedFocusKeyRef.current = null;
-    setIsAwayFromBottom(false);
+    setIsAwayFromBottom(!(reopeningPosition?.atEnd ?? true));
     setPreviousUserTarget(null);
     setHasNewMessages(false);
-  }, [scrollResetKey]);
+  }, [scrollResetKey, reopeningPosition]);
   // 卸载时清掉在飞的定时器/rAF(闭包引用 listRef,卸载后触发是无害 no-op,
   // 但不留悬挂句柄)。
   useEffect(() => () => {
+    reopeningAnchorRef.current = null;
+    if (reopeningFrameRef.current !== null) cancelAnimationFrame(reopeningFrameRef.current);
     initialRevealGenerationRef.current += 1;
     readingOlderRequestGenerationRef.current += 1;
     historyPrependTransactionRef.current = null;
@@ -2414,9 +2553,16 @@ export function MessageRenderer({
     prevTopPaddingRef.current = topPadding;
     const delta = topPadding - prev;
     if (delta === 0 || (nearBottomRef.current && !readingOlderRef.current)) return;
+    // The bookmark resolver already includes current top padding. A relative
+    // compensation here would cancel its scrollToIndex using stale native metrics.
+    if (reopeningAnchorRef.current) {
+      reconcileReopeningAnchor();
+      return;
+    }
+    if (!initialAnchorDoneRef.current || nativeScrollEventSequenceRef.current === 0) return;
     const { offsetY } = scrollMetricsRef.current;
     scrollToOffsetProgrammatically(Math.max(0, offsetY + delta), false);
-  }, [scrollToOffsetProgrammatically, topPadding]);
+  }, [reconcileReopeningAnchor, scrollToOffsetProgrammatically, topPadding]);
 
   // 深链/搜索:滚到指定消息(LegendList scrollToIndex 自带 offscreen 处理,无需 rAF/失败兜底)。
   useEffect(() => {
@@ -2429,6 +2575,7 @@ export function MessageRenderer({
     const index = listData.findIndex((item) => item.key === focusedItemKey);
     if (index < 0) return;
     lastAppliedFocusKeyRef.current = focusRunKey;
+    reopeningAnchorRef.current = null;
     // 深链 / 搜索定位是明确的历史浏览意图。定位后落在近顶区时继续自动补页,
     // 不要求用户再拖动一次才能看到目标上方上下文。
     userScrollForOlderRef.current = true;
@@ -2530,6 +2677,7 @@ export function MessageRenderer({
         data={listData}
         extraData={messageListExtraData}
         getItemType={mobileMessageListItemType}
+        onItemSizeChanged={reconcileReopeningAnchor}
         keyExtractor={(item) => item.key}
         renderItem={renderMessageItem}
         recycleItems={recycleItems}
@@ -2629,7 +2777,7 @@ export function MessageRenderer({
           {hasNewMessages ? <View style={styles.scrollToBottomDot} testID="message.newMessageDot" /> : null}
         </MessageListActionButton>
       ) : null}
-      {payload?.kind === 'media' && payload.media.kind === 'image' && lightboxImages ? (
+      {historyActive && payload?.kind === 'media' && payload.media.kind === 'image' && lightboxImages ? (
         // 图片走 IM 级全屏查看器(手势缩放/下滑关闭/横滑翻页);其余 payload 走通用查看器。
         <ImageLightbox
           annotation={imageAnnotation}
@@ -2647,7 +2795,7 @@ export function MessageRenderer({
           onReleaseRemoteMedia={onReleaseRemoteMedia}
           onResolveRemoteMedia={onResolveRemoteMedia}
           onShareImage={onShareImage}
-          payload={payload}
+          payload={historyActive ? payload : null}
         />
       )}
     </View>
@@ -2699,7 +2847,8 @@ const RenderItemView = memo(function RenderItemView({
         : item.message.companion
         ? <CompanionMessageCard message={item.message} />
         : item.message.orcaCard
-        ? <OrcaCollabCard card={item.message.orcaCard} screenWidth={actions.screenWidth} />
+        ? <OrcaCollabCard card={item.message.orcaCard} screenWidth={actions.screenWidth}
+            blockKey={JSON.stringify([actions.remoteDeviceId, item.key])} />
         : <MessageBubble item={hookSourceUserItem ?? systemCardUserItem ?? item} actions={actions} />;
       break;
     case 'thinking':
@@ -2940,6 +3089,10 @@ function MessageBubble({
   const { t, i18n: i18nInstance } = useTranslation();
   const [copyState, setCopyState] = useRecyclingState<CopyMessageStatus | 'idle' | 'copying'>('idle');
   const [actionSheetOpen, setActionSheetOpen] = useRecyclingState(false);
+  const historyActive = useMessageHistoryActive();
+  useEffect(() => {
+    if (!historyActive) setActionSheetOpen(false);
+  }, [historyActive, setActionSheetOpen]);
   // chat-text-quote:只解析持久化 quotesEncoded 明确标记的产品引用消息，避免
   // 把用户手写的 Markdown blockquote 误当产品引用。兼容 desktop 的交错
   // marker 块和 mobile 的前置引用。旧 markerless 消息保持 leading-only，
@@ -3023,10 +3176,10 @@ function MessageBubble({
   const isStreamingAssistant = item.message.kind === 'assistant' && item.message.isStreaming === true;
   const clientId = messageClientId(item);
   useEffect(() => {
-    if (!actionSheetOpen) return undefined;
+    if (!historyActive || !actionSheetOpen) return undefined;
     actions.onMessageActionSheetOpenChange?.(clientId, true);
     return () => actions.onMessageActionSheetOpenChange?.(clientId, false);
-  }, [actionSheetOpen, actions.onMessageActionSheetOpenChange, clientId]);
+  }, [historyActive, actionSheetOpen, actions.onMessageActionSheetOpenChange, clientId]);
   const shareableMessage = isShareableMessage(item.message);
   const handleShareableMessageViewChange = useCallback((view: View | null) => {
     actions.onShareableMessageViewChange?.(clientId, view);
@@ -3583,7 +3736,7 @@ function MessageBubble({
         items={messageMenu}
         onAction={selectMenuAction}
         onClose={() => setActionSheetOpen(false)}
-        visible={actionSheetOpen}
+        visible={historyActive && actionSheetOpen}
       />
     </View>
   );
@@ -4652,6 +4805,8 @@ function Rail({ children, layout }: { children: ReactNode; layout: MessageHierar
 // children 用 render-prop 拿到 layout(内层 stack 间距等)。
 function CollabCardShell({
   blockId,
+  controlledExpanded,
+  onControlledToggle,
   leadingIcon,
   title,
   subtitle,
@@ -4663,6 +4818,8 @@ function CollabCardShell({
   children,
 }: {
   blockId?: string;
+  controlledExpanded?: boolean;
+  onControlledToggle?: () => void;
   leadingIcon: ReactNode;
   title: string;
   subtitle?: string;
@@ -4681,6 +4838,8 @@ function CollabCardShell({
   return (
     <FoldablePanel
       blockId={blockId}
+      controlledExpanded={controlledExpanded}
+      onControlledToggle={onControlledToggle}
       title={title}
       subtitle={subtitle}
       controlledExpanded={controlledExpanded}
@@ -4939,8 +5098,16 @@ function MobileAutoResumeActionRow({
 
 // Orca 协同卡片:Lead 派活(dispatch)/ worker 回报(report)。与 SubagentCard 共用 CollabCardShell
 // chrome(同款 leadingIcon+title+可折叠 body),视觉一致;数据路径仍是 message.orcaCard,不碰 parentUuid。
-// 默认展开(协同消息是 Lead 对话的主内容),正文可选中(长按复制)。识别/文案抽取在 @/session/orcaCollab。
-function OrcaCollabCard({ card, screenWidth }: { card: OrcaCollabCardModel; screenWidth?: number }) {
+// worker 回报默认收起,Lead 派活保持默认展开;正文可选中(长按复制)。识别/文案抽取在 @/session/orcaCollab。
+function OrcaCollabCard({ card, screenWidth, blockKey }: {
+  card: OrcaCollabCardModel; screenWidth?: number; blockKey: string;
+}) {
+  const { accountGeneration } = useAuth();
+  // Remember deviations from each variant's default using the
+  // existing bounded block store, including across native route reconstruction.
+  const [toggled, toggleExpanded] = useFoldableExpandedState(
+    `orca-toggled-${JSON.stringify([accountGeneration, blockKey, card.variant])}`, false,
+  );
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const body = card.body && card.body.trim() ? card.body : null;
@@ -4959,7 +5126,8 @@ function OrcaCollabCard({ card, screenWidth }: { card: OrcaCollabCardModel; scre
     <CollabCardShell
       leadingIcon={<Bot color={colors.textTertiary} size={iconSize.md} strokeWidth={iconStroke.regular} />}
       title={card.title}
-      defaultExpanded
+      controlledExpanded={(card.variant === 'dispatch') !== toggled}
+      onControlledToggle={toggleExpanded}
       screenWidth={screenWidth}
       testID={`message.orcaCard.${card.variant}`}
     >
