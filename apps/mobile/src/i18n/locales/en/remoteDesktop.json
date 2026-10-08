@@ -132,5 +132,8 @@
   "autoUnlockUnavailable": "Automatic unlock is unavailable. You can still connect and unlock the Mac manually.",
   "lockOnExit": "Lock Computer on Exit",
   "lockOnExitHint": "Locks when you leave remote desktop. Reconnecting or switching apps does not lock the computer.",
-  "lockOnExitFailed": "Could not confirm that the computer locked. Check the computer before leaving it unattended."
+  "lockOnExitFailed": "Could not confirm that the computer locked. Check the computer before leaving it unattended.",
+  "hostMute": "Mute remote computer",
+  "hostMuteHint": "Mute the remote computer while connected",
+  "hostMuteFailed": "Couldn't change the remote computer's mute setting"
 }

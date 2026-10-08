@@ -24,14 +24,16 @@
       "memory": "内存",
       "lastSeen": "最近在线",
       "deviceId": "设备 ID"
-    }
+    },
+    "availableSection": "在线设备",
+    "offlineSection": "离线设备",
+    "showAllOffline": "显示全部 {{count}} 台",
+    "showFewerOffline": "收起"
   },
   "common": {
     "cancel": "取消",
     "save": "保存",
-    "saving": "保存中",
     "delete": "删除",
-    "deleting": "删除中",
     "create": "新建"
   },
   "resources": {
@@ -47,7 +49,8 @@
     "openFailed": "无法打开任务",
     "resolving": "正在打开最新任务…",
     "retry": "重试",
-    "hostCount": "{{count}} 台电脑"
+    "hostCount": "{{count}} 台电脑",
+    "stale": "内容可能已过期，暂时无法更新"
   },
   "presentation": {
     "deviceList": {
@@ -155,7 +158,7 @@
         },
         "active": {
           "title": "这台电脑暂无活跃任务",
-          "copy": "先在桌面端创建或继续一个任务，手机端会把它显示在这里。"
+          "copy": "先在电脑端创建或继续一个任务，手机端会把它显示在这里。"
         }
       },
       "time": {
@@ -177,10 +180,10 @@
     },
     "home": {
       "allDevices": "全部",
-      "allComputers": "全部电脑",
+      "allComputers": "全部设备",
       "waitingCount": "{{count}} 待处理",
       "synced": "已同步",
-      "unknownComputer": "未知电脑",
+      "unknownComputer": "未知设备",
       "uncategorizedProject": "未分类项目",
       "empty": {
         "search": {
@@ -201,7 +204,7 @@
         },
         "noSession": {
           "title": "还没有任务",
-          "copy": "先在桌面端创建或继续一个任务，手机端会直接显示对应项目和任务。"
+          "copy": "先在电脑端创建或继续一个任务，手机端会直接显示对应项目和任务。"
         }
       },
       "noDevice": {
@@ -293,7 +296,7 @@
     "error": {
       "sessionDeviceNotFound": "找不到这个任务所属设备，请重新同步后再试。",
       "taskDeviceNotFound": "找不到这个任务所属设备，请重新同步后再试。",
-      "noDevice": "没有可用设备。请先打开桌面端远程控制，然后重新同步。"
+      "noDevice": "没有可用设备。请先在电脑端打开远程控制，然后重新同步。"
     },
     "alert": {
       "actionFailed": "操作失败",
@@ -311,7 +314,7 @@
       "syncing": "正在重新同步",
       "sync": "重新同步",
       "pinnedConversations": "置顶 {{count}} 条任务",
-      "newRemoteConversation": "新建远程任务",
+      "newRemoteConversation": "新建任务",
       "renameDevice": "重命名 {{label}}",
       "project": "项目 {{title}}",
       "dialogue": "对话",
@@ -807,18 +810,53 @@
     }
   },
   "companionProfile": {
-    "memory": {
-      "title": "已存记忆",
-      "search": "搜索记忆",
-      "conflict": "这条记忆已在主机上发生变化。",
-      "useLatest": "使用最新内容",
-      "keepMine": "保留我的修改",
-      "edit": "编辑",
-      "delete": "删除",
-      "done": "保存",
-      "deleteConfirmTitle": "删除这条记忆？",
-      "deleteConfirmBody": "删除后无法撤销。"
-    }
+    "avatar": "头像",
+    "emptyEditor": "暂无内容。",
+    "searchOptions": "搜索",
+    "changed": "内容已在别处更改，你未保存的编辑已保留。",
+    "discardAndReload": "放弃编辑并重新加载",
+    "notes": "记忆笔记",
+    "create": "新建伙伴",
+    "createFailed": "暂未确认创建结果，请重试核对。",
+    "title": "伙伴资料",
+    "profile": "资料与性格",
+    "memory": "记忆",
+    "skills": "技能与连接",
+    "artifacts": "成果",
+    "direct": "伙伴往来",
+    "automation": "自动化",
+    "settings": "模型与权限",
+    "search": "搜索消息",
+    "models": "模型候选链",
+    "permissions": "操作权限",
+    "personalSkills": "个人学会的技能",
+    "connections": "引用的技能与连接",
+    "save": "保存更改",
+    "offline": "请重新连接 {{deviceName}} 后继续，未保存的编辑已保留。",
+    "hostUpgrade": "请更新 {{deviceName}} 上的 Cindy 后重试，或在那台电脑上编辑伙伴设置。",
+    "readFailed": "暂时无法确认最新状态。请刷新后再试，操作可能已经完成。你的编辑已保留。",
+    "artifactsEmpty": "还没有成果，可以让伙伴创作一些内容。",
+    "openSourceTask": "打开来源任务",
+    "modelFollowsDefault": "跟随当前默认模型链",
+    "taskModel": "任务模型",
+    "taskInheritsPrimary": "继承主模型",
+    "modelOverride": "使用此伙伴的自定义模型链",
+    "modelsUnavailable": "暂无可用模型，请在电脑上检查此伙伴的模型设置后刷新。",
+    "artifactsRecovery": "请从消息卡中打开文件，或在 {{deviceName}} 上浏览文件。",
+    "directRecovery": "暂时无法读取伙伴往来，请更新 {{deviceName}} 上的 Cindy 后重试。",
+    "directEmpty": "还没有伙伴往来",
+    "skillsEmpty": "还没有个人技能，可以让伙伴记下做事方法。",
+    "connectionsEmpty": "尚未选择技能或连接",
+    "largeProfileRecovery": "此资料过长，无法在手机上编辑。请在 {{deviceName}} 上编辑完整资料。",
+    "addModel": "添加备用模型",
+    "removeModel": "移除模型",
+    "moveModelUp": "上移模型",
+    "settingsTitle": "伙伴设置",
+    "name": "名字",
+    "portraitNumber": "头像 {{number}}",
+    "uploadAvatar": "上传头像",
+    "avatarFailed": "无法打开此图片，请换一张。",
+    "nameTaken": "已有同名伙伴，请换一个名字。"
   },
   "companions": {
     "messageSent": "已发送补充消息",
@@ -852,7 +890,7 @@
       "failed": "失败",
       "cancelled": "已取消",
       "timed-out": "已超时",
-      "unknown": "暂时无法确认状态"
+      "unknown": "状态未知"
     },
     "title": "伙伴",
     "tasks": "任务",
@@ -982,55 +1020,7 @@
       "avatarSkipped": "暂时用了默认头像，你随时可以换一张。"
     },
     "viewResult": "查看结果",
-    "noWrittenResult": "没有文字结果。"
-  },
-  "companionProfile": {
-    "avatar": "头像",
-    "emptyEditor": "暂无内容。",
-    "searchOptions": "搜索",
-    "changed": "内容已在别处更改，你未保存的编辑已保留。",
-    "discardAndReload": "放弃编辑并重新加载",
-    "notes": "记忆笔记",
-    "create": "新伙伴",
-    "createFailed": "暂未确认创建结果，请重试核对。",
-    "title": "伙伴资料",
-    "profile": "资料与性格",
-    "memory": "记忆",
-    "skills": "技能与连接",
-    "artifacts": "成果",
-    "direct": "伙伴往来",
-    "automation": "自动化",
-    "settings": "模型与权限",
-    "search": "搜索消息",
-    "models": "模型候选链",
-    "permissions": "操作权限",
-    "personalSkills": "个人学会的技能",
-    "connections": "引用的技能与连接",
-    "save": "保存更改",
-    "offline": "请重新连接 {{deviceName}} 后继续，未保存的编辑已保留。",
-    "hostUpgrade": "请更新 {{deviceName}} 上的 Cindy 后重试，或在那台电脑上编辑伙伴设置。",
-    "readFailed": "暂时无法确认最新状态。请刷新后再试，操作可能已经完成。你的编辑已保留。",
-    "artifactsEmpty": "还没有成果，可以让伙伴创作一些内容。",
-    "openSourceTask": "打开来源任务",
-    "modelFollowsDefault": "跟随当前默认模型链",
-    "taskModel": "任务模型",
-    "taskInheritsPrimary": "继承主模型",
-    "modelOverride": "使用此伙伴的自定义模型链",
-    "modelsUnavailable": "暂无可用模型，请在电脑上检查此伙伴的模型设置后刷新。",
-    "artifactsRecovery": "请从消息卡中打开文件，或在 {{deviceName}} 上浏览文件。",
-    "directRecovery": "暂时无法读取伙伴往来，请更新 {{deviceName}} 上的 Cindy 后重试。",
-    "directEmpty": "还没有伙伴往来",
-    "skillsEmpty": "还没有个人技能，可以让伙伴记下做事方法。",
-    "connectionsEmpty": "尚未选择技能或连接",
-    "largeProfileRecovery": "此资料过长，无法在手机上编辑。请在 {{deviceName}} 上编辑完整资料。",
-    "addModel": "添加备用模型",
-    "removeModel": "移除模型",
-    "moveModelUp": "上移模型",
-    "settingsTitle": "伙伴设置",
-    "name": "名字",
-    "portraitNumber": "头像 {{number}}",
-    "uploadAvatar": "上传头像",
-    "avatarFailed": "无法打开此图片，请换一张。",
-    "nameTaken": "已有同名伙伴，请换一个名字。"
+    "noWrittenResult": "没有文字结果。",
+    "noCreateHosts": "当前没有可用的兼容电脑。在电脑上打开 Cindy 并登录同一账号后即可新建伙伴。"
   }
 }

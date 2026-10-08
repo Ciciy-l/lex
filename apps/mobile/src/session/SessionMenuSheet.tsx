@@ -36,6 +36,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Easing,
   Pressable,
   Platform,
   StyleSheet,
@@ -46,7 +47,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { mobilePresentationLocalizer } from '@/i18n/presentationLocalizer';
 import { Text, TextInput } from '@/components/AppText';
-import { MainWindowActionGroup } from '@/components/MobilePrimitives';
+import { MainWindowActionButton, MainWindowActionGroup } from '@/components/MobilePrimitives';
 import type { MobileMakerTransport, RemoteDirectoryEntry } from '@/device-link/mobileMakerTransport';
 import type { MobileCodexRateLimitsResult } from '@cindy/maker-shared/device-link-contract';
 import { projectDraftSessionTitle } from '@cindy/maker-shared/session-title';
@@ -84,10 +85,9 @@ import { SheetSurface } from '@/session/SheetSurface';
 import { SessionDetailsNative, SessionDetailsNativeActions } from './SessionDetailsNative';
 import type { RemoteSession } from '@/session/types';
 import { iconSize, iconStroke, monoFont, useTheme, useThemedStyles, type ThemeColors } from '@/theme';
-import { fontWeight, lineHeight, radius, spacing, typeScale } from '@/theme/tokens';
+import { fontWeight, lineHeight, motionDuration, motionEasing, radius, spacing, typeScale } from '@/theme/tokens';
+import { useReduceMotionEnabled } from '@/hooks/useReduceMotion';
 
-/** 二级 Surface 滑入/滑出时长(对齐 useContextSheetDrag 的 SNAP_ANIMATION_DURATION_MS)。 */
-const SECONDARY_SLIDE_DURATION_MS = 180;
 /** 复制反馈(行内文案临时替换)展示时长。 */
 const COPY_FEEDBACK_MS = 1500;
 
@@ -102,6 +102,8 @@ export interface SessionExtraDirBrowserState {
 
 export interface SessionMenuSheetProps {
   providerName?: string;
+  /** 当前模型在模型目录里的用户可读展示名(用量卡显示;缺席时卡片自行兜底)。 */
+  modelLabel?: string | null;
   messageOnly?: boolean;
   onOpenSearch?: () => void;
   accountProvider?: OpenAiAccountProvider;
@@ -153,6 +155,7 @@ export interface SessionMenuSheetProps {
 
 export function SessionMenuSheet({
   providerName,
+  modelLabel,
   messageOnly = false,
   onOpenSearch,
   usageReader,
@@ -219,6 +222,8 @@ export function SessionMenuSheet({
   const renameSeqRef = useRef(0);
   // 二级 Surface 滑入/滑出动画(0 = 就位;windowHeight = 屏下)。动画期间锁交互防连点。
   const secondaryTranslate = useRef(new Animated.Value(windowHeight)).current;
+  // 只有明确 === false 才播二级滑入/滑出(null / true 直接就位)。
+  const animateSecondary = useReduceMotionEnabled() === false;
   const secondaryAnimatingRef = useRef(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -281,28 +286,42 @@ export function SessionMenuSheet({
     secondaryAnimatingRef.current = true;
     setSecondarySnap('half');
     setView('info');
+    // 二级 Surface 滑入 = 重浮层入场档;减弱动态效果(或偏好未查到)时直接就位。
+    if (!animateSecondary) {
+      secondaryTranslate.setValue(0);
+      secondaryAnimatingRef.current = false;
+      return;
+    }
     secondaryTranslate.setValue(windowHeight);
     Animated.timing(secondaryTranslate, {
-      duration: SECONDARY_SLIDE_DURATION_MS,
+      duration: motionDuration.enter,
+      easing: Easing.bezier(...motionEasing.out),
       toValue: 0,
       useNativeDriver: true,
     }).start(() => {
       secondaryAnimatingRef.current = false;
     });
-  }, [secondaryTranslate, view, windowHeight]);
+  }, [animateSecondary, secondaryTranslate, view, windowHeight]);
 
   const backToMenu = useCallback(() => {
     if (secondaryAnimatingRef.current) return;
     secondaryAnimatingRef.current = true;
+    if (!animateSecondary) {
+      secondaryTranslate.setValue(windowHeight);
+      secondaryAnimatingRef.current = false;
+      setView('menu');
+      return;
+    }
     Animated.timing(secondaryTranslate, {
-      duration: SECONDARY_SLIDE_DURATION_MS,
+      duration: motionDuration.exit,
+      easing: Easing.bezier(...motionEasing.in),
       toValue: windowHeight,
       useNativeDriver: true,
     }).start(() => {
       secondaryAnimatingRef.current = false;
       setView('menu');
     });
-  }, [secondaryTranslate, windowHeight]);
+  }, [animateSecondary, secondaryTranslate, windowHeight]);
 
   // Android 返回键 / iOS 关闭手势:两段式(info 先回 menu,menu 才关浮窗)。
   const handleRequestClose = useCallback(() => {
@@ -581,7 +600,7 @@ export function SessionMenuSheet({
             ) : null}
           </View>
 
-          {!messageOnly ? <SessionUsageSummary providerName={providerName} session={session} usage={menuUsage} contextUsage={contextUsage} onPress={openInfo} translucent={Platform.OS === 'ios'} /> : null}
+          {!messageOnly ? <SessionUsageSummary modelLabel={modelLabel} providerName={providerName} session={session} usage={menuUsage} contextUsage={contextUsage} onPress={openInfo} translucent={Platform.OS === 'ios'} /> : null}
 
           {Platform.OS === 'ios' ? (
             <SessionDetailsNativeActions actions={mainActions.map(action => ({
@@ -661,7 +680,7 @@ export function SessionMenuSheet({
 
   const infoContent = (
     <View style={styles.infoBody} testID="session.infoSheetBody">
-      <SessionUsageSummary providerName={providerName} session={session} usage={menuUsage} contextUsage={contextUsage} detail translucent={Platform.OS === 'ios'} />
+      <SessionUsageSummary modelLabel={modelLabel} providerName={providerName} session={session} usage={menuUsage} contextUsage={contextUsage} detail translucent={Platform.OS === 'ios'} />
       <View style={styles.infoSection}>
         <View style={styles.infoSectionHeader}>
           <Text style={styles.infoSectionTitle}>{t('session.menu.usageSection')}</Text>
@@ -669,6 +688,7 @@ export function SessionMenuSheet({
             accessibilityLabel={t('session.menu.refreshContextUsage')}
             accessibilityRole="button"
             disabled={contextLoading}
+            hitSlop={6}
             onPress={() => { onRefreshContextUsage(); menuUsage.refresh(); onRefreshAccountUsage(); }}
             style={({ pressed }) => [styles.refreshButton, pressed && styles.pressed]}
             testID="session.contextRefreshButton"
@@ -707,8 +727,8 @@ export function SessionMenuSheet({
               </Text>
               <View style={styles.infoActionRow}>
                 <MenuPillButton
-                  disabled={codexResetBusy}
-                  label={codexResetBusy ? t('session.menu.resetting') : t('session.menu.resetCodexUsage')}
+                  busy={codexResetBusy}
+                  label={t('session.menu.resetCodexUsage')}
                   onPress={confirmCodexReset}
                   testID="session.codexRateLimitResetButton"
                   tone="primary"
@@ -842,7 +862,7 @@ export function SessionMenuSheet({
     <MainWindowActionGroup
       primaryActions={[{
         accessibilityLabel: t('session.menu.confirmRename'),
-        label: t('session.menu.confirm'),
+        label: t('session.menu.renameSubmit'),
         onPress: submitRename,
         testID: 'session.renameButton',
         tone: 'primary',
@@ -985,42 +1005,34 @@ function MenuActionRow({
   );
 }
 
+/** 信息面板内的紧凑操作按钮:统一走共享 MainWindowActionButton(compact,自带 44pt 命中区与加载转圈)。 */
 function MenuPillButton({
+  busy = false,
   disabled = false,
   label,
   onPress,
   testID,
   tone = 'default',
 }: {
+  busy?: boolean;
   disabled?: boolean;
   label: string;
   onPress: () => void;
   testID?: string;
   tone?: 'default' | 'primary';
 }) {
-  const styles = useThemedStyles(makeStyles);
   return (
-    <Pressable
-      accessibilityLabel={label}
-      accessibilityRole="button"
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      onPress={disabled ? undefined : onPress}
-      style={({ pressed }) => [
-        styles.pillButton,
-        tone === 'primary' && styles.pillButtonPrimary,
-        pressed && styles.pressed,
-        disabled && styles.disabled,
-      ]}
-      testID={testID}
-    >
-      <Text
-        numberOfLines={1}
-        style={[styles.pillButtonText, tone === 'primary' && styles.pillButtonTextPrimary]}
-      >
-        {label}
-      </Text>
-    </Pressable>
+    <MainWindowActionButton
+      action={{
+        busy,
+        disabled,
+        label,
+        onPress,
+        testID,
+        tone: tone === 'primary' ? 'primary' : 'secondary',
+      }}
+      density="compact"
+    />
   );
 }
 
@@ -1129,53 +1141,54 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   renameInput: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
-    borderRadius: radius.container,
+    // 单行输入框统一胶囊。
+    borderRadius: radius.pill,
     borderWidth: StyleSheet.hairlineWidth,
     color: colors.textPrimary,
     fontSize: typeScale.body,
-    minHeight: 44,
-    paddingLeft: spacing.md,
-    paddingRight: 44,
-  },
-  renameAiButton: {
-    alignItems: 'center',
-    bottom: 0,
-    justifyContent: 'center',
-    position: 'absolute',
-    right: 0,
-    top: 0,
-    width: 44,
-  },
-  renameErrorText: {
-    color: colors.errorText,
-    fontSize: typeScale.caption,
-    lineHeight: lineHeight.caption,
-  },
-  infoBody: {
-    gap: spacing.md,
-    paddingBottom: spacing.lg,
-  },
-  infoSection: {
-    backgroundColor: colors.surfaceElevated,
-    borderColor: colors.border,
-    borderRadius: radius.container,
-    borderWidth: StyleSheet.hairlineWidth,
-    gap: spacing.sm,
-    padding: spacing.md,
-  },
-  infoSectionHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  infoSectionTitle: {
-    color: colors.textTertiary,
-    fontSize: typeScale.footnote,
-    fontWeight: fontWeight.medium,
-    lineHeight: lineHeight.caption,
-  },
-  refreshButton: {
-    alignItems: 'center',
+      minHeight: 44,
+      paddingLeft: spacing.lg,
+      paddingRight: 44,
+    },
+    renameAiButton: {
+      alignItems: 'center',
+      bottom: 0,
+      justifyContent: 'center',
+      position: 'absolute',
+      right: 0,
+      top: 0,
+      width: 44,
+    },
+    renameErrorText: {
+      color: colors.errorText,
+      fontSize: typeScale.footnote,
+      lineHeight: lineHeight.caption,
+    },
+    infoBody: {
+      gap: spacing.md,
+      paddingBottom: spacing.lg,
+    },
+    infoSection: {
+      backgroundColor: colors.surfaceElevated,
+      borderColor: colors.border,
+      borderRadius: radius.container,
+      borderWidth: StyleSheet.hairlineWidth,
+      gap: spacing.sm,
+      padding: spacing.md,
+    },
+    infoSectionHeader: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+    },
+    infoSectionTitle: {
+      color: colors.textTertiary,
+      fontSize: typeScale.footnote,
+      fontWeight: fontWeight.semibold,
+      lineHeight: lineHeight.caption,
+    },
+    refreshButton: {
+      alignItems: 'center',
     justifyContent: 'center',
     minHeight: 32,
     minWidth: 32,
@@ -1232,64 +1245,44 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     backgroundColor: colors.surface,
     borderColor: colors.border,
     borderRadius: radius.container,
-    borderWidth: StyleSheet.hairlineWidth,
-    gap: spacing.sm,
-    padding: spacing.md,
-  },
-  browsePath: {
-    color: colors.textPrimary,
-    fontSize: typeScale.caption,
-    lineHeight: lineHeight.caption,
-  },
-  browseList: {
-    gap: spacing.sm,
-  },
-  browseRow: {
-    alignItems: 'center',
-    borderColor: colors.border,
-    borderRadius: radius.container,
-    borderWidth: StyleSheet.hairlineWidth,
-    flexDirection: 'row',
-    gap: spacing.sm,
-    minHeight: 48,
-    padding: spacing.sm,
-  },
-  browseEntryButton: {
-    flex: 1,
-    minWidth: 0,
-  },
-  browseEntryName: {
-    color: colors.textPrimary,
-    fontSize: typeScale.caption,
-    fontWeight: fontWeight.medium,
-  },
-  browseEntryPath: {
-    color: colors.textTertiary,
-    fontSize: typeScale.micro,
-    marginTop: 2,
-  },
-  pillButton: {
-    alignItems: 'center',
-    borderColor: colors.borderStrong,
-    borderRadius: radius.pill,
-    borderWidth: StyleSheet.hairlineWidth,
-    justifyContent: 'center',
-    minHeight: 36,
-    minWidth: 72,
-    paddingHorizontal: spacing.md,
-  },
-  pillButtonPrimary: {
-    backgroundColor: colors.cta,
-    borderColor: colors.cta,
-  },
-  pillButtonText: {
-    color: colors.textPrimary,
-    fontSize: typeScale.caption,
-    fontWeight: fontWeight.medium,
-  },
-  pillButtonTextPrimary: {
-    color: colors.ctaText,
-  },
+      borderWidth: StyleSheet.hairlineWidth,
+      gap: spacing.sm,
+      padding: spacing.md,
+    },
+    browsePath: {
+      color: colors.textPrimary,
+      fontSize: typeScale.caption,
+      lineHeight: lineHeight.caption,
+    },
+    browseList: {
+      gap: spacing.sm,
+    },
+    browseRow: {
+      alignItems: 'center',
+      borderColor: colors.border,
+      borderRadius: radius.container,
+      borderWidth: StyleSheet.hairlineWidth,
+      flexDirection: 'row',
+      gap: spacing.sm,
+      minHeight: 48,
+      padding: spacing.sm,
+    },
+    browseEntryButton: {
+      flex: 1,
+      minWidth: 0,
+    },
+    browseEntryName: {
+      color: colors.textPrimary,
+      fontSize: typeScale.caption,
+      lineHeight: lineHeight.caption,
+      fontWeight: fontWeight.medium,
+    },
+    browseEntryPath: {
+      color: colors.textTertiary,
+      fontSize: typeScale.micro,
+      lineHeight: lineHeight.micro,
+      marginTop: 2,
+    },
   pressed: {
     opacity: 0.72,
   },

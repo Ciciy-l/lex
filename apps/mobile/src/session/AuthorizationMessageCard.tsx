@@ -36,5 +36,5 @@ export function AuthorizationMessageCard({ message }: { message: NormalizedRemot
 }
 const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   wrapper: { marginVertical: spacing.sm, gap: spacing.xs },
-  error: { color: colors.statusError, fontSize: typeScale.footnote },
+  error: { color: colors.errorText, fontSize: typeScale.footnote, lineHeight: lineHeight.caption },
 });

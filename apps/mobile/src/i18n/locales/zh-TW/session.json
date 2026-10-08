@@ -28,7 +28,7 @@
     "openMicPermission": "開啟麥克風權限設定",
     "maxAttachments": "最多新增 {{max}} 個附件。",
     "voiceStopRecording": "停止錄音",
-    "capabilitiesUnsupported": "遠端能力返回格式不支援"
+    "capabilitiesUnsupported": "無法讀取電腦端的指令和資源清單，請更新電腦上的 Cindy 後重試"
   },
   "presentation": {
     "collaboration": {
@@ -216,7 +216,7 @@
     "shareUnsupported": "當前客戶端暫不支援分享，更新到最新版本後重試。",
     "downloadFailed": "下載失敗",
     "voiceNoRemoteDevice": "缺少遠端裝置，不能開始語音輸入。",
-    "voiceSenderNotReady": "訊息傳送器未初始化。",
+    "voiceSenderNotReady": "訊息暫時無法傳送，請返回後重新進入任務。",
     "voiceStopAndSend": "結束語音輸入並傳送",
     "sendMessage": "傳送遠端訊息",
     "voiceStartInput": "開始語音輸入",
@@ -319,7 +319,7 @@
     "selectAgent": "選擇 Agent",
     "switchToAgent": "切換到 {{label}}",
     "selectWorkspace": "選擇工作區",
-    "dialogueNoProject": "對話(不繫結專案)",
+    "dialogueNoProject": "對話（不繫結專案）",
     "selectProjectNamed": "選擇專案 {{title}}",
     "noProjects": "暫無專案",
     "chooseOtherFolder": "選擇其他專案資料夾",
@@ -335,7 +335,7 @@
     "selectDir": "選擇目錄 {{name}}",
     "select": "選擇",
     "noModelSelected": "未選擇模型",
-    "assignedDialogueDir": "電腦端分配對話目錄",
+    "assignedDialogueDir": "由電腦自動分配工作目錄",
     "extraDirsSuffix": "+{{num}} 附加目錄",
     "noProjectPath": "未選擇專案路徑",
     "dialogueWorkspace": "對話工作區",
@@ -366,7 +366,7 @@
     "worktreeNotGitRepo": "當前目錄不是 git 倉庫",
     "worktreeAlreadyInWorktree": "已在 worktree 中，禁止巢狀",
     "worktreeDetectFailed": "無法檢測目錄環境，可稍後重選目錄再試",
-    "worktreeUnsupported": "當前桌面端無法安全建立 worktree，請關閉 worktree 後繼續，或升級桌面端。",
+    "worktreeUnsupported": "電腦端目前的 Cindy 無法安全建立 worktree，請關閉 worktree 後繼續，或更新電腦上的 Cindy。",
     "worktreeCreateFailed": "worktree 建立失敗：{{message}}",
     "worktreeRecoveryStateFailed": "無法儲存 worktree 恢復狀態，請重試。",
     "worktreeCleanupPending": "上一次 worktree 仍待回收，請重新連線裝置後再試。"
@@ -463,7 +463,6 @@
     "contextLabel": "上下文",
     "accountLimits": "帳號限額",
     "quotaExhaustedResettable": "當前配額已耗盡。重置會立即消耗 1 次，且不能撤銷。",
-    "resetting": "正在重置…",
     "resetCodexUsage": "重置 Codex 用量",
     "quotaExhaustedNoCredit": "當前配額已耗盡，但沒有可用重置次數。",
     "openDir": "開啟目錄",
@@ -481,9 +480,10 @@
     "noSubDirs": "這個目錄下沒有可進入的子目錄。",
     "dirLimitNotice": "僅顯示前 30 個目錄，可進入更具體的目錄繼續選擇。",
     "confirmRename": "確認重新命名",
-    "confirm": "確定",
+    "confirm": "重新命名",
     "cancelRename": "取消重新命名",
-    "backToMenu": "返回任務選單"
+    "backToMenu": "返回任務選單",
+    "renameSubmit": "重新命名"
   },
   "messageMenu": {
     "addToChat": "新增到對話",
@@ -503,8 +503,8 @@
     "toolUseLoopDetectedConsecutiveWithCount": "模型重複呼叫同一個工具 {{count}} 次，Cindy 已停止本輪以避免無限迴圈。可以傳送新訊息繼續。",
     "toolUseLoopDetectedPingPongWithCount": "模型在多個工具呼叫之間來回循環，Cindy 偵測到本輪已有 {{count}} 次呼叫後停止了本輪。可以傳送新訊息繼續。",
     "toolUseLoopDetectedRotationWithCount": "模型持續輪轉呼叫多個工具，Cindy 偵測到本輪已有 {{count}} 次呼叫後停止了本輪。可以傳送新訊息繼續。",
-    "codexThreadLost": "Codex 鑑權模式已切換，當前任務無法繼續 —— 請新建任務後生效。",
-    "encryptedContentInvalid": "由於更換供應商導致加密不可用，本任務只能在原供應商下使用；請回到電腦端處理（可 Fork 丟棄協議加密內容後在新任務繼續）。"
+    "codexThreadLost": "Codex 鑑權模式已切換，當前任務無法繼續，請新建任務。",
+    "encryptedContentInvalid": "由於更換供應商導致加密不可用，本任務只能在原供應商下使用；請回到電腦端處理（可以用「從這裡開啟新任務」丟棄協議加密內容，在新任務裡繼續）。"
   },
   "row": {
     "moreOptions": "更多選項",
@@ -527,7 +527,9 @@
     "taskCleared": "傳送後，這個任務已被清空。訊息仍保存在手機上，請核對後處理。",
     "restoreFailed": "暫時無法恢復待傳訊息，已保存的內容沒有刪除。請重新啟動 App 後重試。",
     "recoveryTarget": "恢復這個任務時請保留原來的電腦，後續訊息仍保存在手機上。",
-    "taskAlreadyCreated": "電腦上已建立這個任務，已保存的訊息會在原任務中繼續傳送。"
+    "taskAlreadyCreated": "電腦上已建立這個任務，已保存的訊息會在原任務中繼續傳送。",
+    "deleteConfirmTitle": "刪除這則訊息？",
+    "deleteConfirmBody": "這則訊息未能成功傳送，刪除後無法復原。"
   },
   "remoteError": {
     "REMOTE_DAEMON_CLOSED": "遠端連線中斷了，可能正在更新。這一輪已經結束，請重新傳送。",

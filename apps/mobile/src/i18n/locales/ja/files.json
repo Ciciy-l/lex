@@ -119,7 +119,8 @@
     "originalFailedThumb": "オリジナルの取得に失敗しました。現在はサムネイルです",
     "fetchingOriginalHint": "サムネイル · オリジナルを取得中…",
     "a11yExportShareFile": "オリジナルファイルを書き出して共有",
-    "exportShare": "書き出し / 共有"
+    "exportShare": "書き出し / 共有",
+    "browserCopiedAddress": "アドレスをコピーしました"
   },
   "export": {
     "exportFailed": "書き出しに失敗しました",
@@ -127,6 +128,6 @@
     "exportTimeout": "書き出しがタイムアウトしました。もう一度お試しください。"
   },
   "gallery": {
-    "cacheMiss": "リモートメディアのキャッシュミス（cachedOnly）"
+    "cacheMiss": "このメディアはまだスマートフォンにキャッシュされていません。パソコンに接続できるときにもう一度開いてください"
   }
 }

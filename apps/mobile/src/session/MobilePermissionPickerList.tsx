@@ -8,6 +8,7 @@
 import { Pressable, StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { Text } from '@/components/AppText';
+import { mobileInteractionStyles } from '@/components/mobileInteractionStyles';
 import { Check } from 'lucide-react-native';
 
 import type { MobileChoiceOption } from '@/session/agentCapabilities';
@@ -70,33 +71,34 @@ export function MobilePermissionPickerList({
         const accent = permissionAccentColor(presentation.accent, colors);
         const tinted = selected && presentation.accent !== 'neutral';
         return (
-          <Pressable
-            accessibilityLabel={t('interaction.permission.pickerSelect', { mode: presentation.label })}
-            accessibilityRole="button"
-            accessibilityState={{ selected, disabled }}
-            disabled={disabled}
-            key={option.id}
-            onPress={() => onSelect(option.id)}
-            style={({ pressed }) => [
-              styles.optionRow,
-              rowStyle,
-              selected && styles.optionRowSelected,
-              pressed && { opacity: 0.65 },
-            ]}
-            testID={testID}
-          >
-            <presentation.Icon
-              color={tinted ? accent : selected ? colors.textPrimary : colors.textSecondary}
-              size={iconSize.action}
-              strokeWidth={iconStroke.regular}
-            />
-            <Text numberOfLines={1} style={[styles.optionText, tinted && { color: accent }]}>
-              {presentation.label}
-            </Text>
-            {selected ? (
-              <Check color={tinted ? accent : colors.textPrimary} size={iconSize.lg} strokeWidth={iconStroke.medium} />
-            ) : null}
-          </Pressable>
+          <View key={option.id}>
+            {index > 0 ? <View style={styles.separator} /> : null}
+            <Pressable
+              accessibilityLabel={t('interaction.permission.pickerSelect', { mode: presentation.label })}
+              accessibilityRole="button"
+              accessibilityState={{ selected, disabled }}
+              disabled={disabled}
+              onPress={() => onSelect(option.id)}
+              style={({ pressed }) => [
+                styles.optionRow,
+                rowStyle,
+                pressed && mobileInteractionStyles.pressed,
+              ]}
+              testID={testID}
+            >
+              <presentation.Icon
+                color={selected ? permissionAccentColor(presentation.accent, colors) : colors.textSecondary}
+                size={iconSize.action}
+                strokeWidth={iconStroke.regular}
+              />
+              <Text numberOfLines={1} style={styles.optionText}>
+                {presentation.label}
+              </Text>
+              {selected ? (
+                <Check color={colors.textPrimary} size={iconSize.lg} strokeWidth={iconStroke.medium} />
+              ) : null}
+            </Pressable>
+          </View>
         );
       })}
     </>

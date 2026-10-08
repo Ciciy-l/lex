@@ -294,10 +294,12 @@ describe('mobile home desktop-first surface', () => {
     expect(source).toContain('<HomeHeaderGlassButton');
     const floatingAction = readSource('src/session/HomeNewTaskButton.tsx');
     expect(source).toContain('<HomeNewTaskButton');
-    expect(floatingAction).toContain('prominent size={HOME_NEW_TASK_SIZE} artworkSize={iconSize.xxl}');
+    expect(floatingAction).toContain('prominent={!glass} size={HOME_NEW_TASK_SIZE} artworkSize={iconSize.xxl}');
     // Preserve SquarePen artwork while adopting the shared native action size.
     expect(floatingAction).toContain('SquarePen');
-    expect(floatingAction).toContain('<SquarePen color={colors.ctaText} size={iconSize.xxl} strokeWidth={iconStroke.regular} />');
+    // Untinted system glass with a primary icon; the solid filled circle is only the no-glass fallback.
+    expect(floatingAction).toContain('<SquarePen color={glass ? colors.textPrimary : colors.ctaText} size={iconSize.xxl} strokeWidth={iconStroke.regular} />');
+    expect(floatingAction).toContain('prominent={!glass}');
     expect(source).not.toContain('<Send');
     expect(source).not.toContain('function HomeNewChatGlyph');
     expect(source).not.toContain("import Svg, { Path } from 'react-native-svg';");
@@ -307,8 +309,10 @@ describe('mobile home desktop-first surface', () => {
     expect(source).toContain('fontWeight: fontWeight.medium');
     expect(floatingAction).toContain('testID="home.newChatButton"');
     expect(floatingAction).toContain("position: 'absolute'");
-    expect(floatingAction).toContain('bottom: 45 + bottomInset');
-    expect(floatingAction).toContain('right: 20');
+    // The button sits on the composer's resting line so the circle can stretch into the pill.
+    expect(floatingAction).toContain('bottom: bottomInset + composerGeometry.restingGap');
+    expect(floatingAction).toContain('right: composerGeometry.horizontalInset');
+    expect(floatingAction).toContain('HOME_NEW_TASK_SIZE = composerGeometry.pillHeight');
   });
 
   it('opens desktop-parity search filters from the search sliders, not display settings', () => {

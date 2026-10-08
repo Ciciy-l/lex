@@ -21,7 +21,145 @@ import {
   type ContextSheetSnap,
 } from "./contextSheetModel";
 import { mobileAgentLabel } from "./sessionAgentSwitch";
-import type { UnifiedMobilePickerViewProps } from "./UnifiedModelPickerSheet";
+import type {
+  UnifiedMobilePickerViewProps,
+  UnifiedMobileRow,
+} from "./UnifiedModelPickerSheet";
+import { mobileInteractionStyles } from "@/components/mobileInteractionStyles";
+
+type Page = "sources" | "harness" | null;
+
+/** 分组:可选小标题 + 行间 hairline(与 ContextSheetGroup 的安卓分组行同一套节奏)。 */
+function Group({
+  title,
+  children,
+  testID,
+}: {
+  title?: string;
+  children: ReactNode;
+  testID?: string;
+}) {
+  const styles = useThemedStyles(makeStyles);
+  const rows = flatten(children);
+  return (
+    <View style={styles.group} testID={testID}>
+      {title ? <Text style={styles.groupLabel}>{title}</Text> : null}
+      {rows.map((row, index) => (
+        <View key={index}>
+          {index > 0 ? <View style={styles.separator} /> : null}
+          {row}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function flatten(children: ReactNode): ReactNode[] {
+  if (
+    children === null ||
+    children === undefined ||
+    typeof children === "boolean"
+  )
+    return [];
+  if (Array.isArray(children)) return children.flatMap(flatten);
+  return [children];
+}
+
+/** 设置页 / 来源页的单行:leading + 标题(+副标题)+ 右侧取值 / 勾号 / chevron。 */
+function Row({
+  title,
+  subtitle,
+  value,
+  leading,
+  trailing,
+  selected,
+  disabled,
+  onPress,
+  accessibilityLabel,
+  testID,
+}: {
+  title: string;
+  subtitle?: string | null;
+  value?: string | null;
+  leading?: ReactNode;
+  trailing?: ReactNode;
+  selected?: boolean;
+  disabled?: boolean;
+  onPress(): void;
+  accessibilityLabel?: string;
+  testID?: string;
+}) {
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
+  return (
+    <Pressable
+      accessibilityLabel={
+        accessibilityLabel ??
+        [title, subtitle, value].filter(Boolean).join(", ")
+      }
+      accessibilityRole="button"
+      accessibilityState={{ selected: !!selected, disabled: !!disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.row,
+        disabled && styles.rowDisabled,
+        pressed && styles.pressed,
+      ]}
+      testID={testID}
+    >
+      {leading ? <View style={styles.leading}>{leading}</View> : null}
+      <View style={styles.rowMain}>
+        <Text numberOfLines={1} style={styles.rowTitle}>
+          {title}
+        </Text>
+        {subtitle ? (
+          <Text numberOfLines={1} style={styles.rowSubtitle}>
+            {subtitle}
+          </Text>
+        ) : null}
+      </View>
+      {value ? (
+        <Text numberOfLines={1} style={styles.rowValue}>
+          {value}
+        </Text>
+      ) : null}
+      {trailing}
+      {selected ? (
+        <Check
+          color={colors.textPrimary}
+          size={iconSize.lg}
+          strokeWidth={iconStroke.medium}
+        />
+      ) : null}
+    </Pressable>
+  );
+}
+
+function QuotaBar({
+  remaining,
+  label,
+  testID,
+}: {
+  remaining: number;
+  label: string;
+  testID?: string;
+}) {
+  const styles = useThemedStyles(makeStyles);
+  const now = Math.max(0, Math.min(100, remaining));
+  return (
+    <View
+      accessibilityLabel={label}
+      accessibilityRole="progressbar"
+      accessibilityValue={{ min: 0, max: 100, now }}
+      style={styles.quotaTrack}
+      testID={testID}
+    >
+      <View style={[styles.quotaFill, { width: `${now}%` }]} />
+    </View>
+  );
+}
+
 export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
   const { colors } = useTheme();
   const { t } = useTranslation();
@@ -330,4 +468,196 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
       </SheetSurface>
     </SheetModal>
   );
+}
+
+function makeStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+    searchRow: {
+      alignItems: "center",
+      flexDirection: "row",
+      gap: spacing.sm,
+      paddingBottom: spacing.sm,
+    },
+    searchField: {
+      alignItems: "center",
+      backgroundColor: colors.surfaceElevated,
+      borderColor: colors.border,
+      borderRadius: radius.pill,
+      borderWidth: StyleSheet.hairlineWidth,
+      flex: 1,
+      flexDirection: "row",
+      gap: spacing.sm,
+      minHeight: 44,
+      minWidth: 0,
+      paddingLeft: spacing.md,
+      paddingRight: spacing.xs,
+    },
+    searchInput: {
+      color: colors.textPrimary,
+      flex: 1,
+      fontSize: typeScale.bodySmall,
+      minWidth: 0,
+      paddingVertical: spacing.sm,
+    },
+    iconButton: {
+      alignItems: "center",
+      height: 36,
+      justifyContent: "center",
+      width: 36,
+    },
+    sourceButton: {
+      alignItems: "center",
+      flexDirection: "row",
+      gap: spacing.xs,
+      maxWidth: 140,
+      minHeight: 44,
+    },
+    sourceLabel: {
+      color: colors.textSecondary,
+      flexShrink: 1,
+      fontSize: typeScale.bodySmall,
+      fontWeight: fontWeight.medium,
+      lineHeight: lineHeight.bodySmall,
+    },
+    markBox: {
+      alignItems: "center",
+      height: 24,
+      justifyContent: "center",
+      width: 24,
+    },
+    group: {
+      paddingTop: spacing.lg,
+    },
+    groupLabel: {
+      color: colors.textTertiary,
+      fontSize: typeScale.footnote,
+      fontWeight: fontWeight.semibold,
+      lineHeight: lineHeight.caption,
+      paddingBottom: spacing.xs,
+    },
+    separator: {
+      backgroundColor: colors.border,
+      height: StyleSheet.hairlineWidth,
+    },
+    row: {
+      alignItems: "center",
+      flexDirection: "row",
+      gap: spacing.md,
+      minHeight: 48,
+      paddingVertical: spacing.xs,
+    },
+    rowDisabled: {
+      opacity: 0.4,
+    },
+    pressed: mobileInteractionStyles.pressed,
+    leading: {
+      alignItems: "center",
+      justifyContent: "center",
+      minHeight: 28,
+      width: 28,
+    },
+    rowMain: {
+      flex: 1,
+      minWidth: 0,
+    },
+    rowTitle: {
+      color: colors.textPrimary,
+      fontSize: typeScale.body,
+      fontWeight: fontWeight.medium,
+      lineHeight: lineHeight.body,
+    },
+    rowSubtitle: {
+      color: colors.textSecondary,
+      fontSize: typeScale.caption,
+      fontWeight: fontWeight.regular,
+      lineHeight: lineHeight.caption,
+    },
+    rowValue: {
+      color: colors.textSecondary,
+      flexShrink: 1,
+      fontSize: typeScale.body,
+      fontWeight: fontWeight.regular,
+      lineHeight: lineHeight.body,
+      maxWidth: "50%",
+    },
+    sourceLeading: {
+      alignItems: "center",
+      gap: spacing.xs,
+    },
+    quotaTrack: {
+      backgroundColor: colors.surfaceChip,
+      borderRadius: radius.pill,
+      height: 3,
+      overflow: "hidden",
+      width: 24,
+    },
+    quotaFill: {
+      backgroundColor: colors.textSecondary,
+      height: "100%",
+    },
+    modelRow: {
+      alignItems: "center",
+      flexDirection: "row",
+    },
+    modelMain: {
+      alignItems: "center",
+      flex: 1,
+      flexDirection: "row",
+      gap: spacing.md,
+      minHeight: 56,
+      minWidth: 0,
+      paddingVertical: spacing.sm,
+    },
+    titleLine: {
+      alignItems: "center",
+      flexDirection: "row",
+      gap: spacing.xs,
+      minWidth: 0,
+    },
+    titleText: {
+      flexShrink: 1,
+    },
+    meta: {
+      color: colors.textSecondary,
+      flexShrink: 0,
+      fontSize: typeScale.caption,
+      fontWeight: fontWeight.regular,
+      lineHeight: lineHeight.caption,
+    },
+    quotaText: {
+      color: colors.textTertiary,
+      fontSize: typeScale.caption,
+      fontWeight: fontWeight.regular,
+      lineHeight: lineHeight.caption,
+    },
+    optionsButton: {
+      alignItems: "center",
+      height: 44,
+      justifyContent: "center",
+      width: 44,
+    },
+    footnote: {
+      color: colors.textSecondary,
+      fontSize: typeScale.footnote,
+      fontWeight: fontWeight.regular,
+      lineHeight: lineHeight.caption,
+      paddingTop: spacing.md,
+    },
+    price: {
+      paddingTop: spacing.lg,
+    },
+    empty: {
+      color: colors.textSecondary,
+      fontSize: typeScale.footnote,
+      lineHeight: lineHeight.caption,
+      paddingVertical: spacing.lg,
+      textAlign: "center",
+    },
+    error: {
+      color: colors.errorText,
+      fontSize: typeScale.footnote,
+      lineHeight: lineHeight.caption,
+      paddingTop: spacing.md,
+    },
+  });
 }

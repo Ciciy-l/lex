@@ -35,7 +35,7 @@ import { parseLegalSegments } from '@/auth/legalText';
 import { Text, TextInput } from '@/components/AppText';
 import { hasNativeLoginButtons, LoginNativeButton } from './LoginNativeButton';
 import { useTheme, useThemedStyles } from '@/theme';
-import { fontWeight, loginSizes, radius, type ThemeColors } from '@/theme/tokens';
+import { fontWeight, loginSizes, motionDuration, radius, type ThemeColors } from '@/theme/tokens';
 
 /**
  * LoginSkinControls —— 登录布局与跨平台入口。iOS 按钮交给 LoginNativeButton，
@@ -748,7 +748,7 @@ function SpinBox({ box, children }: { box: number; children: ReactNode }) {
   useEffect(() => {
     const loop = Animated.loop(
       Animated.timing(spin, {
-        duration: 900,
+        duration: motionDuration.spinnerCycle,
         easing: Easing.linear,
         toValue: 1,
         useNativeDriver: true,

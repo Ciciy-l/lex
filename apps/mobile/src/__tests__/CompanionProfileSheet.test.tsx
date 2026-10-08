@@ -14,7 +14,7 @@ vi.mock('@/device-link/remoteResources', () => ({ invokeRemoteResourceAction: (.
 vi.mock('@/components/AppText', () => ({ Text: 'span', TextInput: 'input' }));
 vi.mock('@/components/MobilePrimitives', () => ({ MainWindowActionButton: () => null }));
 vi.mock('@/components/RemoteCompanionAvatar', () => ({ RemoteCompanionAvatar: () => null }));
-vi.mock('@/platform/chrome', () => ({ NativePullDownMenu: () => null, usesNativePullDownMenu: () => true }));
+vi.mock('@/platform/chrome', () => ({ NativePullDownMenu: () => null, NativeSwitch: () => null, usesNativePullDownMenu: () => true }));
 vi.mock('@/session/CompanionSettingsRow', () => ({ CompanionSettingsRow: () => null }));
 vi.mock('@/session/CompanionSheet', () => ({ CompanionSheet: () => null }));
 vi.mock('@/session/CompanionProfileArtifacts', () => ({ CompanionProfileArtifacts: () => null }));

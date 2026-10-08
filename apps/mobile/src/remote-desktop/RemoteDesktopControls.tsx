@@ -215,6 +215,7 @@ export function RemoteDesktopControls({
               {(["touch", "pointer"] as const).map((value) => (
                 <MainWindowOptionButton
                   key={value}
+                  accessibilityRole="tab"
                   label={t(`remoteDesktop.${value}`)}
                   testID={`remoteDesktop.${value}`}
                   variant="segmented"
@@ -271,6 +272,7 @@ export function RemoteDesktopControls({
               }}
             >
               <NativeSwitch
+                seedColor={colors.inputCaret}
                 accessibilityLabel={t("remoteDesktop.showMouseButtons")}
                 testID="remoteDesktop.showMouseButtons"
                 value={showMouseButtons}
@@ -300,7 +302,7 @@ export function RemoteDesktopControls({
                 </Text>
               )}
             </View>
-            <ChevronRight size={iconSize.md} color={colors.textTertiary} />
+            <ChevronRight size={iconSize.lg} strokeWidth={iconStroke.regular} color={colors.textTertiary} />
           </Pressable>
           {security && (
             <>
@@ -320,7 +322,7 @@ export function RemoteDesktopControls({
                 <Text style={[styles.rowTitle, styles.expand]}>
                   {t("remoteDesktop.security")}
                 </Text>
-                <ChevronRight size={iconSize.md} color={colors.textTertiary} />
+                <ChevronRight size={iconSize.lg} strokeWidth={iconStroke.regular} color={colors.textTertiary} />
               </Pressable>
             </>
           )}
@@ -519,10 +521,10 @@ const makeStyles = (colors: ThemeColors) =>
       gap: spacing.xs,
       backgroundColor: colors.surfaceChip,
       padding: spacing.xs,
-      borderRadius: radius.control,
+      borderRadius: radius.pill,
     },
-    segment: { flex: 1, minHeight: 44, borderRadius: radius.control },
-    hint: { color: colors.textTertiary, fontSize: typeScale.caption },
+    segment: { flex: 1, minHeight: 44, borderRadius: radius.pill },
+    hint: { color: colors.textSecondary, fontSize: typeScale.footnote, lineHeight: lineHeight.caption },
     group: {
       backgroundColor: colors.sheetActionSurface,
       borderRadius: radius.container,

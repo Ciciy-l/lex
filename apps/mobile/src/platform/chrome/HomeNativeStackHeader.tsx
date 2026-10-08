@@ -1,7 +1,6 @@
 import type { ComponentProps, ReactNode } from "react";
 import { Stack } from "expo-router";
 import { HomeHeaderGlassButton } from "@/session/HomeHeaderGlassButton";
-import { BlurBackdrop } from "@/session/BlurBackdrop";
 import { QuietSyncIndicator } from '@/components/QuietSyncIndicator';
 import { ChevronDown, Menu } from "lucide-react-native";
 import { Pressable, StyleSheet, View } from "react-native";
@@ -21,7 +20,7 @@ import {
   useThemedStyles,
   type ThemeColors,
 } from "@/theme";
-import { lineHeight, radius, spacing } from "@/theme/tokens";
+import { lineHeight, navigationChrome, spacing } from "@/theme/tokens";
 
 /**
  * 首页 iOS 顶栏走系统 UINavigationBar。
@@ -83,7 +82,7 @@ export function HomeNativeStackHeader({
         style={({ pressed }) => [styles.titleHit, pressed && styles.pressed]}
         testID="devices.title"
       >
-        <BlurBackdrop intensity={20} overlayColor={colors.surfaceTranslucent} />
+        {/* The title sits directly on the bar: no capsule material behind it. */}
         <View style={styles.titleCluster}>
           <Text numberOfLines={1} style={styles.title}>
             {title}
@@ -181,9 +180,7 @@ const makeStyles = (colors: ThemeColors) =>
       minWidth: 0,
     },
     titleHit: {
-      borderRadius: radius.pill,
-      overflow: "hidden",
-      paddingHorizontal: spacing.md,
+      paddingHorizontal: spacing.xs,
       alignItems: "center",
       justifyContent: "center",
       minHeight: 44,

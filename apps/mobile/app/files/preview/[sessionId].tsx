@@ -62,6 +62,7 @@ import { HtmlSnapshotReader } from '@/session/HtmlFileReader';
 import { prepareMobileHtmlPreview, type PrepareMobileHtmlPreview } from '@/session/mobileHtmlPreview';
 import { useHtmlSnapshot } from '@/session/useHtmlSnapshot';
 import { MainWindowActionButton } from '@/components/MobilePrimitives';
+import { FileBrowserSegmentedControl } from '@/session/FileBrowserSegmentedControl';
 import { MarkdownFileReader } from '@/session/MarkdownFileReader';
 import { RemoteMediaPlayerWebView } from '@/session/mediaPlayerWebView';
 import {
@@ -1065,19 +1066,21 @@ function TextPreviewPage({
           渲染态共用;文案本身("渲染 / 源码")与载体无关,不为改名动四份 locale。 */}
       {canRenderRich ? (
         <View style={styles.mdToggleRow}>
-          {([['rendered', t('files.preview.mdRendered')], ['source', t('files.preview.mdSource')]] as const).map(([value, label]) => (
-            <Pressable
-              accessibilityLabel={t('files.preview.mdViewA11y', { view: label })}
-              key={value}
-              onPress={() => setRichView(value)}
-              style={[styles.mdTogglePill, richView === value && styles.mdTogglePillActive]}
-              testID={`filePreview.richView.${value}`}
-            >
-              <Text style={[styles.mdToggleLabel, richView === value && styles.mdToggleLabelActive]}>
-                {label}
-              </Text>
-            </Pressable>
-          ))}
+          <FileBrowserSegmentedControl<'rendered' | 'source'>
+            accessibilityLabel={t('files.preview.mdViewA11y', { view: richView === 'rendered' ? t('files.preview.mdRendered') : t('files.preview.mdSource') })}
+            onChange={setRichView}
+            options={(['rendered', 'source'] as const).map((value) => {
+              const label = t(value === 'rendered' ? 'files.preview.mdRendered' : 'files.preview.mdSource');
+              return {
+                value,
+                label,
+                accessibilityLabel: t('files.preview.mdViewA11y', { view: label }),
+                testID: `filePreview.richView.${value}`,
+              };
+            })}
+            testID="filePreview.richView"
+            value={richView}
+          />
         </View>
       ) : null}
       {showRendered ? (
@@ -1212,14 +1215,14 @@ function ImagePreviewPage({
         <View style={styles.imageStateWrap} testID="filePreview.imageError">
           <GenericGlyph name={item.name} />
           <Text style={styles.hintText}>{t('files.preview.fetchOriginalFailed', { detail: failure })}</Text>
-          <Pressable
-            accessibilityLabel={t('files.preview.a11yRetryOriginal')}
-            onPress={() => setAttempt((n) => n + 1)}
-            style={({ pressed }) => [styles.retryBtn, pressed && styles.pressed]}
-            testID="filePreview.imageRetry"
-          >
-            <Text style={styles.retryLabel}>{t('files.preview.retry')}</Text>
-          </Pressable>
+          <MainWindowActionButton
+            action={{
+              accessibilityLabel: t('files.preview.a11yRetryOriginal'),
+              label: t('files.preview.retry'),
+              onPress: () => setAttempt((n) => n + 1),
+              testID: 'filePreview.imageRetry',
+            }}
+          />
         </View>
       ) : (
         <View style={styles.imageStateWrap} testID="filePreview.imageLoading">
@@ -1381,8 +1384,6 @@ const makeStyles = (colors: ThemeColors) => {
     truncText: { color: colors.textSecondary, fontSize: typeScale.caption },
     textPage: { flex: 1 },
     mdToggleRow: {
-      flexDirection: 'row',
-      gap: spacing.sm,
       paddingHorizontal: spacing.lg,
       paddingVertical: spacing.sm,
     },

@@ -78,8 +78,6 @@ export interface RemoteResourceDisplay {
   lastReplyAt?: number;
   avatar?: RemoteResourceAvatar;
   status?: RemoteResourceStatus;
-  /** Optional public generation state; controllers must treat unknown phases as neutral. */
-  generation?: { phase: string; startedAt: number | null };
   badges?: RemoteResourceBadge[];
 }
 

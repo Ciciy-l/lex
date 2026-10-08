@@ -40,7 +40,7 @@
   "joined": "공유 작업에 참여했습니다",
   "joinedBody": "참여 전의 메시지, 도구 결과, 첨부 파일을 확인하고 같은 Agent에게 메시지를 보낼 수 있습니다.",
   "enterTask": "작업 열기",
-  "inviteBoxTitle": "동료에게 초대 링크 보내기",
+  "inviteBoxTitle": "함께 작업할 사람에게 초대 링크 보내기",
   "roleGuest": "게스트",
   "removeShort": "제거",
   "removeNamedTitle": "{{name}} 님을 제거할까요?",

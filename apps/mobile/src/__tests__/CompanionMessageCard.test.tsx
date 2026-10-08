@@ -28,6 +28,7 @@ vi.mock('react-native', () => ({
     ),
   StyleSheet: { create: (v: any) => v, hairlineWidth: 1 },
 }));
+vi.mock('@/utils/useGuardedPush', () => ({ useGuardedPush: () => h.push }));
 vi.mock('expo-router', () => ({
   useFocusEffect: (cb: () => void) => useEffect(cb, [cb]),
   useLocalSearchParams: () => ({ deviceId: 'home' }),

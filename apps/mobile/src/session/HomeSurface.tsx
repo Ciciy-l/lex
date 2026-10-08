@@ -6,14 +6,16 @@ import { ResidentHomeList, useResidentHomeList } from './ResidentHomeList';
 import { HomeNewTaskButton } from './HomeNewTaskButton';
 import { useRetainedHomeState, getHomeViewSession } from './homeViewSession';
 import { rememberRecentTask } from './recentTasks';
-import { homeListStyles, SessionStatusMark } from '@/session/HomeListVisuals';
-import { useHeaderHeight } from "expo-router/react-navigation";
+import { homeListStyles, SESSION_ROW_LONG_PRESS_MS, SessionStatusMark } from '@/session/HomeListVisuals';
+import { useOptionalHeaderHeight } from '@/session/useOptionalHeaderHeight';
 import { SessionHeaderNativeBlur } from "@/session/SessionHeaderNativeControls";
+import { rememberComposerEntry } from './composerMorph';
+import type { ComposerMorphOrigin } from './composerGeometry';
 import { RemoteTaskSuggestions } from '@/session/RemoteTaskSuggestions';
 import { countHomeSuggestionSessions, remoteTaskSuggestionsMode, type RemoteTaskSuggestionId } from '@/session/remoteTaskSuggestionsModel';
 import { cacheRemoteResourceHome, readRemoteResourceSnapshot } from '@/device-link/remoteResourceCache';
 import { canBrowseMobileHomeDevice } from '@/session/mobileHome';
-import { useFocusEffect, useIsFocused } from 'expo-router';
+import { useFocusEffect, useIsFocused, useRouter } from 'expo-router';
 import { createContext, useContext, Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import {
   ActivityIndicator,
@@ -65,7 +67,9 @@ import type { TFunction } from 'i18next';
 import { useAuth } from '@/auth/AuthContext';
 import { configureCollapseAnimation } from '@/utils/collapseAnimation';
 import { useGuardedPush } from '@/utils/useGuardedPush';
+import { useHomeMenuFadeTiming } from '@/session/homeMenuFadeTiming';
 import {
+  MainWindowActionButton,
   MainWindowActionGroup,
   MainWindowEmptyState,
   StatusDot,
@@ -257,7 +261,9 @@ import { useSessionListActions } from '@/session/useSessionListActions';
 import { useModalFadeLifecycle } from '@/session/useModalFadeLifecycle';
 import type { RemoteSession } from '@/session/types';
 import { useTheme, useThemedStyles, type ThemeColors } from '@/theme';
-import { fontWeight, iconSize, iconStroke, lineHeight, radius, spacing, typeScale } from '@/theme/tokens';
+import { fontWeight, iconSize, iconStroke, lineHeight, motionDuration, navigationChrome, radius, spacing, typeScale } from '@/theme/tokens';
+import { mobileInteractionStyles } from '@/components/mobileInteractionStyles';
+import { useReduceMotionEnabled } from '@/hooks/useReduceMotion';
 
 const LIST_LIMIT = 200;
 // Keep the device-link channel responsive while All Sessions hydrates several
@@ -280,6 +286,16 @@ const HOME_SESSION_SINGLE_LINE_ROW_HEIGHT = 60;
 const CINDY_LIST_GUTTER = 20;
 const CINDY_LIST_FAB_BOTTOM = 45;
 const HOME_HEADER_MIN_HEIGHT = 48;
+/**
+ * 新建钮不在系统栏时的列表底部滚动余量:给右下浮动新建钮让出最后一行。
+ * 新建钮坐在输入框静止底线上(安全区 + 8,55 圆钮,顶边约安全区 + 63),
+ * 沿用历史取值 83,最后一行与圆钮之间留约 20pt。
+ */
+const LEGACY_HOME_LIST_BOTTOM_RESERVE = 83;
+/** 项目块「查看全部」行的左缩进(历史取值,与项目内任务文字列大致对齐,保持布局不变)。 */
+const HOME_PROJECT_VIEW_ALL_INSET = 48;
+/** 连接提示条同步按钮的视觉尺寸;命中区用 hitSlop 补到 navigationChrome.target(44)。 */
+const CONNECTION_ICON_BUTTON_SIZE = 28;
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 function estimateHomeSessionRowHeight(item: RemoteSessionListItem): number {
@@ -403,6 +419,7 @@ function HomeScreenContent({ active = true, onModeChange, width, onDismiss, newS
   const push = useGuardedPush();
   const navigationHost = useRef({ runNavigation, onSelectSession });
   navigationHost.current = { runNavigation, onSelectSession };
+  const router = useRouter();
   const guardedPush = useCallback((href: Parameters<typeof push>[0]) => {
     const run = navigationHost.current.runNavigation;
     if (run) run(() => push(href)); else push(href);
@@ -2033,7 +2050,7 @@ function HomeScreenContent({ active = true, onModeChange, width, onDismiss, newS
     guardedPush(href);
   }, [guardedPush, priorityContext, rememberTask, swipeRegistry, t]);
 
-  const openNewSession = useCallback((project?: MobileHomeProjectGroup, suggestion?: RemoteTaskSuggestionId, explicitDeviceId?: string) => {
+  const openNewSession = useCallback((project?: MobileHomeProjectGroup, suggestion?: RemoteTaskSuggestionId, explicitDeviceId?: string, origin?: ComposerMorphOrigin) => {
     const deviceId = project?.deviceId ?? explicitDeviceId ?? home.primaryDevice?.deviceId;
     const deviceName = project?.deviceName ?? newSessionDeviceOptions.find((device) => device.deviceId === deviceId)?.name ?? home.primaryDevice?.label ?? deviceId ?? '';
     if (!deviceId) {
@@ -2046,6 +2063,7 @@ function HomeScreenContent({ active = true, onModeChange, width, onDismiss, newS
         deviceId,
         deviceName,
         deviceOptions: serializeNewSessionDeviceOptions(newSessionDeviceOptions),
+        ...(origin ? { composerMorph: rememberComposerEntry(origin) } : {}),
         ...(suggestion ? { suggestion } : {}),
         ...(project?.workingDir ? { workingDir: project.workingDir } : {}),
         // 列表正筛选某台电脑时,新建默认跟随这台电脑(显式指定,盖过"上次选择"的
@@ -2071,12 +2089,14 @@ function HomeScreenContent({ active = true, onModeChange, width, onDismiss, newS
     setLoggingOut(true);
     try {
       await auth.logout();
+      // Same landing as settings and the partner entries, without relying on the outer auth redirect.
+      router.replace('/login');
     } catch (error) {
       Alert.alert(t('devices.list.alert.actionFailed'), formatRemoteError(error));
     } finally {
       setLoggingOut(false);
     }
-  }, [auth, loggingOut, t]);
+  }, [auth, loggingOut, router, t]);
 
   const toggleProject = useCallback((key: string) => {
     configureCollapseAnimation();
@@ -2562,7 +2582,7 @@ function HomeScreenContent({ active = true, onModeChange, width, onDismiss, newS
   const nativeHomeHeader = !embedded && usesNativeStackHeader();
   const homeGeometry = useAdaptiveWindow();
   const keepMenuTopLeft = nativeHomeHeader && homeGeometry.barEdge !== 'none';
-  const nativeHeaderHeight = useHeaderHeight();
+  const nativeHeaderHeight = useOptionalHeaderHeight();
   const chromeHeight = nativeHomeHeader
     ? nativeHeaderHeight + (headerHeight ?? 0)
     : (headerHeight ?? edgePadding.paddingTop + HOME_HEADER_MIN_HEIGHT);
@@ -2589,6 +2609,7 @@ function HomeScreenContent({ active = true, onModeChange, width, onDismiss, newS
             progressViewOffset={residentList.enabled ? 0 : chromeHeight}
             refreshing={refreshing}
             onRefresh={() => void loadHome({ visible: true })}
+            tintColor={colors.textSecondary}
           />
         }
         scrollEnabled={projectDrag === null}
@@ -2596,11 +2617,13 @@ function HomeScreenContent({ active = true, onModeChange, width, onDismiss, newS
         contentContainerStyle={[
           styles.listContent,
           {
-            paddingBottom: (newSessionInSystemBar ? spacing.sm : 83) + insets.bottom,
+            paddingBottom: (newSessionInSystemBar ? spacing.sm : LEGACY_HOME_LIST_BOTTOM_RESERVE) + insets.bottom,
             paddingTop: residentList.enabled ? 0 : chromeHeight,
           },
         ]}
         onScroll={onListScroll}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         scrollEventThrottle={16}
         onScrollBeginDrag={() => {
           scrollRestored.current = true;
@@ -2711,8 +2734,9 @@ function HomeScreenContent({ active = true, onModeChange, width, onDismiss, newS
 
       {newSessionInSystemBar || showRemoteGuide || taskSuggestionsMode === 'empty' ? null : (
         // 无可控电脑时不提供入口;完整空态已有主按钮,避免重复显示新建 CTA。
-        <HomeNewTaskButton bottomInset={insets.bottom} disabled={newSessionDisabled}
-          onPress={() => openNewSession()} />
+        // iOS: the circle stretches into the new task's composer pill (origin → morph handoff).
+        <HomeNewTaskButton bottomInset={insets.bottom} disabled={newSessionDisabled} morph
+          onPress={(origin) => openNewSession(undefined, undefined, undefined, origin)} />
       )}
 
   </>);
@@ -2842,6 +2866,8 @@ function HomeScreenContent({ active = true, onModeChange, width, onDismiss, newS
             accessibilityRole="button"
             accessibilityState={{ busy: refreshing || undefined, disabled: refreshing }}
             disabled={refreshing}
+            // 视觉 28pt,hitSlop 把命中区补到 44pt(§5 触控目标)。
+            hitSlop={(navigationChrome.target - CONNECTION_ICON_BUTTON_SIZE) / 2}
             onPress={() => void loadHome({ visible: true })}
             style={({ pressed }) => [
               styles.connectionIconButton,
@@ -2959,6 +2985,8 @@ function HomeScreenContent({ active = true, onModeChange, width, onDismiss, newS
           setChromeMenuCloseInstant(true);
           setChromeMenuOpen(false);
         }}
+        // 抽屉内部先确认(confirmLogout)再调 onLogout,这里不重复确认。
+        hasRunningTasks={runningSessionIds.size > 0}
         onLogout={() => void logout()}
         open={chromeMenuOpen}
         user={user}
@@ -3073,12 +3101,12 @@ function DeviceMenuModal({
   const insets = useSafeAreaInsets();
   // 范围菜单只列设备;设置入口已挪到左上角 / 右上角。
   const scopeScrollMaxHeight = Math.max(160, screenHeight - topOffset - insets.bottom - 24);
-  // §14.4:展开用 ≤150ms 纯透明度过渡(不做位移/缩放),关闭淡出后再卸载 Modal。
+  // §14.4 轻浮层:fast 入场 / instant 退场纯透明度过渡(减弱动态效果直接显示),关闭淡出后再卸载 Modal。
+  const menuFadeTiming = useHomeMenuFadeTiming();
   // mounted/progress/进场时机(onShow)/onClosed 延迟触发(等 Modal 真正卸载的 commit
   // 完成,避免 iOS present-during-dismiss 吞掉第二个弹窗)统一走 useModalFadeLifecycle。
   const { mounted, progress, onShowStartIn } = useModalFadeLifecycle(visible, {
-    inMs: 140,
-    outMs: 110,
+    ...menuFadeTiming,
     onClosed,
   });
   const allFilter = filters.find((item) => item.deviceId === null) ?? null;
@@ -3171,9 +3199,9 @@ function HomeDisplaySettingsModal({
   const { height: screenHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const scrollMaxHeight = Math.max(200, screenHeight - topOffset - insets.bottom - 24);
+  const menuFadeTiming = useHomeMenuFadeTiming();
   const { mounted, progress, onShowStartIn } = useModalFadeLifecycle(visible, {
-    inMs: 140,
-    outMs: 110,
+    ...menuFadeTiming,
   });
   return (
     <HomeMenuScrim
@@ -3358,21 +3386,16 @@ function RevokedAccessTip({
           <Text style={styles.revokedTipBody}>
             {t('devices.list.revoked.body', { deviceName: deviceName ?? t('devices.list.thisComputer') })}
           </Text>
-          <Pressable
-            accessibilityLabel={t('devices.list.revoked.retry')}
-            accessibilityRole="button"
-            accessibilityState={{ busy: retrying, disabled: retrying }}
-            disabled={retrying}
-            onPress={onRetry}
-            style={({ pressed }) => [styles.revokedTipRetry, pressed && styles.pressed, retrying && styles.disabled]}
-            testID="home.revokedTip.retry"
-          >
-            {retrying ? (
-              <ActivityIndicator color={colors.ctaText} size="small" />
-            ) : (
-              <Text style={styles.revokedTipRetryText}>{t('devices.list.revoked.retry')}</Text>
-            )}
-          </Pressable>
+          <MainWindowActionButton
+            action={{
+              busy: retrying,
+              label: t('devices.list.revoked.retry'),
+              onPress: onRetry,
+              testID: 'home.revokedTip.retry',
+              tone: 'primary',
+            }}
+            style={styles.revokedTipRetry}
+          />
         </View>
       </View>
     </Modal>
@@ -4056,7 +4079,7 @@ function HomeSessionRowInner({
           ? groupRowOpensPrimary ? t('devices.list.a11y.openAutomationLatest', { title: item.title }) : t('devices.list.a11y.automationTask', { title: item.title })
           : t('devices.list.a11y.openConversation', { title: item.title })}
         accessibilityState={group ? { expanded: groupExpanded, selected: selected || active } : { selected: selected || active }}
-        delayLongPress={400}
+        delayLongPress={SESSION_ROW_LONG_PRESS_MS}
         onLongPress={
           !selectionMode && !group && swipe && conversationSearchAllowsLocalWrites(item)
             ? () => {
@@ -4371,20 +4394,25 @@ function SessionRightSpinner({ testID }: { testID?: string }) {
   const { colors } = useTheme();
   const { t } = useTranslation();
   const spin = useRef(new Animated.Value(0)).current;
+  // 常驻循环:减弱动态效果(含首帧未知)下静止,只显示静态图标。
+  const reduceMotion = useReduceMotionEnabled();
   useEffect(() => {
+    if (reduceMotion !== false) return;
     const loop = Animated.loop(
       Animated.timing(spin, {
-        duration: 1000,
+        duration: motionDuration.spinnerCycle,
         easing: Easing.linear,
         toValue: 1,
         useNativeDriver: true,
+        isInteraction: false,
       }),
     );
     loop.start();
     return () => {
       loop.stop();
+      spin.setValue(0);
     };
-  }, [spin]);
+  }, [reduceMotion, spin]);
   const rotate = spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
   return (
     <Animated.View
@@ -4489,7 +4517,7 @@ function pruneHomeDeviceConnectionStates(
 const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   ...homeListStyles(colors),
   safeArea: { flex: 1, backgroundColor: colors.surface },
-  pressed: { opacity: 0.72 },
+  pressed: mobileInteractionStyles.pressed,
   disabled: { opacity: 0.45 },
   homeChrome: {
     left: 0,
@@ -4581,9 +4609,9 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   connectionIconButton: {
     alignItems: 'center',
     borderRadius: radius.pill,
-    height: 28,
+    height: CONNECTION_ICON_BUTTON_SIZE,
     justifyContent: 'center',
-    width: 28,
+    width: CONNECTION_ICON_BUTTON_SIZE,
   },
   deviceConnectionFailedRing: {
     borderColor: colors.errorBorder,
@@ -4711,17 +4739,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     lineHeight: lineHeight.body,
   },
   revokedTipRetry: {
-    alignItems: 'center',
-    backgroundColor: colors.cta,
-    borderRadius: radius.pill,
-    height: 44,
-    justifyContent: 'center',
     marginTop: spacing.sm,
-  },
-  revokedTipRetryText: {
-    color: colors.ctaText,
-    fontSize: typeScale.body,
-    fontWeight: fontWeight.semibold,
   },
   homeList: {
     backgroundColor: colors.surface,
@@ -4730,7 +4748,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   listContent: {
     backgroundColor: colors.surface,
     flexGrow: 1,
-    paddingBottom: 83,
+    paddingBottom: LEGACY_HOME_LIST_BOTTOM_RESERVE,
     paddingTop: 0,
   },
   // 置顶区收尾线:回 XD-Maker 原版 hairline(换肤卡片化曾置 0,通栏回退一并恢复)。
@@ -4772,7 +4790,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     borderRadius: radius.container,
     borderWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
-    gap: 8,
+    gap: spacing.sm,
     paddingLeft: spacing.md,
     paddingRight: spacing.lg,
     position: 'absolute',
@@ -4793,8 +4811,8 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     gap: spacing.sm,
-    minHeight: 54,
-    paddingLeft: 48,
+    minHeight: HOME_AUTOMATION_VIEW_ALL_ROW_HEIGHT,
+    paddingLeft: HOME_PROJECT_VIEW_ALL_INSET,
     paddingRight: spacing.lg,
   },
   projectViewAllText: {

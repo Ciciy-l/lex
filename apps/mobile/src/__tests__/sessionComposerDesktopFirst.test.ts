@@ -177,7 +177,8 @@ describe('mobile session composer desktop-first surface', () => {
     expect(composerInputSource).toContain('trailing={composerCardActive ? null : controls.trailing}');
     expect(trailingActionsSource).toContain('<PaperPlaneIcon');
     expect(trailingActionsSource).toContain('color={composerSendDisabled ? colors.textSecondary : colors.ctaText}');
-    expect(source).toContain('const composerCardActive = (canUseComposer && composerFocused)');
+    // 收起胶囊点开到真正聚焦之间的过渡期(composerPillOpen.opening)同样算激活态,仍受 canUseComposer 门控。
+    expect(source).toContain('const composerCardActive = (canUseComposer && (composerFocused || composerPillOpen.opening))');
     expect(source).toContain('|| permissionSheetOpen');
     // 2026-07-29 用户裁决:权限入口是 composer 左侧图标钮 + 独立浮窗
     // (MobilePermissionPickerList 由本 screen 直挂 SheetSurface);
@@ -383,7 +384,12 @@ describe('mobile session composer desktop-first surface', () => {
     expect(source).toContain('testID="session.bottomLayer"');
     expect(source).toContain('testID="session.bottomContent"');
     expect(source).toContain("paddingBottom: sessionOperationLayout.composerSlot === 'pending-interaction'");
-    expect(source).toContain('? 0\n                  : insets.bottom');
+    // 底部 padding:待处理面板自己收 safe-area(0);dock 形态(键盘跟随 / 胶囊停靠)另行计算;
+    // 非 dock 的普通 composer 仍由外层留一次 insets.bottom。
+    const bottomPaddingStart = source.indexOf("paddingBottom: sessionOperationLayout.composerSlot === 'pending-interaction'");
+    const bottomPadding = source.slice(bottomPaddingStart, source.indexOf('testID="session.bottomContent"', bottomPaddingStart));
+    expect(bottomPadding).toMatch(/^paddingBottom: sessionOperationLayout\.composerSlot === 'pending-interaction'\s*\n\s*\? 0\s*\n/);
+    expect(bottomPadding).toMatch(/: insets\.bottom,\s*\n\s*\},/);
     expect(source.match(/safeAreaBottomInset={insets\.bottom}/g)).toHaveLength(2);
     expect(source).toContain('pointerEvents="box-none"\n            style={[');
     expect(source).toContain('nativeShellLayout.wideViewport && { maxWidth: nativeShellLayout.contentMaxWidth }');

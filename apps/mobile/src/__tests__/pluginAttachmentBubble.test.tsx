@@ -29,6 +29,12 @@ vi.mock('lucide-react-native', () => ({
 vi.mock('react-native-svg', () => ({ default: () => null, Circle: () => null }));
 vi.mock('react-native-uitextview', () => ({ UITextView: () => null }));
 vi.mock('expo-image', () => ({ Image: () => null }));
+vi.mock('expo-router', () => ({ useRouter: () => ({ push: vi.fn() }), useFocusEffect: vi.fn(), useNavigation: () => ({ isFocused: () => true, addListener: () => () => {} }) }));
+vi.mock('@/device-link/DeviceLinkContext', () => ({
+  useDeviceLink: () => ({ status: 'offline', connectionEpoch: 0, getPresenceAvailability: () => false,
+    invoke: vi.fn(), openLink: vi.fn() }),
+  subscribeRemoteBotChanges: () => () => {},
+}));
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 vi.mock('@/theme', async () => {
   const tokens = await import('@/theme/tokens');

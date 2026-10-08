@@ -20,6 +20,8 @@ export interface ThemeColors {
   surface: string;
   /** 抬一层的 Card / 弹窗 / 输入框 */
   surfaceElevated: string;
+  /** 首页导航抽屉投影，局部浮层例外（2026-09-27 用户要求）。 */
+  homeDrawerShadow: string;
   /** Surface 半透明(吸顶栏等,solid 非模糊——chrome/composer 热路径专用,守护测试禁 BlurView) */
   surfaceTranslucent: string;
   /** 侧栏/抽屉类面板毛玻璃底色(R1 audit 模式1,blur≈50 等效;BlurView tint 用) */
@@ -369,15 +371,30 @@ export const loginPalettes: Record<ThemeMode, LoginSkinColors> = {
  * file-remove-bg 同源,非表内直落 id;lead 2026-07-17 确认采纳,errorBorder 跟随)。
  */
 export const lightColors: ThemeColors = {
-  surface: '#EDEDED',
-  surfaceElevated: '#F8F8F8',
-  surfaceTranslucent: 'rgba(237, 237, 237, 0.78)',
-  surfaceTranslucentSidebar: 'rgba(246, 246, 246, 0.90)',
-  chatHeaderSurface: 'rgba(246, 246, 246, 0.90)',
-  chatHeaderDivider: '#DCDFE3',
-  surfaceGlassPanel: '#F8F8F8',
-  surfaceListRow: '#F6F6F6',
-  surfaceListExpanded: '#EAEAEA',
+  surface: '#F9F9F6',
+  taskTagRed: '#ed615f',
+  taskTagOrange: '#eea34e',
+  taskTagYellow: '#e5c744',
+  taskTagGreen: '#70b568',
+  taskTagBlue: '#609bd4',
+  taskTagPurple: '#ab7bc6',
+  taskTagGray: '#969696',
+  taskTagPink: '#df83b0',
+  taskTagCoral: '#de8970',
+  taskTagTeal: '#53a89d',
+  taskTagIndigo: '#7c83cf',
+  taskTagWhite: '#ffffff',
+  taskTagWhiteCheck: '#525252',
+
+  surfaceElevated: '#FFFFFC',
+  homeDrawerShadow: 'rgba(0, 0, 0, 0.16)',
+  surfaceTranslucent: 'rgba(249, 249, 246, 0.78)',
+  surfaceTranslucentSidebar: 'rgba(255, 255, 252, 0.90)',
+  chatHeaderSurface: 'rgba(249, 249, 246, 0.90)',
+  chatHeaderDivider: '#CCCCC8',
+  surfaceGlassPanel: '#FFFFFC',
+  surfaceListRow: '#FFFFFC',
+  surfaceListExpanded: '#EAEAE6',
   activeGlyph: '#DF0C27',
   chatCodeSurface: '#F8F8F8',
   chatCodeBorder: '#DCDFE3',
@@ -442,15 +459,29 @@ export const lightColors: ThemeColors = {
  * 同源,非表内直落 id;lead 2026-07-17 确认采纳,errorBorder 跟随)。
  */
 export const darkColors: ThemeColors = {
-  surface: '#2A2828',
-  surfaceElevated: '#312F2F',
-  surfaceTranslucent: 'rgba(42, 40, 40, 0.78)',
-  surfaceTranslucentSidebar: 'rgba(18, 15, 15, 0.85)',
-  chatHeaderSurface: 'rgba(37, 35, 35, 0.80)',
-  chatHeaderDivider: 'rgba(255, 255, 255, 0.05)',
-  surfaceGlassPanel: 'rgba(59, 59, 59, 0.95)',
-  surfaceListRow: '#312F2F',
-  surfaceListExpanded: '#2A2828',
+  surface: '#121212',
+  taskTagRed: '#ed615f',
+  taskTagOrange: '#eea34e',
+  taskTagYellow: '#e5c744',
+  taskTagGreen: '#70b568',
+  taskTagBlue: '#609bd4',
+  taskTagPurple: '#ab7bc6',
+  taskTagGray: '#969696',
+  taskTagPink: '#e79fc1',
+  taskTagCoral: '#e6a08c',
+  taskTagTeal: '#75bfb4',
+  taskTagIndigo: '#999fdf',
+  taskTagWhite: '#ffffff',
+  taskTagWhiteCheck: '#525252',
+  surfaceElevated: '#1E1E1E',
+  homeDrawerShadow: 'rgba(0, 0, 0, 0.40)',
+  surfaceTranslucent: 'rgba(18, 18, 18, 0.78)',
+  surfaceTranslucentSidebar: 'rgba(10, 10, 10, 0.85)',
+  chatHeaderSurface: 'rgba(18, 18, 18, 0.80)',
+  chatHeaderDivider: 'rgba(255, 255, 255, 0.08)',
+  surfaceGlassPanel: '#242424',
+  surfaceListRow: '#1E1E1E',
+  surfaceListExpanded: '#121212',
   activeGlyph: '#A61629',
   chatCodeSurface: '#353333',
   chatCodeBorder: '#3C3C3C',

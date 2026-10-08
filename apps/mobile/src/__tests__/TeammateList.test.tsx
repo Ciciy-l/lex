@@ -4,17 +4,19 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 vi.mock('react-native', () => ({
   View: ({ children, testID, style }: any) => el('div', { 'data-testid': testID, style: Object.assign({}, ...[style].flat().filter(Boolean)) }, children),
-  Pressable: ({ children, testID, accessibilityLabel, disabled, onPress }: any) => el('button', { 'data-testid': testID, 'aria-label': accessibilityLabel, disabled, onClick: onPress }, children),
+  Pressable: ({ children, testID, accessibilityLabel, accessibilityState, disabled, onPress }: any) => el('button', { 'data-testid': testID, 'aria-label': accessibilityLabel, 'aria-selected': accessibilityState?.selected, disabled, onClick: onPress }, children),
   ActivityIndicator: () => null, RefreshControl: () => null,
   StyleSheet: { create: (v: unknown) => v, hairlineWidth: 1 },
   FlatList: ({ ListHeaderComponent, ListEmptyComponent, data, renderItem }: any) => el('div', null, ListHeaderComponent, data.length ? data.map((item: any) => renderItem({ item })) : ListEmptyComponent),
 }));
 vi.mock('@/device-link/DeviceLinkContext', () => ({ useDeviceLink: () => ({ invoke: async () => ({ blocks: [] }) }) }));
 vi.mock('@/session/remoteSessionStore', () => ({ remoteSessionStore: {} }));
-vi.mock('@/components/AppText', () => ({ Text: ({ children }: any) => el('span', null, children), TextInput: () => null }));
-vi.mock('@/components/MobilePrimitives', () => ({ MainWindowEmptyState: ({ title, copy }: any) => el('div', null, title, copy) }));
+vi.mock('@/components/AppText', () => ({ Text: ({ children }: any) => el('span', null, children), TextInput: ({ testID, autoFocus }: any) => el('input', { 'data-testid': testID, 'data-autofocus': String(autoFocus) }) }));
+vi.mock('@/components/MobilePrimitives', () => ({ MainWindowEmptyState: ({ title, copy }: any) => el('div', null, title, copy),
+  RemoteListSyncingPlaceholder: ({ testID }: any) => el('div', { 'data-testid': testID }),
+  StatusDot: ({ tone }: any) => el('i', { 'data-testid': 'status-dot', 'data-tone': tone }) }));
 vi.mock('@/components/RemoteCompanionAvatar', () => ({ RemoteCompanionAvatar: () => null }));
-vi.mock('lucide-react-native', () => ({ RefreshCw: () => null }));
+vi.mock('lucide-react-native', () => ({ RefreshCw: () => null, Search: () => null, X: () => null, TriangleAlert: ({ testID, accessibilityLabel }: any) => el('i', { 'data-testid': testID, 'aria-label': accessibilityLabel }) }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }) }));
 vi.mock('@/i18n', () => ({ i18n: { t: (key: string) => key } }));
 vi.mock('@/auth/AuthContext', () => ({ useAuth: () => ({ user: { id: 'owner' } }) }));
@@ -29,6 +31,15 @@ const item = { key: 'host:bot', host: { deviceId: 'host', deviceName: 'Computer 
 let root: Root; let node: HTMLDivElement;
 beforeEach(() => { Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); node = document.createElement('div'); root = createRoot(node); });
 afterEach(async () => { await act(async () => root.unmount()); });
+it('highlights the current identity only in the picker, not on the single-column home list', async () => {
+  const current = { deviceId: 'host', collectionId: 'teammates', resourceKind: 'bot' as const, resourceId: 'bot' };
+  const selected = () => node.querySelector('[data-testid="teammates.item.host.bot"]')?.getAttribute('aria-selected');
+  const props = { items: [item], error: null, isOnline: () => true, loading: false, refreshing: false, onRefresh: vi.fn(), onSelect: vi.fn(), current };
+  await act(async () => root.render(el(TeammateList, props)));
+  expect(selected()).toBe('false');
+  await act(async () => root.render(el(TeammateList, { ...props, embedded: true })));
+  expect(selected()).toBe('true');
+});
 async function render(error: string | null, online = true) {
   await act(async () => root.render(el(TeammateList, { items: [item], error, isOnline: () => online, loading: false, refreshing: false, onRefresh: vi.fn(), onSelect: vi.fn(), embedded: true })));
 }
@@ -62,12 +73,12 @@ it('shows shared public generation instead of raw preview without changing onlin
     loading: false, refreshing: false, onRefresh: vi.fn(), onSelect: vi.fn(), embedded: true })));
   expect(node.textContent).toContain('devices.companions.working.replying');
   expect(node.textContent).not.toContain('Raw tool commentary');
-  expect((node.querySelector('[data-testid="teammate.connection"]') as HTMLElement).style.backgroundColor).toBe('green');
+  expect(node.querySelector('[data-testid="teammate.connection"] [data-testid="status-dot"]')?.getAttribute('data-tone')).toBe('ready');
   await render(null, false);
-  expect((node.querySelector('[data-testid="teammate.connection"]') as HTMLElement).style.backgroundColor).toBe('red');
+  expect(node.querySelector('[data-testid="teammate.connection"] [data-testid="status-dot"]')?.getAttribute('data-tone')).toBe('off');
   expect(node.textContent).not.toContain('devices.companions.working.replying');
   await render('Model error', true);
-  expect((node.querySelector('[data-testid="teammate.connection"]') as HTMLElement).style.backgroundColor).toBe('green');
+  expect(node.querySelector('[data-testid="teammate.connection"] [data-testid="status-dot"]')?.getAttribute('data-tone')).toBe('ready');
 });
 
 it('keeps the connection green when the list cannot be used, and unknown neutral', async () => {
@@ -75,11 +86,11 @@ it('keeps the connection green when the list cannot be used, and unknown neutral
     await act(async () => root.render(el(TeammateList, { items: [item], error: 'API failed', isOnline: () => false,
       connectionState: () => connected, loading: false, refreshing: false, onRefresh: vi.fn(), onSelect: vi.fn(), embedded: true })));
     expect(node.textContent).not.toContain('devices.resources.hostOffline');
-    const dot = node.querySelector('[data-testid="teammate.connection"]') as HTMLElement;
-    expect(dot.style.backgroundColor).not.toBe('red');
-    if (connected) expect(dot.style.backgroundColor).toBe('green');
+    const tone = node.querySelector('[data-testid="teammate.connection"] [data-testid="status-dot"]')?.getAttribute('data-tone');
+    expect(tone).not.toBe('off');
+    if (connected) expect(tone).toBe('ready');
     else {
-      expect(dot.style.backgroundColor).toBe('gray');
+      expect(tone).toBe('muted');
       expect(node.textContent).toContain('devices.resources.connectionUnknown');
     }
   }

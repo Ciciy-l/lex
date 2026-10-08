@@ -132,5 +132,8 @@
   "autoUnlockUnavailable": "暂时无法自动解锁。你仍可连接，并手动解锁 Mac。",
   "lockOnExit": "退出后锁定电脑",
   "lockOnExitHint": "退出远程桌面时锁屏。重连或切换 App 不会触发。",
-  "lockOnExitFailed": "未能确认电脑已锁屏，请检查电脑的锁屏状态。"
+  "lockOnExitFailed": "未能确认电脑已锁屏，请检查电脑的锁屏状态。",
+  "hostMute": "远程电脑静音",
+  "hostMuteHint": "连接期间将远程电脑静音",
+  "hostMuteFailed": "无法修改远程电脑的静音状态"
 }

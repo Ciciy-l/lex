@@ -28,7 +28,7 @@
     "openMicPermission": "打开麦克风权限设置",
     "maxAttachments": "最多添加 {{max}} 个附件。",
     "voiceStopRecording": "停止录音",
-    "capabilitiesUnsupported": "远程能力返回格式不支持"
+    "capabilitiesUnsupported": "无法读取电脑端的命令和资源列表，请更新电脑上的 Cindy 后重试"
   },
   "presentation": {
     "collaboration": {
@@ -82,7 +82,7 @@
         "default": "继续聊一聊…"
       },
       "guidance": {
-        "sending": "消息正在写入桌面端队列，完成前请不要重复发送。",
+        "sending": "消息正在写入电脑端队列，完成前请不要重复发送。",
         "queueBusy": "正在同步队列操作，完成后会刷新队列状态。",
         "listeningWithDraft": "点发送会结束语音并发送当前文字；点输入框会结束语音并弹出键盘。",
         "listening": "正在听；点发送会结束语音并发送识别的文字，点输入框可结束语音并弹出键盘。",
@@ -92,7 +92,7 @@
         "attachmentsWithText": "将发送 {{count}} 个附件和输入框里的文字。",
         "attachmentsOnly": "将只发送 {{count}} 个附件，也可以补充说明后再发送。",
         "attachmentPickerOpen": "可以添加手机上的照片、截图或文件。",
-        "draft": "点发送后会进入桌面端队列，按当前任务设置执行。",
+        "draft": "点发送后会进入电脑端队列，按当前任务设置执行。",
         "quotesOnly": "将发送 {{count}} 处引用，也可以补充说明后再发送。",
         "canStop": "电脑端正在执行；可继续排队输入，或点停止保留当前队列。",
         "empty": "输入文字开始，使用 / 调命令，使用 @ 引用项目资源。"
@@ -216,7 +216,7 @@
     "shareUnsupported": "当前客户端暂不支持分享，更新到最新版本后重试。",
     "downloadFailed": "下载失败",
     "voiceNoRemoteDevice": "缺少远程设备，不能开始语音输入。",
-    "voiceSenderNotReady": "消息发送器未初始化。",
+    "voiceSenderNotReady": "消息暂时无法发送，请返回后重新进入任务。",
     "voiceStopAndSend": "结束语音输入并发送",
     "sendMessage": "发送远程消息",
     "voiceStartInput": "开始语音输入",
@@ -319,7 +319,7 @@
     "selectAgent": "选择 Agent",
     "switchToAgent": "切换到 {{label}}",
     "selectWorkspace": "选择工作区",
-    "dialogueNoProject": "对话(不绑定项目)",
+    "dialogueNoProject": "对话（不绑定项目）",
     "selectProjectNamed": "选择项目 {{title}}",
     "noProjects": "暂无项目",
     "chooseOtherFolder": "选择其他项目文件夹",
@@ -335,7 +335,7 @@
     "selectDir": "选择目录 {{name}}",
     "select": "选择",
     "noModelSelected": "未选择模型",
-    "assignedDialogueDir": "电脑端分配对话目录",
+    "assignedDialogueDir": "由电脑自动分配工作目录",
     "extraDirsSuffix": "+{{num}} 附加目录",
     "noProjectPath": "未选择项目路径",
     "dialogueWorkspace": "对话工作区",
@@ -366,7 +366,7 @@
     "worktreeNotGitRepo": "当前目录不是 git 仓库",
     "worktreeAlreadyInWorktree": "已在 worktree 中，禁止嵌套",
     "worktreeDetectFailed": "无法检测目录环境，可稍后重选目录再试",
-    "worktreeUnsupported": "当前桌面端无法安全创建 worktree，请关闭 worktree 后继续，或升级桌面端。",
+    "worktreeUnsupported": "电脑端当前的 Cindy 无法安全创建 worktree，请关闭 worktree 后继续，或更新电脑上的 Cindy。",
     "worktreeCreateFailed": "worktree 创建失败：{{message}}",
     "worktreeRecoveryStateFailed": "无法保存 worktree 恢复状态，请重试。",
     "worktreeCleanupPending": "上一次 worktree 仍待回收，请重新连接设备后再试。"
@@ -463,7 +463,6 @@
     "contextLabel": "上下文",
     "accountLimits": "账号限额",
     "quotaExhaustedResettable": "当前配额已耗尽。重置会立即消耗 1 次，且不能撤销。",
-    "resetting": "正在重置…",
     "resetCodexUsage": "重置 Codex 用量",
     "quotaExhaustedNoCredit": "当前配额已耗尽，但没有可用重置次数。",
     "openDir": "打开目录",
@@ -481,9 +480,10 @@
     "noSubDirs": "这个目录下没有可进入的子目录。",
     "dirLimitNotice": "仅显示前 30 个目录，可进入更具体的目录继续选择。",
     "confirmRename": "确认重命名",
-    "confirm": "确定",
+    "confirm": "重命名",
     "cancelRename": "取消重命名",
-    "backToMenu": "返回任务菜单"
+    "backToMenu": "返回任务菜单",
+    "renameSubmit": "重命名"
   },
   "messageMenu": {
     "addToChat": "添加到对话",
@@ -503,8 +503,8 @@
     "toolUseLoopDetectedConsecutiveWithCount": "模型重复调用同一个工具 {{count}} 次，Cindy 已停止本轮以避免无限循环。可以发送新消息继续。",
     "toolUseLoopDetectedPingPongWithCount": "模型在多个工具调用之间来回循环，Cindy 检测到本轮已有 {{count}} 次调用后停止了本轮。可以发送新消息继续。",
     "toolUseLoopDetectedRotationWithCount": "模型持续轮转调用多个工具，Cindy 检测到本轮已有 {{count}} 次调用后停止了本轮。可以发送新消息继续。",
-    "codexThreadLost": "Codex 鉴权模式已切换，当前任务无法继续 —— 请新建任务后生效。",
-    "encryptedContentInvalid": "由于更换供应商导致加密不可用，本任务只能在原供应商下使用；请回到电脑端处理（可 Fork 丢弃协议加密内容后在新任务继续）。"
+    "codexThreadLost": "Codex 鉴权模式已切换，当前任务无法继续，请新建任务。",
+    "encryptedContentInvalid": "由于更换供应商导致加密不可用，本任务只能在原供应商下使用；请回到电脑端处理（可以用「从这里开启新任务」丢弃协议加密内容，在新任务里继续）。"
   },
   "row": {
     "moreOptions": "更多选项",
@@ -527,7 +527,9 @@
     "taskCleared": "发送后，这个任务已被清空。消息仍保存在手机上，请核对后处理。",
     "restoreFailed": "暂时无法恢复待发消息，已保存的内容没有删除。请重启 App 后重试。",
     "recoveryTarget": "恢复这个任务时请保留原来的电脑，后续消息仍保存在手机上。",
-    "taskAlreadyCreated": "电脑上已创建这个任务，已保存的消息会在原任务中继续发送。"
+    "taskAlreadyCreated": "电脑上已创建这个任务，已保存的消息会在原任务中继续发送。",
+    "deleteConfirmTitle": "删除这条消息？",
+    "deleteConfirmBody": "这条消息没有发送成功，删除后无法恢复。"
   },
   "remoteError": {
     "REMOTE_DAEMON_CLOSED": "远程连接中断了，可能正在更新。这一轮已经结束，请重新发送。",

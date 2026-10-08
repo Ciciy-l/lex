@@ -1,19 +1,20 @@
 import { readWorkingPhase } from '@cindy/maker-shared';
 import { TeammateGenerationLabel } from './TeammateGenerationLabel';
-import { useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
+import { useMemo, useState, type ReactElement } from 'react';
+import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, View, type ScrollViewProps } from 'react-native';
 import { useTranslation } from 'react-i18next';
-import { RefreshCw } from 'lucide-react-native';
+import { RefreshCw, Search, TriangleAlert, X } from 'lucide-react-native';
 import { resolveRemoteText } from '@cindy/device-link';
 import { Text, TextInput } from '@/components/AppText';
-import { MainWindowEmptyState } from '@/components/MobilePrimitives';
+import { MainWindowEmptyState, RemoteListSyncingPlaceholder, StatusDot } from '@/components/MobilePrimitives';
+import { mobileInteractionStyles } from '@/components/mobileInteractionStyles';
 import { RemoteCompanionAvatar } from '@/components/RemoteCompanionAvatar';
 import { useAuth } from '@/auth/AuthContext';
 import { isRemoteResourceUnread } from '@/device-link/remoteResourceCache';
 import type { HostedRemoteCollectionItem, RemoteResourceHostTarget } from '@/device-link/remoteResources';
 import { useMinuteNow } from '@/utils/useMinuteNow';
 import { useThemedStyles, useTheme, type ThemeColors } from '@/theme';
-import { fontWeight, iconSize, lineHeight, radius, spacing, typeScale } from '@/theme/tokens';
+import { fontWeight, iconSize, iconStroke, lineHeight, radius, spacing, typeScale } from '@/theme/tokens';
 import { formatRemoteSessionSidebarTime } from './sessionList';
 import { orderedTeammates, sameTeammate, teammateIdentity } from './teammateNavigation';
 import type { LastTeammateIdentity } from './homeViewPreferenceStore';
@@ -31,12 +32,14 @@ export interface TeammateListProps {
   current?: LastTeammateIdentity | null;
   /** SheetSurface already owns the scroll view. */
   embedded?: boolean;
+  /** 独立整页、铺到透明系统顶栏下时,由列表自己让出上下安全区。 */
+  scrollInsetProps?: Pick<ScrollViewProps, 'automaticallyAdjustsScrollIndicatorInsets' | 'contentInsetAdjustmentBehavior'>;
   autoFocusSearch?: boolean;
   onInteract?(): void;
 }
 /** Flat identity list shared by home, collection route and the name picker. No host headings or groups. */
 export function TeammateList({ items, loading, refreshing, error, isOnline, connectionState, onRefresh, onSelect,
-  current = null, embedded = false, autoFocusSearch = false, onInteract }: TeammateListProps) {
+  current = null, embedded = false, autoFocusSearch = false, onInteract, renderFooter, scrollInsetProps }: TeammateListProps) {
   const { t, i18n } = useTranslation();
   const { user } = useAuth();
   const { colors } = useTheme();
@@ -52,11 +55,22 @@ export function TeammateList({ items, loading, refreshing, error, isOnline, conn
     }
     return names;
   }, [items, i18n.language]);
+  const trimmedQuery = query.trim();
+  // Mirrors HomeSearchBar: the trailing X clears typed text.
   const header = <View style={styles.controls}>
-    <TextInput accessibilityLabel={t('devices.companions.search')} autoFocus={autoFocusSearch}
-      autoCorrect={false} onChangeText={(value) => { onInteract?.(); setQuery(value); }} onFocus={onInteract} placeholder={t('devices.companions.search')}
-      placeholderTextColor={colors.textTertiary} selectionColor={colors.inputCaret}
-      style={styles.search} value={query} testID="teammates.search" />
+    <View style={styles.search} testID="teammates.searchRow">
+      <Search color={colors.textSecondary} size={iconSize.md} strokeWidth={iconStroke.regular} />
+      <TextInput accessibilityLabel={t('devices.companions.search')} autoFocus={autoFocusSearch}
+        autoCorrect={false} onChangeText={(value) => { onInteract?.(); setQuery(value); }} onFocus={onInteract} placeholder={t('devices.companions.search')}
+        placeholderTextColor={colors.textPlaceholder} selectionColor={colors.inputCaret}
+        style={styles.searchInput} value={query} testID="teammates.search" />
+      {trimmedQuery ? <Pressable accessibilityRole="button" hitSlop={spacing.xs}
+        accessibilityLabel={t('devices.detail.search.clearA11y')}
+        onPress={() => setQuery('')}
+        style={({ pressed }) => [styles.searchButton, pressed && mobileInteractionStyles.pressed]} testID="teammates.searchClose">
+        <X color={colors.textTertiary} size={iconSize.md} strokeWidth={iconStroke.regular} />
+      </Pressable> : null}
+    </View>
     {error ? <View style={styles.noticeRow}>
       <Text accessibilityRole="alert" style={[styles.notice, styles.noticeText]} testID="teammates.error">{t(items.length ? 'devices.companions.stale' : 'devices.resources.loadFailed')}</Text>
       <Pressable accessibilityRole="button" accessibilityLabel={t('devices.resources.retry')} disabled={refreshing}
@@ -65,7 +79,7 @@ export function TeammateList({ items, loading, refreshing, error, isOnline, conn
       </Pressable>
     </View> : null}
   </View>;
-  const empty = loading ? <View style={styles.empty}><ActivityIndicator color={colors.textSecondary} /><Text style={styles.notice}>{t('devices.resources.loading')}</Text></View>
+  const empty = loading ? <RemoteListSyncingPlaceholder testID="teammates.loading" />
     : <MainWindowEmptyState centered style={styles.empty} testID="teammates.empty"
       title={query.trim() ? t('devices.companions.noResults') : t('devices.companions.emptyTitle')}
       copy={query.trim() || error ? '' : t('devices.companions.emptyCopy')} />;
@@ -84,13 +98,14 @@ export function TeammateList({ items, loading, refreshing, error, isOnline, conn
     const timestamp = display.timestamp;
     const time = timestamp !== undefined && Number.isFinite(new Date(timestamp).getTime())
       ? formatRemoteSessionSidebarTime(new Date(timestamp).toISOString(), now) : '';
-    const selected = sameTeammate(current, teammateIdentity(row));
+    // Only the name picker marks the current identity; the single-column home list never does.
+    const selected = embedded && sameTeammate(current, teammateIdentity(row));
     const meta = [connected === false ? t('devices.resources.hostOffline') : connected === null ? t('devices.resources.connectionUnknown') : '', source].filter(Boolean).join(' · ');
     return <Pressable key={row.key} accessibilityRole="button" accessibilityState={{ selected, disabled: !online }}
-      accessibilityLabel={[title, accessiblePreview, time, unread ? t('devices.companions.unread') : '', meta].filter(Boolean).join(', ')}
-      disabled={!online} onPress={() => onSelect(row)} style={({ pressed }) => [styles.row, selected && styles.selected, pressed && styles.pressed]}
+      accessibilityLabel={[title, attention, accessiblePreview, time, unread ? t('devices.companions.unread') : '', meta].filter(Boolean).join(', ')}
+      disabled={!online} onPress={() => onSelect(row)} style={({ pressed }) => [styles.row, selected && styles.selected, pressed && mobileInteractionStyles.pressed]}
       testID={`teammates.item.${row.host.deviceId}.${row.item.ref.id}`}>
-      <View style={styles.avatar}><RemoteCompanionAvatar avatar={display.avatar} deviceId={row.host.deviceId} name={title} online={online} /><View testID="teammate.connection" style={[styles.connection, { backgroundColor: connected === null ? colors.textTertiary : connected ? colors.statusDone : colors.statusError }]} /></View>
+      <View style={styles.avatar}><RemoteCompanionAvatar avatar={display.avatar} deviceId={row.host.deviceId} name={title} online={online} /><View testID="teammate.connection" style={styles.connection}><StatusDot tone={connected === null ? 'muted' : connected ? 'ready' : 'off'} /></View></View>
       <View style={styles.body}>
         <View style={styles.titleRow}><Text numberOfLines={1} style={styles.title}>{title}</Text>
           {time ? <Text numberOfLines={1} style={styles.time}>{time}</Text> : null}
@@ -101,8 +116,9 @@ export function TeammateList({ items, loading, refreshing, error, isOnline, conn
       </View>
     </Pressable>;
   };
-  if (embedded) return <View testID="teammates.list">{header}{rows.length ? rows.map(renderRow) : empty}</View>;
-  return <FlatList style={styles.list} contentContainerStyle={styles.content} data={rows} keyExtractor={(row) => row.key}
+  const footer = renderFooter?.(query) ?? null;
+  if (embedded) return <View testID="teammates.list">{header}{rows.length ? rows.map(renderRow) : empty}{footer}</View>;
+  return <FlatList {...scrollInsetProps} style={styles.list} contentContainerStyle={styles.content} data={rows} keyExtractor={(row) => row.key}
     keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" onScrollBeginDrag={onInteract} testID="teammates.list"
     ListHeaderComponent={header} ListEmptyComponent={empty} renderItem={({ item }) => renderRow(item)}
     refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.textSecondary} />} />;
@@ -111,8 +127,12 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   list: { flex: 1 },
   content: { flexGrow: 1, paddingBottom: spacing.xl },
   controls: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, gap: spacing.sm },
-  search: { borderRadius: radius.pill, backgroundColor: colors.surfaceElevated, borderColor: colors.border,
-    borderWidth: StyleSheet.hairlineWidth, minHeight: 44, paddingHorizontal: spacing.lg, color: colors.textPrimary, fontSize: typeScale.body },
+  // Same pill as HomeSearchBar; the field text follows the 15pt search-box role.
+  search: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, borderRadius: radius.pill, backgroundColor: colors.surfaceElevated,
+    borderColor: colors.border, borderWidth: StyleSheet.hairlineWidth, minHeight: 44, paddingLeft: spacing.lg, paddingRight: spacing.xs },
+  searchInput: { flex: 1, minWidth: 0, paddingVertical: spacing.sm, color: colors.textPrimary, fontSize: typeScale.bodySmall },
+  // 36 visible + hitSlop 4 on each side = 44pt target.
+  searchButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   notice: { color: colors.textSecondary, fontSize: typeScale.footnote, lineHeight: lineHeight.caption },
   empty: { padding: spacing.xl, gap: spacing.md },
   noticeRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
@@ -120,11 +140,13 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   retry: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, minHeight: 78 },
   avatar: { width: 44, height: 44, borderRadius: radius.pill, backgroundColor: colors.surfaceChip, alignItems: 'center', justifyContent: 'center' },
-  connection: { position: 'absolute', right: 0, bottom: 0, width: 10, height: 10, borderRadius: radius.pill, borderWidth: 2, borderColor: colors.surface },
+  // StatusDot sits in a page-coloured ring so it stays legible over the avatar.
+  connection: { position: 'absolute', right: 0, bottom: 0, padding: 2, borderRadius: radius.pill, backgroundColor: colors.surface },
   selected: { backgroundColor: colors.surfaceChip, borderRadius: radius.container },
-  pressed: { opacity: 0.72 },
-  body: { flex: 1, minWidth: 0, gap: spacing.xs, borderBottomColor: colors.border,
-    borderBottomWidth: StyleSheet.hairlineWidth, paddingBottom: spacing.md },
+  // 原先是行上下各 12 + 文字区底部 12,分割线在行底上方 12 处,选中底色因此整体下错 12。
+  // 现在留白上下各 spacing.lg 放进文字区,文字在两条分割线之间居中。
+  body: { flex: 1, minWidth: 0, alignSelf: 'stretch', justifyContent: 'center', gap: spacing.xs,
+    borderBottomColor: colors.border, borderBottomWidth: StyleSheet.hairlineWidth, paddingVertical: spacing.lg },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   title: { flex: 1, color: colors.textPrimary, fontSize: typeScale.body, fontWeight: fontWeight.medium },
   preview: { color: colors.textSecondary, fontSize: typeScale.footnote, lineHeight: lineHeight.caption },

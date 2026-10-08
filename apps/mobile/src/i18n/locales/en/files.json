@@ -119,7 +119,8 @@
     "originalFailedThumb": "Couldn't fetch the original; showing the thumbnail",
     "fetchingOriginalHint": "Thumbnail · fetching the original…",
     "a11yExportShareFile": "Export and share the original file",
-    "exportShare": "Export / Share"
+    "exportShare": "Export / Share",
+    "browserCopiedAddress": "Address copied"
   },
   "export": {
     "exportFailed": "Export failed",
@@ -127,6 +128,6 @@
     "exportTimeout": "Export timed out. Try again."
   },
   "gallery": {
-    "cacheMiss": "Remote media cache miss (cachedOnly)"
+    "cacheMiss": "This media isn't cached on your phone yet. Open it again once your computer is connected"
   }
 }
