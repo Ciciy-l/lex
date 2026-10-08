@@ -2686,10 +2686,6 @@ export default function SessionScreen() {
       : composerRuntimeSummary.modelSummary
     : '';
   const adaptiveWindow = useAdaptiveWindow();
-  const nativeHeaderHeight = useSessionHeaderHeight(JSON.stringify([
-    windowDimensions.width, windowDimensions.height, windowDimensions.fontScale,
-    insets.top, insets.bottom, insets.left, insets.right, adaptiveWindow.barEdge,
-  ]));
   const paneLayout = sessionPaneLayout(adaptiveWindow);
   const horizontalSystemHeader = Platform.OS === 'ios' && adaptiveWindow.barEdge === 'none'
     && !paneLayout.persistent && !shareSelectionActive;
@@ -2728,6 +2724,13 @@ export default function SessionScreen() {
   // onClosed 才 false。它同时保证退场期 TalkBack 背景隔离,以及旋转/收窄退出宽屏时
   // 不会提前卸载 Drawer 而吞掉 pending 导航。
   const [sessionListDrawerOverlayMounted, setSessionListDrawerOverlayMounted] = useState(false);
+  // iOS 系统导航栏在 RN 内容之上,临时抽屉的 zIndex 盖不住它:抽屉存续期间收起系统栏,
+  // 抽屉自身的弹层(选项、改名、下拉菜单)仍在树内正常弹出。收起期间沿用打开前的顶栏
+  // 高度,遮罩下的聊天内容不跳动。
+  const nativeHeaderHeight = useSessionHeaderHeight(JSON.stringify([
+    windowDimensions.width, windowDimensions.height, windowDimensions.fontScale,
+    insets.top, insets.bottom, insets.left, insets.right, adaptiveWindow.barEdge,
+  ]), sessionListDrawerOverlayMounted);
   // 退出宽屏后 layout.drawerWidth 会变 0;退场期间继续用最后一个有效宽度,避免面板几何跳变。
   const sessionListDrawerWidthRef = useRef(wideSessionNav.drawerWidth);
   if (wideSessionNav.enabled) sessionListDrawerWidthRef.current = wideSessionNav.drawerWidth;
@@ -8985,6 +8988,7 @@ export default function SessionScreen() {
         onBack={goBackToHome} />
     </> : <SessionHeaderBar
               horizontalSystemHeader={horizontalSystemHeader}
+              systemBarHidden={sessionListDrawerOverlayMounted}
               currentSession={currentSession}
               diffCount={diffCount}
               isDeviceAccessRevoked={isDeviceAccessRevoked}
@@ -9935,6 +9939,7 @@ type SessionHeaderIcon = typeof Folder;
 
 function SessionHeaderBar({
   horizontalSystemHeader,
+  systemBarHidden = false,
   currentSession,
   diffCount,
   isDeviceAccessRevoked,
@@ -9963,6 +9968,8 @@ function SessionHeaderBar({
   title,
 }: {
   horizontalSystemHeader: boolean;
+  /** 临时任务列表抽屉存续期间收起系统栏,让抽屉顶部控件可见可点。 */
+  systemBarHidden?: boolean;
   currentSession: RemoteSession | null;
   diffCount: number;
   isDeviceAccessRevoked: boolean;
@@ -10040,6 +10047,8 @@ function SessionHeaderBar({
 
   // Let UINavigationBar align controls with the system status area, including Duo portrait.
   if (horizontalSystemHeader) {
+    // Stack.Toolbar left/right forces headerShown: true; drop them while the bar is hidden.
+    if (systemBarHidden) return <Stack.Screen options={{ headerShown: false }} />;
     const files = overview?.actions.find(action => action.id === 'files');
     return <>
       <Stack.Screen options={{ headerShown: true, headerTransparent: true,
