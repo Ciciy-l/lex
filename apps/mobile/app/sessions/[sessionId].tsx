@@ -9301,6 +9301,7 @@ export default function SessionScreen() {
                     }}
                     testID="session.contextSheetPlanRow"
                     trailing={planModeOn ? <Check color={colors.textPrimary} size={iconSize.md} strokeWidth={iconStroke.bold} /> : null}
+                    trailingSize={iconSize.md}
                   />
                 ) : null}
                 <ContextSheetRow

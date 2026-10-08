@@ -152,6 +152,8 @@ export interface ContextSheetRowProps {
   onPress: () => void;
   /** 'chevron' 表示带二级视图；也可以传自定义 trailing 节点。 */
   trailing?: 'chevron' | ReactNode;
+  /** 自定义尾部图标的方形承载尺寸；文字等尾部内容不传，继续按内容布局。 */
+  trailingSize?: number;
   disabled?: boolean;
   busy?: boolean;
   /** Secondary explanatory copy shown below the primary row label. */
@@ -165,6 +167,7 @@ export function ContextSheetRow({
   label,
   onPress,
   trailing,
+  trailingSize,
   disabled,
   busy,
   detail,
@@ -191,7 +194,12 @@ export function ContextSheetRow({
           {detail ? <Text style={styles.rowDetail}>{detail}</Text> : null}
         </View>
       </View>
-      <View style={styles.rowTrailing}>
+      <View style={[
+        styles.rowTrailing,
+        !busy && trailing && trailing !== 'chevron' && trailingSize != null
+          ? { width: trailingSize, height: trailingSize, justifyContent: 'center' as const }
+          : undefined,
+      ]}>
         {busy ? (
           <ActivityIndicator color={colors.textSecondary} size="small" />
         ) : trailing === 'chevron' ? (
