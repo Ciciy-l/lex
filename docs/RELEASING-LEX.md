@@ -139,6 +139,9 @@ when desktop uses unsigned mode. No workflow publishes a release automatically.
 The Android asset is named Lex-<version>-Android.apk and is covered by SHA256SUMS.txt.
 The reusable .github/workflows/mobile-android.yml uses hosted Linux, JDK 17, Expo
 prebuild and Gradle assembleRelease; it compiles arm64-v8a, armeabi-v7a and x86_64.
+The runner materializes the ignored config/endpoint.dev.json from its committed
+public example before bundling: Metro resolves static development imports even
+for a release bundle. This does not select development endpoints for production.
 PR runs compile the production JS/native release without signing, and never upload
 that unsigned APK as an installable artifact. This is a compile gate, not device testing.
 

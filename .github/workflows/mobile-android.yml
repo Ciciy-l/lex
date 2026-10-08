@@ -97,6 +97,16 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Verify mobile release contracts
         run: node --test scripts/__tests__/lex-mobile-release.test.mjs
+      - name: Materialize development manifest for Metro resolution
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Metro resolves static requires in env.ts before pruning __DEV__ code.
+          # This ignored local file is absent in a clean checkout. Use the public
+          # template; release endpoints still come from the production startup gate.
+          if [ ! -e config/endpoint.dev.json ]; then
+            cp config/endpoint.dev.json.example config/endpoint.dev.json
+          fi
       - name: Compile unsigned release for PR
         if: '!inputs.signed'
         env:
