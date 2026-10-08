@@ -2956,7 +2956,7 @@ export function ProviderConnectionDialog({
         >
           <Dialog.Portal>
             <Dialog.Overlay className="fixed inset-0 z-[10002] bg-[var(--overlay-modal)] data-[state=open]:animate-confirm-overlay-in data-[state=closed]:animate-confirm-overlay-out" />
-            <Dialog.Content
+            <Dialog.Content onPointerDownOutside={(event) => event.preventDefault()}
               aria-describedby="custom-provider-image-generation-reload-description"
               onOpenAutoFocus={(event) => {
                 event.preventDefault();
@@ -3091,7 +3091,7 @@ export function ModelPickerOverlay({
           )}
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         />
-        <Dialog.Content
+        <Dialog.Content onPointerDownOutside={(event) => event.preventDefault()}
           ref={contentRef}
           aria-describedby="custom-provider-model-picker-description"
           onEscapeKeyDown={(event) => {

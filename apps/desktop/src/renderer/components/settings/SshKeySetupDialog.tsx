@@ -211,7 +211,7 @@ export function SshKeySetupDialog({ hostId, hostInline, open, onOpenChange, onKe
           className="fixed inset-0 z-50"
           style={{ backgroundColor: 'var(--overlay-modal, rgba(0,0,0,0.4))' }}
         />
-        <Dialog.Content
+        <Dialog.Content onPointerDownOutside={(event) => event.preventDefault()}
           className="fixed left-1/2 top-1/2 z-50 w-[640px] max-w-[92vw] max-h-[88vh] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl flex flex-col"
           style={{
             backgroundColor: 'var(--surface-elevated, #ffffff)',
@@ -672,7 +672,7 @@ function UnlockDialog({ privateKeyPath, onClose, onSubmit }: UnlockDialogProps) 
           className="fixed inset-0 z-[60]"
           style={{ backgroundColor: 'var(--overlay-modal, rgba(0,0,0,0.5))' }}
         />
-        <Dialog.Content
+        <Dialog.Content onPointerDownOutside={(event) => event.preventDefault()}
           className="fixed left-1/2 top-1/2 z-[60] w-[420px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl"
           style={{
             backgroundColor: 'var(--surface-elevated, #ffffff)',
@@ -1053,7 +1053,7 @@ function AgentTroubleDialog({ state, onClose }: AgentTroubleDialogProps) {
           className="fixed inset-0 z-[60]"
           style={{ backgroundColor: 'var(--overlay-modal, rgba(0,0,0,0.5))' }}
         />
-        <Dialog.Content
+        <Dialog.Content onPointerDownOutside={(event) => event.preventDefault()}
           className="fixed left-1/2 top-1/2 z-[60] w-[520px] max-w-[92vw] max-h-[88vh] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl flex flex-col"
           style={{
             backgroundColor: 'var(--surface-elevated, #ffffff)',

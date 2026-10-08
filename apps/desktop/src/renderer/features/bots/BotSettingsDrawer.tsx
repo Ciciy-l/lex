@@ -90,7 +90,7 @@ export function BotSettingsDrawer() {
       <Dialog.Portal>
         {/* Keep portaled controls inside the overlay’s React tree so its scroll lock allows them. */}
         <Dialog.Overlay className="fixed inset-0 z-50 bg-[var(--overlay-modal)]">
-          <Dialog.Content
+          <Dialog.Content onPointerDownOutside={(event) => event.preventDefault()}
             aria-describedby={undefined}
             className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l border-[var(--border-default)] bg-[var(--surface)] outline-none"
           >

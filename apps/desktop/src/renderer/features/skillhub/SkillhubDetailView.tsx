@@ -756,7 +756,7 @@ function DiagnosisAgentPickerDialog({
           className="fixed inset-0 z-[10000] bg-[var(--overlay-modal)]"
           style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
         />
-        <Dialog.Content
+        <Dialog.Content onPointerDownOutside={(event) => event.preventDefault()}
           className={cn(
             'fixed left-1/2 top-1/2 z-[10000] w-full max-w-[420px] -translate-x-1/2 -translate-y-1/2',
             'rounded-xl border border-[var(--cmd-palette-border)] bg-[var(--cmd-palette-bg)] p-5',

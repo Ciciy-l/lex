@@ -4335,7 +4335,8 @@ function validateGhostManifestInput(value: unknown, preserveHistoricalTasks: boo
     if (agentRaw.schedule !== undefined && typeof agentRaw.schedule !== 'boolean') {
       return { ok: false, reason: 'agent.schedule 必须是布尔值' };
     }
-    if (agentRaw.background !== true && agentRaw.errand !== true && agentRaw.schedule !== true && agentRaw.tasks !== true) {
+    if (agentRaw.background !== true && agentRaw.errand !== true && agentRaw.schedule !== true && agentRaw.tasks !== true
+        && !(preserveHistoricalTasks && Object.prototype.hasOwnProperty.call(agentRaw, 'tasks'))) {
       return {
         ok: false,
         reason:
@@ -4345,7 +4346,9 @@ function validateGhostManifestInput(value: unknown, preserveHistoricalTasks: boo
     agent = {
       ...(agentRaw.background === true ? { background: true } : {}),
       ...(agentRaw.errand === true ? { errand: true } : {}),
-      ...(agentRaw.tasks === true ? { tasks: true } : {}),
+      ...(preserveHistoricalTasks && Object.prototype.hasOwnProperty.call(agentRaw, 'tasks')
+        ? { tasks: agentRaw.tasks as boolean }
+        : agentRaw.tasks === true ? { tasks: true } : {}),
       ...(agentRaw.schedule === true ? { schedule: true } : {}),
     };
   }

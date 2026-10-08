@@ -14653,8 +14653,8 @@ describe('CodexAgent MCP thread context hooks', () => {
     await handlers.mcpServerElicitation({ threadId: 'start-thread-id', turnId: 'raw-turn', serverName: 'cindy', mode: 'form',
       _meta: { codex_approval_kind: 'mcp_tool_call', tool_name: 'send', tool_params: { to: 'recipient' } }, message: 'Allow tool call', requestedSchema: {},
     });
-    expect(review.mock.calls[0]?.[0].userIntent).toContain('Do not send.');
-    expect(review.mock.calls[0]?.[0].userIntent).not.toContain('SEND THE REPORT');
+    expect(intentText(review.mock.calls[0]?.[0].userIntent)).toContain('Do not send.');
+    expect(intentText(review.mock.calls[0]?.[0].userIntent)).not.toContain('SEND THE REPORT');
     await handle.close();
   });
 
@@ -34347,3 +34347,5 @@ describe('Codex native model context overrides', () => {
     await handle.close();
   });
 });
+
+function intentText(value: unknown): string { return typeof value === "string" ? value : JSON.stringify(value); }

@@ -336,7 +336,7 @@ describe('PiAgent.startSession failure cleanup (mocked pi process)', () => {
     const ownRunRoot = path.join(agentHome, 'runtime', 'pi-subagent-runs', 's1');
     let publish!: () => void;
     const ready = new Promise<void>((resolve) => { publish = resolve; });
-    const list = mockRunDiscovery().mockImplementation(async (root) => {
+    const list = vi.spyOn(piSubagentRuns, 'listPiSubagentRuns').mockImplementation(async (root) => {
       if (root !== ownRunRoot) return [];
       await ready;
       return [run];

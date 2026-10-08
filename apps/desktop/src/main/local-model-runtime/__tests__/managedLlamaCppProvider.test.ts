@@ -149,7 +149,7 @@ describe('managed llama.cpp provider', () => {
     const provider = buildManagedLlamaCppProvider(models, undefined, catalog);
     expect(provider.runtimes.pi!.models[0]!.name).toBe('Shared catalog name');
     expect(isManagedLlamaCppProvider(provider)).toBe(true);
-    expect(Object.keys(provider.runtimes)).toEqual(['pi', 'codex', 'claude-code']);
+    expect(Object.keys(provider.runtimes)).toEqual(['pi', 'codex', 'claude-code', 'omp']);
     provider.runtimes.pi!.models[0]!.name = 'My model';
     provider.runtimes.pi!.models[0]!.defaultEnabled = false;
     const updated = buildManagedLlamaCppProvider(models, provider);

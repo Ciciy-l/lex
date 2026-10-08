@@ -127,7 +127,7 @@ export function BillingCheckoutDialog({
     >
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-[10000] bg-[var(--overlay-modal)]" />
-        <Dialog.Content
+        <Dialog.Content onPointerDownOutside={(event) => event.preventDefault()}
           className={cn(
             'fixed left-1/2 top-1/2 z-[10001] w-[calc(100vw-40px)] max-w-[620px]',
             '-translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl',

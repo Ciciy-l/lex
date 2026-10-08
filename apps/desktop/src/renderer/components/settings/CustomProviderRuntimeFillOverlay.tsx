@@ -202,7 +202,7 @@ export function CustomProviderRuntimeFillOverlay({
           )}
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         />
-        <Dialog.Content
+        <Dialog.Content onPointerDownOutside={(event) => event.preventDefault()}
           aria-describedby="custom-provider-runtime-fill-description"
           onOpenAutoFocus={(event) => {
             event.preventDefault();

@@ -58,8 +58,8 @@ function fixture() {
       INSERT INTO orca_workers VALUES ('worker','team','sample');
       INSERT INTO orca_teams VALUES ('team','lead','active');
       INSERT INTO plugin_task_requests VALUES ('lead','','plugin','create','{"teamPlan":{"task":"scope","items":[]}}',1);`);
-  db.exec(readFileSync(new URL('../../../../drizzle/0122_auto_review_projections.sql', import.meta.url), 'utf8'));
-  const companion = readFileSync(new URL('../../../../drizzle/scripts/0122_auto_review_projections.ts', import.meta.url), 'utf8');
+  db.exec(readFileSync(new URL('../../../../drizzle/0115_outstanding_the_twelve.sql', import.meta.url), 'utf8'));
+  const companion = readFileSync(new URL('../../../../drizzle/scripts/0116_auto_review_projection_triggers.ts', import.meta.url), 'utf8');
   const module = { exports: {} as { run: (db: Database.Database) => void } };
   new Function('module', companion)(module);
   module.exports.run(db);

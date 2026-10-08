@@ -45,7 +45,7 @@ const MAX_REVIEW_OUTPUT_CHARS = 1_024;
 // ChatInput permits ten external directory grants shared across read-only and writable
 // roots. Keep those ten plus the primary workspace visible to the reviewer.
 const MAX_WORKSPACE_ROOTS = 11;
-const MAX_WORKSPACE_ROOT_CHARS = 512;
+const MAX_WORKSPACE_ROOT_CHARS = 480;
 const REVIEW_TIMEOUT = Symbol('auto-review-timeout');
 
 /**

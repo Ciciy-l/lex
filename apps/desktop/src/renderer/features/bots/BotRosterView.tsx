@@ -318,7 +318,7 @@ export function BotRosterView({ onCreated, onClose, restoreFocus, inline = false
     >
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-[var(--overlay-modal)]" />
-        <Dialog.Content
+        <Dialog.Content onPointerDownOutside={(event) => event.preventDefault()}
           aria-describedby={undefined}
           onCloseAutoFocus={(event) => {
             if (restoreFocus) {

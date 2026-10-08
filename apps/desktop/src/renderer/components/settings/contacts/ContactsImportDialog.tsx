@@ -163,7 +163,7 @@ export function ContactsImportDialog({ open, onOpenChange }: Props) {
         />
         <Dialog.Content
           aria-describedby={undefined}
-          onPointerDownOutside={(e) => e.preventDefault()}
+          onPointerDownOutside={(event) => event.preventDefault()}
           className={cn(
             'fixed left-1/2 top-1/2 z-[10001] -translate-x-1/2 -translate-y-1/2',
             'flex max-h-[76vh] w-[560px] max-w-[92vw] flex-col overflow-hidden rounded-xl',

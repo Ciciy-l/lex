@@ -167,7 +167,7 @@ export function PlanChangeTargetDialog({
     <Dialog.Root open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-[9990] bg-[var(--overlay-modal)]" />
-        <Dialog.Content
+        <Dialog.Content onPointerDownOutside={(event) => event.preventDefault()}
           aria-describedby={undefined}
           className={cn(
             'fixed left-1/2 top-1/2 z-[9991] flex max-h-[min(640px,calc(100vh-48px))]',
@@ -503,7 +503,7 @@ export function PlanChangeStatusDialog({
     <Dialog.Root open={state.open} onOpenChange={(open) => !open && !busy && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-[10000] bg-[var(--overlay-modal)]" />
-        <Dialog.Content
+        <Dialog.Content onPointerDownOutside={(event) => event.preventDefault()}
           className={cn(
             'fixed left-1/2 top-1/2 z-[10001] w-[calc(100vw-40px)] max-w-[600px]',
             '-translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl',

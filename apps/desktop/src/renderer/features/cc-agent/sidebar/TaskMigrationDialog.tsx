@@ -314,7 +314,7 @@ export function TaskMigrationDialog({
           className="fixed inset-0 z-[10000] bg-[var(--overlay-modal)]"
           onClick={(e) => e.stopPropagation()}
         />
-        <Dialog.Content
+        <Dialog.Content onPointerDownOutside={(event) => event.preventDefault()}
           className="fixed left-1/2 top-1/2 z-[10000] w-[calc(100%-32px)] max-w-[480px] -translate-x-1/2 -translate-y-1/2 rounded-xl bg-[var(--confirm-bg)] p-4 shadow-[var(--confirm-shadow)] [-webkit-app-region:no-drag]"
           onClick={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}

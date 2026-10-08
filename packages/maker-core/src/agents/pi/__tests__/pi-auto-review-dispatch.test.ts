@@ -4168,8 +4168,8 @@ describe('pi auto-review dispatch & spawn config (mocked pi process)', () => {
     });
     firePermissionRequest('raw-channel', 'unknown_sender', { action: 'send' });
     await waitForResponse('raw-channel');
-    expect(review.mock.calls[0]?.[0].userIntent).toContain('Do not send.');
-    expect(review.mock.calls[0]?.[0].userIntent).not.toContain('SEND THE REPORT');
+    expect(intentText(review.mock.calls[0]?.[0].userIntent)).toContain('Do not send.');
+    expect(intentText(review.mock.calls[0]?.[0].userIntent)).not.toContain('SEND THE REPORT');
     await handle.close();
   });
 
@@ -5087,3 +5087,5 @@ describe('pi auto-review dispatch & spawn config (mocked pi process)', () => {
     });
   });
 });
+
+function intentText(value: unknown): string { return typeof value === "string" ? value : JSON.stringify(value); }

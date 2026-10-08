@@ -3513,6 +3513,9 @@ export class ClaudeCodeAgent extends BaseAgent {
                   : 'This downstream source was not selected.',
               };
             }
+            if (isPlanToolBlocked(remoteToolName)) {
+              return { kind: 'permission', behavior: 'deny', reason: 'The current Plan turn is read-only.' };
+            }
             // Auto allow/block do not need UI, including MCP operations.
             const canReviewRemoteWithoutUi = mutablePermissionMode === 'auto';
             if (!interactionResolver && !canReviewRemoteWithoutUi) {

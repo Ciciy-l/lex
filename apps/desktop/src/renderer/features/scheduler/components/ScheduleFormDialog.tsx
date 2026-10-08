@@ -557,7 +557,7 @@ export function ScheduleFormDialog({
         />
         <Dialog.Content
           aria-describedby={undefined}
-          onPointerDownOutside={(e) => e.preventDefault()}
+          onPointerDownOutside={(event) => event.preventDefault()}
           onInteractOutside={(e) => e.preventDefault()}
           onEscapeKeyDown={(e) => submitting && e.preventDefault()}
           className={cn(
