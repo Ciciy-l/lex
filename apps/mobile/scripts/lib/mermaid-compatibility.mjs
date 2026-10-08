@@ -9,6 +9,21 @@ const target = ['es2019', 'chrome74'];
 const compatibilityEntry = String.raw`
 import clone from '@ungap/structured-clone';
 if (typeof globalThis.structuredClone !== 'function') globalThis.structuredClone = clone;
+if (typeof URL.canParse !== 'function') {
+  Object.defineProperty(URL, 'canParse', {
+    configurable: true, writable: true,
+    value: function (url, base) {
+      if (arguments.length === 0) throw new TypeError('URL.canParse requires a URL');
+      function toString(value) {
+        if (typeof value === 'symbol') throw new TypeError('Cannot convert a Symbol to a string');
+        return String(value);
+      }
+      var input = toString(url);
+      var resolvedBase = base === undefined ? undefined : toString(base);
+      try { new URL(input, resolvedBase); return true; } catch (error) { return false; }
+    }
+  });
+}
 if (typeof Object.hasOwn !== 'function') {
   Object.defineProperty(Object, 'hasOwn', {
     configurable: true, writable: true,
