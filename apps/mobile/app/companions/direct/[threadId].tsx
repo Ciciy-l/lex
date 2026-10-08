@@ -14,7 +14,7 @@ import { useAuth } from '@/auth/AuthContext';
 import { useDeviceLink } from '@/device-link/DeviceLinkContext';
 import { startFocusedTopicSubscription } from '@/device-link/focusedTopicSubscription';
 import {
-  cachedBotItem,
+  cachedBotDisplayItem as cachedBotItem,
   readRemoteResourceSnapshot,
   remoteResourceCacheRevision,
   subscribeRemoteResourceCache,

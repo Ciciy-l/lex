@@ -136,6 +136,11 @@ export interface ThemeColors {
   /** 自动审批权限模式强调色(Auto Approval 蓝 #417CDD,L=D 同值,设计定稿 2026-07-17;取代 M2 的 #1D4ED8/#19D2C1 拆值) */
   permAutoAccent: string;
   /**
+   * 伙伴列表未读点(信息蓝 #417CDD,L=D 同值)。对齐桌面 `--bot-unread-bg`(DESIGN.md「Bot Unread Badge」):
+   * 表示 IM 未读语义,只用于伙伴列表行(伙伴与群聊)的未读点,不是 CTA、不是状态色,不得挪作他用。
+   */
+  botUnread: string;
+  /**
    * 错误说明文案的黑白系前景 —— **刻意跟随 textPrimary,不是红色**(黑白反色设计里成段
    * 错误文案不点红,错误语义由文案与上下文承担;"error" 是历史命名)。勿用于按钮文字
    * (破坏性按钮用 destructive)、勿用于状态指示(用 statusError / statusRecording)。
@@ -433,7 +438,8 @@ export const lightColors: ThemeColors = {
   statusError: '#D91F37',
   statusDone: '#2AAE5B',
   permAutoAccent: '#417CDD',
-  errorText: '#3C3F43',
+  botUnread: '#417CDD',
+  errorText: '#0F0F0F',
   destructive: '#f43d3f',
   errorBorder: '#686B72',
   // overlay:遮罩双模式恒深(light 原 0.24 太浅近白;0.50 实机过重,用户定稿 0.35,2026-07-21)。
@@ -521,7 +527,8 @@ export const darkColors: ThemeColors = {
   statusError: '#D91F37',
   statusDone: '#2AAE5B',
   permAutoAccent: '#417CDD',
-  errorText: '#D4D4D4',
+  botUnread: '#417CDD',
+  errorText: '#EDEDED',
   destructive: '#f43d3f',
   errorBorder: '#BFC1C4',
   overlay: 'rgba(0, 0, 0, 0.45)',

@@ -1021,6 +1021,13 @@
     },
     "viewResult": "View Result",
     "noWrittenResult": "No written result.",
-    "noCreateHosts": "No compatible computer is available. Open Cindy on a computer and sign in with the same account to create a teammate."
+    "noCreateHosts": "No compatible computer is available. Open Cindy on a computer and sign in with the same account to create a teammate.",
+    "createTeammate": "New teammate",
+    "createMenu": "New",
+    "searchWithGroups": "Search teammates and groups",
+    "awaiting": "Needs your OK",
+    "emptyCopyCreate": "Teammates remember what you talked about and can get things done on your computer.",
+    "taskResult": "Task result",
+    "collapseResult": "Hide result"
   }
 }

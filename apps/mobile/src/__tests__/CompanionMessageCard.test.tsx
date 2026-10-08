@@ -19,14 +19,33 @@ vi.mock('react-native', () => ({
     currentState: 'active',
     addEventListener: () => ({ remove() {} }),
   },
-  View: ({ children }: any) => createElement('div', {}, children),
-  Pressable: ({ children, onPress, disabled }: any) =>
+  View: ({ children, onLayout }: any) => {
+    useEffect(() => {
+      if (!onLayout) return;
+      const event = { nativeEvent: { layout: { width: 128, height: 32, x: 0, y: 0 } } as
+        | { layout: { width: number; height: number; x: number; y: number } }
+        | null };
+      onLayout(event);
+      event.nativeEvent = null;
+    });
+    return createElement('div', {}, children);
+  },
+  Pressable: ({ children, onPress, disabled, testID }: any) =>
     createElement(
       'button',
-      { onClick: onPress, disabled },
+      { onClick: onPress, disabled, 'data-testid': testID },
       typeof children === 'function' ? children({ pressed: false }) : children,
     ),
   StyleSheet: { create: (v: any) => v, hairlineWidth: 1 },
+  ActivityIndicator: () => createElement('i', { 'data-testid': 'spinner' }),
+  Animated: {
+    Value: class { setValue() {} stopAnimation() {} interpolate() { return 0; } },
+    View: ({ children, testID }: any) => createElement('div', { 'data-testid': testID }, children),
+    timing: () => ({ start() {}, stop() {} }),
+    sequence: () => ({ start() {}, stop() {} }),
+    loop: () => ({ start() {}, stop() {} }),
+  },
+  Easing: { inOut: () => () => 0, ease: () => 0, bezier: () => () => 0 },
 }));
 vi.mock('@/utils/useGuardedPush', () => ({ useGuardedPush: () => h.push }));
 vi.mock('expo-router', () => ({
@@ -41,8 +60,9 @@ vi.mock('react-i18next', async (importOriginal) => ({
 vi.mock('@/components/AppText', () => ({
   Text: ({ children }: any) => createElement('span', {}, children),
 }));
-vi.mock('@/theme', () => ({
-  useThemedStyles: () => ({}),
+vi.mock('@/theme', async () => ({
+  ...await vi.importActual<typeof import('@/theme/tokens')>('@/theme/tokens'),
+  useThemedStyles: () => ({ note: {} }),
   useTheme: () => ({ colors: {} }),
 }));
 vi.mock('lucide-react-native', () => ({
@@ -52,6 +72,12 @@ vi.mock('lucide-react-native', () => ({
   GitMerge: () => createElement('i', { 'data-testid': 'merged-pr' }),
   GitPullRequestClosed: () => null,
   GitPullRequestDraft: () => null,
+  Megaphone: () => null,
+  TriangleAlert: () => null,
+  Layers: () => null,
+  CircleAlert: () => null,
+  CircleCheck: () => null,
+  ChevronDown: () => null,
 }));
 vi.mock('@/auth/AuthContext', () => ({
   useAuth: () => ({ accountGeneration: h.accountGeneration }),
@@ -74,6 +100,7 @@ vi.mock('@/device-link/DeviceLinkContext', () => ({
     };
   },
 }));
+vi.mock('@/hooks/useReduceMotion', () => ({ useReduceMotionEnabled: () => true }));
 import { CompanionMessageCard } from '@/session/CompanionMessageCard';
 import { _clearRemotePathVerdictCache } from '@/session/remotePathVerdict';
 import type { NormalizedRemoteMessage } from '@/session/messageNormalize';
@@ -125,12 +152,46 @@ afterEach(async () => {
   node.remove();
   vi.useRealTimers();
 });
+const openEntry = () => node.querySelector<HTMLButtonElement>('[data-testid="companion.taskCard.open"]');
+it('opens the task from the whole card and keeps stop as a small action while it runs', async () => {
+  await render();
+  expect(openEntry()?.disabled).toBe(false);
+  expect(node.textContent).not.toContain('devices.companions.openTask');
+  expect(node.textContent).toContain('devices.companions.stopTask');
+});
+
+it('keeps the task card when the host omits delegations or sends a broken status', async () => {
+  h.invoke.mockResolvedValue({ ok: true });
+  await render();
+  expect(node.textContent).toContain('devices.companions.status.unknown');
+  expect(node.textContent).not.toContain('devices.companions.stopTask');
+  h.invoke.mockResolvedValue({
+    ok: true,
+    delegations: [{ id: 'job', status: 'not-a-status', title: 'Report', childSessionId: 'child' }],
+  });
+  await render();
+  expect(node.textContent).toContain('devices.companions.status.unknown');
+  expect(openEntry()?.disabled).toBe(false);
+});
+
+it('isolates a broken private-chat card so the session can keep rendering', async () => {
+  const broken = {
+    ...message,
+    key: 'broken-direct',
+    companion: { kind: 'direct', meta: null },
+  } as unknown as NormalizedRemoteMessage;
+  const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+  await act(async () => root.render(createElement(CompanionMessageCard, { message: broken })));
+  consoleError.mockRestore();
+  expect(node.textContent).toBe('devices.companions.actionFailed');
+});
+
 it('reads, opens and stops the task on its source computer, then disables stop offline', async () => {
   await render();
   expect(h.invoke).toHaveBeenCalledWith('home', 'maker:bot-delegations:list', ['parent']);
   const button = (label: string) =>
     [...node.querySelectorAll('button')].find((b) => b.textContent === label)!;
-  await act(async () => button('devices.companions.openTask').click());
+  await act(async () => openEntry()!.click());
   expect(h.push).toHaveBeenCalledWith({
     pathname: '/sessions/[sessionId]',
     params: { deviceId: 'home', sessionId: 'child' },
@@ -491,9 +552,12 @@ it('opens a stable completed result inline and routes its artifact to the child 
     } },
   } as NormalizedRemoteMessage;
   await act(async () => root.render(createElement(CompanionMessageCard, { message: resultMessage })));
-  expect(node.textContent).not.toContain('Second execution result');
-  await act(async () => node.querySelector('button')!.click());
+  // Collapsed: a short preview only; the files come with the full result.
+  const fileButton = () => [...node.querySelectorAll('button')].find(button => button.textContent === 'result.pdf');
   expect(node.textContent).toContain('Second execution result');
+  expect(fileButton()).toBeUndefined();
+  await act(async () => node.querySelector<HTMLButtonElement>('[data-testid="companion.taskResult.toggle"]')!.click());
+  expect(fileButton()).toBeDefined();
   const file = [...node.querySelectorAll('button')].find(button => button.textContent === 'result.pdf')!;
   await act(async () => file.click());
   expect(h.push).toHaveBeenCalledWith({ pathname: '/files/preview/[sessionId]', params: { sessionId: 'child', deviceId: 'home', absPath: '/reports/result.pdf' } });

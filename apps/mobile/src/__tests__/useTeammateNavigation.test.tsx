@@ -104,6 +104,7 @@ describe('header/home shared navigation', () => {
     await render();
     let change!: Promise<void>;
     await act(async () => { change = result.setMode('teammates'); });
+    expect(result.hydrated).toBe(false);
     await act(async () => { finish(JSON.stringify({ mode: 'tasks', lastTeammate: teammateIdentity(teammate) })); await change; });
     expect(result.mode).toBe('teammates'); expect(result.lastTeammate).toEqual(teammateIdentity(teammate));
   });

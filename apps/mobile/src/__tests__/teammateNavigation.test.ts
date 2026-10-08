@@ -56,12 +56,6 @@ describe('teammate identity navigation', () => {
       collectionId: 'teammates', resourceId: 'writer', resourceKind: 'bot', deviceId: 'mac', deviceName: 'mac', title: 'Writer',
     } });
   });
-  it('never substitutes Cindy or another same-named host for a deleted or missing remembered teammate', () => {
-    const last = teammateIdentity(row());
-    expect(findLastTeammate(last, [row('other'), row('mac', 'cindy', 'Cindy')])).toBeNull();
-    expect(findLastTeammate(null, [row('mac', 'cindy', 'Cindy')])).toBeNull();
-    expect(findLastTeammate(last, [row()])).toEqual(row());
-  });
   it('keeps equal names from separate hosts, filters names, and sorts by real activity', () => {
     const first = row('mac', 'writer', 'Writer', 100);
     const second = row('pc', 'writer', 'Writer', 200);

@@ -9,9 +9,12 @@ const h = vi.hoisted(() => ({
   focused: true, drawer: {} as any, list: {} as any, accounts: {} as any, push: vi.fn(),
   auth: { user: { id: 'owner' }, accountGeneration: 1, logout: vi.fn(), beginAddAccount: vi.fn() },
   nav: { hydrated: true, lastTeammate: null as LastTeammateIdentity | null, mode: 'teammates' as HomeMode,
-    saveFailed: false, openTeammate: vi.fn(), rememberTeammate: vi.fn(), setMode: vi.fn() },
+    saveFailed: false, rememberTeammate: vi.fn(), openTeammate: vi.fn(), setMode: vi.fn() },
   roster: { createTargets: [], authoritative: true, items: [] as HostedRemoteCollectionItem[], loading: false, refreshing: false, error: null as string | null,
-    isOnline: vi.fn(() => true), refresh: vi.fn() },
+    isOnline: vi.fn(() => true), refresh: vi.fn(), groupTargets: [] as { deviceId: string; deviceName: string }[] },
+  groups: { items: [] as HostedRemoteCollectionItem[], supported: false, isOnline: () => true, refresh: vi.fn() },
+  groupTargetsSeen: [] as unknown[],
+  create: {} as any,
 }));
 vi.mock('react-native', async () => {
   const { createElement: el } = await import('react');
@@ -27,13 +30,21 @@ vi.mock('@/auth/AuthContext', () => ({ useAuth: () => h.auth }));
 vi.mock('@/theme', () => ({ useThemedStyles: () => ({}), useTheme: () => ({ colors: {} }) }));
 vi.mock('@/utils/useGuardedPush', () => ({ useGuardedPush: () => h.push }));
 vi.mock('@/device-link/remoteStatus', () => ({ formatRemoteError: String }));
-vi.mock('@/session/TeammateCreateButton', () => ({ TeammateCreateButton: () => null }));
+vi.mock('@/session/TeammateCreateButton', () => ({ TeammateCreateButton: (props: any) => { if (props.appearance !== 'cta') h.create = props; return null; } }));
 vi.mock('@/session/HomeChromeDrawer', () => ({ HomeChromeDrawer: (props: unknown) => { h.drawer = props; return null; } }));
 vi.mock('@/session/AccountSwitcherSheet', () => ({ AccountSwitcherSheet: (props: unknown) => { h.accounts = props; return null; } }));
 vi.mock('@/session/HomeHeaderGlassButton', () => ({ HomeHeaderGlassButton: () => null }));
 vi.mock('@/session/TeammateList', () => ({ TeammateList: (props: unknown) => { h.list = props; return null; } }));
 vi.mock('@/session/useTeammateRoster', () => ({ useTeammateRoster: () => ({ ...h.roster }) }));
-vi.mock('@/session/useTeammateNavigation', () => ({ useTeammateNavigation: () => ({ ...h.nav }) }));
+vi.mock('@/session/useBotGroupRoster', () => ({ useBotGroupRoster: (targets: unknown) => { h.groupTargetsSeen.push(targets); return h.groups; } }));
+vi.mock('@/session/useTeammateNavigation', async original => {
+  const actual = await original<typeof import('@/session/useTeammateNavigation')>();
+  return { useTeammateNavigation: () => h.realNavigation ? actual.useTeammateNavigation() : { ...h.nav } };
+});
+vi.mock('@react-native-async-storage/async-storage', () => ({ default: {
+  getItem: async () => h.stored, setItem: async (_key: string, value: string) => { h.stored = value; },
+} }));
+vi.mock('@/session/HomeSurface', () => ({ MobileHome: (props: unknown) => { h.tasks = props; return null; } }));
 vi.mock('@/session/remoteSessionStore', () => ({ remoteSessionStore: { subscribe: () => () => {}, getSessions: () => [] } }));
 import { TeammateHomeScreen } from '@/session/TeammateHomeScreen';
 import { teammateIdentity } from '@/session/teammateNavigation';
@@ -43,6 +54,8 @@ const teammate: HostedRemoteCollectionItem = { key: 'mac:bot', host: { deviceId:
 let root: Root | undefined;
 async function render() { root ??= createRoot(document.createElement('div')); await act(async () => root!.render(createElement(TeammateHomeScreen))); }
 beforeEach(() => {
+  h.realNavigation = false; h.stored = null;
+  h.auth.user = { id: `owner-${++serial}` }; h.auth.accountGeneration = serial;
   vi.clearAllMocks(); h.focused = true; h.nav.lastTeammate = teammateIdentity(teammate); h.roster.items = [teammate];
   h.nav.mode = 'teammates'; h.roster.authoritative = true;
   h.roster.loading = false; h.roster.error = null; h.roster.isOnline.mockReturnValue(true);
@@ -80,6 +93,10 @@ describe('teammate home entry', () => {
     if (action === 'mode') { h.nav.mode = 'tasks'; await render(); }
     h.roster.authoritative = true; h.roster.isOnline.mockReturnValue(true); await render();
     expect(h.nav.openTeammate).not.toHaveBeenCalled();
+    expect(h.roster.refresh).toHaveBeenCalledTimes(1);
+    // Choosing a row still opens it.
+    await act(async () => h.list.onSelect(teammate));
+    expect(h.nav.openTeammate).toHaveBeenCalledExactlyOnceWith(teammate);
   });
   it('opens a teammate only after explicit selection', async () => {
     await render();
@@ -97,5 +114,67 @@ describe('teammate home entry', () => {
     await act(async () => { h.drawer.onOpenSearch(); h.drawer.onClosed(); }); expect(h.list.autoFocusSearch).toBe(true);
     h.auth.logout.mockResolvedValue(undefined); await act(async () => h.drawer.onLogout()); expect(h.auth.logout).toHaveBeenCalledOnce();
     expect(h.replace).toHaveBeenCalledWith('/login');
+  });
+});
+
+// Exercise the real page, shared preferences, mode panes and navigation together.
+// Only native chrome, list rendering, storage and the router boundary are replaced.
+describe('explicit sidebar entry through the home page', () => {
+  async function renderHome() {
+    root ??= createRoot(document.createElement('div'));
+    await act(async () => root!.render(createElement(HomeScreen)));
+  }
+  it.each([1, 2])('keeps a %i-companion roster open across refresh and remount until a row is chosen', async count => {
+    h.realNavigation = true;
+    h.stored = JSON.stringify({ mode: 'tasks', lastTeammate: teammateIdentity(teammate) });
+    const second = { ...teammate, key: 'mac:second', item: { ...teammate.item, ref: { ...teammate.item.ref, id: 'second' } } };
+    const items = count === 1 ? [teammate] : [teammate, second];
+    h.roster.items = []; h.roster.loading = true;
+    await renderHome();
+    await act(async () => h.tasks.onModeChange('teammates'));
+    h.roster.items = items; h.roster.loading = false;
+    await renderHome();
+    expect(h.push).not.toHaveBeenCalled();
+    expect(h.list.items).toEqual(items);
+    await act(async () => h.list.onRefresh()); await renderHome();
+    act(() => root!.unmount()); root = undefined;
+    await renderHome();
+    expect(h.push).not.toHaveBeenCalled();
+    await act(async () => h.list.onSelect(items.at(-1)));
+    expect(h.push).toHaveBeenCalledOnce();
+    expect(h.push.mock.calls[0][0].params.resourceId).toBe(items.at(-1)!.item.ref.id);
+  });
+  it('keeps an untouched cold startup on the roster instead of reopening the last companion', async () => {
+    h.realNavigation = true;
+    h.stored = JSON.stringify({ mode: 'teammates', lastTeammate: teammateIdentity(teammate) });
+    await renderHome();
+    expect(h.push).not.toHaveBeenCalled();
+  });
+});
+
+describe('group chats in the teammate list', () => {
+  const group: HostedRemoteCollectionItem = { key: 'mac:g1', host: { deviceId: 'mac', deviceName: 'Mac' },
+    item: { ref: { collectionId: 'bot-groups', kind: 'bot-group', id: 'g1' }, revision: '1', display: { title: '官网' }, links: [] } };
+  afterEach(() => { h.roster.groupTargets = []; h.groups = { items: [], supported: false, isOnline: () => true, refresh: vi.fn() }; h.create = {}; });
+
+  it('leaves group chats out when no computer supports them (older desktops)', async () => {
+    h.nav.lastTeammate = null; await render();
+    expect(h.list.groups).toBeUndefined();
+  });
+
+  it('mixes the discovered computers’ groups into the list, opens one on its computer and creates from the + menu', async () => {
+    h.nav.lastTeammate = null;
+    h.roster.groupTargets = [{ deviceId: 'mac', deviceName: 'Mac' }, { deviceId: 'pc', deviceName: 'PC' }];
+    h.groups = { items: [group], supported: true, isOnline: (host: { deviceId: string }) => host.deviceId === 'mac', refresh: vi.fn() } as any;
+    await render();
+    expect(h.groupTargetsSeen.at(-1)).toBe(h.roster.groupTargets);
+    expect(h.list.groups.items).toEqual([group]);
+    // Only online computers can host a new group.
+    expect(h.create.groupTargets).toEqual([{ deviceId: 'mac', deviceName: 'Mac' }]);
+    await act(async () => h.list.groups.onSelect(group));
+    expect(h.push).toHaveBeenLastCalledWith({ pathname: '/companions/groups/[groupId]', params: { groupId: 'g1', deviceId: 'mac', deviceName: 'Mac' } });
+    await act(async () => h.create.onGroupCreated({ deviceId: 'pc', deviceName: 'PC' }, 'g2'));
+    expect(h.push).toHaveBeenLastCalledWith({ pathname: '/companions/groups/[groupId]', params: { groupId: 'g2', deviceId: 'pc', deviceName: 'PC' } });
+    expect(h.nav.openTeammate).not.toHaveBeenCalled();
   });
 });

@@ -15,7 +15,10 @@ vi.mock('../session/remoteSessionStore', () => ({ remoteSessionStore: {
   getSessionLiveActivity: () => h.activity,
   subscribe: (listener: () => void) => { h.listener = listener; return () => {}; },
 } }));
-import { useCompanionWorkingLabel } from '../session/CompanionWorkingStatus';
+vi.mock('@/hooks/useReduceMotion', () => ({ useReduceMotionEnabled: () => true }));
+vi.mock('@/session/CompanionPresenceRing', () => ({ CompanionPresenceRing: () => null }));
+vi.mock('@/session/ThinkingDots', () => ({ ThinkingDots: () => null }));
+import { useCompanionDisplayResource, useCompanionWorkingLabel } from '../session/CompanionWorkingStatus';
 const messages: RemoteMessage[] = [];
 function Probe() {
   return useCompanionWorkingLabel({ sessionId: 'chat', deviceId: 'host', botId: 'bot', active: true, messages, reconnectAttempt: null });

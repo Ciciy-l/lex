@@ -85,7 +85,9 @@ describe('任务消息内存治理页面接线', () => {
   it('schedule 关闭翻历史入口，页面工作租约覆盖发送与附件状态', () => {
     expect(screen).toContain('if (isScheduleDetail) return;');
     expect(screen).toContain('hasOlderMessages && !isScheduleDetail');
-    expect(screen).toContain('canLoadEarlier={(historyView.snapshot.ready ? historyView.snapshot.hasMore : hasOlderMessages && messages.length > 0) && !isScheduleDetail}');
+    expect(screen).toMatch(/const canLoadEarlierHistory = \(historyView\.snapshot\.ready \? historyView\.snapshot\.hasMore : hasOlderMessages && messages\.length > 0\)\s*&& !isScheduleDetail;/);
+    expect(screen).toContain('canLoadEarlier={canLoadEarlierHistory}');
+    expect(screen).toContain('enabled: appStateActive && remoteHistoryAvailable && !isScheduleDetail,');
     expect(screen).toContain('remoteSessionStore.acquireSessionMessageWork(sessionId, pageHasMessageWork)');
     expect(screen).toContain('remoteSessionStore.acquireSessionMessageWork(sessionId, true)');
     expect(outboxBridge).toContain('remoteSessionStore.acquireSessionMessageWork(');

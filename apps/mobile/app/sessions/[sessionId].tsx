@@ -1,3 +1,4 @@
+import { useCompanionDisplayResource } from '@/session/CompanionWorkingStatus';
 import { MountOnFirstOpen } from '@/session/MountOnFirstOpen';
 import { companionConversationItems } from '@/session/companionConversationPresentation';
 import { HomeHeaderGlassButton } from '@/session/HomeHeaderGlassButton';
@@ -15,6 +16,7 @@ import { getActiveMobileSessionRealm } from '@/config/env';
 import { FailedScheduleNotice } from '@/session/FailedScheduleNotice';
 import { shouldShowFailedScheduleNotice, type FailedScheduleRunSnapshot } from '@cindy/maker-shared/schedule-model';
 import { CompanionHeader } from '@/session/CompanionHeader';
+import { useHiddenHistoryChase } from '@/session/hiddenHistoryChase';
 import { collectCompanionPluginInvocations } from '@/session/pluginInvocations';
 import { CompanionWorkingStatus, useCompanionWorkingLabel } from '@/session/CompanionWorkingStatus';
 import { useRemoteResourceSession } from '@/session/useRemoteResourceSession';
@@ -693,6 +695,13 @@ const SESSION_ACTION_TEST_IDS = {
   usage: 'session.usageButton',
 } satisfies Record<SessionActionStripActionId, string>;
 const COMPOSER_CONTROL_HIT_SLOP = { bottom: 8, left: 8, right: 8, top: 8 };
+/**
+ * The companion chat draws its own header row (back, identity, settings). Hide the native bar the
+ * task header may have configured while the entry was still resolving, so its title and sync
+ * spinner never sit on top of the companion identity. Stable object: expo-router applies screen
+ * options in a layout effect.
+ */
+const COMPANION_NATIVE_HEADER_OPTIONS = { headerShown: false, headerTitle: '' } as const;
 const COMPOSER_INPUT_SINGLE_LINE_CONTENT_HEIGHT = MOBILE_COMPOSER_INPUT_SINGLE_LINE_HEIGHT;
 const COMPOSER_INPUT_MULTILINE_CONTENT_THRESHOLD = 34;
 const COMPOSER_INPUT_LINE_HEIGHT = MOBILE_COMPOSER_INPUT_LINE_HEIGHT;
@@ -5728,7 +5737,21 @@ export default function SessionScreen() {
     () => mergePendingSendItems(companionChat ? companionConversationItems(renderWindow.items) : renderWindow.items, pendingSendItems, optimisticClientIds),
     [companionChat, pendingSendItems, renderWindow.items, optimisticClientIds],
   );
-  const companionWorkingLabel = useCompanionWorkingLabel({ sessionId, deviceId, botId: companionResource?.ref.id ?? '',
+  const canLoadEarlierHistory = (historyView.snapshot.ready ? historyView.snapshot.hasMore : hasOlderMessages && messages.length > 0)
+    && !isScheduleDetail;
+  // A window of only hidden rows (a teammate's scheduled prompts) renders nothing and cannot scroll back:
+  // page older history until something shows. See hiddenHistoryChase.ts.
+  const chasingHiddenHistory = useHiddenHistoryChase({
+    scope: `${auth.accountGeneration}:${deviceId}:${sessionId}`,
+    enabled: appStateActive && remoteHistoryAvailable && !isScheduleDetail,
+    visibleCount: messageListItems.length,
+    canLoadEarlier: canLoadEarlierHistory,
+    loading: historyView.snapshot.ready ? historyView.snapshot.loading : loading || loadingEarlier,
+    cursor: historyView.snapshot.ready ? historyView.snapshot.nextCursor : oldestLoadedMessageCursor,
+  }, () => { void loadEarlierMessages(); });
+  // Task links and notifications carry no teammate resource; the cached roster row supplies name and avatar.
+  const companionDisplay = useCompanionDisplayResource(deviceId, sessionId, companionResource, companionChat);
+  const companionWorkingLabel = useCompanionWorkingLabel({ sessionId, deviceId, botId: companionDisplay?.ref.id ?? '',
     active: companionChat && showComposerActivity, messages, reconnectAttempt: remoteSessionRunStatus.reconnectAttempt });
   const companionPluginInvocations = useMemo(() => companionChat ? collectCompanionPluginInvocations(projectedMessages) : undefined,
     [companionChat, projectedMessages]);
@@ -8887,7 +8910,14 @@ export default function SessionScreen() {
   const headerNode = (
     <>
     <Stack.Screen options={{ gestureEnabled: !sessionListDrawerOverlayMounted }} />
-    {companionChat && companionResource && !shareSelectionActive ? <CompanionHeader key={[auth.accountGeneration,deviceId,companionResource.ref.id].join(':')} resource={companionResource} deviceId={deviceId} deviceName={deviceName} online={!remoteUnavailableReason} onSearch={() => setSearchOpen(true)} onBack={goBackToHome} /> : <SessionHeaderBar
+    {companionChat && companionResource && !shareSelectionActive ? <>
+      <Stack.Screen options={COMPANION_NATIVE_HEADER_OPTIONS} />
+      <CompanionHeader key={`${auth.accountGeneration}:${deviceId}:${companionResource.ref.id}`}
+        resource={companionResource} deviceId={deviceId} deviceName={deviceName} online={!remoteUnavailableReason}
+        working={!!companionWorkingLabel}
+        onSearch={() => setSearchOpen(true)}
+        onBack={goBackToHome} />
+    </> : <SessionHeaderBar
               horizontalSystemHeader={horizontalSystemHeader}
               currentSession={currentSession}
               diffCount={diffCount}
@@ -9363,7 +9393,7 @@ export default function SessionScreen() {
                     topOverlayHeight={topOverlayHeight}
                     busyAction={messageActionBusy?.kind ?? null}
                     busyClientId={messageActionBusy?.clientId ?? null}
-                    canLoadEarlier={(historyView.snapshot.ready ? historyView.snapshot.hasMore : hasOlderMessages && messages.length > 0) && !isScheduleDetail}
+                    canLoadEarlier={canLoadEarlierHistory}
                     emptyTestID="session.messageList.empty"
                     focusedItemKey={focusedMessageItemKey ?? null}
                     focusedRequestKey={focusedMessageRequestKey}
@@ -9458,7 +9488,7 @@ export default function SessionScreen() {
                     )}
                     scrollResetKey={sessionId}
                     isReadingPositionActive={() => messageScreenFocusedRef.current && messageAppActiveRef.current}
-                    syncingWhileEmpty={syncingWhileEmpty}
+                    syncingWhileEmpty={syncingWhileEmpty || chasingHiddenHistory}
                     testID="session.messageList"
                   />
                 </ChatFilePathContext.Provider>

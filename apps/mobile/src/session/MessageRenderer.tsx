@@ -6,6 +6,7 @@ import { PluginInvocationHeader } from './PluginInvocationHeader';
 import { companionPluginWorkEntries, type PluginInvocation } from './pluginInvocations';
 import { AuthorizationMessageCard } from './AuthorizationMessageCard';
 import { CompanionMessageCard } from '@/session/CompanionMessageCard';
+import { CompanionEntering } from '@/session/CompanionEntering';
 import { mobileDebugEnabled, mobileDebugLog } from '@/debug/mobileDebugLog';
 import { createContext, Fragment, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -2930,9 +2931,12 @@ const RenderItemView = memo(function RenderItemView({
       logUnhandledRenderItem(item);
       break;
   }
+  const entering = actions.companion && item.type === 'message' && !item.message.systemCardType
+    && (item.message.kind === 'user' || item.message.kind === 'assistant')
+    ? <CompanionEntering key={item.key} id={item.key} createdAt={item.message.createdAt} kind={item.message.kind === 'user' ? 'send' : 'reply'}>{node}</CompanionEntering> : node;
   return (
     <View style={focused ? styles.focusedItem : undefined} testID={focused ? 'message.focusedItem' : undefined}>
-      {node}
+      {entering}
     </View>
   );
 });

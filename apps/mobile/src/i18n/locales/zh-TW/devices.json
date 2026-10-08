@@ -1021,6 +1021,13 @@
     },
     "viewResult": "查看結果",
     "noWrittenResult": "沒有文字結果。",
-    "noCreateHosts": "目前沒有可用的相容電腦。在電腦上開啟 Cindy 並登入同一帳號後即可新建夥伴。"
+    "noCreateHosts": "目前沒有可用的相容電腦。在電腦上開啟 Cindy 並登入同一帳號後即可新建夥伴。",
+    "createTeammate": "新增夥伴",
+    "createMenu": "新增",
+    "searchWithGroups": "搜尋夥伴和群聊",
+    "awaiting": "等你確認",
+    "emptyCopyCreate": "夥伴會記得你們聊過的事，也能幫你在電腦上做事。",
+    "taskResult": "任務結果",
+    "collapseResult": "收起結果"
   }
 }

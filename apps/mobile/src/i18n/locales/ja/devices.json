@@ -1023,6 +1023,13 @@
     "noWrittenResult": "テキストの結果はありません。",
     "noCreateHosts": "対応するコンピュータを利用できません。パソコンで Cindy を開き、同じアカウントでログインするとチームメイトを新規作成できます。",
     "directLimitReached": "今回の会話は上限に達し、双方がそれぞれのメインセッションに戻りました",
-    "directUnavailable": "このチームメイト同士の会話は利用できません。"
+    "directUnavailable": "このチームメイト同士の会話は利用できません。",
+    "createTeammate": "新しい仲間",
+    "createMenu": "新規作成",
+    "searchWithGroups": "仲間とグループを検索",
+    "awaiting": "確認待ち",
+    "emptyCopyCreate": "仲間は話した内容を覚えていて、パソコンで作業も手伝えます。",
+    "taskResult": "タスクの結果",
+    "collapseResult": "結果を閉じる"
   }
 }

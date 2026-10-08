@@ -102,7 +102,8 @@
       "deletionBubbleBg": "#FFFFFF",
       "deletionBubbleBorder": "#D7D7D4"
     },
-    "homeDrawerShadow": "rgba(0, 0, 0, 0.16)"
+    "homeDrawerShadow": "rgba(0, 0, 0, 0.16)",
+    "botUnread": "#417CDD"
   },
   "dark": {
     "surface": "#2A2828",
@@ -206,6 +207,7 @@
       "deletionBubbleBg": "#1F1F1E",
       "deletionBubbleBorder": "#3C3C3A"
     },
-    "homeDrawerShadow": "rgba(0, 0, 0, 0.40)"
+    "homeDrawerShadow": "rgba(0, 0, 0, 0.40)",
+    "botUnread": "#417CDD"
   }
 }
