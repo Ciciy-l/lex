@@ -75,7 +75,7 @@ describe('SharedTask production host wiring', () => {
     expect(get).toHaveBeenCalledWith('task-a');
     expect(invoke.mock.calls).toEqual([[peer, { channel: 'local-db:sessions:get', args: ['session-a'] }]]);
     await callback('ordinary', 'local-db:sessions:list', []);
-    expect(invoke).toHaveBeenLastCalledWith('ordinary', { channel: 'local-db:sessions:list', args: [] }, undefined);
+    expect(invoke).toHaveBeenLastCalledWith('ordinary', { channel: 'local-db:sessions:list', args: [] }, resolveRemoteInvokeTimeoutMs('local-db:sessions:list'));
   });
 
   it('does not invoke a guest probe after its connection generation changes during authority lookup', async () => {

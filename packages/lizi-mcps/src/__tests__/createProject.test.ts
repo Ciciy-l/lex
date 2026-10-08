@@ -72,7 +72,7 @@ describe("create_project MCP", () => {
         errorCode: "NO_SESSION_CONTEXT",
       });
       sessionId = "caller";
-      for (const restricted of ["bot", "restricted"] as const) {
+      for (const restricted of ["restricted"] as const) {
         surface = restricted;
         const categories = parse(
           await client.callTool({ name: "list_tools", arguments: {} }),
@@ -84,7 +84,9 @@ describe("create_project MCP", () => {
         );
         expect((await call({ working_dir: "/project" })).isError).toBe(true);
       }
-      expect(createProject).toHaveBeenCalledTimes(1);
+      surface = "bot";
+      expect(parse(await call({ working_dir: "/project" }))).toMatchObject({ ok: true });
+      expect(createProject).toHaveBeenCalledTimes(2);
     } finally {
       await client.close();
       await server.close();

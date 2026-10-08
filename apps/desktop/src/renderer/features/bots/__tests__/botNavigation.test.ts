@@ -142,7 +142,7 @@ describe('Bot task route recovery', () => {
     expect(source).toContain('window.electronAPI.localDb.bots.list(');
     expect(source).toContain('lastReadAtByBotId: { [botId]: lastReadAt }');
     expect(source).toContain('botMentions={gate.mentions}');
-    expect(source).toContain('botIdentity={gate.identity}');
+    expect(source).toContain('botIdentity={identity ?? gate.identity}');
     expect(source).toContain('botUnreadBoundaryAt={gate.unreadBoundaryAt}');
   });
 
@@ -152,7 +152,7 @@ describe('Bot task route recovery', () => {
     // 只读历史也带头像与伙伴 lockup:这个视图本来就已经查过 history(botId) 确认归属。
     expect(history).toMatch(/window\.electronAPI\.localDb\.bots\s*\.get\(botId\)/);
     expect(history).toContain(
-      '<CCAgentSessionView readOnly {...(identity ? { botIdentity: identity } : {})} />',
+      "botIdentity={{ ...(identity ?? { id: botId, name: '' }), sessionId }}",
     );
   });
 

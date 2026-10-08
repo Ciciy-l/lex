@@ -524,8 +524,8 @@ describe("PiAgent native auto-compaction ownership", () => {
         expect(knobs.spawnEnv.CINDY_PI_BASH_SHELL_PATH).toBe(expectedShell);
         expect(JSON.parse(knobs.spawnEnv.CINDY_PI_SECRET_ENV_NAMES!)).toContain("CINDY_PI_BASH_SHELL_PATH");
         // Native model selection must preserve packages and the shell.
-        knobs.targetRuntimeContextWindow = 1_000_000;
-        knobs.verifiedContextWindows = [1_000_000, 1_000_000];
+        knobs.targetRuntimeContextWindow = 100_000;
+        knobs.verifiedContextWindows = [100_000, 100_000];
         await handle.setModel!("n");
         expect(readSettings()).toMatchObject({ shellPath: expectedShell, packages });
       } finally {

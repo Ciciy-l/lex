@@ -578,7 +578,7 @@ describe("cindy_helper MCP server", () => {
     }
   });
 
-  it("exposes product knowledge while keeping general history and control out of the Bot surface", async () => {
+  it("exposes available ordinary tools alongside Bot messaging and rechecks Bot-only calls", async () => {
     let surface: "bot" | "default" = "bot";
     const sendToSession = vi.fn(async () => ({
       ok: true as const,
@@ -617,15 +617,13 @@ describe("cindy_helper MCP server", () => {
       );
       expect(overview.categories).toEqual(expect.arrayContaining([
         expect.objectContaining({ name: 'cindy' }),
-        expect.objectContaining({ name: 'control' }),
-        expect.objectContaining({ name: 'history' }),
         expect.objectContaining({ name: 'handoff' }),
         expect.objectContaining({ name: 'bots' }),
       ]));
-      const controlTools = parsePayload(await client.callTool({ name: 'list_tools', arguments: { category: 'control' } }));
-      const controlNames = controlTools.tools as Array<{ name: string; description: string }>;
-      expect(controlNames.map((tool) => tool.name)).toEqual(expect.arrayContaining(['create_project', 'move_session', 'stop_session_turn']));
-      expect(controlNames.find((tool) => tool.name === 'move_session')?.description).toContain('list_sessions');
+      // No project/history callbacks are installed in this fixture; they must not be advertised.
+      expect(overview.categories).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: 'control' }), expect.objectContaining({ name: 'history' }),
+      ]));
       const handedOff = parsePayload(await client.callTool({ name: 'call_tool', arguments: {
         name: 'send_to_session', args: { target_session_id: TARGET_SESSION_ID, message: 'Do work' },
       } }));

@@ -1480,7 +1480,7 @@ describe('applyRuntimeSetModelChange', () => {
       model: 'MiniMax-M3',
       providerId: 'minimax',
       clearPendingCredentialSwitch: vi.fn(),
-    })).resolves.toEqual({ status: 'applied' });
+    })).resolves.toEqual({ status: 'applied', retiredRuntime: true });
 
     expect(requiresModelSwitchRebuild).toHaveBeenCalledWith('MiniMax-M3', {
       providerId: 'minimax',

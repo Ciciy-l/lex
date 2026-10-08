@@ -33,6 +33,8 @@ function createSession(overrides: Partial<MakerSendTransactionSession> = {}): Ma
   return {
     id: 'session-1',
     instanceId: 'session-instance-1',
+    stablePermissionModeState: { mode: 'ask', generation: 0 },
+    stablePlanModeState: { enabled: false, generation: 0 },
     agentKind: 'codex',
     workDir: 'C:\\repo',
     remoteHostId: null,
@@ -43,6 +45,7 @@ function createSession(overrides: Partial<MakerSendTransactionSession> = {}): Ma
     ) => {
       await opts?.onAccepted?.();
       await opts?.onTranscriptUserEntry?.('pi-user-entry');
+      await opts?.resolveAutoReviewUserIntent?.();
       opts?.onDispatching?.();
       return { accepted: true } satisfies SessionSendResult;
     }),
@@ -53,6 +56,7 @@ function createSession(overrides: Partial<MakerSendTransactionSession> = {}): Ma
 function createDeps(overrides: Partial<MakerSendTransactionDeps> = {}) {
   const session = createSession();
   const deps: MakerSendTransactionDeps = {
+    readScheduledPermissions: vi.fn(async () => ({ permissionMode: 'ask', planModeEnabled: false })),
     getSession: vi.fn((sessionId: string) => (sessionId === session.id ? session : undefined)),
     closeSession: vi.fn(async () => {}),
     preflightBotRuntimeResources: vi.fn(async () => {}),

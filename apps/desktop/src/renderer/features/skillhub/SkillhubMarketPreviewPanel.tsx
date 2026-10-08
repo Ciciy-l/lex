@@ -232,7 +232,7 @@ export function SkillhubMarketPreviewPanel({
                             slug: skill.name,
                             version: reviewVersion,
                             // Catalog reads only expose approved releases; owners read failed/rejected releases natively.
-                            catalogScope: status === 'rejected' && skill.canManage ? undefined : skill.catalogScope,
+                            catalogScope: ['rejected', 'failed', 'blocked'].includes(status ?? '') && skill.canManage ? undefined : skill.catalogScope,
                           })
                           .then((res) => {
                             if (!isCurrentRequest()) return;

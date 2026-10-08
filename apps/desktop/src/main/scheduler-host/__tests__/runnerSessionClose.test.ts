@@ -165,6 +165,7 @@ function createRunnerHarness(session: Session) {
     createSession: vi.fn(async () => session),
     getSessionMeta: vi.fn(async () => null),
     isSessionAlive: vi.fn(() => false),
+    getSession: vi.fn(() => undefined),
     closeSession,
   } as unknown as Maker;
   const runner = new MakerScheduleRunner({

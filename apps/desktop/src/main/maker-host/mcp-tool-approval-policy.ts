@@ -52,6 +52,7 @@ const READ_ONLY_MCP_TOOLS: ReadonlySet<string> = new Set([
   'cindy::ghost_info',
   'cindy::ghost_manual',
   'cindy::ghost_forge_guide',
+  'cindy::ghost_market_search',
   'cindy_browser::list_tools',
   'cindy_android::list_tools',
   'cindy_ios_simulator::list_tools',
@@ -222,6 +223,7 @@ export function getDesktopMcpToolApprovalPolicy(
   if (toolName && READ_ONLY_MCP_TOOLS.has(`${serverName}::${toolName}`)) {
     return 'auto-approve';
   }
+  if (serverName === 'cindy' && toolName === 'ghost_market_install') return 'prompt-each-time';
   if (serverName === 'cindy_contacts') {
     return canAutoApproveContactsMcpTool({ toolName, toolParams })
       ? 'auto-approve'

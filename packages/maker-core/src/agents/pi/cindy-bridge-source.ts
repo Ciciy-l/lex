@@ -4028,39 +4028,11 @@ export default async function cindyBridge(pi: any) {
         isInsideRoot(targetPath, subagentRunDir)
         || (writeTargetResolved !== null && isInsideRoot(writeTargetResolved, subagentRunDir))
       );
-    const writeInsideAnyGrantedRoot = (roots: readonly string[]) => targetPath
-      && roots.some((root) => {
-        let resolvedRoot: string | null = null;
-        try {
-          resolvedRoot = realpathSync(root);
-        } catch {
-          resolvedRoot = null;
-        }
-        return (
-          isInsideRoot(targetPath, root)
-          && writeTargetResolved !== null
-          && resolvedRoot !== null
-          && isInsideRoot(writeTargetResolved, resolvedRoot)
-        );
-      });
-    const writeInsideWritableRoot = writeInsideAnyGrantedRoot(permission.writableRoots);
-    if (
+    const controlPlaneWrite = Boolean(
       targetPath
       && FILE_WRITE_BUILTINS.has(event.toolName)
       && (writeInsideAgentHome || writeInsideSubagentRun)
-    ) {
-      return { block: true, reason: 'Cindy agent runtime directory is read-only.' };
-    }
-    if (
-      targetPath
-      && FILE_WRITE_BUILTINS.has(event.toolName)
-      && !writeInsideWritableRoot
-      && permission.readOnlyRoots.some((root) =>
-        isInsideRoot(targetPath, root)
-        || (writeTargetResolved !== null && isInsideRoot(writeTargetResolved, root)))
-    ) {
-      return { block: true, reason: 'Cindy extra reference directories are read-only.' };
-    }
+    );
     // 凭证/密钥路径的内置只读工具与 bash 输入重定向都必须携带 canonical
     // 证据,供 Ask/Auto 升级审批。Full access 不在这里硬拦 — 原生 Pi 没有这道门,
     // 文本拦截也不是安全边界(可被变形绕过)。
@@ -4096,7 +4068,7 @@ export default async function cindyBridge(pi: any) {
     // runtime capability and applies the current general permission policy before it
     // issues a one-shot store grant. Let it reach that boundary in every mode.
     if (event.toolName === 'cindy_pi_extension' || event.toolName === 'cindy_pi_command') return;
-    if (permission.mode === 'bypassPermissions') return;
+    if (permission.mode === 'bypassPermissions' && !controlPlaneWrite) return;
     // MCP discovery/one-tool schema inspection only returns metadata already
     // supplied by connected servers. It is the read-only half of the gateway
     // and never executes a capability, so Ask/Auto should not interrupt the user.
@@ -4145,6 +4117,7 @@ export default async function cindyBridge(pi: any) {
             ? {
                 resolvedWritePath: writeTargetResolved,
                 resolvedWritableRoots: resolveWritableRootsForHost(permission.writableRoots),
+                ...(controlPlaneWrite ? { controlPlaneWrite: true } : {}),
               }
             : {}),
         }),

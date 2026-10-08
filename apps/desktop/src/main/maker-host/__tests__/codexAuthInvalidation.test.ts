@@ -46,6 +46,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('electron', () => ({
   app: {
+    getName: () => 'Lex',
     getPath: () => h.userDataDir,
     getAppPath: () => h.userDataDir,
     get isPackaged() {

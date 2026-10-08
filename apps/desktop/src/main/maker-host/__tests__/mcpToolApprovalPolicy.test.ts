@@ -151,7 +151,6 @@ describe('desktop MCP approval policy', () => {
       'cindy_slack',
       'cindy_scheduler',
       'cindy_memory',
-      'cindy_helper',
       // worker → lead 回报通道:执行边界在工具内部 fail-closed, 逐次弹窗
       // 会让远端 daemon 等审批超时断链。
       'orca_worker_bridge',
@@ -160,6 +159,7 @@ describe('desktop MCP approval policy', () => {
       expect(getDesktopMcpToolApprovalPolicy({ serverName })).toBe('auto-approve');
     }
 
+    expect(getDesktopMcpToolApprovalPolicy({ serverName: 'cindy_helper' })).toBe('prompt-each-time');
     // gitlab_lizi 已于 2026-07-14 退役(迁入内置意识 cindy-gitlab):
     // `<平台>_lizi` 显式白名单清空后,该名字回落到默认 prompt,不再自动放行。
     expect(getDesktopMcpToolApprovalPolicy({ serverName: 'gitlab_lizi' })).toBe('prompt');

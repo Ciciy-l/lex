@@ -270,7 +270,7 @@ describe('authorized file peer source', () => {
     const { connection } = await connect(),
       { ticket, size } = await open(connection);
     expect(size).toBe(5);
-    expect(mock.resolve).toHaveBeenCalledWith(expect.anything(), 2147483648);
+    expect(mock.resolve).toHaveBeenCalledWith(expect.anything(), 2147483648, expect.any(Function));
     expect(await read(connection, ticket, 0)).toBe(Buffer.from('hello').toString('base64'));
     expect(await read(connection, ticket, 5)).toBe('');
     await expect(read(connection, ticket, 5)).rejects.toThrow();

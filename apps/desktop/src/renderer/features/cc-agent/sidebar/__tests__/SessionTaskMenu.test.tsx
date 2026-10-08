@@ -79,7 +79,7 @@ it('loads only on open and groups task organization, sharing, viewing and remova
   expect(labels()).toEqual([
     'pin',
     'rename',
-    'move',
+    'moveToProject',
     'tags',
     'copy',
     'title',
@@ -105,7 +105,7 @@ it('shows unpin without a branch entry even for a forked Pi task', () => {
   expect(labels()).toEqual([
     'unpin',
     'rename',
-    'move',
+    'moveToProject',
     'tags',
     'copy',
     'title',

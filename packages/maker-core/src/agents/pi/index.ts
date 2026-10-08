@@ -4437,6 +4437,7 @@ export class PiAgent extends BaseAgent {
       let input: Record<string, unknown> = {};
       let resolvedWritePath: string | null | undefined;
       let resolvedWritableRoots: string[] | null | undefined;
+      let controlPlaneWrite = false;
       const approvalPayload = approval.method === 'input'
         ? approval.placeholder
         : approval.message;
@@ -4447,6 +4448,7 @@ export class PiAgent extends BaseAgent {
             input?: unknown;
             resolvedWritePath?: unknown;
             resolvedWritableRoots?: unknown;
+            controlPlaneWrite?: unknown;
           };
           if (typeof payload.toolName === 'string' && payload.toolName) toolName = payload.toolName;
           if (payload.input && typeof payload.input === 'object' && !Array.isArray(payload.input)) {
@@ -4467,6 +4469,7 @@ export class PiAgent extends BaseAgent {
               ? payload.resolvedWritableRoots as string[]
               : null;
           }
+          controlPlaneWrite = payload.controlPlaneWrite === true;
         } catch {
           /* malformed permission payload remains a generic, deny-by-default prompt */
         }
@@ -4578,6 +4581,7 @@ export class PiAgent extends BaseAgent {
       const resolveConfirmation = async (): Promise<PiPermissionResolution | null> => {
         // Review resumed child evidence against current user authorization.
         // Other modes retain the independent confirmation for adopted work.
+        if (controlPlaneWrite) return requestUserDecision({ forcePrompt: true });
         if (adopted && permissionMode !== 'auto') return requestUserDecision({ forcePrompt: true });
         if (permissionMode === 'bypassPermissions') {
           return turnPolicyForcePrompt ? 'system-deny' : 'allow';
@@ -8368,6 +8372,7 @@ export class PiAgent extends BaseAgent {
       let resolvedCredentialPaths: string[] | null | undefined;
       let resolvedWritePath: string | null | undefined;
       let resolvedWritableRoots: string[] | null | undefined;
+      let controlPlaneWrite = false;
       try {
         const rawPayload = method === 'input' ? event.placeholder : event.message;
         const payload = JSON.parse(typeof rawPayload === 'string' ? rawPayload : '{}') as {
@@ -8376,6 +8381,7 @@ export class PiAgent extends BaseAgent {
           resolvedCredentialPaths?: unknown;
           resolvedWritePath?: unknown;
           resolvedWritableRoots?: unknown;
+          controlPlaneWrite?: unknown;
         };
         if (typeof payload.toolName === 'string' && payload.toolName.length > 0) toolName = payload.toolName;
         if (payload.input && typeof payload.input === 'object') input = payload.input as Record<string, unknown>;
@@ -8401,6 +8407,7 @@ export class PiAgent extends BaseAgent {
             ? payload.resolvedWritableRoots as string[]
             : null;
         }
+        controlPlaneWrite = payload.controlPlaneWrite === true;
       } catch {
         /* keep defaults */
       }
@@ -8607,6 +8614,13 @@ export class PiAgent extends BaseAgent {
         // 本轮策略命中时不吃 Full Access 短路:policy + bypassPermissions 已在 send 预检
         // 拒绝、且 policy turn 持 host lease 堵死热切到 bypass,故此处 turnPolicyForcePrompt
         // 为真本不可达;仍显式 fail-closed,避免任一上游闸门被绕过就静默放行破坏性调用。
+        if (controlPlaneWrite) {
+          sendPermissionResolution(await requestUserConfirmation({
+            forcePrompt: true,
+            requireExplicitDecision: true,
+          }));
+          return;
+        }
         if (isFullAccessNow() && !turnPolicyForcePrompt) {
           sendPermissionResolution('allow');
           return;

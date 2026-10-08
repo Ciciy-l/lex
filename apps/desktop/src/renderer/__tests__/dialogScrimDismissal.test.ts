@@ -121,11 +121,10 @@ describe('dialog scrim dismissal', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('still recognizes the exempt preflight dialog as a Dialog.Content user', () => {
-    const exempt = resolve(RENDERER_ROOT, 'components/cindy-make/CindyMakePreflightDialog.tsx');
-    expect(unguardedDialogContents('exempt', readFileSync(exempt, 'utf8')).length).toBeGreaterThan(
-      0,
-    );
+  it('recognizes an unguarded dialog in an exempt source fixture', () => {
+    expect(unguardedDialogContents('exempt',
+      "import * as Dialog from '@radix-ui/react-dialog'; export const Fixture = () => <Dialog.Content />;",
+    )).toHaveLength(1);
   });
 
   it.each([

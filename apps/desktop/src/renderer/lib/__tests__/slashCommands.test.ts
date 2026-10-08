@@ -230,6 +230,7 @@ describe('filterSlashCommands', () => {
 
     expect(filterSlashCommands(commands, '').map((command) => command.name)).toEqual([
       'cindy-skill-creator',
+      'learn',
       'help',
       'release-notes',
     ]);

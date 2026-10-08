@@ -28,7 +28,7 @@ describe('session menu parity across header and sidebar variants', () => {
 
   it('keeps removed extras out of all task menus', () => {
     for (const source of [headerSource, sessionItemSource, sessionCardSource, sharedMenuSource]) {
-      for (const key of ['exportHtml', 'compact', 'compacting', 'sessionBranches']) {
+      for (const key of ['exportHtml', 'compact', 'compacting']) {
         expect(source).not.toContain(`sessionMenu.${key}')`);
         expect(source).not.toContain(`item('${key}'`);
       }

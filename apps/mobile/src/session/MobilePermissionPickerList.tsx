@@ -29,8 +29,8 @@ export interface MobilePermissionPickerListProps {
 
 const makeStyles = (c: ThemeColors) =>
   StyleSheet.create({
-    separator: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border },
-  optionRow: {
+    separator: { height: StyleSheet.hairlineWidth, backgroundColor: c.border },
+    optionRow: {
       alignItems: 'center',
       borderRadius: radius.pill,
       flexDirection: 'row',
