@@ -1,6 +1,6 @@
 {
   "taskMove": {
-    "upgradeComputer": "这台电脑的 Cindy 版本暂不支持移动任务。请更新「{{name}}」上的 Cindy 后再试。",
+    "upgradeComputer": "这台电脑的 {{appName}} 版本暂不支持移动任务。请更新「{{name}}」上的 {{appName}} 后再试。",
     "sourceProjects": "任务所在电脑的项目",
     "otherComputers": "复制到其他电脑",
     "offline": "离线",
@@ -13,11 +13,11 @@
     "title": "复制到{{name}}",
     "description": "将在{{name}}创建任务副本。",
     "bindingsNotice": "自动任务和消息渠道仍在源电脑运行，不会随任务复制。",
-    "limits": "两台电脑都需支持此功能并开启远程控制。请先停止使用该目录的任务。复制前会检查目标电脑的磁盘空间和可用内存。目标电脑使用自己的模型设置，不传输 Cindy 登录凭证和机器设置。",
+    "limits": "两台电脑都需支持此功能并开启远程控制。请先停止使用该目录的任务。复制前会检查目标电脑的磁盘空间和可用内存。目标电脑使用自己的模型设置，不传输 {{appName}} 登录凭证和机器设置。",
     "device": "复制到",
     "project": "保存位置",
     "newFolder": "新建文件夹，不覆盖已有文件。",
-    "defaultFolder": "Cindy 默认位置",
+    "defaultFolder": "{{appName}} 默认位置",
     "noDevices": "暂无可用电脑。请连接另一台电脑，并在两台电脑上开启远程控制。",
     "openTarget": "打开新复制的任务",
     "close": "关闭",
@@ -9621,7 +9621,7 @@
       "previewNotFound": "找不到 HTML 文件，请确认文件仍然存在",
       "previewFetching": "正在准备网页预览…",
       "previewTooLarge": "正在准备的预览过多，请稍后重试",
-      "previewUnsupported": "远程设备暂不支持目录预览，请更新该设备上的 Cindy 后重试",
+      "previewUnsupported": "远程设备暂不支持目录预览，请更新该设备上的 {{appName}} 后重试",
       "fetching": "正在从远端获取文件…",
       "fetchFailed": "从远端获取文件失败",
       "notFound": "远端文件不存在",
@@ -11849,12 +11849,12 @@
     },
     "builtIn": {
       "official": "官方",
-      "officialDetail": "由 Cindy 随应用提供并维护。",
+      "officialDetail": "由 {{appName}} 随应用提供并维护。",
       "skillCreator": {
-        "description": "创建或更新 Cindy 技能，并编写清晰的说明和所需支持资源。"
+        "description": "创建或更新 {{appName}} 技能，并编写清晰的说明和所需支持资源。"
       },
       "learn": {
-        "description": "从当前任务、描述的工作流或 SkillHub 技能中提炼可复用技能，并通过 Cindy 的审查流程保存。"
+        "description": "从当前任务、描述的工作流或 SkillHub 技能中提炼可复用技能，并通过 {{appName}} 的审查流程保存。"
       }
     },
     "common": {
@@ -12445,7 +12445,7 @@
       "unlinkDescription": "仅移除本地技能入口，原文件及修改会保留。",
       "sharedImpact": "共用此技能的其他 Agent 也会受影响。云端发布和其他安装位置不受影响。",
       "managedElsewhere": "此技能由其他包或共享目录管理，需在其来源处移除",
-      "builtInManaged": "此技能由 Cindy 内置，无法卸载",
+      "builtInManaged": "此技能由 {{appName}} 内置，无法卸载",
       "managedByPlugin": "此技能由插件提供，请到所属插件页面管理。",
       "cleanupIncomplete": "“{{name}}”的卸载清理尚未完成。请重试；重开技能中心后也可继续。清理完成前无法重新安装。",
       "retryCleanup": "重试清理",

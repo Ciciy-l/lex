@@ -1,6 +1,6 @@
 {
   "taskMove": {
-    "upgradeComputer": "This computer’s Cindy version does not support moving tasks. Update Cindy on “{{name}}” to use this feature.",
+    "upgradeComputer": "This computer’s {{appName}} version does not support moving tasks. Update {{appName}} on “{{name}}” to use this feature.",
     "sourceProjects": "Projects on the task’s computer",
     "otherComputers": "Copy to another computer",
     "offline": "Offline",
@@ -13,11 +13,11 @@
     "title": "Copy to {{name}}",
     "description": "Create a task copy on {{name}}.",
     "bindingsNotice": "Automations and messaging connections stay on the source computer and are not copied.",
-    "limits": "Both computers need this feature and remote control enabled. Stop tasks using this directory first. Available disk space and memory on the destination are checked before transfer. The destination uses its own model settings; Cindy sign-in credentials and machine settings are not transferred.",
+    "limits": "Both computers need this feature and remote control enabled. Stop tasks using this directory first. Available disk space and memory on the destination are checked before transfer. The destination uses its own model settings; {{appName}} sign-in credentials and machine settings are not transferred.",
     "device": "Copy to",
     "project": "Save location",
     "newFolder": "Creates a new folder without overwriting existing files.",
-    "defaultFolder": "Cindy’s default location",
+    "defaultFolder": "{{appName}}’s default location",
     "noDevices": "No available computers. Connect another computer and enable remote control on both computers.",
     "openTarget": "Open newly copied task",
     "close": "Close",
@@ -9638,7 +9638,7 @@
       "previewNotFound": "The HTML file was not found. Check that it still exists.",
       "previewFetching": "Preparing Web Preview…",
       "previewTooLarge": "Too many previews are being prepared. Please try again shortly.",
-      "previewUnsupported": "Update Cindy on the remote device to preview this directory.",
+      "previewUnsupported": "Update {{appName}} on the remote device to preview this directory.",
       "fetching": "Fetching file from remote…",
       "fetchFailed": "Failed to fetch file from remote",
       "notFound": "File not found on remote",
@@ -11876,12 +11876,12 @@
     },
     "builtIn": {
       "official": "Official",
-      "officialDetail": "Included and maintained by Cindy.",
+      "officialDetail": "Included and maintained by {{appName}}.",
       "skillCreator": {
-        "description": "Create or update a Cindy Skill with clear instructions and supporting resources."
+        "description": "Create or update a {{appName}} Skill with clear instructions and supporting resources."
       },
       "learn": {
-        "description": "Distill a reusable Skill from this task, a described workflow, or a SkillHub Skill through Cindy's review flow."
+        "description": "Distill a reusable Skill from this task, a described workflow, or a SkillHub Skill through {{appName}}'s review flow."
       }
     },
     "common": {
@@ -12472,7 +12472,7 @@
       "unlinkDescription": "Only the local skill entry will be removed. Original files and edits will be kept.",
       "sharedImpact": "Other Agents sharing this skill will also be affected. Published versions and installations elsewhere are unaffected.",
       "managedElsewhere": "This Skill belongs to another package or shared directory. Remove it at its source.",
-      "builtInManaged": "This Skill is included with Cindy and cannot be uninstalled.",
+      "builtInManaged": "This Skill is included with {{appName}} and cannot be uninstalled.",
       "managedByPlugin": "This skill is provided by a plugin. Manage it on that plugin’s page.",
       "cleanupIncomplete": "Uninstall cleanup for “{{name}}” is unfinished. Retry now or reopen Skills later to continue. Reinstallation is paused until cleanup completes.",
       "retryCleanup": "Retry cleanup",
