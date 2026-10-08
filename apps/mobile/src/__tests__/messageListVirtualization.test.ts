@@ -75,7 +75,7 @@ describe('mobile message list container', () => {
     expect(source).toContain('const [isViewable, setIsViewable] = useRecyclingState(false);');
     expect(source).toContain('if (token.key !== itemKeyRef.current) return;');
     expect(source).toContain('maxTextRunInlineFragments: ANDROID_SELECTABLE_TEXT_RUN_MAX_INLINE_FRAGMENTS');
-    expect(listSource).toContain('onFirstVisibleItemChanged={handleFirstVisibleItemChangedRef.current}');
+    expect(listSource).not.toContain('onFirstVisibleItemChanged');
     expect(listSource).not.toContain('onViewableItemsChanged=');
     // 上滑加载:LegendList 近顶阈值触发自动预取(替代手搓的滚动 metric 判定)。
     expect(listSource).toContain('onStartReached={handleStartReached}');
@@ -235,10 +235,7 @@ describe('mobile message list container', () => {
 
     expect(source).toContain('key={scrollResetKey}');
     expect(source).not.toContain('tailWindowAnchor');
-    expect(source).toContain('previousUserMessageJumpTarget(listDataRef.current, firstVisibleIndexRef.current)');
-    expect(source).toContain('firstVisibleIndexRef.current = info.index;');
-    expect(source).not.toContain('setFirstVisibleIndex');
-    expect(source).toContain('refreshPreviousUserTarget();');
+    expect(source).not.toContain('previousUserButton');
     // 首次校正仍会命令式落底，但 opacity 揭示必须立即交给 UI-thread native driver；
     // 复杂消息占满 JS 时不能把 300ms 隐藏窗拖成长达数秒的白屏。
     expect(source).not.toContain('onLoad={handleListLoad}');
@@ -307,7 +304,7 @@ describe('mobile message list container', () => {
     const effectStart = source.indexOf('// Sending and the jump button');
     const effectEnd = source.indexOf('// 自动加载更早', effectStart);
     expect(source.slice(effectStart, effectEnd)).toContain('scrollToBottom();');
-    const jump = source.slice(source.indexOf('const scrollToBottom'), source.indexOf('const jumpToPreviousUserMessage'));
+    const jump = source.slice(source.indexOf('const scrollToBottom'), source.indexOf('// A retained list must not replay requests'));
     expect(jump.indexOf('userScrollForOlderRef.current = false')).toBeLessThan(
       jump.indexOf("scrollToEndProgrammatically(true, 'explicit')"),
     );
@@ -316,7 +313,7 @@ describe('mobile message list container', () => {
   it('routes manual jump-to-latest through the controller that owns seek and verification', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/session/MessageRenderer.tsx'), 'utf8');
     const callbackStart = source.indexOf('const scrollToBottom = useCallback');
-    const callbackEnd = source.indexOf('const jumpToPreviousUserMessage', callbackStart);
+    const callbackEnd = source.indexOf('// A retained list must not replay requests', callbackStart);
     const callbackSource = source.slice(callbackStart, callbackEnd);
     const scrollAt = callbackSource.indexOf("scrollToEndProgrammatically(true, 'explicit');");
 

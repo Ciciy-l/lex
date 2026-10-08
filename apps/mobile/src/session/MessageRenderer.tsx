@@ -13,7 +13,6 @@ import { useTranslation } from 'react-i18next';
 import { Image as ExpoImage } from 'expo-image';
 import {
   ArrowLeftRight,
-  ArrowUp,
   Bot,
   Check,
   ChevronDown,
@@ -344,7 +343,6 @@ import {
   MOBILE_MESSAGE_LIST_BOTTOM_PADDING,
   type MessageScrollMetrics,
   mobileMessageListBottomPadding,
-  previousUserMessageJumpTarget,
   resolveMobileNearBottomOnScroll,
   shouldAutoLoadEarlier,
   shouldPreserveMobileHistoryBrowseIntent,
@@ -803,7 +801,6 @@ export function MessageRenderer({
   const focusedItemKeyRef = useRef(focusedItemKey);
   focusedItemKeyRef.current = focusedItemKey;
   const listRef = useRef<LegendListRef>(null);
-  const firstVisibleIndexRef = useRef(0);
   const listMetricsRef = useRef<LegendListMetrics>({ footerSize: 0, headerSize: 0 });
   const listTopPaddingRef = useRef(0);
   const listBottomPaddingRef = useRef(0);
@@ -951,7 +948,6 @@ export function MessageRenderer({
       programmaticScrollTimerRef.current = null;
     }
     previousItemKeysRef.current = [];
-    firstVisibleIndexRef.current = 0;
     nativeScrollEventSequenceRef.current = 0;
     scrollMetricsRef.current = { contentHeight: 0, offsetY: 0, viewportHeight: 0 };
     tailFollowerRef.current?.reset();
@@ -978,9 +974,6 @@ export function MessageRenderer({
     isAwayFromBottomRef.current = next;
     setIsAwayFromBottomState(next);
   }, []);
-  const [previousUserTarget, setPreviousUserTarget] = useState<
-    ReturnType<typeof previousUserMessageJumpTarget>
-  >(null);
   const [payload, setPayload] = useState<MessagePayload | null>(null);
   const payloadRef = useRef(payload);
   payloadRef.current = payload;
@@ -1603,7 +1596,6 @@ export function MessageRenderer({
   const topPadding = mobileMessageListTopPadding(topOverlayHeight);
   listBottomPaddingRef.current = bottomPadding;
   listTopPaddingRef.current = topPadding;
-  const previousUserButtonTop = topPadding > 0 ? topPadding : null;
   // 上一次 topPadding,供顶部 chrome 高度变化时补偿 scroll offset(见下方 effect)。
   const prevTopPaddingRef = useRef(topPadding);
   const floatingBottomOffset = Math.max(
@@ -1786,23 +1778,6 @@ export function MessageRenderer({
   useEffect(() => () => {
     if (stickyCheckTimerRef.current) clearTimeout(stickyCheckTimerRef.current);
   }, []);
-  const refreshPreviousUserTarget = useCallback(() => {
-    const next = nearBottomRef.current
-      ? null
-      : previousUserMessageJumpTarget(listDataRef.current, firstVisibleIndexRef.current);
-    setPreviousUserTarget((previous) => (
-      previous?.itemKey === next?.itemKey
-      && previous?.index === next?.index
-      && previous?.preview === next?.preview
-        ? previous
-        : next
-    ));
-  }, []);
-  const handleFirstVisibleItemChangedRef = useRef((info: {
-    index: number;
-  }) => {
-    firstVisibleIndexRef.current = info.index;
-  });
   const readActuallyVisibleShareableMessageIds = useCallback(async (
     viewport: ShareableMessageViewport,
   ): Promise<readonly string[]> => {
@@ -1850,25 +1825,8 @@ export function MessageRenderer({
     userScrollForOlderRef.current = false;
     setIsAwayFromBottom(false);
     setHasNewMessages(false);
-    setPreviousUserTarget(null);
     scrollToEndProgrammatically(true, 'explicit');
   }, [cancelHistoryPrependTransaction, scrollToEndProgrammatically]);
-
-  const jumpToPreviousUserMessage = useCallback(() => {
-    const target = previousUserMessageJumpTarget(
-      listDataRef.current,
-      firstVisibleIndexRef.current,
-    );
-    if (!target) return;
-    // 上跳导航与拖动同为真实「上翻意图」:落点若在近顶区,自动加载更早应当接得上,
-    // 不要求用户额外再拖一下。与拖动开始同语义,一并作废上次无进展的去重记录,
-    // 否则上次失败/重复页后跳进近顶区仍会被去重短路(review P1)。
-    userScrollForOlderRef.current = true;
-    lastAutoLoadEarlierKeyRef.current = null;
-    nearBottomRef.current = false;
-    setIsAwayFromBottom(true);
-    scrollToIndexProgrammatically(target.index, 0.12);
-  }, [scrollToIndexProgrammatically]);
 
   // A retained list must not replay requests issued while another task was active.
   const followRequestWasActiveRef = useRef(historyActive);
@@ -2222,10 +2180,7 @@ export function MessageRenderer({
         userScrollForOlderRef.current = false;
       }
       setIsAwayFromBottom(!nearBottom);
-      if (nearBottom) {
-        setHasNewMessages(false);
-        setPreviousUserTarget(null);
-      }
+      if (nearBottom) setHasNewMessages(false);
     }
     // 拖动进近顶区时 onStartReached 边沿可能早已被消费(见 attemptAutoLoadEarlier 注释),
     // 滚动事件兜底重评估;前置短路让稳态滚动只付 1~2 次 ref 比较的成本。
@@ -2339,14 +2294,12 @@ export function MessageRenderer({
     handleScroll(event, true);
     isDraggingRef.current = false;
     dragStartOffsetYRef.current = null;
-    refreshPreviousUserTarget();
     // Wait one frame so Android can report whether this drag transitioned into momentum.
     scheduleHistoryPrependUserHandoffSettle();
     scheduleQueuedLoadEarlierFlush();
     runStickToLatestVerify();
   }, [
     handleScroll,
-    refreshPreviousUserTarget,
     runStickToLatestVerify,
     scheduleHistoryPrependUserHandoffSettle,
     scheduleQueuedLoadEarlierFlush,
@@ -2360,13 +2313,11 @@ export function MessageRenderer({
     // The final native sample can arrive without a matching onScroll event.
     if (event) handleScroll(event);
     isMomentumScrollingRef.current = false;
-    refreshPreviousUserTarget();
     scheduleHistoryPrependUserHandoffSettle();
     scheduleQueuedLoadEarlierFlush();
     runStickToLatestVerify();
   }, [
     handleScroll,
-    refreshPreviousUserTarget,
     runStickToLatestVerify,
     scheduleHistoryPrependUserHandoffSettle,
     scheduleQueuedLoadEarlierFlush,
@@ -2523,7 +2474,6 @@ export function MessageRenderer({
   useEffect(() => {
     lastAppliedFocusKeyRef.current = null;
     setIsAwayFromBottom(!(reopeningPosition?.atEnd ?? true));
-    setPreviousUserTarget(null);
     setHasNewMessages(false);
   }, [scrollResetKey, reopeningPosition]);
   // 卸载时清掉在飞的定时器/rAF(闭包引用 listRef,卸载后触发是无害 no-op,
@@ -2734,19 +2684,8 @@ export function MessageRenderer({
         style={styles.messageList}
         testID={testID ?? 'message.list'}
         viewabilityConfig={viewabilityConfigRef.current}
-        onFirstVisibleItemChanged={handleFirstVisibleItemChangedRef.current}
       />
       </Animated.View>
-      {isAwayFromBottom && previousUserTarget && previousUserButtonTop !== null ? (
-        <MessageListActionButton
-          accessibilityLabel={t('message.renderer.previousQuestionJump', { preview: previousUserTarget.preview || t('message.renderer.noPreview') })}
-          onPress={jumpToPreviousUserMessage}
-          style={[styles.previousUserButton, { top: previousUserButtonTop }]}
-          testID="message.previousUserButton"
-        >
-          <ArrowUp color={colors.textPrimary} size={iconSize.md} strokeWidth={iconStroke.regular} />
-        </MessageListActionButton>
-      ) : null}
       {shareSelectionActive && stickyShareClientId ? (
         // 与分享消息行同构，保持吸顶 check 和行内 check 水平对齐。
         <View
@@ -8816,19 +8755,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     top: 3,
     width: 8,
   },
-  previousUserButton: {
-    alignItems: 'center',
-    backgroundColor: colors.surfaceElevated,
-    borderColor: colors.border,
-    borderRadius: radius.pill,
-    borderWidth: StyleSheet.hairlineWidth,
-    height: 34,
-    justifyContent: 'center',
-    position: 'absolute',
-    right: spacing.lg,
-    width: 34,
-    zIndex: 20,
-  },
+
   forkOriginRow: {
     alignItems: 'center',
     flexDirection: 'row',
