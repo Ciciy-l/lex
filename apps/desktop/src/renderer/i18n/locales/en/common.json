@@ -2196,7 +2196,8 @@
           },
           "codexContextUnknown": "CLI configuration unavailable",
           "codexContextValues": "Total {{total}} · Usable {{usable}} · Auto-compact {{compact}} tokens",
-          "contextLimitGptHint": "GPT defaults to at most 272K; you can set it to 1M here. Codex applies the window and automatic compaction threshold together, retaining 5% headroom. Actual capacity depends on the model service."
+          "contextLimitGptHint": "GPT defaults to at most 272K; you can set it to 1M here. Codex applies the window and automatic compaction threshold together, retaining 5% headroom. Actual capacity depends on the model service.",
+          "contextLimitLocalMillionHint": "Native 256K (262,144 tokens), with optional expansion to 1M (1,000,000). If the service is running, restart it under Manage Service to apply changes; if stopped, they apply on next use. Longer inputs need more memory and take longer to process."
         },
         "kindFilter": {
           "all": "All",
@@ -2371,7 +2372,8 @@
           "apple-mlx": "This Mac is a good fit for the official MLX build.",
           "generic-27b": "This computer is a good fit for the official Q4 build.",
           "compact": "For this computer’s memory, start with a lighter model.",
-          "unknown": "Start with a model that’s easier to run."
+          "unknown": "Start with a model that’s easier to run.",
+          "high-memory": "With this much memory, prioritize the stronger model; local speed and peak memory still need testing."
         },
         "searchPlaceholder": "Search models",
         "noSearchResults": "No matching models",
@@ -2462,7 +2464,9 @@
         "deleteModelConfirm": "Delete",
         "deleteModelDone": "Deleted {{name}}",
         "deleteModelFailed": "Couldn’t delete the model. Make sure Ollama is running, then try again.",
-        "noRecommendation": "No recommendation with sufficient evidence fits this computer yet. You can choose a candidate below."
+        "noRecommendation": "No recommendation with sufficient evidence fits this computer yet. You can choose a candidate below.",
+        "lighterAlternative": "Lighter alternative",
+        "recommendedInstalled": "Recommended models are already on this computer."
       },
       "xdSignin": {
         "badge": "Recommended",
@@ -2511,6 +2515,45 @@
         "modelCount": "{{count}} models configured",
         "modelsAutomatic": "Model details are imported automatically. Adjust individual models in the model list.",
         "manualModel": "Model IDs (if discovery is unavailable)"
+      },
+      "llamacpp": {
+        "ownedElsewhere": "The model service is running in another Cindy instance. Download models or change context there, or stop its service first.",
+        "primaryPick": "Primary pick · try this first",
+        "recommendReason": "Start with {{name}}, the shared catalog’s capability pick selected for this computer.",
+        "recommendCaveat": "This GGUF build still needs local speed and peak-memory testing; download size is not runtime memory use.",
+        "candidates": "Models to Try",
+        "trialNote": "These models are available to try; performance and memory use are not yet verified.",
+        "downloadModel": "Download {{name}}",
+        "title": "llama.cpp",
+        "subtitle": "Install, download models, and run locally",
+        "description": "Choose a model below to download and run locally.",
+        "install": "Install llama.cpp",
+        "start": "Start and Connect",
+        "restart": "Restart and Refresh Models",
+        "stop": "Stop Service",
+        "cancel": "Cancel Operation",
+        "repository": "Hugging Face Repository",
+        "findFiles": "Find Model Files",
+        "file": "GGUF File",
+        "shards": "For split models, Cindy downloads all parts. The size above is for the selected part. Text models are supported; vision projectors are not downloaded.",
+        "download": "Download Model",
+        "models": "Downloaded Models",
+        "empty": "Choose a model above or enter a Hugging Face repository to download your first model.",
+        "unsupported": "Automatic installation is unavailable on this platform. Use a manually configured llama.cpp connection.",
+        "failed": "The operation could not finish. Check your network and available disk space, then retry.",
+        "invalid": "Enter a repository as owner/model-GGUF and select a GGUF file.",
+        "progress": {
+          "install": "Installing llama.cpp…",
+          "download": "Downloading model…",
+          "start": "Starting llama.cpp…"
+        },
+        "installAndConnect": "Install and Connect",
+        "installDescription": "Cindy will install llama.cpp. Download a model, and the service starts automatically when you use it.",
+        "manualConnect": "Connect an Existing Service",
+        "manageRuntime": "Manage Service",
+        "restartHint": "After downloading models or changing context, use Manage Service to restart and apply the changes. Restarting interrupts ongoing generation.",
+        "applyModels": "Use Downloaded Models",
+        "startOnUse": "Starts when needed"
       }
     },
     "experimental": {

@@ -132,6 +132,8 @@ import { updateCustomProvider } from '@/lib/customProviders';
 
 import { ProvidersSection } from '@/components/settings/ProvidersSection';
 
+vi.mock('@/components/settings/LlamaCppProviderDetail', () => ({ LlamaCppProviderDetail: () => null }));
+
 vi.mock('@/components/settings/OllamaProviderDetail', () => ({ OllamaProviderDetail: () => null }));
 
 function makeProvider(id: string, over?: Partial<ProviderView>): ProviderView {
@@ -194,6 +196,7 @@ beforeEach(() => {
       onProviderOAuthProgress: vi.fn(() => () => undefined),
       auth: { logout: codexAuthActions.logout },
       scanLocalCli: vi.fn(async () => ({ detections: [] })),
+      llamaCppStatus: vi.fn(async () => ({ installed: false, supported: true, running: false, models: [] })),
       localModelStatus: vi.fn(async () => ({ kind: 'ready' })),
       onLocalModelStatus: vi.fn(() => () => undefined),
       requestProviderModelsAutoRefresh: vi.fn(async () => ({ ok: true })),
@@ -248,10 +251,19 @@ describe('ProvidersSection — 深链定位', () => {
     },
   );
 
-  it.each(['anthropic', 'xai', 'cindy-local-ollama'])('shows the saved name in both sidebar and detail header for %s', async (id) => {
+  it('uses the same local header and empty model treatment for llama.cpp', async () => {
+    providersState.providers = [makeProvider('cindy-local-llamacpp', { name: 'llama.cpp', source: 'user', auth: { method: 'none' }, connected: true })];
+    renderAt('?tab=providers&connect=cindy-local-llamacpp');
+    expect(await screen.findByText(/^settings\.providers\.local\.subtitle/)).toBeTruthy();
+    expect(screen.queryByText('settings.providers.detail.emptyModelsConnected')).toBeNull();
+    expect(screen.queryByText('settings.providers.pill.configured')).toBeNull();
+    expect(await screen.findByText('settings.providers.llamacpp.startOnUse')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'settings.providers.custom.editAria' })).toBeNull();
+  });
+  it.each(['anthropic', 'xai', 'cindy-local-ollama', 'cindy-local-llamacpp'])('shows the saved name in both sidebar and detail header for %s', async (id) => {
     providersState.providers = [makeProvider(id, {
       name: 'My renamed provider', connected: true,
-      source: id === 'cindy-local-ollama' ? 'user' : 'builtin',
+      source: id.startsWith('cindy-local-') ? 'user' : 'builtin',
     })];
     renderAt(`?tab=providers&connect=${id}`);
     await waitFor(() => expect(screen.getAllByText('My renamed provider').length).toBeGreaterThanOrEqual(2));

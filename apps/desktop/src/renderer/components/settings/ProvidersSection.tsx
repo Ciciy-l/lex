@@ -83,6 +83,8 @@ import { QuotaHoverCard } from '../status/QuotaHoverCard';
 import { ProviderConnectionDialog } from './ProviderConnectionDialog';
 import { AddProviderWizard, type WizardEntry } from './AddProviderWizard';
 import { OllamaProviderDetail } from './OllamaProviderDetail';
+import { LlamaCppProviderDetail } from './LlamaCppProviderDetail';
+import { MANAGED_LLAMACPP_PROVIDER_ID } from '../../../shared/llamaCpp';
 import {
   isLocalRuntimeBetaProviderId,
   MANAGED_LMSTUDIO_PROVIDER_ID,
@@ -1622,16 +1624,60 @@ function XdGatewayHeader({
   );
 }
 
-function OllamaHeader({ provider, onDelete }: { provider: ProviderView; onDelete: () => void }) {
+function isManagedLocalProvider(id: string): boolean {
+  return id === MANAGED_OLLAMA_PROVIDER_ID || id === MANAGED_LLAMACPP_PROVIDER_ID;
+}
+
+function useManagedLocalRuntimeLive(providerId: string): boolean | null {
+  const [localLive, setLocalLive] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!isManagedLocalProvider(providerId)) return;
+    let cancelled = false;
+    if (providerId === MANAGED_LLAMACPP_PROVIDER_ID) {
+      let timer: ReturnType<typeof setTimeout>;
+      const read = async () => {
+        try {
+          const next = await window.electronAPI.maker.llamaCppStatus();
+          if (!cancelled) setLocalLive(next.running);
+        } catch { if (!cancelled) setLocalLive(false); }
+        if (!cancelled) timer = setTimeout(() => void read(), 2000);
+      };
+      void read();
+      return () => { cancelled = true; clearTimeout(timer); };
+    }
+    void window.electronAPI.maker.localModelStatus().then((next) => {
+      if (!cancelled) setLocalLive(next.kind === 'ready' || next.kind === 'pulling');
+    });
+    const off = window.electronAPI.maker.onLocalModelStatus((next) => {
+      setLocalLive(next.kind === 'ready' || next.kind === 'pulling');
+    });
+    return () => {
+      cancelled = true;
+      off();
+    };
+  }, [providerId]);
+  return localLive;
+}
+
+function LocalRuntimeHeader({
+  children,
+  provider,
+  onDelete,
+}: {
+  children?: ReactNode;
+  provider: ProviderView;
+  onDelete: () => void;
+}) {
   const { t } = useTranslation();
+  const localLive = useManagedLocalRuntimeLive(provider.id);
   return (
     <DetailHeader
       icon={providerIcon(provider, 18)}
       title={provider.name || t('settings.providers.local.title')}
       subtitle={t('settings.providers.local.subtitle')}
       status={{
-        kind: provider.connected ? 'connected' : 'neutral',
-        label: t('settings.providers.pill.disconnected'),
+        kind: localLive ? 'connected' : 'neutral',
+        label: t(provider.id === MANAGED_LLAMACPP_PROVIDER_ID ? 'settings.providers.llamacpp.startOnUse' : 'settings.providers.pill.disconnected'),
       }}
       provider={provider}
       badge={<BetaTag label={t('settings.providers.local.beta')} />}
@@ -1804,21 +1850,7 @@ function ListRow({
 }) {
   const { t } = useTranslation();
   const management = useProviderManagement(provider);
-  const [ollamaLive, setOllamaLive] = useState<boolean | null>(null);
-  useEffect(() => {
-    if (provider.id !== MANAGED_OLLAMA_PROVIDER_ID) return;
-    let cancelled = false;
-    void window.electronAPI.maker.localModelStatus().then((next) => {
-      if (!cancelled) setOllamaLive(next.kind === 'ready' || next.kind === 'pulling');
-    });
-    const off = window.electronAPI.maker.onLocalModelStatus((next) => {
-      setOllamaLive(next.kind === 'ready' || next.kind === 'pulling');
-    });
-    return () => {
-      cancelled = true;
-      off();
-    };
-  }, [provider.id]);
+  const localLive = useManagedLocalRuntimeLive(provider.id);
   const modelCount = useMemo(
     () => (providerHasModels(provider) ? buildUnionRows(provider).length : null),
     [provider],
@@ -1909,8 +1941,8 @@ function ListRow({
             style={{
               backgroundColor: reconnectRequired
                 ? 'var(--remote-status-failed)'
-                : provider.id === MANAGED_OLLAMA_PROVIDER_ID
-                  ? ollamaLive
+                : isManagedLocalProvider(provider.id)
+                  ? localLive
                     ? 'var(--remote-status-ready)'
                     : 'var(--border-default)'
                   : provider.connected && !provider.suspended
@@ -2113,6 +2145,7 @@ export function ProvidersSection() {
       if (
         p.source === 'user' &&
         (p.id === MANAGED_OLLAMA_PROVIDER_ID ||
+          p.id === MANAGED_LLAMACPP_PROVIDER_ID ||
           p.id === MANAGED_LMSTUDIO_PROVIDER_ID ||
           providerHasModels(p) ||
           (p.auth.method === 'oauth' && (!!p.auth.oauth || !!p.auth.native)))
@@ -2508,8 +2541,10 @@ export function ProvidersSection() {
       if (supportsBuiltinConnectionManagement(p)) return <GenericOAuthHeader key={p.id} provider={p} onChanged={refetch} />;
       return <DetailHeader icon={providerIcon(p, 18)} title={p.name} subtitle={providerSubtitleForDisplay(p, '')} provider={p} />;
     }
-    if (p.id === MANAGED_OLLAMA_PROVIDER_ID) {
-      return <OllamaHeader provider={p} onDelete={() => void handleDeleteOllama()} />;
+    if (isManagedLocalProvider(p.id)) {
+      return (
+        <LocalRuntimeHeader provider={p} onDelete={() => void (p.id === MANAGED_OLLAMA_PROVIDER_ID ? handleDeleteOllama() : handleDelete(p))} />
+      );
     }
     return (
       <CustomProviderHeader
@@ -2755,10 +2790,10 @@ export function ProvidersSection() {
                       effectiveSelected.source === 'user' ||
                       (isBuiltinRefreshableProviderId(effectiveSelected.id) &&
                         !effectiveSelected.modelDiscoveryFailure) ||
-                      effectiveSelected.id === MANAGED_OLLAMA_PROVIDER_ID) && (
+                      isManagedLocalProvider(effectiveSelected.id)) && (
                       <>
                         {(providerHasModels(effectiveSelected) ||
-                          effectiveSelected.id !== MANAGED_OLLAMA_PROVIDER_ID) && (
+                          !isManagedLocalProvider(effectiveSelected.id)) && (
                           <div
                             className="border-t"
                             style={{ borderColor: 'var(--settings-theme-card-border)' }}
@@ -2777,18 +2812,21 @@ export function ProvidersSection() {
                               : undefined
                           }
                           emptyMessage={
-                            effectiveSelected.source === 'user' && effectiveSelected.modelDiscoveryFailure
-                              ? t(`settings.providers.detail.discoveryFailed.${effectiveSelected.modelDiscoveryFailure.kind}`)
-                              : effectiveSelected.id === MANAGED_OLLAMA_PROVIDER_ID
-                              ? t('settings.providers.local.emptyInstalled')
-                              : t(
-                                  effectiveSelected.connected
-                                    ? 'settings.providers.detail.emptyModelsConnected'
-                                    : 'settings.providers.detail.emptyModels',
+                            effectiveSelected.source === 'user' &&
+                            effectiveSelected.modelDiscoveryFailure
+                              ? t(
+                                  `settings.providers.detail.discoveryFailed.${effectiveSelected.modelDiscoveryFailure.kind}`,
                                 )
+                              : isManagedLocalProvider(effectiveSelected.id)
+                                ? t('settings.providers.local.emptyInstalled')
+                                : t(
+                                    effectiveSelected.connected
+                                      ? 'settings.providers.detail.emptyModelsConnected'
+                                      : 'settings.providers.detail.emptyModels',
+                                  )
                           }
-                          compactWhenEmpty={effectiveSelected.id === MANAGED_OLLAMA_PROVIDER_ID}
-                          compact={effectiveSelected.id === MANAGED_OLLAMA_PROVIDER_ID}
+                          compactWhenEmpty={isManagedLocalProvider(effectiveSelected.id)}
+                          compact={isManagedLocalProvider(effectiveSelected.id)}
                           {...(isBuiltinRefreshableProviderId(effectiveSelected.id)
                             ? {
                                 onRefresh: () => void handleRefreshBuiltinModels(effectiveSelected),
@@ -2796,7 +2834,7 @@ export function ProvidersSection() {
                                 refreshDisabled: refreshingProviderId !== null,
                                 refreshIdleLabel: t('settings.providers.models.refreshBuiltinAria'),
                               }
-                            : effectiveSelected.source === 'user'
+                            : effectiveSelected.source === 'user' && effectiveSelected.id !== MANAGED_LLAMACPP_PROVIDER_ID
                               ? {
                                   onRefresh: () => void handleRefreshModels(effectiveSelected),
                                   refreshing: refreshingProviderId === effectiveSelected.id,
@@ -2809,7 +2847,7 @@ export function ProvidersSection() {
                   {!effectiveSelected.suspended &&
                     !providerHasModels(effectiveSelected) &&
                     effectiveSelected.source !== 'user' &&
-                    effectiveSelected.id !== MANAGED_OLLAMA_PROVIDER_ID &&
+                    !isManagedLocalProvider(effectiveSelected.id) &&
                     (Boolean(effectiveSelected.modelDiscoveryFailure) ||
                       !isBuiltinRefreshableProviderId(effectiveSelected.id)) && (
                       <div className="flex flex-1 flex-col items-center justify-center gap-3 px-8 text-center text-13">
@@ -2844,6 +2882,9 @@ export function ProvidersSection() {
                     )}
                   {effectiveSelected.id === MANAGED_OLLAMA_PROVIDER_ID && (
                     <OllamaProviderDetail onChanged={refetch} />
+                  )}
+                  {effectiveSelected.id === MANAGED_LLAMACPP_PROVIDER_ID && (
+                    <LlamaCppProviderDetail onChanged={refetch} />
                   )}
                 </>
               </>

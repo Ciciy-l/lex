@@ -2195,7 +2195,8 @@
           },
           "codexContextUnknown": "CLI 設定を取得できません",
           "codexContextValues": "総容量 {{total}} · 使用可能 {{usable}} · 自動圧縮 {{compact}} tokens",
-          "contextLimitGptHint": "GPT は既定で最大 272K を使用します。ここで 1M に変更できます。Codex はウィンドウと自動圧縮のしきい値を同時に適用し、5% の余裕を確保します。実際の容量はモデルサービスに依存します。"
+          "contextLimitGptHint": "GPT は既定で最大 272K を使用します。ここで 1M に変更できます。Codex はウィンドウと自動圧縮のしきい値を同時に適用し、5% の余裕を確保します。実際の容量はモデルサービスに依存します。",
+          "contextLimitLocalMillionHint": "標準は 256K（262,144 tokens）で、1M（1,000,000）への拡張を選べます。サービスの実行中は「サービスを管理」で再起動すると変更が反映されます。停止中なら次回の使用時に反映されます。長い入力ほどメモリと処理時間が必要です。"
         },
         "kindFilter": {
           "all": "すべて",
@@ -2370,7 +2371,8 @@
           "apple-mlx": "この Mac には公式 MLX が向いています。",
           "generic-27b": "このコンピュータには公式 Q4 が向いています。",
           "compact": "このコンピュータのメモリなら、より軽いモデルから始めましょう。",
-          "unknown": "まずは動かしやすいモデルを選びます。"
+          "unknown": "まずは動かしやすいモデルを選びます。",
+          "high-memory": "大容量メモリを活かし、より高性能なモデルを優先します。ローカルの速度とピークメモリは要検証です。"
         },
         "searchPlaceholder": "モデルを検索",
         "noSearchResults": "一致するモデルがありません",
@@ -2461,7 +2463,9 @@
         "deleteModelConfirm": "削除",
         "deleteModelDone": "{{name}} を削除しました",
         "deleteModelFailed": "削除できませんでした。Ollama が起動していることを確認して、もう一度お試しください。",
-        "noRecommendation": "このコンピュータのメモリに適合し、十分な根拠のある推奨モデルはまだありません。下の候補から選べます。"
+        "noRecommendation": "このコンピュータのメモリに適合し、十分な根拠のある推奨モデルはまだありません。下の候補から選べます。",
+        "lighterAlternative": "軽量な代替モデル",
+        "recommendedInstalled": "推奨モデルはインストール済みです。"
       },
       "xdSignin": {
         "badge": "おすすめ",
@@ -2510,6 +2514,45 @@
         "modelCount": "{{count}} 個のモデルを設定済み",
         "modelsAutomatic": "モデル情報は自動取得されます。個別の設定はモデル一覧から変更できます。",
         "manualModel": "モデル ID（自動取得できない場合）"
+      },
+      "llamacpp": {
+        "ownedElsewhere": "モデルサービスは別の Cindy インスタンスで実行中です。モデルのダウンロードやコンテキストの変更はそちらで行うか、先にそのサービスを停止してください。",
+        "primaryPick": "第一候補 · まず試す",
+        "recommendReason": "共通カタログがこのパソコン向けに選んだ性能重視の {{name}} から始めてください。",
+        "recommendCaveat": "この GGUF 版のローカル速度とピークメモリは未検証です。ダウンロードサイズは実行時メモリ使用量ではありません。",
+        "candidates": "試用するモデル",
+        "trialNote": "試用できるモデルです。性能とメモリ使用量は未検証です。",
+        "downloadModel": "{{name}} をダウンロード",
+        "title": "llama.cpp",
+        "subtitle": "実行環境とモデルをダウンロードしてローカルで実行",
+        "description": "下のモデルを選び、ダウンロードしてローカルで実行します。",
+        "install": "llama.cpp をインストール",
+        "start": "起動して接続",
+        "restart": "再起動してモデルを更新",
+        "stop": "サービスを停止",
+        "cancel": "操作をキャンセル",
+        "repository": "Hugging Face リポジトリ",
+        "findFiles": "モデルファイルを検索",
+        "file": "GGUF ファイル",
+        "shards": "分割モデルは全ファイルをダウンロードします。表示サイズは選択したファイルのみです。テキストモデルに対応し、画像用プロジェクターはダウンロードしません。",
+        "download": "モデルをダウンロード",
+        "models": "ダウンロード済みモデル",
+        "empty": "上の一覧からモデルを選ぶか、Hugging Face リポジトリを入力してダウンロードしてください。",
+        "unsupported": "この環境では自動インストールに対応していません。llama.cpp 接続を手動で設定してください。",
+        "failed": "操作を完了できませんでした。ネットワークとディスク空き容量を確認して再試行してください。",
+        "invalid": "owner/model-GGUF 形式でリポジトリを入力し、GGUF ファイルを選択してください。",
+        "progress": {
+          "install": "llama.cpp をインストール中…",
+          "download": "モデルをダウンロード中…",
+          "start": "llama.cpp を起動中…"
+        },
+        "installAndConnect": "インストールして接続",
+        "installDescription": "Cindy が llama.cpp をインストールします。モデルをダウンロードすると、使用時にサービスが自動で起動します。",
+        "manualConnect": "既存のサービスに接続",
+        "manageRuntime": "サービスを管理",
+        "restartHint": "モデルのダウンロードやコンテキストの変更後は、「サービスを管理」で再起動すると変更が反映されます。再起動すると進行中の生成が中断されます。",
+        "applyModels": "ダウンロード済みモデルを使用",
+        "startOnUse": "使用時に起動"
       }
     },
     "experimental": {

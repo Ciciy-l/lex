@@ -2195,7 +2195,8 @@
           },
           "codexContextUnknown": "未读取到 CLI 配置",
           "codexContextValues": "总窗口 {{total}} · 可用 {{usable}} · 自动压缩 {{compact}} tokens",
-          "contextLimitGptHint": "GPT 默认最多使用 272K；可在此自定义到 1M。Codex 会同步应用窗口与自动压缩阈值，保留 5% 余量；实际容量受模型服务限制。"
+          "contextLimitGptHint": "GPT 默认最多使用 272K；可在此自定义到 1M。Codex 会同步应用窗口与自动压缩阈值，保留 5% 余量；实际容量受模型服务限制。",
+          "contextLimitLocalMillionHint": "原生 256K（262,144 tokens），可选扩展至 1M（1,000,000）。服务运行时需在「管理服务」中重启以应用更改；已停止时，下次使用自动生效。长输入会增加内存占用和等待时间。"
         },
         "kindFilter": {
           "all": "全部",
@@ -2370,7 +2371,8 @@
           "apple-mlx": "这台 Mac 适合官方 MLX 封装。",
           "generic-27b": "这台电脑适合官方 Q4 封装。",
           "compact": "按这台电脑的内存，先从更轻量的模型开始。",
-          "unknown": "先选一个更好跑起来的模型。"
+          "unknown": "先选一个更好跑起来的模型。",
+          "high-memory": "这台电脑内存充裕，优先试用能力更强的模型；本机速度和峰值内存仍待实测。"
         },
         "searchPlaceholder": "搜索模型",
         "noSearchResults": "没有匹配的模型",
@@ -2461,7 +2463,9 @@
         "deleteModelConfirm": "删除",
         "deleteModelDone": "已删除 {{name}}",
         "deleteModelFailed": "删除失败，请确认 Ollama 正在运行后重试",
-        "noRecommendation": "这台电脑暂时没有证据充分且内存适配的推荐，可在下方手动选择候选模型。"
+        "noRecommendation": "这台电脑暂时没有证据充分且内存适配的推荐，可在下方手动选择候选模型。",
+        "lighterAlternative": "轻量备选",
+        "recommendedInstalled": "推荐模型已在本机，可直接使用。"
       },
       "xdSignin": {
         "badge": "推荐",
@@ -2510,6 +2514,45 @@
         "modelCount": "已配置 {{count}} 个模型",
         "modelsAutomatic": "模型资料自动获取。单个模型的设置在模型列表中调整。",
         "manualModel": "模型 ID（无法自动获取时填写）"
+      },
+      "llamacpp": {
+        "ownedElsewhere": "模型服务正在另一个 Cindy 实例中运行。请在那里下载模型或修改上下文，或先在该实例停止服务。",
+        "primaryPick": "主推 · 先试这个",
+        "recommendReason": "优先试用 {{name}}，这是为这台机器选出的能力主推型号。",
+        "recommendCaveat": "此 GGUF 包装的本机速度和峰值内存仍待实测，下载大小不等于运行内存。",
+        "candidates": "待试验模型",
+        "trialNote": "以下模型可供试验，性能和内存占用尚待验证。",
+        "downloadModel": "下载 {{name}}",
+        "title": "llama.cpp",
+        "subtitle": "安装运行环境、下载模型并在本机运行",
+        "description": "选择下方模型，下载到本机运行。",
+        "install": "安装 llama.cpp",
+        "start": "启动并连接",
+        "restart": "重启并刷新模型",
+        "stop": "停止服务",
+        "cancel": "取消操作",
+        "repository": "Hugging Face 仓库",
+        "findFiles": "查找模型文件",
+        "file": "GGUF 文件",
+        "shards": "分片模型会自动下载全部分片，上方大小为所选分片的大小。支持文本模型，暂不下载视觉投影文件。",
+        "download": "下载模型",
+        "models": "已下载模型",
+        "empty": "从上方清单选择模型，或输入 Hugging Face 仓库下载第一个模型。",
+        "unsupported": "此平台暂不支持自动安装，可通过手动配置连接 llama.cpp。",
+        "failed": "操作未完成，请检查网络和可用磁盘空间后重试。",
+        "invalid": "请输入 owner/model-GGUF 格式的仓库名称并选择 GGUF 文件。",
+        "progress": {
+          "install": "正在安装 llama.cpp…",
+          "download": "正在下载模型…",
+          "start": "正在启动 llama.cpp…"
+        },
+        "installAndConnect": "安装并连接",
+        "installDescription": "Cindy 会安装 llama.cpp。下载模型后，使用时自动启动服务。",
+        "manualConnect": "连接已有服务",
+        "manageRuntime": "管理服务",
+        "restartHint": "下载模型或修改上下文后，在「管理服务」中重启以应用更改。重启会中断正在进行的生成。",
+        "applyModels": "使用已下载模型",
+        "startOnUse": "按需启动"
       }
     },
     "experimental": {

@@ -1,6 +1,8 @@
 import { getValidClaudeAccountOAuth } from '../../maker-host/subscription-account-auth.js';
 vi.mock('../../maker-host/subscription-account-auth.js', () => ({ getValidClaudeAccountOAuth: vi.fn() }));
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+const localReady = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock('../../local-model-runtime/preflight.js', () => ({ ensureManagedOllamaReadyForSession: localReady }));
 
 vi.mock('electron', () => ({
   app: {
@@ -816,10 +818,10 @@ describe('utility one-shot candidates', () => {
     });
   });
 
-  it('maps disabled thinking to Ollama reasoning_effort none', async () => {
+  it.each(['cindy-local-ollama', 'cindy-local-llamacpp'])('starts the managed one-shot route before dispatch: %s', async (providerId) => {
     activeCatalog.mockReturnValue({
       providers: [{
-        id: 'cindy-local-ollama',
+        id: providerId,
         name: 'Ollama',
         source: 'user',
         agents: ['codex'],
@@ -844,7 +846,7 @@ describe('utility one-shot candidates', () => {
     } as never);
 
     const result = await requestExplicitUtilityText('generate', {
-      providerId: 'cindy-local-ollama',
+      providerId,
       agentKind: 'codex',
       model: 'qwen3.8:27b',
       maxTokens: 32,
@@ -852,6 +854,8 @@ describe('utility one-shot candidates', () => {
     });
 
     expect(result).toMatchObject({ ok: true, text: 'local title' });
+    expect(localReady).toHaveBeenCalledWith({ providerId });
+    expect(localReady.mock.invocationCallOrder.at(-1)!).toBeLessThan(fetchMock.mock.invocationCallOrder[0]!);
     const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(body).toMatchObject({
       model: 'qwen3.8:27b',

@@ -3900,7 +3900,7 @@ describe('Bot Session task end-to-end runtime', () => {
       expect(resolveTaskModelSelection).toHaveBeenCalledWith(selection);
       expect(result.modelRoute).toEqual(chosen);
       const recovery = automaticTaskFallback();
-      expect((await recovery.apply(result.childSessionId, 2, 2)).outcome).toBe('unchanged');
+      expect(await recovery.apply(result.childSessionId, 2, 2)).toBeNull();
       expect(recovery.pick).not.toHaveBeenCalled();
       expect(runtime.started).toContainEqual({ sessionId: result.childSessionId, agentKind, model: route.model, providerId: route.providerId, effort: 'high', fastMode: 1 });
       const next = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Use the saved default.' });

@@ -19,7 +19,7 @@ export function BotTaskModelEditor({ value, inheritedRoute, onChange, disabled, 
     <BotModelChainEditor label={t('bots.model.task')} value={route ? [route] : []}
       allowFallbacks={false} disabled={disabled} hiddenVendors={hiddenVendors} deviceId={deviceId} remote={deviceId !== undefined}
       onChange={routes => { if (routes[0]) onChange(routes[0]); }} />
-    {value ? <Button variant="secondary" tone="quiet" size="sm" compact disabled={disabled}
+    {value ? <Button variant="secondary" size="md" disabled={disabled}
       onClick={() => onChange(null)}>{t('bots.model.inheritPrimary')}</Button>
       : <p className="mt-1 text-12 leading-5 text-[var(--text-secondary)]">{t('bots.model.inheritingPrimary')}</p>}
   </div>;
