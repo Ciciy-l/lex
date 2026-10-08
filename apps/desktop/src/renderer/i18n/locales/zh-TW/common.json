@@ -8223,6 +8223,11 @@
         "paused": "已暫停",
         "disabled": "已停用"
       }
+    },
+    "learning": {
+      "memory": "已記住：{{title}}",
+      "skillCreated": "已建立技能：{{title}}",
+      "skillUpdated": "已更新技能：{{title}}"
     }
   },
   "common": {

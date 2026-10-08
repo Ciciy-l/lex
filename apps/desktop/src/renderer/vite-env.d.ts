@@ -4711,6 +4711,7 @@ interface ElectronAPI {
           | { ok: false; errorCode: string; message: string }
         >;
       };
+      listSkills: (botId: string) => Promise<import('../shared/botSkill').BotSkillSummary[]>;
       memory: {
         list: (
           botId: string,

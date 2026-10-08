@@ -8223,6 +8223,11 @@
         "paused": "一時停止中",
         "disabled": "オフ"
       }
+    },
+    "learning": {
+      "memory": "記憶しました：{{title}}",
+      "skillCreated": "スキルを作成：{{title}}",
+      "skillUpdated": "スキルを更新：{{title}}"
     }
   },
   "common": {

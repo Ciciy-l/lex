@@ -68,6 +68,8 @@ export interface BotSkillWriteInput {
   body: string;
   slug?: string;
   now?: number;
+  /** Review snapshots may only replace the exact version they read (null means create). */
+  expectedUpdatedAt?: string | null;
 }
 
 export type BotSkillErrorCode =
@@ -464,13 +466,27 @@ export async function seedBotSkillIfMissing(
  * 所以这里不做撞名保护,而是原地覆盖并刷新 updatedAt。返回值里的 `created`
  * 让调用方能分辨「学会了」和「改进了」。
  */
+const skillWrites = new Map<string, Promise<unknown>>();
 export async function saveBotSkill(
+  userDataDir: string, botId: string, input: BotSkillWriteInput,
+): Promise<{ record: BotSkillRecord; created: boolean }> {
+  const key = botSkillRootDir(userDataDir, botId);
+  const pending = (skillWrites.get(key) ?? Promise.resolve()).catch(() => {}).then(() => writeBotSkill(userDataDir, botId, input));
+  skillWrites.set(key, pending);
+  try { return await pending; }
+  finally { if (skillWrites.get(key) === pending) skillWrites.delete(key); }
+}
+async function writeBotSkill(
   userDataDir: string,
   botId: string,
   input: BotSkillWriteInput,
   beforeWrite?: () => void,
 ): Promise<{ record: BotSkillRecord; created: boolean }> {
   const { name, description, body, slug, updatedAt } = normalizeBotSkillWriteInput(input);
+  const previous = await readBotSkill(userDataDir, botId, slug);
+  beforeWrite?.();
+  if (input.expectedUpdatedAt !== undefined && (previous?.updatedAt ?? null) !== input.expectedUpdatedAt)
+    throw new BotSkillStoreError('INVALID_ARGS', 'Skill changed during review');
   const existing = await listBotSkills(userDataDir, botId, beforeWrite);
   const created = !existing.some((item) => item.slug === slug);
   if (created && existing.length >= BOT_SKILL_MAX_COUNT) {

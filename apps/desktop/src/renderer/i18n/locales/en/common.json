@@ -8236,6 +8236,11 @@
         "paused": "Paused",
         "disabled": "Turned off"
       }
+    },
+    "learning": {
+      "memory": "Remembered: {{title}}",
+      "skillCreated": "Created skill: {{title}}",
+      "skillUpdated": "Updated skill: {{title}}"
     }
   },
   "common": {

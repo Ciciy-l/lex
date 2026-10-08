@@ -481,6 +481,7 @@ export function createLiziMcpProviders(
           withAccountDataAccess: opts.memory!.withAccountDataAccess,
           workdir: ctx.workingDir,
           getSessionContext: () => resolveLiziMcpSessionContext(ctx),
+          beginWrite: opts.memory!.beginWrite,
           ...(opts.memory!.searchSessions ? { searchSessions: opts.memory!.searchSessions } : {}),
           ...(opts.memory!.logger ? { logger: opts.memory!.logger } : {}),
         }),

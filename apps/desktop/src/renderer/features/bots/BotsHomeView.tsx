@@ -93,7 +93,9 @@ export function BotSettings({
   onBack,
   onOpenSession,
   beforeCloseRef,
+  initialPage = 'home',
 }: {
+  initialPage?: 'home' | 'memory' | 'capabilities';
   bot: BotProfile;
   beforeCloseRef?: { current: (() => Promise<boolean>) | null };
   onBack: () => void;
@@ -133,7 +135,7 @@ export function BotSettings({
     | 'advanced'
     | 'routines'
     | 'memory'
-  >('home');
+  >(initialPage);
   const routineLeaveRef = useRef<(() => Promise<boolean>) | null>(null);
   const memoryLeaveRef = useRef<(() => Promise<boolean>) | null>(null);
   const memoryBackRef = useRef<(() => Promise<boolean>) | null>(null);

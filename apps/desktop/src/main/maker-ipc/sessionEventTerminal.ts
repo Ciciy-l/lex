@@ -1,3 +1,6 @@
+import { reviewTeammateLearning } from './botLearningReview.js';
+import { botLearningTracker } from './botLearningTracker.js';
+import { learningTurnIdentity } from './botLearningFeedback.js';
 import type { BotDelegationService } from './botDelegationService.js';
 import type { BotGroupChatService } from './botGroupChatService.js';
 import type { AgentEvent, Session } from '@cindy/maker-core';
@@ -190,6 +193,9 @@ export function finishSessionTerminalEvent(
           nativeForkAnchor ? { nativeForkAnchor } : undefined,
         );
       }
+    }
+    if (!isContinuationBoundary) {
+      botLearningTracker.seal(session.id, learningTurnIdentity(session, event.sessionTurnGeneration), turnBoundaryAssistantPersistId);
     }
     // error 行在 flushOrphanToolResults 之后入队,保证 orphan tool_result 排在
     // error 行之前(历史时间线:tool 输出 → 错误卡,而非错误卡插到 tool 输出之前)。
@@ -441,6 +447,24 @@ export function finishSessionTerminalEvent(
         session.id,
         event.sessionTurnGeneration,
       );
+    if (
+      event.type === 'done' &&
+      !isContinuationBoundary &&
+      !isPairedFailedTurnDone &&
+      !isFailedTurnCompletionTail &&
+      !deferredOrcaWorkerTerminal &&
+      !isTerminalTurnErrorEvent(event) &&
+      isSuccessfulAssistantReplyDoneData(event.data) &&
+      !deps.autoResumeBookkeeping.hasSuppressedError(session.id) &&
+      !deps.agentInputCoordinatorHolder?.isAutoResumePending(session.id) &&
+      !deps.agentInputCoordinatorHolder?.isAutoResumeDeferred(session.id)
+    ) {
+      if (turnBoundaryAssistantPersistId && !session.remoteHostId) {
+        const replyId = turnBoundaryAssistantPersistId;
+        void reviewTeammateLearning(session.id, replyId).catch(() =>
+          deps.log.warn('Teammate learning review did not complete'));
+      }
+    }
     if (
       !shouldSkipOrcaWorkerTerminal({
         isContinuationBoundary,

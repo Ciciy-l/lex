@@ -1,3 +1,4 @@
+import { BotLearningFooter } from '@/features/bots/BotLearningFooter';
 /**
  * AssistantMessage
  * ---------------------------------------------------------------------------
@@ -193,6 +194,7 @@ interface AssistantMessageProps {
   showActionBar?: boolean;
   /** 伙伴对话使用常显、无费用、无 Fork 的轻量消息操作栏。 */
   simplifiedBotConversation?: boolean;
+  botLearning?: unknown;
   /** Per-turn 费用 (USD) — 仅该轮最后一条 assistant 有值, action bar 时间旁显示。 */
   turnMoney?: RegionalMoney;
   turnCostUsd?: number;
@@ -229,6 +231,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   sessionRunning,
   showActionBar = false,
   simplifiedBotConversation = false,
+  botLearning,
   turnMoney,
   turnCostUsd,
   turnCostIsEstimate,
@@ -400,6 +403,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           </div>
         )}
       </div>
+      {simplifiedBotConversation && !isStreaming && content.trim() && <BotLearningFooter receipts={botLearning} />}
       {/* Streaming → bar not mounted at all (V1.2 验收 "流式期间不挂载");
           非 turn 收尾正文(showActionBar=false)同样不挂,消息流保持紧凑 */}
       {!isStreaming && showActionBar && (

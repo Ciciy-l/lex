@@ -8223,6 +8223,11 @@
         "paused": "일시 중지됨",
         "disabled": "꺼짐"
       }
+    },
+    "learning": {
+      "memory": "기억했어요: {{title}}",
+      "skillCreated": "스킬 생성: {{title}}",
+      "skillUpdated": "스킬 업데이트: {{title}}"
     }
   },
   "common": {
