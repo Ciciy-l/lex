@@ -35,7 +35,7 @@ import { hasPrivacyConsent } from '@/update/updateConsentGate';
 import { SUPPORTED_LOCALES, type LocalePreference } from '@/i18n';
 import { useLocale } from '@/i18n/useLocale';
 import { goBackGuarded } from '@/utils/backGuard';
-import { configureCollapseAnimation } from '@/utils/collapseAnimation';
+import { DisclosureItem, ListDisclosureScope, useListDisclosureTransition } from '@/session/listDisclosureTransition';
 import {
   MainWindowActionButton,
   MainWindowActionGroup,
@@ -575,10 +575,10 @@ export default function SettingsScreen() {
     }
   }, [auth.apiFetch, pushBusy, pushEnabled, t]);
 
+  const debugDisclosure = useListDisclosureTransition();
   const toggleDebug = useCallback(() => {
-    configureCollapseAnimation();
-    setDebugExpanded((value) => !value);
-  }, []);
+    debugDisclosure.run(() => setDebugExpanded((value) => !value));
+  }, [debugDisclosure.run]);
 
   // beta 测试渠道开关:落盘即时生效,但 manifest 通道只在下次冷启动/后台轮询切换。
   // 打开后引导用户手动重启,让下次启动的更新检查前就切到 beta。
@@ -729,6 +729,7 @@ export default function SettingsScreen() {
       />
 
       <ScrollView {...simpleScrollInsetProps} contentContainerStyle={styles.content} testID="settings.scroll">
+        <ListDisclosureScope controller={debugDisclosure.controller}>
         {/* 账号头部:身份 + 连接状态一次性呈现,下面分组不再重复 */}
         <View style={styles.headerCard} testID="settings.accountHeader">
           <MobileUserAvatar imageUrl={auth.user?.avatar} name={overview.header.name} size="large" />
@@ -1076,7 +1077,7 @@ export default function SettingsScreen() {
         </SettingsGroup>
 
         {/* 账号操作:退出保持明确(先确认);注销账号仅保留低调的次要文字入口。 */}
-        <View style={styles.dangerArea} testID="settings.accountActions">
+        <DisclosureItem style={styles.dangerArea} testID="settings.accountActions">
           <Text style={styles.dangerHint}>
             {t('settings.account.logoutHint')}
           </Text>
@@ -1109,7 +1110,8 @@ export default function SettingsScreen() {
               </Text>
             </Pressable>
           ) : null}
-        </View>
+        </DisclosureItem>
+        </ListDisclosureScope>
       </ScrollView>
       <SheetModal
         backdropTestID="settings.languagePicker.backdrop"

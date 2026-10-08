@@ -413,6 +413,8 @@ import {
 } from '@/session/MobileComposerInputRow';
 import { ComposerFrame, nativeComposerFrameAvailable } from '@/session/ComposerFrame';
 import { VoiceRecordingPillContent, useMobileVoiceRecordingTimer } from '@/session/VoiceRecordingPill';
+import { VoicePillWidthFrame } from '@/session/voicePillWidthMotion';
+import { useMobileVoiceProcessingIndicator } from '@/session/useMobileVoiceProcessingIndicator';
 import { useComposerCardTransition } from '@/session/useComposerCardTransition';
 import { ComposerKeyboardAvoidingView } from '@/session/ComposerKeyboardAvoidingView';
 import { useComposerResize } from '@/session/useComposerResize';
@@ -2424,6 +2426,7 @@ export default function SessionScreen() {
     remoteUnavailable: !!remoteUnavailableReason,
   });
   const voiceIsProcessing = voiceState === 'submitting' || voiceState === 'refining';
+  const voiceProcessingIndicator = useMobileVoiceProcessingIndicator(voiceState);
   const composerSendUnavailableReason = canUseComposer ? null : composerDisabledReason;
   // 手机语音只保留官方托管路径,错误引导仅剩系统麦克风权限一条。
   const canStopQueue = !!stopOptionsForProjection(inputProjection)
@@ -6821,80 +6824,86 @@ export default function SessionScreen() {
     </>
   );
   const renderComposerVoiceButton = (buttonStyle?: StyleProp<ViewStyle>) => (
-    <RouteActionButton
-      accessibilityLabel={voiceIsListening ? t('session.common.voiceStopRecording') : t('session.screen.voiceStartInput')}
-      accessibilityHint={composerLayout.voice.disabledReason ?? composerSendUnavailableReason ?? undefined}
-      active={composerLayout.voice.active}
-      busy={voiceIsProcessing}
-      disabled={composerLayout.voice.disabled || (!canUseComposer && !voiceIsBusy)}
-      delayLongPress={320}
-      hitSlop={COMPOSER_CONTROL_HIT_SLOP}
-      onPressIn={handleVoiceButtonPressIn}
-      onLongPress={() => {
-        voiceLongPressActiveRef.current = true;
-        voiceSuppressNextPressRef.current = true;
-        measureSendButtonTarget();
-        // 录音已在 pressIn 起了;这里只兜 pressIn 守卫路径没起成的边缘
-        // (startVoiceRecording 自带重入守卫,重复调用无害)。
-        if (!voiceRecordingActiveRef.current) void startVoiceRecording();
-      }}
-      onPress={() => {
-        if (voiceSuppressNextPressRef.current) {
-          voiceSuppressNextPressRef.current = false;
-          return;
-        }
-        if (voiceStartedOnPressInRef.current) {
-          // 本次按下已在 pressIn 起录:这次松手属于同一手势,不再当作
-          // 「再点一下停止」;下一次完整点击才会 toggle 停止。
+    <VoicePillWidthFrame hitSlop={COMPOSER_CONTROL_HIT_SLOP} width={voiceRecordingTimer.pillWidth}>
+      <RouteActionButton
+        accessibilityLabel={voiceIsListening ? t('session.common.voiceStopRecording') : t('session.screen.voiceStartInput')}
+        accessibilityHint={composerLayout.voice.disabledReason ?? composerSendUnavailableReason ?? undefined}
+        active={composerLayout.voice.active}
+        busy={voiceIsProcessing}
+        disabled={composerLayout.voice.disabled || (!canUseComposer && !voiceIsBusy)}
+        // 停止后的短暂收尾期仍禁止操作,但保持录音胶囊原样、不置灰。voice.disabled 在
+        // 语音处理中恒为 true,不能拿它判断;只有与语音无关的禁用原因(发送中)才置灰。
+        disabledStyle={voiceProcessingIndicator.stopping && !sending ? null : undefined}
+        delayLongPress={320}
+        hitSlop={COMPOSER_CONTROL_HIT_SLOP}
+        onPressIn={handleVoiceButtonPressIn}
+        onLongPress={() => {
+          voiceLongPressActiveRef.current = true;
+          voiceSuppressNextPressRef.current = true;
+          measureSendButtonTarget();
+          // 录音已在 pressIn 起了;这里只兜 pressIn 守卫路径没起成的边缘
+          // (startVoiceRecording 自带重入守卫,重复调用无害)。
+          if (!voiceRecordingActiveRef.current) void startVoiceRecording();
+        }}
+        onPress={() => {
+          if (voiceSuppressNextPressRef.current) {
+            voiceSuppressNextPressRef.current = false;
+            return;
+          }
+          if (voiceStartedOnPressInRef.current) {
+            // 本次按下已在 pressIn 起录:这次松手属于同一手势,不再当作
+            // 「再点一下停止」;下一次完整点击才会 toggle 停止。
+            voiceStartedOnPressInRef.current = false;
+            return;
+          }
+          toggleVoiceRecording();
+        }}
+        onPressOut={(event) => {
+          if (!voiceLongPressActiveRef.current) return;
+          // 长按路径在此收尾,本次按下的生命周期结束;标记同步清掉,
+          // 手势取消(onTouchCancel)不再重复处理。
           voiceStartedOnPressInRef.current = false;
-          return;
-        }
-        toggleVoiceRecording();
-      }}
-      onPressOut={(event) => {
-        if (!voiceLongPressActiveRef.current) return;
-        // 长按路径在此收尾,本次按下的生命周期结束;标记同步清掉,
-        // 手势取消(onTouchCancel)不再重复处理。
-        voiceStartedOnPressInRef.current = false;
-        const shouldSend = updateVoiceReleaseToSendTarget(event);
-        voiceLongPressActiveRef.current = false;
-        voiceSuppressNextPressRef.current = true;
-        setVoiceReleaseToSendActive(false);
-        if (!voiceRecordingActiveRef.current) {
-          voiceStopAfterStartRef.current = true;
-          return;
-        }
-        void finishVoiceRecording({ sendAfterTranscribe: shouldSend });
-      }}
-      onResponderMove={updateVoiceReleaseToSendTarget}
-      onTouchCancel={() => {
-        // 手势被系统/滚动打断(responder termination):撤销这次按下误触发的
-        // 录音——用户本意是滚动列表,不能留下一个还在采集的麦克风(review P1)。
-        // 正常松手(含拖出按钮后松开)不走这里,对齐桌面「pointercancel 才撤销」。
-        if (!voiceStartedOnPressInRef.current) return;
-        voiceStartedOnPressInRef.current = false;
-        cancelVoiceForGestureTermination();
-      }}
-      style={[
-        styles.composerInlineToolButton,
-        buttonStyle,
-        // 胶囊底色跟随计时内容(含 pressIn 乐观 pending 期),不只 listening——
-        // 否则按下瞬间胶囊已展开、底色却要等 ASR 连上才变,闪一次半成品态。
-        voiceRecordingTimer.label !== null && styles.composerToolButtonPrimary,
-        voiceRecordingTimer.label !== null && { width: voiceRecordingTimer.pillWidth },
-      ]}
-      testID="session.voiceButton"
-    >
-      {voiceIsProcessing ? (
-        <ActivityIndicator color={colors.textSecondary} size="small" />
-      ) : voiceRecordingTimer.label !== null ? (
-        // 录音中:胶囊展开为脉冲红点 + 计时(对齐桌面 activeRecording 形态),
-        // 点胶囊任意位置停止录音;右缘锚定不动,只向左生长。
-        <VoiceRecordingPillContent label={voiceRecordingTimer.label} testID="session.voiceRecordingPill" />
-      ) : (
-        <Mic color={colors.textSecondary} size={iconSize.sm} strokeWidth={iconStroke.regular} />
-      )}
-    </RouteActionButton>
+          const shouldSend = updateVoiceReleaseToSendTarget(event);
+          voiceLongPressActiveRef.current = false;
+          voiceSuppressNextPressRef.current = true;
+          setVoiceReleaseToSendActive(false);
+          if (!voiceRecordingActiveRef.current) {
+            voiceStopAfterStartRef.current = true;
+            return;
+          }
+          void finishVoiceRecording({ sendAfterTranscribe: shouldSend });
+        }}
+        onResponderMove={updateVoiceReleaseToSendTarget}
+        onTouchCancel={() => {
+          // 手势被系统/滚动打断(responder termination):撤销这次按下误触发的
+          // 录音——用户本意是滚动列表,不能留下一个还在采集的麦克风(review P1)。
+          // 正常松手(含拖出按钮后松开)不走这里,对齐桌面「pointercancel 才撤销」。
+          if (!voiceStartedOnPressInRef.current) return;
+          voiceStartedOnPressInRef.current = false;
+          cancelVoiceForGestureTermination();
+        }}
+        style={[
+          styles.composerInlineToolButton,
+          buttonStyle,
+          // 胶囊底色跟随计时内容(含 pressIn 乐观 pending 期),不只 listening——
+          // 否则按下瞬间胶囊已展开、底色却要等 ASR 连上才变,闪一次半成品态。
+          voiceRecordingTimer.label !== null && styles.composerToolButtonPrimary,
+          // 宽度由外框 VoicePillWidthFrame 驱动(录音胶囊展开 / 收回的过渡),按钮撑满外框。
+          styles.voicePillFill,
+        ]}
+        testID="session.voiceButton"
+      >
+        {voiceProcessingIndicator.showProcessing ? (
+          <ActivityIndicator color={colors.textSecondary} size="small" />
+        ) : voiceRecordingTimer.label !== null ? (
+          // 录音中:胶囊展开为脉冲红点 + 计时(对齐桌面 activeRecording 形态),
+          // 点胶囊任意位置停止录音;右缘锚定不动,只向左生长。
+          <VoiceRecordingPillContent label={voiceRecordingTimer.label} testID="session.voiceRecordingPill" />
+        ) : (
+          <Mic color={colors.textSecondary} size={iconSize.sm} strokeWidth={iconStroke.regular} />
+        )}
+      </RouteActionButton>
+    </VoicePillWidthFrame>
   );
 
   const renderComposerAttachmentButton = () => (
@@ -12121,6 +12130,9 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     justifyContent: 'center',
     width: 28,
   },
+  // 语音按钮撑满 VoicePillWidthFrame,宽度由外框的过渡驱动;裁剪保证展开初段
+  // 红点 + 计时尚未装下时不会溢出盖住左邻控件。
+  voicePillFill: { overflow: 'hidden', width: '100%' },
   composerInlineToolButton: {
     alignItems: 'center',
     backgroundColor: colors.sheetActionSurface,
