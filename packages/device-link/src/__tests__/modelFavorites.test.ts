@@ -42,3 +42,9 @@ it("strips unknown fields and rejects invalid identities, duplicates, and effort
     }),
   ).toThrow("identity");
 });
+
+it("roundtrips OMP favorites without changing their engine", () => {
+  const omp = { ...item, agent: "omp" };
+  expect(parseModelFavorites([omp])).toEqual([omp]);
+  expect(parseModelFavoriteMutation({ kind: "add", item: omp })).toMatchObject({ kind: "add", item: { agent: "omp" } });
+});

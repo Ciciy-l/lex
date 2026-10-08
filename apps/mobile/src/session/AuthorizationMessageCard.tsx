@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { buildRemotePluginSetupPresentation, buildPluginSetupCancelDecision } from '@cindy/maker-shared/interaction';
 import { Text } from '@/components/AppText';
 import { useDeviceLink } from '@/device-link/DeviceLinkContext';
-import { useThemedStyles, type ThemeColors } from '@/theme';
+import { lineHeight, useThemedStyles, type ThemeColors } from '@/theme';
 import { spacing, typeScale } from '@/theme/tokens';
 import { PluginSetupMessageContent } from './InteractionPanel';
 import type { NormalizedRemoteMessage } from './messageNormalize';

@@ -4753,8 +4753,6 @@ function CollabCardShell({
   leadingIcon,
   title,
   subtitle,
-  controlledExpanded,
-  onControlledToggle,
   defaultExpanded = false,
   screenWidth,
   testID,
@@ -4766,8 +4764,6 @@ function CollabCardShell({
   leadingIcon: ReactNode;
   title: string;
   subtitle?: string;
-  controlledExpanded?: boolean;
-  onControlledToggle?: () => void;
   /** 仅无 blockId 时生效(Orca 协同卡默认展开);blockId 存在时由共享记忆决定。 */
   defaultExpanded?: boolean;
   screenWidth?: number;
@@ -4785,8 +4781,6 @@ function CollabCardShell({
       onControlledToggle={onControlledToggle}
       title={title}
       subtitle={subtitle}
-      controlledExpanded={controlledExpanded}
-      onControlledToggle={onControlledToggle}
       defaultExpanded={defaultExpanded}
       leadingIcon={leadingIcon}
       layout={layout}

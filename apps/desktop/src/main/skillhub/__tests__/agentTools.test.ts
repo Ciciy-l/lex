@@ -98,6 +98,7 @@ describe('SkillHub agent host adapter', () => {
   });
   it.each([false, undefined])('requires confirmed original authorship before any upload (%s)', async (isCreator) => {
     const f = fixture();
+    // @ts-expect-error Simulate an old host response that omits confirmed authorship.
     f.getInfo.mockResolvedValue({ success: true, info: { ...f.info, isCreator, isMine: true, canManage: true } });
     expect(await f.execute({ action: 'publish', input: { path: skillPath, name: 'release-notes', mode: 'update' } }, f.context)).toMatchObject({ ok: false, errorCode: 'NOT_AUTHOR' });
     expect(f.publish).not.toHaveBeenCalled();
@@ -110,6 +111,7 @@ describe('SkillHub agent host adapter', () => {
   });
   it.each([false, undefined])('does not advertise mine or management status as authorship (%s)', async (isCreator) => {
     const f = fixture();
+    // @ts-expect-error Simulate an old host response that omits confirmed authorship.
     f.listMarket.mockResolvedValue({ success: true, items: [{ ...f.info, isCreator, isMine: true, canManage: true }], nextCursor: '2' });
     expect(await f.execute({ action: 'list' }, f.context)).toMatchObject({
       ok: true, skills: [{ name: 'release-notes', is_creator: false, can_manage: true }],

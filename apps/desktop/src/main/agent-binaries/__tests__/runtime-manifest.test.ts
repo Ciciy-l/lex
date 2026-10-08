@@ -1,3 +1,4 @@
+import codexRelease from '../../../../../../tools/codex-package/latest.json';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -14,7 +15,8 @@ describe('build-pinned agent runtime manifest', () => {
 
       expect(manifest).not.toBeNull();
       expect(manifest?.claudeCode?.file).toContain(`/${platform}/`);
-      expect(manifest?.codexPackage?.file).toContain(`/${platform}/`);
+      const codex = codexRelease.runtimeAssets[platform as keyof typeof codexRelease.runtimeAssets];
+      expect(manifest?.codexPackage).toEqual({ version: codexRelease.version, file: codex.url, sha256: codex.sha256, size: codex.size });
       expect(manifest?.pi?.file).toContain(`/${platform}/`);
       const omp = getPinnedOmpRuntimeAsset(platform);
       expect(omp).toBeDefined();

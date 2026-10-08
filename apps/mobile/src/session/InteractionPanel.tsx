@@ -112,6 +112,8 @@ export type MobilePlanViewerState = 'half' | 'expanded' | 'minimized' | 'edit';
 type RestorablePlanViewerState = Exclude<MobilePlanViewerState, 'minimized'>;
 
 const CompanionInteractionContext = createContext(false);
+export interface CompanionInteractionIdentity { name: string; avatar?: ReactNode }
+const CompanionIdentityContext = createContext<CompanionInteractionIdentity | null>(null);
 
 export function InteractionPanel({ companionIdentity, hangFromAvatar = false, ...props }: Parameters<typeof InteractionPanelContent>[0] & {
   companion?: boolean;

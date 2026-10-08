@@ -158,7 +158,7 @@ describe('OMP 代办路由', () => {
     emitters.get('sess-omp')!.emit(doneEvent());
     await pending;
 
-    expect(resolveExecution).toHaveBeenCalledWith({ agentKind: 'omp' }, REQUEST.sourceSessionId, undefined);
+    expect(resolveExecution).toHaveBeenCalledWith({ agentKind: 'omp' }, undefined, undefined);
     expect(createSession).toHaveBeenCalledWith(
       expect.objectContaining({ agentKind: 'omp', model: 'omp-model', providerId: 'minimax' }),
     );

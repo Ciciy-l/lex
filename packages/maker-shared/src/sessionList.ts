@@ -66,7 +66,6 @@ export type RemoteSessionListMessage = RemoteSessionListMessageLike;
 export type RemoteSessionLiveActivityPhase = 'running' | 'needs-interaction' | 'completed' | 'error';
 
 export interface RemoteSessionLiveActivity {
-  workingPhase?: string;
   sessionId: string;
   phase: RemoteSessionLiveActivityPhase;
   compactDetail: string;
@@ -76,12 +75,6 @@ export interface RemoteSessionLiveActivity {
   attention?: boolean;
 }
 
-/** Accept only a bounded host activity token; never render arbitrary payload as a locale key. */
-export function readWorkingPhase(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const phase = value.trim();
-  return phase.length > 0 && phase.length <= 128 ? phase : null;
-}
 
 type RemoteSession = RemoteSessionListSessionLike;
 type RemoteMessage = RemoteSessionListMessageLike;
