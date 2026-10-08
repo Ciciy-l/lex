@@ -6,7 +6,7 @@ const state = vi.hoisted(() => ({
   boundary: false,
   bridge: vi.fn(),
 }));
-vi.mock('electron', () => ({ app: { getPath: () => '', isPackaged: true }, safeStorage: {} }));
+vi.mock('electron', () => ({ app: { getName: () => 'Lex', getPath: () => '', isPackaged: true }, safeStorage: {} }));
 vi.mock('@cindy/maker-core', () => ({}));
 vi.mock('../../appSessionState.js', async (original) => ({
   ...await original<typeof import('../../appSessionState.js')>(),

@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   update: vi.fn(),
   saved: vi.fn(),
   enterLock: vi.fn(),
+  beforeCommit: vi.fn(),
 }));
 vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: () => [] } }));
 vi.mock('../../appSessionState.js', () => ({
@@ -57,6 +58,7 @@ describe('moveSession host', () => {
     h.botLinks = [];
     h.attached = false;
     h.enterLock.mockImplementation(() => undefined);
+    h.beforeCommit.mockImplementation(() => undefined);
     h.query.mockResolvedValue([
       { id: 'target', status: 'active', remoteHostId: null, source: null, orcaRole: null },
     ]);
@@ -65,6 +67,7 @@ describe('moveSession host', () => {
       guard.assertCurrent();
       await guard.beforeUpdate();
       guard.assertCurrent();
+      h.beforeCommit();
       guard.beforeWrite?.();
       h.saved(patch);
       guard.assertCurrent();

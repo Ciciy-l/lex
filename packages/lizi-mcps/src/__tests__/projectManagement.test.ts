@@ -146,7 +146,9 @@ describe("project management MCP", () => {
           ).ok,
         ).toBe(false);
         remoteHostId = undefined;
-        for (const nextSurface of ["bot", "restricted"] as const) {
+        surface = "bot";
+        expect(await call("list_projects", {})).toMatchObject({ ok: true });
+        for (const nextSurface of ["restricted"] as const) {
           surface = nextSurface;
           for (const tool of [
             "list_projects",
@@ -158,7 +160,7 @@ describe("project management MCP", () => {
             });
           }
         }
-        expect(list).toHaveBeenCalledTimes(1);
+        expect(list).toHaveBeenCalledTimes(2);
         expect(rename).toHaveBeenCalledTimes(1);
         expect(remove).toHaveBeenCalledTimes(1);
       } finally {

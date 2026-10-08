@@ -30,6 +30,7 @@ vi.mock('../anthropic-compat-proxy-host.js', () => ({
 }));
 
 vi.mock('../active-catalog.js', () => ({
+  setXaiDiscoveredModels: vi.fn(),
   getActiveCatalog: () => ({
     providers: [
       {

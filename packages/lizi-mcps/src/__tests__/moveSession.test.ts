@@ -95,7 +95,10 @@ describe("move_session MCP", () => {
           await call({ session_id: "target", working_dir: null }),
         ).toMatchObject({ errorCode: "NO_SESSION_CONTEXT" });
         sessionId = "caller";
-        for (const denied of ["bot", "restricted"] as const) {
+        surface = "bot";
+        expect(await call({ session_id: "target", working_dir: null })).toMatchObject({ ok: true });
+        moveSession.mockClear();
+        for (const denied of ["restricted"] as const) {
           surface = denied;
           expect(
             await call({ session_id: "target", working_dir: null }),

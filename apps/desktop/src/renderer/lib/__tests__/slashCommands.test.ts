@@ -7,6 +7,7 @@ import {
   firstAvailableSlashCommandIndex,
   hasAvailableSlashCommand,
   hasUnavailableProjectSkillPreview,
+  isCindyOfficialSlashCommand,
   isSlashCommandUnavailable,
   mergeCommands,
   nextAvailableSlashCommandIndex,

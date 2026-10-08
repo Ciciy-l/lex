@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@cindy/mcps', async () => import('../../../../../../packages/lizi-mcps/src/session-path-auth.js'));
+vi.mock('@cindy/mcps', async () => import('../../../../../../../packages/lizi-mcps/src/session-path-auth.js'));
 vi.mock('../../cindy-brain/dirDeposit.js', () => ({ isPathInsideDir: (root: string, file: string) => {
   const relative = path.relative(root, file);
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));

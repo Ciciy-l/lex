@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({ scope: 'owner-a:1' }));
 const userDataDir = path.join(os.tmpdir(), `remote-cache-owner-${randomUUID()}`);
 vi.mock('electron', () => ({ app: { getPath: () => userDataDir } }));
 vi.mock('../../appSessionState.js', () => ({
+  isAppSessionBoundaryPending: () => false,
   activeOwnerScopeKey: () => state.scope,
   dataOwnerStorageKey: (id: string) => id,
 }));

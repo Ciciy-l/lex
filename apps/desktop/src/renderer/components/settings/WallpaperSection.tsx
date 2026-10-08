@@ -119,7 +119,7 @@ export function WallpaperSection() {
               type="button"
               role="radio"
               aria-checked={selected}
-              aria-label={t('settings.appearance.wallpaper.options.' + option.id)}
+              aria-label={t(`settings.appearance.wallpaper.options.${option.id}`)}
               disabled={busy}
               onClick={() =>
                 option.id === 'custom' && !customWallpaperUrl
@@ -164,7 +164,7 @@ export function WallpaperSection() {
                     : 'text-[var(--settings-theme-label)]',
                 )}
               >
-                {t('settings.appearance.wallpaper.options.' + option.id)}
+                {t(`settings.appearance.wallpaper.options.${option.id}`)}
               </span>
             </button>
           );

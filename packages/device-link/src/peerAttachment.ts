@@ -7,6 +7,24 @@ export interface PeerAttachment {
   mimeType?: string;
   originalName?: string;
 }
+/**
+ * OSS 中转的单对象上限(与服务端 presign-put 对齐)。直连附件不受此限,只受接收端磁盘空间约束;
+ * 超过此值的附件没有 OSS 保底,只能直连发送。
+ */
+export const OSS_ATTACHMENT_MAX_BYTES = 2 * 1024 ** 3;
+/**
+ * 对端能否收这份直连附件(依据 file-peer caps):需支持附件 RPC;超过 OSS 上限还要求对端声明
+ * largeAttachments(旧端仍按 2GB 拒收)。发送端在读整份文件之前与建链之后都用这一判据。
+ */
+export function canSendPeerAttachment(
+  caps: { attachments?: boolean; largeAttachments?: boolean } | null | undefined,
+  size: number,
+): boolean {
+  return (
+    !!caps?.attachments &&
+    (size <= OSS_ATTACHMENT_MAX_BYTES || !!caps.largeAttachments)
+  );
+}
 const prefix = "cindy-peer-attach://";
 export const isPeerAttachmentRef = (value: unknown): value is string =>
   typeof value === "string" && value.startsWith(prefix);
@@ -20,7 +38,6 @@ export function parsePeerAttachmentRef(value: string): PeerAttachment | null {
       !r ||
       !/^[a-f0-9-]{36}$/.test(r.ticket) ||
       !isValidAttachmentIntegrity(r) ||
-      r.size > 2 * 1024 ** 3 ||
       (r.mimeType !== undefined &&
         (typeof r.mimeType !== "string" ||
           !/^[\w.+-]+\/[\w.+-]+$/.test(r.mimeType))) ||
