@@ -31,12 +31,18 @@ import {
   sniffImageMimeFromBase64,
   type AnnotationStroke,
 } from '@/session/imageAnnotationModel';
-import { MOBILE_MAX_ATTACHMENTS, MOBILE_MAX_ATTACHMENT_BYTES } from '@/session/attachments';
+import { MOBILE_MAX_ATTACHMENTS } from '@/session/attachments';
 import type { ImageLightboxAnnotationConfig } from '@/session/ImageLightbox';
 import type {
   MobileLocalAttachmentUploadCandidate,
 } from '@/session/mobileLocalAttachmentUpload';
 import type { RemoteSerializedAttachment } from '@/session/types';
+
+/**
+ * 标注烧录要把整张图 base64 读进 JS 内存,这是防 OOM 的上限,与附件本身的发送上限无关
+ *(附件与桌面一致只受传输通道限制)。
+ */
+const ANNOTATION_SOURCE_MAX_BYTES = 30 * 1024 * 1024;
 
 /** 标注附件的再编辑真相(attachmentId → 矢量笔迹 + 原图)。 */
 interface AnnotationEditMeta {
@@ -190,8 +196,8 @@ export function useComposerImageAnnotations(
     const size = info.exists && typeof info.size === 'number' && Number.isFinite(info.size)
       ? info.size
       : 0;
-    if (size > MOBILE_MAX_ATTACHMENT_BYTES) {
-      throw new Error(t('composer.upload.imageTooLargeSend', { size: Math.round(MOBILE_MAX_ATTACHMENT_BYTES / 1024 / 1024) }));
+    if (size > ANNOTATION_SOURCE_MAX_BYTES) {
+      throw new Error(t('composer.upload.imageTooLargeSend', { size: Math.round(ANNOTATION_SOURCE_MAX_BYTES / 1024 / 1024) }));
     }
     const head = await FileSystem.readAsStringAsync(fileUri, {
       encoding: FileSystem.EncodingType.Base64,
