@@ -8769,7 +8769,8 @@
         "layoutBadge": "Try style B",
         "layoutClassic": "Back to style A",
         "layoutTryUnified": "Try the new picker",
-        "layoutOriginal": "Back to old picker"
+        "layoutOriginal": "Back to old picker",
+        "favoritesSyncFailed": "Favorites could not sync. Reopen the picker to retry; the remote computer may need an update."
       }
     },
     "permissionSelector": {

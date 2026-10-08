@@ -1,5 +1,9 @@
 import { MountOnFirstOpen } from './MountOnFirstOpen';
 import type { HomeMode } from './homeViewPreferenceStore';
+import { GlassView } from "expo-glass-effect";
+import { useLiquidGlassAvailable } from "@/session/useLiquidGlassAvailable";
+import { useHeaderHeight } from "expo-router/react-navigation";
+import { SessionHeaderNativeBlur } from "@/session/SessionHeaderNativeControls";
 import { RemoteTaskSuggestions } from '@/session/RemoteTaskSuggestions';
 import { countHomeSuggestionSessions, remoteTaskSuggestionsMode, type RemoteTaskSuggestionId } from '@/session/remoteTaskSuggestionsModel';
 import { cacheRemoteResourceHome, readRemoteResourceSnapshot } from '@/device-link/remoteResourceCache';
@@ -369,7 +373,8 @@ function HomeScreenContent({ active, onModeChange }: { active: boolean; onModeCh
   const screenFocusedRef = useRef(screenFocused);
   screenFocusedRef.current = screenFocused;
   const styles = useThemedStyles(makeStyles);
-  const { colors } = useTheme();
+  const { colors, mode } = useTheme();
+  const liquidGlass = useLiquidGlassAvailable();
   const { t, i18n: i18nInstance } = useTranslation();
   // 所有前进导航(进会话 / 新建 / 设置 / 组页面)统一走守卫 push:列表卡顿时的
   // 连点会各自触发一次裸 push,把同一页压进栈 N 层(返回也要 N 次)。
@@ -2490,8 +2495,9 @@ function HomeScreenContent({ active, onModeChange }: { active: boolean; onModeCh
   }, [guardedPush, home.deviceFilters, selectedDeviceId, selectedDeviceLabel]);
 
   const nativeHomeHeader = usesNativeStackHeader();
+  const nativeHeaderHeight = useHeaderHeight();
   const chromeHeight = nativeHomeHeader
-    ? (headerHeight ?? 0)
+    ? nativeHeaderHeight + (headerHeight ?? 0)
     : (headerHeight ?? edgePadding.paddingTop + HOME_HEADER_MIN_HEIGHT);
   return (
     <HomeListViewportContext.Provider value={childViewport}>
@@ -2500,6 +2506,7 @@ function HomeScreenContent({ active, onModeChange }: { active: boolean; onModeCh
       style={[styles.safeArea, { paddingLeft: edgePadding.paddingLeft, paddingRight: edgePadding.paddingRight }]}
       testID="devices.screen"
     >
+      {nativeHomeHeader ? <SessionHeaderNativeBlur height={nativeHeaderHeight + spacing.xxl} /> : null}
       {nativeHomeHeader ? (
         <HomeNativeStackHeader
           syncing={quietSyncing}
@@ -2526,7 +2533,7 @@ function HomeScreenContent({ active, onModeChange }: { active: boolean; onModeCh
       ) : null}
       <View
         onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}
-        style={[styles.homeChrome, headerFrosted && !nativeHomeHeader && styles.homeChromeFrosted]}
+        style={[styles.homeChrome, nativeHomeHeader && { top: nativeHeaderHeight }, headerFrosted && !nativeHomeHeader && styles.homeChromeFrosted]}
       >
         <HomeChromeFrost disabled={nativeHomeHeader} visible={headerFrosted}>
         <View style={{ paddingTop: nativeHomeHeader ? 0 : edgePadding.paddingTop }}>
@@ -2773,13 +2780,22 @@ function HomeScreenContent({ active, onModeChange }: { active: boolean; onModeCh
           onPress={() => openNewSession()}
           style={({ pressed }) => [
             styles.newChatButton,
+            liquidGlass && styles.newChatButtonTransparent,
             { bottom: CINDY_LIST_FAB_BOTTOM + insets.bottom },
             pressed && styles.pressed,
             newSessionDisabled && styles.disabled,
           ]}
           testID="home.newChatButton"
         >
-          <SquarePen color={colors.ctaText} size={iconSize.xxl} strokeWidth={iconStroke.regular} />
+          {liquidGlass ? (
+            <GlassView colorScheme={mode} glassEffectStyle="regular" tintColor={`${colors.homeListFab}B3`} isInteractive style={styles.newChatGlass}>
+              <View pointerEvents="none" style={styles.newChatGlassIcon}>
+                <SquarePen color={colors.ctaText} size={iconSize.xxl} strokeWidth={iconStroke.regular} />
+              </View>
+            </GlassView>
+          ) : (
+            <SquarePen color={colors.ctaText} size={iconSize.xxl} strokeWidth={iconStroke.regular} />
+          )}
         </Pressable>
       )}
 
@@ -3346,36 +3362,45 @@ function HomeProjectWindowAnchorTracker({
   childOffsets,
   onAnchorChange,
   projectHeaderHeight,
-  projectLayoutReady,
-  projectTop,
+  projectLayoutRevision,
+  projectRef,
   scrollY,
   viewportHeight,
 }: {
   childOffsets: readonly number[];
   onAnchorChange(anchor: number): void;
   projectHeaderHeight: SharedValue<number>;
-  projectLayoutReady: SharedValue<boolean>;
-  projectTop: SharedValue<number>;
+  projectLayoutRevision: SharedValue<number>;
+  projectRef: AnimatedRef<View>;
   scrollY: SharedValue<number>;
   viewportHeight: number;
 }) {
   useAnimatedReaction(
     () => {
-      if (!projectLayoutReady.value) return -1;
+      // Both layout and scrolling invalidate the measurement. Read pageY on
+      // the UI thread, in screen coordinates; never combine an asynchronous
+      // measureInWindow result with a newer scroll offset.
+      const revision = projectLayoutRevision.value;
+      const offset = scrollY.value;
+      if (revision === 0 || !Number.isFinite(offset)) return null;
+      const layout = measure(projectRef);
+      if (!layout || !Number.isFinite(layout.pageY)) return null;
       return resolveHomeProjectChildAnchor({
         childOffsets,
         projectHeaderHeight: projectHeaderHeight.value,
-        projectTop: projectTop.value,
+        projectTop: layout.pageY,
         shift: PROJECT_CHILD_WINDOW_SHIFT,
         viewportHeight,
-        viewportTop: scrollY.value,
+        viewportTop: 0,
       });
     },
     (next, previous) => {
-      if (next === previous) return;
+      // A temporarily unavailable native view is not evidence that its rows
+      // left the viewport. Keep the last bounded window until measured again.
+      if (next === null || next === previous) return;
       runOnJS(onAnchorChange)(next);
     },
-    [childOffsets, onAnchorChange, projectHeaderHeight, projectLayoutReady, projectTop, scrollY, viewportHeight],
+    [childOffsets, onAnchorChange, projectHeaderHeight, projectLayoutRevision, projectRef, scrollY, viewportHeight],
   );
   return null;
 }
@@ -3444,11 +3469,10 @@ function ProjectRow({
       isSessionRunning: (sessionId) => remoteSessionStore.isSessionRunning(sessionId),
     },
   );
-  const projectTop = useSharedValue(0);
   const projectHeaderHeight = useSharedValue(HOME_PROJECT_HEADER_HEIGHT);
-  const projectRef = useRef<View>(null);
+  const projectRef = useAnimatedRef<View>();
   const [windowAnchor, setWindowAnchor] = useState(-1);
-  const projectLayoutReady = useSharedValue(false);
+  const projectLayoutRevision = useSharedValue(0);
   const estimatedChildHeights = useMemo(() => {
     const expandedKeys = new Set(expandedAutomationGroups);
     return visibleSessions.map((item) => estimateHomeProjectChildHeight(item, expandedKeys));
@@ -3569,22 +3593,11 @@ function ProjectRow({
     </Pressable>
   );
   return (
-    <View
-      onLayout={(event) => {
+    <Reanimated.View
+      collapsable={false}
+      onLayout={() => {
         if (!windowingEnabled) return;
-        projectLayoutReady.value = false;
-        const fallbackY = event.nativeEvent.layout.y;
-        projectRef.current?.measureInWindow((_x, screenY) => {
-          projectTop.value = screenY + (homeScrollY?.value ?? 0);
-          projectLayoutReady.value = true;
-        });
-        // A native measure can be unavailable in shallow/unit renderers. Keep
-        // the local layout as a safe fallback; the real device measurement
-        // above is used whenever the row is mounted in a ScrollView.
-        if (!projectRef.current) {
-          projectTop.value = fallbackY;
-          projectLayoutReady.value = true;
-        }
+        projectLayoutRevision.value += 1;
       }}
       ref={projectRef}
       style={[styles.projectGroup, suppressTopBorder && styles.projectGroupNoTop]}
@@ -3595,8 +3608,8 @@ function ProjectRow({
           childOffsets={estimatedChildOffsets}
           onAnchorChange={setWindowAnchor}
           projectHeaderHeight={projectHeaderHeight}
-          projectLayoutReady={projectLayoutReady}
-          projectTop={projectTop}
+          projectLayoutRevision={projectLayoutRevision}
+          projectRef={projectRef}
           scrollY={scrollY}
           viewportHeight={viewportHeight}
         />
@@ -3676,7 +3689,7 @@ function ProjectRow({
           ) : null}
         </View>
       )}
-    </View>
+    </Reanimated.View>
   );
 }
 
@@ -5022,6 +5035,20 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     fontSize: typeScale.caption,
     fontWeight: fontWeight.medium,
     lineHeight: lineHeight.caption,
+  },
+  newChatButtonTransparent: {
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+  },
+  newChatGlass: {
+    width: '100%',
+    height: '100%',
+    borderRadius: radius.pill,
+  },
+  newChatGlassIcon: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   newChatButton: {
     alignItems: 'center',

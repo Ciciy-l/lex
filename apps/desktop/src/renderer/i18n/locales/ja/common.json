@@ -8756,7 +8756,8 @@
         "layoutBadge": "スタイルBを試す",
         "layoutClassic": "スタイルAに戻す",
         "layoutTryUnified": "新しいセレクターを試す",
-        "layoutOriginal": "旧版に戻す"
+        "layoutOriginal": "旧版に戻す",
+        "favoritesSyncFailed": "お気に入りを同期できません。選択画面を開き直してください。接続先の更新が必要な場合があります。"
       }
     },
     "permissionSelector": {

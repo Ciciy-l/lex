@@ -8755,7 +8755,8 @@
         "layoutBadge": "試用樣式B",
         "layoutClassic": "切回樣式A",
         "layoutTryUnified": "試用新選擇器",
-        "layoutOriginal": "切回舊版"
+        "layoutOriginal": "切回舊版",
+        "favoritesSyncFailed": "收藏未能同步。請重新開啟重試；被控電腦可能需要更新。"
       },
       "modelListAria": "模型清單"
     },

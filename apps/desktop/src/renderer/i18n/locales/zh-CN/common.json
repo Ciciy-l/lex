@@ -8756,7 +8756,8 @@
         "layoutBadge": "尝试样式B",
         "layoutClassic": "切回样式A",
         "layoutTryUnified": "尝试新选择器",
-        "layoutOriginal": "切回老版"
+        "layoutOriginal": "切回老版",
+        "favoritesSyncFailed": "收藏未能同步。请重新打开重试；被控电脑可能需要更新。"
       }
     },
     "permissionSelector": {

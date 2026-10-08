@@ -45,8 +45,8 @@ export interface ContextSheetProps {
   onBack?: () => void;
   keyboardAvoidingBehavior: 'height' | 'padding' | undefined;
   children: ReactNode;
-  /** Optional media strip rendered above the grouped actions. */
   media?: ReactNode;
+  error?: string | null;
   /** 固定在面板底部（滚动区之外）的操作区，如「加入对话」提交按钮。 */
   footer?: ReactNode;
   testID?: string;
@@ -60,10 +60,12 @@ export function ContextSheet({
   keyboardAvoidingBehavior,
   children,
   media,
+  error,
   footer,
   testID,
 }: ContextSheetProps) {
   const styles = useThemedStyles(makeContextSheetStyles);
+  const { colors } = useTheme();
   const { t } = useTranslation();
   const { height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -106,6 +108,7 @@ export function ContextSheet({
       >
         {media}
         {children}
+        {error ? <Text style={{ color: colors.errorText }}>{error}</Text> : null}
       </SheetSurface>
     </SheetModal>
   );
@@ -141,6 +144,8 @@ function flattenChildren(children: ReactNode): ReactNode[] {
 }
 
 export interface ContextSheetRowProps {
+  /** Dismiss the iOS sheet before presenting a system picker. */
+  dismissBeforePress?: boolean;
   icon: ReactNode;
   label: string;
   onPress: () => void;
