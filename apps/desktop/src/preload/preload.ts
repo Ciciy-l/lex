@@ -1092,6 +1092,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pageZoomReset: (): Promise<{ ok: true; zoomFactor: number }> =>
     ipcRenderer.invoke('page-zoom:reset'),
   appearanceSettings: {
+    importWallpaper: () => ipcRenderer.invoke('appearance-settings:import-wallpaper'),
+    ensureWallpaperVideo: (id: string) => ipcRenderer.invoke('appearance-settings:ensure-wallpaper-video', id),
+    removeWallpaper: () => ipcRenderer.invoke('appearance-settings:remove-wallpaper'),
     getSync: (): AppearanceSettings | null => appearanceSettingsInfo,
     get: (): Promise<unknown> => ipcRenderer.invoke('appearance-settings:get'),
     setPatch: (patch: Partial<AppearanceSettings>): Promise<AppearanceSettings> =>

@@ -179,7 +179,7 @@ export function BotRoutines({
       className={
         embedded
           ? 'py-3 text-13 text-[var(--text-primary)]'
-          : 'h-full overflow-y-auto bg-[var(--surface)] p-4 text-13 text-[var(--text-primary)]'
+          : 'app-wallpaper-surface h-full overflow-y-auto bg-[var(--surface)] p-4 text-13 text-[var(--text-primary)]'
       }
     >
       <div className="mb-5 flex items-center justify-between gap-2">

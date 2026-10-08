@@ -745,6 +745,33 @@
         "bubble": "浮动气泡",
         "sidebar": "侧边栏"
       },
+      "wallpaper": {
+        "title": "壁纸",
+        "description": "为整个应用选择 Cindy 场景或自己的图片，主题保持独立。",
+        "reset": "恢复默认",
+        "aria": "壁纸选择",
+        "nonePreview": "无",
+        "options": {
+          "none": "无",
+          "cindy-window": "Cindy · 窗边陪伴",
+          "cindy-studio": "Cindy · 未来工作室",
+          "cindy-dream": "Cindy · 梦境漫游",
+          "custom": "自定义壁纸"
+        },
+        "overlayLabel": "遮罩",
+        "overlayAria": "壁纸遮罩强度",
+        "motionLabel": "展示方式",
+        "motionHint": "默认静态；动态在窗口隐藏时暂停，并遵循系统减少动效设置。",
+        "motionStatic": "静态",
+        "motionDynamic": "动态",
+        "customChoose": "选择图片",
+        "customReplace": "替换图片",
+        "customRemove": "移除图片",
+        "customBusy": "处理中…",
+        "customHint": "PNG、JPEG、WebP，最大 20 MB。仅保存在此设备，静态展示。",
+        "customInvalid": "请选择有效的 PNG、JPEG 或 WebP 图片（不超过 20 MB、4000 万像素）。",
+        "customFailed": "未能保存壁纸，请重试。"
+      },
       "layout": {
         "label": "面板布局",
         "hint": "面板位置和宽度会保留到下次启动。如果布局变得难以使用，可以恢复默认排列。",

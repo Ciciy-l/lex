@@ -745,6 +745,33 @@
         "bubble": "플로팅 버블",
         "sidebar": "사이드바"
       },
+      "wallpaper": {
+        "title": "배경화면",
+        "description": "앱 전체에 Cindy 배경이나 내 이미지를 적용하세요. 테마는 별도로 선택할 수 있습니다.",
+        "reset": "기본값으로 복원",
+        "aria": "배경화면 선택",
+        "nonePreview": "없음",
+        "options": {
+          "none": "없음",
+          "cindy-window": "Cindy · 창가의 휴식",
+          "cindy-studio": "Cindy · 미래의 아틀리에",
+          "cindy-dream": "Cindy · 꿈속 여행",
+          "custom": "사용자 지정 배경화면"
+        },
+        "overlayLabel": "오버레이",
+        "overlayAria": "배경화면 오버레이 강도",
+        "motionLabel": "표시 방식",
+        "motionHint": "기본값은 정적입니다. 창이 숨겨지면 일시 정지하며 시스템의 동작 줄이기 설정을 따릅니다.",
+        "motionStatic": "정적",
+        "motionDynamic": "동적",
+        "customChoose": "이미지 선택",
+        "customReplace": "이미지 교체",
+        "customRemove": "이미지 제거",
+        "customBusy": "처리 중…",
+        "customHint": "PNG, JPEG, WebP, 최대 20 MB. 이 기기에만 저장되며 정지 이미지로 표시됩니다.",
+        "customInvalid": "올바른 PNG, JPEG 또는 WebP 이미지를 선택하세요(최대 20 MB, 4천만 화소).",
+        "customFailed": "배경화면을 저장하지 못했습니다. 다시 시도하세요."
+      },
       "layout": {
         "label": "패널 레이아웃",
         "hint": "패널 위치와 너비는 다음 실행에도 유지됩니다. 사용하기 어려운 배치가 되면 기본 레이아웃으로 복원할 수 있습니다.",
