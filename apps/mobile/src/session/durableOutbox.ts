@@ -56,6 +56,14 @@ export function isDurableOutboxSettled(record: DurableOutboxRecord): boolean {
   return record.cleanupOutcome !== undefined;
 }
 
+/**
+ * 已移交被控端的记录:持久投递已收下(或已落定)。会话 FIFO 只派发第一条未移交的记录,
+ * 移交后的记录只做对账,不再挡后面的消息。
+ */
+export function isDurableOutboxHandedOff(record: Pick<DurableOutboxRecord, 'state' | 'retrySafe' | 'cleanupOutcome'>): boolean {
+  return (record.state === "host-owned" && record.retrySafe === true) || record.cleanupOutcome !== undefined;
+}
+
 /** Preparation is local; only a persisted pre-enqueue proof permits offline disposal.
  * Legacy records without that proof must also lack all previous-send evidence.
  */
