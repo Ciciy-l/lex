@@ -79,6 +79,7 @@ import { BotGroupSettingsSheet } from './BotGroupSettingsSheet';
 import { BotGroupSpeakerRow } from './BotGroupSpeakerRow';
 import { botGroupActionErrorText } from './botGroupCopy';
 import { HomeHeaderGlassButton } from './HomeHeaderGlassButton';
+import { keyboardAvoidingBehaviorForPlatform } from './mobileNativeShellLayout';
 import type { ResolveRemoteMediaFn } from './remoteMedia';
 import { useBotGroupChat } from './useBotGroupChat';
 import { useBotGroupRemoteMedia } from './useBotGroupRemoteMedia';
@@ -298,7 +299,13 @@ export function BotGroupChatScreen({ deviceId, deviceName, groupId }: { deviceId
       </MainWindowEmptyState>
     </View>;
   } else {
-    body = <KeyboardAvoidingView style={styles.flex} enabled={Platform.OS === 'ios'} behavior="padding">
+    body = <KeyboardAvoidingView
+      style={styles.flex}
+      enabled={Platform.OS === 'ios' || Platform.OS === 'android'}
+      behavior={keyboardAvoidingBehaviorForPlatform(
+        Platform.OS === 'ios' ? 'ios' : Platform.OS === 'android' ? 'android' : 'web',
+      )}
+    >
       {!chat.online ? <Text accessibilityRole="alert" style={styles.offline} testID="botGroup.offlineNote">{t('devices.resources.hostOffline')}</Text> : null}
       <ScrollView ref={scrollRef} style={styles.flex} contentContainerStyle={styles.timeline} keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive" onScroll={onScroll} onLayout={onTimelineLayout} scrollEventThrottle={64}

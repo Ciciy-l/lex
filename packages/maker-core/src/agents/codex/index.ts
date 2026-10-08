@@ -6221,8 +6221,9 @@ assertRouteCurrent();
         ...(reviewMode ? {} : readSessionMcpConfig()),
         ...capabilityRoutingConfig,
         ...customProviderThreadConfig,
-        // Bot memory and delegation belong to its Cindy Profile and Session
-        // tasks, not the shared native home or hidden harness child threads.
+        // Lex owns goal dispatch and pause/resume; native continuation must not bypass the host.
+        'features.goals': false,
+        // Bot memory and delegation remain scoped to the Lex Profile and Session.
         ...(opts.botRuntimeProfile ? {
           'features.multi_agent': false,
           'features.multi_agent_v2': false,
@@ -6254,7 +6255,6 @@ assertRouteCurrent();
               } : {}),
               web_search: 'disabled',
               'features.apps': false,
-              'features.goals': false,
               'features.hooks': false,
               'features.multi_agent': false,
               'features.remote_plugin': false,

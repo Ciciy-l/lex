@@ -1,7 +1,7 @@
 import { AuthorizationMessageCard } from './AuthorizationMessageCard';
 import { CompanionMessageCard } from '@/session/CompanionMessageCard';
 import { mobileDebugEnabled, mobileDebugLog } from '@/debug/mobileDebugLog';
-import { createContext, Fragment, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
+import { createContext, Fragment, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Image as ExpoImage } from 'expo-image';
 import {
@@ -5827,6 +5827,10 @@ function MarkdownSessionLinkSpan({
   );
 }
 
+/** The caller selects this once for the strip's lifetime: recycled rows use list state,
+ * while ordinary ScrollView children use React state. Keep the choice fixed while mounted. */
+type MediaPreviewStateHook = <T>(initial: T | (() => T)) => readonly [T, Dispatch<SetStateAction<T>>];
+
 /** 用户消息的附件条(图片缩略图 + 文件 chip);群聊时间线复用同一实现。 */
 export function AttachmentStrip({
   attachments,
@@ -5836,6 +5840,7 @@ export function AttachmentStrip({
   layout,
   onOpen,
   onResolveRemoteMedia,
+  usePreviewState = useRecyclingState,
 }: {
   attachments: readonly NormalizedAttachment[];
   clientId?: string;
@@ -5844,6 +5849,7 @@ export function AttachmentStrip({
   layout: MessageContentLayout;
   onOpen?: (payload: MessagePayload) => void;
   onResolveRemoteMedia?: ResolveRemoteMediaFn;
+  usePreviewState?: MediaPreviewStateHook;
 }) {
   const styles = useThemedStyles(makeStyles);
   // 订阅本地缩略兜底版本:hydrate / 新注册落盘后,已渲染的 cindy-oss-attach:// 气泡
@@ -5867,6 +5873,7 @@ export function AttachmentStrip({
           onOpen={onOpen ? () => onOpen(buildAttachmentPayload(applySentAttachmentThumbOverlay(item))) : undefined}
           onResolveRemoteMedia={onResolveRemoteMedia}
           variant="attachment"
+          usePreviewState={usePreviewState}
         />
       ))}
       {fileAttachments.length > 0 ? (
@@ -5949,12 +5956,13 @@ const ATTACHMENT_INTRINSIC_CACHE_MAX = 500;
 
 // 相册候选仍可能是 ph://，必须由 expo-image 加载；只复用正式附件的布局，
 // 不把本地相册地址声明为 RN Image / 远端查看器可直接预览的媒体。
-function PendingAttachmentImage({ layout, uri, sourceUri = uri, onError, onSize }: {
+function PendingAttachmentImage({ layout, uri, sourceUri = uri, onError, onSize, usePreviewState = useRecyclingState }: {
   layout: MessageContentLayout; uri: string; sourceUri?: string; onError?: () => void;
   onSize?: (size: AttachmentImageIntrinsicSize) => void;
+  usePreviewState?: MediaPreviewStateHook;
 }) {
   const styles = useThemedStyles(makeStyles);
-  const [intrinsicSize, setIntrinsicSize] = useRecyclingState<AttachmentImageIntrinsicSize | null>(
+  const [intrinsicSize, setIntrinsicSize] = usePreviewState<AttachmentImageIntrinsicSize | null>(
     () => attachmentIntrinsicSizeCache.get(sourceUri) ?? attachmentIntrinsicSizeCache.get(uri) ?? null,
   );
   // The upload copy and materialized reference describe the same pixels. Carry their measured frame.
@@ -6011,6 +6019,7 @@ function MediaPreview({
   variant = 'card',
   presentationOnly = false,
   localPreview,
+  usePreviewState = useRecyclingState,
 }: {
   layout: MessageContentLayout;
   media: NormalizedToolMedia;
@@ -6020,6 +6029,7 @@ function MediaPreview({
   variant?: 'card' | 'attachment';
   presentationOnly?: boolean;
   localPreview?: SentMessageImagePreview;
+  usePreviewState?: MediaPreviewStateHook;
 }) {
   const styles = useThemedStyles(makeStyles);
   const preview = summarizeMessagePayloadPreview(buildMediaPayload(media, label));
@@ -6027,15 +6037,15 @@ function MediaPreview({
     ? getSentAttachmentThumbUri(localPreview?.sourceRef ?? media.url)
     : null;
   const localCandidate = localPreview?.uri ?? durableUri;
-  const [failedLocalUris, setFailedLocalUris] = useRecyclingState<readonly string[]>([]);
+  const [failedLocalUris, setFailedLocalUris] = usePreviewState<readonly string[]>([]);
   // Keep the sent source when a durable copy appears later; switch only after an actual load error.
   const localUri = [localCandidate, durableUri].find((uri) => uri && !failedLocalUris.includes(uri)) ?? null;
   const autoResolve = !localUri && shouldAutoResolveMediaThumbnail(media, !!onResolveRemoteMedia);
-  const [resolveState, setResolveState] = useRecyclingState<MediaThumbnailResolveState>({ status: 'idle' });
+  const [resolveState, setResolveState] = usePreviewState<MediaThumbnailResolveState>({ status: 'idle' });
   // attachment 变体的原图尺寸。初值走模块级缓存:FlatList 虚拟化会反复
   // unmount/remount 本组件,不缓存的话每次划回都重新 getSize、重演一次
   // 占位帧 → 真图尺寸的切换(规则 7 的跳变)。
-  const [intrinsicSize, setIntrinsicSize] = useRecyclingState<AttachmentImageIntrinsicSize | null>(
+  const [intrinsicSize, setIntrinsicSize] = usePreviewState<AttachmentImageIntrinsicSize | null>(
     () => attachmentIntrinsicSizeCache.get(localPreview?.uri ?? media.url)
       ?? attachmentIntrinsicSizeCache.get(localCandidate ?? media.url) ?? null,
   );
@@ -6116,6 +6126,7 @@ function MediaPreview({
         style={styles.attachmentImageWrap} testID="message.mediaPreviewButton">
         <PendingAttachmentImage key={localPreview?.uri ?? localUri} layout={layout}
           uri={localUri} sourceUri={localPreview?.uri ?? localUri}
+          usePreviewState={usePreviewState}
           onSize={setIntrinsicSize}
           onError={() => setFailedLocalUris((failed) => failed.includes(localUri) ? failed : [...failed, localUri])} />
       </MessageContentOpenButton>

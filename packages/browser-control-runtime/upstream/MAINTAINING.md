@@ -13,6 +13,8 @@
 
 用户可在设置 → 自动操作打开「使用我的浏览器登录态」(默认关)。打开后,host 在 `start` 前把系统 Chrome / Edge / Brave **当前 `profile.last_used`** 的 Cookies / Login Data 等 SQLite 库拷进 `browser-runtime/browser/Cindy-real/user-data/Default`(vendored `--user-data-dir` 是 `…/Cindy-real/user-data`),并把 dest `Local State` 的 `last_used` / `last_active_profiles` / `profiles_order` **改写成 Default**(原样拷贝会让 Chrome 打开空的 `Profile N`,窗口看起来已登出)。Chrome 右上角 chip **始终显示 `Cindy`**:磁盘目录必须叫 `Cindy-real`(不能叠到隔离身份 `Cindy` 上),host 通过 `displayName: "Cindy"` 传给 runtime,`launchOpenClawChrome` 用它 decorate,而不是用 map key。再用**同一只浏览器二进制**启动该目录。不 attach 日常 Chrome(Chrome 136+ 会拒绝调试默认 user-data-dir)。关掉开关即删除 `Cindy-real`,`Cindy` 隔离身份不动。失败必须 fail-closed,禁止启动一个看起来在浏览、其实全是登出的窗口。快照当凭证:不要写进日志正文、backup、device-link 或 worktree;`status` 只暴露 `{ enabled, applied, source }`,不暴露路径。快照实现在 `apps/desktop/src/main/mcp-integrations/browser-real-profile/`;chip 名例外见 `sync.mjs` 对 `chrome.ts` 的 LOCAL_PATCH。
 
+重拍登录快照时，托管浏览器自己的扩展状态必须保留：Default 下按词匹配 Extension 的条目、Secure Preferences、IndexedDB/chrome-extension_* 及 Preferences.extensions。来源浏览器的扩展状态不复制；非扩展偏好仍从来源刷新。
+
 ## 2. 三层架构 + 文件清单
 
 ```

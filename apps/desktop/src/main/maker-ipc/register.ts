@@ -10941,6 +10941,20 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     broadcastOrcaWorkerChanged: (leadSessionId) => {
       broadcastToAllWindows(MAKER_PUSH.ORCA_WORKER_CHANGED, { leadSessionId });
     },
+    onLeadWorkerReportsSettled: (leadSessionId) => {
+      // A delivered report starts the next Lead turn, whose own terminal decides
+      // completion. Only an idle Lead replays the completion Agent Island deferred.
+      if (
+        isSessionTurnDispatchBoundaryBusy(
+          sessionTurnActivityTracker,
+          leadSessionId,
+          maker.getSession(leadSessionId),
+        )
+      ) {
+        return;
+      }
+      getAgentIslandService()?.notifyQueueEmptied(leadSessionId);
+    },
     dispatchWorkerMessage: async ({
       targetSessionId,
       message,
@@ -14418,8 +14432,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       ...(request.kind === 'permission' ? { toolName: request.toolName, suggestions: request.suggestions } : {}),
     };
   });
+  // An Orca Lead turn that only dispatched work is not the team's completion:
+  // keep it running until every worker report has reached the Lead.
   getAgentIslandService()?.setCompletionDeferResolver((sessionId) =>
-    inputCoordinator.hasPendingQueuedWork(sessionId),
+    inputCoordinator.hasPendingQueuedWork(sessionId) ||
+    orcaTeamServiceForEvents?.hasPendingWorkerReports(sessionId) === true,
   );
 
   // Scheduler 撞忙排队桥实现(导出薄封装见 isSchedulerTargetSessionBusy 一带注释)。
