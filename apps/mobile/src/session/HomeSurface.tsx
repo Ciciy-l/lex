@@ -3228,10 +3228,11 @@ function RevokedAccessTip({
   const { colors } = useTheme();
   const { t } = useTranslation();
   return (
+    // 说明型提示:只有右上角 × 与「重试访问」;按 DESIGN.md 关闭规则点背景不关闭,
+    // 只能用 × 或系统返回。重试在父级持有状态,关闭提示不会中断进行中的重试。
     <Modal animationType="fade" transparent visible={deviceName != null} onRequestClose={onClose}>
-      <Pressable style={styles.revokedTipBackdrop} onPress={onClose} testID="home.revokedTip.backdrop">
-        {/* Inner press swallow keeps taps on the card from dismissing via the backdrop. */}
-        <Pressable style={styles.revokedTipCard} onPress={() => undefined}>
+      <View style={styles.revokedTipBackdrop} testID="home.revokedTip.backdrop">
+        <View style={styles.revokedTipCard}>
           <View style={styles.revokedTipHeader}>
             <View style={styles.revokedTipIcon}>
               <Lock color={colors.textPrimary} size={iconSize.lg} strokeWidth={iconStroke.regular} />
@@ -3265,8 +3266,8 @@ function RevokedAccessTip({
               <Text style={styles.revokedTipRetryText}>{t('devices.list.revoked.retry')}</Text>
             )}
           </Pressable>
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
     </Modal>
   );
 }
