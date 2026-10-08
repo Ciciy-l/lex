@@ -17,7 +17,8 @@ import {
 import { serverApiFetch, ServerApiError } from '../serverApiClient';
 import { requireString, throwIpcError } from '../utils/ipcValidate';
 import { assertTrustedAppRendererEvent } from '../security/trustedAppRenderer';
-import type { IpcErrorCode } from '../../shared/ipc-errors';
+import { isIpcError, type IpcErrorCode } from '../../shared/ipc-errors';
+import { ReviewArtifactAuthorizationError } from '../reviewer/reviewArtifactAuthorization.js';
 import { decodeRemoteHistory } from '../../shared/remoteHistoryCache';
 import {
   DEVICE_LINK_INVOKE,
@@ -54,6 +55,8 @@ import {
 } from './index';
 import { getActiveControllers } from './dispatch';
 import { rewriteOutboundMedia } from './outboundMedia';
+import { withOutboundReviewConfirmation } from '../maker-ipc/reviewOutboundInput.js';
+import { confirmReviewArtifacts } from '../reviewer/confirmReviewArtifacts.js';
 import { withSharedTaskMedia } from './sharedTaskMediaContext.js';
 import {
   outboundSessionReferencesRequested,
@@ -672,9 +675,24 @@ export async function handleInvoke(
         });
       if (owner !== activeOwnerScopeKey()) throw new Error('Attachment account changed');
     } catch (err) {
-      throwIpcError(
-        'DEVICE_LINK_MEDIA_TRANSFER_FAILED',
-        err instanceof Error ? err.message : String(err),
+
+       if (isIpcError(err) && err.code === 'DEVICE_LINK_CHANNEL_NOT_ALLOWED') {
+         throw err;
+       }
+       // Review 走同一条出方向改写管线, 但它的授权/校验拒绝不是媒体传输失败:
+       // PERMISSION_DENIED(凭证/密钥附件拒绝、授权不可用)、INVALID_PARAMS(整批
+       // 请求校验)与用户取消外部成果授权对话框, 保留原错误码/原语义, 消费端才
+       // 不会把"有意拒绝"当成可重试的传输故障。上传/压缩等真传输路径只抛普通
+       // Error, 不受影响。
+       if (isIpcError(err) && (err.code === 'PERMISSION_DENIED' || err.code === 'INVALID_PARAMS')) {
+         throw err;
+       }
+       if (err instanceof ReviewArtifactAuthorizationError) {
+         throwIpcError('PERMISSION_DENIED', err.message);
+       }
+       throwIpcError(
+         'DEVICE_LINK_MEDIA_TRANSFER_FAILED',
+         err instanceof Error ? err.message : String(err),
       );
     }
     assertControlTargetEnabled(deps, normalizedDeviceId);
@@ -1324,6 +1342,13 @@ export function registerDeviceLinkIpc(deps: DeviceLinkIpcDeps = defaultDeps()): 
   ipcMain.handle(DEVICE_LINK_INVOKE.INVOKE, (_e, payload: unknown) => {
     requireDeviceLinkCapability();
     const p = (payload ?? {}) as { deviceId?: unknown; channel?: unknown; args?: unknown };
+    if (p.channel === 'maker:review:start') {
+      assertTrustedAppRendererEvent(e);
+      return withOutboundReviewConfirmation(
+        (items) => confirmReviewArtifacts(e, items),
+        () => handleInvoke(deps, p.deviceId, p.channel, p.args),
+      );
+    }
     return handleInvoke(deps, p.deviceId, p.channel, p.args);
   });
   // 多窗口订阅引用计数:每个发起订阅的窗口(WebContents)挂一次 'destroyed' 清理,

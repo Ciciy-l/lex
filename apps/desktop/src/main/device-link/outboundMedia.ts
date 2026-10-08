@@ -22,6 +22,8 @@ import {
   mayCompressOutboundImage,
 } from './outboundImageCompress';
 import { buildLegacyAttachmentOssRef, parseAttachmentOssRef } from '../../shared/attachmentOssRef';
+import { readStartReviewRequest } from '../maker-ipc/reviewStartHandler.js';
+import { withPreparedOutboundReview } from '../maker-ipc/reviewOutboundInput.js';
 
 import { sharedTaskMediaId } from './sharedTaskMediaContext.js';
 
@@ -363,6 +365,14 @@ async function rewriteQueued(item: unknown, existing: ReadonlySet<string> = new 
  * 抛错由 handleInvoke 转 MEDIA_TRANSFER_FAILED。
  */
 export async function rewriteOutboundMedia(channel: string, args: unknown[], existing?: ReadonlySet<string>): Promise<unknown[]> {
+  if (channel === 'maker:review:start') {
+    // Validate the complete batch before any compression, disk read or upload.
+    const request = readStartReviewRequest(args[0]);
+    return withPreparedOutboundReview(request, async (prepared) => {
+      const rewritten = await rewriteQueued({ files: prepared.attachments }) as { files: unknown[] };
+      return [{ ...prepared, attachments: rewritten.files }, ...args.slice(1)];
+    });
+  }
   if (sharedTaskMediaId() && channel === 'maker:input:update-content') {
     const next = [...args];
     next[2] = await rewriteQueued(next[2], existing);
