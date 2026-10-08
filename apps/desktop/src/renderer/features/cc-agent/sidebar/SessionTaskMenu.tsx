@@ -72,7 +72,7 @@ function ActiveSessionTaskMenu({
       {t(`ccAgent.sidebar.sessionMenu.${key}`)}
     </DropdownMenuItem>
   );
-  const separator = <DropdownMenuSeparator className={MENU_SEPARATOR_CLASS} />;
+  const separator = <DropdownMenuSeparator />;
   return (
     <div
       className="contents"
@@ -83,7 +83,7 @@ function ActiveSessionTaskMenu({
       <DropdownMenuContent
         align="start"
         sideOffset={sideOffset}
-        className={`${MENU_CONTENT_CLASS} min-w-32 overflow-hidden`}
+        className="min-w-32 overflow-hidden"
         onClick={(event) => event.stopPropagation()}
         onCloseAutoFocus={(event) => {
           if (dialog) event.preventDefault();

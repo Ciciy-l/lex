@@ -28,7 +28,7 @@ import { formatSidebarFutureTime, formatSidebarTime } from '../lib/formatSidebar
 import { scheduleFocusPath } from '@/features/scheduler/lib/scheduleSessionBinding';
 import { hasSessionSelectionModifier, SessionItem } from './SessionItem';
 import type { SessionClickHandler } from './SessionItem';
-import { MENU_CONTENT_CLASS, MENU_ITEM_CLASS, MENU_SEPARATOR_CLASS } from './menuStyles';
+import { MENU_ITEM_CLASS } from './menuStyles';
 import {
   useSessionAttentionUrgency,
   useSessionsAttentionUrgencyIdSet,
@@ -763,7 +763,7 @@ export const AutomationSessionGroupItem = memo(function AutomationSessionGroupIt
                               : t('ccAgent.sidebar.automationGroup.menu.pause')}
                           </DropdownMenuItem>
                         )}
-                        <DropdownMenuSeparator className={MENU_SEPARATOR_CLASS} />
+                        <DropdownMenuSeparator />
                         <DropdownMenuItem
                           onSelect={() => onScheduleAction(group, 'delete')}
                           disabled={

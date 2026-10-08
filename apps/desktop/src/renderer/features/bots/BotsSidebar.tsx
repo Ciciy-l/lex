@@ -268,6 +268,86 @@ function BotsSidebarContent() {
       unsubscribe();
     };
   }, []);
+  const renderBotContextMenu = (bot: BotProfile, selected: boolean) => (
+    <DropdownMenu
+      open={contextMenu?.botId === bot.id}
+      onOpenChange={(open) => { if (!open) setContextMenu(null); }}
+    >
+      <DropdownMenuTrigger asChild>
+        <span
+          aria-hidden="true"
+          className="pointer-events-none fixed h-0 w-0"
+          style={{ left: contextMenu?.x ?? 0, top: contextMenu?.y ?? 0 }}
+        />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        className="min-w-40"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          if (menuRestoreFocusRef.current) menuOriginRef.current?.focus({ preventScroll: true });
+        }}
+        onInteractOutside={() => { menuRestoreFocusRef.current = false; }}
+        onPointerDownCapture={(event) => {
+          menuPointerDownRef.current = event.button === 0 && !event.ctrlKey;
+        }}
+        onPointerUpCapture={(event) => {
+          // Radix synthesizes a click on release when the press happened
+          // outside an item. Opening a context menu must never select it.
+          if (!menuPointerDownRef.current || event.button !== 0 || event.ctrlKey) {
+            event.preventDefault();
+          }
+          menuPointerDownRef.current = false;
+        }}
+        onClickCapture={(event) => {
+          if (event.button !== 0 || event.ctrlKey) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+        }}
+      >
+        <DropdownMenuItem onSelect={() => void setBotPinned(bot.id, !bot.pinnedAt)}>
+          <Pin size={14} className="mr-2" />
+          {t(bot.pinnedAt ? 'bots.list.unpin' : 'bots.list.pin')}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onSelect={() => {
+            void setBotHidden(bot.id, true).then(() => {
+              if (!selected) return;
+              const fallback = roster.visible.find(
+                (candidate) => candidate.id !== bot.id,
+              );
+              navigate(fallback ? `/bots/${fallback.id}` : '/bots');
+            });
+          }}
+        >
+          <EyeOff size={14} className="mr-2" />
+          {t('bots.list.hide')}
+        </DropdownMenuItem>
+        {bot.templateId !== 'cindy' && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={() => {
+                void duplicateBotProfile(bot.id).then((copy) =>
+                  navigate(`/bots/${copy.id}`),
+                );
+              }}
+            >
+              <Copy size={14} className="mr-2" />
+              {t('bots.list.duplicate')}
+            </DropdownMenuItem>
+          </>
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem variant="danger" onSelect={() => setDeleteTarget(bot)}
+        >
+          <Trash2 size={14} className="mr-2" />
+          {t('bots.lifecycle.delete')}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 
   if (collapsed) {
     return (
