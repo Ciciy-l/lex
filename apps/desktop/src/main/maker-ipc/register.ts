@@ -15698,6 +15698,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         isSessionTurnDispatchBoundaryBusy(sessionTurnActivityTracker, sessionId, sess)
       );
     },
+    ensureQueueRestored: async (sessionId) => {
+      await inputCoordinator.ensureQueueRestored(sessionId).catch(() => undefined);
+      return inputCoordinator.isQueueRestored(sessionId);
+    },
     hasQueuedPrompt: (sessionId, scheduleId) =>
       inputCoordinator.hasQueuedItemWhere(
         sessionId,
