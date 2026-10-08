@@ -310,9 +310,8 @@ describe.skipIf(!gitAvailable())('resolveMemoryScopeKey — 真实 Git smoke', (
     try {
       await fs.mkdir(repoRoot, { recursive: true });
       git(['init'], repoRoot);
-      git(['config', 'user.email', 'test@example.com'], repoRoot);
-      git(['config', 'user.name', 'scope-resolver-test'], repoRoot);
-      git(['commit', '--allow-empty', '-m', 'init'], repoRoot);
+      git(['-c', 'user.email=test@example.com', '-c', 'user.name=scope-resolver-test',
+        'commit', '--allow-empty', '-m', 'init'], repoRoot);
       git(['worktree', 'add', '-b', 'wt-branch', wt], repoRoot);
       const sub = path.join(wt, 'apps', 'a');
       await fs.mkdir(sub, { recursive: true });
@@ -324,5 +323,6 @@ describe.skipIf(!gitAvailable())('resolveMemoryScopeKey — 真实 Git smoke', (
         /* Windows 上 git 只读对象偶发 EPERM — temp 目录交给 OS 清理 */
       }
     }
-  });
+  // Includes real Git process startup and Windows filesystem cleanup under CI load.
+  }, 15_000);
 });

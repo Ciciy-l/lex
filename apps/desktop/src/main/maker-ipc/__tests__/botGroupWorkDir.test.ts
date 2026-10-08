@@ -16,7 +16,8 @@ describe('botGroupWorkDir', () => {
   let root: string;
 
   beforeEach(async () => {
-    root = await mkdtemp(path.join(os.tmpdir(), 'bot-group-workdir-'));
+    // Compare canonical paths even when Windows TEMP uses an 8.3 alias.
+    root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'bot-group-workdir-')));
   });
 
   afterEach(async () => {

@@ -16,6 +16,8 @@ import { i18n } from '../i18n';
 describe('locale 品牌名插值', () => {
   it.each(['en', 'zh-CN', 'zh-TW', 'ja', 'ko'])('%s keeps new upstream host copy separate from Cindy services', (lng) => {
     for (const key of [
+      'sharedTask.inviteBoxHint',
+      'sharedTask.invitationMessage',
       'ipcError.MODEL_CONTEXT_USAGE_UNKNOWN',
       'settings.remote.add.displayNamePlaceholder',
       'settings.auxiliaryModels.customHint',
@@ -29,6 +31,8 @@ describe('locale 品牌名插值', () => {
       if (lng === 'en') expect(rendered).toContain(BRAND_NAME);
     }
     for (const key of [
+      'sharedTask.login',
+      'sharedTask.invitationDifferentServer',
       'settings.auxiliaryModels.signInHint',
       'onboarding.homeZeroModel.title',
       'onboarding.homeZeroModel.desc',

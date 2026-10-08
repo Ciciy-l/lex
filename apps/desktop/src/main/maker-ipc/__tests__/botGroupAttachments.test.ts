@@ -79,7 +79,8 @@ let root: string;
 const hash = 'a'.repeat(64);
 
 beforeEach(async () => {
-  root = await fs.mkdtemp(path.join(os.tmpdir(), 'bot-group-attachments-'));
+  // Windows CI TEMP can contain an 8.3 alias; the store requires a physical owner root.
+  root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'bot-group-attachments-')));
   h.blobDir = path.join(root, 'blobs');
   await fs.mkdir(h.blobDir);
   await fs.mkdir(path.join(root, 'owner'), { recursive: true });
