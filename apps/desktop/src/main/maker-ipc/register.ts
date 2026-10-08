@@ -20003,6 +20003,11 @@ async function materializeCodexImage(
   // 本体在 cindy-media/generatedMedia.ts(规则 14 可测),这里只做 thin adapter。
   try {
     return await materializeGeneratedImage(data, {
+      verifyManagedUrl: async (url) => {
+        const resolved = url.startsWith('cindy-media://') ? resolveCindyMediaUrl(url) : imageCacheStore.resolveSafe(url);
+        const source = await fsp.stat(resolved.absPath);
+        if (!source.isFile()) throw new Error('[MEDIA_SOURCE_MISSING] Generated image is not a file');
+      },
       ingestFromPath: cindyChatAttachments.ingestChatImageFromPath,
       ingestBuffer: cindyChatAttachments.ingestChatImageBuffer,
     });

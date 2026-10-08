@@ -43,7 +43,7 @@ async function codeOf(fn: () => Promise<unknown>): Promise<string> {
 beforeEach(() => {
   vi.clearAllMocks();
   __testing.uploadCache.clear();
-  statMock.mockResolvedValue({ size: 42, mtimeMs: 1000 });
+  statMock.mockResolvedValue({ isFile: () => true, size: 42, mtimeMs: 1000 });
   realpathMock.mockImplementation(async (p: string) => p);
   // 默认上传回显 contentType,便于断言 result.mimeType 来源
   uploadLocalFile.mockImplementation(async (_p: string, opts?: { contentType?: string }) => ({
@@ -64,6 +64,13 @@ beforeEach(() => {
     planModeEnabled: false,
     remoteHostId: 'host-1',
   });
+});
+
+it('reports a missing Host source without uploading or exposing its filesystem path', async () => {
+  imageResolve.mockReturnValue({ absPath: '/private/missing.png', mimeType: 'image/png' });
+  statMock.mockRejectedValueOnce(Object.assign(new Error('ENOENT /private/missing.png'), { code: 'ENOENT' }));
+  await expect(fetchLocalMediaToOss({ url: 'xdt-image://s/missing.png' })).rejects.toThrow('[MEDIA_SOURCE_MISSING] Media source is missing on this Host');
+  expect(uploadLocalFile).not.toHaveBeenCalled();
 });
 
 afterEach(() => {
@@ -314,7 +321,7 @@ describe('fetchLocalMediaToOss — 图片上传去重', () => {
 
   it('源文件 mtime 变化 → 缓存失效重传', async () => {
     await fetchLocalMediaToOss({ url: IMAGE_URL });
-    statMock.mockResolvedValue({ size: 42, mtimeMs: 2000 });
+    statMock.mockResolvedValue({ isFile: () => true, size: 42, mtimeMs: 2000 });
     nextUploadKey('key-2');
     const changed = await fetchLocalMediaToOss({ url: IMAGE_URL });
     expect(changed.ossKey).toBe('key-2');
@@ -439,7 +446,7 @@ describe('thumbnail 护栏(输入体量 + 渲染超时)', () => {
 
   it('输入超过 48MB 上限 → 不调渲染器,直接原图路径', async () => {
     imageResolve.mockReturnValue({ absPath: '/cache/huge.png', mimeType: 'image/png' });
-    statMock.mockResolvedValue({ size: __testing.THUMB_INPUT_MAX_BYTES + 1, mtimeMs: 1 });
+    statMock.mockResolvedValue({ isFile: () => true, size: __testing.THUMB_INPUT_MAX_BYTES + 1, mtimeMs: 1 });
     const renderer = vi.fn(async () => Buffer.from([1]));
     __testing.setThumbnailRenderer(renderer);
     const out = await fetchLocalMediaToOss({ url: 'xdt-image://sess/huge.png', thumbnail: true });
@@ -451,7 +458,7 @@ describe('thumbnail 护栏(输入体量 + 渲染超时)', () => {
   it('渲染超时 → 回退原图路径,invoke 不被挂住', async () => {
     vi.useFakeTimers();
     imageResolve.mockReturnValue({ absPath: '/cache/slow.png', mimeType: 'image/png' });
-    statMock.mockResolvedValue({ size: 1000, mtimeMs: 1 });
+    statMock.mockResolvedValue({ isFile: () => true, size: 1000, mtimeMs: 1 });
     __testing.setThumbnailRenderer(
       () =>
         new Promise(() => {
@@ -546,17 +553,19 @@ describe('fetchLocalMediaToOss — baseDir / maxBytes 服务端强制约束', ()
 
   it('maxBytes:stat 超限 → 上传之前就拒绝(流量一个字节都不花)', async () => {
     realpathMock.mockImplementation(async (p: string) => p);
-    statMock.mockResolvedValue({ size: 5_000_000, mtimeMs: 1 });
-    const msg = await codeOf(() => fetchLocalMediaToOss({
-      url: urlFor('/proj/out/big.css', '&maxBytes=2097152'),
-    }));
+    statMock.mockResolvedValue({ isFile: () => true, size: 5_000_000, mtimeMs: 1 });
+    const msg = await codeOf(() =>
+      fetchLocalMediaToOss({
+        url: urlFor('/proj/out/big.css', '&maxBytes=2097152'),
+      }),
+    );
     expect(msg).toMatch(/超出取件大小上限/);
     expect(uploadLocalFile).not.toHaveBeenCalled();
   });
 
   it('maxBytes:上限内正常放行', async () => {
     realpathMock.mockImplementation(async (p: string) => p);
-    statMock.mockResolvedValue({ size: 1024, mtimeMs: 1 });
+    statMock.mockResolvedValue({ isFile: () => true, size: 1024, mtimeMs: 1 });
     await fetchLocalMediaToOss({ url: urlFor('/proj/out/a.css', '&maxBytes=2097152') });
     expect(uploadLocalFile).toHaveBeenCalledTimes(1);
   });
@@ -572,7 +581,7 @@ describe('fetchLocalMediaToOss — baseDir / maxBytes 服务端强制约束', ()
 
   it('两个参数都不带 → 行为不变(老控制端照旧取件)', async () => {
     realpathMock.mockImplementation(async (p: string) => p);
-    statMock.mockResolvedValue({ size: 5_000_000, mtimeMs: 1 });
+    statMock.mockResolvedValue({ isFile: () => true, size: 5_000_000, mtimeMs: 1 });
     await fetchLocalMediaToOss({ url: urlFor('/proj/out/big.css') });
     expect(uploadLocalFile).toHaveBeenCalledTimes(1);
   });
