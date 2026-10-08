@@ -5968,7 +5968,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   setClaudeProxyOwnerScopeKeyReader(activeOwnerScopeKey);
   setClaudeProxySessionIdResolver((sdkSessionId) => {
     if (isAppSessionBoundaryPending()) return null;
-    const s = maker.listActiveSessions().find((x) => x.sdkSessionId === sdkSessionId);
+    const s = maker.listActiveSessions().find((x) => x.requestSessionId === sdkSessionId);
     return s ? s.id : null;
   });
 

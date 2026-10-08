@@ -600,11 +600,10 @@ export function hasLocalContextWindowOverride(
     const entry = overrides[section][`${encodeURIComponent(providerId)}:${modelId}`];
     return (
       entry &&
-      (agent === 'pi'
-        ? (!entry.agents || entry.agents.includes('pi'))
-        : agent === 'omp'
-          // OMP has an independent catalog; only existing-model patches apply to it.
-          ? section === 'patches' && (!entry.agents || entry.agents.includes(agent))
+      (agent === 'omp'
+        ? section === 'patches' && (!entry.agents || entry.agents.includes(agent))
+        : section === 'patches' || agent === 'pi'
+          ? (!entry.agents || entry.agents.includes(agent))
         : entryMembershipAgents(entry, policyProviderId).includes(agent)) &&
       effectiveFields(entry, agent).contextWindow !== undefined
     );

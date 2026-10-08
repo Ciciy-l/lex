@@ -196,7 +196,7 @@ describe('Claude extraDirs mid-session rebuild', () => {
     expect(firstQuery.close).toHaveBeenCalled();
 
     const source = await fs.readFile(new URL('../index.ts', import.meta.url), 'utf8');
-    expect(source).toContain('pendingRewindTo = sdkSessionId');
+    expect(source).toContain('pendingRewindTo = durableSdkSessionId');
     expect(source).toContain('directoryGrantRebuild ? {} : { resumeSessionAt: resumeAt }');
     expect(source).toContain('extraDirsCopyFallbackEnabled = false');
 
