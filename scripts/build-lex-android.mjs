@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { patchBuildGradleSigning, patchGradlePropertiesMemory } from '../apps/mobile/scripts/lib/android-local.mjs';
 import mobileConfig from './shared/lex-mobile-config.cjs';
+import { verifyAndroidCertificate } from './shared/android-certificate.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const mobile = path.join(root, 'apps/mobile');
@@ -54,8 +55,7 @@ if (!metadata.includes("application-label:'Lex'")) throw new Error('APK applicat
 if (metadata.includes('application-debuggable')) throw new Error('Release APK must not be debuggable');
 if (signed) {
   const certificate = sdkTool('apksigner', ['verify', '--print-certs', apk]);
-  const actual = certificate.match(/Signer #1 certificate SHA-256 digest: ([a-f0-9]+)/i)?.[1];
-  if (actual?.toLowerCase() !== process.env.LEX_ANDROID_CERT_SHA256.toLowerCase()) throw new Error('APK signing certificate does not match the pinned Lex identity');
+  verifyAndroidCertificate(certificate, process.env.LEX_ANDROID_CERT_SHA256);
   const dist = path.join(root, 'dist/android');
   mkdirSync(dist, { recursive: true });
   copyFileSync(apk, path.join(dist, `Lex-${version}-Android.apk`));
