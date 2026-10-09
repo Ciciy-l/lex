@@ -1,3 +1,5 @@
+import { setSessionOpeningModelAdmission } from '../../sessionOpening';
+import { ScriptTarget, transpileModule } from 'typescript';
 import { getSelectedNewMakerRoute, setNewMakerDraftCache } from '../../../maker-host/newMakerDefaultsCache';
 import { setModelVisibilityMirror } from '../../../maker-host/model-visibility-mirror';
 import Database from 'better-sqlite3';
@@ -38,6 +40,18 @@ import {
   messages,
   sessions,
 } from '../../schema';
+
+// Host preference storage is outside this database/runtime integration test.
+vi.mock('electron-store', () => ({ default: class {
+  private values = new Map<string, unknown>();
+  get(key: string, fallback?: unknown) { return this.values.get(key) ?? fallback; }
+  set(key: string, value: unknown) { this.values.set(key, value); }
+  delete(key: string) { this.values.delete(key); }
+} }));
+vi.mock('../../../maker-ipc/appDefaultModelControl.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../../../maker-ipc/appDefaultModelControl.js')>(),
+  validateTaskModel: vi.fn(async () => true),
+}));
 
 const h = await vi.hoisted(async () => {
   const { mkdtempSync } = await import('node:fs');
@@ -113,6 +127,7 @@ vi.mock('electron', () => ({
   },
 }));
 vi.mock('../../client/current', () => ({
+  getCurrentDbClientSnapshot: () => h,
   getDbClient: () => ({ drizzle: h.db, tx: h.tx }),
   tryGetDbClient: () => ({ drizzle: h.db, tx: h.tx }),
 }));
@@ -207,7 +222,7 @@ import {
 } from '../../../maker-ipc/botProfileRuntime';
 import { createBotLifecycleService } from '../../../maker-ipc/botLifecycleService';
 import { createBotDirectMessageService } from '../../../maker-ipc/botDirectMessageService';
-import { createBotDelegationService } from '../../../maker-ipc/botDelegationService';
+import { createBotDelegationService, hasExplicitSessionTaskModel } from '../../../maker-ipc/botDelegationService';
 import {
   BOT_DELEGATION_MAX_DISPATCH_ATTEMPTS,
 } from '../../../maker-ipc/botDelegationDispatchOutcome';
@@ -455,6 +470,7 @@ const capabilityDeps = {
 const { list: findBotCapabilities, select: selectBotCapability } = createBotCapabilityService(capabilityDeps);
 
 beforeEach(async () => {
+  setSessionOpeningModelAdmission(async body => body);
   setModelVisibilityMirror({}, { fallback: true });
   h.toolsetsAvailable = false;
   h.validateCapabilityAdditions.mockReset().mockResolvedValue(undefined);
@@ -638,9 +654,20 @@ describe('Bot canonical Session lifecycle', () => {
       providerId: 'xd',
       effort: 'high',
     });
+    expect(capabilities).toMatchObject({ toolCapabilityVersion: 1, toolsetMode: 'inherit', mcpMode: 'inherit' });
     expect(capabilities.skills).toEqual([]);
     expect(capabilities.toolsets).toEqual([]);
     expect(capabilities.mcpServers).toEqual([]);
+  });
+
+  it('preserves explicit creation selections under the new capability contract', async () => {
+    const created = await invoke('local-db:bots:create', {
+      id: 'selected-bot', name: 'Selected Bot',
+      capabilities: { toolsetMode: 'allowlist', toolsets: [], permissions: 'ask' },
+    });
+    expect(created.capabilities).toMatchObject({ toolsetMode: 'allowlist', toolsets: [], mcpMode: 'inherit', permissions: 'ask' });
+    const row = h.sqlite!.prepare('SELECT capabilities_json FROM bot_profile_versions WHERE bot_id = ? AND version = 1').get('selected-bot') as { capabilities_json: string };
+    expect(JSON.parse(row.capabilities_json)).toMatchObject({ toolCapabilityVersion: 1, toolsetMode: 'allowlist' });
   });
 
   it('accepts a legacy welcome request without forging an assistant message', async () => {
@@ -1574,7 +1601,7 @@ describe('Bot canonical Session lifecycle', () => {
     expect(opts.botProfileContextPrompt).toContain('ghost_call');
   });
 
-  it('keeps ambient catalogs only as explicit disabled rows under legacy inherit', async () => {
+  it('inherits MCP and tools while preserving the companion Skill selection', async () => {
     const created = await invoke('local-db:bots:create-canonical-session', {
       botId: 'bot-1',
       expectedCanonicalSessionId: null,
@@ -1621,8 +1648,44 @@ describe('Bot canonical Session lifecycle', () => {
         configured: [],
         catalog: [expect.objectContaining({ name: 'research' })],
       },
-      mcpPolicy: { mode: 'allowlist', configured: [] },
-      toolsetPolicy: { mode: 'allowlist', configured: [] },
+      mcpPolicy: { mode: 'allowlist', configured: ['docs'] },
+      toolsetPolicy: { mode: 'allowlist', configured: ['browser'] },
+    });
+  });
+
+  it.each([
+    { versioned: false, selected: true, mode: 'inherit', expectedMcp: ['docs', 'mail'], expectedTools: ['browser', 'contacts'] },
+    { versioned: false, selected: false, mode: 'inherit', expectedMcp: ['docs', 'mail'], expectedTools: ['browser', 'contacts'] },
+    { versioned: true, selected: false, mode: 'allowlist', expectedMcp: [], expectedTools: [] },
+    { versioned: true, selected: true, mode: 'allowlist', expectedMcp: ['docs'], expectedTools: ['browser'] },
+  ])('keeps stored capability selections consistent in settings and runtime: %j', async (entry) => {
+    const row = h.sqlite!.prepare('SELECT capabilities_json FROM bot_profile_versions WHERE bot_id = ? AND version = 1')
+      .get('bot-1') as { capabilities_json: string };
+    const config = { ...JSON.parse(row.capabilities_json),
+      toolsetMode: 'allowlist', toolsets: entry.selected ? ['browser'] : [],
+      mcpMode: 'allowlist', mcpServers: entry.selected ? ['docs'] : [],
+    };
+    if (entry.versioned) config.toolCapabilityVersion = 1;
+    else delete config.toolCapabilityVersion;
+    h.sqlite!.prepare('UPDATE bot_profile_versions SET capabilities_json = ? WHERE bot_id = ? AND version = 1')
+      .run(JSON.stringify(config), 'bot-1');
+    const loaded = await invoke('local-db:bots:get', 'bot-1');
+    expect(loaded.capabilities).toMatchObject({ toolsetMode: entry.mode, mcpMode: entry.mode });
+    const created = await invoke('local-db:bots:create-canonical-session', {
+      botId: 'bot-1', expectedCanonicalSessionId: null, expectedProfileVersion: 1,
+    });
+    const opts: MakerSessionCreateOpts = {
+      id: created.session.id, agentKind: 'pi', workingDir: created.session.workingDir,
+      workspaceKind: 'dialogue', model: 'grok-4.5', permissionMode: 'ask',
+    };
+    await hydrateBotProfileRuntime(opts, {
+      listSkills: async () => [],
+      listMcpServers: async () => ['docs', 'mail'].map(name => ({ name, source: 'custom', available: true })),
+      listToolsets: async () => ['browser', 'contacts'].map(id => ({ id, name: id, available: true })),
+    });
+    expect(opts.botRuntimeProfile).toMatchObject({
+      mcpPolicy: { mode: 'allowlist', configured: entry.expectedMcp },
+      toolsetPolicy: { mode: 'allowlist', configured: entry.expectedTools },
     });
   });
 
@@ -1977,7 +2040,7 @@ describe('Bot canonical Session lifecycle', () => {
     const created = await invoke('local-db:bots:create-canonical-session', { botId: 'bot-1', expectedCanonicalSessionId: null, expectedProfileVersion: 1 });
     const callerSessionId = created.session.id;
     const discovered = await findBotCapabilities({ callerSessionId, kind: 'mcp' });
-    expect(discovered).toMatchObject({ ok: true, capabilities: [{ id: 'shared-docs', joined: false, available: true }] });
+    expect(discovered).toMatchObject({ ok: true, capabilities: [{ id: 'shared-docs', joined: true, available: true }] });
     expect(JSON.stringify(discovered)).not.toMatch(/FAKE_SECRET|example.invalid|Authorization/);
     await expect(selectBotCapability({ callerSessionId, kind: 'mcp', id: 'shared-docs', joined: true })).resolves.toMatchObject({ ok: true, effective: 'next-turn' });
     await expect(findBotCapabilities({ callerSessionId, kind: 'mcp' })).resolves.toMatchObject({ capabilities: [{ id: 'shared-docs', joined: true }] });
@@ -2166,7 +2229,7 @@ describe('Bot canonical Session lifecycle', () => {
   });
 
   it.each(['missing', 'error', 'owner-change'])('does not use the current route when next-turn preview fails: %s', async (reason) => {
-    await invoke('local-db:bots:update', { id: 'bot-1', capabilities: { mcpServers: ['shared-docs'] } });
+    await invoke('local-db:bots:update', { id: 'bot-1', capabilities: { mcpServers: ['shared-docs'], mcpMode: 'allowlist' } });
     const created = await invoke('local-db:bots:create-canonical-session', {
       botId: 'bot-1', expectedCanonicalSessionId: null, expectedProfileVersion: 2,
     });
@@ -2350,7 +2413,7 @@ describe('Bot canonical Session lifecycle', () => {
       .resolves.toMatchObject({ ok: true, joined: false });
   });
 
-  it.each(['contacts', 'lsp'])('rejects gated %s despite registry enablement and keeps joined references removable', async (id) => {
+  it.each(['contacts'])('rejects gated %s despite registry enablement and keeps joined references removable', async (id) => {
     const created = await invoke('local-db:bots:create-canonical-session', { botId: 'bot-1', expectedCanonicalSessionId: null, expectedProfileVersion: 1 });
     const input = { callerSessionId: created.session.id, kind: 'toolset' as const, id };
     await expect(findBotCapabilities(input)).resolves.toMatchObject({
@@ -2448,6 +2511,18 @@ describe('Bot canonical Session lifecycle', () => {
       listToolsets: async () => [{ id: toolset, name: toolset, essential: toolset === 'scheduler', available: true }],
     });
     expect(opts.botRuntimeProfile?.mcpPolicy.configured).toContain(server);
+  });
+
+  it('mounts the baseline scheduler MCP for a local Bot without the toolset being selected', async () => {
+    const created = await invoke('local-db:bots:create-canonical-session', { botId: 'bot-1', expectedCanonicalSessionId: null, expectedProfileVersion: 1 });
+    const opts: MakerSessionCreateOpts = { id: created.session.id, agentKind: 'claude-code', workingDir: created.session.workingDir, workspaceKind: 'dialogue', model: 'test-model', permissionMode: 'auto' };
+    await hydrateBotProfileRuntime(opts, {
+      listMcpServers: async () => [{ name: 'cindy_scheduler', source: 'builtin', available: true }],
+      listToolsets: async () => [{ id: 'scheduler', name: 'Scheduler', essential: true, available: true }],
+    });
+    expect(opts.botRuntimeProfile?.mcpPolicy.configured).toContain('cindy_scheduler');
+    expect(opts.botProfileContextPrompt).toContain('你能建普通自动化');
+    expect(opts.botProfileContextPrompt).toContain('你能看、能管主人的任务');
   });
 
   it('refreshes canonical MCP generations and Toolset versions in place', async () => {
@@ -3341,7 +3416,9 @@ describe('Bot Session task end-to-end runtime', () => {
     getWorktree?: Parameters<typeof createBotDelegationService>[0]['getWorktree'];
     withTransferredWorktree?: Parameters<typeof createBotDelegationService>[0]['withTransferredWorktree'];
     prepareWorktree?: Parameters<typeof createBotDelegationService>[0]['prepareWorktree'];
+    discardUnusedWorktree?: Parameters<typeof createBotDelegationService>[0]['discardUnusedWorktree'];
     taskQueue?: Parameters<typeof createBotDelegationService>[0]['taskQueue'];
+    taskRoute?: Parameters<typeof createBotDelegationService>[0]['taskRoute'];
     taskControl?: boolean;
     queueSnapshots?: Map<string, AgentInputQueuedMessage[]>;
     onNativeStarted?: (sessionId: string) => void;
@@ -3350,6 +3427,8 @@ describe('Bot Session task end-to-end runtime', () => {
     stopUnsupported?: boolean;
     steerUnsupported?: boolean;
     readCallerRuntime?: Parameters<typeof createBotDelegationService>[0]['readCallerRuntime'];
+    validateTaskModel?: Parameters<typeof createBotDelegationService>[0]['validateTaskModel'];
+    resolveTaskModelSelection?: Parameters<typeof createBotDelegationService>[0]['resolveTaskModelSelection'];
     readCallerPermission?: Parameters<typeof createBotDelegationService>[0]['readCallerPermission'];
     accountReady?: () => boolean;
     transientUnavailable?: () => boolean;
@@ -3564,10 +3643,12 @@ describe('Bot Session task end-to-end runtime', () => {
     const flushInput = vi.fn(async (): Promise<void> => undefined);
     const delegation = createBotDelegationService({
       prepareWorktree: options.prepareWorktree,
+      discardUnusedWorktree: options.discardUnusedWorktree,
       getWorktree: options.getWorktree,
       reconcileWorktree: options.reconcileWorktree,
       withTransferredWorktree: options.withTransferredWorktree,
       taskQueue: options.taskQueue,
+      taskRoute: options.taskRoute,
       ...(options.taskControl ? { taskControl: {
         steer, stop: stopTurn,
         isActive: (id: string) => pendingTurns.some((turn) => turn.sessionId === id && !turn.queued),
@@ -3583,6 +3664,8 @@ describe('Bot Session task end-to-end runtime', () => {
         resumeInput: async id => { coordinator?.resume(id); },
       } } : {}),
       readCallerRuntime: options.readCallerRuntime,
+      validateTaskModel: options.validateTaskModel,
+      resolveTaskModelSelection: options.resolveTaskModelSelection,
       readCallerPermission: options.readCallerPermission,
       dispatch,
       abortSession,
@@ -3794,6 +3877,128 @@ describe('Bot Session task end-to-end runtime', () => {
     }
   });
 
+  // Execute the production fallback entry with the real delegation snapshot query.
+  // Native engine mutation is unnecessary: an unpinned task reaches the catalog picker.
+  function automaticTaskFallback() {
+    const source = readFileSync(new URL('../../../maker-ipc/register.ts', import.meta.url), 'utf8');
+    const body = source.slice(source.indexOf('  const maybeApplySessionRuntimeFallback ='),
+      source.indexOf('  const sessionControlService ='));
+    const pick = vi.fn(() => null);
+    const deps = {
+      hasExplicitSessionTaskModel,
+      captureSessionRuntimeControlOwnerEpoch: () => 1,
+      sessionRuntimeControlOwnerEpochMatches: () => true,
+      readSessionRuntimeProfiles: async () => ({ effective: { providerId: 'openai', model: 'gpt-6-astra' },
+        control: { generation: 1, visitedRoutes: [], fallbackHop: 0 } }),
+      canApplyAutomaticRuntimeSelection: () => true,
+      readBotFallbackCandidate: async () => ({ isBot: false, candidate: null }),
+      readSessionRuntimeFallbackSettings: () => ({ enabled: true }),
+      getDesktopProviderService: () => ({ listProviders: async () => [] }),
+      getActiveCatalog: () => ({}),
+      pickSessionRuntimeFallback: pick,
+      log: { warn: vi.fn() },
+    };
+    const js = transpileModule(`${body}\nreturn maybeApplySessionRuntimeFallback;`, {
+      compilerOptions: { target: ScriptTarget.ES2022 },
+    }).outputText;
+    const apply = new Function(...Object.keys(deps), js)(...Object.values(deps)) as
+      (id: string, attempt: number, token: number) => Promise<{ session: null; outcome: string }>;
+    return { apply, pick };
+  }
+
+  it.each([
+    { harness: 'claude', agentKind: 'cc', model: 'claude-opus-5-5', providerId: 'anthropic' },
+    { harness: 'codex', agentKind: 'codex', model: 'gpt-6-astra', providerId: 'openai' },
+    { harness: 'pi', agentKind: 'pi', model: 'z-ai/glm-5.3-flash', providerId: 'xd' },
+  ])('uses the independent task model with its own $harness harness', async ({ agentKind, ...selection }) => {
+    await seedPair();
+    const taskModelOverride = { ...selection, effort: 'high', fastMode: false };
+    const saved = await invoke('local-db:bots:update', { id: 'bot-a', capabilities: { taskModelOverride } });
+    expect(saved.capabilities.taskModelOverride).toEqual(taskModelOverride);
+    const validateTaskModel = vi.fn(async () => true);
+    const runtime = createDelegationRuntime({ validateTaskModel,
+      readCallerRuntime: () => ({ agentKind: 'pi', model: 'primary-model', providerId: 'primary-provider', effort: 'low', fastMode: true }),
+    });
+    try {
+      const result = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Use the independent task model.' });
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error(result.message);
+      expect(validateTaskModel).toHaveBeenCalledWith(taskModelOverride);
+      expect(runtime.started).toContainEqual({ sessionId: result.childSessionId, agentKind,
+        model: selection.model, providerId: selection.providerId, effort: 'high', fastMode: 0 });
+      // Clearing the override resumes live inheritance and keeps the existing child intact.
+      const cleared = await invoke('local-db:bots:update', { id: 'bot-a', capabilities: { taskModelOverride: null } });
+      expect(cleared.capabilities.taskModelOverride).toBeNull();
+      const inherited = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Inherit again.' });
+      expect(inherited.ok).toBe(true);
+      if (!inherited.ok) throw new Error(inherited.message);
+      expect(runtime.started).toContainEqual({ sessionId: inherited.childSessionId, agentKind: 'pi', model: 'primary-model', providerId: 'primary-provider', effort: 'low', fastMode: 1 });
+      expect(runtime.started[0]?.model).toBe(selection.model);
+      const recovery = automaticTaskFallback();
+      for (const attempt of [1, 2, 3]) {
+        const fallback = await recovery.apply(result.childSessionId, attempt, attempt);
+        expect(fallback).toEqual({ session: null, outcome: 'superseded' });
+      }
+      expect(recovery.pick).not.toHaveBeenCalled();
+      await recovery.apply(inherited.childSessionId, 1, 1);
+      expect(recovery.pick).not.toHaveBeenCalled();
+      await recovery.apply(inherited.childSessionId, 2, 2);
+      expect(recovery.pick).toHaveBeenCalledOnce();
+
+      await runtime.settleChild(result.childSessionId, 'Task complete.');
+    } finally { runtime.dispose(); }
+  });
+
+  it.each([
+    { harness: 'claude' as const, agentKind: 'cc', model: 'claude-opus-5-5', providerId: 'anthropic' },
+    { harness: 'codex' as const, agentKind: 'codex', model: 'gpt-6-astra', providerId: 'openai' },
+    { harness: 'pi' as const, agentKind: 'pi', model: 'z-ai/glm-5.3-flash', providerId: 'xd' },
+  ])('starts a one-task model selection on $harness without changing the task default', async ({ agentKind, ...route }) => {
+    const configured = { harness: 'pi', model: 'saved-default', providerId: 'saved-source', effort: 'low', fastMode: false };
+    await seedPair({ taskModelOverride: configured });
+    const chosen = { ...route, effort: 'high', fastMode: true };
+    const selection = { id: JSON.stringify([route.harness, route.providerId, route.model]), effort: 'high', fastMode: true };
+    const resolveTaskModelSelection = vi.fn(async () => chosen);
+    const runtime = createDelegationRuntime({ resolveTaskModelSelection });
+    try {
+      const result = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Use this model once.', modelSelection: selection });
+      expect(result.ok).toBe(true); if (!result.ok) throw new Error(result.message);
+      expect(resolveTaskModelSelection).toHaveBeenCalledWith(selection);
+      expect(result.modelRoute).toEqual(chosen);
+      const recovery = automaticTaskFallback();
+      expect(await recovery.apply(result.childSessionId, 2, 2)).toEqual({ session: null, outcome: 'superseded' });
+      expect(recovery.pick).not.toHaveBeenCalled();
+      expect(runtime.started).toContainEqual({ sessionId: result.childSessionId, agentKind, model: route.model, providerId: route.providerId, effort: 'high', fastMode: 1 });
+      const next = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Use the saved default.' });
+      expect(next.ok).toBe(true); if (!next.ok) throw new Error(next.message);
+      expect(next.modelRoute).toEqual(configured);
+      expect(resolveTaskModelSelection).toHaveBeenCalledTimes(1);
+    } finally { runtime.dispose(); }
+  });
+
+  it('rejects a stale one-task model selection before creating a task instead of using the default', async () => {
+    await seedPair();
+    const runtime = createDelegationRuntime({ resolveTaskModelSelection: async () => { throw new Error('Unavailable'); } });
+    try {
+      expect(await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Do work.', modelSelection: { id: 'stale' } }))
+        .toMatchObject({ ok: false, errorCode: 'TASK_MODEL_UNAVAILABLE' });
+      expect(runtime.started).toEqual([]);
+      expect(h.sqlite!.prepare('SELECT count(*) FROM bot_delegations').pluck().get()).toBe(0);
+    } finally { runtime.dispose(); }
+  });
+
+  it('does not fall back to the primary model when an independent task model is unavailable', async () => {
+    await seedPair();
+    h.sqlite!.prepare("UPDATE bot_profile_versions SET capabilities_json = json_set(capabilities_json, '$.taskModelOverride', json(?)) WHERE bot_id = 'bot-a'").run(JSON.stringify({ harness: 'codex', model: 'gpt-6-astra', providerId: 'openai', effort: 'high', fastMode: false }));
+    const runtime = createDelegationRuntime({ validateTaskModel: async () => false });
+    try {
+      expect(await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Do work.' }))
+        .toMatchObject({ ok: false, errorCode: 'TASK_MODEL_UNAVAILABLE' });
+      expect(runtime.started).toEqual([]);
+      expect(h.sqlite!.prepare('SELECT count(*) FROM bot_delegations').pluck().get()).toBe(0);
+    } finally { runtime.dispose(); }
+  });
+
   it.each(['ask', 'auto', 'bypassPermissions'])('inherits the live %s permission in the child task', async (mode) => {
     await seedPair();
     const runtime = createDelegationRuntime({ readCallerPermission: () => mode });
@@ -3816,7 +4021,7 @@ describe('Bot Session task end-to-end runtime', () => {
     const runtime = createDelegationRuntime({ readCallerPermission: () => permission });
     const starting = runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Run the requested checks.' });
     try {
-      await vi.waitFor(() => expect(h.ensureGit).toHaveBeenCalledWith(expect.objectContaining({ source: 'bot-delegation' })));
+      await vi.waitFor(() => expect(h.ensureGit).toHaveBeenCalledWith(expect.objectContaining({ source: 'session-open' })));
       permission = settledMode;
       finishPreparation();
       const result = await starting;
@@ -3932,7 +4137,7 @@ describe('Bot Session task end-to-end runtime', () => {
       // Failure wakes the parent with the completion notice, never the child.
       expect(runtime.started.map((turn) => turn.sessionId)).toEqual(['session-1']);
       expect(h.sqlite!.prepare('SELECT permission_mode, status FROM sessions WHERE parent_session_id = ?')
-        .get('session-1')).toMatchObject({ permission_mode: 'ask', status: 'archived' });
+        .get('session-1')).toMatchObject({ permission_mode: 'ask', status: 'active' });
     } finally {
       select.mockRestore();
       runtime.dispose();
@@ -5923,6 +6128,46 @@ describe('Bot Session task end-to-end runtime', () => {
         h.sqlite!.prepare('SELECT 1 FROM messages WHERE session_id = ? AND client_id = ?')
           .get(currentSessionId, `bot-delegation-request:${started.delegationId}`),
       ).toBeTruthy();
+    } finally {
+      runtime.dispose();
+    }
+  });
+
+  it('lets the requesting teammate choose a configured route only after execution ends', async () => {
+    await seedPair();
+    const current = { agentKind: 'codex' as const, model: 'same-model', providerId: 'subscription', effort: null, fastMode: false };
+    const next = { ...current, providerId: 'paid' };
+    const inspect = vi.fn(async () => ({ ok: true as const, generation: 7, current, next }));
+    const advance = vi.fn(async () => ({ ok: true as const, status: 'applied' as const, generation: 8 }));
+    const runtime = createDelegationRuntime({ taskRoute: { inspect, advance } });
+    try {
+      const started = await runtime.delegation.startSessionTask({
+        callerSessionId: 'session-1', objective: '尝试当前已配置的路线。',
+      });
+      if (!started.ok) throw new Error('Session task did not start');
+      await expect(runtime.delegation.advanceSessionTaskRoute('session-1', started.delegationId, 7, 'old'))
+        .resolves.toMatchObject({ ok: false, errorCode: 'TASK_ACTIVE' });
+      expect(advance).not.toHaveBeenCalled();
+      await runtime.delegation.settleSession({ childSessionId: started.childSessionId, outcome: 'error', error: 'Quota exhausted' });
+      expect(h.sqlite!.prepare('SELECT status FROM sessions WHERE id = ?').get(started.childSessionId)).toEqual({ status: 'active' });
+      const turnsBeforeSwitch = runtime.started.length;
+      const preview = await runtime.delegation.inspectSessionTaskRoute('session-1', started.delegationId);
+      expect(preview).toMatchObject({ ok: true, current: { providerId: 'subscription' }, next: { providerId: 'paid' } });
+      if (!preview.ok) throw new Error('Expected route preview');
+      await expect(runtime.delegation.advanceSessionTaskRoute('session-1', started.delegationId, 6, preview.selectionToken!))
+        .resolves.toMatchObject({ ok: false, errorCode: 'CONFLICT' });
+      await expect(runtime.delegation.advanceSessionTaskRoute('session-1', started.delegationId, 7, 'old'))
+        .resolves.toMatchObject({ ok: false, errorCode: 'CONFLICT' });
+      await expect(runtime.delegation.advanceSessionTaskRoute('session-1', started.delegationId, 7, preview.selectionToken!))
+        .resolves.toMatchObject({ ok: true, status: 'applied', generation: 8 });
+      expect(advance).toHaveBeenCalledWith(started.childSessionId, 7, next);
+      expect(runtime.started).toHaveLength(turnsBeforeSwitch); // Switching never replays the task.
+      await expect(runtime.delegation.advanceSessionTaskRoute('unowned-session', started.delegationId, 7, preview.selectionToken!))
+        .resolves.toMatchObject({ ok: false, errorCode: 'NOT_A_BOT_SESSION' });
+      h.sqlite!.prepare("UPDATE sessions SET status = 'archived' WHERE id = ?").run(started.childSessionId);
+      await expect(runtime.delegation.inspectSessionTaskRoute('session-1', started.delegationId))
+        .resolves.toMatchObject({ ok: false, errorCode: 'CHILD_SESSION_INVALID' });
+      expect(inspect).toHaveBeenCalledTimes(4); // No new candidate is shown for an archived child.
     } finally {
       runtime.dispose();
     }

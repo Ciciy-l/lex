@@ -51,6 +51,7 @@ describe('desktop Claude read-only allowlist', () => {
       'mcp__cindy__ghost_info',
       'mcp__cindy__ghost_manual',
       'mcp__cindy__ghost_forge_guide',
+      'mcp__cindy__ghost_market_search',
       'mcp__cindy_browser__list_tools',
       'mcp__cindy_android__list_tools',
       'mcp__cindy_ios_simulator__list_tools',
@@ -151,7 +152,6 @@ describe('desktop MCP approval policy', () => {
       'cindy_slack',
       'cindy_scheduler',
       'cindy_memory',
-      'cindy_helper',
       // worker → lead 回报通道:执行边界在工具内部 fail-closed, 逐次弹窗
       // 会让远端 daemon 等审批超时断链。
       'orca_worker_bridge',
@@ -160,6 +160,7 @@ describe('desktop MCP approval policy', () => {
       expect(getDesktopMcpToolApprovalPolicy({ serverName })).toBe('auto-approve');
     }
 
+    expect(getDesktopMcpToolApprovalPolicy({ serverName: 'cindy_helper' })).toBe('prompt-each-time');
     // gitlab_lizi 已于 2026-07-14 退役(迁入内置意识 cindy-gitlab):
     // `<平台>_lizi` 显式白名单清空后,该名字回落到默认 prompt,不再自动放行。
     expect(getDesktopMcpToolApprovalPolicy({ serverName: 'gitlab_lizi' })).toBe('prompt');
@@ -422,6 +423,90 @@ describe('desktop MCP approval policy', () => {
         toolParams: { name: 'browser', args: { action: 'navigate', url: 'https://example.com' } },
       }),
     ).toBe('auto-approve');
+  });
+});
+
+describe('Cindy market action authorization', () => {
+  it('allows catalog discovery but reviews each selected installation', () => {
+    expect(
+      getDesktopMcpToolApprovalPolicy({ serverName: 'cindy', toolName: 'ghost_market_search' }),
+    ).toBe('auto-approve');
+    expect(
+      getDesktopMcpToolApprovalPolicy({ serverName: 'cindy', toolName: 'ghost_market_install' }),
+    ).toBe('prompt-each-time');
+    expect(getDesktopClaudeReadOnlyAllowedTools()).not.toContain(
+      'mcp__cindy__ghost_market_install',
+    );
+  });
+});
+
+describe('helper task workspace and SkillHub publication authorization', () => {
+  const policy = (toolName: string | undefined, toolParams?: unknown) =>
+    getDesktopMcpToolApprovalPolicy({ serverName: 'cindy_helper', toolName, toolParams });
+
+  it.each([
+    { mode: 'create', visibility: 'public' },
+    { mode: 'create', visibility: 'private' },
+    { mode: 'create', visibility: 'shared', visible_slugs: ['engineering'] },
+    { mode: 'update' },
+  ])('reviews each publication with %j across payload representations', (publication) => {
+    const input = { ...publication, path: 'skills/release-notes', name: 'release-notes' };
+    for (const args of [input, JSON.stringify(input)]) {
+      expect(policy('publish_skill', args)).toBe('prompt-each-time');
+      for (const name of ['publish_skill', ' publish_skill ']) {
+        const params = { name, args };
+        for (const toolName of ['call_tool', undefined]) {
+          expect(policy(toolName, params)).toBe('prompt-each-time');
+          expect(policy(toolName, JSON.stringify(params))).toBe('prompt-each-time');
+        }
+      }
+    }
+    expect(getDesktopClaudeReadOnlyAllowedTools()).not.toContain('mcp__cindy_helper__publish_skill');
+    expect(getDesktopClaudeReadOnlyAllowedTools()).not.toContain('mcp__cindy_helper__call_tool');
+  });
+
+  it('reviews each move across progressive payload representations', () => {
+    for (const working_dir of ['/project', null]) {
+      for (const args of [
+        { session_id: 'target', working_dir },
+        JSON.stringify({ session_id: 'target', working_dir }),
+      ]) {
+        const params = { name: 'move_session', args };
+        for (const toolName of ['call_tool', undefined]) {
+          expect(policy(toolName, params)).toBe('prompt-each-time');
+          expect(policy(toolName, JSON.stringify(params))).toBe('prompt-each-time');
+        }
+      }
+    }
+    expect(policy('move_session', { session_id: 'target', working_dir: '/project' })).toBe(
+      'prompt-each-time',
+    );
+    expect(getDesktopClaudeReadOnlyAllowedTools()).not.toContain('mcp__cindy_helper__call_tool');
+  });
+
+  it('does not infer a safe helper action from missing or malformed evidence', () => {
+    for (const params of [undefined, null, [], 'invalid JSON', {}, { name: '' }, { name: 42 }]) {
+      expect(policy('call_tool', params)).toBe('prompt-each-time');
+      expect(policy(undefined, params)).toBe('prompt-each-time');
+    }
+  });
+
+  it('preserves discovery and other existing helper actions', () => {
+    expect(policy('list_tools')).toBe('auto-approve');
+    for (const name of [
+      'list_projects',
+      'create_project',
+      'rename_project',
+      'remove_project',
+      'send_to_session',
+      'search_skills',
+      'list_my_published_skills',
+      'get_skill_publish_status',
+    ]) {
+      expect(policy(name, {})).toBe('auto-approve');
+      expect(policy('call_tool', { name, args: {} })).toBe('auto-approve');
+      expect(policy(undefined, JSON.stringify({ name, args: {} }))).toBe('auto-approve');
+    }
   });
 });
 

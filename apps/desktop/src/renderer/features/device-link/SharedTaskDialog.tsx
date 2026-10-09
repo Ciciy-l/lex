@@ -439,7 +439,7 @@ export function SharedTaskDialog({ open, onOpenChange, session, returnFocus, ini
     {isAuthenticated ? hub : <p className="text-13">{t('sharedTask.login')}</p>}
   </section>}<Dialog.Root open={open && (!embedded || !!target || !!confirm || manualOpen || !!success)} onOpenChange={value => { if (!value) dismiss(); }}><Dialog.Portal>
     <Dialog.Overlay className="fixed inset-0 z-[10000] bg-[var(--overlay-modal)]" />
-    <Dialog.Content ref={panel} aria-describedby={undefined} className="fixed left-1/2 top-1/2 z-[10001] max-h-[calc(100dvh-32px)] w-[min(460px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-[var(--border-default)] bg-[var(--surface-elevated)] p-5 text-[var(--text-primary)]"
+    <Dialog.Content onPointerDownOutside={(event) => event.preventDefault()} ref={panel} aria-describedby={undefined} className="fixed left-1/2 top-1/2 z-[10001] max-h-[calc(100dvh-32px)] w-[min(460px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-[var(--border-default)] bg-[var(--surface-elevated)] p-5 text-[var(--text-primary)]"
       onOpenAutoFocus={event => { if (!target && !confirm) { event.preventDefault(); codeInput.current?.focus(); } }}
       onCloseAutoFocus={returnFocus ? event => { event.preventDefault(); returnFocus(); } : undefined}
       onEscapeKeyDown={event => { if (pending.current || confirm || target) { event.preventDefault(); if (confirm) cancel(); else if (target) back(); } }}

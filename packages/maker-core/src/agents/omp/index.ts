@@ -1,3 +1,4 @@
+import { resolveAllowedManagedSkills, snapshotManagedSkillGrants } from '../shared/managed-skill-policy.js';
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -196,6 +197,7 @@ export class OmpAgent extends BaseAgent {
       }).sort((left, right) => left.name.localeCompare(right.name)),
       ...(errors.length > 0 ? { errors } : {}),
     };
+    result.skills.push(...(await this.deps.getManagedSkills?.() ?? []).map(({ claudeCommandName: _command, ...skill }) => ({ ...skill, runtimeStatus: 'unknown' as const })));
     return this.filterActiveSkillCommands(result, opts.remoteHostId);
   }
 
@@ -375,7 +377,11 @@ export class OmpAgent extends BaseAgent {
           }
           await fs.rm(runtimeHome, { recursive: true, force: true });
         };
+        const managedSkills = remoteHostId || isolatedProbe || opts.reviewMode ? []
+          : resolveAllowedManagedSkills(await this.deps.getManagedSkills?.() ?? [],
+              snapshotManagedSkillGrants(opts.botRuntimeProfile?.skillPolicy), this.deps.getDisabledSkillPaths?.() ?? []);
         const plan = createOmpSessionLaunchPlan({
+          managedSkillDirectories: [...new Set(managedSkills.map((skill) => path.dirname(skill.path)))],
           roots: {
             home: runtimeHome,
             workingDir: runtimeWorkingDir,

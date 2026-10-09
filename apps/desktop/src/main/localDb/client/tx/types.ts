@@ -1,4 +1,5 @@
 export type DbTxName =
+  | 'authorization.readProjection'
   | 'codex.importMessages'
   | 'claude.importMessages'
   | 'rewind.commit'
@@ -48,6 +49,7 @@ export type DbTxName =
   | 'bots.resumeLifecycle'
   | 'bots.recordLifecycleEvent'
   | 'bots.archiveLifecycle'
+  | 'bots.persistSessionPermission'
   | 'bots.deleteProfile'
   | 'bots.assertNoSharedHistory'
   | 'bots.createGroupLane'
@@ -1365,6 +1367,7 @@ export type SkillUsageApplyMutationArgs =
   | { kind: 'promote'; analyzerVersion: string };
 
 export type DbTxArgsByName = {
+  'authorization.readProjection': { sessionId: string; leadId: string };
   'codex.importMessages': CodexImportMessagesArgs;
   'claude.importMessages': ClaudeImportMessagesArgs;
   'rewind.commit': RewindCommitArgs;
@@ -1414,6 +1417,7 @@ export type DbTxArgsByName = {
   'bots.resumeLifecycle': BotsLifecycleTransitionArgs;
   'bots.recordLifecycleEvent': BotsRecordLifecycleEventArgs;
   'bots.archiveLifecycle': BotsArchiveLifecycleArgs;
+  'bots.persistSessionPermission': { sessionId: string; mode: string };
   'bots.deleteProfile': BotsDeleteProfileArgs;
   'bots.assertNoSharedHistory': { botId: string };
   'bots.createGroupLane': BotGroupsCreateLaneArgs;
@@ -1450,6 +1454,7 @@ export type DbTxArgsByName = {
 };
 
 export type DbTxResultByName = {
+  'authorization.readProjection': import('../../autoReviewProjection.js').StoredAutoReviewProjection;
   'codex.importMessages': { changed: number };
   'claude.importMessages': { changed: number };
   'rewind.commit': undefined;
@@ -1503,6 +1508,7 @@ export type DbTxResultByName = {
   'bots.resumeLifecycle': undefined;
   'bots.recordLifecycleEvent': undefined;
   'bots.archiveLifecycle': { sessions: number };
+  'bots.persistSessionPermission': { updated: boolean };
   'bots.deleteProfile': { sessionIds: string[]; status: 'archived' | 'deleted' };
   'bots.assertNoSharedHistory': undefined;
   'bots.createGroupLane': BotGroupsCreateLaneResult;

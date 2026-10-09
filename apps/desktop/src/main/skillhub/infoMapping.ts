@@ -25,6 +25,7 @@ export interface HubSkillInfoForDesktop {
   moderationStatus?: string;
   updatedAt: string;
   isMine?: boolean;
+  isCreator?: boolean;
   canManage?: boolean;
   categories?: Array<{ slug: string; name: string; source?: 'platform' }>;
   tags?: Array<{ slug: string; name: string; source?: 'platform' }>;
@@ -50,6 +51,7 @@ export function mapHubSkillInfoToDesktopInfo(hub: HubSkillInfoForDesktop, opts?:
     publisherName: hub.publisher?.name?.trim() || hub.owner.name,
     authorAvatarUrl: null as string | null,
     isMine: opts?.forceMine === true || hub.isMine === true,
+    isCreator: hub.isCreator === true,
     canManage: hub.canManage === true,
     latestVersion: hub.version,
     folderHash: hub.folderHash ?? hub.fileHash,

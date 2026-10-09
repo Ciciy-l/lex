@@ -24,7 +24,9 @@
  * 其对象被查看器关闭即删,而播放器侧没有自动 skipCache 重试路径,悬空 key 会卡住播放。
  */
 import path from 'node:path';
-import { realpath, stat } from 'node:fs/promises';
+import { open, realpath, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { FILE_INLINE_MAX_BYTES } from '@cindy/device-link';
 
 import * as imageCacheStore from '../imageCacheStore.js';
 import * as videoCacheStore from '../videoCacheStore.js';
@@ -32,7 +34,7 @@ import * as cindyMediaBlobStore from '../cindy-media/blobStore.js';
 import { getSensitiveMediaBlocklist, isPathAllowedAgainst } from '../filePathPolicy.js';
 import { materializeSshRemoteMedia } from '../file-browser/ssh-media.js';
 import { getSessionFsSnapshot } from '../localDb/ipc/sessions.js';
-import { uploadLocalFile } from './mediaTransfer.js';
+import { mimeOf, uploadLocalFile } from './mediaTransfer.js';
 import { sharedTaskMediaId } from './sharedTaskMediaContext.js';
 import { createLogger } from '../logger.js';
 import type { SharedTaskMediaCaptureContext } from './sharedTaskMediaAccess.js';
@@ -69,6 +71,7 @@ export interface MediaFetchResult {
    * presign + 控制端下载」整往返(与 file-browser thumbnail op 同取舍)。
    */
   inlineBase64?: string;
+  transferRequired?: boolean;
 }
 
 /** 缩略图最长边:手机聊天气泡最宽 ~360pt@3x≈1080px,1024 足够清晰;点开查看器仍取原图。 */
@@ -138,7 +141,12 @@ async function renderChatThumbnailSharp(absPath: string): Promise<Buffer | null>
   if (!sharp) return null;
   return sharp(absPath)
     .rotate()
-    .resize({ width: THUMB_MAX_EDGE, height: THUMB_MAX_EDGE, fit: 'inside', withoutEnlargement: true })
+    .resize({
+      width: THUMB_MAX_EDGE,
+      height: THUMB_MAX_EDGE,
+      fit: 'inside',
+      withoutEnlargement: true,
+    })
     .webp({ quality: THUMB_WEBP_QUALITY })
     .toBuffer();
 }
@@ -226,8 +234,14 @@ async function parseSshMediaOrigin(
   const sessionId = params.get('sessionId') ?? '';
   const remoteHostId = params.get('remoteHostId') ?? '';
   const workdir = params.get('workdir') ?? '';
-  if (!hasSessionId || !hasRemoteHostId || !hasWorkdir
-    || !sessionId.trim() || !remoteHostId.trim() || !workdir.trim()) {
+  if (
+    !hasSessionId ||
+    !hasRemoteHostId ||
+    !hasWorkdir ||
+    !sessionId.trim() ||
+    !remoteHostId.trim() ||
+    !workdir.trim()
+  ) {
     throw new Error('SSH 媒体参数不完整：sessionId、remoteHostId 和 workdir 必须同时提供');
   }
 
@@ -273,9 +287,11 @@ function lookupUploadCache(
 ): UploadCacheEntry | null {
   const hit = uploadCache.get(url);
   if (!hit) return null;
-  if (now - hit.uploadedAt >= UPLOAD_CACHE_TTL_MS
-    || hit.statSize !== statSize
-    || hit.statMtimeMs !== statMtimeMs) {
+  if (
+    now - hit.uploadedAt >= UPLOAD_CACHE_TTL_MS ||
+    hit.statSize !== statSize ||
+    hit.statMtimeMs !== statMtimeMs
+  ) {
     uploadCache.delete(url);
     return null;
   }
@@ -300,10 +316,11 @@ function rememberUpload(url: string, entry: UploadCacheEntry): void {
  *   invoke 帧 inline 返回(不经 OSS);不可缩(gif/svg/解码失败/超限)自动退回原图路径。
  *   老被控端不识别该字段,自然回落原图 ossKey,控制端两种回包都要兼容。
  */
-export async function fetchLocalMediaToOss(
+export async function resolveAuthorizedMedia(
   arg: unknown,
+  maximumBytes?: number,
   assertAuthorized?: () => void | SharedTaskMediaCaptureContext | Promise<void | SharedTaskMediaCaptureContext>,
-): Promise<MediaFetchResult> {
+) {
   const record = arg && typeof arg === 'object'
     ? arg as { url?: unknown; skipCache?: unknown; thumbnail?: unknown }
     : {};
@@ -331,6 +348,8 @@ export async function fetchLocalMediaToOss(
   const constraints: PathMediaConstraints = isPathMedia
     ? parsePathMediaConstraints(url)
     : { baseDir: null, maxBytes: null };
+  if (maximumBytes !== undefined)
+    constraints.maxBytes = Math.min(constraints.maxBytes ?? maximumBytes, maximumBytes);
   let absPath: string;
   let mimeType: string | undefined;
   if (sshOrigin) {
@@ -354,6 +373,17 @@ export async function fetchLocalMediaToOss(
     ({ absPath, mimeType } = resolveLocalMedia(url));
     if (capturedMedia?.localPath && isPathMedia) absPath = capturedMedia.localPath;
     await recheckAuthorization();
+    if (!isPathMedia && mimeType?.startsWith('image/')) {
+      try {
+        const source = await stat(absPath);
+        if (!source.isFile()) throw new Error('[MEDIA_SOURCE_MISSING] Media source is not a file');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          throw new Error('[MEDIA_SOURCE_MISSING] Media source is missing on this Host');
+        }
+        throw error;
+      }
+    }
   }
   // For file/audio schemes the requested URL path carries the semantic
   // extension; if it resolves through a symlink whose target has a different
@@ -376,7 +406,8 @@ export async function fetchLocalMediaToOss(
     let real: string;
     try {
       real = await realpath(absPath);
-    } catch {
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new Error('[MEDIA_SOURCE_MISSING] Media source is missing on this Host');
       throw new Error('媒体文件不存在或不可读');
     }
     // A shared-task capture carries the canonical path proven by the DB
@@ -416,11 +447,56 @@ export async function fetchLocalMediaToOss(
     const sizeStat = await stat(absPath);
     await recheckAuthorization();
     if (sizeStat.size > constraints.maxBytes) {
-      log.warn(`media:fetch rejected oversize ${sizeStat.size}B > ${constraints.maxBytes}B ${url.slice(0, 60)}`);
+      log.warn(
+        `media:fetch rejected oversize ${sizeStat.size}B > ${constraints.maxBytes}B ${url.slice(0, 60)}`,
+      );
       throw new Error(`资源超出取件大小上限(${sizeStat.size} > ${constraints.maxBytes} 字节)`);
     }
   }
 
+  return { absPath, mimeType, uploadExtHint, maxBytes: constraints.maxBytes, recheckAuthorization };
+}
+
+export async function fetchLocalMediaToOss(arg: unknown, assertAuthorized?: () => void | SharedTaskMediaCaptureContext | Promise<void | SharedTaskMediaCaptureContext>): Promise<MediaFetchResult> {
+  const record =
+    arg && typeof arg === 'object'
+      ? (arg as { url?: unknown; skipCache?: unknown; thumbnail?: unknown; prepareOnly?: unknown })
+      : {};
+  const { absPath, mimeType, uploadExtHint, maxBytes, recheckAuthorization } = await resolveAuthorizedMedia(arg, undefined, assertAuthorized);
+  const url = record.url as string;
+  const skipCache = record.skipCache === true;
+  if (record.prepareOnly === true && record.thumbnail !== true) {
+    const file = await open(absPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    try {
+      const before = await file.stat();
+      if (!before.isFile()) throw new Error('REMOTE_FILE_NOT_REGULAR');
+      if (maxBytes !== null && before.size > maxBytes) throw new Error('REMOTE_FILE_TOO_LARGE');
+      const result = {
+        ossKey: '',
+        size: before.size,
+        mimeType:
+          mimeType ??
+          mimeOf((uploadExtHint ?? path.extname(absPath)).replace(/^\./, '').toLowerCase()),
+      };
+      await recheckAuthorization();
+      if (before.size > FILE_INLINE_MAX_BYTES) return { ...result, transferRequired: true };
+      // Bounded read: a growing file cannot allocate an unbounded relay response.
+      const bytes = Buffer.alloc(before.size);
+      let offset = 0;
+      while (offset < bytes.length) {
+        const read = await file.read(bytes, offset, bytes.length - offset, offset);
+        if (!read.bytesRead) throw new Error('REMOTE_FILE_CHANGED');
+        offset += read.bytesRead;
+      }
+      const after = await file.stat();
+      if (after.size !== before.size || after.mtimeMs !== before.mtimeMs)
+        throw new Error('REMOTE_FILE_CHANGED');
+      await recheckAuthorization();
+      return { ...result, inlineBase64: bytes.toString('base64') };
+    } finally {
+      await file.close();
+    }
+  }
   if (record.thumbnail === true && canThumbnail(absPath, mimeType)) {
     try {
       // 输入体量护栏:病态大图(> 48MB)解码成本失控,直接放弃缩图走原图路径;
@@ -466,6 +542,7 @@ export async function fetchLocalMediaToOss(
   }
 
   const uploadOptions = {
+    ...(maxBytes !== null ? { maxBytes } : {}),
     ...(mimeType ? { contentType: mimeType } : {}),
     ...(uploadExtHint ? { extHint: uploadExtHint } : {}),
     ...(assertAuthorized ? { assertAuthorized: recheckAuthorization } : {}),

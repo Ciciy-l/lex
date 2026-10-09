@@ -35,3 +35,11 @@ describe('library extraDirs grant wiring', () => {
     expect(body).toContain('return result;');
   });
 });
+
+describe('library extraDirs durable Claude identity', () => {
+  it('uses the accepted SDK identity when rebuilding a directory grant', () => {
+    const source = readFileSync(resolve(process.cwd(), '../../packages/maker-core/src/agents/claude-code/index.ts'), 'utf8');
+    expect(source).toContain('pendingRewindTo = durableSdkSessionId');
+    expect(source).toContain('directoryGrantRebuild ? {} : { resumeSessionAt: resumeAt }');
+  });
+});

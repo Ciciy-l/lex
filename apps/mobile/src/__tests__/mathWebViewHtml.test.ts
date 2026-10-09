@@ -70,7 +70,7 @@ describe('buildMathWebViewHtml — 主题色净化', () => {
     });
     expect(html).not.toContain('alert(1)');
     // fallback = lightColors.surface;随 CINDY 色板(U3+U8)同步为 #EDEDED。
-    expect(html).toContain('background: #EDEDED');
+    expect(html).toContain('background: #F9F9F6');
   });
 });
 

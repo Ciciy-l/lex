@@ -42,7 +42,11 @@ export interface RemoteFileIdentity {
   mtimeMs: number;
 }
 
-export type FetchProgressFn = (received: number, total: number, phase?: 'upload' | 'download') => void;
+export type FetchProgressFn = (
+  received: number,
+  total: number,
+  phase?: 'upload' | 'download',
+) => void;
 
 /** 取回执行体:把远端文件完整写到 destPath(临时路径),完成返回。 */
 export type FetchExecutor = (
@@ -190,6 +194,7 @@ function assertCacheOwner(scope: string): void {
   }
 }
 
+
 /** 断线兜底:按路径身份前缀找最近的已缓存副本(可能不是最新版本)。 */
 export async function findStaleCached(
   id: Pick<RemoteFileIdentity, 'transport' | 'endpointId' | 'workdir' | 'relPath' | 'scope'>,
@@ -302,6 +307,7 @@ export async function putCachedContent(id: RemoteFileIdentity, content: string):
     } catch {
       // miss → 写入
     }
+    assertCacheOwner(scope);
     await fs.mkdir(cacheDir(), { recursive: true });
     assertCacheOwner(scope);
     await fs.writeFile(tmp, content, 'utf8');

@@ -1,4 +1,5 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
+import type { RemoteResource } from '@cindy/device-link';
 import { AppState } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '@/auth/AuthContext';
@@ -10,7 +11,7 @@ import { remoteSessionStore } from './remoteSessionStore';
 import type { RemoteSession } from './types';
 
 /** Follow a companion's current host-owned task on focus/reconnect, retaining its permanent identity. */
-export function useRemoteResourceSession(deviceId: string, deviceName: string, sessionId: string, canMarkRead: boolean): void {
+export function useRemoteResourceSession(deviceId: string, deviceName: string, sessionId: string, canMarkRead: boolean, metadataVerified = false): { resource: RemoteResource | null; ready: boolean } {
   const params = useLocalSearchParams<{ resourceCollectionId?: string; resourceId?: string; resourceKind?: string }>();
   const collectionId = typeof params.resourceCollectionId === 'string' ? params.resourceCollectionId : '';
   const resourceId = typeof params.resourceId === 'string' ? params.resourceId : '';
@@ -18,10 +19,15 @@ export function useRemoteResourceSession(deviceId: string, deviceName: string, s
   const { invoke, connectionEpoch, status, onRemoteResourceChanged, subscribe, unsubscribe } = useDeviceLink();
   const { user, accountGeneration } = useAuth();
   const router = useRouter();
+  const identity = JSON.stringify([accountGeneration, deviceId, sessionId, collectionId, resourceKind, resourceId]);
+  const [display, setDisplay] = useState<{ identity: string; resource: RemoteResource } | null>(null);
   const binding = JSON.stringify([accountGeneration, connectionEpoch, deviceId, sessionId, collectionId, resourceId, canMarkRead]);
   const current = useRef(binding); current.current = binding;
+  const [verified, setVerified] = useState<string | null>(null);
+  const required = !!(collectionId && resourceId && resourceKind && deviceId);
   useFocusEffect(useCallback(() => {
     if (!collectionId || !resourceId || !resourceKind || !deviceId || status !== 'online') return;
+    setVerified(null);
     let disposed = false;
     let generation = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -32,6 +38,9 @@ export function useRemoteResourceSession(deviceId: string, deviceName: string, s
       try {
         const resource = await getRemoteResource(invoke, { deviceId, deviceName }, { collectionId, id: resourceId, kind: resourceKind });
         if (!valid()) return;
+        // Reuse this existing read rather than issuing a second profile request per turn.
+        setDisplay((previous) => previous?.identity === identity && previous.resource.revision === resource.revision
+          ? previous : { identity, resource });
         const target = resource.links.find((link) => link.rel === 'conversation')?.target;
         if (target?.kind !== 'session') return;
         if (target.sessionId !== sessionId) {
@@ -43,11 +52,14 @@ export function useRemoteResourceSession(deviceId: string, deviceName: string, s
           router.setParams({ sessionId: session.id });
           return; // The replacement task must mount and finish its own message sync first.
         }
+        setVerified(binding);
         if (canMarkRead && resourceKind === 'bot') void markRemoteResourceRead(user?.id ?? '', deviceId, resourceId, resource.display.lastReplyAt ?? 0);
       } catch (error) {
         if (!valid()) return;
+        setVerified(null);
         const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
         if (code === 'NOT_FOUND' || /\[NOT_FOUND\]/.test(String(error))) {
+          setDisplay(null);
           // A removed/hidden resource must leave the cached task view immediately.
           // The resolver displays the existing unavailable/retry state.
           router.replace({ pathname: '/resources/[collectionId]/[resourceId]', params: {
@@ -60,11 +72,15 @@ export function useRemoteResourceSession(deviceId: string, deviceName: string, s
     const offPush = onRemoteResourceChanged((source, payload) => {
       if (source !== deviceId || payload.collectionId !== collectionId || timer) return;
       if (payload.resourceRefs?.length && !payload.resourceRefs.some((ref) => ref.id === resourceId && ref.kind === resourceKind)) return;
+      generation += 1;
+      setVerified(null);
       timer = setTimeout(() => { timer = undefined; void load(); }, 300);
     });
     const offTopic = startFocusedTopicSubscription({ deviceId, owner: `resource-session:${sessionId}`, topic: 'sessions', subscribe, unsubscribe });
-    const appState = AppState.addEventListener('change', (state) => { generation += 1; if (state === 'active') void load(); });
+    const appState = AppState.addEventListener('change', (state) => { generation += 1; setVerified(null); if (state === 'active') void load(); });
     void load();
-    return () => { disposed = true; offPush(); offTopic(); appState.remove(); if (timer) clearTimeout(timer); };
-  }, [binding, canMarkRead, collectionId, deviceId, deviceName, invoke, onRemoteResourceChanged, resourceId, resourceKind, router, sessionId, status, subscribe, unsubscribe, user?.id]));
+    return () => { disposed = true; setVerified(null); offPush(); offTopic(); appState.remove(); if (timer) clearTimeout(timer); };
+  }, [binding, canMarkRead, collectionId, deviceId, deviceName, identity, invoke, onRemoteResourceChanged, resourceId, resourceKind, router, sessionId, status, subscribe, unsubscribe, user?.id]));
+  return { resource: display?.identity === identity ? display.resource : null,
+    ready: !required || (AppState.currentState === 'active' && status === 'online' && verified === binding && metadataVerified) };
 }

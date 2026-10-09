@@ -3,6 +3,7 @@
  * Bot profile 与 Session 归属只在这里写入 SQLite；renderer 只读取投影，
  * 不维护第二份资料或决定 canonical Session。
  */
+import { listBotSkillsForBot } from '../../maker-ipc/botSkillService.js';
 import { provisionDefaultBot } from '../../maker-ipc/botDefaultProvisioning.js';
 import { BOT_TEMPLATE_PRESET_AVATARS, CINDY_DEFAULT_IDENTITY } from '../../../shared/botTemplatePreset.js';
 import fs from 'node:fs/promises';
@@ -44,6 +45,7 @@ import {
   writeBotModelChainSettings,
 } from '../../maker-host/bot-model-chain-settings-store.js';
 import { extractMessagePreview, sessionCreateToRow, sessionToCamel } from '../mapper.js';
+import { normalizeBotToolCapabilities } from '../../../shared/botCapabilitySelection.js';
 import {
   botProfileContentChanged,
   botProfileModelSelectionChanged,
@@ -61,11 +63,23 @@ import { syncBotProfileFromFolder } from '../../maker-ipc/botProfileFolderSync.j
 import { requestBotRuntimeEpochRefresh } from '../../maker-ipc/botRuntimeEpochRefreshSignal.js';
 import { createLogger } from '../../logger.js';
 import {
+  addBotWorkbenchDirectory,
+  broadcastBotWorkbenchChanged,
+  readBotWorkbench,
+  readBotWorkbenchDirectoryPaths,
+  removeBotWorkbenchDirectory,
+} from '../../maker-ipc/botWorkbenchService.js';
+import {
+  listBotWorkbenchCandidatesForOwner,
+  readBotWorkbenchTaskForOwner,
+} from '../../maker-ipc/botWorkbenchTools.js';
+import {
   NEW_BOT_DEFAULT_PI_EFFORT,
   NEW_BOT_DEFAULT_PI_MODEL,
   NEW_BOT_DEFAULT_PI_PROVIDER,
 } from '../../../shared/botDefaults.js';
-import { normalizeBotModelChain } from '../../../shared/botModelChain.js';
+import { normalizeBotModelChain, readBotTaskModelOverride } from '../../../shared/botModelChain.js';
+import { validateTaskModel } from '../../maker-ipc/appDefaultModelControl.js';
 import {
   activeOwnerScopeKey,
   isAppSessionBoundaryPending,
@@ -839,16 +853,17 @@ async function readProfile(
       modelChainOverride: Array.isArray(config.modelChainOverride)
         ? normalizeBotModelChain(config.modelChainOverride)
         : null,
+      ...(config.taskModelOverride !== undefined ? { taskModelOverride: readBotTaskModelOverride(config.taskModelOverride) } : {}),
       skillMode: config.skillMode === 'allowlist' ? 'allowlist' : 'inherit',
       // 跟随全局时被单独关掉的那几项(见 botProfileRuntime 的 excludedSkills)。
       skillsExcluded: Array.isArray(config.skillsExcluded)
         ? config.skillsExcluded.filter((item): item is string => typeof item === 'string')
         : [],
-      toolsetMode: 'allowlist',
+      toolsetMode: normalizeBotToolCapabilities(config).toolsetMode,
       toolsets: Array.isArray(config.toolsets)
         ? config.toolsets.filter((item): item is string => typeof item === 'string')
         : [],
-      mcpMode: 'allowlist',
+      mcpMode: normalizeBotToolCapabilities(config).mcpMode,
       mcpServers: Array.isArray(config.mcpServers)
         ? config.mcpServers.filter((item): item is string => typeof item === 'string')
         : [],
@@ -1088,6 +1103,7 @@ export async function getBotRemoteSettingsSource(botId: string) {
     followsDefault: !(Array.isArray(config.modelChainOverride) && config.modelChainOverride.length > 0)
       && (config.modelChainOverride === null || config.modelOverride === null
         || (!Array.isArray(config.modelChainOverride) && !Array.isArray(config.modelChain) && typeof config.model !== 'string')),
+    ...(config.taskModelOverride !== undefined ? { taskModelOverride: readBotTaskModelOverride(config.taskModelOverride) } : {}),
     skills: strings(config.skills),
     connections: strings(config.mcpServers),
     toolsets: strings(config.toolsets),
@@ -1197,9 +1213,10 @@ async function defaultNewBotCapabilities(): Promise<Record<string, unknown>> {
     modelChainOverride: null,
     skillMode: 'allowlist',
     skillsExcluded: [],
-    toolsetMode: 'allowlist',
+    toolCapabilityVersion: 1,
+    toolsetMode: 'inherit',
     toolsets: [],
-    mcpMode: 'allowlist',
+    mcpMode: 'inherit',
     mcpServers: [],
     memory: true,
     permissions: 'auto',
@@ -1302,10 +1319,13 @@ export async function createBotProfile(raw: unknown, operationGuard?: () => void
   }
   const persistedCapabilities = normalizeBotModelCapabilitiesOrThrow({
     permissions: 'auto',
+    toolsetMode: 'inherit',
+    mcpMode: 'inherit',
     ...(hasRequestedCapabilities ? {} : await defaultNewBotCapabilities()),
     ...requestedCapabilities,
+    toolCapabilityVersion: 1,
     skills,
-    ...(draftEntry ? { skillMode: 'allowlist', mcpMode: 'allowlist', mcpServers: draftEntry.draft.mcpRefs, toolsetMode: 'allowlist', toolsets: draftEntry.draft.toolsetRefs } : {}),
+    ...(draftEntry ? { skillMode: 'allowlist', mcpMode: 'inherit', mcpServers: draftEntry.draft.mcpRefs, toolsetMode: 'inherit', toolsets: draftEntry.draft.toolsetRefs } : {}),
     userContextSource,
     ...(gender ? { gender } : {}),
   });
@@ -1499,6 +1519,13 @@ export async function updateBotProfile(raw: unknown, expectedVersion?: number,
     else delete nextConfig.gender;
   }
   const normalizedNextConfig = normalizeBotModelCapabilitiesOrThrow(nextConfig);
+  if (JSON.stringify(previous.taskModelOverride ?? null) !== JSON.stringify(normalizedNextConfig.taskModelOverride ?? null)) {
+    const taskModel = readBotTaskModelOverride(normalizedNextConfig.taskModelOverride);
+    if (taskModel && !await validateTaskModel(taskModel)) {
+      throwIpcError('INVALID_PARAMS', '任务模型不可用，请重新选择模型、来源与引擎');
+    }
+    owner.assertCurrent();
+  }
   const nextIdentitySource =
     body.identitySource !== undefined
       ? readText(body.identitySource, 'identitySource', 12000) ||
@@ -2083,6 +2110,80 @@ export function registerBotIpc(): void {
     owner.assertCurrent();
     return result;
   };
+  ipcMain.handle('local-db:bots:workbench:get', async (event, rawBotId: unknown) => {
+    assertTrustedAppRendererEvent(event);
+    const botId = readText(rawBotId, 'botId', 128, true);
+    const owner = captureBotOperationOwner();
+    const workbench = await readBotWorkbench(owner.userDataDir, botId);
+    owner.assertCurrent();
+    return workbench;
+  });
+  ipcMain.handle('local-db:bots:workbench:add-directory', async (event, rawBotId: unknown, rawPath: unknown) => {
+    assertTrustedAppRendererEvent(event);
+    const botId = readText(rawBotId, 'botId', 128, true);
+    const dirPath = readText(rawPath, 'path', 4096, true);
+    const owner = captureBotOperationOwner();
+    const result = await addBotWorkbenchDirectory(owner.userDataDir, botId, dirPath);
+    owner.assertCurrent();
+    if (result.ok) broadcastBotWorkbenchChanged(botId);
+    return result;
+  });
+  // 侧栏「<伙伴>在跟进」:每个在用的本机伙伴接手了哪些项目。只给路径列表,不做文件系统探测,
+  // 也不带判断与会话内容;渲染层按任务的工作目录自己匹配。
+  ipcMain.handle('local-db:bots:workbench:follow-scopes', async (event) => {
+    assertTrustedAppRendererEvent(event);
+    const owner = captureBotOperationOwner();
+    const bots = await getDbClient().drizzle
+      .select({ id: botProfiles.id })
+      .from(botProfiles)
+      .where(eq(botProfiles.status, 'active'));
+    const scopes = await Promise.all(bots.map(async (bot) => ({
+      botId: bot.id,
+      directories: await readBotWorkbenchDirectoryPaths(owner.userDataDir, bot.id),
+    })));
+    owner.assertCurrent();
+    return scopes.filter((scope) => scope.directories.length > 0);
+  });
+  // 工作台详情视图:只读一件任务的最近内容(有界)。范围限于该伙伴已接手的项目,
+  // 外部会话只读转录尾部,不写库、不导入。
+  ipcMain.handle('local-db:bots:workbench:read-task', async (event, rawBotId: unknown, rawTaskId: unknown) => {
+    assertTrustedAppRendererEvent(event);
+    const botId = readText(rawBotId, 'botId', 128, true);
+    const taskId = readText(rawTaskId, 'taskId', 256, true);
+    const owner = captureBotOperationOwner();
+    const result = await readBotWorkbenchTaskForOwner(botId, taskId);
+    owner.assertCurrent();
+    return result;
+  });
+  // 工作台:已接手项目里近期本机会话的 id 与最近活动(只读、按项目过滤、只看近期)。
+  ipcMain.handle('local-db:bots:workbench:candidates', async (event, rawBotId: unknown) => {
+    assertTrustedAppRendererEvent(event);
+    const botId = readText(rawBotId, 'botId', 128, true);
+    const owner = captureBotOperationOwner();
+    const result = await listBotWorkbenchCandidatesForOwner(botId);
+    owner.assertCurrent();
+    return result;
+  });
+  ipcMain.handle('local-db:bots:workbench:remove-directory', async (event, rawBotId: unknown, rawPath: unknown) => {
+    assertTrustedAppRendererEvent(event);
+    const botId = readText(rawBotId, 'botId', 128, true);
+    const dirPath = readText(rawPath, 'path', 4096, true);
+    const owner = captureBotOperationOwner();
+    await removeBotWorkbenchDirectory(owner.userDataDir, botId, dirPath);
+    owner.assertCurrent();
+    broadcastBotWorkbenchChanged(botId);
+  });
+  // Local settings read; remote clients already use settings:<botId>/skills.
+  ipcMain.handle('local-db:bots:skills:list', async (event, rawBotId: unknown) => {
+    assertTrustedAppRendererEvent(event);
+    const botId = readText(rawBotId, 'botId', 128, true);
+    const owner = captureBotOperationOwner();
+    await getBotRemoteSettingsSource(botId);
+    owner.assertCurrent();
+    const skills = await listBotSkillsForBot(botId);
+    owner.assertCurrent();
+    return skills;
+  });
   ipcMain.handle('local-db:bots:memory:list', async (event, rawBotId: unknown, rawQuery: unknown) => {
     assertTrustedAppRendererEvent(event);
     const botId = readText(rawBotId, 'botId', 128, true);

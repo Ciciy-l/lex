@@ -26,6 +26,7 @@ import { ArrowRight } from 'lucide-react';
 import { InteractionPromptCardShell } from '@/components/interaction-portal';
 import { Tip } from '@/components/ui/tooltip';
 import { useAutoResize } from '@/hooks/useAutoResize';
+import { shouldCardShortcutYield } from '@/lib/editableKeyboardTarget';
 import { cn } from '@/lib/utils';
 import type { AskUserDraft, AskUserViewerState, PendingAskUser } from '@/lib/makerChatStore';
 
@@ -154,6 +155,10 @@ function AskUserQuestionForm({
   // Custom input
   const [customInput, setCustomInput] = useState('');
   const [showCustomInput, setShowCustomInput] = useState(false);
+  const cardRef = useRef<HTMLElement | null>(null);
+  const setCardNode = useCallback((node: HTMLElement | null) => {
+    cardRef.current = node;
+  }, []);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // ── Animation state ──
@@ -404,6 +409,10 @@ function AskUserQuestionForm({
       // F-AUQ-MIN-5: minimized 时数字键 1-N / 回车 / N+1 全部透传，
       // 避免"无视觉反馈地选中选项"。Escape 仍保留——满足 F-AUQ-MIN-5 的取消语义。
       if (viewerState === 'minimized' && e.key !== 'Escape') return;
+      // Numbers typed into the sidebar search, a terminal or a rename field,
+      // and Escape that closed a menu, belong to that place — not to this
+      // question. The answer inputs handle their own keys.
+      if (shouldCardShortcutYield(e, e.key === 'Escape' ? 'dismiss' : 'character', cardRef.current)) return;
 
       // If custom input is focused in single-select mode, handle Escape only
       if (showCustomInput && !isMultiSelect) {
@@ -544,6 +553,7 @@ function AskUserQuestionForm({
   // ── Render ──
   return (
     <InteractionPromptCardShell
+      rootRef={setCardNode}
       viewerState={viewerState}
       onViewerStateChange={onViewerStateChange}
       minimizedTitle={t('chat.askUserQuestion.pendingTitle')}

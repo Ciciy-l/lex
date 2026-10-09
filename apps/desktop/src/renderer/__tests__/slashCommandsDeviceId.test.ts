@@ -16,10 +16,10 @@ function c(name: string, kind: string) {
 }
 
 function stubElectron() {
-  // desktop 含 goal:device-link 远程会话下同样保留(main 按 ctx.deviceId 隧道路由到被控端)。
+  // desktop 含 goal / learn；正常会话由 agent-skill 覆盖/替代 learn，SSH 才保留兼容入口。
   const listDesktopCommands = vi.fn(async () => ({
     success: true,
-    commands: [c('help', 'desktop'), c('goal', 'desktop')],
+    commands: [c('help', 'desktop'), c('goal', 'desktop'), c('learn', 'desktop')],
   }));
   const listAgentCommands = vi.fn(async () => ({
     success: true,
@@ -86,6 +86,7 @@ describe('loadAllCommands deviceId', () => {
       expect.anything(),
     );
     expect(cmds.some((x) => x.kind === 'agent-skill')).toBe(false);
+    expect(cmds).toContainEqual(expect.objectContaining({ name: 'learn', kind: 'desktop' }));
   });
 
   it('SSH remote 新 Pi 对话不请求控制端本机包预览', async () => {
@@ -134,7 +135,7 @@ describe('loadAllCommands deviceId', () => {
       'dev-1',
     );
     // desktop 始终本地
-    expect(s.listDesktopCommands).toHaveBeenCalled();
+    expect(s.listDesktopCommands).toHaveBeenCalledWith({ deviceId: 'dev-1' });
     // agent-builtin / agent-skill 不走本地、走隧道
     expect(s.listAgentCommands).not.toHaveBeenCalled();
     expect(s.listAgentSkills).not.toHaveBeenCalled();

@@ -33,6 +33,7 @@ export interface MobileLocalAttachmentUploadCandidate {
   attachmentScopeKey?: string;
   /** Captured task upload namespace; never read from a later render. */
   sharedTaskId?: string;
+  deviceId?: string;
   /** 同一作用域重复进入时也会递增的代际；避免 A → B → A 后接回最早 A 的旧结果。 */
   attachmentScopeGeneration?: number;
   mimeType?: string;
@@ -102,7 +103,7 @@ export interface MobileLocalAttachmentUploadDeps {
   assertSize(size: number, candidate: MobileLocalAttachmentUploadCandidate): void;
   /** 真正的 presign + PUT(uploadMobileAttachmentFromFile);signal 中止时应尽快断掉传输。 */
   upload(
-    candidate: { id?: string; name: string; size: number; mimeType?: string; sharedTaskId?: string },
+    candidate: { id?: string; name: string; size: number; mimeType?: string; sharedTaskId?: string; deviceId?: string },
     fileUri: string,
     opts: { token: string; signal?: AbortSignal },
   ): Promise<RemoteSerializedAttachment>;
@@ -369,10 +370,15 @@ export function createMobileLocalAttachmentUploadController(
     const interrupted = new Promise<never>((_resolve, reject) => { rejectWait = reject; });
     const onAbort = () => rejectWait(new Error(i18n.t(timedOut ? 'composer.upload.timeout' : 'composer.upload.cancelled')));
     signal.addEventListener('abort', onAbort);
-    const timer = setTimeout(() => {
-      timedOut = true;
-      task.abort.abort();
-    }, 180_000);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const armTimeout = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        timedOut = true;
+        task.abort.abort();
+      }, 180_000);
+    };
+    armTimeout();
     const step = <T>(value: T | Promise<T>, late?: (result: T) => void): Promise<T> => Promise.race([
       Promise.resolve(value).then((result) => {
         if (signal.aborted) late?.(result);
@@ -405,11 +411,15 @@ export function createMobileLocalAttachmentUploadController(
         outcome = 'discarded';
         return;
       }
+      // 上传阶段不受总时限约束:附件不限大小,传输层各自按无进度/单次请求判超时
+      //(OSS 60 秒无进度、直连逐请求超时、presign 12 秒),用户取消仍即时生效。
+      clearTimeout(timer);
       const attachment = uploadedAttachment = await step(deps.upload(
-        { id: task.localId, name: prepared.name, size, mimeType: prepared.mimeType || undefined, ...(source.sharedTaskId ? { sharedTaskId: source.sharedTaskId } : {}) },
+        { id: task.localId, name: prepared.name, size, mimeType: prepared.mimeType || undefined, ...(source.sharedTaskId ? { sharedTaskId: source.sharedTaskId } : {}), ...(source.deviceId ? { deviceId: source.deviceId } : {}) },
         prepared.uri,
         { token, signal },
       ), (late) => deps.discard(late, token));
+      armTimeout();
       if (task.handoff) await task.handoff.promise;
       task.delivering = true;
       if (task.discarded) {

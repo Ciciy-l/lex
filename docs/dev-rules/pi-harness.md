@@ -70,10 +70,11 @@ Pi 任务时冻结，并写入该任务 `settings.json` 的 `compaction.reserveT
 模型容量用于 Pi 原生请求长度裁剪，不能随小预算缩到 1K；工作预算只调整原生压缩阈值，
 并作为已应用预算进入 Cindy 的用量快照。
 大窗切小窗先由 Desktop 的统一目标窗口事务按目标窗口 90% 固定压力线评估（独立于 Pi
-日常自动压缩百分比），命中时换干净原生窗口；未命中时 Pi 重写 settings 后调用
-`switch_session`，必须重新 `set_model` 并用 `get_state` 校验
-provider／model／contextWindow，因为 Pi 会用进程初始 CLI route 重建 runtime。校验完成前
-子代理 route 保持 pending，失败则终止该 live 任务。Claude Code 仍用独立百分比。env:`CINDY_PI_API_KEY`、
+日常自动压缩百分比），命中时换干净原生窗口；未命中时，按官方 Pi API 刷新模型目录，调用 set_model 并通过 get_state 核验目标路由；
+不使用私有 refresh_models / set_compaction_reserve_tokens RPC。目录刷新经内部扩展的
+nonce receipt 确认，工作预算按原生版本支持写入 compaction.modelOverrides；不能证明
+原生热更新支持的配置由 previewModelSwitch 返回受控重建。核验完成前
+子代理 route 保持 pending，失败不继续使用未确认的路由。Claude Code 仍用独立百分比。env:`CINDY_PI_API_KEY`、
 `CINDY_PI_SESSION_ID`、`PI_CODING_AGENT_DIR`、`CINDY_PI_PERMISSION_FILE`、`CINDY_PI_MCP_BRIDGE`、
 外部 MCP 专用动态 env、`PI_OFFLINE=1`(关启动期联网)、`NO_PROXY` 兜底 loopback(防全局代理
 打穿本地 proxy 与 MCP bridge)。

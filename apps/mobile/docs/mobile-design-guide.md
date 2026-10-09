@@ -8,13 +8,13 @@
 
 ## 1. 视觉哲学
 
-承接桌面:**灰度为主、零阴影、pill 几何、字重克制**。在此之上叠加移动端约束:
+承接桌面:**灰度为主、默认零阴影、pill 几何、字重克制**。在此之上叠加移动端约束:
 
 - **iOS 优先**,触控优先,跟随系统 light / dark 自动切换(`useColorScheme`)。
 - **灰度环境**:除品牌 teal(就绪态)、Heart Orange(运行/thinking 态)和已登记的 Beta 渠道红色状态徽标外,界面全是黑白之间的灰阶。不引入任何品牌蓝 / 绿 / 红等装饰色。
 - **圆角走四档阶梯**(与 `src/theme/tokens.ts` 的 `radius` 一致,守护测试拦截阶梯外值):`micro`(4,缩略图内 chip、勾选指示器等微元素)/ `control`(8,卡片内层控件)/ `container`(12,卡片 / 容器)/ `pill`(9999,交互元素)。**禁止**阶梯外中间值(0 / 3 / 6 / 28 等)与字面量圆角。根规范 `docs/design-rules/DESIGN.md` §5 的三档制约束的是桌面 surface;其「Mobile」节明确把 §15.13 / §16 之外的 mobile 布局细节委托给 `apps/mobile` 的实现,mobile 圆角阶梯以 `tokens.ts` 为准。
-- **零阴影**:层次靠背景色差 + 1px 边框,不用 `shadow*` / `elevation`。
-- **字重克制**:只用 400 / 500,极少量大写微标签可用 600。**UI chrome 无 700+**。唯一例外是根规范 `docs/design-rules/DESIGN.md` §3「排版豁免登记表」已登记的域——原生 Markdown strong(`src/session/MessageRenderer.tsx` 的 `markdownStrong` → `fontWeight.bold`)与登录品牌画布(`app/(auth)/login.tsx`、`src/components/LoginSkinControls.tsx`、`src/auth/loginSkinLayout.ts`)。这些是用户内容语义与品牌画布,不算 chrome;chrome 本身的上限仍是 600。
+- **默认零阴影**:层次靠背景色差 + 1px 边框。2026-09-27 用户明确要求的局部例外：首页主菜单抽屉（含伙伴入口）用右侧容器圆角与柔和投影，颜色走 homeDrawerShadow，外壳承载阴影、内层裁切内容；不扩展到页面卡片或任务列表侧栏，见 DESIGN.md §6。
+- **字重克制**:按角色用 400 / 500 / 600(见 §3「字重与字色按角色搭配」)。**UI chrome 无 700+**。唯一例外是根规范 `docs/design-rules/DESIGN.md` §3「排版豁免登记表」已登记的域——原生 Markdown strong(`src/session/MessageRenderer.tsx` 的 `markdownStrong` → `fontWeight.bold`)与登录品牌画布(`app/(auth)/login.tsx`、`src/components/LoginSkinControls.tsx`、`src/auth/loginSkinLayout.ts`)。这些是用户内容语义与品牌画布,不算 chrome;chrome 本身的上限仍是 600。
 - **手机只做减法**(详见 `mobile-current-execution-plan.md`):主层信息量不超过桌面主层;视觉轻、触控够(可见图标小,hitSlop 补足热区)。
 
 ---
@@ -44,14 +44,18 @@
 | `statusAccent` | `#ff6600` | `#ff6600` | 运行 / thinking + 完全访问权限(Heart Orange,**语义不变**) |
 | `betaChannelBadgeBackground` | `#DF0C27` | `#DF0C27` | Beta 渠道开关已打开时,当前版本旁的状态徽标底色 |
 | `betaChannelBadgeForeground` | `#FFFFFF` | `#FFFFFF` | Beta 渠道状态徽标文字,与底色对比度 4.98:1 |
-| `permAutoAccent` | `#000050` | `#00D9C5` | 自动审批权限模式强调(对齐桌面 `--perm-auto-selected-text`) |
-| `errorText` | `#262626` | `#d4d4d4` | 错误文字(跟随 textPrimary) |
-| `errorBorder` | `#a3a3a3` | `#525252` | 错误边框(跟随 borderStrong) |
-| `overlay` | rgba(38,38,38,.24) | rgba(0,0,0,.45) | modal / lightbox 背板 |
+| `permAutoAccent` | `#417CDD` | `#417CDD` | 自动审批权限模式强调 |
+| `botUnread` | `#417CDD` | `#417CDD` | **仅限**伙伴列表的未读点(桌面 `--bot-unread-bg` 的移动端镜像,见 `DESIGN.md` Bot Unread Badge) |
+| `errorText` | `#0F0F0F` | `#EDEDED` | 错误说明文字(跟随 textPrimary) |
+| `errorBorder` | `#858581` | `#8A8A8A` | 错误边框(跟随 borderStrong) |
+| `overlay` | rgba(38,38,38,.35) | rgba(0,0,0,.45) | modal / lightbox 背板 |
 
 **规则:**
-- **语义不变色**(`statusReady` / `statusAccent` / `betaChannelBadgeBackground` / `betaChannelBadgeForeground`)跨 light / dark 一致——它们是状态语义,不随主题漂移。Beta 红色只用于设置页当前版本旁的渠道徽标,不得扩展为装饰色、错误色或 CTA。
-- **CTA 在 dark 反相为白**:`cta` 白底 + `ctaText` 深字。注意别让白 pill 看起来像 disabled——新增主操作 / 选中态后在 dark 下目检。
+- **语义不变色**(`statusReady` / `statusAccent` / `betaChannelBadgeBackground` / `betaChannelBadgeForeground` / `botUnread`)跨 light / dark 一致——它们是状态语义,不随主题漂移。Beta 红色只用于设置页当前版本旁的渠道徽标,不得扩展为装饰色、错误色或 CTA。
+- **浅色卡片主要靠描边分层**:页面提亮到 `#F9F9F6` 后,近白卡片相对页面只剩 1.05 的色差(桌面 1.12)。新增浮起面(卡片 / 列表行 / 浮层 / 输入容器)**必须带 1px `border`**,不要只靠 `surfaceElevated` 的填充色差;需要“沉下去”的块(选中底、展开块、代码卡)用比页面更暗的档。
+- **文字三档由深到浅**:正文 → 二级 → 三级,在所在底色上都 ≥ 4.5:1(`themeTokens.test.ts` 守护)。占位字单独用 `textPlaceholder`,比三级更淡但 ≥ 3:1,只给输入框占位字用。新增文字不要拿 `textTertiary` 当“更弱的二级”以外的用途,也不要为了“更淡”自行调低透明度。
+- **CTA 在 dark 反相为近白**:`cta` 近白底 + `ctaText` 深字。注意别让近白 pill 看起来像 disabled——新增主操作 / 选中态后在 dark 下目检。
+- **显示模式由用户设置**:设置 → 外观 → 显示模式(跟随系统 / 浅色 / 深色,默认跟随系统)。组件只读 `useTheme()`,不要自己调 `useColorScheme()`。
 - **Home 对话列表用 base token**:列表背景 / 分隔 / 文字使用 `surface` / `border` / `text*`,菜单选中用 `surfaceChip`,不另起暗色调色板;菜单 / FAB 只用 1px `border` 分层、零阴影,保持桌面「单一 flat Surface + 1px Board」哲学。
 - 不要在组件里硬编码 hex / rgba;找不到合适 token 时跟维护者确认是否新增,而不是写死。
 
@@ -145,18 +149,36 @@ function Foo() {
 
 ### iOS 外壳 vs Cindy 内容
 
-界面分两层,不要混为一谈:
+iOS 新增与改造界面遵循 [iOS 原生界面规范](../../../docs/design-rules/ios-native-design.md)。该规范区分系统容器、原生控件和 Cindy 业务内容；取代原先“复杂内容面板一律使用 SheetSurface”的规定。
 
-- **外壳(iOS 交给系统)**:首页顶栏走系统导航栏,底色跟列表同一块 surface。触发器(汉堡 / 标题簇 / `···`)仍是原来的按钮,点开后挂系统 UIMenu。尚未冷更编进 `MenuView` 时自动退回自绘面板。底部 ActionSheet 只留给没有附着点的确认/破坏性询问。Android 继续自绘。
-- **内容(继续 Cindy)**:消息和 Markdown、输入框、模型 / 权限 / 任务等带搜索或两级结构的面板、登录品牌画布、首页会话列表。这些仍走 token、lucide、`SheetSurface`。
-
-左滑「选项」在 iOS 用 Expo UI 的系统 `BottomSheet` + `List`(SwiftUI grouped rows)。Android 继续自绘 `SessionActionSheet`。无附着点的其它纯动作菜单仍走 `showActionMenu`。内容面板(模型选择、会话菜单、任务 Context)继续 `SheetSurface`。
-
-简单页(设置、账号删除、设备详情、自动化)在 iOS 打开系统导航栏,返回锚点 `settings.backButton` 等 testID 仍要保留。首页顶栏在 iOS 也走系统导航栏,底色跟列表同一块 surface;会话页和文件浏览顶栏仍是自绘。左侧抽屉仍是自绘面板,iOS 用 `FullWindowOverlay` 盖住系统顶栏;Android 继续树内 overlay。搜索筛选钮收起时仍是原来的图标,iOS 点开挂系统 UIMenu;尚未冷更或 Android 继续自绘面板。
+- 首页和简单页继续使用系统导航栏。任务页采用原生操作控件与透明标题布局，按首页实际导航中心对齐；保留返回锚点及 testID。
+- iOS 弹层优先使用系统 BottomSheet，表单和操作分组优先原生 Form / Section 或分组 List。左滑任务选项已有 BottomSheet + List，可参考其关闭生命周期。任务详情与搜索的高度、材质及入口顺序见新规范。
+- 消息、Markdown、代码和复杂业务内容可继续用 RN 与主题 token；业务图标保留原有 Lucide。系统导航符号由原生控件提供。不得用“原生外壳”概括成“整页已原生化”。
+- 系统管理的圆角、字体、材质与反馈保留系统默认，不强制套自绘圆角档位或零阴影约束；自绘内容继续遵守本文 token 规则。
+- 模型／权限、Context、账号切换等存量自绘面板列为渐进迁移项，不因本规范批量重写。Android 与必要兼容回退继续复用现有基础组件，不降低业务能力。
+- 首页筛选继续使用原生 UIMenu；左侧抽屉和文件浏览顶部的存量实现不代表已经迁移，需分别审查。
 
 首页「所有任务」下拉只负责范围筛选：点设备名直接切换到该设备的任务，不得为补充管理动作改成设备子菜单或增加一次确认。设备详情、重命名与删除集中在左侧抽屉的「设备管理」页；列表不画进入箭头或重命名图标。所有设备无论在线、离线或未开启远程控制，都能点进资料详情，再重命名或删除；右滑显示重命名、左滑显示删除，删除需系统确认。iOS 使用系统原生列表与滑动操作。删除使用服务端接口，在线设备当前需先离线才能删除，不以本地隐藏代替删除。iOS 原生菜单与自绘回退、Android 遵守同一交互边界。
 
 ---
+
+### 伙伴列表行与伙伴卡片(2026-09-29 定稿)
+
+伙伴页的行与聊天里的卡片各有一个共享组件,新入口直接复用,不要另画一套:
+
+- **列表行 `CompanionListRow`**:私聊与群聊同一种行。行高 78,头像 44(群为双人叠放 `BotGroupDuoAvatar`),
+  分隔线只画在文字列下方(从 72 到屏幕右缘)、最后一行不画;右上时间位只放一样东西:时间,或工作中的中性
+  转圈;第二行是预览,等你确认 / 需要关注 / 离线时在预览前加前缀词(正文色 500),不用彩色点。未读只用
+  `botUnread` 蓝点(主机只给「有没有未读」,没有条数);在线状态用头像右下的 `CompanionPresenceDot`,离线头像
+  降透明度;两个伙伴同名时名字后加「· 电脑名」。首次读取慢时显示同几何的骨架行。
+- **聊天顶栏 `ChatIdentityHeader`**:私聊与群聊共用。返回 + 32 标记 + 标题 16/22 600 + 副标题 12/18
+  三级色 + 设置;点身份区与设置打开同一份资料 / 设置。私聊副标题保留设备名,离线时前面加「离线 ·」。
+- **卡片外壳**:`surfaceElevated` 底 + 1px `border` + `radius.container` + 内边距 16。眉题 13/18 medium 二级色,
+  标题 16/22 medium,状态行 13/18 二级色;只有运行中(`statusAccent` 呼吸)与失败(`statusError`)带颜色。
+- **卡片按钮 `CompanionCardButton`**:高 38(hitSlop 补到 44)、pill、15/20 medium,**文字始终居中**;一行里等宽
+  平分,次要在左、主操作在右;次要按钮用 `surfaceChip` 填充不加描边。不要在卡片里写 `textAlign: 'left'` 的按钮。
+- **动效**:新消息与卡片用 `CompanionEntering` / `CompanionFadeIn`(RN `Animated`,原生驱动,只动 opacity /
+  transform,系统减弱动效时静止);工作中用 `CompanionPresenceRing` + `ThinkingDots`,不另写循环动画。
 
 ## 5. 间距 / 圆角 / 触控 / 安全区
 
@@ -180,7 +202,7 @@ function Foo() {
 - `strokeWidth` 统一约 2。
 - 颜色走 token(`colors.textPrimary` / `textSecondary` / `statusAccent` / `permAutoAccent` 等),不写死。
 - 会话 Agent 身份图标走 `MobileVendorIcon`；provider / model 厂牌图标分别走 `MobileProviderMark` / `MobileModelIconMark`。
-- **底部浮窗统一走 SheetSurface 模式**:可拖动底部浮窗(把手 half/full/下拉 dismiss)的「面板表面」抽在 `src/session/SheetSurface.tsx`(grabber + header + pinnedTop/footer 插槽 + 滚动区 + `useContextSheetDrag` 拖动编排,snap 受控)。单层浮窗 = Modal + backdrop + 一层 Surface(`ContextSheet` 即此薄壳);需要「浮窗上再叠一层」时**不要嵌套 Modal**(iOS 同级双 Modal 第二个不显示、Android 每个 Modal 是独立原生 Dialog、返回键派发不可控),在**同一个 Modal 里叠第二层 Surface**(translateY 滑入 + 自带加深 backdrop + 返回两段式),先例见 `ModelPickerSheet`(模型列表一级 + 模型选项/权限二级,视图状态机在 `modelPickerSheetModel.ts` 可单测)。**内容面板**新浮窗一律复用 SheetSurface。纯动作菜单除外:iOS 走 `showActionMenu`,见 §4「iOS 外壳 vs Cindy 内容」。
+- **底部浮窗按平台承载**：iOS 新增与迁移优先系统 sheet，详情默认中等高度、短工具按内容高度，具体见 iOS 规范。Android 和尚未迁移的兼容实现继续复用 `SheetModal` / `SheetSurface`，不另造自绘外壳；其二级内容保留单 Modal 内导航。不同面板之间等待关闭回调后再呈现，避免叠加遮罩。
 
 ---
 
@@ -195,7 +217,7 @@ function Foo() {
 
 **Don't**
 - ❌ 写死 hex / rgba / `'Courier'`(dark 下不变色 / 字体不统一)。
-- ❌ `shadow*` / `elevation`(零阴影)。
+- ❌ 未登记的阴影（首页主菜单抽屉例外见 §1）。
 - ❌ 中间圆角(0 / 3 / 4 / 8 / 28)。
 - ❌ UI chrome 字重 > 600(已登记豁免域除外:原生 Markdown strong、登录品牌画布)。
 - ❌ 在组件体内内联定义 `makeStyles`(破坏缓存)。
@@ -218,7 +240,7 @@ function Foo() {
 - [ ] `makeStyles` 在**模块级**定义。
 - [ ] 字号 / 行高 / 字重 / 圆角 / 图标尺寸全走 token,无裸数字(必要微调写注释)。
 - [ ] 等宽用 `monoFont`。
-- [ ] 无 `shadow*` / `elevation`、无中间圆角、**UI chrome 字重 ≤ 600**(已登记豁免域除外:原生 Markdown strong `src/session/MessageRenderer.tsx`、登录品牌画布 `app/(auth)/login.tsx` / `src/components/LoginSkinControls.tsx` / `src/auth/loginSkinLayout.ts` —— 这两处保留 `bold '700'`,验收时不要按 ≤ 600 降档)。
+- [ ] 无未登记的阴影（首页主菜单抽屉例外见 §1）、无中间圆角、**UI chrome 字重 ≤ 600**(已登记豁免域除外:原生 Markdown strong `src/session/MessageRenderer.tsx`、登录品牌画布 `app/(auth)/login.tsx` / `src/components/LoginSkinControls.tsx` / `src/auth/loginSkinLayout.ts` —— 这两处保留 `bold '700'`,验收时不要按 ≤ 600 降档)。
 - [ ] 复用了 `MobilePrimitives`,没有重复造按钮/卡片/空态。
 - [ ] 在模拟器 light + dark(Cmd+Shift+A)都目检过。
 

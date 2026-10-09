@@ -13,7 +13,10 @@ vi.mock('../../imageCacheStore.js', () => ({ resolveSafe: imageResolve }));
 vi.mock('../../videoCacheStore.js', () => ({ resolveSafe: videoResolve }));
 
 const uploadLocalFile = vi.hoisted(() => vi.fn());
-vi.mock('../mediaTransfer.js', () => ({ uploadLocalFile }));
+vi.mock('../mediaTransfer.js', () => ({
+  uploadLocalFile,
+  mimeOf: () => 'application/octet-stream',
+}));
 
 const materializeSshRemoteMedia = vi.hoisted(() => vi.fn());
 vi.mock('../../file-browser/ssh-media.js', () => ({ materializeSshRemoteMedia }));
@@ -27,7 +30,8 @@ vi.mock('../../logger.js', () => ({
 
 const statMock = vi.hoisted(() => vi.fn());
 const realpathMock = vi.hoisted(() => vi.fn());
-vi.mock('node:fs/promises', () => ({ stat: statMock, realpath: realpathMock }));
+const openMock = vi.hoisted(() => vi.fn());
+vi.mock('node:fs/promises', () => ({ stat: statMock, realpath: realpathMock, open: openMock }));
 
 import { fetchLocalMediaToOss, __testing } from '../mediaFetch.js';
 
@@ -43,7 +47,7 @@ async function codeOf(fn: () => Promise<unknown>): Promise<string> {
 beforeEach(() => {
   vi.clearAllMocks();
   __testing.uploadCache.clear();
-  statMock.mockResolvedValue({ size: 42, mtimeMs: 1000 });
+  statMock.mockResolvedValue({ isFile: () => true, size: 42, mtimeMs: 1000 });
   realpathMock.mockImplementation(async (p: string) => p);
   // 默认上传回显 contentType,便于断言 result.mimeType 来源
   uploadLocalFile.mockImplementation(async (_p: string, opts?: { contentType?: string }) => ({
@@ -66,12 +70,47 @@ beforeEach(() => {
   });
 });
 
+it('reports a missing Host source without uploading or exposing its filesystem path', async () => {
+  imageResolve.mockReturnValue({ absPath: '/private/missing.png', mimeType: 'image/png' });
+  statMock.mockRejectedValueOnce(Object.assign(new Error('ENOENT /private/missing.png'), { code: 'ENOENT' }));
+  await expect(fetchLocalMediaToOss({ url: 'xdt-image://s/missing.png' })).rejects.toThrow('[MEDIA_SOURCE_MISSING] Media source is missing on this Host');
+  expect(uploadLocalFile).not.toHaveBeenCalled();
+});
+
 afterEach(() => {
   __testing.setThumbnailRenderer(null);
   vi.useRealTimers();
 });
 
 describe('fetchLocalMediaToOss — scheme 路由', () => {
+  it.each([0, 65_536, 65_537])(
+    'prepares %s bytes inline only within the shared limit',
+    async (size) => {
+      const read = vi.fn(async (buffer: Buffer) => {
+        buffer.fill(7);
+        return { bytesRead: buffer.length };
+      });
+      const close = vi.fn();
+      openMock.mockResolvedValue({
+        stat: async () => ({ isFile: () => true, size, mtimeMs: 1 }),
+        read,
+        close,
+      });
+      imageResolve.mockReturnValue({ absPath: '/cache/a.png', mimeType: 'image/png' });
+      const result = await fetchLocalMediaToOss({
+        url: 'xdt-image://sess/a.png',
+        prepareOnly: true,
+      });
+      if (size <= 65_536)
+        expect(Buffer.from(result.inlineBase64!, 'base64')).toEqual(Buffer.alloc(size, 7));
+      else {
+        expect(result.transferRequired).toBe(true);
+        expect(read).not.toHaveBeenCalled();
+      }
+      expect(uploadLocalFile).not.toHaveBeenCalled();
+      expect(close).toHaveBeenCalledOnce();
+    },
+  );
   it('xdt-image:// → imageCacheStore.resolveSafe,mime 透传给上传', async () => {
     imageResolve.mockReturnValue({ absPath: '/cache/a.png', mimeType: 'image/png' });
     const r = await fetchLocalMediaToOss({ url: 'xdt-image://sess/a.png' });
@@ -314,7 +353,7 @@ describe('fetchLocalMediaToOss — 图片上传去重', () => {
 
   it('源文件 mtime 变化 → 缓存失效重传', async () => {
     await fetchLocalMediaToOss({ url: IMAGE_URL });
-    statMock.mockResolvedValue({ size: 42, mtimeMs: 2000 });
+    statMock.mockResolvedValue({ isFile: () => true, size: 42, mtimeMs: 2000 });
     nextUploadKey('key-2');
     const changed = await fetchLocalMediaToOss({ url: IMAGE_URL });
     expect(changed.ossKey).toBe('key-2');
@@ -353,6 +392,14 @@ describe('fetchLocalMediaToOss — 图片上传去重', () => {
       true,
     );
   });
+});
+
+it('retains the path budget at the uploader after authorization', async () => {
+  await fetchLocalMediaToOss({ url: 'xdt-file://local/?path=%2Fabs%2Fx.pdf&maxBytes=100' });
+  expect(uploadLocalFile).toHaveBeenCalledWith(
+    path.resolve('/abs/x.pdf'),
+    expect.objectContaining({ maxBytes: 100 }),
+  );
 });
 
 describe('__testing.parsePathQuery', () => {
@@ -439,7 +486,7 @@ describe('thumbnail 护栏(输入体量 + 渲染超时)', () => {
 
   it('输入超过 48MB 上限 → 不调渲染器,直接原图路径', async () => {
     imageResolve.mockReturnValue({ absPath: '/cache/huge.png', mimeType: 'image/png' });
-    statMock.mockResolvedValue({ size: __testing.THUMB_INPUT_MAX_BYTES + 1, mtimeMs: 1 });
+    statMock.mockResolvedValue({ isFile: () => true, size: __testing.THUMB_INPUT_MAX_BYTES + 1, mtimeMs: 1 });
     const renderer = vi.fn(async () => Buffer.from([1]));
     __testing.setThumbnailRenderer(renderer);
     const out = await fetchLocalMediaToOss({ url: 'xdt-image://sess/huge.png', thumbnail: true });
@@ -451,7 +498,7 @@ describe('thumbnail 护栏(输入体量 + 渲染超时)', () => {
   it('渲染超时 → 回退原图路径,invoke 不被挂住', async () => {
     vi.useFakeTimers();
     imageResolve.mockReturnValue({ absPath: '/cache/slow.png', mimeType: 'image/png' });
-    statMock.mockResolvedValue({ size: 1000, mtimeMs: 1 });
+    statMock.mockResolvedValue({ isFile: () => true, size: 1000, mtimeMs: 1 });
     __testing.setThumbnailRenderer(
       () =>
         new Promise(() => {
@@ -502,20 +549,22 @@ describe('fetchLocalMediaToOss — baseDir / maxBytes 服务端强制约束', ()
   it('产物目录里的软链指向 baseDir 之外 → 拒绝,且不上传(词法校验挡不住的那条)', async () => {
     // 请求路径 /proj/out/leak.png 词法完全合法(无 `..`),realpath 却落在别的用户目录;
     // 该目录不在敏感目录 blocklist 里,所以只有 baseDir 包含判定能挡住。
-    realpathMock.mockImplementation(async (p: string) => (
-      p === path.resolve('/proj/out/leak.png') ? path.resolve('/Users/me/private/notes.png') : p
-    ));
-    const msg = await codeOf(() => fetchLocalMediaToOss({
-      url: urlFor('/proj/out/leak.png', `&baseDir=${encodeURIComponent('/proj/out')}`),
-    }));
+    realpathMock.mockImplementation(async (p: string) =>
+      p === path.resolve('/proj/out/leak.png') ? path.resolve('/Users/me/private/notes.png') : p,
+    );
+    const msg = await codeOf(() =>
+      fetchLocalMediaToOss({
+        url: urlFor('/proj/out/leak.png', `&baseDir=${encodeURIComponent('/proj/out')}`),
+      }),
+    );
     expect(msg).toMatch(/不在允许的基目录内/);
     expect(uploadLocalFile).not.toHaveBeenCalled();
   });
 
   it('baseDir 自身是软链(/tmp → /private/tmp)时不误拒:两侧都取 realpath', async () => {
-    realpathMock.mockImplementation(async (p: string) => (
-      p.startsWith('/tmp') ? p.replace('/tmp', '/private/tmp') : p
-    ));
+    realpathMock.mockImplementation(async (p: string) =>
+      p.startsWith('/tmp') ? p.replace('/tmp', '/private/tmp') : p,
+    );
     await fetchLocalMediaToOss({
       url: urlFor('/tmp/out/a.png', `&baseDir=${encodeURIComponent('/tmp/out')}`),
     });
@@ -527,61 +576,81 @@ describe('fetchLocalMediaToOss — baseDir / maxBytes 服务端强制约束', ()
       if (p === path.resolve('/proj/gone')) throw new Error('ENOENT');
       return p;
     });
-    const msg = await codeOf(() => fetchLocalMediaToOss({
-      url: urlFor('/proj/gone/a.png', `&baseDir=${encodeURIComponent('/proj/gone')}`),
-    }));
+    const msg = await codeOf(() =>
+      fetchLocalMediaToOss({
+        url: urlFor('/proj/gone/a.png', `&baseDir=${encodeURIComponent('/proj/gone')}`),
+      }),
+    );
     expect(msg).toMatch(/基目录不存在或不可读/);
     expect(uploadLocalFile).not.toHaveBeenCalled();
   });
 
   it('baseDir 畸形(非绝对 / 空)→ 抛错,不静默降级成"不约束"', async () => {
-    expect(await codeOf(() => fetchLocalMediaToOss({
-      url: urlFor('/proj/out/a.png', '&baseDir=out'),
-    }))).toMatch(/baseDir 必须为绝对路径/);
-    expect(await codeOf(() => fetchLocalMediaToOss({
-      url: urlFor('/proj/out/a.png', '&baseDir=%20'),
-    }))).toMatch(/baseDir 不能为空/);
+    expect(
+      await codeOf(() =>
+        fetchLocalMediaToOss({
+          url: urlFor('/proj/out/a.png', '&baseDir=out'),
+        }),
+      ),
+    ).toMatch(/baseDir 必须为绝对路径/);
+    expect(
+      await codeOf(() =>
+        fetchLocalMediaToOss({
+          url: urlFor('/proj/out/a.png', '&baseDir=%20'),
+        }),
+      ),
+    ).toMatch(/baseDir 不能为空/);
     expect(uploadLocalFile).not.toHaveBeenCalled();
   });
 
   it('maxBytes:stat 超限 → 上传之前就拒绝(流量一个字节都不花)', async () => {
     realpathMock.mockImplementation(async (p: string) => p);
-    statMock.mockResolvedValue({ size: 5_000_000, mtimeMs: 1 });
-    const msg = await codeOf(() => fetchLocalMediaToOss({
-      url: urlFor('/proj/out/big.css', '&maxBytes=2097152'),
-    }));
+    statMock.mockResolvedValue({ isFile: () => true, size: 5_000_000, mtimeMs: 1 });
+    const msg = await codeOf(() =>
+      fetchLocalMediaToOss({
+        url: urlFor('/proj/out/big.css', '&maxBytes=2097152'),
+      }),
+    );
     expect(msg).toMatch(/超出取件大小上限/);
     expect(uploadLocalFile).not.toHaveBeenCalled();
   });
 
   it('maxBytes:上限内正常放行', async () => {
     realpathMock.mockImplementation(async (p: string) => p);
-    statMock.mockResolvedValue({ size: 1024, mtimeMs: 1 });
+    statMock.mockResolvedValue({ isFile: () => true, size: 1024, mtimeMs: 1 });
     await fetchLocalMediaToOss({ url: urlFor('/proj/out/a.css', '&maxBytes=2097152') });
     expect(uploadLocalFile).toHaveBeenCalledTimes(1);
   });
 
   it('maxBytes 畸形(非正整数)→ 抛错,不静默降级成"不约束"', async () => {
     for (const raw of ['0', '-1', 'abc', '1.5']) {
-      expect(await codeOf(() => fetchLocalMediaToOss({
-        url: urlFor('/proj/out/a.png', `&maxBytes=${encodeURIComponent(raw)}`),
-      }))).toMatch(/maxBytes 必须为正整数/);
+      expect(
+        await codeOf(() =>
+          fetchLocalMediaToOss({
+            url: urlFor('/proj/out/a.png', `&maxBytes=${encodeURIComponent(raw)}`),
+          }),
+        ),
+      ).toMatch(/maxBytes 必须为正整数/);
     }
     expect(uploadLocalFile).not.toHaveBeenCalled();
   });
 
   it('两个参数都不带 → 行为不变(老控制端照旧取件)', async () => {
     realpathMock.mockImplementation(async (p: string) => p);
-    statMock.mockResolvedValue({ size: 5_000_000, mtimeMs: 1 });
+    statMock.mockResolvedValue({ isFile: () => true, size: 5_000_000, mtimeMs: 1 });
     await fetchLocalMediaToOss({ url: urlFor('/proj/out/big.css') });
     expect(uploadLocalFile).toHaveBeenCalledTimes(1);
   });
 
   it('SSH 分支:两项约束原样下发给 materializeSshRemoteMedia(它 stat 完就会拉整份文件)', async () => {
-    const url = 'xdt-file://local/?path=' + encodeURIComponent('/home/u/proj/out/a.png')
-      + '&sessionId=s1&remoteHostId=host-1&workdir=' + encodeURIComponent('/home/u/proj')
-      + '&baseDir=' + encodeURIComponent('/home/u/proj/out')
-      + '&maxBytes=2097152';
+    const url =
+      'xdt-file://local/?path=' +
+      encodeURIComponent('/home/u/proj/out/a.png') +
+      '&sessionId=s1&remoteHostId=host-1&workdir=' +
+      encodeURIComponent('/home/u/proj') +
+      '&baseDir=' +
+      encodeURIComponent('/home/u/proj/out') +
+      '&maxBytes=2097152';
     await fetchLocalMediaToOss({ url });
     expect(materializeSshRemoteMedia).toHaveBeenCalledWith(
       { remoteHostId: 'host-1', workdir: '/home/u/proj' },

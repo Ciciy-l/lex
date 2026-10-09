@@ -443,7 +443,7 @@ describe('mobile optimistic composer while session is not ready', () => {
     // 同一族的两处泄漏:活动条粘滞态跨会话、缩略图锁定跨附件变更 —— 派生状态不带身份,
     // 切换目标时旧值会顶着新目标(review P1/P2)。
     const screen = readSource(SCREEN);
-    expect(screen).toContain('const showComposerActivity = isSessionStreaming || streamingSticky === sessionId;');
+    expect(screen).toContain('const showComposerActivity = composerActivitySignal || streamingSticky === sessionId;');
 
     const bubble = readSource('src/session/PendingSendBubble.tsx');
     // 上传补齐 ossRef 不改变本地图片身份；附件替换仍重置预览。
@@ -464,7 +464,7 @@ describe('mobile optimistic composer while session is not ready', () => {
     expect(source).toContain('const sessionSettingsLocked = isRemoteSessionMissing(currentSession);');
     expect(source).toContain('disabled={controlBusy || !canUseRemoteSessionControls}');
     // 2) 会话设置 RPC 的硬门(统一入口,覆盖全部 runControlAction 调用点)。
-    expect(source).toContain('if (!canUseRemoteSessionControls) return;\n    setControlBusy(true);');
+    expect(source).toContain('if (!canUseRemoteSessionControls) return false;\n    setControlBusy(true);');
     // 3) 消息派发:复合判据,「不存在」是它的子集。
     expect(source).toContain('if (isRemoteSessionMissing(row)) return true;');
     expect(source).not.toContain('const sessionSettingsLocked = currentSession?.pendingLocalCreation === true;');

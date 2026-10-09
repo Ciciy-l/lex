@@ -2074,6 +2074,7 @@ body.resizing-pane [data-ghost-webview] {
 [data-theme='cindy-dark'] .h-screen.bg-content-area {
   background: transparent;
 }
+
 /* 模式1 侧栏(light):半透底,壁纸模糊由原生 vibrancy sidebar 材质提供。
    红渐变覆盖层已拆除(用户裁决 2026-07-18:Figma 该两块渐变矩形按装饰废稿处理,不实现);
    CSS backdrop-filter 已撤(A/B 实证:blur 会把透明窗背衬黑箱)。 */
@@ -2116,6 +2117,33 @@ body.resizing-pane [data-ghost-webview] {
   background: var(--surface-translucent-overlay);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
+}
+/* Windows 例外:cmd-palette 浮层一律不透明、不加模糊 —— 透明窗口背景上的 CSS
+   backdrop-filter 可能渲染成黑块(§15.12,菜单常在侧栏上方打开),集显 / 软件渲染有性能风险,
+   Windows 原生材质也未实机验证。回落 --cmd-palette-bg 本身(CINDY 下即 Card 面板色
+   --surface-elevated),1px 描边与阴影不变。 */
+[data-platform='win32'][data-theme='cindy-light'] .bg-\[var\(--cmd-palette-bg\)\],
+[data-platform='win32'][data-theme='cindy-dark'] .bg-\[var\(--cmd-palette-bg\)\] {
+  background: var(--cmd-palette-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* 共享下拉菜单行(components/ui/dropdown-menu.tsx,DESIGN §4):行内 Lucide 图标平时线宽 1.5,
+   高亮 / 勾选 / 展开时回到 2。只动默认线宽(stroke-width="2")的图标:显式传了其他 strokeWidth 的
+   不命中;显式传 2 的由组件标上 data-menu-icon-stroke(行内直接子元素与普通标签内可识别)。 */
+[data-menu-row] svg.lucide[stroke-width='2']:not([data-menu-icon-stroke]) {
+  stroke-width: 1.5;
+  transition: stroke-width var(--motion-instant) var(--motion-ease-out);
+}
+[data-menu-row]:is(
+    [data-menu-active],
+    [data-highlighted],
+    [data-state='checked'],
+    [data-state='open']
+  )
+  svg.lucide[stroke-width='2']:not([data-menu-icon-stroke]) {
+  stroke-width: 2;
 }
 
 /* ── 插件面板悬浮球(GhostPanelBubbleLayer)────────────────────────────
@@ -2220,4 +2248,83 @@ body.resizing-pane [data-ghost-webview] {
   .ghost-bubble:hover .ghost-bubble-face {
     animation: none;
   }
+}
+
+/* Opt-in whole-window wallpaper. Page surfaces share one fixed canvas;
+   elevated controls and external web content keep their readable surfaces. */
+html[data-wallpaper-active='true'] body {
+  isolation: isolate;
+  background: var(--surface);
+}
+html[data-wallpaper-active='true'] body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-color: var(--surface);
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--surface) var(--app-wallpaper-veil), transparent),
+    color-mix(in srgb, var(--surface) var(--app-wallpaper-veil), transparent)
+  ), var(--app-wallpaper-image);
+  background-size: auto, cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+html[data-wallpaper-active='true'] :is(
+  .bg-content-area,
+  .app-wallpaper-surface,
+  main[class~='bg-[var(--surface)]'],
+  [class~='bg-[var(--panel-bg)]'],
+  [class~='bg-[var(--settings-bg)]']
+) {
+  background-color: transparent;
+}
+html[data-wallpaper-active='true'] aside.bg-sidebar:not([data-sidebar-peek-drawer]) {
+  background: transparent;
+}
+/* Fixed attachment uses the same viewport coordinates as the canvas. The
+   footer masks scrolled messages without introducing a differently tinted slab. */
+html[data-wallpaper-active='true'] :is(.wallpaper-composer-zone, .wallpaper-composer-fade) {
+  background-color: var(--surface);
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--surface) var(--app-wallpaper-veil), transparent),
+    color-mix(in srgb, var(--surface) var(--app-wallpaper-veil), transparent)
+  ), var(--app-wallpaper-image);
+  background-size: auto, cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+html[data-wallpaper-active='true'] .wallpaper-composer-fade {
+  mask-image: linear-gradient(transparent, currentColor);
+}
+
+/* Opt-in scene motion shares one decoder behind every pane. Its veil matches
+   the still canvas exactly; no animated paint properties or per-frame JS. */
+.app-wallpaper-video {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  transition: opacity var(--motion-base) var(--motion-ease-move);
+}
+.app-wallpaper-video video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.app-wallpaper-video::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--surface) var(--app-wallpaper-veil), transparent);
+}
+/* Fade the message layer itself, so the moving scene remains continuous behind
+   the composer. Repainting a static copy there would create a visible seam. */
+html[data-wallpaper-motion='dynamic'] .wallpaper-message-viewport [data-scroll-container] {
+  mask-image: linear-gradient(to bottom, black calc(100% - var(--wallpaper-composer-height)), transparent calc(100% - var(--wallpaper-composer-height) + 32px));
+}
+html[data-wallpaper-motion='dynamic'] :is(.wallpaper-composer-zone, .wallpaper-composer-fade) {
+  background: transparent;
 }

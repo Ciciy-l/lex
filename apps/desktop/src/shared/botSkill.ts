@@ -8,6 +8,7 @@
 
 /** 「TA 学会的」列表里的一条真技能。 */
 export interface BotSkillSummary {
+  enabled?: boolean;
   /** 目录名,删除 / 展开正文时的稳定标识。 */
   slug: string;
   /** 展示名。 */

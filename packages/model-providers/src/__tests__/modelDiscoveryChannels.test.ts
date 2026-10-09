@@ -56,6 +56,7 @@ describe('shared provider discovery', () => {
       { id: 'gpt-9-sol', max_context_window: 64000 },
     ] })!);
     expect(refreshed[0].discoveredMetadata).toEqual({ contextWindowMax: 64000 });
+
     for (const agent of ['claude-code', 'codex', 'pi'] as const) {
       const provider = buildUserProvider({ id: 'relay', name: 'Relay', runtimes: {
         [agent]: { baseUrl: 'https://relay.example/v1', wireProtocol: 'openai-responses', models: refreshed },

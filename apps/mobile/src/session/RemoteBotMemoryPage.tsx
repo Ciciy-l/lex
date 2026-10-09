@@ -282,7 +282,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   row: { alignItems: 'flex-start', flexDirection: 'row', gap: spacing.md, padding: spacing.md },
   separator: { borderTopColor: colors.border, borderTopWidth: StyleSheet.hairlineWidth },
   rowMain: { flex: 1, gap: spacing.xs },
-  rowTitle: { color: colors.textPrimary, fontSize: typeScale.listBody, fontWeight: fontWeight.medium },
+  rowTitle: { color: colors.textPrimary, fontSize: typeScale.bodySmall, fontWeight: fontWeight.medium },
   preview: { color: colors.textSecondary, fontSize: typeScale.caption, lineHeight: lineHeight.caption },
   date: { color: colors.textTertiary, fontSize: typeScale.micro },
   title: { color: colors.textPrimary, fontSize: typeScale.subtitle, fontWeight: fontWeight.medium },

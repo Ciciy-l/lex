@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "cindy-desktop-linux",
-  "documentNamespace": "https://cindy.app/spdx/desktop-linux/1bcdec45b5e06485c927187f4e0c21ded28f7575bc449230e8fad05ebb8ad2ec",
+  "documentNamespace": "https://cindy.app/spdx/desktop-linux/c450ae4745c0bd50fcaf33c245a2c7373dbf55120d21a13ac176a132a61918f4",
   "creationInfo": {
     "created": "2026-09-19T10:53:50Z",
     "creators": [
@@ -93,9 +93,19 @@
     },
     {
       "name": "OpenAI Codex CLI (runtime-downloaded binary)",
-      "SPDXID": "SPDXRef-Package-4f22132a77577bcb",
-      "versionInfo": "0.145.0",
+      "SPDXID": "SPDXRef-Package-618e13d446a4c6e4",
+      "versionInfo": "0.159.2",
       "downloadLocation": "https://github.com/openai/codex",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "OpenAI Codex skill-creator (adapted)",
+      "SPDXID": "SPDXRef-Package-670f3c5f091a0b1c",
+      "versionInfo": "977193486dfe7a88c4dab24abeafe9b754f5b13f",
+      "downloadLocation": "https://github.com/openai/codex/tree/977193486dfe7a88c4dab24abeafe9b754f5b13f/codex-rs/skills/src/assets/samples/skill-creator",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
       "licenseDeclared": "Apache-2.0",
@@ -126,6 +136,16 @@
       "SPDXID": "SPDXRef-Package-a3cbdbce86e6fdc7",
       "versionInfo": "0.84.4",
       "downloadLocation": "https://github.com/earendil-works/pi",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "PyYAML (vendored pure-Python runtime)",
+      "SPDXID": "SPDXRef-Package-bf01cf3b3b399efc",
+      "versionInfo": "6.0.3",
+      "downloadLocation": "https://github.com/yaml/pyyaml/tree/6.0.3",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
@@ -15730,7 +15750,12 @@
     {
       "spdxElementId": "SPDXRef-DOCUMENT",
       "relationshipType": "DESCRIBES",
-      "relatedSpdxElement": "SPDXRef-Package-4f22132a77577bcb"
+      "relatedSpdxElement": "SPDXRef-Package-618e13d446a4c6e4"
+    },
+    {
+      "spdxElementId": "SPDXRef-DOCUMENT",
+      "relationshipType": "DESCRIBES",
+      "relatedSpdxElement": "SPDXRef-Package-670f3c5f091a0b1c"
     },
     {
       "spdxElementId": "SPDXRef-DOCUMENT",
@@ -15746,6 +15771,11 @@
       "spdxElementId": "SPDXRef-DOCUMENT",
       "relationshipType": "DESCRIBES",
       "relatedSpdxElement": "SPDXRef-Package-a3cbdbce86e6fdc7"
+    },
+    {
+      "spdxElementId": "SPDXRef-DOCUMENT",
+      "relationshipType": "DESCRIBES",
+      "relatedSpdxElement": "SPDXRef-Package-bf01cf3b3b399efc"
     },
     {
       "spdxElementId": "SPDXRef-DOCUMENT",

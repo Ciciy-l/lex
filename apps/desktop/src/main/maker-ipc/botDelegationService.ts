@@ -1,3 +1,7 @@
+import { ensureProjectGitInitialized } from '../git-snapshot/projectGitBootstrap.js';
+import { readGitSafetySettings } from '../maker-host/git-safety-settings-store.js';
+import { openSession } from '../localDb/sessionOpening.js';
+import { controlOwnedSessionExecution, isSameSessionExecution, withdrawOwnedSessionInputs } from './sessionExecutionOwnership.js';
 import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -6,7 +10,6 @@ import { app } from 'electron';
 import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { BRAND_NAME } from '@cindy/maker-shared/branding';
 
-import { ensureProjectGitInitialized } from '../git-snapshot/projectGitBootstrap.js';
 import { getDbClient } from '../localDb/client/current.js';
 import type { BotsFinishDelegationResult } from '../localDb/client/tx/types.js';
 import { visibleMessageTextForConversationSearch } from '../localDb/conversationSearch.pure.js';
@@ -17,11 +20,11 @@ import { sessionCreateToRow } from '../localDb/mapper.js';
 import {
   botDelegations,
   botProfiles,
+  botProfileVersions,
   botSessionLinks,
   messages,
   sessions,
 } from '../localDb/schema.js';
-import { readGitSafetySettings } from '../maker-host/git-safety-settings-store.js';
 import type { InteractionDecision, InteractionRequest } from '@cindy/maker-core';
 import { permissionModeOrAsk } from '@cindy/maker-shared/permission-mode';
 import { UI_ACTION_TRIGGER_PREFIX } from '../../shared/interruptedTurn.js';
@@ -48,6 +51,9 @@ import { BOT_DELEGATION_CLIENT_ID } from '../../shared/botCollaboration.js';
 import { ensureBotWorkspaceDir } from './botProfileFolder.js';
 import type { SessionQueuedMessageControlResult, SessionSteerResult, SessionStopResult } from './sessionControlService.js';
 import { ownerScopedUserDataPath } from '../appSessionState.js';
+import { readBotTaskModelOverride, type BotModelRoute } from '../../shared/botModelChain.js';
+import { validateTaskModel, resolveTaskModelSelection, type TaskModelSelection } from './appDefaultModelControl.js';
+import type { SessionRuntimeProfile } from './sessionRuntimeControl.js';
 
 const ACTIVE_DELEGATION_STATUSES = ['queued', 'running', 'waiting'] as const;
 /** 一条补充消息的正文上限：够写清「先别做 X，改做 Y」，又不至于变成另一项任务。 */
@@ -142,8 +148,21 @@ export interface BotDelegationServiceDeps {
     typeof sessions.$inferSelect,
     'model' | 'agentKind' | 'providerId' | 'fastMode'
   > & { effort?: (typeof sessions.$inferSelect)['effort'] }) | null;
+  validateTaskModel?: typeof validateTaskModel;
+  resolveTaskModelSelection?: typeof resolveTaskModelSelection;
   /** null means the live permission is changing or the caller is closing. */
   readCallerPermission?: (sessionId: string) => string | { mode: string; generation: number } | null;
+  /** Narrow, owner-checked bridge to the ordinary Session runtime controller. */
+  taskRoute?: {
+    inspect(callerSessionId: string, childSessionId: string): Promise<
+      | { ok: true; generation: number; current: SessionRuntimeProfile; next: SessionRuntimeProfile | null }
+      | { ok: false; errorCode: string; message: string }
+    >;
+    advance(childSessionId: string, expectedGeneration: number, route: SessionRuntimeProfile): Promise<
+      | { ok: true; status: 'applied' | 'deferred'; generation: number }
+      | { ok: false; errorCode: string; message: string }
+    >;
+  };
   now?: () => number;
   createId?: () => string;
   maxActiveChildren?: number;
@@ -151,6 +170,8 @@ export interface BotDelegationServiceDeps {
 
 /** Start one tracked Cindy Session task from a persistent Bot task. */
 export interface SessionTaskInput {
+  /** One task only; the catalog id includes source and Harness. */
+  modelSelection?: TaskModelSelection;
   callerSessionId: string;
   objective: string;
   contextRefs?: string[];
@@ -190,6 +211,16 @@ function parseRecord(value: string | null | undefined): Record<string, unknown> 
   } catch {
     return {};
   }
+}
+
+/** Use the creation snapshot, not today's companion settings, during recovery. */
+export async function hasExplicitSessionTaskModel(sessionId: string): Promise<boolean> {
+  const [row] = await getDbClient().drizzle
+    .select({ permissionSnapshotJson: botDelegations.permissionSnapshotJson })
+    .from(botDelegations)
+    .where(eq(botDelegations.childSessionId, sessionId))
+    .limit(1);
+  return !!parseRecord(row?.permissionSnapshotJson).taskModelOverride;
 }
 
 /** Mutable execution hold lives beside the frozen plan, without changing its authority fields. */
@@ -1746,6 +1777,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     objective: string;
     contextRefs: string[];
     plan: Omit<BotDelegationPlanSnapshot, 'permission'>;
+    taskModelOverride?: BotModelRoute;
     useWorktree?: boolean;
     session: {
       workingDir: string;
@@ -1773,106 +1805,88 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       childSessionId = prepared.sessionId;
       input.session = { ...input.session, workingDir: prepared.workingDir, workspaceKind: 'project' };
     }
-    await ensureProjectGitInitialized({
-      workingDir: input.session.workingDir,
-      workspaceKind: input.session.workspaceKind ?? 'dialogue',
-      remoteHostId: null,
-      sessionId: childSessionId,
-      autoSnapshotEnabled: readGitSafetySettings().autoSnapshotEnabled,
-      source: 'bot-delegation',
-    }).catch(async error => {
-      if (input.useWorktree) await deps.discardUnusedWorktree?.(childSessionId);
-      throw error;
-    });
-    // Read stable authority after asynchronous preparation, with no await before
-    // submitting creation. Both persisted records must use this same snapshot.
-    const callerPermission = deps.readCallerPermission
-      ? deps.readCallerPermission(input.callerSessionId)
-      : input.caller.permissionMode;
-    if (callerPermission === null) {
-      if (input.useWorktree) await deps.discardUnusedWorktree?.(childSessionId);
-      return { ok: false, errorCode: 'CALLER_PERMISSION_UNAVAILABLE', message: '伙伴权限正在切换或任务正在关闭，请稍后重试' };
-    }
-    const permissionMode = permissionModeOrAsk(typeof callerPermission === 'string' ? callerPermission : callerPermission.mode);
-    const isCreationPermissionCurrent = (): boolean => {
-      if (!deps.readCallerPermission) return true;
-      const current = deps.readCallerPermission(input.callerSessionId);
-      if (current === null) return false;
-      if (typeof callerPermission === 'string') return current === callerPermission;
-      return typeof current !== 'string' && current.mode === callerPermission.mode
-        && current.generation === callerPermission.generation;
-    };
-    const plan: BotDelegationPlanSnapshot = {
-      ...input.plan,
-      permission: {
-        mode: permissionMode,
-        requesterMode: permissionMode,
-        // Legacy target-profile field; the effective child permission is mode.
-        targetConfigured: 'ask',
-      },
-    };
-    const createdAt = plan.createdAt;
-    const permissionSnapshotJson = JSON.stringify({
-      ...plan,
-      taskInput: { runSequence: 1, originalObjective: input.objective, followUp: null } satisfies SessionTaskInputSnapshot,
-    });
-    const childRow = {
-      ...sessionCreateToRow(
-        childSessionId,
-        {
-          workspaceKind: input.session.workspaceKind ?? 'dialogue',
-          workingDir: input.session.workingDir,
-          model: input.session.model,
-          // 后台任务沿用发起伙伴当前任务的模型、来源和执行档位。
-          ...(input.session.effort !== undefined ? { effort: input.session.effort } : {}),
-          ...(input.session.fastMode !== undefined ? { fastMode: input.session.fastMode } : {}),
-          ...(input.session.providerId !== undefined
-            ? { providerId: input.session.providerId }
-            : {}),
-          agentKind: input.session.agentKind,
-          permissionMode,
-          parentSessionId: input.callerSessionId,
-        },
-        createdAt,
-      ),
-      title: input.session.title,
-      source: input.session.source,
-    };
+    let creationCommitted = false;
+    let permissionMode: ReturnType<typeof permissionModeOrAsk>;
+    let isCreationPermissionCurrent!: () => boolean;
+    let plan!: BotDelegationPlanSnapshot;
+    let permissionSnapshotJson!: string;
+    const createdAt = input.plan.createdAt;
+    const { source: taskSource, ...sessionBody } = input.session;
     try {
-      await getDbClient().tx('bots.createDelegation', {
-        maxActiveChildren,
-        session: {
-          id: childRow.id,
-          title: childRow.title,
-          workingDir: childRow.workingDir ?? null,
-          workspaceKind: childRow.workspaceKind,
-          model: childRow.model,
-          effort: childRow.effort,
-          fastMode: childRow.fastMode,
-          permissionMode: childRow.permissionMode,
-          agentKind: childRow.agentKind,
-          remoteHostId: null,
-          providerId: childRow.providerId ?? null,
-          parentSessionId: input.callerSessionId,
-          extraDirs: childRow.extraDirs,
-          source: childRow.source,
-          createdAt: childRow.createdAt,
-          updatedAt: childRow.updatedAt,
+      await openSession({ id: childSessionId, now: createdAt, source: taskSource,
+        body: { ...sessionBody, workspaceKind: input.session.workspaceKind ?? 'dialogue' },
+        finalize: () => {
+          // Read stable authority after asynchronous preparation, with no await before
+          // submitting creation. Both persisted records must use this same snapshot.
+          const callerPermission = deps.readCallerPermission
+            ? deps.readCallerPermission(input.callerSessionId)
+            : input.caller.permissionMode;
+          if (callerPermission === null) {
+            throw new Error('CALLER_PERMISSION_UNAVAILABLE');
+          }
+          permissionMode = permissionModeOrAsk(typeof callerPermission === 'string' ? callerPermission : callerPermission.mode);
+          isCreationPermissionCurrent = (): boolean => {
+            if (!deps.readCallerPermission) return true;
+            const current = deps.readCallerPermission(input.callerSessionId);
+            if (current === null) return false;
+            if (typeof callerPermission === 'string') return current === callerPermission;
+            return typeof current !== 'string' && current.mode === callerPermission.mode
+              && current.generation === callerPermission.generation;
+          };
+          plan = {
+            ...input.plan,
+            permission: {
+              mode: permissionMode,
+              requesterMode: permissionMode,
+              // Legacy target-profile field; the effective child permission is mode.
+              targetConfigured: 'ask',
+            },
+          };
+
+          permissionSnapshotJson = JSON.stringify({ ...plan,
+            ...(input.taskModelOverride ? { taskModelOverride: input.taskModelOverride } : {}),
+            taskInput: { runSequence: 1, originalObjective: input.objective, followUp: null } satisfies SessionTaskInputSnapshot,
+          });
+
+          return { permissionMode, parentSessionId: input.callerSessionId };
         },
-        delegation: {
-          id: delegationId,
-          requestingBotId: input.caller.botId,
-          targetBotId: null,
-          parentSessionId: input.callerSessionId,
-          childSessionId,
-          objective: input.objective,
-          contextRefsJson: JSON.stringify(input.contextRefs),
-          permissionSnapshotJson,
-          lineageJson: JSON.stringify([input.caller.botId]),
-          targetProfileVersion: null,
-          depth: 1,
-          createdAt,
-        },
+      }, async childRow => {
+        await getDbClient().tx('bots.createDelegation', {
+          maxActiveChildren,
+          session: {
+            id: childRow.id,
+            title: childRow.title,
+            workingDir: childRow.workingDir ?? null,
+            workspaceKind: childRow.workspaceKind,
+            model: childRow.model,
+            effort: childRow.effort,
+            fastMode: childRow.fastMode,
+            permissionMode: childRow.permissionMode,
+            agentKind: childRow.agentKind,
+            remoteHostId: null,
+            providerId: childRow.providerId ?? null,
+            parentSessionId: input.callerSessionId,
+            extraDirs: childRow.extraDirs,
+            source: childRow.source,
+            createdAt: childRow.createdAt,
+            updatedAt: childRow.updatedAt,
+          },
+          delegation: {
+            id: delegationId,
+            requestingBotId: input.caller.botId,
+            targetBotId: null,
+            parentSessionId: input.callerSessionId,
+            childSessionId,
+            objective: input.objective,
+            contextRefsJson: JSON.stringify(input.contextRefs),
+            permissionSnapshotJson,
+            lineageJson: JSON.stringify([input.caller.botId]),
+            targetProfileVersion: null,
+            depth: 1,
+            createdAt,
+          },
+        });
+        creationCommitted = true;
       });
       // The worktree store and workingDir already own the binding. A failed
       // display snapshot must not strand the committed task before dispatch.
@@ -1893,7 +1907,10 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         status: 'queued',
       });
     } catch (error) {
-      if (input.useWorktree) await deps.discardUnusedWorktree?.(childSessionId);
+      if (input.useWorktree && !creationCommitted) await deps.discardUnusedWorktree?.(childSessionId);
+      if (error instanceof Error && error.message === 'CALLER_PERMISSION_UNAVAILABLE') {
+        return { ok: false, errorCode: 'CALLER_PERMISSION_UNAVAILABLE', message: '伙伴权限正在切换或任务正在关闭，请稍后重试' };
+      }
       // The Profile workspace is durable and shared across the Bot's Sessions.
       // A failed child creation never owns it and must not compensate by deleting it.
       if (error instanceof Error && error.message === 'BOT_DELEGATION_CONCURRENCY_LIMIT') {
@@ -1955,6 +1972,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
   const startSessionTask = async (
     input: SessionTaskInput,
   ): Promise<BotDelegationResult<{
+    modelRoute: BotModelRoute;
     delegationId: string;
     childSessionId: string;
     /**
@@ -1982,7 +2000,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     const createdAt = now();
     const deadlineAt = createdAt + timeoutMs;
 
-    // 子任务承接发起伙伴的实际路由与权限档；一次性工具批准仍只属于原请求。
+    // No override inherits the live route (including fallback), never a stale creation snapshot.
     const [callerSession] = await db
       .select({
         model: sessions.model,
@@ -1998,6 +2016,29 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       return { ok: false, errorCode: 'NOT_A_BOT_SESSION', message: '当前任务不属于任何伙伴' };
     }
     const callerRuntime = deps.readCallerRuntime?.(input.callerSessionId) ?? callerSession;
+    const [profile] = await db.select({ config: botProfileVersions.capabilitiesJson })
+      .from(botProfiles)
+      .innerJoin(botProfileVersions, and(eq(botProfileVersions.botId, botProfiles.id),
+        eq(botProfileVersions.version, botProfiles.currentVersion)))
+      .where(eq(botProfiles.id, caller.botId)).limit(1);
+    let taskModel: BotModelRoute | null;
+    try {
+      taskModel = input.modelSelection !== undefined
+        ? await (deps.resolveTaskModelSelection ?? resolveTaskModelSelection)(input.modelSelection)
+        : readBotTaskModelOverride(parseRecord(profile?.config).taskModelOverride);
+      if (input.modelSelection === undefined && taskModel && !await (deps.validateTaskModel ?? validateTaskModel)(taskModel)) {
+        return { ok: false, errorCode: 'TASK_MODEL_UNAVAILABLE', message: '任务模型不可用，请在伙伴模型设置中重新选择后重试' };
+      }
+    } catch {
+      return { ok: false, errorCode: 'TASK_MODEL_UNAVAILABLE', message: '无法确认任务模型或参数，请重新查询可用模型并检查伙伴模型设置后重试' };
+    }
+    const taskRuntime = taskModel ? {
+      agentKind: taskModel.harness === 'claude' ? 'cc' : taskModel.harness,
+      model: taskModel.model,
+      providerId: taskModel.providerId,
+      effort: taskModel.effort as typeof callerRuntime.effort,
+      fastMode: taskModel.fastMode,
+    } : callerRuntime;
     let workingDir = input.workingDir?.trim() || '';
     if (workingDir) {
       const isDirectory = (() => {
@@ -2035,17 +2076,18 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       objective,
       contextRefs: contextRefs.refs,
       plan,
+      taskModelOverride: taskModel ?? undefined,
       useWorktree: input.useWorktree,
       session: {
         workingDir,
         workspaceKind: input.workingDir?.trim() ? 'project' : 'dialogue',
-        model: callerRuntime.model,
-        ...(callerRuntime.effort ? { effort: callerRuntime.effort } : {}),
-        ...(callerRuntime.fastMode !== null && callerRuntime.fastMode !== undefined
-          ? { fastMode: callerRuntime.fastMode }
+        model: taskRuntime.model,
+        ...(taskRuntime.effort ? { effort: taskRuntime.effort } : {}),
+        ...(taskRuntime.fastMode !== null && taskRuntime.fastMode !== undefined
+          ? { fastMode: taskRuntime.fastMode }
           : {}),
-        ...(callerRuntime.providerId ? { providerId: callerRuntime.providerId } : {}),
-        agentKind: callerRuntime.agentKind as 'cc' | 'codex' | 'pi' | 'omp',
+        ...(taskRuntime.providerId ? { providerId: taskRuntime.providerId } : {}),
+        agentKind: taskRuntime.agentKind as 'cc' | 'codex' | 'pi' | 'omp',
         title: input.title?.trim() || objective.split('\n')[0]!.slice(0, 60),
         source: 'desktop',
       },
@@ -2057,6 +2099,13 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       childSessionId: started.childSessionId,
       status: started.status,
       deadlineAt: started.deadlineAt,
+      modelRoute: {
+        harness: taskRuntime.agentKind === 'codex' ? 'codex' : taskRuntime.agentKind === 'pi' ? 'pi' : taskRuntime.agentKind === 'omp' ? 'omp' : 'claude',
+        model: taskRuntime.model,
+        providerId: taskRuntime.providerId ?? null,
+        effort: taskRuntime.effort ?? '',
+        fastMode: Boolean(taskRuntime.fastMode),
+      },
     };
   };
 
@@ -2852,6 +2901,62 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     };
   });
 
+  const inspectSessionTaskRoute = (callerSessionId: string, taskId: string) =>
+    withTaskOperation(taskId, async () => {
+      const found = await findOwnedSessionTask(callerSessionId, taskId);
+      if (!found.ok) return found;
+      if (!found.row.childSessionId || !deps.taskRoute) {
+        return { ok: false as const, errorCode: 'UNSUPPORTED_CAPABILITY', message: 'Task model control is unavailable' };
+      }
+      const [child] = await getDbClient().drizzle.select({ status: sessions.status })
+        .from(sessions).where(eq(sessions.id, found.row.childSessionId)).limit(1);
+      if (child?.status !== 'active') {
+        return { ok: false as const, errorCode: 'CHILD_SESSION_INVALID', message: 'Task Session is no longer active' };
+      }
+      if (isActiveDelegation(found.row.status as DelegationStatus) || deps.taskControl?.isActive(found.row.childSessionId)) {
+        return { ok: false as const, errorCode: 'TASK_ACTIVE', message: 'Finish or stop the current execution before changing its model' };
+      }
+      const inspected = await deps.taskRoute.inspect(callerSessionId, found.row.childSessionId);
+      return inspected.ok ? { ...inspected, selectionToken: inspected.next
+        ? createHash('sha256').update(JSON.stringify([inspected.generation, inspected.next])).digest('hex')
+        : null } : inspected;
+    });
+
+  const advanceSessionTaskRoute = (callerSessionId: string, taskId: string, expectedGeneration: number, selectionToken: string) =>
+    withTaskOperation(taskId, async () => {
+      const found = await findOwnedSessionTask(callerSessionId, taskId);
+      if (!found.ok) return found;
+      const row = found.row;
+      if (!row.childSessionId || !deps.taskRoute) {
+        return { ok: false as const, errorCode: 'UNSUPPORTED_CAPABILITY', message: 'Task model control is unavailable' };
+      }
+      const [child] = await getDbClient().drizzle.select({ status: sessions.status })
+        .from(sessions).where(eq(sessions.id, row.childSessionId)).limit(1);
+      if (child?.status !== 'active') {
+        return { ok: false as const, errorCode: 'CHILD_SESSION_INVALID', message: 'Task Session is no longer active' };
+      }
+      if (isActiveDelegation(row.status as DelegationStatus) || deps.taskControl?.isActive(row.childSessionId)) {
+        return { ok: false as const, errorCode: 'TASK_ACTIVE', message: 'Finish or stop the current execution before changing its model' };
+      }
+      const inspected = await deps.taskRoute.inspect(callerSessionId, row.childSessionId);
+      if (!inspected.ok) return inspected;
+      if (inspected.generation !== expectedGeneration) {
+        return { ok: false as const, errorCode: 'CONFLICT', message: 'Task model changed; inspect it again before retrying' };
+      }
+      if (!inspected.next) {
+        return { ok: false as const, errorCode: 'NO_CONFIGURED_ROUTE', message: 'No further configured model route is available' };
+      }
+      const currentToken = createHash('sha256')
+        .update(JSON.stringify([inspected.generation, inspected.next])).digest('hex');
+      if (currentToken !== selectionToken) {
+        return { ok: false as const, errorCode: 'CONFLICT', message: 'Configured route changed; inspect it again before retrying' };
+      }
+      if (deps.taskControl?.isActive(row.childSessionId)) {
+        return { ok: false as const, errorCode: 'TASK_ACTIVE', message: 'Task execution restarted before its model could change' };
+      }
+      return deps.taskRoute.advance(row.childSessionId, expectedGeneration, inspected.next);
+    });
+
   const taskControlView = (row: DelegationRow) => {
     const pause = isActiveDelegation(row.status as DelegationStatus) ? readTaskPause(row) : null;
     const cancelling = isActiveDelegation(row.status as DelegationStatus) && parseRecord(row.permissionSnapshotJson).taskCancelRequested === true;
@@ -3325,6 +3430,8 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     },
     listDelegations,
     getSessionTask,
+    inspectSessionTaskRoute,
+    advanceSessionTaskRoute,
     restorePauseForSession,
     messageSessionTask,
     stopSessionTask,

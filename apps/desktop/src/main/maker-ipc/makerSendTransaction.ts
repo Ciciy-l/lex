@@ -1,9 +1,12 @@
+import { routinePermissionSnapshot } from '../maker-host/routinePermission.js';
+import type { AutoReviewUserIntent, Session } from '@cindy/maker-core';
 import {
   CodexResumePreparationBlockedError,
   AUTO_REVIEW_SOURCE_CONTENT,
   AUTO_REVIEW_USER_INTENT,
   INHERITED_CAPABILITY_SELECTION,
   MAIN_OWNED_SEND_CONTEXT,
+  PINNED_SKILL_INVOCATION,
   type AgentKind,
   type MainOwnedSendContext,
   type SessionSendOptions,
@@ -37,7 +40,8 @@ import {
   validateExtraDirs,
 } from './extraDirsValidator.js';
 import type { MakerSessionCreateOpts } from './sessionRequest.js';
-import { currentAutoReviewResourceIntent, readAutoReviewUserText, restoreAutoReviewUserIntent, type AutoReviewHistoryMessage } from './autoReviewUserIntent.js';
+import { AUTO_REVIEW_DELEGATED_CONTINUATION, currentAutoReviewResourceIntent, readAutoReviewUserText, restoreAutoReviewUserIntent, type AutoReviewHistoryMessage } from './autoReviewUserIntent.js';
+import type { CindyLearnInvocationGrant } from '../learn-host/invocationGrant.js';
 
 type CreateOpts = MakerSessionCreateOpts;
 
@@ -210,9 +214,10 @@ export function revokeTrustedDesktopQueuedOrigin(item: AgentInputQueuedMessage):
 }
 
 type MakerSendOptions = {
+  readonly [AUTO_REVIEW_DELEGATED_CONTINUATION]?: true;
   readonly [AUTO_REVIEW_SOURCE_CONTENT]?: UserMessage['content'];
   /** Main-only continuation: a restored intent is not an authored user turn. */
-  readonly [AUTO_REVIEW_USER_INTENT]?: string;
+  readonly [AUTO_REVIEW_USER_INTENT]?: AutoReviewUserIntent;
   readonly [INHERITED_CAPABILITY_SELECTION]?: string;
   readonly [MAIN_OWNED_SEND_CONTEXT]?: MainOwnedSendContext;
   messageUuid?: string;
@@ -299,8 +304,12 @@ function extractIpcUserMessageText(message: IpcUserMessage): string {
 }
 
 export interface MakerSendTransactionSession {
+  readonly stablePermissionModeState?: Session['stablePermissionModeState'];
+  readonly stablePlanModeState?: Session['stablePlanModeState'];
   hostStartupPreferences?: CreateOpts['hostStartupPreferences'];
   id: string;
+  /** Exact in-memory incarnation; a reused session id must not inherit turn grants. */
+  instanceId: string;
   agentKind: AgentKind;
   workDir: string;
   remoteHostId: string | null;
@@ -324,6 +333,7 @@ export interface MakerSendTransactionDeps {
   getSessionMeta(sessionId: string): Promise<{ title?: string } | null>;
   /** The same clear/rewind-filtered transcript used for native context handoffs. */
   readAutoReviewHistory?(sessionId: string): Promise<AutoReviewHistoryMessage[]>;
+  readScheduledPermissions?(sessionId: string): Promise<{ permissionMode: unknown; planModeEnabled: unknown } | null>;
   ensureRemoteReadyForSessionStart(params: {
     session?: { agentKind: AgentKind; remoteHostId: string | null } | null;
     createOpts?: unknown;
@@ -389,6 +399,12 @@ export interface MakerSendTransactionDeps {
       expectedClearBoundaryMs?: number | null;
     },
   ): Promise<unknown>;
+  /** Resolve the actual /learn Skill winner once for this exact dispatch. */
+  captureCindyLearnInvocation?: (
+    session: MakerSendTransactionSession,
+    persistedContent: unknown,
+    dispatchedText: string,
+  ) => Promise<CindyLearnInvocationGrant | null>;
   /** Hide a user row that lost a clear race after accepted persistence. */
   rewindPersistedUserMessageAfterClear?: (sessionId: string, clientId: string) => Promise<void>;
   /** Check the clear token captured at the start of this send. */
@@ -1192,7 +1208,41 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
       const autoReviewSourceContent = so[AUTO_REVIEW_SOURCE_CONTENT]
         ?? (typeof normalized === 'string' ? normalized : normalized.content) as UserMessage['content'];
       let restoredAutoReviewIntent = so[AUTO_REVIEW_USER_INTENT];
-      if (restoredAutoReviewIntent === undefined && isOrdinaryUserTurn && trustedUserText !== undefined
+      // The coordinator's scheduled continuation is not a new user message. Restore
+      // the owning task's authored requests at dispatch, including later revocations.
+      // Never use the agent-authored schedule prompt as evidence of permission.
+      const plannedModes = createOpts as Partial<CreateOpts> | undefined;
+      const expectedScheduledModes = so.origin?.kind === 'scheduler' ? routinePermissionSnapshot(undefined, {
+        permissionMode: plannedModes?.permissionMode ?? sess.stablePermissionModeState?.mode,
+        planModeEnabled: plannedModes?.planMode ?? sess.stablePlanModeState?.enabled,
+      }) : null;
+      let latestScheduledModes: { permissionMode: unknown; planModeEnabled: unknown } | null = null;
+      const assertScheduledModes = () => {
+        const current = routinePermissionSnapshot(sess, latestScheduledModes);
+        if (!current || deps.getSession(sessionId) !== sess
+          || current.permissionMode !== expectedScheduledModes?.permissionMode
+          || current.planMode !== expectedScheduledModes?.planMode) {
+          throwIpcError('PRECONDITION_FAILED', 'Scheduled task modes changed before vendor dispatch');
+        }
+      };
+      const resolveScheduledIntent = so.origin?.kind === 'scheduler' ? async () => {
+        let history: AutoReviewHistoryMessage[] = [];
+        try {
+          history = await deps.readAutoReviewHistory?.(sessionId) ?? [];
+        } catch {
+          deps.log.warn('auto-review continuation history unavailable', { sessionId });
+        }
+        latestScheduledModes = await deps.readScheduledPermissions?.(sessionId) ?? null;
+        assertScheduledModes();
+        return restoreAutoReviewUserIntent(history);
+      } : undefined;
+      if (resolveScheduledIntent) restoredAutoReviewIntent = undefined;
+      if (!resolveScheduledIntent && restoredAutoReviewIntent === undefined && so[AUTO_REVIEW_DELEGATED_CONTINUATION]
+        && (!mainOwnedSendContext || mainOwnedSendContext.origin.kind === 'desktop')) {
+        const history = await deps.readAutoReviewHistory?.(sessionId) ?? [];
+        restoredAutoReviewIntent = restoreAutoReviewUserIntent(history);
+      }
+      if (!resolveScheduledIntent && restoredAutoReviewIntent === undefined && isOrdinaryUserTurn && trustedUserText !== undefined
         && (!mainOwnedSendContext || mainOwnedSendContext.origin.kind === 'desktop')) {
         let history: AutoReviewHistoryMessage[] = [];
         try {
@@ -1291,6 +1341,25 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
           await directPreDispatchHook(sessionId);
           directPreDispatchHookStarted = true;
         }
+        let cindyLearnInvocation: CindyLearnInvocationGrant | null = null;
+        if (persistUserMessage && deps.captureCindyLearnInvocation) {
+          try {
+            // Capture before Session.send: onAccepted persists this exact snapshot,
+            // and the provider cannot start until that durable write completes.
+            cindyLearnInvocation = await deps.captureCindyLearnInvocation(
+              sess,
+              persistUserMessage.content,
+              extractIpcUserMessageText(normalized),
+            );
+          } catch (err) {
+            // The message may still run as a normal Skill invocation, but the
+            // privileged Learn host must fail closed without a dispatch snapshot.
+            deps.log.warn('send: Learn Skill winner capture failed', {
+              sessionId,
+              err: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
         // Capture on the executor immediately before vendor code. sess.send may
         // synchronously publish the continuation's new started marker before it
         // resolves, so the old-turn ack must use this strictly earlier value.
@@ -1299,8 +1368,18 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
           : null;
         const sendResult = await sess.send(outgoing as never, {
           [AUTO_REVIEW_SOURCE_CONTENT]: autoReviewSourceContent,
+          ...(so[AUTO_REVIEW_DELEGATED_CONTINUATION] ? { [AUTO_REVIEW_DELEGATED_CONTINUATION]: true as const } : {}),
           ...(so[INHERITED_CAPABILITY_SELECTION] !== undefined
             ? { [INHERITED_CAPABILITY_SELECTION]: so[INHERITED_CAPABILITY_SELECTION] }
+            : {}),
+          ...(resolveScheduledIntent ? { resolveAutoReviewUserIntent: resolveScheduledIntent } : {}),
+          ...(cindyLearnInvocation
+            ? {
+                [PINNED_SKILL_INVOCATION]: {
+                  name: 'learn',
+                  path: cindyLearnInvocation.resolvedSkillPath,
+                },
+              }
             : {}),
           ...(restoredAutoReviewIntent !== undefined
             ? { [AUTO_REVIEW_USER_INTENT]: restoredAutoReviewIntent }
@@ -1374,7 +1453,11 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
                       content: persistUserMessage.content,
                       agentMeta: {
                         uuid: so.messageUuid,
-                        ...(trustedUserText !== undefined ? { autoReviewUserText: trustedUserText } : {}),
+                        ...(so.origin?.kind === 'scheduler'
+                          ? { autoReviewUserText: { kind: 'scheduled-continuation' } }
+                          : so[AUTO_REVIEW_DELEGATED_CONTINUATION]
+                            ? { autoReviewUserText: { kind: 'delegated-continuation' } }
+                          : trustedUserText !== undefined ? { autoReviewUserText: trustedUserText } : {}),
                         sdkSessionId: persistUserMessage.sdkSessionId,
                         ...(persistUserMessage.delivery
                           ? { delivery: persistUserMessage.delivery }
@@ -1390,6 +1473,9 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
                           : {}),
                         ...(persistUserMessage.agentFacingWireContent
                           ? { agentFacingWireContent: persistUserMessage.agentFacingWireContent }
+                          : {}),
+                        ...(cindyLearnInvocation
+                          ? { cindyLearnInvocation }
                           : {}),
                         // 队列来源写入 agentMeta,不发给 maker-core。Orca 只在 persist
                         // 上;scheduler 直发可能只在 sendOpts.origin 上。
@@ -1430,6 +1516,7 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
                 'REMOTE_OPTIMISTIC_INPUT_SUPERSEDED: input preparation was superseded',
               );
             }
+            if (resolveScheduledIntent) assertScheduledModes();
             deps.assertBeforeVendorDispatch?.(sessionId, finalFenceSendOpts);
             if (userPromptPreviewSessionId) {
               deps.dispatchUserPromptPreview?.(

@@ -43,7 +43,7 @@ describe('mobile sending queue badge', () => {
     expect(source).toContain('observeDurableOutboxSending(mobileDurableOutbox');
     expect(source).toContain('markQueueItemSending(record.prepared!);');
     expect(source.match(/appendOptimisticUserMessage\(/g)).toHaveLength(1);
-    expect(source.match(/clearQueueItemSending\(queued\.clientId\);/g)).toHaveLength(1);
+    expect(source.match(/clearQueueItemSending\(queued, enqueueAccepted, projectionBeforeSend\);/g)).toHaveLength(1);
     expect(source).toContain('} finally {\n        // 成功、对账认定已入队、回滚 throw 三条路径都算「不再在途」');
     // 新建会话乐观管线在跑时,首条消息同样是「已上屏未确认」。
     expect(source).toContain("creationTask?.status === 'running'");

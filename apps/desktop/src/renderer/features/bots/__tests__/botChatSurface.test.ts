@@ -23,7 +23,7 @@ describe('Bot 对话的判定条件', () => {
   it('「这是跟伙伴的对话」需要路由身份与 session.source 同时成立', () => {
     // URL 只是导航投影。少了 source 这一半,任何 /bots/... 链接都能把普通任务
     // 伪装成伙伴对话。
-    expect(sessionView).toContain("botIdentity && session?.source === 'bot' ? botIdentity : null");
+    expect(sessionView).toContain("botIdentity && botIdentity.sessionId === sessionId ? botIdentity : null");
   });
 
   it('气泡头像只在 Bot 对话下传给消息流', () => {

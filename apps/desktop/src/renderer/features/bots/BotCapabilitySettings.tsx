@@ -17,7 +17,7 @@ import {
 } from '@/contexts/dataOwnerGeneration';
 
 type Kind = 'skill' | 'mcp' | 'toolset';
-type Entry = { id: string; name: string; available: boolean };
+type Entry = { id: string; name: string; available: boolean; personal?: boolean };
 const kinds: Kind[] = ['skill', 'mcp', 'toolset'];
 
 /** References are edited per companion; shared installations and connections stay host-owned. */
@@ -130,6 +130,7 @@ export function BotCapabilitySettings({
         const agentKind = mcpResult.agentKind;
         if (!agentKind) throw new Error('Missing next-turn route');
         const results = await Promise.allSettled([
+          window.electronAPI.localDb.bots.listSkills(bot.id),
           api.listAgentSkills(agentKind, {
             forceReload: true,
             workingDir: session.workingDir ?? undefined,
@@ -142,7 +143,7 @@ export function BotCapabilitySettings({
           }),
         ]);
         if (!isCurrent()) return;
-        const [skillResult, toolsetResult] = results;
+        const [personalResult, skillResult, toolsetResult] = results;
         const next: Partial<Record<Kind, Entry[]>> = {};
         if (skillResult.status === 'fulfilled' && skillResult.value.success)
           next.skill = (skillResult.value.skills ?? []).map((item) => ({
@@ -150,6 +151,10 @@ export function BotCapabilitySettings({
             name: item.name,
             available: item.enabled !== false && item.runtimeStatus !== 'failed',
           }));
+        if (personalResult.status === 'fulfilled') next.skill = [
+          ...personalResult.value.map(item => ({ id: `personal:${item.slug}`, name: item.name, available: item.enabled !== false, personal: true })),
+          ...(next.skill ?? []),
+        ];
         next.mcp = mcpResult.servers.map((item) => ({
           id: item.id,
           name: item.name,
@@ -157,7 +162,7 @@ export function BotCapabilitySettings({
         }));
         if (toolsetResult.status === 'fulfilled')
           next.toolset = toolsetResult.value
-            .filter((item) => !['memory', 'xdt_helper', 'collab'].includes(item.id))
+            .filter((item) => !['memory', 'xdt_helper', 'scheduler', 'lsp'].includes(item.id))
             .map((item) => ({
               id: item.id,
               name: item.name,
@@ -216,6 +221,13 @@ export function BotCapabilitySettings({
           const rows = [...(entries[kind] ?? [])];
           for (const id of selected[kind])
             if (!rows.some((item) => item.id === id)) rows.push({ id, name: id, available: false });
+          const mode = kind === 'mcp' ? capabilities.mcpMode : kind === 'toolset' ? capabilities.toolsetMode : 'allowlist';
+          // Inheritance can only become an explicit selection from a complete
+          // catalog of this kind. Missing/refreshing entries must not drop tools.
+          const canEdit = mode !== 'inherit' || entries[kind] !== undefined;
+          const selectedIds = mode === 'inherit'
+            ? [...new Set([...selected[kind], ...rows.filter((item) => item.available).map((item) => item.id)])]
+            : selected[kind];
           const matching = rows.filter((item) =>
             `${item.id} ${item.name}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()),
           );
@@ -233,14 +245,14 @@ export function BotCapabilitySettings({
                     <input
                       type="checkbox"
                       className="accent-[var(--text-primary)]"
-                      checked={selected[kind].includes(item.id)}
-                      disabled={!item.available && !selected[kind].includes(item.id)}
+                      checked={item.personal ? item.available : selectedIds.includes(item.id)}
+                      disabled={!canEdit || item.personal || (!item.available && !selectedIds.includes(item.id))}
                       onChange={(event) =>
-                        onChange(
+                        canEdit && onChange(
                           kind,
                           event.target.checked
-                            ? [...selected[kind], item.id]
-                            : selected[kind].filter((id) => id !== item.id),
+                            ? [...selectedIds, item.id]
+                            : selectedIds.filter((id) => id !== item.id),
                         )
                       }
                     />

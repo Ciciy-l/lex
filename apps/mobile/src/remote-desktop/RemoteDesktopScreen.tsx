@@ -64,6 +64,7 @@ import {
   resolveDesktopIceServers,
 } from "@cindy/device-link";
 import { Text } from "@/components/AppText";
+import { mobileInteractionStyles } from "@/components/mobileInteractionStyles";
 import { useScreenEdgePadding } from "@/components/screenEdgeInsets";
 import { goBackGuarded } from "@/utils/backGuard";
 import {
@@ -1949,7 +1950,7 @@ export default function RemoteDesktopScreen() {
                     style={({ pressed }) => [
                       styles.modeTab,
                       fullKeys === computer && styles.modeTabSelected,
-                      pressed && styles.keyPressed,
+                      pressed && mobileInteractionStyles.pressed,
                     ]}
                   >
                     <Text
@@ -2234,7 +2235,7 @@ const makeStyles = (colors: ThemeColors) =>
       flex: 1,
       flexDirection: "row",
       backgroundColor: colors.surfaceChip,
-      borderRadius: radius.container,
+      borderRadius: radius.pill,
       padding: spacing.xs,
     },
     modeTab: {
@@ -2242,17 +2243,17 @@ const makeStyles = (colors: ThemeColors) =>
       minHeight: 36,
       alignItems: "center",
       justifyContent: "center",
-      borderRadius: radius.control,
+      borderRadius: radius.pill,
     },
     modeTabSelected: { backgroundColor: colors.surfaceElevated },
     modeText: {
-      fontSize: typeScale.listBody,
+      fontSize: typeScale.bodySmall,
       fontWeight: fontWeight.regular,
       color: colors.textTertiary,
     },
+    // 选中只换色,字重保持与未选一致。
     modeTextSelected: {
       color: colors.textPrimary,
-      fontWeight: fontWeight.semibold,
     },
     closeKey: {
       width: 44,

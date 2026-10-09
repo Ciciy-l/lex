@@ -18,7 +18,7 @@ import {
   type SortBy,
   type Visibility,
 } from './hooks/useMarketList';
-import { refresh as refreshSkillhub } from './hooks/useSkillhub';
+import { refresh as refreshSkillhub, useSkillhub } from './hooks/useSkillhub';
 import { MarketManagementDialogs, useMarketManagement } from './hooks/useMarketManagement';
 import { getMarketSelected, setMarketSelected } from './hooks/useMarketSelection';
 import { MarketCard } from './components/MarketCard';
@@ -77,6 +77,7 @@ export function SkillhubMarketListView() {
 function SkillhubMarketListViewInner() {
   const { t } = useTranslation();
   const { user, isInitializing } = useAuth();
+  const { skills: localSkills, learnSkillEnabled } = useSkillhub();
   const identityPolicy = useSkillhubIdentityPolicy(user);
   const location = useLocation();
   const navigate = useNavigate();
@@ -266,12 +267,12 @@ function SkillhubMarketListViewInner() {
   );
 
   return (
-    <div className="relative flex h-full w-full flex-col overflow-hidden bg-[hsl(var(--content-area))]">
+    <div className="app-wallpaper-surface relative flex h-full w-full flex-col overflow-hidden bg-[hsl(var(--content-area))]">
       {/* market-toolbar — h56, padding 0 24
           mac 上本页不渲染通用 ContentHeader,工具栏行承担窗口拖拽,行内交互
           元素各自 no-drag(windowDrag.tsx 约定) */}
       <div
-        className="flex items-center justify-between bg-[hsl(var(--content-area))]"
+        className="app-wallpaper-surface flex items-center justify-between bg-[hsl(var(--content-area))]"
         style={{
           height: '56px',
           padding: '0 24px',
@@ -505,6 +506,7 @@ function SkillhubMarketListViewInner() {
           : 'none'}
         onClone={handleClone}
         onManageAction={management.handleManageAction}
+        learnSkillEnabled={learnSkillEnabled}
       />
       <MarketManagementDialogs controller={management} />
     </div>

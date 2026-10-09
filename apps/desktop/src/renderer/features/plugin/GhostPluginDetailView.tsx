@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button';
 import { shouldShowOpenPathError } from '../../../shared/openPathResult';
 /**
  * Plugin detail presentation for configuration, Tools, permissions, and factual metadata.
@@ -28,7 +29,7 @@ import { useTranslation } from 'react-i18next';
 
 import { CindyCapabilityPrefs } from '@/cindy-brain/CindyCapabilityPrefs';
 import { GhostLibrarySection } from './GhostLibrarySection';
-import { GhostErrandPrefs } from '@/cindy-brain/GhostErrandPrefs';
+import { PluginTaskPrefs } from '@/cindy-brain/PluginTaskPrefs';
 import { GhostSettingsWebview } from '@/cindy-brain/GhostSettingsWebview';
 import { WINDOW_NO_DRAG_STYLE } from '@/components/layout/windowDrag';
 import {
@@ -122,6 +123,7 @@ export function GhostPluginDetailView({
   const { t } = useTranslation();
   const { scrolled, onScroll } = usePluginDetailScrolled();
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  const [taskApprovalPending, setTaskApprovalPending] = useState(false);
   const [descriptionOverflows, setDescriptionOverflows] = useState(false);
   const descriptionRef = useRef<HTMLParagraphElement>(null);
   // 安装记录不完整时不可运行:enabled 直接门控为 false(说明现状 + 给恢复入口,不让它
@@ -140,7 +142,7 @@ export function GhostPluginDetailView({
     detail.hasSettingsUi ||
     detail.hostCapability === 'ios-simulator' ||
     cindyCapabilities.length > 0 ||
-    detail.hasErrand;
+    detail.hasTaskPreferences;
   const summary = ghostPluginSummary(detail.description, detail.id);
   /**
    * 「从 .cindy 文件更新」是否可用。官方保留前缀(cindy- / filo- / xd-)在**非 dev
@@ -200,7 +202,7 @@ export function GhostPluginDetailView({
 
   return (
     <main
-      className="plugin-motion-root h-full min-h-0 w-full overflow-y-auto bg-[var(--surface)] [scrollbar-gutter:stable_both-edges]"
+      className="app-wallpaper-surface plugin-motion-root h-full min-h-0 w-full overflow-y-auto bg-[var(--surface)] [scrollbar-gutter:stable_both-edges]"
       onScroll={onScroll}
     >
       <PluginDetailTopBar
@@ -519,8 +521,9 @@ export function GhostPluginDetailView({
                   appearance="plugin"
                 />
               ) : null}
-              {detail.hasErrand ? (
-                <GhostErrandPrefs ghostId={detail.id} appearance="plugin" />
+              {detail.hasTaskPreferences ? (
+                <PluginTaskPrefs ghostId={detail.id} appearance="plugin"
+                  legacyDefault={ghost?.manifest.agent?.errand === true && !ghost.manifest.agent?.tasks && !ghost.manifest.workspace} />
               ) : null}
             </div>
           </section>
@@ -529,6 +532,20 @@ export function GhostPluginDetailView({
         {detail.tools.length > 0 ? <ToolsSection tools={detail.tools} /> : null}
 
         {detail.permissions.length > 0 ? <PermissionSummary items={detail.permissions} /> : null}
+        {enabled && ghost?.manifest.agent?.tasks === true && ghost.taskCapabilityApproved !== true ? (
+          <Button variant="secondary" size="md" className="mt-4" disabled={taskApprovalPending} onClick={async () => {
+            setTaskApprovalPending(true);
+            try {
+              await window.electronAPI.ghosts.requestTaskApproval(detail.id);
+            } catch {
+              toast.error(t('settings.ghosts.errors.generic'));
+            } finally {
+              setTaskApprovalPending(false);
+            }
+          }}>
+            {t('settings.ghosts.perm.agentTasksRequest')}
+          </Button>
+        ) : null}
 
         <GhostLibrarySection ghostId={detail.id} enabled={ghost?.manifest.library === true} />
 
@@ -1008,7 +1025,7 @@ function DialogFrame({ children }: { children: ReactNode }) {
         className="fixed inset-0 z-[10000] bg-[var(--overlay-modal)]"
         style={WINDOW_NO_DRAG_STYLE}
       />
-      <Dialog.Content
+      <Dialog.Content onPointerDownOutside={(event) => event.preventDefault()}
         className="fixed left-1/2 top-1/2 z-[10000] flex max-h-[70vh] w-[calc(100vw-48px)] max-w-[560px] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-[var(--border-default)] bg-[var(--surface-elevated)] text-[var(--text-primary)] shadow-[var(--shadow-menu)] focus:outline-none"
         style={WINDOW_NO_DRAG_STYLE}
       >

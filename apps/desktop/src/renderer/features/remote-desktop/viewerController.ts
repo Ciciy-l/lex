@@ -48,7 +48,7 @@ export class DesktopViewerController {
     displayId: '',
     transport: '',
     latency: null,
-    settings: { fps: 30, bitrate: 0, audio: true },
+    settings: { fps: 30, quality: 'auto', audio: true },
     ready: false,
   };
   private scope: RemoteViewerState = { target: null, active: false, generation: -1 };

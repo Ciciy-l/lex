@@ -1,3 +1,4 @@
+import type { AutoReviewUserIntent } from './shared/auto-review-decision.js';
 /**
  * BaseAgent — Claude Code / Codex 等具体 agent 的统一抽象。
  *
@@ -76,8 +77,10 @@ import type {
   ScanAtResourcesResult,
   AgentBuiltinCommand,
   AgentRuntimeCommandCatalogSnapshot,
+  AgentSkillCommand,
   ListAgentSkillsOptions,
   ListAgentSkillsResult,
+  ListRuntimeSkillsOptions,
 } from '../types/palette.js';
 import type {
   ListCustomizationsOptions,
@@ -698,6 +701,12 @@ export interface PiSubagentRunnerLaunchRequest {
 export interface AgentDeps {
   /** Cindy-only local Skill overrides. Freeze at native runtime startup; never apply to SSH. */
   getDisabledSkillPaths?: () => readonly string[];
+  /** Host-owned local Skills, loaded without writing user/project discovery directories. */
+  getManagedSkills?: () => Promise<Array<AgentSkillCommand & {
+    claudeCommandName: string;
+  }>>;
+  /** Refresh host-owned Skill links in the actual local Codex home before each thread, including reused servers. */
+  prepareCodexSkills?: (codexHome: string) => Promise<void>;
   /** Optional low-I/O, provider-neutral turn change recorder supplied by the host. */
   turnChangeCapture?: TurnChangeCaptureHooks;
   auth: AuthAdapter;
@@ -963,6 +972,8 @@ export interface AgentDeps {
       model: string;
       /** Present only when restoring an existing Pi session; permits private compatibility ids. */
       resumeSessionId?: string;
+      /** Preview must not prepare global skills or start a local model service. */
+      purpose?: 'startup' | 'preview' | 'live-refresh';
     },
   ) => Promise<PiNativeProvidersResult | null>;
 
@@ -975,6 +986,8 @@ export interface AgentDeps {
     providerId: string | null | undefined,
     modelId: string,
   ) => ModelDescriptor | null;
+  /** Current Pi-selectable catalog projection for live registry refreshes. */
+  resolvePiRuntimeModels?: () => ModelDescriptor[];
 
   /**
    * Pi-only:为 `cindy` gateway 的 models.json 块按会话实际来源解析 provider-aware 描述符。
@@ -1019,9 +1032,11 @@ export interface AgentDeps {
    * cindy-bridge 的 vision 工具读取。缺省 = 不注入（视觉桥工具不可用，零干扰）。
    * model 参数供 host 按 session 模型判定是否命中视觉桥目标模型——未命中返回 null，
    * 保证非目标/已有视觉能力的 Pi 模型不注册 vision 工具、不改变工具面（零干扰）。
+   * sessionId 供需要上游会话头的后端（OpenCode Go）确定性派生头值：spawn env 必须
+   * 同 session 重建逐字节稳定（pi-harness §4.10），不得用随机值。
    * 返回的键应纳入 piSecretEnvNames 剥离面（host 实现应把含 key 的键名一并声明）。
    */
-  resolvePiVisionBridgeEnv?: (model: string) => Record<string, string> | null;
+  resolvePiVisionBridgeEnv?: (model: string, sessionId?: string) => Record<string, string> | null;
 
   /**
    * Host-owned arbitration for capabilities that overlap with harness-native
@@ -1418,7 +1433,7 @@ export interface AgentDeps {
    */
   prepareCodexResumeSession?: (threadId: string, context?: { codexHome: string; providerId?: string }) => Promise<string | void>;
   recordCodexThreadLocation?: (threadId: string, codexHome: string, rolloutPath?: string) => Promise<void>;
-  resolveCodexThreadStorage?: (threadId: string) => Promise<{ historyHome: string; sqliteHome: string } | undefined>;
+  resolveCodexThreadStorage?: (threadId: string, options?: { readOnly?: boolean }) => Promise<{ historyHome: string; sqliteHome: string } | undefined>;
   /** Freeze the owner/account scope before async host startup; never expose tokens to the renderer. */
   createCodexAuthTokenReader?: (providerId?: string) => () => Promise<import('./codex/app-server/external-auth.js').CodexChatgptTokens>;
 
@@ -2055,8 +2070,22 @@ export const AUTO_REVIEW_SOURCE_CONTENT = Symbol('cindy.auto-review-source-conte
 /** Host-restored user authorization for this send; never accepted from wire options. */
 export const AUTO_REVIEW_USER_INTENT = Symbol('cindy.auto-review-user-intent');
 
+/** Main-attested continuation: retain initialized live intent, including an explicit empty reset. */
+export const AUTO_REVIEW_DELEGATED_CONTINUATION = Symbol('autoReviewDelegatedContinuation');
+
 /** Main-only selection from the original input for a retained-history continuation. */
 export const INHERITED_CAPABILITY_SELECTION = Symbol('cindy.inherited-capability-selection');
+
+/**
+ * Main-attested Skill winner for this exact send. Symbol keys cannot cross the
+ * Renderer/device-link boundary, so only a Host dispatcher can pin a path.
+ */
+export const PINNED_SKILL_INVOCATION = Symbol('cindy.pinned-skill-invocation');
+
+export interface PinnedSkillInvocation {
+  readonly name: string;
+  readonly path: string;
+}
 
 export interface MainOwnedSendContext {
   readonly origin: TurnPermissionOrigin;
@@ -2070,8 +2099,11 @@ export interface MainOwnedSendContext {
  */
 export interface SendOptions {
   readonly [AUTO_REVIEW_SOURCE_CONTENT]?: UserMessage['content'];
-  readonly [AUTO_REVIEW_USER_INTENT]?: string;
+  readonly [AUTO_REVIEW_USER_INTENT]?: AutoReviewUserIntent;
+  readonly [AUTO_REVIEW_DELEGATED_CONTINUATION]?: true;
   readonly [INHERITED_CAPABILITY_SELECTION]?: string;
+  /** Exact Skill selected by a Host authorization check for this send. */
+  readonly [PINNED_SKILL_INVOCATION]?: PinnedSkillInvocation;
   /** Host-authenticated metadata; never accept an equivalent string-keyed wire field. */
   readonly [MAIN_OWNED_SEND_CONTEXT]?: MainOwnedSendContext;
   /**
@@ -2256,12 +2288,25 @@ export interface CodexContextWindowInfo {
  * 一个已启动的 agent 会话句柄。
  * 上层 Session 类持有此句柄并对外暴露 UI 友好的 API。
  */
+export interface PiModelSwitchPreview {
+  /** Existing Pi model snapshot can serve the target without a catalog mutation. */
+  action: 'hot' | 'refresh' | 'rebuild' | 'unavailable';
+  /** Target configuration's context capacity; null when not established. */
+  targetContextWindow: number | null;
+  /** Only true when the live Pi runtime has confirmed this exact target window. */
+  windowVerified: boolean;
+  /** Non-secret reason suitable for a host error; never include env values. */
+  reason?: string;
+}
+
 export interface AgentSessionHandle {
   /** Canonical physical Skill identities frozen at native runtime startup. */
   readonly disabledSkillPaths?: readonly string[];
   getCodexContextWindowInfo?(): Promise<CodexContextWindowInfo | null>;
-  /** SDK 内部 sessionId，session.started 后会回填 */
+  /** Native session identity safe for resume; may retain an unaccepted fork's source. */
   readonly id: string;
+  /** Transient native request identity; hosts must not persist it as a resume id. */
+  readonly requestSessionId?: string;
   readonly agentKind: AgentKind;
   readonly model: string;
   /** Pi-only, per-session runtime command catalog. Undefined for other agents. */
@@ -2414,6 +2459,12 @@ export interface AgentSessionHandle {
   /** 运行时切换模型 —— 不支持时抛 NotSupportedError */
   setModel?(model: string, opts?: { providerId?: string | null; effort?: Effort }): Promise<void>;
 
+  /** Read-only Pi preflight before the host changes its persisted route or context. */
+  previewModelSwitch?(
+    model: string,
+    opts?: { providerId?: string | null },
+  ): Promise<PiModelSwitchPreview>;
+
   /**
    * 当前 provider handle 是否必须先关闭、再由同一业务任务 cold resume 才能应用目标模型。
    * 缺省 false；用于 Codex 这类把部分模型配置冻结在 app-server spawn / thread resume
@@ -2446,6 +2497,7 @@ export interface AgentSessionHandle {
 
   /** 当前 maker 进程内记录的计划模式状态；不支持的 agent 不实现。 */
   getPlanMode?(): boolean | null;
+  getExecutionPlanMode?(): boolean | null;
 
   /**
    * 把当前会话导出成 HTML 文件,返回写入的绝对路径。
@@ -2673,6 +2725,11 @@ export abstract class BaseAgent {
   async listAgentSkills(opts: ListAgentSkillsOptions): Promise<ListAgentSkillsResult> {
     void opts;
     return { skills: [] };
+  }
+
+  /** Runtime-accurate Skill discovery for host-side authorization checks. */
+  async listRuntimeSkills(opts: ListRuntimeSkillsOptions): Promise<ListAgentSkillsResult> {
+    return this.listAgentSkills(opts);
   }
 
   /**

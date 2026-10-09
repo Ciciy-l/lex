@@ -103,3 +103,15 @@ export async function clearRemoteResourceCache(): Promise<void> {
   const keys = await AsyncStorage.getAllKeys().catch(() => []);
   await AsyncStorage.multiRemove(keys.filter((key) => key.startsWith(PREFIX))).catch(() => undefined);
 }
+
+export function cachedBotIdForSession(userId: string, collectionId: string, deviceId: string, sessionId: string): string {
+  const row = snapshots.get(userId)?.items[collectionId]?.find(({ host, item }) => host.deviceId === deviceId
+    && item.ref.kind === 'bot' && item.links.some(({ rel, target }) => rel === 'conversation'
+      && target.kind === 'session' && target.sessionId === sessionId));
+  return row?.item.ref.id ?? '';
+}
+/** A cached roster row for display (name/avatar) only; never an authorization or availability signal. */
+export function cachedBotDisplayItem(userId: string, collectionId: string, deviceId: string, botId: string) {
+  return snapshots.get(userId)?.items[collectionId]?.find(({ host, item }) => host.deviceId === deviceId
+    && item.ref.kind === 'bot' && item.ref.id === botId)?.item ?? null;
+}

@@ -19,6 +19,8 @@ export function BotSettingsDrawer() {
   const bot = bots.find((candidate) => candidate.id === match?.params.botId) ?? null;
   const open = searchParams.get('settings') === '1' && bot !== null;
 
+  const requestedPage = searchParams.get('settingsPage');
+  const initialPage = requestedPage === 'memory' || requestedPage === 'capabilities' ? requestedPage : 'home';
   const allowNavigation = useRef(false);
   const pendingGuard = useRef<Promise<boolean> | null>(null);
   const beforeCloseRef = useRef<(() => Promise<boolean>) | null>(null);
@@ -70,6 +72,7 @@ export function BotSettingsDrawer() {
       (current) => {
         const next = new URLSearchParams(current);
         next.delete('settings');
+        next.delete('settingsPage');
         return next;
       },
       { replace: true },
@@ -87,7 +90,7 @@ export function BotSettingsDrawer() {
       <Dialog.Portal>
         {/* Keep portaled controls inside the overlay’s React tree so its scroll lock allows them. */}
         <Dialog.Overlay className="fixed inset-0 z-50 bg-[var(--overlay-modal)]">
-          <Dialog.Content
+          <Dialog.Content onPointerDownOutside={(event) => event.preventDefault()}
             aria-describedby={undefined}
             className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l border-[var(--border-default)] bg-[var(--surface)] outline-none"
           >
@@ -104,7 +107,8 @@ export function BotSettingsDrawer() {
             </header>
             <BotPronounProvider bot={bot}>
               <BotSettings
-                key={bot.id}
+                key={JSON.stringify([bot.id, open, initialPage])}
+                initialPage={initialPage}
                 beforeCloseRef={beforeCloseRef}
                 bot={bot}
                 onBack={performClose}

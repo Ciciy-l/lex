@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../../localDb/ipc/messages.js', () => ({ createMessage: mocks.createMessage }));
 vi.mock('../../localDb/ipc/sessions.js', () => ({
+  getSessionFsSnapshot: vi.fn(async () => ({ permissionMode: 'ask', planModeEnabled: false })),
   getSessionRowSnapshot: mocks.getSessionRowSnapshot,
   touchUserSendInDb: vi.fn().mockResolvedValue(undefined),
 }));
@@ -53,6 +54,8 @@ function createSessionHarness(sendImpl: SendImpl) {
   });
   const send = vi.fn<SendImpl>(sendImpl);
   const session = {
+    stablePermissionModeState: { mode: 'ask', generation: 0 },
+    stablePlanModeState: { enabled: false, generation: 0 },
     id: 'heartbeat-session',
     agentKind: 'codex',
     model: 'gpt-5.4',

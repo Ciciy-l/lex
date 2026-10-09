@@ -55,10 +55,11 @@ function screenReadGate(contentRecoveryKey: string | null, contentSyncedKey: str
 }
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let root: Root | undefined;
-function Probe({ canMarkRead }: { canMarkRead: boolean }) { useRemoteResourceSession('mac', 'My Mac', 'task-1', canMarkRead); return null; }
-async function render(canMarkRead = false) {
+let entry: ReturnType<typeof useRemoteResourceSession>;
+function Probe({ canMarkRead, metadataVerified }: { canMarkRead: boolean; metadataVerified: boolean }) { entry = useRemoteResourceSession('mac', 'My Mac', 'task-1', canMarkRead, metadataVerified); return null; }
+async function render(canMarkRead = false, metadataVerified = false) {
   root ??= createRoot(document.createElement('div'));
-  await act(async () => root!.render(createElement(Probe, { canMarkRead })));
+  await act(async () => root!.render(createElement(Probe, { canMarkRead, metadataVerified })));
 }
 beforeEach(() => { vi.clearAllMocks(); h.auth.accountGeneration = 1; h.store.getSessionDeviceId.mockReturnValue(undefined); });
 afterEach(() => { act(() => root?.unmount()); root = undefined; });
@@ -121,4 +122,17 @@ describe('companion task visibility refresh', () => {
     await act(async () => reject(new Error('[NOT_FOUND] old owner')));
     expect(h.router.replace).not.toHaveBeenCalled();
   });
+});
+
+it('requires current host resource and metadata before enabling companion controls', async () => {
+  h.get.mockResolvedValue({ links: [{ rel: 'conversation', target: { kind: 'session', sessionId: 'task-1' } }], display: { lastReplyAt: 200 } });
+  await render(false, false);
+  expect(entry.ready).toBe(false);
+  await render(false, true);
+  expect(entry.ready).toBe(true);
+  h.auth.accountGeneration += 1;
+  h.get.mockRejectedValue(new Error('offline'));
+  await render(false, true);
+  expect(entry.ready).toBe(false);
+  expect(entry.resource).toBeNull();
 });

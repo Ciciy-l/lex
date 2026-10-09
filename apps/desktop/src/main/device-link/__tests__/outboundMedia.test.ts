@@ -8,7 +8,7 @@ import path from 'node:path';
 
 const uploadLocalFile = vi.hoisted(() => vi.fn());
 const uploadBuffer = vi.hoisted(() => vi.fn());
-vi.mock('../mediaTransfer', () => ({ uploadLocalFile, uploadBuffer }));
+vi.mock('../mediaTransfer', () => ({ uploadLocalFile, uploadBuffer, mimeOf: () => 'text/plain' }));
 
 const resolveSafe = vi.hoisted(() => vi.fn());
 vi.mock('../../imageCacheStore', () => ({ resolveSafe }));
@@ -17,7 +17,10 @@ vi.mock('../../logger', () => ({
   createLogger: () => ({ info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() }),
 }));
 
-import { rewriteOutboundMedia, __testing } from '../outboundMedia';
+import { rewriteOutboundMedia, withPeerAttachmentUpload, __testing } from '../outboundMedia';
+import { REVIEW_START_REQUEST_LIMITS } from '../../maker-ipc/reviewStartHandler';
+vi.mock('../../maker-ipc/reviewOutboundInput', () => ({ withPreparedOutboundReview: (request: unknown, upload: (value: unknown) => unknown) => upload(request) }));
+import { buildPeerAttachmentRef, parsePeerAttachmentRef } from '@cindy/device-link';
 import { parseAttachmentOssRef, isAttachmentOssRef } from '../../../shared/attachmentOssRef';
 
 const SHA256 = 'a'.repeat(64);
@@ -39,6 +42,51 @@ beforeEach(() => {
 });
 
 describe('rewriteOutboundMedia — channel gating', () => {
+  it('uses peer staging for exact file bytes, preserves the name and retains OSS fallback', async () => {
+    const direct = vi.fn(async () => buildPeerAttachmentRef({ ticket: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', size: 10, sha256: SHA256, mimeType: 'text/plain' }));
+    const args = ['session', { type: 'user', content: [{ type: 'file', path: '/controller/a.txt', originalName: 'a.txt' }] }];
+    const result = await withPeerAttachmentUpload(direct, () => rewriteOutboundMedia('maker:send', args));
+    const ref = (result[1] as any).content[0].path;
+    expect(parsePeerAttachmentRef(ref)?.originalName).toBe('a.txt');
+    expect(uploadLocalFile).not.toHaveBeenCalled();
+    await withPeerAttachmentUpload(async () => null, () => rewriteOutboundMedia('maker:send', args));
+    expect(uploadLocalFile).toHaveBeenCalledOnce();
+  });
+  it.each([
+    ['count', () => Array.from({ length: 21 }, () => ({ name: 'a', path: '/controller/a' }))],
+    ['metadata', () => [{ name: 'a', path: '/controller/a' }, { name: 'x'.repeat(4097), path: '/controller/b' }]],
+    ['total metadata', () => Array.from({ length: 5 }, () => ({ name: 'a', url: 'a'.repeat(64 * 1024) }))],
+    ['single inline payload', () => [{ name: 'a', base64: 'a'.repeat(REVIEW_START_REQUEST_LIMITS.attachmentBase64Chars + 1) }]],
+    ['total inline payload', () => Array.from({ length: 3 }, () => ({ name: 'a', base64: 'a'.repeat(24 * 1024 * 1024) }))],
+  ] as const)('rejects Review %s limits before reading, compressing or staging any attachment', async (_label, attachments) => {
+    await expect(rewriteOutboundMedia('maker:review:start', [{
+      sourceSessionId: 'source', attachments: attachments(),
+    }])).rejects.toThrow('INVALID_PARAMS');
+    expect(uploadLocalFile).not.toHaveBeenCalled();
+    expect(uploadBuffer).not.toHaveBeenCalled();
+    expect(resolveSafe).not.toHaveBeenCalled();
+  });
+
+  it('uploads Review attachments and strips controller-local paths without mutating the request', async () => {
+    const request = { sourceSessionId: 'source', focus: 'docs', attachments: [
+      { name: 'notes.md', path: '/controller/notes.md', category: 'text' },
+    ] };
+    const result = await rewriteOutboundMedia('maker:review:start', [request]);
+    const rewritten = result[0] as typeof request;
+    expect(rewritten.sourceSessionId).toBe('source');
+    expect(rewritten.focus).toBe('docs');
+    expect(isAttachmentOssRef(rewritten.attachments[0].path)).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('/controller/notes.md');
+    expect(request.attachments[0].path).toBe('/controller/notes.md');
+    expect(uploadLocalFile).toHaveBeenCalledOnce();
+  });
+
+  it('rejects Review when attachment upload fails', async () => {
+    uploadLocalFile.mockRejectedValue(new Error('upload failed'));
+    await expect(rewriteOutboundMedia('maker:review:start', [{
+      sourceSessionId: 'source', attachments: [{ name: 'notes.md', path: '/controller/notes.md' }],
+    }])).rejects.toThrow('upload failed');
+  });
   it('非媒体 channel → 原样,不上传', async () => {
     const args = [{ a: 1 }];
     const out = await rewriteOutboundMedia('maker:set-model', args);

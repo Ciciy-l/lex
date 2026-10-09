@@ -191,6 +191,9 @@ jobs:
       - name: Validate Lex release and website contracts
         run: pnpm exec node scripts/__tests__/lex-product-release-baseline.test.mjs
 
+      - name: Validate Lex mobile release and download routing
+        run: node --test scripts/__tests__/lex-mobile-release.test.mjs
+
   # Linux 单测使用与 Windows 相同的确定性 Vitest 分片。两个分片分别覆盖每个
   # workspace 经 Vitest 切分后的测试文件，并集等于完整 unit tier；不重复 test:runner。
   linux-unit-shards:
@@ -310,6 +313,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: pnpm install:ripgrep
+
+      - name: Verify Windows atomic directory-entry replacement
+        if: matrix.shard == 1
+        run: node apps/desktop/scripts/check-windows-atomic-rename.mjs
 
       # 保留 Windows 路径、进程与锁的自测覆盖，但两个分片只执行一次。
       - name: Run Windows test runner self-tests

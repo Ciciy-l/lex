@@ -490,6 +490,23 @@ async function savePinnedOrder(rawRequest: unknown): Promise<string[]> {
   return Array.from(nextSettings.pinnedOrder);
 }
 
+/** Restore one local project using the same owner fence and broadcast as the sidebar. */
+export async function restoreLocalProjectVisibility(
+  workingDir: string,
+  ownerStamp: DataOwnerPushStamp,
+): Promise<boolean> {
+  return setLocalProjectHidden(workingDir, false, ownerStamp);
+}
+
+/** Host project tools share the sidebar's owner-scoped visibility mutation. */
+export async function setLocalProjectHidden(
+  workingDir: string,
+  hidden: boolean,
+  ownerStamp: DataOwnerPushStamp,
+): Promise<boolean> {
+  return setProjectHidden({ ...ownerStamp, projectKey: normalizeProjectKey(workingDir), hidden });
+}
+
 async function setProjectHidden(rawRequest: unknown): Promise<boolean> {
   const request = requireWriteRequest(rawRequest);
   const projectKey = requireProjectKey(request.projectKey);

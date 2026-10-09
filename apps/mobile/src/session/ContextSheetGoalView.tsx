@@ -18,6 +18,8 @@ import {
   View,
 } from 'react-native';
 import { Text, TextInput } from '@/components/AppText';
+import { NativePullDownMenu, usesNativePullDownMenu } from '@/platform/chrome';
+import { mobileInteractionStyles } from '@/components/mobileInteractionStyles';
 import type {
   MobileGoalLimitsInput,
   MobileGoalStatus,
@@ -408,6 +410,11 @@ function formatTokens(tokens: number): string {
 
 function makeGoalStyles(colors: ThemeColors) {
   return {
+    statusHeader: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: spacing.sm },
+    statusChip: { backgroundColor: colors.surfaceChip, borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
+    statusChipActive: { backgroundColor: colors.cta },
+    statusChipText: { color: colors.textSecondary, fontSize: typeScale.footnote },
+    statusChipTextActive: { color: colors.ctaText },
     groupLabel: {
       color: colors.textTertiary,
       fontSize: typeScale.footnote,
@@ -497,32 +504,7 @@ function makeGoalStyles(colors: ThemeColors) {
       fontSize: typeScale.body,
       fontWeight: fontWeight.semibold,
     },
-    pressed: {
-      opacity: 0.7,
-    },
-    statusHeader: {
-      alignItems: 'center' as const,
-      flexDirection: 'row' as const,
-      gap: spacing.md,
-      paddingTop: spacing.lg,
-    },
-    statusChip: {
-      backgroundColor: colors.surfaceChip,
-      borderRadius: radius.pill,
-      paddingHorizontal: spacing.md,
-      paddingVertical: 4,
-    },
-    statusChipActive: {
-      backgroundColor: colors.cta,
-    },
-    statusChipText: {
-      color: colors.textPrimary,
-      fontSize: typeScale.caption,
-      fontWeight: fontWeight.medium,
-    },
-    statusChipTextActive: {
-      color: colors.ctaText,
-    },
+    pressed: mobileInteractionStyles.pressed,
     statusMeta: {
       color: colors.textTertiary,
       fontSize: typeScale.caption,

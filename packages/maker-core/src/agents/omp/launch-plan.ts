@@ -84,6 +84,8 @@ export interface OmpSessionLaunchPlanInput {
   readonly remoteProxyEnvironment?: Readonly<Record<string, string>>;
   /** OMP runtime names to disable through its native skill extension setting. */
   readonly disabledSkillNames?: readonly string[];
+  /** Verified app-owned sources, loaded through the native custom directory setting. */
+  readonly managedSkillDirectories?: readonly string[];
   /**
    * 可选：把会话 JSONL 指到受管根内。
    * 上游 `--session-dir` 未在 v18.1.18 spike 中实证，因此默认不传（agent 目录
@@ -287,6 +289,7 @@ function settingsYaml(
   approvalMode: OmpApprovalMode,
   providers: readonly string[],
   disabledSkillNames: readonly string[],
+  managedSkillDirectories: readonly string[],
 ): string {
   return [
     'startup:',
@@ -295,6 +298,7 @@ function settingsYaml(
     'tools:',
     // 与 --approval-mode 同值双写：OMP 上游默认 yolo，不能依赖任何一侧的默认值。
     `  approvalMode: ${approvalMode}`,
+    ...(managedSkillDirectories.length ? ['skills:', '  customDirectories:', ...managedSkillDirectories.map((directory) => '    - ' + JSON.stringify(directory))] : []),
     'enabledProviders:',
     ...providers.map((provider) => `  - ${JSON.stringify(provider)}`),
     ...(disabledSkillNames.length === 0
@@ -511,7 +515,10 @@ export function createOmpSessionLaunchPlan(
       ...(systemPromptFile === undefined ? {} : { systemPromptFile }),
     }),
     approvalMode,
-    settingsYaml: settingsYaml(approvalMode, providers, disabledSkillNames),
+    settingsYaml: settingsYaml(approvalMode, providers, disabledSkillNames, (input.managedSkillDirectories ?? []).map((directory) => {
+      if (!implementation.isAbsolute(directory)) throw new Error('Managed Skill directory must be absolute');
+      return requireArgumentValue(directory, 'managed Skill directory');
+    })),
     arguments: Object.freeze(argv),
     environment: freezeRecord(environment),
   });

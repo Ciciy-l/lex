@@ -6,21 +6,26 @@
  * you are talking to, and the way into their settings. Two entrances, both
  * leading to the same place — the name/avatar lockup itself, and the gear at the
  * right end of the bar — because "click the name" is the discoverable one and
- * "the gear is on the right" is the learned one.
+ * "the gear is on the right" is the learned one. Local teammates also get a
+ * permanent way into their workbench here: the sidebar tab can be closed, and
+ * nothing else reopens it.
  */
 import { useMemo } from 'react';
-import { Settings2 } from 'lucide-react';
+import { LayoutGrid, Settings2 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
 import { WINDOW_NO_DRAG_STYLE } from '@/components/layout/windowDrag';
 import { useRegisterContentHeader } from '../feature-context';
+import { openBotWorkbenchTab } from '@/features/right-sidebar/lib/openBotWorkbenchTab';
 import { BotAvatar } from './BotAvatar';
 
 export interface BotChatIdentity {
   id: string;
   deviceId?: string;
   deviceName?: string;
+  /** 本机伙伴主任务的 session id;有它才有工作台入口。远程名册里为 null。 */
+  sessionId?: string | null;
   name: string;
   avatar?: string | null;
   avatarColor?: string | null;
@@ -53,6 +58,18 @@ export function BotSessionContentHeader({ bot }: { bot: BotChatIdentity }) {
         <span className="min-w-0 truncate">{bot.name}</span>
       </button>
       <div className="ml-auto flex shrink-0 items-center gap-1">
+        {!bot.deviceId && bot.sessionId ? (
+          <button
+            type="button"
+            onClick={() => void openBotWorkbenchTab(bot.sessionId!, bot.id).catch(() => undefined)}
+            aria-label={t('bots.workbench.open')}
+            title={t('bots.workbench.open')}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--text-tertiary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+            style={WINDOW_NO_DRAG_STYLE}
+          >
+            <LayoutGrid size={15} />
+          </button>
+        ) : null}
         {!bot.deviceId ? <button
           type="button"
           onClick={openSettings}

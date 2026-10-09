@@ -258,7 +258,8 @@ describe('reply before user echo', () => {
     const slots = reserve();
     expect(reconcileOptimisticUserMessages(slots, [], NO_IDS, NO_IDS)).toEqual([]);
     expect(reconcileOptimisticUserMessages(slots, [], new Set(['sent']), NO_IDS)).toBe(slots);
-    expect(reconcileOptimisticUserMessages(slots, [row('sent', 'user', 2)], NO_IDS, NO_IDS)).toBe(slots);
+    const echo = row('sent', 'user', 2);
+    expect(reconcileOptimisticUserMessages(slots, [echo], NO_IDS, NO_IDS)).toEqual([{ ...slots[0], message: echo }]);
     expect(reconcileOptimisticUserMessages(slots, [row('sent', 'user', 2)], NO_IDS, new Set(['sent']))).toEqual([]);
   });
 

@@ -175,8 +175,8 @@ export function PiSessionTreeSheet({
 
 function makeStyles(colors: ThemeColors) {
   return StyleSheet.create({
-    empty: { color: colors.textTertiary, fontSize: typeScale.listBody, padding: spacing.xl, textAlign: 'center' },
-    error: { color: colors.errorText, flex: 1, fontSize: typeScale.listBody },
+    empty: { color: colors.textTertiary, fontSize: typeScale.bodySmall, padding: spacing.xl, textAlign: 'center' },
+    error: { color: colors.errorText, flex: 1, fontSize: typeScale.bodySmall },
     loading: { alignItems: 'center', minHeight: 120, justifyContent: 'center' },
     node: { alignItems: 'flex-start', borderRadius: radius.container, flexDirection: 'row', gap: spacing.sm, minHeight: 54, paddingRight: spacing.md, paddingVertical: spacing.sm },
     nodeActive: { backgroundColor: colors.surfaceElevated },
@@ -184,10 +184,10 @@ function makeStyles(colors: ThemeColors) {
     nodeIconActive: { borderColor: colors.borderStrong },
     nodeLabel: { color: colors.textTertiary, fontSize: typeScale.caption },
     nodePressed: { opacity: 0.7 },
-    nodePreview: { color: colors.textPrimary, fontSize: typeScale.listBody, lineHeight: lineHeight.listBody },
+    nodePreview: { color: colors.textPrimary, fontSize: typeScale.bodySmall, lineHeight: lineHeight.bodySmall },
     nodeText: { flex: 1, gap: 2 },
-    notice: { color: colors.textSecondary, fontSize: typeScale.listBody, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+    notice: { color: colors.textSecondary, fontSize: typeScale.bodySmall, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
     noticeButton: { alignItems: 'center', backgroundColor: colors.surfaceElevated, borderRadius: radius.container, flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.sm, marginHorizontal: spacing.md, padding: spacing.md },
-    retry: { color: colors.textPrimary, fontSize: typeScale.listBody, fontWeight: fontWeight.semibold },
+    retry: { color: colors.textPrimary, fontSize: typeScale.bodySmall, fontWeight: fontWeight.semibold },
   });
 }

@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useBotProfiles } from './botStore';
 import { ArrowLeft, CircleAlert, RefreshCcw } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -7,6 +8,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { CCAgentSessionView } from '@/features/cc-agent/CCAgentSessionView';
 import type { ComposerBotMention } from '@/lib/fileTypes';
 import { getBotLastReadAt, markBotRead } from './botReadState';
+import { ensureBotWorkbenchTab } from '@/features/right-sidebar/lib/openBotWorkbenchTab';
 import type { BotChatIdentity } from './BotSessionContentHeader';
 import { useBotIslandVisibleSession } from './useBotIslandVisibleSession';
 
@@ -15,7 +17,7 @@ type BotSessionGate =
   | {
       kind: 'ready';
       mentions: ComposerBotMention[];
-      identity: BotChatIdentity;
+      identity: import('./botChatPresentation').BotChatBinding;
       /** True only for the Bot's own canonical chat (not a mounted channel route). */
       isCanonical: boolean;
       /** Read position captured before opening advances it; null when entry had no unread replies. */
@@ -77,6 +79,26 @@ function BotSessionGateView() {
   const [reloadVersion, setReloadVersion] = useState(0);
   const [gate, setGate] = useState<BotSessionGate>({ kind: 'loading' });
   useBotIslandVisibleSession(gate.kind === 'ready' ? sessionId ?? null : null);
+  // The gate proves ownership once; name and avatar edited in settings must
+  // still reach the open chat's header and composer.
+  const liveProfile = useBotProfiles().find((profile) => profile.id === botId);
+  const liveName = liveProfile?.name;
+  const liveAvatar = liveProfile?.avatar;
+  const liveAvatarColor = liveProfile?.avatarColor;
+  const gateIdentity = gate.kind === 'ready' ? gate.identity : null;
+  const identity = useMemo(
+    () =>
+      gateIdentity && liveName !== undefined
+        ? {
+            ...gateIdentity,
+            name: liveName,
+            avatar: liveAvatar ?? gateIdentity.avatar,
+            avatarColor: liveAvatarColor ?? gateIdentity.avatarColor,
+          }
+        : gateIdentity,
+    [gateIdentity, liveName, liveAvatar, liveAvatarColor],
+  );
+
 
   useEffect(() => {
     let cancelled = false;
@@ -138,7 +160,7 @@ function BotSessionGateView() {
           isCanonical: activeProjection?.role === 'canonical',
           unreadBoundaryAt:
             activeProjection?.role === 'canonical' && unreadCount > 0 ? lastReadAt : null,
-          identity: readBotChatIdentity(bot, botId),
+          identity: { ...readBotChatIdentity(bot, botId), sessionId },
           mentions: Array.isArray(bots)
             ? bots
                 .map((candidate) => readBotMention(candidate, botId))
@@ -176,6 +198,14 @@ function BotSessionGateView() {
       unsubscribe?.();
     };
   }, [botId, gate.kind, sessionId]);
+  // 本机伙伴主任务:右侧栏默认带上「工作台」标签(首次进入时创建并展开)。
+  // 远程伙伴走 RemoteBotSessionView,不经过这里;渠道任务、历史任务不提供工作台。
+  const workbenchSessionId = gate.kind === 'ready' && gate.isCanonical ? sessionId : undefined;
+  useEffect(() => {
+    if (!botId || !workbenchSessionId) return;
+    void ensureBotWorkbenchTab(workbenchSessionId, botId).catch(() => undefined);
+  }, [botId, workbenchSessionId]);
+
 
   if (gate.kind === 'loading') {
     return (
@@ -237,7 +267,7 @@ function BotSessionGateView() {
       <div className="min-w-0 flex-1">
         <CCAgentSessionView
           botMentions={gate.mentions}
-          botIdentity={gate.identity}
+          botIdentity={identity ?? gate.identity}
           botUnreadBoundaryAt={gate.unreadBoundaryAt}
         />
       </div>

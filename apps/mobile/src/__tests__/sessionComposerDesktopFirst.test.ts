@@ -146,10 +146,10 @@ describe('mobile session composer desktop-first surface', () => {
     expect(source).toContain('PaperPlaneIcon');
     expect(source).toContain('Camera');
     expect(source).toContain('Settings');
-    // Context 面板「添加」分组的四个入口 icon(照片 / 截图 / 拍照 / 文件)。
+    // 「添加」保留照片 / 拍照 / 文件，不再提供单独截图入口。
     expect(source).toContain('<Image color={colors.textPrimary}');
     expect(source).toContain('<Camera color={colors.textPrimary}');
-    expect(source).toContain('<Scan color={colors.textPrimary}');
+    expect(source).not.toContain('session.contextSheetScreenshotsRow');
     expect(source).toContain('<Folder color={colors.textPrimary}');
     expect(composerInputSource).toContain('cardActive={composerCardActive}');
     expect(composerInputSource).toContain('leading={controls.leading}');
@@ -177,7 +177,8 @@ describe('mobile session composer desktop-first surface', () => {
     expect(composerInputSource).toContain('trailing={composerCardActive ? null : controls.trailing}');
     expect(trailingActionsSource).toContain('<PaperPlaneIcon');
     expect(trailingActionsSource).toContain('color={composerSendDisabled ? colors.textSecondary : colors.ctaText}');
-    expect(source).toContain('const composerCardActive = (canUseComposer && composerFocused)');
+    // 收起胶囊点开到真正聚焦之间的过渡期(composerPillOpen.opening)同样算激活态,仍受 canUseComposer 门控。
+    expect(source).toContain('const composerCardActive = (canUseComposer && (composerFocused || composerPillOpen.opening))');
     expect(source).toContain('|| permissionSheetOpen');
     // 2026-07-29 用户裁决:权限入口是 composer 左侧图标钮 + 独立浮窗
     // (MobilePermissionPickerList 由本 screen 直挂 SheetSurface);
@@ -205,7 +206,7 @@ describe('mobile session composer desktop-first surface', () => {
     expect(source).toContain('testID="session.contextSheet"');
     expect(attachmentButtonSource).toContain('setContextSheetOpen(true)');
     expect(source).toContain("<ContextSheetGroup label={t('session.common.groupMode')}>");
-    expect(source).toContain("<ContextSheetGroup label={t('session.common.groupAdd')}>");
+    expect(source).toContain("<ContextSheetGroup label={Platform.OS === 'ios' && contextSheetMediaLibraryEnabled ? '' : t('session.common.groupAdd')}>");
     expect(source).not.toContain('testID="session.attachmentPathPanel"');
     expect(source).not.toContain('被控电脑上的文件路径');
     expect(source).toContain('testID="session.composerActivityStatus"');
@@ -254,9 +255,9 @@ describe('mobile session composer desktop-first surface', () => {
     expect(source).toContain('color: colors.statusAccent');
     expect(source).not.toContain("import { BlurView } from 'expo-blur';");
     expect(source).toContain("import { BlurBackdrop } from '@/session/BlurBackdrop';");
-    expect(source).toContain("function TranslucentBackdrop()");
-    expect(source).toContain("<TranslucentBackdrop />");
-    expect(source).toContain('return <BlurBackdrop intensity={40} overlayColor={colors.chatHeaderSurface} style={styles.translucentBackdrop} />;');
+    expect(source).toContain('<SessionHeaderNativeBlur height=');
+    expect(source).toMatch(/<SessionHeaderNativeTitle\s+title=\{title\}/);
+    expect(source).toContain('<SessionHeaderNativeActions');
     expect(source).toContain("sessionHeaderBar: {\n    alignItems: 'center',\n    backgroundColor: 'transparent'");
     expect(source).toContain('sessionBottomLayer: {\n    backgroundColor: colors.surface');
     expect(source).not.toContain("colors.glassTint");
@@ -318,7 +319,7 @@ describe('mobile session composer desktop-first surface', () => {
     expect(source).toContain('if (!visualOpenSearch) return;');
     expect(source).toContain('setSearchOpen(true);');
     expect(source).toContain('if (visualSearchQuery !== null) setSearchQuery(visualSearchQuery);');
-    expect(source).toContain('autoFocus={MOBILE_VISUAL_MOCK_ENABLED && visible}');
+    expect(source).toContain('autoFocus={visible}');
     expect(composerInputSource).toContain('autoFocus={visualFocusComposer}');
     expect(composerInputSource).toContain('cursorColor={colors.inputCaret}');
     expect(composerInputSource).toContain('selectionColor={colors.inputCaret}');
@@ -383,7 +384,12 @@ describe('mobile session composer desktop-first surface', () => {
     expect(source).toContain('testID="session.bottomLayer"');
     expect(source).toContain('testID="session.bottomContent"');
     expect(source).toContain("paddingBottom: sessionOperationLayout.composerSlot === 'pending-interaction'");
-    expect(source).toContain('? 0\n                  : insets.bottom');
+    // 底部 padding:待处理面板自己收 safe-area(0);dock 形态(键盘跟随 / 胶囊停靠)另行计算;
+    // 非 dock 的普通 composer 仍由外层留一次 insets.bottom。
+    const bottomPaddingStart = source.indexOf("paddingBottom: sessionOperationLayout.composerSlot === 'pending-interaction'");
+    const bottomPadding = source.slice(bottomPaddingStart, source.indexOf('testID="session.bottomContent"', bottomPaddingStart));
+    expect(bottomPadding).toMatch(/^paddingBottom: sessionOperationLayout\.composerSlot === 'pending-interaction'\s*\n\s*\? 0\s*\n/);
+    expect(bottomPadding).toMatch(/: insets\.bottom,\s*\n\s*\},/);
     expect(source.match(/safeAreaBottomInset={insets\.bottom}/g)).toHaveLength(2);
     expect(source).toContain('pointerEvents="box-none"\n            style={[');
     expect(source).toContain('nativeShellLayout.wideViewport && { maxWidth: nativeShellLayout.contentMaxWidth }');
@@ -769,7 +775,9 @@ describe('mobile session composer desktop-first surface', () => {
     // 手势被系统/滚动打断时撤销按下即录(review P1)。
     expect(source).toContain('cancelVoiceForAppBackground();');
     expect(source).toContain('testID="session.voiceRecordingPill"');
-    expect(source).toContain('{ width: voiceRecordingTimer.pillWidth }');
+    // 胶囊宽度驱动语音按钮外框(过渡由 voicePillWidthMotion 负责);外框要带上按钮的
+    // hitSlop,否则收起态 34pt 麦克风的命中区会因新的直接父视图而缩小。
+    expect(source).toContain('<VoicePillWidthFrame hitSlop={COMPOSER_CONTROL_HIT_SLOP} width={voiceRecordingTimer.pillWidth}>');
     expect(source).not.toContain('voiceDuration');
     expect(source).not.toContain('recordingDuration');
     expect(source).not.toContain('formatVoiceDuration');

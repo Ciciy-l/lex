@@ -1,3 +1,4 @@
+import { collectPluginInvocations, type PluginInvocation } from './pluginInvocations';
 import { placeBotTaskCardsAfterIntroduction, readBotCollaborationMeta, type BotCollaborationMeta } from '@cindy/maker-shared/botCollaboration';
 import { readBotDirectMessageMeta, type BotDirectMessageMeta } from '@cindy/maker-shared/botDirectMessage';
 import type { RemoteMessage, RemoteMessageRole } from '@/session/types';
@@ -65,6 +66,7 @@ export type NormalizedRemoteMessageKind =
   | 'system';
 
 export interface NormalizedRemoteMessage {
+  pluginInvocations?: PluginInvocation[];
   key: string;
   source: RemoteMessage;
   kind: NormalizedRemoteMessageKind;
@@ -232,7 +234,7 @@ export function normalizeRemoteMessages(
 
       const task = readBotCollaborationMeta(message.agentMeta?.botCollaboration);
       const direct = readBotDirectMessageMeta(message.agentMeta?.botDirectMessage);
-      const isTaskTrace = task?.role === 'delegation-request' || task?.role === 'interjection';
+      const isTaskTrace = task?.role === 'delegation-request' || task?.role === 'delegation-result' || task?.role === 'interjection';
       if (isTaskTrace || direct) {
         result.push({
           key: messageNormalizeKey(message), source: message, kind: 'system', role: message.role,
@@ -499,6 +501,10 @@ export function normalizeRemoteMessages(
     });
   }
 
+  const pluginInvocations = collectPluginInvocations(sorted, toolResultPairing);
+  for (const row of result) {
+    if (row.kind === 'user' && !row.isSyntheticTrigger && !row.hookSource && !row.automationOrigin) row.pluginInvocations = pluginInvocations.get(row.source.clientId || row.source.id);
+  }
   dedupeToolImagesAgainstAssistantMarkdown(result);
   return result;
 }

@@ -177,6 +177,7 @@ import {
   useControlledBy,
 } from '@/features/remote-device/ControlledBanner';
 import {
+  commandsForHelpCard,
   loadAllCommands,
   dispatchCommand,
   leadingSlashInvocation,
@@ -185,6 +186,7 @@ import {
   reconcilePiRuntimeCommandForDispatch,
   reconcilePiRuntimeCommandForDispatchWithRetry,
   rewriteNativeSkillAliasFromCommand,
+  rewriteAgentSkillInvocationForDispatch,
   supportsNativeSkillRuntimeAliases,
   shouldRefreshRuntimeCommandCatalog,
   type UnifiedCommand,
@@ -229,6 +231,7 @@ import {
 import type { Effort, PermissionMode } from '@/lib/userPreferences.types';
 import type { AttachedFile, ComposerBotMention, MentionedResource } from '@/lib/fileTypes';
 import { serializeAttachedFiles } from '@/lib/messageAttachmentPayload';
+import { startReviewOnDevice } from '@/lib/startReviewOnDevice';
 import type { PastedTextRange, SlashCommandRange } from '@/lib/imageRef';
 import { createLogger } from '@/lib/logger';
 import { subscribeWorkLouderCodexAction } from '@/lib/workLouderCodexActions';
@@ -486,7 +489,7 @@ interface CCAgentSessionViewProps {
    * 顶栏换成伙伴 lockup、assistant 气泡挂 TA 的头像、输入框使用伙伴称呼，保留标准权限入口。
    * 判定仍与 `session.source === 'bot'` 双重成立才生效——URL 不是身份。
    */
-  botIdentity?: BotChatIdentity;
+  botIdentity?: import('../bots/botChatPresentation').BotChatBinding;
   /** Entry-time read boundary for a Bot chat; preserved after the live read position advances. */
   botUnreadBoundaryAt?: number | null;
 }
@@ -943,7 +946,7 @@ export function CCAgentSessionView({
   // 「这是一场跟伙伴的对话」的单一判据:路由声明的身份 + 任务自己的 source 双重成立。
   // 只有 URL 说了不算 —— 那是导航投影,不是身份。
   const botChatIdentity: BotChatIdentity | null =
-    botIdentity && session?.source === 'bot' ? botIdentity : null;
+    botIdentity && botIdentity.sessionId === sessionId ? botIdentity : null;
   // 伙伴没有 RunningStatusBar，折叠呼吸灯继续留在输入框上方，不能随状态行一起消失。
   const showCenteredControlledBanner =
     hasControlledBanner && (!controlledBannerCollapsed || Boolean(botChatIdentity));
@@ -2433,12 +2436,7 @@ export function CCAgentSessionView({
   const insertHelpCard = useCallback(async () => {
     const commands = await getHelpCommandsSnapshot();
     insertSystemCard('help', {
-      commands: commands.map((c) => ({
-        name: c.name,
-        description: 'description' in c ? c.description : undefined,
-        // help 卡用 source 区分类目: agent-skill 透传原 source, 其余按 kind 简化
-        source: c.kind === 'agent-skill' ? c.source : c.kind,
-      })),
+      commands: commandsForHelpCard(commands),
     });
   }, [getHelpCommandsSnapshot, insertSystemCard]);
 
@@ -2482,23 +2480,6 @@ export function CCAgentSessionView({
           toast.success(t('goal.toast.set'));
         } else if (payload.goalAction === 'cleared') {
           toast.success(t('goal.toast.cleared'));
-        }
-        return;
-      }
-      if (payload.command === 'learn') {
-        // /learn 的蒸馏在独立后台 session 跑(learn-host);这里只反馈启动结果。
-        // 进度与"待审查"入口由 learn:event 状态流驱动(审查面板见 features/learn)。
-        if (payload.error === 'learn-usage') {
-          toast.warning(t('learn.toast.usage'));
-        } else if (payload.error === 'learn-busy') {
-          toast.warning(t('learn.toast.busy'));
-        } else if (payload.error === 'learn-failed') {
-          toast.error(t('learn.toast.failed'));
-        } else if (payload.error === 'remote-unsupported') {
-          toast.warning(t('commands.toast.remoteUnsupported'));
-        } else if (payload.learnRunId) {
-          // 状态卡只存 runId,状态本体由卡片内 useLearnRun 订阅 learn:event 实时刷新。
-          insertSystemCard('learn', { runId: payload.learnRunId });
         }
         return;
       }
@@ -3119,8 +3100,7 @@ export function CCAgentSessionView({
         return {
           handled: false,
           accepted: false,
-          message:
-            rewriteNativeSkillAliasFromCommand(agentKind, message, hit),
+          message: agentKind === 'claude-code' ? rewriteAgentSkillInvocationForDispatch(message, hit) : rewriteNativeSkillAliasFromCommand(agentKind, message, hit),
         };
       }
       // Desktop commands stay `^/` only. A whitespace-prefixed `/help` is not a dispatch.
@@ -3131,19 +3111,20 @@ export function CCAgentSessionView({
       // nor share a mutable attachment ref with a later command.
       if (hit.name === 'review') {
         if (!sessionId) return { handled: true, accepted: false, message };
-        if (remoteDeviceId || session?.remoteHostId) {
-          // 轮 35 HIGH-2:SSH 远端会话同样不支持 /review —— 与 device-link 并列
-          // 前置拦截, 避免命令进入 main 后被 UNSUPPORTED_CAPABILITY 拒绝。
+        if (session?.remoteHostId) {
+          // SSH workspaces still have no Review transport. Device-link tasks
+          // use the controlled Desktop's local Review lifecycle below.
           toast.warning(t('review.toast.remoteUnsupported'));
           return { handled: true, accepted: false, message };
         }
         const attachments = files?.length ? serializeAttachedFiles(files) : undefined;
         try {
-          await window.electronAPI.maker.startReview({
+          const request = {
             sourceSessionId: sessionId,
             ...(args.trim() ? { focus: args.trim() } : {}),
             ...(attachments?.length ? { attachments } : {}),
-          });
+          };
+          await startReviewOnDevice(request, rightSidebarDeviceLinkDeviceId);
           return { handled: true, accepted: true, message };
         } catch (err) {
           const ipcError = extractIpcError(err);
@@ -3184,6 +3165,7 @@ export function CCAgentSessionView({
       session?.workingDir,
       sessionId,
       remoteDeviceId,
+      rightSidebarDeviceLinkDeviceId,
       t,
     ],
   );
@@ -4416,22 +4398,23 @@ export function CCAgentSessionView({
     };
   }, [historyLoaded, insertSystemCard, sessionId, learnRestoreKey]);
 
-  // learn 卡跟随最新叙述:提案就绪 / 每轮修订刷新(awaiting-review 的
-  // state-changed)时把本会话的 learn 卡移到消息流末尾 —— 卡片是 /learn 发出
-  // 时插入的,蒸馏长输出把用户视线带到底部后,顶部的「查看提案」入口会被
-  // 错过、误以为已装好(Chris 实测反馈)。移动只调位置不换消息对象。
+  // Learn 现在由 Agent Skill 通过宿主工具启动,不再有 Desktop command payload。
+  // 首个属于本会话的状态事件负责插入卡片；提案就绪 / 每轮修订刷新时再把卡片
+  // 移到消息流末尾,避免蒸馏长输出把「查看提案」入口留在顶部。
   useEffect(() => {
     if (!sessionId) return;
     // subscribeLearnEvents:本机走 learn:event IPC;device-link 远程会话经
     // onRemotePush 消费被控端转发的同名事件(learnTransport 内路由)。
     const off = subscribeLearnEvents(sessionId, (payload) => {
       if (payload.type !== 'state-changed') return;
-      if (payload.run.status !== 'awaiting-review') return;
       if (payload.run.sessionId !== sessionId && payload.run.originSessionId !== sessionId) return;
-      makerChatStore.moveLearnCardToEnd(sessionId, payload.run.runId);
+      insertSystemCard('learn', { runId: payload.run.runId });
+      if (payload.run.status === 'awaiting-review') {
+        makerChatStore.moveLearnCardToEnd(sessionId, payload.run.runId);
+      }
     });
     return off;
-  }, [sessionId]);
+  }, [insertSystemCard, sessionId]);
 
   // session 切换时 reset consumed guard(切到别的 session 后再回来,理论上 pending
   // 已被消费过、Map 也清掉了,但 ref 复用一份是为了 guard 可重入)。
@@ -4779,7 +4762,10 @@ export function CCAgentSessionView({
         {/* Scroll container — full height, bottom padding reserves space for input overlay.
            key={sessionId}: force a full remount on session switch so scroll state,
            refs, and ResizeObservers are fresh — guarantees per-session isolation. */}
-        <div className="relative min-h-0 flex-1">
+        <div
+          className="wallpaper-message-viewport relative min-h-0 flex-1"
+          style={{ '--wallpaper-composer-height': `${overlayHeight}px` } as CSSProperties}
+        >
           {/* perf/session-switch 探针纯诊断:仅 DEV 用 Profiler 量 MessageStream commit,
             生产直接渲染 el(见上方 messageStreamEl),不引入多余 Profiler fiber。 */}
           {import.meta.env.DEV ? (
@@ -4801,11 +4787,11 @@ export function CCAgentSessionView({
         >
           {/* Gradient mask: transparent → content-area */}
           <div className="pointer-events-none h-8 w-full">
-            <div className="h-full w-full bg-gradient-to-t from-[hsl(var(--content-area))] to-transparent" />
+            <div className="wallpaper-composer-fade h-full w-full bg-gradient-to-t from-[hsl(var(--content-area))] to-transparent" />
           </div>
 
           {/* Solid background zone */}
-          <div className="pointer-events-auto flex w-full flex-col items-center bg-[hsl(var(--content-area))] pb-5">
+          <div className="wallpaper-composer-zone pointer-events-auto flex w-full flex-col items-center bg-[hsl(var(--content-area))] pb-5">
             {/* 单行 composer 状态层：RunningStatusBar 与中央胶囊组合叠在同一个 grid row。
               展开态由「计划 + 完整被控提示」组成真实 flex 组合共同居中,被控提示会把计划
               向左挤且不会互相覆盖；折叠态计划恢复单独居中,呼吸灯移到 token 统计左侧。 */}

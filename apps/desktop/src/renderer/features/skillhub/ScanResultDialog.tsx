@@ -13,7 +13,8 @@ import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import type { ScanResultPayload } from './PublishDialog';
 import { isPassingScanStatus, isPendingManualReviewStatus } from './lib/scanStatus';
-import { isPublicationProcessingFailure } from './lib/scanResultPresentation';
+import { isPublicationProcessingFailure, publicationProcessingErrorCode, publicationProcessingGateErrorCode, scanPublicationErrorCode } from './lib/scanResultPresentation';
+import { publishErrorDetail } from '../../../shared/skillhubPublishErrors';
 
 interface ScanIssue {
   severity?: string;
@@ -44,11 +45,18 @@ function resolveI18nField(value: unknown): string {
   return String(value ?? '');
 }
 
-function visibleScanIssues(gate: ScanGate): ScanIssue[] {
+function visibleScanIssues(gate: ScanGate, t: TFunction): ScanIssue[] {
   const issues = Array.isArray(gate.issues) ? gate.issues : [];
   return (issues as ScanIssue[]).filter(
     (issue) => issue.severity === 'warning' || issue.severity === 'error',
-  );
+  ).map((issue) => {
+    const code = scanPublicationErrorCode(issue.code, resolveI18nField(issue.message)) ?? publicationProcessingGateErrorCode(gate.name);
+    if (!code) return issue;
+    const message = publishErrorDetail(code, resolveI18nField(issue.message));
+    if (message) return { ...issue, message };
+    // Service/auth diagnostics must not escape through either rendering or copy.
+    return { severity: issue.severity, code: issue.code, message: t(`skillhub.publishError.${code}.message`) };
+  });
 }
 
 function normalizeScanCode(value: unknown): string {
@@ -105,6 +113,8 @@ function scanGateLabel(gate: ScanGate, t: TFunction): string {
   if (code === 'internal-error') {
     return t('skillhub.scanResult.gateLabel.publicationProcessing');
   }
+  const errorCode = publicationProcessingErrorCode([gate]);
+  if (errorCode) return t(`skillhub.publishError.${errorCode}.title`);
   return gate.name;
 }
 
@@ -153,6 +163,13 @@ export function ScanResultDialog({ open, onClose, result }: ScanResultDialogProp
   const failedGates = (result.gates ?? []).filter((g) => !isPassingScanStatus(g.status));
   const processingFailure =
     !passed && !pendingManualReview && isPublicationProcessingFailure(result.gates);
+  const processingErrorCode = processingFailure ? publicationProcessingErrorCode(result.gates) : undefined;
+  const processingErrorCopy = processingErrorCode && processingErrorCode !== 'INTERNAL'
+    ? {
+        title: t(`skillhub.publishError.${processingErrorCode}.title`),
+        message: t(`skillhub.publishError.${processingErrorCode}.message`),
+      }
+    : undefined;
   const title = rejected
     ? t('skillhub.scanResult.rejectedTitle')
     : passed
@@ -160,7 +177,7 @@ export function ScanResultDialog({ open, onClose, result }: ScanResultDialogProp
       : pendingManualReview
         ? t('skillhub.scanResult.pendingTitle')
         : processingFailure
-          ? t('skillhub.scanResult.processingFailedTitle')
+          ? processingErrorCopy?.title ?? t('skillhub.scanResult.processingFailedTitle')
           : t('skillhub.scanResult.failedTitle', { status: result.status });
   const statusLabel = scanStatusLabel(result.status, t);
   const description = rejected
@@ -172,7 +189,7 @@ export function ScanResultDialog({ open, onClose, result }: ScanResultDialogProp
       : pendingManualReview
         ? t('skillhub.scanResult.pendingDesc')
         : processingFailure
-          ? t('skillhub.scanResult.processingFailedDesc')
+          ? processingErrorCopy?.message ?? t('skillhub.scanResult.processingFailedDesc')
           : t('skillhub.scanResult.failedDesc', { status: statusLabel });
   const footerButtonBaseClass = cn(
     'inline-flex h-9 min-w-[104px] items-center justify-center gap-1.5 rounded-full px-5',
@@ -198,7 +215,7 @@ export function ScanResultDialog({ open, onClose, result }: ScanResultDialogProp
         lines.push(
           `- ${withRawCode(label, gate.name)}: ${withRawCode(scanStatusLabel(gate.status, t), gate.status)}`,
         );
-        for (const issue of visibleScanIssues(gate)) {
+        for (const issue of visibleScanIssues(gate, t)) {
           const line = scanIssueCopyLine(issue);
           if (line) lines.push(`  - ${line}`);
         }
@@ -230,7 +247,7 @@ export function ScanResultDialog({ open, onClose, result }: ScanResultDialogProp
           className="fixed inset-0 z-[10000] bg-[var(--overlay-modal)]"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         />
-        <Dialog.Content
+        <Dialog.Content onPointerDownOutside={(event) => event.preventDefault()}
           className={cn(
             'fixed left-1/2 top-1/2 z-[10000] -translate-x-1/2 -translate-y-1/2',
             'w-full max-w-[480px] rounded-xl',
@@ -306,9 +323,9 @@ export function ScanResultDialog({ open, onClose, result }: ScanResultDialogProp
                           {scanStatusLabel(gate.status, t)}
                         </span>
                       </div>
-                      {visibleScanIssues(gate).length > 0 && (
+                      {visibleScanIssues(gate, t).length > 0 && (
                         <div className="mt-2 flex flex-col gap-1.5 pl-5">
-                          {visibleScanIssues(gate).map((issue, i) => (
+                          {visibleScanIssues(gate, t).map((issue, i) => (
                             <div
                               key={i}
                               className="text-xs leading-relaxed text-[var(--cmd-palette-item-meta)]"

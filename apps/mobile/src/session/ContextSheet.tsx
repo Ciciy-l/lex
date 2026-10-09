@@ -18,7 +18,9 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import { Text } from '@/components/AppText';
+import { Text, TextInput } from '@/components/AppText';
+import { MainWindowActionButton } from '@/components/MobilePrimitives';
+import { mobileInteractionStyles } from '@/components/mobileInteractionStyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { computeContextSheetSnapHeights, type ContextSheetSnap } from '@/session/contextSheetModel';
 import { SheetModal } from '@/session/SheetModal';
@@ -45,8 +47,8 @@ export interface ContextSheetProps {
   onBack?: () => void;
   keyboardAvoidingBehavior: 'height' | 'padding' | undefined;
   children: ReactNode;
-  /** Optional media strip rendered above the grouped actions. */
   media?: ReactNode;
+  error?: string | null;
   /** 固定在面板底部（滚动区之外）的操作区，如「加入对话」提交按钮。 */
   footer?: ReactNode;
   testID?: string;
@@ -60,6 +62,7 @@ export function ContextSheet({
   keyboardAvoidingBehavior,
   children,
   media,
+  error,
   footer,
   testID,
 }: ContextSheetProps) {
@@ -106,6 +109,7 @@ export function ContextSheet({
       >
         {media}
         {children}
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
       </SheetSurface>
     </SheetModal>
   );
@@ -141,6 +145,8 @@ function flattenChildren(children: ReactNode): ReactNode[] {
 }
 
 export interface ContextSheetRowProps {
+  /** Dismiss the iOS sheet before presenting a system picker. */
+  dismissBeforePress?: boolean;
   icon: ReactNode;
   label: string;
   onPress: () => void;
@@ -206,7 +212,7 @@ export interface ContextSheetFooterButtonProps {
   testID?: string;
 }
 
-/** footer 槽用的主操作按钮（黑底 pill，对照 Cursor「Add N」）。 */
+/** footer 槽用的主操作按钮:共享主按钮(cta 实心 pill;加载只转圈)。 */
 export function ContextSheetFooterButton({
   label,
   onPress,
@@ -214,28 +220,10 @@ export function ContextSheetFooterButton({
   disabled,
   testID,
 }: ContextSheetFooterButtonProps) {
-  const styles = useThemedStyles(makeContextSheetStyles);
-  const { colors } = useTheme();
   return (
-    <Pressable
-      accessibilityLabel={label}
-      accessibilityRole="button"
-      accessibilityState={{ disabled: disabled || busy }}
-      disabled={disabled || busy}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.footerButton,
-        disabled && styles.footerButtonDisabled,
-        pressed && styles.footerButtonPressed,
-      ]}
-      testID={testID}
-    >
-      {busy ? (
-        <ActivityIndicator color={colors.ctaText} size="small" />
-      ) : (
-        <Text style={styles.footerButtonLabel}>{label}</Text>
-      )}
-    </Pressable>
+    <MainWindowActionButton
+      action={{ busy, disabled, label, onPress, testID, tone: 'primary' }}
+    />
   );
 }
 
@@ -245,23 +233,12 @@ function makeContextSheetStyles(colors: ThemeColors) {
   return {
     // Modal 外壳样式(背板/内容层/键盘规避)已随 SheetModal 抽出;
     // sheet 表面样式(sheet/dragZone/grabber/header/滚动区/footer 容器)已随 SheetSurface 抽出。
-    footerButton: {
-      alignItems: 'center' as const,
-      backgroundColor: colors.cta,
-      borderRadius: radius.pill,
-      height: 50,
-      justifyContent: 'center' as const,
-    },
-    footerButtonDisabled: {
-      opacity: 0.4,
-    },
-    footerButtonPressed: {
-      opacity: 0.7,
-    },
-    footerButtonLabel: {
-      color: colors.ctaText,
-      fontSize: typeScale.body,
-      fontWeight: fontWeight.semibold,
+    // 说明、提示、报错(成句的话):footnote 13/18 400。
+    errorText: {
+      color: colors.errorText,
+      fontSize: typeScale.footnote,
+      lineHeight: lineHeight.caption,
+      fontWeight: fontWeight.regular,
     },
     group: {
       paddingTop: spacing.lg,
@@ -280,9 +257,7 @@ function makeContextSheetStyles(colors: ThemeColors) {
       minHeight: ROW_HEIGHT,
       justifyContent: 'space-between' as const,
     },
-    rowPressed: {
-      opacity: 0.6,
-    },
+    rowPressed: mobileInteractionStyles.pressed,
     rowDisabled: {
       opacity: 0.4,
     },

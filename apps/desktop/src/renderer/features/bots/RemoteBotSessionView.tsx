@@ -170,7 +170,7 @@ export function RemoteBotSessionView() {
             key={`${deviceId}:${ready.sessionId}`}
             sessionIdProp={ready.sessionId}
             routeOwner
-            botIdentity={ready}
+            botIdentity={{ ...ready, sessionId: ready.sessionId }}
             readOnly={!bot.online || validatedSessionId !== bot.sessionId || failed}
           />
         </div>

@@ -299,3 +299,13 @@ describe('隔离 — 一个伙伴的技能不进另一个伙伴的目录', () =>
     expect(path.relative(path.join(userDataDir, 'bots'), root)).toBe('-escape');
   });
 });
+it('preserves a foreground edit when background learning uses an older snapshot', async () => {
+  const initial = await saveBotSkill(userDataDir, 'bot-1', { ...SAMPLE, now: Date.parse('2026-09-01T00:00:00.000Z') });
+  const results = await Promise.allSettled([
+    saveBotSkill(userDataDir, 'bot-1', { ...SAMPLE, body: 'Human corrected workflow', now: Date.parse('2026-09-02T00:00:00.000Z') }),
+    saveBotSkill(userDataDir, 'bot-1', { ...SAMPLE, body: 'Outdated background proposal', expectedUpdatedAt: initial.record.updatedAt }),
+  ]);
+  expect(results.map(result => result.status)).toEqual(['fulfilled', 'rejected']);
+  expect((await readBotSkill(userDataDir, 'bot-1', 'weekly-report'))?.body).toBe('Human corrected workflow');
+  await expect(saveBotSkill(userDataDir, 'bot-1', { ...SAMPLE, expectedUpdatedAt: null })).rejects.toThrow('Skill changed during review');
+});

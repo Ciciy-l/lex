@@ -36,6 +36,33 @@ import type { TurnChangeSetUpdatedPayload } from '../../shared/turnChangeSet';
 
 type FullMaker = typeof window.electronAPI.maker;
 
+export type RemoteCredentialSwitchOutcome =
+  | { kind: 'applied'; sessionId: string }
+  | { kind: 'failed'; sessionId: string; reason: 'apply-failed' | 'rollback-failed' };
+
+/** A deferred model choice settles on its owning device after the invoke has returned. */
+export function subscribeRemoteCredentialSwitchOutcome(
+  sessionId: string,
+  deviceId: string | undefined,
+  callback: (outcome: RemoteCredentialSwitchOutcome) => void,
+): () => void {
+  if (!sessionId) return () => {};
+  return window.electronAPI.deviceLink.onRemotePush((push, ownerStamp) => {
+    const sourceDeviceId = deviceId ?? getStickySessionDeviceId(sessionId);
+    if (!sourceDeviceId || push.deviceId !== sourceDeviceId || !isDeviceLinkRemotePushCurrent(push, ownerStamp)) return;
+    const payload = push.payload;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
+    const value = payload as Record<string, unknown>;
+    if (value.sessionId !== sessionId) return;
+    if (push.channel === 'maker:session-credential-switch-applied') {
+      callback({ kind: 'applied', sessionId });
+    } else if (push.channel === 'maker:session-credential-switch-failed' &&
+      (value.reason === 'apply-failed' || value.reason === 'rollback-failed')) {
+      callback({ kind: 'failed', sessionId, reason: value.reason });
+    }
+  });
+}
+
 /**
  * makerChatStore / ChatInput 经传输层调用的会话操作子集。本地直接复用
  * window.electronAPI.maker;远程转 deviceLink.invoke。所有 channel 均在

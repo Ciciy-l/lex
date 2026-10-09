@@ -1,3 +1,7 @@
+import { FILE_PEER_CHANNEL, TASK_MIGRATION_CHANNEL } from '@cindy/device-link';
+import { requestFilePeer, stopFilePeers } from './filePeer';
+import { requestTaskMigration } from '../task-migration/service';
+import { normalizeProviderOrder } from "../../shared/providerOrder.js";
 /**
  * dispatch —— device-link 被控端隧道层。
  *
@@ -22,6 +26,8 @@
 import {
   computeAllowlistHash,
   INVOKE_TIMEOUT_OVERRIDES_MS,
+  ACTION_INVOKE_TIMEOUTS_MS,
+  resolveRemoteInvokeTimeoutMs,
   MAX_FRAME_BYTES,
   PROTOCOL_VERSION,
   REMOTE_INVOKE_ALLOWLIST,
@@ -620,7 +626,7 @@ function projectInvokeResultForTunnel(
     return capScheduleSidebarIndexForTunnel(result);
   }
   if (channel !== 'maker:provider:list') return result;
-  const r = result as { providers?: unknown; modelVisibilityOverrides?: unknown };
+  const r = result as { providers?: unknown; modelVisibilityOverrides?: unknown; providerOrder?: unknown };
   if (!Array.isArray(r.providers)) return result;
   const providers = (r.providers as Record<string, unknown>[]).map((p) => {
     const rest = { ...p };
@@ -650,6 +656,7 @@ function projectInvokeResultForTunnel(
   return {
     providers,
     ...(modelVisibilityOverrides !== undefined ? { modelVisibilityOverrides } : {}),
+    ...(Array.isArray(r.providerOrder) ? { providerOrder: normalizeProviderOrder(r.providerOrder) } : {}),
   };
 }
 
@@ -755,6 +762,7 @@ const DEFAULT_REMOTE_INVOKE_CLIENT_WAIT_MS = 30_000;
 const REMOTE_INVOKE_MAX_CLIENT_WAIT_MS = Math.max(
   DEFAULT_REMOTE_INVOKE_CLIENT_WAIT_MS,
   ...Object.values(INVOKE_TIMEOUT_OVERRIDES_MS),
+  ...ACTION_INVOKE_TIMEOUTS_MS,
 );
 /** 再保留一轮同等重连窗口后才放弃无人等待的回包(全局上限;逐条按 channel 收窄)。 */
 const REMOTE_INVOKE_RESULT_OUTBOX_MAX_AGE_MS = REMOTE_INVOKE_MAX_CLIENT_WAIT_MS * 2;
@@ -766,10 +774,18 @@ const REMOTE_INVOKE_RESULT_OUTBOX_MAX_AGE_MS = REMOTE_INVOKE_MAX_CLIENT_WAIT_MS 
  * 弱网时段最多占 outbox 两分钟纯属浪费配额;长任务 channel(60s 预算)自动保留
  * 更久。控制端可能配置更短的超时(mobile 15s),推断值只偏保守、不早丢。
  */
-function outboxEntryMaxAgeMs(channel: string | undefined): number {
-  const budgetMs =
-    (channel && INVOKE_TIMEOUT_OVERRIDES_MS[channel]) || DEFAULT_REMOTE_INVOKE_CLIENT_WAIT_MS;
-  return Math.min(budgetMs * 2, REMOTE_INVOKE_RESULT_OUTBOX_MAX_AGE_MS);
+function outboxEntryMaxAgeMs(channel: string | undefined, args?: unknown[]): number {
+  return Math.min(remoteInvokeClientBudgetMs(channel, args) * 2, REMOTE_INVOKE_RESULT_OUTBOX_MAX_AGE_MS);
+}
+/**
+ * 控制端对这次调用的等待预算:与桌面控制端同一个 resolver(带 args),所以任务复制
+ * estimate/receive 这类按动作区分的预算在被控端的 orphan 与 outbox 两处同样生效。
+ */
+function remoteInvokeClientBudgetMs(channel: string | undefined, args?: unknown[]): number {
+  return (
+    (channel && resolveRemoteInvokeTimeoutMs(channel, args, 'desktop')) ||
+    DEFAULT_REMOTE_INVOKE_CLIENT_WAIT_MS
+  );
 }
 /**
  * ipcMain handler 没有统一 AbortSignal，不能在 30s 客户端超时时假装取消副作用。
@@ -783,10 +799,8 @@ const REMOTE_INVOKE_ORPHAN_TIMEOUT_MS = REMOTE_INVOKE_MAX_CLIENT_WAIT_MS * 2;
  * 默认 30s handler 都会占满 controller 的 in-flight 配额整整 22 分钟,后续远程控制
  * 动作看起来卡住(BACKPRESSURE)。
  */
-function remoteInvokeOrphanTimeoutMs(channel: string | undefined): number {
-  const budgetMs =
-    (channel && INVOKE_TIMEOUT_OVERRIDES_MS[channel]) || DEFAULT_REMOTE_INVOKE_CLIENT_WAIT_MS;
-  return Math.min(budgetMs * 2, REMOTE_INVOKE_ORPHAN_TIMEOUT_MS);
+function remoteInvokeOrphanTimeoutMs(channel: string | undefined, args?: unknown[]): number {
+  return Math.min(remoteInvokeClientBudgetMs(channel, args) * 2, REMOTE_INVOKE_ORPHAN_TIMEOUT_MS);
 }
 interface CachedRemoteInvokeResult {
   result: InvokeResultPayload;
@@ -796,6 +810,7 @@ interface CachedRemoteInvokeResult {
 const completedRemoteInvokeResults = new Map<string, CachedRemoteInvokeResult>();
 let completedRemoteInvokeResultBytes = 0;
 interface InFlightRemoteInvoke {
+  channel?: string;
   promise: Promise<InvokeResultPayload>;
   bytes: number;
   fingerprint: string;
@@ -2137,6 +2152,7 @@ export function dropAllControllers(
   client: DeviceLinkClient,
   reason: 'user' | 'toggle-off' | 'shutdown',
 ): void {
+  stopFilePeers();
   remoteDesktop.stop();
   void remoteCredentialHost.closeAll().catch(() => remoteCredentialHost.dispose());
   const controllerIds = new Set([
@@ -2197,6 +2213,7 @@ function deactivateControllerState(
   }
   let changed = false;
   changed = acceptedLinkControllers.delete(deviceId) || changed;
+  stopFilePeers(deviceId);
   remoteDesktop.stop(deviceId);
   void remoteCredentialHost.close(deviceId).catch(() => remoteCredentialHost.dispose());
   changed = controllerConnectionEpochByDevice.delete(deviceId) || changed;
@@ -2239,6 +2256,7 @@ export function deactivateController(
 
 /** Relay 连接离开 online：清本连接代所有 active controller，但保留恢复意图。 */
 export function deactivateAllControllers(reason: string): void {
+  stopFilePeers();
   remoteDesktop.stop();
   const controllerIds = new Set([
     ...subscriptions.getControllerIds(),
@@ -2278,6 +2296,7 @@ export function forgetControllerInvokeState(deviceId: string): void {
 
 /** 显式撤销时清理短时离线队列与 remembered topic，避免恢复后重放撤权期间数据。 */
 export function purgeRevokedController(deviceId: string): void {
+  stopFilePeers(deviceId);
   remoteDesktop.stop(deviceId);
   const changed = deactivateControllerState(deviceId);
   topicSubscriptionControllers.delete(deviceId);
@@ -2327,6 +2346,7 @@ async function handleFrame(client: DeviceLinkClient, env: Envelope): Promise<voi
         return;
       }
       clearRemoteInvokeStateFor(src);
+      stopFilePeers(src);
       remoteDesktop.stop(src);
       void remoteCredentialHost.close(src).catch(() => remoteCredentialHost.dispose());
       offlinePushQueue.clear(src);
@@ -2651,6 +2671,30 @@ async function handleInvoke(
       > REMOTE_INVOKE_IN_FLIGHT_BYTES
   );
   if (controllerAtLimit || globalAtLimit) {
+    const channels: Record<string, number> = {};
+    let executing = 0;
+    let pendingResults = 0;
+    const countChannel = (channel?: string) => {
+      const name = channel && REMOTE_INVOKE_ALLOWLIST.has(channel) ? channel : 'unknown';
+      channels[name] = (channels[name] ?? 0) + 1;
+    };
+    for (const [key, entry] of inFlightRemoteInvokeResults) {
+      if (!key.startsWith(`${src}\u0000`)) continue;
+      executing++;
+      countChannel(entry.channel);
+    }
+    for (const entry of remoteInvokeResultOutbox.values()) {
+      if (entry.src !== src) continue;
+      pendingResults++;
+      countChannel(entry.channel);
+    }
+    log.debug('remote invoke admission busy', {
+      from: shortId(src), controllerAtLimit, globalAtLimit, executing, pendingResults,
+      controllerBytes: controllerAdmission.bytes,
+      globalExecuting: inFlightRemoteInvokeResults.size,
+      globalPendingResults: remoteInvokeResultOutbox.size,
+      channels: Object.fromEntries(Object.entries(channels).sort((a, b) => b[1] - a[1]).slice(0, 8)),
+    });
     const result: InvokeResultPayload = {
       ok: false,
       error: {
@@ -2674,6 +2718,7 @@ async function handleInvoke(
 
   if (joiningExisting && existingListing) {
     const waiterEntry = {
+      channel: payload?.channel,
       promise: existingListing.promise,
       bytes: invokeBytes,
       fingerprint,
@@ -2729,8 +2774,10 @@ async function handleInvoke(
     executionPromise,
     src,
     payload?.channel,
+    payload?.args,
   ).finally(releaseBusyLease);
   const inFlightEntry = {
+    channel: payload?.channel,
     promise: resultPromise,
     bytes: invokeBytes,
     fingerprint,
@@ -2785,9 +2832,10 @@ function settleRemoteInvokeWithOrphanDeadline(
   execution: Promise<InvokeResultPayload>,
   src: string,
   channel: string | undefined,
+  args?: unknown[],
 ): Promise<InvokeResultPayload> {
   let timer: ReturnType<typeof setTimeout> | null = null;
-  const orphanMs = remoteInvokeOrphanTimeoutMs(channel);
+  const orphanMs = remoteInvokeOrphanTimeoutMs(channel, args);
   const timeout = new Promise<InvokeResultPayload>((resolve) => {
     timer = setTimeout(() => {
       timer = null;
@@ -3314,7 +3362,7 @@ function flushRemoteInvokeResultOutbox(onlySrc?: string): void {
   const blockedPeers = new Set<string>();
   for (const [key, queued] of remoteInvokeResultOutbox) {
     if (onlySrc && queued.src !== onlySrc) continue;
-    if (now - queued.queuedAt >= outboxEntryMaxAgeMs(queued.channel)) {
+    if (now - queued.queuedAt >= outboxEntryMaxAgeMs(queued.channel, queued.args)) {
       log.warn(
         `dropping expired invoke-result outbox entry for ${queued.channel ?? '?'} ` +
         `to ${shortId(queued.src)} request=${shortId(queued.requestId)} queuedMs=${now - queued.queuedAt}`,
@@ -3804,6 +3852,23 @@ async function executeRemoteInvoke(
     };
   }
 
+  if (payload.channel === FILE_PEER_CHANNEL) {
+    try { return { ok: true, result: await requestFilePeer(src, payload.args?.[0], (channel, args) => runInvoke(src, { channel, args })) }; }
+    catch { return { ok: false, error: { code: 'IPC_ERROR', message: 'FILE_PEER_UNAVAILABLE' } }; }
+  }
+  if (payload.channel === TASK_MIGRATION_CHANNEL) {
+    try {
+      if (isSharedTaskPeer(src)) throw new Error('MIGRATION_ACCESS_REVOKED');
+      const result = await runDeviceLinkInvokeContext(
+        { controllerDeviceId: src, channel: payload.channel },
+        () => requestTaskMigration(payload.args?.[0]),
+      );
+      return { ok: true, result };
+    } catch (error) {
+      const code = /\bMIGRATION_[A-Z_]+\b/.exec(error instanceof Error ? error.message : '')?.[0] ?? 'MIGRATION_FAILED';
+      return { ok: false, error: { code: 'IPC_ERROR', message: code } };
+    }
+  }
   if (payload.channel === REMOTE_DESKTOP_CHANNEL) {
     try { return { ok: true, result: await requestRemoteDesktop(src, payload.args?.[0]) }; }
     catch (error) { return { ok: false, error: { code: 'IPC_ERROR', message: error instanceof Error ? error.message : 'DESKTOP_UNAVAILABLE' } }; }

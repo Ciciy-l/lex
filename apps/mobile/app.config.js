@@ -389,5 +389,5 @@ module.exports = (context = {}) => {
     }
   }
 
-  return next;
+  return require('../../scripts/shared/lex-mobile-config.cjs').lexMobileConfig(next);
 };

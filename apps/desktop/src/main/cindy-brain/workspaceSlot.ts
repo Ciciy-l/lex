@@ -47,6 +47,7 @@ export interface WorkspaceSessionService {
   findActiveSessionByWorkdir(dirAbs: string): Promise<string | null>;
   /** 创建 plugin 来源的空 draft 会话(不拉起 agent 进程),返回会话 id。 */
   createDraftSession(params: {
+    sourceSessionId?: string;
     dirAbs: string;
     title: string | null;
     ghostId: string;
@@ -157,6 +158,7 @@ export class GhostWorkspaceSlot {
 
     // ── 目录授权 ────────────────────────────────────────────────────────
     let dirAbs: string;
+    let sourceSessionId: string | undefined;
     let callIsCurrent: (() => boolean) | undefined;
     if (request.mode === 'pick') {
       this.consentInFlight = true;
@@ -200,6 +202,7 @@ export class GhostWorkspaceSlot {
           '本次调用没有会话语境,无法向用户弹确认卡;请改用 mode:"pick" 让用户亲自选目录',
         );
       }
+      sourceSessionId = ctx.sessionId;
       callIsCurrent = () => {
         const current = this.deps.resolveCallContext(request.callId as string);
         return current?.ghostId === ctx.ghostId && current?.sessionId === ctx.sessionId
@@ -273,6 +276,7 @@ export class GhostWorkspaceSlot {
           return { ok: true, sessionId: existing, created: false, name };
         }
         const sessionId = await service.createDraftSession({ dirAbs, title, ghostId,
+          ...(sourceSessionId ? { sourceSessionId } : {}),
           ...(callIsCurrent ? { shouldContinue: callIsCurrent } : {}),
         });
         if (!sessionId || (callIsCurrent && !callIsCurrent())) return fail('CANCELLED', 'The originating tool call has ended.');

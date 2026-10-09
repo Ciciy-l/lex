@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
-import { parseSharedTaskPeer, probeSharedTaskHost, sharedTaskGuestPeer, sharedTaskHostPeer } from '@cindy/device-link';
+import { resolveRemoteInvokeTimeoutMs, parseSharedTaskPeer, probeSharedTaskHost, sharedTaskGuestPeer, sharedTaskHostPeer } from '@cindy/device-link';
 
 // Execute the actual singleton callbacks without booting Electron or reading
 // a user's profile. The socket/SQLite dispatch path has separate integration tests.
@@ -66,7 +66,7 @@ describe('SharedTask production host wiring', () => {
     const peer = sharedTaskHostPeer('task-a', 'desktop');
     const get = vi.fn(async () => ({ sharedTaskId: 'task-a', sessionId: 'session-a', status: 'active' }));
     const callback = evaluate(property('probeInvoke').initializer.getText(source), {
-      client, parseSharedTaskPeer, probeSharedTaskHost,
+      client, parseSharedTaskPeer, probeSharedTaskHost, resolveRemoteInvokeTimeoutMs,
       activeOwnerScopeKey: () => 'owner', arbiter: { isOwner: () => true },
       isAppSessionBoundaryPending: () => false, revokedByRemote: new Set(),
       sharedTaskApi: { get }, openRemoteLink: vi.fn(), INVOKE_TIMEOUT_OVERRIDES_MS: {},
@@ -75,7 +75,7 @@ describe('SharedTask production host wiring', () => {
     expect(get).toHaveBeenCalledWith('task-a');
     expect(invoke.mock.calls).toEqual([[peer, { channel: 'local-db:sessions:get', args: ['session-a'] }]]);
     await callback('ordinary', 'local-db:sessions:list', []);
-    expect(invoke).toHaveBeenLastCalledWith('ordinary', { channel: 'local-db:sessions:list', args: [] }, undefined);
+    expect(invoke).toHaveBeenLastCalledWith('ordinary', { channel: 'local-db:sessions:list', args: [] }, resolveRemoteInvokeTimeoutMs('local-db:sessions:list'));
   });
 
   it('does not invoke a guest probe after its connection generation changes during authority lookup', async () => {
@@ -83,7 +83,7 @@ describe('SharedTask production host wiring', () => {
     const invoke = vi.fn();
     const client = { invoke, getConnectionEpoch: () => epoch, isLinkReady: () => true };
     const callback = evaluate(property('probeInvoke').initializer.getText(source), {
-      client, parseSharedTaskPeer, probeSharedTaskHost,
+      client, parseSharedTaskPeer, probeSharedTaskHost, resolveRemoteInvokeTimeoutMs,
       activeOwnerScopeKey: () => 'owner', arbiter: { isOwner: () => true },
       isAppSessionBoundaryPending: () => false, revokedByRemote: new Set(),
       sharedTaskApi: { get: async () => { epoch++; return { sharedTaskId: 'task-a', sessionId: 'session-a', status: 'active' }; } },

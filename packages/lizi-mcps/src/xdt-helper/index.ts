@@ -9,6 +9,7 @@
  */
 
 export { registerGetCapabilitiesTool } from './get_capabilities.js';
+export { registerSkillhubTools, type SkillhubAgentCallback, type SkillhubAgentRequest } from './skillhub.js';
 export {
   registerGetCurrentSessionIdTool,
   type GetCurrentSessionIdDeps,
@@ -139,6 +140,25 @@ export {
   type BotSkillToolDeps,
 } from './bot_skills.js';
 export {
+  registerBotWorkbenchTools,
+  WORKBENCH_BATCH_MAX,
+  WORKBENCH_MESSAGE_MAX_CHARS,
+  type BotWorkbenchCallbacks,
+  type BotWorkbenchSnapshotWire,
+  type BotWorkbenchToolDeps,
+  type WorkbenchAutomationWire,
+  type WorkbenchDigestWire,
+  type WorkbenchItemWire,
+  type WorkbenchJudgmentInputWire,
+  type WorkbenchJudgmentWire,
+  type WorkbenchProjectBriefWire,
+  type WorkbenchProjectWire,
+  type WorkbenchTaskStateWire,
+  type WorkbenchTaskWire,
+  type WorkbenchTranscriptWire,
+  type WorkbenchVerdictWire,
+} from './bot_workbench.js';
+export {
   registerCreateTeammateTool,
   type CreateTeammateCallbacks,
 } from './create_teammate.js';
@@ -156,6 +176,12 @@ export {
   type SubmitGithubIssueHostErr,
   type SubmitGithubIssueHostErrorCode,
 } from './submit_github_issue.js';
+export {
+  registerStartSkillLearningTool,
+  type AuthorizeSkillLearningCallback,
+  type StartSkillLearningCallback,
+  type StartSkillLearningParams,
+} from './start_skill_learning.js';
 export type {
   XdtHelperHistoryDeps,
   HistoryAgentKind,

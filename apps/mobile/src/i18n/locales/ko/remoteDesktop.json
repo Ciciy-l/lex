@@ -103,10 +103,9 @@
   "fps": "{{count}} fps",
   "quality": "화질",
   "automatic": "자동",
-  "clear": "표준",
-  "highDefinition": "고화질",
-  "original": "원본",
-  "qualityHint": "자동은 네트워크 상태에 맞춰 화질을 조절합니다. 화질이 높을수록 더 많은 대역폭이 필요하며, 영상의 부드러움은 컴퓨터와 네트워크 상태에 따라 달라집니다.",
+  "saver": "데이터 절약",
+  "hd": "고화질",
+  "qualityHint": "자동은 부드러움을 우선하고 네트워크가 좋으면 더 선명하게 표시합니다. 데이터 절약은 사용량을 줄입니다(최대 30fps). 고화질은 글자 선명도를 우선하며 대역폭이 부족하면 프레임 속도를 낮춥니다.",
   "resolution": "컴퓨터 해상도",
   "settingUnsupported": "이 컴퓨터는 아직 이 설정을 지원하지 않습니다",
   "loadingSettings": "불러오는 중…",
@@ -133,5 +132,8 @@
   "autoUnlockUnavailable": "자동 잠금 해제를 사용할 수 없습니다. 연결한 뒤 Mac을 수동으로 잠금 해제할 수 있습니다.",
   "lockOnExit": "종료 시 컴퓨터 잠금",
   "lockOnExitHint": "원격 데스크톱을 종료하면 잠급니다. 재연결이나 앱 전환 시에는 잠그지 않습니다.",
-  "lockOnExitFailed": "컴퓨터가 잠겼는지 확인하지 못했습니다. 컴퓨터 상태를 확인해 주세요."
+  "lockOnExitFailed": "컴퓨터가 잠겼는지 확인하지 못했습니다. 컴퓨터 상태를 확인해 주세요.",
+  "hostMute": "원격 컴퓨터 음소거",
+  "hostMuteFailed": "원격 컴퓨터의 음소거 상태를 변경할 수 없습니다",
+  "hostMuteHint": "연결 중 원격 컴퓨터의 소리를 음소거합니다"
 }

@@ -190,6 +190,8 @@ export {
   AUTO_REVIEW_RETRY_SCHEDULING_SLACK_MS,
   autoReviewRetryBudgetMs,
   DEFAULT_AUTO_REVIEW_TIMEOUT_POLICY,
+  normalizeAutoReviewUserIntent,
+  type AutoReviewUserIntent,
   extractAutoReviewUserIntent,
   appendAutoReviewUserIntent,
   getAutoReviewActionTextLength,
@@ -218,3 +220,5 @@ export {
   isClaudeProjectKeyExact,
   findClaudeSessionJsonl,
 } from './claude-code/claude-projects-fs.js';
+
+export { AUTO_REVIEW_CONTINUATION_POLICY } from './shared/continuation-policy.js';

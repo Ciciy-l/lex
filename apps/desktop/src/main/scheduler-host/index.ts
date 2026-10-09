@@ -1,3 +1,5 @@
+import { listMessagesForAgentHandoff } from '../localDb/ipc/messages.js';
+import { drainPersistQueue } from '../messagePersistBroadcaster.js';
 /**
  * Phase 3: scheduler-host 单例 + 启停。
  *
@@ -36,6 +38,7 @@ import {
 import { getAgentIslandService } from '../agent-island/service.js';
 import { getDesktopNotificationsEnabled } from '../notificationService.js';
 import {
+  applyPiImModelSelectionUnderLock,
   acquirePendingAgentSwitchForDirectSend,
   broadcastSessionCreated,
   cancelSchedulerAutoResume,
@@ -114,8 +117,13 @@ async function startSchedulerInternal(deps: StartSchedulerDeps): Promise<Schedul
     notifier,
     logger: deps.logger,
     beforeDispatchUserTurn: deps.beforeDispatchUserTurn,
+    readAutoReviewHistory: async (sessionId) => {
+      await drainPersistQueue();
+      return listMessagesForAgentHandoff(sessionId, null, undefined, 'authorization');
+    },
     onUndispatchedUserTurn: deps.onUndispatchedUserTurn,
     acquirePendingAgentSwitch: acquirePendingAgentSwitchForDirectSend,
+    applyPiModelSelectionUnderLock: applyPiImModelSelectionUnderLock,
     resolveModelSelection: resolveScheduledModelSelectionLive,
     onSessionCreated: broadcastSessionCreated,
     // 停用轴裁决:每次 fire 前判保存路由是否已被用户停用(见 runner deps 注释)。

@@ -1,4 +1,5 @@
 import { Stack } from "expo-router";
+import { useTranslation } from 'react-i18next';
 import { QuietSyncIndicator } from '@/components/QuietSyncIndicator';
 import type { ReactNode } from "react";
 import { Platform, StyleSheet, View } from "react-native";
@@ -33,6 +34,18 @@ export function simpleScreenSafeAreaEdges(): readonly Edge[] | undefined {
   return Platform.OS === "ios" ? ["left", "right", "bottom"] : undefined;
 }
 
+/**
+ * 整页滚动的简单页(配合 `<SimpleStackHeader scrollEdge />`):iOS 上内容铺到透明顶栏
+ * 和底部指示条下面,由滚动视图自己让出上下安全区,系统柔和边缘替代硬分界。
+ */
+export function simpleScrollScreenSafeAreaEdges(): readonly Edge[] | undefined {
+  return Platform.OS === "ios" ? ["left", "right"] : undefined;
+}
+
+export const simpleScrollInsetProps = Platform.OS === "ios"
+  ? { automaticallyAdjustsScrollIndicatorInsets: true, contentInsetAdjustmentBehavior: "automatic" as const }
+  : {};
+
 export function SimpleStackHeader({
   action,
   right,
@@ -43,6 +56,7 @@ export function SimpleStackHeader({
   title,
   titleTestID,
   syncing,
+  scrollEdge = false,
 }: {
   action?: MainWindowAction;
   right?: ReactNode;
@@ -53,8 +67,11 @@ export function SimpleStackHeader({
   title: string;
   titleTestID?: string;
   syncing?: boolean;
+  /** 页面根部是整页滚动视图时打开;配套使用 simpleScrollScreenSafeAreaEdges / simpleScrollInsetProps。 */
+  scrollEdge?: boolean;
 }) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const styles = useThemedStyles(makeNativeTitleStyles);
 
   if (!usesNativeStackHeader()) {
@@ -74,12 +91,17 @@ export function SimpleStackHeader({
   }
 
   return (
+    <>
     <Stack.Screen
       options={{
         headerShown: true,
         headerShadowVisible: false,
         headerBackVisible: false,
-        headerStyle: { backgroundColor: colors.surface },
+        headerStyle: { backgroundColor: scrollEdge ? "transparent" : colors.surface },
+        headerTransparent: scrollEdge,
+        scrollEdgeEffects: scrollEdge
+          ? { bottom: "soft", left: "hidden", right: "hidden", top: "soft" }
+          : undefined,
         headerTintColor: colors.textPrimary,
         headerTitle: () => (
           <View style={styles.wrap} testID={titleTestID}>
@@ -89,20 +111,15 @@ export function SimpleStackHeader({
             {syncing !== undefined ? <QuietSyncIndicator active={syncing} /> : null}
           </View>
         ),
-        headerLeft: onBack
-          ? () => (
-              <ScreenBackButton
-                compact
-                onPress={onBack}
-                testID={backTestID ?? "screen.backButton"}
-              />
-            )
-          : undefined,
         headerRight: right ? () => right : action
           ? () => <MainWindowActionButton action={action} density="compact" />
           : undefined,
       }}
     />
+    {onBack ? <Stack.Toolbar placement="left">
+      <Stack.Toolbar.Button icon="chevron.backward" onPress={onBack} accessibilityLabel={t('shared.back')} />
+    </Stack.Toolbar> : null}
+    </>
   );
 }
 

@@ -1,4 +1,6 @@
+import { isSharedTaskPeer } from '@cindy/device-link';
 import Constants from 'expo-constants';
+import { tryMobilePeerInvoke, resetMobilePeer } from './peerFileRegistry';
 import { isHistoryViewUnavailable } from '@cindy/maker-shared/message-window';
 import { findRemoteHistoryView } from '@/session/remoteHistoryView';
 import { createBackgroundConnection } from './backgroundConnection';
@@ -7,6 +9,7 @@ import { createRecoveryDiagnostics, settleMeasuredSnapshot, type RecoveryPhase }
 import { confirmTrackedSubscription, SubscriptionAcknowledgements } from './subscriptionAcknowledgements';
 import { AppState, Platform } from 'react-native';
 import { mobileDebugLog } from '@/debug/mobileDebugLog';
+import { dispatchCredentialSwitchOutcome } from '@/session/credentialSwitchOutcome';
 import {
   DeviceLinkClient,
   DeviceLinkError,
@@ -180,10 +183,10 @@ export interface DeviceLinkContextValue {
   reopenLink(deviceId: string): Promise<LinkAcceptPayload>;
   closeLink(deviceId: string): void;
   /**
-   * opts.preSend:在连接就绪之后、真正 client.invoke 之前的最后同步检查点。抛错即
+   * opts.preSend:在连接就绪并从 invoke 队列出队后、实际发送前的同步检查点。抛错即
    * 中止本次发送(错误原样上抛)。供写序敏感的调用方(patchHomeSession 的 isLatest
-   * 屏障)把「过期即放弃」判定贴到实际发送点——ensureOnlineForRequest 最长 1.5s 的
-   * 重连等待期间写可能被同字段新写取代,等待前的检查不够晚。
+   * 屏障)把「过期即放弃」判定贴到实际发送点——重连或排队期间写可能被同字段新写
+   * 取代,等待前的检查不够晚。
    */
   invoke<T = unknown>(
     deviceId: string,
@@ -229,6 +232,11 @@ const CONTROLLER_CAPABILITIES = [
 const remoteResponseEvidenceEpochs = createPresenceAvailabilityEpochs();
 const remoteResponseEvidenceListeners = new Set<(deviceId: string) => void>();
 const remoteAgentRosterListeners = new Set<(deviceId: string) => void>();
+const remoteFavoritesChangedListeners = new Set<(deviceId: string) => void>();
+export function subscribeRemoteFavoritesChanged(listener: (deviceId: string) => void): () => void {
+  remoteFavoritesChangedListeners.add(listener);
+  return () => { remoteFavoritesChangedListeners.delete(listener); };
+}
 const remoteBotChangedListeners = new Set<(deviceId: string, channel: string, payload: unknown) => void>();
 export function subscribeRemoteBotChanges(listener: (deviceId: string, channel: string, payload: unknown) => void): () => void {
   remoteBotChangedListeners.add(listener);
@@ -1169,6 +1177,8 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
       },
       onLinkClosed: (deviceId, reason) => {
         catalogRefreshDeviceIds.delete(deviceId);
+        resetMobilePeer(deviceId);
+        if (isSharedTaskPeer(deviceId)) setPresenceVersion((version) => version + 1);
         catalogRefresh.cancel(deviceId);
         resetRemoteProjectOrderPushFence(deviceId);
         updateRehydrateSuppressionOnLinkClose(
@@ -1472,6 +1482,7 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
   );
 
   const closeLink = useCallback((deviceId: string) => {
+    resetMobilePeer(deviceId);
     registryRef.current.untrackOpenLink(deviceId);
     forcedPeerRecoveryIntentRef.current.cancel(deviceId);
     openLinkInFlightRef.current.delete(deviceId);
@@ -1506,7 +1517,17 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
         preSend();
         return accepted;
       },
-      () => sendInvokeWithAccessHandling<T>(client, deviceId, channel, args, { preSend }),
+      async () => {
+        if (!isSharedTaskPeer(deviceId)) {
+          const result = await tryMobilePeerInvoke(deviceId, channel, args);
+          preSend();
+          if (clientRef.current !== client) throw new DeviceLinkError('NOT_CONNECTED', 'link changed');
+          if (result) {
+            return withAccessRevokedHandling(deviceId, async () => unwrapInvoke<T>(result));
+          }
+        }
+        return sendInvokeWithAccessHandling<T>(client, deviceId, channel, args, { preSend });
+      },
     );
   }, [sendOpenLinkOnce]);
 
@@ -1621,6 +1642,11 @@ export function routeFrame(env: Envelope, handlers: {
   const sharedPeer = parseSharedTaskPeer(env.src);
   if (sharedPeer && !isSharedTaskPushAllowed(env.src, (env.payload as PushPayload).payload, handlers.connectionEpoch)) return;
   const push = env.payload as PushPayload;
+  dispatchCredentialSwitchOutcome(env.src, push.channel, push.payload);
+  if (push.channel === 'maker:model-favorites:changed') {
+    for (const listener of remoteFavoritesChangedListeners) listener(env.src);
+    return;
+  }
   if (push.channel === 'maker:provider:changed') {
     handlers.onProviderChanged?.(env.src);
     return;
@@ -1978,7 +2004,7 @@ async function sendInvoke<T>(
   });
   try {
     await ensureOnlineForRequest(client);
-    // 连接就绪后、真正发送前的最后检查点:重连等待期间调用方状态可能已失效
+    // 连接就绪后先检查一次:重连等待期间调用方状态可能已失效
     // (写被同字段新写取代),抛错即中止发送。
     opts?.preSend?.();
   } catch (err) {
@@ -1987,6 +2013,7 @@ async function sendInvoke<T>(
     throw err;
   }
   let result: InvokeResultPayload;
+  let preSendFailed = false;
   try {
     // 长执行通道(desktop-cmd:run / worktree:create 等)按协议契约表放宽超时,
     // 与桌面控制端用法对齐,避免 mobile 收紧的默认 15s 误伤合法慢操作。
@@ -1996,9 +2023,18 @@ async function sendInvoke<T>(
       // 长通道(media / 文件搜索 / schedule 就绪窗口等)按 invokeTimeouts 解析
       // 规则保留更长窗口,避免 mobile 收紧的默认 15s 误伤合法慢操作。
       resolveMobileInvokeTimeoutMs(channel, args),
+      { preSend: () => {
+        try {
+          opts?.preSend?.();
+        } catch (err) {
+          preSendFailed = true;
+          throw err;
+        }
+      } },
     );
   } catch (err) {
-    settleDeviceSend(deviceId, slot, classifyDeviceSendFailure(err));
+    // A queued call rejected by its local guard is not a remote timeout.
+    settleDeviceSend(deviceId, slot, preSendFailed ? 'inconclusive' : classifyDeviceSendFailure(err));
     throw err;
   }
   // 收到 invoke-result 帧即为目标设备真实回包(即使 ok:false 的业务错误)。但

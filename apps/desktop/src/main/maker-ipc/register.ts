@@ -1,5 +1,25 @@
+import { resolveSafe as resolveCindyMediaUrl } from '../cindy-media/blobStore.js';
+import { getSessionFsSnapshot } from '../localDb/ipc/sessions.js';
+import { isModelSelectableForNewRoute } from '@cindy/model-providers';
+import { resolveVerifiedContextWindow } from '../maker-host/catalog-to-descriptors.js';
+import { openSession, setSessionOpeningModelAdmission } from '../localDb/sessionOpening.js';
+import { createPluginTaskReviewResolver } from './pluginTaskReviewContext.js';
+import { isPluginTaskPermissionAllowed, assertPluginTaskResult, createPluginTaskService, readPluginTaskPlanReceipt, PluginTaskError, type PluginTaskService } from './pluginTaskService.js';
+import { assertPluginWorkerDirectoryScope, resolvePluginWorkerDirectory } from './pluginWorkerDirectory.js';
+import { PluginWriteAccessGate } from './pluginWriteAccessGate.js';
+import { pluginWorkerCompletedAt } from './pluginWorkerCompletion.js';
+import { createPluginTaskStore } from './pluginTaskStore.js';
+import { hasAcceptedUserTaskInput } from './pluginTaskInput.js';
+import { controlOwnedSessionExecution, isSameSessionExecution, withdrawOwnedSessionInputs } from './sessionExecutionOwnership.js';
+import { setPluginTaskHandler, getPluginTaskSourceSessionId, setPluginTaskUninstaller, isPluginTaskAuthorized, getPluginTaskInstallRevision, pluginTaskAuthorizationRevision } from '../cindy-brain/index.js';
+import type { PluginTaskRoute, PluginTaskRequest } from '../../shared/pluginTasks.js';
+import { createHash as pluginTaskConfigHash } from 'node:crypto';
+import { MANAGED_LLAMACPP_PROVIDER_ID, llamaCppModelPreset, llamaCppMaxContextSize } from '../../shared/llamaCpp.js';
+import { getManagedLlamaCppService } from '../local-model-runtime/llamaCppService.js';
+import { ensureManagedLlamaCppProvider } from '../local-model-runtime/managedLlamaCppProvider.js';
+import { registerModelFavoritesSync } from './modelFavoritesSync.js';
 import { advanceRuntimeRecoveryNotice } from '../im/shared/runtimeRecoveryNotice.js';
-import { configureAppDefaultModelSelection } from './appDefaultModelControl.js';
+import { configureAppDefaultModelSelection, inspectAppDefaultModel } from './appDefaultModelControl.js';
 import type { BuiltinApiKeyBridgeDeps } from '../secrets/builtinApiKeyBridge.js';
 import { setBotInvitationWelcomeDispatch } from './botInvitation.js';
 import type { TurnUsageContext } from './turnUsageContext.js';
@@ -45,15 +65,17 @@ import {
   piSubagentRunRoot,
 } from '@cindy/maker-core/pi-subagent-runs';
 import { AUTO_REVIEW_SOURCE_CONTENT, AUTO_REVIEW_USER_INTENT, INHERITED_CAPABILITY_SELECTION, MAIN_OWNED_SEND_CONTEXT } from '@cindy/maker-core';
-import { readAutoReviewUserText, restoreAutoReviewSteerIntent, restoreAutoReviewUserIntent } from './autoReviewUserIntent.js';
+import { AUTO_REVIEW_DELEGATED_CONTINUATION, readAutoReviewUserText, restoreAutoReviewSteerIntent, restoreAutoReviewUserIntent } from './autoReviewUserIntent.js';
 import type {
   AgentEvent,
   AgentKind,
+  Effort,
   ContextUsageData,
   InteractionDecision,
   InteractionRequest,
   MainOwnedSendContext,
   Maker,
+  PermissionMode,
   SendOrigin,
   Session,
   SessionSendOptions,
@@ -84,7 +106,7 @@ import {
   DL_SESSION_REFERENCE_CAPABILITY_CHANNEL,
   readInputDeliveryClientIds,
 } from '@cindy/device-link';
-import { and, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { applyScheduledModelSelection, ScheduledModelSelectionBusyError, type ScheduledModelSelection, type ScheduledModelSelectionLease } from './scheduledModelSelection';
 import { createDurableInputDeliveryBoundary } from './durableInputDeliveryBoundary.js';
 import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
@@ -286,8 +308,9 @@ import {
   ReviewArtifactAuthorizationError,
   type ReviewArtifactConfirmationItem,
 } from '../reviewer/reviewArtifactAuthorization.js';
-import { buildReviewArtifactConfirmationDialog } from '../reviewer/reviewArtifactDialog.js';
-import { showReviewArtifactConfirmWindow } from '../reviewer/reviewArtifactConfirmWindow.js';
+import { confirmReviewArtifacts } from '../reviewer/confirmReviewArtifacts.js';
+import { configureOutboundReviewPreparation } from './reviewOutboundInput.js';
+import { assertRemoteBotInvocationAllowed } from '../device-link/remoteBotSessionBoundary.js';
 import {
   cleanupOrphanedReviewArtifactSnapshots,
   prepareStableReviewArtifactSnapshots,
@@ -371,6 +394,7 @@ import {
   messages,
   orcaTeams,
   orcaWorkers,
+  orcaWorkerCreationReservations,
   sessions,
 } from '../localDb/schema.js';
 import { nextBotModelRoute } from '../../shared/botModelChain.js';
@@ -388,6 +412,16 @@ import {
   readClaudeApiKey,
 } from '../maker-host/auth-adapters.js';
 import { prepareSharedProjectSkillLinks } from '../maker-host/shared-global-skills.js';
+import {
+  activeCindyBuiltInAgentSkills,
+  builtInSkillDescriptors,
+} from '../maker-host/built-in-skills.js';
+import { isCindySkillEnabled } from '../skillhub/activationPreferences.js';
+import {
+  parseDirectLearnInvocation,
+  canGrantUnqualifiedClaudeLearnInvocation,
+  type CindyLearnInvocationGrant,
+} from '../learn-host/invocationGrant.js';
 import { ensurePiManagerInstalled } from '../maker-host/pi-manager-client.js';
 import {
   setRemoteCodexLiveTurnChecker,
@@ -410,8 +444,10 @@ import {
 import { createAgentResourceSettingsIpc } from './agent-resource-settings-ipc.js';
 import {
   createBotDelegationService,
+  hasExplicitSessionTaskModel,
   type BotDelegationService,
 } from './botDelegationService.js';
+import { createBotSessionTaskRouteBridge } from './botSessionTaskRouteBridge.js';
 import {
   createBotDirectMessageService,
   type BotDirectMessageService,
@@ -432,6 +468,8 @@ import { BOT_GROUP_CLIENT_ID_PREFIX } from '../../shared/botGroupChat.js';
 import { ensureBotGroupLaneSession } from '../localDb/ipc/bots.js';
 import { restartBotRuntime } from './botRuntimeRestart.js';
 import { registerBotLifecycleHandlers } from './botLifecycleService.js';
+import { isSessionPermissionMode, persistPermissionModeWithoutRuntime } from './sessionPermissionPersistence.js';
+import { withSessionPermissionChange } from './sessionPermissionChange.js';
 import { updateBotRoutineLifecycle } from '../routines/service.js';
 import {
   createBotCompactRuntimeRefreshCoordinator,
@@ -464,6 +502,7 @@ import {
   setBeforeLocalCodexSessionStartHook,
   setBotCapabilityAgentKindResolver,
   setModelContextRuntimeRefreshListener,
+  setAutoReviewContextResolver,
 } from '../maker-host/index.js';
 import {
   assertSshCodexModel,
@@ -486,6 +525,7 @@ import {
   getRemoteNewMakerDefaults,
   getRemoteNewMakerDefaultsByVendor,
   getWorkerDefaultsFromNewMaker,
+  getSelectedNewMakerRoute,
   getWorkerPermissionModeFromCreationPrefs,
   type ProviderModelMemorySnapshot,
   syncNewMakerDraftCache,
@@ -725,6 +765,7 @@ import {
   materializeQueuedOssAttachmentsDeferred,
 } from './normalizeAttachments.js';
 import { QueuedAttachmentOwnershipRegistry } from './queuedAttachmentOwnership.js';
+import { prepareRemoteReviewAttachments } from './reviewRemoteInput.js';
 import { AGENT_ISLAND_DISPLAY_CONFIG } from '../agent-island/displayConfig.js';
 import {
   shouldClearAgentIslandSessionForOrcaWorker,
@@ -805,6 +846,7 @@ import {
   type ModelWindowSwitchPreparationResult,
 } from './contextOverflowRollover.js';
 import { classifyCodexHistoryOversized } from '../maker-host/codex-local-sessions.js';
+import { readCodexThreadStorageReadOnly } from '../maker-host/codex-thread-storage.js';
 import { hydrateQueuedAgentReferences } from './agentInputReferences.js';
 import { agentHandoffPending } from './agentHandoffPendingSingleton.js';
 import { clearSealedCodexPlanState, readCodexPlanState } from '../localDb/codexPlanState.js';
@@ -966,6 +1008,7 @@ import {
   isSupportedRuntimeEffort,
   resolveRetainedRuntimeEffort,
 } from './runtimeSelectionAxes.js';
+import { runSchedulerQueuedPreparation } from './schedulerQueuedPreparation.js';
 import {
   acceptSessionRuntimeAxisMutation,
   acceptSessionRuntimeMutation,
@@ -996,7 +1039,7 @@ import {
 } from './sessionRuntimeControl.js';
 import { applyRuntimeEffortWithRecovery } from './runtimeSetEffort.js';
 import { normalizeDeviceLinkSetModelWireArgs } from './setModelWireArgs.js';
-import { PendingCredentialSwitchService } from './pendingCredentialSwitch.js';
+import { PendingCredentialSwitchService, type PendingCredentialSwitchDeps } from './pendingCredentialSwitch.js';
 import {
   DeferredCodexRestartService,
   runMemoryChangeWithCodexRestart,
@@ -1109,6 +1152,11 @@ import {
   type InterruptedTurnErrorSignals,
 } from './interruptedTurnAutoResume.js';
 import { readInterruptedTurnAutoResumeSettings } from '../maker-host/interrupted-turn-auto-resume-store.js';
+import {
+  isBotCandidateUnavailable,
+  canResumeAfterRuntimeFallback,
+  type RuntimeFallbackResult,
+} from './botCandidateRecovery.js';
 
 import {
   broadcastGhostMessageBlocked,
@@ -1127,18 +1175,22 @@ import {
   getInstalledGhostName,
 } from '../cindy-brain/index.js';
 import {
-  readGhostErrandConfig,
+  readPluginTaskConfig,
+  clampPluginTaskPermissionMode,
+  setPluginTaskConfigValidator,
+  writePluginTaskConfig,
   readGhostErrandSessionId,
   writeGhostErrandSessionId,
-} from '../cindy-brain/errandPrefsStore.js';
+} from '../cindy-brain/pluginTaskPrefsStore.js';
 import { isGhostPickedDir } from '../cindy-brain/pickGrantsStore.js';
 import {
   resolveGhostUserHookModel,
   withGhostUserHookModel,
 } from '../cindy-brain/subscriptionGateway.js';
+import { createSessionExecutionResolver } from './sessionExecutionSelection.js';
 import { createGhostErrandRunner } from './ghostErrandRunner.js';
 import {
-  createGhostErrandSession,
+  createPluginTaskSession,
   createPluginDraftSession,
   findActiveSessionByWorkdir,
 } from '../localDb/ipc/pluginWorkspaceSessions.js';
@@ -3384,6 +3436,11 @@ const ensureReviewOwnerLivenessReady = createRetryableReviewInitialization(async
   await sessionTurnLeaseTracker.refreshActiveLeaseOwners();
 });
 configureTempAttachmentOwner(reviewRunOwner, ensureReviewOwnerLivenessReady);
+configureOutboundReviewPreparation({
+  owner: reviewRunOwner,
+  ensureOwnerReady: ensureReviewOwnerLivenessReady,
+  resolvePath: resolveReviewArtifactPath,
+});
 const silentStopTurnLeaseGate = new SilentStopTurnLeaseGate();
 function providerTurnLeaseId(sessionInstanceId: string, turnGeneration: number): string {
   return `${sessionInstanceId}:${turnGeneration}`;
@@ -3483,6 +3540,12 @@ export function isSessionInTurn(sessionId: string): boolean {
   return sessionTurnActivityTracker.isSessionInTurn(sessionId);
 }
 
+/** Runtime-only attribution; queued or rejected steering cannot take ownership. */
+export function getSessionInputProvenance(sessionId: string) {
+  const input = agentInputCoordinatorHolder?.getAcceptedInputProvenance(sessionId) ?? null;
+  return { input, executing: !!input || !!getMakerIfReady()?.getSession(sessionId)?.isTurnRunning() };
+}
+
 /**
  * 标题素材读取需要覆盖 `status:isRunning=false` 到 terminal event 的短窗口：
  * 逻辑 running 已结束，但最后一条 Assistant 还没有拿到 durable turn seal。
@@ -3556,7 +3619,7 @@ export function cancelPendingAgentSwitchForSession(sessionId: string): void {
  */
 export async function registerPendingCredentialSwitchForSession(
   sessionId: string,
-  target: { model: string; providerId: string | null; forceSessionRebuild?: boolean },
+  target: { model: string; providerId: string | null; forceSessionRebuild?: boolean; selectionSource?: 'agent' },
 ): Promise<void> {
   const service = pendingCredentialSwitchHolder;
   if (!service) {
@@ -3596,7 +3659,8 @@ export async function registerPendingCredentialSwitchForSession(
   const prevModel = live?.model ?? prevRow?.model ?? null;
   service.register(sessionId, {
     ...target,
-    ...(dbAgentKind ? { agentKind: dbToMakerAgentKind(dbAgentKind) } : {}),
+    ownerEpoch: captureSessionRuntimeControlOwnerEpoch(),
+    ...(dbAgentKind ? { agentKind: dbToMakerAgentKind(dbAgentKind) } : live?.agentKind ? { agentKind: live.agentKind } : {}),
     ...(prevModel
       ? {
           previousRoute: {
@@ -3626,12 +3690,29 @@ export function wakeSessionInputAfterCredentialSwitch(sessionId: string): void {
   agentInputCoordinatorHolder?.wakeSession(sessionId, 'credential-switch-applied-inline');
 }
 
+let applyPiImModelSelectionHolder: ((
+  sessionId: string, model: string, providerId: string | null | undefined,
+  previousRoute: { model: string; providerId: string | null } | null,
+  options?: { refreshPiConfiguration?: boolean; source?: 'user' | 'agent' },
+) => Promise<{ status: 'applied' | 'deferred'; generation?: number; effectiveProviderId?: string | null }>) | null = null;
+
+/** IM model cards already own the send lock; reuse Desktop's window-safe Pi transaction. */
+export async function applyPiImModelSelectionUnderLock(
+  sessionId: string, model: string, providerId: string | null | undefined,
+  previousRoute: { model: string; providerId: string | null } | null,
+  options?: { refreshPiConfiguration?: boolean; source?: 'user' | 'agent' },
+): Promise<{ status: 'applied' | 'deferred'; generation?: number; effectiveProviderId?: string | null }> {
+  if (!applyPiImModelSelectionHolder) throw new Error('Pi model selection is not ready');
+  return applyPiImModelSelectionHolder(sessionId, model, providerId, previousRoute, options);
+}
+
 export function getPendingCredentialSwitchTarget(
   sessionId: string,
-): { model: string; providerId: string | null; forceSessionRebuild?: boolean } | undefined {
+): { model: string; providerId: string | null; forceSessionRebuild?: boolean; selectionSource?: 'agent' } | undefined {
   const pending = pendingCredentialSwitchHolder?.get(sessionId);
   return pending ? { model: pending.model, providerId: pending.providerId,
-    ...(pending.forceSessionRebuild ? { forceSessionRebuild: true } : {}) } : undefined;
+    ...(pending.forceSessionRebuild ? { forceSessionRebuild: true } : {}),
+    ...(pending.selectionSource ? { selectionSource: pending.selectionSource } : {}) } : undefined;
 }
 
 // ── Scheduler 撞忙排队桥(scheduler-host runner 消费)────────────────────────
@@ -3652,6 +3733,10 @@ export interface SchedulerQueuedPromptRequest {
   /** 落库与队列气泡展示的用户原始 prompt(不含隐藏协议)。 */
   persistedContent: string;
   origin: { kind: 'scheduler'; scheduleId: string; scheduleName: string; runId?: string };
+  /** Runs under the send lock before the live session is captured or a user row is written. */
+  onPreparing?: () => Promise<void>;
+  /** Reject the queued run if preparation fails before dispatch. */
+  onPreparationFailed?: (error: unknown) => void;
   /** 排队项被 drain 派发、turn 已被会话接受时回调(等价直发路径的 send onAccepted)。 */
   onAccepted: (queuedPermissions?: { permissionMode?: string; planMode?: boolean }) => void | Promise<void>;
   /** 派发已 accept 但最终未成为运行 turn(取消/回滚)时回调。 */
@@ -3679,6 +3764,10 @@ interface SchedulerQueueBridge {
 let schedulerQueueBridgeHolder: SchedulerQueueBridge | null = null;
 /** 排队心跳的 discard 监听(clientId → 通知 runner 收尾)。派发/丢弃后清条目。 */
 const schedulerQueuedPromptDiscardWatchers = new Map<string, () => void>();
+const schedulerQueuedPromptPreparations = new Map<string, {
+  onPreparing: () => Promise<void>;
+  onPreparationFailed?: (error: unknown) => void;
+}>();
 
 export function isSchedulerTargetSessionBusy(sessionId: string): boolean {
   return schedulerQueueBridgeHolder?.isSessionBusy(sessionId) ?? false;
@@ -4481,6 +4570,17 @@ const sessionBindings = createSessionBindingLifecycle<WiredSession, WiredSession
   },
 });
 
+let pluginTaskServiceForCurrentOwner: (() => PluginTaskService) | null = null;
+let drainPluginTaskReceipts: (() => Promise<void>) | null = null;
+export async function flushPluginTaskLifecycle(): Promise<void> {
+  await drainPluginTaskReceipts?.();
+}
+function notePluginTaskLifecycle(operation: (service: PluginTaskService) => Promise<unknown>): void {
+  if (!pluginTaskServiceForCurrentOwner) return;
+  try { void operation(pluginTaskServiceForCurrentOwner()).catch(() => log.warn('Plugin task receipt update failed')); }
+  catch { /* Database is unavailable during logout/startup; never switch to another owner. */ }
+}
+
 /** Remaining domain cleanup stays in its original order, after input coordination. */
 function cleanupClosedSessionRuntime(session: WiredSession): void {
   // 会话关闭:兑现延迟凭证切换(直接写 route),并唤醒被它挡住的等待者。
@@ -4517,6 +4617,9 @@ function cleanupClosedSessionRuntime(session: WiredSession): void {
 // operation. Capturing these services when wiring a Session would freeze the
 // pre-initialization or previous runtime value for later events.
 const sessionEventDependencies: SessionEventDependencies = {
+  onPluginTaskTerminal: (sessionId, execution, outcome, outputMessageId) => {
+    notePluginTaskLifecycle(service => service.settle(sessionId, execution, outcome, outputMessageId));
+  },
   get botCompactRuntimeRefreshCoordinator() { return botCompactRuntimeRefreshCoordinator; },
   get attemptBotCompactRuntimeRefresh() { return attemptBotCompactRuntimeRefresh; },
   get botDelegationServiceHolder() { return botDelegationServiceHolder; },
@@ -4710,8 +4813,29 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
   // listeners never treat it as turn text; Desktop persist/broadcast still
   // consumes the localized notice.
   const emitWiredSessionEvent = (event: AgentEvent) => {
-    handleSessionEvent(sessionEventDependencies, session, event);
+    if (event.type === 'plan_mode_changed') {
+      const enabled = (event.data as { enabled?: unknown })?.enabled;
+      if (typeof enabled === 'boolean') {
+        // Do not block event consumption/turn lease release on this queue.
+        void withSessionPermissionChange(session.id, async () => {
+          if (!ownerDb || ownerDb !== getCurrentDbClientSnapshot()
+            || sessionBindings.getSession(session.id) !== session
+            || session.getPlanMode() !== enabled) return;
+          await persistSessionFields(session.id, {planModeEnabled: enabled});
+        }).catch((error) => log.warn('persist plan_mode_changed failed', {sessionId: session.id, error: String(error)}));
+      }
+      return;
+    }
+    handleSessionEvent(ownerEventDependencies, session, event);
   };
+  const ownerDb = getCurrentDbClientSnapshot();
+  const ownerEventDependencies = Object.create(sessionEventDependencies) as SessionEventDependencies;
+  Object.defineProperty(ownerEventDependencies, 'onPluginTaskTerminal', {
+    value: (...args: Parameters<NonNullable<SessionEventDependencies['onPluginTaskTerminal']>>) => {
+      if (!ownerDb || getCurrentDbClientSnapshot() !== ownerDb) return;
+      sessionEventDependencies.onPluginTaskTerminal?.(...args);
+    },
+  });
   registration.disposers.push(session.onEvent(emitWiredSessionEvent));
   registration.disposers.push(session.onRuntimeRecovery(emitWiredSessionEvent));
   sessionBindings.attachStatusListener(registration);
@@ -4779,11 +4903,10 @@ async function confirmReviewExternalArtifacts(
   event: IpcMainInvokeEvent,
   items: ReviewArtifactConfirmationItem[],
 ): Promise<boolean> {
-  const parent = BrowserWindow.fromWebContents(event.sender);
-  if (!parent || parent.isDestroyed()) return false;
-  return showReviewArtifactConfirmWindow(parent, buildReviewArtifactConfirmationDialog(items, t), {
-    log,
-  });
+  // Remote invokes have no Renderer sender. Until this confirmation has a
+  // remote UI, retain the explicit-grant requirement rather than auto-approve.
+  if (isDeviceLinkInvoke()) return false;
+  return confirmReviewArtifacts(event, items);
 }
 
 export interface RegisterMakerIpcOptions {
@@ -4805,6 +4928,7 @@ let disposePiPackagesChangedBroadcast: (() => void) | null = null;
  * soon as the Renderer selects an owner, before the splash-gated Maker IPC bundle is available.
  */
 export function registerModelVisibilitySyncIpc(): void {
+  registerModelFavoritesSync(broadcastToAllWindows);
   configureAppDefaultModelSelection((appDefaultSelection) => {
     broadcastToAllWindows(MAKER_PUSH.DRAFT_PREF_APPLY, {
       agent: appDefaultSelection.route.harness === 'claude' ? 'claude-code' : appDefaultSelection.route.harness,
@@ -4841,11 +4965,16 @@ export function registerModelVisibilitySyncIpc(): void {
 export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions): void {
   // Catalog updates and explicit budget edits share one serial refresh boundary.
   let contextRefresh = Promise.resolve();
+  let applyPiModelSettingsRefresh: (sessionId: string, model: string, providerId: string | null) => Promise<void> =
+    async () => { throw new Error('Pi model settings refresh is not ready'); };
+  let applyPiPendingSelection: NonNullable<PendingCredentialSwitchDeps['applyPiPending']> =
+    async () => { throw new Error('Pi pending model switch is not ready'); };
   const refreshContextSettings = (targets?: readonly { agent: AgentKind; providerId: string; modelId: string }[]) => {
     const owner = getActiveAppSession();
     const next = contextRefresh.then(() => refreshActiveModelContextSettings({
       targets, inferProviderId: (model, agent) => resolveDesktopModelContextProviderId(getActiveCatalog(), agent, null, model),
       withSessionLock: withSendToSessionLock,
+      applyPiRefresh: applyPiModelSettingsRefresh,
       hasPendingSelection: (sessionId) => {
         const pending = getPendingSessionRuntimeMutation(sessionId);
         return !!agentSwitchPending.get(sessionId) ||
@@ -5701,6 +5830,19 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       ),
     }),
     validateModelContextLimit: async (targets, limit) => {
+      const localTargets = targets.filter((target) => target.providerId === MANAGED_LLAMACPP_PROVIDER_ID);
+      if (localTargets.length) {
+        const { models } = await getManagedLlamaCppService(app.getPath('userData')).snapshot();
+        for (const target of localTargets) {
+          const model = models.find((entry) => entry.id === target.modelId);
+          if (!model) throwIpcError('INVALID_PARAMS', 'Local model is not installed');
+          try {
+            llamaCppModelPreset(model, { [`${target.agent}:${target.providerId}:${target.modelId}`]: limit });
+          } catch {
+            throwIpcError('INVALID_PARAMS', `This local model supports context up to ${llamaCppMaxContextSize(model)} tokens`);
+          }
+        }
+      }
       for (const target of targets.filter((t) => t.agent === 'codex')) {
         const binaryPath = getCachedBinaryStatus('codex').binaryPath;
         if (!binaryPath) throw new Error('Codex runtime is unavailable');
@@ -5710,9 +5852,28 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       }
     },
     writeModelContextLimit: async (targets, limit) => {
-      await writeModelContextLimitsWithRefresh(targets, limit,
+      const owner = getActiveAppSession();
+      const active = () => {
+        const now = getActiveAppSession();
+        return now?.dataOwnerId === owner?.dataOwnerId && now?.generation === owner?.generation;
+      };
+      const write = () => writeModelContextLimitsWithRefresh(targets, limit,
         () => refreshContextSettings(targets),
         () => refreshContextSettings());
+      if (targets.some((target) => target.providerId === MANAGED_LLAMACPP_PROVIDER_ID)) {
+        const service = getManagedLlamaCppService(app.getPath('userData'));
+        return service.configure(async () => {
+          if (!active()) throw new Error('OWNER_CHANGED');
+          await ensureManagedLlamaCppProvider(
+            (await service.snapshot()).models, active,
+          );
+          if (!active()) throw new Error('OWNER_CHANGED');
+          await refreshCustomProvidersIntoCatalog();
+          if (!active()) throw new Error('OWNER_CHANGED');
+          await write();
+        });
+      }
+      await write();
     },
     // 通用 OAuth（目录 auth.oauth 描述符驱动）：login 成功后 best-effort 拉动态模型发现
     // (additions-only merge 进 active-catalog) 并广播 PROVIDER_CHANGED 让 UI 刷新连接态。
@@ -5968,7 +6129,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   setClaudeProxyOwnerScopeKeyReader(activeOwnerScopeKey);
   setClaudeProxySessionIdResolver((sdkSessionId) => {
     if (isAppSessionBoundaryPending()) return null;
-    const s = maker.listActiveSessions().find((x) => x.sdkSessionId === sdkSessionId);
+    const s = maker.listActiveSessions().find((x) => x.requestSessionId === sdkSessionId);
     return s ? s.id : null;
   });
 
@@ -5987,8 +6148,16 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   // Desktop / agent-builtin / agent-skill 各一条 list 接口 + desktop 自家的
   // execute 接口。renderer 通过 mergeCommands 把三路 list 合并展示, dispatch
   // 时按 kind 分流: desktop → executeDesktopCommand IPC; agent-* → 当 prompt 前缀 send。
-  ipcMain.handle(MAKER_INVOKE.LIST_DESKTOP_COMMANDS, () => {
-    return { success: true, commands: getDesktopCommandRegistry().list() };
+  ipcMain.handle(MAKER_INVOKE.LIST_DESKTOP_COMMANDS, (_event, ctx?: unknown) => {
+    const deviceId = ctx && typeof ctx === 'object' && !Array.isArray(ctx)
+      && typeof (ctx as { deviceId?: unknown }).deviceId === 'string'
+      && (ctx as { deviceId: string }).deviceId.length > 0
+      ? (ctx as { deviceId: string }).deviceId
+      : undefined;
+    return {
+      success: true,
+      commands: getDesktopCommandRegistry().list(deviceId ? { deviceId } : undefined),
+    };
   });
 
   ipcMain.handle(MAKER_INVOKE.EXECUTE_DESKTOP_COMMAND, async (e, name: unknown, ctx: unknown) => {
@@ -6116,7 +6285,15 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           await desktopClaudeAuthAdapter.ensureSharedGlobalSkills();
         }
         const result = await maker.listAgentSkills(kind, skillParams);
-        return { success: true, ...result };
+        return {
+          success: true,
+          ...result,
+          skills: activeCindyBuiltInAgentSkills(
+            result.skills,
+            builtInSkillDescriptors(app.getPath('userData'), app.getPath('appData')),
+            isCindySkillEnabled,
+          ),
+        };
       } catch (err) {
         return toAgentSkillListFailure(err, {
           reportError: (error) => {
@@ -6663,7 +6840,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     return verdict.kind === 'reroute' ? verdict.providerId : undefined;
   }
 
-  async function bootstrapSession(o: CreateOpts): Promise<{
+  async function bootstrapSession(o: CreateOpts, assertOpeningCurrent?: () => void): Promise<{
     session: Awaited<ReturnType<typeof maker.createSession>>;
     didInjectOrcaInstructions: boolean;
     didInjectProjectContext: boolean;
@@ -6686,6 +6863,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       }
     }
     const assertSshCodexOwnerCurrent = () => {
+      assertOpeningCurrent?.();
       if (
         sshCodexOwnerGeneration !== null &&
         (isAppSessionBoundaryPending() ||
@@ -6834,7 +7012,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       session = await maker.createSession(
         o,
         sshCodexOwnerGeneration === null
-          ? undefined
+          ? (assertOpeningCurrent ? { assertCurrent: assertOpeningCurrent } : undefined)
           : {
               assertCurrent: assertSshCodexOwnerCurrent,
               scopeKey: getSshCodexCreationScopeKey(
@@ -7265,7 +7443,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     teamId: string;
     leadSessionId: string;
     sessionId: string;
-  }): Promise<boolean> {
+  }, assertCurrent?: () => Promise<void>): Promise<boolean> {
     const live = maker.getSession(target.sessionId);
     if (live) return false;
 
@@ -7305,8 +7483,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       ...(extraDirs.length > 0 ? { extraDirs } : {}),
       ...(writableDirs.length > 0 ? { writableDirs } : {}),
     });
+    await assertCurrent?.();
     await ensureRemoteReadyForSessionStart({ createOpts: opts });
+    await assertCurrent?.();
     const { session: resumedSession } = await bootstrapSession(opts);
+    await assertCurrent?.();
     await markOrcaRoleIfNeeded(resumedSession.id, 'worker');
     return true;
   }
@@ -7808,8 +7989,24 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   };
 
   const reviewRunControl = registerReviewStartHandler(makerSessionRegistry, {
-    assertCaller: (event) =>
-      assertTrustedAppRendererEvent(event as Parameters<typeof assertTrustedAppRendererEvent>[0]),
+    captureSourceAccessGuard: (sourceSessionId) => {
+      // Capture trusted origin while still in the invoke context, including for
+      // a later provider-start callback that may run outside that await chain.
+      const remote = isDeviceLinkInvoke();
+      return async () => {
+        if (remote) {
+          await assertRemoteBotInvocationAllowed([{ sourceSessionId }], MAKER_INVOKE.START_REVIEW);
+        }
+      };
+    },
+    assertCaller: (event) => {
+      // A device-link invoke is already authenticated by the relay, controller
+      // lease and remote invoke allowlist. Its synthetic IPC event has no real
+      // BrowserWindow sender, so only local Renderer calls use the sender guard.
+      if (!isDeviceLinkInvoke()) {
+        assertTrustedAppRendererEvent(event as Parameters<typeof assertTrustedAppRendererEvent>[0]);
+      }
+    },
     waitUntilReady: async (sourceSessionId) => {
       await ensureReviewRuntimeReady();
       // Recover only this task when the user explicitly starts Review again.
@@ -7871,7 +8068,18 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       let sourceArtifactFingerprint = '';
       let authorizedArtifactPaths: string[] = [];
       let cleanupPreparedArtifacts: (() => Promise<void>) | null = null;
+      let cleanupRemoteAttachments: (() => Promise<void>) | null = null;
+      let acceptRemoteAttachments: (() => void) | null = null;
       try {
+        if (isDeviceLinkInvoke() && request.attachments.length) {
+          const remote = await prepareRemoteReviewAttachments(
+            request, reviewerSessionId, materializeQueuedOssAttachmentsDeferred,
+          );
+          request.attachments = remote.attachments;
+          acceptRemoteAttachments = remote.onAccepted;
+          cleanupRemoteAttachments = remote.cleanup;
+          cleanupPreparedArtifacts = remote.cleanup;
+        }
         const historicalAttachments = await listReviewHistoricalAttachments(source.id);
         const explicitArtifactGrant = await authorizeReviewExplicitArtifacts({
           workingDir: sourceWorkingDir,
@@ -7894,7 +8102,13 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               explicitArtifactGrant: snapshotGrant,
             }),
         });
-        cleanupPreparedArtifacts = prepared.cleanup;
+        cleanupPreparedArtifacts = async () => {
+          try {
+            await prepared.cleanup();
+          } finally {
+            await cleanupRemoteAttachments?.();
+          }
+        };
         evidence = prepared.value;
         sourceArtifactFingerprint = prepared.fingerprint;
       } catch (error) {
@@ -7954,6 +8168,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         sourceAgentKind: source.agentKind as 'cc' | 'codex' | 'pi' | 'omp',
         prompt: builtPrompt.prompt,
         targetKind: builtPrompt.targetKind,
+        onAccepted: () => acceptRemoteAttachments?.(),
         cleanup: async () => {
           await cleanupPreparedArtifacts?.();
         },
@@ -8788,10 +9003,14 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     onAcceptedRollback?: () => void | Promise<void>;
     onAcceptedCommit?: () => void | Promise<void>;
     origin?: AgentInputQueuedMessage['origin'];
+    /** Host-only receipt: plugin-authored input is not user-authored permission. */
+    autoReviewUserText?: { kind: 'delegated-continuation' };
     authorizationGuard?: BotAuthorizationInputGuard;
     createDefaults?: SendToSessionCreateDefaults;
     /** 安全调用方可要求新会话不比来源会话拥有更高的权限。 */
     inheritSourcePermissionMode?: boolean;
+    /** Host-owned durable inputs use the coordinator even when idle. */
+    forceQueue?: boolean;
   }): Promise<SendToSessionInternalResult> {
     const {
       targetSessionId,
@@ -8815,6 +9034,14 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       message,
       explicitOrigin: origin,
     });
+    const inputAgentMeta: AgentMeta | undefined = queuedOrigin || params.autoReviewUserText !== undefined
+      ? {
+          ...(queuedOrigin ? { origin: queuedOrigin } : {}),
+          ...(params.autoReviewUserText !== undefined
+            ? { autoReviewUserText: params.autoReviewUserText, delivery: 'turn' as const }
+            : {}),
+        } as AgentMeta
+      : undefined;
     if (!message) {
       return { ok: false, errorCode: 'INVALID_ARGS', message: 'message required' };
     }
@@ -8999,7 +9226,20 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           title: newTitle,
           permissionMode: inherited.permissionMode ?? 'bypassPermissions',
         });
-        const { session } = await bootstrapSession(createOpts);
+        const { row: openedRow, value: { session } } = await openSession({
+          id: createOpts.id, body: { title: newTitle,
+            agentKind: inherited.agentKind === 'claude-code' ? 'cc' : inherited.agentKind,
+            model: inherited.model, providerId: inherited.providerId, effort: inherited.effort,
+            fastMode: !!inherited.fastMode, permissionMode: createOpts.permissionMode,
+            workspaceKind: inherited.workspaceKind, workingDir: createOpts.workingDir },
+        }, async (row, assertCurrent) => {
+          const created = await bootstrapSession({ ...createOpts, id: row.id, model: row.model,
+            providerId: row.providerId, effort: (row.effort || undefined) as CreateOpts['effort'],
+            fastMode: row.fastMode, workingDir: row.workingDir ?? createOpts.workingDir }, assertCurrent);
+          // A later owner check must not reclaim a worktree whose Session already exists.
+          createdPreviewSessionId = created.session.id;
+          return created;
+        });
         // worktree 场景补写 sessions.worktree_path 反范式快照:createWorktree 时
         // session 行还不存在,worktreeStore.set 的 DB 同步落空(仅 warn),这里 session
         // 行已建,补一次。失败非致命——徽标以 worktreeStore 为准。
@@ -9031,7 +9271,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               clientId,
               role: 'user',
               content: persistedContent ?? message,
-              ...(queuedOrigin ? { agentMeta: { origin: queuedOrigin } as AgentMeta } : {}),
+              ...(inputAgentMeta ? { agentMeta: inputAgentMeta } : {}),
             });
             // F4: send_to_session 的 create 分支也建了一条用户可见新会话(有 title + 落了 user
             // 消息),同属"新建会话需同步所有窗侧栏"的 purpose。广播跟 user row 持久化
@@ -9067,10 +9307,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           targetTitle: newTitle,
           targetLastUserSendAt: null,
           worktreePath: handoffWorktree?.meta.path ?? null,
-          model: inherited.model,
-          effort: inherited.effort ?? null,
-          fastMode: !!inherited.fastMode,
-          providerId: inherited.providerId ?? null,
+          model: openedRow.model,
+          effort: openedRow.effort || null,
+          fastMode: openedRow.fastMode,
+          providerId: openedRow.providerId ?? null,
         };
       } catch (err) {
         if (createdPreviewStarted && createdPreviewSessionId && createdPreviewClientId) {
@@ -9147,7 +9387,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       // Pending selections also need the canonical send transaction: it consumes the intent,
       // then refreshes queued createOpts from DB before starting the target harness.
       // enqueue does not await dispatch, so the drain can acquire this lock after we return.
-      if (explicitClientId?.startsWith('bot-dm:') || explicitClientId?.startsWith(BOT_GROUP_CLIENT_ID_PREFIX) || explicitClientId?.startsWith('bot-authorization-resume:') || inputCoordinator.shouldQueueNewTurn(targetSessionId) || agentSwitchPending.get(targetSessionId)) {
+      if (params.forceQueue || explicitClientId?.startsWith('bot-dm:') || explicitClientId?.startsWith(BOT_GROUP_CLIENT_ID_PREFIX) || explicitClientId?.startsWith('bot-authorization-resume:') || inputCoordinator.shouldQueueNewTurn(targetSessionId) || agentSwitchPending.get(targetSessionId)) {
         lockStage = 'enqueue-queued-message';
         const qClientId = explicitClientId ?? createId();
         await enqueueSendToSessionMessage({
@@ -9161,6 +9401,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           onAcceptedRollback,
           onAcceptedCommit,
           origin: queuedOrigin,
+          autoReviewUserText: params.autoReviewUserText,
           authorizationGuard: params.authorizationGuard,
         });
         return {
@@ -9195,7 +9436,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           clientId,
           role: 'user',
           content: persistedContent ?? message,
-          ...(queuedOrigin ? { agentMeta: { origin: queuedOrigin } as AgentMeta } : {}),
+          ...(inputAgentMeta ? { agentMeta: inputAgentMeta } : {}),
         });
         await runAcceptedCallback(onAccepted, targetSessionId, clientId);
       };
@@ -9224,6 +9465,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             onAcceptedRollback,
             onAcceptedCommit,
             origin: queuedOrigin,
+            autoReviewUserText: params.autoReviewUserText,
           });
           return {
             ok: true as const,
@@ -9302,6 +9544,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         lockStage = 'live-send';
         try {
           const sendResult = await sendUserMessageWithAwaitedGitBaseline(live, message, clientId, {
+            ...(params.autoReviewUserText ? {
+              [AUTO_REVIEW_SOURCE_CONTENT]: '',
+              [AUTO_REVIEW_USER_INTENT]: restoreAutoReviewUserIntent(await readAutoReviewHistory(targetSessionId)),
+            [AUTO_REVIEW_DELEGATED_CONTINUATION]: true as const,
+            } : {}),
             planMode: false,
             onAccepted: persistUserMessage,
             onDispatching: () => dispatchAgentIslandUserPrompt(targetSessionId),
@@ -9347,6 +9594,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               onAcceptedRollback,
               onAcceptedCommit,
               origin: queuedOrigin,
+              autoReviewUserText: params.autoReviewUserText,
             });
             return {
               ok: true as const,
@@ -9411,6 +9659,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         const { session } = await bootstrapSession(createOpts);
         await markOrcaRoleIfNeeded(session.id, createOpts.orcaRole);
         const sendResult = await sendUserMessageWithAwaitedGitBaseline(session, message, clientId, {
+          ...(params.autoReviewUserText ? {
+            [AUTO_REVIEW_SOURCE_CONTENT]: '',
+            [AUTO_REVIEW_USER_INTENT]: restoreAutoReviewUserIntent(await readAutoReviewHistory(targetSessionId)),
+            [AUTO_REVIEW_DELEGATED_CONTINUATION]: true as const,
+          } : {}),
           planMode: false,
           onAccepted: persistUserMessage,
           onDispatching: () => dispatchAgentIslandUserPrompt(targetSessionId),
@@ -9456,6 +9709,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             onAcceptedRollback,
             onAcceptedCommit,
             origin: queuedOrigin,
+            autoReviewUserText: params.autoReviewUserText,
           });
           return {
             ok: true as const,
@@ -9845,6 +10099,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         fastMode: getSessionFastMode(sessionId),
       } : null;
     },
+    taskRoute: createBotSessionTaskRouteBridge({
+      getSessionRuntime: params => sessionControlService.getSessionRuntime(params),
+      setSessionRuntime: params => sessionControlService.setSessionRuntime(params),
+      readConfiguredCandidate: (callerSessionId, current, childSessionId) =>
+        readBotFallbackCandidate(callerSessionId, current, childSessionId),
+    }),
     dispatch: ({ targetSessionId, message, persistedContent, clientId, onAccepted, dispatcherSessionId }) =>
       dispatchBotSessionMessage({
         targetSessionId,
@@ -10031,6 +10291,42 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       return delegationForRestore.cancelDelegation(parentSessionId, delegationId);
     },
   );
+  const captureSessionOwner = () => {
+    const owner = getCurrentDbClientSnapshot();
+    return () => {
+      if (!owner || isAppSessionBoundaryPending() || getCurrentDbClientSnapshot() !== owner) throw new Error('账号已变化，请重新发起任务');
+    };
+  };
+  const resolveSessionExecution = createSessionExecutionResolver({
+    captureOwner: captureSessionOwner,
+    readCaller: async sessionId => {
+      const meta = await maker.getSessionMeta(sessionId);
+      if (!meta || meta.remoteHostId) throw new Error('无法读取发起任务的本机模型配置，请明确选择新任务的模型');
+      const profile = await readSessionRuntimeProfiles(sessionId);
+      if (!profile || profile.pendingMutation) throw new Error('发起任务正在切换模型，请稍后重试');
+      return { ...profile.effective, effort: profile.effective.effort ?? undefined };
+    },
+    readDefault: () => {
+      const route = getSelectedNewMakerRoute(activeOwnerScopeKey());
+      return route ? { agentKind: route.harness === 'claude' ? 'claude-code' : route.harness,
+        model: route.model, providerId: route.providerId, effort: (route.effort || undefined) as Effort | undefined,
+        fastMode: route.fastMode } : undefined;
+    },
+    availableAgents: () => maker.listAvailableAgents(),
+    availableModels: agent => maker.getCapabilities(agent).availableModels,
+    readProviderRouting: () => getProviderRoutingContext(),
+    hasCindyAiApiKey: () => readClaudeApiKey() != null,
+  });
+  setSessionOpeningModelAdmission(async body => {
+    const execution = await resolveSessionExecution({
+      agentKind: body.agentKind, model: body.model, providerId: body.providerId,
+      effort: body.effort, fastMode: body.fastMode,
+    });
+    return { ...body, ...execution, effort: execution.effort ?? '',
+      agentKind: execution.agentKind === 'claude-code' ? 'cc' : execution.agentKind };
+  });
+  setPluginTaskConfigValidator(async config => { await resolveSessionExecution(config); });
+
   // Ghost 的 Agent 槽只负责验证权限和整理 prompt；真正的新回合仍走
   // sendToSessionInternal 这一条主机通路，因此会话恢复、繁忙排队、消息落库与
   // 费用行为都和用户亲自在聊天框发送一致。runner 通过回调注入，避免
@@ -10050,6 +10346,16 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           return 'queued';
       }
     };
+
+    // This surface acts on the user's task, so keep its own route/permissions.
+    // Admission is shared with plugin-owned tasks; their defaults must not replace it.
+    try {
+      // A remote task's model is owned by its execution host, not this device's catalog.
+      const source = await maker.getSessionMeta(request.sourceSessionId);
+      if (!source?.remoteHostId) await resolveSessionExecution({}, request.sourceSessionId);
+    }
+    catch (error) { return { ok: false, errorCode: 'MODEL_UNAVAILABLE',
+      message: error instanceof Error ? error.message : '任务模型不可用，请在任务中重新选择' }; }
 
     if (request.mode === 'new') {
       const result = await sendToSessionInternal({
@@ -10133,13 +10439,526 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   });
   setGhostSessionRevealer((sessionId) => openMainWindowSession(sessionId));
 
-  // Ghost 的派活取件(agent 槽 errand 加档):守门在 cindy-brain/errandSlot,
-  // 这里注入真实执行链——专属会话确保/统一投递/turn 收口。投递仍走
-  // sendToSessionInternal 这一条主机通路(消息落库、进程拉起与用户亲发一致);
-  // 收口复用 hook-control 的 observeHookTurn(与飞书 bot 同一套 turn 观察语义)。
+  // One receipt service per account/database epoch. No mutable current-DB lookup
+  // is retained by an asynchronous task request.
+  let pluginTaskEpoch: ReturnType<typeof getCurrentDbClientSnapshot> = null;
+  let pluginTasks: PluginTaskService | null = null;
+  drainPluginTaskReceipts = async () => { await pluginTasks?.drain(); };
+  pluginTaskServiceForCurrentOwner = () => {
+    const snapshot = getCurrentDbClientSnapshot();
+    if (!snapshot) throw new PluginTaskError('HOST_NOT_READY', 'Task storage is unavailable', true);
+    if (pluginTaskEpoch === snapshot && pluginTasks) return pluginTasks;
+    const assertCurrent = () => {
+      if (getCurrentDbClientSnapshot() !== snapshot) throw new PluginTaskError('PERMISSION_DENIED', 'Account changed');
+    };
+    const assertPlugin = (pluginId: string) => {
+      assertCurrent();
+      if (!isPluginTaskAuthorized(pluginId)) throw new PluginTaskError('PERMISSION_DENIED', 'Plugin task capability is unavailable');
+    };
+    const routeUnavailable = (): never => { throw new PluginTaskError('ROUTE_UNAVAILABLE', 'The selected provider, model or effort is unavailable'); };
+    const resolveRoute = async (pluginId: string, requested?: PluginTaskRoute, callId?: string): Promise<PluginTaskRoute> => {
+      assertPlugin(pluginId);
+      const selection = { ...readPluginTaskConfig(pluginId), ...requested };
+      const sourceSessionId = getPluginTaskSourceSessionId(pluginId, callId);
+      if (callId && !sourceSessionId && !(selection.agentKind && selection.model && selection.providerId)) throw new PluginTaskError('ROUTE_UNAVAILABLE', '发起任务已不可用，请重新调用，或在面板选择模型后创建任务');
+      try {
+        const execution = await resolveSessionExecution(selection, sourceSessionId);
+        assertPlugin(pluginId);
+        if (!execution.providerId) return routeUnavailable();
+        return { ...execution, agentKind: execution.agentKind === 'claude-code' ? 'cc' : execution.agentKind,
+          providerId: execution.providerId, effort: execution.effort ?? '' };
+      } catch (error) {
+        throw new PluginTaskError('ROUTE_UNAVAILABLE', error instanceof Error ? error.message : '任务模型不可用，请重新选择');
+      }
+    };
+    const readExecution = (taskId: string) => {
+      const live = maker.getSession(taskId);
+      return live && (live.isTurnRunning() || live.getTurnControlSnapshot().pendingInteractionCount > 0) ? { instanceId: live.instanceId, generation: live.getTurnGeneration() } : null;
+    };
+    pluginTaskEpoch = snapshot;
+    pluginTasks = createPluginTaskService({
+      store: createPluginTaskStore(snapshot.client), assertCurrent, assertAuthorized: assertPlugin, resolveRoute,
+      readPermissionMode: pluginId => clampPluginTaskPermissionMode(readPluginTaskConfig(pluginId).permissionMode),
+      setModel: async (taskId, route, assertUnchanged) => {
+        const current = await sessionControlService.getSessionRuntime({ targetSessionId: taskId });
+        if (!current.ok) throw new PluginTaskError('TASK_NOT_FOUND', current.message);
+        await assertUnchanged();
+        const targetAgent = route.agentKind === 'cc' ? 'claude-code' : route.agentKind;
+        const pendingAgent = current.runtime.pendingMutation?.profile.agentKind;
+        const selectHarness = current.runtime.effectiveProfile.agentKind !== targetAgent
+          || (pendingAgent !== undefined && pendingAgent !== targetAgent);
+        const result = await sessionControlService.setSessionRuntime({ targetSessionId: taskId,
+          expectedGeneration: current.runtime.runtimeGeneration,
+          patch: { ...(selectHarness ? { harness: targetAgent } : {}),
+            model: route.model, providerId: route.providerId, effort: (route.effort || null) as Effort | null,
+            fastMode: route.fastMode } });
+        if (!result.ok) throw new PluginTaskError(result.errorCode, result.message);
+        return { status: result.status };
+      },
+      assertTeamPlanUnstarted: async taskId => {
+        assertCurrent();
+        await drainPersistQueue();
+        assertCurrent();
+        const [input] = await snapshot.client.drizzle.select({id: messages.id}).from(messages).where(and(eq(messages.sessionId, taskId), eq(messages.role, 'user'))).limit(1);
+        const [task] = await snapshot.client.drizzle.select({startedAt: sessions.activeTurnStartedAt, endedAt: sessions.lastTurnEndedAt}).from(sessions).where(eq(sessions.id, taskId)).limit(1);
+        assertCurrent();
+        if (input || task?.startedAt != null || task?.endedAt != null) throw new PluginTaskError('TASK_BUSY', 'Register the team plan before sending input');
+        const workers = await snapshot.client.drizzle.select({id:orcaWorkers.id}).from(orcaWorkers).innerJoin(orcaTeams,eq(orcaWorkers.teamId,orcaTeams.id)).where(eq(orcaTeams.leadSessionId,taskId)).limit(1);
+        const reservations = await snapshot.client.drizzle.select({id:orcaWorkerCreationReservations.id}).from(orcaWorkerCreationReservations).innerJoin(orcaTeams,eq(orcaWorkerCreationReservations.teamId,orcaTeams.id)).where(and(eq(orcaTeams.leadSessionId,taskId),gte(orcaWorkerCreationReservations.expiresAt,Date.now()))).limit(1);
+        assertCurrent();
+        if (workers.length || reservations.length) throw new PluginTaskError('TASK_BUSY', 'Register the team plan before creating Workers');
+      },
+      createSession: async (pluginId, taskId, title, route, isolatedWorkspace, requestedRoute, onPersistenceStarted, callId) => {
+        assertPlugin(pluginId);
+        const cfg = readPluginTaskConfig(pluginId);
+        const configurationIsCurrent = () => {
+          const current = readPluginTaskConfig(pluginId);
+          return current.workingDir === cfg.workingDir && current.permissionMode === cfg.permissionMode
+            && current.agentKind === cfg.agentKind && current.model === cfg.model
+            && current.providerId === cfg.providerId && current.effort === cfg.effort
+            && current.fastMode === cfg.fastMode;
+        };
+        // Receipt persistence/provider lookup can yield after the first resolution.
+        // Reuse the resolver with the original request, then guard this configuration
+        // through directory validation and the creator's final continuation.
+        const currentRoute = await resolveRoute(pluginId, requestedRoute, callId);
+        if ((Object.keys(currentRoute) as Array<keyof PluginTaskRoute>).some(key => currentRoute[key] !== route[key]))
+          throw new PluginTaskError('ROUTE_UNAVAILABLE', 'Plugin task route changed');
+        const workingDir = !isolatedWorkspace && cfg.workingDir
+          ? await resolvePluginWorkerDirectory({
+              requested: cfg.workingDir, configuredDirectory: cfg.workingDir,
+              isPickedDirectory: () => false,
+              assertCurrent: () => {
+                assertPlugin(pluginId);
+                if (!configurationIsCurrent()) throw new PluginTaskError('PERMISSION_DENIED', 'Plugin task configuration changed');
+              },
+            })
+          : undefined;
+        assertPlugin(pluginId);
+        if (!configurationIsCurrent()) throw new PluginTaskError('PERMISSION_DENIED', 'Plugin task configuration changed');
+        await createPluginTaskSession({
+          ghostId: pluginId, sessionId: taskId, title, ...route,
+          onPersistenceStarted,
+          permissionMode: clampPluginTaskPermissionMode(cfg.permissionMode),
+          ...(workingDir ? { workingDir } : {}),
+          shouldContinue: () => getCurrentDbClientSnapshot() === snapshot && isPluginTaskAuthorized(pluginId) && configurationIsCurrent(),
+          notifySessionCreated: ({ sessionId, workdir }) => {
+            notifyGhostSessionEvent('created', { sessionId, workdir });
+            broadcastSessionCreated(sessionId);
+          },
+        });
+      },
+      readSession: async taskId => {
+        assertCurrent();
+        const [row] = await snapshot.client.drizzle.select().from(sessions).where(eq(sessions.id, taskId)).limit(1);
+        assertCurrent();
+        if (!row || row.source !== 'plugin' || row.remoteHostId || (row.orcaRole && row.orcaRole !== 'lead') || !['cc', 'codex', 'pi'].includes(row.agentKind)) return null;
+        const runtime = await readSessionRuntimeProfiles(taskId);
+        assertCurrent();
+        // A queued input will execute the accepted next-send route. Keep its
+        // receipt stable as a deferred model/Harness switch reaches that boundary.
+        const selected = runtime?.pendingMutation?.profile ?? runtime?.effective;
+        const resolvedConfig: PluginTaskRoute = selected
+          ? { agentKind: selected.agentKind === 'claude-code' ? 'cc' : selected.agentKind,
+            providerId: selected.providerId ?? '', model: selected.model,
+            effort: selected.effort ?? '', fastMode: selected.fastMode }
+          : { agentKind: row.agentKind as PluginTaskRoute['agentKind'], providerId: row.providerId ?? '', model: row.model, effort: row.effort, fastMode: row.fastMode };
+        const revision = Number.parseInt(pluginTaskConfigHash('sha256').update(JSON.stringify([resolvedConfig, row.permissionMode, row.planModeEnabled, row.workingDir, row.status, row.orcaRole])).digest('hex').slice(0, 12), 16);
+        return { taskId, title: row.title, status: row.status, revision, resolvedConfig, workingDir: row.workingDir ?? undefined, permissionMode: row.permissionMode, planModeEnabled: !!row.planModeEnabled };
+      },
+      dispatch: async (pluginId, taskId, clientId, text) => {
+        assertPlugin(pluginId);
+        const outcome = await sendToSessionInternal({ targetSessionId: taskId, clientId, message: text, autoReviewUserText: { kind: 'delegated-continuation' }, forceQueue: true, onAccepted: async () => { assertPlugin(pluginId); await pluginTaskServiceForCurrentOwner!().assertDispatch(pluginId, taskId); assertPlugin(pluginId); } });
+        await awaitAgentInputQueueSnapshotPersistence(taskId);
+        assertCurrent();
+        return outcome;
+      },
+      inspect: async taskId => {
+        assertCurrent(); await inputCoordinator.ensureQueueRestored(taskId); assertCurrent();
+        if (!inputCoordinator.isQueueRestored(taskId)) throw new PluginTaskError('HOST_NOT_READY', 'Task queue is restoring', true);
+        return { execution: readExecution(taskId), pending: inputCoordinator.getQueueControlSnapshot(taskId).pendingQueue };
+      },
+      cancel: async (pluginId, taskId, inputClientIds, execution) => {
+        assertPlugin(pluginId);
+        await inputCoordinator.ensureQueueRestored(taskId);
+        assertCurrent();
+        if (!inputCoordinator.isQueueRestored(taskId)) throw new PluginTaskError('HOST_NOT_READY', 'Task queue is restoring', true);
+        await withdrawOwnedSessionInputs({ sessionId: taskId, queue: {
+          ensureQueueRestored: async sessionId => {
+            await inputCoordinator.ensureQueueRestored(sessionId);
+            await pluginTaskServiceForCurrentOwner!().get(pluginId, taskId);
+            assertPlugin(pluginId);
+          },
+          getQueueControlSnapshot: sessionId => inputCoordinator.getQueueControlSnapshot(sessionId),
+          remove: (sessionId, clientId) => inputCoordinator.remove(sessionId, clientId),
+        }, owns: value => { assertPlugin(pluginId); return inputClientIds.includes(value); }, flush: awaitAgentInputQueueSnapshotPersistence });
+        assertCurrent();
+        if (!execution) return 'cancelled';
+        let stopped = false;
+        const applied = await controlOwnedSessionExecution({
+          sessionId: taskId, withSessionLock: withSessionRestartLock,
+          matches: () => getCurrentDbClientSnapshot() === snapshot && isPluginTaskAuthorized(pluginId) && isSameSessionExecution(readExecution(taskId), execution),
+          operation: async () => {
+            await pluginTaskServiceForCurrentOwner!().get(pluginId, taskId);
+            assertPlugin(pluginId);
+            if (!isSameSessionExecution(readExecution(taskId), execution)) { stopped = true; return; }
+            resetAutomaticRecoveryForExplicitStop(taskId);
+            contextOverflowRolloverHolder?.cancelRecovery(taskId);
+            const outcome = await sessionControlService.stopSessionTurn({ targetSessionId: taskId });
+            if (!outcome.ok) throw new PluginTaskError('UNSUPPORTED_CAPABILITY', 'Execution does not support stopping');
+            stopped = outcome.status === 'no-active-turn';
+          },
+        });
+        return applied ? (stopped ? 'stale' : 'stopping') : 'stale';
+      },
+    });
+    return pluginTasks;
+  };
+  const startOrcaTeamForCaller = async (leadSessionId: string, workerPermissionMode?: OrcaWorkerPermissionMode, assertCurrent?: (activationStarted?: boolean) => Promise<void>, completeOperation?: PluginTaskService['completeOperation']) => {
+      try {
+        await assertLeadCollabProjectEnabled(leadSessionId);
+        // Plugin Auto cannot request Full access, including through the public
+        // Agent tool. Reject before showing a confirmation we cannot honor.
+        if (workerPermissionMode === 'bypassPermissions'
+          && (await captureOrcaPluginAuthority(leadSessionId)).permissionMode === 'auto') {
+          throw new PluginTaskError('PERMISSION_DENIED', 'Plugin tasks cannot request Worker Full access');
+        }
+        return await startOrcaTeamWithPermissionGate(
+          { leadSessionId, workerPermissionMode },
+          {
+            getCurrentWorkerPermissionMode: getWorkerPermissionModeFromCreationPrefs,
+            requestFullAccessConfirmation: (sessionId) =>
+              orcaWorkerPermissionConfirmBridge.request(sessionId, {
+                title: t('newChat.chatInput.fullAccessConfirmation.title'),
+                description: `${t('newChat.chatInput.fullAccessConfirmation.description')} ${t('newChat.chatInput.fullAccessConfirmation.note')}`,
+              }),
+            startTeam: async (params) => {
+              const start = async () => {
+                await assertCurrent?.();
+                return orcaLifecycleService.startTeam(params, assertCurrent ? () => assertCurrent(true) : undefined);
+              };
+              // Track only admitted native work, never the permission dialog.
+              return completeOperation ? completeOperation(start) : start();
+            },
+          },
+        );
+      } catch (err) {
+        return {
+          ok: false as const,
+          errorCode:
+            err instanceof Error && (err as unknown as { code?: string }).code
+              ? (err as unknown as { code: string }).code
+              : 'INTERNAL',
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
+  };
+  const pluginPermissionRequests = new Set<string>();
+  const pluginWriteAccessGate = new PluginWriteAccessGate();
+  const pluginWriteAccessIdentity = (pluginId: string) => {
+    const owner = getCurrentDbClientSnapshot();
+    const revision = getPluginTaskInstallRevision(pluginId);
+    if (!owner || !revision) throw new PluginTaskError('PERMISSION_DENIED', 'Plugin task approval unavailable');
+    return JSON.stringify([owner.userId, owner.clientEpoch, revision]);
+  };
+  // Projection and release consume the same host-stamped completion evidence.
+  const readPluginWorkerCompletion = async (epoch: NonNullable<ReturnType<typeof getCurrentDbClientSnapshot>>, sessionId: string, status: string) => {
+    const [row] = await epoch.client.drizzle.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+    const safeMeta = sql`CASE WHEN json_valid(${messages.agentMeta}) THEN ${messages.agentMeta} ELSE '{}' END`;
+    const [anchor] = await epoch.client.drizzle.select({role:messages.role, createdAt:messages.createdAt, agentMeta:messages.agentMeta, rowid:sql<number>`rowid`}).from(messages)
+      .where(and(eq(messages.sessionId, sessionId), isNull(messages.rewindAt), inArray(messages.role, ['user', 'assistant']), sql`json_extract(${safeMeta}, '$.parentUuid') IS NULL`))
+      .orderBy(desc(messages.createdAt), desc(sql`rowid`)).limit(1);
+    const [taskInput] = anchor ? await epoch.client.drizzle.select({createdAt:messages.createdAt, content:messages.content}).from(messages)
+      .where(and(eq(messages.sessionId, sessionId), isNull(messages.rewindAt), eq(messages.role, 'user'),
+        sql`json_extract(${safeMeta}, '$.parentUuid') IS NULL`,
+        sql`COALESCE(json_extract(${safeMeta}, '$.autoResume'), 0) != 1`,
+        sql`${messages.createdAt} > ${row?.clearedAt ?? 0}`,
+        sql`(${messages.createdAt} < ${anchor.createdAt} OR (${messages.createdAt} = ${anchor.createdAt} AND rowid < ${anchor.rowid}))`))
+      .orderBy(desc(messages.createdAt), desc(sql`rowid`)).limit(1) : [];
+    const flow = await createOrcaDiagnosticsDeps().getWorkerFlowStatus(sessionId);
+    if (epoch !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED', 'Account changed');
+    const completedAt = pluginWorkerCompletedAt({status, working:flow.isWorking, queued:flow.queuedCount, paused:flow.queuePaused, startedAt:row?.activeTurnStartedAt ?? null, endedAt:row?.lastTurnEndedAt ?? null, clearedAt:row?.clearedAt, anchor, taskInput});
+    return {row, completedAt, status: completedAt !== null ? 'done' : status === 'done' ? 'idle' : status};
+  };
+  const handlePluginTask = async (pluginId: string, request: PluginTaskRequest, explicitWriteAccess = false, assertCallerCurrent = () => {}): Promise<unknown> => {
+    const service = pluginTaskServiceForCurrentOwner!();
+    switch (request.kind) {
+      case 'requestWriteAccess': {
+        const snapshot = getCurrentDbClientSnapshot();
+        const task = await service.get(pluginId, request.taskId);
+        if (task.status !== 'active') throw new PluginTaskError('TASK_BUSY', 'Archived tasks cannot request write access');
+        const assertPlanInactive = () => {
+          const live = maker.getSession(task.taskId);
+          const plan = live?.stablePlanModeState;
+          if (live && (!plan || plan.enabled)) throw new PluginTaskError('PERMISSION_DENIED', 'Plan Mode is active or changing');
+        };
+        assertPlanInactive();
+        if (task.planModeEnabled) throw new PluginTaskError('PERMISSION_DENIED', 'Exit Plan Mode before requesting write access');
+        const mode = request.mode ?? 'acceptEdits';
+        const cfg = readPluginTaskConfig(pluginId);
+        assertCallerCurrent();
+        if (isPluginTaskPermissionAllowed(task.permissionMode, cfg.permissionMode) && (mode === 'acceptEdits' ? task.permissionMode === 'acceptEdits' || task.permissionMode === 'auto' : task.permissionMode === 'auto')) return { granted: true, task };
+        if (pluginPermissionRequests.size) throw new PluginTaskError('TASK_BUSY', 'A permission request is already open');
+        const identity = pluginWriteAccessIdentity(pluginId);
+        const assertRequestCurrent = () => {
+          assertCallerCurrent();
+          if (snapshot !== getCurrentDbClientSnapshot() || identity !== pluginWriteAccessIdentity(pluginId)) throw new PluginTaskError('PERMISSION_DENIED', 'Permission request identity changed');
+        };
+        const before = JSON.stringify(cfg);
+        const assertIdle = async () => {
+          await inputCoordinator.ensureQueueRestored(task.taskId);
+          assertRequestCurrent();
+          if (!inputCoordinator.isQueueRestored(task.taskId)) throw new PluginTaskError('HOST_NOT_READY', 'Task queue is restoring', true);
+          if (mode === 'acceptEdits') {
+            if ((await service.listRuns(pluginId, task.taskId)).items.length) throw new PluginTaskError('TASK_BUSY', 'Only an unstarted task can request write access');
+            await drainPersistQueue();
+            if (!snapshot || snapshot !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED', 'Account changed');
+            // Ordinary UI turns have no plugin send receipt. Clearing or rewinding
+            // their messages must not make an already-started task new again.
+            const [input] = await snapshot.client.drizzle.select({id: messages.id}).from(messages)
+              .where(and(eq(messages.sessionId, task.taskId), eq(messages.role, 'user'))).limit(1);
+            const [row] = await snapshot.client.drizzle.select({startedAt: sessions.activeTurnStartedAt, endedAt: sessions.lastTurnEndedAt}).from(sessions)
+              .where(eq(sessions.id, task.taskId)).limit(1);
+            if (snapshot !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED', 'Account changed');
+            if (input || row?.startedAt != null || row?.endedAt != null) throw new PluginTaskError('TASK_BUSY', 'Only an unstarted task can request write access');
+          }
+          const live = maker.getSession(task.taskId);
+          if (live?.isTurnRunning() || live?.getTurnControlSnapshot().pendingInteractionCount || inputCoordinator.getQueueControlSnapshot(task.taskId).pendingQueue.length) throw new PluginTaskError('TASK_BUSY', 'Wait for the current turn before changing permission');
+        };
+        pluginPermissionRequests.add(pluginId);
+        try {
+          await withSessionRestartLock(task.taskId, assertIdle);
+          assertRequestCurrent();
+          // Busy/preflight failures have not asked the user anything; do not consume an attempt.
+          return await pluginWriteAccessGate.request(JSON.stringify([pluginId, task.taskId]), identity, mode, explicitWriteAccess, async () => {
+          const result = await dialog.showMessageBox({
+            type: 'question', title: t(mode === 'auto' ? 'pluginTaskWriteAccess.autoTitle' : 'pluginTaskWriteAccess.title'),
+            message: t(mode === 'auto' ? 'pluginTaskWriteAccess.autoMessage' : 'pluginTaskWriteAccess.message').replace('{{name}}', getInstalledGhostName(pluginId) ?? pluginId),
+            detail: t(mode === 'auto' ? 'pluginTaskWriteAccess.autoDetail' : 'pluginTaskWriteAccess.detail'),
+            buttons: [t('pluginTaskWriteAccess.allow'), t('pluginTaskWriteAccess.cancel')], defaultId: 1, cancelId: 1,
+          });
+          if (result.response !== 0) return { granted: false };
+          // Reserve permission order before the lifecycle/restart fence. Ordinary
+          // permission writers never hold that fence while awaiting this queue.
+          return await withSessionPermissionChange(task.taskId, () => service.completeOperation(() => withSessionRestartLock(task.taskId, async () => {
+            assertRequestCurrent();
+            if (snapshot !== getCurrentDbClientSnapshot() || before !== JSON.stringify(readPluginTaskConfig(pluginId))) throw new PluginTaskError('PERMISSION_DENIED', 'Account or permission settings changed');
+            const fresh = await service.get(pluginId, task.taskId);
+            if (fresh.status !== 'active') throw new PluginTaskError('TASK_BUSY', 'Archived tasks cannot request write access');
+            if (fresh.planModeEnabled) throw new PluginTaskError('PERMISSION_DENIED', 'Exit Plan Mode before requesting write access');
+            if (fresh.revision !== task.revision) throw new PluginTaskError('TASK_BUSY', 'Task changed while awaiting permission');
+            await assertIdle();
+            assertRequestCurrent();
+            assertPlanInactive();
+            const live = maker.getSession(task.taskId);
+            let persisted = false;
+            try {
+              if (live) await live.setPermissionMode(mode);
+              assertRequestCurrent();
+              if (snapshot !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED', 'Account changed');
+              const saved = await snapshot!.client.tx('bots.persistSessionPermission', {sessionId: task.taskId, mode});
+              persisted = saved.updated;
+              if (!saved.updated) throw new PluginTaskError('TASK_NOT_FOUND', 'Task not found');
+              if (snapshot !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED', 'Account changed');
+              const updatedTask = await service.get(pluginId, task.taskId);
+              if (updatedTask.planModeEnabled) throw new PluginTaskError('PERMISSION_DENIED', 'Plan Mode changed during permission confirmation');
+              assertRequestCurrent();
+              if (snapshot !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED', 'Account changed');
+              assertPlanInactive();
+              const currentConfig = readPluginTaskConfig(pluginId);
+              if (currentConfig.permissionMode !== cfg.permissionMode) throw new PluginTaskError('PERMISSION_DENIED', 'Permission settings changed');
+              if (mode === 'auto' || ['ask', 'plan'].includes(clampPluginTaskPermissionMode(currentConfig.permissionMode))) writePluginTaskConfig(pluginId, {...currentConfig, permissionMode: mode});
+              broadcastSessionPatched(task.taskId, {permissionMode: mode});
+              return { granted: true, task: updatedTask };
+            } catch (error) {
+              if (live) await live.setPermissionMode(task.permissionMode as Parameters<typeof live.setPermissionMode>[0]).catch(() => undefined);
+              if (persisted) await snapshot!.client.tx('bots.persistSessionPermission', {sessionId: task.taskId, mode: task.permissionMode});
+              throw error;
+            }
+          })));
+          });
+        } finally { pluginPermissionRequests.delete(pluginId); }
+      }
+      case 'startTeam': {
+        const epoch = getCurrentDbClientSnapshot();
+        const task = await service.get(pluginId, request.taskId);
+        const configuredDirectory = readPluginTaskConfig(pluginId).workingDir;
+        // Becoming Lead changes revision through orcaRole, but may not change admission facts.
+        const admission = (view: typeof task) => JSON.stringify([view.resolvedConfig, view.permissionMode, view.planModeEnabled, view.workingDir]);
+        const expectedAdmission = admission(task);
+        assertPluginWorkerAutoAuthorized(pluginId, task);
+        const result = await startOrcaTeamForCaller(task.taskId, undefined, async (activationStarted) => {
+          if (epoch !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED', 'Account changed');
+          const fresh = await service.get(pluginId, task.taskId);
+          if (epoch !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED', 'Account changed');
+          assertPluginWorkerAutoAuthorized(pluginId, fresh);
+          if (configuredDirectory !== readPluginTaskConfig(pluginId).workingDir) throw new PluginTaskError('PERMISSION_DENIED', 'Plugin directory authorization changed');
+          if ((!activationStarted && fresh.revision !== task.revision) || admission(fresh) !== expectedAdmission) throw new PluginTaskError('STALE_REVISION', 'Task changed during team activation');
+        }, service.completeOperation);
+        assertPluginTaskResult(result, 'Collaboration could not be started');
+        return result;
+      }
+      case 'setTeamPlan': return withSendToSessionLock(request.taskId, async () => {
+        const epoch = getCurrentDbClientSnapshot();
+        const task = await service.get(pluginId, request.taskId);
+        const cfg = readPluginTaskConfig(pluginId);
+        const assertCurrent = () => {
+          if (epoch !== getCurrentDbClientSnapshot() || !isPluginTaskAuthorized(pluginId) || cfg.workingDir !== readPluginTaskConfig(pluginId).workingDir) throw new PluginTaskError('PERMISSION_DENIED', 'Plugin directory authorization changed');
+        };
+        const items = [];
+        for (const item of request.plan.items) {
+          const workingDir = await resolvePluginWorkerDirectory({requested:item.workingDir,leadDirectory:task.workingDir,configuredDirectory:cfg.workingDir,isPickedDirectory:dir=>isGhostPickedDir(pluginId,dir),assertCurrent});
+          items.push({...item, workingDir});
+        }
+        const current = await service.get(pluginId, request.taskId);
+        assertCurrent();
+        if (current.revision !== task.revision) throw new PluginTaskError('STALE_REVISION', 'Task changed during directory validation');
+        return service.setTeamPlan(pluginId, request.taskId, {...request.plan, items});
+      });
+      case 'releaseWorker': {
+        return service.completeOperation(async () => {
+          const epoch = getCurrentDbClientSnapshot();
+          await service.get(pluginId,request.taskId);
+          if (!epoch) throw new PluginTaskError('HOST_NOT_READY','Task storage unavailable',true);
+          const [record] = await epoch.client.drizzle.select({id:orcaWorkers.id,sessionId:orcaWorkers.sessionId,label:orcaWorkers.label}).from(orcaWorkers).innerJoin(orcaTeams,eq(orcaWorkers.teamId,orcaTeams.id)).where(and(eq(orcaWorkers.id,request.workerId),eq(orcaTeams.leadSessionId,request.taskId))).limit(1);
+          if (epoch !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED','Account changed');
+          await service.get(pluginId,request.taskId);
+          if (!record) throw new PluginTaskError('TASK_NOT_FOUND','Worker not found');
+          const planReceipt = await createPluginTaskStore(epoch.client).get(request.taskId);
+          const plan = planReceipt ? readPluginTaskPlanReceipt(planReceipt.payload).teamPlan : undefined;
+          if (plan && !plan.items.some((item: {label: string}) => item.label === record.label)) throw new PluginTaskError('INVALID_REQUEST', 'Worker is not in team plan');
+          const [row] = await epoch.client.drizzle.select().from(sessions).where(eq(sessions.id,record.sessionId)).limit(1);
+          if (!row || row.status === 'deleted') throw new PluginTaskError('TASK_NOT_FOUND','Worker not found');
+          const validate = async () => {
+            if (epoch !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED','Account changed');
+            await service.get(pluginId,request.taskId);
+            const [worker] = await epoch.client.drizzle.select({status:orcaWorkers.status}).from(orcaWorkers).where(eq(orcaWorkers.id,record.id)).limit(1);
+            const {row: fresh, completedAt} = await readPluginWorkerCompletion(epoch, record.sessionId, worker?.status ?? 'unknown');
+            if (!fresh || fresh.status === 'deleted' || completedAt === null || completedAt !== request.completedAt) throw new PluginTaskError('STALE_REVISION','Worker has no matching successful completion');
+          };
+          if (row.status === 'archived') {
+            await validate();
+            if (plan) await service.settleWorkerLabel(pluginId,request.taskId,record.label!);
+            return {ok:true,workerId:record.id};
+          }
+          const result = await orcaTeamService.archiveWorker({callerLeadSessionId:request.taskId,workerId:record.id,onlyIfIdle:true,beforeArchive:validate});
+          assertPluginTaskResult(result, 'Worker could not be released');
+          if (result.ok && plan) await service.settleWorkerLabel(pluginId,request.taskId,record.label!);
+          return result;
+        });
+      }
+      case 'getTeam': {
+        const epoch = getCurrentDbClientSnapshot();
+        if (!epoch) throw new PluginTaskError('HOST_NOT_READY', 'Task storage unavailable', true);
+        await service.get(pluginId, request.taskId);
+        await inputCoordinator.ensureQueueRestored(request.taskId);
+        if (!inputCoordinator.isQueueRestored(request.taskId)) throw new PluginTaskError('HOST_NOT_READY', 'Task input queue is unavailable', true);
+        if (epoch !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED', 'Account changed');
+        await service.get(pluginId, request.taskId);
+        const team = await getOrcaWorkspaceInfoReadOnly(createOrcaDiagnosticsDeps(), request.taskId);
+        if (!team.ok) throw new PluginTaskError('HOST_NOT_READY', 'Collaboration state unavailable', true);
+        const workers = await Promise.all(team.workers.map(async worker => {
+          const {row, completedAt, status} = await readPluginWorkerCompletion(epoch, worker.session_id, worker.status);
+          const [firstInput] = await epoch.client.drizzle.select({at:messages.createdAt}).from(messages).where(and(eq(messages.sessionId,worker.session_id),eq(messages.role,'user'),isNull(messages.rewindAt))).orderBy(asc(messages.createdAt)).limit(1);
+          const [firstActivity] = await epoch.client.drizzle.select({at:messages.createdAt}).from(messages).where(and(eq(messages.sessionId,worker.session_id),inArray(messages.role,['assistant','thinking','tool_use']),gte(messages.createdAt,firstInput?.at??row?.createdAt??0),isNull(messages.rewindAt))).orderBy(asc(messages.createdAt)).limit(1);
+          return {...worker, acceptedAt:firstInput?.at, startedAt:firstActivity?.at, timingBasis:'host-message-window', createdAt:row?.createdAt, lastTurnStartedAt:row?.activeTurnStartedAt, lastTurnEndedAt:row?.lastTurnEndedAt, waitingForUser:!!maker.getSession(worker.session_id)?.getTurnControlSnapshot().pendingInteractionCount, usage: {scope:'session-total', tokens:row?.totalTokenUsage ?? null, costUSD:row?.totalCostCurrency === 'USD' && row.totalCostAmount > 0 ? row.totalCostAmount : null, approximate:row?.totalCostIsApproximate ?? false, reason:row?.totalCostCurrency === 'USD' && row.totalCostAmount > 0 ? null : 'No confirmed USD cost; subscription value and other currencies are not a bill'}, status, permissionMode:row?.permissionMode, providerId:row?.providerId, fastMode:row?.fastMode, completedAt};
+        }));
+        if (epoch !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED', 'Account changed');
+        await service.get(pluginId, request.taskId);
+        const [leadRow] = await epoch.client.drizzle.select().from(sessions).where(eq(sessions.id,request.taskId)).limit(1);
+        const reservations = team.workflow ? await epoch.client.drizzle.select({id:orcaWorkerCreationReservations.id}).from(orcaWorkerCreationReservations).where(and(eq(orcaWorkerCreationReservations.teamId,team.workflow.workflow_id),gte(orcaWorkerCreationReservations.expiresAt,Date.now()))) : [];
+        const occupiedSlots=workers.length+reservations.length;
+        const planRow = await createPluginTaskStore(epoch.client).get(request.taskId);
+        const plan = planRow ? readPluginTaskPlanReceipt(planRow.payload).teamPlan : undefined;
+        if (epoch !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED','Account changed');
+        await service.get(pluginId,request.taskId);
+        const hardLimit = Math.min(readCollaborationSettings().workerHardLimit, plan?.concurrency ?? Infinity);
+        const live = maker.getSession(request.taskId);
+        return {...team, capacity:{hardLimit,occupiedSlots,remainingSlots:Math.max(0,hardLimit-occupiedSlots),advisory:true}, coordinatorUsage:{scope:'session-total',tokens:leadRow?.totalTokenUsage ?? null,costUSD:leadRow?.totalCostCurrency==='USD' && leadRow.totalCostAmount>0 ? leadRow.totalCostAmount : null, approximate:leadRow?.totalCostIsApproximate ?? false}, workers, waitingForUser:!!live && live.getTurnControlSnapshot().pendingInteractionCount > 0, leadWorking:(!!live && (live.isTurnRunning() || live.getTurnControlSnapshot().pendingInteractionCount > 0)) || inputCoordinator.getQueueControlSnapshot(request.taskId).pendingQueue.length > 0};
+      }
+      case 'models': {
+        const snapshot = getCurrentDbClientSnapshot();
+        const { available } = await inspectAppDefaultModel();
+        if (snapshot !== getCurrentDbClientSnapshot() || !isPluginTaskAuthorized(pluginId)) throw new PluginTaskError('PERMISSION_DENIED', '账号或插件授权已变化');
+        return { models: available.map(option => ({ id: option.id,
+          route: { agentKind: option.route.harness === 'claude' ? 'cc' : option.route.harness,
+            model: option.route.model, providerId: option.route.providerId,
+            effort: option.route.effort, fastMode: option.route.fastMode },
+          efforts: option.efforts, supportsFastMode: option.supportsFastMode })) };
+      }
+      case 'setModel': return service.setModel(pluginId, request);
+      case 'create': return service.create(pluginId, request);
+      case 'get': return service.get(pluginId, request.taskId);
+      case 'list': return service.list(pluginId, request.after, request.limit);
+      case 'send': return service.send(pluginId, request);
+      case 'readMessages': {
+        const snapshot = getCurrentDbClientSnapshot();
+        await service.get(pluginId, request.taskId);
+        if (snapshot !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED', 'Account changed');
+        if (!snapshot) throw new PluginTaskError('HOST_NOT_READY', 'Task storage is unavailable', true);
+        let cursor: { createdAt: number; id: string; rowid?: number } | null = null;
+        if (request.after) {
+          try {
+            cursor = JSON.parse(request.after);
+            if (!cursor || typeof cursor.id !== 'string' || !Number.isSafeInteger(cursor.createdAt)
+              || (cursor.rowid !== undefined && !Number.isSafeInteger(cursor.rowid))) throw new Error('Invalid cursor');
+          } catch { throw new PluginTaskError('INVALID_REQUEST', 'Invalid message cursor'); }
+        }
+        await drainPersistQueue();
+        if (getCurrentDbClientSnapshot() !== snapshot) throw new PluginTaskError('PERMISSION_DENIED', 'Account changed');
+        const page = await getMessagesForHistory({ sessionIds: [request.taskId], workdir: null, fromMs: null, toMs: null,
+          agentKind: null, roles: null, includeRewound: false, limit: request.limit ?? 50, cursor, order: 'asc' });
+        await service.get(pluginId, request.taskId);
+        if (getCurrentDbClientSnapshot() !== snapshot) throw new PluginTaskError('PERMISSION_DENIED', 'Account changed');
+        return { items: page.items.map(({ id, clientId, role, content, createdAt }) => ({ id: clientId ?? id, role, content, createdAt })),
+          nextCursor: page.nextCursor ? JSON.stringify(page.nextCursor) : null };
+      }
+      case 'getRun': return service.getRun(pluginId, request.runId);
+      case 'listRuns': return service.listRuns(pluginId, request.taskId, request.after, request.limit);
+      case 'cancel': return service.cancel(pluginId, request.runId);
+      default: throw new PluginTaskError('UNSUPPORTED_CAPABILITY', 'Task operation is unavailable');
+    }
+  };
+  setPluginTaskHandler(handlePluginTask);
+  setPluginTaskUninstaller((pluginId, remove) => pluginTaskServiceForCurrentOwner!().withUninstall(pluginId, remove));
+
+  // Local task UI only. The plugin and device-link protocols have no recovery operation.
+  const pluginWriteAccessFromHost = async (event: Electron.IpcMainInvokeEvent, taskId: unknown, retry: boolean) => {
+    if (isDeviceLinkInvoke()) throwIpcError('PERMISSION_DENIED', 'Local task UI required');
+    assertTrustedAppRendererEvent(event);
+    if (typeof taskId !== 'string' || !taskId || taskId.length > 128) throwIpcError('INVALID_PARAMS', 'taskId required');
+    const owner = getCurrentDbClientSnapshot();
+    if (!owner) throwIpcError('INTERNAL', 'Task storage unavailable');
+    const frame = event.senderFrame;
+    const assertCallerCurrent = () => {
+      if (owner !== getCurrentDbClientSnapshot() || event.sender.isDestroyed() || event.senderFrame !== frame) throwIpcError('PERMISSION_DENIED', 'Task UI changed');
+      assertTrustedAppRendererEvent(event);
+    };
+    const receipt = await createPluginTaskStore(owner.client).get(taskId);
+    assertCallerCurrent();
+    if (!receipt || receipt.operation !== 'create') return { granted: false, available: false };
+    try {
+      await pluginTaskServiceForCurrentOwner!().get(receipt.pluginId, taskId);
+      assertCallerCurrent();
+      const identity = pluginWriteAccessIdentity(receipt.pluginId);
+      const mode = pluginWriteAccessGate.recoverable(JSON.stringify([receipt.pluginId, taskId]), identity);
+      if (!retry || !mode) return { granted: false, available: !!mode };
+      const result = await handlePluginTask(receipt.pluginId, {type:'tasks-request', kind:'requestWriteAccess', taskId, mode}, true, () => {
+        assertCallerCurrent();
+        if (identity !== pluginWriteAccessIdentity(receipt.pluginId)) throwIpcError('PERMISSION_DENIED', 'Plugin installation changed');
+      }) as {granted: boolean};
+      return { granted: result.granted, available: !result.granted, mode };
+    } catch {
+      throwIpcError('PERMISSION_DENIED', 'Plugin write permission could not be confirmed');
+    }
+  };
+  ipcMain.handle('maker:get-plugin-write-access-recovery', (event, taskId: unknown) => pluginWriteAccessFromHost(event, taskId, false));
+  ipcMain.handle('maker:retry-plugin-write-access', (event, taskId: unknown) => pluginWriteAccessFromHost(event, taskId, true));
+
+  // Legacy result-returning adapter; ordinary task configuration lives above.
   setGhostErrandRunner(
     createGhostErrandRunner({
-      readConfig: readGhostErrandConfig,
+      readConfig: readPluginTaskConfig,
       readSessionId: readGhostErrandSessionId,
       writeSessionId: writeGhostErrandSessionId,
       getSessionRow: async (sessionId) => {
@@ -10148,6 +10967,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             status: sessions.status,
             agentKind: sessions.agentKind,
             model: sessions.model,
+            providerId: sessions.providerId,
+            effort: sessions.effort,
+            fastMode: sessions.fastMode,
             permissionMode: sessions.permissionMode,
             workingDir: sessions.workingDir,
             workspaceKind: sessions.workspaceKind,
@@ -10155,10 +10977,18 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           .from(sessions)
           .where(eq(sessions.id, sessionId))
           .limit(1);
-        return row ?? null;
+        if (!row) return null;
+        const profile = await readSessionRuntimeProfiles(sessionId);
+        if (profile?.pendingMutation) throw new Error('任务正在切换模型，请稍后重试');
+        const live = maker.getSession(sessionId);
+        const mode = live ? live.stablePermissionModeState?.mode : row.permissionMode;
+        if (live && !mode) throw new Error('任务正在切换权限，请稍后重试');
+        return { ...row, ...(profile ? { ...profile.effective,
+          agentKind: profile.effective.agentKind === 'claude-code' ? 'cc' : profile.effective.agentKind } : {}),
+          permissionMode: mode ?? row.permissionMode };
       },
       createSession: async (params) => {
-        const sessionId = await createGhostErrandSession({
+        const sessionId = await createPluginTaskSession({
           ...params,
           notifySessionCreated: (info) => notifyGhostSessionEvent('created', info),
         });
@@ -10168,7 +10998,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         return sessionId;
       },
       getGhostName: getInstalledGhostName,
-      getDraftDefaults: getWorkerDefaultsFromNewMaker,
+      resolveExecution: resolveSessionExecution,
+      captureOwner: captureSessionOwner,
       normalizeWorkingDir: (dir) => normalizeWorkingDirForStorage(dir),
       isUserPickedDir: isGhostPickedDir,
       isSessionBusy: isSessionInTurn,
@@ -10222,40 +11053,15 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
     findActiveSessionByWorkdir,
     createDraftSession: async (params) => {
-      // draft 跟随用户在 New Maker 面板的当前选择,与用户手建草稿的默认体验
-      // 一致。main 侧缓存没有"当前激活 vendor"信号,取有选择记录的一档:
-      // cc 有记录用 cc;cc 无则 codex;再无则 pi / OMP(整套跟随,避免给
-      // 单引擎用户建出带 Claude 默认值的会话);都没有走 mapper 兜底。
-      const ccDefaults = getWorkerDefaultsFromNewMaker('claude-code');
-      const codexDefaults = ccDefaults.model ? null : getWorkerDefaultsFromNewMaker('codex');
-      const piDefaults =
-        ccDefaults.model || codexDefaults?.model ? null : getWorkerDefaultsFromNewMaker('pi');
-      const ompDefaults =
-        ccDefaults.model || codexDefaults?.model || piDefaults?.model
-          ? null
-          : getWorkerDefaultsFromNewMaker('omp');
-      const picked = ccDefaults.model
-        ? { agentKind: 'cc' as const, d: ccDefaults }
-        : codexDefaults?.model
-          ? { agentKind: 'codex' as const, d: codexDefaults }
-          : piDefaults?.model
-            ? { agentKind: 'pi' as const, d: piDefaults }
-            : ompDefaults?.model
-              ? { agentKind: 'omp' as const, d: ompDefaults }
-              : null;
+      const assertOwner = captureSessionOwner();
+      const config = readPluginTaskConfig(params.ghostId);
+      const execution = await resolveSessionExecution(config, params.sourceSessionId);
+      assertOwner();
       const sessionId = await createPluginDraftSession({
         ...params,
-        ...(picked
-          ? {
-              defaults: {
-                agentKind: picked.agentKind,
-                ...(picked.d.model ? { model: picked.d.model } : {}),
-                ...(picked.d.effort ? { effort: picked.d.effort } : {}),
-                ...(picked.d.fastMode !== undefined ? { fastMode: picked.d.fastMode } : {}),
-                ...(picked.d.providerId !== undefined ? { providerId: picked.d.providerId } : {}),
-              },
-            }
-          : {}),
+        shouldContinue: () => { assertOwner(); return (params.shouldContinue?.() ?? true)
+          && JSON.stringify(readPluginTaskConfig(params.ghostId)) === JSON.stringify(config); },
+        defaults: { ...execution, effort: execution.effort ?? '', permissionMode: clampPluginTaskPermissionMode(config.permissionMode), agentKind: execution.agentKind === 'claude-code' ? 'cc' : execution.agentKind },
         notifySessionCreated: (info) => notifyGhostSessionEvent('created', info),
       });
       if (!sessionId) return null;
@@ -10353,6 +11159,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     onAcceptedRollback?: () => void | Promise<void>;
     onAcceptedCommit?: () => void | Promise<void>;
     origin?: AgentInputQueuedMessage['origin'];
+    /** Host-only receipt: plugin-authored input is not user-authored permission. */
+    autoReviewUserText?: { kind: 'delegated-continuation' };
     authorizationGuard?: BotAuthorizationInputGuard;
   }): Promise<void> {
     const queued = await buildSessionControlInputItem(params);
@@ -10392,6 +11200,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     meta: NonNullable<Awaited<ReturnType<typeof maker.getSessionMeta>>>;
     files?: AgentInputQueuedMessage['files'];
     origin?: AgentInputQueuedMessage['origin'];
+    /** Host-only receipt: plugin-authored input is not user-authored permission. */
+    autoReviewUserText?: { kind: 'delegated-continuation' };
   }): Promise<AgentInputQueuedMessage> {
     const createOpts = await buildCreateOptsForQueuedSession(params.targetSessionId, params.meta, params.inheritTargetPlanMode);
     const imageAttachments: NonNullable<AgentInputQueuedMessage['chatMessage']['images']> = [];
@@ -10425,6 +11235,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     return {
       clientId: params.clientId,
       text: params.message,
+      ...(params.autoReviewUserText !== undefined ? { autoReviewUserText: params.autoReviewUserText } : {}),
       persistedContent,
       model: createOpts.model,
       effort: createOpts.effort ?? '',
@@ -10446,6 +11257,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   }
 
   const orcaInterAgentDispatcher: OrcaInterAgentDispatcher = createOrcaInterAgentDispatcher({
+    readAutoReviewHistory: sessionId => readAutoReviewHistory(sessionId),
     createId,
     getSessionMeta: (sessionId) => maker.getSessionMeta(sessionId).catch(() => null),
     getSessionRowSnapshot,
@@ -10464,11 +11276,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         inputCoordinator.enqueue(sessionId, item);
       })();
     },
-    reserveNextQueuedMessage: async (sessionId, item, onReserved) => {
+    reserveNextQueuedMessage: async (sessionId, item, onReserved, beforeReserve) => {
       await inputCoordinator.ensureQueueRestored(sessionId);
       if (!inputCoordinator.isQueueRestored(sessionId)) {
         throw new Error(`queue restore incomplete for ${sessionId}`);
       }
+      await beforeReserve?.();
       return inputCoordinator.reserveNextInput(sessionId, item, { onReserved }).reserved;
     },
     sendToSessionInternal,
@@ -10594,6 +11407,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (typeof waitForLeadHistory !== 'boolean') {
         throwIpcError('INVALID_PARAMS', 'waitForLeadHistory must be a boolean');
       }
+      const { assertCurrent } = await captureOrcaPluginAuthority(leadSessionId);
       if (waitForLeadHistory) {
         const queryable = await orcaUiAssignmentHistoryGate.waitUntilQueryable(
           leadSessionId,
@@ -10617,7 +11431,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               initialTask: initialTask.trim(),
               snapshotBeforeMs,
             }),
-          });
+          }, assertCurrent);
           if (!result.ok) throwOrcaServiceFailure(result);
           return result;
         },
@@ -10631,12 +11445,14 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
    * 清 knownNonOrca cache、在线时清空 vendorOptions。抽出来给 disableOrcaInternal 的「正常关闭」
    * 和「悬空 lead 兜底」两条路径共用,避免两份漂移。
    */
-  async function clearLeadOrcaRoleState(leadSessionId: string): Promise<void> {
+  async function clearLeadOrcaRoleState(leadSessionId: string, assertCurrent?: () => Promise<void>): Promise<void> {
+    await assertCurrent?.();
     await setSessionOrcaRole(leadSessionId, null);
     knownNonOrcaSessionIds.delete(leadSessionId);
 
     const leadSess = maker.getSession(leadSessionId);
     if (leadSess) {
+      await assertCurrent?.();
       try {
         await leadSess.setVendorOptions({
           orcaRole: null,
@@ -10669,8 +11485,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
    *   - SESSION_DISABLE_ORCA IPC handler (renderer 手动 toggle)
    *   - cindy_helper end_team MCP tool (Lead agent 自动调)
    */
-  async function disableOrcaInternal(leadSessionId: string): Promise<{ ok: true }> {
+  async function disableOrcaInternal(leadSessionId: string, assertCurrent?: () => Promise<void>): Promise<{ ok: true }> {
     const team = await getActiveTeamByLead(leadSessionId);
+    await assertCurrent?.();
     if (!team) {
       // 没有 active team —— 但 Lead 的 orca_role 可能因为上一次关闭被中途打断而悬空成 'lead'
       // (markTeamEnded / markWorkersStatusByTeam / archiveWorkersByTeam 已落库,setSessionOrcaRole(null)
@@ -10679,6 +11496,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       // active team」之后,坏态自锁。所以这里做幂等兜底:仍是 stranded lead 就把角色清掉,
       // 让「关闭协同」成为可靠的逃生口。
       const role = await getSessionOrcaRole(leadSessionId);
+      await assertCurrent?.();
       if (role === 'lead') {
         log.warn('disableOrca: no active team but lead orca_role stranded; reconciling', {
           leadSessionId,
@@ -10686,9 +11504,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         // 上一次关闭若在 archiveWorkersByTeam 之前被打断,team 已非 active 但 worker session 还停在
         // active + hidden + unreachable —— 一并补齐归档,否则它们会成为永远触达不到的孤儿 worker。
         const workerRecycleScope = captureSessionRecycleScope();
-        const orphanedWorkerSessionIds = await reconcileInactiveTeamWorkersForLead(leadSessionId);
+        const orphanedWorkerSessionIds = await reconcileInactiveTeamWorkersForLead(leadSessionId, assertCurrent);
         for (const sid of orphanedWorkerSessionIds) {
+          await assertCurrent?.();
           await recycleSessionWorktreeForStatusChange(sid, 'archived', workerRecycleScope);
+          await assertCurrent?.();
           cleanupPendingInteractionsForSession(sid, 'orca_disable');
           forgetKnownOrcaWorkerSession(sid);
         }
@@ -10698,7 +11518,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             count: orphanedWorkerSessionIds.length,
           });
         }
-        await clearLeadOrcaRoleState(leadSessionId);
+        await clearLeadOrcaRoleState(leadSessionId, assertCurrent);
       } else {
         log.info('disableOrca: no active team, no-op', { leadSessionId });
       }
@@ -10708,8 +11528,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     const workers = await listWorkersByLead(leadSessionId);
     const activeWorkers = workers.filter((w) => w.teamId === team.id);
     for (const w of activeWorkers) {
+      await assertCurrent?.();
       orcaTeamService.clearAutoBridgeState(w.sessionId);
       await cancelIOSSimulatorSessionOperations(w.sessionId);
+      await assertCurrent?.();
       const sess = maker.getSession(w.sessionId);
       if (sess) {
         try {
@@ -10722,6 +11544,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             err: err instanceof Error ? err.message : String(err),
           });
         }
+        await assertCurrent?.();
         try {
           await maker.closeSession(w.sessionId);
         } catch (err) {
@@ -10731,21 +11554,26 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           });
         }
       }
+      await assertCurrent?.();
       cleanupPendingInteractionsForSession(w.sessionId, 'orca_disable');
       forgetKnownOrcaWorkerSession(w.sessionId);
     }
 
+    await assertCurrent?.();
     await markTeamEnded(team.id, 'completed');
+    await assertCurrent?.();
     await markWorkersStatusByTeam(team.id, 'done');
+    await assertCurrent?.();
     const workerRecycleScope = captureSessionRecycleScope();
-    const archivedWorkerSessionIds = await archiveWorkersByTeam(team.id);
+    const archivedWorkerSessionIds = await archiveWorkersByTeam(team.id, assertCurrent);
     await Promise.all(
-      archivedWorkerSessionIds.map((sessionId) =>
-        recycleSessionWorktreeForStatusChange(sessionId, 'archived', workerRecycleScope),
-      ),
+      archivedWorkerSessionIds.map(async (sessionId) => {
+        await assertCurrent?.();
+        await recycleSessionWorktreeForStatusChange(sessionId, 'archived', workerRecycleScope);
+      }),
     );
 
-    await clearLeadOrcaRoleState(leadSessionId);
+    await clearLeadOrcaRoleState(leadSessionId, assertCurrent);
 
     log.info('disableOrca done', {
       leadSessionId,
@@ -10887,6 +11715,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   };
 
   const orcaTeamService = createOrcaTeamService({
+    captureControlAuthority: async (leadSessionId) => (await captureOrcaPluginAuthority(leadSessionId)).assertCurrent,
+    withSessionSendLock: withSendToSessionLock,
     getWorkerLinkBySessionId: (workerSessionId) => getWorkerLink({ workerSessionId }),
     getWorkerLinkByWorkerId: (workerId) => getWorkerLink({ workerId }),
     listWorkersByLead,
@@ -10906,15 +11736,17 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     markWorkerIdleIfStatus,
     restoreWorkerDoneIfIdle,
     cancelWorkerSessionOperations: cancelIOSSimulatorSessionOperations,
-    closeWorkerSession: async (sessionId) => {
+    closeWorkerSession: async (sessionId, beforeClose) => {
       const sess = maker.getSession(sessionId);
+      await beforeClose?.();
       if (sess) {
         await sess.abort();
       }
+      await beforeClose?.();
       await maker.closeSession(sessionId);
     },
-    closeWorkerSessionIfIdle: async (sessionId) => {
-      if (sendToSessionLocks.has(sessionId)) return false;
+    closeWorkerSessionIfIdle: async (sessionId, sendLockHeld = false) => {
+      if (!sendLockHeld && sendToSessionLocks.has(sessionId)) return false;
       const sess = maker.getSession(sessionId);
       return sess ? sess.closeIfIdle() : true;
     },
@@ -10929,9 +11761,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       );
     },
     hasSendToSessionLock: (sessionId) => sendToSessionLocks.has(sessionId),
-    archiveWorkerSession: async (sessionId) => {
+    archiveWorkerSession: async (sessionId, beforeMutation) => {
       const workerRecycleScope = captureSessionRecycleScope();
-      await archiveSingleWorkerSession(sessionId);
+      await archiveSingleWorkerSession(sessionId, beforeMutation);
+      await beforeMutation?.();
       await recycleSessionWorktreeForStatusChange(sessionId, 'archived', workerRecycleScope);
     },
     getManualInterrupt,
@@ -10940,6 +11773,20 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     forgetWorkerSession: forgetKnownOrcaWorkerSession,
     broadcastOrcaWorkerChanged: (leadSessionId) => {
       broadcastToAllWindows(MAKER_PUSH.ORCA_WORKER_CHANGED, { leadSessionId });
+    },
+    onLeadWorkerReportsSettled: (leadSessionId) => {
+      // A delivered report starts the next Lead turn, whose own terminal decides
+      // completion. Only an idle Lead replays the completion Agent Island deferred.
+      if (
+        isSessionTurnDispatchBoundaryBusy(
+          sessionTurnActivityTracker,
+          leadSessionId,
+          maker.getSession(leadSessionId),
+        )
+      ) {
+        return;
+      }
+      getAgentIslandService()?.notifyQueueEmptied(leadSessionId);
     },
     dispatchWorkerMessage: async ({
       targetSessionId,
@@ -10978,6 +11825,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       message,
       workerId,
       dispatchMeta,
+      beforeReserve,
       onReserved,
       onAccepted,
       onAcceptedRollback,
@@ -10990,6 +11838,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         senderLabel: 'Lead',
         workerId,
         meta: dispatchMeta,
+        beforeReserve,
         onReserved,
         onAccepted,
         onAcceptedRollback,
@@ -11060,16 +11909,17 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       await inputCoordinator.ensureQueueRestored(sessionId).catch(() => undefined);
       return inputCoordinator.isQueueRestored(sessionId);
     },
-    removeQueuedMessage: (sessionId, clientId) => {
-      if (!inputCoordinator.hasQueuedItemWhere(sessionId, (item) => item.clientId === clientId)) {
+    removeQueuedMessage: (sessionId, clientId, expected) => {
+      if (!inputCoordinator.hasQueuedItemWhere(sessionId, (item) => item.clientId === clientId && (!expected || item === expected))) {
         return false;
       }
       // remove 内部对 steering 条目静默拒绝,以移除后的队列状态为准判定成败。
       inputCoordinator.remove(sessionId, clientId);
       return !inputCoordinator.hasQueuedItemWhere(sessionId, (item) => item.clientId === clientId);
     },
-    replaceQueuedMessage: (sessionId, clientId, next) =>
-      inputCoordinator.replaceQueuedMessage(sessionId, clientId, next),
+    replaceQueuedMessage: (sessionId, clientId, next, expected) =>
+      (!expected || inputCoordinator.hasQueuedItemWhere(sessionId, item => item === expected))
+      && inputCoordinator.replaceQueuedMessage(sessionId, clientId, next),
     mergeQueuedMessages: (sessionId, clientIds, buildReplacement) =>
       inputCoordinator.mergeQueuedMessagesAtomically(sessionId, clientIds, buildReplacement).merged,
     sendAutoBridgeToLead: async (leadSessionId, message, workerId) => {
@@ -11101,11 +11951,114 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     });
   };
 
+  const assertPluginWorkerAutoAuthorized = (pluginId: string, task: { status: string; permissionMode?: string; planModeEnabled?: boolean }) => {
+    if (task.status !== 'active') {
+      throw new PluginTaskError('TASK_BUSY', 'Archived tasks cannot create Workers');
+    }
+    if (!isPluginTaskAuthorized(pluginId) || task.planModeEnabled || task.permissionMode !== 'auto' || readPluginTaskConfig(pluginId).permissionMode !== 'auto') {
+      throw new PluginTaskError('PERMISSION_DENIED', 'Authorize Auto for the plugin coordinator before creating Workers');
+    }
+  };
+
+  // Uninstall keeps the historical receipt, but ordinary Orca belongs to the user.
+  // Malformed receipts still go through the service's fail-closed ownership check.
+  const hasRevokedPluginTaskOwnership = (receipt: { payload: string }): boolean => {
+    try { return JSON.parse(receipt.payload)?.ownershipRevoked === true; }
+    catch { return false; }
+  };
+
+  const captureOrcaPluginAuthority = async (leadSessionId: string) => {
+    const epoch = getCurrentDbClientSnapshot();
+    if (!epoch) throw new PluginTaskError('HOST_NOT_READY', 'Task storage unavailable', true);
+    const input = inputCoordinator.getAcceptedInputProvenance(leadSessionId);
+    const executing = !!input || !!maker.getSession(leadSessionId)?.isTurnRunning();
+    const store = createPluginTaskStore(epoch.client);
+    const receipt = await store.get(leadSessionId);
+    // Retry continues the original input; only a new accepted user message
+    // replaces that source. The stable lineage already survives automatic retries.
+    const inputId = input?.retrySourceClientId ?? input?.clientId;
+    if (receipt?.operation === 'create' && hasRevokedPluginTaskOwnership(receipt) && executing
+      && !await hasAcceptedUserTaskInput(epoch.client, leadSessionId, input)) {
+      throw new PluginTaskError('PERMISSION_DENIED', 'Orca input provenance unavailable');
+    }
+    const run = inputId?.startsWith('plugin-task:') ? await store.get(inputId.slice('plugin-task:'.length)) : undefined;
+    let inputPluginId: string | null = null;
+    if (inputId?.startsWith('plugin-task:')) {
+      if (!run || run.operation !== 'send' || run.targetId !== leadSessionId || JSON.parse(run.payload).inputMessageId !== inputId) {
+        throw new PluginTaskError('PERMISSION_DENIED', 'Plugin input provenance unavailable');
+      }
+      inputPluginId = run.pluginId;
+    }
+    if (epoch !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED', 'Account changed');
+    const pluginId = inputPluginId ?? (receipt?.operation === 'create' && !hasRevokedPluginTaskOwnership(receipt) ? receipt.pluginId : null);
+    const assertCurrent = async () => {
+      if (epoch !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED', 'Account changed');
+      const current = await store.get(leadSessionId);
+      const currentPluginId = current?.operation === 'create' && !hasRevokedPluginTaskOwnership(current) ? current.pluginId : null;
+      if (epoch !== getCurrentDbClientSnapshot() || currentPluginId !== pluginId) throw new PluginTaskError('PERMISSION_DENIED', 'Orca task ownership changed');
+      if (pluginId === null) return;
+      const task = await pluginTaskServiceForCurrentOwner!().get(pluginId, leadSessionId);
+      if (epoch !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED', 'Account changed');
+      assertPluginWorkerAutoAuthorized(pluginId, task);
+    };
+    await assertCurrent();
+    return { permissionMode: pluginId === null ? undefined : 'auto' as const, assertCurrent };
+  };
+
   const orcaWorkerCreationService = createOrcaWorkerCreationService({
+    withLeadSendLock: withSendToSessionLock,
     getActiveTeamByLead,
     listWorkersByLead,
     isActiveWorkerStatus,
     readCollaborationSettings,
+    validateCreationPlan: async (params, resolvedWorkingDir, resolvedRoute, assertCurrent) => {
+      const epoch = getCurrentDbClientSnapshot();
+      if (!epoch) throw new PluginTaskError('HOST_NOT_READY','Task storage unavailable');
+      const receipt = await createPluginTaskStore(epoch.client).get(params.leadSessionId);
+      await assertCurrent?.();
+      if (epoch !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED','Account changed');
+      if (!receipt || receipt.operation !== 'create' || hasRevokedPluginTaskOwnership(receipt)) return undefined;
+      const task = await pluginTaskServiceForCurrentOwner!().get(receipt.pluginId,params.leadSessionId);
+      if (epoch !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED','Account changed');
+      assertPluginWorkerAutoAuthorized(receipt.pluginId, task);
+      const cfg = readPluginTaskConfig(receipt.pluginId);
+      const resolveAuthorizedDirectory = (requested: string) => resolvePluginWorkerDirectory({
+        requested, leadDirectory: task.workingDir,
+        configuredDirectory: cfg.workingDir, isPickedDirectory: dir => isGhostPickedDir(receipt.pluginId,dir),
+        assertCurrent: () => {
+          if (epoch !== getCurrentDbClientSnapshot() || !isPluginTaskAuthorized(receipt.pluginId) || cfg.workingDir !== readPluginTaskConfig(receipt.pluginId).workingDir) throw new PluginTaskError('PERMISSION_DENIED','Plugin directory authorization changed');
+        },
+      });
+      const directory = await resolveAuthorizedDirectory(params.workingDir ?? task.workingDir ?? '');
+      if (resolvedWorkingDir !== undefined && directory !== await resolveAuthorizedDirectory(resolvedWorkingDir)) throw new PluginTaskError('PERMISSION_DENIED','Worker directory changed during creation');
+      // Drain plan registration before taking the receipt snapshot. Waiting only
+      // after this read leaves a stale no-plan payload even when get() sees the
+      // newly persisted plan. Keep the final task check after directory awaits.
+      await pluginTaskServiceForCurrentOwner!().get(receipt.pluginId,params.leadSessionId);
+      if (epoch !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED','Account changed');
+      const currentReceipt = await createPluginTaskStore(epoch.client).get(params.leadSessionId);
+      if (!currentReceipt || currentReceipt.operation !== 'create' || currentReceipt.pluginId !== receipt.pluginId || hasRevokedPluginTaskOwnership(currentReceipt) || epoch !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED', 'Task ownership changed');
+      const data = readPluginTaskPlanReceipt(currentReceipt.payload);
+      const item = data.teamPlan?.items.find((x: {label:string})=>x.label===params.label);
+      const plannedDirectory = item && resolvedRoute
+        ? await resolveAuthorizedDirectory(item.workingDir) : undefined;
+      const currentTask = await pluginTaskServiceForCurrentOwner!().get(receipt.pluginId,params.leadSessionId);
+      await assertCurrent?.();
+      if (epoch !== getCurrentDbClientSnapshot() || currentTask.revision !== task.revision) throw new PluginTaskError('STALE_REVISION','Task changed during directory validation');
+      // Last admission check also covers no-plan plugin tasks and revocation
+      // while directory/receipt reads or the existing reservation were pending.
+      assertPluginWorkerAutoAuthorized(receipt.pluginId, currentTask);
+      if (cfg.workingDir !== readPluginTaskConfig(receipt.pluginId).workingDir) throw new PluginTaskError('PERMISSION_DENIED','Plugin directory authorization changed');
+      assertPluginWorkerDirectoryScope({ requested: directory, leadDirectory: currentTask.workingDir,
+        configuredDirectory: cfg.workingDir, isPickedDirectory: dir => isGhostPickedDir(receipt.pluginId, dir) });
+      if (!data.teamPlan) return undefined; // Existing plugins retain their original behavior.
+      if (!item || data.settledLabels?.includes(params.label)) throw new PluginTaskError('INVALID_REQUEST','Worker is not pending in the registered plan');
+      const route = item.route;
+      // Defaults and provider capabilities are resolved by the creation service.
+      // Compare that exact spawn route at the post-reservation admission check.
+      if (resolvedRoute && (directory!==plannedDirectory || resolvedRoute.model!==route.model || resolvedRoute.providerId!==route.providerId || resolvedRoute.effort!==route.effort || resolvedRoute.fastMode!==route.fastMode || params.agent!==(route.agentKind==='cc'?'claude-code':route.agentKind))) throw new PluginTaskError('INVALID_REQUEST','Worker configuration differs from registered plan');
+      return data.teamPlan.concurrency;
+    },
     getLeadSessionRow: async (leadSessionId) => {
       const db = getDbClient().drizzle;
       const [leadRow] = await db
@@ -11203,9 +12156,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     isOrphanedTeamInit,
     createActiveTeam: async (leadSessionId) => createActiveTeam({ leadSessionId }),
     getWorkerPermissionMode: getWorkerPermissionModeFromCreationPrefs,
+    getWorkerPermissionModeOverride: async (leadSessionId) => {
+      return captureOrcaPluginAuthority(leadSessionId);
+    },
     setWorkerPermissionMode: applyWorkerPermissionModePreference,
-    createWorkerInTeam: (params) => orcaWorkerCreationService.createWorkerInTeam(params),
-    dispatchWorkerTask: (params) => orcaTeamService.dispatchWorkerTask(params),
+    createWorkerInTeam: (params, assertCurrent, onCreated) => orcaWorkerCreationService.createWorkerInTeam(params, assertCurrent, onCreated),
+    dispatchWorkerTask: (params, assertCurrent) => orcaTeamService.dispatchWorkerTask(params, assertCurrent),
     markTeamEnded,
     setSessionOrcaRole,
     clearKnownNonOrcaSession: (sessionId) => {
@@ -11233,14 +12189,24 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         initialWorker: null,
       });
     },
-    sendWorkerReadyPlaceholder: async ({ workerSessionId, agentKind, entrypoint, context }) => {
+    sendWorkerReadyPlaceholder: async ({ workerSessionId, agentKind, entrypoint, context }, assertCurrent) => {
       const workerSession = maker.getSession(workerSessionId);
       if (!workerSession) {
         throw new Error(`worker session ${workerSessionId} not found for ready placeholder`);
       }
       const sendResult = await workerSession.send(
         { type: 'user', content: ORCA_WORKER_READY_MESSAGE },
-        { planMode: false, throwOnStartFailure: true },
+        {
+          planMode: false,
+          throwOnStartFailure: true,
+          onAccepted: async () => {
+            try {
+              await assertCurrent?.();
+            } catch (err) {
+              throw new AcceptedCallbackDispatchCancelled(err instanceof Error ? err.message : String(err));
+            }
+          },
+        },
       );
       assertDesktopSendDispatched(sendResult, context);
       log.info('orca worker ready placeholder accepted', {
@@ -11369,6 +12335,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     /** Internal calls from the send / switch transaction already own the route lock. */
     sessionLockHeld?: boolean;
     applyingUserSelectionOnSend?: boolean;
+    /** Reassess the current Pi route after its catalog descriptor or budget changed. */
+    refreshPiConfiguration?: boolean;
+    /** The pending service owns removal and queue release after this apply commits. */
+    applyingPiCredentialPending?: boolean;
+    /** Renderer may have staged the target in DB while the old Pi runtime went cold. */
+    previousPiRoute?: { model: string; providerId: string | null };
     expectedGeneration?: number;
     deferWhileRunning?: boolean;
     applyingPendingGeneration?: number;
@@ -11677,6 +12649,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   const readBotFallbackCandidate = async (
     sessionId: string,
     current: SessionRuntimeProfile,
+    controlSessionId = sessionId,
   ): Promise<{ isBot: boolean; candidate: SessionRuntimeProfile | null }> => {
     const [row] = await getDbClient()
       .drizzle.select({
@@ -11720,12 +12693,15 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         : current.agentKind === 'omp'
           ? 'omp'
           : 'claude';
-    const control = getSessionRuntimeControlSnapshot(sessionId);
+    const control = getSessionRuntimeControlSnapshot(controlSessionId);
+    const [controlSession] = controlSessionId === sessionId ? [{ remoteHostId: row.remoteHostId }]
+      : await getDbClient().drizzle.select({ remoteHostId: sessions.remoteHostId })
+        .from(sessions).where(eq(sessions.id, controlSessionId)).limit(1);
     const route = nextBotModelRoute(
       chain,
       { harness: currentHarness, model: current.model, providerId: current.providerId },
       control.visitedRoutes,
-      (candidate) => !row.remoteHostId || candidate.harness === currentHarness,
+      (candidate) => !controlSession?.remoteHostId || candidate.harness === currentHarness,
     );
     return {
       isBot: true,
@@ -11785,25 +12761,31 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     sessionId: string,
     episodeAttempt: number,
     attemptToken: number,
-  ): Promise<Session | null> => {
+    requireRouteChange = false,
+    isCurrent: () => boolean = () => true,
+  ): Promise<RuntimeFallbackResult<Session>> => {
     const runtimeOwnerEpoch = captureSessionRuntimeControlOwnerEpoch();
     let runtimeSession: Session | null = null;
     let blockAutoResumeForModelWindowConfirmation = false;
     try {
       const profiles = await readSessionRuntimeProfiles(sessionId);
-      if (!profiles) return null;
+      if (!profiles || !isCurrent()) return { session: null, outcome: 'superseded' };
       // A previously accepted Agent/fallback mutation owns the next boundary.
       // Do not let a later infrastructure retry replace that pending intent.
       if (profiles.control.pending ||
-          !canApplyAutomaticRuntimeSelection(sessionId, profiles.control.generation)) return null;
+          !canApplyAutomaticRuntimeSelection(sessionId, profiles.control.generation)) return { session: null, outcome: 'superseded' };
+      const explicitTaskModel = await hasExplicitSessionTaskModel(sessionId);
+      if (!sessionRuntimeControlOwnerEpochMatches(runtimeOwnerEpoch) || explicitTaskModel) return { session: null, outcome: 'superseded' };
       // Bot routes are explicit and ordered. They switch on the first recoverable
       // failure and never depend on the generic Session fallback toggle/catalog
       // guesser. Ordinary Sessions keep their existing second-attempt behavior.
       const botFallback = await readBotFallbackCandidate(sessionId, profiles.effective);
+      if (!isCurrent()) return { session: null, outcome: 'superseded' };
       let currentForFallback = profiles.effective;
       let candidate = botFallback.candidate;
       if (!botFallback.isBot) {
-        if (episodeAttempt < 2 || !readSessionRuntimeFallbackSettings().enabled) return null;
+        if (requireRouteChange) return { session: null, outcome: 'exhausted' };
+        if (episodeAttempt < 2 || !readSessionRuntimeFallbackSettings().enabled) return { session: null, outcome: 'unchanged' };
         const providers = await getDesktopProviderService().listProviders({
           allowSideEffects: false,
           catalog: getActiveCatalog(),
@@ -11828,7 +12810,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             maxHops: 2,
           });
       }
-      if (!candidate) return null;
+      if (!candidate) return { session: null, outcome: 'exhausted' };
       runtimeSession = maker.getSession(sessionId) ?? null;
       if (runtimeSession) {
         pendingSessionRuntimeFallbackRebuilds.set(runtimeSession, attemptToken);
@@ -11840,6 +12822,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         try {
           await withSendToSessionLock(sessionId, async () => {
             if (!sessionRuntimeControlOwnerEpochMatches(runtimeOwnerEpoch)) return;
+            if (!isCurrent()) return;
             const [runtimeStatus] = await getDbClient()
               .drizzle.select({ status: sessions.status })
               .from(sessions)
@@ -11876,25 +12859,42 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       // this one recovery boundary instead of retrying the broken primary and
       // waiting for another user-visible failure before trying route N+1.
       while (candidate) {
+        if (!isCurrent()) return { session: runtimeSession, outcome: 'superseded' };
         const selected = candidate;
-        const applyCandidate = () =>
-          applySessionRuntimeSelection(
+        const applyCandidate = () => withSendToSessionLock(sessionId, async () => {
+          if (!isCurrent() || !sessionRuntimeControlOwnerEpochMatches(runtimeOwnerEpoch) ||
+              !canApplyAutomaticRuntimeSelection(sessionId, profiles.control.generation)) {
+            return { deferred: false, superseded: true };
+          }
+          const result = await applySessionRuntimeSelection(
             sessionId,
             selected.model,
             selected.providerId,
             { effort: selected.effort, fastMode: selected.fastMode },
             {
               source: 'fallback',
+              sessionLockHeld: true,
               expectedGeneration: profiles.control.generation,
               previousProfile: currentForFallback,
               effortExplicit: false,
               fastExplicit: false,
             },
           );
+          if (requireRouteChange && result.deferred && result.generation !== undefined &&
+              cancelPendingSessionRuntimeMutation(sessionId, result.generation)) {
+            const pendingCredential = getPendingCredentialSwitchTarget(sessionId);
+            if (pendingCredential?.model === selected.model &&
+                pendingCredential.providerId === selected.providerId) {
+              clearPendingCredentialSwitchForSession(sessionId, { wake: false });
+            }
+            await broadcastSessionRuntimeProjection(sessionId);
+          }
+          return result;
+        });
         if (selected.agentKind !== currentForFallback.agentKind) {
           try {
             const result = await withSendToSessionLock(sessionId, async () => {
-              if (!sessionRuntimeControlOwnerEpochMatches(runtimeOwnerEpoch) ||
+              if (!isCurrent() || !sessionRuntimeControlOwnerEpochMatches(runtimeOwnerEpoch) ||
                   !canApplyAutomaticRuntimeSelection(sessionId, profiles.control.generation)) return null;
               const switched = await performSessionAgentSwitch(agentSwitchDeps, {
                 sessionId,
@@ -11916,11 +12916,15 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               }
               return switched;
             });
-            if (!result) return runtimeSession;
+            if (!result) return { session: runtimeSession, outcome: 'superseded' };
             if (!result.switched) {
               if (await advanceConfiguredBotRoute(selected)) continue;
-              return runtimeSession;
+              return { session: runtimeSession, outcome: 'exhausted' };
             }
+            // The route transaction has already committed, including a new
+            // generation. Its failed bootstrap must not resume input or advance
+            // candidates using the pre-switch profile/generation captured above.
+            if (!result.engineReady) return { session: runtimeSession, outcome: 'failed' };
           } catch (error) {
             if (await advanceConfiguredBotRoute(selected)) continue;
             throw error;
@@ -11933,7 +12937,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             toProviderId: selected.providerId,
             toModel: selected.model,
           });
-          return runtimeSession;
+          return { session: runtimeSession, outcome: 'switched' };
         }
         let result: Awaited<ReturnType<typeof applySessionRuntimeSelection>>;
         try {
@@ -11975,6 +12979,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             'automatic model-window confirmation is unsupported; runtime selection was not changed',
           );
         }
+        if (result.deferred && requireRouteChange) {
+          // The automatic intent was withdrawn inside the route lock above.
+          return { session: runtimeSession, outcome: 'failed' };
+        }
         log.info('automatic session runtime fallback evaluated', {
           sessionId,
           episodeAttempt,
@@ -11985,9 +12993,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           toModel: selected.model,
           applied: !result.superseded,
         });
-        return runtimeSession;
+        return { session: runtimeSession, outcome: result.superseded ? 'superseded' : 'switched' };
       }
-      return runtimeSession;
+      return { session: runtimeSession, outcome: 'exhausted' };
     } catch (error) {
       log.warn('automatic session runtime fallback skipped after switch failure', {
         sessionId,
@@ -12001,7 +13009,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         if (runtimeSession) pendingSessionRuntimeFallbackRebuilds.delete(runtimeSession);
         throw error;
       }
-      return runtimeSession;
+      return { session: runtimeSession, outcome: 'failed' };
     }
   };
 
@@ -12023,7 +13031,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         baselineProfile: profiles.baseline,
         effectiveProfile: profiles.effective,
         pendingMutation: profiles.pendingMutation,
-        fallbackEnabled: botFallback.isBot
+        fallbackEnabled: await hasExplicitSessionTaskModel(sessionId) ? false : botFallback.isBot
           ? botFallback.candidate !== null
           : readSessionRuntimeFallbackSettings().enabled,
       };
@@ -12171,10 +13179,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         .map((entry) => entry.queuedMessageId);
       return { pendingQueue: snapshot.pendingQueue, consumingClientIds };
     },
-    replaceQueuedMessage: (sessionId, clientId, next) =>
-      inputCoordinator.replaceQueuedMessage(sessionId, clientId, next),
-    removeQueuedMessage: (sessionId, clientId) => {
-      if (!inputCoordinator.hasQueuedItemWhere(sessionId, (item) => item.clientId === clientId)) {
+    replaceQueuedMessage: (sessionId, clientId, next, expected) =>
+      (!expected || inputCoordinator.hasQueuedItemWhere(sessionId, item => item === expected))
+      && inputCoordinator.replaceQueuedMessage(sessionId, clientId, next),
+    removeQueuedMessage: (sessionId, clientId, expected) => {
+      if (!inputCoordinator.hasQueuedItemWhere(sessionId, (item) => item.clientId === clientId && (!expected || item === expected))) {
         return false;
       }
       inputCoordinator.remove(sessionId, clientId);
@@ -12247,32 +13256,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     updateWorkerQueuedMessage: (params) => orcaTeamService.updateWorkerQueuedMessage(params),
     cancelWorkerQueuedMessage: (params) => orcaTeamService.cancelWorkerQueuedMessage(params),
     mergeWorkerQueuedMessages: (params) => orcaTeamService.mergeWorkerQueuedMessages(params),
-    startTeam: async ({ leadSessionId, workerPermissionMode }) => {
-      try {
-        await assertLeadCollabProjectEnabled(leadSessionId);
-        return await startOrcaTeamWithPermissionGate(
-          { leadSessionId, workerPermissionMode },
-          {
-            getCurrentWorkerPermissionMode: getWorkerPermissionModeFromCreationPrefs,
-            requestFullAccessConfirmation: (sessionId) =>
-              orcaWorkerPermissionConfirmBridge.request(sessionId, {
-                title: t('newChat.chatInput.fullAccessConfirmation.title'),
-                description: `${t('newChat.chatInput.fullAccessConfirmation.description')} ${t('newChat.chatInput.fullAccessConfirmation.note')}`,
-              }),
-            startTeam: (params) => orcaLifecycleService.startTeam(params),
-          },
-        );
-      } catch (err) {
-        return {
-          ok: false,
-          errorCode:
-            err instanceof Error && (err as unknown as { code?: string }).code
-              ? (err as unknown as { code: string }).code
-              : 'INTERNAL',
-          message: err instanceof Error ? err.message : String(err),
-        };
-      }
-    },
+    startTeam: ({ leadSessionId, workerPermissionMode }) => startOrcaTeamForCaller(leadSessionId, workerPermissionMode),
     createWorker: async (params) => {
       try {
         await assertLeadCollabProjectEnabled(params.leadSessionId);
@@ -12388,6 +13372,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
     switchFocus: async ({ leadSessionId, workerIdOrLabel }) => {
       try {
+        const { assertCurrent } = await captureOrcaPluginAuthority(leadSessionId);
         const workers = await listWorkersByLead(leadSessionId);
         const target = findFocusTargetWorker(workers, workerIdOrLabel);
         if (!target)
@@ -12397,6 +13382,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             message: `no worker matching "${workerIdOrLabel}"`,
           };
 
+        await assertCurrent();
         await setWorkerFocus(target.teamId, target.id);
 
         // Resume closed session so it's ready to receive tasks, but DON'T change
@@ -12404,7 +13390,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         // dispatched (sendToWorker). Setting 'running' here without a task causes
         // the icon to flash indefinitely (no turn → turn-done never fires).
         if (target.status === 'idle') {
-          await resumeOrcaWorkerSessionIfMissing(target);
+          await assertCurrent();
+          await resumeOrcaWorkerSessionIfMissing(target, assertCurrent);
         }
         broadcastToAllWindows(MAKER_PUSH.ORCA_WORKER_CHANGED, { leadSessionId });
         return { ok: true, workerId: target.id };
@@ -12418,7 +13405,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
     idleWorker: async ({ callerLeadSessionId, workerId, expectedStatus }) => {
       try {
-        return await orcaTeamService.idleWorker({ callerLeadSessionId, workerId, expectedStatus });
+        const { assertCurrent } = await captureOrcaPluginAuthority(callerLeadSessionId);
+        return await orcaTeamService.idleWorker({ callerLeadSessionId, workerId, expectedStatus }, { assertCurrent });
       } catch (err) {
         return {
           ok: false,
@@ -12429,7 +13417,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
     endTeam: async ({ leadSessionId }) => {
       try {
-        await disableOrcaInternal(leadSessionId);
+        const { assertCurrent } = await captureOrcaPluginAuthority(leadSessionId);
+        await disableOrcaInternal(leadSessionId, assertCurrent);
         broadcastToAllWindows(MAKER_PUSH.ORCA_WORKER_CHANGED, { leadSessionId });
         return { ok: true };
       } catch (err) {
@@ -12442,7 +13431,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
     archiveWorker: async ({ callerLeadSessionId, workerId }) => {
       try {
-        return await orcaTeamService.archiveWorker({ callerLeadSessionId, workerId });
+        const { assertCurrent } = await captureOrcaPluginAuthority(callerLeadSessionId);
+        return await orcaTeamService.archiveWorker({ callerLeadSessionId, workerId, beforeArchive: assertCurrent });
       } catch (err) {
         return {
           ok: false,
@@ -12563,10 +13553,107 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
 
   const readAutoReviewHistory = async (sessionId: string) => {
     await drainPersistQueue();
-    return listMessagesForAgentHandoff(sessionId, 100, undefined, 'authorization');
+    return listMessagesForAgentHandoff(sessionId, null, undefined, 'authorization');
   };
+  setAutoReviewContextResolver(createPluginTaskReviewResolver(async sessionId => {
+    const epoch = getCurrentDbClientSnapshot();
+    if (!epoch) throw new Error('Task storage unavailable');
+    const db = epoch.client.drizzle;
+    const [session] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+    if (!session) throw new Error('Task unavailable');
+    // Ordinary tasks do not depend on plugin receipt storage. Worker ownership
+    // is checked through its lead before touching the plugin task store.
+    if (session.source !== 'plugin' && session.orcaRole !== 'worker') {
+      if (epoch !== getCurrentDbClientSnapshot()) throw new Error('Account changed');
+      return null;
+    }
+    const [link] = await db.select({ label: orcaWorkers.label, leadId: orcaTeams.leadSessionId,
+      teamId: orcaTeams.id, teamStatus: orcaTeams.status }).from(orcaWorkers)
+      .innerJoin(orcaTeams, eq(orcaWorkers.teamId, orcaTeams.id))
+      .where(eq(orcaWorkers.sessionId, sessionId)).limit(1);
+    const leadId = link?.leadId ?? sessionId;
+    const [lead] = await db.select().from(sessions).where(eq(sessions.id, leadId)).limit(1);
+    if (!lead) throw new Error('Lead unavailable');
+    if (lead.source !== 'plugin') {
+      if (epoch !== getCurrentDbClientSnapshot()) throw new Error('Account changed');
+      return null;
+    }
+    const store = createPluginTaskStore(epoch.client);
+    const receipt = await store.get(leadId);
+    if (!receipt || receipt.operation !== 'create') {
+      if (epoch !== getCurrentDbClientSnapshot()) throw new Error('Account changed');
+      return null;
+    }
+    if (!session || !lead || !session.workingDir) throw new Error('Delegated task unavailable');
+    const agentKind = session.agentKind === 'cc' ? 'cc' : session.agentKind === 'pi' ? 'pi' : session.agentKind === 'codex' ? 'codex' : null;
+    if (!agentKind) throw new Error('Delegated task route unavailable');
+    const data = readPluginTaskPlanReceipt(receipt.payload);
+    const item = link ? data.teamPlan?.items.find(item => item.label === link.label) : undefined;
+    let directoryMatches = item?.workingDir === session.workingDir;
+    if (item && !directoryMatches) {
+      try {
+        directoryMatches = await fsp.realpath(item.workingDir) === session.workingDir;
+      } catch {
+        directoryMatches = false;
+      }
+    }
+    // Resolve aliases before the live ownership/database/epoch fence. Returning
+    // the checked snapshot must not await filesystem I/O after that fence.
+    await drainPersistQueue();
+    const projection = await epoch.client.tx('authorization.readProjection', { sessionId, leadId });
+    // Reinstall must not revive the old Lead's delegated authority, including
+    // requests that were already waiting for history/projection reads at uninstall.
+    await pluginTaskServiceForCurrentOwner!().get(receipt.pluginId, leadId);
+    if (epoch !== getCurrentDbClientSnapshot()) throw new Error('Account changed');
+    // The projection/ownership awaits must not return an old Worker grant.
+    // One final SELECT compares every database fact used below at one read point;
+    // a changed fact denies this review, while a query failure remains unavailable.
+    const unchanged = await epoch.client.queryOne<{ unchanged: number }>(`
+      SELECT 1 AS unchanged FROM sessions s
+      JOIN sessions l ON l.id = ?
+      LEFT JOIN orca_workers w ON w.session_id = s.id
+      LEFT JOIN orca_teams t ON t.id = w.team_id
+      JOIN plugin_task_requests r ON r.id = l.id
+      JOIN auto_review_projections p ON p.session_id = s.id AND p.lead_id = l.id
+      WHERE s.id = ?
+        AND json_array(s.source,s.orca_role,s.working_dir,s.permission_mode,coalesce(s.plan_mode_enabled,0),s.status,
+          s.agent_kind,s.provider_id,s.model,s.effort,coalesce(s.fast_mode,0)) = ?
+        AND json_array(l.source,l.permission_mode,coalesce(l.plan_mode_enabled,0),l.status) = ?
+        AND json_array(w.label,t.lead_session_id,t.id,t.status) = ?
+        AND json_array(r.id,r.target_id,r.plugin_id,r.operation,r.payload,r.revision) = ?
+        AND p.revision = ? AND p.projected_revision = p.revision AND p.version = 3
+      LIMIT 1`, [leadId, sessionId,
+      JSON.stringify([session.source,session.orcaRole,session.workingDir,session.permissionMode,Number(!!session.planModeEnabled),session.status,
+        session.agentKind,session.providerId,session.model,session.effort,Number(!!session.fastMode)]),
+      JSON.stringify([lead.source,lead.permissionMode,Number(!!lead.planModeEnabled),lead.status]),
+      JSON.stringify([link?.label,link?.leadId,link?.teamId,link?.teamStatus]),
+      JSON.stringify([receipt.id,receipt.targetId,receipt.pluginId,receipt.operation,receipt.payload,receipt.revision]),
+      projection.revision,
+    ]);
+    if (epoch !== getCurrentDbClientSnapshot()) throw new Error('Account changed');
+    const config = readPluginTaskConfig(receipt.pluginId);
+    const approvalRevision = pluginTaskAuthorizationRevision(receipt.pluginId);
+    return {
+      pluginId: receipt.pluginId,
+      authorized: !!unchanged && approvalRevision !== null && isPluginTaskAuthorized(receipt.pluginId) && config.permissionMode === 'auto',
+      revision: [epoch.userId, epoch.clientEpoch, approvalRevision, config.permissionMode, link],
+      plan: data.teamPlan, settledLabels: data.settledLabels,
+      registeredRoute: data.route,
+      session: { workingDir: session.workingDir, permissionMode: session.permissionMode, planModeEnabled: !!session.planModeEnabled, status: session.status,
+        route: { agentKind, providerId: session.providerId ?? '', model: session.model,
+          effort: session.effort, fastMode: !!session.fastMode } },
+      lead: { permissionMode: lead.permissionMode, planModeEnabled: !!lead.planModeEnabled, status: lead.status },
+      ...(link ? { worker: { label: link.label ?? '', activeTeam: link.teamStatus === 'active', directoryMatches } } : {}),
+      projection,
+      history: [],
+      sessionHistory: [],
+      historyComplete: true,
+    };
+  }));
+
   const { sendToAgentAccepted: sendToAgentAcceptedUnlocked } = createMakerSendTransaction({
     readAutoReviewHistory,
+    readScheduledPermissions: getSessionFsSnapshot,
     getSession: (sessionId) => maker.getSession(sessionId),
     closeSession: (sessionId) => maker.closeSession(sessionId),
     getSessionMeta: (sessionId) => maker.getSessionMeta(sessionId),
@@ -12614,6 +13701,70 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     prepareSendUserMessage: (sessionId, message) =>
       prepareUserMessageForAgent(sessionId, message, 'send'),
     materializeDirectSendOssAttachments,
+    captureCindyLearnInvocation: async (session, persistedContent, dispatchedText) => {
+      const invocationText = visibleMessageTextForConversationSearch(
+        'user',
+        typeof persistedContent === 'string' ? persistedContent : JSON.stringify(persistedContent),
+      );
+      const persistedInvocation = parseDirectLearnInvocation(invocationText);
+      const dispatchedInvocation = parseDirectLearnInvocation(dispatchedText);
+      if (
+        !persistedInvocation
+        || !dispatchedInvocation
+        || JSON.stringify(persistedInvocation) !== JSON.stringify(dispatchedInvocation)
+      ) return null;
+      if (
+        session.remoteHostId
+        || maker.getSession(session.id) !== session
+        || (session.getStatus && session.getStatus() !== 'active')
+      ) return null;
+
+      if (session.agentKind === 'claude-code'
+        && !/^\/cindy:learn(?:\s|$)/i.test(dispatchedText.trim())
+        && !await canGrantUnqualifiedClaudeLearnInvocation(session.id)) return null;
+
+      const descriptors = builtInSkillDescriptors(
+        app.getPath('userData'),
+        app.getPath('appData'),
+      );
+      const learnDescriptor = descriptors.find((descriptor) => descriptor.name === 'learn');
+      if (!learnDescriptor || !isCindySkillEnabled(learnDescriptor.absolutePath)) return null;
+
+      const result = session.agentKind === 'claude-code'
+        ? await maker.listAgentRuntimeSkills(session.agentKind, {
+          workingDir: session.workDir,
+          sessionId: session.id,
+          runtimeConfigDir: process.env.CLAUDE_CONFIG_DIR?.trim() || (
+            process.env.XDT_USER_DATA_DIR && !app.isPackaged
+              ? path.join(app.getPath('userData'), 'claude-home')
+              : path.join(os.homedir(), '.claude')
+          ),
+        })
+        : await maker.listAgentSkills(session.agentKind, {
+          workingDir: session.workDir,
+          sessionId: session.id,
+        });
+      if (result.errors?.length || maker.getSession(session.id) !== session) return null;
+      const learnCandidates = activeCindyBuiltInAgentSkills(
+        result.skills,
+        descriptors,
+        isCindySkillEnabled,
+      ).filter((skill) => (skill.name.toLowerCase() === 'learn' || skill.runtimeCommandName === 'cindy:learn')
+        && (!/^\/cindy:learn(?:\s|$)/i.test(dispatchedText.trim())
+          || (skill.builtIn === true && skill.runtimeCommandName === 'cindy:learn')));
+      if (
+        learnCandidates.length === 0
+        || learnCandidates.some((skill) => skill.builtIn !== true || !skill.path)
+      ) return null;
+
+      const resolvedSkillPath = await fsp.realpath(learnCandidates[0]!.path!);
+      if (maker.getSession(session.id) !== session) return null;
+      return {
+        version: 1,
+        sessionInstanceId: session.instanceId,
+        resolvedSkillPath,
+      } satisfies CindyLearnInvocationGrant;
+    },
     createDbMessage: createUserMessageDurably,
     rewindPersistedUserMessageAfterClear: (sessionId, clientId) =>
       enqueueDurableWrite(`user-rewind:${sessionId}:${clientId}`, () =>
@@ -12714,6 +13865,13 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     log,
   });
 
+  // Host-only hints belong to the dispatched input, not a persistent session cache.
+  // The fallback transaction still rechecks the authoritative Bot link and chain.
+  const botFallbackInputs = new WeakSet<object>();
+  const canRecoverTurn = (signals: InterruptedTurnErrorSignals, item?: AgentInputQueuedMessage | null) =>
+    isInterruptedTurnError(signals) ||
+    (!!item && botFallbackInputs.has(item.createOpts) && isBotCandidateUnavailable(signals));
+
   const sendToAgentAccepted: typeof sendToAgentAcceptedUnlocked = async (...args) => {
     const [sessionId] = args;
     if (typeof sessionId !== 'string') return await sendToAgentAcceptedUnlocked(...args);
@@ -12736,6 +13894,13 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         .where(eq(sessions.id, sessionId))
         .limit(1);
       const blocked = botSessionInputBlockReason(botInput ?? null);
+      if (args[2] && typeof args[2] === 'object') {
+        if (botInput?.source === 'bot' && ['canonical', 'delegation'].includes(botInput.role ?? '')) {
+          botFallbackInputs.add(args[2]);
+        } else {
+          botFallbackInputs.delete(args[2]);
+        }
+      }
       if (isDeviceLinkInvoke() && botInput?.source === 'bot' && (botInput.hiddenAt || botInput.profileStatus === 'archived')) {
         throwIpcError('NOT_FOUND', 'Session does not exist');
       }
@@ -12743,6 +13908,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (inputCoordinator.isExecutionPaused(sessionId)) {
         throwIpcError('PRECONDITION_FAILED', 'Task is paused; resume it before continuing');
       }
+      const queuedClientId = (args[3] as { persistUserMessage?: { clientId?: string } } | undefined)
+        ?.persistUserMessage?.clientId;
+      await runSchedulerQueuedPreparation(queuedClientId, schedulerQueuedPromptPreparations,
+        () => { if (queuedClientId) schedulerQueuedPromptDiscardWatchers.delete(queuedClientId); });
       return sendToAgentAcceptedUnlocked(...args);
     });
   };
@@ -12780,7 +13949,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       const dbSnapshot = getCurrentDbClientSnapshot();
       let committed = false;
       try {
-        const classified = await classifyCodexHistoryOversized(threadId);
+        const storage = await readCodexThreadStorageReadOnly(threadId).catch(() => null);
+        const classified = storage === null ? 'unknown' : await classifyCodexHistoryOversized(threadId, storage);
         if (
           !isDataOwnerBroadcastScopeCurrent(ownerScope) ||
           !dbSnapshot ||
@@ -13099,6 +14269,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       expectedTurnGeneration?: number;
       readonly [MAIN_OWNED_SEND_CONTEXT]?: MainOwnedSendContext;
       readonly [AUTO_REVIEW_SOURCE_CONTENT]?: string;
+      readonly [AUTO_REVIEW_DELEGATED_CONTINUATION]?: true;
       readonly [AUTO_REVIEW_USER_INTENT]?: string;
     };
     const readCurrentSteerSession = () => {
@@ -13196,6 +14367,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         signal: so.signal,
         [MAIN_OWNED_SEND_CONTEXT]: so[MAIN_OWNED_SEND_CONTEXT],
         [AUTO_REVIEW_SOURCE_CONTENT]: so[AUTO_REVIEW_SOURCE_CONTENT],
+        [AUTO_REVIEW_DELEGATED_CONTINUATION]: so[AUTO_REVIEW_DELEGATED_CONTINUATION],
         [AUTO_REVIEW_USER_INTENT]: restoredSteerIntent,
       });
       log.info('steer: delivered', { sessionId, agentKind: sess.agentKind });
@@ -13260,15 +14432,21 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       },
     },
     {
-      sendToAgentAccepted: (sessionId, message, createOpts, sendOpts) =>
-        sendToAgentAccepted(
+      sendToAgentAccepted: async (sessionId, message, createOpts, sendOpts) => {
+        // Only fresh user IPC waits, before taking any send/restart fence.
+        // Internal continuations and turn cleanup must remain able to finish.
+        const owner = getCurrentDbClientSnapshot();
+        await withSessionPermissionChange(sessionId, async () => undefined);
+        if (!owner || owner !== getCurrentDbClientSnapshot()) throwIpcError('PRECONDITION_FAILED', 'Account changed before input');
+        return sendToAgentAccepted(
           sessionId,
           message,
           createOpts,
           isDeviceLinkInvoke()
             ? sendOpts
             : attachTrustedDesktopSendContext(message, sendOpts),
-        ),
+        );
+      },
       assertRemoteInputControlBoundary: (sessionId, opts) =>
         assertRemoteInputControlBoundary(sessionId, isDeviceLinkInvoke(), opts),
     },
@@ -13874,8 +15052,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     // 纯判定,无副作用:coordinator 用它在「决策还做不了」的时序里先把红横幅与 error 行
     // 按住(见 isAutoResumeDeferred)。与下面 onResumableTurnError 的第一道门是同一个函数,
     // 两处必须同判据 —— 否则会出现"按住了却永远不接管"或"没按住却接管"的错配。
-    isResumableTurnErrorCandidate: (signals: InterruptedTurnErrorSignals) =>
-      isInterruptedTurnError(signals),
+    isResumableTurnErrorCandidate: canRecoverTurn,
     // 被按住的 error 最终没接管 → 只补落 error 行(横幅 coordinator 自己设)。
     onResumableTurnErrorDiscarded: (
       sessionId: string,
@@ -13892,7 +15069,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       signals: InterruptedTurnErrorSignals,
       item: AgentInputQueuedMessage,
     ) => {
-      if (!isInterruptedTurnError(signals) || inputCoordinator.isExecutionPaused(sessionId)) return null;
+      if (!canRecoverTurn(signals, item) || inputCoordinator.isExecutionPaused(sessionId)) return null;
+      const requireRouteChange = botFallbackInputs.has(item.createOpts) && isBotCandidateUnavailable(signals);
       const erroredAt = Date.now();
       const decision = interruptedTurnAutoResumeGuard.onInterruptedTurn(sessionId, erroredAt);
       if (decision.action !== 'resume') {
@@ -13949,11 +15127,22 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           return (async () => {
             let fallbackRebuildSession: Session | null = null;
             try {
-              fallbackRebuildSession = await maybeApplySessionRuntimeFallback(
+              const fallback = await maybeApplySessionRuntimeFallback(
                 sessionId,
                 decision.episodeAttempt,
                 decision.attemptToken,
+                requireRouteChange,
+                () => attempt.isCurrent() && !inputCoordinator.isExecutionPaused(sessionId),
               );
+              fallbackRebuildSession = fallback.session;
+              if (!attempt.isCurrent()) return;
+              if (!canResumeAfterRuntimeFallback(requireRouteChange, fallback)) {
+                interruptedTurnAutoResumeGuard.noteResumeSendFailed(sessionId, decision.attemptToken);
+                autoResumeBookkeeping.finalizeSuppressedError(sessionId, decision.attemptToken, {
+                  surfaceBanner: true,
+                });
+                return;
+              }
               // 退避窗口内用户可能已经自己发了消息 / 清了会话。判据是 coordinator 的 recovery
               // 与**接管态**(enqueue / clearError / teardown 会清掉接管态,recovery 未必),
               // autoRetryLastError 内部复核后会 no-op 并返回非 resumed —— 此时必须回滚
@@ -14124,12 +15313,17 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     // 可见行),理由与踩过的坑记在 helper 的注释里。
     supersedeRetriedUserTurn,
     getLastAssistantTranscriptUuid,
-    onAcceptedQueuedMessage: (sessionId, item): Promise<void> | undefined => {
+    onAcceptedQueuedMessage: async (sessionId, item): Promise<void> => {
       // 已派发 → 该项不会再走 discard,释放 scheduler 的 discard 监听防泄漏。
       schedulerQueuedPromptDiscardWatchers.delete(item.clientId);
+      schedulerQueuedPromptPreparations.delete(item.clientId);
       // 返回 promise 让 coordinator 在 onPersisted 链路里 await —— worker 运行态与
       // pending auto-bridge 副作用必须先于 turn 启动完成；失败仍吞错落日志，不拦派发。
-      return orcaInterAgentDispatcher.runQueuedOrcaInterAgentAcceptedCallback(sessionId, item);
+      await orcaInterAgentDispatcher.runQueuedOrcaInterAgentAcceptedCallback(sessionId, item);
+      const pluginTaskSession = maker.getSession(sessionId);
+      if (pluginTaskSession && pluginTaskServiceForCurrentOwner) {
+        await pluginTaskServiceForCurrentOwner().accept(sessionId, item, { instanceId: pluginTaskSession.instanceId, generation: pluginTaskSession.getTurnGeneration() });
+      }
     },
     onUserMessagePersisting: (sessionId, item) => {
       markQueuedAttachmentPersistenceStarted(sessionId, item.clientId);
@@ -14235,6 +15429,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       publishUiSessionIntervention(sessionId);
     },
     onRejectedUserTurn: (sessionId, item) => {
+      notePluginTaskLifecycle(service => service.discard(sessionId, item, 'failed'));
       rollbackAgentIslandUserPrompt(sessionId, item.clientId, 'rejected');
       // Auto-resume items have an exact-token cleanup boundary below. Keep
       // their attempt lease until that boundary can restore recovery and
@@ -14274,6 +15469,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
     // 队列项未派发即被丢弃(stop/remove/clearSession) → 释放暂存的 accepted 副作用, 防回调表泄漏。
     onDiscardedQueuedMessage: (sessionId, item) => {
+      notePluginTaskLifecycle(service => service.discard(sessionId, item, 'cancelled'));
       if (item.durableDelivery === true) {
         void saveCancelledInputDelivery(sessionId, item.clientId).catch((error) => {
           log.warn('input delivery cancellation persistence failed', {
@@ -14295,6 +15491,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (!autoResume) settleUndispatchedInterruptedAutoResume(sessionId, item);
       // 排队心跳被丢弃 → 通知 runner 按 aborted 收尾对应 run,不让 fire 永久挂起。
       const watcher = schedulerQueuedPromptDiscardWatchers.get(item.clientId);
+      schedulerQueuedPromptPreparations.delete(item.clientId);
       if (watcher) {
         schedulerQueuedPromptDiscardWatchers.delete(item.clientId);
         try {
@@ -14418,14 +15615,18 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       ...(request.kind === 'permission' ? { toolName: request.toolName, suggestions: request.suggestions } : {}),
     };
   });
+  // An Orca Lead turn that only dispatched work is not the team's completion:
+  // keep it running until every worker report has reached the Lead.
   getAgentIslandService()?.setCompletionDeferResolver((sessionId) =>
-    inputCoordinator.hasPendingQueuedWork(sessionId),
+    inputCoordinator.hasPendingQueuedWork(sessionId) ||
+    orcaTeamServiceForEvents?.hasPendingWorkerReports(sessionId) === true,
   );
 
   // Scheduler 撞忙排队桥实现(导出薄封装见 isSchedulerTargetSessionBusy 一带注释)。
   // registerAll 可能因切账号重跑:先清旧账号残留的 discard 监听(对应队列快照
   // 已随账号切换失效,runner 侧 run 也已被 sweep 收尾)。
   schedulerQueuedPromptDiscardWatchers.clear();
+  schedulerQueuedPromptPreparations.clear();
   schedulerQueueBridgeHolder = {
     isSessionBusy: (sessionId) => {
       // 两个视角取并集:coordinator 队列/锁/凭证切换视角(shouldQueueNewTurn,
@@ -14484,6 +15685,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (req.onDiscarded) {
         schedulerQueuedPromptDiscardWatchers.set(clientId, req.onDiscarded);
       }
+      if (req.onPreparing) {
+        schedulerQueuedPromptPreparations.set(clientId, {
+          onPreparing: req.onPreparing,
+          onPreparationFailed: req.onPreparationFailed,
+        });
+      }
       try {
         await enqueueSendToSessionMessage({
           targetSessionId: req.sessionId,
@@ -14499,6 +15706,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         });
       } catch (err) {
         schedulerQueuedPromptDiscardWatchers.delete(clientId);
+        schedulerQueuedPromptPreparations.delete(clientId);
         throw err;
       }
       return { clientId };
@@ -14520,6 +15728,13 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   const pendingCredentialSwitchService = new PendingCredentialSwitchService({
     maker,
     isSessionInTurn,
+    isPiOwnerCurrent: sessionRuntimeControlOwnerEpochMatches,
+    withPiSessionLock: withSendToSessionLock,
+    applyPiPending: (sessionId, target, resolved, isCurrent) =>
+      applyPiPendingSelection(sessionId, target, resolved, isCurrent),
+    broadcastFailed: (payload) => {
+      broadcastToAllWindows(MAKER_PUSH.SESSION_CREDENTIAL_SWITCH_FAILED, payload);
+    },
     broadcastApplied: (payload) => {
       broadcastToAllWindows(MAKER_PUSH.SESSION_CREDENTIAL_SWITCH_APPLIED, payload);
     },
@@ -14534,8 +15749,16 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     // deferred 接受时已按请求值落盘,不纠正则下一次懒 resume 按停用路由重建
     // (PR #744 review 第十、十四轮)。
     persistRoute: async (sessionId, route) => {
+      const ownerEpoch = pendingCredentialSwitchHolder?.get(sessionId)?.ownerEpoch;
+      const assertPendingOwner = () => {
+        if (ownerEpoch && !sessionRuntimeControlOwnerEpochMatches(ownerEpoch)) {
+          throw new Error('pending model switch account changed');
+        }
+      };
+      assertPendingOwner();
+      const pendingDb = getDbClient();
       const agentKind = getSessionDbAgentKind(sessionId);
-      const [desiredRow] = await getDbClient()
+      const [desiredRow] = await pendingDb
         .drizzle.select({
           model: sessions.model,
           effort: sessions.effort,
@@ -14544,6 +15767,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         .from(sessions)
         .where(eq(sessions.id, sessionId))
         .limit(1);
+      assertPendingOwner();
       const finalModel = route.model ?? desiredRow?.model ?? null;
       const previousRoute = pendingCredentialSwitchHolder?.get(sessionId)?.previousRoute;
       const restoringPreviousRoute =
@@ -14613,7 +15837,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         );
         if (verifiedWindow) patch.contextWindow = verifiedWindow;
       }
-      await getDbClient().drizzle.update(sessions).set(patch).where(eq(sessions.id, sessionId));
+      assertPendingOwner();
+      await pendingDb.drizzle.update(sessions).set(patch).where(eq(sessions.id, sessionId));
+      assertPendingOwner();
       setSessionEffort(sessionId, finalEffort);
       setSessionFastMode(sessionId, finalFastMode);
       broadcastSessionPatched(sessionId, patch);
@@ -15232,6 +16458,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       await assertReviewExternalInputAllowed(sid);
       const deviceLinkInvoke = isDeviceLinkInvoke();
       if (!deviceLinkInvoke) assertTrustedAppRendererEvent(event);
+      const inputOwner = getCurrentDbClientSnapshot();
+      await withSessionPermissionChange(sid, async () => undefined);
+      if (!inputOwner || inputOwner !== getCurrentDbClientSnapshot()) throwIpcError('PRECONDITION_FAILED', 'Account changed before input');
       const parsed = await prepareSharedTaskInput(sid, requireQueuedMessage(item));
       assertRemoteInputClearNotInFlight(sid, deviceLinkInvoke);
       const clearBoundaryPrecondition = readRemoteInputClearBoundaryPrecondition(opts);
@@ -16184,7 +17413,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     expectedAgentSwitchRevision: unknown,
     selection: unknown,
     internalOptions: InternalRuntimeSelectionOptions,
-  ) => {
+  ): ReturnType<typeof applySessionRuntimeSelection> => {
     if (typeof sessionId !== 'string' || typeof model !== 'string') {
       throwIpcError('INVALID_PARAMS', 'sessionId + model required');
     }
@@ -16364,11 +17593,13 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           });
         }
       }
-      const currentProviderId = resolveCurrentSetModelProviderId(
-        hasSessionProvider(sessionId),
-        getSessionProvider(sessionId),
-        persistedProviderId,
-      );
+      const currentProviderId = internalOptions.previousPiRoute
+        ? internalOptions.previousPiRoute.providerId
+        : resolveCurrentSetModelProviderId(
+            hasSessionProvider(sessionId),
+            getSessionProvider(sessionId),
+            persistedProviderId,
+          );
       const guardProviderId = resolveSetModelGuardProviderId(
         requestedProviderId,
         currentProviderId,
@@ -16577,7 +17808,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           deferred: true,
           superseded: false,
           generation,
-          effectiveProviderId: normalizeSessionProviderId(effectiveProviderId) ?? null,
+          effectiveProviderId: effectiveProviderId === undefined
+            ? currentProviderId : normalizeSessionProviderId(effectiveProviderId) ?? null,
         };
       };
       // 远端回合中不能 live 改 turn:登记选择,回合结束后再生效,不再 PRECONDITION 丢掉。
@@ -16586,6 +17818,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       }
       if (internalOptions.deferWhileRunning && isSessionInTurn(sessionId)) {
         return deferLockedSelection();
+      }
+      if (internalOptions.previousPiRoute && !maker.getSession(sessionId)) {
+        // Renderer may have persisted the deferred target before a Pi turn exited.
+        // Restore the captured source identity for the cold window transaction.
+        setSessionProvider(sessionId, internalOptions.previousPiRoute.providerId);
       }
       const previousRuntime = {
         hadProviderRoute: hasSessionProvider(sessionId),
@@ -16648,16 +17885,38 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           ? dbToMakerAgentKind(getSessionDbAgentKind(sessionId))
           : persistedSessionMeta?.agentKind);
       const targetRouteProviderId = targetProviderId;
-      let currentRuntimeModel = liveSessionBeforeRouteChange?.model ?? persistedSessionMeta?.model;
+      let currentRuntimeModel = liveSessionBeforeRouteChange?.model ??
+        internalOptions.previousPiRoute?.model ?? persistedSessionMeta?.model;
       let runtimeRouteChanged =
         currentRuntimeModel !== undefined &&
         (currentRuntimeModel !== model || currentProviderId !== targetRouteProviderId);
       let coldPiRouteWithoutLiveWindowCheck = false;
-      if (runtimeAgentKind === 'pi' && runtimeRouteChanged) {
+      const piConfigurationRefresh = runtimeAgentKind === 'pi' && internalOptions.refreshPiConfiguration === true;
+      const piPreview = runtimeAgentKind === 'pi' && (runtimeRouteChanged || piConfigurationRefresh) && liveSessionBeforeRouteChange
+        ? await liveSessionBeforeRouteChange.previewModelSwitch?.(model, {
+            providerId: targetRouteProviderId,
+          })
+        : undefined;
+      assertRuntimeOwnerCurrent();
+      sharedTaskSetting();
+      if (runtimeAgentKind === 'pi' && (runtimeRouteChanged || piConfigurationRefresh) && liveSessionBeforeRouteChange) {
+        if (!piPreview || piPreview.action === 'unavailable') {
+          throwIpcError(
+            'PRECONDITION_FAILED',
+            piPreview?.reason ?? 'Pi target route cannot be previewed; runtime selection was not changed',
+          );
+        }
+      }
+      if (runtimeAgentKind === 'pi' && (runtimeRouteChanged || piConfigurationRefresh)) {
         if (isSessionInTurn(sessionId)) {
           return deferLockedSelection();
         }
-        if (!liveSessionBeforeRouteChange && runtimeStatus.remoteHostId) {
+        if (!liveSessionBeforeRouteChange && !runtimeStatus.sdkSessionId) {
+          // There is no native history to inspect or retire. The next send will
+          // create Pi directly with the target route and an empty context.
+          coldPiRouteWithoutLiveWindowCheck = true;
+        }
+        if (!liveSessionBeforeRouteChange && runtimeStatus.remoteHostId && runtimeStatus.sdkSessionId) {
           throwIpcError(
             localModelWindowSwitchErrorCode('MODEL_WINDOW_TARGET_CONTEXT_UNKNOWN'),
             'cold remote Pi runtime cannot verify the target window; runtime selection was not changed',
@@ -16718,15 +17977,24 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       let verifiedCurrentWindow: number | undefined;
       let modelWindowContextNeedsProtection = false;
       let modelWindowRebuilt = false;
-      if (runtimeAgentKind && (runtimeRouteChanged || confirmedContextWindow !== undefined)) {
+      if (runtimeAgentKind && (runtimeRouteChanged || piConfigurationRefresh || confirmedContextWindow !== undefined)) {
         const resolveRouteWindow = (_agentKind: string, modelId: string, pid: string | null) =>
-          resolveConfiguredContextWindow(getActiveCatalog(), runtimeAgentKind, pid, modelId);
-        const verifiedTargetWindow = lookupVerifiedContextWindow(
+          sshCodexProviders
+            ? resolveVerifiedContextWindow({ providers: sshCodexProviders }, runtimeAgentKind, pid ?? 'openai', modelId)
+            : resolveConfiguredContextWindow(getActiveCatalog(), runtimeAgentKind, pid, modelId);
+        const catalogTargetWindow = lookupVerifiedContextWindow(
           resolveRouteWindow,
           model,
           targetRouteProviderId,
           runtimeAgentKind,
         );
+        const verifiedTargetWindow =
+          runtimeAgentKind === 'pi' && piPreview?.windowVerified === true &&
+          typeof piPreview.targetContextWindow === 'number' && piPreview.targetContextWindow > 0
+            ? catalogTargetWindow === null
+              ? piPreview.targetContextWindow
+              : Math.min(piPreview.targetContextWindow, catalogTargetWindow)
+            : catalogTargetWindow;
         const catalogCurrentWindow =
           lookupVerifiedContextWindow(
             resolveRouteWindow,
@@ -16799,7 +18067,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             isRemote: !!runtimeStatus.remoteHostId ||
               (!internalOptions.applyingUserSelectionOnSend && isDeviceLinkInvoke()),
             agentKind: runtimeAgentKind,
-            runtimeRouteChanged,
+            runtimeRouteChanged: runtimeRouteChanged || piConfigurationRefresh,
             verifiedTargetWindow,
             verifiedCurrentWindow,
             contextTokensKnown,
@@ -16818,7 +18086,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         }
         if (
           !modelSwitchPlan.skipRebuild &&
-          runtimeAgentKind !== 'pi' &&
           typeof targetContextWindow === 'number' &&
           targetContextWindow > 0 &&
           !targetDoesNotShrink
@@ -16839,15 +18106,17 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               contextWindow: targetContextWindow!,
               recheckTargetPressure: true,
               confirmedTargetPressure:
-                internalOptions.applyingUserSelectionOnSend === true ||
+                (internalOptions.source === 'user' && internalOptions.applyingUserSelectionOnSend === true) ||
                 (!isDeviceLinkInvoke() && confirmedContextWindow === targetContextWindow),
               onConfirmationRequired: (contextTokens) => {
                 confirmationContextTokens = contextTokens;
               },
               assertCanCommit: assertRuntimeOwnerCurrent,
               beforeClose: () => {
-                clearPendingCredentialSwitchForSession(sessionId, { wake: false });
-                pendingClearedForWindowRebuild = true;
+                if (!internalOptions.applyingPiCredentialPending) {
+                  clearPendingCredentialSwitchForSession(sessionId, { wake: false });
+                  pendingClearedForWindowRebuild = true;
+                }
               },
             });
           } catch (error) {
@@ -16988,7 +18257,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         }
         setSessionEffort(sessionId, retainedProfile.effort);
         setSessionFastMode(sessionId, retainedProfile.fastMode);
-        pendingCredentialSwitchHolder?.clear(sessionId);
+        if (!internalOptions.applyingPiCredentialPending) pendingCredentialSwitchHolder?.clear(sessionId);
         if (internalOptions.source === 'user') {
           recordRecoveredSessionRuntimeMutation(sessionId, retainedProfile);
         } else if (!routeExplicit) {
@@ -17116,12 +18385,13 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         };
         assertRuntimeOwnerCurrent();
         sharedTaskSetting.admit();
-        const result = routeExplicit
+        const result: Awaited<ReturnType<typeof applyRuntimeSetModelChange>> = routeExplicit
           ? await applyRuntimeSetModelChange({
               maker,
               sessionId,
               model,
               providerId: effectiveProviderId,
+              ...(piConfigurationRefresh ? { refreshPiConfiguration: true } : {}),
               ...(canTransferThread ? {
                 requiresCodexThreadRelink: () => maker.requiresCodexThreadHostTransfer({
                   ...transferTarget, threadId: transferStatus.sdkSessionId!,
@@ -17137,25 +18407,19 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               forceSessionRebuild:
                 rebuildLiveOrcaWorker ||
                 (atomicSelection?.effort === null && runtimeAgentKind !== 'pi'),
-              ...(runtimeAgentKind === 'pi' && runtimeRouteChanged
-                ? {
-                    assertSessionCloseSupported: () => {
-                      throwIpcError(
-                        'PRECONDITION_FAILED',
-                        'Pi target route requires an unsupported runtime replacement; runtime selection was not changed',
-                      );
-                    },
-                  }
-                : {}),
               isSessionInTurn,
               registerPendingCredentialSwitch: registerPendingCredentialSwitchForSession,
-              clearPendingCredentialSwitch: atomicSelection
+              clearPendingCredentialSwitch: internalOptions.applyingPiCredentialPending
+                ? () => {}
+                : atomicSelection ||
+                (runtimeAgentKind === 'pi' && (runtimeRouteChanged || piConfigurationRefresh))
                 ? (pendingSessionId) =>
                     clearPendingCredentialSwitchForSession(pendingSessionId, { wake: false })
                 : clearPendingCredentialSwitchForSession,
               // Worker rebuild must publish the accepted runtime profile before queued input
               // can lazy-create the replacement execution unit.
-              ...(!rebuildLiveOrcaWorker && !atomicSelection
+              ...(!rebuildLiveOrcaWorker && !atomicSelection &&
+                !(runtimeAgentKind === 'pi' && (runtimeRouteChanged || piConfigurationRefresh))
                 ? { wakeSessionInputQueue: wakeSessionInputAfterCredentialSwitch }
                 : {}),
               getPendingCredentialSwitch: getPendingCredentialSwitchTarget,
@@ -17164,7 +18428,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               codexAuthInjection: getCodexProxyAuthInjectionState(),
               logger: log,
             })
-          : { status: 'applied' as const };
+          : { status: 'applied' };
         // deferred = 会话自己在跑,选择已登记、turn 结束自动生效。renderer 据此提示
         // "任务结束后生效"而不是当成已即时切换。
         const response = {
@@ -17180,8 +18444,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         const piSessionAfterRouteChange = maker.getSession(sessionId);
         if (
           runtimeAgentKind === 'pi' &&
-          runtimeRouteChanged &&
+          (runtimeRouteChanged || piConfigurationRefresh) &&
           result.status !== 'deferred' &&
+          result.retiredRuntime !== true &&
           !modelWindowRebuilt &&
           !coldPiRouteWithoutLiveWindowCheck
         ) {
@@ -17229,7 +18494,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
                   contextWindow: finalPiWindow,
                   recheckTargetPressure: true,
                   confirmedTargetPressure:
-                    internalOptions.applyingUserSelectionOnSend === true ||
+                    (internalOptions.source === 'user' && internalOptions.applyingUserSelectionOnSend === true) ||
                     (!isDeviceLinkInvoke() && confirmedContextWindow === finalPiWindow),
                   onConfirmationRequired: (contextTokens) => {
                     finalPressureContextTokens = contextTokens;
@@ -17316,6 +18581,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         if (
           result.persistedRoute !== true &&
           (modelWindowRebuilt ||
+            (runtimeAgentKind === 'pi' && (runtimeRouteChanged || piConfigurationRefresh)) ||
             (internalOptions.source === 'user' && (isDeviceLinkInvoke() || atomicSelection)))
         ) {
           // device-link 的通用持久化原本发生在 handler 返回、session 锁释放之后；
@@ -17349,7 +18615,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             // harness can switch atomically. If SQLite rejects, unwind every
             // in-memory side effect while generation/effectiveOverride still
             // describe the old profile.
-            pendingCredentialSwitchHolder?.clear(sessionId);
+            if (!internalOptions.applyingPiCredentialPending) pendingCredentialSwitchHolder?.clear(sessionId);
             restoreControlStores();
             let recoveryError: unknown;
             const shouldCloseRuntimeAfterPersistenceFailure =
@@ -17370,7 +18636,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
                 sessionId,
                 previousRuntime.pendingCredentialSwitch,
               );
-            } else if (!recoveryError) {
+            } else if (!recoveryError && !internalOptions.applyingPiCredentialPending) {
               wakeSessionInputAfterCredentialSwitch(sessionId);
             }
             if (recoveryError) {
@@ -17454,7 +18720,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             },
           });
         }
-        if ((rebuildLiveOrcaWorker || modelWindowRebuilt || atomicSelection) && !response.deferred) {
+        if (!internalOptions.applyingPiCredentialPending && (rebuildLiveOrcaWorker || modelWindowRebuilt || atomicSelection ||
+          (runtimeAgentKind === 'pi' && (runtimeRouteChanged || piConfigurationRefresh))) && !response.deferred) {
           wakeSessionInputAfterCredentialSwitch(sessionId);
         }
         if (!response.deferred) {
@@ -17532,7 +18799,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         // to dispatch and cannot be followed by a stale lock-free route write.
         return Object.assign(response, {
           generation,
-          effectiveProviderId: normalizeSessionProviderId(effectiveProviderId) ?? null,
+          effectiveProviderId: effectiveProviderId === undefined
+            ? currentProviderId : normalizeSessionProviderId(effectiveProviderId) ?? null,
         });
       } catch (err) {
         // Atomic calls suppress applyRuntimeSetModelChange's early wake. If a later step
@@ -17550,6 +18818,53 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       }
     };
     return internalOptions.sessionLockHeld ? applyLocked() : withSendToSessionLock(sessionId, applyLocked);
+  };
+  applyPiModelSettingsRefresh = async (sessionId, model, providerId) => {
+    const generation = getSessionRuntimeControlSnapshot(sessionId).generation;
+    const result = await handleSetModel(sessionId, model, providerId, undefined, undefined, {
+      source: 'agent', sessionLockHeld: true, applyingUserSelectionOnSend: true,
+      expectedGeneration: generation, refreshPiConfiguration: true,
+    });
+    if (result.contextWindowConfirmationRequired) {
+      throw new Error('Pi model settings need a smaller context window; confirm the switch before continuing');
+    }
+  };
+  applyPiPendingSelection = async (sessionId, target, resolved, isCurrent) => {
+    const assertPendingCurrent = () => {
+      if (!isCurrent() || !target.ownerEpoch ||
+          !sessionRuntimeControlOwnerEpochMatches(target.ownerEpoch)) {
+        throw new Error('Pi pending model switch was superseded or its account changed');
+      }
+    };
+    assertPendingCurrent();
+    const result = await handleSetModel(sessionId, resolved.model, resolved.providerId,
+      undefined, undefined, {
+        source: target.selectionSource ?? 'user', applyingUserSelectionOnSend: true,
+        applyingPiCredentialPending: true, refreshPiConfiguration: true,
+        ...(target.previousRoute ? { previousPiRoute: target.previousRoute } : {}),
+        assertSelectionCurrent: assertPendingCurrent,
+      });
+    if (result.superseded) throw new Error('Pi pending model switch was superseded');
+    if (result.contextWindowConfirmationRequired) {
+      throw new Error('Pi model switch needs confirmation for its smaller context window');
+    }
+    return result.deferred ? 'deferred' : 'applied';
+  };
+  applyPiImModelSelectionHolder = async (sessionId, model, providerId, previousRoute, options) => {
+    const result = await handleSetModel(sessionId, model, providerId, undefined, undefined, {
+      source: options?.source ?? 'user', sessionLockHeld: true, applyingUserSelectionOnSend: true,
+      ...(previousRoute ? { previousPiRoute: previousRoute } : {}),
+      ...(options?.refreshPiConfiguration ? { refreshPiConfiguration: true } : {}),
+    });
+    if (result.superseded) throw new Error('Pi model selection was superseded');
+    if (result.contextWindowConfirmationRequired) {
+      throw new Error('Pi model selection needs confirmation for its smaller context window');
+    }
+    return {
+      status: result.deferred ? 'deferred' : 'applied',
+      generation: result.generation,
+      effectiveProviderId: result.effectiveProviderId,
+    };
   };
   applySessionRuntimeSelection = (sessionId, model, providerId, selection, options) =>
     handleSetModel(sessionId, model, providerId, undefined, selection, options);
@@ -17761,15 +19076,53 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (typeof sessionId !== 'string' || typeof mode !== 'string') {
         throwIpcError('INVALID_PARAMS', 'sessionId + mode required');
       }
-      await assertReviewSettingsUnlocked(sessionId);
-      const sess = maker.getSession(sessionId);
-      if (!sess) {
-        log.debug('set-permission-mode: session not found, no-op', { sessionId });
-        return;
+      if (!isSessionPermissionMode(mode)) {
+        throwIpcError('INVALID_PARAMS', 'invalid permission mode');
       }
-      await sess.setPermissionMode(
-        mode as 'ask' | 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions',
-      );
+      const snapshot = getCurrentDbClientSnapshot();
+      const remote = isDeviceLinkInvoke();
+      const assertOwnerCurrent = () => {
+        if (!snapshot || snapshot !== getCurrentDbClientSnapshot()) {
+          throwIpcError('PRECONDITION_FAILED', 'Account changed during permission update');
+        }
+      };
+      return withSessionPermissionChange(sessionId, async () => {
+        assertOwnerCurrent();
+        await assertReviewSettingsUnlocked(sessionId);
+        assertOwnerCurrent();
+        const [row] = await snapshot!.client.drizzle.select({permissionMode: sessions.permissionMode})
+          .from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+        assertOwnerCurrent();
+        if (!row) throwIpcError('NOT_FOUND', 'session not found');
+        const sess = maker.getSession(sessionId);
+        let runtimeChanged = false;
+        try {
+          if (sess) {
+            await sess.setPermissionMode(mode as PermissionMode);
+            runtimeChanged = true;
+          }
+          assertOwnerCurrent();
+          const saved = await snapshot!.client.tx('bots.persistSessionPermission', {sessionId, mode});
+          if (!saved.updated) throwIpcError('NOT_FOUND', 'session not found');
+          assertOwnerCurrent();
+        } catch (error) {
+          // Keep recovery inside the same permission operation so it cannot
+          // overwrite a later user choice. Never recover into a new account.
+          if (runtimeChanged && sess && snapshot === getCurrentDbClientSnapshot()) {
+            await sess.setPermissionMode(row.permissionMode as PermissionMode).catch((rollbackError) => {
+              log.warn('permission runtime rollback failed', {sessionId, error: String(rollbackError)});
+            });
+          }
+          throw error;
+        }
+        broadcastSessionPatched(sessionId, { permissionMode: mode });
+        if (remote) {
+          const result = {};
+          markRemoteSettingPersistedInsideHandler(result);
+          return result;
+        }
+        return true;
+      });
     },
   );
 
@@ -17783,13 +19136,43 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (typeof sessionId !== 'string' || typeof enabled !== 'boolean') {
         throwIpcError('INVALID_PARAMS', 'sessionId + enabled required');
       }
-      await assertReviewSettingsUnlocked(sessionId);
-      const sess = maker.getSession(sessionId);
-      if (!sess) {
-        log.debug('set-plan-mode: session not found, no-op', { sessionId });
-        return;
-      }
-      await sess.setPlanMode(enabled);
+      const snapshot = getCurrentDbClientSnapshot();
+      const remote = isDeviceLinkInvoke();
+      const assertOwnerCurrent = () => {
+        if (!snapshot || snapshot !== getCurrentDbClientSnapshot())
+          throwIpcError('PRECONDITION_FAILED', 'Account changed during Plan update');
+      };
+      return withSessionPermissionChange(sessionId, async () => {
+        assertOwnerCurrent();
+        await assertReviewSettingsUnlocked(sessionId);
+        assertOwnerCurrent();
+        const [row] = await snapshot!.client.drizzle.select({planModeEnabled: sessions.planModeEnabled})
+          .from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+        assertOwnerCurrent();
+        if (!row) throwIpcError('NOT_FOUND', 'session not found');
+        const sess = maker.getSession(sessionId);
+        try {
+          if (sess) await sess.setPlanMode(enabled);
+          assertOwnerCurrent();
+          if (maker.getSession(sessionId) !== sess) throwIpcError('PRECONDITION_FAILED', 'Session changed during Plan update');
+          await persistSessionFields(sessionId, {planModeEnabled: enabled});
+          assertOwnerCurrent();
+        } catch (error) {
+          // A provider may change its runtime before rejecting. Preserve the
+          // existing best-effort recovery, inside this same complete commit.
+          if (sess && snapshot === getCurrentDbClientSnapshot() && maker.getSession(sessionId) === sess) {
+            await sess.setPlanMode(!!row.planModeEnabled).catch((rollbackError) => {
+              log.warn('Plan runtime rollback failed', {sessionId, error: String(rollbackError)});
+            });
+          }
+          throw error;
+        }
+        if (remote) {
+          const result = {};
+          markRemoteSettingPersistedInsideHandler(result);
+          return result;
+        }
+      });
     },
   );
 
@@ -18787,6 +20170,11 @@ async function materializeCodexImage(
   // 本体在 cindy-media/generatedMedia.ts(规则 14 可测),这里只做 thin adapter。
   try {
     return await materializeGeneratedImage(data, {
+      verifyManagedUrl: async (url) => {
+        const resolved = url.startsWith('cindy-media://') ? resolveCindyMediaUrl(url) : imageCacheStore.resolveSafe(url);
+        const source = await fsp.stat(resolved.absPath);
+        if (!source.isFile()) throw new Error('[MEDIA_SOURCE_MISSING] Generated image is not a file');
+      },
       ingestFromPath: cindyChatAttachments.ingestChatImageFromPath,
       ingestBuffer: cindyChatAttachments.ingestChatImageBuffer,
     });

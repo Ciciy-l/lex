@@ -29,6 +29,7 @@ export type {
   ProviderRuntimeModelConfig,
   PiReasoningEffort,
   PiModelApi,
+  NativeSubscriptionAuth,
   ProviderPreset,
   ProviderPresetModel,
   ProviderPresetRuntime,
@@ -38,7 +39,7 @@ export type {
   OAuthProviderDescriptor,
 } from "./types.js";
 
-export { PI_MODEL_APIS, PI_REASONING_EFFORTS } from "./types.js";
+export { NATIVE_SUBSCRIPTION_AUTHS, NATIVE_SUBSCRIPTION_DEFAULT_PROVIDER_IDS, PI_MODEL_APIS, PI_REASONING_EFFORTS } from "./types.js";
 export { expandPresetModels } from './presetModels.js';
 export { isLocalOnlyProviderForAgent, isOpenAiSubscriptionProvider, providerCatalogId } from './provider-identity.js';
 export { isOfficialXaiApiHost, isOfficialXaiUsApiHost } from './xai-endpoints.js';
@@ -274,6 +275,7 @@ export type {
   LocalModelCatalog,
   LocalCatalogModel,
   LocalModelVariant,
+  LocalGgufVariant,
 } from "./localModelCatalog.js";
 
 export {

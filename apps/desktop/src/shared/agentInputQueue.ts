@@ -230,7 +230,7 @@ export interface AgentInputQueuedMessage {
    */
   sharedTaskWireClientId?: string;
   /** Host-captured authored text before plugin/reference decoration; omitted from wire projections. */
-  autoReviewUserText?: string;
+  autoReviewUserText?: string | { kind: 'delegated-continuation' };
   clientId: string;
   durableDelivery?: true;
   text: string;

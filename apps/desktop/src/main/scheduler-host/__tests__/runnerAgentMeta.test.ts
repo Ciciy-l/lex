@@ -28,6 +28,7 @@ vi.mock('../../localDb/ipc/messages.js', () => ({
 }));
 
 vi.mock('../../localDb/ipc/sessions.js', () => ({
+  getSessionFsSnapshot: vi.fn(async () => ({ permissionMode: 'ask', planModeEnabled: false })),
   getSessionRowSnapshot: mocks.getSessionRowSnapshot,
   touchUserSendInDb: mocks.touchUserSendInDb,
 }));
@@ -68,6 +69,8 @@ function createSessionHarness(sendImpl: SendImpl): FakeSessionHarness {
   const listeners: Array<(event: AgentEvent) => void> = [];
   const session = {
     id: 'scheduler-session',
+    stablePermissionModeState: { mode: 'ask', generation: 0 },
+    stablePlanModeState: { enabled: false, generation: 0 },
     agentKind: 'codex',
     send: vi.fn<SendImpl>(sendImpl),
     onEvent(listener: (event: AgentEvent) => void) {
@@ -138,6 +141,7 @@ function createRunnerHarness(
   const notifier: Notifier = { notify: vi.fn(async () => undefined) };
   const maker = {
     createSession: vi.fn(async () => session),
+    getSession: vi.fn(() => session),
     getSessionMeta: vi.fn(async () => opts.sessionMeta ?? null),
     isSessionAlive: vi.fn(() => false),
     closeSession: vi.fn(async () => undefined),
@@ -198,6 +202,7 @@ describe('MakerScheduleRunner agentMeta automation origin', () => {
     expect(body.role).toBe('user');
     expect(body.content).toBe('check the PR status');
     expect(body.agentMeta).toEqual({
+      autoReviewUserText: { kind: 'scheduled-continuation' },
       origin: {
         kind: 'scheduler',
         scheduleId: 'schedule-1',

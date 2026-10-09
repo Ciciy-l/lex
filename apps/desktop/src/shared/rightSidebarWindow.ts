@@ -45,6 +45,8 @@ export type RsbWindowCommand =
       reveal?: { line: number; column?: number; requestId: string } | null;
     } }
   | { type: 'open-routines-tab'; sessionId: string; botId: string }
+  /** 伙伴主任务页:确保「工作台」标签存在(不存在时创建并展开右侧栏)。 */
+  | { type: 'open-bot-workbench-tab'; sessionId: string; botId: string }
   | { type: 'open-terminal'; sessionId: string }
   | { type: 'toggle-review-tab'; sessionId: string }
   | { type: 'open-web-browser'; sessionId: string; url: string }

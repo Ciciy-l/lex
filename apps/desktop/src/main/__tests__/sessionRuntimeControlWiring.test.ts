@@ -418,14 +418,15 @@ describe('session runtime control wiring', () => {
     );
     const resolveAxes = persistRoute.indexOf('const axes = resolveSessionRuntimeAxes({');
     const persist = persistRoute.indexOf(
-      'await getDbClient().drizzle.update(sessions).set(patch)',
+      'await pendingDb.drizzle.update(sessions).set(patch)',
       resolveAxes,
     );
     const commitEffort = persistRoute.indexOf('setSessionEffort(sessionId, finalEffort);', persist);
     const commitFast = persistRoute.indexOf('setSessionFastMode(sessionId, finalFastMode);', persist);
     const broadcast = persistRoute.indexOf('broadcastSessionPatched(sessionId, patch);', persist);
 
-    expect(persistRoute).toContain('const [desiredRow] = await getDbClient()');
+    expect(persistRoute).toContain('const [desiredRow] = await pendingDb');
+    expect(persistRoute).toContain('assertPendingOwner();');
     expect(persistRoute).toContain('const restoringPreviousRoute =');
     expect(persistRoute).toContain(
       'let finalEffort = restoringPreviousRoute && route.effort',
@@ -457,7 +458,7 @@ describe('session runtime control wiring', () => {
       patchFast,
     );
     const normalWakeGuard = setModel.indexOf(
-      'if ((rebuildLiveOrcaWorker || modelWindowRebuilt || atomicSelection) && !response.deferred)',
+      'if (!internalOptions.applyingPiCredentialPending && (rebuildLiveOrcaWorker || modelWindowRebuilt || atomicSelection ||',
       persistSelection,
     );
     const wakeQueue = setModel.indexOf(
@@ -520,7 +521,7 @@ describe('session runtime control wiring', () => {
     );
     expect(setModel).toContain('await maker.getSessionMeta(sessionId)');
     expect(setModel).toContain(
-      'liveSessionBeforeRouteChange?.model ?? persistedSessionMeta?.model',
+      'internalOptions.previousPiRoute?.model ?? persistedSessionMeta?.model',
     );
     expect(setModel).not.toContain(
       'if (liveSessionBeforeRouteChange && runtimeAgentKind && runtimeRouteChanged)',
@@ -546,9 +547,7 @@ describe('session runtime control wiring', () => {
     expect(setModel).toContain('sessionRuntimeControlOwnerEpochMatches(runtimeOwnerEpoch)');
     expect(setModel).toContain('modelWindowRebuilt ||');
     expect(setModel).toContain('patch.contextWindow = targetContextWindow;');
-    expect(setModel).toContain(
-      '(rebuildLiveOrcaWorker || modelWindowRebuilt || atomicSelection)',
-    );
+    expect(setModel).toContain('(rebuildLiveOrcaWorker || modelWindowRebuilt || atomicSelection ||');
     expect(setModel).toContain('wakeSessionInputAfterCredentialSwitch(sessionId);');
   });
 
@@ -569,7 +568,7 @@ describe('session runtime control wiring', () => {
     const requested = setModel.indexOf('const requestedProviderId = normalizeSessionProviderId(');
     const restore = setModel.indexOf('if (!hasSessionProvider(sessionId)) {');
     const hydrate = setModel.indexOf('hydrateSessionProvider(sessionId, persistedProviderId);');
-    const current = setModel.indexOf('const currentProviderId = resolveCurrentSetModelProviderId(');
+    const current = setModel.indexOf('const currentProviderId = internalOptions.previousPiRoute');
     const catalogCurrent = setModel.indexOf('const catalogCurrentWindow =');
     expect(requested).toBeGreaterThan(-1);
     expect(restore).toBeGreaterThan(requested);
@@ -1109,13 +1108,16 @@ describe('session runtime control wiring', () => {
     const apply = setModel.indexOf('await applyRuntimeSetModelChange({');
 
     expect(setModel.indexOf('return deferLockedSelection()')).toBeLessThan(apply);
-    expect(
-      setModel.indexOf('cold remote Pi runtime cannot verify the target window'),
-    ).toBeLessThan(apply);
-    expect(setModel).toContain("runtimeAgentKind === 'pi' && runtimeRouteChanged");
+    expect(setModel.indexOf('cold remote Pi runtime cannot verify the target window')).toBeLessThan(
+      apply,
+    );
+    expect(setModel).toContain("runtimeAgentKind === 'pi' && (runtimeRouteChanged || piConfigurationRefresh)");
     expect(setModel).not.toContain('busy Pi task cannot change runtime selection');
     expect(setModel).toContain('finalPiWindow < verifiedCurrentWindow!');
     expect(setModel).not.toContain('finalPiWindow < targetContextWindow');
+    expect(setModel).toContain('internalOptions.previousPiRoute.providerId');
+    expect(setModel).toContain('setSessionProvider(sessionId, internalOptions.previousPiRoute.providerId)');
+    expect(setModel).toContain('coldPiRouteWithoutLiveWindowCheck = true');
   });
 
   it('switches and verifies Pi before deciding whether the actual window needs rebuild', () => {
@@ -1135,12 +1137,8 @@ describe('session runtime control wiring', () => {
       'preparation = await contextOverflowRolloverHolder.prepareModelWindowSwitch(',
     );
 
-    const piPreflightGuard = setModel.lastIndexOf(
-      "runtimeAgentKind !== 'pi'",
-      preflightPreparation,
-    );
-    expect(piPreflightGuard).toBeGreaterThan(-1);
-    expect(preflightPreparation - piPreflightGuard).toBeLessThan(700);
+    expect(preflightPreparation).toBeGreaterThan(-1);
+    expect(preflightPreparation).toBeLessThan(apply);
     expect(closeRecovery).toBeGreaterThan(-1);
     expect(closeRecovery).toBeLessThan(finalWindow);
     expect(finalWindow).toBeGreaterThan(apply);
@@ -1162,7 +1160,7 @@ describe('session runtime control wiring', () => {
     expect(setModel).toContain('contextWindowConfirmationRequired: finalPiWindow');
     expect(setModel).toContain('contextTokensForConfirmation: finalPressureContextTokens');
     expect(setModel).toContain('finalPressureContextTokens = contextTokens');
-    expect(setModel).toContain('runtimeRouteChanged || confirmedContextWindow !== undefined');
+    expect(setModel).toContain('runtimeRouteChanged || piConfigurationRefresh || confirmedContextWindow !== undefined');
     expect(setModel).toContain('targetContextWindow = finalPiWindow');
     expect(setModel).toContain("if (!isDeviceLinkInvoke() && runtimeAgentKind === 'pi') {");
     expect(setModel).toContain('planUserRuntimeModelSwitch({');
@@ -1271,7 +1269,7 @@ describe('session runtime control wiring', () => {
     expect(setModel).toContain('deferSessionRuntimeAxisMutation({');
     expect(setModel).toContain('pendingPatch: pendingAxisPatch');
     expect(registerSource).toContain('routeExplicit: isPendingSessionRuntimeRouteExplicit(');
-    expect(setModel).toContain('const result = routeExplicit');
+    expect(setModel).toMatch(/const result(?::[^;\n]+)? = routeExplicit\s*\? await applyRuntimeSetModelChange\(/);
     expect(setModel).toContain('acceptSessionRuntimeAxisMutation({');
     expect(setModel).toContain("runtimeAgentKind !== 'pi' &&");
     expect(setModel).toContain('(routeExplicit || internalOptions.effortExplicit === true)');
@@ -1299,7 +1297,7 @@ describe('session runtime control wiring', () => {
     expect(setModel).toContain('forceSessionRebuild:');
     expect(setModel).toContain('rebuildLiveOrcaWorker ||');
     expect(setModel).toContain(
-      'if ((rebuildLiveOrcaWorker || modelWindowRebuilt || atomicSelection) && !response.deferred)',
+      'if (!internalOptions.applyingPiCredentialPending && (rebuildLiveOrcaWorker || modelWindowRebuilt || atomicSelection ||',
     );
   });
 });

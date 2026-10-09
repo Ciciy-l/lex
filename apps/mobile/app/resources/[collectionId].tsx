@@ -1,3 +1,4 @@
+import { lineHeight } from '@/theme/tokens';
 import { cacheRemoteResourceItems, readRemoteResourceSnapshot, isRemoteResourceUnread, subscribeRemoteResourceCache, remoteResourceCacheRevision } from '@/device-link/remoteResourceCache';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -10,7 +11,7 @@ import {
   StyleSheet,
   View,
 } from 'react-native';
-import { ChevronRight } from 'lucide-react-native';
+import { ChevronRight, RefreshCw } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { BOT_GROUP_REMOTE_COLLECTION_ID } from '@cindy/maker-shared/botGroupChat';
@@ -19,11 +20,13 @@ import {
 } from '@cindy/device-link';
 
 import { Text } from '@/components/AppText';
+import { TeammateList } from '@/session/TeammateList';
 import { RemoteCompanionAvatar } from '@/components/RemoteCompanionAvatar';
-import { MainWindowEmptyState, StatusDot } from '@/components/MobilePrimitives';
-import { SimpleStackHeader, simpleScreenSafeAreaEdges } from '@/platform/chrome';
+import { MainWindowActionButton, MainWindowEmptyState, RemoteListSyncingPlaceholder, StatusDot } from '@/components/MobilePrimitives';
+import { mobileInteractionStyles } from '@/components/mobileInteractionStyles';
+import { SimpleStackHeader, simpleScrollInsetProps, simpleScrollScreenSafeAreaEdges } from '@/platform/chrome';
 import { useAuth } from '@/auth/AuthContext';
-import { isRemoteResourceHostOnline, readRemoteCollectionCache, writeRemoteCollectionCache } from '@/device-link/remoteResourceAvailability';
+import { remoteResourceConnectionState, isRemoteResourceHostOnline, readRemoteCollectionCache, writeRemoteCollectionCache } from '@/device-link/remoteResourceAvailability';
 import { useDeviceLink } from '@/device-link/DeviceLinkContext';
 import {
   type HostedRemoteCollectionItem,
@@ -33,6 +36,7 @@ import {
   normalizeRemoteCollectionItems,
   parseRemoteResourceTargets,
 } from '@/device-link/remoteResources';
+import { useRemoteSyncCoordinator } from '@/device-link/remoteSyncTask';
 import { formatRemoteError } from '@/device-link/remoteStatus';
 import { startFocusedTopicSubscription } from '@/device-link/focusedTopicSubscription';
 import { goBackGuarded } from '@/utils/backGuard';
@@ -93,12 +97,13 @@ export default function RemoteCollectionScreen() {
   const [itemsAccount, setItemsAccount] = useState(accountGeneration);
   const [items, setItems] = useState<HostedResourceItem[]>(() => readRemoteCollectionCache(cacheOwner, collectionId));
   const loadGenerationRef = useRef(0);
+  const active = useRef(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async (visible: boolean) => {
-    if (hydratedOwner !== cacheOwner) return;
+  const read = useCallback(async (visible: boolean, isStale: () => boolean) => {
+    if (!active.current || hydratedOwner !== cacheOwner) return;
     const generation = ++loadGenerationRef.current;
     const expectedAccount = accountGeneration;
     if (!collectionId || targets.length === 0) {
@@ -113,7 +118,7 @@ export default function RemoteCollectionScreen() {
       if (relayStatus !== 'online' || getPresenceAvailability(host.deviceId) === false) throw new Error(t('devices.resources.hostOffline'));
       return { host, response: await listRemoteCollection(invoke, host, collectionId, i18n.language) };
     }));
-    if (loadGenerationRef.current !== generation || accountRef.current !== expectedAccount) return;
+    if (isStale() || !active.current || loadGenerationRef.current !== generation || accountRef.current !== expectedAccount) return;
     const next: HostedResourceItem[] = [];
     const failures: string[] = [];
     const successfulDeviceIds = new Set<string>();
@@ -146,6 +151,11 @@ export default function RemoteCollectionScreen() {
     setRefreshing(false);
   }, [accountGeneration, cacheOwner, collectionId, connectionEpoch, getPresenceAvailability, hydratedOwner, i18n.language, invoke, relayStatus, t, targets, presenceKey, user?.id]);
 
+  const requestRefresh = useRemoteSyncCoordinator(
+    (run) => read(run.reasons.includes('visible'), run.isStale), JSON.stringify([cacheOwner, collectionId]),
+  );
+  const load = useCallback((visible: boolean) => requestRefresh({ reason: visible ? 'visible' : 'changed' }), [read, requestRefresh]);
+
   useEffect(() => {
     loadGenerationRef.current += 1;
     setItems(readRemoteCollectionCache(cacheOwner, collectionId));
@@ -161,8 +171,9 @@ export default function RemoteCollectionScreen() {
   }, [accountGeneration, cacheOwner, collectionId, user?.id]);
 
   useFocusEffect(useCallback(() => {
+    active.current = true;
     void load(false);
-    return () => { loadGenerationRef.current += 1; };
+    return () => { active.current = false; loadGenerationRef.current += 1; };
   }, [connectionEpoch, load]));
   useFocusEffect(useCallback(() => {
     const subscription = AppState.addEventListener('change', (state) => {
@@ -223,21 +234,25 @@ export default function RemoteCollectionScreen() {
 
   return (
     <SafeAreaView
-      edges={simpleScreenSafeAreaEdges()}
+      edges={simpleScrollScreenSafeAreaEdges()}
       style={styles.safeArea}
       testID="remoteResources.screen"
     >
       <SimpleStackHeader
+        scrollEdge
         backTestID="remoteResources.backButton"
         onBack={() => goBackGuarded(router)}
-        subtitle={targets.length > 1 ? t('devices.resources.hostCount', { count: targets.length }) : targets[0]?.deviceName}
+        subtitle={collectionId === 'teammates' ? undefined : targets.length > 1 ? t('devices.resources.hostCount', { count: targets.length }) : targets[0]?.deviceName}
         title={title || t('devices.resources.titleFallback')}
         titleTestID="remoteResources.title"
       />
-      {loading && items.length === 0 ? (
+      {collectionId === 'teammates' ? <TeammateList
+        items={itemsAccount === accountGeneration ? items : []} loading={loading} refreshing={refreshing} error={error}
+        connectionState={host => remoteResourceConnectionState(relayStatus, getPresenceAvailability(host.deviceId))}
+        isOnline={host => isRemoteResourceHostOnline(relayStatus, getPresenceAvailability(host.deviceId), replyEpochs[host.deviceId], connectionEpoch)}
+        onRefresh={() => void load(true)} onSelect={openItem} scrollInsetProps={simpleScrollInsetProps} /> : loading && items.length === 0 ? (
         <View style={styles.center}>
-          <ActivityIndicator color={colors.textSecondary} />
-          <Text style={styles.muted}>{t('devices.resources.loading')}</Text>
+          <RemoteListSyncingPlaceholder testID="remoteResources.loading" />
         </View>
       ) : isBotGroups ? (
         <View style={styles.groupListContainer}>
@@ -254,10 +269,32 @@ export default function RemoteCollectionScreen() {
         </View>
       ) : (
         <FlatList
+          {...simpleScrollInsetProps}
           contentContainerStyle={items.length === 0 ? styles.emptyContent : styles.listContent}
           data={itemsAccount === accountGeneration ? items : []}
           keyExtractor={(item) => item.key}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={colors.textSecondary} />}
+          ListHeaderComponent={error && items.length > 0 ? (
+            // 已有内容时加载失败:列表保持可读,顶部行内提示 + 重试(与伙伴列表同一呈现)。
+            <View style={styles.noticeRow}>
+              <Text accessibilityRole="alert" style={styles.noticeText} testID="remoteResources.error">
+                {t('devices.resources.stale')}
+              </Text>
+              <Pressable
+                accessibilityLabel={t('devices.resources.retry')}
+                accessibilityRole="button"
+                accessibilityState={{ busy: refreshing || undefined, disabled: refreshing }}
+                disabled={refreshing}
+                onPress={() => void load(true)}
+                style={({ pressed }) => [styles.retry, pressed && styles.pressed]}
+                testID="remoteResources.refresh"
+              >
+                {refreshing
+                  ? <ActivityIndicator color={colors.textSecondary} />
+                  : <RefreshCw color={colors.textSecondary} size={iconSize.sm} strokeWidth={iconStroke.regular} />}
+              </Pressable>
+            </View>
+          ) : null}
           renderItem={({ item: hosted }) => {
             const display = hosted.item.display;
             const titleText = resolveRemoteText(display.title, i18n.language);
@@ -302,11 +339,31 @@ export default function RemoteCollectionScreen() {
             );
           }}
           ListEmptyComponent={(
-            <MainWindowEmptyState
-              copy={error ?? t('devices.resources.emptyCopy')}
-              testID={error ? 'remoteResources.error' : 'remoteResources.empty'}
-              title={error ? t('devices.resources.loadFailed') : t('devices.resources.emptyTitle')}
-            />
+            error ? (
+              // 无内容时加载失败:错误态而非空态,附重试。
+              <MainWindowEmptyState
+                centered
+                copy={error}
+                style={styles.emptyState}
+                testID="remoteResources.error"
+                title={t('devices.resources.loadFailed')}
+              >
+                <MainWindowActionButton
+                  action={{
+                    busy: refreshing,
+                    label: t('devices.resources.retry'),
+                    onPress: () => void load(true),
+                    testID: 'remoteResources.retry',
+                  }}
+                />
+              </MainWindowEmptyState>
+            ) : (
+              <MainWindowEmptyState
+                copy={t('devices.resources.emptyCopy')}
+                testID="remoteResources.empty"
+                title={t('devices.resources.emptyTitle')}
+              />
+            )
           )}
         />
       )}
@@ -318,6 +375,10 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   safeArea: { backgroundColor: colors.surface, flex: 1 },
   center: { alignItems: 'center', flex: 1, gap: spacing.sm, justifyContent: 'center' },
   muted: { color: colors.textSecondary, fontSize: typeScale.footnote },
+  emptyState: { gap: spacing.md, padding: spacing.xl },
+  noticeRow: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm },
+  noticeText: { color: colors.errorText, flex: 1, fontSize: typeScale.footnote, lineHeight: lineHeight.caption },
+  retry: { alignItems: 'center', justifyContent: 'center', minHeight: 44, minWidth: 44 },
   listContent: { gap: spacing.sm, padding: spacing.md },
   groupListContainer: { flex: 1 },
   groupError: { color: colors.errorText, fontSize: typeScale.footnote, padding: spacing.lg },
@@ -334,7 +395,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
-  pressed: { opacity: 0.72 },
+  pressed: mobileInteractionStyles.pressed,
   unread: { width: 7, height: 7, borderRadius: radius.pill, backgroundColor: colors.statusAwaiting },
   connectionDot: { position: 'absolute', bottom: 0, right: 0 },
   avatar: {
@@ -347,7 +408,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   },
   body: { flex: 1, gap: spacing.xs, minWidth: 0 },
   titleRow: { alignItems: 'baseline', flexDirection: 'row', gap: spacing.sm },
-  title: { color: colors.textPrimary, flex: 1, fontSize: typeScale.listTitle, fontWeight: fontWeight.semibold },
+  title: { color: colors.textPrimary, flex: 1, fontSize: typeScale.title, fontWeight: fontWeight.semibold },
   time: { color: colors.textTertiary, fontSize: typeScale.footnote },
   subtitle: { color: colors.textSecondary, fontSize: typeScale.body },
   meta: { color: colors.textTertiary, fontSize: typeScale.footnote },

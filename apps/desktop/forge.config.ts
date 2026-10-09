@@ -802,6 +802,8 @@ function extraResourcesForTarget(targetPlatform: string): string[] {
     // Input bytes for upgrading retired preset avatars to ordinary managed images.
     'resources/legacy-teammate-avatars',
     'resources/teammate-portrait-gallery.png',
+    // Cindy-owned Agent Skills are materialized under userData on startup.
+    'resources/system-skills',
     'resources/tools',
     'drizzle',
     'resources/cc-manager',
@@ -1114,6 +1116,30 @@ function buildRemoteDesktopInput(platform: ForgePlatform, arch: ForgeArch): void
       fs.copyFileSync(path.join(output, `${name}.exe`), path.join(destDir, `${name}.exe`));
       if (helper === 'windows-host') fs.copyFileSync(path.join(output, 'cindy_windows_desktop_host.dll'), path.join(destDir, `${name}.node`));
     }
+  }
+}
+
+function buildWindowsAtomicRenameHelper(platform: ForgePlatform, arch: ForgeArch): void {
+  if (process.platform !== 'win32' || platform !== 'win32') return;
+  const target = arch === 'arm64' ? 'aarch64-pc-windows-msvc' : arch === 'x64' ? 'x86_64-pc-windows-msvc' : null;
+  if (!target) throw new Error(`[forge] Unsupported Windows atomic rename architecture: ${arch}`);
+  const source = path.join(__dirname, 'native', 'windows-atomic-rename', 'main.rs');
+  const build = fs.mkdtempSync(path.join(os.tmpdir(), 'cindy-atomic-rename-build-'));
+  const output = path.join(build, 'cindy-windows-atomic-rename.exe');
+  try {
+    const userRustc = path.join(os.homedir(), '.cargo', 'bin', 'rustc.exe');
+    const result = spawnSync(fs.existsSync(userRustc) ? userRustc : 'rustc', [
+      source, '--edition=2021', '-C', 'opt-level=s', '-C', 'panic=abort',
+      '--target', target, '-o', output,
+    ], { stdio: 'inherit', windowsHide: true });
+    if (result.error || result.status !== 0) {
+      throw new Error(`[forge] Windows atomic rename build failed: ${result.error?.message ?? result.status}`);
+    }
+    const dest = path.join(__dirname, 'resources', 'tools', 'windows-atomic-rename');
+    fs.mkdirSync(dest, { recursive: true });
+    fs.copyFileSync(output, path.join(dest, 'cindy-windows-atomic-rename.exe'));
+  } finally {
+    fs.rmSync(build, { recursive: true, force: true });
   }
 }
 
@@ -1643,6 +1669,7 @@ const config: ForgeConfig = {
       buildMacIOSSimulatorHelper(platform, arch);
       buildMacVoiceInputTextInsertionHelper(platform, arch);
       buildMacXboxGamepadHelper(platform, arch);
+      buildWindowsAtomicRenameHelper(platform, arch);
       buildMacVoiceInputModifierShortcutListener(platform, arch);
       buildMacAgentIslandHelper(platform, arch);
       buildMacComputerPermissionGuideHelper(platform, arch);
@@ -1713,6 +1740,12 @@ const config: ForgeConfig = {
           entry: 'src/main/contacts-sync/contactsSyncCodecWorker.ts',
           config: 'vite.contacts-sync-codec-worker.config.ts',
           // 大通讯录 JSON/gzip/crypto 隔离在线程中，避免阻塞 Electron main。
+          target: 'preload',
+        },
+        {
+          entry: 'src/main/worktree/recoveryArchiveWorker.ts',
+          config: 'vite.recovery-archive-worker.config.ts',
+          // Physical ASAR bytes belong in recovery archives; isolate noAsar from main.
           target: 'preload',
         },
         {

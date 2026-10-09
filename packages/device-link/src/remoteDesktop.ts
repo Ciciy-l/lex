@@ -94,10 +94,30 @@ export function isDesktopInput(value: unknown): value is DesktopInput {
   }
 }
 
+/** Viewer intent; the host owns the concrete encoder and capture parameters. */
+export type RemoteDesktopVideoQuality = "auto" | "saver" | "hd";
+export const REMOTE_DESKTOP_VIDEO_QUALITIES: readonly RemoteDesktopVideoQuality[] =
+  ["auto", "saver", "hd"];
 export interface RemoteDesktopVideoSettings {
   fps: 30 | 60;
-  bitrate: 0 | 2_000_000 | 8_000_000 | 20_000_000;
+  quality: RemoteDesktopVideoQuality;
   audio: boolean;
+}
+type LegacyVideoBitrate = 0 | 2_000_000 | 8_000_000 | 20_000_000;
+const LEGACY_BITRATES: readonly number[] = [
+  0, 2_000_000, 8_000_000, 20_000_000,
+];
+/** Older hosts only accept `bitrate` and ignore `quality`; send both. Saver
+ * also caps the frame rate, which older hosts can only learn from `fps`. */
+export function remoteDesktopVideoSettingsWire(
+  settings: RemoteDesktopVideoSettings,
+): RemoteDesktopVideoSettings & { bitrate: LegacyVideoBitrate } {
+  if (settings.quality === "saver")
+    return { ...settings, fps: 30, bitrate: 2_000_000 };
+  return { ...settings, bitrate: settings.quality === "hd" ? 20_000_000 : 0 };
+}
+function legacyVideoQuality(bitrate: number): RemoteDesktopVideoQuality {
+  return bitrate === 0 ? "auto" : bitrate === 2_000_000 ? "saver" : "hd";
 }
 export interface RemoteDesktopDisplayMode {
   id: string;
@@ -262,11 +282,20 @@ export function parseRemoteDesktopRequest(
     };
     if (v.settings === undefined)
       return { op: v.op, lease, sdp: v.sdp, ...overlay };
-    const settings = v.settings as RemoteDesktopVideoSettings;
+    const settings = v.settings as Record<string, unknown> | null;
+    // Older viewers send only `bitrate`; newer ones send `quality` plus a
+    // legacy bitrate, which also covers tiers this host does not know yet.
+    const quality = REMOTE_DESKTOP_VIDEO_QUALITIES.includes(
+      settings?.quality as RemoteDesktopVideoQuality,
+    )
+      ? (settings!.quality as RemoteDesktopVideoQuality)
+      : LEGACY_BITRATES.includes(settings?.bitrate as number)
+        ? legacyVideoQuality(settings!.bitrate as number)
+        : null;
     if (
       !settings ||
-      ![30, 60].includes(settings.fps) ||
-      ![0, 2_000_000, 8_000_000, 20_000_000].includes(settings.bitrate) ||
+      (settings.fps !== 30 && settings.fps !== 60) ||
+      !quality ||
       typeof settings.audio !== "boolean"
     )
       throw new Error("INVALID_REQUEST");
@@ -275,11 +304,7 @@ export function parseRemoteDesktopRequest(
       lease,
       sdp: v.sdp,
       ...overlay,
-      settings: {
-        fps: settings.fps,
-        bitrate: settings.bitrate,
-        audio: settings.audio,
-      },
+      settings: { fps: settings.fps, quality, audio: settings.audio },
     };
   }
   if (

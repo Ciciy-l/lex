@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const managedEnvKeys = [
+  'LEX_MOBILE_BUILD',
+  'LEX_MOBILE_VERSION',
   'CINDY_CN_APP_STORE_ID',
   'CINDY_GLOBAL_APP_STORE_ID',
   'EAS_BUILD_PROFILE',
@@ -49,6 +51,23 @@ afterEach(() => {
 });
 
 describe('mobile native app config', () => {
+  it('builds Lex with its own package, version and disabled OTA without changing service callbacks', () => {
+    const buildConfig = require(resolve(process.cwd(), 'app.config.js'));
+    process.env.LEX_MOBILE_BUILD = '1';
+    process.env.LEX_MOBILE_VERSION = '0.1.97';
+    process.env.EXPO_PUBLIC_CINDY_AUTH_REGION = 'global';
+    const config = buildConfig();
+    expect(config.name).toBe('Lex');
+    expect(config.android.package).toBe('io.github.ciciyl.lex');
+    expect(config.android.versionCode).toBe(1009799);
+    expect(config.version).toBe('0.1.97');
+    expect(config.scheme).toBe('cindy');
+    expect(config.updates).toEqual({ enabled: false });
+    expect(config.extra.cindy.tapdb).toBeUndefined();
+    process.env.EAS_PROJECT_ID = 'unrelated-project';
+    expect(() => buildConfig()).toThrow('cannot inherit');
+  });
+
   it('defaults to the CN app identity and requires an explicit Global build', () => {
     const appJson = JSON.parse(
       readFileSync(resolve(process.cwd(), 'app.json'), 'utf8'),
@@ -603,12 +622,39 @@ describe('mobile native app config', () => {
     const paths: string[] = metroConfig.resolver.nodeModulesPaths;
     // path.join 产物在 Windows 上是反斜杠,比较前统一归一为 POSIX 分隔符(规则 15)。
     const posix = (p: string) => p.split(sep).join('/');
-    for (const packageName of ['auth-client', 'device-link', 'maker-shared', 'model-providers']) {
+    for (const packageName of ['auth-client', 'device-link', 'device-link-protocol', 'maker-shared', 'model-providers', 'voice-input-core']) {
       expect(paths.some((p) => posix(p).endsWith(`packages/${packageName}/node_modules`))).toBe(true);
     }
     // 追加在 app / workspace 根之后:常规依赖命中顺序不变(精确断言前两位,防止顺序被换)。
     expect(paths[0]).toBe(join(appDir, 'node_modules'));
     expect(paths[1]).toBe(join(resolve(appDir, '../..'), 'node_modules'));
+  });
+
+  it('resolves protocol and voice ESM .js imports to existing TypeScript sources in Metro', () => {
+    const metroConfigPath = require.resolve('../../metro.config.js');
+    const metroConfig = require(metroConfigPath);
+    const root = resolve(dirname(metroConfigPath), '../..');
+    for (const [packageName, importer, dependency] of [
+      ['device-link-protocol', 'protocol.ts', 'sharedTask'],
+      ['voice-input-core', 'index.ts', 'VoiceInputController'],
+    ]) {
+      const originModulePath = join(root, 'packages', packageName, 'src', importer);
+      const expectedPath = join(dirname(originModulePath), `${dependency}.ts`);
+      expect(existsSync(expectedPath)).toBe(true);
+      const context = {
+        originModulePath,
+        resolveRequest: (_context: unknown, moduleName: string, platform: string) => {
+          expect(platform).toBe('android');
+          // A clean checkout has TS sources, not adjacent compiled .js files.
+          const filePath = resolve(dirname(originModulePath), moduleName);
+          if (!existsSync(filePath)) throw new Error(`Missing module: ${moduleName}`);
+          return { type: 'sourceFile', filePath };
+        },
+      };
+      expect(metroConfig.resolver.resolveRequest(context, `./${dependency}.js`, 'android')).toEqual({
+        type: 'sourceFile', filePath: expectedPath,
+      });
+    }
   });
 
   it('wires first-party Apple, public Google, and the minimal official WeChat bridge', () => {

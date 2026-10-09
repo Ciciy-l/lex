@@ -1,27 +1,28 @@
-/**
- * Narrow host adapter for controlled Device Link attachment references.
- *
- * G4 only consumes the existing cindy-oss-attach relay contract.  File Peer
- * materialisation remains a separate capability and is intentionally not
- * enabled by this group-chat phase.
- */
 import {
+  isAttachmentOssRef,
   parseAttachmentOssRef,
+  isPeerAttachmentRef,
+  parsePeerAttachmentRef,
   type AttachmentIntegrity,
   type AttachmentOssRef,
+  type PeerAttachment,
 } from '@cindy/device-link';
-import { downloadToFile } from './mediaTransfer.js';
+import { downloadToFile } from './mediaTransfer';
+import { copyPeerAttachment } from './peerAttachmentStore';
 
-export type RemoteAttachment = AttachmentOssRef;
-
+export type RemoteAttachment = AttachmentOssRef & { peer?: PeerAttachment };
+export const isRemoteAttachmentRef = (value: unknown): value is string =>
+  isAttachmentOssRef(value) || isPeerAttachmentRef(value);
 export function parseRemoteAttachmentRef(value: string): RemoteAttachment | null {
-  return parseAttachmentOssRef(value);
+  if (!isPeerAttachmentRef(value)) return parseAttachmentOssRef(value);
+  const peer = parsePeerAttachmentRef(value);
+  return peer ? { ...peer, ossKey: '', peer } : null;
 }
-
 export async function materializeRemoteAttachment(
   ref: RemoteAttachment,
   destination: string,
   integrity?: AttachmentIntegrity,
-): Promise<void> {
-  await downloadToFile(ref.ossKey, destination, integrity);
+) {
+  if (ref.peer) await copyPeerAttachment(ref.peer, destination);
+  else await downloadToFile(ref.ossKey, destination, integrity);
 }

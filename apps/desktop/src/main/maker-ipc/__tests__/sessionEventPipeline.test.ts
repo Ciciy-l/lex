@@ -30,6 +30,10 @@ vi.mock('../../maker-host/model-discovery/xai.js', () => ({
   discardXaiModelsDiskCache: vi.fn(async () => {}),
 }));
 
+vi.mock('../../local-model-runtime/preflight.js', () => ({
+  ensureManagedOllamaReadyForSession: effects.fn('ensureManagedOllamaReadyForSession'),
+}));
+
 vi.mock('../../logger.js', () => ({
   createLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
 }));
@@ -240,6 +244,7 @@ function harness() {
   });
   const activity = new SessionTurnActivityTracker();
   const deps = {
+    onPluginTaskTerminal: vi.fn(),
     log,
     botCompactRuntimeRefreshCoordinator: { noteBoundary: vi.fn() },
     attemptBotCompactRuntimeRefresh: vi.fn(),
@@ -409,7 +414,7 @@ describe('production Session event pipeline', () => {
     effects.fn('onAssistantTextEvent').mockClear();
     effects.fn('broadcast').mockClear();
     h.emit(receipt);
-    expect(effects.fn('onAssistantTextEvent')).toHaveBeenCalledWith('task', { ...data, text }, null);
+    expect(effects.fn('onAssistantTextEvent')).toHaveBeenCalledWith('task', { ...data, text }, null, undefined);
     expect(effects.fn('broadcast')).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
       sessionId: 'task', event: { ...receipt, data: { ...data, text } },
     }));
@@ -439,7 +444,7 @@ describe('production Session event pipeline', () => {
     const h = harness();
     const data = { isFinal: true, text: 'partial: restart-cindy-to-refresh-packages' };
     h.emit(event('text', data, { source: 'pi' }));
-    expect(effects.fn('onAssistantTextEvent')).toHaveBeenCalledWith('task', data, null);
+    expect(effects.fn('onAssistantTextEvent')).toHaveBeenCalledWith('task', data, null, undefined);
     await h.dispose();
   });
 
@@ -831,6 +836,31 @@ describe('provider turn observer on real Session.send', () => {
       },
     };
   }
+  it('awaits llama.cpp readiness on an existing task before dispatch and propagates startup failure', async () => {
+    const h = harness();
+    const gate = deferred();
+    effects.fn('getSessionProvider').mockReturnValue('cindy-local-llamacpp');
+    const ready = effects.fn('ensureManagedOllamaReadyForSession').mockImplementation(() => gate.promise);
+    const dispose = installSessionTurnObserver(observerDeps(), h.session);
+    try {
+      const sending = h.session.send('continue existing task');
+      await vi.waitFor(() => expect(ready).toHaveBeenCalledOnce());
+      expect(h.handle.send).not.toHaveBeenCalled();
+      gate.resolve();
+      await sending;
+      expect(ready).toHaveBeenCalledWith({ providerId: 'cindy-local-llamacpp', onlyIfStopped: true });
+      expect(h.handle.send).toHaveBeenCalledOnce();
+      h.emit(event('done', {}));
+      ready.mockRejectedValue(new Error('NOT_INSTALLED'));
+      await expect(h.session.send('next turn')).rejects.toThrow('NOT_INSTALLED');
+      expect(h.handle.send).toHaveBeenCalledOnce();
+    } finally {
+      gate.resolve();
+      dispose();
+      await h.dispose();
+    }
+  });
+
   it.each(['reject', 'reroute'] as const)(
     'stops a paid-model %s before lease and provider dispatch',
     async (kind) => {

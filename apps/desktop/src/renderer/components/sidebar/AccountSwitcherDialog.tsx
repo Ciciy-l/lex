@@ -149,7 +149,7 @@ export function AccountSwitcherDialog({
           className="fixed inset-0 z-[10000] bg-[var(--overlay-modal)] data-[state=open]:animate-confirm-overlay-in data-[state=closed]:animate-confirm-overlay-out"
           style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
         />
-        <Dialog.Content
+        <Dialog.Content onPointerDownOutside={(event) => event.preventDefault()}
           ref={contentRef}
           tabIndex={-1}
           className={cn(

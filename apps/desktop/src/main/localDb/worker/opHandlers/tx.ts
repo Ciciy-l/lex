@@ -1,3 +1,5 @@
+import { botsPersistSessionPermission } from '../../botSessionPermissionSql.js';
+import { batchAutoReviewProjection, readAutoReviewProjectionTransaction } from '../../autoReviewProjection.js';
 import { normalizeBotName } from '../../../../shared/botCreation.js';
 import { inferBotTemplatePresetId } from '../../../../shared/botTemplatePreset.js';
 // inproc 回滚口：仅在 XDT_DB_INPROC=true 时使用。
@@ -48,11 +50,18 @@ const MAX_ATTEMPTS = 5;
 const RETRY_BACKOFF_MS = [1_000, 5_000, 30_000, 5 * 60_000, 30 * 60_000];
 
 export function tx(db: Database.Database, args: unknown): unknown {
+  const name = expectString(asRecord(args, 'tx args').name, 'name');
+  return batchAutoReviewProjection(db, name, () => dispatchTransaction(db, args));
+}
+
+function dispatchTransaction(db: Database.Database, args: unknown): unknown {
   const payload = asRecord(args, 'tx args');
   const name = expectString(payload.name, 'name') as DbTxName;
   const txArgs = payload.args;
 
   switch (name) {
+    case 'authorization.readProjection':
+      return readAutoReviewProjectionTransaction(db, txArgs);
     case 'codex.importMessages':
       return codexImportMessages(db, txArgs);
     case 'claude.importMessages':
@@ -151,6 +160,8 @@ export function tx(db: Database.Database, args: unknown): unknown {
       return botsRecordLifecycleEvent(db, txArgs);
     case 'bots.archiveLifecycle':
       return botsArchiveLifecycle(db, txArgs);
+    case 'bots.persistSessionPermission':
+      return botsPersistSessionPermission(db, txArgs);
     case 'bots.deleteProfile':
       return botsDeleteProfile(db, txArgs);
     case 'bots.assertNoSharedHistory':
@@ -814,7 +825,7 @@ function botsCreateGroupLane(db: Database.Database, args: BotGroupsCreateLaneArg
 function botsFinishDelegation(
   db: Database.Database,
   args: unknown,
-): { id: string; parentSessionId: string | null; childSessionId: string | null; status: string } | null {
+): { id: string; parentSessionId: string | null; childSessionId: string | null; targetBotId: string | null; status: string } | null {
   const p = asRecord(args, 'bots.finishDelegation args');
   return db.transaction(() => {
     const values: unknown[] = [
@@ -828,19 +839,15 @@ function botsFinishDelegation(
     const row = db.prepare(`UPDATE bot_delegations SET status = ?, result_summary = ?, output_artifacts_json = ?, last_error = ?
       ${tokenSet}, pending_interaction_json = NULL, completed_at = ?, completion_delivered_at = NULL, updated_at = ?
       WHERE id = ? AND status IN ('queued','running','waiting')
-      RETURNING id, parent_session_id AS parentSessionId, child_session_id AS childSessionId, status`)
+      RETURNING id, parent_session_id AS parentSessionId, child_session_id AS childSessionId, target_bot_id AS targetBotId, status`)
       .get(...values) as
-      | { id: string; parentSessionId: string | null; childSessionId: string | null; status: string }
+      | { id: string; parentSessionId: string | null; childSessionId: string | null; targetBotId: string | null; status: string }
       | undefined;
     if (!row) return null;
-    if (row.childSessionId) {
-      // The delegation terminal transition owns its child task's terminal
-      // archive: `sessions.setStatus` refuses `source = 'bot'` rows on purpose
-      // (generic UI archive must not bypass Bot lifecycle bookkeeping), so the
-      // archive has to happen in this very transaction. Doing it anywhere else
-      // (a follow-up generic write that can also be swallowed) leaves the
-      // child task `active` forever and the guardian reports a supervision
-      // anomaly (PR #2829 QA).
+    if (row.childSessionId && row.targetBotId !== null) {
+      // Only legacy Bot-to-Bot execution containers are archived on completion.
+      // Independent tasks (target_bot_id IS NULL) remain available for the user's
+      // next input or explicit model selection; explicit archive still owns closure.
       db.prepare(`UPDATE sessions SET status = 'archived', updated_at = ?
         WHERE id = ? AND status = 'active'`)
         .run(completedAt, row.childSessionId);

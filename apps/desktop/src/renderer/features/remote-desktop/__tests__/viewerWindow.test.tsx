@@ -114,7 +114,7 @@ it('explains view-only actions and enables the same actions when control is conf
     displayId: 'one',
     transport: 'direct',
     latency: null,
-    settings: { fps: 30, bitrate: 0, audio: false },
+    settings: { fps: 30, quality: 'auto', audio: false },
     caps: {
       version: 1,
       enabled: true,
@@ -177,7 +177,7 @@ it.each([
       displayId: 'one',
       transport,
       latency: null,
-      settings: { fps: 30, bitrate: 0, audio: false },
+      settings: { fps: 30, quality: 'auto', audio: false },
     }),
   );
   const toolbar = within(view.container.querySelector('header')!);

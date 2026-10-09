@@ -52,6 +52,7 @@ const READ_ONLY_MCP_TOOLS: ReadonlySet<string> = new Set([
   'cindy::ghost_info',
   'cindy::ghost_manual',
   'cindy::ghost_forge_guide',
+  'cindy::ghost_market_search',
   'cindy_browser::list_tools',
   'cindy_android::list_tools',
   'cindy_ios_simulator::list_tools',
@@ -222,6 +223,7 @@ export function getDesktopMcpToolApprovalPolicy(
   if (toolName && READ_ONLY_MCP_TOOLS.has(`${serverName}::${toolName}`)) {
     return 'auto-approve';
   }
+  if (serverName === 'cindy' && toolName === 'ghost_market_install') return 'prompt-each-time';
   if (serverName === 'cindy_contacts') {
     return canAutoApproveContactsMcpTool({ toolName, toolParams })
       ? 'auto-approve'
@@ -229,6 +231,19 @@ export function getDesktopMcpToolApprovalPolicy(
   }
   if (canAutoApproveCindyArtGhostCall(context)) {
     return 'auto-approve';
+  }
+  // Rebinding a task's workspace delegates its execution root; publishing a Skill
+  // uploads local files under the signed-in account. Review each action instead
+  // of reusing the trusted helper server shortcut/grant. Session modes still apply.
+  if (serverName === 'cindy_helper') {
+    if (toolName === 'move_session' || toolName === 'publish_skill') return 'prompt-each-time';
+    if (!toolName || toolName === 'call_tool') {
+      const params = readJsonObject(toolParams);
+      const innerName = typeof params?.name === 'string' ? params.name.trim() : '';
+      if (!innerName || innerName === 'move_session' || innerName === 'publish_skill') {
+        return 'prompt-each-time';
+      }
+    }
   }
   // Choosing a new Worker root delegates filesystem access. Do not let the
   // trusted-server shortcut or a cached server grant authorize another root.

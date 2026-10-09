@@ -8,11 +8,15 @@ function source(path: string): string {
 
 describe('inactive session list subscriptions', () => {
   it('gates both mounted list routes by navigation focus', () => {
-    for (const path of ['app/devices/index.tsx', 'app/devices/[deviceId].tsx']) {
+    for (const path of ['src/session/HomeSurface.tsx', 'app/devices/[deviceId].tsx']) {
       const screen = source(path);
-      expect(screen).toContain('const screenFocused = useIsFocused();');
+      expect(screen).toContain(path === 'src/session/HomeSurface.tsx'
+        ? 'const screenFocused = useIsFocused() && (props.active ?? true);'
+        : 'const screenFocused = useIsFocused();');
       expect(screen).toContain(
-        '<RemoteSessionStoreSubscriptionGate enabled={screenFocused}>',
+        path === 'src/session/HomeSurface.tsx'
+          ? '<RemoteSessionStoreSubscriptionGate enabled={screenFocused}>'
+          : '<RemoteSessionStoreSubscriptionGate enabled={screenFocused}>',
       );
     }
   });
@@ -20,7 +24,7 @@ describe('inactive session list subscriptions', () => {
   it('pauses list and row subscriptions while their route is covered', () => {
     const store = source('src/session/remoteSessionStore.ts');
     expect(store).toContain(
-      'enabled ? subscribe : INACTIVE_REMOTE_SESSION_STORE_SUBSCRIBE',
+      'gate ? gate.subscribe(subscribe, notify) : subscribe(notify)',
     );
     expect(store).toContain(
       "usePausableRemoteSessionStoreSnapshot('sessions', remoteSessionStore.getSessions)",

@@ -13,7 +13,8 @@
  * updater / release-notes、被控端全局设置写(maker:compat-mode:set 等 *_SET 设置类——
  * 远程改被控端全局设置越权)、local-db 裸写(sessions:create/update、messages:create——
  * 写库必须经业务 handler,不开裸写)、maker:execute-desktop-command(UI 副作用)、
- * migration / session-import、skillhub 写操作。
+ * 通用 migration / session-import、skillhub 写操作。任务迁移仅放行下述受限业务通道，
+ * 不开放通用导入、任意路径写入或裸数据库迁移。
  *
  * 双层校验:控制端发送前(快速失败)+ 被控端执行前(权威)。
  * 新增 channel 不进表即天然不可远程调用(代码保证确定性)。
@@ -23,6 +24,8 @@
  * 不接受 URL、不直接打开系统设置/请求 OS 授权、不修改开关;系统权限按钮仅本机可信
  * Renderer 可调用。它由业务 dispatch 拦截,绝不放行通用 UI / shell IPC。
  */
+import { FILE_PEER_CHANNEL } from './filePeer.js';
+import { TASK_MIGRATION_CHANNEL } from './taskMigration.js';
 import { SESSION_ACTIVITY_CHANNEL, SESSION_SYNC_CHANNEL } from './topics.js';
 import { REMOTE_DESKTOP_INVOKE_MS } from './remoteDesktopIce.js';
 import {
@@ -163,6 +166,10 @@ const CORE_INVOKE_CHANNELS: readonly string[] = [
   'maker:list-active',
   'maker:any-session-in-turn',
   'maker:session-in-turn',
+  // Review evidence and the Reviewer session are created on the data-owning
+  // device. The handler remains host-owned; this only permits the explicit
+  // start request to cross the device-link tunnel.
+  'maker:review:start',
   // —— 输入队列(input queue 全集,无本机副作用)——
   DL_SESSION_REFERENCE_CAPABILITY_CHANNEL,
   'maker:input:get-projection',
@@ -227,6 +234,8 @@ const CORE_INVOKE_CHANNELS: readonly string[] = [
   // 数据真相在被控端(其 renderer 草稿),无 sender 依赖、无本机副作用 → 准入。老被控端无此 handler
   // → 控制端收 CHANNEL_NOT_ALLOWED → 回退被控端 capabilities 默认。
   'maker:get-new-maker-defaults',
+  'maker:model-favorites:get',
+  'maker:model-favorites:apply',
   // device-link 草稿「每个模型 effort/fast」写穿(控制端 → 被控端):控制端在远程项目草稿里改
   // 选中 / 非选中模型的 effort/fast 时通知被控端,被控端调它原来的本地 setter(setEffortForModel /
   // setFastModeForModel)写真实草稿;被控端 newMakerDraft 变更自动经既有 maker:sync-new-maker-draft
@@ -317,6 +326,8 @@ const CORE_INVOKE_CHANNELS: readonly string[] = [
   DL_UNSUBSCRIBE_CHANNEL,
   // 入方向媒体取件(被控端 dispatch 拦截执行,不落 ipcMain handler;契约登记 + 能力探测)。
   DL_MEDIA_FETCH_CHANNEL,
+  FILE_PEER_CHANNEL,
+  TASK_MIGRATION_CHANNEL,
   // 出方向语音转写(被控端 dispatch 拦截执行,不落 ipcMain handler;复用被控端 ASR 配置)。
   DL_VOICE_TRANSCRIBE_CHANNEL,
   // 临时 voice credential 同步(被控端 dispatch 拦截执行,不落 ipcMain handler;禁止泛化)。
@@ -623,6 +634,10 @@ export const PUSH_FORWARD_ALLOWLIST: ReadonlySet<string> = new Set([
   'maker:interaction-dismissed',
   // Claude Auto classifier 故障后降级到 ask;payload 带 sessionId,控制端显示同款提示。
   'maker:auto-permission:fallback',
+  // Deferred model-provider outcome. Both payloads contain only task identity
+  // and selected route or a bounded failure code; no native error text.
+  'maker:session-credential-switch-applied',
+  'maker:session-credential-switch-failed',
   // 被控端 active-catalog revision 变化：控制端按 deviceId 驱逐并重拉 provider 目录。
   'maker:provider:changed',
   // 注:maker:auth:state-changed 曾在此 —— 但发射点不 tap、控制端也不消费(被控端 agent 鉴权
@@ -683,6 +698,7 @@ export const PUSH_FORWARD_ALLOWLIST: ReadonlySet<string> = new Set([
   // 控制端的远程项目草稿据此实时刷新显示镜像(remoteDraftState)。账号 / 全局级、无 sessionId →
   // topics.ts 的 ACCOUNT_CHANNELS 把它并入 `sessions` topic(控制端按设备订阅 sessions)。
   'maker:new-maker-draft:changed',
+  'maker:model-favorites:changed',
   // 被控端 repo-scoped worktree 源分支选择变化；无 sessionId，topics.ts 按账号级
   // 并入 sessions topic，控制端再按来源 deviceId + payload.baseRepo 精确消费。
   'maker:new-maker-worktree-branch:changed',
@@ -713,8 +729,12 @@ export const PUSH_FORWARD_ALLOWLIST: ReadonlySet<string> = new Set([
  * client-agnostic:mobile/web 控制端应使用同一映射(与 allowlist 同为协议契约)。
  */
 export const INVOKE_TIMEOUT_OVERRIDES_MS: Readonly<Record<string, number>> = {
+  // Evidence collection may include git diff and bounded artifact reads before
+  // the host can acknowledge the newly-created Reviewer session.
+  'maker:review:start': 90_000,
   // Two Git preflight/apply stages each allow 30s, plus snapshot and queue overhead.
   'maker:turn-change-set:apply': 90_000,
+  [FILE_PEER_CHANNEL]: 30_000,
   // Capture renderer readiness + source enumeration + offer, then reply delivery.
   "device-link:remote-desktop:v1": REMOTE_DESKTOP_INVOKE_MS,
   // 被控端 CMD_TIMEOUT_MS(30s)+ CMD_KILL_GRACE_MS(5s)+ 5s 回程余量

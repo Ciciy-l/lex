@@ -10,6 +10,7 @@
  * 不持有 LLM client、不做决策、不存任何业务记忆 —— 这些是未来 MetaAgent 的事。
  */
 
+import type { AutoReviewUserIntent } from './agents/shared/auto-review-decision.js';
 import { randomUUID } from 'node:crypto';
 import { ToolLoopGuard } from './agents/shared/loop-guard.js';
 import type { ReviewableAction } from './agents/shared/auto-review.js';
@@ -52,6 +53,7 @@ import type { PiRuntimeCapabilityManifest } from './types/pi-runtime-capabilitie
 import type { AgentRuntimeCommandCatalogSnapshot } from './types/palette.js';
 import type {
   AgentSessionHandle,
+  PiModelSwitchPreview,
   AgentSessionTeardownOptions,
   BackgroundTaskSnapshot,
   SendOptions,
@@ -60,6 +62,7 @@ import type {
 } from './agents/base-agent.js';
 import {
   AUTO_REVIEW_SOURCE_CONTENT,
+  AUTO_REVIEW_USER_INTENT,
   TurnDispatchRejectedError,
   TurnDispatchUnconfirmedError,
 } from './agents/base-agent.js';
@@ -286,6 +289,8 @@ function appendManagedImageReferences(
 }
 
 export interface SessionSendOptions extends SendOptions {
+  /** Host-owned authorization refresh after all async preparation, before vendor dispatch. */
+  resolveAutoReviewUserIntent?: () => Promise<AutoReviewUserIntent>;
   /**
    * Turn reservation 建立后的原子准备钩子。
    *
@@ -420,6 +425,9 @@ export class Session {
   private permissionModeStateValue: PermissionModeState;
   private permissionModeChangeChain: Promise<void> = Promise.resolve();
   private permissionModeChangesInFlight = 0;
+  /** Invalidation only; the provider remains the sole owner of the live Plan flag. */
+  private planModeGeneration = 0;
+  private planModeChangesInFlight = 0;
   /** User/API permission changes, serialized separately so host restores cannot deadlock. */
   private externalPermissionModeChangeChain: Promise<void> = Promise.resolve();
   private externalPermissionModeChangesInFlight = 0;
@@ -731,6 +739,7 @@ export class Session {
       onAccepted,
       onDispatching,
       onTurnReserved,
+      resolveAutoReviewUserIntent,
       ...handleOpts
     } = opts ?? {};
     const cancelledBeforeReservation = (): SessionSendResult | null =>
@@ -880,6 +889,11 @@ export class Session {
           });
           return cancelledAfterVision;
         }
+      }
+      if (resolveAutoReviewUserIntent) {
+        handleOpts[AUTO_REVIEW_USER_INTENT] = await resolveAutoReviewUserIntent();
+        const cancelledAfterAuthorization = finishCancelledBeforeDispatch();
+        if (cancelledAfterAuthorization !== null) return cancelledAfterAuthorization;
       }
       reservation.phase = 'dispatching';
       // 越过 dispatch 边界才记 origin — cancelled-before-dispatch 早返回不会到这,
@@ -1590,12 +1604,16 @@ export class Session {
   }
 
   /**
-   * 底层 agent handle 的会话 id —— cc = SDK session id(也是出站请求的 `x-claude-code-session-id`
-   * header 值);SDK 尚未回填时为 '<pending>'。只读、不触发任何行为,供 host 把 loopback proxy
-   * 看到的请求归属回本会话做 per-session 路由(见 maker-host/anthropic-compat-proxy-host.ts)。
+   * Native identity safe to persist for resume. An unaccepted fork retains its source.
+   * Request routing uses requestSessionId, which may already identify the destination.
    */
   get sdkSessionId(): string {
     return this.handle.id;
+  }
+
+  /** Live request identity, which may precede a fork's durable resume identity. */
+  get requestSessionId(): string {
+    return this.handle.requestSessionId ?? this.handle.id;
   }
 
   /** 当前运行时模型。底层 handle 的 getter 会随 setModel 成功更新。 */
@@ -1649,10 +1667,24 @@ export class Session {
     return this.permissionModeState;
   }
 
+  /** Host side effects must not use an unknown or in-flight Plan state. */
+  get stablePlanModeState(): { enabled: boolean; generation: number } | null {
+    if (this.status !== 'active' || this.terminationStarted || this.planModeChangesInFlight > 0) return null;
+    const enabled = this.capabilities.planMode?.supported
+      ? (this.handle.getExecutionPlanMode ? this.handle.getExecutionPlanMode() : this.getPlanMode())
+      : false;
+    return enabled === null ? null : { enabled, generation: this.planModeGeneration };
+  }
+
   /** Review a Host-side tool step without reconstructing or persisting another copy of user intent. */
   async reviewHostPermissionAction(action: ReviewableAction): Promise<AutoReviewDecision> {
     const permission = this.stablePermissionModeState;
     if (!permission) return { verdict: 'block', reason: 'Session permissions are changing or the task has closed.' };
+    const plan = this.stablePlanModeState;
+    if (!plan || plan.enabled || permission.mode === 'plan') {
+      return { verdict: 'block', reason: 'Plan mode is active or changing; Host side effects are not allowed.' };
+    }
+    if (permission.mode === 'bypassPermissions') return { verdict: 'allow' };
     if (permission.mode !== 'auto') return { verdict: 'ask' };
     // Host steps can belong to a still-active descendant after the foreground
     // turn finishes. Guard Session authority here; root-turn generation is not
@@ -1672,7 +1704,9 @@ export class Session {
       unsubscribe();
     }
     const current = this.stablePermissionModeState;
+    const currentPlan = this.stablePlanModeState;
     if (invalidated || !current || current.generation !== permission.generation
+      || !currentPlan || currentPlan.enabled || currentPlan.generation !== plan.generation
       || (turnControl?.gracefulStopState ?? 'none') !== gracefulStop
       || (this.turnControlState?.gracefulStopState ?? 'none') !== gracefulStop) {
       return { verdict: 'block', reason: 'Task or permissions changed; retry with the current scope.' };
@@ -1710,6 +1744,13 @@ export class Session {
       throw new NotSupportedError('switchModel', { supported: false, reason: 'not-implemented' });
     }
     await this.handle.setModel(model, opts);
+  }
+
+  async previewModelSwitch(
+    model: string,
+    opts?: { providerId?: string | null },
+  ): Promise<PiModelSwitchPreview | undefined> {
+    return this.handle.previewModelSwitch?.(model, opts);
   }
 
   async requiresModelSwitchRebuild(
@@ -1870,7 +1911,16 @@ export class Session {
     if (!this.handle.setPlanMode) {
       throw new NotSupportedError('planMode', { supported: false, reason: 'not-implemented' });
     }
-    await this.handle.setPlanMode(enabled);
+    if (this.planModeChangesInFlight === 0 && this.getPlanMode() === enabled) return;
+    // Invalidate before awaiting the provider (Pi may queue its RPC). A switch
+    // back, or a failed switch, must not revive an earlier Host approval.
+    this.planModeGeneration += 1;
+    this.planModeChangesInFlight += 1;
+    try {
+      await this.handle.setPlanMode(enabled);
+    } finally {
+      this.planModeChangesInFlight -= 1;
+    }
   }
 
   getPlanMode(): boolean | null {

@@ -6354,6 +6354,7 @@ const MessageItem = memo(function MessageItem({
             modelMismatch={message.modelMismatch}
             ghostReplyPending={message.ghostReplyPending}
             simplifiedBotConversation={simplifiedBotConversation}
+            botLearning={message.botLearning}
           />
         </>,
       );

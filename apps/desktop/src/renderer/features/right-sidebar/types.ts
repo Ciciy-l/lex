@@ -33,6 +33,7 @@ export type BuiltinTabKindId =
   | 'subagents'
   | 'background-tasks'
   | 'routines'
+  | 'bot-workbench'
   | 'resource-usage';
 export type TabKindId = BuiltinTabKindId | `ghost:${string}`;
 

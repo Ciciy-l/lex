@@ -19,8 +19,10 @@ const sharedArrayBufferPolyfill = path.join(__dirname, 'src/polyfills/sharedArra
 const workspaceTsSourcePackages = [
   'auth-client',
   'device-link',
+  'device-link-protocol',
   'maker-shared',
   'model-providers',
+  'voice-input-core',
 ];
 
 config.resolver.disableHierarchicalLookup = true;

@@ -1,3 +1,4 @@
+import { setSessionOpeningModelAdmission, type SessionOpenBody } from '../../sessionOpening';
 /**
  * sessionsUpdate.test.ts — `local-db:sessions:update` handler 集成接线。
  * -------------------------------------------------------------------
@@ -94,6 +95,7 @@ vi.mock('../../../logger', () => ({
   createLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
 }));
 vi.mock('../../client/current', () => ({
+  getCurrentDbClientSnapshot: () => h,
   getDbClient: () => h.client,
   getCurrentDbClientUserId: () => 'test-user',
 }));
@@ -277,6 +279,7 @@ async function invokeCreate(body: Record<string, unknown>): Promise<unknown> {
 }
 
 beforeEach(() => {
+  setSessionOpeningModelAdmission(async body => body);
   vi.clearAllMocks();
   h.relocate.mockImplementation(async () => ({ persistedSdkSessionId: null }));
   h.closeSession.mockClear();
@@ -931,6 +934,49 @@ describe('local-db:sessions:update handler wiring', () => {
     expect(h.relocate).toHaveBeenCalledWith('cc-local', '/old/dir', '/new/dir');
   });
 
+  it.each([{ workingDir: '/new/dir', workspaceKind: 'project' }, { workspaceKind: 'dialogue' }])(
+    'runs MCP move checks inside the route lock before persisting %j', async (patch) => {
+      let locked = false;
+      h.routeLock.mockImplementation(async (_id, task) => {
+        locked = true;
+        try { return await task(); } finally { locked = false; }
+      });
+      const beforeUpdate = vi.fn(async () => {
+        expect(locked).toBe(true);
+        throw Object.assign(new Error('[PRECONDITION_FAILED] move blocked'), { code: 'PRECONDITION_FAILED' });
+      });
+      await expect(updateSessionInDb('cc-local', patch, undefined, {
+        assertCurrent: () => undefined, beforeUpdate,
+      })).rejects.toThrow('move blocked');
+      expect(beforeUpdate).toHaveBeenCalledOnce();
+      expect(h.sqlite!.prepare('SELECT working_dir FROM sessions WHERE id = ?').get('cc-local')).toEqual({ working_dir: '/old/dir' });
+      expect(h.relocate).not.toHaveBeenCalled();
+      expect(h.tapWindowBroadcast).not.toHaveBeenCalled();
+    },
+  );
+
+  it('checks the move account fence again after closing an idle runtime and before writing', async () => {
+    let current = true;
+    h.closeIdleSessionForMove.mockImplementationOnce(async () => { current = false; return true; });
+    await expect(updateSessionInDb('codex-local', { workingDir: '/new/dir' }, undefined, {
+      beforeUpdate: async () => undefined,
+      assertCurrent: () => { if (!current) throw Object.assign(new Error('[PRECONDITION_FAILED] account changed'), { code: 'PRECONDITION_FAILED' }); },
+    })).rejects.toThrow('account changed');
+    expect(h.sqlite!.prepare('SELECT working_dir FROM sessions WHERE id = ?').get('codex-local')).toEqual({ working_dir: '/old/dir' });
+    expect(h.tapWindowBroadcast).not.toHaveBeenCalled();
+  });
+
+  it('retains transcript relocation and returned resume identity for a guarded MCP move', async () => {
+    const updated = await updateSessionInDb('cc-local', { workingDir: '/new/dir', workspaceKind: 'project' }, undefined, {
+      beforeUpdate: async () => undefined, assertCurrent: () => undefined,
+    });
+    expect(updated.workingDir).toBe('/new/dir');
+    expect(h.relocate).toHaveBeenCalledWith('cc-local', '/old/dir', '/new/dir', {
+      client: h.client, assertCurrent: expect.any(Function),
+    });
+    expect(h.tapWindowBroadcast).toHaveBeenCalledWith('local-db:sessions:patched', expect.objectContaining({ sessionId: 'cc-local' }));
+  });
+
   it('returns and broadcasts the sdkSessionId persisted during relocation', async () => {
     const liveId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
     // 模拟真实编排:迁移把内存 id 持久化进 DB 并上报;handler 必须在迁移后才查
@@ -1080,4 +1126,19 @@ describe('local-db:sessions:set-pinned-card-summaries', () => {
     await expect(invokeSetPinnedCardSummaries({}, true)).rejects.toThrow('UNTRUSTED_RENDERER');
     expect(h.setPinnedSectionCardMode).not.toHaveBeenCalled();
   });
+});
+
+it('opens a normal renderer task through shared model admission', async () => {
+  const admission = vi.fn(async (body: SessionOpenBody) => ({ ...body, agentKind: 'codex' as const,
+    model: 'selected-model', providerId: 'selected-provider', effort: '', fastMode: false }));
+  setSessionOpeningModelAdmission(admission);
+  await invokeCreate({ id: 'normal-open', title: 'Normal task', workspaceKind: 'project', permissionMode: 'auto' });
+  expect(admission).toHaveBeenCalledOnce();
+  expect(h.sqlite!.prepare('SELECT model, provider_id, effort, permission_mode FROM sessions WHERE id = ?').get('normal-open'))
+    .toEqual({ model: 'selected-model', provider_id: 'selected-provider', effort: '', permission_mode: 'auto' });
+});
+it('does not create a renderer task when common model admission fails', async () => {
+  setSessionOpeningModelAdmission(async () => { throw new Error('model unavailable'); });
+  await expect(invokeCreate({ id: 'rejected-open', title: 'Rejected task' })).rejects.toThrow('model unavailable');
+  expect(h.sqlite!.prepare('SELECT id FROM sessions WHERE id = ?').get('rejected-open')).toBeUndefined();
 });

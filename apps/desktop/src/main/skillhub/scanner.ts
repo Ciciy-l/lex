@@ -23,6 +23,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import matter from 'gray-matter';
 import type { AgentCustomization, Maker, PiRuntimeCapabilityStatus } from '@cindy/maker-core';
+import type { BuiltInSkillDescriptor } from '../maker-host/built-in-skills';
 import { registryService, type StoredInstall } from './registry';
 import { reconcileScannedInstall } from './registryReconciliation';
 import { isIgnoredSkillPackagePath } from './packageIgnore';
@@ -46,6 +47,7 @@ export interface Skill {
   cindyEnabled?: boolean;
   canUninstall?: boolean;
   managedByPlugin?: boolean;
+  builtIn?: boolean;
   uninstallLinkOnly?: boolean;
   /** All lexical discovery aliases; Main owns their validation. */
   discoveryPaths?: string[];
@@ -115,9 +117,7 @@ export interface Skill {
 }
 
 export type SourceStatus =
-  | { state: 'ok'; count: number }
-  | { state: 'missing' }
-  | { state: 'error'; message: string };
+  { state: 'ok'; count: number } | { state: 'missing' } | { state: 'error'; message: string };
 
 export interface SourceReport {
   kind: SkillKind;
@@ -176,10 +176,7 @@ function realPathOrNormalized(value: string): string {
 }
 
 function normalizeSkillEntityPath(c: AgentCustomization): AgentCustomization {
-  if (
-    c.kind === 'skill' &&
-    path.basename(c.absolutePath).toLowerCase() === 'skill.md'
-  ) {
+  if (c.kind === 'skill' && path.basename(c.absolutePath).toLowerCase() === 'skill.md') {
     return {
       ...c,
       absolutePath: path.dirname(c.absolutePath),
@@ -189,17 +186,57 @@ function normalizeSkillEntityPath(c: AgentCustomization): AgentCustomization {
   return c;
 }
 
-function filterSkillPackageFileEntries(rootDir: string, entries: SkillFileEntry[]): SkillFileEntry[] {
+function filterSkillPackageFileEntries(
+  rootDir: string,
+  entries: SkillFileEntry[],
+): SkillFileEntry[] {
   return entries.filter((entry) => {
     const childPath = path.join(rootDir, entry.name);
     return !isIgnoredSkillPackagePath(skillPackageRelPath(rootDir, childPath, entry.name));
   });
 }
 
+function readBuiltInCustomization(descriptor: BuiltInSkillDescriptor): AgentCustomization {
+  const skillFile = path.join(descriptor.absolutePath, 'SKILL.md');
+  const raw = fs.readFileSync(skillFile, 'utf8');
+  let frontmatter: Record<string, unknown> | undefined;
+  let description: string | undefined;
+  let parseError: string | undefined;
+  try {
+    const parsed = matter(raw);
+    frontmatter = parsed.data;
+    if (typeof parsed.data.description === 'string') {
+      description = parsed.data.description.trim().slice(0, 500) || undefined;
+    }
+  } catch (error) {
+    parseError = error instanceof Error ? error.message : String(error);
+  }
+  const files = fs
+    .readdirSync(descriptor.absolutePath, { withFileTypes: true })
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((entry) => ({
+      name: entry.name,
+      kind: entry.isDirectory() ? ('dir' as const) : ('file' as const),
+    }));
+  return {
+    engine: 'claude-code',
+    kind: 'skill',
+    scope: 'global',
+    name: descriptor.name,
+    description,
+    absolutePath: descriptor.absolutePath,
+    mdPath: skillFile,
+    files,
+    frontmatter,
+    parseError,
+  };
+}
+
 export async function scanAllSkills(
   params: { projects?: ProjectInput[] },
   maker: Maker,
   managedSkillRoots: readonly string[] = [],
+  builtInSkills: readonly BuiltInSkillDescriptor[] = [],
 ): Promise<ScanResult> {
   const projects = params.projects ?? [];
   const projectByWorkingDir = new Map<string, ProjectInput>();
@@ -233,6 +270,38 @@ export async function scanAllSkills(
     log.error('maker.listCustomizations failed', err);
     listed = { items: [], errors: [{ message: err instanceof Error ? err.message : String(err) }] };
   }
+  const discoveredEnginesByRealPath = new Map<
+    string,
+    Map<Skill['engine'], Skill['linkedEngines'][number]>
+  >();
+  for (const rawItem of listed.items) {
+    const item = normalizeSkillEntityPath(rawItem);
+    if (item.kind !== 'skill') continue;
+    const realPath = realPathOrNormalized(item.absolutePath);
+    const engines = discoveredEnginesByRealPath.get(realPath) ?? new Map();
+    if (!engines.has(item.engine)) {
+      engines.set(item.engine, {
+        engine: item.engine,
+        label: item.engine === 'claude-code' ? 'Claude' : item.engine === 'codex' ? 'Codex' : 'Pi',
+        ...(item.runtimeStatus ? { runtimeStatus: item.runtimeStatus } : {}),
+      });
+    }
+    discoveredEnginesByRealPath.set(realPath, engines);
+  }
+  const builtInRealPaths = new Set<string>();
+  for (const descriptor of builtInSkills) {
+    try {
+      const customization = readBuiltInCustomization(descriptor);
+      const realPath = realPathOrNormalized(customization.absolutePath);
+      builtInRealPaths.add(realPath);
+      listed.items.push(customization);
+    } catch (error) {
+      listed.errors.push({
+        path: descriptor.absolutePath,
+        message: `Could not read built-in Skill ${descriptor.name}: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
+  }
 
   // ── 过滤 + 跨引擎去重 ──────────────────────────────────────────────────────
   // ~/.agents/skills/ 是 agent-agnostic 的共享路径（canonical），实体文件在此。
@@ -240,7 +309,10 @@ export async function scanAllSkills(
   const HIDDEN_SCOPES = new Set(['system', 'admin']);
   const isBackupPath = (p: string) => /\.bak\.\d+$/.test(path.basename(p));
   const isGenericPath = (p: string) => /\/\.agents\/skills\//.test(p.replace(/\\/g, '/'));
-  const seenItems = new Map<string, { winner: AgentCustomization; all: AgentCustomization[]; realPath: string }>();
+  const seenItems = new Map<
+    string,
+    { winner: AgentCustomization; all: AgentCustomization[]; realPath: string }
+  >();
   for (const item of listed.items) {
     const c = normalizeSkillEntityPath(item);
     if (HIDDEN_SCOPES.has(c.scope)) continue;
@@ -273,10 +345,11 @@ export async function scanAllSkills(
     // used as fallback cwd. If the workingDir doesn't map to a tracked project,
     // treat the skill as global — it's effectively user-level.
     const rawScope = normalizeScope(engine, c.scope);
-    const scope: SkillScope = (rawScope === 'project' && !projectHash) ? 'global' : rawScope;
-    const urlKey = scope === 'global'
-      ? `${c.kind}:global:${canonicalName}`
-      : `${c.kind}:project:${projectHash}:${canonicalName}`;
+    const scope: SkillScope = rawScope === 'project' && !projectHash ? 'global' : rawScope;
+    const urlKey =
+      scope === 'global'
+        ? `${c.kind}:global:${canonicalName}`
+        : `${c.kind}:project:${projectHash}:${canonicalName}`;
     return { c, all, realPath, engine, project, projectHash, canonicalName, scope, urlKey };
   });
   const identityCounts = new Map<string, number>();
@@ -285,71 +358,75 @@ export async function scanAllSkills(
     identityCounts.set(identity, (identityCounts.get(identity) ?? 0) + 1);
   }
 
-  const skills: Skill[] = candidates.map(({
-    c,
-    all,
-    realPath,
-    engine,
-    project,
-    projectHash,
-    canonicalName,
-    scope,
-    urlKey,
-  }) => {
-    const hasIdentityCollision = (identityCounts.get(`${engine}:${urlKey}`) ?? 0) > 1;
-    // Pi entries are new to this SkillHub projection. Give them a path-derived
-    // identity even when currently unique, so adding/removing a same-name source
-    // never changes the surviving Pi entry's React/storage identity.
-    const sourceKey = engine === 'pi' || hasIdentityCollision
-      ? createHash('sha256').update(realPath).digest('hex')
-      : undefined;
-    const id = `${engine}:${urlKey}${sourceKey ? `:source:${sourceKey}` : ''}`;
+  const skills: Skill[] = candidates.map(
+    ({ c, all, realPath, engine, project, projectHash, canonicalName, scope, urlKey }) => {
+      const builtIn = builtInRealPaths.has(realPath);
+      const hasIdentityCollision = (identityCounts.get(`${engine}:${urlKey}`) ?? 0) > 1;
+      // Pi entries are new to this SkillHub projection. Give them a path-derived
+      // identity even when currently unique, so adding/removing a same-name source
+      // never changes the surviving Pi entry's React/storage identity.
+      const sourceKey =
+        engine === 'pi' || hasIdentityCollision
+          ? createHash('sha256').update(realPath).digest('hex')
+          : undefined;
+      const id = `${engine}:${urlKey}${sourceKey ? `:source:${sourceKey}` : ''}`;
 
-    const engineSet = new Map<Skill['engine'], Skill['linkedEngines'][number]>();
-    for (const item of all) {
-      const eng = item.engine;
-      if (!engineSet.has(eng)) {
-        engineSet.set(eng, {
-          engine: eng,
-          label: eng === 'claude-code' ? 'Claude' : eng === 'codex' ? 'Codex' : eng === 'pi' ? 'Pi' : 'OMP',
-          ...(item.runtimeStatus ? { runtimeStatus: item.runtimeStatus } : {}),
-        });
+      const engineSet = new Map<Skill['engine'], Skill['linkedEngines'][number]>();
+      for (const item of all) {
+        const eng = item.engine;
+        if (!engineSet.has(eng)) {
+          engineSet.set(eng, {
+            engine: eng,
+            label: eng === 'claude-code' ? 'Claude' : eng === 'codex' ? 'Codex' : eng === 'pi' ? 'Pi' : 'OMP',
+            ...(item.runtimeStatus ? { runtimeStatus: item.runtimeStatus } : {}),
+          });
+        }
       }
-    }
-    const linkedEngines = Array.from(engineSet.values());
+      const linkedEngines = builtIn
+        ? Array.from(discoveredEnginesByRealPath.get(realPath)?.values() ?? [])
+        : Array.from(engineSet.values());
 
-    const skill: Skill = {
-      id,
-      urlKey,
-      ...(sourceKey ? { sourceKey } : {}),
-      ...(hasIdentityCollision ? { requiresSourceKey: true } : {}),
-      engine,
-      linkedEngines,
-      kind: c.kind as SkillKind,
-      scope,
-      name: canonicalName,
-      description: c.description,
-      absolutePath: realPath,
-      discoveredPath: c.absolutePath,
-      mdPath: c.mdPath ?? realPath,
-      files: c.kind === 'skill'
-        ? filterSkillPackageFileEntries(realPath, (c.files ?? []) as SkillFileEntry[])
-        : [],
-      frontmatter: c.frontmatter,
-      parseError: c.parseError,
-      registryEntry: null,            // 下面 join 阶段填
-      ...(c.kind === 'skill' ? (() => {
-        const discoveryPaths = all.map((item) => item.absolutePath);
-        const target = inspectLocalSkillTarget(realPath, discoveryPaths, managedSkillRoots);
-        return { cindyEnabled: isCindySkillEnabled(realPath), discoveryPaths,
-          managedByPlugin: isPluginManagedSkillPath(realPath, managedSkillRoots),
-          canUninstall: target !== null, uninstallLinkOnly: target?.linkOnly ?? false };
-      })() : {}),
-      ...(project ? { projectRoot: project.projectRoot } : {}),
-      ...(projectHash ? { projectHash } : {}),
-    };
-    return skill;
-  });
+      const skill: Skill = {
+        id,
+        urlKey,
+        ...(sourceKey ? { sourceKey } : {}),
+        ...(hasIdentityCollision ? { requiresSourceKey: true } : {}),
+        engine,
+        linkedEngines,
+        kind: c.kind as SkillKind,
+        scope,
+        name: canonicalName,
+        description: c.description,
+        absolutePath: realPath,
+        discoveredPath: c.absolutePath,
+        mdPath: c.mdPath ?? realPath,
+        files:
+          c.kind === 'skill'
+            ? filterSkillPackageFileEntries(realPath, (c.files ?? []) as SkillFileEntry[])
+            : [],
+        frontmatter: c.frontmatter,
+        parseError: c.parseError,
+        registryEntry: null, // 下面 join 阶段填
+        ...(c.kind === 'skill'
+          ? (() => {
+              const discoveryPaths = [...new Set(all.map((item) => item.absolutePath))];
+              const target = inspectLocalSkillTarget(realPath, discoveryPaths, managedSkillRoots);
+              return {
+                cindyEnabled: isCindySkillEnabled(realPath),
+                discoveryPaths,
+                ...(builtIn ? { builtIn: true } : {}),
+                managedByPlugin: isPluginManagedSkillPath(realPath, managedSkillRoots),
+                canUninstall: !builtIn && target !== null,
+                uninstallLinkOnly: target?.linkOnly ?? false,
+              };
+            })()
+          : {}),
+        ...(project ? { projectRoot: project.projectRoot } : {}),
+        ...(projectHash ? { projectHash } : {}),
+      };
+      return skill;
+    },
+  );
 
   // ── join registry ──────────────────────────────────────────────────────────
   let registryEntries: Awaited<ReturnType<typeof registryService.listAllInstalls>>;
@@ -394,10 +471,12 @@ export async function scanAllSkills(
 
   // Maintenance uses the same mutation protocol as install/uninstall and
   // revalidates each registry/source snapshot after acquiring the lease.
-  void Promise.all(registryEntries.map((record) => {
-    const key = path.normalize(record.installPath);
-    return reconcileScannedInstall(record, !liveRealPaths.has(registryLiveKeys.get(key) ?? key));
-  }));
+  void Promise.all(
+    registryEntries.map((record) => {
+      const key = path.normalize(record.installPath);
+      return reconcileScannedInstall(record, !liveRealPaths.has(registryLiveKeys.get(key) ?? key));
+    }),
+  );
 
   // ── sources[] 兼容 (renderer 只存不读) ─────────────────────────────────────
   const sources: SourceReport[] = listed.errors.map((e) => ({
@@ -416,12 +495,12 @@ export async function scanAllSkills(
  * `.claude/{skills,commands,agents}/` layout so the IPC can't be coerced
  * into a generic file reader.
  */
-export async function readSkillContent(params: { mdPath: string }): Promise<{
+export async function readSkillContent(params: { mdPath: string; attestedRoot?: string }): Promise<{
   success: boolean;
   content?: string;
   error?: string;
 }> {
-  const { mdPath } = params;
+  const { mdPath, attestedRoot } = params;
   if (!mdPath || !path.isAbsolute(mdPath)) {
     return { success: false, error: 'mdPath must be an absolute path' };
   }
@@ -432,11 +511,11 @@ export async function readSkillContent(params: { mdPath: string }): Promise<{
     return { success: false, error: 'only .md files may be read via this channel' };
   }
 
-  const resolvedMdPath = resolveAllowedExistingSkillPath(mdPath);
+  const resolvedMdPath = resolveReadableExistingSkillPath(mdPath, attestedRoot);
   if (!resolvedMdPath) {
     return { success: false, error: 'path is not under a recognized skills directory' };
   }
-  if (isIgnoredSkillFilePath(mdPath)) {
+  if (isIgnoredSkillFilePath(attestedRoot ? resolvedMdPath : mdPath, attestedRoot)) {
     return { success: false, error: 'path is excluded from SkillHub packages' };
   }
 
@@ -463,23 +542,26 @@ export async function readSkillContent(params: { mdPath: string }): Promise<{
  */
 const PREVIEW_SIZE_CAP = 1024 * 1024; // 1 MB
 
-export async function readSkillSiblingFile(params: { filePath: string }): Promise<{
+export async function readSkillSiblingFile(params: {
+  filePath: string;
+  attestedRoot?: string;
+}): Promise<{
   success: boolean;
   content?: string;
   error?: string;
 }> {
-  const { filePath } = params;
+  const { filePath, attestedRoot } = params;
   if (!filePath || !path.isAbsolute(filePath)) {
     return { success: false, error: 'filePath must be an absolute path' };
   }
 
-  const resolvedFilePath = resolveAllowedExistingSkillPath(filePath);
+  const resolvedFilePath = resolveReadableExistingSkillPath(filePath, attestedRoot);
   if (!resolvedFilePath) {
     return { success: false, error: 'path is not under a recognized skills directory' };
   }
 
   try {
-    if (isIgnoredSkillFilePath(filePath)) {
+    if (isIgnoredSkillFilePath(attestedRoot ? resolvedFilePath : filePath, attestedRoot)) {
       return { success: false, error: 'path is excluded from SkillHub packages' };
     }
 
@@ -488,7 +570,10 @@ export async function readSkillSiblingFile(params: { filePath: string }): Promis
       return { success: false, error: 'path is not a file' };
     }
     if (stat.size > PREVIEW_SIZE_CAP) {
-      return { success: false, error: `文件超过 ${Math.round(PREVIEW_SIZE_CAP / 1024)} KB,无法在面板中预览` };
+      return {
+        success: false,
+        error: `文件超过 ${Math.round(PREVIEW_SIZE_CAP / 1024)} KB,无法在面板中预览`,
+      };
     }
     const content = fs.readFileSync(resolvedFilePath, 'utf-8');
     return { success: true, content };
@@ -507,17 +592,20 @@ export async function readSkillSiblingFile(params: { filePath: string }): Promis
  * — only paths within a skill folder are accepted, so commands / agents
  * (single .md files) can't trigger directory traversal here.
  */
-export async function listSkillFolderChildren(params: { dirPath: string }): Promise<{
+export async function listSkillFolderChildren(params: {
+  dirPath: string;
+  attestedRoot?: string;
+}): Promise<{
   success: boolean;
   entries?: SkillFileEntry[];
   error?: string;
 }> {
-  const { dirPath } = params;
+  const { dirPath, attestedRoot } = params;
   if (!dirPath || !path.isAbsolute(dirPath)) {
     return { success: false, error: 'dirPath must be an absolute path' };
   }
 
-  const resolvedDirPath = resolveAllowedExistingSkillPath(dirPath);
+  const resolvedDirPath = resolveReadableExistingSkillPath(dirPath, attestedRoot);
   if (!resolvedDirPath) {
     return { success: false, error: 'path is not under a recognized skills directory' };
   }
@@ -527,11 +615,14 @@ export async function listSkillFolderChildren(params: { dirPath: string }): Prom
     if (!stat.isDirectory()) {
       return { success: false, error: 'path is not a directory' };
     }
-    const skillRoot = findSkillRootForPath(dirPath);
+    const listedDirPath = attestedRoot ? resolvedDirPath : dirPath;
+    const skillRoot = attestedRoot
+      ? fs.realpathSync.native(attestedRoot)
+      : findSkillRootForPath(dirPath);
     const entries: SkillFileEntry[] = fs
       .readdirSync(resolvedDirPath, { withFileTypes: true })
       .filter((s) => {
-        const childPath = path.join(dirPath, s.name);
+        const childPath = path.join(listedDirPath, s.name);
         return !isIgnoredSkillPackagePath(skillPackageRelPath(skillRoot, childPath, s.name));
       })
       .map((s) => ({
@@ -556,12 +647,13 @@ export async function listSkillFolderChildren(params: { dirPath: string }): Prom
 // readSkillContent for view (frontmatter stripped) and readRawFile here for
 // edit (frontmatter intact). Writes are gated by SKILL_PATH_WHITELIST.
 
-const EDIT_SIZE_CAP_READ = 256 * 1024;   // 256 KB read cap (matches detail-view edit-button gate)
+const EDIT_SIZE_CAP_READ = 256 * 1024; // 256 KB read cap (matches detail-view edit-button gate)
 const EDIT_SIZE_CAP_WRITE = 1024 * 1024; // 1 MB write cap (defensive against paste-of-binary)
 
 // 统一白名单：所有引擎的 skill/command/agent 目录共用。
 // 新增引擎时只需在此 regex 加一个分支。
-const SKILL_PATH_WHITELIST = /\/(\.(claude\/(skills|commands|agents)|agents\/skills|codex\/skills|pi\/skills)|codex-home\/skills)\//;
+const SKILL_PATH_WHITELIST =
+  /\/(\.(claude\/(skills|commands|agents)|agents\/skills|codex\/skills|pi\/skills)|codex-home\/skills)\//;
 
 function isLexicallyAllowedSkillPath(absolutePath: string): boolean {
   // path.resolve 解析 .. 和 . 段，防止遍历绕过白名单
@@ -571,10 +663,9 @@ function isLexicallyAllowedSkillPath(absolutePath: string): boolean {
 
 function isPathWithin(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
-  return relative === '' || (
-    relative !== '..'
-    && !relative.startsWith(`..${path.sep}`)
-    && !path.isAbsolute(relative)
+  return (
+    relative === '' ||
+    (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
   );
 }
 
@@ -604,14 +695,33 @@ function resolveAllowedExistingSkillPath(absolutePath: string): string | null {
   try {
     const realProjectRoot = fs.realpathSync.native(lexicalProjectRoot);
     const realSkillRoot = fs.realpathSync.native(lexicalSkillRoot);
-    if (
-      !isPathWithin(realProjectRoot, realSkillRoot)
-      || !isPathWithin(realSkillRoot, realTarget)
-    ) return null;
+    if (!isPathWithin(realProjectRoot, realSkillRoot) || !isPathWithin(realSkillRoot, realTarget))
+      return null;
   } catch {
     return null;
   }
   return realTarget;
+}
+
+/**
+ * Read-only built-ins can live outside the user-facing discovery whitelist.
+ * Main may pass an attested physical root from the sender's latest scan; keep
+ * every final target physically contained by that root so child symlinks
+ * cannot turn this into a generic file-read primitive.
+ */
+function resolveReadableExistingSkillPath(
+  absolutePath: string,
+  attestedRoot?: string,
+): string | null {
+  if (!attestedRoot) return resolveAllowedExistingSkillPath(absolutePath);
+  if (!path.isAbsolute(attestedRoot)) return null;
+  try {
+    const realRoot = fs.realpathSync.native(attestedRoot);
+    const realTarget = fs.realpathSync.native(path.resolve(absolutePath));
+    return isPathWithin(realRoot, realTarget) ? realTarget : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -639,7 +749,10 @@ export function isExistingSkillPathGranted(
 
 function findSkillRootForPath(absolutePath: string): string | null {
   const norm = path.resolve(absolutePath).replace(/\\/g, '/');
-  const markerMatch = /\/(?:\.claude\/(?:skills|commands|agents)|\.agents\/skills|\.codex\/skills|\.pi\/skills|codex-home\/skills)\//.exec(norm);
+  const markerMatch =
+    /\/(?:\.claude\/(?:skills|commands|agents)|\.agents\/skills|\.codex\/skills|\.pi\/skills|codex-home\/skills)\//.exec(
+      norm,
+    );
   if (!markerMatch) return null;
 
   const afterMarker = norm.slice((markerMatch.index ?? 0) + markerMatch[0].length);
@@ -649,23 +762,39 @@ function findSkillRootForPath(absolutePath: string): string | null {
   return norm.slice(0, (markerMatch.index ?? 0) + markerMatch[0].length) + skillName;
 }
 
-function skillPackageRelPath(rootDir: string | null, childPath: string, fallbackName: string): string {
+function skillPackageRelPath(
+  rootDir: string | null,
+  childPath: string,
+  fallbackName: string,
+): string {
   if (!rootDir) return fallbackName;
   const rel = path.relative(rootDir, childPath).split(path.sep).join('/');
   return rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : fallbackName;
 }
 
-function isIgnoredSkillFilePath(filePath: string): boolean {
-  const skillRoot = findSkillRootForPath(filePath);
-  return isIgnoredSkillPackagePath(skillPackageRelPath(skillRoot, filePath, path.basename(filePath)));
+function isIgnoredSkillFilePath(filePath: string, attestedRoot?: string): boolean {
+  let skillRoot = attestedRoot ?? findSkillRootForPath(filePath);
+  if (attestedRoot) {
+    try {
+      skillRoot = fs.realpathSync.native(attestedRoot);
+    } catch {
+      return true;
+    }
+  }
+  return isIgnoredSkillPackagePath(
+    skillPackageRelPath(skillRoot, filePath, path.basename(filePath)),
+  );
 }
 
-export async function readSkillRawFile(params: { filePath: string }): Promise<{
+export async function readSkillRawFile(params: {
+  filePath: string;
+  attestedRoot?: string;
+}): Promise<{
   success: boolean;
   content?: string;
   error?: string;
 }> {
-  const { filePath } = params;
+  const { filePath, attestedRoot } = params;
   if (!filePath || !path.isAbsolute(filePath)) {
     return { success: false, error: 'filePath must be an absolute path' };
   }
@@ -673,18 +802,21 @@ export async function readSkillRawFile(params: { filePath: string }): Promise<{
   if (path.normalize(filePath).split(path.sep).includes('..')) {
     return { success: false, error: 'filePath contains traversal segments' };
   }
-  const resolvedFilePath = resolveAllowedExistingSkillPath(filePath);
+  const resolvedFilePath = resolveReadableExistingSkillPath(filePath, attestedRoot);
   if (!resolvedFilePath) {
     return { success: false, error: 'path is not under a recognized skills directory' };
   }
-  if (isIgnoredSkillFilePath(filePath)) {
+  if (isIgnoredSkillFilePath(attestedRoot ? resolvedFilePath : filePath, attestedRoot)) {
     return { success: false, error: 'path is excluded from SkillHub packages' };
   }
   try {
     const stat = fs.statSync(resolvedFilePath);
     if (!stat.isFile()) return { success: false, error: 'path is not a file' };
     if (stat.size > EDIT_SIZE_CAP_READ) {
-      return { success: false, error: `文件超过 ${Math.round(EDIT_SIZE_CAP_READ / 1024)} KB,请用外部编辑器` };
+      return {
+        success: false,
+        error: `文件超过 ${Math.round(EDIT_SIZE_CAP_READ / 1024)} KB,请用外部编辑器`,
+      };
     }
     const content = fs.readFileSync(resolvedFilePath, 'utf-8');
     return { success: true, content };
@@ -736,7 +868,10 @@ export async function writeSkillFile(params: { filePath: string; content: string
   }
   const byteLen = Buffer.byteLength(content, 'utf-8');
   if (byteLen > EDIT_SIZE_CAP_WRITE) {
-    return { success: false, error: `内容超过 ${Math.round(EDIT_SIZE_CAP_WRITE / 1024)} KB,拒绝写入` };
+    return {
+      success: false,
+      error: `内容超过 ${Math.round(EDIT_SIZE_CAP_WRITE / 1024)} KB,拒绝写入`,
+    };
   }
   // Atomic write: tmp + rename. fsync the tmp file before rename so a crash
   // mid-write doesn't leave a half-written file at the target path.
@@ -753,7 +888,11 @@ export async function writeSkillFile(params: { filePath: string; content: string
     return { success: true };
   } catch (err) {
     // Best-effort tmp cleanup — ignore failures.
-    try { fs.unlinkSync(tmpPath); } catch { /* noop */ }
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch {
+      /* noop */
+    }
     return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
@@ -766,10 +905,13 @@ export async function writeSkillFile(params: { filePath: string; content: string
  *
  * 仅支持 kind=skill (folder-shaped). command/agent 是单 .md 文件,本期不需要。
  */
-export async function renameLocalSkill(params: {
-  absolutePath: string;
-  newName: string;
-}, canMutate: () => boolean = () => true): Promise<{ success: true; newAbsolutePath: string } | { success: false; error: string }> {
+export async function renameLocalSkill(
+  params: {
+    absolutePath: string;
+    newName: string;
+  },
+  canMutate: () => boolean = () => true,
+): Promise<{ success: true; newAbsolutePath: string } | { success: false; error: string }> {
   const { absolutePath, newName } = params;
 
   if (!absolutePath || !path.isAbsolute(absolutePath)) {
@@ -845,7 +987,8 @@ export async function renameLocalSkill(params: {
   let releaseShared: SkillMutationRelease | null = null;
   try {
     releaseShared = await acquireSharedSkillMutationLease([oldName, newName]);
-    if (!releaseShared) return { success: false, error: 'Skill is busy; retry after the current operation' };
+    if (!releaseShared)
+      return { success: false, error: 'Skill is busy; retry after the current operation' };
     await renameSkillWithActivation(absolutePath, newAbsolutePath, () => {
       if (!canMutate()) throw new Error('Skill mutation context changed');
       // Recheck after waiting for the preferences lock; never replace a new entity.
@@ -854,25 +997,40 @@ export async function renameLocalSkill(params: {
         throw new Error('Skill changed; refresh and retry');
       }
       const currentMd = fs.lstatSync(oldSkillMd);
-      if (currentMd.isSymbolicLink() || currentMd.dev !== skillMdStat.dev || currentMd.ino !== skillMdStat.ino) {
+      if (
+        currentMd.isSymbolicLink() ||
+        currentMd.dev !== skillMdStat.dev ||
+        currentMd.ino !== skillMdStat.ino
+      ) {
         throw new Error('Skill content changed; refresh and retry');
       }
       const parsed = matter(fs.readFileSync(oldSkillMd, 'utf-8'));
-      const data = (parsed.data && typeof parsed.data === 'object' ? parsed.data : {}) as Record<string, unknown>;
+      const data = (parsed.data && typeof parsed.data === 'object' ? parsed.data : {}) as Record<
+        string,
+        unknown
+      >;
       data.name = newName;
       const next = matter.stringify(parsed.content, data);
       fs.renameSync(absolutePath, newAbsolutePath);
       renamed = true;
       const fd = fs.openSync(tmpPath, 'w');
-      try { fs.writeSync(fd, next); fs.fsyncSync(fd); }
-      finally { fs.closeSync(fd); }
+      try {
+        fs.writeSync(fd, next);
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
       fs.renameSync(newSkillMd, backupPath);
       backedUp = true;
       fs.renameSync(tmpPath, newSkillMd);
     });
     // packageIgnore excludes this reserved backup from browsing, hashes,
     // snapshots and ZIPs even if Windows keeps it locked after commit.
-    try { fs.unlinkSync(backupPath); } catch { /* Do not roll back committed preferences. */ }
+    try {
+      fs.unlinkSync(backupPath);
+    } catch {
+      /* Do not roll back committed preferences. */
+    }
     return { success: true, newAbsolutePath };
   } catch (err) {
     if (renamed) {
@@ -880,10 +1038,17 @@ export async function renameLocalSkill(params: {
         // Keep the original file until preferences commit, so even a full disk
         // can roll back with renames instead of writing the contents again.
         if (backedUp) fs.renameSync(backupPath, newSkillMd);
-        try { fs.unlinkSync(tmpPath); } catch { /* No staging file after a completed switch. */ }
+        try {
+          fs.unlinkSync(tmpPath);
+        } catch {
+          /* No staging file after a completed switch. */
+        }
         fs.renameSync(newAbsolutePath, absolutePath);
       } catch (rollbackError) {
-        return { success: false, error: `Skill rename and rollback failed: ${String(rollbackError)}` };
+        return {
+          success: false,
+          error: `Skill rename and rollback failed: ${String(rollbackError)}`,
+        };
       }
     }
     return { success: false, error: `Skill rename failed: ${String(err)}` };

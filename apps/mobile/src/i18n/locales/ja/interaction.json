@@ -20,7 +20,13 @@
     "allowOnceAccessibility": "権限リクエストを1回だけ許可",
     "allowOnceConfirm": "1回だけ許可を確認",
     "highRisk": "高リスク",
-    "autoReviewUnavailable": "自動レビューを完了できませんでした。この操作を許可するか確認してください。"
+    "autoReviewUnavailable": "自動レビューを完了できませんでした。この操作を許可するか確認してください。",
+    "fullAccessConfirm": {
+      "title": "フルアクセスを有効にしますか？",
+      "description": "フルアクセスはワークスペースのサンドボックスを無効にし、通常の承認を省略します。{{appName}} はワークスペース外のファイル変更やネットワークコマンドを確認なしで実行できます。組み込みの高リスク操作では引き続き確認が必要です。",
+      "confirm": "フルアクセスを有効にする",
+      "cancel": "現在の権限を維持"
+    }
   },
   "planMode": {
     "label": "プランモード",
@@ -233,7 +239,9 @@
     "inlineFormActionGeneric": "パソコンで設定を入力"
   },
   "presentation": {
-    "action": { "submitting": "送信中" },
+    "action": {
+      "submitting": "送信中"
+    },
     "permission": {
       "highRiskTitle": "高リスクの権限は再確認が必要です",
       "highRiskDetail": "コマンドを確認し、もう一度許可を確定してください。不明な場合は拒否してください。",
@@ -271,6 +279,18 @@
         "plugin_setup": "設定はコンピューターで完了する必要があります。ここではリクエストをキャンセルできます。",
         "fallback": "モバイルではデスクトップから届いた順にリモートリクエストを処理します。"
       }
+    }
+  },
+  "companion": {
+    "operation": "操作",
+    "details": "詳細を表示",
+    "fields": {
+      "path": "ファイル",
+      "file_path": "ファイル",
+      "url": "アドレス",
+      "command": "コマンド",
+      "ghost_id": "プラグイン",
+      "tool": "ツール"
     }
   }
 }

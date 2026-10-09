@@ -1,3 +1,6 @@
+import { reviewTeammateLearning } from './botLearningReview.js';
+import { botLearningTracker } from './botLearningTracker.js';
+import { learningTurnIdentity } from './botLearningFeedback.js';
 import type { BotDelegationService } from './botDelegationService.js';
 import type { BotGroupChatService } from './botGroupChatService.js';
 import type { AgentEvent, Session } from '@cindy/maker-core';
@@ -47,6 +50,7 @@ import type { PreparedSessionEvent } from './sessionEventPreparation.js';
 import type { SessionDeliveryResult } from './sessionEventDelivery.js';
 import { isSessionErrorSuppressed } from './sessionErrorSuppression.js';
 export interface FinishSessionTerminalEventDeps {
+  readonly onPluginTaskTerminal?: (sessionId: string, execution: { instanceId: string; generation: number }, outcome: 'completed' | 'failed' | 'cancelled' | 'interrupted', outputMessageId?: string) => void;
   readonly botDelegationServiceHolder: Pick<BotDelegationService, 'settleSession'> | null;
   /** Resolves a Bot group member turn when its hidden group lane finishes. */
   readonly botGroupChatServiceHolder?: Pick<BotGroupChatService, 'settleLaneTurn'> | null;
@@ -189,6 +193,9 @@ export function finishSessionTerminalEvent(
           nativeForkAnchor ? { nativeForkAnchor } : undefined,
         );
       }
+    }
+    if (!isContinuationBoundary) {
+      botLearningTracker.seal(session.id, learningTurnIdentity(session, event.sessionTurnGeneration), turnBoundaryAssistantPersistId);
     }
     // error 行在 flushOrphanToolResults 之后入队,保证 orphan tool_result 排在
     // error 行之前(历史时间线:tool 输出 → 错误卡,而非错误卡插到 tool 输出之前)。
@@ -441,6 +448,24 @@ export function finishSessionTerminalEvent(
         event.sessionTurnGeneration,
       );
     if (
+      event.type === 'done' &&
+      !isContinuationBoundary &&
+      !isPairedFailedTurnDone &&
+      !isFailedTurnCompletionTail &&
+      !deferredOrcaWorkerTerminal &&
+      !isTerminalTurnErrorEvent(event) &&
+      isSuccessfulAssistantReplyDoneData(event.data) &&
+      !deps.autoResumeBookkeeping.hasSuppressedError(session.id) &&
+      !deps.agentInputCoordinatorHolder?.isAutoResumePending(session.id) &&
+      !deps.agentInputCoordinatorHolder?.isAutoResumeDeferred(session.id)
+    ) {
+      if (turnBoundaryAssistantPersistId && !session.remoteHostId) {
+        const replyId = turnBoundaryAssistantPersistId;
+        void reviewTeammateLearning(session.id, replyId).catch(() =>
+          deps.log.warn('Teammate learning review did not complete'));
+      }
+    }
+    if (
       !shouldSkipOrcaWorkerTerminal({
         isContinuationBoundary,
         stashedThisErrorEvent: deferredOrcaWorkerTerminal,
@@ -457,6 +482,22 @@ export function finishSessionTerminalEvent(
       // Capture before queue-drain microtasks can promote the follow-up turn.
       const botDelegationHadPendingInputAtTerminal =
         (deps.agentInputCoordinatorHolder?.getQueueControlSnapshot(session.id).pendingQueue.length ?? 0) > 0;
+      // Recovery-owned terminals are settled by their owner (deferred auth /
+      // gateway persistence, overflow surface, or auto-resume abandonment).
+      const unsuccessfulBoundary =
+        isTerminalTurnErrorEvent(event) || !isSuccessfulAssistantReplyDoneData(event.data);
+      if (typeof event.sessionTurnGeneration === 'number' && !autoResumeSuppressesPersist) {
+        const nativeStatus = (event.data as { status?: unknown } | null)?.status;
+        const outcome = !isTerminalTurnErrorEvent(event)
+          && (nativeStatus === 'cancelled' || nativeStatus === 'interrupted')
+          ? nativeStatus : unsuccessfulBoundary ? 'failed' : 'completed';
+        // Settle the precise native outcome before generic unsuccessful-turn
+        // bookkeeping can enqueue its fallback failure for the same execution.
+        deps.onPluginTaskTerminal?.(session.id, {
+          instanceId: event.sessionInstanceId ?? session.instanceId,
+          generation: event.sessionTurnGeneration,
+        }, outcome, turnAssistantPersistId ?? undefined);
+      }
       // Group lane turns are attributed by the accepted input, captured before the queue drains.
       const groupLaneInputClientId =
         deps.agentInputCoordinatorHolder?.getActiveInputClientId?.(session.id, event.sessionTurnGeneration) ?? null;

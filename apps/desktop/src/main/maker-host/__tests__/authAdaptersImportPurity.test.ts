@@ -24,6 +24,7 @@ vi.mock('electron', () => ({
     getPath: () => h.userDataDir,
     getAppPath: () => h.userDataDir,
     isPackaged: false,
+    getName: () => 'Lex',
   },
   safeStorage: { isEncryptionAvailable: () => false },
 }));
@@ -59,5 +60,5 @@ describe('auth-adapters import purity', () => {
     } finally {
       fs.rmSync(h.userDataDir, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 });

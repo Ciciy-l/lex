@@ -139,6 +139,35 @@ function createAgent(
 }
 
 describe('Maker Pi managed-package skill boundary', () => {
+  it('uses the runtime Skill view for host authorization checks', async () => {
+    const agent = createAgent(async () => {
+      throw new Error('not used');
+    }, 'claude-code');
+    agent.listRuntimeSkills = vi.fn(async () => ({ skills: [{
+      kind: 'agent-skill' as const,
+      name: 'learn',
+      source: 'skill' as const,
+      path: '/repo/.claude/skills/learn/SKILL.md',
+    }] }));
+    const maker = new Maker({
+      agents: { 'claude-code': agent },
+      storage: createStorage(),
+      logger: createLogger(),
+    });
+
+    const result = await maker.listAgentRuntimeSkills('claude-code', {
+      workingDir: '/repo/src',
+      runtimeConfigDir: '/runtime/claude-home',
+    });
+
+    expect(result.skills.map((skill) => skill.name)).toEqual(['learn']);
+    expect(agent.listRuntimeSkills).toHaveBeenCalledWith({
+      workingDir: '/repo/src',
+      runtimeConfigDir: '/runtime/claude-home',
+    });
+    await maker.shutdown();
+  });
+
   it.each(['claude-code', 'codex', 'pi'] as const)('keeps %s live palettes on their startup Skill snapshot', async (agentKind) => {
     const source = '/fixture/disabled-skill';
     let disabled: string[] = [source];
@@ -1005,6 +1034,21 @@ describe('Maker session creation owner guard', () => {
 });
 
 describe('Maker session creation singleflight', () => {
+  it('persists the durable resume id while exposing a distinct transient request id', async () => {
+    const storage = createStorage();
+    const handle = { ...createHandle({ id: 'sdk-source', agentKind: 'claude-code' }), requestSessionId: 'sdk-unaccepted-fork' };
+    const maker = new Maker({
+      agents: { 'claude-code': createAgent(async () => handle, 'claude-code') },
+      storage, logger: createLogger(),
+    });
+    const session = await maker.createSession({ id: 'fork-task', agentKind: 'claude-code', workingDir: '/fixture', model: 'grok-4.6' });
+    expect(session.sdkSessionId).toBe('sdk-source');
+    expect(session.requestSessionId).toBe('sdk-unaccepted-fork');
+    expect((await storage.get('fork-task'))?.sdkSessionId).toBe('sdk-source');
+    await maker.closeSession('fork-task');
+    expect((await storage.get('fork-task'))?.sdkSessionId).toBe('sdk-source');
+  });
+
   it('reports the effective runtime cwd when recovering an existing task elsewhere', async () => {
     const storage = createStorage();
     await storage.create({ id: 'recovered-cwd', agentKind: 'codex', workDir: '/original', title: 'Existing task', model: 'test-model' });

@@ -166,6 +166,7 @@ import {
 } from './sourceSwitch';
 import { useConfirmDialog } from '@/components/ui/confirm-dialog-provider';
 import { PermissionSelector } from './PermissionSelector';
+import { PluginWriteAccessRecovery } from './PluginWriteAccessRecovery';
 import { ExtraDirsButton, type CollaborationMenuConfig } from './ExtraDirsButton';
 import { expandHostCapabilityInvocation } from '../../cindy-brain/hostCapabilityInvocation';
 import {
@@ -394,7 +395,7 @@ import { createWorkLouderCodexVoiceGesture } from '@/lib/workLouderCodexVoiceGes
 import { appendMentionChip } from './mentionChipInsertion';
 // device-link 远程会话:设置变更不落本地 DB(会 404),改写远程内存层 + 运行时隧道。
 import { getSessionDeviceId } from '@/features/device-link/remoteProjectsStore';
-import { makerApiFor, makerApiForDevice } from '@/lib/makerTransport';
+import { makerApiFor, makerApiForDevice, subscribeRemoteCredentialSwitchOutcome } from '@/lib/makerTransport';
 import { SESSION_LINK_DROP_MIME } from '@/lib/sessionLinkDrop';
 
 const log = createLogger('ChatInput');
@@ -1254,9 +1255,28 @@ export function ChatInput({
     if (!sessionId) return;
     return window.electronAPI.maker.onSessionCredentialSwitchApplied((payload) => {
       if (payload.sessionId !== sessionId) return;
+      if (deviceLinkDeviceId || getSessionDeviceId(sessionId)) return;
       toast.success(t('newChat.chatInput.credentialSwitchApplied'), { duration: 3000 });
     });
-  }, [sessionId, t]);
+  }, [deviceLinkDeviceId, sessionId, t]);
+  useEffect(() => {
+    if (!sessionId) return;
+    return window.electronAPI.maker.onSessionCredentialSwitchFailed((payload) => {
+      if (payload.sessionId !== sessionId) return;
+      if (deviceLinkDeviceId || getSessionDeviceId(sessionId)) return;
+      toast.error(t('newChat.chatInput.credentialSwitchFailed'), { duration: 6000 });
+    });
+  }, [deviceLinkDeviceId, sessionId, t]);
+  useEffect(() => {
+    if (!sessionId) return;
+    return subscribeRemoteCredentialSwitchOutcome(sessionId, deviceLinkDeviceId ?? undefined, (outcome) => {
+      if (outcome.kind === 'applied') {
+        toast.success(t('newChat.chatInput.credentialSwitchApplied'), { duration: 3000 });
+      } else {
+        toast.error(t('newChat.chatInput.credentialSwitchFailed'), { duration: 6000 });
+      }
+    });
+  }, [deviceLinkDeviceId, sessionId, t]);
   // F-QUEUE-1 — preserve prior semantics
   const showStopButton = isAgentBusy ?? isStreaming;
   const { confirm: confirmDialog } = useConfirmDialog();
@@ -8044,19 +8064,8 @@ export function ChatInput({
             // 控制端纯镜像:运行时隧道 setPermissionMode,被控端持久化后广播回流更新分片。
             await makerApiFor(sessionId).setPermissionMode(sessionId, newMode);
           } else {
-            // runtime-first:运行时成功后才持久化，避免 UI/DB 先显示已切换而实际 agent 仍是旧档。
+            // Host 串行完成运行时、持久化和失败恢复，界面只等待最终结果。
             await window.electronAPI.maker.setPermissionMode(sessionId, newMode);
-            try {
-              await sessionService.update(sessionId, { permissionMode: newMode });
-            } catch (persistError) {
-              // DB 写入失败时尽力恢复运行时，保持用户看到的旧设置与实际行为一致。
-              try {
-                await window.electronAPI.maker.setPermissionMode(sessionId, previousMode);
-              } catch (rollbackError) {
-                log.warn('permission runtime rollback failed:', rollbackError);
-              }
-              throw persistError;
-            }
           }
         }
         // SSoT: notify parent so it refreshes `session.permissionMode` → props update.
@@ -8732,6 +8741,7 @@ export function ChatInput({
                   visualVariant={isCreateAgentVariant ? 'create-agent' : 'default'}
                 />
                 <PermissionSelector
+                  footer={sessionId && !getSessionDeviceId(sessionId) && !deviceLinkDeviceId ? <PluginWriteAccessRecovery key={sessionId} sessionId={sessionId} onGranted={onPermissionModeDidChange} /> : undefined}
                   permissionMode={activePermissionMode}
                   onPermissionModeChange={handlePermissionModeChange}
                   vendorKey={vendorKey}

@@ -159,18 +159,29 @@ test('Lex agent runtime snapshot is pinned, complete, and platform-safe', () => 
       assert.ok(value && typeof value === 'object', `${platform}/${field}`);
       // The Lex CDN still serves the legacy standalone `codex` 0.145.0
       // compatibility asset. SSH's official release pin advances independently
-      // to 0.156.0; codex-package is the desktop distribution and must match
+      // to 0.159.2; codex-package is the desktop distribution and must match
       // its official pin exactly.
       const expectedVersion = field === 'codex' ? '0.145.0' : pins[field].version;
       assert.equal(value.version, expectedVersion, `${platform}/${field} version`);
-      assert.equal(
-        value.file.startsWith(`${directories[field]}/${value.version}/${platform}/`),
-        true,
-        `${platform}/${field} file`,
-      );
+      if (field === 'codexPackage') {
+        const official = pins.codexPackage.runtimeAssets[platform];
+        assert.equal(value.file, official.url, `${platform}/codexPackage official URL`);
+        assert.equal(value.sha256, official.sha256, `${platform}/codexPackage official digest`);
+        assert.equal(value.size, official.size, `${platform}/codexPackage official size`);
+        const officialUrl = new URL(value.file);
+        assert.equal(officialUrl.origin, 'https://github.com');
+        assert.equal(officialUrl.pathname.startsWith('/openai/codex/releases/download/rust-v0.159.2/codex-package-'), true);
+        assert.equal(officialUrl.pathname.endsWith('.tar.gz'), true);
+      } else {
+        assert.equal(
+          value.file.startsWith(`${directories[field]}/${value.version}/${platform}/`),
+          true,
+          `${platform}/${field} file`,
+        );
+        assert.equal(value.file.includes('://'), false, `${platform}/${field} relative path`);
+      }
       assert.equal(value.file.includes('..'), false, `${platform}/${field} traversal`);
       assert.equal(value.file.includes('\\'), false, `${platform}/${field} separator`);
-      assert.equal(value.file.includes('://'), false, `${platform}/${field} relative path`);
       assert.match(value.sha256, /^[a-f0-9]{64}$/i, `${platform}/${field} sha256`);
       assert.equal(Number.isSafeInteger(value.size) && value.size > 0, true, `${platform}/${field} size`);
       if (value.binarySha256 !== undefined) {
@@ -192,8 +203,8 @@ test('Lex agent runtime snapshot is pinned, complete, and platform-safe', () => 
     assert.equal(omp.size, ompPin.size, `${platform}/omp size`);
     assert.match(omp.file, /^https:\/\/github\.com\/can1357\/oh-my-pi\/releases\/download\//);
   }
-  assert.equal(pins.codex.version, '0.156.0', 'SSH standalone Codex pin');
-  assert.equal(pins.codexPackage.version, '0.156.0', 'desktop Codex package pin');
+  assert.equal(pins.codex.version, '0.159.2', 'SSH standalone Codex pin');
+  assert.equal(pins.codexPackage.version, '0.159.2', 'desktop Codex package pin');
 });
 
 test('Lex update publishing projects the tag-pinned runtime snapshot without network drift', () => {

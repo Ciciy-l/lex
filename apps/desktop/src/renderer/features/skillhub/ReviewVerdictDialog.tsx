@@ -150,7 +150,7 @@ export function ReviewVerdictDialog({
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         />
         <Dialog.Content
-          onPointerDownOutside={(e) => e.preventDefault()}
+          onPointerDownOutside={(event) => event.preventDefault()}
           onEscapeKeyDown={(e) => e.preventDefault()}
           className={cn(
             'fixed left-1/2 top-1/2 z-[10000] -translate-x-1/2 -translate-y-1/2',

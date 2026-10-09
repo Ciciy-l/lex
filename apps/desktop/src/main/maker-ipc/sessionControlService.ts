@@ -90,7 +90,7 @@ export interface SessionControlServiceDeps {
       harness?: AgentKind;
       model?: string;
       providerId?: string | null;
-      effort?: Effort;
+      effort?: Effort | null;
       fastMode?: boolean;
     };
   }): Promise<SessionRuntimeSetResult>;
@@ -110,8 +110,8 @@ export interface SessionControlServiceDeps {
     pendingQueue: AgentInputQueuedMessage[];
     consumingClientIds: string[];
   }>;
-  replaceQueuedMessage(sessionId: string, clientId: string, next: AgentInputQueuedMessage): boolean;
-  removeQueuedMessage(sessionId: string, clientId: string): boolean;
+  replaceQueuedMessage(sessionId: string, clientId: string, next: AgentInputQueuedMessage, expected?: AgentInputQueuedMessage): boolean;
+  removeQueuedMessage(sessionId: string, clientId: string, expected?: AgentInputQueuedMessage): boolean;
   createId(): string;
 }
 
@@ -285,7 +285,7 @@ export function createSessionControlService(deps: SessionControlServiceDeps) {
         harness?: AgentKind;
         model?: string;
         providerId?: string | null;
-        effort?: Effort;
+        effort?: Effort | null;
         fastMode?: boolean;
       };
     }): Promise<SessionRuntimeSetResult> {

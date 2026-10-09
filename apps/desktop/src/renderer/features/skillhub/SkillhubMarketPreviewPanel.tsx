@@ -45,6 +45,7 @@ interface SkillhubMarketPreviewPanelProps {
   primaryAction?: MarketCardPrimaryAction;
   onClone?: (skill: MarketSkill) => void;
   onManageAction?: (skill: MarketSkill, action: MarketCardManageAction) => void;
+  learnSkillEnabled?: boolean;
 }
 
 /**
@@ -62,6 +63,7 @@ export function SkillhubMarketPreviewPanel({
   primaryAction = 'none',
   onClone,
   onManageAction,
+  learnSkillEnabled = true,
 }: SkillhubMarketPreviewPanelProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -230,7 +232,7 @@ export function SkillhubMarketPreviewPanel({
                             slug: skill.name,
                             version: reviewVersion,
                             // Catalog reads only expose approved releases; owners read failed/rejected releases natively.
-                            catalogScope: status === 'rejected' && skill.canManage ? undefined : skill.catalogScope,
+                            catalogScope: ['rejected', 'failed', 'blocked'].includes(status ?? '') && skill.canManage ? undefined : skill.catalogScope,
                           })
                           .then((res) => {
                             if (!isCurrentRequest()) return;
@@ -262,6 +264,8 @@ export function SkillhubMarketPreviewPanel({
                   {primaryAction === 'clone' ? (
                     <Button
                       variant="secondary"
+                      disabled={!learnSkillEnabled}
+                      title={learnSkillEnabled ? undefined : t('learn.hub.disabledHint')}
                       onClick={() => {
                         // Learn = 以该 skill 为参考蒸馏本地技能(不安装原件)。
                         // 不预创建会话:把 `/learn hub:<slug> ` 预填进系统原生的

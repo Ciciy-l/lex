@@ -52,7 +52,7 @@ import { getProjectSessionCollapseLimit } from '../../lib/sidebarCollapseConfig'
 import type { FolderPickerOption } from '@/components/new-chat/FolderPickerPopover';
 import type { SessionMoveTarget } from '../sessionMoveTarget';
 import type { FilterStatus } from '../../hooks/useSidebarFilter';
-import { MENU_CONTENT_CLASS, MENU_ITEM_CLASS, MENU_SEPARATOR_CLASS } from '../menuStyles';
+import { MENU_ITEM_CLASS } from '../menuStyles';
 import { RemoteProjectIcon } from '../RemoteProjectIcon';
 import { SidebarRightStatusIndicator } from '../SidebarRightStatusIndicator';
 import { isDeviceLinkWriteBlocked } from '../../lib/remoteSessionWriteGuard';
@@ -475,7 +475,7 @@ export const ProjectNode = memo(function ProjectNode({
           align="start"
           sideOffset={2}
           // 统一菜单 surface(menuStyles):与 SessionItem / Dialogue / 自动化 等同款
-          className={cn(MENU_CONTENT_CLASS, 'min-w-[160px] overflow-hidden')}
+          className="min-w-[160px] overflow-hidden"
         >
           <DropdownMenuItem
             onClick={() => {
@@ -537,7 +537,7 @@ export const ProjectNode = memo(function ProjectNode({
               >
                 {t('ccAgent.sidebar.projectAction.openInExplorer')}
               </DropdownMenuItem>
-              <DropdownMenuSeparator className={MENU_SEPARATOR_CLASS} />
+              <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={() => {
                   setMenuPos(null);
@@ -559,7 +559,7 @@ export const ProjectNode = memo(function ProjectNode({
               </DropdownMenuItem>
             </>
           )}
-          <DropdownMenuSeparator className={MENU_SEPARATOR_CLASS} />
+          <DropdownMenuSeparator />
           {project.scope === 'local' && (
             <DropdownMenuItem onClick={handleRemoveFromSidebar} className={MENU_ITEM_CLASS}>
               {t('ccAgent.sidebar.projectAction.removeFromSidebar')}

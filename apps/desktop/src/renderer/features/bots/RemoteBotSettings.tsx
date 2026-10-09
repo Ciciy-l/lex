@@ -22,6 +22,7 @@ import { isDeviceLinkRemotePushCurrent } from '@/lib/remoteDataOwnerPushFence';
 import { createCoalescedRefresh } from '@/lib/coalescedRefresh';
 import { extractIpcError } from '@/utils/ipcError';
 import { BotModelChainEditor } from './BotModelChainEditor';
+import { BotTaskModelEditor } from './BotTaskModelEditor';
 import { BotPortraitPicker } from './BotPortraitPicker';
 import { isManagedBotAvatarUrl } from '../../../shared/botAvatarValue';
 import { rewriteToRemoteMediaOrigin } from '../../../shared/remoteMediaUrl';
@@ -37,6 +38,7 @@ import {
 } from './remoteBotSettingsData';
 
 interface Props {
+  initialPage?: 'home' | 'memory' | 'capabilities';
   bot: RemoteBot;
   beforeCloseRef: MutableRefObject<(() => Promise<boolean>) | null>;
   onDeleted(): void;
@@ -51,11 +53,11 @@ export function RemoteBotSettings(props: Props) {
     />
   );
 }
-function RemoteBotSettingsContent({ bot, beforeCloseRef, onDeleted }: Props) {
+function RemoteBotSettingsContent({ bot, beforeCloseRef, onDeleted, initialPage = 'home' }: Props) {
   const { t, i18n } = useTranslation();
   const { confirm } = useConfirmDialog();
   const [data, setData] = useState<RemoteBotSettingsData | null>(null);
-  const [resourceId, setResourceId] = useState(bot.id);
+  const [resourceId, setResourceId] = useState(initialPage === 'memory' ? `settings:${bot.id}/memory` : initialPage === 'capabilities' ? `settings:${bot.id}/connections` : bot.id);
   const [page, setPage] = useState<string | null>(null);
   const [draft, setDraft] = useState<SettingsValues>({});
   const [busy, setBusy] = useState(false);
@@ -375,7 +377,7 @@ function RemoteBotSettingsContent({ bot, beforeCloseRef, onDeleted }: Props) {
   const fields = (item: SettingsPanel) =>
     item.action?.fields?.map((field) => {
       const id = `remote-bot-${field.id}`;
-      if (field.id === 'modelChain' || field.id === 'confirmName') return null;
+      if (['modelChain', 'taskModel', 'taskFollowsPrimary', 'confirmName'].includes(field.id)) return null;
       const change = (value: string | boolean) => {
         if (!disabled && !revisionPendingRef.current)
           setDraft((valueBefore) => ({ ...valueBefore, [field.id]: value }));
@@ -495,7 +497,8 @@ function RemoteBotSettingsContent({ bot, beforeCloseRef, onDeleted }: Props) {
         fields(item)
       )}
       {item.id === 'models' ? (
-        <BotModelChainEditor
+        <><BotModelChainEditor
+          label={t('bots.model.primary')}
           value={readRemoteBotModelChain(draft.modelChain)}
           remote
           deviceId={bot.deviceId}
@@ -509,6 +512,17 @@ function RemoteBotSettingsContent({ bot, beforeCloseRef, onDeleted }: Props) {
               }));
           }}
         />
+        {item.action?.fields?.some(field => field.id === 'taskModel') &&
+          <BotTaskModelEditor deviceId={bot.deviceId} disabled={disabled}
+            value={draft.taskFollowsPrimary === true ? null : readRemoteBotModelChain(draft.taskModel)[0] ?? null}
+            inheritedRoute={readRemoteBotModelChain(draft.modelChain)[0]}
+            onChange={route => {
+              if (!disabled && !revisionPendingRef.current) setDraft(previous => ({ ...previous,
+                taskFollowsPrimary: route === null,
+                taskModel: JSON.stringify(route ? [route] : readRemoteBotModelChain(previous.modelChain).slice(0, 1)),
+              }));
+            }} />}
+        </>
       ) : null}
       <Button
         type="submit"

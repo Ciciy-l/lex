@@ -1,4 +1,95 @@
 {
+  "taskMove": {
+    "upgradeComputer": "このコンピューターの {{appName}} はタスクの移動に対応していません。「{{name}}」の {{appName}} を更新してください。",
+    "sourceProjects": "タスクのコンピューターのプロジェクト",
+    "otherComputers": "別のコンピューターにコピー",
+    "offline": "オフライン",
+    "loading": "読み込み中…",
+    "retry": "読み込めませんでした。再試行",
+    "moved": "タスクを移動しました",
+    "failed": "タスクを移動できませんでした。タスクを停止し、移動先フォルダーを確認して再試行してください。"
+  },
+  "taskMigration": {
+    "title": "{{name}}にコピー",
+    "description": "{{name}}にタスクのコピーを作成します。",
+    "bindingsNotice": "自動実行とメッセージ連携は元のコンピューターに残り、コピーされません。",
+    "limits": "両方のコンピューターでこの機能とリモート操作を有効にする必要があります。このフォルダーを使用するタスクを先に停止してください。コピー前にコピー先のディスク空き容量と利用可能なメモリを確認します。コピー先のモデル設定を使用し、{{appName}} のログイン情報やマシン設定は転送しません。",
+    "device": "コピー先",
+    "project": "保存先",
+    "newFolder": "新しいフォルダーを作成し、既存ファイルは上書きしません。",
+    "defaultFolder": "{{appName}} の既定の場所",
+    "noDevices": "利用可能なコンピューターがありません。別のコンピューターに接続し、両方でリモート操作を有効にしてください。",
+    "openTarget": "新しくコピーしたタスクを開く",
+    "close": "閉じる",
+    "cancel": "キャンセル",
+    "start": "タスクをコピー",
+    "failed": "コピーが完了しませんでした。両方のコンピューターを確認してから再度コピーしてください。（{{code}}）",
+    "errorPath": "該当ファイル：{{path}}",
+    "errorSize": "必要量 約 {{needed}}、上限 約 {{limit}}。",
+    "stages": {
+      "preparing": "スナップショットを準備中…",
+      "transferring": "ファイルを転送・検証中…",
+      "complete": "コピー完了",
+      "cancelled": "コピーをキャンセルしました。",
+      "receiving": "ファイルを受信中…",
+      "active": "このコンピューターでタスクを続けられます。"
+    },
+    "errors": {
+      "MIGRATION_TASK_RUNNING": "コピーする前にタスクを停止してください。",
+      "MIGRATION_SHARED_DIRECTORY_BUSY": "別のタスクがこのフォルダーを使用しています。停止してから再試行してください。",
+      "MIGRATION_TASK_UNSUPPORTED": "このタスクの種類または現在の状態では、別のコンピューターにコピーできません。",
+      "MIGRATION_NO_MEMORY": "タスク履歴が大きすぎて、コピー時に処理できる上限を超えています。",
+      "MIGRATION_INCOMPLETE_CONTEXT": "タスク履歴が不完全なため、コピーを停止しました。",
+      "MIGRATION_EXTERNAL_LINK": "フォルダー外へのリンク、または未対応のリンクチェーンがあります。元のファイルは変更されていません。",
+      "MIGRATION_REQUIRES_REPOSITORY_ROOT": "Git プロジェクトでは、タスクのフォルダーがリポジトリのルートである必要があります。",
+      "MIGRATION_SUBMODULE_UNSUPPORTED": "Git サブモジュールを含むプロジェクトのコピーは未対応です。",
+      "MIGRATION_NO_SPACE": "コピー先の空き容量が不足しています。",
+      "MIGRATION_TARGET_MODEL_UNAVAILABLE": "コピー先にこのタスクのエンジンで利用できるモデルがありません。先にプロバイダーを接続してください。",
+      "MIGRATION_UNSUPPORTED": "両方のコンピューターをタスクのコピーに対応したバージョンに更新してください。",
+      "MIGRATION_TASK_QUEUED": "このタスクには待機中のメッセージがあります。処理または削除してからコピーしてください。",
+      "MIGRATION_SOURCE_CHANGED": "準備中に元のタスクが変更されました。コピーを再試行してください。",
+      "MIGRATION_TIMEOUT": "コピー元のコンピューターが時間内に応答しませんでした。しばらくしてから再試行してください。",
+      "MIGRATION_CANNOT_CANCEL": "移行先のコンピューターでタスクの作成が始まったため、キャンセルできません。",
+      "MIGRATION_WORKSPACE_CHANGED": "パッケージ作成中にプロジェクトの Git コミットまたはステージ済みの内容が変更されました。しばらくしてからコピーを再試行してください。",
+      "MIGRATION_TEAM_CHANGED": "協同タスクのメンバーが変更されました。コピーをやり直してください。",
+      "MIGRATION_NONPORTABLE_PATH": "ほかのシステムで使用できないファイル名が含まれています。元のファイルは変更されていません。",
+      "MIGRATION_PATH_COLLISION": "大文字と小文字だけが異なる同名ファイルが含まれています。元のファイルは変更されていません。",
+      "MIGRATION_NOT_CONNECTED": "このコンピューターは接続されていません。ログインしてリモート操作がオンになっていることを確認してから再試行してください。",
+      "MIGRATION_TASK_BUSY": "このタスクはコピー中か、別の操作で使用中です。しばらくしてから再試行してください。"
+    },
+    "successTitle": "コピー完了",
+    "successDescription": "{{name}}にコピーしました。",
+    "skippedTitle_one": "次の {{count}} 件のファイルまたはフォルダーはコピーされませんでした。その他はすべてコピーしました：",
+    "skippedTitle_other": "次の {{count}} 件のファイルまたはフォルダーはコピーされませんでした。その他はすべてコピーしました：",
+    "skippedMore_one": "ほか {{count}} 件は表示していません。",
+    "skippedMore_other": "ほか {{count}} 件は表示していません。",
+    "completeWithSkipped_one": "コピー完了（{{count}} 件はコピーされず）",
+    "completeWithSkipped_other": "コピー完了（{{count}} 件はコピーされず）",
+    "skippedReasons": {
+      "MIGRATION_EXTERNAL_LINK": "プロジェクトフォルダー外を指すリンク",
+      "MIGRATION_NONPORTABLE_PATH": "ほかのシステムで使用できない名前",
+      "MIGRATION_PATH_COLLISION": "別のファイルと大文字・小文字だけが異なる",
+      "MIGRATION_UNSUPPORTED_ENTRY": "コピーできない特殊ファイル（ソケット、パイプなど）"
+    },
+    "copyingTitle": "{{name}}にコピー中",
+    "keepOpen": "{{name}}にコピーしています。このウィンドウを閉じてもコピーは続行され、元のタスク上部で進捗を確認できます。",
+    "runInBackground": "バックグラウンドで続行",
+    "cancelCopy": "コピーをキャンセル",
+    "cancelling": "キャンセルしています…",
+    "failureTitle": "コピー失敗",
+    "failureDescription": "閉じた後、タスクメニューから新しくコピーできます。",
+    "finishing": "{{name}}で受信・検証し、タスクを作成中…",
+    "transferProgress": "転送済み {{sent}} / {{total}} · 平均 {{speed}}/s",
+    "thisComputer": "このコンピューター",
+    "selectedComputer": "選択したコンピューター",
+    "estimating": "ファイル数とサイズを計算中…",
+    "fileSummary": "プロジェクトファイル：{{count}} 個、合計 {{size}}",
+    "estimateNote": "隠しファイルを含むコピー前の推定値です。別途コピーする Git 履歴、タスクの会話と添付ファイルは含みません。ファイルの変更により最終サイズは変わります。",
+    "estimateFailed": "集計できませんでした。コピー元の接続とバージョンを確認し、閉じて再試行してください。",
+    "estimateFailedWithCode": "集計できませんでした。コピー元の接続とバージョンを確認し、閉じて再試行してください。（{{code}}）",
+    "estimateTimeout": "集計がタイムアウトしました。プロジェクトのファイルが多すぎるため、コピー元が時間内に集計を完了できませんでした。ファイル数の少ないプロジェクトをコピーしてください。",
+    "estimateTooManyFiles": "プロジェクトのファイルが {{limit, number}} 個を超えているため、コピーできません。ファイル数の少ないプロジェクトをコピーしてください。"
+  },
   "sharedTask": {
     "manageSharing": "共有管理",
     "manageMembers": "メンバーを管理…",
@@ -194,9 +285,9 @@
       "fps": "フレームレート",
       "quality": "画質",
       "automatic": "自動",
-      "smooth": "スムーズ",
-      "balanced": "バランス",
-      "clear": "高画質",
+      "saver": "データ節約",
+      "hd": "高画質",
+      "qualityHint": "自動は滑らかさを優先し、通信に余裕があれば鮮明にします。データ節約は通信量を抑えます（最大 30 fps）。高画質は文字の鮮明さを優先し、帯域が足りないときはフレームレートを下げます。",
       "resolution": "コンピュータの解像度",
       "clipboardFailed": "テキストを転送できません。操作権限を確認し、16,384 文字以内にしてください。",
       "settingsFailed": "表示設定を変更できませんでした。",
@@ -242,7 +333,8 @@
     "SSH_HOST_PREFS_WRITE_FAILED": "ホストは保存されていますが、表示名または Agent Proxy の設定を保存できませんでした。ローカルストレージの権限を確認して再試行してください。",
     "RIGHT_SIDEBAR_TOO_MANY_TABS": "このタスクのタブ数の上限に達しました。いくつかのタブを閉じてください",
     "RIGHT_SIDEBAR_STATE_TOO_LARGE": "タブの内容が大きすぎるため、追加できません",
-    "RIGHT_SIDEBAR_UNKNOWN_KIND": "このタブの種類は現在使用できません"
+    "RIGHT_SIDEBAR_UNKNOWN_KIND": "このタブの種類は現在使用できません",
+    "DEVICE_LINK_BUSY": "接続先のコンピュータが混み合っています。しばらくしてから再試行してください。"
   },
   "providerError": {
     "AUTH_INVALID": "API キーが無効か期限切れです（401）。キーを確認して再試行してください",
@@ -744,6 +836,33 @@
         "aria": "プラグインパネルの復元場所を選択",
         "bubble": "フローティングバブル",
         "sidebar": "サイドバー"
+      },
+      "wallpaper": {
+        "title": "壁紙",
+        "description": "アプリ全体に {{appName}} の壁紙や自分の画像を設定できます。テーマは独立して選べます。",
+        "reset": "デフォルトに戻す",
+        "aria": "壁紙の選択",
+        "nonePreview": "なし",
+        "options": {
+          "none": "なし",
+          "cindy-window": "{{appName}} · 窓辺のひととき",
+          "cindy-studio": "{{appName}} · 未来のアトリエ",
+          "cindy-dream": "{{appName}} · 夢の旅",
+          "custom": "カスタム壁紙"
+        },
+        "overlayLabel": "オーバーレイ",
+        "overlayAria": "壁紙オーバーレイの強さ",
+        "motionLabel": "表示方法",
+        "motionHint": "初期設定は静止画です。非表示時は停止し、システムの視差効果を減らす設定に従います。",
+        "motionStatic": "静止画",
+        "motionDynamic": "動画",
+        "customChoose": "画像を選択",
+        "customReplace": "画像を変更",
+        "customRemove": "画像を削除",
+        "customBusy": "処理中…",
+        "customHint": "PNG・JPEG・WebP、最大 20 MB。この端末にのみ保存し、静止画として表示します。",
+        "customInvalid": "有効な PNG・JPEG・WebP 画像を選択してください（最大 20 MB・4000 万画素）。",
+        "customFailed": "壁紙を保存できませんでした。もう一度お試しください。"
       },
       "layout": {
         "label": "パネルレイアウト",
@@ -2168,7 +2287,8 @@
           },
           "codexContextUnknown": "CLI 設定を取得できません",
           "codexContextValues": "総容量 {{total}} · 使用可能 {{usable}} · 自動圧縮 {{compact}} tokens",
-          "contextLimitGptHint": "GPT は既定で最大 272K を使用します。ここで 1M に変更できます。Codex はウィンドウと自動圧縮のしきい値を同時に適用し、5% の余裕を確保します。実際の容量はモデルサービスに依存します。"
+          "contextLimitGptHint": "GPT は既定で最大 272K を使用します。ここで 1M に変更できます。Codex はウィンドウと自動圧縮のしきい値を同時に適用し、5% の余裕を確保します。実際の容量はモデルサービスに依存します。",
+          "contextLimitLocalMillionHint": "標準は 256K（262,144 tokens）で、1M（1,000,000）への拡張を選べます。サービスの実行中は「サービスを管理」で再起動すると変更が反映されます。停止中なら次回の使用時に反映されます。長い入力ほどメモリと処理時間が必要です。"
         },
         "kindFilter": {
           "all": "すべて",
@@ -2343,7 +2463,8 @@
           "apple-mlx": "この Mac には公式 MLX が向いています。",
           "generic-27b": "このコンピュータには公式 Q4 が向いています。",
           "compact": "このコンピュータのメモリなら、より軽いモデルから始めましょう。",
-          "unknown": "まずは動かしやすいモデルを選びます。"
+          "unknown": "まずは動かしやすいモデルを選びます。",
+          "high-memory": "大容量メモリを活かし、より高性能なモデルを優先します。ローカルの速度とピークメモリは要検証です。"
         },
         "searchPlaceholder": "モデルを検索",
         "noSearchResults": "一致するモデルがありません",
@@ -2434,7 +2555,9 @@
         "deleteModelConfirm": "削除",
         "deleteModelDone": "{{name}} を削除しました",
         "deleteModelFailed": "削除できませんでした。Ollama が起動していることを確認して、もう一度お試しください。",
-        "noRecommendation": "このコンピュータのメモリに適合し、十分な根拠のある推奨モデルはまだありません。下の候補から選べます。"
+        "noRecommendation": "このコンピュータのメモリに適合し、十分な根拠のある推奨モデルはまだありません。下の候補から選べます。",
+        "lighterAlternative": "軽量な代替モデル",
+        "recommendedInstalled": "推奨モデルはインストール済みです。"
       },
       "xdSignin": {
         "badge": "おすすめ",
@@ -2483,6 +2606,45 @@
         "modelCount": "{{count}} 個のモデルを設定済み",
         "modelsAutomatic": "モデル情報は自動取得されます。個別の設定はモデル一覧から変更できます。",
         "manualModel": "モデル ID（自動取得できない場合）"
+      },
+      "llamacpp": {
+        "ownedElsewhere": "モデルサービスは別の {{appName}} インスタンスで実行中です。モデルのダウンロードやコンテキストの変更はそちらで行うか、先にそのサービスを停止してください。",
+        "primaryPick": "第一候補 · まず試す",
+        "recommendReason": "共通カタログがこのパソコン向けに選んだ性能重視の {{name}} から始めてください。",
+        "recommendCaveat": "この GGUF 版のローカル速度とピークメモリは未検証です。ダウンロードサイズは実行時メモリ使用量ではありません。",
+        "candidates": "試用するモデル",
+        "trialNote": "試用できるモデルです。性能とメモリ使用量は未検証です。",
+        "downloadModel": "{{name}} をダウンロード",
+        "title": "llama.cpp",
+        "subtitle": "実行環境とモデルをダウンロードしてローカルで実行",
+        "description": "下のモデルを選び、ダウンロードしてローカルで実行します。",
+        "install": "llama.cpp をインストール",
+        "start": "起動して接続",
+        "restart": "再起動してモデルを更新",
+        "stop": "サービスを停止",
+        "cancel": "操作をキャンセル",
+        "repository": "Hugging Face リポジトリ",
+        "findFiles": "モデルファイルを検索",
+        "file": "GGUF ファイル",
+        "shards": "分割モデルは全ファイルをダウンロードします。表示サイズは選択したファイルのみです。テキストモデルに対応し、画像用プロジェクターはダウンロードしません。",
+        "download": "モデルをダウンロード",
+        "models": "ダウンロード済みモデル",
+        "empty": "上の一覧からモデルを選ぶか、Hugging Face リポジトリを入力してダウンロードしてください。",
+        "unsupported": "この環境では自動インストールに対応していません。llama.cpp 接続を手動で設定してください。",
+        "failed": "操作を完了できませんでした。ネットワークとディスク空き容量を確認して再試行してください。",
+        "invalid": "owner/model-GGUF 形式でリポジトリを入力し、GGUF ファイルを選択してください。",
+        "progress": {
+          "install": "llama.cpp をインストール中…",
+          "download": "モデルをダウンロード中…",
+          "start": "llama.cpp を起動中…"
+        },
+        "installAndConnect": "インストールして接続",
+        "installDescription": "{{appName}} が llama.cpp をインストールします。モデルをダウンロードすると、使用時にサービスが自動で起動します。",
+        "manualConnect": "既存のサービスに接続",
+        "manageRuntime": "サービスを管理",
+        "restartHint": "モデルのダウンロードやコンテキストの変更後は、「サービスを管理」で再起動すると変更が反映されます。再起動すると進行中の生成が中断されます。",
+        "applyModels": "ダウンロード済みモデルを使用",
+        "startOnUse": "使用時に起動"
       }
     },
     "experimental": {
@@ -5272,8 +5434,8 @@
         "agentUserActionDetail": "1 回のクリックにつき 1 回だけ開始でき、そのカードが属するセッションでのみ使用できます。",
         "agentBackground": "バックグラウンドで Agent の新しいターンを自動的に開始できます",
         "agentBackgroundDetail": "毎回のクリックは不要ですが、以前このプラグインに関連付けたセッションでのみ使用できます。モデル料金が発生する場合があります。",
-        "agentErrand": "{{appName}} Agent にタスクを任せて結果を受け取れます",
-        "agentErrandDetail": "タスクはこのプラグイン専用のセッションで実行され、サイドバーから常に確認・停止できます。既定では読み取り専用で、権限の引き上げはプラグイン設定であなた自身が行う必要があります。モデル料金が発生する場合があります。",
+        "agentErrand": "タスクを作成し、作業を実行して結果を取得できます",
+        "agentErrandDetail": "作成したタスクは Cindy のタスク一覧に表示され、進行状況を確認して会話を続けられます。",
         "agentSchedule": "自動化の新規作成をあなたに依頼できます",
         "agentScheduleDetail": "できるのは内容が入力済みの新規自動化パネルを開くことだけで、作成するかどうかはあなたがモデルを選んで自分で保存して決めます。作成後は {{appName}} があなたの設定した時間に実行します。モデル料金が発生する場合があります。",
         "nodeRuntime": "同梱された Node プログラムをこのコンピューターで実行できます",
@@ -5347,7 +5509,10 @@
         "nodeChildSpawnDetail": "起動できるのは自身のパッケージ内で申告済みの JS ファイルだけです(メインプログラムと同じローカル権限)。任意のコマンドは実行できません。プラグインの無効化や終了時にはサブプロセスも一緒に閉じられます。",
         "skill": "AI アシスタントにスキル「{{name}}」を追加します",
         "skillDetail": "スキルは AI が自分の指示として読み込んで実行する指示ファイルです。あなたの全権限で、Claude Code と Codex のすべてのプロジェクトに適用され、このプラグインのサンドボックスには制限されません。プラグインが有効な間は利用可能で、無効化またはアンインストールすると削除されます。特定のフォルダーだけでプラグインをオフにしても非表示にはなりません。ここではスキルの全文をプレビューできません——信頼できるプラグインのみをインストールしてください。",
-        "routineEvents": "ルーティンイベント"
+        "routineEvents": "ルーティンイベント",
+        "agentTasksRequest": "セッション権限を確認",
+        "agentTasks": "このプラグインの Cindy セッションを作成・管理できます",
+        "agentTasksDetail": "メッセージの送信、結果の読み取り、自身の実行の停止ができます。セッションはユーザーに表示されます。プラグインの AI 設定を使用し、モデル料金が発生する場合があります。他のセッションへのアクセスは許可されません。"
       },
       "connections": {
         "confirmTitle": "接続先の追加",
@@ -5412,16 +5577,21 @@
           "noModels": "利用可能なモデルなし"
         },
         "errandPrefs": {
-          "title": "AI 代行",
-          "desc": "このプラグインが {{appName}} Agent にタスクを任せるときの実行設定です。未設定の項目は新規ドラフトの選択に従います。既定では読み取り専用で、専用フォルダー内で作業します。",
+          "title": "タスク設定",
+          "desc": "このプラグインが作成するタスクの設定です。新規タスクは呼び出し元のモデルを使い、パネルから作成する場合は現在の新規タスクの選択を使います。既存タスクのモデルは維持されます。権限は別途設定し、通常のタスクの既定権限を使います。フルアクセスは継承しません。",
           "agent": "Agent",
           "model": "モデル",
           "permission": "書き込み権限",
-          "permissionDisabled": "代行セッションでは選べません",
+          "permissionDisabled": "プラグインではこの権限を選べません",
           "workdir": "作業フォルダー",
           "workdirDefault": "プラグイン専用フォルダー(既定)",
           "workdirPick": "選択…",
-          "workdirClear": "既定のフォルダーに戻す"
+          "workdirClear": "既定のフォルダーに戻す",
+          "legacyDesc": "このプラグインが作成するタスクの設定です。新規タスクは呼び出し元のモデルを使い、パネルから作成する場合は現在の新規タスクの選択を使います。既存タスクのモデルは維持されます。旧 API は元の権限を維持します。権限を選ぶと、その設定を使用します。",
+          "legacyPermission": "元の権限を維持",
+          "sourceDefault": "呼び出し元に従う（下はパネル作成時のモデル）",
+          "sourceCustom": "このプラグイン用に選択したモデル",
+          "restoreModel": "モデルをリセット"
         },
         "toolsTitle": "Tools",
         "permissionsTitle": "権限",
@@ -6865,7 +7035,9 @@
       "processKilled": "プロセスが強制終了されました (シグナル {{signal}})",
       "restart": "再起動",
       "shellNotFound": "シェルが見つかりません: {{detail}}",
-      "spawnFailed": "ターミナルを起動できません: {{detail}}"
+      "spawnFailed": "ターミナルを起動できません: {{detail}}",
+      "remoteUnavailableTitle": "リモートセッションでは利用できません",
+      "remoteUnavailableDescription": "ターミナルは現在、このデバイスでローカル実行されるセッションでのみ利用できます。"
     },
     "review": {
       "turn": {
@@ -7602,6 +7774,10 @@
     },
     "model": {
       "description": "このパートナーが使用するモデルを選びます。",
+      "primary": "メインモデル",
+      "task": "セッション用モデル",
+      "inheritPrimary": "メインモデルを継承",
+      "inheritingPrimary": "新しいバックグラウンドセッションはメインモデルを継承します",
       "restoreDefault": "デフォルトのモデルに戻す"
     },
     "modelChain": {
@@ -8040,6 +8216,116 @@
           "prompt": "温かくユーモアがあり、すぐに助言せず日々の小さな話を聞いてくれるパートナー。"
         }
       }
+    },
+    "workbench": {
+      "title": "ワークベンチ",
+      "open": "ワークベンチを開く",
+      "emptyTitle": "{{name}} にプロジェクトを任せる",
+      "emptyDescription": "このコンピューターにある作業を {{name}} に引き継ぎます。まずプロジェクトのドキュメント、最近のコミットと PR、これまでのセッションに目を通し、終わっていないものややる価値のあるものを選び出してから、どれを続けるか確認します。",
+      "scanning": "このコンピューターのプロジェクトを探しています…",
+      "noProjects": "セッションのあるプロジェクトがまだありません。フォルダーを選んで {{name}} に任せられます。",
+      "pickFolder": "別のフォルダーを選ぶ",
+      "cancelAdd": "キャンセル",
+      "projectTasks_other": "{{count}} 件のセッション",
+      "projectAutomations_other": "{{count}} 件の自動化",
+      "sourceCindy_other": "{{appName}} {{count}} 件のセッション",
+      "sourceClaude_other": "Claude Code {{count}} 件のセッション",
+      "sourceCodex_other": "Codex {{count}} 件のセッション",
+      "moreProjects": "ほか {{count}} 件",
+      "hideMoreProjects": "閉じる",
+      "grant": "{{name}} は {{project}} の{{scope}}を確認・続行・停止でき、新しいセッションも代わりに始めます。",
+      "grantTasks_other": "{{count}} 件のセッション",
+      "grantCindy_other": "{{appName}} の {{count}} 件のセッション",
+      "grantClaude_other": "Claude Code の {{count}} 件のセッション",
+      "grantCodex_other": "Codex の {{count}} 件のセッション",
+      "grantAutomations_other": "{{count}} 件の自動化",
+      "grantEverything": "セッションと自動化",
+      "handOver": "{{name}} に任せる",
+      "handoverMessage": "{{project}} を任せます。",
+      "addProject": "{{name}} に別のプロジェクトを任せる",
+      "removeProject": "{{project}} を {{name}} から外す",
+      "dirMissing": "フォルダーが見つかりません",
+      "dirUnavailable": "このフォルダーを開けません。別のフォルダーを選んでください。",
+      "tooManyDirs": "{{name}} に任せられるプロジェクトは最大 {{count}} 件です",
+      "sendFailed": "{{name}} に送信できませんでした。もう一度お試しください。",
+      "tasksEmpty": "続けるべきセッションはまだありません。",
+      "understanding": "{{name}} が {{project}} を把握しています…",
+      "untitled": "無題のセッション",
+      "continueMessage": "「{{title}}」を続けて：{{text}}",
+      "verdict": {
+        "unfinished": "未完了",
+        "idea": "話したまま"
+      },
+      "detail": {
+        "back": "ワークベンチに戻る",
+        "stop": "このセッションを停止",
+        "openInTasks": "セッション画面で開く",
+        "placeholder": "{{name}} に続けてもらう一言…",
+        "send": "送信",
+        "sent": "{{name}} に伝えました",
+        "judgment": "{{name}} の見立て",
+        "empty": "表示できる内容はまだありません。",
+        "loadFailed": "このセッションの記録を読み込めません。",
+        "truncated": "最近の内容のみ表示しています",
+        "ref": "参考",
+        "noRef": "参考リンクはありません。",
+        "openPr": "GitHub で PR #{{number}} を開く",
+        "refBlocked": "このパスは任せたプロジェクトの外にあるため開きませんでした。"
+      },
+      "openTask": "「{{title}}」を開く（{{state}}）",
+      "outputs": "成果物",
+      "outputsEmpty": "{{name}} が作ったファイルはここに表示されます。",
+      "state": {
+        "running": "実行中",
+        "waiting": "返信待ち",
+        "queued": "待機中",
+        "stopped": "停止中",
+        "automation": "自動化",
+        "done": "完了"
+      },
+      "group": {
+        "waiting": "返信待ち",
+        "running": "実行中",
+        "todo": "やること",
+        "done": "完了"
+      },
+      "followUp": {
+        "label": "進める",
+        "message": "「{{title}}」を進めて",
+        "aria": "「{{title}}」を進める"
+      },
+      "olderCount_other": "さらに前の {{count}} 件",
+      "kind": {
+        "existing": "既存のセッション",
+        "delegated": "あなたの依頼",
+        "claudeCode": "Claude Code から",
+        "codex": "Codex から",
+        "pi": "Pi から",
+        "pr": "PR #{{number}}",
+        "issue": "Issue #{{number}}",
+        "idea": "提案",
+        "automationPlain": "自動化"
+      },
+      "cycle": {
+        "manual": "手動",
+        "once": "1 回",
+        "event": "イベント時"
+      },
+      "line": {
+        "waiting": "あなたの返信を待っています",
+        "queued": "待機中",
+        "interrupted": "前回は最後まで実行されませんでした",
+        "errored": "前回エラーが発生しました",
+        "failed": "完了しませんでした",
+        "paused": "一時停止中",
+        "disabled": "オフ"
+      },
+      "followingMark": "このプロジェクトの担当: {{names}}"
+    },
+    "learning": {
+      "memory": "記憶しました：{{title}}",
+      "skillCreated": "スキルを作成：{{title}}",
+      "skillUpdated": "スキルを更新：{{title}}"
     }
   },
   "common": {
@@ -8470,7 +8756,8 @@
         "layoutBadge": "スタイルBを試す",
         "layoutClassic": "スタイルAに戻す",
         "layoutTryUnified": "新しいセレクターを試す",
-        "layoutOriginal": "旧版に戻す"
+        "layoutOriginal": "旧版に戻す",
+        "favoritesSyncFailed": "お気に入りを同期できません。選択画面を開き直してください。接続先の更新が必要な場合があります。"
       }
     },
     "permissionSelector": {
@@ -8728,6 +9015,7 @@
       "credentialSwitchDeferred": "モデルプロバイダーを切り替えました。現在のタスク終了後に有効になります。",
       "effortRuntimeDirty": "推論強度を更新しています。少し待ってからもう一度送信してください。",
       "credentialSwitchApplied": "モデルプロバイダーの切り替えが有効になりました。",
+      "credentialSwitchFailed": "モデルプロバイダーの切り替えに失敗しました。モデルを選び直してください。",
       "modelSwitchContextGuard": {
         "title": "このモデルには今の会話が収まりません",
         "warnToast": "この会話はすでに {{used}} 使っています。切替後は新しいモデルの容量（{{total}}）の約 {{pct}}% になります",
@@ -8747,7 +9035,8 @@
           "cancel": "現在の Agent を維持",
           "dontShowAgain": "次回から表示しない"
         }
-      }
+      },
+      "retryPluginWriteAccess": "プラグインの書き込み権限を再確認"
     },
     "agentSelect": {
       "label": "エンジン",
@@ -9329,6 +9618,11 @@
       "closeHint": "または背景をクリックして閉じる"
     },
     "remoteFile": {
+      "previewFailed": "Web プレビューを準備できませんでした。ディレクトリと接続を確認して再試行してください。",
+      "previewNotFound": "HTML ファイルが見つかりません。ファイルが存在するか確認してください。",
+      "previewFetching": "Web プレビューを準備しています…",
+      "previewTooLarge": "準備中のプレビューが多すぎます。しばらくしてから再試行してください。",
+      "previewUnsupported": "ディレクトリをプレビューするには、リモート端末の {{appName}} を更新してください。",
       "fetching": "リモートからファイルを取得しています…",
       "fetchFailed": "リモートからのファイル取得に失敗しました",
       "notFound": "リモートにファイルが見つかりません",
@@ -9723,7 +10017,8 @@
       "DEVICE_LINK_MEDIA_TRANSFER_FAILED": "添付ファイルの転送に失敗しました。メッセージは送信されていません。もう一度お試しください。",
       "MCP_APPROVAL_AUTO_BLOCKED": "このツール呼び出しは自動審査でブロックされました。手動で拒否された記録はありません。",
       "MCP_APPROVAL_CONFIRMATION_TIMEOUT": "権限の確認がタイムアウトし、有効な確認結果を受信できませんでした。タイムアウトだけでは、ボタンをクリックしたかどうかは判断できません。",
-      "MCP_APPROVAL_CONFIRMATION_UNAVAILABLE": "権限の確認を完了できませんでした。手動で拒否された記録はありません。"
+      "MCP_APPROVAL_CONFIRMATION_UNAVAILABLE": "権限の確認を完了できませんでした。手動で拒否された記録はありません。",
+      "DEVICE_LINK_BUSY": "接続先のコンピュータが混み合っています。しばらくしてから再試行してください。"
     },
     "generatedFiles": {
       "title": "このメッセージで作成されたファイル",
@@ -10282,8 +10577,8 @@
         "pin": "ピン留め",
         "unpin": "ピン留め解除",
         "archived": "アーカイブ済み",
-        "moveToProject": "プロジェクトへ移動",
-        "moveToProjectHeading": "プロジェクトを選択",
+        "moveToProject": "タスクを移動",
+        "moveToProjectHeading": "現在のコンピューターのプロジェクト",
         "browseProjectFolder": "プロジェクトフォルダーを選択",
         "moveToDialogue": "対話へ移動",
         "noProjects": "最近使ったプロジェクトはありません",
@@ -11509,7 +11804,14 @@
       "directory": "ディレクトリ",
       "allowDirs": "これらのファイルのフォルダーも許可(このセッション中、同じフォルダーのメディアファイルは再確認しません)",
       "allow": "許可",
-      "deny": "拒否"
+      "deny": "拒否",
+      "descriptionForgeSource": "以下のディレクトリは現在のセッションの作業ディレクトリの外にあります。許可すると、Forge がそこでプラグインをパックまたは雛形生成します（.cindy 成果物または雛形ファイルを書き込みます）。",
+      "descriptionForgeScaffold": "以下のディレクトリは現在のセッションの作業ディレクトリの外にあります。許可すると、Forge がそこにプラグインの雛形を生成します。",
+      "descriptionForgePack": "以下のディレクトリは現在のセッションの作業ディレクトリの外にあります。許可すると、Forge がそこでプラグインをパックし、.cindy 成果物を書き込みます。",
+      "descriptionForgeInstall": "以下のディレクトリは現在のセッションの作業ディレクトリの外にあります。許可すると、Forge がこのプラグインをパックし、このコンピュータにインストールして有効化します。",
+      "descriptionOutsideWorkdir": "以下のパスは現在のセッションの作業ディレクトリの外にあります。許可すると、現在のツールがそこを読み書きできます。",
+      "descriptionOutsideRead": "以下のパスは現在のセッションの作業ディレクトリの外にあります。許可すると、現在のツールがそこを読み取れます。",
+      "descriptionOutsideWrite": "以下のパスは現在のセッションの作業ディレクトリの外にあります。許可すると、現在のツールがそこに書き込めます。"
     }
   },
   "commandPalette": {
@@ -11544,6 +11846,7 @@
       "installed": "インストール済み",
       "globalScope": "グローバル",
       "sourceSkillhub": "SkillHub",
+      "sourceBuiltIn": "内蔵",
       "sourceLocal": "ローカル",
       "import": "スキルをインポート",
       "importAria": "ローカルの zip または SKILL.md からスキルをインポート",
@@ -11551,6 +11854,16 @@
       "importPickerSubtitle": "{{name}} · {{description}}",
       "importSuccess": "{{name}} をインポートしました{{suffix}}",
       "importFailed": "スキルのインポートに失敗しました"
+    },
+    "builtIn": {
+      "official": "公式",
+      "officialDetail": "{{appName}} がアプリに同梱し、管理しています。",
+      "skillCreator": {
+        "description": "明確な手順と必要な補助リソースを備えた {{appName}} スキルを作成または更新します。"
+      },
+      "learn": {
+        "description": "現在のタスク、説明されたワークフロー、または SkillHub のスキルから再利用可能なスキルを抽出し、{{appName}} のレビューフローを経て保存します。"
+      }
     },
     "common": {
       "openFolderFailed": "フォルダを開けませんでした",
@@ -11894,7 +12207,8 @@
         "rename": "改名へ",
         "fix": "修正へ",
         "republish": "再公開",
-        "abandonPending": "待機をやめる"
+        "abandonPending": "待機をやめる",
+        "editPublication": "公開情報を修正"
       },
       "API_KEY_MISSING": {
         "title": "API key が未設定",
@@ -11918,15 +12232,15 @@
       },
       "OSS_PUT_FAILED": {
         "title": "アップロード失敗",
-        "message": "ネットワーク異常、再試行してください"
+        "message": "アップロードサービスがファイルを受信できませんでした。ネットワークを確認してアップロードを再試行してください。問題が続く場合は再公開してください。"
       },
       "OSS_PUT_EXPIRED": {
         "title": "アップロードリンク失効",
         "message": "アップロードリンクが失効しました、再公開してください"
       },
       "VERSION_RACE": {
-        "title": "バージョン競合",
-        "message": "自動再試行に失敗しました、後ほど再試行してください"
+        "title": "バージョン番号は使用済みです",
+        "message": "このバージョンは公開済みか処理中です。未使用のバージョン番号を指定して再公開してください。"
       },
       "CHECKSUM_MISMATCH": {
         "title": "チェックサム失敗",
@@ -11938,15 +12252,15 @@
       },
       "PACK_FAILED": {
         "title": "パッケージ化に失敗しました",
-        "message": "skill のパッケージを作成できませんでした。再試行してください"
+        "message": "ローカルのスキルファイルを読み取れるか確認し、不要な大きいファイルを削除して再公開してください。"
       },
       "OSS_OBJECT_NOT_FOUND": {
         "title": "アップロードファイルが見つかりません",
         "message": "サーバーがアップロード済みファイルを見つけられません、再試行してください"
       },
       "MANIFEST_INVALID": {
-        "title": "SKILL.md の形式が正しくありません",
-        "message": "SKILL.md は YAML frontmatter で始まり、name と description フィールドを含む必要があります"
+        "title": "スキルパッケージが要件を満たしていません",
+        "message": "以下の理由に従って SKILL.md とパッケージ内のファイルを確認し、修正して再公開してください。"
       },
       "CANCELLED": {
         "title": "キャンセル済み",
@@ -11961,12 +12275,56 @@
         "message": "現在の公開者が利用できる公開範囲を選択してください"
       },
       "INTERNAL": {
-        "title": "サーバーエラー",
-        "message": "公開失敗、後ほど再試行してください"
+        "title": "公開が完了しませんでした",
+        "message": "予期しないエラーが発生しました。時間をおいて再試行してください。問題が続く場合はサポートにお問い合わせください。"
       },
       "UNKNOWN": {
         "title": "不明なエラー",
         "message": "公開失敗 ({{code}})、再試行してください"
+      },
+      "SKILL_DELETED": {
+        "title": "同名のスキルは削除済み",
+        "message": "同名のスキルは削除されていますが、名前は引き続き予約されています。スキル名を変更して再公開してください。"
+      },
+      "SKILL_UNPUBLISHED": {
+        "title": "スキルが公開停止されました",
+        "message": "アップロード中にスキルが公開停止されたため、今回の公開は中止されました。公開状態を確認して再公開してください。"
+      },
+      "AUTH_REQUIRED": {
+        "title": "ログインが必要です",
+        "message": "未ログインか、ログインの有効期限が切れています。ログインして再公開してください。"
+      },
+      "PERMISSION_DENIED": {
+        "title": "公開権限がありません",
+        "message": "公開権限のあるアカウントに切り替えるか、スキルの作者または組織の管理者に権限を確認してください。"
+      },
+      "INVALID_PARAMS": {
+        "title": "公開情報が要件を満たしていません",
+        "message": "以下の理由に従って公開情報を修正し、再公開してください。"
+      },
+      "SKILL_FILE_TOO_LARGE": {
+        "title": "スキルパッケージが上限を超えています",
+        "message": "上限は圧縮時 32 MiB、展開後 50 MiB、SKILL.md は 2 MiB、アーカイブ内は 2000 項目です。内容を減らして再公開してください。"
+      },
+      "NETWORK_ERROR": {
+        "title": "公開サービスに接続できません",
+        "message": "ネットワーク接続を確認して公開を再試行してください。"
+      },
+      "RATE_LIMITED": {
+        "title": "公開リクエストが多すぎます",
+        "message": "少し待ってから公開を再試行してください。"
+      },
+      "SERVICE_UNAVAILABLE": {
+        "title": "公開サービスを利用できません",
+        "message": "時間をおいて公開を再試行してください。問題が続く場合はサポートにお問い合わせください。"
+      },
+      "PUBLISH_BUSY": {
+        "title": "別のスキルを公開中です",
+        "message": "現在の公開処理が完了してから、このスキルを公開してください。"
+      },
+      "REQUEST_REJECTED": {
+        "title": "公開リクエストが拒否されました",
+        "message": "公開情報を確認して再公開してください。繰り返し失敗する場合はサポートにお問い合わせください。"
       }
     },
     "scanResult": {
@@ -12095,6 +12453,7 @@
       "unlinkDescription": "ローカルのスキル登録のみを削除します。元のファイルと編集内容は保持されます。",
       "sharedImpact": "このスキルを共有する他の Agent にも影響します。公開済みバージョンや別の場所のインストールには影響しません。",
       "managedElsewhere": "このスキルは別のパッケージまたは共有ディレクトリで管理されています。提供元で削除してください",
+      "builtInManaged": "このスキルは {{appName}} に内蔵されているため、アンインストールできません",
       "managedByPlugin": "このスキルはプラグインが提供しています。提供元のプラグインページで管理してください。",
       "cleanupIncomplete": "「{{name}}」のアンインストール後のクリーンアップが未完了です。再試行するか、後でスキルを開き直して続行してください。完了するまで再インストールはできません。",
       "retryCleanup": "整理を再試行",
@@ -12502,7 +12861,8 @@
       "INTERNAL": "内部エラーです。しばらくしてから再試行してください。"
     },
     "hub": {
-      "learnButton": "このスキルを学習"
+      "learnButton": "このスキルを学習",
+      "disabledHint": "この操作を使うには、ローカルスキルで組み込みの Learn スキルを有効にしてください。"
     }
   },
   "planMode": {
@@ -12974,5 +13334,70 @@
       "contains": "含む",
       "not-equals": "一致しない"
     }
+  },
+  "pluginTaskWriteAccess": {
+    "title": "このプラグインの AI にファイルの編集を許可しますか？",
+    "message": "「{{name}}」の AI にファイルの編集を許可して続行しますか？",
+    "detail": "このプラグインの AI 権限を編集可能に変更します。今後のタスクにも適用されます。独立した作業ディレクトリはシステムのサンドボックスではなく、コマンドには引き続き {{appName}} の権限チェックが適用されます。プラグインの AI 設定でいつでも読み取り専用に戻せます。",
+    "allow": "許可して続行",
+    "cancel": "今は許可しない",
+    "autoTitle": "Auto 自動承認を有効化",
+    "autoMessage": "「{{name}}」で Auto 自動承認を使用しますか？",
+    "autoDetail": "主タスクと Worker の操作を {{appName}} が自動審査します。確認が必要な操作や拒否された操作は停止します。完全アクセスではありません。他のタスクの全体設定は変更しません。"
+  },
+  "taskTags": {
+    "loadFailed": "タグを読み込めませんでした。もう一度お試しください。",
+    "retry": "再試行",
+    "editLabel": "「{{name}}」を編集",
+    "reorderLabel": "「{{name}}」の順序を変更",
+    "reorderHint": "ドラッグまたは上下キーで並べ替え",
+    "addLabel": "「{{name}}」を追加",
+    "removeLabel": "「{{name}}」を外す",
+    "title": "タグ",
+    "more": "その他のタグ",
+    "settings": "タグ設定",
+    "name": "名前",
+    "color": "色",
+    "favorite": "よく使うタグ（最大7個）",
+    "create": "作成",
+    "save": "保存",
+    "done": "完了",
+    "back": "戻る",
+    "delete": "タグを削除",
+    "cancel": "キャンセル",
+    "deleteConfirm": "「{{name}}」を{{count}}件のタスクから削除しますか？タスクとメッセージは保持されます。",
+    "loading": "読み込み中…",
+    "unavailable": "タグを使用するには、このコンピュータを更新してください。",
+    "offline": "タグを編集するには、セッションのあるコンピュータに接続してください。",
+    "failed": "保存できませんでした。再試行してください。",
+    "conflict": "別の端末でタグが変更されました。再読み込みしてください。",
+    "favoritesFull": "よく使うタグは最大7個です。",
+    "alreadyExists": "同じ名前のタグが存在します。",
+    "empty": "タグはまだありません。",
+    "red": "赤",
+    "orange": "オレンジ",
+    "yellow": "黄",
+    "green": "緑",
+    "blue": "青",
+    "purple": "紫",
+    "gray": "グレー",
+    "none": "色なし",
+    "pink": "ピンク",
+    "coral": "コーラル",
+    "teal": "ティール",
+    "indigo": "インディゴ",
+    "white": "白",
+    "add": "タグを追加",
+    "editTitle": "タグを編集",
+    "editHint": "このタグを使うすべてのタスクに反映されます。",
+    "addHint": "追加後、このタスクに自動で選択されます。",
+    "selectedCount": "{{count}} 個選択中",
+    "presetImportant": "重要",
+    "presetFollowUp": "フォローアップ",
+    "presetWork": "仕事",
+    "presetLife": "生活",
+    "presetIdeas": "アイデア",
+    "presetReference": "資料",
+    "remoteBusy": "接続先のコンピュータが混み合っています。しばらくしてから再試行してください。"
   }
 }

@@ -134,6 +134,12 @@ try {
 function withoutPiSecrets(env: Record<string, string | undefined>): Record<string, string | undefined> {
   const clean = { ...env };
   for (const name of SECRET_ENV_NAMES) delete clean[name];
+  // A provider added after session start was absent from the original host-generated list.
+  for (const name of Object.keys(clean)) {
+    if (/^CINDY_PI_KEY_[A-Z0-9_]+$/.test(name)
+      || name === 'CINDY_PI_SESSION_TOKEN' || name === 'CINDY_PI_API_KEY'
+      || name === 'CINDY_PI_OPENAI_PROXY_KEY' || name === 'CINDY_PI_XAI_PROXY_API_KEY') delete clean[name];
+  }
   return clean;
 }
 
@@ -3586,7 +3592,47 @@ function nativeFastPayload(payload, model) {
 }
 
 export default async function cindyBridge(pi: any) {
-  await registerCindyNativeProviderAdapters(pi);
+  const nativeProviderAdapters = await registerCindyNativeProviderAdapters(pi);
+  const initialNativeSettings = typeof pi.getSettings === 'function' ? undefined
+    : JSON.parse(readFileSync(path.join(process.env.PI_CODING_AGENT_DIR, 'settings.json'), 'utf8'));
+  pi.registerCommand('cindy-native-provider-refresh', {
+    description: 'Cindy internal native provider refresh',
+    handler: async (args: string, ctx: any) => {
+      const nonce = args.trim();
+      if (!/^[A-Za-z0-9_-]{16,128}$/.test(nonce)) return;
+      let code: 'INVALID_PAYLOAD' | 'APPLY_FAILED' | undefined;
+      let mutationStarted = false;
+      let runtimeSettings;
+      try {
+        const raw = await ctx.ui.input('cindy:provider-refresh', JSON.stringify({ nonce }));
+        let inspect = false;
+        try { const request = JSON.parse(raw); inspect = request?.nonce === nonce && request?.operation === 'inspect'; }
+        catch { /* The normal snapshot parser rejects invalid JSON. */ }
+        const snapshot = inspect ? undefined : parseCindyProviderRefreshSnapshot(raw, nonce);
+        if (!inspect && !snapshot) {
+          code = 'INVALID_PAYLOAD';
+        } else if (snapshot) {
+          mutationStarted = true;
+          await nativeProviderAdapters.refresh(snapshot, ctx, SECRET_ENV_NAMES);
+        }
+        if (!code) {
+          // getSettings returns a copy. Never reach into Pi's private session or
+          // pretend a settings.json rewrite changed the live SettingsManager.
+          const settings = typeof pi.getSettings === 'function' ? pi.getSettings() : initialNativeSettings;
+          runtimeSettings = { version: piCodingAgent.VERSION, compaction: settings.compaction ?? {} };
+        }
+      } catch {
+        code = mutationStarted ? 'APPLY_FAILED' : 'INVALID_PAYLOAD';
+      }
+      // RPC prompt swallows extension command exceptions. The host must see an
+      // explicit, nonce-bound receipt before accepting a refreshed catalog.
+      try {
+        await ctx.ui.input('cindy:provider-refresh-ack', JSON.stringify(
+          code ? { nonce, ok: false, code } : { nonce, ok: true, runtimeSettings },
+        ));
+      } catch { /* A missing receipt forces the host to retire this process. */ }
+    },
+  });
   if (!currentPermissionState().reviewOnly) registerCindyQuestionTool(pi);
   pi.on('before_provider_request', (event, ctx) => {
     const payload = astraResponsesPayload(event.payload, ctx.model) ?? event.payload;
@@ -3982,39 +4028,11 @@ export default async function cindyBridge(pi: any) {
         isInsideRoot(targetPath, subagentRunDir)
         || (writeTargetResolved !== null && isInsideRoot(writeTargetResolved, subagentRunDir))
       );
-    const writeInsideAnyGrantedRoot = (roots: readonly string[]) => targetPath
-      && roots.some((root) => {
-        let resolvedRoot: string | null = null;
-        try {
-          resolvedRoot = realpathSync(root);
-        } catch {
-          resolvedRoot = null;
-        }
-        return (
-          isInsideRoot(targetPath, root)
-          && writeTargetResolved !== null
-          && resolvedRoot !== null
-          && isInsideRoot(writeTargetResolved, resolvedRoot)
-        );
-      });
-    const writeInsideWritableRoot = writeInsideAnyGrantedRoot(permission.writableRoots);
-    if (
+    const controlPlaneWrite = Boolean(
       targetPath
       && FILE_WRITE_BUILTINS.has(event.toolName)
       && (writeInsideAgentHome || writeInsideSubagentRun)
-    ) {
-      return { block: true, reason: 'Cindy agent runtime directory is read-only.' };
-    }
-    if (
-      targetPath
-      && FILE_WRITE_BUILTINS.has(event.toolName)
-      && !writeInsideWritableRoot
-      && permission.readOnlyRoots.some((root) =>
-        isInsideRoot(targetPath, root)
-        || (writeTargetResolved !== null && isInsideRoot(writeTargetResolved, root)))
-    ) {
-      return { block: true, reason: 'Cindy extra reference directories are read-only.' };
-    }
+    );
     // 凭证/密钥路径的内置只读工具与 bash 输入重定向都必须携带 canonical
     // 证据,供 Ask/Auto 升级审批。Full access 不在这里硬拦 — 原生 Pi 没有这道门,
     // 文本拦截也不是安全边界(可被变形绕过)。
@@ -4050,7 +4068,7 @@ export default async function cindyBridge(pi: any) {
     // runtime capability and applies the current general permission policy before it
     // issues a one-shot store grant. Let it reach that boundary in every mode.
     if (event.toolName === 'cindy_pi_extension' || event.toolName === 'cindy_pi_command') return;
-    if (permission.mode === 'bypassPermissions') return;
+    if (permission.mode === 'bypassPermissions' && !controlPlaneWrite) return;
     // MCP discovery/one-tool schema inspection only returns metadata already
     // supplied by connected servers. It is the read-only half of the gateway
     // and never executes a capability, so Ask/Auto should not interrupt the user.
@@ -4099,6 +4117,7 @@ export default async function cindyBridge(pi: any) {
             ? {
                 resolvedWritePath: writeTargetResolved,
                 resolvedWritableRoots: resolveWritableRootsForHost(permission.writableRoots),
+                ...(controlPlaneWrite ? { controlPlaneWrite: true } : {}),
               }
             : {}),
         }),

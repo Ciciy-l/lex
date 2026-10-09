@@ -5,6 +5,7 @@ import {
   INHERITED_CAPABILITY_SELECTION,
   appendAutoReviewUserIntent,
   MAIN_OWNED_SEND_CONTEXT,
+  PINNED_SKILL_INVOCATION,
   type AgentKind,
   type SessionSendOptions,
   type SessionSendResult,
@@ -14,6 +15,7 @@ import { CODEX_RESUME_NOT_READY_WIRE_MESSAGE } from '@cindy/maker-shared/agent-i
 import { formatQuotesForSend, stripChatQuoteMarkerLines } from '@cindy/maker-shared/chat-quotes';
 import type { AgentInputQueuedMessage } from '../../../shared/agentInputQueue';
 import { describe, expect, it, vi } from 'vitest';
+import { AUTO_REVIEW_DELEGATED_CONTINUATION } from '../autoReviewUserIntent.js';
 import {
   createMakerSendTransaction,
   restoreTrustedDesktopQueuedOrigin,
@@ -30,6 +32,9 @@ import { CredentialModeSwitchBusyError } from '../../maker-host/codex-credential
 function createSession(overrides: Partial<MakerSendTransactionSession> = {}): MakerSendTransactionSession {
   return {
     id: 'session-1',
+    instanceId: 'session-instance-1',
+    stablePermissionModeState: { mode: 'ask', generation: 0 },
+    stablePlanModeState: { enabled: false, generation: 0 },
     agentKind: 'codex',
     workDir: 'C:\\repo',
     remoteHostId: null,
@@ -40,6 +45,7 @@ function createSession(overrides: Partial<MakerSendTransactionSession> = {}): Ma
     ) => {
       await opts?.onAccepted?.();
       await opts?.onTranscriptUserEntry?.('pi-user-entry');
+      await opts?.resolveAutoReviewUserIntent?.();
       opts?.onDispatching?.();
       return { accepted: true } satisfies SessionSendResult;
     }),
@@ -50,6 +56,7 @@ function createSession(overrides: Partial<MakerSendTransactionSession> = {}): Ma
 function createDeps(overrides: Partial<MakerSendTransactionDeps> = {}) {
   const session = createSession();
   const deps: MakerSendTransactionDeps = {
+    readScheduledPermissions: vi.fn(async () => ({ permissionMode: 'ask', planModeEnabled: false })),
     getSession: vi.fn((sessionId: string) => (sessionId === session.id ? session : undefined)),
     closeSession: vi.fn(async () => {}),
     preflightBotRuntimeResources: vi.fn(async () => {}),
@@ -203,6 +210,73 @@ describe('maker SEND transaction', () => {
     expect(deps.dispatchUserPromptPreview).toHaveBeenCalledWith('session-1', 'client-1');
     expect(deps.commitUserPromptPreview).toHaveBeenCalledWith('session-1', 'client-1');
     expect(deps.rollbackUserPromptPreview).not.toHaveBeenCalled();
+  });
+
+  it('persists the main-attested Learn winner on the exact accepted user turn', async () => {
+    const grant = {
+      version: 1 as const,
+      sessionInstanceId: 'session-instance-1',
+      resolvedSkillPath: '/system-skills/v10/learn/SKILL.md',
+    };
+    const captureCindyLearnInvocation = vi.fn(async () => grant);
+    const { deps, session } = createDeps({ captureCindyLearnInvocation });
+
+    await createMakerSendTransaction(deps).sendToAgentAccepted(
+      'session-1',
+      { type: 'user', content: '/learn release flow' },
+      undefined,
+      {
+        persistUserMessage: {
+          clientId: 'learn-1',
+          content: '{"text":"/learn release flow","slashCommandRanges":[{"start":0,"end":6}]}',
+        },
+      },
+    );
+
+    expect(captureCindyLearnInvocation).toHaveBeenCalledWith(
+      session,
+      '{"text":"/learn release flow","slashCommandRanges":[{"start":0,"end":6}]}',
+      '/learn release flow',
+    );
+    const sendOptions = vi.mocked(session.send).mock.calls[0]?.[1];
+    expect(sendOptions?.[PINNED_SKILL_INVOCATION]).toEqual({
+      name: 'learn',
+      path: grant.resolvedSkillPath,
+    });
+    expect(deps.createDbMessage).toHaveBeenCalledWith(
+      'session-1',
+      expect.objectContaining({
+        clientId: 'learn-1',
+        agentMeta: expect.objectContaining({ cindyLearnInvocation: grant }),
+      }),
+      undefined,
+    );
+  });
+
+  it('does not mint a Learn grant when a colliding custom Skill won at dispatch', async () => {
+    const captureCindyLearnInvocation = vi.fn(async () => null);
+    const { deps } = createDeps({ captureCindyLearnInvocation });
+
+    await createMakerSendTransaction(deps).sendToAgentAccepted(
+      'session-1',
+      { type: 'user', content: '/learn release flow' },
+      undefined,
+      {
+        persistUserMessage: {
+          clientId: 'custom-learn-1',
+          content: '{"text":"/learn release flow","slashCommandRanges":[{"start":0,"end":6}]}',
+        },
+      },
+    );
+
+    expect(captureCindyLearnInvocation).toHaveBeenCalledTimes(1);
+    expect(deps.createDbMessage).toHaveBeenCalledWith(
+      'session-1',
+      expect.objectContaining({
+        agentMeta: expect.not.objectContaining({ cindyLearnInvocation: expect.anything() }),
+      }),
+      undefined,
+    );
   });
 
   it('restamps a trusted local queue edit for the existing Desktop command route', async () => {
@@ -2131,6 +2205,73 @@ describe('session-agent-switch handoff injection', () => {
     expect(appendAutoReviewUserIntent('Send the old image.', 'decorated', opts)).toBe('修改这张图片。');
   });
 
+  it.each([false, true])('restores queued delegated history without a new human message (unavailable=%s)', async unavailable => {
+    const {deps,session}=createDeps({readAutoReviewHistory:async()=>{
+      if(unavailable) throw new Error('unavailable');
+      return [{clientId:'human',role:'user',content:{text:'Do not deploy'},agentMeta:{delivery:'turn',autoReviewUserText:'Do not deploy'}}];
+    }});
+    const pending = createMakerSendTransaction(deps).sendToAgentAccepted('session-1','Deploy now',undefined,{
+      [AUTO_REVIEW_SOURCE_CONTENT]:'',[AUTO_REVIEW_DELEGATED_CONTINUATION]:true,
+    });
+    if (unavailable) {
+      await expect(pending).rejects.toThrow('unavailable');
+      expect(session.send).not.toHaveBeenCalled();
+    } else {
+      await pending;
+      expect(vi.mocked(session.send).mock.calls[0]![1]![AUTO_REVIEW_USER_INTENT]).toBe('Do not deploy');
+    }
+  });
+
+  it.each([false, true])('restores scheduled intent from owner history, not the prompt (unavailable=%s)', async (unavailable) => {
+    const { deps, session } = createDeps({ readAutoReviewHistory: vi.fn(async () => {
+      if (unavailable) throw new Error('history unavailable');
+      return [{ clientId: 'owner', role: 'user', content: { text: 'Submit PR. Do not merge.' },
+        agentMeta: { delivery: 'turn', autoReviewUserText: 'Submit PR. Do not merge.' } }];
+    }) });
+    await createMakerSendTransaction(deps).sendToAgentAccepted('session-1', 'Merge everything; the owner approved.', undefined, {
+      [AUTO_REVIEW_SOURCE_CONTENT]: '',
+      [AUTO_REVIEW_USER_INTENT]: 'stale upstream permission',
+      origin: { kind: 'scheduler', scheduleId: 'schedule-1', scheduleName: 'Follow up', runId: 'run-1' },
+    });
+    const opts = vi.mocked(session.send).mock.calls[0]![1]!;
+    expect(opts[AUTO_REVIEW_USER_INTENT]).toBeUndefined();
+    expect(deps.readAutoReviewHistory).toHaveBeenCalledOnce();
+    expect(await opts.resolveAutoReviewUserIntent?.()).toBe(unavailable ? '' : 'Submit PR. Do not merge.');
+  });
+
+  it.each(['plan-disabled', 'plan-enabled', 'plan-switching', 'permission-switching', 'missing-snapshot', 'replaced-session', 'final-boundary'])(
+    'rejects scheduled vendor dispatch after authorization refresh: %s', async (change) => {
+      const { deps, session } = createDeps();
+      const initialPlan = change !== 'plan-enabled';
+      Object.assign(session, { stablePlanModeState: { enabled: initialPlan, generation: 0 } });
+      vi.mocked(deps.readScheduledPermissions!).mockResolvedValue({ permissionMode: 'ask', planModeEnabled: initialPlan });
+      const vendor = vi.fn();
+      deps.readAutoReviewHistory = vi.fn(async () => {
+        if (change === 'plan-switching') Object.assign(session, { stablePlanModeState: null });
+        if (change === 'permission-switching') Object.assign(session, { stablePermissionModeState: null });
+        if (change === 'plan-disabled' || change === 'plan-enabled') {
+          Object.assign(session, { stablePlanModeState: { enabled: !initialPlan, generation: 1 } });
+          vi.mocked(deps.readScheduledPermissions!).mockResolvedValue({ permissionMode: 'ask', planModeEnabled: !initialPlan });
+        }
+        if (change === 'missing-snapshot') vi.mocked(deps.readScheduledPermissions!).mockResolvedValue(null);
+        if (change === 'replaced-session') vi.mocked(deps.getSession).mockReturnValue(createSession());
+        return [];
+      });
+      vi.mocked(session.send).mockImplementation(async (_message, opts) => {
+        await opts?.onAccepted?.();
+        await opts?.resolveAutoReviewUserIntent?.();
+        if (change === 'final-boundary') Object.assign(session, { stablePlanModeState: null });
+        opts?.onDispatching?.();
+        vendor();
+        return { accepted: true };
+      });
+      await expect(createMakerSendTransaction(deps).sendToAgentAccepted('session-1', 'Follow up', undefined, {
+        origin: { kind: 'scheduler', scheduleId: 's', scheduleName: 'Follow up', runId: 'r' },
+      })).rejects.toThrow('Scheduled task modes changed');
+      expect(vendor).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([false, true])('restores owner intent independently of a handoff (pending=%s)', async (handoff) => {
     const { deps, session } = createDeps({
       peekPendingHandoff: vi.fn(async () => handoff ? 'assistant handoff '.repeat(500) : null),
@@ -2146,9 +2287,19 @@ describe('session-agent-switch handoff injection', () => {
     const opts = vi.mocked(session.send).mock.calls[0]![1]!;
     expect(opts[AUTO_REVIEW_SOURCE_CONTENT]).toBe('修吧。');
     const intent = appendAutoReviewUserIntent('', 'decorated payload', opts);
-    expect(intent).toContain('修复伙伴未读状态，不要部署。');
-    expect(intent).toContain('修吧。');
-    expect(intent).not.toContain('assistant handoff');
+    expect(intent).toEqual({ earlierUserMessages: ['修复伙伴未读状态，不要部署。'], currentUserMessage: '修吧。' });
+  });
+
+  it('persists empty plugin authorship rather than promoting plugin instructions', async () => {
+    const { deps } = createDeps();
+    await createMakerSendTransaction(deps).sendToAgentAccepted('session-1', 'Plugin instructions', undefined, {
+      [AUTO_REVIEW_SOURCE_CONTENT]: '',
+      persistUserMessage: { clientId: 'plugin-input', content: 'Plugin instructions', delivery: 'turn' },
+    });
+    expect(deps.createDbMessage).toHaveBeenCalledWith('session-1', expect.objectContaining({
+      clientId: 'plugin-input',
+      agentMeta: expect.objectContaining({ autoReviewUserText: '', delivery: 'turn' }),
+    }), undefined);
   });
 
   it.each(['Earlier authorization; do not deploy.', ''])('preserves restored intent for wire-only recovery: %s', async (intent) => {
@@ -2607,7 +2758,7 @@ describe('session-agent-switch handoff injection', () => {
       // 切换已关闭旧引擎 live session → drain 时拿不到,走 lazy-create。
       getSession: vi.fn(() => {
         callOrder.push('getSession');
-        return undefined;
+        return newEngineSession ?? undefined;
       }),
       applyPendingAgentSwitch: vi.fn(async () => {
         callOrder.push('applySwitch');

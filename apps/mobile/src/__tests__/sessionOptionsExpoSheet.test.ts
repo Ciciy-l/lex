@@ -39,6 +39,24 @@ vi.mock('@expo/ui/swift-ui', () => ({
   Group: 'Group',
 }));
 vi.mock('@expo/ui/swift-ui/modifiers', () => ({
+  ...Object.fromEntries(
+    [
+      'accessibilityAddTraits',
+      'accessibilityLabel',
+      'contentShape',
+      'buttonStyle',
+      'disabled',
+      'font',
+      'foregroundStyle',
+      'onGeometryChange',
+      'listRowInsets',
+      'listRowBackground',
+      'presentationDetents',
+      'interactiveDismissDisabled',
+      'scrollContentBackground',
+    ].map((name) => [name, (params: unknown) => ({ modifier: name, params })]),
+  ),
+  shapes: { rectangle: () => ({ shape: 'rectangle' }) },
   frame: (params: unknown) => ({ modifier: 'frame', params }),
   padding: (params: unknown) => ({ modifier: 'padding', params }),
   presentationDragIndicator: (visibility: unknown) => ({
