@@ -622,12 +622,39 @@ describe('mobile native app config', () => {
     const paths: string[] = metroConfig.resolver.nodeModulesPaths;
     // path.join 产物在 Windows 上是反斜杠,比较前统一归一为 POSIX 分隔符(规则 15)。
     const posix = (p: string) => p.split(sep).join('/');
-    for (const packageName of ['auth-client', 'device-link', 'maker-shared', 'model-providers']) {
+    for (const packageName of ['auth-client', 'device-link', 'device-link-protocol', 'maker-shared', 'model-providers', 'voice-input-core']) {
       expect(paths.some((p) => posix(p).endsWith(`packages/${packageName}/node_modules`))).toBe(true);
     }
     // 追加在 app / workspace 根之后:常规依赖命中顺序不变(精确断言前两位,防止顺序被换)。
     expect(paths[0]).toBe(join(appDir, 'node_modules'));
     expect(paths[1]).toBe(join(resolve(appDir, '../..'), 'node_modules'));
+  });
+
+  it('resolves protocol and voice ESM .js imports to existing TypeScript sources in Metro', () => {
+    const metroConfigPath = require.resolve('../../metro.config.js');
+    const metroConfig = require(metroConfigPath);
+    const root = resolve(dirname(metroConfigPath), '../..');
+    for (const [packageName, importer, dependency] of [
+      ['device-link-protocol', 'protocol.ts', 'sharedTask'],
+      ['voice-input-core', 'index.ts', 'VoiceInputController'],
+    ]) {
+      const originModulePath = join(root, 'packages', packageName, 'src', importer);
+      const expectedPath = join(dirname(originModulePath), `${dependency}.ts`);
+      expect(existsSync(expectedPath)).toBe(true);
+      const context = {
+        originModulePath,
+        resolveRequest: (_context: unknown, moduleName: string, platform: string) => {
+          expect(platform).toBe('android');
+          // A clean checkout has TS sources, not adjacent compiled .js files.
+          const filePath = resolve(dirname(originModulePath), moduleName);
+          if (!existsSync(filePath)) throw new Error(`Missing module: ${moduleName}`);
+          return { type: 'sourceFile', filePath };
+        },
+      };
+      expect(metroConfig.resolver.resolveRequest(context, `./${dependency}.js`, 'android')).toEqual({
+        type: 'sourceFile', filePath: expectedPath,
+      });
+    }
   });
 
   it('wires first-party Apple, public Google, and the minimal official WeChat bridge', () => {
