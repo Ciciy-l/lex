@@ -8,6 +8,7 @@ on:
       - 'pnpm-lock.yaml'
       - 'scripts/build-lex-android.mjs'
       - 'scripts/shared/lex-mobile-config.cjs'
+      - 'scripts/shared/android-certificate.mjs'
       - 'scripts/__tests__/lex-mobile-release.test.mjs'
       - 'website/**'
       - 'config/**'

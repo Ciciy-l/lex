@@ -2,10 +2,23 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
+import { verifyAndroidCertificate } from '../shared/android-certificate.mjs';
 import YAML from 'yaml';
 import { androidVersionCode, lexMobileConfig } from '../shared/lex-mobile-config.cjs';
 
 const read = (name) => fs.readFileSync(new URL('../../' + name, import.meta.url), 'utf8');
+
+test('certificate check accepts SDK-ranged signers and rejects missing or different certificates', () => {
+  const digest = 'ab'.repeat(32);
+  for (const label of ['Signer #1', 'Signer (minSdkVersion=28, maxSdkVersion=2147483647)', 'Signer (minSdkVersion=33 (dev release=true), maxSdkVersion=2147483647)']) {
+    const output = `${label} certificate SHA-256 digest: ${digest}`;
+    assert.doesNotThrow(() => verifyAndroidCertificate(output, digest.toUpperCase()));
+    assert.throws(() => verifyAndroidCertificate(output, 'cd'.repeat(32)), /does not match/);
+  }
+  assert.throws(() => verifyAndroidCertificate(`Signer #1 public key SHA-256 digest: ${digest}`, digest), /No signer/);
+  assert.throws(() => verifyAndroidCertificate('', digest), /No signer/);
+  assert.throws(() => verifyAndroidCertificate(`Signer #1 certificate SHA-256 digest: ${digest}\nSigner #2 certificate SHA-256 digest: ${'cd'.repeat(32)}`, digest), /does not match/);
+});
 
 test('Android versions increase through prereleases, stable and later versions', () => {
   const versions = ['0.1.97-alpha.1', '0.1.97-alpha.29', '0.1.97-beta.1', '0.1.97-beta.29', '0.1.97-rc.1', '0.1.97-rc.29', '0.1.97', '0.1.98-alpha.1', '0.2.0', '1.0.0'];
