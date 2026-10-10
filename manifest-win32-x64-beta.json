@@ -1,16 +1,16 @@
 {
   "app": {
-    "version": "0.1.3-rc.3",
-    "releaseNotes": "Lex 0.1.3-rc.3",
+    "version": "0.1.4-rc.1",
+    "releaseNotes": "Lex 0.1.4-rc.1",
     "hotfix": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.3-rc.3/Lex-0.1.3-rc.3-Windows-x64-Auto-Update.zip",
-      "sha256": "60be898d9516647c28367299603e6a4b7eb184341a6a731738e1c36dd089e8e8",
-      "size": 323305646
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.4-rc.1/Lex-0.1.4-rc.1-Windows-x64-Auto-Update.zip",
+      "sha256": "0024ce095da886ecf8256822bf8b7911d17410c4c22f9e1e8b500b73e2eafe47",
+      "size": 347001588
     },
     "installer": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.3-rc.3/Lex-0.1.3-rc.3-Windows-x64-Setup.exe",
-      "sha256": "55a05643bd245dee47a09fb9e6d6fc30f2aeb487bdca3cb5c8cc76003460d869",
-      "size": 238436426
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.4-rc.1/Lex-0.1.4-rc.1-Windows-x64-Setup.exe",
+      "sha256": "19e36c441a954ca2bc90640325d80d5b9b4c898ad1451557a7cc47a5b3028624",
+      "size": 261981989
     }
   },
   "claudeCode": {
@@ -28,10 +28,10 @@
     "binarySha256": "83751f15cb6a0a7b97df67752c001e3fe1c20e18ffbfec3ff63567296205eb6c"
   },
   "codexPackage": {
-    "version": "0.153.4",
-    "file": "https://hotfix.cindy.app/cindy/codex-package/0.153.4/win32-x64/codex-package.dist.tar.gz",
-    "sha256": "cd38e60cf090066c58fcfa457318ac1efe9ac9af308acbd3fe83fa01a602902a",
-    "size": 141491178
+    "version": "0.159.2",
+    "file": "https://github.com/openai/codex/releases/download/rust-v0.159.2/codex-package-x86_64-pc-windows-msvc.tar.gz",
+    "sha256": "a7ab591043d99e8a88d0c2bebf15f810b15599a71148c4af944a755af3c71eef",
+    "size": 156614559
   },
   "pi": {
     "version": "0.84.4",

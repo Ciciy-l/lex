@@ -1,0 +1,56 @@
+{
+  "version": "0.1.4-rc.1",
+  "date": "2026-10-09",
+  "contentByLocale": {
+    "zh-CN": {
+      "intro": "Lex 0.1.4-rc.1 预发布版",
+      "topics": [
+        {
+          "id": "release",
+          "title": "桌面与 Android",
+          "text": "适配 Cindy v0.1.97 的本机模型、壁纸、伙伴工作台及连接和稳定性改进，保留 Lex OMP 与工作区扩展。新增独立签名 Android APK 和官网下载二维码。目前手动下载 APK 升级，iOS 暂未提供安装包；部分移动端品牌仍沿用 Cindy，真机安装尚待验证。后续按需吸收上游修复，不再每周自动同步。"
+        }
+      ]
+    },
+    "zh-TW": {
+      "intro": "Lex 0.1.4-rc.1 預發佈版",
+      "topics": [
+        {
+          "id": "release",
+          "title": "桌面與 Android",
+          "text": "適配 Cindy v0.1.97 的本機模型、桌布、夥伴工作台及連線與穩定性改善，保留 Lex OMP 與工作區擴充。新增獨立簽名 Android APK 和官網下載 QR Code。目前手動下載 APK 升級，iOS 尚未提供安裝套件；部分行動端品牌仍沿用 Cindy，實機安裝尚待驗證。後續按需採用上游修復，不再每週自動同步。"
+        }
+      ]
+    },
+    "en": {
+      "intro": "Lex 0.1.4-rc.1 preview",
+      "topics": [
+        {
+          "id": "release",
+          "title": "Desktop and Android",
+          "text": "Adapts local models, wallpapers, the companion workbench and connection/stability improvements from Cindy v0.1.97 while preserving Lex OMP and workspace extensions. Adds a separately signed Android APK and website download QR. APK upgrades are manual; no iOS installer is provided. Some mobile branding remains Cindy and device installation validation is pending. Upstream fixes will be adopted selectively instead of weekly automatic synchronization."
+        }
+      ]
+    },
+    "ja": {
+      "intro": "Lex 0.1.4-rc.1 プレビュー",
+      "topics": [
+        {
+          "id": "release",
+          "title": "デスクトップと Android",
+          "text": "Cindy v0.1.97 のローカルモデル、壁紙、パートナーのワークベンチ、接続と安定性の改善を取り込み、Lex OMP とワークスペース拡張を維持します。独立署名の Android APK とダウンロード QR を追加しました。APK 更新は手動です。iOS は未提供で、一部のモバイル表示は Cindy のままです。実機インストールは未検証です。毎週の自動同期を終了し、必要な上流修正を選択して採用します。"
+        }
+      ]
+    },
+    "ko": {
+      "intro": "Lex 0.1.4-rc.1 미리 보기",
+      "topics": [
+        {
+          "id": "release",
+          "title": "데스크톱 및 Android",
+          "text": "Cindy v0.1.97의 로컬 모델, 배경 화면, 파트너 작업대, 연결 및 안정성 개선을 적용하고 Lex OMP와 작업 공간 확장을 유지합니다. 독립 서명 Android APK와 다운로드 QR을 추가했습니다. APK 업데이트는 수동이며 iOS는 아직 제공하지 않습니다. 일부 모바일 브랜드 표시는 Cindy로 유지되며 실제 기기 설치는 아직 검증하지 않았습니다. 매주 자동 동기화 대신 필요한 업스트림 수정만 반영합니다."
+        }
+      ]
+    }
+  }
+}

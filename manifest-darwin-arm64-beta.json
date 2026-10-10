@@ -1,16 +1,16 @@
 {
   "app": {
-    "version": "0.1.3-rc.3",
-    "releaseNotes": "Lex 0.1.3-rc.3",
+    "version": "0.1.4-rc.1",
+    "releaseNotes": "Lex 0.1.4-rc.1",
     "hotfix": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.3-rc.3/Lex-0.1.3-rc.3-macOS-Apple-Silicon-Auto-Update.zip",
-      "sha256": "8760a947bbcc5d3736485c4c4ce9d201920f032d1cf556cef4cecff0c7f27049",
-      "size": 254975002
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.4-rc.1/Lex-0.1.4-rc.1-macOS-Apple-Silicon-Auto-Update.zip",
+      "sha256": "d3110f02b999636086507356e97553c02e50f63dd29eb5e8f3a5bd7df72b7dfa",
+      "size": 278721475
     },
     "installer": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.3-rc.3/Lex-0.1.3-rc.3-macOS-Apple-Silicon.dmg",
-      "sha256": "650621088676da88a02c1652f8d125e4a8edd16996313a5133d735fa20fd0cc6",
-      "size": 280966905
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.4-rc.1/Lex-0.1.4-rc.1-macOS-Apple-Silicon.dmg",
+      "sha256": "601ce86df8bafc795daef4de905be76e252cb8120e02c4fda9f5ab66d893602a",
+      "size": 304835506
     }
   },
   "claudeCode": {
@@ -28,10 +28,10 @@
     "binarySha256": "1da3f4e0e96028b8a771814293c3033dafd1971f943f6c7e79b0897fe705f590"
   },
   "codexPackage": {
-    "version": "0.153.4",
-    "file": "https://hotfix.cindy.app/cindy/codex-package/0.153.4/darwin-arm64/codex-package.dist.tar.gz",
-    "sha256": "e0bd608d90f775cd354e4c1615c922b6101d212499072f0ae54a9671f3aedbd6",
-    "size": 115670239
+    "version": "0.159.2",
+    "file": "https://github.com/openai/codex/releases/download/rust-v0.159.2/codex-package-aarch64-apple-darwin.tar.gz",
+    "sha256": "38aaf6dce63099fd10988948d03bbc6c0474253aef6961fcbe60f8d154b39101",
+    "size": 129522674
   },
   "pi": {
     "version": "0.84.4",
