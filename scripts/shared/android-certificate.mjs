@@ -8,3 +8,14 @@ export function verifyAndroidCertificate(output, expected) {
     throw new Error('APK signing certificate does not match the pinned Lex identity');
   }
 }
+import { X509Certificate, createHash } from 'node:crypto';
+
+export function verifyAndroidCertificatePem(output, expected) {
+  if (!/^[a-f0-9]{64}$/i.test(expected ?? '')) throw new Error('Invalid pinned Android certificate SHA-256');
+  const certificates = output.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) ?? [];
+  if (!certificates.length) throw new Error('No PEM certificate found in apksigner output');
+  for (const pem of certificates) {
+    const digest = createHash('sha256').update(new X509Certificate(pem).raw).digest('hex');
+    if (digest !== expected.toLowerCase()) throw new Error('APK signing certificate does not match the pinned Lex identity');
+  }
+}

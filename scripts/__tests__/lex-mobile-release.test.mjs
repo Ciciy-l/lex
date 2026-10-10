@@ -2,11 +2,23 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
-import { verifyAndroidCertificate } from '../shared/android-certificate.mjs';
+import { verifyAndroidCertificate, verifyAndroidCertificatePem } from '../shared/android-certificate.mjs';
+import { rootCertificates } from 'node:tls';
+import { X509Certificate, createHash } from 'node:crypto';
 import YAML from 'yaml';
 import { androidVersionCode, lexMobileConfig } from '../shared/lex-mobile-config.cjs';
 
 const read = (name) => fs.readFileSync(new URL('../../' + name, import.meta.url), 'utf8');
+
+test('PEM verification hashes certificate DER and rejects wrong, missing and mixed certificates', () => {
+  // Public CA certificates used only as parser fixtures, not APK signing identities.
+  const pem = rootCertificates[0];
+  const digest = createHash('sha256').update(new X509Certificate(pem).raw).digest('hex');
+  assert.doesNotThrow(() => verifyAndroidCertificatePem(`Verifies\n${pem}`, digest));
+  assert.throws(() => verifyAndroidCertificatePem(pem, '00'.repeat(32)), /does not match/);
+  assert.throws(() => verifyAndroidCertificatePem('Verifies', digest), /No PEM/);
+  assert.throws(() => verifyAndroidCertificatePem(pem + '\n' + rootCertificates[1], digest), /does not match/);
+});
 
 test('certificate check accepts SDK-ranged signers and rejects missing or different certificates', () => {
   const digest = 'ab'.repeat(32);
