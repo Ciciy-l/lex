@@ -4,7 +4,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { patchBuildGradleSigning, patchGradlePropertiesMemory } from '../apps/mobile/scripts/lib/android-local.mjs';
 import mobileConfig from './shared/lex-mobile-config.cjs';
-import { verifyAndroidCertificate } from './shared/android-certificate.mjs';
+import { verifyAndroidCertificatePem } from './shared/android-certificate.mjs';
+import { createHash } from 'node:crypto';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const mobile = path.join(root, 'apps/mobile');
@@ -53,11 +54,25 @@ const metadata = sdkTool('aapt', ['dump', 'badging', apk]);
 if (!metadata.includes(`package: name='${mobileConfig.ANDROID_PACKAGE}' versionCode='${versionCode}' versionName='${version}'`)) throw new Error('APK installation identity/version mismatch');
 if (!metadata.includes("application-label:'Lex'")) throw new Error('APK application label is not Lex');
 if (metadata.includes('application-debuggable')) throw new Error('Release APK must not be debuggable');
+// Invoke the Java CLI directly, avoiding SDK launcher wrapper differences.
+const signer = (args) => execFileSync('java', ['-jar', path.join(toolsRoot, toolVersion, 'lib/apksigner.jar'), ...args], { encoding: 'utf8' });
+const verify = (file, fingerprint) => {
+  const certificate = signer(['verify', '--verbose', '--print-certs', '--print-certs-pem', file]);
+  console.log(`Android build-tools ${toolVersion}:\n${certificate}`); // Public certificate only.
+  verifyAndroidCertificatePem(certificate, fingerprint);
+};
 if (signed) {
-  const certificate = sdkTool('apksigner', ['verify', '--print-certs', apk]);
-  verifyAndroidCertificate(certificate, process.env.LEX_ANDROID_CERT_SHA256);
+  verify(apk, process.env.LEX_ANDROID_CERT_SHA256);
   const dist = path.join(root, 'dist/android');
   mkdirSync(dist, { recursive: true });
   copyFileSync(apk, path.join(dist, `Lex-${version}-Android.apk`));
+} else {
+  // Exercise the same real signer/verification path in PR CI with Expo's disposable
+  // debug fixture key. This APK stays on the runner and is never uploaded.
+  const fixtureKey = path.join(mobile, 'android/app/debug.keystore');
+  const fixtureApk = path.join(process.env.RUNNER_TEMP, 'lex-signing-check.apk');
+  const der = execFileSync('keytool', ['-exportcert', '-keystore', fixtureKey, '-storepass', 'android', '-alias', 'androiddebugkey']);
+  signer(['sign', '--ks', fixtureKey, '--ks-key-alias', 'androiddebugkey', '--ks-pass', 'pass:android', '--key-pass', 'pass:android', '--out', fixtureApk, apk]);
+  verify(fixtureApk, createHash('sha256').update(der).digest('hex'));
 }
 console.log(`Lex Android ${version}: ${signed ? 'signed APK verified' : 'unsigned CI compilation verified (not distributed)'}`);
