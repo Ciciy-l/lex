@@ -6043,7 +6043,7 @@
       "memoryBusy": "OMP 실행 환경이 이 메모리를 사용 중입니다. 관련 Agent 세션을 닫고 다시 시도하세요.",
       "subagentModel": "기본 하위 에이전트 모델",
       "inheritModel": "상위 작업 모델 상속",
-      "subagentDescription": "상위 세션의 공급자와 API 경로에서 사용할 수 있는 모델만 선택하며, 그 외에는 상위 모델을 상속합니다. 이름이 있는 Agent의 명시적 모델 설정이 우선합니다. 숫자를 비우면 기본값을 사용합니다. 동시 실행 수 0은 무제한입니다.",
+      "subagentDescription": "상위 세션의 제공자와 API 경로에서 사용할 수 있는 모델만 선택하며, 그 외에는 상위 모델을 상속합니다. 이름이 있는 Agent의 명시적 모델 설정이 우선합니다. 숫자를 비우면 기본값을 사용합니다. 동시 실행 수 0은 무제한입니다.",
       "maxConcurrency": "하위 에이전트 최대 동시 실행 수",
       "maxRecursionDepth": "하위 에이전트 최대 중첩 깊이",
       "compactionEnabled": "OMP 자동 컨텍스트 압축",
