@@ -49,6 +49,8 @@ import {
   registerListSessionsTool,
   registerListSessionQueueTool,
   registerUpdateSessionQueuedMessageTool,
+  registerSteerSessionQueuedMessageTool,
+  registerMoveSessionQueuedMessageTool,
   registerCancelSessionQueuedMessageTool,
   registerSteerSessionTool,
   registerStopSessionTurnTool,
@@ -860,6 +862,8 @@ export function createXdtHelperMcpServer(
     };
     registerUpdateSessionQueuedMessageTool(registry, controlDeps);
     registerCancelSessionQueuedMessageTool(registry, controlDeps);
+    registerSteerSessionQueuedMessageTool(registry, controlDeps);
+    registerMoveSessionQueuedMessageTool(registry, controlDeps);
     registerSteerSessionTool(registry, controlDeps);
     registerStopSessionTurnTool(registry, controlDeps);
     registerGetSessionRuntimeTool(registry, controlDeps);

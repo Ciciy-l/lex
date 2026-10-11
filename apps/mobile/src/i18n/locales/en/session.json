@@ -6,6 +6,7 @@
     "dismissTitle": "Dismiss past failure notice"
   },
   "common": {
+    "modelHiddenReselect": "{{model}} is turned off. Choose an enabled model before sending.",
     "cancel": "Cancel",
     "delete": "Delete",
     "openContextPanel": "Open context panel",
@@ -208,6 +209,7 @@
     "retry": "Retry",
     "firstMessageNotSent": "The first message wasn't sent. It remains saved with this task; retry creation or return to editing.",
     "attachmentsNotCarriedBack": "{{count}} attachment(s) couldn't be brought back — please add them again.",
+    "localStorageFull": "Cindy's local storage on this phone is full, so the message couldn't be saved. Please try again.",
     "commandWaitsForSession": "The session is still being created — this command needs the session to be ready. Please try again shortly.",
     "locateMessageNotFound": "Couldn't find the message to jump to.",
     "shareNoLocalImage": "Couldn't get the local image file",

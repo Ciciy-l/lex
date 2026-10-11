@@ -30,6 +30,26 @@ SSH 保持仅展示经过存在性复核的工具产物，不把 Desktop 消息�
 本次覆盖 Desktop 设备互联；SSH 任务没有本机历史变更快照，仍不显示该卡片；
 Mobile 未新增卡片入口。服务端无需改动。
 
+## 远程桌面画质档位
+
+`offer.settings` 的画质由码率改为档位 `quality: "auto" | "saver" | "hd"`（自动／省流／高清）。
+控制端只表达意图，具体的码率上限、降级取舍（`auto`/`saver` 先降分辨率保帧数，`hd` 锁分辨率
+降帧数）、截屏分辨率与 JPEG 预算由被控端 `apps/desktop/src/shared/remoteDesktopQuality.ts`
+决定，调整数值无需两端同时发版。
+
+新控制端经 `remoteDesktopVideoSettingsWire` 同时发送档位与旧 `bitrate`（auto→0、saver→2M、
+hd→20M）：旧被控端只校验 `bitrate` 并忽略 `quality`，无需新增能力声明。新被控端优先读取
+已知档位；档位缺失或不认识时按旧 `bitrate` 换算（0→auto、2M→saver、8M／20M→hd），因此旧
+控制端与未来新增档位都能降级连接。两者都无效时仍返回 `INVALID_REQUEST`。此变更不改 relay、
+不新增 channel，服务端无需改动。Desktop 远程桌面窗口的主进程会先用 `parseRemoteDesktopRequest`
+校验 renderer 请求（解析结果只保留档位），转发给被控端前必须再经 `remoteDesktopVideoSettingsWire`
+补回旧 `bitrate`；否则旧被控端对每次 offer 都返回 `INVALID_REQUEST`，视频退回截图中转。
+
+被控端在应用控制端 offer 前，仅为带 `settings` 的请求给视频编解码追加 `x-google-start-bitrate` /
+`x-google-min-bitrate` / `x-google-max-bitrate`，避免近静止画面因发送量过低导致带宽估计塌到
+百 kbps 级、分辨率被锁在低档。这些是 libwebrtc 对发送端生效的本地提示，不改变协商出的编解码；
+不识别它们的控制端不受影响，旧控制端（无 `settings`）的 offer 原样使用。
+
 ### 可见历史优先读取
 
 `local-db:messages:view` 的可选 `{ lazyDetails: true }` 启用轻量历史投影：
@@ -396,3 +416,18 @@ Mobile 原生 fingerprint 输入，服务端无需改动。
 任务迁移业务通道的 `move-project` action 在任务所属宿主复用项目移动校验与更新，
 仅接受任务 ID 和明确的目录（null 表示移到对话）。不开放远程 sessions 原始 patch；
 旧宿主拒绝未知 action，不回退到控制端本机执行。
+
+## 远程模型目录按显示设置过滤
+
+`maker:provider:list` 在执行主机完成既有授权和账号快照读取后，先按同一快照中的
+`modelVisibilityOverrides` 与模型 `defaultEnabled` 过滤，再通过原有响应格式传输。
+判定复用共享 `isModelVisible`：用户显式开关优先，否则跟随目录默认；不限制已开启模型的
+数量、不修改用户偏好。聊天模型按 agent/provider/model 区分，媒体模型沿用主机的显示设置键。
+未开启模型的详情不再传给控制端；供应商结构、连接状态、顺序及开启模型的能力配置保留。
+投影中的既有 `modelVisibilityOverrides` 补齐有效开关布尔值（含默认关闭项），不回写偏好。
+Mobile 据此区分已关闭与已删除的旧选择：保留任务或草稿原模型身份，发送前提示重选，
+不自动替换模型、不清空草稿，也不为旧选择重新传输关闭模型的详情。
+
+这是执行主机的投影修复，旧 Mobile 和远控 Desktop 无需新增能力协商即可接收。
+不增加分页、客户端重组或重试，不提高传输大小上限；本机 Desktop 设置仍读取完整目录。
+“关闭后必须重选”的提示与发送前检查随 Mobile 更新；旧版控制端仍沿用各自既有选择处理。

@@ -30,7 +30,7 @@ export interface HomeViewPreferencePatch {
 }
 
 export async function readHomeViewPreferences(): Promise<HomeViewPreferences> {
-  const raw = await AsyncStorage.getItem(STORAGE_KEY).catch(() => null);
+  const raw = await AsyncStorage.getItem(STORAGE_KEY);
   if (!raw) return emptyPreferences();
   try {
     return normalizeStoredPreferences(JSON.parse(raw));

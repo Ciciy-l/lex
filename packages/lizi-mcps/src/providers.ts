@@ -444,7 +444,7 @@ export function createLiziMcpProviders(
         }),
       }),
       // OMP cannot consume an in-process MCP SDK server.  It receives this
-      // same 18-tool Orca manifest over its host-owned RPC bridge instead.
+      // same 20-tool Orca manifest over its host-owned RPC bridge instead.
       toOmpRpcHostTools: (ctx) => createOrcaOmpRpcHostTools(opts.orca!, {
         agentKind: 'omp',
         workingDir: ctx.workingDir,

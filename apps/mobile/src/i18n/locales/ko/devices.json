@@ -299,6 +299,8 @@
       "noDevice": "사용할 수 있는 기기가 없습니다. 데스크톱에서 원격 제어를 켠 후 다시 동기화하세요."
     },
     "alert": {
+      "cacheSaveFailed": "오프라인 캐시를 저장하지 못했습니다",
+      "cacheSaveFailedDetail": "휴대전화의 남은 저장 공간을 확인해 주세요. 온라인에서는 계속 사용할 수 있지만 일부 콘텐츠는 오프라인에서 볼 수 없을 수 있습니다.",
       "actionFailed": "작업 실패",
       "renameFailed": "이름 변경 실패",
       "deleteTitle": "세션을 삭제할까요?",

@@ -575,10 +575,14 @@ export default function SettingsScreen() {
     }
   }, [auth.apiFetch, pushBusy, pushEnabled, t]);
 
-  const debugDisclosure = useListDisclosureTransition();
+  const debugDisclosureMotionEnabled = Platform.OS !== 'android';
+  const debugDisclosure = useListDisclosureTransition({
+    motionEnabled: debugDisclosureMotionEnabled,
+  });
+  const runDebugDisclosure = debugDisclosure.run;
   const toggleDebug = useCallback(() => {
-    debugDisclosure.run(() => setDebugExpanded((value) => !value));
-  }, [debugDisclosure.run]);
+    runDebugDisclosure(() => setDebugExpanded((value) => !value));
+  }, [runDebugDisclosure]);
 
   // beta 测试渠道开关:落盘即时生效,但 manifest 通道只在下次冷启动/后台轮询切换。
   // 打开后引导用户手动重启,让下次启动的更新检查前就切到 beta。
@@ -729,7 +733,10 @@ export default function SettingsScreen() {
       />
 
       <ScrollView {...simpleScrollInsetProps} contentContainerStyle={styles.content} testID="settings.scroll">
-        <ListDisclosureScope controller={debugDisclosure.controller}>
+        <ListDisclosureScope
+          controller={debugDisclosure.controller}
+          motionEnabled={debugDisclosureMotionEnabled}
+        >
         {/* 账号头部:身份 + 连接状态一次性呈现,下面分组不再重复 */}
         <View style={styles.headerCard} testID="settings.accountHeader">
           <MobileUserAvatar imageUrl={auth.user?.avatar} name={overview.header.name} size="large" />

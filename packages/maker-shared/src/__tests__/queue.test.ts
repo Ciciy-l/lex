@@ -185,7 +185,10 @@ describe('shared queue presentation model', () => {
       },
       queueLength: 3,
     });
-    expect(busyOrca.actions.edit.disabledReason).toBe('协同消息由桌面端编排，手机端只读显示。');
+    expect(busyOrca.actions.edit).toEqual({
+      disabled: true,
+      disabledReason: '队列操作同步中，完成后再继续操作。',
+    });
   });
 
   it('explains steering, edit-lock, interaction-lock, and Orca row states', () => {
@@ -239,9 +242,14 @@ describe('shared queue presentation model', () => {
       },
       queueLength: 2,
     });
+    // 对齐桌面:协同消息不能编辑,但可以插话、调整顺序和删除。
     expect(orca.title).toBe('协同队列 2');
-    expect(orca.hint).toBe('协同消息由桌面端编排，手机端只读显示。');
-    expect(orca.actions.steer.disabledReason).toBe('协同消息由桌面端编排，手机端只读显示。');
+    expect(orca.hint).toBeNull();
+    expect(orca.actions.steer).toMatchObject({ disabled: false, disabledReason: null });
+    expect(orca.actions.edit.disabledReason).toBe('协同消息不支持编辑。');
+    expect(orca.actions.remove.disabled).toBe(false);
+    expect(orca.actions.moveUp.disabled).toBe(false);
+    expect(orca.actions.moveDown).toMatchObject({ disabled: true, disabledReason: '已经是队列最后一条。' });
   });
 
   it('locks edit and steer (but keeps remove and reorder) for synthetic trigger rows', () => {

@@ -4491,6 +4491,8 @@ describe('Bot Session task end-to-end runtime', () => {
         queue[index] = next; return true;
       },
       removeQueuedMessage: (_id, clientId) => { queue = queue.filter(item => item.clientId !== clientId); return true; },
+      steerQueuedMessage: async () => ({ kind: 'gone' }),
+      moveQueuedMessage: () => null,
     });
     const runtime = createDelegationRuntime({ taskControl: true, taskQueue: {
       inspect: async (_id, caller) => queue.filter(item => authorizeSessionQueueItem(item, caller).ok)

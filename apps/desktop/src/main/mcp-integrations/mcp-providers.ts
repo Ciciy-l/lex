@@ -562,6 +562,8 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
       sessionControl: {
         updateQueuedMessage: wrap((service, params) => service.updateSessionQueuedMessage(params)),
         cancelQueuedMessage: wrap((service, params) => service.cancelSessionQueuedMessage(params)),
+        steerQueuedMessage: wrap((service, params) => service.steerSessionQueuedMessage(params)),
+        moveQueuedMessage: wrap((service, params) => service.moveSessionQueuedMessage(params)),
         steerSession: wrap((service, params) => service.steerSession(params)),
         stopSessionTurn: wrap((service, params) => service.stopSessionTurn(params)),
         getSessionRuntime: wrap((service, params) => service.getSessionRuntime(params)),
@@ -902,6 +904,8 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
       updateWorkerQueuedMessage: wrap((s, params) => s.updateWorkerQueuedMessage(params)),
       cancelWorkerQueuedMessage: wrap((s, params) => s.cancelWorkerQueuedMessage(params)),
       mergeWorkerQueuedMessages: wrap((s, params) => s.mergeWorkerQueuedMessages(params)),
+      steerWorkerQueuedMessage: wrap((s, params) => s.steerWorkerQueuedMessage(params)),
+      moveWorkerQueuedMessage: wrap((s, params) => s.moveWorkerQueuedMessage(params)),
       idleWorker: wrap((s, params) => s.idleWorker(params)),
       endTeam: wrap((s, params) => s.endTeam(params)),
       archiveWorker: wrap((s, params) => s.archiveWorker(params)),

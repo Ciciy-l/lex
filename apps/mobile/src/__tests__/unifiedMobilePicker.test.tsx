@@ -527,3 +527,15 @@ it('does not start preference writes after selection completes for a closed pane
   expect(test.view.options).toBeUndefined();
   expect(test.view.error).toBeNull();
 });
+
+it('explains a closed current model without changing it and still allows choosing a replacement', async () => {
+  const { onSelect } = await mount(undefined, {
+    providersReady: true,
+    modelVisibilityOverrides: { 'codex:account:codex/model': false },
+  });
+  expect(test.view.error).toBe('session.common.modelHiddenReselect');
+  expect(onSelect).not.toHaveBeenCalled();
+  expect(test.view.busy).toBe(false);
+  await act(async () => test.view.onSelect(test.view.groups[0].rows[0]));
+  expect(onSelect).toHaveBeenCalledOnce();
+});
