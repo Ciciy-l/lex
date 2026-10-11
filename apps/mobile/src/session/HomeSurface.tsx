@@ -1,9 +1,6 @@
-<<<<<<< HEAD
 import { useSharedTasks } from '@/device-link/useSharedTasks';
 import { MountOnFirstOpen } from './MountOnFirstOpen';
-=======
 import { getMobileAuthOwner, isMobileAuthOwnerCurrent } from '@/auth/authOwnerGeneration';
->>>>>>> 2022be6b9 (fix(mobile): 统一消息文件缓存并提示存储失败)
 import type { HomeMode } from './homeViewPreferenceStore';
 import { GlassView } from "expo-glass-effect";
 import { useLiquidGlassAvailable } from "@/session/useLiquidGlassAvailable";

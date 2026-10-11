@@ -51,18 +51,11 @@ export function saveHomeViewPreferences(patch: HomeViewPreferencePatch): Promise
 }
 
 async function writeHomeViewPreferences(patch: HomeViewPreferencePatch): Promise<void> {
-<<<<<<< HEAD
   // A failed read (disk/lock) must reject so we do not replace a still-valid
   // blob with defaults. Corrupt JSON is different: keeping it makes every
   // computer switch alert "couldn't save" forever.
   const raw = await AsyncStorage.getItem(STORAGE_KEY);
   const current = raw === null ? emptyPreferences() : parseStoredPreferences(raw);
-=======
-  // A failed read (including corrupt JSON) is not an empty preference record.
-  // Preserve it rather than replacing unrelated choices with defaults.
-  const raw = await AsyncStorage.getItem(STORAGE_KEY);
-  const current = raw === null ? emptyPreferences() : normalizeStoredPreferences(JSON.parse(raw));
->>>>>>> 2022be6b9 (fix(mobile): 统一消息文件缓存并提示存储失败)
   const next: HomeViewPreferences = {
     groupByProject: patch.groupByProject ?? current.groupByProject,
     groupDialogue: patch.groupDialogue ?? current.groupDialogue,
