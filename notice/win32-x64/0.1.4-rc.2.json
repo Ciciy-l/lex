@@ -1,0 +1,306 @@
+{
+  "version": "0.1.4-rc.2",
+  "date": "2026-10-11",
+  "contentByLocale": {
+    "zh-CN": {
+      "intro": "Lex 0.1.4-rc.2 是在 rc.1 基础上的稳定性预发布版。本轮选择性吸收 Cindy 截至 v0.1.101 的修复，重点改善远程连接、长任务历史、手机缓存和 Orca 协同，保留 Lex 的 OMP 与工作区扩展，不引入新的伙伴功能。",
+      "topics": [
+        {
+          "id": "remote",
+          "title": "远程恢复与长任务历史",
+          "text": "改善手机挂起、返回前台及转发链路停滞后的恢复，减少设备仍在线却请求无响应的情况。修复长任务历史分页和扫描范围导致的记录缺失；远程新建任务会衔接发送首条消息，减少创建成功后消息留在输入框的问题。建议桌面端与 Android 一起更新。"
+        },
+        {
+          "id": "orca",
+          "title": "Orca 排队与插话",
+          "text": "Lead 与 Worker 的消息继续默认排队，发送方可明确选择向正在运行的本机任务插话；目标不支持或暂时无法接收时，会按队列规则处理并返回原因。补齐队列查看、插话和排序能力，并适配 OMP；继续尊重用户暂停、权限确认与消息归属，不让插话另开一轮或重复投递。"
+        },
+        {
+          "id": "loops",
+          "title": "减少工具循环误判",
+          "text": "改进 Claude Code、Codex、Pi、OMP 的循环检测，区分合理等待外部进度与反复无进展的调用。疑似循环可交由现有辅助模型复核，放行后继续工作；复核失败、不可用或超时仍会停止。复核次数与等待时间有上限，发送前对工具摘要中的常见敏感信息做脱敏；OMP 的流式片段不会被重复计数。"
+        },
+        {
+          "id": "lifecycle",
+          "title": "定时任务与目标模式",
+          "text": "修复应用重启后定时任务已排队却无法正常恢复的情况，恢复过程保留原消息身份与结算关系。目标模式在新输入或插话到来后隔离上一轮的迟到结束信号，避免旧结果误改当前目标状态或触发不合时宜的继续执行。"
+        },
+        {
+          "id": "interactions",
+          "title": "清理过期问题和提醒",
+          "text": "改善远程权限确认、提问及任务状态同步。已解决的问题不会因迟到消息重新变成待处理，过期提问和已处理提醒会正确清理；在手机与桌面之间切换操作时，减少残留卡片与状态不一致。"
+        },
+        {
+          "id": "cache",
+          "title": "手机缓存与 Android 容量",
+          "text": "消息缓存改用应用私有文件，并迁移旧缓存，降低长任务对 Android 键值数据库容量的压力；旧缓存迁移失败时保留可读副本。Android 存储容量上限调整为 64 MiB，写入失败会提示，避免静默丢失缓存状态。账号切换和退出仍执行缓存隔离与清理。"
+        },
+        {
+          "id": "models",
+          "title": "模型目录和推理强度",
+          "text": "修复手机模型列表与可用状态不同步的问题；当前模型被关闭或不可用时，引导重新选择。自定义模型未声明推理强度时，不再把未知能力误判为明确不支持，保留 Lex 原有默认选择及 Pi 的兼容行为；显式声明的能力限制仍生效。"
+        },
+        {
+          "id": "skills",
+          "title": "多实例技能账号隔离",
+          "text": "改善同时运行多个客户端实例时的技能账号边界。账号切换、失效及迟到的状态更新按所属账号处理，减少一个实例的旧状态干扰另一个实例的技能可用性。"
+        },
+        {
+          "id": "compatibility",
+          "title": "界面与兼容性小修复",
+          "text": "修复 Android 设置列表展开收起异常，补齐旧 Android WebView 的 Mermaid 图表兼容。远程桌面继续兼容旧端画质参数；桌面登录控件悬停和更新请求失败后的资源回收也得到修正。源码包含 iOS 文件链接菜单重复弹出和计划模式勾号布局修复，但本次不提供 iOS 安装包。"
+        },
+        {
+          "id": "upgrade",
+          "title": "如何升级",
+          "text": "桌面端在 beta 更新通道检查 rc.2，或下载对应平台安装包；Auto-Update.zip 供桌面更新器使用。Android 请下载 Lex APK，由系统确认覆盖安装，沿用原有 Lex 签名和包名，通常无需卸载；尚未启用应用内 APK 更新或 OTA。本轮包含移动端原生改动，必须更新安装包才能生效。"
+        },
+        {
+          "id": "scope",
+          "title": "范围与已知限制",
+          "text": "这是 RC 测试版，重点是缺陷修复和已批准的协同优化，不代表完整同步 Cindy 新版本，也不包含新的伙伴功能。本轮相对 rc.1 没有桌面数据库 schema/migration 变更。真实账号、设备、双主题体验与 Android 覆盖安装仍需实机验证；iOS 暂无公开安装渠道。Lex 品牌、独立更新源、OMP 和已有共享任务权限边界保持不变。"
+        }
+      ]
+    },
+    "zh-TW": {
+      "intro": "Lex 0.1.4-rc.2 是以 rc.1 為基礎的穩定性預發佈版。本輪選擇性採用 Cindy 截至 v0.1.101 的修正，重點改善遠端連線、長任務歷史、手機快取與 Orca 協同，保留 Lex 的 OMP 和工作區擴充，不引入新的夥伴功能。",
+      "topics": [
+        {
+          "id": "remote",
+          "title": "遠端恢復與長任務歷史",
+          "text": "改善手機暫停、返回前景及轉發鏈路停滯後的恢復，減少裝置仍在線上卻沒有回應的情況。修正長任務歷史分頁與掃描範圍造成的記錄缺漏；遠端建立任務後會接續傳送首則訊息，減少任務已建立但訊息仍留在輸入框的問題。建議桌面端與 Android 一起更新。"
+        },
+        {
+          "id": "orca",
+          "title": "Orca 排隊與插話",
+          "text": "Lead 與 Worker 的訊息仍預設排隊，傳送方可明確選擇向正在執行的本機任務插話；目標不支援或暫時無法接收時，依佇列規則處理並回報原因。補齊佇列檢視、插話和排序能力，並適配 OMP；繼續遵守使用者暫停、權限確認與訊息歸屬，不讓插話另開一輪或重複投遞。"
+        },
+        {
+          "id": "loops",
+          "title": "減少工具循環誤判",
+          "text": "改善 Claude Code、Codex、Pi、OMP 的循環偵測，區分合理等待外部進度與反覆無進展的呼叫。疑似循環可交由既有輔助模型複核，放行後繼續工作；複核失敗、不可用或逾時仍會停止。複核次數與等待時間有上限，傳送前會遮蔽工具摘要中的常見敏感資訊；OMP 的串流片段不會重複計數。"
+        },
+        {
+          "id": "lifecycle",
+          "title": "排程任務與目標模式",
+          "text": "修正應用程式重新啟動後，已排隊的排程任務無法正常恢復的情況，恢復時保留原訊息身分與結算關係。目標模式在新輸入或插話到來後，會隔離上一輪遲到的結束訊號，避免舊結果誤改目前目標狀態或觸發不合時宜的繼續執行。"
+        },
+        {
+          "id": "interactions",
+          "title": "清除過期問題與提醒",
+          "text": "改善遠端權限確認、提問與任務狀態同步。已解決的問題不會因遲到訊息再次變成待處理，過期提問與已處理提醒會正確清除；在手機與桌面之間切換操作時，減少殘留卡片與狀態不一致。"
+        },
+        {
+          "id": "cache",
+          "title": "手機快取與 Android 容量",
+          "text": "訊息快取改用應用程式私有檔案，並遷移舊快取，降低長任務對 Android 鍵值資料庫容量的壓力；遷移失敗時保留可讀的舊副本。Android 儲存容量上限調整為 64 MiB，寫入失敗時會提示，避免快取狀態靜默遺失。帳號切換與登出仍執行快取隔離和清理。"
+        },
+        {
+          "id": "models",
+          "title": "模型目錄與推理強度",
+          "text": "修正手機模型清單與可用狀態不同步的問題；目前模型被關閉或不可用時，引導重新選擇。自訂模型未宣告推理強度時，不再將未知能力誤判為明確不支援，保留 Lex 原有預設選擇及 Pi 的相容行為；已明確宣告的能力限制仍然生效。"
+        },
+        {
+          "id": "skills",
+          "title": "多實例技能帳號隔離",
+          "text": "改善同時執行多個客戶端實例時的技能帳號邊界。帳號切換、失效與遲到的狀態更新依所屬帳號處理，減少一個實例的舊狀態干擾另一個實例的技能可用性。"
+        },
+        {
+          "id": "compatibility",
+          "title": "介面與相容性修正",
+          "text": "修正 Android 設定清單展開收起異常，補齊舊版 Android WebView 的 Mermaid 圖表相容性。遠端桌面繼續相容舊端畫質參數；桌面登入控制項懸停與更新請求失敗後的資源回收也已修正。原始碼包含 iOS 檔案連結選單重複彈出及計畫模式勾號版面修正，但本次不提供 iOS 安裝套件。"
+        },
+        {
+          "id": "upgrade",
+          "title": "如何升級",
+          "text": "桌面端可在 beta 更新通道檢查 rc.2，或下載對應平台安裝套件；Auto-Update.zip 供桌面更新器使用。Android 請下載 Lex APK，由系統確認覆蓋安裝，沿用原有 Lex 簽名與套件名稱，通常不必解除安裝；尚未啟用應用程式內 APK 更新或 OTA。本輪含行動端原生變更，必須更新安裝套件才會生效。"
+        },
+        {
+          "id": "scope",
+          "title": "範圍與已知限制",
+          "text": "這是 RC 測試版，重點為缺陷修正與已核准的協同優化，不代表完整同步 Cindy 新版本，也不包含新的夥伴功能。相較 rc.1，本輪沒有桌面資料庫 schema/migration 變更。真實帳號、裝置、雙主題體驗與 Android 覆蓋安裝仍需實機驗證；iOS 暫無公開安裝管道。Lex 品牌、獨立更新來源、OMP 與既有共享任務權限邊界維持不變。"
+        }
+      ]
+    },
+    "en": {
+      "intro": "Lex 0.1.4-rc.2 is a stability preview following rc.1. It selectively adopts fixes reviewed through Cindy v0.1.101, focusing on remote connections, long task histories, mobile caching and Orca collaboration. Lex OMP and workspace extensions remain supported; no new companion features are included.",
+      "topics": [
+        {
+          "id": "remote",
+          "title": "Remote recovery and long histories",
+          "text": "Improves recovery after mobile suspension, foreground return and stalled relay forwarding, reducing cases where an online device stops responding. Fixes gaps caused by history pagination and scan limits in long tasks. Creating a remote task now hands off its first message more reliably instead of leaving it in the composer. Update both desktop and Android for these improvements."
+        },
+        {
+          "id": "orca",
+          "title": "Orca queues and steering",
+          "text": "Lead and Worker messages still queue by default. Senders can explicitly choose to steer an active local task; unsupported or temporarily unavailable delivery follows queue rules and reports a reason. Queue inspection, steering and reordering are wired through OMP as well. User pauses, permission prompts and message ownership remain enforced; steering must not start another turn or duplicate delivery."
+        },
+        {
+          "id": "loops",
+          "title": "Fewer false tool-loop interruptions",
+          "text": "Refines loop detection across Claude Code, Codex, Pi and OMP to distinguish reasonable waits for external progress from repeated calls without progress. Suspected loops can use the existing utility model for review and continue when allowed; unavailable, failed or timed-out review still stops the loop. Review count and wait time are bounded. Common sensitive data in tool summaries is redacted before review, and OMP streaming fragments are not counted twice."
+        },
+        {
+          "id": "lifecycle",
+          "title": "Scheduled tasks and goal mode",
+          "text": "Fixes recovery of scheduled work already queued before an application restart, retaining message identity and delivery bookkeeping. After new input or steering, goal mode ignores late completion signals from the previous turn so they do not alter the current goal state or trigger an unwanted continuation."
+        },
+        {
+          "id": "interactions",
+          "title": "Expired questions and notifications",
+          "text": "Improves remote permission, question and task-state synchronization. Late messages no longer revive resolved questions, and expired questions or handled reminders are cleared correctly. This reduces stale cards and inconsistent state when switching between desktop and mobile."
+        },
+        {
+          "id": "cache",
+          "title": "Mobile caching and Android capacity",
+          "text": "Moves message caching to private application files and migrates legacy caches, reducing pressure from long histories on Android key-value storage. A failed migration keeps the readable legacy copy. Android storage capacity is raised to 64 MiB, and failed cache writes produce a notice instead of silently losing cache state. Account changes and logout continue to isolate and clean up caches."
+        },
+        {
+          "id": "models",
+          "title": "Model availability and reasoning effort",
+          "text": "Fixes mobile model lists becoming inconsistent with availability and asks users to choose again when the current model is disabled or unavailable. Custom models with undeclared reasoning effort are no longer treated as explicitly unsupported. Lex defaults and Pi-specific compatibility behavior remain intact; declared capability restrictions still apply."
+        },
+        {
+          "id": "skills",
+          "title": "Skill isolation across app instances",
+          "text": "Improves account boundaries for skills when multiple client instances run concurrently. Account changes, expiration and late state updates are handled for their owning account, reducing interference from stale state in another instance."
+        },
+        {
+          "id": "compatibility",
+          "title": "Interface and compatibility fixes",
+          "text": "Fixes Android settings expansion and collapse, and improves Mermaid rendering on older Android WebViews. Remote desktop remains compatible with legacy quality parameters. Desktop login hover behavior and resource cleanup after failed update requests are corrected. Source fixes also cover repeated iOS file-link menus and plan-mode checkmark layout; this release does not distribute an iOS installer."
+        },
+        {
+          "id": "upgrade",
+          "title": "How to upgrade",
+          "text": "On desktop, check for rc.2 in the beta update channel or download the installer for your platform. Auto-Update.zip is intended for the desktop updater. On Android, download the Lex APK and confirm installation with the system installer; the existing Lex package and signing identity are retained, so uninstalling is normally unnecessary. In-app APK updates and OTA remain disabled. Mobile native changes require a new installation package."
+        },
+        {
+          "id": "scope",
+          "title": "Scope and limitations",
+          "text": "This RC focuses on bug fixes and the approved collaboration improvements, not a complete Cindy version sync or new companion features. There are no desktop database schema or migration changes relative to rc.1. Real accounts, devices, both themes and Android in-place upgrades still need device validation; there is no public iOS distribution channel yet. Lex branding, its own update source, OMP and existing shared-task permission boundaries are preserved."
+        }
+      ]
+    },
+    "ja": {
+      "intro": "Lex 0.1.4-rc.2 は rc.1 を基にした安定性向上のプレビュー版です。Cindy v0.1.101 までを確認対象として修正を選択的に取り込み、リモート接続、長いセッションの履歴、モバイルキャッシュ、Orca 協同を改善します。Lex の OMP とワークスペース拡張は維持し、新しいパートナー機能は追加しません。",
+      "topics": [
+        {
+          "id": "remote",
+          "title": "リモート接続の復帰と長い履歴",
+          "text": "モバイルの中断、フォアグラウンド復帰、リレー転送の停滞後の回復を改善し、デバイスがオンラインでも応答しない状況を減らします。長いセッションでページ分割や走査範囲により履歴が欠落する問題を修正しました。リモートでセッションを作成した際、最初のメッセージが入力欄に残る問題も改善しています。デスクトップと Android の両方を更新してください。"
+        },
+        {
+          "id": "orca",
+          "title": "Orca のキューと割り込み入力",
+          "text": "Lead と Worker のメッセージは引き続き既定でキューに入ります。送信側が明示的に選んだ場合、実行中のローカルセッションに割り込み入力できます。未対応または一時的に配信できない場合はキューの規則に従い、理由を返します。キュー確認、割り込み、並べ替えは OMP にも対応し、一時停止、権限確認、メッセージ所有権を維持します。新しいターンの開始や二重配信は行いません。"
+        },
+        {
+          "id": "loops",
+          "title": "ツールループの誤判定を軽減",
+          "text": "Claude Code、Codex、Pi、OMP で、外部の進捗を適切な間隔で待つ処理と、進展のない反復呼び出しを区別します。疑わしいループは既存の補助モデルで再確認し、許可されれば続行します。再確認が利用不可、失敗、タイムアウトの場合は停止します。回数と待機時間には上限があり、送信前にツール要約内の一般的な機密情報をマスクします。OMP のストリーミング断片は重複集計しません。"
+        },
+        {
+          "id": "lifecycle",
+          "title": "スケジュールと目標モード",
+          "text": "アプリ再起動前にキューへ入っていたスケジュール処理の復元を修正し、メッセージの識別情報と配信状態を保持します。新しい入力や割り込みの後に前のターンの終了通知が遅れて届いても、現在の目標状態を変更したり、意図しない続行を起こしたりしないようにしました。"
+        },
+        {
+          "id": "interactions",
+          "title": "期限切れの質問と通知を整理",
+          "text": "リモートの権限確認、質問、セッション状態の同期を改善しました。遅れて届くメッセージで解決済みの質問が再び未処理にならず、古い質問や処理済みの通知が適切に消えます。デスクトップとモバイルを切り替えた際に、古いカードや状態の不一致が残りにくくなります。"
+        },
+        {
+          "id": "cache",
+          "title": "モバイルキャッシュと Android 容量",
+          "text": "メッセージキャッシュをアプリ専用ファイルへ移し、旧キャッシュを移行することで、長い履歴による Android キー値ストレージの圧迫を軽減します。移行に失敗しても読み取り可能な旧データを残します。Android ストレージ上限を 64 MiB に変更し、書き込み失敗を通知します。アカウント切り替えとログアウト時の分離・削除処理も維持します。"
+        },
+        {
+          "id": "models",
+          "title": "モデル一覧と推論強度",
+          "text": "モバイルのモデル一覧と利用可能状態の不一致を修正し、選択中のモデルが無効または利用不可なら再選択を案内します。推論強度が未宣言のカスタムモデルを、明示的に未対応と誤判定しないようにしました。Lex の既定選択と Pi 固有の互換動作は維持し、宣言済みの能力制限は引き続き適用します。"
+        },
+        {
+          "id": "skills",
+          "title": "複数インスタンスでのスキル分離",
+          "text": "複数のクライアントを同時に実行する際のスキルのアカウント境界を改善しました。アカウント変更、失効、遅延した状態更新を所属アカウントごとに扱い、別インスタンスの古い状態がスキルの利用可否に影響する問題を減らします。"
+        },
+        {
+          "id": "compatibility",
+          "title": "画面表示と互換性の修正",
+          "text": "Android 設定一覧の展開・折りたたみと、古い Android WebView での Mermaid 表示を修正しました。リモートデスクトップは旧端末の画質パラメーターとの互換性を維持します。デスクトップのログイン操作のホバー表示と、更新リクエスト失敗時のリソース解放も改善しました。iOS のファイルリンクメニュー重複表示とプランモードのチェックマーク修正もソースに含みますが、iOS インストーラーは配布しません。"
+        },
+        {
+          "id": "upgrade",
+          "title": "更新方法",
+          "text": "デスクトップは beta 更新チャンネルで rc.2 を確認するか、対象プラットフォームのインストーラーをダウンロードしてください。Auto-Update.zip はデスクトップ更新機能用です。Android は Lex APK をダウンロードし、システム画面で上書きインストールを確認します。既存のパッケージと署名を引き継ぐため、通常はアンインストール不要です。アプリ内 APK 更新と OTA は未対応です。今回のモバイルネイティブ変更には新しいインストールパッケージが必要です。"
+        },
+        {
+          "id": "scope",
+          "title": "対象範囲と制限",
+          "text": "この RC は不具合修正と承認済みの協同改善が中心で、Cindy 新版の完全同期や新しいパートナー機能の追加ではありません。rc.1 からデスクトップ DB のスキーマ・マイグレーション変更はありません。実アカウント、実機、両テーマ、Android 上書き更新は引き続き実機検証が必要です。iOS の公開配布経路はありません。Lex ブランド、独立更新元、OMP、共有タスクの既存の権限境界は維持しています。"
+        }
+      ]
+    },
+    "ko": {
+      "intro": "Lex 0.1.4-rc.2는 rc.1을 기반으로 한 안정성 미리 보기 버전입니다. Cindy v0.1.101까지 검토한 수정 사항을 선택적으로 적용하여 원격 연결, 긴 세션 기록, 모바일 캐시, Orca 협업을 개선합니다. Lex의 OMP와 작업 공간 확장은 유지하며 새로운 파트너 기능은 추가하지 않습니다.",
+      "topics": [
+        {
+          "id": "remote",
+          "title": "원격 복구와 긴 기록",
+          "text": "모바일 일시 중단, 포그라운드 복귀, 릴레이 전송 정체 후 복구를 개선하여 기기가 온라인인데 응답하지 않는 상황을 줄입니다. 긴 세션에서 페이지 처리와 검색 범위 때문에 기록이 누락되는 문제를 수정했습니다. 원격 세션을 만든 뒤 첫 메시지가 입력창에 남는 문제도 개선했습니다. 데스크톱과 Android를 함께 업데이트하는 것을 권장합니다."
+        },
+        {
+          "id": "orca",
+          "title": "Orca 대기열과 끼어들기",
+          "text": "Lead와 Worker 메시지는 기본적으로 대기열에 들어갑니다. 발신자가 명시적으로 선택하면 실행 중인 로컬 세션에 끼어들 수 있습니다. 대상이 지원하지 않거나 일시적으로 받을 수 없으면 대기열 규칙에 따라 처리하고 이유를 반환합니다. 대기열 조회, 끼어들기, 순서 변경을 OMP에도 연결했습니다. 사용자 일시 중지, 권한 확인, 메시지 소유권을 유지하며 새 턴이나 중복 전달을 만들지 않습니다."
+        },
+        {
+          "id": "loops",
+          "title": "도구 반복 감지의 오판 감소",
+          "text": "Claude Code, Codex, Pi, OMP에서 외부 진행을 적절한 간격으로 기다리는 호출과 진전 없는 반복 호출을 구분합니다. 의심되는 반복은 기존 보조 모델이 재검토하여 허용하면 계속 진행합니다. 재검토가 불가능하거나 실패 또는 시간 초과이면 중단합니다. 검토 횟수와 대기 시간에 상한이 있으며, 전송 전에 도구 요약의 일반적인 민감 정보를 가립니다. OMP 스트리밍 조각은 중복 집계하지 않습니다."
+        },
+        {
+          "id": "lifecycle",
+          "title": "예약 작업과 목표 모드",
+          "text": "앱 재시작 전에 대기열에 들어간 예약 작업을 복구할 때 메시지 식별 정보와 전달 상태를 보존하도록 수정했습니다. 새 입력이나 끼어들기 이후 이전 턴의 종료 신호가 늦게 도착해도 현재 목표 상태를 잘못 바꾸거나 원치 않는 계속 실행을 유발하지 않도록 했습니다."
+        },
+        {
+          "id": "interactions",
+          "title": "오래된 질문과 알림 정리",
+          "text": "원격 권한 확인, 질문, 세션 상태 동기화를 개선했습니다. 늦게 도착한 메시지가 해결된 질문을 다시 미처리 상태로 만들지 않으며, 오래된 질문과 처리된 알림을 올바르게 정리합니다. 데스크톱과 모바일을 오갈 때 남아 있는 카드와 상태 불일치를 줄입니다."
+        },
+        {
+          "id": "cache",
+          "title": "모바일 캐시와 Android 용량",
+          "text": "메시지 캐시를 앱 전용 파일로 옮기고 기존 캐시를 이전하여 긴 기록이 Android 키 값 저장소에 주는 부담을 줄입니다. 이전에 실패하면 읽을 수 있는 기존 사본을 유지합니다. Android 저장소 상한을 64 MiB로 늘리고 캐시 쓰기 실패를 알립니다. 계정 전환과 로그아웃 시 캐시 분리 및 정리도 계속 적용합니다."
+        },
+        {
+          "id": "models",
+          "title": "모델 목록과 추론 강도",
+          "text": "모바일 모델 목록과 사용 가능 상태가 일치하지 않는 문제를 수정했습니다. 현재 모델이 꺼져 있거나 사용할 수 없으면 다시 선택하도록 안내합니다. 추론 강도가 선언되지 않은 사용자 지정 모델을 명시적 미지원으로 잘못 판단하지 않도록 했습니다. Lex 기본 선택과 Pi 호환 동작을 유지하며, 선언된 기능 제한은 그대로 적용합니다."
+        },
+        {
+          "id": "skills",
+          "title": "여러 인스턴스의 스킬 계정 분리",
+          "text": "여러 클라이언트 인스턴스를 동시에 실행할 때 스킬의 계정 경계를 개선했습니다. 계정 변경, 만료, 지연된 상태 업데이트를 해당 계정에 맞게 처리하여 다른 인스턴스의 오래된 상태가 스킬 사용 가능 여부에 영향을 주는 문제를 줄입니다."
+        },
+        {
+          "id": "compatibility",
+          "title": "화면과 호환성 수정",
+          "text": "Android 설정 목록의 펼치기와 접기, 오래된 Android WebView의 Mermaid 표시를 수정했습니다. 원격 데스크톱은 이전 클라이언트의 화질 매개변수와 호환됩니다. 데스크톱 로그인 컨트롤의 마우스 오버와 업데이트 요청 실패 후 리소스 정리도 개선했습니다. iOS 파일 링크 메뉴 중복 표시와 계획 모드 체크 표시 수정도 소스에 포함되지만 이번에는 iOS 설치 패키지를 배포하지 않습니다."
+        },
+        {
+          "id": "upgrade",
+          "title": "업데이트 방법",
+          "text": "데스크톱은 beta 업데이트 채널에서 rc.2를 확인하거나 해당 플랫폼 설치 파일을 다운로드하세요. Auto-Update.zip은 데스크톱 업데이트 기능용입니다. Android는 Lex APK를 다운로드한 뒤 시스템 설치 화면에서 덮어쓰기를 확인하세요. 기존 패키지와 서명을 유지하므로 일반적으로 삭제할 필요가 없습니다. 앱 내 APK 업데이트와 OTA는 아직 지원하지 않습니다. 이번 모바일 네이티브 변경을 적용하려면 새 설치 패키지가 필요합니다."
+        },
+        {
+          "id": "scope",
+          "title": "범위와 알려진 제한",
+          "text": "이번 RC는 버그 수정과 승인된 협업 개선에 집중하며, Cindy 신버전 전체 동기화나 새로운 파트너 기능 추가가 아닙니다. rc.1 대비 데스크톱 데이터베이스 스키마나 마이그레이션 변경은 없습니다. 실제 계정과 기기, 두 테마, Android 덮어쓰기 업데이트는 실기기 검증이 필요하며 공개 iOS 배포 경로는 아직 없습니다. Lex 브랜드, 독립 업데이트 소스, OMP, 기존 공유 작업 권한 경계는 유지됩니다."
+        }
+      ]
+    }
+  }
+}
