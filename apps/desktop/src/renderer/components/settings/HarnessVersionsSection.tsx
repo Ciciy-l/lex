@@ -19,6 +19,15 @@ export const HARNESS_BUTTON =
 
 export function HarnessVersionsSection() {
   const { t } = useTranslation();
+  const phaseLabels: Record<HarnessRuntimeState['phase'], string> = {
+    idle: '',
+    ready: '',
+    checking: t('settings.harness.phase.checking'),
+    downloading: t('settings.harness.phase.downloading'),
+    verifying: t('settings.harness.phase.verifying'),
+    cancelled: t('settings.harness.phase.cancelled'),
+    failed: t('settings.harness.phase.failed'),
+  };
   const [states, setStates] = useState<Partial<Record<HarnessKind, HarnessRuntimeState>>>({});
   const [unavailable, setUnavailable] = useState(false);
   useEffect(() => {
@@ -130,7 +139,7 @@ export function HarnessVersionsSection() {
               <div aria-live="polite" className="text-12 text-[var(--settings-section-desc)]">
                 {state && !['idle', 'ready'].includes(state.phase) && (
                   <span>
-                    {t('settings.harness.phase.' + state.phase)}{' '}
+                    {phaseLabels[state.phase]}{' '}
                     {state.percent === null ? '' : Math.round(state.percent) + '%'}
                   </span>
                 )}

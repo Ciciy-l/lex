@@ -84,6 +84,15 @@ export function OmpHarnessControls({
   const { confirm } = useConfirmDialog();
   const { state, pending, error, load, run } = controller;
   const settings = state?.value;
+  const labels = {
+    nativeMemory: t('settings.harness.nativeMemory'),
+    unifiedMemory: t('settings.harness.unifiedMemory'),
+    compactionEnabled: t('settings.harness.compactionEnabled'),
+    maxConcurrency: t('settings.harness.maxConcurrency'),
+    maxRecursionDepth: t('settings.harness.maxRecursionDepth'),
+    compactionThreshold: t('settings.harness.compactionThreshold'),
+    keepRecentTokens: t('settings.harness.keepRecentTokens'),
+  };
   const save = (patch: Partial<OmpHarnessSettings>) => {
     if (state)
       void run(() => window.electronAPI.maker.ompHarness.set(patch, state.ownerGeneration));
@@ -94,7 +103,7 @@ export function OmpHarnessControls({
   ) => (
     <div className="flex items-center justify-between gap-4">
       <label htmlFor={'omp-' + key} className="text-13 text-[var(--settings-section-title)]">
-        {t('settings.harness.' + key)}
+        {labels[key]}
       </label>
       <Switch
         id={'omp-' + key}
@@ -111,7 +120,7 @@ export function OmpHarnessControls({
   ) => (
     <NumericSetting
       key={key + ':' + settings?.[key]}
-      label={t('settings.harness.' + key)}
+      label={labels[key]}
       value={settings?.[key] ?? null}
       min={min}
       max={max}

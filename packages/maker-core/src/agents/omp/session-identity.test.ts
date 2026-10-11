@@ -7,7 +7,10 @@ import { PassThrough, Writable } from 'node:stream';
 
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('node:child_process', () => ({ spawn: vi.fn() }));
+vi.mock('node:child_process', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:child_process')>()),
+  spawn: vi.fn(),
+}));
 
 let pendingFakeProcess: FakeOmpProcess | undefined;
 
