@@ -447,7 +447,8 @@
       "help": "帮助",
       "about": "关于",
       "imBot": "IM 机器人",
-      "ghosts": "插件"
+      "ghosts": "插件",
+      "harness": "Harness"
     },
     "sections": {
       "user": "用户",
@@ -3362,10 +3363,10 @@
       "toggleAria": "开启或关闭流式输出淡入动效"
     },
     "personalization": {
-      "title": "个性化",
+      "title": "自定义提示词",
       "subtitle": "自定义提示词",
       "description": "为你的助手提供额外的指令和上下文。",
-      "placeholder": "在这里输入自定义指令，会追加到 Claude / Codex 的系统提示词末尾。\n\n· 仅对 {{appName}} 内嵌的 Agent 会话生效；已有会话维持启动时快照，修改后下一个新会话才应用。\n· 想让所有 Claude Code 会话(含终端直跑、其他 IDE)硬性生效：在 ~/.claude/settings.json 里配 SessionStart hook(harness 级强制)。\n· Codex CLI 可在 ~/.codex/hooks.json 配 SessionStart hook 强制注入(harness 级，和 CC 同款)；或通过 ~/.codex/AGENTS.md 自动加载(软约束，模型可能忽略)。",
+      "placeholder": "在这里输入自定义指令，会追加到所选引擎的原生系统提示词之后。通用提示词会先于引擎专用提示词追加。\n\n仅对 {{appName}} 内嵌的 Agent 会话生效；已有 Agent 会话保留启动时的设置，下一个 Agent 会话应用新内容。",
       "ariaLabel": "自定义指令",
       "save": "保存",
       "overLimit": " — 已超出长度限制",
@@ -6015,6 +6016,51 @@
       "hint": "远程 IM 会为需要审批的操作保留确认流程。",
       "fullAccessDisabled": "远程 IM 不支持完全访问，避免无法安全确认的操作被直接执行。",
       "permissionModeDisabled": "远程 IM 使用 {{appName}} 桌面端确认策略，因此该权限模式不可用。"
+    },
+    "harness": {
+      "description": "按功能统一设置 Harness。各分组只展示对应引擎实际支持的选项。",
+      "versions": "版本与升级",
+      "versionsDescription": "检查各引擎官方稳定版，结果缓存 15 分钟。点击安装后才会下载；安装完成后由你手动重启 Lex 生效，运行中的任务继续使用原版本。恢复操作使用此 Lex 构建随附的基线版本。",
+      "check": "重新检查",
+      "install": "安装 {{version}}",
+      "restore": "恢复 Lex 基线 {{version}}",
+      "cancel": "取消",
+      "retry": "重试",
+      "runtimeFailed": "运行环境操作未完成，请检查网络连接后重试。",
+      "restartRequired": "{{version}} 已就绪。请在任务结束后手动重启 Lex，使新版本生效。",
+      "promptScope": "提示词范围",
+      "commonPrompt": "所有引擎通用",
+      "promptDescription": "在引擎原生系统提示词之后，依次追加通用提示词和该引擎的提示词。合并后的内容最多为 8,000 个字符。",
+      "saveFailed": "保存失败，请检查填写内容后重试。",
+      "loadFailed": "未能加载设置。",
+      "nextSession": "保存的设置在下一个 Agent 会话生效；现有 Agent 会话保留启动时的设置。",
+      "unifiedMemory": "OMP 使用 Lex 统一记忆",
+      "nativeMemory": "OMP 本地记忆",
+      "nativeMemoryDescription": "记忆按账号保存在本机，按项目召回，使用全文检索，无需下载嵌入模型。自动整理可能调用任务当前使用的模型，并产生正常用量。",
+      "nativeMemoryPaused": "Lex 统一记忆已启用。OMP 原生记忆暂时停用，原有偏好仍会保留。",
+      "clearMemory": "清空 OMP 本地记忆",
+      "clearMemoryDescription": "删除此账号所有项目的 OMP 原生记忆，不包含 Lex 统一记忆。请先关闭正在使用这些记忆的 Agent 会话。",
+      "memoryBusy": "仍有 OMP 运行环境在使用这些记忆，请关闭相关 Agent 会话后重试。",
+      "subagentModel": "默认 Subagent 模型",
+      "inheritModel": "继承父任务模型",
+      "subagentDescription": "仅在父任务的供应商和 API 路由内使用指定模型，否则继承父模型。具名 Agent 显式指定的模型优先。数值留空使用原生默认值；并发为 0 表示不限制。",
+      "maxConcurrency": "Subagent 最大并发数",
+      "maxRecursionDepth": "Subagent 最大嵌套深度",
+      "compactionEnabled": "OMP 自动上下文压缩",
+      "compactionThreshold": "压缩阈值（%）",
+      "keepRecentTokens": "保留最近内容的 token 数",
+      "compactionDescription": "使用 OMP 原生压缩机制及其进度事件。数值留空跟随已安装版本的原生默认值。",
+      "nativeDefault": "原生默认值",
+      "invalidRange": "请输入 {{min}} 至 {{max}} 的整数，或留空。",
+      "extensions": "扩展",
+      "phase": {
+        "checking": "正在检查…",
+        "downloading": "正在下载…",
+        "verifying": "正在校验…",
+        "cancelled": "已取消",
+        "failed": "操作失败"
+      },
+      "memoryCleared": "OMP 本地记忆已清空。"
     }
   },
   "remoteDevice": {

@@ -6569,6 +6569,9 @@ interface ElectronAPI {
       }>;
     };
 
+    harness: import('../shared/harnessSettings').HarnessRuntimeApi;
+    ompHarness: import('../shared/harnessSettings').OmpHarnessApi;
+
     /* ── Agent 今日累计 (取代老 codex.usage.* + onUsageTodaySpendChanged) ── */
     usage: {
       getToday: (agentKind: 'claude-code' | 'codex' | 'pi') => Promise<{

@@ -250,7 +250,7 @@ import { matchNavigationCommandName, tryHandleNavigationCommand } from '@/lib/na
 import { extractIpcError } from '@/utils/ipcError';
 import { listActiveRunsForSession } from '@/features/learn/useLearnRun';
 import { subscribeLearnEvents } from '@/features/learn/learnTransport';
-import { getUserPrompt } from '@/lib/userPromptStore';
+import { getEffectiveUserPrompt } from '@/lib/userPromptStore';
 import { makerApiForSticky } from '@/lib/makerTransport';
 import {
   consumePending,
@@ -3358,7 +3358,7 @@ export function CCAgentSessionView({
             effort: session.effort,
             fastMode,
             permissionMode: session.permissionMode,
-            userPrompt: getUserPrompt(),
+            userPrompt: getEffectiveUserPrompt(session.agentKind ?? 'claude-code'),
             // device-link executes on the target desktop, so let that runtime
             // own the setting. SSH remote follows the controller's global
             // setting like local sessions (memory scoped per hostId+remote

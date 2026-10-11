@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough, Writable } from 'node:stream';
@@ -119,6 +119,7 @@ function agentFor(
   root: string,
   fake: FakeOmpProcess,
   mcpProviders?: McpProvider[],
+  overrides: Partial<AgentDeps> = {},
 ): OmpAgent {
   pendingFakeProcess = fake;
   const deps: AgentDeps = {
@@ -138,7 +139,7 @@ function agentFor(
         ? { systemRoot: globalThis.process.env.SystemRoot ?? 'C:\\Windows' }
         : {},
   };
-  return new OmpAgent(deps);
+  return new OmpAgent({ ...deps, ...overrides });
 }
 
 function commandTypes(process: FakeOmpProcess): string[] {
@@ -266,5 +267,66 @@ describe('OMP upstream session identity', () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+
+describe('OMP Harness startup wiring', () => {
+  it('materializes unified memory and captured native settings without replacing the native prompt', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'omp-harness-session-'));
+    try {
+      const workdir = path.join(root, 'work');
+      await mkdir(workdir);
+      const toTools = vi.fn(() => []);
+      const getStore = vi.fn(async () => ({ getIndex: async () => 'project memory index' }));
+      const models = vi.fn(() => undefined);
+      const session = await agentFor(root, fakeOmpProcess(path.join(root, 'history.jsonl')), [
+        { name: 'memory', toOmpRpcHostTools: toTools },
+      ], {
+        makerMemory: { isEnabled: () => true, currentOwnerScopeKey: () => 'owner-a', getStore } as unknown as AgentDeps['makerMemory'],
+        resolveOmpHarnessSettings: () => ({ unifiedMemoryEnabled: true, compactionEnabled: false, maxConcurrency: 4, subagentModel: 'child' }),
+        resolveOmpModelsYaml: models,
+      }).startSession({ sessionId: 'harness-task', sessionInstanceId: 'harness-instance', workingDir: workdir,
+        model: 'parent', providerId: 'source', makerMemoryScopeKey: '/project-key', userPrompt: 'custom instructions' });
+      try {
+        const args = vi.mocked(spawn).mock.calls.at(-1)![1] as string[];
+        const settings = await readFile(args[args.indexOf('--config') + 1], 'utf8');
+        expect(settings).toContain('enabled: false');
+        expect(settings).toContain('maxConcurrency: 4');
+        expect(settings).toContain('task: "cindy/child"');
+        expect(settings).toContain('backend: off');
+        const prompt = await readFile(args[args.indexOf('--append-system-prompt') + 1], 'utf8');
+        expect(prompt).toContain('project memory index');
+        expect(prompt).toContain('custom instructions');
+        expect(args).not.toContain('--system-prompt');
+        expect(getStore).toHaveBeenCalledWith('/project-key');
+        expect(toTools).toHaveBeenCalledWith(expect.objectContaining({ memoryEnabled: true, memoryScopeKey: '/project-key' }));
+        expect(models).toHaveBeenCalledWith(expect.objectContaining({ subagentModel: 'child', providerId: 'source' }));
+      } finally { await session.close({ reason: 'navigation' }); }
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('holds native memory until the runtime exits and releases on failed startup', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'omp-harness-lease-'));
+    try {
+      const workdir = path.join(root, 'work');
+      await mkdir(workdir);
+      const release = vi.fn(async () => {});
+      const acquire = vi.fn(async () => release);
+      const deps: Partial<AgentDeps> = {
+        resolveOmpHarnessSettings: () => ({ unifiedMemoryEnabled: false, compactionEnabled: true, nativeMemoryDbPath: path.join(root, 'memory.db') }),
+        acquireOmpMemoryLease: acquire,
+      };
+      const session = await agentFor(root, fakeOmpProcess(path.join(root, 'ok.jsonl')), [], deps)
+        .startSession({ sessionId: 'native', workingDir: workdir, model: 'parent' });
+      expect(acquire).toHaveBeenCalledWith(path.join(root, 'memory.db'));
+      expect(release).not.toHaveBeenCalled();
+      await session.close({ reason: 'navigation' });
+      expect(release).toHaveBeenCalled();
+      release.mockClear();
+      await expect(agentFor(root, fakeOmpProcess('invalid-relative.jsonl'), [], deps)
+        .startSession({ sessionId: 'bad', workingDir: workdir, model: 'parent' })).rejects.toThrow();
+      expect(release).toHaveBeenCalled();
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
 });

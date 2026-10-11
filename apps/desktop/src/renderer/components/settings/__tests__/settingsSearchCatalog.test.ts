@@ -42,6 +42,15 @@ const context: SettingsSearchContext = {
 };
 
 describe('settings search catalog', () => {
+  it('routes existing prompt/memory/subagent/compaction and Pi extension entries to Harness', () => {
+    for (const id of ['personalization.userPrompt', 'personalization.memory', 'personalization.subagents', 'personalization.compaction', 'general.piExtensions']) {
+      const entry = resolveSettingsSearchEntry('harness', id, TAB_IDS, context);
+      expect(entry?.tab).toBe('harness');
+      expect(createSettingsSearchParams(new URLSearchParams(), entry!).get('tab')).toBe('harness');
+    }
+    expect(resolveSettingsSearchEntry('general', 'general.collaboration', TAB_IDS, context)?.tab).toBe('general');
+    expect(resolveSettingsSearchEntry('personalization', 'personalization.auxiliaryModels', TAB_IDS, context)?.tab).toBe('personalization');
+  });
   it('has a unique, routable category entry for every visible Settings tab', () => {
     expect(validateSettingsSearchCatalog()).toEqual([]);
     const documents = buildSettingsSearchDocuments(translate, TAB_IDS, context);

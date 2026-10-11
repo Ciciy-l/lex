@@ -17,6 +17,6 @@ export default {
     { id: 'general.agentResource', tab: 'general', targetId: 'settings-agent-resource', titleKey: 'settings.sections.agentResource', sectionKey: 'settings.sections.agentResource' },
     { id: 'general.gitSafety', tab: 'general', targetId: 'settings-search-target-general-git-safety', titleKey: 'settings.sections.gitSafety', sectionKey: 'settings.sections.gitSafety' },
     { id: 'general.experimental', tab: 'general', targetId: 'settings-search-target-general-experimental', titleKey: 'settings.sections.experimental', sectionKey: 'settings.sections.experimental' },
-    { id: 'general.piExtensions', tab: 'general', targetId: 'settings-pi-extensions', titleKey: 'settings.piPackages.entryTitle', sectionKey: 'settings.piPackages.entryTitle' },
+    { id: 'general.piExtensions', tab: 'harness', targetId: 'settings-pi-extensions', titleKey: 'settings.piPackages.entryTitle', sectionKey: 'settings.piPackages.entryTitle' },
   ],
 } satisfies SettingsSearchModule;

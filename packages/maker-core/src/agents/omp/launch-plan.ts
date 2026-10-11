@@ -17,6 +17,18 @@ export const OMP_CONFIG_DIR_NAME = '.omp';
 export const OMP_SETTINGS_FILE_NAME = 'omp-settings.yaml';
 export const OMP_SYSTEM_PROMPT_DIRECTORY_NAME = 'system-prompts';
 
+/** Trusted host snapshot; never populated from remote renderer createOpts. */
+export interface OmpHarnessRuntimeSettings {
+  unifiedMemoryEnabled: boolean;
+  nativeMemoryDbPath?: string;
+  subagentModel?: string;
+  maxConcurrency?: number;
+  maxRecursionDepth?: number;
+  compactionEnabled: boolean;
+  compactionThreshold?: number;
+  keepRecentTokens?: number;
+}
+
 export interface OmpSessionRoots {
   /**
    * Lex 受管的**持久** OMP 根（`userData/omp-agent-home`）。
@@ -66,6 +78,7 @@ export interface OmpSessionExecutableEnvironment {
 }
 
 export interface OmpSessionLaunchPlanInput {
+  readonly harnessSettings?: OmpHarnessRuntimeSettings;
   readonly roots: OmpSessionRoots;
   /** Lex 权限档位；未知/缺失一律 fail-closed 到 `always-ask`（见 permission-map）。 */
   readonly permissionMode?: unknown;
@@ -290,11 +303,14 @@ function settingsYaml(
   providers: readonly string[],
   disabledSkillNames: readonly string[],
   managedSkillDirectories: readonly string[],
+  harness?: OmpHarnessRuntimeSettings,
+  parentModel?: string,
 ): string {
   return [
     'startup:',
     '  setupWizard: false',
     '  checkUpdate: false',
+    ...(harness ? ompHarnessYaml(harness, parentModel) : []),
     'tools:',
     // 与 --approval-mode 同值双写：OMP 上游默认 yolo，不能依赖任何一侧的默认值。
     `  approvalMode: ${approvalMode}`,
@@ -309,6 +325,26 @@ function settingsYaml(
         ]),
     '',
   ].join('\n');
+}
+
+export function ompHarnessYaml(settings: OmpHarnessRuntimeSettings, parentModel?: string): string[] {
+  const lines = ['compaction:', '  enabled: ' + settings.compactionEnabled];
+  if (settings.compactionThreshold !== undefined) lines.push('  thresholdPercent: ' + settings.compactionThreshold);
+  if (settings.keepRecentTokens !== undefined) lines.push('  keepRecentTokens: ' + settings.keepRecentTokens);
+  lines.push('task:');
+  if (settings.maxConcurrency !== undefined) lines.push('  maxConcurrency: ' + settings.maxConcurrency);
+  if (settings.maxRecursionDepth !== undefined) lines.push('  maxRecursionDepth: ' + settings.maxRecursionDepth);
+  // An empty YAML mapping must not become null (native settings expects an object).
+  if (lines[lines.length - 1] === 'task:') lines[lines.length - 1] = 'task: {}';
+  const taskModel = settings.subagentModel ?? parentModel;
+  if (taskModel) lines.push('modelRoles:', '  task: ' + JSON.stringify(OMP_CINDY_PROVIDER_ID + '/' + taskModel),
+    '  smol: ' + JSON.stringify(OMP_CINDY_PROVIDER_ID + '/' + (parentModel ?? taskModel)),
+    '  tiny: ' + JSON.stringify(OMP_CINDY_PROVIDER_ID + '/' + (parentModel ?? taskModel)));
+  const native = !settings.unifiedMemoryEnabled && settings.nativeMemoryDbPath;
+  lines.push('memory:', '  backend: ' + (native ? 'mnemopi' : 'off'));
+  if (native) lines.push('mnemopi:', '  dbPath: ' + JSON.stringify(native), '  scoping: per-project',
+    '  noEmbeddings: true', '  llmMode: smol', '  autoRecall: true', '  autoRetain: true');
+  return lines;
 }
 
 /**
@@ -518,7 +554,7 @@ export function createOmpSessionLaunchPlan(
     settingsYaml: settingsYaml(approvalMode, providers, disabledSkillNames, (input.managedSkillDirectories ?? []).map((directory) => {
       if (!implementation.isAbsolute(directory)) throw new Error('Managed Skill directory must be absolute');
       return requireArgumentValue(directory, 'managed Skill directory');
-    })),
+    }), input.harnessSettings, input.model?.model),
     arguments: Object.freeze(argv),
     environment: freezeRecord(environment),
   });

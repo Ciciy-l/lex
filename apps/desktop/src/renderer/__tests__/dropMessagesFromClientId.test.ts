@@ -27,7 +27,7 @@ vi.mock('@/lib/sessionsBus', () => ({
 }));
 
 vi.mock('@/lib/userPromptStore', () => ({
-  getUserPrompt: () => 'test user prompt',
+  getEffectiveUserPrompt: () => 'test user prompt',
 }));
 
 vi.mock('@/lib/memorySettingsStore', () => ({

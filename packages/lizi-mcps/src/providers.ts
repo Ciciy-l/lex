@@ -21,6 +21,7 @@ import { createSlackMcpGatewayServer } from './cindy_slackMcpServer.js';
 import { createSchedulerMcpServer } from './cindy_schedulerMcpServer.js';
 import { createSshMcpServer } from './cindy_sshMcpServer.js';
 import { createCindyMemoryMcpServer } from './cindy_memoryMcpServer.js';
+import { createMemoryOmpHostTools } from './memory/omp-host-tools.js';
 import { createCindyContactsMcpServer } from './cindy_contactsMcpServer.js';
 import { createXdtHelperMcpServer, type XdtHelperMcpDeps } from './lizi_xdtHelperMcpServer.js';
 import { createCindyDocsMcpServer } from './cindy_docsMcpServer.js';
@@ -466,13 +467,22 @@ export function createLiziMcpProviders(
       // Codex 端: 第一次 host spawn 时 prepareCodexExtraSpawnConfig 调本函数, host
       //   长生命周期下后续 disable 不影响已 spawn 的 host (老 thread 仍看到 server,
       //   但 withStore 会用 MAKER_MEMORY_NOT_READY 兜底)。
-      isEnabled: (ctx) =>
-        ctx.memoryScopeKey?.startsWith('bot:') === true
+      isEnabled: (ctx) => {
+        if (ctx.agentKind === 'omp') {
+          return ctx.memoryEnabled === true && opts.memory!.getManager().isEnabled();
+        }
         // Shared Codex/Pi bridges are assembled before a concrete Session
-        // exists. Keep the factory structurally present there; each Session
-        // descriptor still removes it when neither global nor Bot Memory applies.
-        || ((ctx.agentKind === 'codex' || ctx.agentKind === 'pi') && !ctx.workingDir)
-        || opts.memory!.getManager().isEnabled(),
+        // exists. Each Session descriptor still removes the provider when
+        // neither global nor Bot Memory applies.
+        return ctx.memoryScopeKey?.startsWith('bot:') === true
+          || ((ctx.agentKind === 'codex' || ctx.agentKind === 'pi') && !ctx.workingDir)
+          || opts.memory!.getManager().isEnabled();
+      },
+      toOmpRpcHostTools: (ctx) => ctx.memoryEnabled !== true ? [] : createMemoryOmpHostTools({
+        ...opts.memory!,
+        workdir: ctx.workingDir,
+        getSessionContext: () => resolveLiziMcpSessionContext(ctx),
+      }),
       toClaudeSdkConfig: (ctx) => ({
         type: 'sdk',
         name: 'cindy_memory',

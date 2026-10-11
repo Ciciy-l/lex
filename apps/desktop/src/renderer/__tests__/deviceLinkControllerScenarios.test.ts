@@ -42,7 +42,7 @@ vi.mock('@/features/device-link/mirrorCacheClient', async (importOriginal) => ({
   readCachedMessages: vi.fn(async () => []),
   clearCachedMessages: vi.fn(),
 }));
-vi.mock('@/lib/userPromptStore', () => ({ getUserPrompt: () => '' }));
+vi.mock('@/lib/userPromptStore', () => ({ getEffectiveUserPrompt: () => '' }));
 vi.mock('@/lib/imageRef', () => ({
   parseUserContent: vi.fn((c: string) => ({ text: c, images: [], files: [] })),
   stringifyUserContent: vi.fn((text: string) => text),

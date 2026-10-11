@@ -33,6 +33,7 @@ import { promisify } from 'node:util';
 import { OMP_COMPATIBILITY_BASELINE, parseOmpVersionOutput } from '@cindy/maker-core';
 
 import { buildShipsOmpRuntime, getCachedBinaryStatus } from '../agent-binaries/index.js';
+import { activeHarnessSelection, activeHarnessPath } from '../agent-binaries/harness-selection.js';
 import { isRetryableOptionalRuntimePrepareError } from '../agent-binaries/pi-runtime-recovery.js';
 import { createLogger } from '../logger.js';
 import { getPlatformKey } from '../manifestService.js';
@@ -77,6 +78,7 @@ export interface OmpDownloadPhase {
 
 /** 判定所需的全部输入(fs / 子进程 / 下载器的采集结果),纯数据。 */
 export interface OmpRuntimeFacts {
+  readonly expectedVersion?: string;
   readonly platformKey: string;
   readonly platformSupported: boolean;
   readonly binaryPath: string | null;
@@ -119,12 +121,12 @@ export function classifyOmpRuntime(facts: OmpRuntimeFacts): OmpRuntimeSnapshot {
     );
   }
   if (facts.binaryUsable) {
-    if (facts.reportedVersion !== null && facts.reportedVersion !== OMP_COMPATIBILITY_BASELINE) {
+    if (facts.reportedVersion !== null && facts.reportedVersion !== (facts.expectedVersion ?? OMP_COMPATIBILITY_BASELINE)) {
       return snapshot(
         'failed',
         'version-mismatch',
         facts,
-        `expected ${OMP_COMPATIBILITY_BASELINE}, binary reports ${facts.reportedVersion}`,
+        `expected ${facts.expectedVersion ?? OMP_COMPATIBILITY_BASELINE}, binary reports ${facts.reportedVersion}`,
       );
     }
     return snapshot('ready', null, facts);
@@ -152,6 +154,8 @@ export function ompBinaryName(platformKey: string = getPlatformKey()): string {
  * 触发子进程。
  */
 export function resolveOmpBinaryPath(): string | null {
+  const selected = activeHarnessPath('omp');
+  if (selected) return selected;
   const platformKey = getPlatformKey();
   let expected: OmpPinnedRuntimeAsset | undefined;
   try {
@@ -208,6 +212,7 @@ function computeSnapshot(): OmpRuntimeSnapshot {
   const binaryUsable = binaryPath !== null;
   return classifyOmpRuntime({
     platformKey,
+    expectedVersion: activeHarnessSelection('omp')?.version,
     // latest.json 有 6 平台,构建资产表只发 4 个;缺资产的平台按「平台不支持」算。
     platformSupported: SUPPORTED_PLATFORM_KEYS.has(platformKey) && buildShipsOmpRuntime(platformKey),
     binaryPath,
@@ -308,6 +313,7 @@ export async function refreshOmpRuntime(): Promise<OmpRuntimeSnapshot> {
   return publish(
     classifyOmpRuntime({
       platformKey,
+      expectedVersion: activeHarnessSelection('omp')?.version,
       platformSupported: SUPPORTED_PLATFORM_KEYS.has(platformKey),
       binaryPath,
       binaryUsable,

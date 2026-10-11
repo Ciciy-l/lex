@@ -9,6 +9,7 @@
 
 export type SettingsTab =
   | 'general'
+  | 'harness'
   | 'billing'
   | 'usage'
   | 'personalization'
@@ -33,6 +34,7 @@ export type SettingsTab =
 
 export const TAB_IDS = [
   'general',
+  'harness',
   'personalization',
   'providers',
   'billing',
@@ -65,6 +67,7 @@ export type VisibleSettingsTab = (typeof TAB_IDS)[number];
 
 export const TAB_LABEL_KEY: Record<SettingsTab, string> = {
   general: 'settings.tabs.general',
+  harness: 'settings.tabs.harness',
   billing: 'settings.tabs.billing',
   usage: 'settings.tabs.usage',
   personalization: 'settings.tabs.personalization',

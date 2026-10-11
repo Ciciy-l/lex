@@ -29,7 +29,7 @@ vi.mock('@/lib/sessionService', () => ({
   touchUserSend: vi.fn(async () => ({})),
 }));
 vi.mock('@/lib/sessionsBus', () => ({ emitPatch: vi.fn() }));
-vi.mock('@/lib/userPromptStore', () => ({ getUserPrompt: () => '' }));
+vi.mock('@/lib/userPromptStore', () => ({ getEffectiveUserPrompt: () => '' }));
 vi.mock('@/lib/memorySettingsStore', () => ({ getMakerMemoryEnabled: () => true }));
 vi.mock('@/lib/logger', () => ({
   createLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }),

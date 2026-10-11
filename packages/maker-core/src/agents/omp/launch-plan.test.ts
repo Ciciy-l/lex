@@ -35,6 +35,35 @@ describe('parseOmpVersionOutput', () => {
 });
 
 describe('createOmpSessionLaunchPlan', () => {
+  it('maps managed preferences to native settings while preserving native system instructions', () => {
+    const result = plan({ model: { provider: 'cindy', model: 'parent' }, harnessSettings: {
+      unifiedMemoryEnabled: false, nativeMemoryDbPath: '/owners/a/omp-memory/data/mnemopi.db',
+      subagentModel: 'child', maxConcurrency: 0, maxRecursionDepth: 3,
+      compactionEnabled: true, compactionThreshold: 85, keepRecentTokens: 24000,
+    } });
+    expect(result.settingsYaml).toContain('task: "cindy/child"');
+    expect(result.settingsYaml).toContain('smol: "cindy/parent"');
+    expect(result.settingsYaml).toContain('maxConcurrency: 0');
+    expect(result.settingsYaml).toContain('maxRecursionDepth: 3');
+    expect(result.settingsYaml).toContain('thresholdPercent: 85');
+    expect(result.settingsYaml).toContain('keepRecentTokens: 24000');
+    expect(result.settingsYaml).toContain('backend: mnemopi');
+    expect(result.settingsYaml).toContain('noEmbeddings: true');
+    expect(result.settingsYaml).toContain('scoping: per-project');
+    expect(result.arguments).not.toContain('--system-prompt');
+    expect(result.settingsYaml).not.toContain('agentModelOverrides');
+  });
+  it('pauses native memory for unified memory and omits numeric overrides when using native defaults', () => {
+    const result = plan({ model: { model: 'parent' }, harnessSettings: {
+      unifiedMemoryEnabled: true, nativeMemoryDbPath: '/owners/a/memory.db', compactionEnabled: false,
+    } });
+    expect(result.settingsYaml).toContain('backend: off');
+    expect(result.settingsYaml).not.toContain('dbPath');
+    expect(result.settingsYaml).toContain('task: "cindy/parent"');
+    expect(result.settingsYaml).not.toContain('maxConcurrency');
+    expect(result.settingsYaml).not.toContain('thresholdPercent');
+    expect(result.settingsYaml).not.toContain('keepRecentTokens');
+  });
   it('uses the real working directory instead of a sandbox home', () => {
     const result = plan();
     expect(result.roots.workingDir).toBe('/projects/app');

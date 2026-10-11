@@ -1,3 +1,4 @@
+import { registerHarnessSettingsIpc } from './harness-settings-ipc.js';
 import { registerFilePeerIpc } from './device-link/filePeer';
 import { registerTaskMigrationIpc } from './task-migration/service';
 import { retainProviderPresentationAfterAuthChange } from './maker-host/provider-presentation-store.js';
@@ -4496,6 +4497,7 @@ const registerIpcHandlers = () => {
   // handler，因此独立提前挂载。迁移只会写持久化值，并在 Maker 已被其它启动路径构造
   // 时顺带 disable 现有 manager；不会为迁移而主动构造 Maker。正常 toggle/reset 仍在
   // register.ts 中注册，因为它们依赖 splash 完成后的完整 agent runtime。
+  registerHarnessSettingsIpc();
   ipcMain.handle(MAKER_IPC_INVOKE.MEMORY_GET_SETTINGS, async () => {
     return readMemorySettings();
   });

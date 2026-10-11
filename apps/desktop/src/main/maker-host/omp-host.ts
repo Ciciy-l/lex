@@ -44,6 +44,8 @@ import { readClaudeApiKey } from './auth-adapters.js';
 import { createLogger } from '../logger.js';
 import { isLocalOmpRuntimePending, peekOmpRuntimeSnapshot, resolveOmpBinaryPath } from './omp-runtime.js';
 import { deriveOmpProxySessionToken } from './omp-proxy-session-token.js';
+import { readOmpHarnessSettings, ompNativeMemoryPath, acquireOmpMemoryLease } from './omp-harness-settings.js';
+import { readMemorySettings } from './memory-settings-store.js';
 
 const log = createLogger('omp-host');
 
@@ -149,7 +151,10 @@ export function buildDesktopOmpExecutableEnvironment(
  * 只提供 id:上下文窗口由 OMP 自己的 `get_state` 给(`OmpTranslator` 会读),
  * 在 models.yml 里重复声明反而会和真机值分叉。
  */
-export function collectOmpCatalogModels(model: string): OmpModelsModel[] {
+export function collectOmpCatalogModels(model: string, providerId?: string | null, preferredModel?: string): OmpModelsModel[] {
+  // The native managed provider ID is not a catalog source. Preserve the legacy
+  // unscoped roster for callers that have no concrete parent source.
+  const sourceId = providerId === OMP_CINDY_PROVIDER_ID ? undefined : providerId;
   const seen = new Set<string>();
   const out: OmpModelsModel[] = [];
   const push = (id: string): void => {
@@ -159,9 +164,14 @@ export function collectOmpCatalogModels(model: string): OmpModelsModel[] {
   };
   // 当前选中的模型先占位:即使目录这一轮还没投影到 omp(首启竞态),会话也能起。
   push(model);
+  if (preferredModel) push(preferredModel);
   for (const provider of getActiveCatalog().providers) {
+    if (sourceId && provider.id !== sourceId) continue;
     if (provider.routing.omp?.disabled === true) continue;
-    for (const entry of provider.models.omp ?? []) push(entry.id);
+    for (const entry of provider.models.omp ?? []) {
+      if (sourceId && resolveOmpWireProtocol(entry.id, sourceId) !== resolveOmpWireProtocol(model, sourceId)) continue;
+      push(entry.id);
+    }
   }
   return out;
 }
@@ -235,8 +245,10 @@ export function buildOmpManagedModelsYaml(params: {
   providerId?: string | null;
   /** 显式指定上游协议(测试用);不给则按模型/供应商解析。 */
   wireProtocol?: OmpWireProtocol;
+  subagentModel?: string;
 }): string | undefined {
-  const models = collectOmpCatalogModels(params.model);
+  const preferred = validateOmpSubagentModel(params.model, params.providerId, params.subagentModel);
+  const models = collectOmpCatalogModels(params.model, params.providerId, preferred);
   if (models.length === 0) {
     log.warn('omp has no catalog models; skipping models.yml materialization');
     return undefined;
@@ -349,6 +361,22 @@ export function buildOmpAgent(opts: BuildOmpAgentOpts): OmpAgent | null {
   const agentDeps: AgentDeps = {
     auth: desktopOmpAuthAdapter,
     runtimeConfig: buildDesktopOmpRuntimeConfig(),
+    acquireOmpMemoryLease,
+    resolveOmpHarnessSettings: ({ model, providerId }) => {
+      const settings = readOmpHarnessSettings();
+      const unified = readMemorySettings().maker;
+      const subagentModel = resolveOmpSubagentModel(model, providerId);
+      return {
+        unifiedMemoryEnabled: unified && settings.unifiedMemory,
+        ...(settings.nativeMemory && !unified ? { nativeMemoryDbPath: ompNativeMemoryPath() } : {}),
+        ...(subagentModel ? { subagentModel } : {}),
+        ...(settings.maxConcurrency !== null ? { maxConcurrency: settings.maxConcurrency } : {}),
+        ...(settings.maxRecursionDepth !== null ? { maxRecursionDepth: settings.maxRecursionDepth } : {}),
+        compactionEnabled: settings.compactionEnabled,
+        ...(settings.compactionThreshold !== null ? { compactionThreshold: settings.compactionThreshold } : {}),
+        ...(settings.keepRecentTokens !== null ? { keepRecentTokens: settings.keepRecentTokens } : {}),
+      };
+    },
     ...localRuntimeDeps,
     logger: opts.logger,
     turnChangeCapture: opts.turnChangeCapture,
@@ -391,6 +419,7 @@ export function buildOmpAgent(opts: BuildOmpAgentOpts): OmpAgent | null {
         token,
         providerId: context.providerId,
         baseUrl: context.remoteBaseUrl,
+        subagentModel: context.subagentModel,
       });
     },
   };
@@ -416,4 +445,15 @@ function buildDesktopOmpRuntimeConfig(): AgentDeps['runtimeConfig'] {
   return {
     userDataPath: app.getPath('userData'),
   };
+}
+
+/** A global preference resolves only within the parent source and its native API route. */
+export function resolveOmpSubagentModel(parentModel: string, providerId?: string | null): string | undefined {
+  return validateOmpSubagentModel(parentModel, providerId, readOmpHarnessSettings().subagentModel);
+}
+function validateOmpSubagentModel(parentModel: string, providerId: string | null | undefined, model: string | null | undefined): string | undefined {
+  if (!model || !providerId) return undefined;
+  const provider = getActiveCatalog().providers.find(provider => provider.id === providerId);
+  if (!provider || provider.routing.omp?.disabled || !provider.models.omp?.some(entry => entry.id === model)) return undefined;
+  return resolveOmpWireProtocol(model, providerId) === resolveOmpWireProtocol(parentModel, providerId) ? model : undefined;
 }

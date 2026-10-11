@@ -57,6 +57,7 @@ import type { HookEvent, HookCallbackMatcher, Query } from '@anthropic-ai/claude
 
 import type {
   OmpSessionCredentials,
+  OmpHarnessRuntimeSettings,
   OmpSessionExecutableEnvironment,
 } from './omp/launch-plan.js';
 import type { OmpRemoteTransport } from './omp/process-host.js';
@@ -768,6 +769,8 @@ export interface AgentDeps {
    * PI_CODING_AGENT_DIR），复用会静默读到对方的凭证与会话。
    */
   resolveOmpAgentHome?: (remoteHostId?: string | null) => string | undefined;
+  resolveOmpHarnessSettings?: (context: { model: string; providerId?: string | null }) => OmpHarnessRuntimeSettings;
+  acquireOmpMemoryLease?: (dbPath: string) => Promise<() => Promise<void>>;
   /**
    * OMP-only: resolves the already-probed remote native runtime and the two
    * remote paths that are safe to use for one managed OMP session. The values
@@ -829,6 +832,8 @@ export interface AgentDeps {
     sessionId?: string;
     providerId?: string | null;
     model: string;
+    /** Already captured with the other Harness settings for this runtime. */
+    subagentModel?: string;
     /** Present only for an SSH OMP session. */
     remoteHostId?: string;
     /** Reverse-forwarded remote loopback endpoint for this runtime. */

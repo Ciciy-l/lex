@@ -96,7 +96,7 @@ vi.mock('@/lib/sessionsBus', () => ({
 }));
 
 vi.mock('@/lib/userPromptStore', () => ({
-  getUserPrompt: () => '',
+  getEffectiveUserPrompt: () => '',
 }));
 
 vi.mock('@/lib/imageRef', () => ({

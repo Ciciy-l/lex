@@ -20,7 +20,7 @@ vi.mock('@/lib/makerTransport', () => ({
 }));
 
 vi.mock('@/lib/userPromptStore', () => ({
-  getUserPrompt: () => '',
+  getEffectiveUserPrompt: () => '',
 }));
 
 vi.mock('@/lib/imageRef', () => ({

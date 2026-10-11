@@ -28,7 +28,7 @@ vi.mock('@/lib/sessionService', () => ({
   touchUserSend: vi.fn(async () => ({})),
 }));
 vi.mock('@/lib/sessionsBus', () => ({ emitPatch: vi.fn() }));
-vi.mock('@/lib/userPromptStore', () => ({ getUserPrompt: () => '' }));
+vi.mock('@/lib/userPromptStore', () => ({ getEffectiveUserPrompt: () => '' }));
 vi.mock('@/lib/imageRef', () => ({
   parseUserContent: vi.fn((c: string) => ({ text: c, images: [], files: [] })),
   stringifyUserContent: vi.fn((text: string) => text),

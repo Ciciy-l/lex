@@ -307,7 +307,7 @@ OMP 特有、需要在 UI 上表达的只有四类：
 3. **`config/lex-agent-runtime-assets.json`**：4 个平台（`win32-x64` / `darwin-arm64` / `darwin-x64` / `linux-x64`）各加 `omp: { version, file, sha256, size }`，值必须与 `tools/omp/latest.json` 的同平台条目逐字一致。
    - **平台缺口**：`tools/omp/latest.json` pin 了 6 个平台（多出 `linux-arm64` / `win32-arm64`），CDN snapshot 现在只有 4 个。需补 2 个平台或明确不支持（见 §11-Q9）。
 4. **`omp-probe-runtime.ts` → 重写为 `omp-runtime.ts`**：去掉"仅 dev""打包版直接拒绝"的限制；保留从 pin 重建 descriptor、URL / sha256 / size / version 全量复核、`timingSafeEqual` 比对；接入 `agent-binaries` 的受管路径解析。spawn 前必须过 `isVettedAgentBinaryPath('omp', candidate)`。
-5. **版本策略**：`OMP_COMPATIBILITY_BASELINE`（`commands.ts`）与 `tools/omp/latest.json` 的 `version` 必须同值（当前 18.1.18）。**本地存在更高版本一律拒绝启动，不静默升级也不静默降级**（见 §11-Q4）。
+5. **版本策略**：`OMP_COMPATIBILITY_BASELINE`（`commands.ts`）与 `tools/omp/latest.json` 的 `version` 必须同值（当前 18.1.18）。未通过 Harness 管理器选中的本地版本仍按 pin 校验。用户可在设置 → Harness 安装经过官方摘要/版本校验的稳定版，手动重启后生效，并可恢复 Lex 基线（见 [Harness 设置](dev-rules/harness-settings.md)）。
 
 ### 8.3 用户可见行为
 
@@ -412,8 +412,8 @@ OMP 特有、需要在 UI 上表达的只有四类：
 - 替代（更快但面更小）：P0 仅 BYOM，Cindy 网关放 P1。
 - 前置核实：OMP 的 provider 配置是否支持 `anthropic-messages` 形态、能否指向 loopback 代理并注入 per-request header。
 
-**Q4 版本策略：锁死 18.1.18，还是允许本地更高版本？**
-- **推荐：锁死**。`OMP_COMPATIBILITY_BASELINE` 与 pin 同值，本地更高版本一律拒绝启动。OMP 上游迭代极快（仓库已到 v18.x），协议漂移风险高；跟随上游必须每次重跑协议审查 + 更新 pin + 更新本 PRD 的 §3。
+**Q4 版本策略：保留构建基线，支持显式选择受管稳定版。**
+- **当前裁决**：默认基线仍为 18.1.18；Harness 安装的官方稳定版使用其验证过的版本/摘要，选择持久化，手动重启生效。任意本地文件不因此获得执行权限。基线可恢复；上游新版协议兼容仍需验证。详见 [Harness 设置](dev-rules/harness-settings.md)。
 
 **Q5 OMP 会话文件放哪？**
 - **推荐：Lex `userData/omp-agent-home/sessions/`**（与其它 agent 一致，随 Lex 备份/卸载走，不污染用户仓库）。

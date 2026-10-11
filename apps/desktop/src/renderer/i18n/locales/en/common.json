@@ -447,7 +447,8 @@
       "help": "Help",
       "about": "About",
       "imBot": "IM bots",
-      "ghosts": "Plugins"
+      "ghosts": "Plugins",
+      "harness": "Harness"
     },
     "sections": {
       "user": "User",
@@ -3319,10 +3320,10 @@
       }
     },
     "personalization": {
-      "title": "Personalization",
+      "title": "Custom prompts",
       "subtitle": "Custom Prompts",
       "description": "Give your assistants extra instructions and context.",
-      "placeholder": "Enter your custom instructions here. They will be appended to the end of the Claude / Codex system prompt.\n\n· Applies only to {{appName}}'s built-in sessions. Existing sessions keep their startup snapshot; changes take effect on the next new session.\n· To enforce this across all Claude Code sessions (terminal, other IDEs, etc.), configure a SessionStart hook in ~/.claude/settings.json (harness-level enforcement).\n· Codex CLI: configure a SessionStart hook in ~/.codex/hooks.json for deterministic injection (same harness mechanism as CC); or use ~/.codex/AGENTS.md (auto-loaded, soft-guidance only).",
+      "placeholder": "Enter extra instructions to append after the selected engine’s native system prompt. Common instructions come before engine-specific instructions.\n\nApplies only to Agent sessions inside {{appName}}. Existing Agent sessions keep their startup settings; the next Agent session uses the new content.",
       "ariaLabel": "Custom instructions",
       "save": "Save",
       "overLimit": " — over limit",
@@ -6017,6 +6018,51 @@
       "hint": "Remote IM keeps confirmation enabled for actions that need approval.",
       "fullAccessDisabled": "Full Access is unavailable for remote IM because actions that cannot be safely confirmed must not run directly.",
       "permissionModeDisabled": "This permission mode is unavailable because remote IM uses {{appName}} Desktop's confirmation policy."
+    },
+    "harness": {
+      "description": "Configure Harness capabilities by function. Each section shows only the controls supported by that engine.",
+      "versions": "Versions & upgrades",
+      "versionsDescription": "Check official stable releases (cached for 15 minutes). Downloads start only when you choose Install. Installed versions take effect after you manually restart Lex; running tasks keep their current runtime. Restore returns to the baseline shipped with this Lex build.",
+      "check": "Check again",
+      "install": "Install {{version}}",
+      "restore": "Restore Lex baseline {{version}}",
+      "cancel": "Cancel",
+      "retry": "Retry",
+      "runtimeFailed": "Could not complete the runtime operation. Check your connection and retry.",
+      "restartRequired": "Version {{version}} is ready. Manually restart Lex when your tasks are finished to apply it.",
+      "promptScope": "Prompt scope",
+      "commonPrompt": "All engines",
+      "promptDescription": "Append the common prompt, then the selected engine’s prompt, to its native system prompt. The combined text must fit within 8,000 characters.",
+      "saveFailed": "Could not save. Check the values and retry.",
+      "loadFailed": "Could not load the settings.",
+      "nextSession": "Saved preferences apply to the next Agent session. Existing Agent sessions retain their startup settings.",
+      "unifiedMemory": "Use Lex unified memory in OMP",
+      "nativeMemory": "OMP local memory",
+      "nativeMemoryDescription": "Store memory locally for this account, recall it by project, and use full-text search without downloading embedding models. Automatic processing can call the task’s existing model and incur its normal usage.",
+      "nativeMemoryPaused": "Lex unified memory is enabled. OMP native memory is paused; its saved preference is retained.",
+      "clearMemory": "Clear OMP local memory",
+      "clearMemoryDescription": "Delete all OMP native memories for this account across projects. Lex unified memory is not included. Close Agent sessions using this store first.",
+      "memoryBusy": "An OMP runtime is still using this memory. Close the relevant Agent sessions and try again.",
+      "subagentModel": "Default Subagent model",
+      "inheritModel": "Inherit parent model",
+      "subagentDescription": "Use the selected model only within the parent provider and API route; otherwise inherit the parent model. Explicit model choices in named agents take precedence. Leave numbers blank for native defaults; concurrency 0 means unlimited.",
+      "maxConcurrency": "Maximum concurrent Subagents",
+      "maxRecursionDepth": "Maximum Subagent nesting depth",
+      "compactionEnabled": "OMP automatic context compaction",
+      "compactionThreshold": "Compaction threshold (%)",
+      "keepRecentTokens": "Recent tokens to keep",
+      "compactionDescription": "Uses OMP’s native compaction and progress events. Leave numbers blank to follow the installed version’s native defaults.",
+      "nativeDefault": "Native default",
+      "invalidRange": "Enter an integer between {{min}} and {{max}}, or leave it blank.",
+      "extensions": "Extensions",
+      "phase": {
+        "checking": "Checking…",
+        "downloading": "Downloading…",
+        "verifying": "Verifying…",
+        "cancelled": "Cancelled",
+        "failed": "Operation failed"
+      },
+      "memoryCleared": "OMP local memory has been cleared."
     }
   },
   "remoteDevice": {
