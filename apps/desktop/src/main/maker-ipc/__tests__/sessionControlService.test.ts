@@ -223,7 +223,11 @@ describe('session control domain service', () => {
     expect(own({ kind: 'orca', senderLabel: 'reviewer', displayText: 'r' })).toBe(true);
     expect(own({ kind: 'session', senderSessionId: 'other', displayText: 'r' })).toBe(true);
     expect(own(undefined)).toBe(false);
-    expect(own({ kind: 'session', senderSessionId: 'other', senderBotId: 'bot-1', displayText: 'r' })).toBe(false);
+    // Persisted rows may carry provenance beyond Lex's public origin type.
+    expect(own(Object.assign(
+      { kind: 'session' as const, senderSessionId: 'other', displayText: 'r' },
+      { senderBotId: 'bot-1' },
+    ))).toBe(false);
     expect(own({ kind: 'session', senderSessionId: 'other', displayText: 'r' }, {
       sourcePlugin: { pluginId: 'plugin-1', name: 'Plugin' },
     } as Partial<AgentInputQueuedMessage>)).toBe(false);

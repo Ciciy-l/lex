@@ -185,7 +185,10 @@ describe('shared queue presentation model', () => {
       },
       queueLength: 3,
     });
-    expect(busyOrca.actions.edit.disabledReason).toBe('协同消息由桌面端编排，手机端只读显示。');
+    expect(busyOrca.actions.edit).toEqual({
+      disabled: true,
+      disabledReason: '队列操作同步中，完成后再继续操作。',
+    });
   });
 
   it('explains steering, edit-lock, interaction-lock, and Orca row states', () => {

@@ -277,6 +277,16 @@ async function runStableAbabLoop(
 
   try {
     await handle.send({ type: 'user', content: userContent });
+    if (sidechain) {
+      // Keep the parent Agent call active while its child loop is being reviewed.
+      stream.emit({
+        type: 'assistant', parent_tool_use_id: null,
+        message: { role: 'assistant', content: [{
+          type: 'tool_use', id: sidechain.parentToolUseId, name: 'Agent',
+          input: { prompt: userContent },
+        }] },
+      });
+    }
     for (let i = 0; i < 12; i += 1) {
       const id = `${idPrefix}_${i}`;
       const isA = i % 2 === 0;
@@ -759,28 +769,44 @@ describe('Claude Code tool-loop guard runtime integration', () => {
     expect(result.interruptCalls).toBe(1);
   });
 
-  it('未确认的 provider-routed 模型不扩展自动硬中断范围', async () => {
-    const result = await runStableAbabLoop(
-      await startSessionWithStream('codex/gpt-5.5'),
-      'run a provider-routed investigation',
-      'toolu_provider_boundary',
+  describe.each(['session', 'sidechain'] as const)('provider-routed %s loop review', (scope) => {
+    it.each(['continue', 'stop', 'unavailable'] as const)(
+      'honors the reviewer decision (%s) for stable ABAB loops',
+      async (decision) => {
+        const reviewer = decision === 'unavailable'
+          ? undefined
+          : vi.fn<ToolLoopReviewer>(async () => decision);
+        const model = scope === 'session' ? 'codex/gpt-5.5' : 'gpt-5.6-sol';
+        const result = await runStableAbabLoop(
+          await startSessionWithStream(scope === 'session' ? model : 'claude-opus-5', reviewer),
+          'run a provider-routed investigation',
+          `toolu_provider_${scope}_${decision}`,
+          scope === 'sidechain' ? { parentToolUseId: 'toolu_agent_codex', model } : undefined,
+        );
+
+        if (reviewer) {
+          expect(reviewer).toHaveBeenCalledOnce();
+          expect(reviewer.mock.calls[0]?.[0]).toMatchObject({
+            model, agentKind: 'claude-code',
+            verdict: { reason: 'pingpong', count: 12, toolName: 'Bash' },
+          });
+        }
+        if (decision === 'continue') {
+          expect(result.loopError).toBeUndefined();
+          expect(result.interruptCalls).toBe(0);
+        } else {
+          expect(result.loopError).toMatchObject({
+            type: 'error',
+            data: {
+              reason: 'tool_use_loop_detected', loopKind: 'pingpong', loopCount: 12,
+              model, isTerminal: true,
+            },
+            source: 'claude-code',
+          });
+          expect(result.interruptCalls).toBe(1);
+        }
+      },
     );
-
-    expect(result.loopError).toBeUndefined();
-    expect(result.interruptCalls).toBe(0);
-  });
-
-  it('claude 会话下 provider-routed 模型 sidechain 的稳定 ABAB 循环不触发硬中断', async () => {
-    // sidechain 流内消息报的是 SDK 原始 id(无 codex/ 前缀),guard 适用性按它判。
-    const result = await runStableAbabLoop(
-      await startSessionWithStream('claude-opus-5'),
-      'delegate the investigation to a codex subagent',
-      'toolu_codex_sidechain',
-      { parentToolUseId: 'toolu_agent_codex', model: 'gpt-5.6-sol' },
-    );
-
-    expect(result.loopError).toBeUndefined();
-    expect(result.interruptCalls).toBe(0);
   });
 
   it('provider-routed 会话下 claude 模型 sidechain 的稳定 ABAB 循环仍会中断', async () => {

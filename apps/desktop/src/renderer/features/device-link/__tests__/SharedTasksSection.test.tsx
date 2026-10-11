@@ -168,7 +168,7 @@ it('shows the owned group alone for a host, with local task navigation', async (
   const select=vi.fn(); render(<SharedTasksSection onSelect={select} />);
   await screen.findByText('sharedTask.title');
   expect(screen.queryByRole('tablist')).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: /Hosted task/ }));
+  fireEvent.click(await screen.findByRole('button', { name: /Hosted task/ }));
   expect(select).toHaveBeenCalledWith('host-task');
   expect(state.openLink).not.toHaveBeenCalled();
 });

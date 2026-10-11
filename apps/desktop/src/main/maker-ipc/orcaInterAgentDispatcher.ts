@@ -428,9 +428,10 @@ export function createOrcaInterAgentDispatcher<TSessionMeta>(
           const createOpts = await deps.buildCreateOptsForQueuedSession(params.targetSessionId, meta);
           const item = buildQueuedOrcaInterAgentMessage({
             clientId,
-            agentMessageText: await buildAgentMessageText(),
+            agentMessageText,
             persistedContent,
-            origin: await resolveOrigin(),
+            rawContent: params.rawContent,
+            senderLabel: await resolveSenderLabel(),
             createOpts,
           });
           if (

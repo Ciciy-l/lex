@@ -4,7 +4,6 @@ import {
   remoteDesktopVideoSettingsWire,
   type RemoteDesktopRequest,
 } from '@cindy/device-link';
-import { DEFAULT_VIEWER_PREFERENCES } from '../../../shared/remoteDesktopViewer';
 
 function fixture() {
   let owner = 'account-a:1';

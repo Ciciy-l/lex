@@ -61,6 +61,7 @@ function productionSteer(session: FakeSession, deliver: () => Promise<void>, rej
     restoreAutoReviewSteerIntent: async () => undefined,
     shouldPrependMobileClientPromptNote: () => false,
     readWireSourceDevice: () => null,
+    isMobileControllerInvoke: () => false,
     isDeviceLinkInvoke: () => false,
     assertRemoteInputClearNotInFlight: () => {},
     readRemoteInputClearBoundaryPrecondition: () => ({ present: false }),

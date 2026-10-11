@@ -283,7 +283,7 @@ describe('resolveSendToSessionExecutionConfig', () => {
     const undeclared = { id: 'custom/step-5-preview', efforts: [], defaultEffort: null, effortsUnknown: true };
     const routing: OrcaWorkerProviderRoutingContext = {
       availability: {
-        codex: [], pi: [],
+        codex: [], pi: [], omp: [],
         'claude-code': [{
           id: 'custom-anthropic',
           name: 'Custom Anthropic Messages',

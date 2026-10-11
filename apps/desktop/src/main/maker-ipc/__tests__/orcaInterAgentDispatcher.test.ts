@@ -134,7 +134,6 @@ describe('sender-chosen steering into an active turn', () => {
       withSendToSessionLock: lock as OrcaInterAgentDispatcherDeps<TestSessionMeta>['withSendToSessionLock'],
       shouldQueueNewTurn: () => true,
       resolveWorkerSenderLabel: async () => 'reviewer',
-      resolveWorkerSessionLink: async () => ({ leadSessionId: 'target-session', workerSessionId: 'worker-session' }),
     });
     return { ...h, live, steer, lock };
   }
@@ -147,10 +146,10 @@ describe('sender-chosen steering into an active turn', () => {
     expect(result).toMatchObject({ ok: true, mode: 'steered', clientId: 'client-1' });
     expect(result).not.toHaveProperty('steerFallbackReason');
     expect(h.steer).toHaveBeenCalledWith('target-session', expect.objectContaining({
-      clientId: 'client-1', text: '[From Orca Worker reviewer (worker_id: worker-1)]\nCompleted work',
+      clientId: 'client-1', text: '[From Orca Worker]\nCompleted work',
       persistedContent: '{"orcaSource":"worker","content":"Completed work"}',
       autoReviewUserText: { kind: 'delegated-continuation' },
-      origin: { kind: 'orca', senderLabel: 'reviewer', senderSessionId: 'worker-session', displayText: 'Completed work' },
+      origin: { kind: 'orca', senderLabel: 'reviewer', displayText: 'Completed work' },
     }), { session: h.live, turnGeneration: 7 });
     // The message joined the running turn; accepted/commit would claim a new turn's identity.
     expect(order).toEqual([]);

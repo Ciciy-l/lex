@@ -355,10 +355,12 @@ export function authorizeSessionQueueReorder(
   callerSessionId: string,
   targetSessionId: string,
 ): { ok: true } | { ok: false; message: string } {
-  const plainMachineMessage =
-    !item.sourcePlugin &&
-    (item.origin?.kind === 'orca' ||
-      (item.origin?.kind === 'session' && !item.origin.senderBotId));
+  // Reject extended persisted provenance even though it is not in Lex's public queue schema.
+  const pluginOwned = 'sourcePlugin' in item && !!item.sourcePlugin;
+  const botOwned = item.origin?.kind === 'session' &&
+    'senderBotId' in item.origin && !!item.origin.senderBotId;
+  const plainMachineMessage = !pluginOwned && !botOwned &&
+    (item.origin?.kind === 'orca' || item.origin?.kind === 'session');
   const owned =
     authorizeSessionQueueItem(item, callerSessionId).ok || callerSessionId === targetSessionId;
   return plainMachineMessage && owned
