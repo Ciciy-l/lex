@@ -132,7 +132,7 @@ PR #101 之后，Orca 的 main 侧业务由独立 service 承接，`register.ts`
 
 诊断 3 工具是纯只读，实现走 host `apps/desktop/src/main/maker-ipc/orcaDiagnostics.ts`（读 active team + DB worker 列表 + live session 状态 + 最近 assistant 消息），**无建 team 写副作用**——这是与旧 `orca_bridge` 版本的关键差异（旧版经 `ensureWorkflowForLead` 会顺手建 team）。早期 Lead 侧 `orca_bridge`（门面 + 私有 registry/restore/auto-bridge）已整体删除：Lead→worker/team 工具面唯 `cindy_orca`（C）一套，worker→lead 唯 `orca_worker_bridge`（B，在 `packages/orca-workflow`）一套；`@cindy/orca-workflow` 包通过 B provider 与 `renderOrcaLeadSystemPrompt`/`renderOrcaWorkerSystemPrompt` 两个 render 函数继续被 host 依赖。
 
-`cindy_orca` 直接注册到顶层，而不是藏在 `list_tools/call_tool` 后面；模型在“开协同 / 派 worker”时需要稳定发现 `start_team/create_worker`。Claude Code / Codex / Pi 走 MCP SDK 或 HTTP bridge；本地 OMP 通过 `set_host_tools` 接收同一份 18 工具清单，并由 `host_tool_call` 回到同一组 handler，不能另写一套 Team 状态机。实现见 `packages/lizi-mcps/src/orca/server.ts` 的 `createOrcaMcpServer`、`createOrcaOmpRpcHostTools`、`DirectToolSink`、`OrcaMcpDeps`。
+`cindy_orca` 直接注册到顶层，而不是藏在 `list_tools/call_tool` 后面；模型在“开协同 / 派 worker”时需要稳定发现 `start_team/create_worker`。Claude Code / Codex / Pi 走 MCP SDK 或 HTTP bridge；本地 OMP 通过 `set_host_tools` 接收同一份 20 工具清单，并由 `host_tool_call` 回到同一组 handler，不能另写一套 Team 状态机。实现见 `packages/lizi-mcps/src/orca/server.ts` 的 `createOrcaMcpServer`、`createOrcaOmpRpcHostTools`、`DirectToolSink`、`OrcaMcpDeps`。
 
 Worker 权限是 **Worker 创建偏好**，与 Agent、模型、effort、Fast 的“下次创建默认值”同类，不是 Lead 权限的继承项，也不是 Team 数据库字段：
 

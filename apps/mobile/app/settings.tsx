@@ -576,7 +576,9 @@ export default function SettingsScreen() {
   }, [auth.apiFetch, pushBusy, pushEnabled, t]);
 
   const debugDisclosureMotionEnabled = Platform.OS !== 'android';
-  const debugDisclosure = useListDisclosureTransition({ motionEnabled: debugDisclosureMotionEnabled });
+  const debugDisclosure = useListDisclosureTransition({
+    motionEnabled: debugDisclosureMotionEnabled,
+  });
   const runDebugDisclosure = debugDisclosure.run;
   const toggleDebug = useCallback(() => {
     runDebugDisclosure(() => setDebugExpanded((value) => !value));
@@ -731,7 +733,10 @@ export default function SettingsScreen() {
       />
 
       <ScrollView {...simpleScrollInsetProps} contentContainerStyle={styles.content} testID="settings.scroll">
-        <ListDisclosureScope controller={debugDisclosure.controller} motionEnabled={debugDisclosureMotionEnabled}>
+        <ListDisclosureScope
+          controller={debugDisclosure.controller}
+          motionEnabled={debugDisclosureMotionEnabled}
+        >
         {/* 账号头部:身份 + 连接状态一次性呈现,下面分组不再重复 */}
         <View style={styles.headerCard} testID="settings.accountHeader">
           <MobileUserAvatar imageUrl={auth.user?.avatar} name={overview.header.name} size="large" />

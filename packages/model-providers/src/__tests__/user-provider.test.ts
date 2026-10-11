@@ -397,8 +397,8 @@ describe("buildUserProvider (per-runtime)", () => {
         expect(provider.models[agent]).toEqual([
           expect.objectContaining({
             id: "unknown-model",
-            efforts: [],
-            defaultEffort: null,
+            efforts: agent === "pi" ? [] : ["low", "medium", "high", "xhigh", "max"],
+            defaultEffort: agent === "pi" ? null : "medium",
           }),
           expect.objectContaining({
             id: "discovered-model",
@@ -635,8 +635,8 @@ describe("buildUserProvider (per-runtime)", () => {
     // custom/my-model → no registry match → CUSTOM_EFFORTS for codex
     expect(p.models.codex?.[0]).toMatchObject({
       id: "custom/my-model",
-      efforts: [],
-      defaultEffort: null,
+      efforts: ["low", "medium", "high", "xhigh", "max"],
+      defaultEffort: "medium",
       effortsUnknown: true,
     });
   });

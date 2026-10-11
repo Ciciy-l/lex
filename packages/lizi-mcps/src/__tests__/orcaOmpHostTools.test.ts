@@ -58,6 +58,8 @@ function createDeps(overrides: Partial<OrcaMcpDeps> = {}): OrcaMcpDeps {
       queuedMessageId: 'queued-1',
       messages: [],
     })),
+    steerWorkerQueuedMessage: vi.fn(async () => ({ ok: true as const, workerId: 'worker-1', queuedMessageId: 'queued-1', delivery: 'steered' as const })),
+    moveWorkerQueuedMessage: vi.fn(async () => ({ ok: true as const, workerId: 'worker-1', queuedMessageId: 'queued-1', position: 1 })),
     idleWorker: vi.fn(async () => ({ ok: true as const, workerId: 'worker-1' })),
     endTeam: vi.fn(async () => ({ ok: true as const })),
     archiveWorker: vi.fn(async () => ({ ok: true as const, workerId: 'worker-1' })),
@@ -117,7 +119,7 @@ function payload(result: { content: readonly { type: 'text'; text: string }[] })
 }
 
 describe('cindy_orca OMP host-tool adapter', () => {
-  it('projects the same complete, strict 18-tool Orca manifest for an OMP Lead', () => {
+  it('projects the same complete, strict 20-tool Orca manifest for an OMP Lead', () => {
     const tools = createOmpOrcaTools(createDeps());
 
     expect(tools.map((tool) => tool.name)).toEqual([
@@ -132,6 +134,8 @@ describe('cindy_orca OMP host-tool adapter', () => {
       'update_queued_message',
       'cancel_queued_message',
       'merge_queued_messages',
+      'steer_queued_message',
+      'move_queued_message',
       'idle_worker',
       'end_team',
       'archive_worker',
@@ -150,6 +154,25 @@ describe('cindy_orca OMP host-tool adapter', () => {
         64 * 1024,
       );
     }
+  });
+
+  it('routes OMP queue steering and ordering through the authenticated Lead handlers', async () => {
+    const deps = createDeps();
+    const tools = createOmpOrcaTools(deps);
+    const signal = new AbortController().signal;
+    const steer = tools.find((tool) => tool.name === 'steer_queued_message')!;
+    const move = tools.find((tool) => tool.name === 'move_queued_message')!;
+    const result = await steer.execute({ worker_id: 'worker-1', queued_message_id: 'queued-1' }, { signal });
+    expect(payload(result)).toMatchObject({ ok: true, delivery: 'steered' });
+    expect(deps.steerWorkerQueuedMessage).toHaveBeenCalledWith({
+      callerLeadSessionId: 'lead-1', workerRef: 'worker-1', queuedMessageId: 'queued-1',
+    });
+    await move.execute({ queued_message_id: 'queued-1', position: 1 }, { signal });
+    expect(deps.moveWorkerQueuedMessage).toHaveBeenCalledWith({
+      callerLeadSessionId: 'lead-1', queuedMessageId: 'queued-1', position: 1,
+    });
+    await move.execute({ queued_message_id: 'queued-1', position: -1 }, { signal });
+    expect(deps.moveWorkerQueuedMessage).toHaveBeenCalledTimes(1);
   });
 
   it('uses the existing Lead handler and preserves its structured result', async () => {
