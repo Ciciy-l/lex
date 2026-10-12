@@ -146,6 +146,8 @@ vi.mock('../../../cindy-brain/index.js', () => ({
 
 import {
   broadcastSessionPatched,
+  getSessionRowSnapshot,
+  getSessionRowSnapshotStrict,
   patchSessionMetaInDb,
   persistSessionFields,
   registerSessionIpc,
@@ -322,6 +324,21 @@ afterEach(async () => {
     rmSync(dir, { recursive: true, force: true });
     h.userDataDir = null;
   }
+});
+
+describe('session row snapshot permissions', () => {
+  it.each(['ask', 'default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'])(
+    'reads persisted %s permissions without changing another session',
+    async (permissionMode) => {
+      h.sqlite!.prepare('UPDATE sessions SET permission_mode = ? WHERE id = ?')
+        .run(permissionMode, 'pi-local');
+
+      await expect(getSessionRowSnapshot('pi-local')).resolves.toMatchObject({ permissionMode });
+      await expect(getSessionRowSnapshotStrict('pi-local')).resolves.toMatchObject({ permissionMode });
+      await expect(getSessionRowSnapshot('cc-local')).resolves.toMatchObject({ permissionMode: 'ask' });
+      await expect(getSessionRowSnapshotStrict('missing-session')).resolves.toBeNull();
+    },
+  );
 });
 
 describe('local-db:sessions:update handler wiring', () => {

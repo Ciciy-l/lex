@@ -475,6 +475,7 @@ describe('hook session 精确接管边界', () => {
       .mockResolvedValueOnce({
         status: 'active',
         title: 'Remote',
+        permissionMode: 'ask',
         userSendAt: 1,
         workingDir: '/repo',
         workspaceKind: 'project',
@@ -485,6 +486,7 @@ describe('hook session 精确接管边界', () => {
       .mockResolvedValueOnce({
         status: 'active',
         title: 'Worker',
+        permissionMode: 'ask',
         userSendAt: 1,
         workingDir: '/repo',
         workspaceKind: 'project',
@@ -2993,6 +2995,7 @@ describe('providerId(来源/供应商)贯通 —— issue #854 回归', () => {
       workingDir: 'D:/repo',
       workspaceKind: 'project',
       providerId: 'xd',
+      permissionMode: 'ask',
     });
     const runner = createMakerHookSessionRunner({ log });
     const outcome = await runner.run(baseReq({ sessionId: 'sess-old', isNew: false }));
@@ -3020,6 +3023,7 @@ describe('providerId(来源/供应商)贯通 —— issue #854 回归', () => {
       workingDir: 'D:/repo',
       workspaceKind: 'project',
       providerId: null,
+      permissionMode: 'ask',
     });
     const runner = createMakerHookSessionRunner({ log });
     const outcome = await runner.run(baseReq({ sessionId: 'sess-old', isNew: false }));
