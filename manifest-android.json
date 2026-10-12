@@ -1,0 +1,339 @@
+{
+  "schemaVersion": 1,
+  "version": "0.1.4",
+  "versionCode": 1000499,
+  "packageName": "io.github.ciciyl.lex",
+  "size": 131526502,
+  "sha256": "4ea8cb2db16b478ec56da3995d0a1aa6f86ef630ecc42e1da865c81b0269ba3a",
+  "certificateSha256": "86261bb1fea32e9122a7934f5f62d3b100c2248e032d148837ea997ce0b33a14",
+  "platform": "android",
+  "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.4/Lex-0.1.4-Android.apk",
+  "releaseUrl": "https://github.com/Ciciy-l/lex/releases/tag/v0.1.4",
+  "contentByLocale": {
+    "zh-CN": {
+      "intro": "Lex 0.1.4 是 0.1.4 系列的正式版，承接 rc.1、rc.2 的稳定性修复，并新增桌面 Harness 统一设置、四引擎版本管理、OMP 设置及 Lex 移动端品牌、分区登录和 Android 应用内 APK 更新。相对 rc.2 的主要新增内容来自 PR #63 和 #64；建议桌面端与 Android 一起升级。",
+      "topics": [
+        {
+          "id": "harness",
+          "title": "设置新增 Harness 页面，按功能统一管理",
+          "text": "Claude Code、Codex、Pi、OMP 的相关设置集中到 Harness 页面，按版本与升级、自定义提示词、记忆、Subagent、上下文压缩和扩展分组。每组只展示引擎实际支持的能力，不要求四个引擎具有完全相同的选项；设置搜索同步指向新位置。模型供应商、通用技能、MCP 与 Orca 协同保留原有入口。"
+        },
+        {
+          "id": "runtime",
+          "title": "四引擎版本检测、安装与恢复",
+          "text": "可检查各引擎的上游稳定版、手动下载安装，或恢复此 Lex 版本固定的引擎基线。界面显示下载与校验进度并支持取消；失败或取消不会覆盖当前选择。安装成功后请在方便时手动重启 Lex，新引擎才会生效，运行中的任务不会被自动中断。已选择的引擎版本会保留，不随 Lex 应用升级被覆盖；这些入口管理本机引擎，不管理 SSH 远端安装。"
+        },
+        {
+          "id": "prompts",
+          "title": "通用提示词与引擎专用追加",
+          "text": "保留已有通用自定义提示词，并允许分别为 Claude Code、Codex、Pi、OMP 追加内容。引擎原生系统提示词继续生效，其后组合通用追加与当前引擎追加，两者合计最多 8,000 字符。配置按账号隔离，保存失败会提示；已运行的 Agent 会话不会自动重建，新建或重建时读取新配置。"
+        },
+        {
+          "id": "omp-memory",
+          "title": "OMP 接入统一记忆，并提供原生记忆选项",
+          "text": "OMP 默认参与 Lex 统一记忆，沿用项目范围、账号隔离和现有记忆工具。可选的原生 Mnemopi 记忆默认关闭，使用本机全文检索，不下载嵌入模型；自动整理可能调用当前任务已授权的模型。全局统一记忆开启时，新 OMP 运行环境暂停原生记忆，保留原生偏好。清空原生记忆需要确认，仍有运行环境占用时会拒绝清空。"
+        },
+        {
+          "id": "omp-execution",
+          "title": "OMP 的 Subagent 与上下文压缩设置",
+          "text": "OMP Subagent 默认继承父模型，也可指定同一供应商、同一原生 API 路由内的模型；不可用时回退父模型，不借用其他供应商凭证。可设置并发数、递归深度、原生自动压缩开关、触发比例及保留的近期 tokens。数值留空跟随引擎默认值，各组可恢复默认；运行中的 Agent 会话保留原配置，后续新建时生效。"
+        },
+        {
+          "id": "mobile-brand",
+          "title": "移动端统一 Lex 品牌与产品入口",
+          "text": "开屏、登录立绘、亮暗字标、分享图片页脚和应用文案统一为 Lex，品牌图片随移动端打包。设置新增 Lex 官网、反馈、下载和版本说明入口；未配置统计服务时隐藏无效开关，Lex 不显示上游备案号。简体中文、繁体中文、英语、日语、韩语同步更新，亮色与暗色均有对应实现。"
+        },
+        {
+          "id": "service-region",
+          "title": "手机个人登录支持 Global / 中国大陆",
+          "text": "个人登录页可选择 Global 或中国大陆服务分区并记住选择；已有账号启动时优先使用该账号保存的分区。验证码、登录验证和协议链接跟随所选分区，切换时取消旧登录流程，避免迟到结果写入新流程。手机与电脑需登录同一账号、同一服务分区才能按原有规则连接。切换分区不会迁移账号，也不会改变 Lex 的更新渠道。"
+        },
+        {
+          "id": "android-updates",
+          "title": "Android 从 Lex Releases 检查、下载并安装新版 APK",
+          "text": "新增应用内 APK 更新：启动或返回前台时最多每 6 小时自动检查，同一目标版本最多每 24 小时提醒一次，也可在设置中手动检查。下载需主动点击，支持进度、取消和重试；安装须经过 Android 系统确认，必要时引导开启安装权限。安装前校验文件大小、SHA-256、包名、版本和签名证书。这是完整 APK 升级，不是 JS OTA，也不会静默安装。"
+        },
+        {
+          "id": "channels",
+          "title": "正式版与 RC 渠道独立于签名和登录分区",
+          "text": "0.1.4 是正式版，发布后的更新清单同时覆盖正式与 beta 渠道，让 rc.1、rc.2 用户能够升级到正式版；Android 旧版需先手动安装本次 APK。关闭 beta 后只接收正式版，已有的明确渠道选择会保留，不执行降级。以后仍可发布更高版本的 RC，例如 0.1.5-rc.1；正式版用户只有开启 beta 才会收到。正式/RC 标记不代表是否签名。"
+        },
+        {
+          "id": "inherited-fixes",
+          "title": "保留 0.1.4 RC 阶段的稳定性修复",
+          "text": "继续包含远程连接恢复、长任务历史与首条消息发送、过期提问和提醒清理、定时任务恢复、目标模式迟到结果隔离、模型目录和推理强度兼容等修复。手机消息缓存迁入应用私有文件，减轻 Android 键值存储压力；Orca 保留队列查看、插话和排序优化及 OMP 适配。这些属于系列累计内容，并非全部在 rc.2 之后新增。"
+        },
+        {
+          "id": "upgrade",
+          "title": "升级步骤：Android 本次先手动安装一次",
+          "text": "桌面端可使用内置检查更新或下载对应平台安装包；macOS 按处理器选择 DMG，Linux 提供 x64 DEB。Android 从本次 Release 下载 Lex-0.1.4-Android.apk，使用原有 Lex 签名和包名覆盖安装，通常无需卸载；请勿为升级先卸载应用。rc.1、rc.2 不含此次原生更新器，安装 0.1.4 后才能接收未来的应用内 APK 更新。首次启用需更新完整安装包，建议先备份重要数据。"
+        },
+        {
+          "id": "scope",
+          "title": "兼容范围与仍需了解的边界",
+          "text": "手机继续通过电脑使用 Claude Code、Codex、Pi、OMP，不在手机安装引擎，也未加入远程 Harness 设置编辑。沿用 Lex 包名、持久 Android 签名、账号存储和 cindy:// 回调；Cindy 账号与服务协议继续标明来源，社交登录仍取决于 Lex 的供应商注册。本次不提供 iOS 安装包、不新增伙伴能力或推送服务。CI 通过不等于全部真机、真实双区登录、引擎下载或签名覆盖安装已验收。"
+        }
+      ]
+    },
+    "zh-TW": {
+      "intro": "Lex 0.1.4 是 0.1.4 系列的正式版，延續 rc.1、rc.2 的穩定性修正，並新增桌面 Harness 統一設定、四引擎版本管理、OMP 設定，以及 Lex 行動版品牌、分區登入和 Android 應用程式內 APK 更新。相較 rc.2 的主要新增內容來自 PR #63 與 #64；建議桌面端與 Android 一起升級。",
+      "topics": [
+        {
+          "id": "harness",
+          "title": "設定新增 Harness 頁面，依功能集中管理",
+          "text": "Claude Code、Codex、Pi、OMP 的相關設定集中至 Harness 頁面，依版本與升級、自訂提示詞、記憶、Subagent、上下文壓縮和擴充功能分組。各組僅顯示引擎實際支援的能力，不要求四個引擎提供完全相同的選項；設定搜尋同步指向新位置。模型供應商、通用技能、MCP 與 Orca 協同保留原有入口。"
+        },
+        {
+          "id": "runtime",
+          "title": "四引擎版本檢查、安裝與還原",
+          "text": "可檢查各引擎的上游穩定版、手動下載安裝，或還原此 Lex 版本固定的引擎基準版本。介面顯示下載與驗證進度並支援取消；失敗或取消不會覆蓋目前選擇。安裝完成後請於方便時手動重新啟動 Lex，新引擎才會生效，不會自動中斷執行中的任務。已選引擎版本會保留，不隨 Lex 應用程式升級被覆蓋；這些入口管理本機引擎，不管理 SSH 遠端安裝。"
+        },
+        {
+          "id": "prompts",
+          "title": "通用提示詞與各引擎專用追加內容",
+          "text": "保留既有通用自訂提示詞，並可分別為 Claude Code、Codex、Pi、OMP 追加內容。引擎原生系統提示詞繼續生效，之後組合通用追加與目前引擎追加，合計最多 8,000 字元。設定依帳號隔離，儲存失敗會提示；執行中的 Agent 會話不會自動重建，新增或重建時才讀取新設定。"
+        },
+        {
+          "id": "omp-memory",
+          "title": "OMP 接入統一記憶，並提供原生記憶選項",
+          "text": "OMP 預設參與 Lex 統一記憶，沿用專案範圍、帳號隔離與既有記憶工具。可選的原生 Mnemopi 記憶預設關閉，使用本機全文檢索，不下載嵌入模型；自動整理可能呼叫目前任務已授權的模型。全域統一記憶開啟時，新 OMP 執行環境暫停原生記憶並保留偏好。清空原生記憶須確認，仍有執行環境占用時會拒絕清空。"
+        },
+        {
+          "id": "omp-execution",
+          "title": "OMP 的 Subagent 與上下文壓縮設定",
+          "text": "OMP Subagent 預設繼承父模型，也可指定同一供應商、同一原生 API 路由內的模型；不可用時回退父模型，不借用其他供應商憑證。可設定並行數、遞迴深度、原生自動壓縮開關、觸發比例與保留的近期 tokens。數值留空跟隨引擎預設值，各組可還原預設；執行中的 Agent 會話保留原設定，之後新增時生效。"
+        },
+        {
+          "id": "mobile-brand",
+          "title": "行動版統一 Lex 品牌與產品入口",
+          "text": "啟動畫面、登入立繪、亮暗字標、分享圖片頁尾與應用程式文案統一為 Lex，品牌圖片隨行動版封裝。設定新增 Lex 官網、回饋、下載與版本說明入口；未設定統計服務時隱藏無效開關，Lex 不顯示上游備案號。簡體中文、繁體中文、英語、日語、韓語同步更新，亮色與暗色均有對應實作。"
+        },
+        {
+          "id": "service-region",
+          "title": "手機個人登入支援 Global / 中國大陸",
+          "text": "個人登入頁可選擇 Global 或中國大陸服務分區並記住選擇；已有帳號啟動時優先使用該帳號儲存的分區。驗證碼、登入驗證與協議連結跟隨所選分區，切換時取消舊登入流程，避免延遲結果寫入新流程。手機與電腦須登入同一帳號、同一服務分區才能依既有規則連線。切換分區不會搬移帳號，也不會改變 Lex 更新渠道。"
+        },
+        {
+          "id": "android-updates",
+          "title": "Android 從 Lex Releases 檢查、下載及安裝新版 APK",
+          "text": "新增應用程式內 APK 更新：啟動或回到前景時最多每 6 小時自動檢查，同一目標版本最多每 24 小時提醒一次，也可在設定中手動檢查。下載須主動點選，支援進度、取消與重試；安裝須經 Android 系統確認，必要時引導開啟安裝權限。安裝前驗證檔案大小、SHA-256、套件名稱、版本及簽署憑證。這是完整 APK 升級，不是 JS OTA，也不會靜默安裝。"
+        },
+        {
+          "id": "channels",
+          "title": "正式版與 RC 渠道獨立於簽署和登入分區",
+          "text": "0.1.4 是正式版，發佈後的更新清單同時涵蓋正式與 beta 渠道，讓 rc.1、rc.2 使用者能升級正式版；Android 舊版須先手動安裝本次 APK。關閉 beta 後只接收正式版，既有明確渠道選擇會保留，不執行降級。往後仍可發佈較高版本的 RC，例如 0.1.5-rc.1；正式版使用者僅在開啟 beta 後收到。正式/RC 標記不代表是否簽署。"
+        },
+        {
+          "id": "inherited-fixes",
+          "title": "保留 0.1.4 RC 階段的穩定性修正",
+          "text": "繼續包含遠端連線恢復、長任務歷史與首則訊息傳送、過期提問和提醒清理、排程任務恢復、目標模式延遲結果隔離、模型目錄與推理強度相容等修正。手機訊息快取遷入應用程式私有檔案，減輕 Android 鍵值儲存壓力；Orca 保留佇列查看、插話與排序改善及 OMP 適配。這些是系列累積內容，並非全部於 rc.2 之後新增。"
+        },
+        {
+          "id": "upgrade",
+          "title": "升級步驟：Android 本次先手動安裝一次",
+          "text": "桌面端可使用內建檢查更新或下載對應平台安裝包；macOS 依處理器選擇 DMG，Linux 提供 x64 DEB。Android 從本次 Release 下載 Lex-0.1.4-Android.apk，以原有 Lex 簽署憑證與套件名稱覆蓋安裝，通常不需解除安裝；請勿為了升級先移除應用程式。rc.1、rc.2 不含此次原生更新器，安裝 0.1.4 後才能接收未來的應用程式內 APK 更新。首次啟用須更新完整安裝包，建議先備份重要資料。"
+        },
+        {
+          "id": "scope",
+          "title": "相容範圍與仍需了解的限制",
+          "text": "手機繼續透過電腦使用 Claude Code、Codex、Pi、OMP，不在手機安裝引擎，也未加入遠端 Harness 設定編輯。沿用 Lex 套件名稱、持久 Android 簽署憑證、帳號儲存與 cindy:// 回呼；Cindy 帳號及服務協議繼續標明來源，社群登入仍取決於 Lex 的供應商註冊。本次不提供 iOS 安裝包、不新增夥伴能力或推播服務。CI 通過不等於所有真機、真實雙區登入、引擎下載或簽署覆蓋安裝已驗收。"
+        }
+      ]
+    },
+    "en": {
+      "intro": "Lex 0.1.4 is the stable release of the 0.1.4 series. It carries forward the rc.1 and rc.2 stability fixes and adds unified desktop Harness settings, version management for four engines, OMP controls, Lex mobile branding, service-region selection and Android in-app APK updates. The main additions since rc.2 come from PRs #63 and #64. Updating desktop and Android together is recommended.",
+      "topics": [
+        {
+          "id": "harness",
+          "title": "One Harness settings page, grouped by function",
+          "text": "Claude Code, Codex, Pi and OMP settings now live under Harness, grouped into versions and updates, custom prompts, memory, subagents, context compaction and extensions. Each group shows only the capabilities an engine supports; engines need not offer identical options. Settings search follows the new locations. Model providers, general Skills, MCP and Orca collaboration keep their existing entry points."
+        },
+        {
+          "id": "runtime",
+          "title": "Check, install and restore engine versions",
+          "text": "Check each engine's upstream stable release, download and install it manually, or restore the baseline pinned by this Lex build. Download and verification progress are visible, with cancellation support; failures or cancellation preserve the current selection. Manually restart Lex when convenient to activate an installed engine, without automatically interrupting running tasks. Selected engine versions survive Lex app upgrades. These controls manage local engines, not SSH installations."
+        },
+        {
+          "id": "prompts",
+          "title": "Shared prompts plus per-engine additions",
+          "text": "Existing shared custom prompts are retained, with separate additions for Claude Code, Codex, Pi and OMP. The native engine system prompt remains in effect, followed by the shared and engine-specific additions, up to 8,000 characters combined. Settings are isolated by account and save failures are reported. Running Agent sessions are not rebuilt automatically; new or rebuilt sessions read the new settings."
+        },
+        {
+          "id": "omp-memory",
+          "title": "OMP unified memory and optional native memory",
+          "text": "OMP participates in Lex unified memory by default, using the existing project scope, account isolation and memory tools. Optional native Mnemopi memory starts disabled and uses local full-text search without downloading an embedding model; automatic organization may call the model authorized for the current task. When global unified memory is enabled, new OMP runtimes suspend native memory while retaining its preference. Clearing native memory requires confirmation and is refused while a runtime still uses it."
+        },
+        {
+          "id": "omp-execution",
+          "title": "OMP subagents and context compaction",
+          "text": "OMP subagents inherit the parent model by default, or can use a model from the same provider and native API route. Unavailable preferences fall back to the parent model without borrowing another provider's credentials. Controls cover concurrency, recursion depth, native automatic compaction, its threshold and recent tokens to retain. Empty numeric fields follow native defaults and each group can reset to defaults. Running Agent sessions keep their captured settings; new sessions use the changes."
+        },
+        {
+          "id": "mobile-brand",
+          "title": "Lex mobile branding and product links",
+          "text": "Splash screens, login artwork, light/dark wordmarks, shared-image footers and app copy now use Lex branding, with images bundled in the mobile app. Settings link to the Lex website, feedback, downloads and release information. Unconfigured analytics controls are hidden, as is the upstream registration number in Lex. Simplified Chinese, Traditional Chinese, English, Japanese and Korean are updated, with both light and dark implementations."
+        },
+        {
+          "id": "service-region",
+          "title": "Global / China mainland selection on mobile login",
+          "text": "Personal login lets you choose and remember the Global or China mainland service region. Existing accounts start with their saved region. Verification codes, login challenges and legal links follow the selected region; switching cancels the old login flow so late results cannot update the new one. Phone and desktop must use the same account and service region for the existing connection rules. Switching regions does not migrate accounts or change the Lex update channel."
+        },
+        {
+          "id": "android-updates",
+          "title": "Check, download and install APK updates from Lex Releases",
+          "text": "Android checks at startup or on return to the foreground at most once every six hours, and reminds you about the same target at most once per 24 hours. Manual checks are available in Settings. Downloads require a tap and offer progress, cancellation and retry. Android confirms installation and guides you to installation permission when needed. Size, SHA-256, package ID, version and signing certificate are checked before installation. This updates the full APK; it is neither JS OTA nor silent installation."
+        },
+        {
+          "id": "channels",
+          "title": "Stable and RC channels are separate from signing and login region",
+          "text": "0.1.4 is stable. Once published, its manifests cover both release and beta channels so rc.1 and rc.2 users can move to stable; older Android apps first need this APK installed manually. Disabling beta limits updates to stable releases. Explicit channel preferences are preserved and no downgrade is performed. Future higher RC versions, such as 0.1.5-rc.1, remain possible and reach stable users only when beta is enabled. Stable/RC labels do not indicate signing status."
+        },
+        {
+          "id": "inherited-fixes",
+          "title": "Includes the 0.1.4 RC stability fixes",
+          "text": "The release retains remote recovery, long task history and first-message delivery fixes, stale question and reminder cleanup, scheduled-task recovery, goal-mode late-result isolation, and model catalog and reasoning-effort compatibility fixes. Mobile message caches move to private app files to reduce Android key-value storage pressure. Orca retains queue inspection, steering and reordering improvements with OMP support. These are cumulative series improvements, not all new since rc.2."
+        },
+        {
+          "id": "upgrade",
+          "title": "Upgrading: install this Android APK manually once",
+          "text": "Use the desktop built-in update check or the installer for your platform. Choose the macOS DMG for your processor; Linux provides an x64 DEB. On Android, download Lex-0.1.4-Android.apk from this Release and install over Lex with its existing package ID and persistent signer; do not uninstall first. rc.1 and rc.2 lack the new native updater. After installing 0.1.4, future APK updates can be offered in the app. This first upgrade needs a complete installation package; back up important data first."
+        },
+        {
+          "id": "scope",
+          "title": "Compatibility and remaining boundaries",
+          "text": "Mobile continues to use Claude Code, Codex, Pi and OMP through the connected computer; it does not install engines or add remote Harness settings editing. Lex keeps its package ID, persistent Android signer, account storage and cindy:// callbacks. Cindy account/service attribution remains and social login still depends on provider registration for Lex. No iOS installer, new companion features or push service are included. CI success does not certify every device, real login region, engine download or signed in-place upgrade."
+        }
+      ]
+    },
+    "ja": {
+      "intro": "Lex 0.1.4 は 0.1.4 シリーズの正式版です。rc.1、rc.2 の安定性修正を引き継ぎ、デスクトップの Harness 統合設定、4 エンジンのバージョン管理、OMP 設定、Lex モバイルのブランド表示、サービス地域の選択、Android のアプリ内 APK 更新を追加しました。rc.2 以降の主な追加内容は PR #63 と #64 です。デスクトップと Android の同時更新を推奨します。",
+      "topics": [
+        {
+          "id": "harness",
+          "title": "Harness 設定を機能別に集約",
+          "text": "Claude Code、Codex、Pi、OMP の設定を Harness ページにまとめ、バージョンと更新、カスタムプロンプト、メモリ、サブエージェント、コンテキスト圧縮、拡張機能に分類しました。各グループにはエンジンが実際に対応する項目だけを表示し、設定検索も新しい場所へ案内します。モデルプロバイダー、共通スキル、MCP、Orca 協同の入口は従来どおりです。"
+        },
+        {
+          "id": "runtime",
+          "title": "4 エンジンの更新確認・インストール・復元",
+          "text": "各エンジンの上流安定版を確認し、手動でダウンロード・インストールできます。この Lex ビルドに固定された基準バージョンへの復元も可能です。進捗表示とキャンセルに対応し、失敗やキャンセルで現在の選択を上書きしません。インストール後は都合のよいタイミングで Lex を手動再起動すると有効になります。実行中のタスクは自動中断せず、選択済みバージョンはアプリ更新後も保持します。対象はローカルエンジンで、SSH 先の管理は含みません。"
+        },
+        {
+          "id": "prompts",
+          "title": "共通プロンプトとエンジン別の追記",
+          "text": "既存の共通カスタムプロンプトを保持し、Claude Code、Codex、Pi、OMP ごとに追記を設定できます。エンジン本来のシステムプロンプトの後に共通追記とエンジン別追記を組み合わせ、合計 8,000 文字まで使用できます。設定はアカウント別に分離し、保存失敗を通知します。実行中の Agent セッションは自動再作成せず、新規作成・再作成時に新設定を読み込みます。"
+        },
+        {
+          "id": "omp-memory",
+          "title": "OMP の統合メモリと任意のネイティブメモリ",
+          "text": "OMP は標準で Lex 統合メモリに参加し、既存のプロジェクト範囲、アカウント分離、メモリツールを利用します。任意のネイティブ Mnemopi メモリは初期状態では無効で、埋め込みモデルをダウンロードせずローカル全文検索を使います。自動整理では現在のタスクで許可されたモデルを呼び出す場合があります。全体の統合メモリが有効なら、新しい OMP 実行環境ではネイティブメモリを一時停止し、設定自体は保持します。消去には確認が必要で、使用中の実行環境がある場合は拒否します。"
+        },
+        {
+          "id": "omp-execution",
+          "title": "OMP サブエージェントとコンテキスト圧縮",
+          "text": "OMP サブエージェントは標準で親モデルを継承し、同じプロバイダーとネイティブ API 経路内のモデルも指定できます。利用できなければ親モデルに戻り、他のプロバイダーの認証情報は使いません。同時実行数、再帰深度、ネイティブ自動圧縮の有効化、開始割合、保持する直近の tokens を設定できます。空欄はネイティブの既定値に従い、グループ単位で初期値に戻せます。実行中の Agent セッションは元の設定を維持し、新規セッションから適用します。"
+        },
+        {
+          "id": "mobile-brand",
+          "title": "モバイルの Lex ブランドと製品リンク",
+          "text": "起動画面、ログインイラスト、ライト・ダーク用ロゴ、共有画像のフッター、アプリ文言を Lex に統一し、画像をモバイルアプリに同梱しました。設定に Lex 公式サイト、フィードバック、ダウンロード、リリース情報への入口を追加しました。未設定の分析機能と上流の登録番号は Lex では表示しません。簡体字中国語、繁体字中国語、英語、日本語、韓国語を更新し、ライト・ダーク両方に対応しています。"
+        },
+        {
+          "id": "service-region",
+          "title": "モバイルログインで Global / 中国本土を選択",
+          "text": "個人ログインで Global または中国本土のサービス地域を選択・保存できます。既存アカウントでの起動時は、そのアカウントに保存された地域を優先します。確認コード、ログイン認証、規約リンクは選択した地域に従い、地域変更時には古いログイン処理を取り消して遅延結果の混入を防ぎます。従来の接続ルールに従い、スマートフォンと PC は同じアカウント・サービス地域を使用してください。地域変更によるアカウント移行や更新チャネル変更は行いません。"
+        },
+        {
+          "id": "android-updates",
+          "title": "Lex Releases から Android APK を更新",
+          "text": "起動時やフォアグラウンド復帰時に最大 6 時間に 1 回更新を確認し、同じ対象バージョンの通知は 24 時間に 1 回までです。設定から手動確認もできます。ダウンロードには操作が必要で、進捗表示・キャンセル・再試行に対応します。インストールは Android の確認画面を使い、必要ならインストール権限へ案内します。サイズ、SHA-256、パッケージ名、バージョン、署名証明書を検証します。APK 全体の更新であり、JS OTA や無確認インストールではありません。"
+        },
+        {
+          "id": "channels",
+          "title": "正式版・RC と署名・ログイン地域は独立",
+          "text": "0.1.4 は正式版です。公開後は正式・beta 両チャネルへ更新情報を提供し、rc.1、rc.2 から正式版へ進めます。旧 Android アプリには今回の APK の手動インストールが必要です。beta を無効にすると正式版のみ受信し、明示的なチャネル設定は保持してダウングレードは行いません。今後も 0.1.5-rc.1 など、より新しい RC を公開でき、正式版ユーザーには beta 有効時だけ届きます。正式版・RC の表示は署名の有無を意味しません。"
+        },
+        {
+          "id": "inherited-fixes",
+          "title": "0.1.4 RC の安定性修正を継承",
+          "text": "リモート接続復旧、長いセッション履歴と最初のメッセージ送信、期限切れ質問・通知の整理、スケジュールタスク復旧、目標モードの遅延結果分離、モデル一覧と推論強度の互換性修正を含みます。モバイルのメッセージキャッシュはアプリ専用ファイルへ移行し、Android のキー値ストレージへの負荷を減らします。Orca のキュー確認・割り込み・並べ替えと OMP 対応も維持します。これらはシリーズ累積の改善で、すべてが rc.2 以降の追加ではありません。"
+        },
+        {
+          "id": "upgrade",
+          "title": "更新手順：Android は今回だけ手動インストール",
+          "text": "デスクトップはアプリ内の更新確認、または対応するインストーラーを利用してください。macOS は CPU に合う DMG、Linux は x64 DEB を提供します。Android はこの Release の Lex-0.1.4-Android.apk をダウンロードし、同じパッケージ名・継続使用する署名で上書きインストールしてください。先にアンインストールしないでください。rc.1、rc.2 には新しいネイティブ更新機能がないため、0.1.4 を入れた後に将来のアプリ内 APK 更新を受け取れます。初回は完全なインストールパッケージが必要です。重要なデータは事前にバックアップしてください。"
+        },
+        {
+          "id": "scope",
+          "title": "互換性と対象範囲",
+          "text": "モバイルは接続先 PC を通じて Claude Code、Codex、Pi、OMP を利用し、スマートフォンへのエンジン導入やリモート Harness 設定編集は追加しません。Lex のパッケージ名、Android 署名、アカウント保存領域、cindy:// コールバックを維持します。Cindy アカウント・サービスの帰属表示は残り、ソーシャルログインは Lex のプロバイダー登録に依存します。iOS インストーラー、新しいパートナー機能、プッシュサービスは含みません。CI 合格は全実機、両地域の実ログイン、エンジンダウンロード、署名付き上書き更新の検証完了を意味しません。"
+        }
+      ]
+    },
+    "ko": {
+      "intro": "Lex 0.1.4는 0.1.4 시리즈의 정식 버전입니다. rc.1과 rc.2의 안정성 수정을 유지하면서 데스크톱 Harness 통합 설정, 네 엔진의 버전 관리, OMP 설정, Lex 모바일 브랜딩, 서비스 지역 선택 및 Android 앱 내 APK 업데이트를 추가했습니다. rc.2 이후 주요 추가 내용은 PR #63과 #64에서 제공됩니다. 데스크톱과 Android를 함께 업데이트하는 것을 권장합니다.",
+      "topics": [
+        {
+          "id": "harness",
+          "title": "기능별로 통합한 Harness 설정 페이지",
+          "text": "Claude Code, Codex, Pi, OMP 설정을 Harness 페이지에 모으고 버전 및 업데이트, 사용자 지정 프롬프트, 메모리, 하위 에이전트, 컨텍스트 압축, 확장 기능으로 나눴습니다. 각 그룹은 엔진이 실제 지원하는 기능만 표시하며 네 엔진의 옵션이 같을 필요는 없습니다. 설정 검색도 새 위치로 연결됩니다. 모델 제공자, 공통 스킬, MCP, Orca 협업은 기존 위치를 유지합니다."
+        },
+        {
+          "id": "runtime",
+          "title": "네 엔진의 버전 확인, 설치 및 복원",
+          "text": "각 엔진의 업스트림 안정 버전을 확인하고 수동으로 다운로드·설치하거나 이 Lex 빌드에 고정된 기준 버전으로 복원할 수 있습니다. 다운로드와 검증 진행률 및 취소를 지원하며 실패하거나 취소해도 현재 선택을 덮어쓰지 않습니다. 설치 후 편한 시점에 Lex를 직접 다시 시작하면 적용되며 실행 중인 작업을 자동 중단하지 않습니다. 선택한 엔진 버전은 Lex 앱 업그레이드 후에도 유지됩니다. 로컬 엔진을 관리하며 SSH 원격 설치는 관리하지 않습니다."
+        },
+        {
+          "id": "prompts",
+          "title": "공통 프롬프트와 엔진별 추가 내용",
+          "text": "기존 공통 사용자 지정 프롬프트를 유지하면서 Claude Code, Codex, Pi, OMP별로 내용을 추가할 수 있습니다. 엔진 고유 시스템 프롬프트 뒤에 공통 및 엔진별 추가 내용을 합치며 총 8,000자까지 지원합니다. 설정은 계정별로 격리되고 저장 실패를 알려 줍니다. 실행 중인 Agent 세션은 자동으로 다시 만들지 않으며 새로 만들거나 재생성할 때 변경 사항을 읽습니다."
+        },
+        {
+          "id": "omp-memory",
+          "title": "OMP 통합 메모리와 선택적 네이티브 메모리",
+          "text": "OMP는 기본적으로 Lex 통합 메모리에 참여하고 기존 프로젝트 범위, 계정 격리 및 메모리 도구를 사용합니다. 선택적 네이티브 Mnemopi 메모리는 기본적으로 꺼져 있으며 임베딩 모델 다운로드 없이 로컬 전체 텍스트 검색을 사용합니다. 자동 정리는 현재 작업에 허용된 모델을 호출할 수 있습니다. 전역 통합 메모리가 켜져 있으면 새 OMP 실행 환경은 네이티브 메모리를 일시 중지하되 설정은 유지합니다. 메모리 삭제는 확인이 필요하며 실행 환경이 사용 중이면 거부합니다."
+        },
+        {
+          "id": "omp-execution",
+          "title": "OMP 하위 에이전트와 컨텍스트 압축",
+          "text": "OMP 하위 에이전트는 기본적으로 부모 모델을 상속하며 같은 제공자와 네이티브 API 경로의 모델을 지정할 수도 있습니다. 사용할 수 없으면 다른 제공자의 인증 정보를 빌리지 않고 부모 모델로 돌아갑니다. 동시 실행 수, 재귀 깊이, 네이티브 자동 압축, 시작 비율 및 유지할 최근 tokens를 설정할 수 있습니다. 숫자를 비워 두면 엔진 기본값을 따르고 그룹별 기본값 복원을 지원합니다. 실행 중인 Agent 세션은 기존 설정을 유지하고 새 세션부터 적용합니다."
+        },
+        {
+          "id": "mobile-brand",
+          "title": "Lex 모바일 브랜딩과 제품 링크",
+          "text": "시작 화면, 로그인 일러스트, 밝은 테마·어두운 테마 로고, 공유 이미지 하단 및 앱 문구를 Lex로 통일하고 이미지를 모바일 앱에 포함했습니다. 설정에 Lex 홈페이지, 피드백, 다운로드, 버전 설명 링크를 추가했습니다. 미설정 분석 기능과 업스트림 등록 번호는 Lex에서 표시하지 않습니다. 중국어 간체·번체, 영어, 일본어, 한국어를 갱신했으며 밝은 테마와 어두운 테마를 모두 구현했습니다."
+        },
+        {
+          "id": "service-region",
+          "title": "모바일 로그인에서 Global / 중국 본토 선택",
+          "text": "개인 로그인에서 Global 또는 중국 본토 서비스 지역을 선택하고 저장할 수 있습니다. 기존 계정으로 시작할 때는 해당 계정에 저장된 지역을 우선합니다. 인증 코드, 로그인 인증 및 약관 링크가 선택한 지역을 따르며 지역 전환 시 이전 로그인 흐름을 취소해 늦은 결과가 새 흐름에 반영되지 않게 합니다. 기존 연결 규칙에 따라 휴대폰과 PC는 같은 계정·서비스 지역을 사용해야 합니다. 지역 변경은 계정을 이전하거나 Lex 업데이트 채널을 바꾸지 않습니다."
+        },
+        {
+          "id": "android-updates",
+          "title": "Lex Releases에서 Android APK 확인·다운로드·설치",
+          "text": "앱 시작 또는 포그라운드 복귀 시 최대 6시간에 한 번 확인하고 같은 대상 버전은 24시간에 한 번만 알립니다. 설정에서 수동으로 확인할 수도 있습니다. 다운로드는 직접 눌러야 하며 진행률, 취소, 재시도를 지원합니다. 설치는 Android 시스템 확인을 거치고 필요하면 설치 권한 화면으로 안내합니다. 설치 전에 크기, SHA-256, 패키지 ID, 버전, 서명 인증서를 검증합니다. 전체 APK 업그레이드이며 JS OTA나 자동 무인 설치가 아닙니다."
+        },
+        {
+          "id": "channels",
+          "title": "정식·RC 채널은 서명 및 로그인 지역과 독립",
+          "text": "0.1.4는 정식 버전입니다. 공개 후 정식 및 beta 채널에 업데이트 정보를 제공하여 rc.1과 rc.2에서 정식으로 이동할 수 있습니다. 이전 Android 앱은 먼저 이번 APK를 수동 설치해야 합니다. beta를 끄면 정식 버전만 받으며 명시적으로 선택한 채널은 유지하고 다운그레이드하지 않습니다. 이후에도 0.1.5-rc.1처럼 더 높은 RC 버전을 출시할 수 있고 정식 사용자는 beta를 켠 경우에만 받습니다. 정식·RC 표시는 서명 여부를 뜻하지 않습니다."
+        },
+        {
+          "id": "inherited-fixes",
+          "title": "0.1.4 RC 단계의 안정성 수정 포함",
+          "text": "원격 연결 복구, 긴 세션 기록과 첫 메시지 전송, 만료된 질문·알림 정리, 예약 작업 복구, 목표 모드의 늦은 결과 격리, 모델 목록 및 추론 강도 호환성 수정을 유지합니다. 모바일 메시지 캐시는 앱 전용 파일로 이동해 Android 키-값 저장소 부담을 줄입니다. Orca의 대기열 조회, 끼어들기, 순서 조정 및 OMP 지원도 유지합니다. 시리즈 누적 개선 사항이며 모두 rc.2 이후에 새로 추가된 것은 아닙니다."
+        },
+        {
+          "id": "upgrade",
+          "title": "업그레이드: Android는 이번에 한 번 수동 설치",
+          "text": "데스크톱은 앱 내 업데이트 확인 또는 플랫폼별 설치 파일을 사용하세요. macOS는 CPU에 맞는 DMG를 선택하고 Linux는 x64 DEB를 제공합니다. Android는 이번 Release에서 Lex-0.1.4-Android.apk를 받아 기존 패키지 ID와 지속 사용 서명으로 덮어 설치하세요. 먼저 앱을 제거하지 마세요. rc.1과 rc.2에는 새 네이티브 업데이터가 없으므로 0.1.4 설치 후에 향후 앱 내 APK 업데이트를 받을 수 있습니다. 최초 적용에는 전체 설치 패키지가 필요하며 중요한 데이터는 먼저 백업하는 것을 권장합니다."
+        },
+        {
+          "id": "scope",
+          "title": "호환 범위와 남아 있는 제한",
+          "text": "모바일은 연결된 PC를 통해 Claude Code, Codex, Pi, OMP를 사용하며 휴대폰에 엔진을 설치하거나 원격 Harness 설정 편집을 추가하지 않습니다. Lex 패키지 ID, 지속 사용 Android 서명, 계정 저장소 및 cindy:// 콜백을 유지합니다. Cindy 계정·서비스 출처 표시는 남고 소셜 로그인은 Lex의 제공자 등록에 달려 있습니다. iOS 설치 파일, 새로운 파트너 기능 또는 푸시 서비스는 포함하지 않습니다. CI 성공이 모든 실기기, 실제 양 지역 로그인, 엔진 다운로드 또는 서명된 덮어 설치의 검증 완료를 의미하지는 않습니다."
+        }
+      ]
+    }
+  }
+}
