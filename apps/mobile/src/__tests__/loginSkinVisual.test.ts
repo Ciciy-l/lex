@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, resolve, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { loginColors, loginSizes } from '@/theme/tokens';
@@ -73,9 +73,31 @@ describe('loginSkin 白底体系视觉(源码接线 + token 参数)', () => {
   it('Lex hero replaces Cindy artwork and slogan while preserving responsive geometry', () => {
     expect(stageSource).not.toContain("require('../../assets/login/login-slogan.png')");
     expect(stageSource).not.toContain('boxStyle(stage.slogan)');
-    expect(stageSource).toContain("require('../../../../assets/branding/lex-assistant-hero.png')");
+    expect(stageSource).toContain("require('../../assets/lex/assistant-hero.png')");
     expect(stageSource).toContain("require('../../assets/lex/wordmark-dark.png')");
     expect(stageSource).toContain('boxStyle(stage.cindy)');
+  });
+
+  it.each([
+    'src/components/MobileLoginHandoffStage.tsx',
+    'src/components/StartupSplashOverlay.tsx',
+    'src/session/ConversationShareSvg.tsx',
+  ])('%s 的打包图片存在于移动端资源目录，不依赖被 EAS 排除的桌面文件', (sourceFile) => {
+    const sourcePath = resolve(process.cwd(), sourceFile);
+    const source = readFileSync(sourcePath, 'utf8');
+    const imageRefs = [...source.matchAll(/require[(]['"]([^'"]+[.]png)['"][)]/g)];
+    expect(imageRefs.length).toBeGreaterThan(0);
+    for (const [, reference] of imageRefs) {
+      const imagePath = resolve(dirname(sourcePath), reference);
+      expect(imagePath.startsWith(`${resolve(process.cwd(), 'assets')}${sep}`), reference).toBe(true);
+      // Metro 允许省略 @2x/@3x，Cindy 兼容分支仍使用这种缩放资源。
+      const candidates = [
+        imagePath,
+        imagePath.replace(/[.]png$/, '@2x.png'),
+        imagePath.replace(/[.]png$/, '@3x.png'),
+      ];
+      expect(candidates.some((candidate) => existsSync(candidate)), reference).toBe(true);
+    }
   });
 
   it('splash-brand:CenteredScreen splash 变体复用品牌宿主,红底体系退役', () => {

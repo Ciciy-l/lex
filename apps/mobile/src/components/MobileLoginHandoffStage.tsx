@@ -54,7 +54,7 @@ import { resolveLoginWindowSurface } from '@/auth/loginGroupPlacement';
 // Lex 字标提供亮色与暗色画布两个版本，
 // 立绘两模式同资产。
 // Reuse Lex artwork with the existing responsive stage and handoff.
-const heroAsset = require('../../../../assets/branding/lex-assistant-hero.png');
+const heroAsset = require('../../assets/lex/assistant-hero.png');
 const wordmarkAsset = require('../../assets/lex/wordmark.png');
 const wordmarkDarkAsset = require('../../assets/lex/wordmark-dark.png');
 const heroPadPortraitAsset = heroAsset;

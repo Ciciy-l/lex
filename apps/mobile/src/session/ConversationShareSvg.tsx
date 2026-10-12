@@ -33,7 +33,7 @@ export interface ConversationShareSvgHandle {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const shareCharacterAsset = require("../../../desktop/resources/icon-master-1024.png");
+const shareCharacterAsset = require("../../assets/lex/icon.png");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const shareLogoLightAsset = require("../../assets/lex/wordmark.png");
 // eslint-disable-next-line @typescript-eslint/no-require-imports

@@ -20,8 +20,11 @@
 
 ## 视觉与品牌
 
-- 登录立绘复用 `assets/branding/lex-assistant-hero.png`；Lex 亮/暗字标 PNG 来自既有
-  桌面 SVG，分享图片页脚同时换成 Lex 图标和字标。兼容存储键、包名和 deep link 不改。
+- 登录立绘、开屏及分享图标收录于 `apps/mobile/assets/lex/`，分别原样复用桌面端
+  `apps/desktop/src/renderer/assets/branding/lex-assistant-hero.png` 与
+  `apps/desktop/resources/icon-master-1024.png`。Lex 亮/暗字标 PNG 来自既有桌面 SVG。
+  移动端打包只引用自身资源目录，避免 EAS 排除桌面目录后丢失图片；更新品牌图片时需同步
+  这两份移动端副本。兼容存储键、包名和 deep link 不改。
 - `lexNativeSplashBackground` 位于 Mobile token 正本 `src/theme/tokens.ts`，与 Lex
   config plugin 的原生启动图背景匹配：Light 白色、Dark 深灰。上游开发构建旧 token 保留。
 - 分区选择复用语义颜色、pill 圆角及不小于 44px 点击目标；更新页复用 SettingsGroup

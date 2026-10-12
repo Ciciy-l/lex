@@ -19,7 +19,7 @@ import { motionDuration, useTheme } from '@/theme';
 /** splash 释放后的淡出时长(ms):盖住底下首屏首帧的绘制间隙,避免红→白闪帧 */
 const SPLASH_FADE_OUT_MS = 220;
 const nativeSplashHeroAsset = IS_LEX_MOBILE
-  ? require('../../../desktop/resources/icon-master-1024.png')
+  ? require('../../assets/lex/icon.png')
   : require('../../assets/login/login-hero.png');
 
 type StartupSplashContextValue = {
