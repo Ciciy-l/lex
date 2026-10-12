@@ -104,6 +104,7 @@ import { consumeLearnInvocationGrant } from '../learn-host/invocationGrant.js';
 import { createSkillhubAgentTools } from '../skillhub/agentTools.js';
 
 export interface DesktopMcpProvidersDeps {
+  askUserQuestionAsync?: XdtHelperMcpDeps['askUserQuestionAsync'];
   runtimeCapabilities?: XdtHelperMcpDeps['runtimeCapabilities'];
   botCapabilities: Pick<ReturnType<typeof createBotCapabilityService>, 'list' | 'select'>;
   createMediaDownloadContext?: CindyGhostsHostDeps['createMediaDownloadContext'];
@@ -587,6 +588,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
           return { ok: false, errorCode: 'INTERNAL', message };
         }
       },
+      askUserQuestionAsync: deps.askUserQuestionAsync,
       renameSessions: async ({ changes, dryRun }) => {
         if (!tryGetDbClient()) {
           return { ok: false, errorCode: 'HOST_NOT_READY', message: 'localDb not ready' };

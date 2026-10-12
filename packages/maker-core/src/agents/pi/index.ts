@@ -66,6 +66,7 @@ import {
   AgentStartupStoppedError,
   BaseAgent,
   MAIN_OWNED_SEND_CONTEXT,
+  ASYNC_QUESTION_ANSWER,
   PiManagedPackageMutationCancelledError,
   PiManagedPackageMutationFailedError,
   projectPiPackageCommandDiagnostic,
@@ -7098,6 +7099,7 @@ export class PiAgent extends BaseAgent {
             ? 'Pi RPC unavailable before steer dispatch'
             : '[NO_ACTIVE_TURN] No active Pi turn to steer: RPC unavailable');
         };
+        const answerLifecycle = piAgentLifecycleSequence;
         rejectIfCancelled(sendOpts, 'steer');
         rejectIfUnavailable();
         if (sendOpts) handle.validateSendOptions?.(sendOpts);
@@ -7158,6 +7160,12 @@ export class PiAgent extends BaseAgent {
           resp = await runExclusivePiRpc(async () => {
             if (managedPackageRoute.accepted && rpcUnavailable()) return undefined;
             rejectIfUnavailable();
+            if (sendOpts?.[ASYNC_QUESTION_ANSWER]) {
+              rejectIfCancelled(sendOpts, 'steer');
+              if (!ctx.isStreaming || piAgentLifecycleSequence !== answerLifecycle) {
+                throw new Error('No active Pi turn for the async question answer');
+              }
+            }
             return proc.request(command);
           });
         } catch (error) {
