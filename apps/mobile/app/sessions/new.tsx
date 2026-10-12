@@ -125,6 +125,10 @@ import {
   ContextSheetGroup,
   ContextSheetRow,
 } from '@/session/ContextSheet';
+import { ComposerPluginPalette, ContextSheetPlugins } from '@/session/ContextSheetPlugins';
+import { appendComposerPluginTrigger, detectComposerPluginTrigger, placeComposerPlugin } from '@/session/composerPlugins';
+import type { ComposerPlugin } from '@/session/remoteComposerPlugins';
+import { textComposerDocument, composerDocumentProjectedText } from '@/session/composerDocument';
 import { RecentPhotosStrip } from '@/session/ContextSheetMediaViews';
 import { ContextSheetGoalCreateForm } from '@/session/ContextSheetGoalView';
 import type { MobileGoalLimitsInput } from '@cindy/maker-shared/device-link-contract';
@@ -1751,6 +1755,7 @@ export default function NewRemoteSessionScreen() {
     voiceState,
   }).input.placeholder;
   const composerTrigger = useMemo(() => detectComposerTrigger(draft.firstMessage), [draft.firstMessage]);
+  const pluginPaletteVisible = useMemo(() => detectComposerPluginTrigger(draft.firstMessage) !== null, [draft.firstMessage]);
   const composerAtQuery = composerTrigger.kind === 'at' ? composerTrigger.query : '';
   const visibleSlashCommands = useMemo(
     () => composerTrigger.kind === 'slash'
@@ -1776,6 +1781,29 @@ export default function NewRemoteSessionScreen() {
     }
     setDraft((current) => ({ ...current, ...patch }));
   }, []);
+
+  const openPluginPalette = useCallback(() => {
+    const next = composerDocumentProjectedText(appendComposerPluginTrigger(textComposerDocument(firstMessageRef.current)));
+    patchDraft({ firstMessage: next });
+    const selection = { start: next.length, end: next.length };
+    firstMessageSelectionRef.current = selection;
+    setFirstMessageSelection(selection);
+    if (composerPillOpen.onCollapsedPress) composerPillOpen.onCollapsedPress();
+    else requestAnimationFrame(() => firstMessageInputRef.current?.focus());
+  }, [composerPillOpen.onCollapsedPress, patchDraft]);
+
+  const selectComposerPlugin = useCallback((plugin: ComposerPlugin, roster: ComposerPlugin[]) => {
+    const document = textComposerDocument(firstMessageRef.current);
+    const next = composerDocumentProjectedText(placeComposerPlugin(document, plugin, roster));
+    patchDraft({ firstMessage: next });
+    const selection = { start: next.length, end: next.length };
+    firstMessageSelectionRef.current = selection;
+    setFirstMessageSelection(selection);
+    requestAnimationFrame(() => {
+      firstMessageInputRef.current?.setNativeProps({ selection });
+      firstMessageInputRef.current?.focus();
+    });
+  }, [patchDraft]);
 
   const setFirstMessageDraft = useCallback((next: SetStateAction<string>) => {
     const value = typeof next === 'function' ? next(firstMessageRef.current) : next;
@@ -6158,6 +6186,16 @@ export default function NewRemoteSessionScreen() {
                 - safeAreaInsets.top - navigationChrome.target - spacing.xl),
               paddingBottom: composerDock.enabled ? 0 : spacing.md,
             }]} testID="newSession.composer">
+              <ComposerPluginPalette
+                deviceId={selectedDeviceId || undefined}
+                workingDir={draft.workspaceKind === 'project' ? draft.workingDir.trim() : undefined}
+                draft={draft.firstMessage}
+                enabled={contextSheetOpen || pluginPaletteVisible}
+                visible={pluginPaletteVisible}
+                disabled={creating}
+                onSelect={selectComposerPlugin}
+                testID="newSession.pluginPalette"
+              />
               {composerTrigger.kind === 'slash' ? (
                 <NewComposerPaletteFrame
                   emptyText={t('session.common.noMatchingCommands')}
@@ -6477,6 +6515,11 @@ export default function NewRemoteSessionScreen() {
                 trailing="chevron"
               />
             </ContextSheetGroup>
+            <ContextSheetPlugins
+              disabled={creating}
+              onOpen={openPluginPalette}
+              testID="newSession.contextSheetPlugins"
+            />
           </>
         ) : (
           <ContextSheetGoalCreateForm

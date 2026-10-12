@@ -492,6 +492,9 @@ const EXTENDED_INVOKE_CHANNELS: readonly string[] = [
   'maker:scan-at-resources',
   // —— 插件列表(只读)——
   'maker:plugins:list',
+  // Public, directory-filtered command metadata for same-account composers.
+  // Shared-task access has a separate allowlist and is also denied by the handler.
+  'ghosts:composer-list',
   // 单个插件的启停状态(只读)。与 maker:plugins:list 同类,差别只在它不跳过
   // HOSTED_ELSEWHERE 插件、且按 id 精确查。准入三条:handler 只读 settings + 项目
   // `.cindy/plugins.json`,不依赖 event.sender、无 UI/shell 副作用;插件启停真相在
