@@ -31,7 +31,7 @@ import path from 'node:path';
 import DatabaseCtor from 'better-sqlite3';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   MakerMemoryManager,
@@ -64,6 +64,11 @@ const PROJECT_DIR = path.join(path.sep, 'repo', 'cindy');
  * 打开伙伴的家,不再由 renderer 维护第二套分类逻辑。
  */
 const LEARNED_SLUG_PREFIX = 'learned-';
+
+// Real MCP + SQLite + filesystem integration, not a 5s performance contract.
+// Match memory/manager.scope.test.ts's bounded Windows allowance: loaded runners
+// can spend several seconds opening, writing and deleting SQLite-backed stores.
+vi.setConfig({ testTimeout: process.platform === 'win32' ? 30_000 : 5_000 });
 
 let root: string;
 let manager: MakerMemoryManager;
@@ -102,7 +107,9 @@ afterEach(async () => {
   // Windows cannot remove fts.db while the manager still owns an open connection.
   manager.dispose();
   for (const database of databases) expect(database.open).toBe(false);
-  await rm(root, { recursive: true, force: true });
+  // A closed SQLite file may still be briefly locked by Windows file scanning.
+  // Retry only cleanup after the close assertion; exhausted retries still fail.
+  await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 /**
