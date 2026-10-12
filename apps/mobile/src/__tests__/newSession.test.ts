@@ -476,7 +476,15 @@ describe('real model defaults for all Lex engines', () => {
   it.each(['claude-code', 'codex', 'pi', 'omp'] as const)(
     '%s waits for real models, uses catalog defaults, and supports legacy capabilities', agentKind => {
       const base = { agentKind, sessions: [], modelRows: [], currentEffort: 'unsupported', catalogReady: false };
-      expect(withAgentDefaults({ ...DEFAULT_NEW_SESSION_DRAFT, model: 'old-device-model' }, agentKind).model).toBe('');
+      // Reselecting the current engine is a no-op. Only an actual engine switch
+      // invalidates its model/source; exercise both paths for every engine pair.
+      for (const previousKind of ['claude-code', 'codex', 'pi', 'omp'] as const) {
+        const draft = { ...DEFAULT_NEW_SESSION_DRAFT, agentKind: previousKind,
+          model: 'selected-model', providerId: 'selected-provider', permissionMode: 'ask' };
+        const next = withAgentDefaults(draft, agentKind);
+        if (previousKind === agentKind) expect(next).toBe(draft);
+        else expect(next).toMatchObject({ agentKind, model: '', providerId: null, permissionMode: 'auto' });
+      }
       expect(pickAgentDefaultRuntime(base).model).toBe('');
       expect(pickAgentDefaultRuntime({ ...base, catalogReady: true }).model).toBe('');
       const rows = [modelRow('first', ['low', 'high'], 'high'),
