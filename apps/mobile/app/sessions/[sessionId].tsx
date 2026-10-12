@@ -9350,7 +9350,7 @@ export default function SessionScreen() {
                   ) : 'chevron'}
                 />
               </ContextSheetGroup> : null}
-              {!isSharedTaskPeer(deviceId) ? <ContextSheetPlugins
+              {!sharedTaskPeer ? <ContextSheetPlugins
                 disabled={!canUseComposer}
                 onOpen={openPluginPalette}
                 testID="session.contextSheetPlugins"
@@ -10626,7 +10626,7 @@ function SessionComposerPalette({
 
   return (
     <>
-          {!shareSelectionActive && canUseComposer && !isSharedTaskPeer(deviceId) ? (
+          {!shareSelectionActive && canUseComposer && !parseSharedTaskPeer(deviceId) ? (
             <ComposerPluginPalette
               deviceId={deviceId}
               workingDir={currentSession?.workingDir ?? undefined}
