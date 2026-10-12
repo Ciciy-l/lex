@@ -5,6 +5,13 @@ directory, set its exact version and publication date, and review its five local
 topic lists. Commit that file in the release source before tagging. Do not derive the
 machine-readable notice from a mutable GitHub Release body.
 
+Also commit `<version>.md` with the detailed GitHub Release body, including all five
+languages, installation instructions and compatibility limits. The release workflow
+requires this file before packaging, reads it from the exact release commit and
+uses it for the draft body. It appends the actual desktop signing mode after the
+reviewed text. The title remains `Lex v<version>` without a signing suffix.
+Stable versus RC is determined by the version suffix, independently of signing.
+
 Validate without publishing:
 
 ```sh
