@@ -3248,9 +3248,9 @@
     },
     "subagentModels": {
       "title": "하위 에이전트",
-      "description": "Claude Code 기본 모델과 Codex의 하위 에이전트 할당 방식을 설정합니다.",
+      "description": "Claude Code와 OMP의 기본 하위 에이전트 모델 및 Codex의 하위 에이전트 할당 방식을 설정합니다.",
       "unspecified": "기본 설정 사용",
-      "hint": "Claude Code 변경 사항은 새 작업부터 적용됩니다. Codex 스마트 라우팅은 Codex가 유휴 상태가 된 뒤 적용됩니다.",
+      "hint": "Claude Code와 OMP 변경 사항은 새 작업부터 적용됩니다. Codex 스마트 라우팅은 Codex가 유휴 상태가 된 뒤 적용됩니다.",
       "saveFailed": "하위 에이전트 설정 저장 실패",
       "smartRouting": {
         "label": "Codex 스마트 라우팅",
@@ -6018,6 +6018,8 @@
       "permissionModeDisabled": "원격 IM은 {{appName}} Desktop의 확인 정책을 사용하므로 이 권한 모드를 사용할 수 없습니다."
     },
     "harness": {
+      "advanced": "고급 설정",
+      "subagentAdvancedHint": "숫자를 비우면 기본값을 사용합니다. 동시 실행 수 0은 무제한입니다.",
       "description": "Harness 설정을 기능별로 모았습니다. 각 그룹에는 해당 엔진이 지원하는 항목만 표시합니다.",
       "versions": "버전 및 업데이트",
       "versionsDescription": "각 엔진의 공식 안정 버전을 확인합니다(15분 캐시). 설치를 선택해야 다운로드가 시작됩니다. 설치 후 {{appName}}를 직접 다시 시작하면 적용되며, 실행 중인 작업은 현재 버전을 계속 사용합니다. 복원은 이 {{appName}} 빌드에 포함된 기준 버전을 사용합니다.",
@@ -6043,7 +6045,7 @@
       "memoryBusy": "OMP 실행 환경이 이 메모리를 사용 중입니다. 관련 Agent 세션을 닫고 다시 시도하세요.",
       "subagentModel": "기본 하위 에이전트 모델",
       "inheritModel": "상위 작업 모델 상속",
-      "subagentDescription": "상위 세션의 제공자와 API 경로에서 사용할 수 있는 모델만 선택하며, 그 외에는 상위 모델을 상속합니다. 이름이 있는 Agent의 명시적 모델 설정이 우선합니다. 숫자를 비우면 기본값을 사용합니다. 동시 실행 수 0은 무제한입니다.",
+      "subagentDescription": "이 설정은 상위 작업의 제공자와 API 경로에서 해당 모델을 사용할 수 있을 때만 적용됩니다. 그렇지 않으면 상위 모델을 상속합니다. 이름이 있는 Agent의 명시적 모델 설정이 우선합니다.",
       "maxConcurrency": "하위 에이전트 최대 동시 실행 수",
       "maxRecursionDepth": "하위 에이전트 최대 중첩 깊이",
       "compactionEnabled": "OMP 자동 컨텍스트 압축",

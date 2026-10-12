@@ -65,7 +65,13 @@ interface MemorySlotState {
 
 const INITIAL: MemorySlotState = { enabled: undefined, pending: false };
 
-export function MemorySection() {
+export function MemorySection({
+  children,
+  additionalSettings,
+}: {
+  children?: ReactNode;
+  additionalSettings?: { customized: boolean; pending: boolean; reset: () => Promise<boolean> };
+}) {
   const { confirm } = useConfirmDialog();
   const { t } = useTranslation();
   // Maker Memory 启用时，下方 Claude Code / Codex 运行时的原生 toggle 强制 disable + 视觉变灰。
@@ -114,7 +120,8 @@ export function MemorySection() {
 
   useEffect(() => {
     void reloadSlots();
-    void window.electronAPI.maker.memoryGetSettingsState()
+    void window.electronAPI.maker
+      .memoryGetSettingsState()
       .then((settings) => setSettingsCustomized(settings.isCustomized))
       .catch(() => undefined);
     const onFocus = () => void reloadSlots();
@@ -127,6 +134,7 @@ export function MemorySection() {
   const handleResetSettings = useCallback(async () => {
     setMakerTogglePending(true);
     try {
+      if (additionalSettings && !(await additionalSettings.reset())) return;
       const settings = await window.electronAPI.maker.memoryResetSettings();
       setMakerEnabled(settings.maker);
       setSettingsCustomized(settings.isCustomized);
@@ -143,7 +151,7 @@ export function MemorySection() {
     } finally {
       setMakerTogglePending(false);
     }
-  }, [reloadSlots, setMakerEnabled, t]);
+  }, [additionalSettings, reloadSlots, setMakerEnabled, t]);
 
   const handleToggle = useCallback(
     async (kind: AgentKind, next: boolean, label: string) => {
@@ -155,7 +163,9 @@ export function MemorySection() {
         // 操作本身成功 → success(绿). next-session 只是信息性后缀, 不用 warning ——
         // 警告色会让用户误以为出错。文案 suffix 已经把 "新会话生效" 说清楚了。
         const suffix =
-          result.effective === 'next-session' ? t('settings.memory.agent.toast.takesEffectSuffix') : '';
+          result.effective === 'next-session'
+            ? t('settings.memory.agent.toast.takesEffectSuffix')
+            : '';
         const baseKey = next
           ? 'settings.memory.agent.toast.enabled'
           : 'settings.memory.agent.toast.disabled';
@@ -221,9 +231,7 @@ export function MemorySection() {
     setMakerResetPending(true);
     try {
       const result = await window.electronAPI.maker.makerMemoryReset();
-      toast.success(
-        t('settings.memory.maker.toast.resetSuccess', { count: result.removedCount }),
-      );
+      toast.success(t('settings.memory.maker.toast.resetSuccess', { count: result.removedCount }));
     } catch (err) {
       log.warn('makerMemoryReset failed', err);
       toast.error(
@@ -278,8 +286,8 @@ export function MemorySection() {
             {t('settings.memory.title')}
           </h2>
           <DefaultOverrideControls
-            isCustomized={settingsCustomized}
-            disabled={makerTogglePending}
+            isCustomized={settingsCustomized || Boolean(additionalSettings?.customized)}
+            disabled={makerTogglePending || additionalSettings?.pending}
             onReset={() => void handleResetSettings()}
           />
         </div>
@@ -297,7 +305,7 @@ export function MemorySection() {
       >
         {/* Maker Memory cell — 顶部独立, 启用时下方 Claude / Codex 强制 disable + 视觉变灰 */}
         <div className="flex items-center justify-between gap-3 px-4 py-[14px]">
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
             <div
               className={cn(
                 'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
@@ -306,16 +314,16 @@ export function MemorySection() {
             >
               <Sparkles size={18} className="text-[var(--settings-section-title)]" />
             </div>
-            <div className="flex flex-col gap-[8px]">
+            <div className="flex min-w-0 flex-col gap-[8px]">
               <p className="text-14 font-medium leading-none text-[var(--settings-section-title)]">
                 {t('settings.memory.maker.label')}
               </p>
-              <p className="text-12 leading-none text-[var(--settings-section-desc)]">
+              <p className="text-12 leading-[1.5] text-[var(--settings-section-desc)]">
                 {t('settings.memory.maker.description')}
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <Switch
               checked={makerEnabled}
               disabled={makerResetPending || makerTogglePending}
@@ -345,8 +353,11 @@ export function MemorySection() {
           const supported = slot.enabled !== null;
           const loading = slot.enabled === undefined;
           const checked = slot.enabled === true;
-          const disabled = (agent.requiresMaker ? !makerEnabled : makerEnabled)
-            || !supported || slot.pending || loading;
+          const disabled =
+            (agent.requiresMaker ? !makerEnabled : makerEnabled) ||
+            !supported ||
+            slot.pending ||
+            loading;
           // Agent label/description 来自 i18n 表 (品牌名 Claude / Codex 也走 i18n
           // —— 各语种都保留品牌原文，只方便统一管理)。
           const label = t(`settings.memory.agents.${agent.kind}.label`);
@@ -360,7 +371,7 @@ export function MemorySection() {
                 (agent.requiresMaker ? !makerEnabled : makerEnabled) && 'opacity-50',
               )}
             >
-              <div className="flex items-center gap-3">
+              <div className="flex min-w-0 flex-1 items-center gap-3">
                 <div
                   className={cn(
                     'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
@@ -369,17 +380,17 @@ export function MemorySection() {
                 >
                   <agent.Mark />
                 </div>
-                <div className="flex flex-col gap-[8px]">
+                <div className="flex min-w-0 flex-col gap-[8px]">
                   <p className="text-14 font-medium leading-none text-[var(--settings-section-title)]">
                     {label}
                   </p>
-                  <p className="text-12 leading-none text-[var(--settings-section-desc)]">
+                  <p className="text-12 leading-[1.5] text-[var(--settings-section-desc)]">
                     {description}
                   </p>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex shrink-0 items-center gap-2">
                 <Switch
                   checked={checked}
                   disabled={disabled}
@@ -405,6 +416,7 @@ export function MemorySection() {
             </div>
           );
         })}
+        {children}
       </div>
     </div>
   );

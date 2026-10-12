@@ -3248,9 +3248,9 @@
     },
     "subagentModels": {
       "title": "サブエージェント",
-      "description": "Claude Code の既定モデルと Codex のサブエージェント割り当て方法を設定します。",
+      "description": "Claude Code と OMP の既定サブエージェントモデル、および Codex のサブエージェント割り当て方法を設定します。",
       "unspecified": "既定の設定を使用",
-      "hint": "Claude Code の変更は新しいタスクから適用されます。Codex のスマートルーティングは Codex がアイドルになった後に適用されます。",
+      "hint": "Claude Code と OMP の変更は新しいタスクから適用されます。Codex のスマートルーティングは Codex がアイドルになった後に適用されます。",
       "saveFailed": "サブエージェント設定の保存に失敗しました",
       "smartRouting": {
         "label": "Codex スマートルーティング",
@@ -6018,6 +6018,8 @@
       "permissionModeDisabled": "リモート IM は {{appName}} Desktop の確認ポリシーを使用するため、この権限モードは利用できません。"
     },
     "harness": {
+      "advanced": "詳細設定",
+      "subagentAdvancedHint": "数値を空欄にするとネイティブの既定値を使用します。同時実行数の 0 は無制限です。",
       "description": "Harness の設定を機能別にまとめています。各グループには、そのエンジンが対応している項目だけを表示します。",
       "versions": "バージョンと更新",
       "versionsDescription": "各エンジンの公式安定版を確認します（15 分間キャッシュ）。インストールを選ぶとダウンロードが始まり、{{appName}} を手動で再起動すると適用されます。実行中のタスクは現在のバージョンを使い続けます。復元では、この {{appName}} ビルドに付属する基準バージョンに戻します。",
@@ -6043,7 +6045,7 @@
       "memoryBusy": "OMP 実行環境がこのメモリを使用しています。関連する Agent セッションを閉じて再試行してください。",
       "subagentModel": "既定のサブエージェントモデル",
       "inheritModel": "親タスクのモデルを継承",
-      "subagentDescription": "親セッションと同じプロバイダーと API 経路で利用可能な場合のみ指定モデルを使い、それ以外は親モデルを継承します。名前付き Agent の明示的なモデル指定が優先されます。数値を空欄にするとネイティブの既定値を使用します。同時実行数 0 は無制限です。",
+      "subagentDescription": "親タスクと同じプロバイダーと API 経路で利用できる場合のみ、この設定が適用されます。それ以外は親モデルを継承します。名前付き Agent の明示的なモデル設定が優先されます。",
       "maxConcurrency": "サブエージェントの最大同時実行数",
       "maxRecursionDepth": "サブエージェントの最大ネスト深度",
       "compactionEnabled": "OMP の自動コンテキスト圧縮",

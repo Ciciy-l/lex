@@ -3249,9 +3249,9 @@
     },
     "subagentModels": {
       "title": "Subagents",
-      "description": "Set the default Claude Code model and how Codex assigns Subagents.",
+      "description": "Set default Subagent models for Claude Code and OMP, and how Codex assigns Subagents.",
       "unspecified": "Use default setting",
-      "hint": "Claude Code changes apply to new tasks. Codex smart routing applies after Codex becomes idle.",
+      "hint": "Claude Code and OMP changes apply to new tasks. Codex smart routing applies after Codex becomes idle.",
       "saveFailed": "Failed to save subagent settings",
       "smartRouting": {
         "label": "Codex smart routing",
@@ -6020,6 +6020,8 @@
       "permissionModeDisabled": "This permission mode is unavailable because remote IM uses {{appName}} Desktop's confirmation policy."
     },
     "harness": {
+      "advanced": "Advanced settings",
+      "subagentAdvancedHint": "Leave numbers blank to follow native defaults. A concurrency value of 0 means unlimited.",
       "description": "Configure Harness capabilities by function. Each section shows only the controls supported by that engine.",
       "versions": "Versions & upgrades",
       "versionsDescription": "Check official stable releases (cached for 15 minutes). Downloads start only when you choose Install. Installed versions take effect after you manually restart {{appName}}; running tasks keep their current runtime. Restore returns to the baseline shipped with this {{appName}} build.",
@@ -6045,7 +6047,7 @@
       "memoryBusy": "An OMP runtime is still using this memory. Close the relevant Agent sessions and try again.",
       "subagentModel": "Default Subagent model",
       "inheritModel": "Inherit parent model",
-      "subagentDescription": "Use the selected model only within the parent provider and API route; otherwise inherit the parent model. Explicit model choices in named agents take precedence. Leave numbers blank for native defaults; concurrency 0 means unlimited.",
+      "subagentDescription": "This preference applies only when available through the parent task’s provider and API route; otherwise the parent model is inherited. Explicit model settings for named Agents take priority.",
       "maxConcurrency": "Maximum concurrent Subagents",
       "maxRecursionDepth": "Maximum Subagent nesting depth",
       "compactionEnabled": "OMP automatic context compaction",

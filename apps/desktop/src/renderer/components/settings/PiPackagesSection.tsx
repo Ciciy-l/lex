@@ -308,17 +308,17 @@ export function PiPackagesSection() {
     });
   };
   return (
-    <div className="flex flex-col gap-8">
-      <div className="flex flex-col gap-1">
-        <h2 className="text-16 font-medium leading-[1.2] text-[var(--settings-section-title)]">
+    <div className={CARD_CLASS} role="region" aria-labelledby="pi-extensions-card-title">
+      <div className="flex flex-col gap-1 px-4 pt-4 pb-3">
+        <h3 id="pi-extensions-card-title" className="text-14 font-medium leading-[1.2] text-[var(--settings-section-title)]">
           {t('settings.piPackages.title')}
-        </h2>
+        </h3>
         <p className="text-12 leading-[1.45] text-[var(--settings-section-desc)]">
           {t('settings.piPackages.description')}
         </p>
       </div>
 
-      <section className="flex flex-col gap-3" aria-labelledby="pi-extension-install-title">
+      <section className="flex flex-col gap-3 px-4 pb-4" aria-labelledby="pi-extension-install-title">
         <div className="flex flex-col gap-1">
           <h3
             id="pi-extension-install-title"
@@ -330,8 +330,8 @@ export function PiPackagesSection() {
             {t('settings.piPackages.installSectionDescription')}
           </p>
         </div>
-        <div className={CARD_CLASS}>
-          <div className="flex items-center gap-2 px-4 py-4">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-2">
             <SettingsTextInput
               value={source}
               onChange={setSource}
@@ -357,17 +357,16 @@ export function PiPackagesSection() {
               {t('settings.piPackages.install')}
             </button>
           </div>
-          <div className="mx-4 h-px bg-[var(--settings-theme-card-border)]" />
-          <p className="px-4 py-3 text-12 leading-[1.45] text-[var(--settings-section-desc)]">
+          <p className="text-12 leading-[1.45] text-[var(--settings-section-desc)]">
             {t('settings.piPackages.inspectionHint')}
           </p>
         </div>
       </section>
 
-      <section className="flex flex-col gap-3" aria-labelledby="pi-extension-installed-title">
+      <section className="flex flex-col gap-3 border-t border-[var(--settings-theme-card-border)] pt-4" aria-labelledby="pi-extension-installed-title">
         <h3
           id="pi-extension-installed-title"
-          className="text-14 font-medium text-[var(--settings-section-sublabel)]"
+          className="px-4 text-14 font-medium text-[var(--settings-section-sublabel)]"
         >
           {t('settings.piPackages.installedSectionTitle')}
         </h3>
@@ -375,7 +374,7 @@ export function PiPackagesSection() {
         {loadState === 'loading' && (
           <div
             role="status"
-            className="flex items-center justify-center gap-2 rounded-xl border border-[var(--settings-theme-card-border)] px-5 py-8 text-12 text-[var(--settings-section-desc)]"
+            className="flex items-center justify-center gap-2 px-4 py-6 text-12 text-[var(--settings-section-desc)]"
           >
             <Spinner size={15} />
             {t('settings.piPackages.loading')}
@@ -385,7 +384,7 @@ export function PiPackagesSection() {
         {loadState === 'error' && (
           <div
             role="alert"
-            className="flex flex-col items-center gap-3 rounded-xl border border-[var(--settings-theme-card-border)] px-5 py-8 text-center"
+            className="flex flex-col items-center gap-3 px-4 py-6 text-center"
           >
             <p className="text-12 leading-[1.45] text-[var(--settings-section-desc)]">
               {t('settings.piPackages.loadFailed')}
@@ -398,20 +397,20 @@ export function PiPackagesSection() {
         )}
 
         {loadState === 'ready' && !available && (
-          <p className="text-12 text-[var(--settings-section-desc)]">
+          <p className="px-4 pb-4 text-12 text-[var(--settings-section-desc)]">
             {t('settings.piPackages.piUnavailable')}
           </p>
         )}
 
         {empty && (
-          <div className="rounded-xl border border-dashed border-[var(--settings-theme-card-border)] px-5 py-8 text-center">
+          <div className="px-4 py-6 text-center">
             <p className="text-12 text-[var(--settings-section-desc)]">
               {t('settings.piPackages.empty')}
             </p>
           </div>
         )}
 
-        <div className={packages.length > 0 ? CARD_CLASS : undefined}>
+        <div>
           {packages.map((pkg) => {
             const mutationTargetOption = pkg.mutationTarget
               ? { mutationTarget: pkg.mutationTarget }
