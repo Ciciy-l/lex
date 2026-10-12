@@ -224,7 +224,7 @@ describe('owner-fenced new task and Bot default mirror', () => {
   });
 });
 
-it('reads remembered tuning only from the matching owner snapshot, with source/engine and legacy fallbacks', () => {
+it('reads remembered tuning only from the matching owner snapshot, with preset-first and source fallbacks', () => {
   const payload = { ownerStamp: { dataOwnerId: 'A', ownerGeneration: 4 }, lastByVendor: {},
     effortByModel: { target: 'medium', old: 'low' }, fastModeByModel: { target: true, old: true },
     providerModelMemory: {
@@ -233,11 +233,27 @@ it('reads remembered tuning only from the matching owner snapshot, with source/e
       'pi:provider': { effortByModel: { target: 'minimal' }, fastByModel: {} },
     } };
   expect(syncNewMakerDraftCache(payload, payload.ownerStamp, 'A:4', false)).toBe(true);
-  expect(getNewMakerModelTuning('A:4', 'codex', 'provider', 'target')).toEqual({ effort: 'low', fastMode: false });
+  // 权威 `${agent}:*` 优先:同一个模型换个来源(provider → other)仍然是同一档,
+  // 不会被 provider 槽的旧副本拽回旧档位(那就是「推理强度自己变低」在 main 侧的形态)。
+  expect(getNewMakerModelTuning('A:4', 'codex', 'provider', 'target')).toEqual({ effort: 'high', fastMode: true });
   expect(getNewMakerModelTuning('A:4', 'codex', 'other', 'target')).toEqual({ effort: 'high', fastMode: true });
+  // 该 agent 没有 `*` 槽 → 回落 provider 槽;fast 该槽没记过 → 再回落 newMakerDraft 根表。
   expect(getNewMakerModelTuning('A:4', 'pi', 'provider', 'target').effort).toBe('minimal');
   expect(getNewMakerModelTuning('A:4', 'codex', 'provider', 'old')).toEqual({ effort: 'low', fastMode: true });
   expect(getNewMakerModelTuning('B:4', 'codex', 'provider', 'target')).toEqual({});
   expect(syncNewMakerDraftCache(payload, { dataOwnerId: 'B', ownerGeneration: 4 }, 'B:4', false)).toBe(false);
   expect(getNewMakerModelTuning('B:4', 'codex', 'provider', 'target')).toEqual({});
+});
+
+it.each(['claude-code', 'codex', 'pi', 'omp'] as const)('%s uses authoritative tuning without losing false overrides', (agent) => {
+  const memory = {
+    [`${agent}:*`]: { effortByModel: { m: 'low' }, fastByModel: { m: false }, thinkingByModel: { m: false } },
+    [`${agent}:source`]: { effortByModel: { m: 'high' }, fastByModel: { m: true }, thinkingByModel: { m: true } },
+  };
+  setProviderModelMemoryCache(memory);
+  setNewMakerDraftCache({ lastByVendor: {}, effortByModel: {}, fastModeByModel: {}, providerModelMemory: memory }, 'owner');
+  expect(getNewMakerModelTuning('owner', agent, 'source', 'm')).toEqual({ effort: 'low', fastMode: false });
+  expect(getThinkingEnabledFromMemory(agent, 'source', 'm')).toBe(false);
+  expect(getThinkingEnabledFromMemory(agent, 'another', 'm')).toBe(false);
+  expect(getNewMakerModelTuning('other-owner', agent, 'source', 'm')).toEqual({});
 });

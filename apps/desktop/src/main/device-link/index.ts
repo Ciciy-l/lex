@@ -1800,7 +1800,8 @@ export async function remoteInvoke(
     preSend();
     if (!client) throw new Error('[DEVICE_LINK_NOT_CONNECTED] device-link client not initialized');
     if (!parseSharedTaskPeer(deviceId)) {
-      const accelerated = await tryPeerInvoke(deviceId, channel, args, (peer, nextChannel, nextArgs) => {
+      // Saved callbacks may outlive the caller; guards must reject, not escape a timer.
+      const accelerated = await tryPeerInvoke(deviceId, channel, args, async (peer, nextChannel, nextArgs) => {
         preSend();
         return remoteInvoke(peer, nextChannel, nextArgs, { preSend });
       });

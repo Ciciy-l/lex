@@ -411,6 +411,7 @@ import {
 } from '../../shared/orca-worker-permission-mode.js';
 import { t } from '../i18n.js';
 import { createLogger } from '../logger.js';
+import { classifyColdPiRehydrationOutcome } from './coldPiRehydrationOutcome.js';
 import {
   desktopClaudeAuthAdapter,
   desktopCodexAuthAdapter,
@@ -9051,6 +9052,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     inheritSourcePermissionMode?: boolean;
     /** Host-owned durable inputs use the coordinator even when idle. */
     forceQueue?: boolean;
+    /** Host-owned plugin dispatch policy; never inferred from source metadata. */
+    resumeWithStoredPermissionMode?: boolean;
   }): Promise<SendToSessionInternalResult> {
     const {
       targetSessionId,
@@ -9670,7 +9673,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           workingDir: meta.workDir,
           model: meta.model,
           resumeSessionId: meta.sdkSessionId,
-          permissionMode: 'bypassPermissions',
+          // Plugin task permissions are user settings, including for cold resumes.
+          permissionMode: params.resumeWithStoredPermissionMode
+            ? permissionModeOrAsk(dbRow.permissionMode)
+            : 'bypassPermissions',
           // 发起方回合结束后进程常被释放。漏掉 providerId = 回落到隐式默认路由,
           // 订阅 / 自定义来源的伙伴会以 AGENT_NOT_READY 起不来,委派结果停在外发
           // 队列里,表现就是「对方做完了,发起方没被叫醒」。
@@ -10608,7 +10614,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       },
       dispatch: async (pluginId, taskId, clientId, text) => {
         assertPlugin(pluginId);
-        const outcome = await sendToSessionInternal({ targetSessionId: taskId, clientId, message: text, autoReviewUserText: { kind: 'delegated-continuation' }, forceQueue: true, onAccepted: async () => { assertPlugin(pluginId); await pluginTaskServiceForCurrentOwner!().assertDispatch(pluginId, taskId); assertPlugin(pluginId); } });
+        const outcome = await sendToSessionInternal({ targetSessionId: taskId, clientId, message: text, resumeWithStoredPermissionMode: true, autoReviewUserText: { kind: 'delegated-continuation' }, forceQueue: true, onAccepted: async () => { assertPlugin(pluginId); await pluginTaskServiceForCurrentOwner!().assertDispatch(pluginId, taskId); assertPlugin(pluginId); } });
         await awaitAgentInputQueueSnapshotPersistence(taskId);
         assertCurrent();
         return outcome;
@@ -11044,7 +11050,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       isUserPickedDir: isGhostPickedDir,
       isSessionBusy: isSessionInTurn,
       dispatch: async ({ targetSessionId, message }) => {
-        const r = await sendToSessionInternal({ targetSessionId, message });
+        const r = await sendToSessionInternal({ targetSessionId, message, resumeWithStoredPermissionMode: true });
         if (!r.ok) return { ok: false, errorCode: r.errorCode, message: r.message };
         return { ok: true, wakeKind: r.wakeKind };
       },
@@ -18024,25 +18030,37 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               nextProviderId: targetRouteProviderId,
             });
           } else {
+            let coldPiRehydrationFailed = false;
             try {
               await rehydrateColdPiRuntimeForWindowVerification(sessionId);
             } catch {
-              throwIpcError(
-                localModelWindowSwitchErrorCode('MODEL_WINDOW_CURRENT_CONTEXT_UNKNOWN'),
-                'Pi current runtime could not be verified; runtime selection was not changed',
-              );
+              // A removed/unavailable old provider cannot bootstrap. Allow selecting
+              // the target route for the next send; do not replay any previous input.
+              coldPiRehydrationFailed = true;
+              log.warn('set-model: cold Pi window verification failed; allowing route reselection', { sessionId });
             }
+            assertRuntimeOwnerCurrent();
+            sharedTaskSetting();
             liveSessionBeforeRouteChange = maker.getSession(sessionId);
-            if (!liveSessionBeforeRouteChange) {
+            const coldPiRehydrationOutcome = classifyColdPiRehydrationOutcome({
+              rehydrationFailed: coldPiRehydrationFailed,
+              liveAfterBootstrap: liveSessionBeforeRouteChange !== undefined,
+            });
+            if (coldPiRehydrationOutcome === 'fail-closed') {
               throwIpcError(
                 localModelWindowSwitchErrorCode('MODEL_WINDOW_CURRENT_CONTEXT_UNKNOWN'),
                 'Pi current runtime could not be verified; runtime selection was not changed',
               );
             }
-            rehydratedColdPiRuntime = liveSessionBeforeRouteChange;
-            currentRuntimeModel = liveSessionBeforeRouteChange.model;
-            runtimeRouteChanged =
-              currentRuntimeModel !== model || currentProviderId !== targetRouteProviderId;
+            if (coldPiRehydrationOutcome === 'degraded') {
+              coldPiRouteWithoutLiveWindowCheck = true;
+            }
+            if (liveSessionBeforeRouteChange) {
+              rehydratedColdPiRuntime = liveSessionBeforeRouteChange;
+              currentRuntimeModel = liveSessionBeforeRouteChange.model;
+              runtimeRouteChanged =
+                currentRuntimeModel !== model || currentProviderId !== targetRouteProviderId;
+            }
           }
         }
       }

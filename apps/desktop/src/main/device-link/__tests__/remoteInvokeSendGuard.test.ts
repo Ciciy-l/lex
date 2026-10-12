@@ -13,6 +13,27 @@ const compiled = ts.transpileModule(declaration.getText(source).replace(/^export
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
 
+type PeerInvoke = (peer: string, channel: string, args: unknown[]) => Promise<unknown>;
+
+function loadRemoteInvoke(overrides: Record<string, unknown>) {
+  const dependencies = {
+    DeviceLinkError, invokeWithClosedLinkRecovery,
+    assertNotStandby: () => {},
+    assertRemoteControlTargetEnabled: () => {},
+    openLinkCloseEpochs: new Map<string, number>(),
+    ensureOnlineForRequest: async () => {},
+    client: { invoke: vi.fn() },
+    parseSharedTaskPeer: () => null,
+    tryPeerInvoke: async () => null,
+    resolveRemoteInvokeTimeoutMs: () => undefined,
+    openRemoteLink: vi.fn(),
+    closeRemoteLink: vi.fn(),
+    responsivenessTracker: null,
+    ...overrides,
+  };
+  return new Function(...Object.keys(dependencies), compiled + '; return remoteInvoke;')(...Object.values(dependencies));
+}
+
 it.each(['caller cancelled', 'target disabled', 'link closed', 'still valid'])(
   'revalidates %s after the client queue and never reopens an explicitly closed link', async (change) => {
     let enabled = true;
@@ -60,3 +81,31 @@ it.each(['caller cancelled', 'target disabled', 'link closed', 'still valid'])(
     expect(reopen).not.toHaveBeenCalled();
   },
 );
+
+// The direct connection keeps this invoke and calls it later from timers (idle close),
+// where `void invoke(...).catch(() => {})` only absorbs rejections. A synchronous throw
+// there escaped as an uncaughtException and shut the app down.
+it('rejects instead of throwing when a stored direct-connection invoke outlives its caller', async () => {
+  let current = true;
+  let stored!: PeerInvoke;
+  const remoteInvoke = loadRemoteInvoke({
+    client: {
+      invoke: vi.fn<DeviceLinkClient['invoke']>(async (_peer, _payload, _timeout, options) => {
+        options?.preSend?.();
+        return { ok: true, result: null };
+      }),
+    },
+    tryPeerInvoke: async (_device: string, _channel: string, _args: unknown[], invoke: PeerInvoke) => {
+      stored = invoke;
+      return null;
+    },
+  });
+  const stopped = new Error('DESKTOP_STOPPED');
+  await remoteInvoke('host', 'remote-desktop', [], {
+    preSend: () => { if (!current) throw stopped; },
+  });
+  current = false;
+  let closing: Promise<unknown> | undefined;
+  expect(() => { closing = stored('host', 'file-peer', [{ action: 'close' }]); }).not.toThrow();
+  await expect(closing).rejects.toBe(stopped);
+});

@@ -1018,6 +1018,23 @@ describe('session runtime control wiring', () => {
     expect(setModel).toContain('Pi current runtime could not be verified');
   });
 
+  it('allows dead old Pi routes to be reselected without bypassing owner or SSH checks', () => {
+    const setModel = handlerBody(registerSource, 'const handleSetModel = async (', 'const recoverRemoteRuntimeAxisPersistence');
+    const rehydrate = setModel.indexOf('await rehydrateColdPiRuntimeForWindowVerification(sessionId)');
+    const verdict = setModel.indexOf('const coldPiRehydrationOutcome =', rehydrate);
+    const branch = setModel.slice(rehydrate, setModel.indexOf('let targetContextWindow:', verdict));
+    expect(rehydrate).toBeGreaterThan(-1);
+    expect(verdict).toBeGreaterThan(rehydrate);
+    expect(branch).toContain('assertRuntimeOwnerCurrent();');
+    expect(branch).toContain('sharedTaskSetting();');
+    expect(branch).toContain('coldPiRehydrationFailed = true;');
+    expect(branch).toContain("coldPiRehydrationOutcome === 'degraded'");
+    expect(branch).toContain('coldPiRouteWithoutLiveWindowCheck = true;');
+    expect(branch).toContain("coldPiRehydrationOutcome === 'fail-closed'");
+    expect(setModel.indexOf('cold remote Pi runtime cannot verify the target window')).toBeLessThan(rehydrate);
+    expect(branch).not.toContain('.send(');
+  });
+
   it('closes a cold Pi runtime when route persistence fails after rehydrate', () => {
     const setModel = handlerBody(
       registerSource,

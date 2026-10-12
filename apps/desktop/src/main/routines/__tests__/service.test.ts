@@ -452,3 +452,12 @@ it('reports real database failures instead of waiting indefinitely and allows a 
     .resolves.toMatchObject({ ok: false, message: 'Routine request failed; please retry later' });
   await expect(f.request({ action: 'status', status: 'listening' })).resolves.toEqual({ ok: true });
 });
+
+it.skipIf(process.platform === 'win32')('rejects a malformed routine hook before persisting it', async () => {
+  await expect(routineTools.save('bot', {
+    name: 'Broken check', prompt: 'Check', enabled: false,
+    triggers: [{ id: 'tick', kind: 'interval', intervalMs: 60000 }],
+    preRunHook: { command: `node '/a b/x.mjs'//'` },
+  })).rejects.toThrow(/shell syntax error/);
+  expect(await routineTools.list('bot')).toEqual([]);
+});

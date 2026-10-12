@@ -22,6 +22,7 @@ import { assertTrustedAppRendererEvent } from '../security/trustedAppRenderer.js
 import { throwIpcError } from '../utils/ipcValidate.js';
 import { createLogger } from '../logger.js';
 import { RoutineFileStore } from './store.js';
+import { assertPreRunHookCommandSyntax } from '../scheduler-host/pre-run-hook.js';
 import { untrustedJsonBlock } from '../../shared/untrustedPrompt.js';
 import { getCurrentDbClientSnapshot } from '../localDb/client/current.js';
 import { botProfiles } from '../localDb/schema.js';
@@ -390,7 +391,14 @@ async function withBot<T>(
 export const routineTools = {
   list: (botId: string) => withBot(botId, (engine) => engine.list(botId)),
   save: (botId: string, input: RoutineInput, id?: string) =>
-    withBot(botId, (engine) => engine.put(botId, input, id)),
+    withBot(botId, async (engine, scope) => {
+      if (input.preRunHook?.command?.trim()) {
+        await assertPreRunHookCommandSyntax(input.preRunHook.command);
+      }
+      // Parsing is async; the operation still belongs to the initiating account.
+      assertScope(scope);
+      return engine.put(botId, input, id);
+    }),
   remove: (botId: string, id: string) =>
     withBot(botId, async (engine, scope) => {
       await engine.remove(botId, id, () => cleanBackingSchedules(scope, [id], true));
