@@ -688,6 +688,7 @@ describe('mobile remote-control headless UI flow smoke', () => {
 
     const newSessionCreateOpts = buildRemoteCreateSessionOptions({
       ...DEFAULT_NEW_SESSION_DRAFT,
+      model: 'claude-sonnet-4-6',
       workingDir: '/repo/xdt-maker',
       firstMessage: 'start from mobile',
     });

@@ -148,6 +148,107 @@ function makeDelivery(
 }
 
 describe('durable mobile outbox', () => {
+  it.each([true, false])('retains a confirmed send across restart until caching completes (durable=%s)', async (durable) => {
+    const storage = new MemoryStorage();
+    const store = createDurableOutbox(storage);
+    const record = makeRecord({ state: durable ? 'host-owned' : 'confirming', retrySafe: durable,
+      prepared: messageFor(makeRecord()) });
+    await store.activate(record.accountId);
+    await store.add(record);
+    const projection = async (current: DurableOutboxRecord) => deliveryProjection(current, durable ? 'accepted' : undefined);
+    const enqueue = vi.fn(async (current: DurableOutboxRecord) => deliveryProjection(current));
+    const cleanup = vi.fn(async () => {});
+    await makeDelivery(store, { projection, history: async () => true, cacheHistory: async () => false, enqueue, cleanup }).run();
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(store.getSnapshot()[0]).toMatchObject({ historyConfirmed: true, state: 'host-owned' });
+    expect(store.getSnapshot()[0].cleanupOutcome).toBeUndefined();
+
+    const restarted = createDurableOutbox(storage);
+    await restarted.activate(record.accountId);
+    expect(restarted.getSnapshot()[0].item.text).toBe(record.item.text);
+    const saved = deferred<boolean>();
+    const cacheHistory = vi.fn(() => saved.promise);
+    const run = makeDelivery(restarted, { projection, history: async () => true, cacheHistory, enqueue, cleanup }).run();
+    await vi.waitFor(() => expect(cacheHistory).toHaveBeenCalledOnce());
+    expect(restarted.getSnapshot()[0].cleanupOutcome).toBeUndefined();
+    saved.resolve(true);
+    await run;
+    expect(restarted.getSnapshot()).toEqual([]);
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  it('lets a later legacy send proceed while a confirmed row waits for caching', async () => {
+    const store = createDurableOutbox(new MemoryStorage());
+    const first = { ...makeRecord({ state: 'host-owned', retrySafe: false, prepared: messageFor(makeRecord()) }), historyConfirmed: true };
+    await store.activate(first.accountId);
+    await store.add(first);
+    await store.add(makeRecord({ clientId: 'next' }));
+    const enqueue = vi.fn(async (current: DurableOutboxRecord) => deliveryProjection(current));
+    await makeDelivery(store, { history: async () => true, cacheHistory: async () => false, enqueue }).run();
+    expect(enqueue.mock.calls.map(([current]) => current.item.clientId)).toEqual(['next']);
+    expect(store.getSnapshot().find(current => current.item.clientId === first.item.clientId)?.historyConfirmed).toBe(true);
+  });
+
+  it('does not release a cached send after its owner has changed', async () => {
+    const store = createDurableOutbox(new MemoryStorage());
+    const record = makeRecord({ state: 'host-owned', retrySafe: true });
+    await store.activate(record.accountId);
+    await store.add(record);
+    let current = true;
+    const cleanup = vi.fn(async () => {});
+    await makeDelivery(store, { isCurrent: () => current, history: async () => true, cleanup,
+      cacheHistory: async () => { current = false; return true; } }).run();
+    expect(store.getSnapshot()[0].cleanupOutcome).toBeUndefined();
+    expect(cleanup).not.toHaveBeenCalled();
+  });
+
+  it.each(['NOT_FOUND', '[NOT_FOUND] no history row'])('uses host receipts when history is absent (%s)', async (message) => {
+    const store = createDurableOutbox(new MemoryStorage());
+    const record = { ...makeRecord({ state: 'host-owned', retrySafe: true }), error: 'stale history error' };
+    await store.activate(record.accountId);
+    await store.add(record);
+    const history = vi.fn(async () => { throw Object.assign(new Error(message), { code: 'NOT_FOUND' }); });
+    const enqueue = vi.fn(async (row: DurableOutboxRecord) => deliveryProjection(row));
+    const cleanup = vi.fn(async () => {});
+    let removed = false;
+    const delivery = makeDelivery(store, { projection: async row => deliveryProjection(row, removed ? 'removed' : 'pending'), history, enqueue, cleanup });
+    await delivery.run();
+    expect(store.getSnapshot()[0]).toMatchObject({ state: 'host-owned', retrySafe: true });
+    expect(store.getSnapshot()[0].error).toBeUndefined();
+    expect(cleanup).not.toHaveBeenCalled();
+    removed = true;
+    delivery.wake();
+    await delivery.run();
+    expect(store.getSnapshot()).toEqual([]);
+    expect(cleanup).toHaveBeenCalledWith(expect.anything(), true);
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('keeps uncertainty visible when a legacy cancellation has no history row', async () => {
+    const store = createDurableOutbox(new MemoryStorage());
+    const record = makeRecord({ state: 'confirming', prepared: messageFor(makeRecord()), enqueueStarted: true, cancelRequested: true });
+    await store.activate(record.accountId);
+    await store.add(record);
+    const cleanup = vi.fn(async () => {});
+    const enqueue = vi.fn(async (row: DurableOutboxRecord) => deliveryProjection(row));
+    await makeDelivery(store, { cleanup, enqueue, history: async () => { throw Object.assign(new Error('missing history'), { code: 'NOT_FOUND' }); } }).run();
+    expect(store.getSnapshot()[0]).toMatchObject({ state: 'failed', error: 'DELIVERY_CONFIRMATION_REQUIRED' });
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('retains real history read errors instead of treating them as absent rows', async () => {
+    const store = createDurableOutbox(new MemoryStorage());
+    const record = makeRecord({ state: 'host-owned', retrySafe: true });
+    await store.activate(record.accountId);
+    await store.add(record);
+    const cleanup = vi.fn(async () => {});
+    await makeDelivery(store, { cleanup, history: async () => { throw new Error('history permission denied'); } }).run();
+    expect(store.getSnapshot()[0].error).toBe('history permission denied');
+    expect(cleanup).not.toHaveBeenCalled();
+  });
+
   it('isolates persisted records by account, desktop, session, and client ID', async () => {
     const store = createDurableOutbox(new MemoryStorage());
     await store.activate('realm:user-a');
