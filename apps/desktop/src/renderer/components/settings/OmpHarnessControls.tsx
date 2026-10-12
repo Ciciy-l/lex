@@ -143,6 +143,14 @@ export function OmpHarnessControls({
   const { state, pending, error, load, run } = controller;
   const settings = state?.value;
   const disabled = !settings || pending;
+  const labels = {
+    nativeMemory: t('settings.harness.nativeMemory'),
+    compactionEnabled: t('settings.harness.compactionEnabled'),
+    maxConcurrency: t('settings.harness.maxConcurrency'),
+    maxRecursionDepth: t('settings.harness.maxRecursionDepth'),
+    compactionThreshold: t('settings.harness.compactionThreshold'),
+    keepRecentTokens: t('settings.harness.keepRecentTokens'),
+  };
   const customized = (keys: (keyof OmpHarnessSettings)[]) =>
     state?.customizedKeys.some((key) => keys.includes(key as keyof OmpHarnessSettings)) ?? false;
   const save = (patch: Partial<OmpHarnessSettings>) =>
@@ -166,7 +174,7 @@ export function OmpHarnessControls({
   const toggle = (key: 'nativeMemory' | 'compactionEnabled', inactive = false) => (
     <div className="flex items-center justify-between gap-4">
       <label htmlFor={'omp-' + key} className="text-13 text-[var(--settings-section-title)]">
-        {t('settings.harness.' + key)}
+        {labels[key]}
       </label>
       <Switch
         id={'omp-' + key}
@@ -185,7 +193,7 @@ export function OmpHarnessControls({
   ) => (
     <NumericSetting
       id={'omp-' + key}
-      label={t('settings.harness.' + key)}
+      label={labels[key]}
       value={settings?.[key] ?? null}
       snapshot={state}
       min={min}
