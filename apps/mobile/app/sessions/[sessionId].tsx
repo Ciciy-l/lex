@@ -1,3 +1,5 @@
+import { ResponseSpeedPanel } from '@/session/ResponseSpeedPanel';
+import type { ResponseSpeedSnapshot } from '@cindy/maker-shared/usage-format';
 import { useCompanionDisplayResource } from '@/session/CompanionWorkingStatus';
 import { modelNeedsReselection } from '@/session/modelReselection';
 import { getCachedDeviceProviders } from '@/device-link/deviceProvidersCache';
@@ -9844,7 +9846,7 @@ export default function SessionScreen() {
                   紧接着消息落屏时这条又要重排一次。等有内容了再显示活动条。
                   判据必须带 messageCount:syncingWhileEmpty 只要 loading 就为真,而收口后
                   还会再来几轮 load(实测日志),只看它会让已有消息的会话反复熄灭活动条。 */}
-              {!companionChat && showComposerActivity && !(syncingWhileEmpty && !hasRenderedMessages) ? (
+              {!companionChat && (showComposerActivity || remoteSessionRunStatus.responseSpeed?.phase === 'complete') && !(syncingWhileEmpty && !hasRenderedMessages) ? (
                 <View
                   style={[
                     styles.composerActivityFrame,
@@ -9852,6 +9854,8 @@ export default function SessionScreen() {
                   ]}
                 >
                   <ComposerActivityStatus
+                    key={JSON.stringify([auth.accountGeneration, deviceId, sessionId])}
+                    responseSpeed={remoteSessionRunStatus.responseSpeed}
                     reconnectAttempt={remoteSessionRunStatus.reconnectAttempt}
                     sideTaskRunning={remoteSessionRunStatus.sideTaskRunning}
                     startedAt={composerActivityStartedAtMs}
@@ -11617,6 +11621,7 @@ function ComposerRuntimePill({
 }
 
 function ComposerActivityStatus({
+  responseSpeed,
   reconnectAttempt,
   sideTaskRunning,
   startedAt,
@@ -11627,6 +11632,7 @@ function ComposerActivityStatus({
   generationActive,
   visible,
 }: {
+  responseSpeed?: ResponseSpeedSnapshot;
   reconnectAttempt: RemoteSessionRunStatus['reconnectAttempt'];
   sideTaskRunning: boolean;
   startedAt: number | null;
@@ -11655,7 +11661,13 @@ function ComposerActivityStatus({
     return () => clearInterval(interval);
   }, [startedAt, visible]);
 
-  if (!visible) return null;
+  const retainedSpeed = !sideTaskRunning && responseSpeed?.phase === 'complete';
+  if (!visible && !retainedSpeed) return null;
+  if (responseSpeed && !sideTaskRunning && !reconnectAttempt) {
+    return <View style={styles.composerActivityStatus} testID="session.composerActivityStatus">
+      <ResponseSpeedPanel speed={responseSpeed} />
+    </View>;
+  }
 
   const elapsedText = formatComposerActivityElapsed(elapsed);
   const tokenCount = formatComposerActivityTokenCount(tokenUsage);

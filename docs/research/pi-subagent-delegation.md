@@ -116,7 +116,8 @@ sequenceDiagram
 结果去重、取消不唤醒、runner 崩溃和失败诊断。PiAgent 生命周期测试验证模型续跑与
 UI 共用路径、停止 gate，以及关闭等待在途 resume 后才转交资源租约。
 
-2026-10-08 本机另外运行经仓库 SHA256 校验的官方 Pi 1.0.2 父子进程，使用本地
+以下是 Cindy 上游 ea45fddb8 记录的历史验证，不是本轮 Lex 执行证据。
+上游于 2026-10-08 运行经 SHA256 校验的官方 Pi 1.0.2 父子进程，使用本地
 OpenAI SSE 测试服务、虚拟凭证和隔离 HOME，验证：
 
 1. 子代理发出说明文字并执行 bash 时，纠正请求得到 accepted 回执，随后进入真实子模型请求。
@@ -125,5 +126,5 @@ OpenAI SSE 测试服务、虚拟凭证和隔离 HOME，验证：
 4. 停止父轮后，child 可独立完成，但没有新增父模型请求。
 5. 长历史后的最新纠正进入 fork 子请求。
 
-这证明原生 RPC、会话与扩展链路行为；不是外部模型质量评测，也不是打包 Desktop GUI、
-Windows 或 SSH 的实机验收。发布前仍以 CI 与实际分发版本验收为准。
+Lex 本轮未运行本地 tests/typecheck/build；新增回归交 GitHub CI 执行，以精确
+PR/main SHA 的结果为准。Desktop GUI、Windows 和 SSH 实机验收尚无证据。
