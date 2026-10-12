@@ -15,7 +15,7 @@
 
 import type { Logger } from '../../interfaces/logger.js';
 
-import type { PiTransport } from './transport.js';
+import type { PiDisconnectReason, PiTransport } from './transport.js';
 
 export { attachJsonlReader } from './transport.js';
 export { createPiStdioTransport } from './transport.js';
@@ -57,6 +57,8 @@ export interface PiRpcSpawnOptions {
   onEvent: (event: PiRpcEvent) => void;
   /** 进程退出回调(exit code / signal;正常 close() 也会触发)。 */
   onExit: (info: { code: number | null; signal: NodeJS.Signals | null }) => void;
+  /** RPC loss without confirmed executor exit. Runtime cleanup still needs close(). */
+  onDisconnect?: (reason: PiDisconnectReason) => void;
   onStderrLine?: (line: string) => void;
 }
 
@@ -110,6 +112,7 @@ export class PiRpcProcess {
     commandType: string;
   }>();
   private closed = false;
+  private exitError: Error | undefined;
   /**
    * In-flight/successful close is shared. A failed close clears the gate so a
    * later call can retry remote termination instead of reporting a false
@@ -139,9 +142,26 @@ export class PiRpcProcess {
     });
     this.transport.onClose((info) => {
       this.closed = true;
-      this.failAllPending(new Error(`pi process exited (code=${info.code}, signal=${info.signal})`));
+      this.exitError = new Error(`pi process exited (code=${info.code}, signal=${info.signal})`);
+      this.failAllPending(this.exitError);
+      this.flushUnsettledFrameDiagnostics();
       opts.onExit({ code: info.code, signal: info.signal });
     });
+    this.transport.onDisconnect?.((reason) => {
+      this.closed = true;
+      this.exitError = new Error(`pi RPC disconnected (${reason}); executor exit unconfirmed`);
+      this.failAllPending(this.exitError);
+      this.flushUnsettledFrameDiagnostics();
+      opts.onDisconnect?.(reason);
+    });
+  }
+
+  private flushUnsettledFrameDiagnostics(): void {
+    if (this.eventFrameCounts.size === 0) return;
+    this.logger.info('pi rpc turn frame histogram (no agent_settled)', {
+      frames: Object.fromEntries(this.eventFrameCounts),
+    });
+    this.eventFrameCounts.clear();
   }
 
   get pid(): number | undefined {
@@ -163,7 +183,7 @@ export class PiRpcProcess {
       refreshTimeoutOnEvent?: (event: PiRpcEvent) => boolean;
     } = {},
   ): Promise<PiRpcResponse> {
-    if (this.isClosed) throw new Error('pi process already exited');
+    if (this.isClosed) throw this.exitError ?? new Error('pi RPC transport is closed');
     const id = `c${this.nextRequestId++}`;
     const payload = JSON.stringify({ ...command, id });
 

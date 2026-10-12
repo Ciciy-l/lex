@@ -377,3 +377,17 @@ Pi home 复用。settings/packages/extensions 仍属于后续独立安全评审�
   `agentKind=pi` 露出。支持原生分支切换、可选分支摘要、选中 user entry 回填原 prompt、
   SQLite 可见时间线原子重投影与上下文 usage 恢复;device-link / mobile transport
   contract 同步开放。切换不回滚工作区文件。
+
+## Lex 0.1.5 的切模与 RPC 失联边界
+
+- 模型切换和目标窗口核验完成后，重新下发目标模型支持的显式 effort 或会话原档位。
+  仅确认成功才更新 effort 镜像；恢复档位失败不撤销已经确认的模型路由，也不留下
+  pending 子代理路由。现有模型目录、上下文容量与压缩预算策略不变。
+- 冷本机 Pi 旧路由无法恢复时允许重新选路，下次发送按目标路由创建；没有恢复失败
+  却也没有 live runtime 仍拒绝。账号代次、共享任务权限、SSH 和目标窗口校验继续执行。
+- 本机 stdout EOF/关闭/错误或 stdin 错误立即禁止新 RPC 写入，保留 250ms 退出确认
+  与尾帧排空窗口。失联不等于工具成功或进程退出；未结算轮次报告 `pi-rpc-disconnected`，
+  窗口内 Stop 保留取消语义，已经收到的成功结果与用量不改判。正常长工具静默不触发此路径。
+- 复用已确认退出后的清理；未确认退出前保留运行文件与进程登记，禁止新 send/steer。
+  已完成的宿主包操作不可重放，旧输入不自动重跑，不杀后代进程树。SSH daemon 保活语义不变。
+  回归见 `pi-long-tool-lifecycle.test.ts`、`transport.test.ts`、`rpc-client.test.ts`。
