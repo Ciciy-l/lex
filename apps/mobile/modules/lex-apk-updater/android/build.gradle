@@ -1,0 +1,10 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+group = 'io.github.ciciyl.lex.updater'
+version = '0.1.0'
+android {
+  namespace 'io.github.ciciyl.lex.updater'
+  defaultConfig { minSdkVersion 24 }
+}

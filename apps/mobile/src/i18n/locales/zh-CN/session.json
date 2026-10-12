@@ -29,7 +29,7 @@
     "openMicPermission": "打开麦克风权限设置",
     "maxAttachments": "最多添加 {{max}} 个附件。",
     "voiceStopRecording": "停止录音",
-    "capabilitiesUnsupported": "无法读取电脑端的命令和资源列表，请更新电脑上的 Cindy 后重试"
+    "capabilitiesUnsupported": "无法读取电脑端的命令和资源列表，请更新电脑端应用 后重试"
   },
   "presentation": {
     "collaboration": {
@@ -209,7 +209,7 @@
     "retry": "重试",
     "firstMessageNotSent": "首条消息暂未发送，内容仍保存在任务中；可重试创建或返回编辑。",
     "attachmentsNotCarriedBack": "有 {{count}} 个附件没能一起带回，需要重新添加。",
-    "localStorageFull": "Cindy 在手机上的本地存储已满，消息没能保存，请稍后重试。",
+    "localStorageFull": "{{appName}} 在手机上的本地存储已满，消息没能保存，请稍后重试。",
     "commandWaitsForSession": "任务还在创建中，这个命令要等任务就绪后才能用，请稍后再发。",
     "locateMessageNotFound": "未找到要定位的消息。",
     "shareNoLocalImage": "无法获取本地图片文件",
@@ -313,7 +313,7 @@
     "enterModel": "请输入模型。",
     "enterFirstMessageOrAttachment": "请输入首条消息或添加附件。",
     "noSessionIdReturned": "未能确认远程电脑上的新任务已创建，请重新同步后查看。",
-    "sessionIdNotAdopted": "远程电脑上的 Cindy 版本不兼容，请更新后重试。",
+    "sessionIdNotAdopted": "远程电脑端应用 版本不兼容，请更新后重试。",
     "firstMessageMissingConfirm": "首条消息没有发出，内容已还原到输入框；发送前请确认任务里没有这条消息。",
     "firstMessageUnconfirmed": "首条消息发送状态未确认，内容已还原到输入框，请先确认任务里是否已有这条消息再发送。",
     "selectControlledDevice": "选择远程设备",
@@ -368,7 +368,7 @@
     "worktreeNotGitRepo": "当前目录不是 git 仓库",
     "worktreeAlreadyInWorktree": "已在 worktree 中，禁止嵌套",
     "worktreeDetectFailed": "无法检测目录环境，可稍后重选目录再试",
-    "worktreeUnsupported": "电脑端当前的 Cindy 无法安全创建 worktree，请关闭 worktree 后继续，或更新电脑上的 Cindy。",
+    "worktreeUnsupported": "电脑端当前的 电脑端应用 无法安全创建 worktree，请关闭 worktree 后继续，或更新电脑端应用。",
     "worktreeCreateFailed": "worktree 创建失败：{{message}}",
     "worktreeRecoveryStateFailed": "无法保存 worktree 恢复状态，请重试。",
     "worktreeCleanupPending": "上一次 worktree 仍待回收，请重新连接设备后再试。"
@@ -500,11 +500,11 @@
     "ignore": "忽略",
     "executionResultUnavailable": "未能取回执行结果，已停止自动续接。可以让助手检查已有的执行结果。",
     "outputLimit": "模型已达到输出长度上限，本轮回复可能不完整。可以直接发送下一条消息继续。",
-    "toolUseLoopDetected": "模型重复调用工具次数过多，Cindy 已停止本轮以避免无限循环。可以发送新消息继续。",
-    "toolUseLoopDetectedWithCount": "模型连续触发了无效的工具调用，Cindy 已在 {{count}} 次失败后停止本轮，以避免无限循环。可以发送新消息继续。",
-    "toolUseLoopDetectedConsecutiveWithCount": "模型重复调用同一个工具 {{count}} 次，Cindy 已停止本轮以避免无限循环。可以发送新消息继续。",
-    "toolUseLoopDetectedPingPongWithCount": "模型在多个工具调用之间来回循环，Cindy 检测到本轮已有 {{count}} 次调用后停止了本轮。可以发送新消息继续。",
-    "toolUseLoopDetectedRotationWithCount": "模型持续轮转调用多个工具，Cindy 检测到本轮已有 {{count}} 次调用后停止了本轮。可以发送新消息继续。",
+    "toolUseLoopDetected": "模型重复调用工具次数过多，电脑端应用 已停止本轮以避免无限循环。可以发送新消息继续。",
+    "toolUseLoopDetectedWithCount": "模型连续触发了无效的工具调用，电脑端应用 已在 {{count}} 次失败后停止本轮，以避免无限循环。可以发送新消息继续。",
+    "toolUseLoopDetectedConsecutiveWithCount": "模型重复调用同一个工具 {{count}} 次，电脑端应用 已停止本轮以避免无限循环。可以发送新消息继续。",
+    "toolUseLoopDetectedPingPongWithCount": "模型在多个工具调用之间来回循环，电脑端应用 检测到本轮已有 {{count}} 次调用后停止了本轮。可以发送新消息继续。",
+    "toolUseLoopDetectedRotationWithCount": "模型持续轮转调用多个工具，电脑端应用 检测到本轮已有 {{count}} 次调用后停止了本轮。可以发送新消息继续。",
     "codexThreadLost": "Codex 鉴权模式已切换，当前任务无法继续，请新建任务。",
     "encryptedContentInvalid": "由于更换供应商导致加密不可用，本任务只能在原供应商下使用；请回到电脑端处理（可以用「从这里开启新任务」丢弃协议加密内容，在新任务里继续）。"
   },
@@ -523,9 +523,9 @@
     "authGateHint": "{{agent}} 在这台电脑上还没有已连接的模型供应商，发送会失败。请在电脑端 {{appName}} 的「设置 → 模型供应商」完成配置。"
   },
   "outbox": {
-    "legacyPlanRecovery": "这台电脑暂不支持在计划模式下恢复待发消息。请关闭计划模式，或更新电脑上的 Cindy 后重试。",
+    "legacyPlanRecovery": "这台电脑暂不支持在计划模式下恢复待发消息。请关闭计划模式，或更新电脑端应用 后重试。",
     "creationRecoveryRequired": "请先重试创建任务，再删除首条消息；这条消息还保存着后续消息所需的任务恢复信息。",
-    "confirmationRequired": "电脑暂时无法确认是否收到这条消息。请核对消息记录，或更新电脑上的 Cindy 后重试。",
+    "confirmationRequired": "电脑暂时无法确认是否收到这条消息。请核对消息记录，或更新电脑端应用 后重试。",
     "taskCleared": "发送后，这个任务已被清空。消息仍保存在手机上，请核对后处理。",
     "restoreFailed": "暂时无法恢复待发消息，已保存的内容没有删除。请重启 App 后重试。",
     "recoveryTarget": "恢复这个任务时请保留原来的电脑，后续消息仍保存在手机上。",

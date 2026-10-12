@@ -1,5 +1,6 @@
+import { sha256File } from './lex-android-updates.mjs';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, copyFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { patchBuildGradleSigning, patchGradlePropertiesMemory } from '../apps/mobile/scripts/lib/android-local.mjs';
@@ -65,6 +66,11 @@ if (signed) {
   verify(apk, process.env.LEX_ANDROID_CERT_SHA256);
   const dist = path.join(root, 'dist/android');
   mkdirSync(dist, { recursive: true });
+  writeFileSync(path.join(dist, 'Lex-' + version + '-Android.update.json'), JSON.stringify({
+    schemaVersion: 1, version, versionCode, packageName: mobileConfig.ANDROID_PACKAGE,
+    size: statSync(apk).size, sha256: await sha256File(apk),
+    certificateSha256: process.env.LEX_ANDROID_CERT_SHA256.toLowerCase(),
+  }, null, 2) + '\n');
   copyFileSync(apk, path.join(dist, `Lex-${version}-Android.apk`));
 } else {
   // Exercise the same real signer/verification path in PR CI with Expo's disposable

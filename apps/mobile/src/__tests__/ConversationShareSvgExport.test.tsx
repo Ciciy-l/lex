@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import Module, { createRequire } from "node:module";
+import { createRequire } from "node:module";
 import { act, createRef, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import {
@@ -122,31 +122,15 @@ let ConversationShareSvg: typeof import("@/session/ConversationShareSvg").Conver
 const require = createRequire(import.meta.url);
 const oldJpg = require.extensions[".jpg"];
 const oldPng = require.extensions[".png"];
-const nodeModule = Module as unknown as {
-  _resolveFilename(request: string, ...args: unknown[]): string;
-};
-const resolveFilename = nodeModule._resolveFilename;
 beforeAll(async () => {
   // Metro's static require assets are opaque identifiers; native decoding is
   // driven explicitly below. Do not replace the component or layout builder.
   require.extensions[".jpg"] = require.extensions[".png"] = (module, file) => {
     module.exports = file;
   };
-  // Metro also resolves an unsuffixed asset to its checked-in density variant.
-  nodeModule._resolveFilename = function (request, ...args) {
-    return resolveFilename.call(
-      this,
-      request.replace(
-        /^(\.\.\/\.\.\/assets\/login\/login-wordmark(?:-dark)?)\.png$/,
-        "$1@2x.png",
-      ),
-      ...args,
-    );
-  };
   ({ ConversationShareSvg } = await import("@/session/ConversationShareSvg"));
 });
 afterAll(() => {
-  nodeModule._resolveFilename = resolveFilename;
   if (oldJpg) require.extensions[".jpg"] = oldJpg;
   else delete require.extensions[".jpg"];
   if (oldPng) require.extensions[".png"] = oldPng;

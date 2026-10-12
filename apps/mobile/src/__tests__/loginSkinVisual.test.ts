@@ -62,21 +62,20 @@ describe('loginSkin 白底体系视觉(源码接线 + token 参数)', () => {
     expect(panelBlock).toContain('borderWidth: 1');
   });
 
-  it('wordmark:黑红新资产 login-wordmark 接入 stage 且框内 contain 等比适配(368:1381)', () => {
-    expect(stageSource).toContain("require('../../assets/login/login-wordmark.png')");
+  it('wordmark:Lex 双主题字标 接入 stage 且框内 contain 等比适配(368:1381)', () => {
+    expect(stageSource).toContain("require('../../assets/lex/wordmark.png')");
     expect(stageSource).toContain('resizeMode="contain"');
     expect(stageSource).toContain('boxStyle(stage.word)');
     // 禁止非等比拉伸:不得出现 stretch
     expect(stageSource).not.toContain('"stretch"');
   });
 
-  it('slogan:近黑 login-slogan 资产接入 stage 且 contain(368:1394,几何沿旧表)', () => {
-    expect(stageSource).toContain("require('../../assets/login/login-slogan.png')");
-    expect(stageSource).toContain('boxStyle(stage.slogan)');
-    expect(stageSource).toContain("require('../../assets/login/login-hero.png')");
+  it('Lex hero replaces Cindy artwork and slogan while preserving responsive geometry', () => {
+    expect(stageSource).not.toContain("require('../../assets/login/login-slogan.png')");
+    expect(stageSource).not.toContain('boxStyle(stage.slogan)');
+    expect(stageSource).toContain("require('../../../../assets/branding/lex-assistant-hero.png')");
+    expect(stageSource).toContain("require('../../assets/lex/wordmark-dark.png')");
     expect(stageSource).toContain('boxStyle(stage.cindy)');
-    // SLOGAN 近黑 ink token 冻结(资产本体为矢量位图,token 供参数锚定)
-    expect(loginColors.sloganInk).toBe('#2A2828');
   });
 
   it('splash-brand:CenteredScreen splash 变体复用品牌宿主,红底体系退役', () => {

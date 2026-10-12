@@ -9,6 +9,8 @@ on:
       - 'scripts/build-lex-android.mjs'
       - 'scripts/shared/lex-mobile-config.cjs'
       - 'scripts/shared/android-certificate.mjs'
+      - 'scripts/lex-android-updates.mjs'
+      - 'scripts/__tests__/lex-android-updates.test.mjs'
       - 'scripts/__tests__/lex-mobile-release.test.mjs'
       - 'website/**'
       - 'config/**'
@@ -97,7 +99,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Verify mobile release contracts
-        run: node --test scripts/__tests__/lex-mobile-release.test.mjs
+        run: node --test scripts/__tests__/lex-mobile-release.test.mjs scripts/__tests__/lex-android-updates.test.mjs
       - name: Materialize development manifest for Metro resolution
         shell: bash
         run: |
@@ -127,7 +129,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: mobile-android-${{ inputs.version }}
-          path: dist/android/Lex-${{ inputs.version }}-Android.apk
+          path: |
+            dist/android/Lex-${{ inputs.version }}-Android.apk
+            dist/android/Lex-${{ inputs.version }}-Android.update.json
           if-no-files-found: error
           retention-days: 14
       - name: Remove signing material

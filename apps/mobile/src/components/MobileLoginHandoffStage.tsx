@@ -21,7 +21,6 @@ import {
   LOGIN_HANDOFF_EASING,
   LOGIN_HANDOFF_TIMING,
   loginHandoffMoveMs,
-  loginHandoffSloganDelayMs,
 } from '@/auth/loginHandoff';
 import { useLoginHandoffOptional } from '@/auth/MobileLoginHandoffContext';
 import { useLoginFirstLaunchLight } from '@/auth/loginFirstLaunchGate';
@@ -41,27 +40,25 @@ import { resolveLoginWindowSurface } from '@/auth/loginGroupPlacement';
  *    登录页、iPad 横竖屏全部复用本宿主,共享同一纯平底;
  *  - 底色钉在根 View 上不随键盘位移(keyboardShiftPx 只作用于品牌层,children 的
  *    位移由登录页内层 translate 容器自管,见 v5 冻结测量拓扑);
- *  - 品牌三要素(立绘/SLOGAN/字标)走 stage 坐标(resolveLoginSurface 布局引擎,
+ *  - Lex 品牌立绘/字标走 stage 坐标(resolveLoginSurface 布局引擎,
  *    U-8a 照 demo;§3.6 平板竖屏 744×1133 / 横屏 1180×820 双构图);新字标
  *    423×145 在字标框内 contain 等比适配,禁止非等比拉伸(368:1381 资产行);
  *  - handoff 动画(demo splashHandoff 时序冻结):splash 期立绘/字标簇按
  *    splashOffset 居中 + spinner;readiness 达成后 300ms 起 650ms 位移到登录位
- *    (iPad 横屏无位移变体),Slogan 在面板起步后 100ms 起 500ms 渐显;
+ *    (iPad 横屏无位移变体)，Lex 登录不再显示 Cindy slogan;
  *    reduced-motion / Provider 缺席 → 静态终态。动画全部 transform/opacity +
  *    useNativeDriver(compositor-only,规则 7);spinner 仅 splash/handoff 期挂载。
  */
 
-// 品牌资产(asset-manifest 登记;@2x/@3x 由 Metro 按设备 scale 解析)。
-// 暗色画布用白字版字标/slogan(figma 532:585 CINDY_Standard_White / SLOGAN #FBFBFB),
+// Lex 品牌资产与来源见 docs/dev-rules/lex-mobile-integration.md。
+// Lex 字标提供亮色与暗色画布两个版本，
 // 立绘两模式同资产。
-const heroAsset = require('../../assets/login/login-hero.png');
-const sloganAsset = require('../../assets/login/login-slogan.png');
-const sloganDarkAsset = require('../../assets/login/login-slogan-dark.png');
-const wordmarkAsset = require('../../assets/login/login-wordmark.png');
-const wordmarkDarkAsset = require('../../assets/login/login-wordmark-dark.png');
-// iPad/平板双构图专属立绘裁切(§3.6;slogan/字标与手机共用同一资产,demo 同源)
-const heroPadPortraitAsset = require('../../assets/login/login-hero-pad-portrait.png');
-const heroPadLandscapeAsset = require('../../assets/login/login-hero-pad-landscape.png');
+// Reuse Lex artwork with the existing responsive stage and handoff.
+const heroAsset = require('../../../../assets/branding/lex-assistant-hero.png');
+const wordmarkAsset = require('../../assets/lex/wordmark.png');
+const wordmarkDarkAsset = require('../../assets/lex/wordmark-dark.png');
+const heroPadPortraitAsset = heroAsset;
+const heroPadLandscapeAsset = heroAsset;
 
 /** hook:物理 viewport → §3.6 三构图 surface 布局(useWindowDimensions → resolveLoginSurface)。 */
 export function useLoginSurface(): LoginSurfaceLayout {
@@ -198,9 +195,6 @@ function MobileLoginHandoffStageInner({
   const brandProgress = useRef(
     new Animated.Value(phase === 'done' ? 0 : 1),
   ).current;
-  const sloganOpacity = useRef(
-    new Animated.Value(phase === 'done' ? 1 : 0),
-  ).current;
   const spinnerOpacity = useRef(new Animated.Value(1)).current;
   useEffect(() => {
     if (phase === 'handoff') {
@@ -224,32 +218,16 @@ function MobileLoginHandoffStageInner({
           useNativeDriver: true,
         }),
       ]).start();
-      Animated.sequence([
-        Animated.delay(loginHandoffSloganDelayMs(stage.mode)),
-        Animated.timing(sloganOpacity, {
-          toValue: 1,
-          duration: LOGIN_HANDOFF_TIMING.sloganInMs,
-          easing: Easing.bezier(
-            LOGIN_HANDOFF_EASING.sloganIn[0],
-            LOGIN_HANDOFF_EASING.sloganIn[1],
-            LOGIN_HANDOFF_EASING.sloganIn[2],
-            LOGIN_HANDOFF_EASING.sloganIn[3],
-          ),
-          useNativeDriver: true,
-        }),
-      ]).start();
       return;
     }
     if (phase === 'done') {
       brandProgress.setValue(0);
-      sloganOpacity.setValue(1);
       spinnerOpacity.setValue(0);
       return;
     }
     brandProgress.setValue(1);
-    sloganOpacity.setValue(0);
     spinnerOpacity.setValue(1);
-  }, [phase, stage.mode, brandProgress, sloganOpacity, spinnerOpacity]);
+  }, [phase, stage.mode, brandProgress, spinnerOpacity]);
 
   // splash 簇偏移(stage 坐标;外层 scale 会同步放大,pad-landscape 恒 0 无位移)
   const brandTranslate = brandProgress.interpolate({
@@ -263,9 +241,8 @@ function MobileLoginHandoffStageInner({
       : (stage.mode === 'pad-landscape' || stage.mode === 'compact-wide')
         ? heroPadLandscapeAsset
         : heroAsset;
-  // 暗色画布用白字版字标/slogan;立绘两模式同资产(figma 532:585)
+  // 暗色画布用白字版 Lex 字标；立绘两模式同资产。
   const wordmarkSource = mode === 'dark' ? wordmarkDarkAsset : wordmarkAsset;
-  const sloganSource = mode === 'dark' ? sloganDarkAsset : sloganAsset;
 
   return (
     <View
@@ -318,17 +295,6 @@ function MobileLoginHandoffStageInner({
               style={boxStyle(stage.word)}
             />
           </Animated.View>
-          {/* Slogan:splash 期隐藏,面板起步后 100ms 渐显(终位固定不随簇移) */}
-          <Animated.View
-            style={[boxStyle(stage.slogan), { opacity: sloganOpacity }]}
-          >
-            <Image
-              accessibilityIgnoresInvertColors
-              resizeMode="contain"
-              source={sloganSource}
-              style={styles.sloganImage}
-            />
-          </Animated.View>
           {/* splash spinner:仅 splash/handoff 期挂载(限时长,规则 7) */}
           {handoff != null && phase !== 'done' ? (
             <View
@@ -352,10 +318,6 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     overflow: 'hidden',
-  },
-  sloganImage: {
-    height: '100%',
-    width: '100%',
   },
   stage: {
     position: 'absolute',

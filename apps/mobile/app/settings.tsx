@@ -1,3 +1,5 @@
+import { IS_LEX_MOBILE } from '@/config/lexMobile';
+import { LexMobileInfoSection } from '@/update/LexMobileUpdate';
 import { diagnosticUploadConfigured, uploadMobileDiagnostics } from '@/debug/mobileDiagnosticUpload';
 import { clearDiagnostics, diagnosticsEnabled, exportDiagnostics, hydrateDiagnostics, setDiagnosticsEnabled } from '@/debug/localDiagnostics';
 import Constants from 'expo-constants';
@@ -30,7 +32,7 @@ import {
   setAnalyticsEnabled,
   subscribeAnalyticsConsent,
 } from '@/analytics/analyticsConsentStore';
-import { initMobileTapdb, setTapdbUser, stopMobileTapdbReporting } from '@/analytics/mobileTapdb';
+import { mobileTapdbConfigured, initMobileTapdb, setTapdbUser, stopMobileTapdbReporting } from '@/analytics/mobileTapdb';
 import { hasPrivacyConsent } from '@/update/updateConsentGate';
 import { SUPPORTED_LOCALES, type LocalePreference } from '@/i18n';
 import { useLocale } from '@/i18n/useLocale';
@@ -768,6 +770,7 @@ export default function SettingsScreen() {
         </SettingsGroup>
 
         {/* 版本:只保留统一检查入口;允许整包分发时先查整包,否则直接查热更。 */}
+        {IS_LEX_MOBILE ? <LexMobileInfoSection /> : (
         <SettingsGroup title={t('settings.version.sectionTitle')}>
           {[
             <View key="version" style={styles.versionRow} testID="settings.version">
@@ -820,6 +823,7 @@ export default function SettingsScreen() {
             </View>,
           ]}
         </SettingsGroup>
+        )}
 
         {/* 通知:任务完成推送(仅 iOS;Android 待 FCM/厂商通道) */}
         {isPushSupported() ? (
@@ -1003,6 +1007,7 @@ export default function SettingsScreen() {
                     <InfoRow key={row.id} detail={row.detail} label={row.label} testID={`settings.row.${row.id}`} value={row.value} />
                   )
                 )),
+                ...(!IS_LEX_MOBILE ? [
                 <SettingsSwitchRow
                   accessibilityLabel={t('settings.betaChannel.title')}
                   disabled={betaBusy || !betaReady}
@@ -1024,6 +1029,7 @@ export default function SettingsScreen() {
                 ...updateInfoRows.map((row) => (
                   <InfoRow key={row.id} label={row.label} testID={`settings.updateInfo.${row.id}`} value={row.value} />
                 )),
+                ] : []),
               ]
               : null}
           </SettingsGroup>
@@ -1033,7 +1039,7 @@ export default function SettingsScreen() {
             使用统计开关与它们同组(合规要求关闭途径可被找到);
             App 备案号仅国内版显示。 */}
         <SettingsGroup title={t('settings.legal.sectionTitle')}>
-          <SettingsSwitchRow
+          {(!IS_LEX_MOBILE || mobileTapdbConfigured()) ? <SettingsSwitchRow
             accessibilityLabel={t('settings.legal.analytics')}
             disabled={analyticsBusy || !analyticsReady}
             hint={t('settings.legal.analyticsHint')}
@@ -1044,8 +1050,8 @@ export default function SettingsScreen() {
             switchTestID="settings.analyticsToggle"
             testID="settings.analyticsToggleRow"
             value={analyticsEnabled}
-          />
-          {analyticsCustomized ? (
+          /> : null}
+          {analyticsCustomized && (!IS_LEX_MOBILE || mobileTapdbConfigured()) ? (
             <ActionInfoRow
               accessibilityLabel={t('settings.legal.analyticsReset')}
               key="analytics-reset"
@@ -1073,7 +1079,7 @@ export default function SettingsScreen() {
             testID="settings.userAgreement"
             value={t('settings.legal.view')}
           />
-          {AUTH_REGION === 'cn' ? (
+          {!IS_LEX_MOBILE && AUTH_REGION === 'cn' ? (
             <InfoRow
               key="app-filing-number"
               label={t('settings.legal.appFilingNumber')}

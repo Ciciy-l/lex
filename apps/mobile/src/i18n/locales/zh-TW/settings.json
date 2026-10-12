@@ -145,7 +145,7 @@
     "openUserAgreement": "開啟使用者協議",
     "appFilingNumber": "App 備案號",
     "analytics": "使用統計",
-    "analyticsHint": "幫助我們瞭解 Cindy 的啟動與留存情況。上報裝置型號、系統版本、應用版本、裝置識別符號等裝置與使用環境資訊，登入後還包含你的帳號 ID；不包含任何對話內容、檔案或提示詞。",
+    "analyticsHint": "幫助我們瞭解 {{appName}} 的啟動與留存情況。上報裝置型號、系統版本、應用版本、裝置識別符號等裝置與使用環境資訊，登入後還包含你的帳號 ID；不包含任何對話內容、檔案或提示詞。",
     "analyticsSaveFailed": "設定未能儲存，重啟後可能恢復原值。",
     "analyticsReset": "恢復預設",
     "analyticsResetAction": "恢復"

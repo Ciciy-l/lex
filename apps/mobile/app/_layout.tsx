@@ -1,3 +1,6 @@
+import { LexMobileUpdateBridge } from '@/update/LexMobileUpdate';
+import { ServiceRealmSelector } from '@/components/ServiceRealmSelector';
+import { IS_LEX_MOBILE } from '@/config/lexMobile';
 import { recentTaskKey } from '@/session/recentTasks';
 import { readComposerEntry } from '@/session/composerMorph';
 import { RecentMessageHistoriesProvider } from '@/session/RecentMessageHistories';
@@ -433,6 +436,7 @@ function RootLayout() {
     body = (
       <MobileLoginHandoffStage>
         <StartupGateBlockedContent
+          extra={IS_LEX_MOBILE ? <ServiceRealmSelector realm={endpointGate.realm} onSelect={endpointGate.selectRealm} /> : undefined}
           title={loginText('endpointGateTitle')}
           subtitle={loginText('endpointGateSubtitle').replace(
             '{reason}',
@@ -472,6 +476,7 @@ function RootLayout() {
         <ThemeProvider>
           {/* 语言 Provider 常驻 root:恢复持久化 override,覆盖含 (auth) 在内的全部屏幕 */}
           <LocaleProvider>
+            <LexMobileUpdateBridge />
             {/* handoff Provider 常驻 root(PR4b):闸门屏切换不重置衔接状态机 */}
             <MobileLoginHandoffProvider>
               <EndpointHandoffBridge status={endpointGate.status} />
@@ -503,17 +508,20 @@ function StartupGateBlockedContent({
   subtitle,
   actionLabel,
   onAction,
+  extra,
 }: {
   title: string;
   subtitle?: string;
   actionLabel: string;
   onAction: () => void;
+  extra?: ReactElement;
 }) {
   const gateStyles = useThemedStyles(makeGateStyles);
   return (
     <View style={gateStyles.root}>
       <Text style={gateStyles.title}>{title}</Text>
       {subtitle ? <Text style={gateStyles.subtitle}>{subtitle}</Text> : null}
+      {extra}
       <Pressable
         accessibilityRole="button"
         onPress={onAction}

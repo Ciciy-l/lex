@@ -45,7 +45,7 @@ describe('mobile auth-server login', () => {
     expect(loginSource).toContain('nonAppleProviders.length');
     expect(loginSource).not.toContain('react-native-webview');
     expect(authSource).toContain(
-      'authClientFor(did, BUILD_AUTH_REGION).exchangeNativeSocial(',
+      'authClientFor(did, personalRealm).exchangeNativeSocial(',
     );
     expect(authSource).toContain("clientType: 'mobile'");
     expect(nativeSource).toContain("import('expo-apple-authentication')");
@@ -173,7 +173,7 @@ describe('mobile auth-server login', () => {
     expect(authSource).toContain("action.type === 'start-social-browser' ||");
     expect(authSource).toContain("action.type === 'native-social'");
     expect(authSource).toContain(
-      "if (startsBuildRealmFlow && action.type !== 'request-code') {\n            pendingAuthRealmRef.current = null;",
+      "if (startsPersonalRealmFlow && action.type !== 'request-code') {\n            pendingAuthRealmRef.current = null;",
     );
 
     const discoveryStart = authSource.indexOf(
@@ -182,21 +182,21 @@ describe('mobile auth-server login', () => {
     const discoveryBody = authSource.slice(
       discoveryStart,
       authSource.indexOf(
-        "if (action.type === 'reset')",
+        "if (action.type === 'reset' || action.type === 'select-realm')",
         discoveryStart,
       ),
     );
     expect(discoveryBody).toContain('pendingAuthRealmRef.current = null;');
   });
 
-  it('asks for confirmation only when enterprise discovery crosses the build region', () => {
+  it('asks for confirmation only when enterprise discovery crosses the selected personal region', () => {
     const authSource = readFileSync(
       resolve(process.cwd(), 'src/auth/AuthContext.tsx'),
       'utf8',
     );
 
     expect(authSource).toContain(
-      'if (discovery.region !== BUILD_AUTH_REGION) {',
+      'if (discovery.region !== personalRealm) {',
     );
     expect(authSource).toContain("type: 'realm-switch-required'");
     expect(authSource).toContain(
@@ -223,11 +223,11 @@ describe('mobile auth-server login', () => {
     expect(discover).toContain('discoverEmailLogin(action.email');
     expect(discover).toContain('discoverOrganization,');
     expect(discover).toContain('pendingAuthRealmRef.current = region;');
-    expect(discover.indexOf("type: 'realm-switch-required'")).toBeLessThan(discover.indexOf("await ensureCaptchaGate('email')"));
+    expect(discover.indexOf("type: 'realm-switch-required'")).toBeLessThan(discover.indexOf("await ensureCaptchaGate('email', personalRealm)"));
     expect(source).toContain("email: confirmation.email ?? ''");
     const requestStart = source.indexOf("if (action.type === 'request-code') {");
     const request = source.slice(requestStart, source.indexOf("if (action.type === 'verify-code') {", requestStart));
-    expect(request.indexOf('pendingAuthRealmRef.current = BUILD_AUTH_REGION;')).toBeGreaterThan(request.indexOf('await requestCodeWithCaptchaFallback('));
+    expect(request.indexOf('pendingAuthRealmRef.current = personalRealm;')).toBeGreaterThan(request.indexOf('await requestCodeWithCaptchaFallback('));
   });
 
   it('remembers successful organization discovery before sole-SSO browser auth starts', () => {

@@ -222,7 +222,7 @@
       "AUTH_NETWORK": "无法连接授权服务，请检查网络后重试。",
       "AUTH_SERVICE_UNAVAILABLE": "授权服务暂不可用，请稍后重试。",
       "INLINE_INVALID": "配置内容无效，请检查后重试。",
-      "INLINE_UNAVAILABLE": "当前版本无法在对话中保存此配置，请更新 Cindy 后重试。",
+      "INLINE_UNAVAILABLE": "当前版本无法在对话中保存此配置，请更新 电脑端应用 后重试。",
       "SAVE_FAILED": "未能保存配置，请重试。",
       "WINDOW_CLOSED": "发起设置的窗口已关闭，请回到该任务重试。",
       "TARGET_UNAVAILABLE": "插件已停用、卸载或不可用，请检查插件状态后重试。",

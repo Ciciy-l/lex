@@ -222,7 +222,7 @@
       "AUTH_NETWORK": "Couldn't reach the authorization service. Check your network and try again.",
       "AUTH_SERVICE_UNAVAILABLE": "The authorization service is temporarily unavailable. Try again later.",
       "INLINE_INVALID": "This configuration is invalid. Check it and try again.",
-      "INLINE_UNAVAILABLE": "This Cindy version can't save this configuration in chat. Update Cindy and try again.",
+      "INLINE_UNAVAILABLE": "This version of the desktop app can't save this configuration in chat. Update the desktop app and try again.",
       "SAVE_FAILED": "Couldn't save this configuration. Try again.",
       "WINDOW_CLOSED": "The window that started setup was closed. Return to the session and try again.",
       "TARGET_UNAVAILABLE": "This plugin is disabled, uninstalled, or unavailable. Check the plugin and try again.",

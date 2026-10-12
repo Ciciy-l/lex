@@ -188,6 +188,42 @@ older desktop-only releases fall back to the release list. Website deployment co
 to follow the existing published-release workflow. Publishing the first APK is required
 before there is a public mobile installer.
 
+### Android in-app APK updates
+
+The first build containing `lex-apk-updater` requires one manual APK install. Later
+updates are checked at startup/foreground (at most every six hours) and offered once
+per target per 24 hours. Download requires a tap; Android confirms installation.
+Settings provides manual checks, progress/cancel, retry and install-permission
+controls. Cancelling or closing the app can require a fresh download. A downloaded
+APK is not reported as installed merely because the system installer opened.
+
+Signed builds publish `Lex-<version>-Android.update.json` alongside the APK. It contains
+package/versionCode, byte size, SHA-256 and the verified signing-certificate fingerprint.
+`lex-updates.yml` compares those values to the release APK and the existing public
+`LEX_ANDROID_CERT_SHA256` variable, then embeds the five-language release notice in:
+
+- `updates/manifest-android-beta.json`: RC and stable builds.
+- `updates/manifest-android.json`: stable builds only.
+
+Both are rooted at `https://raw.githubusercontent.com/Ciciy-l/lex/updates/` and are
+independent of Cindy service endpoints and login realm. Stable advances both pointers;
+a backport cannot replace a newer pointer, and equal versionCode with different bytes
+is rejected. Existing signed Android secrets/certificate are reused; never regenerate
+the key for an upgrade. Old tags without the publisher retain the earlier release path.
+
+The app checks metadata before download; native code verifies size, checksum, archive
+package/version and exact installed signer before exposing a private-cache content URI
+to Android's installer. Missing metadata (404) is shown as unpublished, not up-to-date.
+Do not replace published APK bytes. Verify RC→stable→next-RC, denied/granted install
+permission, offline/cancel/retry and retained account data on a physical Android device
+before promoting the first release. CI compilation and unit fixtures do not prove that
+real signing, vendor installers or account login work on a device.
+
+This adds a native module/permission and changes the mobile runtime fingerprint. A
+native rebuild is unavoidable; retain the same package and certificate so installed
+Lex data survives an upgrade. Native cold-update approval is required before merge
+under `docs/dev-rules/mobile-development.md`. iOS shares branding/realm/UI only.
+
 ## iOS distribution
 
 This change does not produce a public IPA or claim iOS installability. A normal iPhone

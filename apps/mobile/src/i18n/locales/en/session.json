@@ -29,7 +29,7 @@
     "openMicPermission": "Open microphone settings",
     "maxAttachments": "You can add up to {{max}} attachments.",
     "voiceStopRecording": "Stop Recording",
-    "capabilitiesUnsupported": "Couldn't load commands and resources from your computer. Update Cindy on your computer and try again."
+    "capabilitiesUnsupported": "Couldn't load commands and resources from your computer. Update the desktop app and try again."
   },
   "presentation": {
     "collaboration": {
@@ -209,7 +209,7 @@
     "retry": "Retry",
     "firstMessageNotSent": "The first message wasn't sent. It remains saved with this task; retry creation or return to editing.",
     "attachmentsNotCarriedBack": "{{count}} attachment(s) couldn't be brought back — please add them again.",
-    "localStorageFull": "Cindy's local storage on this phone is full, so the message couldn't be saved. Please try again.",
+    "localStorageFull": "{{appName}}'s local storage on this phone is full, so the message couldn't be saved. Please try again.",
     "commandWaitsForSession": "The session is still being created — this command needs the session to be ready. Please try again shortly.",
     "locateMessageNotFound": "Couldn't find the message to jump to.",
     "shareNoLocalImage": "Couldn't get the local image file",
@@ -313,7 +313,7 @@
     "enterModel": "Enter a model.",
     "enterFirstMessageOrAttachment": "Enter a first message or add an attachment.",
     "noSessionIdReturned": "Could not confirm that the new session was created on the remote computer. Sync again to check.",
-    "sessionIdNotAdopted": "The Cindy version on the remote computer is incompatible. Update it and try again.",
+    "sessionIdNotAdopted": "The desktop app version on the remote computer is incompatible. Update it and try again.",
     "firstMessageMissingConfirm": "The first message wasn't sent; its content has been restored to the input box. Before sending, make sure this message isn't already in the session.",
     "firstMessageUnconfirmed": "The first message's send status is unconfirmed; its content has been restored to the input box. Check whether it's already in the session before sending.",
     "selectControlledDevice": "Select the remote device",
@@ -368,7 +368,7 @@
     "worktreeNotGitRepo": "Current directory is not a git repository",
     "worktreeAlreadyInWorktree": "Already inside a worktree, nesting is not allowed",
     "worktreeDetectFailed": "Could not check this directory — reselect it later and try again",
-    "worktreeUnsupported": "Cindy on your computer can't safely create worktrees. Turn worktree off to continue, or update Cindy on your computer.",
+    "worktreeUnsupported": "The desktop app can't safely create worktrees. Turn worktree off to continue, or update the desktop app.",
     "worktreeCreateFailed": "Failed to create worktree: {{message}}",
     "worktreeRecoveryStateFailed": "Could not save the worktree recovery state. Try again.",
     "worktreeCleanupPending": "The previous worktree is still awaiting cleanup. Reconnect the device and try again."
@@ -500,11 +500,11 @@
     "ignore": "Ignore",
     "executionResultUnavailable": "Unable to retrieve the execution result. Automatic continuation has stopped. Ask the assistant to check the existing execution result.",
     "outputLimit": "The model reached its output limit, so this response may be incomplete. Send the next message to continue.",
-    "toolUseLoopDetected": "The model repeated a tool call too many times, so Cindy stopped this turn to prevent an infinite loop. Send a new message to continue.",
-    "toolUseLoopDetectedWithCount": "The model kept repeating invalid tool calls, so Cindy stopped this turn after {{count}} failures to prevent an infinite loop. Send a new message to continue.",
-    "toolUseLoopDetectedConsecutiveWithCount": "The model repeated the same tool call {{count}} times, so Cindy stopped this turn to prevent an infinite loop. Send a new message to continue.",
-    "toolUseLoopDetectedPingPongWithCount": "The model kept cycling between tool calls, so Cindy stopped this turn after detecting {{count}} calls in the loop. Send a new message to continue.",
-    "toolUseLoopDetectedRotationWithCount": "The model kept rotating through tool calls, so Cindy stopped this turn after detecting {{count}} calls in the loop. Send a new message to continue.",
+    "toolUseLoopDetected": "The model repeated a tool call too many times, so the desktop app stopped this turn to prevent an infinite loop. Send a new message to continue.",
+    "toolUseLoopDetectedWithCount": "The model kept repeating invalid tool calls, so the desktop app stopped this turn after {{count}} failures to prevent an infinite loop. Send a new message to continue.",
+    "toolUseLoopDetectedConsecutiveWithCount": "The model repeated the same tool call {{count}} times, so the desktop app stopped this turn to prevent an infinite loop. Send a new message to continue.",
+    "toolUseLoopDetectedPingPongWithCount": "The model kept cycling between tool calls, so the desktop app stopped this turn after detecting {{count}} calls in the loop. Send a new message to continue.",
+    "toolUseLoopDetectedRotationWithCount": "The model kept rotating through tool calls, so the desktop app stopped this turn after detecting {{count}} calls in the loop. Send a new message to continue.",
     "codexThreadLost": "The Codex auth mode changed, so this session can't continue. Start a new session.",
     "encryptedContentInvalid": "Switching providers made the encryption unavailable, so this session works only under the original provider. Handle it on the computer (use “Start new session from here” to drop the encrypted protocol content and continue in a new session)."
   },
@@ -525,9 +525,9 @@
   "outbox": {
     "deleteConfirmTitle": "Delete this message?",
     "deleteConfirmBody": "This message wasn't sent. Deleting it can't be undone.",
-    "legacyPlanRecovery": "This computer cannot restore saved messages in Plan mode. Turn off Plan mode or update Cindy on the computer, then retry.",
+    "legacyPlanRecovery": "This computer cannot restore saved messages in Plan mode. Turn off Plan mode or update the desktop app, then retry.",
     "creationRecoveryRequired": "Retry creating this task before deleting its first message. That message keeps the recovery details for your later messages.",
-    "confirmationRequired": "This computer cannot confirm whether the message was received. Check its history or update Cindy before retrying.",
+    "confirmationRequired": "This computer cannot confirm whether the message was received. Check its history or update the desktop app before retrying.",
     "taskCleared": "This task was cleared after you sent the message. The saved message has been kept for you to review.",
     "restoreFailed": "Saved messages could not be restored. They have not been deleted. Restart the app and try again.",
     "recoveryTarget": "Keep the original computer while recovering this task. Its later messages are still saved.",

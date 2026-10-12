@@ -43,7 +43,7 @@
   },
   "upload": {
     "emptyFile": "這個檔案為空，不能作為附件傳送。",
-    "fileTooLarge": "檔案超過 {{limit}}，只能在與電腦直連時傳送，目前未能直連。請確認電腦端 Cindy 已更新到最新版本，並保持 App 在前景後重試。",
+    "fileTooLarge": "檔案超過 {{limit}}，只能在與電腦直連時傳送，目前未能直連。請確認電腦端 電腦端應用程式 已更新到最新版本，並保持 App 在前景後重試。",
     "cancelled": "附件上傳已取消。",
     "incompleteRead": "檔案讀取不完整：預期 {{expected}} 位元組，實際 {{actual}} 位元組。",
     "integrityUnavailable": "當前附件上傳體無法進行完整性校驗。",

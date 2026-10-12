@@ -171,7 +171,7 @@ describe('AuthContext captcha 闸接线(静态源码断言)', () => {
       authContextSource.indexOf("sole?.type === 'email_code'"),
       authContextSource.indexOf("updateLoginState(\n                reduceAuthFlow(currentState, {\n                  type: 'code-requested'"),
     );
-    expect(soleBranch).toContain("ensureCaptchaGate('email')");
+    expect(soleBranch).toContain("ensureCaptchaGate('email', personalRealm)");
     expect(soleBranch).toContain('requestCodeWithCaptchaFallback');
   });
 
@@ -180,17 +180,17 @@ describe('AuthContext captcha 闸接线(静态源码断言)', () => {
       authContextSource.indexOf("if (action.type === 'request-code')"),
       authContextSource.indexOf("if (action.type === 'verify-code')"),
     );
-    expect(branch).toContain('ensureCaptchaGate(action.kind)');
+    expect(branch).toContain('ensureCaptchaGate(action.kind, personalRealm)');
     expect(branch).toContain('if (!gate.proceed) return false;');
     expect(branch).toContain('requestCodeWithCaptchaFallback');
     expect(authContextSource).toContain('captchaRequiredActionForVerificationKind(kind)');
     expect(authContextSource).toContain('?action=${encodeURIComponent(action)}&lang=');
   });
 
-  it('挑战页地址由构建区域 authApiBaseUrl + 共享路径常量拼出', () => {
+  it('挑战页地址由所选服务分区 authApiBaseUrl + 共享路径常量拼出', () => {
     expect(authContextSource).toContain('CAPTCHA_CHALLENGE_PAGE_PATH');
     expect(authContextSource).toContain(
-      "getMobileEndpointForRealm(BUILD_AUTH_REGION, 'authApiBaseUrl')",
+      "getMobileEndpointForRealm(realm, 'authApiBaseUrl')",
     );
   });
 
@@ -204,7 +204,7 @@ describe('AuthContext captcha 闸接线(静态源码断言)', () => {
     );
     expect(challengeBranch.indexOf('Keyboard.dismiss();')).toBeGreaterThan(-1);
     expect(challengeBranch.indexOf('Keyboard.dismiss();')).toBeLessThan(
-      challengeBranch.indexOf('setCaptchaChallenge({ url });'),
+      challengeBranch.indexOf('setCaptchaChallenge({ url, epoch: loginFlowEpochRef.current });'),
     );
   });
 

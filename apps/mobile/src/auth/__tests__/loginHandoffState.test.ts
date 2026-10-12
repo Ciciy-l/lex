@@ -203,7 +203,9 @@ describe('loginHandoff 接线(Provider/reporter 拓扑 + 清理,读源码断言)
     expect(stageSource).toContain('useNativeDriver: true');
     expect(stageSource).toContain("phase !== 'done' ? (");
     expect(stageSource).toContain('brandProgress');
-    expect(stageSource).toContain('sloganOpacity');
+    expect(stageSource).not.toContain('sloganOpacity');
+    expect(stageSource).toContain('spinnerOpacity');
+    expect(stageSource).toContain("require('../../assets/lex/wordmark-dark.png')");
     // 面板入场在登录页(自下而上 20px + 渐显 420ms)
     expect(loginSource).toContain('usePanelEntrance');
     expect(loginSource).toContain('LOGIN_HANDOFF_TIMING.panelInMs');

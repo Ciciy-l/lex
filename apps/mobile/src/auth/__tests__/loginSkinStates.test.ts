@@ -75,7 +75,7 @@ describe('loginSkin 全登录态(harness 真链 + 渲染层接线)', () => {
     // 双 tab 已按用户拍板(2026-07-21 分区互斥)移除:形态由构建区域确定性推导。
     expect(loginSource).not.toContain('LoginIdTabs');
     expect(loginSource).toContain(
-      'resolveIdentifierMethod(AUTH_REGION, auth.loginState.providers)',
+      'resolveIdentifierMethod(auth.loginRealm, auth.loginState.providers)',
     );
     expect(loginSource).toContain('testID="login.identifierInput"');
     expect(loginSource).toContain('testID="login.continueButton"');

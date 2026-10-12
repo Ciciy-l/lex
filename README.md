@@ -110,8 +110,13 @@ support. Lex does not operate those services or sell a separate subscription. Th
 release pipeline covers **Lex Desktop and Lex Mobile for Android**. Scan the QR on the
 [mobile download page](https://ciciy-l.github.io/lex/#mobile-download) for published APKs.
 Android requires Cindy sign-in to connect to your desktop; it does not run desktop
-Agent engines locally. Lex Mobile uses its own package and upgrades through APKs,
-with OTA disabled. iOS is not available yet; it needs a TestFlight/App Store channel.
+Agent engines locally. Choose Global or Mainland China at login, matching the account
+and service region used on your computer. Lex Mobile keeps its own package and signing
+identity. Builds with the APK updater check Lex Releases automatically; download is
+manual and Android confirms installation. The first updater-enabled APK must be
+installed manually once. RC/stable channels are independent of the login region;
+EAS/self-host JS OTA stays disabled. iOS is not available yet; it needs a
+TestFlight/App Store channel.
 
 Lex follows its own roadmap. Upstream security and compatibility fixes are adopted
 selectively; weekly automatic upstream synchronization is disabled.

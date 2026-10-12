@@ -2,12 +2,13 @@
  * legalLinks — 服务条款 / 隐私协议链接的区域分流单点(consent PR,与桌面
  * shared/legalLinks.ts 同 URL 权威源)。
  *
- * 区域 = 构建期 EXPO_PUBLIC_CINDY_AUTH_REGION(env.ts AUTH_REGION);dev 归 cn 系
- * (与登录 identifier 形态同口径)。国内走 protocol.xd.cn,国际走 protocol.xd.com;
+ * 登录页按用户选择的服务分区，已登录页面按当前账号所属分区。
+ * 国内走 protocol.xd.cn，Global 走 protocol.xd.com，服务协议保留 Cindy 归属。
  * 链接一律 `Linking.openURL` 交系统默认浏览器打开。
  */
 
-import { AUTH_REGION } from '@/config/env';
+import { getActiveMobileSessionRealm } from '@/config/env';
+import type { AuthRegion } from '@cindy/auth-client';
 
 export interface LegalLinks {
   /** 服务条款 */
@@ -26,6 +27,11 @@ const GLOBAL_LEGAL_LINKS: LegalLinks = {
   privacyPolicy: 'https://protocol.xd.com/cindy/privacy.html',
 };
 
-/** 本构建区域的协议链接(dev 归 cn 系)。 */
-export const LEGAL_LINKS: LegalLinks =
-  AUTH_REGION === 'global' ? GLOBAL_LEGAL_LINKS : CN_LEGAL_LINKS;
+/** Legal URLs follow the login selection, or the authenticated session realm. */
+export function legalLinksForRealm(realm: AuthRegion): LegalLinks {
+  return realm === 'cn' ? CN_LEGAL_LINKS : GLOBAL_LEGAL_LINKS;
+}
+export const LEGAL_LINKS: LegalLinks = {
+  get termsOfService() { return legalLinksForRealm(getActiveMobileSessionRealm()).termsOfService; },
+  get privacyPolicy() { return legalLinksForRealm(getActiveMobileSessionRealm()).privacyPolicy; },
+};

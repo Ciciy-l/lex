@@ -1,3 +1,4 @@
+import { IS_LEX_MOBILE } from '@/config/lexMobile';
 import {
   createContext,
   useCallback,
@@ -17,7 +18,9 @@ import { motionDuration, useTheme } from '@/theme';
 
 /** splash 释放后的淡出时长(ms):盖住底下首屏首帧的绘制间隙,避免红→白闪帧 */
 const SPLASH_FADE_OUT_MS = 220;
-const nativeSplashHeroAsset = require('../../assets/login/login-hero.png');
+const nativeSplashHeroAsset = IS_LEX_MOBILE
+  ? require('../../../desktop/resources/icon-master-1024.png')
+  : require('../../assets/login/login-hero.png');
 
 type StartupSplashContextValue = {
   /** 启动链最后一道门通过后调用:淡出并卸载常驻 splash(幂等,可重复调用) */
@@ -69,7 +72,7 @@ export function StartupSplashOverlay({
   const opacity = useRef(new Animated.Value(1)).current;
   const releaseSplash = useCallback(() => setReleaseRequested(true), []);
 
-  // Android JS 首帧复刻原生红底 + hero。首启门决议后只淡出这一层，
+  // Android JS 首帧复刻原生 Lex 图标与双主题背景。首启门决议后只淡出这一层，
   // 露出已选定正确主题的 MobileLoginHandoffStage；iOS 不挂该层，行为不变。
   useEffect(() => {
     if (!nativeBridgeMounted || handoff.showNativeBridge) return;
@@ -125,7 +128,7 @@ export function StartupSplashOverlay({
           pointerEvents={released ? 'none' : 'auto'}
           style={[StyleSheet.absoluteFill, styles.overlay, { opacity }]}
         >
-          <CenteredScreen title="Cindy" variant="splash" />
+          <CenteredScreen title="Lex" variant="splash" />
           {nativeBridgeMounted ? (
             <Animated.View
               pointerEvents="none"
@@ -133,7 +136,7 @@ export function StartupSplashOverlay({
                 StyleSheet.absoluteFill,
                 styles.nativeBridge,
                 {
-                  backgroundColor: colors.brandSplashBackground,
+                  backgroundColor: IS_LEX_MOBILE ? colors.lexNativeSplashBackground : colors.brandSplashBackground,
                   opacity: nativeBridgeOpacity,
                 },
               ]}

@@ -29,11 +29,18 @@ function lexMobileConfig(config, env = process.env) {
     // Preserve Cindy callback/deep-link compatibility. Package/data identity is Lex.
     // Changing OAuth schemes requires an independently registered server contract.
     android: { ...config.android, package: ANDROID_PACKAGE, versionCode, adaptiveIcon: { foregroundImage: icon, backgroundColor: '#ffffff' } },
-    ios: { ...config.ios, bundleIdentifier: ANDROID_PACKAGE, buildNumber: String(versionCode) },
+    ios: { ...config.ios, bundleIdentifier: ANDROID_PACKAGE, buildNumber: String(versionCode),
+      infoPlist: Object.fromEntries(Object.entries(config.ios?.infoPlist ?? {}).map(([key, value]) =>
+        [key, key.endsWith('UsageDescription') && typeof value === 'string' ? value.replace(/\bCindy\b/g, 'Lex') : value])),
+    },
     updates: { enabled: false },
     plugins: config.plugins.map((plugin) => {
       if (Array.isArray(plugin) && plugin[0] === 'expo-splash-screen') {
         return [plugin[0], { backgroundColor: '#ffffff', image: icon, imageWidth: 128, dark: { backgroundColor: '#262626', image: icon } }];
+      }
+      if (Array.isArray(plugin) && ['expo-audio', 'expo-image-picker', 'expo-media-library'].includes(plugin[0])) {
+        return [plugin[0], Object.fromEntries(Object.entries(plugin[1] ?? {}).map(([key, value]) =>
+          [key, key.endsWith('Permission') && typeof value === 'string' ? value.replace(/\bCindy\b/g, 'Lex') : value]))];
       }
       return plugin;
     }),

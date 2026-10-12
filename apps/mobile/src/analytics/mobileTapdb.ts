@@ -53,6 +53,12 @@ export function initMobileTapdb(): Promise<MobileTapdbInitStatus> {
   });
 }
 
+export function mobileTapdbConfigured(): boolean {
+  const config = selfHostTapdbConfig();
+  return !!((config.clientId?.trim() || process.env.EXPO_PUBLIC_TAPTAP_CLIENT_ID?.trim())
+    && (config.clientToken?.trim() || process.env.EXPO_PUBLIC_TAPTAP_CLIENT_TOKEN?.trim()));
+}
+
 function startInit(): Promise<MobileTapdbInitStatus> {
   const selfHostConfig = selfHostTapdbConfig();
   const clientId =

@@ -19,7 +19,7 @@
       "platform": "平台",
       "model": "机型",
       "systemVersion": "系统版本",
-      "appVersion": "Cindy 版本",
+      "appVersion": "电脑端版本",
       "cpu": "处理器",
       "memory": "内存",
       "lastSeen": "最近在线",
@@ -217,12 +217,12 @@
           "copy": "{{names}} 已经在线，还差最后一步：在电脑上打开允许手机控制的开关。"
         },
         "offline": {
-          "title": "打开电脑上的 Cindy",
-          "copy": "连接过的电脑现在都不在线。在电脑上打开 Cindy 并保持登录，手机会自动连上。"
+          "title": "打开电脑端应用",
+          "copy": "连接过的电脑现在都不在线。在电脑上打开 Lex 或 Cindy，并登录同一服务区的同一账号，手机会自动重连。"
         },
         "firstRun": {
-          "title": "连接你电脑上的 Cindy",
-          "copy": "目前 Cindy 都运行在你的电脑上，手机版通过远程访问来让你使用电脑上的 Agent。"
+          "title": "连接你的电脑",
+          "copy": "Agent 在电脑上运行。打开 Lex 或 Cindy 并登录同一服务区的同一账号，即可从手机访问任务。"
         }
       }
     },
@@ -243,7 +243,7 @@
     "taskSuggestions": {
       "connected": "电脑已连接",
       "title": "不在电脑旁，\n也能开始一件事。",
-      "copy": "从这里交给 Cindy，在电脑上帮你处理。任务进展，随时回手机查看。",
+      "copy": "把任务交给电脑上的 Agent，随时从手机查看进展。",
       "footerTitle": "接下来，让电脑帮你…",
       "footerCopy": "开始一个新任务，在手机上查看进展。",
       "newTask": "新建任务",
