@@ -5,6 +5,9 @@ edition = "2021"
 license = "Apache-2.0"
 
 [lib]
+# MSVC normalizes the bin name to cindy_windows_desktop_host for its PDB.
+# Give the addon a distinct stem so parallel bin/lib links cannot race on it.
+name = "cindy_windows_desktop_host_node"
 crate-type = ["cdylib"]
 
 [build-dependencies]
