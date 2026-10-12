@@ -48,9 +48,10 @@ describe('mobile session message labels', () => {
     expect(sentSessionMessageChipLabel('  \n ')).toBe('');
   });
 
-  it('strips images nested inside emphasis, strong and raw <img> tags', () => {
+  it('strips images nested inside emphasis, strong, strikethrough and raw <img> tags', () => {
     expect(sentSessionMessageChipLabel('**![](cindy-media://blobs/abc)**')).toBe('');
     expect(sentSessionMessageChipLabel('*![图](cindy-media://blobs/x)* 后文')).toBe('图 后文');
+    expect(sentSessionMessageChipLabel('~~![旧图](cindy-media://blobs/x)~~ 后文')).toBe('旧图 后文');
     expect(sentSessionMessageChipLabel('**<img src="cindy-media://blobs/x">** 尾')).toBe('尾');
     expect(sentSessionMessageChipLabel('**加粗 ![说明](cindy-media://blobs/y) 中**')).toBe('加粗 说明 中');
     expect(sentSessionMessageChipLabel('***![](cindy-media://blobs/z)*** 字')).not.toContain('cindy-media');
@@ -71,6 +72,7 @@ describe('mobile session message labels', () => {
       (token) => token,
       (token) => `**${token}**`,
       (token) => `*${token}*`,
+      (token) => `~~${token}~~`,
       (token) => `***${token}***`,
       (token) => `**外 *内 ${token}* 外**`,
       (token) => `- ${token}`,

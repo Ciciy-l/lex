@@ -51,8 +51,7 @@ function inlinesPlainText(inlines: readonly MobileMarkdownInline[], depth = 0): 
     if (inline.type === 'image') return inline.alt;
     const emphasized = inline.type === 'strong'
       || inline.type === 'emphasis'
-      || inline.type === 'strikethrough'
-      || (inline.type !== 'code' && (inline.marks?.length ?? 0) > 0);
+      || inline.type === 'strikethrough';
     return emphasized && depth < MAX_EMPHASIS_REPARSE_DEPTH
       ? inlinesPlainText(parseMobileMarkdownInlines(inline.text), depth + 1)
       : inline.text;
