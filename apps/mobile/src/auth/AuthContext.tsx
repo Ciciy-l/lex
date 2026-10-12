@@ -67,6 +67,8 @@ import {
   resetMobileSessionRealm,
 } from '@/config/env';
 import { syncCanaryChannelAfterAuth } from '@/auth/canaryChannelSync';
+import { IS_LEX_MOBILE } from '@/config/lexMobile';
+import { readPersonalLoginRealm, savePersonalLoginRealm } from '@/auth/personalLoginRealm';
 import { ensureDeviceId, hasStoredDeviceId } from '@/auth/deviceId';
 import { decodeJwtOrgSlug, isAccessTokenExpiring } from '@/auth/jwt';
 import {
@@ -246,6 +248,7 @@ interface CachedUserProfileRecord {
 
 export type MobileLoginAction =
   | { type: 'reset' }
+  | { type: 'select-realm'; realm: AuthRegion }
   | { type: 'discover'; email: string }
   | { type: 'discover-sso-org'; org: string }
   | { type: 'confirm-sso-realm' }
@@ -286,6 +289,7 @@ export interface AuthContextValue {
   user: MobileUser | null;
   deviceId: string | null;
   loginState: AuthFlowState | null;
+  loginRealm: AuthRegion;
   authError: string | null;
   accountDeletionReceipt: string | null;
   accountDeletionRestored: boolean;
@@ -301,8 +305,8 @@ export interface AuthContextValue {
    * 装载该托管挑战页;结果经 resolveCaptchaChallenge 回到挂起的发码动作
    * (token = 通过,null = 用户取消/挑战失败)。
    */
-  captchaChallenge: { url: string } | null;
-  resolveCaptchaChallenge(token: string | null): void;
+  captchaChallenge: { url: string; epoch: number } | null;
+  resolveCaptchaChallenge(token: string | null, expectedEpoch?: number): void;
   completeOAuthCallback(callbackUrl: string): Promise<void>;
   syncSavedAccounts(): Promise<void>;
   switchAccount(accountKey: string): Promise<void>;
@@ -337,6 +341,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user: visualMockUser,
       deviceId: 'visual-mock-phone',
       loginState: null,
+      loginRealm: BUILD_AUTH_REGION,
       authError: null,
       accountDeletionReceipt: null,
       accountDeletionRestored: false,
@@ -410,6 +415,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [deferredSessionRecovery, setDeferredSessionRecovery] = useState(false);
   const [loginState, setLoginState] = useState<AuthFlowState | null>(null);
   const loginStateRef = useRef<AuthFlowState | null>(null);
+  const [loginRealm, setLoginRealm] = useState<AuthRegion>(BUILD_AUTH_REGION);
+  const personalRealmRef = useRef<AuthRegion>(BUILD_AUTH_REGION);
+  const personalRealmReadyRef = useRef(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [accountDeletionReceipt, setAccountDeletionReceipt] = useState<
     string | null
@@ -718,7 +726,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   /* ── 登录人机验证(Turnstile 托管挑战页,按 requiredFor 控制邮箱/短信发码)── */
   const captchaConfigRef = useRef<CaptchaConfig | null>(null);
   const loginProvidersRef = useRef<ProviderConfig | null>(null);
-  const [captchaChallenge, setCaptchaChallenge] = useState<{ url: string } | null>(null);
+  const [captchaChallenge, setCaptchaChallenge] = useState<{ url: string; epoch: number } | null>(null);
   const captchaResolveRef = useRef<((token: string | null) => void) | null>(null);
 
   const updateLoginState = useCallback((next: AuthFlowState | null) => {
@@ -734,7 +742,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /** 登录页 WebView Modal 的结果回传口(token = 通过,null = 取消/失败)。 */
-  const resolveCaptchaChallenge = useCallback((token: string | null) => {
+  const resolveCaptchaChallenge = useCallback((token: string | null, expectedEpoch?: number) => {
+    if (expectedEpoch !== undefined && expectedEpoch !== loginFlowEpochRef.current) return;
     const resolve = captchaResolveRef.current;
     captchaResolveRef.current = null;
     setCaptchaChallenge(null);
@@ -742,8 +751,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /** 出题并等结果。有效登录主题由 ThemeOverrideProvider 内的 WebView 补入 URL。 */
-  const runCaptchaChallenge = useCallback((kind: VerificationKind): Promise<string | null> => {
-    let base = getMobileEndpointForRealm(BUILD_AUTH_REGION, 'authApiBaseUrl');
+  const runCaptchaChallenge = useCallback((kind: VerificationKind, realm: AuthRegion): Promise<string | null> => {
+    let base = getMobileEndpointForRealm(realm, 'authApiBaseUrl');
     while (base.endsWith('/')) base = base.slice(0, -1);
     const action = captchaRequiredActionForVerificationKind(kind);
     const url = `${base}${CAPTCHA_CHALLENGE_PAGE_PATH}?action=${encodeURIComponent(action)}&lang=${encodeURIComponent(getLoginLanguage())}`;
@@ -753,7 +762,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // 验证码浮层不是原生 Modal，也不做键盘避让；先收键盘，避免 iOS 小屏上
       // 挑战内容与取消动作被仍聚焦的 identifier 输入框键盘遮挡。
       Keyboard.dismiss();
-      setCaptchaChallenge({ url });
+      setCaptchaChallenge({ url, epoch: loginFlowEpochRef.current });
     });
   }, []);
 
@@ -761,6 +770,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const ensureCaptchaGate = useCallback(
     async (
       kind: VerificationKind,
+      realm: AuthRegion,
     ): Promise<
       { proceed: true; captchaToken?: string } | { proceed: false }
     > => {
@@ -771,7 +781,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ) {
         return { proceed: true };
       }
-      const token = await runCaptchaChallenge(kind);
+      const token = await runCaptchaChallenge(kind, realm);
       return token === null
         ? { proceed: false }
         : { proceed: true, captchaToken: token };
@@ -790,9 +800,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       kind: VerificationKind,
       identifier: string,
       captchaToken: string | undefined,
+      realm: AuthRegion,
+      expectedEpoch: number,
     ): Promise<void> => {
       try {
-        await authClientFor(did, BUILD_AUTH_REGION).requestCode(
+        await authClientFor(did, realm).requestCode(
           kind,
           identifier,
           {
@@ -800,12 +812,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           },
         );
       } catch (error) {
+        assertLoginFlowCurrent(expectedEpoch);
         const code = authErrorCode(error);
         if (code !== 'CAPTCHA_REQUIRED' && code !== 'CAPTCHA_INVALID')
           throw error;
-        const retryToken = await runCaptchaChallenge(kind);
+        const retryToken = await runCaptchaChallenge(kind, realm);
+        assertLoginFlowCurrent(expectedEpoch);
         if (retryToken === null) throw error;
-        await authClientFor(did, BUILD_AUTH_REGION).requestCode(
+        await authClientFor(did, realm).requestCode(
           kind,
           identifier,
           {
@@ -814,7 +828,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         );
       }
     },
-    [runCaptchaChallenge],
+    [runCaptchaChallenge, assertLoginFlowCurrent],
   );
 
   const setToken = useCallback((token: string | null) => {
@@ -965,6 +979,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       expectedLoginFlowEpoch = loginFlowEpochRef.current,
       options: { skipOrganizationDiscovery?: boolean } = {},
     ): Promise<void> => {
+      assertLoginFlowCurrent(expectedLoginFlowEpoch);
       await deleteSecureItem(PENDING_OAUTH_KEY).catch(() => undefined);
       assertLoginFlowCurrent(expectedLoginFlowEpoch);
 
@@ -1015,7 +1030,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (!options.skipOrganizationDiscovery) {
-        const personalRealm = pendingAuthRealmRef.current ?? BUILD_AUTH_REGION;
+        const personalRealm = pendingAuthRealmRef.current ?? personalRealmRef.current;
         const discovery = await discoverPersonalLoginOrganization(outcome.membership, {
           handledEmail: handledLoginEmailRef.current,
           discoverOrganization: (domain) => lookupOrganizationRealm(domain, did, expectedLoginFlowEpoch),
@@ -1023,7 +1038,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         assertLoginFlowCurrent(expectedLoginFlowEpoch);
         // A cold OAuth callback can arrive before the login screen loads providers.
         const providers = discovery
-          ? (loginProvidersRef.current ?? await authClientFor(did, BUILD_AUTH_REGION)
+          ? (loginProvidersRef.current ?? await authClientFor(did, personalRealm)
               .getProviders().catch(() => null))
           : null;
         assertLoginFlowCurrent(expectedLoginFlowEpoch);
@@ -1043,7 +1058,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const deletionWasRestored =
         outcome.accountDeletionRestored === true ||
         pendingAccountDeletionRestoredRef.current;
-      const committedRealm = pendingAuthRealmRef.current ?? BUILD_AUTH_REGION;
+      const committedRealm = pendingAuthRealmRef.current ?? personalRealmRef.current;
       const pendingMembership = pendingAccountMembershipsRef.current.find(
         (membership) => membership.id === outcome.membership.id,
       );
@@ -1788,6 +1803,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const dispatchLoginAction = useCallback(
     (action: MobileLoginAction): Promise<boolean> => {
+      if (action.type === 'select-realm') {
+        if (!IS_LEX_MOBILE || !getMobileEndpointRealmConfig().crossRealmOrgLoginEnabled
+          || (action.realm !== 'cn' && action.realm !== 'global')) return Promise.resolve(false);
+        loginFlowEpochRef.current += 1;
+        resolveCaptchaChallenge(null);
+        pendingAccountTokenRef.current = null;
+        pendingAccountRefreshTokenRef.current = null;
+        pendingAccountMembershipsRef.current = [];
+        pendingLoginTicketRef.current = null;
+        pendingBindTicketRef.current = null;
+        pendingSsoVerificationTicketRef.current = null;
+        pendingAuthRealmRef.current = null;
+        pendingPersonalLoginRef.current = null;
+        handledLoginEmailRef.current = null;
+        loginProvidersRef.current = null;
+        captchaConfigRef.current = null;
+        personalRealmRef.current = action.realm;
+        personalRealmReadyRef.current = true;
+        setLoginRealm(action.realm);
+        updateLoginState(null);
+      }
       const expectedLoginFlowEpoch = loginFlowEpochRef.current;
       suspendSessionRecoveryForLogin();
       if (
@@ -1807,25 +1843,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setIsBusy(true);
         setAuthError(null);
         try {
+          if (action.type === 'select-realm') {
+            await deleteSecureItem(PENDING_OAUTH_KEY);
+            assertLoginFlowCurrent(expectedLoginFlowEpoch);
+            await savePersonalLoginRealm(action.realm);
+          } else if (!personalRealmReadyRef.current) {
+            const selected = IS_LEX_MOBILE && getMobileEndpointRealmConfig().crossRealmOrgLoginEnabled
+              ? await readPersonalLoginRealm() : BUILD_AUTH_REGION;
+            assertLoginFlowCurrent(expectedLoginFlowEpoch);
+            personalRealmRef.current = selected;
+            personalRealmReadyRef.current = true;
+            setLoginRealm(selected);
+          }
+          assertLoginFlowCurrent(expectedLoginFlowEpoch);
+          const personalRealm = personalRealmRef.current;
+          await loadMobileEndpointsForRealm(personalRealm);
+          assertLoginFlowCurrent(expectedLoginFlowEpoch);
           const did =
             deviceIdRef.current ?? (await prepareBetaChannelForCurrentDevice());
           assertLoginFlowCurrent(expectedLoginFlowEpoch);
           deviceIdRef.current = did;
           setDeviceId(did);
-          const startsBuildRealmFlow =
+          const startsPersonalRealmFlow =
             action.type === 'discover' ||
             action.type === 'request-code' ||
             action.type === 'verify-code' ||
             action.type === 'start-social-browser' ||
             action.type === 'native-social';
-          if (startsBuildRealmFlow && action.type !== 'request-code') {
+          if (startsPersonalRealmFlow && action.type !== 'request-code') {
             pendingAuthRealmRef.current = null;
-            if (!additionalLoginRef.current) resetMobileSessionRealm();
+            if (!additionalLoginRef.current) activateMobileSessionRealm(personalRealm);
           }
           if (action.type === 'start-social-browser' || action.type === 'native-social') {
             handledLoginEmailRef.current = null;
           }
-          const loginRealm = pendingAuthRealmRef.current ?? BUILD_AUTH_REGION;
+          const loginRealm = pendingAuthRealmRef.current ?? personalRealmRef.current;
           const client = authClientFor(did, loginRealm);
           const startBrowserAuthorization = async (input: {
             previousState: AuthFlowState;
@@ -1833,7 +1885,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             providerOrConnectionId: string;
             label: string;
           }): Promise<boolean> => {
-            const authorizationRealm = pendingAuthRealmRef.current ?? BUILD_AUTH_REGION;
+            const authorizationRealm = pendingAuthRealmRef.current ?? personalRealmRef.current;
             const authorizationClient = authClientFor(did, authorizationRealm);
             const { codeVerifier, codeChallenge } = await createPkcePair();
             assertLoginFlowCurrent(expectedLoginFlowEpoch);
@@ -1886,7 +1938,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             pendingAuthRealmRef.current = discovery.region;
             return discovery;
           };
-          if (action.type === 'reset') {
+          if (action.type === 'reset' || action.type === 'select-realm') {
             pendingAccountTokenRef.current = null;
             pendingAccountRefreshTokenRef.current = null;
             pendingAccountMembershipsRef.current = [];
@@ -1896,14 +1948,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             pendingBindTicketRef.current = null;
             pendingSsoVerificationTicketRef.current = null;
             pendingAuthRealmRef.current = null;
-            if (!additionalLoginRef.current) resetMobileSessionRealm();
+            if (!additionalLoginRef.current) activateMobileSessionRealm(personalRealm);
             pendingAccountDeletionRestoredRef.current = false;
             setAccountDeletionRestored(false);
             await deleteSecureItem(PENDING_OAUTH_KEY).catch(() => undefined);
             assertLoginFlowCurrent(expectedLoginFlowEpoch);
             const providers = await authClientFor(
               did,
-              BUILD_AUTH_REGION,
+              personalRealm,
             ).getProviders();
             assertLoginFlowCurrent(expectedLoginFlowEpoch);
             updateLoginState(
@@ -1969,7 +2021,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               return true;
             }
             pendingAuthRealmRef.current = null;
-            if (!additionalLoginRef.current) resetMobileSessionRealm();
+            if (!additionalLoginRef.current) activateMobileSessionRealm(personalRealm);
             updateLoginState(
               reduceAuthFlow(confirmation, {
                 type: 'providers-loaded',
@@ -1980,15 +2032,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
           if (action.type === 'discover') {
             const { email, methods, region } = await discoverEmailLogin(action.email, {
-              buildRegion: BUILD_AUTH_REGION,
+              buildRegion: personalRealm,
               discoverOrganization,
-              discoverPersonal: (email) => authClientFor(did, BUILD_AUTH_REGION).discover(email),
+              discoverPersonal: (email) => authClientFor(did, personalRealm).discover(email),
             });
             assertLoginFlowCurrent(expectedLoginFlowEpoch);
             handledLoginEmailRef.current = email;
             pendingAuthRealmRef.current = region;
             const currentState = loginStateRef.current;
-            if (region !== BUILD_AUTH_REGION) {
+            if (region !== personalRealm) {
               if (currentState?.step !== 'identifier') {
                 throw authCodeError('INVALID_AUTH_ACTION');
               }
@@ -2015,7 +2067,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             if (sole?.type === 'email_code') {
               // 人机验证前置闸(覆盖 discovery→发码的自动串发路径):取消则不
               // 串发,落 method-choice,用户可从个人行再次发起(会重新过闸)。
-              const gate = await ensureCaptchaGate('email');
+              const gate = await ensureCaptchaGate('email', personalRealm);
               assertLoginFlowCurrent(expectedLoginFlowEpoch);
               if (!gate.proceed) {
                 updateLoginState(
@@ -2032,6 +2084,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 'email',
                 email,
                 gate.captchaToken,
+                personalRealm,
+                expectedLoginFlowEpoch,
               );
               assertLoginFlowCurrent(expectedLoginFlowEpoch);
               updateLoginState(
@@ -2064,7 +2118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             await rememberSsoOrgIdentifier(action.org);
             assertLoginFlowCurrent(expectedLoginFlowEpoch);
             const currentState = loginStateRef.current;
-            if (discovery.region !== BUILD_AUTH_REGION) {
+            if (discovery.region !== personalRealm) {
               if (currentState?.step !== 'identifier') {
                 throw authCodeError('INVALID_AUTH_ACTION');
               }
@@ -2098,7 +2152,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
           if (action.type === 'request-code') {
             const identifier = action.identifier.trim();
-            const gate = await ensureCaptchaGate(action.kind);
+            const gate = await ensureCaptchaGate(action.kind, personalRealm);
             assertLoginFlowCurrent(expectedLoginFlowEpoch);
             // 取消:不发码、不改状态、不报错(用户可再点发送/重发)。
             if (!gate.proceed) return false;
@@ -2107,11 +2161,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               action.kind,
               identifier,
               gate.captchaToken,
+              personalRealm,
+              expectedLoginFlowEpoch,
             );
             assertLoginFlowCurrent(expectedLoginFlowEpoch);
             // Commit the personal realm only after sending; a failed attempt leaves SSO usable.
-            pendingAuthRealmRef.current = BUILD_AUTH_REGION;
-            if (!additionalLoginRef.current) resetMobileSessionRealm();
+            pendingAuthRealmRef.current = personalRealm;
+            if (!additionalLoginRef.current) activateMobileSessionRealm(personalRealm);
             updateLoginState(
               reduceAuthFlow(loginStateRef.current, {
                 type: 'code-requested',
@@ -2123,7 +2179,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
           if (action.type === 'verify-code') {
             await acceptOutcome(
-              await authClientFor(did, BUILD_AUTH_REGION).verifyCode(
+              await authClientFor(did, personalRealm).verifyCode(
                 action.kind,
                 action.identifier.trim(),
                 action.code,
@@ -2139,7 +2195,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             );
             assertLoginFlowCurrent(expectedLoginFlowEpoch);
             await acceptOutcome(
-              await authClientFor(did, BUILD_AUTH_REGION).exchangeNativeSocial(
+              await authClientFor(did, personalRealm).exchangeNativeSocial(
                 action.provider,
                 credential,
               ),
@@ -2319,6 +2375,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       prepareBetaChannelForCurrentDevice,
       suspendSessionRecoveryForLogin,
       updateLoginState,
+      resolveCaptchaChallenge,
     ],
   );
 
@@ -3097,6 +3154,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       deviceId,
       loginState,
+      loginRealm,
       authError,
       accountDeletionReceipt,
       accountDeletionRestored,
@@ -3150,6 +3208,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       initialized,
       isBusy,
       loginState,
+      loginRealm,
       logout,
       requestAccountDeletionChallenge,
       resolveCaptchaChallenge,

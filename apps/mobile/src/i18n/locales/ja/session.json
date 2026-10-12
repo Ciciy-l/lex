@@ -29,7 +29,7 @@
     "openMicPermission": "マイクの権限設定を開く",
     "maxAttachments": "添付は最大 {{max}} 件までです。",
     "voiceStopRecording": "録音を停止",
-    "capabilitiesUnsupported": "パソコンからコマンドとリソースの一覧を読み込めませんでした。パソコンの Cindy を更新してから再試行してください"
+    "capabilitiesUnsupported": "パソコンからコマンドとリソースの一覧を読み込めませんでした。パソコンのデスクトップアプリを更新してから再試行してください"
   },
   "presentation": {
     "collaboration": {
@@ -209,7 +209,7 @@
     "retry": "再試行",
     "firstMessageNotSent": "最初のメッセージは送信されていません。内容はタスクに保存されています。作成を再試行するか、編集に戻ってください。",
     "attachmentsNotCarriedBack": "{{count}} 件の添付は復元できませんでした。もう一度追加してください。",
-    "localStorageFull": "このスマートフォン上の Cindy のローカルストレージがいっぱいのため、メッセージを保存できませんでした。もう一度お試しください。",
+    "localStorageFull": "このスマートフォン上の {{appName}} のローカルストレージがいっぱいのため、メッセージを保存できませんでした。もう一度お試しください。",
     "commandWaitsForSession": "セッションの作成中です。このコマンドはセッションの準備が必要なため、少し待ってから送信してください。",
     "locateMessageNotFound": "移動先のメッセージが見つかりませんでした。",
     "shareNoLocalImage": "ローカルの画像ファイルを取得できませんでした",
@@ -313,7 +313,7 @@
     "enterModel": "モデルを入力してください。",
     "enterFirstMessageOrAttachment": "最初のメッセージを入力するか、添付を追加してください。",
     "noSessionIdReturned": "リモートのパソコンで新しいセッションが作成されたか確認できません。再同期して確認してください。",
-    "sessionIdNotAdopted": "リモートのパソコンの Cindy は互換性のないバージョンです。更新してから再試行してください。",
+    "sessionIdNotAdopted": "リモートのパソコンのデスクトップアプリは互換性のないバージョンです。更新してから再試行してください。",
     "firstMessageMissingConfirm": "最初のメッセージは送信されませんでした。内容は入力欄に復元されました。送信前に、このメッセージがセッションに存在しないことを確認してください。",
     "firstMessageUnconfirmed": "最初のメッセージの送信状態を確認できませんでした。内容は入力欄に復元されました。送信前に、このメッセージがすでにセッションにあるか確認してください。",
     "selectControlledDevice": "リモートデバイスを選択",
@@ -368,7 +368,7 @@
     "worktreeNotGitRepo": "現在のディレクトリは git リポジトリではありません",
     "worktreeAlreadyInWorktree": "すでに worktree 内です。ネストは禁止です",
     "worktreeDetectFailed": "ディレクトリ環境を確認できません。後でディレクトリを選び直してもう一度お試しください",
-    "worktreeUnsupported": "パソコンの Cindy では worktree を安全に作成できません。続行するには worktree をオフにするか、パソコンの Cindy を更新してください。",
+    "worktreeUnsupported": "パソコンのデスクトップアプリでは worktree を安全に作成できません。続行するには worktree をオフにするか、パソコンのデスクトップアプリを更新してください。",
     "worktreeCreateFailed": "worktree の作成に失敗しました：{{message}}",
     "worktreeRecoveryStateFailed": "worktree の復旧状態を保存できませんでした。もう一度お試しください。",
     "worktreeCleanupPending": "前回の worktree はまだクリーンアップ待ちです。デバイスを再接続してから再試行してください。"
@@ -525,9 +525,9 @@
   "outbox": {
     "deleteConfirmTitle": "このメッセージを削除しますか？",
     "deleteConfirmBody": "このメッセージは送信されていません。削除すると元に戻せません。",
-    "legacyPlanRecovery": "このパソコンではプランモードで保存済みメッセージを復元できません。プランモードをオフにするか、パソコンの Cindy を更新して再試行してください。",
+    "legacyPlanRecovery": "このパソコンではプランモードで保存済みメッセージを復元できません。プランモードをオフにするか、パソコンのデスクトップアプリを更新して再試行してください。",
     "creationRecoveryRequired": "先頭のメッセージを削除する前に、セッションの作成を再試行してください。このメッセージには後続メッセージの復元に必要な情報が保存されています。",
-    "confirmationRequired": "このコンピューターではメッセージの受信を確認できません。履歴を確認するか、Cindy を更新してから再試行してください。",
+    "confirmationRequired": "このコンピューターではメッセージの受信を確認できません。履歴を確認するか、デスクトップアプリを更新してから再試行してください。",
     "taskCleared": "送信後にこのセッションがクリアされました。メッセージはスマートフォンに保存されています。内容を確認してください。",
     "restoreFailed": "送信待ちメッセージを復元できませんでした。保存済みの内容は削除されていません。アプリを再起動して再試行してください。",
     "recoveryTarget": "このセッションを復元する際は元のコンピューターを使用してください。後続のメッセージは保存されています。",

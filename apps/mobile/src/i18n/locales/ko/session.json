@@ -29,7 +29,7 @@
     "openMicPermission": "마이크 권한 설정 열기",
     "maxAttachments": "첨부는 최대 {{max}}개까지 가능합니다.",
     "voiceStopRecording": "녹음 중지",
-    "capabilitiesUnsupported": "컴퓨터에서 명령과 리소스 목록을 불러오지 못했습니다. 컴퓨터의 Cindy를 업데이트한 후 다시 시도하세요"
+    "capabilitiesUnsupported": "컴퓨터에서 명령과 리소스 목록을 불러오지 못했습니다. 컴퓨터의 데스크톱 앱을 업데이트한 후 다시 시도하세요"
   },
   "presentation": {
     "collaboration": {
@@ -209,7 +209,7 @@
     "retry": "다시 시도",
     "firstMessageNotSent": "첫 메시지가 전송되지 않았습니다. 내용은 작업에 저장되어 있습니다. 생성을 다시 시도하거나 편집으로 돌아가세요.",
     "attachmentsNotCarriedBack": "첨부 {{count}}개는 되돌리지 못했습니다. 다시 추가해 주세요.",
-    "localStorageFull": "이 휴대폰에서 Cindy 로컬 저장 공간이 가득 차 메시지를 저장하지 못했습니다. 다시 시도해 주세요.",
+    "localStorageFull": "이 휴대폰에서 {{appName}} 로컬 저장 공간이 가득 차 메시지를 저장하지 못했습니다. 다시 시도해 주세요.",
     "commandWaitsForSession": "세션을 만들고 있습니다. 이 명령은 세션이 준비된 뒤에 사용할 수 있습니다. 잠시 후 다시 보내 주세요.",
     "locateMessageNotFound": "이동할 메시지를 찾을 수 없습니다.",
     "shareNoLocalImage": "로컬 이미지 파일을 가져올 수 없습니다",
@@ -313,7 +313,7 @@
     "enterModel": "모델을 입력하세요.",
     "enterFirstMessageOrAttachment": "첫 메시지를 입력하거나 첨부를 추가하세요.",
     "noSessionIdReturned": "원격 컴퓨터에서 새 세션이 생성되었는지 확인할 수 없습니다. 다시 동기화하여 확인하세요.",
-    "sessionIdNotAdopted": "원격 컴퓨터의 Cindy 버전이 호환되지 않습니다. 업데이트한 후 다시 시도하세요.",
+    "sessionIdNotAdopted": "원격 컴퓨터의 데스크톱 앱 버전이 호환되지 않습니다. 업데이트한 후 다시 시도하세요.",
     "firstMessageMissingConfirm": "첫 메시지가 전송되지 않았습니다. 내용이 입력창에 복원되었습니다. 보내기 전에 이 메시지가 세션에 없는지 확인하세요.",
     "firstMessageUnconfirmed": "첫 메시지의 전송 상태를 확인할 수 없습니다. 내용이 입력창에 복원되었습니다. 보내기 전에 이 메시지가 이미 세션에 있는지 확인하세요.",
     "selectControlledDevice": "원격 기기 선택",
@@ -368,7 +368,7 @@
     "worktreeNotGitRepo": "현재 디렉터리는 git 리포지토리가 아닙니다",
     "worktreeAlreadyInWorktree": "이미 worktree 안에 있어 중첩이 금지됩니다",
     "worktreeDetectFailed": "디렉터리 환경을 확인할 수 없습니다. 나중에 디렉터리를 다시 선택해 시도하세요",
-    "worktreeUnsupported": "컴퓨터의 Cindy에서는 worktree를 안전하게 만들 수 없습니다. 계속하려면 worktree를 끄거나 컴퓨터의 Cindy를 업데이트하세요.",
+    "worktreeUnsupported": "컴퓨터의 데스크톱 앱에서는 worktree를 안전하게 만들 수 없습니다. 계속하려면 worktree를 끄거나 컴퓨터의 데스크톱 앱을 업데이트하세요.",
     "worktreeCreateFailed": "worktree 생성 실패: {{message}}",
     "worktreeRecoveryStateFailed": "worktree 복구 상태를 저장할 수 없습니다. 다시 시도하세요.",
     "worktreeCleanupPending": "이전 worktree가 아직 정리 대기 중입니다. 기기를 다시 연결한 후 재시도하세요."
@@ -525,9 +525,9 @@
   "outbox": {
     "deleteConfirmTitle": "이 메시지를 삭제할까요?",
     "deleteConfirmBody": "이 메시지는 전송되지 않았습니다. 삭제하면 되돌릴 수 없습니다.",
-    "legacyPlanRecovery": "이 컴퓨터에서는 계획 모드로 저장된 메시지를 복원할 수 없습니다. 계획 모드를 끄거나 컴퓨터의 Cindy를 업데이트한 후 다시 시도해 주세요.",
+    "legacyPlanRecovery": "이 컴퓨터에서는 계획 모드로 저장된 메시지를 복원할 수 없습니다. 계획 모드를 끄거나 컴퓨터의 데스크톱 앱을 업데이트한 후 다시 시도해 주세요.",
     "creationRecoveryRequired": "첫 메시지를 삭제하기 전에 세션 생성을 다시 시도하세요. 이 메시지에는 후속 메시지를 복원하는 데 필요한 정보가 저장되어 있습니다.",
-    "confirmationRequired": "이 컴퓨터에서 메시지 수신 여부를 확인할 수 없습니다. 기록을 확인하거나 컴퓨터의 Cindy를 업데이트한 후 다시 시도하세요.",
+    "confirmationRequired": "이 컴퓨터에서 메시지 수신 여부를 확인할 수 없습니다. 기록을 확인하거나 컴퓨터의 데스크톱 앱을 업데이트한 후 다시 시도하세요.",
     "taskCleared": "전송 후 이 세션이 비워졌습니다. 메시지는 휴대폰에 저장되어 있으니 확인해 주세요.",
     "restoreFailed": "전송 대기 메시지를 복원하지 못했습니다. 저장된 내용은 삭제되지 않았습니다. 앱을 다시 시작하고 재시도하세요.",
     "recoveryTarget": "이 세션을 복원할 때는 기존 컴퓨터를 사용해 주세요. 후속 메시지는 저장되어 있습니다.",

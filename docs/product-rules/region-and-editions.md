@@ -2,7 +2,7 @@
 
 > **状态**：权威产品规则（authoritative）
 > **适用范围**：Lex 的安装身份、更新渠道、登录、端点选择、区域文案与发布流程
-> **最后变更**：2026-10-08，产品所有者确认扩展 Android 发行并采用独立路线
+> **最后变更**：2026-10-12，补充已确认的 Mobile 个人服务分区与 APK 应用内更新
 
 ## 1. 产品关系
 
@@ -13,7 +13,7 @@ Lex 是基于开源 Cindy 客户端构建、由社区独立维护的桌面与移
 这两个维度必须分开：
 
 - **Lex product identity**：每个平台一个安装包、一个正式 app/bundle ID、一个用户数据目录、
-  一个版本号和一个 GitHub Release；桌面保留自动更新，Android 首版通过 APK 升级。
+  一个版本号和一个 GitHub Release；桌面保留自动更新，Android 自动检查并由用户下载、确认安装 APK。
 - **Cindy service realm**：`global` 或 `cn`，是登录会话及账号凭证的属性，不是 Lex
   的发行版、下载版本或系统身份。
 
@@ -56,8 +56,11 @@ Cindy 账号”。这不是品牌不一致，而是必须保留的责任边界�
 - 新的个人登录默认展示 `Global`，并提供明确的 Cindy 服务区切换入口。
 - 用户可以选择 `Global` 或「中国大陆」；邮箱/手机号形态、验证码、社交登录、
   Captcha 和 Cindy 官方协议链接随选择结果切换。
-- 选择由 Electron Main 持有并通过运行期校验的 IPC 改变。Renderer 只展示 Main
-  返回的结果，不能把本地 UI 状态当作路由真值。
+- Desktop 选择由 Electron Main 持有并通过运行期校验的 IPC 改变；Mobile 由 AuthContext
+  持有并保存非敏感偏好。UI 只展示登录控制器返回的结果，不能独立决定凭证路由。
+- Mobile 切换选择时同步废弃旧登录流程、验证码挑战及待处理票据；迟到结果不得完成新登录。
+  添加账号时选择只作用于新登录，不改变当前已登录账号的连接。启动端点闸门优先使用
+  已保存活动账号的 realm，其次兼容 session realm，已退出或新安装才用个人选择。
 - 登录成功后，realm 与加密 refresh credential 一起按账号保存。冷启动、刷新和
   已保存账号切换必须按该账号的 realm 加载端点后再使用 token。
 - 不得根据系统语言、IP、时区、下载镜像或地理位置静默猜测账号 realm。
@@ -76,8 +79,8 @@ Cindy 账号”。这不是品牌不一致，而是必须保留的责任边界�
   重新解析并按对应区域域名验证。禁止采用「两个 Cindy 域都可信」的并集策略。
 - Lex 更新资产只从 Lex 的更新信任锚解析。Cindy 官方 CLI runtime 资产在尚未镜像
   前可以使用绝对 URL，但不能因此把应用更新通道切回 Cindy。
-- 凭证仍只存 Main 的 safeStorage/vault；Renderer 不接触 token、realm/account
-  复合键或服务端票据。
+- Desktop 凭证仍只存 Main 的 safeStorage/vault；Renderer 不接触 token、realm/account
+  复合键或服务端票据。Mobile 继续使用既有 SecureStore/vault，不把凭证放进分区偏好。
 - Cindy 的两个 realm 没有承诺共享 membership ID 命名空间。当前本地数据层仍以裸
   membership ID 作为 owner；在 Profile Registry 全面接管本地存储前，如果同一裸 ID
   已出现在另一 realm，Lex 必须拒绝激活该会话，不能冒险打开另一账号的数据库或密钥。
@@ -97,8 +100,14 @@ Cindy 账号”。这不是品牌不一致，而是必须保留的责任边界�
 - 产品所有者于 2026-10-08 扩展发行范围：Lex Desktop 与 Lex Mobile Android 随同一个
   GitHub Release 发布。Android 使用独立包名 io.github.ciciyl.lex 和持久签名密钥，
   不覆盖 Cindy 安装，不迁移其私有数据；每个平台不按服务区拆包。
-- 首版 Lex Mobile 禁用 OTA，通过后续 APK 升级；账号与远程服务继续由 Cindy 提供。
-  iOS 尚无公开安装渠道，Apple 签名及分发完成前不得展示可安装 IPA 的承诺。
+- Lex Mobile 禁用 EAS/self-host JS OTA；Android 从 Lex 自有 Release 清单自动检查，
+  用户点击后下载 APK，并经 Android 系统确认安装。包名、持久签名和数据目录保持不变。
+  启动/回到前台检查间隔 6 小时，同一目标提醒间隔 24 小时；设置页可以手动检查。
+- RC 默认 beta，正式版默认 release；用户明确渠道偏好优先，账号/组织/服务区不改变渠道。
+  beta 接收 RC 与正式版，release 只接收正式版；只接受更高 versionCode，关闭 beta 不降级。
+  首个包含更新器的 APK 需手动安装一次，之后可在应用内升级。
+- iOS 共享品牌、分区与关于入口，但无 APK 安装流程；尚无公开安装渠道，Apple 签名及
+  分发完成前不得展示可安装 IPA 的承诺。
 - Lex 沿自己的路线发展，上游改为按需手动引入安全、稳定性与兼容修复，不再每周同步新特性。
 - `@cindy/*`、`CINDY_*`、`cindy://`、存储键和协议字段属于上游同步或服务兼容层，
   不做机械改名。只有用户可见的产品身份归 Lex。
@@ -111,7 +120,7 @@ Cindy 账号”。这不是品牌不一致，而是必须保留的责任边界�
 
 1. 是否仍只生成一套正式 Lex 产物和一个更新通道？
 2. Lex 安装身份、官网、支持或更新地址是否意外随账号 realm 改变？
-3. 个人登录选择是否由 Main 管理，且所有 auth 子流程使用同一冻结 realm？
+3. 个人登录选择是否由 Main / Mobile AuthContext 管理，且所有 auth 子流程使用同一冻结 realm？
 4. 保存账号、冷启动与刷新是否先加载凭证记录的 realm 端点再发送 token？
 5. 企业 SSO 是否仍双区发现并在跨区时要求确认？
 6. CN/Global token 是否可能通过缓存、回退或默认值被发送到另一 realm？

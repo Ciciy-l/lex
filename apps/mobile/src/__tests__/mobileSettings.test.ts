@@ -282,12 +282,12 @@ describe('mobile settings overview', () => {
     expect(source).toContain('subscribeMobileVoiceDictionaryCache(() => {');
   });
 
-  it('always shows privacy policy + user agreement (regional links via legalLinks) above the cn-only App filing number', () => {
+  it('always shows privacy policy + user agreement (regional links via legalLinks) above the upstream-only cn App filing number; Lex never claims it', () => {
     const source = readTextLf(resolve(process.cwd(), 'app/settings.tsx'), 'utf8');
     const filingCardIndex = source.indexOf("<SettingsGroup title={t('settings.legal.sectionTitle')}>");
     const privacyRowIndex = source.indexOf('testID="settings.privacyPolicy"');
     const userAgreementRowIndex = source.indexOf('testID="settings.userAgreement"');
-    const regionGuardIndex = source.indexOf("{AUTH_REGION === 'cn' ? (", userAgreementRowIndex);
+    const regionGuardIndex = source.indexOf("{!IS_LEX_MOBILE && AUTH_REGION === 'cn' ? (", userAgreementRowIndex);
     const filingNumberIndex = source.indexOf('testID="settings.appFilingNumber"');
     const accountActionsIndex = source.indexOf('testID="settings.accountActions"');
 

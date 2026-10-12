@@ -94,7 +94,9 @@ export interface ThemeColors {
   sheetActionBorder: string;
   /** Bottom sheet / composer grabber 色 */
   sheetGrabber: string;
-  /** App 内品牌 splash 背景红(仅限 splash,不进入普通 CTA 红名单) */
+  /** Lex 原生启动图与 JS 过渡的共同背景；与 Lex config plugin 同步。 */
+  lexNativeSplashBackground: string;
+  /** 上游开发构建的启动背景。 */
   brandSplashBackground: string;
   /** App 内品牌 splash 前景白(logo/script/loading) */
   brandSplashForeground: string;
@@ -438,6 +440,7 @@ export const lightColors: ThemeColors = {
   sheetActionSurface: '#FFFFFC',
   sheetActionBorder: '#CCCCC8',
   sheetGrabber: '#C2C2BE',
+  lexNativeSplashBackground: '#ffffff',
   brandSplashBackground: '#DF0C27',
   brandSplashForeground: '#FFFFFF',
   brandSplashMuted: 'rgba(255, 255, 255, 0.82)',
@@ -528,6 +531,7 @@ export const darkColors: ThemeColors = {
   sheetActionSurface: '#262626',
   sheetActionBorder: '#383838',
   sheetGrabber: '#5C5C5C',
+  lexNativeSplashBackground: '#262626',
   brandSplashBackground: '#DF0C27',
   brandSplashForeground: '#FFFFFF',
   brandSplashMuted: 'rgba(255, 255, 255, 0.82)',

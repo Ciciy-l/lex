@@ -55,6 +55,10 @@ jobs:
           mkdir -p release-assets generated-manifests
           gh release download "$RELEASE_TAG" --repo "$REPOSITORY" --dir release-assets \
             --pattern '*.exe' --pattern '*.dmg' --pattern '*.deb' --pattern '*.zip'
+          if [ -f scripts/lex-android-updates.mjs ]; then
+            gh release download "$RELEASE_TAG" --repo "$REPOSITORY" --dir release-assets \
+              --pattern '*-Android.apk' --pattern '*-Android.update.json'
+          fi
 
       - name: Build platform manifests with checksums
         env:
@@ -196,6 +200,8 @@ jobs:
       - name: Publish manifests to the Lex updates branch
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_PRERELEASE: ${{ steps.release.outputs.prerelease }}
+          LEX_ANDROID_CERT_SHA256: ${{ vars.LEX_ANDROID_CERT_SHA256 }}
         run: |
           set -euo pipefail
           repo_url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
@@ -212,6 +218,9 @@ jobs:
           # prerelease installs can graduate; untouched channels stay in place.
           cp generated-manifests/* "$worktree/repo/"
           node scripts/lex-release-notices.mjs "$RELEASE_TAG" "$worktree/repo"
+          if [ -f scripts/lex-android-updates.mjs ]; then
+            node scripts/lex-android-updates.mjs release-assets "$worktree/repo"
+          fi
           git -C "$worktree/repo" config user.name 'github-actions[bot]'
           git -C "$worktree/repo" config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git -C "$worktree/repo" add .

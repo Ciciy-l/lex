@@ -43,7 +43,7 @@
   },
   "upload": {
     "emptyFile": "这个文件为空，不能作为附件发送。",
-    "fileTooLarge": "文件超过 {{limit}}，只能在与电脑直连时发送，当前未能直连。请确认电脑端 Cindy 已更新到最新版本，并保持 App 在前台后重试。",
+    "fileTooLarge": "文件超过 {{limit}}，只能在与电脑直连时发送，当前未能直连。请确认电脑端 电脑端应用 已更新到最新版本，并保持 App 在前台后重试。",
     "cancelled": "附件上传已取消。",
     "incompleteRead": "文件读取不完整：预期 {{expected}} 字节，实际 {{actual}} 字节。",
     "integrityUnavailable": "当前附件上传体无法进行完整性校验。",

@@ -9,10 +9,15 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import type { AuthRegion } from '@cindy/auth-client';
+import { IS_LEX_MOBILE } from './lexMobile';
+import { readStartupAuthRealm, savePersonalLoginRealm } from '@/auth/personalLoginRealm';
 import { isTestFlightBuild } from '@/platform/appDistribution';
 import { runStartupEndpointResolve } from './clientEndpointStartup';
 import {
   BUILD_AUTH_REGION,
+  applyResolvedClientEndpoints,
+  getMobileEndpointRealmConfig,
   DEV_RELEASE_ENDPOINT_MANIFEST_BASE_URL,
   ENDPOINT_MANIFEST_BASE_URL,
   resolveEnvFlag,
@@ -29,6 +34,8 @@ export type StartupEndpointGateStatus = 'pending' | 'ready' | 'error';
 
 export interface StartupEndpointGate {
   status: StartupEndpointGateStatus;
+  realm: AuthRegion;
+  selectRealm: (realm: AuthRegion) => void;
   /** status === 'error' 时的失败原因(fetch-failed / invalid-json / ...)。 */
   reason: string | null;
   /** Release 业务端点覆盖失败时，唯一动作可将 CindyDev 恢复到 Dev。 */
@@ -51,13 +58,32 @@ export function useStartupEndpointGate(): StartupEndpointGate {
   const [canResetToDev, setCanResetToDev] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const running = useRef(false);
+  const generation = useRef(0);
+  const explicitRealm = useRef<AuthRegion | null>(null);
+  const [realm, setRealm] = useState<AuthRegion>(BUILD_AUTH_REGION);
 
   useEffect(() => {
-    if (!enabled || status === 'ready' || running.current) return;
+    if (!enabled || status === 'ready') return;
     if (status === 'error') return; // 等用户点重试
     running.current = true;
     let cancelled = false;
+    const current = ++generation.current;
     void (async () => {
+      if (IS_LEX_MOBILE) {
+        const selected = explicitRealm.current ?? await readStartupAuthRealm();
+        if (cancelled || current !== generation.current) return null;
+        setRealm(selected);
+        const outcome = await runStartupEndpointResolve({
+          expectedRegion: selected,
+          manifestBaseUrl: getMobileEndpointRealmConfig().realmManifestBaseUrls[selected],
+          apply: resolved => {
+            if (!cancelled && current === generation.current) {
+              applyResolvedClientEndpoints({ ...resolved, region: selected }, { preserveBuildReleaseMetadata: true });
+            }
+          },
+        });
+        return outcome.ok ? outcome : { ...outcome, canResetToDev: false };
+      }
       const environment = DEV_SERVER_ENVIRONMENT_SWITCH_ENABLED
         ? await hydrateDevServerEnvironment()
         : 'dev';
@@ -78,7 +104,7 @@ export function useStartupEndpointGate(): StartupEndpointGate {
       );
     })().then((outcome) => {
       running.current = false;
-      if (cancelled) return;
+      if (cancelled || current !== generation.current || !outcome) return;
       if (outcome.ok) {
         setCanResetToDev(false);
         setStatus('ready');
@@ -87,6 +113,11 @@ export function useStartupEndpointGate(): StartupEndpointGate {
         setCanResetToDev(outcome.canResetToDev);
         setStatus('error');
       }
+    }).catch(() => {
+      if (cancelled || current !== generation.current) return;
+      running.current = false;
+      setReason('realm-startup-failed');
+      setStatus('error');
     });
     return () => {
       cancelled = true;
@@ -119,5 +150,17 @@ export function useStartupEndpointGate(): StartupEndpointGate {
       });
   }, []);
 
-  return { status, reason, canResetToDev, resetToDev, retry };
+  const selectRealm = useCallback((next: AuthRegion) => {
+    if (!IS_LEX_MOBILE || (next !== 'cn' && next !== 'global')) return;
+    const current = ++generation.current;
+    explicitRealm.current = next;
+    setRealm(next);
+    void savePersonalLoginRealm(next).then(() => {
+      if (current === generation.current) retry();
+    }).catch(() => {
+      if (current === generation.current) setReason('realm-preference-save-failed');
+    });
+  }, [retry]);
+
+  return { status, reason, canResetToDev, resetToDev, retry, realm, selectRealm };
 }

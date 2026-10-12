@@ -63,7 +63,7 @@ import {
   type LoginDeletionBubbleFrame,
   type LoginSurfaceMode,
 } from '@/auth/loginSkinLayout';
-import { LEGAL_LINKS } from '@/config/legalLinks';
+import { legalLinksForRealm } from '@/config/legalLinks';
 import { useLoginKeyboardRect } from '@/session/useMobileKeyboardState';
 import {
   LoginBackButton,
@@ -90,7 +90,9 @@ import {
   MobileLoginHandoffStage,
   useLoginSurface,
 } from '@/components/MobileLoginHandoffStage';
-import { AUTH_REGION, BUILD_AUTH_REGION, getMobileConfigIssues } from '@/config/env';
+import { getMobileConfigIssues } from '@/config/env';
+import { IS_LEX_MOBILE } from '@/config/lexMobile';
+import { ServiceRealmSelector } from '@/components/ServiceRealmSelector';
 import { resolveIdentifierMethod } from '@/auth/loginIdentifierMethod';
 import { AccountSwitcherSheet } from '@/session/AccountSwitcherSheet';
 import {
@@ -151,11 +153,11 @@ export function LoginScreen({
   const identifierKind: VerificationKind = useMemo(
     () =>
       auth.loginState?.step === 'identifier'
-        ? resolveIdentifierMethod(AUTH_REGION, auth.loginState.providers)
-        : AUTH_REGION === 'global'
+        ? resolveIdentifierMethod(auth.loginRealm, auth.loginState.providers)
+        : auth.loginRealm === 'global'
           ? 'email'
           : 'phone',
-    [auth.loginState],
+    [auth.loginState, auth.loginRealm],
   );
   const [identifier, setIdentifier] = useState('');
   // identifier 本地格式校验错误(设计稿 347:1727:非法邮箱/手机号 → 输入框红边 +
@@ -186,6 +188,21 @@ export function LoginScreen({
      pending 动作只存本组件(不进 AuthContext 状态机;仓规 9)。 ── */
   const [consentAccepted, setConsentAccepted] = useState(false);
   const [consentDialogOpen, setConsentDialogOpen] = useState(false);
+  const changeRealm = (realm: 'cn' | 'global') => {
+    if (realm === auth.loginRealm) return;
+    setIdentifier('');
+    setVerificationCode('');
+    setSsoVerificationCode('');
+    setBindingCode('');
+    setBindingContact('');
+    setResendDeadline(null);
+    setIdentifierFormatError(null);
+    setSsoOrgMode(false);
+    setConsentAccepted(false);
+    setConsentDialogOpen(false);
+    pendingConsentAction.current = null;
+    void auth.dispatchLoginAction({ type: 'select-realm', realm });
+  };
   // pending 带开门时刻快照(stamp),同意时复验防陈旧续接(codex 审查 P1;consentGate 单测覆盖)
   const pendingConsentAction = useRef<{
     action: () => void;
@@ -270,9 +287,9 @@ export function LoginScreen({
     auth.loginState?.step,
   ]);
   const openLegalLink = (kind: 'terms' | 'privacy') => {
-    // 系统默认浏览器打开(settings.tsx 同款 Linking 模式);URL 按构建区域分流
+    // 系统默认浏览器打开(settings.tsx 同款 Linking 模式);URL 按所选服务分区分流
     void Linking.openURL(
-      kind === 'terms' ? LEGAL_LINKS.termsOfService : LEGAL_LINKS.privacyPolicy,
+      kind === 'terms' ? legalLinksForRealm(auth.loginRealm).termsOfService : legalLinksForRealm(auth.loginRealm).privacyPolicy,
     ).catch(() => undefined);
   };
   const [verificationCode, setVerificationCode] = useState('');
@@ -470,7 +487,7 @@ export function LoginScreen({
     for (const provider of providers.social) {
       const mode = resolveMobileSocialLoginMode({
         provider,
-        region: BUILD_AUTH_REGION,
+        region: auth.loginRealm,
         platform: Platform.OS,
         nativeSupported: isNativeSocialProviderSupported(provider),
       });
@@ -1367,6 +1384,10 @@ export function LoginScreen({
       keyboardShiftPx={keyboardShift}
       testID="login.screen"
     >
+      {IS_LEX_MOBILE ? <View style={{ position: 'absolute', top: insets.top + spacing.sm, left: spacing.lg, right: additionalAccount ? 64 : spacing.lg, zIndex: 10 }}>
+        <ServiceRealmSelector realm={auth.loginRealm} onSelect={changeRealm}
+          disabled={!auth.initialized || consentDialogOpen || realmConfirmation !== null} />
+      </View> : null}
       {/* 渲染为 null,仅把状态栏样式写进本屏 screen options。iOS 专用:
           Android 由舞台内组件式 StatusBar 控制,不走 RNS 双轨 */}
       {!additionalAccount ? <SystemNavigationBack available={!!backAction} disabled={auth.isBusy}
@@ -1525,7 +1546,8 @@ export function LoginScreen({
       {auth.captchaChallenge ? (
         <LoginCaptchaWebView
           url={auth.captchaChallenge.url}
-          onResult={auth.resolveCaptchaChallenge}
+          key={auth.captchaChallenge.epoch}
+          onResult={token => auth.resolveCaptchaChallenge(token, auth.captchaChallenge?.epoch)}
         />
       ) : null}
     </MobileLoginHandoffStage>

@@ -33,11 +33,11 @@ export interface ConversationShareSvgHandle {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const shareCharacterAsset = require("../../assets/share/cindy-share-character.jpg");
+const shareCharacterAsset = require("../../assets/lex/icon.png");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const shareLogoLightAsset = require("../../assets/login/login-wordmark.png");
+const shareLogoLightAsset = require("../../assets/lex/wordmark.png");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const shareLogoDarkAsset = require("../../assets/login/login-wordmark-dark.png");
+const shareLogoDarkAsset = require("../../assets/lex/wordmark-dark.png");
 const SHARE_CHARACTER_SIZE = 22;
 const SHARE_LOGO_HEIGHT = 18;
 const SHARE_LOCKUP_GAP = 6;

@@ -7,6 +7,7 @@ export const PLATFORMS = [
   "darwin-arm64",
   "darwin-x64",
   "linux-x64",
+  "android",
 ];
 export const LOCALES = ["zh-CN", "zh-TW", "en", "ja", "ko"];
 const VERSION =

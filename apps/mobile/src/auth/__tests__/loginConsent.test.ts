@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { parseLegalSegments } from "@/auth/legalText";
 import { LOGIN_CONSENT_ROW } from "@/auth/loginSkinLayout";
-import { LEGAL_LINKS } from "@/config/legalLinks";
+import { LEGAL_LINKS, legalLinksForRealm } from "@/config/legalLinks";
 import { loginPalettes } from "@/theme/tokens";
 import { loginMessages } from "@/auth/loginMessages";
 
@@ -77,7 +77,9 @@ describe("LEGAL_LINKS(区域分流,测试构建 = cn)", () => {
       "https://protocol.xd.com/cindy/agreement-1.0.html",
     );
     expect(source).toContain("https://protocol.xd.com/cindy/privacy.html");
-    expect(source).toContain("AUTH_REGION === 'global'");
+    expect(legalLinksForRealm('global').termsOfService).toBe('https://protocol.xd.com/cindy/agreement-1.0.html');
+    expect(legalLinksForRealm('cn').privacyPolicy).toBe('https://protocol.xd.cn/cindy/privacy-1.0.html');
+    expect(loginSource).toContain('legalLinksForRealm(auth.loginRealm)');
   });
 });
 

@@ -19,7 +19,7 @@
       "platform": "Platform",
       "model": "Model",
       "systemVersion": "System version",
-      "appVersion": "Cindy version",
+      "appVersion": "Desktop app version",
       "cpu": "Processor",
       "memory": "Memory",
       "lastSeen": "Last online",
@@ -217,12 +217,12 @@
           "copy": "{{names}} is online. One step remains: enable phone control on the computer."
         },
         "offline": {
-          "title": "Open Cindy on your computer",
-          "copy": "Your connected computers are offline. Open Cindy and stay signed in; your phone will reconnect automatically."
+          "title": "Open the desktop app",
+          "copy": "Your computers are offline. Open Lex or Cindy on a computer and sign in with the same account in the same service region. Your phone will reconnect automatically."
         },
         "firstRun": {
-          "title": "Connect Cindy on your computer",
-          "copy": "Cindy currently runs on your computer. The mobile app uses remote access so you can work with the Agents on that computer."
+          "title": "Connect your computer",
+          "copy": "Agents run on your computer. Open Lex or Cindy and sign in with the same account in the same service region to access tasks from your phone."
         }
       }
     },
@@ -243,7 +243,7 @@
     "taskSuggestions": {
       "connected": "Computer connected",
       "title": "Away from your computer?\nYou can still get started.",
-      "copy": "Ask Cindy to work on your computer, and check progress from your phone.",
+      "copy": "Give a task to an Agent on your computer and follow its progress from your phone.",
       "footerTitle": "What can your computer help with next?",
       "footerCopy": "Start a new session and follow its progress here.",
       "newTask": "New session",
