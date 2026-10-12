@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { responseSpeedActivity, responseSpeedHistory, type ResponseSpeedSnapshot } from '@cindy/maker-shared/usage-format';
 import { Text } from '@/components/AppText';
 import { ContextSheet, ContextSheetRow } from './ContextSheet';
-import { fontWeight, radius, spacing, typeScale, lineHeight, useTheme, useThemedStyles, type ThemeColors } from '@/theme';
+import { fontWeight, iconStroke, radius, spacing, typeScale, lineHeight, useTheme, useThemedStyles, type ThemeColors } from '@/theme';
 
 export function ResponseSpeedPanel({ speed }: { speed: ResponseSpeedSnapshot }) {
   const { t } = useTranslation();
@@ -57,7 +57,7 @@ export function ResponseSpeedPanel({ speed }: { speed: ResponseSpeedSnapshot }) 
         <Text style={styles.rate}>{rateText(history.latestRate, speed.phase !== 'complete' || speed.estimated)}</Text>
         <Svg width="100%" height={80} viewBox="0 0 300 80" accessibilityLabel={t('session.screen.rateHistory')}>
           <Path d="M4 76H296" stroke={colors.border} />
-          {samples.length > 1 && <Path d={curve} stroke={colors.textPrimary} strokeWidth={2} fill="none" />}
+          {samples.length > 1 && <Path d={curve} stroke={colors.textPrimary} strokeWidth={iconStroke.regular} fill="none" />}
         </Svg>
         <Text style={styles.label}>{t('session.screen.averageRate')}: {rateText(speed.averageRate, speed.estimated)}</Text>
         <Text style={styles.label} testID="session.responseSpeedOutput">{t('session.screen.outputTotal')}: {t('session.screen.tokenCount', { tokens: output })}</Text>

@@ -6598,15 +6598,24 @@ it('keeps response speed failures through terminal tails, distinguishes cancella
   event('thinking', { stage: 'delta', blockId: 'recovered-thinking', text: 'reasoning resumed' });
   expect(remoteSessionStore.getSessionRunStatus('speed-errors').responseSpeed?.retrying).toBe(false);
   event('error', { message: 'API unavailable', isTerminal: true });
+  // Lex keeps the display outcome in responseSpeed rather than a second
+  // top-level terminal-error flag. Assert both the terminal event and its tails.
+  expect(remoteSessionStore.getSessionRunStatus('speed-errors')).toMatchObject({
+    isRunning: false,
+    responseSpeed: { phase: 'complete', outcome: 'failed', recentRate: null, retrying: false,
+      outputTokens: 50, durationMs: 2000, samples: speed.samples },
+  });
   event('done', {});
   pushMakerStatus('speed-errors', { isRunning: false, responseSpeed: { ...speed, phase: 'complete', estimated: false } });
-  expect(remoteSessionStore.getSessionRunStatus('speed-errors')).toMatchObject({ isRunning: false, hasTerminalError: true,
-    responseSpeed: { outcome: 'failed', recentRate: null, samples: speed.samples } });
+  expect(remoteSessionStore.getSessionRunStatus('speed-errors')).toMatchObject({ isRunning: false,
+    responseSpeed: { phase: 'complete', outcome: 'failed', recentRate: null, retrying: false,
+      outputTokens: 50, durationMs: 2000, samples: speed.samples } });
   pushMakerStatus('speed-errors', { isRunning: true, responseSpeed: speed });
   expect(remoteSessionStore.getSessionRunStatus('speed-errors').responseSpeed?.outcome).toBeUndefined();
   event('done', { type: 'pi/agent_settled', status: 'cancelled' });
   event('error', { message: 'aborted transport', isTerminal: true });
-  expect(remoteSessionStore.getSessionRunStatus('speed-errors')).toMatchObject({ hasTerminalError: false,
-    responseSpeed: { outcome: 'cancelled', recentRate: null } });
+  expect(remoteSessionStore.getSessionRunStatus('speed-errors')).toMatchObject({ isRunning: false,
+    responseSpeed: { phase: 'complete', outcome: 'cancelled', recentRate: null, retrying: false,
+      outputTokens: 50, durationMs: 2000, samples: speed.samples } });
   remoteSessionStore.clear();
 });
