@@ -12,10 +12,13 @@ vi.mock('../blobStore.js', () => ({ mimeForExt: (ext: string) => ext === '.png' 
 const ingest = vi.hoisted(() => vi.fn());
 const hasRef = vi.hoisted(() => vi.fn());
 const owner = vi.hoisted(() => ({ dataOwnerId: 'owner', generation: 1 }));
+const capturedDb = vi.hoisted(() => ({}));
 vi.mock('../ingest.js', () => ({ ingestMedia: ingest }));
-vi.mock('../ledger.js', () => ({ hasRef }));
+vi.mock('../ledger.js', async (original) => ({
+  ...await original<typeof import('../ledger.js')>(), hasRef,
+}));
 vi.mock('../refCompensationJournal.js', () => ({ captureMediaRefCompensationScope: () => ({}) }));
-vi.mock('../../localDb/client/current.js', () => ({ getDbClient: () => ({ drizzle: 'captured-db' }) }));
+vi.mock('../../localDb/client/current.js', () => ({ getDbClient: () => ({ drizzle: capturedDb }) }));
 vi.mock('../../appSessionState.js', () => ({ getActiveAppSession: () => ({ ...owner }), isAppSessionBoundaryPending: () => false }));
 import { publishImage } from '../publishImage.js';
 
@@ -82,7 +85,7 @@ describe('publishImage', () => {
     expect(ingest).toHaveBeenCalledWith(expect.objectContaining({ buffer: bytes, mimeType: 'image/png',
       refs: [{ refKind: 'session-attachment', refId: 'task', originSessionId: 'task', originKind: 'tool' }],
       assertStillValid: expect.any(Function), refCompensationScope: expect.any(Object),
-    }), 'captured-db');
+    }), capturedDb);
     expect(authorize).not.toHaveBeenCalled();
   });
 
