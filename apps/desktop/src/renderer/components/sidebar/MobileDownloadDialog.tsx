@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronRight, Monitor, QrCode, Settings2, Smartphone, X } from 'lucide-react';
 import * as QRCode from 'qrcode';
@@ -7,10 +7,10 @@ import * as QRCode from 'qrcode';
 import cindyIconUrl from '@/../../resources/icon.png?url';
 import { Spinner } from '@/components/ui/spinner';
 import { Tip } from '@/components/ui/tooltip';
-import { useAuth } from '@/contexts/AuthContext';
 import { compareDevicesByName } from '@/features/device-link/deviceSort';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
+import { LEX_PRODUCT_HOMEPAGE_URL } from '../../../shared/endpoints';
 
 interface MobileDownloadDialogProps {
   open: boolean;
@@ -88,12 +88,11 @@ export function resolveMobileRemotePresentation(
   };
 }
 
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 /**
- * https 之外只放行本机回环 —— `config/endpoint.dev.json.example` 的
- * `websiteUrl` 是 `http://localhost:3000`,开发机不该看到一个禁用的二维码;
- * 但公网 http 仍然拒绝,免得区域配置被改成明文站点。
+ * Public product links require HTTPS; HTTP is only accepted for a local
+ * preview of the Lex website. Credentials must never enter a QR code.
  */
 function parseWebsiteUrl(value: string): URL | null {
   try {
@@ -106,25 +105,15 @@ function parseWebsiteUrl(value: string): URL | null {
   }
 }
 
-/**
- * 官网 CN 主站是 `cindy.cn`,打包配置里的 `cindy.com.cn` 只是会 302 过去的别名。
- * 二维码是给手机扫的,直接给最终地址少一跳,也避免手机上先闪一下跳转页。
- */
-const WEBSITE_HOST_ALIASES: Record<string, string> = {
-  'cindy.com.cn': 'cindy.cn',
-  'www.cindy.com.cn': 'cindy.cn',
-  'www.cindy.cn': 'cindy.cn',
-  'www.cindy.app': 'cindy.app',
-};
-
-export function resolveMobileDownloadUrl(websiteUrl: string): string | null {
-  const website = parseWebsiteUrl(websiteUrl);
+/** Keep the product site's subpath; account realms do not select installers. */
+export function resolveMobileDownloadUrl(homepageUrl: string): string | null {
+  const website = parseWebsiteUrl(homepageUrl);
   if (!website) return null;
 
-  const downloadUrl = new URL('/download/', website);
-  const canonicalHost = WEBSITE_HOST_ALIASES[downloadUrl.hostname];
-  if (canonicalHost) downloadUrl.hostname = canonicalHost;
-  return downloadUrl.toString();
+  if (!website.pathname.endsWith('/')) website.pathname += '/';
+  website.search = '';
+  website.hash = 'mobile-download';
+  return website.toString();
 }
 
 function getQrDataUrl(downloadUrl: string): Promise<string> {
@@ -170,7 +159,7 @@ function platformLabel(platform: string | null): string {
 }
 
 /**
- * Desktop promotion surface for the regional Cindy mobile download page.
+ * Desktop promotion surface for the Lex mobile download page.
  * The QR card is a bare code: no brand edge, no border, no shadow and no
  * pointer tilt — the only brand artwork left in the dialog is the header icon
  * (DESIGN.md §15.7). Its only motion is the linked ↔ onboarding size tween.
@@ -184,12 +173,9 @@ export function MobileDownloadDialog({
   triggerRef,
 }: MobileDownloadDialogProps) {
   const { t } = useTranslation();
-  // 只作为 Main auth 状态变化的重读信号；服务 URL 真值仍由下方 IPC 返回。
-  const { serviceRealm } = useAuth();
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [qrError, setQrError] = useState(false);
   const [qrAttempt, setQrAttempt] = useState(0);
-  const [websiteUrl, setWebsiteUrl] = useState<string | null>(null);
   const [remoteSnapshot, setRemoteSnapshot] = useState<MobileRemoteSnapshot | null>(null);
   const [remoteStatusError, setRemoteStatusError] = useState(false);
   const primaryActionRef = useRef<HTMLButtonElement>(null);
@@ -198,31 +184,12 @@ export function MobileDownloadDialog({
   const refreshRemoteRef = useRef<(() => void) | null>(null);
   const skipNextOpenRefreshRef = useRef(false);
   const openHandledRef = useRef(false);
-  const downloadUrl = useMemo(
-    () => (websiteUrl === null ? undefined : resolveMobileDownloadUrl(websiteUrl)),
-    [websiteUrl],
-  );
-
-  // URL 真值留在 Main：账号切区完成后，Renderer 只用 serviceRealm 触发重读，
-  // 不自行拼装或缓存 CN / Global 服务地址。
-  useEffect(() => {
-    let active = true;
-    setWebsiteUrl(null);
-    void window.electronAPI.clientEndpoints
-      .getActiveWebsiteUrl()
-      .then((url) => {
-        if (active) setWebsiteUrl(url);
-      })
-      .catch(() => {
-        if (active) setWebsiteUrl('');
-      });
-    return () => {
-      active = false;
-    };
-  }, [serviceRealm]);
+  // This public product link is baked from config/lex-product.json. Cindy's
+  // account/service website endpoint must not select the mobile distribution.
+  const downloadUrl = resolveMobileDownloadUrl(LEX_PRODUCT_HOMEPAGE_URL);
 
   // Prepare the QR before the first click so opening the dialog never waits on
-  // canvas encoding. The module-level cache keeps this a once-per-endpoint cost.
+  // canvas encoding. The module-level cache keeps this a once-per-product-URL cost.
   // qrAttempt only moves when a reopen retries a previous failure — the sidebar
   // keeps this component mounted, so without it one transient encoding error
   // would strand the card in its error state until the app restarts.
@@ -230,10 +197,6 @@ export function MobileDownloadDialog({
     let active = true;
     setQrError(false);
 
-    if (downloadUrl === undefined) {
-      setQrDataUrl(null);
-      return;
-    }
     if (!downloadUrl) {
       setQrDataUrl(null);
       setQrError(true);
@@ -260,9 +223,8 @@ export function MobileDownloadDialog({
     };
   }, [downloadUrl, qrAttempt]);
 
-  // Radix 的首次自动聚焦早于异步 Main IPC 返回时，会先落到远控或关闭按钮。
-  // 仅当焦点仍停在这个自动 fallback 上时补到二维码主动作；用户已经主动移动
-  // 焦点则绝不抢回。
+  // Only move focus from a fallback action; never steal it after the user
+  // has deliberately focused another control.
   useEffect(() => {
     if (!open || !downloadUrl) return;
     const activeElement = document.activeElement;

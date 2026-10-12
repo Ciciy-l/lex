@@ -12,8 +12,10 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
-const authState = vi.hoisted(() => ({ serviceRealm: 'cn' as 'cn' | 'global' }));
-vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => authState }));
+const productLinks = vi.hoisted(() => ({
+  LEX_PRODUCT_HOMEPAGE_URL: 'https://ciciy-l.github.io/lex',
+}));
+vi.mock('../../shared/endpoints', () => productLinks);
 
 const { toDataURL } = vi.hoisted(() => ({
   toDataURL: vi.fn(async () => 'data:image/png;base64,mobile-download'),
@@ -90,7 +92,7 @@ const onConnectionIssue = vi.fn(() => vi.fn());
 const detachedTriggerRef = { current: null as HTMLButtonElement | null };
 
 beforeEach(() => {
-  authState.serviceRealm = 'cn';
+  productLinks.LEX_PRODUCT_HOMEPAGE_URL = 'https://ciciy-l.github.io/lex';
   toDataURL.mockClear();
   toastError.mockClear();
   openExternal.mockClear();
@@ -146,40 +148,46 @@ afterEach(() => {
 });
 
 describe('resolveMobileDownloadUrl', () => {
-  it('builds the download page from the regional website endpoint', () => {
-    expect(resolveMobileDownloadUrl('https://cindy.cn')).toBe('https://cindy.cn/download/');
-    expect(resolveMobileDownloadUrl('https://cindy.app')).toBe('https://cindy.app/download/');
+  it('uses the shipped Lex product homepage and its existing mobile anchor', () => {
+    const product = JSON.parse(
+      readFileSync(resolve(__dirname, '../../../../../config/lex-product.json'), 'utf8'),
+    ) as { homepageUrl: string };
+    const website = readFileSync(
+      resolve(__dirname, '../../../../../website/index.html'),
+      'utf8',
+    );
+    expect(resolveMobileDownloadUrl(product.homepageUrl)).toBe(
+      'https://ciciy-l.github.io/lex/#mobile-download',
+    );
+    expect(website).toContain('id="mobile-download"');
   });
 
-  it('maps the shipped endpoint hosts onto the canonical download pages', () => {
-    // 打包配置的真实取值:CN 是 config/endpoint.json 的 cindy.com.cn(官网 302 到
-    // cindy.cn),Global 是 cindy.app。二维码直接给最终地址,手机上少一跳。
-    const shipped = (configPath: string) =>
-      JSON.parse(readFileSync(resolve(__dirname, configPath), 'utf8')).websiteUrl as string;
-
-    expect(resolveMobileDownloadUrl(shipped('../../../../../config/endpoint.json'))).toBe(
-      'https://cindy.cn/download/',
-    );
-    expect(resolveMobileDownloadUrl(shipped('../../../../../config/endpoint.global.json'))).toBe(
-      'https://cindy.app/download/',
-    );
-  });
-
-  it('accepts the loopback http endpoint used by the dev manifest', () => {
-    // config/endpoint.dev.json.example 的 websiteUrl 是 http://localhost:3000,
-    // 开发机不该看到一个禁用的二维码。
-    expect(resolveMobileDownloadUrl('http://localhost:3000')).toBe(
-      'http://localhost:3000/download/',
-    );
-    expect(resolveMobileDownloadUrl('http://127.0.0.1:5173')).toBe(
-      'http://127.0.0.1:5173/download/',
+  it.each([
+    'https://ciciy-l.github.io/lex',
+    'https://ciciy-l.github.io/lex/',
+    'https://ciciy-l.github.io/lex/?ref=desktop#download-section',
+  ])('preserves the site subpath and replaces query/fragment: %s', (homepageUrl) => {
+    expect(resolveMobileDownloadUrl(homepageUrl)).toBe(
+      'https://ciciy-l.github.io/lex/#mobile-download',
     );
   });
 
-  it.each(['', 'not-a-url', 'http://cindy.cn', 'https://user:pass@cindy.cn'])(
-    'rejects an unsafe regional website endpoint: %s',
-    (websiteUrl) => {
-      expect(resolveMobileDownloadUrl(websiteUrl)).toBeNull();
+  it.each(['localhost:3000', '127.0.0.1:5173', '[::1]:5173'])(
+    'accepts a loopback HTTP product-site preview: %s',
+    (host) => {
+      expect(resolveMobileDownloadUrl(`http://${host}/lex`)).toBe(
+        `http://${host}/lex/#mobile-download`,
+      );
+    },
+  );
+
+  it.each([
+    '', 'not-a-url', 'http://example.com', 'https://user:pass@example.com',
+    'javascript:alert(1)', 'file:///tmp/lex', 'ftp://example.com',
+  ])(
+    'rejects an unsafe product homepage: %s',
+    (homepageUrl) => {
+      expect(resolveMobileDownloadUrl(homepageUrl)).toBeNull();
     },
   );
 });
@@ -304,10 +312,15 @@ describe('MobileDownloadDialog', () => {
       />,
     );
     await waitFor(() => expect(toDataURL).toHaveBeenCalledTimes(1));
+    expect(toDataURL).toHaveBeenCalledWith(
+      'https://ciciy-l.github.io/lex/#mobile-download',
+      expect.any(Object),
+    );
+    expect(getActiveWebsiteUrl).not.toHaveBeenCalled();
     expect(getState).toHaveBeenCalledTimes(1);
   });
 
-  it('generates the regional QR code and exposes an equivalent browser action', async () => {
+  it('generates the Lex QR code and exposes an equivalent browser action', async () => {
     render(
       <MobileDownloadDialog
         open
@@ -326,13 +339,12 @@ describe('MobileDownloadDialog', () => {
     });
     await waitFor(() => expect(document.activeElement).toBe(openButton));
     fireEvent.click(openButton);
-    expect(openExternal).toHaveBeenCalledWith('https://cindy.cn/download/');
+    expect(openExternal).toHaveBeenCalledWith('https://ciciy-l.github.io/lex/#mobile-download');
   });
 
-  it('re-reads the Main-owned website when the signed-in account realm changes', async () => {
-    getActiveWebsiteUrl
-      .mockResolvedValueOnce('https://realm-cn.example.com')
-      .mockResolvedValueOnce('https://realm-global.example.com');
+  it('keeps Lex downloads independent from both Cindy account realm endpoints', async () => {
+    productLinks.LEX_PRODUCT_HOMEPAGE_URL = 'https://lex-realms.example.com/lex';
+    getActiveWebsiteUrl.mockResolvedValue('https://cindy.com.cn');
     const props = {
       open: true,
       onOpenChange: vi.fn(),
@@ -345,21 +357,39 @@ describe('MobileDownloadDialog', () => {
 
     await waitFor(() =>
       expect(toDataURL).toHaveBeenCalledWith(
-        'https://realm-cn.example.com/download/',
+        'https://lex-realms.example.com/lex/#mobile-download',
         expect.any(Object),
       ),
     );
 
-    authState.serviceRealm = 'global';
+    getActiveWebsiteUrl.mockResolvedValue('https://cindy.app');
+    window.electronAPI.clientEndpoints.websiteUrl = 'https://cindy.app';
     view.rerender(<MobileDownloadDialog {...props} />);
 
-    await waitFor(() => expect(getActiveWebsiteUrl).toHaveBeenCalledTimes(2));
-    await waitFor(() =>
-      expect(toDataURL).toHaveBeenCalledWith(
-        'https://realm-global.example.com/download/',
-        expect.any(Object),
-      ),
+    expect(getActiveWebsiteUrl).not.toHaveBeenCalled();
+    expect(toDataURL).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'sidebar.mobileDownload.openPage' }));
+    expect(openExternal).toHaveBeenCalledWith(
+      'https://lex-realms.example.com/lex/#mobile-download',
     );
+  });
+
+  it('opens the Lex download page when Cindy service discovery is unavailable', async () => {
+    getActiveWebsiteUrl.mockImplementation(async () => { throw new Error('offline'); });
+    render(
+      <MobileDownloadDialog
+        open
+        onOpenChange={vi.fn()}
+        remoteAvailable={false}
+        onOpenRemoteSettings={vi.fn()}
+        onOpenDevices={vi.fn()}
+        triggerRef={detachedTriggerRef}
+      />,
+    );
+    await screen.findByAltText('sidebar.mobileDownload.qrAlt');
+    fireEvent.click(screen.getByRole('button', { name: 'sidebar.mobileDownload.openPage' }));
+    expect(getActiveWebsiteUrl).not.toHaveBeenCalled();
+    expect(openExternal).toHaveBeenCalledWith('https://ciciy-l.github.io/lex/#mobile-download');
   });
 
   it('reports a failed handoff to the system browser', async () => {
@@ -393,9 +423,9 @@ describe('MobileDownloadDialog', () => {
   });
 
   it('retries QR generation when the dialog is reopened after a failure', async () => {
-    // 用独立站点绕开模块级二维码缓存(缓存按 URL 命中,复用 cindy.cn 会直接拿到
-    // 前面用例生成好的结果,失败路径根本走不到)。
-    getActiveWebsiteUrl.mockResolvedValue('https://qr-retry.example.com');
+    // Use a distinct product URL so an earlier test's cached QR cannot hide
+    // the failed generation/reopen path.
+    productLinks.LEX_PRODUCT_HOMEPAGE_URL = 'https://qr-retry.example.com/lex';
     toDataURL.mockRejectedValueOnce(new Error('canvas busy'));
     const props = {
       onOpenChange: vi.fn(),
@@ -616,7 +646,7 @@ describe('MobileDownloadDialog', () => {
   });
 
   it('focuses a usable fallback when the download endpoint is invalid', async () => {
-    getActiveWebsiteUrl.mockResolvedValue('not-a-url');
+    productLinks.LEX_PRODUCT_HOMEPAGE_URL = 'not-a-url';
     render(
       <MobileDownloadDialog
         open
