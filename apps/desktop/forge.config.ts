@@ -1114,7 +1114,7 @@ function buildRemoteDesktopInput(platform: ForgePlatform, arch: ForgeArch): void
       const output = path.join(root, 'target', target, 'release');
       const name = `cindy-windows-desktop-${helper === 'windows-input' ? 'input' : 'host'}`;
       fs.copyFileSync(path.join(output, `${name}.exe`), path.join(destDir, `${name}.exe`));
-      if (helper === 'windows-host') fs.copyFileSync(path.join(output, 'cindy_windows_desktop_host.dll'), path.join(destDir, `${name}.node`));
+      if (helper === 'windows-host') fs.copyFileSync(path.join(output, 'cindy_windows_desktop_host_node.dll'), path.join(destDir, `${name}.node`));
     }
   }
 }
