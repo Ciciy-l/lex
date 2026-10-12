@@ -1,4 +1,7 @@
 import { installPiBinaryUpdate } from './pi-self-update.js';
+import { activeHarnessPath, harnessRoot, hashRuntimeFile, persistHarnessSelection, activateNativeHarnessSelection } from './harness-selection.js';
+import { withSecurityBoundaryLock } from '../device-link/crossProcessLock.js';
+import { randomUUID } from 'node:crypto';
 /**
  * apps/desktop/src/main/agent-binaries/index.ts
  *
@@ -217,6 +220,7 @@ function isLinuxFallbackEligible(kind: AgentBinaryKind): kind is 'claude-code' |
  * `pnpm install:omp`),不受构建资产表约束,`tools/omp/update.mjs` 支持全部 6 平台。
  */
 export function buildShipsOmpRuntime(platformKey: string = getPlatformKey()): boolean {
+  if (platformKey === getPlatformKey() && activeHarnessPath('omp')) return true;
   if (!app.isPackaged) return true;
   const manifest = getRuntimeManifest(platformKey);
   return manifest !== null && getVendorAsset(manifest, 'omp') !== undefined;
@@ -308,13 +312,28 @@ const lastReadyPath = new Map<AgentBinaryKind, string>();
 export async function updateReadyPiBinary(force: boolean): Promise<string> {
   const current = lastReadyPath.get('pi');
   if (!current) throw new Error(`Pi is not installed in ${BRAND_NAME}`);
-  const result = await installPiBinaryUpdate(path.join(app.getPath('userData'), 'pi'), current, force);
-  lastReadyPath.set('pi', result.binaryPath);
-  return result.version;
+  const root = harnessRoot('pi');
+  await fs.promises.mkdir(root, { recursive: true });
+  return withSecurityBoundaryLock(path.join(root, 'install.lock'), { label: 'harness-pi', waitMs: 0 }, async (lock) => {
+    if (!lock.held) throw new Error('Pi update is already running');
+    const result = await installPiBinaryUpdate(path.join(app.getPath('userData'), 'pi'), current, force);
+    if (result.binaryPath === current) return result.version;
+    const directory = result.version + '-' + randomUUID();
+    const destination = path.join(root, directory);
+    await fs.promises.cp(path.dirname(result.binaryPath), destination, { recursive: true, errorOnExist: true });
+    const binary = path.join(destination, path.basename(result.binaryPath));
+    const selection = { version: result.version, source: 'upstream' as const, directory,
+      executableSha256: hashRuntimeFile(binary), executableSize: fs.statSync(binary).size };
+    persistHarnessSelection('pi', selection);
+    // Explicit Pi native commands retain their existing immediate next-runtime semantics.
+    activateNativeHarnessSelection('pi', selection);
+    lastReadyPath.set('pi', binary);
+    return result.version;
+  });
 }
 
 export function getReadyBinaryPath(kind: AgentBinaryKind): string | undefined {
-  return lastReadyPath.get(kind);
+  return activeHarnessPath(kind) ?? lastReadyPath.get(kind);
 }
 
 /**
@@ -346,6 +365,8 @@ function formatBytes(bytes: number): string {
 // ── 同步快查 (不触发下载) ────────────────────────────────────────────────────
 
 export function getCachedBinaryStatus(kind: AgentBinaryKind): CachedBinaryStatus {
+  const selected = activeHarnessPath(kind);
+  if (selected) return { binaryReady: true, binaryPath: selected };
   const cfg = CONFIG[kind];
   const isUsableCachedPath = (candidate: string): boolean => {
     try {
@@ -408,6 +429,11 @@ export async function prepare(
   kind: AgentBinaryKind,
   opts: PrepareOpts = {},
 ): Promise<PrepareResult> {
+  const selected = activeHarnessPath(kind);
+  if (selected) {
+    lastReadyPath.set(kind, selected);
+    return { ready: true, path: selected, downloaded: false };
+  }
   const cfg = CONFIG[kind];
   const { step, totalSteps, broadcastProgress = true, broadcastFailure = true } = opts;
 
@@ -692,6 +718,7 @@ export async function peekNeedsDownload(
   kind: AgentBinaryKind,
   opts: Pick<PrepareOpts, 'checkForUpdates'> = {},
 ): Promise<boolean> {
+  if (activeHarnessPath(kind)) return false;
   // dev 模式永不下载 (findDevBinary 命中 / 缺失都不走 OSS)
   if (!app.isPackaged) return false;
   opts = { ...opts, checkForUpdates: resolveUpdateCheck(opts.checkForUpdates) };

@@ -40,6 +40,7 @@ function normalizeVersionToken(token: string | undefined): string | null {
 export function parseBinaryVersionOutput(stdout: string, stderr: string): string | null {
   const output = (stdout || stderr).trim();
   const firstLine = output.split(/\r?\n/, 1)[0]?.trim() ?? '';
+  if (firstLine.startsWith('omp/')) return normalizeBinaryVersion(firstLine.slice(4));
   const tokens = firstLine.split(/\s+/);
   const leadingVersion = normalizeVersionToken(tokens[0]);
   if (leadingVersion) return leadingVersion;

@@ -5,9 +5,44 @@ import { cn } from '@/lib/utils';
 import { useUserPrompt } from '@/hooks/useUserPrompt';
 import { USER_PROMPT_MAX_LENGTH } from '@/lib/userPrompt.constants';
 import { toast } from '@/lib/toast';
+import { PROMPT_ENGINES, userPromptFits, type PromptScope } from '@/lib/userPromptStore';
 
 export function UserPromptSection() {
-  const { value, setValue } = useUserPrompt();
+  const { t } = useTranslation();
+  const [scope, setScope] = useState<PromptScope>('common');
+  return (
+    <div className="flex flex-col gap-3">
+      <label className="text-13 text-[var(--settings-section-title)]">
+        {t('settings.harness.promptScope')}
+        <select
+          value={scope}
+          onChange={(event) => setScope(event.target.value as PromptScope)}
+          className="ml-3 rounded-lg border border-[var(--settings-input-border)] bg-[var(--settings-input-bg)] p-2 text-[var(--settings-input-text)]"
+        >
+          <option value="common">{t('settings.harness.commonPrompt')}</option>
+          {PROMPT_ENGINES.map((engine) => (
+            <option key={engine} value={engine}>
+              {engine === 'claude-code'
+                ? 'Claude Code'
+                : engine === 'omp'
+                  ? 'OMP'
+                  : engine === 'pi'
+                    ? 'Pi'
+                    : 'Codex'}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="text-13 text-[var(--settings-section-desc)]">
+        {t('settings.harness.promptDescription')}
+      </p>
+      <PromptEditor key={scope} scope={scope} />
+    </div>
+  );
+}
+
+function PromptEditor({ scope }: { scope: PromptScope }) {
+  const { value, owner, setValue } = useUserPrompt(scope);
   const { t } = useTranslation();
 
   const [draft, setDraft] = useState(value);
@@ -16,17 +51,21 @@ export function UserPromptSection() {
   // 单 Electron 窗口里几乎不会触发，留作兜底。
   useEffect(() => {
     setDraft(value);
-  }, [value]);
+  }, [value, owner]);
 
   const length = draft.length;
-  const overLimit = length > USER_PROMPT_MAX_LENGTH;
+  const overLimit = !userPromptFits(scope, draft);
   const dirty = draft !== value;
   const canSave = dirty && !overLimit;
 
   const handleSave = useCallback(() => {
     if (!canSave) return;
-    setValue(draft);
-    toast.success(t('settings.personalization.toast.saved'));
+    try {
+      setValue(draft);
+      toast.success(t('settings.personalization.toast.saved'));
+    } catch {
+      toast.error(t('settings.harness.saveFailed'));
+    }
   }, [canSave, draft, setValue, t]);
 
   const counter = useMemo(

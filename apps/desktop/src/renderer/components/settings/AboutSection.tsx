@@ -154,7 +154,6 @@ export function AboutSection() {
         <Divider />
         <AnalyticsToggleRow />
         <Divider />
-        <AgentVersionsRows />
         <DebugLogToggleRow />
         <Divider />
         <OpenLogsRow />

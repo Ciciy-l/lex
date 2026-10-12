@@ -5,7 +5,7 @@ export default {
   id: 'SubagentModelSection',
   order: 30,
   entries: [
-    { id: 'settings.subagentModels.smartRouting.label', fallbackTargetId: 'settings-search-target-personalization-subagents', tab: 'personalization', targetId: 'settings-search-settings-subagentModels-smartRouting-label', titleKey: 'settings.subagentModels.smartRouting.label', sectionKey: 'settings.sections.subagentModels' },
+    { id: 'settings.subagentModels.smartRouting.label', fallbackTargetId: 'settings-search-target-personalization-subagents', tab: 'harness', targetId: 'settings-search-settings-subagentModels-smartRouting-label', titleKey: 'settings.subagentModels.smartRouting.label', sectionKey: 'settings.sections.subagentModels' },
 
   ],
 } satisfies SettingsSearchModule;

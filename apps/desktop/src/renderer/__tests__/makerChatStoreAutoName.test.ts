@@ -30,7 +30,7 @@ vi.mock('@/lib/sessionsBus', () => ({
   emitAutoTitlePreview: (id: string, title: string) => emitAutoTitlePreview(id, title),
   emitAutoTitlePreviewCleared: (id: string) => emitAutoTitlePreviewCleared(id),
 }));
-vi.mock('@/lib/userPromptStore', () => ({ getUserPrompt: () => '' }));
+vi.mock('@/lib/userPromptStore', () => ({ getEffectiveUserPrompt: () => '' }));
 vi.mock('@/lib/memorySettingsStore', () => ({ getMakerMemoryEnabled: () => true }));
 
 vi.mock('@/lib/logger', () => ({

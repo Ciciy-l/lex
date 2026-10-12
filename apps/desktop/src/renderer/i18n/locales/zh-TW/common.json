@@ -447,7 +447,8 @@
       "help": "幫助",
       "about": "關於",
       "imBot": "IM 機器人",
-      "ghosts": "插件"
+      "ghosts": "插件",
+      "harness": "Harness"
     },
     "sections": {
       "user": "使用者",
@@ -3362,10 +3363,10 @@
       "toggleAria": "開啟或關閉串流輸出淡入效果"
     },
     "personalization": {
-      "title": "個性化",
+      "title": "自訂提示詞",
       "subtitle": "自定義提示詞",
       "description": "為你的助手提供額外的指令和上下文。",
-      "placeholder": "在這裡輸入自定義指令，會追加到 Claude / Codex 的系統提示詞末尾。\n\n· 僅對 {{appName}} 內嵌的 Agent 會話生效；已有會話維持啟動時快照，修改後下一個新會話才應用。\n· 想讓所有 Claude Code 會話(含終端直跑、其他 IDE)硬性生效：在 ~/.claude/settings.json 裡配 SessionStart hook(harness 級強制)。\n· Codex CLI 可在 ~/.codex/hooks.json 配 SessionStart hook 強制注入(harness 級，和 CC 同款)；或透過 ~/.codex/AGENTS.md 自動載入(軟約束，模型可能忽略)。",
+      "placeholder": "在此輸入自訂指令，會附加至所選引擎的原生系統提示詞之後。通用提示詞會先於引擎專用提示詞附加。\n\n僅對 {{appName}} 內嵌的 Agent 會話生效；現有 Agent 會話保留啟動時的設定，下一個 Agent 會話套用新內容。",
       "ariaLabel": "自定義指令",
       "save": "儲存",
       "overLimit": " — 已超出長度限制",
@@ -6015,6 +6016,51 @@
       "hint": "遠端 IM 會為需要審批的操作保留確認流程。",
       "fullAccessDisabled": "遠端 IM 不支援完全訪問，避免無法安全確認的操作被直接執行。",
       "permissionModeDisabled": "遠端 IM 使用 {{appName}} 桌面端確認策略，因此該權限模式不可用。"
+    },
+    "harness": {
+      "description": "依功能統一設定 Harness。各分組只顯示對應引擎實際支援的選項。",
+      "versions": "版本與升級",
+      "versionsDescription": "檢查各引擎官方穩定版，結果快取 15 分鐘。按下安裝後才會下載；安裝完成後由你手動重新啟動 {{appName}} 生效，執行中的任務繼續使用原版本。還原操作使用此 {{appName}} 建置隨附的基準版本。",
+      "check": "重新檢查",
+      "install": "安裝 {{version}}",
+      "restore": "還原 {{appName}} 基準 {{version}}",
+      "cancel": "取消",
+      "retry": "重試",
+      "runtimeFailed": "執行環境操作未完成，請檢查網路連線後重試。",
+      "restartRequired": "{{version}} 已就緒。請在任務結束後手動重新啟動 {{appName}}，使新版本生效。",
+      "promptScope": "提示詞範圍",
+      "commonPrompt": "所有引擎通用",
+      "promptDescription": "在引擎原生系統提示詞之後，依序附加通用提示詞和該引擎的提示詞。合併後的內容最多為 8,000 個字元。",
+      "saveFailed": "儲存失敗，請檢查填寫內容後重試。",
+      "loadFailed": "無法載入設定。",
+      "nextSession": "儲存的設定於下一個 Agent 會話生效；現有 Agent 會話保留啟動時的設定。",
+      "unifiedMemory": "OMP 使用 {{appName}} 統一記憶",
+      "nativeMemory": "OMP 本機記憶",
+      "nativeMemoryDescription": "記憶依帳號儲存在本機，依專案召回，使用全文檢索，無需下載嵌入模型。自動整理可能呼叫任務目前使用的模型，並產生正常用量。",
+      "nativeMemoryPaused": "{{appName}} 統一記憶已啟用。OMP 原生記憶暫時停用，原有偏好仍會保留。",
+      "clearMemory": "清空 OMP 本機記憶",
+      "clearMemoryDescription": "刪除此帳號所有專案的 OMP 原生記憶，不包含 {{appName}} 統一記憶。請先關閉正在使用這些記憶的 Agent 會話。",
+      "memoryBusy": "仍有 OMP 執行環境在使用這些記憶，請關閉相關 Agent 會話後重試。",
+      "subagentModel": "預設 Subagent 模型",
+      "inheritModel": "繼承父任務模型",
+      "subagentDescription": "僅在父任務的供應商和 API 路由內使用指定模型，否則繼承父模型。具名 Agent 明確指定的模型優先。數值留空使用原生預設值；並行數為 0 表示不限制。",
+      "maxConcurrency": "Subagent 最大並行數",
+      "maxRecursionDepth": "Subagent 最大巢狀深度",
+      "compactionEnabled": "OMP 自動上下文壓縮",
+      "compactionThreshold": "壓縮閾值（%）",
+      "keepRecentTokens": "保留最近內容的 token 數",
+      "compactionDescription": "使用 OMP 原生壓縮機制及其進度事件。數值留空時使用已安裝版本的原生預設值。",
+      "nativeDefault": "原生預設值",
+      "invalidRange": "請輸入 {{min}} 至 {{max}} 的整數，或留空。",
+      "extensions": "擴充功能",
+      "phase": {
+        "checking": "正在檢查…",
+        "downloading": "正在下載…",
+        "verifying": "正在驗證…",
+        "cancelled": "已取消",
+        "failed": "操作失敗"
+      },
+      "memoryCleared": "OMP 本機記憶已清空。"
     }
   },
   "remoteDevice": {

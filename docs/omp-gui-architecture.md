@@ -268,7 +268,7 @@ OMP 设置启动期加载，`setPermissionMode(mode)` 落地为：**当前 turn 
 2. `types.ts` `VendorKey` 加 `'omp'`。
 3. `config/lex-agent-runtime-assets.json`：4 平台各加 `omp:{version,file,sha256,size}`，与 `tools/omp/latest.json` 逐字一致。
 4. `scripts/ensure-agent-binaries.mjs`：`KINDS.omp` 保留 `defaultInstall:false`、`strictPinnedRuntime:true`。
-5. `omp-probe-runtime.ts` → `omp-runtime.ts`：去 dev-only 限制；保留 pin 全量复核 + `timingSafeEqual`；接 `agent-binaries` 受管路径解析；spawn 前过 `isVettedAgentBinaryPath('omp', candidate)`。`OMP_COMPATIBILITY_BASELINE` 与 pin 同值，**本地更高版本拒绝启动**（PRD Q4 锁死策略）。
+5. `omp-probe-runtime.ts` → `omp-runtime.ts`：去 dev-only 限制；保留 pin 全量复核 + `timingSafeEqual`；接 `agent-binaries` 受管路径解析；spawn 前过 `isVettedAgentBinaryPath('omp', candidate)`。`OMP_COMPATIBILITY_BASELINE` 与 pin 同值，未经受管选择的本地版本继续严格校验；Harness 中安装并选中的官方稳定版使用自身验证后的摘要/版本，重启生效（见 [Harness 设置](dev-rules/harness-settings.md)）。
 
 ### 6.3 Cindy CDN 不可控下的自主可控
 
@@ -334,8 +334,8 @@ OMP 设置启动期加载，`setPermissionMode(mode)` 落地为：**当前 turn 
 - 品牌：桌面/运行时分发=Lex；账号/订阅/托管模型/代理头(x-cindy-*)=Cindy；
   check:brand-terminology 为硬门禁；引擎显示名 "OMP" 不进 i18n。
 - 代码风格：单引号；提交 git commit -s（DCO）。
-- 版本锁死：OMP_COMPATIBILITY_BASELINE === tools/omp/latest.json.version === 18.1.18；
-  本地更高版本拒绝启动。
+- 构建基线：OMP_COMPATIBILITY_BASELINE === tools/omp/latest.json.version === 18.1.18；Harness 用户选择独立持久化，默认 pin 不覆盖显式选择；
+  未通过受管管理器验证/选择的本地更高版本继续拒绝启动。
 ```
 
 ### 8.4 任务依赖图

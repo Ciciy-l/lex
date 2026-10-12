@@ -1,3 +1,4 @@
+import type { HarnessKind, HarnessSource, HarnessRuntimeState, OmpHarnessSettings } from '../shared/harnessSettings.js';
 import { TASK_MIGRATION_LOCAL_CHANNEL } from '@cindy/device-link';
 import { FAVORITE_HOST_READY, FAVORITE_HOST_REQUEST, FAVORITE_HOST_REPLY, FAVORITE_HOST_CHANGED, type ModelFavoritesHostApi } from '../shared/modelFavoritesSync';
 import { invokeOpenPath } from './openPath';
@@ -7332,6 +7333,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
 
     // ── Agent 联合状态 (取代老 electronAPI.codex.binary.getStatus) ──────────
+    harness: {
+      state: (kind: HarnessKind) => ipcRenderer.invoke('harness:state', kind),
+      check: (kind: HarnessKind, force?: boolean) => ipcRenderer.invoke('harness:check', kind, force),
+      install: (input: { kind: HarnessKind; source: HarnessSource; version: string }) => ipcRenderer.invoke('harness:install', input),
+      cancel: (kind: HarnessKind) => ipcRenderer.invoke('harness:cancel', kind),
+      onProgress: (listener: (state: HarnessRuntimeState) => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, state: HarnessRuntimeState) => listener(state);
+        ipcRenderer.on('harness:progress', handler);
+        return () => { ipcRenderer.removeListener('harness:progress', handler); };
+      },
+    },
+    ompHarness: {
+      get: () => ipcRenderer.invoke('harness:omp:get'),
+      set: (patch: Partial<OmpHarnessSettings>, generation: number) => ipcRenderer.invoke('harness:omp:set', patch, generation),
+      reset: (keys: (keyof OmpHarnessSettings)[], generation: number) => ipcRenderer.invoke('harness:omp:reset', keys, generation),
+      clearMemory: (generation: number) => ipcRenderer.invoke('harness:omp:clear-memory', generation),
+    },
     agent: {
       getStatus: (agentKind: 'claude-code' | 'codex' | 'pi' | 'omp'): Promise<unknown> =>
         ipcRenderer.invoke('maker:agent:status', agentKind),

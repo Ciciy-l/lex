@@ -12,6 +12,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const env = vi.hoisted(() => ({
   endpoint: 'http://127.0.0.1:41041',
   catalogModels: ['claude-sonnet-4-6', 'gpt-5.4'] as string[],
+  subagentModel: null as string | null,
+  routes: {} as Record<string, string>,
 }));
 
 vi.mock('electron', () => ({
@@ -36,8 +38,9 @@ vi.mock('../active-catalog.js', () => ({
       {
         id: 'xd',
         routing: {},
-        models: { omp: env.catalogModels.map((id) => ({ id })) },
+        models: { omp: env.catalogModels.map((id) => ({ id, route: { wireProtocol: env.routes[id] } })) },
       },
+      { id: 'other', routing: {}, models: { omp: env.catalogModels.length ? [{ id: 'other-only' }] : [] } },
     ],
   }),
 }));
@@ -62,7 +65,13 @@ vi.mock('../omp-proxy-session-token.js', () => ({
   deriveOmpProxySessionToken: (sessionId: string) => `omp-tok-${sessionId}`,
 }));
 
+vi.mock('../omp-harness-settings.js', () => ({
+  readOmpHarnessSettings: () => ({ subagentModel: env.subagentModel }),
+  ompNativeMemoryPath: vi.fn(), acquireOmpMemoryLease: vi.fn(),
+}));
+
 import {
+  resolveOmpSubagentModel,
   assertOmpModelsYamlHasNoSecrets,
   buildDesktopOmpExecutableEnvironment,
   buildOmpManagedModelsYaml,
@@ -86,7 +95,7 @@ describe('collectOmpCatalogModels', () => {
 
   it('merges catalog models without duplicates', () => {
     const ids = collectOmpCatalogModels('claude-sonnet-4-6').map((model) => model.id);
-    expect(ids).toEqual(['claude-sonnet-4-6', 'gpt-5.4']);
+    expect(ids).toEqual(['claude-sonnet-4-6', 'gpt-5.4', 'other-only']);
   });
 
   it('caps the list so a runaway catalog cannot blow up the YAML', () => {
@@ -245,5 +254,33 @@ describe('assertOmpModelsYamlHasNoSecrets', () => {
 
   it('ignores empty secrets instead of matching everything', () => {
     expect(() => assertOmpModelsYamlHasNoSecrets('anything', [''])).not.toThrow();
+  });
+});
+
+
+describe('OMP Harness Subagent source boundary', () => {
+  beforeEach(() => {
+    env.catalogModels = ['parent', 'child', 'different-api'];
+    env.routes = { parent: 'anthropic-messages', child: 'anthropic-messages', 'different-api': 'openai-chat' };
+    env.subagentModel = 'child';
+  });
+  afterEach(() => { env.routes = {}; env.subagentModel = null; });
+  it('resolves only inside the parent provider and API route', () => {
+    expect(resolveOmpSubagentModel('parent', 'xd')).toBe('child');
+    expect(resolveOmpSubagentModel('parent', 'other')).toBeUndefined();
+    expect(resolveOmpSubagentModel('parent')).toBeUndefined();
+    env.subagentModel = 'different-api';
+    expect(resolveOmpSubagentModel('parent', 'xd')).toBeUndefined();
+    expect(collectOmpCatalogModels('parent', 'xd').map(m => m.id)).toEqual(['parent', 'child']);
+  });
+  it('retains the captured preferred model even when the live preference changes', () => {
+    env.catalogModels = ['parent', ...Array.from({ length: 100 }, (_, i) => 'model-' + i), 'child'];
+    env.subagentModel = 'other-only';
+    const yaml = buildOmpManagedModelsYaml({ sessionId: 's', model: 'parent', providerId: 'xd', token: SECRET, subagentModel: 'child' });
+    expect(yaml).toContain('child');
+    expect(yaml).not.toContain('other-only');
+  });
+  it('keeps the legacy catalog when only the native managed provider ID is known', () => {
+    expect(collectOmpCatalogModels('parent', 'cindy').map(m => m.id)).toContain('child');
   });
 });

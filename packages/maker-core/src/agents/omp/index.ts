@@ -71,6 +71,8 @@ import {
   snapshotDisabledSkillLaunch,
 } from '../shared/skill-activation.js';
 import { scanRemoteOmpSkills } from '../shared/remote-skill-scanner.js';
+import { resolveMemoryScopeKey } from '../../memory/scope-resolver.js';
+import { MAKER_MEMORY_RULES } from '../../memory/system-prompt.js';
 
 /**
  * OMP Agent —— Lex 的第四个 coding agent（上游 `can1357/oh-my-pi` v18.1.18）。
@@ -283,11 +285,32 @@ export class OmpAgent extends BaseAgent {
     // opaque root so one process cannot inherit another's startup files.
     const firstRuntimeInstanceId = opts.sessionInstanceId?.trim() || randomUUID();
     let runtimeNumber = 0;
-    const appendSystemPrompt = normalizeAppendSystemPrompt(opts.userPrompt);
+    const harnessSettings = remoteHostId || isolatedProbe || opts.reviewMode || opts.botRuntimeProfile
+      ? undefined : this.deps.resolveOmpHarnessSettings?.({ model: opts.model, providerId: sourceProviderId });
+    const memoryEnabled = harnessSettings?.unifiedMemoryEnabled === true
+      && opts.makerMemoryEnabled !== false && this.deps.makerMemory?.isEnabled() === true;
+    const memoryOwner = this.deps.makerMemory?.currentOwnerScopeKey?.();
+    const memoryScopeKey = memoryEnabled
+      ? opts.makerMemoryScopeKey ?? await resolveMemoryScopeKey(opts.workingDir, opts.remoteHostId)
+      : opts.makerMemoryScopeKey;
+    let memoryIndex = '';
+    if (memoryEnabled && memoryScopeKey) {
+      try {
+        memoryIndex = opts.makerMemoryIndexSnapshot ?? await (await this.deps.makerMemory!.getStore(memoryScopeKey)).getIndex();
+      } catch {
+        this.deps.logger.warn('OMP unified memory index unavailable at session start');
+      }
+    }
+    if (memoryEnabled && this.deps.makerMemory?.currentOwnerScopeKey?.() !== memoryOwner)
+      throw new Error('OMP memory owner changed during startup');
+    const appendSystemPrompt = normalizeAppendSystemPrompt([
+      memoryEnabled ? MAKER_MEMORY_RULES : undefined, memoryIndex, opts.userPrompt,
+    ].filter(Boolean).join('\n\n'));
     const mcpContext: McpProviderContext = {
       agentKind: 'omp',
       workingDir: opts.workingDir,
-      ...(opts.makerMemoryScopeKey ? { memoryScopeKey: opts.makerMemoryScopeKey } : {}),
+      ...(memoryScopeKey ? { memoryScopeKey } : {}),
+      ...(harnessSettings ? { memoryEnabled } : {}),
       vendorOptions: mutableVendorOptions,
       ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
       ...(opts.sessionInstanceId ? { sessionInstanceId: opts.sessionInstanceId } : {}),
@@ -318,6 +341,7 @@ export class OmpAgent extends BaseAgent {
       let remoteRuntime: ResolvedRemoteOmpRuntime | undefined;
       let remoteProviderForward: RemoteOmpProviderForward | undefined;
       let cleanupRuntimeFiles: (() => Promise<void>) | undefined;
+      let releaseMemory: (() => Promise<void>) | undefined;
       let cleanupIsolatedRuntimeHome: () => Promise<void> = async () => undefined;
       let host: OmpProcessHost | undefined;
       let hostTools: OmpHostToolBridge | undefined;
@@ -336,6 +360,7 @@ export class OmpAgent extends BaseAgent {
         callbacks?.onFrame(frame);
       };
       const forwardExit = (state: OmpProcessState) => {
+        void releaseMemory?.().catch(() => this.deps.logger.warn('OMP memory lease cleanup failed'));
         if (!activated) {
           pendingExit = state;
           return;
@@ -344,6 +369,10 @@ export class OmpAgent extends BaseAgent {
       };
 
       try {
+        if (harnessSettings?.nativeMemoryDbPath) {
+          if (!this.deps.acquireOmpMemoryLease) throw new Error('OMP memory lease unavailable');
+          releaseMemory = await this.deps.acquireOmpMemoryLease(harnessSettings.nativeMemoryDbPath);
+        }
         if (remoteHostId) {
           remoteRuntime = await this.resolveRemoteRuntime(remoteHostId);
           const providerForward = await this.deps.openRemoteOmpProviderForward!(remoteHostId);
@@ -381,6 +410,7 @@ export class OmpAgent extends BaseAgent {
           : resolveAllowedManagedSkills(await this.deps.getManagedSkills?.() ?? [],
               snapshotManagedSkillGrants(opts.botRuntimeProfile?.skillPolicy), this.deps.getDisabledSkillPaths?.() ?? []);
         const plan = createOmpSessionLaunchPlan({
+          harnessSettings,
           managedSkillDirectories: [...new Set(managedSkills.map((skill) => path.dirname(skill.path)))],
           roots: {
             home: runtimeHome,
@@ -414,6 +444,7 @@ export class OmpAgent extends BaseAgent {
           remoteRuntime,
           remoteProviderForward?.baseUrl,
           isolatedProbe,
+          harnessSettings?.subagentModel,
         );
         host = await this.spawnHost(plan, forwardFrame, forwardExit, remoteRuntime);
         const activeHost = host;
@@ -476,7 +507,9 @@ export class OmpAgent extends BaseAgent {
             unregisterCommandCatalog();
             stopAndDisposePromise = (async () => {
               try {
-                return await activeHost.stopAndWait();
+                const stopped = await activeHost.stopAndWait();
+                if (stopped) await releaseMemory?.();
+                return stopped;
               } finally {
                 try {
                   await cleanupRuntimeFiles?.();
@@ -496,7 +529,8 @@ export class OmpAgent extends BaseAgent {
       } catch (error) {
         hostTools?.close();
         unregisterCommandCatalog();
-        await host?.stopAndWait().catch(() => false);
+        const stopped = host ? await host.stopAndWait().catch(() => false) : true;
+        if (stopped) await releaseMemory?.();
         await cleanupRuntimeFiles?.().catch(() => undefined);
         await cleanupIsolatedRuntimeHome().catch(() => undefined);
         await remoteProviderForward?.release().catch(() => undefined);
@@ -881,6 +915,7 @@ export class OmpAgent extends BaseAgent {
     remoteRuntime?: ResolvedRemoteOmpRuntime,
     remoteBaseUrl?: string,
     isolatedProbe = false,
+    subagentModel?: string,
   ): Promise<() => Promise<void>> {
     let cleaned = false;
     const cleanupSystemPrompt = async () => {
@@ -957,6 +992,7 @@ export class OmpAgent extends BaseAgent {
         sessionId,
         providerId,
         model,
+        ...(subagentModel ? { subagentModel } : {}),
         ...(remoteRuntime ? { remoteHostId: remoteRuntime.remoteHostId } : {}),
         ...(remoteBaseUrl ? { remoteBaseUrl } : {}),
       });

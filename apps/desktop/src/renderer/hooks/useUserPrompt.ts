@@ -10,23 +10,36 @@ import { useCallback, useEffect, useState } from 'react';
 
 import {
   getUserPrompt,
+  getUserPromptOwner,
   setUserPrompt,
   subscribeUserPrompt,
+  type PromptScope,
 } from '@/lib/userPromptStore';
 
-export function useUserPrompt(): {
+export function useUserPrompt(scope: PromptScope = 'common'): {
   value: string;
+  owner: string | null;
   setValue: (next: string) => void;
 } {
-  const [value, setValueState] = useState<string>(getUserPrompt);
+  const [snapshot, setSnapshot] = useState(() => ({
+    value: getUserPrompt(scope),
+    owner: getUserPromptOwner(),
+  }));
 
-  const setValue = useCallback((next: string) => {
-    setUserPrompt(next);
-    // 走 store.setUserPrompt 之后，subscribe 回调会更新本地 state，
-    // 这里不重复 setValueState。
-  }, []);
+  const setValue = useCallback(
+    (next: string) => {
+      setUserPrompt(next, scope, snapshot.owner);
+      // 走 store.setUserPrompt 之后，subscribe 回调会更新本地 state，
+      // 这里不重复 setValueState。
+    },
+    [scope, snapshot.owner],
+  );
 
-  useEffect(() => subscribeUserPrompt(setValueState), []);
+  useEffect(() => {
+    const refresh = () => setSnapshot({ value: getUserPrompt(scope), owner: getUserPromptOwner() });
+    refresh();
+    return subscribeUserPrompt(refresh);
+  }, [scope]);
 
-  return { value, setValue };
+  return { value: snapshot.value, owner: snapshot.owner, setValue };
 }

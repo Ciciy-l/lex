@@ -447,7 +447,8 @@
       "help": "ヘルプ",
       "about": "情報",
       "imBot": "IM ボット",
-      "ghosts": "プラグイン"
+      "ghosts": "プラグイン",
+      "harness": "Harness"
     },
     "sections": {
       "user": "ユーザー",
@@ -3318,10 +3319,10 @@
       }
     },
     "personalization": {
-      "title": "パーソナライズ",
+      "title": "カスタムプロンプト",
       "subtitle": "カスタムプロンプト",
       "description": "アシスタントに追加の指示やコンテキストを与えます。",
-      "placeholder": "ここにカスタム指示を入力してください。Claude / Codex のシステムプロンプト末尾に追加されます。\n\n· {{appName}} の内蔵セッションのみに適用されます。既存のセッションは起動時スナップショットを保持し、変更は次回の新規セッションから有効になります。\n· すべての Claude Code セッション(ターミナルや他の IDE を含む)で強制的に有効にするには、~/.claude/settings.json に SessionStart フックを設定してください(harness レベルの強制)。\n· Codex CLI は ~/.codex/hooks.json に SessionStart フックを設定すると harness レベルで強制注入できます（CC と同等）。または ~/.codex/AGENTS.md による自動読み込み（ソフト制約、モデルが無視する場合あり）も利用できます。",
+      "placeholder": "選択したエンジンのネイティブシステムプロンプトに追加する指示を入力します。共通の指示、エンジン固有の指示の順に追加されます。\n\n{{appName}} 内の Agent セッションにのみ適用されます。実行中の Agent セッションは開始時の設定を維持し、次の Agent セッションから新しい内容を使用します。",
       "ariaLabel": "カスタム指示",
       "save": "保存",
       "overLimit": " — 文字数制限を超過",
@@ -6015,6 +6016,51 @@
       "hint": "リモート IM では、承認が必要な操作の確認フローを維持します。",
       "fullAccessDisabled": "安全に確認できない操作が直接実行されないよう、リモート IM では Full Access を利用できません。",
       "permissionModeDisabled": "リモート IM は {{appName}} Desktop の確認ポリシーを使用するため、この権限モードは利用できません。"
+    },
+    "harness": {
+      "description": "Harness の設定を機能別にまとめています。各グループには、そのエンジンが対応している項目だけを表示します。",
+      "versions": "バージョンと更新",
+      "versionsDescription": "各エンジンの公式安定版を確認します（15 分間キャッシュ）。インストールを選ぶとダウンロードが始まり、{{appName}} を手動で再起動すると適用されます。実行中のタスクは現在のバージョンを使い続けます。復元では、この {{appName}} ビルドに付属する基準バージョンに戻します。",
+      "check": "再確認",
+      "install": "{{version}} をインストール",
+      "restore": "{{appName}} 基準 {{version}} に復元",
+      "cancel": "キャンセル",
+      "retry": "再試行",
+      "runtimeFailed": "実行環境の操作を完了できませんでした。接続を確認して再試行してください。",
+      "restartRequired": "{{version}} の準備ができました。タスク終了後に {{appName}} を手動で再起動して適用してください。",
+      "promptScope": "プロンプトの適用範囲",
+      "commonPrompt": "全エンジン共通",
+      "promptDescription": "エンジン本来のシステムプロンプトに、共通プロンプト、エンジン別プロンプトの順で追加します。合計 8,000 文字以内で入力してください。",
+      "saveFailed": "保存できませんでした。入力内容を確認して再試行してください。",
+      "loadFailed": "設定を読み込めませんでした。",
+      "nextSession": "保存した設定は次の Agent セッションから適用されます。既存の Agent セッションは開始時の設定を保持します。",
+      "unifiedMemory": "OMP で {{appName}} の統合メモリを使用",
+      "nativeMemory": "OMP ローカルメモリ",
+      "nativeMemoryDescription": "メモリをアカウント別に端末へ保存し、プロジェクト別に呼び出します。全文検索を使用し、埋め込みモデルはダウンロードしません。自動処理はタスクの現在のモデルを呼び出し、通常の使用量が発生する場合があります。",
+      "nativeMemoryPaused": "{{appName}} の統合メモリが有効なため、OMP のネイティブメモリを一時停止しています。保存した設定は保持されます。",
+      "clearMemory": "OMP ローカルメモリを消去",
+      "clearMemoryDescription": "このアカウントの全プロジェクトの OMP ネイティブメモリを削除します。{{appName}} の統合メモリは含みません。先に使用中の Agent セッションを閉じてください。",
+      "memoryBusy": "OMP 実行環境がこのメモリを使用しています。関連する Agent セッションを閉じて再試行してください。",
+      "subagentModel": "既定のサブエージェントモデル",
+      "inheritModel": "親タスクのモデルを継承",
+      "subagentDescription": "親セッションと同じプロバイダーと API 経路で利用可能な場合のみ指定モデルを使い、それ以外は親モデルを継承します。名前付き Agent の明示的なモデル指定が優先されます。数値を空欄にするとネイティブの既定値を使用します。同時実行数 0 は無制限です。",
+      "maxConcurrency": "サブエージェントの最大同時実行数",
+      "maxRecursionDepth": "サブエージェントの最大ネスト深度",
+      "compactionEnabled": "OMP の自動コンテキスト圧縮",
+      "compactionThreshold": "圧縮しきい値（%）",
+      "keepRecentTokens": "保持する直近のトークン数",
+      "compactionDescription": "OMP のネイティブ圧縮と進捗イベントを使用します。数値を空欄にすると、インストール済みバージョンの既定値を使用します。",
+      "nativeDefault": "ネイティブ既定値",
+      "invalidRange": "{{min}} から {{max}} の整数を入力するか、空欄にしてください。",
+      "extensions": "拡張機能",
+      "phase": {
+        "checking": "確認中…",
+        "downloading": "ダウンロード中…",
+        "verifying": "検証中…",
+        "cancelled": "キャンセル済み",
+        "failed": "操作失敗"
+      },
+      "memoryCleared": "OMP ローカルメモリを消去しました。"
     }
   },
   "remoteDevice": {

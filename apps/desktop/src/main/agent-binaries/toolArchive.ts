@@ -46,9 +46,10 @@ export async function extractToolArchive(
   destination: string,
   artifact: ToolArchiveArtifact,
   signal: AbortSignal,
+  limits?: { archiveBytes: number; fileBytes: number; expandedBytes: number },
 ): Promise<void> {
   signal.throwIfAborted();
-  if ((await stat(archive)).size > MAX_ARCHIVE_BYTES) throw new Error('Tool archive too large');
+  if ((await stat(archive)).size > (limits?.archiveBytes ?? MAX_ARCHIVE_BYTES)) throw new Error('Tool archive too large');
   if (artifact.format === 'binary') {
     await copyFile(archive, path.join(destination, artifact.executable));
   } else if (artifact.format === 'zip') {
@@ -79,7 +80,7 @@ export async function extractToolArchive(
           size += chunk.length;
           expanded += chunk.length;
           callback(
-            size > MAX_FILE_BYTES || expanded > MAX_EXPANDED_BYTES
+            size > (limits?.fileBytes ?? MAX_FILE_BYTES) || expanded > (limits?.expandedBytes ?? MAX_EXPANDED_BYTES)
               ? new Error('Tool archive too large')
               : null,
             chunk,
@@ -108,7 +109,7 @@ export async function extractToolArchive(
           if (entry.type === 'SymbolicLink' || entry.type === 'Link')
             safeArchiveLink(entry.path, entry.linkpath ?? '', entry.type === 'Link');
           expanded += entry.size;
-          if (++count > MAX_ENTRIES || entry.size > MAX_FILE_BYTES || expanded > MAX_EXPANDED_BYTES)
+          if (++count > MAX_ENTRIES || entry.size > (limits?.fileBytes ?? MAX_FILE_BYTES) || expanded > (limits?.expandedBytes ?? MAX_EXPANDED_BYTES))
             throw new Error('Tool archive too large');
         } catch (error) {
           invalid = error as Error;

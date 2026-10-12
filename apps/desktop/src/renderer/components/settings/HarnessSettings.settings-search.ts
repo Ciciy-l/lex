@@ -1,0 +1,39 @@
+import type { SettingsSearchModule } from './settingsSearchTypes';
+export default {
+  id: 'harness',
+  order: 1,
+  entries: [
+    {
+      id: 'harness.versions',
+      tab: 'harness',
+      targetId: 'settings-harness-versions',
+      titleKey: 'settings.harness.versions',
+      sectionKey: 'settings.tabs.harness',
+      aliases: ['Claude Code', 'Codex', 'Pi', 'OMP', 'engine update', '引擎升级', '版本'],
+    },
+    {
+      id: 'harness.ompMemory',
+      tab: 'harness',
+      targetId: 'settings-search-target-personalization-memory',
+      titleKey: 'settings.harness.nativeMemory',
+      sectionKey: 'settings.tabs.harness',
+      aliases: ['OMP', 'Mnemopi', '本地记忆'],
+    },
+    {
+      id: 'harness.ompSubagents',
+      tab: 'harness',
+      targetId: 'settings-search-target-personalization-subagents',
+      titleKey: 'settings.harness.subagentModel',
+      sectionKey: 'settings.tabs.harness',
+      aliases: ['OMP', 'subagent', 'concurrency', '并发', '深度'],
+    },
+    {
+      id: 'harness.ompCompaction',
+      tab: 'harness',
+      targetId: 'settings-search-target-personalization-compaction',
+      titleKey: 'settings.harness.compactionEnabled',
+      sectionKey: 'settings.tabs.harness',
+      aliases: ['OMP', 'compaction', '上下文压缩'],
+    },
+  ],
+} satisfies SettingsSearchModule;

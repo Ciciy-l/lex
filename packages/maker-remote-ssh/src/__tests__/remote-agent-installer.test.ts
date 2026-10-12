@@ -1,8 +1,8 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { BOOTSTRAP_SH } from '../bootstrap/bootstrap-script.js';
 import {
@@ -44,51 +44,112 @@ describe('remote agent installer', () => {
     expect(calls[0].input).toBe(BOOTSTRAP_SH);
   });
 
-  it.each([
-    { name: 'legacy standalone', complete: false, version: PINNED_CODEX_RELEASE_VERSION, ready: false },
-    { name: 'old full package', complete: true, version: '0.0.1', ready: false },
-    { name: 'current full package', complete: true, version: PINNED_CODEX_RELEASE_VERSION, ready: true },
-  ])('probe and bootstrap agree on $name readiness', async ({ complete, version, ready }) => {
-    const root = mkdtempSync(path.join(os.tmpdir(), 'lex-codex-readiness-'));
-    try {
-      const installDir = path.join(root, '.xdt-server', 'v1');
-      const current = path.join(installDir, 'codex-home', 'packages', 'standalone', 'current');
-      const files = complete
-        ? ['codex', 'bin/codex', 'bin/codex-code-mode-host', 'codex-path/rg', 'codex-resources/bwrap', 'codex-package.json']
-        : ['codex'];
-      for (const file of files) {
-        const target = path.join(current, file);
-        mkdirSync(path.dirname(target), { recursive: true });
-        writeFileSync(target, file === 'codex-package.json'
-          ? '{}'
-          : '#!/bin/sh' + String.fromCharCode(10) + 'printf "codex-cli ' + version + String.fromCharCode(92) + 'n"' + String.fromCharCode(10));
-        if (file !== 'codex-package.json') chmodSync(target, 0o755);
-      }
-      writeFileSync(path.join(installDir, '.installed-codex'), '');
-      const outputs: string[] = [];
-      const host = {
+  describe('Codex package readiness', () => {
+    const cases = [
+      { name: 'legacy standalone', complete: false, version: PINNED_CODEX_RELEASE_VERSION, ready: false },
+      { name: 'old full package', complete: true, version: '0.0.1', ready: false },
+      { name: 'current full package', complete: true, version: PINNED_CODEX_RELEASE_VERSION, ready: true },
+    ];
+    const requests: Array<{ command: string; input: string }> = [];
+    const results: Array<Array<{ exitCode: number; stdout: string; stderr: string }>> = [];
+    let root: string | undefined;
+
+    beforeAll(async () => {
+      root = mkdtempSync(path.join(os.tmpdir(), 'lex-codex-readiness-'));
+      const captureHost = {
         exec: async (command: string, opts: { input?: string }) => {
-          const args = [...command.matchAll(/'([^']*)'/g)].map((match) => match[1]);
-          expect(args).toContain(PINNED_CODEX_RELEASE_VERSION);
-          const result = spawnSync('bash', ['-s', '--', ...args], {
-            cwd: root,
-            encoding: 'utf8',
-            input: ['export HOME="$PWD"', 'curl() { return 1; }', 'wget() { return 1; }', '']
-              .join(String.fromCharCode(10)) + (opts.input ?? ''),
-          });
-          expect(result.error).toBeUndefined();
-          outputs.push(result.stdout);
-          return { exitCode: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
+          requests.push({ command, input: opts.input ?? '' });
+          return { exitCode: 0, stdout: '', stderr: '' };
         },
       } as Pick<RemoteHost, 'exec'> as RemoteHost;
+      await probeRemoteAgent(captureHost, 'codex');
+      await installRemoteAgent(captureHost, 'codex');
+      expect(requests).toHaveLength(2);
+      for (const request of requests) {
+        expect(request.command).toMatch(/^bash -l -s -- /);
+        expect(request.command).toContain(`'${PINNED_CODEX_RELEASE_VERSION}'`);
+      }
 
-      expect((await probeRemoteAgent(host, 'codex')).installed).toBe(ready);
-      expect((await installRemoteAgent(host, 'codex')).ready).toBe(ready);
-      if (!ready) expect(outputs[1]).toContain('INSTALL_START codex-package');
-      else expect(outputs[1]).not.toContain('INSTALL_START');
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+      // Share one real Bash fixture across the matrix instead of repeatedly
+      // starting Git Bash under each five-second Windows test budget. Subshells
+      // isolate each invocation's exit, arguments, HOME and environment.
+      const scripts: string[] = [];
+      for (const [index, { complete, version }] of cases.entries()) {
+        const caseDir = path.join(root, `case-${index}`);
+        const installDir = path.join(caseDir, '.xdt-server', 'v1');
+        const current = path.join(installDir, 'codex-home', 'packages', 'standalone', 'current');
+        const files = complete
+          ? ['codex', 'bin/codex', 'bin/codex-code-mode-host', 'codex-path/rg', 'codex-resources/bwrap', 'codex-package.json']
+          : ['codex'];
+        for (const file of files) {
+          const target = path.join(current, file);
+          mkdirSync(path.dirname(target), { recursive: true });
+          writeFileSync(target, file === 'codex-package.json'
+            ? '{}'
+            : '#!/bin/sh' + String.fromCharCode(10) + 'printf "codex-cli ' + version + String.fromCharCode(92) + 'n"' + String.fromCharCode(10));
+          if (file !== 'codex-package.json') chmodSync(target, 0o755);
+        }
+        writeFileSync(path.join(installDir, '.installed-codex'), '');
+        for (const [requestIndex, request] of requests.entries()) {
+          // Fixture-owned POSIX paths inside Bash, not host filesystem paths.
+          const output = `case-${index}/result-${requestIndex}`;
+          scripts.push([
+            '(',
+            `cd case-${index} || exit 99`,
+            'export HOME="$PWD"',
+            'curl() { return 1; }',
+            'wget() { return 1; }',
+            request.command.replace(/^bash -l -s -- /, 'set -- '),
+            request.input,
+            `) > ${output}.stdout 2> ${output}.stderr`,
+            `printf '%s' "$?" > ${output}.status`,
+          ].join(String.fromCharCode(10)));
+        }
+      }
+      const result = spawnSync('bash', ['--noprofile', '--norc', '-s'], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, BASH_ENV: '' },
+        input: scripts.join(String.fromCharCode(10)),
+        // Bound the entire six-invocation fixture, including shell startup.
+        timeout: 15_000,
+      });
+      expect(result.error, result.stderr).toBeUndefined();
+      expect(result.status, result.stderr).toBe(0);
+      for (const index of cases.keys()) {
+        results[index] = requests.map((_, requestIndex) => {
+          const output = path.join(root!, `case-${index}`, `result-${requestIndex}`);
+          return {
+            exitCode: Number(readFileSync(`${output}.status`, 'utf8').trim()),
+            stdout: readFileSync(`${output}.stdout`, 'utf8'),
+            stderr: readFileSync(`${output}.stderr`, 'utf8'),
+          };
+        });
+      }
+    }, 20_000);
+
+    afterAll(() => {
+      if (root) rmSync(root, { recursive: true, force: true });
+    });
+
+    it.each(cases.map((testCase, index) => ({ ...testCase, index })))(
+      'probe and bootstrap agree on $name readiness',
+      async ({ ready, index }) => {
+        let nextRequest = 0;
+        const host = {
+          exec: async (command: string, opts: { input?: string }) => {
+            const requestIndex = nextRequest++;
+            expect({ command, input: opts.input ?? '' }).toEqual(requests[requestIndex]);
+            return results[index][requestIndex];
+          },
+        } as Pick<RemoteHost, 'exec'> as RemoteHost;
+        expect((await probeRemoteAgent(host, 'codex')).installed).toBe(ready);
+        expect((await installRemoteAgent(host, 'codex')).ready).toBe(ready);
+        expect(nextRequest).toBe(2);
+        if (!ready) expect(results[index][1].stdout).toContain('INSTALL_START codex-package');
+        else expect(results[index][1].stdout).not.toContain('INSTALL_START');
+      },
+    );
   });
 
   it('runs install.sh with --release when a Codex release arg is present', () => {

@@ -124,6 +124,14 @@ export function createCindyMemoryMcpServer(deps: MemoryMcpDeps): McpServer {
     version: '1.0.0',
   });
 
+  const registry = createMemoryToolRegistry(deps);
+  registerListToolsEntry(server, registry, deps);
+  registerCallToolEntry(server, registry, deps);
+  return server;
+}
+
+export function createMemoryToolRegistry(deps: MemoryMcpDeps): MemoryToolRegistry {
+
   const registry = new MemoryToolRegistry();
 
   // 注册顺序 = list_tools 里的位次。读类优先, 写类次之, 维护类放最后。
@@ -137,8 +145,5 @@ export function createCindyMemoryMcpServer(deps: MemoryMcpDeps): McpServer {
   registerMemoryConsolidateTool(registry, deps);
   registerMemoryReviewTool(registry, deps);
 
-  registerListToolsEntry(server, registry, deps);
-  registerCallToolEntry(server, registry, deps);
-
-  return server;
+  return registry;
 }

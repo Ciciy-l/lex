@@ -61,6 +61,7 @@ type SettingsNavIcon = ComponentType<LucideProps>;
 
 const TAB_ICON: Record<VisibleSettingsTab, SettingsNavIcon> = {
   general: Settings2,
+  harness: Wrench,
   billing: CircleDollarSign,
   usage: ChartColumn,
   personalization: Sparkles,

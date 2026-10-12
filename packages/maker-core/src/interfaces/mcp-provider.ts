@@ -7,6 +7,8 @@ export interface McpProviderContext {
   workingDir: string;
   /** Host-owned memory namespace override (for example a stable Cindy Bot scope). */
   memoryScopeKey?: string;
+  /** Host-captured per-session unified-memory preference (OMP RPC bridge). */
+  memoryEnabled?: boolean;
   vendorOptions?: Record<string, unknown>;
   /**
    * Business 层 session id (host 通过 createSession 的 opts.id 提供, 由 maker.ts

@@ -914,6 +914,8 @@ export interface LiziMcpSessionContext {
   workingDir: string;
   /** Host-owned memory namespace override shared with the agent prompt path. */
   memoryScopeKey?: string;
+  /** Host-captured per-session unified-memory preference, not a tool argument. */
+  memoryEnabled?: boolean;
   /**
    * 当前 tool-call 的权威 session ctx accessor。
    *

@@ -57,10 +57,13 @@ describe('dynamic wallpaper lifecycle', () => {
     await act(async () => document.documentElement.removeAttribute(HIDDEN_ANIMATION_ATTR));
     expect(video.play).toHaveBeenCalledTimes(2);
     rerender(<WallpaperVideo wallpaperId="cindy-window" motion="static" />);
-    await waitFor(() => expect(document.querySelector('video')).toBeNull());
-    expect(video.getAttribute('src')).toBeNull();
-    expect(video.load).toHaveBeenCalled();
-    expect(document.documentElement.dataset.wallpaperMotion).toBeUndefined();
+    // DOM removal can precede passive cleanup of the decoder and motion marker.
+    await waitFor(() => {
+      expect(document.querySelector('video')).toBeNull();
+      expect(video.getAttribute('src')).toBeNull();
+      expect(video.load).toHaveBeenCalled();
+      expect(document.documentElement.dataset.wallpaperMotion).toBeUndefined();
+    });
   });
   it('fades decoded video over the still, retaining it only until the exit finishes', () => {
     vi.useFakeTimers();
