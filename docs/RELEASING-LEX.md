@@ -19,9 +19,13 @@ immutable result rather than reinstalling dependencies and rerunning the full
 source-level test suite. It still performs release-specific checks, signing
 preflight, and native packaging on every supported desktop platform and Android.
 
-Versioned unsigned releases are clearly labelled in their Release title and
-notes. Windows packages are unsigned; macOS apps use ad-hoc signing and their
-DMG container is unsigned, so first installation can trigger SmartScreen or
+Release titles use `Lex v<version>` without a signing suffix. The draft body uses
+the committed five-language `release-notices/<version>.md` from the exact release
+commit and appends the actual signing mode. Both that Markdown file and the
+structured five-language JSON notice are required before packaging. A version
+without a prerelease suffix creates a stable draft, independently of signing.
+For unsigned desktop releases, Windows packages are unsigned; macOS apps use
+ad-hoc signing and their DMG container is unsigned, so first installation can trigger SmartScreen or
 Gatekeeper warnings. The updater still verifies SHA-256 and can apply the
 separately labelled `Auto-Update.zip` archives.
 

@@ -145,6 +145,43 @@ test("release workflows validate tagged structured notices before publishing any
         step.run === 'node scripts/lex-release-notices.mjs "$RELEASE_VERSION"',
     ),
   );
+  const detailedNotesGate = release.jobs["resolve-release"].steps.find(
+    (step) => step.name === "Require detailed Lex release notes",
+  );
+  assert.ok(detailedNotesGate);
+  assert.ok(detailedNotesGate.run.includes('[ ! -s "release-notices/${RELEASE_VERSION}.md" ]'));
+  const draftSteps = release.jobs.publish.steps;
+  const checkout = draftSteps.find((step) => step.uses?.startsWith("actions/checkout@"));
+  assert.equal(checkout.with.ref, "${{ needs.resolve-release.outputs.release_commit }}");
+  assert.equal(checkout.with["persist-credentials"], false);
+  const draft = draftSteps.find((step) => step.name === "Create or update draft release").run;
+  assert.ok(draft.includes('cp "release-notices/${VERSION}.md" "$notes_file"'));
+  assert.ok(draft.includes('--notes-file "$notes_file"'));
+  assert.ok(draft.includes('--draft --title "Lex ${tag}"'));
+  assert.ok(draft.includes('if [[ "$VERSION" == *-* ]]; then'));
+  assert.ok(draft.includes('release_flags+=(--prerelease)'));
+  assert.ok(draft.includes('Desktop build mode: **%s**. %s'));
+});
+
+test("0.1.4 stable notices cover every locale and match the detailed release body", () => {
+  const stable = JSON.parse(fs.readFileSync(
+    new URL("../../release-notices/0.1.4.json", import.meta.url), "utf8",
+  ));
+  const body = fs.readFileSync(
+    new URL("../../release-notices/0.1.4.md", import.meta.url), "utf8",
+  );
+  validateNotice(stable, "0.1.4");
+  assert.ok(compareVersions(stable.version, "0.1.4-rc.2") > 0);
+  const topicIds = stable.contentByLocale.en.topics.map((topic) => topic.id);
+  for (const locale of LOCALES) {
+    const content = stable.contentByLocale[locale];
+    assert.deepEqual(content.topics.map((topic) => topic.id), topicIds);
+    assert.ok(body.includes(content.intro), locale);
+    for (const topic of content.topics) {
+      assert.ok(body.includes(topic.title), locale + ":" + topic.id);
+      assert.ok(body.includes(topic.text), locale + ":" + topic.id);
+    }
+  }
 });
 
 test("the checked-in authoring template renders in every locale after choosing a release version", () => {
