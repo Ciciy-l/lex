@@ -58,6 +58,8 @@ Cindy 以 `pi --mode rpc` spawn pi 二进制(JSONL/stdio),`translator.ts` 把 pi
 - **plan 模式**:挂 pi 自带 plan-mode 扩展,`/plan` toggle 驱动;Cindy 维护镜像态并在 resume
   时从 `get_entries` 校正。
 
+> Lex 的 Pi 子代理委派、控制、结果收口见 [Pi 子代理设计](../research/pi-subagent-delegation.md)，与 Orca Worker 分别维护。
+
 ## 2. 配置面:Cindy 显式设置 vs 放任 pi 默认
 
 Cindy 显式设置:models.json、`settings.json` 的 `transport:sse` 与 `retry.maxRetries=6`
