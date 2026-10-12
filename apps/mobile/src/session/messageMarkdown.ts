@@ -1004,7 +1004,8 @@ function isMermaidLanguage(language: string | undefined): boolean {
 }
 
 function parseOpeningCodeFence(line: string): ParsedOpeningCodeFence | null {
-  const match = line.match(/^([ \t]*)(`{2,}|~{2,})(.*)$/);
+  // Keep the legacy two-backtick fallback, but two tildes start strikethrough, not a code fence.
+  const match = line.match(/^([ \t]*)(`{2,}|~{3,})(.*)$/);
   if (!match) return null;
   const markerRun = match[2];
   const marker = markerRun[0] as '`' | '~';
