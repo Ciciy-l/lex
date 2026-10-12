@@ -1247,17 +1247,31 @@ const mergedSessionById = new Map<string, RemoteSession>();
 // live usage. Usage pushes must not rebuild Home's grouping/localization tree.
 let homeSessions: RemoteSession[] = [];
 const SESSION_USAGE_FIELDS = new Set(['totalMoney', 'totalCostUsd', 'totalTokenUsage']);
+const homeSessionProjectionCache = new Map<string, {
+  source: RemoteSession;
+  projected: RemoteSession;
+}>();
 
 function reconcileHomeSessions(): void {
-  const previous = new Map(homeSessions.map((session) => [session.id, session]));
+  const activeSessionIds = new Set<string>();
   const next = mergedSessions.map((session) => {
+    activeSessionIds.add(session.id);
+    const cached = homeSessionProjectionCache.get(session.id);
+    if (cached?.source === session) return cached.projected;
+
     const projected = { ...session };
     delete projected.totalMoney;
     delete projected.totalCostUsd;
     delete projected.totalTokenUsage;
-    const old = previous.get(session.id);
-    return old && remoteSessionEqual(old, projected) ? old : projected;
+    const stableProjected = cached && remoteSessionEqual(cached.projected, projected)
+      ? cached.projected
+      : projected;
+    homeSessionProjectionCache.set(session.id, { source: session, projected: stableProjected });
+    return stableProjected;
   });
+  for (const sessionId of homeSessionProjectionCache.keys()) {
+    if (!activeSessionIds.has(sessionId)) homeSessionProjectionCache.delete(sessionId);
+  }
   if (sameElementRefs(homeSessions, next)) return;
   homeSessions = next;
   bumpHomeStatusVersion();
@@ -1510,8 +1524,9 @@ function recomputeSessions(): void {
   for (const { session, physicalDeviceId } of byId.values()) {
     const prev = prevById.get(session.id);
     const projected = applyPendingTitlePreview(session);
-    if (!prev || !remoteSessionEqual(prev, projected)) pendingMessagePreviewSessionIds.add(session.id);
-    next.push(prev && remoteSessionEqual(prev, projected) ? prev : projected);
+    const same = prev !== undefined && remoteSessionEqual(prev, projected);
+    if (!same) pendingMessagePreviewSessionIds.add(session.id);
+    next.push(same ? prev : projected);
     sessionDeviceIndex.set(session.id, physicalDeviceId);
   }
   for (const sessionId of [...sessionLiveActivity.keys()]) {
@@ -1521,10 +1536,13 @@ function recomputeSessions(): void {
   // 权威标题落地、明确失败撤回、归档/删除、设备移除、clear() 才会丢掉。
   // 数组级同样调和:全部元素引用与序都未变时保留旧数组引用——useRemoteSessions 的
   // useSyncExternalStore 快照经 Object.is 即可短路,消费屏对无关 emit 零重渲染。
-  mergedSessions = sameElementRefs(mergedSessions, next) ? mergedSessions : next;
+  const sessionsChanged = !sameElementRefs(mergedSessions, next);
+  if (sessionsChanged) mergedSessions = next;
   mergedSessionById.clear();
   for (const session of mergedSessions) mergedSessionById.set(session.id, session);
-  reconcileHomeSessions();
+  // Usage-only patches bypass this projection and cannot change Home fields.
+  // Reuse the list comparison above to skip its scan and allocations entirely.
+  if (sessionsChanged) reconcileHomeSessions();
   let liveRowsReanchored = false;
   for (const session of mergedSessions) {
     bindPendingHostAnchorSendAt(session.id, session.userSendAt);
@@ -5056,6 +5074,7 @@ export const remoteSessionStore = {
     pendingTitlePreview.clear();
     mergedSessions = [];
     mergedSessionById.clear();
+    homeSessionProjectionCache.clear();
     if (homeSessions.length > 0) {
       homeSessions = [];
       bumpHomeStatusVersion();

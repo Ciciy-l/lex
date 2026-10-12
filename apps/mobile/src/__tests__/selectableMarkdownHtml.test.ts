@@ -155,6 +155,13 @@ describe('buildSelectableMarkdownHtml 本地路径不出死链', () => {
     expect(html).not.toContain('cindy://session/abc123');
     expect(html).not.toMatch(/<a[^>]*xdt-session-chip/);
   });
+
+  it('查不到标题的会话深链显示中性文字,不露内部任务 ID', () => {
+    const html = buildSelectableMarkdownHtml('cindy://session/03e0c22d-19db-4ac5-814f-1ea04040b471');
+    expect(html).toContain('xdt-session-chip');
+    expect(html).not.toContain('03e0c22d');
+    expect(html).not.toContain('b471');
+  });
 });
 
 describe('阅读器里「有下划线 = 可点」不得出现反例(DESIGN.md §14.5 规则 1)', () => {

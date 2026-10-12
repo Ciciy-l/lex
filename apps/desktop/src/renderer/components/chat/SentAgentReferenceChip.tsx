@@ -1,12 +1,13 @@
 import { Bot, CornerDownRight, FolderOpen, Globe2, Monitor, Plug } from 'lucide-react';
 
+import { i18n } from '@/i18n';
+import { sentMessageReferenceLabel } from '@/lib/sentMessageReferenceLabel';
+
 import type { AgentInputReference } from '../../../shared/agentInputQueue';
 import { InlineReferenceChip } from './InlineReferenceChip';
 import { ProjectLinkChip } from './ProjectLinkChip';
 import { QuoteChip } from './QuoteChip';
 import { SessionLinkChip } from './SessionLinkChip';
-
-const MESSAGE_REFERENCE_LABEL_MAX = 240;
 
 function oneLine(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
@@ -15,12 +16,11 @@ function oneLine(value: string): string {
 /** The compact label shared by the rich chip and collapsed-message projection. */
 export function sentAgentReferenceDisplayLabel(reference: AgentInputReference): string {
   if (reference.kind === 'message') {
-    const text = oneLine(reference.text ?? '') || reference.messageClientId;
-    return text.length <= MESSAGE_REFERENCE_LABEL_MAX
-      ? text
-      : `${text.slice(0, MESSAGE_REFERENCE_LABEL_MAX - 1)}…`;
+    return sentMessageReferenceLabel(reference.text ?? '') || i18n.t('chat.userMessage.messageLinkFallback');
   }
-  if (reference.kind === 'session') return oneLine(reference.title ?? '') || reference.sessionId;
+  if (reference.kind === 'session') {
+    return oneLine(reference.title ?? '') || i18n.t('chat.userMessage.sessionLinkFallback');
+  }
   if (reference.kind === 'project') return oneLine(reference.name) || reference.workingDir;
   if (reference.kind === 'browser-tab') return oneLine(reference.title ?? '') || reference.url;
   if (reference.kind === 'desktop-window') {

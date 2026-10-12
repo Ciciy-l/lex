@@ -9993,13 +9993,8 @@
       "orcaFromWorker": "Message from Worker",
       "expandLongMessage": "Show full message",
       "collapseLongMessage": "Collapse",
-      "sessionReference": {
-        "recent": "Recent",
-        "aroundAnchor": "Around linked message",
-        "messageCount_one": "{{count}} message",
-        "messageCount_other": "{{count}} messages",
-        "truncated": "truncated"
-      },
+      "sessionLinkFallback": "A session",
+      "messageLinkFallback": "Quoted message",
       "forkBusy": "Wait for the current response to finish before starting a new session from here",
       "editStopTimeout": "Timed out waiting for the task to stop — please try again",
       "editQueueNotEmpty": "This session has queued messages — send or remove them before editing",

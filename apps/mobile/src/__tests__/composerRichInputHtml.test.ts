@@ -548,6 +548,22 @@ describe('mobile composer rich input HTML', () => {
     }, true, { nodeIndex: 1, offset: 8 });
     expect(selection.anchorNode).toBe(children[2]);
     expect(selection.anchorOffset).toBe(8);
+    // Without focusAfter the caret is restored only while the editor already has focus.
+    let focusCalls = 0;
+    root.focus = () => { focusCalls += 1; };
+    const dictated = {
+      version: 1,
+      nodes: [{ type: 'text', text: 'dictated text' }],
+    };
+    // Replacing the DOM drops the live selection, as a real contenteditable does.
+    selection.removeAllRanges();
+    windowStub.cindyComposer?.applyDocument(dictated, false, { nodeIndex: 0, offset: 4 });
+    expect(selection.anchorNode).toBeNull();
+    Object.assign(documentStub, { activeElement: root });
+    windowStub.cindyComposer?.applyDocument(dictated, false, { nodeIndex: 0, offset: 4 });
+    expect(selection.anchorNode).toBe(children[0]);
+    expect(selection.anchorOffset).toBe(4);
+    expect(focusCalls).toBe(0);
     expect(legacyHtml).not.toContain('.flatMap(');
   });
 

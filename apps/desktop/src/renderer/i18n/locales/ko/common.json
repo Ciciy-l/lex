@@ -9976,13 +9976,8 @@
       "orcaFromWorker": "Worker에서 온 메시지",
       "expandLongMessage": "전체 메시지 보기",
       "collapseLongMessage": "접기",
-      "sessionReference": {
-        "recent": "최근 메시지",
-        "aroundAnchor": "링크된 메시지 주변",
-        "messageCount_one": "메시지 {{count}}개",
-        "messageCount_other": "메시지 {{count}}개",
-        "truncated": "일부 생략"
-      },
+      "sessionLinkFallback": "세션",
+      "messageLinkFallback": "인용한 메시지",
       "forkBusy": "현재 응답이 종료된 후 여기서 새 세션을 시작해 주세요",
       "editStopTimeout": "작업 중지 대기 시간이 초과되었습니다. 다시 시도하세요",
       "editQueueNotEmpty": "이 세션에 대기 중인 메시지가 있습니다. 먼저 전송하거나 제거한 후 편집하세요",

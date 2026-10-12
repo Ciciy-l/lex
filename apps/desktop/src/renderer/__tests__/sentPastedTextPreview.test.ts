@@ -152,17 +152,6 @@ describe('UserMessage pasted-text chip wiring', () => {
     expect(source.match(/handlePastedTextChipClick/g)?.length).toBe(3);
   });
 
-  it('S1b 两个调用点都拿到同一份 sessionReferences(不再有 undefined 占位)', () => {
-    // 召唤卡 prompt 曾经漏传 sessionReferences(PR #966 review);该插槽现已
-    // 随合并形态取消,$指令 正文并入普通正文调用点。sessionReferences 按
-    // sessionId / messageClientId 匹配、不依赖文本偏移,两处理应拿同一份。
-    // 展开态传 handler;收起态传 undefined,但两个调用点都保留同一份引用元数据。
-    expect(source).toMatch(
-      /sessionReferences,\s*\n\s*longMessageCollapsed \? undefined : handlePastedTextChipClick,/,
-    );
-    expect(source).toMatch(/sessionReferences,\s*\n\s*handlePastedTextChipClick,/);
-  });
-
   it('S2 ToolPayloadLightbox 以只读 text 模式挂载', () => {
     const lightboxStart = source.indexOf('{pastedTextPreview !== null && (');
     expect(lightboxStart).toBeGreaterThan(-1);

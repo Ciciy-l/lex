@@ -9976,13 +9976,8 @@
       "orcaFromWorker": "来自 Worker 的消息",
       "expandLongMessage": "展开全文",
       "collapseLongMessage": "收起",
-      "sessionReference": {
-        "recent": "最近消息",
-        "aroundAnchor": "链接消息附近",
-        "messageCount_one": "{{count}} 条消息",
-        "messageCount_other": "{{count}} 条消息",
-        "truncated": "已截断"
-      },
+      "sessionLinkFallback": "某个任务",
+      "messageLinkFallback": "引用的消息",
       "forkBusy": "当前任务正在运行，等结束后再从这里开启新任务",
       "editStopTimeout": "等待任务停止超时，请稍后重试",
       "editQueueNotEmpty": "任务有排队中的消息，先发送或移除队列内容后再编辑",

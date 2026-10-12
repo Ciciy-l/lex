@@ -9976,13 +9976,8 @@
       "orcaFromWorker": "Worker からのメッセージ",
       "expandLongMessage": "全文を表示",
       "collapseLongMessage": "折りたたむ",
-      "sessionReference": {
-        "recent": "最近のメッセージ",
-        "aroundAnchor": "リンクしたメッセージの前後",
-        "messageCount_one": "{{count}} 件のメッセージ",
-        "messageCount_other": "{{count}} 件のメッセージ",
-        "truncated": "一部省略"
-      },
+      "sessionLinkFallback": "セッション",
+      "messageLinkFallback": "引用したメッセージ",
       "forkBusy": "現在の応答が終了してから、ここから新しいセッションを始めてください",
       "editStopTimeout": "タスクの停止待ちがタイムアウトしました。もう一度お試しください",
       "editQueueNotEmpty": "このセッションには送信待ちのメッセージがあります。先に送信または削除してから編集してください",

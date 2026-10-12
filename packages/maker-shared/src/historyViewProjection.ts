@@ -1,6 +1,7 @@
 import { groupWorkRuns } from './workRunGrouping.js';
+import { isContinuationMessage } from './syntheticTrigger.js';
 import { describeToolUse } from './toolUseDescriptor.js';
-import { isAgentPlanToolName, isDeliveryProseText } from './messageRender.js';
+import { isAgentPlanToolName, isDeliveryProseText, isSteerUserRow } from './messageRender.js';
 import { isAgentTaskToolName } from './agentTask.js';
 import { extractPayloadToolResultMedia } from './payloadSummary.js';
 import { isOrcaCommunicationTool, messageContentToPreview, parseMessageToolUse } from './messageNormalize.js';
@@ -32,6 +33,27 @@ export function hasVisibleHistoryResult(content: unknown): boolean {
     return !!value && !Array.isArray(value) && (typeof value.xdt_card_id === 'string'
       || typeof value.xdt_anchor_card_id === 'string');
   } catch { return false; }
+}
+
+/**
+ * The renderers' turn-end signal (desktop `isCompletedAssistantMessage`, mobile
+ * `remoteMessageCompletesTurn`): cost and usage are stamped only when a turn ends,
+ * including an interrupted one whose `turnCompleted` is false. Pages count the
+ * items this projection folds, so a narrower seal here leaves every progress line
+ * of a long interrupted turn as its own page item while clients fold them all.
+ * The two renderers differ on usage without tokens (desktop seals, mobile does not);
+ * this takes the union. Folding only regroups: every visible row is still delivered
+ * and clients regroup it themselves, so an extra seal merely yields a larger page.
+ */
+export function completesHistoryTurn(row: HistoryMessageSource): boolean {
+  const meta = row.agentMeta as Record<string, unknown> | null | undefined;
+  if (!meta) return false;
+  const positive = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value > 0;
+  const money = (value: unknown) => positive((value as { amount?: unknown } | null)?.amount);
+  return meta.turnCompleted === true
+    || money(meta.userTurnCost) || money(meta.turnCost)
+    || positive(meta.userTurnCostUsd) || positive(meta.turnCostUsd)
+    || (typeof meta.turnUsageDetails === 'object' && meta.turnUsageDetails !== null);
 }
 
 function hasFileDelivery(row: HistoryMessageSource): boolean {
@@ -229,11 +251,11 @@ function projectHistorySourceView<T extends HistoryMessageSource>(
     return result;
   };
   const grouped = groupWorkRuns<Item, SourceItem<T>>(source, streaming, {
-    isUserBoundary: (item) => item.type === 'source' && item.row.role === 'user',
+    isUserBoundary: (item) => item.type === 'source' && item.row.role === 'user' && !isSteerUserRow(item.row),
+    isContinuationBoundary: (item) => item.type === 'source' && isContinuationMessage(item.row),
     isAnswer: (item) => item.type === 'source' && item.row.role === 'assistant'
       && typeof item.row.content === 'string' && !!item.row.content.trim(),
-    isSealedAnswer: (item) => item.type === 'source'
-      && (item.row.agentMeta as Record<string, unknown> | null)?.turnCompleted === true,
+    isSealedAnswer: (item) => item.type === 'source' && completesHistoryTurn(item.row),
     isCompactBoundary: (item) => item.type === 'source' && item.row.role === 'system',
     isActivity: (item): item is SourceItem<T> => item.type === 'source' && item.activity,
     isArchivable: (item): item is SourceItem<T> => item.type === 'source' && item.archivable,

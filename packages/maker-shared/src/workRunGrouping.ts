@@ -3,6 +3,8 @@ import { HISTORY_GAP_SPLIT_MS } from "./historyGap.js";
 /** Platform projections own item shapes, card visibility, timestamps and stable keys. */
 export interface WorkRunGroupingAdapter<TItem, TChild extends TItem> {
   isUserBoundary(item: TItem): boolean;
+  /** A recovery closes the interrupted attempt without requiring a final answer. */
+  isContinuationBoundary?(item: TItem): boolean;
   isAnswer(item: TItem): boolean;
   isSealedAnswer(item: TItem): boolean;
   isCompactBoundary(item: TItem): boolean;
@@ -43,7 +45,7 @@ export function groupWorkRuns<TItem, TChild extends TItem>(
   let turn: TItem[] = [];
   let turnStart: number | null = null;
   let previousEnd: number | null = null;
-  const flushTurn = (activeTail: boolean) => {
+  const flushTurn = (activeTail: boolean, resumed = false) => {
     if (turn.length === 0) return;
     if (activeTail && isSessionStreaming) {
       // A new run's status can arrive before its user row. A durable done seal still
@@ -80,19 +82,12 @@ export function groupWorkRuns<TItem, TChild extends TItem>(
       return;
     }
     out.push(
-      ...(groupAnsweredTurn(turn, turnStart, adapter) ??
+      ...(groupAnsweredTurn(turn, turnStart, adapter, resumed) ??
         groupActivityRuns(turn, turnStart, false, adapter)),
     );
     turn = [];
   };
   for (const item of items) {
-    if (adapter.isUserBoundary(item)) {
-      flushTurn(false);
-      out.push(item);
-      previousEnd = adapter.userBoundaryEnd(item, previousEnd);
-      turnStart = adapter.startTimestamp(item);
-      continue;
-    }
     const start = adapter.startTimestamp(item);
     if (
       previousEnd !== null &&
@@ -102,6 +97,14 @@ export function groupWorkRuns<TItem, TChild extends TItem>(
       flushTurn(false);
       // The user boundary on the far side of a gap cannot contribute to this duration.
       turnStart = null;
+    }
+    // A recovery closes only the contiguous loaded turn, never work across a gap.
+    if (adapter.isUserBoundary(item)) {
+      flushTurn(false, adapter.isContinuationBoundary?.(item) === true);
+      out.push(item);
+      previousEnd = adapter.userBoundaryEnd(item, previousEnd);
+      turnStart = start;
+      continue;
     }
     turn.push(item);
     const end = adapter.endTimestamp(item);
@@ -171,19 +174,23 @@ function groupAnsweredTurn<TItem, TChild extends TItem>(
   items: readonly TItem[],
   turnStart: number | null,
   adapter: WorkRunGroupingAdapter<TItem, TChild>,
+  resumed = false,
 ): TItem[] | null {
   const answers = new Set<number>();
+  const sealed: number[] = [];
   let lastAnswer = -1;
   for (let index = 0; index < items.length; index++) {
     if (!adapter.isAnswer(items[index])) continue;
     lastAnswer = index;
-    if (adapter.isSealedAnswer(items[index])) answers.add(index);
+    if (adapter.isSealedAnswer(items[index])) sealed.push(index);
   }
   if (lastAnswer < 0) return null;
 
-  if (answers.size > 0) {
+  if (sealed.length > 0) {
+    // Preserve Lex's ordinary sealed answers. Recovery alone supersedes short
+    // progress seals; delivery runs still remain visible with their introduction.
     let segmentStart = 0;
-    for (const sealedIndex of [...answers]) {
+    for (const sealedIndex of sealed) {
       let lastActivity = -1;
       for (let index = sealedIndex - 1; index >= segmentStart; index--) {
         if (adapter.isActivity(items[index])) {
@@ -199,12 +206,19 @@ function groupAnsweredTurn<TItem, TChild extends TItem>(
       ) {
         answerStart--;
       }
-      for (let index = answerStart; index <= sealedIndex; index++) {
-        if (adapter.isAnswer(items[index])) answers.add(index);
+      let keep = !resumed;
+      for (let index = answerStart; index <= sealedIndex && !keep; index++) {
+        keep =
+          adapter.isAnswer(items[index]) && !adapter.isArchivable(items[index]);
+      }
+      if (keep) {
+        for (let index = answerStart; index <= sealedIndex; index++) {
+          if (adapter.isAnswer(items[index])) answers.add(index);
+        }
       }
       segmentStart = sealedIndex + 1;
     }
-  } else {
+  } else if (!resumed) {
     if (
       items.some(
         (item, index) => index > lastAnswer && adapter.isActivity(item),
@@ -231,6 +245,9 @@ function groupAnsweredTurn<TItem, TChild extends TItem>(
     }
   }
 
+  // Recovery has superseded the interrupted attempt. Its short progress prose belongs
+  // in the work fold even when the last activity never produced a final answer.
+  // Error/interaction cards and delivery prose still follow isArchivable.
   const out: TItem[] = [];
   let run: TChild[] = [];
   let previousBoundary = turnStart;
