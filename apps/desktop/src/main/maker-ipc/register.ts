@@ -10614,7 +10614,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       },
       dispatch: async (pluginId, taskId, clientId, text) => {
         assertPlugin(pluginId);
-        const outcome = await sendToSessionInternal({ targetSessionId: taskId, clientId, message: text, resumeWithStoredPermissionMode: true, autoReviewUserText: { kind: 'delegated-continuation' }, forceQueue: true, onAccepted: async () => { assertPlugin(pluginId); await pluginTaskServiceForCurrentOwner!().assertDispatch(pluginId, taskId); assertPlugin(pluginId); } });
+        const outcome = await sendToSessionInternal({ targetSessionId: taskId, clientId, message: text, autoReviewUserText: { kind: 'delegated-continuation' }, forceQueue: true, resumeWithStoredPermissionMode: true, onAccepted: async () => { assertPlugin(pluginId); await pluginTaskServiceForCurrentOwner!().assertDispatch(pluginId, taskId); assertPlugin(pluginId); } });
         await awaitAgentInputQueueSnapshotPersistence(taskId);
         assertCurrent();
         return outcome;
