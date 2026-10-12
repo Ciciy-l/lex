@@ -3248,9 +3248,9 @@
     },
     "subagentModels": {
       "title": "Subagent",
-      "description": "设置 Claude Code 的默认模型，以及 Codex 的 Subagent 调配方式。",
+      "description": "设置 Claude Code、OMP 的默认 Subagent 模型，以及 Codex 的 Subagent 调配方式。",
       "unspecified": "跟随默认设置",
-      "hint": "Claude Code 的设置从新任务开始生效；Codex 智能调配会在 Codex 空闲后应用。",
+      "hint": "Claude Code 和 OMP 的设置从新任务开始生效；Codex 智能调配会在 Codex 空闲后应用。",
       "saveFailed": "保存 Subagent 设置失败",
       "smartRouting": {
         "label": "Codex 智能调配",
@@ -6018,6 +6018,8 @@
       "permissionModeDisabled": "远程 IM 使用 {{appName}} 桌面端确认策略，因此该权限模式不可用。"
     },
     "harness": {
+      "advanced": "高级设置",
+      "subagentAdvancedHint": "数值留空跟随原生默认值；并发数 0 表示不限。",
       "description": "按功能统一设置 Harness。各分组只展示对应引擎实际支持的选项。",
       "versions": "版本与升级",
       "versionsDescription": "检查各引擎官方稳定版，结果缓存 15 分钟。点击安装后才会下载；安装完成后由你手动重启 {{appName}} 生效，运行中的任务继续使用原版本。恢复操作使用此 {{appName}} 构建随附的基线版本。",
@@ -6043,7 +6045,7 @@
       "memoryBusy": "仍有 OMP 运行环境在使用这些记忆，请关闭相关 Agent 会话后重试。",
       "subagentModel": "默认 Subagent 模型",
       "inheritModel": "继承父任务模型",
-      "subagentDescription": "仅在父任务的供应商和 API 路由内使用指定模型，否则继承父模型。具名 Agent 显式指定的模型优先。数值留空使用原生默认值；并发为 0 表示不限制。",
+      "subagentDescription": "此偏好只在父任务的同一供应商、同一 API 路由可用时生效，否则继承父模型。具名 Agent 的显式模型设置优先。",
       "maxConcurrency": "Subagent 最大并发数",
       "maxRecursionDepth": "Subagent 最大嵌套深度",
       "compactionEnabled": "OMP 自动上下文压缩",

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PiPackageView } from '../../../../shared/piPackages';
@@ -62,6 +62,10 @@ describe('PiPackagesSection compact installed list', () => {
       expect(screen.getByText('sample-extension-6')).toBeTruthy();
     });
     expect(screen.getAllByRole('switch')).toHaveLength(6);
+    const card = screen.getByRole('region', { name: 'settings.piPackages.title' });
+    expect(within(card).getByRole('button', { name: 'settings.piPackages.install' })).toBeTruthy();
+    expect(within(card).getByText('settings.piPackages.inspectionHint')).toBeTruthy();
+    expect(within(card).getAllByRole('switch')).toHaveLength(6);
     expect(screen.getAllByRole('button', { name: 'settings.piPackages.showDetails' })).toHaveLength(6);
     const noticeCountLabels = screen.getAllByText('settings.piPackages.rowStatus.noticeCount');
     expect(noticeCountLabels.filter((element) => element.getAttribute('aria-hidden') !== 'true')).toHaveLength(1);

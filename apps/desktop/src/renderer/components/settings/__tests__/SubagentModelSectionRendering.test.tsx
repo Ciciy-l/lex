@@ -209,6 +209,14 @@ afterEach(() => {
 });
 
 describe('SubagentModelSection standard panel contract (Claude row)', () => {
+  it('keeps an additional engine visible if the legacy settings fail to load', async () => {
+    settingsGet.mockRejectedValueOnce(new Error('unavailable'));
+    render(<SubagentModelSection><button>OMP model</button></SubagentModelSection>);
+    await waitFor(() => expect(settingsGet).toHaveBeenCalled());
+    expect(screen.getByRole('button', { name: 'OMP model' })).toBeTruthy();
+    expect(screen.queryByTestId('model-selector-cc')).toBeNull();
+  });
+
   it('mounts the standard selector with provider sections enabled', async () => {
     render(<SubagentModelSection />);
     const selector = await screen.findByTestId('model-selector-cc');

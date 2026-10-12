@@ -5,7 +5,7 @@ import { MemorySection } from './MemorySection';
 import { SubagentModelSection } from './SubagentModelSection';
 import { CompactionSection } from './CompactionSection';
 import { PiPackagesSection } from './PiPackagesSection';
-import { OmpHarnessControls, useOmpHarnessSettings } from './OmpHarnessControls';
+import { OmpHarnessControls, OMP_MEMORY_KEYS, useOmpHarnessSettings } from './OmpHarnessControls';
 
 export function HarnessSettingsSection() {
   const { t } = useTranslation();
@@ -22,16 +22,40 @@ export function HarnessSettingsSection() {
         <UserPromptSection />
       </section>
       <section id="settings-search-target-personalization-memory">
-        <MemorySection />
-        <OmpHarnessControls group="memory" controller={omp} />
+        <MemorySection
+          additionalSettings={{
+            customized:
+              omp.state?.customizedKeys.some((key) =>
+                OMP_MEMORY_KEYS.includes(key as (typeof OMP_MEMORY_KEYS)[number]),
+              ) ?? false,
+            pending: omp.pending || !omp.state,
+            reset: () => {
+              const state = omp.state;
+              return state
+                ? omp.run(
+                    () =>
+                      window.electronAPI.maker.ompHarness.reset(
+                        OMP_MEMORY_KEYS,
+                        state.ownerGeneration,
+                      ),
+                    null,
+                  )
+                : Promise.resolve(false);
+            },
+          }}
+        >
+          <OmpHarnessControls group="memory" controller={omp} />
+        </MemorySection>
       </section>
       <section id="settings-search-target-personalization-subagents">
-        <SubagentModelSection />
-        <OmpHarnessControls group="subagents" controller={omp} />
+        <SubagentModelSection>
+          <OmpHarnessControls group="subagents" controller={omp} />
+        </SubagentModelSection>
       </section>
       <section id="settings-search-target-personalization-compaction">
-        <CompactionSection />
-        <OmpHarnessControls group="compaction" controller={omp} />
+        <CompactionSection>
+          <OmpHarnessControls group="compaction" controller={omp} />
+        </CompactionSection>
       </section>
       <section id="settings-pi-extensions" className="flex flex-col gap-[14px]">
         <h2 className="text-16 font-medium text-[var(--settings-section-title)]">

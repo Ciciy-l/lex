@@ -5,6 +5,7 @@
  * 原生 settings.json 的 compaction.reserveTokens。renderer 只负责渲染和提交设置。
  */
 
+import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useCompactionSettings, type CompactionAgent } from '@/hooks/useCompactionSettings';
@@ -40,14 +41,18 @@ function CompactionCard({ agent, pct, isCustomized, resetPct, setPct }: Compacti
               void resetPct()
                 .then(() => toast.success(t('settings.defaults.restored')))
                 .catch((err) => {
-                  toast.error(err instanceof Error ? err.message : t('settings.defaults.restoreFailed'));
+                  toast.error(
+                    err instanceof Error ? err.message : t('settings.defaults.restoreFailed'),
+                  );
                 });
             }}
           />
         </div>
       </div>
 
-      <p className="text-12 leading-[1.5] text-[var(--text-secondary)]">{t(`${key}.description`)}</p>
+      <p className="text-12 leading-[1.5] text-[var(--text-secondary)]">
+        {t(`${key}.description`)}
+      </p>
 
       <div className="flex items-center gap-[14px]">
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
@@ -77,12 +82,10 @@ function CompactionCard({ agent, pct, isCustomized, resetPct, setPct }: Compacti
   );
 }
 
-export function CompactionSection() {
+export function CompactionSection({ children }: { children?: ReactNode }) {
   const { t } = useTranslation();
   const claude = useCompactionSettings('claude');
   const pi = useCompactionSettings('pi');
-
-  if (claude.pct === null || pi.pct === null) return null;
 
   return (
     <div className="flex flex-col gap-[14px]">
@@ -95,20 +98,25 @@ export function CompactionSection() {
         </p>
       </div>
 
-      <CompactionCard
-        agent="claude"
-        pct={claude.pct}
-        isCustomized={claude.isCustomized}
-        resetPct={claude.resetPct}
-        setPct={claude.setPct}
-      />
-      <CompactionCard
-        agent="pi"
-        pct={pi.pct}
-        isCustomized={pi.isCustomized}
-        resetPct={pi.resetPct}
-        setPct={pi.setPct}
-      />
+      {claude.pct !== null && (
+        <CompactionCard
+          agent="claude"
+          pct={claude.pct}
+          isCustomized={claude.isCustomized}
+          resetPct={claude.resetPct}
+          setPct={claude.setPct}
+        />
+      )}
+      {pi.pct !== null && (
+        <CompactionCard
+          agent="pi"
+          pct={pi.pct}
+          isCustomized={pi.isCustomized}
+          resetPct={pi.resetPct}
+          setPct={pi.setPct}
+        />
+      )}
+      {children}
     </div>
   );
 }
