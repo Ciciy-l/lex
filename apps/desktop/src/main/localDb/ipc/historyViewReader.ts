@@ -4,7 +4,7 @@ import { isDeliveryProseText } from '@cindy/maker-shared/message-render';
 import { parseMessageToolUse } from '@cindy/maker-shared/message-normalize';
 import {
   HISTORY_VIEW_PAGE_BYTES, HISTORY_VIEW_PAGE_ITEMS, HISTORY_DETAIL_PAGE_BYTES,
-  projectHistoryView, historySubagentScopes, mapHistoryViewMessages, historyWorkSummaries, type HistoryMessageSource, type HistoryViewItem,
+  completesHistoryTurn, projectHistoryView, historySubagentScopes, mapHistoryViewMessages, historyWorkSummaries, type HistoryMessageSource, type HistoryViewItem,
   type HistoryViewPage, type HistoryDetailPage, type HistoryWorkReference,
 } from '@cindy/maker-shared/message-window';
 
@@ -94,8 +94,9 @@ export function createHistoryViewReader<T extends HistoryMessageSource>(deps: Hi
         // A page may start at a sealed answer. Keep that answer as right-hand
         // context when reading the preceding page, or an older progress seal
         // would become the "last answer" and escape its completed work group.
-        const context = beforeAnchor?.role === 'assistant'
-          && (beforeAnchor.agentMeta as { turnCompleted?: unknown } | null)?.turnCompleted === true
+        // Uses the projection's seal, so a cost-stamped interrupted answer still
+        // closes its turn when it is the first item of the newer page.
+        const context = beforeAnchor?.role === 'assistant' && completesHistoryTurn(beforeAnchor)
           ? beforeAnchor : undefined;
         const projected = projectHistoryView(
           [...raw.slice(boundary), ...live, ...(context ? [context] : [])],

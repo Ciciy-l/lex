@@ -162,6 +162,7 @@ import { createOfflineMirrorWipeQueue } from '@/device-link/offlineMirrorWipeQue
 import { hasMoreOlderMessages } from '@/session/messagePaging';
 import type { InputProjection, PendingInteraction, RemoteMessage } from '@/session/types';
 import { createVisualMockDeviceLinkContext, seedVisualMockStore } from '@/debug/visualMock';
+import { meterDeviceLinkInvokes, recordDeviceLinkPush } from '@/debug/deviceLinkTraffic';
 
 export interface DeviceLinkContextValue {
   status: DeviceLinkStatus;
@@ -954,6 +955,7 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
         requestTimeoutMs: 15_000,
       },
     });
+    meterDeviceLinkInvokes(client);
     clientRef.current = client;
     const catalogRefresh = createDeviceCatalogRefresh({
       connectionEpoch: () => connectionEpochRef.current,
@@ -1646,6 +1648,7 @@ export function routeFrame(env: Envelope, handlers: {
   const sharedPeer = parseSharedTaskPeer(env.src);
   if (sharedPeer && !isSharedTaskPushAllowed(env.src, (env.payload as PushPayload).payload, handlers.connectionEpoch)) return;
   const push = env.payload as PushPayload;
+  recordDeviceLinkPush(push.channel, push.payload);
   dispatchCredentialSwitchOutcome(env.src, push.channel, push.payload);
   if (push.channel === 'maker:model-favorites:changed') {
     for (const listener of remoteFavoritesChangedListeners) listener(env.src);

@@ -343,6 +343,7 @@ import {
   resolveWorktreeEligibility,
   shouldAcceptWorktreeBranchListResult,
   shouldBlockNewSessionCreateForWorktree,
+  settleWorktreeEligibilityForDisplay,
   shouldShowWorktreeToggle,
   worktreeEligibilityForTarget,
   worktreeEligibilityCaptionKey,
@@ -350,6 +351,7 @@ import {
   worktreeSourceBranchFromPreference,
   type NewSessionWorktreeEligibility,
   type NewSessionWorktreeProbeSnapshot,
+  type NewSessionWorktreeSettledSnapshot,
 } from '@/session/newSessionWorktree';
 import { mobileAgentLabel, mobileAgentVendor } from '@/session/sessionAgentSwitch';
 import { MobileModelIconMark } from '@/session/MobileProviderMark';
@@ -652,6 +654,7 @@ export default function NewRemoteSessionScreen() {
   const worktreeBranchRenderedRef = useRef({ key: '', sourceBranch: '' });
   const worktreeBranchTargetRef = useRef({ deviceId: '', workingDir: '' });
   const worktreeEligibilityRef = useRef<NewSessionWorktreeEligibility>({ status: 'probing' });
+  const worktreeSettledRef = useRef<NewSessionWorktreeSettledSnapshot | null>(null);
   const worktreeSourceBranchRef = useRef('HEAD');
   const worktreeSeedSeqRef = useRef(0);
   const [worktreeSeedRetryNonce, setWorktreeSeedRetryNonce] = useState(0);
@@ -1365,12 +1368,21 @@ export default function NewRemoteSessionScreen() {
       : [],
     [worktreeBranchList, worktreeBranchListMatchesTarget],
   );
-  // 老被控端通常隐藏开关；若工作端旧镜像仍为 ON，则保留显式关闭入口，避免
-  // fail-closed 后既不能创建、也不能解除状态。
+  // 开关行按「已有定论」显示：首次探测完成前不出现，重连重探沿用上次定论不闪。
+  const worktreeSettled = settleWorktreeEligibilityForDisplay(
+    worktreeEligibility,
+    worktreeTarget,
+    worktreeSettledRef.current,
+  );
+  // 只在提交后记录「已展示的定论」：被放弃的并发 render 不能污染它。
+  useLayoutEffect(() => {
+    worktreeSettledRef.current = worktreeSettled;
+  }, [worktreeSettled]);
   const worktreeRowVisible = shouldShowWorktreeToggle({
     workspaceKind: draft.workspaceKind,
     workingDir: draft.workingDir,
     eligibility: worktreeEligibility,
+    settled: worktreeSettled?.eligibility ?? null,
     enabled: worktreeEnabled,
   });
   const worktreePreferenceSaving =
@@ -1420,7 +1432,11 @@ export default function NewRemoteSessionScreen() {
   // 2026-09-11: show this draft's explicit choice, otherwise the last host mirror.
   // Eligibility failures still cannot silently downgrade an enabled worktree.
   const worktreeChecked = worktreeEnabled;
-  const worktreeCaptionKey = worktreeEligibilityCaptionKey(worktreeEligibility);
+  // caption 会多占一行、把上方选择器顶起，只在它解释「已勾选但创建被拦」时显示：
+  // 探测中不显示；未勾选时创建不受资格影响，恢复中 / 探测失败也不显示。
+  const worktreeCaptionKey = worktreeEnabled && worktreeEligibility.status !== 'probing'
+    ? worktreeEligibilityCaptionKey(worktreeEligibility)
+    : null;
   const worktreeCreateBlocked = shouldBlockNewSessionCreateForWorktree({
     applicable: worktreeApplicable,
     enabled: worktreeEnabled,
@@ -1436,7 +1452,6 @@ export default function NewRemoteSessionScreen() {
     ));
   const worktreeControlCaptionKey = worktreeCaptionKey
     ?? (worktreePreferenceAuthorityUnknown ? 'session.new.worktreeSettingsSyncFailed' : null)
-    ?? (worktreePreferenceSaving ? 'session.new.worktreeSettingsSaving' : null)
     ?? (worktreeBranchPreferenceError ? 'session.new.worktreeBranchSyncFailed' : null);
   const resolveWorktreeCreateErrorKey = useCallback(() => (
     worktreeEligibilityCaptionKey(worktreeEligibilityRef.current)
@@ -6009,7 +6024,11 @@ export default function NewRemoteSessionScreen() {
                     </Text>
                   ) : null}
                 </View>
-              ) : null}
+              ) : (
+                // 开关行不显示时占住同样高度：检测结果回来后开关出现，上方选择器
+                // 也不会被顶起；同时作为选择器与输入框之间的留白。
+                <View style={styles.worktreeSlotPlaceholder} testID="newSession.worktreeSlot" />
+              )}
             </View>
 
             {!nativeSelectionSheet && browseOpen ? (
@@ -6979,6 +6998,9 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   // 内缩 5pt 后视觉高 34，既不牺牲触控面积，也不让「worktree」重新显得臃肿。
   worktreeToggleWrap: {
     gap: spacing.xs,
+  },
+  worktreeSlotPlaceholder: {
+    height: 44,
   },
   worktreeControlTouchWrap: {
     alignItems: 'center',

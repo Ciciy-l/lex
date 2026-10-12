@@ -984,6 +984,56 @@ describe('buildRenderItems — key stability', () => {
     expect(segment.toolCalls.map((tool) => tool.clientId)).toEqual(['t1', 't2']);
   });
 
+  it.each(['none', 'TodoWrite', 'update_plan'])(
+    'keeps ordinary history and %s plans unchanged in an incomplete window', (source) => {
+      const messages: ChatMessage[] = [mkUser('u1')];
+      for (let index = 0; index < 80; index += 1) {
+        messages.push(mkTool(`read-${index}`, 'Read'), mkResult(`result-${index}`, `tu-read-${index}`));
+      }
+      if (source === 'TodoWrite') {
+        messages.push(mkTool('plan', source, { todos: [
+          { content: 'Inspect', status: 'completed' },
+          { content: 'Verify', status: 'pending' },
+        ] }));
+      } else if (source === 'update_plan') {
+        messages.push(mkTool('plan', source, { plan: [
+          { step: 'Inspect', status: 'completed' },
+          { step: 'Verify', status: 'pending' },
+        ] }));
+      }
+      messages.push(mkAssistant('answer', 'Done'));
+      const complete = buildRenderItems(messages);
+      const partial = buildRenderItems(messages, undefined, undefined, { historyWindowIncomplete: true });
+      expect(partial).toEqual(complete);
+      expect(partial.items.filter((item) => item.type === 'agent_plan')).toHaveLength(source === 'none' ? 0 : 1);
+    },
+  );
+
+  it('keeps independent Task plans with delayed results across user turns', () => {
+    const messages: ChatMessage[] = [];
+    const lateResults: ChatMessage[] = [];
+    for (let turn = 0; turn < 6; turn += 1) {
+      messages.push(mkUser(`user-${turn}`), mkTool(`plan-${turn}`, 'TaskList'));
+      lateResults.push(mkResult(`result-${turn}`, `tu-plan-${turn}`, JSON.stringify({ tasks: [
+        { id: `${turn}-1`, subject: `Inspect ${turn}`, status: 'in_progress' },
+        { id: `${turn}-2`, subject: `Verify ${turn}`, status: 'pending' },
+      ] })));
+      messages.push(mkAssistant(`answer-${turn}`, 'Progress'));
+    }
+    messages.push(...lateResults.reverse());
+    const plans = buildRenderItems(messages, undefined, undefined, { historyWindowIncomplete: true })
+      .items.filter((item) => item.type === 'agent_plan');
+    expect(plans.map((plan) => ({ key: plan.key, todos: plan.todos }))).toEqual(
+      Array.from({ length: 6 }, (_, turn) => ({
+        key: `todo-plan-${turn}`,
+        todos: [
+          { content: `Inspect ${turn}`, status: 'in_progress' },
+          { content: `Verify ${turn}`, status: 'pending' },
+        ],
+      })),
+    );
+  });
+
   it('waits for older Task history before showing a partial inline plan', () => {
     const first = mkTool('tc2', 'TaskCreate', { subject: 'Fix renderer' });
     const second = mkTool('tc3', 'TaskCreate', { subject: 'Run tests' });
@@ -1059,6 +1109,71 @@ describe('buildRenderItems — key stability', () => {
         { content: 'Run tests', status: 'pending' },
       ],
     });
+  });
+
+  it('keeps late Task results attached after a long history prefix', () => {
+    const messages: ChatMessage[] = [
+      mkUser('u1', 'Show the current tasks'),
+      mkTool('task-list', 'TaskList'),
+    ];
+    for (let index = 0; index < 200; index += 1) {
+      messages.push(mkAssistant(`history-${index}`, `history ${index}`));
+    }
+    messages.push(mkResult(
+      'r-task-list-late',
+      'tu-task-list',
+      JSON.stringify({
+        tasks: [
+          { id: '1', subject: 'Inspect renderer', status: 'in_progress' },
+          { id: '2', subject: 'Run tests', status: 'pending' },
+        ],
+      }),
+    ));
+
+    const plans = buildRenderItems(messages, undefined, undefined, {
+      historyWindowIncomplete: true,
+    }).items.filter(
+      (item): item is Extract<RenderItem, { type: 'agent_plan' }> => item.type === 'agent_plan',
+    );
+
+    expect(plans).toHaveLength(1);
+    expect(plans[0]?.todos).toEqual([
+      { content: 'Inspect renderer', status: 'in_progress' },
+      { content: 'Run tests', status: 'pending' },
+    ]);
+  });
+
+  it('black-box: repeated history-window renders keep one stable plan result', () => {
+    const messages: ChatMessage[] = [
+      mkUser('u-blackbox', 'Review the task list'),
+      mkTool('task-list', 'TaskList'),
+    ];
+    for (let index = 0; index < 200; index += 1) {
+      messages.push(mkAssistant(`blackbox-history-${index}`, `history ${index}`));
+    }
+    messages.push(mkResult(
+      'r-task-list-blackbox',
+      'tu-task-list',
+      JSON.stringify({
+        tasks: [
+          { id: 'blackbox-task-1', subject: 'Keep the task visible', status: 'in_progress' },
+          { id: 'blackbox-task-2', subject: 'Keep the second task visible', status: 'pending' },
+        ],
+      }),
+    ));
+
+    const render = () => buildRenderItems(messages, undefined, undefined, {
+      historyWindowIncomplete: true,
+    }).items;
+    const first = render();
+    const second = render();
+    const summarize = (items: RenderItem[]) => items.map((item) => {
+      if (item.type !== 'agent_plan') return item.type;
+      return { type: item.type, key: item.key, todos: item.todos };
+    });
+
+    expect(summarize(second)).toEqual(summarize(first));
+    expect(second.filter((item) => item.type === 'agent_plan')).toHaveLength(1);
   });
 
   it('renders a new Task plan after a real user turn despite an older orphan update', () => {

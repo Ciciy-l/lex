@@ -9,7 +9,6 @@ import type { RemoteInvoke } from '@/device-link/mobileMakerTransport';
 import {
   estimateMobileReferenceTokens,
   extractMobileSessionReferences,
-  formatMobileSessionReferenceMetadata,
   MAX_MOBILE_REFERENCE_MESSAGES,
   MobileSessionReferenceError,
   canFallbackToStoredMobileSessionReferenceSnapshot,
@@ -173,16 +172,6 @@ describe('mobile session-reference links', () => {
 
     expect(prepared).toEqual({ text: 'plain text after editing' });
     expect(invoke).not.toHaveBeenCalled();
-  });
-
-  it('formats the persisted range summary without referenced message bodies', () => {
-    expect(formatMobileSessionReferenceMetadata({
-      sessionId: 'source',
-      messageClientId: 'anchor',
-      range: 'around-anchor',
-      messageCount: 4,
-      truncated: true,
-    })).toBe('链接附近 · 4 条 · 已截断');
   });
 
   it('falls back to raw link text when the target does not support references', async () => {

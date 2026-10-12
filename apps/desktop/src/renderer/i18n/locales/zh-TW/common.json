@@ -9975,13 +9975,8 @@
       "orcaFromWorker": "來自 Worker 的訊息",
       "expandLongMessage": "展開全文",
       "collapseLongMessage": "收起",
-      "sessionReference": {
-        "recent": "最近訊息",
-        "aroundAnchor": "連結訊息附近",
-        "messageCount_one": "{{count}} 條訊息",
-        "messageCount_other": "{{count}} 條訊息",
-        "truncated": "已截斷"
-      },
+      "sessionLinkFallback": "某個任務",
+      "messageLinkFallback": "引用的訊息",
       "forkBusy": "當前任務正在執行，等結束後再從這裡開啟新任務",
       "editStopTimeout": "等待任務停止超時，請稍後重試",
       "editQueueNotEmpty": "任務有排隊中的訊息，先傳送或移除佇列內容後再編輯",

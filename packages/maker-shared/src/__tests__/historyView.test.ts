@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { projectHistoryView } from '../historyViewProjection.js';
-import { historyWorkSummaries, isHistoryViewUnavailable, readHistoryWorkDetails, type HistoryMessageSource } from '../historyView.js';
+import { CONTINUE_AFTER_ERROR_PROMPT } from '../syntheticTrigger.js';
+import { historyViewLeaves, historyWorkSummaries, isHistoryViewUnavailable, readHistoryWorkDetails, type HistoryMessageSource } from '../historyView.js';
 
 function row(id: number, role: string, content: unknown): HistoryMessageSource {
   return { id: String(id), clientId: `c${id}`, role, content,
@@ -8,6 +9,28 @@ function row(id: number, role: string, content: unknown): HistoryMessageSource {
 }
 
 describe('history reading projection', () => {
+  it.each([false, true])('archives interrupted progress in recoverable history ranges (streaming=%s)', (streaming) => {
+    const rows = [row(0, 'user', 'Work'), row(1, 'assistant', 'Checking the build'),
+      row(2, 'thinking', 'detail'), row(3, 'error', { message: 'Usage limit reached' }),
+      row(4, 'user', { text: CONTINUE_AFTER_ERROR_PROMPT }),
+      row(5, 'assistant', 'Resuming'), row(6, 'thinking', 'more detail')];
+    if (!streaming) rows.push({ ...row(7, 'assistant', 'Done'), agentMeta: { turnCompleted: true } });
+    const projected = projectHistoryView(rows, streaming);
+    expect(projected.slice(0, 4)).toMatchObject([
+      { type: 'messages', messages: [{ id: '0' }] },
+      { type: 'work', summary: { firstMessageId: '1', lastMessageId: '2', messageCount: 2, isStreaming: false },
+        children: [{ type: 'messages', messages: [{ id: '1' }] },
+          { type: 'work', summary: { firstMessageId: '2', lastMessageId: '2' } }] },
+      { type: 'messages', messages: [{ id: '3' }] },
+      { type: 'messages', messages: [{ id: '4' }] },
+    ]);
+    expect(historyWorkSummaries(projected).map((summary) => summary.firstMessageId))
+      .toEqual(streaming ? ['2', '6', '6'] : ['2', '6']);
+    expect(projected.at(-1)).toMatchObject(streaming
+      ? { type: 'work', summary: { isStreaming: true } }
+      : { type: 'messages', messages: [{ id: '7' }] });
+  });
+
   it.each(['<tool_use_error>Permission denied</tool_use_error>', { isError: true, text: 'Failed' }])('keeps ordinary tool failures in the same recoverable activity range', (content) => {
     const rows = [row(0, 'user', 'Work'), row(1, 'thinking', 'reasoning'),
       { ...row(2, 'tool_use', { toolName: 'Read', input: {} }), toolUseId: 't' },
@@ -63,6 +86,35 @@ describe('history reading projection', () => {
       row(2, 'thinking', 'new')];
     expect(projectHistoryView(rows, true).filter((item) => item.type === 'work')
       .map((item) => item.summary.isStreaming)).toEqual([false, true]);
+  });
+
+  // Pages count projected items; clients fold progress before a cost-stamped
+  // interrupted answer, so each progress line must not cost a page item.
+  it.each([
+    { turnCompleted: false, turnCost: { amount: 539.3, currency: 'USD' } },
+    { userTurnCostUsd: 0.4 },
+    { turnUsageDetails: { totalTokens: 12 } },
+  ])('folds progress before an answer that carries end-of-turn cost or usage (%j)', (meta) => {
+    const rows = [row(0, 'user', 'Work'), row(1, 'assistant', 'Still building'), row(2, 'thinking', 'wait'),
+      row(3, 'assistant', 'Still building'), row(4, 'thinking', 'wait'),
+      { ...row(5, 'user', 'Is it fine?'), agentMeta: { delivery: 'steer' } },
+      { ...row(6, 'assistant', 'Checking CI'), agentMeta: { assistantPhase: 'commentary', ...meta } },
+      row(7, 'thinking', 'check'), row(8, 'user', 'Next')];
+    const projected = projectHistoryView(rows, false, true);
+    expect(projected.map((item) => item.type === 'work' ? `work:${item.summary.firstMessageId}` : item.messages[0].id))
+      .toEqual(['0', 'work:1', '5', '6', 'work:7', '8']);
+    expect(projected[1]).toMatchObject({ summary: { lastMessageId: '4' } });
+  });
+
+  // Mobile does not seal on usage without tokens; it regroups the delivered rows itself.
+  it('still delivers every progress line when only a token-less usage record seals the turn', () => {
+    const rows = [row(0, 'user', 'Work'), row(1, 'assistant', 'Still building'), row(2, 'thinking', 'wait'),
+      { ...row(3, 'assistant', 'Checking'), agentMeta: { turnUsageDetails: { totalTokens: 0, turnDurationMs: 900 } } },
+      row(4, 'user', 'Next')];
+    const projected = projectHistoryView(rows, false, true);
+    expect(projected[1]).toMatchObject({ type: 'work', children: [{ type: 'messages', messages: [{ id: '1' }] }, { type: 'work' }] });
+    expect(historyViewLeaves(projected).flatMap((item) => item.type === 'messages' ? item.messages.map((message) => message.id) : []))
+      .toEqual(['0', '1', '3', '4']);
   });
 });
 

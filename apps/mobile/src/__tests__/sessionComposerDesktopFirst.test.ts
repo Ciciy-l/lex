@@ -67,7 +67,7 @@ describe('mobile session composer desktop-first surface', () => {
     const voiceStart = source.indexOf('const startVoiceRecording = useCallback(async () => {');
     const voiceEnd = source.indexOf('const removeRemoteFileAttachment = useCallback', voiceStart);
     const voiceSource = source.slice(voiceStart, voiceEnd);
-    const finishVoiceStart = source.indexOf('const finishVoiceRecording = useCallback(async (options: { sendAfterTranscribe?: boolean } = {}) => {');
+    const finishVoiceStart = source.indexOf('const finishVoiceRecording = useCallback(async (options: { sendAfterTranscribe?: boolean; focusInput?: boolean } = {}) => {');
     const finishVoiceEnd = source.indexOf('const cancelVoiceRecording = useCallback', finishVoiceStart);
     const finishVoiceSource = source.slice(finishVoiceStart, finishVoiceEnd);
     const sharedSource = readTextLf(resolve(process.cwd(), 'src/session/MobileComposerInputRow.tsx'), 'utf8');
@@ -519,7 +519,6 @@ describe('mobile session composer desktop-first surface', () => {
     expect(source).toContain('placeholderTextColor={colors.textTertiary}');
     expect(source).toContain('voiceDraftListeningText: {\n    color: colors.textTertiary,');
     expect(source).not.toContain('voiceDraftListeningText: {\n    color: colors.statusReady,');
-    expect(source).toContain('finishVoiceRecordingRef.current?.();');
     expect(source).toContain('const voiceStopInFlightRef = useRef(false);');
     expect(voiceSource).toContain('|| voiceStopInFlightRef.current');
     expect(finishVoiceSource).toContain('if (voiceStopInFlightRef.current) return;');
@@ -530,6 +529,11 @@ describe('mobile session composer desktop-first surface', () => {
       finishVoiceSource.indexOf('const latestDraft = await controller.stop();'),
     );
     expect(finishVoiceSource).toContain('voiceStopInFlightRef.current = false;');
+    // Only a tap on the input that stops dictation raises the keyboard; mic-button,
+    // release-to-send and automatic stops keep it closed.
+    expect(finishVoiceSource).toContain('if (options.focusInput) inputBeforeStop.applyDocumentAndFocusSelection(composerDocumentRef.current, insertionEnd);');
+    expect(finishVoiceSource).toContain('else inputBeforeStop.applyDocumentAndSetSelection(composerDocumentRef.current, insertionEnd);');
+    expect(source).toContain('finishVoiceRecordingRef.current?.({ focusInput: true });');
     expect(composerInputSource).toContain('floatingVoiceButton={voiceUiAvailable ? controls.voiceButton : undefined}');
     expect(composerInputSource).not.toContain('floatingVoiceButtonStyle=');
     expect(composerInputSource).toContain('voicePlacement={composerVoicePlacement}');

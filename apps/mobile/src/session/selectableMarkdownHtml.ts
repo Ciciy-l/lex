@@ -5,7 +5,7 @@ import {
   type MobileMarkdownInline,
 } from '@/session/messageMarkdown';
 import { tokenizeCode } from '@/session/codeHighlight';
-import { parseSessionDeepLinkUrl, shortSessionId } from '@/session/sessionLinks';
+import { parseSessionDeepLinkUrl } from '@/session/sessionLinks';
 import { buildKatexLoaderJs } from '@/session/mathWebViewHtml';
 import { repairMermaidSource } from '@cindy/maker-shared/mermaid-autofix';
 // lineHeight 取别名:本模块内 `lineHeight` 是正文行高的局部变量(来自 options)。
@@ -493,7 +493,7 @@ function renderInline(inline: MobileMarkdownInline, ctx: RenderContext = {}): st
           const title =
             explicit ??
             ctx.sessionLinkTitles?.[session.sessionId] ??
-            i18n.t('message.renderer.sessionChipFallback', { id: shortSessionId(session.sessionId) });
+            i18n.t('message.renderer.sessionChipFallback');
           return `<span class="xdt-session-chip">›&nbsp;${escapeHtml(title)}</span>`;
         }
         // 本地路径(`[README.md](/abs/README.md:17)` 与正文裸写的路径)、mailto 等:

@@ -97,6 +97,7 @@ describe('incremental mobile Markdown parsing', () => {
     const fixtures = [
       '# heading\n\nplain text\n\n- item\n\nend',
       'intro\n\n```ts\nconst x = 1;\n```\n\nresult',
+      'intro\n\n~~gone~~ stays\n\n~~~text\n~~literal~~\n~~\n~~~\n\nend',
       'intro\n\n$$\nx = 1\n$$\n\nresult',
       'prefix \\(x + 1\\) suffix\n\nnext',
       '<!-- hidden\n\ntext -->\n\nvisible',
@@ -272,17 +273,32 @@ describe('messageMarkdown', () => {
     ]);
   });
 
-  it('parses tilde fenced code blocks with info strings', () => {
+  it.each(['', '  '])('keeps line-leading strikethrough as paragraph text with indent %j', (indent) => {
+    expect(parseMobileMarkdown(`${indent}~~gone~~ stays\nnext`)).toEqual([
+      {
+        type: 'paragraph',
+        key: 'p:2:0',
+        inlines: [
+          { type: 'strikethrough', text: 'gone' },
+          { type: 'text', text: ' stays\nnext' },
+        ],
+      },
+    ]);
+  });
+
+  it('parses tilde fenced code blocks with info strings and keeps shorter tilde runs inside', () => {
     expect(parseMobileMarkdown([
       '~~~bash title="cleanup"',
       'rm -rf /tmp/cache',
+      '~~literal~~',
+      '~~',
       '~~~',
     ].join('\n'))).toEqual([
       {
         type: 'code',
         key: 'code:0:0',
         language: 'bash',
-        text: 'rm -rf /tmp/cache',
+        text: 'rm -rf /tmp/cache\n~~literal~~\n~~',
       },
     ]);
   });

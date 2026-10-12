@@ -259,6 +259,17 @@ it('keeps pending caret intent on first ready but does not replay it on reload',
   expect(page.applyDocument.mock.lastCall?.slice(1, 3)).toEqual([false, null]);
 });
 
+it('applies the final dictation document without focusing and keeps the remembered caret', () => {
+  const { ref, page, send } = mount();
+  send({ type: 'ready' });
+  act(() => ref.current?.rememberSelection('voice suffix', { start: 5, end: 5 }));
+  act(() => ref.current?.applyDocumentAndSetSelection(textComposerDocument('voice suffix'), 5));
+  expect(page.document).toEqual(textComposerDocument('voice suffix'));
+  expect(page.applyDocument.mock.lastCall?.slice(1, 3)).toEqual([false, { nodeIndex: 0, offset: 5 }]);
+  expect(page.focus).not.toHaveBeenCalled();
+  expect(ref.current?.getSelection('voice suffix')).toEqual({ start: 5, end: 5 });
+});
+
 it('restores a hidden dictation draft without focusing or losing its saved insertion end', () => {
   const { ref, page, send } = mount(true);
   send({ type: 'ready' });
