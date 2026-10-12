@@ -3073,14 +3073,29 @@ describe('PiAgent.startSession failure cleanup (mocked pi process)', () => {
     let handle: Awaited<typeof startPromise> | undefined;
     try {
       await removalStarted;
-      await vi.waitFor(
-        () => expect(knobs.spawnedEnvs.some(
-          (env) => env.CINDY_PI_SESSION_ID === 'bounded-stale-sweep',
-        )).toBe(true),
-        { timeout: 500 },
-      );
+      // This is a dependency-order contract, not a 500ms filesystem benchmark.
+      // Await full RPC readiness while orphan removal is still gated; a startup
+      // that awaits the sweep cannot pass. Keep a bounded deadlock guard so the
+      // finally block can release the gate before Vitest's outer timeout.
+      let startupDeadline: ReturnType<typeof setTimeout> | undefined;
+      try {
+        handle = await Promise.race([
+          startPromise,
+          new Promise<never>((_, reject) => {
+            startupDeadline = setTimeout(() => reject(new Error(
+              'Pi startup did not become ready while stale-home removal was blocked',
+            )), 2000);
+          }),
+        ]);
+      } finally {
+        if (startupDeadline !== undefined) clearTimeout(startupDeadline);
+      }
+      expect(removalReleased).toBe(false);
+      expect(staleHomes.every((home) => existsSync(home))).toBe(true);
+      expect(knobs.spawnedEnvs.some(
+        (env) => env.CINDY_PI_SESSION_ID === 'bounded-stale-sweep',
+      )).toBe(true);
       unblockRemoval();
-      handle = await startPromise;
       await waitFor(() => staleHomes.every((home) => !existsSync(home)));
       await vi.waitFor(() => expect(firstSweepYieldObservedAt).toBeDefined());
       expect(firstSweepYieldObservedAt).toBeGreaterThanOrEqual(1);
