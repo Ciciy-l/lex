@@ -44,7 +44,8 @@ export function ResponseSpeedPanel({ speed }: { speed: ResponseSpeedSnapshot }) 
   const output = speed.estimated ? t('session.screen.estimatedValue', { value: speed.outputTokens }) : String(speed.outputTokens);
   return <>
     <Pressable accessibilityRole="button" accessibilityLabel={t('session.screen.rateHistory')}
-      accessibilityState={{ expanded: open }} onPress={() => setOpen(true)} style={styles.trigger}
+      accessibilityState={{ expanded: open }} onPress={() => setOpen(true)}
+      style={({ pressed }) => [styles.trigger, pressed && styles.triggerPressed]}
       testID="session.responseSpeedTrigger">
       <Text style={styles.label} numberOfLines={1}>{label}</Text>
       {history.latestRate !== null && <Text style={styles.label}>{rateText(history.latestRate, speed.phase !== 'complete' || speed.estimated)}</Text>}
@@ -72,11 +73,13 @@ export function ResponseSpeedPanel({ speed }: { speed: ResponseSpeedSnapshot }) 
 
 function makeStyles(colors: ThemeColors) {
   return StyleSheet.create({
-    trigger: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.sm },
+    trigger: { minHeight: 44, minWidth: 44, maxWidth: '100%', borderRadius: radius.pill,
+      flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.sm },
+    triggerPressed: { backgroundColor: colors.surfaceChip },
     card: { padding: spacing.lg, gap: spacing.sm, borderWidth: 1, borderColor: colors.border,
-      borderRadius: radius.lg, backgroundColor: colors.surfaceElevated },
+      borderRadius: radius.container, backgroundColor: colors.surfaceElevated },
     label: { color: colors.textSecondary, fontSize: typeScale.caption, lineHeight: lineHeight.caption },
     rate: { color: colors.textPrimary, fontSize: typeScale.title, lineHeight: lineHeight.title, fontWeight: fontWeight.medium },
-    description: { color: colors.textSecondary, fontSize: typeScale.caption, lineHeight: lineHeight.caption },
+    description: { color: colors.textSecondary, fontSize: typeScale.footnote, lineHeight: lineHeight.caption },
   });
 }

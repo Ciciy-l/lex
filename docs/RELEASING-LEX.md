@@ -20,8 +20,8 @@ source-level test suite. It still performs release-specific checks, signing
 preflight, and native packaging on every supported desktop platform and Android.
 
 Release titles use `Lex v<version>` without a signing suffix. The draft body uses
-the committed five-language `release-notices/<version>.md` from the exact release
-commit and appends the actual signing mode. Both that Markdown file and the
+the committed concise Simplified Chinese `release-notices/<version>.md` from the exact
+release commit and appends the actual signing mode in Chinese. Both that Markdown file and the
 structured five-language JSON notice are required before packaging. A version
 without a prerelease suffix creates a stable draft, independently of signing.
 For unsigned desktop releases, Windows packages are unsigned; macOS apps use
@@ -189,12 +189,14 @@ package and certificate. This change does not configure a push service or new ba
 The homepage QR opens its stable mobile download section without third-party QR
 requests. Only a published Release containing a Lex Android APK gets a direct link;
 older desktop-only releases fall back to the release list. Website deployment continues
-to follow the existing published-release workflow. Publishing the first APK is required
-before there is a public mobile installer.
+to follow the existing published-release workflow. Desktop download QR codes use the
+Lex download page as well. RC downloads remain marked as prereleases; they do not
+replace the stable entry.
 
 ### Android in-app APK updates
 
-The first build containing `lex-apk-updater` requires one manual APK install. Later
+Lex 0.1.4 is the first stable build containing `lex-apk-updater`. Earlier builds
+need a manual APK upgrade to acquire it. From 0.1.4 onwards, later
 updates are checked at startup/foreground (at most every six hours) and offered once
 per target per 24 hours. Download requires a tap; Android confirms installation.
 Settings provides manual checks, progress/cancel, retry and install-permission
@@ -220,13 +222,14 @@ package/version and exact installed signer before exposing a private-cache conte
 to Android's installer. Missing metadata (404) is shown as unpublished, not up-to-date.
 Do not replace published APK bytes. Verify RC→stable→next-RC, denied/granted install
 permission, offline/cancel/retry and retained account data on a physical Android device
-before promoting the first release. CI compilation and unit fixtures do not prove that
+before claiming device upgrade acceptance. CI compilation and unit fixtures do not prove that
 real signing, vendor installers or account login work on a device.
 
-This adds a native module/permission and changes the mobile runtime fingerprint. A
-native rebuild is unavoidable; retain the same package and certificate so installed
-Lex data survives an upgrade. Native cold-update approval is required before merge
-under `docs/dev-rules/mobile-development.md`. iOS shares branding/realm/UI only.
+Introducing the updater in 0.1.4 added a native module/permission and changed the mobile
+runtime fingerprint. Later JavaScript-only fixes do not add another native migration;
+Lex still distributes full APKs. Retain the same package and certificate so installed
+Lex data survives an upgrade. Any future native input change requires the cold-update
+review in `docs/dev-rules/mobile-development.md`. iOS shares branding/realm/UI only.
 
 ## iOS distribution
 
