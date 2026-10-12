@@ -17,6 +17,11 @@ import {
   writeInvalidatedSystemCodexAuthMarker,
 } from '../codex-auth-invalidation.js';
 
+// Load the shared adapter graph during collection, after Vitest's hoisted mocks.
+// Its first import can exceed a test's deadline in the full Windows suite; the
+// identity regression below measures synchronous comparisons, not cold loading.
+import { haveSameStableFileIdentity } from '../auth-adapters.js';
+
 const dirs: string[] = [];
 const expectedSharedLinkType = process.platform === 'win32' ? 'hardlink' : 'symlink';
 
@@ -106,8 +111,7 @@ function expectPlatformSharedLink(systemAuth: string, localAuth: string): void {
   });
 }
 
-it('compares Codex hard-link identities without Windows number precision collisions', async () => {
-  const { haveSameStableFileIdentity } = await import('../auth-adapters.js');
+it('compares Codex hard-link identities without Windows number precision collisions', () => {
   expect(
     haveSameStableFileIdentity(
       { dev: 0n, ino: 9_007_199_254_740_992n },
