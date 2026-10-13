@@ -817,10 +817,15 @@ function remoteOrcaWorkflows(deviceId: string): RoutableOrcaWorkflows {
 /**
  * 按 ctx session 来源返回 orca 操作入口:本机 → 真 window.electronAPI.localDb.orcaWorkflows;
  * 远程 → 隧道适配器。lead 相关方法传 leadSessionId 作 ctx;getByWorkerSession 传 workerSessionId
- * 作 ctx(reseed 后 worker sessionId 已注册到被控端 deviceId)。
+ * 作 ctx(reseed 后 worker sessionId 已注册到被控端 deviceId)。已解析归属的调用方可传
+ * ownerDeviceId 固定同一次操作的执行端；null 明确表示本机，undefined 保留按 ctx 查询。
  */
-export function orcaWorkflowsFor(contextSessionId: string): RoutableOrcaWorkflows {
-  const deviceId = getSessionDeviceId(contextSessionId);
+export function orcaWorkflowsFor(
+  contextSessionId: string,
+  ownerDeviceId?: string | null,
+): RoutableOrcaWorkflows {
+  const deviceId =
+    ownerDeviceId === undefined ? getSessionDeviceId(contextSessionId) : ownerDeviceId;
   return deviceId ? remoteOrcaWorkflows(deviceId) : window.electronAPI.localDb.orcaWorkflows;
 }
 

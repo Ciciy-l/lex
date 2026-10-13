@@ -20,6 +20,9 @@ vi.mock('../sshReviewBackend.js', () => ({
   withSessionReviewExecution: vi.fn(),
   createSshPreviewReaderDeps: vi.fn(),
 }));
+vi.mock('../../file-browser/remote-deps.js', () => ({
+  getRemoteFileBrowser: vi.fn(),
+}));
 import { registerGitReviewIpc } from '../ipc';
 
 beforeEach(() => {

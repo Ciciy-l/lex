@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
   refresh: vi.fn(),
   getTeam: vi.fn(),
   enable: vi.fn(),
-  remoteWorkflows: vi.fn(),
+  workflowsFor: vi.fn(),
   sticky: vi.fn(),
   createWorker: vi.fn<(input: Record<string, unknown>) => Promise<void>>(async () => undefined),
   switchFocus: vi.fn(async () => undefined),
@@ -41,13 +41,7 @@ vi.mock('@/features/device-link/stickySessionOrigin', () => ({
   getStickySessionDeviceId: mocks.sticky,
 }));
 vi.mock('@/lib/makerTransport', () => ({
-  orcaWorkflowsForDevice: mocks.remoteWorkflows,
-  orcaWorkflowsFor: () => ({
-    createWorker: mocks.createWorker,
-    switchFocus: mocks.switchFocus,
-    idleWorker: mocks.idleWorker,
-    archiveWorker: vi.fn(async () => undefined),
-  }),
+  orcaWorkflowsFor: mocks.workflowsFor,
 }));
 
 vi.mock('react-i18next', () => ({
@@ -103,11 +97,12 @@ describe('useOrcaWorkerSelection', () => {
     mocks.getTeam.mockReset().mockResolvedValue({ status: 'active' });
     mocks.enable.mockReset().mockResolvedValue('first-worker');
     mocks.sticky.mockReturnValue(null);
-    const workflows = { getByLeadSession: mocks.getTeam, createWorker: mocks.createWorker };
-    mocks.remoteWorkflows.mockReset().mockReturnValue(workflows);
-    Object.defineProperty(window, 'electronAPI', {
-      configurable: true,
-      value: { localDb: { orcaWorkflows: workflows } },
+    mocks.workflowsFor.mockReset().mockReturnValue({
+      getByLeadSession: mocks.getTeam,
+      createWorker: mocks.createWorker,
+      switchFocus: mocks.switchFocus,
+      idleWorker: mocks.idleWorker,
+      archiveWorker: vi.fn(async () => undefined),
     });
     mocks.workers = [
       makeWorker('worker-a', 'session-a', true),
@@ -151,30 +146,38 @@ describe('useOrcaWorkerSelection', () => {
       ]);
     });
     expect(mocks.enable).toHaveBeenCalledTimes(1);
+    expect(mocks.workflowsFor).toHaveBeenCalledWith('lead-1', null);
     expect(mocks.enable).toHaveBeenCalledWith('lead-1', form, 'builder', null);
     expect(mocks.createWorker).not.toHaveBeenCalled();
   });
-  it('pins the remote team lookup and enable to the same device', async () => {
-    mocks.getTeam.mockResolvedValue(null);
-    const { result } = renderHook(
-      () => useOrcaWorkerSelection({ leadSessionId: 'lead-1', deviceId: 'remote' }),
-      { wrapper },
-    );
-    const form = {
-      agent: 'codex' as const,
-      role: 'builder',
-      model: 'gpt-5.4',
-      fast: false,
-      providerId: null,
-      initialTask: '',
-      workerPermissionMode: 'auto' as const,
-    };
-    await act(async () => {
-      await result.current.handleCreateWorker(form);
-    });
-    expect(mocks.remoteWorkflows).toHaveBeenCalledWith('remote');
-    expect(mocks.enable).toHaveBeenCalledWith('lead-1', form, 'builder', 'remote');
-  });
+  it.each([{ deviceId: 'remote' }, {}])(
+    'pins the remote team lookup and enable to the same device (%#)',
+    async (options) => {
+      mocks.sticky.mockReturnValue('remote');
+      mocks.getTeam.mockImplementationOnce(async () => {
+        mocks.sticky.mockReturnValue('other-device');
+        return null;
+      });
+      const { result } = renderHook(
+        () => useOrcaWorkerSelection({ leadSessionId: 'lead-1', ...options }),
+        { wrapper },
+      );
+      const form = {
+        agent: 'codex' as const,
+        role: 'builder',
+        model: 'gpt-5.4',
+        fast: false,
+        providerId: null,
+        initialTask: '',
+        workerPermissionMode: 'auto' as const,
+      };
+      await act(async () => {
+        await result.current.handleCreateWorker(form);
+      });
+      expect(mocks.workflowsFor).toHaveBeenCalledWith('lead-1', 'remote');
+      expect(mocks.enable).toHaveBeenCalledWith('lead-1', form, 'builder', 'remote');
+    },
+  );
   it('does not retry an ambiguous enable failure or fall through into a second Worker creation', async () => {
     mocks.getTeam.mockResolvedValue(null);
     mocks.enable.mockRejectedValue(new Error('[DEVICE_LINK_TIMEOUT] unconfirmed'));

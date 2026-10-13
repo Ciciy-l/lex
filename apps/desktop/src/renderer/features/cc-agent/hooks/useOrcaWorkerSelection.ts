@@ -4,7 +4,7 @@ import { useLocation, useSearchParams } from 'react-router-dom';
 
 import { toast } from '@/lib/toast';
 import { createLogger } from '@/lib/logger';
-import { orcaWorkflowsFor, orcaWorkflowsForDevice } from '@/lib/makerTransport';
+import { orcaWorkflowsFor } from '@/lib/makerTransport';
 import { getStickySessionDeviceId } from '@/features/device-link/stickySessionOrigin';
 import { enableCollabFromForm } from '../enableCollabFromForm';
 import { extractIpcError } from '@/utils/ipcError';
@@ -304,10 +304,9 @@ export function useOrcaWorkerSelection({
       if (creatingRef.current) return;
       creatingRef.current = true;
       try {
-        const owner = deviceId === undefined ? getStickySessionDeviceId(leadSessionId) : deviceId;
-        const workflows = owner
-          ? orcaWorkflowsForDevice(owner)
-          : window.electronAPI.localDb.orcaWorkflows;
+        const owner =
+          deviceId === undefined ? (getStickySessionDeviceId(leadSessionId) ?? null) : deviceId;
+        const workflows = orcaWorkflowsFor(leadSessionId, owner);
         const team = (await workflows.getByLeadSession(leadSessionId)) as {
           status?: string;
         } | null;

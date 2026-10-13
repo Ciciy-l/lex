@@ -38,6 +38,11 @@ vi.mock('electron', () => ({
 vi.mock('../sshReviewBackend.js', () => ({
   withSessionReviewExecution: withSessionReviewExecutionMock,
 }));
+// Repository discovery owns SSH file-service behavior; IPC tests must not load
+// its production Electron/SSH dependency assembly.
+vi.mock('../../file-browser/remote-deps.js', () => ({
+  getRemoteFileBrowser: vi.fn(),
+}));
 
 vi.mock('../ipc.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../ipc.js')>();
