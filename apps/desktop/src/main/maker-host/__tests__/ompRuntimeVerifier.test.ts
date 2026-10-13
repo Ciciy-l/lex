@@ -41,7 +41,7 @@ afterEach(() => {
 });
 
 describe('OMP runtime pin verifier', () => {
-  it('contains the six fixed v18.10.3 platform assets with their expected names', () => {
+  it('contains the six fixed v18.10.4 platform assets with their expected names', () => {
     expect(OMP_RUNTIME_PLATFORM_KEYS).toEqual([
       'darwin-arm64',
       'darwin-x64',
@@ -52,7 +52,7 @@ describe('OMP runtime pin verifier', () => {
     ]);
     expect(getPinnedOmpRuntimeAsset('win32-x64')).toMatchObject({
       binaryName: 'omp.exe',
-      url: 'https://github.com/can1357/oh-my-pi/releases/download/v18.10.3/omp-windows-x64.exe',
+      url: 'https://github.com/can1357/oh-my-pi/releases/download/v18.10.4/omp-windows-x64.exe',
     });
     expect(getPinnedOmpRuntimeAsset('linux-x64')).toMatchObject({ binaryName: 'omp' });
     expect(getPinnedOmpRuntimeAsset('linux-armv7l')).toBeUndefined();

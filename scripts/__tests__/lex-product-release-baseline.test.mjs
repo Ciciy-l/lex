@@ -141,7 +141,7 @@ test("Lex agent runtime snapshot is pinned, complete, and platform-safe", () => 
     codex: "0.162.1",
     codexPackage: "0.162.1",
     pi: "1.2.0",
-    omp: "18.10.3",
+    omp: "18.10.4",
   };
   const pins = Object.fromEntries(
     Object.entries(paths).map(([field, tool]) => [
