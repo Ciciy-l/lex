@@ -38,7 +38,7 @@
         {
           "id": "engine-baselines",
           "title": "更新四引擎默认版本",
-          "text": "Claude Code 2.1.296、Codex 0.162.1、Pi 1.2.0、OMP 18.10.3。保留已显式选择的引擎版本，也可在设置中恢复 Lex 基线。"
+          "text": "Claude Code 2.1.296、Codex 0.162.1、Pi 1.2.0、OMP 18.10.4。保留已显式选择的引擎版本，也可在设置中恢复 Lex 基线。"
         },
         {
           "id": "upgrade",
@@ -83,7 +83,7 @@
         {
           "id": "engine-baselines",
           "title": "更新四引擎預設版本",
-          "text": "Claude Code 2.1.296、Codex 0.162.1、Pi 1.2.0、OMP 18.10.3。保留已明確選定的引擎版本，也可在設定中復原 Lex 基線。"
+          "text": "Claude Code 2.1.296、Codex 0.162.1、Pi 1.2.0、OMP 18.10.4。保留已明確選定的引擎版本，也可在設定中復原 Lex 基線。"
         },
         {
           "id": "upgrade",
@@ -128,7 +128,7 @@
         {
           "id": "engine-baselines",
           "title": "Updated default engine versions",
-          "text": "Claude Code 2.1.296, Codex 0.162.1, Pi 1.2.0 and OMP 18.10.3. Explicitly selected engine versions are preserved. You can also restore the Lex baseline in settings."
+          "text": "Claude Code 2.1.296, Codex 0.162.1, Pi 1.2.0 and OMP 18.10.4. Explicitly selected engine versions are preserved. You can also restore the Lex baseline in settings."
         },
         {
           "id": "upgrade",
@@ -173,7 +173,7 @@
         {
           "id": "engine-baselines",
           "title": "4エンジンの既定バージョンを更新",
-          "text": "Claude Code 2.1.296、Codex 0.162.1、Pi 1.2.0、OMP 18.10.3。明示的に選択したエンジンバージョンは維持し、設定から Lex の基準バージョンに戻すこともできます。"
+          "text": "Claude Code 2.1.296、Codex 0.162.1、Pi 1.2.0、OMP 18.10.4。明示的に選択したエンジンバージョンは維持し、設定から Lex の基準バージョンに戻すこともできます。"
         },
         {
           "id": "upgrade",
@@ -218,7 +218,7 @@
         {
           "id": "engine-baselines",
           "title": "네 엔진 기본 버전 업데이트",
-          "text": "Claude Code 2.1.296, Codex 0.162.1, Pi 1.2.0, OMP 18.10.3. 직접 선택한 엔진 버전은 유지하며 설정에서 Lex 기준 버전으로 복원할 수도 있습니다."
+          "text": "Claude Code 2.1.296, Codex 0.162.1, Pi 1.2.0, OMP 18.10.4. 직접 선택한 엔진 버전은 유지하며 설정에서 Lex 기준 버전으로 복원할 수도 있습니다."
         },
         {
           "id": "upgrade",

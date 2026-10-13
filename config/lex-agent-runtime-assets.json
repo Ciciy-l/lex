@@ -30,10 +30,10 @@
         "size": 45099534
       },
       "omp": {
-        "version": "18.10.3",
-        "file": "https://github.com/can1357/oh-my-pi/releases/download/v18.10.3/omp-windows-x64.exe",
-        "sha256": "c7969e65ab75aa9ae6f93f0fa8307c9fe8dc4cd2ad5ccd5bfa282ed8c840a7d5",
-        "size": 244256768
+        "version": "18.10.4",
+        "file": "https://github.com/can1357/oh-my-pi/releases/download/v18.10.4/omp-windows-x64.exe",
+        "sha256": "391744ed751f56742c85d8fbf2eb7dcb800b83a0eaf6a650e6cae70d29776d44",
+        "size": 244276224
       }
     },
     "darwin-arm64": {
@@ -64,10 +64,10 @@
         "size": 31065256
       },
       "omp": {
-        "version": "18.10.3",
-        "file": "https://github.com/can1357/oh-my-pi/releases/download/v18.10.3/omp-darwin-arm64",
-        "sha256": "985c70cbcd264f6c6313de45ee81df6734664ec8ed8e72fa39fc644df625f0ce",
-        "size": 217142304
+        "version": "18.10.4",
+        "file": "https://github.com/can1357/oh-my-pi/releases/download/v18.10.4/omp-darwin-arm64",
+        "sha256": "7459333760ef0e265d5d40445ea459da3d18a10ef3ec4958302e1977b52c8a2b",
+        "size": 217158688
       }
     },
     "darwin-x64": {
@@ -98,10 +98,10 @@
         "size": 33524998
       },
       "omp": {
-        "version": "18.10.3",
-        "file": "https://github.com/can1357/oh-my-pi/releases/download/v18.10.3/omp-darwin-x64",
-        "sha256": "f19f9a7b4c715456f778ab3ae28fbc38978c6bae6296a832506bc7225f343942",
-        "size": 227734240
+        "version": "18.10.4",
+        "file": "https://github.com/can1357/oh-my-pi/releases/download/v18.10.4/omp-darwin-x64",
+        "sha256": "ba70472c9e43d4ca7536a76d03bbe75afadfc1e296ec422161b22e813d5c1062",
+        "size": 227751648
       }
     },
     "linux-x64": {
@@ -132,10 +132,10 @@
         "size": 42611136
       },
       "omp": {
-        "version": "18.10.3",
-        "file": "https://github.com/can1357/oh-my-pi/releases/download/v18.10.3/omp-linux-x64",
-        "sha256": "366ffcda80db57b825921b6ff4b0e5e623bc62cf18478f2828cd8a322fc72ff9",
-        "size": 276170720
+        "version": "18.10.4",
+        "file": "https://github.com/can1357/oh-my-pi/releases/download/v18.10.4/omp-linux-x64",
+        "sha256": "ff59fc1b484c1308a7247ad208305005627b3fac62b440737c2b1835ac32074e",
+        "size": 276199392
       }
     }
   }

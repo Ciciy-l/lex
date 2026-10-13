@@ -10,7 +10,7 @@
 | Claude Code | 2.1.259 | 2.1.296 | npm latest 元数据及 downloads.claude.ai 同版本 manifest |
 | Codex | 0.159.2 | 0.162.1 | [rust-v0.162.1](https://github.com/openai/codex/releases/tag/rust-v0.162.1) 的完整 package 与 standalone 资产 |
 | Pi | 0.84.4 | 1.2.0 | [v1.2.0](https://github.com/earendil-works/pi/releases/tag/v1.2.0) |
-| OMP | 18.1.18 | 18.10.3 | [v18.10.3](https://github.com/can1357/oh-my-pi/releases/tag/v18.10.3) |
+| OMP | 18.1.18 | 18.10.4 | [v18.10.4](https://github.com/can1357/oh-my-pi/releases/tag/v18.10.4) |
 
 `tools/<kind>/latest.json` 保存官方 URL、size、SHA-256；Claude 来自官方发布清单，
 GitHub 资产来自固定 tag 的 digest。Codex Desktop 使用 `tools/codex-package/latest.json`，
@@ -103,6 +103,70 @@ CLI 认成新包；原有 CLI、旧私有布局、既有标记及用户选择保
 `e19d6d1f7cb3ce27a5e2e3bca0b3bc6d05171bf5`、RPC mode
 `2a291babc8c884cfaec727a1f3cf7de3c838cfb3`、模型 schema
 `91f4288b47a3a1f20401d13c00f826b69f7ed2bb`。
+
+## OMP v18.10.4 发行前跟进审阅
+
+PR77 合入后、发行前的官方 latest 查询发现 OMP 已发布 v18.10.4，故最终基线从
+18.10.3 推进到 18.10.4。上节保留 v18.10.3 的历史审阅，不改写 v18.1.18 实测记录。
+这次只审阅公开源码和元数据，没有安装或运行新版 OMP，也没有本地测试结果。
+
+固定依据为 [release 412040933](https://github.com/can1357/oh-my-pi/releases/tag/v18.10.4)
+（非 draft、非 prerelease，2026-10-13T19:38:04Z 发布），tag commit 为
+`687892d1046ecaf18829b45f5b86928a308258f4`。相对 v18.10.3 的
+[固定提交 compare](https://github.com/can1357/oh-my-pi/compare/81e1d8927a3c16cfaff2e9456baa8c060e1e0e9b...687892d1046ecaf18829b45f5b86928a308258f4)
+包含 105 commits、191 changed files；以下链接固定到新提交，而不是可移动的 main。
+
+- **宿主与 RPC**：[rpc-types.ts](https://github.com/can1357/oh-my-pi/blob/687892d1046ecaf18829b45f5b86928a308258f4/packages/coding-agent/src/modes/rpc/rpc-types.ts)、
+  [rpc-mode.ts](https://github.com/can1357/oh-my-pi/blob/687892d1046ecaf18829b45f5b86928a308258f4/packages/coding-agent/src/modes/rpc/rpc-mode.ts)、
+  [host-tools.ts](https://github.com/can1357/oh-my-pi/blob/687892d1046ecaf18829b45f5b86928a308258f4/packages/coding-agent/src/modes/rpc/host-tools.ts)
+  与 v18.10.3 的 blob 相同，仍有 set_host_tools、host_tool_call/result、
+  essential/discoverable loadMode、select/confirm 和 get_available_commands。
+  Lex 继续显式 essential、既有字段校验和权限回执，不扩大工具或 IPC 入口。
+- **OMP Code Mode 移除**：[session/settings.ts](https://github.com/can1357/oh-my-pi/blob/687892d1046ecaf18829b45f5b86928a308258f4/packages/coding-agent/src/session/settings.ts)
+  删除 providers.openai-codex.codeMode/codeModeDirectTools；
+  [session-tools.ts](https://github.com/can1357/oh-my-pi/blob/687892d1046ecaf18829b45f5b86928a308258f4/packages/coding-agent/src/session/session-tools.ts)
+  不再分割 Code Mode 工具，catalog 的 toolMode 与 AI 的 toolNamespacesInfo 也被移除。
+  Lex 的 OMP launch-plan、models-config、omp-host 未读写这些字段，也不消费上游内部 SDK
+  回调；生成器只投影声明的三种 provider API 和模型字段。本次不改 Lex 工具清单。
+  Lex 独立 Codex 引擎的完整 package/code-mode-host 不属于这次 OMP 移除，继续保留。
+- **审批与 timeout**：[approval.ts](https://github.com/can1357/oh-my-pi/blob/687892d1046ecaf18829b45f5b86928a308258f4/packages/coding-agent/src/tools/approval.ts)
+  新增可选 ui.approve，全/紧凑两种提示；RPC 的 RpcExtensionUIContext 没有实现 approve，
+  requestApproval 继续用完整 Allow tool 提示和 select([Approve, Deny])，只认明确 Approve。
+  新终端审批快捷键、timeout start/reset 回调在交互 UI；Lex 保留自身有界超时、拒绝/取消、
+  requestGeneration 与任务代次围栏，不通过新增 UI method 放行。
+- **计划审批扩展**：[extensions/types.ts](https://github.com/can1357/oh-my-pi/blob/687892d1046ecaf18829b45f5b86928a308258f4/packages/coding-agent/src/extensibility/extensions/types.ts)
+  新增 plan_review_requested、可选 tier 与 resolve/openPlanReview。
+  [agent-session.ts](https://github.com/can1357/oh-my-pi/blob/687892d1046ecaf18829b45f5b86928a308258f4/packages/coding-agent/src/session/agent-session.ts)
+  的默认命令上下文返回 false/undefined；交互模式才提供计划审批 UI。Lex 的 RPC 适配器
+  未调用这些扩展 API，不新增功能，也不把它们当成宿主批准事实。
+- **配置与价格**：[models-config-schema-bundle.ts](https://github.com/can1357/oh-my-pi/blob/687892d1046ecaf18829b45f5b86928a308258f4/packages/coding-agent/src/config/models-config-schema-bundle.ts)
+  blob 仍为 `91f4288b47a3a1f20401d13c00f826b69f7ed2bb`，现用 provider/model 和四项 numeric cost
+  契约不变。context/task/mnemopi/memory-backend/tools 的 settings blob 同样未变，
+  原生动态 thresholdPercent=-1 保留。新增 scheduled price/catalog 修复由 OMP 自己处理；
+  Lex 没有消费 toolMode、同步上游模型目录或改写自有价格/用户默认投影。
+- **启动与 SSH**：main.ts、utils/dirs.ts blob 未变，utils/package.json 的 VERSION 改为
+  18.10.4，依旧打印裸单行版本。本地保留裸版本/omp 前缀两种解析且默认 pin 精确匹配；
+  SSH pin 从 tools 元数据读取，既有 READY omp/<version> 归一和摘要门不变。
+- **恢复与压缩**：[session-context.ts](https://github.com/can1357/oh-my-pi/blob/687892d1046ecaf18829b45f5b86928a308258f4/packages/coding-agent/src/session/session-context.ts)
+  修正 leaf/usage marker 重放；
+  [compaction.ts](https://github.com/can1357/oh-my-pi/blob/687892d1046ecaf18829b45f5b86928a308258f4/packages/agent/src/compaction/compaction.ts)
+  与 snapcompact 按读取模型选择 reasoning-free archive，内部 buildProviderContext 增加 model 参数。
+  Lex 未实现这些内部回调或解析 archive/preserveData，仍用 switch_session + 绝对 sessionFile
+  身份复核、原生 compact 命令及 auto_compaction 事件投影。真实跨模型恢复/压缩仍需运行验收。
+
+六平台裸资产按本固定 release 的唯一 name、URL、size、digest 与先前官方回执交叉比对，
+四个发行平台的 OMP snapshot 同源投影；未下载大型二进制，不能把 API digest 核对称为本机
+二进制 hash/版本执行验收。非 OMP 条目（包括 frozen Codex 0.145.0 兼容 bytes）原样保持。
+默认 pin 的启动/恢复/开发准备继续使用上节的 binary 格式、staging 和完整性校验；
+显式用户版本选择不变。本次没有格式、安装器、原生指纹、证书或工作流改动。
+
+当前版本回归同步到 18.10.4，额外保留拒绝 18.10.3、后续 18.10.5 和 prerelease 的
+反向覆盖；旧 18.1.18/18.1.19、缺换行、诊断噪声、错误 size/hash/URL/name 仍拒绝。
+启动 byte gate、六平台 asset 名与四平台 snapshot 合同须由新 head 的 CI 独立执行，
+没有逐例运行结果时不能声称通过。
+
+固定 JSON、完整 compare、tree 与引用 blob（含原 bytes、SHA-1/SHA-256）位于 repo 外
+`F:/Projects/lex/ci-logs/release-0.1.5/omp-18.10.4`，asset-mapping.json 标记核对范围。
 
 ## Pi v1.2.0 固定源码审阅
 
