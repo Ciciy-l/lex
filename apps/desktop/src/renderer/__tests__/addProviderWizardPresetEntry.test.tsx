@@ -1183,7 +1183,7 @@ describe.each([true, false])('native defaults with discovery available=%s', disc
   });
 });
 
-it('imports an OpenCode Go Responses model into all three engines', async () => {
+it('imports an OpenCode Go Responses model into all four engines with native OMP defaults', async () => {
   const preset = structuredClone(BUNDLED_CATALOG.presets!.find(p => p.id === 'opencode-go')!);
   for (const runtime of Object.values(preset.runtimes)) {
     for (const model of runtime!.models) model.defaultEnabled = false;
@@ -1206,13 +1206,22 @@ it('imports an OpenCode Go Responses model into all three engines', async () => 
   const model = buildUserProvider(saved, { presets: [preset] }).models.pi?.find(m => m.id === 'gpt-5.6-luna');
   expect(model).toMatchObject({ piApi: 'openai-responses', supportsImageInput: true });
   const projected = buildUserProvider(saved, { presets: [preset] });
+  expect(projected.agents).toEqual(['claude-code', 'codex', 'pi', 'omp']);
   for (const agent of projected.agents) {
     expect(projected.models[agent]?.find(m => m.id === 'gpt-5.6-luna')).toMatchObject({
       api: 'openai-responses',
-      defaultEnabled: agent === 'codex' || agent === 'pi',
+      defaultEnabled: agent === 'codex' || agent === 'pi' || agent === 'omp',
     });
     expect(saved.runtimes[agent]?.models.find(m => m.id === 'gpt-5.6-luna')).not.toHaveProperty('route');
+    expect(saved.runtimes[agent]?.models.find(m => m.id === 'gpt-5.6-luna')).not.toHaveProperty('defaultEnabled');
   }
+  // The maintained model route selects OMP's Responses front door; selection
+  // need not persist an explicit opt-in to a compatibility engine.
+  const omp = projected.models.omp!.find(m => m.id === 'gpt-5.6-luna')!;
+  expect(modelProtocolComparison(projected, { omp }).forAgent('omp')).toMatchObject({
+    harness: 'openai-responses', outbound: 'openai-responses',
+    localConversion: false, mode: 'matching',
+  });
 });
 
 
@@ -1354,9 +1363,21 @@ it('imports the full Hermes inventory immediately for every supported harness', 
   expect(provider.agents).toEqual(['claude-code', 'codex', 'pi', 'omp']);
   for (const agent of provider.agents) {
     expect(provider.models[agent]?.map(m => m.id)).toEqual(['google/gemini-test', 'other']);
-    expect(provider.models[agent]?.find(m => m.id === 'google/gemini-test')?.defaultEnabled).toBe(agent === 'pi');
+    expect(provider.models[agent]?.find(m => m.id === 'google/gemini-test')?.defaultEnabled).toBe(agent === 'pi' || agent === 'omp');
     expect(provider.models[agent]?.find(m => m.id === 'other')?.defaultEnabled).toBe(false);
+    expect(saved.runtimes[agent]?.models.find(m => m.id === 'google/gemini-test')).not.toHaveProperty('defaultEnabled');
+    expect(saved.runtimes[agent]?.models.find(m => m.id === 'other')).toMatchObject({ defaultEnabled: false });
   }
+  // This discovery fixture declares only an ID, not a native Google API. OMP
+  // uses the configured Chat route; unchecked models remain explicitly off.
+  expect(provider.routing.omp).toMatchObject({
+    upstream: 'https://inference-api.nousresearch.com/v1', wireProtocol: 'openai-chat',
+  });
+  const omp = provider.models.omp!.find(m => m.id === 'google/gemini-test')!;
+  expect(modelProtocolComparison(provider, { omp }).forAgent('omp')).toMatchObject({
+    harness: 'openai-completions', outbound: 'openai-completions',
+    localConversion: false, mode: 'matching',
+  });
 });
 
 
