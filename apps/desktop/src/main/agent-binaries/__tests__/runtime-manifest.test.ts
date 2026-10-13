@@ -28,7 +28,7 @@ describe('build-pinned agent runtime manifest', () => {
       const omp = getPinnedOmpRuntimeAsset(platform);
       expect(omp).toBeDefined();
       expect(manifest?.omp).toEqual({
-        version: '18.10.3',
+        version: '18.10.4',
         file: omp?.url,
         sha256: omp?.sha256,
         size: omp?.size,
