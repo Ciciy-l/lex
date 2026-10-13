@@ -38,6 +38,7 @@ export function CenteredScreen({
       <MobileLoginHandoffStage
         accessibilityLabel={title}
         testID="startup.splash"
+        splashOnly
       />
     );
   }

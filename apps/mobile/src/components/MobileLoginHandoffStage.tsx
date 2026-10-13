@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import {
   Animated,
   Easing,
-  Image,
   Platform,
   StyleSheet,
   useWindowDimensions,
@@ -28,6 +27,7 @@ import { resolveStartupSplashHandoff } from '@/auth/startupSplashContinuity';
 import { ThemeOverrideProvider, useTheme } from '@/theme';
 import { useAdaptiveWindow } from '@/platform/AdaptiveWindowContext';
 import { resolveLoginWindowSurface } from '@/auth/loginGroupPlacement';
+import { resolveLexBrandLayout } from '@/auth/lexBrandLayout';
 
 /**
  * MobileLoginHandoffStage —— 白底体系登录/闸门**唯一 full-viewport 品牌宿主**
@@ -43,10 +43,10 @@ import { resolveLoginWindowSurface } from '@/auth/loginGroupPlacement';
  *  - Lex 品牌立绘/字标走 stage 坐标(resolveLoginSurface 布局引擎,
  *    U-8a 照 demo;§3.6 平板竖屏 744×1133 / 横屏 1180×820 双构图);新字标
  *    423×145 在字标框内 contain 等比适配,禁止非等比拉伸(368:1381 资产行);
- *  - handoff 动画(demo splashHandoff 时序冻结):splash 期立绘/字标簇按
- *    splashOffset 居中 + spinner;readiness 达成后 300ms 起 650ms 位移到登录位
+ *  - Lex splash 按安全区域居中，人物/字标/spinner 分区，几何见 lexBrandLayout；
+ *    handoff 沿用原时序，readiness 达成后 300ms 起 650ms 位移到登录位
  *    (iPad 横屏无位移变体)，Lex 登录不再显示 Cindy slogan;
- *    reduced-motion / Provider 缺席 → 静态终态。动画全部 transform/opacity +
+ *    reduced-motion / Provider 缺席 → 静态终态；常驻 splash 保持居中直至淡出。动画全部 transform/opacity +
  *    useNativeDriver(compositor-only,规则 7);spinner 仅 splash/handoff 期挂载。
  */
 
@@ -54,11 +54,9 @@ import { resolveLoginWindowSurface } from '@/auth/loginGroupPlacement';
 // Lex 字标提供亮色与暗色画布两个版本，
 // 立绘两模式同资产。
 // Reuse Lex artwork with the existing responsive stage and handoff.
-const heroAsset = require('../../assets/lex/assistant-hero.png');
+const heroAsset = require('../../assets/lex/assistant-startup.png');
 const wordmarkAsset = require('../../assets/lex/wordmark.png');
 const wordmarkDarkAsset = require('../../assets/lex/wordmark-dark.png');
-const heroPadPortraitAsset = heroAsset;
-const heroPadLandscapeAsset = heroAsset;
 
 /** hook:物理 viewport → §3.6 三构图 surface 布局(useWindowDimensions → resolveLoginSurface)。 */
 export function useLoginSurface(): LoginSurfaceLayout {
@@ -72,14 +70,19 @@ export function useLoginStage(): LoginStageLayout {
   return useMemo(() => resolveLoginStage(width, height), [width, height]);
 }
 
-/** stage 几何框 → 绝对定位 style(stage 坐标系内,缩放由外层 transform 承担)。 */
-function boxStyle(box: LoginStageBox) {
+/** Translate/scale the whole image between two non-overlapping compositions. */
+function animatedBrandStyle(login: LoginStageBox, splash: LoginStageBox, progress: Animated.Value) {
   return {
     position: 'absolute' as const,
-    left: box.x,
-    top: box.y,
-    width: box.w,
-    height: box.h,
+    left: login.x,
+    top: login.y,
+    width: login.w,
+    height: login.h,
+    transform: [
+      { translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [0, splash.x + splash.w / 2 - login.x - login.w / 2] }) },
+      { translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [0, splash.y + splash.h / 2 - login.y - login.h / 2] }) },
+      { scale: progress.interpolate({ inputRange: [0, 1], outputRange: [1, splash.w / login.w] }) },
+    ],
   };
 }
 
@@ -91,13 +94,16 @@ function boxStyle(box: LoginStageBox) {
 function SplashSpinner({
   size,
   opacity,
+  reducedMotion,
 }: {
   size: number;
   opacity: Animated.Value;
+  reducedMotion: boolean;
 }) {
   const { colors } = useTheme();
   const rotation = useRef(new Animated.Value(0)).current;
   useEffect(() => {
+    if (reducedMotion) return;
     const loop = Animated.loop(
       Animated.timing(rotation, {
         toValue: 1,
@@ -108,7 +114,7 @@ function SplashSpinner({
     );
     loop.start();
     return () => loop.stop();
-  }, [rotation]);
+  }, [reducedMotion, rotation]);
   const spin = rotation.interpolate({
     inputRange: [0, 1],
     outputRange: ['0deg', '360deg'],
@@ -143,6 +149,8 @@ function SplashSpinner({
  */
 export function MobileLoginHandoffStage(props: {
   children?: ReactNode;
+  /** Startup overlay keeps its own centered composition until it fades away. */
+  splashOnly?: boolean;
   /** handoff 动画期品牌层由本宿主状态机驱动;静态调用方恒显 */
   showBrand?: boolean;
   /** 键盘位移(物理 px,向上为正;只作用品牌层——children 位移由登录页自管) */
@@ -167,11 +175,14 @@ export function MobileLoginHandoffStage(props: {
 function MobileLoginHandoffStageInner({
   children,
   showBrand = true,
+  splashOnly = false,
   keyboardShiftPx = 0,
   testID,
   accessibilityLabel,
 }: {
   children?: ReactNode;
+  /** Startup overlay keeps its own centered composition until it fades away. */
+  splashOnly?: boolean;
   /** handoff 动画期品牌层由本宿主状态机驱动;静态调用方恒显 */
   showBrand?: boolean;
   /** 键盘位移(物理 px,向上为正;只作用品牌层——children 位移由登录页自管) */
@@ -181,15 +192,19 @@ function MobileLoginHandoffStageInner({
 }) {
   const { colors, mode } = useTheme();
   const stage = useLoginSurface();
+  const window = useAdaptiveWindow();
+  const brand = resolveLexBrandLayout(stage, window.insets);
   const handoff = useLoginHandoffOptional();
   // Provider 缺席 = 静态终态(pr4a 兼容);缺席时不播动画、不挂 spinner
-  const phase = handoff?.state.phase ?? 'done';
+  const phase = splashOnly ? 'splash' : handoff?.state.phase ?? 'done';
 
-  // 品牌资产为打包 require 资源(随 bundle 同步可用),宿主挂载即上报 assets 就绪
-  useEffect(() => {
-    handoff?.dispatch({ type: 'assets-ready' });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Bundled URLs are available synchronously; decoded image pixels are not.
+  const settledAssets = useRef(new Set<string>());
+  const dispatch = handoff?.dispatch;
+  const assetSettled = useCallback((key: string) => {
+    settledAssets.current.add(key);
+    if (settledAssets.current.size === 2) dispatch?.({ type: 'assets-ready' });
+  }, [dispatch]);
 
   // handoff 动画驱动(demo splashHandoff 时序;值域 1=splash 居中位,0=登录终位)
   const brandProgress = useRef(
@@ -199,12 +214,12 @@ function MobileLoginHandoffStageInner({
   useEffect(() => {
     if (phase === 'handoff') {
       const moveMs = loginHandoffMoveMs(stage.mode);
-      Animated.timing(spinnerOpacity, {
+      const spinnerAnimation = Animated.timing(spinnerOpacity, {
         toValue: 0,
         duration: LOGIN_HANDOFF_TIMING.spinnerFadeMs,
         useNativeDriver: true,
-      }).start();
-      Animated.sequence([
+      });
+      const brandAnimation = Animated.sequence([
         Animated.delay(LOGIN_HANDOFF_TIMING.brandMoveDelayMs),
         Animated.timing(brandProgress, {
           toValue: 0,
@@ -217,8 +232,13 @@ function MobileLoginHandoffStageInner({
           ),
           useNativeDriver: true,
         }),
-      ]).start();
-      return;
+      ]);
+      spinnerAnimation.start();
+      brandAnimation.start();
+      return () => {
+        spinnerAnimation.stop();
+        brandAnimation.stop();
+      };
     }
     if (phase === 'done') {
       brandProgress.setValue(0);
@@ -229,18 +249,6 @@ function MobileLoginHandoffStageInner({
     spinnerOpacity.setValue(1);
   }, [phase, stage.mode, brandProgress, spinnerOpacity]);
 
-  // splash 簇偏移(stage 坐标;外层 scale 会同步放大,pad-landscape 恒 0 无位移)
-  const brandTranslate = brandProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, stage.splashOffset],
-  });
-
-  const heroSource =
-    stage.mode === 'pad-portrait'
-      ? heroPadPortraitAsset
-      : (stage.mode === 'pad-landscape' || stage.mode === 'compact-wide')
-        ? heroPadLandscapeAsset
-        : heroAsset;
   // 暗色画布用白字版 Lex 字标；立绘两模式同资产。
   const wordmarkSource = mode === 'dark' ? wordmarkDarkAsset : wordmarkAsset;
 
@@ -275,36 +283,36 @@ function MobileLoginHandoffStageInner({
             },
           ]}
         >
-          {/* splash 簇位移层:立绘 + 字标(demo splashHandoff 只移这两者) */}
-          <Animated.View
-            style={[
-              StyleSheet.absoluteFill,
-              { transform: [{ translateY: brandTranslate }] },
-            ]}
-          >
-            <Image
-              accessibilityIgnoresInvertColors
-              resizeMode="contain"
-              source={heroSource}
-              style={boxStyle(stage.cindy)}
-            />
-            <Image
-              accessibilityIgnoresInvertColors
-              resizeMode="contain"
-              source={wordmarkSource}
-              style={boxStyle(stage.word)}
-            />
-          </Animated.View>
+          <Animated.Image
+            accessibilityIgnoresInvertColors
+            accessible={false}
+            resizeMode="contain"
+            fadeDuration={0}
+            source={heroAsset}
+            onLoad={() => assetSettled('hero')}
+            onError={() => assetSettled('hero')}
+            style={animatedBrandStyle(brand.login.hero, brand.splash.hero, brandProgress)}
+          />
+          <Animated.Image
+            accessibilityIgnoresInvertColors
+            accessible={false}
+            resizeMode="contain"
+            fadeDuration={0}
+            source={wordmarkSource}
+            onLoad={() => assetSettled('wordmark')}
+            onError={() => assetSettled('wordmark')}
+            style={animatedBrandStyle(brand.login.word, brand.splash.word, brandProgress)}
+          />
           {/* splash spinner:仅 splash/handoff 期挂载(限时长,规则 7) */}
           {handoff != null && phase !== 'done' ? (
             <View
               style={{
                 position: 'absolute',
-                left: stage.spinner.x,
-                top: stage.spinner.y,
+                left: brand.spinner.x,
+                top: brand.spinner.y,
               }}
             >
-              <SplashSpinner size={stage.spinner.size} opacity={spinnerOpacity} />
+              <SplashSpinner size={brand.spinner.size} opacity={spinnerOpacity} reducedMotion={handoff.state.reducedMotion} />
             </View>
           ) : null}
         </View>

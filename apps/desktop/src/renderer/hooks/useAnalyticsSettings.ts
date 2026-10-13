@@ -5,14 +5,14 @@ export interface AnalyticsSettingsState {
   analyticsEnabled: boolean;
   /** 用户是否显式设置过开关;false = 跟随当前默认值。 */
   analyticsEnabledCustomized: boolean;
-  /** allowed = isReportingBuild && 已同意隐私政策 && 统计开关开启(dev 默认 false,XDT_TAPDB_DEV=1 可放行)。 */
+  /** Lex 固定关闭；旧客户端协议仍可读取隐私同意事实。 */
   allowed: boolean;
   loading: boolean;
 }
 
 const INITIAL: AnalyticsSettingsState = {
   privacyConsentAccepted: false,
-  analyticsEnabled: true,
+  analyticsEnabled: false,
   analyticsEnabledCustomized: false,
   allowed: false,
   loading: true,

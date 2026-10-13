@@ -12,13 +12,15 @@
  *    undefined,运行时才与默认值 true 合并。这样才能区分「跟随默认」和「显式选择」,
  *    将来改默认值也能触达没自定义过的用户。
  *
- * 允许上报 = consent && enabled(见 isAnalyticsAllowed)。
+ * Lex 永久禁用统计，忽略 enabled=true 的存量偏好；隐私同意事实仍保留。
+ * 非 Lex 兼容构建允许上报 = consent && enabled(见 isAnalyticsAllowed)。
  *
  * 「盘上有没有记录」是存量迁移的唯一判定依据,因此:任何**存在但非法**的记录都算
  * 「有记录」(fail closed)。损坏 ≠ 不存在——把损坏当不存在,会让一份原本是显式
  * opt-out 的坏数据在下次冷启动被静默翻回「已同意」。
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { IS_LEX_MOBILE } from '@/config/lexMobile';
 
 const STORAGE_KEY = 'cindy.mobile.analytics.consent';
 
@@ -52,8 +54,8 @@ const listeners = new Set<() => void>();
 function toPublic(value: InternalState): AnalyticsConsentState {
   return {
     consent: value.consent,
-    enabled: value.enabledOverride ?? DEFAULT_ENABLED,
-    enabledCustomized: value.enabledOverride !== null,
+    enabled: !IS_LEX_MOBILE && (value.enabledOverride ?? DEFAULT_ENABLED),
+    enabledCustomized: !IS_LEX_MOBILE && value.enabledOverride !== null,
   };
 }
 
@@ -166,6 +168,7 @@ export function getAnalyticsConsentState(): AnalyticsConsentState {
 
 /** 允许初始化 SDK / 继续上报的唯一结论。 */
 export function isAnalyticsAllowed(): boolean {
+  if (IS_LEX_MOBILE) return false;
   const current = getAnalyticsConsentState();
   return current.consent && current.enabled;
 }
@@ -190,6 +193,7 @@ export async function acceptPrivacyConsent(): Promise<void> {
 }
 
 export async function setAnalyticsEnabled(enabled: boolean): Promise<void> {
+  if (IS_LEX_MOBILE) enabled = false;
   await hydrateAnalyticsConsent();
   await commit((current) =>
     current.enabledOverride === enabled ? null : { ...current, enabledOverride: enabled },

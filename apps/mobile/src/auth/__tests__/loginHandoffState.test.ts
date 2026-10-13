@@ -180,7 +180,7 @@ describe('loginHandoff 接线(Provider/reporter 拓扑 + 清理,读源码断言)
     expect(layoutSource).toContain('<AuthHandoffBridge />');
     expect(layoutSource).toContain("dispatch({ type: 'auth-init', authenticated: auth.isAuthenticated })");
     expect(loginSource).toContain("handoffDispatch?.({ type: 'panel-mounted' })");
-    expect(stageSource).toContain("handoff?.dispatch({ type: 'assets-ready' })");
+    expect(stageSource).toContain("dispatch?.({ type: 'assets-ready' })");
     // endpoint→OTA→auth 既有挂载顺序不变:OTA 上报在 RootAfterEndpoints、auth 桥在 AuthProvider 内
     const otaIndex = layoutSource.indexOf('useStartupOtaGate(');
     const authBridgeIndex = layoutSource.indexOf('<AuthHandoffBridge />');
@@ -189,6 +189,15 @@ describe('loginHandoff 接线(Provider/reporter 拓扑 + 清理,读源码断言)
     expect(otaIndex).toBeGreaterThanOrEqual(0);
     expect(authBridgeIndex).toBeGreaterThanOrEqual(0);
     expect(otaIndex).toBeLessThan(authBridgeIndex);
+  });
+
+  it('图片加载或失败后才结束资产等待，打包资源不能在挂载时冒充已解码', () => {
+    expect(stageSource).toContain('settledAssets.current.size === 2');
+    for (const asset of ['hero', 'wordmark']) {
+      expect(stageSource).toContain(`onLoad={() => assetSettled('${asset}')}`);
+      expect(stageSource).toContain(`onError={() => assetSettled('${asset}')}`);
+    }
+    expect(stageSource).not.toContain("handoff?.dispatch({ type: 'assets-ready' })");
   });
 
   it('reduced-motion:AccessibilityInfo 拉取 + 订阅,unmount 移除;直落终态由 Provider 收敛', () => {

@@ -1,3 +1,5 @@
+/** Legacy Cindy SDK adapter retained for compatibility tests only.
+ * Lex main-entry does not import it; Main permanently denies analytics. */
 /**
  * tapdbClient.ts
  * ---------------------------------------------------------------------------
@@ -8,14 +10,13 @@
  *   在 PIPL 与 GDPR 下都属于个人信息;TapTap 自己的合规文档也要求
  *   `if (用户同意隐私协议) { init(...) }`。真相由 main 持有,本模块只消费
  *   `electronAPI.getAnalyticsSettings().allowed` 这个结论:
- *     allowed = isReportingBuild() && 已同意隐私政策 && 使用统计开关开启
- *   (Lex 默认关闭；仅显式 XDT_TAPDB_DEV=1 的授权链路验证会放行)
+ *     Lex 中 allowed 恒为 false；main-entry 不导入本模块。
+ *   下述 SDK 生命周期保留用于上游兼容测试，不是 Lex 的运行期行为。
  *
  * ⚠️ 构建闸(2026-07-26):dev 构建默认 allowed=false,SDK 不初始化。dev 的
  *   renderer 从 `http://localhost:<vite 端口>` 加载、沙箱各有独立 userData,
  *   localStorage 里的 device_id 每次都是新的,会凭空造出大量"新增设备"污染线上
- *   口径。理由与逃生口(XDT_TAPDB_DEV=1)见
- *   main/analytics-settings-store.ts 的 isReportingBuild。
+ *   口径。Lex 将所有构建永久关闭，旧 XDT_TAPDB_DEV 环境变量不再放行。
  *
  * 为什么放在 renderer:
  *   TapDB SDK 依赖 `localStorage` / `document` / `window` / `XMLHttpRequest` /
@@ -25,8 +26,7 @@
  *   IPC channel,直接订阅现有 fanOut 即可。
  *
  * 生命周期:
- *   - import 触发 initTapdb(主视图启动时,见 renderer/index.tsx)——它只挂闸、
- *     订阅信号,不碰 SDK
+ *   - 兼容调用方显式调用 initTapdb 后只挂闸、订阅信号,不碰 SDK
  *   - main 回报 allowed=true 才 init SDK,并立即上报 page_view (#tag=app_start)
  *   - autoTrack 接管 page_show;page_hide 由本模块自己发(SDK 的 beacon 路径没有
  *     采集闸,详见 initTapdb 内 visibilitychange 处的注释)
@@ -71,7 +71,7 @@ const log = createLogger('tapdb');
 
 // ── Config ──────────────────────────────────────────────────────────────────
 //
-// 仅供显式 XDT_TAPDB_DEV=1 链路验证：TapDB 项目按兼容构建区域二选一，appId
+// 保留上游适配器配置：TapDB 项目按兼容构建区域二选一，appId
 // 与采集端点(serverUrl,SDK 直接 POST、不再
 // 追加路径)必须同区配对。appId 是公开应用标识(服务端 tapdbChargeReporter 同样
 // 硬编码同一对 ID),不属于凭证。
@@ -83,7 +83,7 @@ const log = createLogger('tapdb');
 // TAPDB_PROJECTS 保持一致。
 //
 // dev 是内部构建身份,行为语义归 cn 系(region-and-editions.md §1.1);其上报
-// 本身已被 isReportingBuild 闸住,仅 XDT_TAPDB_DEV=1 逃生口可达。
+// 在 Lex 中仍不可达，旧环境变量不再提供启用入口。
 export const TAPDB_PROJECT_BY_REGION: Readonly<
   Record<CindyRegion, { appId: string; serverUrl: string }>
 > = Object.freeze({

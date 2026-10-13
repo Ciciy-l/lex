@@ -3,9 +3,9 @@
  *
  * 这里测的是合规行为本身,不是配置读写的花样:
  *  - 默认必须是「未同意」,即 allowed=false(fail closed)
- *  - 同意后才允许上报,且开关能独立关掉
+ *  - 同意事实可独立保存，但 Lex 使用统计始终关闭
  *  - 存量迁移只在本机毫无记录时生效,绝不覆盖用户已有选择
- *  - dev 构建一律不上报(构建闸),且不因此篡改用户的同意与开关
+ *  - 所有构建及旧环境变量都不能启用统计，且不篡改用户的同意事实
  *
  * 用真实 tmpdir 当 userData(mkdtemp),覆盖到落盘与回读,而不是只测 normalize。
  */
@@ -17,7 +17,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let userDataDir = '';
-/** 除「构建闸」那一组之外，所有用例都显式开启链路以单测同意语义。 */
+/** Both packaged and development builds enforce the same Lex policy. */
 let isPackaged = true;
 
 vi.mock('electron', () => ({
@@ -47,8 +47,7 @@ const originalDevReportingEnv = process.env.XDT_TAPDB_DEV;
 beforeEach(() => {
   userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cindy-analytics-'));
   isPackaged = true;
-  // Most tests isolate the consent/toggle state machine from Lex's product-level
-  // reporting opt-in. The dedicated build-gate cases below remove this flag.
+  // A leftover developer flag must not bypass the Lex product policy.
   process.env.XDT_TAPDB_DEV = '1';
 });
 
@@ -64,29 +63,29 @@ describe('analytics settings store', () => {
 
     expect(store.readAnalyticsSettings()).toEqual({
       privacyConsentAccepted: false,
-      analyticsEnabled: true,
+      analyticsEnabled: false,
       legacyConsentMigrationClosed: false,
     });
     expect(store.isAnalyticsAllowed()).toBe(false);
     expect(fs.existsSync(settingsFile())).toBe(false);
   });
 
-  it('allows reporting only after consent is recorded, and persists it', async () => {
+  it('preserves privacy consent across restart without enabling Lex analytics', async () => {
     const store = await importStore();
 
     store.acceptPrivacyConsent();
 
-    expect(store.isAnalyticsAllowed()).toBe(true);
+    expect(store.isAnalyticsAllowed()).toBe(false);
     expect(JSON.parse(fs.readFileSync(settingsFile(), 'utf-8'))).toMatchObject({
       privacyConsentAccepted: true,
     });
 
     // 重新加载模块 = 模拟重启,结论必须从磁盘恢复。
     const reloaded = await importStore();
-    expect(reloaded.isAnalyticsAllowed()).toBe(true);
+    expect(reloaded.isAnalyticsAllowed()).toBe(false);
   });
 
-  it('keeps consent but stops reporting when the toggle is switched off', async () => {
+  it('keeps consent and analytics disabled when an old renderer requests opt-out', async () => {
     const store = await importStore();
     store.acceptPrivacyConsent();
 
@@ -103,26 +102,25 @@ describe('analytics settings store', () => {
     expect(reloaded.isAnalyticsAllowed()).toBe(false);
   });
 
-  it('records an explicit re-enable instead of dropping it as "same as default"', async () => {
+  it('clamps an explicit re-enable to false without changing consent', async () => {
     const store = await importStore();
     store.acceptPrivacyConsent();
     store.setAnalyticsEnabled(false);
 
     store.setAnalyticsEnabled(true);
 
-    // analyticsEnabled 的默认值就是 true;不显式留痕的话,「关掉后又打开」会被
-    // 当成「从没碰过」,合规问询时无法自证。
+    // Old renderers may still request true; only false may be persisted now.
     expect(JSON.parse(fs.readFileSync(settingsFile(), 'utf-8'))).toMatchObject({
-      analyticsEnabled: true,
+      analyticsEnabled: false,
     });
-    expect(store.isAnalyticsAllowed()).toBe(true);
+    expect(store.isAnalyticsAllowed()).toBe(false);
   });
 
   it('migrates a pre-existing signed-in user when the machine has no record', async () => {
     const store = await importStore();
 
     expect(store.migrateExistingLoginAsConsented(true)).toBe(true);
-    expect(store.isAnalyticsAllowed()).toBe(true);
+    expect(store.isAnalyticsAllowed()).toBe(false);
   });
 
   it('never migrates a signed-out startup', async () => {
@@ -143,30 +141,42 @@ describe('analytics settings store', () => {
     expect(store.isAnalyticsAllowed()).toBe(false);
   });
 
+  it('ignores legacy enabled preferences without erasing the privacy-consent fact', async () => {
+    fs.writeFileSync(settingsFile(), JSON.stringify({ privacyConsentAccepted: true, analyticsEnabled: true }));
+    const store = await importStore();
+    expect(store.readAnalyticsSettings()).toMatchObject({ privacyConsentAccepted: true, analyticsEnabled: false });
+    expect(store.readAnalyticsSettingsState().value.analyticsEnabled).toBe(false);
+    expect(store.isAnalyticsAllowed()).toBe(false);
+    store.setAnalyticsEnabled(true);
+    const restarted = await importStore();
+    expect(restarted.readAnalyticsSettings()).toMatchObject({ privacyConsentAccepted: true, analyticsEnabled: false });
+    expect(restarted.isAnalyticsAllowed()).toBe(false);
+  });
+
   it('normalizes hostile file contents to the safe default', async () => {
     const store = await importStore();
 
     expect(store.__testing.normalize(null)).toEqual({
       privacyConsentAccepted: false,
-      analyticsEnabled: true,
+      analyticsEnabled: false,
       legacyConsentMigrationClosed: false,
     });
     // 字符串 'true' 不是布尔,不得被当成同意。
     expect(store.__testing.normalize({ privacyConsentAccepted: 'true' })).toEqual({
       privacyConsentAccepted: false,
-      analyticsEnabled: true,
+      analyticsEnabled: false,
       legacyConsentMigrationClosed: false,
     });
     expect(store.__testing.normalize({ analyticsEnabled: 0 })).toEqual({
       privacyConsentAccepted: false,
-      analyticsEnabled: true,
+      analyticsEnabled: false,
       legacyConsentMigrationClosed: false,
     });
     // 字符串 'true' 同样不得把迁移窗口当成已关闭(损坏内容一律回到默认 false,
     // 后续由冷启动判定重新落盘;fail open 到「可迁移」侧的风险由 probe 闸兜底)。
     expect(store.__testing.normalize({ legacyConsentMigrationClosed: 'true' })).toEqual({
       privacyConsentAccepted: false,
-      analyticsEnabled: true,
+      analyticsEnabled: false,
       legacyConsentMigrationClosed: false,
     });
   });
@@ -214,13 +224,12 @@ describe('analytics settings store', () => {
 
     store.clearAnalyticsEnabledOverride();
 
-    // 拨回 true 会写入一个显式 true,此后跟不上未来的默认值变化;恢复默认必须是
-    // 「删掉 override」而不是「写入当前默认值」。
+    // 恢复默认只删除旧版开关 override，不能清掉独立的隐私同意事实。
     expect(store.isAnalyticsEnabledCustomized()).toBe(false);
     expect(JSON.parse(fs.readFileSync(settingsFile(), 'utf-8'))).toEqual({
       privacyConsentAccepted: true,
     });
-    expect(store.isAnalyticsAllowed()).toBe(true);
+    expect(store.isAnalyticsAllowed()).toBe(false);
   });
 
   it('tracks whether the toggle was explicitly set', async () => {
@@ -276,7 +285,7 @@ describe('legacy consent migration window closure', () => {
     // 关窗是内部标记,不是同意、也不是用户动过开关。
     expect(store.readAnalyticsSettings()).toEqual({
       privacyConsentAccepted: false,
-      analyticsEnabled: true,
+      analyticsEnabled: false,
       legacyConsentMigrationClosed: true,
     });
     expect(store.isAnalyticsAllowed()).toBe(false);
@@ -288,7 +297,7 @@ describe('legacy consent migration window closure', () => {
     const store = await importStore();
 
     expect(store.migrateExistingLoginAsConsented(true)).toBe(true);
-    expect(store.isAnalyticsAllowed()).toBe(true);
+    expect(store.isAnalyticsAllowed()).toBe(false);
   });
 
   it('keeps blocking even if a later write rewrites the record file', async () => {
@@ -304,7 +313,7 @@ describe('legacy consent migration window closure', () => {
 });
 
 /**
- * 构建闸 —— Lex 构建默认不上报，只有显式链路验证可开启。
+ * 构建闸 —— Lex 永久不上报，旧环境变量也不能放行。
  *
  * dev 的 renderer 从 http://localhost:<vite 端口> 加载、每条 --isolated 沙箱各有独立
  * userData,TapDB 的 device_id 存在 localStorage 里因而每次都是新的,会凭空造出大量
@@ -322,7 +331,7 @@ describe('analytics build gate', () => {
     // 闸只挡上报,不得篡改用户的持久真相 —— dev 与正式版常共享同一份 userData。
     expect(store.readAnalyticsSettings()).toEqual({
       privacyConsentAccepted: true,
-      analyticsEnabled: true,
+      analyticsEnabled: false,
       legacyConsentMigrationClosed: false,
     });
     expect(JSON.parse(fs.readFileSync(settingsFile(), 'utf-8'))).toMatchObject({
@@ -330,27 +339,27 @@ describe('analytics build gate', () => {
     });
   });
 
-  it('keeps Lex packaged builds opted out unless reporting is explicitly enabled', async () => {
+  it('keeps Lex packaged and development builds permanently opted out', async () => {
     isPackaged = false;
     delete process.env.XDT_TAPDB_DEV;
     const devStore = await importStore();
     devStore.acceptPrivacyConsent();
     expect(devStore.isAnalyticsAllowed()).toBe(false);
 
-    // 同一份盘上记录,换成正式构建立刻放行 —— 证明差异只来自构建 flavor。
+    // The same consent record stays opted out in the packaged build.
     isPackaged = true;
     const packagedStore = await importStore();
     expect(packagedStore.isAnalyticsAllowed()).toBe(false);
   });
 
-  it('lets XDT_TAPDB_DEV=1 opt a build back in (link verification escape hatch)', async () => {
+  it('ignores XDT_TAPDB_DEV=1 in Lex builds', async () => {
     isPackaged = false;
     process.env.XDT_TAPDB_DEV = '1';
     const store = await importStore();
 
     store.acceptPrivacyConsent();
 
-    expect(store.isAnalyticsAllowed()).toBe(true);
+    expect(store.isAnalyticsAllowed()).toBe(false);
   });
 
   it('treats any value other than "1" as opted out — no boolean guessing', async () => {

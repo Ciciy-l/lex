@@ -65,7 +65,7 @@ describe('loginSkin 白底体系视觉(源码接线 + token 参数)', () => {
   it('wordmark:Lex 双主题字标 接入 stage 且框内 contain 等比适配(368:1381)', () => {
     expect(stageSource).toContain("require('../../assets/lex/wordmark.png')");
     expect(stageSource).toContain('resizeMode="contain"');
-    expect(stageSource).toContain('boxStyle(stage.word)');
+    expect(stageSource).toContain('animatedBrandStyle(brand.login.word, brand.splash.word, brandProgress)');
     // 禁止非等比拉伸:不得出现 stretch
     expect(stageSource).not.toContain('"stretch"');
   });
@@ -73,9 +73,9 @@ describe('loginSkin 白底体系视觉(源码接线 + token 参数)', () => {
   it('Lex hero replaces Cindy artwork and slogan while preserving responsive geometry', () => {
     expect(stageSource).not.toContain("require('../../assets/login/login-slogan.png')");
     expect(stageSource).not.toContain('boxStyle(stage.slogan)');
-    expect(stageSource).toContain("require('../../assets/lex/assistant-hero.png')");
+    expect(stageSource).toContain("require('../../assets/lex/assistant-startup.png')");
     expect(stageSource).toContain("require('../../assets/lex/wordmark-dark.png')");
-    expect(stageSource).toContain('boxStyle(stage.cindy)');
+    expect(stageSource).toContain('animatedBrandStyle(brand.login.hero, brand.splash.hero, brandProgress)');
   });
 
   it.each([
@@ -85,7 +85,7 @@ describe('loginSkin 白底体系视觉(源码接线 + token 参数)', () => {
   ])('%s 的打包图片存在于移动端资源目录，不依赖被 EAS 排除的桌面文件', (sourceFile) => {
     const sourcePath = resolve(process.cwd(), sourceFile);
     const source = readFileSync(sourcePath, 'utf8');
-    const imageRefs = [...source.matchAll(/require[(]['"]([^'"]+[.]png)['"][)]/g)];
+    const imageRefs = [...source.matchAll(/require[(]['"]([^'"]+[.](?:png|webp))['"][)]/g)];
     expect(imageRefs.length).toBeGreaterThan(0);
     for (const [, reference] of imageRefs) {
       const imagePath = resolve(dirname(sourcePath), reference);

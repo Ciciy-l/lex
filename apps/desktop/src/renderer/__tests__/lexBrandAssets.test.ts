@@ -35,6 +35,25 @@ describe('Lex brand asset contract', () => {
     expect(png.colorType).toBe(6);
   });
 
+  it('preloads the lightweight alpha portrait before renderer startup', () => {
+    const bytes = readFileSync(resolve(rendererRoot, 'assets/branding/lex-assistant-startup.webp'));
+    expect(bytes.toString('ascii', 0, 4)).toBe('RIFF');
+    expect(bytes.toString('ascii', 8, 12)).toBe('WEBP');
+    expect(bytes.length).toBeLessThan(200_000);
+    const html = readFileSync(resolve(rendererRoot, 'index.html'), 'utf8');
+    expect(html).toContain('rel="preload" as="image"');
+    expect(html).toContain('./assets/branding/lex-assistant-startup.webp');
+  });
+
+  it('does not load analytics or offer an enabled analytics setting in Lex', () => {
+    const entry = readFileSync(resolve(rendererRoot, 'main-entry.tsx'), 'utf8');
+    const about = readFileSync(resolve(rendererRoot, 'components/settings/AboutSection.tsx'), 'utf8');
+    const search = readFileSync(resolve(rendererRoot, 'components/settings/AboutSection.settings-search.ts'), 'utf8');
+    expect(entry).not.toContain('initTapdb');
+    expect(about).not.toContain('AnalyticsToggleRow');
+    expect(search).not.toContain('settings.about.analyticsLabel');
+  });
+
   it('uses Lex as the renderer document title', () => {
     const html = readFileSync(resolve(rendererRoot, 'index.html'), 'utf8');
     expect(html).toContain('<title>Lex</title>');
@@ -58,8 +77,11 @@ describe('Lex brand asset contract', () => {
     const sources = [lockup, login, share, brandLogo].join('\n');
 
     expect(lockup).toContain('lex-assistant-avatar.png');
-    expect(login).toContain('lex-assistant-hero.png');
-    expect(login).toContain('lex-assistant-master.png');
+    expect(login).toContain('lex-assistant-startup.webp');
+    expect(login).not.toContain('lex-assistant-master.png');
+    expect(login).not.toContain('maskImage:');
+    expect(login).toContain('fetchPriority="high"');
+    expect(login).toContain('decoding="sync"');
     expect(login).not.toContain('assets/login/slogan');
     expect(login).not.toContain('login-slogan');
     expect(share).toContain('lex-assistant-share.png');
