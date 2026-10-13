@@ -367,22 +367,62 @@ async function findPrivateBinaryAsync(
   signal?: AbortSignal,
 ): Promise<string | null> {
   const userDataPath = app.getPath('userData');
-  for (const candidate of privateBinaryCandidates(userDataPath, kind)) {
-    if (!isCompletePrivateCandidate(userDataPath, kind, candidate, CONFIG[kind].version)) continue;
-    const versionOutput = await readExecutableVersion(candidate, signal);
-    if (versionOutput && runtimeVersionMatchesPin(kind, versionOutput)) {
-      if (
-        kind === 'codex' &&
-        candidate ===
-          path.join(codexPackageDirectory(userDataPath, CONFIG.codex.version), 'bin', 'codex')
-      )
-        fs.writeFileSync(codexPackageVersionMarker(userDataPath), `${CONFIG.codex.version}\n`);
-      else writeRuntimeVersionMarker(userDataPath, kind);
-      return candidate;
+  const standaloneMarker = runtimeVersionMarkerPath(userDataPath, kind);
+  const markedStandaloneVersion = readText(standaloneMarker);
+  const packageCandidate =
+    kind === 'codex'
+      ? path.join(codexPackageDirectory(userDataPath, CONFIG.codex.version), 'bin', 'codex')
+      : null;
+  let standaloneMarkerChecked = false;
+  let pinnedPath: string | null = null;
+  const invalidateMarker = (marker: string): void => {
+    try {
+      fs.rmSync(marker, { force: true });
+    } catch {
+      /* ignore */
     }
+  };
+  for (const candidate of privateBinaryCandidates(userDataPath, kind)) {
+    const isPackage = candidate === packageCandidate;
+    if (!isPackage && pinnedPath && (standaloneMarkerChecked || !markedStandaloneVersion)) break;
+    let executable = false;
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      executable = true;
+    } catch {
+      /* missing candidates cannot own a marker */
+    }
+    if (
+      !executable ||
+      !isCompletePrivateCandidate(userDataPath, kind, candidate, CONFIG[kind].version)
+    ) {
+      if (isPackage && readText(codexPackageVersionMarker(userDataPath)) === CONFIG.codex.version)
+        invalidateMarker(codexPackageVersionMarker(userDataPath));
+      continue;
+    }
+    const versionOutput = await readExecutableVersion(candidate, signal);
+    const matchesPin = !!versionOutput && runtimeVersionMatchesPin(kind, versionOutput);
+    if (isPackage) {
+      if (matchesPin)
+        fs.writeFileSync(codexPackageVersionMarker(userDataPath), `${CONFIG.codex.version}\n`);
+      else if (readText(codexPackageVersionMarker(userDataPath)) === CONFIG.codex.version)
+        invalidateMarker(codexPackageVersionMarker(userDataPath));
+    } else if (!standaloneMarkerChecked) {
+      // The synchronous cache picks the first executable standalone candidate.
+      // Preserve its old marker only when this probe confirms that exact version;
+      // an executable sibling must not validate a broken/shadowing earlier path.
+      standaloneMarkerChecked = true;
+      if (matchesPin) writeRuntimeVersionMarker(userDataPath, kind);
+      else if (
+        !versionOutput ||
+        parseBinaryVersionOutput(versionOutput, '') !== markedStandaloneVersion
+      )
+        invalidateMarker(standaloneMarker);
+    }
+    if (matchesPin) pinnedPath ??= candidate;
   }
-  try { fs.rmSync(runtimeVersionMarkerPath(userDataPath, kind), { force: true }); } catch { /* ignore */ }
-  return null;
+  if (!standaloneMarkerChecked) invalidateMarker(standaloneMarker);
+  return pinnedPath;
 }
 
 async function migrateLegacyManagedBinary(

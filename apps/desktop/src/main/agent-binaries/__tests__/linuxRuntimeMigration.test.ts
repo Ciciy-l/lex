@@ -134,6 +134,192 @@ describe('legacy managed binary migration', () => {
   });
 });
 
+describe('private runtime ready markers', () => {
+  describe.each(['claude-code', 'codex'] as const)('%s standalone marker', (kind) => {
+    it.each([
+      'valid-old',
+      'stale-pin',
+      'version-mismatch',
+      'invalid-output',
+      'invalid-marker',
+      'probe-error',
+      'missing-binary',
+    ] as const)(
+      'preserves only a verified installation during an offline upgrade: %s',
+      async (scenario) => {
+        const root = fallback.runtimeInstallRoot(tempDir, kind);
+        const binaryPath = fallback.privateBinaryPath(tempDir, kind);
+        fs.mkdirSync(path.dirname(binaryPath), { recursive: true });
+        if (scenario !== 'missing-binary')
+          fs.writeFileSync(binaryPath, 'old standalone', { mode: 0o755 });
+        const versionMarker = path.join(root, '.version');
+        const markerVersion =
+          scenario === 'stale-pin'
+            ? kind === 'codex'
+              ? codexPin.version
+              : PINNED_CLAUDE_VERSION
+            : scenario === 'version-mismatch'
+              ? '0.0.2'
+              : scenario === 'invalid-marker'
+                ? 'invalid-version'
+                : '0.0.1';
+        fs.writeFileSync(versionMarker, `${markerVersion}\n`);
+        execFileMock.mockImplementation(
+          (
+            command: string,
+            _args: string[],
+            _options: unknown,
+            callback: (error: Error | null, stdout: string, stderr: string) => void,
+          ) => {
+            if (command !== binaryPath || scenario === 'probe-error') {
+              callback(new Error('unavailable CLI'), '', '');
+              return;
+            }
+            callback(
+              null,
+              scenario === 'invalid-output'
+                ? 'failed to initialize 0.0.1'
+                : kind === 'codex'
+                  ? 'codex-cli 0.0.1'
+                  : claudeVersionOutput('0.0.1'),
+              '',
+            );
+          },
+        );
+        downloadMock.mockRejectedValueOnce(new Error('offline install'));
+
+        await expect(fallback.prepareLinuxRuntimeFallback(kind)).rejects.toThrow('offline install');
+
+        expect(downloadMock).toHaveBeenCalledOnce();
+        expect(fallback.findCachedLinuxRuntimeFallbackBinary(kind)).toBeNull();
+        if (scenario === 'valid-old') {
+          expect(fs.readFileSync(versionMarker, 'utf8')).toBe('0.0.1\n');
+          expect(fallback.findCachedLinuxRuntimeFallbackBinary(kind, false)).toBe(binaryPath);
+        } else {
+          expect(fs.existsSync(versionMarker)).toBe(false);
+          expect(fallback.findCachedLinuxRuntimeFallbackBinary(kind, false)).toBeNull();
+        }
+        if (scenario !== 'missing-binary')
+          expect(fs.readFileSync(binaryPath, 'utf8')).toBe('old standalone');
+      },
+    );
+  });
+
+  it('does not let a legacy sibling validate the first executable standalone marker', async () => {
+    const root = fallback.runtimeInstallRoot(tempDir, 'codex');
+    const binaryPath = fallback.privateBinaryPath(tempDir, 'codex');
+    const sibling = path.join(root, 'codex-home', 'packages', 'standalone', 'current', 'codex');
+    for (const file of [binaryPath, sibling]) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, 'standalone', { mode: 0o755 });
+    }
+    fs.writeFileSync(path.join(root, '.version'), '0.0.1\n');
+    execFileMock.mockImplementation(
+      (
+        command: string,
+        _args: string[],
+        _options: unknown,
+        callback: (error: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        if (command === binaryPath || command === sibling)
+          callback(null, `codex-cli ${command === binaryPath ? '0.0.2' : '0.0.1'}`, '');
+        else callback(new Error('unavailable CLI'), '', '');
+      },
+    );
+    downloadMock.mockRejectedValueOnce(new Error('offline install'));
+
+    await expect(fallback.prepareLinuxRuntimeFallback('codex')).rejects.toThrow('offline install');
+
+    expect(fs.existsSync(path.join(root, '.version'))).toBe(false);
+    expect(fallback.findCachedLinuxRuntimeFallbackBinary('codex', false)).toBeNull();
+    for (const file of [binaryPath, sibling])
+      expect(fs.readFileSync(file, 'utf8')).toBe('standalone');
+  });
+
+  it.each(['matching', 'wrong-version'] as const)(
+    'keeps package and standalone readiness independent after a %s package probe',
+    async (packageVersion) => {
+      const root = fallback.runtimeInstallRoot(tempDir, 'codex');
+      const binaryPath = fallback.privateBinaryPath(tempDir, 'codex');
+      fs.mkdirSync(path.dirname(binaryPath), { recursive: true });
+      fs.writeFileSync(binaryPath, 'old standalone', { mode: 0o755 });
+      const standaloneVersion = packageVersion === 'matching' ? codexPin.version : '0.0.1';
+      fs.writeFileSync(path.join(root, '.version'), `${standaloneVersion}\n`);
+      const directory = path.join(root, 'codex-package', codexPin.version);
+      const asset = codexPin.runtimeAssets[`linux-${process.arch}` as 'linux-x64' | 'linux-arm64'];
+      for (const file of [
+        'bin/codex',
+        'bin/codex-code-mode-host',
+        'codex-path/rg',
+        'codex-resources/runtime.json',
+      ]) {
+        const target = path.join(directory, file);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, file, { mode: 0o755 });
+      }
+      fs.writeFileSync(
+        path.join(directory, 'codex-package.json'),
+        JSON.stringify({
+          layoutVersion: 1,
+          version: codexPin.version,
+          target: asset.target,
+          variant: 'codex',
+          entrypoint: 'bin/codex',
+          pathDir: 'codex-path',
+          resourcesDir: 'codex-resources',
+        }),
+      );
+      const packageMarker = path.join(root, '.package-version');
+      fs.writeFileSync(packageMarker, `${codexPin.version}\n`);
+      const packageBinary = path.join(directory, 'bin', 'codex');
+      execFileMock.mockImplementation(
+        (
+          command: string,
+          _args: string[],
+          _options: unknown,
+          callback: (error: Error | null, stdout: string, stderr: string) => void,
+        ) => {
+          if (command === binaryPath || command === packageBinary)
+            callback(
+              null,
+              `codex-cli ${
+                command === packageBinary && packageVersion === 'matching'
+                  ? codexPin.version
+                  : '0.0.1'
+              }`,
+              '',
+            );
+          else callback(new Error('unavailable CLI'), '', '');
+        },
+      );
+      if (packageVersion === 'matching') {
+        await expect(fallback.prepareLinuxRuntimeFallback('codex')).resolves.toMatchObject({
+          ready: true,
+          installed: false,
+          source: 'private',
+          binaryPath: packageBinary,
+        });
+        expect(downloadMock).not.toHaveBeenCalled();
+        expect(fs.readFileSync(packageMarker, 'utf8')).toBe(`${codexPin.version}\n`);
+        expect(fs.existsSync(path.join(root, '.version'))).toBe(false);
+        fs.unlinkSync(path.join(directory, 'bin', 'codex-code-mode-host'));
+        expect(fallback.findCachedLinuxRuntimeFallbackBinary('codex')).toBeNull();
+        expect(fallback.findCachedLinuxRuntimeFallbackBinary('codex', false)).toBeNull();
+      } else {
+        downloadMock.mockRejectedValueOnce(new Error('offline install'));
+        await expect(fallback.prepareLinuxRuntimeFallback('codex')).rejects.toThrow(
+          'offline install',
+        );
+        expect(fs.existsSync(packageMarker)).toBe(false);
+        expect(fs.readFileSync(path.join(root, '.version'), 'utf8')).toBe('0.0.1\n');
+        expect(fallback.findCachedLinuxRuntimeFallbackBinary('codex')).toBeNull();
+        expect(fallback.findCachedLinuxRuntimeFallbackBinary('codex', false)).toBe(binaryPath);
+      }
+      expect(fs.readFileSync(binaryPath, 'utf8')).toBe('old standalone');
+    },
+  );
+});
+
 describe('full Linux Codex fallback installation', () => {
   it.each(['complete', 'incomplete', 'wrong-target', 'bad-version', 'cancelled'] as const)(
     'downloads the full pin and publishes only a verified %s package',

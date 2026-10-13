@@ -10,6 +10,7 @@ const originalArch = process.arch;
 let TEST_ROOT: string;
 let TEST_USER_DATA: string;
 let TEST_EXE: string;
+const updateServiceTestInstances = new Set<{ stopUpdateService: () => void }>();
 
 const browserWindowGetAllWindows = vi.fn(() => []);
 const ipcMainHandle = vi.fn();
@@ -195,7 +196,21 @@ async function freshUpdateService(platform: NodeJS.Platform, arch: string = orig
   vi.resetModules();
   setPlatform(platform);
   setArch(arch);
-  return import('../updateService');
+  const service = await import('../updateService');
+  updateServiceTestInstances.add(service);
+  return service;
+}
+
+function disposeUpdateServiceTestInstances(): void {
+  try {
+    for (const service of updateServiceTestInstances) service.stopUpdateService();
+  } finally {
+    updateServiceTestInstances.clear();
+    // stopUpdateService does not own the startup timeout or child spawn deadline.
+    // Keep them on the test clock and discard them before app.getPath points at
+    // another fixture, including when an assertion exits before a local finally.
+    vi.clearAllTimers();
+  }
 }
 
 function resetUpdateServiceFixture() {
@@ -217,6 +232,7 @@ afterAll(() => {
   fs.rmSync(TEST_ROOT, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 beforeEach(() => {
+  vi.useFakeTimers();
   browserWindowGetAllWindows.mockReset();
   browserWindowGetAllWindows.mockReturnValue([]);
   ipcHandlers.clear();
@@ -264,7 +280,8 @@ beforeEach(() => {
   });
   readAutoUpdateSettings.mockReset();
   readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: true });
-  spawnProcess.mockClear();
+  spawnProcess.mockReset();
+  spawnProcess.mockImplementation(() => ({ unref: vi.fn(), on: vi.fn() }));
   checkWindowsUpdaterPrerequisites.mockReset();
   checkWindowsUpdaterPrerequisites.mockReturnValue({
     satisfied: true,
@@ -279,13 +296,52 @@ beforeEach(() => {
   resetUpdateServiceFixture();
 });
 afterEach(() => {
-  vi.clearAllTimers();
-  vi.useRealTimers();
-  setPlatform(originalPlatform);
-  setArch(originalArch);
+  try {
+    disposeUpdateServiceTestInstances();
+  } finally {
+    vi.useRealTimers();
+    setPlatform(originalPlatform);
+    setArch(originalArch);
+  }
 });
 
 describe.sequential('updateService', () => {
+  it('disposes an old startup check before rotating the userData fixture', async () => {
+    readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });
+    download.mockImplementation(async ({ targetPath }: { targetPath: string }) => {
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      fs.writeFileSync(targetPath, 'update');
+      return { path: targetPath, size: 123 };
+    });
+    const previousService = await freshUpdateService('darwin');
+    previousService.initUpdateService();
+    await expect(previousService.checkForUpdate(updateManifest())).resolves.toBe('ready');
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+    disposeUpdateServiceTestInstances();
+    expect(vi.getTimerCount()).toBe(0);
+    resetUpdateServiceFixture();
+    const nextService = await freshUpdateService('darwin');
+    await expect(nextService.checkForUpdate(updateManifest())).resolves.toBe('ready');
+    const patchInfoPath = path.join(TEST_USER_DATA, 'updates', 'patch-info.json');
+    const patchInfoBefore = fs.readFileSync(patchInfoPath, 'utf8');
+    // A leaked first-check callback sees the shared mock's new path/manifest
+    // and can discard the next fixture's patch as a no-longer-offered upgrade.
+    fetchManifest.mockResolvedValue(updateManifest('0.0.63'));
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(fetchManifest).not.toHaveBeenCalled();
+    expect(nextService.getUpdateStatus()).toBe('ready');
+    expect(fs.readFileSync(patchInfoPath, 'utf8')).toBe(patchInfoBefore);
+    const patchInfo = JSON.parse(patchInfoBefore) as { fileName: string; applyAttempts?: number };
+    expect(patchInfo.applyAttempts).toBeUndefined();
+    expect(fs.readFileSync(path.join(TEST_USER_DATA, 'updates', patchInfo.fileName), 'utf8')).toBe(
+      'update',
+    );
+    expect(spawnProcess).not.toHaveBeenCalled();
+  });
+
   describe('binary version checks after an applied update', () => {
     beforeEach(() => {
       readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });
@@ -1234,7 +1290,6 @@ describe.sequential('updateService', () => {
         manifest: updateManifest('0.0.65', sharedHotfix),
       });
       service.stopUpdateService();
-      vi.useRealTimers();
       let releaseProbe: ((busy: boolean) => void) | undefined;
       const probeStarted = new Promise<void>((resolveStarted) => {
         service.setUpdateAutoRelaunchBusyProbe(
@@ -1321,7 +1376,6 @@ describe.sequential('updateService', () => {
         manifest: updateManifest('0.0.65', sharedHotfix),
       });
       service.stopUpdateService();
-      vi.useRealTimers();
       let releaseProbe: ((busy: boolean) => void) | undefined;
       const probeStarted = new Promise<void>((resolveStarted) => {
         service.setUpdateAutoRelaunchBusyProbe(
@@ -1391,7 +1445,6 @@ describe.sequential('updateService', () => {
       const { DownloadError } = await import('../downloader/index');
       const service = await bootWithStagedPatch({ enabled: true });
       service.stopUpdateService();
-      vi.useRealTimers();
       let releaseProbe: ((busy: boolean) => void) | undefined;
       const probeStarted = new Promise<void>((resolveStarted) => {
         service.setUpdateAutoRelaunchBusyProbe(
@@ -1939,7 +1992,8 @@ describe.sequential('updateService', () => {
         try {
           await expect(service.checkForUpdate(updateManifest('0.0.65'))).resolves.toBe('ready');
           const patchInfoPath = path.join(TEST_USER_DATA, 'updates', 'patch-info.json');
-          const patchInfoBefore = JSON.parse(fs.readFileSync(patchInfoPath, 'utf-8')) as {
+          const patchInfoBytesBefore = fs.readFileSync(patchInfoPath, 'utf-8');
+          const patchInfoBefore = JSON.parse(patchInfoBytesBefore) as {
             fileName: string;
           };
           const stagedPatchPath = path.join(TEST_USER_DATA, 'updates', patchInfoBefore.fileName);
@@ -1961,8 +2015,10 @@ describe.sequential('updateService', () => {
           const patchInfoAfter = JSON.parse(fs.readFileSync(patchInfoPath, 'utf-8')) as {
             applyAttempts?: number;
           };
+          expect(fs.readFileSync(patchInfoPath, 'utf-8')).toBe(patchInfoBytesBefore);
           expect(patchInfoAfter.applyAttempts).toBeUndefined();
           expect(fs.existsSync(stagedPatchPath)).toBe(true);
+          expect(fs.readFileSync(stagedPatchPath, 'utf-8')).toBe('update');
           expect(spawnProcess).not.toHaveBeenCalled();
           expect(service.isUpdateRelaunchImminent()).toBe(false);
         } finally {
