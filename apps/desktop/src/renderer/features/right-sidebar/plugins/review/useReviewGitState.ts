@@ -1,3 +1,4 @@
+import { useGitRepositoryId } from '../../lib/gitRepositorySelection';
 /**
  * Hooks for git-review read state.
  *
@@ -228,16 +229,21 @@ export function useReviewGitState(
   ignoreWhitespace = false,
   deviceId: string | null = null,
 ): LoadState<ReviewData> {
+  const repositoryId = useGitRepositoryId();
   const fetchReviewData = useCallback(
     (currentSessionId: string) =>
-      gitReviewApiFor(deviceId).get({ sessionId: currentSessionId, ignoreWhitespace }),
-    [deviceId, ignoreWhitespace],
+      gitReviewApiFor(deviceId).get({
+        repositoryId,
+        sessionId: currentSessionId,
+        ignoreWhitespace,
+      }),
+    [repositoryId, deviceId, ignoreWhitespace],
   );
   return useGitReviewLoad(sessionId, fetchReviewData, 'git review load failed', {
     cacheKey: sessionId
-      ? `${deviceId ?? 'local'}:worktree:${sessionId}:${ignoreWhitespace ? 'w' : 'plain'}`
+      ? `${deviceId ?? 'local'}:${repositoryId ?? 'default'}:worktree:${sessionId}:${ignoreWhitespace ? 'w' : 'plain'}`
       : null,
-    scopeKey: sessionId ? `${deviceId ?? 'local'}:${sessionId}` : null,
+    scopeKey: sessionId ? `${deviceId ?? 'local'}:${repositoryId ?? 'default'}:${sessionId}` : null,
   });
 }
 
@@ -245,13 +251,14 @@ export function useReviewDirtySummary(
   sessionId: string | null,
   deviceId: string | null = null,
 ): LoadState<ReviewDirtySummary> {
+  const repositoryId = useGitRepositoryId();
   const fetchReviewSummary = useCallback(
     (currentSessionId: string) =>
-      gitReviewApiFor(deviceId).summary({ sessionId: currentSessionId }),
-    [deviceId],
+      gitReviewApiFor(deviceId).summary({ repositoryId, sessionId: currentSessionId }),
+    [repositoryId, deviceId],
   );
   return useGitReviewLoad(sessionId, fetchReviewSummary, 'git review summary failed', {
-    scopeKey: sessionId ? `${deviceId ?? 'local'}:${sessionId}` : null,
+    scopeKey: sessionId ? `${deviceId ?? 'local'}:${repositoryId ?? 'default'}:${sessionId}` : null,
   });
 }
 
@@ -260,13 +267,14 @@ export function useReviewCommits(
   baseRef: string | null,
   deviceId: string | null = null,
 ): LoadState<ReviewCommitListData> {
+  const repositoryId = useGitRepositoryId();
   const fetchReviewCommits = useCallback(
     (currentSessionId: string) =>
-      gitReviewApiFor(deviceId).commits({ sessionId: currentSessionId, baseRef }),
-    [baseRef, deviceId],
+      gitReviewApiFor(deviceId).commits({ repositoryId, sessionId: currentSessionId, baseRef }),
+    [repositoryId, baseRef, deviceId],
   );
   return useGitReviewLoad(sessionId, fetchReviewCommits, 'git review commits failed', {
-    scopeKey: sessionId ? `${deviceId ?? 'local'}:${sessionId}` : null,
+    scopeKey: sessionId ? `${deviceId ?? 'local'}:${repositoryId ?? 'default'}:${sessionId}` : null,
   });
 }
 
@@ -276,16 +284,18 @@ export function useReviewCommitDiff(
   ignoreWhitespace = false,
   deviceId: string | null = null,
 ): LoadState<ReviewCommitDiffData> {
+  const repositoryId = useGitRepositoryId();
   const fetchCommitDiff = useCallback(
     (currentSessionId: string) => {
       if (!oid) return Promise.reject(new Error('commit oid is required'));
       return gitReviewApiFor(deviceId).commitDiff({
+        repositoryId,
         sessionId: currentSessionId,
         oid,
         ignoreWhitespace,
       });
     },
-    [deviceId, ignoreWhitespace, oid],
+    [repositoryId, deviceId, ignoreWhitespace, oid],
   );
   return useGitReviewLoad(
     sessionId && oid ? sessionId : null,
@@ -294,9 +304,12 @@ export function useReviewCommitDiff(
     {
       cacheKey:
         sessionId && oid
-          ? `${deviceId ?? 'local'}:commit:${sessionId}:${oid}:${ignoreWhitespace ? 'w' : 'plain'}`
+          ? `${deviceId ?? 'local'}:${repositoryId ?? 'default'}:commit:${sessionId}:${oid}:${ignoreWhitespace ? 'w' : 'plain'}`
           : null,
-      scopeKey: sessionId && oid ? `${deviceId ?? 'local'}:${sessionId}` : null,
+      scopeKey:
+        sessionId && oid
+          ? `${deviceId ?? 'local'}:${repositoryId ?? 'default'}:${sessionId}`
+          : null,
       preserveWhenDisabled: true,
     },
   );
@@ -309,14 +322,16 @@ export function useReviewBranchDiff(
   enabled = true,
   deviceId: string | null = null,
 ): LoadState<ReviewBranchDiffData> {
+  const repositoryId = useGitRepositoryId();
   const fetchBranchDiff = useCallback(
     (currentSessionId: string) =>
       gitReviewApiFor(deviceId).branchDiff({
+        repositoryId,
         sessionId: currentSessionId,
         baseRef,
         ignoreWhitespace,
       }),
-    [baseRef, deviceId, ignoreWhitespace],
+    [repositoryId, baseRef, deviceId, ignoreWhitespace],
   );
   return useGitReviewLoad(
     sessionId && enabled ? sessionId : null,
@@ -324,9 +339,11 @@ export function useReviewBranchDiff(
     'git review branch diff failed',
     {
       cacheKey: sessionId
-        ? `${deviceId ?? 'local'}:branch:${sessionId}:${baseRef ?? 'default'}:${ignoreWhitespace ? 'w' : 'plain'}`
+        ? `${deviceId ?? 'local'}:${repositoryId ?? 'default'}:branch:${sessionId}:${baseRef ?? 'default'}:${ignoreWhitespace ? 'w' : 'plain'}`
         : null,
-      scopeKey: sessionId ? `${deviceId ?? 'local'}:${sessionId}` : null,
+      scopeKey: sessionId
+        ? `${deviceId ?? 'local'}:${repositoryId ?? 'default'}:${sessionId}`
+        : null,
       preserveWhenDisabled: true,
     },
   );
@@ -338,6 +355,7 @@ export function useReviewFileDiff(
   refreshVersion = 0,
   deviceId: string | null = null,
 ): LoadState<ReviewFileDiffData> {
+  const repositoryId = useGitRepositoryId();
   const source = request?.source ?? null;
   const path = request?.path ?? null;
   const oldPath = request?.oldPath ?? null;
@@ -348,6 +366,7 @@ export function useReviewFileDiff(
     (currentSessionId: string) => {
       if (!source || !path) return Promise.reject(new Error('file diff request is required'));
       return gitReviewApiFor(deviceId).fileDiff({
+        repositoryId,
         sessionId: currentSessionId,
         source,
         path,
@@ -357,13 +376,24 @@ export function useReviewFileDiff(
         ignoreWhitespace,
       });
     },
-    [branchBaseRef, commitOid, deviceId, ignoreWhitespace, oldPath, path, refreshVersion, source],
+    [
+      repositoryId,
+      branchBaseRef,
+      commitOid,
+      deviceId,
+      ignoreWhitespace,
+      oldPath,
+      path,
+      refreshVersion,
+      source,
+    ],
   );
   // A different commit/path is a different document, even inside one session.
   // Only refreshing the same request may retain its previous contents.
   const scopeKey =
     sessionId && source && path
       ? JSON.stringify([
+          repositoryId,
           deviceId,
           sessionId,
           source,
@@ -392,6 +422,7 @@ export function useReviewFileDiffs(
   requests: readonly ReviewFileDiffRequest[],
   deviceId: string | null = null,
 ): LoadState<ReviewFileDiffData[]> {
+  const repositoryId = useGitRepositoryId();
   const requestKey =
     requests.length > 0
       ? JSON.stringify(
@@ -410,6 +441,7 @@ export function useReviewFileDiffs(
     (currentSessionId: string) =>
       mapWithConcurrency(requests, FILE_DIFF_BATCH_CONCURRENCY, (request) =>
         gitReviewApiFor(deviceId).fileDiff({
+          repositoryId,
           sessionId: currentSessionId,
           source: request.source,
           path: request.path,
@@ -419,7 +451,7 @@ export function useReviewFileDiffs(
           ignoreWhitespace: request.ignoreWhitespace === true,
         }),
       ),
-    [deviceId, requestKey],
+    [repositoryId, deviceId, requestKey],
   );
   return useGitReviewLoad(
     sessionId && requestKey ? sessionId : null,
@@ -427,8 +459,13 @@ export function useReviewFileDiffs(
     'git review file diff batch failed',
     {
       cacheKey:
-        sessionId && requestKey ? `${deviceId ?? 'local'}:files:${sessionId}:${requestKey}` : null,
-      scopeKey: sessionId && requestKey ? `${deviceId ?? 'local'}:${sessionId}` : null,
+        sessionId && requestKey
+          ? `${deviceId ?? 'local'}:${repositoryId ?? 'default'}:files:${sessionId}:${requestKey}`
+          : null,
+      scopeKey:
+        sessionId && requestKey
+          ? `${deviceId ?? 'local'}:${repositoryId ?? 'default'}:${sessionId}`
+          : null,
       preserveWhenDisabled: false,
     },
   );

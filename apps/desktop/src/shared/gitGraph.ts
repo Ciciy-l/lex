@@ -15,6 +15,7 @@ export interface GitGraphRef {
 }
 
 export interface GitGraphRequest {
+  repositoryId?: string;
   sessionId: string;
   limit: number;
   currentBranch: boolean;
@@ -29,6 +30,7 @@ export interface GitGraphData {
 }
 
 export interface GitGraphCompareRequest {
+  repositoryId?: string;
   sessionId: string;
   fromRef: string;
   fromOid: string;
@@ -49,6 +51,8 @@ export function parseGitGraphRequest(value: unknown): GitGraphRequest {
     typeof request.sessionId !== 'string' ||
     !request.sessionId.trim() ||
     request.sessionId.length > 128 ||
+    (request.repositoryId !== undefined &&
+      (typeof request.repositoryId !== 'string' || !/^[a-f0-9]{64}$/.test(request.repositoryId))) ||
     !Number.isInteger(request.limit) ||
     request.limit! < 1 ||
     request.limit! > 1000 ||
@@ -59,6 +63,7 @@ export function parseGitGraphRequest(value: unknown): GitGraphRequest {
   }
   return {
     sessionId: request.sessionId,
+    ...(request.repositoryId === undefined ? {} : { repositoryId: request.repositoryId }),
     limit: request.limit!,
     currentBranch: request.currentBranch,
     includeRemotes: request.includeRemotes,
@@ -72,6 +77,8 @@ export function parseGitGraphCompareRequest(value: unknown): GitGraphCompareRequ
     typeof request.sessionId !== 'string' ||
     !request.sessionId.trim() ||
     request.sessionId.length > 128 ||
+    (request.repositoryId !== undefined &&
+      (typeof request.repositoryId !== 'string' || !/^[a-f0-9]{64}$/.test(request.repositoryId))) ||
     ![request.fromOid, request.toOid].every(
       (oid) => typeof oid === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(oid),
     ) ||
@@ -89,6 +96,7 @@ export function parseGitGraphCompareRequest(value: unknown): GitGraphCompareRequ
   }
   return {
     sessionId: request.sessionId,
+    ...(request.repositoryId === undefined ? {} : { repositoryId: request.repositoryId }),
     fromRef: request.fromRef!,
     fromOid: request.fromOid!,
     toRef: request.toRef!,

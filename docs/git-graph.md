@@ -10,13 +10,17 @@ no code or assets from the third-party VS Code Git Graph extension are used.
 ## Read-only scope
 
 - The graph and exact comparison IPCs require a trusted app renderer, a bounded
-  session ID, and an authoritative local session row. SSH sessions are rejected
-  before scope resolution. Device Link does not expose these operations; the UI
-  also refuses unresolved device ownership.
+  session ID, and an authoritative host session row. Local and SSH tasks use
+  their own Git backend; Device Link routes read-only operations to the controlled
+  host, including its SSH tasks. The UI refuses unresolved device ownership.
 - No checkout, reset, branch/tag/stash modification, merge, or push is added.
   Existing change review and its write safeguards are unchanged.
-- Local navigation reads status without loading working-tree patches. Device
-  navigation keeps the existing read transport rather than adding remote ops.
+- Navigation reads status without loading working-tree patches. Repository
+  discovery searches the task workspace (including non-Git parents), supports
+  .git files, skips generated directories, and reports partial scans. A dropdown
+  scopes Graph and Review; explorer status covers all discovered repositories.
+  Relative manual paths support deeper repositories. Selected IDs are validated
+  on the host; older devices retain their default-repository Review.
 
 ## History and comparisons
 
@@ -50,7 +54,7 @@ with focus/file-save/Git-change events and a visible-tab 15-second fallback.
 The previous successful list stays visible during refresh. Switching owning
 session/workdir invalidates pending UI results and comparison selections.
 
-Tests cover payload guards, local-only scope resolution, fixed roots/OIDs,
+Tests cover payload guards, local/SSH/device scope routing, fixed roots/OIDs,
 history/ref parsing and limits, lane layout, refresh serialization, content-tab
 routing, context changes, and exact-versus-merge-base differences using real Git
 in isolated test repositories.
@@ -64,14 +68,14 @@ the graph viewport; they do not filter or reorder commits. Selection automatical
 brings its lane into view. First-parent color follows ancestry rather than the
 screen column, so reusing or shifting a column does not recolor that path.
 
-The subject is the primary row label, followed by bounded short reference badges.
+HEAD and bounded short reference badges precede the ellipsized subject.
 Full subjects, refs, author names, OIDs, and local timestamps remain available in
 tooltips or selected-commit/explicit-comparison details. Each row displays the
 author timestamp already supplied by the API: month/day and local hour/minute,
 with full local date/year in the tooltip and ISO datetime for assistive tooling.
-At widths below 640 px, date/hash are inline metadata. At wider widths they have
-separate columns, and the author becomes its own column from 880 px. Narrow rows
-are 52 px; wide rows are 36 px. The list takes the available height rather than a
+Author, timestamp and short SHA occupy columns on the same 36 px row at every
+width. Narrow panels scroll horizontally without wrapping or hiding metadata.
+The list takes the available height rather than a
 fixed fraction of the window. Arrow keys, Home, and End move through commits.
 
 Normal chrome stays neutral. The six new git-graph-lane tokens are categorical
@@ -161,6 +165,6 @@ with a passive limit notice. Refresh retries failed reads; scrolling does not
 create an uncontrolled retry loop. Screenshots of the reference extension are
 design targets, not proof that its implementation or repository was reproduced.
 
-Recent-history disclosure reads a fixed commit's changed paths only. It uses the
+Recent-history disclosure reads a fixed commit's changed paths and A/M/D/R statuses. It uses the
 same first-parent semantics as full commit Review, but avoids patch, blob-size and
 numstat work until the user explicitly opens the existing Review surface.

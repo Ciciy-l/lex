@@ -17,6 +17,7 @@ vi.mock('../../window-behavior-settings-store.js', () => ({
 vi.mock('../../secondary-windows.js', () => ({ installExternalLinkGuards: vi.fn() }));
 vi.mock('../../selection-context-menu.js', () => ({ installSelectionContextMenu: vi.fn() }));
 vi.mock('../../appearance-settings-ipc.js', () => ({ applyAppearanceToWindow: vi.fn() }));
+vi.mock('../contentSizing.js', () => ({ installSidebarContentSizing: vi.fn() }));
 vi.mock('../registry.js', () => ({ markRsbWindowWebContentsId: vi.fn() }));
 vi.mock('../../windowHiddenBroadcast.js', () => ({
   installWindowHiddenBroadcast: mocks.installWindowHiddenBroadcast,

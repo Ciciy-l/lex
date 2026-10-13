@@ -53,6 +53,7 @@ export interface RsbWindowControllerDeps {
    * 窗口以 show:false 创建,由 controller 的 presentation-ready 握手决定展示时机。
    */
   createWindow: () => BrowserWindow;
+  applyContentLayout?: (win: BrowserWindow, navigationOnly: boolean) => void;
   getMainWindow: () => BrowserWindow | null;
   /** 状态变化广播(所有窗口)。bootstrap 注入 getAllWindows 遍历实现。 */
   broadcastState: (state: {
@@ -446,6 +447,13 @@ export class RsbWindowController {
         this.flushDeferredCommandsToAttachedHost(ctx.sessionId);
       }
     }
+  }
+
+  setContentLayout(request: import('../../shared/rightSidebarWindow.js').RsbContentLayoutRequest): void {
+    const context = this.lastContext;
+    const win = this.winRef;
+    if (!context || !win || win.isDestroyed() || context.sessionId !== request.sessionId || context.workdir !== request.workdir || context.remoteHostId !== request.remoteHostId || context.deviceLinkDeviceId !== request.deviceLinkDeviceId) return;
+    this.deps.applyContentLayout?.(win, request.navigationOnly);
   }
 
   getContext(): RsbWindowContext | null {

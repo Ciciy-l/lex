@@ -38,6 +38,11 @@ vi.mock('electron', () => ({
 vi.mock('../sshReviewBackend.js', () => ({
   withSessionReviewExecution: withSessionReviewExecutionMock,
 }));
+// Repository discovery owns SSH file-service behavior; IPC tests must not load
+// its production Electron/SSH dependency assembly.
+vi.mock('../../file-browser/remote-deps.js', () => ({
+  getRemoteFileBrowser: vi.fn(),
+}));
 
 vi.mock('../ipc.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../ipc.js')>();
@@ -55,6 +60,7 @@ vi.mock('../ipc.js', async (importOriginal) => {
 });
 
 import { __gitReviewDeviceOpTesting } from '../device-op.js';
+import { currentReviewRepositoryId } from '../repositoryContext.js';
 
 const { handleRemoteOp, GIT_REVIEW_MAX_JSON_BYTES } = __gitReviewDeviceOpTesting;
 
@@ -66,22 +72,54 @@ beforeEach(() => {
 });
 
 describe('git-review device-op', () => {
+  it('preserves the selected repository throughout a controlled-host read and rejects malformed identities', async () => {
+    const repositoryId = 'a'.repeat(64);
+    readReviewDataMock.mockImplementationOnce(async () => ({
+      repositoryId: currentReviewRepositoryId(),
+    }));
+    await expect(
+      handleRemoteOp({ op: 'get', payload: { sessionId: 's1', repositoryId } }),
+    ).resolves.toEqual({
+      ok: true,
+      result: { repositoryId },
+    });
+    expect(withSessionReviewExecutionMock).toHaveBeenCalledWith('s1', expect.any(Function));
+    expect(currentReviewRepositoryId()).toBeUndefined();
+    await expect(
+      handleRemoteOp({ op: 'get', payload: { sessionId: 's1', repositoryId: '../other' } }),
+    ).rejects.toThrow('INVALID_PARAMS');
+    expect(readReviewDataMock).toHaveBeenCalledTimes(1);
+  });
+  it('advertises repository-aware read capabilities without resolving a session', async () => {
+    await expect(handleRemoteOp({ op: 'capabilities', payload: {} })).resolves.toEqual({
+      ok: true,
+      result: { repositories: true, graph: true, navigation: true, commitFiles: true },
+    });
+    expect(withSessionReviewExecutionMock).not.toHaveBeenCalled();
+  });
   it('reads historical snapshots from the host without running current-workspace Git', async () => {
     turnStore.list.mockResolvedValue([{ id: 'set' }]);
     turnStore.get.mockResolvedValue([{ id: 'set', diffs: [{ rawPatch: 'exact' }] }]);
-    expect(await handleRemoteOp({ op: 'turn-list', payload: { sessionId: 's1' } }))
-      .toEqual({ ok: true, result: [{ id: 'set' }] });
-    expect(await handleRemoteOp({ op: 'turn-get', payload: { sessionId: 's1', ids: ['set'] } }))
-      .toEqual({ ok: true, result: [{ id: 'set', diffs: [{ rawPatch: 'exact' }] }] });
+    expect(await handleRemoteOp({ op: 'turn-list', payload: { sessionId: 's1' } })).toEqual({
+      ok: true,
+      result: [{ id: 'set' }],
+    });
+    expect(
+      await handleRemoteOp({ op: 'turn-get', payload: { sessionId: 's1', ids: ['set'] } }),
+    ).toEqual({ ok: true, result: [{ id: 'set', diffs: [{ rawPatch: 'exact' }] }] });
     expect(turnStore.get).toHaveBeenCalledWith('s1', ['set']);
     expect(withSessionReviewExecutionMock).not.toHaveBeenCalled();
   });
 
-  it.each([undefined, [''], [123], Array(17).fill('set')])('rejects invalid historical detail IDs (%#)', async (ids) => {
-    await expect(handleRemoteOp({ op: 'turn-get', payload: { sessionId: 's1', ids } }))
-      .rejects.toThrow('[INVALID_PARAMS]');
-    expect(turnStore.get).not.toHaveBeenCalled();
-  });
+  it.each([undefined, [''], [123], Array(17).fill('set')])(
+    'rejects invalid historical detail IDs (%#)',
+    async (ids) => {
+      await expect(
+        handleRemoteOp({ op: 'turn-get', payload: { sessionId: 's1', ids } }),
+      ).rejects.toThrow('[INVALID_PARAMS]');
+      expect(turnStore.get).not.toHaveBeenCalled();
+    },
+  );
   it('rejects invalid args deterministically', async () => {
     expect(await handleRemoteOp(undefined as never)).toEqual({
       ok: false,
@@ -96,10 +134,6 @@ describe('git-review device-op', () => {
   it('rejects unknown and write ops without dispatching (read-only contract)', async () => {
     for (const op of [
       'nope',
-      'graph',
-      'graph-compare',
-      'navigation',
-      'commit-files',
       'stage-file',
       'unstage-file',
       'discard-file',

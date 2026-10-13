@@ -59,4 +59,15 @@ describe('openGitReview', () => {
       jumpTarget: { path: 'src/b.ts', diffId: null, nonce: 1 },
     });
   });
+
+  it('opens a deleted file in its repository and clears the previous repository comparison base', async () => {
+    await openGitReview('lead', { kind: 'staged' }, 'gone.ts', 'new-repository');
+    const update = store.patchTabState.mock.calls[0][2];
+    expect(update({ repositoryId: 'old-repository', branchBaseRef: 'old-branch' })).toMatchObject({
+      repositoryId: 'new-repository',
+      branchBaseRef: null,
+      descriptor: { kind: 'staged' },
+      jumpTarget: { path: 'gone.ts' },
+    });
+  });
 });

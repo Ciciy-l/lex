@@ -1908,6 +1908,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 「侧边栏在新窗口中显示」偏好 + 子窗口生命周期。状态机在 main
   // (right-sidebar-window/controller.ts),renderer 只 invoke + 订阅广播。
   rightSidebarWindow: {
+    setContentLayout: (request: import('../shared/rightSidebarWindow').RsbContentLayoutRequest): Promise<void> => ipcRenderer.invoke('rsb-window:content-layout', request),
     getState: (): Promise<{
       detached: boolean;
       lastOpen: boolean;
@@ -4956,8 +4957,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   gitReview: {
+    repositories: (params: import('../shared/gitRepositories').ReviewRepositoryRequest): Promise<import('../shared/gitRepositories').ReviewRepositoryList> =>
+      ipcRenderer.invoke('git-review:repositories', params),
+    workspaceStatus: (params: import('../shared/gitRepositories').ReviewRepositoryRequest): Promise<import('../shared/gitRepositories').ReviewWorkspaceStatus> =>
+      ipcRenderer.invoke('git-review:workspace-status', params),
     navigation: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
     }): Promise<Pick<import('../shared/gitReviewWire').ReviewData, 'scope' | 'status'>> =>
       ipcRenderer.invoke('git-review:navigation', params),
     graph: (
@@ -4969,58 +4974,58 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ): Promise<import('../shared/gitGraph').GitGraphComparison> =>
       ipcRenderer.invoke('git-review:graph-compare', params),
     history: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
     }): Promise<import('../shared/gitReviewWire').ReviewHistoryData> =>
       ipcRenderer.invoke('git-review:history', params),
-    get: (params: { sessionId: string; ignoreWhitespace?: boolean }): Promise<ReviewData> =>
+    get: (params: { sessionId: string; repositoryId?: string; ignoreWhitespace?: boolean }): Promise<ReviewData> =>
       ipcRenderer.invoke('git-review:get', params),
-    summary: (params: { sessionId: string }): Promise<ReviewDirtySummary> =>
+    summary: (params: { sessionId: string; repositoryId?: string }): Promise<ReviewDirtySummary> =>
       ipcRenderer.invoke('git-review:summary', params),
     commits: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       baseRef?: string | null;
     }): Promise<ReviewCommitListData> => ipcRenderer.invoke('git-review:commits', params),
-    commitFiles: (params: { sessionId: string; oid: string }): Promise<ReviewCommitFilesData> =>
+    commitFiles: (params: { sessionId: string; repositoryId?: string; oid: string }): Promise<ReviewCommitFilesData> =>
       ipcRenderer.invoke('git-review:commit-files', params),
     commitDiff: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       oid: string;
       ignoreWhitespace?: boolean;
     }): Promise<ReviewCommitDiffData> => ipcRenderer.invoke('git-review:commit-diff', params),
     branchDiff: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       baseRef?: string | null;
       ignoreWhitespace?: boolean;
     }): Promise<ReviewBranchDiffData> => ipcRenderer.invoke('git-review:branch-diff', params),
     fileDiff: (
-      params: { sessionId: string } & ReviewFileDiffRequest,
+      params: { sessionId: string; repositoryId?: string } & ReviewFileDiffRequest,
     ): Promise<ReviewFileDiffData> => ipcRenderer.invoke('git-review:file-diff', params),
     imagePreview: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       diff: FileDiff;
       commitOid?: string | null;
       branchBaseRef?: string | null;
     }): Promise<ReviewImagePreviewData> => ipcRenderer.invoke('git-review:image-preview', params),
     markdownPreview: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       diff: FileDiff;
       commitOid?: string | null;
       branchBaseRef?: string | null;
     }): Promise<ReviewMarkdownPreviewData> =>
       ipcRenderer.invoke('git-review:markdown-preview', params),
-    openFile: (params: { sessionId: string; path: string }): Promise<void> =>
+    openFile: (params: { sessionId: string; repositoryId?: string; path: string }): Promise<void> =>
       ipcRenderer.invoke('git-review:open-file', params),
     stageFile: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       targets: ReviewFileTarget[];
     }): Promise<ReviewStageOperationResult> => ipcRenderer.invoke('git-review:stage-file', params),
     unstageFile: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       targets: ReviewFileTarget[];
     }): Promise<ReviewStageOperationResult> =>
       ipcRenderer.invoke('git-review:unstage-file', params),
     discardFile: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       targets: ReviewFileTarget[];
     }): Promise<ReviewStageOperationResult> =>
       ipcRenderer.invoke('git-review:discard-file', params),
@@ -5031,21 +5036,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     discardHunk: (params: ReviewHunkOperationRequest): Promise<ReviewStageOperationResult> =>
       ipcRenderer.invoke('git-review:discard-hunk', params),
     stageAll: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       targets: ReviewFileTarget[];
     }): Promise<ReviewStageOperationResult> => ipcRenderer.invoke('git-review:stage-all', params),
     unstageAll: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       targets: ReviewFileTarget[];
     }): Promise<ReviewStageOperationResult> => ipcRenderer.invoke('git-review:unstage-all', params),
     discardAll: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       targets: ReviewFileTarget[];
     }): Promise<ReviewStageOperationResult> => ipcRenderer.invoke('git-review:discard-all', params),
     commit: (params: ReviewCommitRequest): Promise<ReviewCommitResult> =>
       ipcRenderer.invoke('git-review:commit', params),
     push: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       confirmForce?: ReviewPushConfirmForce;
     }): Promise<ReviewPushResult> => ipcRenderer.invoke('git-review:push', params),
   },

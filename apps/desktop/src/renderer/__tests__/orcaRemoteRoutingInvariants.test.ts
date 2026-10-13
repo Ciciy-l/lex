@@ -22,6 +22,7 @@ const CONSUMERS = [
   'features/cc-agent/hooks/useOrcaLeadWorkerMap.ts',
   'features/cc-agent/OrcaSplitView.tsx',
   'features/cc-agent/CCAgentSessionView.tsx',
+  'features/cc-agent/enableCollabFromForm.ts',
   'features/cc-agent/CCAgentIndexRedirect.tsx',
   'lib/orcaSessionIdentity.ts',
 ];
@@ -60,17 +61,24 @@ describe('orca 远程路由接线不变式', () => {
   // 这是「同一语义在对称路径上的缺口」,两条必须同口径,所以一起锁。
   it('协同开关的 enable / disable 都用粘滞归属,不用非粘滞 makerApiFor', () => {
     const view = read('features/cc-agent/CCAgentSessionView.tsx');
-    expect(view).toContain('const orcaDeviceId = getStickySessionDeviceId(collabSessionId);');
-    expect(view).toContain('await enableRemoteCollabForSession({');
-    expect(view).toContain('deviceId: orcaDeviceId,');
+    expect(view).toContain('await enableCollabFromForm(collabSessionId, form);');
     expect(view).not.toContain('makerApiFor(collabSessionId).enableOrca(');
-    // 开启后的镜像回流也取粘滞值,否则瞬断窗口内解析成 undefined 会整段跳过,
-    // 被控端刚建的 worker 永远进不了控制端注册表。
-    expect(view).toContain('getStickySessionDeviceId(collabSessionId)');
+    const enable = read('features/cc-agent/enableCollabFromForm.ts');
+    expect(enable).toContain(
+      'deviceId: string | null | undefined = getStickySessionDeviceId(leadSessionId)',
+    );
+    expect(enable).toContain('await enableRemoteCollabForSession({');
+    expect(enable).toContain('deviceId,');
+    expect(enable).not.toContain('makerApiFor(');
+    const selection = read('features/cc-agent/hooks/useOrcaWorkerSelection.ts');
+    expect(selection).toContain('getStickySessionDeviceId(leadSessionId) ?? null');
+    expect(selection).toContain('orcaWorkflowsFor(leadSessionId, owner)');
 
     const handoff = read('features/cc-agent/remoteCollabHandoff.ts');
     expect(handoff).toContain('makerApiForDevice(p.deviceId).enableOrca(');
     expect(handoff).not.toContain('makerApiFor(p.leadSessionId).enableOrca(');
+    // 镜像回流复用 handoff 固定的 deviceId，不能在重连窗口重新查询易失归属。
+    expect(handoff).toContain('refreshRemoteDeviceSessions(p.deviceId)');
 
     const stop = read('features/cc-agent/hooks/useStopOrcaCollab.ts');
     expect(stop).toContain('makerApiForSticky(leadSessionId).disableOrca(');

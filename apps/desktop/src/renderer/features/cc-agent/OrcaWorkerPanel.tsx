@@ -86,7 +86,7 @@ export function OrcaWorkerPanel({
     handleArchiveWorker,
   } = useOrcaWorkerSelection({
     leadSessionId,
-    deviceId: deviceId ?? undefined,
+    deviceId,
     viewVisible,
     focusWorkerSessionId,
     focusWorkerHintRevision,
@@ -97,6 +97,7 @@ export function OrcaWorkerPanel({
   const lastAgentIslandPayloadRef = useRef<string | string[] | null>(null);
 
   const handleOpenCreate = useCallback(async () => {
+    if (deviceId === undefined) return;
     const result = await refreshCreationState();
     if (result.status !== 'applied') {
       toast.error(t('newChat.collaboration.createWorkerRefreshFailed'));
@@ -107,7 +108,7 @@ export function OrcaWorkerPanel({
     ).length;
     if (result.hardLimit !== null && activeCount >= result.hardLimit) return;
     setCreateOpen(true);
-  }, [refreshCreationState, setCreateOpen, t]);
+  }, [deviceId, refreshCreationState, setCreateOpen, t]);
 
   // 硬上限时 + 按钮不再只是 disabled no-op，而是跳转到协同设置去调高上限（codex P1 逃生口）。
   // 但两类面板不接线跳转（onOpenSettings 传 undefined，+ 按钮回退为 disabled）：
@@ -120,7 +121,7 @@ export function OrcaWorkerPanel({
   }, [navigate]);
 
   useEffect(() => {
-    if (!viewVisible) return;
+    if (!viewVisible || deviceId === undefined) return;
     let active = true;
     const unsubscribe = subscribeNewWorkerShortcut(async () => {
       // Refresh both worker status and authoritative collaboration settings so the shortcut
@@ -143,7 +144,7 @@ export function OrcaWorkerPanel({
       active = false;
       unsubscribe();
     };
-  }, [refreshCreationState, setCreateOpen, t, viewVisible]);
+  }, [deviceId, refreshCreationState, setCreateOpen, t, viewVisible]);
 
   useEffect(() => {
     if (!isAgentIslandSupported()) return;

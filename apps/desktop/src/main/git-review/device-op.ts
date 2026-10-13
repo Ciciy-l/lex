@@ -28,6 +28,12 @@ import { GIT_REVIEW_REMOTE_OP_CHANNEL } from '@cindy/device-link';
 
 import { createLogger } from '../logger.js';
 import {
+  parseCommitFilesPayload,
+  readReviewCommitFiles,
+  readReviewNavigation,
+  readReviewHistory,
+  readReviewRepositories,
+  readReviewWorkspaceStatus,
   parseBranchDiffPayload,
   parseCommitDiffPayload,
   parseCommitsPayload,
@@ -45,6 +51,10 @@ import {
   readReviewMarkdownPreview,
   readReviewSummary,
 } from './ipc.js';
+import { parseGitGraphRequest, parseGitGraphCompareRequest } from '../../shared/gitGraph.js';
+import { readGitGraph, readGitGraphComparison } from './graphReader.js';
+import { resolveReviewScope } from './scopeResolver.js';
+import { withReviewRepository } from './repositoryContext.js';
 import { withSessionReviewExecution } from './sshReviewBackend.js';
 import {
   getTurnChangeSets,
@@ -97,6 +107,28 @@ async function encodeResult(result: unknown): Promise<GitReviewRemoteOpResult> {
 
 async function dispatchRemoteOp(op: string, payload: unknown): Promise<unknown> {
   switch (op) {
+    case 'capabilities':
+      return { repositories: true, graph: true, navigation: true, commitFiles: true };
+    case 'repositories':
+      return readReviewRepositories(payload);
+    case 'workspace-status':
+      return readReviewWorkspaceStatus(payload);
+    case 'navigation':
+      return readReviewNavigation(parseSessionId(payload));
+    case 'history':
+      return readReviewHistory(parseSessionId(payload));
+    case 'commit-files': {
+      const { sessionId, oid } = parseCommitFilesPayload(payload);
+      return readReviewCommitFiles(sessionId, oid);
+    }
+    case 'graph': {
+      const request = parseGitGraphRequest(payload);
+      return readGitGraph(await resolveReviewScope(request.sessionId), request);
+    }
+    case 'graph-compare': {
+      const request = parseGitGraphCompareRequest(payload);
+      return readGitGraphComparison(await resolveReviewScope(request.sessionId), request);
+    }
     case 'turn-list':
       return listTurnChangeSets(parseSessionId(payload));
     case 'turn-get': {
@@ -113,35 +145,35 @@ async function dispatchRemoteOp(op: string, payload: unknown): Promise<unknown> 
     }
     case 'get': {
       const { sessionId, options } = parseReviewDataPayload(payload);
-      return withSessionReviewExecution(sessionId, () => readReviewData(sessionId, options));
+      return readReviewData(sessionId, options);
     }
     case 'summary': {
       const sessionId = parseSessionId(payload);
-      return withSessionReviewExecution(sessionId, () => readReviewSummary(sessionId));
+      return readReviewSummary(sessionId);
     }
     case 'commits': {
       const { sessionId, baseRef } = parseCommitsPayload(payload);
-      return withSessionReviewExecution(sessionId, () => readReviewCommits(sessionId, baseRef));
+      return readReviewCommits(sessionId, baseRef);
     }
     case 'commit-diff': {
       const { sessionId, oid, options } = parseCommitDiffPayload(payload);
-      return withSessionReviewExecution(sessionId, () => readReviewCommitDiff(sessionId, oid, options));
+      return readReviewCommitDiff(sessionId, oid, options);
     }
     case 'branch-diff': {
       const { sessionId, baseRef, options } = parseBranchDiffPayload(payload);
-      return withSessionReviewExecution(sessionId, () => readReviewBranchDiff(sessionId, baseRef, options));
+      return readReviewBranchDiff(sessionId, baseRef, options);
     }
     case 'file-diff': {
       const { sessionId, request } = parseFileDiffPayload(payload);
-      return withSessionReviewExecution(sessionId, () => readReviewFileDiff(sessionId, request));
+      return readReviewFileDiff(sessionId, request);
     }
     case 'image-preview': {
       const { sessionId, request } = parseImagePreviewPayload(payload);
-      return withSessionReviewExecution(sessionId, () => readReviewImagePreview(sessionId, request));
+      return readReviewImagePreview(sessionId, request);
     }
     case 'markdown-preview': {
       const { sessionId, request } = parseMarkdownPreviewPayload(payload);
-      return withSessionReviewExecution(sessionId, () => readReviewMarkdownPreview(sessionId, request));
+      return readReviewMarkdownPreview(sessionId, request);
     }
     default:
       return null;
@@ -149,6 +181,14 @@ async function dispatchRemoteOp(op: string, payload: unknown): Promise<unknown> 
 }
 
 const READ_OPS = new Set([
+  'capabilities',
+  'repositories',
+  'workspace-status',
+  'navigation',
+  'history',
+  'commit-files',
+  'graph',
+  'graph-compare',
   'turn-list',
   'turn-get',
   'get',
@@ -170,13 +210,19 @@ async function handleRemoteOp(args: GitReviewRemoteOpArgs): Promise<GitReviewRem
     return bad(`unknown op: ${args.op}`);
   }
   try {
-    const result = await dispatchRemoteOp(args.op, args.payload);
+    const execute = () =>
+      withReviewRepository(args.payload, () => dispatchRemoteOp(args.op, args.payload));
+    const result =
+      args.op === 'capabilities' || args.op.startsWith('turn-')
+        ? await execute()
+        : await withSessionReviewExecution(parseSessionId(args.payload), execute);
     return await encodeResult(result);
   } catch (err) {
     // 与本机 handler 同口径:带 [CODE] 标记的错误原样抛(经 invoke error 信封
     // 到控制端 reject,extractIpcError 可解);其余摘要为结构化 message,
     // 避免把内部堆栈带回控制端。
-    if (err instanceof Error && /\[(INVALID_PARAMS|PRECONDITION_FAILED)\]/.test(err.message)) throw err;
+    if (err instanceof Error && /\[(INVALID_PARAMS|PRECONDITION_FAILED)\]/.test(err.message))
+      throw err;
     const message = err instanceof Error ? err.message : String(err);
     if (/\[SSH_[A-Z_]+\]/.test(message)) {
       log.warn('git-review remote-op SSH backend unavailable', { op: args.op });

@@ -177,10 +177,10 @@ describe('git-review reader git stdout limits', () => {
     });
   });
 
-  it('uses one small no-rename name-only read for recent-commit paths', async () => {
+  it('reads bounded recent-commit statuses including renames without loading patches', async () => {
     runGitMock.mockImplementation(async (args: readonly string[]) => {
-      if (args[0] === 'diff-tree' && args.includes('--name-only')) {
-        return { stdout: 'new.ts\0a.ts\0', stderr: '', exitCode: 0 };
+      if (args[0] === 'diff-tree' && args.includes('--name-status')) {
+        return { stdout: 'R100\0old.ts\0new.ts\0M\0a.ts\0', stderr: '', exitCode: 0 };
       }
       throw new Error(`unexpected git args: ${args.join(' ')}`);
     });
@@ -188,13 +188,18 @@ describe('git-review reader git stdout limits', () => {
     await expect(listCommitFiles(scope(), commitOid)).resolves.toEqual({
       commitOid,
       paths: ['a.ts', 'new.ts'],
+      files: [
+        { path: 'new.ts', status: 'renamed' },
+        { path: 'a.ts', status: 'modified' },
+      ],
     });
     expect(runGitMock).toHaveBeenCalledTimes(1);
     expect(runGitMock).toHaveBeenCalledWith(
       expect.arrayContaining([
         'diff-tree',
-        '--name-only',
-        '--no-renames',
+        '--name-status',
+        '-M',
+        '-l1000',
         '--no-ext-diff',
         `${commitOid}^{commit}^1`,
         `${commitOid}^{commit}`,
@@ -203,7 +208,7 @@ describe('git-review reader git stdout limits', () => {
     );
     expect(runGitMock.mock.calls[0]?.[0]).not.toContain('--diff-merges=first-parent');
     expect(runGitMock.mock.calls[0]?.[0]).not.toContain('--first-parent');
-    expect(runGitMock.mock.calls[0]?.[0]).not.toContain('-M');
+    expect(runGitMock.mock.calls[0]?.[0]).not.toContain('--patch');
   });
 
   it.each([

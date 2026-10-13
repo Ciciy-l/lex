@@ -87,6 +87,10 @@ const sessionViewSource = readTextLf(
   resolve(__dirname, '..', 'features', 'cc-agent', 'CCAgentSessionView.tsx'),
   'utf8',
 );
+const enableCollabSource = readTextLf(
+  resolve(__dirname, '..', 'features', 'cc-agent', 'enableCollabFromForm.ts'),
+  'utf8',
+);
 const chatInputSource = readTextLf(
   resolve(__dirname, '..', 'components', 'new-chat', 'ChatInput.tsx'),
   'utf8',
@@ -261,13 +265,9 @@ describe('OrcaWorkflowRoute source invariants', () => {
   it('does not block collaboration tab opening on worker SDK bootstrap', () => {
     const requestEnable = sessionViewSource.indexOf('const requestEnableCollab = useCallback');
     // device-link 按粘滞 deviceId 走共享远程 handoff；本机会话仍直调本机 IPC。
-    // reveal promise 必须在两条 mutation 分支之前启动，不能等 Worker bootstrap 完成后才开 tab。
-    const remoteEnableCall = sessionViewSource.indexOf(
-      'await enableRemoteCollabForSession({',
-      requestEnable,
-    );
-    const localEnableCall = sessionViewSource.indexOf(
-      'await window.electronAPI.maker.enableOrca(collabSessionId, enableOptions)',
+    // reveal promise 必须在共享 helper 的两条 mutation 分支之前启动。
+    const enableCall = sessionViewSource.indexOf(
+      'await enableCollabFromForm(collabSessionId, form)',
       requestEnable,
     );
     const openTab = sessionViewSource.indexOf(
@@ -276,11 +276,14 @@ describe('OrcaWorkflowRoute source invariants', () => {
     );
 
     expect(requestEnable).toBeGreaterThan(-1);
-    expect(remoteEnableCall).toBeGreaterThan(requestEnable);
-    expect(localEnableCall).toBeGreaterThan(requestEnable);
+    expect(enableCall).toBeGreaterThan(requestEnable);
     expect(openTab).toBeGreaterThan(requestEnable);
-    expect(openTab).toBeLessThan(remoteEnableCall);
-    expect(openTab).toBeLessThan(localEnableCall);
+    expect(openTab).toBeLessThan(enableCall);
+    expect(enableCollabSource).toContain('await enableRemoteCollabForSession({');
+    expect(enableCollabSource).toContain(
+      'await window.electronAPI.maker.enableOrca(leadSessionId, options)',
+    );
+    expect(sessionViewSource.slice(openTab, enableCall)).not.toContain('await revealWorkersTab');
     expect(sessionViewSource).not.toContain(
       `/cc-agent/orca/${templatePlaceholder('collabSessionId')}`,
     );
@@ -289,10 +292,12 @@ describe('OrcaWorkflowRoute source invariants', () => {
   it('starts manual collaboration through the detailed worker form', () => {
     expect(sessionViewSource).toContain('<CreateWorkerPopover');
     expect(sessionViewSource).toContain('onOpenDetails');
-    expect(sessionViewSource).toContain('role: form.role');
-    expect(sessionViewSource).toContain('label: createWorkerLabel(form.role, [])');
-    expect(sessionViewSource).toContain('model: form.model');
-    expect(sessionViewSource).toContain('delegateTask: form.initialTask || undefined');
+    expect(sessionViewSource).toContain('await enableCollabFromForm(collabSessionId, form);');
+    expect(enableCollabSource).toContain('role: form.role');
+    expect(enableCollabSource).toContain('label = createWorkerLabel(form.role, [])');
+    expect(enableCollabSource).toContain('model: form.model');
+    expect(enableCollabSource).toContain('delegateTask: form.initialTask || undefined');
+    expect(enableCollabSource).toContain('workerPermissionMode: form.workerPermissionMode');
     expect(chatInputSource).toContain('if (collaboration) {');
     expect(chatInputSource).toContain('collaboration.onOpenDetails();');
   });

@@ -503,3 +503,18 @@ describe('sidebar nested namespace contract', () => {
     );
   });
 });
+
+// New methods are required in the detached renderer as well as the main window.
+it('exposes repository navigation, first-worker enable, and content sizing in the detached sidebar', () => {
+  expect(gitReviewKeys).toEqual(
+    expect.arrayContaining([
+      'repositories',
+      'workspaceStatus',
+      'navigation',
+      'graph',
+      'graphCompare',
+    ]),
+  );
+  expect(makerKeys).toContain('enableOrca');
+  expect(rswKeys).toContain('setContentLayout');
+});

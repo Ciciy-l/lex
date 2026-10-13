@@ -36,7 +36,7 @@ const server = await createServer({
       },
       load(id) {
         if (id === '\0preview-store')
-          return 'export const getBucket = () => ({tabs: []}); export const addOrFocusSingletonTab = async () => ({id: "preview"}); export const patchTabState = async () => {};';
+          return 'const bucket = {tabs: []}; export const getBucket = () => bucket; export const subscribe = () => () => {}; export const addOrFocusSingletonTab = async () => ({id: "preview"}); export const patchTabState = async () => {};';
         if (id === '\0preview-transport')
           return 'export const gitReviewApiFor = () => window.electronAPI.gitReview;';
       },
@@ -74,11 +74,10 @@ try {
           const times = [...row.querySelectorAll('time')].filter(
             (time) => time.getClientRects().length > 0,
           );
-          const content = row.querySelector('span');
-          const inlineMetadata = row.querySelector('.lex-git-graph-inline-meta');
-          const inlineAuthor = inlineMetadata?.querySelector('.lex-git-graph-inline-author');
-          const inlineTime = inlineMetadata?.querySelector('time');
-          const inlineHash = inlineMetadata?.querySelector('code');
+          const content = row.querySelector('.lex-git-graph-subject');
+          const inlineAuthor = row.querySelector('.lex-git-graph-author');
+          const inlineTime = row.querySelector('time');
+          const inlineHash = row.querySelector('code');
           const rect = (node) => {
             const box = node?.getBoundingClientRect();
             return box && node.getClientRects().length > 0
@@ -111,7 +110,8 @@ try {
       assert(facts.visibleTimes === 1, JSON.stringify(facts));
       assert(!facts.overflow, JSON.stringify(facts));
       assert(facts.strokes.length > 1, JSON.stringify(facts));
-      if (facts.rowWidth < 640) {
+      {
+        // The single-row metadata contract applies at every viewport width.
         assert.equal(facts.rowHeight, 36, JSON.stringify(facts));
         assert(facts.inlineMetadata.author, JSON.stringify(facts));
         assert(facts.inlineMetadata.time, JSON.stringify(facts));

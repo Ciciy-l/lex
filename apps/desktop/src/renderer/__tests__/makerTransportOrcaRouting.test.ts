@@ -53,6 +53,41 @@ function stubElectron() {
 const sess = (id: string): Session => ({ id }) as unknown as Session;
 
 describe('orcaWorkflowsFor 路由', () => {
+  it('固定归属的查询和创建不随远程镜像变化转向另一设备，失败也不回退本机', async () => {
+    const { orcaSpies, invoke } = stubElectron();
+    const { orcaWorkflowsFor } = await import('@/lib/makerTransport');
+    const { remoteProjectsStore } = await import('@/features/device-link/remoteProjectsStore');
+    remoteProjectsStore.setDeviceSessions('other-device', 'Other', [sess('lead')]);
+
+    const orca = orcaWorkflowsFor('lead', 'pinned-device');
+    await orca.getByLeadSession('lead');
+    const error = new Error('[DEVICE_LINK_TIMEOUT] disconnected');
+    invoke.mockRejectedValueOnce(error);
+    await expect(orca.createWorker({ leadSessionId: 'lead' })).rejects.toBe(error);
+    expect(invoke).toHaveBeenCalledWith('pinned-device', 'local-db:orca-workflows:get-by-lead', [
+      'lead',
+    ]);
+    expect(invoke).toHaveBeenCalledWith('pinned-device', 'maker:worker:create', [
+      { leadSessionId: 'lead' },
+    ]);
+    expect(orcaSpies.getByLeadSession).not.toHaveBeenCalled();
+    expect(orcaSpies.createWorker).not.toHaveBeenCalled();
+  });
+
+  it('显式本机归属不会重新按 ctx 查询远程镜像', async () => {
+    const { orcaSpies, invoke } = stubElectron();
+    const { orcaWorkflowsFor } = await import('@/lib/makerTransport');
+    const { remoteProjectsStore } = await import('@/features/device-link/remoteProjectsStore');
+    remoteProjectsStore.setDeviceSessions('other-device', 'Other', [sess('lead')]);
+
+    const orca = orcaWorkflowsFor('lead', null);
+    await orca.getByLeadSession('lead');
+    await orca.createWorker({ leadSessionId: 'lead' });
+    expect(orcaSpies.getByLeadSession).toHaveBeenCalledWith('lead');
+    expect(orcaSpies.createWorker).toHaveBeenCalledWith({ leadSessionId: 'lead' });
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
   it('远程 lead:读 / 管理命中对应隧道 channel + args(与 preload 对齐)', async () => {
     const { invoke } = stubElectron();
     const { orcaWorkflowsFor } = await import('@/lib/makerTransport');

@@ -1,3 +1,4 @@
+import { useGitRepositoryId } from '../../lib/gitRepositorySelection';
 /**
  * ReviewTabBody — unified workspace and recorded-message review panel.
  *
@@ -445,6 +446,7 @@ export function descriptorForReviewSource(
 }
 
 export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
+  const repositoryId = useGitRepositoryId();
   const { t } = useTranslation();
   const { confirm } = useConfirmDialog();
   // device-link 远程会话:session 行在被控设备的 DB 里,只读查询经 gitReviewTransport
@@ -674,7 +676,7 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
       if (!sessionId) return Promise.reject(new Error('sessionId is required'));
       return gitReviewApiFor(deviceLinkDeviceId)
         .imagePreview({
-          sessionId,
+          repositoryId, sessionId,
           diff: deviceLinkDeviceId ? trimPreviewDiff(diff) : diff,
           commitOid: diff.source === 'commit' ? effectiveCommitOid : null,
           branchBaseRef:
@@ -691,6 +693,7 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
       currentBranchDiffData?.baseRef,
       deviceLinkDeviceId,
       effectiveCommitOid,
+      repositoryId,
       sessionId,
       t,
       trimPreviewDiff,
@@ -701,7 +704,7 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
       if (!sessionId) return Promise.reject(new Error('sessionId is required'));
       return gitReviewApiFor(deviceLinkDeviceId)
         .markdownPreview({
-          sessionId,
+          repositoryId, sessionId,
           diff: deviceLinkDeviceId ? trimPreviewDiff(diff) : diff,
           commitOid: diff.source === 'commit' ? effectiveCommitOid : null,
           branchBaseRef:
@@ -718,6 +721,7 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
       currentBranchDiffData?.baseRef,
       deviceLinkDeviceId,
       effectiveCommitOid,
+      repositoryId,
       sessionId,
       t,
       trimPreviewDiff,
@@ -730,13 +734,13 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
   const openReviewFile = useCallback(
     (diff: FileDiff) => {
       if (!sessionId) return;
-      void window.electronAPI.gitReview.openFile({ sessionId, path: diff.path }).catch((err) => {
+      void window.electronAPI.gitReview.openFile({ repositoryId, sessionId, path: diff.path }).catch((err) => {
         const message =
           extractIpcError(err)?.message ?? (err instanceof Error ? err.message : String(err));
         toast.error(t('rightSidebar.review.openFileFailed', { error: message }));
       });
     },
-    [sessionId, t],
+    [repositoryId, sessionId, t],
   );
   // device-link 与 SSH 工作区都没有可由控制端 shell 打开的本机文件。
   const openFileHandler =
@@ -877,12 +881,12 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
             : targets.length === 1
               ? window.electronAPI.gitReview.unstageFile
               : window.electronAPI.gitReview.unstageAll;
-        const result = await api({ sessionId, targets });
+        const result = await api({ sessionId, repositoryId, targets });
         updateReviewDataFromWrite(result.data);
         setOperationSummary(result.operation);
       });
     },
-    [runWrite, sessionId, updateReviewDataFromWrite],
+    [runWrite, repositoryId, sessionId, updateReviewDataFromWrite],
   );
 
   const runHunkOperation = useCallback(
@@ -893,12 +897,12 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
           action === 'stage'
             ? window.electronAPI.gitReview.stageHunk
             : window.electronAPI.gitReview.unstageHunk;
-        const result = await api({ sessionId, diff, hunkIndex, ignoreWhitespace: hideWhitespace });
+        const result = await api({ sessionId, repositoryId, diff, hunkIndex, ignoreWhitespace: hideWhitespace });
         updateReviewDataFromWrite(result.data);
         setOperationSummary(result.operation);
       });
     },
-    [hideWhitespace, runWrite, sessionId, updateReviewDataFromWrite],
+    [hideWhitespace, runWrite, repositoryId, sessionId, updateReviewDataFromWrite],
   );
 
   const confirmDiscard = useCallback(
@@ -927,7 +931,7 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
         if (!(await confirmDiscard('file', [diff]))) return;
         await runWrite(`discard:file:${diff.id}`, async () => {
           const result = await window.electronAPI.gitReview.discardFile({
-            sessionId,
+            repositoryId, sessionId,
             targets: [targetFromDiff(diff)],
           });
           updateReviewDataFromWrite(result.data);
@@ -935,7 +939,7 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
         });
       })();
     },
-    [confirmDiscard, runWrite, sessionId, updateReviewDataFromWrite],
+    [confirmDiscard, runWrite, repositoryId, sessionId, updateReviewDataFromWrite],
   );
 
   const runDiscardHunkOperation = useCallback(
@@ -945,7 +949,7 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
         if (!(await confirmDiscard('hunk', [diff]))) return;
         await runWrite(`discard:hunk:${diff.id}:${hunkIndex}`, async () => {
           const result = await window.electronAPI.gitReview.discardHunk({
-            sessionId,
+            repositoryId, sessionId,
             diff,
             hunkIndex,
             ignoreWhitespace: hideWhitespace,
@@ -955,7 +959,7 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
         });
       })();
     },
-    [confirmDiscard, hideWhitespace, runWrite, sessionId, updateReviewDataFromWrite],
+    [confirmDiscard, hideWhitespace, runWrite, repositoryId, sessionId, updateReviewDataFromWrite],
   );
 
   const runDiscardSectionOperation = useCallback(
@@ -965,7 +969,7 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
         if (!(await confirmDiscard('section', diffsToDiscard))) return;
         await runWrite(key, async () => {
           const result = await window.electronAPI.gitReview.discardAll({
-            sessionId,
+            repositoryId, sessionId,
             targets: diffsToDiscard.map(targetFromDiff),
           });
           updateReviewDataFromWrite(result.data);
@@ -973,7 +977,7 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
         });
       })();
     },
-    [confirmDiscard, runWrite, sessionId, updateReviewDataFromWrite],
+    [confirmDiscard, runWrite, repositoryId, sessionId, updateReviewDataFromWrite],
   );
 
   const applyPushResult = useCallback(
@@ -986,7 +990,7 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
 
   const runPushFlow = useCallback(async () => {
     if (!sessionId) return;
-    const result = applyPushResult(await window.electronAPI.gitReview.push({ sessionId }));
+    const result = applyPushResult(await window.electronAPI.gitReview.push({ repositoryId, sessionId }));
     if (result.kind !== 'needs-force') {
       toast.success(t('rightSidebar.review.push.successToast'));
       return;
@@ -1005,7 +1009,7 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
 
     const forceResult = applyPushResult(
       await window.electronAPI.gitReview.push({
-        sessionId,
+        repositoryId, sessionId,
         confirmForce: {
           remoteRef: result.remoteRef,
           expectedOid: result.remoteOid,
@@ -1016,7 +1020,7 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
       throw new Error(t('rightSidebar.review.push.forceStillRejected'));
     }
     toast.success(t('rightSidebar.review.push.successToast'));
-  }, [applyPushResult, confirm, sessionId, t]);
+  }, [applyPushResult, confirm, repositoryId, sessionId, t]);
 
   const decoratePushError = useCallback(
     (message: string, err: unknown) => {
@@ -1042,7 +1046,7 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
         pushAfterCommit ? 'commit-push' : 'commit',
         async () => {
           const result = await window.electronAPI.gitReview.commit({
-            sessionId,
+            repositoryId, sessionId,
             message,
             includeUnstaged,
           });
@@ -1064,6 +1068,7 @@ export function ReviewTabBody({ state, ctx }: ReviewTabBodyProps) {
       decoratePushError,
       runPushFlow,
       runWrite,
+      repositoryId,
       sessionId,
       setDescriptor,
       source,

@@ -6,7 +6,7 @@ import { Spinner } from '@/components/ui/spinner';
  * Stable first-load shell for Git surfaces.
  *
  * This deliberately contains no repository data or controls: it can be used
- * while a Git chunk is still loading and while its local-only graph read is
+ * while a Git chunk is still loading and while its repository graph read is
  * in flight, without exposing a stale or unverified worktree state.
  */
 export function GitGraphLoadingState({

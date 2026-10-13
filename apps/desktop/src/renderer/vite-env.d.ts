@@ -2004,6 +2004,7 @@ interface ElectronAPI {
   // ── 右侧栏独立子窗口(RSB window)──────────────────────────────────────
   // 「侧边栏在新窗口中显示」偏好 + 子窗口生命周期(main: right-sidebar-window/)。
   rightSidebarWindow: {
+    setContentLayout: (request: import('../shared/rightSidebarWindow').RsbContentLayoutRequest) => Promise<void>;
     getState: () => Promise<{
       detached: boolean;
       lastOpen: boolean;
@@ -4300,61 +4301,63 @@ interface ElectronAPI {
   };
 
   gitReview: {
-    navigation: (params: { sessionId: string }) => Promise<Pick<import('../shared/gitReviewWire').ReviewData, 'scope' | 'status'>>;
+    repositories: (params: import('../shared/gitRepositories').ReviewRepositoryRequest) => Promise<import('../shared/gitRepositories').ReviewRepositoryList>;
+    workspaceStatus: (params: import('../shared/gitRepositories').ReviewRepositoryRequest) => Promise<import('../shared/gitRepositories').ReviewWorkspaceStatus>;
+    navigation: (params: { sessionId: string; repositoryId?: string }) => Promise<Pick<import('../shared/gitReviewWire').ReviewData, 'scope' | 'status'>>;
     graph: (params: import('../shared/gitGraph').GitGraphRequest) => Promise<import('../shared/gitGraph').GitGraphData>;
     graphCompare: (params: import('../shared/gitGraph').GitGraphCompareRequest) => Promise<import('../shared/gitGraph').GitGraphComparison>;
-    history: (params: { sessionId: string }) => Promise<import('../shared/gitReviewWire').ReviewHistoryData>;
+    history: (params: { sessionId: string; repositoryId?: string }) => Promise<import('../shared/gitReviewWire').ReviewHistoryData>;
     get: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       ignoreWhitespace?: boolean;
     }) => Promise<import('@/lib/gitReview.types').ReviewData>;
     summary: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
     }) => Promise<import('@/lib/gitReview.types').ReviewDirtySummary>;
     commits: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       baseRef?: string | null;
     }) => Promise<import('@/lib/gitReview.types').ReviewCommitListData>;
     commitFiles: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       oid: string;
     }) => Promise<import('@/lib/gitReview.types').ReviewCommitFilesData>;
     commitDiff: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       oid: string;
       ignoreWhitespace?: boolean;
     }) => Promise<import('@/lib/gitReview.types').ReviewCommitDiffData>;
     branchDiff: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       baseRef?: string | null;
       ignoreWhitespace?: boolean;
     }) => Promise<import('@/lib/gitReview.types').ReviewBranchDiffData>;
     fileDiff: (
-      params: { sessionId: string } & import('@/lib/gitReview.types').ReviewFileDiffRequest,
+      params: { sessionId: string; repositoryId?: string } & import('@/lib/gitReview.types').ReviewFileDiffRequest,
     ) => Promise<import('@/lib/gitReview.types').ReviewFileDiffData>;
     imagePreview: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       diff: import('@/lib/gitReview.types').FileDiff;
       commitOid?: string | null;
       branchBaseRef?: string | null;
     }) => Promise<import('@/lib/gitReview.types').ReviewImagePreviewData>;
     markdownPreview: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       diff: import('@/lib/gitReview.types').FileDiff;
       commitOid?: string | null;
       branchBaseRef?: string | null;
     }) => Promise<import('@/lib/gitReview.types').ReviewMarkdownPreviewData>;
-    openFile: (params: { sessionId: string; path: string }) => Promise<void>;
+    openFile: (params: { sessionId: string; repositoryId?: string; path: string }) => Promise<void>;
     stageFile: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       targets: import('@/lib/gitReview.types').ReviewFileTarget[];
     }) => Promise<import('@/lib/gitReview.types').ReviewStageOperationResult>;
     unstageFile: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       targets: import('@/lib/gitReview.types').ReviewFileTarget[];
     }) => Promise<import('@/lib/gitReview.types').ReviewStageOperationResult>;
     discardFile: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       targets: import('@/lib/gitReview.types').ReviewFileTarget[];
     }) => Promise<import('@/lib/gitReview.types').ReviewStageOperationResult>;
     stageHunk: (
@@ -4367,22 +4370,22 @@ interface ElectronAPI {
       params: import('@/lib/gitReview.types').ReviewHunkOperationRequest,
     ) => Promise<import('@/lib/gitReview.types').ReviewStageOperationResult>;
     stageAll: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       targets: import('@/lib/gitReview.types').ReviewFileTarget[];
     }) => Promise<import('@/lib/gitReview.types').ReviewStageOperationResult>;
     unstageAll: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       targets: import('@/lib/gitReview.types').ReviewFileTarget[];
     }) => Promise<import('@/lib/gitReview.types').ReviewStageOperationResult>;
     discardAll: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       targets: import('@/lib/gitReview.types').ReviewFileTarget[];
     }) => Promise<import('@/lib/gitReview.types').ReviewStageOperationResult>;
     commit: (
       params: import('@/lib/gitReview.types').ReviewCommitRequest,
     ) => Promise<import('@/lib/gitReview.types').ReviewCommitResult>;
     push: (params: {
-      sessionId: string;
+      sessionId: string; repositoryId?: string;
       confirmForce?: import('@/lib/gitReview.types').ReviewPushConfirmForce;
     }) => Promise<import('@/lib/gitReview.types').ReviewPushResult>;
   };

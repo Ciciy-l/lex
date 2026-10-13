@@ -15,6 +15,10 @@ import {
 const mocks = vi.hoisted(() => ({
   workers: [] as WorkerInfo[],
   refresh: vi.fn(),
+  getTeam: vi.fn(),
+  enable: vi.fn(),
+  workflowsFor: vi.fn(),
+  sticky: vi.fn(),
   createWorker: vi.fn<(input: Record<string, unknown>) => Promise<void>>(async () => undefined),
   switchFocus: vi.fn(async () => undefined),
   idleWorker: vi.fn(async () => ({ ok: true as const, workerId: 'worker-b' })),
@@ -32,13 +36,12 @@ vi.mock('../useWorkers', () => ({
   }),
 }));
 
+vi.mock('../../enableCollabFromForm', () => ({ enableCollabFromForm: mocks.enable }));
+vi.mock('@/features/device-link/stickySessionOrigin', () => ({
+  getStickySessionDeviceId: mocks.sticky,
+}));
 vi.mock('@/lib/makerTransport', () => ({
-  orcaWorkflowsFor: () => ({
-    createWorker: mocks.createWorker,
-    switchFocus: mocks.switchFocus,
-    idleWorker: mocks.idleWorker,
-    archiveWorker: vi.fn(async () => undefined),
-  }),
+  orcaWorkflowsFor: mocks.workflowsFor,
 }));
 
 vi.mock('react-i18next', () => ({
@@ -91,6 +94,16 @@ function wrapper({ children }: { children: ReactNode }) {
 
 describe('useOrcaWorkerSelection', () => {
   beforeEach(() => {
+    mocks.getTeam.mockReset().mockResolvedValue({ status: 'active' });
+    mocks.enable.mockReset().mockResolvedValue('first-worker');
+    mocks.sticky.mockReturnValue(null);
+    mocks.workflowsFor.mockReset().mockReturnValue({
+      getByLeadSession: mocks.getTeam,
+      createWorker: mocks.createWorker,
+      switchFocus: mocks.switchFocus,
+      idleWorker: mocks.idleWorker,
+      archiveWorker: vi.fn(async () => undefined),
+    });
     mocks.workers = [
       makeWorker('worker-a', 'session-a', true),
       makeWorker('worker-b', 'session-b'),
@@ -110,16 +123,90 @@ describe('useOrcaWorkerSelection', () => {
     mocks.createWorker.mockReset().mockResolvedValue(undefined);
   });
 
+  it('enables collaboration once with the original form when creating the first Worker', async () => {
+    mocks.getTeam.mockResolvedValue(null);
+    const { result } = renderHook(
+      () => useOrcaWorkerSelection({ leadSessionId: 'lead-1', deviceId: null }),
+      { wrapper },
+    );
+    const form = {
+      agent: 'codex' as const,
+      role: 'builder',
+      model: 'gpt-5.4',
+      effort: 'high' as const,
+      fast: false,
+      providerId: null,
+      initialTask: 'implement',
+      workerPermissionMode: 'auto' as const,
+    };
+    await act(async () => {
+      await Promise.all([
+        result.current.handleCreateWorker(form),
+        result.current.handleCreateWorker(form),
+      ]);
+    });
+    expect(mocks.enable).toHaveBeenCalledTimes(1);
+    expect(mocks.workflowsFor).toHaveBeenCalledWith('lead-1', null);
+    expect(mocks.enable).toHaveBeenCalledWith('lead-1', form, 'builder', null);
+    expect(mocks.createWorker).not.toHaveBeenCalled();
+  });
+  it.each([{ deviceId: 'remote' }, {}])(
+    'pins the remote team lookup and enable to the same device (%#)',
+    async (options) => {
+      mocks.sticky.mockReturnValue('remote');
+      mocks.getTeam.mockImplementationOnce(async () => {
+        mocks.sticky.mockReturnValue('other-device');
+        return null;
+      });
+      const { result } = renderHook(
+        () => useOrcaWorkerSelection({ leadSessionId: 'lead-1', ...options }),
+        { wrapper },
+      );
+      const form = {
+        agent: 'codex' as const,
+        role: 'builder',
+        model: 'gpt-5.4',
+        fast: false,
+        providerId: null,
+        initialTask: '',
+        workerPermissionMode: 'auto' as const,
+      };
+      await act(async () => {
+        await result.current.handleCreateWorker(form);
+      });
+      expect(mocks.workflowsFor).toHaveBeenCalledWith('lead-1', 'remote');
+      expect(mocks.enable).toHaveBeenCalledWith('lead-1', form, 'builder', 'remote');
+    },
+  );
+  it('does not retry an ambiguous enable failure or fall through into a second Worker creation', async () => {
+    mocks.getTeam.mockResolvedValue(null);
+    mocks.enable.mockRejectedValue(new Error('[DEVICE_LINK_TIMEOUT] unconfirmed'));
+    const { result } = renderHook(() => useOrcaWorkerSelection({ leadSessionId: 'lead-1' }), {
+      wrapper,
+    });
+    await act(async () => {
+      await result.current.handleCreateWorker({
+        agent: 'codex',
+        role: 'builder',
+        model: 'gpt-5.4',
+        providerId: null,
+        initialTask: '',
+      });
+    });
+    expect(mocks.enable).toHaveBeenCalledTimes(1);
+    expect(mocks.createWorker).not.toHaveBeenCalled();
+    expect(mocks.toastError).toHaveBeenCalledTimes(1);
+  });
+
   it('acknowledges a done worker after switching focus and clears attention after success', async () => {
     mocks.workers = [
       makeWorker('worker-a', 'session-a', true),
       makeWorker('worker-b', 'session-b', false, 'done'),
     ];
     markWorkerAttention('worker-b');
-    const { result } = renderHook(
-      () => useOrcaWorkerSelection({ leadSessionId: 'lead-1' }),
-      { wrapper },
-    );
+    const { result } = renderHook(() => useOrcaWorkerSelection({ leadSessionId: 'lead-1' }), {
+      wrapper,
+    });
 
     act(() => result.current.handleSwitchFocus('worker-b'));
 
@@ -139,10 +226,9 @@ describe('useOrcaWorkerSelection', () => {
       new Error('[WORKER_STATE_CHANGED] worker worker-b has a dispatch in progress'),
     );
     markWorkerAttention('worker-b');
-    const { result } = renderHook(
-      () => useOrcaWorkerSelection({ leadSessionId: 'lead-1' }),
-      { wrapper },
-    );
+    const { result } = renderHook(() => useOrcaWorkerSelection({ leadSessionId: 'lead-1' }), {
+      wrapper,
+    });
 
     act(() => result.current.handleSwitchFocus('worker-b'));
 
@@ -163,10 +249,9 @@ describe('useOrcaWorkerSelection', () => {
       new Error('[DEVICE_LINK_CHANNEL_NOT_ALLOWED] automatic done acknowledgement is unsupported'),
     );
     markWorkerAttention('worker-b');
-    const { result } = renderHook(
-      () => useOrcaWorkerSelection({ leadSessionId: 'lead-1' }),
-      { wrapper },
-    );
+    const { result } = renderHook(() => useOrcaWorkerSelection({ leadSessionId: 'lead-1' }), {
+      wrapper,
+    });
 
     act(() => result.current.handleSwitchFocus('worker-b'));
 
@@ -185,10 +270,9 @@ describe('useOrcaWorkerSelection', () => {
     ];
     mocks.idleWorker.mockRejectedValueOnce(new Error('idle store unavailable'));
     markWorkerAttention('worker-b');
-    const { result } = renderHook(
-      () => useOrcaWorkerSelection({ leadSessionId: 'lead-1' }),
-      { wrapper },
-    );
+    const { result } = renderHook(() => useOrcaWorkerSelection({ leadSessionId: 'lead-1' }), {
+      wrapper,
+    });
 
     act(() => result.current.handleSwitchFocus('worker-b'));
 
@@ -202,10 +286,9 @@ describe('useOrcaWorkerSelection', () => {
       makeWorker('worker-a', 'session-a', true),
       makeWorker('worker-b', 'session-b', false, 'running'),
     ];
-    const { result } = renderHook(
-      () => useOrcaWorkerSelection({ leadSessionId: 'lead-1' }),
-      { wrapper },
-    );
+    const { result } = renderHook(() => useOrcaWorkerSelection({ leadSessionId: 'lead-1' }), {
+      wrapper,
+    });
 
     act(() => result.current.handleSwitchFocus('worker-b'));
 
@@ -224,10 +307,9 @@ describe('useOrcaWorkerSelection', () => {
         resolveIdle = resolve;
       }),
     );
-    const { result } = renderHook(
-      () => useOrcaWorkerSelection({ leadSessionId: 'lead-1' }),
-      { wrapper },
-    );
+    const { result } = renderHook(() => useOrcaWorkerSelection({ leadSessionId: 'lead-1' }), {
+      wrapper,
+    });
 
     act(() => {
       result.current.handleSwitchFocus('worker-b');
@@ -290,10 +372,9 @@ describe('useOrcaWorkerSelection', () => {
     mocks.workers = [makeWorker('worker-a', 'session-a', true, 'done')];
     markWorkerAttention('worker-a');
 
-    renderHook(
-      () => useOrcaWorkerSelection({ leadSessionId: 'lead-1', viewVisible: true }),
-      { wrapper },
-    );
+    renderHook(() => useOrcaWorkerSelection({ leadSessionId: 'lead-1', viewVisible: true }), {
+      wrapper,
+    });
 
     await waitFor(() => {
       expect(mocks.idleWorker).toHaveBeenCalledWith('lead-1', 'worker-a', 'done');
@@ -346,10 +427,9 @@ describe('useOrcaWorkerSelection', () => {
     mocks.createWorker
       .mockRejectedValueOnce(new Error('[DUPLICATE_LABEL] label already used'))
       .mockResolvedValueOnce(undefined);
-    const { result } = renderHook(
-      () => useOrcaWorkerSelection({ leadSessionId: 'lead-1' }),
-      { wrapper },
-    );
+    const { result } = renderHook(() => useOrcaWorkerSelection({ leadSessionId: 'lead-1' }), {
+      wrapper,
+    });
 
     await act(async () => {
       await result.current.handleCreateWorker({
@@ -372,10 +452,9 @@ describe('useOrcaWorkerSelection', () => {
     mocks.createWorker.mockRejectedValueOnce(
       new Error('[WORKER_CREATION_IN_PROGRESS] label is currently being created'),
     );
-    const { result } = renderHook(
-      () => useOrcaWorkerSelection({ leadSessionId: 'lead-1' }),
-      { wrapper },
-    );
+    const { result } = renderHook(() => useOrcaWorkerSelection({ leadSessionId: 'lead-1' }), {
+      wrapper,
+    });
 
     await act(async () => {
       await result.current.handleCreateWorker({

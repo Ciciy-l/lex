@@ -38,6 +38,7 @@ function makeController() {
     markPresentationReady: vi.fn(),
     refreshContext: vi.fn(),
     setContext: vi.fn(),
+    setContentLayout: vi.fn(),
     routeCommand: vi.fn(async () => 'routed'),
   } as unknown as RsbWindowControllerMock;
 }
@@ -77,8 +78,7 @@ describe('right-sidebar-window IPC', () => {
       ([channel]) => channel === MAKER_SEND.RSB_WINDOW_SET_CONTEXT,
     );
     const setContext = setContextCall?.[1] as
-      | ((event: { sender: unknown }, payload: unknown) => void)
-      | undefined;
+      ((event: { sender: unknown }, payload: unknown) => void) | undefined;
     if (!setContext) throw new Error('RSB_WINDOW_SET_CONTEXT handler not registered');
 
     setContext(
@@ -110,8 +110,7 @@ describe('right-sidebar-window IPC', () => {
       ([channel]) => channel === MAKER_SEND.RSB_WINDOW_SET_CONTEXT,
     );
     const setContext = setContextCall?.[1] as
-      | ((event: { sender: unknown }, payload: unknown) => void)
-      | undefined;
+      ((event: { sender: unknown }, payload: unknown) => void) | undefined;
     if (!setContext) throw new Error('RSB_WINDOW_SET_CONTEXT handler not registered');
 
     setContext(
@@ -142,8 +141,7 @@ describe('right-sidebar-window IPC', () => {
       ([channel]) => channel === MAKER_SEND.RSB_WINDOW_SET_CONTEXT,
     );
     const setContext = setContextCall?.[1] as
-      | ((event: { sender: unknown }, payload: unknown) => void)
-      | undefined;
+      ((event: { sender: unknown }, payload: unknown) => void) | undefined;
     if (!setContext) throw new Error('RSB_WINDOW_SET_CONTEXT handler not registered');
 
     setContext(
@@ -551,7 +549,9 @@ describe('right-sidebar-window IPC', () => {
     controller.getSidebarWebContents.mockReturnValue(sidebarWebContents);
     registerController(controller);
     const handlers = (
-      ipcMain as unknown as { __handlers: Map<string, (e: unknown, p: unknown, h?: unknown) => unknown> }
+      ipcMain as unknown as {
+        __handlers: Map<string, (e: unknown, p: unknown, h?: unknown) => unknown>;
+      }
     ).__handlers;
     const setDetached = handlers.get(MAKER_INVOKE.RSB_WINDOW_SET_DETACHED);
     if (!setDetached) throw new Error('RSB_WINDOW_SET_DETACHED handler not registered');
@@ -570,9 +570,11 @@ describe('right-sidebar-window IPC', () => {
     expect(controller.setDetached).toHaveBeenCalledWith(false, handoff);
 
     expect(() => setDetached({ sender: { id: 4 } }, false, handoff)).toThrow(/sender/);
-    expect(() => setDetached({ sender: sidebarWebContents }, false, {
-      snapshots: [{ sessionId: 's1', tabs: [], activeTabId: null, persistable: true }],
-    })).toThrow(/non-persistable/);
+    expect(() =>
+      setDetached({ sender: sidebarWebContents }, false, {
+        snapshots: [{ sessionId: 's1', tabs: [], activeTabId: null, persistable: true }],
+      }),
+    ).toThrow(/non-persistable/);
   });
 
   it('accepts a memory-only tab handoff for detach only from the main window sender', () => {
@@ -609,10 +611,31 @@ describe('right-sidebar-window IPC', () => {
     const { handler, mainWebContents } = registerController(controller);
 
     await expect(
-      handler(
-        { sender: mainWebContents },
-        { command: { type: 'open-terminal', sessionId: 's1' } },
-      ),
+      handler({ sender: mainWebContents }, { command: { type: 'open-terminal', sessionId: 's1' } }),
     ).rejects.toThrow(/request.allowOpen/);
   });
+});
+
+it('accepts content layout only from the actual sidebar renderer', () => {
+  const controller = makeController();
+  const { mainWebContents } = registerController(controller);
+  const sidebar = { id: 2 };
+  controller.getSidebarWebContents.mockReturnValue(sidebar);
+  const handlers = (
+    ipcMain as unknown as { __handlers: Map<string, (event: unknown, payload: unknown) => unknown> }
+  ).__handlers;
+  const handler = handlers.get('rsb-window:content-layout')!;
+  const payload = {
+    sessionId: 's1',
+    workdir: '/work',
+    remoteHostId: null,
+    deviceLinkDeviceId: 'device',
+    navigationOnly: true,
+  };
+  expect(() => handler({ sender: mainWebContents }, payload)).toThrow('PERMISSION_DENIED');
+  expect(() => handler({ sender: sidebar }, { ...payload, navigationOnly: 'yes' })).toThrow(
+    'INVALID_PARAMS',
+  );
+  handler({ sender: sidebar }, payload);
+  expect(controller.setContentLayout).toHaveBeenCalledWith({ ...payload, available: true });
 });

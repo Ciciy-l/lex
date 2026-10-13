@@ -8,6 +8,10 @@ import {
 } from '../graphReader';
 import type { ReviewScope } from '../types';
 
+vi.mock('../sshReviewBackend.js', () => ({
+  withSessionReviewExecution: async (_id: string, task: () => Promise<unknown>) => task(),
+}));
+
 const git = vi.hoisted(() => vi.fn());
 vi.mock('../gitRunner.js', async () => ({
   ...(await vi.importActual('../gitRunner.js')),
@@ -58,36 +62,36 @@ describe('Git Graph input boundary', () => {
       expect(() => parseGitGraphCompareRequest({ ...input, fromOid })).toThrow();
     expect(() => parseGitGraphCompareRequest({ ...input, fromRef: 'bad\0ref' })).toThrow();
   });
-  it.each([null, { id: 'lead', remoteHostId: 'ssh', workingDir: '/remote', worktreePath: null }])(
-    'rejects missing/SSH sessions before scope resolution',
-    async (row) => {
-      const resolveScope = vi.fn();
-      const task = vi.fn();
-      await expect(
-        withLocalGraphScope('lead', task, {
-          getSessionRow: vi.fn().mockResolvedValue(row),
-          resolveScope,
-        }),
-      ).rejects.toThrow('local');
-      expect(resolveScope).not.toHaveBeenCalled();
-      expect(task).not.toHaveBeenCalled();
-    },
-  );
-  it('uses the authoritative local session scope', async () => {
-    const task = vi.fn().mockResolvedValue('done');
+  it.each([null])('rejects missing sessions before scope resolution', async (row) => {
+    const resolveScope = vi.fn();
+    const task = vi.fn();
     await expect(
       withLocalGraphScope('lead', task, {
-        getSessionRow: vi.fn().mockResolvedValue({
-          id: 'lead',
-          remoteHostId: null,
-          workingDir: '/repo',
-          worktreePath: null,
-        }),
-        resolveScope: vi.fn().mockResolvedValue(scope),
+        getSessionRow: vi.fn().mockResolvedValue(row),
+        resolveScope,
       }),
-    ).resolves.toBe('done');
-    expect(task).toHaveBeenCalledWith(scope);
+    ).rejects.toThrow('Session not found');
+    expect(resolveScope).not.toHaveBeenCalled();
+    expect(task).not.toHaveBeenCalled();
   });
+  it.each([null, 'ssh-host'])(
+    'uses authoritative scope through the session backend (%s)',
+    async (remoteHostId) => {
+      const task = vi.fn().mockResolvedValue('done');
+      await expect(
+        withLocalGraphScope('lead', task, {
+          getSessionRow: vi.fn().mockResolvedValue({
+            id: 'lead',
+            remoteHostId,
+            workingDir: '/repo',
+            worktreePath: null,
+          }),
+          resolveScope: vi.fn().mockResolvedValue(scope),
+        }),
+      ).resolves.toBe('done');
+      expect(task).toHaveBeenCalledWith(scope);
+    },
+  );
 });
 
 describe('bounded graph reads', () => {

@@ -1,3 +1,4 @@
+import type { FileTreeDecoration } from './FileTreeView';
 /**
  * FilterResultList —— 文件名筛选结果列表。
  *
@@ -15,6 +16,7 @@ import { cn } from '@/lib/utils';
 import { FILTER_RESULT_LIMIT } from './lib/filterFiles';
 
 export interface FilterResultListProps {
+  decorationForPath?: (path: string) => FileTreeDecoration | undefined;
   files: readonly string[];
   /** ripgrep cap 截断或前端展示上限截断 —— 显示"结果过多"提示行。 */
   truncated: boolean;
@@ -32,6 +34,7 @@ export interface FilterResultListProps {
 }
 
 export function FilterResultList({
+  decorationForPath,
   files,
   truncated,
   isLoading,
@@ -72,28 +75,49 @@ export function FilterResultList({
           const slash = relPath.lastIndexOf('/');
           const basename = slash < 0 ? relPath : relPath.slice(slash + 1);
           const dirname = slash < 0 ? '' : relPath.slice(0, slash);
+          const decoration = decorationForPath?.(relPath);
           const selected = relPath === selectedPath;
           return (
             <button
               type="button"
               key={relPath}
-              onClick={e => e.detail === 0 && onOpenFile ? onOpenFile(relPath) : onSelectFile(relPath)}
+              onClick={(e) =>
+                e.detail === 0 && onOpenFile ? onOpenFile(relPath) : onSelectFile(relPath)
+              }
               onDoubleClick={() => onOpenFile?.(relPath)}
               title={relPath}
               className={cn(
                 'flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm',
                 selected
-                  ? 'bg-sidebar-item-active font-medium text-sidebar-item-active-foreground'
+                  ? decoration
+                    ? 'bg-[var(--surface-hover)] font-medium ring-1 ring-inset ring-[var(--border-default)]'
+                    : 'bg-sidebar-item-active font-medium text-sidebar-item-active-foreground'
                   : 'text-foreground hover:bg-sidebar-item-hover',
               )}
             >
               <FileIcon size={14} strokeWidth={1.5} className="shrink-0 text-sidebar-muted" />
               <span className="flex min-w-0 flex-1 flex-col leading-tight">
-                <span className="truncate">{basename}</span>
-                {dirname && (
-                  <span className="truncate text-10 text-sidebar-muted">{dirname}</span>
-                )}
+                <span
+                  className="truncate"
+                  title={decoration?.description}
+                  style={{
+                    color: decoration?.color,
+                    textDecoration: decoration?.deleted ? 'line-through' : undefined,
+                  }}
+                >
+                  {basename}
+                </span>
+                {dirname && <span className="truncate text-10 text-sidebar-muted">{dirname}</span>}
               </span>
+              {decoration && (
+                <span
+                  className="shrink-0 text-11"
+                  style={{ color: decoration.color }}
+                  aria-label={decoration.description}
+                >
+                  {decoration.badge}
+                </span>
+              )}
             </button>
           );
         })}

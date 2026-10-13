@@ -6697,6 +6697,22 @@
     "multipleAria": "{{count}} plugin panels minimized. Choose a panel to restore"
   },
   "rightSidebar": {
+    "repositories": {
+      "title": "Repository",
+      "partial": "Some folders were not scanned. Add a deeper repository by path.",
+      "add": "Add repository",
+      "relativePath": "Path relative to the working directory",
+      "legacy": "The remote computer uses an older version. Only its default repository is available."
+    },
+    "gitFiles": {
+      "added": "Added",
+      "deleted": "Deleted",
+      "modified": "Modified",
+      "conflict": "Conflict",
+      "renamed": "Renamed",
+      "clean": "Unchanged",
+      "unavailable": "Git status is temporarily unavailable"
+    },
     "gitGraph": {
       "unloadedParents": "Dashed continuation: parent commit is outside the loaded history.",
       "lanesLeft": "Show lanes to the left",

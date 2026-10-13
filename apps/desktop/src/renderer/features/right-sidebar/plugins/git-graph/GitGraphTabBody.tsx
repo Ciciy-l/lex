@@ -1,3 +1,5 @@
+import { useGitRepositoryId } from '../../lib/gitRepositorySelection';
+import { gitReviewApiFor } from '@/lib/gitReviewTransport';
 import {
   lazy,
   Suspense,
@@ -58,13 +60,18 @@ const disabledReasonKeys = {
 } satisfies Record<ReviewDisableReason, string>;
 
 export function GitGraphTabBody(props: TabKindBodyProps<GitGraphState>) {
-  const { t } = useTranslation();
-  if (props.ctx.remoteHostId || props.ctx.deviceLinkDeviceId !== null) {
-    return (
-      <p className="p-4 text-[var(--text-secondary)]">{t('rightSidebar.gitGraph.localOnly')}</p>
-    );
-  }
-  return <GraphContent key={JSON.stringify([props.ctx.sessionId, props.ctx.workdir])} {...props} />;
+  if (props.ctx.deviceLinkDeviceId === undefined) return <GitGraphLoadingState />;
+  return (
+    <GraphContent
+      key={JSON.stringify([
+        props.ctx.sessionId,
+        props.ctx.workdir,
+        props.ctx.remoteHostId,
+        props.ctx.deviceLinkDeviceId,
+      ])}
+      {...props}
+    />
+  );
 }
 
 function GraphContent({
@@ -74,6 +81,7 @@ function GraphContent({
   shellVisible = true,
 }: TabKindBodyProps<GitGraphState>) {
   const { t } = useTranslation();
+  const repositoryId = useGitRepositoryId();
   const [data, setData] = useState<GitGraphData | null>(null);
   const [limit, setLimit] = useState(100);
   const [busy, setBusy] = useState(false);
@@ -127,7 +135,8 @@ function GraphContent({
         if (!visible.current || document.visibilityState === 'hidden') return;
         attemptedRead = true;
         setBusy(true);
-        const result = await window.electronAPI.gitReview.graph({
+        const result = await gitReviewApiFor(ctx.deviceLinkDeviceId).graph({
+          repositoryId,
           sessionId: ctx.sessionId,
           limit: snapshot.limit,
           ...snapshot.state,
@@ -175,7 +184,7 @@ function GraphContent({
       queue.dispose();
       comparisonEpoch.current++;
     };
-  }, [ctx.sessionId]);
+  }, [ctx.sessionId, ctx.deviceLinkDeviceId, repositoryId]);
 
   useEffect(() => {
     if (!active || !shellVisible) return;
@@ -299,7 +308,8 @@ function GraphContent({
     setComparing(true);
     setComparison(null);
     try {
-      const result = await window.electronAPI.gitReview.graphCompare({
+      const result = await gitReviewApiFor(ctx.deviceLinkDeviceId).graphCompare({
+        repositoryId,
         sessionId: ctx.sessionId,
         fromRef: from.ref,
         fromOid: from.oid,
@@ -466,9 +476,12 @@ function GraphContent({
             <GitControl
               label={t('rightSidebar.gitGraph.commitChanges')}
               onClick={() =>
-                void openGitReview(ctx.sessionId, { kind: 'commit', commitOid: commit.oid }).catch(
-                  () => toast.error(t('rightSidebar.workbench.loadFailed')),
-                )
+                void openGitReview(
+                  ctx.sessionId,
+                  { kind: 'commit', commitOid: commit.oid },
+                  undefined,
+                  repositoryId,
+                ).catch(() => toast.error(t('rightSidebar.workbench.loadFailed')))
               }
             >
               {t('rightSidebar.gitGraph.commitChanges')}

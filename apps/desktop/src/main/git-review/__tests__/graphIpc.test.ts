@@ -20,6 +20,9 @@ vi.mock('../sshReviewBackend.js', () => ({
   withSessionReviewExecution: vi.fn(),
   createSshPreviewReaderDeps: vi.fn(),
 }));
+vi.mock('../../file-browser/remote-deps.js', () => ({
+  getRemoteFileBrowser: vi.fn(),
+}));
 import { registerGitReviewIpc } from '../ipc';
 
 beforeEach(() => {
@@ -28,6 +31,8 @@ beforeEach(() => {
 });
 describe('Git Graph IPC boundary', () => {
   it.each([
+    'git-review:repositories',
+    'git-review:workspace-status',
     'git-review:graph',
     'git-review:graph-compare',
     'git-review:navigation',

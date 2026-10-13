@@ -1,3 +1,4 @@
+import { getSidebarCompact, useSidebarCompact } from './sidebarPresentation';
 import {
   memo,
   useEffect,
@@ -256,7 +257,7 @@ function computeRootWidths(layout: Layout, live: Record<string, number> | null):
     // accidentally apply the root share a second time. cqw keeps the shell and content aligned
     // without restoring a ResizeObserver → React state round-trip during live window resizing.
     const width = `clamp(${min}px, ${share * 100}cqw, calc(100cqw - ${CHAT_MIN_PX}px))`;
-    if (node.type === 'pane') panelWidths[node.panelKind] = width;
+    if (node.type === 'pane') panelWidths[node.panelKind] = node.panelKind === 'right-tabs' && getSidebarCompact() ? 'min(280px, max(0px, calc(100cqw - 400px)))' : width;
     else splitWidths[node.id] = width;
   }
   return { panelWidths, splitWidths };
@@ -563,7 +564,13 @@ function RootDivider({
     };
   };
 
+  const compact = useSidebarCompact();
+  const compactBoundary = compact && [left.node, right.node].some(
+    (node) => node.type === 'pane' && node.panelKind === 'right-tabs',
+  );
+
   const onPointerDown = (e: React.PointerEvent) => {
+    if (compactBoundary) return;
     if (e.button !== 0 || draggingRef.current) return;
     e.preventDefault();
     draggingRef.current = true;
@@ -578,7 +585,7 @@ function RootDivider({
     // The settle-time self-heal can still be pending when the user grabs the divider immediately
     // after a window resize. Align this gesture's baseline synchronously so a pane held up by the
     // CSS floor responds from the first pixel; persist only if the gesture actually moves.
-    const alignedLayout = normalizeSubMinFractions(layout, available, isPanelKindVisible);
+    const alignedLayout = compact ? null : normalizeSubMinFractions(layout, available, isPanelKindVisible);
     const alignedLedger =
       alignedLayout?.content.type === 'split' && alignedLayout.content.direction === 'row'
         ? activeSplitLedger(alignedLayout.content.children)
@@ -633,6 +640,7 @@ function RootDivider({
   // 在两块布局下的语义等价推广。在场份额口径:均分的是**画面上**这两块的宽度。
   // 压缩 chat 的方向同样走接力(计划即时按当前实测现算),且不得越过 chat 400px 下限。
   const onDoubleClick = () => {
+    if (compactBoundary) return;
     const total = left.share + right.share;
     const measuredAvailable = availableWidthRootRef.current?.getBoundingClientRect().width ?? 0;
     const available =
@@ -663,11 +671,11 @@ function RootDivider({
       className="layout-divider-v relative"
       // hover 高亮与左栏拖宽把手同款取色;该 token 是 HSL 三元组,必须 hsl() 包裹
       // (裸引用会产出非法 CSS 整条失效 → 透明,规则 16 点名的坑,实测踩过)。
-      style={hover ? { background: 'hsl(var(--sidebar-action-icon))' } : undefined}
+      style={hover && !compactBoundary ? { background: 'hsl(var(--sidebar-action-icon))' } : undefined}
     >
       {/* 隐形抓握区:比 1px 缝宽,悬停变色提示可拖;no-drag 保证收到指针事件。 */}
       <div
-        className="absolute inset-y-0 left-[-3px] z-10 w-[7px] cursor-col-resize"
+        className={'absolute inset-y-0 left-[-3px] z-10 w-[7px] ' + (compactBoundary ? 'cursor-default' : 'cursor-col-resize')}
         style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
         onPointerEnter={() => setHover(true)}
         onPointerLeave={() => setHover(false)}
@@ -851,6 +859,7 @@ export function LayoutRoot({ suppressNonChatPanels = false }: LayoutRootProps = 
       }
       const available = root.getBoundingClientRect().width;
       if (!(available > 0)) return;
+      if (getSidebarCompact()) return;
       const fixed = normalizeSubMinFractions(layout, available, isPanelKindVisible);
       if (fixed === null) return;
       setLayout(fixed);
@@ -888,9 +897,10 @@ export function LayoutRoot({ suppressNonChatPanels = false }: LayoutRootProps = 
   const availableWidthHint = useContentAvailableWidth();
   // eslint 会说 ghostWindowsState 没被直接读——它是 computeRootWidths 里
   // isPanelKindVisible 的隐式数据源(模块级镜像),必须进 deps 才能感知抽离变化。
+  const compactSidebar = useSidebarCompact();
   const rootWidths = useMemo(
     () => computeRootWidths(layout, liveFractions),
-    [layout, liveFractions, ghostBubbleState, ghostSyncVersion, ghostWindowsState],
+    [layout, liveFractions, ghostBubbleState, ghostSyncVersion, ghostWindowsState, compactSidebar],
   );
 
   // 撑满目标失效自动还原:面板被卸下/停用(kind 注销)、抽离进独立窗口或

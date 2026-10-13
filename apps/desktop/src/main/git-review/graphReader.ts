@@ -6,6 +6,7 @@ import type {
   GitGraphCompareRequest,
   GitGraphComparison,
 } from '../../shared/gitGraph.js';
+import { withSessionReviewExecution } from './sshReviewBackend.js';
 import { runGit, type GitRunOptions, type GitRunResult } from './gitRunner.js';
 import {
   defaultScopeResolverDeps,
@@ -63,13 +64,13 @@ export async function withLocalGraphScope<T>(
   },
 ): Promise<T> {
   const row = await deps.getSessionRow(sessionId);
-  if (!row || row.remoteHostId) throw new Error('Git Graph is available for local sessions only');
-  return withSessionReviewRowSnapshot(row, async () => {
-    const scope = await deps.resolveScope(sessionId);
-    if (scope.source === 'remote')
-      throw new Error('Git Graph is available for local sessions only');
-    return task(scope);
-  });
+  if (!row) throw new Error('Session not found');
+  return withSessionReviewRowSnapshot(row, () =>
+    withSessionReviewExecution(sessionId, async () => {
+      const scope = await deps.resolveScope(sessionId);
+      return task(scope);
+    }),
+  );
 }
 
 export function parseGraphLog(stdout: string): GitGraphCommit[] {

@@ -75,7 +75,7 @@ describe('OrcaWorkerPanel New Maker shortcut', () => {
       workers: [],
       hardLimit: 2,
     });
-    render(<OrcaWorkerPanel leadSessionId="lead-1" viewVisible />);
+    render(<OrcaWorkerPanel leadSessionId="lead-1" deviceId={null} viewVisible />);
 
     await expect(requestNewWorkerFromShortcut()).resolves.toBe(true);
     expect(mocks.refreshCreationState).toHaveBeenCalledOnce();
@@ -89,7 +89,7 @@ describe('OrcaWorkerPanel New Maker shortcut', () => {
       workers: [{ status: 'running' }],
       hardLimit: 1,
     });
-    render(<OrcaWorkerPanel leadSessionId="lead-1" viewVisible />);
+    render(<OrcaWorkerPanel leadSessionId="lead-1" deviceId={null} viewVisible />);
 
     await expect(requestNewWorkerFromShortcut()).resolves.toBe(true);
     expect(mocks.setCreateOpen).not.toHaveBeenCalled();
@@ -101,7 +101,7 @@ describe('OrcaWorkerPanel New Maker shortcut', () => {
       workers: [],
       hardLimit: null,
     });
-    render(<OrcaWorkerPanel leadSessionId="lead-1" viewVisible />);
+    render(<OrcaWorkerPanel leadSessionId="lead-1" deviceId={null} viewVisible />);
 
     await expect(requestNewWorkerFromShortcut()).resolves.toBe(true);
     expect(mocks.setCreateOpen).not.toHaveBeenCalled();
@@ -113,7 +113,7 @@ describe('OrcaWorkerPanel New Maker shortcut', () => {
   it('does not retain an in-flight shortcut after the visible panel unmounts', async () => {
     const pending = deferred<{ status: 'applied'; workers: []; hardLimit: number }>();
     mocks.refreshCreationState.mockReturnValue(pending.promise);
-    const panel = render(<OrcaWorkerPanel leadSessionId="lead-1" viewVisible />);
+    const panel = render(<OrcaWorkerPanel leadSessionId="lead-1" deviceId={null} viewVisible />);
 
     const request = requestNewWorkerFromShortcut();
     await waitFor(() => expect(mocks.refreshCreationState).toHaveBeenCalledOnce());

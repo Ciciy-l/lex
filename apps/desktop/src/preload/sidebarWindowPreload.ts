@@ -235,7 +235,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('maker:file-browser:cache-put', params),
     onTransferProgress: (cb: (event: unknown) => void): (() => void) =>
       onPayload('maker:file-browser:transfer', cb),
-    previewHtml: (params: unknown): Promise<unknown> => ipcRenderer.invoke('maker:html-preview:open', params),
+    previewHtml: (params: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('maker:html-preview:open', params),
     chatFetch: (params: unknown): Promise<unknown> =>
       ipcRenderer.invoke('maker:chat-file:fetch', params),
     chatStat: (params: unknown): Promise<unknown> =>
@@ -285,8 +286,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openExternal: (url: string): Promise<unknown> => ipcRenderer.invoke('shell:open-external', url),
   openFileInBrowser: (pathOrUrl: string): Promise<unknown> =>
     ipcRenderer.invoke('shell:open-file-in-browser', pathOrUrl),
-  openPath: (pathOrUrl: string) =>
-    invokeOpenPath(ipcRenderer.invoke.bind(ipcRenderer), pathOrUrl),
+  openPath: (pathOrUrl: string) => invokeOpenPath(ipcRenderer.invoke.bind(ipcRenderer), pathOrUrl),
   showItemInFolder: (params: unknown): Promise<unknown> =>
     ipcRenderer.invoke('shell:show-item-in-folder', params),
   copyMediaToClipboard: (params: unknown): Promise<unknown> =>
@@ -346,6 +346,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   rightSidebarWindow: {
+    setContentLayout: (
+      request: import('../shared/rightSidebarWindow').RsbContentLayoutRequest,
+    ): Promise<void> => ipcRenderer.invoke('rsb-window:content-layout', request),
     getState: (): Promise<{ detached: boolean; lastOpen: boolean; open: boolean }> =>
       ipcRenderer.invoke('maker:rsb-window:get-state'),
     open: (payload?: unknown): Promise<void> =>
@@ -565,6 +568,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   gitReview: {
+    repositories: (params: unknown) => ipcRenderer.invoke('git-review:repositories', params),
+    workspaceStatus: (params: unknown) => ipcRenderer.invoke('git-review:workspace-status', params),
+    navigation: (params: unknown) => ipcRenderer.invoke('git-review:navigation', params),
+    graph: (params: unknown) => ipcRenderer.invoke('git-review:graph', params),
+    graphCompare: (params: unknown) => ipcRenderer.invoke('git-review:graph-compare', params),
     history: (params: { sessionId: string }) => ipcRenderer.invoke('git-review:history', params),
     get: (params: unknown): Promise<unknown> => ipcRenderer.invoke('git-review:get', params),
     summary: (params: unknown): Promise<unknown> =>
@@ -607,6 +615,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     push: (params: unknown): Promise<unknown> => ipcRenderer.invoke('git-review:push', params),
   },
   maker: {
+    enableOrca: (leadSessionId: string, options: unknown) =>
+      ipcRenderer.invoke('maker:session:enable-orca', leadSessionId, options),
     // Live event subset consumed by makerChatStore in the detached renderer.
     onEvent: (cb: (payload: unknown) => void): (() => void) => onPayload('maker:event', cb),
     onStatusChanged: (cb: (payload: unknown) => void): (() => void) =>
