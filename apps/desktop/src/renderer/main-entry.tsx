@@ -15,7 +15,6 @@ import '@/i18n';
 import './themes/colors';
 
 import { TopLevelErrorBoundary } from './components/error/TopLevelErrorBoundary';
-import { initTapdb } from './analytics/tapdbClient';
 import { installScrollbarAutoHide } from './lib/scrollbarAutoHide';
 import { bootstrapMemorySettingsFromMain } from './lib/memorySettingsStore';
 import {
@@ -225,10 +224,7 @@ export const mainEntryReady: Promise<void> = (async () => {
   // 启动快照并发。浮窗不消费该设置，跳过同步以免多个 renderer 争写共享 localStorage。
   await bootstrapMemorySettingsFromMain();
 
-  // Lex's Main-owned build gate keeps TapDB disabled by default, including in
-  // packaged builds. Keep the normal consent-aware initialization hook so an
-  // explicitly opted-in developer verification run can still exercise it.
-  initTapdb();
+  // Lex does not load or initialize the upstream usage-analytics SDK.
 
   // 顶层 boundary:App 内 RouterProvider 之上的 provider 链渲染崩溃时兜底
   // (路由子树的崩溃仍由 router.tsx 的 errorElement 就近接住)。

@@ -32,7 +32,7 @@ import {
   setAnalyticsEnabled,
   subscribeAnalyticsConsent,
 } from '@/analytics/analyticsConsentStore';
-import { mobileTapdbConfigured, initMobileTapdb, setTapdbUser, stopMobileTapdbReporting } from '@/analytics/mobileTapdb';
+import { initMobileTapdb, setTapdbUser, stopMobileTapdbReporting } from '@/analytics/mobileTapdb';
 import { hasPrivacyConsent } from '@/update/updateConsentGate';
 import { SUPPORTED_LOCALES, type LocalePreference } from '@/i18n';
 import { useLocale } from '@/i18n/useLocale';
@@ -1039,7 +1039,7 @@ export default function SettingsScreen() {
             使用统计开关与它们同组(合规要求关闭途径可被找到);
             App 备案号仅国内版显示。 */}
         <SettingsGroup title={t('settings.legal.sectionTitle')}>
-          {(!IS_LEX_MOBILE || mobileTapdbConfigured()) ? <SettingsSwitchRow
+          {!IS_LEX_MOBILE ? <SettingsSwitchRow
             accessibilityLabel={t('settings.legal.analytics')}
             disabled={analyticsBusy || !analyticsReady}
             hint={t('settings.legal.analyticsHint')}
@@ -1051,7 +1051,7 @@ export default function SettingsScreen() {
             testID="settings.analyticsToggleRow"
             value={analyticsEnabled}
           /> : null}
-          {analyticsCustomized && (!IS_LEX_MOBILE || mobileTapdbConfigured()) ? (
+          {analyticsCustomized && !IS_LEX_MOBILE ? (
             <ActionInfoRow
               accessibilityLabel={t('settings.legal.analyticsReset')}
               key="analytics-reset"

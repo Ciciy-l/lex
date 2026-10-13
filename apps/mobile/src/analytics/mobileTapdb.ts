@@ -1,4 +1,5 @@
 import Constants from 'expo-constants';
+import { IS_LEX_MOBILE } from '@/config/lexMobile';
 import { Platform } from 'react-native';
 import {
   clearTapdbUser as clearNativeTapdbUser,
@@ -34,14 +35,16 @@ function selfHostTapdbConfig(): SelfHostTapdbConfig {
 }
 
 /**
- * 初始化 TapDB —— **只有用户明示同意《隐私政策》且统计开关开启时**才会真正初始化
- * 原生 SDK。
+ * Lex 永不初始化 TapDB。非 Lex 兼容构建只有用户明示同意《隐私政策》且统计
+ * 开关开启时才会真正初始化原生 SDK。
  *
  * 原生 SDK 一旦 init 就无法反初始化(TapTap Core 没有 opt-out API),所以同意闸必须
  * 挡在 init 之前,而不是靠事后停止上报。未放行时返回 `not_consented` 且**不缓存**
  * 这个结果——用户在登录页同意后会再调一次,那一次才真正 init。
  */
 export function initMobileTapdb(): Promise<MobileTapdbInitStatus> {
+  // Product policy wins over saved consent, cached init and baked/env credentials.
+  if (IS_LEX_MOBILE) return Promise.resolve({ ok: false, reason: 'not_consented' });
   if (initPromise) return initPromise;
 
   return hydrateAnalyticsConsent().then(() => {
@@ -54,6 +57,7 @@ export function initMobileTapdb(): Promise<MobileTapdbInitStatus> {
 }
 
 export function mobileTapdbConfigured(): boolean {
+  if (IS_LEX_MOBILE) return false;
   const config = selfHostTapdbConfig();
   return !!((config.clientId?.trim() || process.env.EXPO_PUBLIC_TAPTAP_CLIENT_ID?.trim())
     && (config.clientToken?.trim() || process.env.EXPO_PUBLIC_TAPTAP_CLIENT_TOKEN?.trim()));

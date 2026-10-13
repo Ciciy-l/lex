@@ -4,7 +4,7 @@
  *
  * reporter 拓扑(写死,v6.3):RootLayout 常驻本 Provider;endpoint gate 在 root 层
  * 直接上报;RootAfterEndpoints 内上报 OTA;AuthProvider 内(桥组件)上报 auth-init;
- * 登录页上报「面板已挂载」;品牌资产为打包 require 资源,由 Stage 挂载时上报。
+ * 登录页上报「面板已挂载」;品牌资产为打包资源,由 Stage 的图片 load/error 回调全部结束后上报。
  * 不改变 endpoint→OTA→auth 既有挂载顺序。
  *
  * phase 推进(代码保证确定性,规则 9):readiness 达成时——已登录或 reduced-motion

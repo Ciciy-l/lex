@@ -8,15 +8,12 @@
 export interface AnalyticsSettingsPayload {
   /** 用户是否已明示同意《隐私政策》。 */
   privacyConsentAccepted: boolean;
-  /** 同意之后的统计开关(opt-out),默认开启。 */
+  /** 兼容旧版开关；Lex 固定关闭。 */
   analyticsEnabled: boolean;
   /** 用户是否显式设置过开关(盘上有 override)。false = 跟随当前默认值。 */
   analyticsEnabledCustomized: boolean;
   /**
-   * 是否允许初始化 TapDB / 继续上报
-   * = isReportingBuild() && privacyConsentAccepted && analyticsEnabled。
-   * isReportingBuild = packaged 构建,或 dev 下显式 XDT_TAPDB_DEV=1。
-   * 构建闸的理由见 main/analytics-settings-store.ts。
+   * Lex 固定为 false，不允许初始化 TapDB 或继续上报。
    */
   allowed: boolean;
 }

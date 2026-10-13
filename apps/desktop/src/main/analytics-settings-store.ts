@@ -7,10 +7,9 @@
  *  - privacyConsentAccepted：用户是否**明示同意过《隐私政策》**。这是采集的前置
  *    条件,不是偏好设置。TapTap 官方合规要求「用户同意隐私协议后再初始化 SDK」,
  *    国内《APP违法违规收集使用个人信息行为认定方法》也把「未经同意收集」列为违规。
- *  - analyticsEnabled：同意之后的 opt-out 开关,默认开启,用户可随时在设置里关闭。
+ *  - analyticsEnabled：兼容旧版的字段，Lex 中固定关闭，不接受任何启用入口。
  *
- * 有效上报条件 = 正式构建 && privacyConsentAccepted && analyticsEnabled
- * (见 isAnalyticsAllowed;构建闸的理由见 isReportingBuild)。
+ * Lex 不初始化统计 SDK、不上报使用统计。隐私同意事实仍供登录和用户主动诊断使用。
  *
  * 关于「恢复默认」:consent 是事实记录而非配置,不提供 UI 级 reset。resetAnalyticsSettings
  * 只用于测试与显式的账号数据清理,调用后用户会重新落回「未同意」。
@@ -31,7 +30,7 @@ const log = desktopMakerLogger.child('analytics-settings-store');
 export interface AnalyticsSettings {
   /** 用户是否已明示同意《隐私政策》。false = 一律不得初始化 TapDB。 */
   privacyConsentAccepted: boolean;
-  /** 同意后的统计开关(opt-out)。默认开启。 */
+  /** 兼容旧设置字段；Lex 的生效值始终为 false。 */
   analyticsEnabled: boolean;
   /**
    * 存量同意迁移的窗口是否已在本机**永久关闭**(持久标记,非用户偏好)。
@@ -52,7 +51,7 @@ export interface AnalyticsSettings {
 
 const DEFAULTS: AnalyticsSettings = {
   privacyConsentAccepted: false,
-  analyticsEnabled: true,
+  analyticsEnabled: false,
   legacyConsentMigrationClosed: false,
 };
 
@@ -68,8 +67,8 @@ function normalize(raw: unknown): AnalyticsSettings {
       typeof r.privacyConsentAccepted === 'boolean'
         ? r.privacyConsentAccepted
         : DEFAULTS.privacyConsentAccepted,
-    analyticsEnabled:
-      typeof r.analyticsEnabled === 'boolean' ? r.analyticsEnabled : DEFAULTS.analyticsEnabled,
+    // Lex never collects usage analytics, including legacy enabled overrides.
+    analyticsEnabled: false,
     legacyConsentMigrationClosed:
       typeof r.legacyConsentMigrationClosed === 'boolean'
         ? r.legacyConsentMigrationClosed
@@ -223,56 +222,13 @@ export function readAnalyticsSettingsState(): OverrideSettingsState<AnalyticsSet
   return store.readState();
 }
 
-/**
- * dev 逃生口:严格 `XDT_TAPDB_DEV=1` 才让非 packaged 构建上报,其它任何值
- * ('0' / 'true' / 空串)都视为关——与 devCliFlags 的 XDT_ISOLATED 同款约定,不做
- * 布尔猜测。只在需要验证上报链路本身时手动打开,打开即污染线上口径。
- */
-const DEV_REPORTING_ENV = 'XDT_TAPDB_DEV';
-
-/** 构建闸的结论只在第一次求值时记一条日志,避免每次广播都刷屏。 */
-let buildGateLogged = false;
-
-/**
- * 构建 flavor 闸:Lex 默认不替 Cindy 启用 TapDB。只有开发者显式设置
- * XDT_TAPDB_DEV=1 时才允许上报（无论 packaged/dev），用于经授权的链路验证。
- *
- * 为什么必须有这道闸:TapDB Web SDK 的设备身份(device_id)写在 renderer 的
- * localStorage 里,而 localStorage 按 **origin + userData 目录** 分家 ——
- *   - dev 的 renderer 从 `http://localhost:<vite 端口>` 加载(packaged 走 file://),
- *     并行多开时端口自增(5173 / 5174 / …),每个端口一份全新 localStorage;
- *   - `--isolated[=<名字>]` / `XDT_USER_DATA_DIR` 每条沙箱一份独立 localStorage,
- *     沙箱删掉重建又是一份。
- * 而 SDK init 时的 `isInitDeviceLogin` 会发 device_login,正是 TapDB 后台认定
- * 「新增设备」的事件。于是一个开发者每天能凭空造出几十台"新增设备",把线上
- * 新增设备 / 转化率 / 次日留存全部带偏(2026-07-26 复盘:某地区单人一天 78 台设备、
- * 新增账号 1、次日留存 2.6%)。dev 与 release 目前共用同一个 TapDB appId,只能在
- * 闸上区分;将来 dev 拿到独立 appId 后这道闸仍应保留(默认不上报)。
- *
- * 严格判 `=== true`:非 Electron 宿主或测试 mock 拿不到 isPackaged 时按 dev 处理
- * (fail closed,宁可少报不可乱报)。
- */
+/** Lex 产品策略：使用统计永久关闭，环境变量和旧偏好均不能重新启用。 */
 function isReportingBuild(): boolean {
-  const devOptIn = process.env[DEV_REPORTING_ENV] === '1';
-  if (!buildGateLogged) {
-    buildGateLogged = true;
-    log.info('analytics build gate evaluated', { packaged: app.isPackaged === true, devOptIn });
-  }
-  return devOptIn;
+  return false;
 }
 
-/**
- * 有效上报条件:构建闸在最前,然后同意在先、开关在后。任一为 false 都不得上报。
- *
- * 构建闸不写盘、不改 privacyConsentAccepted / analyticsEnabled —— 那两个字段是用户
- * 的持久真相(dev 与正式版共享同一份 userData 时必须保持一致),设置页照常显示真实
- * 开关状态,dev 下只是没有任何字节发出去。
- */
 export function isAnalyticsAllowed(): boolean {
-  probeRecordOnce();
-  if (!isReportingBuild()) return false;
-  const value = store.read();
-  return value.privacyConsentAccepted && value.analyticsEnabled;
+  return false;
 }
 
 /**
@@ -296,9 +252,8 @@ export function acceptPrivacyConsent(): AnalyticsSettings {
 
 export function setAnalyticsEnabled(analyticsEnabled: boolean): AnalyticsSettings {
   probeRecordOnce();
-  // preserveDefaults:analyticsEnabled 的默认值就是 true,不保留的话「用户主动打开」
-  // 会被当成「未自定义」而删除 override。这里要留痕,否则无法区分「没碰过」和
-  // 「关掉后又打开」——后者在合规问询时是需要能自证的。
+  // Keep this IPC-compatible setter for old renderers, but never persist an opt-in.
+  analyticsEnabled = false;
   store.writePatch({ analyticsEnabled }, { preserveDefaults: true });
   refreshProbeAfterWrite();
   log.info('analytics setting written', { analyticsEnabled });
@@ -384,7 +339,6 @@ export const __testing = {
   normalize,
   DEFAULTS,
   isReportingBuild,
-  DEV_REPORTING_ENV,
   classifyAnalyticsContent,
   resetProbe(): void {
     recordProbe = null;

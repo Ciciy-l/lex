@@ -35,6 +35,27 @@ beforeEach(() => {
 });
 
 describe('mobile TapDB analytics', () => {
+  it('permanently disables Lex analytics despite saved opt-in and baked/env credentials', async () => {
+    vi.stubEnv('EXPO_PUBLIC_TAPTAP_CLIENT_ID', 'legacy-id');
+    vi.stubEnv('EXPO_PUBLIC_TAPTAP_CLIENT_TOKEN', 'legacy-token');
+    const tapdb = await importMobileTapdb({ cindy: { tapdb: { clientId: 'baked-id', clientToken: 'baked-token' } } }, 'lex-mobile');
+    const consent = await import('@/analytics/analyticsConsentStore');
+    await consent.hydrateAnalyticsConsent();
+    expect(consent.getAnalyticsConsentState()).toEqual({ consent: true, enabled: false, enabledCustomized: false });
+    expect(tapdb.mobileTapdbConfigured()).toBe(false);
+    await consent.setAnalyticsEnabled(true);
+    await consent.clearAnalyticsEnabledOverride();
+    expect(consent.isAnalyticsAllowed()).toBe(false);
+    await tapdb.initMobileTapdb();
+    await tapdb.setTapdbUser('must-not-be-reported');
+    await tapdb.clearTapdbUser();
+    await tapdb.stopMobileTapdbReporting();
+    expect(initializeTapdb).not.toHaveBeenCalled();
+    expect(setTapdbUserId).not.toHaveBeenCalled();
+    expect(clearNativeTapdbUser).not.toHaveBeenCalled();
+    expect(consent.getAnalyticsConsentState().consent).toBe(true);
+  });
+
   it('does not initialize without TapTap client config', async () => {
     const tapdb = await importMobileTapdb();
 
@@ -203,7 +224,7 @@ describe('mobile TapDB analytics', () => {
   });
 });
 
-async function importMobileTapdb(extra: Record<string, unknown> = {}) {
+async function importMobileTapdb(extra: Record<string, unknown> = {}, slug = 'cindy-mobile') {
   vi.doMock('xdt-tapdb', () => ({
     initializeTapdb,
     setTapdbUserId,
@@ -215,7 +236,7 @@ async function importMobileTapdb(extra: Record<string, unknown> = {}) {
   vi.doMock('expo-constants', () => ({
     default: {
       nativeAppVersion: '1.2.3',
-      expoConfig: { version: '1.0.0', extra },
+      expoConfig: { version: '1.0.0', extra, slug },
     },
   }));
   return import('@/analytics/mobileTapdb');

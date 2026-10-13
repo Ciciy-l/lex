@@ -29,8 +29,24 @@
   config plugin 的原生启动图背景匹配：Light 白色、Dark 深灰。上游开发构建旧 token 保留。
 - 分区选择复用语义颜色、pill 圆角及不小于 44px 点击目标；更新页复用 SettingsGroup
   与标准行组件。遵循 DESIGN.md §2/§3/§4/§5/§8/§10，双主题均实现。
-- Cindy 账号、服务区和协议继续标明服务提供方；未配置统计服务时隐藏无效开关，
+- Cindy 账号、服务区和协议继续标明服务提供方；Lex 强制关闭 TapDB 使用统计并隐藏开关，
   Lex 不显示上游备案号。设备引导明确同账号、同服务区与远端引擎归属。
+
+### Lex 启动与使用统计（2026-10-13）
+
+- Lex Desktop 和 Lex Mobile 都不允许初始化或上报 TapDB 使用统计。桌面入口不再
+  加载统计 SDK；旧 enabled=true、恢复默认、XDT_TAPDB_DEV 及移动端烘焙/env 配置
+  均不能绕过关闭策略。隐私协议同意事实仍保留，登录、服务请求和用户主动诊断授权不变；
+  这不是对账号服务端行为的声明。兼容的非 Lex Mobile 构建保持原同意闸。
+- 桌面首屏提前加载约 159 KB 的 lex-assistant-startup.webp，使用原人物和原 hero-mask
+  预合成透明度，不再先下载 5 MB 的双倍 PNG 或等待独立遮罩。移动端使用约 203 KB 的
+  assistant-startup.png，兼容现有原生图片解码器。原始资产保留，衍生脚本为
+  scripts/generate-lex-startup-art.mjs；不需要外部生成服务或新原生依赖。
+- 手机启动品牌区按安全区域居中，人物、字标、加载状态有独立纵向空间；字标不覆盖
+  人物。登录终态保留原有表单位置、键盘避让及横屏双栏，品牌区以实际剩余空间适配。
+  两主题复用透明人物与各自字标，底色继续消费 login.bgBase；构图见
+  src/auth/lexBrandLayout.ts。图片实际 load/error 后才上报 assets-ready，Android
+  原生复刻层在品牌图片就绪后淡出，避免先露空背景。原生启动图配置未改。
 
 ## 桌面扫码下载入口
 

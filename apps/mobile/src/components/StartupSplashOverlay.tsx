@@ -75,7 +75,7 @@ export function StartupSplashOverlay({
   // Android JS 首帧复刻原生 Lex 图标与双主题背景。首启门决议后只淡出这一层，
   // 露出已选定正确主题的 MobileLoginHandoffStage；iOS 不挂该层，行为不变。
   useEffect(() => {
-    if (!nativeBridgeMounted || handoff.showNativeBridge) return;
+    if (!nativeBridgeMounted || handoff.showNativeBridge || handoffContext?.state.assets === 'pending') return;
     if (handoffContext?.state.reducedMotion) {
       nativeBridgeOpacity.setValue(0);
       setNativeBridgeMounted(false);
@@ -93,14 +93,15 @@ export function StartupSplashOverlay({
   }, [
     handoff.showNativeBridge,
     handoffContext?.state.reducedMotion,
+    handoffContext?.state.assets,
     nativeBridgeMounted,
     nativeBridgeOpacity,
   ]);
 
   // 即使 auth 很快完成，也要等原生复刻层交接完再释放整个覆盖层。
   useEffect(() => {
-    if (releaseRequested && !nativeBridgeMounted) setReleased(true);
-  }, [nativeBridgeMounted, releaseRequested]);
+    if (releaseRequested && !nativeBridgeMounted && handoffContext?.state.assets !== 'pending') setReleased(true);
+  }, [handoffContext?.state.assets, nativeBridgeMounted, releaseRequested]);
 
   useEffect(() => {
     if (!released) return;

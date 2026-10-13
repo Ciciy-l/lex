@@ -54,7 +54,7 @@ describe("startup splash overlay", () => {
     expect(overlay).toContain("duration: motionDuration.fast");
     expect(motionDuration.fast).toBe(150);
     expect(overlay).toContain(
-      "if (releaseRequested && !nativeBridgeMounted) setReleased(true);",
+      "if (releaseRequested && !nativeBridgeMounted && handoffContext?.state.assets !== 'pending') setReleased(true);",
     );
     expect(overlay).toContain("handoffContext?.state.reducedMotion");
   });

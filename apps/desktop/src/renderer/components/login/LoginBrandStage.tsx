@@ -4,9 +4,7 @@ import { BRAND_NAME } from '@cindy/maker-shared/branding';
 import { LOGIN_HANDOFF_TIMINGS, useLoginHandoff } from '@/contexts/LoginHandoffContext';
 import { useIsDarkMode } from '@/components/markdown/useIsDarkMode';
 
-import heroPng from '@/assets/branding/lex-assistant-hero.png';
-import heroPng2x from '@/assets/branding/lex-assistant-master.png';
-import heroMask from '@/assets/login/hero-mask.svg';
+import heroStartup from '@/assets/branding/lex-assistant-startup.webp';
 import wordmarkSvg from '@/assets/login/lex-wordmark.svg';
 import wordmarkDarkSvg from '@/assets/login/lex-wordmark-dark.svg';
 
@@ -136,27 +134,16 @@ export function LoginBrandStage() {
             onLoad={() => handleAssetSettled('hero')}
             onError={() => handleAssetSettled('hero')}
             className="pointer-events-none absolute select-none object-cover"
-            src={heroPng}
-            srcSet={`${heroPng} 1x, ${heroPng2x} 2x`}
+            src={heroStartup}
+            loading="eager"
+            fetchPriority="high"
+            decoding="sync"
             style={{
               left: HERO.x,
               top: HERO.y,
               width: HERO.size,
               height: HERO.size,
-              // 立绘下半渐隐融入背景(figma §4.11 mask 347:970,alpha 图像 mask,
-              // 非自造 CSS gradient;资产为 Figma 原始 SVG,渐变 y=566→920 封装其中)。
-              // 静态 mask 无动画,规则 7 不涉。
-              // data URI 内含单引号,url() 必须双引号包裹(Vite 内联所致),
-              // 否则 CSSOM 静默丢弃 mask-image。
-              maskImage: `url("${heroMask}")`,
-              WebkitMaskImage: `url("${heroMask}")`,
-              maskMode: 'alpha',
-              maskSize: `${HERO.size}px ${HERO.size}px`,
-              maskRepeat: 'no-repeat',
-              maskPosition: 'center',
-              WebkitMaskSize: `${HERO.size}px ${HERO.size}px`,
-              WebkitMaskRepeat: 'no-repeat',
-              WebkitMaskPosition: 'center',
+              // Fade is baked into alpha: no extra mask fetch can hide the first frame.
             }}
           />
           <img
