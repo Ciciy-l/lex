@@ -12,30 +12,32 @@ export function UserPromptSection() {
   const [scope, setScope] = useState<PromptScope>('common');
   return (
     <div className="flex flex-col gap-3">
-      <label className="text-13 text-[var(--settings-section-title)]">
-        {t('settings.harness.promptScope')}
-        <select
-          value={scope}
-          onChange={(event) => setScope(event.target.value as PromptScope)}
-          className="ml-3 rounded-lg border border-[var(--settings-input-border)] bg-[var(--settings-input-bg)] p-2 text-[var(--settings-input-text)]"
-        >
-          <option value="common">{t('settings.harness.commonPrompt')}</option>
-          {PROMPT_ENGINES.map((engine) => (
-            <option key={engine} value={engine}>
-              {engine === 'claude-code'
-                ? 'Claude Code'
-                : engine === 'omp'
-                  ? 'OMP'
-                  : engine === 'pi'
-                    ? 'Pi'
-                    : 'Codex'}
-            </option>
-          ))}
-        </select>
-      </label>
-      <p className="text-13 text-[var(--settings-section-desc)]">
-        {t('settings.harness.promptDescription')}
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-16 font-medium leading-[1.2] text-[var(--settings-section-title)]">
+          {t('settings.personalization.title')}
+        </h2>
+        <label className="text-13 text-[var(--settings-section-title)]">
+          <span className="sr-only">{t('settings.harness.promptScope')}</span>
+          <select
+            value={scope}
+            onChange={(event) => setScope(event.target.value as PromptScope)}
+            className="min-h-8 rounded-full border border-[var(--settings-input-border)] bg-[var(--settings-input-bg)] px-3 py-1 text-[var(--settings-input-text)]"
+          >
+            <option value="common">{t('settings.harness.commonPrompt')}</option>
+            {PROMPT_ENGINES.map((engine) => (
+              <option key={engine} value={engine}>
+                {engine === 'claude-code'
+                  ? 'Claude Code'
+                  : engine === 'omp'
+                    ? 'OMP'
+                    : engine === 'pi'
+                      ? 'Pi'
+                      : 'Codex'}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
       <PromptEditor key={scope} scope={scope} />
     </div>
   );
@@ -75,26 +77,16 @@ function PromptEditor({ scope }: { scope: PromptScope }) {
 
   return (
     <div className="flex flex-col gap-[14px]">
-      <h2 className="text-16 font-medium leading-[1.2] text-[var(--settings-section-title)]">
-        {t('settings.personalization.title')}
-      </h2>
-
       <div
         className={cn(
-          'flex flex-col gap-[14px] rounded-xl p-5',
+          'flex flex-col gap-3 rounded-xl p-4',
           'bg-[var(--settings-theme-card-bg)]',
           'border border-[var(--settings-theme-card-border)]',
         )}
       >
         <div className="flex flex-col gap-1">
-          <p
-            className="text-13 font-medium text-[var(--settings-section-sublabel)]"
-            style={{ letterSpacing: '0.12px' }}
-          >
-            {t('settings.personalization.subtitle')}
-          </p>
-          <p className="text-13 leading-[1.5] text-[var(--settings-section-desc)]">
-            {t('settings.personalization.description')}
+          <p className="text-12 leading-[1.5] text-[var(--settings-section-desc)]">
+            {t('settings.harness.promptDescription')}
           </p>
         </div>
 

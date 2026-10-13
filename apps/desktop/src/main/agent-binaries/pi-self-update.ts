@@ -78,16 +78,50 @@ const defaults: PiBinaryUpdateDeps = {
 };
 
 export function parsePiRelease(value: unknown, platform: string, arch: string) {
-  const release = value as { tag_name?: unknown; assets?: Array<{ name?: unknown; digest?: unknown; browser_download_url?: unknown }> } | null;
-  if (!release || typeof release.tag_name !== 'string' || !/^v\d+\.\d+\.\d+$/.test(release.tag_name)) throw new Error('Invalid Pi release version');
-  if (!['darwin', 'linux', 'win32'].includes(platform) || !['arm64', 'x64'].includes(arch)) throw new Error('Unsupported Pi host platform');
-  const format = platform === 'win32' ? 'zip' as const : 'tar.gz' as const;
-  const name = `pi-${platform}-${arch}.${format}`;
+  const release = value as {
+    tag_name?: unknown;
+    draft?: boolean;
+    prerelease?: boolean;
+    assets?: Array<{
+      name?: unknown;
+      digest?: unknown;
+      browser_download_url?: unknown;
+      size?: unknown;
+    }>;
+  } | null;
+  if (
+    !release ||
+    release.draft ||
+    release.prerelease ||
+    typeof release.tag_name !== 'string' ||
+    !/^v\d+\.\d+\.\d+$/.test(release.tag_name)
+  )
+    throw new Error('INVALID_RELEASE_VERSION');
+  if (!['darwin', 'linux', 'win32'].includes(platform) || !['arm64', 'x64'].includes(arch))
+    throw new Error('UNSUPPORTED_PLATFORM');
+  const format = platform === 'win32' ? ('zip' as const) : ('tar.gz' as const);
+  const name = `pi-${platform === 'win32' ? 'windows' : platform}-${arch}.${format}`;
   const url = `https://github.com/earendil-works/pi/releases/download/${release.tag_name}/${name}`;
-  const asset = Array.isArray(release.assets) ? release.assets.find(asset => asset.name === name) : undefined;
-  if (!asset || asset.browser_download_url !== url || typeof asset.digest !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(asset.digest)) throw new Error('Pi release has no verified asset for this platform');
-  return { version: release.tag_name.slice(1), url, sha256: asset.digest.slice(7), format,
-    executable: platform === 'win32' ? 'pi.exe' : 'pi' };
+  const asset = Array.isArray(release.assets)
+    ? release.assets.find((asset) => asset.name === name)
+    : undefined;
+  if (
+    !asset ||
+    asset.browser_download_url !== url ||
+    typeof asset.digest !== 'string' ||
+    !/^sha256:[a-f0-9]{64}$/.test(asset.digest)
+  )
+    throw new Error('RELEASE_HAS_NO_VERIFIED_ASSET');
+  return {
+    version: release.tag_name.slice(1),
+    url,
+    sha256: asset.digest.slice(7),
+    format,
+    ...(typeof asset.size === 'number' && Number.isSafeInteger(asset.size) && asset.size > 0
+      ? { size: asset.size }
+      : {}),
+    executable: platform === 'win32' ? 'pi.exe' : 'pi',
+  };
 }
 
 /** The standalone upstream CLI cannot self-update. Install its official release

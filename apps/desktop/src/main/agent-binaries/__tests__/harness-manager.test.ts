@@ -10,6 +10,8 @@ const env = vi.hoisted(() => ({
   blocked: false,
   downloads: 0,
   checks: 0,
+  checkFailure: null as Error | null,
+  downloadFailure: null as Error | null,
 }));
 vi.mock('electron', () => ({ app: { getPath: () => env.root }, net: { fetch: vi.fn() } }));
 vi.mock('../../logger.js', () => ({
@@ -43,6 +45,7 @@ vi.mock('../harness-releases.js', () => {
     baselineArtifact: () => artifact('baseline', '18.1.18'),
     upstreamArtifact: async () => {
       env.checks++;
+      if (env.checkFailure) throw env.checkFailure;
       return artifact('upstream', env.version);
     },
   };
@@ -50,6 +53,7 @@ vi.mock('../harness-releases.js', () => {
 vi.mock('../../downloader/index.js', () => ({
   download: async ({ targetPath, signal }: { targetPath: string; signal: AbortSignal }) => {
     env.downloads++;
+    if (env.downloadFailure) throw env.downloadFailure;
     if (env.waiting)
       await new Promise((_resolve, reject) =>
         signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true }),
@@ -68,6 +72,8 @@ beforeEach(async () => {
     blocked: false,
     downloads: 0,
     checks: 0,
+    checkFailure: null,
+    downloadFailure: null,
   });
   await fs.writeFile(path.join(env.root, 'current'), 'running baseline');
 });
@@ -75,6 +81,48 @@ afterEach(async () => {
   await fs.rm(env.root, { recursive: true, force: true });
 });
 describe('managed Harness installation', () => {
+  it('reports asset lookup as a check failure, allows a forced recovery, and isolates other engines', async () => {
+    const manager = await import('../harness-manager.js');
+    env.checkFailure = new Error('RELEASE_HAS_NO_VERIFIED_ASSET');
+    expect(await manager.checkHarness('pi')).toMatchObject({
+      phase: 'failed',
+      failureStage: 'check',
+      error: 'RELEASE_HAS_NO_VERIFIED_ASSET',
+      upstream: null,
+    });
+    expect(env.downloads).toBe(0);
+    env.checkFailure = null;
+    expect(await manager.checkHarness('omp')).toMatchObject({ phase: 'idle', error: null });
+    expect(await manager.checkHarness('pi', true)).toMatchObject({
+      phase: 'idle',
+      error: null,
+      failureStage: null,
+    });
+  });
+
+  it('distinguishes query, download and version errors without returning raw paths', async () => {
+    const manager = await import('../harness-manager.js');
+    env.checkFailure = new Error('private path or response');
+    expect(await manager.checkHarness('omp')).toMatchObject({
+      error: 'RUNTIME_CHECK_FAILED',
+      failureStage: 'check',
+    });
+    env.checkFailure = null;
+    await manager.checkHarness('omp', true);
+    env.downloadFailure = Object.assign(new Error('private download URL'), { code: 'TIMEOUT' });
+    expect(
+      await manager.installHarness({ kind: 'omp', source: 'upstream', version: env.version }),
+    ).toMatchObject({ error: 'TIMEOUT', failureStage: 'download', selectedVersion: null });
+    env.downloadFailure = null;
+    env.badProbe = true;
+    expect(
+      await manager.installHarness({ kind: 'omp', source: 'upstream', version: env.version }),
+    ).toMatchObject({
+      error: 'RUNTIME_VERSION_MISMATCH',
+      failureStage: 'verify',
+      selectedVersion: null,
+    });
+  });
   it('caches checks, stages a verified selection, and activates it only in the next process', async () => {
     const manager = await import('../harness-manager.js');
     const selection = await import('../harness-selection.js');

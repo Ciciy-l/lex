@@ -15,7 +15,7 @@ vi.mock('electron', () => ({ net: { fetch: electronFetch } }));
 const roots: string[] = [];
 afterEach(async () => { vi.unstubAllGlobals(); electronFetch.mockReset(); await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))); });
 function release(platform = 'darwin') {
-  const name = `pi-${platform}-arm64.${platform === 'win32' ? 'zip' : 'tar.gz'}`;
+  const name = `pi-${platform === 'win32' ? 'windows' : platform}-arm64.${platform === 'win32' ? 'zip' : 'tar.gz'}`;
   return { tag_name: 'v0.85.1', assets: [{ name, digest: 'sha256:' + 'a'.repeat(64), browser_download_url: `https://github.com/earendil-works/pi/releases/download/v0.85.1/${name}` }] };
 }
 async function fixture(platform: 'darwin' | 'win32' = 'darwin') {
@@ -49,7 +49,7 @@ describe('Pi standalone core update', () => {
     });
     expect(nodeFetch).not.toHaveBeenCalled();
     expect(piBinaryUpdateFailureStage(error)).toBe(status === 200 ? 'asset-validation' : 'release-lookup');
-    expect(error.message).toContain(status === 200 ? 'verified asset' : '(503)');
+    expect(error.message).toContain(status === 200 ? 'RELEASE_HAS_NO_VERIFIED_ASSET' : '(503)');
     expect(json).toHaveBeenCalledTimes(status === 200 ? 1 : 0);
     expect(await fs.readFile(current, 'utf8')).toBe('old-running-runtime');
     expect(await fs.readdir(root)).toEqual(['0.84.4']);
@@ -159,9 +159,9 @@ describe('Pi standalone core update', () => {
   });
   it('rejects missing digests and changed asset hosts before downloading', () => {
     const data = release(); data.assets[0].digest = '';
-    expect(() => parsePiRelease(data, 'darwin', 'arm64')).toThrow('verified asset');
+    expect(() => parsePiRelease(data, 'darwin', 'arm64')).toThrow('RELEASE_HAS_NO_VERIFIED_ASSET');
     data.assets[0].digest = 'sha256:' + 'a'.repeat(64); data.assets[0].browser_download_url = 'https://example.test/pi';
-    expect(() => parsePiRelease(data, 'darwin', 'arm64')).toThrow('verified asset');
+    expect(() => parsePiRelease(data, 'darwin', 'arm64')).toThrow('RELEASE_HAS_NO_VERIFIED_ASSET');
   });
 });
 

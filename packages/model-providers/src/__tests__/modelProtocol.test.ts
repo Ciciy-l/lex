@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { buildUserProvider } from '../user-provider.js';
 import { modelProtocolComparison, nativeModelAgents } from '../modelProtocol.js';
 import { pickRecommendedAgent, resolveAgentCapability } from '../unifiedSelection.js';
 import type { CatalogModel, PiModelApi, Provider } from '../types.js';
@@ -203,5 +204,105 @@ describe('custom supplier transport ownership', () => {
     provider.source = 'user';
     expect(modelProtocolComparison(provider, byAgent).forAgent('codex')?.mode).toBe('unknown');
     expect(nativeModelAgents(provider, byAgent)).toEqual(['pi']);
+  });
+});
+
+describe('OMP protocol support', () => {
+  it.each(['anthropic-messages', 'openai-responses', 'openai-chat'] as const)(
+    'OMP speaks its configured %s route without fixed-Anthropic compatibility',
+    (wire) => {
+      const api = wire === 'openai-chat' ? 'openai-completions' : wire;
+      const provider = {
+        id: 'omp-source',
+        routing: { omp: { wireProtocol: wire } },
+      } as Provider;
+      const models: { omp: CatalogModel } = { omp: { ...model, nativeApi: api } };
+      expect(
+        modelProtocolComparison(provider, models).forAgent('omp'),
+      ).toMatchObject({
+        harness: api,
+        outbound: api,
+        localConversion: false,
+        mode: 'matching',
+      });
+      expect(nativeModelAgents(provider, models)).toEqual(['omp']);
+      expect(
+        resolveAgentCapability(
+          [{ ...provider, connected: true, models: { omp: [models.omp] } }],
+          provider.id,
+          model.id,
+          'omp',
+        ),
+      ).toMatchObject({ protocolMode: 'matching', outboundApi: api });
+    },
+  );
+
+  it('OMP follows the actual per-model wire override instead of conflicting generic metadata', () => {
+    const provider = {
+      id: 'source',
+      routing: { omp: { wireProtocol: 'anthropic-messages' } },
+    } as Provider;
+    const omp: CatalogModel = {
+      ...model,
+      api: 'anthropic-messages',
+      route: {
+        baseUrl: 'https://example.invalid',
+        wireProtocol: 'openai-chat',
+      },
+    };
+    expect(
+      modelProtocolComparison(provider, { omp }).forAgent('omp'),
+    ).toMatchObject({
+      harness: 'openai-completions',
+      outbound: 'openai-completions',
+      mode: 'matching',
+      localConversion: false,
+    });
+    omp.nativeApi = 'google-generative-ai';
+    expect(
+      modelProtocolComparison(provider, { omp }).forAgent('omp')?.mode,
+    ).toBe('compatibility');
+    expect(nativeModelAgents(provider, { omp })).toEqual([]);
+  });
+
+  it('does not invent a native OMP Google bridge or a route in a redacted view', () => {
+    const provider = {
+      id: 'source',
+      routing: { omp: { wireProtocol: 'google-generative-ai' } },
+    } as Provider;
+    expect(
+      modelProtocolComparison(provider, { omp: model }).forAgent('omp'),
+    ).toMatchObject({
+      harness: 'anthropic-messages',
+      mode: 'compatibility',
+      localConversion: true,
+    });
+    expect(
+      modelProtocolComparison(
+        { id: 'source', routing: {} },
+        { omp: { ...model, api: 'openai-responses' } },
+      ).forAgent('omp'),
+    ).toMatchObject({ outbound: null, mode: 'unknown' });
+  });
+
+  it('updates only inferred OMP defaults and preserves explicit disabled models', () => {
+    const provider = buildUserProvider({
+      id: 'omp-user',
+      name: 'OMP user',
+      runtimes: {
+        omp: {
+          baseUrl: 'https://example.invalid/v1',
+          wireProtocol: 'openai-chat',
+          models: [
+            { id: 'inferred', name: 'Inferred' },
+            { id: 'disabled', name: 'Disabled', defaultEnabled: false },
+          ],
+        },
+      },
+    });
+    expect(provider.models.omp?.map((entry) => entry.defaultEnabled)).toEqual([
+      true,
+      false,
+    ]);
   });
 });

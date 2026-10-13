@@ -1,6 +1,7 @@
 export const HARNESS_KINDS = ['claude-code', 'codex', 'pi', 'omp'] as const;
 export type HarnessKind = (typeof HARNESS_KINDS)[number];
 export type HarnessSource = 'upstream' | 'baseline';
+export type HarnessFailureStage = 'check' | 'download' | 'extract' | 'verify' | 'publish';
 export interface HarnessRelease {
   version: string;
   source: HarnessSource;
@@ -16,6 +17,8 @@ export interface HarnessRuntimeState {
   phase: 'idle' | 'checking' | 'downloading' | 'verifying' | 'ready' | 'cancelled' | 'failed';
   percent: number | null;
   error: string | null;
+  /** Optional for older progress receipts. No paths or raw upstream errors. */
+  failureStage?: HarnessFailureStage | null;
 }
 export interface HarnessRuntimeApi {
   state(kind: HarnessKind): Promise<HarnessRuntimeState>;
