@@ -266,10 +266,6 @@ function isMissingFirstParent(error: unknown, firstParent: string): error is Git
   );
 }
 
-function parseChangedPaths(stdout: string): string[] {
-  return [...new Set(stdout.split('\0').filter(Boolean))].sort((a, b) => a.localeCompare(b));
-}
-
 async function readChangedEntries(
   repoRoot: string,
   identity: CommitIdentity,
@@ -291,9 +287,9 @@ async function readChangedEntries(
 }
 
 /**
- * Lists only the changed paths used by the compact recent-history navigator.
+ * Lists changed paths and statuses for the compact recent-history navigator.
  *
- * This deliberately avoids commit identity, rename similarity, numstat,
+ * This avoids full commit identity, numstat,
  * blob-size and patch reads. Opening a path still routes to the existing full
  * commit Review, so the lightweight disclosure never becomes a second diff
  * implementation.
@@ -301,8 +297,8 @@ async function readChangedEntries(
 export async function listCommitFiles(
   scope: ReviewScope,
   oid: string,
-): Promise<{ commitOid: string; paths: string[] }> {
-  if (scope.disabledReason || !scope.repoRoot) return { commitOid: oid, paths: [] };
+): Promise<{ commitOid: string; paths: string[]; files: Array<{ path: string; status: string }> }> {
+  if (scope.disabledReason || !scope.repoRoot) return { commitOid: oid, paths: [], files: [] };
   const options = { cwd: scope.repoRoot, maxStdoutBytes: 4 * 1024 * 1024 };
   const commit = `${oid}^{commit}`;
   const firstParent = `${commit}^1`;
@@ -317,8 +313,9 @@ export async function listCommitFiles(
         '--no-commit-id',
         '-r',
         '-z',
-        '--name-only',
-        '--no-renames',
+        '--name-status',
+        '-M',
+        '-l1000',
         '--no-ext-diff',
         firstParent,
         commit,
@@ -336,15 +333,17 @@ export async function listCommitFiles(
         '--no-commit-id',
         '-r',
         '-z',
-        '--name-only',
-        '--no-renames',
+        '--name-status',
+        '-M',
+        '-l1000',
         '--no-ext-diff',
         commit,
       ],
       options,
     ));
   }
-  const paths = parseChangedPaths(stdout);
+  const files = parseChangedEntries(stdout).map(({ path, status }) => ({ path, status }));
+  const paths = [...new Set(files.map((file) => file.path))].sort((a, b) => a.localeCompare(b));
   if (paths.length > CAPPED_DIFF_HARD_FILE_COUNT_GUARD) {
     throw new Error(
       `Commit file list has too many changed files to load: ${paths.length} > ${CAPPED_DIFF_HARD_FILE_COUNT_GUARD}`,
@@ -353,6 +352,7 @@ export async function listCommitFiles(
   return {
     commitOid: oid,
     paths,
+    files,
   };
 }
 

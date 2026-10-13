@@ -1,3 +1,5 @@
+import { setSidebarCompact } from '@/layout/sidebarPresentation';
+import { isSidebarWindow } from '@/lib/sidebarWindow';
 /**
  * RightSidebarShell —— 右侧栏内容容器(TabBar + TabBody),挂在外壳 aside 之内。
  *
@@ -23,6 +25,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -272,6 +275,16 @@ export function RightSidebarShell({
     () => tabs.filter((tab) => workspaceSurface(tab.kind) === 'tool'),
     [tabs],
   );
+  const navigationOnly = bucket.hydrated && contentTabs.length === 0;
+  useLayoutEffect(() => {
+    if (!bucket.hydrated || !sessionId) return;
+    if (isSidebarWindow()) {
+      void window.electronAPI.rightSidebarWindow.setContentLayout({ sessionId, workdir, remoteHostId, deviceLinkDeviceId, navigationOnly }).catch(error => log.warn('sidebar content layout failed', error));
+      return;
+    }
+    setSidebarCompact(navigationOnly);
+    return () => setSidebarCompact(false);
+  }, [bucket.hydrated, sessionId, workdir, remoteHostId, deviceLinkDeviceId, navigationOnly]);
   const activeContentTabId = bucket.activeContentTabId
     ? (contentTabs.find((tab) => tab.id === bucket.activeContentTabId)?.id ??
       contentTabs[0]?.id ??
@@ -764,7 +777,7 @@ export function RightSidebarShell({
           <>
             <div
               data-workspace-surface="content"
-              className="relative flex min-w-0 flex-1 flex-col overflow-hidden"
+              className={navigationOnly ? 'hidden' : 'relative flex min-w-0 flex-1 flex-col overflow-hidden'}
               onFocusCapture={() => {
                 if (activeContentTabId && bucket.activeContentTabId !== activeContentTabId)
                   handleActivate(activeContentTabId);
@@ -801,7 +814,7 @@ export function RightSidebarShell({
                   ? 'relative flex min-w-0 flex-col overflow-hidden border-l border-[var(--border-default)]'
                   : 'hidden'
               }
-              style={{ flex: '0 1 240px', minWidth: toolsExpanded ? 180 : 0 }}
+              style={{ flex: navigationOnly ? '1 1 0%' : '0 1 240px', minWidth: toolsExpanded ? 180 : 0 }}
             >
               {selectedToolKind === 'review' &&
                 toolsExpanded &&
@@ -813,6 +826,7 @@ export function RightSidebarShell({
                     sessionId={sessionId}
                     deviceId={deviceLinkDeviceId}
                     remoteHostId={remoteHostId}
+                    workdir={workdir}
                   />
                 )}
               {toolTabs

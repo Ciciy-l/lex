@@ -4,7 +4,9 @@ import { useLocation, useSearchParams } from 'react-router-dom';
 
 import { toast } from '@/lib/toast';
 import { createLogger } from '@/lib/logger';
-import { orcaWorkflowsFor } from '@/lib/makerTransport';
+import { orcaWorkflowsFor, orcaWorkflowsForDevice } from '@/lib/makerTransport';
+import { getStickySessionDeviceId } from '@/features/device-link/stickySessionOrigin';
+import { enableCollabFromForm } from '../enableCollabFromForm';
 import { extractIpcError } from '@/utils/ipcError';
 import {
   parseConversationSearchJump,
@@ -25,7 +27,7 @@ function parseSearchJump(state: unknown): ConversationSearchJump | null {
 
 export interface UseOrcaWorkerSelectionOptions {
   leadSessionId: string;
-  deviceId?: string;
+  deviceId?: string | null;
   /** Whether the worker conversation is actually visible to the user. */
   viewVisible: boolean;
   focusWorkerSessionId?: string | null;
@@ -265,7 +267,10 @@ export function useOrcaWorkerSelection({
         return true;
       } catch (err) {
         const errorCode = extractIpcError(err)?.code;
-        if (errorCode === 'WORKER_STATE_CHANGED' || errorCode === 'DEVICE_LINK_CHANNEL_NOT_ALLOWED') {
+        if (
+          errorCode === 'WORKER_STATE_CHANGED' ||
+          errorCode === 'DEVICE_LINK_CHANNEL_NOT_ALLOWED'
+        ) {
           log.debug('done acknowledgement skipped after worker state changed', { workerId });
           return false;
         }
@@ -293,50 +298,91 @@ export function useOrcaWorkerSelection({
       });
   }, [acknowledgeDoneWorker, refresh, visibleDoneWorkerId]);
 
+  const creatingRef = useRef(false);
   const handleCreateWorker = useCallback(
     async (form: CreateWorkerForm) => {
-      const existingLabels = workers
-        .map((w) => w.label)
-        .filter((label): label is string => label !== null);
-      const allocatedLabels = [...existingLabels];
-      for (let attempt = 0; attempt < 1000; attempt += 1) {
-        const label = createWorkerLabel(form.role, allocatedLabels);
-        try {
-          await orcaWorkflowsFor(leadSessionId).createWorker({
-            leadSessionId,
-            role: form.role,
-            agent: form.agent,
-            model: form.model,
-            effort: form.effort,
-            fast: form.fast,
-            // null(未显式选来源)不传字段:IPC 侧只认非空 string 为显式来源。
-            providerId: form.providerId ?? undefined,
-            workerPermissionMode: form.workerPermissionMode,
-            label,
-            initialTask: form.initialTask || undefined,
-          });
-          setCreateOpen(false);
-          await refresh();
-          return;
-        } catch (err) {
-          if (err instanceof Error && err.message.includes('DUPLICATE_LABEL')) {
-            // archived worker 不在可见列表，但 label 在 team 生命周期内永久占用。
-            allocatedLabels.push(label);
-            continue;
+      if (creatingRef.current) return;
+      creatingRef.current = true;
+      try {
+        const owner = deviceId === undefined ? getStickySessionDeviceId(leadSessionId) : deviceId;
+        const workflows = owner
+          ? orcaWorkflowsForDevice(owner)
+          : window.electronAPI.localDb.orcaWorkflows;
+        const team = (await workflows.getByLeadSession(leadSessionId)) as {
+          status?: string;
+        } | null;
+        let hasTeam = team?.status === 'active';
+        const existingLabels = workers
+          .map((w) => w.label)
+          .filter((label): label is string => label !== null);
+        const allocatedLabels = [...existingLabels];
+        for (let attempt = 0; attempt < 1000; attempt += 1) {
+          const label = createWorkerLabel(form.role, allocatedLabels);
+          try {
+            if (!hasTeam) {
+              try {
+                const workerSessionId = await enableCollabFromForm(
+                  leadSessionId,
+                  form,
+                  label,
+                  owner,
+                );
+                setFocusWorkerPinnedSessionId(workerSessionId);
+                setCreateOpen(false);
+                await refresh();
+                return;
+              } catch (error) {
+                if (extractIpcError(error)?.code !== 'ALREADY_EXISTS') throw error;
+                // A definite conflict has no creation side effect for this request.
+                const current = (await workflows.getByLeadSession(leadSessionId)) as {
+                  status?: string;
+                } | null;
+                if (current?.status !== 'active') throw error;
+                hasTeam = true;
+              }
+            }
+            await workflows.createWorker({
+              leadSessionId,
+              role: form.role,
+              agent: form.agent,
+              model: form.model,
+              effort: form.effort,
+              fast: form.fast,
+              // null(未显式选来源)不传字段:IPC 侧只认非空 string 为显式来源。
+              providerId: form.providerId ?? undefined,
+              workerPermissionMode: form.workerPermissionMode,
+              label,
+              initialTask: form.initialTask || undefined,
+            });
+            setCreateOpen(false);
+            await refresh();
+            return;
+          } catch (err) {
+            if (err instanceof Error && err.message.includes('DUPLICATE_LABEL')) {
+              // archived worker 不在可见列表，但 label 在 team 生命周期内永久占用。
+              allocatedLabels.push(label);
+              continue;
+            }
+            toast.error(
+              getCollaborationStartErrorMessage(err, t, { remoteDevice: Boolean(deviceId) }),
+            );
+            return;
           }
-          toast.error(
-            getCollaborationStartErrorMessage(err, t, { remoteDevice: Boolean(deviceId) }),
-          );
-          return;
         }
+        toast.error(
+          getCollaborationStartErrorMessage(
+            new Error('[DUPLICATE_LABEL] no unique worker label available'),
+            t,
+            { remoteDevice: Boolean(deviceId) },
+          ),
+        );
+      } catch (error) {
+        toast.error(
+          getCollaborationStartErrorMessage(error, t, { remoteDevice: Boolean(deviceId) }),
+        );
+      } finally {
+        creatingRef.current = false;
       }
-      toast.error(
-        getCollaborationStartErrorMessage(
-          new Error('[DUPLICATE_LABEL] no unique worker label available'),
-          t,
-          { remoteDevice: Boolean(deviceId) },
-        ),
-      );
     },
     [deviceId, leadSessionId, refresh, t, workers],
   );

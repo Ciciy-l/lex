@@ -7,6 +7,10 @@ import { describe, expect, it, vi } from 'vitest';
 import type { TabKindHostContext } from '../../../types';
 import type { ReviewState } from '../index';
 
+vi.mock('../../../lib/gitRepositorySelection', async () => ({
+  ...(await vi.importActual('../../../lib/gitRepositorySelection')),
+  useGitRepositorySelection: () => ({ ready: true, legacy: false }),
+}));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock('../ReviewTabBody', () => ({
   ReviewTabBody: ({ state }: { state: ReviewState }) => (
@@ -117,10 +121,10 @@ describe('GitWorkspaceTabBody', () => {
     expect(screen.getByTestId('graph-body').textContent).toContain('graph:true:false');
   });
 
-  it('fails closed to Review without mounting Graph in an SSH workspace', async () => {
+  it('allows Graph in an SSH workspace using the authoritative backend', async () => {
     render(<Harness remoteHostId="ssh-host" />);
-    expect(await screen.findByTestId('review-body')).toBeTruthy();
-    expect(screen.queryByTestId('graph-body')).toBeNull();
+    expect(await screen.findByTestId('graph-body')).toBeTruthy();
+    expect(screen.queryByTestId('review-body')).toBeNull();
   });
 
   it('keeps both Git views unmounted behind the visible Graph loader until ownership resolves', async () => {

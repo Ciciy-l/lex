@@ -102,7 +102,7 @@ function fakeWindow(id = 1): FakeWindow {
 
 function makeHarness(
   initial: Partial<RsbWindowSettings> = {},
-  extras: Pick<RsbWindowControllerDeps, 'resolveHostContext'> = {},
+  extras: Pick<RsbWindowControllerDeps, 'resolveHostContext' | 'applyContentLayout'> = {},
 ) {
   let settings: RsbWindowSettings = { detached: false, lastOpen: false, ...initial };
   let quitting = false;
@@ -147,6 +147,7 @@ function makeHarness(
     tabHandoffChannel: 'handoff-channel',
     isQuitting: () => quitting,
     resolveHostContext: extras.resolveHostContext,
+    applyContentLayout: extras.applyContentLayout,
     log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   };
   const controller = new RsbWindowController(deps);
@@ -1985,4 +1986,16 @@ describe('sender guard', () => {
     expect(delivered).toEqual([other, fresh]);
   });
 
+});
+
+it('ignores content sizing reports from an old task or host context', () => {
+  const applyContentLayout = vi.fn();
+  const h = makeHarness({ detached: true }, { applyContentLayout });
+  h.controller.prewarm();
+  h.controller.setContext({ ...ctx, deviceLinkDeviceId: 'device' });
+  h.controller.setContentLayout({ ...ctx, deviceLinkDeviceId: 'old-device', navigationOnly: true });
+  h.controller.setContentLayout({ ...ctx, sessionId: 'old-task', deviceLinkDeviceId: 'device', navigationOnly: true });
+  expect(applyContentLayout).not.toHaveBeenCalled();
+  h.controller.setContentLayout({ ...ctx, deviceLinkDeviceId: 'device', navigationOnly: true });
+  expect(applyContentLayout).toHaveBeenCalledWith(h.windows[0], true);
 });

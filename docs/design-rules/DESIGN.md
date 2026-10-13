@@ -667,6 +667,29 @@ The existing process-category palette is explicitly process-only and is not
 repurposed. Existing themes and tokens are not changed. External theme snapshots
 fall back to these base-mode defaults without rewriting stored user themes.
 
+### Git File Status and Sidebar Navigation
+
+The user-requested Lex sidebar update (2026-10-13) permits Git state colors on
+filenames and their adjacent status letters in the workspace explorer, file-name
+search results, current changes and recent-commit file lists. Added/untracked
+uses `--diff-add-fg` with A/?, deleted uses `--diff-del-fg` with D, modified/type
+changes use `--warning-accent` with M, conflicts use `--error-fg` with U, and
+renames remain neutral with R. This is a narrowly scoped extension of the diff
+foreground and warning-accent consumer lists; backgrounds stay neutral. Deleted
+placeholders also have a strikethrough and open the deletion diff. Colored tree
+rows use a neutral selected background instead of inverse selection, preserving
+the theme's foreground context. Letters and localized labels provide a cue that
+does not rely on color. Existing theme token defaults and ancestry colors remain
+unchanged; both Light and Dark use semantic tokens.
+
+Git history is one row: ancestry, HEAD/reference badges, ellipsized subject,
+author, date and short SHA. Metadata does not wrap or disappear on narrow panels;
+the history viewport scrolls horizontally. The repository selector uses the
+existing Select primitive. The explorer keeps the full workspace root and
+aggregates states from discovered repositories. Without content tabs, the empty
+content surface is hidden and the sidebar narrows; expanded geometry is restored
+when a content tab opens, without rewriting the layout tree fractions.
+
 ### Built-in Themes
 
 The implementation truth is `builtinThemes` in `apps/desktop/src/renderer/themes/registry.ts`; adding or removing themes does not require updating this document. The default light/dark (base) themes are exactly the §2 palette.

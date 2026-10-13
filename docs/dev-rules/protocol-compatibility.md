@@ -13,6 +13,24 @@
 
 ## 电脑互联的消息文件与历史变更
 
+### Lex 侧栏多仓库与 Git Graph
+
+Desktop 的既有只读 `git-review:remote-op` 增加 `capabilities`、`repositories`、
+`workspace-status`、`navigation`、`history`、`commit-files`、`graph`、`graph-compare`。
+新主机从任务的权威工作目录发现仓库，返回不透明 `repositoryId`；控制端只传该 ID，
+不传任意仓库绝对路径。所有选库读取均在主机校验 ID、目录归属和当前 Git 根目录，
+SSH 任务继续在对应 SSH 主机执行；不回落控制端文件系统。原只读白名单与响应体预算保持不变。
+
+既有 Review 请求追加可选 `repositoryId`，省略时保留原默认仓库语义；commit-files
+追加可选 `files` 状态数据，原 `paths` 字段保留。新控制端在每次选库读取前探测能力，
+避免旧主机忽略新增字段后静默读取错误仓库；旧主机未知新 op 时仅保留默认仓库 Review，
+不开放远控写入。旧控制端与新主机保持原行为。该增量不改 relay、服务端或 Mobile 协议，
+Mobile 本次不增加 Graph 入口。
+
+独立侧栏新增本机 `rsb-window:content-layout`，仅接收该窗口 renderer 的几何请求，
+并核对当前任务、工作目录、SSH host 与设备上下文。它不进入 Device Link allowlist。
+
+
 设备互联生成文件沿用远端文件服务的 stat 与修改时间，控制端按被控端消息时间窗校验命令产物；
 仅有文件存在、缺失时间戳或读取失败不构成命令产物证据。不增加 relay 协议字段。
 SSH 保持仅展示经过存在性复核的工具产物，不把 Desktop 消息时间与 SSH 主机文件时间比较。

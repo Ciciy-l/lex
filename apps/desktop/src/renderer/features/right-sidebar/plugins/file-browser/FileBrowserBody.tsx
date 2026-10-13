@@ -1,8 +1,19 @@
+import { useGitFileDecorations } from './useGitFileDecorations';
+import { openGitReview } from '../../lib/openGitReview';
+import { rememberGitRepositorySelection } from '../../lib/gitRepositorySelection';
 /** Workspace file tool: tree/search navigation only. Files open in independent content tabs. */
 
 import { openHtmlFileByPreference } from '@/components/chat/useOpenWithMenu';
 import { resolveSessionFileOrigin } from '@/lib/sessionFileOrigin';
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type DragEvent,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronsDownUp, FolderX, RefreshCw, Search, X as XIcon } from 'lucide-react';
 
@@ -59,15 +70,30 @@ import './FileBrowserBody.css';
 interface FileBrowserBodyProps {
   state: FileBrowserState;
   ctx: TabKindHostContext;
+  active?: boolean;
+  shellVisible?: boolean;
 }
 
-export function FileBrowserBody({ state, ctx }: FileBrowserBodyProps) {
+export function FileBrowserBody({
+  state,
+  ctx,
+  active = true,
+  shellVisible = true,
+}: FileBrowserBodyProps) {
   const { workdir } = ctx;
   if (!workdir) {
     return <NoWorkdirPlaceholder />;
   }
   if (ctx.deviceLinkDeviceId === undefined) return <Spinner />;
-  return <FileBrowserBodyWithWorkdir state={state} ctx={ctx} workdir={workdir} />;
+  return (
+    <FileBrowserBodyWithWorkdir
+      state={state}
+      ctx={ctx}
+      workdir={workdir}
+      active={active}
+      shellVisible={shellVisible}
+    />
+  );
 }
 
 /**
@@ -79,6 +105,8 @@ function FileBrowserBodyWithWorkdir({
   state,
   ctx,
   workdir,
+  active = true,
+  shellVisible = true,
 }: FileBrowserBodyProps & { workdir: string }) {
   const { t } = useTranslation();
   // Host ownership is resolved before mounting any read/search hooks. Never
@@ -87,6 +115,22 @@ function FileBrowserBodyWithWorkdir({
   const remoteHostId = deviceId ? null : ctx.remoteHostId;
   const isRemote = Boolean(remoteHostId) || Boolean(deviceId);
   const tree = useFileTree({ workdir, hideMetaFiles: true, remoteHostId, deviceId });
+  const {
+    decorations,
+    decoratedTree,
+    failed: gitStatusFailed,
+  } = useGitFileDecorations(ctx.sessionId, deviceId, workdir, tree, active && shellVisible);
+  const decorationForPath = (path: string) => {
+    const value = decorations.get(path);
+    return value
+      ? {
+          color: value.color,
+          badge: value.letter,
+          description: t(value.labelKey),
+          deleted: value.deleted,
+        }
+      : undefined;
+  };
   const [imageLightboxSrc, setImageLightboxSrc] = useState<string | null>(null);
   const fileDragDepthRef = useRef(0);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
@@ -94,6 +138,17 @@ function FileBrowserBodyWithWorkdir({
     async (path: string, preview = false, line?: number) => {
       if (!ctx.sessionId) return;
       try {
+        const deleted = decorations.get(path);
+        if (deleted?.deleted) {
+          await openGitReview(
+            ctx.sessionId,
+            { kind: deleted.source },
+            deleted.gitPath,
+            deleted.repositoryId,
+          );
+          rememberGitRepositorySelection(ctx.sessionId, deviceId, deleted.repositoryId);
+          return;
+        }
         await openFileContentInSidebar(ctx.sessionId, {
           path,
           workdir,
@@ -107,7 +162,7 @@ function FileBrowserBodyWithWorkdir({
         toast.error(t('rightSidebar.tabs.addFailed'));
       }
     },
-    [ctx.sessionId, workdir, remoteHostId, deviceId, t],
+    [ctx.sessionId, workdir, remoteHostId, deviceId, t, decorations],
   );
   // 文件树 / 搜索 双模式 —— 跟 doc 模式 sidebar 同 ergonomics(参考 WorkdirBrowseSidebar
   // L124 的 mode state)。mode 不持久化,关 tab 重开默认 tree(合理预期:用户切到
@@ -128,8 +183,14 @@ function FileBrowserBodyWithWorkdir({
     enabled: filterQuery.trim() !== '',
   });
   const filteredFiles = useMemo(
-    () => filterFiles(filterQuery, projectFiles.files),
-    [filterQuery, projectFiles.files],
+    () =>
+      filterFiles(filterQuery, [
+        ...new Set([
+          ...projectFiles.files,
+          ...[...decorations].filter(([, value]) => value.deleted).map(([path]) => path),
+        ]),
+      ]),
+    [filterQuery, projectFiles.files, decorations],
   );
   const search = useProjectSearch({
     workdir,
@@ -151,10 +212,13 @@ function FileBrowserBodyWithWorkdir({
     [openFile, ctx],
   );
 
-  const handleOpenMatch = useCallback(async (relPath: string, line: number) => {
-    ctx.patchState({ selectedFilePath: relPath });
-    await openFile(relPath, true, line);
-  }, [openFile, ctx]);
+  const handleOpenMatch = useCallback(
+    async (relPath: string, line: number) => {
+      ctx.patchState({ selectedFilePath: relPath });
+      await openFile(relPath, true, line);
+    },
+    [openFile, ctx],
+  );
 
   // FileTreeView 的 imperative ref —— useRevealFileInTree 通过它调 scrollToPath。
   const fileTreeRef = useRef<FileTreeViewHandle>(null);
@@ -216,7 +280,6 @@ function FileBrowserBodyWithWorkdir({
   // 展开 + 滚动逻辑封在 useRevealFileInTree,doc 模式 sidebar 共用同一份(以后
   // 优化 reveal 行为只改 hook 一处)。
   const handleSelectFromFilter = handleSelectFile;
-
 
   // refresh 按钮:文件树 + 项目文件索引一起 invalidate。
   const handleRefresh = useCallback(() => {
@@ -495,7 +558,7 @@ function FileBrowserBodyWithWorkdir({
           workdir={workdir}
           mode={mode}
           onToggleSearch={handleToggleSearch}
-          onCollapseAll={tree.collapseAll}
+          onCollapseAll={decoratedTree.collapseAll}
           onRefresh={handleRefresh}
         />
         {/* tree 模式:常驻文件名筛选输入框 + (筛选结果列表 / 文件树)。
@@ -504,10 +567,16 @@ function FileBrowserBodyWithWorkdir({
             内部 `min-h-0 flex-1` 拿不到明确高度,FileTreeView 的 overflow-y-auto
             就滚不动了(2026-06-30 用户实测 bug)。 */}
         <div className={cn('flex min-h-0 flex-1 flex-col', mode !== 'tree' && 'hidden')}>
+          {gitStatusFailed && (
+            <p className="px-2 text-11 text-[var(--text-secondary)]">
+              {t('rightSidebar.gitFiles.unavailable')}
+            </p>
+          )}
           <FileFilterInput value={filterQuery} onChange={setFilterQuery} />
           {filterQuery ? (
             <FilterResultList
               files={filteredFiles}
+              decorationForPath={decorationForPath}
               truncated={
                 // ripgrep cap 截断,或者前端展示上限截断(命中超过 FILTER_RESULT_LIMIT)
                 projectFiles.truncated || filteredFiles.length >= FILTER_RESULT_LIMIT
@@ -516,7 +585,7 @@ function FileBrowserBodyWithWorkdir({
               indexError={projectFiles.error}
               selectedPath={state.selectedFilePath}
               onSelectFile={handleSelectFromFilter}
-              onOpenFile={path => void openFile(path)}
+              onOpenFile={(path) => void openFile(path)}
             />
           ) : tree.loadError && tree.entries.size === 0 ? (
             <TreeLoadErrorPlaceholder kind={tree.loadError} onRetry={handleRefresh} />
@@ -524,10 +593,11 @@ function FileBrowserBodyWithWorkdir({
             <div className="rsb-fbody-tree-scroll min-h-0 flex-1">
               <FileTreeView
                 ref={fileTreeRef}
-                tree={tree}
+                tree={decoratedTree}
+                decorationForPath={decorationForPath}
                 selectedPath={state.selectedFilePath}
                 onSelectFile={handleSelectFile}
-                onOpenFile={path => void openFile(path)}
+                onOpenFile={(path) => void openFile(path)}
                 onPreviewImage={handlePreviewImage}
                 onCopyFilePath={!isRemote ? handleCopyFilePath : undefined}
                 onRevealInFolder={!isRemote ? handleRevealInFolder : undefined}

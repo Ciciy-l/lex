@@ -28,6 +28,8 @@ beforeEach(() => {
 });
 describe('Git Graph IPC boundary', () => {
   it.each([
+    'git-review:repositories',
+    'git-review:workspace-status',
     'git-review:graph',
     'git-review:graph-compare',
     'git-review:navigation',

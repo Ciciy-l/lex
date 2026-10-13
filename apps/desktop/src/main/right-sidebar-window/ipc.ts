@@ -85,25 +85,60 @@ function parseCommand(raw: unknown): RsbWindowCommand {
   }
   if (r.type === 'open-file-content') {
     const file = requireObject(r.file, 'file');
-    if (typeof file.path !== 'string' || !file.path || file.path.length > 4096 || typeof file.workdir !== 'string' || !file.workdir || file.workdir.length > 4096 || typeof file.external !== 'boolean') {
+    if (
+      typeof file.path !== 'string' ||
+      !file.path ||
+      file.path.length > 4096 ||
+      typeof file.workdir !== 'string' ||
+      !file.workdir ||
+      file.workdir.length > 4096 ||
+      typeof file.external !== 'boolean'
+    ) {
       throwIpcError('INVALID_PARAMS', 'invalid file content target');
     }
     for (const key of ['remoteHostId', 'deviceId']) {
-      if (file[key] !== undefined && file[key] !== null && (typeof file[key] !== 'string' || (file[key] as string).length > 128)) throwIpcError('INVALID_PARAMS', 'invalid file endpoint');
+      if (
+        file[key] !== undefined &&
+        file[key] !== null &&
+        (typeof file[key] !== 'string' || (file[key] as string).length > 128)
+      )
+        throwIpcError('INVALID_PARAMS', 'invalid file endpoint');
     }
-    if (file.preview !== undefined && typeof file.preview !== 'boolean') throwIpcError('INVALID_PARAMS', 'invalid preview flag');
+    if (file.preview !== undefined && typeof file.preview !== 'boolean')
+      throwIpcError('INVALID_PARAMS', 'invalid preview flag');
     let reveal: { line: number; column?: number; requestId: string } | null = null;
     if (file.reveal != null) {
       const target = requireObject(file.reveal, 'reveal');
-      if (!Number.isSafeInteger(target.line) || (target.line as number) < 1 || (target.column !== undefined && (!Number.isSafeInteger(target.column) || (target.column as number) < 1)) || typeof target.requestId !== 'string' || target.requestId.length > 128) throwIpcError('INVALID_PARAMS', 'invalid reveal position');
-      reveal = { line: target.line as number, column: target.column as number | undefined, requestId: target.requestId as string };
+      if (
+        !Number.isSafeInteger(target.line) ||
+        (target.line as number) < 1 ||
+        (target.column !== undefined &&
+          (!Number.isSafeInteger(target.column) || (target.column as number) < 1)) ||
+        typeof target.requestId !== 'string' ||
+        target.requestId.length > 128
+      )
+        throwIpcError('INVALID_PARAMS', 'invalid reveal position');
+      reveal = {
+        line: target.line as number,
+        column: target.column as number | undefined,
+        requestId: target.requestId as string,
+      };
     }
-    return { type: 'open-file-content', sessionId: r.sessionId, file: {
-      path: file.path as string, workdir: file.workdir as string, external: file.external as boolean,
-      preview: file.preview === true, reveal,
-      ...(file.remoteHostId !== undefined ? { remoteHostId: file.remoteHostId as string | null } : {}),
-      ...(file.deviceId !== undefined ? { deviceId: file.deviceId as string | null } : {}),
-    } };
+    return {
+      type: 'open-file-content',
+      sessionId: r.sessionId,
+      file: {
+        path: file.path as string,
+        workdir: file.workdir as string,
+        external: file.external as boolean,
+        preview: file.preview === true,
+        reveal,
+        ...(file.remoteHostId !== undefined
+          ? { remoteHostId: file.remoteHostId as string | null }
+          : {}),
+        ...(file.deviceId !== undefined ? { deviceId: file.deviceId as string | null } : {}),
+      },
+    };
   }
   if (r.type === 'open-terminal') {
     return { type: 'open-terminal', sessionId: r.sessionId };
@@ -150,11 +185,13 @@ function parseCommand(raw: unknown): RsbWindowCommand {
     return { type: 'close-orca-workers-tab', sessionId: r.sessionId };
   }
   if (r.type === 'open-routines-tab') {
-    if (typeof r.botId !== 'string' || !r.botId || r.botId.length > 128) throwIpcError('INVALID_PARAMS', 'Invalid teammate');
+    if (typeof r.botId !== 'string' || !r.botId || r.botId.length > 128)
+      throwIpcError('INVALID_PARAMS', 'Invalid teammate');
     return { type: 'open-routines-tab', sessionId: r.sessionId, botId: r.botId };
   }
   if (r.type === 'open-bot-workbench-tab') {
-    if (typeof r.botId !== 'string' || !r.botId || r.botId.length > 128) throwIpcError('INVALID_PARAMS', 'Invalid teammate');
+    if (typeof r.botId !== 'string' || !r.botId || r.botId.length > 128)
+      throwIpcError('INVALID_PARAMS', 'Invalid teammate');
     return { type: 'open-bot-workbench-tab', sessionId: r.sessionId, botId: r.botId };
   }
   if (r.type === 'open-background-tasks-tab') {
@@ -482,6 +519,21 @@ export function registerRsbWindowIpc(opts: {
       return;
     }
     controller.markRendererReady(event.sender);
+  });
+
+  ipcMain.handle('rsb-window:content-layout', (event, payload: unknown) => {
+    const sidebarWc = controller.getSidebarWebContents();
+    if (!sidebarWc || event.sender !== sidebarWc)
+      throwIpcError('PERMISSION_DENIED', 'sidebar renderer required');
+    const raw = requireObject(payload);
+    const context = parseContext({ ...raw, available: true });
+    if (!context.sessionId || typeof raw.navigationOnly !== 'boolean')
+      throwIpcError('INVALID_PARAMS', 'invalid content layout');
+    controller.setContentLayout({
+      ...context,
+      sessionId: context.sessionId,
+      navigationOnly: raw.navigationOnly,
+    });
   });
 
   ipcMain.handle(RSB_WINDOW_PRESENTATION_READY_CHANNEL, (event) => {

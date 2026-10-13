@@ -97,12 +97,25 @@ if (new URLSearchParams(location.search).get('history') === 'real') {
 Object.defineProperty(window, 'electronAPI', {
   value: {
     gitReview: {
+      repositories: async () => ({
+        workspace: '/workspace/lex',
+        repositories: [
+          { id: 'preview-repo', root: '/workspace/lex', relativePath: '.', name: 'lex' },
+        ],
+        defaultRepositoryId: 'preview-repo',
+        partial: false,
+      }),
       graph: async () => graph,
       navigation: async () => ({
         scope: graph.scope,
         status: {
           files: [
-            { path: 'src/git-graph/CommitList.tsx', sources: ['unstaged'], isUntracked: false },
+            {
+              path: 'src/git-graph/CommitList.tsx',
+              sources: ['unstaged'],
+              isUntracked: false,
+              worktreeStatus: 'modified',
+            },
           ],
         },
       }),
@@ -114,6 +127,10 @@ Object.defineProperty(window, 'electronAPI', {
         truncated: true,
       }),
       commitDiff: async () => ({ diffs: [], capped: null }),
+      commitFiles: async () => ({
+        paths: ['src/changed.ts'],
+        files: [{ path: 'src/changed.ts', status: 'modified' }],
+      }),
       graphCompare: async (request: object) => ({
         ...request,
         diffs: [],

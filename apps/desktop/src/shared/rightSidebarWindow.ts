@@ -39,11 +39,19 @@ export interface RsbWindowContext {
 
 /** main → 子窗口的命令推送(如主窗终端快捷键转发 / detached RSB 内定位文件)。 */
 export type RsbWindowCommand =
-  | { type: 'open-file-content'; sessionId: string; file: {
-      path: string; workdir: string; external: boolean; preview?: boolean;
-      remoteHostId?: string | null; deviceId?: string | null;
-      reveal?: { line: number; column?: number; requestId: string } | null;
-    } }
+  | {
+      type: 'open-file-content';
+      sessionId: string;
+      file: {
+        path: string;
+        workdir: string;
+        external: boolean;
+        preview?: boolean;
+        remoteHostId?: string | null;
+        deviceId?: string | null;
+        reveal?: { line: number; column?: number; requestId: string } | null;
+      };
+    }
   | { type: 'open-routines-tab'; sessionId: string; botId: string }
   /** 伙伴主任务页:确保「工作台」标签存在(不存在时创建并展开右侧栏)。 */
   | { type: 'open-bot-workbench-tab'; sessionId: string; botId: string }
@@ -151,3 +159,11 @@ export const RSB_WINDOW_REFRESH_CONTEXT_CHANNEL = 'rsb-window:refresh-context';
 export const RSB_WINDOW_LOCALE_CHANGED_CHANNEL = 'rsb-window:locale-changed';
 /** main → 主 renderer：合并前交接不可持久化 session 的 tab 快照。 */
 export const RSB_WINDOW_TAB_HANDOFF_CHANNEL = 'maker:rsb-window:tab-handoff';
+
+export interface RsbContentLayoutRequest {
+  sessionId: string;
+  workdir: string | null;
+  remoteHostId: string | null;
+  deviceLinkDeviceId?: string | null;
+  navigationOnly: boolean;
+}

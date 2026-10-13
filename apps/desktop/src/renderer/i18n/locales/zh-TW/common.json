@@ -6695,6 +6695,22 @@
     "multipleAria": "已收起 {{count}} 個插件面板，點擊選擇要恢復的面板"
   },
   "rightSidebar": {
+    "repositories": {
+      "title": "儲存庫",
+      "partial": "僅掃描部分目錄，可新增更深層的儲存庫路徑。",
+      "add": "新增儲存庫",
+      "relativePath": "相對於工作目錄的路徑",
+      "legacy": "遠端電腦版本較舊，僅顯示預設儲存庫。"
+    },
+    "gitFiles": {
+      "added": "新增",
+      "deleted": "刪除",
+      "modified": "修改",
+      "conflict": "衝突",
+      "renamed": "重新命名",
+      "clean": "未變更",
+      "unavailable": "Git 狀態暫時無法使用"
+    },
     "gitGraph": {
       "unloadedParents": "虛線延續：父提交不在已載入歷史中。",
       "lanesLeft": "查看左側圖線",

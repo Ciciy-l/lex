@@ -6695,6 +6695,22 @@
     "multipleAria": "已收起 {{count}} 个插件面板，点击选择要恢复的面板"
   },
   "rightSidebar": {
+    "repositories": {
+      "title": "仓库",
+      "partial": "仅扫描部分目录，可添加更深层的仓库路径。",
+      "add": "添加仓库",
+      "relativePath": "相对于工作目录的路径",
+      "legacy": "远程电脑版本较旧，仅显示默认仓库。"
+    },
+    "gitFiles": {
+      "added": "新增",
+      "deleted": "删除",
+      "modified": "修改",
+      "conflict": "冲突",
+      "renamed": "重命名",
+      "clean": "未改动",
+      "unavailable": "Git 状态暂不可用"
+    },
     "gitGraph": {
       "unloadedParents": "虚线延续：父提交不在已加载历史中。",
       "lanesLeft": "查看左侧图线",

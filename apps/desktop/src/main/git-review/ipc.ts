@@ -23,7 +23,10 @@ import { isSafeGitObjectOid, isSafeGitPath, normalizeGitDiffIndexOid } from './g
 import { readImagePreview } from './imageReader.js';
 import { readMarkdownPreview } from './markdownReader.js';
 import { GitReviewPushError, pushBranch } from './pushOps.js';
-import { resolveReviewScope } from './scopeResolver.js';
+import { resolveReviewScope, resolveDefaultReviewScope, defaultScopeResolverDeps } from './scopeResolver.js';
+import { withReviewRepository } from './repositoryContext.js';
+import { listReviewRepositories } from './repositoryCatalog.js';
+import type { ReviewRepositoryList, ReviewWorkspaceStatus } from '../../shared/gitRepositories.js';
 import { parseGitGraphRequest, parseGitGraphCompareRequest } from '../../shared/gitGraph.js';
 import { readGitGraph, readGitGraphComparison, withLocalGraphScope } from './graphReader.js';
 import { createSshPreviewReaderDeps, withSessionReviewExecution } from './sshReviewBackend.js';
@@ -56,6 +59,8 @@ import type {
 } from './types.js';
 
 export const GIT_REVIEW_INVOKE = {
+  REPOSITORIES: 'git-review:repositories',
+  WORKSPACE_STATUS: 'git-review:workspace-status',
   HISTORY: 'git-review:history',
   GRAPH: 'git-review:graph',
   GRAPH_COMPARE: 'git-review:graph-compare',
@@ -221,8 +226,8 @@ export async function readReviewCommitFiles(
 ): Promise<ReviewCommitFilesData> {
   const scope = await deps.resolveScope(sessionId);
   if (scope.disabledReason || !scope.repoRoot) return { scope, commitOid: oid, paths: [] };
-  const { commitOid, paths } = await listCommitFiles(scope, oid);
-  return { scope, commitOid, paths };
+  const { commitOid, paths, files } = await listCommitFiles(scope, oid);
+  return { scope, commitOid, paths, files };
 }
 
 export async function readReviewBranchDiff(
@@ -869,7 +874,22 @@ export function parseCommitFilesPayload(payload: unknown): { sessionId: string; 
 }
 
 export function registerGitReviewIpc(options: GitReviewIpcOptions = {}): void {
-  ipcMain.handle(GIT_REVIEW_INVOKE.NAVIGATION, async (event, payload: unknown) => {
+  const handle = (channel: string, listener: (event: Electron.IpcMainInvokeEvent, payload: unknown) => unknown) => {
+    ipcMain.handle(channel, async (event, payload: unknown) => withReviewRepository(payload, async () => listener(event, payload)));
+  };
+  handle(GIT_REVIEW_INVOKE.REPOSITORIES, async (event, payload) => {
+    if (!isTrustedAppRendererEvent(event)) throwIpcError('PERMISSION_DENIED', 'trusted renderer required');
+    const sessionId = parseSessionId(payload);
+    try { return await withSessionReviewExecution(sessionId, () => readReviewRepositories(payload)); }
+    catch (error) { rethrowReviewIpcError(error); }
+  });
+  handle(GIT_REVIEW_INVOKE.WORKSPACE_STATUS, async (event, payload) => {
+    if (!isTrustedAppRendererEvent(event)) throwIpcError('PERMISSION_DENIED', 'trusted renderer required');
+    const sessionId = parseSessionId(payload);
+    try { return await withSessionReviewExecution(sessionId, () => readReviewWorkspaceStatus(payload)); }
+    catch (error) { rethrowReviewIpcError(error); }
+  });
+  handle(GIT_REVIEW_INVOKE.NAVIGATION, async (event, payload: unknown) => {
     if (!isTrustedAppRendererEvent(event))
       throwIpcError('PERMISSION_DENIED', 'trusted renderer required');
     try {
@@ -884,7 +904,7 @@ export function registerGitReviewIpc(options: GitReviewIpcOptions = {}): void {
       rethrowReviewIpcError(error);
     }
   });
-  ipcMain.handle(GIT_REVIEW_INVOKE.GRAPH, async (event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.GRAPH, async (event, payload: unknown) => {
     if (!isTrustedAppRendererEvent(event))
       throwIpcError('PERMISSION_DENIED', 'trusted renderer required');
     try {
@@ -894,7 +914,7 @@ export function registerGitReviewIpc(options: GitReviewIpcOptions = {}): void {
       rethrowReviewIpcError(error);
     }
   });
-  ipcMain.handle(GIT_REVIEW_INVOKE.GRAPH_COMPARE, async (event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.GRAPH_COMPARE, async (event, payload: unknown) => {
     if (!isTrustedAppRendererEvent(event))
       throwIpcError('PERMISSION_DENIED', 'trusted renderer required');
     try {
@@ -911,7 +931,7 @@ export function registerGitReviewIpc(options: GitReviewIpcOptions = {}): void {
     isSessionRunning: options.isSessionRunning,
   };
 
-  ipcMain.handle(GIT_REVIEW_INVOKE.HISTORY, async (event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.HISTORY, async (event, payload: unknown) => {
     if (!isTrustedAppRendererEvent(event))
       throwIpcError('PERMISSION_DENIED', 'trusted renderer required');
     try {
@@ -923,7 +943,7 @@ export function registerGitReviewIpc(options: GitReviewIpcOptions = {}): void {
     }
   });
 
-  ipcMain.handle(GIT_REVIEW_INVOKE.GET, async (_event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.GET, async (_event, payload: unknown) => {
     try {
       const { sessionId, options } = parseReviewDataPayload(payload);
       return await withSessionReviewExecution(sessionId, () => readReviewData(sessionId, options));
@@ -932,7 +952,7 @@ export function registerGitReviewIpc(options: GitReviewIpcOptions = {}): void {
     }
   });
 
-  ipcMain.handle(GIT_REVIEW_INVOKE.SUMMARY, async (_event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.SUMMARY, async (_event, payload: unknown) => {
     try {
       const sessionId = parseSessionId(payload);
       return await withSessionReviewExecution(sessionId, () => readReviewSummary(sessionId));
@@ -941,7 +961,7 @@ export function registerGitReviewIpc(options: GitReviewIpcOptions = {}): void {
     }
   });
 
-  ipcMain.handle(GIT_REVIEW_INVOKE.COMMITS, async (_event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.COMMITS, async (_event, payload: unknown) => {
     try {
       const { sessionId, baseRef } = parseCommitsPayload(payload);
       return await withSessionReviewExecution(sessionId, () =>
@@ -952,7 +972,7 @@ export function registerGitReviewIpc(options: GitReviewIpcOptions = {}): void {
     }
   });
 
-  ipcMain.handle(GIT_REVIEW_INVOKE.COMMIT_DIFF, async (_event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.COMMIT_DIFF, async (_event, payload: unknown) => {
     try {
       const { sessionId, oid, options } = parseCommitDiffPayload(payload);
       return await withSessionReviewExecution(sessionId, () =>
@@ -963,7 +983,7 @@ export function registerGitReviewIpc(options: GitReviewIpcOptions = {}): void {
     }
   });
 
-  ipcMain.handle(GIT_REVIEW_INVOKE.COMMIT_FILES, async (event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.COMMIT_FILES, async (event, payload: unknown) => {
     if (!isTrustedAppRendererEvent(event))
       throwIpcError('PERMISSION_DENIED', 'trusted renderer required');
     try {
@@ -976,7 +996,7 @@ export function registerGitReviewIpc(options: GitReviewIpcOptions = {}): void {
     }
   });
 
-  ipcMain.handle(GIT_REVIEW_INVOKE.BRANCH_DIFF, async (_event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.BRANCH_DIFF, async (_event, payload: unknown) => {
     try {
       const { sessionId, baseRef, options } = parseBranchDiffPayload(payload);
       return await withSessionReviewExecution(sessionId, () =>
@@ -987,7 +1007,7 @@ export function registerGitReviewIpc(options: GitReviewIpcOptions = {}): void {
     }
   });
 
-  ipcMain.handle(GIT_REVIEW_INVOKE.FILE_DIFF, async (_event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.FILE_DIFF, async (_event, payload: unknown) => {
     try {
       const { sessionId, request } = parseFileDiffPayload(payload);
       return await withSessionReviewExecution(sessionId, () =>
@@ -998,7 +1018,7 @@ export function registerGitReviewIpc(options: GitReviewIpcOptions = {}): void {
     }
   });
 
-  ipcMain.handle(GIT_REVIEW_INVOKE.IMAGE_PREVIEW, async (_event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.IMAGE_PREVIEW, async (_event, payload: unknown) => {
     try {
       const { sessionId, request } = parseImagePreviewPayload(payload);
       return await withSessionReviewExecution(sessionId, () =>
@@ -1009,7 +1029,7 @@ export function registerGitReviewIpc(options: GitReviewIpcOptions = {}): void {
     }
   });
 
-  ipcMain.handle(GIT_REVIEW_INVOKE.MARKDOWN_PREVIEW, async (_event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.MARKDOWN_PREVIEW, async (_event, payload: unknown) => {
     try {
       const { sessionId, request } = parseMarkdownPreviewPayload(payload);
       return await withSessionReviewExecution(sessionId, () =>
@@ -1020,7 +1040,7 @@ export function registerGitReviewIpc(options: GitReviewIpcOptions = {}): void {
     }
   });
 
-  ipcMain.handle(GIT_REVIEW_INVOKE.OPEN_FILE, async (_event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.OPEN_FILE, async (_event, payload: unknown) => {
     try {
       const { sessionId, path: gitPath } = parseOpenFilePayload(payload);
       await withSessionReviewExecution(sessionId, () => openReviewFile(sessionId, gitPath));
@@ -1029,80 +1049,116 @@ export function registerGitReviewIpc(options: GitReviewIpcOptions = {}): void {
     }
   });
 
-  ipcMain.handle(GIT_REVIEW_INVOKE.STAGE_FILE, async (_event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.STAGE_FILE, async (_event, payload: unknown) => {
     const { sessionId, targets } = parseTargets(payload);
     return withSessionReviewExecution(sessionId, () =>
       runReviewFileStageOperation(sessionId, 'stage', targets.slice(0, 1), writeDeps),
     );
   });
 
-  ipcMain.handle(GIT_REVIEW_INVOKE.UNSTAGE_FILE, async (_event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.UNSTAGE_FILE, async (_event, payload: unknown) => {
     const { sessionId, targets } = parseTargets(payload);
     return withSessionReviewExecution(sessionId, () =>
       runReviewFileStageOperation(sessionId, 'unstage', targets.slice(0, 1), writeDeps),
     );
   });
 
-  ipcMain.handle(GIT_REVIEW_INVOKE.DISCARD_FILE, async (_event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.DISCARD_FILE, async (_event, payload: unknown) => {
     const { sessionId, targets } = parseTargets(payload);
     return withSessionReviewExecution(sessionId, () =>
       runReviewFileStageOperation(sessionId, 'discard', targets.slice(0, 1), writeDeps),
     );
   });
 
-  ipcMain.handle(GIT_REVIEW_INVOKE.STAGE_ALL, async (_event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.STAGE_ALL, async (_event, payload: unknown) => {
     const { sessionId, targets } = parseTargets(payload);
     return withSessionReviewExecution(sessionId, () =>
       runReviewFileStageOperation(sessionId, 'stage', targets, writeDeps),
     );
   });
 
-  ipcMain.handle(GIT_REVIEW_INVOKE.UNSTAGE_ALL, async (_event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.UNSTAGE_ALL, async (_event, payload: unknown) => {
     const { sessionId, targets } = parseTargets(payload);
     return withSessionReviewExecution(sessionId, () =>
       runReviewFileStageOperation(sessionId, 'unstage', targets, writeDeps),
     );
   });
 
-  ipcMain.handle(GIT_REVIEW_INVOKE.DISCARD_ALL, async (_event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.DISCARD_ALL, async (_event, payload: unknown) => {
     const { sessionId, targets } = parseTargets(payload);
     return withSessionReviewExecution(sessionId, () =>
       runReviewFileStageOperation(sessionId, 'discard', targets, writeDeps),
     );
   });
 
-  ipcMain.handle(GIT_REVIEW_INVOKE.STAGE_HUNK, async (_event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.STAGE_HUNK, async (_event, payload: unknown) => {
     const { sessionId, diff, hunkIndex, options } = parseHunkPayload(payload);
     return withSessionReviewExecution(sessionId, () =>
       runReviewHunkStageOperation(sessionId, 'stage', diff, hunkIndex, options, writeDeps),
     );
   });
 
-  ipcMain.handle(GIT_REVIEW_INVOKE.UNSTAGE_HUNK, async (_event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.UNSTAGE_HUNK, async (_event, payload: unknown) => {
     const { sessionId, diff, hunkIndex, options } = parseHunkPayload(payload);
     return withSessionReviewExecution(sessionId, () =>
       runReviewHunkStageOperation(sessionId, 'unstage', diff, hunkIndex, options, writeDeps),
     );
   });
 
-  ipcMain.handle(GIT_REVIEW_INVOKE.DISCARD_HUNK, async (_event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.DISCARD_HUNK, async (_event, payload: unknown) => {
     const { sessionId, diff, hunkIndex, options } = parseHunkPayload(payload);
     return withSessionReviewExecution(sessionId, () =>
       runReviewHunkStageOperation(sessionId, 'discard', diff, hunkIndex, options, writeDeps),
     );
   });
 
-  ipcMain.handle(GIT_REVIEW_INVOKE.COMMIT, async (_event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.COMMIT, async (_event, payload: unknown) => {
     const { sessionId, message, includeUnstaged } = parseCommitPayload(payload);
     return withSessionReviewExecution(sessionId, () =>
       runReviewCommit(sessionId, message, includeUnstaged, writeDeps),
     );
   });
 
-  ipcMain.handle(GIT_REVIEW_INVOKE.PUSH, async (_event, payload: unknown) => {
+  handle(GIT_REVIEW_INVOKE.PUSH, async (_event, payload: unknown) => {
     const { sessionId, confirmForce } = parsePushPayload(payload);
     return withSessionReviewExecution(sessionId, () =>
       runReviewPush(sessionId, confirmForce, writeDeps),
     );
   });
+}
+
+
+export async function readReviewRepositories(payload: unknown): Promise<ReviewRepositoryList> {
+  const obj = requireObject(payload);
+  const sessionId = parseSessionId(payload);
+  if (obj.relativePath !== undefined && (typeof obj.relativePath !== 'string' || obj.relativePath.length > 4096))
+    throwIpcError('INVALID_PARAMS', 'Invalid repository path');
+  const scope = await resolveDefaultReviewScope(sessionId);
+  const row = await defaultScopeResolverDeps().getSessionRow(sessionId);
+  return listReviewRepositories(scope, row?.remoteHostId ?? null, {
+    refresh: obj.refresh === true, relativePath: obj.relativePath as string | undefined,
+  });
+}
+
+export async function readReviewNavigation(sessionId: string): Promise<Pick<ReviewData, 'scope' | 'status'>> {
+  const scope = await resolveReviewScope(sessionId);
+  const status = scope.repoRoot && !scope.disabledReason ? await readStatus(scope) : null;
+  return { scope: status?.scope ?? scope, status };
+}
+
+export async function readReviewWorkspaceStatus(payload: unknown): Promise<ReviewWorkspaceStatus> {
+  const catalog = await readReviewRepositories(payload);
+  const sessionId = parseSessionId(payload);
+  const statuses: ReviewWorkspaceStatus['statuses'] = [];
+  const failedRepositoryIds: string[] = [];
+  for (let i = 0; i < catalog.repositories.length; i += 4) {
+    await Promise.all(catalog.repositories.slice(i, i + 4).map(async repo => {
+      try {
+        const data = await withReviewRepository({ repositoryId: repo.id }, () => readReviewNavigation(sessionId));
+        if (!data.status) { failedRepositoryIds.push(repo.id); return; }
+        statuses.push({ repositoryId: repo.id, scope: data.scope, files: data.status.files });
+      } catch { failedRepositoryIds.push(repo.id); }
+    }));
+  }
+  return { ...catalog, statuses, failedRepositoryIds };
 }

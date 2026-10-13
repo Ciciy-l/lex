@@ -1,3 +1,4 @@
+import { setSidebarContentLayout } from './right-sidebar-window/contentSizing.js';
 import { registerHarnessSettingsIpc } from './harness-settings-ipc.js';
 import { registerFilePeerIpc } from './device-link/filePeer';
 import { registerTaskMigrationIpc } from './task-migration/service';
@@ -2126,6 +2127,7 @@ setLoginCaptchaOriginResolver(() => {
 // 调用时机远晚于此处构造),状态机本体见 right-sidebar-window/controller.ts。
 resetRsbWindowSettingsForStartup();
 const rsbWindowController = new RsbWindowController({
+  applyContentLayout: setSidebarContentLayout,
   settings: { read: readRsbWindowSettings, writePatch: writeRsbWindowSettingsPatch },
   createWindow: () => {
     const window = createRightSidebarWindow();

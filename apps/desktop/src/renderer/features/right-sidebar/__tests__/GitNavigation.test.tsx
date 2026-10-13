@@ -12,6 +12,7 @@ const api = vi.hoisted(() => ({
   navigate: vi.fn(),
   openGraph: vi.fn(),
   openWorkspaceView: vi.fn(),
+  legacy: false,
   tabs: [] as Array<{ id: string; kind: string; state?: unknown }>,
 }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
@@ -19,6 +20,15 @@ vi.mock('@/components/ui/tooltip', () => ({
   Tip: ({ children }: { children: ReactNode }) => children,
 }));
 vi.mock('@/lib/gitReviewTransport', () => ({ gitReviewApiFor: () => api }));
+vi.mock('../lib/gitRepositorySelection', () => ({
+  useGitRepositorySelection: () => ({
+    repositoryId: undefined,
+    ready: true,
+    legacy: api.legacy,
+    catalog: null,
+    refresh: () => {},
+  }),
+}));
 vi.mock('../store', () => ({ getBucket: () => ({ tabs: api.tabs }) }));
 vi.mock('../lib/openGitReview', () => ({ openGitReview: api.navigate }));
 vi.mock('../lib/openGitGraph', () => ({
@@ -50,6 +60,7 @@ beforeEach(() => {
   api.openGraph.mockResolvedValue(undefined);
   api.openWorkspaceView.mockResolvedValue(undefined);
   api.tabs = [];
+  api.legacy = false;
   Object.defineProperty(window, 'electronAPI', { configurable: true, value: { gitReview: api } });
 });
 afterEach(cleanup);
@@ -75,6 +86,7 @@ describe('Git tool loading', () => {
       'lead',
       { kind: 'commit', commitOid: 'a'.repeat(40) },
       'file.ts',
+      undefined,
     );
   });
   it('keeps native disclosure separate from the keyboard-focusable review action', async () => {
@@ -96,7 +108,7 @@ describe('Git tool loading', () => {
     expect(document.activeElement).toBe(action);
     fireEvent.click(action);
     expect(details.open).toBe(true);
-    expect(api.navigate).toHaveBeenCalledWith('lead', { kind: 'staged' }, undefined);
+    expect(api.navigate).toHaveBeenCalledWith('lead', { kind: 'staged' }, undefined, undefined);
   });
   it('keeps empty status sections and a collapsed disclosure stable during refresh', async () => {
     const view = render(<GitNavigation sessionId="lead" deviceId={null} />);
@@ -175,7 +187,12 @@ describe('Git tool loading', () => {
     render(<GitNavigation sessionId="lead" deviceId={null} />);
     await screen.findByText('initial commit');
     fireEvent.click(screen.getByRole('button', { name: 'rightSidebar.workbench.comparison' }));
-    expect(api.navigate).toHaveBeenCalledWith('lead', { kind: 'branch', baseRef: null }, undefined);
+    expect(api.navigate).toHaveBeenCalledWith(
+      'lead',
+      { kind: 'branch', baseRef: null },
+      undefined,
+      undefined,
+    );
     expect(screen.getByText('rightSidebar.workbench.comparisonHint')).toBeTruthy();
   });
 
@@ -203,7 +220,7 @@ describe('Git tool loading', () => {
     fireEvent.click(screen.getByRole('button', { name: 'rightSidebar.gitGraph.title' }));
     expect(api.openGraph).toHaveBeenCalledWith('lead');
     fireEvent.click(screen.getByRole('button', { name: 'rightSidebar.workbench.staged (0)' }));
-    expect(api.navigate).toHaveBeenCalledWith('lead', { kind: 'staged' }, undefined);
+    expect(api.navigate).toHaveBeenCalledWith('lead', { kind: 'staged' }, undefined, undefined);
   });
   it('switches the header Review control without replacing the current Review descriptor', async () => {
     render(<GitNavigation sessionId="lead" deviceId={null} />);
@@ -239,25 +256,21 @@ describe('Git tool loading', () => {
   it.each([
     { deviceId: 'controlled-device', remoteHostId: null },
     { deviceId: null, remoteHostId: 'ssh-host' },
-  ])('does not offer a local Graph opener for a remote context %#', async (props) => {
+  ])('offers Graph for a repository-aware remote context %#', async (props) => {
     render(<GitNavigation sessionId="lead" {...props} />);
-    await waitFor(() =>
-      expect(screen.queryByRole('button', { name: 'rightSidebar.gitGraph.title' })).toBeNull(),
-    );
-    expect(
-      screen
-        .getByRole('button', { name: 'rightSidebar.tabs.kinds.review' })
-        .getAttribute('aria-pressed'),
-    ).toBe('true');
-    expect(api.openGraph).not.toHaveBeenCalled();
+    const button = await screen.findByRole('button', { name: 'rightSidebar.gitGraph.title' });
+    fireEvent.click(button);
+    expect(api.openGraph).toHaveBeenCalledWith('lead');
+    expect(api.navigation).toHaveBeenCalled();
   });
-  it('removes the Graph opener after a locally resolved SSH scope is reported', async () => {
-    api.navigation.mockResolvedValue({
-      scope: { ...status.scope, source: 'remote', disabledReason: 'remote-session' },
-      status: null,
-    });
-    render(<GitNavigation sessionId="lead" deviceId={null} />);
-    await screen.findByText('rightSidebar.review.disabled.remote-session.title');
+  it('keeps the default read-only Review on legacy controlled devices', async () => {
+    api.legacy = true;
+    api.get.mockResolvedValue(status);
+    render(<GitNavigation sessionId="lead" deviceId="old-device" />);
+    await screen.findByText('feature');
     expect(screen.queryByRole('button', { name: 'rightSidebar.gitGraph.title' })).toBeNull();
+    expect(api.get).toHaveBeenCalledWith({ sessionId: 'lead' });
+    expect(api.navigation).not.toHaveBeenCalled();
+    expect(screen.getByText('rightSidebar.repositories.legacy')).toBeTruthy();
   });
 });

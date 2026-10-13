@@ -32,6 +32,7 @@ import { seedReviewDiffsExpanded } from './diffExpansionPreference';
 import { GitWorkspaceTabBody } from './GitWorkspaceTabBody';
 
 export interface ReviewState {
+  repositoryId?: string;
   /** The workspace's top-level Git surface. New Git tabs start in graph view. */
   activeView: GitWorkspaceView;
   /** Graph preferences stay isolated from the Review state persisted below. */
@@ -151,6 +152,10 @@ const plugin: TabKindPlugin<ReviewState> = {
         : null);
     return {
       activeView,
+      repositoryId:
+        typeof obj.repositoryId === 'string' && /^[a-f0-9]{64}$/.test(obj.repositoryId)
+          ? obj.repositoryId
+          : undefined,
       graph: hydrateGraphState(obj.graph),
       historyCommitOid:
         typeof obj.historyCommitOid === 'string' && /^[a-f0-9]{40,64}$/i.test(obj.historyCommitOid)

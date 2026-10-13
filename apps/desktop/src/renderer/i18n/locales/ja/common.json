@@ -6695,6 +6695,22 @@
     "multipleAria": "{{count}}個のプラグインパネルが最小化されています。復元するパネルを選択"
   },
   "rightSidebar": {
+    "repositories": {
+      "title": "リポジトリ",
+      "partial": "一部のフォルダーは未検索です。深い階層のリポジトリはパスで追加できます。",
+      "add": "リポジトリを追加",
+      "relativePath": "作業ディレクトリからの相対パス",
+      "legacy": "リモートコンピューターのバージョンが古いため、既定のリポジトリのみ表示します。"
+    },
+    "gitFiles": {
+      "added": "追加",
+      "deleted": "削除",
+      "modified": "変更",
+      "conflict": "競合",
+      "renamed": "名前変更",
+      "clean": "変更なし",
+      "unavailable": "Git の状態を取得できません"
+    },
     "gitGraph": {
       "unloadedParents": "破線は、親コミットが読み込み済み履歴の範囲外にあることを示します。",
       "lanesLeft": "左側の履歴線を表示",

@@ -1,7 +1,10 @@
+import { useTranslation } from 'react-i18next';
+import { GitControl } from '../../lib/GitControl';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TabKindBodyProps, TabKindHostContext } from '../../types';
 import { hydrateGraphState } from '../git-graph/state';
 import { GitGraphLoadingState } from '../git-graph/GitGraphLoadingState';
+import { GitRepositoryContext, useGitRepositorySelection } from '../../lib/gitRepositorySelection';
 import type { ReviewState } from './index';
 
 const ReviewTabBody = lazy(() =>
@@ -28,6 +31,12 @@ export function GitWorkspaceTabBody({
   active = true,
   shellVisible = true,
 }: TabKindBodyProps<ReviewState>) {
+  const { t } = useTranslation();
+  const selection = useGitRepositorySelection(
+    ctx.sessionId,
+    ctx.deviceLinkDeviceId,
+    JSON.stringify([ctx.workdir, ctx.remoteHostId]),
+  );
   const graphStateRef = useRef(state.graph);
   graphStateRef.current = state.graph;
   const [mountedViews, setMountedViews] = useState<MountedViews>(() => ({
@@ -35,12 +44,10 @@ export function GitWorkspaceTabBody({
     review: state.activeView === 'review',
   }));
 
-  // Graph itself also repeats this check before it can issue local IPC. The
-  // workspace chooses Review as the usable surface for remote/device contexts
-  // so a newly-opened Git tab never lands on a known-unavailable graph view.
+  // Resolve ownership before any Git request. Older controlled devices retain
+  // Review until their host supports repository-aware Graph reads.
   const ownershipKnown = ctx.deviceLinkDeviceId !== undefined;
-  const graphAllowed =
-    ownershipKnown && ctx.remoteHostId === null && ctx.deviceLinkDeviceId === null;
+  const graphAllowed = ownershipKnown && !selection.legacy;
   const activeView = state.activeView === 'graph' && graphAllowed ? 'graph' : 'review';
 
   useEffect(() => {
@@ -69,46 +76,74 @@ export function GitWorkspaceTabBody({
   const showGraph = graphAllowed && (mountedViews.graph || activeView === 'graph');
   const showReview = mountedViews.review || activeView === 'review';
 
-  // Until Device Link ownership is known, neither local-only Graph nor the
+  // Until Device Link ownership is known, neither Graph nor the
   // Review body may assume that a local worktree belongs to this renderer.
   // This is a normal cold-start state. The workspace opens in Graph mode, so
   // reuse its visible loading shell instead of exposing an inert blank tab
   // while the session origin resolves.
-  if (!ownershipKnown) {
+  if (selection.failed) {
+    return (
+      <div className="flex flex-col items-center gap-2 p-4" role="status">
+        <p>{t('rightSidebar.workbench.loadFailed')}</p>
+        <GitControl label={t('rightSidebar.workbench.refresh')} onClick={selection.refresh}>
+          {t('rightSidebar.workbench.refresh')}
+        </GitControl>
+      </div>
+    );
+  }
+  if (!ownershipKnown || !selection.ready) {
     return <GitGraphLoadingState />;
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      {showGraph && (
-        <div
-          className={
-            activeView === 'graph' ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'hidden'
-          }
-        >
-          <Suspense fallback={<GitGraphLoadingState />}>
-            <GitGraphTabBody
-              state={state.graph}
-              ctx={graphCtx}
-              active={active && activeView === 'graph'}
-              shellVisible={shellVisible}
-            />
-          </Suspense>
-        </div>
-      )}
-      {showReview && (
-        <div
-          className={
-            activeView === 'review' ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'hidden'
-          }
-        >
-          <Suspense
-            fallback={<GitGraphLoadingState messageKey="rightSidebar.workbench.gitLoading" />}
+    <GitRepositoryContext.Provider value={selection.repositoryId}>
+      <div
+        key={selection.repositoryId ?? 'default'}
+        className="flex min-h-0 flex-1 flex-col overflow-hidden"
+      >
+        {showGraph && (
+          <div
+            className={
+              activeView === 'graph' ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'hidden'
+            }
           >
-            <ReviewTabBody state={state} ctx={ctx} />
-          </Suspense>
-        </div>
-      )}
-    </div>
+            <Suspense fallback={<GitGraphLoadingState />}>
+              <GitGraphTabBody
+                state={state.graph}
+                ctx={graphCtx}
+                active={active && activeView === 'graph'}
+                shellVisible={shellVisible}
+              />
+            </Suspense>
+          </div>
+        )}
+        {showReview && (
+          <div
+            className={
+              activeView === 'review' ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'hidden'
+            }
+          >
+            <Suspense
+              fallback={<GitGraphLoadingState messageKey="rightSidebar.workbench.gitLoading" />}
+            >
+              <ReviewTabBody
+                state={
+                  state.repositoryId && state.repositoryId !== selection.repositoryId
+                    ? {
+                        ...state,
+                        historyCommitOid: null,
+                        branchBaseRef: null,
+                        descriptor: { kind: 'unstaged' },
+                        jumpTarget: null,
+                      }
+                    : state
+                }
+                ctx={ctx}
+              />
+            </Suspense>
+          </div>
+        )}
+      </div>
+    </GitRepositoryContext.Provider>
   );
 }

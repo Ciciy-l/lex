@@ -1,3 +1,4 @@
+import { installSidebarContentSizing } from './contentSizing.js';
 /**
  * createRightSidebarWindow —— 右侧栏子窗口的 BrowserWindow 工厂。
  *
@@ -98,6 +99,7 @@ export function createRightSidebarWindow(): BrowserWindow {
   });
   installSelectionContextMenu(win);
   windowState.manage(win);
+  installSidebarContentSizing(win);
 
   installExternalLinkGuards(win);
 

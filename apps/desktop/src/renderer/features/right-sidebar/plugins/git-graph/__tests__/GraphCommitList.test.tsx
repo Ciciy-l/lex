@@ -34,10 +34,18 @@ it('bounds the ancestry column and keeps narrow author, date, and short OID meta
     new Date(commits[0].authorTime * 1000).toISOString(),
   );
   expect(view.container.querySelector('time')?.getAttribute('title')).toBeTruthy();
-  const inlineMetadata = view.container.querySelector('.lex-git-graph-inline-meta')!;
-  expect(inlineMetadata.querySelector('.lex-git-graph-inline-author')?.textContent).toBe('Author');
+  const inlineMetadata = view.container.querySelector('[data-commit-row]')!;
+  expect(inlineMetadata.querySelector('.lex-git-graph-author')?.textContent).toBe('Author');
   expect(inlineMetadata.querySelector('time')?.textContent).toBeTruthy();
   expect(inlineMetadata.querySelector('code')?.textContent).toBe('0');
+  expect(inlineMetadata.querySelectorAll('time')).toHaveLength(1);
+  expect(inlineMetadata.textContent!.indexOf('HEAD')).toBeLessThan(
+    inlineMetadata.textContent!.indexOf('Commit 0'),
+  );
+  expect(inlineMetadata.textContent!.indexOf('main')).toBeLessThan(
+    inlineMetadata.textContent!.indexOf('Commit 0'),
+  );
+  expect(screen.getByText('Commit 0').className).toContain('truncate');
   expect(
     new Set([...view.container.querySelectorAll('path')].map((path) => path.getAttribute('stroke')))
       .size,

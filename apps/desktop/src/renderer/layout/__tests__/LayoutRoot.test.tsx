@@ -12,6 +12,8 @@ import { __resetBuiltinPanelsForTest } from '../../panels/builtinPanels';
 import { __resetPanelRegistryForTest, registerPanelKind } from '../../panels/registry';
 import { LayoutRoot, normalizeSubMinFractions } from '../LayoutRoot';
 import { usePaneAtWindowTop, usePaneFill } from '../panePlacement';
+import { usePanelWidth } from '../paneWidths';
+import { setSidebarCompact } from '../sidebarPresentation';
 
 const ghostPanelSyncMock = vi.hoisted(() => ({ version: 0 }));
 
@@ -83,6 +85,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  setSidebarCompact(false);
   document.body.classList.remove('resizing-pane');
   vi.useRealTimers();
   __resetPanelRegistryForTest();
@@ -90,6 +93,23 @@ afterEach(() => {
 });
 
 describe('LayoutRoot · 树驱动的顺序与在场', () => {
+  it('narrows navigation-only sidebar without changing stored fractions and restores its expanded width', () => {
+    function WidthProbe() {
+      return <div data-testid="sidebar-width" data-width={usePanelWidth('right-tabs')} />;
+    }
+    render(
+      <BuiltinPanelBridgeProvider value={{ ...bridge, rightTabs: <WidthProbe /> }}>
+        <LayoutRoot />
+      </BuiltinPanelBridgeProvider>,
+    );
+    const expanded = screen.getByTestId('sidebar-width').getAttribute('data-width');
+    act(() => setSidebarCompact(true));
+    expect(screen.getByTestId('sidebar-width').getAttribute('data-width')).toContain('280px');
+    expect(setLayoutMock).not.toHaveBeenCalled();
+    act(() => setSidebarCompact(false));
+    expect(screen.getByTestId('sidebar-width').getAttribute('data-width')).toBe(expanded);
+    expect(setLayoutMock).not.toHaveBeenCalled();
+  });
   it('用独立 flex-1 内容区承载根 split，让百分比不包含左侧栏宽度', () => {
     renderLayoutRoot();
     const row = screen.getByTestId('row');

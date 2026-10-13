@@ -1,3 +1,4 @@
+import { enableCollabFromForm } from './enableCollabFromForm';
 import { ResponseSpeedStatus } from './ResponseSpeedStatus';
 import type { ResponseSpeedSnapshot } from '@cindy/maker-shared/usage-format';
 import { shouldShowOpenPathError } from '../../../shared/openPathResult';
@@ -72,7 +73,6 @@ import { sessionsStore } from '@/lib/sessionsStore';
 import { useStopOrcaCollab } from './hooks/useStopOrcaCollab';
 import { useWorkerProjection, useWorkerProjectionOwner } from './hooks/workerProjectionStore';
 import { CreateWorkerPopover, type CreateWorkerForm } from './CreateWorkerPopover';
-import { createWorkerLabel } from './workerLabel';
 import { setModelWithWindowConfirmation } from './lib/modelWindowConfirmation';
 import { TakeoverMask } from '@/components/new-chat/TakeoverMask';
 import { WorktreeCreatingOverlay } from '@/components/new-chat/WorktreeCreatingOverlay';
@@ -284,7 +284,7 @@ import {
 import { getCollaborationStartErrorMessage } from './collaborationErrors';
 import { useCollabProjectPolicy } from './hooks/useCollabProjectPolicy';
 import { resolveCollabEntryPolicy } from './collabEntryPolicy';
-import { consumePendingRemoteCollab, enableRemoteCollabForSession } from './remoteCollabHandoff';
+import { consumePendingRemoteCollab } from './remoteCollabHandoff';
 import {
   dispatchDeferredUiAssignment,
   getRecoverableDeferredUiAssignment,
@@ -2797,36 +2797,7 @@ export function CCAgentSessionView({
         // 粘滞归属(codex review P2):入口与协同策略查询都按粘滞 remoteDeviceId 指向被控端,
         // mutation 必须同口径 —— 非粘滞的 makerApiFor 在 relay 瞬断窗口内会退回本机
         // enableOrca,在**控制端**建出一个 team(本机恰有同 id 会话时还会操作错对象)。
-        const enableOptions = {
-          workerAgent,
-          role: form.role,
-          label: createWorkerLabel(form.role, []),
-          model: form.model,
-          effort: form.effort as
-            'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' | undefined,
-          fast: form.fast,
-          // null(未显式选来源)不传字段:IPC 侧只认非空 string 为显式来源。
-          providerId: form.providerId ?? undefined,
-          delegateTask: form.initialTask || undefined,
-          workerPermissionMode: form.workerPermissionMode,
-        };
-        const orcaDeviceId = getStickySessionDeviceId(collabSessionId);
-        if (orcaDeviceId) {
-          await enableRemoteCollabForSession({
-            deviceId: orcaDeviceId,
-            leadSessionId: collabSessionId,
-            options: enableOptions,
-            logTag: 'session enable collab',
-          });
-        } else {
-          await window.electronAPI.maker.enableOrca(collabSessionId, enableOptions);
-        }
-        void sessionsStore.forceRefresh('active');
-        // 远程会话:enableOrca 在被控端起了 worker session,先把该设备会话列表重拉进 store
-        // (注册 worker sessionId),否则 orca split 视图按 ?worker= 加载会 404。
-        // 归属同样取粘滞值:上面这次 enableOrca 已经按粘滞路由发到了被控端,这里若用非粘滞
-        // 判定会在瞬断窗口内解析成 undefined、跳过回流,worker 永远进不了控制端注册表。
-        if (orcaDeviceId) await refreshRemoteDeviceSessions(orcaDeviceId);
+        await enableCollabFromForm(collabSessionId, form);
         await revealWorkersTab;
       } catch (err) {
         await revealWorkersTab;

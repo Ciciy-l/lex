@@ -9,6 +9,8 @@ import { openGitGraph } from '../../../lib/openGitGraph';
 
 const api = vi.hoisted(() => ({
   graph: vi.fn(),
+  remoteGraph: vi.fn(),
+  remoteInvoke: vi.fn(),
   graphCompare: vi.fn(),
   review: vi.fn(),
   openTab: vi.fn(),
@@ -71,6 +73,12 @@ function Harness({
 beforeEach(() => {
   vi.resetAllMocks();
   api.graph.mockResolvedValue(data);
+  api.remoteInvoke.mockImplementation(
+    async (_device: string, _channel: string, [request]: [{ op: string; payload: unknown }]) => {
+      api.remoteGraph(request.payload);
+      return { ok: true, result: data };
+    },
+  );
   HTMLElement.prototype.scrollIntoView = vi.fn();
   api.review.mockResolvedValue(undefined);
   api.graphCompare.mockImplementation(async (request) => ({
@@ -79,7 +87,10 @@ beforeEach(() => {
     capped: null,
     warning: null,
   }));
-  Object.defineProperty(window, 'electronAPI', { configurable: true, value: { gitReview: api } });
+  Object.defineProperty(window, 'electronAPI', {
+    configurable: true,
+    value: { gitReview: api, deviceLink: { invoke: api.remoteInvoke } },
+  });
 });
 afterEach(cleanup);
 
@@ -317,15 +328,20 @@ describe('Git Graph content routing', () => {
     const update = api.patchTabState.mock.calls[0]?.[2] as (current: unknown) => unknown;
     expect(update({})).toMatchObject({ activeView: 'graph' });
   });
-  it.each([{ deviceId: 'device' }, { remoteHostId: 'ssh' }])(
-    'does not query local Git for a remote context %s',
-    async (props) => {
-      render(<Harness {...props} />);
-      expect(screen.getByText('rightSidebar.gitGraph.localOnly')).toBeTruthy();
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      expect(api.graph).not.toHaveBeenCalled();
-    },
-  );
+  it('routes controlled-device Graph over the tunnel without querying local Git', async () => {
+    render(<Harness deviceId="device" />);
+    await screen.findByText('Newest');
+    expect(api.graph).not.toHaveBeenCalled();
+    expect(api.remoteInvoke).toHaveBeenCalledWith('device', 'git-review:remote-op', [
+      { op: 'graph', payload: expect.objectContaining({ sessionId: 'lead' }) },
+    ]);
+  });
+  it('routes SSH Graph through main, where session ownership selects the backend', async () => {
+    render(<Harness remoteHostId="ssh" />);
+    await screen.findByText('Newest');
+    expect(api.graph).toHaveBeenCalled();
+    expect(api.remoteInvoke).not.toHaveBeenCalled();
+  });
   it('fails closed while device ownership is unresolved', () => {
     render(
       <GitGraphTabBody
@@ -333,7 +349,7 @@ describe('Git Graph content routing', () => {
         state={hydrateGraphState(null)}
       />,
     );
-    expect(screen.getByText('rightSidebar.gitGraph.localOnly')).toBeTruthy();
+    expect(screen.getByRole('status', { name: 'rightSidebar.gitGraph.loading' })).toBeTruthy();
     expect(api.graph).not.toHaveBeenCalled();
   });
   it('loads a bounded prefix, preserves the list during refresh and applies filters', async () => {
@@ -374,7 +390,12 @@ describe('Git Graph content routing', () => {
     fireEvent.click(screen.getByText('Newest'));
     fireEvent.click(screen.getByText('rightSidebar.gitGraph.setTo'));
     fireEvent.click(screen.getByText('rightSidebar.gitGraph.commitChanges'));
-    expect(api.review).toHaveBeenCalledWith('lead', { kind: 'commit', commitOid: head });
+    expect(api.review).toHaveBeenCalledWith(
+      'lead',
+      { kind: 'commit', commitOid: head },
+      undefined,
+      undefined,
+    );
     fireEvent.click(
       screen
         .getAllByRole('button', { name: 'rightSidebar.gitGraph.compare' })

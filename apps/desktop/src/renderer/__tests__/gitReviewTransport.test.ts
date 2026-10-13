@@ -35,6 +35,29 @@ afterEach(() => {
 });
 
 describe('gitReviewApiFor', () => {
+  it('checks repository capabilities before sending a selected-repository read and never downgrades to a default read', async () => {
+    const api = transport.gitReviewApiFor('device-1');
+    const payload = { sessionId: 's1', repositoryId: 'a'.repeat(64) };
+    invokeMock.mockResolvedValueOnce({ ok: true, result: { repositories: true } });
+    invokeMock.mockResolvedValueOnce({
+      ok: true,
+      result: { scope: { repositoryId: payload.repositoryId } },
+    });
+    await expect(api.navigation(payload)).resolves.toEqual({
+      scope: { repositoryId: payload.repositoryId },
+    });
+    expect(invokeMock.mock.calls.map((call) => call[2][0].op)).toEqual([
+      'capabilities',
+      'navigation',
+    ]);
+    expect(invokeMock.mock.calls[1][2][0].payload).toEqual(payload);
+    invokeMock.mockClear();
+    invokeMock.mockResolvedValue({ ok: false, message: 'unknown op: capabilities' });
+    await expect(api.navigation(payload)).rejects.toThrow('unknown op: capabilities');
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(localGitReview.get).not.toHaveBeenCalled();
+  });
+
   it('routes historical summaries and exact patches to the owning device', async () => {
     invokeMock.mockResolvedValue({ ok: true, result: [] });
     const api = transport.turnChangeReadApiFor('device-1');
@@ -42,7 +65,11 @@ describe('gitReviewApiFor', () => {
     expect(await api.getTurnChangeSets('s1', ['set-1'])).toEqual([]);
     expect(invokeMock.mock.calls).toEqual([
       ['device-1', 'git-review:remote-op', [{ op: 'turn-list', payload: { sessionId: 's1' } }]],
-      ['device-1', 'git-review:remote-op', [{ op: 'turn-get', payload: { sessionId: 's1', ids: ['set-1'] } }]],
+      [
+        'device-1',
+        'git-review:remote-op',
+        [{ op: 'turn-get', payload: { sessionId: 's1', ids: ['set-1'] } }],
+      ],
     ]);
   });
   it('returns the local API untouched when deviceId is empty', () => {

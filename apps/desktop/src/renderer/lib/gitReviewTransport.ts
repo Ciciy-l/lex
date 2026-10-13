@@ -2,14 +2,13 @@
  * gitReviewTransport —— git 审查的 device-link 透明传输层(fileBrowserTransport 同款模式)。
  *
  * 让 useReviewGitState 等 hooks 的只读查询**按会话来源**自动切换:
- *   - 本地 / SSH remote 会话 → 原样走 window.electronAPI.gitReview(SSH 由 scope
- *     层返回 remote-session 禁用态,renderer 无感)
+ *   - 本地 / SSH remote 会话 → 原样走 window.electronAPI.gitReview，SSH 由 main
+ *     按任务的权威 host/workdir 选择执行后端
  *   - device-link 远程会话(被控设备)→ 走 deviceLink.invoke(deviceId,
  *     'git-review:remote-op', [{op, payload}]) 隧道,被控端 git-review/device-op
  *     以它自己的 session 记录解析 workdir 并执行
  *
- * 只覆盖只读子集(get / summary / commits / commitDiff / branchDiff / fileDiff /
- * imagePreview / markdownPreview);写操作与 openFile 在 device-link 场景由 UI 层
+ * 只覆盖只读子集(仓库目录、工作区状态、Graph、history 和原有 Review 读取);写操作与 openFile 在 device-link 场景由 UI 层
  * 直接禁用,不进传输层。
  *
  * 响应编码:被控端超帧预算时以 resultGz(gzip+base64)返回,这里解回原形,
@@ -39,6 +38,13 @@ type LocalGitReview = typeof window.electronAPI.gitReview;
 /** 只读子集:device-link 场景可用的查询面。 */
 export type GitReviewReadApi = Pick<
   LocalGitReview,
+  | 'repositories'
+  | 'workspaceStatus'
+  | 'navigation'
+  | 'history'
+  | 'commitFiles'
+  | 'graph'
+  | 'graphCompare'
   | 'get'
   | 'summary'
   | 'commits'
@@ -67,6 +73,10 @@ type RemoteOpResult =
   | { ok: false; message: string };
 
 async function invokeOp<T>(deviceId: string, op: string, payload: object): Promise<T> {
+  if ((payload as { repositoryId?: string }).repositoryId && op !== 'capabilities') {
+    const caps = await invokeOp<{ repositories?: boolean }>(deviceId, 'capabilities', {});
+    if (caps.repositories !== true) throw new Error('GIT_REPOSITORIES_UNSUPPORTED');
+  }
   const res = (await window.electronAPI.deviceLink.invoke(deviceId, REMOTE_OP_CHANNEL, [
     { op, payload },
   ])) as RemoteOpResult | null | undefined;
@@ -91,6 +101,13 @@ async function invokeOp<T>(deviceId: string, op: string, payload: object): Promi
 export function gitReviewApiFor(deviceId: string | null | undefined): GitReviewReadApi {
   if (!deviceId) return window.electronAPI.gitReview;
   return {
+    repositories: (p) => invokeOp(deviceId, 'repositories', p),
+    workspaceStatus: (p) => invokeOp(deviceId, 'workspace-status', p),
+    navigation: (p) => invokeOp(deviceId, 'navigation', p),
+    history: (p) => invokeOp(deviceId, 'history', p),
+    commitFiles: (p) => invokeOp(deviceId, 'commit-files', p),
+    graph: (p) => invokeOp(deviceId, 'graph', p),
+    graphCompare: (p) => invokeOp(deviceId, 'graph-compare', p),
     get: (p) => invokeOp(deviceId, 'get', p),
     summary: (p) => invokeOp(deviceId, 'summary', p),
     commits: (p) => invokeOp(deviceId, 'commits', p),

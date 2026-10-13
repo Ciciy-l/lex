@@ -1,3 +1,7 @@
+import { useGitRepositorySelection } from './lib/gitRepositorySelection';
+import { gitFileDecoration, worktreeFileDecoration } from './lib/gitFileDecoration';
+import { Select } from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeftRight, FileDiff, GitBranch, GitFork, RefreshCw } from 'lucide-react';
@@ -53,14 +57,40 @@ export function GitNavigation({
   sessionId,
   deviceId,
   remoteHostId = null,
+  workdir = '',
 }: {
   sessionId: string;
   deviceId: string | null;
   remoteHostId?: string | null;
+  workdir?: string;
 }) {
+  const selection = useGitRepositorySelection(
+    sessionId,
+    deviceId,
+    JSON.stringify([workdir, remoteHostId]),
+  );
+  const { t } = useTranslation();
+  if (!selection.ready)
+    return (
+      <div role="status" className="flex flex-col gap-2 p-2 text-12">
+        <p>
+          {t(
+            selection.failed
+              ? 'rightSidebar.workbench.loadFailed'
+              : 'rightSidebar.workbench.gitLoading',
+          )}
+        </p>
+        {selection.failed && (
+          <GitControl label={t('rightSidebar.workbench.refresh')} onClick={selection.refresh}>
+            {t('rightSidebar.workbench.refresh')}
+          </GitControl>
+        )}
+      </div>
+    );
   return (
     <GitNavigationContent
-      key={JSON.stringify([sessionId, deviceId, remoteHostId])}
+      key={JSON.stringify([sessionId, deviceId, remoteHostId, selection.repositoryId])}
+      selection={selection}
       sessionId={sessionId}
       deviceId={deviceId}
       remoteHostId={remoteHostId}
@@ -69,6 +99,7 @@ export function GitNavigation({
 }
 
 function GitNavigationContent({
+  selection,
   sessionId,
   deviceId,
   remoteHostId,
@@ -76,8 +107,11 @@ function GitNavigationContent({
   sessionId: string;
   deviceId: string | null;
   remoteHostId: string | null;
+  selection: ReturnType<typeof useGitRepositorySelection>;
 }) {
   const { t } = useTranslation();
+  const repositoryId = selection.repositoryId;
+  const [directory, setDirectory] = useState('');
   const [data, setData] = useState<Pick<ReviewData, 'scope' | 'status'> | null>(null);
   const [history, setHistory] = useState<ReviewHistoryData | null>(null);
   const [failed, setFailed] = useState(false);
@@ -94,9 +128,9 @@ function GitNavigationContent({
     setHistoryBusy(true);
     const request = ++revision.current;
     await Promise.allSettled([
-      (deviceId
+      (selection.legacy
         ? gitReviewApiFor(deviceId).get({ sessionId })
-        : window.electronAPI.gitReview.navigation({ sessionId })
+        : gitReviewApiFor(deviceId).navigation({ sessionId, repositoryId })
       )
         .then((result) => {
           if (request === revision.current) {
@@ -107,9 +141,9 @@ function GitNavigationContent({
         .catch(() => {
           if (request === revision.current) setFailed(true);
         }),
-      (deviceId
+      (selection.legacy
         ? Promise.reject(new Error('HISTORY_UNAVAILABLE'))
-        : window.electronAPI.gitReview.history({ sessionId })
+        : gitReviewApiFor(deviceId).history({ sessionId, repositoryId })
       )
         .then((result) => {
           if (request === revision.current) {
@@ -127,7 +161,7 @@ function GitNavigationContent({
     if (request !== revision.current) return;
     inFlight.current = false;
     setBusy(false);
-  }, [sessionId, deviceId]);
+  }, [sessionId, deviceId, repositoryId, selection.legacy]);
   useEffect(() => {
     const queue = createGraphRefreshQueue(refresh);
     queueRef.current = queue;
@@ -150,7 +184,7 @@ function GitNavigationContent({
     };
   }, [refresh]);
   const navigate = (descriptor: Parameters<typeof openGitReview>[1], path?: string) => {
-    void openGitReview(sessionId, descriptor, path).catch(() =>
+    void openGitReview(sessionId, descriptor, path, repositoryId).catch(() =>
       toast.error(t('rightSidebar.workbench.loadFailed')),
     );
   };
@@ -159,14 +193,9 @@ function GitNavigationContent({
   // Legacy review state has no activeView and must remain a Review surface;
   // no tab yet means the next Git action will create a Graph-first workspace.
   const storedActiveView = resolveGitWorkspaceView(reviewTab?.state);
-  // Graph uses a local-only main IPC. Do not offer an action that is known to
-  // be denied for a controlled device or an SSH workspace.
-  const canOpenGraph =
-    deviceId === null &&
-    remoteHostId === null &&
-    data?.scope.source !== 'remote' &&
-    data?.scope.disabledReason !== 'remote-session';
-  // The workspace body also falls back to Review outside local contexts. Keep
+  // Older controlled devices retain Review until they support repository-aware Graph.
+  const canOpenGraph = !selection.legacy;
+  // The workspace body also falls back to Review for older hosts. Keep
   // the navigator's pressed state aligned with that effective visible view.
   const activeView = canOpenGraph && storedActiveView === 'graph' ? 'graph' : 'review';
   // Keep a known-empty snapshot visible while the next status read is in flight.
@@ -179,14 +208,34 @@ function GitNavigationContent({
     >
       <div className="border-b border-[var(--border-default)] px-2 py-1.5">
         <div className="flex min-w-0 items-center gap-1">
-          <span className="min-w-0 flex-1 truncate font-medium" title={data?.scope.repoRoot || ''}>
-            {data?.scope.repoRoot?.split(/[\\/]/).pop() || t('rightSidebar.workbench.git')}
-          </span>
+          {selection.catalog?.repositories.length ? (
+            <Select
+              label={t('rightSidebar.repositories.title')}
+              value={repositoryId ?? ''}
+              className="h-8 flex-1 text-12"
+              options={selection.catalog.repositories.map((repo) => ({
+                value: repo.id,
+                label: repo.name + ' · ' + repo.relativePath,
+              }))}
+              onValueChange={(id) => {
+                void selection
+                  .select(id)
+                  .catch(() => toast.error(t('rightSidebar.workbench.loadFailed')));
+              }}
+            />
+          ) : (
+            <span className="min-w-0 flex-1 truncate font-medium">
+              {t('rightSidebar.workbench.git')}
+            </span>
+          )}
           <GitControl
             label={t('rightSidebar.workbench.refresh')}
             iconOnly
             disabled={busy}
-            onClick={() => queueRef.current?.request()}
+            onClick={() => {
+              selection.refresh();
+              queueRef.current?.request();
+            }}
           >
             <RefreshCw size={13} />
           </GitControl>
@@ -256,6 +305,44 @@ function GitNavigationContent({
           )}
         </div>
       </div>
+      {selection.legacy && (
+        <p className="px-2 text-11 text-[var(--text-secondary)]">
+          {t('rightSidebar.repositories.legacy')}
+        </p>
+      )}
+      {selection.catalog?.partial && (
+        <p className="px-2 text-11 text-[var(--text-secondary)]">
+          {t('rightSidebar.repositories.partial')}
+        </p>
+      )}
+      {!selection.legacy && (
+        <details className="px-2 py-1 text-11">
+          <summary>{t('rightSidebar.repositories.add')}</summary>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void gitReviewApiFor(deviceId)
+                .repositories({ sessionId, relativePath: directory })
+                .then(() => {
+                  setDirectory('');
+                  selection.refresh();
+                })
+                .catch(() => toast.error(t('rightSidebar.workbench.loadFailed')));
+            }}
+            className="flex gap-1 py-1"
+          >
+            <Input
+              aria-label={t('rightSidebar.repositories.relativePath')}
+              placeholder={t('rightSidebar.repositories.relativePath')}
+              value={directory}
+              onChange={(event) => setDirectory(event.target.value)}
+            />
+            <GitControl label={t('rightSidebar.repositories.add')} type="submit">
+              +
+            </GitControl>
+          </form>
+        </details>
+      )}
       {failed && (
         <p role="alert" className="px-2">
           {t('rightSidebar.workbench.loadFailed')}
@@ -306,11 +393,11 @@ function GitNavigationContent({
                       key={file.path}
                       className="block w-full truncate rounded-full px-2 py-1 text-left hover:bg-[var(--surface-hover)]"
                       data-native-title="truncated-text"
-                      title={file.path}
+                      title={file.path + ' · ' + t(worktreeFileDecoration(file, source).labelKey)}
+                      style={{ color: worktreeFileDecoration(file, source).color }}
                       onClick={() => navigate({ kind: source }, file.path)}
                     >
-                      {file.isUntracked ? '? ' : ''}
-                      {file.path}
+                      {worktreeFileDecoration(file, source).letter} {file.path}
                     </button>
                   ))}
                   {!files.length && hasStatusSnapshot && (
@@ -352,8 +439,9 @@ function GitNavigationContent({
             )}
             {history?.commits.map((commit) => (
               <CommitFiles
-                key={commit.oid}
+                key={(repositoryId ?? 'default') + ':' + commit.oid}
                 commit={commit}
+                repositoryId={repositoryId}
                 sessionId={sessionId}
                 deviceId={deviceId}
               />
@@ -374,33 +462,32 @@ function GitNavigationContent({
 }
 
 function CommitFiles({
+  repositoryId,
   commit,
   sessionId,
   deviceId,
 }: {
+  repositoryId?: string;
   commit: ReviewCommit;
   sessionId: string;
   deviceId: string | null;
 }) {
   const { t } = useTranslation();
   const [paths, setPaths] = useState<string[] | null>(null);
+  const [statuses, setStatuses] = useState<Record<string, string>>({});
   const [error, setError] = useState(false);
   const [open, setOpen] = useState(false);
   useEffect(() => {
     if (!open || paths) return;
-    // Device Link deliberately does not expose this new local IPC capability.
-    // Local Desktop and SSH sessions both stay on the audited main-process
-    // execution path below.
-    if (deviceId !== null) {
-      setError(true);
-      return;
-    }
     let alive = true;
-    void window.electronAPI.gitReview
-      .commitFiles({ sessionId, oid: commit.oid })
+    void gitReviewApiFor(deviceId)
+      .commitFiles({ sessionId, repositoryId, oid: commit.oid })
       .then((result) => {
         if (alive) {
           setPaths(result.paths);
+          setStatuses(
+            Object.fromEntries((result.files ?? []).map((file) => [file.path, file.status])),
+          );
           setError(false);
         }
       })
@@ -410,7 +497,7 @@ function CommitFiles({
     return () => {
       alive = false;
     };
-  }, [open, paths, sessionId, deviceId, commit.oid]);
+  }, [open, paths, sessionId, deviceId, repositoryId, commit.oid]);
   return (
     <details onToggle={(e) => setOpen(e.currentTarget.open)}>
       <summary
@@ -425,14 +512,18 @@ function CommitFiles({
           className="block w-full truncate rounded-full py-1 pl-3 text-left hover:bg-[var(--surface-hover)]"
           key={path}
           data-native-title="truncated-text"
-          title={path}
+          title={path + ' · ' + t(gitFileDecoration(statuses[path]).labelKey)}
+          style={{ color: gitFileDecoration(statuses[path]).color }}
           onClick={() =>
-            void openGitReview(sessionId, { kind: 'commit', commitOid: commit.oid }, path).catch(
-              () => toast.error(t('rightSidebar.workbench.loadFailed')),
-            )
+            void openGitReview(
+              sessionId,
+              { kind: 'commit', commitOid: commit.oid },
+              path,
+              repositoryId,
+            ).catch(() => toast.error(t('rightSidebar.workbench.loadFailed')))
           }
         >
-          {path}
+          {gitFileDecoration(statuses[path]).letter} {path}
         </button>
       ))}
     </details>

@@ -98,7 +98,11 @@ export interface FileTreeViewHandle {
   scrollToPath: (relPath: string) => void;
 }
 
+export interface FileTreeDecoration {
+  color: string; badge: string; description: string; deleted?: boolean;
+}
 export interface FileTreeViewProps {
+  decorationForPath?: (path: string) => FileTreeDecoration | undefined;
   tree: UseFileTreeReturn;
   /** Currently selected file relPath (from URL). Used to draw highlight. */
   selectedPath: string | null;
@@ -206,6 +210,7 @@ function flattenTree(
 export const FileTreeView = forwardRef<FileTreeViewHandle, FileTreeViewProps>(function FileTreeView(
   {
     tree,
+    decorationForPath,
     selectedPath,
     onSelectFile,
   onOpenFile,
@@ -349,6 +354,7 @@ export const FileTreeView = forwardRef<FileTreeViewHandle, FileTreeViewProps>(fu
           <FileTreeRow
             key={entry.relPath}
             entry={entry}
+            decoration={decorationForPath?.(entry.relPath)}
             depth={depth}
             selected={entry.type === 'file' && entry.relPath === selectedPath}
             expanded={tree.expanded.has(entry.relPath)}
@@ -360,7 +366,7 @@ export const FileTreeView = forwardRef<FileTreeViewHandle, FileTreeViewProps>(fu
             onContextMenu={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              if (!hasContextActions(entry)) return;
+              if (decorationForPath?.(entry.relPath)?.deleted || !hasContextActions(entry)) return;
               setMenu({ pos: { x: e.clientX, y: e.clientY }, entry });
             }}
           />
@@ -560,6 +566,7 @@ export const FileTreeView = forwardRef<FileTreeViewHandle, FileTreeViewProps>(fu
 });
 
 interface FileTreeRowProps {
+  decoration?: FileTreeDecoration;
   entry: DirEntry;
   depth: number;
   selected: boolean;
@@ -574,6 +581,7 @@ interface FileTreeRowProps {
 }
 
 function FileTreeRow({
+  decoration,
   entry,
   depth,
   selected,
@@ -588,7 +596,7 @@ function FileTreeRow({
   const { t } = useTranslation();
   const isFolder = entry.type === 'directory';
   const canPreviewImage =
-    !isFolder && Boolean(onPreviewImage) && isLightboxImagePath(entry.relPath);
+    !decoration?.deleted && !isFolder && Boolean(onPreviewImage) && isLightboxImagePath(entry.relPath);
   // 展开慢时 chevron 原位换 spinner(同尺寸,行几何零变化);门控见 useDelayedFlag。
   const showLoadingChevron = useDelayedFlag(loading && isFolder);
   const Chev = expanded ? ChevronDown : ChevronRight;
@@ -624,7 +632,7 @@ function FileTreeRow({
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: 行内主按钮承载键盘语义；外层 click 只补回 padding 死区，眼睛按钮会阻止冒泡。
     <div
-      draggable
+      draggable={!decoration?.deleted}
       onClick={handleClick}
       onDoubleClick={() => { if (!isFolder) onOpenFile?.(entry.relPath); }}
       onContextMenu={onContextMenu}
@@ -640,7 +648,7 @@ function FileTreeRow({
         'group/file-row flex h-7 w-full min-w-max shrink-0 items-center rounded-md pr-2',
         'cursor-pointer text-13 transition-colors',
         selected
-          ? 'bg-sidebar-item-active font-medium text-sidebar-item-active-foreground'
+          ? decoration ? 'bg-[var(--surface-hover)] font-medium ring-1 ring-inset ring-[var(--border-default)]' : 'bg-sidebar-item-active font-medium text-sidebar-item-active-foreground'
           : 'text-foreground hover:bg-sidebar-item-hover',
       )}
     >
@@ -674,12 +682,13 @@ function FileTreeRow({
           strokeWidth={1.75}
           className={cn(
             'shrink-0',
-            selected
+            selected && !decoration
               ? 'text-sidebar-item-active-foreground'
               : 'text-[var(--cmd-palette-item-meta)]',
           )}
         />
-        <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+        <span className="min-w-0 flex-1 truncate" title={decoration?.description} style={{ color: decoration?.color, textDecoration: decoration?.deleted ? 'line-through' : undefined }}>{entry.name}</span>
+        {decoration && <span className="shrink-0 text-11" style={{ color: decoration.color }} aria-label={decoration.description}>{decoration.badge}</span>}
       </button>
       {canPreviewImage ? (
         <Tip text={t('ccAgent.workdirBrowse.imagePreview.viewLarge')} side="left">

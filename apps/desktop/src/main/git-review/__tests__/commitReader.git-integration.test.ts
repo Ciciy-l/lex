@@ -154,7 +154,11 @@ describe('git-review commitReader', () => {
       additions: 1,
       deletions: 0,
     });
-    expect(files).toEqual({ commitOid: oid, paths: ['extra.txt'] });
+    expect(files).toEqual({
+      commitOid: oid,
+      paths: ['extra.txt'],
+      files: [{ path: 'extra.txt', status: 'added' }],
+    });
   });
 
   it('falls back to the default branch base for branch commit history', async () => {
@@ -201,7 +205,11 @@ describe('git-review commitReader', () => {
       additions: 1,
       deletions: 0,
     });
-    expect(files).toEqual({ commitOid: oid, paths: ['root.txt'] });
+    expect(files).toEqual({
+      commitOid: oid,
+      paths: ['root.txt'],
+      files: [{ path: 'root.txt', status: 'added' }],
+    });
   });
 
   it('lists merge commit paths against the first parent without reading patches', async () => {
@@ -223,6 +231,7 @@ describe('git-review commitReader', () => {
     await expect(listCommitFiles(scope(repoPath), mergeOid)).resolves.toEqual({
       commitOid: mergeOid,
       paths: ['topic.txt'],
+      files: [{ path: 'topic.txt', status: 'added' }],
     });
   });
 

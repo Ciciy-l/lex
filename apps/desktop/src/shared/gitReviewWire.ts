@@ -24,6 +24,7 @@ export interface AheadBehind {
 }
 
 export interface ReviewScope {
+  repositoryId?: string;
   sessionId: string;
   workdir: string | null;
   worktreePath: string | null;
@@ -206,6 +207,7 @@ export interface ReviewCommit {
  * needs paths to route the user into the existing full Review surface.
  */
 export interface ReviewCommitFilesData {
+  files?: Array<{ path: string; status: string; oldPath?: string }>;
   scope: ReviewScope;
   commitOid: string;
   paths: string[];
@@ -356,6 +358,7 @@ export interface ReviewFileTarget {
 }
 
 export interface ReviewHunkOperationRequest {
+  repositoryId?: string;
   sessionId: string;
   diff: FileDiff;
   hunkIndex: number;
@@ -375,6 +378,7 @@ export interface ReviewStageOperationResult {
 }
 
 export interface ReviewCommitRequest {
+  repositoryId?: string;
   sessionId: string;
   message: string;
   includeUnstaged?: boolean;

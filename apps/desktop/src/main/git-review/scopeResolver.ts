@@ -17,6 +17,8 @@ import { sessions } from '../localDb/schema.js';
 import * as worktreeStore from '../worktree/worktreeStore.js';
 import { GitRunError, runGit } from './gitRunner.js';
 import type { ReviewScope } from './types.js';
+import { currentReviewRepositoryId } from './repositoryContext.js';
+import { resolveCatalogRepository } from './repositoryCatalog.js';
 
 export interface SessionReviewRow {
   id: string;
@@ -95,13 +97,19 @@ interface RepoRootProbe {
 }
 
 function isGitUnavailable(err: unknown): boolean {
-  return err instanceof GitRunError && (
-    err.exitCode === 127 ||
-    (err.exitCode === null && (err.cause as NodeJS.ErrnoException | undefined)?.code === 'ENOENT')
+  return (
+    err instanceof GitRunError &&
+    (err.exitCode === 127 ||
+      (err.exitCode === null &&
+        (err.cause as NodeJS.ErrnoException | undefined)?.code === 'ENOENT'))
   );
 }
 
-async function readRepoRoot(workdir: string, git: typeof runGit, remote = false): Promise<RepoRootProbe> {
+async function readRepoRoot(
+  workdir: string,
+  git: typeof runGit,
+  remote = false,
+): Promise<RepoRootProbe> {
   try {
     const { stdout } = await git(['rev-parse', '--show-toplevel'], { cwd: workdir });
     const root = stdout.trim();
@@ -118,7 +126,10 @@ async function readRepoRoot(workdir: string, git: typeof runGit, remote = false)
     // the caller can surface a retryable connection failure instead of
     // misreporting the workspace as a non-Git directory.
     if (remote && !(err instanceof GitRunError)) throw err;
-    return { repoRoot: null, disabledReason: isGitUnavailable(err) ? 'git-unavailable' : 'non-git' };
+    return {
+      repoRoot: null,
+      disabledReason: isGitUnavailable(err) ? 'git-unavailable' : 'non-git',
+    };
   }
 }
 
@@ -146,7 +157,7 @@ async function readRemoteHeadState(
   }
 }
 
-export async function resolveReviewScope(
+export async function resolveDefaultReviewScope(
   sessionId: string,
   deps: ScopeResolverDeps = defaultScopeResolverDeps(),
 ): Promise<ReviewScope> {
@@ -160,7 +171,9 @@ export async function resolveReviewScope(
   }
 
   if (row.remoteHostId) {
-    const resolutionChain = [{ source: 'remote', path: row.workingDir, ok: Boolean(row.workingDir) }];
+    const resolutionChain = [
+      { source: 'remote', path: row.workingDir, ok: Boolean(row.workingDir) },
+    ];
     if (!row.workingDir) {
       return disabledScope(sessionId, {
         worktreePath: row.worktreePath,
@@ -192,7 +205,9 @@ export async function resolveReviewScope(
         disabledMessage: unavailable
           ? 'Git is not available on the SSH host'
           : 'No git repository found in the SSH workspace',
-        resolutionChain: [{ ...resolutionChain[0], ok: false, reason: unavailable ? 'git-unavailable' : 'non-git' }],
+        resolutionChain: [
+          { ...resolutionChain[0], ok: false, reason: unavailable ? 'git-unavailable' : 'non-git' },
+        ],
       });
     }
     const head = await readRemoteHeadState(probe.repoRoot, deps.git);
@@ -240,7 +255,11 @@ export async function resolveReviewScope(
     });
   }
   const resolutionChain = [
-    { source: 'telemetry', path: resolved.source === 'telemetry' ? resolved.workdir : null, ok: resolved.source === 'telemetry' },
+    {
+      source: 'telemetry',
+      path: resolved.source === 'telemetry' ? resolved.workdir : null,
+      ok: resolved.source === 'telemetry',
+    },
     { source: 'worktree', path: fallbackWorktreePath, ok: resolved.source === 'worktree' },
     { source: 'workingDir', path: row.workingDir, ok: resolved.source === 'workingDir' },
   ];
@@ -250,7 +269,10 @@ export async function resolveReviewScope(
       workingDir: row.workingDir,
       worktreePath: fallbackWorktreePath,
       disabledReason: row.workingDir || fallbackWorktreePath ? 'non-git' : 'no-workdir',
-      disabledMessage: row.workingDir || fallbackWorktreePath ? 'No git repository found for this session' : 'This session has no local workdir',
+      disabledMessage:
+        row.workingDir || fallbackWorktreePath
+          ? 'No git repository found for this session'
+          : 'This session has no local workdir',
       resolutionChain,
     });
   }
@@ -263,9 +285,10 @@ export async function resolveReviewScope(
       worktreePath: fallbackWorktreePath,
       source: resolved.source,
       disabledReason: probe.disabledReason ?? 'non-git',
-      disabledMessage: probe.disabledReason === 'git-unavailable'
-        ? 'Git is not available on this computer'
-        : 'No git repository found for this session',
+      disabledMessage:
+        probe.disabledReason === 'git-unavailable'
+          ? 'Git is not available on this computer'
+          : 'No git repository found for this session',
       resolutionChain,
     });
   }
@@ -288,5 +311,30 @@ export async function resolveReviewScope(
     disabledReason: null,
     disabledMessage: null,
     resolutionChain,
+  };
+}
+
+export async function resolveReviewScope(
+  sessionId: string,
+  deps: ScopeResolverDeps = defaultScopeResolverDeps(),
+): Promise<ReviewScope> {
+  const scope = await resolveDefaultReviewScope(sessionId, deps);
+  const repositoryId = currentReviewRepositoryId();
+  if (!repositoryId) return scope;
+  const row = await deps.getSessionRow(sessionId);
+  if (!row) return scope;
+  const repoRoot = await resolveCatalogRepository(scope, row.remoteHostId, repositoryId, deps.git);
+  const head = await readRemoteHeadState(repoRoot, deps.git);
+  return {
+    ...scope,
+    ...head,
+    repositoryId,
+    repoRoot,
+    workdir: repoRoot,
+    isUnborn: head.headOid === null,
+    disabledReason: null,
+    disabledMessage: null,
+    source: row.remoteHostId ? 'remote' : (scope.source ?? 'workingDir'),
+    aheadBehind: { ahead: 0, behind: 0, upstream: null, stale: true },
   };
 }
