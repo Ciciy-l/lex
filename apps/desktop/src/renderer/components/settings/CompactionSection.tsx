@@ -9,7 +9,7 @@ import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useCompactionSettings, type CompactionAgent } from '@/hooks/useCompactionSettings';
-import { Slider } from '@/components/ui/slider';
+import { CompactionThresholdControl } from './CompactionThresholdControl';
 import { toast } from '@/lib/toast';
 import { DefaultOverrideControls } from './DefaultOverrideControls';
 
@@ -54,30 +54,13 @@ function CompactionCard({ agent, pct, isCustomized, resetPct, setPct }: Compacti
         {t(`${key}.description`)}
       </p>
 
-      <div className="flex items-center gap-[14px]">
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-          <Slider
-            value={[pct]}
-            min={50}
-            max={95}
-            step={1}
-            onValueChange={(value: number[]) => {
-              const next = value[0];
-              if (typeof next === 'number') setPct(next);
-            }}
-            aria-label={t(`${key}.sliderAria`)}
-          />
-          <div className="flex items-center justify-between text-11 leading-none text-[var(--text-tertiary)]">
-            <span>50%</span>
-            <span>95%</span>
-          </div>
-        </div>
-        <span className="shrink-0 rounded-full border border-[var(--border-default)] bg-[var(--surface-elevated)] px-3 py-1.5 text-13 font-medium leading-none text-[var(--text-primary)]">
-          {pct}%
-        </span>
-      </div>
-
-      <p className="text-12 leading-[1.5] text-[var(--text-secondary)]">{t(`${key}.hint`)}</p>
+      <CompactionThresholdControl
+        value={pct}
+        label={t(`${key}.sliderAria`)}
+        onChange={(next) => {
+          if (next !== null) setPct(next);
+        }}
+      />
     </div>
   );
 }
@@ -93,7 +76,7 @@ export function CompactionSection({ children }: { children?: ReactNode }) {
         <h2 className="text-16 font-medium leading-[1.2] text-[var(--settings-section-title)]">
           {t('settings.compaction.title')}
         </h2>
-        <p className="text-13 leading-[1.5] text-[var(--settings-section-desc)]">
+        <p className="text-12 leading-[1.5] text-[var(--settings-section-desc)]">
           {t('settings.compaction.description')}
         </p>
       </div>

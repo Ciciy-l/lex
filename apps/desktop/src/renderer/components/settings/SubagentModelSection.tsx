@@ -46,7 +46,7 @@ export function SubagentModelSection({ children }: { children?: ReactNode }) {
         <h2 className="text-16 font-medium leading-[1.2] text-[var(--settings-section-title)]">
           {t('settings.subagentModels.title')}
         </h2>
-        <p className="text-13 leading-[1.5] text-[var(--settings-section-desc)]">
+        <p className="text-12 leading-[1.5] text-[var(--settings-section-desc)]">
           {t('settings.subagentModels.description')}
         </p>
       </div>

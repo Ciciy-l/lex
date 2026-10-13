@@ -23,6 +23,54 @@ function release(kind: 'codex' | 'omp') {
   };
 }
 describe('official Harness releases', () => {
+  // Asset names taken from earendil-works/pi v1.2.0 (2026-10-12), not
+  // generated from process.platform: upstream calls Windows "windows".
+  it.each([
+    ['win32', 'x64', 'pi-windows-x64.zip', 'zip', 'pi.exe'],
+    ['win32', 'arm64', 'pi-windows-arm64.zip', 'zip', 'pi.exe'],
+    ['darwin', 'x64', 'pi-darwin-x64.tar.gz', 'tar.gz', 'pi'],
+    ['darwin', 'arm64', 'pi-darwin-arm64.tar.gz', 'tar.gz', 'pi'],
+    ['linux', 'x64', 'pi-linux-x64.tar.gz', 'tar.gz', 'pi'],
+    ['linux', 'arm64', 'pi-linux-arm64.tar.gz', 'tar.gz', 'pi'],
+  ] as const)(
+    'resolves the official Pi asset on %s %s',
+    (platform, arch, name, format, executable) => {
+      const url = `https://github.com/earendil-works/pi/releases/download/v1.2.0/${name}`;
+      const raw = {
+        tag_name: 'v1.2.0',
+        assets: [
+          { name, browser_download_url: url, digest: 'sha256:' + 'a'.repeat(64), size: 45099534 },
+        ],
+      };
+      expect(parseGithubArtifact('pi', raw, platform, arch)).toMatchObject({
+        version: '1.2.0',
+        source: 'upstream',
+        format,
+        executable,
+        url,
+        size: 45099534,
+      });
+      expect(() =>
+        parseGithubArtifact(
+          'pi',
+          { ...raw, assets: [{ ...raw.assets[0], digest: null }] },
+          platform,
+          arch,
+        ),
+      ).toThrow('RELEASE_HAS_NO_VERIFIED_ASSET');
+      expect(() =>
+        parseGithubArtifact(
+          'pi',
+          {
+            ...raw,
+            assets: [{ ...raw.assets[0], browser_download_url: 'https://example.invalid/asset' }],
+          },
+          platform,
+          arch,
+        ),
+      ).toThrow('RELEASE_HAS_NO_VERIFIED_ASSET');
+    },
+  );
   it('accepts the full Codex package and raw OMP artifact with official digests', () => {
     expect(parseGithubArtifact('codex', release('codex'), 'win32', 'x64').executable).toBe(
       'bin/codex.exe',

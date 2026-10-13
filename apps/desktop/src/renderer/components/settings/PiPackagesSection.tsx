@@ -50,10 +50,14 @@ const PACKAGE_RECOVERY_KEYS = {
   'check-build-dependencies': 'settings.piPackages.recovery.check-build-dependencies',
   'refresh-package-state': 'settings.piPackages.recovery.refresh-package-state',
   'inspect-state-before-retry': 'settings.piPackages.recovery.inspect-state-before-retry',
-} as const satisfies Record<NonNullable<PiPackageMutationResult['diagnostics']>[number]['recovery'], string>;
+} as const satisfies Record<
+  NonNullable<PiPackageMutationResult['diagnostics']>[number]['recovery'],
+  string
+>;
 
 function packageRecoveryKey(recovery: unknown) {
-  return typeof recovery === 'string' && Object.prototype.hasOwnProperty.call(PACKAGE_RECOVERY_KEYS, recovery)
+  return typeof recovery === 'string' &&
+    Object.prototype.hasOwnProperty.call(PACKAGE_RECOVERY_KEYS, recovery)
     ? PACKAGE_RECOVERY_KEYS[recovery as keyof typeof PACKAGE_RECOVERY_KEYS]
     : PACKAGE_RECOVERY_KEYS['inspect-state-before-retry'];
 }
@@ -65,17 +69,21 @@ function packageFailureMessage(message: string, t: ReturnType<typeof useTranslat
   if (offset < 0) return message;
   try {
     const diagnostic = JSON.parse(message.slice(offset + 1));
-    if (!diagnostic || !['prepare', 'native-command'].includes(diagnostic.phase)
-      || !['failed', 'timed-out', 'unknown'].includes(diagnostic.outcome)) {
+    if (
+      !diagnostic ||
+      !['prepare', 'native-command'].includes(diagnostic.phase) ||
+      !['failed', 'timed-out', 'unknown'].includes(diagnostic.outcome)
+    ) {
       return t('settings.piPackages.operationFailed');
     }
-    const statusKey = diagnostic.outcome === 'timed-out'
-      ? 'settings.piPackages.failure.commandTimedOut'
-      : diagnostic.outcome === 'unknown'
-        ? 'settings.piPackages.failure.commandUnknown'
-        : diagnostic.phase === 'prepare'
-          ? 'settings.piPackages.failure.commandNotStarted'
-          : 'settings.piPackages.failure.commandFailed';
+    const statusKey =
+      diagnostic.outcome === 'timed-out'
+        ? 'settings.piPackages.failure.commandTimedOut'
+        : diagnostic.outcome === 'unknown'
+          ? 'settings.piPackages.failure.commandUnknown'
+          : diagnostic.phase === 'prepare'
+            ? 'settings.piPackages.failure.commandNotStarted'
+            : 'settings.piPackages.failure.commandFailed';
     return `${t(statusKey)} ${t(packageRecoveryKey(diagnostic.recovery))}`;
   } catch {
     return t('settings.piPackages.operationFailed');
@@ -248,8 +256,11 @@ export function PiPackagesSection() {
       // A confirmed native success survives a missing Cindy projection. Older
       // receipts still need their enabled-package evidence; changed alone is
       // not proof that installation succeeded.
-      if (action === 'install' && result.nativeCommandSucceeded !== true
-        && result.affectedPackage?.enabled !== true) {
+      if (
+        action === 'install' &&
+        result.nativeCommandSucceeded !== true &&
+        result.affectedPackage?.enabled !== true
+      ) {
         toast.error(t('settings.piPackages.operationFailed'));
         return false;
       }
@@ -310,7 +321,10 @@ export function PiPackagesSection() {
   return (
     <div className={CARD_CLASS} role="region" aria-labelledby="pi-extensions-card-title">
       <div className="flex flex-col gap-1 px-4 pt-4 pb-3">
-        <h3 id="pi-extensions-card-title" className="text-14 font-medium leading-[1.2] text-[var(--settings-section-title)]">
+        <h3
+          id="pi-extensions-card-title"
+          className="text-14 font-medium leading-[1.2] text-[var(--settings-section-title)]"
+        >
           {t('settings.piPackages.title')}
         </h3>
         <p className="text-12 leading-[1.45] text-[var(--settings-section-desc)]">
@@ -318,18 +332,10 @@ export function PiPackagesSection() {
         </p>
       </div>
 
-      <section className="flex flex-col gap-3 px-4 pb-4" aria-labelledby="pi-extension-install-title">
-        <div className="flex flex-col gap-1">
-          <h3
-            id="pi-extension-install-title"
-            className="text-14 font-medium text-[var(--settings-section-sublabel)]"
-          >
-            {t('settings.piPackages.installSectionTitle')}
-          </h3>
-          <p className="text-12 leading-[1.45] text-[var(--settings-section-desc)]">
-            {t('settings.piPackages.installSectionDescription')}
-          </p>
-        </div>
+      <section
+        className="flex flex-col gap-2 px-4 pb-4"
+        aria-label={t('settings.piPackages.installSectionTitle')}
+      >
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <SettingsTextInput
@@ -363,7 +369,10 @@ export function PiPackagesSection() {
         </div>
       </section>
 
-      <section className="flex flex-col gap-3 border-t border-[var(--settings-theme-card-border)] pt-4" aria-labelledby="pi-extension-installed-title">
+      <section
+        className="flex flex-col gap-3 border-t border-[var(--settings-theme-card-border)] pt-4"
+        aria-labelledby="pi-extension-installed-title"
+      >
         <h3
           id="pi-extension-installed-title"
           className="px-4 text-14 font-medium text-[var(--settings-section-sublabel)]"
@@ -382,10 +391,7 @@ export function PiPackagesSection() {
         )}
 
         {loadState === 'error' && (
-          <div
-            role="alert"
-            className="flex flex-col items-center gap-3 px-4 py-6 text-center"
-          >
+          <div role="alert" className="flex flex-col items-center gap-3 px-4 py-6 text-center">
             <p className="text-12 leading-[1.45] text-[var(--settings-section-desc)]">
               {t('settings.piPackages.loadFailed')}
             </p>

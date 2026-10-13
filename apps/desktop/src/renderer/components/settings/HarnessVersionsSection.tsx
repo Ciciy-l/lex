@@ -7,6 +7,8 @@ import {
   type HarnessRelease,
 } from '../../../shared/harnessSettings';
 import { toast } from '@/lib/toast';
+import { extractIpcError } from '@/utils/ipcError';
+import { harnessErrorKey } from './harnessErrorKey';
 
 export const HARNESS_LABELS = {
   'claude-code': 'Claude Code',
@@ -30,6 +32,7 @@ export function HarnessVersionsSection() {
   };
   const [states, setStates] = useState<Partial<Record<HarnessKind, HarnessRuntimeState>>>({});
   const [unavailable, setUnavailable] = useState(false);
+  const [requestErrors, setRequestErrors] = useState<Partial<Record<HarnessKind, string>>>({});
   useEffect(() => {
     let active = true;
     const api = window.electronAPI?.maker.harness;
@@ -38,7 +41,10 @@ export function HarnessVersionsSection() {
       return;
     }
     const update = (state: HarnessRuntimeState) => {
-      if (active) setStates((prev) => ({ ...prev, [state.kind]: state }));
+      if (active) {
+        setStates((prev) => ({ ...prev, [state.kind]: state }));
+        setRequestErrors((prev) => ({ ...prev, [state.kind]: undefined }));
+      }
     };
     const unsubscribe = api.onProgress(update);
     for (const kind of HARNESS_KINDS)
@@ -46,7 +52,8 @@ export function HarnessVersionsSection() {
         .check(kind)
         .then(update)
         .catch(() => {
-          if (active) setUnavailable(true);
+          if (active)
+            setRequestErrors((prev) => ({ ...prev, [kind]: 'settings.harness.errors.check' }));
         });
     return () => {
       active = false;
@@ -54,22 +61,27 @@ export function HarnessVersionsSection() {
     };
   }, []);
   const invoke = async (kind: HarnessKind, release?: HarnessRelease) => {
+    setRequestErrors((prev) => ({ ...prev, [kind]: undefined }));
     try {
       const api = window.electronAPI.maker.harness;
       const next = release ? await api.install({ kind, ...release }) : await api.check(kind, true);
       setStates((prev) => ({ ...prev, [kind]: next }));
-    } catch {
-      toast.error(t('settings.harness.runtimeFailed'));
+    } catch (error) {
+      const key = harnessErrorKey(extractIpcError(error)?.message, release ? undefined : 'check');
+      setRequestErrors((prev) => ({ ...prev, [kind]: key }));
+      toast.error(t(key));
     }
   };
   return (
     <div className="flex flex-col gap-[14px]">
-      <h2 className="text-16 font-medium text-[var(--settings-section-title)]">
-        {t('settings.harness.versions')}
-      </h2>
-      <p className="text-13 text-[var(--settings-section-desc)]">
-        {t('settings.harness.versionsDescription')}
-      </p>
+      <div className="flex flex-col gap-1">
+        <h2 className="text-16 font-medium text-[var(--settings-section-title)]">
+          {t('settings.harness.versions')}
+        </h2>
+        <p className="text-12 leading-[1.5] text-[var(--settings-section-desc)]">
+          {t('settings.harness.versionsDescription')}
+        </p>
+      </div>
       {unavailable && (
         <p role="alert" className="text-13 text-[var(--settings-error-text)]">
           {t('settings.harness.runtimeFailed')}
@@ -79,9 +91,15 @@ export function HarnessVersionsSection() {
         {HARNESS_KINDS.map((kind) => {
           const state = states[kind];
           const installing = state?.phase === 'downloading' || state?.phase === 'verifying';
-          const busy = !state || installing || state.phase === 'checking';
+          const busy =
+            (!state && !requestErrors[kind]) || installing || state?.phase === 'checking';
+          const errorKey =
+            requestErrors[kind] ??
+            (state?.error ? harnessErrorKey(state.error, state.failureStage) : null);
+          const showStatus =
+            errorKey || state?.restartRequired || (state && phaseLabels[state.phase]);
           return (
-            <div key={kind} className="flex flex-col gap-3 p-5">
+            <div key={kind} className="flex flex-col gap-2 px-4 py-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="text-13 text-[var(--settings-section-title)]">
                   <span className="font-medium">{HARNESS_LABELS[kind]}</span>
@@ -136,22 +154,22 @@ export function HarnessVersionsSection() {
                   )}
                 </div>
               </div>
-              <div aria-live="polite" className="text-12 text-[var(--settings-section-desc)]">
-                {state && !['idle', 'ready'].includes(state.phase) && (
-                  <span>
-                    {phaseLabels[state.phase]}{' '}
-                    {state.percent === null ? '' : Math.round(state.percent) + '%'}
-                  </span>
-                )}
-                {state?.error && (
-                  <p role="alert">
-                    {t('settings.harness.runtimeFailed')} ({state.error})
-                  </p>
-                )}
-                {state?.restartRequired && (
-                  <p>{t('settings.harness.restartRequired', { version: state.selectedVersion })}</p>
-                )}
-              </div>
+              {showStatus && (
+                <div aria-live="polite" className="text-12 text-[var(--settings-section-desc)]">
+                  {state && !errorKey && !['idle', 'ready'].includes(state.phase) && (
+                    <span>
+                      {phaseLabels[state.phase]}{' '}
+                      {state.percent === null ? '' : Math.round(state.percent) + '%'}
+                    </span>
+                  )}
+                  {errorKey && <p role="alert">{t(errorKey)}</p>}
+                  {state?.restartRequired && (
+                    <p>
+                      {t('settings.harness.restartRequired', { version: state.selectedVersion })}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           );
         })}

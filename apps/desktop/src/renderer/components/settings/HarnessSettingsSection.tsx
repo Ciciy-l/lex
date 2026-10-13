@@ -11,8 +11,8 @@ export function HarnessSettingsSection() {
   const { t } = useTranslation();
   const omp = useOmpHarnessSettings();
   return (
-    <div className="flex flex-col gap-8">
-      <p className="text-13 text-[var(--settings-section-desc)]">
+    <div className="flex flex-col gap-6">
+      <p className="text-12 leading-[1.5] text-[var(--settings-section-desc)]">
         {t('settings.harness.description')}
       </p>
       <section id="settings-harness-versions">

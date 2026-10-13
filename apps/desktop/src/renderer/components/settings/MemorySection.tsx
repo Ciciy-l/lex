@@ -291,7 +291,7 @@ export function MemorySection({
             onReset={() => void handleResetSettings()}
           />
         </div>
-        <p className="text-13 leading-[1.5] text-[var(--settings-section-desc)]">
+        <p className="text-12 leading-[1.5] text-[var(--settings-section-desc)]">
           {t('settings.memory.description')}
         </p>
       </div>
@@ -314,7 +314,7 @@ export function MemorySection({
             >
               <Sparkles size={18} className="text-[var(--settings-section-title)]" />
             </div>
-            <div className="flex min-w-0 flex-col gap-[8px]">
+            <div className="flex min-w-0 flex-col gap-1">
               <p className="text-14 font-medium leading-none text-[var(--settings-section-title)]">
                 {t('settings.memory.maker.label')}
               </p>
@@ -380,7 +380,7 @@ export function MemorySection({
                 >
                   <agent.Mark />
                 </div>
-                <div className="flex min-w-0 flex-col gap-[8px]">
+                <div className="flex min-w-0 flex-col gap-1">
                   <p className="text-14 font-medium leading-none text-[var(--settings-section-title)]">
                     {label}
                   </p>

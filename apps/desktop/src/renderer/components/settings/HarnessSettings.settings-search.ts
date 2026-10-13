@@ -52,7 +52,16 @@ export default {
       targetId: 'settings-search-target-personalization-compaction',
       titleKey: 'settings.harness.compactionEnabled',
       sectionKey: 'settings.tabs.harness',
-      aliases: ['OMP', 'compaction', '上下文压缩'],
+      aliases: [
+        'OMP',
+        'compaction',
+        '上下文压缩',
+        '压缩阈值',
+        '百分比',
+        '原生默认',
+        'threshold',
+        'native default',
+      ],
     },
     {
       id: 'harness.ompKeepRecentTokens',

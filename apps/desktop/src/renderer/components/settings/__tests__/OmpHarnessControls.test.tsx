@@ -34,10 +34,37 @@ vi.mock('../DefaultOverrideControls', () => ({
     isCustomized: boolean;
     disabled?: boolean;
     onReset: () => void;
+  }) =>
+    props.isCustomized ? (
+      <button disabled={props.disabled || !props.isCustomized} onClick={props.onReset}>
+        restore
+      </button>
+    ) : null,
+}));
+vi.mock('@/components/ui/slider', () => ({
+  Slider: (props: {
+    value: number[];
+    min: number;
+    max: number;
+    step: number;
+    disabled: boolean;
+    onValueChange: (v: number[]) => void;
+    onValueCommit: (v: number[]) => void;
+    'aria-label': string;
+    'aria-valuetext': string;
   }) => (
-    <button disabled={props.disabled || !props.isCustomized} onClick={props.onReset}>
-      restore
-    </button>
+    <input
+      type="range"
+      min={props.min}
+      max={props.max}
+      step={props.step}
+      value={props.value[0]}
+      disabled={props.disabled}
+      aria-label={props['aria-label']}
+      aria-valuetext={props['aria-valuetext']}
+      onChange={(event) => props.onValueChange([Number(event.currentTarget.value)])}
+      onBlur={(event) => props.onValueCommit([Number(event.currentTarget.value)])}
+    />
   ),
 }));
 vi.mock('@/components/ui/switch', () => ({
@@ -249,13 +276,53 @@ describe('OMP settings within function groups', () => {
     value.keepRecentTokens = 1234;
     await mount(['compaction']);
     expand();
-    expect(field('compactionThreshold').value).toBe('');
+    const slider = screen.getByRole('slider', {
+      name: 'settings.harness.compactionThreshold',
+    }) as HTMLInputElement;
+    expect(slider.getAttribute('aria-valuetext')).toBe('settings.harness.nativeDefault');
     fireEvent.click(screen.getByRole('switch', { name: 'settings.harness.compactionEnabled' }));
     await waitFor(() => expect(value.compactionEnabled).toBe(false));
-    expect(field('compactionThreshold').disabled).toBe(true);
+    expect(slider.disabled).toBe(true);
     expect(field('keepRecentTokens').disabled).toBe(true);
     expect(field('keepRecentTokens').value).toBe('1234');
     expect(api.set).toHaveBeenLastCalledWith({ compactionEnabled: false }, 7);
+  });
+
+  it('previews the threshold without writes, commits a percentage, and restores the native policy', async () => {
+    await mount(['compaction']);
+    const slider = screen.getByRole('slider') as HTMLInputElement;
+    expect(screen.queryByText('restore')).toBeNull();
+    expect(api.set).not.toHaveBeenCalled();
+    fireEvent.change(slider, { target: { value: '83' } });
+    expect(slider.getAttribute('aria-valuetext')).toBe('83%');
+    expect(api.set).not.toHaveBeenCalled();
+    fireEvent.blur(slider);
+    await waitFor(() => expect(api.set).toHaveBeenLastCalledWith({ compactionThreshold: 83 }, 7));
+    await waitFor(() => expect(slider.disabled).toBe(false));
+    fireEvent.change(slider, { target: { value: '49' } });
+    fireEvent.blur(slider);
+    await waitFor(() => expect(api.set).toHaveBeenLastCalledWith({ compactionThreshold: null }, 7));
+    expect(slider.getAttribute('aria-valuetext')).toBe('settings.harness.nativeDefault');
+  });
+
+  it('rolls back failed threshold saves and restores the entire compaction group', async () => {
+    value.compactionThreshold = 81;
+    value.keepRecentTokens = 1000;
+    await mount(['compaction']);
+    const slider = screen.getByRole('slider') as HTMLInputElement;
+    api.set.mockRejectedValueOnce(new Error('write failed'));
+    fireEvent.change(slider, { target: { value: '90' } });
+    fireEvent.blur(slider);
+    await waitFor(() => expect(slider.value).toBe('81'));
+    fireEvent.click(screen.getByText('restore'));
+    await waitFor(() =>
+      expect(slider.getAttribute('aria-valuetext')).toBe('settings.harness.nativeDefault'),
+    );
+    expect(api.reset).toHaveBeenCalledWith(
+      ['compactionEnabled', 'compactionThreshold', 'keepRecentTokens'],
+      7,
+    );
+    expect(value.keepRecentTokens).toBeNull();
   });
 
   it('pauses native memory under unified memory and requires confirmation before clearing', async () => {

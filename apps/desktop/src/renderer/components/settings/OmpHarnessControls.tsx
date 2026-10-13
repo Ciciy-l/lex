@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { OmpHarnessSettings, OmpHarnessState } from '../../../shared/harnessSettings';
@@ -13,6 +13,7 @@ import { toast } from '@/lib/toast';
 import { DefaultOverrideControls } from './DefaultOverrideControls';
 import { HARNESS_BUTTON } from './HarnessVersionsSection';
 import { SettingsTextInput } from './SettingsTextInput';
+import { CompactionThresholdControl } from './CompactionThresholdControl';
 import { useSettingsSearchNavigation } from './SettingsSearchNavigation';
 
 export function useOmpHarnessSettings() {
@@ -83,15 +84,7 @@ const ADVANCED_KEYS: Record<Group, (keyof OmpHarnessSettings)[]> = {
   compaction: ['keepRecentTokens'],
 };
 
-function AdvancedSettings({
-  group,
-  customized,
-  children,
-}: {
-  group: Group;
-  customized: boolean;
-  children: ReactNode;
-}) {
+function useAdvancedSettings(group: Group, customized: boolean) {
   const { t } = useTranslation();
   const { entry, activation } = useSettingsSearchNavigation();
   const [expanded, setExpanded] = useState(false);
@@ -99,14 +92,16 @@ function AdvancedSettings({
   useLayoutEffect(() => {
     if (entry?.targetId === target) setExpanded(true);
   }, [entry?.targetId, activation, target]);
-  return (
-    <div className={group === 'memory' ? 'flex flex-col gap-3 pl-12' : 'flex flex-col gap-3'}>
+  return {
+    expanded,
+    target,
+    trigger: (
       <button
         type="button"
         aria-expanded={expanded}
         aria-controls={target}
         onClick={() => setExpanded((value) => !value)}
-        className="flex min-h-8 items-center gap-2 self-start rounded-full px-2 text-12 text-[var(--settings-section-desc)] hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+        className="flex min-h-8 shrink-0 items-center gap-2 self-start whitespace-nowrap rounded-full px-2 text-12 text-[var(--settings-section-desc)] hover:bg-[var(--surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
       >
         {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         {t('settings.harness.advanced')}
@@ -116,16 +111,8 @@ function AdvancedSettings({
           </span>
         )}
       </button>
-      {expanded && (
-        <div
-          id={target}
-          className="flex flex-col gap-3 border-t border-[var(--settings-theme-card-border)] pt-3"
-        >
-          {children}
-        </div>
-      )}
-    </div>
-  );
+    ),
+  };
 }
 
 /** Memory/Subagent render inside their shared card; compaction follows its sibling cards. */
@@ -148,7 +135,6 @@ export function OmpHarnessControls({
     compactionEnabled: t('settings.harness.compactionEnabled'),
     maxConcurrency: t('settings.harness.maxConcurrency'),
     maxRecursionDepth: t('settings.harness.maxRecursionDepth'),
-    compactionThreshold: t('settings.harness.compactionThreshold'),
     keepRecentTokens: t('settings.harness.keepRecentTokens'),
   };
   const customized = (keys: (keyof OmpHarnessSettings)[]) =>
@@ -161,7 +147,6 @@ export function OmpHarnessControls({
     <DefaultOverrideControls
       isCustomized={customized(KEYS[group])}
       disabled={disabled}
-      alwaysVisible
       onReset={() => {
         if (state)
           void run(
@@ -171,6 +156,7 @@ export function OmpHarnessControls({
       }}
     />
   );
+  const advanced = useAdvancedSettings(group, customized(ADVANCED_KEYS[group]));
   const toggle = (key: 'nativeMemory' | 'compactionEnabled', inactive = false) => (
     <div className="flex items-center justify-between gap-4">
       <label htmlFor={'omp-' + key} className="text-13 text-[var(--settings-section-title)]">
@@ -187,7 +173,7 @@ export function OmpHarnessControls({
     </div>
   );
   const number = (
-    key: 'maxConcurrency' | 'maxRecursionDepth' | 'compactionThreshold' | 'keepRecentTokens',
+    key: 'maxConcurrency' | 'maxRecursionDepth' | 'keepRecentTokens',
     min: number,
     max: number,
   ) => (
@@ -220,6 +206,15 @@ export function OmpHarnessControls({
             <span className="shrink-0 rounded-full bg-[var(--surface-chip)] px-2.5 py-1 text-11 font-medium leading-none text-[var(--text-secondary)]">
               OMP
             </span>
+            {advanced.trigger}
+            <Switch
+              checked={settings?.compactionEnabled ?? false}
+              disabled={disabled}
+              aria-label={labels.compactionEnabled}
+              onCheckedChange={(compactionEnabled) => {
+                void save({ compactionEnabled });
+              }}
+            />
             {reset}
           </div>
         </div>
@@ -256,10 +251,11 @@ export function OmpHarnessControls({
           <div
             className={
               group === 'subagents'
-                ? 'flex min-w-0 flex-1 basis-48 items-center gap-2'
+                ? 'flex min-w-0 flex-1 basis-64 items-center gap-2'
                 : 'flex shrink-0 items-center gap-2'
             }
           >
+            {group === 'memory' && advanced.trigger}
             {group === 'memory' ? (
               <Switch
                 checked={settings?.unifiedMemory ?? false}
@@ -292,6 +288,7 @@ export function OmpHarnessControls({
                 />
               </div>
             )}
+            {group === 'subagents' && advanced.trigger}
             {reset}
           </div>
         </div>
@@ -322,59 +319,98 @@ export function OmpHarnessControls({
           <p className="text-12 leading-[1.5] text-[var(--settings-section-desc)]">
             {t('settings.harness.compactionDescription')}
           </p>
-          {toggle('compactionEnabled')}
-          {number('compactionThreshold', 50, 95)}
+          <OmpCompactionThreshold
+            value={settings?.compactionThreshold ?? null}
+            snapshot={state}
+            disabled={disabled || !settings?.compactionEnabled}
+            onSave={(compactionThreshold) => save({ compactionThreshold })}
+          />
         </>
       )}
-      <AdvancedSettings group={group} customized={customized(ADVANCED_KEYS[group])}>
-        {group === 'memory' && (
-          <>
-            {toggle('nativeMemory', makerEnabled)}
-            <p className="text-12 leading-[1.5] text-[var(--settings-section-desc)]">
-              {t('settings.harness.nativeMemoryDescription')}
-            </p>
-            {makerEnabled && (
+      {advanced.expanded && (
+        <div
+          id={advanced.target}
+          className="flex flex-col gap-3 border-t border-[var(--settings-theme-card-border)] pt-3"
+        >
+          {group === 'memory' && (
+            <>
+              {toggle('nativeMemory', makerEnabled)}
               <p className="text-12 leading-[1.5] text-[var(--settings-section-desc)]">
-                {t('settings.harness.nativeMemoryPaused')}
+                {t('settings.harness.nativeMemoryDescription')}
               </p>
-            )}
-            <button
-              type="button"
-              className={HARNESS_BUTTON + ' self-start'}
-              disabled={disabled}
-              onClick={async () => {
-                const ok = await confirm({
-                  title: t('settings.harness.clearMemory'),
-                  description: t('settings.harness.clearMemoryDescription'),
-                  confirmText: t('settings.harness.clearMemory'),
-                  cancelText: t('settings.harness.cancel'),
-                });
-                if (ok && state)
-                  void run(
-                    () => window.electronAPI.maker.ompHarness.clearMemory(state.ownerGeneration),
-                    'settings.harness.memoryCleared',
-                  );
-              }}
-            >
-              {t('settings.harness.clearMemory')}
-            </button>
-          </>
-        )}
-        {group === 'subagents' && (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {number('maxConcurrency', 0, 128)}
-            {number('maxRecursionDepth', 0, 16)}
-            <p className="text-12 leading-[1.5] text-[var(--settings-section-desc)] sm:col-span-2">
-              {t('settings.harness.subagentAdvancedHint')}
-            </p>
-          </div>
-        )}
-        {group === 'compaction' && number('keepRecentTokens', 0, 1_000_000)}
-        <p className="text-12 leading-[1.5] text-[var(--settings-section-desc)]">
-          {t('settings.harness.nextSession')}
-        </p>
-      </AdvancedSettings>
+              {makerEnabled && (
+                <p className="text-12 leading-[1.5] text-[var(--settings-section-desc)]">
+                  {t('settings.harness.nativeMemoryPaused')}
+                </p>
+              )}
+              <button
+                type="button"
+                className={HARNESS_BUTTON + ' self-start'}
+                disabled={disabled}
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: t('settings.harness.clearMemory'),
+                    description: t('settings.harness.clearMemoryDescription'),
+                    confirmText: t('settings.harness.clearMemory'),
+                    cancelText: t('settings.harness.cancel'),
+                  });
+                  if (ok && state)
+                    void run(
+                      () => window.electronAPI.maker.ompHarness.clearMemory(state.ownerGeneration),
+                      'settings.harness.memoryCleared',
+                    );
+                }}
+              >
+                {t('settings.harness.clearMemory')}
+              </button>
+            </>
+          )}
+          {group === 'subagents' && (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {number('maxConcurrency', 0, 128)}
+              {number('maxRecursionDepth', 0, 16)}
+              <p className="text-12 leading-[1.5] text-[var(--settings-section-desc)] sm:col-span-2">
+                {t('settings.harness.subagentAdvancedHint')}
+              </p>
+            </div>
+          )}
+          {group === 'compaction' && number('keepRecentTokens', 0, 1_000_000)}
+        </div>
+      )}
     </div>
+  );
+}
+
+function OmpCompactionThreshold({
+  value,
+  snapshot,
+  disabled,
+  onSave,
+}: {
+  value: number | null;
+  snapshot: OmpHarnessState | null;
+  disabled: boolean;
+  onSave: (value: number | null) => Promise<boolean>;
+}) {
+  const { t } = useTranslation();
+  const [draft, setDraft] = useState(value);
+  const saved = useRef(value);
+  saved.current = value;
+  useEffect(() => {
+    setDraft(value);
+  }, [value, snapshot]);
+  return (
+    <CompactionThresholdControl
+      value={draft}
+      nativeDefault
+      disabled={disabled}
+      label={t('settings.harness.compactionThreshold')}
+      onChange={setDraft}
+      onCommit={async (next) => {
+        if (disabled || next === saved.current) return;
+        if (!(await onSave(next))) setDraft(saved.current);
+      }}
+    />
   );
 }
 
@@ -429,7 +465,6 @@ function NumericSetting({
     <FormField
       id={id}
       label={label}
-      reserveFeedback
       error={invalid ? t('settings.harness.invalidRange', { min, max }) : undefined}
     >
       {(control) => (

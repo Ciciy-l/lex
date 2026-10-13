@@ -9,6 +9,7 @@ import type {
   HarnessKind,
   HarnessRuntimeState,
   HarnessSource,
+  HarnessFailureStage,
 } from '../../shared/harnessSettings.js';
 import {
   activeHarnessSelection,
@@ -96,7 +97,7 @@ export async function checkHarness(kind: HarnessKind, force = false): Promise<Ha
   if (!force && state(kind).checkedAt !== null && Date.now() - state(kind).checkedAt! < CACHE_MS)
     return harnessState(kind);
   const operation = (async () => {
-    publish(kind, { phase: 'checking', error: null });
+    publish(kind, { phase: 'checking', error: null, failureStage: null });
     try {
       const release = await upstreamArtifact(kind, AbortSignal.timeout(30_000));
       releases.set(kind, release);
@@ -110,7 +111,8 @@ export async function checkHarness(kind: HarnessKind, force = false): Promise<Ha
       publish(kind, {
         upstream: null,
         phase: 'failed',
-        error: errorCode(error),
+        error: errorCode(error, 'RUNTIME_CHECK_FAILED'),
+        failureStage: 'check',
         checkedAt: Date.now(),
       });
     }
@@ -123,9 +125,28 @@ export async function checkHarness(kind: HarnessKind, force = false): Promise<Ha
     checks.delete(kind);
   }
 }
-function errorCode(error: unknown): string {
+function errorCode(error: unknown, fallback = 'RUNTIME_INSTALL_FAILED'): string {
   const message = error instanceof Error ? error.message : '';
-  return /^[A-Z][A-Z0-9_]{1,80}$/.test(message) ? message : 'RUNTIME_INSTALL_FAILED';
+  if (/^[A-Z][A-Z0-9_]{1,80}$/.test(message)) return message;
+  const code = (error as { code?: unknown } | null)?.code;
+  if (
+    typeof code === 'string' &&
+    [
+      'NETWORK',
+      'TIMEOUT',
+      'CHECKSUM',
+      'SIZE',
+      'DISK',
+      'ENOSPC',
+      'EACCES',
+      'EPERM',
+      'HTTP_4XX',
+      'HTTP_5XX',
+    ].includes(code)
+  )
+    return code;
+  if (error instanceof Error && error.name === 'TimeoutError') return 'TIMEOUT';
+  return fallback;
 }
 async function distributionRoot(
   unpacked: string,
@@ -174,7 +195,8 @@ export async function installHarness(input: {
   operations.set(kind, controller);
   const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30 * 60_000)]);
   const root = harnessRoot(kind);
-  publish(kind, { phase: 'downloading', error: null, percent: 0 });
+  let failureStage: HarnessFailureStage = 'download';
+  publish(kind, { phase: 'downloading', error: null, failureStage: null, percent: 0 });
   try {
     await fsp.mkdir(root, { recursive: true });
     await withSecurityBoundaryLock(
@@ -206,6 +228,7 @@ export async function installHarness(input: {
             },
           });
           publish(kind, { phase: 'verifying', percent: 100 });
+          failureStage = 'extract';
           if (artifact.format === 'gz') {
             let size = 0;
             const limit = new Transform({
@@ -229,6 +252,7 @@ export async function installHarness(input: {
               signal,
               LIMITS,
             );
+          failureStage = 'verify';
           const distribution = await distributionRoot(stage, artifact, kind);
           const binary = path.join(distribution, artifact.executable);
           if (process.platform !== 'win32') await fsp.chmod(binary, 0o755);
@@ -242,6 +266,7 @@ export async function installHarness(input: {
             executableSize: (await fsp.stat(binary)).size,
           };
           signal.throwIfAborted();
+          failureStage = 'publish';
           await renameWithTransientRetry(distribution, path.join(root, selection.directory), {
             platform: process.platform,
             signal,
@@ -266,6 +291,7 @@ export async function installHarness(input: {
     publish(kind, {
       phase: controller.signal.aborted ? 'cancelled' : 'failed',
       error: controller.signal.aborted ? null : errorCode(error),
+      failureStage: controller.signal.aborted ? null : failureStage,
       percent: null,
     });
   } finally {
