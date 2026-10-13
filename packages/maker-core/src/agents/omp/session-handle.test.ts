@@ -13,6 +13,7 @@ import {
   type OmpSessionRuntimeCallbacks,
 } from './session-handle.js';
 import { OmpTranslator } from './translator.js';
+import { ASYNC_QUESTION_ANSWER } from '../base-agent.js';
 
 /** `JSON.parse` 返回 unknown；这里用运行时守卫收窄，不做断言式 cast。 */
 function parseFrameObject(line: string): Record<string, unknown> {
@@ -355,6 +356,27 @@ describe('OmpSessionHandle runtime vendor options', () => {
 });
 
 describe('OmpSessionHandle send / steer / abort', () => {
+  it('delivers optional answers only to an active native turn and never queues idle answers', async () => {
+    const test = harness();
+    const message = { type: 'user' as const, content: 'The user answered: both' };
+    const options = { [ASYNC_QUESTION_ANSWER]: true as const };
+    try {
+      await expect(test.handle.steer(message, options)).rejects.toThrow('No active OMP turn');
+      expect(test.transport.written()).toHaveLength(0);
+      test.handle.dispatchFrame({ type: 'agent_start' });
+      const pending = test.handle.steer(message, options);
+      test.answer('steer');
+      await pending;
+      const before = test.transport.written().length;
+      const controller = new AbortController();
+      controller.abort();
+      await expect(test.handle.steer(message, { ...options, signal: controller.signal })).rejects.toThrow('cancelled');
+      test.handle.dispatchFrame({ type: 'agent_end', messages: [] });
+      await expect(test.handle.steer(message, options)).rejects.toThrow('No active OMP turn');
+      expect(test.transport.written()).toHaveLength(before);
+    } finally { await test.handle.close(); }
+  });
+
   it('sends a prompt frame and settles when OMP accepts it', async () => {
     const test = harness();
     const pending = test.handle.send({ type: 'user', content: 'create hello.txt' });

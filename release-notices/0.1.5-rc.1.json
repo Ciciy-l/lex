@@ -1,0 +1,66 @@
+{
+  "version": "0.1.5-rc.1",
+  "date": "2026-10-13",
+  "contentByLocale": {
+    "zh-CN": {
+      "intro": "Lex 0.1.5-rc.1 选择性适配 Cindy v0.1.104 的修复与优化，保留 Lex 的四引擎、服务区和独立更新渠道。建议桌面与 Android 一同更新。",
+      "topics": [
+        {"id": "stability", "title": "任务与引擎更稳定", "text": "修复旧任务恢复时的权限继承、SSH 重协商与设备连接清理，改善 Pi 切换模型、断线和取消处理。四引擎的模型、思考档位与快速模式偏好按实际能力保存，辅助窗口恢复更可靠。"},
+        {"id": "mobile", "title": "手机登录、消息和历史体验", "text": "改善浏览器登录恢复、取消和切区隔离；已发送消息在历史缓存接管前保持可见。新任务等待真实模型目录，优化语音结束后的焦点、历史滚动、引用摘要、首页刷新和长任务读取。"},
+        {"id": "media-plugins", "title": "持久图片与手机插件选择", "text": "任务图片进入受管存储，修复可恢复的旧引用并明确显示缺失图片，保持账号与 SSH 文件边界。手机输入框可选择已安装插件，发送和持久草稿保留原始输入；旧桌面缺少目录能力时保持兼容。"},
+        {"id": "agent-controls", "title": "提问、工具发现与 Pi 子代理", "text": "异步提问支持在运行中接收回答，过期、取消或已结束的任务不会被回答重新唤醒；OMP 接入原生插话。Pi 子代理补齐等待、停止、插话、续作和结果回报。MCP 发现读取 Claude Code/Codex 当前任务实际工具；Pi、OMP 或 SSH 暂无此读取接口时明确说明，不新建连接。"},
+        {"id": "response-speed", "title": "四引擎生成速度", "text": "展示首响应等待、生成、工具执行与重试状态，完成后保留本轮速度曲线和输出量。流式估算明确标注，工具执行时间不计入生成速度；显示计量与账单、上下文用量分离。"},
+        {"id": "settings-download", "title": "统一设置布局与 Lex 下载入口", "text": "OMP 记忆、子代理和上下文压缩融入已有功能分组，Pi 扩展设置集中呈现。桌面二维码指向 Lex 下载页面；这些修复随本版本安装生效。"},
+        {"id": "upgrade", "title": "预发布升级说明", "text": "仅推进 beta 渠道，正式版仍为 0.1.4。桌面可开启接收测试版更新或下载安装包；Android 0.1.4 可通过应用内更新获取本版，旧版也可手动覆盖安装。沿用 Lex 包名和永久签名，不需要卸载。暂不提供 iOS 安装包；未宣称完成真实设备安装、升级或双主题目检。"}
+      ]
+    },
+    "zh-TW": {
+      "intro": "Lex 0.1.5-rc.1 選擇性適配 Cindy v0.1.104 的修復與最佳化，保留 Lex 的四引擎、服務區域及獨立更新管道。建議桌面與 Android 一起更新。",
+      "topics": [
+        {"id": "stability", "title": "任務與引擎更穩定", "text": "修復舊任務恢復時的權限繼承、SSH 重新協商與裝置連線清理，改善 Pi 切換模型、斷線和取消處理。四引擎的模型、思考等級與快速模式偏好依實際能力儲存，輔助視窗恢復更可靠。"},
+        {"id": "mobile", "title": "手機登入、訊息與歷史體驗", "text": "改善瀏覽器登入恢復、取消與切換區域的隔離；已傳送訊息在歷史快取接手前保持可見。新任務等待真實模型目錄，改善語音結束後的焦點、歷史捲動、引用摘要、首頁更新與長任務讀取。"},
+        {"id": "media-plugins", "title": "持久圖片與手機插件選擇", "text": "任務圖片存入受管儲存空間，修復可恢復的舊引用並明確顯示缺失圖片，維持帳號與 SSH 檔案邊界。手機輸入框可選擇已安裝插件，傳送與持久草稿保留原始輸入；舊桌面缺少目錄能力時保持相容。"},
+        {"id": "agent-controls", "title": "提問、工具探索與 Pi 子代理", "text": "非同步提問可在執行中接收回答，過期、取消或已結束的任務不會被回答重新喚醒；OMP 接入原生插話。Pi 子代理補齊等待、停止、插話、續作與結果回報。MCP 探索讀取 Claude Code/Codex 目前任務的實際工具；Pi、OMP 或 SSH 暫無此讀取介面時明確說明，不建立新連線。"},
+        {"id": "response-speed", "title": "四引擎生成速度", "text": "顯示首次回應等待、生成、工具執行與重試狀態，完成後保留本輪速度曲線及輸出量。串流估算明確標示，工具執行時間不計入生成速度；顯示計量與帳單、上下文用量分離。"},
+        {"id": "settings-download", "title": "統一設定版面與 Lex 下載入口", "text": "OMP 記憶、子代理與上下文壓縮整合至既有功能分組，Pi 擴充設定集中呈現。桌面 QR 碼指向 Lex 下載頁面；這些修復隨本版本安裝生效。"},
+        {"id": "upgrade", "title": "預發布升級說明", "text": "只推進 beta 管道，正式版仍為 0.1.4。桌面可開啟接收測試版更新或下載安裝包；Android 0.1.4 可透過應用程式內更新取得本版，舊版也可手動覆蓋安裝。沿用 Lex 套件名稱與永久簽章，不需要解除安裝。暫不提供 iOS 安裝包；未宣稱完成實機安裝、升級或雙主題目視驗證。"}
+      ]
+    },
+    "en": {
+      "intro": "Lex 0.1.5-rc.1 selectively adapts fixes and improvements from Cindy v0.1.104 while preserving Lex's four engines, service regions and independent updates. Update desktop and Android together.",
+      "topics": [
+        {"id": "stability", "title": "More reliable tasks and engines", "text": "Fixes saved permissions during task recovery, SSH rekeying and device connection cleanup. Improves Pi model switching, disconnection and cancellation. Model, thinking and fast-mode preferences follow each engine's actual capabilities, and auxiliary windows recover more reliably."},
+        {"id": "mobile", "title": "Mobile sign-in, messages and history", "text": "Improves browser sign-in recovery, cancellation and region isolation. Sent messages remain visible until history caching takes over. New tasks wait for the real model catalog. Voice-input focus, history scrolling, quoted summaries, home refresh and long-task reading are improved."},
+        {"id": "media-plugins", "title": "Durable images and mobile plugin selection", "text": "Task images enter managed storage; recoverable references are repaired and missing images are clearly shown, preserving account and SSH file boundaries. The mobile composer can select installed plugins while durable drafts and sent input retain the original text. Older hosts without a plugin catalog remain compatible."},
+        {"id": "agent-controls", "title": "Questions, tool discovery and Pi subagents", "text": "Asynchronous questions accept answers during execution without waking expired, cancelled or finished tasks; OMP uses native steering. Pi subagents gain complete wait, stop, steer, follow-up and result delivery controls. MCP discovery reads tools already held by the current Claude Code/Codex task. Pi, OMP and SSH report unavailable discovery when no reader exists, without opening new connections."},
+        {"id": "response-speed", "title": "Response speed across four engines", "text": "Shows first-response waiting, generation, tool execution and retries, retaining the turn's speed chart and output after completion. Stream estimates are labelled, tool execution is excluded from generation time, and display measurements remain separate from billing and context usage."},
+        {"id": "settings-download", "title": "Consistent settings and Lex downloads", "text": "OMP memory, subagents and context compaction join the existing capability groups; Pi extension settings are grouped together. The desktop QR code opens Lex's download page. These fixes take effect after installing this version."},
+        {"id": "upgrade", "title": "Prerelease upgrade", "text": "Only the beta channel advances; stable remains 0.1.4. Enable prerelease updates or download a desktop installer. Android 0.1.4 can use in-app updates; older builds can install the APK over the existing app. Lex keeps its package ID and permanent Android signer, with no uninstall required. No iOS installer is included. Physical-device installation, upgrades and Light/Dark visual acceptance have not been claimed."}
+      ]
+    },
+    "ja": {
+      "intro": "Lex 0.1.5-rc.1 は Cindy v0.1.104 の修正と改善を選択的に取り込み、Lex の4エンジン、サービス地域、独立した更新チャネルを維持します。デスクトップと Android を一緒に更新してください。",
+      "topics": [
+        {"id": "stability", "title": "タスクとエンジンの安定性", "text": "タスク復元時の保存済み権限、SSH の再鍵交換、デバイス接続の後処理を修正しました。Pi のモデル切り替え、切断、キャンセルを改善し、モデル・思考レベル・高速モードの設定を各エンジンの対応範囲に合わせて保存します。補助ウィンドウの復旧も改善しました。"},
+        {"id": "mobile", "title": "モバイルのログイン、メッセージ、履歴", "text": "ブラウザー認証の復旧、キャンセル、地域切り替え時の分離を改善しました。送信済みメッセージは履歴キャッシュへの移行まで表示を維持します。新規タスクは実際のモデル一覧を待ちます。音声入力後のフォーカス、履歴スクロール、引用要約、ホーム更新、長いタスクの読み込みも改善しました。"},
+        {"id": "media-plugins", "title": "画像の永続保存とモバイルのプラグイン選択", "text": "タスク画像を管理ストレージに保存し、復旧可能な参照を修復して欠落画像を明示します。アカウントと SSH のファイル境界を維持します。モバイル入力欄でインストール済みプラグインを選べ、保存下書きと送信入力には元のテキストを保持します。一覧機能のない旧ホストとも互換性を保ちます。"},
+        {"id": "agent-controls", "title": "質問、ツール探索、Pi サブエージェント", "text": "非同期質問は実行中に回答を受け取り、期限切れ・キャンセル・終了済みタスクを再起動しません。OMP はネイティブの割り込みを使います。Pi サブエージェントの待機、停止、割り込み、継続、結果通知を整備しました。MCP 探索は現在の Claude Code/Codex タスクが保持するツールを読みます。Pi、OMP、SSH に読取機能がない場合は明示し、新規接続は作りません。"},
+        {"id": "response-speed", "title": "4エンジンの生成速度", "text": "初回応答待ち、生成、ツール実行、再試行を表示し、完了後も今回の速度グラフと出力量を残します。ストリーム推定値は明示し、ツール実行時間を生成速度から除外します。表示用計測は課金・コンテキスト使用量と分離します。"},
+        {"id": "settings-download", "title": "設定レイアウトと Lex ダウンロード", "text": "OMP のメモリ、サブエージェント、コンテキスト圧縮を既存の機能グループへ統合し、Pi 拡張設定を一か所にまとめました。デスクトップの QR コードは Lex のダウンロードページを開きます。本バージョンのインストール後に反映されます。"},
+        {"id": "upgrade", "title": "プレリリースへの更新", "text": "beta チャネルのみ更新し、正式版は 0.1.4 のままです。デスクトップはテスト版更新を有効にするかインストーラーを利用してください。Android 0.1.4 はアプリ内更新、旧版は APK の上書きインストールが可能です。Lex のパッケージ ID と継続使用する Android 署名を維持し、アンインストールは不要です。iOS インストーラーは含みません。実機のインストール・更新や明暗テーマの目視検証完了は主張していません。"}
+      ]
+    },
+    "ko": {
+      "intro": "Lex 0.1.5-rc.1은 Cindy v0.1.104의 수정과 개선을 선택적으로 적용하며 Lex의 네 엔진, 서비스 지역 및 독립 업데이트 채널을 유지합니다. 데스크톱과 Android를 함께 업데이트하세요.",
+      "topics": [
+        {"id": "stability", "title": "작업과 엔진 안정성", "text": "작업 복원 시 저장된 권한, SSH 재키 교환 및 기기 연결 정리를 수정했습니다. Pi 모델 전환, 연결 끊김과 취소를 개선했습니다. 모델·사고 수준·빠른 모드 설정은 각 엔진의 실제 지원 범위를 따르며 보조 창 복구도 개선했습니다."},
+        {"id": "mobile", "title": "모바일 로그인, 메시지와 기록", "text": "브라우저 로그인 복구, 취소 및 지역 전환 격리를 개선했습니다. 보낸 메시지는 기록 캐시가 인계받을 때까지 표시됩니다. 새 작업은 실제 모델 목록을 기다립니다. 음성 입력 후 포커스, 기록 스크롤, 인용 요약, 홈 새로 고침 및 긴 작업 읽기도 개선했습니다."},
+        {"id": "media-plugins", "title": "이미지 영구 보관과 모바일 플러그인 선택", "text": "작업 이미지를 관리 저장소에 보관하고 복구 가능한 참조를 수정하며 누락된 이미지를 명확히 표시합니다. 계정과 SSH 파일 경계를 유지합니다. 모바일 입력창에서 설치된 플러그인을 선택할 수 있으며 저장 초안과 전송 입력은 원문을 유지합니다. 목록 기능이 없는 이전 호스트와도 호환됩니다."},
+        {"id": "agent-controls", "title": "질문, 도구 검색과 Pi 하위 에이전트", "text": "비동기 질문은 실행 중 답변을 받으며 만료·취소·종료된 작업을 다시 깨우지 않습니다. OMP는 네이티브 끼어들기를 사용합니다. Pi 하위 에이전트의 대기, 중지, 끼어들기, 후속 작업과 결과 전달을 보완했습니다. MCP 검색은 현재 Claude Code/Codex 작업이 보유한 도구를 읽습니다. Pi, OMP 및 SSH에 읽기 인터페이스가 없으면 이를 알리고 새 연결은 만들지 않습니다."},
+        {"id": "response-speed", "title": "네 엔진의 생성 속도", "text": "첫 응답 대기, 생성, 도구 실행 및 재시도를 표시하고 완료 후에도 해당 차례의 속도 그래프와 출력량을 유지합니다. 스트림 추정치를 명시하며 도구 실행 시간은 생성 속도에서 제외합니다. 표시용 측정값은 요금 및 컨텍스트 사용량과 분리됩니다."},
+        {"id": "settings-download", "title": "일관된 설정과 Lex 다운로드", "text": "OMP 메모리, 하위 에이전트와 컨텍스트 압축을 기존 기능 그룹에 통합하고 Pi 확장 설정을 한곳에 모았습니다. 데스크톱 QR 코드는 Lex 다운로드 페이지를 엽니다. 이 버전을 설치하면 적용됩니다."},
+        {"id": "upgrade", "title": "미리 보기 버전 업그레이드", "text": "beta 채널만 갱신하며 정식 버전은 0.1.4를 유지합니다. 데스크톱에서 테스트 버전 업데이트를 켜거나 설치 파일을 받으세요. Android 0.1.4는 앱 내 업데이트를, 이전 버전은 APK 덮어쓰기를 사용할 수 있습니다. Lex 패키지 ID와 지속 사용 Android 서명을 유지하므로 제거할 필요가 없습니다. iOS 설치 파일은 제공하지 않습니다. 실기기 설치·업그레이드 또는 밝은·어두운 테마의 육안 검증 완료를 주장하지 않습니다."}
+      ]
+    }
+  }
+}

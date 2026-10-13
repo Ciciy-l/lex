@@ -19165,6 +19165,8 @@ describe('CodexAgent MCP thread context hooks', () => {
         }
 
         now = 5_000;
+        handlers.itemStarted!({ threadId: 'start-thread-id', turnId: 'turn-ordering',
+          item: { id: 'ordering-reasoning', type: 'reasoning', summary: [], content: [] } });
         handlers.turnCompleted({
           threadId: 'start-thread-id',
           turn: { id: 'turn-ordering', status: 'completed' },
@@ -19174,10 +19176,151 @@ describe('CodexAgent MCP thread context hooks', () => {
         });
         const done = events.find((event) => event.type === 'done');
         expect((done?.data as { usage?: { durationMs?: number } }).usage?.durationMs)
-          .toBe(expectedDurationMs);
+          .toBeUndefined();
+        expect(events.findLast((event) => event.type === 'status')?.data.responseSpeed).toMatchObject({ outputTokens: 0, averageRate: null, firstResponseMs: expectedDurationMs });
 
         await handle.close();
       } finally {
+        nowSpy.mockRestore();
+      }
+    },
+  );
+
+  it.each(['serial', 'parallel-tools', 'parallel-output'])('publishes paired tool phases and closes response time before delayed usage/turn completion (%s)', async (mode) => {
+    let now = 1_000;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const agent = new CodexAgent(createDeps());
+    const host = installFakeHost(agent);
+    const handle = await agent.startSession({ sessionId: 'session-speed-lifecycle', model: 'gpt-5.4', workingDir: '/repo' });
+    const handlers = host.getThreadHandlers()!;
+    const events: AgentEvent[] = [];
+    void (async () => { for await (const event of handle.events()) events.push(event); })();
+    const latestSpeed = () => events.findLast((event) => event.type === 'status')?.data.responseSpeed;
+    try {
+      handlers.turnStarted!({ threadId: 'start-thread-id', turn: { id: 'speed-turn' } });
+      now = 2_000;
+      handlers.agentMessageDelta!({ threadId: 'start-thread-id', turnId: 'speed-turn', itemId: 'answer-1', delta: 'abcd' });
+      now = 3_000;
+      handlers.itemStarted!({ threadId: 'start-thread-id', turnId: 'speed-turn',
+        item: { id: 'tool-1', type: 'commandExecution', command: 'pwd', cwd: '/repo', status: 'inProgress' } } as never);
+      await waitForExpectation(() => expect(latestSpeed()).toMatchObject({ phase: 'paused', toolActive: true, durationMs: 1_000 }));
+      // A duplicate start must not reopen generation during tool execution.
+      now = 3_100;
+      handlers.itemStarted!({ threadId: 'start-thread-id', turnId: 'speed-turn',
+        item: { id: 'tool-1', type: 'commandExecution', command: 'pwd', cwd: '/repo', status: 'inProgress' } } as never);
+      await waitForExpectation(() => expect(latestSpeed()).toMatchObject({ phase: 'paused', durationMs: 1_000 }));
+      if (mode === 'parallel-tools') {
+        now = 4_000;
+        handlers.itemStarted!({ threadId: 'start-thread-id', turnId: 'speed-turn',
+          item: { id: 'tool-2', type: 'commandExecution', command: 'pwd', cwd: '/repo', status: 'inProgress' } } as never);
+        now = 8_000;
+        handlers.itemCompleted!({ threadId: 'start-thread-id', turnId: 'speed-turn',
+          item: { id: 'tool-2', type: 'commandExecution', command: 'pwd', cwd: '/repo', status: 'completed' } } as never);
+        await waitForExpectation(() => expect(latestSpeed()).toMatchObject({ phase: 'paused', toolActive: true }));
+      }
+      if (mode === 'parallel-output') {
+        now = 8_000;
+        handlers.agentMessageDelta!({ threadId: 'start-thread-id', turnId: 'speed-turn', itemId: 'parallel-answer', delta: 'ijkl' });
+      }
+      now = 9_000;
+      handlers.itemCompleted!({ threadId: 'start-thread-id', turnId: 'speed-turn',
+        item: { id: 'tool-1', type: 'commandExecution', command: 'pwd', cwd: '/repo', status: 'completed', aggregatedOutput: '/repo' } } as never);
+      await waitForExpectation(() => expect(latestSpeed()).toMatchObject({ phase: mode === 'parallel-output' ? 'generating' : 'waiting', toolActive: false, waitingMs: 0 }));
+      now = 11_000;
+      handlers.agentMessageDelta!({ threadId: 'start-thread-id', turnId: 'speed-turn', itemId: 'answer-2', delta: 'efgh' });
+      now = 13_000;
+      handlers.itemCompleted!({ threadId: 'start-thread-id', turnId: 'speed-turn',
+        item: { id: 'answer-2', type: 'agentMessage', text: 'efgh' } } as never);
+      const observedMs = mode === 'parallel-output' ? 6_000 : 3_000;
+      await waitForExpectation(() => expect(latestSpeed()).toMatchObject({ phase: 'paused', durationMs: observedMs }));
+      now = 19_000;
+      handlers.tokenUsageUpdated!({ threadId: 'start-thread-id', turnId: 'speed-turn', tokenUsage: {
+        total: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 60, reasoningOutputTokens: 0, totalTokens: 70 },
+        last: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 60, reasoningOutputTokens: 0, totalTokens: 70 },
+      } } as never);
+      now = 25_000;
+      handlers.turnCompleted!({ threadId: 'start-thread-id', turn: { id: 'speed-turn', status: 'completed', durationMs: 24_000 } });
+      await waitForExpectation(() => expect(events.some((event) => event.type === 'done')).toBe(true));
+      // Tool arguments are not a measured stream: the whole-turn 60 output
+      // tokens must not inflate these two/three observed character estimates.
+      const observedTokens = mode === 'parallel-output' ? 3 : 2;
+      expect(latestSpeed()).toMatchObject({ phase: 'complete', outputTokens: observedTokens,
+        durationMs: observedMs, averageRate: observedTokens * 1_000 / observedMs, estimated: true });
+      const usage = events.find((event) => event.type === 'done')?.data.usage;
+      expect(usage).toMatchObject({ completionTokens: 60 });
+      expect(usage?.durationMs).toBeUndefined();
+      now = 26_000;
+      handlers.turnStarted!({ threadId: 'start-thread-id', turn: { id: 'next-speed-turn' } });
+      now = 26_100;
+      handlers.itemStarted!({ threadId: 'start-thread-id', turnId: 'next-speed-turn', item: { id: 'reason-2', type: 'reasoning', summary: [], content: [] } } as never);
+      await waitForExpectation(() => expect(latestSpeed()?.outputTokens).toBe(0));
+    } finally {
+      await handle.close();
+      nowSpy.mockRestore();
+    }
+  });
+
+  it.each(['commandExecution', 'mcpToolCall', 'fileChange', 'plan'])(
+    'keeps tool-first %s turns approximate and restores calibration on the next text-only turn',
+    async (type) => {
+      let now = 1_000;
+      const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+      const agent = new CodexAgent(createDeps());
+      const host = installFakeHost(agent);
+      const handle = await agent.startSession({ sessionId: `session-tool-first-${type}`, model: 'gpt-5.4', workingDir: '/repo' });
+      const handlers = host.getThreadHandlers()!;
+      const events: AgentEvent[] = [];
+      void (async () => { for await (const event of handle.events()) events.push(event); })();
+      const latestSpeed = () => events.findLast(event => event.type === 'status')?.data.responseSpeed;
+      try {
+        handlers.turnStarted!({ threadId: 'start-thread-id', turn: { id: 'tool-first' } });
+        const item = type === 'commandExecution'
+          ? { id: 'first-tool', type, command: 'pwd', cwd: '/repo', status: 'inProgress' }
+          : type === 'mcpToolCall'
+            ? { id: 'first-tool', type, server: 'test', tool: 'lookup', arguments: { query: 'where' }, status: 'inProgress' }
+            : type === 'fileChange'
+              ? { id: 'first-tool', type, changes: [{ path: '/repo/example', kind: { type: 'update' }, diff: '+answer' }], status: 'completed' }
+              : { id: 'first-tool', type, text: 'Look up the answer' };
+        const execution = type === 'commandExecution' || type === 'mcpToolCall';
+        now = 2_000;
+        if (execution) {
+          handlers.itemStarted!({ threadId: 'start-thread-id', turnId: 'tool-first', item } as never);
+          await waitForExpectation(() => expect(latestSpeed()).toMatchObject({ phase: 'paused', toolActive: true, firstResponseMs: 1_000, durationMs: 0 }));
+          now = 8_000;
+        }
+        handlers.itemCompleted!({ threadId: 'start-thread-id', turnId: 'tool-first', item: { ...item, status: 'completed' } } as never);
+        if (execution) await waitForExpectation(() => expect(latestSpeed()).toMatchObject({ phase: 'waiting', toolActive: false }));
+
+        const finishAnswer = async (turnId: string, start: number, cumulativeOutput: number, lastOutput: number) => {
+          now = start;
+          handlers.agentMessageDelta!({ threadId: 'start-thread-id', turnId, itemId: `${turnId}-answer`, delta: 'a'.repeat(40) });
+          now = start + 1_000;
+          handlers.agentMessageDelta!({ threadId: 'start-thread-id', turnId, itemId: `${turnId}-answer`, delta: 'b'.repeat(40) });
+          await waitForExpectation(() => expect(latestSpeed()).toMatchObject({ phase: 'generating', recentRate: 10 }));
+          now = start + 2_000;
+          handlers.itemCompleted!({ threadId: 'start-thread-id', turnId, item: { id: `${turnId}-answer`, type: 'agentMessage', text: 'a'.repeat(40) + 'b'.repeat(40) } } as never);
+          now = start + 3_000;
+          handlers.tokenUsageUpdated!({ threadId: 'start-thread-id', turnId, tokenUsage: {
+            total: { inputTokens: 20, cachedInputTokens: 0, outputTokens: cumulativeOutput, reasoningOutputTokens: 0, totalTokens: cumulativeOutput + 20 },
+            last: { inputTokens: 10, cachedInputTokens: 0, outputTokens: lastOutput, reasoningOutputTokens: 0, totalTokens: lastOutput + 10 },
+          } } as never);
+          handlers.turnCompleted!({ threadId: 'start-thread-id', turn: { id: turnId, status: 'completed' } });
+          await waitForExpectation(() => expect(latestSpeed()?.phase).toBe('complete'));
+          return events.findLast(event => event.type === 'done')?.data.usage;
+        };
+        const mixedUsage = await finishAnswer('tool-first', 10_000, 150, 150);
+        expect(latestSpeed()).toMatchObject({ estimated: true, outputTokens: 20, durationMs: 2_000, averageRate: 10 });
+        expect(latestSpeed()?.samples.every((sample: { rate: number }) => sample.rate <= 10)).toBe(true);
+        expect(mixedUsage).toMatchObject({ completionTokens: 150 });
+        expect(mixedUsage?.durationMs).toBeUndefined();
+
+        now = 14_000;
+        handlers.turnStarted!({ threadId: 'start-thread-id', turn: { id: 'text-only' } });
+        const textUsage = await finishAnswer('text-only', 15_000, 190, 40);
+        expect(latestSpeed()).toMatchObject({ estimated: false, outputTokens: 40, durationMs: 2_000, averageRate: 20 });
+        expect(textUsage).toMatchObject({ completionTokens: 40, durationMs: 2_000 });
+      } finally {
+        await handle.close();
         nowSpy.mockRestore();
       }
     },
@@ -19256,7 +19399,10 @@ describe('CodexAgent MCP thread context hooks', () => {
       });
       await waitForExpectation(() => expect(events.some((event) => event.type === 'done')).toBe(true));
       const done = events.find((event) => event.type === 'done');
-      expect((done?.data as { usage?: { durationMs?: number } }).usage?.durationMs).toBe(3_000);
+      // No root output/usage was observed: tool/interaction facts remain
+      // available, but cannot become a persisted token-rate denominator.
+      expect((done?.data as { usage?: { durationMs?: number } }).usage?.durationMs).toBeUndefined();
+      expect(events.findLast((event) => event.type === 'status')?.data.responseSpeed).toMatchObject({ outputTokens: 0, averageRate: null, firstResponseMs: null });
 
       await handle.close();
     } finally {
@@ -19345,7 +19491,9 @@ describe('CodexAgent MCP thread context hooks', () => {
         expect(events.some((event) => event.type === 'done')).toBe(true),
       );
       const done = events.find((event) => event.type === 'done');
-      expect((done?.data as { usage?: { durationMs?: number } }).usage?.durationMs).toBe(1_500);
+      // A last-only usage notification without a cumulative ledger cursor and
+      // no content stream cannot provide a calibrated generation rate.
+      expect((done?.data as { usage?: { durationMs?: number } }).usage?.durationMs).toBeUndefined();
 
       await handle.close();
     } finally {
@@ -19421,7 +19569,10 @@ describe('CodexAgent MCP thread context hooks', () => {
       expect(handle.getUsageSnapshot().tokenUsage).toBe(540 - cachedInputTokens);
       handlers.turnCompleted!({ threadId: 'start-thread-id', turn: { id: 'turn-1', status: 'completed' } });
       await waitForExpectation(() => expect(events.some((event) => event.type === 'done')).toBe(true));
-      expect(events.find((event) => event.type === 'done')?.data.usage.durationMs).toBe(5_000);
+      // Real output exists, but no streamed text was observed: keep accounting
+      // and the legacy paired sample, while omitting an unobservable final TPS.
+      expect(events.find((event) => event.type === 'done')?.data.usage.durationMs).toBeUndefined();
+      expect(events.filter((event) => event.type === 'status').at(-1)?.data.responseSpeed).toMatchObject({ outputTokens: 500, averageRate: null });
       expect(events.filter((event) => event.type === 'status').at(-1)?.data).toMatchObject({
         status: 'Done', outputTokens: 500, generationDurationMs: 5_000,
       });
@@ -19790,7 +19941,10 @@ describe('CodexAgent MCP thread context hooks', () => {
       });
       await waitForExpectation(() => expect(events.some((event) => event.type === 'done')).toBe(true));
       const done = events.find((event) => event.type === 'done');
-      expect((done?.data as { usage?: { durationMs?: number } }).usage?.durationMs).toBe(3_000);
+      // No root output/usage was observed: tool/interaction facts remain
+      // available, but cannot become a persisted token-rate denominator.
+      expect((done?.data as { usage?: { durationMs?: number } }).usage?.durationMs).toBeUndefined();
+      expect(events.findLast((event) => event.type === 'status')?.data.responseSpeed).toMatchObject({ outputTokens: 0, averageRate: null, firstResponseMs: 1_000 });
 
       await handle.close();
     } finally {
@@ -19868,7 +20022,10 @@ describe('CodexAgent MCP thread context hooks', () => {
         });
         await waitForExpectation(() => expect(events.some((event) => event.type === 'done')).toBe(true));
         const done = events.find((event) => event.type === 'done');
-        expect((done?.data as { usage?: { durationMs?: number } }).usage?.durationMs).toBe(3_000);
+        // No root output/usage was observed: tool/interaction facts remain
+        // available, but cannot become a persisted token-rate denominator.
+        expect((done?.data as { usage?: { durationMs?: number } }).usage?.durationMs).toBeUndefined();
+        expect(events.findLast((event) => event.type === 'status')?.data.responseSpeed).toMatchObject({ outputTokens: 0, averageRate: null, firstResponseMs: null });
 
         if (outcome === 'server-resolved') {
           decision.resolve({ kind: 'ask_user_question', answers: {} });
@@ -20672,6 +20829,310 @@ describe('CodexAgent MCP thread context hooks', () => {
     return events;
   }
 
+  const asyncQuestionItem = {
+    type: 'agentMessage', id: 'async-question-1', phase: 'final_answer', delivery: 'async',
+    text: 'Proceed?\n- Yes\n- No', questions: [{ title: 'Proceed?', options: ['Yes', 'No'] }],
+  };
+
+  async function runningAsyncQuestion(steer?: () => Promise<unknown>) {
+    const agent = new CodexAgent(createDeps());
+    let turnSeq = 0;
+    const host = installFakeHost(agent, (method) => {
+      if (method === Method.TurnStart) return { turn: { id: `async-turn-${++turnSeq}` } };
+      if (method === Method.TurnSteer) return steer ? steer() : {};
+      if (method === Method.TurnInterrupt) return {};
+      return undefined;
+    });
+    const handle = await agent.startSession({ sessionId: 'async-question', model: 'gpt-5.4', workingDir: '/repo' });
+    const decision = deferred<InteractionDecision>();
+    const resolver = vi.fn(async (_request: InteractionRequest) => decision.promise);
+    handle.setInteractionResolver(resolver);
+    const events = await collectAgentEvents(handle);
+    await handle.send({ type: 'user', content: 'Make the change' });
+    const handlers = host.getThreadHandlers()!;
+    const params = { threadId: 'start-thread-id', turnId: 'async-turn-1', item: asyncQuestionItem };
+    handlers.itemStarted?.(params);
+    handlers.itemUpdated?.(params);
+    expect(resolver).not.toHaveBeenCalled();
+    handlers.itemCompleted?.(params);
+    expect(resolver).toHaveBeenCalledOnce();
+    return { host, handle, handlers, params, decision, resolver, events };
+  }
+
+  it.each([
+    { label: 'skip', answers: {} },
+    { label: 'empty text', answers: { 'Proceed?': '' } },
+    { label: 'whitespace', answers: { 'Proceed?': ' \n\t' } },
+    { label: 'empty selections', answers: { 'Proceed?': '[]' } },
+    { label: 'blank selections', answers: { 'Proceed?': '[" "]' } },
+    { label: 'unrelated answer', answers: { 'Another question?': 'Yes' } },
+    { label: 'dismissed answer', answers: { 'Proceed?': 'Yes' }, dismissed: true },
+    { label: 'resolver failure', answers: {}, reject: true },
+  ] as Array<{ label: string; answers: Record<string, string>; dismissed?: boolean; reject?: boolean }>)('does not deliver or retain an async continuation for $label', async ({ answers, dismissed, reject }) => {
+    const s = await runningAsyncQuestion();
+    try {
+      if (reject) s.decision.reject(new Error('resolver unavailable'));
+      else s.decision.resolve({ kind: 'ask_user_question', answers, ...(dismissed ? { dismissed } : {}) });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(s.host.request.mock.calls.filter(([method]) => method === Method.TurnSteer)).toHaveLength(0);
+      expect(s.handle.isTurnRunning?.()).toBe(true);
+      expect(s.events.filter((event) => event.type === 'done')).toHaveLength(0);
+      s.handlers.turnCompleted?.({ threadId: s.params.threadId,
+        turn: { id: s.params.turnId, status: 'completed' } });
+      await vi.waitFor(() => expect(s.handle.isTurnRunning?.()).toBe(false));
+      await vi.waitFor(() => expect(s.events.filter((event) => event.type === 'done')).toHaveLength(1));
+      expect(s.events.find((event) => event.type === 'done')?.turnContinuationId).toBeUndefined();
+      expect(s.events.filter((event) => event.type === 'interaction_dismissed')).toHaveLength(0);
+      expect(askUserTurnStartCalls(s.host)).toHaveLength(1);
+    } finally { await s.handle.close(); }
+  });
+
+  it('delivers a partially answered async batch once', async () => {
+    const s = await runningAsyncQuestion();
+    const partial = deferred<InteractionDecision>();
+    try {
+      s.resolver.mockImplementationOnce(async () => partial.promise);
+      const next = { ...s.params, item: { ...asyncQuestionItem, id: 'partial-question',
+        questions: [{ title: 'Optional detail?' }, { title: 'Next action?' }] } };
+      s.handlers.itemCompleted?.(next);
+      partial.resolve({ kind: 'ask_user_question', answers: { 'Optional detail?': '', 'Next action?': 'Run tests' } });
+      await vi.waitFor(() => expect(s.host.request.mock.calls.filter(([method]) => method === Method.TurnSteer)).toHaveLength(1));
+      expect(s.host.request.mock.calls.find(([method]) => method === Method.TurnSteer)?.[1]).toMatchObject({
+        expectedTurnId: s.params.turnId, input: [{ text: expect.stringContaining('A: Run tests') }],
+      });
+      s.handlers.itemCompleted?.(next);
+      expect(s.resolver).toHaveBeenCalledTimes(2);
+      s.handlers.turnCompleted?.({ threadId: s.params.threadId,
+        turn: { id: s.params.turnId, status: 'completed' } });
+      await vi.waitFor(() => expect(s.handle.isTurnRunning?.()).toBe(false));
+      expect(askUserTurnStartCalls(s.host)).toHaveLength(1);
+    } finally { await s.handle.close(); }
+  });
+
+  it.each((['pending', 'answered', 'dismissed'] as const).flatMap((state) =>
+    ['Proceed?', 'Continue testing?'].map((question) => ({ state, question })),
+  ))('keeps only the latest async card for "$question" when the first is $state', async ({ state, question }) => {
+    const s = await runningAsyncQuestion();
+    const second = deferred<InteractionDecision>();
+    const steerCalls = () => s.host.request.mock.calls.filter(([method]) => method === Method.TurnSteer);
+    try {
+      if (state !== 'pending') {
+        s.decision.resolve({ kind: 'ask_user_question', answers: state === 'answered' ? { 'Proceed?': 'Yes' } : {},
+          ...(state === 'dismissed' ? { dismissed: true } : {}) });
+        if (state === 'answered') await vi.waitFor(() => expect(steerCalls()).toHaveLength(1));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      s.resolver.mockImplementationOnce(async () => second.promise);
+      const next = { ...s.params, item: { ...asyncQuestionItem, id: 'async-question-2',
+        questions: [{ title: question, options: ['Yes', 'No'] }] } };
+      s.handlers.itemCompleted?.(next);
+      s.handlers.itemCompleted?.(next);
+      s.handlers.itemCompleted?.(s.params);
+      expect(s.resolver).toHaveBeenCalledTimes(2);
+      expect(s.resolver.mock.calls[1][0].requestId).not.toBe(s.resolver.mock.calls[0][0].requestId);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(s.events.filter((event) => event.type === 'interaction_dismissed')).toEqual(state === 'pending' ? [{
+        type: 'interaction_dismissed', source: 'codex',
+        data: { requestId: s.resolver.mock.calls[0][0].requestId, reason: 'superseded', resolvedAs: 'deny' },
+      }] : []);
+      // Even before the turn ends, a late response to the replaced card cannot
+      // steer the model or remove the current card.
+      s.decision.resolve({ kind: 'ask_user_question', answers: { 'Proceed?': 'Yes' } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(steerCalls()).toHaveLength(state === 'answered' ? 1 : 0);
+      second.resolve({ kind: 'ask_user_question', answers: { [question]: 'No' } });
+      await vi.waitFor(() => expect(steerCalls()).toHaveLength(state === 'answered' ? 2 : 1));
+      expect(steerCalls().at(-1)?.[1]).toMatchObject({ input: [{ text: expect.stringContaining('A: No') }] });
+      s.handlers.turnCompleted?.({ threadId: s.params.threadId,
+        turn: { id: s.params.turnId, status: 'completed' } });
+      await vi.waitFor(() => expect(s.handle.isTurnRunning?.()).toBe(false));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(s.events.filter((event) => event.type === 'interaction_dismissed')).toHaveLength(state === 'pending' ? 1 : 0);
+      expect(steerCalls()).toHaveLength(state === 'answered' ? 2 : 1);
+      expect(askUserTurnStartCalls(s.host)).toHaveLength(1);
+    } finally { await s.handle.close(); }
+  });
+
+  it.each(['completed', 'failed', 'stop', 'close'] as const)('expires only the latest unanswered async card on %s after replacement', async (outcome) => {
+    const s = await runningAsyncQuestion();
+    const second = deferred<InteractionDecision>();
+    try {
+      s.resolver.mockImplementationOnce(async () => second.promise);
+      const next = { ...s.params, item: { ...asyncQuestionItem, id: 'async-question-2' } };
+      s.handlers.itemCompleted?.(next);
+      // Replayed lifecycle events cannot bring the replaced card back.
+      s.handlers.itemCompleted?.(s.params);
+      expect(s.resolver).toHaveBeenCalledTimes(2);
+      if (outcome === 'stop') await s.handle.abort();
+      else if (outcome === 'close') await s.handle.close();
+      else s.handlers.turnCompleted?.({ threadId: s.params.threadId,
+        turn: { id: s.params.turnId, status: outcome } });
+      await vi.waitFor(() => expect(s.events.filter((event) => event.type === 'interaction_dismissed')).toHaveLength(2));
+      expect(s.events.filter((event) => event.type === 'interaction_dismissed').map((event) => event.data)).toEqual([
+        { requestId: s.resolver.mock.calls[0][0].requestId, reason: 'superseded', resolvedAs: 'deny' },
+        { requestId: s.resolver.mock.calls[1][0].requestId, reason: expect.any(String), resolvedAs: 'deny' },
+      ]);
+      s.decision.resolve({ kind: 'ask_user_question', answers: { 'Proceed?': 'Yes' } });
+      second.resolve({ kind: 'ask_user_question', answers: { 'Proceed?': 'No' } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(s.host.request.mock.calls.filter(([method]) => method === Method.TurnSteer)).toHaveLength(0);
+      expect(askUserTurnStartCalls(s.host)).toHaveLength(1);
+    } finally { await s.handle.close(); }
+  });
+
+  it.each(['completed', 'failed', 'stop'] as const)('does not expire an answered async card when %s occurs inside steer dispatch', async (outcome) => {
+    let terminate!: () => void;
+    const s = await runningAsyncQuestion(async () => { terminate(); return {}; });
+    try {
+      terminate = () => {
+        if (outcome === 'stop') void s.handle.abort();
+        else s.handlers.turnCompleted?.({ threadId: s.params.threadId,
+          turn: { id: s.params.turnId, status: outcome } });
+      };
+      s.decision.resolve({ kind: 'ask_user_question', answers: { 'Proceed?': 'Yes' } });
+      await vi.waitFor(() => expect(s.host.request.mock.calls.some(([method]) => method === Method.TurnSteer)).toBe(true));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(s.events.filter((event) => event.type === 'interaction_dismissed')).toEqual([]);
+    } finally { await s.handle.close(); }
+  });
+
+  it.each(['pending', 'answered'] as const)('does not join a synchronous tool to a %s async answer', async (state) => {
+    const s = await runningAsyncQuestion();
+    const syncDecision = deferred<InteractionDecision>();
+    const syncResolver = vi.fn(async () => syncDecision.promise);
+    try {
+      if (state === 'answered') {
+        s.decision.resolve({ kind: 'ask_user_question', answers: { 'Proceed?': 'Yes' } });
+        await vi.waitFor(() => expect(s.host.request.mock.calls.filter(([method]) => method === Method.TurnSteer)).toHaveLength(1));
+      }
+      s.handle.setInteractionResolver(syncResolver);
+      const sync = s.handlers.requestUserInput!({
+        threadId: s.params.threadId, turnId: s.params.turnId, itemId: 'sync-item',
+        questions: [{ id: 'sync-choice', header: '', question: 'Proceed?', isOther: true,
+          options: [{ label: 'Yes', description: null }, { label: 'No', description: null }] }],
+      }, { requestId: 561 });
+      await vi.waitFor(() => expect(syncResolver).toHaveBeenCalledOnce());
+      // Another optional question cannot cover the blocking card.
+      s.handlers.itemCompleted?.({ ...s.params, item: { ...asyncQuestionItem, id: 'async-later' } });
+      expect(syncResolver).toHaveBeenCalledOnce();
+      s.decision.resolve({ kind: 'ask_user_question', answers: { 'Proceed?': 'Yes' } });
+      syncDecision.resolve({ kind: 'ask_user_question', answers: { 'Proceed?': 'No' } });
+      await expect(sync).resolves.toEqual({ answers: { 'sync-choice': { answers: ['No'] } } });
+      expect(s.host.request.mock.calls.filter(([method]) => method === Method.TurnSteer)).toHaveLength(state === 'answered' ? 1 : 0);
+      s.handlers.turnCompleted?.({ threadId: s.params.threadId,
+        turn: { id: s.params.turnId, status: 'completed' } });
+      await vi.waitFor(() => expect(s.handle.isTurnRunning?.()).toBe(false));
+    } finally { await s.handle.close(); }
+  });
+
+  it('shows an async question once through the existing card and steers its answer without waiting for turn completion', async () => {
+    const { host, handle, handlers, params, decision, resolver, events } = await runningAsyncQuestion();
+    expect(resolver.mock.calls[0]?.[0]).toMatchObject({ kind: 'ask_user_question', delivery: 'async', questions: [{
+      question: 'Proceed?', options: [{ label: 'Yes' }, { label: 'No' }],
+    }] });
+    handlers.itemCompleted?.(params);
+    expect(resolver).toHaveBeenCalledOnce();
+    decision.resolve({ kind: 'ask_user_question', answers: { 'Proceed?': 'Yes' } });
+    await vi.waitFor(() => expect(host.request.mock.calls.filter(([method]) => method === Method.TurnSteer)).toHaveLength(1));
+    const [, input] = host.request.mock.calls.find(([method]) => method === Method.TurnSteer)!;
+    expect(input).toMatchObject({ expectedTurnId: 'async-turn-1', input: [{ text: expect.stringContaining('A: Yes') }] });
+    handlers.itemCompleted?.(params);
+    expect(resolver).toHaveBeenCalledOnce();
+    expect(events.filter((event) => event.type === 'text')).toHaveLength(0);
+    expect(askUserTurnStartCalls(host)).toHaveLength(1);
+    handlers.turnCompleted?.({ threadId: params.threadId, turn: { id: params.turnId, status: 'completed' } });
+    await waitForExpectation(() => expect(handle.isTurnRunning?.()).toBe(false));
+    await waitForExpectation(() => expect(events.filter((event) => event.type === 'done' && event.turnContinuationId === undefined)).toHaveLength(1));
+    await handle.close();
+  });
+
+  it.each(['accepted', 'rejected'] as const)('handles an async answer whose steer is %s after the original turn finishes', async (outcome) => {
+    const ack = deferred<unknown>();
+    const { host, handle, handlers, params, decision, events } = await runningAsyncQuestion(() => ack.promise);
+    decision.resolve({ kind: 'ask_user_question', answers: { 'Proceed?': 'Yes' } });
+    await vi.waitFor(() => expect(host.request.mock.calls.some(([method]) => method === Method.TurnSteer)).toBe(true));
+    handlers.turnCompleted?.({ threadId: params.threadId, turn: { id: params.turnId, status: 'completed' } });
+    expect(handle.isTurnRunning?.()).toBe(true);
+    if (outcome === 'accepted') ack.resolve({});
+    else ack.reject(Object.assign(new Error('codex app-server turn/steer error -32602: no active turn to steer'), { code: -32602 }));
+    if (outcome === 'rejected') {
+      await vi.waitFor(() => expect(askUserTurnStartCalls(host)).toHaveLength(2));
+      handlers.turnCompleted?.({ threadId: params.threadId, turn: { id: 'async-turn-2', status: 'completed' } });
+    }
+    await waitForExpectation(() => expect(handle.isTurnRunning?.()).toBe(false));
+    expect(askUserTurnStartCalls(host)).toHaveLength(outcome === 'accepted' ? 1 : 2);
+    await waitForExpectation(() => expect(events.filter((event) => event.type === 'done' && event.turnContinuationId === undefined)).toHaveLength(1));
+    await handle.close();
+  });
+
+  it('does not replay an async answer when steer delivery is uncertain', async () => {
+    const { host, handle, handlers, params, decision, events } = await runningAsyncQuestion(async () => {
+      throw new Error('connection lost after dispatch');
+    });
+    decision.resolve({ kind: 'ask_user_question', answers: { 'Proceed?': 'Yes' } });
+    await waitForExpectation(() => expect(events.some((event) => event.type === 'error' && event.data.isTerminal === false)).toBe(true));
+    expect(handle.isTurnRunning?.()).toBe(true);
+    expect(events.filter((event) => event.type === 'done')).toHaveLength(0);
+    handlers.turnCompleted?.({ threadId: params.threadId, turn: { id: params.turnId, status: 'completed' } });
+    await waitForExpectation(() => expect(handle.isTurnRunning?.()).toBe(false));
+    expect(askUserTurnStartCalls(host)).toHaveLength(1);
+    await handle.close();
+  });
+
+  it.each(['stop', 'failed', 'close'] as const)('ignores an async answer after %s', async (action) => {
+    const { host, handle, handlers, params, decision } = await runningAsyncQuestion();
+    if (action === 'stop') await handle.abort();
+    if (action === 'close') await handle.close();
+    if (action === 'failed') handlers.turnCompleted?.({ threadId: params.threadId, turn: { id: params.turnId, status: 'failed' } });
+    decision.resolve({ kind: 'ask_user_question', answers: { 'Proceed?': 'Yes' } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(host.request.mock.calls.filter(([method]) => method === Method.TurnSteer)).toHaveLength(0);
+    expect(askUserTurnStartCalls(host)).toHaveLength(1);
+    await handle.close();
+  });
+
+  it.each([1, 2])('expires all %i unanswered async cards before completing the task and ignores late answers', async (count) => {
+    const { host, handle, handlers, params, decision, resolver, events } = await runningAsyncQuestion();
+    const lastDecision = deferred<InteractionDecision>();
+    if (count === 2) {
+      handle.setInteractionResolver(async () => lastDecision.promise);
+      handlers.itemCompleted?.({ ...params, item: { ...asyncQuestionItem, id: 'async-question-2',
+        questions: [{ title: 'Last question?', options: null }] } });
+    }
+    handlers.itemCompleted?.({ ...params, item: { type: 'agentMessage', id: 'final',
+      phase: 'final_answer', text: 'Independent work completed.' } });
+    handlers.turnCompleted?.({ threadId: params.threadId, turn: { id: params.turnId, status: 'completed' } });
+    await waitForExpectation(() => expect(events.filter((event) => event.type === 'done')).toHaveLength(1));
+    const doneIndex = events.findIndex((event) => event.type === 'done');
+    expect(events[doneIndex]?.turnContinuationId).toBeUndefined();
+    expect(handle.isTurnRunning?.()).toBe(false);
+    const dismissed = events.filter((event) => event.type === 'interaction_dismissed');
+    expect(dismissed).toHaveLength(count);
+    expect(dismissed.map((event) => event.data.reason)).toEqual(
+      count === 2 ? ['superseded', 'turn_completed'] : ['turn_completed'],
+    );
+    for (const event of dismissed) {
+      expect(events.indexOf(event)).toBeLessThan(doneIndex);
+    }
+    expect(events.some((event) => event.type === 'text'
+      && JSON.stringify(event.data).includes('Independent work completed.'))).toBe(true);
+    expect(events.some((event) => event.type === 'error')).toBe(false);
+    // Neither a repeated completion nor a late item may revive an expired card.
+    handlers.turnCompleted?.({ threadId: params.threadId, turn: { id: params.turnId, status: 'completed' } });
+    handlers.itemCompleted?.(params);
+    expect(resolver).toHaveBeenCalledOnce();
+    decision.resolve({ kind: 'ask_user_question', answers: { 'Proceed?': 'stale' } });
+    lastDecision.resolve({ kind: 'ask_user_question', answers: { 'Last question?': 'free-form answer' } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(host.request.mock.calls.filter(([method]) => method === Method.TurnSteer)).toHaveLength(0);
+    expect(askUserTurnStartCalls(host)).toHaveLength(1);
+    expect(events.filter((event) => event.type === 'done')).toHaveLength(1);
+    // The user can still start ordinary new work after the expired questions.
+    await handle.send({ type: 'user', content: 'A new task' });
+    expect(askUserTurnStartCalls(host)).toHaveLength(2);
+    await handle.close();
+  });
+
   async function pendingHumanProduct(kind: 'native' | 'dynamic' | 'plan', followupStart?: () => Promise<unknown>) {
     const agent = new CodexAgent(createDeps());
     let turnSeq = 0;
@@ -20740,7 +21201,7 @@ describe('CodexAgent MCP thread context hooks', () => {
     await handle.close();
   });
 
-  it.each(['abort', 'graceful', 'close'] as const)('supports %s while only a confirmation remains and ignores late approval', async (action) => {
+  it.each(['abort', 'graceful', 'close'] as const)('supports %s while only a plan confirmation remains and ignores late approval', async (action) => {
     const { handle, host, decision, events } = await pendingHumanProduct('plan');
     if (action === 'abort') await handle.abort();
     else if (action === 'graceful') await handle.requestGracefulStop?.();

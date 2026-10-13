@@ -27,6 +27,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { structuredPatch } from 'diff';
+import { readCodexThreadMcpServerTools } from './mcp-server-tools.js';
 
 import {
   BaseAgent,
@@ -113,6 +114,7 @@ import {
 } from '../shared/auto-review-decision.js';
 import type { ReviewableAction } from '../shared/auto-review.js';
 import { UsageTracker } from '../shared/usage-tracker.js';
+import { calibratedResponseDuration } from '@cindy/maker-shared/usage-format';
 import { attachLiveGeneration, sampleGenerationDuration } from '../shared/live-generation-snapshot.js';
 import { getDefaultImageResizer } from '../shared/image-resizer.js';
 import { formatManagedImageReferences } from '../shared/managed-image-reference.js';
@@ -138,6 +140,7 @@ import {
 } from './capability-routing.js';
 import { scanCodexCustomizations } from './customization-scanner.js';
 import { commandExecutionDisplayInput } from './command-display.js';
+import { asyncUserInputQuestions } from './async-user-input.js';
 import {
   dedupeCells,
   extractAliveYieldCellsFromCodexItem,
@@ -152,8 +155,8 @@ import {
   classifyCodexError,
   translateErrorNotification,
   translateItemNotification,
+  observeCodexItemTiming,
   beginCodexGenerationTurn,
-  codexGenerationDurationMs,
   finalizeCodexGenerationTurn,
   pauseCodexGeneration,
   resetCodexGenerationTiming,
@@ -237,6 +240,7 @@ import {
   type DynamicToolCallParams,
   type DynamicToolCallResponse,
   type DynamicToolSpec,
+  type ItemEnvelope,
   type FileChangeRequestApprovalParams,
   type FileChangeRequestApprovalResponse,
   type McpServerElicitationRequestParams,
@@ -1119,6 +1123,7 @@ interface LiveAskUserRequest {
   questions: ToolRequestUserInputQuestion[];
   detached: boolean;
   continuationStarted: boolean;
+  delivery?: 'async';
   permissionPolicy: TurnPermissionPolicy | null;
   capabilitySelectionText: string;
   autoReviewIntent: AutoReviewUserIntent;
@@ -3701,6 +3706,7 @@ assertRouteCurrent();
     const usageTracker = new UsageTracker();
     const translatorRt: CodexRuntimeState = newCodexRuntimeState();
     const liveUsageSnapshot = () => attachLiveGeneration(usageTracker.snapshot(), {
+      responseSpeed: translatorRt.responseSpeed.snapshot(),
       outputTokens: usageTracker.getTurnUsage().output,
       durationMs: translatorRt.generationOutputDurationMs,
       openStartedAt: translatorRt.generationStartedAt,
@@ -3904,12 +3910,31 @@ assertRouteCurrent();
     async function sendInteractionContinuation(
       requestId: string, message: UserMessage, options: CodexInternalSendOptions,
       failureContext: string,
+      steerTurnId?: string | null,
     ): Promise<void> {
       const claim = interactionContinuation;
       if (!claim || !claim.requestIds.delete(requestId) || claim.settled) return;
       claim.pendingSends += 1;
       claim.sendTail = claim.sendTail.then(async () => {
-        if (claim.settled || closed || await waitForYieldContinuationIdle()) return;
+        if (claim.settled || closed) return;
+        if (steerTurnId && isTurnInFlight && currentTurnId === steerTurnId) {
+          try {
+            await handle.steer!(message, { ...options, signal: claim.abort.signal });
+            return;
+          } catch (error) {
+            if (claim.settled || closed) return;
+            // Only a definite pre-accept rejection can become a fresh turn.
+            // A timeout/transport failure may already have delivered the answer.
+            const message = error instanceof Error ? error.message : String(error);
+            if (!/\bno active (?:Codex )?turn to steer\b/i.test(message)) {
+              eventQueue.push({ type: 'error', data: {
+                message: `Async question answer delivery failed: ${message}`, isTerminal: false,
+              }, source: 'codex' });
+              return;
+            }
+          }
+        }
+        if (await waitForYieldContinuationIdle()) return;
         while (!claim.settled && (isTurnInFlight || isTurnStartPending)) {
           await new Promise<void>((resolve) => {
             const wake = () => {
@@ -7421,6 +7446,7 @@ assertRouteCurrent();
       pendingInteraction: PendingUserInputInteraction;
     }>();
     const liveAskUserByRequestId = new Map<string, LiveAskUserRequest>();
+    const asyncQuestionItemsByTurn = new Map<string, Set<string>>();
     registerRootCodexMcpContext();
     let mcpElicitationSeq = 0;
 
@@ -7874,6 +7900,16 @@ assertRouteCurrent();
       success: false,
     });
 
+    function dismissLiveAskUser(requestId: string, reason: string): void {
+      liveAskUserByRequestId.delete(requestId);
+      forgetPendingUserInputRequest(requestId);
+      eventQueue.push({
+        type: 'interaction_dismissed',
+        data: { requestId, reason, resolvedAs: 'deny' },
+        source: 'codex',
+      });
+    }
+
     function dismissPendingUserInput(
       reason: string,
       predicate: (meta: { threadId?: string; turnId?: string | null }) => boolean,
@@ -7891,25 +7927,13 @@ assertRouteCurrent();
         const requestId = serverInteractionId(meta.requestId);
         if (dismissed.has(requestId)) continue;
         dismissed.add(requestId);
-        liveAskUserByRequestId.delete(requestId);
-        forgetPendingUserInputRequest(requestId);
-        eventQueue.push({
-          type: 'interaction_dismissed',
-          data: { requestId, reason, resolvedAs: 'deny' },
-          source: 'codex',
-        });
+        dismissLiveAskUser(requestId, reason);
       }
       for (const [requestId, live] of liveAskUserByRequestId) {
         if (!predicate({ threadId, turnId: live.turnId })) continue;
-        liveAskUserByRequestId.delete(requestId);
         if (dismissed.has(requestId)) continue;
         dismissed.add(requestId);
-        forgetPendingUserInputRequest(requestId);
-        eventQueue.push({
-          type: 'interaction_dismissed',
-          data: { requestId, reason, resolvedAs: 'deny' },
-          source: 'codex',
-        });
+        dismissLiveAskUser(requestId, reason);
       }
     }
 
@@ -7926,10 +7950,11 @@ assertRouteCurrent();
         (meta) => meta.turnId === turnId,
         cancelledDynamicToolResponse('turn_completed'),
       );
-      // Desktop 只有一个 pendingAskUser。同 turn 多个提问只留最后一张，
-      // 否则被盖住的 resolver 会一直占着 hasPendingAgentInteraction。
+      // Desktop 只有一个 pendingAskUser，只保留最后一张同步提问。
+      // 异步提问不阻塞结束：未回答的卡片随原 turn 到期，不代选或续跑。
       const lives = [...liveAskUserByRequestId.values()].filter((live) => live.turnId === turnId);
-      const keep = lives.at(-1) ?? null;
+      const latest = lives.at(-1);
+      const keep = latest?.delivery === 'async' ? null : latest ?? null;
       if (keep) {
         keep.detached = true;
         retainInteractionContinuation(turnId, keep.requestId);
@@ -7939,17 +7964,11 @@ assertRouteCurrent();
       const dismiss = (requestId: string, reason: string): void => {
         if (keepUiRequestIds.has(requestId) || dismissed.has(requestId)) return;
         dismissed.add(requestId);
-        liveAskUserByRequestId.delete(requestId);
-        forgetPendingUserInputRequest(requestId);
-        eventQueue.push({
-          type: 'interaction_dismissed',
-          data: { requestId, reason, resolvedAs: 'deny' },
-          source: 'codex',
-        });
+        dismissLiveAskUser(requestId, reason);
       };
       for (const live of lives) {
         if (keep && live.requestId === keep.requestId) continue;
-        dismiss(live.requestId, 'superseded');
+        dismiss(live.requestId, live.delivery === 'async' ? 'turn_completed' : 'superseded');
       }
       for (const meta of [...cancelledUserInput, ...cancelledDynamicTools]) {
         dismiss(serverInteractionId(meta.requestId), 'turn_completed');
@@ -7979,7 +7998,7 @@ assertRouteCurrent();
       autoReviewIntent?: AutoReviewUserIntent,
     ): Promise<void> {
       if (closed) return;
-      if (await waitForYieldContinuationIdle()) return;
+      if (live.delivery !== 'async' && await waitForYieldContinuationIdle()) return;
       if (closed) return;
       const message = formatAskUserContinuationMessage(live.questions, answers);
       const sendOptions: CodexInternalSendOptions = {
@@ -7992,7 +8011,7 @@ assertRouteCurrent();
       };
       try {
         await sendInteractionContinuation(live.requestId, { type: 'user', content: message }, sendOptions,
-          'ask_user continuation turn failed to start');
+          'ask_user continuation turn failed to start', live.delivery === 'async' ? live.turnId : null);
       } catch (error) {
         emitAskUserContinuationStartFailure(error);
       }
@@ -9396,6 +9415,7 @@ assertRouteCurrent();
       turnId?: string | null,
       isRequestPending: () => boolean = () => true,
       toolUseId?: string,
+      delivery?: 'async',
     ): Promise<ToolRequestUserInputResponse> {
       if (questions.some((q) => q.isSecret)) {
         log.warn('requestUserInput secret question refused', {
@@ -9404,7 +9424,21 @@ assertRouteCurrent();
         });
         return emptyUserInputResponse(questions);
       }
-      const fingerprint = turnId ? userInputQuestionsFingerprint(questions) : null;
+      // A blocking tool must remain answerable; optional cards may not cover it.
+      if (delivery === 'async') {
+        if ([...liveAskUserByRequestId.values()].some((live) => live.delivery !== 'async')) {
+          return emptyUserInputResponse(questions);
+        }
+      }
+      // The shared card has one slot: either kind of new question replaces an
+      // unanswered async card. Answered cards have already left this map.
+      for (const live of liveAskUserByRequestId.values()) {
+        if (live.delivery === 'async') dismissLiveAskUser(live.requestId, 'superseded');
+      }
+      // Async items already deduplicate lifecycle notifications by item id.
+      // Only synchronous protocol aliases may share pending/submitted answers
+      // by content: distinct async items must always own their own decisions.
+      const fingerprint = turnId && delivery !== 'async' ? userInputQuestionsFingerprint(questions) : null;
       const submittedForTurn = turnId ? submittedUserInputByTurn.get(turnId) : undefined;
       const replay = fingerprint ? submittedForTurn?.get(fingerprint) : undefined;
       if (replay) {
@@ -9437,7 +9471,7 @@ assertRouteCurrent();
             turnId,
           });
           return isRequestPending()
-            ? askUserViaInteraction(requestId, questions, turnId, isRequestPending, toolUseId)
+            ? askUserViaInteraction(requestId, questions, turnId, isRequestPending, toolUseId, delivery)
             : emptyUserInputResponse(questions);
         }
         return responseFromUserInputAnswersByPosition(questions, joined.answersByPosition);
@@ -9450,6 +9484,7 @@ assertRouteCurrent();
           questions,
           detached: false,
           continuationStarted: false,
+          delivery,
           permissionPolicy: activeTurnPermissionPolicy,
           capabilitySelectionText: (
             (turnId ? capabilitySelectionTextByTurnId.get(turnId) : undefined)
@@ -9462,6 +9497,7 @@ assertRouteCurrent();
           kind: 'ask_user_question',
           requestId,
           ...(toolUseId ? { toolUseId } : {}),
+          ...(delivery ? { delivery } : {}),
           questions: questionsToAskUserItems(questions),
         });
         if (decision.kind !== 'ask_user_question') {
@@ -9470,6 +9506,21 @@ assertRouteCurrent();
           return questions.map(() => []);
         }
         const live = liveAskUserByRequestId.get(requestId);
+        // Stop/supersession may win while the UI response is already in flight.
+        if (!live) return questions.map(() => []);
+        // The host has resolved the card. A synchronous completion during steer
+        // must not mark it expired while the outer promise is still unwinding.
+        liveAskUserByRequestId.delete(requestId);
+        const answersByPosition = userInputAnswersByPosition(
+          questions,
+          responseFromAskUserAnswers(questions, decision.answers),
+        );
+        // Optional skips/cancellations settle the card without changing intent,
+        // claiming a continuation, or sending synthetic "no answer" input.
+        if (live.delivery === 'async'
+          && (decision.dismissed === true || !hasSubmittedUserInput(answersByPosition))) {
+          return answersByPosition;
+        }
         // 澄清必须锚在发起提问那一轮的审查意图上。卡片挂起期间后续 turn 可能改写
         // currentAutoReviewIntent；plan_review 已用 planRequestAutoReviewIntent 防漂。
         const continuationAutoReviewIntent = composeAutoReviewIntentWithClarification(
@@ -9477,17 +9528,16 @@ assertRouteCurrent();
           Object.entries(decision.answers ?? {}).map(([question, answer]) => ({ question, answer })),
         );
         setAutoReviewIntent(continuationAutoReviewIntent);
-        const answersByPosition = userInputAnswersByPosition(
-          questions,
-          responseFromAskUserAnswers(questions, decision.answers),
-        );
         if (
           live
-          && live.detached
+          && (live.detached || live.delivery === 'async')
           && !live.continuationStarted
           && decision.dismissed !== true
         ) {
           live.continuationStarted = true;
+          if (live.delivery === 'async' && live.turnId) {
+            retainInteractionContinuation(live.turnId, requestId);
+          }
           // Pass the applied, normalized snapshot so send can reuse this transition.
           void startAskUserContinuation(live, decision.answers ?? {}, currentAutoReviewIntent);
         } else if (live?.detached && decision.dismissed === true) {
@@ -9553,6 +9603,25 @@ assertRouteCurrent();
           }
         }
       }
+    }
+
+    function interceptAsyncUserInput(
+      params: { threadId: string; turnId: string; item: ItemEnvelope },
+      phase: 'started' | 'updated' | 'completed',
+    ): boolean {
+      const rawQuestions = asyncUserInputQuestions(params.item);
+      if (!rawQuestions) return false;
+      // Do not render the fallback prose as a final answer or open child-agent cards.
+      if (phase !== 'completed' || reviewMode || params.threadId !== threadId) return true;
+      let seen = asyncQuestionItemsByTurn.get(params.turnId);
+      if (seen?.has(params.item.id)) return true;
+      if (!seen) asyncQuestionItemsByTurn.set(params.turnId, seen = new Set());
+      seen.add(params.item.id);
+      const requestId = serverInteractionId(`async:${params.turnId}:${params.item.id}`);
+      void askUserViaInteraction(requestId, normalizeRequestUserInputQuestions(rawQuestions),
+        params.turnId, () => !closed && !completedTurnIds.has(params.turnId), undefined, 'async')
+        .catch((error: unknown) => log.warn('async user input interaction failed', { requestId, error: String(error) }));
+      return true;
     }
 
     async function requestUserInputAsPermission(
@@ -10591,6 +10660,7 @@ assertRouteCurrent();
       if (typeof candidate.id === 'string') {
         clearApprovalPolicyDenialOnProgress(turnId, candidate.id);
       }
+      translatorRt.responseSpeedHasUnobservedOutput = true;
       if (typeof candidate.text === 'string') proposedPlanText = candidate.text;
       return true;
     }
@@ -10731,6 +10801,7 @@ assertRouteCurrent();
       // 同一个墓碑也负责拦截该 turn 随后迟到的 item / reasoning / started 事件。
       if (completedTurnIds.has(turn.id)) return;
       completedTurnIds.add(turn.id);
+      asyncQuestionItemsByTurn.delete(turn.id);
       compactingTurnIds.delete(turn.id);
       normalModelWorkTurnIds.delete(turn.id);
       completedSummaryRecoveryTurnIds.delete(turn.id);
@@ -10803,7 +10874,16 @@ assertRouteCurrent();
       const realTurnUsage = usageTracker.getTurnUsage();
       const realTurnUsageSegments = usageTracker.getTurnUsageSegments();
       finalizeCodexGenerationTurn(translatorRt, turn.id);
-      const generationDurationMs = codexGenerationDurationMs(translatorRt);
+      const unmeasuredOutputOnly = translatorRt.responseSpeedHasUnobservedOutput
+        && translatorRt.responseSpeed.snapshot().outputTokens === 0;
+      // With no sampled units, retain the real total but expose no rate. Mixed
+      // turns retain only their observed estimates, never a whole-turn scale.
+      translatorRt.responseSpeed.finish(realTurnUsageSegments.length > 0
+        && (!translatorRt.responseSpeedHasUnobservedOutput || unmeasuredOutputOnly)
+        ? realTurnUsage.output : undefined);
+      if (!translatorRt.generationTimingReliable || unmeasuredOutputOnly) translatorRt.responseSpeed.invalidate();
+      const speedSnapshot = translatorRt.responseSpeed.snapshot();
+      const generationDurationMs = calibratedResponseDuration(speedSnapshot, realTurnUsage.output);
       const codexDoneUsage = {
         promptTokens: realTurnUsage.input,
         completionTokens: realTurnUsage.output,
@@ -10814,12 +10894,9 @@ assertRouteCurrent();
         cachedTokens: realTurnUsage.cacheRead,
         cacheCreationTokens: realTurnUsage.cacheCreate,
         segments: realTurnUsageSegments,
-        // With usage, exclude post-output finalization. Without usage, retain
-        // the measured duration metadata (zero output cannot produce a rate).
+        // Persist TPS timing only when observed stream time pairs with real turn output.
         ...(generationDurationMs !== undefined ? {
-          durationMs: realTurnUsage.output > 0
-            ? translatorRt.generationOutputDurationMs || undefined
-            : generationDurationMs,
+          durationMs: generationDurationMs,
         } : {}),
         ...(typeof turn.durationMs === 'number' && Number.isFinite(turn.durationMs)
           ? { turnDurationMs: turn.durationMs }
@@ -11040,6 +11117,7 @@ assertRouteCurrent();
           data: {
             status: 'Done',
             ...attachLiveGeneration(endSnap, {
+              responseSpeed: translatorRt.responseSpeed.snapshot(),
               outputTokens: realTurnUsage.output,
               durationMs: translatorRt.generationOutputDurationMs,
               openStartedAt: null,
@@ -12334,6 +12412,7 @@ assertRouteCurrent();
         }
         noteActiveToolContext(params.item, params.turnId);
         noteToolItemLifecycle(params.item, 'started');
+        if (interceptAsyncUserInput(params, 'started')) return;
         // 先登记再翻译:子线程通知可能紧随 spawn item 到达,映射就位才不丢首帧。
         const translatedItem = withFrozenSubagentSpawnIdentity(params.item, params.turnId);
         const translatedParams = translatedItem === params.item
@@ -12344,10 +12423,12 @@ assertRouteCurrent();
           params.turnId,
           'started',
         );
+        observeCodexItemTiming(translatorRt, 'started', translatedParams);
         pushItemStatus(translatedItem);
         translateItemNotification('started', translatedParams, eventQueue, {
           rt: translatorRt,
           log,
+          timingObserved: true,
           onCompactBoundary: handleCompactBoundary,
         });
         // 重放帧后发:translator 刚推的 running 帧不得把已重放出的终态盖回去。
@@ -12377,6 +12458,7 @@ assertRouteCurrent();
         }
         noteActiveToolContext(params.item, params.turnId);
         rememberYieldedExecCells(params.turnId, params.item, 'updated');
+        if (interceptAsyncUserInput(params, 'updated')) return;
         // updated 也要登记映射,顺序与 started / completed 一致(先登记 → 翻译 → 后发重放帧)。
         // V1 的 spawn 是长跑 item(started → updated* → completed):started 那帧若没到我们手里
         // (turn 缓冲、stale turn 丢弃、上游省略),映射就要一直等到 completed 才建立 —— 期间
@@ -12446,6 +12528,7 @@ assertRouteCurrent();
           producedOutputTurnIds.add(params.turnId);
           noteRecoveryModelWork(params.turnId, params.item);
         }
+        if (interceptAsyncUserInput(params, 'completed')) return;
         noteAssistantReplyCandidate(params.turnId, params.item);
         completeActiveToolContext(params.item, params.turnId);
         rememberYieldedExecCells(params.turnId, params.item, 'completed');
@@ -12484,6 +12567,12 @@ assertRouteCurrent();
           log,
           onCompactBoundary: handleCompactBoundary,
         });
+        // Close the observed response after translating any final text that
+        // was absent from deltas. A later usage/turn terminal calibrates the
+        // counts without charging its delivery lag as model generation.
+        if (!isLateCollabTerminal && translatedItem.type === 'agentMessage') {
+          translatorRt.responseSpeed.pause();
+        }
         // A late V1 spawn completion is the spawn tool closing, not necessarily
         // the child closing. Reassert a running compact state, or an explicit
         // failed/stopped tracker state; a completed replay would only duplicate
@@ -12520,6 +12609,7 @@ assertRouteCurrent();
         producedOutputTurnIds.add(params.turnId);
         noteRecoveryModelWork(params.turnId);
         translateAgentMessageDelta(params, eventQueue, { rt: translatorRt, log });
+        maybePushUsageRefresh();
       },
       turnPlanUpdated: (params) => {
         if (enqueueIfBufferedTurn(params.turnId, () => handlers.turnPlanUpdated?.(params))) return;
@@ -12536,6 +12626,7 @@ assertRouteCurrent();
         producedOutputTurnIds.add(params.turnId);
         noteRecoveryModelWork(params.turnId);
         translateReasoningSummaryTextDelta(params, eventQueue, { rt: translatorRt, log });
+        maybePushUsageRefresh();
       },
       reasoningSummaryPartAdded: (params) => {
         // thinking 流同样算产出(与非缓冲路径一致)。
@@ -12554,6 +12645,7 @@ assertRouteCurrent();
         producedOutputTurnIds.add(params.turnId);
         noteRecoveryModelWork(params.turnId);
         translateReasoningTextDelta(params, eventQueue, { rt: translatorRt, log });
+        maybePushUsageRefresh();
       },
       accountRateLimitsUpdated: (params) =>
         translateAccountRateLimitsUpdated(params, eventQueue, { rt: translatorRt, log }),
@@ -14105,6 +14197,12 @@ assertRouteCurrent();
           );
         } catch { return null; }
       },
+
+      readMcpServerTools: (serverName: string) => readCodexThreadMcpServerTools(
+        (method, params, requestOpts) => host.request(method, params, requestOpts),
+        threadId,
+        serverName,
+      ),
 
       getUsageSnapshot(): UsageSnapshot {
         return liveUsageSnapshot();

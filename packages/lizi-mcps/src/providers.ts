@@ -24,6 +24,7 @@ import { createCindyMemoryMcpServer } from './cindy_memoryMcpServer.js';
 import { createMemoryOmpHostTools } from './memory/omp-host-tools.js';
 import { createCindyContactsMcpServer } from './cindy_contactsMcpServer.js';
 import { createXdtHelperMcpServer, type XdtHelperMcpDeps } from './lizi_xdtHelperMcpServer.js';
+import { createOmpAsyncQuestionTools } from './xdt-helper/omp-async-question.js';
 import { createCindyDocsMcpServer } from './cindy_docsMcpServer.js';
 import type { DocsMcpDeps } from './cindy-docs/types.js';
 import {
@@ -380,6 +381,7 @@ export function createLiziMcpProviders(
   if (opts.xdtHelper && selected(enabled, 'cindy_helper')) {
     providers.push({
       name: 'cindy_helper',
+      toOmpRpcHostTools: (ctx) => createOmpAsyncQuestionTools(opts.xdtHelper!, ctx),
       // 无门控:任何 cc / codex session 都能让模型查 Cindy 自身能力。
       // 自省类工具 (get_capabilities / get_current_session_id) 全静态数据/读 ctx, 无 auth、无 IPC。
       // send_to_session 走 host 注入的 deps.sendToSession, ctx 闭包绑定 sessionId 让工具知道 dispatcher 是谁。

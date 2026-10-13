@@ -6,31 +6,13 @@ import { authorizedSessionPathStillBound, type SessionPathAuthorization } from '
 import { classifyLocalAttachmentPath } from '../cindy-brain/ghostLocalPathGrant.js';
 import { mimeForExt } from './blobStore.js';
 import { ingestMedia } from './ingest.js';
-import { hasRef } from './ledger.js';
+import { hasRef, withSessionMediaRefLock } from './ledger.js';
 import { sniffMediaMime } from './sniffMediaMime.js';
 import { captureMediaRefCompensationScope } from './refCompensationJournal.js';
 import { getDbClient } from '../localDb/client/current.js';
 import { getActiveAppSession, isAppSessionBoundaryPending } from '../appSessionState.js';
 
 const MAX_IMAGE_BYTES = 48 * 1024 * 1024;
-// Serialize only the check-and-pin for one owner/task/blob; do not share results
-// because each caller must retain its own permission and cancellation checks.
-const referenceLocks = new Map<string, Promise<void>>();
-
-async function withReferenceLock<T>(key: string, perform: () => Promise<T>): Promise<T> {
-  const previous = referenceLocks.get(key) ?? Promise.resolve();
-  let release!: () => void;
-  const next = new Promise<void>((resolve) => { release = resolve; });
-  referenceLocks.set(key, next);
-  try {
-    await previous;
-    return await perform();
-  } finally {
-    release();
-    if (referenceLocks.get(key) === next) referenceLocks.delete(key);
-  }
-}
-
 /** Import into this Host's store; never manufacture a reference to another profile's blob. */
 export async function publishImage(
   sourcePath: string,
@@ -93,8 +75,8 @@ export async function publishImage(
   try {
     const hash = createHash('sha256').update(buffer).digest('hex');
     const reference = { refKind: 'session-attachment' as const, refId: context.sessionId };
-    const key = JSON.stringify([owner.dataOwnerId, owner.generation, context.sessionId, hash]);
-    const image = await withReferenceLock(key, async () => {
+    // Share the task publication/cleanup lock; explicit imports keep their own grants.
+    const image = await withSessionMediaRefLock(db, context.sessionId, async () => {
       assertCurrent();
       const exists = await hasRef({ hash, ...reference }, db);
       assertCurrent();

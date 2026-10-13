@@ -1,3 +1,4 @@
+import { readResponseSpeedSnapshot, stopResponseSpeed, retryResponseSpeed, resumeResponseSpeed, mergeResponseSpeedStatus, type ResponseSpeedSnapshot } from '@cindy/maker-shared/usage-format';
 import {
   createContext,
   createElement,
@@ -123,6 +124,7 @@ export interface RemoteSessionRunStatus {
   status: string;
   tokenUsage: number;
   outputTokens: number;
+  responseSpeed?: ResponseSpeedSnapshot;
   generationDurationMs: number;
   generationActive: boolean;
   generationReliable: boolean;
@@ -4618,6 +4620,15 @@ export const remoteSessionStore = {
       ? clearSessionReconnectAttempt(sessionId)
       : false;
     const fullMessageWriteAllowed = messageWriteAllowed(sessionId);
+    const outputData = isRecord(event.data) ? event.data : null;
+    if (((type === 'text' || type === 'thinking') && readString(outputData, 'text')) || type === 'tool_use') {
+      const current = readSessionRunStatus(sessionId);
+      const responseSpeed = resumeResponseSpeed(current.responseSpeed);
+      if (responseSpeed !== current.responseSpeed) {
+        writeSessionRunStatus(sessionId, { ...current, responseSpeed });
+        emit();
+      }
+    }
     if (type === 'text') {
       if (!fullMessageWriteAllowed) {
         if (reconnectCleared) emit();
@@ -4700,12 +4711,25 @@ export const remoteSessionStore = {
           }
         }
       }
+      const terminalData = isRecord(event.data) ? event.data : null;
+      const rawTurn = isRecord(terminalData?.raw) ? terminalData.raw : null;
+      const current = readSessionRunStatus(sessionId);
+      const cancelled = (!current.isRunning && current.responseSpeed?.outcome === 'cancelled') ||
+        terminalData?.cancelled === true || terminalData?.status === 'cancelled' ||
+        terminalData?.reason === 'send_cancelled_before_acceptance' ||
+        terminalData?.reason === 'turn_continuation_cancelled' ||
+        terminalData?.reason === 'user_stop_unconfirmed_wake_tasks';
+      const failed = !cancelled && (isTerminalMakerErrorEvent(event) || rawTurn?.status === 'failed' || terminalData?.status === 'failed');
+      const terminalErrorChanged = writeSessionRunStatus(sessionId, {
+        ...current,
+        responseSpeed: stopResponseSpeed(current.responseSpeed, cancelled ? 'cancelled' : failed ? 'failed' : undefined),
+      });
       this.setSessionRunning(
         sessionId,
         false,
         isRecord(event.agentMeta) ? event.agentMeta : null,
       );
-      if (terminalPlanChanged) {
+      if (terminalPlanChanged || terminalErrorChanged) {
         bumpMessageVersion(sessionId);
         emit();
       }
@@ -4726,6 +4750,7 @@ export const remoteSessionStore = {
         ...current,
         isRunning: true,
         reconnectAttempt,
+        responseSpeed: data?.willRetry === true ? retryResponseSpeed(current.responseSpeed) : current.responseSpeed,
         startedAt: current.startedAt ?? Date.now(),
       });
       if (changed || textFlushed) emit();
@@ -4902,6 +4927,8 @@ export const remoteSessionStore = {
         status: rawStatus ?? current.status,
         tokenUsage,
         outputTokens,
+        responseSpeed: mergeResponseSpeedStatus(current.responseSpeed,
+          readResponseSpeedSnapshot(data?.responseSpeed, Date.now()), isRunning, isTurnStart),
         generationDurationMs,
         generationActive,
         generationReliable,
@@ -5483,6 +5510,7 @@ function clearLiveGenerationOnWideRunStart(
   return {
     ...next,
     outputTokens: 0,
+    responseSpeed: undefined,
     generationDurationMs: 0,
     generationActive: false,
     generationReliable: true,
@@ -5503,6 +5531,9 @@ function writeMakerTurnRunning(sessionId: string, running: boolean): boolean {
 
 function writeSessionRunStatus(sessionId: string, next: RemoteSessionRunStatus): boolean {
   const current = readSessionRunStatus(sessionId);
+  if (!next.isRunning && next.responseSpeed?.phase !== 'complete') {
+    next = { ...next, responseSpeed: stopResponseSpeed(next.responseSpeed), generationActive: false };
+  }
   if (shallowRecordEqual(current as unknown as Record<string, unknown>, next as unknown as Record<string, unknown>)) {
     return false;
   }

@@ -9398,7 +9398,9 @@
       "label": "Created from another session"
     },
     "imageMissing": {
-      "title": "Image missing"
+      "title": "Image missing",
+      "unavailable": "Image Unavailable",
+      "loading": "Loading image…"
     },
     "visionBridge": {
       "analyzing": "Analyzing {{count}} image(s)…",
@@ -9456,8 +9458,32 @@
     },
     "runningStatus": {
       "tokenRate": "{{rate}} tok/s",
-      "tokenRateDescription": "The main Agent’s average generation speed for this turn, including thinking and excluding tool execution and approval waits. Updated with reported usage; the adjacent timer shows total turn time.",
-      "tokenCount": "{{tokens}} tok"
+      "tokenRateDescription": "Streaming rates and peaks are estimates. Response totals are calibrated with reported usage. Tool execution and request waits are excluded.",
+      "tokenCount": "{{tokens}} tok",
+      "currentRate": "Latest speed",
+      "waitingSample": "Sampling",
+      "averageRate": "Turn average",
+      "rateHistory": "Generation speed history",
+      "outputTotal": "Output",
+      "observedPeak": "Peak",
+      "tokenRateUnit": "tok/s",
+      "estimatedValue": "≈{{value}}",
+      "estimatedTokenRate": "≈{{rate}} tok/s",
+      "responseWaiting": "Waiting {{seconds}}s",
+      "waitSeconds": "{{seconds}}s",
+      "firstResponse": "First response",
+      "streamWait": "Stream wait",
+      "turnWaitDescription": "From the local provider turn start to the first observed text, thinking or tool content. This is not network latency.",
+      "streamWaitDescription": "From SDK stream start to the first content block. The earlier request wait is not observable.",
+      "lastGeneration": "Last generation",
+      "finalAverage": "Final average",
+      "generationPaused": "Generation paused",
+      "responsePending": "Waiting for response",
+      "responseFailed": "Request failed",
+      "responseCancelled": "Stopped",
+      "responseRetrying": "Retrying",
+      "responseGenerating": "Generating",
+      "toolRunning": "Running tool"
     },
     "shareImage": {
       "entry": "Share as Image",

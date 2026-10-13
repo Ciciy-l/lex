@@ -40,6 +40,7 @@ import { throwIpcError, requireString } from '../../utils/ipcValidate';
 import * as broadcastTap from '../../device-link/broadcast-tap';
 import { createLogger } from '../../logger';
 import { collectCindyMediaHashes, commitMessageMediaRefs } from '../../cindy-media/chatAttachments';
+import { restoreTaskImageRows } from '../../cindy-media/taskImageDelivery';
 import {
   removeRefs as removeMediaRefs,
   removeSessionAttachmentRefIfUnreferencedByLiveMessage,
@@ -245,7 +246,8 @@ export async function readMessagesList(sessionId: unknown, opts: unknown, skipIm
     const before = (opts as { before?: string } | undefined)?.before;
     const beforeTs = (opts as { beforeTs?: number } | undefined)?.beforeTs;
     const after = (opts as { after?: string } | undefined)?.after;
-    const db = getDbClient().drizzle;
+    const imageDbClient = getDbClient();
+    const db = imageDbClient.drizzle;
 
     // 外部历史导入(Codex rollout / Claude transcript):device-link 隧道调用
     // 只在首页请求跑(分页跳过,#318 性能语义;首页判定 = 无任何分页游标),
@@ -329,7 +331,8 @@ export async function readMessagesList(sessionId: unknown, opts: unknown, skipIm
       )
       .limit(limit);
     const orderedRows = afterCursor ? rows.slice().reverse() : rows;
-    const listed = await hydrateLegacyUserTurnCosts(orderedRows.map(messageToCamelWithRowid));
+    const restored = await restoreTaskImageRows(imageDbClient, orderedRows);
+    const listed = await hydrateLegacyUserTurnCosts(restored.map(messageToCamelWithRowid));
     // 不阻塞首屏。旧 reconnect-stalled 横幅只在首页扫描一次，分页不再读 rollout。
     if (!before && beforeTs == null && !after) {
       const ownerScope = captureOwnerBroadcastScope();
@@ -369,7 +372,8 @@ export function registerMessageIpc(
     },
     outline: (sid, opts, skipImport) => readMessagesList(sid, opts, skipImport, true),
     hydrate: async (sid, ids) => {
-      const db = getDbClient().drizzle;
+      const imageDbClient = getDbClient();
+      const db = imageDbClient.drizzle;
       const [session] = await db.select({ clearedAt: sessions.clearedAt }).from(sessions)
         .where(eq(sessions.id, sid)).limit(1);
       if (!session) throwIpcError('NOT_FOUND', 'History is unavailable');
@@ -380,7 +384,7 @@ export function registerMessageIpc(
           .where(and(eq(messages.sessionId, sid), inArray(messages.id, batch), isNull(messages.rewindAt),
             session.clearedAt !== null ? gt(messages.createdAt, session.clearedAt) : undefined));
         if (rows.length !== batch.length) throwIpcError('NOT_FOUND', 'History range changed');
-        result.push(...rows.map(messageToCamelWithRowid));
+        result.push(...(await restoreTaskImageRows(imageDbClient, rows)).map(messageToCamelWithRowid));
       }
       return hydrateLegacyUserTurnCosts(result);
     },
@@ -407,7 +411,8 @@ export function registerMessageIpc(
     running: readRunning,
     live: readLive,
     anchor: async (sessionId, id, outline) => {
-      const db = getDbClient().drizzle;
+      const imageDbClient = getDbClient();
+      const db = imageDbClient.drizzle;
       const [session] = await db.select({ clearedAt: sessions.clearedAt }).from(sessions)
         .where(eq(sessions.id, sessionId)).limit(1);
       if (!session) throwIpcError('NOT_FOUND', 'History is unavailable');
@@ -421,7 +426,8 @@ export function registerMessageIpc(
           isNull(messages.rewindAt),
           session.clearedAt !== null ? gt(messages.createdAt, session.clearedAt) : undefined)).limit(1);
       if (!row) throwIpcError('NOT_FOUND', 'History range changed');
-      const message = messageToCamelWithRowid(row);
+      const [restored] = await restoreTaskImageRows(imageDbClient, [row]);
+      const message = messageToCamelWithRowid(restored);
       return outline ? withHistoryArtifacts(message) : message;
     },
   });
@@ -471,7 +477,8 @@ export function registerMessageIpc(
       const sid = requireString(sessionId, 'sessionId');
       const mid = requireString(messageId, 'messageId');
       const radius = clampAroundRadius((opts as { radius?: unknown } | undefined)?.radius);
-      const db = getDbClient().drizzle;
+      const imageDbClient = getDbClient();
+      const db = imageDbClient.drizzle;
 
       const [sessionRow] = await db
         .select({ clearedAt: sessions.clearedAt })
@@ -542,7 +549,7 @@ export function registerMessageIpc(
         .limit(radius);
 
       return hydrateLegacyUserTurnCosts(
-        [...before.reverse(), anchor, ...after].map(messageToCamelWithRowid),
+        (await restoreTaskImageRows(imageDbClient, [...before.reverse(), anchor, ...after])).map(messageToCamelWithRowid),
       );
     },
   );
@@ -555,7 +562,8 @@ export function registerMessageIpc(
       const aroundOpts = opts as { radius?: unknown; contentCharLimit?: unknown } | undefined;
       const radius = clampAroundRadius(aroundOpts?.radius);
       const contentCharLimit = requireReferenceContentCharLimit(aroundOpts?.contentCharLimit);
-      const db = getDbClient().drizzle;
+      const imageDbClient = getDbClient();
+      const db = imageDbClient.drizzle;
 
       const [sessionRow] = await db
         .select({ clearedAt: sessions.clearedAt })
@@ -626,7 +634,7 @@ export function registerMessageIpc(
         .limit(radius);
 
       const rows = await hydrateLegacyUserTurnCosts(
-        [...before.reverse(), anchor, ...after].map(messageToCamelWithRowid),
+        (await restoreTaskImageRows(imageDbClient, [...before.reverse(), anchor, ...after])).map(messageToCamelWithRowid),
       );
       return capReferenceMessageRows(rows, contentCharLimit);
     },
@@ -1488,7 +1496,9 @@ export async function updateMessageContent(
     .from(messages)
     .where(and(eq(messages.sessionId, sessionId), eq(messages.clientId, clientId)))
     .limit(1);
-  const row: MessageRow | undefined = narrow ? { ...narrow, content: serialized } : undefined;
+  const row: MessageRow | undefined = narrow
+    ? (await restoreTaskImageRows(dbClient, [{ ...narrow, content: serialized }]))[0]
+    : undefined;
   if (row) {
     // 挂账钩子同样覆盖"先摘要 create、后全文 update"的 tool_result 顺序
     // (review P2:vendor 事件顺序一变,首现于 update 的 blob URL 若不在这里
@@ -1739,7 +1749,8 @@ export async function createMessage(
     createdAt: insertRow.createdAt,
     rewindAt: null,
   };
-  const msg = messageToCamel(row);
+  const [restoredRow] = await restoreTaskImageRows(dbClient, [row]);
+  const msg = messageToCamel(restoredRow);
   // 媒体总仓挂账钩子(规则 25):消息落库是"blob 归属本会话"的
   // 确定时点,覆盖所有落库来源(renderer IPC / hook / im / agent echo / 合成
   // tool_result)。生成产物(art/mivo/codex)入仓时零引用,在这里补挂
@@ -1777,7 +1788,7 @@ export async function createMessage(
   // 主动 push 过, 监听端按 (sessionId, clientId) dedupe 就不会重复显示。
   if (opts?.shouldBroadcast?.() !== false) {
     broadcastMessageRow(sessionId, msg, opts?.broadcastOwnerScope);
-    await maybeBroadcastSessionListPreview(sessionId, row, opts?.broadcastOwnerScope);
+    await maybeBroadcastSessionListPreview(sessionId, restoredRow, opts?.broadcastOwnerScope);
   }
   // chat-history-embedder hook (Phase 1.2) —— fire-and-forget, 不 await。
   // 内部已有 enabled / cutoff / role / size 守卫; 关闭状态下零成本直接 return。

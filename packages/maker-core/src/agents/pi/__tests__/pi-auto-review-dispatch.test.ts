@@ -201,6 +201,7 @@ vi.mock('../rpc-client.js', () => ({
 
 import {
   AUTO_REVIEW_SOURCE_CONTENT,
+  ASYNC_QUESTION_ANSWER,
   MAIN_OWNED_SEND_CONTEXT,
   PiManagedPackageMutationCancelledError,
   PiManagedPackageMutationFailedError,
@@ -467,6 +468,26 @@ describe('pi auto-review dispatch & spawn config (mocked pi process)', () => {
       ...directories,
     }) as Promise<PiTestSessionHandle>;
   }
+
+  it.each(['settled', 'replaced', 'aborted'] as const)('does not enqueue an async answer after its Pi execution is %s', async (action) => {
+    const handle = await start('bypassPermissions');
+    const controller = new AbortController();
+    try {
+      captured.onEvent?.({ type: 'agent_start' });
+      const send = handle.steer({ type: 'user', content: 'Async answer' }, {
+        signal: controller.signal, [ASYNC_QUESTION_ANSWER]: true,
+      });
+      // Interrupt while steer is awaiting prompt preparation / the RPC queue.
+      if (action === 'aborted') controller.abort();
+      else {
+        captured.onEvent?.({ type: 'agent_end', messages: [] });
+        captured.onEvent?.({ type: 'agent_settled' });
+        if (action === 'replaced') captured.onEvent?.({ type: 'agent_start' });
+      }
+      await expect(send).rejects.toThrow(/cancelled|No active Pi turn/);
+      expect(captured.requests.filter((request) => request.type === 'steer')).toHaveLength(0);
+    } finally { await handle.close(); }
+  });
 
   /**
    * 等某个权限请求的回帧落地。用「等信号 + 有界超时」而不是固定 flush ——

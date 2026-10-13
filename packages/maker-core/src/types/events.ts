@@ -307,6 +307,8 @@ export type InteractionRequest =
   | (InteractionRequestBase & {
       kind: 'ask_user_question';
       questions: AskUserQuestionItem[];
+      /** Optional question: the provider keeps running; absence means a blocking question. */
+      delivery?: 'async';
     })
   | (InteractionRequestBase & {
       kind: 'plan_review';
@@ -394,6 +396,7 @@ export interface InteractionDismissedEvent {
  * 注: isRunning / status text 不属于 usage, 由 translator 在 emit status event 时单独拼。
  */
 export interface UsageSnapshot {
+  responseSpeed?: import("@cindy/maker-shared/usage-format").ResponseSpeedSnapshot;
   tokenUsage: number;
   contextTokens: number;
   contextWindow: number;

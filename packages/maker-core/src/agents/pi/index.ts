@@ -66,6 +66,7 @@ import {
   AgentStartupStoppedError,
   BaseAgent,
   MAIN_OWNED_SEND_CONTEXT,
+  ASYNC_QUESTION_ANSWER,
   PiManagedPackageMutationCancelledError,
   PiManagedPackageMutationFailedError,
   projectPiPackageCommandDiagnostic,
@@ -5147,6 +5148,45 @@ export class PiAgent extends BaseAgent {
       return proxyLeaseInitialInspection;
     };
     let durableSpawnEnv: NodeJS.ProcessEnv = {};
+    // Both model controls and the UI use the same durable resume path. Track it
+    // before yielding so close/account-boundary teardown can await its lease.
+    const resumeSubagent = async (taskId: string, message: string, childId?: string): Promise<string> => {
+      if (closed || accountBoundaryTeardown) throw new Error('PI session is closed');
+      if (!localSubagentSupported) throw new Error('PI Subagent is available only in local PI sessions.');
+      const operation = (async () => {
+        await permissionWriteChain;
+        if (closed) throw new Error('PI session is closed');
+        const [modelsJson, bridgeSource, runnerSource] = await Promise.all([
+          fs.readFile(path.join(configHome, 'models.json')),
+          fs.readFile(bridgeExtensionPath),
+          fs.readFile(subagentRunnerPath),
+        ]);
+        const runId = await resumePiSubagentRun(subagentRunRoot, taskId, message, {
+          launchRunner: (request) => this.launchSubagentRunner(request),
+          env: durableSpawnEnv,
+          runtimeOwnerId: subagentRuntimeOwnerId,
+          permissionSnapshot: {
+            ...requestedPermissionSnapshot,
+            mode: permissionMode,
+            readOnlyRoots: [...requestedPermissionSnapshot.readOnlyRoots],
+            writableRoots: [...requestedPermissionSnapshot.writableRoots],
+            ...reviewPathSnapshot,
+          },
+          runnerFallbackFile: subagentRunnerPath,
+          runtimeSnapshot: { modelsJson, bridgeSource, runnerSource },
+        }, childId);
+        if (!runId) throw new Error('No terminal PI Subagent run is available to resume.');
+        await refreshPiSubagentRuns();
+        return runId;
+      })();
+      // close() waits for every resume that entered while this handle was
+      // live before inspecting durable runs and transferring the proxy-token
+      // lease. Otherwise a concurrent close can observe no new directory,
+      // revoke the token, and then let this resume launch a doomed child.
+      piSubagentResumeTail = Promise.allSettled([piSubagentResumeTail, operation]).then(() => undefined);
+      return operation;
+    };
+
     let piSpawnStartedAt: number | undefined;
     let piSpawnLogged = false;
     try {
@@ -5375,7 +5415,12 @@ export class PiAgent extends BaseAgent {
               remote: Boolean(opts.remoteHostId),
               allowPiPackageManagement,
               piPackageManagementToken,
+              resumeSubagent,
               controlSubagentRunner: async (action, runId) => {
+                if (action === 'delivery') {
+                  return localSubagentSupported && !closed && !accountBoundaryTeardown
+                    && !proc.isClosed && !isCurrentTurnHostAbortRequested(ctx);
+                }
                 if (!localSubagentSupported || !PI_SUBAGENT_RUN_ID_RE.test(runId)) {
                   throw new Error('PI Subagent runner request is unavailable');
                 }
@@ -6065,8 +6110,6 @@ export class PiAgent extends BaseAgent {
       throw new AgentStartupStoppedError(err);
     }
 
-    const launchSubagentRunner = (request: PiSubagentRunnerLaunchRequest): Promise<void> =>
-      this.launchSubagentRunner(request);
     const deps = this.deps;
     const agentKind = this.kind;
     let firstModelRequestLogged = false;
@@ -7098,6 +7141,7 @@ export class PiAgent extends BaseAgent {
             ? 'Pi RPC unavailable before steer dispatch'
             : '[NO_ACTIVE_TURN] No active Pi turn to steer: RPC unavailable');
         };
+        const answerLifecycle = piAgentLifecycleSequence;
         rejectIfCancelled(sendOpts, 'steer');
         rejectIfUnavailable();
         if (sendOpts) handle.validateSendOptions?.(sendOpts);
@@ -7158,6 +7202,12 @@ export class PiAgent extends BaseAgent {
           resp = await runExclusivePiRpc(async () => {
             if (managedPackageRoute.accepted && rpcUnavailable()) return undefined;
             rejectIfUnavailable();
+            if (sendOpts?.[ASYNC_QUESTION_ANSWER]) {
+              rejectIfCancelled(sendOpts, 'steer');
+              if (!ctx.isStreaming || piAgentLifecycleSequence !== answerLifecycle) {
+                throw new Error('No active Pi turn for the async question answer');
+              }
+            }
             return proc.request(command);
           });
         } catch (error) {
@@ -7197,37 +7247,7 @@ export class PiAgent extends BaseAgent {
       async resumeBackgroundTask(taskId: string, message: string, childId?: string): Promise<void> {
         if (closed) throw new Error('PI session is closed');
         if (!localSubagentSupported) throw new Error('PI Subagent is available only in local PI sessions.');
-        const operation = (async () => {
-          await permissionWriteChain;
-          if (closed) throw new Error('PI session is closed');
-          const [modelsJson, bridgeSource, runnerSource] = await Promise.all([
-            fs.readFile(path.join(configHome, 'models.json')),
-            fs.readFile(bridgeExtensionPath),
-            fs.readFile(subagentRunnerPath),
-          ]);
-          const runId = await resumePiSubagentRun(subagentRunRoot, taskId, message, {
-            launchRunner: launchSubagentRunner,
-            env: durableSpawnEnv,
-            runtimeOwnerId: subagentRuntimeOwnerId,
-            permissionSnapshot: {
-              ...requestedPermissionSnapshot,
-              mode: permissionMode,
-              readOnlyRoots: [...requestedPermissionSnapshot.readOnlyRoots],
-              writableRoots: [...requestedPermissionSnapshot.writableRoots],
-              ...reviewPathSnapshot,
-            },
-            runnerFallbackFile: subagentRunnerPath,
-            runtimeSnapshot: { modelsJson, bridgeSource, runnerSource },
-          }, childId);
-          if (!runId) throw new Error('No terminal PI Subagent run is available to resume.');
-          await refreshPiSubagentRuns();
-        })();
-        // close() waits for every resume that entered while this handle was
-        // live before inspecting durable runs and transferring the proxy-token
-        // lease. Otherwise a concurrent close can observe no new directory,
-        // revoke the token, and then let this resume launch a doomed child.
-        piSubagentResumeTail = operation.then(() => undefined, () => undefined);
-        await operation;
+        await resumeSubagent(taskId, message, childId);
       },
 
       listBackgroundTasks() {
@@ -8079,9 +8099,10 @@ export class PiAgent extends BaseAgent {
       allowPiPackageManagement: boolean;
       piPackageManagementToken?: string;
       controlSubagentRunner: (
-        action: 'launch' | 'terminate' | 'status',
+        action: 'launch' | 'terminate' | 'status' | 'delivery',
         runId: string,
       ) => Promise<boolean>;
+      resumeSubagent?: (taskId: string, message: string, childId?: string) => Promise<string>;
       emitExtensionNotification: (message: string, event?: PiRpcEvent) => AgentEvent;
       /** Surface a cancelled native-only dialog once without exposing the raw RPC payload. */
       notifyUnsupportedExtensionUi: (
@@ -8143,15 +8164,28 @@ export class PiAgent extends BaseAgent {
         try {
           const payload = JSON.parse(
             typeof event.placeholder === 'string' ? event.placeholder : '{}',
-          ) as { action?: unknown; runId?: unknown };
+          ) as { action?: unknown; runId?: unknown; message?: unknown; childId?: unknown };
           if (
             (payload.action !== 'launch'
               && payload.action !== 'terminate'
-              && payload.action !== 'status')
+              && payload.action !== 'status'
+              && payload.action !== 'delivery'
+              && payload.action !== 'resume')
             || typeof payload.runId !== 'string'
             || !PI_SUBAGENT_RUN_ID_RE.test(payload.runId)
           ) {
             throw new Error('Invalid PI Subagent runner request');
+          }
+          if (payload.action === 'resume') {
+            if (!context.resumeSubagent || context.isPermissionContextClosed()
+              || typeof payload.message !== 'string' || !payload.message.trim()
+              || payload.message.length > 32000
+              || (payload.childId !== undefined && typeof payload.childId !== 'string')) {
+              throw new Error('Invalid PI Subagent resume request');
+            }
+            const runId = await context.resumeSubagent(payload.runId, payload.message, payload.childId as string | undefined);
+            proc.send({ type: 'extension_ui_response', id, value: JSON.stringify({ ok: true, runId }) });
+            return;
           }
           const accepted = await context.controlSubagentRunner(payload.action, payload.runId);
           proc.send({

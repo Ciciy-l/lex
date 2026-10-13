@@ -9384,7 +9384,9 @@
       "label": "基於原任務建立"
     },
     "imageMissing": {
-      "title": "圖片已丟失"
+      "title": "圖片已丟失",
+      "unavailable": "圖片暫時無法顯示",
+      "loading": "正在載入圖片…"
     },
     "visionBridge": {
       "analyzing": "正在辨識圖片中…（{{count}} 張）",
@@ -9439,8 +9441,32 @@
     },
     "runningStatus": {
       "tokenRate": "{{rate}} tok/s",
-      "tokenRateDescription": "本輪主 Agent 的平均生成速度，含思考，排除工具執行與審批等待。隨用量回報更新；旁邊顯示本輪總耗時。",
-      "tokenCount": "{{tokens}} tok"
+      "tokenRateDescription": "即時速度和峰值為估算。回應結束後以實際用量校準；不計工具執行和請求等待。",
+      "tokenCount": "{{tokens}} tok",
+      "currentRate": "最近速度",
+      "waitingSample": "取樣中",
+      "averageRate": "本輪平均",
+      "rateHistory": "生成速度歷史",
+      "outputTotal": "累計輸出",
+      "observedPeak": "峰值",
+      "tokenRateUnit": "tok/s",
+      "estimatedValue": "約{{value}}",
+      "estimatedTokenRate": "約{{rate}} tok/s",
+      "responseWaiting": "等待 {{seconds}}秒",
+      "waitSeconds": "{{seconds}}秒",
+      "firstResponse": "首回應",
+      "streamWait": "流內等待",
+      "turnWaitDescription": "從本機收到引擎開始到首個文字、思考或工具內容，不等同於網路延遲。",
+      "streamWaitDescription": "從 SDK 串流開始到首個內容區塊，之前的請求等待無法測量。",
+      "lastGeneration": "上次生成",
+      "finalAverage": "最終平均",
+      "generationPaused": "生成暫停",
+      "responsePending": "等待回應",
+      "responseFailed": "請求失敗",
+      "responseCancelled": "已停止",
+      "responseRetrying": "正在重試",
+      "responseGenerating": "正在生成",
+      "toolRunning": "執行工具中"
     },
     "shareImage": {
       "entry": "分享為圖片",

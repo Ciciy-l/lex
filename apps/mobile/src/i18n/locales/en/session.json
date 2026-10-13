@@ -30,7 +30,12 @@
     "openMicPermission": "Open microphone settings",
     "maxAttachments": "You can add up to {{max}} attachments.",
     "voiceStopRecording": "Stop Recording",
-    "capabilitiesUnsupported": "Couldn't load commands and resources from your computer. Update the desktop app and try again."
+    "capabilitiesUnsupported": "Couldn't load commands and resources from your computer. Update the desktop app and try again.",
+    "plugins": "Plugins",
+    "pluginsChooseDevice": "Choose a Device",
+    "pluginsLoading": "Loading plugins…",
+    "pluginsEmpty": "No Installed Plugins",
+    "pluginsReload": "Reload Plugins"
   },
   "presentation": {
     "collaboration": {
@@ -276,7 +281,31 @@
     "forkConfirmTitle": "Start a new session from here?",
     "forkConfirmDescription": "A separate session will be created using the context at this point. The original session stays unchanged, and future messages in either session won't affect the other.",
     "forkConfirm": "Start new session",
-    "forkCancel": "Cancel"
+    "forkCancel": "Cancel",
+    "currentRate": "Latest speed",
+    "rateHistory": "Generation speed history",
+    "tokenRateUnit": "tok/s",
+    "tokenRateDescription": "Streaming rates and peaks are estimates. Response totals are calibrated with reported usage. Tool execution and request waits are excluded.",
+    "estimatedValue": "≈{{value}}",
+    "estimatedTokenRate": "≈{{rate}} tok/s",
+    "responseWaiting": "Waiting {{seconds}}s",
+    "waitSeconds": "{{seconds}}s",
+    "firstResponse": "First response",
+    "streamWait": "Stream wait",
+    "turnWaitDescription": "From the local provider turn start to the first observed text, thinking or tool content. This is not network latency.",
+    "streamWaitDescription": "From SDK stream start to the first content block. The earlier request wait is not observable.",
+    "lastGeneration": "Last generation",
+    "finalAverage": "Final average",
+    "generationPaused": "Generation paused",
+    "responsePending": "Waiting for response",
+    "responseFailed": "Request failed",
+    "responseCancelled": "Stopped",
+    "responseRetrying": "Retrying",
+    "responseGenerating": "Generating",
+    "toolRunning": "Running tool",
+    "averageRate": "Turn average",
+    "outputTotal": "Output",
+    "observedPeak": "Peak"
   },
   "shareImage": {
     "title": "Share Conversation",

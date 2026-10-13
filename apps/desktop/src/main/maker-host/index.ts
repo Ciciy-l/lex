@@ -1014,7 +1014,9 @@ export function getMaker(): Maker {
               && entry?.source === 'builtin' && !REMOTE_ALLOWED_SERVER_NAMES.has(provider.name);
             return entry?.available === false || remoteBridgeMissing
               ? 'transport-unavailable-for-current-runtime' : null;
-          });
+          },
+          // The caller's own engine is the only evidence of what this task can call.
+          (server) => session.readMcpServerTools(server));
         if (_maker?.getSession(session.id) !== session) return { ok: false, errorCode: 'CALLER_UNAVAILABLE' };
         return { ...result, permission: session.stablePermissionModeState,
           hostCapabilities: Object.fromEntries(Object.entries(session.capabilities)
@@ -1043,6 +1045,16 @@ export function getMaker(): Maker {
           && session.instanceId === sessionInstanceId
           && session.getStatus() === 'active'
           && !session.remoteHostId);
+      },
+      askUserQuestionAsync: (
+        context: import('@cindy/mcps').LiziMcpSessionContext,
+        questions: Parameters<import('@cindy/maker-core').Session['askUserQuestionAsync']>[0],
+      ) => {
+        const session = context.sessionId ? _maker?.getSession(context.sessionId) : undefined;
+        if (!session || session.instanceId !== context.sessionInstanceId || isAppSessionBoundaryPending()) {
+          throw new Error('Question caller is no longer active');
+        }
+        return session.askUserQuestionAsync(questions);
       },
       // 只读活跃 Session 的运行时真相。权限切换是 runtime-first、DB-second，
       // 因此插件过户自动放行不得回退 sessions.permission_mode；会话不再 active

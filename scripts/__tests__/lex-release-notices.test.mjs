@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import YAML from "yaml";
+import { androidVersionCode } from "../shared/lex-mobile-config.cjs";
 import {
   compareVersions,
   LOCALES,
@@ -145,11 +146,11 @@ test("release workflows validate tagged structured notices before publishing any
         step.run === 'node scripts/lex-release-notices.mjs "$RELEASE_VERSION"',
     ),
   );
-  const detailedNotesGate = release.jobs["resolve-release"].steps.find(
-    (step) => step.name === "Require detailed Lex release notes",
+  const notesGate = release.jobs["resolve-release"].steps.find(
+    (step) => step.name === "Require Lex release notes",
   );
-  assert.ok(detailedNotesGate);
-  assert.ok(detailedNotesGate.run.includes('[ ! -s "release-notices/${RELEASE_VERSION}.md" ]'));
+  assert.ok(notesGate);
+  assert.ok(notesGate.run.includes('[ ! -s "release-notices/${RELEASE_VERSION}.md" ]'));
   const draftSteps = release.jobs.publish.steps;
   const checkout = draftSteps.find((step) => step.uses?.startsWith("actions/checkout@"));
   assert.equal(checkout.with.ref, "${{ needs.resolve-release.outputs.release_commit }}");
@@ -160,7 +161,40 @@ test("release workflows validate tagged structured notices before publishing any
   assert.ok(draft.includes('--draft --title "Lex ${tag}"'));
   assert.ok(draft.includes('if [[ "$VERSION" == *-* ]]; then'));
   assert.ok(draft.includes('release_flags+=(--prerelease)'));
-  assert.ok(draft.includes('Desktop build mode: **%s**. %s'));
+  assert.ok(draft.includes('桌面构建：**%s**。%s'));
+  assert.ok(draft.includes("signing_label='已签名'"));
+  assert.ok(draft.includes("signing_label='未使用发行证书签名'"));
+  assert.ok(!draft.includes('Build and signing /'));
+});
+
+test("0.1.5-rc.1 has concise Chinese release notes and complete localized app notices", () => {
+  const rc = JSON.parse(fs.readFileSync(
+    new URL("../../release-notices/0.1.5-rc.1.json", import.meta.url), "utf8",
+  ));
+  const body = fs.readFileSync(
+    new URL("../../release-notices/0.1.5-rc.1.md", import.meta.url), "utf8",
+  );
+  validateNotice(rc, "0.1.5-rc.1");
+  assert.ok(compareVersions(rc.version, "0.1.4") > 0);
+  assert.ok(compareVersions(rc.version, "0.1.5") < 0);
+  assert.equal(androidVersionCode(rc.version), 1000561);
+  assert.ok(androidVersionCode(rc.version) > androidVersionCode("0.1.4"));
+  assert.ok(androidVersionCode(rc.version) < androidVersionCode("0.1.5"));
+  const topicIds = rc.contentByLocale["zh-CN"].topics.map((topic) => topic.id);
+  assert.equal(new Set(topicIds).size, topicIds.length);
+  for (const locale of LOCALES) {
+    assert.deepEqual(rc.contentByLocale[locale].topics.map((topic) => topic.id), topicIds);
+  }
+  assert.ok(body.length < 1400, "Keep the public release body concise");
+  assert.match(body, /预发布/);
+  assert.match(body, /beta/);
+  assert.match(body, /0\.1\.4/);
+  assert.doesNotMatch(body, /English|日本語|한국어|繁體中文/);
+  const ci = YAML.parse(fs.readFileSync(
+    new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8",
+  ));
+  assert.ok(Object.values(ci.jobs).some((job) => job.steps?.some((step) =>
+    step.run?.includes("scripts/__tests__/lex-release-notices.test.mjs"))));
 });
 
 test("0.1.4 stable notices cover every locale and match the detailed release body", () => {

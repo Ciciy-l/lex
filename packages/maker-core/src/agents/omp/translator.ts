@@ -1,5 +1,6 @@
 import type { Logger } from '../../interfaces/logger.js';
 import type { AgentEvent, AgentEventType, UsageSnapshot } from '../../types/events.js';
+import { ResponseSpeedTracker } from '../shared/response-speed.js';
 import { isOmpRecord } from './commands.js';
 import { parseOmpUiRequest, type OmpUiRequest } from './permission-bridge.js';
 
@@ -109,6 +110,8 @@ export interface OmpTranslatorOptions {
  * 一个 translator 只服务一个会话（防串台：会话切换时必须重建，架构 §3.7）。
  */
 export class OmpTranslator {
+  private readonly responseSpeed = new ResponseSpeedTracker('turn');
+  private hasResponseSpeed = false;
   private streaming = false;
   private readonly seenMessageEnds = new Set<string>();
   private readonly toolNames = new Map<string, string>();
@@ -150,6 +153,7 @@ export class OmpTranslator {
       costUsd: this.costUsd,
       outputTokens: this.outputTokens,
       generationActive: this.streaming,
+      ...(this.hasResponseSpeed ? { responseSpeed: this.responseSpeed.snapshot() } : {}),
     };
   }
 
@@ -163,6 +167,10 @@ export class OmpTranslator {
       case 'ready':
       case 'turn_start':
       case 'message_start':
+        if (type === 'message_start' && this.streaming && readRecord(frame.message)?.role === 'assistant') {
+          this.responseSpeed.beginRequest();
+          return { kind: 'events', events: [this.status('OMP is working', true)] };
+        }
         return { kind: 'ignored' };
       case 'extension_ui_request':
         return this.translateUiRequest(frame);
@@ -184,6 +192,7 @@ export class OmpTranslator {
       case 'auto_compaction_end':
         return this.translateCompaction(type);
       case 'auto_retry_start':
+        if (!this.streaming || !this.responseSpeed.beginRetry()) return { kind: 'ignored' };
         return { kind: 'events', events: [this.status('Retrying after a provider error', true)] };
       case 'auto_retry_end':
         return { kind: 'ignored' };
@@ -225,6 +234,8 @@ export class OmpTranslator {
   }
 
   private translateAgentStart(): OmpTranslation {
+    this.hasResponseSpeed = true;
+    this.responseSpeed.reset('turn');
     this.streaming = true;
     this.streamedTextInTurn = false;
     this.turnText = '';
@@ -243,12 +254,16 @@ export class OmpTranslator {
       readString(sub.toolCallId, 256) ??
       `omp-${subType}`;
 
+    const speedChanged = this.streaming && Boolean(delta)
+      && ['text_delta', 'thinking_delta', 'toolcall_delta'].includes(subType)
+      && this.responseSpeed.delta(delta!);
+    const speedEvents = speedChanged ? [this.status('OMP is working', true)] : [];
     switch (subType) {
       case 'thinking_delta':
         if (!delta) return { kind: 'ignored' };
         return {
           kind: 'events',
-          events: [this.event('thinking', { stage: 'delta', blockId, text: delta })],
+          events: [this.event('thinking', { stage: 'delta', blockId, text: delta }), ...speedEvents],
         };
       case 'text_delta':
         if (!delta) return { kind: 'ignored' };
@@ -256,7 +271,7 @@ export class OmpTranslator {
         this.turnText += delta;
         return {
           kind: 'events',
-          events: [this.event('text', { text: delta, isFinal: false })],
+          events: [this.event('text', { text: delta, isFinal: false }), ...speedEvents],
         };
       case 'thinking_end':
       case 'text_start':
@@ -265,6 +280,7 @@ export class OmpTranslator {
         // 块级边界事件：GUI 靠 delta 累加即可，重复发块事件会造出空块。
         return { kind: 'ignored' };
       case 'toolcall_delta':
+        if (speedChanged) return { kind: 'events', events: speedEvents };
         // 工具参数增量：真实参数在 `tool_execution_start` 的 `args` 里已完整给出，
         // 这里再发 tool_use 会让 UI 出现重复工具卡 —— 故意丢弃。
         return { kind: 'ignored' };
@@ -288,10 +304,17 @@ export class OmpTranslator {
       this.seenMessageEnds.add(dedupeKey);
     }
     this.applyUsage(message);
+    if (this.hasResponseSpeed && message.role === 'assistant') {
+      const usage = readRecord(message.usage);
+      const output = typeof usage?.output === 'number' && Number.isFinite(usage.output) && usage.output >= 0
+        ? usage.output : undefined;
+      this.responseSpeed.endResponse(output);
+    }
 
     const role = readString(message.role, 32);
     const stopReason = readString(message.stopReason, 64);
     if (stopReason === 'error') {
+      this.responseSpeed.finish();
       this.streaming = false;
       const raw =
         readString(message.errorMessage, MAX_FRAME_TEXT) ??
@@ -333,6 +356,7 @@ export class OmpTranslator {
         );
       }
     }
+    if (this.hasResponseSpeed) events.push(this.status('OMP is working', this.streaming));
     return events.length === 0 ? { kind: 'ignored' } : { kind: 'events', events };
   }
 
@@ -342,6 +366,10 @@ export class OmpTranslator {
     const input = readRecord(frame.args) ?? {};
     const intent = readString(frame.intent, 8_192);
     if (toolUseId) this.toolNames.set(toolUseId, toolName);
+    if (this.streaming) {
+      this.responseSpeed.pause();
+      this.responseSpeed.toolStarted(toolUseId);
+    }
     return {
       kind: 'events',
       events: [
@@ -351,6 +379,7 @@ export class OmpTranslator {
           input,
           ...(intent === undefined ? {} : { intent }),
         }),
+        ...(this.streaming ? [this.status('OMP is working', true)] : []),
       ],
     };
   }
@@ -385,6 +414,9 @@ export class OmpTranslator {
     const resolvedPath = this.toolPaths.get(toolUseId);
     this.toolPaths.delete(toolUseId);
     this.toolNames.delete(toolUseId);
+    const ended = this.responseSpeed.toolEnded(toolUseId);
+    const speed = this.responseSpeed.snapshot();
+    if (this.streaming && ended && !speed.toolActive && speed.phase !== 'generating') this.responseSpeed.beginRequest();
     return {
       kind: 'events',
       events: [
@@ -399,6 +431,7 @@ export class OmpTranslator {
           toolUseIds: [toolUseId],
           summary: isError ? 'failed' : 'done',
         }),
+        ...(this.streaming ? [this.status('OMP is working', true)] : []),
       ],
     };
   }
@@ -406,6 +439,7 @@ export class OmpTranslator {
   private translateAgentEnd(frame: Readonly<Record<string, unknown>>): OmpTranslation {
     // spike §4：`isTerminal` 是终态标志；显式 false 表示还有后续 turn。
     if (frame.isTerminal === false) return { kind: 'ignored' };
+    this.responseSpeed.finish();
     this.streaming = false;
     const result = this.turnText ? this.turnText.slice(0, PREVIEW_LIMIT * 8) : undefined;
     return {
@@ -439,6 +473,7 @@ export class OmpTranslator {
 
   /** rpc-client 在 prompt 明确失败时合成的帧（不是上游协议字段）。 */
   private translatePromptFailure(frame: Readonly<Record<string, unknown>>): OmpTranslation {
+    this.responseSpeed.finish();
     this.streaming = false;
     const raw = readString(frame.message, MAX_FRAME_TEXT) ?? 'OMP prompt failed';
     return {
@@ -454,6 +489,7 @@ export class OmpTranslator {
 
   /** 上游若直接发 `error` 帧（spike 未抓到，防御性分支）。 */
   private translateErrorFrame(frame: Readonly<Record<string, unknown>>): OmpTranslation {
+    this.responseSpeed.finish();
     this.streaming = false;
     const raw =
       readString(frame.message, MAX_FRAME_TEXT) ??

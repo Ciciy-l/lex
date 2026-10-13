@@ -28,6 +28,7 @@
     "./file-browser-grid": "./src/fileBrowserGrid.ts",
     "./file-preview": "./src/filePreview.ts",
     "./fixtures": "./src/fixtures.ts",
+    "./ghost-command": "./src/ghostCommand.ts",
     "./history-gap": "./src/historyGap.ts",
     "./interaction": "./src/interaction.ts",
     "./internal-citation": "./src/internalCitation.ts",

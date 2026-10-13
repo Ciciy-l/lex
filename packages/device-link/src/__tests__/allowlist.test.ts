@@ -27,6 +27,12 @@ import {
 } from '../remoteResources.js';
 
 describe('REMOTE_INVOKE_ALLOWLIST', () => {
+  it('exposes public composer metadata without exposing installed plugin state or mutations', () => {
+    expect(REMOTE_INVOKE_ALLOWLIST.has('ghosts:composer-list')).toBe(true);
+    for (const channel of ['ghosts:list', 'ghosts:mark-used', 'ghosts:enable', 'ghosts:install']) {
+      expect(REMOTE_INVOKE_ALLOWLIST.has(channel)).toBe(false);
+    }
+  });
   it('allows Review start to run on the data-owning Desktop', () => {
     expect(REMOTE_INVOKE_ALLOWLIST.has('maker:review:start')).toBe(true);
   });

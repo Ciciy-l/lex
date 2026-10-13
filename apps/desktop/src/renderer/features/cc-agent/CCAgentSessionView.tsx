@@ -1,3 +1,5 @@
+import { ResponseSpeedStatus } from './ResponseSpeedStatus';
+import type { ResponseSpeedSnapshot } from '@cindy/maker-shared/usage-format';
 import { shouldShowOpenPathError } from '../../../shared/openPathResult';
 import { shouldShowFailedScheduleNotice } from '@cindy/maker-shared/schedule-model';
 /**
@@ -4817,6 +4819,7 @@ export function CCAgentSessionView({
                 <RunningStatusBar
                   key={sessionId}
                   status={composerStatus}
+                  responseSpeed={agentStatus.responseSpeed}
                   tokenUsage={agentStatus.tokenUsage}
                   outputTokens={agentStatus.outputTokens ?? 0}
                   generationDurationMs={agentStatus.generationDurationMs ?? 0}
@@ -5635,6 +5638,7 @@ const STATUS_BAR_FADE_MS = 400;
 const CONTROLLED_BANNER_MAX_WIDTH = 420;
 
 function RunningStatusBar({
+  responseSpeed,
   status,
   tokenUsage,
   outputTokens = 0,
@@ -5654,6 +5658,7 @@ function RunningStatusBar({
   className,
 }: {
   status: string;
+  responseSpeed?: ResponseSpeedSnapshot;
   tokenUsage: number;
   outputTokens?: number;
   generationDurationMs?: number;
@@ -5736,6 +5741,8 @@ function RunningStatusBar({
 
   const isHidden = suppressContent || (!showContent && !visible);
   const workflowWaiting = workflowStatus !== undefined;
+  const retainedSpeed = !suppressContent && !sideTaskRunning && !backgroundTasksRunning
+    && !workflowWaiting && responseSpeed?.phase === 'complete';
 
   // side-task / 后台子任务运行中永远当成进行态 (即便上一轮 LLM 留下的 status 文案
   // 是 "Done", 此时任务还在跑, 显示 ✓ 完成图标会让用户以为已经做完)。
@@ -5837,7 +5844,7 @@ function RunningStatusBar({
   };
   // 空闲后真正收起,不再给输入框上方留下固定空行。overlay 的 ResizeObserver 会在
   // DOM 尺寸变化后补齐 MessageStream 的 bottomPadding,因此不靠硬编码高度制造跳变。
-  if (isHidden && !rightLeadingSlot) return null;
+  if (isHidden && !rightLeadingSlot && !retainedSpeed) return null;
 
   // 两段式布局:左(运行状态) / 右(elapsed·tokens)。
   // - 左段 min-w-0(可收缩):status 并非短枚举 —— turn-start 文案带用户名(可含中文长句)、
@@ -5896,12 +5903,12 @@ function RunningStatusBar({
           走 LLM, 显示残留 token 计数会误导用户以为也耗了 token。 */}
       <div className="flex min-w-0 items-center justify-self-end gap-2">
         {rightLeadingSlot}
-        {!isHidden && (
+        {(!isHidden || retainedSpeed) && (
           <div
             data-running-status-meta="true"
             className="flex min-w-0 items-center gap-[6px]"
-            style={fadeStyle}
-            aria-hidden={isHidden}
+            style={retainedSpeed ? undefined : fadeStyle}
+            aria-hidden={isHidden && !retainedSpeed}
           >
             {backgroundTasksRunning ? (
               // 后台子任务模式:elapsed 是上一轮 turn 的残留计时、tokens 是残留计数,
@@ -5926,7 +5933,9 @@ function RunningStatusBar({
                   ? t('chat.backgroundActivity.stopping')
                   : t('chat.backgroundActivity.stopAll')}
               </button>
-            ) : workflowWaiting ? null : (
+            ) : workflowWaiting ? null : responseSpeed && !sideTaskRunning ? (
+              <ResponseSpeedStatus speed={responseSpeed} />
+            ) : (
               <>
                 <span className="text-13 font-medium text-[var(--status-bar-meta)]">
                   {elapsedText}

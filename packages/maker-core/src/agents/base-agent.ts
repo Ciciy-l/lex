@@ -2074,6 +2074,8 @@ export interface StartSessionOptions {
  * this proof. Main dispatchers attach it only after authenticating the source.
  */
 export const MAIN_OWNED_SEND_CONTEXT = Symbol('cindy.main-owned-send-context');
+/** Optional question replies must never be queued for a later execution. */
+export const ASYNC_QUESTION_ANSWER = Symbol('cindy.async-question-answer');
 
 /** Call-local user content before Session replaces images with generated descriptions. */
 export const AUTO_REVIEW_SOURCE_CONTENT = Symbol('cindy.auto-review-source-content');
@@ -2109,6 +2111,7 @@ export interface MainOwnedSendContext {
  * 缺省 / 不识别字段必须安全忽略。
  */
 export interface SendOptions {
+  readonly [ASYNC_QUESTION_ANSWER]?: true;
   readonly [AUTO_REVIEW_SOURCE_CONTENT]?: UserMessage['content'];
   readonly [AUTO_REVIEW_USER_INTENT]?: AutoReviewUserIntent;
   readonly [AUTO_REVIEW_DELEGATED_CONTINUATION]?: true;
@@ -2310,10 +2313,38 @@ export interface PiModelSwitchPreview {
   reason?: string;
 }
 
+/**
+ * What the running engine reports for one MCP server in this session.
+ * - `connected`: the engine lists tools for it (possibly none, when it says so).
+ * - `no-tools`: the engine has the server but lists no tools and no state; it
+ *   may have failed to start, still be starting, or expose no tools.
+ * - `not-mounted`: the engine has no server by that name in this session.
+ */
+export type AgentMcpServerToolsState =
+  | 'connected'
+  | 'no-tools'
+  | 'not-mounted'
+  | 'failed'
+  | 'needs-auth'
+  | 'pending'
+  | 'disabled';
+
+export interface AgentMcpServerToolsReport {
+  state: AgentMcpServerToolsState;
+  /** Raw MCP tool names as the server declared them, not harness-qualified names. */
+  tools: Array<{ name: string; description?: string }>;
+}
+
 export interface AgentSessionHandle {
   /** Canonical physical Skill identities frozen at native runtime startup. */
   readonly disabledSkillPaths?: readonly string[];
   getCodexContextWindowInfo?(): Promise<CodexContextWindowInfo | null>;
+  /**
+   * Read-only: ask the engine which tools it holds for one MCP server in this
+   * session. Never starts a server or calls its tools. Absent, or null, when
+   * the engine has no per-session MCP status entry.
+   */
+  readMcpServerTools?(serverName: string): Promise<AgentMcpServerToolsReport | null>;
   /** Native session identity safe for resume; may retain an unaccepted fork's source. */
   readonly id: string;
   /** Transient native request identity; hosts must not persist it as a resume id. */

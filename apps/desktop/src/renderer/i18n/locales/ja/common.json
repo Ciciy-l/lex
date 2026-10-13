@@ -9385,7 +9385,9 @@
       "label": "元のセッションから作成"
     },
     "imageMissing": {
-      "title": "画像が失われました"
+      "title": "画像が失われました",
+      "unavailable": "画像を表示できません",
+      "loading": "画像を読み込み中…"
     },
     "visionBridge": {
       "analyzing": "画像を認識中…（{{count}}枚）",
@@ -9440,8 +9442,32 @@
     },
     "runningStatus": {
       "tokenRate": "{{rate}} tok/s",
-      "tokenRateDescription": "このターンのメイン Agent の平均生成速度です。思考を含み、ツール実行と承認待ちは除きます。使用量の報告に合わせて更新され、隣にはターン全体の経過時間が表示されます。",
-      "tokenCount": "{{tokens}} tok"
+      "tokenRateDescription": "リアルタイム速度とピークは推定値です。応答後に実使用量で補正し、ツール実行とリクエスト待機は除外します。",
+      "tokenCount": "{{tokens}} tok",
+      "currentRate": "直近の速度",
+      "waitingSample": "計測中",
+      "averageRate": "このターンの平均",
+      "rateHistory": "生成速度の推移",
+      "outputTotal": "累計出力",
+      "observedPeak": "ピーク",
+      "tokenRateUnit": "tok/s",
+      "estimatedValue": "約{{value}}",
+      "estimatedTokenRate": "約{{rate}} tok/s",
+      "responseWaiting": "待機 {{seconds}}秒",
+      "waitSeconds": "{{seconds}}秒",
+      "firstResponse": "初回応答",
+      "streamWait": "ストリーム内待機",
+      "turnWaitDescription": "ローカルでの実行開始から最初のテキスト、思考、ツール内容まで。ネットワーク遅延とは異なります。",
+      "streamWaitDescription": "SDK ストリーム開始から最初のコンテンツまで。それ以前のリクエスト待機は測定できません。",
+      "lastGeneration": "前回の生成",
+      "finalAverage": "最終平均",
+      "generationPaused": "生成を一時停止",
+      "responsePending": "応答待ち",
+      "responseFailed": "リクエスト失敗",
+      "responseCancelled": "停止済み",
+      "responseRetrying": "再試行中",
+      "responseGenerating": "生成中",
+      "toolRunning": "ツール実行中"
     },
     "shareImage": {
       "entry": "画像として共有",

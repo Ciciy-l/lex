@@ -1,5 +1,6 @@
 import path from 'node:path';
 import os from 'node:os';
+import { ASYNC_QUESTION_ANSWER } from '../base-agent.js';
 import type {
   AgentSessionHandle,
   AgentSessionTeardownOptions,
@@ -422,6 +423,11 @@ export class OmpSessionHandle implements AgentSessionHandle {
   async steer(message: UserMessage, opts?: SendOptions): Promise<void> {
     this.assertRuntimeAvailable();
     if (opts?.signal?.aborted === true) throw new Error('OMP steer was cancelled');
+    // No await before the RPC write: the active runtime and turn cannot change
+    // between this check and dispatch. Never queue an optional reply for later.
+    if (opts?.[ASYNC_QUESTION_ANSWER] && !this.isTurnRunning()) {
+      throw new Error('No active OMP turn for the async question answer');
+    }
     const text = toOmpPromptText(message);
     if (!text || text.length > MAX_MESSAGE_LENGTH)
       throw new Error('Invalid OMP prompt message');
@@ -433,6 +439,7 @@ export class OmpSessionHandle implements AgentSessionHandle {
       );
       await response;
     } catch (error) {
+      if (opts?.[ASYNC_QUESTION_ANSWER]) throw error;
       this.emitTerminalError(error, 'steer');
       if (opts?.throwOnStartFailure === true) throw error;
     }
