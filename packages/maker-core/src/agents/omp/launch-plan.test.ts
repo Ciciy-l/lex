@@ -24,13 +24,21 @@ function plan(
 }
 
 describe('parseOmpVersionOutput', () => {
-  it('accepts the pinned v18.1.18 banner and nothing looser', () => {
-    expect(parseOmpVersionOutput('omp/18.1.18\n')).toBe('18.1.18');
-    expect(parseOmpVersionOutput('omp/18.1.18\r\n')).toBe('18.1.18');
-    expect(isOmpCompatibilityBaseline('omp/18.1.18\n')).toBe(true);
-    expect(isOmpCompatibilityBaseline('omp/18.1.19\n')).toBe(false);
-    expect(parseOmpVersionOutput('omp 18.1.18')).toBeUndefined();
-    expect(parseOmpVersionOutput('omp/18.1.18\nnoise')).toBeUndefined();
+  it("accepts the pinned v18.10.3 banner and nothing looser", () => {
+    expect(parseOmpVersionOutput("18.10.3\n")).toBe("18.10.3");
+    expect(parseOmpVersionOutput("18.10.3\r\n")).toBe("18.10.3");
+    expect(isOmpCompatibilityBaseline("18.10.3\n")).toBe(true);
+    expect(parseOmpVersionOutput("omp/18.10.3\n")).toBe("18.10.3");
+    expect(parseOmpVersionOutput("omp/18.10.3\r\n")).toBe("18.10.3");
+    expect(isOmpCompatibilityBaseline("omp/18.10.3\n")).toBe(true);
+    expect(isOmpCompatibilityBaseline("omp/18.1.19\n")).toBe(false);
+    expect(isOmpCompatibilityBaseline("omp/18.1.18\n")).toBe(false);
+    expect(isOmpCompatibilityBaseline("18.10.4\n")).toBe(false);
+    expect(parseOmpVersionOutput("18.10.3")).toBeUndefined();
+    expect(parseOmpVersionOutput("18.10.3\nnoise")).toBeUndefined();
+    expect(parseOmpVersionOutput("notice\n18.10.3\n")).toBeUndefined();
+    expect(parseOmpVersionOutput("omp 18.10.3")).toBeUndefined();
+    expect(parseOmpVersionOutput("omp/18.10.3\nnoise")).toBeUndefined();
   });
 });
 

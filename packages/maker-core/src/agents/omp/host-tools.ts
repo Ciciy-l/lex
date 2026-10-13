@@ -130,9 +130,15 @@ export class OmpHostToolBridge {
     this.tools = entries;
   }
 
-  definitions(): readonly Pick<OmpHostToolDefinition, 'name' | 'label' | 'description' | 'parameters'>[] {
+  definitions(): readonly (Pick<
+    OmpHostToolDefinition,
+    'name' | 'label' | 'description' | 'parameters'
+  > & { loadMode: 'essential' })[] {
     return Object.freeze(Array.from(this.tools.values(), (tool) => Object.freeze({
       name: tool.name,
+      // v18.10.3 otherwise demotes host tools to discovery. These are Lex's
+      // fixed gateways, not its dynamically discovered individual tool catalog.
+      loadMode: 'essential' as const,
       ...(tool.label === undefined ? {} : { label: tool.label }),
       description: tool.description,
       parameters: tool.parameters,

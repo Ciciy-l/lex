@@ -1,4 +1,5 @@
 import codexRelease from '../../../../../../tools/codex-package/latest.json';
+import piRelease from '../../../../../../tools/pi/latest.json';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -17,11 +18,17 @@ describe('build-pinned agent runtime manifest', () => {
       expect(manifest?.claudeCode?.file).toContain(`/${platform}/`);
       const codex = codexRelease.runtimeAssets[platform as keyof typeof codexRelease.runtimeAssets];
       expect(manifest?.codexPackage).toEqual({ version: codexRelease.version, file: codex.url, sha256: codex.sha256, size: codex.size });
-      expect(manifest?.pi?.file).toContain(`/${platform}/`);
+      const pi = piRelease.runtimeAssets[platform as keyof typeof piRelease.runtimeAssets];
+      expect(manifest?.pi).toEqual({
+        version: piRelease.version,
+        file: pi.url,
+        sha256: pi.sha256,
+        size: pi.size,
+      });
       const omp = getPinnedOmpRuntimeAsset(platform);
       expect(omp).toBeDefined();
       expect(manifest?.omp).toEqual({
-        version: '18.1.18',
+        version: '18.10.3',
         file: omp?.url,
         sha256: omp?.sha256,
         size: omp?.size,
@@ -38,7 +45,7 @@ describe('build-pinned agent runtime manifest', () => {
     expect(first?.claudeCode).toBeDefined();
     first!.claudeCode!.version = 'mutated';
 
-    expect(getRuntimeManifest('win32-x64')?.claudeCode?.version).toBe('2.1.259');
+    expect(getRuntimeManifest('win32-x64')?.claudeCode?.version).toBe('2.1.296');
   });
 
   it('uses the audited Cindy CDN base without a trailing slash', () => {
@@ -48,7 +55,7 @@ describe('build-pinned agent runtime manifest', () => {
   it('keeps the legacy standalone pin distinct from the desktop package pin', () => {
     const manifest = getRuntimeManifest('win32-x64');
 
-    expect(manifest?.codexPackage?.version).toBe('0.159.2');
+    expect(manifest?.codexPackage?.version).toBe('0.162.1');
     expect(manifest?.codex?.version).toBe('0.145.0');
     expect(manifest?.codex?.version).not.toBe(manifest?.codexPackage?.version);
   });

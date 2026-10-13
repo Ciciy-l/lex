@@ -1,0 +1,231 @@
+{
+  "version": "0.1.5",
+  "date": "2026-10-14",
+  "contentByLocale": {
+    "zh-CN": {
+      "intro": "Lex 0.1.5 正式版改善任务稳定性、手机体验、Git 侧栏与引擎设置，建议桌面和 Android 一同更新。",
+      "topics": [
+        {
+          "id": "stability",
+          "title": "任务与远控更稳定",
+          "text": "修复任务权限恢复、SSH 与设备连接、Pi 模型切换和断线处理，完善四引擎模型偏好保存。异步提问可在执行中接收回答，Pi Subagent 的等待、停止、继续和结果通知更完整。"
+        },
+        {
+          "id": "mobile",
+          "title": "手机消息与图片更可靠",
+          "text": "改善登录恢复、已发送消息、模型选择、语音输入、历史滚动和长任务阅读。任务图片持久保存，可恢复的图片引用自动修复；输入框可选择已安装插件。"
+        },
+        {
+          "id": "response-speed",
+          "title": "四引擎速度可回看",
+          "text": "显示首响应等待、生成、工具执行和重试状态，完成后保留速度图表与输出结果。流式估算值会明确标示，工具执行时间不计入生成速度。"
+        },
+        {
+          "id": "privacy-startup",
+          "title": "关闭使用统计，优化启动画面",
+          "text": "强制关闭 Lex 客户端 TapDB 使用统计。桌面启动背景加载更轻，手机启动人物、字标与加载提示布局更清晰，并适配亮色与暗色主题。"
+        },
+        {
+          "id": "sidebar",
+          "title": "Git 与协同侧栏更顺手",
+          "text": "工作目录内可发现和切换多个 Git 仓库，本机、SSH 和设备连接均可使用。单行 Graph 前置 HEAD 与分支；文件状态用颜色和字母区分，删除路径带删除线。侧栏可直接创建 Worker，无内容页签时自动收起空白区域。"
+        },
+        {
+          "id": "harness-settings",
+          "title": "引擎设置更紧凑",
+          "text": "OMP 压缩阈值支持百分比滑杆和原生默认，模型协议按实际连接显示。引擎设置说明更简短，高级项默认折叠、搜索时展开；修复 Pi 官方版本检测，升级失败提示更明确。"
+        },
+        {
+          "id": "engine-baselines",
+          "title": "更新四引擎默认版本",
+          "text": "Claude Code 2.1.296、Codex 0.162.1、Pi 1.2.0、OMP 18.10.3。保留已显式选择的引擎版本，也可在设置中恢复 Lex 基线。"
+        },
+        {
+          "id": "upgrade",
+          "title": "升级至正式版",
+          "text": "正式版与 beta 用户均可升级至 0.1.5。下载页：https://ciciy-l.github.io/lex/ 。安装包：https://github.com/Ciciy-l/lex/releases/tag/v0.1.5 。Android 保持原包名 io.github.ciciyl.lex 和永久签名，可直接覆盖安装，请勿先卸载。暂不提供 iOS 安装包。"
+        }
+      ]
+    },
+    "zh-TW": {
+      "intro": "Lex 0.1.5 正式版改善任務穩定性、手機體驗、Git 側欄與引擎設定，建議桌面和 Android 一同更新。",
+      "topics": [
+        {
+          "id": "stability",
+          "title": "任務與遠端控制更穩定",
+          "text": "修正任務權限復原、SSH 與裝置連線、Pi 模型切換和斷線處理，完善四引擎模型偏好儲存。非同步提問可在執行中接收回答，Pi Subagent 的等待、停止、繼續與結果通知更完整。"
+        },
+        {
+          "id": "mobile",
+          "title": "手機訊息與圖片更可靠",
+          "text": "改善登入復原、已傳送訊息、模型選擇、語音輸入、歷史捲動和長任務閱讀。任務圖片持久儲存，可復原的圖片參照自動修正；輸入框可選擇已安裝插件。"
+        },
+        {
+          "id": "response-speed",
+          "title": "四引擎速度可回看",
+          "text": "顯示首次回應等待、生成、工具執行和重試狀態，完成後保留速度圖表與輸出結果。串流估計值會明確標示，工具執行時間不計入生成速度。"
+        },
+        {
+          "id": "privacy-startup",
+          "title": "關閉使用統計，優化啟動畫面",
+          "text": "強制關閉 Lex 用戶端 TapDB 使用統計。桌面啟動背景載入更輕，手機啟動人物、字標與載入提示配置更清楚，並適配亮色與暗色主題。"
+        },
+        {
+          "id": "sidebar",
+          "title": "Git 與協同側欄更順手",
+          "text": "工作目錄內可探索和切換多個 Git 儲存庫，本機、SSH 和裝置連線均可使用。單行 Graph 將 HEAD 與分支放在前方；檔案狀態以顏色和字母區分，刪除路徑帶刪除線。側欄可直接建立 Worker，沒有內容分頁時自動收起空白區域。"
+        },
+        {
+          "id": "harness-settings",
+          "title": "引擎設定更精簡",
+          "text": "OMP 壓縮閾值支援百分比滑桿和原生預設，模型協定依實際連線顯示。引擎設定說明更簡短，進階項預設摺疊、搜尋時展開；修正 Pi 官方版本偵測，升級失敗提示更明確。"
+        },
+        {
+          "id": "engine-baselines",
+          "title": "更新四引擎預設版本",
+          "text": "Claude Code 2.1.296、Codex 0.162.1、Pi 1.2.0、OMP 18.10.3。保留已明確選定的引擎版本，也可在設定中復原 Lex 基線。"
+        },
+        {
+          "id": "upgrade",
+          "title": "升級至正式版",
+          "text": "正式版與 beta 使用者均可升級至 0.1.5。下載頁：https://ciciy-l.github.io/lex/ 。安裝包：https://github.com/Ciciy-l/lex/releases/tag/v0.1.5 。Android 保持原套件名稱 io.github.ciciyl.lex 和永久簽章，可直接覆蓋安裝，請勿先解除安裝。暫不提供 iOS 安裝包。"
+        }
+      ]
+    },
+    "en": {
+      "intro": "Lex 0.1.5 is a stable release with more reliable tasks, a better mobile experience, an improved Git sidebar and clearer engine settings. Update desktop and Android together.",
+      "topics": [
+        {
+          "id": "stability",
+          "title": "More reliable tasks and remote control",
+          "text": "Fixes permission recovery, SSH and device connections, Pi model switching and disconnection handling. Model preferences are saved consistently across all four engines. Asynchronous questions accept answers during execution, and Pi subagents gain better wait, stop, follow-up and result notifications."
+        },
+        {
+          "id": "mobile",
+          "title": "More reliable mobile messages and images",
+          "text": "Improves sign-in recovery, sent messages, model selection, voice input, history scrolling and long-task reading. Task images are stored durably and recoverable references are repaired. The composer can select installed plugins."
+        },
+        {
+          "id": "response-speed",
+          "title": "Review speed across four engines",
+          "text": "Shows first-response waiting, generation, tool execution and retries. Speed charts and output remain visible after completion. Stream estimates are labelled, and tool execution time is excluded from generation speed."
+        },
+        {
+          "id": "privacy-startup",
+          "title": "Usage analytics disabled and startup improved",
+          "text": "Lex client-side TapDB usage analytics are disabled. The desktop startup artwork loads with less overhead. Mobile character artwork, wordmark and loading indicator have a clearer layout in both Light and Dark themes."
+        },
+        {
+          "id": "sidebar",
+          "title": "A better Git and collaboration sidebar",
+          "text": "Discover and switch between multiple Git repositories in a working directory, locally, over SSH or through device connections. Single-row Graph entries put HEAD and branches first. Colors and letters distinguish file status, with deleted paths struck through. Create a Worker directly from the sidebar; empty content areas collapse when no content tab is open."
+        },
+        {
+          "id": "harness-settings",
+          "title": "More compact engine settings",
+          "text": "OMP compaction thresholds use a percentage slider with a native-default option, and protocol labels reflect the actual model connection. Settings descriptions are shorter; advanced options collapse by default and expand in search. Pi official release detection is fixed, with clearer upgrade failure messages."
+        },
+        {
+          "id": "engine-baselines",
+          "title": "Updated default engine versions",
+          "text": "Claude Code 2.1.296, Codex 0.162.1, Pi 1.2.0 and OMP 18.10.3. Explicitly selected engine versions are preserved. You can also restore the Lex baseline in settings."
+        },
+        {
+          "id": "upgrade",
+          "title": "Upgrade to the stable release",
+          "text": "Both stable and beta users can upgrade to 0.1.5. Download page: https://ciciy-l.github.io/lex/ . Installers: https://github.com/Ciciy-l/lex/releases/tag/v0.1.5 . Android keeps package ID io.github.ciciyl.lex and its permanent signer. Install over the existing app without uninstalling first. No iOS installer is available."
+        }
+      ]
+    },
+    "ja": {
+      "intro": "Lex 0.1.5 正式版では、セッションの安定性、モバイル体験、Git サイドバー、エンジン設定を改善しました。デスクトップと Android を一緒に更新してください。",
+      "topics": [
+        {
+          "id": "stability",
+          "title": "セッションとリモート操作の安定性",
+          "text": "権限の復元、SSH とデバイス接続、Pi のモデル切り替えと切断処理を修正し、4エンジンのモデル設定の保存を改善しました。非同期の質問に実行中でも回答でき、Pi サブエージェントの待機、停止、継続、結果通知も改善しました。"
+        },
+        {
+          "id": "mobile",
+          "title": "モバイルのメッセージと画像",
+          "text": "ログイン復旧、送信済みメッセージ、モデル選択、音声入力、履歴スクロール、長いセッションの閲覧を改善しました。セッション画像を永続保存し、復旧可能な参照を修復します。入力欄でインストール済みプラグインを選択できます。"
+        },
+        {
+          "id": "response-speed",
+          "title": "4エンジンの速度を振り返る",
+          "text": "初回応答待ち、生成、ツール実行、再試行の状態を表示し、完了後も速度グラフと出力結果を残します。ストリーム推定値を明示し、ツール実行時間は生成速度から除外します。"
+        },
+        {
+          "id": "privacy-startup",
+          "title": "使用統計の停止と起動画面の改善",
+          "text": "Lex クライアントの TapDB 使用統計を無効化しました。デスクトップの起動背景を軽量化し、モバイルの人物、ワードマーク、読み込み表示の配置を見やすくしました。ライト・ダーク両テーマに対応します。"
+        },
+        {
+          "id": "sidebar",
+          "title": "Git と協同サイドバー",
+          "text": "作業ディレクトリ内の複数の Git リポジトリを検出・切り替えできます。ローカル、SSH、デバイス接続に対応します。1行の Graph は HEAD とブランチを先頭に表示し、色と文字でファイル状態を区別します。削除したパスには取り消し線を表示します。サイドバーから Worker を作成でき、内容タブがないと空白領域を折りたたみます。"
+        },
+        {
+          "id": "harness-settings",
+          "title": "コンパクトなエンジン設定",
+          "text": "OMP の圧縮閾値にパーセントスライダーとネイティブ既定値を用意し、実際のモデル接続に基づいてプロトコルを表示します。説明を短くし、詳細設定は通常折りたたみ、検索時に展開します。Pi の公式バージョン検出を修正し、更新失敗時の案内を明確にしました。"
+        },
+        {
+          "id": "engine-baselines",
+          "title": "4エンジンの既定バージョンを更新",
+          "text": "Claude Code 2.1.296、Codex 0.162.1、Pi 1.2.0、OMP 18.10.3。明示的に選択したエンジンバージョンは維持し、設定から Lex の基準バージョンに戻すこともできます。"
+        },
+        {
+          "id": "upgrade",
+          "title": "正式版への更新",
+          "text": "正式版と beta の両方から 0.1.5 に更新できます。ダウンロード：https://ciciy-l.github.io/lex/ 。インストーラー：https://github.com/Ciciy-l/lex/releases/tag/v0.1.5 。Android はパッケージ ID io.github.ciciyl.lex と継続使用する署名を維持します。アンインストールせず上書きインストールしてください。iOS インストーラーは提供していません。"
+        }
+      ]
+    },
+    "ko": {
+      "intro": "Lex 0.1.5 정식 버전은 세션 안정성, 모바일 경험, Git 사이드바와 엔진 설정을 개선합니다. 데스크톱과 Android를 함께 업데이트하세요.",
+      "topics": [
+        {
+          "id": "stability",
+          "title": "더 안정적인 세션과 원격 제어",
+          "text": "권한 복원, SSH와 기기 연결, Pi 모델 전환 및 연결 끊김 처리를 수정하고 네 엔진의 모델 설정 저장을 개선했습니다. 실행 중에도 비동기 질문에 답할 수 있으며 Pi 하위 에이전트의 대기, 중지, 후속 작업과 결과 알림도 개선했습니다."
+        },
+        {
+          "id": "mobile",
+          "title": "모바일 메시지와 이미지 개선",
+          "text": "로그인 복구, 보낸 메시지, 모델 선택, 음성 입력, 기록 스크롤과 긴 세션 읽기를 개선했습니다. 세션 이미지를 영구 저장하고 복구 가능한 참조를 수정합니다. 입력창에서 설치된 플러그인을 선택할 수 있습니다."
+        },
+        {
+          "id": "response-speed",
+          "title": "네 엔진의 속도 다시 보기",
+          "text": "첫 응답 대기, 생성, 도구 실행과 재시도 상태를 표시하며 완료 후에도 속도 그래프와 출력 결과를 유지합니다. 스트림 추정값을 명시하고 도구 실행 시간은 생성 속도에서 제외합니다."
+        },
+        {
+          "id": "privacy-startup",
+          "title": "사용 통계 중단과 시작 화면 개선",
+          "text": "Lex 클라이언트의 TapDB 사용 통계를 비활성화했습니다. 데스크톱 시작 배경의 로딩을 가볍게 하고 모바일 캐릭터, 워드마크와 로딩 표시를 더 명확하게 배치했습니다. 밝은 테마와 어두운 테마에 모두 대응합니다."
+        },
+        {
+          "id": "sidebar",
+          "title": "Git과 협업 사이드바 개선",
+          "text": "작업 디렉터리 안의 여러 Git 저장소를 찾고 전환할 수 있으며 로컬, SSH와 기기 연결을 지원합니다. 한 줄 Graph는 HEAD와 브랜치를 앞에 표시합니다. 색과 문자로 파일 상태를 구분하고 삭제된 경로에는 취소선을 표시합니다. 사이드바에서 Worker를 만들 수 있으며 내용 탭이 없으면 빈 영역을 접습니다."
+        },
+        {
+          "id": "harness-settings",
+          "title": "더 간결한 엔진 설정",
+          "text": "OMP 압축 임계값에 백분율 슬라이더와 네이티브 기본값 옵션을 제공하고 실제 모델 연결에 따라 프로토콜을 표시합니다. 설명을 줄이고 고급 항목은 기본적으로 접었다가 검색 시 펼칩니다. Pi 공식 버전 감지를 수정하고 업그레이드 실패 안내를 명확하게 했습니다."
+        },
+        {
+          "id": "engine-baselines",
+          "title": "네 엔진 기본 버전 업데이트",
+          "text": "Claude Code 2.1.296, Codex 0.162.1, Pi 1.2.0, OMP 18.10.3. 직접 선택한 엔진 버전은 유지하며 설정에서 Lex 기준 버전으로 복원할 수도 있습니다."
+        },
+        {
+          "id": "upgrade",
+          "title": "정식 버전으로 업그레이드",
+          "text": "정식 버전과 beta 사용자 모두 0.1.5로 업그레이드할 수 있습니다. 다운로드: https://ciciy-l.github.io/lex/ . 설치 파일: https://github.com/Ciciy-l/lex/releases/tag/v0.1.5 . Android는 패키지 ID io.github.ciciyl.lex와 기존 영구 서명을 유지합니다. 먼저 제거하지 말고 기존 앱 위에 설치하세요. iOS 설치 파일은 제공하지 않습니다."
+        }
+      ]
+    }
+  }
+}

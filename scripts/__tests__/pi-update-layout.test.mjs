@@ -54,6 +54,25 @@ test('Pi updater supplies fallback themes when an archive omits them', () => {
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'theme', 'dark.json'), 'utf8')).name, 'custom');
 });
 
+test('fallback themes keep the Pi 1.2 startup schema contract', () => {
+  const root = new URL('../../tools/pi/theme/', import.meta.url);
+  const schema = JSON.parse(fs.readFileSync(new URL('theme-schema.json', root), 'utf8'));
+  // v1.2.0 keeps these required tokens; new scrollbar/search tokens have native
+  // fallbacks. Its strict schema rejects extra metadata and non-color vars.
+  for (const name of ['dark', 'light']) {
+    const theme = JSON.parse(fs.readFileSync(new URL(name + '.json', root), 'utf8'));
+    assert.equal(theme.$schema, 'https://pi.dev/schemas/theme.schema.json');
+    assert.equal(theme.name, name);
+    for (const key of Object.keys(theme)) assert.ok(['$schema', 'name', 'appearance', 'vars', 'colors', 'export'].includes(key));
+    for (const token of schema.properties.colors.required) assert.ok(Object.hasOwn(theme.colors, token), token);
+    for (const token of Object.keys(theme.colors)) assert.ok(Object.hasOwn(schema.properties.colors.properties, token), token);
+    for (const value of Object.values(theme.vars ?? {})) assert.ok(
+      (Number.isInteger(value) && value >= 0 && value <= 255)
+      || (typeof value === 'string' && /^(?:#[0-9a-f]{6})?$/i.test(value)),
+    );
+  }
+});
+
 test('Pi updater extracts tar.gz archives streamed to the system tar', async (t) => {
   const root = tempDir();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

@@ -40,7 +40,7 @@ function release(overrides = {}) {
 
 test('OMP runtime pin keeps the adapter on its one audited baseline', () => {
   assert.equal(readPinnedVersion(), OMP_COMPATIBILITY_BASELINE);
-  assert.equal(OMP_COMPATIBILITY_BASELINE, '18.1.18');
+  assert.equal(OMP_COMPATIBILITY_BASELINE, '18.10.3');
 });
 
 test('OMP runtime metadata requires exact name, URL, digest, and size matches', () => {

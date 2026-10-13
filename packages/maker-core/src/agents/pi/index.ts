@@ -6929,8 +6929,10 @@ export class PiAgent extends BaseAgent {
             message: escapeLeadingSlashCommand(promptText, runtimeCapabilityManifest),
           };
           if (images.length > 0) command.images = images;
-          // send 语义 = 排队开新 turn;pi streaming 中裸 prompt 会被拒,补 followUp。
-          if (ctx.isStreaming) command.streamingBehavior = 'followUp';
+          // Native Pi 1.2 counts startup handlers as busy before agent_start.
+          // Always declare send's queue policy: idle prompts still start normally,
+          // while a native busy interval cannot race our event-side state mirror.
+          command.streamingBehavior = 'followUp';
           const userEntriesBefore = sendOpts?.onTranscriptUserEntry
             ? await readPiUserEntryIds()
             : null;

@@ -146,10 +146,11 @@ const REMOTE_PROXY_ENVIRONMENT_NAMES = new Set([
   'HTTPS_PROXY',
   'NO_PROXY',
 ]);
-const VERSION_OUTPUT = /^omp\/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)\r?\n$/u;
+const VERSION_OUTPUT =
+  /^(?:omp\/)?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)\r?\n$/u;
 
 /**
- * OMP v18.1.18 的 `--version` 输出严格是 `omp/<semver>\n`。保持严格，
+ * OMP v18.10.3 prints a bare semver; older releases use omp/<semver>.
  * 避免把任意诊断输出当成受审可执行文件。
  */
 export function parseOmpVersionOutput(output: string): string | undefined {

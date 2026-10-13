@@ -16,13 +16,14 @@ export type VendorKey = 'claude' | 'codex' | 'pi' | 'omp';
 /** @frozen v1.0(additive: 2026-08 增补 tar-gz-dir artifact 与 optionalAsset) */
 export interface BinaryProvisionerConfig {
   vendorKey: VendorKey;
-  manifestField: string;            // manifest 中该 vendor 的字段名 e.g. <vendor-field>
-  installSubdir: string;            // userData 下的安装目录名 e.g. <install-subdir>
+  manifestField: string; // manifest 中该 vendor 的字段名 e.g. <vendor-field>
+  installSubdir: string; // userData 下的安装目录名 e.g. <install-subdir>
   artifact:
     | { kind: 'gz'; binaryName: string }
     | { kind: 'raw'; binaryName: string }
     /**
-     * 整目录分发:CDN 资产是 tar.gz,解压后归档根即完整运行时目录
+     * 整目录分发:保留历史 kind 名，按资产路径识别 tar.gz 或官方 ZIP。
+     * 解压后归档根即完整运行时目录
      * (主执行文件 + 旁侧资产,与 apps/<vendor>-bin/<platform>/ 同布局)。
      * 归档根若嵌套一层与主执行文件同名的目录(上游 Unix 包习惯),解压时容错上移。
      */
@@ -51,7 +52,10 @@ export interface BinaryProvisionerConfig {
    * for a local lookup or a network download, so a build that pins one upstream
    * binary cannot be redirected by a changed snapshot field.
    */
-  assetValidator?: (asset: { version: string; file: string; sha256: string; size: number }, platformKey: string) => boolean;
+  assetValidator?: (
+    asset: { version: string; file: string; sha256: string; size: number },
+    platformKey: string,
+  ) => boolean;
   /**
    * Optional byte-level validation for the exact snapshot version already on
    * disk.  The normal `.verified` marker says a provisioner finished once; a

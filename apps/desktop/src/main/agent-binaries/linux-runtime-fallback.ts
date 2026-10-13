@@ -1,10 +1,10 @@
 /**
  * Packaged Linux runtime fallback for Claude Code / Codex binaries.
  *
- * Linux manifests intentionally do not publish agent assets. The packaged app
- * first reuses a compatible system CLI, then migrates the legacy Cindy-managed
- * cache, and finally downloads the pinned official binary with SHA-256
- * verification. No system Node/npm/curl installation is required.
+ * When snapshot provisioning is unavailable, preserve compatible local CLIs
+ * and legacy caches, then download the pinned official runtime with SHA-256
+ * verification. Newly managed Codex installs keep its complete package.
+ * No system Node/npm/curl installation is required.
  */
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
@@ -14,9 +14,10 @@ import { createGunzip } from 'node:zlib';
 import { app } from 'electron';
 
 import claudeLatest from '../../../../../tools/claude/latest.json';
-import codexLatest from '../../../../../tools/codex/latest.json';
+import codexLatest from '../../../../../tools/codex-package/latest.json';
 import { download, type ProgressEvent } from '../downloader/index.js';
 import { parseBinaryVersionOutput } from './binary-version-probe.js';
+import { extractToolArchive, RUNTIME_ARCHIVE_LIMITS } from './toolArchive.js';
 
 export type LinuxRuntimeFallbackKind = 'claude-code' | 'codex';
 
@@ -47,7 +48,7 @@ const VERIFY_TIMEOUT_MS = 15_000;
 const LOOKUP_TIMEOUT_MS = 5_000;
 
 /**
- * pin 文件(`tools/{claude,codex}/latest.json`)里 `runtimeAssets` 的键,同时也是
+ * pin 文件(`tools/{claude,codex-package}/latest.json`)里 `runtimeAssets` 的键,同时也是
  * Claude 官方下载 URL 的平台段。必须跟随宿主 arch:aarch64 机器上写死 linux-x64
  * 会下到一个根本执行不了的二进制,而下载本身(SHA-256 匹配 x64 资产)是"成功"的,
  * 故障只会推迟到 readExecutableVersion 才暴露。
@@ -95,6 +96,39 @@ export function runtimeInstallRoot(userDataPath: string, kind: LinuxRuntimeFallb
 
 export function privateBinaryPath(userDataPath: string, kind: LinuxRuntimeFallbackKind): string {
   return path.join(runtimeInstallRoot(userDataPath, kind), 'bin', CONFIG[kind].commandName);
+}
+
+function codexPackageDirectory(userDataPath: string, version: string): string {
+  return path.join(runtimeInstallRoot(userDataPath, 'codex'), 'codex-package', version);
+}
+
+function codexPackageVersionMarker(userDataPath: string): string {
+  return path.join(runtimeInstallRoot(userDataPath, 'codex'), '.package-version');
+}
+
+function validateCodexPackageDirectory(directory: string, version: string): void {
+  const target = codexLinuxAsset()
+    .replace(/^codex-/, '')
+    .replace(/\.tar\.gz$/, '');
+  const manifest = JSON.parse(fs.readFileSync(path.join(directory, 'codex-package.json'), 'utf8'));
+  const expected = {
+    layoutVersion: 1,
+    version,
+    target,
+    variant: 'codex',
+    entrypoint: 'bin/codex',
+    resourcesDir: 'codex-resources',
+    pathDir: 'codex-path',
+  };
+  for (const [key, value] of Object.entries(expected)) {
+    if (manifest?.[key] !== value) throw new Error('Invalid Codex package layout');
+  }
+  for (const file of ['bin/codex', 'bin/codex-code-mode-host', 'codex-path/rg']) {
+    if (!fs.lstatSync(path.join(directory, file)).isFile())
+      throw new Error('Incomplete Codex package');
+  }
+  if (!fs.lstatSync(path.join(directory, 'codex-resources')).isDirectory())
+    throw new Error('Incomplete Codex package');
 }
 
 function runtimeVersionMarkerPath(
@@ -298,6 +332,7 @@ function privateBinaryCandidates(
   if (kind !== 'codex') return [canonical];
   // Compatibility with the first private installer implementation.
   return [
+    path.join(codexPackageDirectory(userDataPath, CONFIG.codex.version), 'bin', 'codex'),
     canonical,
     path.join(
       runtimeInstallRoot(userDataPath, kind),
@@ -310,20 +345,84 @@ function privateBinaryCandidates(
   ];
 }
 
+function isCompletePrivateCandidate(
+  userDataPath: string,
+  kind: LinuxRuntimeFallbackKind,
+  candidate: string,
+  version: string,
+): boolean {
+  if (kind !== 'codex') return true;
+  const directory = codexPackageDirectory(userDataPath, version);
+  if (candidate !== path.join(directory, 'bin', 'codex')) return true;
+  try {
+    validateCodexPackageDirectory(directory, version);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function findPrivateBinaryAsync(
   kind: LinuxRuntimeFallbackKind,
   signal?: AbortSignal,
 ): Promise<string | null> {
   const userDataPath = app.getPath('userData');
-  for (const candidate of privateBinaryCandidates(userDataPath, kind)) {
-    const versionOutput = await readExecutableVersion(candidate, signal);
-    if (versionOutput && runtimeVersionMatchesPin(kind, versionOutput)) {
-      writeRuntimeVersionMarker(userDataPath, kind);
-      return candidate;
+  const standaloneMarker = runtimeVersionMarkerPath(userDataPath, kind);
+  const markedStandaloneVersion = readText(standaloneMarker);
+  const packageCandidate =
+    kind === 'codex'
+      ? path.join(codexPackageDirectory(userDataPath, CONFIG.codex.version), 'bin', 'codex')
+      : null;
+  let standaloneMarkerChecked = false;
+  let pinnedPath: string | null = null;
+  const invalidateMarker = (marker: string): void => {
+    try {
+      fs.rmSync(marker, { force: true });
+    } catch {
+      /* ignore */
     }
+  };
+  for (const candidate of privateBinaryCandidates(userDataPath, kind)) {
+    const isPackage = candidate === packageCandidate;
+    if (!isPackage && pinnedPath && (standaloneMarkerChecked || !markedStandaloneVersion)) break;
+    let executable = false;
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      executable = true;
+    } catch {
+      /* missing candidates cannot own a marker */
+    }
+    if (
+      !executable ||
+      !isCompletePrivateCandidate(userDataPath, kind, candidate, CONFIG[kind].version)
+    ) {
+      if (isPackage && readText(codexPackageVersionMarker(userDataPath)) === CONFIG.codex.version)
+        invalidateMarker(codexPackageVersionMarker(userDataPath));
+      continue;
+    }
+    const versionOutput = await readExecutableVersion(candidate, signal);
+    const matchesPin = !!versionOutput && runtimeVersionMatchesPin(kind, versionOutput);
+    if (isPackage) {
+      if (matchesPin)
+        fs.writeFileSync(codexPackageVersionMarker(userDataPath), `${CONFIG.codex.version}\n`);
+      else if (readText(codexPackageVersionMarker(userDataPath)) === CONFIG.codex.version)
+        invalidateMarker(codexPackageVersionMarker(userDataPath));
+    } else if (!standaloneMarkerChecked) {
+      // The synchronous cache picks the first executable standalone candidate.
+      // Preserve its old marker only when this probe confirms that exact version;
+      // an executable sibling must not validate a broken/shadowing earlier path.
+      standaloneMarkerChecked = true;
+      if (matchesPin) writeRuntimeVersionMarker(userDataPath, kind);
+      else if (
+        !versionOutput ||
+        parseBinaryVersionOutput(versionOutput, '') !== markedStandaloneVersion
+      )
+        invalidateMarker(standaloneMarker);
+    }
+    if (matchesPin) pinnedPath ??= candidate;
   }
-  try { fs.rmSync(runtimeVersionMarkerPath(userDataPath, kind), { force: true }); } catch { /* ignore */ }
-  return null;
+  if (!standaloneMarkerChecked) invalidateMarker(standaloneMarker);
+  return pinnedPath;
 }
 
 async function migrateLegacyManagedBinary(
@@ -360,9 +459,29 @@ export function findCachedLinuxRuntimeFallbackBinary(
 ): string | null {
   if (!app.isPackaged || process.platform !== 'linux') return null;
   const userDataPath = app.getPath('userData');
+  if (kind === 'codex') {
+    const version = readText(codexPackageVersionMarker(userDataPath));
+    if (
+      version &&
+      /^\d+\.\d+\.\d+$/.test(version) &&
+      (!checkForUpdates || version === CONFIG.codex.version)
+    ) {
+      const binaryPath = path.join(codexPackageDirectory(userDataPath, version), 'bin', 'codex');
+      try {
+        validateCodexPackageDirectory(path.dirname(path.dirname(binaryPath)), version);
+        fs.accessSync(binaryPath, fs.constants.X_OK);
+        return binaryPath;
+      } catch {
+        /* incomplete package cannot become ready from a marker alone */
+      }
+    }
+  }
   const installedVersion = readText(runtimeVersionMarkerPath(userDataPath, kind));
   if (installedVersion && (!checkForUpdates || installedVersion === CONFIG[kind].version)) {
-    for (const candidate of privateBinaryCandidates(userDataPath, kind)) {
+    // The legacy marker describes the standalone layout only; a new package
+    // has its own marker so it cannot bless an older sibling standalone CLI.
+    const candidates = privateBinaryCandidates(userDataPath, kind);
+    for (const candidate of kind === 'codex' ? candidates.slice(1) : candidates) {
       try {
         fs.accessSync(candidate, fs.constants.X_OK);
         return candidate;
@@ -397,9 +516,10 @@ export function pinnedOfficialAssetDescriptor(
     runtimeAssets?: Record<string, { url?: unknown; sha256?: unknown; size?: unknown }>;
   })?.runtimeAssets?.[platformKey];
   const sha256 = normalizeSha256(entry?.sha256);
-  const expectedUrl = kind === 'claude-code'
-    ? `https://downloads.claude.ai/claude-code-releases/${version}/${platformKey}/claude`
-    : `https://github.com/openai/codex/releases/download/rust-v${version}/${codexLinuxAsset(arch)}`;
+  const expectedUrl =
+    kind === 'claude-code'
+      ? `https://downloads.claude.ai/claude-code-releases/${version}/${platformKey}/claude`
+      : `https://github.com/openai/codex/releases/download/rust-v${version}/${codexLinuxAsset(arch).replace('codex-', 'codex-package-')}`;
   if (entry?.url !== expectedUrl || !sha256) {
     throw new Error(`${kind} ${version} pin lacks a trusted ${platformKey} asset`);
   }
@@ -417,7 +537,7 @@ function parseTarString(buffer: Buffer, start: number, length: number): string {
   return buffer.subarray(start, sliceEnd).toString('utf8').trim();
 }
 
-/** Extract the single Codex binary from an already SHA-verified tar.gz. */
+/** Legacy standalone archive compatibility; new managed installs use full packages. */
 export async function extractCodexBinaryFromTarGz(
   archivePath: string,
   destinationPath: string,
@@ -509,28 +629,66 @@ async function installCodexFromOfficialAsset(
   const version = CONFIG.codex.version;
   const descriptor = pinnedOfficialAssetDescriptor('codex', version, codexLatest);
   const root = runtimeInstallRoot(app.getPath('userData'), 'codex');
-  const archivePath = path.join(root, `${codexLinuxAsset()}.${version}`);
-  const binaryPath = privateBinaryPath(app.getPath('userData'), 'codex');
+  const archivePath = path.join(root, `.codex-package-${version}.tar.gz`);
+  const directory = codexPackageDirectory(app.getPath('userData'), version);
+  const parent = path.dirname(directory);
   fs.mkdirSync(root, { recursive: true });
+  fs.mkdirSync(parent, { recursive: true });
+  const stage = fs.mkdtempSync(path.join(parent, '.stage-'));
+  const extractSignal = signal ?? new AbortController().signal;
   try {
     await download({
       url: descriptor.url,
       targetPath: archivePath,
       sha256: descriptor.sha256,
       expectedSize: descriptor.size,
+      maxBytes: RUNTIME_ARCHIVE_LIMITS.archiveBytes,
       signal,
       onProgress,
     });
-    await extractCodexBinaryFromTarGz(archivePath, binaryPath);
+    await extractToolArchive(
+      archivePath,
+      stage,
+      { format: 'tar.gz', executable: 'bin/codex' },
+      extractSignal,
+      RUNTIME_ARCHIVE_LIMITS,
+    );
+    validateCodexPackageDirectory(stage, version);
+    for (const file of ['bin/codex', 'bin/codex-code-mode-host', 'codex-path/rg'])
+      fs.chmodSync(path.join(stage, file), 0o755);
+    const versionOutput = await readExecutableVersion(path.join(stage, 'bin', 'codex'), signal);
+    if (!versionOutput || !runtimeVersionMatchesPin('codex', versionOutput))
+      throw new Error(`Codex ${version} downloaded but failed version verification`);
+    extractSignal.throwIfAborted();
+    const backup = fs.mkdtempSync(path.join(parent, '.previous-'));
+    fs.rmdirSync(backup);
+    const hadPrevious = fs.existsSync(directory);
+    if (hadPrevious) fs.renameSync(directory, backup);
+    try {
+      fs.renameSync(stage, directory);
+    } catch (error) {
+      if (hadPrevious) fs.renameSync(backup, directory);
+      throw error;
+    }
+    try {
+      fs.rmSync(backup, { recursive: true, force: true });
+    } catch {
+      /* deferred cleanup */
+    }
+    fs.writeFileSync(codexPackageVersionMarker(app.getPath('userData')), `${version}\n`);
+    try {
+      fs.rmSync(archivePath, { force: true });
+    } catch {
+      /* reusable verified archive */
+    }
+    return path.join(directory, 'bin', 'codex');
   } finally {
-    try { fs.rmSync(archivePath, { force: true }); } catch { /* ignore */ }
+    try {
+      fs.rmSync(stage, { recursive: true, force: true });
+    } catch {
+      /* deferred cleanup */
+    }
   }
-  const versionOutput = await readExecutableVersion(binaryPath, signal);
-  if (!versionOutput || !runtimeVersionMatchesPin('codex', versionOutput)) {
-    throw new Error(`Codex ${version} downloaded but failed version verification`);
-  }
-  writeRuntimeVersionMarker(app.getPath('userData'), 'codex');
-  return binaryPath;
 }
 
 export async function findUsableLinuxRuntimeFallbackBinary(

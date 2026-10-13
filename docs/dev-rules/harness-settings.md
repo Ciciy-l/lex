@@ -45,7 +45,9 @@ GUI 安装写入 userData/harness-runtimes/<kind>/<version>-<uuid>，按引擎�
 每个进程在首次解析时冻结选择。GUI 安装仅在用户手动重启 Lex 后使用，不发起重启、不打断任务。
 启动选择优先于 dev/baseline 路径，应用升级不覆盖已选引擎。
 读取选择时校验受管路径、文件身份及入口摘要；文件变化后重新核验摘要。
-OMP 默认基线仍严格固定为 18.1.18；经管理器校验、显式选中的官方稳定版使用自己的版本和摘要。
+OMP 默认基线严格固定为 18.10.3；经管理器校验、显式选中的官方稳定版使用自己的版本和摘要。
+四引擎 0.1.5 固定版本、官方格式与新版源码兼容依据见
+[Lex 0.1.5 引擎基线](lex-0.1.5-engine-baselines.md)。
 原生 Pi 显式更新命令保持原有下一运行环境生效语义，并写入同一持久选择，GUI 不额外审批这些命令。
 
 IPC 只接收 kind/source/version，不接受 URL、路径或命令。
@@ -97,7 +99,7 @@ Light/Dark 复用设置语义 token；未声称实机 GUI、真实引擎下载�
 
 此实现是 Lex 本地适配。参考 Cindy #4913 的持久选择/独立安装目录和 #5061 的版本管理交互，
 没有复制 Cindy 应用更新通道、自动重启或整批合并上游功能。
-OMP 原生字段与 Mnemopi 合同依据 can1357/oh-my-pi v18.1.18 的
+历史 OMP 原生字段与 Mnemopi 合同依据 can1357/oh-my-pi v18.1.18 的
 packages/coding-agent/src/config/settings-schema.ts、mnemopi/config.ts、mnemopi/backend.ts、task/agents.ts。
 原始参考提交元数据见文末，后续作者归属保持真实 Lex 提交身份。
 

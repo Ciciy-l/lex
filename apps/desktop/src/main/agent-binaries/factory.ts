@@ -11,15 +11,17 @@
  * - import { app } from 'electron' 仅用于 app.getPath('userData')
  *
  * 实现参考：apps/desktop/src/main/ccdManager.ts（只读，零修改）
- * decompressGz 内嵌自 ccdManager.ts:97-102（6 行复刻，无 export）
+ * gzip 路径兼容旧 CDN 分发，并使用受管运行时的展开预算与取消信号。
  */
 
 import path from 'node:path';
 import fs from 'node:fs';
 import { createGunzip } from 'node:zlib';
+import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { app } from 'electron';
-import { extract as extractTar } from 'tar';
+import { extractToolArchive, RUNTIME_ARCHIVE_LIMITS } from './toolArchive.js';
+import { runtimeArtifactFormat, runtimeAssetPlatform } from './artifact-format.js';
 
 import {
   type BinaryProvisioner,
@@ -69,7 +71,7 @@ function listVerifiedBinaries(
     const root = getInstallRoot(installSubdir);
     return fs
       .readdirSync(root, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
       .map((entry) => ({
         directoryVersion: entry.name,
         binaryPath: getFinalBinPath(installSubdir, entry.name, binaryName),
@@ -103,7 +105,7 @@ function findLatestVerifiedBinary(
     const entries = fs.readdirSync(root, { withFileTypes: true });
     const verified: string[] = [];
     for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
       try {
         fs.accessSync(getVerifiedMarker(installSubdir, entry.name));
         verified.push(entry.name);
@@ -175,38 +177,66 @@ function cleanupOldVersions(installSubdir: string, keepVersion: string): void {
   try {
     const root = getInstallRoot(installSubdir);
     for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-      if (entry.isDirectory() && entry.name !== keepVersion) {
+      if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== keepVersion) {
         try {
           fs.rmSync(path.join(root, entry.name), { recursive: true, force: true });
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }
     }
   } catch { /* ignore */ }
 }
 
-// ── decompressGz 内嵌实现（复刻 ccdManager.ts:97-102，无 export）────────────
+// ── 旧 CDN gzip 单文件分发 ────────────────────────────────────────────────
 
-async function decompressGz(srcGz: string, destBin: string): Promise<void> {
+async function decompressGz(srcGz: string, destBin: string, signal: AbortSignal): Promise<void> {
   const src = fs.createReadStream(srcGz);
   const dest = fs.createWriteStream(destBin);
   const gunzip = createGunzip();
-  await pipeline(src, gunzip, dest);
+  let size = 0;
+  const limit = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      size += chunk.length;
+      callback(
+        size > RUNTIME_ARCHIVE_LIMITS.fileBytes ? new Error('Runtime executable too large') : null,
+        chunk,
+      );
+    },
+  });
+  await pipeline(src, gunzip, limit, dest, { signal });
 }
 
 /**
- * 整目录分发解压:tar.gz → destDir。CDN 约定归档根即完整运行时目录(与
+ * 整目录分发解压:tar.gz / ZIP → destDir。归档根即完整运行时目录(与
  * apps/<vendor>-bin/<platform>/ 同布局,主执行文件在根)。上游 Unix 包习惯把
  * dist 嵌在与主执行文件同名的目录里,这里做与 tools 侧 flattenExtractedDir
  * 一致的容错上移(嵌套目录与主执行文件同名会撞名,先改临时名再逐个上移),
  * 避免发布侧忘记平铺时装出坏目录。解压/上移后主执行文件必须在根,否则抛错。
  */
-async function extractTarGzDir(srcTarGz: string, destDir: string, binaryName: string): Promise<void> {
-  await extractTar({ file: srcTarGz, cwd: destDir });
+async function extractRuntimeDir(
+  archive: string,
+  destDir: string,
+  binaryName: string,
+  format: 'tar.gz' | 'zip',
+  signal: AbortSignal,
+): Promise<void> {
+  await extractToolArchive(
+    archive,
+    destDir,
+    { format, executable: binaryName },
+    signal,
+    RUNTIME_ARCHIVE_LIMITS,
+  );
   const finalBin = path.join(destDir, binaryName);
   // 注意用 isFile 判定:嵌套壳目录与主执行文件同名(Unix 包习惯),existsSync
   // 会把"同名目录"误判成已就位。
   const isFileAt = (p: string): boolean => {
-    try { return fs.statSync(p).isFile(); } catch { return false; }
+    try {
+      return fs.statSync(p).isFile();
+    } catch {
+      return false;
+    }
   };
   if (!isFileAt(finalBin)) {
     const nestedName = binaryName.replace(/\.exe$/i, '');
@@ -320,12 +350,13 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
     async prepare(opts) {
       const onProgress = opts?.onProgress;
       let requestedAsset: VendorAsset | undefined;
+      let stageDir: string | undefined;
       try {
         const binaryName = deriveBinaryName();
         // 1. Read the build-pinned runtime snapshot. App update channels are a
         // separate concern and must never gate first-run runtime provisioning.
         const manifest = getRuntimeManifest();
-        
+
         // 2. 当前构建不支持该平台时，检查本地已验证版本（离线 fallback）。
         if (!manifest) {
           // Optional assets (currently Pi) must remain disabled when the
@@ -335,13 +366,22 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
             ? null
             : findLatestVerifiedBinary(config.installSubdir, binaryName);
           if (local) {
-            emit({ status: 'ready', installedVersion: local.version, binaryPath: local.binaryPath }, onProgress);
+            emit(
+              { status: 'ready', installedVersion: local.version, binaryPath: local.binaryPath },
+              onProgress,
+            );
             return { ready: true, binaryPath: local.binaryPath };
           }
-          emit({
-            status: 'failed',
-            error: { code: 'manifest_failed', message: 'Runtime snapshot unavailable for this platform' },
-          }, onProgress);
+          emit(
+            {
+              status: 'failed',
+              error: {
+                code: 'manifest_failed',
+                message: 'Runtime snapshot unavailable for this platform',
+              },
+            },
+            onProgress,
+          );
           return { ready: false, binaryPath: '', error: 'manifest_failed' };
         }
 
@@ -349,37 +389,46 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
         const asset: VendorAsset | undefined = getVendorAsset(manifest, config.manifestField);
         requestedAsset = asset;
         if (!asset) {
-          emit({
-            status: 'failed',
-            error: {
-              code: 'asset_missing',
-              message: `manifest field "${config.manifestField}" missing or malformed`,
+          emit(
+            {
+              status: 'failed',
+              error: {
+                code: 'asset_missing',
+                message: `manifest field "${config.manifestField}" missing or malformed`,
+              },
             },
-          }, onProgress);
+            onProgress,
+          );
           return { ready: false, binaryPath: '', error: 'asset_missing' };
         }
         if (!isAllowedAsset(asset)) {
-          emit({
-            status: 'failed',
-            error: {
-              code: 'asset_invalid',
-              message: `manifest field "${config.manifestField}" failed its immutable asset validation`,
+          emit(
+            {
+              status: 'failed',
+              error: {
+                code: 'asset_invalid',
+                message: `manifest field "${config.manifestField}" failed its immutable asset validation`,
+              },
             },
-          }, onProgress);
+            onProgress,
+          );
           return { ready: false, binaryPath: '', error: 'asset_invalid' };
         }
         // Reject a manifest asset explicitly scoped to another platform, while
         // keeping compatibility with older manifests whose file path had no
         // platform segment at all.
-        const assetPlatform = asset.file.match(/\/(linux-x64|linux-arm64|darwin-arm64|darwin-x64|win32-x64|win32-arm64)\//)?.[1];
+        const assetPlatform = runtimeAssetPlatform(asset.file);
         if (assetPlatform && assetPlatform !== getPlatformKey()) {
-          emit({
-            status: 'failed',
-            error: {
-              code: 'asset_platform_mismatch',
-              message: `manifest field "${config.manifestField}" points to non-${getPlatformKey()} asset`,
+          emit(
+            {
+              status: 'failed',
+              error: {
+                code: 'asset_platform_mismatch',
+                message: `manifest field "${config.manifestField}" points to non-${getPlatformKey()} asset`,
+              },
             },
-          }, onProgress);
+            onProgress,
+          );
           return { ready: false, binaryPath: '', error: 'asset_platform_mismatch' };
         }
         emit({ availableVersion: asset.version }, onProgress);
@@ -387,7 +436,10 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
         if (opts?.checkForUpdates === false) {
           const local = await findUsableLocalBinary(asset, opts.signal);
           if (local) {
-            emit({ status: 'ready', installedVersion: local.version, binaryPath: local.binaryPath }, onProgress);
+            emit(
+              { status: 'ready', installedVersion: local.version, binaryPath: local.binaryPath },
+              onProgress,
+            );
             return { ready: true, binaryPath: local.binaryPath };
           }
         }
@@ -401,37 +453,40 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
           opts?.signal,
         );
         if (preferredLocal) {
-          emit({
-            status: 'ready',
-            installedVersion: preferredLocal.version,
-            binaryPath: preferredLocal.binaryPath,
-          }, onProgress);
+          emit(
+            {
+              status: 'ready',
+              installedVersion: preferredLocal.version,
+              binaryPath: preferredLocal.binaryPath,
+            },
+            onProgress,
+          );
           return { ready: true, binaryPath: preferredLocal.binaryPath };
         }
 
         // 3.1 未启用真实版本仲裁的 runtime 保持原有 manifest 精确命中流程。
         // 启用仲裁时，探针失败/无效/较旧必须继续下载，以修复残留的 .verified 安装。
         const finalBinPath = getFinalBinPath(config.installSubdir, asset.version, binaryName);
-        if (!config.localVersionResolver && await isInstalledForAsset(asset)) {
-          emit({
-            status: 'ready',
-            installedVersion: asset.version,
-            binaryPath: finalBinPath,
-          }, onProgress);
+        if (!config.localVersionResolver && (await isInstalledForAsset(asset))) {
+          emit(
+            {
+              status: 'ready',
+              installedVersion: asset.version,
+              binaryPath: finalBinPath,
+            },
+            onProgress,
+          );
           return { ready: true, binaryPath: finalBinPath };
         }
 
-        // 4. 准备目录
+        // 4. Keep downloads outside the live version directory. Extraction always
+        // starts fresh, so a failed ZIP attempt cannot collide with old entries.
         const versionDir = getVersionDir(config.installSubdir, asset.version);
-        fs.mkdirSync(versionDir, { recursive: true });
-
-        // 5. 计算下载目标路径（gz 中间文件加 .gz 后缀，tar-gz-dir 落整包归档，
-        //    raw 直接落到 binaryName）
+        const root = getInstallRoot(config.installSubdir);
         const url = resolveVendorAssetUrl(getRuntimeAssetBaseUrl(), asset);
-        const useGzMid = config.artifact.kind === 'gz' && asset.file.endsWith('.gz');
-        const downloadDest = config.artifact.kind === 'tar-gz-dir'
-          ? path.join(versionDir, `${binaryName}.dist.tar.gz`)
-          : path.join(versionDir, useGzMid ? `${binaryName}.gz` : binaryName);
+        const format = runtimeArtifactFormat(asset.file, config.artifact.kind);
+        const extension = format === 'binary' ? 'download' : format;
+        const downloadDest = path.join(root, `.${asset.version}.dist.${extension}`);
 
         // 6. 下载（含 SHA256 校验，由 downloader 内部完成）
         //
@@ -447,71 +502,101 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
           targetPath: downloadDest,
           sha256: asset.sha256.toLowerCase(),
           expectedSize: asset.size,
+          maxBytes: RUNTIME_ARCHIVE_LIMITS.archiveBytes,
           signal: opts?.signal,
           // 可选 Pi 不该在 CDN 故障时做六轮重试拖住启动；一次连接失败就降级，
           // 持续有进度的正常下载仍可在宿主总 deadline 内完成。
           retry:
-            config.optionalAsset || config.fastNetworkFallback
-              ? { maxAttempts: 1 }
-              : undefined,
+            config.optionalAsset || config.fastNetworkFallback ? { maxAttempts: 1 } : undefined,
           timeout: config.fastNetworkFallback ? { connectMs: 3_000 } : undefined,
           onProgress: (e: ProgressEvent) => {
-            emit({
-              status: 'downloading',
-              downloadProgress: {
-                received: e.loaded,
-                total: e.total ?? asset.size,
-                speedBps: e.speedBps,
+            emit(
+              {
+                status: 'downloading',
+                downloadProgress: {
+                  received: e.loaded,
+                  total: e.total ?? asset.size,
+                  speedBps: e.speedBps,
+                },
               },
-            }, onProgress);
+              onProgress,
+            );
           },
         });
 
         // 7. 解压分发
         emit({ status: 'extracting' }, onProgress);
-        switch (config.artifact.kind) {
-          case 'gz': {
-            await decompressGz(downloadDest, finalBinPath);
-            try { fs.unlinkSync(downloadDest); } catch { /* ignore */ }
-            break;
-          }
-          case 'tar-gz-dir': {
-            await extractTarGzDir(downloadDest, versionDir, binaryName);
-            try { fs.unlinkSync(downloadDest); } catch { /* ignore */ }
-            break;
-          }
-          // Raw artifacts are already placed at finalBinPath by the downloader.
-          // Its successful result is SHA-256 and size verified, so there is no
-          // extraction step to perform (OMP uses this form).
-          case 'raw':
-            break;
+        stageDir = fs.mkdtempSync(path.join(root, '.stage-'));
+        const stageBinary = path.join(stageDir, binaryName);
+        const signal = opts?.signal ?? new AbortController().signal;
+        if (format === 'gz') {
+          await decompressGz(downloadDest, stageBinary, signal);
+        } else if (format === 'binary') {
+          await fs.promises.copyFile(downloadDest, stageBinary);
+        } else {
+          await extractRuntimeDir(downloadDest, stageDir, binaryName, format, signal);
         }
+        signal.throwIfAborted();
+        if (!fs.statSync(stageBinary).isFile()) throw new Error('Runtime executable missing');
 
         // 8. chmod (unix) + marker
         if (process.platform !== 'win32') {
-          try { fs.chmodSync(finalBinPath, 0o755); } catch { /* ignore */ }
+          try {
+            fs.chmodSync(stageBinary, 0o755);
+          } catch {
+            /* ignore */
+          }
         }
-        fs.writeFileSync(getVerifiedMarker(config.installSubdir, asset.version), '', 'utf-8');
+        fs.writeFileSync(path.join(stageDir, '.verified'), '', 'utf-8');
+
+        // Publish the complete directory, retaining a repair target until the
+        // replacement is in place. Failed download/extraction leaves it untouched.
+        const backup = fs.mkdtempSync(path.join(root, '.previous-'));
+        fs.rmdirSync(backup);
+        const hadPrevious = fs.existsSync(versionDir);
+        if (hadPrevious) fs.renameSync(versionDir, backup);
+        try {
+          fs.renameSync(stageDir, versionDir);
+          stageDir = undefined;
+        } catch (error) {
+          if (hadPrevious) fs.renameSync(backup, versionDir);
+          throw error;
+        }
+        try {
+          fs.rmSync(backup, { recursive: true, force: true });
+        } catch {
+          /* deferred cleanup */
+        }
+        try {
+          fs.unlinkSync(downloadDest);
+        } catch {
+          /* reusable verified download */
+        }
 
         // 9. cleanup 旧版本
         cleanupOldVersions(config.installSubdir, asset.version);
 
-        emit({
-          status: 'ready',
-          installedVersion: asset.version,
-          binaryPath: finalBinPath,
-          downloadProgress: undefined,
-        }, onProgress);
+        emit(
+          {
+            status: 'ready',
+            installedVersion: asset.version,
+            binaryPath: finalBinPath,
+            downloadProgress: undefined,
+          },
+          onProgress,
+        );
         return { ready: true, binaryPath: finalBinPath };
-
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         // NOT_IMPLEMENTED_* 必须 rethrow（让 Boss 4 / 未来消费者立即感知）
         if (message === 'NOT_IMPLEMENTED_BOSS_4' || message === 'NOT_IMPLEMENTED') {
-          emit({
-            status: 'failed',
-            error: { code: message, message },
-          }, opts?.onProgress);
+          emit(
+            {
+              status: 'failed',
+              error: { code: message, message },
+            },
+            opts?.onProgress,
+          );
           throw err;
         }
         const code = err instanceof DownloadError ? err.code : 'unknown';
@@ -527,18 +612,32 @@ export function createBinaryProvisioner(config: BinaryProvisionerConfig): Binary
           ? null
           : await findUsableLocalBinary(requestedAsset, opts?.signal, true);
         if (localFallback) {
-          emit({
-            status: 'ready',
-            installedVersion: localFallback.version,
-            binaryPath: localFallback.binaryPath,
-          }, opts?.onProgress);
+          emit(
+            {
+              status: 'ready',
+              installedVersion: localFallback.version,
+              binaryPath: localFallback.binaryPath,
+            },
+            opts?.onProgress,
+          );
           return { ready: true, binaryPath: localFallback.binaryPath };
         }
-        emit({
-          status: 'failed',
-          error: { code, message },
-        }, opts?.onProgress);
+        emit(
+          {
+            status: 'failed',
+            error: { code, message },
+          },
+          opts?.onProgress,
+        );
         return { ready: false, binaryPath: '', error: code };
+      } finally {
+        if (stageDir) {
+          try {
+            fs.rmSync(stageDir, { recursive: true, force: true });
+          } catch {
+            /* deferred cleanup */
+          }
+        }
       }
     },
 

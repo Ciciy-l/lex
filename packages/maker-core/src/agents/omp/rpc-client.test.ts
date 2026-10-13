@@ -2,8 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   OmpRpcClient,
   type OmpRpcTransport,
+  type OmpRpcHostToolDefinition,
   type OmpUiResponse,
-} from './rpc-client.js';
+} from "./rpc-client.js";
 
 function fixture() {
   const lines = new Set<(line: string) => void>();
@@ -48,6 +49,64 @@ afterEach(() => {
 });
 
 describe('OMP RPC command channel', () => {
+  it.each(["essential", "discoverable", undefined] as const)(
+    "preserves host-tool visibility %s through the actual wire encoder",
+    async (loadMode) => {
+      const test = fixture();
+      const tool: OmpRpcHostToolDefinition = {
+        name: "lex_host_gateway",
+        description: "Host gateway",
+        parameters: { type: "object" },
+        ...(loadMode === undefined ? {} : { loadMode }),
+      };
+      const pending = test.client.request({
+        type: "set_host_tools",
+        tools: [tool],
+      });
+      try {
+        test.emit({
+          type: "response",
+          id: pending.id,
+          command: "set_host_tools",
+          success: true,
+        });
+        await pending.response;
+        expect(JSON.parse(test.writeLine.mock.calls[0][0])).toEqual({
+          type: "set_host_tools",
+          id: pending.id,
+          tools: [tool],
+        });
+      } finally {
+        test.client.close();
+      }
+    },
+  );
+
+  it.each([null, "native", true])(
+    "rejects malformed host-tool visibility %s before writing",
+    (loadMode) => {
+      const test = fixture();
+      try {
+        expect(() =>
+          test.client.request({
+            type: "set_host_tools",
+            tools: [
+              {
+                name: "lex_host_gateway",
+                description: "Host gateway",
+                parameters: {},
+                loadMode,
+              } as unknown as OmpRpcHostToolDefinition,
+            ],
+          }),
+        ).toThrow("Invalid OMP RPC host tool load mode");
+        expect(test.writeLine).not.toHaveBeenCalled();
+      } finally {
+        test.client.close();
+      }
+    },
+  );
+
   it.each([
     { value: 'x', confirmed: true },
     { value: 'x', cancelled: true },

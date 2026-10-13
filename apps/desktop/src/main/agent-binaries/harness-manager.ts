@@ -24,14 +24,13 @@ import { baselineArtifact, upstreamArtifact, type HarnessArtifact } from './harn
 import { getCachedBinaryStatus } from './index.js';
 import { probeBinaryVersion } from './binary-version-probe.js';
 import { download } from '../downloader/index.js';
-import { extractToolArchive } from './toolArchive.js';
+import { extractToolArchive, RUNTIME_ARCHIVE_LIMITS as LIMITS } from './toolArchive.js';
 import { renameWithTransientRetry } from './pi-self-update.js';
 import { withSecurityBoundaryLock } from '../device-link/crossProcessLock.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('harness-manager');
 const CACHE_MS = 15 * 60_000;
-const LIMITS = { archiveBytes: 1024 ** 3, fileBytes: 1024 ** 3, expandedBytes: 3 * 1024 ** 3 };
 const states = new Map<HarnessKind, HarnessRuntimeState>();
 const releases = new Map<HarnessKind, HarnessArtifact>();
 const operations = new Map<HarnessKind, AbortController>();

@@ -1,5 +1,5 @@
 /**
- * factory.ts tar-gz-dir(整目录分发,pi 形态)回归。
+ * factory.ts 整目录分发(tar.gz / ZIP,Pi 与 Codex package)回归。
  *
  * 覆盖:
  *  - CDN 约定布局(归档根即完整 dist):解压后主执行文件 + 旁侧资产就位,
@@ -14,8 +14,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { create as createTar } from 'tar';
+import JSZip from 'jszip';
 
 import type { VendorAsset } from '../manifest.js';
+import type { BinaryProvisionerConfig } from '../types.js';
 
 const FAKE_SHA = 'b'.repeat(64);
 
@@ -24,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   runtimeManifest: { current: { app: {} } as { app: Record<string, never> } | null },
   // 每个用例把要打包进 tar.gz 的源目录塞进来,download mock 现打包成归档落盘。
   archiveState: { srcDir: '' },
+  platformKey: 'darwin-arm64',
   asset: {
     current: {
       version: '9.9.9-test',
@@ -46,7 +49,7 @@ vi.mock('../../downloader/index.js', () => ({
 }));
 
 vi.mock('../../manifestService.js', () => ({
-  getPlatformKey: () => 'darwin-arm64',
+  getPlatformKey: () => mocks.platformKey,
 }));
 
 vi.mock('../runtime-manifest.js', () => ({
@@ -82,7 +85,11 @@ async function fulfillDownloadWithTarGz(opts: DownloadOpts) {
   };
 }
 
-function makeProvisioner(overrides?: { optionalAsset?: boolean; binaryName?: string }) {
+function makeProvisioner(overrides?: {
+  optionalAsset?: boolean;
+  binaryName?: string;
+  localVersionResolver?: BinaryProvisionerConfig['localVersionResolver'];
+}) {
   const { binaryName = BIN_NAME, ...configOverrides } = overrides ?? {};
   return createBinaryProvisioner({
     vendorKey: 'pi',
@@ -107,6 +114,7 @@ function stageDist(layout: 'flat' | 'nested', withBinary = true): string {
 
 beforeEach(() => {
   mocks.download.mockReset();
+  mocks.platformKey = 'darwin-arm64';
   mocks.runtimeManifest.current = { app: {} };
   mocks.asset.current = {
     version: '9.9.9-test',
@@ -117,6 +125,89 @@ beforeEach(() => {
 });
 
 describe('createBinaryProvisioner tar-gz-dir', () => {
+  it('installs a Windows Pi ZIP in a fresh stage after a partial failed attempt', async () => {
+    mocks.platformKey = 'win32-x64';
+    mocks.asset.current!.file =
+      'https://github.com/earendil-works/pi/releases/download/v1.2.0/pi-windows-x64.zip';
+    let attempt = 0;
+    mocks.download.mockImplementation(async (opts: DownloadOpts) => {
+      const zip = new JSZip();
+      zip.file('theme/dark.json', ++attempt === 1 ? 'failed-stage' : 'new-stage');
+      if (attempt > 1) zip.file(BIN_NAME, 'pi executable');
+      fs.writeFileSync(opts.targetPath, await zip.generateAsync({ type: 'nodebuffer' }));
+    });
+    const p = makeProvisioner({ optionalAsset: true });
+    const failed = await p.prepare();
+    expect(failed.ready).toBe(false);
+    const result = await p.prepare();
+    expect(result.ready).toBe(true);
+    const versionDir = path.dirname(result.binaryPath);
+    try {
+      expect(fs.readFileSync(path.join(versionDir, 'theme', 'dark.json'), 'utf8')).toBe(
+        'new-stage',
+      );
+      expect(fs.existsSync(path.join(versionDir, '.verified'))).toBe(true);
+      expect(mocks.download).toHaveBeenCalledTimes(2);
+    } finally {
+      fs.rmSync(path.dirname(versionDir), { recursive: true, force: true });
+    }
+  });
+
+  it('rejects an official archive for another platform before downloading', async () => {
+    mocks.asset.current!.file =
+      'https://github.com/earendil-works/pi/releases/download/v1.2.0/pi-windows-x64.zip';
+    expect(await makeProvisioner({ optionalAsset: true }).prepare()).toEqual({
+      ready: false,
+      binaryPath: '',
+      error: 'asset_platform_mismatch',
+    });
+    expect(mocks.download).not.toHaveBeenCalled();
+  });
+
+  it.each(['invalid', 'cancelled'] as const)(
+    'preserves the existing directory after a %s ZIP repair',
+    async (failure) => {
+      mocks.platformKey = 'win32-x64';
+      mocks.asset.current!.file =
+        'https://github.com/earendil-works/pi/releases/download/v1.2.0/pi-windows-x64.zip';
+      const controller = new AbortController();
+      let attempt = 0;
+      mocks.download.mockImplementation(async (opts: DownloadOpts) => {
+        const zip = new JSZip();
+        if (++attempt === 1) zip.file(BIN_NAME, 'original executable');
+        else if (failure === 'cancelled') zip.file(BIN_NAME, 'replacement executable');
+        zip.file('theme/dark.json', attempt === 1 ? 'original theme' : 'replacement theme');
+        fs.writeFileSync(opts.targetPath, await zip.generateAsync({ type: 'nodebuffer' }));
+        if (attempt > 1 && failure === 'cancelled') controller.abort();
+      });
+      // A failed version probe requests repair of the same version directory.
+      const provisioner = makeProvisioner({
+        optionalAsset: true,
+        localVersionResolver: async () => null,
+      });
+      let root: string | undefined;
+      try {
+        const installed = await provisioner.prepare();
+        expect(installed.ready).toBe(true);
+        const directory = path.dirname(installed.binaryPath);
+        root = path.dirname(directory);
+        expect((await provisioner.prepare({ signal: controller.signal })).ready).toBe(false);
+        expect(fs.readFileSync(installed.binaryPath, 'utf8')).toBe('original executable');
+        expect(fs.readFileSync(path.join(directory, 'theme', 'dark.json'), 'utf8')).toBe(
+          'original theme',
+        );
+        expect(fs.existsSync(path.join(directory, '.verified'))).toBe(true);
+        expect(
+          fs
+            .readdirSync(root)
+            .some((name) => name.startsWith('.stage-') || name.startsWith('.previous-')),
+        ).toBe(false);
+      } finally {
+        if (root) fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it('平铺归档:解压出完整目录、写 .verified、清理归档中间文件', async () => {
     mocks.archiveState.srcDir = stageDist('flat');
     mocks.download.mockImplementation(fulfillDownloadWithTarGz);
@@ -143,6 +234,11 @@ describe('createBinaryProvisioner tar-gz-dir', () => {
     fs.mkdirSync(path.dirname(sourceBinary), { recursive: true });
     fs.writeFileSync(sourceBinary, '#!/bin/sh\necho codex\n', { mode: 0o755 });
     fs.writeFileSync(path.join(sourceRoot, 'codex-package.json'), '{}');
+    fs.writeFileSync(path.join(sourceRoot, 'bin', 'codex-code-mode-host'), 'code-mode host');
+    fs.mkdirSync(path.join(sourceRoot, 'codex-path'));
+    fs.writeFileSync(path.join(sourceRoot, 'codex-path', 'rg'), 'ripgrep');
+    fs.mkdirSync(path.join(sourceRoot, 'codex-resources'));
+    fs.writeFileSync(path.join(sourceRoot, 'codex-resources', 'runtime.json'), '{"resource":true}');
     mocks.archiveState.srcDir = sourceRoot;
     mocks.download.mockImplementation(fulfillDownloadWithTarGz);
 
@@ -155,6 +251,13 @@ describe('createBinaryProvisioner tar-gz-dir', () => {
       installRoot = path.dirname(versionDir);
       expect(result.binaryPath).toBe(path.join(versionDir, binaryName));
       expect(fs.existsSync(path.join(versionDir, 'codex-package.json'))).toBe(true);
+      expect(fs.readFileSync(path.join(versionDir, 'bin', 'codex-code-mode-host'), 'utf8')).toBe(
+        'code-mode host',
+      );
+      expect(fs.readFileSync(path.join(versionDir, 'codex-path', 'rg'), 'utf8')).toBe('ripgrep');
+      expect(
+        fs.readFileSync(path.join(versionDir, 'codex-resources', 'runtime.json'), 'utf8'),
+      ).toBe('{"resource":true}');
       expect(fs.existsSync(path.join(versionDir, '.verified'))).toBe(true);
       expect(fs.existsSync(path.join(versionDir, `${binaryName}.dist.tar.gz`))).toBe(false);
     } finally {

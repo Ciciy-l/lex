@@ -4785,6 +4785,47 @@ describe("Pi provider-aware model routing", () => {
     await handle.close();
   });
 
+  it("queues a send while native startup is busy before agent_start", async () => {
+    const agent = new PiAgent(
+      byomDeps(async () => ({ providers: [], env: {} })),
+    );
+    const handle = await agent.startSession({
+      sessionId: "native-startup-busy",
+      workingDir: cwd,
+      model: "local-model",
+    });
+    let nativeBusy = false;
+    captured.requestHandler = async (command) => {
+      if (command.type === "prompt") {
+        if (nativeBusy && command.streamingBehavior !== "followUp") {
+          return { success: false, error: "Agent is already processing" };
+        }
+        // v1.2.0 is busy during startup handlers; no agent_start is emitted yet.
+        nativeBusy = true;
+      }
+      return { success: true, data: {} };
+    };
+    try {
+      await handle.send({ type: "user", content: "start" });
+      await expect(
+        handle.send({ type: "user", content: "next" }),
+      ).resolves.toBeUndefined();
+      const prompts = captured.requests.filter(
+        (command) => command.type === "prompt",
+      );
+      expect(prompts).toHaveLength(2);
+      expect(prompts[1]).toMatchObject({
+        message: "next",
+        streamingBehavior: "followUp",
+      });
+      expect(
+        captured.requests.some((command) => command.type === "steer"),
+      ).toBe(false);
+    } finally {
+      await handle.close();
+    }
+  });
+
   it("waits through Pi preflight compaction when accepting a prompt", async () => {
     const agent = new PiAgent(
       byomDeps(async () => ({ providers: [], env: {} })),
