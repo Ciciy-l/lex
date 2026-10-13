@@ -72,13 +72,14 @@ export function useGitRepositorySelection(
     if (!catalog?.repositories.some((repo) => repo.id === id)) return;
     const tab = getBucket(sessionId).tabs.find((item) => item.kind === 'review');
     if (tab)
-      await patchTabState(sessionId, tab.id, {
+      await patchTabState(sessionId, tab.id, (current) => ({
+        ...(current && typeof current === 'object' && !Array.isArray(current) ? current : {}),
         repositoryId: id,
         historyCommitOid: null,
         branchBaseRef: null,
         descriptor: { kind: 'unstaged' },
         jumpTarget: null,
-      });
+      }));
     rememberGitRepositorySelection(sessionId, deviceId ?? null, id);
   };
   return {

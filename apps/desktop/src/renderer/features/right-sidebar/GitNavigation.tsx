@@ -335,7 +335,7 @@ function GitNavigationContent({
               aria-label={t('rightSidebar.repositories.relativePath')}
               placeholder={t('rightSidebar.repositories.relativePath')}
               value={directory}
-              onChange={(event) => setDirectory(event.target.value)}
+              onChange={setDirectory}
             />
             <GitControl label={t('rightSidebar.repositories.add')} type="submit">
               +

@@ -51,29 +51,39 @@ it('does not query local Git until ownership resolves and discards late results 
   expect(hook.result.current.repositoryId).toBe('a');
   expect(mocks.api.mock.calls.map((call) => call[0])).toEqual(['old-device', 'new-device']);
 });
-it('clears repository-specific review state before publishing a new selection', async () => {
+it('clears repository-specific review state while preserving view preferences before publishing a new selection', async () => {
+  const previousState = {
+    repositoryId: 'a',
+    historyCommitOid: 'old',
+    branchBaseRef: 'old-base',
+    descriptor: { kind: 'commit', commitOid: 'old' },
+    jumpTarget: { path: 'old.ts', diffId: null, nonce: 1 },
+    activeView: 'graph',
+    graph: { currentBranch: true, includeRemotes: false },
+    diffViewMode: 'split',
+  };
   mocks.bucket = {
-    tabs: [{ id: 'review', kind: 'review', state: { repositoryId: 'a', historyCommitOid: 'old' } }],
+    tabs: [{ id: 'review', kind: 'review', state: previousState }],
   };
   mocks.api.mockReturnValue({ repositories: mocks.list });
   mocks.list.mockResolvedValue(catalog);
-  mocks.patch.mockImplementation(async (_session, _tab, patch) => {
-    mocks.bucket.tabs[0].state = patch;
+  mocks.patch.mockImplementation(async (_session, _tab, patch: (current: unknown) => unknown) => {
+    mocks.bucket.tabs[0].state = patch(mocks.bucket.tabs[0].state);
   });
   const hook = renderHook(() => useGitRepositorySelection('switch', null));
   await waitFor(() => expect(hook.result.current.ready).toBe(true));
   await act(async () => hook.result.current.select('b'));
-  expect(mocks.patch).toHaveBeenCalledWith(
-    'switch',
-    'review',
-    expect.objectContaining({
-      repositoryId: 'b',
-      historyCommitOid: null,
-      branchBaseRef: null,
-      descriptor: { kind: 'unstaged' },
-      jumpTarget: null,
-    }),
-  );
+  expect(mocks.patch).toHaveBeenCalledWith('switch', 'review', expect.any(Function));
+  expect(mocks.bucket.tabs[0].state).toEqual({
+    ...previousState,
+    repositoryId: 'b',
+    historyCommitOid: null,
+    branchBaseRef: null,
+    descriptor: { kind: 'unstaged' },
+    jumpTarget: null,
+  });
+  expect(previousState.repositoryId).toBe('a');
+  expect(previousState.historyCommitOid).toBe('old');
   expect(hook.result.current.repositoryId).toBe('b');
 });
 it('keeps old controlled devices on their legacy default-repository view', async () => {

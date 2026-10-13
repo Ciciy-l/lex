@@ -58,8 +58,10 @@ export function installSidebarContentSizing(win: BrowserWindow): void {
   };
   win.on('resized', persist);
   win.on('close', persist);
-  for (const event of ['unmaximize', 'leave-full-screen', 'restore'] as const)
-    win.on(event, () => setSidebarContentLayout(win, state.requested));
+  const restoreLayout = () => setSidebarContentLayout(win, state.requested);
+  win.on('unmaximize', restoreLayout);
+  win.on('leave-full-screen', restoreLayout);
+  win.on('restore', restoreLayout);
 }
 
 export function setSidebarContentLayout(win: BrowserWindow, compact: boolean): void {

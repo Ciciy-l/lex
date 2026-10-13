@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const api = vi.hoisted(() => ({
   get: vi.fn(),
   navigation: vi.fn(),
+  repositories: vi.fn(),
+  refreshRepositories: vi.fn(),
   history: vi.fn(),
   commitFiles: vi.fn(),
   commitDiff: vi.fn(),
@@ -26,7 +28,7 @@ vi.mock('../lib/gitRepositorySelection', () => ({
     ready: true,
     legacy: api.legacy,
     catalog: null,
-    refresh: () => {},
+    refresh: api.refreshRepositories,
   }),
 }));
 vi.mock('../store', () => ({ getBucket: () => ({ tabs: api.tabs }) }));
@@ -55,6 +57,7 @@ const history = (title: string) => ({
 beforeEach(() => {
   vi.resetAllMocks();
   api.navigation.mockResolvedValue(status);
+  api.repositories.mockResolvedValue({ repositories: [] });
   api.history.mockResolvedValue(history('initial commit'));
   api.navigate.mockResolvedValue(undefined);
   api.openGraph.mockResolvedValue(undefined);
@@ -261,7 +264,23 @@ describe('Git tool loading', () => {
     const button = await screen.findByRole('button', { name: 'rightSidebar.gitGraph.title' });
     fireEvent.click(button);
     expect(api.openGraph).toHaveBeenCalledWith('lead');
-    expect(api.navigation).toHaveBeenCalled();
+    await waitFor(() => expect(api.navigation).toHaveBeenCalledWith({ sessionId: 'lead' }));
+  });
+  it('submits the typed relative repository path and refreshes the catalog', async () => {
+    render(<GitNavigation sessionId="lead" deviceId={null} />);
+    fireEvent.click(screen.getByText('rightSidebar.repositories.add'));
+    const input = screen.getByRole<HTMLInputElement>('textbox', {
+      name: 'rightSidebar.repositories.relativePath',
+    });
+    fireEvent.change(input, { target: { value: 'packages/nested-repository' } });
+    expect(input.value).toBe('packages/nested-repository');
+    fireEvent.click(screen.getByRole('button', { name: 'rightSidebar.repositories.add' }));
+    await waitFor(() => expect(api.refreshRepositories).toHaveBeenCalledTimes(1));
+    expect(api.repositories).toHaveBeenCalledWith({
+      sessionId: 'lead',
+      relativePath: 'packages/nested-repository',
+    });
+    expect(input.value).toBe('');
   });
   it('keeps the default read-only Review on legacy controlled devices', async () => {
     api.legacy = true;
