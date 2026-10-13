@@ -68,6 +68,9 @@ describe('buildOmpModelsConfigYaml', () => {
     expect(yaml).toContain('          - text');
     expect(yaml).toContain('        cost:');
     expect(yaml).toContain('          output: 30');
+    expect(yaml).toContain("          input: 5");
+    expect(yaml).toContain("          cacheRead: 0");
+    expect(yaml).toContain("          cacheWrite: 0");
     expect(yaml).toContain('          efforts:');
     expect(yaml).toContain('            - high');
   });
@@ -80,6 +83,24 @@ describe('buildOmpModelsConfigYaml', () => {
     expect(yaml).toContain(`        name: 'a: ''b'' - evil'`);
     expect(yaml.split('\n').filter((line) => line.includes('evil')).length).toBe(1);
   });
+
+  it.each([null, -1, "5", true])(
+    "rejects an invalid declared cost %s instead of defaulting it",
+    (value) => {
+      for (const key of ["input", "output", "cacheRead", "cacheWrite"]) {
+        expect(() =>
+          buildUnknown({
+            providers: [
+              {
+                ...BASE_PROVIDER,
+                models: [{ id: "m", cost: { [key]: value } }],
+              },
+            ],
+          }),
+        ).toThrow(`cost.${key}`);
+      }
+    },
+  );
 
   it('rejects a literal api key and other invalid provider fields', () => {
     const withSecret = { providers: [{ ...BASE_PROVIDER, apiKeyEnv: 'sk-ant-oat-01' }] };

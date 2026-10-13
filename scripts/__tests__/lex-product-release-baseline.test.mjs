@@ -127,84 +127,169 @@ test('release workflows keep one package while choosing signed or versioned unsi
   assert.match(ci, /ref: \$\{\{ inputs\.checkout_ref \|\| github\.sha \}\}/);
 });
 
-test('Lex agent runtime snapshot is pinned, complete, and platform-safe', () => {
-  const snapshot = readJson('config/lex-agent-runtime-assets.json');
-  const pins = {
-    claudeCode: readJson('tools/claude/latest.json'),
-    codex: readJson('tools/codex/latest.json'),
-    codexPackage: readJson('tools/codex-package/latest.json'),
-    pi: readJson('tools/pi/latest.json'),
-    omp: readJson('tools/omp/latest.json'),
+test("Lex agent runtime snapshot is pinned, complete, and platform-safe", () => {
+  const snapshot = readJson("config/lex-agent-runtime-assets.json");
+  const paths = {
+    claudeCode: "claude",
+    codex: "codex",
+    codexPackage: "codex-package",
+    pi: "pi",
+    omp: "omp",
   };
-  const directories = {
-    claudeCode: 'claude-code',
-    codex: 'codex',
-    codexPackage: 'codex-package',
-    pi: 'pi',
+  const versions = {
+    claudeCode: "2.1.296",
+    codex: "0.162.1",
+    codexPackage: "0.162.1",
+    pi: "1.2.0",
+    omp: "18.10.3",
   };
-
+  const pins = Object.fromEntries(
+    Object.entries(paths).map(([field, tool]) => [
+      field,
+      readJson("tools/" + tool + "/latest.json"),
+    ]),
+  );
   assert.equal(snapshot.schemaVersion, 1);
   assert.match(snapshot.cdnBaseUrl, /^https:\/\/[^\s/]+(?:\/[^\s/]+)*$/);
-  assert.ok(!snapshot.cdnBaseUrl.endsWith('/'));
+  assert.ok(!snapshot.cdnBaseUrl.endsWith("/"));
   assert.deepEqual(Object.keys(snapshot.platforms).sort(), [
-    'darwin-arm64',
-    'darwin-x64',
-    'linux-x64',
-    'win32-x64',
+    "darwin-arm64",
+    "darwin-x64",
+    "linux-x64",
+    "win32-x64",
   ]);
-
-  for (const [platform, assets] of Object.entries(snapshot.platforms)) {
-    for (const field of ['claudeCode', 'codex', 'codexPackage', 'pi']) {
-      const value = assets[field];
-      assert.ok(value && typeof value === 'object', `${platform}/${field}`);
-      // The Lex CDN still serves the legacy standalone `codex` 0.145.0
-      // compatibility asset. SSH's official release pin advances independently
-      // to 0.159.2; codex-package is the desktop distribution and must match
-      // its official pin exactly.
-      const expectedVersion = field === 'codex' ? '0.145.0' : pins[field].version;
-      assert.equal(value.version, expectedVersion, `${platform}/${field} version`);
-      if (field === 'codexPackage') {
-        const official = pins.codexPackage.runtimeAssets[platform];
-        assert.equal(value.file, official.url, `${platform}/codexPackage official URL`);
-        assert.equal(value.sha256, official.sha256, `${platform}/codexPackage official digest`);
-        assert.equal(value.size, official.size, `${platform}/codexPackage official size`);
-        const officialUrl = new URL(value.file);
-        assert.equal(officialUrl.origin, 'https://github.com');
-        assert.equal(officialUrl.pathname.startsWith('/openai/codex/releases/download/rust-v0.159.2/codex-package-'), true);
-        assert.equal(officialUrl.pathname.endsWith('.tar.gz'), true);
+  for (const [field, version] of Object.entries(versions)) {
+    assert.equal(pins[field].version, version, field + " stable baseline");
+    assert.deepEqual(
+      Object.keys(pins[field].runtimeAssets).sort(),
+      [
+        "darwin-arm64",
+        "darwin-x64",
+        "linux-arm64",
+        "linux-x64",
+        "win32-x64",
+        ...(field === "codexPackage" || field === "pi" || field === "omp"
+          ? ["win32-arm64"]
+          : []),
+      ].sort(),
+      field + " full tools coverage",
+    );
+    for (const [platform, asset] of Object.entries(pins[field].runtimeAssets)) {
+      assert.match(asset.sha256, /^[a-f0-9]{64}$/, field + '/' + platform + ' pin digest');
+      assert.ok(Number.isSafeInteger(asset.size) && asset.size > 0, field + '/' + platform + ' pin size');
+      const url = new URL(asset.url);
+      assert.equal(url.protocol, 'https:');
+      assert.equal(url.search, '');
+      assert.equal(url.hash, '');
+      const [os, arch] = platform.split('-');
+      if (field === 'claudeCode') {
+        assert.equal(url.origin, 'https://downloads.claude.ai');
+        assert.equal(url.pathname, '/claude-code-releases/' + version + '/' + platform + '/' + (os === 'win32' ? 'claude.exe' : 'claude'));
       } else {
-        assert.equal(
-          value.file.startsWith(`${directories[field]}/${value.version}/${platform}/`),
-          true,
-          `${platform}/${field} file`,
-        );
-        assert.equal(value.file.includes('://'), false, `${platform}/${field} relative path`);
-      }
-      assert.equal(value.file.includes('..'), false, `${platform}/${field} traversal`);
-      assert.equal(value.file.includes('\\'), false, `${platform}/${field} separator`);
-      assert.match(value.sha256, /^[a-f0-9]{64}$/i, `${platform}/${field} sha256`);
-      assert.equal(Number.isSafeInteger(value.size) && value.size > 0, true, `${platform}/${field} size`);
-      if (value.binarySha256 !== undefined) {
-        assert.match(value.binarySha256, /^[a-f0-9]{64}$/i, `${platform}/${field} binarySha256`);
+        const target = (arch === 'arm64' ? 'aarch64' : 'x86_64') + '-' + (os === 'win32' ? 'pc-windows-msvc' : os === 'darwin' ? 'apple-darwin' : 'unknown-linux-musl');
+        const codex = field === 'codex' || field === 'codexPackage';
+        const repo = codex ? 'openai/codex' : field === 'pi' ? 'earendil-works/pi' : 'can1357/oh-my-pi';
+        const filename = codex ? (field === 'codexPackage' ? 'codex-package-' : 'codex-') + target + (os === 'win32' && field === 'codex' ? '.exe.tar.gz' : '.tar.gz')
+          : (field === 'pi' ? 'pi-' : 'omp-') + platform.replace('win32', 'windows') + (field === 'pi' ? (os === 'win32' ? '.zip' : '.tar.gz') : os === 'win32' ? '.exe' : '');
+        assert.equal(url.origin, 'https://github.com');
+        assert.equal(url.pathname, '/' + repo + '/releases/download/' + (codex ? 'rust-v' : 'v') + version + '/' + filename);
+        if (field === 'codexPackage') {
+          assert.equal(asset.target, target);
+          assert.equal(asset.entrypoint, 'bin/codex' + (os === 'win32' ? '.exe' : ''));
+        }
       }
     }
-    assert.equal(
-      assets.claudeCode.binarySha256,
-      pins.claudeCode.runtimeAssets[platform].sha256,
-      `${platform}/claudeCode upstream binary digest`,
-    );
-    const omp = assets.omp;
-    const ompPin = pins.omp.runtimeAssets[platform];
-    assert.ok(omp && typeof omp === 'object', `${platform}/omp`);
-    assert.ok(ompPin && typeof ompPin === 'object', `${platform}/omp pin`);
-    assert.equal(omp.version, pins.omp.version, `${platform}/omp version`);
-    assert.equal(omp.file, ompPin.url, `${platform}/omp official URL`);
-    assert.equal(omp.sha256, ompPin.sha256, `${platform}/omp digest`);
-    assert.equal(omp.size, ompPin.size, `${platform}/omp size`);
-    assert.match(omp.file, /^https:\/\/github\.com\/can1357\/oh-my-pi\/releases\/download\//);
   }
-  assert.equal(pins.codex.version, '0.159.2', 'SSH standalone Codex pin');
-  assert.equal(pins.codexPackage.version, '0.159.2', 'desktop Codex package pin');
+  for (const [platform, assets] of Object.entries(snapshot.platforms)) {
+    for (const field of Object.keys(paths)) {
+      const value = assets[field];
+      const label = platform + "/" + field;
+      assert.ok(value && typeof value === "object", label);
+      assert.match(value.sha256, /^[a-f0-9]{64}$/, label + " sha256");
+      assert.ok(
+        Number.isSafeInteger(value.size) && value.size > 0,
+        label + " size",
+      );
+      assert.equal(value.file.includes(".."), false, label + " traversal");
+      assert.equal(value.file.includes("\\"), false, label + " separator");
+      if (value.binarySha256 !== undefined) {
+        assert.match(value.binarySha256, /^[a-f0-9]{64}$/, label + ' binarySha256');
+      }
+      if (field === "codex") {
+        // Old-client compatibility bytes only; Desktop uses codexPackage and
+        // SSH uses tools/codex, never this frozen standalone CDN snapshot.
+        assert.equal(value.version, "0.145.0");
+        assert.ok(value.file.startsWith("codex/0.145.0/" + platform + "/"));
+        assert.equal(value.file.includes("://"), false);
+        assert.match(value.binarySha256, /^[a-f0-9]{64}$/);
+        continue;
+      }
+      const official = pins[field].runtimeAssets[platform];
+      assert.equal(value.version, versions[field], label + " version");
+      assert.equal(value.file, official.url, label + " official URL");
+      assert.equal(value.sha256, official.sha256, label + " official digest");
+      assert.equal(value.size, official.size, label + " official size");
+      const url = new URL(value.file);
+      assert.equal(url.protocol, "https:");
+      if (field === "claudeCode") {
+        assert.equal(url.origin, "https://downloads.claude.ai");
+        assert.equal(
+          url.pathname,
+          "/claude-code-releases/2.1.296/" +
+            platform +
+            "/" +
+            (platform.startsWith("win32") ? "claude.exe" : "claude"),
+        );
+        assert.equal(value.binarySha256, official.sha256);
+      } else {
+        assert.equal(url.origin, "https://github.com");
+        const repo =
+          field === "codexPackage"
+            ? "openai/codex"
+            : field === "pi"
+              ? "earendil-works/pi"
+              : "can1357/oh-my-pi";
+        const tag =
+          (field === "codexPackage" ? "rust-v" : "v") + versions[field];
+        assert.ok(
+          url.pathname.startsWith(
+            "/" + repo + "/releases/download/" + tag + "/",
+          ),
+        );
+        if (field === "codexPackage") {
+          assert.equal(
+            url.pathname.endsWith(
+              "/codex-package-" + official.target + ".tar.gz",
+            ),
+            true,
+          );
+          assert.equal(
+            official.entrypoint,
+            "bin/codex" + (platform.startsWith("win32") ? ".exe" : ""),
+          );
+          assert.equal(pins[field].layoutVersion, 1);
+        } else if (field === "pi") {
+          assert.equal(
+            url.pathname.endsWith(
+              "/pi-" +
+                platform.replace("win32", "windows") +
+                (platform.startsWith("win32") ? ".zip" : ".tar.gz"),
+            ),
+            true,
+          );
+        } else {
+          assert.equal(
+            url.pathname.endsWith(
+              "/omp-" +
+                platform.replace("win32", "windows") +
+                (platform.startsWith("win32") ? ".exe" : ""),
+            ),
+            true,
+          );
+        }
+      }
+    }
+  }
 });
 
 test('Lex update publishing projects the tag-pinned runtime snapshot without network drift', () => {

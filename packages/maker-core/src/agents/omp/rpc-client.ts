@@ -17,12 +17,13 @@ type OmpRpcRequestType =
   | 'compact'
   | 'get_messages';
 
-/** OMP v18.1.18 RPC `set_host_tools` payload (the executable shape only). */
+/** Audited RPC host-tool payload; v18.10.3 adds explicit visibility policy. */
 export interface OmpRpcHostToolDefinition {
   readonly name: string;
   readonly label?: string;
   readonly description: string;
   readonly parameters: Readonly<Record<string, unknown>>;
+  readonly loadMode?: "essential" | "discoverable";
 }
 
 export type OmpRpcRequest =
@@ -127,6 +128,13 @@ function hostToolDefinitions(value: unknown): OmpRpcHostToolDefinition[] {
     const label = candidate.label === undefined
       ? undefined
       : hostToolText(candidate.label, 'host tool label', 128);
+    const loadMode = candidate.loadMode;
+    if (
+      loadMode !== undefined &&
+      loadMode !== "essential" &&
+      loadMode !== "discoverable"
+    )
+      throw new Error("Invalid OMP RPC host tool load mode");
     let parameters: string;
     try {
       parameters = JSON.stringify(candidate.parameters);
@@ -138,6 +146,7 @@ function hostToolDefinitions(value: unknown): OmpRpcHostToolDefinition[] {
     return {
       name,
       ...(label === undefined ? {} : { label }),
+      ...(loadMode === undefined ? {} : { loadMode }),
       description,
       parameters: candidate.parameters,
     };

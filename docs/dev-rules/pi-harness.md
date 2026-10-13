@@ -7,6 +7,11 @@
 
 ## 1. 架构总览
 
+Lex 0.1.5 将默认 Pi 从 0.84.4 升至 1.2.0。官方目录格式、严格主题 schema、
+before_agent_start union 和早期 busy/RPC 排队的固定源码依据见
+[Lex 0.1.5 引擎基线](lex-0.1.5-engine-baselines.md)。这是源码审阅与待 CI 回归，
+不是新版实机验收；本规则中的历史实测仍仅对应其原版本。
+
 Cindy 以 `pi --mode rpc` spawn pi 二进制(JSONL/stdio),`translator.ts` 把 pi 事件映射进
 统一 `AgentEvent`。关键装配点:
 

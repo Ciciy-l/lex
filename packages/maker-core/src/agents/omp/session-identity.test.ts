@@ -186,8 +186,17 @@ describe('OMP upstream session identity', () => {
         workingDir: workspace,
         model: 'test-model',
       });
-      expect(normalProcess.commands.find((command) => command.type === 'set_host_tools')).toMatchObject({
-        tools: [expect.objectContaining({ name: 'ordinary_host_tool' })],
+      expect(
+        normalProcess.commands.find(
+          (command) => command.type === "set_host_tools",
+        ),
+      ).toMatchObject({
+        tools: [
+          expect.objectContaining({
+            name: "ordinary_host_tool",
+            loadMode: "essential",
+          }),
+        ],
       });
       await normal.close({ reason: 'navigation' });
     } finally {

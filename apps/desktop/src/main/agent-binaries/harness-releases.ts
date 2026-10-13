@@ -3,6 +3,7 @@ import type { HarnessKind, HarnessSource } from '../../shared/harnessSettings.js
 import { getRuntimeManifest, getRuntimeAssetBaseUrl } from './runtime-manifest.js';
 import { getVendorAsset, resolveVendorAssetUrl } from './manifest.js';
 import { parsePiRelease } from './pi-self-update.js';
+import { runtimeArtifactFormat } from './artifact-format.js';
 
 export interface HarnessArtifact {
   version: string;
@@ -30,7 +31,10 @@ export function baselineArtifact(kind: HarnessKind): HarnessArtifact | null {
     url: resolveVendorAssetUrl(getRuntimeAssetBaseUrl(), asset),
     sha256: asset.sha256,
     size: asset.size,
-    format: kind === 'claude-code' ? 'gz' : kind === 'omp' ? 'binary' : 'tar.gz',
+    format: runtimeArtifactFormat(
+      asset.file,
+      kind === 'claude-code' ? 'gz' : kind === 'omp' ? 'raw' : 'tar-gz-dir',
+    ),
     executable: harnessExecutable(kind),
   };
 }

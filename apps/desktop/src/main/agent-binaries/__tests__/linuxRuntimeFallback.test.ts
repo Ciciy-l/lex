@@ -135,10 +135,22 @@ describe('official asset descriptors', () => {
     ['arm64', 'linux-arm64', 'aarch64'],
   ])('uses the pinned Codex %s asset and rejects unexpected metadata', (arch, platformKey, rustArch) => {
     const sha256 = 'b'.repeat(64);
-    const url = `https://github.com/openai/codex/releases/download/rust-v${SAMPLE_ASSET_VERSION}/codex-${rustArch}-unknown-linux-musl.tar.gz`;
+    const url = `https://github.com/openai/codex/releases/download/rust-v${SAMPLE_ASSET_VERSION}/codex-package-${rustArch}-unknown-linux-musl.tar.gz`;
     expect(pinnedOfficialAssetDescriptor('codex', SAMPLE_ASSET_VERSION, {
       runtimeAssets: { [platformKey]: { url, sha256, size: 456 } },
     }, arch)).toEqual({ url, sha256, size: 456 });
+    expect(() =>
+      pinnedOfficialAssetDescriptor(
+        'codex',
+        SAMPLE_ASSET_VERSION,
+        {
+          runtimeAssets: {
+            [platformKey]: { url: url.replace('/codex-package-', '/codex-'), sha256, size: 456 },
+          },
+        },
+        arch,
+      ),
+    ).toThrow(/pin lacks a trusted/);
     expect(() => pinnedOfficialAssetDescriptor('codex', SAMPLE_ASSET_VERSION, {
       runtimeAssets: { [platformKey]: { url: 'https://example.test/codex.tar.gz', sha256 } },
     }, arch)).toThrow(

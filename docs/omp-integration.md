@@ -8,7 +8,11 @@ Lead 负责实现与测试验证，Orca Reviewer 负责独立审查。当前不�
 
 ## 协议研究基线
 
-2026-09-12 查询上游 release API 并核对 tag 源码，当前研究基线为 v18.1.18。
+Lex 0.1.5 的当前固定基线为 v18.10.3，版本 banner、宿主工具可见性、models.yml
+和原生设置的公开源码审阅见 [四引擎基线](dev-rules/lex-0.1.5-engine-baselines.md)。
+下文 v18.1.18 spike/阶段记录保留原始版本与实测范围，不能当作新版已运行证据。
+
+2026-09-12 查询上游 release API 并核对 tag 源码，当时研究基线为 v18.1.18。
 这只是兼容研究常量，不是已经接入下载器的二进制版本 pin，也不代表完成真机验证。
 
 - 上游仓库：can1357/oh-my-pi。
@@ -194,9 +198,9 @@ transport beginDrain 忽略随后 stdin close，继续读 stdout 尾帧至 EOF�
 没有副作用。
 即使零 prompt 探测也不能宣称零后台网络；如需该保证，必须另行采用 OS 网络限制并实测。
 
-### 受管开发运行时：固定版本，尚未接入发行产物
+### 受管运行时：固定版本与发行 snapshot
 
-`tools/omp/latest.json` 固定 OMP v18.1.18 六个平台的 GitHub Release 文件名、URL、
+`tools/omp/latest.json` 当前固定 OMP v18.10.3 六个平台的 GitHub Release 文件名、URL、
 SHA-256 与字节大小；`tools/omp/update.mjs` 每次下载前都重新核对 release 元数据与
 该 pin，任意 URL、摘要或大小不一致都会拒绝下载。`pnpm install:omp` 对已在本地的
 runtime 也会重新核对固定版本、精确大小和 SHA-256；不会因 `.version` 相同、文件大于
@@ -205,7 +209,7 @@ runtime 也会重新核对固定版本、精确大小和 SHA-256；不会因 `.v
 
 开发者可显式运行 `pnpm install:omp`（或 `pnpm update:omp -- --platform=<platform>`）
 把当前平台二进制放入 `apps/omp-bin/<platform>/`。OMP 不在 postinstall、默认开发启动
-或默认运行时列表里，因此不会自动下载约 150–200 MB 的上游二进制，也不会从 PATH、Pi
+或默认运行时列表里，因此不会自动下载上游二进制，也不会从 PATH、Pi
 目录或用户安装中寻找替代品。正式 Lex 安装包则复用 `agent-binaries` 的同一条受管链：
 启动页串行队列读取构建期固定的 `config/lex-agent-runtime-assets.json`，其中 `omp`
 条目的 `file` 直接是 `tools/omp/latest.json` 固定的上游 GitHub Release URL（与

@@ -1,5 +1,6 @@
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { createHash } from "node:crypto";
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -18,7 +19,7 @@ import type { RemoteHost } from '../RemoteHost.js';
 
 describe('remote agent installer', () => {
   it('passes the pinned Codex release to the remote bootstrap script', async () => {
-    expect(PINNED_CODEX_RELEASE_VERSION).toBe('0.159.2');
+    expect(PINNED_CODEX_RELEASE_VERSION).toBe("0.162.1");
     const calls: Array<{ command: string; input: string }> = [];
     const host = {
       exec: async (command: string, opts: { input?: string }) => {
@@ -278,6 +279,82 @@ describe('remote agent installer', () => {
     // OMP's native asset path has no bundled Node or npm bootstrap.
     expect(calls[1].input).not.toContain('npm install');
   });
+
+  it.skipIf(process.platform === "win32")(
+    "accepts native OMP version shapes without changing the remote READY identity",
+    async () => {
+      const scripts: string[] = [];
+      const captureHost = {
+        exec: async (_command: string, opts: { input?: string }) => {
+          scripts.push(opts.input ?? "");
+          return { exitCode: 0, stdout: "", stderr: "" };
+        },
+      } as Pick<RemoteHost, "exec"> as RemoteHost;
+      await probeRemoteAgent(captureHost, "omp");
+      await installRemoteAgent(captureHost, "omp");
+      const root = mkdtempSync(path.join(os.tmpdir(), "lex-omp-banner-"));
+      try {
+        const file = path.join(root, ".xdt-server", "v1", "omp", "omp");
+        mkdirSync(path.dirname(file), { recursive: true });
+        for (const banner of [
+          PINNED_OMP_VERSION,
+          `omp/${PINNED_OMP_VERSION}`,
+          "0.0.1",
+        ]) {
+          const bytes = Buffer.from(
+            `#!/bin/sh\nprintf '%s\\n' '${banner}'\n#` +
+              "x".repeat(1500) +
+              "\n",
+          );
+          writeFileSync(file, bytes);
+          chmodSync(file, 0o755);
+          const sha = createHash("sha256").update(bytes).digest("hex");
+          const pins = [
+            "darwin-arm64",
+            "darwin-x64",
+            "linux-arm64",
+            "linux-x64",
+          ].flatMap((key) => [
+            `https://github.com/can1357/oh-my-pi/releases/download/v${PINNED_OMP_VERSION}/omp-${key}`,
+            sha,
+            String(bytes.length),
+          ]);
+          // A local shell fixture exercises the captured production gates; no
+          // upstream runtime or network is used. Install must reuse verified bytes.
+          const matching = banner !== "0.0.1";
+          for (const script of matching ? scripts : scripts.slice(0, 1)) {
+            const result = spawnSync(
+              "bash",
+              [
+                "--noprofile",
+                "--norc",
+                "-s",
+                "--",
+                "v1",
+                PINNED_OMP_VERSION,
+                ...pins,
+              ],
+              {
+                input: script,
+                encoding: "utf8",
+                env: { ...process.env, HOME: root, BASH_ENV: "" },
+                timeout: 10_000,
+              },
+            );
+            expect(result.status, result.stderr || result.error?.message).toBe(
+              0,
+            );
+            expect(result.stdout).toContain(
+              matching ? `READY omp/${PINNED_OMP_VERSION}` : "NOT_INSTALLED",
+            );
+            expect(result.stdout).not.toContain("INSTALL_START");
+          }
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('uninstalls only OMP-owned runtime and managed runtime state', async () => {
     const calls: Array<{ command: string; label?: string }> = [];

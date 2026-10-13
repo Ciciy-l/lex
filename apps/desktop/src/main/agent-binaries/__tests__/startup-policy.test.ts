@@ -64,7 +64,7 @@ vi.mock('../../maker-host/omp-runtime-verifier.js', () => ({
     return {
       platformKey,
       binaryName: platformKey.startsWith('win32') ? 'omp.exe' : 'omp',
-      url: `https://github.com/can1357/oh-my-pi/releases/download/v18.1.18/${suffix}`,
+      url: `https://github.com/can1357/oh-my-pi/releases/download/v18.10.3/${suffix}`,
       sha256: 'b'.repeat(64),
       size: 7,
     };
@@ -102,7 +102,7 @@ function installManaged(kind: 'claude-code' | 'codex' | 'pi', version = '1.0.0')
 function releaseManifest(version = '2.0.0'): Manifest {
   const asset = (kind: string) => ({
     version,
-    file: kind + '/' + version + '/runtime',
+    file: kind + '/' + version + (kind === 'claude' ? '/runtime.gz' : '/runtime.dist.tar.gz'),
     sha256: 'a'.repeat(64),
     size: 7,
   });
@@ -112,8 +112,8 @@ function releaseManifest(version = '2.0.0'): Manifest {
     codexPackage: asset('codex'),
     pi: asset('pi'),
     omp: {
-      version: '18.1.18',
-      file: `https://github.com/can1357/oh-my-pi/releases/download/v18.1.18/${
+      version: '18.10.3',
+      file: `https://github.com/can1357/oh-my-pi/releases/download/v18.10.3/${
         process.platform === 'win32'
           ? 'omp-windows-x64.exe'
           : process.platform === 'linux'
@@ -201,17 +201,34 @@ afterAll(() => {
 });
 
 describe('shared startup policy through the real binary preparation chain', () => {
+  it('does not expose a leftover extraction or repair backup as a ready runtime', () => {
+    installManaged('pi', '.stage-leftover');
+    installManaged('pi', '.previous-leftover');
+    expect(binaries.getCachedBinaryStatus('pi')).toEqual({ binaryReady: false });
+    const binaryPath = installManaged('pi');
+    expect(binaries.getCachedBinaryStatus('pi')).toEqual({ binaryReady: true, binaryPath });
+    expect(mocks.execFile).not.toHaveBeenCalled();
+    expect(mocks.download).not.toHaveBeenCalled();
+  });
+
   it('downloads the fixed raw OMP asset and reuses it only after its byte gate passes', async () => {
     mocks.runtimeManifest = releaseManifest();
     await expect(binaries.peekNeedsDownload('omp')).resolves.toBe(true);
     await expect(binaries.prepare('omp', quiet)).resolves.toMatchObject({
       ready: true,
-      path: path.join(mocks.userDataDir, 'omp', '18.1.18', process.platform === 'win32' ? 'omp.exe' : 'omp'),
+      path: path.join(
+        mocks.userDataDir,
+        'omp',
+        '18.10.3',
+        process.platform === 'win32' ? 'omp.exe' : 'omp',
+      ),
     });
-    expect(mocks.download).toHaveBeenCalledWith(expect.objectContaining({
-      url: expect.stringContaining('/oh-my-pi/releases/download/v18.1.18/'),
-      targetPath: path.join(mocks.userDataDir, 'omp', '18.1.18', process.platform === 'win32' ? 'omp.exe' : 'omp'),
-    }));
+    expect(mocks.download).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: expect.stringContaining('/oh-my-pi/releases/download/v18.10.3/'),
+        targetPath: path.join(mocks.userDataDir, 'omp', '.18.10.3.dist.download'),
+      }),
+    );
     expect(binaries.getCachedBinaryStatus('omp')).toMatchObject({ binaryReady: true });
   });
 
@@ -220,7 +237,7 @@ describe('shared startup policy through the real binary preparation chain', () =
     const binaryPath = path.join(
       mocks.userDataDir,
       'omp',
-      '18.1.18',
+      '18.10.3',
       process.platform === 'win32' ? 'omp.exe' : 'omp',
     );
     writeExecutable(binaryPath, 'altered omp');

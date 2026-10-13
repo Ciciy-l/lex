@@ -289,10 +289,10 @@ reduces accidental cache reuse; it is not a security sandbox for hostile code.
 Review upstream provenance before testing or merging untrusted changes.
 
 For this checkout, create a dedicated `sync/cindy-<date>` branch from Lex main,
-fetch `origin` (Cindy), and merge a recorded upstream SHA there. Push only to
-`lex`, open a normal PR and validate product/service boundaries before merging.
-Do not run the release examples above with `origin` in this checkout: use `lex`
-for Lex pulls, tags and pushes. No sync action creates a tag or publishes a release.
+fetch `cindy` (Cindy upstream), and merge a recorded upstream SHA there. Push only
+to `origin` (Lex), open a normal PR and validate product/service boundaries before
+merging. Check `git remote -v` before using release examples; remote names in
+historical sync records are not authority. No sync action creates a tag or publishes a release.
 
 For local work, keep separate remotes:
 
@@ -301,10 +301,15 @@ git remote add cindy-upstream https://github.com/makecindy/cindy.git
 git fetch cindy-upstream main
 ```
 
-In this development checkout, `origin` currently points to Cindy and `lex`
-points to the Lex repository, so use `git fetch origin main` for Cindy and
-`git push lex <branch>` for Lex. A fresh clone of Lex will normally use `origin`
-for Lex; add the `cindy-upstream` remote there as shown above.
+As checked on 2026-10-14, this development checkout uses
+`origin=https://github.com/Ciciy-l/lex.git` for Lex and `cindy` for the Cindy
+upstream, with `cindy` push disabled (`no-push://upstream-cindy`). Use
+`git fetch cindy main` for upstream reads and `git push origin <branch>` for Lex.
+A fresh clone may instead name the read-only upstream `cindy-upstream`, as shown above.
+
+The 0.1.5 official engine pins, installation/recovery formats and retained legacy
+snapshot fields are documented in
+[Lex 0.1.5 engine baselines](dev-rules/lex-0.1.5-engine-baselines.md).
 
 The old Cindy Fork can remain as a backup; it is not used by the sync workflow.
 

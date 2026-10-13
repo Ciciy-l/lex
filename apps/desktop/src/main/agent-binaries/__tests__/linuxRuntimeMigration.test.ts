@@ -1,6 +1,9 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { create as createTar } from 'tar';
+import codexPin from '../../../../../../tools/codex-package/latest.json';
+import { RUNTIME_ARCHIVE_LIMITS } from '../toolArchive.js';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { olderStableVersion, PINNED_CLAUDE_VERSION } from './runtimeVersionFixtures';
@@ -38,6 +41,8 @@ beforeAll(async () => {
 beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cindy-linux-runtime-migration-'));
   appMock.getPath.mockReturnValue(tempDir);
+  downloadMock.mockReset();
+  execFileMock.mockReset();
   downloadMock.mockRejectedValue(new Error('network download must not run during migration'));
   execFileMock.mockImplementation((
     command: string,
@@ -127,4 +132,105 @@ describe('legacy managed binary migration', () => {
     expect(result.binaryPath).toBe(fallback.privateBinaryPath(tempDir, 'claude-code'));
     expect(downloadMock).toHaveBeenCalledOnce();
   });
+});
+
+describe('full Linux Codex fallback installation', () => {
+  it.each(['complete', 'incomplete', 'wrong-target', 'bad-version', 'cancelled'] as const)(
+    'downloads the full pin and publishes only a verified %s package',
+    async (scenario) => {
+      const root = fallback.runtimeInstallRoot(tempDir, 'codex');
+      const oldBinary = fallback.privateBinaryPath(tempDir, 'codex');
+      fs.mkdirSync(path.dirname(oldBinary), { recursive: true });
+      fs.writeFileSync(oldBinary, 'old standalone', { mode: 0o755 });
+      fs.writeFileSync(path.join(root, '.version'), '0.0.1\n');
+      const asset = codexPin.runtimeAssets[`linux-${process.arch}` as 'linux-x64' | 'linux-arm64'];
+      const source = path.join(tempDir, 'package-source');
+      const files = [
+        'bin/codex',
+        'bin/codex-code-mode-host',
+        'codex-path/rg',
+        'codex-resources/runtime.json',
+      ];
+      for (const file of files) {
+        if (scenario === 'incomplete' && file === 'bin/codex-code-mode-host') continue;
+        const target = path.join(source, file);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, file, { mode: 0o755 });
+      }
+      fs.writeFileSync(
+        path.join(source, 'codex-package.json'),
+        JSON.stringify({
+          layoutVersion: 1,
+          version: codexPin.version,
+          variant: 'codex',
+          entrypoint: 'bin/codex',
+          target: scenario === 'wrong-target' ? 'wrong-architecture' : asset.target,
+          pathDir: 'codex-path',
+          resourcesDir: 'codex-resources',
+        }),
+      );
+      const controller = new AbortController();
+      execFileMock.mockImplementation(
+        (
+          command: string,
+          _args: string[],
+          _options: unknown,
+          callback: (error: Error | null, stdout: string, stderr: string) => void,
+        ) => {
+          if (command === '/bin/sh' || !fs.existsSync(command)) {
+            callback(new Error('no compatible local CLI'), '', '');
+            return;
+          }
+          callback(
+            null,
+            `codex-cli ${command === oldBinary || scenario === 'bad-version' ? '0.0.1' : codexPin.version}\n`,
+            '',
+          );
+        },
+      );
+      downloadMock.mockImplementationOnce(async ({ targetPath }: { targetPath: string }) => {
+        await createTar({ gzip: true, file: targetPath, cwd: source }, fs.readdirSync(source));
+        if (scenario === 'cancelled') controller.abort();
+      });
+      const installation = fallback.prepareLinuxRuntimeFallback('codex', {
+        signal: controller.signal,
+      });
+      const directory = path.join(root, 'codex-package', codexPin.version);
+      if (scenario === 'complete') {
+        await expect(installation).resolves.toMatchObject({
+          ready: true,
+          installed: true,
+          source: 'installed',
+          binaryPath: path.join(directory, 'bin', 'codex'),
+        });
+        for (const file of files)
+          expect(fs.readFileSync(path.join(directory, file), 'utf8')).toBe(file);
+        expect(fallback.findCachedLinuxRuntimeFallbackBinary('codex')).toBe(
+          path.join(directory, 'bin', 'codex'),
+        );
+        fs.unlinkSync(path.join(directory, 'bin', 'codex-code-mode-host'));
+        expect(fallback.findCachedLinuxRuntimeFallbackBinary('codex')).toBeNull();
+      } else {
+        await expect(installation).rejects.toThrow();
+        expect(fs.existsSync(directory)).toBe(false);
+        expect(fs.existsSync(path.join(root, '.package-version'))).toBe(false);
+      }
+      expect(downloadMock).toHaveBeenCalledOnce();
+      expect(downloadMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: asset.url,
+          sha256: asset.sha256,
+          expectedSize: asset.size,
+          maxBytes: RUNTIME_ARCHIVE_LIMITS.archiveBytes,
+        }),
+      );
+      expect(fs.readFileSync(oldBinary, 'utf8')).toBe('old standalone');
+      expect(fs.readFileSync(path.join(root, '.version'), 'utf8')).toBe('0.0.1\n');
+      expect(
+        fs
+          .readdirSync(path.dirname(directory))
+          .some((name) => name.startsWith('.stage-') || name.startsWith('.previous-')),
+      ).toBe(false);
+    },
+  );
 });

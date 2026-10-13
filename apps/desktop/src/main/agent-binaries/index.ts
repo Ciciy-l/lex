@@ -133,19 +133,22 @@ import type {
 export type AgentBinaryKind = 'claude-code' | 'codex' | 'pi' | 'omp';
 
 interface AgentBinaryConfig {
-  vendorKey: VendorKey;            // 底层 createBinaryProvisioner 接受的内部 key
-  manifestField: string;           // CDN manifest 顶层字段
-  installSubdir: string;           // userData/<installSubdir>/<version>/<binary>
-  binaryName: string;              // 平台相关二进制名
-  devBinDir: string;               // apps/<devBinDir>/<platform>/
-  devBinaryName?: string;          // dev 可覆盖入口相对路径；prod 仍使用 binaryName
-  vendorTag: VendorKey;            // 'binary-download-progress' IPC payload 的 vendor 字段
-  artifactKind: 'gz' | 'tar-gz-dir' | 'raw'; // CDN 资产形态(单文件 gz / 整目录 tar.gz / 裸二进制)
-  optionalAsset?: boolean;         // true = manifest 缺字段不算"需要下载"(可选 vendor)
-  preserveLocalVersion?: boolean;  // true = 本地真实版本 >= manifest 时保留，禁止降级
-  fastNetworkFallback?: boolean;   // true = 短连接单次尝试后尽快进入外层 fallback
+  vendorKey: VendorKey; // 底层 createBinaryProvisioner 接受的内部 key
+  manifestField: string; // CDN manifest 顶层字段
+  installSubdir: string; // userData/<installSubdir>/<version>/<binary>
+  binaryName: string; // 平台相关二进制名
+  devBinDir: string; // apps/<devBinDir>/<platform>/
+  devBinaryName?: string; // dev 可覆盖入口相对路径；prod 仍使用 binaryName
+  vendorTag: VendorKey; // 'binary-download-progress' IPC payload 的 vendor 字段
+  artifactKind: 'gz' | 'tar-gz-dir' | 'raw'; // 历史种类；实际编码由资产路径区分 raw/gz/ZIP/tar.gz
+  optionalAsset?: boolean; // true = manifest 缺字段不算"需要下载"(可选 vendor)
+  preserveLocalVersion?: boolean; // true = 本地真实版本 >= manifest 时保留，禁止降级
+  fastNetworkFallback?: boolean; // true = 短连接单次尝试后尽快进入外层 fallback
   /** Immutable metadata gate for an upstream raw runtime. */
-  assetValidator?: (asset: { version: string; file: string; sha256: string; size: number }, platformKey: string) => boolean;
+  assetValidator?: (
+    asset: { version: string; file: string; sha256: string; size: number },
+    platformKey: string,
+  ) => boolean;
   /** Byte-level check used by the provisioner before reusing a fixed asset. */
   verifyInstalledBinary?: (
     binaryPath: string,
@@ -407,7 +410,7 @@ export function getCachedBinaryStatus(kind: AgentBinaryKind): CachedBinaryStatus
     const installRoot = path.join(app.getPath('userData'), cfg.installSubdir);
     const versions = fs
       .readdirSync(installRoot, { withFileTypes: true })
-      .filter((e) => e.isDirectory())
+      .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
       .map((e) => e.name);
     for (const v of versions) {
       const p = path.join(installRoot, v, cfg.binaryName);

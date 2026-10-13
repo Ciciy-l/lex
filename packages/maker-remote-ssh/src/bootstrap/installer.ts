@@ -145,8 +145,8 @@ verify_pinned_file() {
 }
 if [ -x "$BIN_PATH" ] && verify_pinned_file "$BIN_PATH"; then
   V="$("$BIN_PATH" --version 2>/dev/null | head -1 || true)"
-  if [ "$V" = "omp/$OMP_VERSION" ]; then
-    printf 'READY %s\\n' "$V"
+  if [ "$V" = "$OMP_VERSION" ] || [ "$V" = "omp/$OMP_VERSION" ]; then
+    printf 'READY omp/%s\\n' "$OMP_VERSION"
     exit 0
   fi
 fi
@@ -219,8 +219,8 @@ verify_pinned_file() {
 # asset's exact pinned byte identity as well.
 if [ -x "$BIN_PATH" ] && verify_pinned_file "$BIN_PATH"; then
   V="$("$BIN_PATH" --version 2>/dev/null | head -1 || true)"
-  if [ "$V" = "omp/$OMP_VERSION" ]; then
-    printf 'READY %s\\n' "$V"
+  if [ "$V" = "$OMP_VERSION" ] || [ "$V" = "omp/$OMP_VERSION" ]; then
+    printf 'READY omp/%s\\n' "$OMP_VERSION"
     exit 0
   fi
 fi
@@ -241,7 +241,7 @@ verify_pinned_file "$TMP/omp" || { printf 'ERROR downloaded runtime does not mat
 printf 'INSTALL_LOG sha256 and size verified\\n'
 chmod 700 "$TMP/omp" || { printf 'ERROR chmod failed\\n'; cleanup_tmp; exit 7; }
 V="$("$TMP/omp" --version 2>/dev/null | head -1 || true)"
-[ "$V" = "omp/$OMP_VERSION" ] || { printf 'ERROR runtime version mismatch\\n'; cleanup_tmp; exit 7; }
+{ [ "$V" = "$OMP_VERSION" ] || [ "$V" = "omp/$OMP_VERSION" ]; } || { printf 'ERROR runtime version mismatch\\n'; cleanup_tmp; exit 7; }
 
 # Promote as a directory swap. The old runtime remains available until the
 # new verified one is in place; a failed rename rolls the old directory back.
@@ -266,7 +266,7 @@ if ! verify_pinned_file "$BIN_PATH"; then
   exit 7
 fi
 V="$("$BIN_PATH" --version 2>/dev/null | head -1 || true)"
-if [ "$V" != "omp/$OMP_VERSION" ]; then
+if [ "$V" != "$OMP_VERSION" ] && [ "$V" != "omp/$OMP_VERSION" ]; then
   printf 'ERROR promoted runtime version mismatch\\n'
   rm -rf "$INSTALL_DIR/omp"
   [ -e "$OLD" ] && mv "$OLD" "$INSTALL_DIR/omp" || true
@@ -277,7 +277,7 @@ rm -rf "$OLD"
 cleanup_tmp
 : > "$INSTALL_DIR/.installed-omp"
 printf 'INSTALL_DONE\\n'
-printf 'READY %s\\n' "$V"
+printf 'READY omp/%s\\n' "$OMP_VERSION"
 exit 0
 `;
 

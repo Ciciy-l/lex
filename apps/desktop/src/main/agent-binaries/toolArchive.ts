@@ -16,6 +16,15 @@ const MAX_FILE_BYTES = 256 * 1024 ** 2;
 const MAX_EXPANDED_BYTES = 1024 ** 3;
 const MAX_ENTRIES = 30_000;
 
+/** Managed engine packages share the existing Harness manager's bounded budget.
+ * Codex 0.162.1's Windows executable exceeds the ordinary tool file budget.
+ */
+export const RUNTIME_ARCHIVE_LIMITS = Object.freeze({
+  archiveBytes: 1024 ** 3,
+  fileBytes: 1024 ** 3,
+  expandedBytes: 3 * 1024 ** 3,
+});
+
 /** Publisher paths are POSIX paths, independent of the host extracting the archive. */
 export function safeArchivePath(name: string): string {
   const clean = name.replace(/^(\.\/)+/, '').replace(/\/$/, '');

@@ -100,6 +100,14 @@ describe('official Harness releases', () => {
   it('keeps recovery metadata tied to the Lex build snapshot', () => {
     const baseline = baselineArtifact('codex');
     if (baseline)
-      expect(baseline).toMatchObject({ source: 'baseline', format: 'tar.gz', version: '0.159.2' });
+      expect(baseline).toMatchObject({ source: 'baseline', format: 'tar.gz', version: '0.162.1' });
+    const claude = baselineArtifact('claude-code');
+    if (claude) expect(claude).toMatchObject({ version: '2.1.296', format: 'binary' });
+    const pi = baselineArtifact('pi');
+    if (pi)
+      expect(pi).toMatchObject({
+        version: '1.2.0',
+        format: process.platform === 'win32' ? 'zip' : 'tar.gz',
+      });
   });
 });

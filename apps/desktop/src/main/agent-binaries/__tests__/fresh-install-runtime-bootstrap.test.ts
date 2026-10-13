@@ -39,7 +39,7 @@ const claudeBinaryName = process.platform === 'win32' ? 'claude.exe' : 'claude';
 const codexBinaryName = process.platform === 'win32' ? 'codex.exe' : 'codex';
 
 beforeAll(() => {
-  mocks.download.mockImplementation(async (opts: { targetPath: string }) => {
+  mocks.download.mockImplementation(async (opts: { targetPath: string; url: string }) => {
     fs.mkdirSync(path.dirname(opts.targetPath), { recursive: true });
     if (opts.targetPath.endsWith('.dist.tar.gz')) {
       const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lex-codex-runtime-'));
@@ -47,12 +47,12 @@ beforeAll(() => {
       const binaryPath = path.join(sourceRoot, 'bin', codexBinaryName);
       fs.mkdirSync(path.dirname(binaryPath), { recursive: true });
       fs.writeFileSync(binaryPath, 'codex');
-      await createTar(
-        { gzip: true, file: opts.targetPath, cwd: sourceRoot },
-        ['bin'],
-      );
+      await createTar({ gzip: true, file: opts.targetPath, cwd: sourceRoot }, ['bin']);
     } else {
-      fs.writeFileSync(opts.targetPath, gzipSync(Buffer.from('claude')));
+      fs.writeFileSync(
+        opts.targetPath,
+        opts.url.endsWith('.gz') ? gzipSync(Buffer.from('claude')) : 'claude',
+      );
     }
     return {
       path: opts.targetPath,
@@ -106,6 +106,7 @@ describe('fresh-install runtime bootstrap', () => {
       JSON.stringify({ result: codexResult, state: await codex.getState() }),
     ).toBe(true);
     expect(fs.existsSync(claudeResult.binaryPath)).toBe(true);
+    expect(fs.readFileSync(claudeResult.binaryPath, 'utf8')).toBe('claude');
     expect(fs.existsSync(codexResult.binaryPath)).toBe(true);
     expect(codexResult.binaryPath).toContain(
       path.join(codexPackageLatest.version, 'bin'),

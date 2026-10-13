@@ -1,4 +1,4 @@
-export const OMP_COMPATIBILITY_BASELINE = '18.1.18';
+export const OMP_COMPATIBILITY_BASELINE = '18.10.3';
 
 export type OmpCommandSource =
   'builtin' | 'skill' | 'extension' | 'custom' | 'mcp_prompt' | 'file';

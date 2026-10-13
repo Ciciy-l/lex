@@ -203,10 +203,13 @@ function modelCost(cost: OmpModelsModelCost | undefined): string[] {
   const entries = keys.filter((key) => cost[key] !== undefined);
   if (entries.length === 0) return [];
   return [
-    '        cost:',
-    ...entries.map(
-      (key) => `          ${key}: ${requireNumber(cost[key], `cost.${String(key)}`)}`,
-    ),
+    "        cost:",
+    // v18.10.3 requires all four numeric fields when cost is present. Omitted
+    // values retain native zero-cost metadata; this is not Lex billing data.
+    ...keys.map((key) => {
+      const value = cost[key] === undefined ? 0 : cost[key];
+      return `          ${key}: ${requireNumber(value, `cost.${String(key)}`)}`;
+    }),
   ];
 }
 
