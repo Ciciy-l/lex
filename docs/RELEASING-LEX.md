@@ -193,6 +193,11 @@ to follow the existing published-release workflow. Desktop download QR codes use
 Lex download page as well. RC downloads remain marked as prereleases; they do not
 replace the stable entry.
 
+Pages generates its default download metadata from published, non-draft,
+non-prerelease releases only, using scripts/generate-lex-website-release.mjs.
+If no stable release is available in the response, deployment stops and keeps the
+previous site rather than substituting an RC or empty download metadata.
+
 ### Android in-app APK updates
 
 Lex 0.1.4 is the first stable build containing `lex-apk-updater`. Earlier builds

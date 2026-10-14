@@ -7,6 +7,7 @@ import { rootCertificates } from 'node:tls';
 import { X509Certificate, createHash } from 'node:crypto';
 import YAML from 'yaml';
 import { androidVersionCode, lexMobileConfig } from '../shared/lex-mobile-config.cjs';
+import { selectStableWebsiteRelease } from '../generate-lex-website-release.mjs';
 
 const read = (name) => fs.readFileSync(new URL('../../' + name, import.meta.url), 'utf8');
 
@@ -71,14 +72,14 @@ test('release waits for signed Android while PR compilation cannot upload an APK
   assert.equal(YAML.parse(read('.github/workflows/upstream-sync.yml')).on.schedule, undefined);
 });
 
-async function renderDownload({ ua, platform, touch = 0, assets = [], failed = false }) {
+async function renderDownload({ ua, platform, touch = 0, assets = [], failed = false, metadata }) {
   const nodes = new Map();
   const element = () => ({ dataset: {}, textContent: '', href: 'https://github.com/Ciciy-l/lex/releases', setAttribute() {}, addEventListener() {}, replaceChildren() {} });
   const get = (key) => { if (!nodes.has(key)) nodes.set(key, element()); return nodes.get(key); };
   const document = { documentElement: element(), getElementById: get, querySelector: get, createElement: element, createTextNode: (text) => text };
   const html = read('website/index.html');
   const code = html.match(/<script>([\s\S]*?)<\/script>/)[1];
-  vm.runInNewContext(code, { document, navigator: { userAgent: ua, platform, maxTouchPoints: touch, language: 'zh-CN' }, window: {}, localStorage: { getItem() { return null; }, setItem() {} }, fetch: async () => ({ ok: !failed, json: async () => ({ version: '1.0.0', assets, releaseUrl: 'https://github.com/Ciciy-l/lex/releases/tag/v1.0.0' }) }) });
+  vm.runInNewContext(code, { document, navigator: { userAgent: ua, platform, maxTouchPoints: touch, language: 'zh-CN' }, window: {}, localStorage: { getItem() { return null; }, setItem() {} }, fetch: async () => ({ ok: !failed, json: async () => metadata ?? ({ version: '1.0.0', assets, releaseUrl: 'https://github.com/Ciciy-l/lex/releases/tag/v1.0.0' }) }) });
   await new Promise((resolve) => setImmediate(resolve));
   return nodes;
 }
@@ -95,4 +96,29 @@ test('mobile browsers get only published APKs, iPad gets iOS status, never Linux
   assert.equal(ipad.get('download').href, '#mobile-download');
   const failed = await renderDownload({ ua: 'Android', platform: 'Linux', failed: true });
   assert.equal(failed.get('download').href, 'https://github.com/Ciciy-l/lex/releases');
+});
+
+test('newer public RCs do not change default Android, Windows or Linux website downloads', async () => {
+  const stable = {
+    draft: false, prerelease: false, published_at: '2026-10-13T00:00:00Z',
+    tag_name: 'v0.1.5', html_url: 'https://github.com/Ciciy-l/lex/releases/tag/v0.1.5',
+    assets: ['Android.apk', 'Windows-x64-Setup.exe', 'Linux-x64.deb'].map((suffix) => ({
+      name: 'Lex-0.1.5-' + suffix,
+      browser_download_url: 'https://github.com/Ciciy-l/lex/releases/download/v0.1.5/Lex-0.1.5-' + suffix,
+      size: 123,
+    })),
+  };
+  const metadata = selectStableWebsiteRelease([
+    { ...stable, tag_name: 'v0.1.6-rc.1', prerelease: true, published_at: '2026-10-14T00:00:00Z', assets: [] },
+    stable,
+  ]);
+  for (const [ua, platform, suffix] of [
+    ['Android', 'Linux armv8l', 'Android.apk'],
+    ['Windows', 'Win32', 'Windows-x64-Setup.exe'],
+    ['Linux', 'Linux x86_64', 'Linux-x64.deb'],
+  ]) {
+    const nodes = await renderDownload({ ua, platform, metadata });
+    assert.equal(nodes.get('download').href, stable.assets.find((asset) => asset.name.endsWith(suffix)).browser_download_url);
+    assert.equal(nodes.get('download-android').href, stable.assets[0].browser_download_url);
+  }
 });

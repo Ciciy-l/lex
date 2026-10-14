@@ -6,6 +6,7 @@ on:
     paths:
       - "website/**"
       - "config/lex-product.json"
+      - "scripts/generate-lex-website-release.mjs"
       - ".github/workflows/pages.yml"
   # A release event keeps the tag as its deployment ref, which may be rejected by the
   # github-pages environment when it is protected for main only. Wait for the update
@@ -40,24 +41,17 @@ jobs:
           sparse-checkout: |
             website
             config/lex-product.json
+            scripts/generate-lex-website-release.mjs
 
-      - name: Generate latest release metadata
+      - name: Generate stable release metadata
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
           api_file="$RUNNER_TEMP/lex-releases.json"
-          if gh api "repos/$GITHUB_REPOSITORY/releases?per_page=20" > "$api_file" && jq -e '[.[] | select(.draft == false and .published_at != null)] | length > 0' "$api_file" >/dev/null; then
-            jq '[.[] | select(.draft == false and .published_at != null)][0] | {
-              version: (.tag_name | sub("^v"; "")),
-              tag: .tag_name,
-              prerelease: .prerelease,
-              publishedAt: .published_at,
-              releaseUrl: .html_url,
-              assets: [.assets[] | {name: .name, url: .browser_download_url, size: .size}]
-            }' "$api_file" > website/release.json
-          fi
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$api_file"
+          node scripts/generate-lex-website-release.mjs "$api_file" website/release.json
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
