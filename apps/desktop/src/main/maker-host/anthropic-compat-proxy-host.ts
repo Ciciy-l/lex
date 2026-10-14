@@ -816,8 +816,13 @@ export function createModelRoutingTransform(): RoutingTransform {
 
     const selectedProviderId = sessionId ? getSessionProvider(sessionId) : null;
     // A deleted explicit channel must not become a subscription-prefix request.
-    if (selectedProviderId && !getActiveCatalog().providers.some(provider => provider.id === selectedProviderId))
-      return unavailablePiProviderRoute(selectedProviderId);
+    if (selectedProviderId && !getActiveCatalog().providers.some(provider => provider.id === selectedProviderId)) {
+      // Claude's missing-source contract is retryable; Pi retains its own error interface.
+      return piSessionId ? unavailablePiProviderRoute(selectedProviderId) : retryableLocalRoute(
+        'provider_route_unavailable',
+        'The selected provider route is unavailable; check its configuration and retry.',
+      );
+    }
     if (
       remoteSession &&
       (!selectedProviderId ||

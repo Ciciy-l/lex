@@ -129,7 +129,7 @@ describe('channel credential transaction', () => {
   });
   it('allows explicit repair but never deletes unreadable ciphertext implicitly', () => {
     const { io } = memory();
-    io.readKey = vi.fn(() => UNRECOVERABLE_PROVIDER_CREDENTIAL);
+    io.readKey = vi.fn<typeof providerChannelSecretIo.readKey>(() => UNRECOVERABLE_PROVIDER_CREDENTIAL);
     expect(() => stageProviderChannelCredentials(null, config(), undefined, () => {}, io)).toThrow(
       'replacement',
     );

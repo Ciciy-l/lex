@@ -119,10 +119,11 @@ import {
 } from '@/../shared/piRuntimeInitialization';
 
 /**
- * 本面板配置 claude / codex / pi / omp 四个 runtime。pi 是多协议 harness:BYOM 自定义/本地模型
+ * 本面板保留 claude / codex / pi / omp 四个 runtime 的高级与专用配置。pi 是多协议 harness:BYOM 自定义/本地模型
  * 走 pi 原生 provider 直连(不过 anthropic-compat 代理),故 pi tab 额外提供显式 api 选择器。
  * omp 经 Cindy 的受管兼容代理接入，支持 Anthropic Messages、OpenAI Responses 和
- * Chat Completions 三种 wire protocol；Google 原生协议没有对应的 OMP 前门。
+ * Chat Completions 和 Google Gemini 四种原生 wire protocol 入口。Claude Code/Codex
+ * 使用其他协议时由 Lex 宿主桥接，不构成引擎原生支持。
  */
 type DialogAgentKind = Extract<AgentKind, 'claude-code' | 'codex' | 'pi' | 'omp'>;
 
@@ -467,9 +468,17 @@ function PresetDropdown({
 
 export function ProviderConnectionDialog(props: ProviderConnectionDialogProps) {
   const [specialized, setSpecialized] = useState(false);
+  // Capture the external entry once, before either form moves focus inside.
+  const initialReturnFocusRef = useRef(
+    document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+      ? document.activeElement
+      : null,
+  );
+  const returnFocusRef = props.returnFocusRef ?? initialReturnFocusRef;
   if (!specialized && (!props.initial || props.initial.channels)) return <ProviderChannelsDialog {...props}
+    returnFocusRef={returnFocusRef}
     {...(!props.initial ? { onSpecializedSetup: () => setSpecialized(true) } : {})} />;
-  return <LegacyProviderConnectionDialog {...props} />;
+  return <LegacyProviderConnectionDialog {...props} returnFocusRef={returnFocusRef} />;
 }
 
 function LegacyProviderConnectionDialog({
@@ -763,10 +772,6 @@ function LegacyProviderConnectionDialog({
   }, [dismissTopmostLayer]);
 
   useEffect(() => {
-    const returnFocusElement =
-      document.activeElement instanceof HTMLElement && document.activeElement !== document.body
-        ? document.activeElement
-        : null;
     const frame = requestAnimationFrame(() => {
       (
         dialogPanelRef.current?.querySelector<HTMLInputElement>('input')
@@ -774,9 +779,7 @@ function LegacyProviderConnectionDialog({
     });
     return () => {
       cancelAnimationFrame(frame);
-      const focusTarget = returnFocusElement?.isConnected
-        ? returnFocusElement
-        : returnFocusRef?.current;
+      const focusTarget = returnFocusRef?.current;
       if (focusTarget?.isConnected) focusTarget.focus();
     };
   }, [returnFocusRef]);

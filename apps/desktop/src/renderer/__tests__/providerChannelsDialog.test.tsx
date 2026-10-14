@@ -32,10 +32,11 @@ beforeEach(() => {
   window.electronAPI = { maker: { listProviderPresets: vi.fn(async () => ({ presets: [] })) } } as unknown as typeof window.electronAPI;
 });
 afterEach(cleanup);
-function mount() {
+function mount(onSpecializedSetup?: () => void) {
   const onSaved = vi.fn();
   const onClose = vi.fn();
-  render(<ProviderChannelsDialog initial={config} onSaved={onSaved} onClose={onClose} />);
+  render(<ProviderChannelsDialog initial={config} onSaved={onSaved} onClose={onClose}
+    onSpecializedSetup={onSpecializedSetup} />);
   return { onSaved, onClose };
 }
 function escape() {
@@ -90,6 +91,27 @@ describe('protocol-channel form requests', () => {
     setDataOwnerGeneration('owner-b', 2);
     await act(async () => { resolve({ ok: true }); });
     expect(onSaved).not.toHaveBeenCalled();
+    expect(calls.update).toHaveBeenCalledOnce();
+  });
+  it('blocks specialized setup during a pending save and permits it after a failure', async () => {
+    let reject!: (error: Error) => void;
+    calls.update.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
+    const onSpecializedSetup = vi.fn();
+    const { onSaved, onClose } = mount(onSpecializedSetup);
+    const entry = screen.getByRole('button', { name: 'models.channels.specializedSetup' });
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'common.save' }));
+      fireEvent.click(entry);
+    });
+    expect(calls.update).toHaveBeenCalledOnce();
+    expect((entry as HTMLButtonElement).disabled).toBe(true);
+    expect(onSpecializedSetup).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onSaved).not.toHaveBeenCalled();
+    await act(async () => { reject(new Error('Save failed; retry')); });
+    expect((entry as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(entry);
+    expect(onSpecializedSetup).toHaveBeenCalledOnce();
     expect(calls.update).toHaveBeenCalledOnce();
   });
 });

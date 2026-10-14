@@ -576,6 +576,37 @@ describe('ProviderConnectionDialog accessibility', () => {
     await waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 
+  it.each([false, true])('keeps focus inside specialized setup and restores the original entry (explicit=%s)', async (explicit) => {
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      const stableTriggerRef = useRef<HTMLButtonElement>(null);
+      return (
+        <>
+          <button type="button" ref={stableTriggerRef}>Stable provider entry</button>
+          <button type="button" onClick={() => setOpen(true)}>Add provider</button>
+          {open && <ProviderConnectionDialog
+            returnFocusRef={explicit ? stableTriggerRef : undefined}
+            onSaved={() => setOpen(false)} onClose={() => setOpen(false)}
+          />}
+        </>
+      );
+    }
+    const user = userEvent.setup();
+    render(<Harness />);
+    const trigger = screen.getByRole('button', { name: 'Add provider' });
+    const stable = screen.getByRole('button', { name: 'Stable provider entry' });
+    await user.click(trigger);
+    await user.click(screen.getByRole('button', { name: 'models.channels.specializedSetup' }));
+    const dialog = screen.getByRole('dialog', { name: 'settings.providers.custom.dialog.createTitle' });
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
+    // Radix settles the departing form's closeAutoFocus on the next task.
+    await act(() => new Promise(resolve => window.setTimeout(resolve, 0)));
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(explicit ? stable : trigger));
+  });
+
   it('uses a stable fallback when the immediate opener unmounts during a wizard transition', async () => {
     function Harness() {
       const [stage, setStage] = useState<'idle' | 'wizard' | 'dialog'>('idle');

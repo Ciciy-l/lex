@@ -46,4 +46,15 @@ describe('Bot strictly follows the available Cindy default', () => {
     expect(defaultBotModelChain({ ...args, preferredRoute: selected, availableAgents: new Set() })).toEqual([]);
     expect(defaultBotModelChain({ ...args, preferredRoute: { ...selected, providerId: 'other-account' } })).toEqual([]);
   });
+  it('passes legacy visibility aliases through without replacing a hidden explicit selection', () => {
+    const migrated = providers.map(provider => ({ ...provider, models: { ...provider.models,
+      codex: provider.models.codex?.map(model => ({ ...model, defaultEnabled: true,
+        visibilityAliases: model.id === selected.model ? ['legacy-source'] : [] })),
+    } }));
+    expect(defaultBotModelChain({ ...args, providers: migrated, preferredRoute: selected,
+      isModelEnabled: (_agent, _providerId, model) =>
+        !model.visibilityAliases?.includes('legacy-source') && model.defaultEnabled !== false,
+    })).toEqual([]);
+    expect(defaultBotModelChain({ ...args, providers: migrated, preferredRoute: selected })).toEqual([selected]);
+  });
 });

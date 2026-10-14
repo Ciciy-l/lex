@@ -3,6 +3,7 @@ import {
   defaultEffortForCapabilities,
   clampEffortToSupported,
   type AgentKind,
+  type CatalogModel,
   type Effort,
   type ProviderView,
 } from '@cindy/model-providers';
@@ -10,6 +11,13 @@ import {
 // 与 renderer/lib/ccAgent.types.ts 的 MakerVendor 保持同一取值集合:OMP 虽无产品
 // 默认 tuple(vendorForAgent 返回 null),但可用 vendor 集合里必须能容纳它。
 type MakerVendor = 'cc' | 'codex' | 'pi' | 'omp' | 'orca';
+
+/** Visibility checks retain the catalog's legacy preference identities. */
+type ModelVisibilityCheck = (
+  agent: AgentKind,
+  providerId: string,
+  model: Pick<CatalogModel, 'id' | 'defaultEnabled' | 'visibilityAliases'>,
+) => boolean;
 
 export interface NewMakerDefaultTuple {
   vendor: Extract<MakerVendor, 'cc' | 'codex' | 'pi'>;
@@ -103,7 +111,7 @@ function matchingModel(
   modelIds: readonly string[],
   requireNewSessionDefault = false,
   requireImageInput = false,
-  enabled?: (agent: AgentKind, providerId: string, model: { id: string; defaultEnabled?: boolean }) => boolean,
+  enabled?: ModelVisibilityCheck,
 ) {
   const models = provider.models[agent] ?? [];
   const preferred = modelIds.map((id) => models.find((model) => model.id === id));
@@ -131,7 +139,7 @@ export function resolveNewMakerDefaultTuples(args: {
   providersLoading: boolean;
   availableAgents: ReadonlySet<MakerVendor>;
   availableAgentsLoaded: boolean;
-  isModelEnabled?: (agent: AgentKind, providerId: string, model: { id: string; defaultEnabled?: boolean }) => boolean;
+  isModelEnabled?: ModelVisibilityCheck;
 }): NewMakerDefaultTuple[] {
   const { providers, providersLoading, availableAgents, availableAgentsLoaded } = args;
   if (providersLoading || !availableAgentsLoaded) return [];

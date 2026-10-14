@@ -56,6 +56,7 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
   const formId = useId();
   const nameInput = useRef<HTMLInputElement>(null);
   const requestPending = useRef(false);
+  const transferringFocus = useRef(false);
   const opener = useRef(document.activeElement as HTMLElement | null);
   const owner = useRef(getDataOwnerGeneration());
   const alive = useRef(true);
@@ -420,6 +421,8 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
           }}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
+            // A form transition hands focus to the next layer, not the outer trigger.
+            if (transferringFocus.current) return;
             const target = p.returnFocusRef?.current ?? opener.current;
             if (target?.isConnected) target.focus();
           }}
@@ -453,7 +456,11 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
               </label>
             )}
             {p.onSpecializedSetup && (
-              <Button variant="outline" onClick={p.onSpecializedSetup}>
+              <Button variant="secondary" disabled={busy} onClick={() => {
+                if (requestPending.current) return;
+                transferringFocus.current = true;
+                p.onSpecializedSetup?.();
+              }}>
                 {t('models.channels.specializedSetup')}
               </Button>
             )}
@@ -488,13 +495,13 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
               {available.map((entry) => (
                 <Button
                   key={entry.id}
-                  variant={entry.id === channel?.id ? 'default' : 'outline'}
+                  variant={entry.id === channel?.id ? 'primary' : 'secondary'}
                   onClick={() => setSelectedId(entry.id)}
                 >
                   {entry.name}
                 </Button>
               ))}
-              <Button variant="outline" onClick={() => add()}>
+              <Button variant="secondary" onClick={() => add()}>
                 {t('models.channels.add')}
               </Button>
             </div>
@@ -582,10 +589,10 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
                   />
                 </label>
                 <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => void request(true)}>
+                  <Button variant="secondary" onClick={() => void request(true)}>
                     {t('models.channels.discover')}
                   </Button>
-                  <Button variant="outline" onClick={() => void request(false)}>
+                  <Button variant="secondary" onClick={() => void request(false)}>
                     {t('models.channels.test')}
                   </Button>
                 </div>
@@ -651,7 +658,7 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
                       />
                       {t('models.channels.noAuth')}
                     </label>
-                    <Button variant="outline" onClick={remove}>
+                    <Button variant="secondary" onClick={remove}>
                       {t('models.channels.removeProtocol')}
                     </Button>
                   </div>
@@ -675,7 +682,7 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
             </p>
           )}
           <div className="flex justify-end gap-2">
-            <Button variant="outline" disabled={busy} onClick={() => {
+            <Button variant="secondary" disabled={busy} onClick={() => {
               if (!requestPending.current) p.onClose();
             }}>
               {t('settings.providers.custom.cancel')}
