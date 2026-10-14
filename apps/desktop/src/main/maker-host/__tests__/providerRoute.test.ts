@@ -814,7 +814,7 @@ describe('none (无鉴权自定义代理 buildRouteDecision)', () => {
     expect(buildRouteDecision(routing, KEY, 'claude-code', null)).toEqual({
       upstreamOverride: 'http://127.0.0.1:4000/v1',
       headerOverride: { 'X-Proxy-Tenant': 'local' },
-      headerDelete: ['authorization', 'x-api-key'],
+      headerDelete: ['authorization', 'x-api-key', 'x-goog-api-key'],
     });
   });
 
@@ -825,6 +825,7 @@ describe('none (无鉴权自定义代理 buildRouteDecision)', () => {
       headerDelete: [
         'authorization',
         'x-api-key',
+        'x-goog-api-key',
         'chatgpt-account-id',
         'openai-beta',
         'originator',
@@ -1627,7 +1628,7 @@ describe('resolveSessionRouteDecision — 自定义供应商(resolve 时注入 k
     ).toBe('openai-chat');
     expect(resolveSessionRouteDecision('s-user', 'codex', KEY, 'qwen3.8:27b-mxfp8')).toEqual({
       upstreamOverride: 'http://127.0.0.1:11434/v1',
-      headerDelete: ['authorization', 'x-api-key', ...CODEX_ACCOUNT_HEADER_DELETE],
+      headerDelete: ['authorization', 'x-api-key', 'x-goog-api-key', ...CODEX_ACCOUNT_HEADER_DELETE],
     });
   });
 

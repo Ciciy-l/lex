@@ -573,6 +573,11 @@ function resolveOmpRoute(
       'The selected OMP provider route is unavailable.',
     );
   const resolve = (decision: RoutingDecision | null): RoutingDecision => {
+    // Keep OMP's selected-source error contract even when the generic resolver
+    // returns a fail-closed tombstone for an absent channel/provider.
+    if (selectedProviderId && !getActiveCatalog().providers.some(
+      (provider) => provider.id === selectedProviderId,
+    )) return unavailableSelectedProvider();
     if (decision) {
       if (
         googleRequest &&
@@ -971,7 +976,12 @@ export function createModelRoutingTransform(): RoutingTransform {
         // A missing descriptor is not permission to use the default upstream.
         // Keep builtin subscription scope fallbacks, but pin explicit custom
         // requests even while their catalog/runtime is temporarily unavailable.
-        if (!route && ((requestAgent === 'claude-code' && explicitCustomProvider) || (requestAgent === 'pi' && piProviderId && piProviderId !== 'xd'))) {
+        const selectedProviderMissing = selectedProviderId && !getActiveCatalog().providers.some(
+          (provider) => provider.id === selectedProviderId,
+        );
+        // A missing catalog entry is retryable; an existing disabled channel
+        // retains the generic resolver's explicit disabled response.
+        if ((!route || selectedProviderMissing) && ((requestAgent === 'claude-code' && explicitCustomProvider) || (requestAgent === 'pi' && piProviderId && piProviderId !== 'xd'))) {
           return retryableLocalRoute(
             'provider_route_unavailable',
             'The selected provider route is unavailable; check its configuration and retry.',

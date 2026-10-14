@@ -166,7 +166,7 @@ describe('Orca provider routing snapshot wiring', () => {
     const guard = registerSource.indexOf("throwIpcError('INVALID_PARAMS', 'This provider requires local execution')");
     expect(guard).toBeGreaterThan(-1);
     const surrounding = registerSource.slice(guard - 520, guard);
-    expect(surrounding).toContain('!usesControllerProviderProxyForSsh(targetAgent)');
+    expect(surrounding).toContain('!usesControllerProviderProxyForSsh(targetAgent, target)');
     expect(surrounding).toContain('isLocalOnlyProviderForAgent(target, targetAgent)');
   });
 

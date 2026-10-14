@@ -359,6 +359,24 @@ describe('OMP gateway route in cc routingTransform', () => {
     });
   });
 
+  it('keeps an existing disabled OMP route closed instead of treating it as a missing provider', async () => {
+    const provider = buildUserProvider({
+      id: 'disabled-omp', name: 'Disabled OMP', auth: { method: 'apiKey' },
+      runtimes: { omp: { baseUrl: 'https://disabled.example/v1', wireProtocol: 'openai-chat',
+        models: [{ id: 'disabled-model', name: 'Disabled Model' }] } },
+    });
+    provider.routing.omp = { ...provider.routing.omp!, disabled: true };
+    setCustomProviders([provider]);
+    setSessionProvider('sess-omp', provider.id);
+    const decision = createModelRoutingTransform()(
+      { model: 'disabled-model' },
+      ctxWith({ ...OMP_HEADERS, authorization: 'Bearer omp-tok-sess-omp' }),
+    );
+    await expect(errorBodyOf(decision)).resolves.toEqual({
+      status: 503, code: 'provider_route_disabled',
+    });
+  });
+
   it('leaves requests without OMP headers on the existing Claude path', async () => {
     // 没有 OMP 头 → 不许走 OMP 分支(否则会误伤 cc / pi 的全部流量)。
     const decision = await settledDecision(

@@ -408,7 +408,7 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
         <Dialog.Overlay className="fixed inset-0 z-[10000] bg-[var(--overlay-modal)]" />
         <Dialog.Content
           onPointerDownOutside={(event) => {
-            if (requestPending.current) event.preventDefault();
+            event.preventDefault();
           }}
           onOpenAutoFocus={(event) => {
             event.preventDefault();
@@ -678,7 +678,7 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
             <Button variant="outline" disabled={busy} onClick={() => {
               if (!requestPending.current) p.onClose();
             }}>
-              {t('common.cancel')}
+              {t('settings.providers.custom.cancel')}
             </Button>
             <Button
               disabled={busy || !config.name.trim() || !channels.length}

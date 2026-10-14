@@ -1566,12 +1566,9 @@ export function registerProviderHandlers(
       );
     };
     const run = async () => {
-      const selectedProvider = (await deps.listProviders()).find(
-        (provider) => provider.id === i.providerId,
-      );
-      assertSameOwner();
-      const accessProviderId = selectedProvider?.channel?.supplierId ?? (i.providerId as string);
       if (i.kind === 'reset') {
+        // The settings list supplies the supplier identity for channels. Do not
+        // load the catalog here: stale overrides must remain removable offline.
         // 恢复默认 = 删除该供应商整组 override(含指向已下架模型的陈旧条目)。删除
         // 与「恢复启用」同语义,故意不做目录成员校验 —— 目录漂移后也要能清干净
         // (configuration-and-overrides.md §4;PR #744 review 第二十四轮)。
@@ -1579,10 +1576,15 @@ export function registerProviderHandlers(
           throwIpcError('INTERNAL', 'disable override reset is not wired');
         }
         assertSameOwner();
-        persist(() => deps.clearProviderDisableOverrides?.(accessProviderId));
+        persist(() => deps.clearProviderDisableOverrides?.(i.providerId as string));
         deps.broadcastChanged();
         return { ok: true };
       }
+      const selectedProvider = (await deps.listProviders()).find(
+        (provider) => provider.id === i.providerId,
+      );
+      assertSameOwner();
+      const accessProviderId = selectedProvider?.channel?.supplierId ?? (i.providerId as string);
       if (i.kind === 'model') {
         const modelIds = i.modelIds as string[];
         if (i.disabled) {

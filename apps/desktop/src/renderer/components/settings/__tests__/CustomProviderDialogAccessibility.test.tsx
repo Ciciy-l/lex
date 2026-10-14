@@ -51,7 +51,15 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
+// These cases exercise the retained OAuth/specialized form. New connections
+// now enter the protocol-channel form first, so follow its real setup entry.
+async function enterSpecializedSetup(): Promise<void> {
+  const entry = screen.queryByRole('button', { name: 'models.channels.specializedSetup' });
+  if (entry) fireEvent.click(entry);
+}
+
 async function waitForInitialDialogFocus(): Promise<void> {
+  await enterSpecializedSetup();
   const nameInput = screen.getByPlaceholderText('settings.providers.custom.fields.namePlaceholder');
   await waitFor(() => expect(document.activeElement).toBe(nameInput));
 }
@@ -182,6 +190,7 @@ async function renderNewImageGenerationReloadConfirmation(onSaved = vi.fn(), onC
   });
   const user = userEvent.setup();
   render(<ProviderConnectionDialog onSaved={onSaved} onClose={onClose} />);
+  await enterSpecializedSetup();
   await user.type(
     screen.getByPlaceholderText('settings.providers.custom.fields.namePlaceholder'),
     'New image provider',
@@ -543,6 +552,7 @@ describe('ProviderConnectionDialog accessibility', () => {
     render(<Harness />);
     const trigger = screen.getByRole('button', { name: 'Add provider' });
     await user.click(trigger);
+    await enterSpecializedSetup();
 
     const dialog = screen.getByRole('dialog', {
       name: 'settings.providers.custom.dialog.createTitle',
@@ -596,6 +606,7 @@ describe('ProviderConnectionDialog accessibility', () => {
     const stableTrigger = screen.getByRole('button', { name: 'Add provider' });
     await user.click(stableTrigger);
     await user.click(screen.getByRole('button', { name: 'Custom endpoint' }));
+    await enterSpecializedSetup();
     await user.click(screen.getByText('settings.providers.custom.cancel'));
 
     await waitFor(() => expect(document.activeElement).toBe(stableTrigger));
@@ -713,7 +724,7 @@ describe('ProviderConnectionDialog accessibility', () => {
     render(<ProviderConnectionDialog initial={initial} onSaved={vi.fn()} onClose={vi.fn()} />);
     await screen.findByText('settings.providers.custom.fields.apiKeySaved');
     await user.click(
-      screen.getByRole('button', { name: 'settings.providers.custom.wireProtocol.responses' }),
+      screen.getByRole('button', { name: 'settings.providers.custom.wireProtocol.piResponses · models.channels.native' }),
     );
     await user.click(screen.getByRole('button', { name: 'settings.providers.custom.test.button' }));
 
@@ -1284,7 +1295,7 @@ describe('ProviderConnectionDialog accessibility', () => {
     ).toBe(true);
 
     await user.click(
-      screen.getByRole('button', { name: 'settings.providers.custom.wireProtocol.chat' }),
+      screen.getByRole('button', { name: 'settings.providers.custom.wireProtocol.piChat · models.channels.bridged' }),
     );
     expect(
       screen.queryByRole('button', {
@@ -1360,7 +1371,7 @@ describe('ProviderConnectionDialog accessibility', () => {
 
     // 重新形成 Responses 前门不会恢复旧 true；必须由用户再次显式开启。
     await user.click(
-      screen.getByRole('button', { name: 'settings.providers.custom.wireProtocol.responses' }),
+      screen.getByRole('button', { name: 'settings.providers.custom.wireProtocol.piResponses · models.channels.native' }),
     );
     const capability = screen.getByRole('checkbox', {
       name: 'settings.providers.custom.fields.runtimeSupportsImageGeneration',
@@ -1576,7 +1587,7 @@ it('offers an OMP tab where the upstream protocol can be chosen', async () => {
     screen.getByText('settings.providers.custom.fields.wireProtocol'),
   ).toBeTruthy();
   // 但说明文案必须是 OMP 自己的:codex 那套写的是「Responses 原生、其余 {{appName}} 桥接」,
-  // 而 OMP 原生支持三种协议,套用会得出「明明原生却说桥接」的错误描述。
+  // 而 OMP 原生支持四种协议,套用会得出「明明原生却说桥接」的错误描述。
   expect(
     screen.getByText('settings.providers.custom.wireProtocol.ompAnthropicHelp'),
   ).toBeTruthy();
@@ -1584,10 +1595,10 @@ it('offers an OMP tab where the upstream protocol can be chosen', async () => {
     screen.queryByText('settings.providers.custom.wireProtocol.anthropicHelp'),
   ).toBeNull();
   expect(
-    screen.queryByRole('button', {
-      name: 'settings.providers.custom.modelProtocol.google',
+    screen.getByRole('button', {
+      name: 'settings.providers.custom.modelProtocol.google · models.channels.native',
     }),
-  ).toBeNull();
+  ).toBeTruthy();
 });
 
 it('derives the OMP runtime from the preset claude-code runtime', async () => {

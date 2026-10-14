@@ -42,6 +42,18 @@ function escape() {
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
 }
 describe('protocol-channel form requests', () => {
+  it('keeps an idle draft open on outside clicks while allowing explicit cancellation', async () => {
+    const { onClose, onSaved } = mount();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByDisplayValue('Supplier')));
+    fireEvent.pointerDown(document.body, { button: 0, pointerType: 'mouse' });
+    fireEvent.click(document.body);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(calls.update).not.toHaveBeenCalled();
+    expect(screen.getByDisplayValue('Supplier')).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'settings.providers.custom.cancel' }));
+    expect(onClose).toHaveBeenCalledOnce();
+  });
   it('focuses the supplier field and prevents duplicate saves and dismissal until settlement', async () => {
     let reject!: (error: Error) => void;
     calls.update.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
@@ -58,7 +70,7 @@ describe('protocol-channel form requests', () => {
     expect(calls.update.mock.calls[0][2]).toEqual({ source: 'manual-settings', channelKeys: {} });
     expect(onClose).not.toHaveBeenCalled();
     expect(onSaved).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'common.cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.providers.custom.cancel' }));
     expect(onClose).not.toHaveBeenCalled();
     await act(async () => { reject(new Error('Save failed; retry')); });
     expect(screen.getByRole('alert').textContent).toBe('models.channels.requestFailed');
