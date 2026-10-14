@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import YAML from 'yaml';
+import { selectStableWebsiteRelease } from '../generate-lex-website-release.mjs';
 
 const ROOT = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
 
@@ -371,13 +374,68 @@ test('GitHub Pages workflow and self-contained website form a valid download sur
   assert.match(html, /Windows-x64/);
   assert.match(html, /Linux-x64/);
   assert.match(html, /TapDB analytics disabled by default/);
-  assert.match(pages, /select\(\.draft == false and \.published_at != null\)/);
+  const metadataStep = pagesWorkflow.jobs.deploy.steps.find((step) => step.name === 'Generate stable release metadata');
+  assert.match(metadataStep.run, /node scripts\/generate-lex-website-release\.mjs "\$api_file" website\/release\.json/);
+  assert.match(pagesWorkflow.jobs.deploy.steps[0].with['sparse-checkout'], /scripts\/generate-lex-website-release\.mjs/);
+  assert.ok(pagesWorkflow.on.push.paths.includes('scripts/generate-lex-website-release.mjs'));
   assert.doesNotMatch(html, /<script[^>]+src=/i);
   assert.doesNotMatch(html, /<link[^>]+stylesheet/i);
 
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/gi)];
   assert.equal(scripts.length, 1);
   assert.doesNotThrow(() => Function(scripts[0][1]));
+});
+
+test('website metadata keeps the older published stable when newer releases are RCs or drafts', () => {
+  const stable = {
+    draft: false, prerelease: false, published_at: '2026-10-13T00:00:00Z',
+    tag_name: 'v0.1.5', html_url: 'https://github.com/Ciciy-l/lex/releases/tag/v0.1.5',
+    assets: [{ name: 'Lex-0.1.5-Android.apk', browser_download_url: 'https://github.com/Ciciy-l/lex/releases/download/v0.1.5/Lex-0.1.5-Android.apk', size: 123 }],
+  };
+  const candidates = [
+    { ...stable, tag_name: 'v0.1.7', draft: true },
+    { ...stable, tag_name: 'v0.1.6-rc.1', prerelease: true, published_at: '2026-10-14T00:00:00Z', assets: [] },
+    { ...stable, tag_name: 'v0.1.6', published_at: null },
+    stable,
+  ];
+  const before = structuredClone(candidates);
+  assert.deepEqual(selectStableWebsiteRelease(candidates), {
+    version: '0.1.5', tag: 'v0.1.5', prerelease: false,
+    publishedAt: stable.published_at, releaseUrl: stable.html_url,
+    assets: [{ name: stable.assets[0].name, url: stable.assets[0].browser_download_url, size: 123 }],
+  });
+  assert.deepEqual(candidates, before);
+});
+
+test('website metadata has no RC or draft fallback when no published stable exists', () => {
+  assert.equal(selectStableWebsiteRelease([]), null);
+  assert.equal(selectStableWebsiteRelease([
+    { draft: false, prerelease: true, published_at: '2026-10-14T00:00:00Z' },
+    { draft: true, prerelease: false, published_at: '2026-10-14T00:00:00Z' },
+    { draft: false, prerelease: false, published_at: null },
+  ]), null);
+});
+
+test('website generation refuses an RC-only response without overwriting existing metadata', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'lex-website-release-'));
+  try {
+    const input = path.join(directory, 'releases.json');
+    const output = path.join(directory, 'release.json');
+    const previous = '{"version":"0.1.5","prerelease":false}';
+    fs.writeFileSync(input, JSON.stringify([
+      { draft: false, prerelease: true, published_at: '2026-10-14T00:00:00Z' },
+    ]));
+    fs.writeFileSync(output, previous);
+    const result = spawnSync(process.execPath, [
+      path.join(ROOT, 'scripts/generate-lex-website-release.mjs'), input, output,
+    ], { encoding: 'utf8' });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /No published stable release available/);
+    assert.equal(fs.readFileSync(output, 'utf8'), previous);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('all third-party GitHub Actions are pinned to complete commit SHAs', () => {
