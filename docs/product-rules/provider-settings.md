@@ -4,6 +4,10 @@
 API 接入、Cindy AI 与本地模型服务。本文定义统一合同；当前实现与验证边界见末节。
 视觉正本见 [DESIGN §4 Provider detail header](../design-rules/DESIGN.md#provider-detail-header)。
 
+API 配置现以协议和具名渠道组织，同一协议可配置多组 URL/Key；供应商身份、
+订阅与专用云入口保持独立。迁移、凭证和跨端合同见
+[供应商协议渠道](../dev-rules/provider-protocol-channels.md)。
+
 ## 1. 一个连接，一套顶部
 
 供应商品牌与连接实例分开：同品牌的多个账号使用同一品牌图标，允许不同显示名。

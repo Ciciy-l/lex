@@ -14,7 +14,7 @@ import {
   CODEX_PROVIDER_OAUTH_PLACEHOLDER_KEY,
   type CodexProxySpawnAuthMode,
 } from './codex-gateway-config.js';
-import { getProviderRouteCredentialRevision } from './provider-route.js';
+import { getProviderRouteCredentialRevision, providerRoutingForModel } from './provider-route.js';
 
 export const CODEX_IMAGE_GENERATION_ACTOR_HEADER = 'x-openai-actor-authorization';
 export const CODEX_IMAGE_GENERATION_ACTOR_VALUE = 'local-image-extension';
@@ -143,6 +143,10 @@ function routeForProvider(provider: Provider): CodexCustomProviderRoute | null {
     routing: frozenRouting,
     responseRoutingByModel: Object.fromEntries(
       responseModels.map((model) => {
+        if (provider.channelConfig || provider.channelAliases) {
+          const modelRouting = providerRoutingForModel(provider, 'codex', model.id);
+          return [model.id, frozenRoutingDescriptor(modelRouting ?? routing)];
+        }
         if (!model.route) return [model.id, { ...frozenRouting }];
         const inherited = { ...frozenRouting };
         delete inherited.requestPath;
@@ -165,6 +169,12 @@ function routeForProvider(provider: Provider): CodexCustomProviderRoute | null {
  * handled separately by the Main mutation transaction; header values are stripped by routeForProvider.
  */
 export function codexCustomProviderConfigSignature(config: CustomProviderConfig): string {
+  if (config.channels) {
+    // Channels carry several independent Codex routes, including bridge routes.
+    // Their persisted metadata excludes secrets; key generations are tracked by
+    // the enclosing provider mutation transaction.
+    return createHash('sha256').update(JSON.stringify(config.channels)).digest('hex');
+  }
   const route = routeForProvider(buildUserProvider(config));
   if (!route) return '';
   return createHash('sha256')

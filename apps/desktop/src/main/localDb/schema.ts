@@ -1913,6 +1913,8 @@ export const customProviders = sqliteTable(
      * 只含已配置的 runtime（至少一个）。密钥不在此（走 safeStorage provider_key_<id>_<agent>）。
      */
     runtimes: text('runtimes').notNull().default('{}'),
+    /** Versioned protocol/channel configuration; credential values stay in safeStorage. */
+    channels: text('channels'),
     /**
      * 鉴权配置 JSON（可空）：'{"method":"oauth","oauth":{authorizeUrl,tokenUrl,clientId,scopes,...}}'。
      * 缺省/null = API key 形态（历史行为）。OAuth 凭证不在此（走 safeStorage provider_oauth_<id>）。

@@ -59,6 +59,8 @@ import {
 import {
   authenticateOmpProxySession,
   readOmpBearerToken,
+  readOmpRequestToken,
+  parseOmpGoogleRequest,
 } from '../omp-proxy-session-auth';
 import { setCustomProviders } from '../active-catalog';
 import { setCustomProviderKeyReader } from '../provider-route';
@@ -116,6 +118,17 @@ describe('readOmpBearerToken', () => {
 });
 
 describe('authenticateOmpProxySession', () => {
+  it('restricts Google tokens to the native Google front door', () => {
+    const headers = { 'x-goog-api-key': 'omp-tok-sess-omp' };
+    expect(readOmpRequestToken(headers, '/v1/messages')).toBeNull();
+    expect(
+      readOmpRequestToken(headers, '/v1beta/models/gemini:streamGenerateContent?alt=sse'),
+    ).toBe('omp-tok-sess-omp');
+    expect(
+      parseOmpGoogleRequest('/v1beta/models/gemini:streamGenerateContent?key=secret'),
+    ).toBeNull();
+    expect(parseOmpGoogleRequest('/v1beta/models/%00:generateContent')).toBeNull();
+  });
   it('accepts the derived token for the session', () => {
     expect(authenticateOmpProxySession('sess-omp', 'omp-tok-sess-omp')).toBe(true);
   });
@@ -169,6 +182,68 @@ describe('OMP gateway route in cc routingTransform', () => {
     );
     setSessionProvider('sess-omp', 'minimax');
   }
+
+  it.each([undefined, '/custom/gemini:streamGenerateContent?alt=sse'])(
+    'forwards native Google requests with the saved path %s and host key without leaking the process token', async (requestPath) => {
+    gatewayKey = null;
+    setCustomProviders([
+      buildUserProvider({
+        id: 'google',
+        name: 'Google',
+        runtimes: {
+          omp: {
+            baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+            wireProtocol: 'google-generative-ai',
+            ...(requestPath ? { requestPath } : {}),
+            models: [{ id: 'gemini', name: 'Gemini' }],
+          },
+        },
+      }),
+    ]);
+    setSessionProvider('sess-omp', 'google');
+    setCustomProviderKeyReader((id, agent) =>
+      id === 'google' && agent === 'omp' ? 'real-google-key' : null,
+    );
+    const body = { contents: [{ role: 'user', parts: [{ text: 'hello' }] }] };
+    const original = structuredClone(body);
+    const decision = await settledDecision(
+      createModelRoutingTransform()(
+        body,
+        ctxWith(
+          {
+            ...OMP_HEADERS,
+            'x-goog-api-key': 'omp-tok-sess-omp',
+          },
+          '/v1beta/models/gemini:streamGenerateContent?alt=sse',
+        ),
+      ),
+    );
+    expect(decision).toMatchObject({
+      upstreamOverride: 'https://generativelanguage.googleapis.com/v1beta',
+      pathOverride: requestPath ?? '/models/gemini:streamGenerateContent?alt=sse',
+      headerOverride: { 'x-goog-api-key': 'real-google-key' },
+    });
+    expect(decision?.headerDelete).toEqual(
+      expect.arrayContaining(['authorization', 'x-api-key', 'x-cindy-omp-session-id']),
+    );
+    expect(decision?.headerDelete).not.toContain('x-goog-api-key');
+    expect(JSON.stringify(decision)).not.toContain('omp-tok-sess-omp');
+    expect(body).toEqual(original);
+    await expect(
+      errorBodyOf(
+        createModelRoutingTransform()(
+          body,
+          ctxWith(
+            {
+              ...OMP_HEADERS,
+              'x-goog-api-key': 'forged',
+            },
+            '/v1beta/models/gemini:streamGenerateContent?alt=sse',
+          ),
+        ),
+      ),
+    ).resolves.toEqual({ status: 401, code: 'invalid_omp_session_token' });
+  });
 
   it('takes the token from Authorization and swaps in the gateway key', async () => {
     const decision = await settledDecision(

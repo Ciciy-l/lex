@@ -28,19 +28,23 @@
 export type OmpProviderApi =
   | 'anthropic-messages'
   | 'openai-completions'
-  | 'openai-responses';
+  | 'openai-responses'
+  | "google-generative-ai";
 
 export const OMP_PROVIDER_APIS: readonly OmpProviderApi[] = [
   'anthropic-messages',
   'openai-completions',
   'openai-responses',
+  "google-generative-ai",
 ];
 
 /**
  * Cindy 侧的 wire protocol 名。与 `@cindy/model-providers` 的 `ProviderWireProtocol`
  * 同形,就地声明以保持本模块**零依赖**(本文件刻意不 import 任何东西)。
  */
-export type OmpWireProtocol = 'anthropic-messages' | 'openai-responses' | 'openai-chat';
+export type OmpWireProtocol =
+  | 'anthropic-messages' | 'openai-responses' | 'openai-chat'
+  | "google-generative-ai";
 
 /**
  * Cindy 的 wire protocol → OMP models.yml 的 `api`。
@@ -50,8 +54,8 @@ export type OmpWireProtocol = 'anthropic-messages' | 'openai-responses' | 'opena
  * 直接透传 `openai-chat` 会让**整份 models.yml 被拒**——OMP 报
  * `Unknown provider "<id>"`,而不是退化成某个默认协议,所以传错等于会话起不来。
  *
- * 另一条同批实测的约束:**OMP 不支持模型级 `api`**(给单个模型写 `api` 同样整份被拒),
- * 协议只能在 provider 级声明。
+ * The pinned OMP 18.10.4 schema supports model-level api/baseUrl overrides.
+ * The older 18.1.18 experiment does not describe the current schema.
  */
 export function ompApiForWireProtocol(wire: OmpWireProtocol): OmpProviderApi {
   switch (wire) {
@@ -61,6 +65,8 @@ export function ompApiForWireProtocol(wire: OmpWireProtocol): OmpProviderApi {
       return 'openai-responses';
     case 'openai-chat':
       return 'openai-completions';
+    case "google-generative-ai":
+      return "google-generative-ai";
   }
 }
 
@@ -101,6 +107,8 @@ export interface OmpModelsModelCost {
 
 export interface OmpModelsModel {
   id: string;
+  api?: OmpProviderApi;
+  baseUrl?: string;
   name?: string;
   contextWindow?: number;
   maxTokens?: number;
@@ -217,7 +225,17 @@ function modelBlock(model: unknown): string[] {
   if (model === null || typeof model !== 'object' || Array.isArray(model))
     throw new Error('Invalid OMP models entry');
   const entry = model as Partial<OmpModelsModel>;
-  const lines: string[] = [`      - id: ${bare(requireId(entry.id, 'model id', MODEL_ID))}`];
+  const lines: string[] = [
+    `      - id: ${bare(requireId(entry.id, 'model id', MODEL_ID))}`,
+  ];
+  if (entry.api !== undefined)
+    lines.push(`        api: ${bare(requireApi(entry.api))}`);
+  if (entry.baseUrl !== undefined) {
+    const baseUrl = requireText(entry.baseUrl, "model baseUrl", 2048);
+    if (!/^https?:\/\//u.test(baseUrl) || /\s/u.test(baseUrl))
+      throw new Error("Invalid OMP models model baseUrl");
+    lines.push(`        baseUrl: ${quote(baseUrl)}`);
+  }
   if (entry.name !== undefined)
     lines.push(`        name: ${quote(requireText(entry.name, 'model name', 256))}`);
   if (entry.contextWindow !== undefined)

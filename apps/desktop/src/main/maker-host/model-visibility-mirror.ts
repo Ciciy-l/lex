@@ -136,10 +136,14 @@ export function getModelVisibilityOverride(
   agent: AgentKind,
   providerId: string,
   modelId: string,
+  aliases: readonly string[] = [],
 ): boolean | undefined {
   if (!ready) throw notReady();
   const key = keyOf(agent, providerId, modelId);
-  return mirror[key] ?? (strict && !followCatalogKeys.has(key) ? false : undefined);
+  const inherited = followCatalogKeys.has(key)
+    ? undefined
+    : aliases.map((id) => mirror[keyOf(agent, id, modelId)]).find((value) => value !== undefined);
+  return mirror[key] ?? inherited ?? (strict && !followCatalogKeys.has(key) ? false : undefined);
 }
 
 /**
@@ -155,7 +159,14 @@ export function getModelVisibilityMirrorSnapshot(providers: readonly ProviderVie
   for (const provider of providers) {
     for (const agent of provider.agents) {
       for (const model of provider.models[agent] ?? []) {
-        const value = getModelVisibilityOverride(agent, provider.id, model.id);
+        const ownKey = keyOf(agent, provider.id, model.id);
+        const inherited = !followCatalogKeys.has(ownKey)
+          ? model.visibilityAliases
+              ?.map((id) => mirror[keyOf(agent, id, model.id)])
+              .find((value) => value !== undefined)
+          : undefined;
+        const value =
+          mirror[ownKey] ?? inherited ?? getModelVisibilityOverride(agent, provider.id, model.id);
         if (value !== undefined) snapshot[keyOf(agent, provider.id, model.id)] = value;
       }
     }

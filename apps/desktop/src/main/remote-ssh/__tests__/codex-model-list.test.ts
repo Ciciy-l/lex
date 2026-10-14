@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import type { CatalogModel, ProviderView } from '@cindy/model-providers';
+import { buildUserProviderChannels, type CatalogModel, type ProviderView } from '@cindy/model-providers';
 import {
   assertSshCodexModel,
   isVerifiedSshCodexResume,
@@ -91,6 +91,15 @@ describe('SSH Codex model route boundary', () => {
     const implicitNativeStored = { ...stored, providerId: null };
     expect(isVerifiedSshCodexResume(implicitNativeRequest, implicitNativeStored)).toBe(true);
     expect(isVerifiedSshCodexResume(request, implicitNativeStored)).toBe(false);
+    const channels = buildUserProviderChannels({ id: 'supplier', name: 'Supplier', runtimes: {},
+      channels: { version: 1, channels: [{ id: 'channel', name: 'Primary', protocols: {
+        'google-generative-ai': { baseUrl: 'https://example.test', models: [{ id: 'hidden-model', name: 'Hidden', defaultEnabled: false }] },
+      } }] } });
+    const channelRequest = { ...request, providerId: 'channel' };
+    const channelStored = { ...stored, providerId: 'channel' };
+    expect(isVerifiedSshCodexResume(channelRequest, channelStored, channels)).toBe(true);
+    expect(isVerifiedSshCodexResume(channelRequest, channelStored, [])).toBe(false);
+    expect(isVerifiedSshCodexResume({ ...channelRequest, model: 'different' }, channelStored, channels)).toBe(false);
   });
 
   it('wires the exact resume exception before requiring a currently visible remote model', () => {

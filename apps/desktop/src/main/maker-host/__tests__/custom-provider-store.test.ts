@@ -27,6 +27,7 @@ const CREATE_SQL = `
     name TEXT NOT NULL,
     runtimes TEXT NOT NULL DEFAULT '{}',
     auth TEXT,
+    channels TEXT,
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
@@ -238,7 +239,7 @@ describe('validateCustomProviderConfig (per-runtime)', () => {
     },
   );
 
-  it('rejects Google-native routes for OMP before they can reach its proxy', () => {
+  it('accepts Google-native runtime and model routes for the pinned OMP', () => {
     expect(
       validateCustomProviderConfig({
         ...valid,
@@ -250,11 +251,7 @@ describe('validateCustomProviderConfig (per-runtime)', () => {
           },
         },
       }),
-    ).toEqual({
-      ok: false,
-      code: 'INVALID_PARAMS',
-      message: "runtime 'omp' wireProtocol invalid",
-    });
+    ).toEqual({ ok: true });
     expect(
       validateCustomProviderConfig({
         ...valid,
@@ -275,11 +272,7 @@ describe('validateCustomProviderConfig (per-runtime)', () => {
           },
         },
       }),
-    ).toEqual({
-      ok: false,
-      code: 'INVALID_PARAMS',
-      message: "runtime 'omp' model.route.wireProtocol invalid",
-    });
+    ).toEqual({ ok: true });
   });
 
   it('rejects runtime with bad baseUrl / missing model fields', () => {
@@ -1328,7 +1321,7 @@ describe('custom-provider-store CRUD (per-runtime)', () => {
     ).toEqual({ runtimes: storedRuntimes });
   });
 
-  it('drops unsupported legacy OMP Google protocol hints when reading', async () => {
+  it('preserves OMP Google protocol hints when reading', async () => {
     mountDb();
     raw!
       .prepare(
@@ -1358,8 +1351,11 @@ describe('custom-provider-store CRUD (per-runtime)', () => {
       );
 
     const loaded = await getCustomProvider('legacy-omp-google');
-    expect(loaded?.runtimes.omp?.wireProtocol).toBeUndefined();
-    expect(loaded?.runtimes.omp?.models[0]?.route).toBeUndefined();
+    expect(loaded?.runtimes.omp?.wireProtocol).toBe('google-generative-ai');
+    expect(loaded?.runtimes.omp?.models[0]?.route).toEqual({
+                  baseUrl: 'https://omp.example.test/v1',
+                  wireProtocol: 'google-generative-ai',
+                });
   });
 
   it('round-trips a validated exact inference request path', async () => {
@@ -1774,5 +1770,30 @@ describe('imported capability persistence', () => {
     const stored = await getCustomProvider('all-fields');
     for (const agent of ['claude-code', 'codex', 'pi'] as const)
       expect(stored?.runtimes[agent]?.models[0]).toEqual(model);
+  });
+});
+
+describe('canonical channel persistence', () => {
+  const channels: CustomProviderConfig = { id: 'supplier', name: 'Supplier', runtimes: {}, channels: { version: 1, channels: [{
+    id: 'channel', name: 'A', protocols: { 'google-generative-ai': {
+      baseUrl: 'https://google.example/v1beta', wireProtocol: 'google-generative-ai',
+      models: [{ id: 'gemini', name: 'Gemini', defaultEnabled: false }],
+    } },
+  }] } };
+  it('returns a monotonically increasing edit revision and preserves disabled preferences', async () => {
+    mountDb();
+    const created = await createCustomProvider(channels, 100);
+    expect(created.readRevision).toBe(100);
+    expect((await getCustomProvider(channels.id))?.readRevision).toBe(created.readRevision);
+    const updated = await updateCustomProvider(channels.id, { ...created, name: 'Renamed' }, 100);
+    expect(updated?.readRevision).toBe(101);
+    const stored = await getCustomProvider(channels.id);
+    expect(stored?.readRevision).toBe(updated?.readRevision);
+    expect(stored?.channels?.channels[0].protocols['google-generative-ai']?.models[0].defaultEnabled).toBe(false);
+  });
+  it.each(['gemini', '__proto__', 'constructor', 'cindy-local-ollama'])('rejects reserved channel identity %s', id => {
+    const config = structuredClone(channels);
+    config.channels!.channels[0].id = id;
+    expect(validateCustomProviderConfig(config).ok).toBe(false);
   });
 });

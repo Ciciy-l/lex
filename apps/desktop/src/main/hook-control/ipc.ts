@@ -607,7 +607,7 @@ function ensureInstances(): { store: SlackHookStore; manager: HookControlManager
         return getMaker().listAvailableAgents().map((agentKind) => {
           const models = visibleModelUnion(providers, agentKind, (providerId, m) =>
             isModelVisible(
-              getModelVisibilityOverride(agentKind, providerId, m.id),
+              getModelVisibilityOverride(agentKind, providerId, m.id, m.visibilityAliases),
               m.defaultEnabled,
             ),
           );

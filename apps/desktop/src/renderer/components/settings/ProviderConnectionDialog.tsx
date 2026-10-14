@@ -4,6 +4,7 @@ import {
   classifyModel,
   isChatEligible,
   mergeModelMetadata,
+  nativeEngineProtocol,
   providerEndpointBindings,
 } from '@cindy/model-providers';
 /**
@@ -53,6 +54,7 @@ import {
   type RuntimeFillDialogState,
 } from '@/components/settings/CustomProviderRuntimeFillOverlay';
 import { extractIpcError } from '@/utils/ipcError';
+import { ProviderChannelsDialog } from './ProviderChannelsDialog';
 import {
   createCustomProvider,
   customProviderWireProtocolForSave,
@@ -139,18 +141,21 @@ function isDialogAgentKind(agent: AgentKind): agent is DialogAgentKind {
 }
 
 /**
- * 协议选择器的文案 key；codex 返回 null(它用 option 自带的 labelKey/helpKey)。
- *
- * 为什么需要分引擎文案：codex 那一套写的是「Responses 原生、其余 {{appName}} 桥接」，
- * 因为 **Codex 只会说 Responses**，上游说别的协议时必须由 {{appName}} 转换。
- * pi / omp 是原生支持三种协议的 harness，套用 codex 的措辞会得出「明明原生却说桥接」
- * 的错误描述（OMP 实测三条路径都能直接打）。
+ * Protocol names are engine-independent. The label adds native/bridge status
+ * using the same capability rule as the channel selector; Pi/OMP keep their
+ * existing native transport help instead of Codex's translation wording.
  */
 function wireProtocolCopyKey(
   agent: DialogAgentKind,
   protocol: ProviderWireProtocol,
   kind: 'label' | 'help',
 ): string | null {
+  if (kind === 'label') return ({
+    'anthropic-messages': 'settings.providers.custom.wireProtocol.piAnthropic',
+    'openai-responses': 'settings.providers.custom.wireProtocol.piResponses',
+    'openai-chat': 'settings.providers.custom.wireProtocol.piChat',
+    'google-generative-ai': 'settings.providers.custom.modelProtocol.google',
+  })[protocol];
   const prefix = agent === 'pi' ? 'pi' : agent === 'omp' ? 'omp' : null;
   if (!prefix) return null;
   const suffix = protocol === 'anthropic-messages'
@@ -460,7 +465,14 @@ function PresetDropdown({
   );
 }
 
-export function ProviderConnectionDialog({
+export function ProviderConnectionDialog(props: ProviderConnectionDialogProps) {
+  const [specialized, setSpecialized] = useState(false);
+  if (!specialized && (!props.initial || props.initial.channels)) return <ProviderChannelsDialog {...props}
+    {...(!props.initial ? { onSpecializedSetup: () => setSpecialized(true) } : {})} />;
+  return <LegacyProviderConnectionDialog {...props} />;
+}
+
+function LegacyProviderConnectionDialog({
   initial,
   existingIds,
   returnFocusRef,
@@ -2408,6 +2420,9 @@ export function ProviderConnectionDialog({
                       {t(
                         wireProtocolCopyKey(activeTab, option.value, 'label') ?? option.labelKey,
                       )}
+                      {' · '}{t(nativeEngineProtocol(activeTab) === null ||
+                        nativeEngineProtocol(activeTab) === option.value
+                        ? 'models.channels.native' : 'models.channels.bridged')}
                     </button>
                   ))}
                 </div>

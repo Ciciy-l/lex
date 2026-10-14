@@ -47,7 +47,7 @@ import {
   filterEnabledGatewayMediaModels,
   isMediaModelExecutable,
 } from '../model-access/mediaModels.js';
-import { hasCustomProviderCredential } from './provider-connection-state.js';
+import { hasCustomProviderCredential, projectChannelConnectionAvailability } from './provider-connection-state.js';
 import { getBaseUrl } from '../manifestService.js';
 import { throwIpcError } from '../utils/ipcValidate.js';
 import { getBuildClientEndpoint, getClientEndpoint } from '../clientEndpointsService.js';
@@ -90,6 +90,7 @@ import { migrateManagedOllamaProvider } from '../local-model-runtime/managedOlla
 import { migrateLocalConnectProvider } from '../../shared/localConnectHarness.js';
 import {
   setCustomProviderKeyReader,
+  providerRoutingForModel,
   setCustomProviderHeaderReader,
   setOAuthTokenReader,
   setProviderOAuthTokenReader,
@@ -112,6 +113,7 @@ import {
   getProviderSecretStore,
   readCustomProviderHeaders,
   readCustomProviderKey,
+  setCustomProviderCredentialResolver,
 } from '../secrets/providerSecretStore.js';
 import {
   hasClaudeAiOAuth,
@@ -467,6 +469,17 @@ export function ensureActiveCatalogLoaded(): Promise<Catalog> {
   // 接通自定义供应商密钥读取器（idempotent）：provider-route 用 setter 注入避免触电，
   // 这里在路由发生前（splash 早于任何 turn）把真实 safeStorage 读取接进去。
   setCustomProviderKeyReader(readCustomProviderKey);
+  setCustomProviderCredentialResolver((providerId, agent) => {
+    if (agent !== 'claude-code' && agent !== 'codex' && agent !== 'pi' && agent !== 'omp')
+      return null;
+    const provider = getActiveCatalog().providers.find((entry) => entry.id === providerId);
+    const credential = provider
+      ? providerRoutingForModel(provider, agent, undefined)?.channelCredential
+      : null;
+    return credential
+      ? { providerId: credential.channelId, slot: `protocol-${credential.protocol}` }
+      : null;
+  });
   setCustomProviderHeaderReader(readCustomProviderHeaders);
   setProviderOAuthTokenReader((providerId, agent, options) => {
     if (isXaiSubscriptionProviderId(providerId)) return readXaiProviderOAuthToken(options, providerId);
@@ -1087,7 +1100,9 @@ export function getDesktopProviderService(): ProviderService {
     builtinApiKeyConnected: (providerId) =>
       providerId === 'gemini' ? Boolean(getProviderSecretStore().get('gemini')?.trim()) : false,
     customApiKeyConnected: (provider) =>
-      hasCustomProviderCredential(provider, readCustomProviderKey),
+      hasCustomProviderCredential(provider, readCustomProviderKey, providerRoutingForModel),
+    projectConnectionAvailability: (provider) =>
+      projectChannelConnectionAvailability(provider, readCustomProviderKey, providerRoutingForModel),
     getAvailableMediaModels: () => [
       ...listReadyProviderMediaModels(),
       ...(getAppCapabilities().canUseCindyGateway && readClaudeApiKey() != null

@@ -13501,5 +13501,41 @@
     "presetIdeas": "靈感",
     "presetReference": "資料",
     "remoteBusy": "遠端忙碌中，請稍後再試。"
+  },
+  "models": {
+    "channels": {
+      "settingsTitle": "依協定設定渠道",
+      "settingsDescription": "每個協定可新增多個命名渠道。切換引擎時保留所選渠道。",
+      "supplierName": "供應商名稱",
+      "protocol": "協定",
+      "channel": "渠道",
+      "defaultName": "預設渠道",
+      "numberedName": "渠道 {{number}}",
+      "add": "新增渠道",
+      "attach": "關聯現有渠道",
+      "chooseChannel": "選擇渠道",
+      "channelName": "渠道名稱",
+      "keepKey": "未修改則保留已儲存的金鑰",
+      "modelIds": "模型 ID，每行一個",
+      "advanced": "進階設定",
+      "requestPath": "請求路徑",
+      "modelsUrl": "模型清單 URL",
+      "removeProtocol": "移除此協定",
+      "restartRequired": "需要先停止執行中的 Codex 任務，才能套用這些設定。",
+      "interruptAndSave": "停止任務並儲存",
+      "channelAndProtocol": "渠道與協定",
+      "automatic": "自動（優先原生）",
+      "native": "原生",
+      "bridged": "橋接",
+      "discover": "取得模型",
+      "test": "測試連線",
+      "connected": "已連線",
+      "endpointChanged": "修改端點後請重新填寫金鑰。",
+      "headers": "請求標頭（JSON；留空保留已儲存的標頭）",
+      "noAuth": "無需驗證（僅限本機）",
+      "imageGeneration": "啟用原生圖片生成",
+      "requestFailed": "請求未完成，請檢查連線後重試。",
+      "specializedSetup": "OAuth 與專用雲端供應商"
+    }
   }
 }

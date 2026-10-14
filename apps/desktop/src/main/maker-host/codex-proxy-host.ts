@@ -103,6 +103,11 @@ import {
 import type { CodexSubagentRouteSnapshot } from './codex-subagent-config.js';
 import { getSessionProvider } from './session-provider-store.js';
 import {
+  consumeRemoteChannelSession,
+  remoteChannelSession,
+  remoteChannelRequestCurrent,
+} from './remote-provider-channel-auth.js';
+import {
   composeResponseObservers,
   recordClaudeRateLimitHeaders,
 } from './claude-rate-limit-headers-observer.js';
@@ -378,9 +383,9 @@ function isCollabSpawnRequest(headers: Readonly<Record<string, string>>): boolea
   return headerValue(headers, 'x-openai-subagent').toLowerCase() === CODEX_COLLAB_SPAWN_SUBAGENT;
 }
 
-function sessionIdFromHeaders(
-  headers: Readonly<Record<string, string>>,
-): string | undefined {
+function sessionIdFromHeaders(headers: Readonly<Record<string, string>>): string | undefined {
+  const remote = remoteChannelSession(headers, 'codex');
+  if (remote) return remote;
   const parentThreadId = guardianParentThreadIdFromHeaders(headers);
   if (parentThreadId) return threadToSession.get(parentThreadId);
 
@@ -1141,7 +1146,10 @@ function createChatBridgeDecision(
     ...(onUpstreamError ? { onUpstreamError } : {}),
     // localHandler 分支的上游请求由 chat bridge 自己发,绕开了 compat-proxy 转发层的
     // 出站代理;显式注入代理感知 fetch(见 outbound-fetch.ts)。
-  }, { logger: log, fetchImpl: outboundFetch });
+  }, { logger: log, fetchImpl: async (url, init) => {
+    if (route.isCurrent?.() === false) throw new Error('Provider channel changed before dispatch');
+    return outboundFetch(url, init);
+  } });
   return {
     localHandler: ({ rawBody, parsedBody, ctx, res }) => {
       const body = prepareLocalBridgeBody({
@@ -1164,7 +1172,7 @@ function createChatBridgeDecision(
         ? providerModelRecord(actualModel, route.routing.upstream, 'openai-chat') : undefined;
       if (standard && isPlainObject(body)) {
         const nativeHeaders = overrideHeadersCaseInsensitive(withChatBridgeUserAgent(Object.fromEntries(Object.entries(headers).filter(([name]) =>
-          !['authorization', 'x-api-key'].includes(name.toLowerCase())))), resolveConversationSessionHeaders(ctx?.headers));
+          !['authorization', 'x-api-key', 'x-goog-api-key'].includes(name.toLowerCase())))), resolveConversationSessionHeaders(ctx?.headers));
         if (standard.execution.pi.api === 'anthropic-messages' && (actualModel.endsWith('[1m]')
           || (isOfficialAnthropicUpstream(standard.upstream) && (standard.contextWindow ?? 0) >= 1_000_000))) {
           appendCommaSeparatedHeaderToken(nativeHeaders, 'anthropic-beta', 'context-1m-2025-08-07');
@@ -1176,7 +1184,12 @@ function createChatBridgeDecision(
           upstream: buildRouteDecision(route.routing, null, 'codex', route.apiKey, route.oauthToken)?.upstreamOverride ?? route.routing.upstream,
           apiKey: nativeBridgeApiKey(headers),
           headers: nativeHeaders,
+          assertCurrent: () => {
+            if (route.isCurrent?.() === false || (ctx && !remoteChannelRequestCurrent(ctx.headers, 'codex')))
+              throw new Error('Provider channel changed before dispatch');
+          },
           fetchImpl: async (url, init) => {
+            if (route.isCurrent?.() === false) throw new Error('Provider channel changed before dispatch');
             const response = await outboundFetch(url, init);
             if (!response.ok && onUpstreamError) onUpstreamError({ status: response.status, body: await readBoundedResponseText(response.clone()) });
             return response;
@@ -1516,7 +1529,10 @@ function createAnthropicBridgeDecision(
       : {}),
   }, {
     logger: log,
-    fetchImpl: outboundFetch,
+    fetchImpl: async (url, init) => {
+      if (route.isCurrent?.() === false) throw new Error('Provider channel changed before dispatch');
+      return outboundFetch(url, init);
+    },
   });
   return {
     localHandler: ({ rawBody, parsedBody, ctx, res }) => {
@@ -2767,7 +2783,25 @@ export function createModelRoutingTransform(
   sourceHostAlive: () => boolean = () => true,
   onCrossProviderChildAuthorized?: (ctx: RequestTransformCtx) => void,
 ): RoutingTransform {
-  return (body, ctx) => {
+  const route: RoutingTransform = (body, ctx) => {
+    const remoteSession = consumeRemoteChannelSession(ctx.headers, 'codex');
+    if (remoteSession === false)
+      return codexCustomProviderRouteFailure(403, 'remote_channel_unavailable');
+    if (remoteSession) {
+      const providerId = getSessionProvider(remoteSession);
+      const model = isPlainObject(body) && typeof body.model === 'string' ? body.model : '';
+      if (
+        !providerId ||
+        !getActiveCatalog().providers.some(
+          (provider) =>
+            provider.id === providerId &&
+            provider.channel &&
+            provider.models.codex?.some((entry) => entry.id === model),
+        )
+      ) {
+        return codexCustomProviderRouteFailure(403, 'remote_channel_model_unavailable');
+      }
+    }
     const inheritedPath = parseCodexCustomProviderPath(ctx.url);
     if (inheritedPath.kind === 'route' && inheritedPath.pathKind === 'responses' && ctx.method === 'POST') {
       // Select the first smart child before validating the inherited parent URL.
@@ -2949,7 +2983,7 @@ export function createModelRoutingTransform(
             model,
             model !== requestModel ? model : undefined,
             threadId,
-          );
+          ) ?? codexCustomProviderRouteFailure(503, 'custom_provider_route_unavailable');
         });
       }
       // model 传给 scope 门(空串 = 控制面 GET,不受范围限制);声明了 modelPrefixes 的
@@ -3019,6 +3053,25 @@ export function createModelRoutingTransform(
       log.warn('codex routing → gateway but no api key configured; passthrough (可能 401)', { model });
     }
     return decision;
+  };
+  return (body, ctx) => {
+    const decision = route(body, ctx);
+    const session = remoteChannelSession(ctx.headers, 'codex');
+    if (!session && remoteChannelRequestCurrent(ctx.headers, 'codex')) return decision;
+    const current = () => remoteChannelRequestCurrent(ctx.headers, 'codex') && sourceHostAlive();
+    const finish = (resolved: RoutingDecision | null): RoutingDecision => {
+      const failure = () => codexCustomProviderRouteFailure(403, 'remote_channel_unavailable');
+      if (!current() || !resolved) return failure();
+      const handler = resolved.localHandler;
+      return { ...resolved,
+        dispatchGenerationValid: () => current() && (resolved.dispatchGenerationValid?.() ?? true),
+        ...(handler ? { localHandler: async (args: Parameters<typeof handler>[0]) => {
+          if (!current()) return failure().localHandler!(args);
+          return handler(args);
+        } } : {}),
+      };
+    };
+    return decision instanceof Promise ? decision.then(finish) : finish(decision);
   };
 }
 

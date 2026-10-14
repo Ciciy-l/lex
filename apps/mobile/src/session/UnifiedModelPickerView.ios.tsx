@@ -69,7 +69,8 @@ function NativeMark({ children }: { children: ReactNode }) {
 export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
   const { t } = useTranslation();
   const { colors } = useTheme();
-  const [page, setPage] = useState<"sources" | "harness" | null>(null);
+  const [page, setPage] = useState<"sources" | "harness" | "channels" | null>(null,
+  );
   useEffect(() => {
     setPage(null);
   }, [p.visible, p.options?.row.key]);
@@ -281,7 +282,9 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
       title={
         page === "sources"
           ? t("models.unified.source")
-          : page === "harness"
+          : page === "channels"
+            ? t("models.channels.channelAndProtocol")
+            : page === "harness"
             ? t("models.unified.harness")
             : p.title
       }
@@ -337,6 +340,19 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
                 p.onFilter(item.id);
                 setPage(null);
               }}
+            />
+          ))}
+        </Section>
+      ) : page === "channels" && options && config ? (
+        <Section>
+          {options.channels?.map((channel) => (
+            <ComposerNativeRow
+              key={channel.id}
+              title={channel.label}
+              selected={config.providerId === channel.id}
+              selectionIcon={mark(Check)}
+              disabled={p.busy}
+              onPress={() => options.onChannel?.(channel.id)}
             />
           ))}
         </Section>
@@ -407,6 +423,19 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
             </Section>
           ) : null}
           <Section>
+            {!!options.channels?.length && (
+              <ComposerNativeRow
+                title={t("models.channels.channelAndProtocol")}
+                subtitle={
+                  options.channels.find(
+                    (channel) => channel.id === config.providerId,
+                  )?.label
+                }
+                disabled={p.busy}
+                onPress={() => setPage("channels")}
+                testID={p.testID + ".channels"}
+              />
+            )}
             <ComposerNativeRow
               title={t("models.unified.harness")}
               subtitle={mobileAgentLabel(config.agent)}

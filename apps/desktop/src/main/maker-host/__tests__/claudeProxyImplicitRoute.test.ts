@@ -65,7 +65,7 @@ import {
 } from '../provider-route';
 import { getActiveCatalog, setCustomProviders } from '../active-catalog';
 import * as providerRoute from '../provider-route';
-import { buildRegistry, buildUserProvider, providerPresetOAuth, PROVIDER_MODEL_CATALOG } from '@cindy/model-providers';
+import { buildRegistry, buildUserProvider, buildUserProviderChannels, providerPresetOAuth, PROVIDER_MODEL_CATALOG } from '@cindy/model-providers';
 import { clearSessionProvider, setSessionProvider } from '../session-provider-store';
 import {
   readClaudeSessionRoute,
@@ -119,6 +119,26 @@ describe('cc routingTransform — ①.5 隐式来源路由 (智谱 glm-5.3 裸 i
     setProviderViewsReader(async () => []);
     clearSessionProvider('sess-race');
     resetClaudeSessionRouteRegistryForTest();
+  });
+
+  it.each(['chatgpt/private-model', 'xai/private-model'])('keeps the explicit channel for a model named %s', async model => {
+    setCustomProviders(buildUserProviderChannels({
+      id: 'supplier', name: 'Supplier', runtimes: {}, channels: { version: 1, channels: [{
+        id: 'channel-primary', name: 'Primary', protocols: {
+          'anthropic-messages': { baseUrl: 'https://channel.example', models: [{ id: model, name: model }] },
+        },
+      }] },
+    }));
+    setClaudeProxySessionIdResolver(() => 'sess-race');
+    setSessionProvider('sess-race', 'channel-primary');
+    const ctx = ctxWith({ 'x-claude-code-session-id': 'sdk-race' });
+    const decision = await transform({ model }, ctx);
+    expect(decision).toMatchObject({ upstreamOverride: 'https://channel.example' });
+    expect(decision?.localHandler).toBeUndefined();
+    setCustomProviders([]);
+    const unavailable = await transform({ model }, ctxWith({ 'x-claude-code-session-id': 'sdk-race' }));
+    expect(unavailable?.localHandler).toBeTypeOf('function');
+    expect(unavailable?.upstreamOverride).toBeUndefined();
   });
 
   it.each(['openai-chat', 'openai-responses', 'google-generative-ai'] as const)('selects the Claude translation handler for a saved %s connection', wireProtocol => {

@@ -16,7 +16,8 @@ function ompSupportsWire(protocol: ProviderWireProtocol | undefined): boolean {
   return (
     protocol === 'anthropic-messages' ||
     protocol === 'openai-responses' ||
-    protocol === 'openai-chat'
+    protocol === 'openai-chat' ||
+    protocol === 'google-generative-ai'
   );
 }
 
@@ -72,7 +73,8 @@ export function modelProtocolComparison(
       agent === 'omp' &&
       (outbound === 'anthropic-messages' ||
         outbound === 'openai-responses' ||
-        outbound === 'openai-completions');
+        outbound === 'openai-completions' ||
+        outbound === 'google-generative-ai');
     const ompHarness = apiFromWireProtocol(
       ompSupportsWire(model.route?.wireProtocol)
         ? model.route?.wireProtocol

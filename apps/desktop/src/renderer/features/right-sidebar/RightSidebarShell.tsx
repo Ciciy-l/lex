@@ -754,7 +754,8 @@ export function RightSidebarShell({
           subagentsAvailable={subagentsEnabled}
         />
       )}
-      <div className="relative flex min-h-0 flex-1 overflow-hidden bg-[var(--panel-bg)]">
+      {/* 内容未加载或已隐藏时也将末尾的工具列靠右；窄窗口不把入口挤出右边界。 */}
+      <div className="relative flex min-h-0 flex-1 justify-end overflow-hidden bg-[var(--panel-bg)]">
         {/* 首次切到某 session 时 cache 尚未 hydrate(等 IPC list 回包),保留 panel
             背景而非闪 EmptyState —— EmptyState 是"真的没 tab"的 Welcome 内容。
             sessionId 为 null 也走这条:Shell 不显示任何内容(无激活会话)。 */}

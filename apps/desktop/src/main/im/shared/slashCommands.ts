@@ -345,7 +345,7 @@ export function createSlashHandlers(
             const provider = connected.find((p) => p.id === pid);
             const model = provider ? getModel(provider, mid, agentKind) : undefined;
             return isModelVisible(
-              getModelVisibilityOverride(agentKind, pid, mid),
+              getModelVisibilityOverride(agentKind, pid, mid, model?.visibilityAliases),
               model?.defaultEnabled,
             );
           },

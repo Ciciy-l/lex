@@ -123,9 +123,13 @@ const legacyMissingPiProtocolPreset: ProviderPreset = {
 };
 
 function renderDialog(onClose = vi.fn()) {
+  const view = render(<ProviderConnectionDialog onSaved={vi.fn()} onClose={onClose} existingIds={[]} />);
+  // These contracts cover the retained specialized per-engine setup. The
+  // default protocol-channel form has separate interaction coverage.
+  fireEvent.click(screen.getByRole('button', { name: 'models.channels.specializedSetup' }));
   return {
     onClose,
-    ...render(<ProviderConnectionDialog onSaved={vi.fn()} onClose={onClose} existingIds={[]} />),
+    ...view,
   };
 }
 

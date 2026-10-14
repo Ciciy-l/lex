@@ -41,7 +41,8 @@ import { isDeepStrictEqual } from 'node:util';
 
 import {
   BUNDLED_CATALOG,
-  buildUserProvider,
+  buildUserProviderChannels,
+  legacyChannelModelPreferenceId,
   runtimeUserModelMetadata,
   clampEffortToSupported,
   modelDefaultEffort,
@@ -1762,6 +1763,10 @@ function computeMerged(): Catalog {
               }),
             );
           }
+          const legacyPreferenceId = legacyChannelModelPreferenceId(provider, agent as AgentKind, model.id);
+          if (legacyPreferenceId) {
+            next = applyExistingModelLocalPatch(legacyPreferenceId, agent as AgentKind, next, localOverrides);
+          }
           return applyExistingModelLocalPatch(
             provider.id,
             agent as AgentKind,
@@ -1887,7 +1892,10 @@ function computeMerged(): Catalog {
         const openAiModel = identity !== undefined
           ? identity.startsWith('openai/')
           : /^(?:(?:codex|openai|chatgpt)\/)?(?:gpt-|codex-|o\d+(?:[.-]|$))/.test(model.id);
+        const legacyPreferenceId = legacyChannelModelPreferenceId(provider, agent as AgentKind, model.id);
         if (!openAiModel || model.userModelConfig?.contextWindow !== undefined ||
+            (legacyPreferenceId && hasLocalContextWindowOverride(localOverrides, legacyPreferenceId,
+              model.id, agent as AgentKind, metadataProviderId)) ||
             (identity && localOverrides.baseModels?.[identity]?.contextWindow !== undefined) ||
             hasLocalContextWindowOverride(localOverrides, provider.id, rootId,
               agent as AgentKind, metadataProviderId) ||
@@ -1999,8 +2007,8 @@ function installActiveCatalog(
   baseCapabilityEvidence = capabilityEvidence;
   baseUnverifiedXdMediaKinds = nextUnverifiedXdMediaKinds;
   if (customConfigs) {
-    custom = customConfigs.map((config) =>
-      buildUserProvider(config, { modelRegistry: projectionRegistry, presets: catalog.presets }),
+    custom = customConfigs.flatMap((config) =>
+      buildUserProviderChannels(config, { modelRegistry: projectionRegistry, presets: catalog.presets }),
     );
   }
   markChanged();
@@ -2084,8 +2092,8 @@ export function commitModelPlaneFromCatalog(
     baseUnverifiedXdMediaKinds = new Set(['image', 'video', 'embedding']);
   }
   if (customConfigs) {
-    custom = customConfigs.map((config) =>
-      buildUserProvider(config, {
+    custom = customConfigs.flatMap((config) =>
+      buildUserProviderChannels(config, {
         modelRegistry: trustedCustomProviderRegistry,
         presets: (base ?? BUNDLED_CATALOG).presets,
       }),
@@ -2129,8 +2137,8 @@ export function setCustomProviders(providers: Provider[]): void {
  */
 export function setCustomProviderConfigs(configs: CustomProviderConfig[]): void {
   customConfigs = [...configs];
-  custom = customConfigs.map((config) =>
-    buildUserProvider(config, {
+  custom = customConfigs.flatMap((config) =>
+    buildUserProviderChannels(config, {
       modelRegistry: trustedCustomProviderRegistry,
       presets: (base ?? BUNDLED_CATALOG).presets,
     }),

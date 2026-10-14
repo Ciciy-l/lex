@@ -65,7 +65,7 @@ import type {
 } from "./UnifiedModelPickerSheet";
 import { mobileInteractionStyles } from "@/components/mobileInteractionStyles";
 
-type Page = "sources" | "harness" | null;
+type Page = "sources" | "harness" | "channels" | null;
 
 /** 分组:可选小标题 + 行间 hairline(与 ContextSheetGroup 的安卓分组行同一套节奏)。 */
 function Group({
@@ -264,7 +264,9 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
   const title =
     page === "sources"
       ? t("models.unified.source")
-      : page === "harness"
+      : page === "channels"
+        ? t("models.channels.channelAndProtocol")
+        : page === "harness"
         ? t("models.unified.harness")
         : p.title;
 
@@ -412,6 +414,22 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
       </Group>
     ) : null;
 
+  const channelsPage =
+    options && config ? (
+      <Group>
+        {options.channels?.map((channel) => (
+          <Row
+            key={channel.id}
+            title={channel.label}
+            selected={config.providerId === channel.id}
+            disabled={p.busy}
+            onPress={() => options.onChannel?.(channel.id)}
+            testID={p.testID + ".channel." + channel.id}
+          />
+        ))}
+      </Group>
+    ) : null;
+
   const efforts =
     options && config
       ? (options.row.entry.capabilities[config.agent]?.efforts ?? [])
@@ -496,6 +514,19 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
           </Text>
         ) : null}
         <Group>
+          {!!options.channels?.length && (
+            <Row
+              title={t("models.channels.channelAndProtocol")}
+              subtitle={
+                options.channels.find(
+                  (channel) => channel.id === config.providerId,
+                )?.label
+              }
+              disabled={p.busy}
+              onPress={() => setPage("channels")}
+              testID={p.testID + ".channels"}
+            />
+          )}
           <Row
             disabled={p.busy}
             leading={
@@ -856,7 +887,9 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
             {p.error ? <Text style={styles.error}>{p.error}</Text> : null}
             {page === "sources"
               ? sourcesPage
-              : page === "harness" && options
+              : page === "channels"
+                ? channelsPage
+                : page === "harness" && options
                 ? harnessPage
                 : options
                   ? settingsPage

@@ -39,17 +39,11 @@ export const CUSTOM_PROVIDER_CODEX_WIRE_PROTOCOLS = [
   },
 ] as const satisfies readonly CustomProviderWireProtocolOption[];
 
-/** OMP's managed bridge implements the three non-Google wire formats. */
-export const CUSTOM_PROVIDER_OMP_WIRE_PROTOCOLS = Object.freeze(
-  CUSTOM_PROVIDER_CODEX_WIRE_PROTOCOLS.filter(
-    (option) => option.value !== 'google-generative-ai',
-  ),
-);
+/** The pinned OMP runtime supports all four native provider APIs. */
+export const CUSTOM_PROVIDER_OMP_WIRE_PROTOCOLS = CUSTOM_PROVIDER_CODEX_WIRE_PROTOCOLS;
 
 /**
- * The generic settings control is shared by the four engines, but OMP has no
- * Google-native proxy front door.  Keep the UI in lockstep with Main's
- * persistence validator rather than letting a user save an unexecutable route.
+ * Keep the settings choices aligned with the host's executable protocols.
  */
 export function customProviderWireProtocolsForAgent(
   agent: AgentKind,

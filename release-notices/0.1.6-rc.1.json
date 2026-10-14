@@ -1,0 +1,66 @@
+{
+  "version": "0.1.6-rc.1",
+  "date": "2026-10-14",
+  "contentByLocale": {
+    "zh-CN": {
+      "intro": "Lex 0.1.6-rc.1 预发布版改善模型连接配置与桌面、手机的模型选择。",
+      "topics": [
+        { "id": "protocol-channels", "title": "多协议、多渠道", "text": "供应商配置按协议组织，同一协议可添加多个具名渠道，分别保存连接地址、密钥和模型。" },
+        { "id": "model-sources", "title": "同名模型，明确来源", "text": "同一供应商的同名模型合并展示，可展开选择具体渠道和自动或固定协议；模型能力、窗口和价格跟随实际选择。" },
+        { "id": "mobile-selection", "title": "手机与电脑同步选择", "text": "手机可选择渠道和协议，电脑确认后才应用切换；收藏保留具体来源。" },
+        { "id": "engine-protocols", "title": "连接方式更清楚", "text": "OMP 增加原生 Google Gemini 协议选项。Claude Code 与 Codex 使用其他协议时明确显示为 Lex 桥接。" },
+        { "id": "existing-settings", "title": "保留已有配置", "text": "已有连接、密钥、收藏和模型设置保留原选择，OAuth、订阅、Vertex 与 Bedrock 仍有专用配置入口。" },
+        { "id": "right-toolbar", "title": "右侧工具栏靠右", "text": "内容尚未加载或已隐藏时，右侧栏工具按钮仍保持在右边。" },
+        { "id": "upgrade", "title": "升级至预发布版", "text": "0.1.6-rc.1 仅进入 beta 更新渠道，正式更新渠道仍为 0.1.5。建议桌面和 Android 一同更新。安装包：https://github.com/Ciciy-l/lex/releases/tag/v0.1.6-rc.1 。正式版下载页：https://ciciy-l.github.io/lex/ 。Android 保持原包名 io.github.ciciyl.lex 和永久签名，可直接覆盖安装，请勿先卸载。暂不提供 iOS 安装包。" }
+      ]
+    },
+    "zh-TW": {
+      "intro": "Lex 0.1.6-rc.1 預發佈版改善模型連線設定與桌面、手機的模型選擇。",
+      "topics": [
+        { "id": "protocol-channels", "title": "多協定、多渠道", "text": "供應商設定依協定整理，同一協定可新增多個具名渠道，分別儲存連線位址、金鑰與模型。" },
+        { "id": "model-sources", "title": "同名模型，明確來源", "text": "同一供應商的同名模型合併顯示，可展開選擇具體渠道與自動或固定協定；模型能力、視窗與價格依實際選擇顯示。" },
+        { "id": "mobile-selection", "title": "手機與電腦同步選擇", "text": "手機可選擇渠道與協定，電腦確認後才套用切換；收藏保留具體來源。" },
+        { "id": "engine-protocols", "title": "連線方式更清楚", "text": "OMP 新增原生 Google Gemini 協定選項。Claude Code 與 Codex 使用其他協定時明確標示為 Lex 橋接。" },
+        { "id": "existing-settings", "title": "保留既有設定", "text": "既有連線、金鑰、收藏與模型設定保留原選擇，OAuth、訂閱、Vertex 與 Bedrock 仍有專用設定入口。" },
+        { "id": "right-toolbar", "title": "右側工具列靠右", "text": "內容尚未載入或已隱藏時，右側欄工具按鈕仍保持在右邊。" },
+        { "id": "upgrade", "title": "升級至預發佈版", "text": "0.1.6-rc.1 僅進入 beta 更新渠道，正式更新渠道仍為 0.1.5。建議桌面與 Android 一同更新。安裝包：https://github.com/Ciciy-l/lex/releases/tag/v0.1.6-rc.1 。正式版下載頁：https://ciciy-l.github.io/lex/ 。Android 保持原套件名稱 io.github.ciciyl.lex 與永久簽章，可直接覆蓋安裝，請勿先解除安裝。暫不提供 iOS 安裝包。" }
+      ]
+    },
+    "en": {
+      "intro": "Lex 0.1.6-rc.1 improves model connection settings and model selection on desktop and mobile.",
+      "topics": [
+        { "id": "protocol-channels", "title": "Multiple Protocols and Channels", "text": "Provider settings are organized by protocol. Add multiple named channels for each protocol, with separate connection URLs, keys, and models." },
+        { "id": "model-sources", "title": "Choose the Source for Each Model", "text": "Models with the same name from one provider share a row. Expand it to choose a channel and automatic or fixed protocol; capabilities, context windows, and prices follow the selected connection." },
+        { "id": "mobile-selection", "title": "Keep Mobile and Desktop Selections in Sync", "text": "Choose a channel and protocol on your phone. The change applies after the computer confirms it, and favorites retain their specific source." },
+        { "id": "engine-protocols", "title": "Clearer Connection Labels", "text": "OMP adds a native Google Gemini protocol option. Claude Code and Codex connections using other protocols are clearly labeled as bridged through Lex." },
+        { "id": "existing-settings", "title": "Keep Existing Settings", "text": "Existing connections, keys, favorites, and model settings retain their selections. Dedicated setup remains available for OAuth, subscriptions, Vertex, and Bedrock." },
+        { "id": "right-toolbar", "title": "Keep the Right Toolbar in Place", "text": "Right sidebar tool buttons stay at the right edge while content is loading or hidden." },
+        { "id": "upgrade", "title": "Upgrade to the Prerelease", "text": "0.1.6-rc.1 enters only the beta update channel; stable remains on 0.1.5. Update desktop and Android together. Packages: https://github.com/Ciciy-l/lex/releases/tag/v0.1.6-rc.1 . Stable download page: https://ciciy-l.github.io/lex/ . Android keeps package io.github.ciciyl.lex and its permanent signing certificate. Install over the existing app without uninstalling it first. No iOS package is available." }
+      ]
+    },
+    "ja": {
+      "intro": "Lex 0.1.6-rc.1 は、モデルの接続設定とデスクトップ・モバイルでのモデル選択を改善するプレリリースです。",
+      "topics": [
+        { "id": "protocol-channels", "title": "複数のプロトコルとチャネル", "text": "プロバイダー設定をプロトコル別に整理しました。同じプロトコルに名前付きチャネルを複数追加し、接続 URL、キー、モデルを個別に保存できます。" },
+        { "id": "model-sources", "title": "同名モデルの接続元を選択", "text": "同じプロバイダーの同名モデルは一行にまとめて表示します。展開してチャネルと自動・固定プロトコルを選択でき、機能、コンテキストウィンドウ、価格は選択した接続に従います。" },
+        { "id": "mobile-selection", "title": "スマートフォンとパソコンの選択を同期", "text": "スマートフォンでチャネルとプロトコルを選択できます。パソコンの確認後に切り替えが適用され、お気に入りは具体的な接続元を保持します。" },
+        { "id": "engine-protocols", "title": "接続方式を明確に表示", "text": "OMP にネイティブの Google Gemini プロトコルを追加しました。Claude Code と Codex で他のプロトコルを使う接続は、Lex によるブリッジと明示します。" },
+        { "id": "existing-settings", "title": "既存の設定を保持", "text": "既存の接続、キー、お気に入り、モデル設定は元の選択を保持します。OAuth、サブスクリプション、Vertex、Bedrock の専用設定も引き続き利用できます。" },
+        { "id": "right-toolbar", "title": "右側ツールバーの位置を維持", "text": "コンテンツの読み込み中や非表示時も、右サイドバーのツールボタンを右端に配置します。" },
+        { "id": "upgrade", "title": "プレリリースへの更新", "text": "0.1.6-rc.1 は beta 更新チャネルのみで配信し、正式チャネルは 0.1.5 のままです。デスクトップと Android を一緒に更新してください。パッケージ：https://github.com/Ciciy-l/lex/releases/tag/v0.1.6-rc.1 。正式版ダウンロードページ：https://ciciy-l.github.io/lex/ 。Android はパッケージ名 io.github.ciciyl.lex と永続署名を維持します。先にアンインストールせず、上書きインストールしてください。iOS パッケージは提供していません。" }
+      ]
+    },
+    "ko": {
+      "intro": "Lex 0.1.6-rc.1 사전 릴리스는 모델 연결 설정과 데스크톱·모바일의 모델 선택을 개선합니다.",
+      "topics": [
+        { "id": "protocol-channels", "title": "여러 프로토콜과 채널", "text": "제공자 설정을 프로토콜별로 정리했습니다. 같은 프로토콜에 이름이 있는 채널을 여러 개 추가하고 연결 URL, 키, 모델을 각각 저장할 수 있습니다." },
+        { "id": "model-sources", "title": "같은 이름의 모델도 연결 출처 선택", "text": "같은 제공자의 동일한 이름 모델을 한 행으로 표시합니다. 펼쳐서 채널과 자동·고정 프로토콜을 선택할 수 있으며 기능, 컨텍스트 창, 가격은 실제 선택한 연결을 따릅니다." },
+        { "id": "mobile-selection", "title": "휴대폰과 컴퓨터의 선택 동기화", "text": "휴대폰에서 채널과 프로토콜을 선택할 수 있습니다. 컴퓨터가 확인한 뒤 전환이 적용되며 즐겨찾기는 구체적인 출처를 유지합니다." },
+        { "id": "engine-protocols", "title": "연결 방식 명확히 표시", "text": "OMP에 네이티브 Google Gemini 프로토콜 옵션을 추가했습니다. Claude Code와 Codex에서 다른 프로토콜을 사용하는 연결은 Lex 브리지로 명확히 표시합니다." },
+        { "id": "existing-settings", "title": "기존 설정 유지", "text": "기존 연결, 키, 즐겨찾기, 모델 설정은 원래 선택을 유지합니다. OAuth, 구독, Vertex, Bedrock의 전용 설정도 계속 사용할 수 있습니다." },
+        { "id": "right-toolbar", "title": "오른쪽 도구 모음 위치 유지", "text": "콘텐츠를 불러오는 중이거나 숨겨져 있어도 오른쪽 사이드바의 도구 버튼은 오른쪽 끝에 유지됩니다." },
+        { "id": "upgrade", "title": "사전 릴리스로 업데이트", "text": "0.1.6-rc.1은 beta 업데이트 채널에만 배포되며 정식 채널은 0.1.5를 유지합니다. 데스크톱과 Android를 함께 업데이트하세요. 설치 패키지: https://github.com/Ciciy-l/lex/releases/tag/v0.1.6-rc.1 . 정식 버전 다운로드 페이지: https://ciciy-l.github.io/lex/ . Android는 패키지 이름 io.github.ciciyl.lex와 영구 서명을 유지합니다. 먼저 삭제하지 말고 기존 앱 위에 설치하세요. iOS 패키지는 제공하지 않습니다." }
+      ]
+    }
+  }
+}

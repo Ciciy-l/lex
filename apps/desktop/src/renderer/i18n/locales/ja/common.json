@@ -13501,5 +13501,41 @@
     "presetIdeas": "アイデア",
     "presetReference": "資料",
     "remoteBusy": "接続先のコンピュータが混み合っています。しばらくしてから再試行してください。"
+  },
+  "models": {
+    "channels": {
+      "settingsTitle": "プロトコル別のチャネル",
+      "settingsDescription": "プロトコルごとに複数のチャネルを追加できます。エンジンを切り替えても選択したチャネルを維持します。",
+      "supplierName": "プロバイダー名",
+      "protocol": "プロトコル",
+      "channel": "チャネル",
+      "defaultName": "既定のチャネル",
+      "numberedName": "チャネル {{number}}",
+      "add": "チャネルを追加",
+      "attach": "既存のチャネルに関連付ける",
+      "chooseChannel": "チャネルを選択",
+      "channelName": "チャネル名",
+      "keepKey": "変更しなければ保存済みのキーを保持",
+      "modelIds": "モデル ID（1 行に 1 つ）",
+      "advanced": "詳細設定",
+      "requestPath": "リクエストパス",
+      "modelsUrl": "モデル一覧 URL",
+      "removeProtocol": "このプロトコルを削除",
+      "restartRequired": "設定の適用には実行中の Codex タスクを停止する必要があります。",
+      "interruptAndSave": "タスクを停止して保存",
+      "channelAndProtocol": "チャネルとプロトコル",
+      "automatic": "自動（ネイティブ優先）",
+      "native": "ネイティブ",
+      "bridged": "ブリッジ",
+      "discover": "モデルを取得",
+      "test": "接続をテスト",
+      "connected": "接続済み",
+      "endpointChanged": "エンドポイントを変更した場合はキーを再入力してください。",
+      "headers": "ヘッダー（JSON、空欄は保存済みの値を保持）",
+      "noAuth": "認証なし（ローカルのみ）",
+      "imageGeneration": "ネイティブ画像生成を有効にする",
+      "requestFailed": "リクエストを完了できませんでした。接続を確認して再試行してください。",
+      "specializedSetup": "OAuth と専用クラウドプロバイダー"
+    }
   }
 }

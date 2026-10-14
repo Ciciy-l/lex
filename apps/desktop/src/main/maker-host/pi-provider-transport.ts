@@ -113,6 +113,8 @@ export interface PiProviderTransportOptions {
   headers?: Record<string, string>;
   env?: Record<string, string>;
   fetchImpl: typeof fetch;
+  /** Runs at native dispatch too: Google/Vertex do not accept injected fetch. */
+  assertCurrent?: () => void;
 }
 
 /**
@@ -158,6 +160,8 @@ function assertHostCredentialEndpoint(api: string, destination: string, apiKey?:
 }
 
 export function nativeBridgeApiKey(headers: Readonly<Record<string, string>>): string {
+  const google = Object.entries(headers).find(([name]) => name.toLowerCase() === 'x-goog-api-key')?.[1];
+  if (google) return google;
   const authorization = Object.entries(headers).find(([name]) => name.toLowerCase() === 'authorization')?.[1];
   if (authorization) return authorization.replace(/^Bearer\s+/i, '');
   return Object.entries(headers).find(([name]) => name.toLowerCase() === 'x-api-key')?.[1] ?? '';
@@ -209,6 +213,7 @@ export async function probePiProvider(options: PiProviderTransportOptions, signa
   const adapter = adapters[model.api];
   if (!adapter) throw new Error('Native API is not supported by the bundled Pi adapter');
   const cloudflare = model.provider === 'cloudflare-ai-gateway';
+  options.assertCurrent?.();
   return adapter.streamSimple(model, { messages: [{ role: 'user', content: 'ping', timestamp: 0 }] }, {
     apiKey: cloudflare ? undefined : options.apiKey,
     env: options.env,
@@ -292,6 +297,7 @@ export function createPiProviderFetch(options: PiProviderTransportOptions): type
     const routeHeaders = withOpenCodeGoSessionHeader(options.headers, {
       providerId: options.providerId, catalogPresetId: options.catalogPresetId, upstream: model.baseUrl, sessionId,
     });
+    options.assertCurrent?.();
     const events = adapter.streamSimple(model, context, {
       apiKey: cloudflareGateway ? undefined : options.apiKey, env: options.env,
       headers: cloudflareGateway ? cloudflareGatewayHeaders(options.apiKey, routeHeaders) : routeHeaders,

@@ -2,7 +2,7 @@ import { app, safeStorage } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { storedCustomProviderId } from '@cindy/model-providers';
+import { storedCustomProviderId, type ProviderWireProtocol } from '@cindy/model-providers';
 
 import { createLogger } from '../logger.js';
 import {
@@ -391,10 +391,39 @@ export function getProviderSecretStore(): ProviderSecretStore {
  * 不存在 / safeStorage 不可用 / 读失败均返回 null。复用默认 electronSecretIo,
  * 与 renderer 经通用 safe-storage IPC 写入的 .enc 文件字节级互通。
  */
-export function readCustomProviderKey(providerId: string, agent: string): string | null {
-  const storageProviderId = storedCustomProviderId(providerId);
+type CustomCredentialLocation = { providerId: string; slot: string };
+let customCredentialResolver:
+  ((providerId: string, agent: string) => CustomCredentialLocation | null) | null = null;
+
+/** Injected by the host; the secret store itself never imports catalog state. */
+export function setCustomProviderCredentialResolver(
+  resolver: typeof customCredentialResolver,
+): void {
+  customCredentialResolver = resolver;
+}
+
+function customCredentialLocation(
+  providerId: string,
+  agent: string,
+  protocol?: ProviderWireProtocol,
+): CustomCredentialLocation {
+  if (protocol)
+    return { providerId: storedCustomProviderId(providerId), slot: `protocol-${protocol}` };
+  return (
+    customCredentialResolver?.(providerId, agent) ?? {
+      providerId: storedCustomProviderId(providerId),
+      slot: agent,
+    }
+  );
+}
+
+export function readCustomProviderKey(providerId: string, agent: string,
+  protocol?: ProviderWireProtocol,
+): string | null {
   try {
-    return electronSecretIo.read(customProviderSecretStorageKey(storageProviderId, agent));
+    const location = customCredentialLocation(providerId, agent, protocol);
+    return electronSecretIo.read(customProviderSecretStorageKey(location.providerId, location.slot),
+    );
   } catch (err) {
     log.warn(
       { providerId, agent, err: err instanceof Error ? err.message : String(err) },
@@ -420,10 +449,12 @@ function parseCustomProviderHeaders(raw: string): Record<string, string> {
 export function readCustomProviderHeaders(
   providerId: string,
   agent: string,
+  protocol?: ProviderWireProtocol,
 ): Record<string, string> | null {
-  const storageProviderId = storedCustomProviderId(providerId);
   try {
-    const raw = electronSecretIo.read(customProviderHeaderStorageKey(storageProviderId, agent));
+    const location = customCredentialLocation(providerId, agent, protocol);
+    const raw = electronSecretIo.read(customProviderHeaderStorageKey(location.providerId, location.slot),
+    );
     return raw === null ? null : parseCustomProviderHeaders(raw);
   } catch (err) {
     log.warn(

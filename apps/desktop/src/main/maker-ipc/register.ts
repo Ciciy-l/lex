@@ -897,6 +897,7 @@ import {
 import { getActiveCatalog, setDiscoveredProviderModels } from '../maker-host/active-catalog.js';
 import { readCompactionPct } from '../maker-host/compaction-settings-store.js';
 import { resolveModelDefaultContextWindow } from '../maker-host/catalog-to-descriptors.js';
+import { providerChannelPreferenceAliases } from '../maker-host/provider-channel-preferences.js';
 import {
   isModelContextLimitCustomized,
   readModelContextLimit,
@@ -5899,7 +5900,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         return now?.dataOwnerId === owner?.dataOwnerId && now?.generation === owner?.generation;
       };
       const write = () => writeModelContextLimitsWithRefresh(targets, limit,
-        () => refreshContextSettings(targets),
+        () => refreshContextSettings(providerChannelPreferenceAliases(targets)),
         () => refreshContextSettings());
       if (targets.some((target) => target.providerId === MANAGED_LLAMACPP_PROVIDER_ID)) {
         const service = getManagedLlamaCppService(app.getPath('userData'));
@@ -7001,7 +7002,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
                 providerId: row.providerId ?? null,
                 remoteHostId: row.remoteHostId,
                 sdkSessionId: row.sdkSessionId,
-              } : undefined)
+              } : undefined, getActiveCatalog().providers)
             : !!row && row.model === o.model && (row.providerId ?? null) === (o.providerId ?? null);
         } catch {
           verifiedResume = false;
@@ -17736,7 +17737,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         const targetAgent = dbToMakerAgentKind(runtimeStatus.agentKind);
         if (
           target &&
-          !usesControllerProviderProxyForSsh(targetAgent) &&
+          !usesControllerProviderProxyForSsh(targetAgent, target) &&
           isLocalOnlyProviderForAgent(target, targetAgent)
         ) {
           throwIpcError('INVALID_PARAMS', 'This provider requires local execution');

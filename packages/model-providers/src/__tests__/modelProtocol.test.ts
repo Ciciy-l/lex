@@ -208,7 +208,7 @@ describe('custom supplier transport ownership', () => {
 });
 
 describe('OMP protocol support', () => {
-  it.each(['anthropic-messages', 'openai-responses', 'openai-chat'] as const)(
+  it.each(['anthropic-messages', 'openai-responses', 'openai-chat', 'google-generative-ai'] as const)(
     'OMP speaks its configured %s route without fixed-Anthropic compatibility',
     (wire) => {
       const api = wire === 'openai-chat' ? 'openai-completions' : wire;
@@ -265,7 +265,7 @@ describe('OMP protocol support', () => {
     expect(nativeModelAgents(provider, { omp })).toEqual([]);
   });
 
-  it('does not invent a native OMP Google bridge or a route in a redacted view', () => {
+  it('recognizes the configured native OMP Google route without inventing a route in a redacted view', () => {
     const provider = {
       id: 'source',
       routing: { omp: { wireProtocol: 'google-generative-ai' } },
@@ -273,9 +273,10 @@ describe('OMP protocol support', () => {
     expect(
       modelProtocolComparison(provider, { omp: model }).forAgent('omp'),
     ).toMatchObject({
-      harness: 'anthropic-messages',
-      mode: 'compatibility',
-      localConversion: true,
+      harness: 'google-generative-ai',
+      outbound: 'google-generative-ai',
+      mode: 'matching',
+      localConversion: false,
     });
     expect(
       modelProtocolComparison(
@@ -285,14 +286,14 @@ describe('OMP protocol support', () => {
     ).toMatchObject({ outbound: null, mode: 'unknown' });
   });
 
-  it('updates only inferred OMP defaults and preserves explicit disabled models', () => {
+  it.each(['openai-chat', 'google-generative-ai'] as const)('updates only inferred OMP defaults for %s and preserves explicit disabled models', (wireProtocol) => {
     const provider = buildUserProvider({
       id: 'omp-user',
       name: 'OMP user',
       runtimes: {
         omp: {
           baseUrl: 'https://example.invalid/v1',
-          wireProtocol: 'openai-chat',
+          wireProtocol,
           models: [
             { id: 'inferred', name: 'Inferred' },
             { id: 'disabled', name: 'Disabled', defaultEnabled: false },

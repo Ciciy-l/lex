@@ -71,7 +71,22 @@ export async function resolveRemoteClaudeRoute(opts: {
         `[REMOTE_PROVIDER_UPDATING] provider "${providerId}" credentials are being updated on this desktop; retry in a moment`,
       );
     }
-    const routed = await resolveProviderRouteDecision(providerId, REMOTE_AGENT, readClaudeApiKey());
+    const routed = await resolveProviderRouteDecision(providerId, REMOTE_AGENT, readClaudeApiKey(),
+      opts.model,
+    );
+    if (
+      routed &&
+      !routed.routing.disabled &&
+      getActiveCatalog().providers.find((provider) => provider.id === providerId)?.channel
+    ) {
+      // The factory replaces this marker with a task-scoped SSH reverse forward.
+      // No upstream credential is materialized into the remote environment.
+      return {
+        hostManaged: true,
+        endpoint: 'http://127.0.0.1',
+        env: { ANTHROPIC_API_KEY: 'cindy-host-managed-channel' },
+      };
+    }
     if (routed) return materializeRoutedProvider(routed);
     // TOCTOU 兜底:resolver 内部也会因 mutation 窗口返回 null;若恰好在两次判定之间
     // 窗口开启,报 UPDATING 而非 UNSUPPORTED(语义更准确,用户稍后重试即可)。

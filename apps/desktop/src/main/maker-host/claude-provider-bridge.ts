@@ -25,6 +25,7 @@ export function createClaudeProviderBridge(options: {
   catalogPresetId?: string;
   nativeUpstream?: string;
   fetchImpl: typeof fetch;
+  assertCurrent?: () => void;
 }): ResponsesBridgeHandler {
   const nativeFetch = options.model ? createPiProviderFetch({ row: {
     ...options.model, supportsFastMode: options.supportsFastMode ?? options.model.supportsFastMode,
@@ -34,10 +35,12 @@ export function createClaudeProviderBridge(options: {
     upstream: options.nativeUpstream,
     apiKey: nativeBridgeApiKey(options.headers),
     headers: Object.fromEntries(Object.entries(options.headers).filter(([name]) =>
-      !['authorization', 'x-api-key', 'anthropic-version', 'anthropic-beta'].includes(name.toLowerCase()))),
+      !['authorization', 'x-api-key', 'x-goog-api-key', 'anthropic-version', 'anthropic-beta'].includes(name.toLowerCase()))),
     fetchImpl: options.fetchImpl,
+    assertCurrent: options.assertCurrent,
   }) : undefined;
   const upstreamFetch: typeof fetch = async (_url, init) => {
+    options.assertCurrent?.();
     if (nativeFetch) return nativeFetch(_url, init);
     if (options.protocol === 'openai-responses') return options.fetchImpl(options.url, init);
     const responses = JSON.parse(String(init?.body)) as ResponsesRequest;

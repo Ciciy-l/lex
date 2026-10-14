@@ -13501,5 +13501,41 @@
     "presetIdeas": "아이디어",
     "presetReference": "자료",
     "remoteBusy": "원격 컴퓨터가 사용 중입니다. 잠시 후 다시 시도해 주세요."
+  },
+  "models": {
+    "channels": {
+      "settingsTitle": "프로토콜별 채널",
+      "settingsDescription": "프로토콜마다 이름이 있는 채널을 여러 개 추가할 수 있습니다. 엔진을 전환해도 선택한 채널을 유지합니다.",
+      "supplierName": "제공자 이름",
+      "protocol": "프로토콜",
+      "channel": "채널",
+      "defaultName": "기본 채널",
+      "numberedName": "채널 {{number}}",
+      "add": "채널 추가",
+      "attach": "기존 채널 연결",
+      "chooseChannel": "채널 선택",
+      "channelName": "채널 이름",
+      "keepKey": "변경하지 않으면 저장된 키 유지",
+      "modelIds": "모델 ID (한 줄에 하나)",
+      "advanced": "고급 설정",
+      "requestPath": "요청 경로",
+      "modelsUrl": "모델 목록 URL",
+      "removeProtocol": "이 프로토콜 제거",
+      "restartRequired": "설정을 적용하려면 실행 중인 Codex 작업을 먼저 중지해야 합니다.",
+      "interruptAndSave": "작업 중지 후 저장",
+      "channelAndProtocol": "채널 및 프로토콜",
+      "automatic": "자동 (네이티브 우선)",
+      "native": "네이티브",
+      "bridged": "브리지",
+      "discover": "모델 가져오기",
+      "test": "연결 테스트",
+      "connected": "연결됨",
+      "endpointChanged": "엔드포인트를 변경한 후 키를 다시 입력하세요.",
+      "headers": "헤더 (JSON, 비워 두면 저장된 헤더 유지)",
+      "noAuth": "인증 없음 (로컬 전용)",
+      "imageGeneration": "네이티브 이미지 생성 사용",
+      "requestFailed": "요청을 완료하지 못했습니다. 연결을 확인한 후 다시 시도하세요.",
+      "specializedSetup": "OAuth 및 전용 클라우드 제공자"
+    }
   }
 }

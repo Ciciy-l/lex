@@ -104,7 +104,8 @@ export function isRendererAccessibleSafeStorageKey(storageKey: string): boolean 
   const normalized = storageKey.toLowerCase();
   return (
     !MAIN_ONLY_PROVIDER_SECRET_STORAGE_KEYS.has(normalized)
-    && !normalized.startsWith(CUSTOM_PROVIDER_HEADER_SECRET_PREFIX)
+    && !normalized.startsWith(CUSTOM_PROVIDER_HEADER_SECRET_PREFIX) &&
+    !/^provider_key_.+_protocol-/u.test(normalized)
   );
 }
 

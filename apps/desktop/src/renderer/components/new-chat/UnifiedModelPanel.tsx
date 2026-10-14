@@ -6,6 +6,9 @@ import { useTranslation } from 'react-i18next';
 
 import {
   unifiedModelEntries,
+  groupProviderChannelEntries,
+  providerChannelChoices,
+  nativeEngineProtocol,
   type CatalogModel,
   type ProviderView,
   type UnifiedModelEntry,
@@ -386,9 +389,24 @@ export function UnifiedModelPanel({
     [providers, agentsKey, scope, sourceVersion, keepModelKey, includePaymentRequired],
   );
 
+  const modelEntries = useMemo(
+    () => groupProviderChannelEntries(entries, providers, selected),
+    [entries, providers, selected.providerId, selected.modelId],
+  );
+  const channelLabel = (providerId: string): string => {
+    const channel = providers.find((provider) => provider.id === providerId)?.channel;
+    return channel && !channel.legacy
+      ? [providerLabel(providerId), channel.name, channel.protocol ?? t('models.channels.automatic')].join(' · ')
+      : providerLabel(providerId);
+  };
+  const supplierOf = useCallback((id: string) => providers.find(provider => provider.id === id)?.channel?.supplierId ?? id, [providers]);
+  const supplierLabel = (id: string) => {
+    const channel = providers.find(provider => provider.channel?.supplierId === id);
+    return providerLabel(channel?.id ?? id);
+  };
   const railItems = useMemo(
-    () => buildUnifiedRail(entries, undefined, providerOrder),
-    [entries, providerOrder],
+    () => buildUnifiedRail(modelEntries, undefined, providerOrder, supplierOf),
+    [modelEntries, providerOrder, supplierOf],
   );
   // rail 上的筛选目标消失(供应商断开 / 收藏清空)时回落「全部」,避免停在空视图。
   useEffect(() => {
@@ -592,7 +610,9 @@ export function UnifiedModelPanel({
   const sections = useMemo(
     () =>
       buildUnifiedListSections({
+        supplierOf,
         entries,
+        modelEntries,
         favorites,
         query,
         matchesQuery: (entry, q) => matchesModelName({
@@ -605,7 +625,10 @@ export function UnifiedModelPanel({
           ? { recommendation: { agent: liveEngineAgent, ...selected } }
           : {}),
       }),
-    [entries, favorites, query, effectiveRail, effectiveEngineOf, providerOrder, t, scope, liveEngineAgent, selected.modelId, selected.providerId],
+    [entries, supplierOf,
+      modelEntries,
+      favorites, query, effectiveRail, effectiveEngineOf, providerOrder, t, scope, liveEngineAgent, selected.modelId, selected.providerId,
+    ],
   );
 
   // 打开或切视图时，把模型本体的当前行对齐到可视高度 35% 处；收藏可以滚出顶部。
@@ -873,7 +896,7 @@ export function UnifiedModelPanel({
       : section.kind === 'recommended'
         ? t('newChat.modelSelector.unified.recommended')
       : section.group
-        ? providerLabel(section.group.providerId)
+        ? supplierLabel(section.group.providerId)
         : '';
 
   const rows = sections.flatMap((section) => section.rows);
@@ -947,6 +970,7 @@ export function UnifiedModelPanel({
     () =>
       widthSizerActive
         ? buildUnifiedListSections({
+            supplierOf,
             entries,
             favorites,
             query: '',
@@ -969,7 +993,7 @@ export function UnifiedModelPanel({
         active={effectiveRail}
         onSelect={setRail}
         providers={providers}
-        providerLabel={providerLabel}
+        providerLabel={supplierLabel}
         interactionDisabled={interactionDisabled || actionPending}
       />
 
@@ -1085,7 +1109,7 @@ export function UnifiedModelPanel({
                       anchor={row.anchor}
                       config={config}
                       {...(effectiveRail.kind === 'all' || effectiveRail.kind === 'favorites'
-                        ? { sourceLabel: providerLabel(row.entry.providerId) }
+                        ? { sourceLabel: channelLabel(row.entry.providerId) }
                         : {})}
                       selected={isSelectedRow(row.anchor, row.entry)}
                       active={sameAnchor(flyAnchor, row.anchor)}
@@ -1157,7 +1181,7 @@ export function UnifiedModelPanel({
                       entry={row.entry}
                       anchor={row.anchor}
                       config={config}
-                      sourceLabel={providerLabel(row.entry.providerId)}
+                      sourceLabel={channelLabel(row.entry.providerId)}
                       selected={false}
                       active={false}
                       isFavoriteRow={!!row.favorite}
@@ -1204,11 +1228,65 @@ export function UnifiedModelPanel({
                 ? 'customized'
                 : 'recommended';
             return (
-              <ModelConfigFlyout
+              <div>
+                {!target.favorite && providerChannelChoices(target.entry, entries, providers).length > 0 && (
+                  <label className="flex flex-col gap-1 border-b border-[var(--border-default)] p-3 text-12 text-[var(--text-secondary)]">
+                    {t('models.channels.channelAndProtocol')}
+                    <select
+                      aria-label={t('models.channels.channelAndProtocol')}
+                      value={target.entry.providerId}
+                      disabled={interactionDisabled || actionPending}
+                      className="min-h-8 rounded-full border border-[var(--settings-input-border)] bg-[var(--settings-input-bg)] px-2 text-13 text-[var(--text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring-soft)]"
+                      onChange={(event) => {
+                        const entry = entries.find(
+                          (candidate) =>
+                            candidate.providerId === event.target.value &&
+                            candidate.modelId === target.entry.modelId,
+                        );
+                        if (!entry || !entry.candidates.includes(config.agent)) return;
+                        const next = resolveFavoriteRowConfig({
+                          entry,
+                          item: {
+                            uid: '', providerId: entry.providerId, modelId: entry.modelId,
+                            agent: config.engine,
+                            ...(config.effort ? { effort: config.effort } : {}),
+                            ...(config.fast ? { fast: true as const } : {}),
+                          },
+                          agentFastModeCapable,
+                        });
+                        void selectRow(
+                          { kind: 'model', providerId: entry.providerId, modelId: entry.modelId },
+                          next,
+                        );
+                      }}
+                    >
+                      {providerChannelChoices(target.entry, entries, providers).filter(entry => entry.candidates.includes(config.agent)).map((entry) => {
+                        const channel = providers.find(
+                          (provider) => provider.id === entry.providerId,
+                        )?.channel;
+                        const native = nativeEngineProtocol(config.agent);
+                        const mode = channel?.protocol
+                          ? t(
+                              native && native !== channel.protocol
+                                ? 'models.channels.bridged'
+                                : 'models.channels.native',
+                            )
+                          : '';
+                        return (
+                          <option key={entry.providerId} value={entry.providerId}>
+                            {channelLabel(entry.providerId)}
+                            {mode ? ' · ' + mode : ''}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </label>
+                )}
+                <ModelConfigFlyout
                 entry={target.entry}
                 config={config}
                 state={state}
-                sourceLabel={providerLabel(target.entry.providerId)}
+                sourceLabel={channelLabel(target.entry.providerId)}
                 price={priceOf(
                   target.entry.providerId,
                   config.wireModelId ?? target.entry.modelId,
@@ -1238,6 +1316,7 @@ export function UnifiedModelPanel({
                 onAddFavorite={() => addFavorite(target.anchor, config)}
                 onRemoveFavorite={() => removeFavorite(target.anchor, target.entry)}
               />
+              </div>
             );
           })()}
         </UnifiedFlyoutHost>

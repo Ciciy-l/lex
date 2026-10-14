@@ -40,6 +40,7 @@ import type { AgentKind } from '@cindy/model-providers';
 import { desktopMakerLogger } from './logger-adapter.js';
 import { createOverrideSettingsFile } from './override-settings-file.js';
 import { ownerScopedUserDataPath } from '../appSessionState.js';
+import { providerChannelPreferenceTarget } from './provider-channel-preferences.js';
 
 const log = desktopMakerLogger.child('model-context-limit');
 
@@ -138,7 +139,8 @@ export function readModelContextLimit(
   modelId: string,
 ): number | null {
   if (!providerId || !modelId) return null;
-  return readPrefs().limits[modelContextLimitKey(agent, providerId, modelId)] ?? null;
+  const target = providerChannelPreferenceTarget({ agent, providerId, modelId });
+  return readPrefs().limits[modelContextLimitKey(agent, target.providerId, modelId)] ?? null;
 }
 
 /** UI 用:这一条是否被用户显式设过(区分「跟随默认」与「设了一个刚好等于默认的值」)。 */
@@ -148,7 +150,8 @@ export function isModelContextLimitCustomized(
   modelId: string,
 ): boolean {
   if (!providerId || !modelId) return false;
-  return modelContextLimitKey(agent, providerId, modelId) in readPrefs().limits;
+  const target = providerChannelPreferenceTarget({ agent, providerId, modelId });
+  return modelContextLimitKey(agent, target.providerId, modelId) in readPrefs().limits;
 }
 
 /**
@@ -173,6 +176,7 @@ export function writeModelContextLimits(
   if (limit !== null && next === null) throw new Error('invalid context limit');
   store.invalidateIfChanged();
   const limits = { ...store.read().limits };
+  targets = targets.map(providerChannelPreferenceTarget);
   for (const target of targets) {
     if (!target.providerId || !target.modelId) throw new Error('invalid context target');
     const key = modelContextLimitKey(target.agent, target.providerId, target.modelId);
@@ -194,6 +198,7 @@ export async function writeModelContextLimitsWithRefresh(
   // Capture the original owner's file; an account switch must never restore into
   // the new owner's preferences. Preserve mixed aliases and absent overrides.
   const filePath = ownerScopedUserDataPath('model-context-limit-prefs.json');
+  targets = targets.map(providerChannelPreferenceTarget);
   const previous = { ...readModelContextLimits() };
   const written = writeModelContextLimits(targets, limit);
   try {

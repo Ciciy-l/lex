@@ -76,4 +76,20 @@ describe('sessionModelMirror', () => {
     }
     expect(acc.getEffort('codex', 'xd', 'm')).toBeUndefined();
   });
+
+  it("keeps OMP preference pushes isolated from other engines and channels", () => {
+    const acc = makeSessionMirrorAccessors('s1', vi.fn());
+    applySessionModelPrefPush({
+      sessionId: "s1",
+      agent: "omp",
+      providerId: "channel-a",
+      model: "gemini",
+      effort: "high",
+      fast: false,
+    });
+    expect(acc.getEffort("omp", "channel-a", "gemini")).toBe("high");
+    expect(acc.getFast("omp", "channel-a", "gemini")).toBe(false);
+    expect(acc.getEffort("pi", "channel-a", "gemini")).toBeUndefined();
+    expect(acc.getEffort("omp", "channel-b", "gemini")).toBeUndefined();
+  });
 });

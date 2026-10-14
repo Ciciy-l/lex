@@ -18,6 +18,12 @@ import {
   updateCustomProvider,
 } from './custom-provider-store.js';
 import { getCurrentDbClientUserId } from '../localDb/client/current.js';
+import { getActiveAppSession, isAppSessionBoundaryPending } from '../appSessionState.js';
+import { migrateProviderChannels } from './provider-channel-secrets.js';
+import {
+  providerStorageMutationPending,
+  withProviderStorageMutation,
+} from './provider-storage-mutation.js';
 
 // 覆盖全部 AgentKind:漏掉的 runtime 其 headers 不会被纳入密文管理,
 // 保存/读取时会被当成普通明文处理。
@@ -49,7 +55,13 @@ export function splitCustomProviderHeaders(config: CustomProviderConfig): {
     const { headers: _removed, ...persistedRuntime } = runtime;
     runtimes[agent] = persistedRuntime;
   }
-  return { config: { ...config, runtimes }, headers };
+  const channels = config.channels ? structuredClone(config.channels) : undefined;
+  for (const channel of channels?.channels ?? []) {
+    for (const connection of Object.values(channel.protocols)) {
+      if (connection) delete connection.headers;
+    }
+  }
+  return { config: { ...config, runtimes, ...(channels ? { channels } : {}) }, headers };
 }
 
 /** Hydrate safeStorage-only runtime headers into a config used by routing/UI/Pi. */
@@ -72,7 +84,22 @@ export function hydrateCustomProviderHeaders(
       runtimes[agent] = { ...runtime, headersState: 'unknown' };
     }
   }
-  return { ...config, runtimes };
+  const channels = config.channels ? structuredClone(config.channels) : undefined;
+  for (const channel of channels?.channels ?? []) {
+    for (const [protocol, connection] of Object.entries(channel.protocols)) {
+      try {
+        const headers = readCustomProviderHeadersForMutation(channel.id, 'protocol-' + protocol);
+        if (headers === UNRECOVERABLE_PROVIDER_CREDENTIAL) connection.headersState = 'unknown';
+        else if (headers) {
+          connection.headers = headers;
+          connection.headersState = 'configured';
+        }
+      } catch {
+        connection.headersState = 'unknown';
+      }
+    }
+  }
+  return { ...config, runtimes, ...(channels ? { channels } : {}) };
 }
 
 type HeaderSnapshot = {
@@ -100,7 +127,9 @@ function restoreHeaderSnapshots(
  * The encrypted write happens before the SQLite scrub; any scrub failure rolls
  * safeStorage back so the next load can retry without losing credentials.
  */
-export async function listCustomProvidersWithSecureHeaders(): Promise<CustomProviderConfig[]> {
+async function loadCustomProvidersWithSecureHeaders(
+  scrub: boolean,
+): Promise<CustomProviderConfig[]> {
   // 把整段迁移(读 → 写密文头 → scrub 明文)绑定到发起时的数据 owner。configs 读自 owner A
   // 的库;若迁移期间用户切到账号 B,storeCustomProviderHeaders / updateCustomProvider 会按
   // **调用时**的当前 owner 解析,可能把 A 的 Authorization 头写进 B 的 safe-storage 命名空间、
@@ -108,7 +137,9 @@ export async function listCustomProvidersWithSecureHeaders(): Promise<CustomProv
   // (下次在稳定 owner 下重试;已在 A 下写入的密文头位于 A 命名空间、正确且幂等,无需——也
   // 不能——在 B 上回滚)。
   const ownerAtStart = getCurrentDbClientUserId();
-  const ownerChanged = (): boolean => getCurrentDbClientUserId() !== ownerAtStart;
+  const generation = getActiveAppSession().generation;
+  const ownerChanged = (): boolean => getCurrentDbClientUserId() !== ownerAtStart
+    || getActiveAppSession().generation !== generation || isAppSessionBoundaryPending();
   const assertSameOwner = (stage: string): void => {
     if (ownerChanged()) {
       throw new Error(
@@ -127,6 +158,10 @@ export async function listCustomProvidersWithSecureHeaders(): Promise<CustomProv
     );
     let persisted = split.config;
     if (legacyAgents.length > 0) {
+      if (!scrub) {
+        result.push(hydrateCustomProviderHeaders(original));
+        continue;
+      }
       const snapshots: HeaderSnapshot[] = [];
       try {
         assertSameOwner('header encryption');
@@ -160,4 +195,17 @@ export async function listCustomProvidersWithSecureHeaders(): Promise<CustomProv
     result.push(hydrateCustomProviderHeaders(persisted));
   }
   return result;
+}
+
+export async function listCustomProvidersWithSecureHeaders(): Promise<CustomProviderConfig[]> {
+  // Catalog refresh inside a mutation must not wait for its own storage lock.
+  // Read-only callers during that window also leave migration to the next load.
+  if (providerStorageMutationPending()) return loadCustomProvidersWithSecureHeaders(false);
+  const configs = await withProviderStorageMutation(() =>
+    loadCustomProvidersWithSecureHeaders(true),
+  );
+  const migrated: CustomProviderConfig[] = [];
+  for (const config of configs)
+    migrated.push(hydrateCustomProviderHeaders(await migrateProviderChannels(config)));
+  return migrated;
 }

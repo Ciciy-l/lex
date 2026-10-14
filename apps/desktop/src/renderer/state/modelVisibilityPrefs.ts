@@ -608,7 +608,7 @@ export async function migrateModelVisibilityDefaults(
 export function isModelEnabled(
   agent: AgentKind,
   providerId: string,
-  model: { id: string; defaultEnabled?: boolean },
+  model: { id: string; defaultEnabled?: boolean; visibilityAliases?: string[] },
 ): boolean {
   const key = keyOf(agent, providerId, model.id);
   const override = load()[key];
@@ -616,6 +616,10 @@ export function isModelEnabled(
   // Restore defaults 记在独立 initialization 里：偏好 map 损坏时仍跟随目录。
   if (initialization?.followCatalogKeys.includes(key)) {
     return isModelVisible(undefined, model.defaultEnabled);
+  }
+  for (const alias of model.visibilityAliases ?? []) {
+    const value = load()[keyOf(agent, alias, model.id)];
+    if (value !== undefined) return value;
   }
   if (mapCorrupt) return false;
   // 旧全局开关还在等独占导入：不能用目录默认把用户关过的模型暂时打开。

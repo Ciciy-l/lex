@@ -148,13 +148,19 @@ export function buildRegistry(
     // 剥掉 detail 再下发:它可能是上游原始响应体,而这份视图会过 IPC 到 renderer、
     // 再经 device-link 投影给配对控制端。UI 只用 kind。
     const failureView = failure ? stripDiscoveryFailureDetail(failure) : null;
-    const suspended = isProviderDisabled(access, p.id);
+    const accessIds = [
+      ...new Set([
+        p.id,
+        ...(p.channel ? [p.channel.id, p.channel.supplierId] : []),
+      ]),
+    ];
+    const suspended = accessIds.some((id) => isProviderDisabled(access, id));
     // 该供应商名下的停用 override 总数(供应商级标志 + 全部逐模型条目)。与烘进
     // 模型条目的 disabled 标志不同,它**包含指向已下架模型的陈旧条目** —— 设置页
     // 据此决定是否展示「全部启用」组级恢复入口:目录漂移后 override 仍在、却没有
     // 任何行可渲染时,恢复入口不能消失(PR #744 review 第二十六轮)。
     const disableOverrideCount =
-      (suspended ? 1 : 0) + disabledKeys.filter((k) => k.startsWith(`${p.id}:`)).length;
+      (suspended ? 1 : 0) + disabledKeys.filter((k) => accessIds.some((id) => k.startsWith(id + ":"))).length;
     // 停用标志烘焙进模型条目(视图层字段,见 CatalogModel.disabled):renderer 与
     // device-link 控制端直接消费,不需要各自再查一份 override 表。**只有确实带停用
     // 条目的供应商**才重建 models(按 key 前缀判;listProviders 是热路径,其余供应商
@@ -162,11 +168,11 @@ export function buildRegistry(
     // 多做一次无害映射,不影响正确性。
     let models = p.models;
     let mediaOverrides: Pick<Provider, 'imageModels' | 'videoModels' | 'audioModels' | 'embeddingModels'> = {};
-    if (disabledKeys.length > 0 && disabledKeys.some((k) => k.startsWith(`${p.id}:`))) {
+    if (disabledKeys.length > 0 && disabledKeys.some((k) => accessIds.some((id) => k.startsWith(id + ":")))) {
       const mapped: Provider['models'] = {};
       for (const agent of Object.keys(p.models) as AgentKind[]) {
         mapped[agent] = (p.models[agent] ?? []).map((m) =>
-          isModelDisabled(access, p.id, m.id) ? { ...m, disabled: true } : m,
+          accessIds.some((id) => isModelDisabled(access, id, m.id)) ? { ...m, disabled: true } : m,
         );
       }
       models = mapped;
@@ -176,7 +182,7 @@ export function buildRegistry(
       // isModelDisabled,但设置页没有对应的行,等于停用轴有实现无入口,
       // 用户没法单独拦住某个向量型号的付费调用)。
       const mapMedia = (list: NonNullable<Provider['imageModels']>) =>
-        list.map((m) => (isModelDisabled(access, p.id, m.id) ? { ...m, disabled: true } : m));
+        list.map((m) => (accessIds.some((id) => isModelDisabled(access, id, m.id)) ? { ...m, disabled: true } : m));
       mediaOverrides = {
         ...(p.imageModels ? { imageModels: mapMedia(p.imageModels) } : {}),
         ...(p.videoModels ? { videoModels: mapMedia(p.videoModels) } : {}),
@@ -267,6 +273,7 @@ export function sourcesForModel(
       (!onlyConnected || p.connected) &&
       hasEnabledAgentRuntime(p, agent) &&
       providerOffersModel(p, modelId, agent) &&
+      (!onlyConnected || getModel(p, modelId, agent)?.credentialUnavailable !== true) &&
       (includeDisabled || getModel(p, modelId, agent)?.disabled !== true),
   );
 }

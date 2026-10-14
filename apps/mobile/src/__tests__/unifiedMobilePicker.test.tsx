@@ -44,6 +44,28 @@ it('keeps the sheet and preferences unchanged after cancelled selection',async()
   await act(async()=>test.view.onSelect(test.view.groups[0].rows[0]));
   expect(onClose).not.toHaveBeenCalled();expect(test.save).not.toHaveBeenCalled();
 });
+it('groups supplier models while submitting the exact fixed channel and waiting for its acknowledgement', async () => {
+  const fixedId = 'channel-b--google-generative-ai';
+  test.entries = [test.entries[0], { ...test.entries[0], providerId: fixedId }];
+  const providers = [
+    { id: 'account', name: 'Supplier', models: {}, connected: true, channel: { supplierId: 'supplier', id: 'account', name: 'A', protocols: ['openai-responses'] } },
+    { id: fixedId, name: 'Supplier', models: {}, connected: true, channel: { supplierId: 'supplier', id: 'channel-b', name: 'B', protocols: ['google-generative-ai'], protocol: 'google-generative-ai' } },
+  ];
+  let acknowledge!: (ok: boolean) => void;
+  const onSelect = vi.fn(() => new Promise<boolean>(resolve => { acknowledge = resolve; }));
+  const { onClose } = await mount(onSelect, { providers });
+  expect(test.view.groups.flatMap((group: any) => group.rows)).toHaveLength(1);
+  expect(test.view.filters.filter((item: any) => item.id === 'supplier')).toHaveLength(1);
+  await act(async()=>test.view.onOptions(test.view.groups[0].rows[0]));
+  await act(async () => { test.view.options.onChannel(fixedId); });
+  expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ providerId: fixedId, agent: 'codex', modelId: 'codex/model' }));
+  expect(onClose).not.toHaveBeenCalled();
+  expect(test.view.busy).toBe(true);
+  await act(async () => { acknowledge(false); });
+  expect(onClose).not.toHaveBeenCalled();
+  expect(test.save).not.toHaveBeenCalled();
+  expect(test.view.options.row.entry.providerId).toBe('account');
+});
 it('only closes after selection succeeds and passes the full wire configuration',async()=>{
   const {onSelect,onClose}=await mount();
   await act(async()=>test.view.onSelect(test.view.groups[0].rows[0]));

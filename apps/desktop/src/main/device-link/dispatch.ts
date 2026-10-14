@@ -657,6 +657,9 @@ function projectInvokeResultForTunnel(
     : {};
   const providers = (r.providers as Record<string, unknown>[]).map((p) => {
     const rest = { ...p };
+    delete rest.channelConfig;
+    delete rest.channelAliases;
+    delete rest.customConfig;
     const logoKind = typeof p.id === 'string'
       ? resolveProviderLogoKind(p.id, p.routing as ProviderLogoRouting | undefined)
       : null;

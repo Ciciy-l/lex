@@ -7,7 +7,12 @@ import * as ExpoCrypto from "expo-crypto";
 import { useTranslation } from "react-i18next";
 import type { MobileProviderMarkProps } from "./MobileProviderMark";
 import type { AgentKind } from "@cindy/model-providers/types";
-import type { UnifiedModelEntry } from "@cindy/model-providers";
+import {
+  groupProviderChannelEntries,
+  providerChannelChoices,
+  nativeEngineProtocol,
+  type UnifiedModelEntry,
+} from "@cindy/model-providers";
 import type { MobileAgentCapabilities } from "./agentCapabilities";
 import type { ModelPickerSheetProps } from "./ModelPickerSheet";
 import { buildMobileModelSections } from "./providerModelSections";
@@ -105,6 +110,8 @@ export interface UnifiedMobilePickerViewProps {
   onOptions(row: UnifiedMobileRow): void;
   options?: {
     row: UnifiedMobileRow;
+    channels?: { id: string; label: string }[];
+    onChannel?(id: string): void;
     agents: AgentKind[];
     fastCapable: boolean;
     onChange(config: MobileModelConfiguration): void;
@@ -325,6 +332,13 @@ export function UnifiedModelPickerSheet(
     };
   };
   const rows = entries.map((entry) => makeRow(entry));
+  const groupedEntries = groupProviderChannelEntries(entries, p.providers, {
+    providerId: sourceId,
+    modelId: p.activeModelId,
+  });
+  const groupedIds = new Set(
+    groupedEntries.map((entry) => modelKey(entry.providerId, entry.modelId)),
+  );
   const favorites = prefs.value.favorites.flatMap((item) => {
     const entry = entries.find(
       (entry) =>
@@ -336,8 +350,19 @@ export function UnifiedModelPickerSheet(
   const providerName = (id: string) => {
     const provider = p.providers.find((item) => item.id === id);
     if (!provider) return id;
-    return mobileProviderAccountTitle(provider);
+    const channel = provider.channel;
+    return channel && !channel.legacy
+      ? [
+          mobileProviderAccountTitle(provider),
+          channel.name,
+          channel.protocol ?? t("models.channels.automatic"),
+        ].join(" · ")
+      : mobileProviderAccountTitle(provider);
   };
+  const supplierOf = (id: string) => p.providers.find(provider => provider.id === id)?.channel?.supplierId ?? id;
+  const suppliers = p.providers.filter((provider, index, all) =>
+    groupedEntries.some(entry => supplierOf(entry.providerId) === supplierOf(provider.id)) &&
+    all.findIndex(candidate => supplierOf(candidate.id) === supplierOf(provider.id)) === index);
   const matches = (row: UnifiedMobileRow) =>
     !query.trim() ||
     `${row.entry.displayName} ${row.entry.modelId} ${row.entry.description ?? ""} ${providerName(row.entry.providerId)}`
@@ -345,7 +370,9 @@ export function UnifiedModelPickerSheet(
       .includes(query.trim().toLocaleLowerCase());
   const all = query.trim() || filter === "all";
   const filtered = rows.filter(
-    (row) => matches(row) && (all || filter === row.entry.providerId),
+    (row) =>
+      groupedIds.has(modelKey(row.entry.providerId, row.entry.modelId)) &&
+      matches(row) && (all || filter === supplierOf(row.entry.providerId)),
   );
   const groups: UnifiedMobileGroup[] = [];
   const favoriteRows = favorites.filter(matches);
@@ -368,15 +395,15 @@ export function UnifiedModelPickerSheet(
       rows: recommended,
     });
   if (all || filter !== "favorites")
-    for (const provider of p.providers) {
+    for (const provider of suppliers) {
       const group = filtered.filter(
         (row) =>
-          row.entry.providerId === provider.id && !recommended.includes(row),
+          supplierOf(row.entry.providerId) === supplierOf(provider.id) && !recommended.includes(row),
       );
       if (group.length)
         groups.push({
-          key: provider.id,
-          title: providerName(provider.id),
+          key: supplierOf(provider.id),
+          title: mobileProviderAccountTitle(provider),
           rows: group,
         });
     }
@@ -599,13 +626,10 @@ export function UnifiedModelPickerSheet(
         ...(prefs.favoritesReady
           ? [{ id: "favorites", label: t("models.unified.favorites") }]
           : []),
-        ...p.providers
-          .filter((provider) =>
-            entries.some((e) => e.providerId === provider.id),
-          )
+        ...suppliers
           .map((provider) => ({
-            id: provider.id,
-            label: providerName(provider.id),
+            id: supplierOf(provider.id),
+            label: mobileProviderAccountTitle(provider),
             quota:
               quotas[provider.id]?.remaining !== undefined
                 ? {
@@ -659,6 +683,43 @@ export function UnifiedModelPickerSheet(
         row
           ? {
               row,
+              channels: (favoriteEdit ? [] : providerChannelChoices(
+                row.entry,
+                entries,
+                p.providers,
+              )).filter(entry => entry.candidates.includes(row.config.agent)).map((entry) => {
+                const route = p.providers.find(
+                  (provider) => provider.id === entry.providerId,
+                )?.channel;
+                const native = nativeEngineProtocol(row.config.agent);
+                const mode = route?.protocol
+                  ? t(
+                      native && native !== route.protocol
+                        ? "models.channels.bridged"
+                        : "models.channels.native",
+                    )
+                  : "";
+                return {
+                  id: entry.providerId,
+                  label: [providerName(entry.providerId), mode]
+                    .filter(Boolean)
+                    .join(" · "),
+                };
+              }),
+              onChannel: (id) => {
+                const entry = providerChannelChoices(
+                  row.entry,
+                  entries,
+                  p.providers,
+                ).find((entry) => entry.providerId === id);
+                if (!entry || !entry.candidates.includes(row.config.agent) || favoriteEdit) return;
+                const next = makeRow(entry);
+                next.config = resolveMobileModelConfig(entry, {
+                  live: { ...row.config, providerId: id },
+                  fastCapable,
+                });
+                select(next);
+              },
               agents: row.entry.candidates.filter((agent) =>
                 ALL_AGENTS.includes(agent),
               ),
@@ -680,6 +741,7 @@ export function UnifiedModelPickerSheet(
               isFavorite: !!matchingFavorite,
               canReset,
               configurationSummary: [
+                providerName(row.config.providerId),
                 mobileAgentLabel(row.config.agent),
                 row.config.effort
                   ? t(`models.options.effortLevels.${row.config.effort}`, {

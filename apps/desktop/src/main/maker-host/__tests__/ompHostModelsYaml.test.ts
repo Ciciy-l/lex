@@ -235,6 +235,20 @@ describe('buildOmpManagedModelsYaml', () => {
     expect(yaml).toContain('api: anthropic-messages');
   });
 
+  it('gives Google its native API and loopback path alongside other model APIs', () => {
+    const yaml = buildOmpManagedModelsYaml({
+      sessionId: 'sess-1',
+      model: 'gemini',
+      providerId: 'xd',
+      token: SECRET,
+      wireProtocol: 'google-generative-ai',
+    });
+    expect(yaml).toContain('api: google-generative-ai');
+    expect(yaml).toContain(`baseUrl: '${env.endpoint}/v1beta'`);
+    expect(yaml).toContain('api: anthropic-messages');
+    expect(yaml).not.toContain(SECRET);
+  });
+
   it('skips materialization when no model can be served', () => {
     env.catalogModels = [];
     expect(buildOmpManagedModelsYaml({ sessionId: 'sess-1', model: '', token: SECRET })).toBeUndefined();
@@ -265,13 +279,15 @@ describe('OMP Harness Subagent source boundary', () => {
     env.subagentModel = 'child';
   });
   afterEach(() => { env.routes = {}; env.subagentModel = null; });
-  it('resolves only inside the parent provider and API route', () => {
+  it('resolves across native APIs but only inside the parent provider', () => {
     expect(resolveOmpSubagentModel('parent', 'xd')).toBe('child');
     expect(resolveOmpSubagentModel('parent', 'other')).toBeUndefined();
     expect(resolveOmpSubagentModel('parent')).toBeUndefined();
     env.subagentModel = 'different-api';
-    expect(resolveOmpSubagentModel('parent', 'xd')).toBeUndefined();
-    expect(collectOmpCatalogModels('parent', 'xd').map(m => m.id)).toEqual(['parent', 'child']);
+    expect(resolveOmpSubagentModel('parent', 'xd')).toBe('different-api');
+    expect(collectOmpCatalogModels('parent', 'xd').map(m => m.id)).toEqual(['parent', 'child',
+      'different-api',
+    ]);
   });
   it('retains the captured preferred model even when the live preference changes', () => {
     env.catalogModels = ['parent', ...Array.from({ length: 100 }, (_, i) => 'model-' + i), 'child'];

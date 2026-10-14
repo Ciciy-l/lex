@@ -94,6 +94,7 @@ export interface ProviderServiceDeps {
   builtinApiKeyConnected?: (providerId: string) => boolean;
   /** Saved custom configuration is not evidence that its credential still exists. */
   customApiKeyConnected?: (provider: Provider) => boolean;
+  projectConnectionAvailability?: (provider: ProviderView) => ProviderView;
   /** Runtime-owned media readiness, not inferred from chat authentication. */
   getAvailableMediaModels?: () => readonly { providerId: string; id: string }[];
   /**
@@ -210,7 +211,7 @@ export function createProviderService(deps: ProviderServiceDeps): ProviderServic
       // Deletion disconnects first. A live binding wins over a stale removed flag if
       // restoring display preferences failed after authentication was committed.
       ...(provider.connected ? { removed: false } : {}),
-    })).map(
+    })).map(provider => deps.projectConnectionAvailability?.(provider) ?? provider).map(
       (provider) =>
         media === undefined
           ? provider

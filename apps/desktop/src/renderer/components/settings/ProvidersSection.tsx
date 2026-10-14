@@ -20,6 +20,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { channelProtocolProviderId, type ProviderWireProtocol } from '@cindy/model-providers';
 import {
   Check,
   Copy,
@@ -290,7 +291,8 @@ async function disconnectProvider(
   } else if (provider.auth.method === 'oauth') {
     return window.electronAPI.maker.providerOAuthLogout(provider.id, scope, options);
   } else {
-    return window.electronAPI.maker.disconnectCustomProvider(provider.id, scope, options);
+    return window.electronAPI.maker.disconnectCustomProvider(provider.channel?.supplierId ?? provider.id, scope, options,
+    );
   }
 }
 
@@ -2126,6 +2128,16 @@ export function ProvidersSection() {
     const rows: ProviderView[] = [];
     for (const p of providers) {
       if (p.removed) continue;
+      if (p.channel) {
+        if (
+          p.channel.protocol ||
+          (p.channel.legacy && p.customConfig?.channels?.channels.length !== 0) ||
+          rows.some((row) => row.channel?.supplierId === p.channel!.supplierId)
+        )
+          continue;
+        rows.push(p);
+        continue;
+      }
       if (p.source === 'builtin') {
         // reconnect-required 视同占行:凭证失效 ≠ 用户断开,重连入口必须保留。
         // OpenAI 图像 key 与 ChatGPT OAuth 两套凭证解耦:imageModels 已声明时,
@@ -2360,7 +2372,11 @@ export function ProvidersSection() {
 
   // 选中项:默认第一行;所选供应商被删除/消失时回退第一行(不留空详情)。
   const effectiveSelected = useMemo(() => {
-    const selected = listProviders.find((p) => p.id === selectedId) ?? listProviders[0] ?? null;
+    const selected = listProviders.find((p) => p.id === selectedId) ??
+      providers.find(
+        (p) => p.id === selectedId && p.channel && !p.channel.protocol && !p.channel.legacy,
+      ) ??
+      listProviders[0] ?? null;
     // Match the connection header immediately, including auth invalidation before catalog refresh.
     return selected?.id === 'openai'
       ? {
@@ -2368,7 +2384,7 @@ export function ProvidersSection() {
           connected: isChatGptConnectionConnected(codexAuth.state, selected.connected),
         }
       : selected;
-  }, [selectedId, listProviders, codexAuth.state]);
+  }, [selectedId, listProviders, providers, codexAuth.state]);
 
   const handleDelete = useCallback(
     async (p: ProviderView) => {
@@ -2382,7 +2398,8 @@ export function ProvidersSection() {
           cancelText: t('settings.providers.custom.deleteConfirm.cancel'),
         });
         if (!ok) return;
-        if (!(await confirmProviderChange(options => deleteCustomProvider(p.id, scope, options)))) return;
+        if (!(await confirmProviderChange((options) => deleteCustomProvider(p.channel?.supplierId ?? p.id, scope, options),
+          ))) return;
         toast.success(t('settings.providers.custom.toast.deleted'));
       } catch {
         toast.error(t('settings.providers.custom.toast.deleteFailed'));
@@ -2420,7 +2437,30 @@ export function ProvidersSection() {
         const config = providerViewToCustomProviderConfig(p);
         let added = 0;
         let anyOk = false;
-        for (const agent of p.agents) {
+        if (config.channels) {
+          const selected = config.channels.channels.find((channel) => channel.id === p.channel?.id);
+          if (!selected) throw new Error('Channel no longer exists');
+          for (const [wire, rt] of Object.entries(selected.protocols)) {
+            const r = await window.electronAPI.maker.fetchProviderModels({
+            agent: 'pi',
+            baseUrl: rt.baseUrl,
+              wireProtocol: wire as ProviderWireProtocol,
+              authMethod: p.auth.method === 'none' ? 'none' : 'apiKey',
+              modelsUrl: rt.modelsUrl ?? null,
+            apiKey: null,
+              savedProviderId: channelProtocolProviderId(selected.id, wire as ProviderWireProtocol),
+          });
+          if (!r.ok || !r.models) continue;
+            anyOk = true;
+            const known = new Set(rt.models.map((model) => model.id));
+            const merged = appendDiscoveredCustomProviderModels(rt.models, r.models, rt.modelsUrl);
+            rt.models = merged.models.map((model) =>
+              known.has(model.id) ? model : { ...model, defaultEnabled: true },
+            );
+            added += merged.addedIds.length;
+          }
+        }
+        for (const agent of config.channels ? [] : p.agents) {
           const rt = config.runtimes[agent];
           if (!rt?.baseUrl) continue;
           const authMethod =
@@ -2454,7 +2494,8 @@ export function ProvidersSection() {
           toast.error(t('settings.providers.models.refreshFailed'));
           return;
         }
-        await updateCustomProvider(config, {});
+        if (!(await confirmProviderChange((options) => updateCustomProvider(config, {}, options))))
+          return;
         if (added > 0) {
           toast.success(t('settings.providers.models.refreshAdded', { count: added }));
         } else {
@@ -2467,7 +2508,7 @@ export function ProvidersSection() {
         finishProviderRefresh(p.id);
       }
     },
-    [beginProviderRefresh, finishProviderRefresh, refetch, t],
+    [beginProviderRefresh, finishProviderRefresh, refetch, t, confirmProviderChange],
   );
 
   /** 内置四家复用 main 已有的 provider-specific 真源刷新，不在 Renderer 复制网络逻辑。 */
@@ -2611,7 +2652,11 @@ export function ProvidersSection() {
                 renderItem={(provider, index) => (
                   <ListRow
                     provider={provider}
-                    selected={!cindySigninActive && effectiveSelected?.id === provider.id}
+                    selected={!cindySigninActive &&
+                      (effectiveSelected?.id === provider.id ||
+                        (!!provider.channel &&
+                          effectiveSelected?.channel?.supplierId === provider.channel.supplierId))
+                    }
                     reconnectRequired={
                       (provider.id === 'openai' && openaiReconnectRequired) ||
                       provider.openAiAccount?.reconnectRequired === true
@@ -2729,6 +2774,32 @@ export function ProvidersSection() {
             ) : effectiveSelected ? (
               <>
                 {renderDetailHeader(effectiveSelected)}
+                {effectiveSelected.channel && (
+                  <label className="flex items-center gap-3 px-5 py-3 text-13 text-[var(--text-secondary)]">
+                    {t('models.channels.channel')}
+                    <select
+                      value={effectiveSelected.id}
+                      onChange={(event) => {
+                        setFocusedModel(null);
+                        setSelectedId(event.target.value);
+                      }}
+                      className="min-h-8 min-w-0 flex-1 rounded-full border border-[var(--settings-input-border)] bg-[var(--settings-input-bg)] px-2 text-[var(--text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring-soft)]"
+                    >
+                      {providers
+                        .filter(
+                          (p) =>
+                            p.channel?.supplierId === effectiveSelected.channel!.supplierId &&
+                            !p.channel?.protocol &&
+                            !p.channel?.legacy,
+                        )
+                        .map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.channel!.name}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                )}
                 <>
                   {/* 供应商已停用:条带讲清「发生了什么 + 下一步」并就地给恢复入口。整个
                     模型区随之收起(2026-07-28 用户反馈:停用了就别再列模型)——停用是
