@@ -1,24 +1,24 @@
 {
   "app": {
-    "version": "0.1.5-rc.1",
-    "releaseNotes": "Lex 0.1.5-rc.1",
+    "version": "0.1.5",
+    "releaseNotes": "Lex 0.1.5",
     "hotfix": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.5-rc.1/Lex-0.1.5-rc.1-macOS-Intel-Auto-Update.zip",
-      "sha256": "3b5d450e45a18f3f3e5bf4ec60c914dc6863bc82035cc4ab0dcf487220e95c08",
-      "size": 288740329
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.5/Lex-0.1.5-macOS-Intel-Auto-Update.zip",
+      "sha256": "f6b4ea9f0506a3c46d2c27e831de5cac560476b25ac202ff847ce345f0954c7d",
+      "size": 282312992
     },
     "installer": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.5-rc.1/Lex-0.1.5-rc.1-macOS-Intel.dmg",
-      "sha256": "9db8745f6ae8927dae8ff4955d5dd86438d00b52751f08f29a0393ed2b1403de",
-      "size": 316620771
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.5/Lex-0.1.5-macOS-Intel.dmg",
+      "sha256": "7b5f9cb786679d0785c04d3457c54b236ddcf32ad9c9fcccda9b2c1d8178d16e",
+      "size": 310139673
     }
   },
   "claudeCode": {
-    "version": "2.1.259",
-    "file": "https://hotfix.cindy.app/cindy/claude-code/2.1.259/darwin-x64/claude.gz",
-    "sha256": "850e9127624648c42bdb33e0195b0a651bfc6c651bd747f239ba5b41c7fcee16",
-    "size": 91555458,
-    "binarySha256": "af8741cff0d3fb5c4b893c7cb3613bd21b28fa61cca45469d60b8e5e161eb9d8"
+    "version": "2.1.296",
+    "file": "https://downloads.claude.ai/claude-code-releases/2.1.296/darwin-x64/claude",
+    "sha256": "a6bf4f30be241053a923f3820ad23c5991d2f5ac2935b3a8dd64da218d9cc603",
+    "size": 249194752,
+    "binarySha256": "a6bf4f30be241053a923f3820ad23c5991d2f5ac2935b3a8dd64da218d9cc603"
   },
   "codex": {
     "version": "0.145.0",
@@ -28,21 +28,21 @@
     "binarySha256": "6db9193ce2c9a8cef2b5482612cde24202a4329dfc34f4687a036d5d7da619af"
   },
   "codexPackage": {
-    "version": "0.159.2",
-    "file": "https://github.com/openai/codex/releases/download/rust-v0.159.2/codex-package-x86_64-apple-darwin.tar.gz",
-    "sha256": "6b9b38bfad6ac8019aa6a243ee3ab11d3e22889eafd5458b0344cf20e797e680",
-    "size": 140813958
+    "version": "0.162.1",
+    "file": "https://github.com/openai/codex/releases/download/rust-v0.162.1/codex-package-x86_64-apple-darwin.tar.gz",
+    "sha256": "894ac20afe819d4fa2a4be8cd27c54fd606338b86036e8ed9b6c9978c2dc7aed",
+    "size": 143687717
   },
   "pi": {
-    "version": "0.84.4",
-    "file": "https://hotfix.cindy.app/cindy/pi/0.84.4/darwin-x64/pi.dist.tar.gz",
-    "sha256": "741a634f67cb64d5c970edd2e5fd4bc94d33fd9d8772b716c4589f0293e2c5d6",
-    "size": 33731200
+    "version": "1.2.0",
+    "file": "https://github.com/earendil-works/pi/releases/download/v1.2.0/pi-darwin-x64.tar.gz",
+    "sha256": "e079ff016ae78279cfbd6c1b4fffe072162f4a7bb879ad61b04e2e43bcc53455",
+    "size": 33524998
   },
   "omp": {
-    "version": "18.1.18",
-    "file": "https://github.com/can1357/oh-my-pi/releases/download/v18.1.18/omp-darwin-x64",
-    "sha256": "29fead1b667dc969b825c5aa4798aadb5b7ec9b2f15c3304b10196d7afa4171d",
-    "size": 144083632
+    "version": "18.10.4",
+    "file": "https://github.com/can1357/oh-my-pi/releases/download/v18.10.4/omp-darwin-x64",
+    "sha256": "ba70472c9e43d4ca7536a76d03bbe75afadfc1e296ec422161b22e813d5c1062",
+    "size": 227751648
   }
 }

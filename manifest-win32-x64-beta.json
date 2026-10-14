@@ -1,24 +1,24 @@
 {
   "app": {
-    "version": "0.1.5-rc.1",
-    "releaseNotes": "Lex 0.1.5-rc.1",
+    "version": "0.1.5",
+    "releaseNotes": "Lex 0.1.5",
     "hotfix": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.5-rc.1/Lex-0.1.5-rc.1-Windows-x64-Auto-Update.zip",
-      "sha256": "2759acad39f4e39de764c8d5ab9fb45a3900beb5d113c63edec87c84af5c28b0",
-      "size": 347088808
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.5/Lex-0.1.5-Windows-x64-Auto-Update.zip",
+      "sha256": "e90bd3d8ec1f001d87d286a7a2045941e807422ee07bc190a7613975a4998f2e",
+      "size": 340657764
     },
     "installer": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.5-rc.1/Lex-0.1.5-rc.1-Windows-x64-Setup.exe",
-      "sha256": "d30e7621e9e1e2bcfd8f1fd5c6c10b9eee536b24638b53f7a6127ae66226201c",
-      "size": 262044244
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.5/Lex-0.1.5-Windows-x64-Setup.exe",
+      "sha256": "f9840671e885b6b89d5834b1a7ac7f2ca6d8e1f6a3554dd5ffcb19cfdf412964",
+      "size": 255628938
     }
   },
   "claudeCode": {
-    "version": "2.1.259",
-    "file": "https://hotfix.cindy.app/cindy/claude-code/2.1.259/win32-x64/claude.exe.gz",
-    "sha256": "09c953fe0e18516d3ef5b55821af1c232b808e200c53b203be1cd507d557492b",
-    "size": 100063881,
-    "binarySha256": "85429000ec9b80082613e9ecd2e0d3b2276c9d5b22a681936575d2c4c2f342ed"
+    "version": "2.1.296",
+    "file": "https://downloads.claude.ai/claude-code-releases/2.1.296/win32-x64/claude.exe",
+    "sha256": "76de74f7694a5bdc03378a5f837c9e132827bf004c98c276bc4e9094ff06769a",
+    "size": 260489376,
+    "binarySha256": "76de74f7694a5bdc03378a5f837c9e132827bf004c98c276bc4e9094ff06769a"
   },
   "codex": {
     "version": "0.145.0",
@@ -28,21 +28,21 @@
     "binarySha256": "83751f15cb6a0a7b97df67752c001e3fe1c20e18ffbfec3ff63567296205eb6c"
   },
   "codexPackage": {
-    "version": "0.159.2",
-    "file": "https://github.com/openai/codex/releases/download/rust-v0.159.2/codex-package-x86_64-pc-windows-msvc.tar.gz",
-    "sha256": "a7ab591043d99e8a88d0c2bebf15f810b15599a71148c4af944a755af3c71eef",
-    "size": 156614559
+    "version": "0.162.1",
+    "file": "https://github.com/openai/codex/releases/download/rust-v0.162.1/codex-package-x86_64-pc-windows-msvc.tar.gz",
+    "sha256": "3e993a82ff393f4530558dcaadb36bb4f0fd1ea7243e621348e40b469f900f6a",
+    "size": 159746536
   },
   "pi": {
-    "version": "0.84.4",
-    "file": "https://hotfix.cindy.app/cindy/pi/0.84.4/win32-x64/pi.dist.tar.gz",
-    "sha256": "dd3e72892bbf9fb9d2cd61e1d4ca9adc0ef01399b3539ed741ab834eba504191",
-    "size": 45804170
+    "version": "1.2.0",
+    "file": "https://github.com/earendil-works/pi/releases/download/v1.2.0/pi-windows-x64.zip",
+    "sha256": "bd272b508657ad8d0ac6176e7751913c848a89cfb8cbe21ff319941e6ca140be",
+    "size": 45099534
   },
   "omp": {
-    "version": "18.1.18",
-    "file": "https://github.com/can1357/oh-my-pi/releases/download/v18.1.18/omp-windows-x64.exe",
-    "sha256": "d9cf773ee3fd3823af9bc073c880fce4013920b2478bd5a02feff35920424378",
-    "size": 161370112
+    "version": "18.10.4",
+    "file": "https://github.com/can1357/oh-my-pi/releases/download/v18.10.4/omp-windows-x64.exe",
+    "sha256": "391744ed751f56742c85d8fbf2eb7dcb800b83a0eaf6a650e6cae70d29776d44",
+    "size": 244276224
   }
 }
