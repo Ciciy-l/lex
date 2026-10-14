@@ -81,6 +81,11 @@ import {
 } from '../local-model-runtime/qwenProfile.js';
 import { readCustomProviderKey } from '../secrets/providerSecretStore.js';
 import {
+  buildUserProviderChannels,
+  projectChannelRuntimes,
+  projectLegacyChannelRuntimes,
+} from '@cindy/model-providers';
+import {
   desktopClaudeAuthAdapter,
   desktopCodexAuthAdapter,
   readClaudeApiKey,
@@ -1822,13 +1827,61 @@ export async function resolvePiNativeProviders(ctx: {
     }
   }
   const custom = buildPiNativeProvidersFromConfigs(
-    configs,
+    configs.filter((config) => !config.channels),
     readCustomProviderKey,
     (id, reason) => log.warn('resolvePiNativeProviders: skipped custom provider', { id, reason }),
     bundledModels ?? undefined,
     getActiveCatalog(),
     !isRemote && compatProxyReady ? getClaudeEndpoint() : undefined,
   );
+  // Channel credentials differ per protocol. Pi still creates and streams its
+  // native API requests; authenticated host forwarding only selects the exact
+  // endpoint/key. No key or custom authorization header is serialized to Pi.
+  if (compatProxyReady) {
+    const localEndpoint = getClaudeEndpoint();
+    const endpoint = new URL(localEndpoint);
+    if (isRemote) {
+      endpoint.hostname = '127.0.0.1';
+      endpoint.port = String(PI_XAI_COMPAT_FORWARD_PORT);
+    }
+    const nativeBase = (api: string | undefined): string =>
+      api === 'google-generative-ai'
+        ? appendEndpointPath(endpoint.toString(), 'v1beta')
+        : endpoint.toString().replace(/\/$/, '');
+    for (const config of configs.filter((config) => config.channels)) {
+      for (const provider of buildUserProviderChannels(config)) {
+        if (!provider.channelConfig && !provider.channelAliases?.pi) continue;
+        const runtime = provider.channelConfig
+          ? projectChannelRuntimes(provider.channelConfig).pi
+          : projectLegacyChannelRuntimes(config).pi;
+        if (!runtime) continue;
+        const { headers: _headers, ...publicRuntime } = runtime;
+        const projected = buildPiNativeProvidersFromConfigs(
+          [{ id: provider.id, name: config.name, runtimes: { pi: publicRuntime } }],
+          () => PI_PROVIDER_AUTH_PLACEHOLDER_KEY,
+          (id, reason) => log.warn('resolvePiNativeProviders: skipped channel', { id, reason }),
+          bundledModels ?? undefined,
+          getActiveCatalog(),
+        );
+        for (const spec of projected.providers) {
+          spec.baseUrl = nativeBase(spec.api);
+          spec.headers = piSubscriptionHeaders(provider.id);
+          spec.models = spec.models.map((model) => ({
+            ...model,
+            baseUrl: nativeBase(model.api ?? spec.api),
+            headers: piSubscriptionHeaders(provider.id),
+          }));
+          if (isRemote)
+            spec.hostProxyForward = {
+              localUrl: localEndpoint,
+              remotePort: PI_XAI_COMPAT_FORWARD_PORT,
+            };
+          custom.providers.push(spec);
+        }
+        Object.assign(custom.env, projected.env);
+      }
+    }
+  }
   // Remote PI cannot use the local native overlay. Preserve upstream's exact
   // SuperGrok provenance/forwarding path there; locally the version-matched PI
   // native provider above remains the protocol authority.

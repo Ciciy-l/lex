@@ -160,7 +160,10 @@ export function filterChatBridgedCodexProviders(
   exclude: boolean,
 ): ProviderView[] {
   return exclude && !usesControllerProviderProxyForSsh(agent)
-    ? providers.filter((provider) => !isLocalOnlyProviderForAgent(provider, agent))
+    ? providers.filter((provider) =>
+          usesControllerProviderProxyForSsh(agent, provider) ||
+          !isLocalOnlyProviderForAgent(provider, agent),
+      )
     : providers;
 }
 
@@ -266,7 +269,10 @@ export function selectVisibleModels(params: {
   const pass = (list: ModelDescriptor[]): ModelDescriptor[] => list;
   const deriveOpts = (agent: AgentKind) =>
     excludeChatBridgedCodex && !usesControllerProviderProxyForSsh(agent)
-    ? { excludeProvider: (provider: ProviderView) => isLocalOnlyProviderForAgent(provider, agent) }
+    ? { excludeProvider: (provider: ProviderView) =>
+            !usesControllerProviderProxyForSsh(agent, provider) &&
+            isLocalOnlyProviderForAgent(provider, agent),
+        }
     : undefined;
   const cc = pass(deviceId ? deviceCcModels : deriveModelsFromProviders(providers, 'claude-code', deriveOpts('claude-code')));
   const codex = pass(deviceId ? deviceCodexModels : deriveModelsFromProviders(providers, 'codex', deriveOpts('codex')));

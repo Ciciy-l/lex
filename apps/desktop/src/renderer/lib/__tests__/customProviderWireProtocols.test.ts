@@ -24,11 +24,12 @@ describe('custom provider Codex wire protocols', () => {
     });
   });
 
-  it('does not offer Google-native wire protocol to OMP', () => {
+  it('offers the native Google wire protocol to OMP', () => {
     expect(CUSTOM_PROVIDER_OMP_WIRE_PROTOCOLS.map((option) => option.value)).toEqual([
       'openai-responses',
       'openai-chat',
       'anthropic-messages',
+      'google-generative-ai',
     ]);
     expect(customProviderWireProtocolsForAgent('omp')).toBe(
       CUSTOM_PROVIDER_OMP_WIRE_PROTOCOLS,

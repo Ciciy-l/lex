@@ -23,6 +23,8 @@ import {
   isProviderRequestPath,
   runtimeCustomProviderId,
   storedCustomProviderId,
+  channelProtocolProviderId,
+  type ProviderWireProtocol,
   type AgentKind,
   type CustomProviderConfig,
   type ProviderModelDiscoveryFailure,
@@ -63,7 +65,17 @@ import {
 } from '../../shared/providerModelRefresh.js';
 
 import { createLogger } from '../logger.js';
+import {
+  parseProviderChannelKeys,
+  stageProviderChannelCredentials,
+} from '../maker-host/provider-channel-mutations.js';
+import { withProviderStorageMutation } from '../maker-host/provider-storage-mutation.js';
+import { assertProviderChannelIdsAvailable } from '../maker-host/custom-provider-store.js';
 import type { UnrecoverableProviderCredential } from '../secrets/providerSecretStore.js';
+import {
+  readCustomProviderKeyForMutation as readChannelKey,
+  readCustomProviderHeadersForMutation as readChannelHeaders,
+} from '../secrets/providerSecretStore.js';
 import { throwIpcError } from '../utils/ipcValidate.js';
 import {
   createCustomProvider,
@@ -187,16 +199,19 @@ function parseCustomProviderUpdateOptions(input: unknown): CustomProviderUpdateO
   if (input === undefined) return {};
   if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
   const entries = Object.entries(input as Record<string, unknown>);
-  if (entries.some(([key]) => key !== 'source' && key !== 'codexImageGenerationRestartPolicy'))
+  if (entries.some(([key]) => key !== 'source' && key !== 'codexImageGenerationRestartPolicy' && key !== 'channelKeys',
+    ))
     return null;
   const source = (input as Record<string, unknown>).source;
   if (source !== undefined && source !== 'manual-settings') return null;
   const policy = (input as Record<string, unknown>).codexImageGenerationRestartPolicy;
-  if (policy === undefined) return source === 'manual-settings' ? { source } : {};
-  if (policy !== 'interrupt') return null;
+  const rawKeys = (input as Record<string, unknown>).channelKeys;
+  const channelKeys = rawKeys === undefined ? undefined : parseProviderChannelKeys(rawKeys);
+  if (channelKeys === null || (policy !== undefined && policy !== 'interrupt')) return null;
   return {
     ...(source === 'manual-settings' ? { source } : {}),
-    codexImageGenerationRestartPolicy: policy,
+    ...(policy === 'interrupt' ? { codexImageGenerationRestartPolicy: policy } : {}),
+    ...(channelKeys ? { channelKeys } : {}),
   };
 }
 
@@ -242,17 +257,24 @@ function oauthRuntimeEndpointSignature(config: CustomProviderConfig | null): str
 }
 
 /** Never expose runtime header credentials to WebViews or synthetic remote events. */
-function withoutProviderHeaderCredentials(provider: ProviderView): ProviderView {
-  if (!provider.routing) return provider;
+function withoutProviderHeaderCredentials(provider: ProviderView, trusted = false): ProviderView {
+  const {
+    channelConfig: _channel,
+    channelAliases: _aliases,
+    customConfig: _config,
+    ...safeProvider
+  } = provider;
+  if (!provider.routing) return safeProvider;
   const routing = Object.fromEntries(
     Object.entries(provider.routing).map(([agent, descriptor]) => {
       if (!descriptor) return [agent, descriptor];
       const safeDescriptor = { ...descriptor };
       delete safeDescriptor.headerOverride;
+      delete safeDescriptor.channelCredential;
       return [agent, safeDescriptor];
     }),
   ) as ProviderView['routing'];
-  return { ...provider, routing };
+  return { ...safeProvider, routing, ...(trusted && _config ? { customConfig: _config } : {}) };
 }
 
 export interface ProviderHandlerDeps {
@@ -668,8 +690,10 @@ export function registerProviderHandlers(
     }
   };
   const providerConfigMutationCounts = new Map<string, number>();
+  const providerConfigMutationRevisions = new Map<string, number>();
   const providerConfigMutationTails = new Map<string, Promise<void>>();
   const beginProviderConfigMutation = (providerId: string): void => {
+    providerConfigMutationRevisions.set(providerId, (providerConfigMutationRevisions.get(providerId) ?? 0) + 1);
     providerConfigMutationCounts.set(
       providerId,
       (providerConfigMutationCounts.get(providerId) ?? 0) + 1,
@@ -697,7 +721,7 @@ export function registerProviderHandlers(
     beginProviderConfigMutation(providerId);
     try {
       await previous.catch(() => undefined);
-      return await operation(commitRouteMutation);
+      return await withProviderStorageMutation(() => operation(commitRouteMutation));
     } finally {
       release();
       if (providerConfigMutationTails.get(providerId) === tail) {
@@ -747,6 +771,7 @@ export function registerProviderHandlers(
     previous?: CustomProviderConfig | null,
   ): KeyMutation[] => {
     const mutations: KeyMutation[] = [];
+    if (config.channels) return mutations;
     const usesApiKey = !config.auth || config.auth.method === 'apiKey';
     const previouslyUsedApiKey = !previous?.auth || previous.auth.method === 'apiKey';
     for (const agent of VALID_AGENTS as readonly AgentKind[]) {
@@ -865,6 +890,7 @@ export function registerProviderHandlers(
     const usesApiKey = !config.auth || config.auth.method === 'apiKey';
     const previouslyUsedApiKey = !previous?.auth || previous.auth.method === 'apiKey';
     const mutations: HeaderMutation[] = [];
+    if (config.channels && mode !== 'delete') return mutations;
     for (const agent of CUSTOM_PROVIDER_RUNTIME_AGENTS) {
       const replacement = headers[agent];
       if (mode === 'create') {
@@ -1083,7 +1109,7 @@ export function registerProviderHandlers(
       return {
         dataOwnerId,
         ownerGeneration: ownerAtIngress?.generation ?? 0,
-        providers: providers.map(withoutProviderHeaderCredentials),
+        providers: providers.map((provider) => withoutProviderHeaderCredentials(provider, trusted)),
         providerOrder,
         modelVisibilityOverrides,
       };
@@ -1246,14 +1272,18 @@ export function registerProviderHandlers(
         let result: CustomProviderUpdateResult;
         let modelsPending = false;
         if (resolution.action === 'update') {
-          const id = storedCustomProviderId(providerId);
+          const selected = providers.find((provider) => provider.id === providerId);
+          const id = selected?.channel?.supplierId ?? storedCustomProviderId(providerId);
           const current = await getCustomProvider(id);
           assertProviderMutationOwner(ownerAtIngress);
           if (!current) throwIpcError('NOT_FOUND', 'selected provider no longer exists');
           // The resolver is Main-only and runs again inside the shared mutation queue.
-          const keepLatestConfig = (latest: CustomProviderConfig): CustomProviderConfig => {
+          const keepLatestConfig = (latest: CustomProviderConfig,
+            mutationOptions = options,
+          ): CustomProviderConfig => {
             assertProviderMutationOwner(ownerAtIngress);
-            importKeysForCurrentConfig(draft, latest);
+            const channelKeys = importKeysForCurrentConfig(draft, latest, selected?.channel?.id);
+            if (channelKeys) mutationOptions.channelKeys = channelKeys;
             return latest;
           };
           keepLatestConfig(current);
@@ -1377,7 +1407,7 @@ export function registerProviderHandlers(
       if (provider.source === 'builtin') {
         await setProviderPresentation(providerId, { name: value.name });
       } else {
-        const id = storedCustomProviderId(providerId);
+        const id = provider.channel?.supplierId ?? storedCustomProviderId(providerId);
         const name = value.name.trim();
         await withProviderConfigMutation(id, async () => {
           assertOptionalRequestedOwner(value);
@@ -1537,6 +1567,8 @@ export function registerProviderHandlers(
     };
     const run = async () => {
       if (i.kind === 'reset') {
+        // The settings list supplies the supplier identity for channels. Do not
+        // load the catalog here: stale overrides must remain removable offline.
         // 恢复默认 = 删除该供应商整组 override(含指向已下架模型的陈旧条目)。删除
         // 与「恢复启用」同语义,故意不做目录成员校验 —— 目录漂移后也要能清干净
         // (configuration-and-overrides.md §4;PR #744 review 第二十四轮)。
@@ -1548,6 +1580,11 @@ export function registerProviderHandlers(
         deps.broadcastChanged();
         return { ok: true };
       }
+      const selectedProvider = (await deps.listProviders()).find(
+        (provider) => provider.id === i.providerId,
+      );
+      assertSameOwner();
+      const accessProviderId = selectedProvider?.channel?.supplierId ?? (i.providerId as string);
       if (i.kind === 'model') {
         const modelIds = i.modelIds as string[];
         if (i.disabled) {
@@ -1570,12 +1607,11 @@ export function registerProviderHandlers(
         }
         assertSameOwner();
         persist(() =>
-          deps.setModelsDisabled(i.providerId as string, modelIds, i.disabled as boolean),
-        );
+          deps.setModelsDisabled(accessProviderId, modelIds, i.disabled as boolean));
       } else {
         if (i.disabled) await requireCatalogProvider(i.providerId as string);
         assertSameOwner();
-        persist(() => deps.setProviderDisabled(i.providerId as string, i.disabled as boolean));
+        persist(() => deps.setProviderDisabled(accessProviderId, i.disabled as boolean));
       }
       deps.broadcastChanged();
       return { ok: true };
@@ -1894,6 +1930,7 @@ export function registerProviderHandlers(
       if (await customProviderExists(config.id)) {
         throwIpcError('ALREADY_EXISTS', `custom provider '${config.id}' already exists`);
       }
+      await assertProviderChannelIdsAvailable(config);
       // 前面的异步存在性查询期间可能换号；写 key/header 前复核。
       assertProviderMutationOwner(ownerAtIngress);
       const targetCodexConfigSignature =
@@ -1912,13 +1949,21 @@ export function registerProviderHandlers(
           planProviderHeaderMutations(config, separated.headers, 'create'),
           commitRouteMutation,
         );
+        let restoreChannelCredentials = (): boolean => true;
         try {
+          restoreChannelCredentials = stageProviderChannelCredentials(
+            config,
+            null,
+            options.channelKeys,
+            () => assertProviderMutationOwner(ownerAtIngress),
+          );
           await createCustomProvider(separated.config);
           assertProviderMutationOwner(ownerAtIngress);
         } catch (error) {
           // 换号后不在 B 的 secret store 执行 A 的回滚。
           assertProviderMutationOwner(ownerAtIngress);
-          if (!restoreProviderCredentials(config.id, credentialSnapshots)) {
+          const channelsRestored = restoreChannelCredentials();
+          if (!restoreProviderCredentials(config.id, credentialSnapshots) || !channelsRestored) {
             commitRouteMutation();
             throwIpcError(
               'INTERNAL',
@@ -1943,7 +1988,9 @@ export function registerProviderHandlers(
     input: unknown,
     keyInput?: unknown,
     optionsInput?: unknown,
-    resolveLatest?: (current: CustomProviderConfig) => CustomProviderConfig,
+    resolveLatest?: (current: CustomProviderConfig,
+      options: CustomProviderUpdateOptions,
+    ) => CustomProviderConfig,
   ): Promise<CustomProviderUpdateResult> {
     assertTrustedProviderMutationSender(event);
     const v = validateCustomProviderConfig(input, { allowLegacyXai: true });
@@ -1970,9 +2017,17 @@ export function registerProviderHandlers(
         const previous = await getCustomProvider(config.id);
         assertProviderMutationOwner(ownerAtIngress);
         if (!previous) throwIpcError('NOT_FOUND', `custom provider '${config.id}' not found`);
+        if (previous.channels && !resolveLatest && config.readRevision !== previous.readRevision)
+          throwIpcError('PRECONDITION_FAILED', 'Provider configuration changed; reload before saving');
+        await assertProviderChannelIdsAvailable(config);
+        if (previous.channels && !config.channels)
+          throwIpcError(
+            'UNSUPPORTED_CAPABILITY',
+            'This provider uses protocol channels; reload the settings before editing it',
+          );
         if (resolveLatest) {
           // Main-only key import merges under the same queue, never from a stale UI snapshot.
-          config = resolveLatest(previous);
+          config = resolveLatest(previous, options);
           const latestValidation = validateCustomProviderConfig(config, { allowLegacyXai: true });
           if (!latestValidation.ok) throwIpcError(latestValidation.code, latestValidation.message);
           separated = splitCustomProviderHeaders(config);
@@ -2001,6 +2056,13 @@ export function registerProviderHandlers(
           planProviderHeaderMutations(config, separated.headers, 'update', previous),
         );
         const codexCredentialGenerationChanged =
+          (config.channels !== undefined && Object.keys(options.channelKeys ?? {}).length > 0) ||
+          // Channel headers are stripped from persisted metadata and therefore
+          // absent from the config signature. An explicit replacement (including
+          // an empty map) must retire the old Host before publishing credentials.
+          config.channels?.channels.some((channel) =>
+            Object.values(channel.protocols).some((connection) => connection?.headers !== undefined),
+          ) === true ||
           keyMutations.some((mutation) => mutation.agent === 'codex') ||
           headerMutations.some((mutation) => mutation.agent === 'codex') ||
           authMethodChanged ||
@@ -2026,6 +2088,7 @@ export function registerProviderHandlers(
           headerMutations,
           commitRouteMutation,
         );
+        let restoreChannelCredentials = (): boolean => true;
         // 先阻止在途 flow 写回，再改描述符；否则旧 flow 可能在 clear 后迟到落一枚旧 token。
         if (shouldResetOAuth) deps.oauthCancel(config.id);
         // 旧 client / endpoint 下签发的 token 不能沿用到新 OAuth 描述符；切到 API key /
@@ -2034,6 +2097,12 @@ export function registerProviderHandlers(
         let restoreOAuthCredentials: (() => boolean) | null = null;
         let updated: CustomProviderConfig | null;
         try {
+          restoreChannelCredentials = stageProviderChannelCredentials(
+            config,
+            previous,
+            options.channelKeys,
+            () => assertProviderMutationOwner(ownerAtIngress),
+          );
           if (shouldResetOAuth) {
             assertProviderMutationOwner(ownerAtIngress);
             restoreOAuthCredentials = deps.removeOAuthCredentials(config.id);
@@ -2048,7 +2117,8 @@ export function registerProviderHandlers(
           assertProviderMutationOwner(ownerAtIngress);
           const oauthRestored = !restoreOAuthCredentials || restoreOAuthCredentials();
           const credentialsRestored = restoreProviderCredentials(config.id, credentialSnapshots);
-          if (!oauthRestored || !credentialsRestored) {
+          const channelsRestored = restoreChannelCredentials();
+          if (!oauthRestored || !credentialsRestored || !channelsRestored) {
             commitRouteMutation();
             throwIpcError(
               'INTERNAL',
@@ -2061,7 +2131,8 @@ export function registerProviderHandlers(
           assertProviderMutationOwner(ownerAtIngress);
           const oauthRestored = !restoreOAuthCredentials || restoreOAuthCredentials();
           const credentialsRestored = restoreProviderCredentials(config.id, credentialSnapshots);
-          if (!oauthRestored || !credentialsRestored) {
+          const channelsRestored = restoreChannelCredentials();
+          if (!oauthRestored || !credentialsRestored || !channelsRestored) {
             commitRouteMutation();
             throwIpcError(
               'INTERNAL',
@@ -2125,8 +2196,8 @@ export function registerProviderHandlers(
           deps.oauthCancel(providerId);
           // OAuth 形态自定义供应商的凭证 blob 一并清掉（apiKey 形态无 blob，幂等无害）。
           let restoreOAuthCredentials: (() => boolean) | null = null;
-          let restoreDisableOverrides: (() => boolean) | null = null;
-          let restorePriceOverrides: (() => boolean) | null = null;
+          const restoreDisableOverrides: (() => boolean)[] = [];
+          const restorePriceOverrides: (() => boolean)[] = [];
           // 整个删除事务(清 override → 删凭证 → 删配置 → 刷目录)在 disable 写队列**内**
           // 执行,持队列直到 afterChange 刷完 active-catalog:只把清理入队的话,清理落盘
           // 后队列即释放,「删除完成前」的窗口里并发 MODEL_DISABLE_SET 仍能从未刷新的
@@ -2150,14 +2221,28 @@ export function registerProviderHandlers(
               ),
               commitRouteMutation,
             );
-            try {
-              // 停用 override 清理进事务(第二十轮):放在配置删除之前,后续任一步失败
+              let restoreChannelCredentials = (): boolean => true;
+              try {
+                restoreChannelCredentials = stageProviderChannelCredentials(
+                  null,
+                  previous,
+                  undefined,
+                  () => assertProviderMutationOwner(ownerAtIngress),
+                );
+                // 停用 override 清理进事务(第二十轮):放在配置删除之前,后续任一步失败
               // 由恢复函数把停用状态原样写回;清理自身抛错时事务未产生破坏,删除中止,
               // 不再出现「配置删了、override 残留」让同 id 重建复活旧停用状态。
-              restoreDisableOverrides =
-                deps.stageClearProviderDisableOverrides?.(runtimeProviderId) ?? null;
-              restorePriceOverrides =
-                deps.stageClearProviderModelPriceOverrides?.(runtimeProviderId) ?? null;
+              const routeIds = [runtimeProviderId, ...(previous?.channels?.channels ?? []).flatMap(
+                (channel) => [channel.id, ...Object.keys(channel.protocols).map(
+                  (protocol) => channelProtocolProviderId(channel.id, protocol as ProviderWireProtocol),
+                )],
+              )];
+              for (const id of new Set(routeIds)) {
+                const restoreDisable = deps.stageClearProviderDisableOverrides?.(id);
+                if (restoreDisable) restoreDisableOverrides.push(restoreDisable);
+                const restorePrice = deps.stageClearProviderModelPriceOverrides?.(id);
+                if (restorePrice) restorePriceOverrides.push(restorePrice);
+              }
               assertProviderMutationOwner(ownerAtIngress);
               restoreOAuthCredentials = deps.removeOAuthCredentials(providerId);
               if (!restoreOAuthCredentials) {
@@ -2168,11 +2253,14 @@ export function registerProviderHandlers(
               assertProviderMutationOwner(ownerAtIngress);
             } catch (err) {
               assertProviderMutationOwner(ownerAtIngress);
-              const overridesRestored = !restoreDisableOverrides || restoreDisableOverrides();
-              const pricesRestored = !restorePriceOverrides || restorePriceOverrides();
+              // Attempt every compensation even if one returns false.
+              const overridesRestored = restoreDisableOverrides.reverse().map(restore => restore()).every(Boolean);
+              const pricesRestored = restorePriceOverrides.reverse().map(restore => restore()).every(Boolean);
               const oauthRestored = !restoreOAuthCredentials || restoreOAuthCredentials();
               const credentialsRestored = restoreProviderCredentials(providerId, credentialSnapshots);
-              if (!oauthRestored || !credentialsRestored || !overridesRestored || !pricesRestored) {
+                const channelsRestored = restoreChannelCredentials();
+              if (!oauthRestored || !credentialsRestored ||
+                  !channelsRestored || !overridesRestored || !pricesRestored) {
                 commitRouteMutation();
                 throwIpcError(
                   'INTERNAL',
@@ -2231,6 +2319,42 @@ export function registerProviderHandlers(
     assertTrustedProviderMutationSender(event);
     const parsed = parseModelsFetchInput(input);
     if (!parsed) throwIpcError('INVALID_PARAMS', 'invalid models-fetch input');
+    if (parsed.savedProviderId) {
+      const owner = captureProviderOwnerSession();
+      const provider = (await deps.listProviders({ allowSideEffects: false })).find(
+        (provider) => provider.id === parsed.savedProviderId,
+      );
+      assertProviderMutationOwner(owner);
+      if (provider?.channel && !provider.channel.legacy) {
+        const revision = providerConfigMutationRevisions.get(provider.channel.supplierId) ?? 0;
+        if (providerConfigMutationCounts.has(provider.channel.supplierId))
+          throwIpcError('PRECONDITION_FAILED', 'Channel configuration is being updated');
+        const protocol = provider.channel.protocol;
+        // Model discovery must target one protocol, not the channel's automatic
+        // model router. Bind both endpoint and credentials to that saved slot.
+        const connection = protocol && provider.channelConfig?.protocols[protocol];
+        if (!protocol || !connection)
+          throwIpcError('INVALID_PARAMS', 'Choose a saved channel protocol for discovery');
+        const key = readChannelKey(provider.channel.id, 'protocol-' + protocol);
+        const headers = readChannelHeaders(provider.channel.id, 'protocol-' + protocol);
+        if (typeof key === 'symbol' || typeof headers === 'symbol')
+          throwIpcError('PRECONDITION_FAILED', 'Saved channel credentials are unavailable');
+        const result = await deps.fetchModels({
+          ...parsed,
+          baseUrl: connection.baseUrl,
+          modelsUrl: connection.modelsUrl ?? null,
+          wireProtocol: protocol,
+          authMethod: provider.auth.method === 'none' ? 'none' : 'apiKey',
+          apiKey: key,
+          headers: headers ?? undefined,
+        });
+        assertProviderMutationOwner(owner);
+        if (providerConfigMutationCounts.has(provider.channel.supplierId) ||
+          (providerConfigMutationRevisions.get(provider.channel.supplierId) ?? 0) !== revision)
+          throwIpcError('PRECONDITION_FAILED', 'Channel configuration changed during discovery');
+        return result;
+      }
+    }
     // 已保存供应商:main 侧按 (id, agent) 并入 main-only 鉴权请求头,无需 renderer 回读
     // 明文头。安全边界在 main —— renderer 传的 baseUrl/modelsUrl **不可信**(被注入 / 误用
     // 的顶层 Renderer 只要提交一个已知 savedProviderId + 攻击者控制的 baseUrl,就能把
@@ -2415,16 +2539,25 @@ export function registerProviderHandlers(
       assertProviderMutationOwner(owner);
       if (!config || (config.auth && config.auth.method !== 'apiKey')) throwIpcError('INVALID_PARAMS', 'API connection required');
       const preparation = await prepareCodexCustomProviderChange(
-        deps.hasAppliedCodexCustomProviderImageGeneration?.(id) === true, options, owner,
+          config.channels !== undefined ||
+            deps.hasAppliedCodexCustomProviderImageGeneration?.(id) === true, options, owner,
       );
       if (preparation.confirmation) return preparation.confirmation;
       try {
         assertProviderMutationOwner(owner);
-        stageProviderCredentials(id,
+          const restoreChannels = stageProviderChannelCredentials(null, config, undefined, () =>
+            assertProviderMutationOwner(owner),
+          );
+          try {
+            stageProviderCredentials(id,
           (VALID_AGENTS as readonly AgentKind[]).map((agent) => ({ agent, replacement: null })),
           (VALID_AGENTS as readonly AgentKind[]).map((agent) => ({ agent, replacement: null })),
           commitRouteMutation);
-        // Configuration and stable route ID remain available for reconnect. Publish even when
+          } catch (error) {
+            restoreChannels();
+            throw error;
+          }
+          // Configuration and stable route ID remain available for reconnect. Publish even when
         // a later catalog refresh fails: the disconnected credential must never be reused.
         commitRouteMutation();
         await afterChange(preparation.prepared, commitRouteMutation);

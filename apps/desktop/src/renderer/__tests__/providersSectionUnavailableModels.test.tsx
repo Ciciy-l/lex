@@ -230,6 +230,24 @@ afterEach(() => {
 });
 
 describe('ProvidersSection — 双栏管理', () => {
+  it('resets channel disable overrides by supplier identity without resetting another route', async () => {
+    const setModelDisable = vi.fn(async () => ({ ok: true as const }));
+    Object.assign(window.electronAPI.maker, { setModelDisable });
+    providerSnapshotState.customOverride = {
+      id: 'primary', name: 'Supplier', source: 'user', agents: ['codex'], connected: true,
+      auth: { method: 'apiKey' }, routing: {},
+      channel: { supplierId: 'supplier', id: 'primary', name: 'Primary',
+        protocols: ['openai-responses'] },
+      disableOverrideCount: 1,
+      models: { codex: [{ id: 'disabled-model', name: 'Disabled Model', contextWindow: 64000,
+        efforts: [], defaultEffort: null, disabled: true }] },
+    };
+    providerSnapshotState.order = ['primary', 'xd'];
+    render(<MemoryRouter><ProvidersSection /></MemoryRouter>);
+    const reset = await screen.findByRole('button', { name: 'settings.providers.models.enableAllModels' });
+    await act(async () => { fireEvent.click(reset); });
+    expect(setModelDisable).toHaveBeenCalledExactlyOnceWith({ kind: 'reset', providerId: 'supplier' });
+  });
   it.each([
     ['openrouter-existing', 'oauth', true],
     ['openrouter-new', 'oauth', false],
@@ -279,7 +297,7 @@ describe('ProvidersSection — 双栏管理', () => {
         expect.objectContaining({ id: 'new-model', discoveredMetadata: { nativeApi: 'openai-responses' } }),
         ...(hasModels ? [expect.objectContaining({ id: 'old-model', contextWindow: 64000, defaultEnabled: false })] : []),
       ]) }) }),
-    }), {});
+    }), {}, { source: 'manual-settings' });
     const saved = vi.mocked(updateCustomProvider).mock.calls[0]![0];
     // Refresh adds membership without freezing a visibility choice. Native
     // projection decides defaults; compatibility still requires an override.

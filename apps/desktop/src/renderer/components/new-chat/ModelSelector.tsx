@@ -1346,7 +1346,7 @@ function ModelSelectorContentView({
     () =>
       excludeChatBridgedCodex
         ? (provider: ProviderView, agent: AgentKind): boolean =>
-            !usesControllerProviderProxyForSsh(agent) &&
+            !usesControllerProviderProxyForSsh(agent, provider) &&
             isLocalOnlyProviderForAgent(provider, agent)
         : undefined,
     [excludeChatBridgedCodex],
@@ -1354,8 +1354,8 @@ function ModelSelectorContentView({
   const unifiedExcludeModel = useMemo(
     () =>
       excludeSubscriptionDirect
-        ? (model: { id: string }, _provider: ProviderView, agent: AgentKind): boolean =>
-            !usesControllerProviderProxyForSsh(agent) && isSubscriptionDirectModel(model.id)
+        ? (model: { id: string }, provider: ProviderView, agent: AgentKind): boolean =>
+            !usesControllerProviderProxyForSsh(agent, provider) && isSubscriptionDirectModel(model.id)
         : undefined,
     [excludeSubscriptionDirect],
   );

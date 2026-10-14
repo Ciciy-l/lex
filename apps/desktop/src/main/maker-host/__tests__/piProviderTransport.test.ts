@@ -152,6 +152,21 @@ it('uses Cloudflare gateway authentication without forwarding its token as an up
 it('does not invent a fake API key for header-only native bridges', () => {
   expect(nativeBridgeApiKey({ 'cf-aig-authorization': 'Bearer header-only-key' })).toBe('');
   expect(nativeBridgeApiKey({ authorization: 'Bearer real-key' })).toBe('real-key');
+  expect(nativeBridgeApiKey({ 'X-Goog-Api-Key': 'google-key' })).toBe('google-key');
+});
+
+it('checks a native Google route before invoking the SDK that cannot use injected fetch', async () => {
+  const provider = buildUserProvider({ id: 'google-test', name: 'Google', runtimes: { codex: {
+    baseUrl: 'https://example.test/v1beta', wireProtocol: 'google-generative-ai',
+    models: [{ id: 'gemini', name: 'Gemini', api: 'google-generative-ai' }],
+  } } });
+  const row = invocationModelRecord(provider.models.codex![0], 'https://example.test/v1beta')!;
+  const fetchImpl = vi.fn();
+  const assertCurrent = vi.fn(() => { throw new Error('route changed'); });
+  const send = createPiProviderFetch({ row, providerId: provider.id, apiKey: 'fixture', fetchImpl, assertCurrent });
+  await expect(send('https://unused.invalid', { body: JSON.stringify({ model: 'gemini', input: 'hello' }) })).rejects.toThrow('route changed');
+  expect(assertCurrent).toHaveBeenCalledOnce();
+  expect(fetchImpl).not.toHaveBeenCalled();
 });
 
 it('allows official Vertex hosts for Desktop ADC and rejects unofficial ones', () => {

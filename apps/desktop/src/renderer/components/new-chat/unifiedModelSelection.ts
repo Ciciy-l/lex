@@ -340,6 +340,7 @@ export function buildUnifiedRail(
   entries: readonly UnifiedModelEntry[],
   sessionAgent?: AgentKind,
   providerOrder?: readonly string[],
+  supplierOf: (providerId: string) => string = (id) => id,
 ): UnifiedRailItem[] {
   const items: UnifiedRailItem[] = [];
   // ★ 常驻(设计稿 renderRail:collection 永远在第一格,空收藏点进去看空态引导)——
@@ -350,9 +351,10 @@ export function buildUnifiedRail(
   const seen = new Set<string>();
   const firstSeen: string[] = [];
   for (const entry of entries) {
-    if (seen.has(entry.providerId)) continue;
-    seen.add(entry.providerId);
-    firstSeen.push(entry.providerId);
+    const supplierId = supplierOf(entry.providerId);
+    if (seen.has(supplierId)) continue;
+    seen.add(supplierId);
+    firstSeen.push(supplierId);
   }
   const ordered =
     providerOrder === undefined ? firstSeen : applyProviderOrderIds(firstSeen, providerOrder);
@@ -421,15 +423,17 @@ function prefersEngineRail(
 function clusterByProvider(
   entries: readonly UnifiedModelEntry[],
   providerOrder?: readonly string[],
+  supplierOf: (providerId: string) => string = (id) => id,
 ): { providerId: string; items: UnifiedModelEntry[] }[] {
   const clusterOrder: string[] = [];
   const clusters = new Map<string, UnifiedModelEntry[]>();
   for (const entry of entries) {
-    let cluster = clusters.get(entry.providerId);
+    const supplierId = supplierOf(entry.providerId);
+    let cluster = clusters.get(supplierId);
     if (!cluster) {
       cluster = [];
-      clusters.set(entry.providerId, cluster);
-      clusterOrder.push(entry.providerId);
+      clusters.set(supplierId, cluster);
+      clusterOrder.push(supplierId);
     }
     cluster.push(entry);
   }
@@ -487,6 +491,9 @@ function arrangeEngineRailClusters(
  */
 export function buildUnifiedListSections(args: {
   entries: readonly UnifiedModelEntry[];
+  /** Grouped presentation rows; the complete entries remain available to favorites. */
+  modelEntries?: readonly UnifiedModelEntry[];
+  supplierOf?: (providerId: string) => string;
   favorites: readonly ModelFavoriteItem[];
   query: string;
   matchesQuery?: (entry: UnifiedModelEntry, query: string) => boolean;
@@ -502,6 +509,7 @@ export function buildUnifiedListSections(args: {
   recommendation?: { agent: AgentKind; providerId: string | null; modelId: string };
 }): UnifiedListSection[] {
   const { entries, favorites, effectiveEngineOf } = args;
+  const supplierOf = args.supplierOf ?? ((id: string) => id);
   const q = args.query.trim().toLowerCase();
   const rail: UnifiedRailFilter = q ? { kind: 'all' } : args.rail;
   const matches = args.matchesQuery ?? matchesQuery;
@@ -524,7 +532,7 @@ export function buildUnifiedListSections(args: {
     // 收藏指向的模型已不可路由(来源断开 / 目录下架)→ 本轮不显示;**不删条目**:
     // 连回来就该回来,静默删掉用户存过的配置是不可逆的。
     if (!entry) continue;
-    if (rail.kind === 'provider' && entry.providerId !== rail.providerId) continue;
+    if (rail.kind === 'provider' && supplierOf(entry.providerId) !== rail.providerId) continue;
     // 同引擎视图:收藏按**解析后的生效引擎**过滤。收藏是配置快照,不是模型本体 ——
     // 只列点下去仍停在当前引擎的副本。判据只有这一个,不再先按条目自存的 item.agent
     // 硬排除(2026-08-19 review P2):两者在「条目引擎掉出候选」时会分叉 ——
@@ -560,10 +568,10 @@ export function buildUnifiedListSections(args: {
   // 同引擎视图的准入只有一条:候选里有当前引擎。生效引擎是排序优先级,不是隐藏条件
   // (Chris 2026-08-23 纠正 08-19「不显示」裁决):默认 / 用户选过本引擎的在前,其余兼容
   // 行在后。不把兼容行转换成当前引擎 —— 点下去仍按其落点走,落点在别处就走跨引擎确认。
-  const visible = entries.filter(
+  const visible = (args.modelEntries ?? entries).filter(
     (entry) =>
       matches(entry, q) &&
-      (rail.kind !== 'provider' || entry.providerId === rail.providerId) &&
+      (rail.kind !== 'provider' || supplierOf(entry.providerId) === rail.providerId) &&
       (rail.kind !== 'engine' || entry.candidates.includes(rail.agent)),
   );
   const promoted = new Set<UnifiedModelEntry>();
@@ -572,7 +580,7 @@ export function buildUnifiedListSections(args: {
     const current = visible.find((entry) =>
       entryMatchesModelId(entry, recommendation.modelId) &&
       (recommendation.providerId === null || entry.providerId === recommendation.providerId));
-    const sameEngine = clusterByProvider(visible, args.providerOrder).flatMap((cluster) => cluster.items)
+    const sameEngine = clusterByProvider(visible, args.providerOrder, supplierOf).flatMap((cluster) => cluster.items)
       .filter((entry) => entry !== current && entry.availability !== 'requires_payment' &&
         (effectiveEngineOf?.(entry) ?? resolveUnifiedRowConfig({ entry }).engine) === engineOfAgentKind(recommendation.agent));
     const recommended = [...(current ? [current] : []), ...sameEngine];
@@ -584,7 +592,7 @@ export function buildUnifiedListSections(args: {
     }
   }
   // Cluster only the remaining models: emptied providers produce no header or spacing.
-  const clustered = clusterByProvider(visible.filter((entry) => !promoted.has(entry)), args.providerOrder);
+  const clustered = clusterByProvider(visible.filter((entry) => !promoted.has(entry)), args.providerOrder, supplierOf);
   const arranged =
     rail.kind === 'engine'
       ? arrangeEngineRailClusters(clustered, rail.agent, effectiveEngineOf)

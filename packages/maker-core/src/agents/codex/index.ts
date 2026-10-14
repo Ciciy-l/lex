@@ -3602,13 +3602,36 @@ assertRouteCurrent();
         signal, threadDispatched: false,
         cleanup: undefined as (() => Promise<void>) | undefined,
         customContext: undefined as (() => Promise<void>) | undefined,
+        remoteRoute: null as Awaited<
+          ReturnType<NonNullable<AgentDeps["openRemoteProviderChannelRoute"]>>
+        >,
       };
       try {
         signal.throwIfAborted();
-        return await this.startSessionInternal(opts, (cleanup) => {
+        if (opts.remoteHostId && this.deps.openRemoteProviderChannelRoute) {
+          startup.remoteRoute = await this.deps.openRemoteProviderChannelRoute({
+            remoteHostId: opts.remoteHostId,
+            sessionId: opts.sessionId ?? '',
+            providerId: opts.providerId,
+            model: opts.model,
+            agent: "codex",
+          });
+        }
+        const handle = await this.startSessionInternal(opts, (cleanup) => {
           startup.customContext = cleanup ?? undefined;
         }, startup);
+        if (!startup.remoteRoute) return handle;
+        const close = handle.close.bind(handle);
+        handle.close = async () => {
+          try {
+            await close();
+          } finally {
+            await startup.remoteRoute?.release();
+          }
+        };
+        return handle;
       } catch (error) {
+        await startup.remoteRoute?.release();
         if (!startup.threadDispatched
           && (error instanceof CodexRouteSelectionChangedError || error instanceof CodexNativeInitializationStoppedError || signal.aborted)) {
           // No thread was submitted. Release this startup's lease and retire only
@@ -3626,7 +3649,11 @@ assertRouteCurrent();
   private async startSessionInternal(
     opts: StartSessionOptions,
     registerFailedCustomContextStartupCleanup: (cleanup: (() => Promise<void>) | null) => void,
-    startup: { signal: AbortSignal; threadDispatched: boolean; cleanup?: () => Promise<void> },
+    startup: { signal: AbortSignal; threadDispatched: boolean; cleanup?: () => Promise<void>;
+      remoteRoute?: Awaited<
+        ReturnType<NonNullable<AgentDeps["openRemoteProviderChannelRoute"]>>
+      >;
+    },
   ): Promise<AgentSessionHandle> {
     // scope 带完整 s:<sessionId> 前缀 → host logger 落盘时提取 business sessionId,
     // 路由到 sessions/<id>/<date>.ndjson (logger.ts extractSessionId / sessionAgentSlot)。
@@ -5079,6 +5106,7 @@ assertRouteCurrent();
       setOpts?: { providerId?: string | null },
     ): Promise<boolean> => {
       const nextProvider = setOpts && Object.hasOwn(setOpts, 'providerId') ? setOpts.providerId : mutableProviderId;
+      if (opts.remoteHostId && nextProvider !== mutableProviderId) return true;
       if ((this.deps.isCodexAccountProvider?.(nextProvider) ? nextProvider : undefined) !== accountProviderId) return true;
       for (let attempt = 0; ; attempt++) {
         const selection = opts.remoteHostId ? null : await this.resolveLocalAuthSelection(
@@ -6203,6 +6231,7 @@ assertRouteCurrent();
     const terminateHandleAfterThreadCleanupFailure = (reason: string): void => {
       if (closed) return;
       closed = true;
+      void startup.remoteRoute?.release().catch(() => undefined);
       cancelInteractionContinuation(reason);
       resetCodexGenerationTiming(translatorRt);
       resetUpstreamIdleForTurnEnd();
@@ -6376,6 +6405,18 @@ assertRouteCurrent();
         ...(reviewMode ? {} : readSessionMcpConfig()),
         ...capabilityRoutingConfig,
         ...customProviderThreadConfig,
+        ...(startup.remoteRoute
+          ? {
+              "model_providers.lex_channel": {
+                name: "Lex channel",
+                base_url: startup.remoteRoute.endpoint,
+                wire_api: "responses",
+                requires_openai_auth: false,
+                supports_websockets: false,
+                http_headers: startup.remoteRoute.headers,
+              },
+            }
+          : {}),
         // Lex owns goal dispatch and pause/resume; native continuation must not bypass the host.
         'features.goals': false,
         // Bot memory and delegation remain scoped to the Lex Profile and Session.
@@ -6650,7 +6691,9 @@ assertRouteCurrent();
       };
     }
     let threadModelProvider = opts.remoteHostId
-      ? undefined
+      ? startup.remoteRoute
+        ? "lex_channel"
+        : undefined
       : customProviderModelProvider
         ? customProviderModelProvider
         : cindyProviderRemoteCompaction
@@ -6714,7 +6757,8 @@ assertRouteCurrent();
      * 通道错误地只看 provider 身份。
      */
     let threadUsesWebSocket = threadModelProvider !== localSummaryProvider
-      && !customProviderThreadPolicy.dynamicIdentity
+      && !startup.remoteRoute &&
+      !customProviderThreadPolicy.dynamicIdentity
       && !cindyProviderRemoteCompaction
       && !!threadModelProvider
       && (host.getOpenAiWebSocketsEnabled?.() ?? true);
@@ -13017,6 +13061,7 @@ assertRouteCurrent();
     ): Promise<void> {
       if (closed) return;
       closed = true;
+      await startup.remoteRoute?.release();
       cancelInteractionContinuation('session_closed', true);
       resetCodexGenerationTiming(translatorRt);
       clearReconnectStall();

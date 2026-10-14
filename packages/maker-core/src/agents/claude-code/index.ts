@@ -3327,7 +3327,9 @@ export class ClaudeCodeAgent extends BaseAgent {
         // env-builder.ts remote branch), so this should never fire — if it does, the
         // remote env was assembled wrong; reject rather than let remote cc dial a
         // loopback URL it can't reach.
-        if (isLoopbackEndpoint(remoteEnv?.ANTHROPIC_BASE_URL)) {
+        if (
+          !remoteRoute?.hostManaged &&
+          isLoopbackEndpoint(remoteEnv?.ANTHROPIC_BASE_URL)) {
           throw new Error('[REMOTE_COMPAT_MODE_UNSUPPORTED] Remote Claude Code sessions cannot route through the local compat proxy.');
         }
         // startParams shape 跟 sdkQuery options 同源 (cwd / model / env / mcpServers /
@@ -3461,6 +3463,14 @@ export class ClaudeCodeAgent extends BaseAgent {
 
         const remoteQuery = await this.deps.remoteCcQueryFactory({
           remoteHostId: opts.remoteHostId,
+          ...(remoteRoute?.hostManaged && mutableProviderId
+            ? {
+                hostManagedProviderRoute: {
+                  providerId: mutableProviderId,
+                  model: mutableModel,
+                },
+              }
+            : {}),
           botSession: !reviewMode && !!opts.botRuntimeProfile,
           sessionId: opts.sessionId,
           ...(opts.sessionInstanceId ? { sessionInstanceId: opts.sessionInstanceId } : {}),
@@ -6866,7 +6876,8 @@ export class ClaudeCodeAgent extends BaseAgent {
             model: newModel,
           });
           const routeChanged =
-            (nextRoute === null) !== (remoteRoute === null) ||
+            !(nextRoute?.hostManaged && remoteRoute?.hostManaged) &&
+            ((nextRoute === null) !== (remoteRoute === null) ||
             (nextRoute !== null &&
               remoteRoute !== null &&
               (() => {
@@ -6928,7 +6939,7 @@ export class ClaudeCodeAgent extends BaseAgent {
               (async () => {
                 const currentAuthEnv = await getAuthEnv({ credentialMode: 'gateway-key' });
                 return currentAuthEnv.ANTHROPIC_API_KEY !== remoteEnv?.ANTHROPIC_API_KEY;
-              })());
+              })()));
           if (await routeChanged) {
             throw new Error(
               `[REMOTE_MODEL_SWITCH_ROUTE_CHANGE] switching to "${newModel}" requires a different remote route; close and recreate the remote session to apply it`,

@@ -387,6 +387,10 @@ Plugin 声明的应用级完整页面能力；区别于会话内 Panel。V1 由 
 
 OS 进程语境(资源用量面板、浏览器 guest 进程、终端)。注意与 Thread→任务(消息流语境)区分:资源用量面板刻意不展示 OS 线程数,避免「线程」撞上 Thread 的既定裁决;若未来要展示,需为 OS thread 立同形异义条目再谈。
 
+### Channel
+
+A named provider connection with protocol-specific URL and credentials; distinct from an engine and from a release channel.
+
 ### Qwen
 
 模型显示品牌采用官方中文名称，版本号和变体原样保留；仅用于展示与搜索，不改模型 ID 或用户保存的名称。

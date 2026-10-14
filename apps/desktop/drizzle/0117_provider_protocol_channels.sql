@@ -1,0 +1,1 @@
+ALTER TABLE `custom_providers` ADD `channels` text;

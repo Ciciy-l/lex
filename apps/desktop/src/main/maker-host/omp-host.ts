@@ -169,7 +169,6 @@ export function collectOmpCatalogModels(model: string, providerId?: string | nul
     if (sourceId && provider.id !== sourceId) continue;
     if (provider.routing.omp?.disabled === true) continue;
     for (const entry of provider.models.omp ?? []) {
-      if (sourceId && resolveOmpWireProtocol(entry.id, sourceId) !== resolveOmpWireProtocol(model, sourceId)) continue;
       push(entry.id);
     }
   }
@@ -179,9 +178,8 @@ export function collectOmpCatalogModels(model: string, providerId?: string | nul
 /**
  * 这次会话该让 OMP 对 proxy 说哪种上游协议。
  *
- * 为什么必须压成**一个**值:OMP 的 models.yml **只能**在 provider 级声明 `api`
- * (实测 v18.1.18:给单个模型写 `api` 会让整份文件被拒,报 `Unknown provider`),
- * 所以 Cindy 的「模型 route 覆盖 → 供应商 routing 默认」两层在这里收敛成一个。
+ * OMP 18.10.4 supports per-model APIs. Resolve each model separately, keeping
+ * the selected model's API as the provider default for older model entries.
  *
  * 取值必须经 `ompApiForWireProtocol` 翻译后才能写进 models.yml —— Cindy 与 OMP 对
  * chat completions 的命名不同(`openai-chat` vs `openai-completions`),透传会让
@@ -211,9 +209,12 @@ export function resolveOmpWireProtocol(
   return 'anthropic-messages';
 }
 
-/** OMP's managed loopback bridge has no Google-native front door. */
+/** Native APIs supported by the pinned OMP and the managed loopback proxy. */
 function isOmpWireProtocol(value: unknown): value is OmpWireProtocol {
-  return value === 'anthropic-messages' || value === 'openai-responses' || value === 'openai-chat';
+  return (
+    value === 'anthropic-messages' || value === 'openai-responses' || value === 'openai-chat' ||
+    value === 'google-generative-ai'
+  );
 }
 
 /**
@@ -255,8 +256,11 @@ export function buildOmpManagedModelsYaml(params: {
   }
   const wireProtocol =
     params.wireProtocol ?? resolveOmpWireProtocol(params.model, params.providerId);
+  const endpoint = (params.baseUrl ?? getClaudeEndpoint()).replace(/\/+$/u, '');
+  const modelEndpoint = (wire: OmpWireProtocol): string =>
+    wire === 'google-generative-ai' ? `${endpoint}/v1beta` : endpoint;
   const yaml = buildOmpCindyModelsYaml({
-    baseUrl: params.baseUrl ?? getClaudeEndpoint(),
+    baseUrl: modelEndpoint(wireProtocol),
     // 必须翻译:Cindy 的 `openai-chat` 在 OMP 里叫 `openai-completions`,透传会让
     // OMP 整份 models.yml 被拒(见 ompApiForWireProtocol 注释)。
     api: ompApiForWireProtocol(wireProtocol),
@@ -268,7 +272,13 @@ export function buildOmpManagedModelsYaml(params: {
     headers: {
       [OMP_CINDY_PROVIDER_ID_HEADER]: params.providerId ?? OMP_CINDY_PROVIDER_ID,
     },
-    models,
+    models: models.map((entry) => {
+      const wire =
+        entry.id === params.model
+          ? wireProtocol
+          : resolveOmpWireProtocol(entry.id, params.providerId);
+      return { ...entry, api: ompApiForWireProtocol(wire), baseUrl: modelEndpoint(wire) };
+    }),
   });
   assertOmpModelsYamlHasNoSecrets(yaml, [params.token]);
   return yaml;
@@ -447,7 +457,7 @@ function buildDesktopOmpRuntimeConfig(): AgentDeps['runtimeConfig'] {
   };
 }
 
-/** A global preference resolves only within the parent source and its native API route. */
+/** A global preference resolves only within the parent source. */
 export function resolveOmpSubagentModel(parentModel: string, providerId?: string | null): string | undefined {
   return validateOmpSubagentModel(parentModel, providerId, readOmpHarnessSettings().subagentModel);
 }
@@ -455,5 +465,5 @@ function validateOmpSubagentModel(parentModel: string, providerId: string | null
   if (!model || !providerId) return undefined;
   const provider = getActiveCatalog().providers.find(provider => provider.id === providerId);
   if (!provider || provider.routing.omp?.disabled || !provider.models.omp?.some(entry => entry.id === model)) return undefined;
-  return resolveOmpWireProtocol(model, providerId) === resolveOmpWireProtocol(parentModel, providerId) ? model : undefined;
+  return model;
 }

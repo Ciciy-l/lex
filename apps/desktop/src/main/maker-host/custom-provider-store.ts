@@ -39,6 +39,9 @@ import {
   PI_REASONING_EFFORTS,
   PI_MODEL_APIS,
   preservesPiCatalogModels,
+  isProviderWireProtocol,
+  channelProtocolProviderId,
+  type ProviderChannelConfiguration,
 } from '@cindy/model-providers';
 
 import { getDbClient } from '../localDb/client/current.js';
@@ -50,6 +53,8 @@ export const CUSTOM_PROVIDER_ID_RE = /^[a-z0-9_-]+$/;
 // 'cindy' 是 pi models.json 里网关 provider 的保留 id;自定义 provider 撞名会让其模型
 // 既被排除出网关块又不写入原生块 → --model 校验失败,故一并保留。
 const RESERVED_IDS = new Set(['anthropic', 'openai', 'xai', 'xd', 'cindy']);
+// Channel IDs become provider identities and must not shadow builtin or object keys.
+const RESERVED_CHANNEL_IDS = new Set([...RESERVED_IDS, 'gemini', '__proto__', 'constructor', 'prototype']);
 // 必须覆盖全部 AgentKind:这里是保存自定义供应商时的白名单,漏掉的 agent 会让
 // 用户配好的该 engine runtime 在保存阶段被整份拒绝(invalid runtime '<id>')。
 const VALID_AGENTS: readonly AgentKind[] = ['claude-code', 'codex', 'pi', 'omp'];
@@ -196,17 +201,9 @@ const GENERIC_WIRE_PROTOCOLS: readonly ProviderWireProtocol[] = [
   'anthropic-messages',
   'google-generative-ai',
 ];
-const OMP_WIRE_PROTOCOLS: readonly ProviderWireProtocol[] = [
-  'openai-responses',
-  'openai-chat',
-  'anthropic-messages',
-];
-
 function allowedWireProtocols(agent: string): readonly ProviderWireProtocol[] {
-  // OMP's managed loopback proxy deliberately has no Google-native front
-  // door.  Keep stored provider metadata from advertising a route the host
-  // cannot execute; Pi and the other engines retain their existing choices.
-  return agent === 'omp' ? OMP_WIRE_PROTOCOLS : GENERIC_WIRE_PROTOCOLS;
+  void agent;
+  return GENERIC_WIRE_PROTOCOLS;
 }
 
 function isAllowedWireProtocol(agent: string, value: unknown): value is ProviderWireProtocol {
@@ -556,6 +553,19 @@ export function validateCustomProviderConfig(
     if (!a.ok) return a;
   }
 
+  if (c.channels !== undefined) {
+    if ((c.auth as { method?: string } | undefined)?.method === 'oauth')
+      return invalid('OAuth connections retain their specialized configuration');
+    if (!c.runtimes || typeof c.runtimes !== 'object' || Array.isArray(c.runtimes))
+      return invalid('runtimes required');
+    for (const [agent, runtime] of Object.entries(c.runtimes)) {
+      if (!VALID_AGENTS.includes(agent as AgentKind)) return invalid('unknown legacy runtime');
+      const checked = validateRuntime(agent as AgentKind, runtime);
+      if (!checked.ok) return checked;
+    }
+    return validateChannels(c.channels, c.id, c.auth as CustomProviderConfig['auth']);
+  }
+
   if (!c.runtimes || typeof c.runtimes !== 'object' || Array.isArray(c.runtimes)) {
     return invalid('runtimes required');
   }
@@ -592,6 +602,125 @@ export function validateCustomProviderConfig(
     c.auth as CustomProviderConfig['auth'],
     rts as Partial<Record<AgentKind, CustomProviderRuntimeConfig>>,
   );
+}
+
+function validateChannels(
+  value: unknown,
+  supplierId: string,
+  auth: CustomProviderConfig['auth'],
+): ValidationResult {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    return invalid('channels must be an object');
+  const config = value as Record<string, unknown>;
+  if (
+    config.version !== 1 ||
+    !Array.isArray(config.channels) ||
+    !config.channels.length ||
+    config.channels.length > 64
+  )
+    return invalid('invalid channel configuration');
+  const ids = new Set<string>();
+  for (const value of config.channels) {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+      return invalid('invalid channel');
+    const channel = value as Record<string, unknown>;
+    if (
+      typeof channel.id !== 'string' ||
+      !CUSTOM_PROVIDER_ID_RE.test(channel.id) ||
+      channel.id.length > 96 ||
+      channel.id === supplierId ||
+      RESERVED_CHANNEL_IDS.has(channel.id) ||
+      channel.id.startsWith('cindy-local-') ||
+      ids.has(channel.id)
+    )
+      return invalid('invalid or duplicate channel id');
+    ids.add(channel.id);
+    if (
+      typeof channel.name !== 'string' ||
+      !channel.name.trim() ||
+      channel.name.length > MAX_NAME_LEN
+    )
+      return invalid('invalid channel name');
+    if (
+      !channel.protocols ||
+      typeof channel.protocols !== 'object' ||
+      Array.isArray(channel.protocols)
+    )
+      return invalid('channel protocols required');
+    const protocols = Object.entries(channel.protocols);
+    if (!protocols.length || protocols.length > 4)
+      return invalid('channel needs at least one protocol');
+    for (const [protocol, runtime] of protocols) {
+      if (!isProviderWireProtocol(protocol) || !runtime || typeof runtime !== 'object')
+        return invalid('invalid channel protocol');
+      const rt = runtime as CustomProviderRuntimeConfig;
+      if (rt.wireProtocol !== undefined && rt.wireProtocol !== protocol)
+        return invalid('channel protocol mismatch');
+      const checked = validateRuntime('pi', {
+        ...rt,
+        supportsImageGeneration: undefined,
+        wireProtocol: protocol,
+      });
+      if (!checked.ok) return checked;
+      if (rt.models.some((model) => model.route && model.route.wireProtocol !== protocol))
+        return invalid('model route belongs to another channel protocol');
+      if (
+        rt.models.some((model) =>
+          [model.api, model.piApi].some(
+            (api) =>
+              api !== undefined && api !== 'openai-completions' && !isProviderWireProtocol(api),
+          ),
+        )
+      )
+        return invalid('Specialized SDK transports retain their existing configuration');
+      if (
+        rt.supportsImageGeneration !== undefined &&
+        typeof rt.supportsImageGeneration !== 'boolean'
+      )
+        return invalid('invalid image generation capability');
+      if (rt.supportsImageGeneration === true && protocol !== 'openai-responses')
+        return invalid('image generation requires OpenAI Responses');
+      const noAuth = validateNoAuthLoopbackBoundary(auth, { pi: rt });
+      if (!noAuth.ok) return noAuth;
+    }
+  }
+  if (config.legacyBindings !== undefined) {
+    if (
+      !config.legacyBindings ||
+      typeof config.legacyBindings !== 'object' ||
+      Array.isArray(config.legacyBindings)
+    )
+      return invalid('invalid legacy channel bindings');
+    for (const [agent, id] of Object.entries(config.legacyBindings)) {
+      if (!VALID_AGENTS.includes(agent as AgentKind) || typeof id !== 'string' || !ids.has(id))
+        return invalid('invalid legacy channel binding');
+    }
+  }
+  return { ok: true };
+}
+
+function normalizeChannels(value: ProviderChannelConfiguration): ProviderChannelConfiguration {
+  return {
+    version: 1,
+    channels: value.channels.map((channel) => ({
+      id: channel.id,
+      name: channel.name.trim(),
+      protocols: Object.fromEntries(
+        Object.entries(channel.protocols).map(([protocol, rt]) => [
+          protocol,
+          {
+            ...normalizeRuntime('pi', rt),
+            wireProtocol: protocol,
+            ...(rt.requestPath?.trim() ? { requestPath: rt.requestPath.trim() } : {}),
+            ...(rt.supportsImageGeneration !== undefined
+              ? { supportsImageGeneration: rt.supportsImageGeneration }
+              : {}),
+          },
+        ]),
+      ),
+    })),
+    ...(value.legacyBindings ? { legacyBindings: { ...value.legacyBindings } } : {}),
+  };
 }
 
 /** 规整单个 runtime（trim baseUrl、去重 models、裁 headers）。 */
@@ -663,10 +792,11 @@ function normalizeRuntime(
 function normalizeConfig(config: CustomProviderConfig): CustomProviderConfig {
   const runtimes: Partial<Record<AgentKind, CustomProviderRuntimeConfig>> = {};
   for (const agent of VALID_AGENTS) {
-    const rt = config.runtimes[agent];
+    const rt = config.runtimes?.[agent];
     if (rt) runtimes[agent] = normalizeRuntime(agent, rt);
   }
   const out: CustomProviderConfig = { id: config.id, name: config.name.trim(), runtimes };
+  if (config.channels) out.channels = normalizeChannels(config.channels);
   // auth 规整：apiKey（默认形态）不落 auth 字段；none / oauth 显式落盘。
   if (config.auth?.method === 'oauth' && config.auth.native) {
     out.auth = { method: 'oauth', native: config.auth.native };
@@ -721,9 +851,16 @@ function invalidateEditedProviderMetadata(
     model.route?.wireProtocol ?? runtime.wireProtocol,
     model.route?.requestPath ?? runtime.requestPath ?? '',
   ]);
-  for (const agent of VALID_AGENTS) {
-    const before = previous.runtimes[agent];
-    const after = next.runtimes[agent];
+  const pairs = VALID_AGENTS.map(
+    (agent) => [previous.runtimes[agent], next.runtimes[agent]] as const,
+  );
+  for (const channel of next.channels?.channels ?? []) {
+    const old = previous.channels?.channels.find((entry) => entry.id === channel.id);
+    for (const [protocol, after] of Object.entries(channel.protocols)) {
+      pairs.push([old?.protocols[protocol as ProviderWireProtocol], after]);
+    }
+  }
+  for (const [before, after] of pairs) {
     if (!before || !after) continue;
     after.models = after.models.map(model => {
       const old = before.models.find(row => row.id === model.id);
@@ -733,6 +870,14 @@ function invalidateEditedProviderMetadata(
       delete copy.discoveredCost;
       return copy;
     });
+    if (
+      after.piCatalogProviderId &&
+      (before.baseUrl !== after.baseUrl ||
+        before.wireProtocol !== after.wireProtocol ||
+        !preservesPiCatalogModels(before.models, after.models))
+    ) {
+      delete after.piCatalogProviderId;
+    }
   }
   const previousPi = previous.runtimes.pi;
   const nextPi = next.runtimes.pi;
@@ -901,6 +1046,19 @@ function parseRuntimes(raw: string): Partial<Record<AgentKind, CustomProviderRun
 function rowToConfig(row: typeof customProviders.$inferSelect): CustomProviderConfig {
   const auth = parseAuth(row.auth);
   const runtimes = parseRuntimes(row.runtimes);
+  let channels: ProviderChannelConfiguration | undefined;
+  if (row.channels !== null && row.channels !== undefined) {
+    // Keep malformed records repairable without restoring a stale legacy route
+    // or making the entire owner's catalog unavailable. Never rewrite on read.
+    channels = { version: 1, channels: [] };
+    try {
+      const value: unknown = JSON.parse(row.channels);
+      if (validateChannels(value, row.id, auth).ok)
+        channels = value as ProviderChannelConfiguration;
+    } catch {
+      /* fail closed for this supplier only */
+    }
+  }
   // #527 之前保存的远程 auth:none 记录保留原始表单数据，供设置页展示和修复。
   // buildUserProvider 会把不满足当前 loopback 边界的 runtime 标成 disabled；路由解析
   // 一律拒绝 disabled 描述符，因此不会把历史远程 endpoint 重新解释成 API-key 路由。
@@ -909,6 +1067,7 @@ function rowToConfig(row: typeof customProviders.$inferSelect): CustomProviderCo
     name: row.name,
     ...(auth ? { auth } : {}),
     runtimes,
+    ...(channels ? { channels, readRevision: Number(row.updatedAt) } : {}),
   };
 }
 
@@ -934,6 +1093,29 @@ export async function customProviderExists(id: string): Promise<boolean> {
   return (await getCustomProvider(id)) != null;
 }
 
+/** Must run under the shared storage mutation queue, before any secret write. */
+export async function assertProviderChannelIdsAvailable(
+  config: CustomProviderConfig,
+): Promise<void> {
+  const identities = (entry: CustomProviderConfig): string[] => [
+    entry.id,
+    ...(entry.channels?.channels ?? []).flatMap((channel) => [
+      channel.id,
+      ...Object.keys(channel.protocols).map((protocol) =>
+        channelProtocolProviderId(channel.id, protocol as ProviderWireProtocol),
+      ),
+    ]),
+  ];
+  const claimed = identities(config);
+  if (new Set(claimed).size !== claimed.length)
+    throw new Error('Duplicate provider route identity');
+  const occupied = new Set(
+    (await listCustomProviders()).filter((entry) => entry.id !== config.id).flatMap(identities),
+  );
+  if (claimed.some((id) => occupied.has(id)))
+    throw new Error('Provider route identity already belongs to another supplier');
+}
+
 /**
  * 新建。调用方须先 `validateCustomProviderConfig` + 处理重名（`customProviderExists`）。
  * 返回入库后的规整配置。
@@ -950,12 +1132,13 @@ export async function createCustomProvider(
     id: c.id,
     name: c.name,
     runtimes: JSON.stringify(c.runtimes),
+    channels: c.channels ? JSON.stringify(c.channels) : null,
     auth: c.auth ? JSON.stringify(c.auth) : null,
     sortOrder: nextOrder,
     createdAt: now,
     updatedAt: now,
   });
-  return c;
+  return c.channels ? { ...c, readRevision: now } : c;
 }
 
 /**
@@ -979,11 +1162,12 @@ export async function updateCustomProvider(
     .set({
       name: c.name,
       runtimes: JSON.stringify(c.runtimes),
+      channels: c.channels ? JSON.stringify(c.channels) : null,
       auth: c.auth ? JSON.stringify(c.auth) : null,
       updatedAt: nextUpdatedAt(now, existing.updatedAt),
     })
     .where(eq(customProviders.id, id));
-  return c;
+  return c.channels ? { ...c, readRevision: nextUpdatedAt(now, existing.updatedAt) } : c;
 }
 
 /**
@@ -1009,7 +1193,9 @@ export async function updateCustomProviderIfUnchanged(
   if (
     existing.name !== expectedConfig.name ||
     existing.runtimes !== expectedRuntimes ||
-    existing.auth !== expectedAuth
+    existing.auth !== expectedAuth ||
+    (existing.channels ?? null) !==
+      (expectedConfig.channels ? JSON.stringify(expectedConfig.channels) : null)
   )
     return false;
   const result = await db
@@ -1017,6 +1203,7 @@ export async function updateCustomProviderIfUnchanged(
     .set({
       name: nextConfig.name,
       runtimes: JSON.stringify(nextConfig.runtimes),
+      channels: nextConfig.channels ? JSON.stringify(nextConfig.channels) : null,
       auth: nextConfig.auth ? JSON.stringify(nextConfig.auth) : null,
       updatedAt: nextUpdatedAt(now, existing.updatedAt),
     })

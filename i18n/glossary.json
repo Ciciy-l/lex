@@ -2273,6 +2273,18 @@
         "ko": "작업대"
       },
       "note": "伙伴主任务右侧栏里的标签：主人交给伙伴的项目，以及项目里的任务、自动化与产出（docs/product-rules/cindy-bots-runtime.md「工作台」一节）。只指这个伙伴视图，不泛指任务列表或其它面板。先登记为 proposed，待 Chris 实机试用后再定。"
+    },
+    {
+      "id": "provider-channel",
+      "status": "proposed",
+      "en": "Channel",
+      "translations": {
+        "zh-CN": "渠道",
+        "zh-TW": "渠道",
+        "ja": "チャネル",
+        "ko": "채널"
+      },
+      "note": "A named provider connection with protocol-specific URL and credentials; distinct from an engine and from a release channel."
     }
   ]
 }

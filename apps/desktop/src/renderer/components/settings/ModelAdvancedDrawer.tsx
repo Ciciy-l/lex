@@ -282,7 +282,8 @@ export function ModelAdvancedDrawer({
     [contextAgent, contextModel, provider.id, row, chatAgents],
   );
   const ctx = useModelContextLimit(open ? contextTarget : null);
-  const canEditProtocol = provider.source === 'user' && !provider.auth?.native && !isManagedSidecarProviderId(provider.id);
+  const canEditProtocol = provider.source === 'user' && !provider.channel &&
+    !provider.auth?.native && !isManagedSidecarProviderId(provider.id);
   const setModelApi = async (agent: AgentKind, api: PiModelApi) => {
     if (protocolSaving || !canEditProtocol || !row?.byAgent[agent]) return;
     const config = providerViewToCustomProviderConfig(provider);

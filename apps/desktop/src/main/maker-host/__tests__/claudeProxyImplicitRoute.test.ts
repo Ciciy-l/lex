@@ -65,7 +65,7 @@ import {
 } from '../provider-route';
 import { getActiveCatalog, setCustomProviders } from '../active-catalog';
 import * as providerRoute from '../provider-route';
-import { buildRegistry, buildUserProvider, providerPresetOAuth, PROVIDER_MODEL_CATALOG } from '@cindy/model-providers';
+import { buildRegistry, buildUserProvider, buildUserProviderChannels, providerPresetOAuth, PROVIDER_MODEL_CATALOG } from '@cindy/model-providers';
 import { clearSessionProvider, setSessionProvider } from '../session-provider-store';
 import {
   readClaudeSessionRoute,
@@ -119,6 +119,26 @@ describe('cc routingTransform — ①.5 隐式来源路由 (智谱 glm-5.3 裸 i
     setProviderViewsReader(async () => []);
     clearSessionProvider('sess-race');
     resetClaudeSessionRouteRegistryForTest();
+  });
+
+  it.each(['chatgpt/private-model', 'xai/private-model'])('keeps the explicit channel for a model named %s', async model => {
+    setCustomProviders(buildUserProviderChannels({
+      id: 'supplier', name: 'Supplier', runtimes: {}, channels: { version: 1, channels: [{
+        id: 'channel-primary', name: 'Primary', protocols: {
+          'anthropic-messages': { baseUrl: 'https://channel.example', models: [{ id: model, name: model }] },
+        },
+      }] },
+    }));
+    setClaudeProxySessionIdResolver(() => 'sess-race');
+    setSessionProvider('sess-race', 'channel-primary');
+    const ctx = ctxWith({ 'x-claude-code-session-id': 'sdk-race' });
+    const decision = await transform({ model }, ctx);
+    expect(decision).toMatchObject({ upstreamOverride: 'https://channel.example' });
+    expect(decision?.localHandler).toBeUndefined();
+    setCustomProviders([]);
+    const unavailable = await transform({ model }, ctxWith({ 'x-claude-code-session-id': 'sdk-race' }));
+    expect(unavailable?.localHandler).toBeTypeOf('function');
+    expect(unavailable?.upstreamOverride).toBeUndefined();
   });
 
   it.each(['openai-chat', 'openai-responses', 'google-generative-ai'] as const)('selects the Claude translation handler for a saved %s connection', wireProtocol => {
@@ -305,10 +325,14 @@ describe('cc routingTransform — ①.5 隐式来源路由 (智谱 glm-5.3 裸 i
         id: 'zhipu-plan', name: 'Zhipu Plan', runtimes: {},
       })]);
       const decision = await transform({ model: 'claude-opus-5' }, ctxWith(headers));
+      expect(decision?.localHandler).toBeTypeOf('function');
+      expect(decision?.upstreamOverride).toBeUndefined();
       const writeHead = vi.fn();
       const end = vi.fn();
       await decision?.localHandler?.({ res: { writeHead, end } } as never);
-      expect(writeHead).toHaveBeenCalledWith(503, expect.objectContaining({ 'retry-after': '1' }));
+      expect(writeHead).toHaveBeenCalledWith(503, expect.objectContaining({
+        'retry-after': '1', 'cache-control': 'no-store',
+      }));
       expect(JSON.parse(end.mock.calls[0][0])).toMatchObject({
         error: { code: 'provider_route_unavailable' },
       });
@@ -319,6 +343,33 @@ describe('cc routingTransform — ①.5 隐式来源路由 (智谱 glm-5.3 裸 i
       expect(retry).toMatchObject({ upstreamOverride: ZHIPU_UPSTREAM });
     },
   );
+
+  it('keeps an existing disabled Claude route non-retryable and never borrows another source', async () => {
+    const provider = buildUserProvider({
+      id: 'zhipu-plan', name: 'Disabled Claude', runtimes: {
+        'claude-code': { baseUrl: ZHIPU_UPSTREAM, wireProtocol: 'anthropic-messages',
+          models: [{ id: 'claude-opus-5', name: 'Opus' }] },
+      },
+    });
+    provider.routing['claude-code'] = { ...provider.routing['claude-code']!, disabled: true };
+    setCustomProviders([provider]);
+    setClaudeProxySessionIdResolver(() => 'sess-race');
+    setSessionProvider('sess-race', provider.id);
+    const decision = await transform({ model: 'claude-opus-5' },
+      ctxWith({ 'x-claude-code-session-id': 'sdk-race', 'x-api-key': 'sk-gw' }));
+    expect(decision?.localHandler).toBeTypeOf('function');
+    expect(decision?.upstreamOverride).toBeUndefined();
+    const writeHead = vi.fn();
+    const end = vi.fn();
+    await decision?.localHandler?.({ res: { writeHead, end } } as never);
+    expect(writeHead).toHaveBeenCalledWith(503, {
+      'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store',
+    });
+    expect(JSON.parse(end.mock.calls[0][0])).toMatchObject({
+      error: { code: 'provider_route_disabled' },
+    });
+    expect(outbound).not.toHaveBeenCalled();
+  });
 
   it('session resolver failure is not an unbound request and cannot borrow gateway credentials (#3631)', async () => {
     setClaudeProxySessionIdResolver(() => { throw new Error('session lookup unavailable'); });

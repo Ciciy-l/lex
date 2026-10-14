@@ -1571,6 +1571,7 @@ export interface AgentDeps {
    */
   remoteCcQueryFactory?: (opts: {
     remoteHostId: string;
+    hostManagedProviderRoute?: { providerId: string; model: string };
     /** Inject the narrow helper transport for a Bot runtime. */
     botSession?: boolean;
     sessionId: string;
@@ -1666,12 +1667,26 @@ export interface AgentDeps {
     providerId?: string | null;
     model: string;
   }) => Promise<RemoteClaudeRoute | null>;
+  /** Task-scoped SSH route. Credentials remain on the controller; the returned
+   * headers authorize only this task and are revoked on close/startup failure. */
+  openRemoteProviderChannelRoute?: (opts: {
+    remoteHostId: string;
+    sessionId: string;
+    providerId?: string | null;
+    model: string;
+    agent: "claude-code" | "codex";
+  }) => Promise<{
+    endpoint: string;
+    headers: Record<string, string>;
+    release(): Promise<void>;
+  } | null>;
 }
 
 /**
  * 远端 Claude Code 会话解析出的上游 + 鉴权 env(见 AgentDeps.resolveRemoteClaudeRoute)。
  */
 export interface RemoteClaudeRoute {
+  hostManaged?: boolean;
   /** 远端 cc 子进程 ANTHROPIC_BASE_URL 的最终取值(供应商真上游,绝不是本机 loopback)。 */
   endpoint: string;
   /**

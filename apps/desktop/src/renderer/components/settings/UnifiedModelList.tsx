@@ -672,7 +672,7 @@ export function UnifiedModelList({
       return next;
     });
     void window.electronAPI.maker
-      .setModelDisable({ kind: 'reset', providerId: provider.id })
+      .setModelDisable({ kind: 'reset', providerId: provider.channel?.supplierId ?? provider.id })
       .catch(() => {
         setPendingDisabled((prev) => {
           const next = { ...prev };
@@ -683,7 +683,7 @@ export function UnifiedModelList({
         });
         toast.error(t('settings.providers.models.accessWriteFailed'));
       });
-  }, [hasLockedDisabledRow, unionRows, pendingDisabled, provider.id, selectionAvailable, t]);
+  }, [hasLockedDisabledRow, unionRows, pendingDisabled, provider.id, provider.channel?.supplierId, selectionAvailable, t]);
 
   /**
    * 该来源真实存在的**输出类型**:对话 + 各能力类型(图像 / 视频 / 语音…)。

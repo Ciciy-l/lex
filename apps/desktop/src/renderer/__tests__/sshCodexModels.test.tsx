@@ -60,7 +60,7 @@ afterEach(() => {
 });
 
 describe('SSH Codex host model discovery', () => {
-  it('uses the host default despite controller catalog failure and rejects explicit non-native sources', async () => {
+  it('uses the host default and rejects an explicit source absent from the host catalog', async () => {
     mocks.list.mockResolvedValueOnce([provider('host-default')]);
     await expect(loadSshSessionModelSelection('builder', {
       agentKind: 'codex',
@@ -75,11 +75,38 @@ describe('SSH Codex host model discovery', () => {
     expect(mocks.list).toHaveBeenCalledExactlyOnceWith('builder');
 
     mocks.list.mockClear();
+    mocks.list.mockResolvedValueOnce([provider('host-default')]);
     await expect(loadSshSessionModelSelection('builder', {
       agentKind: 'codex',
       preferred: { model: 'controller-model', providerId: 'custom-provider' },
     })).resolves.toEqual({ ok: false, reason: 'unsupported-codex-source' });
-    expect(mocks.list).not.toHaveBeenCalled();
+    expect(mocks.list).toHaveBeenCalledExactlyOnceWith('builder');
+  });
+
+  it('uses the exact fixed channel from the host catalog without borrowing a same-name native model', async () => {
+    const channel: ProviderView = {
+      ...provider('shared-model'),
+      id: 'primary--openai-chat',
+      source: 'user',
+      auth: { method: 'apiKey' },
+      channel: { supplierId: 'supplier', id: 'primary', name: 'Primary',
+        protocols: ['openai-chat'], protocol: 'openai-chat' },
+      routing: { codex: { upstream: 'https://channel.example/v1',
+        authStrategy: 'api-key-header', wireProtocol: 'openai-chat' } },
+    };
+    mocks.list.mockResolvedValueOnce([provider('shared-model'), channel]);
+    await expect(loadSshSessionModelSelection('builder', {
+      agentKind: 'codex',
+      preferred: { model: 'shared-model', providerId: channel.id },
+    })).resolves.toEqual({ ok: true, model: 'shared-model', providerId: channel.id,
+      effort: 'high', fastMode: false });
+    expect(mocks.list).toHaveBeenCalledExactlyOnceWith('builder');
+
+    mocks.list.mockResolvedValueOnce([provider('shared-model')]);
+    await expect(loadSshSessionModelSelection('builder', {
+      agentKind: 'codex',
+      preferred: { model: 'shared-model', providerId: channel.id },
+    })).resolves.toEqual({ ok: false, reason: 'unsupported-codex-source' });
   });
 
   it('does not replace an explicit model absent from this host or fall back after a read failure', async () => {

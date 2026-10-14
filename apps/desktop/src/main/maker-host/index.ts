@@ -17,6 +17,8 @@ import { isCodexAccountProvider, setCodexAccountRetirement } from './codex-accou
 import { ownerCodexThreadLocations, readCodexThreadStorageReadOnly } from './codex-thread-storage.js';
 import { getActiveAppSession, activeOwnerScopeKey, isAppSessionBoundaryPending } from '../appSessionState.js';
 import { remoteCodexProvider } from './ssh-codex-models.js';
+import { openRemoteProviderChannelRoute, resetRemoteProviderChannelRoutes } from './remote-provider-channel-forward.js';
+import { publicProviderView } from './provider-public-view.js';
 import { getActiveAuthRealm } from '../authManager.js';
 import { getCustomProvider, updateCustomProviderIfUnchanged } from './custom-provider-store.js';
 import { refreshCustomProvidersIntoCatalog } from './createDesktopProviderService.js';
@@ -1336,6 +1338,7 @@ export function getMaker(): Maker {
       // factory 返回时直接 `as unknown as Query` cast 即可。
       remoteCcQueryFactory: async ({
         remoteHostId,
+        hostManagedProviderRoute,
         sessionId,
         sessionInstanceId,
         startParams,
@@ -1446,6 +1449,7 @@ export function getMaker(): Maker {
         // fresh 过」时生效, attach 回持旧 Authorization/URL 的 query
         // (codex-connector R27 P1)。fresh 集合只豁免「同代际的重复注入」。
         const forceFreshQuery =
+          !!hostManagedProviderRoute ||
           ((injectedServerCount > 0 ||
             mcpNeedsFreshStart ||
             staleInvalidatedCcSessions.has(sessionId)) &&
@@ -1465,8 +1469,27 @@ export function getMaker(): Maker {
             }
           : startParams;
 
+        let channelRoute: Awaited<ReturnType<typeof openRemoteProviderChannelRoute>> = null;
         const { remoteQuery, dispose, detach } = await (async () => {
           try {
+            if (hostManagedProviderRoute) {
+              channelRoute = await openRemoteProviderChannelRoute(
+                { remoteHostId, sessionId, ...hostManagedProviderRoute, agent: 'claude-code' },
+                getClaudeEndpoint(),
+              );
+              if (!channelRoute) throw new Error('Selected SSH provider channel is unavailable');
+              const params = startParamsWithProxy as { env?: Record<string, string> };
+              params.env = {
+                ...params.env,
+                ANTHROPIC_BASE_URL: channelRoute.endpoint,
+                ANTHROPIC_API_KEY: 'cindy-host-managed-channel',
+                ANTHROPIC_CUSTOM_HEADERS: Object.entries(channelRoute.headers)
+                  .map(([key, value]) => key + ': ' + value)
+                  .join('\n'),
+              };
+              delete params.env.ANTHROPIC_AUTH_TOKEN;
+              delete params.env.CLAUDE_CODE_OAUTH_TOKEN;
+            }
             return await openCcManagerSession({
               host,
               sessionId,
@@ -1486,6 +1509,7 @@ export function getMaker(): Maker {
               forceFreshQuery,
             });
           } catch (err) {
+            await channelRoute?.release();
             // openCcManagerSession 失败时上面注册的 per-session ctx / forward
             // intent 必须清掉,否则残留到同 session 下一次重建或应用退出。
             try {
@@ -1518,6 +1542,7 @@ export function getMaker(): Maker {
         // close 同时注销 per-session MCP token (detach 不清:detach 是断传输
         // 保 session, 重连时 factory 会重新注册)。
         const disposeWithMcpCleanup = async (): Promise<void> => {
+          await channelRoute?.release();
           try {
             mcpCleanup();
           } catch (err) {
@@ -1530,7 +1555,10 @@ export function getMaker(): Maker {
         };
         const remoteQueryWithDispose = Object.assign(remoteQuery, {
           close: disposeWithMcpCleanup,
-          detach,
+          detach: async () => {
+            await channelRoute?.release();
+            return detach();
+          },
         });
         return remoteQueryWithDispose as unknown as RemoteCcQuery;
       },
@@ -2129,6 +2157,8 @@ export function getMaker(): Maker {
           },
         });
       },
+      openRemoteProviderChannelRoute: (opts) =>
+        openRemoteProviderChannelRoute(opts, getCodexProxyEndpoint()),
     });
 
     // 模块级回填 codexAgent 引用 —— restartCodexAfterAuthModeChange() 需要它在
@@ -3163,10 +3193,19 @@ export async function listSshCodexProviders(hostId: string) {
     assertCurrent();
     const agent = _codexAgent;
     if (!agent) throw new Error('Codex is not ready');
-    const models = await agent.listRemoteModels(hostId);
+    const channels = (await getDesktopProviderService().listProviders({ allowSideEffects: false }))
+      .filter((provider) => provider.channel && provider.agents.includes('codex'))
+      .map((provider) => publicProviderView(provider));
+    assertCurrent();
+    let native: ReturnType<typeof remoteCodexProvider>[] = [];
+    try {
+      native = [remoteCodexProvider(await agent.listRemoteModels(hostId))];
+    } catch (error) {
+      if (!channels.length) throw error;
+    }
     assertCurrent();
     if (_codexAgent !== agent) throw new Error('Codex runtime changed');
-    return [remoteCodexProvider(models)];
+    return [...native, ...channels];
   } finally {
     stopListening();
   }
@@ -3278,6 +3317,7 @@ export async function preflightBotRuntimeResources(
  * 重置 Maker 单例（切账号 / 测试用）。
  */
 export function resetMaker(): void {
+  resetRemoteProviderChannelRoutes();
   cancelCodexAuthModeChange();
   setAnthropicModelProbe(null);
   setCodexAppliedCustomProviderRoutes([]);

@@ -7,6 +7,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import type { ProviderChannelKeys } from '../../shared/customProviderUpdate.js';
 import { validateHeaderName, validateHeaderValue } from 'node:http';
 import {
   isLoopbackProviderUrl,
@@ -762,7 +763,8 @@ function normalizedUrl(value: string): string {
 export function importKeysForCurrentConfig(
   draft: ProviderImportDraft,
   current: CustomProviderConfig,
-): void {
+  selectedChannelId?: string,
+): ProviderChannelKeys | undefined {
   if (
     draft.kind !== 'custom' ||
     (draft.config.auth?.method ?? 'apiKey') !== 'apiKey' ||
@@ -773,14 +775,18 @@ export function importKeysForCurrentConfig(
     fail('connection cannot receive imported keys');
   const agents = AGENTS.filter((agent) => draft.keys[agent]);
   if (!agents.length) fail('no API keys to update');
+  const channel = current.channels?.channels.find((entry) => entry.id === selectedChannelId);
+  if (current.channels && !channel) fail('select a specific channel to update');
+  const channelKeys: ProviderChannelKeys = {};
   for (const agent of agents) {
     const incoming = draft.config.runtimes[agent]!;
-    const existing = current.runtimes[agent];
-    const protocol = (value: typeof existing) =>
+    const protocol = (value: CustomProviderConfig['runtimes'][AgentKind]) =>
       value?.wireProtocol ??
       (agent === 'claude-code' || agent === 'omp'
         ? 'anthropic-messages'
         : 'openai-responses');
+    const wire = protocol(incoming);
+    const existing = channel ? channel.protocols[wire] : current.runtimes[agent];
     if (
       !existing ||
       normalizedUrl(incoming.baseUrl) !== normalizedUrl(existing.baseUrl) ||
@@ -788,11 +794,28 @@ export function importKeysForCurrentConfig(
       (incoming.requestPath ?? '') !== (existing.requestPath ?? '')
     )
       fail('connection destinations changed');
+    if (channel) {
+      const previous = channelKeys[channel.id]?.[wire];
+      if (previous !== undefined && previous !== draft.keys[agent])
+        fail('conflicting keys for the same channel protocol');
+      channelKeys[channel.id] = { ...channelKeys[channel.id], [wire]: draft.keys[agent] };
+    }
   }
+  return channel ? channelKeys : undefined;
 }
 
 function canUpdate(draft: ProviderImportDraft, provider: ProviderView): boolean {
   if (provider.source !== 'user') return false;
+  if (provider.channel) {
+    if (provider.channel.protocol || provider.channel.legacy || !provider.customConfig)
+      return false;
+    try {
+      importKeysForCurrentConfig(draft, provider.customConfig, provider.channel.id);
+      return true;
+    } catch {
+      return false;
+    }
+  }
   const runtimes: CustomProviderConfig['runtimes'] = {};
   for (const agent of AGENTS) {
     const route = provider.routing[agent];

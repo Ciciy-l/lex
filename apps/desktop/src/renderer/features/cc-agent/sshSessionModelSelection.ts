@@ -67,9 +67,6 @@ export async function loadSshSessionModelSelection(
   if (agentKind !== 'codex') {
     return { ok: false, reason: 'no-route' };
   }
-  if (args.preferred?.providerId && args.preferred.providerId !== 'openai') {
-    return { ok: false, reason: 'unsupported-codex-source' };
-  }
   try {
     const providers = await window.electronAPI.remoteSsh.listCodexModels(hostId);
     return resolveSshSessionModelSelection({
@@ -101,14 +98,18 @@ export function resolveSshSessionModelSelection(args: {
   if (args.loading) return { ok: false, reason: 'catalog-loading' };
 
   const { agentKind, preferred } = args;
-  if (agentKind === 'codex' && preferred?.providerId && preferred.providerId !== 'openai') {
+  if (agentKind === 'codex' && preferred?.providerId && preferred.providerId !== 'openai' &&
+    !args.providers.some((provider) => provider.id === preferred.providerId && provider.channel)
+  ) {
     return { ok: false, reason: 'unsupported-codex-source' };
   }
 
   const sourceCandidates =
     agentKind === 'codex'
       ? args.providers.filter(
-          (provider) => provider.id === 'openai' && isOpenAiSubscriptionProvider(provider),
+          (provider) =>
+            (provider.id === 'openai' && isOpenAiSubscriptionProvider(provider)) ||
+            !!provider.channel,
         )
       : args.providers;
   const connected = filterChatBridgedCodexProviders(
@@ -129,7 +130,7 @@ export function resolveSshSessionModelSelection(args: {
       [agentKind]: (provider.models[agentKind] ?? []).filter(
         (model) =>
           isModelSelectableForNewRoute(model, { userProvider: provider.source === 'user' }) &&
-          !(excludeSubscriptionDirect && isSubscriptionDirectModel(model.id)),
+          !(excludeSubscriptionDirect && !provider.channel && isSubscriptionDirectModel(model.id)),
       ),
     },
   }));

@@ -25,6 +25,8 @@ import { ownerScopedUserDataPath } from '../appSessionState.js';
 import { createOverrideSettingsFile } from '../maker-host/override-settings-file.js';
 import { desktopMakerLogger } from '../maker-host/logger-adapter.js';
 import { currentLedgerCurrency } from './ledgerCurrency.js';
+import { getActiveCatalog } from '../maker-host/active-catalog.js';
+import { providerChannelPreferenceTarget } from '../maker-host/provider-channel-preferences.js';
 
 const log = desktopMakerLogger.child('model-price-overrides');
 const STORE_VERSION = 1;
@@ -53,7 +55,7 @@ interface ModelPriceOverridePrefs {
 const DEFAULTS: ModelPriceOverridePrefs = { version: STORE_VERSION, entries: {} };
 
 function isAgent(value: unknown): value is AgentKind {
-  return value === 'claude-code' || value === 'codex' || value === 'pi';
+  return value === 'claude-code' || value === 'codex' || value === 'pi' || value === 'omp';
 }
 
 function isCurrency(value: unknown): value is MoneyCurrency {
@@ -433,7 +435,7 @@ export function readModelPriceOverrideView(
     remoteReference && currencyCanProjectToLedger(remoteReference.currency, ledgerCurrency)
       ? remoteReference
       : undefined;
-  const record = readEntries()[overrideKey(target)];
+  const record = readEntries()[overrideKey(providerChannelPreferenceTarget(target))];
   const merged = mergedQuote(target, reference, record?.values, record?.baseReference);
   return {
     target,
@@ -463,6 +465,7 @@ export function setModelPriceOverride(
   });
   const baseReference = comparable(reference);
   const values = sparseValues(desired, baseReference);
+  target = providerChannelPreferenceTarget(target);
   const entries = { ...readEntries() };
   const key = overrideKey(target);
   if (Object.keys(values).length === 0) {
@@ -485,6 +488,7 @@ export function setModelPriceOverride(
 }
 
 export function clearModelPriceOverride(target: ModelPriceOverrideTarget): void {
+  target = providerChannelPreferenceTarget(target);
   const entries = { ...readEntries() };
   const key = overrideKey(target);
   if (!(key in entries)) return;
@@ -540,9 +544,9 @@ export function mergeStoredModelPriceOverride(
   reference: ModelPriceQuote | undefined,
   entries: ModelPriceOverridesSnapshot = readEntries(),
 ): ModelPriceQuote | undefined {
-  const record = entries[overrideKey(target)];
+  const record = entries[overrideKey(providerChannelPreferenceTarget(target))];
   if (!record) return undefined;
-  return mergedQuote(record, reference, record.values, record.baseReference);
+  return mergedQuote(target, reference, record.values, record.baseReference);
 }
 
 export function applyModelPriceOverrides(
@@ -562,7 +566,8 @@ export function applyModelPriceOverrides(
       ),
     ]),
   );
-  for (const record of Object.values(readEntries())) {
+  const entries = readEntries();
+  for (const record of Object.values(entries)) {
     if (record.providerId === 'xd') continue;
     const reference = providerReferencePriceQuote(record.providerId, record.modelId, registry, {
       agent: record.agent,
@@ -570,6 +575,18 @@ export function applyModelPriceOverrides(
     const quote = mergedQuote(record, reference, record.values, record.baseReference);
     if (!quote || !currencyCanProjectToLedger(quote.currency, ledgerCurrency)) continue;
     (next[record.providerId] ??= {})[modelPricingKey(record.modelId, record.agent)] = quote;
+  }
+  for (const provider of getActiveCatalog().providers) {
+    if (!provider.channel || provider.channel.legacy) continue;
+    for (const [agent, models] of Object.entries(provider.models)) {
+      for (const model of models ?? []) {
+        const target = { providerId: provider.id, agent: agent as AgentKind, modelId: model.id };
+        const reference = providerReferencePriceQuote(provider.id, model.id, registry, { agent: target.agent });
+        const quote = mergeStoredModelPriceOverride(target, reference, entries);
+        if (quote && currencyCanProjectToLedger(quote.currency, ledgerCurrency))
+          (next[provider.id] ??= {})[modelPricingKey(model.id, target.agent)] = quote;
+      }
+    }
   }
   return next;
 }

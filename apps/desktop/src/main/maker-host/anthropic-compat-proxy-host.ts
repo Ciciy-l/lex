@@ -17,6 +17,11 @@
  */
 
 import {
+  consumeRemoteChannelSession,
+  remoteChannelSession,
+  remoteChannelRequestCurrent,
+} from './remote-provider-channel-auth.js';
+import {
   createAnthropicCompatProxy,
   createActiveStripTransform,
   createDuplicateToolUseIdRecoveryRule,
@@ -124,7 +129,8 @@ import {
 } from './pi-proxy-session-auth.js';
 import {
   authenticateOmpProxySession,
-  readOmpBearerToken,
+  readOmpRequestToken,
+  parseOmpGoogleRequest,
 } from './omp-proxy-session-auth.js';
 import {
   OMP_CINDY_PROVIDER_ID_HEADER,
@@ -145,7 +151,7 @@ let _initialized = false;
 // 复刻 codex-proxy-host.ts 的 setCodexProxyGatewayKeyReader 套路。
 let _readGatewayKey: () => string | null = () => null;
 
-function attachClaudeProviderBridge(route: RoutingDecision, providerId: string, wireModel: string, sessionId?: string): RoutingDecision {
+function attachClaudeProviderBridge(route: RoutingDecision, providerId: string, wireModel: string, sessionId?: string, ctx?: RequestTransformCtx): RoutingDecision {
   if (route.localHandler) return route;
   const provider = getActiveCatalog().providers.find(p => p.id === providerId);
   const model = provider?.models['claude-code']?.find(m => m.id === wireModel);
@@ -167,13 +173,20 @@ function attachClaudeProviderBridge(route: RoutingDecision, providerId: string, 
       supportsFastMode: model.supportsFastMode === true,
       providerId: provider.id,
       catalogPresetId: model.catalogPresetId,
+      assertCurrent: () => {
+        if (ownerBoundDispatchUnsafe(ctx) || route.dispatchGenerationValid?.() === false)
+          throw new Error('Provider channel changed before dispatch');
+      },
       ...(row && (protocol === 'openai-chat' || model.api) ? { model: row, nativeUpstream: base } : {}),
       capabilities: {
         ...(model.supportsImageInput ? { imageInput: 'image_url' as const } : {}),
         reasoningField: thinkingFormat === 'qwen' ? 'enable_thinking'
           : thinkingFormat === 'zai' ? 'thinking.type' : 'reasoning_effort',
       },
-      fetchImpl: outboundFetch,
+      fetchImpl: async (url, init) => {
+        if (route.dispatchGenerationValid?.() === false) throw new Error('Provider channel changed before dispatch');
+        return outboundFetch(url, init);
+      },
     });
     return { ...route, localHandler: args => handler.handle({ ...args,
       prefs: { reasoningEffort: (sessionId ? getSessionEffort(sessionId) : null) ?? model.defaultEffort ?? undefined,
@@ -384,6 +397,7 @@ function stampOwnerScope(ctx: RequestTransformCtx): string | null {
 
 /** pending,或这条请求开始后 owner generation 已经变了。 */
 function ownerBoundDispatchUnsafe(ctx?: RequestTransformCtx): boolean {
+  if (ctx && !remoteChannelRequestCurrent(ctx.headers, 'claude-code')) return true;
   if (isOwnerBoundaryPending()) return true;
   const start = ctx ? stampOwnerScope(ctx) : readOwnerScopeKey();
   if (start === null) return true;
@@ -525,7 +539,8 @@ function resolveOmpRoute(
       'OMP proxy request without a session id.',
     );
   }
-  const bearer = readOmpBearerToken(ctx.headers);
+  const googleRequest = parseOmpGoogleRequest(ctx.url);
+  const bearer = readOmpRequestToken(ctx.headers, ctx.url);
   if (bearer === null || !authenticateOmpProxySession(sessionId, bearer)) {
     return localErrorRoute(
       401,
@@ -544,6 +559,9 @@ function resolveOmpRoute(
         ...(decision.headerDelete ?? []),
         OMP_CINDY_SESSION_ID_HEADER,
         OMP_CINDY_PROVIDER_ID_HEADER,
+        // A process token is never an upstream Google credential. Keep only
+        // the replacement supplied by the authenticated host route.
+        ...(googleRequest && decision.headerOverride?.['x-goog-api-key'] ? [] : ['x-goog-api-key']),
       ]),
     ],
   });
@@ -555,7 +573,29 @@ function resolveOmpRoute(
       'The selected OMP provider route is unavailable.',
     );
   const resolve = (decision: RoutingDecision | null): RoutingDecision => {
-    if (decision) return stripOmpHeaders(decision);
+    // Keep OMP's selected-source error contract even when the generic resolver
+    // returns a fail-closed tombstone for an absent channel/provider.
+    if (selectedProviderId && !getActiveCatalog().providers.some(
+      (provider) => provider.id === selectedProviderId,
+    )) return unavailableSelectedProvider();
+    if (decision) {
+      if (
+        googleRequest &&
+        !decision.localHandler &&
+        selectedProviderId &&
+        selectedProviderId !== 'xd'
+      ) {
+        const provider = getActiveCatalog().providers.find(
+          (entry) => entry.id === selectedProviderId,
+        );
+        const routing = provider
+          ? providerRoutingForModel(provider, 'omp', googleRequest.model)
+          : null;
+        if (routing?.wireProtocol !== 'google-generative-ai') return unavailableSelectedProvider();
+        return stripOmpHeaders({ ...decision, pathOverride: routing.requestPath ?? googleRequest.path });
+      }
+      return stripOmpHeaders(decision);
+    }
     // A selected source is an authorization boundary.  Do not let a temporarily
     // missing / incompatible / mutated OMP route fall through to Cindy Gateway.
     if (selectedProviderId) return unavailableSelectedProvider();
@@ -634,14 +674,18 @@ function unavailablePiProviderRoute(providerId: string): RoutingDecision {
  */
 export function createModelRoutingTransform(): RoutingTransform {
   const route: RoutingTransform = (body, ctx) => {
+    const remoteSession = consumeRemoteChannelSession(ctx.headers, 'claude-code');
+    if (remoteSession === false) return unavailablePiProviderRoute('remote-channel');
     // OMP 先于 Pi 判定:OMP 不会带任何 pi-* 头,放前面不会误伤既有链路,
     // 也让「OMP 未通过鉴权」绝无可能掉进 Pi / Claude 的默认路由。
     const claimedOmpSessionId = headerValue(ctx.headers, OMP_CINDY_SESSION_ID_HEADER);
     const claimedOmpProviderId = headerValue(ctx.headers, OMP_CINDY_PROVIDER_ID_HEADER);
     if (claimedOmpSessionId !== null || claimedOmpProviderId !== null) {
-      const ompWireModel = isPlainObject(body) && typeof body.model === 'string'
+      const ompWireModel =
+        parseOmpGoogleRequest(ctx.url)?.model ??
+        (isPlainObject(body) && typeof body.model === 'string'
         ? body.model
-        : undefined;
+        : undefined);
       return resolveOmpRoute(ctx, claimedOmpSessionId, ompWireModel);
     }
     const claimedPiSessionId = headerValue(ctx.headers, 'x-cindy-pi-session-id');
@@ -748,9 +792,11 @@ export function createModelRoutingTransform(): RoutingTransform {
     // 非 JSON 的 POST/PUT/PATCH 不经过这里,由响应侧 observer 兜底观察活动。
     // 开销 = 一次 header 读 + 一次活跃会话表反解 + Map.set,非 per-token 路径。
     const sdkSessionId = ctx.headers['x-claude-code-session-id'];
-    const ccSessionId = sdkSessionId && _resolveCcSessionId
+    const ccSessionId =
+      remoteChannelSession(ctx.headers, 'claude-code') ??
+      (sdkSessionId && _resolveCcSessionId
       ? _resolveCcSessionId(sdkSessionId)
-      : null;
+      : null);
     const sessionId = piSessionId ?? ccSessionId;
     if (sdkSessionId) {
       recordClaudeApiActivity(
@@ -760,13 +806,35 @@ export function createModelRoutingTransform(): RoutingTransform {
     }
     if (ccSessionId) noteClaudeSessionRequest(ccSessionId, ctx.reqId);
     if (!isPlainObject(body)) return null;
-    const wireModel = typeof body.model === 'string' ? body.model : '';
+    const wireModel =
+      (piSessionId ? parseOmpGoogleRequest(ctx.url)?.model : undefined) ??
+      (typeof body.model === 'string' ? body.model : '');
     const pendingRoute = sessionId
       ? resolvePendingSessionRouteDecision(sessionId, wireModel || undefined)
       : null;
     if (pendingRoute) return pendingRoute;
 
     const selectedProviderId = sessionId ? getSessionProvider(sessionId) : null;
+    // A deleted explicit channel must not become a subscription-prefix request.
+    if (selectedProviderId && !getActiveCatalog().providers.some(provider => provider.id === selectedProviderId)) {
+      // Claude's missing-source contract is retryable; Pi retains its own error interface.
+      return piSessionId ? unavailablePiProviderRoute(selectedProviderId) : retryableLocalRoute(
+        'provider_route_unavailable',
+        'The selected provider route is unavailable; check its configuration and retry.',
+      );
+    }
+    if (
+      remoteSession &&
+      (!selectedProviderId ||
+        !getActiveCatalog().providers.some(
+          (provider) =>
+            provider.id === selectedProviderId &&
+            provider.channel &&
+            provider.models['claude-code']?.some((model) => model.id === wireModel),
+        ))
+    ) {
+      return unavailablePiProviderRoute('remote-channel');
+    }
     const applyExclusiveReroute = shouldApplyExclusiveProviderReroute(
       selectedProviderId,
       getActiveCatalog().providers,
@@ -795,10 +863,11 @@ export function createModelRoutingTransform(): RoutingTransform {
       return refuseExclusiveXaiDefaultGateway(wireModel);
     }
     // 显式自定义供应商 + 裸 grok id 必须走 ① 的用户上游,不能仅凭模型名劫持到 SuperGrok。
-    // `xai/` / `chatgpt/` 前缀仍是订阅户口,按 per-request 进 bridge。
+    // Canonical channels own their model namespace, including xai/ or chatgpt/.
     if (
       !piSessionId
       && isSubscriptionDirectRoute(wireModel)
+      && !getActiveCatalog().providers.find(provider => provider.id === selectedProviderId)?.channel
       && !(explicitCustomProvider && !isXaiSubscriptionProviderId(selectedProviderId) && isExclusiveXaiModelId(wireModel) && !wireModel.startsWith(XAI_MODEL_PREFIX))
     ) {
       const bridgeHandler = getResponsesBridgeHandler((isOpenAiSubscriptionProviderId(selectedProviderId) || isXaiSubscriptionProviderId(selectedProviderId)) ? selectedProviderId! : undefined);
@@ -831,6 +900,46 @@ export function createModelRoutingTransform(): RoutingTransform {
     }
 
     const gatewayKey = _readGatewayKey();
+
+    // Canonical channels use native Pi payloads with host-owned protocol keys.
+    // Both root and child requests have already passed the exact process-token
+    // and provider binding checks above. Never infer a different channel.
+    if (
+      piProviderId &&
+      getActiveCatalog().providers.find((provider) => provider.id === piProviderId)?.channel
+    ) {
+      return resolveProviderRouteDecision(piProviderId, 'pi', gatewayKey, wireModel)
+        .then((resolved) => {
+          if (!resolved?.decision || !wireModel) return unavailablePiProviderRoute(piProviderId);
+          const google = parseOmpGoogleRequest(ctx.url);
+          const wire = resolved.routing.wireProtocol;
+          const path = new URL(ctx.url, 'http://127.0.0.1').pathname;
+          const expected =
+            wire === 'anthropic-messages'
+              ? '/v1/messages'
+              : wire === 'openai-responses'
+                ? '/responses'
+                : '/chat/completions';
+          if (wire === 'google-generative-ai' ? !google : path !== expected)
+            return unavailablePiProviderRoute(piProviderId);
+          return {
+            ...resolved.decision,
+            ...(google ? { pathOverride: resolved.routing.requestPath ?? google.path } : {}),
+            headerDelete: [
+              ...new Set([
+                ...(resolved.decision.headerDelete ?? []),
+                'x-cindy-pi-session-id',
+                'x-cindy-pi-session-token',
+                'x-cindy-pi-provider-id',
+                ...(google && resolved.decision.headerOverride?.['x-goog-api-key']
+                  ? []
+                  : ['x-goog-api-key']),
+              ]),
+            ],
+          };
+        })
+        .catch(() => unavailablePiProviderRoute(piProviderId));
+    }
 
     if (subagentRoute && isPiGatewayRequest) {
       // A `cindy` child route is provider-null by design. Route it by the request API instead of
@@ -872,7 +981,12 @@ export function createModelRoutingTransform(): RoutingTransform {
         // A missing descriptor is not permission to use the default upstream.
         // Keep builtin subscription scope fallbacks, but pin explicit custom
         // requests even while their catalog/runtime is temporarily unavailable.
-        if (!route && ((requestAgent === 'claude-code' && explicitCustomProvider) || (requestAgent === 'pi' && piProviderId && piProviderId !== 'xd'))) {
+        const selectedProviderMissing = selectedProviderId && !getActiveCatalog().providers.some(
+          (provider) => provider.id === selectedProviderId,
+        );
+        // A missing catalog entry is retryable; an existing disabled channel
+        // retains the generic resolver's explicit disabled response.
+        if ((!route || selectedProviderMissing) && ((requestAgent === 'claude-code' && explicitCustomProvider) || (requestAgent === 'pi' && piProviderId && piProviderId !== 'xd'))) {
           return retryableLocalRoute(
             'provider_route_unavailable',
             'The selected provider route is unavailable; check its configuration and retry.',
@@ -890,7 +1004,7 @@ export function createModelRoutingTransform(): RoutingTransform {
           );
         }
         if (route && requestAgent === 'claude-code' && explicitCustomProvider && selectedProviderId) {
-          return attachClaudeProviderBridge(route, selectedProviderId, wireModel, sessionId);
+          return attachClaudeProviderBridge(route, selectedProviderId, wireModel, sessionId, ctx);
         }
         return isPiGatewayRequest ? sanitizePiGatewayDecision(route, ctx.url) : route;
       };
@@ -944,7 +1058,9 @@ export function createModelRoutingTransform(): RoutingTransform {
             bridged && bridgeRoute.routing.requestPath
               ? { ...bridged, pathOverride: bridgeRoute.routing.requestPath }
               : bridged;
-          if (withRequestPath) return attachClaudeProviderBridge(withRequestPath, bridgeRoute.providerId, wireModel, sessionId ?? undefined);
+          if (withRequestPath) return attachClaudeProviderBridge({ ...withRequestPath,
+            ...(bridgeRoute.isCurrent ? { dispatchGenerationValid: bridgeRoute.isCurrent } : {}),
+          }, bridgeRoute.providerId, wireModel, sessionId ?? undefined, ctx);
         }
         const implicitOAuth = resolveImplicitProviderOAuthRouteDecision(
           wireModel,

@@ -1,4 +1,4 @@
-import { isOpenAiSubscriptionProvider, type ProviderView } from '@cindy/model-providers';
+import { isOpenAiSubscriptionProvider, type Provider, type ProviderView } from '@cindy/model-providers';
 import { requireObject, requireString, throwIpcError } from '../utils/ipcValidate.js';
 
 export async function readSshCodexModelList(
@@ -10,10 +10,13 @@ export async function readSshCodexModelList(
   try {
     const providers = await read(hostId);
     const native = providers.find(
-      (provider) => provider.id === 'openai' && isOpenAiSubscriptionProvider(provider),
+    (provider) => provider.id === 'openai' && isOpenAiSubscriptionProvider(provider),
+  );
+    const channels = providers.filter(
+      (provider) => provider.channel && provider.models.codex?.length,
     );
-    if (!native?.models.codex?.length) throw new Error('Empty SSH Codex model list');
-    return [native];
+    if (!native?.models.codex?.length && !channels.length) throw new Error('Empty SSH Codex model list');
+    return [...(native ? [native] : []), ...channels];
   } catch {
     throwIpcError('SSH_EXEC_FAILED', 'Unable to read SSH Codex models; reconnect and retry');
   }
@@ -25,6 +28,13 @@ export function assertSshCodexModel(
   providerId?: string | null,
 ): void {
   if (providerId && providerId !== 'openai') {
+    const channel = providers.find((provider) => provider.id === providerId && provider.channel);
+    if (
+      channel?.connected &&
+      !channel.suspended &&
+      channel.models.codex?.some((candidate) => candidate.id === model && !candidate.disabled && !candidate.credentialUnavailable)
+    )
+      return;
     throwIpcError('INVALID_PARAMS', 'SSH Codex uses the remote native subscription route');
   }
   const native = providers.find(
@@ -51,6 +61,7 @@ export function isVerifiedSshCodexResume(
     remoteHostId: string | null;
     sdkSessionId: string | null;
   } | undefined,
+  providers: readonly Provider[] = [],
 ): boolean {
   return !!stored && request.agentKind === 'codex' && stored.agentKind === 'codex' &&
     !!request.id && !!request.remoteHostId && !!request.resumeSessionId &&
@@ -58,5 +69,7 @@ export function isVerifiedSshCodexResume(
     stored.sdkSessionId === request.resumeSessionId &&
     stored.model === request.model &&
     (stored.providerId ?? null) === (request.providerId ?? null) &&
-    (!request.providerId || request.providerId === 'openai');
+    (!request.providerId || request.providerId === 'openai' ||
+      providers.some(provider => provider.id === request.providerId && provider.channel &&
+        provider.models.codex?.some(model => model.id === request.model)));
 }

@@ -63,7 +63,8 @@ async function readSelection() {
   const available = availableAppDefaultModels({ providers, currentRoute: current,
     tuning: (agent, providerId, model) => getNewMakerModelTuning(owner, agent, providerId, model),
     availableAgents: new Set((getMakerIfReady()?.listAvailableAgents() ?? []).map(agent => agent === 'claude-code' ? 'cc' : agent)),
-    enabled: (agent, providerId, model) => isModelVisible(getModelVisibilityOverride(agent, providerId, model.id), model.defaultEnabled),
+    enabled: (agent, providerId, model) => isModelVisible(getModelVisibilityOverride(agent, providerId, model.id, model.visibilityAliases), model.defaultEnabled,
+      ),
   });
   return { owner, assertOwner, current, available };
 }

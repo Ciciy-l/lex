@@ -94,5 +94,38 @@
       "minute": "分钟",
       "second": "秒"
     }
+  },
+  "channels": {
+    "settingsTitle": "按协议配置渠道",
+    "settingsDescription": "每个协议可添加多个命名渠道。切换引擎时保留所选渠道。",
+    "supplierName": "供应商名称",
+    "protocol": "协议",
+    "channel": "渠道",
+    "defaultName": "默认渠道",
+    "numberedName": "渠道 {{number}}",
+    "add": "添加渠道",
+    "attach": "关联已有渠道",
+    "chooseChannel": "选择渠道",
+    "channelName": "渠道名称",
+    "keepKey": "未修改则保留已保存的密钥",
+    "modelIds": "模型 ID，每行一个",
+    "advanced": "高级设置",
+    "requestPath": "请求路径",
+    "modelsUrl": "模型列表 URL",
+    "removeProtocol": "移除此协议",
+    "restartRequired": "需要先停止正在运行的 Codex 任务，才能应用这些设置。",
+    "interruptAndSave": "停止任务并保存",
+    "channelAndProtocol": "渠道与协议",
+    "automatic": "自动（优先原生）",
+    "native": "原生",
+    "bridged": "桥接",
+    "discover": "获取模型",
+    "test": "测试连接",
+    "connected": "已连接",
+    "endpointChanged": "修改端点后请重新填写密钥。",
+    "headers": "请求头（JSON；留空保留已保存的请求头）",
+    "noAuth": "无需鉴权（仅限本机）",
+    "imageGeneration": "启用原生图片生成",
+    "requestFailed": "请求未完成，请检查连接后重试。"
   }
 }

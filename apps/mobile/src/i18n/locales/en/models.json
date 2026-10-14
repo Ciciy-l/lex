@@ -94,5 +94,38 @@
       "minute": "m",
       "second": "s"
     }
+  },
+  "channels": {
+    "settingsTitle": "Channels by Protocol",
+    "settingsDescription": "Configure named channels for each protocol. Switching engines keeps the selected channel.",
+    "supplierName": "Provider Name",
+    "protocol": "Protocol",
+    "channel": "Channel",
+    "defaultName": "Default Channel",
+    "numberedName": "Channel {{number}}",
+    "add": "Add Channel",
+    "attach": "Use an Existing Channel",
+    "chooseChannel": "Choose a Channel",
+    "channelName": "Channel Name",
+    "keepKey": "Leave unchanged to keep the saved key",
+    "modelIds": "Model IDs, One per Line",
+    "advanced": "Advanced",
+    "requestPath": "Request Path",
+    "modelsUrl": "Model List URL",
+    "removeProtocol": "Remove This Protocol",
+    "restartRequired": "Active Codex tasks need to stop before these settings can be applied.",
+    "interruptAndSave": "Stop Tasks and Save",
+    "channelAndProtocol": "Channel and Protocol",
+    "automatic": "Automatic (Prefer Native)",
+    "native": "Native",
+    "bridged": "Bridge",
+    "discover": "Discover Models",
+    "test": "Test Connection",
+    "connected": "Connected",
+    "endpointChanged": "Enter a new key after changing the endpoint.",
+    "headers": "Headers (JSON; blank keeps saved headers)",
+    "noAuth": "No Authentication (Local Only)",
+    "imageGeneration": "Enable Native Image Generation",
+    "requestFailed": "Could not complete the request. Check the connection and try again."
   }
 }

@@ -15,6 +15,9 @@ Lex 客户端随包目录 / 外部 Cindy Model Access → /api/model-catalog/cat
 聊天调用目标为「连接 ID + 上游模型 ID + 引擎」。同品牌多账号共用资料，凭证、发现、用量和覆盖按连接隔离。
 Mobile / device-link 使用执行端目录；本地安装状态来自执行机器。目录声明不等于账号准入或协议已实现。
 
+供应商的协议多渠道配置、旧配置迁移及桌面/手机的精确选择身份见
+[协议多渠道合同](provider-protocol-channels.md)。渠道不会改变在线 Catalog 的发布边界。
+
 ### 配置包含什么
 
 外部 Cindy Model Access 可提供在线完整 Catalog；Lex 客户端不维护该服务端仓库。Lex 随包目录由本仓维护，文件分别是

@@ -107,8 +107,11 @@ export async function readBotModelChainSettingsState(
     availableAgents, availableAgentsLoaded: true,
     preferredRoute: getSelectedNewMakerRoute(owner),
     isModelEnabled: (agent, providerId, model) => isModelVisible(
-      getModelVisibilityOverride(agent, providerId, model.id), model.defaultEnabled),
-  }) };
+      getModelVisibilityOverride(agent, providerId, model.id, model.visibilityAliases),
+          model.defaultEnabled,
+        ),
+    }),
+  };
   return { ...latest, value, defaults: value };
 }
 

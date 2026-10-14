@@ -1,4 +1,8 @@
 import type { ModelMetadata } from "./modelMetadataLayers.js";
+import type {
+  ProviderChannel,
+  ProviderChannelConfiguration,
+} from "./providerChannels.js";
 /**
  * @cindy/model-providers — 类型定义。
  *
@@ -183,6 +187,8 @@ export type OAuthProviderDescriptor =
  * 真实上游 + 鉴权 + model id 还原。加新供应商 = 加这份数据，不改路由器代码。
  */
 export interface RoutingDescriptor {
+  /** Host-only secret identity; never a credential value. */
+  channelCredential?: { channelId: string; protocol: ProviderWireProtocol };
   /**
    * 上游 wire protocol。Claude Code / Codex 缺省保持历史语义；Pi 必须显式声明。
    * Codex 的 openai-chat / anthropic-messages 会分别进入对应的本地 Responses bridge。
@@ -291,6 +297,8 @@ export interface ModelCost {
  * 跨 provider(如 gpt-5.5 同时由 openai 与 xd 提供)则必须元数据一致(见 catalog.ts 校验)。
  */
 export interface CatalogModel {
+  /** Ordered legacy/channel preference identities; display only, never routing. */
+  visibilityAliases?: string[];
   supportsToolCalls?: boolean;
   reasoningRequired?: boolean;
   userModelConfig?: ProviderRuntimeModelConfig;
@@ -461,6 +469,8 @@ export interface CatalogModel {
    * 新增模型缺省 = 默认开,符合「未自定义用户随版本吃到新默认」(CLAUDE.md 规则 20)。
    */
   defaultEnabled?: boolean;
+  /** Host-derived channel credential readiness; never a stored user preference. */
+  credentialUnavailable?: boolean;
   /**
    * 该模型是哪些 agent 的**新对话默认种子**（cold-start seed），与 `sortOrder`（只管选择器
    * 陈列顺序）和 `defaultEnabled`（只管可见性）独立。桌面运行时只从**区域门控后的**
@@ -511,6 +521,22 @@ export interface ProviderMediaModel extends Pick<
 
 /** 供应商定义。 */
 export interface Provider {
+  /** Safe channel identity. Supplier grouping must never replace the route ID. */
+  channel?: {
+    supplierId: string;
+    /** Stable connection identity, shared by its automatic and fixed protocol views. */
+    id: string;
+    name: string;
+    protocols: ProviderWireProtocol[];
+    protocol?: ProviderWireProtocol;
+    legacy?: boolean;
+  };
+  /** Host configuration; omitted from remote/untrusted provider projections. */
+  channelConfig?: ProviderChannel;
+  /** Main-only compatibility bindings for tasks created before channel migration. */
+  channelAliases?: Partial<Record<AgentKind, ProviderChannel>>;
+  /** Trusted local settings snapshot, stripped of credential-bearing headers. */
+  customConfig?: CustomProviderConfig;
   /** 'anthropic' | 'openai' | 'xd' | 未来自定义 id。 */
   id: string;
   /** 展示名。 */
@@ -785,6 +811,10 @@ export interface CustomProviderRuntimeConfig {
  * renderer 投影一律剥离。
  */
 export interface CustomProviderConfig {
+  /** Host-issued optimistic edit revision for canonical settings. Not persisted in JSON. */
+  readRevision?: number;
+  /** Canonical protocol configuration; runtimes is its compatibility projection. */
+  channels?: ProviderChannelConfiguration;
   /** 供应商 id，小写 slug（/^[a-z0-9_-]+$/），同账号内唯一，不撞内置 `anthropic|openai|xd`。 */
   id: string;
   /** 展示名。 */

@@ -400,6 +400,7 @@ export function isModelSelectableForNewRoute(
     group?: string;
     mode?: string;
     disabled?: boolean;
+    credentialUnavailable?: boolean;
     status?: string;
     availability?: 'available' | 'requires_payment';
   },
@@ -407,6 +408,7 @@ export function isModelSelectableForNewRoute(
 ): boolean {
   return (
     model.disabled !== true &&
+    model.credentialUnavailable !== true &&
     model.status !== 'retired' &&
     model.availability !== 'requires_payment' &&
     isAgentSelectableModel(model, opts)

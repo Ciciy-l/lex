@@ -11,6 +11,7 @@ import { clearCurrentDbClient, setCurrentDbClient } from '../../localDb/client/c
 import * as schema from '../../localDb/schema.js';
 import { createCustomProvider, getCustomProvider, listCustomProviders } from '../../maker-host/custom-provider-store.js';
 import { codexCustomProviderConfigSignature } from '../../maker-host/codex-custom-provider-route.js';
+import { providerChannelSecretIo } from '../../maker-host/provider-channel-mutations.js';
 import {
   beginProviderRouteMutation,
   getProviderRouteCredentialRevision,
@@ -58,7 +59,7 @@ function catalogView(
 const CREATE_SQL = `
   CREATE TABLE custom_providers (
     id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, runtimes TEXT NOT NULL DEFAULT '{}',
-    auth TEXT,
+    auth TEXT, channels TEXT,
     sort_order INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
   );
   CREATE INDEX idx_custom_providers_sort_order ON custom_providers (sort_order);
@@ -4346,6 +4347,104 @@ describe('model context limit IPC', () => {
 
 
 describe('provider connection management', () => {
+  it('rejects an old channel form before writing its credentials or replacing newer settings', async () => {
+    mountDb();
+    const config: CustomProviderConfig = {
+      id: 'channel-supplier', name: 'Channels', runtimes: {},
+      channels: { version: 1, channels: [{ id: 'channel-primary', name: 'Primary', protocols: {
+        'openai-responses': { baseUrl: 'https://channel.example/v1', models: [{ id: 'model', name: 'Model' }] },
+      } }] },
+    };
+    await createCustomProvider(config);
+    const oldForm = (await getCustomProvider(config.id))!;
+    vi.spyOn(providerChannelSecretIo, 'readKey').mockReturnValue(null);
+    vi.spyOn(providerChannelSecretIo, 'readHeaders').mockReturnValue(null);
+    const storeKey = vi.spyOn(providerChannelSecretIo, 'storeKey').mockReturnValue(true);
+    const harness = new IpcHarness();
+    registerProviderHandlers(harness, makeDeps());
+    await expect(harness.invoke(MAKER_INVOKE.PROVIDER_CUSTOM_UPDATE, { ...oldForm, name: 'Newer settings' }, undefined, {
+      source: 'manual-settings',
+    })).resolves.toEqual({ ok: true });
+    const newer = (await getCustomProvider(config.id))!;
+    expect(newer.readRevision).toBeGreaterThan(oldForm.readRevision!);
+    await expect(harness.invoke(MAKER_INVOKE.PROVIDER_CUSTOM_UPDATE, oldForm, undefined, {
+      source: 'manual-settings', channelKeys: { 'channel-primary': { 'openai-responses': 'stale-key' } },
+    })).rejects.toThrow('PRECONDITION_FAILED');
+    expect(storeKey).not.toHaveBeenCalled();
+    expect(await getCustomProvider(config.id)).toEqual(newer);
+  });
+
+  it('removes channel and fixed-protocol overrides with their supplier', async () => {
+    mountDb();
+    await createCustomProvider({
+      id: 'channel-supplier', name: 'Channels', runtimes: {},
+      channels: { version: 1, channels: [{ id: 'channel-primary', name: 'Primary', protocols: {
+        'google-generative-ai': { baseUrl: 'https://channel.example/v1beta', models: [{ id: 'gemini', name: 'Gemini' }] },
+      } }] },
+    });
+    vi.spyOn(providerChannelSecretIo, 'readKey').mockReturnValue(null);
+    vi.spyOn(providerChannelSecretIo, 'readHeaders').mockReturnValue(null);
+    const deps = makeDeps({ stageClearProviderDisableOverrides: vi.fn(() => () => true) });
+    const harness = new IpcHarness();
+    registerProviderHandlers(harness, deps);
+    await expect(harness.invoke(MAKER_INVOKE.PROVIDER_CUSTOM_DELETE, 'channel-supplier')).resolves.toEqual({ ok: true });
+    for (const id of ['channel-supplier', 'channel-primary', 'channel-primary--google-generative-ai']) {
+      expect(deps.stageClearProviderDisableOverrides).toHaveBeenCalledWith(id);
+      expect(deps.stageClearProviderModelPriceOverrides).toHaveBeenCalledWith(id);
+    }
+    expect(await getCustomProvider('channel-supplier')).toBeNull();
+  });
+
+  it('retires frozen Codex routes before a header-only channel edit and leaves no-op saves alone', async () => {
+    mountDb();
+    const harness = new IpcHarness();
+    const config: CustomProviderConfig = {
+      id: 'channel-supplier', name: 'Channels', runtimes: {},
+      channels: { version: 1, channels: [{ id: 'channel-primary', name: 'Primary', protocols: {
+        'openai-responses': { baseUrl: 'https://channel.example/v1',
+          models: [{ id: 'model', name: 'Model' }], supportsImageGeneration: true },
+      } }] },
+    };
+    await createCustomProvider(config);
+    vi.spyOn(providerChannelSecretIo, 'readKey').mockReturnValue(null);
+    vi.spyOn(providerChannelSecretIo, 'readHeaders').mockReturnValue(null);
+    const storeHeaders = vi.spyOn(providerChannelSecretIo, 'storeHeaders').mockReturnValue(true);
+    const deps = makeDeps({
+      beginRouteMutation: beginProviderRouteMutation,
+      listBusyLocalCodexSessionIds: () => ['busy-task'],
+    });
+    registerProviderHandlers(harness, deps);
+    const saved = (await getCustomProvider(config.id))!;
+    const revision = getProviderRouteCredentialRevision(config.id);
+    await expect(harness.invoke(MAKER_INVOKE.PROVIDER_CUSTOM_UPDATE, saved, undefined, {
+      source: 'manual-settings',
+    })).resolves.toEqual({ ok: true });
+    expect(deps.prepareCodexCustomProviderHostChange).not.toHaveBeenCalled();
+    expect(getProviderRouteCredentialRevision(config.id)).toBe(revision);
+
+    const replacement = (await getCustomProvider(config.id))!;
+    replacement.channels!.channels[0].protocols['openai-responses']!.headers = {
+      'X-Channel-Key': 'new-header-secret',
+    };
+    await expect(harness.invoke(MAKER_INVOKE.PROVIDER_CUSTOM_UPDATE, replacement, undefined, {
+      source: 'manual-settings',
+    })).resolves.toEqual({
+      ok: false, confirmationRequired: 'codex-image-generation-reload', busyCount: 1,
+    });
+    expect(storeHeaders).not.toHaveBeenCalled();
+    expect(getProviderRouteCredentialRevision(config.id)).toBe(revision);
+    await expect(harness.invoke(MAKER_INVOKE.PROVIDER_CUSTOM_UPDATE, replacement, undefined, {
+      source: 'manual-settings', codexImageGenerationRestartPolicy: 'interrupt',
+    })).resolves.toEqual({ ok: true });
+    expect(deps.prepareCodexCustomProviderHostChange).toHaveBeenCalledOnce();
+    expect(deps.finalizeCodexCustomProviderHostChange).toHaveBeenCalledOnce();
+    expect(storeHeaders).toHaveBeenCalledWith('channel-primary', 'protocol-openai-responses', {
+      'X-Channel-Key': 'new-header-secret',
+    });
+    expect(getProviderRouteCredentialRevision(config.id)).not.toBe(revision);
+    expect(JSON.stringify(await getCustomProvider(config.id))).not.toContain('new-header-secret');
+  });
+
   it.each(['private-provider', 'cindy-local-ollama'])('broadcasts committed %s rename despite catalog failure without changing credentials or Host', async (id) => {
     mountDb();
     const harness = new IpcHarness();

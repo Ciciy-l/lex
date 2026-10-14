@@ -115,6 +115,7 @@ export function customProviderModelConfigFromCatalogModel(
 
 /** ProviderView → 编辑表单配置；必须无损保留所有非密钥路由/鉴权字段。 */
 export function providerViewToCustomProviderConfig(p: ProviderView): CustomProviderConfig {
+  if (p.customConfig) return structuredClone(p.customConfig);
   if (p.auth.native) {
     const native = p.auth.native;
     return {
