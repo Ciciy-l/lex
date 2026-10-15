@@ -255,9 +255,26 @@ beforeEach(async () => {
   vi.resetModules();
 });
 
+const fixtureWork = new Set<Promise<unknown>>();
+function withFixtureWork<T>(work: () => Promise<T>): Promise<T> {
+  const pending = work();
+  fixtureWork.add(pending);
+  void pending.then(() => fixtureWork.delete(pending), () => fixtureWork.delete(pending));
+  return pending;
+}
+
+async function cleanupTestRoots(): Promise<void> {
+  // A timeout does not cancel the async test body. Multi-stage snapshot tests
+  // also do I/O between critical sections; let their whole body settle before
+  // deleting roots or allowing beforeEach to replace the shared runtime home.
+  await Promise.allSettled([...fixtureWork]);
+  await lockRuntime.tail;
+  await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
+}
+
 afterEach(async () => {
   vi.useRealTimers();
-  await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
+  await cleanupTestRoots();
 });
 
 async function mutateAuthorized(
@@ -270,6 +287,71 @@ async function mutateAuthorized(
 }
 
 describe('Pi package executable-code boundary', () => {
+  it('settles a pending snapshot state write before deleting its fixture roots', async () => {
+    await createSkillOnlyPackage('npm:pending-fixture-write');
+    const store = await import('../pi-package-store.js');
+    const fixtureHome = runtime.userData;
+    const fixtureRoots = [...roots];
+    const statePath = path.join(fixtureHome, 'pi-package-home', 'cindy-package-state.json');
+    const originalWrite = fs.writeFile.bind(fs);
+    let enteredWrite!: () => void;
+    let releaseWrite!: () => void;
+    let enteredTrailingWork!: () => void;
+    let releaseTrailingWork!: () => void;
+    const entered = new Promise<void>((resolve) => { enteredWrite = resolve; });
+    const released = new Promise<void>((resolve) => { releaseWrite = resolve; });
+    const trailingWork = new Promise<void>((resolve) => { enteredTrailingWork = resolve; });
+    const trailingReleased = new Promise<void>((resolve) => { releaseTrailingWork = resolve; });
+    const writeSpy = vi.spyOn(fs, 'writeFile').mockImplementation(async (...args) => {
+      if (String(args[0]).startsWith(`${statePath}.tmp-`)) {
+        enteredWrite();
+        await released;
+      }
+      return originalWrite(...args as Parameters<typeof fs.writeFile>);
+    });
+    let trailingWriteFinished = false;
+    const pending = withFixtureWork(async () => {
+      await store.resolveManagedPiPackageResources({
+        snapshotRoot: path.join(fixtureHome, 'limited-snapshot'),
+        snapshotLimits: { maxEntries: 1, maxBytes: 1024 * 1024, maxDurationMs: 10_000 },
+      });
+      // Fixture work continues after the store releases its mutation lock.
+      enteredTrailingWork();
+      await trailingReleased;
+      await fs.writeFile(path.join(fixtureHome, 'after-resolve.txt'), 'settled');
+      trailingWriteFinished = true;
+    });
+    let cleanup: Promise<void> | undefined;
+    let rmSpy: { mockRestore(): void } | undefined;
+    try {
+      await entered;
+      expect(lockRuntime.active).toBe(1);
+      rmSpy = vi.spyOn(fs, 'rm');
+      cleanup = cleanupTestRoots();
+      void cleanup.catch(() => undefined); // Retain the rejection for the awaited cleanup below.
+      for (const root of fixtureRoots) {
+        expect(rmSpy).not.toHaveBeenCalledWith(root, { recursive: true, force: true });
+      }
+      releaseWrite();
+      await trailingWork;
+      expect(lockRuntime.active).toBe(0);
+      // The atomic state writer may remove its own temporary file. Only the
+      // fixture roots must remain untouched until all fixture work settles.
+      for (const root of fixtureRoots) {
+        expect(rmSpy).not.toHaveBeenCalledWith(root, { recursive: true, force: true });
+      }
+    } finally {
+      releaseWrite();
+      releaseTrailingWork();
+      try { await pending; } finally {
+        try { await cleanup; } finally { writeSpy.mockRestore(); rmSpy?.mockRestore(); }
+      }
+    }
+    expect(trailingWriteFinished).toBe(true);
+    expect(lockRuntime.active).toBe(0);
+    await expect(fs.stat(fixtureHome)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('uses a safe basename for a manifest-less local package display name', async () => {
     const { root } = await createPackage({ source: '' });
     await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({
@@ -2504,7 +2586,7 @@ describe('Pi package executable-code boundary', () => {
     });
   });
 
-  it('retries a persisted inspection-limit after deep package content shrinks under a stable root identity', async () => {
+  it('retries a persisted inspection-limit after deep package content shrinks under a stable root identity', () => withFixtureWork(async () => {
     const { root, source } = await createSkillOnlyPackage('npm:mutated-installation');
     const deepPayload = path.join(root, 'skills', 'managed-skill', 'payload.bin');
     await fs.writeFile(deepPayload, Buffer.alloc(4_096));
@@ -2566,7 +2648,7 @@ describe('Pi package executable-code boundary', () => {
       statSpy?.mockRestore();
       nowSpy.mockRestore();
     }
-  });
+  }));
 
   it.each([
     ['install', 'install', undefined],
@@ -2576,7 +2658,7 @@ describe('Pi package executable-code boundary', () => {
     ['disable', 'set-enabled', false],
   ] as const)(
     'a production %s mutation clears the durable snapshot failure before fresh inspection',
-    async (_label, action, enabled) => {
+    (_label, action, enabled) => withFixtureWork(async () => {
       const { source } = await createSkillOnlyPackage(
         `npm:mutation-recovery-${action}-${String(enabled)}`,
       );
@@ -2629,7 +2711,7 @@ describe('Pi package executable-code boundary', () => {
         ),
       ) as { snapshotUnavailablePackages: unknown[] };
       expect(state.snapshotUnavailablePackages).toEqual([]);
-    },
+    }),
   );
 
   it('does not run a skipped descendant extension from an unverified ancestor snapshot', async () => {

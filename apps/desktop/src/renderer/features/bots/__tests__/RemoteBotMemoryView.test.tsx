@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { REMOTE_RESOURCE_GET_CHANNEL, REMOTE_RESOURCE_INVOKE_CHANNEL } from '@cindy/device-link';
 import { RemoteBotMemoryView } from '../RemoteBotMemoryView';
@@ -135,6 +135,101 @@ describe('RemoteBotMemoryView state guards', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /Original/ })).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: /Original/ }));
     await waitFor(() => expect(screen.getByDisplayValue('Unsaved body')).toBeTruthy());
+  });
+
+  it('reloads once after deletion and lets the next memory save before that list responds', async () => {
+    const listRefresh = deferred<ReturnType<typeof listWithBoth>>();
+    const listRefreshStarted = deferred<void>();
+    let deleted = false;
+    let listGets = 0;
+    let tone = { ...detailResource('b1', 'Tone', 'Tone body'), ref: { ...listResource.ref, id: entryBId } };
+    const invoke = vi.fn(async (_device: string, channel: string, payload: unknown[]) => {
+      const request = payload[0] as { ref?: { id?: string }; actionId?: string; input?: Record<string, unknown> };
+      if (channel === REMOTE_RESOURCE_GET_CHANNEL) {
+        if (request.ref?.id === baseId) {
+          listGets += 1;
+          if (deleted) {
+            listRefreshStarted.resolve(undefined);
+            return listRefresh.promise;
+          }
+          return listWithBoth();
+        }
+        if (request.ref?.id === entryBId) return tone;
+        return detailResource('a1', 'Original', 'Body');
+      }
+      if (request.actionId === 'memory-delete') deleted = true;
+      if (request.actionId === 'memory-update') {
+        tone = { ...detailResource('b2', 'Tone', String(request.input?.body)), ref: tone.ref };
+      }
+      return { effects: [] };
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    Object.defineProperty(window, 'electronAPI', { configurable: true, value: { deviceLink: { invoke } } });
+    render(<RemoteBotMemoryView bot={bot} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Original/ }));
+    await screen.findByDisplayValue('Body');
+    fireEvent.click(screen.getByRole('button', { name: 'bots.memory.delete' }));
+    // A retained list row can render before the passive refresh effect runs.
+    // waitFor allows the effect to commit instead of awaiting it inside act.
+    await waitFor(() => expect(listRefreshStarted.promise).resolves.toBeUndefined());
+    const next = await screen.findByRole('button', { name: /Tone/ });
+    // The selected->list effect owns refresh; deletion must not start a second
+    // request that can race a click on the still-visible list snapshot.
+    expect(listGets).toBe(2);
+    fireEvent.click(next);
+    await screen.findByDisplayValue('Tone body');
+    fireEvent.change(screen.getByLabelText('bots.memory.bodyLabel'), { target: { value: 'Tone saved' } });
+    fireEvent.click(screen.getByRole('button', { name: 'bots.save' }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('device-a', REMOTE_RESOURCE_INVOKE_CHANNEL, [expect.objectContaining({
+      actionId: 'memory-update', input: { expectedUpdatedAt: 'b1', body: 'Tone saved' },
+    })]));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'bots.save' }).hasAttribute('disabled')).toBe(false));
+    await act(async () => { listRefresh.resolve(listWithBoth()); });
+    expect(listGets).toBe(2);
+    expect(screen.getByDisplayValue('Tone saved')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it.each(['resolve', 'reject'] as const)('ignores a late %s detail after navigating to another memory', async (outcome) => {
+    const pending = deferred<ReturnType<typeof detailResource>>();
+    const invoke = vi.fn(async (_device: string, channel: string, payload: unknown[]) => {
+      const request = payload[0] as { ref?: { id?: string } };
+      if (channel !== REMOTE_RESOURCE_GET_CHANNEL) return { effects: [] };
+      if (request.ref?.id === baseId) return listWithBoth();
+      if (request.ref?.id === entryBId) return { ...detailResource('b1', 'Tone', 'Tone body'), ref: { ...listResource.ref, id: entryBId } };
+      return pending.promise;
+    });
+    Object.defineProperty(window, 'electronAPI', { configurable: true, value: { deviceLink: { invoke } } });
+    render(<RemoteBotMemoryView bot={bot} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Original/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'bots.settingsBack' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Tone/ }));
+    await screen.findByDisplayValue('Tone body');
+    await act(async () => {
+      if (outcome === 'resolve') pending.resolve(detailResource('a1', 'Original', 'Old detail'));
+      else pending.reject(new Error('old detail failed'));
+    });
+    expect(screen.getByDisplayValue('Tone body')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it.each(['resolve', 'reject'] as const)('ignores a late %s list after switching bots', async (outcome) => {
+    const pending = deferred<ReturnType<typeof listWithBoth>>();
+    const invoke = vi.fn(async (_device: string, channel: string, payload: unknown[]) => {
+      const request = payload[0] as { ref?: { id?: string } };
+      if (request.ref?.id === baseId) return pending.promise;
+      return { ...listResource, ref: { ...listResource.ref, id: 'settings:bot-b/memory' }, blocks: [] };
+    });
+    Object.defineProperty(window, 'electronAPI', { configurable: true, value: { deviceLink: { invoke } } });
+    const view = render(<RemoteBotMemoryView bot={bot} />);
+    view.rerender(<RemoteBotMemoryView bot={botB} />);
+    await screen.findByText('bots.memory.empty');
+    await act(async () => {
+      if (outcome === 'resolve') pending.resolve(listWithBoth());
+      else pending.reject(new Error('old bot list failed'));
+    });
+    expect(screen.queryByRole('button', { name: /Original/ })).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it.each(['resolve', 'reject'] as const)('ignores a late %s save response after opening another memory', async (outcome) => {
