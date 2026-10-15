@@ -21633,7 +21633,7 @@ describe('CodexAgent MCP thread context hooks', () => {
   });
 
   it('keeps the originating turn auto-review intent on detached continuation', async () => {
-    const seenIntents: string[] = [];
+    const seenIntents: Array<Parameters<AutoReviewDelegate>[0]['userIntent']> = [];
     const reviewAutoPermissionAction = vi.fn<AutoReviewDelegate>(async (request) => {
       seenIntents.push(request.userIntent);
       return { verdict: 'allow' as const };
@@ -21943,7 +21943,7 @@ describe('CodexAgent yield continuation', () => {
   });
 
   it('inherits origin capability selection and auto-review intent on the yield continuation turn', async () => {
-    const seenIntents: string[] = [];
+    const seenIntents: Array<Parameters<AutoReviewDelegate>[0]['userIntent']> = [];
     const reviewAutoPermissionAction = vi.fn<AutoReviewDelegate>(async (request) => {
       seenIntents.push(request.userIntent);
       return { verdict: 'allow' as const };
@@ -22045,8 +22045,10 @@ describe('CodexAgent yield continuation', () => {
       command: 'pnpm --filter desktop run typecheck',
       cwd: '/repo',
     })).resolves.toEqual({ decision: 'accept' });
-    expect(seenIntents.some((intent) => intent.includes('查消息并跑 typecheck'))).toBe(true);
-    expect(seenIntents.some((intent) => intent.includes('foreground exec cell'))).toBe(false);
+    const intentText = seenIntents.map((intent) => typeof intent === 'string'
+      ? intent : [...intent.earlierUserMessages, intent.currentUserMessage].join(' '));
+    expect(intentText.some((intent) => intent.includes('查消息并跑 typecheck'))).toBe(true);
+    expect(intentText.some((intent) => intent.includes('foreground exec cell'))).toBe(false);
     await handle.close();
   });
 

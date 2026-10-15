@@ -769,6 +769,7 @@ import {
   normalizeUserMessage,
   materializeDirectSendOssAttachments,
   materializeQueuedOssAttachmentsDeferred,
+  collectQueuedAttachmentRefs,
 } from './normalizeAttachments.js';
 import { QueuedAttachmentOwnershipRegistry } from './queuedAttachmentOwnership.js';
 import { prepareRemoteReviewAttachments } from './reviewRemoteInput.js';
@@ -15039,7 +15040,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   const discardQueuedAttachmentOwnership = (
     sessionId: string,
     clientId: string,
-    keepOwnerId?: string,
+    opts?: { keepCurrentOwner?: boolean },
   ): void => {
     // Coordinator discard callbacks can run before the state mutation that
     // removes the item emits its replacement snapshot (remove/stop/clear do
@@ -15051,7 +15052,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       void (async () => {
         try {
           await awaitAgentInputQueueSnapshotPersistence(sessionId);
-          await queuedAttachmentOwnership.discardClient(sessionId, clientId, keepOwnerId);
+          // A superseding edit keeps whichever owner is current when the
+          // discard finally runs: a later edit accepted while this one waited
+          // may have replaced or merged the owner that was current earlier.
+          await (opts?.keepCurrentOwner
+            ? queuedAttachmentOwnership.discardSuperseded(sessionId, clientId)
+            : queuedAttachmentOwnership.discardClient(sessionId, clientId));
         } catch (error) {
           // A failed snapshot must keep the ownership callbacks alive. The
           // recycler/next lifecycle boundary can retry without losing data.
@@ -16599,7 +16605,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         sid,
         parsed.clientId,
         materialized.cleanupLocalMaterialization,
-        { cleanupAfterDurable: materialized.cleanupAfterAcceptance },
+        {
+          cleanupAfterDurable: materialized.cleanupAfterAcceptance,
+          parts: materialized.materializedParts,
+        },
       );
       let acceptedByCoordinator = false;
       try {
@@ -16825,6 +16834,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             cleanupAfterAcceptance: undefined,
             cleanupBeforeAcceptance: undefined,
             cleanupLocalMaterialization: undefined,
+            materializedParts: undefined,
           }
         : await materializeQueuedOssAttachmentsDeferred(sid, parsed);
       const attachmentOwnerId = steeringStoredQueueItem
@@ -16833,7 +16843,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             sid,
             parsed.clientId,
             materialized.cleanupLocalMaterialization,
-            { cleanupAfterDurable: materialized.cleanupAfterAcceptance },
+            {
+              cleanupAfterDurable: materialized.cleanupAfterAcceptance,
+              parts: materialized.materializedParts,
+            },
           );
       let acceptedByCoordinator = false;
       let previousAttachmentOwnerId: string | null = null;
@@ -17147,7 +17160,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         sid,
         cid,
         materialized.cleanupLocalMaterialization,
-        { cleanupAfterDurable: materialized.cleanupAfterAcceptance },
+        {
+          cleanupAfterDurable: materialized.cleanupAfterAcceptance,
+          parts: materialized.materializedParts,
+        },
       );
       let acceptedByCoordinator = false;
       try {
@@ -17180,14 +17196,26 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         );
         acceptedByCoordinator = result.updated;
         if (result.updated) {
-          // The replacement supersedes any older local materialisation owned by
-          // this clientId. Keep the new owner alive for the queue item's later
-          // persistence/discard boundary, but release old refs now.
-          if (attachmentOwnerId) {
-            queuedAttachmentOwnership.activateCurrentOwner(sid, cid, attachmentOwnerId);
+          // The replacement supersedes older local materialisations owned by
+          // this clientId, except media it still carries: an edit that keeps an
+          // attachment creates no new copy, so the existing owner must survive
+          // or the queued item would point at a deleted blob. Release only the
+          // owners whose media the edit dropped.
+          const replacementRefs = collectQueuedAttachmentRefs(update);
+          const survivingOwnerId = queuedAttachmentOwnership.retainReferencedOwners(
+            sid,
+            cid,
+            attachmentOwnerId,
+            (ref) => replacementRefs.has(ref),
+          );
+          if (survivingOwnerId) {
+            queuedAttachmentOwnership.activateCurrentOwner(sid, cid, survivingOwnerId);
+          } else {
+            // The replacement carries none of the owned media; nothing stays current.
+            queuedAttachmentOwnership.restoreCurrentOwner(sid, cid, null);
           }
-          discardQueuedAttachmentOwnership(sid, cid, attachmentOwnerId ?? undefined);
-          markQueuedAttachmentDurableAfterSnapshot(sid, cid, attachmentOwnerId);
+          discardQueuedAttachmentOwnership(sid, cid, { keepCurrentOwner: true });
+          markQueuedAttachmentDurableAfterSnapshot(sid, cid, survivingOwnerId);
         } else {
           await materialized.cleanupBeforeAcceptance?.();
           if (attachmentOwnerId) {

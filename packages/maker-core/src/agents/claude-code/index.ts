@@ -1125,7 +1125,9 @@ export class ClaudeCodeAgent extends BaseAgent {
    * 按 name 去重), 二者共享 ~/.claude/{...} 扫盘事实, 但消费者不同。
    */
   async listCustomizations(opts: ListCustomizationsOptions): Promise<ListCustomizationsResult> {
-    const result = await scanClaudeCustomizations(opts);
+    const result = await (this.deps.scanLocalCustomizations
+      ? this.deps.scanLocalCustomizations('claude-code', opts)
+      : scanClaudeCustomizations(opts));
     if (!opts.kinds || opts.kinds.includes('skill')) {
       result.items.push(...(await this.deps.getManagedSkills?.() ?? []).filter((skill) => skill.path).map((skill) => ({
         engine: 'claude-code' as const, kind: 'skill', scope: 'user', name: skill.name,

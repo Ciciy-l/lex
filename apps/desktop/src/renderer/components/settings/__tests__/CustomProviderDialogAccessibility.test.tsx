@@ -607,6 +607,23 @@ describe('ProviderConnectionDialog accessibility', () => {
     await waitFor(() => expect(document.activeElement).toBe(explicit ? stable : trigger));
   });
 
+  it('preserves both channel and specialized drafts across Back without a hidden Escape listener', async () => {
+    const onClose = vi.fn();
+    render(<ProviderConnectionDialog onSaved={vi.fn()} onClose={onClose} />);
+    fireEvent.change(screen.getByLabelText('models.channels.supplierName'), { target: { value: 'Channel draft' } });
+    await enterSpecializedSetup();
+    fireEvent.change(screen.getByPlaceholderText('settings.providers.custom.fields.namePlaceholder'), { target: { value: 'Specialized draft' } });
+    fireEvent.click(screen.getByRole('button', { name: 'models.channels.backToChannels' }));
+    expect(screen.getByDisplayValue('Channel draft')).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    expect(screen.getByRole('alertdialog')).toBeTruthy();
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'models.channels.keepEditing' }));
+    await enterSpecializedSetup();
+    expect(screen.getByDisplayValue('Specialized draft')).toBeTruthy();
+    expect(screen.queryByDisplayValue('Channel draft')).toBeNull();
+  });
+
   it('uses a stable fallback when the immediate opener unmounts during a wizard transition', async () => {
     function Harness() {
       const [stage, setStage] = useState<'idle' | 'wizard' | 'dialog'>('idle');

@@ -12,6 +12,15 @@ let n = 0;
 const sid = () => `mirror-test-${n++}`;
 
 describe('makerChatStore.mirrorSessionFields', () => {
+  it('does not invent effort when sending from an unavailable catalog', () => {
+    const s = sid();
+    makerChatStore.mirrorSessionFields(s, { providerId: 'supplier--backup' });
+    const opts = buildCreateOptsForCurrentSession(s, 'same-model', undefined, 'default', '/tmp');
+    expect(opts.providerId).toBe('supplier--backup');
+    expect(opts.effort).toBeUndefined();
+    expect(JSON.parse(JSON.stringify(opts))).not.toHaveProperty('effort');
+    expect(buildCreateOptsForCurrentSession(s, 'same-model', 'high', 'default', '/tmp').effort).toBe('high');
+  });
   it('patched{fastMode:true} 镜像进快照;切回 false 同样', () => {
     const s = sid();
     makerChatStore.mirrorSessionFields(s, { fastMode: true });

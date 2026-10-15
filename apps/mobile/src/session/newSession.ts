@@ -1,6 +1,7 @@
 import { modelNeedsReselection } from './modelReselection';
 import { stripTrailingPathSeparators } from '@cindy/maker-shared/path-text';
 import { collapseWorktreeDirForGrouping } from '@cindy/maker-shared/worktree-paths';
+import { normalizeProjectOrderPath } from '@cindy/maker-shared/project-order-sync';
 import {
   DEFAULT_DRAFT_SESSION_TITLE,
   deriveOptimisticSessionTitle,
@@ -305,10 +306,12 @@ export function buildRecentWorkspaceOptions(
     const rawWorkingDir = session.workingDir?.trim();
     if (!rawWorkingDir) continue;
     const workingDir = collapseWorktreeDirForGrouping(rawWorkingDir);
+    // Match home project grouping; keep the original path for display and remote actions.
+    const pathKey = normalizeProjectOrderPath(workingDir);
     const lastActivityAt = session.userSendAt ?? session.updatedAt ?? session.createdAt;
-    const current = byPath.get(workingDir);
+    const current = byPath.get(pathKey);
     if (!current) {
-      byPath.set(workingDir, {
+      byPath.set(pathKey, {
         workingDir,
         title: projectTitle(workingDir),
         sessionCount: 1,

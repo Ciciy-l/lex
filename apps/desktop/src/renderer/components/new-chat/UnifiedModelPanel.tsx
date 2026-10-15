@@ -524,8 +524,10 @@ export function UnifiedModelPanel({
       // fastOnOf 的选中行分支同语义)。
       if (!isLiveRow(entry, base)) return base;
       const efforts: readonly string[] = base.efforts;
+      // Missing or unsupported live metadata is not a choice of the catalog
+      // default. Leave the row unmarked until the runtime value is known.
       const liveEffort =
-        selectedEffort && efforts.includes(selectedEffort) ? selectedEffort : base.effort;
+        selectedEffort && efforts.includes(selectedEffort) ? selectedEffort : null;
       const liveFast = base.fastCapable ? fastMode : false;
       if (liveEffort === base.effort && liveFast === base.fast) return base;
       return {

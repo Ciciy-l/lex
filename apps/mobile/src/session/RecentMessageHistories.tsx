@@ -5,6 +5,7 @@ import { NavigationContext, NavigationRouteContext, useIsFocused } from 'expo-ro
 import { PaneViewportProvider, usePaneViewport } from '@/platform/AdaptiveWindowContext';
 import { getRecentTasks, recentTaskKey, subscribeRecentTasks } from './recentTasks';
 import { NativeHistoryHost, NativeHistorySlot, needsResidentHistoryUpgrade } from './NativeResidentHistory';
+import { RemoteSessionStoreSubscriptionGate } from './remoteSessionStore';
 
 import { MessageHistoryActive, MessageHistoryPositioning } from './messageHistoryActivity';
 export { useMessageHistoryActive, useMessageHistoryPositioning } from './messageHistoryActivity';
@@ -79,11 +80,17 @@ export function RecentMessageHistoriesProvider({ children }: { children: ReactNo
       {children}
       {[...entries].filter(([key]) => allowed.has(key)).map(([key, entry]) => {
         const active = onTaskRoute && entry.focused;
-        if (NativeHistoryHost) return <NativeHistoryHost key={key} surfaceId={namespace + key}
-          pointerEvents="none" style={{ position: 'absolute', width: entry.frame.width, height: entry.frame.height }}>
+        // Retained histories outlive their route, so no route-level gate covers
+        // them. Pause their store subscriptions while hidden; otherwise every
+        // task-list change re-renders all retained message trees.
+        const content = <RemoteSessionStoreSubscriptionGate enabled={active}>
           <MessageHistoryPositioning.Provider value={active && entry.ready}>
             <MessageHistoryActive.Provider value={active && entry.ready}>{entry.children}</MessageHistoryActive.Provider>
           </MessageHistoryPositioning.Provider>
+        </RemoteSessionStoreSubscriptionGate>;
+        if (NativeHistoryHost) return <NativeHistoryHost key={key} surfaceId={namespace + key}
+          pointerEvents="none" style={{ position: 'absolute', width: entry.frame.width, height: entry.frame.height }}>
+          {content}
         </NativeHistoryHost>;
         // Keep the original list viewport/offset, but restrict this root layer's
         // drawing and hit area to the message body. Native chrome/composer stay in
@@ -95,9 +102,7 @@ export function RecentMessageHistoriesProvider({ children }: { children: ReactNo
           style={[styles.clip, { left: entry.frame.left, top: entry.frame.top + top,
             width: entry.frame.width, height: entry.frame.height - top - bottom, opacity: active ? 1 : 0 }]}>
           <View style={{ position: 'absolute', top: -top, width: entry.frame.width, height: entry.frame.height }}>
-            <MessageHistoryPositioning.Provider value={active && entry.ready}>
-              <MessageHistoryActive.Provider value={active && entry.ready}>{entry.children}</MessageHistoryActive.Provider>
-            </MessageHistoryPositioning.Provider>
+            {content}
           </View>
         </View>;
       })}

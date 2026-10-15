@@ -122,6 +122,88 @@ describe('LiteLlmTextModelClient', () => {
     expect(isRefinerModelOutputError(error)).toBe(true);
   });
 
+  it('accepts a long refinement whose SSE framing exceeds the output limit', async () => {
+    // Real gateways send one or two characters per event wrapped in ~180 chars
+    // of JSON; a 1,000-character refinement streams over 100,000 bytes.
+    const refined = '长'.repeat(1_000);
+    const deltas = ['{"text":"', ...refined, '"}'];
+    undiciFetchMock.mockImplementation(async () => makeChatCompletionSseResponse(deltas.map((content) => ({
+      id: 'chatcmpl-EXxrC3CJkbLLnU1qOjh6Hn6s6iSdr',
+      object: 'chat.completion.chunk',
+      created: 1791763622,
+      model: 'gpt-5.4-mini',
+      choices: [{ index: 0, delta: { content } }],
+    }))));
+
+    const client = new LiteLlmTextModelClient({
+      proxyApiKey: 'proxy-key',
+      baseUrl: 'https://llm-proxy.example.com',
+    });
+
+    await expect(client.requestJson<{ text: string }>({
+      model: 'm',
+      schemaName: 's',
+      system: 'sys',
+      user: {},
+    })).resolves.toEqual({ text: refined });
+  });
+
+  it('rejects runaway model output as a model-output error', async () => {
+    undiciFetchMock.mockImplementation(async () => makeChatCompletionSseResponse([
+      { choices: [{ delta: { content: `{"text":"${'长'.repeat(64_001)}` } }] },
+    ]));
+
+    const client = new LiteLlmTextModelClient({
+      proxyApiKey: 'proxy-key',
+      baseUrl: 'https://llm-proxy.example.com',
+    });
+
+    const error = await client.requestJson<{ text: string }>({
+      model: 'm',
+      schemaName: 's',
+      system: 'sys',
+      user: {},
+    }).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('exceeded 64000 characters');
+    expect(isRefinerModelOutputError(error)).toBe(true);
+  });
+
+  it.each([
+    ['one oversized event with little output', [
+      { padding: 'x'.repeat(64_001), choices: [{ delta: { content: '{"text":"短"}' } }] },
+    ]],
+    ['endless framing-only events', Array.from({ length: 12_000 }, () => ({
+      id: 'chatcmpl-EXxrC3CJkbLLnU1qOjh6Hn6s6iSdr',
+      object: 'chat.completion.chunk',
+      created: 1791763622,
+      model: 'gpt-5.4-mini',
+      choices: [{ index: 0, delta: {} }],
+    }))],
+  ])('bounds the stream when the gateway sends %s', async (_case, events) => {
+    undiciFetchMock.mockImplementation(async () => makeChatCompletionSseResponse(events));
+
+    const client = new LiteLlmTextModelClient({
+      proxyApiKey: 'proxy-key',
+      baseUrl: 'https://llm-proxy.example.com',
+    });
+
+    const error = await client.requestJson<{ text: string }>({
+      model: 'm',
+      schemaName: 's',
+      system: 'sys',
+      user: {},
+    }).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    expect((error as Error).message).toMatch(/exceeded \d+ characters/);
+    expect(isRefinerModelOutputError(error)).toBe(true);
+  });
+
   it('does not mark HTTP transport failures as model-output errors', async () => {
     undiciFetchMock.mockImplementation(async () => new Response('upstream exploded', { status: 502 }));
 

@@ -270,6 +270,35 @@ describe('MakerScheduleRunner silent-run notification skip', () => {
     expect(JSON.stringify(notifier.notify.mock.calls)).not.toContain('Retracted partial');
   });
 
+  it.each(['claude-code', 'codex', 'pi', 'omp'] as const)(
+    '%s keeps sealed text through repeated empty finals and starts a fresh delta buffer', async (agentKind) => {
+      const h = createSessionHarness(acceptingSend(), agentKind);
+      const { runner } = createRunnerHarness(h.session, { silenced: true });
+      const pending = runner.fire(baseSchedule({ agentKind, model: 'grok-4.5' }), createFireContext());
+      await vi.waitFor(() => expect(mocks.createMessage).toHaveBeenCalled());
+      h.emit({ type: 'text', source: agentKind, data: { text: 'Sealed', isFinal: true, isFullText: true } });
+      for (const phase of ['commentary', 'final_answer', undefined]) {
+        h.emit({ type: 'text', source: agentKind, data: { text: '', isFinal: true, isFullText: true, phase } });
+      }
+      h.emit({ type: 'done', source: agentKind, data: {} });
+      await expect(pending).resolves.toMatchObject({ resultText: 'Sealed' });
+      expect(mocks.createMessage.mock.calls.filter(([, body]) => body.role === 'assistant')).toHaveLength(0);
+    },
+  );
+
+  it.each([true, false])('appends a delta only to an unsealed block (sealed=%s)', async (sealed) => {
+    const h = createSessionHarness(acceptingSend());
+    const { runner } = createRunnerHarness(h.session, { silenced: true });
+    const pending = runner.fire(baseSchedule(), createFireContext());
+    await vi.waitFor(() => expect(mocks.createMessage).toHaveBeenCalled());
+    h.emit({ type: 'text', data: { text: 'First', isFinal: true, isFullText: sealed } });
+    if (sealed) h.emit({ type: 'text', data: { text: '', isFinal: true } });
+    h.emit({ type: 'text', data: { text: ' tail', isFinal: false } });
+    h.emit({ type: 'done', data: {} });
+    await expect(pending).resolves.toMatchObject({ resultText: sealed ? ' tail' : 'First tail' });
+    expect(mocks.createMessage.mock.calls.filter(([, body]) => body.role === 'assistant')).toHaveLength(0);
+  });
+
   it('scheduler turn 绑定 host-owned runId,收尾后清理', async () => {
     const h = createSessionHarness(acceptingSend());
     const { runner } = createRunnerHarness(h.session, { silenced: false });

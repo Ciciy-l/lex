@@ -2161,7 +2161,9 @@ export class CodexAgent extends BaseAgent {
    * 运行时技能列表（command palette）走 listAgentSkills → RPC，不受影响。
    */
   async listCustomizations(opts: ListCustomizationsOptions): Promise<ListCustomizationsResult> {
-    return scanCodexCustomizations(opts);
+    return this.deps.scanLocalCustomizations
+      ? this.deps.scanLocalCustomizations('codex', opts)
+      : scanCodexCustomizations(opts);
   }
 
   private async listSkillsForCwd(

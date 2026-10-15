@@ -527,6 +527,8 @@ function persistedContentNeedsMaterialize(json: string): boolean {
 /** 物化结果:被控端 image cache 里的 `xdt-image://` url(渲染用)+ 其绝对路径(file chip / agent 用)。 */
 type MaterializedRef = { url: string; absPath: string };
 type MaterializedCleanup = () => void | Promise<void>;
+/** One materialised attachment: its host-managed URL/path and the cleanup that releases only it. */
+export type MaterializedAttachmentPart = { refs: string[]; cleanup: MaterializedCleanup };
 
 /**
  * 用 materialize(OSS 引用串 → image cache 物化结果)改写 persistedContent JSON 串。
@@ -599,6 +601,8 @@ async function materializeQueuedOssAttachmentsInternal(
   cleanupAfterAcceptance?: () => void;
   cleanupBeforeAcceptance?: () => Promise<void>;
   cleanupLocalMaterialization?: () => Promise<void>;
+  /** Per-attachment local copies, so a queue edit can release only the attachments it dropped. */
+  materializedParts?: MaterializedAttachmentPart[];
 }> {
   if (!item || typeof item !== 'object') return { item };
   const it = item as { files?: unknown; persistedContent?: unknown };
@@ -637,12 +641,16 @@ async function materializeQueuedOssAttachmentsInternal(
   };
   assertCurrent();
   const ledgerDb = snapshot?.client.drizzle;
-  const localCleanupCallbacks: MaterializedCleanup[] = [];
+  const localParts: MaterializedAttachmentPart[] = [];
+  const addLocalPart = (entry: MaterializedRef, cleanup: MaterializedCleanup): void => {
+    let run: Promise<void> | null = null;
+    localParts.push({ refs: [entry.url, entry.absPath], cleanup: () => (run ??= Promise.resolve().then(cleanup)) });
+  };
   let localCleanedUp = false;
   const cleanupLocalMaterializations = async (): Promise<void> => {
     if (localCleanedUp) return;
     localCleanedUp = true;
-    for (const cleanup of localCleanupCallbacks) {
+    for (const { cleanup } of localParts) {
       try {
         await cleanup();
       } catch (e) {
@@ -678,9 +686,10 @@ async function materializeQueuedOssAttachmentsInternal(
         },
       ],
     }, ledgerDb);
+    const entry = { url: written.url, absPath: cindyMediaBlobStore.resolveSafe(written.url).absPath };
     const refId = written.refIds[0];
     if (refId) {
-      localCleanupCallbacks.push(async () => {
+      addLocalPart(entry, async () => {
         await cindyMediaLedger.removeRefById(refId, ...(ledgerDb ? [ledgerDb] as const : []));
         const removed = await cindyMediaLedger.deleteZeroRefBlobRecord(
           written.hash,
@@ -691,7 +700,7 @@ async function materializeQueuedOssAttachmentsInternal(
       });
     }
     assertCurrent();
-    return { url: written.url, absPath: cindyMediaBlobStore.resolveSafe(written.url).absPath };
+    return entry;
   };
   // 物化:被控端本机绝对路径图片(手机文件浏览器发送)读字节入总仓;OSS 引用走
   // 流式下载 → 临时文件 → 媒体 mime 入总仓 / 非媒体(pdf/doc/.bin 等)拷进老
@@ -749,9 +758,9 @@ async function materializeQueuedOssAttachmentsInternal(
           originalName,
           lifecycle: 'committed',
         });
-        localCleanupCallbacks.push(() => imageCacheStore.removeFile(url));
-        assertCurrent();
         entry = { url, absPath: imageCacheStore.resolveSafe(url).absPath };
+        addLocalPart(entry, () => imageCacheStore.removeFile(url));
+        assertCurrent();
       }
       byRef.set(refStr, entry);
       if (ref.ossKey) ossKeys.add(ref.ossKey);
@@ -816,12 +825,12 @@ async function materializeQueuedOssAttachmentsInternal(
     };
     return {
       item: materializedItem,
-      ...(deferCleanup && (ossKeys.size > 0 || localCleanupCallbacks.length > 0)
+      ...(deferCleanup && (ossKeys.size > 0 || localParts.length > 0)
         ? {
             cleanupAfterAcceptance: cleanupOss,
             cleanupBeforeAcceptance,
-            ...(localCleanupCallbacks.length > 0
-              ? { cleanupLocalMaterialization: cleanupLocalMaterializations }
+            ...(localParts.length > 0
+              ? { cleanupLocalMaterialization: cleanupLocalMaterializations, materializedParts: localParts }
               : {}),
           }
         : {}),
@@ -858,8 +867,33 @@ export async function materializeQueuedOssAttachmentsDeferred(
   cleanupAfterAcceptance?: () => void;
   cleanupBeforeAcceptance?: () => Promise<void>;
   cleanupLocalMaterialization?: () => Promise<void>;
+  materializedParts?: MaterializedAttachmentPart[];
 }> {
   return materializeQueuedOssAttachmentsInternal(sessionId, item, true);
+}
+
+/** References carried by the accepted replacement, including unchanged media. */
+export function collectQueuedAttachmentRefs(item: unknown): Set<string> {
+  const refs = new Set<string>();
+  const add = (value: unknown) => { if (typeof value === 'string' && value) refs.add(value); };
+  const it = (item && typeof item === 'object' ? item : {}) as { files?: unknown; persistedContent?: unknown };
+  for (const file of Array.isArray(it.files) ? it.files : []) {
+    if (!file || typeof file !== 'object') continue;
+    add((file as SerializedFileLike).url);
+    add((file as SerializedFileLike).path);
+  }
+  if (typeof it.persistedContent === 'string') {
+    try {
+      const parsed = JSON.parse(it.persistedContent) as { images?: unknown; files?: unknown };
+      for (const image of Array.isArray(parsed?.images) ? parsed.images : []) {
+        if (image && typeof image === 'object') add((image as { url?: unknown }).url);
+      }
+      for (const file of Array.isArray(parsed?.files) ? parsed.files : []) {
+        if (file && typeof file === 'object') add((file as { path?: unknown }).path);
+      }
+    } catch { /* Plain text has no attachment references. */ }
+  }
+  return refs;
 }
 
 /**

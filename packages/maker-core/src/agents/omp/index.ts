@@ -155,7 +155,9 @@ export class OmpAgent extends BaseAgent {
   override async listCustomizations(
     opts: ListCustomizationsOptions,
   ): Promise<ListCustomizationsResult> {
-    return scanOmpCustomizations(opts);
+    return this.deps.scanLocalCustomizations
+      ? this.deps.scanLocalCustomizations('omp', opts)
+      : scanOmpCustomizations(opts);
   }
 
   /**

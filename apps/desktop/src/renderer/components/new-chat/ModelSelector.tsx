@@ -606,7 +606,7 @@ interface ModelSelectorProps {
   /** Open recovery for the selected source; generic Add model navigation stays separate. */
   onReconnectSource?: () => void;
   modelId: string;
-  effort: Effort;
+  effort: Effort | undefined;
   onModelChange: (modelId: string) => void | boolean | Promise<void | boolean>;
   /**
    * 改深度。返回值(若有)= **这次写入真的落下去了没有**(`false` / 抛错 = 没落;返回 void 的
@@ -795,7 +795,7 @@ interface ModelSelectorContentProps {
   providersOverride?: ProviderView[];
   providersOverrideState?: ModelSelectorProps['providersOverrideState'];
   modelId: string;
-  effort: Effort;
+  effort: Effort | undefined;
   onModelChange: (modelId: string) => void | boolean | Promise<void | boolean>;
   /**
    * 改深度。返回值(若有)= **这次写入真的落下去了没有**(`false` / 抛错 = 没落;返回 void 的
@@ -1814,7 +1814,8 @@ function ModelSelectorContentView({
   const rowEffortOf = (providerId: string | null, m: RowModel): Effort | null => {
     if (!m.efforts || m.efforts.length === 0) return null;
     if (isSelectedRow(providerId, m.id)) {
-      return m.efforts.includes(effort) ? effort : (m.defaultEffort ?? m.efforts[0]);
+      if (effort === undefined) return null;
+      return m.efforts.includes(effort) ? effort : null;
     }
     const pe =
       currentAgentKind && providerId
@@ -1982,6 +1983,18 @@ function ModelSelectorContentView({
     targetFast: boolean,
   ): Promise<boolean> => {
     const previousEffort = effort;
+    // An unknown effort cannot be restored. Write the reversible Fast axis first,
+    // then effort, so failure cannot leave an unrequested partial combination.
+    if (previousEffort === undefined && targetEffort && onFastModeChange && targetFast !== (fastMode ?? false)) {
+      const previousFast = fastMode ?? false;
+      const fastChange = onFastModeChange;
+      if (!(await runLiveWrite(() => fastChange(targetFast)))) return false;
+      if (!(await runLiveWrite(() => onEffortChange(targetEffort)))) {
+        await runLiveWrite(() => fastChange(previousFast));
+        return false;
+      }
+      return true;
+    }
     let effortWritten = false;
     if (targetEffort && targetEffort !== previousEffort) {
       if (!(await runLiveWrite(() => onEffortChange(targetEffort)))) return false;
@@ -1990,7 +2003,7 @@ function ModelSelectorContentView({
     if (onFastModeChange && targetFast !== (fastMode ?? false)) {
       const fastChange = onFastModeChange;
       if (!(await runLiveWrite(() => fastChange(targetFast)))) {
-        if (effortWritten) await runLiveWrite(() => onEffortChange(previousEffort));
+        if (effortWritten && previousEffort !== undefined) await runLiveWrite(() => onEffortChange(previousEffort));
         return false;
       }
     }
@@ -3619,7 +3632,7 @@ export function ModelSelector({
   const showEffort =
     !fallbackOption?.active &&
     efforts.length > 0 &&
-    efforts.includes(effort) &&
+    effort !== undefined && efforts.includes(effort) &&
     !activeThinkingToggle;
   const fullEffortLabel = showEffort
     ? labelOf(effort)

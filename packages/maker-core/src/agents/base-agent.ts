@@ -702,6 +702,11 @@ export interface PiSubagentRunnerLaunchRequest {
 export interface AgentDeps {
   /** Cindy-only local Skill overrides. Freeze at native runtime startup; never apply to SSH. */
   getDisabledSkillPaths?: () => readonly string[];
+  /** Host-isolated discovery; native runtime loading stays unchanged. */
+  scanLocalCustomizations?: (
+    engine: 'claude-code' | 'codex' | 'pi' | 'omp',
+    options: ListCustomizationsOptions,
+  ) => Promise<ListCustomizationsResult>;
   /** Host-owned local Skills, loaded without writing user/project discovery directories. */
   getManagedSkills?: () => Promise<Array<AgentSkillCommand & {
     claudeCommandName: string;
@@ -975,6 +980,8 @@ export interface AgentDeps {
       remoteHostId?: string | null;
       providerId?: string | null;
       model: string;
+      /** Local Pi binary frozen for this session; host catalog probes must use the same build. */
+      runtimeBinaryPath?: string;
       /** Present only when restoring an existing Pi session; permits private compatibility ids. */
       resumeSessionId?: string;
       /** Preview must not prepare global skills or start a local model service. */
@@ -1012,14 +1019,14 @@ export interface AgentDeps {
   resolvePiGatewayModelApi?: (
     providerId: string | null | undefined,
     modelId: string,
-    context?: { remote: boolean },
+    context?: { remote: boolean; runtimeBinaryPath?: string },
   ) => PiNativeApi | null | undefined;
 
   /** Host-resolved model-specific PI compatibility metadata for the Gateway block. */
   resolvePiGatewayModelSpec?: (
     providerId: string | null | undefined,
     modelId: string,
-    context?: { remote: boolean },
+    context?: { remote: boolean; runtimeBinaryPath?: string },
   ) => PiGatewayModelSpec | null | undefined;
 
   /**

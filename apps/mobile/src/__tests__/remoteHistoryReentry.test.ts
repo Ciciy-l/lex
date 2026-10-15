@@ -209,7 +209,7 @@ describe('history reentry', () => {
     expect(reopened.view.getSnapshot().items).toEqual([]);
   });
 
-  it('uses existing schedule reclamation while keeping a mounted background view addressable', async () => {
+  it('keeps an opened scheduled task readable after the app goes to the background', async () => {
     remoteSessionStore.upsertDeviceSession('d', 'desktop', {
       id: 's', source: 'scheduler', status: 'active', createdAt: '2026-09-08T00:00:00Z',
       updatedAt: '2026-09-08T00:00:00Z', title: 's',
@@ -218,10 +218,11 @@ describe('history reentry', () => {
     mount(entry);
     const authority = remoteSessionStore.enterSessionMessageDetail('s');
     await entry.view.refresh();
+    const items = entry.view.getSnapshot().items;
     entry.view.setActive(false);
     remoteSessionStore.leaveSessionMessageDetail('s', 'app-background', authority);
     expect(remoteSessionStore.releaseSessionRuntimeState('s', { reason: 'app-background' })).toBe(true);
-    expect(entry.view.getSnapshot()).toMatchObject({ items: [], ready: false });
+    expect(entry.view.getSnapshot()).toMatchObject({ items, ready: true });
     expect(findRemoteHistoryView('d', 's')).toBe(entry.view);
   });
 

@@ -15,7 +15,6 @@ const knobs = vi.hoisted(() => ({
   compactCalls: [] as Array<Record<string, unknown>>,
   compactHold: null as null | Promise<void>,
   rpcCalls: [] as Array<Record<string, unknown>>,
-  spawnArgs: [] as string[],
   spawnEnv: {} as NodeJS.ProcessEnv,
   switchSessionSuccess: true,
   bridgeAckSuccess: true,
