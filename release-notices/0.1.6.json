@@ -3,7 +3,7 @@
   "date": "2026-10-16",
   "contentByLocale": {
     "zh-CN": {
-      "intro": "本次正式版改善模型连接、任务连续性和手机操作，并移除伙伴相关功能。",
+      "intro": "Lex 0.1.6 正式版改善模型连接、任务连续性和手机操作，并移除伙伴相关功能。",
       "topics": [
         {
           "id": "protocol-channels",
@@ -38,7 +38,7 @@
       ]
     },
     "zh-TW": {
-      "intro": "此正式版改善模型連線、任務連續性與手機操作，並移除夥伴相關功能。",
+      "intro": "Lex 0.1.6 正式版改善模型連線、任務連續性與手機操作，並移除夥伴相關功能。",
       "topics": [
         {
           "id": "protocol-channels",
@@ -73,7 +73,7 @@
       ]
     },
     "en": {
-      "intro": "This stable release improves model connections, task continuity and mobile controls, and retires companion features.",
+      "intro": "Lex 0.1.6 is a stable release that improves model connections, task continuity and mobile controls, and retires companion features.",
       "topics": [
         {
           "id": "protocol-channels",
@@ -108,7 +108,7 @@
       ]
     },
     "ja": {
-      "intro": "モデル接続、タスクの継続性、モバイル操作を改善し、パートナー関連機能を終了する正式版です。",
+      "intro": "Lex 0.1.6 は、モデル接続、タスクの継続性、モバイル操作を改善し、パートナー関連機能を終了する正式版です。",
       "topics": [
         {
           "id": "protocol-channels",
@@ -143,7 +143,7 @@
       ]
     },
     "ko": {
-      "intro": "모델 연결, 작업 연속성, 모바일 조작을 개선하고 동료 관련 기능을 종료하는 정식 버전입니다.",
+      "intro": "Lex 0.1.6은 모델 연결, 작업 연속성, 모바일 조작을 개선하고 동료 관련 기능을 종료하는 정식 버전입니다.",
       "topics": [
         {
           "id": "protocol-channels",
