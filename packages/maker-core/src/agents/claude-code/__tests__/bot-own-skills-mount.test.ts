@@ -10,7 +10,7 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentDeps } from '../../base-agent.js';
 import type { AuthAdapter } from '../../../interfaces/auth-adapter.js';
@@ -31,6 +31,14 @@ import { ClaudeCodeAgent } from '../index.js';
 const tempDirs: string[] = [];
 const liveHandles: Awaited<ReturnType<ClaudeCodeAgent['startSession']>>[] = [];
 const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+
+beforeEach(async () => {
+  // Runtime discovery includes ~/.agents/skills; never scan the developer's home.
+  const home = await makeTempDir();
+  vi.spyOn(os, 'homedir').mockReturnValue(home);
+  vi.stubEnv('HOME', home);
+  vi.stubEnv('USERPROFILE', home);
+});
 
 function createNoopLogger(): Logger {
   const logger: Logger = {
@@ -89,6 +97,9 @@ function createFakeQuery() {
 async function makeTempDir(): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'maker-core-bot-skills-'));
   tempDirs.push(dir);
+  // Native discovery walks project ancestors up to Git; Temp lives under the
+  // user's home on Windows, so the fixture must own its repository boundary.
+  await fs.mkdir(path.join(dir, '.git'));
   return dir;
 }
 
@@ -196,6 +207,8 @@ afterEach(async () => {
     process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir;
   }
   await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
 });
 
 describe('Claude Code mounts the Bot\'s own learned Skills', () => {

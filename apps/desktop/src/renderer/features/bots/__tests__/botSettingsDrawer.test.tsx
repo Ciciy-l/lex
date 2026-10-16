@@ -168,6 +168,8 @@ describe('BotSettingsDrawer', () => {
     expect(dialog.className).toContain('right-0');
     expect(dialog.className).toContain('w-full');
     expect(dialog.className).toContain('max-w-md');
+    // Portaled after the page's title-bar drag strip, so this no-drag wins under the close button.
+    expect((dialog.style as CSSStyleDeclaration & { WebkitAppRegion?: string }).WebkitAppRegion).toBe('no-drag');
     expect(screen.getByTestId('chat-underlay')).toBeTruthy();
     expect(screen.getByTestId('simple-bot-settings')).toBeTruthy();
 

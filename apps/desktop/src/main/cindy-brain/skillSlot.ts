@@ -82,7 +82,7 @@ export interface ReconcileGhostSkillLinksResult {
  * visible.
  *
  * The sweep keeps unrelated foreign-link failures as warnings, but separately
- * reports blockers whenever it cannot prove a shared root is clean or cannot
+ * reports blockers whenever it cannot inspect an existing directory or cannot
  * remove an identified owner projection. The account boundary must not expose a
  * new owner while one of those blockers remains (I-2).
  */
@@ -125,6 +125,9 @@ export async function removeGhostSkillLinksForRoots(
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
       const message = `Unable to read global skill root ${dir}: ${(err as Error).message}`;
       warnings.push(message);
+      // A non-directory root (or ancestor) cannot expose skill entries. Preserve
+      // the user's file and keep sweeping the other roots without blocking login.
+      if ((err as NodeJS.ErrnoException).code === 'ENOTDIR') continue;
       blockers.push(message);
       continue;
     }

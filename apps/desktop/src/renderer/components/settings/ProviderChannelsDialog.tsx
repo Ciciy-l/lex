@@ -14,6 +14,9 @@ import {
   type ProviderWireProtocol,
 } from '@cindy/model-providers';
 import { Button } from '@/components/ui/button';
+import { Select } from '@/components/ui/select';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { ArrowLeft, Plus, X } from 'lucide-react';
 import { Textarea } from '@/components/ui/input';
 import { SettingsTextInput } from './SettingsTextInput';
 import {
@@ -35,8 +38,6 @@ const protocolNames: Record<ProviderWireProtocol, string> = {
   'openai-chat': 'OpenAI Chat Completions',
   'google-generative-ai': 'Google Gemini',
 };
-const inputClass =
-  'min-h-9 w-full rounded-full border border-[var(--settings-input-border)] bg-[var(--settings-input-bg)] px-3 py-2 text-13 text-[var(--settings-input-text)] outline-none focus:border-[var(--settings-input-border-focus)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring-soft)]';
 const newId = () => 'channel-' + crypto.randomUUID();
 
 export interface ProviderChannelsDialogProps {
@@ -46,6 +47,7 @@ export interface ProviderChannelsDialogProps {
   onSaved(): void;
   onClose(): void;
   onSpecializedSetup?(): void;
+  suspended?: boolean;
 }
 
 /** Credentials are write-only form input. Saved values never return to this view. */
@@ -114,6 +116,32 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState(false);
+  const [narrowDetail, setNarrowDetail] = useState(false);
+  const [pendingAction, setPendingAction] = useState<
+    { kind: 'close' } | { kind: 'preset'; id: string } | null
+  >(null);
+  const initialSnapshot = useRef(JSON.stringify(config));
+  const dirty =
+    JSON.stringify(config) !== initialSnapshot.current ||
+    Object.keys(keys).length > 0 ||
+    Object.keys(modelDrafts).length > 0 ||
+    Object.keys(headerDrafts).length > 0;
+  const invalidate = () => {
+    setError(null);
+    setMessage(null);
+    setConfirmation(false);
+  };
+  const close = () => {
+    if (requestPending.current) return;
+    if (dirty) setPendingAction({ kind: 'close' });
+    else p.onClose();
+  };
+  const selectRoute = (wire: ProviderWireProtocol, id?: string) => {
+    invalidate();
+    setProtocol(wire);
+    setSelectedId(id ?? '');
+    setNarrowDetail(true);
+  };
   const presets = sortPresetsForRegion(catalogPresets, serviceRealm).filter(
     (preset) =>
       Object.values(preset.runtimes).every((runtime) => runtime && !/[{}]/.test(runtime.baseUrl)) &&
@@ -177,11 +205,12 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
   const channel = available.find((entry) => entry.id === selectedId) ?? available[0];
   const connection = channel?.protocols[protocol];
   const draftId = channel ? channelProtocolProviderId(channel.id, protocol) : '';
-  const prepareConfig = (): CustomProviderConfig => {
+  const prepareConfig = (onlyRoute?: string): CustomProviderConfig => {
     const next = structuredClone(config);
     for (const item of next.channels!.channels) {
       for (const [wire, route] of Object.entries(item.protocols)) {
         const id = channelProtocolProviderId(item.id, wire as ProviderWireProtocol);
+        if (onlyRoute && onlyRoute !== id) continue;
         const raw = modelDrafts[id];
         if (raw !== undefined) {
           const existing = new Map(route.models.map((model) => [model.id, model]));
@@ -195,7 +224,30 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
           ].map((id) => existing.get(id) ?? { id, name: id, defaultEnabled: true });
         }
         const headers = headerDrafts[id];
-        if (headers?.trim()) route.headers = JSON.parse(headers);
+        if (headers !== undefined) {
+          try {
+            const parsed: unknown = headers.trim() ? JSON.parse(headers) : {};
+            if (
+              !parsed ||
+              typeof parsed !== 'object' ||
+              Array.isArray(parsed) ||
+              Object.values(parsed).some((value) => typeof value !== 'string')
+            )
+              throw new Error();
+            route.headers = parsed as Record<string, string>;
+          } catch {
+            selectRoute(wire as ProviderWireProtocol, item.id);
+            throw new Error(t('models.channels.invalidHeaders'));
+          }
+        }
+        try {
+          const url = new URL(route.baseUrl);
+          if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password)
+            throw new Error();
+        } catch {
+          selectRoute(wire as ProviderWireProtocol, item.id);
+          throw new Error(t('models.channels.invalidUrl'));
+        }
       }
     }
     return next;
@@ -231,7 +283,8 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
     }));
   };
   const add = (existingId?: string) => {
-    setConfirmation(false);
+    invalidate();
+    setNarrowDetail(true);
     const next = { baseUrl: '', wireProtocol: protocol, models: [] };
     if (existingId) {
       updateChannel(existingId, (current) => ({
@@ -262,7 +315,17 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
   };
   const remove = () => {
     if (!channel) return;
-    setConfirmation(false);
+    invalidate();
+    setModelDrafts((previous) => {
+      const next = { ...previous };
+      delete next[draftId];
+      return next;
+    });
+    setHeaderDrafts((previous) => {
+      const next = { ...previous };
+      delete next[draftId];
+      return next;
+    });
     setConfig((previous) => {
       const next = previous.channels!.channels.flatMap((entry) => {
         if (entry.id !== channel.id) return [entry];
@@ -296,6 +359,15 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
     requestPending.current = true;
     setBusy(true);
     setError(null);
+    let prepared: CustomProviderConfig;
+    try {
+      prepared = prepareConfig();
+    } catch (error) {
+      setError((error as Error).message);
+      requestPending.current = false;
+      setBusy(false);
+      return;
+    }
     try {
       const options = {
         source: 'manual-settings' as const,
@@ -303,7 +375,7 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
         ...(interrupt ? { codexImageGenerationRestartPolicy: 'interrupt' as const } : {}),
       };
       const result = await (p.initial ? updateCustomProvider : createCustomProvider)(
-        prepareConfig(),
+        prepared,
         {},
         options,
       );
@@ -329,8 +401,9 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
     setError(null);
     setMessage(null);
     try {
-      const route = prepareConfig().channels!.channels.find((item) => item.id === channel.id)!
-        .protocols[protocol]!;
+      const route = prepareConfig(draftId).channels!.channels.find(
+        (item) => item.id === channel.id,
+      )!.protocols[protocol]!;
       const saved = p.initial?.channels?.channels.find((item) => item.id === channel.id)?.protocols[
         protocol
       ];
@@ -340,7 +413,7 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
         saved.modelsUrl === route.modelsUrl &&
         saved.requestPath === route.requestPath &&
         keys[channel.id]?.[protocol] === undefined &&
-        !headerDrafts[draftId]?.trim() &&
+        headerDrafts[draftId] === undefined &&
         p.initial?.auth?.method === config.auth?.method;
       const authMethod = config.auth?.method === 'none' ? ('none' as const) : ('apiKey' as const);
       const common = {
@@ -358,7 +431,12 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
           ...(useSaved ? { savedProviderId: draftId } : {}),
         });
         if (!isCurrent()) return;
-        if (!result.ok || !result.models) throw new Error(t('models.channels.requestFailed'));
+        if (!result.ok || !result.models) {
+          setError(
+            result.code ? t(`providerError.${result.code}`) : t('models.channels.requestFailed'),
+          );
+          return;
+        }
         const merged = appendDiscoveredCustomProviderModels(
           route.models,
           result.models,
@@ -388,11 +466,24 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
               },
         );
         if (!isCurrent()) return;
-        if (!result.ok) throw new Error(t('models.channels.requestFailed'));
+        if (!result.ok) {
+          setError(
+            result.code ? t(`providerError.${result.code}`) : t('models.channels.requestFailed'),
+          );
+          return;
+        }
         setMessage(t('models.channels.connected'));
       }
-    } catch {
-      if (isCurrent()) setError(t('models.channels.requestFailed'));
+    } catch (error) {
+      if (isCurrent())
+        setError(
+          error instanceof Error &&
+            [t('models.channels.invalidHeaders'), t('models.channels.invalidUrl')].includes(
+              error.message,
+            )
+            ? error.message
+            : t('models.channels.requestFailed'),
+        );
     } finally {
       requestPending.current = false;
       if (isCurrent()) setBusy(false);
@@ -400,9 +491,9 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
   };
   return (
     <Dialog.Root
-      open
+      open={!p.suspended}
       onOpenChange={(open) => {
-        if (!open && !requestPending.current) p.onClose();
+        if (!open) close();
       }}
     >
       <Dialog.Portal>
@@ -413,11 +504,13 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
           }}
           onOpenAutoFocus={(event) => {
             event.preventDefault();
+            transferringFocus.current = false;
             nameInput.current?.focus();
           }}
           aria-describedby={formId + '-description'}
           onEscapeKeyDown={(event) => {
-            if (requestPending.current || event.isComposing || event.keyCode === 229) event.preventDefault();
+            if (requestPending.current || event.isComposing || event.keyCode === 229)
+              event.preventDefault();
           }}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
@@ -426,274 +519,356 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
             const target = p.returnFocusRef?.current ?? opener.current;
             if (target?.isConnected) target.focus();
           }}
-          className="fixed left-1/2 top-1/2 z-[10001] flex max-h-[85vh] w-[min(600px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 overflow-y-auto rounded-xl border border-[var(--border-default)] bg-[var(--confirm-bg)] p-4 text-[var(--text-primary)] shadow-[var(--confirm-shadow)]"
+          className="fixed left-1/2 top-1/2 z-[10001] flex h-[min(780px,90vh)] w-[min(960px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-[var(--border-default)] bg-[var(--confirm-bg)] text-[var(--text-primary)] shadow-[var(--confirm-shadow)] [-webkit-app-region:no-drag]"
         >
-          <Dialog.Title className="text-18 font-semibold">
-            {t('models.channels.settingsTitle')}
-          </Dialog.Title>
-          <Dialog.Description
-            id={formId + '-description'}
-            className="text-13 text-[var(--text-secondary)]"
-          >
-            {t('models.channels.settingsDescription')}
-          </Dialog.Description>
-          <fieldset disabled={busy} className="flex min-w-0 flex-col gap-4">
-            {!p.initial && (
-              <label className="flex flex-col gap-1 text-13">
-                {t('settings.providers.custom.presets.label')}
-                <select
-                  className={inputClass}
-                  value=""
-                  onChange={(event) => applyPreset(event.target.value)}
-                >
-                  <option value="">{t('settings.providers.custom.presets.placeholder')}</option>
-                  {presets.map((preset) => (
-                    <option key={preset.id} value={preset.id}>
-                      {presetDisplayName(preset, i18n.language)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            {p.onSpecializedSetup && (
-              <Button variant="secondary" disabled={busy} onClick={() => {
-                if (requestPending.current) return;
-                transferringFocus.current = true;
-                p.onSpecializedSetup?.();
-              }}>
-                {t('models.channels.specializedSetup')}
-              </Button>
-            )}
-            <label className="flex flex-col gap-1 text-13">
-              {t('models.channels.supplierName')}
-              <SettingsTextInput
-                inputRef={nameInput}
-                size="md"
-                value={config.name}
-                maxLength={60}
-                onChange={(value) => {
-                  setConfirmation(false);
-                  setConfig((previous) => ({ ...previous, name: value }));
-                }}
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-13">
-              {t('models.channels.protocol')}
-              <select
-                className={inputClass}
-                value={protocol}
-                onChange={(event) => setProtocol(event.target.value as ProviderWireProtocol)}
+          <header className="shrink-0 border-b border-[var(--border-default)] p-4">
+            <div className="flex items-center justify-between gap-3">
+              <Dialog.Title className="text-18 font-semibold">
+                {t('models.channels.settingsTitle')}
+              </Dialog.Title>
+              <Button
+                variant="secondary"
+                className="w-8 px-0"
+                disabled={busy}
+                aria-label={t('common.dismiss')}
+                onClick={close}
               >
-                {PROVIDER_WIRE_PROTOCOLS.map((wire) => (
-                  <option key={wire} value={wire}>
-                    {protocolNames[wire]}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="flex flex-wrap gap-2" aria-label={t('models.channels.channel')}>
-              {available.map((entry) => (
-                <Button
-                  key={entry.id}
-                  variant={entry.id === channel?.id ? 'primary' : 'secondary'}
-                  onClick={() => setSelectedId(entry.id)}
-                >
-                  {entry.name}
-                </Button>
-              ))}
-              <Button variant="secondary" onClick={() => add()}>
-                {t('models.channels.add')}
+                <X size={16} />
               </Button>
             </div>
-            {channels.some((entry) => !entry.protocols[protocol]) && (
-              <label className="flex flex-col gap-1 text-13">
-                {t('models.channels.attach')}
-                <select
-                  className={inputClass}
-                  value=""
-                  onChange={(event) => {
-                    if (event.target.value) add(event.target.value);
-                  }}
-                >
-                  <option value="">{t('models.channels.chooseChannel')}</option>
-                  {channels
-                    .filter((entry) => !entry.protocols[protocol])
-                    .map((entry) => (
-                      <option key={entry.id} value={entry.id}>
-                        {entry.name}
-                      </option>
-                    ))}
-                </select>
-              </label>
-            )}
-            {channel && connection && (
-              <>
+            <Dialog.Description
+              id={formId + '-description'}
+              className="text-13 text-[var(--text-secondary)]"
+            >
+              {t('models.channels.settingsDescription')}
+            </Dialog.Description>
+            <fieldset disabled={busy} className="mt-3 grid min-w-0 gap-3 min-[800px]:grid-cols-2">
+              {!p.initial && (
                 <label className="flex flex-col gap-1 text-13">
-                  {t('models.channels.channelName')}
-                  <SettingsTextInput
-                    size="md"
-                    value={channel.name}
-                    maxLength={60}
-                    onChange={(value) =>
-                      updateChannel(channel.id, (entry) => ({ ...entry, name: value }))
+                  {t('settings.providers.custom.presets.label')}
+                  <Select
+                    label={t('settings.providers.custom.presets.label')}
+                    value=""
+                    disabled={busy}
+                    options={presets.map((preset) => ({
+                      value: preset.id,
+                      label: presetDisplayName(preset, i18n.language),
+                    }))}
+                    onValueChange={(id) =>
+                      dirty ? setPendingAction({ kind: 'preset', id }) : applyPreset(id)
                     }
                   />
                 </label>
+              )}
+              {p.onSpecializedSetup && (
+                <Button
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => {
+                    if (requestPending.current) return;
+                    transferringFocus.current = true;
+                    p.onSpecializedSetup?.();
+                  }}
+                >
+                  {t('models.channels.specializedSetup')}
+                </Button>
+              )}
+              <label className="flex flex-col gap-1 text-13">
+                {t('models.channels.supplierName')}
+                <SettingsTextInput
+                  inputRef={nameInput}
+                  size="md"
+                  value={config.name}
+                  maxLength={60}
+                  onChange={(value) => {
+                    invalidate();
+                    setConfig((previous) => ({ ...previous, name: value }));
+                  }}
+                />
+              </label>
+            </fieldset>
+          </header>
+          <fieldset disabled={busy} className="flex min-h-0 flex-1 overflow-hidden">
+            <nav
+              aria-label={t('models.channels.protocol')}
+              className={
+                (narrowDetail ? 'hidden min-[800px]:block ' : '') +
+                'w-full shrink-0 overflow-y-auto p-3 min-[800px]:w-64 min-[800px]:border-r min-[800px]:border-[var(--border-default)]'
+              }
+            >
+              {PROVIDER_WIRE_PROTOCOLS.map((wire) => (
+                <section key={wire} className="mb-4">
+                  <h3 className="px-2 py-1 text-12 text-[var(--text-secondary)]">
+                    {protocolNames[wire]}
+                  </h3>
+                  {channels
+                    .filter((entry) => entry.protocols[wire])
+                    .map((entry) => (
+                      <Button
+                        key={entry.id}
+                        variant={
+                          wire === protocol && entry.id === channel?.id ? 'primary' : 'secondary'
+                        }
+                        aria-pressed={wire === protocol && entry.id === channel?.id}
+                        className="mb-1 w-full justify-start truncate"
+                        onClick={() => selectRoute(wire, entry.id)}
+                      >
+                        {entry.name}
+                      </Button>
+                    ))}
+                  <Button
+                    variant="secondary"
+                    className="w-full justify-start gap-2"
+                    onClick={() => selectRoute(wire)}
+                  >
+                    <Plus size={14} />
+                    {t('models.channels.manageProtocol')}
+                  </Button>
+                </section>
+              ))}
+            </nav>
+            <div
+              className={
+                (narrowDetail ? 'flex ' : 'hidden min-[800px]:flex ') +
+                'min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto p-4'
+              }
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Button
+                  variant="secondary"
+                  className="min-[800px]:hidden"
+                  onClick={() => setNarrowDetail(false)}
+                >
+                  <ArrowLeft size={16} />
+                  {t('models.channels.backToChannels')}
+                </Button>
+                <h3 className="text-14 font-medium">{protocolNames[protocol]}</h3>
+                <Button variant="secondary" onClick={() => add()}>
+                  <Plus size={14} />
+                  {t('models.channels.add')}
+                </Button>
+              </div>
+              {channels.some((entry) => !entry.protocols[protocol]) && (
                 <label className="flex flex-col gap-1 text-13">
-                  Base URL
-                  <SettingsTextInput
-                    size="md"
-                    value={connection.baseUrl}
-                    spellCheck={false}
-                    onChange={(value) => updateConnection({ baseUrl: value })}
+                  {t('models.channels.attach')}
+                  <Select
+                    label={t('models.channels.chooseChannel')}
+                    value=""
+                    disabled={busy}
+                    options={channels
+                      .filter((entry) => !entry.protocols[protocol])
+                      .map((entry) => ({ value: entry.id, label: entry.name }))}
+                    onValueChange={(id) => add(id)}
                   />
                 </label>
-                {config.auth?.method !== 'none' && (
+              )}
+              {channel && connection && (
+                <>
                   <label className="flex flex-col gap-1 text-13">
-                    API Key
+                    {t('models.channels.channelName')}
                     <SettingsTextInput
                       size="md"
-                      secret
-                      secretTipContentClassName="z-[10002]"
-                      autoComplete="new-password"
-                      value={keys[channel.id]?.[protocol] ?? ''}
-                      placeholder={p.initial ? t('models.channels.keepKey') : ''}
+                      value={channel.name}
+                      maxLength={60}
+                      onChange={(value) =>
+                        updateChannel(channel.id, (entry) => ({ ...entry, name: value }))
+                      }
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-13">
+                    Base URL
+                    <SettingsTextInput
+                      size="md"
+                      value={connection.baseUrl}
+                      spellCheck={false}
+                      onChange={(value) => updateConnection({ baseUrl: value })}
+                    />
+                  </label>
+                  {config.auth?.method !== 'none' && (
+                    <label className="flex flex-col gap-1 text-13">
+                      API Key
+                      <SettingsTextInput
+                        size="md"
+                        secret
+                        secretTipContentClassName="z-[10002]"
+                        autoComplete="new-password"
+                        value={keys[channel.id]?.[protocol] ?? ''}
+                        placeholder={p.initial ? t('models.channels.keepKey') : ''}
+                        onChange={(value) => {
+                          invalidate();
+                          setKeys((previous) => ({
+                            ...previous,
+                            [channel.id]: { ...previous[channel.id], [protocol]: value },
+                          }));
+                        }}
+                      />
+                    </label>
+                  )}
+                  {p.initial?.channels?.channels.some(
+                    (entry) =>
+                      entry.id === channel.id &&
+                      entry.protocols[protocol] &&
+                      (entry.protocols[protocol]!.baseUrl !== connection.baseUrl ||
+                        entry.protocols[protocol]!.requestPath !== connection.requestPath),
+                  ) && (
+                    <p className="text-12 text-[var(--text-secondary)]">
+                      {t('models.channels.endpointChanged')}
+                    </p>
+                  )}
+                  <label className="flex flex-col gap-1 text-13">
+                    {t('models.channels.modelIds')}
+                    <Textarea
+                      surface="ivory"
+                      rows={5}
+                      value={
+                        modelDrafts[draftId] ??
+                        connection.models.map((model) => model.id).join('\n')
+                      }
                       onChange={(value) => {
                         setConfirmation(false);
-                        setKeys((previous) => ({
+                        setModelDrafts((previous) => ({
                           ...previous,
-                          [channel.id]: { ...previous[channel.id], [protocol]: value },
+                          [draftId]: value,
                         }));
                       }}
                     />
                   </label>
-                )}
-                <p className="text-12 text-[var(--text-secondary)]">
-                  {t('models.channels.endpointChanged')}
-                </p>
-                <label className="flex flex-col gap-1 text-13">
-                  {t('models.channels.modelIds')}
-                  <Textarea
-                    surface="ivory"
-                    rows={5}
-                    value={
-                      modelDrafts[draftId] ?? connection.models.map((model) => model.id).join('\n')
-                    }
-                    onChange={(value) => {
-                      setConfirmation(false);
-                      setModelDrafts((previous) => ({
-                        ...previous,
-                        [draftId]: value,
-                      }));
-                    }}
-                  />
-                </label>
-                <div className="flex gap-2">
-                  <Button variant="secondary" onClick={() => void request(true)}>
-                    {t('models.channels.discover')}
-                  </Button>
-                  <Button variant="secondary" onClick={() => void request(false)}>
-                    {t('models.channels.test')}
-                  </Button>
-                </div>
-                <details>
-                  <summary className="min-h-6 cursor-pointer text-13 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]">
-                    {t('models.channels.advanced')}
-                  </summary>
-                  <div className="mt-3 flex flex-col gap-3">
-                    <label className="text-13">
-                      {t('models.channels.requestPath')}
-                      <SettingsTextInput
-                        size="md"
-                        value={connection.requestPath ?? ''}
-                        onChange={(value) => updateConnection({ requestPath: value || undefined })}
-                      />
-                    </label>
-                    <label className="text-13">
-                      {t('models.channels.modelsUrl')}
-                      <SettingsTextInput
-                        size="md"
-                        value={connection.modelsUrl ?? ''}
-                        onChange={(value) => updateConnection({ modelsUrl: value || undefined })}
-                      />
-                    </label>
-                    <label className="text-13">
-                      {t('models.channels.headers')}
-                      <Textarea
-                        surface="ivory"
-                        rows={3}
-                        value={headerDrafts[draftId] ?? ''}
-                        onChange={(value) => {
-                          setConfirmation(false);
-                          setHeaderDrafts((previous) => ({
-                            ...previous,
-                            [draftId]: value,
-                          }));
-                        }}
-                      />
-                    </label>
-                    {protocol === 'openai-responses' && (
+                  <div className="flex gap-2">
+                    <Button variant="secondary" onClick={() => void request(true)}>
+                      {t('models.channels.discover')}
+                    </Button>
+                    <Button variant="secondary" onClick={() => void request(false)}>
+                      {t('models.channels.test')}
+                    </Button>
+                  </div>
+                  <details>
+                    <summary className="min-h-6 cursor-pointer text-13 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]">
+                      {t('models.channels.advanced')}
+                    </summary>
+                    <div className="mt-3 flex flex-col gap-3">
+                      <label className="text-13">
+                        {t('models.channels.requestPath')}
+                        <SettingsTextInput
+                          size="md"
+                          value={connection.requestPath ?? ''}
+                          onChange={(value) =>
+                            updateConnection({ requestPath: value || undefined })
+                          }
+                        />
+                      </label>
+                      <label className="text-13">
+                        {t('models.channels.modelsUrl')}
+                        <SettingsTextInput
+                          size="md"
+                          value={connection.modelsUrl ?? ''}
+                          onChange={(value) => updateConnection({ modelsUrl: value || undefined })}
+                        />
+                      </label>
+                      <label className="text-13">
+                        {t('models.channels.headers')}
+                        <Textarea
+                          surface="ivory"
+                          rows={3}
+                          value={headerDrafts[draftId] ?? ''}
+                          onChange={(value) => {
+                            invalidate();
+                            setHeaderDrafts((previous) => ({
+                              ...previous,
+                              [draftId]: value,
+                            }));
+                          }}
+                        />
+                      </label>
+                      {protocol === 'openai-responses' && (
+                        <label className="flex min-h-8 items-center gap-2 text-13">
+                          <input
+                            type="checkbox"
+                            checked={connection.supportsImageGeneration === true}
+                            onChange={(event) =>
+                              updateConnection({ supportsImageGeneration: event.target.checked })
+                            }
+                          />
+                          {t('models.channels.imageGeneration')}
+                        </label>
+                      )}
                       <label className="flex min-h-8 items-center gap-2 text-13">
                         <input
                           type="checkbox"
-                          checked={connection.supportsImageGeneration === true}
-                          onChange={(event) =>
-                            updateConnection({ supportsImageGeneration: event.target.checked })
-                          }
+                          checked={config.auth?.method === 'none'}
+                          onChange={(event) => {
+                            invalidate();
+                            setConfig((previous) => ({
+                              ...previous,
+                              auth: event.target.checked ? { method: 'none' } : undefined,
+                            }));
+                          }}
                         />
-                        {t('models.channels.imageGeneration')}
+                        {t('models.channels.noAuthSupplier')}
                       </label>
-                    )}
-                    <label className="flex min-h-8 items-center gap-2 text-13">
-                      <input
-                        type="checkbox"
-                        checked={config.auth?.method === 'none'}
-                        onChange={(event) => {
-                          setConfirmation(false);
-                          setConfig((previous) => ({
-                            ...previous,
-                            auth: event.target.checked ? { method: 'none' } : undefined,
-                          }));
-                        }}
-                      />
-                      {t('models.channels.noAuth')}
-                    </label>
-                    <Button variant="secondary" onClick={remove}>
-                      {t('models.channels.removeProtocol')}
-                    </Button>
-                  </div>
-                </details>
-              </>
-            )}
+                      <Button variant="secondary" onClick={remove}>
+                        {t('models.channels.removeProtocol')}
+                      </Button>
+                    </div>
+                  </details>
+                </>
+              )}
+            </div>
           </fieldset>
-          {error && (
-            <p role="alert" className="text-13 text-[var(--text-primary)]">
-              {error}
-            </p>
-          )}
-          {message && (
-            <p role="status" className="text-13 text-[var(--text-secondary)]">
-              {message}
-            </p>
-          )}
-          {confirmation && (
-            <p role="alert" className="text-13">
-              {t('models.channels.restartRequired')}
-            </p>
-          )}
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" disabled={busy} onClick={() => {
-              if (!requestPending.current) p.onClose();
-            }}>
-              {t('settings.providers.custom.cancel')}
-            </Button>
-            <Button
-              disabled={busy || !config.name.trim() || !channels.length}
-              onClick={() => void save(confirmation)}
-            >
-              {t(confirmation ? 'models.channels.interruptAndSave' : 'common.save')}
-            </Button>
-          </div>
+          <footer className="shrink-0 space-y-2 border-t border-[var(--border-default)] p-4">
+            {error && (
+              <p role="alert" className="text-13 text-[var(--text-primary)]">
+                {error}
+              </p>
+            )}
+            {message && (
+              <p role="status" className="text-13 text-[var(--text-secondary)]">
+                {message}
+              </p>
+            )}
+            {confirmation && (
+              <p role="alert" className="text-13">
+                {t('models.channels.restartRequired')}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="secondary"
+                disabled={busy}
+                onClick={() => {
+                  close();
+                }}
+              >
+                {t('settings.providers.custom.cancel')}
+              </Button>
+              <Button
+                disabled={busy || !config.name.trim() || !channels.length}
+                onClick={() => void save(confirmation)}
+              >
+                {t(
+                  confirmation
+                    ? 'models.channels.interruptAndSave'
+                    : 'settings.providers.custom.save',
+                )}
+              </Button>
+            </div>
+          </footer>
+          <ConfirmDialog
+            open={pendingAction !== null}
+            zIndex={10020}
+            title={t('models.channels.discardTitle')}
+            description={t('models.channels.discardDescription')}
+            confirmText={t('models.channels.discard')}
+            cancelText={t('models.channels.keepEditing')}
+            onOpenChange={(open) => {
+              if (!open) setPendingAction(null);
+            }}
+            onConfirm={() => {
+              const action = pendingAction;
+              setPendingAction(null);
+              if (action?.kind === 'preset') applyPreset(action.id);
+              else if (action) p.onClose();
+            }}
+          />
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

@@ -1777,6 +1777,13 @@ const config: ForgeConfig = {
           target: 'preload',
         },
         {
+          entry: 'src/main/skillhub/customizationScanProcess.ts',
+          config: 'vite.contacts-sync-codec-worker.config.ts',
+          // File approvals can stall native scandir indefinitely. Keep discovery
+          // in a killable utility process so Main can time out and recover.
+          target: 'preload',
+        },
+        {
           entry: 'src/main/watcher-host/watcherHostProcess.ts',
           config: 'vite.watcher-host.config.ts',
           // 同 dbWorker:借 preload target 出 CJS 单文件；运行时是 Electron

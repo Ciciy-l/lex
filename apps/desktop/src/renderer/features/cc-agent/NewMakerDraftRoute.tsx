@@ -3358,7 +3358,7 @@ export function NewMakerDraftRoute() {
     async (
       message: string,
       model: string,
-      effort: Effort,
+      effort: Effort = draftInitialEffort,
       permissionMode: PermissionMode,
       files?: AttachedFile[],
       mentions?: MentionedResource[],

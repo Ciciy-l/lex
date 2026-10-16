@@ -2966,7 +2966,9 @@ export class MakerScheduleRunner implements ScheduleRunner {
   ): TurnCompletionWaiter {
     const sessionId = initialSession.id;
     let assistantText = '';
-    let lastTextWasCodexCommentary = false;
+    // Full-text snapshots are already sealed messages. Claude block finals can
+    // still receive a fallback tail, so only isFullText seals this buffer.
+    let assistantTextSealed = false;
     let stopped = false;
     let stopListeningTurn: (() => void) | undefined;
     const turnFinished = new Promise<void>((resolve, reject) => {
@@ -3070,17 +3072,18 @@ export class MakerScheduleRunner implements ScheduleRunner {
             text?: string; isFinal?: boolean; isFullText?: boolean; phase?: string;
           } | null;
           if (data && typeof data.text === 'string') {
-            // A separate empty Codex final item does not replace the already
-            // completed commentary. Every other empty final remains authoritative.
-            const emptyCodexAnswer = lastTextWasCodexCommentary
-              && ev.source === 'codex' && data.phase === 'final_answer'
-              && data.isFinal === true && data.isFullText === true && !data.text.trim();
-            lastTextWasCodexCommentary = ev.source === 'codex'
-              && data.phase === 'commentary' && data.isFinal === true
-              && data.isFullText === true && !!data.text.trim();
-            if (emptyCodexAnswer) return;
-            if (data.isFinal) assistantText = data.text;
-            else assistantText += data.text;
+            if (data.isFinal && !data.text.trim()) {
+              if (!assistantTextSealed) assistantText = '';
+              return;
+            }
+            if (data.isFinal) {
+              assistantText = data.text;
+              assistantTextSealed = data.isFullText === true;
+            } else {
+              if (assistantTextSealed) assistantText = '';
+              assistantTextSealed = false;
+              assistantText += data.text;
+            }
           }
           return;
         }

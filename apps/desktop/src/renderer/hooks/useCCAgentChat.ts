@@ -119,7 +119,7 @@ interface UseCCAgentChatReturn {
   sendMessage: (
     text: string,
     model: string,
-    effort: string,
+    effort: string | undefined,
     permissionMode: string,
     workingDir: string,
     files?: AttachedFile[],
@@ -136,7 +136,7 @@ interface UseCCAgentChatReturn {
   ) => Promise<boolean>;
   compactSession: (
     model: string,
-    effort: string,
+    effort: string | undefined,
     permissionMode: string,
     workingDir: string,
     opts?: { vendorOptions?: Record<string, unknown> },
@@ -144,7 +144,7 @@ interface UseCCAgentChatReturn {
   steerMessage: (
     text: string,
     model: string,
-    effort: string,
+    effort: string | undefined,
     permissionMode: string,
     workingDir: string,
     files?: AttachedFile[],
@@ -406,7 +406,7 @@ export function useCCAgentChat(
     (
       text: string,
       model: string,
-      effort: string,
+      effort: string | undefined,
       permissionMode: string,
       workingDir: string,
       files?: AttachedFile[],
@@ -440,7 +440,7 @@ export function useCCAgentChat(
   const compactSession = useCallback(
     (
       model: string,
-      effort: string,
+      effort: string | undefined,
       permissionMode: string,
       workingDir: string,
       opts?: { vendorOptions?: Record<string, unknown> },
@@ -462,7 +462,7 @@ export function useCCAgentChat(
     (
       text: string,
       model: string,
-      effort: string,
+      effort: string | undefined,
       permissionMode: string,
       workingDir: string,
       files?: AttachedFile[],

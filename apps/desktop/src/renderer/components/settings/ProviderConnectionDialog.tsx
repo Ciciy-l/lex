@@ -227,6 +227,8 @@ interface ProviderConnectionDialogProps {
   focusAgent?: AgentKind;
   onSaved: () => void;
   onClose: () => void;
+  onBackToChannels?: () => void;
+  suspended?: boolean;
 }
 
 interface ImageGenerationReloadConfirmation {
@@ -468,6 +470,7 @@ function PresetDropdown({
 
 export function ProviderConnectionDialog(props: ProviderConnectionDialogProps) {
   const [specialized, setSpecialized] = useState(false);
+  const [specializedVisited, setSpecializedVisited] = useState(false);
   // Capture the external entry once, before either form moves focus inside.
   const initialReturnFocusRef = useRef(
     document.activeElement instanceof HTMLElement && document.activeElement !== document.body
@@ -475,13 +478,18 @@ export function ProviderConnectionDialog(props: ProviderConnectionDialogProps) {
       : null,
   );
   const returnFocusRef = props.returnFocusRef ?? initialReturnFocusRef;
-  if (!specialized && (!props.initial || props.initial.channels)) return <ProviderChannelsDialog {...props}
-    returnFocusRef={returnFocusRef}
-    {...(!props.initial ? { onSpecializedSetup: () => setSpecialized(true) } : {})} />;
+  if (!props.initial || props.initial.channels) return <>
+    <ProviderChannelsDialog {...props} returnFocusRef={returnFocusRef} suspended={specialized}
+      {...(!props.initial ? { onSpecializedSetup: () => { setSpecializedVisited(true); setSpecialized(true); } } : {})} />
+    {specializedVisited && <LegacyProviderConnectionDialog {...props} returnFocusRef={returnFocusRef} suspended={!specialized}
+      onBackToChannels={() => setSpecialized(false)} />}
+  </>;
   return <LegacyProviderConnectionDialog {...props} returnFocusRef={returnFocusRef} />;
 }
 
 function LegacyProviderConnectionDialog({
+  onBackToChannels,
+  suspended = false,
   initial,
   existingIds,
   returnFocusRef,
@@ -621,6 +629,8 @@ function LegacyProviderConnectionDialog({
   const savingRef = useRef(saving);
   const imageGenerationReloadConfirmationRef = useRef(imageGenerationReloadConfirmation);
   const onCloseRef = useRef(onClose);
+  const suspendedRef = useRef(suspended);
+  suspendedRef.current = suspended;
   const showImageGenerationHelp =
     imageGenerationHelpPinned || imageGenerationHelpHovered || imageGenerationHelpFocused;
 
@@ -728,6 +738,7 @@ function LegacyProviderConnectionDialog({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (suspendedRef.current) return;
       if (event.key !== 'Escape') return;
       // IME 候选窗的 Escape 是组合输入控制，不是弹层关闭意图。
       if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
@@ -755,6 +766,7 @@ function LegacyProviderConnectionDialog({
 
   useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
+      if (suspendedRef.current) return;
       if (event.button !== 0) return;
       if (event.target !== scrimRef.current) return;
       if (!childLayerRef.current && !runtimeFillRef.current) return;
@@ -772,6 +784,7 @@ function LegacyProviderConnectionDialog({
   }, [dismissTopmostLayer]);
 
   useEffect(() => {
+    if (suspended) return;
     const frame = requestAnimationFrame(() => {
       (
         dialogPanelRef.current?.querySelector<HTMLInputElement>('input')
@@ -780,9 +793,9 @@ function LegacyProviderConnectionDialog({
     return () => {
       cancelAnimationFrame(frame);
       const focusTarget = returnFocusRef?.current;
-      if (focusTarget?.isConnected) focusTarget.focus();
+      if (!suspendedRef.current && focusTarget?.isConnected) focusTarget.focus();
     };
-  }, [returnFocusRef]);
+  }, [returnFocusRef, suspended]);
   // 最新 runtime 表单状态镜像：拉取响应到达时据此构建弹层行/预勾选，而不是用请求发出时的
   // 闭包快照——在途期间被用户删除的行不得复活。镜像在每个 setRt updater 内**同步**更新
   // （见 setRtSynced），不用被动 useEffect——effect 在 commit 后才跑，IPC 响应若落在
@@ -2096,6 +2109,7 @@ function LegacyProviderConnectionDialog({
     );
   };
 
+  if (suspended) return null;
   return (
     <div
       ref={scrimRef}
@@ -2908,6 +2922,9 @@ function LegacyProviderConnectionDialog({
 
         {/* Footer: only the save request owns this busy state. */}
         <div className="flex shrink-0 flex-wrap justify-end gap-2.5 p-4">
+          {onBackToChannels && <Button variant="secondary" disabled={saving} onClick={onBackToChannels}>
+            {t('models.channels.backToChannels')}
+          </Button>}
           <Button
             variant="secondary"
             size="lg"

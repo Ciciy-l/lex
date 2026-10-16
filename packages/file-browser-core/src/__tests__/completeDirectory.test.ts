@@ -31,7 +31,9 @@ it('retains realpath boundaries when listing without presentation filters', asyn
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'complete-dir-'));
   const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'complete-outside-'));
   roots.push(root, outside);
-  await fs.symlink(outside, path.join(root, 'link'));
+  // Directory junctions exercise the same realpath boundary without requiring
+  // Windows Developer Mode or the privileged file-symlink capability.
+  await fs.symlink(outside, path.join(root, 'link'), process.platform === 'win32' ? 'junction' : 'dir');
   expect(await listDir(root, '')).toEqual([]);
   await expect(listDir(root, 'link')).rejects.toThrow('escapes');
 });

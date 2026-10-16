@@ -9,7 +9,7 @@ const h = vi.hoisted(() => ({ t: (key: string) => key, confirm: vi.fn(), editor:
 vi.mock('react-i18next', async (original) => ({ ...await original<typeof import('react-i18next')>(), useTranslation: () => ({ t: h.t }) }));
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }));
 vi.mock('@/components/ui/confirm-dialog-provider', () => ({ useConfirmDialog: () => ({ confirm: h.confirm }) }));
-vi.mock('../ModelSelector', async (original) => ({ ...await original<typeof import('../ModelSelector')>(), ModelSelector: ({ modelId }: { modelId: string }) => <span data-testid="model-selector">{modelId}</span> }));
+vi.mock('../ModelSelector', async (original) => ({ ...await original<typeof import('../ModelSelector')>(), ModelSelector: ({ modelId, effort }: { modelId: string; effort?: string }) => <span data-testid="model-selector" data-effort={effort}>{modelId}</span> }));
 vi.mock('../ExtraDirsButton', () => ({ ExtraDirsButton: () => null }));
 vi.mock('../PermissionSelector', () => ({ PermissionSelector: () => <span data-testid="permission-selector" /> }));
 vi.mock('../NewGoalDialog', () => ({ NewGoalDialog: () => null }));
@@ -62,6 +62,19 @@ const props = {
   vendorKey: 'codex' as const, deviceLinkDeviceId: 'test-host', attachmentState: attachments,
   hideRuntimeControls: true, showFolderPicker: false, disableAutofocus: true,
 };
+
+it.each(['high', null] as const)('sends the actual runtime effort %s even without a catalog', async (effort) => {
+  const onSend = vi.fn().mockResolvedValue(true);
+  const view = render(<ChatInput {...props} hideRuntimeControls={false} onSend={onSend}
+    initialModel="gpt-6-astra" initialProviderId="openai" initialEffort="medium"
+    runtimeEffective={{ agentKind: 'codex', model: 'gpt-6-astra', providerId: 'openai', effort, fastMode: false }} />);
+  await waitFor(() => expect(view.container.querySelector('[contenteditable]')).not.toBeNull());
+  expect(screen.getByTestId('model-selector').getAttribute('data-effort')).toBe(effort);
+  await act(async () => { h.editor!.commands.setContent('<p>Keep the running configuration</p>'); });
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'newChat.sendButton.send' })); });
+  await waitFor(() => expect(onSend).toHaveBeenCalledOnce());
+  expect(onSend.mock.calls[0][2]).toBe(effort ?? undefined);
+});
 
 it.each(['button', 'Enter', 'voice'] as const)(
   'blocks %s while metadata is absent, retains input, and sends Astra when metadata arrives', async (entry) => {

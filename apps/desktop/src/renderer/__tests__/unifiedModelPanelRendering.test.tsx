@@ -1250,6 +1250,39 @@ describe('统一面板 · 恢复推荐应用到 live 配置', () => {
     });
   });
 
+  it('未知思考档恢复推荐失败时回滚 Fast，不虚构旧档位或清除记忆', async () => {
+    setModelEngineOverride('xd', 'gpt-5.5', 'cc');
+    const writes: string[] = [];
+    const onEffortChange = vi.fn(async (value: string) => {
+      writes.push(`effort:${value}`);
+      return false;
+    });
+    const onFastModeChange = vi.fn(async (value: boolean) => {
+      writes.push(`fast:${value}`);
+      return true;
+    });
+    renderPanel({
+      sessionEngineFilter: {
+        currentAgent: 'codex',
+        runtimeAgent: 'codex',
+        onCrossEngineSelect: vi.fn(),
+      },
+      currentProviderId: 'xd',
+      modelId: 'gpt-5.5',
+      effort: undefined,
+      fastMode: true,
+      onEffortChange,
+      onFastModeChange,
+    });
+    const flyout = await openFlyoutFor('GPT-5.5');
+    await act(async () => {
+      fireEvent.click(within(flyout).getByText('恢复推荐'));
+    });
+    expect(writes).toEqual(['fast:false', 'effort:high', 'fast:true']);
+    expect(onEffortChange).toHaveBeenCalledExactlyOnceWith('high');
+    expect(getModelEngineOverride('xd', 'gpt-5.5')).toBe('cc');
+  });
+
   it('会话内跨引擎被取消:override 不落地,不留半套状态', async () => {
     setModelEngineOverride('xd', 'gpt-5.5', 'cc');
     const onCrossEngineSelect = vi.fn(() => false);

@@ -1699,7 +1699,7 @@ export function CCAgentSessionView({
     deliveryMode: MessageDeliveryMode;
     message: string;
     model: string;
-    effort: Effort;
+    effort: Effort | undefined;
     permissionMode: PermissionMode;
     files?: AttachedFile[];
     mentions?: MentionedResource[];
@@ -3367,7 +3367,7 @@ export function CCAgentSessionView({
     async (
       message: string,
       model: string,
-      effort: Effort,
+      effort: Effort | undefined,
       permissionMode: PermissionMode,
       files?: AttachedFile[],
       mentions?: MentionedResource[],

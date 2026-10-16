@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import { matchPath, useBlocker, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { WINDOW_NO_DRAG_STYLE } from '@/components/layout/windowDrag';
 
 import { BotPronounProvider, useBotTranslation } from './botPronounContext';
 import { BotSettings } from './BotsHomeView';
@@ -92,6 +93,7 @@ export function BotSettingsDrawer() {
         <Dialog.Overlay className="fixed inset-0 z-50 bg-[var(--overlay-modal)]">
           <Dialog.Content onPointerDownOutside={(event) => event.preventDefault()}
             aria-describedby={undefined}
+            style={WINDOW_NO_DRAG_STYLE}
             className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l border-[var(--border-default)] bg-[var(--surface)] outline-none"
           >
             <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--border-default)] px-5">

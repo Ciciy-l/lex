@@ -460,7 +460,7 @@ interface ChatInputProps {
   onSend: (
     message: string,
     model: string,
-    effort: Effort,
+    effort: Effort | undefined,
     permissionMode: PermissionMode,
     files?: AttachedFile[],
     mentions?: MentionedResource[],
@@ -1709,7 +1709,7 @@ export function ChatInput({
       agentKind: runtimeAgentKind ?? vendorKeyToAgentKind(vendorKey) ?? 'claude-code',
       model: initialModel ?? (sessionId ? '' : localVendorDefaults.model),
       providerId: initialProviderId ?? null,
-      effort: initialEffort ?? localVendorDefaults.effort,
+      effort: initialEffort ?? (sessionId ? null : localVendorDefaults.effort),
       fastMode: fastMode === true,
     },
     effective: sessionId ? runtimeEffective : undefined,
@@ -1718,7 +1718,10 @@ export function ChatInput({
     optimistic: pendingRemoteSwitch,
   });
   const activeModel = composerSelection.display.model;
-  const activeEffort = composerSelection.display.effort ?? 'low';
+  // A selected target's explicit null must not inherit the previous route's effort.
+  // Missing catalogs do not create a new choice: Main projects observed runtime
+  // effort, and an unavailable value remains omitted on the next send.
+  const activeEffort = composerSelection.display.effort ?? undefined;
   const activePermissionMode: PermissionMode =
     initialPermissionMode ?? localVendorDefaults.permissionMode;
 
@@ -6569,7 +6572,7 @@ export function ChatInput({
           requested: overrides?.effort,
           efforts,
           defaultEffort,
-          activeEffort,
+          activeEffort: activeEffort ?? '',
           providerEffort,
           rememberedEffort: getRememberedEffort(newModelId),
         });
@@ -7118,7 +7121,7 @@ export function ChatInput({
           : activeEffort;
       // 切换前先快照旧模型的当前 effort, 这样 user 切回来时能拿回原选择。
       // 本地 lane 读取上一条已提交值，不依赖 React props 是否已经 rerender。
-      if (activeModel && activeModel !== newModelId) {
+      if (activeModel && activeModel !== newModelId && committedActiveEffort !== undefined) {
         setRememberedEffort(activeModel, committedActiveEffort);
       }
 
@@ -7132,7 +7135,7 @@ export function ChatInput({
       const newEffort = resolveRequestedEffort({
         efforts,
         defaultEffort,
-        activeEffort: committedActiveEffort,
+        activeEffort: committedActiveEffort ?? '',
         providerEffort,
         rememberedEffort: getRememberedEffort(newModelId),
       });
@@ -7310,7 +7313,7 @@ export function ChatInput({
         ) {
           await window.electronAPI.maker
             .setModel(sessionId, rollbackModelAfterPersistFailure.model, undefined, undefined, {
-              effort: activeEffort,
+              effort: activeEffort ?? null,
               fastMode,
             })
             .catch((rollbackErr) => {
@@ -7549,7 +7552,7 @@ export function ChatInput({
         case 'composer.decreaseReasoningEffort': {
           const { efforts } = resolveModelEfforts(activeModel, effectiveSourceId);
           if (efforts.length === 0) return false;
-          const currentIndex = Math.max(0, efforts.indexOf(activeEffort));
+          const currentIndex = activeEffort === undefined ? -1 : efforts.indexOf(activeEffort);
           const delta = action.commandId === 'composer.increaseReasoningEffort' ? 1 : -1;
           const next = efforts[Math.max(0, Math.min(efforts.length - 1, currentIndex + delta))];
           if (!next || next === activeEffort) return true;
@@ -7603,7 +7606,7 @@ export function ChatInput({
       return resolveEffort({
         efforts,
         defaultEffort,
-        activeEffort: committedActiveEffort,
+        activeEffort: committedActiveEffort ?? '',
         preferred,
         providerEffort,
         rememberedEffort: getRememberedEffort(targetModelId),
@@ -7920,7 +7923,7 @@ export function ChatInput({
           defaultEffort,
           providerEffort,
           preferred: reconciledEffort,
-          fallbackEffort: committedActiveEffort,
+          fallbackEffort: committedActiveEffort ?? '',
         });
         // applyModelAndEffort 同时按新来源 capability 校验 fast,并把 (activeModel, targetEffort)
         // 写回模型级全局预设。模型不变,model 字段照写 activeModel(幂等)。
@@ -7939,7 +7942,7 @@ export function ChatInput({
         ) {
           await window.electronAPI.maker
             .setModel(sessionId, rollbackProvider.model, rollbackProvider.providerId, undefined, {
-              effort: activeEffort,
+              effort: activeEffort ?? null,
               fastMode,
             })
             .catch((rollbackErr) => {

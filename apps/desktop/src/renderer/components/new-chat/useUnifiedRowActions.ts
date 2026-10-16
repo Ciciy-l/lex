@@ -353,6 +353,17 @@ export function useUnifiedRowActions(options: UnifiedRowActionsOptions): Unified
   const applyDefaultsLive = async (effort: Effort | null): Promise<boolean> => {
     // 快照必须在第一笔写出去之前取:它就是 onEffortChangeLive 写的那个格子的原值。
     const previousEffort = liveEffort ?? null;
+    if (previousEffort === null && effort && onEffortChangeLive && onFastModeChangeLive) {
+      // Unknown effort has no truthful rollback value. Apply the reversible
+      // Fast axis first, and restore it if the explicit effort write fails.
+      const previousFast = liveFast ?? false;
+      if (!(await runLive(() => onFastModeChangeLive(false)))) return false;
+      if (!(await runLive(() => onEffortChangeLive(effort)))) {
+        await runLive(() => onFastModeChangeLive(previousFast));
+        return false;
+      }
+      return true;
+    }
     let effortWritten = false;
     if (effort && onEffortChangeLive) {
       if (!(await runLive(() => onEffortChangeLive(effort)))) return false;

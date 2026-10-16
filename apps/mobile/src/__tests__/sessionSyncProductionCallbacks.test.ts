@@ -6,7 +6,11 @@ import { createRemoteSyncCoordinator } from '@/device-link/remoteSyncTask';
 import { runConnectionScopedSessionMetadataRead, waitForIndependentSnapshotReads } from '@/device-link/sessionSnapshotSingleFlight';
 import { syncSessionMessageWindow } from '@/session/sessionMessageWindowSync';
 import { shouldClearOperationErrorAfterSync } from '@/session/sessionSyncErrorRecovery';
-import { hasOlderMessagesAfterReopen, shouldKeepOlderMessagesAffordance } from '@/session/messagePaging';
+import {
+  bridgeLatestMessagePage,
+  hasOlderMessagesAfterReopen,
+  shouldKeepOlderMessagesAffordance,
+} from '@/session/messagePaging';
 import { HistoryViewController, isHistoryViewUnavailable, projectHistoryView } from '@cindy/maker-shared/message-window';
 
 // Execute the actual page callbacks, not a duplicate orchestration written for tests.
@@ -52,7 +56,9 @@ function historyAvailable(status: string, presence: boolean | null): boolean {
 }
 const tick = () => new Promise((done) => setTimeout(done, 0));
 const session = { id: 's1', updatedAt: '2026-09-06T00:00:00Z', _count: { messages: 100 } };
-const page = { messages: [{ id: 'm1' }], limit: 1, reducedByPayloadTooLarge: false };
+const page = {
+  messages: [{ id: 'm1' }] as { id: string; clientId?: string }[], limit: 1, reducedByPayloadTooLarge: false,
+};
 
 function fixture(reopen = false, remoteHistoryAvailable = true) {
   const state = {
@@ -80,6 +86,7 @@ function fixture(reopen = false, remoteHistoryAvailable = true) {
     isSessionMessageWindowSynced: vi.fn(() => false),
     setMessages: vi.fn((_id, rows) => { state.rows = rows; }),
     setLatestMessageWindow: vi.fn((_id, rows) => { state.rows = rows; }),
+    latestMessageWindowNeedsBridge: vi.fn(() => false),
     markSessionMessagesSynced: vi.fn(),
     setPendingInteractions: vi.fn(), setInputProjectionIfCurrent: vi.fn(),
     setActiveSessionSnapshots: vi.fn(),
@@ -115,6 +122,7 @@ function fixture(reopen = false, remoteHistoryAvailable = true) {
     getSubscriptionIdentity: (): number | null => null, notificationResponse: null,
     syncedNotificationResponseRef: { current: null },
     shouldKeepOlderMessagesAffordance, hasOlderMessagesAfterReopen,
+    bridgeLatestMessagePage,
     messageWindowReconciledRef: { current: false },
     setHasOlderMessages: (value: boolean) => { state.older = value; },
     setLoading: (value: boolean) => { state.loading = value; },
@@ -236,6 +244,34 @@ describe('production session recovery callbacks', () => {
     expect(f.state.rows).toEqual(page.messages);
     expect(f.store.markSessionMessagesSynced).toHaveBeenCalled();
   });
+  it('reads before the latest page until it joins the verified window, then commits once', async () => {
+    const f = fixture(true);
+    f.store.latestMessageWindowNeedsBridge.mockReturnValueOnce(true).mockReturnValue(false);
+    f.maker.listMessages
+      .mockResolvedValueOnce({ ...page, messages: [{ id: 'm2', clientId: 'm2' }], limit: 1 })
+      .mockResolvedValueOnce({ ...page, messages: [{ id: 'm1', clientId: 'm1' }], limit: 1 });
+    await f.sync();
+    expect(f.maker.listMessages.mock.calls.map((call) => (call as unknown[])[1])).toEqual([
+      { limit: 20 },
+      { limit: 20, before: 'm2' },
+    ]);
+    expect(f.store.setLatestMessageWindow).toHaveBeenCalledTimes(1);
+    expect(f.state.rows.map((row) => row.id)).toEqual(['m1', 'm2']);
+  });
+
+  it('does not commit an unbridged window when a bridge read fails', async () => {
+    const f = fixture(true);
+    const cached = f.state.rows;
+    f.store.latestMessageWindowNeedsBridge.mockReturnValue(true);
+    f.maker.listMessages
+      .mockResolvedValueOnce({ ...page, messages: [{ id: 'm2', clientId: 'm2' }], limit: 1 })
+      .mockRejectedValueOnce(new Error('INVOKE_TIMEOUT'));
+    await f.sync().catch(() => undefined);
+    expect(f.store.setLatestMessageWindow).not.toHaveBeenCalled();
+    expect(f.state.rows).toBe(cached);
+    expect(f.state.syncError).not.toBeNull();
+  });
+
   it('accepts a history view without certifying sparse rows as a complete raw window', async () => {
     const f = fixture();
     f.bindings.historyView.view.getSnapshot = () => ({ ready: true, error: null });

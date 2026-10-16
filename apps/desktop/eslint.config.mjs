@@ -20,6 +20,7 @@ export default tseslint.config(
       'src/main/workdir-probe-host/**/*.{ts,tsx}',
       'src/main/mcp-integrations/forgeIconConversionHost.ts',
       'src/main/reviewer/reviewPdfProcess.ts',
+      'src/main/skillhub/customizationScanHost.ts',
       'src/main/cindy-brain/nodeRuntimeBroker.ts',
       'src/main/cindy-brain/piSubagentRunnerHost.ts',
       'src/main/__spike__/**/*.{ts,tsx}',

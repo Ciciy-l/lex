@@ -20,6 +20,7 @@ import { CINDY_SUBAGENT_EXTENSION_SOURCE } from "../cindy-subagent-source.js";
 
 const captured = vi.hoisted(() => ({
   args: [] as string[],
+  spawnBinaryPath: undefined as string | undefined,
   env: {} as Record<string, string | undefined>,
   requests: [] as Array<Record<string, unknown>>,
   responses: [] as Array<Record<string, unknown>>,
@@ -58,11 +59,13 @@ const captured = vi.hoisted(() => ({
 
 vi.mock("../transport.js", () => ({
   createPiStdioTransport: (opts: {
+    binaryPath: string;
     args: string[];
     env: Record<string, string | undefined>;
     onProcessSpawned?: (pid: number) => void | (() => void);
   }) => {
     // spawn 参数断言移到 transport 工厂(spawn 行为在 stdio transport)。
+    captured.spawnBinaryPath = opts.binaryPath;
     captured.args = [...opts.args];
     captured.env = { ...(opts.env ?? {}) };
     opts.onProcessSpawned?.(1234);
@@ -271,6 +274,7 @@ describe("Pi provider-aware model routing", () => {
   let cwd = "";
 
   beforeEach(() => {
+    captured.spawnBinaryPath = undefined;
     captured.args = [];
     captured.requests = [];
   captured.responses = [];
@@ -572,6 +576,7 @@ describe("Pi provider-aware model routing", () => {
     };
     expect(apiResolver).toHaveBeenCalledWith("openai", "shared-model", {
       remote: false,
+      runtimeBinaryPath: deps.binaryPath,
     });
     expect(descriptorResolver).toHaveBeenCalledWith("openai", "shared-model");
     expect(
@@ -3931,7 +3936,7 @@ describe("Pi provider-aware model routing", () => {
 
   it.each([
     { label: 'different live window', window: 400_000, action: 'rebuild' },
-    { label: 'matching live window', window: 128_000, action: 'hot' },
+    { label: 'matching live window', window: 128_000, action: 'rebuild' },
     { label: 'missing live window', window: undefined, action: 'rebuild' },
     { label: 'failed live catalog read', window: null, action: 'rebuild' },
   ] as const)('checks an inherited model before switching: $label', async ({ window, action }) => {
@@ -3954,11 +3959,16 @@ describe("Pi provider-aware model routing", () => {
         ? { sessionFile: '/mock/s.jsonl', model: { contextWindow: captured.runtimeProvider === 'pi-native' ? window : 200_000 } }
         : {} };
     };
-    const handle = await new PiAgent(deps).startSession({
+    const agent = new PiAgent(deps);
+    const handle = await agent.startSession({
       sessionId: 'inherited-window', workingDir: cwd, model: 'local-model', providerId: 'native-a',
     });
     const config = captured.env.PI_CODING_AGENT_DIR!;
     const before = ['models.json', 'settings.json'].map(file => readFileSync(path.join(config, file), 'utf8'));
+    const startupSettings = JSON.parse(before[1]) as {
+      compaction?: { modelOverrides?: Record<string, { reserveTokens?: number }> };
+    };
+    expect(startupSettings.compaction?.modelOverrides).not.toHaveProperty('pi-native/wire-model');
     captured.requests.length = 0;
     const preview = await handle.previewModelSwitch?.('catalog-alias', { providerId: 'native-account' });
     expect(preview).toMatchObject({ action, targetContextWindow: window ?? null, windowVerified: false });
@@ -3976,6 +3986,145 @@ describe("Pi provider-aware model routing", () => {
       expect(captured.closes).toBe(0);
     }
     await handle.close();
+    if (typeof window === 'number') {
+      const rebuilt = await agent.startSession({
+        sessionId: 'inherited-window', workingDir: cwd,
+        model: 'catalog-alias', providerId: 'native-account',
+      });
+      const rebuiltSettings = JSON.parse(readFileSync(
+        path.join(captured.env.PI_CODING_AGENT_DIR!, 'settings.json'), 'utf8',
+      )) as { compaction?: { modelOverrides?: Record<string, { reserveTokens?: number }> } };
+      expect(rebuiltSettings.compaction?.modelOverrides?.['pi-native/wire-model']?.reserveTokens)
+        .toBe(window * 0.25);
+      await rebuilt.close();
+    }
+  });
+
+  it('keeps a learned inherited window below a later Cindy working-window override', async () => {
+    let workingWindow: number | undefined;
+    const deps = byomDeps(async () => ({ providers: [
+      { id: 'native-a', name: 'Current', baseUrl: 'http://a.test', api: 'openai-completions',
+        models: [{ id: 'local-model', contextWindow: 200_000 }] },
+      { id: 'pi-native', sourceProviderId: 'native-account', name: 'Inherited', baseUrl: 'http://b.test',
+        inheritModels: true, modelIdAliases: { 'catalog-alias': 'catalog-model' },
+        models: [{ id: 'catalog-model', wireId: 'wire-model' }] },
+    ], env: {} }));
+    deps.runtimeConfig = { ...deps.runtimeConfig, piAutoCompactThresholdPct: 75 };
+    deps.resolveModelContextLimit = (provider, model) =>
+      provider === 'native-account' && (model === 'catalog-model' || model === 'catalog-alias')
+        ? workingWindow ?? null
+        : null;
+    captured.requestHandler = async (command) => {
+      if (command.type === 'get_available_models') return { success: true, data: { models: [
+        { provider: 'pi-native', id: 'wire-model', contextWindow: 400_000 },
+      ] } };
+      return { success: true, data: command.type === 'get_state'
+        ? { sessionFile: '/mock/s.jsonl', model: { contextWindow: captured.runtimeProvider === 'pi-native' ? 400_000 : 200_000 } }
+        : {} };
+    };
+
+    const agent = new PiAgent(deps);
+    const initial = await agent.startSession({
+      sessionId: 'learned-working-window', workingDir: cwd,
+      model: 'local-model', providerId: 'native-a',
+    });
+    expect(await initial.previewModelSwitch?.('catalog-alias', { providerId: 'native-account' }))
+      .toMatchObject({ action: 'rebuild', targetContextWindow: 400_000 });
+    await initial.close();
+
+    workingWindow = 150_000;
+    captured.initialProvider = undefined;
+    captured.initialModel = undefined;
+    captured.runtimeProvider = undefined;
+    captured.runtimeModel = undefined;
+    const rebuilt = await agent.startSession({
+      sessionId: 'learned-working-window', workingDir: cwd,
+      model: 'catalog-alias', providerId: 'native-account',
+    });
+    const rebuiltSettings = JSON.parse(readFileSync(
+      path.join(captured.env.PI_CODING_AGENT_DIR!, 'settings.json'), 'utf8',
+    )) as { compaction?: {
+      reserveTokens?: number;
+      modelOverrides?: Record<string, { reserveTokens?: number }>;
+    } };
+    // Pi 0.x uses this global reserve: retain the 400K physical capacity and
+    // express the 150K working window as its 112.5K used-token threshold.
+    expect(rebuiltSettings.compaction?.reserveTokens).toBe(287_500);
+    expect(rebuiltSettings.compaction?.modelOverrides?.['pi-native/wire-model']?.reserveTokens)
+      .toBe(37_500);
+    expect(await rebuilt.previewModelSwitch?.('catalog-alias', { providerId: 'native-account' }))
+      .toMatchObject({ action: 'hot', targetContextWindow: 150_000 });
+    await rebuilt.close();
+  });
+
+  it('does not reuse an inherited window after the managed Pi binary changes', async () => {
+    const v1Path = path.join(agentHome, 'pi-v1');
+    const v2Path = path.join(agentHome, 'pi-v2');
+    let binaryPath = v1Path;
+    let liveWindow = 400_000;
+    const resolvedBinaryPaths: Array<string | undefined> = [];
+    const deps = byomDeps(async (input) => {
+      resolvedBinaryPaths.push(input.runtimeBinaryPath);
+      return { providers: [
+        { id: 'native-a', name: 'Current', baseUrl: 'http://a.test', api: 'openai-completions',
+          models: [{ id: 'local-model', contextWindow: 200_000 }] },
+        { id: 'pi-native', sourceProviderId: 'native-account', name: 'Inherited', baseUrl: 'http://b.test',
+          inheritModels: true, modelIdAliases: { 'catalog-alias': 'catalog-model' },
+          models: [{ id: 'catalog-model', wireId: 'wire-model' }] },
+      ], env: {} };
+    });
+    let observeFreeze = false;
+    let signalFrozen!: () => void;
+    const binaryFrozen = new Promise<void>((resolve) => { signalFrozen = resolve; });
+    Object.defineProperty(deps, 'binaryPath', { configurable: true, get: () => {
+      const current = binaryPath;
+      if (observeFreeze) {
+        observeFreeze = false;
+        signalFrozen();
+      }
+      return current;
+    } });
+    captured.requestHandler = async (command) => {
+      if (command.type === 'get_available_models') return { success: true, data: { models: [
+        { provider: 'pi-native', id: 'wire-model', contextWindow: liveWindow },
+      ] } };
+      return { success: true, data: command.type === 'get_state'
+        ? { sessionFile: '/mock/s.jsonl', model: { contextWindow: 200_000 } }
+        : {} };
+    };
+
+    const agent = new PiAgent(deps);
+    observeFreeze = true;
+    const firstStart = agent.startSession({
+      sessionId: 'binary-window-v1', workingDir: cwd, model: 'local-model', providerId: 'native-a',
+      makerMemoryEnabled: true, makerMemoryIndexSnapshot: '',
+    });
+    // Publish v2 after startSession freezes v1, while the async memory-scope
+    // lookup still precedes native-provider resolution.
+    await binaryFrozen;
+    binaryPath = v2Path;
+    const first = await firstStart;
+    expect(resolvedBinaryPaths).toEqual([v1Path]);
+    expect(captured.spawnBinaryPath).toBe(v1Path);
+    expect(await first.previewModelSwitch?.('catalog-alias', { providerId: 'native-account' }))
+      .toMatchObject({ targetContextWindow: 400_000 });
+    expect(resolvedBinaryPaths).toEqual([v1Path, v1Path]);
+    await first.close();
+
+    liveWindow = 200_000;
+    captured.requests.length = 0;
+    const afterUpdate = await agent.startSession({
+      sessionId: 'binary-window-v2', workingDir: cwd, model: 'local-model', providerId: 'native-a',
+    });
+    expect(captured.spawnBinaryPath).toBe(v2Path);
+    const settings = JSON.parse(readFileSync(
+      path.join(captured.env.PI_CODING_AGENT_DIR!, 'settings.json'), 'utf8',
+    )) as { compaction?: { modelOverrides?: Record<string, { reserveTokens?: number }> } };
+    expect(settings.compaction?.modelOverrides).not.toHaveProperty('pi-native/wire-model');
+    expect(await afterUpdate.previewModelSwitch?.('catalog-alias', { providerId: 'native-account' }))
+      .toMatchObject({ targetContextWindow: 200_000 });
+    expect(resolvedBinaryPaths).toEqual([v1Path, v1Path, v2Path, v2Path]);
+    await afterUpdate.close();
   });
 
   it('refreshes a managed adapter when the same model ID gets a new descriptor', async () => {

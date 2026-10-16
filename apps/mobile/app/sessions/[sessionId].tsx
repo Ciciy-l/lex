@@ -528,6 +528,7 @@ import {
   type MobileVoiceDictionaryLearningTracker,
 } from '@/session/mobileVoiceDictionaryLearning';
 import {
+  bridgeLatestMessagePage,
   hasOlderMessagesAfterReopen,
   hasOlderMessagesByServerCount,
   listMessagesWithPayloadRetry,
@@ -3591,7 +3592,7 @@ export default function SessionScreen() {
             return { messages: [], limit: 20, reducedByPayloadTooLarge: false };
           }
           if (!isHistoryViewUnavailable(viewState.error)) throw viewState.error;
-          return retryRead(() => listMessagesWithPayloadRetry(
+          const latest = await retryRead(() => listMessagesWithPayloadRetry(
           (limit) => runSessionMessagesSnapshotSingleFlight(
             snapshotScope,
             limit,
@@ -3600,6 +3601,17 @@ export default function SessionScreen() {
           ),
           isReopen ? REOPEN_MESSAGE_WINDOW_LIMITS : undefined,
         ));
+          // 整窗替换不保留旧段，无需补读。
+          if (options.replaceMessages) return latest;
+          return bridgeLatestMessagePage(latest, {
+            needsBridge: (rows, more) =>
+              remoteSessionStore.latestMessageWindowNeedsBridge(sessionId, rows, more),
+            // 与最新页同一套瞬态重试；仍失败时整轮同步失败，不提交接不上的窗口。
+            readBefore: (before) => retryRead(() => listMessagesWithPayloadRetry(
+              (limit) => maker.listMessages(sessionId, { limit, before }),
+            )),
+            isCurrent,
+          });
         },
         isCurrent,
         commitMessages: (history) => {
@@ -6110,6 +6122,9 @@ export default function SessionScreen() {
       selectionAtSend.agentKind, selectionAtSend.model, selectionAtSend.providerId,
     )) {
       setError(t('session.common.modelHiddenReselect', { model: selectionAtSend.model }));
+      // 与手动打开入口一致：面板按「待切换目标 / 当前任务引擎」浏览，才能把已关闭的
+      // 原选模型认作当前选择并显示重选提示（#5580）。
+      setModelSheetAgentKind(selectionAtSend.agentKind);
       setModelSheetOpen(true);
       sendInFlightRef.current = false;
       setSending(false);

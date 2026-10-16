@@ -82,8 +82,8 @@ vi.mock('@/hooks/useReduceMotion', () => ({
   useReduceMotionEnabled: () => native.reducedMotion,
 }));
 
-function Harness({ active = false, inset = 0 }) {
-  const keyboard = useMobileKeyboardState();
+function Harness({ active = false, inset = 0, enabled = true }) {
+  const keyboard = useMobileKeyboardState(enabled);
   useComposerCardTransition(active, keyboard);
   return (
     <ComposerKeyboardAvoidingView
@@ -155,6 +155,37 @@ afterEach(() => {
 });
 
 describe('composer keyboard geometry and motion', () => {
+  it('does no keyboard work while disabled and refreshes native geometry when enabled again', () => {
+    render({ enabled: false });
+    expect(native.listeners.size).toBe(0);
+    emit('keyboardDidShow');
+    expect(height()).toBe(0);
+    render();
+    expect(height()).toBe(300);
+    expect(native.schedule).not.toHaveBeenCalled();
+    expect(native.configure).not.toHaveBeenCalled();
+    render({ enabled: false });
+    expect([...native.listeners.values()].every(listeners => listeners.size === 0)).toBe(true);
+    emit('keyboardDidHide');
+    render();
+    expect(height()).toBe(0);
+    emit('keyboardWillShow');
+    expect(height()).toBe(300);
+    expect(native.schedule).toHaveBeenCalledOnce();
+  });
+
+  it('ignores a delayed cross-fade query after disabling and reopening', async () => {
+    let finish!: (crossFade: boolean) => void;
+    native.crossFade.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    render();
+    emit('keyboardWillShow', keyboardEvent(0, 844));
+    render({ enabled: false });
+    emit('keyboardDidShow', keyboardEvent(444, 400));
+    render();
+    await act(async () => finish(true));
+    expect(height()).toBe(400);
+  });
+
   it('updates both available height and iOS avoidance when an already-open keyboard changes height', () => {
     render();
     emit('keyboardWillShow');

@@ -349,6 +349,10 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
 
   beforeAll(async () => {
     agentHome = mkdtempSync(path.join(tmpdir(), 'pi-agent-int-'));
+    const userHome = path.join(agentHome, 'user-home');
+    mkdirSync(userHome);
+    vi.stubEnv('HOME', userHome);
+    vi.stubEnv('USERPROFILE', userHome);
     server = createServer((req, res) => {
       let body = '';
       req.on('data', (c) => { body += c; });
@@ -380,6 +384,7 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
   });
 
   afterAll(async () => {
+    vi.unstubAllEnvs();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     rmSync(agentHome, { recursive: true, force: true });
   });
@@ -844,7 +849,7 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
   );
 
   it(
-    'uses PI native OAuth identity and fallback betas for a host Claude subscription model',
+    'uses PI native OAuth identity and inherited request features for a host Claude subscription model',
     { timeout: 60_000 },
     async () => {
       const deps = buildDeps();
@@ -902,7 +907,7 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
 
         expect(seenRequests.slice(requestsBefore)).toEqual(expect.arrayContaining([
           expect.objectContaining({
-            url: '/v1/messages',
+            url: '/v1/messages?beta=true',
             providerId: 'anthropic',
           }),
         ]));
@@ -911,14 +916,18 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
         expect(request.headers['x-api-key']).toBeUndefined();
         expect(request.headers['user-agent']).toMatch(/^claude-cli\//);
         expect(String(request.headers['anthropic-beta']).split(',')).toEqual(expect.arrayContaining([
-          'claude-code-20250219', 'oauth-2025-04-20', 'server-side-fallback-2026-07-01',
+          'claude-code-20250219', 'oauth-2025-04-20',
+          'mid-conversation-output-config-2026-07-01', 'thinking-binding-controls-2026-08-01',
         ]));
         expect(JSON.parse(request.body)).toMatchObject({
           system: expect.arrayContaining([
             expect.objectContaining({ type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." }),
           ]),
-          fallbacks: expect.arrayContaining([expect.objectContaining({ model: expect.any(String) })]),
         });
+        // Pi 1.2 derives fallback requests from explicit native compat metadata.
+        // This inherited model no longer advertises a fallback; Lex must not add one.
+        expect(String(request.headers['anthropic-beta']).split(',')).not.toContain('server-side-fallback-2026-07-01');
+        expect(JSON.parse(request.body)).not.toHaveProperty('fallbacks');
       } finally {
         await handle?.close();
         rmSync(workingDir, { recursive: true, force: true });
@@ -1290,7 +1299,7 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
     async () => {
       // 合法 1x1 透明 PNG —— pi 不会因非法图片拒收;其 base64 应原样出现在网关请求体。
       const PNG_1x1_B64 =
-        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWNgYGBgAAAABQABh6FO1AAAAABJRU5ErkJggg==';
       const agent = new PiAgent(buildDeps());
       const workingDir = mkdtempSync(path.join(tmpdir(), 'pi-img-cwd-'));
       let handle: AgentSessionHandle | null = null;
@@ -1332,7 +1341,7 @@ describe.skipIf(!piAvailable)('PiAgent integration (real pi binary + fake gatewa
     { timeout: 60_000 },
     async () => {
       const pngBase64 =
-        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWNgYGBgAAAABQABh6FO1AAAAABJRU5ErkJggg==';
       const agent = new PiAgent(buildDeps());
       const workingDir = mkdtempSync(path.join(tmpdir(), 'pi-review-formats-'));
       const markdownPath = path.join(workingDir, 'launch.md');

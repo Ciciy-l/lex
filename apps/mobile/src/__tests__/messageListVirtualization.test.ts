@@ -35,12 +35,16 @@ describe('mobile message list container', () => {
     expect(source).not.toContain('MOBILE_TAIL_REVEAL_ITEM_COUNT');
     expect(listSource).not.toMatch(/\binitialScrollIndex\s*=/);
     // Manual data prepend 不能与 Android native MVCP 并行:它会在 cell 位置提交后异步补
-    // offset，中间坐标窗无 cell 而白屏。普通 data / size 变化仍由 LegendList 锚定。
+    // offset，中间坐标窗无 cell 而白屏。size 变化始终由 LegendList 锚定；data 变化只在读历史
+    // 时锚定——贴底跟随时锚定会把被整批替换的旧可见行钉住，重连补同步时先跳上去再拉回底部。
     expect(listSource).toContain('alignItemsAtEnd');
     expect(listSource).toContain('maintainScrollAtEnd');
     expect(listSource).toContain('maintainVisibleContentPosition={historyPrependNativeMvcpDisabled');
     expect(listSource).toContain('? false');
-    expect(listSource).toContain(': { data: true, size: true }}');
+    expect(listSource).toContain(': { data: anchorVisibleRowsOnDataChange, size: true }}');
+    expect(source).toContain(
+      'const anchorVisibleRowsOnDataChange = isAwayFromBottom || readingOlderRef.current;',
+    );
     expect(source).toContain('mobileHistoryPrependUsesAppOwnedAnchor(');
     expect(source).toContain('MOBILE_HISTORY_PREPEND_USES_APP_OWNED_ANCHOR');
     expect(source).toContain('captureMobileHistoryAnchor(');

@@ -13563,7 +13563,16 @@
       "noAuth": "No Authentication (Local Only)",
       "imageGeneration": "Enable Native Image Generation",
       "requestFailed": "Could not complete the request. Check the connection and try again.",
-      "specializedSetup": "OAuth and Specialized Cloud Providers"
+      "specializedSetup": "OAuth and Specialized Cloud Providers",
+      "manageProtocol": "Manage channels",
+      "backToChannels": "Back to channels",
+      "discardTitle": "Discard unsaved changes?",
+      "discardDescription": "Changing the preset or closing will discard unsaved URLs, keys, and model changes.",
+      "discard": "Discard changes",
+      "keepEditing": "Keep editing",
+      "invalidHeaders": "Headers must be a JSON object with text values.",
+      "invalidUrl": "Enter a valid HTTP or HTTPS URL without a username or password.",
+      "noAuthSupplier": "No authentication for any channel of this provider"
     }
   }
 }

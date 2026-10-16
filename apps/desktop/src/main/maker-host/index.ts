@@ -1,3 +1,4 @@
+import { scanLocalCustomizations } from '../skillhub/customizationScanHost';
 import { readAgentCapabilityCatalog, RUNTIME_MCP_NAMES_KEY, type AgentCapabilityQuery } from './agentCapabilityCatalog.js';
 import { listCindyManagedSkills, prepareCindyCodexSkills } from './managed-skills.js';
 import { readDisabledSkillPaths } from '../skillhub/activationPreferences';
@@ -1240,6 +1241,7 @@ export function getMaker(): Maker {
     const claudeAgent = new ClaudeCodeAgent({
       getDisabledSkillPaths: readDisabledSkillPaths,
       getManagedSkills: listCindyManagedSkills,
+      scanLocalCustomizations,
       auth: desktopClaudeAuthAdapter,
       runtimeConfig: buildDesktopClaudeRuntimeConfig(getClaudeEndpoint),
       binaryPath: claudePath,
@@ -1591,6 +1593,7 @@ export function getMaker(): Maker {
     const codexAgent = new CodexAgent({
       getDisabledSkillPaths: readDisabledSkillPaths,
       getManagedSkills: listCindyManagedSkills,
+      scanLocalCustomizations,
       prepareCodexSkills: prepareCindyCodexSkills,
       auth: desktopCodexAuthAdapter,
       runtimeConfig: desktopCodexRuntimeConfig,

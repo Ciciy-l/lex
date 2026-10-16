@@ -6224,6 +6224,22 @@ export class AgentInputCoordinator {
       state.error = message ?? null;
       clearErrorProjectionSignals(state);
     }
+    if (
+      state.activeTurn === null &&
+      state.recovery?.kind === 'active-turn' &&
+      isSchedulerOriginItem(state.recovery.item)
+    ) {
+      // Scheduler recovery only belongs to the live auto-resume attempt. Once
+      // that attempt ends, the runner settles the failed run; keeping Retry
+      // here would block every later fire (and replay outside run accounting).
+      this.setActiveTurnRecovery(state, state.recovery.item);
+      // Reuse normal scheduler failure settlement, including its bounded wait
+      // for a paired done, so an old terminal cannot clear the next turn.
+      this.markPendingExternalTerminalDone(sessionId, state);
+      this.emit(sessionId);
+      this.scheduleDrainAfterExternalTurnSettles(sessionId, 'scheduler-auto-resume-abandoned');
+      return;
+    }
     // cancelPreparedAutoResume 已为队列 / active 变化 emit；纯退避态仍需
     // 单独投影接管结束。没有任何接管状态时保持既有 no-op 语义。
     if (!cancelledPrepared && (hadPendingTakeover || surfacedMessage)) this.emit(sessionId);

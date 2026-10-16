@@ -663,6 +663,58 @@ describe('session runtime fallback selection', () => {
     });
   });
 
+  it('skips an exact-name bridge and keeps searching native Responses defaults', () => {
+    const bridge = provider('bridge', [{ id: 'gpt-main' }]);
+    bridge.routing.codex!.wireProtocol = 'openai-chat';
+    const result = pickSessionRuntimeFallback({
+      providers: [provider('openai', [{ id: 'gpt-main' }]), bridge,
+        provider('native', [{ id: 'recommended', defaults: true }])],
+      current, visitedRoutes: [], currentHop: 0, maxHops: 2,
+    });
+    expect(result).toMatchObject({ providerId: 'native', model: 'recommended' });
+  });
+
+  it('honors explicit model routes over provider defaults on both sides of fallback', () => {
+    const source = provider('openai', [{ id: 'gpt-main' }]);
+    source.routing.codex!.wireProtocol = 'openai-chat';
+    source.models.codex![0]!.route = {
+      baseUrl: 'https://example.com/v1', wireProtocol: 'openai-responses',
+    };
+    const chat = provider('chat', [{ id: 'gpt-main' }]);
+    chat.routing.codex!.wireProtocol = 'openai-chat';
+    const native = provider('native', [{ id: 'gpt-main' }]);
+    native.routing.codex!.wireProtocol = 'openai-chat';
+    native.models.codex![0]!.route = {
+      baseUrl: 'https://example.com/v1', wireProtocol: 'openai-responses',
+    };
+    expect(pickSessionRuntimeFallback({
+      providers: [source, chat, native],
+      current, visitedRoutes: [], currentHop: 0, maxHops: 2,
+    })).toMatchObject({ providerId: 'native', model: 'gpt-main' });
+
+    const bridge = provider('bridge', [{ id: 'gpt-main' }]);
+    bridge.models.codex![0]!.route = {
+      baseUrl: 'https://example.com/v1', wireProtocol: 'openai-chat',
+    };
+    expect(pickSessionRuntimeFallback({
+      providers: [provider('openai', [{ id: 'gpt-main' }]), bridge],
+      current, visitedRoutes: [], currentHop: 0, maxHops: 2,
+    })).toBeNull();
+  });
+
+  it('honors model-level bridge overrides and fails closed without the current route', () => {
+    const mixed = provider('mixed', [{ id: 'gpt-main' }]);
+    mixed.models.codex![0]!.codexCompatibilityWireProtocol = 'openai-chat';
+    for (const providers of [
+      [provider('openai', [{ id: 'gpt-main' }]), mixed],
+      [provider('native', [{ id: 'gpt-main' }])],
+    ]) {
+      expect(pickSessionRuntimeFallback({
+        providers, current, visitedRoutes: [], currentHop: 0, maxHops: 2,
+      })).toBeNull();
+    }
+  });
+
   it('ignores disconnected sources even when they offer the same model', () => {
     const disconnected = provider('disconnected', [{ id: 'gpt-main' }]);
     disconnected.connected = false;
@@ -675,6 +727,24 @@ describe('session runtime fallback selection', () => {
         maxHops: 2,
       }),
     ).toBeNull();
+  });
+
+  it('keeps exact channel identities and never recovers a deleted fixed route through its supplier alias', () => {
+    const route = { ...current, providerId: 'primary--openai-responses' };
+    const source = provider(route.providerId, [{ id: current.model }], 'user');
+    const disabled = provider('disabled--openai-responses', [{ id: current.model }], 'user');
+    disabled.suspended = true;
+    const wrongWire = provider('backup--google-generative-ai', [{ id: current.model }], 'user');
+    wrongWire.routing.codex!.wireProtocol = 'google-generative-ai';
+    const backup = provider('backup--openai-responses', [{ id: current.model }], 'user');
+    for (const item of [source, disabled, wrongWire, backup]) {
+      item.channel = { supplierId: 'supplier', id: item.id.split('--')[0], name: 'Same name', protocols: [item.routing.codex!.wireProtocol!] };
+    }
+    const args = { current: route, visitedRoutes: [], currentHop: 0, maxHops: 2 };
+    expect(pickSessionRuntimeFallback({ ...args, providers: [source, disabled, wrongWire, backup] }))
+      .toMatchObject({ providerId: backup.id, model: current.model });
+    expect(pickSessionRuntimeFallback({ ...args, providers: [provider('supplier', [{ id: current.model }]), backup] })).toBeNull();
+    expect(pickSessionRuntimeFallback({ ...args, providers: [source, disabled, wrongWire] })).toBeNull();
   });
 
   it('uses only an explicitly declared same-harness default after exact-name routes', () => {
@@ -717,7 +787,7 @@ describe('session runtime fallback selection', () => {
           ]),
           provider('chat-default', [{ id: 'chat-recommended', defaults: true }]),
         ],
-        current: { ...current, model: 'missing-model' },
+        current,
         visitedRoutes: [],
         currentHop: 0,
         maxHops: 2,
@@ -736,7 +806,7 @@ describe('session runtime fallback selection', () => {
             'user',
           ),
         ],
-        current: { ...current, model: 'missing-model' },
+        current,
         visitedRoutes: [],
         currentHop: 0,
         maxHops: 2,

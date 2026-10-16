@@ -2610,6 +2610,13 @@ export function MessageRenderer({
   // native detach/attach batches and try to mount a child that still belongs to
   // the previous row. listperf keeps the DEV-only override for explicit A/Bs.
   const recycleItems = __DEV__ ? devRecycleItems === true : false;
+  // 贴底跟随时数据变化不做可见位置锚定：重连补同步会整批替换 / 丢弃尾部行，锚定会把旧的可见行
+  // 钉在原屏幕位置，先露出新内容的开头（甚至列表顶部）再被贴底跟随拉回，表现为「跳一下又跳回来」。
+  // 不锚定时内容变短由原生滚动范围直接截到新底部，变长由贴底跟随补滚。读历史（离开底部，或
+  // 「加载更早」事务进行中——它可能由自动补齐在贴底时发起）仍靠锚定保住正在看的行。
+  // readingOlderRef 在事务开始与结束时都会伴随一次重渲染（loadingEarlier / 事务收尾的 state），
+  // 这里在渲染期读取它足以让 prepend 那次数据提交带上锚定。
+  const anchorVisibleRowsOnDataChange = isAwayFromBottom || readingOlderRef.current;
 
   return (
     // chat-text-quote:Provider 恒挂载(值可为 null),避免启用态翻转时整棵消息树
@@ -2643,12 +2650,12 @@ export function MessageRenderer({
         // 二分实锤,3.3.2 / 3.3.3 均复现)。
         alignItemsAtEnd
         maintainScrollAtEnd={false}
-        // iOS always uses LegendList/RN's atomic data/size anchoring. Android history prepends
-        // temporarily disable the whole prop because RN exposes one native switch: leaving either
-        // flag on would race the app-owned key/offset correction there.
+        // iOS uses LegendList/RN's atomic data/size anchoring while reading history. Android history
+        // prepends temporarily disable the whole prop because RN exposes one native switch: leaving
+        // either flag on would race the app-owned key/offset correction there.
         maintainVisibleContentPosition={historyPrependNativeMvcpDisabled
           ? false
-          : { data: true, size: true }}
+          : { data: anchorVisibleRowsOnDataChange, size: true }}
         contentContainerStyle={[
           styles.messages,
           { paddingBottom: bottomPadding, paddingTop: topPadding },

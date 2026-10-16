@@ -2435,6 +2435,94 @@ describe('remoteSessionStore', () => {
     ]);
   });
 
+  it('断流期间漏收超过一页：补读到已验证上界后，整段旧历史保留', () => {
+    remoteSessionStore.setMessages('s1', [
+      messageAt('old-1', 's1', '2026-01-01T09:00:01.000Z'),
+      messageAt('old-2', 's1', '2026-01-01T09:00:02.000Z'),
+    ]);
+    remoteSessionStore.noteLiveStreamInterrupted();
+    const latestPage = [
+      messageAt('gap-3', 's1', '2026-01-01T09:00:05.000Z'),
+      messageAt('gap-4', 's1', '2026-01-01T09:00:06.000Z'),
+    ];
+    // 本页最旧行晚于已验证上界:直接提交会丢掉 old-*,所以需要先补读。
+    expect(remoteSessionStore.latestMessageWindowNeedsBridge('s1', latestPage, true)).toBe(true);
+    // 本页不满页(历史到头)、或已验证区间不存在时,补读不改变结果。
+    expect(remoteSessionStore.latestMessageWindowNeedsBridge('s1', latestPage, false)).toBe(false);
+    expect(remoteSessionStore.latestMessageWindowNeedsBridge('s2', latestPage, true)).toBe(false);
+
+    const bridged = [
+      messageAt('old-2', 's1', '2026-01-01T09:00:02.000Z'),
+      messageAt('gap-1', 's1', '2026-01-01T09:00:03.000Z'),
+      messageAt('gap-2', 's1', '2026-01-01T09:00:04.000Z'),
+      ...latestPage,
+    ];
+    expect(remoteSessionStore.latestMessageWindowNeedsBridge('s1', bridged, true)).toBe(false);
+    remoteSessionStore.setLatestMessageWindow('s1', bridged, { moreBeyondWindow: true });
+
+    expect(remoteSessionStore.getMessages('s1').map((item) => item.id)).toEqual([
+      'old-1',
+      'old-2',
+      'gap-1',
+      'gap-2',
+      'gap-3',
+      'gap-4',
+    ]);
+  });
+
+  it('漏推提示后只信区间下界：补读覆盖整段才相接，旧历史不被整段丢弃', () => {
+    remoteSessionStore.noteLiveStreamAcked('s1');
+    remoteSessionStore.setMessages('s1', [
+      messageAt('old-1', 's1', '2026-01-01T09:00:01.000Z'),
+      messageAt('old-2', 's1', '2026-01-01T09:00:02.000Z'),
+    ]);
+    // 订阅内的 push 把上界推过了一条被漏推的 gap-3。
+    remoteSessionStore.appendMessage('s1', messageAt('live-4', 's1', '2026-01-01T09:00:04.000Z'));
+    remoteSessionStore.applyRemotePush('dev-1', SESSION_SYNC_CHANNEL, { sessionId: 's1', resyncRequired: true });
+
+    const latestPage = [
+      messageAt('live-4', 's1', '2026-01-01T09:00:04.000Z'),
+      messageAt('new-5', 's1', '2026-01-01T09:00:05.000Z'),
+    ];
+    // 上界已不可信:即使最新页与 live-4 有交集,也要补读到区间下界。
+    expect(remoteSessionStore.latestMessageWindowNeedsBridge('s1', latestPage, true)).toBe(true);
+    const bridged = [
+      messageAt('old-1', 's1', '2026-01-01T09:00:01.000Z'),
+      messageAt('old-2', 's1', '2026-01-01T09:00:02.000Z'),
+      messageAt('gap-3', 's1', '2026-01-01T09:00:03.000Z'),
+      ...latestPage,
+    ];
+    expect(remoteSessionStore.latestMessageWindowNeedsBridge('s1', bridged, true)).toBe(false);
+    remoteSessionStore.setLatestMessageWindow('s1', bridged, { moreBeyondWindow: true });
+    expect(remoteSessionStore.getMessages('s1').map((item) => item.id)).toEqual([
+      'old-1', 'old-2', 'gap-3', 'live-4', 'new-5',
+    ]);
+  });
+
+  it('漏推提示后没补读到区间下界时，仍按未验证处置', () => {
+    remoteSessionStore.noteLiveStreamAcked('s1');
+    remoteSessionStore.setMessages('s1', [
+      messageAt('old-1', 's1', '2026-01-01T09:00:01.000Z'),
+      messageAt('old-2', 's1', '2026-01-01T09:00:02.000Z'),
+    ]);
+    remoteSessionStore.appendMessage('s1', messageAt('live-4', 's1', '2026-01-01T09:00:04.000Z'));
+    remoteSessionStore.applyRemotePush('dev-1', SESSION_SYNC_CHANNEL, { sessionId: 's1', resyncRequired: true });
+    remoteSessionStore.setLatestMessageWindow('s1', [
+      messageAt('gap-3', 's1', '2026-01-01T09:00:03.000Z'),
+      messageAt('live-4', 's1', '2026-01-01T09:00:04.000Z'),
+    ], { moreBeyondWindow: true });
+    expect(remoteSessionStore.getMessages('s1').map((item) => item.id)).toEqual(['gap-3', 'live-4']);
+  });
+
+  it('来源不明的缓存段没有已验证区间可接，不触发补读', () => {
+    remoteSessionStore.hydrateMessagesIfEmpty('s1', [
+      messageAt('cached-old', 's1', '2026-01-01T00:00:01.000Z'),
+    ]);
+    expect(remoteSessionStore.latestMessageWindowNeedsBridge('s1', [
+      messageAt('latest-1', 's1', '2026-01-01T10:00:01.000Z'),
+    ], true)).toBe(false);
+  });
+
   it('rejects late paging whose anchor was removed by a concurrent latest-window refresh', () => {
     const old = messageAt('old-anchor', 's1', '2026-01-01T09:00:00.000Z');
     const latest = messageAt('new-anchor', 's1', '2026-01-01T10:00:00.000Z');
@@ -5351,19 +5439,46 @@ describe('任务消息内存治理', () => {
     expect(remoteSessionStore.canCommitUnenteredSessionMessageWindow(afterReset, 'dev-1')).toBe(true);
   });
 
-  it('schedule 失焦后回收到 0，后续 push 不会复活完整正文', async () => {
+  it('打开过的 schedule 离场后与 regular 一致：压回单窗而不是清空', async () => {
     remoteSessionStore.setDeviceSessions('dev-1', 'Mac', [session('s1', { source: 'scheduler' })]);
+    expect(remoteSessionStore.getSessionRetention('s1')).toBe('schedule');
     const authority = remoteSessionStore.enterSessionMessageDetail('s1');
-    remoteSessionStore.setMessages('s1', [message('m1', 's1')], { authority });
+    expect(remoteSessionStore.getSessionRetention('s1')).toBe('regular');
+    remoteSessionStore.setMessages('s1', manyMessages('s1', 100), { authority });
 
-    remoteSessionStore.leaveSessionMessageDetail('s1', 'detail-blur', authority);
+    remoteSessionStore.leaveSessionMessageDetail('s1', 'app-background', authority);
     await flushReclaim();
-    expect(remoteSessionStore.getMessages('s1')).toEqual([]);
+    const rows = remoteSessionStore.getMessages('s1');
+    expect(rows).toHaveLength(80);
+    expect(rows.at(-1)?.id).toBe('s1-m-99');
+  });
 
+  it.each(['deleted', 'archived'] as const)('%s 后同 id 重新出现的 schedule 不沿用旧的已打开标记', (status) => {
+    remoteSessionStore.setDeviceSessions('dev-1', 'Mac', [session('s1', { source: 'scheduler' })]);
+    remoteSessionStore.enterSessionMessageDetail('s1');
+    expect(remoteSessionStore.getSessionRetention('s1')).toBe('regular');
+
+    remoteSessionStore.applySessionPatch('dev-1', 's1', { status });
+    remoteSessionStore.setDeviceSessions('dev-1', 'Mac', [session('s1', { source: 'scheduler' })]);
+    expect(remoteSessionStore.getSessionRetention('s1')).toBe('schedule');
+  });
+
+  it('移除设备后同 id 重新出现的 schedule 不沿用旧的已打开标记', () => {
+    remoteSessionStore.setDeviceSessions('dev-1', 'Mac', [session('s1', { source: 'scheduler' })]);
+    remoteSessionStore.enterSessionMessageDetail('s1');
+
+    remoteSessionStore.removeDevice('dev-1');
+    remoteSessionStore.setDeviceSessions('dev-2', 'PC', [session('s1', { source: 'scheduler' })]);
+    expect(remoteSessionStore.getSessionRetention('s1')).toBe('schedule');
+  });
+
+  it('从未打开的 schedule 不驻留推送来的完整正文', () => {
+    remoteSessionStore.setDeviceSessions('dev-1', 'Mac', [session('s1', { source: 'scheduler' })]);
     remoteSessionStore.applyRemotePush('dev-1', 'local-db:messages:created', {
       sessionId: 's1',
-      message: message('late-push', 's1'),
+      message: message('unopened-push', 's1'),
     });
+    expect(remoteSessionStore.getSessionRetention('s1')).toBe('schedule');
     expect(remoteSessionStore.getMessages('s1')).toEqual([]);
   });
 
@@ -5405,34 +5520,34 @@ describe('任务消息内存治理', () => {
   });
 
   it('页面卸载后本地工作排空仍会完成 deferred reclaim', async () => {
-    remoteSessionStore.setDeviceSessions('dev-1', 'Mac', [session('s1', { source: 'scheduler' })]);
+    remoteSessionStore.setDeviceSessions('dev-1', 'Mac', [session('s1')]);
     const work = remoteSessionStore.acquireSessionMessageWork('s1', true);
     const authority = remoteSessionStore.enterSessionMessageDetail('s1');
-    remoteSessionStore.setMessages('s1', [message('m1', 's1')], { authority });
+    remoteSessionStore.setMessages('s1', manyMessages('s1', 100), { authority });
     remoteSessionStore.leaveSessionMessageDetail('s1', 'session-switch', authority);
 
     await flushReclaim();
-    expect(remoteSessionStore.getMessages('s1')).toHaveLength(1);
+    expect(remoteSessionStore.getMessages('s1')).toHaveLength(100);
     work.release();
     await flushReclaim();
-    expect(remoteSessionStore.getMessages('s1')).toEqual([]);
+    expect(remoteSessionStore.getMessages('s1')).toHaveLength(80);
   });
 
-  it('pending queue 暂缓 schedule 回收，queue 排空后由 store 主动补回收', async () => {
-    remoteSessionStore.setDeviceSessions('dev-1', 'Mac', [session('s1', { source: 'scheduler' })]);
+  it('pending queue 暂缓回收，queue 排空后由 store 主动补回收', async () => {
+    remoteSessionStore.setDeviceSessions('dev-1', 'Mac', [session('s1')]);
     const authority = remoteSessionStore.enterSessionMessageDetail('s1');
-    remoteSessionStore.setMessages('s1', [message('m1', 's1')], { authority });
+    remoteSessionStore.setMessages('s1', manyMessages('s1', 100), { authority });
     remoteSessionStore.setInputProjection('s1', projection('s1'));
     remoteSessionStore.leaveSessionMessageDetail('s1', 'app-background', authority);
 
     await flushReclaim();
-    expect(remoteSessionStore.getMessages('s1')).toHaveLength(1);
+    expect(remoteSessionStore.getMessages('s1')).toHaveLength(100);
     remoteSessionStore.setInputProjection('s1', {
       ...projection('s1'),
       pendingQueue: [],
     });
     await flushReclaim();
-    expect(remoteSessionStore.getMessages('s1')).toEqual([]);
+    expect(remoteSessionStore.getMessages('s1')).toHaveLength(80);
   });
 
   it('regular 失焦压回单窗，同时保留窗口外的本地系统卡', async () => {
@@ -5452,8 +5567,34 @@ describe('任务消息内存治理', () => {
     expect(rows.at(-1)?.id).toBe('s1-m-99');
   });
 
+  it('后台运行中的 regular 任务持续收到列表推送，内存窗口不超过一页', () => {
+    remoteSessionStore.setDeviceSessions('dev-1', 'Mac', [session('s1')]);
+    remoteSessionStore.setSessionRunning('s1', true);
+    const pushed = manyMessages('s1', 300);
+    for (const row of pushed) {
+      remoteSessionStore.applyRemotePush('dev-1', 'local-db:messages:created', {
+        sessionId: 's1', listMessage: true, message: row,
+      });
+    }
+    const rows = remoteSessionStore.getMessages('s1');
+    expect(rows).toHaveLength(80);
+    expect(rows.at(-1)?.id).toBe('s1-m-299');
+  });
+
+  it('正在看的 regular 任务不受后台单窗上限影响', () => {
+    remoteSessionStore.setDeviceSessions('dev-1', 'Mac', [session('s1')]);
+    remoteSessionStore.setSessionRunning('s1', true);
+    const authority = remoteSessionStore.enterSessionMessageDetail('s1');
+    remoteSessionStore.setMessages('s1', manyMessages('s1', 120), { authority });
+    remoteSessionStore.applyRemotePush('dev-1', 'local-db:messages:created', {
+      sessionId: 's1', listMessage: true, message: messageAt('s1-new', 's1', '2026-01-01T01:00:00.000Z'),
+    });
+    expect(remoteSessionStore.getMessages('s1')).toHaveLength(121);
+  });
+
   it('regular 全局 LRU 不淘汰当前详情，且总量压回约 800 条', () => {
-    const sessions = Array.from({ length: 9 }, (_, index) => session(`s${index}`));
+    // 后台任务各自封顶一页(80)，要 11 个以上后台任务才会触发全局淘汰。
+    const sessions = Array.from({ length: 13 }, (_, index) => session(`s${index}`));
     remoteSessionStore.setDeviceSessions('dev-1', 'Mac', sessions);
     remoteSessionStore.enterSessionMessageDetail('s0');
     for (const item of sessions) {
@@ -5470,17 +5611,17 @@ describe('任务消息内存治理', () => {
   });
 
   it('notifies an evicted session preview subscriber when another session exceeds the LRU budget', () => {
-    const sessions = Array.from({ length: 9 }, (_, index) => session(`s${index}`));
+    const sessions = Array.from({ length: 13 }, (_, index) => session(`s${index}`));
     remoteSessionStore.setDeviceSessions('dev-1', 'Mac', sessions);
     const previewChanged = vi.fn();
     const unsubscribe = remoteSessionStore.subscribeSessionMessagePreview('s0', previewChanged);
     try {
-      remoteSessionStore.setMessages('s0', manyMessages('s0', 100));
+      remoteSessionStore.setMessages('s0', manyMessages('s0', 80));
       expect(remoteSessionStore.getSessionMessagePreview('s0')).toBeDefined();
       previewChanged.mockClear();
 
       for (const item of sessions.slice(1)) {
-        remoteSessionStore.setMessages(item.id, manyMessages(item.id, 100));
+        remoteSessionStore.setMessages(item.id, manyMessages(item.id, 80));
       }
 
       expect(remoteSessionStore.getMessages('s0')).toEqual([]);
@@ -5518,18 +5659,18 @@ describe('任务消息内存治理', () => {
   });
 
   it('regular LRU 只淘汰可重取正文，不丢尚未落盘的本地系统卡', () => {
-    const sessions = Array.from({ length: 9 }, (_, index) => session(`s${index}`));
+    const sessions = Array.from({ length: 13 }, (_, index) => session(`s${index}`));
     remoteSessionStore.setDeviceSessions('dev-1', 'Mac', sessions);
     const localCard = {
       ...messageAt('mobile-system-local-only', 's0', '2025-12-31T23:59:59.000Z'),
       role: 'system' as const,
     };
-    remoteSessionStore.setMessages('s0', [localCard, ...manyMessages('s0', 99)]);
+    remoteSessionStore.setMessages('s0', [localCard, ...manyMessages('s0', 79)]);
     for (const item of sessions.slice(1)) {
-      remoteSessionStore.setMessages(item.id, manyMessages(item.id, 100));
+      remoteSessionStore.setMessages(item.id, manyMessages(item.id, 80));
     }
 
-    expect(remoteSessionStore.getMessages('s0')).toHaveLength(100);
+    expect(remoteSessionStore.getMessages('s0')).toHaveLength(80);
     expect(remoteSessionStore.getMessages('s0').some((row) => row.id === localCard.id)).toBe(true);
   });
 
@@ -5554,18 +5695,18 @@ describe('任务消息内存治理', () => {
     )).toBe(false);
   });
 
-  it('source 晚到改判 schedule：当前详情立即压窗，失焦后归零', async () => {
+  it('source 晚到为 scheduler：已打开的详情仍按 regular 驻留', async () => {
     remoteSessionStore.setDeviceSessions('dev-1', 'Mac', [session('s1')]);
     const authority = remoteSessionStore.enterSessionMessageDetail('s1');
     remoteSessionStore.setMessages('s1', manyMessages('s1', 100), { authority });
 
     remoteSessionStore.upsertDeviceSession('dev-1', 'Mac', session('s1', { source: 'scheduler' }));
-    expect(remoteSessionStore.getSessionRetention('s1')).toBe('schedule');
-    expect(remoteSessionStore.getMessages('s1')).toHaveLength(80);
+    expect(remoteSessionStore.getSessionRetention('s1')).toBe('regular');
+    expect(remoteSessionStore.getMessages('s1')).toHaveLength(100);
 
-    remoteSessionStore.leaveSessionMessageDetail('s1', 'detail-blur');
+    remoteSessionStore.leaveSessionMessageDetail('s1', 'detail-blur', authority);
     await flushReclaim();
-    expect(remoteSessionStore.getMessages('s1')).toEqual([]);
+    expect(remoteSessionStore.getMessages('s1')).toHaveLength(80);
   });
 
   it('归档会话会撤销旧 authority，并拒绝迟到 push 复活正文', () => {

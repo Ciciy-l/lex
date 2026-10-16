@@ -431,9 +431,22 @@ describe('task image delivery', () => {
         await fs.mkdir(path.dirname(source), { recursive: true });
       }
       if (kind === 'symlink') {
-        const outside = path.join(state.root, 'private.png');
+        const outsideDir = path.join(state.root, 'private');
+        await fs.mkdir(outsideDir);
+        const outside = path.join(outsideDir, 'private.png');
         await fs.writeFile(outside, PNG);
-        await fs.symlink(outside, source);
+        if (process.platform === 'win32') {
+          // A real directory reparse point redirects an otherwise valid PNG
+          // outside the task, without privileged file-symlink creation.
+          const link = path.join(work, 'linked');
+          await fs.symlink(outsideDir, link, 'junction');
+          expect((await fs.lstat(link)).isSymbolicLink()).toBe(true);
+          source = path.join(link, 'private.png');
+        } else {
+          await fs.symlink(outside, source, 'file');
+        }
+        expect(await fs.readFile(source)).toEqual(PNG);
+        await expect(readTaskImage(source, [await fs.realpath(work)])).rejects.toThrow('outside task');
       } else await fs.writeFile(source, kind === 'not-image' ? Buffer.from('not png') : PNG);
       const row = insert(`![image](${source})`);
       expect(await restoreTaskImageRows(client, [row])).toEqual([row]);

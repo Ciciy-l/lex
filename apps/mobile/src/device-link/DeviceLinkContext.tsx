@@ -159,7 +159,7 @@ import {
   updatePresenceAvailability,
 } from '@/device-link/presenceRecovery';
 import { createOfflineMirrorWipeQueue } from '@/device-link/offlineMirrorWipeQueue';
-import { hasMoreOlderMessages } from '@/session/messagePaging';
+import { bridgeLatestMessagePage, listMessagesWithPayloadRetry, shouldKeepOlderMessagesAffordance } from '@/session/messagePaging';
 import type { InputProjection, PendingInteraction, RemoteMessage } from '@/session/types';
 import { createVisualMockDeviceLinkContext, seedVisualMockStore } from '@/debug/visualMock';
 import { meterDeviceLinkInvokes, recordDeviceLinkPush } from '@/debug/deviceLinkTraffic';
@@ -1772,15 +1772,14 @@ async function rebuildSessionSnapshot(
   // 其余(旧实现共用一个 catch,任一失败三份快照全丢)。goal 覆盖断连窗口内
   // 丢失的 maker:goal:status-changed push;model-pref / turn-cost 无对应查询通道,
   // 暂不在补齐范围(需扩桌面端 invoke 白名单)。
-  const applyHistory = (value: RemoteMessage[]) => {
+  const applyHistory = (value: RemoteMessage[], moreBeyondWindow: boolean) => {
     if (!isCurrent()) return false;
     if (Array.isArray(value)) {
       // moreBeyondWindow:这一页上沿之外服务端还有历史(满 80 条,或被 device-link 裁过行)。为真时
-      // store 不保留早于本页的缓存段 —— 断连期间漏收的 push 可能正落在两段之间,保留就在窗口里
-      // 留下孤岛,而漏收的量不大时两侧时间差很小、时间阈值的空洞检测发现不了(#1222)。
-      const windowOptions = {
-        moreBeyondWindow: hasMoreOlderMessages(value, RECONNECT_MESSAGE_WINDOW_LIMIT),
-      };
+      // store 不保留接不上已验证区间的缓存段 —— 断连期间漏收的 push 可能正落在两段之间,保留就在
+      // 窗口里留下孤岛,而漏收的量不大时两侧时间差很小、时间阈值的空洞检测发现不了(#1222)。
+      // readHistory 会先补读到接上为止,接上的旧段因此得以保留。
+      const windowOptions = { moreBeyondWindow };
       if (messageAuthorityAtRequestStart) {
         return remoteSessionStore.setLatestMessageWindow(sessionId, value, {
           ...windowOptions,
@@ -1860,7 +1859,27 @@ async function rebuildSessionSnapshot(
       if (!snapshot.error && snapshot.ready) return true;
       if (!isHistoryViewUnavailable(snapshot.error)) throw snapshot.error;
     }
-    return applyHistory(await readRawHistory());
+    const latest = await readRawHistory();
+    if (!Array.isArray(latest)) return applyHistory(latest, false);
+    // 断线期间漏收超过一页时，最新一页接不上已验证区间；先往前补读，避免旧历史被整段丢弃。
+    const page = await bridgeLatestMessagePage(
+      { messages: latest, limit: RECONNECT_MESSAGE_WINDOW_LIMIT, reducedByPayloadTooLarge: false },
+      {
+        needsBridge: (rows, more) =>
+          remoteSessionStore.latestMessageWindowNeedsBridge(sessionId, rows, more),
+        readBefore: (before) => listMessagesWithPayloadRetry(
+          (limit) => sendInvokeWithAccessHandling<RemoteMessage[]>(
+            client,
+            deviceId,
+            'local-db:messages:list',
+            [sessionId, { limit, before }],
+            sendOpts,
+          ),
+        ),
+        isCurrent,
+      },
+    );
+    return applyHistory(page.messages, shouldKeepOlderMessagesAffordance(page));
   };
   const [history, pending, projection, goal] = await Promise.all([
     measured('history', readHistory(), (applied) => applied),

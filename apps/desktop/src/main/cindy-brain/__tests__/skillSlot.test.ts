@@ -162,8 +162,8 @@ describe('skillSlot · reconcileGhostSkillLinks', () => {
     await fs.promises.mkdir(claudeDir(), { recursive: true });
     const legacy = path.join(legacySharedDir(), 'my-ghost--foo');
     const fanout = path.join(claudeDir(), 'my-ghost--foo');
-    await fs.promises.symlink(target, legacy, 'dir');
-    await fs.promises.symlink(legacy, fanout, 'dir');
+    await fs.promises.symlink(target, legacy, process.platform === 'win32' ? 'junction' : 'dir');
+    await fs.promises.symlink(legacy, fanout, process.platform === 'win32' ? 'junction' : 'dir');
     const user = path.join(legacySharedDir(), 'user-skill');
     await fs.promises.mkdir(user);
     await fs.promises.writeFile(path.join(user, 'SKILL.md'), '# User skill');
@@ -179,9 +179,9 @@ describe('skillSlot · reconcileGhostSkillLinks', () => {
     await fs.promises.mkdir(legacySharedDir(), { recursive: true });
     await fs.promises.mkdir(claudeDir(), { recursive: true });
     const legacy = path.join(legacySharedDir(), 'my-ghost--foo');
-    await fs.promises.symlink(path.join(brainRoot, 'my-ghost', 'missing'), legacy, 'dir');
-    await fs.promises.symlink(legacy, path.join(claudeDir(), 'my-ghost--foo'), 'dir');
-    await fs.promises.symlink(path.join(workDir, 'user-missing'), path.join(claudeDir(), 'user-skill'), 'dir');
+    await fs.promises.symlink(path.join(brainRoot, 'my-ghost', 'missing'), legacy, process.platform === 'win32' ? 'junction' : 'dir');
+    await fs.promises.symlink(legacy, path.join(claudeDir(), 'my-ghost--foo'), process.platform === 'win32' ? 'junction' : 'dir');
+    await fs.promises.symlink(path.join(workDir, 'user-missing'), path.join(claudeDir(), 'user-skill'), process.platform === 'win32' ? 'junction' : 'dir');
     await removeGhostSkillLinksForRoots([brainRoot, approvalStateRoot], homeDir);
     expect(fs.readdirSync(legacySharedDir())).toEqual([]);
     expect(fs.readdirSync(claudeDir())).toEqual(['user-skill']);
@@ -502,13 +502,16 @@ describe('skillSlot · reconcileGhostSkillLinks', () => {
     expect(fs.existsSync(liveLink)).toBe(false); // 断链回收(目标带 cindy-brain 段)
   });
 
-  it('账号边界按 owner 根撤销全局 Cindy skill 投影,不删除外来链接', async () => {
+  it('账号边界跳过非目录根后仍撤销其他根的 Cindy skill 投影,不删除外来链接', async () => {
     const ownerRoot = path.join(workDir, 'owners', 'bbb');
     const managedTarget = path.join(ownerRoot, 'cindy-brain', 'other-ghost', 'skills', 'foo');
     const foreignTarget = path.join(workDir, 'projects', 'other-ghost', 'skills', 'foo');
     await fs.promises.mkdir(managedTarget, { recursive: true });
     await fs.promises.mkdir(foreignTarget, { recursive: true });
     await fs.promises.mkdir(legacySharedDir(), { recursive: true });
+    const codexRoot = path.join(homeDir, '.codex', 'skills');
+    await fs.promises.mkdir(path.dirname(codexRoot), { recursive: true });
+    await fs.promises.writeFile(codexRoot, 'user-owned file');
     const managedLink = path.join(legacySharedDir(), 'other-ghost--foo');
     const foreignLink = path.join(legacySharedDir(), 'foreign--foo');
     await fs.promises.symlink(managedTarget, managedLink, process.platform === 'win32' ? 'junction' : 'dir');
@@ -516,8 +519,10 @@ describe('skillSlot · reconcileGhostSkillLinks', () => {
 
     const result = await removeGhostSkillLinksForRoots([path.join(ownerRoot, 'cindy-brain')], homeDir);
     expect(result.changed).toBe(true);
+    expect(result.blockers).toEqual([]);
     expect(fs.existsSync(managedLink)).toBe(false);
     expect(fs.existsSync(foreignLink)).toBe(true);
+    expect(await fs.promises.readFile(codexRoot, 'utf8')).toBe('user-owned file');
   });
 
   it('账号边界会按 raw link target 撤销已不存在 owner 根下的悬空投影', async () => {
@@ -538,6 +543,58 @@ describe('skillSlot · reconcileGhostSkillLinks', () => {
 
     expect(result.changed).toBe(true);
     expect(fs.existsSync(managedLink)).toBe(false);
+  });
+
+  it.each(['.claude', '.codex', '.agents'])(
+    '账号边界保留 %s/skills 同名普通文件,不让无关路径阻断登录',
+    async (parent) => {
+      const skillRoot = path.join(homeDir, parent, 'skills');
+      await fs.promises.mkdir(path.dirname(skillRoot), { recursive: true });
+      await fs.promises.writeFile(skillRoot, 'user-owned file');
+
+      const result = await removeGhostSkillLinksForRoots([brainRoot], homeDir);
+
+      expect(result.blockers).toEqual([]);
+      expect(result.changed).toBe(false);
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings[0]).toContain(skillRoot);
+      expect(await fs.promises.readFile(skillRoot, 'utf8')).toBe('user-owned file');
+    },
+  );
+
+  it('账号边界保留非目录的技能路径父级,也继续检查后续根的权限错误', async () => {
+    const codexRoot = path.join(homeDir, '.codex');
+    await fs.promises.writeFile(codexRoot, 'user-owned parent');
+    const readDirectory = fs.promises.readdir;
+    vi.spyOn(fs.promises, 'readdir').mockImplementation(async (...args) => {
+      if (String(args[0]) === legacySharedDir()) {
+        throw Object.assign(new Error('denied'), { code: 'EACCES' });
+      }
+      return readDirectory(...args);
+    });
+
+    const result = await removeGhostSkillLinksForRoots([brainRoot], homeDir);
+
+    // A non-directory ancestor can report ENOENT on Windows and ENOTDIR on POSIX.
+    // Both must preserve the file without hiding the later root's permission error.
+    expect(result.blockers).toHaveLength(1);
+    expect(result.blockers[0]).toContain(legacySharedDir());
+    expect(result.blockers.some((blocker) => blocker.includes(codexRoot))).toBe(false);
+    expect(await fs.promises.readFile(codexRoot, 'utf8')).toBe('user-owned parent');
+  });
+
+  it('账号边界保留私有 skills 同名文件,不将其判为未撤销的技能链接', async () => {
+    await fs.promises.mkdir(path.dirname(sharedDir()), { recursive: true });
+    await fs.promises.writeFile(sharedDir(), 'user-owned private file');
+
+    const result = await removeGhostSkillLinksForRoots(
+      [brainRoot, approvalStateRoot], homeDir, [sharedDir()],
+    );
+
+    expect(result.blockers).toEqual([]);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.changed).toBe(false);
+    expect(await fs.promises.readFile(sharedDir(), 'utf8')).toBe('user-owned private file');
   });
 
   it('账号边界读取全局技能根失败:记 blocker,禁止在未确认清空时提交新 owner', async () => {
