@@ -2424,7 +2424,7 @@ describe('Codex system credential suppression marker', () => {
     await expect(adapter.getAccessToken()).resolves.toBeNull();
   });
 
-  it('preserves an in-flight Cindy F2 login when an F1 host reports a late invalidation', async () => {
+  it.each([false, true])('preserves an in-flight Cindy F2 login when an F1 host reports a late invalidation (delayed local read=%s)', async (delayLocalRead) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xdt-codex-stale-host-login-'));
     dirs.push(root);
     h.userDataDir = path.join(root, 'user-data');
@@ -2452,8 +2452,24 @@ describe('Codex system credential suppression marker', () => {
       localAuth,
       JSON.stringify({ tokens: { access_token: 'cindy-f2-token', account_id: 'acct-2' } }),
     );
+    if (delayLocalRead) {
+      const localReader = adapter as unknown as {
+        readLocalCodexAuthState(): Promise<{ authenticated: boolean }>;
+      };
+      const readLocalState = localReader.readLocalCodexAuthState.bind(adapter);
+      vi.spyOn(localReader, 'readLocalCodexAuthState').mockImplementationOnce(async () => {
+        // Keep a real prerequisite pending beyond vi.waitFor's default 1s budget.
+        // Read the actual fixture afterwards; do not fabricate successful auth.
+        await new Promise<void>((resolve) => setTimeout(resolve, 1250));
+        return readLocalState();
+      });
+    }
     const loginFinalizeGate = deferred();
-    const onLoginSuccess = vi.fn(() => loginFinalizeGate.promise);
+    const loginSuccessEntered = deferred<'callback-entered'>();
+    const onLoginSuccess = vi.fn(() => {
+      loginSuccessEntered.resolve('callback-entered');
+      return loginFinalizeGate.promise;
+    });
     const onLogoutSuccess = vi.fn().mockResolvedValue(undefined);
     const broadcast = vi.fn().mockResolvedValue(undefined);
     adapter.setOnLoginSuccess(onLoginSuccess);
@@ -2466,26 +2482,38 @@ describe('Codex system credential suppression marker', () => {
     ).finishSuccessfulCodexLogin.bind(adapter);
     (adapter as unknown as { loginCancellationOpen: boolean }).loginCancellationOpen = true;
     const loginFinalization = finishSuccessfulCodexLogin();
-    await vi.waitFor(() => expect(onLoginSuccess).toHaveBeenCalledOnce());
-    fs.writeFileSync(cachePath, JSON.stringify({ models: [{ slug: 'f2-model' }] }));
-    const f2Before = fs.readFileSync(localAuth);
+    try {
+      // Synchronize with the actual callback, not ACL/filesystem wall-clock speed.
+      // An early return or rejection must fail instead of waiting for an absent callback.
+      const phase = await Promise.race([
+        loginSuccessEntered.promise,
+        loginFinalization.then(() => 'finalization-returned' as const),
+      ]);
+      expect(phase).toBe('callback-entered');
+      expect(onLoginSuccess).toHaveBeenCalledOnce();
+      fs.writeFileSync(cachePath, JSON.stringify({ models: [{ slug: 'f2-model' }] }));
+      const f2Before = fs.readFileSync(localAuth);
 
-    await expect(
-      adapter.invalidate('late_f1_401', { credentialGeneration: f1Generation }),
-    ).resolves.toBeUndefined();
+      await expect(
+        adapter.invalidate('late_f1_401', { credentialGeneration: f1Generation }),
+      ).resolves.toBeUndefined();
 
-    expect(fs.readFileSync(localAuth)).toEqual(f2Before);
-    expect(fs.existsSync(cachePath)).toBe(true);
-    expect(readInvalidatedSystemCodexAuthMarker(codexHome)).toBeNull();
-    expect(onLogoutSuccess).not.toHaveBeenCalled();
-    expect(broadcast).not.toHaveBeenCalled();
-    expect(JSON.parse(fs.readFileSync(bindingFile, 'utf8'))).toMatchObject({
-      openai: 'owner-a',
-      selfAuthorized: { openai: 'owner-a' },
-      sources: { openai: 'explicit-provider-oauth' },
-    });
+      expect(fs.readFileSync(localAuth)).toEqual(f2Before);
+      expect(fs.existsSync(cachePath)).toBe(true);
+      expect(readInvalidatedSystemCodexAuthMarker(codexHome)).toBeNull();
+      expect(onLogoutSuccess).not.toHaveBeenCalled();
+      expect(broadcast).not.toHaveBeenCalled();
+      expect(JSON.parse(fs.readFileSync(bindingFile, 'utf8'))).toMatchObject({
+        openai: 'owner-a',
+        selfAuthorized: { openai: 'owner-a' },
+        sources: { openai: 'explicit-provider-oauth' },
+      });
+    } finally {
+      // Do not let an assertion failure leave finalization racing fixture cleanup.
+      loginFinalizeGate.resolve();
+      await loginFinalization;
+    }
 
-    loginFinalizeGate.resolve();
     await expect(loginFinalization).resolves.toMatchObject({
       authenticated: true,
       credentialScope: 'instance-isolated',
