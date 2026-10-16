@@ -55,18 +55,90 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-/** 模拟浏览器:从授权 URL 提取回调地址与 state 并回打 code。 */
-function autoBrowser(code = 'code-1'): (url: string) => void {
+function deliverBrowserCallback(callback: URL): Promise<void> {
+  // Each authorization owns a short-lived listener. Do not share pooled fetch
+  // sockets with earlier flows, or detach failures from the test awaiting it.
+  return new Promise<void>((resolve, reject) => {
+    http.get(callback, { agent: false }, response => {
+      response.once('error', reject);
+      response.once('aborted', () => reject(new Error('OAuth callback response aborted')));
+      response.once('end', () => {
+        if (response.statusCode === 200) resolve();
+        else reject(new Error(`OAuth callback HTTP ${response.statusCode}`));
+      });
+      response.resume();
+    }).once('error', reject);
+  });
+}
+
+/** 模拟浏览器:从授权 URL 提取回调地址与 state，等待回调完整结束并传播错误。 */
+function autoBrowser(code = 'code-1'): (url: string) => Promise<void> {
   return (url) => {
     const u = new URL(url);
     const cb = new URL(u.searchParams.get('redirect_uri') ?? '');
     cb.searchParams.set('code', code);
     cb.searchParams.set('state', u.searchParams.get('state') ?? '');
-    setImmediate(() => {
-      void fetch(cb.toString()).catch(() => undefined);
-    });
+    return deliverBrowserCallback(cb);
   };
 }
+
+async function withBrowserCallbackListener(
+  handler: http.RequestListener,
+  run: (authorizeUrl: string) => Promise<void>,
+): Promise<void> {
+  const server = http.createServer(handler);
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  try {
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Missing callback listener');
+    const authorizeUrl = new URL(DECL.authorizeUrl);
+    authorizeUrl.searchParams.set('redirect_uri', `http://127.0.0.1:${address.port}/callback`);
+    authorizeUrl.searchParams.set('state', 'fixture-state');
+    await run(authorizeUrl.toString());
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+}
+
+describe('browser callback fixture', () => {
+  it('waits for the complete callback response before finishing browser delivery', async () => {
+    let received!: (response: http.ServerResponse) => void;
+    const responseReceived = new Promise<http.ServerResponse>(resolve => { received = resolve; });
+    let callbackParams: URLSearchParams | undefined;
+    await withBrowserCallbackListener((request, response) => {
+      callbackParams = new URL(request.url ?? '/', 'http://127.0.0.1').searchParams;
+      response.writeHead(200);
+      response.write('callback accepted');
+      received(response);
+    }, async authorizeUrl => {
+      let settled = false;
+      const delivery = Promise.resolve(autoBrowser()(authorizeUrl)).then(() => { settled = true; });
+      const response = await responseReceived;
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(settled).toBe(false);
+      expect(callbackParams?.get('state')).toBe('fixture-state');
+      expect(callbackParams?.get('code')).toBe('code-1');
+      response.end('done');
+      await delivery;
+      expect(settled).toBe(true);
+    });
+  });
+
+  it('propagates a disconnected callback instead of leaving authorization pending', async () => {
+    let requests = 0;
+    await withBrowserCallbackListener(request => {
+      requests += 1;
+      request.socket.destroy();
+    }, async authorizeUrl => {
+      await expect(autoBrowser()(authorizeUrl)).rejects.toThrow();
+      expect(requests).toBe(1);
+    });
+  });
+});
 
 /** 预置一个"已连接账号"的保险库(绕过交互授权直测刷新链路)。 */
 function seededVault(rt = 'rt-seed'): ReturnType<typeof memoryVault> {
@@ -1766,7 +1838,7 @@ describe('tokenBroker 模式', () => {
       openExternal: (url) => {
         // 授权 URL 用内置 clientId,而不是用户自填的。
         expect(new URL(url).searchParams.get('client_id')).toBe('builtin-cid');
-        autoBrowser('c-bk')(url);
+        return autoBrowser('c-bk')(url);
       },
       broker: { exchange, refresh: vi.fn() },
     });
@@ -1794,7 +1866,7 @@ describe('tokenBroker 模式', () => {
   it('connect 可选清单内备用 clientId;未声明值防御性拒绝', async () => {
     const openExternal = vi.fn((url: string) => {
       expect(new URL(url).searchParams.get('client_id')).toBe('global-cid');
-      autoBrowser('c-global')(url);
+      return autoBrowser('c-global')(url);
     });
     const mgr = new GhostOauthAccountManager({
       vault: memoryVault(),
@@ -2008,9 +2080,7 @@ describe('brokerBounce(双地址弹跳回调)', () => {
         const cb = new URL(`http://127.0.0.1:${freePort}/jira/callback`);
         cb.searchParams.set('code', 'c-bb');
         cb.searchParams.set('state', u.searchParams.get('state') ?? '');
-        setImmediate(() => {
-          void fetch(cb.toString()).catch(() => undefined);
-        });
+        return deliverBrowserCallback(cb);
       },
       broker: { exchange, refresh: vi.fn() },
       resolveBrokerPublicUrl,
@@ -2039,7 +2109,7 @@ describe('connectAccount · opts.scopes 收窄', () => {
       ) as unknown as typeof fetch,
       openExternal: (url) => {
         capturedScope = new URL(url).searchParams.get('scope');
-        autoBrowser('c-narrow')(url);
+        return autoBrowser('c-narrow')(url);
       },
     });
     await expect(

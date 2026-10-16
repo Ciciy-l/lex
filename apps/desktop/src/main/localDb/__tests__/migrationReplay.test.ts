@@ -1,9 +1,10 @@
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { setImmediate } from 'node:timers/promises';
 
 import type Database from 'better-sqlite3';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { createBetterSqliteDatabase } from '../betterSqliteFactory';
 import { listMigrations, runMigrationReplay } from '../migrationRunner';
@@ -11,6 +12,13 @@ import './retiredCompanionRetention.fixture';
 
 const canRunMigrationReplay = process.platform === 'win32' || process.platform === 'darwin';
 const describeMigrationReplay = canRunMigrationReplay ? describe : describe.skip;
+
+// Each replay is synchronous. A slow disk can keep the whole sequence in the
+// microtask queue past Vitest's RPC deadline, even when every test passes. Give
+// the worker a real event-loop turn to process acknowledgements between replays.
+afterEach(async () => {
+  await setImmediate();
+});
 
 function desktopRoot(): string {
   return path.resolve(__dirname, '../../../..');
