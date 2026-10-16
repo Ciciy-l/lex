@@ -1,0 +1,181 @@
+{
+  "version": "0.1.6",
+  "date": "2026-10-16",
+  "contentByLocale": {
+    "zh-CN": {
+      "intro": "Lex 0.1.6 正式版改善模型连接、任务连续性和手机操作，并移除伙伴相关功能。",
+      "topics": [
+        {
+          "id": "protocol-channels",
+          "title": "多协议、多渠道",
+          "text": "供应商按协议配置，同一协议可添加多组地址、密钥和模型。同名模型保留具体渠道，桌面和手机按电脑确认的实际来源切换。OMP 支持原生 Gemini；Claude Code、Codex 的其他协议连接明确标注 Lex 桥接。已有专用供应商设置继续保留。"
+        },
+        {
+          "id": "continuity",
+          "title": "模型与任务连续性",
+          "text": "自动切换避免跨 Codex 协议混用历史，思考档位优先保留实际运行值。改善 Pi 上下文缓存、定时任务恢复与排队图片保留。"
+        },
+        {
+          "id": "connections-and-schedules",
+          "title": "连接与查询",
+          "text": "修复部分供应商返回无类型标头的事件流时，非流式请求得到异常结果的问题。Agent 查询定时任务支持按关键词筛选，并明确查询范围为当前电脑。"
+        },
+        {
+          "id": "mobile-and-ui",
+          "title": "手机与界面",
+          "text": "改善后台切换、重连历史保留和隐藏弹层的开销；停止生成后可删除消息，收到电脑确认后才更新列表。右侧工具栏保持靠右，供应商配置交互继续优化。"
+        },
+        {
+          "id": "companion-retirement",
+          "title": "伙伴功能退休",
+          "text": "移除伙伴、伙伴私聊、伙伴群聊及专属定时流程的入口与运行功能。旧资料保留在原存储中，不自动删除、不继续执行，也不转成普通任务；本版不提供其浏览和导出入口。普通任务、Orca 协作、定时任务、Skills、插件及 IM 接入继续可用。"
+        },
+        {
+          "id": "upgrade",
+          "title": "升级至正式版",
+          "text": "0.1.6 同时进入正式与 beta 更新渠道。建议桌面和 Android 一同更新。Android 保持原包名 io.github.ciciyl.lex 与永久签名，可直接覆盖安装，请勿先卸载。暂不提供 iOS 安装包。 https://github.com/Ciciy-l/lex/releases/tag/v0.1.6 https://ciciy-l.github.io/lex/"
+        }
+      ]
+    },
+    "zh-TW": {
+      "intro": "Lex 0.1.6 正式版改善模型連線、任務連續性與手機操作，並移除夥伴相關功能。",
+      "topics": [
+        {
+          "id": "protocol-channels",
+          "title": "多協定、多渠道",
+          "text": "供應商依協定設定，同一協定可新增多組位址、金鑰與模型。同名模型保留具體渠道，桌面與手機依電腦確認的實際來源切換。OMP 支援原生 Gemini；Claude Code、Codex 的其他協定連線明確標示 Lex 橋接。既有專用供應商設定繼續保留。"
+        },
+        {
+          "id": "continuity",
+          "title": "模型與任務連續性",
+          "text": "自動切換避免跨 Codex 協定混用歷史，思考檔位優先保留實際執行值。改善 Pi 上下文快取、定時任務恢復與排隊圖片保留。"
+        },
+        {
+          "id": "connections-and-schedules",
+          "title": "連線與查詢",
+          "text": "修正部分供應商回傳無類型標頭事件串流時，非串流請求得到異常結果的問題。Agent 查詢定時任務支援關鍵字篩選，並明確限定目前電腦。"
+        },
+        {
+          "id": "mobile-and-ui",
+          "title": "手機與介面",
+          "text": "改善背景切換、重新連線的歷史保留與隱藏浮層的開銷；停止生成後可刪除訊息，收到電腦確認後才更新清單。右側工具列維持靠右，供應商設定互動繼續改善。"
+        },
+        {
+          "id": "companion-retirement",
+          "title": "夥伴功能退役",
+          "text": "移除夥伴、夥伴私聊、夥伴群聊及專屬定時流程的入口與執行功能。舊資料保留在原儲存位置，不自動刪除、不繼續執行，也不轉為普通任務；本版不提供瀏覽或匯出入口。普通任務、Orca 協作、定時任務、Skills、外掛與 IM 接入仍可使用。"
+        },
+        {
+          "id": "upgrade",
+          "title": "升級正式版",
+          "text": "0.1.6 同時進入正式與 beta 更新渠道。建議桌面與 Android 一同更新。Android 保留套件名稱 io.github.ciciyl.lex 與永久簽章，可直接覆蓋安裝，請勿先解除安裝。暫不提供 iOS 安裝包。 https://github.com/Ciciy-l/lex/releases/tag/v0.1.6 https://ciciy-l.github.io/lex/"
+        }
+      ]
+    },
+    "en": {
+      "intro": "Lex 0.1.6 is a stable release that improves model connections, task continuity and mobile controls, and retires companion features.",
+      "topics": [
+        {
+          "id": "protocol-channels",
+          "title": "Multiple protocols and channels",
+          "text": "Configure providers by protocol with multiple URL, key and model sets per protocol. Models with the same name retain their channel identity, and desktop and mobile apply the source confirmed by the host. OMP supports native Gemini; other protocol connections for Claude Code and Codex are labelled Lex bridges. Existing dedicated provider settings remain available."
+        },
+        {
+          "id": "continuity",
+          "title": "Model and task continuity",
+          "text": "Automatic fallback avoids mixing Codex protocols within the same history, and reasoning levels preserve the actual runtime value. Improvements cover Pi context caching, scheduled task recovery and queued images."
+        },
+        {
+          "id": "connections-and-schedules",
+          "title": "Connections and schedule search",
+          "text": "Fixes non-streaming requests when a provider returns an event stream without a Content-Type header. Agents can filter scheduled tasks by keyword, with results explicitly scoped to the current computer."
+        },
+        {
+          "id": "mobile-and-ui",
+          "title": "Mobile and interface",
+          "text": "Improves background transitions, history retention on reconnect and hidden overlay overhead. Messages can be deleted after stopping generation; the list changes after host confirmation. The right toolbar stays at the right edge, with further provider form improvements."
+        },
+        {
+          "id": "companion-retirement",
+          "title": "Companion retirement",
+          "text": "Removes companions, their direct and group conversations, and dedicated routines from the interface and runtime. Existing data stays in its original storage without automatic deletion, execution or conversion to ordinary tasks; this version has no browsing or export entry for it. Ordinary tasks, Orca collaboration, schedules, Skills, plugins and IM integrations remain available."
+        },
+        {
+          "id": "upgrade",
+          "title": "Upgrade to stable",
+          "text": "0.1.6 reaches both stable and beta update channels. Update desktop and Android together. Android keeps package io.github.ciciyl.lex and its permanent signing identity; install over the existing app without uninstalling it first. No iOS package is provided. https://github.com/Ciciy-l/lex/releases/tag/v0.1.6 https://ciciy-l.github.io/lex/"
+        }
+      ]
+    },
+    "ja": {
+      "intro": "Lex 0.1.6 は、モデル接続、タスクの継続性、モバイル操作を改善し、パートナー関連機能を終了する正式版です。",
+      "topics": [
+        {
+          "id": "protocol-channels",
+          "title": "複数プロトコルとチャネル",
+          "text": "プロバイダーをプロトコル別に設定し、同じプロトコルに複数の URL・キー・モデルを登録できます。同名モデルもチャネルを保持し、デスクトップとスマートフォンはホストが確認した接続元を適用します。OMP は Gemini をネイティブ対応し、Claude Code と Codex の他プロトコル接続には Lex ブリッジと表示します。既存の専用設定も利用できます。"
+        },
+        {
+          "id": "continuity",
+          "title": "モデルとタスクの継続性",
+          "text": "自動切り替えで Codex の異なるプロトコルの履歴を混在させず、推論レベルは実際の実行値を優先します。Pi のコンテキストキャッシュ、定期タスクの復旧、待機中画像の保持を改善しました。"
+        },
+        {
+          "id": "connections-and-schedules",
+          "title": "接続と定期タスク検索",
+          "text": "Content-Type ヘッダーのないイベントストリームを返すプロバイダーで、非ストリーミング要求が異常になる問題を修正しました。Agent は定期タスクをキーワードで絞り込み、現在のコンピューターのみを検索することを明示します。"
+        },
+        {
+          "id": "mobile-and-ui",
+          "title": "モバイルと画面",
+          "text": "バックグラウンド切り替え、再接続時の履歴保持、非表示オーバーレイの負荷を改善しました。生成停止後にメッセージを削除でき、ホストの確認後に一覧を更新します。右ツールバーを右端に維持し、プロバイダー設定操作も改善しました。"
+        },
+        {
+          "id": "companion-retirement",
+          "title": "パートナー機能の終了",
+          "text": "パートナー、専用の個別・グループ会話、定期処理の画面と実行機能を削除しました。既存データは元の保存先に保持し、自動削除、実行、通常タスクへの変換は行いません。本版には閲覧・エクスポート入口がありません。通常タスク、Orca 協作、定期タスク、Skills、プラグイン、IM 連携は引き続き利用できます。"
+        },
+        {
+          "id": "upgrade",
+          "title": "正式版への更新",
+          "text": "0.1.6 は stable と beta の両更新チャネルに配信されます。デスクトップと Android を一緒に更新してください。Android は io.github.ciciyl.lex と永続署名を維持します。先にアンインストールせず上書きインストールしてください。iOS パッケージはありません。 https://github.com/Ciciy-l/lex/releases/tag/v0.1.6 https://ciciy-l.github.io/lex/"
+        }
+      ]
+    },
+    "ko": {
+      "intro": "Lex 0.1.6은 모델 연결, 작업 연속성, 모바일 조작을 개선하고 동료 관련 기능을 종료하는 정식 버전입니다.",
+      "topics": [
+        {
+          "id": "protocol-channels",
+          "title": "여러 프로토콜과 채널",
+          "text": "제공자를 프로토콜별로 설정하고 같은 프로토콜에 여러 URL·키·모델 조합을 추가할 수 있습니다. 같은 이름의 모델도 채널 출처를 유지하며 데스크톱과 모바일은 호스트가 확인한 연결을 적용합니다. OMP는 Gemini를 네이티브 지원하고 Claude Code와 Codex의 다른 프로토콜 연결은 Lex 브리지로 표시합니다. 기존 전용 설정도 유지됩니다."
+        },
+        {
+          "id": "continuity",
+          "title": "모델과 작업 연속성",
+          "text": "자동 전환 시 Codex의 다른 프로토콜 이력을 섞지 않으며 추론 수준은 실제 실행 값을 우선 보존합니다. Pi 컨텍스트 캐시, 예약 작업 복구, 대기 이미지 보존을 개선했습니다."
+        },
+        {
+          "id": "connections-and-schedules",
+          "title": "연결과 예약 작업 검색",
+          "text": "Content-Type 헤더 없이 이벤트 스트림을 반환하는 제공자에서 비스트리밍 요청 결과가 잘못되는 문제를 수정했습니다. Agent는 예약 작업을 키워드로 검색하며 현재 컴퓨터만 조회한다는 범위를 명확히 표시합니다."
+        },
+        {
+          "id": "mobile-and-ui",
+          "title": "모바일과 화면",
+          "text": "백그라운드 전환, 재연결 이력 보존, 숨겨진 오버레이의 부하를 개선했습니다. 생성 중지 후 메시지를 삭제할 수 있으며 호스트 확인 후 목록을 갱신합니다. 오른쪽 도구 모음을 오른쪽 끝에 유지하고 제공자 설정 조작도 개선했습니다."
+        },
+        {
+          "id": "companion-retirement",
+          "title": "동료 기능 종료",
+          "text": "동료, 동료의 개인·그룹 대화, 전용 예약 루틴의 화면과 실행 기능을 제거했습니다. 기존 자료는 원래 저장 위치에 보존하며 자동 삭제, 실행, 일반 작업 전환을 하지 않습니다. 이 버전에는 해당 자료의 열람·내보내기 메뉴가 없습니다. 일반 작업, Orca 협업, 예약 작업, Skills, 플러그인, IM 연동은 계속 사용할 수 있습니다."
+        },
+        {
+          "id": "upgrade",
+          "title": "정식 버전 업데이트",
+          "text": "0.1.6은 stable과 beta 업데이트 채널에 함께 배포됩니다. 데스크톱과 Android를 함께 업데이트하세요. Android는 io.github.ciciyl.lex와 영구 서명을 유지하므로 먼저 삭제하지 말고 덮어 설치하세요. iOS 패키지는 제공하지 않습니다. https://github.com/Ciciy-l/lex/releases/tag/v0.1.6 https://ciciy-l.github.io/lex/"
+        }
+      ]
+    }
+  }
+}

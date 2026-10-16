@@ -1,16 +1,16 @@
 {
   "app": {
-    "version": "0.1.5",
-    "releaseNotes": "Lex 0.1.5",
+    "version": "0.1.6",
+    "releaseNotes": "Lex 0.1.6",
     "hotfix": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.5/Lex-0.1.5-macOS-Apple-Silicon-Auto-Update.zip",
-      "sha256": "a335b40d49e07580bc73c0e82b83a49d55c2bf8fb9e22039387b42c2543c941a",
-      "size": 272355053
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.6/Lex-0.1.6-macOS-Apple-Silicon-Auto-Update.zip",
+      "sha256": "478576c1cd76a09f837ccb544c08c35bc63ba64aebee6592267c39cb4759cc6d",
+      "size": 266503296
     },
     "installer": {
-      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.5/Lex-0.1.5-macOS-Apple-Silicon.dmg",
-      "sha256": "434b13990c853b092685103fdb96dca1f4051711388537d01b6c09b23a228bc7",
-      "size": 298479911
+      "file": "https://github.com/Ciciy-l/lex/releases/download/v0.1.6/Lex-0.1.6-macOS-Apple-Silicon.dmg",
+      "sha256": "5e821908d46f802653e4cef3e017161b030090f45d4e8ac0df574bb16f0d7bd7",
+      "size": 292541251
     }
   },
   "claudeCode": {
