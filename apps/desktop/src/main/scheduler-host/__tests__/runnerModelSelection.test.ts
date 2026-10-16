@@ -1,3 +1,7 @@
+// These runner units stub persistence; real ownership SQL is covered by the retention integration test.
+vi.mock('../../localDb/retiredCompanions.js', () => ({
+  assertNotRetiredCompanionSession: vi.fn(async () => undefined),
+}));
 /**
  * MakerScheduleRunner 模型选择回归测试。
  *

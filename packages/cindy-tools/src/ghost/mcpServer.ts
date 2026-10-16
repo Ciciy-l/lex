@@ -1254,7 +1254,7 @@ export function createCindyGhostsMcpServer(
 
   if (deps.connectAccount) server.tool(
     "connect_account",
-    "Request an account connection card in a teammate conversation. For a built-in Grok account use kind=host, id=grok; for an installed plugin use kind=plugin and its real ghost_id. Do not invent connectors, URLs or credentials. The card returns immediately; finish unrelated work and end the turn. The Host resumes you after authorization succeeds. Grok login does not authorize X or change your model.",
+    "Request an account connection card in the current conversation. For a built-in Grok account use kind=host, id=grok; for an installed plugin use kind=plugin and its real ghost_id. Do not invent connectors, URLs or credentials. The card returns immediately; finish unrelated work and end the turn. The Host resumes you after authorization succeeds. Grok login does not authorize X or change your model.",
     { kind: z.enum(["host", "plugin"]), id: z.string().min(1).max(256), reauthorize: z.boolean().optional().describe("Only for an explicit reconnect request or a known authorization/scope failure") },
     async ({ kind, id, reauthorize }) => {
       if (kind === "host" && id !== "grok") return { content: [{ type: "text" as const, text: JSON.stringify({ ok: false, errorCode: "UNSUPPORTED_CONNECTION" }) }], isError: true };

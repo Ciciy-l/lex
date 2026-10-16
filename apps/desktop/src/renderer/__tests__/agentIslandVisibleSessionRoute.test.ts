@@ -3,14 +3,7 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import {
-  isAgentIslandVisibleSessionOwnedByWorkdirBrowseRoute,
-  isAgentIslandVisibleSessionOwnedByBotRoute,
-  resolveAgentIslandVisibleSessionsFromPath,
-  resolveAgentIslandVisibleSessionFromRouteTarget,
-  resolveAgentIslandVisibleSessionIdForWorkdirBrowseRail,
-  resolveAgentIslandVisibleSessionIdFromPath,
-} from '@/lib/agentIslandVisibleSessionRoute';
+import { isAgentIslandVisibleSessionOwnedByWorkdirBrowseRoute, resolveAgentIslandVisibleSessionsFromPath, resolveAgentIslandVisibleSessionFromRouteTarget, resolveAgentIslandVisibleSessionIdForWorkdirBrowseRail, resolveAgentIslandVisibleSessionIdFromPath } from '@/lib/agentIslandVisibleSessionRoute';
 
 // Windows checkout(core.autocrlf)下源码是 CRLF;统一归一成 LF,含 \n 的多行片段断言才跨平台成立。
 const readTextLf = (...args: Parameters<typeof readFileSync>): string =>
@@ -38,16 +31,6 @@ const ccAgentSessionViewSource = readTextLf(
 );
 
 describe('bot and split route visibility', () => {
-  it.each([
-    ['/bots/bot-a/session/chat-a', true],
-    ['/bots/bot-a/history/history-a', true],
-    ['/bots/bot-a', false],
-    ['/bots', false],
-    ['/bots/roster', false],
-    ['/bots/bot-a/session', false],
-  ])('delegates %s to the validating view', (pathname, expected) => {
-    expect(isAgentIslandVisibleSessionOwnedByBotRoute(pathname)).toBe(expected);
-  });
 
   it('keeps stale splits out of bot pages across navigation and settings', () => {
     const splits = ['task-a', 'task-b'];

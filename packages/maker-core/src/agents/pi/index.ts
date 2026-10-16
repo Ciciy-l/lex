@@ -200,8 +200,8 @@ import {
   stageApprovedPiProjectResources,
   unavailablePiProjectResourceAssembly,
 } from './project-resource-assembly.js';
-import { applyPiBotSkillPolicy } from './bot-skill-policy.js';
-import { resolveAllowedManagedSkills, snapshotManagedSkillGrants } from '../shared/managed-skill-policy.js';
+
+import { resolveAllowedManagedSkills } from '../shared/managed-skill-policy.js';
 import {
   assertPiSpawnArgvFitsPlatform,
   collectPiProjectResourceCliPaths,
@@ -2543,10 +2543,9 @@ export class PiAgent extends BaseAgent {
     }
     assertRemotePiContextProfileAvailable(opts.remoteHostId, opts.model, opts.providerId);
     const reviewMode = opts.reviewMode === true;
-    const botMemoryScope = opts.makerMemoryScopeKey?.startsWith('bot:') === true;
     const sessionMemoryEnabled = !reviewMode
       && (opts.makerMemoryEnabled ?? this.deps.runtimeConfig.makerMemoryEnabled ?? false) === true
-      && (botMemoryScope || (this.memoryOverride ?? true));
+      && (this.memoryOverride ?? true);
     const compactionMemoryEnabled = sessionMemoryEnabled && !!this.deps.makerMemory;
     const makerMemoryPromptEnabled =
       sessionMemoryEnabled &&
@@ -3083,9 +3082,9 @@ export class PiAgent extends BaseAgent {
     // 这两份快照。若只按 sessionId 分目录, 另一实例改路由或 retry 策略会先覆盖
     // 仍在跑的旧 Pi / 子代理热读快照。
     const localConfigHomeRuntimeId = remote ? undefined : randomBytes(16).toString('hex');
-    // Bot contexts remain profile-only. SSH tasks use the remote user's rules,
+    // SSH tasks use the remote user's rules,
     // never the controlling desktop's personal instructions.
-    const globalContextFiles = opts.botRuntimeProfile ? [] : await readPiGlobalContext(
+    const globalContextFiles = await readPiGlobalContext(
       this.deps.resolvePiGlobalContextHome?.(opts.remoteHostId),
       fileOps,
     );
@@ -3564,7 +3563,7 @@ export class PiAgent extends BaseAgent {
       try {
         const extra = await this.deps.preparePiExtraSpawnConfig(
           // The Desktop bridge is generation-cached, so it must be built from the
-          // full provider superset. Per-Bot narrowing happens on the returned
+          // full provider superset. Per-session filtering happens on the returned
           // per-session descriptor; otherwise whichever session starts first
           // accidentally defines every later Pi session's tool surface.
           this.deps.mcpProviders ?? [],
@@ -3576,9 +3575,6 @@ export class PiAgent extends BaseAgent {
           // 不得再二次 resolve (Codex #2399 P2)。
           ...((sessionMemoryEnabled || opts.makerMemoryScopeKey) ? { memoryScopeKey } : {}),
           memoryEnabled: sessionMemoryEnabled,
-          ...(opts.botRuntimeProfile?.mcpPolicy
-            ? { botMcpPolicy: opts.botRuntimeProfile.mcpPolicy }
-            : {}),
           vendorOptions: mutableVendorOptions,
           mcpCallerKind: 'root',
           mcpCallerAttested: true,
@@ -3659,20 +3655,17 @@ export class PiAgent extends BaseAgent {
 
     // 追加而非替换:pi 默认 prompt(工具用法/工程约定)原样保留,只追加 host 产品段
     // 与用户段。前缀稳定(默认 prompt 静态),易变内容禁止进入(缓存规则 3.1)。
-    const ghostRosterPrompt = reviewMode || opts.botRuntimeProfile
+    const ghostRosterPrompt = reviewMode
       ? ''
       : (this.deps.getGhostRosterPrompt?.({ workingDir: opts.workingDir }) ?? '');
     const appendSections = [
-      reviewMode ? undefined : opts.botProfilePrompt?.trim(),
-      opts.botRuntimeProfile ? undefined : this.deps.runtimeConfig.systemPrompt?.trim(),
+      this.deps.runtimeConfig.systemPrompt?.trim(),
       ghostRosterPrompt.trim(),
-      reviewMode ? undefined : opts.botProfileContextPrompt?.trim(),
-      makerMemoryPromptEnabled && !opts.makerMemoryScopeKey?.startsWith('bot:')
+      makerMemoryPromptEnabled
         ? MAKER_MEMORY_RULES
         : undefined,
       makerMemoryIndex.trim(),
-      reviewMode ? undefined : opts.botUserProfilePrompt?.trim(),
-      reviewMode || opts.botRuntimeProfile ? undefined : opts.userPrompt?.trim(),
+      reviewMode ? undefined : opts.userPrompt?.trim(),
       piExtraDirsPrompt(mutableExtraDirs, mutableWritableDirs),
     ].filter((s): s is string => !!s && s.length > 0);
     const appendSystemPrompt = appendSections.join('\n\n');
@@ -3716,11 +3709,11 @@ export class PiAgent extends BaseAgent {
     // snapshot. Freeze it once per new runtime, then assemble only its eligible
     // skills. Missing/throwing authorities and paths fail closed; never infer
     // approval from permission mode, MCP/plugin state, or caller vendor options.
-    const disabledSkillPaths = opts.remoteHostId || opts.botRuntimeProfile || reviewMode
+    const disabledSkillPaths = opts.remoteHostId || reviewMode
       ? [] : [...(this.deps.getDisabledSkillPaths?.() ?? [])];
     let disabledSkillLaunch = snapshotDisabledSkillLaunch(disabledSkillPaths);
     const disabledSkillSnapshot = disabledSkillLaunch.identities;
-    const loadProjectResourcesInPlace = !reviewMode && !opts.botRuntimeProfile && !opts.remoteHostId;
+    const loadProjectResourcesInPlace = !reviewMode && !opts.remoteHostId;
     let projectResourceAssembly = unavailablePiProjectResourceAssembly(
       reviewMode ? 'review-mode-project-resources-disabled' : 'approval-resolver-unavailable',
     );
@@ -3752,12 +3745,6 @@ export class PiAgent extends BaseAgent {
       approvalRevision: projectResourceAssembly.diagnostic.approvalRevision,
       requestedSkillCount: projectResourceAssembly.diagnostic.requestedSkillCount,
     });
-    const botSkillSelection = applyPiBotSkillPolicy(
-      reviewMode ? undefined : opts.botRuntimeProfile?.skillPolicy,
-      projectResourceAssembly,
-    );
-    projectResourceAssembly = botSkillSelection.projectAssembly;
-
     // Cindy-managed installs use a shared package home, but Pi remains the
     // package/resource loader. Ordinary local runtimes receive installed roots
     // in their own settings.json; Cindy inspection below is advisory metadata.
@@ -3854,18 +3841,18 @@ export class PiAgent extends BaseAgent {
     let managedSkillRoot: string | undefined;
     let args: string[];
     try {
-      const managedSkillGrants = snapshotManagedSkillGrants(opts.botRuntimeProfile?.skillPolicy);
+
       const managedSkills = opts.remoteHostId || reviewMode ? [] : await this.deps.getManagedSkills?.() ?? [];
       const managedDisabledPaths = snapshotDisabledSkillLaunch(opts.remoteHostId || reviewMode ? [] : this.deps.getDisabledSkillPaths?.() ?? []);
       const managedSourceIdentities = new Set(managedSkills.flatMap((skill) =>
         skill.path ? [canonicalSkillPath(skill.path)] : []));
       const managedSourcePaths = new Set(managedSkills.flatMap((skill) => skill.path ? [path.resolve(skill.path)] : []));
-      managedSkillPaths = resolveAllowedManagedSkills(managedSkills, managedSkillGrants,
+      managedSkillPaths = resolveAllowedManagedSkills(managedSkills,
         currentDisabledSkillLaunchPaths(managedDisabledPaths)).map((skill) => skill.path);
       // The catalog path may alias a managed source. Apply the managed grant and
       // activation checks once, including paths already selected by the Bot.
       const additionalSkillPaths = [...new Map([
-        ...(loadProjectResourcesInPlace ? [] : botSkillSelection.explicitSkillPaths.filter((skillPath) =>
+        ...(loadProjectResourcesInPlace ? [] : projectResourceAssembly.launchSkillPaths.filter((skillPath) =>
           !managedSourcePaths.has(path.resolve(skillPath)) && !managedSourceIdentities.has(canonicalSkillPath(skillPath)))),
       ].map((skillPath) => [canonicalSkillPath(skillPath), skillPath])).values()];
 
@@ -3891,10 +3878,6 @@ export class PiAgent extends BaseAgent {
         '--model',
         initialWireModel,
         ...(reviewMode ? ['--tools', 'read,grep,find,ls'] : []),
-        // Bot sessions must not absorb project/global AGENTS.md or CLAUDE.md from
-        // the cwd chain — their context is the Bot profile, not the workspace.
-        ...(opts.botRuntimeProfile ? ['--no-context-files'] : []),
-        ...(botSkillSelection.disableImplicitSkills ? ['--no-skills'] : []),
         ...additionalSkillPaths.filter((skillPath) => !projectResourceCli.skills
           .some((existing) => canonicalSkillPath(existing) === canonicalSkillPath(skillPath)))
           .flatMap((skillPath) => ['--skill', skillPath]),

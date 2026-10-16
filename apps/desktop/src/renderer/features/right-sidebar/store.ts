@@ -20,7 +20,7 @@ import { createLogger } from '@/lib/logger';
 import { extractIpcError } from '@/utils/ipcError';
 import { normalizePersistableFavicon } from '../../../shared/faviconPersistence';
 import { createIpcError } from '../../../shared/ipc-errors';
-import { MAX_STATE_JSON_BYTES } from '../../../shared/rightSidebarTabState';
+import { MAX_STATE_JSON_BYTES, isRetiredWorkspaceTabKind } from '../../../shared/rightSidebarTabState';
 import { workspaceSurface, isHiddenTerminal } from '../../../shared/workspaceSurface';
 import { hydrateTerminalState } from './plugins/terminal/terminal-layout';
 import { getSessionDeviceId } from '@/features/device-link/remoteProjectsStore';
@@ -422,6 +422,9 @@ function setBucket(sessionId: string, next: Partial<TabBucket>): TabBucket {
           : (available[0]?.id ?? null)
         : null;
   }
+  if (merged.activeTabId && !merged.tabs.some((tab) => tab.id === merged.activeTabId)) {
+    merged.activeTabId = merged.activeToolId ?? merged.activeContentTabId ?? null;
+  }
   cache.set(sessionId, merged);
   notify(sessionId);
   return merged;
@@ -698,7 +701,7 @@ export function importTabSnapshot(snapshot: RsbWindowTabSnapshot): void {
   const seen = new Set<string>();
   const tabs: TabState[] = snapshot.tabs
     .filter((tab) => {
-      if (!tab.id || !tab.kind || seen.has(tab.id)) return false;
+      if (!tab.id || !tab.kind || isRetiredWorkspaceTabKind(tab.kind) || seen.has(tab.id)) return false;
       seen.add(tab.id);
       return true;
     })
@@ -782,7 +785,7 @@ export async function ensureHydrated(sessionId: string): Promise<void> {
       } else {
         memoryOnlySessions.delete(sessionId);
       }
-      const tabs: TabState[] = result.tabs.map((row) => ({
+      const tabs: TabState[] = result.tabs.filter(row => !isRetiredWorkspaceTabKind(row.kind)).map((row) => ({
         id: row.id,
         kind: row.kind as TabKindId,
         state: sanitizeHydratedTabState(row.kind, row.state),

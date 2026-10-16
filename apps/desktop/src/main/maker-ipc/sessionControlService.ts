@@ -348,7 +348,7 @@ export function authorizeSessionQueueItem(
 
 /**
  * 插话 / 排序不改正文：除了自己投递的消息，任务还可以处理自己队列里由其它任务或协同
- * 成员发来的机器消息。用户手打、伙伴委派、插件与定时任务的条目有各自的接受簿记，不开放。
+ * 成员发来的机器消息。用户手打、插件与定时任务的条目有各自的接受簿记，不开放。
  */
 export function authorizeSessionQueueReorder(
   item: AgentInputQueuedMessage,

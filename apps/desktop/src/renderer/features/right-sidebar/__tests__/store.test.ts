@@ -127,6 +127,22 @@ describe('RSB store', () => {
   });
 
   describe('ensureHydrated', () => {
+    it('hides retained companion tabs without deleting rows or keeping their selection', async () => {
+      ipc.list.mockResolvedValueOnce({
+        tabs: [
+          { id: 'old', kind: 'routines', state: { private: 'retained' } },
+          { id: 'normal', kind: 'file-browser', state: {} },
+        ], activeTabId: 'old', activeToolId: 'old',
+      });
+      await store.ensureHydrated('retirement');
+      expect(store.getBucket('retirement').tabs.map(tab => tab.id)).toEqual(['normal']);
+      expect(store.getBucket('retirement').activeTabId).toBe('normal');
+      expect(store.getBucket('retirement').activeToolId).toBe('normal');
+      expect(ipc.close).not.toHaveBeenCalled();
+      expect(ipc.upsert).not.toHaveBeenCalled();
+      expect(ipc.setActive).not.toHaveBeenCalled();
+    });
+
     it('calls IPC list once and caches hydrated bucket', async () => {
       ipc.list.mockResolvedValueOnce({
         tabs: [

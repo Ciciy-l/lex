@@ -338,14 +338,14 @@ describe('searchCachedSessionsByTitle', () => {
   });
 });
 
-describe('ordinary search against a retained remote companion mirror', () => {
+describe('ordinary search against legacy remote companion rows', () => {
   afterEach(() => {
     remoteProjectsStore.clear();
     vi.unstubAllGlobals();
   });
 
   it.each(['offline', 'disconnect', 'timeout', 'legacy-list', 'legacy-cache'] as const)(
-    'hides companion titles on %s fallback while preserving their model metadata',
+    'hides companion titles on %s fallback without retaining a companion mirror',
     async (mode) => {
       const deviceId = 'companion-search-host';
       const bot = session({
@@ -395,17 +395,7 @@ describe('ordinary search against a retained remote companion mirror', () => {
       );
       expect(remoteProjectsStore.getDeviceSessions(deviceId)).toBe(snapshot);
       expect(snapshot.filter((row) => row.source === 'bot')).toEqual(
-        expect.arrayContaining(
-          [bot, archivedBot].map((row) =>
-            expect.objectContaining({
-              id: row.id,
-              status: row.status,
-              model: 'gpt-6-astra',
-              agentKind: 'codex',
-              deviceLinkDeviceId: deviceId,
-            }),
-          ),
-        ),
+        [],
       );
     },
   );

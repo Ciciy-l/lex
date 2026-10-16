@@ -27,7 +27,6 @@ export type AtResourceType =
   | 'browser-tab'
   | 'desktop-window'
   | 'session'
-  | 'bot'
   | 'plugin-command'
   | 'plugin-resource';
 

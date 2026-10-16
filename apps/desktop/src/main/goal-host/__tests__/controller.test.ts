@@ -56,7 +56,7 @@ function productionSteer(session: FakeSession, deliver: () => Promise<void>, rej
     getDbClient: () => ({ drizzle: { select: () => query } }),
     sessions: {}, botSessionLinks: {}, botProfiles: {}, eq: () => undefined,
     assertReviewExternalInputAllowed: async () => {},
-    botSessionInputBlockReason: () => null,
+    assertNotRetiredCompanionSession: async () => {},
     prepareUserMessageForAgent: async (_id: string, message: unknown) => message,
     restoreAutoReviewSteerIntent: async () => undefined,
     shouldPrependMobileClientPromptNote: () => false,

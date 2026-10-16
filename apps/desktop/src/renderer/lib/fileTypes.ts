@@ -173,13 +173,6 @@ export interface MentionedResource {
   path: string;
 }
 
-/** Bot candidates supplied by the Bot task route to the shared Composer. */
-export interface ComposerBotMention {
-  id: string;
-  name: string;
-  description?: string;
-}
-
 export interface FileValidationResult {
   valid: AttachedFileInput[];
   errors: { name: string; reason: string }[];

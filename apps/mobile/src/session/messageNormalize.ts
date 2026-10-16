@@ -1,6 +1,6 @@
 import { collectPluginInvocations, type PluginInvocation } from './pluginInvocations';
-import { placeBotTaskCardsAfterIntroduction, readBotCollaborationMeta, type BotCollaborationMeta } from '@cindy/maker-shared/botCollaboration';
-import { readBotDirectMessageMeta, type BotDirectMessageMeta } from '@cindy/maker-shared/botDirectMessage';
+
+
 import type { RemoteMessage, RemoteMessageRole } from '@/session/types';
 import type { MobileSystemCardType } from '@/session/systemCard';
 import { contentToPreview } from '@/utils/contentPreview';
@@ -82,7 +82,6 @@ export interface NormalizedRemoteMessage {
   /** user Composer 的结构化语义引用；用于 fork / rewind 恢复同款 chip。 */
   agentReferences?: AgentInputReference[];
   secondaryBody?: string;
-  authorization?: Record<string, unknown>;
   systemCardData?: Record<string, unknown>;
   systemCardType?: MobileSystemCardType;
   attachments?: NormalizedAttachment[];
@@ -112,7 +111,6 @@ export interface NormalizedRemoteMessage {
   modelMismatch?: { selected: string; actual: string };
   /** Orca 协同卡片(Lead 派活 / worker 回报);存在时由 MessageRenderer 渲染成专属卡片而非普通气泡。 */
   orcaCard?: OrcaCollabCard;
-  companion?: { kind: 'task'; meta: BotCollaborationMeta } | { kind: 'direct'; meta: BotDirectMessageMeta };
   /** tool 消息专用:tool_result 是否已到达(含被隐藏的 orca 空结果),驱动工具行 running/done 状态。 */
   toolSettled?: boolean;
   /** Large settled tool input is fetched only when the user asks to view it. */
@@ -199,22 +197,7 @@ export function normalizeRemoteMessages(
 ): NormalizedRemoteMessage[] {
   // History views already place live tails after their persisted prefix. A live
   // row's provisional timestamp must not undo that order during normalization.
-  const sorted = placeBotTaskCardsAfterIntroduction(
-    options.preserveSourceOrder ? messages : sortMessagesByCreatedAt(messages),
-    (message) => {
-      if (message.role === 'user') {
-        return message.agentMeta?.delivery !== 'steer' || message.agentMeta?.synthetic
-          ? 'boundary' : 'other';
-      }
-      if (message.role !== 'assistant' || message.agentMeta?.parentUuid || message.systemCardType)
-        return 'other';
-      const task = readBotCollaborationMeta(message.agentMeta?.botCollaboration);
-      if (task?.role === 'delegation-request') return 'task';
-      if (task || message.agentMeta?.botDirectMessage || message.agentMeta?.botAuthorization)
-        return 'other';
-      return typeof message.content === 'string' && message.content.trim() ? 'prose' : 'other';
-    },
-  );
+  const sorted = options.preserveSourceOrder ? messages : sortMessagesByCreatedAt(messages);
   const toolResultPairing = buildMessageToolResultPairing(sorted, {
     contentToPreview: toolResultContentToPreview,
   });
@@ -222,32 +205,6 @@ export function normalizeRemoteMessages(
   const result: NormalizedRemoteMessage[] = [];
   for (const message of sorted) {
     if (message.role === 'tool_result') continue;
-    if (message.role === 'assistant') {
-      const authorization = readRecord(message.agentMeta?.botAuthorization);
-      const snapshot = readRecord(authorization?.snapshot);
-      if (authorization?.v === 1 && authorization.sessionId === message.sessionId && snapshot?.kind === 'plugin_setup') {
-        result.push({ key: messageNormalizeKey(message), source: message, kind: 'system', role: message.role,
-          label: 'authorization', body: typeof message.content === 'string' ? message.content : '', align: 'agent',
-          createdAt: message.createdAt, authorization: snapshot });
-        continue;
-      }
-
-      const task = readBotCollaborationMeta(message.agentMeta?.botCollaboration);
-      const direct = readBotDirectMessageMeta(message.agentMeta?.botDirectMessage);
-      const isTaskTrace = task?.role === 'delegation-request' || task?.role === 'delegation-result' || task?.role === 'interjection';
-      if (isTaskTrace || direct) {
-        result.push({
-          key: messageNormalizeKey(message), source: message, kind: 'system', role: message.role,
-          // Task traces are status-only, including legacy rows containing execution instructions.
-          label: 'companion', body: isTaskTrace ? '' : typeof message.content === 'string' ? message.content : '',
-          align: 'agent', createdAt: message.createdAt,
-          companion: isTaskTrace
-            ? { kind: 'task', meta: task } : { kind: 'direct', meta: direct! },
-        });
-        continue;
-      }
-    }
-
     if (message.role === 'tool_use') {
       const tool = parseToolUse(message);
       const toolInputProjection = message.mobileToolInputProjection;

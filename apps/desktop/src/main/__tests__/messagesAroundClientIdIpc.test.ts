@@ -22,7 +22,15 @@ const viteEnvSource = readTextLf(
 
 describe('messages around-client-id IPC boundary', () => {
   it('exposes the clientId-based around lookup across main, preload, and renderer types', () => {
-    expect(messagesIpcSource).toContain("ipcMain.handle(\n    'local-db:messages:around-client-id'");
+    expect(messagesIpcSource).toContain("handleMessageIpc(\n    'local-db:messages:around-client-id'");
+    const wrapperStart = messagesIpcSource.indexOf('function handleMessageIpc(');
+    const wrapperEnd = messagesIpcSource.indexOf('export async function readMessagesList(', wrapperStart);
+    expect(wrapperStart).toBeGreaterThan(-1);
+    expect(wrapperEnd).toBeGreaterThan(wrapperStart);
+    const wrapper = messagesIpcSource.slice(wrapperStart, wrapperEnd);
+    expect(wrapper).toContain('ipcMain.handle(channel,');
+    expect(wrapper).toContain('await captureMessageSessionAccess(sid)');
+    expect(wrapper).toContain('await listener(event, sid, ...args)');
     expect(preloadSource).toContain('aroundClientId: (');
     expect(preloadSource).toContain("'local-db:messages:around-client-id'");
     expect(viteEnvSource).toContain('aroundClientId: (');

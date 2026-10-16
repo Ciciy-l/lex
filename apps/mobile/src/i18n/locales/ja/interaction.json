@@ -280,17 +280,5 @@
         "fallback": "モバイルではデスクトップから届いた順にリモートリクエストを処理します。"
       }
     }
-  },
-  "companion": {
-    "operation": "操作",
-    "details": "詳細を表示",
-    "fields": {
-      "path": "ファイル",
-      "file_path": "ファイル",
-      "url": "アドレス",
-      "command": "コマンド",
-      "ghost_id": "プラグイン",
-      "tool": "ツール"
-    }
   }
 }

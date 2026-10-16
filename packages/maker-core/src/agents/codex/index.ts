@@ -49,7 +49,7 @@ import {
   type TurnPermissionPolicy,
 } from '../base-agent.js';
 import { skillEntryPath, snapshotDisabledSkillLaunch, currentDisabledSkillLaunchPaths } from '../shared/skill-activation.js';
-import { snapshotManagedSkillGrants } from '../shared/managed-skill-policy.js';
+
 import type { AgentCredentialMode } from '../../interfaces/auth-adapter.js';
 import type {
   Capabilities,
@@ -129,15 +129,7 @@ import { isRemoteCompactEncryptedContentError } from '../shared/remote-compact-e
 import { listCodexModels } from './app-server/list-models.js';
 import { buildCodexEnv } from './env-builder.js';
 import type { CodexErrorInfo } from './app-server/protocol.js';
-import {
-  buildCodexBotSkillConfigOverrides,
-  buildCodexBotMcpConfigOverrides,
-  buildCodexCapabilityConfigOverrides,
-  buildCodexCapabilitySkillConfigOverrides,
-  buildCodexSessionCapabilityRoutingPolicy,
-  mergeCodexSkillConfigOverrides,
-  requiresCodexCapabilitySkillDiscovery,
-} from './capability-routing.js';
+import { buildCodexCapabilityConfigOverrides, buildCodexCapabilitySkillConfigOverrides, buildCodexSessionCapabilityRoutingPolicy, mergeCodexSkillConfigOverrides, requiresCodexCapabilitySkillDiscovery } from './capability-routing.js';
 import { scanCodexCustomizations } from './customization-scanner.js';
 import { commandExecutionDisplayInput } from './command-display.js';
 import { asyncUserInputQuestions } from './async-user-input.js';
@@ -460,21 +452,18 @@ function buildCodexDeveloperInstructions(parts: {
   ghostRosterPrompt?: string;
   runtimeSystemPrompt?: string;
   makerMemoryIndex?: string;
-  botProfilePrompt?: string;
-  botProfileContextPrompt?: string;
-  botUserProfilePrompt?: string;
   userPrompt?: string;
 }): string {
   return [
-    parts.botProfilePrompt,
+    undefined,
     MAKER_CODEX_SYSTEM_PROMPT_APPEND,
     parts.makerMemoryRules,
     parts.contactsRules,
     parts.ghostRosterPrompt,
-    parts.botProfileContextPrompt,
+    undefined,
     parts.runtimeSystemPrompt,
     parts.makerMemoryIndex,
-    parts.botUserProfilePrompt,
+    undefined,
     parts.userPrompt,
   ]
     .filter((s): s is string => !!s && s.trim().length > 0)
@@ -997,10 +986,10 @@ function normalizeDynamicAskUserQuestions(args: unknown): ToolRequestUserInputQu
 function questionsToAskUserItems(questions: readonly ToolRequestUserInputQuestion[]) {
   return questions.map((q) => ({
     question: q.question,
-    header: q.header || undefined,
+    header: q.header,
     options: q.options?.map((option) => ({
       label: option.label,
-      description: option.description || undefined,
+      description: option.description,
     })),
     multiSelect: false,
   }));
@@ -3662,9 +3651,6 @@ assertRouteCurrent();
     const sid = opts.sessionId ?? '';
     const log = this.deps.logger.child(sid ? `s:${sid}/codex` : 'codex');
     const reviewMode = opts.reviewMode === true;
-    const botSkillGrants = !opts.remoteHostId && !reviewMode
-      ? snapshotManagedSkillGrants(opts.botRuntimeProfile?.skillPolicy) : undefined;
-    let refreshedBotSkillConfig: Record<string, unknown> | undefined;
     if (reviewMode && opts.remoteHostId) {
       throw new Error('Cindy Review currently supports local Codex sessions only');
     }
@@ -3711,9 +3697,7 @@ assertRouteCurrent();
     if (makerMemoryEnabled && makerMemory) {
       try {
         const store = await makerMemory.getStore(memoryScopeKey);
-        makerMemoryRules = opts.makerMemoryScopeKey?.startsWith('bot:')
-          ? ''
-          : MAKER_MEMORY_RULES;
+        makerMemoryRules = MAKER_MEMORY_RULES;
         makerMemoryIndex = opts.makerMemoryIndexSnapshot ?? await store.getIndex();
         memoryFlushController = new MemoryFlushController({
           logger: log.child('memory-flush'),
@@ -5281,15 +5265,6 @@ assertRouteCurrent();
         // app-server outlives threads; refreshing files alone leaves its cached
         // catalog available to the next thread after a plugin is disabled.
         const refreshed = await this.listSkillsForHost(host, opts.workingDir, true, CRITICAL_THREAD_RPC_TIMEOUT_MS);
-        if (botSkillGrants !== undefined) {
-          const unscopedError = refreshed.errors.find(error => !error.path);
-          if (unscopedError) throw new Error(unscopedError.message);
-          refreshedBotSkillConfig = buildCodexBotSkillConfigOverrides(opts.botRuntimeProfile?.skillPolicy, {
-            grants: botSkillGrants,
-            skills: [...refreshed.skills, ...refreshed.errors.flatMap(error =>
-              error.path ? [{ path: error.path, enabled: false }] : [])],
-          });
-        }
         assertCurrentHost('Skill catalog reload');
       }
     } catch (error) {
@@ -5550,47 +5525,9 @@ assertRouteCurrent();
     }
     const readSessionMcpConfig = (): Record<string, unknown> => {
       const config = host.getSessionMcpConfig(opts.sessionInstanceId, { vendorOptions: vo });
-      if (opts.remoteHostId && opts.botRuntimeProfile?.mcpPolicy
-        && typeof config['mcp_servers.cindy_helper.url'] !== 'string') {
-        throw new Error('Remote Codex Bot tools are not ready. Retry after the active remote task finishes.');
-      }
       return config;
     };
-    let botMcpConfig: Record<string, unknown> = {};
-    if (!reviewMode && opts.botRuntimeProfile?.mcpPolicy) {
-      try {
-        const response = await host.request<{ config?: Record<string, unknown> }>(
-          Method.ConfigRead, { includeLayers: false },
-          { timeoutMs: CRITICAL_THREAD_RPC_TIMEOUT_MS },
-        );
-        assertCurrentHost('Bot MCP configuration');
-        const transports = new Set(Object.entries(asRecord(asRecord(response.config).mcp_servers))
-          .filter(([, value]) => hasCodexMcpTransport(value)).map(([name]) => name));
-        for (const [key, value] of Object.entries(readSessionMcpConfig())) {
-          const match = /^mcp_servers\.([A-Za-z0-9_-]+)\.(?:url|command)$/.exec(key);
-          if (match && typeof value === 'string' && value.trim()) transports.add(match[1]);
-        }
-        botMcpConfig = buildCodexBotMcpConfigOverrides(opts.botRuntimeProfile.mcpPolicy, transports);
-        // Remote daemons keep this shared transport disabled for ordinary tasks.
-        if (opts.remoteHostId && transports.has('cindy_helper')) {
-          botMcpConfig['mcp_servers.cindy_helper.enabled'] = true;
-        }
-        if (!makerMemoryEnabled && transports.has('cindy_memory')) {
-          botMcpConfig['mcp_servers.cindy_memory.enabled'] = false;
-        }
-      } catch (error) {
-        releaseHostBindingLeaseIfNeeded();
-        if (error instanceof CodexRouteSelectionChangedError) throw error;
-        throw new Error(`Cannot prepare Codex Bot MCP configuration: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-    capabilityRoutingConfig = mergeCodexSkillConfigOverrides(
-      capabilityRoutingConfig,
-      refreshedBotSkillConfig ?? buildCodexBotSkillConfigOverrides(
-        reviewMode ? undefined : opts.botRuntimeProfile?.skillPolicy,
-      ),
-    );
-    const disabledSkillPaths = opts.remoteHostId || opts.botRuntimeProfile || reviewMode
+    const disabledSkillPaths = opts.remoteHostId || reviewMode
       ? [] : [...(this.deps.getDisabledSkillPaths?.() ?? [])];
     const disabledSkillLaunch = snapshotDisabledSkillLaunch(disabledSkillPaths);
     const disabledSkillSnapshot = disabledSkillLaunch.identities;
@@ -5615,13 +5552,6 @@ assertRouteCurrent();
         throw new Error(`Cannot prepare local Skill configuration: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    capabilityRoutingConfig = {
-      ...capabilityRoutingConfig,
-      ...botMcpConfig,
-      // Bot sessions must not absorb project AGENTS.md from the cwd chain —
-      // their context is the Bot profile, not the workspace.
-      ...(!reviewMode && opts.botRuntimeProfile ? { project_doc_max_bytes: 0 } : {}),
-    };
     if (
       Object.keys(capabilityRoutingConfig).length > 0 &&
       !capabilityRoutingProtocolSupported
@@ -6421,11 +6351,6 @@ assertRouteCurrent();
           : {}),
         // Lex owns goal dispatch and pause/resume; native continuation must not bypass the host.
         'features.goals': false,
-        // Bot memory and delegation remain scoped to the Lex Profile and Session.
-        ...(opts.botRuntimeProfile ? {
-          'memories.generate_memories': false,
-          'memories.use_memories': false,
-        } : {}),
         ...(readonlyReferenceDirsSupported ? readonlyReferencesConfig() : {}),
         ...(reviewMode ? reviewPermissionsConfig : {}),
         ...(reviewMode
@@ -6458,7 +6383,7 @@ assertRouteCurrent();
         // Review disables only transport-bearing entries discovered above.
         // Its host omits Cindy's MCP bridge, so a bare memory override would
         // create an invalid transport even though the entry is disabled.
-        ...(!reviewMode && !makerMemoryEnabled && !opts.botRuntimeProfile
+        ...(!reviewMode && !makerMemoryEnabled
           ? { 'mcp_servers.cindy_memory.enabled': false }
           : {}),
         // Configure the native window and its 90% compaction budget together.
@@ -6828,7 +6753,7 @@ assertRouteCurrent();
     // host 的有效状态计算已含: 全局开关 ∧ 工作区/用户覆盖 ∧ 实际应用到 running
     // app-server 的 spawn 快照(失效失败留下 stale 配置时返回 unavailable, 本段
     // 静默, 不指挥模型调 stale 桥里没有的工具)。
-    const contactsState = opts.remoteHostId || reviewMode || opts.botRuntimeProfile
+    const contactsState = opts.remoteHostId || reviewMode
       ? undefined
       : this.deps.getContactsPromptState?.({ workingDir: opts.workingDir });
     const contactsRules =
@@ -6840,21 +6765,16 @@ assertRouteCurrent();
     // 远端 Codex 的 workingDir 属于 SSH 主机，本地插件目录停用偏好无法可靠匹配；
     // 远端 SSH remote-forward 只下发白名单 MCP，固定 cindy ghost server 不在其中，
     // 因此与 Claude 远端路径一致地 fail-closed，不把召回清单注入到不可达会话。
-    const ghostRosterPrompt = opts.remoteHostId || reviewMode || opts.botRuntimeProfile
+    const ghostRosterPrompt = opts.remoteHostId || reviewMode
       ? ''
       : (this.deps.getGhostRosterPrompt?.({ workingDir: opts.workingDir }) ?? '');
     const developerInstructions = buildCodexDeveloperInstructions({
       makerMemoryRules,
       contactsRules,
       ghostRosterPrompt,
-      runtimeSystemPrompt: opts.botRuntimeProfile
-        ? undefined
-        : this.deps.runtimeConfig.systemPrompt,
+      runtimeSystemPrompt: this.deps.runtimeConfig.systemPrompt,
       makerMemoryIndex,
-      botProfilePrompt: reviewMode ? undefined : opts.botProfilePrompt,
-      botProfileContextPrompt: reviewMode ? undefined : opts.botProfileContextPrompt,
-      botUserProfilePrompt: reviewMode ? undefined : opts.botUserProfilePrompt,
-      userPrompt: reviewMode || opts.botRuntimeProfile ? undefined : opts.userPrompt,
+      userPrompt: reviewMode ? undefined : opts.userPrompt,
     });
     const useProxyChannel = isCodexProxyChannelReady();
     let threadId!: string;
@@ -6921,7 +6841,7 @@ assertRouteCurrent();
       }
       threadId = resp.thread.id;
       await recordNativeThreadLocation(resp.thread);
-      codexThreadModelProviderId = resp.modelProvider?.trim() || undefined;
+      codexThreadModelProviderId = resp.modelProvider?.trim();
       refreshCodexAutoReviewerRoute(threadId);
       if (hostUsesCodexProxy) {
         registerCodexDeveloperInstructions(threadId, developerInstructions);
@@ -7033,7 +6953,7 @@ assertRouteCurrent();
         if (preparedResumePath && resp.thread.id !== opts.resumeSessionId) throw new Error('Codex resumed an unexpected thread');
         threadId = resp.thread.id;
         await recordNativeThreadLocation(resp.thread);
-        codexThreadModelProviderId = resp.modelProvider?.trim() || undefined;
+        codexThreadModelProviderId = resp.modelProvider?.trim();
         refreshCodexAutoReviewerRoute(threadId);
         if (hostUsesCodexProxy) {
           registerCodexDeveloperInstructions(threadId, developerInstructions);
@@ -7254,7 +7174,7 @@ assertRouteCurrent();
           await unsubscribeDetachedThread(nextThreadId, 'summary fallback identity mismatch', false);
           throw new Error('Codex did not apply the summary compaction provider');
         }
-        codexThreadModelProviderId = resp.modelProvider?.trim() || undefined;
+        codexThreadModelProviderId = resp.modelProvider?.trim();
         if (nextThreadId !== previousThreadId) {
           const released = await releaseCurrentThreadSubscription(
             retainHistory ? 'summary fallback release' : 'unused profile replacement release', { retireHostOnFailure: !retainHistory },
@@ -7377,7 +7297,7 @@ assertRouteCurrent();
           } else if (resumeServiceTierGeneration !== serviceTierMutationGeneration) {
             void pushThreadSettings({ serviceTier: mutableServiceTier ?? null });
           }
-          codexThreadModelProviderId = resp.modelProvider?.trim() || undefined;
+          codexThreadModelProviderId = resp.modelProvider?.trim();
           workspacePermissionProfileActive = 'permissions' in resumeThreadWorkspaceConfig;
           workspacePermissionProfileFingerprint = workspacePermissionProfileActive
             ? resumeProfileFingerprint

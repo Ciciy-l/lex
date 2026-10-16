@@ -81,6 +81,7 @@ beforeEach(async () => {
   raw
     .prepare('INSERT INTO sessions VALUES (?, ?, ?, ?, NULL, ?, NULL)')
     .run('s', work, sdk, 'cc', 'active');
+  raw.exec("CREATE TABLE bot_session_links(session_id TEXT); CREATE TABLE bot_profiles(canonical_session_id TEXT); CREATE TABLE bot_delegations(child_session_id TEXT); ALTER TABLE sessions ADD COLUMN source TEXT;");
   client = { drizzle: drizzle(raw, { schema }) } as unknown as DbClient;
   setCurrentDbClient(client, 'test-owner');
 });

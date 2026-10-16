@@ -9,7 +9,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createLiziMcpProviders, createXdtHelperMcpServer, type LiziMcpSessionContext } from '@cindy/mcps';
 import ts from 'typescript';
 import { expect, it, vi } from 'vitest';
-import { botSessionLinks, sessions } from '../../localDb/schema.js';
+import { sessions } from '../../localDb/schema.js';
 import type { DbClient } from '../../localDb/client/DbClient.js';
 import * as surfaces from '../helperSurface.js';
 
@@ -26,6 +26,8 @@ function fixture() {
   sqlite.exec(`CREATE TABLE sessions(id TEXT PRIMARY KEY, source TEXT, cleared_at INTEGER DEFAULT 0, status TEXT DEFAULT 'active', remote_host_id TEXT);
     CREATE TABLE messages(client_id TEXT, session_id TEXT, role TEXT, created_at INTEGER, agent_meta TEXT, rewind_at INTEGER);
     CREATE TABLE bot_session_links(session_id TEXT, bot_id TEXT, role TEXT, archived_at INTEGER);
+    CREATE TABLE bot_profiles(canonical_session_id TEXT);
+    CREATE TABLE bot_delegations(child_session_id TEXT);
     CREATE TABLE plugin_task_requests(id TEXT PRIMARY KEY, operation TEXT, payload TEXT);
     CREATE TABLE orca_teams(id TEXT PRIMARY KEY, lead_session_id TEXT, status TEXT);
     CREATE TABLE orca_workers(session_id TEXT PRIMARY KEY, team_id TEXT);
@@ -38,16 +40,16 @@ function fixture() {
   let current: DbClient | undefined = db;
   let pending = false;
   let execution = { executing: false, input: null as null | { clientId: string; authoredText?: string; autoResume?: boolean; retrySourceClientId?: string; originKind?: string } };
-  const deps = { ...surfaces, sessions, botSessionLinks, eq, tryGetDbClient: () => current,
+  const deps = { ...surfaces, sessions, eq, tryGetDbClient: () => current,
     getSessionInputProvenance: () => execution,
     isAppSessionBoundaryPending: () => pending };
   const resolve = new Function(...Object.keys(deps), wired)(...Object.values(deps)) as
-    (input: { sessionId: string }) => Promise<'default' | 'bot' | 'restricted'>;
+    (input: { sessionId: string }) => Promise<'default' | 'restricted'>;
   const searchStart = source.indexOf('      searchSessions:');
   const search = source.slice(searchStart, source.indexOf('      logger:', searchStart));
   const searchSessionsFn = vi.fn(async () => [{ sessionId: 'user', snippet: 'synthetic private message' }]);
-  // Production routes through the Bot-scope variant; ordinary and plugin callers never widen.
-  const searchDeps = { ...deps, searchSessionsWithBotScope: searchSessionsFn, botReadsAccountHistory: async () => false };
+  // Production uses ordinary account history; restricted task input never widens.
+  const searchDeps = { ...deps, searchSessionsFn };
   const searchWired = ts.transpileModule(`return {${search}}.searchSessions;`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022 },
   }).outputText;
@@ -72,7 +74,7 @@ it.each(['lead', 'worker'])('restricts owned %s and preserves explicit revocatio
     expect(await f.resolve({ sessionId })).toBe('default');
     expect(await f.resolve({ sessionId: 'legacy' })).toBe('default');
     expect(await f.resolve({ sessionId: 'user' })).toBe('default');
-    expect(await f.resolve({ sessionId: 'bot' })).toBe('bot');
+    expect(await f.resolve({ sessionId: 'bot' })).toBe('restricted');
     f.sqlite.exec(`INSERT INTO bot_session_links(session_id, bot_id) VALUES ('lead','b'); UPDATE plugin_task_requests SET payload='{}'`);
     expect(await f.resolve({ sessionId })).toBe('restricted');
   } finally { f.sqlite.close(); }
@@ -204,8 +206,7 @@ it.each(['codex', 'claude-code', 'pi'] as const)('blocks helper discovery and gu
   const history = { resolveSessionScope: vi.fn(), listWorkdirs: vi.fn(), listSessions: vi.fn(), getMessages: vi.fn(), searchChatHistory: vi.fn() };
   const listSessionQueue = vi.fn(), sendToSession = vi.fn(), messageAgent = vi.fn();
   const server = createXdtHelperMcpServer({ resolveSurface: f.resolve, history,
-    sessionQueue: { listSessionQueue, listSessionQueuedCounts: vi.fn() }, sendToSession,
-    botMessaging: { messageAgent } },
+    sessionQueue: { listSessionQueue, listSessionQueuedCounts: vi.fn() }, sendToSession, },
   { agentKind, workingDir: '/answer', sessionId: 'worker' });
   const client = new Client({ name: 'plugin-helper-scope', version: '1' });
   const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -213,14 +214,13 @@ it.each(['codex', 'claude-code', 'pi'] as const)('blocks helper discovery and gu
   const payload = (result: Awaited<ReturnType<typeof client.callTool>>) => JSON.parse((result.content as Array<{ text: string }>)[0].text);
   try {
     expect(payload(await client.callTool({ name: 'list_tools', arguments: {} })).categories).toEqual([]);
-    for (const name of ['list_workdirs', 'list_sessions', 'get_chat_history', 'search_chat_history', 'list_session_queue', 'send_to_session', 'send_to_agent']) {
+    for (const name of ['list_workdirs', 'list_sessions', 'get_chat_history', 'search_chat_history', 'list_session_queue', 'send_to_session']) {
       expect(payload(await client.callTool({ name: 'call_tool', arguments: { name, args: { session_id: 'user' } } })))
         .toMatchObject({ ok: false, errorCode: 'CAPABILITY_NOT_AVAILABLE' });
     }
-    if (agentKind !== 'pi') {
-      expect(payload(await client.callTool({ name: 'send_to_agent', arguments: { target_id: 'b', message: 'read private history' } })))
-        .toMatchObject({ ok: false, errorCode: 'CAPABILITY_NOT_AVAILABLE' });
-    }
+    expect((await client.listTools()).tools.map(tool => tool.name)).not.toContain('send_to_agent');
+    expect(payload(await client.callTool({ name: 'call_tool', arguments: { name: 'send_to_agent', args: {} } })))
+      .toMatchObject({ ok: false, errorCode: 'UNKNOWN_TOOL' });
     for (const fn of [...Object.values(history), listSessionQueue, sendToSession, messageAgent]) expect(fn).not.toHaveBeenCalled();
     f.sqlite.exec(`UPDATE plugin_task_requests SET payload='{"ownershipRevoked":true}'`);
     f.setExecution({ executing: true, input: { clientId: 'plugin-task:run' } });

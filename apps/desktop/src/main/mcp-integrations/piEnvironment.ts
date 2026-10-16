@@ -29,13 +29,7 @@
 import { createHmac, randomBytes } from 'node:crypto';
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import {
-  isBotMcpServerAllowed,
-  type McpProvider,
-  type McpProviderContext,
-  type PiExtraSpawnConfig,
-  type PiExtraSpawnConfigContext,
-} from '@cindy/maker-core';
+import { type McpProvider, type McpProviderContext, type PiExtraSpawnConfig, type PiExtraSpawnConfigContext } from '@cindy/maker-core';
 
 import { getLiziMcpSessionContext, type LiziMcpSessionContext } from '@cindy/mcps';
 
@@ -192,7 +186,6 @@ export async function getPiExtraSpawnConfig(
   const capabilityGated = (servers: NonNullable<PiExtraSpawnConfig['mcpBridge']>['servers']) =>
     servers.filter((server) => {
       if (server.name === 'cindy_memory' && sessionCtx?.memoryEnabled !== true) return false;
-      if (!isBotMcpServerAllowed(sessionCtx?.botMcpPolicy, server.name)) return false;
       if (!collabEnabled && REMOTE_COLLAB_SERVER_NAMES.has(server.name)) return false;
       // Custom HTTP MCPs are `s.remote` and skip the SSH URL rewriter. Desktop
       // loopback would hit the remote machine itself, not the desktop service.
@@ -210,22 +203,13 @@ export async function getPiExtraSpawnConfig(
       }
       // cindy is the always-on plugin gateway (ghost_list / ghost_info / ghost_call).
       // It has no plugin id on purpose — empty ghost_list, not a missing server.
-      // Frozen Bot allowlists therefore must not treat it as an unknown host provider.
+      // It must not be treated as an unknown optional host provider.
       if (server.name === 'cindy') return true;
-      // Use the exact frozen capability snapshot for every provider, including
-      // shared host providers without an optional toolset id.
-      if (allowedPluginIds) {
-        const policy = sessionCtx?.botMcpPolicy;
-        const entry = policy?.catalog.find((item) => item.name === server.name);
-        if (!entry || entry.available === false) return false;
-        // Inheritance was resolved at session preparation, keeping this turn stable.
-        return policy?.configured.includes(server.name) === true;
-      }
+      // Unknown providers cannot inherit an optional frozen builtin grant.
+      if (allowedPluginIds) return false;
       return true;
     });
 
-  // The legacy flag enables companion facades; the bridge separately checks
-  // whether memory is mounted. Helper capabilities must survive memory being off.
   const buildSessionBridge = (
     servers: NonNullable<PiExtraSpawnConfig['mcpBridge']>['servers'],
   ): NonNullable<PiExtraSpawnConfig['mcpBridge']> => {
@@ -235,10 +219,6 @@ export async function getPiExtraSpawnConfig(
     return {
       token: bridge?.token ?? '',
       servers,
-      ...((sessionCtx?.botMcpPolicy || sessionCtx?.memoryScopeKey?.startsWith('bot:'))
-        && servers.some((server) => server.name === 'cindy_memory' || server.name === 'cindy_helper')
-        ? { botMemoryFacade: true }
-        : {}),
     };
   };
 
@@ -288,9 +268,7 @@ export async function getPiExtraSpawnConfig(
     sessionId,
     ...(sessionCtx?.sessionInstanceId ? { sessionInstanceId: sessionCtx.sessionInstanceId } : {}),
     workingDir: sessionCtx?.workingDir ?? '',
-    // Maker Memory 作用域键 (Cindy Bot 会话恒为 `bot:<botId>`): cindy_memory 的
-    // withStore 优先用它定位 store。不透传的话工具侧只剩 workingDir 回落 ——
-    // 模型读到的是伙伴记忆索引、写进去的却是项目记忆 (两张皮)。
+    // 透传当前任务的记忆作用域，使索引读取与工具写入使用同一存储。
     ...(sessionCtx?.memoryScopeKey ? { memoryScopeKey: sessionCtx.memoryScopeKey } : {}),
     vendorOptions,
     mcpCallerKind: sessionCtx?.mcpCallerKind ?? 'unknown',

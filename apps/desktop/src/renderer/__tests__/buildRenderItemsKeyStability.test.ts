@@ -18,27 +18,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
-import {
-  assistantHasFollowingUserBoundary,
-  buildRenderItems,
-  collectDeleteAnchorClientIds,
-  collectStableLocalFileRefs,
-  collectTurnFinalAssistantClientIds,
-  hasBotAssistantOutputInCurrentTurn,
-  isGeneratedFilesTurnSealed,
-  findRestorableViewportItemIdx,
-  renderItemContainsClientId,
-  groupWorkRuns,
-  insertForkOriginItem,
-  isScrollNavigationKey,
-  pickDeleteCompensationAnchorKey,
-  isPlanCardVisibleInViewport,
-  planSessionBelongsToLatestUserTurn,
-  reuseGeneratedFilesRenderItems,
-  simplifyBotRenderItems,
-  shouldBlockAssistantFork,
-  type RenderItem,
-} from '../components/chat/MessageStream';
+import { assistantHasFollowingUserBoundary, buildRenderItems, collectDeleteAnchorClientIds, collectStableLocalFileRefs, collectTurnFinalAssistantClientIds, isGeneratedFilesTurnSealed, findRestorableViewportItemIdx, renderItemContainsClientId, groupWorkRuns, insertForkOriginItem, isScrollNavigationKey, pickDeleteCompensationAnchorKey, isPlanCardVisibleInViewport, planSessionBelongsToLatestUserTurn, reuseGeneratedFilesRenderItems, shouldBlockAssistantFork, type RenderItem } from '../components/chat/MessageStream';
 import { shouldHandleNavigationKey } from '../components/chat/useNavigationKeyListener';
 import type { ChatMessage } from '@/lib/makerChatStore';
 import type { TurnChangeSetSummary } from '../../shared/turnChangeSet';
@@ -56,79 +36,6 @@ const mkAssistant = (id: string, content = 'ok'): ChatMessage => ({
   clientId: id,
   role: 'assistant',
   content,
-});
-
-describe('Bot 流式正文呈现', () => {
-  it('运行中隐藏工作卡，但从首字开始保留 assistant 正文', () => {
-    const messages = [
-      mkUser('u1'),
-      mkTool('t1', 'Bash'),
-      mkResult('r1', 'tu-t1'),
-      { ...mkAssistant('a1', '正在逐字输出'), isStreaming: true },
-    ];
-    const built = buildRenderItems(messages).items;
-    const visible = simplifyBotRenderItems(groupWorkRuns(built, true), true);
-
-    expect(
-      visible.flatMap((item) => (item.type === 'message' ? [item.message.clientId] : [])),
-    ).toEqual(['u1', 'a1']);
-    expect(visible.some((item) => item.type === 'work_group')).toBe(false);
-  });
-
-  it('正文开始前显示思考，正文出现后立即让位，隐藏行不误触发', () => {
-    const user = mkUser('u1');
-    const hiddenSubagent = {
-      ...mkAssistant('sub', '内部结果'),
-      parentToolUseId: 'toolu_01J00000000000000000000000',
-    };
-    const systemCard = { ...mkAssistant('card', '系统状态'), systemCardType: 'status' as const };
-
-    expect(hasBotAssistantOutputInCurrentTurn([user, hiddenSubagent, systemCard])).toBe(false);
-    expect(
-      hasBotAssistantOutputInCurrentTurn([
-        user,
-        hiddenSubagent,
-        systemCard,
-        mkAssistant('a1', '首字'),
-      ]),
-    ).toBe(true);
-    expect(
-      hasBotAssistantOutputInCurrentTurn([user, mkAssistant('a1', '上一轮正文'), mkUser('u2')]),
-    ).toBe(false);
-  });
-
-  it('伙伴私聊往返期间持续保留双方消息戳', () => {
-    const directMessageStamp = (id: string, direction: 'sent' | 'received'): ChatMessage => ({
-      ...mkAssistant(id, ''),
-      systemCardType: 'bot-direct-message',
-      systemCardData: {
-        v: 1,
-        threadId: 'thread-1',
-        viewerBotId: 'bot-a',
-        peerBotId: 'bot-b',
-        peerBotName: '开发Bot',
-        direction,
-        sequence: direction === 'sent' ? 1 : 2,
-        preview: 'hello',
-      },
-    });
-    const messages = [
-      mkUser('u1'),
-      directMessageStamp('dm-sent', 'sent'),
-      { ...mkUser('dm-trigger'), isSyntheticTrigger: true },
-      directMessageStamp('dm-received', 'received'),
-      { ...mkAssistant('a1', '正在回复'), isStreaming: true },
-    ];
-
-    const visible = simplifyBotRenderItems(
-      groupWorkRuns(buildRenderItems(messages).items, true),
-      true,
-    );
-
-    expect(
-      visible.flatMap((item) => (item.type === 'message' ? [item.message.clientId] : [])),
-    ).toEqual(['u1', 'dm-sent', 'dm-received', 'a1']);
-  });
 });
 
 const mkCompactBoundary = (id: string): ChatMessage => ({
@@ -669,33 +576,11 @@ describe('buildRenderItems — key stability', () => {
       additions: 140,
       deletions: 1,
     };
-    const build = (botSessionId?: string) =>
+    const build = () =>
       buildRenderItems(messages, undefined, undefined, {
         workingDir: 'C:/work',
         turnChangeSets: [changeSet],
-        ...(botSessionId ? { botSessionId } : {}),
       }).items;
-
-    it('drops the engineering diff card and promotes changeSet creates to deliverables', () => {
-      const items = build('sess-bot');
-      expect(items.filter((item) => item.type === 'turn_changes')).toEqual([]);
-      const generated = items.filter(
-        (item): item is Extract<RenderItem, { type: 'generated_files' }> =>
-          item.type === 'generated_files',
-      );
-      expect(generated).toHaveLength(1);
-      expect(generated[0]?.files.map((file) => file.name)).toEqual(['report.pdf']);
-      // checkpoint 的新建是结构化实锤,与文件工具新建同级(不降级成 command 候选)。
-      expect(generated[0]?.files[0]?.source).toBe('tool');
-    });
-
-    it('never turns an edited file into a deliverable', () => {
-      const generated = build('sess-bot').filter(
-        (item): item is Extract<RenderItem, { type: 'generated_files' }> =>
-          item.type === 'generated_files',
-      );
-      expect(generated[0]?.files.some((file) => file.name === 'main.ts')).toBe(false);
-    });
 
     it('leaves ordinary tasks on the diff card, unchanged', () => {
       const items = build();
@@ -2226,25 +2111,4 @@ describe('focus scroll takeover keys', () => {
     expect(shouldHandleNavigationKey('PageUp', null)).toBe(true);
     expect(shouldHandleNavigationKey('Enter', null)).toBe(false);
   });
-});
-
-it('places the same Bot task card after its introduction and keeps it through streaming completion replies', () => {
-  const task: ChatMessage = { ...mkAssistant('task-card', ''), systemCardType: 'bot-session-task' };
-  const messages = [mkUser('start'), task, mkAssistant('intro', 'Started'),
-    { ...mkUser('finished-trigger'), isSyntheticTrigger: true }, mkAssistant('done', 'Done')];
-  const project = (streaming: boolean) => simplifyBotRenderItems(
-    buildRenderItems(messages, undefined, undefined, { botSessionId: 'bot' }).items, streaming,
-  ).flatMap((item) => item.type === 'message' ? [item.message.clientId] : []);
-  expect(project(true)).toEqual(['start', 'intro', 'task-card', 'done']);
-  expect(project(false).filter((id) => id !== 'finished-trigger')).toEqual(['start', 'intro', 'task-card', 'done']);
-});
-
-it.each(['steer', 'new', 'completion'])('keeps task introduction pairing within the actual turn: %s', (kind) => {
-  const task: ChatMessage = { ...mkAssistant('task-card', ''), systemCardType: 'bot-session-task' };
-  const interruption = { ...mkUser('interruption'), ...(kind === 'steer' ? { delivery: 'steer' as const } : {}),
-    ...(kind === 'completion' ? { isSyntheticTrigger: true } : {}) };
-  const items = buildRenderItems([mkUser('start'), task, interruption, mkAssistant('intro', 'Started')],
-    undefined, undefined, { botSessionId: 'bot' }).items;
-  const ids = items.flatMap((item) => item.type === 'message' ? [item.message.clientId] : []);
-  expect(ids.indexOf('task-card') > ids.indexOf('intro')).toBe(kind === 'steer');
 });

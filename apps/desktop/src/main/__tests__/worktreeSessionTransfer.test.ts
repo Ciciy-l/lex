@@ -48,14 +48,6 @@ async function reopenStorage() {
   manager = await import('../worktree/WorktreeManager');
 }
 
-function commitChild(next = 'next') {
-  fixture.db!.transaction(() => {
-    fixture.db!.prepare('INSERT INTO sessions VALUES (?, ?)').run(next, meta.path);
-    fixture.db!.prepare('UPDATE bot_delegations SET child_session_id = ? WHERE id = ?').run(next, identity.delegationId);
-  })();
-  return { reopened: true };
-}
-
 beforeEach(async () => {
   root = mkdtempSync(path.join(os.tmpdir(), 'cindy-worktree-transfer-'));
   fixture.unavailable = false;
@@ -75,110 +67,13 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-describe('durable task worktree transfer', () => {
-  it('journals before commit and preserves the branch and files through repeated continuations', async () => {
-    await manager.withTransferredSession('previous', 'next', meta.path, async () => {
-      expect(store.get('previous')).toEqual(intent());
-      expect(store.get('next')).toBeNull();
-      return commitChild();
-    }, identity);
-    await manager.removeWorktreeForSession('previous');
-    expect(store.get('next')).toEqual({ ...meta, sessionId: 'next' });
-    await manager.withTransferredSession('next', 'again', meta.path, async () => commitChild('again'), identity);
-    expect(store.get('previous')).toBeNull();
-    expect(store.get('next')).toBeNull();
-    expect(store.get('again')).toEqual({ ...meta, sessionId: 'again' });
-    expect(readFileSync(path.join(meta.path, 'user-work.txt'), 'utf8')).toBe('keep my changes');
-  });
-
-  it.each(['throw', 'cas'] as const)('retains the old owner after confirmed %s failure', async failure => {
-    const op = manager.withTransferredSession('previous', 'next', meta.path, async () => {
-      if (failure === 'throw') throw new Error('fixture commit failed');
-      return { reopened: false };
-    }, identity);
-    if (failure === 'throw') await expect(op).rejects.toThrow('fixture commit failed');
-    else expect(await op).toEqual({ reopened: false });
-    expect(store.get('previous')).toEqual(meta);
-    expect(store.get('next')).toBeNull();
-  });
-
-  it('recovers a process exit after the registry write and before the DB commit, then retries once', async () => {
-    // Persist exactly the production pre-commit checkpoint; no catch/finally runs.
-    await store.replace('previous', 'previous', intent(), meta);
-    await reopenStorage();
-    await manager.reconcileSessionTransfer('previous');
-    expect(store.get('previous')).toEqual(meta);
-    await manager.withTransferredSession('previous', 'next', meta.path, async () => commitChild(), identity);
-    await reopenStorage();
-    await manager.reconcileSessionTransfer('next');
-    expect(store.get('next')).toEqual({ ...meta, sessionId: 'next' });
-    expect(fixture.db!.prepare('SELECT COUNT(*) AS count FROM sessions').get()).toEqual({ count: 2 });
-  });
-
-  it('recovers an uncommitted transfer when the old display snapshot was never available', async () => {
-    await store.replace('previous', 'previous', intent(), meta);
-    fixture.db!.prepare('UPDATE sessions SET worktree_path = NULL WHERE id = ?').run('previous');
-    await reopenStorage();
-    await manager.reconcileSessionTransfer('previous');
-    expect(store.get('previous')).toEqual(meta);
-    expect(store.get('next')).toBeNull();
-  });
-
-  it('rejects a missing or occupied owner before executing the DB transaction', async () => {
-    const commit = vi.fn(async () => commitChild());
-    await expect(manager.withTransferredSession('missing', 'next', meta.path, commit, identity)).rejects.toThrow('ownership changed');
-    await store.set('next', { ...meta, sessionId: 'next', path: path.join(root, 'other') });
-    await expect(manager.withTransferredSession('previous', 'next', meta.path, commit, identity)).rejects.toThrow('ownership changed');
-    expect(commit).not.toHaveBeenCalled();
-    expect(store.get('previous')).toEqual(meta);
-  });
-
-  it('finishes committed ownership when the worker commit receipt is lost', async () => {
-    await expect(manager.withTransferredSession('previous', 'next', meta.path, async () => {
-      commitChild();
-      throw new Error('fixture lost receipt');
-    }, identity)).rejects.toThrow('fixture lost receipt');
-    expect(store.get('previous')).toBeNull();
-    expect(store.get('next')).toEqual({ ...meta, sessionId: 'next' });
-    await reopenStorage();
-    await manager.reconcileSessionTransfer('next');
-    expect(store.get('next')?.sessionId).toBe('next');
-  });
-
-  it.each([false, true])('preserves uncertain outcomes until restart readback (committed: %s)', async committed => {
-    await expect(manager.withTransferredSession('previous', 'next', meta.path, async () => {
-      if (committed) commitChild();
-      fixture.unavailable = true;
-      throw new Error('fixture worker exited');
-    }, identity)).rejects.toThrow('fixture worker exited');
-    expect(store.get('previous')).toEqual(intent());
-    // Both ordinary recycling and precreation compensation preserve the journal/files.
-    await manager.removeWorktreeForSession('previous', { canRemove: async () => true });
-    await manager.removeWorktreeForSession('previous', { preserveDirty: true, canRemove: async () => true });
-    expect(readFileSync(path.join(meta.path, 'user-work.txt'), 'utf8')).toBe('keep my changes');
-    fixture.unavailable = false;
-    await reopenStorage();
-    await manager.reconcileSessionTransfer(committed ? 'next' : 'previous');
-    await manager.reconcileSessionTransfer(committed ? 'next' : 'previous');
-    expect(store.get(committed ? 'next' : 'previous')).toEqual({ ...meta, sessionId: committed ? 'next' : 'previous' });
-  });
-
-  it.each(['owner', 'target', 'path-owner', 'generation'] as const)('never steals conflicting %s ownership during recovery', async conflict => {
-    await store.replace('previous', 'previous', intent(), meta);
-    commitChild();
-    if (conflict === 'owner') fixture.db!.prepare('UPDATE bot_delegations SET requesting_bot_id = ?').run('other-bot');
-    if (conflict === 'target') await store.set('next', { ...meta, sessionId: 'next', path: path.join(root, 'other') });
-    if (conflict === 'path-owner') await store.set('other', { ...meta, sessionId: 'other' });
-    if (conflict === 'generation') {
-      const originalReplace = store.replace;
-      const replace = vi.spyOn(store, 'replace');
-      replace.mockImplementationOnce(async (...args) => {
-        await store.set('previous', { ...intent(), generation: 'replacement-generation' });
-        return originalReplace(...args);
-      });
-    }
-    await expect(manager.reconcileSessionTransfer('next')).rejects.toThrow('ownership changed');
-    expect(store.get('previous')?.pendingSessionTransfer).toEqual(intent().pendingSessionTransfer);
-    expect(readFileSync(path.join(meta.path, 'user-work.txt'), 'utf8')).toBe('keep my changes');
-  });
+it.each([true, false])('preserves a retained transfer intent and its files (preserveDirty=%s)', async (preserveDirty) => {
+  const pending = intent();
+  await store.set(meta.sessionId, pending);
+  const bytes = readFileSync(path.join(root, 'worktrees.json'));
+  await manager.removeWorktreeForSession(meta.sessionId, { preserveDirty, canRemove: async () => true });
+  expect(readFileSync(path.join(root, 'worktrees.json'))).toEqual(bytes);
+  expect(readFileSync(path.join(meta.path, 'user-work.txt'), 'utf8')).toBe('keep my changes');
+  expect(store.get(meta.sessionId)).toEqual(pending);
+  expect(fixture.db!.prepare('SELECT child_session_id FROM bot_delegations WHERE id = ?').get(identity.delegationId)).toEqual({ child_session_id: 'previous' });
 });

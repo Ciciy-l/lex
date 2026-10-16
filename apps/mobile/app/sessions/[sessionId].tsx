@@ -1,10 +1,14 @@
+import { useRetiredSession } from '@/session/retiredSessionAccess';
+import { isExplicitRemoteNotFoundError } from '@/session/newSessionWorktree';
+import { deleteRemoteMessageConfirmed } from '@/session/confirmedMessageDeletion';
+import { Redirect } from 'expo-router';
 import { ResponseSpeedPanel } from '@/session/ResponseSpeedPanel';
 import type { ResponseSpeedSnapshot } from '@cindy/maker-shared/usage-format';
-import { useCompanionDisplayResource } from '@/session/CompanionWorkingStatus';
+
 import { modelNeedsReselection } from '@/session/modelReselection';
 import { getCachedDeviceProviders } from '@/device-link/deviceProvidersCache';
 import { MountOnFirstOpen } from '@/session/MountOnFirstOpen';
-import { companionConversationItems } from '@/session/companionConversationPresentation';
+
 import { HomeHeaderGlassButton } from '@/session/HomeHeaderGlassButton';
 import { HomeNewTaskButton } from '@/session/HomeNewTaskButton';
 import { RecentMessageHistories, MessageHistoryOverlay } from '@/session/RecentMessageHistories';
@@ -19,11 +23,11 @@ import { nativeComposerAvailable } from '@/session/ComposerNativeInput';
 import { getActiveMobileSessionRealm } from '@/config/env';
 import { FailedScheduleNotice } from '@/session/FailedScheduleNotice';
 import { shouldShowFailedScheduleNotice, type FailedScheduleRunSnapshot } from '@cindy/maker-shared/schedule-model';
-import { CompanionHeader } from '@/session/CompanionHeader';
+
 import { useHiddenHistoryChase } from '@/session/hiddenHistoryChase';
-import { collectCompanionPluginInvocations } from '@/session/pluginInvocations';
-import { CompanionWorkingStatus, useCompanionWorkingLabel } from '@/session/CompanionWorkingStatus';
-import { useRemoteResourceSession } from '@/session/useRemoteResourceSession';
+
+
+
 import { mobileDebugLog } from '@/debug/mobileDebugLog';
 import { getMobileAuthOwner, isMobileAuthOwnerCurrent, subscribeMobileAuthOwner } from '@/auth/authOwnerGeneration';
 import { mobileDurableOutbox, durableOutboxDisplayItem, getCurrentMobileOutboxRecords, reconcileMobileOutboxDrafts } from '@/session/mobileDurableOutbox';
@@ -126,6 +130,7 @@ import {
   humanizeRemoteError,
   isAutoRecoveringRemoteError,
   isPreconditionFailedRemoteError,
+  isSessionRunningRemoteError,
 } from '@/device-link/remoteStatus';
 import { agentAuthGateHint, agentAuthGateVerdict } from '@/session/agentAuthGate';
 import { isTransientRemoteError, withTransientRemoteRetry } from '@/device-link/remoteRetry';
@@ -708,13 +713,6 @@ const SESSION_ACTION_TEST_IDS = {
   usage: 'session.usageButton',
 } satisfies Record<SessionActionStripActionId, string>;
 const COMPOSER_CONTROL_HIT_SLOP = { bottom: 8, left: 8, right: 8, top: 8 };
-/**
- * The companion chat draws its own header row (back, identity, settings). Hide the native bar the
- * task header may have configured while the entry was still resolving, so its title and sync
- * spinner never sit on top of the companion identity. Stable object: expo-router applies screen
- * options in a layout effect.
- */
-const COMPANION_NATIVE_HEADER_OPTIONS = { headerShown: false, headerTitle: '' } as const;
 const COMPOSER_INPUT_SINGLE_LINE_CONTENT_HEIGHT = MOBILE_COMPOSER_INPUT_SINGLE_LINE_HEIGHT;
 const COMPOSER_INPUT_MULTILINE_CONTENT_THRESHOLD = 34;
 const COMPOSER_INPUT_LINE_HEIGHT = MOBILE_COMPOSER_INPUT_LINE_HEIGHT;
@@ -956,7 +954,7 @@ function composerDraftScopeKey(sessionId: string, routeDraft: string | null): st
   return JSON.stringify([sessionId, routeDraft ?? '']);
 }
 
-export default function SessionScreen() {
+function SessionScreen() {
   const styles = useThemedStyles(makeStyles);
   const { colors, mode } = useTheme();
   const { t, i18n: i18nInstance } = useTranslation();
@@ -966,8 +964,6 @@ export default function SessionScreen() {
     resourceKind?: string;
     deviceId?: string;
     deviceName?: string;
-    remoteMemoryResourceId?: string;
-    remoteSettingsResourceId?: string;
     draft?: string;
     goalError?: string;
     goalObjective?: string;
@@ -993,8 +989,6 @@ export default function SessionScreen() {
   // 新发起的请求作废旧请求。
   const rewindRequestSeqRef = useRef(0);
   const deviceName = readRouteParam(params.deviceName) ?? deviceId;
-  const remoteMemoryResourceId = readRouteParam(params.remoteMemoryResourceId);
-  const remoteSettingsResourceId = readRouteParam(params.remoteSettingsResourceId);
   useFocusEffect(useCallback(() => {
     rememberRecentTask({ pathname: '/sessions/[sessionId]', params: { deviceId, deviceName, sessionId } });
   }, [deviceId, deviceName, sessionId]));
@@ -2229,16 +2223,6 @@ export default function SessionScreen() {
     () => remoteSessionStore.getSessionLiveActivity(sessionId)?.attention === true,
   );
   const hasRenderedMessages = historyView.snapshot.ready ? historyView.snapshot.items.length > 0 : messages.length > 0;
-  const companionEntry = useRemoteResourceSession(deviceId, deviceName, sessionId,
-    currentSession?.id === sessionId && hasRenderedMessages
-      && readAckSyncedKey === `${sessionId}:${connectionEpoch}`
-      // A pre-ACK snapshot may omit replies sent before the subscription took effect.
-      && contentRecoveryKey !== null && contentSyncedKey === contentRecoveryKey
-      && !outboxRecoverySyncHeld && !loading,
-    sessionMetadataSyncedKey === `${sessionId}:${connectionEpoch}`
-      && (readRouteParam(params.resourceKind) !== 'bot' || currentSession?.source === 'bot'));
-  const companionResource = companionEntry.resource;
-  const companionChat = companionResource?.ref.kind === 'bot';
   const lastAckKeyRef = useRef<string | null>(null);
   // AppState 门槛:锁屏 / 切后台时导航焦点不变,useFocusEffect 的 cleanup 不会跑,
   // 驻留计时器可能在没有真实前台展示的情况下(甚至后台恢复补跑时)发出 explicit
@@ -2431,7 +2415,7 @@ export default function SessionScreen() {
       setPendingPlanViewerState('half');
     }
   }, [activePendingKind, activePendingRequestId, sessionOperationLayout.composerSlot]);
-  const canUseComposer = sessionOperationLayout.canUseComposer && companionEntry.ready;
+  const canUseComposer = sessionOperationLayout.canUseComposer;
   const canUseRemoteSessionControls = canUseComposer
     && !sessionSettingsLocked
     && !remoteRealtimeControlsUnavailable;
@@ -2442,9 +2426,9 @@ export default function SessionScreen() {
   const composerDisabledReasonKey = composerDisabledReasonI18nKey(
     sessionOperationLayout.composerDisabledReasonSource,
   );
-  const composerDisabledReason = !companionEntry.ready ? t('shared.syncing') : composerDisabledReasonKey
+  const composerDisabledReason = (composerDisabledReasonKey
     ? t(composerDisabledReasonKey)
-    : sessionOperationLayout.composerDisabledReason;
+    : sessionOperationLayout.composerDisabledReason);
   // inline 队列操作可用性:旧队列弹层由 showQueue 整体隐藏(离线/被撤销、pending
   // interaction 等),inline 化后气泡必须留在消息流里,故改为保留渲染、按同一规则
   // 禁用操作(取消/编辑/插话/重试/恢复),禁用理由沿用 composerDisabledReason。
@@ -2458,8 +2442,7 @@ export default function SessionScreen() {
   // 重试/清错属于输入恢复：Lead 能发消息，也应能恢复失败输入。
   // 队列编辑和恢复整组队列仍沿用协作编排只读规则。
   const errorRecoveryReadOnlyReason = composerReadOnlyReason ?? queueAvailabilityReason;
-  const companionInlineInteraction = companionChat && pending.length > 0 && !pendingInteractionFullHeight;
-  const showMessageHistory = companionInlineInteraction || sessionOperationLayout.messageHistoryMode === 'visible'
+  const showMessageHistory = (sessionOperationLayout.messageHistoryMode === 'visible')
     || (sessionOperationLayout.messageHistoryMode === 'collapsed' && pendingHistoryExpanded);
   // 冷开即出壳:session 元信息还没回来,但不是真正不可用(离线/被撤销,看 remoteUnavailableReason)——
   // 立即渲染真壳(标题乐观显示、消息区骨架、输入框可编辑、发送禁用),而不是阻塞式占位。
@@ -3472,7 +3455,14 @@ export default function SessionScreen() {
     // in-flight load 在尾部发现代号已变,放弃落 key(它的数据不含触发点之后的内容)。
     const readAckGateGenAtStart = readAckGateGenRef.current;
     const fetchSessionMetadata = () => runConnectionScopedSessionMetadataRead(
-      () => maker.getSession(sessionId),
+      async () => {
+        try { return await maker.getSession(sessionId); } catch (error) {
+          if (!subscriptionRetryIsStale() && messageAuthorityCurrent() && isExplicitRemoteNotFoundError(error)) {
+            router.replace('/devices');
+          }
+          throw error;
+        }
+      },
       () => (
         !subscriptionRetryIsStale()
         && messageAuthorityCurrent()
@@ -5837,12 +5827,12 @@ export default function SessionScreen() {
     ],
   );
   const messageListItems = useMemo(
-    () => mergePendingSendItems(companionChat ? companionConversationItems(renderWindow.items) : renderWindow.items, pendingSendItems, optimisticClientIds),
-    [companionChat, pendingSendItems, renderWindow.items, optimisticClientIds],
+    () => mergePendingSendItems(renderWindow.items, pendingSendItems, optimisticClientIds),
+    [pendingSendItems, renderWindow.items, optimisticClientIds],
   );
   const canLoadEarlierHistory = (historyView.snapshot.ready ? historyView.snapshot.hasMore : hasOlderMessages && messages.length > 0)
     && !isScheduleDetail;
-  // A window of only hidden rows (a teammate's scheduled prompts) renders nothing and cannot scroll back:
+  // A window of only hidden rows (internal scheduled prompts) renders nothing and cannot scroll back:
   // page older history until something shows. See hiddenHistoryChase.ts.
   const chasingHiddenHistory = useHiddenHistoryChase({
     scope: `${auth.accountGeneration}:${deviceId}:${sessionId}`,
@@ -5852,24 +5842,9 @@ export default function SessionScreen() {
     loading: historyView.snapshot.ready ? historyView.snapshot.loading : loading || loadingEarlier,
     cursor: historyView.snapshot.ready ? historyView.snapshot.nextCursor : oldestLoadedMessageCursor,
   }, () => { void loadEarlierMessages(); });
-  // Task links and notifications carry no teammate resource; the cached roster row supplies name and avatar.
-  const companionDisplay = useCompanionDisplayResource(deviceId, sessionId, companionResource, companionChat);
-  const [companionSettingsRequest, setCompanionSettingsRequest] = useState<{ sessionId: string; ownerGeneration: number; page: 'memory' | 'capabilities'; sequence: number }>();
-  const openCompanionSettings = useCallback((page: 'memory' | 'capabilities') => setCompanionSettingsRequest(previous => ({ sessionId, ownerGeneration: auth.accountGeneration, page, sequence: (previous?.sequence ?? 0) + 1 })), [sessionId, auth.accountGeneration]);
-  const companionWorkingLabel = useCompanionWorkingLabel({ sessionId, deviceId, botId: companionDisplay?.ref.id ?? '',
-    active: companionChat && showComposerActivity, messages, reconnectAttempt: remoteSessionRunStatus.reconnectAttempt });
-  const companionPluginInvocations = useMemo(() => companionChat ? collectCompanionPluginInvocations(projectedMessages) : undefined,
-    [companionChat, projectedMessages]);
-  const companionWorkGroupLabel = companionChat && activePendingKind
-    ? t(`devices.presentation.sessionList.preview.${activePendingKind === 'permission' ? 'permission'
-      : activePendingKind === 'ask_user_question' ? 'answer'
-      : activePendingKind === 'plan_review' ? 'planReview' : 'attention'}`)
-    : companionWorkingLabel;
-  // Hiding progress can change visible rows without changing the underlying stream structure.
-  const companionItemsStructureKey = companionChat ? messageListItems.map(item => item.key).join('\u0000') : null;
   const messageListStructureKey = useMemo(
     () => ({}),
-    [pendingSendItems, renderItemsStructureKey, optimisticClientIds, companionItemsStructureKey],
+    [pendingSendItems, renderItemsStructureKey, optimisticClientIds],
   );
   const shareExpandableBlockIds = useMemo(
     () => (shareSelectionActive ? collectConversationShareBlockIds(messageListItems) : []),
@@ -8971,6 +8946,10 @@ export default function SessionScreen() {
 
   const deleteMessage = useCallback((clientId: string) => {
     if (!deviceId || messageActionBusy) return;
+    const owner = getMobileAuthOwner();
+    const authority = remoteSessionStore.captureSessionMessageAuthority(sessionId);
+    const scopeCurrent = () => isMobileAuthOwnerCurrent(owner) && outboxSessionAliveRef.current === sessionId;
+    // The host decides whether work is still running; Stop can settle before mobile state does.
     Alert.alert(t('session.screen.deleteMessageTitle'), t('session.screen.deleteMessageBody'), [
       { text: t('session.common.cancel'), style: 'cancel' },
       {
@@ -8978,24 +8957,25 @@ export default function SessionScreen() {
         style: 'destructive',
         onPress: () => {
           void (async () => {
+            if (!scopeCurrent()) return;
             setMessageActionBusy({ clientId, kind: 'delete' });
             setError(null);
             try {
-              const result = await maker.deleteMessage(sessionId, clientId);
-              const returnedClientIds = Array.isArray(result.clientIds)
-                ? result.clientIds.filter((value): value is string =>
-                    typeof value === 'string' && value.length > 0,
-                  )
-                : [];
-              remoteSessionStore.removeMessages(
-                sessionId,
-                returnedClientIds.length > 0 ? returnedClientIds : [clientId],
-                deviceId,
-              );
+              await deleteRemoteMessageConfirmed({
+                sessionId, clientId,
+                send: () => maker.deleteMessage(sessionId, clientId),
+                isCurrent: () => scopeCurrent() && remoteSessionStore.isSessionMessageAuthorityCurrent(authority),
+                apply: (clientIds) => remoteSessionStore.removeMessages(sessionId, clientIds, deviceId),
+              });
             } catch (err) {
-              setError(formatRemoteError(err));
+              if (!scopeCurrent()) return;
+              if (isSessionRunningRemoteError(err)) {
+                Alert.alert(t('session.screen.deleteMessageBusy'));
+              } else {
+                setError(formatRemoteError(err));
+              }
             } finally {
-              setMessageActionBusy(null);
+              if (scopeCurrent()) setMessageActionBusy(null);
             }
           })();
         },
@@ -9051,16 +9031,7 @@ export default function SessionScreen() {
   const headerNode = (
     <>
     <Stack.Screen options={{ gestureEnabled: !sessionListDrawerOverlayMounted }} />
-    {companionChat && companionResource && !shareSelectionActive ? <>
-      <Stack.Screen options={COMPANION_NATIVE_HEADER_OPTIONS} />
-      <CompanionHeader key={`${auth.accountGeneration}:${deviceId}:${companionResource.ref.id}`}
-        resource={companionResource} deviceId={deviceId} deviceName={deviceName} online={!remoteUnavailableReason}
-        controlsReady={companionEntry.ready}
-        settingsRequest={companionSettingsRequest?.sessionId === sessionId && companionSettingsRequest.ownerGeneration === auth.accountGeneration ? companionSettingsRequest : undefined}
-        working={!!companionWorkingLabel}
-        onSearch={() => setSearchOpen(true)}
-        onBack={goBackToHome} />
-    </> : <SessionHeaderBar
+    {(<SessionHeaderBar
               horizontalSystemHeader={horizontalSystemHeader}
               systemBarHidden={sessionListDrawerOverlayMounted}
               currentSession={currentSession}
@@ -9095,32 +9066,6 @@ export default function SessionScreen() {
                   params: { deviceId, deviceName },
                 });
               }}
-              onOpenRemoteMemory={remoteMemoryResourceId && deviceId ? () => {
-                router.push({
-                  pathname: '/resources/[collectionId]/[resourceId]',
-                  params: {
-                    collectionId: 'teammates',
-                    resourceId: remoteMemoryResourceId,
-                    resourceKind: 'bot',
-                    deviceId,
-                    deviceName,
-                    title: t('devices.companionProfile.memory.title', { defaultValue: 'Saved Memories' }),
-                  },
-                });
-              } : undefined}
-              onOpenRemoteSettings={remoteSettingsResourceId && deviceId ? () => {
-                router.push({
-                  pathname: '/resources/[collectionId]/[resourceId]',
-                  params: {
-                    collectionId: 'teammates',
-                    resourceId: remoteSettingsResourceId,
-                    resourceKind: 'bot',
-                    deviceId,
-                    deviceName,
-                    title: t('bots.settings', { defaultValue: 'Settings' }),
-                  },
-                });
-              } : undefined}
               onToggleSearch={() => {
                 if (searchOpen) closeSearch();
                 else setSearchOpen(true);
@@ -9138,7 +9083,7 @@ export default function SessionScreen() {
                 : projectDraftSessionTitle(currentSession?.title, t('session.menu.unnamedTitle'))
                   || currentSession?.workingDir
                   || (connectionError ? t('session.screen.sessionNotSynced') : (deviceName || t('session.screen.conversationFallback')))}
-            />}
+            />)}
     </>
   );
   return (
@@ -9514,7 +9459,7 @@ export default function SessionScreen() {
                 topOverlayHeight={topOverlayHeight}
               />
 
-              {!companionInlineInteraction && sessionOperationLayout.messageHistoryMode === 'collapsed' ? (
+              {(sessionOperationLayout.messageHistoryMode === 'collapsed') ? (
                 <MessageHistoryToggle
                   expanded={pendingHistoryExpanded}
                   onToggle={() => setPendingHistoryExpanded((value) => !value)}
@@ -9532,10 +9477,9 @@ export default function SessionScreen() {
                   interactive={!sessionListDrawerOverlayMounted}>
 
                 <ChatFilePathContext.Provider value={chatFilePathContextValue}>
-                  <MessageRenderer companion={companionChat} onOpenCompanionSettings={openCompanionSettings} companionWorkingLabel={companionWorkGroupLabel}
-                    companionPluginInvocations={companionPluginInvocations}
+                  <MessageRenderer
                     remoteDeviceId={deviceId}
-                    showPluginInvocations={!companionChat && Boolean(currentSession && currentSession.source !== 'bot')}
+                    showPluginInvocations={(Boolean(currentSession && currentSession.source !== 'bot'))}
                     bottomOverlayHeight={bottomOverlayHeight}
                     contentBottomInset={nativeComposerFrameAvailable && sessionOperationLayout.composerSlot === 'editable' && !shareSelectionActive
                       ? MOBILE_MESSAGE_LIST_BOTTOM_PADDING
@@ -9585,16 +9529,8 @@ export default function SessionScreen() {
                     imageAnnotation={collaborationReadOnlyReason ? undefined : composerAnnotations.chatAnnotation}
                     queueFooter={(
                       <>
-                        {companionChat && !companionInlineInteraction ? <CompanionWorkingStatus label={companionWorkingLabel} /> : null}
-                        {companionInlineInteraction && !shareSelectionActive ? <InteractionPanel
-                          embedded
-                          companion={companionChat}
-                          collapse={pendingInteractionCollapse} deviceId={deviceId} sessionId={sessionId}
-                          interactions={pending} activeRequestId={pendingInteractionActiveRequestId}
-                          onActiveRequestIdChange={setPendingInteractionActiveRequestId}
-                          planViewerState={pendingPlanViewerState} onPlanViewerStateChange={setPendingPlanViewerState}
-                          onError={setError} readOnlyReason={collaborationReadOnlyReason}
-                        /> : null}
+                        {(null)}
+                        {(null)}
                         {/* error-tail / interrupted 收尾提示:live 错误与队列区互斥
                             (resolveSessionTailBanner 内部已按 projection.error 抑制)。
                             协同只读会话(worker):error-tail 不渲染(错误卡已回流
@@ -9750,7 +9686,7 @@ export default function SessionScreen() {
             在等什么、能取消,但不吃掉 composer —— 否则用户既处理不了这张卡又发不
             出消息。高度按 palette 量级收紧,内容超出走内部滚动。
           */}
-          {!shareSelectionActive && !companionInlineInteraction && sessionOperationLayout.pendingInteractionPlacement === 'above-composer' ? (
+          {!shareSelectionActive && sessionOperationLayout.pendingInteractionPlacement === 'above-composer' ? (
             <View
               style={[
                 styles.pendingInteractionSurface,
@@ -9767,7 +9703,6 @@ export default function SessionScreen() {
                     不给收起入口:收起态的文案与 a11y 都是「先不答、稍后回答」,套在它身上是
                     错的语义。 */}
                 <InteractionPanel
-                  companion={companionChat}
                   deviceId={deviceId}
                   sessionId={sessionId}
                   interactions={pending}
@@ -9781,7 +9716,7 @@ export default function SessionScreen() {
           ) : null}
 
           {shareSelectionActive ? null : sessionOperationLayout.composerSlot === 'pending-interaction' ? (
-            companionInlineInteraction ? null : (
+            ((
             <View
               style={[
                 styles.pendingInteractionSurface,
@@ -9803,7 +9738,6 @@ export default function SessionScreen() {
                   testID="interaction.bottomScroll"
                 >
                   <InteractionPanel
-                  companion={companionChat}
                     safeAreaBottomInset={insets.bottom}
                     collapse={pendingInteractionCollapse}
                     deviceId={deviceId}
@@ -9825,7 +9759,6 @@ export default function SessionScreen() {
                   testID="interaction.bottomScroll"
                 >
                 <InteractionPanel
-                  companion={companionChat}
                   safeAreaBottomInset={insets.bottom}
                   collapse={pendingInteractionCollapse}
                   deviceId={deviceId}
@@ -9841,7 +9774,7 @@ export default function SessionScreen() {
                 </ScrollView>
               )}
             </View>
-          )) : sessionOperationLayout.composerSlot === 'read-only' ? (
+          ))) : sessionOperationLayout.composerSlot === 'read-only' ? (
             sharedTaskAccessEnded ? (
               <View style={styles.readOnlyComposer} testID="session.sharedTaskEnded">
                 <SharedTaskEndedState onReturnToTasks={goBackToHome} />
@@ -9861,7 +9794,7 @@ export default function SessionScreen() {
                   紧接着消息落屏时这条又要重排一次。等有内容了再显示活动条。
                   判据必须带 messageCount:syncingWhileEmpty 只要 loading 就为真,而收口后
                   还会再来几轮 load(实测日志),只看它会让已有消息的会话反复熄灭活动条。 */}
-              {!companionChat && (showComposerActivity || remoteSessionRunStatus.responseSpeed?.phase === 'complete') && !(syncingWhileEmpty && !hasRenderedMessages) ? (
+              {((showComposerActivity || remoteSessionRunStatus.responseSpeed?.phase === 'complete')) && !(syncingWhileEmpty && !hasRenderedMessages) ? (
                 <View
                   style={[
                     styles.composerActivityFrame,
@@ -10041,8 +9974,6 @@ function SessionHeaderBar({
   onOpenSettings,
   onOpenUsage,
   onOpenRemoteDesktop,
-  onOpenRemoteMemory,
-  onOpenRemoteSettings,
   onToggleSearch,
   pendingCount,
   queueCount,
@@ -10074,8 +10005,6 @@ function SessionHeaderBar({
   onOpenSettings(): void;
   onOpenUsage(): void;
   onOpenRemoteDesktop(): void;
-  onOpenRemoteMemory?: () => void;
-  onOpenRemoteSettings?: () => void;
   onToggleSearch(): void;
   pendingCount: number;
   queueCount: number;
@@ -10248,22 +10177,8 @@ function SessionHeaderBar({
           onAction={id => actionHandlers[id]()}
         />
       ) : <View style={styles.sessionHeaderActions}>
-        {onOpenRemoteSettings ? <SessionHeaderIconButton
-          accessibilityLabel={t('bots.settings', { defaultValue: 'Settings' })}
-          active={false}
-          disabled={!currentSession}
-          icon={Settings}
-          onPress={currentSession ? onOpenRemoteSettings : undefined}
-          testID="session.remoteSettings"
-        /> : null}
-        {onOpenRemoteMemory ? <SessionHeaderIconButton
-          accessibilityLabel={t('devices.companionProfile.memory.title', { defaultValue: 'Saved Memories' })}
-          active={false}
-          disabled={!currentSession}
-          icon={Brain}
-          onPress={currentSession ? onOpenRemoteMemory : undefined}
-          testID="session.remoteMemory"
-        /> : null}
+
+
         <SessionHeaderIconButton
           accessibilityLabel={t('remoteDesktop.title')}
           active={false}
@@ -12436,3 +12351,12 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   sendButtonDisabled: { opacity: 0.45 },
   routeButtonPressed: { opacity: 0.72 },
 });
+
+export default function SessionRoute() {
+  const params = useLocalSearchParams<{ sessionId?: string; deviceId?: string; resourceKind?: string; resourceCollectionId?: string }>();
+  const sessionId = readRouteParam(params.sessionId) ?? '';
+  const deviceId = readRouteParam(params.deviceId) ?? remoteSessionStore.getSessionDeviceId(sessionId) ?? '';
+  const retired = useRetiredSession(deviceId, sessionId);
+  if (retired || ['bot', 'bot-group'].includes(readRouteParam(params.resourceKind) ?? '') || ['teammates', 'bot-groups', 'routines'].includes(readRouteParam(params.resourceCollectionId) ?? '')) return <Redirect href="/devices" />;
+  return <SessionScreen />;
+}

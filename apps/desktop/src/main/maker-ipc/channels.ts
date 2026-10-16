@@ -772,28 +772,6 @@ export const MAKER_INVOKE = {
   GOAL_PAUSE: 'maker:goal:pause',
   GOAL_RESUME: 'maker:goal:resume',
   GOAL_UPDATE: 'maker:goal:update',
-  /** Cindy Bot 父任务列出自己发起的 Bot 间委派。 */
-  BOT_DELEGATIONS_LIST: 'maker:bot-delegations:list',
-  /** Cindy Bot 父任务取消仍在运行或等待中的委派。 */
-  BOT_DELEGATION_CANCEL: 'maker:bot-delegation:cancel',
-  /** Read one hidden Bot-to-Bot conversation after a timeline trace is opened. */
-  BOT_DIRECT_MESSAGE_THREAD_GET: 'maker:bot-direct-message-thread:get',
-  /** 伙伴群聊：列表、详情、创建、修改、成员、删除、发言、继续讨论与停止。 */
-  BOT_GROUP_LIST: 'maker:bot-group:list',
-  BOT_GROUP_GET: 'maker:bot-group:get',
-  BOT_GROUP_CREATE: 'maker:bot-group:create',
-  BOT_GROUP_UPDATE: 'maker:bot-group:update',
-  BOT_GROUP_SET_MEMBERS: 'maker:bot-group:set-members',
-  BOT_GROUP_DELETE: 'maker:bot-group:delete',
-  BOT_GROUP_SEND: 'maker:bot-group:send',
-  BOT_GROUP_CONTINUE: 'maker:bot-group:continue',
-  BOT_GROUP_STOP: 'maker:bot-group:stop',
-  BOT_GROUP_PLAN_START: 'maker:bot-group:plan-start',
-  BOT_GROUP_PLAN_DISMISS: 'maker:bot-group:plan-dismiss',
-  BOT_GROUP_PLAN_CONTINUE: 'maker:bot-group:plan-continue',
-  BOT_GROUP_PLAN_RETRY: 'maker:bot-group:plan-retry',
-  BOT_GROUP_PLAN_EDIT: 'maker:bot-group:plan-edit',
-  BOT_LIFECYCLE_ACTION: 'maker:bot-lifecycle:action',
 } as const;
 
 /**
@@ -941,17 +919,6 @@ export const MAKER_PUSH = {
   DESKTOP_COMMAND_TRIGGERED: 'maker:desktop-command-triggered',
   /** multi-worker: worker 增删改 / focus 切换时 broadcast, renderer useWorkers hook 订阅刷新。 */
   ORCA_WORKER_CHANGED: 'maker:orca:worker-changed',
-  /** Bot 间委派状态改变；payload 带父/子任务 id，广播自动附 owner generation。 */
-  BOT_DELEGATION_CHANGED: 'maker:bot-delegation:changed',
-  /** Hidden Bot pair conversation accepted another message or reached its limit. */
-  BOT_DIRECT_MESSAGE_CHANGED: 'maker:bot-direct-message:changed',
-  /** A Bot group, its members, messages or running round changed. */
-  BOT_GROUP_CHANGED: 'maker:bot-group:changed',
-  /** Bot 档案经主进程创建或更新后变化；renderer 收到后重拉伙伴列表。 */
-  BOT_PROFILE_CHANGED: 'maker:bot-profile:changed',
-  /** 伙伴工作台已接手的项目变化(payload: { botId });renderer 收到后重读项目列表。 */
-  BOT_WORKBENCH_CHANGED: 'maker:bot-workbench:changed',
-  BOT_LIFECYCLE_CHANGED: 'maker:bot-lifecycle:changed',
   /**
    * 被控端「当前 New Maker 草稿」全量变更广播。SYNC_NEW_MAKER_DRAFT 落 main 缓存后随即发,
    * 经 device-link tap 转发给控制端(account 级 → sessions topic),控制端刷新远程草稿显示镜像。

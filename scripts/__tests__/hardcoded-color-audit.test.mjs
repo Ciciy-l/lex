@@ -377,7 +377,12 @@ test('CI design commands feed the existing verify job and preserve Windows aggre
     assert.deepEqual(job.strategy.matrix.shard,[1,2]);
     assert.equal(job.strategy['fail-fast'],false);
     assert.ok(job.steps.some(s=>s.run==='pnpm run test:workspaces --tier unit'));
-    assert.ok(job.steps.some(s=>s.name==='Run companion database regressions' && s.if==='matrix.shard == 1'));
+    const retirement = job.steps.find(s=>s.name==='Run retired companion data regressions');
+    assert.equal(retirement.if, 'matrix.shard == 1');
+    assert.equal(retirement['continue-on-error'], undefined);
+    for (const suite of ['tx.test.ts', 'botMutationBoundary.integration.test.ts', 'messagesListCursor.test.ts', 'rightSidebarTabs.test.ts', 'migrationReplay.test.ts']) {
+      assert.ok(retirement.run.includes(suite), `missing retirement coverage: ${suite}`);
+    }
   }
   for(const result of ['success','failure','cancelled','skipped']) {
     const run=spawnSync('bash',['-e','-c',windows.steps[0].run],{env:{...process.env,WINDOWS_UNIT_SHARDS_RESULT:result}});

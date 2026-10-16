@@ -14,8 +14,8 @@
 import { z } from 'zod';
 import { throwIpcError } from '../utils/ipcValidate.js';
 import type { CustomMcpListContext } from '../../shared/customMcp.js';
-import { BOT_MODEL_CHAIN_MAX, type BotModelRoute } from '../../shared/botModelChain.js';
-import type { BotProfileRuntimeDeps } from './botProfileRuntime.js';
+
+
 import {
   createCustomMcpServer,
   customMcpServerExists,
@@ -29,11 +29,7 @@ import { MAKER_INVOKE } from './channels.js';
 import type { IpcHandlerRegistry } from './ipcHandlerRegistry.js';
 
 export interface McpHandlerDeps {
-  /** Same registered runtime catalog used by Bot capability tools and hydration. */
-  listMcpServers(context: { agentKind: CustomMcpListContext['agentKind']; remoteHostId?: string }): ReturnType<NonNullable<BotProfileRuntimeDeps['listMcpServers']>>;
-  resolveBotContext(sessionId: string, chain?: BotModelRoute[]): Promise<{
-    agentKind: CustomMcpListContext['agentKind']; remoteHostId?: string;
-  } | null>;
+  listMcpServers(context: { agentKind: CustomMcpListContext['agentKind']; remoteHostId?: string }): Promise<Array<{ name: string; source: 'builtin' | 'custom'; available: boolean }>>;
   /** CRUD 成功后刷新 agent mcpProviders 数组（生产 = refreshCustomMcpProviders）。 */
   refreshProviders(): Promise<void>;
   /** CRUD 成功后广播变更（生产 = 向所有窗口 send MCP_CHANGED）。 */
@@ -58,25 +54,14 @@ export interface McpHandlerDeps {
 
 const listContextSchema = z.object({
   agentKind: z.enum(['claude-code', 'codex', 'pi', 'omp']),
-  botSessionId: z.string().min(1).optional(),
-  modelChain: z.array(z.object({
-    harness: z.enum(['claude', 'codex', 'pi', 'omp']),
-    model: z.string().trim().min(1),
-    providerId: z.string().nullable(),
-    effort: z.string(),
-    fastMode: z.boolean(),
-  })).min(1).max(BOT_MODEL_CHAIN_MAX).optional(),
-}).refine((value) => value.modelChain === undefined || value.botSessionId !== undefined);
+}).strict();
 
 export function registerMcpHandlers(registry: IpcHandlerRegistry, deps: McpHandlerDeps): void {
   registry.handle(MAKER_INVOKE.MCP_CUSTOM_LIST, async (_event, context: unknown) => {
     const parsed = context === undefined ? undefined : listContextSchema.safeParse(context);
     if (parsed && !parsed.success) throwIpcError('INVALID_PARAMS', 'Invalid MCP catalog context');
     const input = parsed?.data;
-    const runtime = input?.botSessionId
-      ? await deps.resolveBotContext(input.botSessionId, input.modelChain)
-      : input ? { agentKind: input.agentKind } : undefined;
-    if (input?.botSessionId && !runtime) throwIpcError('NOT_FOUND', 'Canonical Bot task not found');
+    const runtime = input ? { agentKind: input.agentKind } : undefined;
     const servers = await listCustomMcpServers();
     if (!runtime) return { servers };
     const { agentKind } = runtime;

@@ -350,14 +350,9 @@ describe('PiAgent.startSession failure cleanup (mocked pi process)', () => {
     };
   }
 
-  it('mounts native subagent tools for companion sessions too', async () => {
+  it('mounts native subagent tools for ordinary tasks', async () => {
     const agent = new PiAgent(buildDeps());
-    const handle = await agent.startSession({ ...opts(), botRuntimeProfile: {
-      botId: 'bot', profileVersion: 1,
-      skillPolicy: { mode: 'allowlist', configured: [], catalog: [] },
-      mcpPolicy: { mode: 'allowlist', configured: [], catalog: [] },
-      toolsetPolicy: { mode: 'allowlist', configured: [], catalog: [] },
-    } });
+    const handle = await agent.startSession({ ...opts(), });
     try {
       expect(repeatedArgValues(knobs.spawnedArgs[0]!, '--extension'))
         .toEqual(expect.arrayContaining([expect.stringContaining('cindy-subagent')]));

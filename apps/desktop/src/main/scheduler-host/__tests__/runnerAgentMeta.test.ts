@@ -1,3 +1,7 @@
+// These runner units stub persistence; real ownership SQL is covered by the retention integration test.
+vi.mock('../../localDb/retiredCompanions.js', () => ({
+  assertNotRetiredCompanionSession: vi.fn(async () => undefined),
+}));
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import type {

@@ -1,7 +1,7 @@
 import type { AgentEvent, SessionSendOptions, UserMessage } from '@cindy/maker-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { assertRemoteBotInvocationAllowed, setRemoteBotSessionLookup } from '../../device-link/remoteBotSessionBoundary.js';
-import { isBotVisibleRemotely } from '../../localDb/ipc/botRemoteVisibility.js';
+
 
 import { MAKER_INVOKE } from '../channels.js';
 import {
@@ -174,11 +174,11 @@ describe('maker:review:start IPC lifecycle', () => {
     expect(deps.releaseSourceLease).toHaveBeenCalledOnce();
   });
 
-  it.each(['hidden', 'archived'] as const)('rejects a companion made %s while collecting evidence and permits a later visible retry', async (change) => {
+  it.each(['hidden', 'archived'] as const)('rechecks source access after evidence preparation and permits a later authorized retry (%s)', async (change) => {
     const harness = new IpcHarness();
     const reviewer = new FakeReviewer();
     const profile = { hiddenAt: null as number | null, status: 'active' };
-    setRemoteBotSessionLookup(async () => isBotVisibleRemotely(profile) ? 'visible' : 'hidden');
+    setRemoteBotSessionLookup(async () => (profile.hiddenAt === null && profile.status === 'active') ? 'visible' : 'hidden');
     const cleanup = vi.fn(async () => {});
     const prepared = makePreparedRun(makeLaunch(), { cleanup });
     let finishPreparation!: (value: PreparedReviewRun) => void;

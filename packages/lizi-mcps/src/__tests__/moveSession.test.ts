@@ -10,7 +10,7 @@ describe("move_session MCP", () => {
   it.each(["pi", "codex", "claude-code"] as const)(
     "moves existing tasks with validated context on %s",
     async (agentKind) => {
-      let surface: "default" | "bot" | "restricted" = "default";
+      let surface: "default" | "bot" | "bot-main" | "restricted" = "default";
       let sessionId: string | undefined = "caller";
       let remoteHostId: string | undefined;
       const moveSession = vi.fn(
@@ -95,14 +95,11 @@ describe("move_session MCP", () => {
           await call({ session_id: "target", working_dir: null }),
         ).toMatchObject({ errorCode: "NO_SESSION_CONTEXT" });
         sessionId = "caller";
-        surface = "bot";
-        expect(await call({ session_id: "target", working_dir: null })).toMatchObject({ ok: true });
-        moveSession.mockClear();
-        for (const denied of ["restricted"] as const) {
+        for (const denied of ["bot", "bot-main", "restricted"] as const) {
           surface = denied;
           expect(
             await call({ session_id: "target", working_dir: null }),
-          ).toMatchObject({ ok: false });
+          ).toMatchObject({ ok: false, errorCode: "CAPABILITY_NOT_AVAILABLE" });
         }
         expect(moveSession).not.toHaveBeenCalled();
       } finally {

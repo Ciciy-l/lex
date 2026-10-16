@@ -11,7 +11,7 @@ import type { DbClient } from '../../localDb/client/DbClient.js';
 import { clearCurrentDbClient, setCurrentDbClient } from '../../localDb/client/current.js';
 import * as schema from '../../localDb/schema.js';
 import { createCustomMcpServer, listCustomMcpServers, listCustomMcpRuntimeGenerations } from '../../maker-host/custom-mcp-store.js';
-import { buildBotMcpCatalog } from '../../maker-host/botMcpCatalog.js';
+import { buildRuntimeMcpCatalog } from '../../maker-host/runtimeMcpCatalog.js';
 import {
   getBuiltinMcpServerNames,
   refreshCustomMcpProviders,
@@ -66,7 +66,6 @@ function mountDb(): void {
 function makeDeps(over: Partial<McpHandlerDeps> = {}): McpHandlerDeps {
   return {
     listMcpServers: vi.fn(async () => []),
-    resolveBotContext: vi.fn(async () => ({ agentKind: 'claude-code' as const })),
     refreshProviders: vi.fn(async () => {}),
     broadcastChanged: vi.fn(() => {}),
     invalidateCodex: vi.fn(async () => {}),
@@ -106,7 +105,7 @@ describe('mcp:custom:* CRUD handlers', () => {
       registerCustomMcpArrays(providers);
       await refreshCustomMcpProviders();
       const deps = makeDeps({
-        listMcpServers: vi.fn(async (context) => buildBotMcpCatalog({
+        listMcpServers: vi.fn(async (context) => buildRuntimeMcpCatalog({
           ...context, providers, builtinNames: getBuiltinMcpServerNames(),
           customServers: await listCustomMcpRuntimeGenerations(),
         })),
@@ -126,53 +125,6 @@ describe('mcp:custom:* CRUD handlers', () => {
       })) });
     },
   );
-
-  it('uses the canonical next-turn route instead of the renderer hint', async () => {
-    mountDb();
-    const harness = new IpcHarness();
-    const chain = [{ harness: 'claude' as const, model: 'claude-x', providerId: null, effort: '', fastMode: false }];
-    const deps = makeDeps({ resolveBotContext: vi.fn(async () => ({ agentKind: 'codex' as const })) });
-    registerMcpHandlers(harness, deps);
-    expect(await harness.invoke(MAKER_INVOKE.MCP_CUSTOM_LIST, {
-      agentKind: 'claude-code', botSessionId: 'canonical', modelChain: chain,
-    })).toEqual({ agentKind: 'codex', servers: [] });
-    expect(deps.resolveBotContext).toHaveBeenCalledWith('canonical', chain);
-    expect(deps.listMcpServers).toHaveBeenCalledWith({ agentKind: 'codex' });
-    expect(deps.refreshProviders).not.toHaveBeenCalled();
-  });
-
-  it('does not fall back to a renderer hint for a missing canonical task', async () => {
-    mountDb();
-    const harness = new IpcHarness();
-    const deps = makeDeps({ resolveBotContext: vi.fn(async () => null) });
-    registerMcpHandlers(harness, deps);
-    await expect(harness.invoke(MAKER_INVOKE.MCP_CUSTOM_LIST, {
-      agentKind: 'claude-code', botSessionId: 'other-task',
-    })).rejects.toThrow(/NOT_FOUND/);
-    expect(deps.listMcpServers).not.toHaveBeenCalled();
-  });
-
-  it.each(['claude-code', 'codex', 'pi'] as const)('evaluates the trusted SSH target for %s capability settings', async (agentKind) => {
-    mountDb();
-    await createCustomMcpServer(validConfig);
-    const providers: McpProvider[] = [];
-    registerCustomMcpArrays(providers);
-    await refreshCustomMcpProviders();
-    const deps = makeDeps({
-      resolveBotContext: vi.fn(async () => ({ agentKind, remoteHostId: 'ssh-host' })),
-      listMcpServers: vi.fn(async (context) => buildBotMcpCatalog({
-        ...context, providers, builtinNames: getBuiltinMcpServerNames(),
-        customServers: await listCustomMcpRuntimeGenerations(),
-      })),
-    });
-    const harness = new IpcHarness();
-    registerMcpHandlers(harness, deps);
-    const result = await harness.invoke(MAKER_INVOKE.MCP_CUSTOM_LIST, {
-      agentKind: 'claude-code', botSessionId: 'canonical',
-    });
-    expect(deps.listMcpServers).toHaveBeenCalledWith({ agentKind, remoteHostId: 'ssh-host' });
-    expect(result).toEqual({ agentKind, servers: [expect.objectContaining({ id: 'mytools', available: agentKind !== 'codex' })] });
-  });
 
   it.each([null, {}, { agentKind: 'unknown' },
     { agentKind: 'codex', modelChain: [] },

@@ -1,3 +1,4 @@
+import { publicScheduleWhere, publicScheduleRunWhere } from './publicScheduleSql.js';
 /**
  * Phase 2: DrizzleScheduleStorage —— `ScheduleStorage` 接口的 SQLite 实现。
  *
@@ -14,7 +15,8 @@
  *   - snake↔camel 全部走 `localDb/mapper.ts`，本文件不写字段转换代码。
  */
 
-import { eq, desc, and, isNull, isNotNull, inArray, notInArray, or, sql } from 'drizzle-orm';
+import { eq, desc, and, isNull, isNotNull, inArray, notInArray, not, or, sql } from 'drizzle-orm';
+import { retiredCompanionSessionSql } from '../localDb/retiredCompanions.js';
 import { runAsBackgroundDbRpc } from '../localDb/client/rpcAdmission.js';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { broadcastSessionPatched } from '../localDb/ipc/sessions.js';
@@ -363,11 +365,6 @@ function legacyRunFromSession(
   };
 }
 
-/** Public automation history must not expose or mutate the routine execution ledger. */
-function publicScheduleRunWhere() {
-  return sql`${scheduleRuns.scheduleId} NOT IN (SELECT id FROM schedules WHERE source = 'bot')`;
-}
-
 export class DrizzleScheduleStorage implements ScheduleStorage {
   constructor(private readonly getDb: () => SchedulerDrizzleDb) {}
 
@@ -396,7 +393,7 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
         maxFinished: sql<number>`coalesce(max(${scheduleRuns.finishedAt}), 0)`.mapWith(Number),
         running: sql<number>`coalesce(sum(case when ${scheduleRuns.status} = 'running' then 1 else 0 end), 0)`.mapWith(Number),
       })
-      .from(scheduleRuns);
+      .from(scheduleRuns).where(publicScheduleRunWhere());
     // nextFireAt / status 会被另一 Cindy 进程改（dev/release 双开共用 DB，见 claimDueFire），
     // 本进程 generation 不会 bump。行数和 max(firedAt/readAt) 覆盖不到这些 UPDATE。
     const [scheduleStats] = await db
@@ -406,7 +403,7 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
         nextFireN: sql<number>`coalesce(sum(case when ${schedules.nextFireAt} is not null then 1 else 0 end), 0)`.mapWith(Number),
         activeN: sql<number>`coalesce(sum(case when ${schedules.status} = 'active' then 1 else 0 end), 0)`.mapWith(Number),
       })
-      .from(schedules);
+      .from(schedules).where(publicScheduleWhere());
     return [
       latest?.n ?? 0,
       runStats?.n ?? 0,
@@ -426,26 +423,30 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
   async list(filter?: ListFilter): Promise<Schedule[]> {
     const db = this.getDb();
     const query = db.select().from(schedules);
-    const rows = filter?.status
-      ? await query.where(eq(schedules.status, filter.status))
-      : await query;
+    const rows = await query.where(and(publicScheduleWhere(), filter?.status ? eq(schedules.status, filter.status) : undefined));
     return rows.map(scheduleToCamel);
   }
 
   async listActive(): Promise<Schedule[]> {
     const db = this.getDb();
-    const rows = await db.select().from(schedules).where(eq(schedules.status, 'active'));
+    const rows = await db.select().from(schedules).where(and(publicScheduleWhere(), eq(schedules.status, 'active')));
     return rows.map(scheduleToCamel);
   }
 
   async get(id: string): Promise<Schedule | null> {
     const db = this.getDb();
-    const [row] = await db.select().from(schedules).where(eq(schedules.id, id)).limit(1);
+    const [row] = await db.select().from(schedules).where(and(publicScheduleWhere(), eq(schedules.id, id))).limit(1);
     return row ? scheduleToCamel(row) : null;
   }
 
   async insert(s: Schedule): Promise<Schedule> {
     const db = this.getDb();
+    if (s.source === 'bot') throw new Error('Schedule is unavailable');
+    if (s.targetSessionId) {
+      const [retired] = await db.select({ id: sessions.id }).from(sessions)
+        .where(and(eq(sessions.id, s.targetSessionId), retiredCompanionSessionSql(sessions.id))).limit(1);
+      if (retired) throw new Error('Schedule is unavailable');
+    }
     await db.insert(schedules).values(scheduleCreateToRow(s));
     // 返回 round-tripped 版本（确保 timezone/booleans/默认值都按 DB 实际形态回流）
     const inserted = await this.get(s.id);
@@ -459,12 +460,18 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
 
   async update(id: string, patch: Partial<Schedule>): Promise<Schedule | null> {
     const db = this.getDb();
+    if (patch.source === 'bot') throw new Error('Schedule is unavailable');
+    if (patch.targetSessionId) {
+      const [retired] = await db.select({ id: sessions.id }).from(sessions)
+        .where(and(eq(sessions.id, patch.targetSessionId), retiredCompanionSessionSql(sessions.id))).limit(1);
+      if (retired) throw new Error('Schedule is unavailable');
+    }
     const setObj = schedulePatchToRow(patch);
     if (Object.keys(setObj).length === 0) {
       // patch 为空：不发 UPDATE，但仍然返回当前 row（或 null）以保持语义一致
       return this.get(id);
     }
-    await db.update(schedules).set(setObj).where(eq(schedules.id, id));
+    await db.update(schedules).set(setObj).where(and(publicScheduleWhere(), eq(schedules.id, id)));
     // drizzle update 不会 throw "not found"——主动 SELECT 验证
     const updated = await this.get(id);
     if (updated) this.bumpSidebarIndexCache();
@@ -474,7 +481,7 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
   async delete(id: string): Promise<void> {
     const db = this.getDb();
     // schedule_runs.schedule_id ON DELETE CASCADE，相关 run 由 SQLite 自动清
-    await db.delete(schedules).where(eq(schedules.id, id));
+    await db.delete(schedules).where(and(publicScheduleWhere(), eq(schedules.id, id)));
     this.bumpSidebarIndexCache();
   }
 
@@ -496,11 +503,11 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
       .update(schedules)
       .set({ nextFireAt: null })
       .where(
-        and(
+        and(publicScheduleWhere(), and(
           eq(schedules.id, id),
           eq(schedules.status, 'active'),
           eq(schedules.nextFireAt, expectedNextFireAt),
-        ),
+        )),
       )
       .run();
     const changes = (result as unknown as { changes?: number }).changes;
@@ -519,8 +526,15 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
 
   async insertRun(run: ScheduleRun): Promise<ScheduleRun> {
     const db = this.getDb();
+    if (!(await this.get(run.scheduleId))) throw new Error('Schedule is unavailable');
+    if (run.sessionId) {
+      const [retired] = await db.select({ id: sessions.id }).from(sessions)
+        .where(and(eq(sessions.id, run.sessionId), retiredCompanionSessionSql(sessions.id))).limit(1);
+      if (retired) throw new Error('Schedule is unavailable');
+    }
+
     await db.insert(scheduleRuns).values(scheduleRunCreateToRow(run));
-    const [row] = await db.select().from(scheduleRuns).where(eq(scheduleRuns.id, run.id)).limit(1);
+    const [row] = await db.select().from(scheduleRuns).where(and(publicScheduleRunWhere(), eq(scheduleRuns.id, run.id))).limit(1);
     if (!row) {
       throw new Error(`DrizzleScheduleStorage: insertRun verify failed for id=${run.id}`);
     }
@@ -530,13 +544,18 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
 
   async updateRun(id: string, patch: Partial<ScheduleRun>): Promise<ScheduleRun | null> {
     const db = this.getDb();
+    if (patch.sessionId) {
+      const [retired] = await db.select({ id: sessions.id }).from(sessions)
+        .where(and(eq(sessions.id, patch.sessionId), retiredCompanionSessionSql(sessions.id))).limit(1);
+      if (retired) throw new Error('Schedule is unavailable');
+    }
     const setObj = scheduleRunPatchToRow(patch);
     if (Object.keys(setObj).length === 0) {
-      const [row] = await db.select().from(scheduleRuns).where(eq(scheduleRuns.id, id)).limit(1);
+      const [row] = await db.select().from(scheduleRuns).where(and(publicScheduleRunWhere(), eq(scheduleRuns.id, id))).limit(1);
       return row ? scheduleRunToCamel(row) : null;
     }
-    await db.update(scheduleRuns).set(setObj).where(eq(scheduleRuns.id, id));
-    const [row] = await db.select().from(scheduleRuns).where(eq(scheduleRuns.id, id)).limit(1);
+    await db.update(scheduleRuns).set(setObj).where(and(publicScheduleRunWhere(), eq(scheduleRuns.id, id)));
+    const [row] = await db.select().from(scheduleRuns).where(and(publicScheduleRunWhere(), eq(scheduleRuns.id, id))).limit(1);
     // 联动:run 终态落 finishedAt 时,把绑定 session 的 updatedAt 一并推到该时刻。
     // 侧栏时间轴统一读 sessions.updatedAt,"任务结束"作为一次会话被推进的动作,
     // 必须进入这个时间轴 —— 否则用户看到的会话时间在 run 结束后停在 fire 触发那刻,
@@ -548,7 +567,7 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
         // 用 MAX 防止倒退：若另一路径（用户发送/clear）在 run 结束前已推进了
         // updatedAt，不应该被 finishedAt 覆盖回旧值。
         .set({ updatedAt: sql`MAX(${sessions.updatedAt}, ${patch.finishedAt})` })
-        .where(eq(sessions.id, row.sessionId));
+        .where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, row.sessionId)));
       // 双路广播（webContents.send + device-link tap）让本机和远端 renderer
       // sessionsStore.patchLocal 就地更新 updatedAt，侧栏时间立即跳到"刚跑完"。
       broadcastSessionPatched(row.sessionId, {
@@ -565,12 +584,12 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
     const [scheduleRow] = await db
       .select()
       .from(schedules)
-      .where(eq(schedules.id, scheduleId))
+      .where(and(publicScheduleWhere(), eq(schedules.id, scheduleId)))
       .limit(1);
     const rows = await db
       .select()
       .from(scheduleRuns)
-      .where(eq(scheduleRuns.scheduleId, scheduleId))
+      .where(and(publicScheduleRunWhere(), eq(scheduleRuns.scheduleId, scheduleId)))
       // 最近的一次在前，便于 UI 抽屉直接展示
       .orderBy(desc(scheduleRuns.firedAt))
       .limit(cap);
@@ -808,7 +827,7 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
               updatedAt: sessions.updatedAt,
             })
             .from(sessions)
-            .where(legacyTitleWhere());
+            .where(and(not(retiredCompanionSessionSql(sessions.id)), legacyTitleWhere()));
     const legacyRuns: ScheduleSidebarIndexRun[] = [];
 
     for (const session of legacySessions) {
@@ -856,7 +875,7 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
    */
   async listCostSummaries(): Promise<ScheduleCostSummary[]> {
     const db = this.getDb();
-    const runCostRows = (await db.select().from(scheduleRuns)).map(scheduleRunToCamel);
+    const runCostRows = (await db.select().from(scheduleRuns).where(publicScheduleRunWhere())).map(scheduleRunToCamel);
 
     const bySchedule = new Map<string, ScheduleTurnCostState>();
     const linkedSessionIds = new Set<string>();
@@ -877,7 +896,7 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
         totalCostUsd: sessions.totalCostUsd,
       })
       .from(sessions)
-      .where(legacyTitleWhere());
+      .where(and(not(retiredCompanionSessionSql(sessions.id)), legacyTitleWhere()));
 
     const legacySessionScheduleIds = new Map<string, string>();
     const scanSessionIds = new Set(linkedSessionIds);
@@ -1161,24 +1180,20 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
     // 找不到直接返回 null，不抛错（与 update/updateRun 的契约对齐）。
     const condition = and(
       eq(scheduleRuns.id, id),
-      options?.excludeBotSchedules ? publicScheduleRunWhere() : undefined,
+      publicScheduleRunWhere(),
     );
-    const [row] = await db.select().from(scheduleRuns).where(condition).limit(1);
+    const [row] = await db.select().from(scheduleRuns).where(and(publicScheduleRunWhere(), condition)).limit(1);
     if (!row) return null;
-    await db.delete(scheduleRuns).where(condition);
+    await db.delete(scheduleRuns).where(and(publicScheduleRunWhere(), condition));
     this.bumpSidebarIndexCache();
     return scheduleRunToCamel(row);
   }
 
   async deleteOrphanRuns(): Promise<number> {
-    const db = this.getDb();
-    // 显式 .run() 才能经 drizzleProxy 拿到 changes(见 claimDueFire 注释)
-    const result = await db
-      .delete(scheduleRuns)
-      .where(sql`${scheduleRuns.scheduleId} NOT IN (SELECT ${schedules.id} FROM ${schedules})`)
-      .run();
-    const changes = (result as unknown as { changes?: number }).changes;
-    return typeof changes === 'number' ? changes : 0;
+    // Historical orphan rows have no surviving schedule source. Keep them inert:
+    // deleting by absence alone could erase retained companion routine history.
+    // New ordinary schedule deletions use the existing FK cascade.
+    return 0;
   }
 
   /**
@@ -1192,10 +1207,10 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
       .select({ id: scheduleRuns.id })
       .from(scheduleRuns)
       .where(
-        and(
+        and(publicScheduleRunWhere(), and(
           eq(scheduleRuns.status, 'running'),
           ...(scheduleId !== undefined ? [eq(scheduleRuns.scheduleId, scheduleId)] : []),
-        ),
+        )),
       )
       .limit(1);
     return Boolean(row);
@@ -1240,23 +1255,23 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
         .select(projection)
         .from(scheduleRuns)
         .where(
-          and(
+          and(publicScheduleRunWhere(), and(
             eq(scheduleRuns.status, 'running'),
             isNotNull(scheduleRuns.heartbeatAt),
             sql`${scheduleRuns.heartbeatAt} < ${staleBefore}`,
             ...excludedRunCondition,
-          ),
+          )),
         ),
       db
         .select(projection)
         .from(scheduleRuns)
         .where(
-          and(
+          and(publicScheduleRunWhere(), and(
             eq(scheduleRuns.status, 'running'),
             isNull(scheduleRuns.heartbeatAt),
             sql`${scheduleRuns.firedAt} < ${legacyStaleBefore}`,
             ...excludedRunCondition,
-          ),
+          )),
         ),
     ]);
     const staleRows = [...heartbeatRows, ...legacyRows];
@@ -1274,13 +1289,13 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
         errorMsg: 'app restarted',
       })
       .where(
-        and(
+        and(publicScheduleRunWhere(), and(
           inArray(
             scheduleRuns.id,
             staleRows.map((r) => r.id),
           ),
           staleRunningCond(),
-        ),
+        )),
       )
       .run();
     this.bumpSidebarIndexCache();
@@ -1295,7 +1310,7 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
     await db
       .update(scheduleRuns)
       .set({ heartbeatAt })
-      .where(and(inArray(scheduleRuns.id, [...runIds]), eq(scheduleRuns.status, 'running')))
+      .where(and(publicScheduleRunWhere(), and(inArray(scheduleRuns.id, [...runIds]), eq(scheduleRuns.status, 'running'))))
       .run();
   }
 
@@ -1332,7 +1347,7 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
         readAt: scheduleRuns.readAt,
       })
       .from(scheduleRuns)
-      .where(eq(scheduleRuns.id, runId))
+      .where(and(publicScheduleRunWhere(), eq(scheduleRuns.id, runId)))
       .limit(1);
     if (!row) return null;
     if (row.readAt != null) return null;
@@ -1344,7 +1359,7 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
     ) {
       return null;
     }
-    await db.update(scheduleRuns).set({ readAt: Date.now() }).where(eq(scheduleRuns.id, runId));
+    await db.update(scheduleRuns).set({ readAt: Date.now() }).where(and(publicScheduleRunWhere(), eq(scheduleRuns.id, runId)));
     this.bumpSidebarIndexCache();
     return row.scheduleId;
   }
@@ -1383,7 +1398,7 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
     const result = await db
       .update(scheduleRuns)
       .set({ readAt: Date.now() })
-      .where(and(eq(scheduleRuns.scheduleId, scheduleId), unreadTerminalRunWhere()))
+      .where(and(publicScheduleRunWhere(), and(eq(scheduleRuns.scheduleId, scheduleId), unreadTerminalRunWhere())))
       .run();
     const changes = (result as unknown as { changes?: number }).changes;
     const updated = typeof changes === 'number' ? changes : 0;
@@ -1418,7 +1433,7 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
         updatedAt: sessions.updatedAt,
       })
       .from(sessions)
-      .where(and(legacyTitleWhere(), inArray(sessions.title, titles)));
+      .where(and(not(retiredCompanionSessionSql(sessions.id)), and(legacyTitleWhere(), inArray(sessions.title, titles))));
 
     return rows
       .filter((row) => {
@@ -1443,7 +1458,7 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
     const [fallbackState] = await db
       .select({ enabled: schedules.legacySessionFallback })
       .from(schedules)
-      .where(eq(schedules.id, schedule.id))
+      .where(and(publicScheduleWhere(), eq(schedules.id, schedule.id)))
       .limit(1);
     if (!fallbackState?.enabled) return new Map();
 
@@ -1469,7 +1484,7 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
       })
       .from(scheduleRuns)
       .innerJoin(sessions, eq(scheduleRuns.sessionId, sessions.id))
-      .where(and(eq(scheduleRuns.scheduleId, schedule.id), legacyTitleWhere()));
+      .where(and(publicScheduleRunWhere(), and(eq(scheduleRuns.scheduleId, schedule.id), legacyTitleWhere())));
 
     for (const row of linkedRows) {
       const name = legacyScheduleNameFromSessionTitle(row.title);

@@ -439,7 +439,6 @@ export function createContextOverflowRollover(deps: ContextOverflowRolloverDeps)
   prepareUnhealthySession(sessionId: string): Promise<boolean>;
   prepareNativeSessionRecovery(
     sessionId: string,
-    // null is an explicit Bot restart: keep its route, including before the first native handle.
     target: NativeSessionRecoveryTarget | null,
     assertCanCommit: () => void,
     signal?: AbortSignal,
@@ -916,8 +915,7 @@ export function createContextOverflowRollover(deps: ContextOverflowRolloverDeps)
         await deps.withCloseSuppressed(sessionId, async () => {
           await deps.drainPersistQueue();
           const row = await deps.getSessionRow(sessionId);
-          if (!row || row.status === 'deleted' ||
-              (target ? (!row.sdkSessionId || row.remoteHostId) : (row.source !== 'bot' || row.status !== 'active'))) {
+          if (!target || !row || row.source === 'bot' || row.status === 'deleted' || !row.sdkSessionId || row.remoteHostId) {
             throw new Error('Native session recovery source is unavailable');
           }
           const generation = deps.readPendingHandoffGeneration?.(sessionId);
@@ -933,13 +931,6 @@ export function createContextOverflowRollover(deps: ContextOverflowRolloverDeps)
           // Manual restart closes the broken runtime without asking it to compact.
           if (live) await deps.closeSession(sessionId);
           assertCanCommit();
-          if (!target) {
-            // Include any last output persisted while the old runtime was stopping.
-            await deps.drainPersistQueue();
-            assertCanCommit();
-            source = (await deps.listMessages(sessionId)).filter((message) => message.role !== 'error');
-            assertCanCommit();
-          }
           const handoff = buildHandoffText(source, {
             fromLabel: engineLabelForOverflow(row.agentKind),
             toLabel: engineLabelForOverflow(row.agentKind),

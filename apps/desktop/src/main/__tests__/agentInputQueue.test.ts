@@ -338,37 +338,6 @@ describe('agentInputQueue', () => {
       .toHaveProperty('text', 'process-local referenced body');
   });
 
-  it('strips transient Bot host state from crash-recovery snapshots', () => {
-    const entry = queuedMessage(undefined);
-    const href = 'cindy://bot/bot-b';
-    const reference = {
-      kind: 'bot' as const,
-      start: 0,
-      end: href.length,
-      href,
-      botId: 'bot-b',
-      name: '小柴',
-      hostSnapshot: {
-        availability: 'ready' as const,
-        activity: 'working' as const,
-        activeDelegations: 1,
-      },
-    };
-    entry.text = href;
-    entry.agentReferences = [reference];
-    entry.chatMessage.agentReferences = [reference];
-    entry.persistedContent = JSON.stringify({ text: href, agentReferences: [reference] });
-
-    const persisted = sanitizeQueuedMessageForPersistence(entry);
-
-    expect(persisted.agentReferences?.[0]).not.toHaveProperty('hostSnapshot');
-    expect(persisted.chatMessage.agentReferences?.[0]).not.toHaveProperty('hostSnapshot');
-    expect(JSON.parse(persisted.persistedContent).agentReferences[0])
-      .not.toHaveProperty('hostSnapshot');
-    expect(entry.agentReferences?.[0]).toHaveProperty('hostSnapshot');
-    expect(entry.chatMessage.agentReferences?.[0]).toHaveProperty('hostSnapshot');
-  });
-
   it('reconciles both current and legacy session links on queue edits', () => {
     expect(
       reconcileSessionRefsForText(

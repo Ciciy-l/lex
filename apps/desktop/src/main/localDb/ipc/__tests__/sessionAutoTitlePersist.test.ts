@@ -1,3 +1,4 @@
+import { RETAINED_COMPANION_DDL } from '../../__tests__/fixtures/retiredCompanionTables';
 /**
  * persistSessionTitleIfStillDraft / isUntitledSessionAwaitingAutoTitle —— 自动
  * 起名的落库出口与资格判定,用内存 sqlite 验证真实条件写语义。
@@ -12,6 +13,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { messages, sessions } from '../../schema';
 
 const h = vi.hoisted(() => ({
+  client: { query: async (sql: string, params: unknown[] = []) => h.sqlite!.prepare(sql).all(...params) },
   db: null as ReturnType<typeof drizzle> | null,
   sqlite: null as InstanceType<typeof import('better-sqlite3')> | null,
 }));
@@ -25,6 +27,7 @@ vi.mock('../../../logger', () => ({
 }));
 vi.mock('../../client/current', () => ({
   getDbClient: () => ({ drizzle: h.db }),
+  getCurrentDbClientSnapshot: () => h,
   getCurrentDbClientUserId: () => 'test-user',
 }));
 vi.mock('../../dialogueWorkspace', () => ({ ensureDialogueWorkspaceDir: vi.fn() }));
@@ -54,6 +57,7 @@ const SESSION_ID = 's1';
 
 function createDb(initialTitle: string): void {
   const sqlite = new Database(':memory:');
+  sqlite.exec(RETAINED_COMPANION_DDL.join(';'));
   sqlite.exec(`
     CREATE TABLE sessions (
       id TEXT PRIMARY KEY NOT NULL,

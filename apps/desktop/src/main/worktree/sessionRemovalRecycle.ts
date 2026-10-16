@@ -1,3 +1,4 @@
+import { retiredCompanionSessionSql } from '../localDb/retiredCompanionSql.js';
 /**
  * 会话显式删除/归档后的 worktree 回收入口(P0 重构:回收的唯一驱动点)。
  *
@@ -13,7 +14,7 @@
  * 历史登记仅分类审计，查不到当前账号的任务不构成删除依据。
  */
 
-import { eq } from 'drizzle-orm';
+import { and, eq, not } from 'drizzle-orm';
 import { auditRegisteredWorktrees } from './recycleMaintenance';
 
 import { hasLiveSessionReference, pathKey } from './liveSessionRefs';
@@ -169,7 +170,7 @@ async function readSessionRecycleSnapshot(
         worktreePath: sessions.worktreePath,
       })
       .from(sessions)
-      .where(eq(sessions.id, sessionId));
+      .where(and(eq(sessions.id, sessionId), not(retiredCompanionSessionSql(sessions.id))));
     return row ?? null;
   } catch (err) {
     log.warn(
@@ -200,7 +201,7 @@ async function readCurrentSessionStatus(
     const [row] = await db
       .select({ status: sessions.status, source: sessions.source })
       .from(sessions)
-      .where(eq(sessions.id, sessionId));
+      .where(and(eq(sessions.id, sessionId), not(retiredCompanionSessionSql(sessions.id))));
     if (row?.source === 'bot') return null;
     return row?.status ?? null;
   } catch (err) {

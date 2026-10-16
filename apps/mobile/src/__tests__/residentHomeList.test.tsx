@@ -5,6 +5,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { homeRowPropsEqual } from '../session/homeRowPropsEqual';
 import { ResidentHomeList, ResidentHomeListProvider } from '../session/ResidentHomeList';
 
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+
 const state = vi.hoisted(() => ({
   mode: 'tasks', segments: ['devices'], width: 1000, anchorWidth: 1000, mounts: 0, unmounts: 0,
 }));
@@ -90,7 +92,7 @@ it('hides the resident list and pauses row subscriptions on other routes without
   expect(state.mounts).toBe(1); expect(state.unmounts).toBe(0);
 });
 
-it.each([{ homeSegments: [] }, { homeSegments: ['index'] }, { homeSegments: ['devices'] }, { homeSegments: ['devices', 'index'] }])('keeps task state but hides the resident list in teammate mode on %j', ({ homeSegments }) => {
+it.each([{ homeSegments: [] }, { homeSegments: ['index'] }, { homeSegments: ['devices'] }, { homeSegments: ['devices', 'index'] }])('ignores the retired teammate preference and preserves the ordinary task list on %j', ({ homeSegments }) => {
   state.segments = homeSegments;
   const host = document.createElement('div');
   const root = createRoot(host); roots.push(root);
@@ -98,8 +100,8 @@ it.each([{ homeSegments: [] }, { homeSegments: ['index'] }, { homeSegments: ['de
   render();
   act(() => (host.querySelector('[data-scroll]') as HTMLButtonElement).click());
   state.mode = 'teammates'; render();
-  expect(host.querySelector('[data-host]')?.getAttribute('data-pointer')).toBe('none');
-  expect(host.querySelector('[data-subscriptions]')?.getAttribute('data-subscriptions')).toBe('false');
+  expect(host.querySelector('[data-host]')?.getAttribute('data-pointer')).toBe('box-none');
+  expect(host.querySelector('[data-subscriptions]')?.getAttribute('data-subscriptions')).toBe('true');
   // An actual task route still owns the upstream persistent sidebar, irrespective of home preference.
   state.segments = ['sessions', '[sessionId]']; render(true);
   expect(host.querySelector('[data-host]')?.getAttribute('data-pointer')).toBe('box-none');

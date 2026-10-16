@@ -251,6 +251,7 @@
     "deleteMessageTitle": "刪除本條訊息？",
     "deleteMessageBody": "使用者訊息只刪除本條；AI 訊息會刪除上一次使用者輸入之後產生的整輪輸出。之後的訊息繼續保留。下次傳送時，AI 上下文會從剩餘記錄重建。",
     "deleteMessageAction": "刪除本條訊息",
+    "deleteMessageBusy": "請等當前回覆結束後再刪除訊息",
     "readingCapabilities": "正在讀取 {{agent}} 執行能力…",
     "editingQueueMessageNumbered": "正在編輯第 {{index}} 條排隊訊息",
     "editingQueueMessage": "正在編輯排隊訊息",

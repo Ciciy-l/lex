@@ -1330,30 +1330,6 @@ describe('cindy-bridge extension source', () => {
     expect(CINDY_BRIDGE_EXTENSION_SOURCE).not.toContain('${');
   });
 
-  it('uses the product brand for Bot-facing Pi helper copy without changing protocol identifiers', () => {
-    const source = CINDY_BRIDGE_EXTENSION_SOURCE;
-
-    expect(source).toContain(`const DISPLAY_BRAND = ${JSON.stringify(BRAND_NAME)};`);
-    expect(source).toContain("DISPLAY_BRAND + ' tool ' + name");
-    expect(source).toContain("DISPLAY_BRAND + ' teammate creation is unavailable");
-    expect(source).toContain("label: 'Start a ' + DISPLAY_BRAND + ' Session task'");
-    expect(source).toContain("'Start one real independent ' + DISPLAY_BRAND + ' Session task");
-    expect(source).toContain("including a Bot named ' + DISPLAY_BRAND + '. Start it once");
-    expect(source).toContain("message to a named ' + DISPLAY_BRAND + ' Bot teammate");
-    expect(source).toContain("label: 'Create a ' + DISPLAY_BRAND + ' teammate'");
-    expect(source).toContain("'Create a new ' + DISPLAY_BRAND + ' Bot teammate");
-    expect(source).not.toContain('Start a Cindy Session task');
-    expect(source).not.toContain('Start one real independent Cindy Session task');
-    expect(source).not.toContain('Bot named Cindy');
-    expect(source).not.toContain('named Cindy Bot teammate');
-    expect(source).not.toContain('Create a Cindy teammate');
-    expect(source).not.toContain('Create a new Cindy Bot teammate');
-    expect(source).not.toContain('Cindy tool ');
-    expect(source).not.toContain('Cindy teammate creation is unavailable');
-    expect(source).toContain("const CINDY_START_SESSION_TASK_TOOL = 'start_session_task'");
-    expect(source).toContain("qualifiedName: 'mcp__cindy_helper__' + name");
-  });
-
   it('preserves the permission denial source across the private Pi UI envelope', () => {
     const source = CINDY_BRIDGE_EXTENSION_SOURCE;
     expect(source).toContain('await ctx.ui.input(');
@@ -1502,34 +1478,12 @@ describe('cindy-bridge extension source', () => {
     expect(handler).toContain('TURN_CHANGE_CAPTURE_TITLE');
   });
 
-  it('keeps generic MCP behind two tools and gives frequent Bot actions typed fast paths', () => {
+  it('keeps generic MCP behind two tools without retired companion shortcuts', () => {
     expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain("const CINDY_MCP_LIST_TOOLS = 'cindy_mcp_list_tools'");
     expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain("const CINDY_MCP_CALL_TOOL = 'cindy_mcp_call_tool'");
-    expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain(
-      "const CINDY_SEND_TO_AGENT_TOOL = 'send_to_agent'",
-    );
-    expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain(
-      "const CINDY_CHECK_SESSION_TASK_TOOL = 'check_session_task'",
-    );
-    expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain(
-      "const CINDY_MESSAGE_SESSION_TASK_TOOL = 'message_session_task'",
-    );
-    expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain(
-      "const CINDY_STOP_SESSION_TASK_TOOL = 'stop_session_task'",
-    );
-    expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain(
-      "const CINDY_CREATE_TEAMMATE_TOOL = 'create_teammate'",
-    );
-    expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain(
-      "name: CINDY_CREATE_TEAMMATE_TOOL",
-    );
     expect(CINDY_BRIDGE_EXTENSION_SOURCE).not.toContain("collaborate_with_bot");
     expect(CINDY_BRIDGE_EXTENSION_SOURCE).not.toContain(
       "enum: ['status', 'notify', 'call', 'reply', 'cancel']",
-    );
-    expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain("const CINDY_BOT_MEMORY_TOOL = 'bot_memory'");
-    expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain(
-      'mcpGateway.register(pi, { botMemoryFacade: cfg.botMemoryFacade === true })',
     );
     expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain("qualifiedName: 'mcp__' + serverName + '__' + toolName");
     expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain('private readonly disclosedSchemas');
@@ -1537,17 +1491,6 @@ describe('cindy-bridge extension source', () => {
     expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain('Inspect this tool before execution');
     expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain('permissionToolName = gatewayCall?.qualifiedName');
     expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain('permissionInput = gatewayCall?.args');
-    expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain(
-      "qualifiedName: 'mcp__cindy_helper__' + name",
-    );
-    expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain(
-      "qualifiedName: 'mcp__cindy_memory__call_tool'",
-    );
-    expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain(
-      "this.botMemoryFacadeEnabled && serverName === 'cindy_memory'",
-    );
-    expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain("name = 'memory_review'");
-    expect(CINDY_BRIDGE_EXTENSION_SOURCE).toContain("name = 'memory_consolidate'");
     expect(CINDY_BRIDGE_EXTENSION_SOURCE).not.toContain("name: qualifiedName,\n        label: server.name + ': ' + tool.name");
   });
 
@@ -2200,7 +2143,7 @@ describe('cindy-bridge extension source', () => {
   );
 });
 
-it('routes Bot shortcuts through the scoped helper entry without exposing them to ordinary Pi tasks', async () => {
+it('registers only the ordinary MCP gateway; retired companion shortcuts cannot be invoked', async () => {
   const source = CINDY_BRIDGE_EXTENSION_SOURCE;
   const compiled = ts.transpileModule(
     source.slice(source.indexOf('const CINDY_MCP_LIST_TOOLS'), source.indexOf('async function connectServer'))
@@ -2226,44 +2169,9 @@ it('routes Bot shortcuts through the scoped helper entry without exposing them t
   const ordinary: any[] = [];
   gateway.register({ registerTool: (tool: unknown) => ordinary.push(tool) });
   expect(ordinary.map((tool) => tool.name)).toEqual(['cindy_mcp_list_tools', 'cindy_mcp_call_tool']);
-  expect(gateway.resolveDirectHelperTool('start_session_task', {})).toBeNull();
-
-  const bot: any[] = [];
-  gateway.register({ registerTool: (tool: unknown) => bot.push(tool) }, { botMemoryFacade: true });
-  expect(bot.find((tool) => tool.name === 'start_session_task')).toMatchObject({
-    label: `Start a ${BRAND_NAME} Session task`,
-    description: expect.stringContaining(`real independent ${BRAND_NAME} Session task`),
-  });
-  expect(bot.find((tool) => tool.name === 'send_to_agent')).toMatchObject({
-    description: expect.stringContaining(`named ${BRAND_NAME} Bot teammate`),
-  });
-  expect(bot.find((tool) => tool.name === 'create_teammate')).toMatchObject({
-    label: `Create a ${BRAND_NAME} teammate`,
-    description: expect.stringContaining(`new ${BRAND_NAME} Bot teammate`),
-  });
-  for (const name of ['start_session_task', 'check_session_task', 'message_session_task', 'stop_session_task', 'send_to_agent', 'create_teammate', 'routine_list', 'routine_save', 'routine_sources', 'routine_history', 'routine_delete', 'routine_run_now']) {
-    const tool = bot.find((item) => item.name === name);
-    expect(tool).toBeDefined();
-    const args = name === 'routine_save' ? {
-      name: 'Rest', prompt: 'Remind me to rest', enabled: true,
-      triggers: [{ id: 'minute', kind: 'interval', intervalMs: 60000 }],
-    } : name === 'routine_list' || name === 'routine_sources' ? {}
-      : name.startsWith('routine_') ? { id: 'routine-1' }
-      : name === 'start_session_task' ? { instruction: 'Prepare a report' }
-      : name === 'send_to_agent' ? { target_id: 'bot-b', message: 'Please review' }
-      : name === 'create_teammate' ? { name: 'Writer', description: 'Novelist', identity_source: 'Write stories', welcome_message: 'Hello' }
-      : name === 'message_session_task' ? { task_id: 'task-1', message: 'Add a summary' }
-      : { task_id: 'task-1' };
-    if (name === 'routine_save') {
-      expect(tool.parameters.required).toEqual(['name', 'prompt', 'enabled', 'triggers']);
-      expect(tool.parameters.properties.botId).toBeUndefined();
-      expect(tool.parameters.properties.triggers.items.anyOf[0].properties.intervalMs.minimum).toBe(60000);
-    }
-    const resolved = gateway.resolveDirectHelperTool(name, args);
-    expect(resolved.qualifiedName).toBe('mcp__cindy_helper__' + name);
-    expect(resolved.args).toEqual(args); // Permission review retains the actual operation and arguments.
-    const controller = new AbortController();
-    await tool.execute('call-1', args, controller.signal);
-    expect(calls.at(-1)).toEqual({ method: 'tools/call', params: { name: 'call_tool', arguments: { name, args } }, signal: controller.signal });
+  expect(gateway.resolveDirectHelperTool).toBeUndefined();
+  expect(calls).toEqual([]);
+  for (const name of ['start_session_task', 'check_session_task', 'message_session_task', 'stop_session_task', 'send_to_agent', 'create_teammate', 'bot_memory', 'routine_list', 'routine_run_now']) {
+    expect(ordinary.some(tool => tool.name === name)).toBe(false);
   }
 });

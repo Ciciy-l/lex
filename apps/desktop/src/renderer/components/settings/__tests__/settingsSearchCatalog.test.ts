@@ -38,7 +38,6 @@ const context: SettingsSearchContext = {
   mode: 'cloud',
   membershipKind: 'personal',
   platform: 'darwin',
-  teammatesEnabled: true,
 };
 
 describe('settings search catalog', () => {
@@ -74,7 +73,7 @@ describe('settings search catalog', () => {
   });
 
   it('hides unavailable tabs and feature-gated entries from results and deep links', () => {
-    const unavailableContext = { ...context, mode: 'local' as const, teammatesEnabled: false };
+    const unavailableContext = { ...context, mode: 'local' as const, };
     const documents = buildSettingsSearchDocuments(translate, ['general', 'remote-control'], unavailableContext);
     expect(documents.some((document) => document.entry.id === 'general.bots')).toBe(false);
     expect(documents.some((document) => document.entry.id === 'remoteControl.devices')).toBe(false);

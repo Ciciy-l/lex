@@ -12,15 +12,15 @@ export type OpenedSessionRow = ReturnType<typeof sessionCreateToRow> & { model: 
 type ModelAdmission = (body: SessionOpenBody) => Promise<SessionOpenBody>;
 let admitModel: ModelAdmission | null = null;
 
-/** Host installs its ordinary model catalog once; UI, tools, companions and plugins share it. */
+/** Host installs its ordinary model catalog once; UI, tools and plugins share it. */
 export function setSessionOpeningModelAdmission(admission: ModelAdmission): void {
   admitModel = admission;
 }
 
 /**
  * Open a normal Cindy Session. No messages are sent and no callback Agent is started.
- * Entry adapters authorize the caller/directory. A companion may atomically commit
- * its own receipt with the Session, while its timeline and completion signal remain outside.
+ * Entry adapters authorize the caller/directory and may atomically commit their
+ * own receipt with the Session; execution starts through the ordinary dispatch path.
  */
 export async function openSession<T = void>(input: {
   id?: string;

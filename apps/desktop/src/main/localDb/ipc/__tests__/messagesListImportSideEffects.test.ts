@@ -15,9 +15,12 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { messages, sessions } from '../../schema';
+import type { CurrentDbClientSnapshot } from '../../client/current';
+import { RETAINED_COMPANION_DDL } from '../../__tests__/fixtures/retiredCompanionTables';
 
 const h = vi.hoisted(() => ({
   db: null as ReturnType<typeof drizzle> | null,
+  snapshot: null as CurrentDbClientSnapshot | null,
   handlers: new Map<string, (...args: unknown[]) => unknown>(),
 }));
 
@@ -49,7 +52,8 @@ vi.mock('../../../embedders/chat-history-embedder', () => ({
   onMessageCreated: vi.fn(async () => undefined),
 }));
 vi.mock('../../client/current', () => ({
-  getDbClient: () => ({ drizzle: h.db }),
+  getDbClient: () => h.snapshot?.client,
+  getCurrentDbClientSnapshot: () => h.snapshot,
 }));
 
 import { registerMessageIpc, runMessagesListImportSideEffects } from '../messages';
@@ -65,6 +69,7 @@ function createDb(sessionId = 's1'): Database.Database {
   sqlite.exec(`
     CREATE TABLE sessions (
       id TEXT PRIMARY KEY,
+      source TEXT NOT NULL DEFAULT 'desktop',
       cleared_at INTEGER
     );
     CREATE TABLE messages (
@@ -82,6 +87,11 @@ function createDb(sessionId = 's1'): Database.Database {
   `);
   sqlite.prepare('INSERT INTO sessions (id, cleared_at) VALUES (?, NULL)').run(sessionId);
   h.db = drizzle(sqlite, { schema: { messages, sessions } });
+  for (const ddl of RETAINED_COMPANION_DDL) sqlite.exec(ddl);
+  h.snapshot = { userId: 'import-test', clientEpoch: 1, client: {
+    drizzle: h.db,
+    query: async (sql: string, params: unknown[] = []) => sqlite.prepare(sql).all(...params),
+  } } as unknown as CurrentDbClientSnapshot;
   return sqlite;
 }
 
@@ -169,6 +179,16 @@ describe('runMessagesListImportSideEffects (injectable)', () => {
 });
 
 describe('local-db:messages:list × import side-effects (integration)', () => {
+  it('rejects a retained native-import task before touching its original CLI files', async () => {
+    const sqlite = createDb('codex-retained');
+    try {
+      sqlite.exec("INSERT INTO bot_session_links VALUES ('codex-retained')");
+      registerMessageIpc();
+      await expect(h.handlers.get('local-db:messages:list')!({}, 'codex-retained', {})).rejects.toThrow('[NOT_FOUND]');
+      expect(codexMock).not.toHaveBeenCalled();
+      expect(claudeMock).not.toHaveBeenCalled();
+    } finally { sqlite.close(); }
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     h.handlers.clear();

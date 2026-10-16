@@ -177,11 +177,12 @@ describe('submitGithubIssueWithConfirm', () => {
     });
   });
 
-  it('把三种 agentKind 映射为公开 Harness 全名', async () => {
+  it('把四种 agentKind 映射为公开 Harness 全名', async () => {
     for (const [agentKind, harness] of [
       ['claude-code', 'Claude Code'],
       ['codex', 'Codex'],
       ['pi', 'Pi'],
+      ['omp', 'OMP'],
     ] as const) {
       const { deps, confirm, postIssue } = makeDeps();
       await expect(

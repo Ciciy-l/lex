@@ -239,11 +239,6 @@ export function subscribeRemoteFavoritesChanged(listener: (deviceId: string) => 
   remoteFavoritesChangedListeners.add(listener);
   return () => { remoteFavoritesChangedListeners.delete(listener); };
 }
-const remoteBotChangedListeners = new Set<(deviceId: string, channel: string, payload: unknown) => void>();
-export function subscribeRemoteBotChanges(listener: (deviceId: string, channel: string, payload: unknown) => void): () => void {
-  remoteBotChangedListeners.add(listener);
-  return () => { remoteBotChangedListeners.delete(listener); };
-}
 
 const remoteResourceChangedListeners = new Set<(
   deviceId: string,
@@ -1660,10 +1655,6 @@ export function routeFrame(env: Envelope, handlers: {
   }
   if (push.channel === 'maker:agents:changed') {
     handlers.onAgentsChanged?.(env.src);
-    return;
-  }
-  if (push.channel === 'maker:bot-delegation:changed' || push.channel === 'maker:bot-direct-message:changed') {
-    for (const listener of remoteBotChangedListeners) listener(env.src, push.channel, push.payload);
     return;
   }
   if (push.channel === REMOTE_RESOURCE_CHANGED_CHANNEL) {

@@ -69,17 +69,11 @@ describe('parseNotificationDeepLink', () => {
   ])('拒绝:%s', (_label, input) => {
     expect(parseNotificationDeepLink(input)).toBeNull();
   });
-
-  it('接受分工提醒的群聊深链,并按规范编码重建', () => {
+it('退休后拒绝原来合法的群聊通知深链', () => {
     expect(parseNotificationDeepLink({ deepLink: '/companions/groups/g-1?deviceId=d-1' }))
-      .toBe('/companions/groups/g-1?deviceId=d-1');
+      .toBeNull();
     expect(parseNotificationDeepLink({ deepLink: `/companions/groups/${encodeURIComponent('群 1')}?deviceId=${encodeURIComponent('mac:1')}` }))
-      .toBe(`/companions/groups/${encodeURIComponent('群 1')}?deviceId=${encodeURIComponent('mac:1')}`);
-  });
-
-  it('群聊深链经通知点击恢复路由后仍带着 deviceId', () => {
-    const link = parseNotificationDeepLink({ deepLink: '/companions/groups/g-1?deviceId=d-1' })!;
-    expect(notificationRecoveryRoute(link, 'id:n-1')).toBe('/companions/groups/g-1?deviceId=d-1&notificationResponse=id%3An-1');
+      .toBeNull();
   });
 });
 

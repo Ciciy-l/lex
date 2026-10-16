@@ -34,6 +34,7 @@ import { findClaudeSessionJsonl } from '@cindy/maker-core';
 
 import { activeOwnerScopeKey } from '../appSessionState.js';
 import { getDbClient } from '../localDb/client/current.js';
+import { RETIRED_COMPANION_SESSION_IDS_SQL } from '../localDb/retiredCompanionSql.js';
 import { getActiveTeamByLead } from '../localDb/orcaTeamStore.js';
 import { createLogger } from '../logger.js';
 import { collectClaudeSdkSessionIds } from '../maker-host/claude-transcript-relocation.js';
@@ -1126,7 +1127,7 @@ async function readSessionRow(sessionId: string): Promise<SessionRow | null> {
         user_send_at AS userSendAt,
         created_at AS createdAt,
         updated_at AS updatedAt
-      FROM sessions WHERE id = ? LIMIT 1`,
+      FROM sessions WHERE id = ? AND id NOT IN (${RETIRED_COMPANION_SESSION_IDS_SQL}) LIMIT 1`,
       [sessionId],
     )) ?? null
   );

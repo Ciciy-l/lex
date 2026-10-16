@@ -24,7 +24,7 @@ vi.mock('electron', () => ({
 import type { Logger, McpProvider } from '@cindy/maker-core';
 import { PluginRegistry } from '../../maker-host/plugins/plugin-registry.js';
 import { CustomMcpProvider } from '../custom-mcp-provider.js';
-import { buildBotMcpCatalog } from '../../maker-host/botMcpCatalog.js';
+import { buildRuntimeMcpCatalog } from '../../maker-host/runtimeMcpCatalog.js';
 import { readAgentCapabilityCatalog, RUNTIME_MCP_NAMES_KEY } from '../../maker-host/agentCapabilityCatalog.js';
 import {
   CODEX_ALLOWED_BUILTIN_PLUGIN_IDS_KEY,
@@ -267,7 +267,7 @@ describe('piEnvironment per-session identity', () => {
     config!.disposeSessionCtx!();
   });
 
-  it.each([true, false])('keeps the plugin gateway with frozen Bot tools when memory is %s', async (memoryEnabled) => {
+  it.each([true, false])('keeps the plugin gateway and explicitly granted builtins when memory is %s', async (memoryEnabled) => {
     const config = await getPiExtraSpawnConfig([
       makeProvider('cindy'),
       makeProvider('cindy_memory'),
@@ -283,22 +283,14 @@ describe('piEnvironment per-session identity', () => {
       vendorOptions: {
         [CODEX_ALLOWED_BUILTIN_PLUGIN_IDS_KEY]: ['memory', 'xdt_helper'],
       },
-      botMcpPolicy: {
-        mode: 'allowlist',
-        configured: ['custom_probe'],
-        catalog: [
-          { name: 'custom_probe', source: 'custom', available: true },
-        ],
-      },
     });
 
     expect(config?.mcpBridge?.servers.map((server) => server.name).sort()).toEqual([
       'cindy',
       'cindy_helper',
       ...(memoryEnabled ? ['cindy_memory'] : []),
-      'custom_probe',
     ]);
-    expect(config?.mcpBridge?.botMemoryFacade).toBe(true);
+    expect(config?.mcpBridge).not.toHaveProperty('botMemoryFacade');
     const gateway = config!.mcpBridge!.servers.find((server) => server.name === 'cindy')!;
     const headers = {
       authorization: `Bearer ${config!.mcpBridge!.token}`,
@@ -325,18 +317,15 @@ describe('piEnvironment per-session identity', () => {
     const isEnabled = vi.spyOn(PluginRegistry.prototype, 'isEnabled')
       .mockImplementation((pluginId) => pluginId !== 'collab');
     const providers = ['cindy_helper', 'cindy_memory', 'cindy_docs', 'cindy_computer',
-      'cindy_make', 'cindy_orca', 'custom_probe'].map((name) => makeProvider(name));
+      'cindy_orca', 'custom_probe'].map((name) => makeProvider(name));
     const vendorOptions: Record<string, unknown> = {
       [RUNTIME_MCP_NAMES_KEY]: providers.map((provider) => provider.name),
-      [CODEX_ALLOWED_BUILTIN_PLUGIN_IDS_KEY]: ['xdt_helper', 'memory', 'docs', 'collab'],
-      [CODEX_DISABLED_BUILTIN_PLUGIN_IDS_KEY]: ['docs'],
+      [CODEX_DISABLED_BUILTIN_PLUGIN_IDS_KEY]: ['docs', 'computer', 'make'],
     };
     try {
       const config = await getPiExtraSpawnConfig(providers, noopLogger(), {
         sessionId: 'pi-capability-catalog', workingDir: '/repo', memoryEnabled: false,
         vendorOptions,
-        botMcpPolicy: { mode: 'allowlist', configured: ['custom_probe'],
-          catalog: [{ name: 'custom_probe', source: 'custom', available: true }] },
       });
       expect(config?.mcpBridge?.servers.map((server) => server.name))
         .toEqual(['cindy_helper', 'custom_probe']);
@@ -358,7 +347,7 @@ describe('piEnvironment per-session identity', () => {
         agentKind: 'pi', workingDir: '/repo', vendorOptions: runtimeOptions,
       }, {})).toMatchObject({ capabilities: [
         { server: 'cindy_helper', status: 'registered' },
-        ...['cindy_memory', 'cindy_docs', 'cindy_computer', 'cindy_make', 'cindy_orca'].map((server) => ({
+        ...['cindy_memory', 'cindy_docs', 'cindy_computer', 'cindy_orca'].map((server) => ({
           server, status: 'unavailable', reason: 'not-mounted-in-current-runtime',
         })),
         { server: 'custom_probe', status: 'registered' },
@@ -369,16 +358,15 @@ describe('piEnvironment per-session identity', () => {
     }
   });
 
-  it('keeps native companion helpers available when memory is disabled', async () => {
+  it('keeps the ordinary helper available when memory is disabled', async () => {
     const config = await getPiExtraSpawnConfig([
       makeProvider('cindy_memory'), makeProvider('cindy_helper'),
     ], noopLogger(), {
       sessionId: 'pi-bot-no-memory', workingDir: '/repo',
       memoryEnabled: false,
-      botMcpPolicy: { mode: 'allowlist', configured: [], catalog: [] },
     });
     expect(config?.mcpBridge?.servers.map((server) => server.name)).toEqual(['cindy_helper']);
-    expect(config?.mcpBridge?.botMemoryFacade).toBe(true);
+    expect(config?.mcpBridge).not.toHaveProperty('botMemoryFacade');
     config?.disposeSessionCtx?.();
   });
 
@@ -649,34 +637,26 @@ describe('piEnvironment per-session identity', () => {
     config!.disposeSessionCtx!();
   });
 
-  it('removes credentials for remote MCPs excluded from one Bot session', async () => {
+  it('removes credentials for a desktop-loopback MCP excluded from an SSH session', async () => {
     const remoteProvider = (name: string, envName: string, secret: string): McpProvider => ({
       name,
       toCodexMcpConfig: () => ({
         type: 'http',
-        url: `https://${name}.example.test/mcp`,
+        url: name === 'excluded_remote' ? 'http://localhost:4321/mcp' : `https://${name}.example.test/mcp`,
         bearerTokenEnvVar: envName,
       }),
       getExtraEnv: () => ({ [envName]: secret }),
     });
     const allowedSecret = 'allowed-remote-secret';
     const excludedSecret = 'excluded-remote-secret';
-    const vendorOptions: Record<string, unknown> = { [CODEX_ALLOWED_BUILTIN_PLUGIN_IDS_KEY]: [] };
+    const vendorOptions: Record<string, unknown> = {};
     const config = await getPiExtraSpawnConfig([
       remoteProvider('allowed_remote', 'ALLOWED_REMOTE_TOKEN', allowedSecret),
       remoteProvider('excluded_remote', 'EXCLUDED_REMOTE_TOKEN', excludedSecret),
     ], noopLogger(), {
-      sessionId: 'pi-bot-remote-allowlist',
+      sessionId: 'pi-remote-filter', remoteHostId: 'ssh-host',
       workingDir: '/repo',
       vendorOptions,
-      botMcpPolicy: {
-        mode: 'allowlist',
-        configured: ['allowed_remote'],
-        catalog: [
-          { name: 'allowed_remote', source: 'custom', available: true },
-          { name: 'excluded_remote', source: 'custom', available: true },
-        ],
-      },
     });
 
     expect(config?.mcpBridge?.servers.map((server) => server.name)).toEqual([
@@ -825,7 +805,7 @@ describe('piEnvironment per-session identity', () => {
     const builtin = makeProvider('cindy_memory');
     const sdkFactory = vi.spyOn(builtin, 'toClaudeSdkConfig');
     const providers = [builtin, ...configs.map((config) => new CustomMcpProvider(config, () => 'TOKEN_CANARY'))];
-    const catalog = buildBotMcpCatalog({ agentKind: 'pi', providers,
+    const catalog = buildRuntimeMcpCatalog({ agentKind: 'pi', providers,
       builtinNames: ['cindy_memory'], customServers: configs });
     expect(sdkFactory).not.toHaveBeenCalled();
     const available = catalog.filter((entry) => entry.available).map((entry) => entry.name);
@@ -849,7 +829,7 @@ describe('piEnvironment per-session identity', () => {
     ].map((config) => ({ ...config, name: config.id, headers: {}, updatedAt: 1 }));
     const builtin = makeProvider('cindy_memory');
     const providers = [builtin, ...configs.map((config) => new CustomMcpProvider(config, () => 'TOKEN_CANARY'))];
-    const catalog = buildBotMcpCatalog({
+    const catalog = buildRuntimeMcpCatalog({
       agentKind: 'pi', remoteHostId: 'ssh-host', providers,
       builtinNames: ['cindy_memory'], customServers: configs,
     });

@@ -1,3 +1,4 @@
+import { isRetiredSession, rememberRetiredSession, resetRetiredSessionAccess } from './retiredSessionAccess';
 import { readResponseSpeedSnapshot, stopResponseSpeed, retryResponseSpeed, resumeResponseSpeed, mergeResponseSpeedStatus, type ResponseSpeedSnapshot } from '@cindy/maker-shared/usage-format';
 import {
   createContext,
@@ -3260,7 +3261,8 @@ export const remoteSessionStore = {
   },
 
   setDeviceSessions(deviceId: string, deviceName: string, rawSessions: readonly RemoteSession[]): void {
-    let nextSessions = rawSessions.map((s) => stamp(s, deviceId, deviceName));
+    for (const session of rawSessions) if (session.source === 'bot') rememberRetiredSession(deviceId, session.id);
+    let nextSessions = rawSessions.filter((s) => s.source !== 'bot' && !isRetiredSession(deviceId, s.id)).map((s) => stamp(s, deviceId, deviceName));
     const existing = shards.get(deviceId);
     if (existing) {
       const localById = new Map(existing.sessions.map((session) => [session.id, session]));
@@ -3275,7 +3277,7 @@ export const remoteSessionStore = {
     // enqueue 落定前的新列表含该 id 但无标,直接替换会提前解开禁发通道。缓存 hydrate
     // 白名单不含此标(mobileHomeListCache.coerceCachedSession),标只存在于本进程内存,
     // 不会出现「无管线接管的孤儿标」。
-    const pendingRows = existing?.sessions.filter((s) => s.pendingLocalCreation === true) ?? [];
+    const pendingRows = existing?.sessions.filter((s) => s.source !== 'bot' && !isRetiredSession(deviceId, s.id) && s.pendingLocalCreation === true) ?? [];
     if (pendingRows.length > 0) {
       const pendingIds = new Set(pendingRows.map((s) => s.id));
       const nextIds = new Set(nextSessions.map((s) => s.id));
@@ -3315,7 +3317,7 @@ export const remoteSessionStore = {
     {
       const snapshotIds = new Set(nextSessions.map((s) => s.id));
       const pendingStatusRows = (existing?.sessions ?? []).filter((row) =>
-        !snapshotIds.has(row.id) && sessionPendingWrites.pendingFields(row.id).includes('status'));
+        row.source !== 'bot' && !isRetiredSession(deviceId, row.id) && !snapshotIds.has(row.id) && sessionPendingWrites.pendingFields(row.id).includes('status'));
       if (pendingStatusRows.length > 0) nextSessions = [...pendingStatusRows, ...nextSessions];
     }
     if (
@@ -3334,18 +3336,28 @@ export const remoteSessionStore = {
   // setDeviceSessions 正常对账替换。与 hydrateMessagesIfEmpty 同一套语义,只作用于会话 shard。
   hydrateDeviceSessionsIfEmpty(deviceId: string, deviceName: string, rawSessions: readonly RemoteSession[]): void {
     if (!deviceId || rawSessions.length === 0 || shards.has(deviceId)) return;
+    for (const session of rawSessions) if (session.source === 'bot') rememberRetiredSession(deviceId, session.id);
     shards.set(deviceId, {
       deviceId,
       deviceName,
       // cacheSeeded 打标:缓存行字段经瘦身/截断(240 字符),只能撑首屏渲染与跳转,
       // 不能作为发送参数;会话页据此在 fresh 元数据到达前禁发(codex review R15)。
       // fresh 路径(setDeviceSessions / upsertDeviceSession)用服务器新对象,天然无标自净。
-      sessions: rawSessions.map((s) => stamp({ ...s, cacheSeeded: true }, deviceId, deviceName)),
+      sessions: rawSessions.filter((s) => s.source !== 'bot' && !isRetiredSession(deviceId, s.id)).map((s) => stamp({ ...s, cacheSeeded: true }, deviceId, deviceName)),
     });
     recomputeSessions();
   },
 
   upsertDeviceSession(deviceId: string, deviceName: string, rawSession: RemoteSession): void {
+    if (rawSession.source === 'bot') rememberRetiredSession(deviceId, rawSession.id);
+    if (isRetiredSession(deviceId, rawSession.id)) {
+      const shard = shards.get(deviceId);
+      if (shard?.sessions.some((s) => s.id === rawSession.id)) {
+        shard.sessions = shard.sessions.filter((s) => s.id !== rawSession.id);
+        recomputeSessions();
+      }
+      return;
+    }
     let stamped = stamp(rawSession, deviceId, deviceName);
     const shard = shards.get(deviceId);
     if (!shard) {
@@ -3378,6 +3390,7 @@ export const remoteSessionStore = {
   },
 
   applySessionPatch(deviceId: string, sessionId: string, patch: Partial<RemoteSession>): void {
+    if (patch.source === 'bot') rememberRetiredSession(deviceId, sessionId);
     const shard = shards.get(deviceId);
     if (!shard) {
       if (patch.status === 'active') reseedHandlers.get(deviceId)?.forEach((handler) => handler());
@@ -3386,6 +3399,12 @@ export const remoteSessionStore = {
     const idx = shard.sessions.findIndex((s) => s.id === sessionId);
     if (idx === -1) {
       if (patch.status === 'active') reseedHandlers.get(deviceId)?.forEach((handler) => handler());
+      return;
+    }
+    // Hide a newly identified legacy row in memory without deleting its saved history.
+    if (isRetiredSession(deviceId, sessionId) || shard.sessions[idx].source === 'bot') {
+      shard.sessions = shard.sessions.filter((s) => s.id !== sessionId);
+      recomputeSessions();
       return;
     }
     let shouldReseedAfterPatch = false;
@@ -4317,10 +4336,24 @@ export const remoteSessionStore = {
     const sessionId = readString(payload, 'sessionId');
     const event = isRecord(payload.event) ? payload.event : null;
     const persistId = readString(payload, 'persistId') ?? undefined;
-    if (sessionId && event) this.applyMakerEvent(sessionId, event, persistId, deviceId);
+    if (sessionId && event && !(deviceId && isRetiredSession(deviceId, sessionId))) {
+      this.applyMakerEvent(sessionId, event, persistId, deviceId);
+    }
   },
 
   applyRemotePush(deviceId: string, channel: string, payload: unknown): void {
+    const pushedSessionId = isRecord(payload) ? readString(payload, 'sessionId')
+      ?? (channel === 'local-db:sessions:created' ? readString(payload, 'id') : null) : null;
+    if (channel === 'local-db:sessions:created' && pushedSessionId && isRecord(payload) && payload.source === 'bot') {
+      this.applySessionPatch(deviceId, pushedSessionId, { source: 'bot' });
+      return;
+    }
+    if (channel === 'local-db:sessions:patched' && pushedSessionId && isRecord(payload)
+      && isRecord(payload.patch) && payload.patch.source === 'bot') {
+      this.applySessionPatch(deviceId, pushedSessionId, { source: 'bot' });
+      return;
+    }
+    if (pushedSessionId && isRetiredSession(deviceId, pushedSessionId)) return;
     if (channel === SESSION_SYNC_CHANNEL) {
       consumeRemoteSessionSync(payload, {
         applyEvent: (event) => this.applyRemotePush(deviceId, 'maker:event', event),
@@ -4594,11 +4627,11 @@ export const remoteSessionStore = {
     emit();
   },
 
-  applySessionActivity(_deviceId: string, payload: unknown): void {
+  applySessionActivity(deviceId: string, payload: unknown): void {
     if (!isRecord(payload)) return;
     const sessionId = readString(payload, 'sessionId');
     const phase = readString(payload, 'phase');
-    if (!sessionId || !isRemoteSessionLiveActivityPhase(phase)) return;
+    if (!sessionId || isRetiredSession(deviceId, sessionId) || !isRemoteSessionLiveActivityPhase(phase)) return;
     const compactDetail = typeof payload.compactDetail === 'string' ? payload.compactDetail : '';
     let changed = false;
     if (phase === 'running' || phase === 'needs-interaction') {
@@ -4659,6 +4692,7 @@ export const remoteSessionStore = {
     persistId?: string,
     deviceId?: string,
   ): void {
+    if (deviceId && isRetiredSession(deviceId, sessionId)) return;
     markSessionMakerActivity(sessionId);
     const type = readString(event, 'type');
     const reconnectCleared = type !== null && type !== 'error' && type !== 'done'
@@ -5091,6 +5125,7 @@ export const remoteSessionStore = {
   },
 
   clear(): void {
+    resetRetiredSessionAccess();
     clearRemoteHistoryViews();
     deviceSessionListMutationEpochFloor = ++nextDeviceSessionListMutationEpoch;
     deviceSessionListMutationEpochs.clear();

@@ -2,8 +2,8 @@
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { AuthorizationMessageCard } from '@/session/AuthorizationMessageCard';
-import type { NormalizedRemoteMessage } from '@/session/messageNormalize';
+
+
 import { InteractionPanel, PluginSetupMessageContent } from '@/session/InteractionPanel';
 import { remoteSessionStore, useSessionPendingInteractions } from '@/session/remoteSessionStore';
 import { clearAllInteractionDrafts, readAskUserDraft, readPlanReviewDraft } from '@/session/interactionDraftStore';
@@ -63,9 +63,9 @@ let root: Root;
 let host: HTMLDivElement;
 const requestId = 'codex:test:0';
 const onError = vi.fn();
-function Harness({ companion = false }: { companion?: boolean }) {
+function Harness() {
   const interactions = useSessionPendingInteractions('s1');
-  return <InteractionPanel companion={companion} deviceId="d1" sessionId="s1" interactions={interactions} onError={onError} />;
+  return <InteractionPanel deviceId="d1" sessionId="s1" interactions={interactions} onError={onError} />;
 }
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -97,7 +97,7 @@ it('keeps multiple selections and the free answer when moving back, remounting, 
       { question: 'Note?' },
     ],
   } }]);
-  await act(async () => root.render(<Harness companion />));
+  await act(async () => root.render(<Harness />));
   await click('interaction.ask.option.1');
   await click('interaction.ask.option.2');
   await click('interaction.ask.submitButton');
@@ -107,7 +107,7 @@ it('keeps multiple selections and the free answer when moving back, remounting, 
   await click('interaction.ask.submitButton');
   expect(host.querySelector<HTMLInputElement>('[data-testid="interaction.ask.textInput"]')?.value).toBe('Keep both');
   await act(async () => root.render(null));
-  await act(async () => root.render(<Harness companion />));
+  await act(async () => root.render(<Harness />));
   expect(host.querySelector<HTMLInputElement>('[data-testid="interaction.ask.textInput"]')?.value).toBe('Keep both');
   resolveInteraction.mockResolvedValueOnce({ accepted: false });
   await click('interaction.ask.submitButton');
@@ -123,7 +123,7 @@ it.each([true, false])('preserves edited plan and feedback through rejected rece
   remoteSessionStore.setPendingInteractions('s1', [{ request: {
     kind: 'plan_review', requestId, plan: '# Original plan\nRead the file.',
   } }]);
-  await act(async () => root.render(<Harness companion />));
+  await act(async () => root.render(<Harness />));
   await click('interaction.plan.editTab');
   await type('interaction.plan.editor', '# Revised plan\nRead only.');
   await click('interaction.plan.minimizeButton');
@@ -147,13 +147,13 @@ it.each([true, false])('preserves edited plan and feedback through rejected rece
   expect(readPlanReviewDraft(requestId)).toBeNull();
 });
 
-it.each([false, true])('restores the last answer after a rejected receipt and clears it after retry (companion=%s)', async (companion) => {
+it('restores the last answer after a rejected receipt and clears it after retry', async () => {
   let reply!: (receipt: { accepted: boolean }) => void;
   resolveInteraction.mockImplementationOnce(() => new Promise((resolve) => { reply = resolve; }));
   remoteSessionStore.setPendingInteractions('s1', [{ request: {
     kind: 'ask_user_question', requestId, questions: [{ question: 'Your answer?' }],
   } }]);
-  await act(async () => root.render(<Harness companion={companion} />));
+  await act(async () => root.render(<Harness />));
   const input = () => host.querySelector<HTMLInputElement>('[data-testid="interaction.ask.textInput"]');
   const submit = () => host.querySelector<HTMLButtonElement>('[data-testid="interaction.ask.submitButton"]')!;
   await act(async () => {
@@ -175,64 +175,13 @@ it.each([false, true])('restores the last answer after a rejected receipt and cl
   expect(readAskUserDraft(requestId)).toBeNull();
 });
 
-
-it.each(['allowOnce', 'deny'])('companion permission preserves complete evidence and %s receipt', async (action) => {
-  const content = 'unique-complete-payload-' + 'x'.repeat(800);
-  remoteSessionStore.setPendingInteractions('s1', [{ request: {
-    kind: 'permission', requestId: 'permission-1', toolName: 'Write',
-    input: { file_path: '/tmp/card-ui-qa.txt', content },
-  } }]);
-  await act(async () => root.render(<Harness companion />));
-  expect(host.textContent).toContain('/tmp/card-ui-qa.txt');
-  expect(host.textContent).not.toContain(content);
-  await act(async () => host.querySelector<HTMLButtonElement>('[data-testid="interaction.permission.detailsButton"]')!.click());
-  expect(host.textContent).toContain(content);
-  resolveInteraction.mockResolvedValueOnce({ accepted: false });
-  await act(async () => host.querySelector<HTMLButtonElement>(`[data-testid="interaction.permission.${action}Button"]`)!.click());
-  expect(resolveInteraction).toHaveBeenLastCalledWith('permission-1', expect.objectContaining({ behavior: action === 'deny' ? 'deny' : 'allow' }));
-  expect(host.querySelector('[data-testid="interaction.permission.card"]')).not.toBeNull();
-  expect(onError).toHaveBeenCalled();
-  resolveInteraction.mockResolvedValueOnce({ accepted: true });
-  await act(async () => host.querySelector<HTMLButtonElement>(`[data-testid="interaction.permission.${action}Button"]`)!.click());
-  expect(host.querySelector('[data-testid="interaction.permission.card"]')).toBeNull();
-});
-
-it('companion permission shows the whole input when no single field leads, never the 500-character preview', async () => {
-  const tail = 'unique-tail-' + 'y'.repeat(40);
-  remoteSessionStore.setPendingInteractions('s1', [{ request: {
-    kind: 'permission', requestId: 'permission-mcp', toolName: 'mcp__notes__append',
-    input: { body: 'z'.repeat(600), target: tail },
-  } }]);
-  await act(async () => root.render(<Harness companion />));
-  expect(host.textContent).toContain(tail);
-});
-
-it('stacks teammate card buttons one per row once any label would wrap at equal width', async () => {
-  textLayouts.clear();
-  remoteSessionStore.setPendingInteractions('s1', [{ request: {
-    kind: 'permission', requestId: 'p-wrap', toolName: 'Read', input: { path: '/tmp/qa.txt' },
-    suggestions: [{ destination: 'session', rules: [{ toolName: 'Read' }] }],
-  } }]);
-  await act(async () => root.render(<Harness companion />));
-  const stacked = () => host.querySelector('[data-testid="interaction.actions.stacked"]');
-  await act(async () => textLayouts.get('interaction.permission.deny')!({ nativeEvent: { lines: [{}] } }));
-  expect(stacked()).toBeNull();
-  // A long label (English 「Always allow this session」 on a narrow card) takes two lines.
-  await act(async () => textLayouts.get('interaction.permission.alwaysAllow')!({ nativeEvent: { lines: [{}, {}] } }));
-  expect(stacked()).not.toBeNull();
-  // Ordinary task cards keep their own layout.
-  textLayouts.clear();
-  await act(async () => root.render(<Harness />));
-  expect(textLayouts.size).toBe(0);
-});
-
 it('preserves session-only persistent permission and the high-risk confirmation step', async () => {
   const sessionRule = { destination: 'session', rules: [{ toolName: 'Read' }] };
   remoteSessionStore.setPendingInteractions('s1', [{ request: {
     kind: 'permission', requestId: 'p-safe', toolName: 'Read', input: { path: '/tmp/qa.txt' },
     suggestions: [sessionRule, { destination: 'project', rules: [{ toolName: 'Read' }] }],
   } }]);
-  await act(async () => root.render(<Harness companion />));
+  await act(async () => root.render(<Harness />));
   resolveInteraction.mockResolvedValue({ accepted: true });
   await click('interaction.permission.alwaysAllowButton');
   expect(resolveInteraction).toHaveBeenLastCalledWith('p-safe', expect.objectContaining({ permissionUpdates: [sessionRule] }));
@@ -277,31 +226,4 @@ it('persistent setup shows actual steps and errors, retires desktop instructions
   expect(host.textContent).not.toContain('interaction.pluginSetup.completeOnDesktop');
   expect(host.textContent).not.toContain('Complete the connection on your computer');
   expect(host.querySelector('[data-testid="interaction.pluginSetup.cancelButton"]')).toBeNull();
-});
-
-
-it('persistent setup cancellation waits for a host terminal update and allows retry after failure', async () => {
-  routeParams.deviceId = 'd1';
-  let receipt!: (value: { accepted: boolean }) => void;
-  const authorization = { kind: 'plugin_setup', requestId: 'setup-1', revision: 1,
-    ghost: { id: 'test-plugin', name: 'Test Plugin' },
-    steps: [{ id: 'connect', title: 'Connect service', phase: 'pending' }] };
-  const message = { authorization } as unknown as NormalizedRemoteMessage;
-  invoke.mockImplementationOnce(() => new Promise(resolve => { receipt = resolve; }));
-  await act(async () => root.render(<AuthorizationMessageCard message={message} />));
-  const cancel = () => host.querySelector<HTMLButtonElement>('[data-testid="interaction.pluginSetup.cancelButton"]');
-  await act(async () => { cancel()!.click(); cancel()!.click(); });
-  expect(invoke).toHaveBeenCalledTimes(1);
-  await act(async () => receipt({ accepted: false }));
-  expect(host.textContent).toContain('devices.companions.actionFailed');
-  expect(cancel()?.disabled).toBe(false);
-  invoke.mockResolvedValueOnce({ accepted: true });
-  await act(async () => cancel()!.click());
-  expect(cancel()).not.toBeNull();
-  expect(host.textContent).not.toContain('interaction.pluginSetup.phase.cancelled');
-  await act(async () => root.render(<AuthorizationMessageCard message={{ authorization: {
-    ...authorization, terminal: true, steps: [{ ...authorization.steps[0], phase: 'cancelled' }],
-  } } as unknown as NormalizedRemoteMessage} />));
-  expect(cancel()).toBeNull();
-  expect(host.textContent).toContain('interaction.pluginSetup.phase.cancelled');
 });

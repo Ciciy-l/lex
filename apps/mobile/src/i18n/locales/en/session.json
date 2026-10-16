@@ -251,6 +251,7 @@
     "deleteMessageTitle": "Delete this message?",
     "deleteMessageBody": "Deleting a user message removes only that message; deleting an AI message removes the entire turn generated after the previous user input. Later messages are kept. On your next send, the AI context is rebuilt from the remaining records.",
     "deleteMessageAction": "Delete this message",
+    "deleteMessageBusy": "Wait for the current response to finish before deleting a message.",
     "readingCapabilities": "Reading {{agent}} capabilities…",
     "editingQueueMessageNumbered": "Editing queued message #{{index}}",
     "editingQueueMessage": "Editing queued message",

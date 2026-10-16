@@ -1,13 +1,7 @@
 import type { Editor } from '@tiptap/core';
 import { Fragment, Slice, type Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { EditorState } from '@tiptap/pm/state';
-import {
-  buildBotReferenceHref,
-  parseBrowserTabReferenceHref,
-  parseDesktopWindowReferenceHref,
-  parsePluginResourceReferenceHref,
-  type AgentInputReference,
-} from '@cindy/maker-shared/agent-input-projection';
+import { parseBrowserTabReferenceHref, parseDesktopWindowReferenceHref, parsePluginResourceReferenceHref, type AgentInputReference } from '@cindy/maker-shared/agent-input-projection';
 
 import type { MentionedResource } from '@/lib/fileTypes';
 import { formatQuoteForSend } from '@/lib/chatQuotes';
@@ -113,19 +107,8 @@ function serializeComposerDocument(
   let hostCapability: SerializedComposerContent['hostCapability'];
 
   const addMention = (attrs: MentionChipAttrs) => {
-    // Slash commands and deep links are represented in the wire text but are
-    // not filesystem resources.
-    if (
-      attrs.kind === 'slash' ||
-      attrs.kind === 'session' ||
-      attrs.kind === 'project' ||
-      attrs.kind === 'browser-tab' ||
-      attrs.kind === 'desktop-window' ||
-      attrs.kind === 'bot' ||
-      attrs.kind === 'plugin-resource' ||
-      attrs.kind === 'plugin-capability'
-    )
-      return;
+    // Old/unknown chip kinds remain plain text and cannot become path grants.
+    if (attrs.kind !== 'file' && attrs.kind !== 'dir' && attrs.kind !== 'agent') return;
     const key = `${attrs.kind}:${attrs.path}`;
     if (seenMentions.has(key)) return;
     seenMentions.add(key);
@@ -365,25 +348,6 @@ function serializeComposerDocument(
               ...(attrs.sourceDescription ? { description: attrs.sourceDescription } : {}),
             });
           }
-          return;
-        }
-        if (attrs.kind === 'bot') {
-          const label = attrs.label
-            .replace(/\s+/g, ' ')
-            .trim()
-            .replace(/([[\]\\])/g, '\\$1');
-          const href = buildBotReferenceHref(attrs.path);
-          const wire = `[${label || 'Bot'}](${href})`;
-          const start = buffer.length;
-          buffer += wire;
-          bufferAgentReferences.push({
-            kind: 'bot',
-            start,
-            end: buffer.length,
-            href,
-            botId: attrs.path,
-            name: attrs.label || attrs.path,
-          });
           return;
         }
         if (attrs.kind === 'dir') {

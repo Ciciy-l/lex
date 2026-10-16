@@ -1,3 +1,4 @@
+import { assertNotRetiredCompanionSession } from '../localDb/retiredCompanions.js';
 import { scanLocalCustomizations } from '../skillhub/customizationScanHost';
 import { readAgentCapabilityCatalog, RUNTIME_MCP_NAMES_KEY, type AgentCapabilityQuery } from './agentCapabilityCatalog.js';
 import { listCindyManagedSkills, prepareCindyCodexSkills } from './managed-skills.js';
@@ -32,18 +33,7 @@ import fsSync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import {
-  Maker,
-  isBotMcpServerAllowed,
-  ClaudeCodeAgent,
-  CodexAgent,
-  configureDefaultImageResizer,
-  generateSessionId,
-  type AgentKind,
-  type InteractionRequest,
-  type AutoReviewDelegate,
-  type McpProvider,
-} from '@cindy/maker-core';
+import { Maker, ClaudeCodeAgent, CodexAgent, configureDefaultImageResizer, generateSessionId, type AgentKind, type InteractionRequest, type AutoReviewDelegate, type McpProvider } from '@cindy/maker-core';
 import { PINNED_OMP_VERSION, probeRemoteAgent } from '@cindy/maker-remote-ssh';
 import type { ProviderView } from '@cindy/model-providers';
 import {
@@ -71,26 +61,13 @@ import { requestHostInteraction } from '../maker-ipc/interactionRouter.js';
 import { markKnownOrcaWorkerSession } from '../maker-ipc/orcaManualInterrupt.js';
 import { markOrcaMcpHydratedIfNeeded } from '../maker-ipc/orcaMcpHydrationCache.js';
 import { preparePersistedOrcaSessionStart } from '../maker-ipc/orcaSessionStartOptions.js';
-import {
-  hydrateBotProfileRuntime,
-  markBotProfileRuntimeApplied,
-  markBotProfileRuntimeFailed,
-  type BotProfileRuntimeDeps,
-  type BotProfileRuntimeSnapshot,
-} from '../maker-ipc/botProfileRuntime.js';
-import { collectBotOwnSkillMounts } from '../maker-ipc/botSkillService.js';
-import { buildBotMcpCatalog } from './botMcpCatalog.js';
-import { createBotCapabilityService, type BotCapabilityServiceDeps, type BotCapabilityUpdate } from '../maker-ipc/botCapabilityService.js';
-import {
-  botProfileDir,
-  ensureBotContentDirs,
-  migrateLegacyBotProfileFolder,
-  readBotProfileFolder,
-} from '../maker-ipc/botProfileFolder.js';
-import {
-  listBotTeammates,
-} from '../localDb/botHistoryScope.js';
-import { prepareBotWorkspaceRuntime } from '../maker-ipc/botWorkspaceRuntime.js';
+
+
+import { buildRuntimeMcpCatalog } from './runtimeMcpCatalog.js';
+
+
+
+
 import type { MakerSessionCreateOpts } from '../maker-ipc/sessionRequest.js';
 import {
   dispatchInterAgentMessage,
@@ -269,10 +246,7 @@ import {
   refreshCustomMcpProviders,
   resetCustomMcpRegistry,
 } from '../mcp-integrations/custom-mcp-registry.js';
-import {
-  ESSENTIAL_PLUGIN_IDS,
-  resolveBotAllowedBuiltinPluginIds,
-} from './plugins/types.js';
+import { ESSENTIAL_PLUGIN_IDS } from './plugins/types.js';
 import { cleanupComputerDriverSession } from '../mcp-integrations/computer.js';
 import { createPluginRegistry, resetPluginRegistry } from './plugins/index.js';
 import {
@@ -286,14 +260,9 @@ import {
 } from '../mcp-integrations/codexEnvironment.js';
 import { REMOTE_ALLOWED_SERVER_NAMES, type CodexHttpBridge } from '../mcp-integrations/codexHttpBridge.js';
 import { setRemoteMcpBridgeTokenRotatedHook } from '../mcp-integrations/remoteMcpBridgeToken.js';
-import type { BotToolsetContext } from '../../shared/botRemoteCapabilities.js';
-import { isBotToolsetProviderAvailable } from './botToolsetAvailability.js';
-import {
-  ensureRemoteMcpForward,
-  buildRemoteCodexSessionMcpConfig,
-  setRemoteMcpForwardRearmedHook,
-  stripRemoteCodexMcpConfig,
-} from '../remote-ssh/codex-remote-mcp.js';
+
+
+import { ensureRemoteMcpForward, setRemoteMcpForwardRearmedHook, stripRemoteCodexMcpConfig } from '../remote-ssh/codex-remote-mcp.js';
 import {
   prepareCcRemoteQueryMcp,
   CC_MCP_DISABLED_FINGERPRINT,
@@ -387,13 +356,8 @@ type RemoteCcQuery = Awaited<
 >;
 
 let _maker: Maker | null = null;
-/** Prepared Bot runtime records waiting for the matching Maker startup result. */
-const pendingBotRuntimeSnapshots = new Map<string, BotProfileRuntimeSnapshot>();
 // Maker copies start options for every runtime, including rebuilds of one task.
 const worktreeRuntimeLeases = new WeakMap<object, WorktreeRuntimeLease>();
-let botRuntimeResourcePreflight:
-  | ((opts: MakerSessionCreateOpts) => Promise<BotProfileRuntimeSnapshot | null>)
-  | null = null;
 let _registerPiAgent: (() => boolean) | null = null;
 /**
  * OMP 与 Pi 同链：正式包把它作为可选受管资产自动准备，网络暂不可用时不阻塞
@@ -623,16 +587,6 @@ export function setBeforeLocalCodexSessionStartHook(hook: (() => Promise<void>) 
   _beforeLocalCodexSessionStartHook = hook;
 }
 
-// Process-lifetime IPC binding: its reconciler reads the dynamic Maker facade and
-// clears owner-scoped bookkeeping by epoch. Keep it across resetMaker; IPC is not
-// registered again after an account switch. MCP factories bind before it is ready.
-let _resolveBotCapabilityAgentKind: BotCapabilityServiceDeps['resolveBotAgentKind'] | null = null;
-export function setBotCapabilityAgentKindResolver(
-  resolver: BotCapabilityServiceDeps['resolveBotAgentKind'] | null,
-): void {
-  _resolveBotCapabilityAgentKind = resolver;
-}
-
 /**
  * detach 某 host 上活跃的远端 codex session (跳过 turn 中的)。
  * 使用点:daemon 被 (重) bootstrap 后 (bridge 重建恢复 / shutdown strip) —
@@ -835,48 +789,6 @@ function getLspPool(): LspServerPool {
   return lspPool;
 }
 
-/** Same Desktop provider instances used by the runtimes, evaluated for this Bot. */
-export function isBotToolsetAvailable(input: BotToolsetContext & { toolsetId: string }): boolean {
-  return isBotToolsetProviderAvailable(_mcpProviders[input.agentKind] ?? [], input);
-}
-
-/** Shared by Bot tools, settings and hydration; never infer registration from raw DB rows. */
-export async function listBotRuntimeMcpServers({ agentKind, remoteHostId }: { agentKind: AgentKind; remoteHostId?: string }) {
-  return buildBotMcpCatalog({
-    agentKind,
-    remoteHostId,
-    providers: _mcpProviders[agentKind] ?? [],
-    builtinNames: getBuiltinMcpServerNames(),
-    customServers: await listCustomMcpRuntimeGenerations(),
-  });
-}
-
-function createDesktopBotCapabilityService() {
-  return createBotCapabilityService({
-    getMaker, getPluginRegistry, isBotToolsetAvailable,
-    listMcpServers: listBotRuntimeMcpServers,
-    resolveBotAgentKind: async (sessionId, chain) => _resolveBotCapabilityAgentKind?.(sessionId, chain) ?? null,
-  });
-}
-
-export function listBotCreationCapabilities(input: Parameters<ReturnType<typeof createBotCapabilityService>['forCreation']>[0]) {
-  return createDesktopBotCapabilityService().forCreation(input);
-}
-
-/** Settings IPC reuses the model-side catalog at its save boundary. */
-export async function validateBotCapabilityAdditions(update: BotCapabilityUpdate): Promise<void> {
-  await createDesktopBotCapabilityService().validateAdditions(update);
-}
-
-/** Portable settings projection used by the remote Bot editor. */
-export async function listBotSettingsCapabilities(input: {
-  callerSessionId: string;
-  kind: 'skill' | 'mcp' | 'toolset';
-}) {
-  const result = await createDesktopBotCapabilityService().list(input);
-  return result.ok ? result.capabilities : [];
-}
-
 /** Get the plugin registry singleton (delegates to plugins/index.ts module-level cache). */
 export function getPluginRegistry() {
   return createPluginRegistry();
@@ -1001,7 +913,7 @@ export function getMaker(): Maker {
         const agentKind = context.agentKind;
         if (agentKind !== 'claude-code' && agentKind !== 'codex' && agentKind !== 'pi' && agentKind !== 'omp')
           return { ok: false, errorCode: 'UNKNOWN_AGENT' };
-        const catalog = await listBotRuntimeMcpServers({ agentKind, remoteHostId: context.remoteHostId });
+        const catalog = await listRuntimeMcpServers({ agentKind, remoteHostId: context.remoteHostId });
         const providers = (_mcpProviders[agentKind] ?? []).map((provider) => ({
           ...provider,
           capability: provider.capability ?? {
@@ -1026,7 +938,6 @@ export function getMaker(): Maker {
             .filter(([, value]) => value && typeof value === 'object' && 'supported' in value)),
           hostCapabilitiesNote: '宿主支持的交互能力，不等于有同名 Agent 工具。Cindy 应用安装更新和重启须通过内置更新界面；check_app_update 仅检查更新。' };
       },
-      botCapabilities: createDesktopBotCapabilityService(),
       createMediaDownloadContext: (sessionId: string, sessionInstanceId: string) => {
         const session = _maker?.getSession(sessionId);
         if (!session || session.instanceId !== sessionInstanceId) return undefined;
@@ -1350,7 +1261,6 @@ export function getMaker(): Maker {
         onOAuthRefresh,
         makerMemoryEnabled,
         makerMemoryScopeKey,
-        botSession,
       }) => {
         const host = getRemoteSshPool().get(remoteHostId);
         if (host?.getStatus() !== 'ready') {
@@ -1370,7 +1280,7 @@ export function getMaker(): Maker {
         // 远端 cc 的协同 MCP 恢复通道:bridge + remote-forward + per-session
         // token,把 cindy_orca / orca_worker_bridge 以 http 形态追加进
         // startParams.mcpServers (cc remote 过滤器本来就放行 http transport)。
-        // 普通任务保留可选 MCP 降级;伙伴缺少 helper 时必须在 query 建立前失败。
+        // 普通任务保留可选 MCP 降级。
         const injected = await prepareCcRemoteQueryMcp(
           {
             host,
@@ -1380,9 +1290,6 @@ export function getMaker(): Maker {
             vendorOptions,
             // per-session Maker Memory 开关 (maker-core 归一后透传)。
             makerMemoryEnabled,
-            botSession,
-            // 同源的 scope key: Bot 会话恒为 `bot:<botId>`, 缺失时远端工具
-            // 会回落 workdir 键, 与本地 prompt 注入的伙伴记忆分家。
             ...(makerMemoryScopeKey ? { makerMemoryScopeKey } : {}),
           },
           {
@@ -1744,13 +1651,6 @@ export function getMaker(): Maker {
             extraEnv: {},
             codexProxyActive: false,
             codexBrowserUseAvailable: true,
-            buildSessionMcpConfig: (instance: string) =>
-              buildRemoteCodexSessionMcpConfig(ctx.remoteHostId!, instance, {
-                bridgeInstanceId: getActiveCodexBridgeInstanceId(),
-                serverNames: getActiveCodexBridgeServerNames() ?? [],
-                collabEnabled: pluginRegistry.isEnabled('collab'),
-                makerMemoryEnabled: _maker?.makerMemory?.isEnabled() ?? false,
-              }),
           };
         }
         const isControlPlane = ctx.hostPurpose === 'control-plane';
@@ -2761,78 +2661,6 @@ export function getMaker(): Maker {
       },
     });
 
-    const buildBotRuntimeDeps = (skillLinksChanged = false): BotProfileRuntimeDeps => ({
-      listSkills: async ({ agentKind, workingDir, remoteHostId }) => {
-        if (!_maker) throw new Error('Maker is not ready while hydrating Bot runtime');
-        const result = await _maker.listAgentSkills(agentKind, {
-          workingDir,
-          remoteHostId,
-          forceReload: agentKind === 'codex' && skillLinksChanged,
-        });
-        return result.skills;
-      },
-      listMcpServers: listBotRuntimeMcpServers,
-      listToolsets: async ({ botId, agentKind, workingDir, remoteHostId }) => {
-        const registry = getPluginRegistry();
-        return Promise.all(
-          registry.getPlugins().map(async (plugin) => {
-            const state = await registry.getEnableState(plugin.id, workingDir);
-            return {
-              id: plugin.id,
-              name: plugin.name,
-              essential: ESSENTIAL_PLUGIN_IDS.has(plugin.id),
-              available:
-                state.effectiveEnabled &&
-                isBotToolsetAvailable({
-                  botId,
-                  workingDir,
-                  agentKind,
-                  remoteHostId,
-                  toolsetId: plugin.id,
-                }),
-              version: plugin.version,
-            };
-          }),
-        );
-      },
-      // 伙伴自己沉淀的技能(本机 userData);remote 会话由 hydrate 侧跳过。
-      listOwnSkills: async ({ botId }) => collectBotOwnSkillMounts(botId),
-      // 伙伴的家在哪(本机 userData),外加用户维护的 prompt overlay。身份与用户画像不走
-      // 这里 —— 它们已经由对账收进冻结快照,运行时认快照。
-      readProfileFolder: async ({ botId }) => {
-        const ownerRoot = ownerScopedUserDataPath();
-        const legacyUserDataDir = app.getPath('userData');
-        await migrateLegacyBotProfileFolder(ownerRoot, legacyUserDataDir, botId);
-        const folder = await readBotProfileFolder(ownerRoot, botId);
-        return {
-          homeDir: botProfileDir(ownerRoot, botId),
-          contentWritableDirs: await ensureBotContentDirs(ownerRoot, botId, legacyUserDataDir),
-          systemPromptOverride: folder.systemPromptOverride,
-        };
-      },
-      readMemoryIndex: async (scopeKey) =>
-        (await makerMemoryManager.getStore(scopeKey)).getIndex(),
-      // 队友名册进提示词(见 buildBotTeammateRoster)。
-      listTeammates: (input) => listBotTeammates(input),
-      readSkillSource: async ({ path: skillPath, remoteHostId }) => {
-        if (!remoteHostId) return fs.readFile(skillPath, 'utf8');
-        const remoteHost = getRemoteSshPool().get(remoteHostId);
-        if (!remoteHost) throw new Error(`remote SSH host "${remoteHostId}" not found`);
-        return createRemotePiFileOps(remoteHost).readFile(skillPath);
-      },
-      fingerprintSkillSource: async ({ path: skillPath, remoteHostId }) => {
-        if (remoteHostId) {
-          const remoteHost = getRemoteSshPool().get(remoteHostId);
-          if (!remoteHost) throw new Error(`remote SSH host "${remoteHostId}" not found`);
-          return createRemotePiFileOps(remoteHost).sha256File(skillPath);
-        }
-        const hash = createHash('sha256');
-        const stream = fsSync.createReadStream(skillPath);
-        for await (const chunk of stream) hash.update(chunk);
-        return hash.digest('hex');
-      },
-    });
-
     _maker = new Maker({
       agents: makerAgents,
       storage: desktopSessionStorage,
@@ -2848,13 +2676,13 @@ export function getMaker(): Maker {
             ? acquireRemoteCodexActivityAdmission(remoteHostId)
             : undefined,
         prepareStartOptions: async (sessionId, opts) => {
-          pendingBotRuntimeSnapshots.delete(sessionId);
+          await assertNotRetiredCompanionSession(sessionId);
           const providerReady = await ensureCurrentAccountProviderReadiness();
           if (!providerReady) {
             // 未登录 / 正在切账号时这里恒 false。主机通路只把失败压成 errorCode +
             // message 两个字符串，所以稳定标记必须写进 message 本身：调用方（如 Bot
             // 委派）据此把「这不会自愈，得让用户去登录」和「瞬时故障，值得重试」分开，
-            // 而不是无差别重试到天荒地老。见 botDelegationDispatchOutcome.ts。
+            // 而不是无差别重试到天荒地老。见派发结果的明确失败分类。
             throw Object.assign(
               new Error(
                 `${ACCOUNT_PROVIDER_NOT_READY_CODE}: account provider models are not ready `
@@ -2883,7 +2711,7 @@ export function getMaker(): Maker {
           }
           const createOpts = opts as MakerSessionCreateOpts;
           createOpts.id ??= sessionId;
-          await prepareBotWorkspaceRuntime(createOpts);
+
           if (!createOpts.remoteHostId && createOpts.workingDir) {
             const lease = await acquireWorktreeRuntimeLease(sessionId, createOpts.workingDir);
             if (lease) worktreeRuntimeLeases.set(opts, lease);
@@ -2901,46 +2729,9 @@ export function getMaker(): Maker {
               });
             }
           }
-          // 主干那半还有一段「codex 专用」的 disabledPluginIds 设置,这里**有意不取**:
-          // 下面那段是它的超集(不限 agentKind,且把伙伴的 disabledToolsets 也并进去),
-          // 取了会先写一次再被覆盖,平白多一次赋值和一条读不懂的重复逻辑。
-          const botRuntimeSnapshot = await hydrateBotProfileRuntime(
-            createOpts,
-            buildBotRuntimeDeps(skillLinksChanged),
-          );
-          if (botRuntimeSnapshot) {
-            pendingBotRuntimeSnapshots.set(sessionId, botRuntimeSnapshot);
-          }
-          if (botRuntimeSnapshot?.unavailableSkills.length) {
-            desktopMakerLogger.warn('Bot configured Skills unavailable for runtime', {
-              botId: botRuntimeSnapshot.botId,
-              profileVersion: botRuntimeSnapshot.profileVersion,
-              agentKind: createOpts.agentKind,
-              skills: botRuntimeSnapshot.unavailableSkills,
-            });
-          }
-          const disabledPluginIds = [
-            ...new Set([
-              ...getPluginRegistry().getDisabledRuntimePluginIds(opts.workingDir),
-              ...(botRuntimeSnapshot?.disabledToolsets ?? []),
-            ]),
-          ];
           opts.vendorOptions = {
             ...(opts.vendorOptions ?? {}),
-            [CODEX_DISABLED_BUILTIN_PLUGIN_IDS_KEY]: disabledPluginIds,
-            ...(botRuntimeSnapshot
-              ? {
-                  [RUNTIME_MCP_NAMES_KEY]: (_mcpProviders[createOpts.agentKind] ?? [])
-                    .filter((provider) => isBotMcpServerAllowed(createOpts.botRuntimeProfile?.mcpPolicy, provider.name))
-                    .map((provider) => provider.name),
-                  [CODEX_ALLOWED_BUILTIN_PLUGIN_IDS_KEY]: [
-                    ...resolveBotAllowedBuiltinPluginIds(
-                      createOpts.botRuntimeProfile?.toolsetPolicy.catalog ?? [],
-                      createOpts.botRuntimeProfile?.toolsetPolicy.configured ?? [],
-                    ),
-                  ],
-                }
-              : {}),
+            [CODEX_DISABLED_BUILTIN_PLUGIN_IDS_KEY]: getPluginRegistry().getDisabledRuntimePluginIds(opts.workingDir),
           };
         },
         onBeforeStart: async ({ agentKind, workingDir, remoteHostId }) => {
@@ -2971,20 +2762,6 @@ export function getMaker(): Maker {
           if (createOpts.orcaRole === 'worker') {
             markKnownOrcaWorkerSession(sessionId);
           }
-          const snapshot = pendingBotRuntimeSnapshots.get(sessionId);
-          if (snapshot) {
-            try {
-              const transitioned = await markBotProfileRuntimeApplied(snapshot);
-              if (!transitioned) {
-                desktopMakerLogger.warn('Bot runtime snapshot was not prepared at success boundary', {
-                  sessionId,
-                  snapshotId: snapshot.snapshotId,
-                });
-              }
-            } finally {
-              pendingBotRuntimeSnapshots.delete(sessionId);
-            }
-          }
         },
         onStartFailed: async ({ sessionId, options, stage, error, runtimeMayBeAlive }) => {
           const lease = worktreeRuntimeLeases.get(options);
@@ -2992,20 +2769,6 @@ export function getMaker(): Maker {
             await releaseWorktreeRuntimeLease(lease).catch((error) => {
               desktopMakerLogger.warn('worktree runtime lease release postponed', { sessionId, code: (error as NodeJS.ErrnoException).code });
             });
-          }
-          const snapshot = pendingBotRuntimeSnapshots.get(sessionId);
-          if (!snapshot) return;
-          try {
-            const transitioned = await markBotProfileRuntimeFailed(snapshot, { stage, error });
-            if (!transitioned) {
-              desktopMakerLogger.warn('Bot runtime snapshot was not prepared at failure boundary', {
-                sessionId,
-                snapshotId: snapshot.snapshotId,
-                stage,
-              });
-            }
-          } finally {
-            pendingBotRuntimeSnapshots.delete(sessionId);
           }
         },
         onStartCleanupSucceeded: async (sessionId, options) => {
@@ -3044,12 +2807,6 @@ export function getMaker(): Maker {
         },
       },
     });
-    botRuntimeResourcePreflight = async (opts) => {
-      const preflightOpts = { ...opts };
-      return hydrateBotProfileRuntime(preflightOpts, buildBotRuntimeDeps(), {
-        persistSnapshot: false,
-      });
-    };
     _registerPiAgent = () => {
       if (!_maker || _maker.listAvailableAgents().includes('pi')) return false;
       const next = buildPiAgentForDesktop();
@@ -3304,19 +3061,6 @@ export function registerOmpAgentIfAvailable(): boolean {
 }
 
 /**
- * Resolve and compare the complete frozen Bot resource bundle without creating
- * a runtime snapshot or touching the currently live Agent process.
- */
-export async function preflightBotRuntimeResources(
-  opts: MakerSessionCreateOpts,
-): Promise<BotProfileRuntimeSnapshot | null> {
-  if (!botRuntimeResourcePreflight) {
-    throw new Error('Bot runtime resource preflight is unavailable before Maker initialization');
-  }
-  return botRuntimeResourcePreflight(opts);
-}
-
-/**
  * 重置 Maker 单例（切账号 / 测试用）。
  */
 export function resetMaker(): void {
@@ -3325,7 +3069,7 @@ export function resetMaker(): void {
   setAnthropicModelProbe(null);
   setCodexAppliedCustomProviderRoutes([]);
   _maker = null;
-  botRuntimeResourcePreflight = null;
+
   _registerPiAgent = null;
   _registerOmpAgent = null;
   _codexAgent = null;
@@ -3625,3 +3369,8 @@ export async function shutdownLspServerPool(): Promise<void> {
 
 // re-exports for IPC layer
 export { desktopClaudeAuthAdapter, desktopCodexAuthAdapter };
+
+/** Runtime catalog shared by custom MCP settings and ordinary task capabilities. */
+export async function listRuntimeMcpServers({agentKind,remoteHostId}:{agentKind:AgentKind;remoteHostId?:string}) {
+  return buildRuntimeMcpCatalog({agentKind,remoteHostId,providers:_mcpProviders[agentKind]??[],builtinNames:getBuiltinMcpServerNames(),customServers:await listCustomMcpRuntimeGenerations()});
+}

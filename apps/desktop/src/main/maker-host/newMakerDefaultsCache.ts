@@ -1,4 +1,4 @@
-import { normalizeBotModelChain, type BotModelRoute } from '../../shared/botModelChain.js';
+import { normalizeModelRoutes, type ModelRoute } from '../../shared/modelRoute.js';
 import { isDataOwnerPushStamp, type DataOwnerPushStamp } from '../../shared/dataOwnerPush.js';
 import {
   DEFAULT_ORCA_WORKER_PERMISSION_MODE,
@@ -36,7 +36,7 @@ interface VendorPrefsSnapshot {
 export interface NewMakerDraftSnapshot {
   /** Model picker preferences captured in the same owner-fenced envelope. */
   providerModelMemory?: ProviderModelMemorySnapshot;
-  selectedRoute?: BotModelRoute;
+  selectedRoute?: ModelRoute;
   lastByVendor: Partial<Record<VendorKey, VendorPrefsSnapshot>>;
   /** 每个 vendor 是否由用户在 New Maker picker 明确选过模型；旧 renderer 缺省不提供。 */
   modelChosenByVendor?: Partial<Record<VendorKey, boolean>>;
@@ -102,7 +102,7 @@ export function syncNewMakerDraftCache(
   const record = (value: unknown) => !!value && typeof value === 'object' && !Array.isArray(value);
   if (!record(p.lastByVendor) || !record(p.fastModeByModel) || !record(p.effortByModel)) return false;
   setNewMakerDraftCache({
-    selectedRoute: normalizeBotModelChain([p.selectedRoute])[0],
+    selectedRoute: normalizeModelRoutes([p.selectedRoute])[0],
     ...(record(p.providerModelMemory) ? { providerModelMemory: p.providerModelMemory } : {}),
     lastByVendor: p.lastByVendor!,
     ...(record(p.modelChosenByVendor) ? { modelChosenByVendor: p.modelChosenByVendor } : {}),
@@ -261,7 +261,7 @@ export function getRemoteNewMakerDefaultsByVendor(): {
 }
 
 /** Read only the active owner’s current selection; never reuse another account’s mirror. */
-export function getSelectedNewMakerRoute(ownerScope: string): BotModelRoute | undefined {
+export function getSelectedNewMakerRoute(ownerScope: string): ModelRoute | undefined {
   return selectedRouteOwner === ownerScope ? cache?.selectedRoute : undefined;
 }
 

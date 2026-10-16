@@ -5,7 +5,8 @@
  * 参数在被控端再次校验，避免 allowlist 只能校验 channel、不能校验 payload 的缺口。
  */
 import { ipcMain } from 'electron';
-import { eq } from 'drizzle-orm';
+import { and, eq, not } from 'drizzle-orm';
+import { retiredCompanionSessionSql } from '../retiredCompanionSql.js';
 import { DL_HISTORY_MESSAGES_CHANNEL } from '@cindy/device-link';
 
 import {
@@ -270,7 +271,7 @@ const defaultSessionExists = async (sessionId: string): Promise<boolean> => {
   const rows = await getDbClient().drizzle
     .select({ id: sessions.id })
     .from(sessions)
-    .where(eq(sessions.id, sessionId))
+    .where(and(eq(sessions.id, sessionId), not(retiredCompanionSessionSql(sessions.id))))
     .limit(1);
   return rows.length > 0;
 };

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isContinuationMessage } from '@cindy/maker-shared/synthetic-trigger';
 import { throwIpcError } from '../../utils/ipcValidate';
 import { isDeliveryProseText } from '@cindy/maker-shared/message-render';
 import { parseMessageToolUse } from '@cindy/maker-shared/message-normalize';
@@ -96,7 +97,8 @@ export function createHistoryViewReader<T extends HistoryMessageSource>(deps: Hi
         // would become the "last answer" and escape its completed work group.
         // Uses the projection's seal, so a cost-stamped interrupted answer still
         // closes its turn when it is the first item of the newer page.
-        const context = beforeAnchor?.role === 'assistant' && completesHistoryTurn(beforeAnchor)
+        const context = beforeAnchor && (isContinuationMessage(beforeAnchor)
+          || (beforeAnchor.role === 'assistant' && completesHistoryTurn(beforeAnchor)))
           ? beforeAnchor : undefined;
         const projected = projectHistoryView(
           [...raw.slice(boundary), ...live, ...(context ? [context] : [])],

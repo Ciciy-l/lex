@@ -1,3 +1,4 @@
+import { publicScheduleRunWhere } from './publicScheduleSql.js';
 /**
  * scheduler run 费用账本。
  *
@@ -5,7 +6,7 @@
  * 保存其聚合快照，供 Run History 直接读取。更新按“补丁前后差值”执行，同一消息
  * 重放不会重复累计，估算值改为真实费用时也能从两栏之间正确搬移。
  */
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 
 import { getDbClient } from '../localDb/client/current';
 import { scheduleRuns } from '../localDb/schema';
@@ -148,7 +149,7 @@ export async function applyScheduleRunCostMetaChange(
           ELSE 'exact'
         END`,
       })
-      .where(eq(scheduleRuns.id, change.runId));
+      .where(and(eq(scheduleRuns.id, change.runId), publicScheduleRunWhere()));
   }
 }
 
@@ -179,7 +180,7 @@ export async function recordScheduleRunCostDirect(args: {
       costCurrency: scheduleRuns.costCurrency,
     })
     .from(scheduleRuns)
-    .where(eq(scheduleRuns.id, runId))
+    .where(and(eq(scheduleRuns.id, runId), publicScheduleRunWhere()))
     .limit(1);
   if (!run) return null;
   if (run.costCurrency && run.costCurrency !== money.currency) {
@@ -217,7 +218,7 @@ export async function recordScheduleRunCostDirect(args: {
               ELSE 'zero'
             END`,
     })
-    .where(eq(scheduleRuns.id, runId))
+    .where(and(eq(scheduleRuns.id, runId), publicScheduleRunWhere()))
     .run();
   const changes = (result as unknown as { changes?: number }).changes;
   if (typeof changes !== 'number' || changes === 0) return null;

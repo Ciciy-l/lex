@@ -4,7 +4,8 @@
  *   - 上游 SSE → Anthropic SSE 的端到端写回(经真实 ServerResponse)
  *   - count_tokens 本地估算、no-provider 400、buildHeaders 失败 502、未实现 wireProtocol fail-fast
  */
-import { createServer, request as httpRequest, type Server } from 'node:http';
+import { EventEmitter } from 'node:events';
+import { createServer, request as httpRequest, type Server, type ServerResponse } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createResponsesHandler, type BridgeSessionPrefs, type ResponsesBridgeHandler } from '../handler.js';
@@ -419,6 +420,93 @@ describe('createResponsesHandler', () => {
       content: [{ type: 'text', text: 'hi' }],
       stop_reason: 'end_turn',
     });
+  });
+
+  it.each([false, undefined])('headerless SSE returns a complete message with stream=%s', async (stream) => {
+    for (const prefix of ['', '\r\n\r\nevent: response.created\n', 'id: 1\n', 'retry: 1000\n', ': keepalive\n\n']) {
+      // A ReadableStream avoids Response's automatic text/plain header for strings.
+      const upstream = new Response(rawStream(prefix + OK_SSE.map((event) => `data: ${event}\n\n`).join('')));
+      expect(upstream.headers.has('content-type')).toBe(false);
+      vi.stubGlobal('fetch', vi.fn(async () => upstream));
+      const handler = createResponsesHandler({ providers: [providerConfig()] });
+      const result = await invoke(handler, { model: 'chatgpt/gpt-5.5', messages: [], ...(stream === false ? { stream } : {}) });
+      expect(result.status).toBe(200);
+      expect(result.headers['content-type']).toContain('application/json');
+      expect(JSON.parse(result.text)).toMatchObject({
+        type: 'message', model: 'chatgpt/gpt-5.5',
+        content: [{ type: 'text', text: 'hi' }], stop_reason: 'end_turn',
+        usage: { input_tokens: 1, output_tokens: 1 },
+      });
+    }
+  });
+
+  it.each([undefined, ''])('keeps headerless JSON responses with Content-Type=%s', async (contentType) => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(rawStream(JSON.stringify({
+      id: 'r', status: 'completed',
+      output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'data: remains JSON text' }] }],
+      usage: { input_tokens: 2, output_tokens: 3 },
+    })), { headers: contentType === undefined ? {} : { 'content-type': contentType } })));
+    const result = await invoke(createResponsesHandler({ providers: [providerConfig()] }), { model: 'chatgpt/gpt-5.5', messages: [] });
+    expect(result.status).toBe(200);
+    expect(JSON.parse(result.text)).toMatchObject({ content: [{ type: 'text', text: 'data: remains JSON text' }] });
+  });
+
+  it.each(['application/json', 'text/plain', 'text/html'])('does not override explicit %s with SSE sniffing', async (contentType) => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(sse(OK_SSE), { headers: { 'content-type': contentType } })));
+    const result = await invoke(createResponsesHandler({ providers: [providerConfig()] }), { model: 'chatgpt/gpt-5.5', messages: [], stream: false });
+    expect(result.status).toBe(502);
+    expect(JSON.parse(result.text)).toMatchObject({ type: 'error', error: { type: 'api_error' } });
+  });
+
+  it.each(['', '  \n', ': keepalive\n\ndata: [DONE]\n\n', 'data: not-json\n\n', '<html>gateway error</html>'])('rejects invalid or empty headerless content %j', async (body) => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(rawStream(body))));
+    const result = await invoke(createResponsesHandler({ providers: [providerConfig()] }), { model: 'chatgpt/gpt-5.5', messages: [] });
+    expect(result.status).toBe(502);
+    expect(JSON.parse(result.text)).toMatchObject({ type: 'error', error: { type: 'api_error' } });
+  });
+
+  it('preserves a headerless SSE upstream error instead of returning a successful empty message', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(sse([JSON.stringify({
+      type: 'response.failed', response: { status: 'failed', error: { code: 'context_length_exceeded', message: 'prompt too large' } },
+    })]))));
+    const result = await invoke(createResponsesHandler({ providers: [providerConfig()] }), { model: 'chatgpt/gpt-5.5', messages: [] });
+    expect(result.status).toBe(502);
+    expect(result.text).toContain('[context_length_exceeded] prompt too large');
+  });
+
+  it('cancels an oversized headerless body before SSE parsing', async () => {
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode('data: ' + 'x'.repeat(16 * 1024 * 1024))); },
+      cancel,
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body)));
+    const result = await invoke(createResponsesHandler({ providers: [providerConfig()] }), { model: 'chatgpt/gpt-5.5', messages: [] });
+    expect(result.status).toBe(502);
+    expect(result.text).toContain('exceeds 16777216 bytes');
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(body.locked).toBe(false);
+  });
+
+  it('does not write an error after the client closes during headerless buffering', async () => {
+    const response = Object.assign(new EventEmitter(), { writeHead: vi.fn(), end: vi.fn() });
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) { response.emit('close'); controller.error(new Error('aborted')); },
+    }, { highWaterMark: 0 });
+    let upstreamSignal: AbortSignal | null | undefined;
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+      upstreamSignal = init.signal;
+      return new Response(body);
+    }));
+    await createResponsesHandler({ providers: [providerConfig()] }).handle({
+      parsedBody: { model: 'chatgpt/gpt-5.5', messages: [] },
+      ctx: { method: 'POST', url: '/v1/messages', headers: {} },
+      res: response as unknown as ServerResponse,
+    });
+    expect(upstreamSignal?.aborted).toBe(true);
+    expect(response.writeHead).not.toHaveBeenCalled();
+    expect(response.end).not.toHaveBeenCalled();
+    expect(body.locked).toBe(false);
   });
 
   it('stream:false 上游 SSE 事件跨多行 data: → 按空行合并后解析,不误判成坏帧(review 反馈)', async () => {

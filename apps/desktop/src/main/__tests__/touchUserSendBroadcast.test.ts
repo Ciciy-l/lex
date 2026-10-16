@@ -437,6 +437,7 @@ describe('persistSessionFields(远程 set-* 回流:字段白名单 + 广播)', (
   }
 
   it('只持久化 + 广播白名单字段(model/providerId/effort/permissionMode/fastMode/extraDirs),其余丢弃', async () => {
+    h.route.row = { id: 'sess-1' };
     await persistSessionFields('sess-1', {
       model: 'opus-4-8',
       effort: 'high',
@@ -455,6 +456,7 @@ describe('persistSessionFields(远程 set-* 回流:字段白名单 + 广播)', (
   // 回归:providerId 曾漏入白名单 → 被控端不写 provider_id + 广播 patch 不带 providerId →
   // 控制端 mirror 的 session.providerId 永不收敛、跨来源切换(GPT→Opus)模型选择器置灰吃满 5s。
   it('providerId(per-session 来源)随 set-model 一并写库 + 广播', async () => {
+    h.route.row = { id: 'sess-p' };
     await persistSessionFields('sess-p', {
       model: 'claude-opus-4-8',
       providerId: 'anthropic',
@@ -469,6 +471,7 @@ describe('persistSessionFields(远程 set-* 回流:字段白名单 + 广播)', (
   });
 
   it('providerId=null(清除显式来源、回落默认路由)同样写库 + 广播', async () => {
+    h.route.row = { id: 'sess-p2' };
     await persistSessionFields('sess-p2', { providerId: null } as Record<string, unknown>);
 
     expect(h.updateSetCalls).toHaveLength(1);
@@ -477,6 +480,7 @@ describe('persistSessionFields(远程 set-* 回流:字段白名单 + 广播)', (
   });
 
   it('全是白名单字段(fastMode / extraDirs / permissionMode)→ 原样回流', async () => {
+    h.route.row = { id: 'sess-x' };
     await persistSessionFields('sess-x', {
       fastMode: true,
       extraDirs: ['/a', '/b'],
@@ -487,6 +491,15 @@ describe('persistSessionFields(远程 set-* 回流:字段白名单 + 广播)', (
       extraDirs: ['/a', '/b'],
       permissionMode: 'plan',
     });
+  });
+
+  it('更新未匹配可用任务行时不广播成功 patch', async () => {
+    h.route.row = null;
+    await persistSessionFields('missing-or-retired', { model: 'opus-4-8' });
+
+    expect(h.updateSetCalls).toEqual([{ model: 'opus-4-8' }]);
+    expect(h.tapWindowBroadcast).not.toHaveBeenCalled();
+    expect(h.webContentsSend).not.toHaveBeenCalled();
   });
 
   it('patch 不含任何白名单字段 → 早退:不写库、不广播', async () => {

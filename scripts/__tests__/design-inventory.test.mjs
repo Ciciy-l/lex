@@ -113,14 +113,6 @@ test('extractRouterFacts: 真实 router.tsx 的三类去向逐条钉死', () => 
   assert.deepEqual(production.map((row) => `${row.path} ${row.component}`), [
     '/add-account AddAccountLoginPage',
     '/apps/:ghostId GhostMainViewFeatureLayout',
-    '/bots BotsHomeView',
-    '/bots/:botId BotsHomeView',
-    '/bots/:botId/direct/:threadId BotDirectMessageView',
-    '/bots/:botId/history/:sessionId BotHistorySessionView',
-    '/bots/:botId/session/:sessionId BotSessionView',
-    '/bots/groups/:groupId BotGroupChatView',
-    '/bots/remote/:deviceId/:botId RemoteBotSessionView',
-    '/bots/roster BotRosterView',
     '/cc-agent/:sessionId CCAgentSessionView',
     '/cc-agent/boot SecondaryWindowBootGate',
     '/cc-agent/files/:sessionId WorkdirBrowseRoute',
@@ -144,6 +136,7 @@ test('extractRouterFacts: 真实 router.tsx 的三类去向逐条钉死', () => 
   assert.deepEqual(redirects.map((row) => `${row.path} -> ${row.to}`), [
     '/ -> /cc-agent',
     '/billing -> /settings?tab=billing',
+    '/bots/* -> /cc-agent',
     '/cc-agent -> (runtime session redirect)',
     '/cc-agent/new-dialogue -> /cc-agent/new',
     '/cc-agent/orca/new -> /cc-agent/new',
@@ -157,7 +150,6 @@ test('extractRouterFacts: 真实 router.tsx 的三类去向逐条钉死', () => 
     '/ LocalDbGate',
     '/ MainLayout',
     '/ ProtectedRoute',
-    '/bots BotsFeatureLayout',
     '/cc-agent CCAgentFeatureLayout',
     '/login GuestRoute',
     '/skillhub SkillhubFeatureLayout',
@@ -1270,7 +1262,7 @@ test('Mobile actual route families and shared visible consumers are discoverable
   assert.equal(coverage.mapped.find(r=>r.path.endsWith('devices/desktop/[deviceId].tsx')).component, '@/remote-desktop/RemoteDesktopScreen');
   const { surfaces } = buildGeneratedSurfaces(ROOT);
   for (const [id, ends] of [
-    ['mobile.chat.session', ['MessageRenderer.tsx', 'CompanionMessageCard.tsx', 'AuthorizationMessageCard.tsx', 'FailedScheduleNotice.tsx']],
+    ['mobile.chat.session', ['MessageRenderer.tsx', 'InteractionPanel.tsx', 'FailedScheduleNotice.tsx']],
     ['mobile.remote-desktop', ['RemoteDesktopScreen.tsx', 'viewerHtml.ts']],
     ['mobile.settings', ['settings.tsx']],
     ['mobile.overlay.connection-startup', ['ConnectionNoticeOverlay.tsx', 'ConnectionBanner.tsx']],

@@ -1,6 +1,6 @@
 import { readResponseSpeedSnapshot, stopResponseSpeed, retryResponseSpeed, resumeResponseSpeed, mergeResponseSpeedStatus, type ResponseSpeedSnapshot } from '@cindy/maker-shared/usage-format';
 import type { ImMessageSource } from '../../shared/imMessageSource';
-import { readBotAuthorizationCard } from '../../shared/botAuthorization';
+
 import { readRemoteHistoryCache, remoteHistoryCacheWriter } from './remoteHistoryCache';
 /**
  * makerChatStore — Module-level store for Maker chat (Claude / Codex), sharded by sessionId.
@@ -82,8 +82,8 @@ import type {
 import { normalizeAgentInputClearBoundaryMs } from '../../shared/agentInputQueue';
 import { hasUserVisibleText } from '../../shared/visibleText';
 import { readReviewRunMeta } from '../../shared/reviewRun';
-import { readBotCollaborationMeta } from '../../shared/botCollaboration';
-import { readBotDirectMessageMeta } from '../../shared/botDirectMessage';
+
+
 import {
   deriveAutoTitleSeed,
   reconcileSessionRefsForText,
@@ -376,9 +376,6 @@ export interface AskUserQuestionItem {
 }
 
 export interface ChatMessage {
-  /** Private Bot reply provenance, projected from persisted/live agent metadata. */
-  botPrivateReply?: boolean;
-  botLearning?: import('@cindy/maker-shared/bot-learning').BotLearningReceipt[];
   clientId: string;
   /** Server message id when this row came from history; used as a pagination cursor. */
   id?: string;
@@ -509,16 +506,6 @@ export interface ChatMessage {
      */
     | 'auto-resume-pending'
     | 'agent-switch'
-    /** 对进行中后台任务的补充消息留痕。 */
-    | 'bot-session-task-message'
-    /** 伙伴发起的可追踪后台任务。 */
-    | 'bot-session-task'
-    /**
-     * 伙伴之间的私聊入口：消息正文单独存储，这里只投影一枚可打开的时间线痕迹。
-     * 它不进入左栏，也不与后台任务卡混用。
-     */
-    | 'bot-direct-message'
-    | 'bot-authorization'
     | 'context-rebuild';
   systemCardData?: Record<string, unknown>;
   /** FP-3: plan_review message fields */
@@ -2656,10 +2643,6 @@ export interface SessionChatState {
    * review)。transition snapshot 与 hasSessionTerminalError 都按此豁免。
    */
   lastStopWasSideTask: boolean;
-  /** Successful automatic private replies remain in history without completion alerts. */
-  lastStopWasPrivateReply?: boolean;
-  /** The last turn ran in a hidden Bot group lane; the group chat owns its alerts. */
-  lastStopWasGroupLane?: boolean;
   /**
    * 后台 subagent「唤醒桥接」标记(claude-code 专用)。
    *
@@ -2863,8 +2846,6 @@ function createInitialState(): SessionChatState {
     planModeEnabled: false,
     planModeRev: 0,
     lastStopWasSideTask: false,
-    lastStopWasPrivateReply: false,
-    lastStopWasGroupLane: false,
     pendingTaskWake: 0,
     pendingTaskWakeDuringTurn: 0,
     pendingTaskWakeStarted: false,
@@ -5313,7 +5294,6 @@ export function handleStreamEvent(
   // - turnCompleted 由 main 在 done 边界盖到该 SDK turn 的最后一条 assistant 上,
   //   让后台任务自动续跑时前一轮正式总结不会被后续补充回复顶掉。
   const assistantMetaFields: {
-    botPrivateReply?: boolean;
     model?: string;
     parentToolUseId?: string;
     turnCompleted?: boolean;
@@ -5325,7 +5305,6 @@ export function handleStreamEvent(
       ? { parentToolUseId: incomingMeta.parentUuid }
       : {}),
     ...(incomingMeta?.turnCompleted === true ? { turnCompleted: true } : {}),
-    ...(typeof incomingMeta?.botPrivateReply === 'boolean' ? { botPrivateReply: incomingMeta.botPrivateReply } : {}),
   };
   switch (event.type) {
     case 'text': {
@@ -5475,7 +5454,7 @@ export function handleStreamEvent(
           assistantMetaFields.model !== undefined ||
           assistantMetaFields.parentToolUseId !== undefined ||
           assistantMetaFields.turnCompleted === true ||
-          assistantMetaFields.botPrivateReply !== undefined;
+          false;
         const shouldCalibrateText = Boolean(
           isFullText === true &&
           text &&
@@ -5994,8 +5973,6 @@ export function handleStreamEvent(
         pendingGhostGrantConfirm: null,
         pendingRemoteDesktopConfirmation: null,
         pendingRemoteDesktopConfirmationQueue: [],
-        lastStopWasPrivateReply: (incomingMeta ?? state.lastAgentMeta)?.botPrivateReply === true,
-        lastStopWasGroupLane: (incomingMeta ?? state.lastAgentMeta)?.botGroupLane === true,
         // agent-meta: turn 结束清空，下一 turn 重新累积。
         lastAgentMeta: null,
         queueAbortPending: false,
@@ -6231,8 +6208,6 @@ export function handleStreamEvent(
         pendingGhostGrantConfirm: null,
         pendingRemoteDesktopConfirmation: null,
         pendingRemoteDesktopConfirmationQueue: [],
-        // 失败的群专线回合同样由群聊承接,终态 error 也要保留这份归属。
-        lastStopWasGroupLane: (incomingMeta ?? state.lastAgentMeta)?.botGroupLane === true,
         // agent-meta: turn 异常结束也清空。
         lastAgentMeta: null,
         // 出错也是 turn 终结：清掉 isRunning，否则 RunningStatusBar 会一直停在
@@ -6983,8 +6958,6 @@ function handleStatusUpdate(
     ...state,
     // 真实 turn 的起/止都把 side-task 标记复位(它只描述「最近一次 stop」)。
     lastStopWasSideTask: false,
-    lastStopWasPrivateReply: update.isRunning ? false : state.lastStopWasPrivateReply,
-    lastStopWasGroupLane: update.isRunning ? false : state.lastStopWasGroupLane,
     // 唤醒桥接:仅在 wake turn 真正启动(isRunning:true)时消费一个计数,或 wake turn
     // 失败时消费——后者表现为 Done + !isRunning 且主 turn 已经结束
     // (state.agentStatus.isRunning 已为 false),此时 isTurnStart 永远不会
@@ -16598,10 +16571,6 @@ export const makerChatStore = {
   /** F-SB-7: Authoritative terminal-error read, immune to snapshot-generation races. */
   hasSessionTerminalError,
   wasLastStopSideTask,
-  wasLastStopPrivateReply: (sessionId: string): boolean =>
-    sessions.get(sessionId)?.lastStopWasPrivateReply === true,
-  wasLastStopGroupLane: (sessionId: string): boolean =>
-    sessions.get(sessionId)?.lastStopWasGroupLane === true,
   /** 输入框推荐后台完成配对用的 non-creating turn 起点。 */
   getPromptRecommendationRunStartedAt,
   /** 输入框推荐后台完成资格的 non-creating 终态快照。 */
@@ -17617,47 +17586,6 @@ function mapServerMessages(serverMsgs: Message[]): ChatMessage[] {
         },
       };
     }
-    // 后台任务锚点与补充消息留痕共享历史 metadata。只投影当前仍会生成的父任务
-    // 锚点和补充消息；旧的目标侧镜像不再生成，也不再重复画第二张任务卡。
-    const collaboration = readBotCollaborationMeta(m.agentMeta?.botCollaboration);
-    if (
-      m.role === 'assistant'
-      && (
-        collaboration?.role === 'delegation-request'
-        || collaboration?.role === 'interjection')
-    ) {
-      return {
-        clientId: m.clientId,
-        role: m.role,
-        content: '',
-        isStreaming: false,
-        systemCardType:
-          collaboration.role === 'interjection'
-            ? ('bot-session-task-message' as const)
-            : ('bot-session-task' as const),
-        systemCardData: {
-          ...collaboration,
-          // 旧记录可能含完整执行指令；实时与历史都只投影任务状态，不修改原记录。
-          text: '',
-        },
-      };
-    }
-    const authorization = readBotAuthorizationCard(m.agentMeta?.botAuthorization);
-    if (m.role === 'assistant' && authorization) return {
-      clientId: m.clientId, role: m.role, content: '', isStreaming: false,
-      systemCardType: 'bot-authorization' as const, systemCardData: { ...authorization },
-    };
-    const directMessage = readBotDirectMessageMeta(m.agentMeta?.botDirectMessage);
-    if (m.role === 'assistant' && directMessage) {
-      return {
-        clientId: m.clientId,
-        role: m.role,
-        content: '',
-        isStreaming: false,
-        systemCardType: 'bot-direct-message' as const,
-        systemCardData: { ...directMessage },
-      };
-    }
     // image-local-cache: user role messages may have JSON-shaped content
     // ({ text, images: ImageRef[], files: FileRef[] }) — pull text + images
     // + files out, keep all three. Older plain-text messages fall through
@@ -17849,8 +17777,7 @@ function mapServerMessages(serverMsgs: Message[]): ChatMessage[] {
       clientId: m.clientId,
       role: m.role,
       content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
-      ...(m.role === 'assistant' ? { botLearning: m.agentMeta?.botLearning } : {}),
-      ...(m.agentMeta?.botPrivateReply === true ? { botPrivateReply: true } : {}),
+      ...(m.role === 'assistant' ? { } : {}),
       // tool_result 消息也带 toolUseId(DB 列),让 MessageStream 能按 id 配对
       ...(m.role === 'tool_result' && typeof m.toolUseId === 'string' && m.toolUseId.length > 0
         ? { toolUseId: m.toolUseId }

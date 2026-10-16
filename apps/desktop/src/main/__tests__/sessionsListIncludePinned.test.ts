@@ -73,9 +73,11 @@ vi.mock('electron', () => ({
 vi.mock('../logger', () => ({
   createLogger: () => ({ debug: h.logDebug, info: h.logInfo, warn: vi.fn(), error: vi.fn() }),
 }));
+const ownerSnapshot = { client: { drizzle: h.fakeDb, query: async () => [] }, userId: 'test-user', clientEpoch: 1 };
 vi.mock('../localDb/client/current', () => ({
   getDbClient: () => ({ drizzle: h.fakeDb }),
   getCurrentDbClientUserId: () => 'test-user',
+  getCurrentDbClientSnapshot: () => ownerSnapshot,
 }));
 vi.mock('../localDb/dialogueWorkspace', () => ({ ensureDialogueWorkspaceDir: vi.fn() }));
 vi.mock('../git-context/prRefsStore', () => ({ recomputePrRefsForSession: vi.fn() }));

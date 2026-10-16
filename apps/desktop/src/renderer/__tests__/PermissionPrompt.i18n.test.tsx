@@ -17,12 +17,12 @@ afterEach(async () => {
 });
 
 describe('PermissionPrompt i18n', () => {
-  it('asks through the companion identity while retaining the exact operation and decision', () => {
+  it('retains the exact operation and decision in the localized permission prompt', () => {
     const onRespond = vi.fn();
-    render(<PermissionPrompt companion={{ id: 'writer', name: '阿橘' }}
+    render(<PermissionPrompt
       permission={{ requestId: 'writer-permission', toolName: 'Bash', input: { command: 'git push origin draft' } }}
       onRespond={onRespond} />);
-    expect(screen.getByText('阿橘 想请你确认一下')).toBeTruthy();
+    expect(screen.getByText('允许 Bash？')).toBeTruthy();
     expect(screen.getByText('git push origin draft')).toBeTruthy();
     expect(screen.queryByText('本任务总是允许')).toBeNull();
     fireEvent.click(screen.getByText('允许一次'));

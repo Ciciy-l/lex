@@ -86,11 +86,7 @@ import { PluginSetupPrompt } from '@/components/new-chat/PluginSetupPrompt';
 import { PlanViewerCard } from '@/components/new-chat/PlanViewerCard';
 import { PlanActionCard } from '@/components/new-chat/PlanActionCard';
 import { InteractionPromptHost } from '@/components/interaction-portal';
-import {
-  hasBotAssistantOutputInCurrentTurn,
-  MessageStream,
-  type InlinePlanVisibility,
-} from '@/components/chat/MessageStream';
+import { MessageStream, type InlinePlanVisibility } from '@/components/chat/MessageStream';
 import {
   readSendFollowCancelGeneration,
   tryRequestFollowLatest,
@@ -207,12 +203,9 @@ import {
 } from '@/lib/makerChatStore';
 import { openBackgroundTasksTab } from '@/features/right-sidebar/lib/openBackgroundTasksTab';
 import { openSubagentsTab } from '@/features/right-sidebar/lib/openSubagentsTab';
-import { BotAvatar } from '@/features/bots/BotAvatar';
-import {
-  BotSessionContentHeaderRegistration,
-  type BotChatIdentity,
-} from '@/features/bots/BotSessionContentHeader';
-import { botComposerPlaceholderKey } from '@/features/bots/botChatPresentation';
+
+
+
 import { isCurrentSubagentRunsChange } from '@/features/right-sidebar/plugins/subagents/subagentChangeFence';
 import { startSubagentTabDiscovery } from './subagentTabDiscovery';
 import { subscribeChatTaskFocus } from '@/features/right-sidebar/plugins/background-tasks/chatTaskFocusIntent';
@@ -231,7 +224,7 @@ import {
   resolveSessionRoute,
 } from '@/lib/orcaSessionIdentity';
 import type { Effort, PermissionMode } from '@/lib/userPreferences.types';
-import type { AttachedFile, ComposerBotMention, MentionedResource } from '@/lib/fileTypes';
+import type { AttachedFile, MentionedResource } from '@/lib/fileTypes';
 import { serializeAttachedFiles } from '@/lib/messageAttachmentPayload';
 import { startReviewOnDevice } from '@/lib/startReviewOnDevice';
 import type { PastedTextRange, SlashCommandRange } from '@/lib/imageRef';
@@ -484,16 +477,6 @@ interface CCAgentSessionViewProps {
   disableAutofocus?: boolean;
   /** 历史回查只读视图：保留消息流与上下文，但不允许发送或修改 Session。 */
   readOnly?: boolean;
-  /** Bot 路由提供的其它持久 Bot，交给标准输入框作为结构化委派目标。 */
-  botMentions?: readonly ComposerBotMention[];
-  /**
-   * 本对话所属的伙伴身份（仅 Bot 路由传）。传入即把这个聊天当成「跟 TA 聊天」渲染：
-   * 顶栏换成伙伴 lockup、assistant 气泡挂 TA 的头像、输入框使用伙伴称呼，保留标准权限入口。
-   * 判定仍与 `session.source === 'bot'` 双重成立才生效——URL 不是身份。
-   */
-  botIdentity?: import('../bots/botChatPresentation').BotChatBinding;
-  /** Entry-time read boundary for a Bot chat; preserved after the live read position advances. */
-  botUnreadBoundaryAt?: number | null;
 }
 
 /**
@@ -743,9 +726,6 @@ export function CCAgentSessionView({
   sidebarTargetSessionId,
   disableAutofocus = false,
   readOnly = false,
-  botMentions,
-  botIdentity,
-  botUnreadBoundaryAt,
 }: CCAgentSessionViewProps = {}) {
   const { t } = useTranslation();
   const { sessionId: paramSessionId } = useParams<{ sessionId: string }>();
@@ -944,20 +924,8 @@ export function CCAgentSessionView({
       ? sessionSnapshotPatchBufferRef.current.merge(sessionId, sessionBase)
       : null;
   const isOrcaLeadSessionView = session?.orcaRole === 'lead';
-
-  // 「这是一场跟伙伴的对话」的单一判据:路由声明的身份 + 任务自己的 source 双重成立。
-  // 只有 URL 说了不算 —— 那是导航投影,不是身份。
-  const botChatIdentity: BotChatIdentity | null =
-    botIdentity && botIdentity.sessionId === sessionId ? botIdentity : null;
-  // 伙伴没有 RunningStatusBar，折叠呼吸灯继续留在输入框上方，不能随状态行一起消失。
   const showCenteredControlledBanner =
-    hasControlledBanner && (!controlledBannerCollapsed || Boolean(botChatIdentity));
-  // assistant 气泡左侧的伙伴头像。节点在整场对话里是同一个,memo 住让 MessageItem
-  // 的 memo 比较仍然成立(否则每帧新节点 = 全流重渲染)。
-  const botAssistantAvatar = useMemo(
-    () => (botChatIdentity ? <BotAvatar bot={botChatIdentity} size="sm" /> : null),
-    [botChatIdentity],
-  );
+    hasControlledBanner && !controlledBannerCollapsed;
 
   // worktree-parallel-sessions:订阅当前 session 的 worktree 创建态(creating/failed)。
   // 触发源:NewMakerDraftRoute 的 worktree 异步创建路径。
@@ -2665,9 +2633,7 @@ export function CCAgentSessionView({
     // 协同策略退回查控制端本机,读到的是另一台机器的开关。
     deviceLinkDeviceId: remoteDeviceId,
   });
-  // A teammate is already a Bot-owned orchestration surface. Exposing generic
-  // Orca here creates an unrelated Worker tree and breaks Bot ownership.
-  const collabPolicyEligible = !orcaMode && !botChatIdentity && collabEntry.eligible;
+  const collabPolicyEligible = !orcaMode && collabEntry.eligible;
   const collabPolicy = useCollabProjectPolicy(session?.workingDir, collabPolicyEligible, {
     workspaceKind: collabWorkspaceKind,
     // SSH 远端会话的 workingDir 是远端主机路径, 跳过项目级查询; 用户级/全局级 collab
@@ -3408,44 +3374,6 @@ export function CCAgentSessionView({
         return;
       }
 
-      // Hermes-compatible Bot lifecycle: `/new` inside the fixed canonical
-      // task means "compact and keep this Bot task", never "silently create a
-      // replacement Session". Claude accepts /compact as an agent command;
-      // Pi exposes a native compact RPC because its slash input is escaped;
-      // Codex only supports upstream automatic compaction, so keep the task
-      // intact and explain that it manages compaction automatically.
-      const botNewMatch =
-        deliveryMode !== 'steer' && sessionRef.current?.source === 'bot'
-          ? message.match(/^\/new(?:\s+(.*))?$/s)
-          : null;
-      if (botNewMatch) {
-        const instructions = botNewMatch[1]?.trim();
-        if (realAgentKind === 'claude-code') {
-          message = `/compact${instructions ? ` ${instructions}` : ''}`;
-        } else if (compactChannelRef.current === 'compact-session') {
-          if (!sessionId || isRunningRef.current) {
-            toast.warning(t('ccAgent.sidebar.sessionMenu.compactFailed'));
-            return false;
-          }
-          try {
-            const result = await makerApiForSticky(sessionId).compactSession(
-              sessionId,
-              instructions || undefined,
-            );
-            if (result?.noop) toast.info(t('ccAgent.sidebar.sessionMenu.compactNothing'));
-            else if (result) toast.success(t('ccAgent.sidebar.sessionMenu.compactSuccess'));
-            else toast.warning(t('ccAgent.sidebar.sessionMenu.compactFailed'));
-            return !!result;
-          } catch (err) {
-            log.warn('Bot /new compact-session failed', err);
-            toast.warning(t('ccAgent.sidebar.sessionMenu.compactFailed'));
-            return false;
-          }
-        } else {
-          toast.info(t('bots.codexAutomaticCompact'));
-          return true;
-        }
-      }
 
       // ── Slash command dispatch (palette refactor) ──
       // 三源 palette 命中:
@@ -4478,10 +4406,6 @@ export function CCAgentSessionView({
       // The spec guarantees `session.workingDir` is set; `?? ''` is purely
       // a TS-narrowing fallback, never expected to fire at runtime.
       workingDir={session?.workingDir ?? ''}
-      // 伙伴对话:assistant 气泡挂 TA 的头像(普通任务传 null,渲染完全不变)。
-      assistantAvatar={botAssistantAvatar}
-      simplifiedBotConversation={Boolean(botChatIdentity)}
-      botUnreadBoundaryAt={botChatIdentity ? botUnreadBoundaryAt : null}
       messages={messages}
       historyLoaded={historyLoaded}
       historyCleared={Boolean(session?.clearedAt)}
@@ -4510,11 +4434,6 @@ export function CCAgentSessionView({
   const composerRuntimeVisible =
     !pendingPlanReview &&
     (agentStatus.isRunning || backgroundTasksActive || runningWorkflow !== null);
-  const botAssistantOutputStarted = useMemo(
-    () => Boolean(botChatIdentity) && hasBotAssistantOutputInCurrentTurn(messages),
-    [botChatIdentity, messages],
-  );
-  const botThinkingVisible = composerRuntimeVisible && !botAssistantOutputStarted;
 
   const content = (
     // Layout: single scroll container (full height) + sticky input overlay at bottom.
@@ -4526,17 +4445,11 @@ export function CCAgentSessionView({
       {/* ContentHeader 注入：仅 ownsRoute 实例注册。普通路由仍由历史判据获得主权；
           SplitGroup 则把主权交给活动 pane，非活动 pane 不覆盖 header。 */}
       {ownsRoute && session ? (
-        // 伙伴对话不是用户经营的任务:它拿的是「跟谁说话 + 进 TA 的设置」,
-        // 不是重命名/置顶/归档/导出那一套任务菜单。
-        botChatIdentity ? (
-          <BotSessionContentHeaderRegistration bot={botChatIdentity} />
-        ) : (
           <SessionContentHeaderRegistration
             session={session}
             remoteSessionUnavailable={remoteSessionUnavailable}
             readOnly={readOnly}
           />
-        )
       ) : null}
       {/* 右栏在场声明：与上方 header 注册同一「主实例」判据。仅全屏聊天视图声明，
           内嵌实例不声明（否则会在 doc rail / 协同面板上误开右栏）。 */}
@@ -4772,21 +4685,7 @@ export function CCAgentSessionView({
               className="mx-auto grid grid-cols-1 grid-rows-1 items-center"
               style={{ width: inputWidth }}
             >
-              {botChatIdentity ? (
-                botThinkingVisible ? (
-                  <div
-                    data-testid="bot-thinking-indicator"
-                    role="status"
-                    aria-live="polite"
-                    className="mx-auto flex items-center gap-2 px-2 py-[6px] text-12 text-[var(--text-tertiary)]"
-                    style={{ width: inputWidth }}
-                  >
-                    {botAssistantAvatar}
-                    <Spinner size={12} />
-                    <span>{t('ccAgent.agentStatus.thinking')}</span>
-                  </div>
-                ) : null
-              ) : !pendingPlanReview || (hasControlledBanner && controlledBannerCollapsed) ? (
+              {(!pendingPlanReview || (hasControlledBanner && controlledBannerCollapsed) ? (
                 <RunningStatusBar
                   key={sessionId}
                   status={composerStatus}
@@ -4824,7 +4723,7 @@ export function CCAgentSessionView({
                   }
                   className="col-start-1 row-start-1"
                 />
-              ) : null}
+              ) : null)}
               <div
                 data-composer-center-group="true"
                 className="pointer-events-none relative z-10 col-start-1 row-start-1 flex max-w-full -translate-y-1 items-center justify-center gap-2"
@@ -5091,7 +4990,6 @@ export function CCAgentSessionView({
                 ) : pendingPermission ? (
                   <PermissionPrompt
                     permission={pendingPermission}
-                    companion={botChatIdentity}
                     onRespond={respondToPermission}
                   />
                 ) : pendingAskUser ? (
@@ -5216,11 +5114,7 @@ export function CCAgentSessionView({
                   steeringQueueClientIds={steeringQueueClientIds}
                   messages={messages}
                   placeholder={
-                    botChatIdentity
-                      ? t(botComposerPlaceholderKey(botChatIdentity.name), {
-                          name: botChatIdentity.name,
-                        })
-                      : t('ccAgent.layout.chatPlaceholder')
+                    (t('ccAgent.layout.chatPlaceholder'))
                   }
                   folderPickerOpen={folderPickerOpen}
                   onFolderPickerOpenChange={handleFolderPickerOpenChange}
@@ -5310,8 +5204,6 @@ export function CCAgentSessionView({
                         }
                       : undefined
                   }
-                  botMentions={botMentions}
-                  hideRuntimeControls={Boolean(botChatIdentity)}
                 />
               )}
 
@@ -5320,7 +5212,7 @@ export function CCAgentSessionView({
                 也复用这一行 inline 显示,替换原 Monitor+basename chip。完成后 store
                 自动 clear,UI 回到正常显示。设计参考用户反馈"把这部分的体验逻辑放到
                 chatinput 底部 显示 work dir 的地方"——不再在 chat stream 插 SystemCard。 */}
-              {!botChatIdentity ? (
+              {((
                 <div
                   className={cn(
                     'mt-1.5 flex w-full items-center justify-between gap-3 px-1',
@@ -5469,7 +5361,7 @@ export function CCAgentSessionView({
                     />
                   </div>
                 </div>
-              ) : null}
+              ))}
             </div>
           </div>
         </div>

@@ -20,9 +20,11 @@ import { listSessionsForHistory, listWorkdirsForHistory } from '../chatHistoryRe
 import { clearCurrentDbClient, setCurrentDbClient } from '../client/current';
 import type { DbClient } from '../client/DbClient';
 import * as schema from '../schema';
+import { RETAINED_COMPANION_DDL } from './fixtures/retiredCompanionTables';
 
 function createLocalDb(): Database.Database {
   const db = new Database(':memory:');
+  for (const ddl of RETAINED_COMPANION_DDL) db.exec(ddl);
   db.exec(`
     CREATE TABLE sessions (
       id TEXT PRIMARY KEY,

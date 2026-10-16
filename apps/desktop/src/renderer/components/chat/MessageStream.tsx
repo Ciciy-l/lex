@@ -1,4 +1,4 @@
-import { placeBotTaskCardsAfterIntroduction } from '@cindy/maker-shared/botCollaboration';
+
 import { describeToolUse, sourcePathCandidatesFromDescriptor } from '@cindy/maker-shared/tool-use-descriptor';
 /**
  * MessageStream
@@ -370,11 +370,7 @@ import {
   isUpwardWheelIntent,
 } from './autoFollowIntent';
 import { countUnreadAdded } from './unreadCount';
-import {
-  collectBotMessageTimeGroups,
-  findFirstUnreadBotReplyClientId,
-  formatBotMessageGroupTime,
-} from '@/features/bots/botConversationTimeline';
+
 import { NAVIGATION_KEYS, useNavigationKeyListener } from './useNavigationKeyListener';
 export function isScrollNavigationKey(key: string): boolean {
   return NAVIGATION_KEYS.has(key);
@@ -413,11 +409,6 @@ interface MessageStreamProps {
    * byte-identical to before. The node must be stable across renders (memoize
    * it at the owner): it is a prop of the memoized `MessageItem`.
    */
-  assistantAvatar?: ReactNode;
-  /** 伙伴专属轻量时间线：隐藏内部工作卡，只保留单一运行状态与分组时间。 */
-  simplifiedBotConversation?: boolean;
-  /** Bot read position captured before entry marks the conversation read. */
-  botUnreadBoundaryAt?: number | null;
   messages: ChatMessage[];
   historyLoaded: boolean;
   /** The task shell remains, but all prior message content was intentionally cleared. */
@@ -502,47 +493,6 @@ function isBotInternalActivity(item: RenderItem): boolean {
     return true;
   }
   return item.type === 'message' && item.message.role === 'thinking';
-}
-
-export function simplifyBotRenderItems(
-  items: readonly RenderItem[],
-  isStreaming: boolean,
-): RenderItem[] {
-  const visible = items.filter((item) => !isBotInternalActivity(item));
-  if (!isStreaming) return visible;
-
-  // 当前回合的普通 assistant 正文从首字开始流式展示；工具媒体、交付卡等容易
-  // 改变布局的结果仍等回合完成后出现。这样既不泄露内部工作过程，也不会把整段
-  // 答案藏到 done 后才突然闪现。
-  let currentTurnStart = -1;
-  for (let index = visible.length - 1; index >= 0; index -= 1) {
-    const item = visible[index];
-    if (
-      item.type === 'message' &&
-      item.message.role === 'user' &&
-      item.message.delivery !== 'steer' &&
-      !item.message.isSyntheticTrigger
-    ) {
-      currentTurnStart = index;
-      break;
-    }
-  }
-  if (currentTurnStart < 0) return visible;
-  return visible.filter((item, index) => {
-    if (index <= currentTurnStart) return true;
-    if (item.type !== 'message') return false;
-    if (item.message.role === 'user') return !item.message.isSyntheticTrigger;
-    // A direct-message stamp is the durable entry into the Bot-to-Bot conversation,
-    // not an expanding work/result card. The reverse delivery starts another hidden
-    // canonical turn; hiding system cards during that turn used to make the already
-    // persisted "sent" stamp flash and disappear until streaming finished.
-    if (item.message.systemCardType === 'bot-direct-message' || item.message.systemCardType === 'bot-session-task') return true;
-    return (
-      item.message.role === 'assistant' &&
-      !item.message.systemCardType &&
-      item.message.content.trim().length > 0
-    );
-  });
 }
 
 /**
@@ -1495,8 +1445,6 @@ export function buildRenderItems(
     /** Session working directory for opaque generated-file fallback chips. */
     workingDir?: string;
     historyArtifacts?: readonly import('@cindy/maker-shared/message-window').HistoryFileArtifact[];
-    /** Bot-owned Session: show newly created files as deliverables, not an engineering diff card. */
-    botSessionId?: string;
     /** Reuse image Markdown extraction for completed assistant messages across stream batches. */
     markdownImageTargetCache?: MarkdownImageTargetCache;
   },
@@ -1506,17 +1454,7 @@ export function buildRenderItems(
 } {
   // Modal-only system cards are transient UI state and never enter the chat timeline.
   allMessages = allMessages.filter((message) => message.systemCardData?.modalOnly !== true);
-  if (opts?.botSessionId) {
-    allMessages = placeBotTaskCardsAfterIntroduction(allMessages, (message) => {
-      if (message.role === 'user') {
-        return message.delivery !== 'steer' || message.isSyntheticTrigger ? 'boundary' : 'other';
-      }
-      if (isSubagentInternalMessage(message)) return 'other';
-      if (message.systemCardType === 'bot-session-task') return 'task';
-      return message.role === 'assistant' && !message.systemCardType && message.content.trim()
-        ? 'prose' : 'other';
-    });
-  }
+
   // ── Pass -1: 剔除子代理内部消息 ──
   // 后台 Agent/Task 跑起来后,SDK 会把子代理自己的 thinking / 正文 / 工具调用一并
   // echo 回主流(每条都带 parent_tool_use_id)。这些是**子任务内部的经过**,不是父
@@ -1822,7 +1760,7 @@ export function buildRenderItems(
         if (file.oldPath) exactPaths.add(pathKey(resolveToolFilePath(file.oldPath, changeSet.cwd)));
       }
     }
-    if (!opts?.botSessionId) {
+    {
       for (const changeSet of changeSets) {
         // Zero-file entries have nothing the user can inspect or act on. Keep their
         // diagnostic sidecars in Main, but do not add a warning-only chat card.
@@ -1866,20 +1804,7 @@ export function buildRenderItems(
 
     const slice = originalTurnSlice(lo, hi);
     const generatedByPath = new Map<string, GeneratedFileRef>();
-    if (opts?.botSessionId) {
-      for (const changeSet of changeSets) {
-        for (const file of changeSet.files) {
-          if (file.status !== 'added') continue;
-          const resolved = resolveToolFilePath(file.path, changeSet.cwd);
-          generatedByPath.set(pathKey(resolved), {
-            path: resolved,
-            name: basename(file.path),
-            source: 'tool',
-            ready: true,
-          });
-        }
-      }
-    }
+
     const workingDir = opts?.workingDir ?? '';
     if (workingDir) {
       const start = Date.parse(messages[lo]?.createdAt ?? '');
@@ -2535,8 +2460,6 @@ function renderWorkGroupChild(
     );
   }
 
-  // 工作组里的中间过程文字不挂 assistantAvatar:折叠块里逐条画脸只会变噪音,
-  // 身份标记只属于对话流里真正的那句回复(见 MessageItem 的 assistantAvatar)。
   return (
     <div data-message-client-id={item.message.clientId}>
       <MessageItem
@@ -2579,9 +2502,6 @@ export function MessageStream({
   agentKind,
   remoteHostId,
   workingDir,
-  assistantAvatar,
-  simplifiedBotConversation = false,
-  botUnreadBoundaryAt = null,
   messages,
   historyLoaded,
   historyCleared = false,
@@ -2832,7 +2752,6 @@ export function MessageStream({
       historyWindowIncomplete: !historyLoaded || Boolean(hasMoreMessages) || historyWindowHasIsland,
       turnChangeSets,
       workingDir,
-      botSessionId: simplifiedBotConversation ? sessionId : undefined,
       markdownImageTargetCache: markdownImageTargetCacheRef.current,
     });
     if (historyView && historySnapshot?.ready) {
@@ -2852,7 +2771,6 @@ export function MessageStream({
             historyWindowIncomplete: true,
             historyArtifacts,
             workingDir,
-            botSessionId: simplifiedBotConversation ? sessionId : undefined,
             markdownImageTargetCache: markdownImageTargetCacheRef.current,
           });
           for (const [key, value] of chunk.singleResultMap) results.set(key, value);
@@ -2895,7 +2813,7 @@ export function MessageStream({
     historyWindowHasIsland,
     turnChangeSets,
     workingDir,
-    simplifiedBotConversation,
+    false,
     sessionId,
   ]);
   const assistantsWithFollowingUserBoundary = useMemo(
@@ -2927,43 +2845,8 @@ export function MessageStream({
       historySnapshot?.ready ? ungroupedRenderItems : groupWorkRuns(ungroupedRenderItems, isSessionStreaming),
       forkOrigin,
   );
-    return simplifiedBotConversation
-      ? simplifyBotRenderItems(grouped, isSessionStreaming)
-      : grouped;
-  }, [ungroupedRenderItems, isSessionStreaming, forkOrigin, simplifiedBotConversation, historySnapshot?.ready]);
-  const botMessageTimeGroups = useMemo(() => {
-    if (!simplifiedBotConversation) return new Map<string, number>();
-    return collectBotMessageTimeGroups(
-      allRenderItems.flatMap((item) => {
-        if (
-          item.type !== 'message' ||
-          (item.message.role !== 'user' && item.message.role !== 'assistant')
-        ) {
-          return [];
-        }
-        return [{ clientId: item.message.clientId, createdAt: item.message.createdAt }];
-      }),
-    );
-  }, [allRenderItems, simplifiedBotConversation]);
-  const botUnreadBoundaryClientId = useMemo(() => {
-    if (!simplifiedBotConversation) return null;
-    return findFirstUnreadBotReplyClientId(
-      allRenderItems.flatMap((item) =>
-        item.type === 'message'
-          ? [
-              {
-                clientId: item.message.clientId,
-                createdAt: item.message.createdAt,
-                role: item.message.role,
-                systemCardType: item.message.systemCardType,
-                botPrivateReply: item.message.botPrivateReply,
-              },
-            ]
-          : [],
-      ),
-      botUnreadBoundaryAt,
-    );
-  }, [allRenderItems, botUnreadBoundaryAt, simplifiedBotConversation]);
+    return (grouped);
+  }, [ungroupedRenderItems, isSessionStreaming, forkOrigin, false, historySnapshot?.ready]);
   const latestInlinePlan = useMemo(() => {
     for (let index = allRenderItems.length - 1; index >= 0; index -= 1) {
       const item = allRenderItems[index];
@@ -5850,7 +5733,6 @@ export function MessageStream({
                           turnStartMs={item.turnStartMs}
                           turnEndMs={item.turnEndMs}
                           turnSealed={item.turnSealed === true}
-                          botArtifacts={simplifiedBotConversation}
                         />
                       );
                     }
@@ -6056,8 +5938,6 @@ export function MessageStream({
                           }
                           isLastMessage={msg.clientId === lastMessageClientId}
                           localFileRefs={localFileRefs}
-                          assistantAvatar={assistantAvatar}
-                          simplifiedBotConversation={simplifiedBotConversation}
                         />
                     );
                     const highlightClass =
@@ -6070,48 +5950,7 @@ export function MessageStream({
                           [SHARE_MESSAGE_ATTR]: msg.clientId,
                         }
                       : {};
-                    if (simplifiedBotConversation) {
-                      const groupTimestamp = botMessageTimeGroups.get(msg.clientId);
-                      const startsUnread = botUnreadBoundaryClientId === msg.clientId;
-                      return (
-                        <div
-                          key={item.key}
-                          data-message-client-id={msg.clientId}
-                          className={cn('scroll-mt-20 transition-colors', highlightClass)}
-                        >
-                          {startsUnread ? (
-                            <div
-                              className="mb-3 flex items-center gap-3"
-                              role="separator"
-                              aria-label={t('bots.chat.newMessagesBoundary')}
-                            >
-                              <div className="h-px flex-1 bg-[var(--bot-unread-bg)] opacity-30" />
-                              <span className="shrink-0 text-11 font-medium tracking-[0.08em] text-[var(--bot-unread-bg)]">
-                                {t('bots.chat.newMessagesBoundary')}
-                              </span>
-                              <div className="h-px flex-1 bg-[var(--bot-unread-bg)] opacity-30" />
-                            </div>
-                          ) : null}
-                          {groupTimestamp !== undefined ? (
-                            <time
-                              dateTime={new Date(groupTimestamp).toISOString()}
-                              className="mb-3 block text-center text-11 text-[var(--text-tertiary)]"
-                            >
-                              {formatBotMessageGroupTime(
-                                groupTimestamp,
-                                i18n.resolvedLanguage ?? i18n.language,
-                              )}
-                            </time>
-                          ) : null}
-                          <div {...shareAttributes} className={cn(shareable && 'relative')}>
-                            {shareable && shareSelectionActive ? (
-                              <ShareMessageCheckbox clientId={msg.clientId} />
-                            ) : null}
-                            {messageNode}
-                          </div>
-                        </div>
-                      );
-                    }
+
 
                     return (
                       <div
@@ -6202,24 +6041,6 @@ export function MessageStream({
 // thinking messages are now rendered inline by MessageStream (above) so they
 // can receive the live isSessionStreaming flag without breaking this memo.
 // The thinking branch below is kept as a defensive fallback only.
-/**
- * Hang an identity mark to the left of an assistant bubble.
- *
- * Without a mark (every normal Cindy task) the bubble is returned untouched —
- * no extra wrapper element, so the existing layout and its measurements are
- * bit-for-bit what they were. With one (a Bot conversation) the row becomes the
- * IM shape everyone already knows: avatar, then what they said.
- */
-function withAssistantAvatar(avatar: ReactNode | undefined, bubble: ReactNode): ReactNode {
-  if (!avatar) return bubble;
-  return (
-    <div className="flex items-start gap-2.5">
-      <span className="mt-0.5 shrink-0">{avatar}</span>
-      <div className="min-w-0 flex-1">{bubble}</div>
-    </div>
-  );
-}
-
 const MessageItem = memo(function MessageItem({
   message,
   toolResult,
@@ -6239,8 +6060,6 @@ const MessageItem = memo(function MessageItem({
   continuationInFlightProjectionCapability,
   isLastMessage,
   localFileRefs,
-  assistantAvatar,
-  simplifiedBotConversation,
 }: {
   message: ChatMessage;
   toolResult?: string;
@@ -6289,10 +6108,6 @@ const MessageItem = memo(function MessageItem({
    *  actionable banner above the composer instead of an inline card. */
   isLastMessage?: boolean;
   localFileRefs: readonly KnownLocalFileRef[];
-  /** Bot 对话:assistant 气泡左侧的伙伴头像。普通任务不传。 */
-  assistantAvatar?: ReactNode;
-  /** 伙伴对话消息操作栏使用轻量常显变体。 */
-  simplifiedBotConversation?: boolean;
 }) {
   // silent-stop 自动续跑行(isSyntheticTrigger + systemCardType):渲染成
   // 「已自动继续」分隔线,必须在 synthetic early-return 之前检查,否则分隔线被吞。
@@ -6342,7 +6157,6 @@ const MessageItem = memo(function MessageItem({
           delivery={message.delivery}
           goalBadge={message.goalBadge}
           blockedByGhost={message.blockedByGhost}
-          simplifiedBotConversation={simplifiedBotConversation}
         />
       );
     case 'assistant':
@@ -6355,12 +6169,9 @@ const MessageItem = memo(function MessageItem({
             workingDir={workingDir}
           />
         );
-        return simplifiedBotConversation && message.systemCardType === 'bot-session-task'
-          ? withAssistantAvatar(assistantAvatar ? <span aria-hidden="true" className="invisible">{assistantAvatar}</span> : undefined, card)
-          : card;
+        return (card);
       }
-      return withAssistantAvatar(
-        assistantAvatar,
+      return (
         <>
           <AssistantMessage
             workingDir={workingDir}
@@ -6388,10 +6199,8 @@ const MessageItem = memo(function MessageItem({
             userTurnUsageDetails={userTurnUsageDetails}
             modelMismatch={message.modelMismatch}
             ghostReplyPending={message.ghostReplyPending}
-            simplifiedBotConversation={simplifiedBotConversation}
-            botLearning={message.botLearning}
           />
-        </>,
+        </>
       );
     case 'tool_use':
       return (

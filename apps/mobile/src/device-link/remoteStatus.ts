@@ -129,6 +129,14 @@ export function isAutoRecoveringRemoteError(error: unknown): boolean {
 }
 
 /**
+ * 被控端因任务仍在运行而拒绝操作（如删除消息）。handler 的 `[SESSION_RUNNING]`
+ * 前缀随隧道放在 message 里（外层 code 为 IPC_ERROR），code 与 message 两种形态都认。
+ */
+export function isSessionRunningRemoteError(error: unknown): boolean {
+  return formatRemoteErrorShared(error).includes('SESSION_RUNNING');
+}
+
+/**
  * 权威同步的一轮内置瞬态重试耗尽后，页面继续自动恢复所用的外层退避。
  * 900ms 尽快吃掉短抖动，随后指数放缓并封顶 30s，避免电脑长期离线时形成请求风暴。
  */

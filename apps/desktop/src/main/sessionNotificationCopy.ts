@@ -33,24 +33,3 @@ export function getSessionExternalNotificationText(title: string, kind: SessionE
   // replacement 必须是函数：任务标题是原样数据，replacement token 不能被解释成模板控制符。
   return t(EXTERNAL_KEY_BY_KIND[kind]).replaceAll('{{title}}', () => title);
 }
-
-export function getTeammateNotificationFallback(): string {
-  return t('settings.notifications.sessionEvent.newReply');
-}
-
-/** Phone push body for a 分工 step that stopped for the user (bot-group-chat.md §8.3). */
-export function getBotGroupStepNotificationBody(event: {
-  botName: string;
-  task: string;
-  outcome: 'done' | 'failed';
-  planDone: boolean;
-}): string {
-  const key = event.outcome === 'failed'
-    ? 'settings.notifications.botGroupPlan.stepFailed'
-    : event.planDone
-      ? 'settings.notifications.botGroupPlan.planDone'
-      : 'settings.notifications.botGroupPlan.stepDone';
-  return t(key)
-    .replaceAll('{{name}}', () => event.botName)
-    .replaceAll('{{task}}', () => event.task);
-}

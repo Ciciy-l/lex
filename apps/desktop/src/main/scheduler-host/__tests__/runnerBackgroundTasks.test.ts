@@ -1,3 +1,7 @@
+// These runner units stub persistence; real ownership SQL is covered by the retention integration test.
+vi.mock('../../localDb/retiredCompanions.js', () => ({
+  assertNotRetiredCompanionSession: vi.fn(async () => undefined),
+}));
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 import type {
@@ -245,24 +249,18 @@ describe('MakerScheduleRunner background subagent task tracking', () => {
     vi.useRealTimers();
   });
 
-  it.each(['ask', 'auto', 'bypassPermissions'])('routine cold resume preserves teammate permission %s and hides the synthetic wake', async (mode) => {
+  it.each(['ask', 'auto', 'bypassPermissions'])('never resumes a retired routine, regardless of stored permission %s', async (mode) => {
     const h = createSessionHarness(acceptingSend());
     Object.assign(h.session, { stablePermissionModeState: { mode, generation: 0 } });
-    const { runner, maker } = createRunnerHarness(h.session);
-    vi.mocked(maker.getSessionMeta).mockResolvedValue({ id: 'bot-session', agentKind: 'claude-code', model: 'claude-sonnet-4-6', workDir: '/repo/project' } as never);
-    mocks.getSessionFsSnapshot.mockResolvedValue({ permissionMode: mode, planModeEnabled: true });
-    const fire = runner.fire(baseSchedule({ source: 'bot', targetSessionId: 'bot-session' }), createFireContext());
-    await vi.waitFor(() => expect(mocks.createMessage).toHaveBeenCalled());
-    expect(maker.createSession).toHaveBeenCalledWith(expect.objectContaining({ permissionMode: mode, planMode: true, id: 'bot-session' }));
-    expect(mocks.backfillSessionMeta).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ permissionMode: null }), expect.anything());
-    expect(h.session.send).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ planMode: true }));
-    expect(mocks.createMessage.mock.calls[0][1].content).not.toBe('review pending PRs');
-    expect(mocks.createMessage.mock.calls[0][1].content).toContain('review pending PRs');
-    h.emit({ type: 'done', data: {} });
-    await fire;
+    const { runner, maker, notifier } = createRunnerHarness(h.session);
+    await expect(runner.fire(baseSchedule({ source: 'bot', targetSessionId: 'retained-session' }), createFireContext())).rejects.toThrow('Schedule is unavailable');
+    expect(maker.createSession).not.toHaveBeenCalled();
+    expect(h.session.send).not.toHaveBeenCalled();
+    expect(mocks.createMessage).not.toHaveBeenCalled();
+    expect(notifier.notify).not.toHaveBeenCalled();
   });
 
-  it.each(['switching', 'missing snapshot', 'missing plan mode', 'invalid mode', 'durable mismatch'])('defers a routine with %s before creating or sending', async (state) => {
+  it.each(['switching', 'missing snapshot', 'missing plan mode', 'invalid mode', 'durable mismatch'])('defers a bound schedule with %s before creating or sending', async (state) => {
     const h = createSessionHarness(acceptingSend());
     Object.assign(h.session, {
       permissionModeState: { mode: 'bypassPermissions', generation: 0 },
@@ -270,12 +268,12 @@ describe('MakerScheduleRunner background subagent task tracking', () => {
     });
     const { runner, maker, notifier } = createRunnerHarness(h.session);
     vi.mocked(maker.getSession).mockReturnValue(h.session);
-    vi.mocked(maker.getSessionMeta).mockResolvedValue({ id: 'bot-session', agentKind: 'claude-code', model: 'claude-sonnet-4-6', workDir: '/repo/project' } as never);
+    vi.mocked(maker.getSessionMeta).mockResolvedValue({ id: 'bound-session', agentKind: 'claude-code', model: 'claude-sonnet-4-6', workDir: '/repo/project' } as never);
     mocks.getSessionFsSnapshot.mockResolvedValue(state === 'missing snapshot' ? null : {
       permissionMode: state === 'invalid mode' ? 'unknown' : state === 'durable mismatch' ? 'ask' : 'bypassPermissions',
       ...(state === 'missing plan mode' ? {} : { planModeEnabled: true }),
     });
-    const result = await runner.fire(baseSchedule({ source: 'bot', manual: true, targetSessionId: 'bot-session' }), { ...createFireContext(), deferToCaller: true });
+    const result = await runner.fire(baseSchedule({ source: 'user', manual: true, targetSessionId: 'bound-session' }), { ...createFireContext(), deferToCaller: true });
     expect(result).toMatchObject({ deferred: true });
     expect(maker.createSession).not.toHaveBeenCalled();
     expect(h.session.send).not.toHaveBeenCalled();
@@ -283,7 +281,7 @@ describe('MakerScheduleRunner background subagent task tracking', () => {
     expect(notifier.notify).not.toHaveBeenCalled();
   });
 
-  it('rechecks the routine revision after accepted-side preparation before direct vendor dispatch', async () => {
+  it('rechecks the bound schedule revision after accepted-side preparation before direct vendor dispatch', async () => {
     let valid = true;
     const vendor = vi.fn();
     const h = createSessionHarness(async (_message, opts) => {
@@ -296,9 +294,9 @@ describe('MakerScheduleRunner background subagent task tracking', () => {
       beforeDispatchUserTurn: async () => { valid = false; },
     });
     vi.mocked(h.session.abort).mockImplementation(() => new Promise(() => undefined));
-    vi.mocked(maker.getSessionMeta).mockResolvedValue({ id: 'bot-session', agentKind: 'claude-code', model: 'claude-sonnet-4-6', workDir: '/repo/project' } as never);
+    vi.mocked(maker.getSessionMeta).mockResolvedValue({ id: 'bound-session', agentKind: 'claude-code', model: 'claude-sonnet-4-6', workDir: '/repo/project' } as never);
     mocks.getSessionFsSnapshot.mockResolvedValue({ permissionMode: 'ask', planModeEnabled: true });
-    const result = await runner.fire(baseSchedule({ source: 'bot', targetSessionId: 'bot-session' }), {
+    const result = await runner.fire(baseSchedule({ source: 'user', targetSessionId: 'bound-session' }), {
       ...createFireContext(), deferToCaller: true, canDispatch: () => valid,
     });
     expect(result).toMatchObject({ deferred: true });
@@ -307,7 +305,7 @@ describe('MakerScheduleRunner background subagent task tracking', () => {
     expect(notifier.notify).not.toHaveBeenCalled();
   });
 
-  it.each(['before create', 'before send'])('rechecks routine permission changes %s after async preparation', async (stage) => {
+  it.each(['before create', 'before send'])('rechecks bound schedule permission changes %s after async preparation', async (stage) => {
     const h = createSessionHarness(acceptingSend());
     Object.assign(h.session, { stablePermissionModeState: { mode: 'bypassPermissions', generation: 0 } });
     let checks = 0;
@@ -320,19 +318,19 @@ describe('MakerScheduleRunner background subagent task tracking', () => {
         return { kind: 'pass' as const };
       }),
     });
-    vi.mocked(maker.getSessionMeta).mockResolvedValue({ id: 'bot-session', agentKind: 'claude-code', model: 'claude-sonnet-4-6', workDir: '/repo/project' } as never);
+    vi.mocked(maker.getSessionMeta).mockResolvedValue({ id: 'bound-session', agentKind: 'claude-code', model: 'claude-sonnet-4-6', workDir: '/repo/project' } as never);
     mocks.getSessionFsSnapshot.mockResolvedValue({ permissionMode: 'bypassPermissions', planModeEnabled: true });
-    const result = await runner.fire(baseSchedule({ source: 'bot', targetSessionId: 'bot-session' }), { ...createFireContext(), deferToCaller: true });
+    const result = await runner.fire(baseSchedule({ source: 'user', targetSessionId: 'bound-session' }), { ...createFireContext(), deferToCaller: true });
     expect(result).toMatchObject({ deferred: true });
     expect(maker.createSession).toHaveBeenCalledTimes(stage === 'before create' ? 0 : 1);
     expect(h.session.send).not.toHaveBeenCalled();
     expect(mocks.createMessage).not.toHaveBeenCalled();
     expect(notifier.notify).not.toHaveBeenCalled();
-    // The same routine can run after the new permissions have settled; no failed run is emitted.
+    // The same bound schedule can run after the new permissions have settled; no failed run is emitted.
     Object.assign(h.session, { stablePermissionModeState: { mode: 'ask', generation: 1 } });
     vi.mocked(maker.getSession).mockReturnValue(undefined);
     mocks.getSessionFsSnapshot.mockResolvedValue({ permissionMode: 'ask', planModeEnabled: true });
-    const retry = runner.fire(baseSchedule({ source: 'bot', targetSessionId: 'bot-session' }), createFireContext());
+    const retry = runner.fire(baseSchedule({ source: 'user', targetSessionId: 'bound-session' }), createFireContext());
     await vi.waitFor(() => expect(h.session.send).toHaveBeenCalled());
     expect(maker.createSession).toHaveBeenLastCalledWith(expect.objectContaining({ permissionMode: 'ask', planMode: true }));
     h.emit({ type: 'done', data: {} });

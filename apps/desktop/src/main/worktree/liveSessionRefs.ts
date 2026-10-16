@@ -90,7 +90,7 @@ export async function loadLiveSessionPathKeys(
     for (const row of rows) {
       const hasSubagentRuns = subagentReferences.has(row.id);
       // The same id in another database is not the row the caller just closed.
-      if (!hasSubagentRuns && row.currentDatabase && opts.excludeSessionId && row.id === opts.excludeSessionId) continue;
+      if (!hasSubagentRuns && row.source !== 'bot' && row.currentDatabase && opts.excludeSessionId && row.id === opts.excludeSessionId) continue;
       const isTerminal = row.status === 'archived' || row.status === 'deleted';
       if (!hasSubagentRuns && row.source !== 'bot' && isTerminal && (!row.currentDatabase || opts.isSessionRuntimeAlive?.(row.id) !== true)) {
         continue;

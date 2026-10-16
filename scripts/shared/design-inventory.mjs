@@ -33,7 +33,6 @@ const LAYOUT_ROUTE_COMPONENTS = new Set([
   'LocalDbGate',
   'MainLayout',
   'CCAgentFeatureLayout',
-  'BotsFeatureLayout',
   'SkillhubFeatureLayout',
 ]);
 
@@ -534,52 +533,6 @@ export function catalogSurfaces() {
       styleRoots: ['apps/desktop/src/renderer/features/cc-agent/workdir-browse'],
       routerPaths: ['/cc-agent/files/:sessionId'],
       routeEntryComponents: { '/cc-agent/files/:sessionId': 'WorkdirBrowseRoute' },
-    },
-    {
-      id: 'desktop.bots',
-      platform: 'desktop',
-      title: '伙伴（列表 / 对话 / 设置 / 历史 / 伙伴私聊 / 群聊）',
-      productionEntry:
-        'hash `/bots`、`/bots/:botId`、`/bots/roster` 及伙伴当前/历史任务、伙伴私聊、伙伴群聊路由（BotsFeatureLayout）',
-      reachableComponents: [
-        'BotsHomeView',
-        'BotRosterView',
-        'BotSessionView',
-        'RemoteBotSessionView',
-        'BotHistorySessionView',
-        'BotDirectMessageView',
-        'BotGroupChatView',
-        'BotGroupSettingsDrawer',
-        'BotGroupCreateDialog',
-        'BotSettingsDrawer',
-        'BotBasicProfileFields',
-        'BotModelChainEditor',
-        'BotLifecycleSettings',
-        'BotCollaborationCard',
-      ],
-      styleRoots: ['apps/desktop/src/renderer/features/bots'],
-      // 伙伴任务复用简化后的主聊天视图与消息组件；本 surface 只补它自己的覆盖层。
-      extraStyleRoots: ['desktop.chat.session'],
-      routerPaths: [
-        '/bots',
-        '/bots/:botId',
-        '/bots/:botId/direct/:threadId',
-        '/bots/:botId/history/:sessionId',
-        '/bots/:botId/session/:sessionId',
-        '/bots/roster',
-        '/bots/groups/:groupId',
-        '/bots/remote/:deviceId/:botId',
-      ],
-      routeEntryComponents: {
-        '/bots': 'BotsHomeView',
-        '/bots/:botId': 'BotsHomeView',
-        '/bots/:botId/direct/:threadId': 'BotDirectMessageView',
-        '/bots/:botId/history/:sessionId': 'BotHistorySessionView',
-        '/bots/:botId/session/:sessionId': 'BotSessionView',
-        '/bots/roster': 'BotRosterView',
-        '/bots/groups/:groupId': 'BotGroupChatView',
-        '/bots/remote/:deviceId/:botId': 'RemoteBotSessionView',
-      },
     },
     {
       id: 'desktop.issues.guide',
@@ -1289,9 +1242,6 @@ const PROTECTED_TAGS = {
   'desktop.chat.orca-workflow': [
     'DESIGN.md §5 登记成员 workflow-status-cell / system-category-square（复用 desktop.chat.session 会话视图）',
   ],
-  'desktop.bots': [
-    'DESIGN.md §5 登记成员 workflow-status-cell / system-category-square（复用 desktop.chat.session 会话视图）',
-  ],
   'desktop.chat.new-draft': ['DESIGN.md §15.15 创建页内容位'],
   'desktop.overlay.permission-prompt': [
     'DESIGN.md §5 裸文字按钮豁免（相关）',
@@ -1387,8 +1337,8 @@ export function mobileCatalogSurfaces() {
     ['device-management', '设备管理', ['devices/manage.tsx', 'devices/manage/[deviceId].tsx']],
     ['remote-desktop', '远程桌面', ['devices/desktop/[deviceId].tsx']],
     ['resources', '远程资源列表与详情', ['resources/[collectionId].tsx', 'resources/[collectionId]/[resourceId].tsx']],
-    ['companions.direct', '伙伴私聊回看', ['companions/direct/[threadId].tsx']],
-    ['companions.groups', '伙伴群聊与分工', ['companions/groups/[groupId].tsx']],
+    ['companions.direct', '已退休伙伴私聊深链（仅重定向）', ['companions/direct/[threadId].tsx']],
+    ['companions.groups', '已退休伙伴群聊深链（仅重定向）', ['companions/groups/[groupId].tsx']],
     ['chat.session', '任务内容与输入', ['sessions/[sessionId].tsx']],
     ['chat.new', '新建任务', ['sessions/new.tsx']],
     ['files', '任务文件与预览', ['files/[sessionId].tsx', 'files/preview/[sessionId].tsx']],

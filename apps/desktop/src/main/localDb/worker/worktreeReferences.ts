@@ -47,8 +47,22 @@ function referenceQuery(db: Database.Database): string {
   }
   // Keep every legacy row protective, including terminal rows: missing metadata
   // is not evidence that a directory can be deleted. No other owner's DB is migrated.
+  const retiredChecks: string[] = [];
+  for (const [table, column] of [
+    ['bot_session_links', 'session_id'], ['bot_profiles', 'canonical_session_id'], ['bot_delegations', 'child_session_id'],
+  ]) {
+    const legacyColumns = db.prepare('PRAGMA table_info(' + table + ')').all() as Array<{ name: string }>;
+    if (!legacyColumns.length) continue; // Older databases have no companion tables.
+    if (!legacyColumns.some((item) => item.name === column)) throw new Error('unsupported retained task ownership schema');
+    retiredChecks.push('id IN (SELECT ' + column + ' FROM ' + table + ' WHERE ' + column + ' IS NOT NULL)');
+  }
+  // This is a deletion-evidence projection only. Retained rows and ownership are never rewritten.
+  const originalSource = hasSource ? 'source' : 'NULL';
+  const protectedSource = retiredChecks.length
+    ? "CASE WHEN " + retiredChecks.join(' OR ') + " THEN 'bot' ELSE " + originalSource + ' END'
+    : originalSource;
   const status = hasRemote ? 'status' : 'NULL';
-  return `SELECT id, ${status} AS status, ${hasSource ? 'source' : 'NULL'} AS source, `
+  return `SELECT id, ${status} AS status, ${protectedSource} AS source, `
     + `working_dir AS workingDir, ${hasWorktree ? 'worktree_path' : 'NULL'} AS worktreePath `
     + `FROM sessions${hasRemote ? ' WHERE remote_host_id IS NULL' : ''}`;
 }

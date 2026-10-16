@@ -1,5 +1,5 @@
 import { captureTurnUsageContext, type TurnUsageContext } from './turnUsageContext.js';
-import type { BotCompactRuntimeRefreshCoordinator } from './botCompactRuntimeRefresh.js';
+
 import type {
   AgentEvent,
   InteractionDecision,
@@ -44,12 +44,6 @@ import {
   InterruptedTurnAutoResumeGuard,
   isSubstantiveProgressEvent,
 } from './interruptedTurnAutoResume.js';
-import { isBotGroupClientId } from '../../shared/botGroupChat.js';
-
-/** Bot DMs and group-lane turns answer an internal channel, not the user watching this Session. */
-function isBotPrivateInput(clientId: string): boolean {
-  return clientId.startsWith('bot-dm:') || isBotGroupClientId(clientId);
-}
 
 interface DismissedInteraction {
   kind: InteractionRequest['kind'];
@@ -59,7 +53,6 @@ interface DismissedInteraction {
 }
 
 export interface PrepareSessionEventDeps {
-  readonly botCompactRuntimeRefreshCoordinator: Pick<BotCompactRuntimeRefreshCoordinator, 'noteBoundary'>;
   readonly isFencedStaleSessionTerminal: (sessionId: string, event: AgentEvent) => boolean;
   readonly log: Pick<ReturnType<typeof createLogger>, 'debug' | 'warn'>;
   readonly interruptedTurnAutoResumeGuard: Pick<
@@ -134,7 +127,6 @@ export function prepareSessionEvent(
   // on-demand detail IPC; forwarding the raw diff through maker:event would duplicate a
   // potentially multi-megabyte payload to every renderer and device-link controller.
   if (event.type === 'turn_diff') return;
-  if (event.type === 'compact_boundary') deps.botCompactRuntimeRefreshCoordinator.noteBoundary(session);
   if (
     event.turnScope === 'background' &&
     Object.prototype.hasOwnProperty.call(event, 'backgroundTurnStartedAt') &&
@@ -168,22 +160,7 @@ export function prepareSessionEvent(
   if (typeof event.turnAttemptToken === 'number') {
     deps.interruptedTurnAutoResumeGuard.noteAttemptEvent(session.id, event.turnAttemptToken);
   }
-  const activeInputId = event.turnScope === 'background' ? null
-    : deps.agentInputCoordinatorHolder?.getActiveInputClientId(session.id, event.sessionTurnGeneration);
-  // The host's accepted input owns provenance across all three SDKs. Explicit
-  // false restores normal replies when the user steers a private message turn.
-  let attributedEvent = activeInputId
-    ? {
-        ...event,
-        agentMeta: {
-          ...event.agentMeta,
-          botPrivateReply: isBotPrivateInput(activeInputId),
-          // A group-lane turn is delivered into the group chat; its hidden Session never
-          // raises completion/error attention of its own (docs/product-rules/bot-group-chat.md §3).
-          ...(isBotGroupClientId(activeInputId) ? { botGroupLane: true } : {}),
-        },
-      }
-    : event;
+  let attributedEvent = event;
   if (event.type === 'error' && isTerminalTurnErrorEvent(event)) {
     const reason =
       !session.remoteHostId && session.agentKind === 'claude-code'

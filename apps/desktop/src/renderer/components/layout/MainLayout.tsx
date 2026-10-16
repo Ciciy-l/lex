@@ -103,17 +103,9 @@ import {
 import { requestSessionSwitch } from '@/features/cc-agent/lib/sessionSwitchCommands';
 import { makeFolderPickerNewMakerRouteState } from '@/features/cc-agent/lib/newMakerRouteState';
 import { resolveSessionRoute } from '@/lib/orcaSessionIdentity';
-import { getBotProfiles } from '@/features/bots/botStore';
-import { botRouteForOwnedSession } from '@/features/bots/botSessionOwners';
 import { remoteProjectsStore } from '@/features/device-link/remoteProjectsStore';
 import { useSharedTaskTasks } from '@/features/device-link/useSharedTaskTasks';
-import {
-  isAgentIslandVisibleSessionOwnedByWorkdirBrowseRoute,
-  isAgentIslandVisibleSessionOwnedByBotRoute,
-  resolveAgentIslandVisibleSessionFromRouteTarget,
-  resolveAgentIslandVisibleSessionsFromPath,
-  resolveAgentIslandVisibleSessionIdFromPath,
-} from '@/lib/agentIslandVisibleSessionRoute';
+import { isAgentIslandVisibleSessionOwnedByWorkdirBrowseRoute, resolveAgentIslandVisibleSessionFromRouteTarget, resolveAgentIslandVisibleSessionsFromPath, resolveAgentIslandVisibleSessionIdFromPath } from '@/lib/agentIslandVisibleSessionRoute';
 
 const SIDEBAR_RAIL_KEY = 'sidebar-rail';
 
@@ -438,7 +430,6 @@ export function MainLayout() {
     if (!isAgentIslandSupported()) return;
     if (!document.hasFocus()) return;
     if (isAgentIslandVisibleSessionOwnedByWorkdirBrowseRoute(location.pathname)) return;
-    if (isAgentIslandVisibleSessionOwnedByBotRoute(location.pathname)) return;
     void window.electronAPI.agentIsland?.setVisibleSession?.(
       visibleSessions,
     );
@@ -503,12 +494,6 @@ export function MainLayout() {
   currentPathRef.current = `${location.pathname}${location.search}`;
   const navigateToSession = useCallback(
     (sessionId: string, messageClientId?: string) => {
-      const botRoute = botRouteForOwnedSession(getBotProfiles(), sessionId);
-      if (botRoute) {
-        const target = botRoute;
-        if (currentPathRef.current !== target) navigate(target);
-        return;
-      }
       // device-link 远程会话本地无 row:resolveSessionRoute 内部的 sessionService.get
       // 会 miss → 远程 Orca lead/worker 被当普通会话路由,CCAgentSessionView 再
       // redirect 到 orca 路由时会丢 searchJump 锚点。传入远程镜像的 session 对象,
@@ -1684,7 +1669,7 @@ export function MainLayout() {
           单例 + vanilla DOM,这里只挂一个空 React 节点,Phase 6 maximize 时
           会在这里加 layout 控制。 */}
       <BrowserWebviewPool />
-      {/* 实际存在内联提示（含伙伴 / 折叠态）时组件自行退让，其余页面保留兜底。 */}
+      {/* 实际存在内联提示（含折叠态）时组件自行退让，其余页面保留兜底。 */}
       <ControlledBanner />
     </FeatureSidebarSlotProvider>
   );

@@ -251,6 +251,7 @@
     "deleteMessageTitle": "이 메시지를 삭제할까요?",
     "deleteMessageBody": "사용자 메시지는 이 항목만 삭제됩니다. AI 메시지의 경우 이전 사용자 입력 이후 생성된 전체 턴이 삭제됩니다. 이후 대화는 유지됩니다. 다음 전송 시 남은 기록에서 AI 컨텍스트가 다시 구성됩니다.",
     "deleteMessageAction": "이 메시지 삭제",
+    "deleteMessageBusy": "현재 응답이 끝난 후 메시지를 삭제해 주세요.",
     "readingCapabilities": "{{agent}} 실행 기능을 불러오는 중…",
     "editingQueueMessageNumbered": "대기열 메시지 {{index}}번째 편집 중",
     "editingQueueMessage": "대기열 메시지 편집 중",

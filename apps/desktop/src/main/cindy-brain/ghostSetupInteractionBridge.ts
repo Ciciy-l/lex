@@ -1,4 +1,4 @@
-import { readBotAuthorizationCard } from '../../shared/botAuthorization.js';
+
 /**
  * Desktop interaction bridge for Host-owned plugin setup cards.
  *
@@ -305,12 +305,8 @@ export function sanitizeGhostSetupSnapshotForDesktop(
 /** Local durable cards retain Desktop helpers; every remote message path strips them. */
 export function sanitizeBotAuthorizationMetaForRemote(meta: Record<string, unknown>): Record<string, unknown> {
   if (!('botAuthorization' in meta)) return meta;
-  const { botAuthorization: raw, ...rest } = meta;
-  const card = readBotAuthorizationCard(raw);
-  return card ? {
-    ...rest,
-    botAuthorization: { ...card, snapshot: sanitizeGhostSetupSnapshotForRemote(card.snapshot) },
-  } : rest;
+  const { botAuthorization: _retired, ...rest } = meta;
+  return rest;
 }
 
 /**

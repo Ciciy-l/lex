@@ -3,7 +3,7 @@ import { getRemoteResource, MOBILE_REMOTE_RESOURCE_PRIMITIVES } from '../device-
 import { normalizeRemoteActions, normalizeRemoteBlocks } from '../device-link/remoteResourceContent';
 import type { RemoteInvoke } from '../device-link/mobileMakerTransport';
 
-const ref = { collectionId: 'teammates', kind: 'bot', id: 'settings:bot-1/avatar' };
+const ref = { collectionId: 'projects', kind: 'project', id: 'settings:project-1/avatar' };
 const action = {
   id: 'avatar',
   label: { fallback: 'Save', translations: { 'zh-CN': '保存' } },

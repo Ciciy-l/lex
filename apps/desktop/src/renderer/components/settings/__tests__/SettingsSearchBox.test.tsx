@@ -28,7 +28,6 @@ const context: SettingsSearchContext = {
   mode: 'cloud',
   membershipKind: 'personal',
   platform: 'darwin',
-  teammatesEnabled: true,
 };
 
 describe('SettingsSearchBox', () => {

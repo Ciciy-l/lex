@@ -1,4 +1,5 @@
-import { eq } from 'drizzle-orm';
+import { retiredCompanionSessionSql } from '../localDb/retiredCompanions.js';
+import { eq, and, not } from 'drizzle-orm';
 import type { ToolCallAuthorizer } from '@cindy/mcps';
 import type { DbClient } from '../localDb/client/DbClient.js';
 import { sessions } from '../localDb/schema.js';
@@ -13,7 +14,7 @@ export function createTaskToolCallAuthorizer(deps: {
     const db = deps.getDb();
     if (!db) return { ok: false, errorCode: 'HOST_NOT_READY', message: '任务数据尚未就绪。' };
     const [task] = await db.drizzle.select({ status: sessions.status }).from(sessions)
-      .where(eq(sessions.id, sessionId)).limit(1);
+      .where(and(eq(sessions.id, sessionId), not(retiredCompanionSessionSql(sessions.id)))).limit(1);
     if (!deps.isScopeCurrent(db)) return { ok: false, errorCode: 'OWNER_SCOPE_CHANGED', message: '账号正在切换，请重试。' };
     // Archive changes list visibility; an already-running turn may still finish.
     if (!task || (task.status !== 'active' && task.status !== 'archived'))

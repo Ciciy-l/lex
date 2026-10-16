@@ -81,9 +81,10 @@ beforeEach(() => {
     revokedControllers: [],
   };
   __testing.reset();
+  setRemoteBotSessionLookup(async () => 'ordinary');
 });
 
-it('strips Desktop credential links from authorization history and live metadata pushes', () => {
+it('removes retired authorization cards from history and live metadata without mutating stored messages', async () => {
   const card = { v: 1, sessionId: 's1', createdAt: 1, target: { kind: 'plugin', id: 'p' },
     snapshot: { kind: 'plugin_setup', requestId: 'r', revision: 1, ghost: { id: 'p', name: 'Plugin' },
       steps: [{ id: 'step', groupId: 'group', groupMode: 'any_of', title: 'Key', description: '', phase: 'pending',
@@ -94,23 +95,32 @@ it('strips Desktop credential links from authorization history and live metadata
   const client = mkClient();
   __testing.setActiveClient(client as never);
   __testing.forwardPush('local-db:messages:created', { sessionId: 's1', message: row });
+  await settleRetirementDelivery();
   const push = client.sendPush.mock.calls.find((c) => c[1] === 'local-db:messages:created')![2];
-  expect(push.message.agentMeta.botAuthorization.snapshot.steps[0].action.kind).toBe('inline_form');
+  await settleRetirementDelivery();
+  expect(push.message.agentMeta.botAuthorization).toBeUndefined();
+  await settleRetirementDelivery();
   expect(JSON.stringify(push)).not.toContain('externalLink');
   for (const channel of ['local-db:messages:list', 'local-db:messages:around']) {
     __testing.sendInvokeResultSafe(client as never, 'mobile', channel, { ok: true, result: [row] }, channel);
   }
   for (const call of client.sendInvokeResult.mock.calls) {
-    expect(call[2].result[0].agentMeta.botAuthorization).toBeDefined();
+    await settleRetirementDelivery();
+    expect(call[2].result[0].agentMeta.botAuthorization).toBeUndefined();
+    await settleRetirementDelivery();
     expect(JSON.stringify(call[2])).not.toContain('externalLink');
   }
   for (const channel of ['local-db:messages:view', 'local-db:messages:work-details']) {
     __testing.sendInvokeResultSafe(client as never, 'mobile', channel, { ok: true,
       result: { messages: [row], items: [{ type: 'messages', key: 'auth', messages: [row] }] } }, channel);
+    await settleRetirementDelivery();
     const result = client.sendInvokeResult.mock.calls.at(-1)![2].result;
-    expect(result.messages[0].agentMeta.botAuthorization).toBeDefined();
+    await settleRetirementDelivery();
+    expect(result.messages[0].agentMeta.botAuthorization).toBeUndefined();
+    await settleRetirementDelivery();
     expect(JSON.stringify(result)).not.toContain('externalLink');
   }
+  await settleRetirementDelivery();
   expect(row.agentMeta.botAuthorization.snapshot.steps[0].action.form.fields[0].externalLink.url).toBe('https://example.com/keys');
 });
 
@@ -123,19 +133,22 @@ describe('negotiated mobile tool projection', () => {
     subscriptions.subscribe('legacy', ['session:s1'], 'legacy', []);
   }
 
-  it('projects new Mobile list reads but leaves old clients and radius-0 details intact', () => {
+  it('projects new Mobile list reads but leaves old clients and radius-0 details intact', async () => {
     subscribe();
     const client = mkClient();
     for (const [dst, channel] of [['mobile', 'local-db:messages:list'], ['legacy', 'local-db:messages:list'],
       ['mobile', 'local-db:messages:around']]) {
       __testing.sendInvokeResultSafe(client as never, dst, channel, { ok: true, result: [row] }, channel);
     }
+    await settleRetirementDelivery();
     expect(client.sendInvokeResult.mock.calls[0][2].result[0]).toHaveProperty('mobileToolInputProjection');
+    await settleRetirementDelivery();
     expect(client.sendInvokeResult.mock.calls[1][2].result[0]).toEqual(row);
+    await settleRetirementDelivery();
     expect(client.sendInvokeResult.mock.calls[2][2].result[0]).toEqual(row);
   });
 
-  it('projects single live/created pushes per peer without changing the host broadcast', () => {
+  it('projects single live/created pushes per peer without changing the host broadcast', async () => {
     subscribe();
     const client = mkClient();
     __testing.setActiveClient(client as never);
@@ -144,18 +157,23 @@ describe('negotiated mobile tool projection', () => {
       event: { type: 'tool_result_full', data: { toolUseId: 'use', fullText: text, isError: false } } };
     __testing.forwardPush('maker:event', payload);
     const calls = client.sendPush.mock.calls;
+    await settleRetirementDelivery();
     expect(calls.find((c) => c[0] === 'mobile')![2]).not.toHaveProperty('resolvedContent');
+    await settleRetirementDelivery();
     expect(calls.find((c) => c[0] === 'legacy')![2]).toEqual(payload);
     __testing.forwardPush('local-db:messages:created', { sessionId: 's1', message: row });
+    await settleRetirementDelivery();
     expect(client.sendPush.mock.calls.find((c) => c[0] === 'mobile' && c[1] === 'local-db:messages:created')![2].message)
       .toHaveProperty('mobileToolInputProjection');
+    await settleRetirementDelivery();
     expect(payload.resolvedContent).toBe(text);
+    await settleRetirementDelivery();
     expect(row.content.input).toBe(input);
   });
 });
 
 describe('history detail interest', () => {
-  it('sanitizes and bounds nested history prose without mutating the Host rows', () => {
+  it('sanitizes and bounds nested history prose without mutating the Host rows', async () => {
     const message = { id: 'prose', clientId: 'prose', role: 'assistant', createdAt: '2026-09-08T00:00:00Z',
       content: 'x'.repeat(MAX_FRAME_BYTES * 2), agentMeta: { recoveryCheckpoint: { secret: 'local-only' }, turnCompleted: false } };
     const page = { version: 1, items: [{ type: 'work', key: 'outer', summary: {}, children: [
@@ -167,10 +185,15 @@ describe('history detail interest', () => {
     });
     __testing.sendInvokeResultSafe(client as never, 'ctrl', 'nested-history', { ok: true, result: page }, 'local-db:messages:view');
     const payload = client.sendInvokeResult.mock.calls.at(-1)![2];
+    await settleRetirementDelivery();
     expect(payload.ok).toBe(true);
+    await settleRetirementDelivery();
     expect(JSON.stringify(payload)).not.toContain('local-only');
+    await settleRetirementDelivery();
     expect(invokeResultFrameBytes('ctrl', 'nested-history', payload)).toBeLessThan(MAX_FRAME_BYTES);
+    await settleRetirementDelivery();
     expect(message.agentMeta.recoveryCheckpoint.secret).toBe('local-only');
+    await settleRetirementDelivery();
     expect(message.content.length).toBe(MAX_FRAME_BYTES * 2);
   });
 
@@ -191,21 +214,26 @@ describe('history detail interest', () => {
     const current = subscriptions.prepareHistoryView('ctrl', 's1')!;
     current.update(['new']);
     finish();
+    await settleRetirementDelivery();
     expect(await request).toMatchObject({ ok: true });
+    await settleRetirementDelivery();
     expect(subscriptions.projectsHistoryDetails('ctrl', 's1')).toBe(true);
     current.setExpanded(['new']);
+    await settleRetirementDelivery();
     expect(subscriptions.projectsHistoryDetails('ctrl', 's1')).toBe(false);
   });
-  it('does not clear working history when link acceptance fails', () => {
+  it('does not clear working history when link acceptance fails', async () => {
     const client = mkClient();
     subscriptions.subscribe('ctrl', ['session:s1']);
     subscriptions.prepareHistoryView('ctrl', 's1')!.update(['work']);
     client.sendLinkAccept.mockImplementation(() => { throw new Error('backpressure'); });
     __testing.handleLinkOpen(client as never, 'ctrl', 'failed-open', undefined);
+    await settleRetirementDelivery();
     expect(subscriptions.hasHistoryView('ctrl', 's1')).toBe(true);
     __testing.reset();
+  setRemoteBotSessionLookup(async () => 'ordinary');
   });
-  it.each([false, true])('restores full pushes on a replacement link (offline first=%s)', (offline) => {
+  it.each([false, true])('restores full pushes on a replacement link (offline first=%s)', async (offline) => {
     const client = mkClient();
     __testing.setActiveClient(client as never);
     for (const peer of ['changed', 'untouched']) {
@@ -221,11 +249,14 @@ describe('history detail interest', () => {
     client.sendPush.mockClear();
     const payload = { sessionId: 's1', event: { type: 'thinking', data: { stage: 'delta', text: 'full detail' } } };
     __testing.forwardPush('maker:event', payload);
+    await settleRetirementDelivery();
     expect(client.sendPush).toHaveBeenCalledWith('changed', 'maker:event', payload);
+    await settleRetirementDelivery();
     expect(client.sendPush.mock.calls.some(([peer]) => peer === 'untouched')).toBe(false);
     subscriptions.prepareHistoryView('changed', 's1')!.update(['work']);
     client.sendPush.mockClear();
     __testing.forwardPush('maker:event', payload);
+    await settleRetirementDelivery();
     expect(client.sendPush.mock.calls.some(([peer]) => peer === 'changed')).toBe(false);
   });
   it.each([false, true])('invalidates a sampled pending view even when notice precedes its result: %s', async (finishBeforeNotice) => {
@@ -248,25 +279,31 @@ describe('history detail interest', () => {
       const request = view.refresh();
       const payload = { sessionId: 's1', event: { type: 'thinking', data: { stage: 'delta', blockId: 'b', text: 'new' } } };
       for (let n = 0; n < 10; n++) __testing.forwardPush('maker:event', payload);
+      await settleRetirementDelivery();
       expect(client.sendPush.mock.calls.filter(([peer, channel]) => peer === 'pending' && channel === 'maker:event')).toHaveLength(10);
       if (!finishBeforeNotice) {
         await vi.advanceTimersByTimeAsync(1000);
+        await settleRetirementDelivery();
         expect(read).toHaveBeenCalledTimes(1);
       }
       captured.update(['work']);
       finish(page);
       await request;
       await vi.advanceTimersByTimeAsync(1000);
+      await settleRetirementDelivery();
       expect(read).toHaveBeenCalledTimes(2);
+      await settleRetirementDelivery();
       expect(client.sendPush.mock.calls.filter(([, channel]) => channel === 'maker:history-view-changed'))
         .toEqual([['pending', 'maker:history-view-changed', { sessionId: 's1' }]]);
       client.sendPush.mockClear();
       __testing.forwardPush('maker:event', payload);
       await vi.advanceTimersByTimeAsync(1000);
+      await settleRetirementDelivery();
       expect(client.sendPush.mock.calls).toEqual([['legacy', 'maker:event', payload]]);
     } finally {
       view.setActive(false);
       __testing.reset();
+  setRemoteBotSessionLookup(async () => 'ordinary');
       vi.useRealTimers();
     }
   });
@@ -281,24 +318,30 @@ describe('history detail interest', () => {
       const push = (stage: string) => ({ sessionId: 's1', event: { type: 'thinking', data: { stage, blockId: 'b', text: 'private detail' } } });
       __testing.forwardPush('maker:event', push('start'));
       for (let n = 0; n < 100; n++) __testing.forwardPush('maker:event', push('delta'));
+      await settleRetirementDelivery();
       expect(client.sendPush.mock.calls.filter((call) => call[0] === 'folded')).toHaveLength(0);
+      await settleRetirementDelivery();
       expect(client.sendPush.mock.calls.filter((call) => call[0] === 'expanded' && call[1] === 'maker:event')).toHaveLength(101);
+      await settleRetirementDelivery();
       expect(client.sendPush.mock.calls.filter((call) => call[0] === 'legacy')).toHaveLength(101);
       await vi.advanceTimersByTimeAsync(500);
       const folded = client.sendPush.mock.calls.filter((call) => call[0] === 'folded');
+      await settleRetirementDelivery();
       expect(folded).toEqual([['folded', 'maker:history-view-changed', { sessionId: 's1' }]]);
       for (let n = 0; n < 100; n++) __testing.forwardPush('maker:event', push('delta'));
       await vi.advanceTimersByTimeAsync(500);
+      await settleRetirementDelivery();
       expect(client.sendPush.mock.calls.filter((call) => call[0] === 'folded')).toHaveLength(1);
     } finally {
       __testing.reset();
+  setRemoteBotSessionLookup(async () => 'ordinary');
       vi.useRealTimers();
     }
   });
 });
 
 describe('[14] sendInvokeResultSafe — 结果超限兜底', () => {
-  it('消息页首发抛 PAYLOAD_TOO_LARGE → 先压缩超大消息内容并重发 ok:true,不冒泡', () => {
+  it('消息页首发抛 PAYLOAD_TOO_LARGE → 先压缩超大消息内容并重发 ok:true,不冒泡', async () => {
     const sendInvokeResult = vi.fn().mockImplementationOnce(() => {
       throw tooLarge();
     });
@@ -320,6 +363,7 @@ describe('[14] sendInvokeResultSafe — 结果超限兜底', () => {
       ],
     };
 
+    await settleRetirementDelivery();
     expect(() =>
       __testing.sendInvokeResultSafe(
         client as never,
@@ -330,10 +374,14 @@ describe('[14] sendInvokeResultSafe — 结果超限兜底', () => {
       ),
     ).not.toThrow();
 
+    await settleRetirementDelivery();
     expect(sendInvokeResult).toHaveBeenCalledTimes(2);
     const second = sendInvokeResult.mock.calls[1];
+    await settleRetirementDelivery();
     expect(second[0]).toBe('ctrl-1');
+    await settleRetirementDelivery();
     expect(second[1]).toBe('req-1');
+    await settleRetirementDelivery();
     expect(second[2]).toMatchObject({
       ok: true,
       result: [
@@ -344,11 +392,13 @@ describe('[14] sendInvokeResultSafe — 结果超限兜底', () => {
         },
       ],
     });
+    await settleRetirementDelivery();
     expect(second[2].result[0].content).toContain('[remote content truncated: payload too large]');
+    await settleRetirementDelivery();
     expect(second[2].result[0].content.length).toBeLessThan(bigContent.length);
   });
 
-  it('消息页非字符串 content 超限 → 用占位文本替代,不返回半截 JSON', () => {
+  it('消息页非字符串 content 超限 → 用占位文本替代,不返回半截 JSON', async () => {
     const sendInvokeResult = vi.fn().mockImplementationOnce(() => {
       throw tooLarge();
     });
@@ -369,6 +419,7 @@ describe('[14] sendInvokeResultSafe — 结果超限兜底', () => {
       ],
     };
 
+    await settleRetirementDelivery();
     expect(() =>
       __testing.sendInvokeResultSafe(
         client as never,
@@ -379,15 +430,17 @@ describe('[14] sendInvokeResultSafe — 结果超限兜底', () => {
       ),
     ).not.toThrow();
 
+    await settleRetirementDelivery();
     expect(sendInvokeResult).toHaveBeenCalledTimes(2);
     const compact = sendInvokeResult.mock.calls[1][2] as {
       ok: true;
       result: Array<{ content: unknown }>;
     };
+    await settleRetirementDelivery();
     expect(compact.result[0].content).toBe('[remote content truncated: payload too large]');
   });
 
-  it('tool_use content 超限 → 保留工具 envelope,只截断 input 大字段', () => {
+  it('tool_use content 超限 → 保留工具 envelope,只截断 input 大字段', async () => {
     const sendInvokeResult = vi.fn().mockImplementationOnce(() => {
       throw tooLarge();
     });
@@ -416,6 +469,7 @@ describe('[14] sendInvokeResultSafe — 结果超限兜底', () => {
       ],
     };
 
+    await settleRetirementDelivery();
     expect(() =>
       __testing.sendInvokeResultSafe(
         client as never,
@@ -426,25 +480,32 @@ describe('[14] sendInvokeResultSafe — 结果超限兜底', () => {
       ),
     ).not.toThrow();
 
+    await settleRetirementDelivery();
     expect(sendInvokeResult).toHaveBeenCalledTimes(2);
     const compact = sendInvokeResult.mock.calls[1][2] as {
       ok: true;
       result: Array<{ content: unknown }>;
     };
+    await settleRetirementDelivery();
     expect(compact.ok).toBe(true);
     const content = compact.result[0].content as {
       toolUseId?: string;
       toolName?: string;
       input?: { command?: string; timeout?: number };
     };
+    await settleRetirementDelivery();
     expect(content.toolUseId).toBe('toolu-1');
+    await settleRetirementDelivery();
     expect(content.toolName).toBe('Bash');
+    await settleRetirementDelivery();
     expect(content.input?.timeout).toBe(1);
+    await settleRetirementDelivery();
     expect(content.input?.command).toContain('[remote content truncated: payload too large]');
+    await settleRetirementDelivery();
     expect(content.input?.command?.length).toBeLessThan(bigCommand.length);
   });
 
-  it('消息页单条内容未超限但整帧仍超限 → 二次压缩到 MAX_FRAME_BYTES 内', () => {
+  it('消息页单条内容未超限但整帧仍超限 → 二次压缩到 MAX_FRAME_BYTES 内', async () => {
     const sendInvokeResult = vi.fn().mockImplementationOnce(() => {
       throw tooLarge();
     });
@@ -460,6 +521,7 @@ describe('[14] sendInvokeResultSafe — 结果超限兜底', () => {
     }));
     const big: InvokeResultPayload = { ok: true, result: messages };
 
+    await settleRetirementDelivery();
     expect(() =>
       __testing.sendInvokeResultSafe(
         client as never,
@@ -470,18 +532,23 @@ describe('[14] sendInvokeResultSafe — 结果超限兜底', () => {
       ),
     ).not.toThrow();
 
+    await settleRetirementDelivery();
     expect(sendInvokeResult).toHaveBeenCalledTimes(2);
     const compact = sendInvokeResult.mock.calls[1][2] as InvokeResultPayload;
+    await settleRetirementDelivery();
     expect(invokeResultFrameBytes('ctrl-1', 'req-1', compact)).toBeLessThan(MAX_FRAME_BYTES);
+    await settleRetirementDelivery();
     expect(compact.ok).toBe(true);
     if (compact.ok) {
       const compactMessages = compact.result as Array<{ content: unknown }>;
+      await settleRetirementDelivery();
       expect(compactMessages).toHaveLength(messages.length);
+      await settleRetirementDelivery();
       expect(compactMessages[0].content).toBe('[remote content truncated: payload too large]');
     }
   });
 
-  it('messages:list 二次压缩后仍需裁行 → 保留 desc 页面的最新行', () => {
+  it('messages:list 二次压缩后仍需裁行 → 保留 desc 页面的最新行', async () => {
     const sendInvokeResult = vi.fn().mockImplementationOnce(() => {
       throw tooLarge();
     });
@@ -500,6 +567,7 @@ describe('[14] sendInvokeResultSafe — 结果超限兜底', () => {
     }));
     const big: InvokeResultPayload = { ok: true, result: messages };
 
+    await settleRetirementDelivery();
     expect(() =>
       __testing.sendInvokeResultSafe(
         client as never,
@@ -510,9 +578,12 @@ describe('[14] sendInvokeResultSafe — 结果超限兜底', () => {
       ),
     ).not.toThrow();
 
+    await settleRetirementDelivery();
     expect(sendInvokeResult).toHaveBeenCalledTimes(2);
     const compact = sendInvokeResult.mock.calls[1][2] as InvokeResultPayload;
+    await settleRetirementDelivery();
     expect(invokeResultFrameBytes('ctrl-1', 'req-1', compact)).toBeLessThan(MAX_FRAME_BYTES);
+    await settleRetirementDelivery();
     expect(compact.ok).toBe(true);
     if (compact.ok) {
       const compactMessages = compact.result as Array<{
@@ -521,13 +592,17 @@ describe('[14] sendInvokeResultSafe — 结果超限兜底', () => {
         content?: unknown;
       }>;
       const ids = compactMessages.map((message) => message.clientId);
+      await settleRetirementDelivery();
       expect(ids[0]).toBe('newest-first-0');
+      await settleRetirementDelivery();
       expect(ids).not.toContain('newest-first-5');
+      await settleRetirementDelivery();
       expect(compactMessages[0].content).toMatchObject({
         toolUseId: 'toolu-0',
         toolName: 'Bash',
         input: { command: 'echo ok', timeout: 1 },
       });
+      await settleRetirementDelivery();
       expect(compactMessages[0].agentMeta).toEqual(
         expect.objectContaining({
           remoteRowsTrimmed: true,
@@ -537,7 +612,7 @@ describe('[14] sendInvokeResultSafe — 结果超限兜底', () => {
     }
   });
 
-  it('messages:around 二次压缩后仍需裁行 → 保留请求的 message anchor', () => {
+  it('messages:around 二次压缩后仍需裁行 → 保留请求的 message anchor', async () => {
     const sendInvokeResult = vi.fn().mockImplementationOnce(() => {
       throw tooLarge();
     });
@@ -553,6 +628,7 @@ describe('[14] sendInvokeResultSafe — 结果超限兜底', () => {
     }));
     const big: InvokeResultPayload = { ok: true, result: messages };
 
+    await settleRetirementDelivery();
     expect(() =>
       __testing.sendInvokeResultSafe(
         client as never,
@@ -564,17 +640,21 @@ describe('[14] sendInvokeResultSafe — 结果超限兜底', () => {
       ),
     ).not.toThrow();
 
+    await settleRetirementDelivery();
     expect(sendInvokeResult).toHaveBeenCalledTimes(2);
     const compact = sendInvokeResult.mock.calls[1][2] as InvokeResultPayload;
+    await settleRetirementDelivery();
     expect(invokeResultFrameBytes('ctrl-1', 'req-1', compact)).toBeLessThan(MAX_FRAME_BYTES);
+    await settleRetirementDelivery();
     expect(compact.ok).toBe(true);
     if (compact.ok) {
       const ids = (compact.result as Array<{ id: string }>).map((message) => message.id);
+      await settleRetirementDelivery();
       expect(ids).toContain('anchor-message');
     }
   });
 
-  it('messages:around-client-id 二次压缩后仍需裁行 → 保留请求的 client anchor', () => {
+  it('messages:around-client-id 二次压缩后仍需裁行 → 保留请求的 client anchor', async () => {
     const sendInvokeResult = vi.fn().mockImplementationOnce(() => {
       throw tooLarge();
     });
@@ -590,6 +670,7 @@ describe('[14] sendInvokeResultSafe — 结果超限兜底', () => {
     }));
     const big: InvokeResultPayload = { ok: true, result: messages };
 
+    await settleRetirementDelivery();
     expect(() =>
       __testing.sendInvokeResultSafe(
         client as never,
@@ -601,44 +682,54 @@ describe('[14] sendInvokeResultSafe — 结果超限兜底', () => {
       ),
     ).not.toThrow();
 
+    await settleRetirementDelivery();
     expect(sendInvokeResult).toHaveBeenCalledTimes(2);
     const compact = sendInvokeResult.mock.calls[1][2] as InvokeResultPayload;
+    await settleRetirementDelivery();
     expect(invokeResultFrameBytes('ctrl-1', 'req-1', compact)).toBeLessThan(MAX_FRAME_BYTES);
+    await settleRetirementDelivery();
     expect(compact.ok).toBe(true);
     if (compact.ok) {
       const clientIds = (compact.result as Array<{ clientId: string }>).map(
         (message) => message.clientId,
       );
+      await settleRetirementDelivery();
       expect(clientIds).toContain('anchor-client');
     }
   });
 
-  it('非消息页首发抛 PAYLOAD_TOO_LARGE → 重发紧凑 {ok:false} 错误结果(沿用原 code),不冒泡', () => {
+  it('非消息页首发抛 PAYLOAD_TOO_LARGE → 重发紧凑 {ok:false} 错误结果(沿用原 code),不冒泡', async () => {
     const sendInvokeResult = vi.fn().mockImplementationOnce(() => {
       throw tooLarge();
     });
     const client = mkClient({ sendInvokeResult });
     const big: InvokeResultPayload = { ok: true, result: { huge: 'x' } };
 
+    await settleRetirementDelivery();
     expect(() =>
       __testing.sendInvokeResultSafe(client as never, 'ctrl-1', 'req-1', big, 'maker:get-session'),
     ).not.toThrow();
 
+    await settleRetirementDelivery();
     expect(sendInvokeResult).toHaveBeenCalledTimes(2);
     const second = sendInvokeResult.mock.calls[1];
+    await settleRetirementDelivery();
     expect(second[0]).toBe('ctrl-1');
+    await settleRetirementDelivery();
     expect(second[1]).toBe('req-1');
+    await settleRetirementDelivery();
     expect(second[2]).toEqual({
       ok: false,
       error: { code: 'PAYLOAD_TOO_LARGE', message: expect.any(String) },
     });
   });
 
-  it('紧凑错误结果也发不出去 → 仍不抛(只 log,彻底放弃)', () => {
+  it('紧凑错误结果也发不出去 → 仍不抛(只 log,彻底放弃)', async () => {
     const sendInvokeResult = vi.fn().mockImplementation(() => {
       throw tooLarge();
     });
     const client = mkClient({ sendInvokeResult });
+    await settleRetirementDelivery();
     expect(() =>
       __testing.sendInvokeResultSafe(
         client as never,
@@ -648,21 +739,24 @@ describe('[14] sendInvokeResultSafe — 结果超限兜底', () => {
         'x',
       ),
     ).not.toThrow();
+    await settleRetirementDelivery();
     expect(sendInvokeResult).toHaveBeenCalledTimes(2);
   });
 
-  it('正常结果 → 直发一次,不重试', () => {
+  it('正常结果 → 直发一次,不重试', async () => {
     const sendInvokeResult = vi.fn();
     const client = mkClient({ sendInvokeResult });
     const ok: InvokeResultPayload = { ok: true, result: { a: 1 } };
     __testing.sendInvokeResultSafe(client as never, 'ctrl-1', 'req-1', ok, 'x');
+    await settleRetirementDelivery();
     expect(sendInvokeResult).toHaveBeenCalledTimes(1);
+    await settleRetirementDelivery();
     expect(sendInvokeResult.mock.calls[0][2]).toBe(ok);
   });
 });
 
 describe('[13] forwardPush — 转发失败 best-effort,不冒泡', () => {
-  it('某控制端 sendPush 抛 PAYLOAD_TOO_LARGE → 不冒泡(本地广播不受影响)', () => {
+  it('某控制端 sendPush 抛 PAYLOAD_TOO_LARGE → 不冒泡(本地广播不受影响)', async () => {
     const sendPush = vi.fn().mockImplementation(() => {
       throw tooLarge();
     });
@@ -671,11 +765,13 @@ describe('[13] forwardPush — 转发失败 best-effort,不冒泡', () => {
     subscriptions.subscribe('ctrl-1', ['session:s1']);
 
     // maker:event + {sessionId:'s1'} → topic 'session:s1' → ctrl-1 命中。
+    await settleRetirementDelivery();
     expect(() => __testing.forwardPush('maker:event', { sessionId: 's1' })).not.toThrow();
+    await settleRetirementDelivery();
     expect(sendPush).toHaveBeenCalledTimes(1);
   });
 
-  it('maker:event 超大帧 → 裁剪实时 payload 后重试一次,不冒泡', () => {
+  it('maker:event 超大帧 → 裁剪实时 payload 后重试一次,不冒泡', async () => {
     const sendPush = vi.fn().mockImplementationOnce(() => {
       throw tooLarge();
     });
@@ -684,6 +780,7 @@ describe('[13] forwardPush — 转发失败 best-effort,不冒泡', () => {
     subscriptions.subscribe('ctrl-1', ['session:s1']);
     const huge = 'x'.repeat(220_000);
 
+    await settleRetirementDelivery();
     expect(() =>
       __testing.forwardPush('maker:event', {
         sessionId: 's1',
@@ -695,19 +792,24 @@ describe('[13] forwardPush — 转发失败 best-effort,不冒泡', () => {
       }),
     ).not.toThrow();
 
+    await settleRetirementDelivery();
     expect(sendPush).toHaveBeenCalledTimes(2);
     const compact = sendPush.mock.calls[1][2] as {
       event: { data: { fullText: string } };
       resolvedContent: string;
       __deviceLinkTruncated?: boolean;
     };
+    await settleRetirementDelivery();
     expect(compact.event.data.fullText.length).toBeLessThan(huge.length);
+    await settleRetirementDelivery();
     expect(compact.event.data.fullText).toContain('[device-link truncated]');
+    await settleRetirementDelivery();
     expect(compact.resolvedContent).toBe('[device-link truncated]');
+    await settleRetirementDelivery();
     expect(compact.__deviceLinkTruncated).toBe(true);
   });
 
-  it('离线队列只记住原 topic 订阅者并按目标 topic 入队', () => {
+  it('离线队列只记住原 topic 订阅者并按目标 topic 入队', async () => {
     const sendPush = vi.fn();
     const client = mkClient({ sendPush });
     __testing.setActiveClient(client as never);
@@ -721,8 +823,11 @@ describe('[13] forwardPush — 转发失败 best-effort,不冒泡', () => {
     __testing.setActiveClient(client as never);
 
     __testing.forwardPush('local-db:messages:created', { sessionId: 's1', id: 'm1' });
+    await settleRetirementDelivery();
     expect(sendPush).not.toHaveBeenCalled();
+    await settleRetirementDelivery();
     expect(__testing.queuedPushesFor('ctrl-sessions')).toEqual([]);
+    await settleRetirementDelivery();
     expect(__testing.queuedPushesFor('ctrl-s1')).toEqual([
       {
         channel: 'local-db:messages:created',
@@ -733,7 +838,7 @@ describe('[13] forwardPush — 转发失败 best-effort,不冒泡', () => {
   });
 
 
-  it('revoked link-open purges remembered routing and closes without accepting', () => {
+  it('revoked link-open purges remembered routing and closes without accepting', async () => {
     const client = mkClient();
     __testing.setActiveClient(client as never);
     subscriptions.subscribe('ctrl-revoked', ['session:s1']);
@@ -744,13 +849,17 @@ describe('[13] forwardPush — 转发失败 best-effort,不冒泡', () => {
     __testing.handleLinkOpen(client as never, 'ctrl-revoked', 'open-1', undefined);
 
     // 'inbound':撤权关的是对方对本机的控制方向,不得封死本机仍存续的主动控制。
+    await settleRetirementDelivery();
     expect(client.closeLink).toHaveBeenCalledWith('ctrl-revoked', 'revoked', 'inbound');
+    await settleRetirementDelivery();
     expect(client.sendLinkAccept).not.toHaveBeenCalled();
+    await settleRetirementDelivery();
     expect(__testing.queuedPushesFor('ctrl-revoked')).toEqual([]);
+    await settleRetirementDelivery();
     expect(subscriptions.getKnownControllersForTopic('session:s1')).toEqual([]);
   });
 
-  it('revoked 控制端反复 link-open 不重复 closeLink,但仍每次 purge 订阅', () => {
+  it('revoked 控制端反复 link-open 不重复 closeLink,但仍每次 purge 订阅', async () => {
     const client = mkClient();
     __testing.setActiveClient(client as never);
     deviceLinkSettings.value.revokedControllers = ['ctrl-revoked'];
@@ -760,12 +869,15 @@ describe('[13] forwardPush — 转发失败 best-effort,不冒泡', () => {
     __testing.handleLinkOpen(client as never, 'ctrl-revoked', 'open-2', undefined);
     __testing.handleLinkOpen(client as never, 'ctrl-revoked', 'open-3', undefined);
 
+    await settleRetirementDelivery();
     expect(client.closeLink).toHaveBeenCalledTimes(1);
+    await settleRetirementDelivery();
     expect(client.sendLinkAccept).not.toHaveBeenCalled();
+    await settleRetirementDelivery();
     expect(subscriptions.getKnownControllersForTopic('session:s1')).toEqual([]);
   });
 
-  it('legacy link-open restores wildcard behavior and replays wildcard backlog', () => {
+  it('legacy link-open restores wildcard behavior and replays wildcard backlog', async () => {
     const client = mkClient();
     __testing.setActiveClient(client as never);
     subscriptions.subscribe('ctrl-legacy', ['*']);
@@ -774,16 +886,19 @@ describe('[13] forwardPush — 转发失败 best-effort,不冒泡', () => {
 
     __testing.handleLinkOpen(client as never, 'ctrl-legacy', 'open-1', undefined);
 
+    await settleRetirementDelivery();
     expect(client.sendLinkAccept).toHaveBeenCalledTimes(1);
+    await settleRetirementDelivery();
     expect(client.sendPush).toHaveBeenCalledWith(
       'ctrl-legacy',
       'local-db:messages:created',
       { sessionId: 's1', id: 'm1' },
     );
+    await settleRetirementDelivery();
     expect(subscriptions.__testing.topicsOf('ctrl-legacy')).toEqual(['*']);
   });
 
-  it('remembered modern link-open waits for an explicit subscribe frame', () => {
+  it('remembered modern link-open waits for an explicit subscribe frame', async () => {
     const client = mkClient();
     __testing.setActiveClient(client as never);
     subscriptions.subscribe(
@@ -802,9 +917,13 @@ describe('[13] forwardPush — 转发失败 best-effort,不冒泡', () => {
       capabilities: [CONTROLLER_CAPABILITY_SET_MODEL_EXPLICIT_PROVIDER_NULL_V1],
     });
 
+    await settleRetirementDelivery();
     expect(client.sendLinkAccept).toHaveBeenCalledTimes(1);
+    await settleRetirementDelivery();
     expect(client.sendPush).not.toHaveBeenCalled();
+    await settleRetirementDelivery();
     expect(subscriptions.__testing.topicsOf('ctrl-modern')).toEqual([]);
+    await settleRetirementDelivery();
     expect(subscriptions.controllerSupports(
       'ctrl-modern',
       CONTROLLER_CAPABILITY_SET_MODEL_EXPLICIT_PROVIDER_NULL_V1,
@@ -814,7 +933,9 @@ describe('[13] forwardPush — 转发失败 best-effort,不冒泡', () => {
       channel: DL_SUBSCRIBE_CHANNEL,
       args: [{ topics: ['session:s1'] }],
     });
+    await settleRetirementDelivery();
     expect(result).toEqual({ ok: true, result: { ok: true } });
+    await settleRetirementDelivery();
     expect(client.sendPush).toHaveBeenCalledWith(
       'ctrl-modern',
       'local-db:messages:created',
@@ -836,7 +957,9 @@ describe('remote companion Session visibility at the device-link boundary', () =
     const handler = vi.fn();
     registry.register(channel as string, handler);
     setRemoteBotSessionLookup(async (id) => id === 's1' ? 'hidden' : 'ordinary');
+    await settleRetirementDelivery();
     expect(await runInvoke('ctrl-1', { channel, args } as never)).toMatchObject({ ok: false, error: { message: expect.stringContaining('[NOT_FOUND]') } });
+    await settleRetirementDelivery();
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -846,38 +969,23 @@ describe('remote companion Session visibility at the device-link boundary', () =
     const lookup = vi.fn(async (id: string, kind?: 'session' | 'bot') =>
       kind === 'bot' && id === 'viewer-bot' ? access : 'ordinary' as const);
     setRemoteBotSessionLookup(lookup);
+    await settleRetirementDelivery();
     expect(await runInvoke('ctrl-1', { channel: 'maker:bot-direct-message-thread:get', args: ['opaque-thread', 'viewer-bot'] }))
-      .toMatchObject({ ok: false, error: { message: expect.stringContaining('[NOT_FOUND]') } });
+      .toMatchObject({ ok: false, error: { code: 'CHANNEL_NOT_ALLOWED' } });
+    await settleRetirementDelivery();
     expect(handler).not.toHaveBeenCalled();
-    expect(lookup).toHaveBeenCalledWith('viewer-bot', 'bot');
-  });
-
-  it('allows a visible private-thread viewer and rechecks that viewer before cached delivery', async () => {
-    let hidden = false;
-    setRemoteBotSessionLookup(async (id, kind) => kind === 'bot' && id === 'viewer-bot'
-      ? hidden ? 'hidden' : 'visible' : 'ordinary');
-    const handler = vi.fn(() => ({ ok: true, thread: { id: 'opaque-thread', messages: [{ content: 'private' }] } }));
-    registry.register('maker:bot-direct-message-thread:get', handler);
-    const client = mkClient();
-    wireInboundDispatch(client as never);
-    const frame = client.onFrame.mock.calls[0][0];
-    const request = { v: PROTOCOL_VERSION, kind: 'invoke', src: 'ctrl-1', id: 'cached-thread', payload: { channel: 'maker:bot-direct-message-thread:get', args: ['opaque-thread', 'viewer-bot'] } };
-    frame(request);
-    await vi.waitFor(() => expect(client.sendInvokeResult).toHaveBeenCalledTimes(1));
-    expect(client.sendInvokeResult.mock.calls[0][2]).toMatchObject({ ok: true, result: { ok: true } });
-    hidden = true;
-    frame(request);
-    await vi.waitFor(() => expect(client.sendInvokeResult).toHaveBeenCalledTimes(2));
-    expect(client.sendInvokeResult.mock.calls[1][2]).toMatchObject({ ok: false, error: { message: expect.stringContaining('[NOT_FOUND]') } });
-    expect(handler).toHaveBeenCalledTimes(1);
+    await settleRetirementDelivery();
+    expect(lookup).not.toHaveBeenCalled();
   });
 
   it('rechecks visibility after an in-flight read and filters active task discovery', async () => {
     let hidden = false;
     setRemoteBotSessionLookup(async () => hidden ? 'hidden' : 'visible');
     registry.register('local-db:sessions:get', () => { hidden = true; return { id: 's1' }; });
+    await settleRetirementDelivery();
     expect(await runInvoke('ctrl-1', { channel: 'local-db:sessions:get', args: ['s1'] })).toMatchObject({ ok: false });
     registry.register('maker:list-active', () => [{ sessionId: 's1' }]);
+    await settleRetirementDelivery();
     expect(await runInvoke('ctrl-1', { channel: 'maker:list-active', args: [] })).toEqual({ ok: true, result: [] });
   });
 
@@ -895,16 +1003,18 @@ describe('remote companion Session visibility at the device-link boundary', () =
     hidden = true;
     finish();
     await vi.waitFor(() => expect(client.sendPush.mock.calls.filter(([dst]) => dst === 'ctrl-2')).toHaveLength(2));
+    await settleRetirementDelivery();
     expect(client.sendPush.mock.calls.filter(([dst]) => dst === 'ctrl-2').map((call) => call[2])).toEqual([
       { sessionId: 's2', seq: 1 }, { sessionId: 's2', seq: 2 },
     ]);
+    await settleRetirementDelivery();
     expect(client.sendPush.mock.calls.every((call) => call[2].sessionId !== 's1')).toBe(true);
   });
 
   it('revalidates cached replies without repeating the local handler', async () => {
     let hidden = false;
     setRemoteBotSessionLookup(async () => hidden ? 'hidden' : 'visible');
-    const handler = vi.fn(() => ({ id: 's1', source: 'bot', workingDir: '/workspace' }));
+    const handler = vi.fn(() => ({ id: 's1', source: 'user', workingDir: '/workspace' }));
     registry.register('local-db:sessions:get', handler);
     const client = mkClient();
     wireInboundDispatch(client as never);
@@ -912,11 +1022,14 @@ describe('remote companion Session visibility at the device-link boundary', () =
     const request = { v: PROTOCOL_VERSION, kind: 'invoke', src: 'ctrl-1', id: 'cached-read', payload: { channel: 'local-db:sessions:get', args: ['s1'] } };
     frame(request);
     await vi.waitFor(() => expect(client.sendInvokeResult).toHaveBeenCalledTimes(1));
+    await settleRetirementDelivery();
     expect(client.sendInvokeResult.mock.calls[0][2]).toMatchObject({ ok: true, result: { workingDir: '/workspace' } });
     hidden = true;
     frame(request);
     await vi.waitFor(() => expect(client.sendInvokeResult).toHaveBeenCalledTimes(2));
+    await settleRetirementDelivery();
     expect(client.sendInvokeResult.mock.calls[1][2]).toMatchObject({ ok: false, error: { message: expect.stringContaining('[NOT_FOUND]') } });
+    await settleRetirementDelivery();
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
@@ -924,10 +1037,12 @@ describe('remote companion Session visibility at the device-link boundary', () =
     const client = mkClient({ sendInvokeResult: vi.fn().mockImplementationOnce(() => { throw new DeviceLinkError('BACKPRESSURE', 'full'); }) });
     __testing.setActiveClient(client as never);
     __testing.sendInvokeResultSafe(client as never, 'ctrl-1', 'queued-read', { ok: true, result: [{ content: 'private reply' }] }, 'local-db:messages:list', ['s1']);
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeResultOutboxSize()).toBe(1);
     setRemoteBotSessionLookup(async () => 'hidden');
     __testing.flushRemoteInvokeResultOutbox();
     await vi.waitFor(() => expect(__testing.remoteInvokeResultOutboxSize()).toBe(0));
+    await settleRetirementDelivery();
     expect(client.sendInvokeResult.mock.calls[1][2]).toMatchObject({ ok: false, error: { message: expect.stringContaining('[NOT_FOUND]') } });
   });
 
@@ -943,7 +1058,9 @@ describe('remote companion Session visibility at the device-link boundary', () =
     __testing.setActiveClient(newClient as never);
     finish();
     await new Promise((resolve) => setTimeout(resolve, 20));
+    await settleRetirementDelivery();
     expect(oldClient.sendPush).not.toHaveBeenCalled();
+    await settleRetirementDelivery();
     expect(newClient.sendPush).not.toHaveBeenCalled();
   });
 });
@@ -983,6 +1100,7 @@ describe('remote recorded-turn actions', () => {
     receive(invokeFrame('peer-live', 'scheduled-live') as never);
 
     await vi.waitFor(() => expect(writes).toEqual(['session-peer-live']));
+    await settleRetirementDelivery();
     expect(writes).not.toContain('session-peer-old');
   });
 
@@ -1010,6 +1128,7 @@ describe('remote recorded-turn actions', () => {
     receive(linkOpenFrame('peer-preflight', 'preflight-reopened') as never);
     releasePreflight();
     await new Promise((resolve) => setTimeout(resolve, 10));
+    await settleRetirementDelivery();
     expect(writes).toEqual([]);
   });
 
@@ -1037,6 +1156,7 @@ describe('remote recorded-turn actions', () => {
     wireInboundDispatch(replacementClient as never);
     releasePreflight();
     await new Promise((resolve) => setTimeout(resolve, 10));
+    await settleRetirementDelivery();
     expect(writes).toEqual([]);
   });
 
@@ -1061,6 +1181,7 @@ describe('remote recorded-turn actions', () => {
       receive(invokeFrame('peer-owner', 'owner-change') as never);
       ownerCurrent = false;
       await new Promise((resolve) => setTimeout(resolve, 10));
+      await settleRetirementDelivery();
       expect(write).not.toHaveBeenCalled();
     } finally {
       capture.mockRestore();
@@ -1076,9 +1197,12 @@ describe('remote recorded-turn actions', () => {
       return { changed: true };
     });
     setRemoteTurnChangeAction(action);
+    await settleRetirementDelivery();
     expect(await runInvoke('ctrl', { channel, args: ['s1', 'change-1', 'undo'] }))
       .toMatchObject({ ok: true, result: { changed: true } });
+    await settleRetirementDelivery();
     expect(action).toHaveBeenCalledWith('s1', 'change-1', 'undo', expect.any(Function));
+    await settleRetirementDelivery();
     expect(localHandler).not.toHaveBeenCalled();
   });
 
@@ -1091,8 +1215,11 @@ describe('remote recorded-turn actions', () => {
     const action = vi.fn(async (_s, _i, verb) => ({ verb }));
     setRemoteTurnChangeAction(action);
     const res = await runInvoke('ctrl', { channel, args: ['s1', 'change-1', 'delete-everything'] });
+    await settleRetirementDelivery();
     expect(res).toMatchObject({ ok: true });
+    await settleRetirementDelivery();
     expect(action).toHaveBeenCalledWith('s1', 'change-1', 'delete-everything', expect.any(Function));
+    await settleRetirementDelivery();
     expect(localHandler).not.toHaveBeenCalled();
   });
 
@@ -1104,7 +1231,9 @@ describe('remote recorded-turn actions', () => {
       throw new Error('[SESSION_RUNNING] Wait for the current response to finish.');
     });
     const busy = await runInvoke('ctrl', { channel, args: ['s1', 'change-1', 'undo'] });
+    await settleRetirementDelivery();
     expect(busy).toMatchObject({ ok: false });
+    await settleRetirementDelivery();
     expect(localHandler).not.toHaveBeenCalled();
   });
   it.each(['disabled', 'revoked', 'hidden'] as const)('rechecks %s access before the write', async (reason) => {
@@ -1118,8 +1247,16 @@ describe('remote recorded-turn actions', () => {
       await assertAccess();
       write();
     });
+    await settleRetirementDelivery();
     expect(await runInvoke('ctrl', { channel, args: ['s1', 'change-1', 'undo'] }))
       .toMatchObject({ ok: false });
+    await settleRetirementDelivery();
     expect(write).not.toHaveBeenCalled();
   });
 });
+
+/** Drain the asynchronous ownership read and delivery queue without advancing retry deadlines. */
+async function settleRetirementDelivery(): Promise<void> {
+  if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(0);
+  else await new Promise<void>(resolve => setTimeout(resolve, 0));
+}

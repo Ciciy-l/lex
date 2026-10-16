@@ -1,8 +1,4 @@
-import { reviewTeammateLearning } from './botLearningReview.js';
-import { botLearningTracker } from './botLearningTracker.js';
-import { learningTurnIdentity } from './botLearningFeedback.js';
-import type { BotDelegationService } from './botDelegationService.js';
-import type { BotGroupChatService } from './botGroupChatService.js';
+
 import type { AgentEvent, Session } from '@cindy/maker-core';
 
 // sidebar-card-mode: turn-done 后刷新列表预览,并按需生成置顶卡片摘要
@@ -51,9 +47,6 @@ import type { SessionDeliveryResult } from './sessionEventDelivery.js';
 import { isSessionErrorSuppressed } from './sessionErrorSuppression.js';
 export interface FinishSessionTerminalEventDeps {
   readonly onPluginTaskTerminal?: (sessionId: string, execution: { instanceId: string; generation: number }, outcome: 'completed' | 'failed' | 'cancelled' | 'interrupted', outputMessageId?: string) => void;
-  readonly botDelegationServiceHolder: Pick<BotDelegationService, 'settleSession'> | null;
-  /** Resolves a Bot group member turn when its hidden group lane finishes. */
-  readonly botGroupChatServiceHolder?: Pick<BotGroupChatService, 'settleLaneTurn'> | null;
   readonly pendingFailedTurnAssistantPersistId: Map<string, string>;
   readonly autoResumeBookkeeping: Pick<
     AutoResumeBookkeeping,
@@ -193,9 +186,6 @@ export function finishSessionTerminalEvent(
           nativeForkAnchor ? { nativeForkAnchor } : undefined,
         );
       }
-    }
-    if (!isContinuationBoundary) {
-      botLearningTracker.seal(session.id, learningTurnIdentity(session, event.sessionTurnGeneration), turnBoundaryAssistantPersistId);
     }
     // error 行在 flushOrphanToolResults 之后入队,保证 orphan tool_result 排在
     // error 行之前(历史时间线:tool 输出 → 错误卡,而非错误卡插到 tool 输出之前)。
@@ -448,24 +438,6 @@ export function finishSessionTerminalEvent(
         event.sessionTurnGeneration,
       );
     if (
-      event.type === 'done' &&
-      !isContinuationBoundary &&
-      !isPairedFailedTurnDone &&
-      !isFailedTurnCompletionTail &&
-      !deferredOrcaWorkerTerminal &&
-      !isTerminalTurnErrorEvent(event) &&
-      isSuccessfulAssistantReplyDoneData(event.data) &&
-      !deps.autoResumeBookkeeping.hasSuppressedError(session.id) &&
-      !deps.agentInputCoordinatorHolder?.isAutoResumePending(session.id) &&
-      !deps.agentInputCoordinatorHolder?.isAutoResumeDeferred(session.id)
-    ) {
-      if (turnBoundaryAssistantPersistId && !session.remoteHostId) {
-        const replyId = turnBoundaryAssistantPersistId;
-        void reviewTeammateLearning(session.id, replyId).catch(() =>
-          deps.log.warn('Teammate learning review did not complete'));
-      }
-    }
-    if (
       !shouldSkipOrcaWorkerTerminal({
         isContinuationBoundary,
         stashedThisErrorEvent: deferredOrcaWorkerTerminal,
@@ -479,9 +451,6 @@ export function finishSessionTerminalEvent(
           deps.agentInputCoordinatorHolder?.isAutoResumeDeferred(session.id) === true,
       })
     ) {
-      // Capture before queue-drain microtasks can promote the follow-up turn.
-      const botDelegationHadPendingInputAtTerminal =
-        (deps.agentInputCoordinatorHolder?.getQueueControlSnapshot(session.id).pendingQueue.length ?? 0) > 0;
       // Recovery-owned terminals are settled by their owner (deferred auth /
       // gateway persistence, overflow surface, or auto-resume abandonment).
       const unsuccessfulBoundary =
@@ -497,42 +466,6 @@ export function finishSessionTerminalEvent(
           instanceId: event.sessionInstanceId ?? session.instanceId,
           generation: event.sessionTurnGeneration,
         }, outcome, turnAssistantPersistId ?? undefined);
-      }
-      // Group lane turns are attributed by the accepted input, captured before the queue drains.
-      const groupLaneInputClientId =
-        deps.agentInputCoordinatorHolder?.getActiveInputClientId?.(session.id, event.sessionTurnGeneration) ?? null;
-      void (async () => {
-        try {
-          const doneData = event.data as { result?: unknown; message?: unknown; reason?: unknown } | null;
-          await deps.botDelegationServiceHolder?.settleSession({
-            childSessionId: session.id,
-            outcome: isTerminalTurnErrorEvent(event) ? 'error' : 'done',
-            resultText: typeof doneData?.result === 'string' ? doneData.result : '',
-            error: [doneData?.message, doneData?.reason].find((value): value is string => typeof value === 'string' && value.length > 0),
-            hadPendingInputAtTerminal: botDelegationHadPendingInputAtTerminal,
-          });
-        } catch (error) {
-          deps.log.warn('Bot delegation terminal settlement failed', {
-            sessionId: session.id, error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      })();
-      if (deps.botGroupChatServiceHolder) {
-        const groupDoneData = event.data as { result?: unknown } | null;
-        void deps.botGroupChatServiceHolder
-          .settleLaneTurn({
-            sessionId: session.id,
-            activeInputClientId: groupLaneInputClientId,
-            outcome: isTerminalTurnErrorEvent(event) ? 'error' : 'done',
-            resultText: typeof groupDoneData?.result === 'string' ? groupDoneData.result : '',
-            resultMessageClientId: turnAssistantPersistId,
-          })
-          .catch((error) => {
-            deps.log.warn('Bot group lane terminal settlement failed', {
-              sessionId: session.id,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          });
       }
       void (async () => {
         try {

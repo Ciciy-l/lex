@@ -385,28 +385,17 @@ describe("PiAgent native auto-compaction ownership", () => {
     knobs.onEvent?.({ type: "agent_settled" });
   }
 
-  it.each(['ordinary', 'disabled', 'bot-allow', 'bot-deny', 'bot-failed', 'bot-disabled', 'bot-missing', 'bot-user-collision', 'bot-global-disabled'] as const)('loads managed skills through explicit paths: %s', async (mode) => {
+  it.each(['ordinary', 'disabled'] as const)('loads managed skills through explicit paths: %s', async (mode) => {
     const skill = path.join(agentHome, 'managed', 'learn', 'SKILL.md');
     mkdirSync(path.dirname(skill), {recursive:true}); writeFileSync(skill, '---\nname: learn\ndescription: fixture\n---\nLearn');
     const deps = buildDeps();
     deps.getManagedSkills = async () => [{kind:'agent-skill', name:'learn', source:'skill', path:skill,
       claudeCommandName:'cindy:learn'}];
-    if(mode === 'disabled' || mode === 'bot-global-disabled') deps.getDisabledSkillPaths = () => [path.dirname(skill)];
-    const bot = mode.startsWith('bot');
-    const handle = await new PiAgent(deps).startSession({ sessionId:'managed-skills', workingDir:cwd, model:'m',
-      ...(bot ? {botRuntimeProfile:{botId:'fixture',profileVersion:1,
-        skillPolicy:{mode:'allowlist' as const, configured:mode === 'bot-deny' ? [] : ['skill:learn'],
-          catalog: mode === 'bot-missing' ? [] : [
-            { name: 'learn', runtimeCommandName: 'skill:learn', path: skill,
-              enabled: mode !== 'bot-disabled', runtimeStatus: mode === 'bot-failed' ? 'failed' as const : 'loaded' as const },
-            ...(mode === 'bot-user-collision' ? [{ name: 'learn', runtimeCommandName: 'skill:learn',
-              path: path.join(agentHome, 'user-learn', 'SKILL.md'), enabled: true }] : []),
-          ]},
-        mcpPolicy:{mode:'inherit' as const,configured:[],catalog:[]},
-        toolsetPolicy:{mode:'inherit' as const,configured:[],catalog:[]}}} : {})});
+    if(mode === 'disabled') deps.getDisabledSkillPaths = () => [path.dirname(skill)];
+    const handle = await new PiAgent(deps).startSession({ sessionId:'managed-skills', workingDir:cwd, model:'m' });
     try {
       const projection = knobs.spawnArgs.find((arg) => path.basename(arg) === 'cindy-managed-skills');
-      expect(!!projection).toBe(mode === 'ordinary' || mode === 'bot-allow');
+      expect(!!projection).toBe(mode === 'ordinary');
       expect(knobs.spawnArgs).not.toContain(realpathSync(skill));
       if (projection) {
         const entries = readdirSync(projection);
@@ -418,8 +407,6 @@ describe("PiAgent native auto-compaction ownership", () => {
           commands: [{ name: 'skill:learn', source: 'skill', sourceInfo: { path: projectedFile, baseDir: path.dirname(projectedFile) } }],
         })).toBe('/skill:learn');
       }
-      if(bot) expect(knobs.spawnArgs).toContain('--no-skills');
-      if(mode === 'bot-allow') expect(knobs.spawnArgs.filter((arg) => arg === '--skill')).toHaveLength(1);
     } finally {await handle.close();}
   });
 

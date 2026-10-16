@@ -12,15 +12,7 @@ import path from 'node:path';
 import { app } from 'electron';
 import type { RemoteHost } from '@cindy/maker-remote-ssh';
 
-import {
-  renderManagedMcpBlock,
-  buildRemoteCodexSessionMcpConfig,
-  mergeManagedMcpBlock,
-  ensureRemoteCodexMcpBridge,
-  stripRemoteCodexMcpConfig,
-  hasPendingRemoteMcpDrift,
-  invalidateRemoteCodexMcpEndpointState,
-} from '../codex-remote-mcp.js';
+import { renderManagedMcpBlock, mergeManagedMcpBlock, ensureRemoteCodexMcpBridge, stripRemoteCodexMcpConfig, hasPendingRemoteMcpDrift, invalidateRemoteCodexMcpEndpointState } from '../codex-remote-mcp.js';
 
 // safeStorage 在测试 stub 里 isEncryptionAvailable=false → token 真源恒 null;
 // 走完整 ensure 流程的用例需要固定 token。
@@ -308,7 +300,7 @@ describe('mergeManagedMcpBlock', () => {
 });
 
 describe('mergeManagedMcpBlock helper-scalar residue (#4776)', () => {
-  const HELPER_SERVERS = ['cindy_orca', 'cindy_helper'];
+  const HELPER_SERVERS = ['cindy_orca'];
   const block = renderManagedMcpBlock({ remotePort: 47921, serverNames: HELPER_SERVERS, tokenFingerprint: 'fp-new' });
   const BEGIN = '# >>> cindy-remote-mcp (managed, do not edit) >>>';
   const END = '# <<< cindy-remote-mcp <<<';
@@ -358,8 +350,7 @@ describe('mergeManagedMcpBlock helper-scalar residue (#4776)', () => {
     expect(parsed.projects['/home/u/repo'].trust_level).toBe('trusted');
     expect(parsed.mcp_servers.my_custom.url).toBe('http://127.0.0.1:22222/mcp/my_custom');
     expect(parsed.history.persistence).toBe('save-all');
-    expect(parsed.mcp_servers.cindy_helper.enabled).toBe(false);
-    expect(parsed.mcp_servers.cindy_helper.startup_timeout_sec).toBe(600);
+    expect(parsed.mcp_servers).not.toHaveProperty('cindy_helper');
     expect(parsed.mcp_servers.cindy_orca.url).toBe('http://127.0.0.1:47921/mcp/cindy_orca');
     return parsed;
   };
@@ -369,7 +360,7 @@ describe('mergeManagedMcpBlock helper-scalar residue (#4776)', () => {
     for (let refresh = 0; refresh < 5; refresh += 1) {
       const { next } = mergeManagedMcpBlock(config, block, { serverNames: HELPER_SERVERS });
       expect(() => parseToml(next), `refresh ${refresh}`).not.toThrow();
-      expect(next.match(/\[mcp_servers\.cindy_helper\]/g), `refresh ${refresh}`).toHaveLength(1);
+      expect(next).not.toContain('[mcp_servers.cindy_helper]');
       expect(next.match(/# >>> cindy-remote-mcp/g), `refresh ${refresh}`).toHaveLength(1);
       expect(outsideManaged(next), `refresh ${refresh}`).not.toMatch(helperScalar);
       expectUserConfigKept(next);
@@ -387,7 +378,7 @@ describe('mergeManagedMcpBlock helper-scalar residue (#4776)', () => {
     expect(changed).toBe(true);
     expect(strippedUserServers).toEqual([]);
     expect(() => parseToml(next)).not.toThrow();
-    expect(next.match(/\[mcp_servers\.cindy_helper\]/g)).toHaveLength(1);
+    expect(next).not.toContain('[mcp_servers.cindy_helper]');
     expect(outsideManaged(next)).not.toMatch(helperScalar);
     expectUserConfigKept(next);
   });
@@ -410,7 +401,7 @@ describe('mergeManagedMcpBlock helper-scalar residue (#4776)', () => {
     const { next } = mergeManagedMcpBlock(interrupted, block, { serverNames: HELPER_SERVERS });
     expect(() => parseToml(next)).not.toThrow();
     expect(outsideManaged(next)).not.toMatch(helperScalar);
-    expect(next.match(/\[mcp_servers\.cindy_helper\]/g)).toHaveLength(1);
+    expect(next).not.toContain('[mcp_servers.cindy_helper]');
     expectUserConfigKept(next);
   });
 
@@ -1476,69 +1467,45 @@ describe('codex-connector R27 regressions', () => {
   });
 });
 
-
-describe('remote Bot helper transport', () => {
-  const helperConfigOpts = {
-    bridgeInstanceId: 'helper-bridge', serverNames: ['cindy_helper'],
-    collabEnabled: false, makerMemoryEnabled: false,
-  };
-
-  it('keeps the shared helper disabled and binds per-thread URLs with collab and memory off', async () => {
-    const { host, inputs } = fakeHost('host-helper-only', '');
-    const ensured = await ensureRemoteCodexMcpBridge(host, {
-      ensureBridgeStarted: async () => ({ port: 38991, serverNames: ['cindy_helper'], bridgeInstanceId: 'helper-bridge' }),
+describe('retired remote helper transport', () => {
+  it('never renders the host helper or unrelated local servers in remote managed config', () => {
+    const rendered = renderManagedMcpBlock({ remotePort: 47921, serverNames: ['cindy_orca', 'cindy_memory', 'cindy_helper', 'cindy_ssh'], tokenFingerprint: 'fp' });
+    const config = parseToml(rendered) as Record<string, any>;
+    expect(Object.keys(config.mcp_servers)).toEqual(['cindy_orca', 'cindy_memory']);
+  });
+  it('does not forward or bootstrap a helper-only empty host', async () => {
+    const { host, execCmds } = fakeHost('host-retired-helper-only', '');
+    const forward = vi.spyOn(host, 'ensureRemoteForward');
+    const result = await ensureRemoteCodexMcpBridge(host, {
+      ensureBridgeStarted: async () => ({ port: 38991, serverNames: ['cindy_helper'], bridgeInstanceId: 'retired-bridge' }),
       isCollabEnabled: () => false, isMakerMemoryEnabled: () => false,
     });
-    expect(ensured.ok).toBe(true);
-    expect(decodeWrittenConfig(inputs)).toContain('[mcp_servers.cindy_helper]');
-    expect(decodeWrittenConfig(inputs)).toContain('enabled = false');
-    const config = buildRemoteCodexSessionMcpConfig(host.id, 'bot-instance', helperConfigOpts);
-    expect(config).toMatchObject({
-      'mcp_servers.cindy_helper.url': 'http://127.0.0.1:47921/mcp/cindy_helper?instance=bot-instance',
-      'mcp_servers.cindy_helper.bearer_token_env_var': 'LIZI_MCP_TOKEN',
-      'mcp_servers.cindy_helper.enabled': false,
-    });
-    expect(buildRemoteCodexSessionMcpConfig('missing-host', 'bot-instance', helperConfigOpts)).toEqual({});
-    expect(buildRemoteCodexSessionMcpConfig(host.id, 'bot-instance', { ...helperConfigOpts, serverNames: [] })).toEqual({});
-    expect(hasPendingRemoteMcpDrift(host.id, {
-      collabEnabled: false, makerMemoryEnabled: false, botHelperAvailable: true,
-      token: 'test-persistent-token', bridgeInstanceId: 'helper-bridge',
-    })).toBe(false);
+    expect(result.ok).toBe(true);
+    expect(execCmds.toString()).not.toContain('bootstrap');
+    expect(forward).not.toHaveBeenCalled();
   });
-
-  it.each(['first-injection', 'helper-added', 'token', 'bridge'] as const)(
-    'withholds the helper during deferred %s and exposes it after bootstrap', async (drift) => {
-      const { host, execCmds } = fakeHost(`host-helper-deferred-${drift}`, '');
-      const bridge = { port: 38991, serverNames: [...SERVERS, 'cindy_helper'], bridgeInstanceId: 'helper-bridge' };
-      const opts = () => ({ ...bridge, collabEnabled: true, makerMemoryEnabled: false });
-      const deps = (live: boolean) => ({
-        ensureBridgeStarted: async () => bridge,
-        hasLiveTurnOnHost: () => live,
-      });
-      try {
-        if (drift !== 'first-injection') {
-          if (drift === 'helper-added') bridge.serverNames = [...SERVERS];
-          expect((await ensureRemoteCodexMcpBridge(host, deps(false))).ok).toBe(true);
-        }
-        bridge.serverNames = [...SERVERS, 'cindy_helper'];
-        if (drift === 'token') vi.mocked(getRemoteMcpBridgeToken).mockReturnValue('test-rotated-token');
-        if (drift === 'bridge') bridge.bridgeInstanceId = 'helper-bridge-next';
-        // Check both before and after ensure: a stale persisted fingerprint must
-        // not be accepted even before the next SSH configuration write.
-        expect(buildRemoteCodexSessionMcpConfig(host.id, 'bot-instance', opts())).toEqual({});
-        execCmds.length = 0;
-        expect(await ensureRemoteCodexMcpBridge(host, deps(true)))
-          .toMatchObject({ ok: true, daemonRebootstrapped: false });
-        expect(execCmds.join('\n')).not.toContain('bootstrap');
-        expect(buildRemoteCodexSessionMcpConfig(host.id, 'bot-instance', opts())).toEqual({});
-
-        expect(await ensureRemoteCodexMcpBridge(host, deps(false)))
-          .toMatchObject({ ok: true, daemonRebootstrapped: true });
-        expect(buildRemoteCodexSessionMcpConfig(host.id, 'bot-instance', opts()))
-          .toHaveProperty('mcp_servers.cindy_helper.url', 'http://127.0.0.1:47921/mcp/cindy_helper?instance=bot-instance');
-      } finally {
-        vi.mocked(getRemoteMcpBridgeToken).mockReturnValue('test-persistent-token');
-      }
-    },
-  );
+  it('removes an old managed helper and preserves user-owned configuration on refresh', async () => {
+    const previous = [
+      'model = "gpt-5.5"',
+      '# >>> cindy-remote-mcp (managed, do not edit) >>>',
+      '[mcp_servers.cindy_helper]',
+      'url = "http://127.0.0.1:47000/mcp/cindy_helper"',
+      'enabled = false', '# <<< cindy-remote-mcp <<<',
+      '[mcp_servers.user_owned]', 'command = "custom-tool"', '',
+    ].join(String.fromCharCode(10));
+    const { host, inputs } = fakeHost('host-retired-helper-upgrade', previous);
+    const result = await ensureRemoteCodexMcpBridge(host, {
+      ensureBridgeStarted: async () => ({ port: 38991, serverNames: [...SERVERS, 'cindy_helper'], bridgeInstanceId: 'retired-bridge' }),
+      hasLiveTurnOnHost: () => false,
+    });
+    expect(result.ok).toBe(true);
+    const written = decodeWrittenConfig(inputs);
+    expect(written).not.toBeNull();
+    if (written === null) throw new Error('No updated remote configuration was written');
+    const config = parseToml(written) as Record<string, any>;
+    expect(config.model).toBe('gpt-5.5');
+    expect(config.mcp_servers.user_owned.command).toBe('custom-tool');
+    expect(config.mcp_servers).not.toHaveProperty('cindy_helper');
+    expect(config.mcp_servers).toHaveProperty('cindy_orca');
+  });
 });

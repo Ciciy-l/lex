@@ -71,7 +71,7 @@ import {
   type SendOptions,
   type TurnPermissionPolicy,
 } from '../base-agent.js';
-import { isBotMcpServerAllowed } from '../shared/bot-runtime-policy.js';
+
 import { SYSTEM_PROMPT_APPEND as MAKER_SYSTEM_PROMPT_APPEND } from './system-prompt-append.js';
 import { MAKER_MEMORY_RULES } from '../../memory/system-prompt.js';
 import {
@@ -191,7 +191,7 @@ import type { McpProviderContext } from '../../interfaces/mcp-provider.js';
 import { claudeDisabledSkillOverrides, snapshotDisabledSkillLaunch, currentDisabledSkillLaunchPaths } from '../shared/skill-activation.js';
 import { scanClaudeCustomizations, scanClaudeRuntimeSkills } from './customization-scanner.js';
 import { prepareManagedSkillPlugins } from './managed-skill-plugins.js';
-import { resolveAllowedManagedSkills, snapshotManagedSkillGrants } from '../shared/managed-skill-policy.js';
+import { resolveAllowedManagedSkills } from '../shared/managed-skill-policy.js';
 import {
   REVIEW_SENSITIVE_CREDENTIAL_GLOB_PATTERNS,
   isReviewSensitiveCredentialSelector,
@@ -211,21 +211,18 @@ export function buildClaudeSystemPromptAppend(parts: {
   ghostRosterPrompt?: string;
   hostSystemPrompt?: string;
   makerMemoryIndex?: string;
-  botProfilePrompt?: string;
-  botProfileContextPrompt?: string;
-  botUserProfilePrompt?: string;
   userPrompt?: string;
 }): string {
   return [
-    parts.botProfilePrompt,
+    undefined,
     MAKER_SYSTEM_PROMPT_APPEND,
     parts.makerMemoryRules,
     parts.contactsRules,
     parts.ghostRosterPrompt,
-    parts.botProfileContextPrompt,
+    undefined,
     parts.hostSystemPrompt,
     parts.makerMemoryIndex,
-    parts.botUserProfilePrompt,
+    undefined,
     parts.userPrompt,
   ]
     .filter((part): part is string => !!part && part.trim().length > 0)
@@ -1432,7 +1429,7 @@ export class ClaudeCodeAgent extends BaseAgent {
       (this.deps.runtimeConfig.subagentModelForRoute
         ? this.deps.runtimeConfig.subagentModelForRoute(opts.providerId ?? null, credentialMode)
         : this.deps.runtimeConfig.subagentModel
-      )?.trim() || undefined;
+      )?.trim();
     let subagentDefault: ResolveSubagentModelDefaultResult = {
       envSubagentModel: configuredSubagentDefault,
       diagnostics: [],
@@ -1552,12 +1549,8 @@ export class ClaudeCodeAgent extends BaseAgent {
         ),
       });
     }
-    // A Bot has its own Profile prompt. The Cindy host identity/custom prompt
-    // belongs to ordinary Sessions and must not be layered into every Bot.
-    const hostSystemPrompt = opts.botRuntimeProfile
-      ? undefined
-      : this.deps.runtimeConfig.systemPrompt;
-    const ghostRosterPrompt = opts.remoteHostId || reviewMode || opts.botRuntimeProfile
+    const hostSystemPrompt = this.deps.runtimeConfig.systemPrompt;
+    const ghostRosterPrompt = opts.remoteHostId || reviewMode
       ? ''
       : (this.deps.getGhostRosterPrompt?.({ workingDir: opts.workingDir }) ?? '');
 
@@ -1623,9 +1616,7 @@ export class ClaudeCodeAgent extends BaseAgent {
     if (makerMemoryEnabled && makerMemory) {
       try {
         const store = await makerMemory.getStore(memoryScopeKey);
-        makerMemoryRules = opts.makerMemoryScopeKey?.startsWith('bot:')
-          ? ''
-          : MAKER_MEMORY_RULES;
+        makerMemoryRules = MAKER_MEMORY_RULES;
         makerMemoryIndex = opts.makerMemoryIndexSnapshot ?? await store.getIndex();
         memoryFlushController = new MemoryFlushController({
           logger: log.child('memory-flush'),
@@ -1759,7 +1750,6 @@ export class ClaudeCodeAgent extends BaseAgent {
         // 不可序列化, 这里跳过, 由 host 的 remoteCcQueryFactory 按同一 flag 以
         // http 形态经 bridge 注入 (见 cc-remote-mcp.ts)。
         if (provider.name === 'cindy_memory' && (!makerMemoryEnabled || opts.remoteHostId)) continue;
-        if (!isBotMcpServerAllowed(opts.botRuntimeProfile?.mcpPolicy, provider.name)) continue;
         if (provider.isEnabled && !provider.isEnabled(context)) continue;
         // 同名 provider 先注册者胜 —— host 把用户自定义 MCP **追加**在内置之后, 后写
         // 覆盖会让一个 id 取名 `cindy_browser` 的自定义远程端点顶替内置 server:
@@ -2500,11 +2490,11 @@ export class ClaudeCodeAgent extends BaseAgent {
     // (eg. summarized reasoning UI 本地有 remote 没)。getter 让 memOverride /
     // mutableFastMode 读最新值 (setMemory / setFastMode 运行时改) 而不是 buildQuery
     // 时快照。装配逻辑(含 apiKeyHelper 恒置空的鉴权防线)在 flag-settings.ts。
-    const managedSkillGrants = snapshotManagedSkillGrants(opts.botRuntimeProfile?.skillPolicy);
+
     const launchDisabledSkillPaths = opts.remoteHostId || reviewMode
       ? [] : [...(this.deps.getDisabledSkillPaths?.() ?? [])];
     const managedDisabledSkillLaunch = snapshotDisabledSkillLaunch(launchDisabledSkillPaths);
-    const disabledSkillPaths = opts.botRuntimeProfile ? [] : launchDisabledSkillPaths;
+    const disabledSkillPaths = (launchDisabledSkillPaths);
     const disabledSkillLaunch = snapshotDisabledSkillLaunch(disabledSkillPaths);
     const disabledSkillSnapshot = disabledSkillLaunch.identities;
     const disabledSkillOverrides = disabledSkillPaths.length > 0
@@ -2523,12 +2513,11 @@ export class ClaudeCodeAgent extends BaseAgent {
         // configuration. Maker Memory on remote sessions is injected via the
         // host bridge (prompt + http MCP), which coexists with — but does not
         // rewrite — the remote machine's native memory settings.
-        memoryOverride: reviewMode || opts.botRuntimeProfile ? false : opts.remoteHostId ? undefined : this.memoryOverride,
+        memoryOverride: reviewMode ? false : opts.remoteHostId ? undefined : this.memoryOverride,
         // Fast 模式:进 flag settings 层(= --settings),解锁 cc 二进制在 Agent SDK 通道下的
         // fast(否则二进制按 "Agent SDK 不可用" 拒绝)。是否 Opus/官方/firstParty 由二进制把关,
         // agent 层不重复硬判(规则 9:确定性逻辑就近,但 fast 的最终门槛是二进制 + 配置门控)。
         fastMode: mutableFastMode,
-        botSkillPolicy: reviewMode ? undefined : opts.botRuntimeProfile?.skillPolicy,
         capabilityRouting: reviewMode ? undefined : this.deps.capabilityRouting,
       });
       if (Object.keys(disabledSkillOverrides).length > 0) {
@@ -3258,7 +3247,7 @@ export class ClaudeCodeAgent extends BaseAgent {
       //   其余(unavailable/工作区覆盖禁用/注册被跳过/remote/未接线) → 不注入 —
       //   既不指挥模型调不可达工具, 也不邀请用户去开一个已开着的开关。
       const contactsRules = (() => {
-        if (opts.remoteHostId || opts.botRuntimeProfile) return '';
+        if (opts.remoteHostId) return '';
         const state = this.deps.getContactsPromptState?.({ workingDir: opts.workingDir });
         if (state === 'disabled') return CONTACTS_RULES_DISABLED;
         if (state !== 'enabled') return '';
@@ -3417,11 +3406,7 @@ export class ClaudeCodeAgent extends BaseAgent {
               ghostRosterPrompt,
               hostSystemPrompt,
               makerMemoryIndex,
-              botProfilePrompt: reviewMode ? undefined : opts.botProfilePrompt,
-              botProfileContextPrompt:
-                reviewMode ? undefined : opts.botProfileContextPrompt,
-              botUserProfilePrompt: reviewMode ? undefined : opts.botUserProfilePrompt,
-              userPrompt: reviewMode || opts.botRuntimeProfile ? undefined : opts.userPrompt,
+              userPrompt: reviewMode ? undefined : opts.userPrompt,
             });
             return {
               type: 'preset' as const,
@@ -3447,7 +3432,6 @@ export class ClaudeCodeAgent extends BaseAgent {
           // options (cc-mgr.ts:106), 所以 extraOptions 是任意 SDK 字段的统一透传出口。
           extraOptions: {
             includePartialMessages: true,
-            ...(opts.botRuntimeProfile ? { strictMcpConfig: true } : {}),
             ...thinkingOpts,
             ...(currentSdkEffort ? { effort: currentSdkEffort } : {}),
             // settings 对象跟本地分支同源 — 不透传则远端 SDK 拿不到
@@ -3457,7 +3441,7 @@ export class ClaudeCodeAgent extends BaseAgent {
             // 上的 ~/.claude / 项目 .claude / cwd-local 三层 settings 文件 (slash
             // commands / output styles / hooks / per-project model 等)。不透传
             // SDK 默认不读, 远端会丢用户配置, 跟本地行为分歧。
-            settingSources: reviewMode || !!opts.botRuntimeProfile
+            settingSources: reviewMode || false
               ? []
               : ['user', 'project', 'local'],
           },
@@ -3473,7 +3457,6 @@ export class ClaudeCodeAgent extends BaseAgent {
                 },
               }
             : {}),
-          botSession: !reviewMode && !!opts.botRuntimeProfile,
           sessionId: opts.sessionId,
           ...(opts.sessionInstanceId ? { sessionInstanceId: opts.sessionInstanceId } : {}),
           startParams,
@@ -3916,7 +3899,7 @@ export class ClaudeCodeAgent extends BaseAgent {
       const managedSkills = !reviewMode && this.deps.getManagedSkills
         ? await this.deps.getManagedSkills() : [];
       const managedDisabledPaths = currentDisabledSkillLaunchPaths(managedDisabledSkillLaunch);
-      const allowedManagedSkills = resolveAllowedManagedSkills(managedSkills, managedSkillGrants, managedDisabledPaths);
+      const allowedManagedSkills = resolveAllowedManagedSkills(managedSkills, managedDisabledPaths);
       const managedPlugins = allowedManagedSkills.length
         ? await prepareManagedSkillPlugins(allowedManagedSkills, (name) => {
           log.warn('managed skill disappeared before Query startup; skipping', { skill: name });
@@ -3926,9 +3909,9 @@ export class ClaudeCodeAgent extends BaseAgent {
       };
       const querySignal = abortController.signal;
       if (managedPlugins) querySignal.addEventListener('abort', releaseManagedPlugins, { once: true });
-      const botOwnSkillPluginRoots = reviewMode
+      const managedSkillPluginRoots = reviewMode
         ? []
-        : [...new Set([...(managedPlugins?.roots ?? []), ...(opts.botRuntimeProfile?.skillPolicy.ownSkillPluginRoots ?? [])])];
+        : [...new Set([...(managedPlugins?.roots ?? []), ])];
       // Bind the native request id before the first HTTP request, not after SDK init.
       // A fork keeps its resume source but must publish a new destination id.
       const newSdkSessionId = !resumeSdkSid || finalFork ? randomUUID() : undefined;
@@ -3945,8 +3928,8 @@ export class ClaudeCodeAgent extends BaseAgent {
           // Bot 自有技能和已按启用状态/白名单过滤的 Cindy 托管技能，
           // 只通过本次 Query 的本地插件加载，不写用户共用技能目录。
           // 与 additionalDirectories 同理:路径是本机的,远端 cc-mgr 分支不透传。
-          ...(botOwnSkillPluginRoots.length > 0
-            ? { plugins: botOwnSkillPluginRoots.map((root) => ({ type: 'local' as const, path: root })) }
+          ...(managedSkillPluginRoots.length > 0
+            ? { plugins: managedSkillPluginRoots.map((root) => ({ type: 'local' as const, path: root })) }
             : {}),
           model: currentSdkModel,
           ...(currentSdkEffort ? { effort: currentSdkEffort } : {}),
@@ -3954,21 +3937,8 @@ export class ClaudeCodeAgent extends BaseAgent {
           includePartialMessages: true,
           ...thinkingOpts,
           pathToClaudeCodeExecutable: binaryPath,
-          // systemPrompt 八段拼接(含 SDK 内嵌 preset)— SDK 先输出 preset, 再追加 append 字段。
-          //   [1] cc preset                  — Claude SDK 自带 (内嵌不可见)
-          //   [2] opts.botProfilePrompt      — Bot SOUL identity only (main/DB authority)
-          //   [3] MAKER_SYSTEM_PROMPT_APPEND — maker engine (system-prompt-append.md)
-          //   [4] makerMemoryRules           — maker memory 写入规范 (条件式: makerMemoryEnabled
-          //                                    且 manager 注入成功才注入)
-          //   [5] contactsRules              — 智能通讯录两态段 (条件式: host 注入了
-          //                                    getContactsPromptState 才有, 开/关各一份静态文案)
-          //   [6] opts.botProfileContextPrompt — stable active-profile marker, kept outside SOUL
-          //   [7] hostSystemPrompt           — host runtime (runtimeConfig.systemPrompt)
-          //   [8] makerMemoryIndex           — 当前 workdir MEMORY.md 内容 (条件式, 紧邻 userPrompt
-          //                                    高优先级, 启动时快照 — 跟 userPrompt 同语义)
-          //   [9] opts.userPrompt            — per-call 用户级 (renderer 本地 storage,
-          //                                    每次 startSession 透传, 优先级最高)
-          // 空段被 .filter 跳过 (.md 文件为空 / userPrompt 为空 = 不 append).
+          // SDK preset is followed by the shared engine, memory/contact/plugin rules,
+          // host instructions, current memory index and per-call user prompt.
           systemPrompt: (() => {
             const appendText = buildClaudeSystemPromptAppend({
               makerMemoryRules,
@@ -3976,11 +3946,7 @@ export class ClaudeCodeAgent extends BaseAgent {
               ghostRosterPrompt,
               hostSystemPrompt,
               makerMemoryIndex,
-              botProfilePrompt: reviewMode ? undefined : opts.botProfilePrompt,
-              botProfileContextPrompt:
-                reviewMode ? undefined : opts.botProfileContextPrompt,
-              botUserProfilePrompt: reviewMode ? undefined : opts.botUserProfilePrompt,
-              userPrompt: reviewMode || opts.botRuntimeProfile ? undefined : opts.userPrompt,
+              userPrompt: reviewMode ? undefined : opts.userPrompt,
             });
             return {
               type: 'preset' as const,
@@ -4033,8 +3999,7 @@ export class ClaudeCodeAgent extends BaseAgent {
           ...(claudeAllowedTools ? { allowedTools: [...claudeAllowedTools] } : {}),
           canUseTool,
           // Bot MCP selection is explicit; native delegation remains available.
-          ...(opts.botRuntimeProfile ? { strictMcpConfig: true } : {}),
-          settingSources: reviewMode || !!opts.botRuntimeProfile
+          settingSources: reviewMode || false
             ? []
             : ['user', 'project', 'local'],
           // Settings (SDK "flag settings" 层, 优先级最高 — 覆盖 user/project/local 文件层):

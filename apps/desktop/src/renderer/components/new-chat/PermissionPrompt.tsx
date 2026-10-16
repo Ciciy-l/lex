@@ -16,8 +16,8 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { BotAvatar } from '@/features/bots/BotAvatar';
-import type { BotChatIdentity } from '@/features/bots/BotSessionContentHeader';
+
+
 
 import { shouldCardShortcutYield } from '@/lib/editableKeyboardTarget';
 import { cn } from '@/lib/utils';
@@ -33,7 +33,6 @@ import { GHOST_INSTALL_CONSENT_TOOL_NAME } from '../../../shared/ghostInstallCon
 
 interface PermissionPromptProps {
   permission: PendingPermission;
-  companion?: BotChatIdentity | null;
   onRespond: (result: CCAgentPermissionResult) => void;
 }
 
@@ -101,7 +100,7 @@ const allowActionClass = cn(
 // Component
 // ---------------------------------------------------------------------------
 
-export function PermissionPrompt({ permission, onRespond, companion }: PermissionPromptProps) {
+export function PermissionPrompt({ permission, onRespond, }: PermissionPromptProps) {
   const { t } = useTranslation();
   const cardRef = useRef<HTMLDivElement>(null);
   const { toolName, input, title, displayName, description, suggestions, autoReviewUnavailable,
@@ -206,14 +205,12 @@ export function PermissionPrompt({ permission, onRespond, companion }: Permissio
     >
       {/* Keep the request in the conversation, with the exact operation below. */}
       <div className="flex items-center gap-2.5">
-        {companion ? <BotAvatar bot={companion} size="sm" /> : null}
+        {(null)}
         <div className="min-w-0">
           <p className="text-15 font-semibold leading-tight text-[var(--chat-input-text)]">
-            {companion ? t('bots.permissionRequest', { name: companion.name }) : displayTitle}
+            {(displayTitle)}
           </p>
-          {companion ? (
-            <p className="mt-1 text-12 text-[var(--status-bar-meta)]">{displayTitle}</p>
-          ) : null}
+          {(null)}
         </div>
       </div>
 

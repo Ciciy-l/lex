@@ -1,3 +1,4 @@
+import { setRemoteBotSessionLookup } from '../remoteBotSessionBoundary';
 import { sharedTaskGuestPeer } from '@cindy/device-link';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DL_SUBSCRIBE_CHANNEL } from '@cindy/device-link';
@@ -40,6 +41,7 @@ function client() {
 beforeEach(() => {
   vi.useFakeTimers();
   __testing.reset();
+  setRemoteBotSessionLookup(async () => 'ordinary');
   grants.clear();
   grants.set(guestA, 'task-a'); grants.set(guestB, 'task-b');
   setSharedTaskDispatchHost({ capturePeer(source: string) {
@@ -54,6 +56,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   __testing.reset();
+  setRemoteBotSessionLookup(async () => 'ordinary');
   setSharedTaskDispatchHost(null);
   vi.useRealTimers();
 });
@@ -103,7 +106,7 @@ describe('shared task metadata uses only its authorized task subscription', () =
     expect(transport.sendPush).not.toHaveBeenCalled();
     expect(__testing.queuedPushesFor(guestA).map((item) => item.topic)).toEqual(metadata.map(() => 'session:task-a'));
     expect(__testing.queuedPushesFor(guestB)).toEqual([]);
-    const result = __testing.handleSubscriptionFrame(guestA, {
+    const result = await __testing.handleSubscriptionFrame(guestA, {
       channel: DL_SUBSCRIBE_CHANNEL, args: [{ topics: ['session:task-a'] }],
     });
     expect(result.ok).toBe(true);

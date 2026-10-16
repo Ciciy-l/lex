@@ -475,13 +475,8 @@ const EXTENDED_INVOKE_CHANNELS: readonly string[] = [
   // Teammate directory: handlers explicitly recognize the authorized device-link
   // context and return only identity/status/canonical task, without local paths,
   // memory, prompts, configuration, or native UI/file mutations.
-  'local-db:bots:list',
-  'local-db:bots:get',
   // Same-account opted-in controllers may inspect and stop a companion's own
   // child task and read a participant-checked private thread. No profile mutation.
-  'maker:bot-delegations:list',
-  'maker:bot-delegation:cancel',
-  'maker:bot-direct-message-thread:get',
   'maker:memory:get',
   'maker:memory:get-settings',
   // —— 命令 / 技能 / at 资源 列举(只读)——
@@ -619,8 +614,6 @@ export const REMOTE_INVOKE_ALLOWLIST: ReadonlySet<string> = new Set([
  * 命中这些 channel 的事件才会经 link 转发给控制端。
  */
 export const PUSH_FORWARD_ALLOWLIST: ReadonlySet<string> = new Set([
-  'maker:bot-delegation:changed',
-  'maker:bot-direct-message:changed',
   // maker-ipc MAKER_PUSH
   'maker:event',
   // Per-session native slash-command catalog invalidation. The controller

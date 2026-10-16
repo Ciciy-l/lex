@@ -1,7 +1,6 @@
 import { useSharedTasks } from '@/device-link/useSharedTasks';
 import { MountOnFirstOpen } from './MountOnFirstOpen';
 import { getMobileAuthOwner, isMobileAuthOwnerCurrent } from '@/auth/authOwnerGeneration';
-import type { HomeMode } from './homeViewPreferenceStore';
 import { GlassView } from "expo-glass-effect";
 import { useLiquidGlassAvailable } from "@/session/useLiquidGlassAvailable";
 import { ResidentHomeList, useResidentHomeList } from './ResidentHomeList';
@@ -389,7 +388,6 @@ class HomeSyncScopeSupersededError extends Error {
 export const HomeListViewportContext = createContext<{ scrollY: SharedValue<number>; viewportHeight: number } | null>(null);
 export interface MobileHomeProps {
   active?: boolean;
-  onModeChange?(mode: HomeMode): void;
   /** The same Home surface, constrained by its host rather than the screen width. */
   width?: number;
   currentSessionId?: string;
@@ -412,7 +410,7 @@ export function MobileHome(props: MobileHomeProps) {
   </RemoteSessionStoreSubscriptionGate>;
 }
 
-function HomeScreenContent({ active = true, onModeChange, width, newSessionInSystemBar = false, newSessionInHeader = false, onSelectSession, runNavigation, newSessionActionRef }: MobileHomeProps) {
+function HomeScreenContent({ active = true, width, newSessionInSystemBar = false, newSessionInHeader = false, onSelectSession, runNavigation, newSessionActionRef }: MobileHomeProps) {
   const ownedSharedTasks = useSharedTasks();
   const [sharedCollapsed, setSharedCollapsed] = useState(false);
   // The retained page and its visible sidebar must never release each other's subscriptions.
@@ -3125,8 +3123,6 @@ function HomeScreenContent({ active = true, onModeChange, width, newSessionInSys
         visible={deviceMenuOpen}
       />}</MountOnFirstOpen>
       <MountOnFirstOpen open={chromeMenuOpen}>{() => <HomeChromeDrawer
-        mode="tasks"
-        onModeChange={onModeChange}
         closeInstant={chromeMenuCloseInstant}
         loggingOut={loggingOut}
         onClose={() => {

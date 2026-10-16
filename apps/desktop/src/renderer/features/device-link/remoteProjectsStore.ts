@@ -57,6 +57,14 @@ interface DeviceShard {
 }
 
 const shards = new Map<string, DeviceShard>();
+const retiredSessions = new Map<string, Set<string>>();
+function rememberRetired(deviceId: string, sessionId: string): void {
+  const ids = retiredSessions.get(deviceId) ?? new Set<string>();
+  ids.add(sessionId); retiredSessions.set(deviceId, ids);
+}
+function isRetired(deviceId: string, sessionId: string): boolean {
+  return retiredSessions.get(deviceId)?.has(sessionId) === true;
+}
 let mergedScheduleIndex: ReadonlyMap<string, AutomationScheduleSessionInfo> = new Map();
 function recomputeScheduleIndex(): void {
   const next = new Map([...shards.values()].flatMap((shard) => [...(shard.scheduleIndex ?? [])]));
@@ -492,7 +500,8 @@ const actions = {
     const connectionStatus: DeviceLinkConnectionStatus = 'connected';
     // 状态桶本身是权威筛选条件：跨版本兼容行 / 测试夹具可能缺 status，统一按本次
     // 请求桶补齐；refresh 层已在到达这里之前拒绝混入其它状态的协议损坏响应。
-    const stamped = rawSessions.map((session) =>
+    for (const row of rawSessions) if (row.source === 'bot') rememberRetired(deviceId, row.id);
+    const stamped = rawSessions.filter((session) => session.source !== 'bot' && !isRetired(deviceId, session.id)).map((session) =>
       stamp({ ...session, status }, deviceId, deviceName, connectionStatus),
     );
     const existing = shards.get(deviceId);
@@ -506,12 +515,9 @@ const actions = {
     const incomingIds = new Set(stamped.map((session) => session.id));
     const preserved =
       existing?.sessions
-        // The ordinary sessions:list excludes companions. Absence from that
-        // snapshot cannot retire a companion loaded through its resource link.
-        // Its own authoritative patch/get still controls status and deletion.
         .filter(
           (session) =>
-            (session.status !== status || session.source === 'bot') && !incomingIds.has(session.id),
+            (session.status !== status && session.source !== 'bot' && !isRetired(deviceId, session.id)) && !incomingIds.has(session.id),
         )
         .map((session) =>
           session.deviceLinkDeviceName === deviceName &&
@@ -577,7 +583,8 @@ const actions = {
       if (!deviceId || shards.has(deviceId)) continue;
       if (device.sessions.length === 0) continue;
       const deviceName = device.deviceName?.trim() || deviceId;
-      const cachedSessions: Session[] = device.sessions.map((session) => ({
+      for (const row of device.sessions) if (row.source === 'bot') rememberRetired(deviceId, row.id);
+      const cachedSessions: Session[] = device.sessions.filter((session) => session.source !== 'bot' && !isRetired(deviceId, session.id)).map((session) => ({
         ...session,
         // 历史缓存 / 测试夹具若缺 status，按旧版镜像语义视为 active；否则 active
         // bootstrap 会把它误当成另一个状态桶永久保留下来。
@@ -642,11 +649,9 @@ const actions = {
       deviceName,
       [
         ...rawSessions,
-        // setDeviceSessions already preserves missing companions. Feeding them
-        // back as incoming rows would turn a connection restamp into a snapshot.
         ...existing.sessions.filter(
           (session) =>
-            session.source !== 'bot' && session.status === status && !incomingIds.has(session.id),
+            session.source !== 'bot' && !isRetired(deviceId, session.id) && session.status === status && !incomingIds.has(session.id),
         ),
       ],
       status,
@@ -674,15 +679,23 @@ const actions = {
     if (changesDetail && detailPatchEpoch.has(detailKey)) {
       detailPatchEpoch.set(detailKey, detailPatchEpoch.get(detailKey)! + 1);
     }
+    if (patch.source === 'bot') rememberRetired(deviceId, sessionId);
+    const retired = isRetired(deviceId, sessionId);
     const deleted = patch.status === 'deleted';
     // 删除清缓存必须放在**所有早退之前**:这个会话可能不在当前(有界)分片里、甚至这台设备
     // 还没有分片,但它完全可能有一份上次打开时留下的消息缓存文件 —— 那时早退就等于把
     // 「别的控制端刚删掉的会话」的正文一直留在盘上,直到 LRU 逐出 / 设备移除 / 登出
     // (review: codex P1)。归档仍可从 Archived / All 打开，必须保留缓存供离线查看。
-    if (deleted) clearCachedMessages(deviceId, sessionId);
+    if (deleted && !retired) clearCachedMessages(deviceId, sessionId);
     const shard = shards.get(deviceId);
     if (!shard) return;
     const idx = shard.sessions.findIndex((s) => s.id === sessionId);
+    if (retired || (idx >= 0 && shard.sessions[idx].source === 'bot')) {
+      dropSessionOverlays(sessionId);
+      shard.sessions = shard.sessions.filter((session) => session.id !== sessionId);
+      recompute();
+      return;
+    }
     if (idx === -1) {
       if (patch.status === 'active') requestRemoteReseed(deviceId, 'active');
       if (patch.status === 'archived' && shard.loadedStatuses.has('archived')) {
@@ -834,6 +847,7 @@ const actions = {
 
   /** 清空所有远端项目(登出 / device-link stopped / 卸载)。 */
   clear(): void {
+    retiredSessions.clear();
     // 所有设备 epoch 无条件**自增**(不 clear-to-0,见 snapshotEpoch 注释的 ABA):清空时在途
     // 首拉立即失效;下一轮 bootstrap 拿到更高 epoch,不会与清空前的 epoch 撞值把陈旧 snapshot 盖回。
     for (const [k, v] of snapshotEpoch) snapshotEpoch.set(k, v + 1);

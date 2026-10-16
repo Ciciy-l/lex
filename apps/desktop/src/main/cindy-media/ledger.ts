@@ -1,3 +1,4 @@
+import { retiredCompanionSessionSql } from '../localDb/retiredCompanionSql.js';
 /**
  * ledger.ts — cindy-media 账本(唯一真相)。
  * ---------------------------------------------------------------------------
@@ -17,7 +18,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, exists, lt, ne, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, exists, lt, ne, not, or, sql } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 
 import { getDbClient } from '../localDb/client/current';
@@ -86,11 +87,9 @@ export async function withSessionMediaRefLock<T>(
  * 'profile-avatar':用户自定义头像(设置 → 用户卡片编辑),refId = 登录用户
  * id。跨会话持久(removeSessionRefs 不碰),同 refId 只保留最新指纹——换头像时
  * 由 profileEdit 用 removeRefsExceptHash 清旧引用,恢复默认头像时 removeRefs 清空。
- * 'bot-avatar':伙伴自定义头像,refId = bot id。头像地址与这条引用由
- * bots.updateProfile 在同一数据库事务里切换,删除伙伴时只清它名下的引用。
- * 'bot-group-attachment':伙伴群聊消息里的图片附件,refId = 群 id。发送时挂上,
- * 删群时在 botGroups.delete 同一事务里清掉;各伙伴自己的 Session 另挂
- * session-attachment,互不牵连(docs/product-rules/bot-group-chat.md §3.1)。
+ * 'bot-avatar' / 'bot-group-attachment':已退休伙伴的历史头像与群附件引用。
+ * 保留旧引用和文件，不再创建、编辑或因功能退休删除；旧任务另有的
+ * session-attachment 引用同样保留，见 lex-companion-retirement.md。
  */
 export type MediaRefKind =
   | 'message'
@@ -324,7 +323,7 @@ export async function removeSessionRefsIfDeleted(
   const deletedSession = db
     .select({ id: schema.sessions.id })
     .from(schema.sessions)
-    .where(and(eq(schema.sessions.id, sessionId), eq(schema.sessions.status, 'deleted')));
+    .where(and(eq(schema.sessions.id, sessionId), eq(schema.sessions.status, 'deleted'), not(retiredCompanionSessionSql(schema.sessions.id))));
   const result = await db
     .delete(mediaRefs)
     .where(and(sessionOwnedRefCondition(sessionId), exists(deletedSession)))

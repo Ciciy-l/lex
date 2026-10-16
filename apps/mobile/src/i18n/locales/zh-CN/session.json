@@ -251,6 +251,7 @@
     "deleteMessageTitle": "删除本条消息？",
     "deleteMessageBody": "用户消息只删除本条；AI 消息会删除上一次用户输入之后产生的整轮输出。之后的消息继续保留。下次发送时，AI 上下文会从剩余记录重建。",
     "deleteMessageAction": "删除本条消息",
+    "deleteMessageBusy": "请等当前回复结束后再删除消息",
     "readingCapabilities": "正在读取 {{agent}} 运行能力…",
     "editingQueueMessageNumbered": "正在编辑第 {{index}} 条排队消息",
     "editingQueueMessage": "正在编辑排队消息",

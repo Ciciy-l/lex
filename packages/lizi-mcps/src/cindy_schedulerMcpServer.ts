@@ -68,12 +68,12 @@ export interface SchedulerMcpSessionCtx {
 // 不需要。
 
 const D_LIST_TOOLS =
-  '探索 cindy_scheduler 可用工具（渐进式发现入口）。不传 category → 返回所有类目+每个类目工具数量。' +
+  '探索本机 cindy_scheduler 可用工具（渐进式发现入口）。只操作当前电脑的定时任务，不查询或操作其它电脑。不传 category → 返回所有类目+每个类目工具数量。' +
   '传 category=scheduler → 返回该类目下所有工具的名称和简介。' +
   '获取工具名后用 call_tool({name, args}) 执行；参数错误会返回完整 JSON Schema。';
 
 const D_CALL_TOOL =
-  '调用 cindy_scheduler 中的某个具体工具。先用 list_tools 拿工具名 + 简介，再用本工具执行。' +
+  '调用本机 cindy_scheduler 中的某个具体工具。先用 list_tools 拿工具名 + 简介，再用本工具执行。' +
   '错误码：' +
   '`SCHEDULER_NOT_READY` = scheduler 未启动（用户登出或切账号窗口期），可重试或提示用户登录；' +
   '`NOT_FOUND` = 指定 schedule id 不存在；' +

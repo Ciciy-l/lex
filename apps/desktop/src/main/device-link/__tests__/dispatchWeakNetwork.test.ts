@@ -1,3 +1,4 @@
+import { setRemoteBotSessionLookup } from '../remoteBotSessionBoundary';
 /**
  * dispatchWeakNetwork.test.ts — 被控端弱网收尾行为契约。
  * -------------------------------------------------------------------------
@@ -231,6 +232,7 @@ beforeEach(() => {
     revokedControllers: [],
   };
   __testing.reset();
+  setRemoteBotSessionLookup(async () => 'ordinary');
 });
 
 afterEach(() => {
@@ -238,16 +240,17 @@ afterEach(() => {
 });
 
 describe('[1] link-accept 发送失败的有限重试', () => {
-  it('declares history projection support in the host accept, including for legacy controllers', () => {
+  it('declares history projection support in the host accept, including for legacy controllers', async () => {
     const client = mkClient();
     __testing.setActiveClient(client as never);
     __testing.handleLinkOpen(client as never, 'ctrl-a', 'open-1', undefined);
+    await settleRetirementDelivery();
     expect(client.sendLinkAccept).toHaveBeenCalledWith('ctrl-a', 'open-1', expect.objectContaining({
       capabilities: expect.arrayContaining([DEVICE_LINK_CAPABILITY_HISTORY_VIEW_V1]),
     }));
   });
 
-  it('背压首发失败 → 不提交订阅;500ms 重试成功后才提交', () => {
+  it('背压首发失败 → 不提交订阅;500ms 重试成功后才提交', async () => {
     const sendLinkAccept = vi.fn().mockImplementationOnce(() => {
       throw backpressure();
     });
@@ -255,20 +258,27 @@ describe('[1] link-accept 发送失败的有限重试', () => {
     __testing.setActiveClient(client as never);
 
     __testing.handleLinkOpen(client as never, 'ctrl-a', 'open-1', undefined);
+    await settleRetirementDelivery();
     expect(sendLinkAccept).toHaveBeenCalledTimes(1);
     // 失败即返回:订阅未提交(幽灵订阅防护),留下一个待触发的重试
+    await settleRetirementDelivery();
     expect(__testing.getActiveControllers()).toHaveLength(0);
+    await settleRetirementDelivery();
     expect(__testing.pendingLinkAcceptRetryCount()).toBe(1);
 
-    vi.advanceTimersByTime(500);
+    await vi.advanceTimersByTimeAsync(500);
+    await settleRetirementDelivery();
     expect(sendLinkAccept).toHaveBeenCalledTimes(2);
+    await settleRetirementDelivery();
     expect(sendLinkAccept).toHaveBeenLastCalledWith('ctrl-a', 'open-1', expect.anything());
     // 第二次成功:订阅提交,无遗留重试
+    await settleRetirementDelivery();
     expect(__testing.getActiveControllers().map((c) => c.deviceId)).toEqual(['ctrl-a']);
+    await settleRetirementDelivery();
     expect(__testing.pendingLinkAcceptRetryCount()).toBe(0);
   });
 
-  it('持续背压:按 500ms/1s/2s 重试三次后放弃,回到「等控制端重开」', () => {
+  it('持续背压:按 500ms/1s/2s 重试三次后放弃,回到「等控制端重开」', async () => {
     const sendLinkAccept = vi.fn(() => {
       throw backpressure();
     });
@@ -276,21 +286,28 @@ describe('[1] link-accept 发送失败的有限重试', () => {
     __testing.setActiveClient(client as never);
 
     __testing.handleLinkOpen(client as never, 'ctrl-a', 'open-1', undefined);
+    await settleRetirementDelivery();
     expect(sendLinkAccept).toHaveBeenCalledTimes(1);
-    vi.advanceTimersByTime(500);
+    await vi.advanceTimersByTimeAsync(500);
+    await settleRetirementDelivery();
     expect(sendLinkAccept).toHaveBeenCalledTimes(2);
-    vi.advanceTimersByTime(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settleRetirementDelivery();
     expect(sendLinkAccept).toHaveBeenCalledTimes(3);
-    vi.advanceTimersByTime(2_000);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await settleRetirementDelivery();
     expect(sendLinkAccept).toHaveBeenCalledTimes(4);
     // 耗尽:不再有排期
+    await settleRetirementDelivery();
     expect(__testing.pendingLinkAcceptRetryCount()).toBe(0);
-    vi.advanceTimersByTime(60_000);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await settleRetirementDelivery();
     expect(sendLinkAccept).toHaveBeenCalledTimes(4);
+    await settleRetirementDelivery();
     expect(__testing.getActiveControllers()).toHaveLength(0);
   });
 
-  it('重试等待期间新 link-open 到达:旧重试被顶掉,只按新 requestId 回 accept', () => {
+  it('重试等待期间新 link-open 到达:旧重试被顶掉,只按新 requestId 回 accept', async () => {
     const sendLinkAccept = vi
       .fn()
       .mockImplementationOnce(() => {
@@ -300,17 +317,21 @@ describe('[1] link-accept 发送失败的有限重试', () => {
     __testing.setActiveClient(client as never);
 
     __testing.handleLinkOpen(client as never, 'ctrl-a', 'open-old', undefined);
+    await settleRetirementDelivery();
     expect(__testing.pendingLinkAcceptRetryCount()).toBe(1);
     // 控制端超时重发:新 requestId 立即处理成功
     __testing.handleLinkOpen(client as never, 'ctrl-a', 'open-new', undefined);
+    await settleRetirementDelivery();
     expect(sendLinkAccept).toHaveBeenLastCalledWith('ctrl-a', 'open-new', expect.anything());
+    await settleRetirementDelivery();
     expect(__testing.pendingLinkAcceptRetryCount()).toBe(0);
     // 旧重试不再触发
-    vi.advanceTimersByTime(10_000);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await settleRetirementDelivery();
     expect(sendLinkAccept).toHaveBeenCalledTimes(2);
   });
 
-  it('重试触发时 relay 已断线 / 开关已关闭:放弃,不发 accept', () => {
+  it('重试触发时 relay 已断线 / 开关已关闭:放弃,不发 accept', async () => {
     // 首发路径不查询连接状态;第一次 getStatus 调用发生在重试回调的世代校验里
     const getStatus = vi.fn(() => 'connecting');
     const sendLinkAccept = vi.fn(() => {
@@ -319,12 +340,15 @@ describe('[1] link-accept 发送失败的有限重试', () => {
     const client = mkClient({ sendLinkAccept, getStatus: getStatus as never });
     __testing.setActiveClient(client as never);
     __testing.handleLinkOpen(client as never, 'ctrl-a', 'open-1', undefined);
+    await settleRetirementDelivery();
     expect(sendLinkAccept).toHaveBeenCalledTimes(1);
-    vi.advanceTimersByTime(500); // 触发时 getStatus() = 'connecting' → 放弃
+    await vi.advanceTimersByTimeAsync(500); // 触发时 getStatus() = 'connecting' → 放弃
+    await settleRetirementDelivery();
     expect(sendLinkAccept).toHaveBeenCalledTimes(1);
 
     // 开关关闭场景:重试走完整 handleLinkOpen,复验后拒绝
     __testing.reset();
+  setRemoteBotSessionLookup(async () => 'ordinary');
     const sendLinkAccept2 = vi.fn(() => {
       throw backpressure();
     });
@@ -332,13 +356,14 @@ describe('[1] link-accept 发送失败的有限重试', () => {
     __testing.setActiveClient(client2 as never);
     __testing.handleLinkOpen(client2 as never, 'ctrl-b', 'open-2', undefined);
     deviceLinkSettings.value = { remoteControlEnabled: false, revokedControllers: [] };
-    vi.advanceTimersByTime(500);
+    await vi.advanceTimersByTimeAsync(500);
+    await settleRetirementDelivery();
     expect(sendLinkAccept2).toHaveBeenCalledTimes(1); // 复验失败,不再尝试发送
   });
 });
 
 describe('[4] 多控制端隔离:两个控制端共享同一被控端,一个静默不波及另一个', () => {
-  it('ctrl-a 停止收 accept(持续背压重试→耗尽)期间与之后,ctrl-b 建链/订阅/回包全程零感知', () => {
+  it('ctrl-a 停止收 accept(持续背压重试→耗尽)期间与之后,ctrl-b 建链/订阅/回包全程零感知', async () => {
     // 故障半径三问的被控端拓扑用例(remote-and-mobile-adaptation §3):被控端与
     // relay 只有一条连接,ctrl-a 的 link 级故障(accept 送不出去 = peer 静默形态)
     // 的全部恢复动作(有限重试→放弃)必须收在 ctrl-a 的 link 内。
@@ -350,14 +375,18 @@ describe('[4] 多控制端隔离:两个控制端共享同一被控端,一个静�
     __testing.setActiveClient(client as never);
 
     __testing.handleLinkOpen(client as never, 'ctrl-a', 'open-a', undefined);
+    await settleRetirementDelivery();
     expect(__testing.pendingLinkAcceptRetryCount()).toBe(1);
 
     // a 的重试等待期间,b 建链立即成功、订阅提交
     __testing.handleLinkOpen(client as never, 'ctrl-b', 'open-b', undefined);
+    await settleRetirementDelivery();
     expect(sendLinkAccept).toHaveBeenLastCalledWith('ctrl-b', 'open-b', expect.anything());
+    await settleRetirementDelivery();
     expect(__testing.getActiveControllers().map((c) => c.deviceId)).toEqual(['ctrl-b']);
 
     // b 的在途回包照常投递,不被 a 的重试状态牵连
+    await settleRetirementDelivery();
     expect(
       __testing.sendInvokeResultSafe(
         client as never,
@@ -367,18 +396,22 @@ describe('[4] 多控制端隔离:两个控制端共享同一被控端,一个静�
         'local-db:sessions:list',
       ),
     ).toBe(true);
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeResultOutboxSize()).toBe(0);
 
     // a 重试耗尽(500ms/1s/2s)后放弃:b 的订阅仍在,恢复动作从未升级到连接层
-    vi.advanceTimersByTime(4_000);
+    await vi.advanceTimersByTimeAsync(4_000);
+    await settleRetirementDelivery();
     expect(__testing.pendingLinkAcceptRetryCount()).toBe(0);
+    await settleRetirementDelivery();
     expect(__testing.getActiveControllers().map((c) => c.deviceId)).toEqual(['ctrl-b']);
+    await settleRetirementDelivery();
     expect(client.closeLink).not.toHaveBeenCalled();
   });
 });
 
 describe('[2] outbox 离线不自旋,上线事件驱动投递', () => {
-  it('relay 离线期间 flush 不 trySend;ws-online 触发立即投递', () => {
+  it('relay 离线期间 flush 不 trySend;ws-online 触发立即投递', async () => {
     let status = 'connecting';
     const sendInvokeResult = vi.fn().mockImplementationOnce(() => {
       throw notConnected();
@@ -390,6 +423,7 @@ describe('[2] outbox 离线不自旋,上线事件驱动投递', () => {
     __testing.setActiveClient(client as never);
 
     // 首发失败入 outbox(此时 relay 离线)
+    await settleRetirementDelivery();
     expect(
       __testing.sendInvokeResultSafe(
         client as never,
@@ -399,28 +433,38 @@ describe('[2] outbox 离线不自旋,上线事件驱动投递', () => {
         'local-db:sessions:list',
       ),
     ).toBe(true);
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeResultOutboxSize()).toBe(1);
+    await settleRetirementDelivery();
     expect(sendInvokeResult).toHaveBeenCalledTimes(1);
 
     // 离线期间多轮慢扫描:不再尝试发送(无 NOT_CONNECTED 自旋)
-    vi.advanceTimersByTime(20_000);
+    await vi.advanceTimersByTimeAsync(20_000);
+    await settleRetirementDelivery();
     expect(sendInvokeResult).toHaveBeenCalledTimes(1);
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeResultOutboxSize()).toBe(1);
 
     // 上线事件:立即投递成功
     status = 'online';
     flushRemoteInvokeResultOutboxOnReconnect();
+    await settleRetirementDelivery();
     expect(sendInvokeResult).toHaveBeenCalledTimes(2);
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeResultOutboxSize()).toBe(0);
+    await settleRetirementDelivery();
     expect(diagnosticLog.warn).toHaveBeenCalledWith(expect.stringContaining('request=req-1 queueMessages=1'));
+    await settleRetirementDelivery();
     expect(diagnosticLog.info).toHaveBeenCalledWith(expect.stringContaining('request=req-1 queuedMs=20000'));
+    await settleRetirementDelivery();
     expect(JSON.stringify(diagnosticLog.warn.mock.calls)).not.toContain('PRIVATE_RESPONSE_BODY');
+    await settleRetirementDelivery();
     expect(JSON.stringify(diagnosticLog.info.mock.calls)).not.toContain('PRIVATE_RESPONSE_BODY');
   });
 });
 
 describe('[5] outbox flush 的 presence 显式离线门禁', () => {
-  it('presence 明确离线的控制端本轮跳过(条目保留),在线控制端照常投递;设备回归后可投', () => {
+  it('presence 明确离线的控制端本轮跳过(条目保留),在线控制端照常投递;设备回归后可投', async () => {
     // 门禁要掐掉的是**同一连接代内**的稳态盲发:relay 在线时全量轮每 500ms 跑一次
     // (REMOTE_INVOKE_RESULT_OUTBOX_RETRY_MS),对 presence 已明说离线的控制端就是
     // 2 帧/秒的 DEVICE_OFFLINE 稳定输出,直到 TTL 出清——纯粹喂 relay 聚合背压。
@@ -443,29 +487,35 @@ describe('[5] outbox flush 的 presence 显式离线门禁', () => {
         'local-db:sessions:list',
       );
     }
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeResultOutboxSize()).toBe(2);
 
     // ws-online 全量 flush:离线者被门禁跳过(不 trySend),在线者投递成功
     sendInvokeResult.mockImplementation(() => {});
     const callsBefore = sendInvokeResult.mock.calls.length;
     flushRemoteInvokeResultOutboxOnReconnect();
+    await settleRetirementDelivery();
     const flushed = sendInvokeResult.mock.calls.slice(callsBefore);
+    await settleRetirementDelivery();
     expect(flushed.map((c) => c[0])).toEqual(['ctrl-online']);
     // 离线者的条目保留(TTL 照常),没有被丢弃
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeResultOutboxSize()).toBe(1);
 
     // 设备回归(presence 翻转):下一次 flush 正常投递
     offline.clear();
     flushRemoteInvokeResultOutboxOnReconnect();
+    await settleRetirementDelivery();
     expect(sendInvokeResult).toHaveBeenLastCalledWith(
       'ctrl-offline',
       'req-ctrl-offline',
       expect.anything(),
     );
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeResultOutboxSize()).toBe(0);
   });
 
-  it('定向 flush(link-open 触发)不受门禁约束:对端已主动建链是更强的在线证据', () => {
+  it('定向 flush(link-open 触发)不受门禁约束:对端已主动建链是更强的在线证据', async () => {
     // review P2:presence 短暂滞后/误报为 offline 时,不得把「对端刚 link-open」
     // 这条恢复事件一并拦死——定向轮(onlySrc)必须照常投递。
     setDispatchPresenceOfflineCheck(() => true); // 极端:判据说所有设备都离线
@@ -481,18 +531,21 @@ describe('[5] outbox flush 的 presence 显式离线门禁', () => {
       { ok: true, result: 1 },
       'local-db:sessions:list',
     );
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeResultOutboxSize()).toBe(1);
 
     // 全量轮:被门禁挡住(条目保留)
     flushRemoteInvokeResultOutboxOnReconnect();
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeResultOutboxSize()).toBe(1);
 
     // 定向轮(link-open 路径):不看门禁,直接投递
     __testing.flushRemoteInvokeResultOutbox('ctrl-a');
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeResultOutboxSize()).toBe(0);
   });
 
-  it('presence 滞后为 offline 但控制端已 link-open 回归:全量轮不再拦它(定向轮失败后的无参重试照样投递)', () => {
+  it('presence 滞后为 offline 但控制端已 link-open 回归:全量轮不再拦它(定向轮失败后的无参重试照样投递)', async () => {
     // codex review 同族第 3 次指出的缺口:定向轮首发被 BACKPRESSURE 打回后,末尾排的
     // 重试是**无参全量轮**、丢掉 onlySrc 证据 —— 判据若只看 presence,这个已建链的
     // peer 会被持续跳过到 presence 更新或 TTL 丢结果。判据带上 accepted link 后 fail-open。
@@ -509,28 +562,34 @@ describe('[5] outbox flush 的 presence 显式离线门禁', () => {
       { ok: true, result: 1 },
       'local-db:sessions:list',
     );
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeResultOutboxSize()).toBe(1);
 
     // 还没有 accepted link:全量轮被门禁挡住(不 trySend)
     let calls = sendInvokeResult.mock.calls.length;
     flushRemoteInvokeResultOutboxOnReconnect();
+    await settleRetirementDelivery();
     expect(sendInvokeResult.mock.calls.length).toBe(calls);
 
     // 控制端 link-open 回归 → accepted link 成立;它触发的定向轮仍被背压打回,
     // 条目保留、末尾排下无参全量重试。
     __testing.handleLinkOpen(client as never, 'ctrl-a', 'open-1', undefined);
+    await settleRetirementDelivery();
     expect(__testing.getActiveControllers().map((c) => c.deviceId)).toEqual(['ctrl-a']);
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeResultOutboxSize()).toBe(1);
 
     // 无参全量重试:presence 判据仍说离线,但 accepted link 是更新的可达证据 → 放行
     sendInvokeResult.mockImplementation(() => {});
     calls = sendInvokeResult.mock.calls.length;
-    vi.advanceTimersByTime(500);
+    await vi.advanceTimersByTimeAsync(500);
+    await settleRetirementDelivery();
     expect(sendInvokeResult.mock.calls.length).toBeGreaterThan(calls);
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeResultOutboxSize()).toBe(0);
   });
 
-  it('presence 宣告离线拆掉 accepted link 后:全量轮重新受门禁约束', () => {
+  it('presence 宣告离线拆掉 accepted link 后:全量轮重新受门禁约束', async () => {
     // 可达证据不得比链路活得更久 —— presence 说离线时 index.ts 会调
     // handleControllerOffline 拆掉该控制端的 accepted link 与订阅,此后必须回到
     // 「presence 说了算」,否则一次历史建链会永久豁免门禁。
@@ -548,6 +607,7 @@ describe('[5] outbox flush 的 presence 显式离线门禁', () => {
       { ok: true, result: 1 },
       'local-db:sessions:list',
     );
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeResultOutboxSize()).toBe(1);
 
     // accepted link 在场:全量轮放行
@@ -556,17 +616,20 @@ describe('[5] outbox flush 的 presence 显式离线门禁', () => {
     });
     let calls = sendInvokeResult.mock.calls.length;
     flushRemoteInvokeResultOutboxOnReconnect();
+    await settleRetirementDelivery();
     expect(sendInvokeResult.mock.calls.length).toBeGreaterThan(calls);
 
     // presence 宣告离线 → 拆链:证据随链路一起消失,门禁重新生效
     handleControllerOffline('ctrl-a');
     calls = sendInvokeResult.mock.calls.length;
     flushRemoteInvokeResultOutboxOnReconnect();
+    await settleRetirementDelivery();
     expect(sendInvokeResult.mock.calls.length).toBe(calls);
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeResultOutboxSize()).toBe(1);
   });
 
-  it('presence 判据未接线(null)时 fail-open:行为与门禁不存在时一致', () => {
+  it('presence 判据未接线(null)时 fail-open:行为与门禁不存在时一致', async () => {
     // __testing.reset() 已把判据清空;不接线直接 flush,验证默认路径不受影响
     const sendInvokeResult = vi.fn().mockImplementationOnce(() => {
       throw notConnected();
@@ -580,32 +643,39 @@ describe('[5] outbox flush 的 presence 显式离线门禁', () => {
       { ok: true, result: 1 },
       'local-db:sessions:list',
     );
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeResultOutboxSize()).toBe(1);
     flushRemoteInvokeResultOutboxOnReconnect();
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeResultOutboxSize()).toBe(0);
   });
 });
 
 describe('[3] outbox 保留时长按 channel 收窄', () => {
-  it('锁「预算 ×2、封顶 120s」联动:表内 channel 跟随共享表,缺省 30s→60s', () => {
+  it('锁「预算 ×2、封顶 120s」联动:表内 channel 跟随共享表,缺省 30s→60s', async () => {
     // 联动语义从共享表推导,不再硬编码结果值——此断言曾在 #1418/#1477 并行开发
     // 时写死 60s(当时表里还没有 listing 条目),两 PR 各自 CI 都绿、先后合入后
     // main 变红。表值本身(12s/60s)在下面单独锁定:它们是产品决策,变更时红在
     // 这里提醒显式确认;而「×2 封顶」的联动对表变更免疫。
     const listingBudget = INVOKE_TIMEOUT_OVERRIDES_MS['local-db:sessions:list'];
     const worktreeBudget = INVOKE_TIMEOUT_OVERRIDES_MS['worktree:create'];
+    await settleRetirementDelivery();
     expect(listingBudget).toBe(12_000);
+    await settleRetirementDelivery();
     expect(worktreeBudget).toBe(60_000);
+    await settleRetirementDelivery();
     expect(__testing.outboxEntryMaxAgeMs('local-db:sessions:list')).toBe(
       Math.min(listingBudget * 2, 120_000),
     );
+    await settleRetirementDelivery();
     expect(__testing.outboxEntryMaxAgeMs(undefined)).toBe(60_000);
+    await settleRetirementDelivery();
     expect(__testing.outboxEntryMaxAgeMs('worktree:create')).toBe(
       Math.min(worktreeBudget * 2, 120_000),
     );
   });
 
-  it('离线慢扫描按逐条 TTL 出清:listing(24s 档)先被丢,长任务 channel 保留到 120s', () => {
+  it('离线慢扫描按逐条 TTL 出清:listing(24s 档)先被丢,长任务 channel 保留到 120s', async () => {
     const sendInvokeResult = vi.fn(() => {
       throw notConnected();
     });
@@ -628,42 +698,53 @@ describe('[3] outbox 保留时长按 channel 收窄', () => {
       { ok: true, result: 2 },
       'worktree:create',
     );
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeResultOutboxSize()).toBe(2);
 
-    vi.advanceTimersByTime(61_000);
+    await vi.advanceTimersByTimeAsync(61_000);
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeResultOutboxSize()).toBe(1); // listing 出清,worktree 保留
 
-    vi.advanceTimersByTime(60_000);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeResultOutboxSize()).toBe(0); // 121s:worktree 也到期
   });
 });
 
 describe('[5] orphan 截止时间按 channel 收窄', () => {
-  it('默认 invoke 保持 60s，只有 compact 使用 22min 长预算', () => {
+  it('默认 invoke 保持 60s，只有 compact 使用 22min 长预算', async () => {
     const compactBudget = INVOKE_TIMEOUT_OVERRIDES_MS['maker:compact-session'];
+    await settleRetirementDelivery();
     expect(compactBudget).toBe(11 * 60_000);
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeOrphanTimeoutForChannelMs(undefined)).toBe(60_000);
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeOrphanTimeoutForChannelMs('maker:list-active')).toBe(60_000);
+    await settleRetirementDelivery();
     expect(__testing.remoteInvokeOrphanTimeoutForChannelMs('maker:compact-session')).toBe(
       compactBudget * 2,
     );
   });
 
-  it('按与控制端相同的动作级预算给任务复制统计留足时间', () => {
+  it('按与控制端相同的动作级预算给任务复制统计留足时间', async () => {
     const orphan = (action: string) =>
       __testing.remoteInvokeOrphanTimeoutForChannelMs(TASK_MIGRATION_CHANNEL, [
         { action, sessionId: 's' },
       ]);
+    await settleRetirementDelivery();
     expect(orphan('estimate')).toBe(TASK_MIGRATION_ESTIMATE_TIMEOUT_MS * 2);
+    await settleRetirementDelivery();
     expect(orphan('status')).toBe(60_000);
     // A reply that could not be sent is kept for the same action-specific window.
     const outbox = (action: string) =>
       __testing.outboxEntryMaxAgeMs(TASK_MIGRATION_CHANNEL, [{ action, sessionId: 's' }]);
+    await settleRetirementDelivery();
     expect(outbox('estimate')).toBe(TASK_MIGRATION_ESTIMATE_TIMEOUT_MS * 2);
+    await settleRetirementDelivery();
     expect(outbox('status')).toBe(60_000);
   });
 
-  it('被控端从不早于控制端放弃：orphan 与 outbox 覆盖每个通道与动作的等待预算', () => {
+  it('被控端从不早于控制端放弃：orphan 与 outbox 覆盖每个通道与动作的等待预算', async () => {
     const calls: Array<[string | undefined, unknown[] | undefined]> = [
       [undefined, undefined],
       ...Object.keys(INVOKE_TIMEOUT_OVERRIDES_MS).map(
@@ -676,7 +757,9 @@ describe('[5] orphan 截止时间按 channel 收窄', () => {
     for (const [channel, args] of calls) {
       const budget =
         (channel && resolveRemoteInvokeTimeoutMs(channel, args, 'desktop')) || 30_000;
+      await settleRetirementDelivery();
       expect(__testing.remoteInvokeOrphanTimeoutForChannelMs(channel, args)).toBeGreaterThanOrEqual(budget);
+      await settleRetirementDelivery();
       expect(__testing.outboxEntryMaxAgeMs(channel, args)).toBeGreaterThanOrEqual(budget);
     }
   });
@@ -734,12 +817,17 @@ describe('[6] active controller 生命周期与故障半径', () => {
     relay.offline.add('ctrl-a');
     target.sendInvokeResult('ctrl-a', 'offline-probe', { ok: true, result: null });
 
+    await settleRetirementDelivery();
     expect(routeChanges).toContain('ctrl-a:offline');
+    await settleRetirementDelivery();
     expect(__testing.getActiveControllers().map((controller) => controller.deviceId).sort()).toEqual([
       'ctrl-b',
     ]);
+    await settleRetirementDelivery();
     expect(subscriptions.getKnownControllersForTopic('session:a')).toEqual(['ctrl-a']);
+    await settleRetirementDelivery();
     expect(subscriptions.getKnownControllersForTopic('session:b')).toEqual(['ctrl-b']);
+    await settleRetirementDelivery();
     expect(__testing.controllerSupports('ctrl-a', 'cap-a')).toBe(true);
 
     relay.releaseHeld();
@@ -751,7 +839,7 @@ describe('[6] active controller 生命周期与故障半径', () => {
     controllerB.stop();
   });
 
-  it('relay 断开清空所有 active projection，但保留 remembered topics/capabilities', () => {
+  it('relay 断开清空所有 active projection，但保留 remembered topics/capabilities', async () => {
     subscriptions.subscribe('ctrl-a', ['session:a'], 'A', ['cap-a']);
     subscriptions.subscribe('ctrl-b', ['fs-watch:/repo'], 'B', ['cap-b']);
     const changes: Array<{ active: string[]; updateRelaunch: string[] }> = [];
@@ -764,16 +852,23 @@ describe('[6] active controller 生命周期与故障半径', () => {
 
     deactivateAllControllers('relay-disconnected');
 
+    await settleRetirementDelivery();
     expect(__testing.getActiveControllers()).toEqual([]);
+    await settleRetirementDelivery();
     expect(__testing.getUpdateRelaunchControllers()).toEqual([]);
+    await settleRetirementDelivery();
     expect(subscriptions.getKnownControllersForTopic('session:a')).toEqual(['ctrl-a']);
+    await settleRetirementDelivery();
     expect(subscriptions.getKnownControllersForTopic('fs-watch:/repo')).toEqual(['ctrl-b']);
+    await settleRetirementDelivery();
     expect(__testing.controllerSupports('ctrl-a', 'cap-a')).toBe(true);
+    await settleRetirementDelivery();
     expect(__testing.controllerSupports('ctrl-b', 'cap-b')).toBe(true);
+    await settleRetirementDelivery();
     expect(changes.at(-1)).toEqual({ active: [], updateRelaunch: [] });
   });
 
-  it('旧 connection epoch 的 offline 事件不能清掉新 link-open 的 active controller', () => {
+  it('旧 connection epoch 的 offline 事件不能清掉新 link-open 的 active controller', async () => {
     let connectionEpoch = 1;
     const client = mkClient({ getConnectionEpoch: vi.fn(() => connectionEpoch) });
     __testing.setActiveClient(client as never);
@@ -788,6 +883,7 @@ describe('[6] active controller 生命周期与故障半径', () => {
       connectionEpoch: 1,
       linkGeneration: 1,
     });
+    await settleRetirementDelivery();
     expect(__testing.getActiveControllers().map((controller) => controller.deviceId)).toEqual([
       'ctrl-a',
     ]);
@@ -798,10 +894,11 @@ describe('[6] active controller 生命周期与故障半径', () => {
       connectionEpoch: 2,
       linkGeneration: 1,
     });
+    await settleRetirementDelivery();
     expect(__testing.getActiveControllers()).toEqual([]);
   });
 
-  it('同一 connection 内旧 link 的 offline 事件不能清掉重新打开后的 controller', () => {
+  it('同一 connection 内旧 link 的 offline 事件不能清掉重新打开后的 controller', async () => {
     let linkGeneration = 1;
     const client = mkClient({
       getConnectionEpoch: vi.fn(() => 1),
@@ -819,6 +916,7 @@ describe('[6] active controller 生命周期与故障半径', () => {
       connectionEpoch: 1,
       linkGeneration: 1,
     });
+    await settleRetirementDelivery();
     expect(__testing.getActiveControllers().map((controller) => controller.deviceId)).toEqual([
       'ctrl-a',
     ]);
@@ -829,6 +927,13 @@ describe('[6] active controller 生命周期与故障半径', () => {
       connectionEpoch: 1,
       linkGeneration: 2,
     });
+    await settleRetirementDelivery();
     expect(__testing.getActiveControllers()).toEqual([]);
   });
 });
+
+/** Drain the asynchronous ownership read and delivery queue without advancing retry deadlines. */
+async function settleRetirementDelivery(): Promise<void> {
+  if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(0);
+  else await new Promise<void>(resolve => setTimeout(resolve, 0));
+}

@@ -693,7 +693,6 @@ import {
   createAutomationUserTurnGitBaselineHooks,
   registerModelVisibilitySyncIpc,
   registerMakerIpc as registerMakerCoreIpc,
-  restoreBotRuntimeForCurrentOwner,
   isSessionTurnPendingCompletion,
   isSessionInTurn,
   stopOrcaIdleWatcher,
@@ -1038,8 +1037,6 @@ import {
   getScheduleStorageIfInitialized,
   getProjectAutomationLoader,
 } from './scheduler-host/index.js';
-import { configureRoutineHost } from './routines/service.js';
-import { getBotRemoteResourceSource } from './localDb/ipc/bots.js';
 import {
   registerScheduleHandlers,
   attachSchedulerEventListeners,
@@ -1094,7 +1091,6 @@ async function waitForCurrentAccountProviderModelsReady(): Promise<void> {
 }
 
 // Live getters preserve account/scheduler replacement without loading Main modules at dispatch time.
-configureRoutineHost({ getBot: getBotRemoteResourceSource, getScheduler: getSchedulerIfInitialized, getScheduleStorage });
 
 /**
  * Phase 4: 不再用 `_schedulerStarted` flag —— `startScheduler()` 内部以 `_scheduler`
@@ -8843,10 +8839,6 @@ app.on('ready', async () => {
       // profile DB. Retry the profile-bound SharedTask host after takeover;
       // this does not publish the later guest capability.
       ensureSharedTaskRuntime();
-      // Bot recovery is owner-scoped and must start only after DbClient
-      // takeover. registerMakerIpc also invokes this once its services exist,
-      // covering both possible splash/login orderings without duplicate runs.
-      void restoreBotRuntimeForCurrentOwner();
       startReadyWorktreeMaintenance();
       if (dbClientTakeover.mode === 'unchanged') {
         // 副窗口会再次走 localDb.ensureReady；同 owner 的 lifecycle client 已由首个

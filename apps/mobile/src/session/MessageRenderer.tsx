@@ -1,16 +1,16 @@
 import { sharedTaskAuthorName } from '@cindy/maker-shared';
 import { downloadRemoteMediaShareTemp } from './remoteMediaDiskCacheExpo';
 import { useAuth } from '@/auth/AuthContext';
-import { CompanionMessageActions } from './CompanionMessageActions';
+
 import { useMessageHistoryActive, useMessageHistoryPositioning } from './messageHistoryActivity';
 import { usePaneViewport } from '@/platform/AdaptiveWindowContext';
 import { messageReadingPosition } from './messageReadingPosition';
 import { PluginInvocationHeader } from './PluginInvocationHeader';
-import { companionPluginWorkEntries, type PluginInvocation } from './pluginInvocations';
-import { AuthorizationMessageCard } from './AuthorizationMessageCard';
-import { CompanionLearningFooter } from './CompanionLearningFooter';
-import { CompanionMessageCard } from '@/session/CompanionMessageCard';
-import { CompanionEntering } from '@/session/CompanionEntering';
+import { type PluginInvocation } from './pluginInvocations';
+
+
+
+
 import { mobileDebugEnabled, mobileDebugLog } from '@/debug/mobileDebugLog';
 import { createContext, Fragment, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -611,10 +611,6 @@ export interface ShareableMessageViewport {
 }
 
 interface MessageActions {
-  companion?: boolean;
-  companionWorkingLabel?: string | null;
-  onOpenCompanionSettings?: (page: 'memory' | 'capabilities') => void;
-  companionPluginWork?: ReturnType<typeof companionPluginWorkEntries>;
   /** Partner chats keep the user's bubble plain; result and authorization cards remain independent. */
   showPluginInvocations?: boolean;
   /** Device hosting plugin results; independent of a filesystem workdir. */
@@ -668,10 +664,6 @@ interface MessageActions {
 }
 
 export function MessageRenderer({
-  companion = false,
-  companionWorkingLabel,
-  onOpenCompanionSettings,
-  companionPluginInvocations,
   showPluginInvocations = true,
   remoteDeviceId,
   topOverlayHeight,
@@ -722,10 +714,6 @@ export function MessageRenderer({
   devExposeList,
   devRecycleItems = false,
 }: {
-  companion?: boolean;
-  companionWorkingLabel?: string | null;
-  onOpenCompanionSettings?: (page: 'memory' | 'capabilities') => void;
-  companionPluginInvocations?: ReadonlyMap<string, PluginInvocation[]>;
   /** Offscreen preload and disappearing native screens must not replace the user's bookmark. */
   isReadingPositionActive?: () => boolean;
   bottomOverlayHeight?: number;
@@ -1625,12 +1613,7 @@ export function MessageRenderer({
     }
     if (shareSelectionActiveRef.current) scheduleStickyShareCheckRef.current?.(true);
   }, []);
-  const companionPluginWork = useMemo(() => companion ? companionPluginWorkEntries(items, companionPluginInvocations) : undefined, [companion, items, companionPluginInvocations]);
   const actions: MessageActions & { firstUserMessageClientId?: string } = useMemo(() => ({
-    companion,
-    companionWorkingLabel,
-    onOpenCompanionSettings,
-    companionPluginWork,
     showPluginInvocations,
     remoteDeviceId,
     onAddMessageToComposer,
@@ -1662,10 +1645,10 @@ export function MessageRenderer({
     isSessionStreaming,
     screenWidth: viewportLayout.contentWidth,
   }), [
-    companion,
-    companionWorkingLabel,
-    onOpenCompanionSettings,
-    companionPluginWork,
+    false,
+    false,
+    false,
+    false,
     showPluginInvocations,
     remoteDeviceId,
     busyClientId,
@@ -2596,14 +2579,9 @@ export function MessageRenderer({
         pendingSend?.selectedClientId ?? null,
         shareSelectionActive === true,
       ),
-      // Resource discovery can complete after history has already populated the list.
-      // Update visible cells when a task is identified as a companion chat.
-      companion,
-      companionWorkingLabel,
       showPluginInvocations,
-      companionPluginWork,
     }),
-    [pendingSend?.selectedClientId, shareSelectionActive, companion, companionWorkingLabel, showPluginInvocations, companionPluginWork],
+    [pendingSend?.selectedClientId, shareSelectionActive, showPluginInvocations],
   );
   // Keep production and regular DEV screens on keyed remounts. With Fabric,
   // recycling an Android container across heterogeneous message trees can race
@@ -2792,14 +2770,10 @@ const RenderItemView = memo(function RenderItemView({
   let node: ReactNode;
   switch (item.type) {
     case 'message':
-      node = item.message.authorization
-        ? <AuthorizationMessageCard message={item.message} />
-        : item.message.companion
-        ? <CompanionMessageCard message={item.message} />
-        : item.message.orcaCard
+      node = (item.message.orcaCard
         ? <OrcaCollabCard card={item.message.orcaCard} screenWidth={actions.screenWidth}
             blockKey={JSON.stringify([actions.remoteDeviceId, item.key])} />
-        : <MessageBubble item={hookSourceUserItem ?? systemCardUserItem ?? item} actions={actions} />;
+        : <MessageBubble item={hookSourceUserItem ?? systemCardUserItem ?? item} actions={actions} />);
       break;
     case 'thinking':
       node = (
@@ -2880,9 +2854,7 @@ const RenderItemView = memo(function RenderItemView({
       logUnhandledRenderItem(item);
       break;
   }
-  const entering = actions.companion && item.type === 'message' && !item.message.systemCardType
-    && (item.message.kind === 'user' || item.message.kind === 'assistant')
-    ? <CompanionEntering key={item.key} id={item.key} createdAt={item.message.createdAt} kind={item.message.kind === 'user' ? 'send' : 'reply'}>{node}</CompanionEntering> : node;
+  const entering = (node);
   return (
     <View style={focused ? styles.focusedItem : undefined} testID={focused ? 'message.focusedItem' : undefined}>
       {entering}
@@ -3177,11 +3149,11 @@ function MessageBubble({
     && item.message.kind === 'user'
     && !isFirstUserMessage
   );
+  // 对齐桌面:任务运行中也保留删除入口,点了由页面提示等回复结束,不让菜单项时有时无。
   const canDelete = !!(
     showCompletedActionBar
     && clientId
     && actions.onDeleteMessage
-    && actions.isSessionStreaming !== true
     && (item.message.kind === 'user' || item.message.kind === 'assistant')
   );
   const canCopyLink = !!(showCompletedActionBar && clientId && actions.onCopyMessageLink);
@@ -3424,8 +3396,8 @@ function MessageBubble({
         presentation.density === 'compact' && styles.bubbleCompact,
         presentation.density === 'rich' && styles.bubbleRich,
         isUser ? styles.userBubble : styles.agentBubble,
-        actions.companion && isUser && styles.companionUserBubble,
-        actions.companion && !isUser && !item.message.systemCardType && styles.companionAnswer,
+        false,
+        false,
         hookSource && styles.hookSourceBubble,
       ]}
       testID={isUser ? 'message.userBubble' : 'message.agentBubble'}
@@ -3594,10 +3566,7 @@ function MessageBubble({
       ) : null}
       {attachmentStripNode}
       {hasBubbleContent || (!attachmentStripNode && messageQuotes.length === 0) ? bubble : null}
-      {actions.companion && item.message.kind === 'assistant' && item.message.body.trim() ? (
-        <CompanionLearningFooter receipts={item.message.source.agentMeta?.botLearning}
-          onOpenSettings={actions.onOpenCompanionSettings} />
-      ) : null}
+      {(null)}
       {item.message.kind === 'assistant' && item.message.modelMismatch ? (
         // 模型降级提示(对齐桌面 AssistantMessage):所选模型本轮被上游静默替换,
         // 常显在气泡下方,icon 用 warning 橙、文字保持 tertiary 灰阶。
@@ -3611,21 +3580,7 @@ function MessageBubble({
           </Text>
         </View>
       ) : null}
-      {hasActions && actions.companion ? <CompanionMessageActions user={isUser} copied={copyState === 'copied'} copying={copyState === 'copying'} disabled={disabled}
-        onCopy={canCopy ? copyMessage : undefined}
-        actions={[
-          ...(canCopy ? [{ id: 'copy', title: copyActionLabel(copyState), image: 'doc.on.doc', disabled: copyState === 'copying' }] : []),
-          ...(canShare ? [{ id: 'share', title: t('session.shareImage.shareMessage'), image: 'square.and.arrow.up' }] : []),
-          ...(canFork ? [{ id: 'fork', title: messageControlActionLabel('fork', copyState), image: 'arrow.triangle.branch', disabled: actionBusy }] : []),
-          ...messageMenu.map(item => ({ id: item.id, title: item.label, image: item.image, destructive: item.destructive, disabled: actionBusy })),
-          ...(absoluteTime ? [{ id: 'time', title: t('message.renderer.sentTime', { time: absoluteTime }), disabled: true }] : []),
-          ...(turnCost || turnTokens ? [{ id: 'usage', title: turnCost ? t('message.renderer.turnCost', { cost: turnCost }) : t('message.renderer.turnTokens', { tokens: turnTokens }), disabled: true }] : []),
-        ]}
-        onAction={id => {
-          if (id === 'copy' || id === 'fork') selectControlAction(id);
-          else if (id === 'share') actions.onEnterShareSelection?.(clientId);
-          else if (messageMenu.some(item => item.id === id)) selectMenuAction(id as MobileMessageMenuActionId);
-        }} /> : hasActions ? (
+      {hasActions ? (
         <View
           style={[
             styles.messageActionBar,
@@ -4364,16 +4319,13 @@ function WorkGroupCard({
       ].filter((value): value is string => value !== null).join(' · ')
     : '';
   const title = [
-    actions.companion && isStreaming && actions.companionWorkingLabel ? actions.companionWorkingLabel : presentation.title,
+    (presentation.title),
     explorationSummary,
   ].filter(Boolean).join(' · ');
   const onToggle = item.deferred?.setVisible ? toggleExpanded : item.deferred?.toggle ?? toggleExpanded;
-  const pluginWork = actions.companionPluginWork?.get(item.key);
   return (
     <>
-    {pluginWork ? <PluginInvocationHeader plugins={pluginWork.plugins} running={pluginWork.running}
-      showCompletionBadge={false}
-      deviceId={actions.remoteDeviceId} sessionId={pluginWork.sessionId} /> : null}
+    {(null)}
     <FoldablePanel
       chevronPosition={header.chevronPosition}
       chevronSize={header.chevronSize}
@@ -8153,8 +8105,6 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   bubbleRich: {
     gap: spacing.sm,
   },
-  companionAnswer: { backgroundColor: colors.surface, borderWidth: 0, paddingHorizontal: 0 },
-  companionUserBubble: { borderColor: colors.border },
   userBubble: {
     alignSelf: 'flex-end',
     backgroundColor: colors.surfaceElevated,

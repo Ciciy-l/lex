@@ -251,6 +251,7 @@
     "deleteMessageTitle": "このメッセージを削除しますか？",
     "deleteMessageBody": "ユーザーメッセージはこの1件のみ削除されます。AI メッセージの場合は、直前のユーザー入力以降に生成されたターン全体が削除されます。以降の会話は保持されます。次回の送信時に、残った記録から AI のコンテキストが再構築されます。",
     "deleteMessageAction": "このメッセージを削除",
+    "deleteMessageBusy": "現在の応答が終わってからメッセージを削除してください。",
     "readingCapabilities": "{{agent}} の実行機能を読み込み中…",
     "editingQueueMessageNumbered": "キュー内メッセージ {{index}} 件目を編集中",
     "editingQueueMessage": "キュー内メッセージを編集中",

@@ -1,7 +1,8 @@
+import { retiredCompanionSessionSql } from '../localDb/retiredCompanionSql.js';
 import { stat } from 'node:fs/promises';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, not } from 'drizzle-orm';
 import type { XdtHelperMcpDeps } from '@cindy/mcps';
-import { sessions, orcaTeams, orcaWorkers, botSessionLinks } from '../localDb/schema.js';
+import { sessions, orcaTeams, orcaWorkers } from '../localDb/schema.js';
 import { updateSessionInDb } from '../localDb/ipc/sessions.js';
 import { bindingStore } from '../im/binding.js';
 import { throwIpcError } from '../utils/ipcValidate.js';
@@ -67,7 +68,7 @@ async function moveSessionProject(
         const [target] = await context.client.drizzle
           .select()
           .from(sessions)
-          .where(eq(sessions.id, sessionId))
+          .where(and(eq(sessions.id, sessionId), not(retiredCompanionSessionSql(sessions.id))))
           .limit(1);
         context.assertCurrent();
         assertAuthority();
@@ -82,16 +83,6 @@ async function moveSessionProject(
             'UNSUPPORTED_CAPABILITY',
             'Review task settings are fixed to the source task.',
           );
-        // Bot runtime resolves its workspace from the ownership link, including legacy tasks.
-        const [botLink] = await context.client.drizzle
-          .select({ botId: botSessionLinks.botId })
-          .from(botSessionLinks)
-          .where(eq(botSessionLinks.sessionId, sessionId))
-          .limit(1);
-        context.assertCurrent();
-        assertAuthority();
-        if (target.source === 'bot' || botLink)
-          throwIpcError('UNSUPPORTED_CAPABILITY', 'Bot tasks use their own managed workspace.');
         workers =
           target.orcaRole === 'lead'
             ? await context.client.drizzle

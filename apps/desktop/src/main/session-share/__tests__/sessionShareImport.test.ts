@@ -28,6 +28,7 @@ const dbMock = vi.hoisted(() => ({
   /** 只对指定 resume id 命中冲突(协同包按 Worker 定向测冲突)。 */
   conflictForResumeId: null as string | null,
   conflictGraphRows: [] as Array<{ id: string; status: 'active' | 'archived' }>,
+  retiredIds: [] as string[],
   queryCalls: [] as Array<{ sql: string; params: unknown[] }>,
   txCalls: [] as Array<{ name: string; args: unknown }>,
   txError: null as Error | null,
@@ -87,6 +88,7 @@ vi.mock('../../localDb/client/current.js', () => ({
     },
     query: async (sql: string, params: unknown[]) => {
       dbMock.queryCalls.push({ sql, params });
+      if (sql.includes('FROM bot_session_links')) return dbMock.retiredIds.filter(id => params.includes(id)).map(id => ({ id }));
       if (
         typeof sql === 'string' &&
         (sql.includes('FROM orca_teams t') || sql.includes('WITH related_leads AS'))
@@ -498,6 +500,7 @@ describe('sessionShareImport', () => {
     dbMock.conflictRow = null;
     dbMock.conflictForResumeId = null;
     dbMock.conflictGraphRows = [];
+    dbMock.retiredIds = [];
     dbMock.queryCalls = [];
     dbMock.txCalls = [];
     dbMock.txError = null;
@@ -1063,6 +1066,35 @@ describe('sessionShareImport', () => {
     expect(txArgs.replaceSessions).toEqual([{ id: 'existing-session', status: 'active' }]);
   });
 
+  it.each(['direct conflict', 'indirect graph member'])('rejects a retained %s before any overwrite cleanup or file writes', async (kind) => {
+    dbMock.conflictRow = { id: 'existing-session', status: 'active' };
+    dbMock.retiredIds = [kind === 'direct conflict' ? 'existing-session' : 'retained-worker'];
+    if (kind !== 'direct conflict') dbMock.conflictGraphRows = [{ id: 'retained-worker', status: 'archived' }];
+    const filePath = await writeBundleFile(await buildBundle());
+    const inspected = await inspectShareFile(filePath);
+    expect(inspected.encrypted).toBe(false);
+    const recycle = vi.fn(async (_id: string) => undefined);
+    await expect(rawCommitShareImport({ draftId: inspected.draftId, workingDir: newWorkdir, projectsRootOverride: projectsRoot, overwrite: true }, {
+      dbClient: mockedDbClientModule.getDbClient(), assertStillValid: () => undefined, requestWorktreeRecycle: recycle,
+      refCompensationScope: { journalDir: path.join(tmpRoot, 'ref-compensation'), ownerStorageKey: 'a'.repeat(20), assertStillValid: () => undefined },
+    })).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(recycle).not.toHaveBeenCalled();
+    expect(dbMock.txCalls).toEqual([]);
+    expect(cindyMediaMock.ingestCalls).toEqual([]);
+    expect(worktreeMock.createCalls).toEqual([]);
+    expect(prepareSharedTaskClosureForTask).not.toHaveBeenCalled();
+    await expect(fsp.stat(projectsRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it.each(['lead', 'worker'])('rejects an explicitly retired %s snapshot before creating a workspace', async (member) => {
+    const filePath = await writeBundleFile(await buildBundle(member === 'lead' ? { session: { source: 'bot' } } : { orcaWorker: { agentKind: 'cc', snapshot: { source: 'bot' } } }));
+    const inspected = await inspectShareFile(filePath);
+    await expect(commitShareImport({ draftId: inspected.draftId, workingDir: newWorkdir, projectsRootOverride: projectsRoot })).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(dbMock.txCalls).toEqual([]);
+    expect(cindyMediaMock.ingestCalls).toEqual([]);
+    await expect(fsp.stat(projectsRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('keeps a committed overwrite successful when relay cleanup fails', async () => {
     dbMock.conflictRow = { id: 'existing-session', status: 'active' };
     closeSharedTaskForTask.mockRejectedValueOnce(new Error('relay close unavailable'));
@@ -1460,7 +1492,7 @@ describe('sessionShareImport', () => {
     };
     expect(txArgs.session.sdkSessionId).toBeNull();
     expect(JSON.parse(txArgs.messages[1].agentMeta ?? '{}').sdkSessionId).toBeUndefined();
-    expect(dbMock.queryCalls).toHaveLength(0);
+    expect(dbMock.queryCalls.filter(call => call.sql.includes('sdk_session_id ='))).toHaveLength(0);
   });
 
   it('OMP bundle imports only DB history with the local dynamic model and no native resume path', async () => {
@@ -1498,7 +1530,7 @@ describe('sessionShareImport', () => {
     expect(meta.sdkSessionId).toBeUndefined();
     expect((meta.nested as Record<string, unknown>).sdkSessionId).toBeUndefined();
     expect(txArgs.messages[1].agentMeta).not.toContain(OMP_SESSION_FILE);
-    expect(dbMock.queryCalls).toHaveLength(0);
+    expect(dbMock.queryCalls.filter(call => call.sql.includes('sdk_session_id ='))).toHaveLength(0);
   });
 
   it('OMP bundle rejects an empty local model before any database write', async () => {

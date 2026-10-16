@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 /**
- * A loaded window can be entirely hidden rows: a teammate's scheduled prompt (every 10 minutes for a
+ * A loaded window can be entirely hidden rows: a scheduled prompt (every 10 minutes for a
  * mailbox check) is stored as a user row neither client shows, and the host still counts it toward
  * the 20-item history page. Then the chat renders nothing, the list cannot scroll, and the ordinary
  * "load earlier" paths — which need at least one visible row — never run, so the chat reads as empty.

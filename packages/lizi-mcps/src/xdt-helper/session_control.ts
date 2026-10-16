@@ -214,10 +214,10 @@ export function registerCancelSessionQueuedMessageTool(
 
 // 转插话 / 重排的可操作范围(host 校验,不满足返回 NOT_AUTHORIZED):调用方通过
 // send_to_session 投递到目标的消息,或调用方自己任务队列里由其它任务 / 协同成员发来的
-// 机器消息;用户手打、伙伴委派、插件、定时任务消息不可操作。
+// 机器消息;用户手打、插件、定时任务消息不可操作。
 const SESSION_QUEUE_MANAGEABLE_SCOPE =
   '可操作的是你通过 send_to_session 投递的消息,或你自己任务队列里由其它任务 / 协同成员发来的机器消息;' +
-  '用户手打、伙伴委派、插件、定时任务消息不可操作。';
+  '用户手打、插件、定时任务消息不可操作。';
 
 export function registerSteerSessionQueuedMessageTool(
   registry: XdtHelperToolRegistry,

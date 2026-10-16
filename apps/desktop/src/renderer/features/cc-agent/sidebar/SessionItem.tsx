@@ -80,7 +80,7 @@ import { SessionProjectMoveSubmenu } from './SessionProjectMoveSubmenu';
 import type { SessionMoveTarget } from './sessionMoveTarget';
 import type { FolderPickerOption } from '@/components/new-chat/FolderPickerPopover';
 import { RemoteProjectIcon } from './RemoteProjectIcon';
-import { BotFollowMark, useSessionFollowers } from '@/features/bots/BotFollowMark';
+
 import { SessionShareExportDialog } from './SessionShareExportDialog';
 import { isRemoteSessionWriteBlocked } from '../lib/remoteSessionWriteGuard';
 import { Tip } from '@/components/ui/tooltip';
@@ -334,7 +334,6 @@ export const SessionItem = memo(function SessionItem({
   sharedTaskRole,
 }: SessionItemProps) {
   const { t } = useTranslation();
-  const followers = useSessionFollowers(session);
   const prRefs = usePrRefsForSession(session.id);
   // 任务信息复选(C 期):行右侧信息槽内容,与整理菜单同源共享状态。
   const { fields: taskInfoFields } = useTaskInfoFields();
@@ -1040,7 +1039,7 @@ export const SessionItem = memo(function SessionItem({
           >
             {titleContent}
           </SidebarTitleMarquee>
-          <BotFollowMark followers={followers} />
+
           {remoteIconKind && (
             <RemoteProjectIcon
               kind={remoteIconKind}

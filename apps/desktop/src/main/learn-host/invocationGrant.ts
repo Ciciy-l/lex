@@ -1,12 +1,15 @@
+import { isAppSessionBoundaryPending } from '../appSessionState.js';
+import { retiredCompanionSessionSql, RETIRED_COMPANION_SESSION_IDS_SQL } from '../localDb/retiredCompanionSql.js';
 import type { StartSkillLearningParams } from '@cindy/mcps';
-import { and, desc, eq, gt, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, isNull, not, or, sql } from 'drizzle-orm';
 
 import { visibleMessageTextForConversationSearch } from '../localDb/conversationSearch.pure.js';
 import {
   isDbClientNotReadyError,
-  tryGetDbClient,
+  getCurrentDbClientSnapshot,
+  type CurrentDbClientSnapshot,
 } from '../localDb/client/current.js';
-import { botSessionLinks, messages, sessions } from '../localDb/schema.js';
+import { messages, sessions } from '../localDb/schema.js';
 
 export type LearnInvocationGrantResult =
   | { ok: true }
@@ -41,14 +44,20 @@ type ConsumeUserInvocation = (
 
 const messageRowid = sql<number>`"messages"."rowid"`;
 
-/** Bot-owned plugins are absent from the global skill catalog, so their /learn
- * aliases cannot be attested there. Bot calls must use /cindy:learn explicitly. */
+/** Reject stale owners before and after every grant read or mutation. */
+function assertInvocationOwner(owner: CurrentDbClientSnapshot | null): asserts owner is CurrentDbClientSnapshot {
+  if (!owner || getCurrentDbClientSnapshot() !== owner || isAppSessionBoundaryPending()) {
+    throw Object.assign(new Error('DbClient not ready'), { code: 'HOST_NOT_READY' });
+  }
+}
+
+/** Only a current ordinary task can receive a global catalog Skill grant. */
 export async function canGrantUnqualifiedClaudeLearnInvocation(sessionId: string): Promise<boolean> {
-  const db = tryGetDbClient();
-  if (!db) return false;
-  const [botLink] = await db.drizzle.select({ sessionId: botSessionLinks.sessionId })
-    .from(botSessionLinks).where(eq(botSessionLinks.sessionId, sessionId)).limit(1);
-  return !botLink;
+  const owner = getCurrentDbClientSnapshot();
+  if (!owner || isAppSessionBoundaryPending()) return false;
+  const [row] = await owner.client.drizzle.select({ id: sessions.id }).from(sessions)
+    .where(and(eq(sessions.id, sessionId), not(retiredCompanionSessionSql(sessions.id)))).limit(1);
+  return getCurrentDbClientSnapshot() === owner && !isAppSessionBoundaryPending() && !!row;
 }
 
 function normalizeInput(value: string): string {
@@ -172,11 +181,10 @@ function parseLearnInvocationGrant(agentMeta: string | null): CindyLearnInvocati
 
 async function readLatestUserInvocation(
   sessionId: string,
+  owner: CurrentDbClientSnapshot | null,
 ): Promise<LatestUserInvocation | null> {
-  const dbClient = tryGetDbClient();
-  if (!dbClient) {
-    throw Object.assign(new Error('DbClient not ready'), { code: 'HOST_NOT_READY' });
-  }
+  assertInvocationOwner(owner);
+  const dbClient = owner.client;
   const [row] = await dbClient.drizzle
     .select({ id: messages.id, content: messages.content, agentMeta: messages.agentMeta })
     .from(messages)
@@ -184,6 +192,7 @@ async function readLatestUserInvocation(
     .where(
       and(
         eq(messages.sessionId, sessionId),
+        not(retiredCompanionSessionSql(sessions.id)),
         eq(messages.role, 'user'),
         isNull(messages.rewindAt),
         sql`(${messages.agentMeta} IS NULL OR CASE WHEN json_valid(${messages.agentMeta}) THEN json_extract(${messages.agentMeta}, '$.autoResume') END IS NOT 1)`,
@@ -197,6 +206,7 @@ async function readLatestUserInvocation(
     )
     .orderBy(desc(messages.createdAt), desc(messageRowid))
     .limit(1);
+  assertInvocationOwner(owner);
   if (!row) return null;
   return {
     messageId: row.id,
@@ -209,11 +219,10 @@ async function consumeUserInvocation(
   sessionId: string,
   messageId: string,
   sessionInstanceId: string,
+  owner: CurrentDbClientSnapshot | null,
 ): Promise<boolean> {
-  const dbClient = tryGetDbClient();
-  if (!dbClient) {
-    throw Object.assign(new Error('DbClient not ready'), { code: 'HOST_NOT_READY' });
-  }
+  assertInvocationOwner(owner);
+  const dbClient = owner.client;
   // Claim the exact persisted user message with one compare-and-update. Keeping
   // the marker in agent_meta makes the one-shot grant survive app restarts;
   // JSON object metadata is preserved, while malformed/non-object metadata
@@ -223,6 +232,7 @@ async function consumeUserInvocation(
         SET agent_meta = json_set(COALESCE(agent_meta, '{}'), '$.cindyLearnInvocationConsumed', 1)
       WHERE id = ?
         AND session_id = ?
+        AND session_id NOT IN (${RETIRED_COMPANION_SESSION_IDS_SQL})
         AND role = 'user'
         AND rewind_at IS NULL
         AND CASE
@@ -237,10 +247,17 @@ async function consumeUserInvocation(
         AND json_type(agent_meta, '$.cindyLearnInvocation.resolvedSkillPath') = 'text'`,
     [messageId, sessionId, sessionInstanceId],
   );
+  assertInvocationOwner(owner);
   return result.changes === 1;
 }
 
-export const consumeLearnInvocationGrant = createLearnInvocationGrantConsumer(
-  readLatestUserInvocation,
-  consumeUserInvocation,
-);
+export async function consumeLearnInvocationGrant(
+  request: StartSkillLearningParams,
+  sessionInstanceId: string | undefined,
+): Promise<LearnInvocationGrantResult> {
+  const owner = getCurrentDbClientSnapshot();
+  return createLearnInvocationGrantConsumer(
+    id => readLatestUserInvocation(id, owner),
+    (id, messageId, instanceId) => consumeUserInvocation(id, messageId, instanceId, owner),
+  )(request, sessionInstanceId);
+}

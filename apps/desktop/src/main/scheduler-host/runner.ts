@@ -1,10 +1,11 @@
+import { assertNotRetiredCompanionSession } from '../localDb/retiredCompanions.js';
 import { restoreAutoReviewUserIntent, type AutoReviewHistoryMessage } from '../maker-ipc/autoReviewUserIntent.js';
 import {
   ScheduledModelSelectionBusyError,
   type ScheduledModelSelection,
   type ScheduledModelSelectionLease,
 } from '../maker-ipc/scheduledModelSelection';
-import { UI_ACTION_TRIGGER_PREFIX } from '../../shared/interruptedTurn.js';
+
 import { routinePermissionSnapshot } from '../maker-host/routinePermission.js';
 /**
  * Phase 3: MakerScheduleRunner
@@ -194,7 +195,7 @@ const INTERRUPTED_ERROR_DONE_FALLBACK_MS = 250;
  *
  * 普通 schedule 的 permissionMode 两个 agent 都用 'bypassPermissions'（types/common.ts:23 注释确认
  * codex 支持子集 ask/auto/bypassPermissions）—— 调度本质是 unattended，bypass 是
- * 既有无人值守策略。伙伴例行任务不使用此默认值，继承伙伴的权限与计划模式。
+ * 既有无人值守策略；绑定现有任务的心跳保留目标权限快照。
  */
 function defaultPermissionModeForSchedule(): PermissionMode {
   // 两个 agent 都支持 bypassPermissions（types/common.ts:23），暂不按 agentKind 分支
@@ -223,7 +224,6 @@ export interface SchedulerQueueDeps {
     sessionId: string;
     text: string;
     persistedContent: string;
-    inheritTargetPlanMode?: boolean;
     origin: { kind: 'scheduler'; scheduleId: string; scheduleName: string; runId: string };
     /** Runs under the send lock before the queued Session is captured. */
     onPreparing?: () => Promise<void>;
@@ -594,6 +594,8 @@ export class MakerScheduleRunner implements ScheduleRunner {
     const holder: EphemeralSessionHolder = {};
     try {
       throwIfFireAborted(ctx.signal, 'runner entry');
+      if (schedule.source === 'bot') throw new Error('Schedule is unavailable');
+      if (schedule.targetSessionId) await assertNotRetiredCompanionSession(schedule.targetSessionId);
       return await this.fireInner(schedule, ctx, holder);
     } finally {
       holder.releaseAgentSwitchLock?.();
@@ -638,9 +640,8 @@ export class MakerScheduleRunner implements ScheduleRunner {
     }
 
     // Explicit retirement is checked before hooks: a broken external check must not
-    // keep an archived task's heartbeat alive. Persistent automations still rebind;
-    // bot routines retain their service-owned canonical-session lifecycle.
-    if (schedule.source !== 'bot' && schedule.targetSessionId && !schedule.persistentSession) {
+    // keep an archived task's heartbeat alive. Persistent automations still rebind.
+    if (schedule.targetSessionId && !schedule.persistentSession) {
       const target = await getSessionRowSnapshot(schedule.targetSessionId);
       if (target?.status === 'archived' || target?.status === 'deleted') {
         return this.retireHeartbeat(schedule, ctx, target.status);
@@ -824,7 +825,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
           // resumeSessionId / heartbeatWorkingDir / heartbeatModel 仍是 undefined,
           // 下方 workingDir 解析自然走 schedule.workingDir + schedule.useWorktree 分支
         } else {
-          if (schedule.source !== 'bot' && (row?.status === 'archived' || row?.status === 'deleted')) {
+          if ((row?.status === 'archived' || row?.status === 'deleted')) {
             return this.retireHeartbeat(schedule, ctx, row.status);
           }
           const errMsg = `target session not available (${row?.status ?? 'missing'})`;
@@ -964,7 +965,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
     // heartbeat 且 schedule.model 留空才沿用绑定 session 的 meta.model；
     // 都空时按 agentKind 兜底 (与 renderer schedulerFallbackModel 同源)，
     // 不留空字符串 — UI picker 显示 placeholder。
-    // 普通 schedule 沿用既有默认权限；伙伴例行任务继承当前伙伴的权限和计划模式。
+    // 普通 schedule 沿用既有默认权限；绑定现有任务的心跳使用目标权限快照。
     const effectiveAgentKind =
       resolvedSelection?.agentKind ??
       (isHeartbeat
@@ -1022,8 +1023,8 @@ export class MakerScheduleRunner implements ScheduleRunner {
       ? (dynamicDefaultRoute?.providerId ?? null)
       : null;
     let routinePermissions =
-      (schedule.source === 'bot' || schedule.targetSessionId) ? await this.readRoutinePermissions(sessionId) : null;
-    if ((schedule.source === 'bot' || schedule.targetSessionId) && !routinePermissions)
+      (schedule.targetSessionId) ? await this.readRoutinePermissions(sessionId) : null;
+    if ((schedule.targetSessionId) && !routinePermissions)
       return this.deferFire(schedule, sessionId, 'routine-permission-unavailable');
     // fastMode 对 Codex / Pi 生效（Claude Code / OMP 忽略此字段）；
     // 确保「不影响 Claude」。heartbeat 沿用 session meta 里的 fast 态，非 heartbeat 取 schedule。
@@ -1267,7 +1268,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
     // The worktree path can also await filesystem work, so cancellation may
     // have arrived after the preceding guard.  Never create a late session.
     throwIfFireAborted(ctx.signal, 'session creation');
-    if (schedule.source === 'bot' || schedule.targetSessionId) {
+    if (schedule.targetSessionId) {
       routinePermissions = await this.readRoutinePermissions(sessionId);
       if (!routinePermissions)
         return this.deferFire(schedule, sessionId, 'routine-permission-unavailable');
@@ -1495,8 +1496,6 @@ export class MakerScheduleRunner implements ScheduleRunner {
       this.deps.getDb(),
       session.id,
       {
-        // The routine owns no permission choice; never overwrite the teammate (including a concurrent edit).
-        ...(schedule.source === 'bot' ? { permissionMode: null } : {}),
         // 复用路径 setEffort 失败时跳过落库 —— 保留旧 meta.effort, 下次 fire
         // heartbeatEffortChanged 仍为 true 会重试同步（4.4.1 注释的固化问题）。
         // 落 runtimeReconciledEffort（按实际运行模型 clamp 后的值),session 行 effort 反映真跑的档,
@@ -1734,7 +1733,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
           setSessionProvider(session.id, verdict.providerId);
         }
       }
-      if (schedule.source === 'bot' || schedule.targetSessionId) {
+      if (schedule.targetSessionId) {
         routinePermissions = await this.readRoutinePermissions(session.id, session);
         if (!routinePermissions) {
           waiter.stopListening();
@@ -1750,7 +1749,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
       }
       const sendResult = await session.send(outgoingMessage as never, {
         origin,
-        ...(schedule.targetSessionId || schedule.source === 'bot' ? {
+        ...(schedule.targetSessionId ? {
           resolveAutoReviewUserIntent: async () => {
             const intent = restoreAutoReviewUserIntent(await this.deps.readAutoReviewHistory?.(session.id).catch(() => []) ?? []);
             const current = await this.readRoutinePermissions(session.id, session);
@@ -1785,9 +1784,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
               clientId: randomUUID(),
               role: 'user',
               content:
-                schedule.source === 'bot'
-                  ? `${UI_ACTION_TRIGGER_PREFIX}${schedule.prompt}`
-                  : schedule.prompt,
+                schedule.prompt,
               agentMeta: { origin, autoReviewUserText: { kind: 'scheduled-continuation' } },
             });
           } catch (err) {
@@ -2172,11 +2169,8 @@ export class MakerScheduleRunner implements ScheduleRunner {
     const enqueueResult = await sq.enqueuePrompt({
       sessionId,
       text: promptToSend,
-      ...(schedule.source === 'bot' ? { inheritTargetPlanMode: true } : {}),
       persistedContent:
-        schedule.source === 'bot'
-          ? `${UI_ACTION_TRIGGER_PREFIX}${schedule.prompt}`
-          : schedule.prompt,
+        schedule.prompt,
       origin,
       onPreparing: async () => {
         const preparingLive = this.deps.maker.getSession(sessionId);
@@ -2188,7 +2182,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
       onPreparationFailed: (error) => {
         failDispatch(error instanceof Error ? error : new Error(String(error)));
       },
-      onAccepted: async (queuedPermissions) => {
+      onAccepted: async () => {
         dispatched = true;
         // Queue admission happens while another (possibly user-driven)
         // Desktop turn still owns the session. Only the accepted scheduler
@@ -2245,9 +2239,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
           const message =
             'queued heartbeat live session unavailable before route sync and vendor dispatch';
           const unavailable =
-            schedule.source === 'bot'
-              ? new RoutineDispatchDeferredError(message)
-              : new Error(message);
+            new Error(message);
           failAfterAccept(unavailable);
           failDispatch(unavailable);
           blockAcceptedDispatch(undefined, 'session unavailable for queued route sync');
@@ -2290,24 +2282,6 @@ export class MakerScheduleRunner implements ScheduleRunner {
             return;
           }
           this.deps.logger.warn?.('[runner] queued heartbeat routing sync failed (non-fatal)', err);
-        }
-        if (schedule.source === 'bot') {
-          const permissions = await this.readRoutinePermissions(sessionId, live);
-          if (
-            !permissions ||
-            this.deps.maker.getSession(sessionId) !== live ||
-            live.stablePermissionModeState?.mode !== permissions.permissionMode ||
-            queuedPermissions?.permissionMode !== permissions.permissionMode ||
-            queuedPermissions?.planMode !== permissions.planMode
-          ) {
-            const error = new RoutineDispatchDeferredError(
-              'Queued routine permissions changed before dispatch',
-            );
-            failAfterAccept(error);
-            failDispatch(error);
-            blockAcceptedDispatch(live, 'routine permissions changed');
-            return;
-          }
         }
         if (ctx.canDispatch && !ctx.canDispatch()) {
           const error = new RoutineDispatchDeferredError(

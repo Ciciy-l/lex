@@ -1,3 +1,4 @@
+import { RETAINED_COMPANION_DDL } from '../../__tests__/fixtures/retiredCompanionTables';
 /**
  * sessionsRestoreIfArchived.test.ts — 批量恢复的持久层 compare-and-set 回归测试。
  *
@@ -17,6 +18,7 @@ type SessionRouteLockMock = SessionRouteLock &
   MockInstance<(sessionId: string, task: () => Promise<unknown>) => Promise<unknown>>;
 
 const h = vi.hoisted(() => ({
+  client: { query: async (sql: string, params: unknown[] = []) => h.sqlite!.prepare(sql).all(...params) },
   db: null as ReturnType<typeof drizzle> | null,
   sqlite: null as InstanceType<typeof import('better-sqlite3')> | null,
   handlers: new Map<string, (...args: unknown[]) => unknown>(),
@@ -40,6 +42,7 @@ vi.mock('../../../logger', () => ({
 }));
 vi.mock('../../client/current', () => ({
   getDbClient: () => ({ drizzle: h.db }),
+  getCurrentDbClientSnapshot: () => h,
   getCurrentDbClientUserId: () => 'test-user',
 }));
 vi.mock('../../dialogueWorkspace', () => ({ ensureDialogueWorkspaceDir: vi.fn() }));
@@ -79,6 +82,7 @@ const ORIGINAL_IDENTITY: ExpectedIdentity = {
 function createDb(): void {
   h.sqlite?.close();
   const sqlite = new Database(':memory:');
+  sqlite.exec(RETAINED_COMPANION_DDL.join(';'));
   sqlite.exec(`
     CREATE TABLE sessions (
       id TEXT PRIMARY KEY NOT NULL,
@@ -299,7 +303,7 @@ describe('local-db:sessions:restore-if-archived', () => {
   it('does not restore Bot history through the ordinary task lifecycle', async () => {
     h.sqlite!.prepare("UPDATE sessions SET source = 'bot' WHERE id = 'target'").run();
 
-    await expect(restore()).rejects.toThrow(/Bot task lifecycle/);
+    await expect(restore()).rejects.toThrow(/NOT_FOUND/);
     expect(readStatus()).toBe('archived');
     expect(h.tapWindowBroadcast).not.toHaveBeenCalled();
   });

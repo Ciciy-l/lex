@@ -29,14 +29,14 @@ describe('controlled banner placement', () => {
       'const controlledBannerCollapsed = useComposerCollapsed(sessionId ?? null);',
     );
     expect(sessionViewSource).toContain(
-      'hasControlledBanner && (!controlledBannerCollapsed || Boolean(botChatIdentity));',
+      'hasControlledBanner && !controlledBannerCollapsed;',
     );
     expect(sessionViewSource).toContain('placement="composer"');
     expect(sessionViewSource).toContain('sessionId={sessionId ?? null}');
     expect(sessionViewSource).toContain('rightLeadingSlot={');
     expect(sessionViewSource).toContain('hasControlledBanner && controlledBannerCollapsed ? (');
     expect(sessionViewSource).toMatch(
-      /botChatIdentity \? \([\s\S]*?\) : !pendingPlanReview \|\|\s+\(hasControlledBanner && controlledBannerCollapsed\) \? \(/,
+      /!pendingPlanReview \|\|\s*\(hasControlledBanner && controlledBannerCollapsed\) \? \(/,
     );
     expect(sessionViewSource).toContain('suppressContent={Boolean(pendingPlanReview)}');
     expect(sessionViewSource).toContain(

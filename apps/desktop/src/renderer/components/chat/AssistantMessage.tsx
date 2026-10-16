@@ -1,4 +1,4 @@
-import { BotLearningFooter } from '@/features/bots/BotLearningFooter';
+
 /**
  * AssistantMessage
  * ---------------------------------------------------------------------------
@@ -192,9 +192,6 @@ interface AssistantMessageProps {
    *  的收尾 assistant 正文传 true —— 任务执行过程中的中间句不挂 bar(bar 即使
    *  opacity-0 也占 24px 布局高度,每句都挂会拉散消息流)。默认 false。 */
   showActionBar?: boolean;
-  /** 伙伴对话使用常显、无费用、无 Fork 的轻量消息操作栏。 */
-  simplifiedBotConversation?: boolean;
-  botLearning?: unknown;
   /** Per-turn 费用 (USD) — 仅该轮最后一条 assistant 有值, action bar 时间旁显示。 */
   turnMoney?: RegionalMoney;
   turnCostUsd?: number;
@@ -230,8 +227,6 @@ export const AssistantMessage = memo(function AssistantMessage({
   forkBlocked,
   sessionRunning,
   showActionBar = false,
-  simplifiedBotConversation = false,
-  botLearning,
   turnMoney,
   turnCostUsd,
   turnCostIsEstimate,
@@ -403,7 +398,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           </div>
         )}
       </div>
-      {simplifiedBotConversation && !isStreaming && content.trim() && <BotLearningFooter receipts={botLearning} />}
+
       {/* Streaming → bar not mounted at all (V1.2 验收 "流式期间不挂载");
           非 turn 收尾正文(showActionBar=false)同样不挂,消息流保持紧凑 */}
       {!isStreaming && showActionBar && (
@@ -413,7 +408,6 @@ export const AssistantMessage = memo(function AssistantMessage({
           copyLinkText={messageDeepLink}
           align="left"
           hovered={hovered}
-          simplifiedBotConversation={simplifiedBotConversation}
           onFork={canFork ? handleFork : undefined}
           onAddToChat={messageDeepLink ? handleAddToChat : undefined}
           onShareAsImage={handleShareAsImage}

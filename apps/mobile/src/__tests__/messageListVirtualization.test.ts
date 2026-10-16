@@ -295,10 +295,6 @@ describe('mobile message list container', () => {
     expect(source.match(/const \[intrinsicSize, setIntrinsicSize\] = usePreviewState</g)).toHaveLength(2);
     expect(source.match(/usePreviewState=\{usePreviewState\}/g)).toHaveLength(2);
     expect(source).not.toContain('usePreviewState={useState}');
-    const groupSource = readFileSync(
-      resolve(process.cwd(), 'src/session/BotGroupMessageAttachments.tsx'), 'utf8',
-    );
-    expect(groupSource).toContain('usePreviewState={useState}');
     expect(source).toContain('const [recycledLocalExpanded, setRecycledLocalExpanded] = useRecyclingState(defaultExpanded);');
     expect(expandedStateSource).toContain('blockId ? store.subscribe(listener) : () => {}');
   });

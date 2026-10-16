@@ -20,7 +20,7 @@ import {
   type RemoteResourceStatus,
   type RemoteText,
 } from '@cindy/device-link';
-import { BOT_GROUP_CHAT_PRIMITIVE, BOT_GROUP_REMOTE_COLLECTION_ID } from '@cindy/maker-shared/botGroupChat';
+
 import { normalizeRemoteActions } from './remoteResourceContent';
 
 import type { RemoteInvoke } from './mobileMakerTransport';
@@ -35,20 +35,19 @@ export const MOBILE_REMOTE_RESOURCE_PRIMITIVES = [
   'markdown',
 ] as const;
 
-/**
- * Primitives whose whole block data is kept for a dedicated screen that asked for them
- * (`getRemoteResource(..., supportedPrimitives)`); ordinary resource views never get it.
- * The screen still validates that data before using it.
- */
-/** Routines remain a desktop feature; other portable collections stay available. */
+/** Old hosts and cached manifests must not revive retired product surfaces. */
 export function isMobileRemoteCollectionSupported(collectionId: string): boolean {
-  return collectionId !== 'routines';
+  return !['routines', 'teammates', 'bot-groups'].includes(collectionId);
 }
 
 function assertMobileRemoteCollectionSupported(collectionId: string): void {
   if (!isMobileRemoteCollectionSupported(collectionId)) {
     throw new Error('Unsupported mobile resource collection');
   }
+}
+
+function isMobileRemoteKindSupported(kind: string): boolean {
+  return kind !== 'bot' && kind !== 'bot-group';
 }
 export interface RemoteResourceHostTarget {
   deviceId: string;
@@ -69,7 +68,7 @@ export function remoteResourceDiscoveryTargets(
   devices: readonly { canOpen: boolean; state: string; deviceId: string; name: string }[],
   previous: readonly RemoteHomeCollection[],
 ): RemoteResourceHostTarget[] {
-  const known = new Set(previous.flatMap((collection) => collection.targets.map((host) => host.deviceId)));
+  const known = new Set(previous.filter((collection) => isMobileRemoteCollectionSupported(collection.id) && isMobileRemoteKindSupported(collection.resourceKind)).flatMap((collection) => collection.targets.map((host) => host.deviceId)));
   return devices
     .filter((device) => device.canOpen || (device.state === 'offline' && known.has(device.deviceId)))
     .map((device) => ({ deviceId: device.deviceId, deviceName: device.name }));
@@ -124,7 +123,7 @@ function normalizeRemoteRef(value: unknown): RemoteResourceRef | null {
   const collectionId = boundedString(record?.collectionId, MAX_REMOTE_ID_CHARS);
   const kind = boundedString(record?.kind, MAX_REMOTE_ID_CHARS);
   const id = boundedString(record?.id, MAX_REMOTE_ID_CHARS);
-  return collectionId && kind && id ? { collectionId, kind, id } : null;
+  return collectionId && kind && id && isMobileRemoteCollectionSupported(collectionId) && isMobileRemoteKindSupported(kind) ? { collectionId, kind, id } : null;
 }
 
 function normalizeRemoteStatus(value: unknown): RemoteResourceStatus | null {
@@ -221,7 +220,7 @@ function validDescriptor(value: unknown): RemoteCollectionDescriptor | null {
   const id = boundedString(record.id, MAX_REMOTE_ID_CHARS);
   const resourceKind = boundedString(record.resourceKind, MAX_REMOTE_ID_CHARS);
   const title = normalizeRemoteText(record.title, 512);
-  if (!id || !resourceKind || !title) return null;
+  if (!id || !resourceKind || !title || !isMobileRemoteCollectionSupported(id) || !isMobileRemoteKindSupported(resourceKind)) return null;
   const placement = boundedString(record.placement, MAX_REMOTE_ID_CHARS);
   const iconRecord = recordOf(record.icon);
   const iconName = boundedString(iconRecord?.name, MAX_REMOTE_ID_CHARS);
@@ -307,7 +306,7 @@ export async function discoverRemoteHomeCollections(
     }
     const target = targets[index];
     if (!target) return [];
-    return previous.flatMap((collection) => collection.targets.some(
+    return previous.filter((collection) => isMobileRemoteCollectionSupported(collection.id) && isMobileRemoteKindSupported(collection.resourceKind)).flatMap((collection) => collection.targets.some(
       (candidate) => candidate.deviceId === target.deviceId,
     ) ? [{
       target,
@@ -332,9 +331,7 @@ export async function discoverRemoteHomeCollections(
   const byId = new Map<string, RemoteHomeCollection>();
   for (const { target, manifest } of discovered) {
     for (const collection of manifest?.collections ?? []) {
-      // The current mobile home exposes the group collection as a companion scope even though
-      // older hosts omit placement for this additive collection. Other unplaced collections stay hidden.
-      if (collection.placement !== 'home-scope' && collection.id !== BOT_GROUP_REMOTE_COLLECTION_ID) continue;
+      if (!isMobileRemoteCollectionSupported(collection.id) || !isMobileRemoteKindSupported(collection.resourceKind) || collection.placement !== 'home-scope') continue;
       const existing = byId.get(collection.id);
       if (existing && existing.resourceKind === collection.resourceKind) {
         existing.targets.push(target);
@@ -365,6 +362,8 @@ export async function invokeRemoteResourceAction(
   },
   locale?: string,
 ): Promise<RemoteActionInvokeResponse> {
+  assertMobileRemoteCollectionSupported(request.collectionId);
+  if (request.resourceRef && !normalizeRemoteRef(request.resourceRef)) throw new Error('Unsupported mobile resource');
   return invoke<RemoteActionInvokeResponse>(target.deviceId, REMOTE_RESOURCE_INVOKE_CHANNEL, [{
     client: clientDescriptor(locale),
     ...request,
@@ -378,6 +377,8 @@ export async function getRemoteResource(
   locale?: string,
   queryOrSupportedPrimitives?: string | readonly string[],
 ): Promise<RemoteResource> {
+  assertMobileRemoteCollectionSupported(ref.collectionId);
+  if (!normalizeRemoteRef(ref)) throw new Error('Unsupported mobile resource');
   const query = typeof queryOrSupportedPrimitives === 'string' ? queryOrSupportedPrimitives : undefined;
   const supportedPrimitives = Array.isArray(queryOrSupportedPrimitives) ? queryOrSupportedPrimitives : [];
   const raw = await invoke<unknown>(target.deviceId, REMOTE_RESOURCE_GET_CHANNEL, [{
@@ -394,14 +395,6 @@ export async function getRemoteResource(
     ...action,
   }));
   const projectedBlocks = normalized.blocks?.map((block) => {
-    if (block.primitive === BOT_GROUP_CHAT_PRIMITIVE) {
-      if (!supportedPrimitives.includes(BOT_GROUP_CHAT_PRIMITIVE)) {
-        const { data: _data, ...fallback } = block;
-        return fallback;
-      }
-      return block;
-    }
-    if (['routine-list', 'routine-detail'].includes(block.primitive) && supportedPrimitives.includes(block.primitive)) return block;
     if (block.primitive === 'session-controls') {
       const data = recordOf(block.data);
       return {
@@ -422,11 +415,6 @@ export async function getRemoteResource(
     ...(projectedActions ? { actions: projectedActions } : {}),
     ...(projectedBlocks ? { blocks: projectedBlocks } : {}),
   };
-  if (!supportedPrimitives.includes(BOT_GROUP_CHAT_PRIMITIVE)) {
-    return {
-      ...projected,
-    };
-  }
   return projected;
 }
 
@@ -481,7 +469,7 @@ export function mergeRemoteCollectionHostShards(
   targets: readonly RemoteResourceHostTarget[],
 ): HostedRemoteCollectionItem[] {
   const sourceFor = (deviceId: string) => (successfulDeviceIds.has(deviceId) ? next : current)
-    .filter((entry) => entry.host.deviceId === deviceId);
+    .filter((entry) => entry.host.deviceId === deviceId && normalizeRemoteRef(entry.item.ref) !== null);
   return targets.flatMap((target) => sourceFor(target.deviceId));
 }
 
@@ -491,6 +479,7 @@ export async function listRemoteCollection(
   collectionId: string,
   locale?: string,
 ): Promise<RemoteCollectionListResponse> {
+  assertMobileRemoteCollectionSupported(collectionId);
   return invoke<RemoteCollectionListResponse>(target.deviceId, REMOTE_RESOURCE_LIST_CHANNEL, [{
     client: clientDescriptor(locale),
     collectionId,

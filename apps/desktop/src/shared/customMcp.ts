@@ -8,7 +8,7 @@
  */
 
 import type { AgentKind } from '@cindy/maker-core';
-import type { BotModelRoute } from './botModelChain.js';
+
 
 /** 支持的 transport 类型。 */
 export const MCP_TRANSPORTS = ['http', 'sse'] as const;
@@ -31,9 +31,7 @@ export interface CustomMcpConfig {
 /** Optional runtime projection for capability pickers; omitted for configuration CRUD. */
 export interface CustomMcpListContext {
   agentKind: AgentKind;
-  /** Preview a canonical Bot's next turn, optionally including an unsaved model chain. */
-  botSessionId?: string;
-  modelChain?: BotModelRoute[];
+
 }
 
 export interface CustomMcpListEntry extends CustomMcpConfig {

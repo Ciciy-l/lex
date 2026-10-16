@@ -12,8 +12,9 @@ describe('mobile session composer desktop-first surface', () => {
     const paletteStart = source.indexOf('function SessionComposerPalette(');
     const inputStart = source.indexOf('function SessionComposerInput(');
     const inputEnd = source.indexOf('function SessionSearchSheet(', inputStart);
-    expect(paletteStart).toBeGreaterThan(source.indexOf('export default function SessionScreen()'));
-    const task = source.slice(source.indexOf('export default function SessionScreen()'), paletteStart);
+    expect(paletteStart).toBeGreaterThan(source.indexOf('function SessionScreen()'));
+    expect(source.indexOf('function SessionScreen()')).toBeGreaterThan(-1);
+    const task = source.slice(source.indexOf('function SessionScreen()'), paletteStart);
     const input = source.slice(inputStart, inputEnd);
     expect(task).not.toContain('useSyncExternalStore(source.subscribe');
     expect(task).not.toContain('composerDraftSource.subscribe');

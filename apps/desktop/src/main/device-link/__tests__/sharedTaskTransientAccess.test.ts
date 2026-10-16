@@ -1,3 +1,4 @@
+import { setRemoteBotSessionLookup } from '../remoteBotSessionBoundary';
 import { sharedTaskGuestPeer } from '@cindy/device-link';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PROTOCOL_VERSION, SHARED_TASK_CAPABILITY, type SharedTaskDetail } from '@cindy/device-link';
@@ -34,6 +35,7 @@ function client() {
 
 beforeEach(async () => {
   __testing.reset();
+  setRemoteBotSessionLookup(async () => 'ordinary');
   registry.reset();
   for (const fn of Object.values(api)) fn.mockReset();
   detail = {
@@ -59,7 +61,8 @@ beforeEach(async () => {
   await host.refresh('sharedTask');
 });
 afterEach(() => {
-  __testing.reset(); registry.reset(); setSharedTaskDispatchHost(null);
+  __testing.reset();
+  setRemoteBotSessionLookup(async () => 'ordinary'); registry.reset(); setSharedTaskDispatchHost(null);
 });
 
 describe('shared task temporary authority fences preserve membership', () => {
@@ -110,7 +113,7 @@ describe('shared task temporary authority fences preserve membership', () => {
       rejectRemove(new Error('offline'));
       await failed;
       expect(host.peerStatus(peer)).toBe('available');
-      expect(__testing.handleSubscriptionFrame(peer, subscribe).ok).toBe(true);
+      expect((await __testing.handleSubscriptionFrame(peer, subscribe)).ok).toBe(true);
       expect((await runInvoke(peer, read)).ok).toBe(true);
     }
   });
@@ -136,7 +139,7 @@ describe('shared task temporary authority fences preserve membership', () => {
     expect(await runInvoke(peer, { ...read, args: ['another-task'] }))
       .toMatchObject({ ok: false, error: { code: 'IPC_ERROR', message: expect.stringContaining('PERMISSION_DENIED') } });
     expect(host.peerStatus(peer)).toBe('available');
-    expect(__testing.handleSubscriptionFrame(peer, subscribe).ok).toBe(true);
+    expect((await __testing.handleSubscriptionFrame(peer, subscribe)).ok).toBe(true);
   });
 
   it('treats unrestored or replaced host authority as unavailable rather than revoked', async () => {

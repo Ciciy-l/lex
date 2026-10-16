@@ -1,4 +1,3 @@
-import { useHomeMode } from './useHomeMode';
 import { createContext, useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 import Animated from 'react-native-reanimated';
@@ -29,9 +28,7 @@ export function ResidentHomeListProvider({ children }: { children: ReactNode }) 
   const geometry = useAdaptiveWindow();
   const enabled = sessionPaneLayout(geometry).persistent;
   const segments = useSegments() as string[];
-  const { mode } = useHomeMode();
-  // The retained task list must not overlay the teammate home pane.
-  const visible = enabled && ((mode === 'tasks' && (segments.length === 0 || segments[0] === 'index' || (segments[0] === 'devices' && (segments.length === 1 || segments[1] === 'index'))))
+  const visible = enabled && (((segments.length === 0 || segments[0] === 'index' || (segments[0] === 'devices' && (segments.length === 1 || segments[1] === 'index'))))
     || (segments[0] === 'sessions' && segments[1] === '[sessionId]'));
   const host = useRef<View>(null);
   const mounted = useRef(false);

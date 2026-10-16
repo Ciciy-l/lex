@@ -1,10 +1,17 @@
 import Database from 'better-sqlite3';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { tx } from '../opHandlers/tx.js';
+import { RETAINED_COMPANION_DDL } from '../../__tests__/fixtures/retiredCompanionTables';
+import { createMigratedSmokeDb } from '../../__tests__/dbWorkerTestUtils';
+import { WorkerThreadTransport } from '../../client/WorkerThreadTransport';
 
 /** 覆盖 session.importShare 用到的最小表结构(列名与真实 schema 对齐)。 */
 function createTables(db: Database.Database): void {
+  for (const ddl of RETAINED_COMPANION_DDL) db.exec(ddl);
   db.exec(`
     CREATE TABLE sessions (
       id TEXT PRIMARY KEY,
@@ -170,6 +177,58 @@ describe('tx session.importShare', () => {
 
   afterEach(() => {
     db.close();
+  });
+
+  it.each(['source', 'link', 'profile', 'delegation'])('rejects overwriting retained %s ownership without changing any row', (ownership) => {
+    db.prepare("INSERT INTO sessions (id, source, created_at, updated_at) VALUES ('retained', ?, 1, 2)").run(ownership === 'source' ? 'bot' : 'desktop');
+    if (ownership === 'link') db.prepare('INSERT INTO bot_session_links VALUES (?)').run('retained');
+    if (ownership === 'profile') db.prepare('INSERT INTO bot_profiles VALUES (?)').run('retained');
+    if (ownership === 'delegation') db.prepare('INSERT INTO bot_delegations VALUES (?)').run('retained');
+    const before = db.prepare('SELECT * FROM sessions').all();
+    const request = validArgs();
+    expect(() => tx(db, { ...request, args: { ...request.args, replaceSessions: [{ id: 'retained', status: 'active' }] } })).toThrow('Retired session');
+    expect(db.prepare('SELECT * FROM sessions').all()).toEqual(before);
+    expect(db.prepare('SELECT * FROM messages').all()).toEqual([]);
+  });
+
+  it('rejects a companion source supplied directly to the import transaction', () => {
+    const request = validArgs();
+    request.args.session.source = 'bot';
+    expect(() => tx(db, request)).toThrow('Retired session');
+    expect(db.prepare('SELECT * FROM sessions').all()).toEqual([]);
+    expect(db.prepare('SELECT * FROM messages').all()).toEqual([]);
+  });
+
+  it('enforces the same retained-overwrite protection in the inline worker and still imports ordinary tasks', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lex-share-retirement-'));
+    const dbPath = path.join(dir, 'inline.db');
+    const drizzleDir = path.join(dir, 'drizzle');
+    let transport: WorkerThreadTransport | undefined;
+    try {
+      fs.mkdirSync(drizzleDir);
+      fs.writeFileSync(path.join(drizzleDir, '0000_init.sql'), 'CREATE TABLE migration_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);');
+      createMigratedSmokeDb(dbPath);
+      const fixture = new Database(dbPath);
+      try {
+        createTables(fixture);
+        for (const id of ['source', 'link', 'profile', 'delegation']) fixture.prepare('INSERT INTO sessions (id, source, created_at, updated_at) VALUES (?, ?, 1, 1)').run(id, id === 'source' ? 'bot' : 'desktop');
+        fixture.exec("INSERT INTO bot_session_links VALUES ('link'); INSERT INTO bot_profiles VALUES ('profile'); INSERT INTO bot_delegations VALUES ('delegation');");
+      } finally { fixture.close(); }
+      transport = new WorkerThreadTransport({ useInlineWorker: true, dbPath, drizzleDir, betterSqliteModulePath: require.resolve('better-sqlite3') });
+      const before = await transport.send('query', { sql: 'SELECT * FROM sessions ORDER BY id' });
+      for (const id of ['source', 'link', 'profile', 'delegation']) {
+        const request = validArgs();
+        await expect(transport.send('tx', { ...request, args: { ...request.args, replaceSessions: [{ id, status: 'active' }] } })).rejects.toThrow('Retired session');
+        expect(await transport.send('query', { sql: 'SELECT * FROM sessions ORDER BY id' })).toEqual(before);
+      }
+      const bot = validArgs();
+      bot.args.session.source = 'bot';
+      await expect(transport.send('tx', bot)).rejects.toThrow('Retired session');
+      await expect(transport.send('tx', validArgs())).resolves.toEqual({ messageCount: 3 });
+    } finally {
+      if (transport) await transport.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('inserts session and all messages (including rewound rows) atomically', () => {

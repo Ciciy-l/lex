@@ -59,7 +59,6 @@ function createDeps(overrides: Partial<MakerSendTransactionDeps> = {}) {
     readScheduledPermissions: vi.fn(async () => ({ permissionMode: 'ask', planModeEnabled: false })),
     getSession: vi.fn((sessionId: string) => (sessionId === session.id ? session : undefined)),
     closeSession: vi.fn(async () => {}),
-    preflightBotRuntimeResources: vi.fn(async () => {}),
     getSessionMeta: vi.fn(async () => ({ title: '现有会话' })),
     ensureRemoteReadyForSessionStart: vi.fn(async () => {}),
     checkWorkDirExists: vi.fn(async () => true),
@@ -1300,23 +1299,6 @@ describe('maker SEND transaction', () => {
     expect(deps.bootstrapSession).toHaveBeenCalledWith(expect.objectContaining({ workingDir: '/conversation' }));
     expect(session.send).not.toHaveBeenCalled();
     expect(recovered.send).toHaveBeenCalledWith(expect.stringContaining('Original filesystem unavailable'), expect.anything());
-  });
-
-  it('keeps the old runtime when Bot resource preflight fails, then resumes normally after repair', async () => {
-    const session = createSession({ agentKind: 'pi' });
-    const { deps } = createDeps({
-      getSession: () => session,
-      peekWorkingDirectoryRecoveryNote: () => 'Directory recreated',
-      preflightBotRuntimeResources: vi.fn().mockRejectedValueOnce(new Error('Bot resource unavailable')).mockResolvedValue(undefined),
-    });
-    const transaction = createMakerSendTransaction(deps);
-    await expect(transaction.sendToAgentAccepted('session-1', 'hello')).resolves.toMatchObject({ accepted: false });
-    expect(deps.closeSession).not.toHaveBeenCalled();
-    expect(deps.bootstrapSession).not.toHaveBeenCalled();
-    await transaction.sendToAgentAccepted('session-1', 'hello');
-    expect(deps.closeSession).toHaveBeenCalledOnce();
-    expect(vi.mocked(deps.preflightBotRuntimeResources).mock.invocationCallOrder[1])
-      .toBeLessThan(vi.mocked(deps.closeSession).mock.invocationCallOrder[0]!);
   });
 
   it('uses persisted settings to recover a live session when send has no createOpts', async () => {

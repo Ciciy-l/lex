@@ -26,8 +26,8 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useBotProfiles } from '@/features/bots/botStore';
-import { findBotProfileForSession } from '@/features/bots/botSessionOwners';
+
+
 import type { TabKindId, TabKindMenuMeta } from './types';
 import type { AvailableShell, ShellId, TerminalProfile } from '../../../shared/terminal-bridge';
 
@@ -36,13 +36,6 @@ const DROPDOWN_WIDTH = 220;
 const VIEWPORT_PADDING = 8;
 /** anchor 底边到 dropdown 顶边的间距(原 mt-1)。 */
 const ANCHOR_GAP = 4;
-
-const BOT_SECONDARY_KINDS = new Set<TabKindId>([
-  'review',
-  'subagents',
-  'background-tasks',
-  'ios-simulator',
-]);
 
 interface AddTabDropdownProps {
   /** 定位锚点:「+」按钮 wrapper。dropdown portal 到 body 后按它的 rect 摆位。 */
@@ -104,8 +97,6 @@ export function AddTabDropdown({
   onLaunchTerminal,
 }: AddTabDropdownProps) {
   const { t } = useTranslation();
-  const bots = useBotProfiles();
-  const isBotSession = Boolean(sessionId && findBotProfileForSession(bots, sessionId));
   const ref = useRef<HTMLDivElement | null>(null);
   const [availableShells, setAvailableShells] = useState<AvailableShell[] | null>(null);
   useEffect(() => {
@@ -225,7 +216,7 @@ export function AddTabDropdown({
   const visibleItems = MENU_ITEMS.filter((item) => {
     if (item.kind === 'ios-simulator' && !iosSimulatorAvailable) return false;
     if (item.kind === 'subagents' && !subagentsAvailable) return false;
-    if (isBotSession && BOT_SECONDARY_KINDS.has(item.kind)) return false;
+
     return true;
   });
   const enabled = visibleItems.filter((m) => m.enabled).sort((a, b) => a.order - b.order);

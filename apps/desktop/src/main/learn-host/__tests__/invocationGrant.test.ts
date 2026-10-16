@@ -17,9 +17,10 @@ let activeDb: { sqlite: Database.Database; client: DbClient } | null = null;
 function createInvocationDb(): Database.Database {
   const sqlite = new Database(':memory:');
   sqlite.exec(`
-    CREATE TABLE bot_session_links (session_id TEXT PRIMARY KEY);
+    CREATE TABLE bot_session_links(session_id TEXT); CREATE TABLE bot_profiles(canonical_session_id TEXT); CREATE TABLE bot_delegations(child_session_id TEXT);
     CREATE TABLE sessions (
       id TEXT PRIMARY KEY,
+      source TEXT,
       cleared_at INTEGER
     );
     CREATE TABLE messages (
@@ -51,10 +52,12 @@ afterEach(() => {
 });
 
 describe('Learn invocation grant', () => {
-  it('does not attest a Bot-owned /learn alias using the global skill catalog', async () => {
+  it('does not attest a retired task or missing task using the global skill catalog', async () => {
     const sqlite = createInvocationDb();
     sqlite.prepare('INSERT INTO bot_session_links(session_id) VALUES (?)').run('bot-session');
     await expect(canGrantUnqualifiedClaudeLearnInvocation('bot-session')).resolves.toBe(false);
+    sqlite.prepare('INSERT INTO sessions(id) VALUES (?)').run('ordinary-session');
+    await expect(canGrantUnqualifiedClaudeLearnInvocation('missing')).resolves.toBe(false);
     await expect(canGrantUnqualifiedClaudeLearnInvocation('ordinary-session')).resolves.toBe(true);
   });
 
@@ -290,4 +293,36 @@ describe('Learn invocation grant', () => {
       errorCode: 'USER_REQUEST_REQUIRED',
     });
   });
+  it.each(['source', 'link', 'profile', 'delegation'])('refuses retained %s task grants without changing the user message', async kind => {
+    const sqlite = createInvocationDb();
+    sqlite.exec("INSERT INTO sessions(id,source) VALUES ('retained','desktop')");
+    if (kind === 'source') sqlite.exec("UPDATE sessions SET source='bot'");
+    if (kind === 'link') sqlite.exec("INSERT INTO bot_session_links VALUES ('retained')");
+    if (kind === 'profile') sqlite.exec("INSERT INTO bot_profiles VALUES ('retained')");
+    if (kind === 'delegation') sqlite.exec("INSERT INTO bot_delegations VALUES ('retained')");
+    const meta = JSON.stringify({ cindyLearnInvocation: grant() });
+    sqlite.prepare("INSERT INTO messages(id,client_id,session_id,role,content,agent_meta,created_at) VALUES ('m','c','retained','user',?, ?, 1)").run('/learn release flow', meta);
+    await expect(canGrantUnqualifiedClaudeLearnInvocation('retained')).resolves.toBe(false);
+    await expect(consumeLearnInvocationGrant({ callerSessionId:'retained', input:'release flow', sourceKind:'freetext' }, 'instance-1')).resolves.toMatchObject({ok:false,errorCode:'USER_REQUEST_REQUIRED'});
+    expect(sqlite.prepare("SELECT agent_meta FROM messages WHERE id='m'").pluck().get()).toBe(meta);
+  });
+
+  it('does not consume the old grant after a database-owner switch during the read', async () => {
+    const sqlite = createInvocationDb();
+    sqlite.exec("INSERT INTO sessions(id) VALUES ('ordinary')");
+    const meta = JSON.stringify({ cindyLearnInvocation: grant() });
+    sqlite.prepare("INSERT INTO messages(id,client_id,session_id,role,content,agent_meta,created_at) VALUES ('m','c','ordinary','user',?, ?, 1)").run('/learn release flow', meta);
+    const client = activeDb!.client;
+    const select = client.drizzle.select.bind(client.drizzle);
+    const spy = vi.spyOn(client.drizzle, 'select').mockImplementation(((...args: unknown[]) => {
+      const result = (select as (...args: unknown[]) => unknown)(...args);
+      setCurrentDbClient(client, 'another-owner');
+      return result;
+    }) as typeof client.drizzle.select);
+    try {
+      await expect(consumeLearnInvocationGrant({ callerSessionId:'ordinary',input:'release flow',sourceKind:'freetext' }, 'instance-1')).resolves.toMatchObject({ok:false,errorCode:'HOST_NOT_READY'});
+      expect(sqlite.prepare("SELECT agent_meta FROM messages WHERE id='m'").pluck().get()).toBe(meta);
+    } finally { spy.mockRestore(); }
+  });
+
 });

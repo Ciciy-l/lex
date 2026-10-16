@@ -5,7 +5,7 @@
  * Renders /help, /cost, /context, /pwd, /status as styled info panels in the chat stream.
  */
 
-import { BotAuthorizationCardView } from '@/features/bots/BotAuthorizationCard';
+
 import { useState, type ReactNode } from 'react';
 import {
   ArrowLeftRight,
@@ -32,11 +32,8 @@ import {
   reviewFailureCodeFromLegacyError,
   type ReviewFailureCode,
 } from '../../../shared/reviewRun';
-import {
-  BotSessionTaskCard,
-  BotSessionTaskMessageTrace,
-} from '@/features/bots/BotCollaborationCard';
-import { BotDirectMessageCard } from '@/features/bots/BotDirectMessageCard';
+
+
 import {
   ACTIVITY_ROW_CHEVRON_SLOT_CLASS,
   ACTIVITY_ROW_COLOR_TRANSITION_CLASS,
@@ -62,10 +59,6 @@ interface SystemCardProps {
     | 'auto-resume'
     | 'auto-resume-pending'
     | 'agent-switch'
-    | 'bot-session-task-message'
-    | 'bot-session-task'
-    | 'bot-direct-message'
-    | 'bot-authorization'
     | 'context-rebuild';
   data?: Record<string, unknown>;
   /**
@@ -1405,14 +1398,6 @@ export function SystemCard({
       return <LearnStatusCard data={data} contextSessionId={sessionId} />;
     case 'review':
       return <ReviewCard data={data} workingDir={workingDir} />;
-    case 'bot-session-task-message':
-      return <BotSessionTaskMessageTrace data={data} />;
-    case 'bot-session-task':
-      return <BotSessionTaskCard data={data} sessionId={sessionId} />;
-    case 'bot-authorization':
-      return <BotAuthorizationCardView data={data} sessionId={sessionId} />;
-    case 'bot-direct-message':
-      return <BotDirectMessageCard data={data} sessionId={sessionId} />;
     default:
       return null;
   }

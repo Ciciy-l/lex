@@ -5,10 +5,10 @@ import { expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   push: vi.fn(), markRead: vi.fn(), list: vi.fn(),
-  params: { collectionId: 'teammates', targets: JSON.stringify([{ deviceId: 'mac', deviceName: 'My Mac' }]) },
+  params: { collectionId: 'projects', targets: JSON.stringify([{ deviceId: 'mac', deviceName: 'My Mac' }]) },
   translation: { t: (key: string) => key, i18n: { language: 'en' } },
   link: { connectionEpoch: 1, status: 'online', presenceVersion: 1, getPresenceAvailability: () => true, invoke: vi.fn(), onRemoteResourceChanged: vi.fn((_listener: (deviceId: string, payload: { collectionId: string }) => void) => () => {}), subscribe: vi.fn(), unsubscribe: vi.fn() },
-  item: { ref: { collectionId: 'teammates', kind: 'bot', id: 'bot-1' }, revision: '1', display: { title: 'Writer', preview: 'Unread reply', lastReplyAt: 200 } },
+  item: { ref: { collectionId: 'projects', kind: 'project', id: 'project-1' }, revision: '1', display: { title: 'Writer', preview: 'Unread reply', lastReplyAt: 200 } },
 }));
 vi.mock('react-native', async () => {
   const { createElement: el, Fragment } = await import('react');
@@ -38,10 +38,10 @@ vi.mock('@/components/AppText', async () => {
   const { createElement: el } = await import('react');
   return { Text: ({ children }: any) => el('span', null, children), TextInput: ({ testID }: any) => el('input', { 'data-testid': testID }) };
 });
-vi.mock('@/components/RemoteCompanionAvatar', () => ({ RemoteCompanionAvatar: () => null }));
+vi.mock('@/components/RemoteResourceAvatar', () => ({ RemoteResourceAvatar: () => null }));
 vi.mock('@/components/MobilePrimitives', () => ({ MainWindowEmptyState: () => null, StatusDot: () => null, RemoteListSyncingPlaceholder: () => null }));
 vi.mock('@/platform/chrome', () => ({ SimpleStackHeader: () => null, simpleScreenSafeAreaEdges: () => [], simpleScrollInsetProps: {}, simpleScrollScreenSafeAreaEdges: () => [] }));
-vi.mock('@/session/BotGroupList', () => ({ BotGroupSection: () => null }));
+
 vi.mock('@/auth/AuthContext', () => ({ useAuth: () => ({ user: { id: 'owner' }, accountGeneration: 1 }) }));
 vi.mock('@/device-link/remoteStatus', () => ({ formatRemoteError: String }));
 vi.mock('@/device-link/DeviceLinkContext', () => ({ useDeviceLink: () => h.link }));
@@ -63,13 +63,13 @@ vi.mock('@/device-link/remoteResources', async (original) => ({
 import RemoteCollectionScreen from '../../app/resources/[collectionId]';
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
-it('opening a companion only navigates; unread survives until the destination confirms content display', async () => {
-  h.list.mockResolvedValue({ collectionId: 'teammates', revision: '1', items: [h.item] });
+it('opening a resource only navigates; unread survives until the destination confirms content display', async () => {
+  h.list.mockResolvedValue({ collectionId: 'projects', revision: '1', items: [h.item] });
   const container = document.createElement('div');
   const root = createRoot(container);
   try {
     await act(async () => root.render(createElement(RemoteCollectionScreen)));
-    const button = container.querySelector<HTMLButtonElement>('[data-testid="teammates.item.mac.bot-1"]');
+    const button = container.querySelector<HTMLButtonElement>('[data-testid="remoteResources.item.project-1"]');
     expect(button).not.toBeNull();
     await act(async () => button!.click());
     expect(h.push).toHaveBeenCalledWith(expect.objectContaining({ pathname: '/resources/[collectionId]/[resourceId]' }));
@@ -87,15 +87,15 @@ it('serializes bursts of generation pushes on the resource route and preserves t
   try {
     await act(async () => root.render(createElement(RemoteCollectionScreen)));
     const notify = h.link.onRemoteResourceChanged.mock.calls.at(-1)![0];
-    await act(async () => { for (let n = 0; n < 20; n++) notify('mac', { collectionId: 'teammates' }); });
+    await act(async () => { for (let n = 0; n < 20; n++) notify('mac', { collectionId: 'projects' }); });
     expect(h.list).toHaveBeenCalledTimes(1);
     h.list.mockResolvedValue({ items: [h.item] });
     await act(async () => settle({ items: [] }));
     expect(h.list).toHaveBeenCalledTimes(2);
-    expect(container.querySelector('[data-testid="teammates.item.mac.bot-1"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="remoteResources.item.project-1"]')).not.toBeNull();
     // A queued refresh must not issue another RPC after leaving the route.
     h.list.mockReturnValue(new Promise(resolve => { settle = resolve; }));
-    await act(async () => { notify('mac', { collectionId: 'teammates' }); notify('mac', { collectionId: 'teammates' }); });
+    await act(async () => { notify('mac', { collectionId: 'projects' }); notify('mac', { collectionId: 'projects' }); });
     act(() => root.unmount());
     await act(async () => settle({ items: [] }));
     expect(h.list).toHaveBeenCalledTimes(3);

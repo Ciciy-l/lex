@@ -36,6 +36,7 @@ import {
   type ShareImportDraftPrefs,
 } from '../../session-share/sessionShareImport.js';
 import { getDbClient, tryGetDbClient } from '../client/current.js';
+import { RETIRED_COMPANION_SESSION_IDS_SQL } from '../retiredCompanionSql.js';
 import { activeOwnerScopeKey, isAppSessionBoundaryPending } from '../../appSessionState.js';
 import { captureMediaRefCompensationScope } from '../../cindy-media/refCompensationJournal.js';
 import { compactSessionToolResultsBestEffort } from '../toolResultCompaction.js';
@@ -290,10 +291,11 @@ function sanitizeDraftPrefs(raw: unknown): ShareImportDraftPrefs | null {
 
 async function readSessionTitle(sessionId: string): Promise<string> {
   const row = await getDbClient().queryOne<{ title: string | null }>(
-    'SELECT title FROM sessions WHERE id = ? LIMIT 1',
+    'SELECT title FROM sessions WHERE id = ? AND id NOT IN (' + RETIRED_COMPANION_SESSION_IDS_SQL + ') LIMIT 1',
     [sessionId],
   );
-  return row?.title || 'session';
+  if (!row) throwIpcError('NOT_FOUND', 'Session does not exist');
+  return row.title || 'session';
 }
 
 /** 标题转安全文件名:去掉两端空白与路径/非法字符,过长截断,空了兜底。 */

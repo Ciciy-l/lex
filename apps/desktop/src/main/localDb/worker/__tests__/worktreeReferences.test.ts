@@ -30,10 +30,12 @@ describe('machine-local task reference reader', () => {
     current = { transaction: <T>(callback: () => T) => callback, prepare: (sql: string) => ({ all: () => sql === 'PRAGMA database_list'
       ? [{ name: 'main', file: currentPath }]
       : sql === 'PRAGMA table_info(sessions)' ? schemaRows()
+      : sql.startsWith('PRAGMA table_info(') ? []
       : [{ id: 'current-task', status: 'active', workingDir: root, worktreePath: null, source: 'desktop' }] }) } as unknown as Database.Database;
     opened.mockReset(); closed.mockReset();
     otherQuery.mockReset().mockImplementation((sql: string) => sql === 'PRAGMA table_info(sessions)'
       ? schemaRows()
+      : sql.startsWith('PRAGMA table_info(') ? []
       : [{ id: 'other-task', status: 'active', workingDir: root, worktreePath: null, source: 'desktop' }]);
   });
   afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
