@@ -30,6 +30,7 @@ import {
 } from './transform.js';
 import { createXaiModelInputRecoveryRule } from './xai-model-input.js';
 import { listenOnAvailableLoopbackPort } from './test-loopback-server.js';
+import { postJson as post } from './test-http-client.js';
 import { createThreadStripController } from './thread-strip-controller.js';
 import type { ProxyHandle, RequestTransform } from './types.js';
 
@@ -108,10 +109,12 @@ afterEach(async () => {
   if (upstreamClose) { await upstreamClose(); upstreamClose = null; }
 });
 
-async function post(url: string, body: unknown): Promise<{ status: number; text: string }> {
-  const res = await fetch(`${url}/v1/responses`, {
+// These cases explicitly exercise fetch's automatic Content-Encoding decoding.
+// Do not retain their completed connections after the test proxy is disposed.
+async function postWithFetch(url: string, body: unknown): Promise<{ status: number; text: string }> {
+  const res = await fetch(url + '/v1/responses', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'thread-id': 'thread-a' },
+    headers: { 'content-type': 'application/json', 'thread-id': 'thread-a', connection: 'close' },
     body: JSON.stringify(body),
   });
   return { status: res.status, text: await res.text() };
@@ -144,7 +147,14 @@ describe('anthropic-compat-proxy loopback port guard', () => {
     const port = Number(new URL(proxy.url).port);
     expect(isFetchBlockedPort(port)).toBe(false);
 
-    const result = await post(proxy.url, { model: 'test-model' });
+    // Keep explicit coverage of the production URL with native fetch. Other
+    // fixtures use a private connection so a reused port cannot inherit a pool.
+    const response = await fetch(`${proxy.url}/v1/responses`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', connection: 'close' },
+      body: JSON.stringify({ model: 'test-model' }),
+    });
+    const result = { status: response.status, text: await response.text() };
     expect(result).toEqual({ status: 200, text: JSON.stringify({ ok: true }) });
   });
 
@@ -2160,7 +2170,7 @@ describe('anthropic-compat-proxy routingTransform', () => {
       logger: { isDebugEnabled: () => true, warn: (msg, ctx) => warns.push({ msg, ctx }) },
     });
 
-    const r = await post(proxy.url, { model: 'codex/gpt-5.5', input: [] });
+    const r = await postWithFetch(proxy.url, { model: 'codex/gpt-5.5', input: [] });
 
     // 客户端侧: pipe + content-encoding 透传, undici 自动解压 → 拿到可读 JSON, 功能不受影响。
     expect(r.status).toBe(429);
@@ -3914,7 +3924,7 @@ describe('压缩 SSE 不接管(Greptile review)', () => {
       transformRequest: [],
     });
 
-    const res = await post(proxy.url, {
+    const res = await postWithFetch(proxy.url, {
       model: 'kimi-k3',
       messages: [
         { role: 'assistant', content: [{ type: 'tool_use', id: 'Bash_210', name: 'Bash', input: {} }] },
@@ -4441,7 +4451,7 @@ describe('streaming response validity gate (#2242)', () => {
     upstreamClose = upstream.close;
     proxy = await createAnthropicCompatProxy({ upstream: upstream.url });
 
-    const result = await post(proxy.url, { model: 'test-model', stream: true });
+    const result = await postWithFetch(proxy.url, { model: 'test-model', stream: true });
     expect(result.status).toBe(200);
     expect(result.text).toBe(SSE_BODY);
   });
