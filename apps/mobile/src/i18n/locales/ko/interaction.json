@@ -280,17 +280,5 @@
         "fallback": "모바일은 데스크톱에서 보낸 순서대로 원격 요청을 처리합니다."
       }
     }
-  },
-  "companion": {
-    "operation": "작업",
-    "details": "세부 정보",
-    "fields": {
-      "path": "파일",
-      "file_path": "파일",
-      "url": "주소",
-      "command": "명령",
-      "ghost_id": "플러그인",
-      "tool": "도구"
-    }
   }
 }

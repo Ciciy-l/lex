@@ -60,12 +60,12 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const props = {
   sessionId: 'loading-test', initialWorkingDir: '/workspace', runtimeAgentKind: 'codex' as const,
   vendorKey: 'codex' as const, deviceLinkDeviceId: 'test-host', attachmentState: attachments,
-  hideRuntimeControls: true, showFolderPicker: false, disableAutofocus: true,
+  showFolderPicker: false, disableAutofocus: true,
 };
 
 it.each(['high', null] as const)('sends the actual runtime effort %s even without a catalog', async (effort) => {
   const onSend = vi.fn().mockResolvedValue(true);
-  const view = render(<ChatInput {...props} hideRuntimeControls={false} onSend={onSend}
+  const view = render(<ChatInput {...props} onSend={onSend}
     initialModel="gpt-6-astra" initialProviderId="openai" initialEffort="medium"
     runtimeEffective={{ agentKind: 'codex', model: 'gpt-6-astra', providerId: 'openai', effort, fastMode: false }} />);
   await waitFor(() => expect(view.container.querySelector('[contenteditable]')).not.toBeNull());
@@ -115,15 +115,15 @@ it.each(['button', 'Enter', 'voice'] as const)(
 
 it('hides a missing existing model, recovers from the effective runtime, and preserves new-draft defaults', async () => {
   const onSend = vi.fn();
-  const view = render(<ChatInput {...props} hideRuntimeControls={false} onSend={onSend} />);
+  const view = render(<ChatInput {...props} onSend={onSend} />);
   expect(screen.queryByTestId('model-selector')).toBeNull();
-  view.rerender(<ChatInput {...props} hideRuntimeControls={false} onSend={onSend}
+  view.rerender(<ChatInput {...props} onSend={onSend}
     runtimeEffective={{ agentKind: 'codex', model: 'gpt-6-astra', providerId: 'openai', effort: 'medium', fastMode: false }} />);
   expect(screen.getByTestId('model-selector').textContent).toBe('gpt-6-astra');
-  view.rerender(<ChatInput {...props} hideRuntimeControls={false} onSend={onSend} />);
+  view.rerender(<ChatInput {...props} onSend={onSend} />);
   expect(screen.queryByTestId('model-selector')).toBeNull();
   expect((screen.getByRole('button', { name: 'newChat.sendButton.send' }) as HTMLButtonElement).disabled).toBe(true);
-  view.rerender(<ChatInput {...props} sessionId={undefined} hideRuntimeControls={false} onSend={onSend} />);
+  view.rerender(<ChatInput {...props} sessionId={undefined} onSend={onSend} />);
   expect(screen.getByTestId('model-selector').textContent).toBe('claude-fable-5-1');
   await act(async () => {});
   expect(onSend).not.toHaveBeenCalled();
@@ -134,7 +134,7 @@ it.each([320, 480, 800])('preserves the model slot across hydration (width=%s)',
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(width);
   const narrowToolbar = width < 600;
   const onSend = vi.fn();
-  const inputProps = { ...props, hideRuntimeControls: false, narrowToolbar, onSend };
+  const inputProps = { ...props, narrowToolbar, onSend };
   const view = render(<ChatInput {...inputProps} />);
   const slot = view.container.querySelector('[data-session-model-slot]') as HTMLElement;
   expect(slot).not.toBeNull();
@@ -150,8 +150,6 @@ it.each([320, 480, 800])('preserves the model slot across hydration (width=%s)',
   expect(view.container.querySelector('[data-session-model-slot]')).toBe(slot);
   expect(slot.className).toBe(geometry);
   expect(slot.textContent).toBe('');
-  view.rerender(<ChatInput {...inputProps} hideRuntimeControls />);
-  expect(view.container.querySelector('[data-session-model-slot]')).toBeNull();
   expect(screen.getByTestId('permission-selector')).toBeTruthy();
   await act(async () => {});
   expect(onSend).not.toHaveBeenCalled();

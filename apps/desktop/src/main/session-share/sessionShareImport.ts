@@ -27,6 +27,7 @@ import { isClaudeProjectKeyExact, sanitizeClaudeProjectKey } from '@cindy/maker-
 import { app } from 'electron';
 
 import type { DbClient } from '../localDb/client/DbClient.js';
+import { RETIRED_COMPANION_SESSION_IDS_SQL } from '../localDb/retiredCompanionSql.js';
 import { isDbTransportOutcomeUnknown } from '../localDb/client/DbTransport.js';
 import type {
   SessionImportShareMessageRow,
@@ -438,6 +439,10 @@ export async function commitShareImport(
     }
   }
 
+  if ([sessionSnapshot, ...workerPlans.map((plan) => plan.snapshot)].some((snapshot) => snapshot.source === 'bot')) {
+    throw codedError('PRECONDITION_FAILED', 'Retired sessions cannot be imported');
+  }
+
   if (runtimeScope.migration) {
     const workers = runtimeScope.migration.workers ?? [];
     if (workers.length !== workerPlans.length || (runtimeScope.migration.workers !== undefined) !== !!manifest.orca)
@@ -464,7 +469,7 @@ export async function commitShareImport(
   assertOmpImportModelRequirements(manifest, workerPlans, draftPrefs);
   const now = Date.now();
   const newId = runtimeScope.migration?.sessionId ?? randomUUID();
-  let workingDir: string;
+  let workingDir = '';
   if (manifest.workspaceKind === 'project' || runtimeScope.migration) {
     const dir = runtimeScope.migration?.workingDir ?? (typeof opts.workingDir === 'string' ? opts.workingDir.trim() : '');
     if (!dir) throw codedError('INVALID_PARAMS', 'workingDir is required for project sessions');
@@ -473,10 +478,6 @@ export async function commitShareImport(
       throw codedError('PRECONDITION_FAILED', 'workingDir does not exist or is not a directory');
     }
     workingDir = dir;
-  } else {
-    assertStillValid();
-    workingDir = ensureDialogueWorkspaceDir(newId, now);
-    assertStillValid();
   }
 
   // activeSdkSessionId 同样是不可信输入,且会流入落盘路径:codex 侧
@@ -676,6 +677,23 @@ export async function commitShareImport(
         conflictExisting.push(row);
       }
     }
+  }
+
+  // Keep retained companion data outside overwrite/cleanup, including indirect
+  // members discovered through the old Orca graph. Use the captured owner DB.
+  const touchedIds = [...new Set([newId, ...workerPlans.map((plan) => plan.newId), ...conflictExisting.map((row) => row.id)])];
+  for (let offset = 0; offset < touchedIds.length; offset += 200) {
+    const ids = touchedIds.slice(offset, offset + 200);
+    const retired = await guarded(() => dbClient.query<{ id: string }>(
+      'SELECT id FROM (' + RETIRED_COMPANION_SESSION_IDS_SQL + ') WHERE id IN (' + ids.map(() => '?').join(',') + ') LIMIT 1',
+      ids,
+    ));
+    if (retired.length > 0) throw codedError('PRECONDITION_FAILED', 'Retired sessions cannot be replaced');
+  }
+  if (!workingDir) {
+    assertStillValid();
+    workingDir = ensureDialogueWorkspaceDir(newId, now);
+    assertStillValid();
   }
 
   // The overwrite transaction below marks these sessions deleted. Persist the

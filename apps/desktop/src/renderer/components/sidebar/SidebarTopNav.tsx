@@ -1,11 +1,10 @@
 /**
  * SidebarTopNav —— 侧栏顶部常驻动作/导航列表(取代原 HorizontalTabbar)。
  * ---------------------------------------------------------------------------
- * 一条同级、等权的列表行,按顺序:新建 / 自动任务 / Plugins / 伙伴 /
+ * 一条同级、等权的列表行,按顺序:新建 / 自动任务 / Plugins /
  * 最小化插件面板恢复入口(按需) / 搜索。
  *   - 新建 / 自动任务:项目(cc-agent)视图的动作 —— 在任意视图点击都跳回项目视图并执行。
  *   - Plugins:主视图切换(navigateToView),命中当前视图时高亮。
- *   - 伙伴:原位切换为「返回任务」动作,随目标更换文案和图标,不显示选中高亮。
  *   - 搜索(SidebarInlineSearch):静息态与其余行同款「🔍 搜索」;hover / 聚焦
  *     就地展开成搜索框,结果由下方功能槽(CCAgentSidebarUpper)替换列表绘制。搜索状态经
  *     ConversationSearchProvider 的 context 共享(行在此、结果在功能槽,两者是兄弟子树)。
@@ -21,8 +20,8 @@
  */
 
 import { useCallback } from 'react';
-import { ArrowLeft, Bot, CirclePlus, Plug, Timer } from 'lucide-react';
-import { useLocation, useNavigate, useMatch } from 'react-router-dom';
+import { CirclePlus, Plug, Timer } from 'lucide-react';
+import { useNavigate, useMatch } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
 import { cn } from '@/lib/utils';
@@ -30,9 +29,7 @@ import { AttentionDot } from '@/components/sidebar/AttentionDot';
 import { useAnyGhostUnread } from '@/cindy-brain/ghostUnreadStore';
 import { GhostPanelRestoreEntry } from '@/cindy-brain/GhostPanelRestoreEntry';
 import { useActiveMainView } from '@/hooks/useActiveMainView';
-import { useExperimentalFlag } from '@/hooks/useExperimentalFeatures';
 import { SidebarInlineSearch } from '@/features/cc-agent/sidebar/SidebarInlineSearch';
-import { SidebarIconButton } from './SidebarIconButton';
 import { useConversationSearchContext } from '@/features/cc-agent/sidebar/conversationSearchContext';
 import { GhostMainViewNavEntries } from './GhostMainViewNavEntries';
 
@@ -64,9 +61,7 @@ export function SidebarTopNav({
 } = {}): React.ReactElement {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const location = useLocation();
   const { activeKey, navigateToView } = useActiveMainView();
-  const { enabled: teammatesEnabled } = useExperimentalFlag('teammates');
   const onScheduleMatch = useMatch('/cc-agent/scheduled');
   const { search, allKnownProjects, openSignal } = useConversationSearchContext();
   // 任一插件有未读 → 入口行尾一颗**静态**绿点(聚合入口按 AttentionDot 规范不呼吸,
@@ -132,45 +127,7 @@ export function SidebarTopNav({
       {hasGhostUnread && <AttentionDot size={6} className="ml-auto mr-0.5" />}
     </button>
   ) : null;
-  // `activeKey` is intentionally sticky for the other navigation rows, but this
-  // action must describe the actual destination. Settings and other auxiliary
-  // routes should continue to offer entry to Teammates, not a stale return.
-  const isBotsView = location.pathname === '/bots' || location.pathname.startsWith('/bots/');
-  const botsActionLabel = t(isBotsView ? 'bots.backToTasks' : 'sidebar.tabs.bots');
-  const BotsActionIcon = isBotsView ? ArrowLeft : Bot;
-  // Lex keeps teammate management experimental by default. Deep links and an
-  // already-open workspace still expose the return action, so disabling the flag
-  // never strands an existing teammate task.
-  const showBotsAction = teammatesEnabled || isBotsView;
-  const botsRow = showScrollable && showBotsAction ? (
-    <button
-      onClick={() => navigateToView(isBotsView ? 'cc-agent' : 'bots')}
-      className={ROW_CLASS}
-      aria-label={botsActionLabel}
-    >
-      <BotsActionIcon
-        size={15}
-        strokeWidth={1.8}
-        className="shrink-0 text-[var(--sidebar-nav-text)]"
-      />
-      <span className="leading-none">{botsActionLabel}</span>
-    </button>
-  ) : null;
-  if (section === 'rail') {
-    // The bots feature owns the rail tile while its route is active. Reuse
-    // that tile for the return action instead of rendering a duplicate here.
-    if (!teammatesEnabled || isBotsView) return <></>;
-    return (
-      <div className="flex shrink-0 justify-center px-2 pt-2 pb-1">
-        <SidebarIconButton
-          icon={BotsActionIcon}
-          label={botsActionLabel}
-          variant="rail"
-          onClick={() => navigateToView(isBotsView ? 'cc-agent' : 'bots')}
-        />
-      </div>
-    );
-  }
+  if (section === 'rail') return <></>;
   const mainViewRows = showScrollable ? <GhostMainViewNavEntries variant="row" /> : null;
   const restoreRow = showScrollable ? (
     <GhostPanelRestoreEntry variant="row" className={ROW_CLASS} />
@@ -192,7 +149,6 @@ export function SidebarTopNav({
         <div className="flex flex-col gap-0.5 pr-3 pl-3">
           {automationsRow}
           {pluginsRow}
-          {botsRow}
           {mainViewRows}
           {restoreRow}
         </div>
@@ -234,7 +190,6 @@ export function SidebarTopNav({
       )}
       {automationsRow}
       {pluginsRow}
-      {botsRow}
       {mainViewRows}
       {restoreRow}
       {searchRow}

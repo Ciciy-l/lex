@@ -797,18 +797,6 @@ describe('写路径 roundtrip(真实存储,tmp userData)', () => {
   });
 });
 
-describe('connect_account shares Host live plugin policy', () => {
-  it('passes dynamically discovered plugins to Host without treating builtin toolsets as plugin grants', async () => {
-    const deps = makeDeps('claude-code', 'bot-session', 'bot-instance', {
-      __cindyAllowedBuiltinPluginIds: ['memory', 'xdt_helper'],
-    });
-    await deps.connectAccount!({ kind: 'plugin', id: 'art' });
-    expect(authorizationRequestMock).toHaveBeenCalledWith('bot-session', { kind: 'plugin', id: 'art' });
-    await deps.connectAccount!({ kind: 'host', id: 'grok' });
-    expect(authorizationRequestMock).toHaveBeenCalledTimes(2);
-  });
-});
-
 describe('花名册 / ghost_list 过滤', () => {
   it('被禁用的意识不进花名册与现查清单;其余照常', async () => {
     setGhostDisabledForWorkdir(WORKDIR, 'art', true);
@@ -2218,19 +2206,4 @@ describe('Host Auto review', () => {
     expect(dispatchMock).not.toHaveBeenCalled();
     expect(grantAttachmentsMock).not.toHaveBeenCalled();
   });
-});
-
-it.each([false, true])('only marks a teammate setup plan as reauthorization with a current suggestion (%s)', async (reauth) => {
-  listMock.mockReturnValue([chipGhost('art')]);
-  isAuthorizationSessionMock.mockResolvedValue(true);
-  const assessment = { state: 'ready' as const, revision: 1, groups: [],
-    ...(reauth ? { reauthSuggest: { ghostId: 'art', secretKey: 'account', missingScopes: ['write'],
-      missingScopeCount: 1, requirement: { ref: 'secret:account', kind: 'oauth' as const,
-        label: 'Account', action: { id: 'connect', kind: 'oauth_connect' as const } } } } : {}) };
-  setupAssessmentMock.mockReturnValue(assessment);
-  const setupPlan = { assessmentRevision: 1, steps: [] };
-  await makeDeps().callGhostTool({ ghostId: 'art', tool: 'run', args: {}, setupPlan });
-  expect(authorizationRequestMock).toHaveBeenCalledWith('s1', {
-    kind: 'plugin', id: 'art', ...(reauth ? { reauthorize: true } : {}),
-  }, setupPlan);
 });

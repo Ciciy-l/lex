@@ -12,8 +12,6 @@ import { PI_NATIVE_PROVIDER_ADAPTER_SOURCE } from './native-provider-adapter-sou
  *  2. MCP 桥:CINDY_PI_MCP_BRIDGE 指向 host 的 localhost bridge，或用户显式配置的
  *     外部 Streamable HTTP MCP。外部认证只保存 env 引用，真值留在 Pi 父进程 env；
  *     对每个 server 走 initialize → 分页 tools/list；模型侧固定注册两个通用网关工具，
- *     cindy_helper 提供伙伴能力时再额外注册稳定的伙伴消息与 Session 任务门面，
- *     避免模型把后台任务和同名 Bot 混为一谈。
  *     调用时再按 server/tool 路由，并把真实 mcp__<server>__<tool> 身份交给 Host 审批与审计。
  *  3. 会话树:注册 Cindy 私有 command，把 RPC prompt 桥到 ctx.navigateTree。
  *
@@ -34,7 +32,7 @@ import {
 } from "../shared/sensitive-credential-paths.js";
 import { projectPiPackageCommandDiagnostic, projectPiManagedCommandFailure } from "../base-agent.js";
 import { shellInputRedirectionParserSource } from "../shared/shell-input-redirections.js";
-import { BRAND_NAME } from '@cindy/maker-shared/branding';
+
 
 const SHELL_INPUT_REDIRECTION_PARSER_SOURCE = shellInputRedirectionParserSource();
 const CREDENTIAL_WORD_BOUNDARY = '\u0001';
@@ -75,7 +73,6 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import * as piCodingAgent from '@earendil-works/pi-coding-agent';
 
-const DISPLAY_BRAND = ${JSON.stringify(BRAND_NAME)};
 const PERMISSION_TITLE = 'cindy:permission';
 const TURN_CHANGE_CAPTURE_TITLE = 'cindy:turn-change-capture';
 const PERMISSION_ALLOW = 'allow';
@@ -2482,24 +2479,6 @@ interface McpServerRef {
 
 const CINDY_MCP_LIST_TOOLS = 'cindy_mcp_list_tools';
 const CINDY_MCP_CALL_TOOL = 'cindy_mcp_call_tool';
-const CINDY_START_SESSION_TASK_TOOL = 'start_session_task';
-const CINDY_CHECK_SESSION_TASK_TOOL = 'check_session_task';
-const CINDY_MESSAGE_SESSION_TASK_TOOL = 'message_session_task';
-const CINDY_STOP_SESSION_TASK_TOOL = 'stop_session_task';
-const CINDY_SEND_TO_AGENT_TOOL = 'send_to_agent';
-const CINDY_CREATE_TEAMMATE_TOOL = 'create_teammate';
-const CINDY_BOT_MEMORY_TOOL = 'bot_memory';
-const CINDY_DIRECT_BOT_TOOLS = new Set([
-  CINDY_START_SESSION_TASK_TOOL,
-  CINDY_CHECK_SESSION_TASK_TOOL,
-  CINDY_MESSAGE_SESSION_TASK_TOOL,
-  CINDY_STOP_SESSION_TASK_TOOL,
-  CINDY_SEND_TO_AGENT_TOOL,
-  CINDY_CREATE_TEAMMATE_TOOL,
-  'routine_list', 'routine_save', 'routine_sources',
-  'routine_history', 'routine_delete', 'routine_run_now',
-]);
-
 interface ConnectedMcpTool {
   serverName: string;
   name: string;
@@ -2509,7 +2488,6 @@ interface ConnectedMcpTool {
 }
 
 interface ResolvedMcpGatewayCall {
-  helperCommand?: string;
   qualifiedName: string;
   args: Record<string, unknown>;
   tool: ConnectedMcpTool;
@@ -2799,8 +2777,6 @@ class CindyMcpGateway {
   private readonly tools = new Map<string, ConnectedMcpTool>();
   private readonly unavailableServers = new Map<string, string>();
   private readonly disclosedSchemas = new Set<string>();
-  private botMemoryFacadeEnabled = false;
-  private botHelperFacadeEnabled = false;
 
   add(serverName: string, client: McpHttpClient, tools: any[]): void {
     for (const rawTool of tools) {
@@ -2835,114 +2811,11 @@ class CindyMcpGateway {
     const serverName = typeof record.server === 'string' ? record.server : '';
     const toolName = typeof record.tool === 'string' ? record.tool : '';
     if (!serverName || !toolName) return null;
-    if (this.botMemoryFacadeEnabled && serverName === 'cindy_memory') return null;
     const tool = this.tools.get(mcpGatewayKey(serverName, toolName));
     if (!tool) return null;
     return {
       qualifiedName: 'mcp__' + serverName + '__' + toolName,
       args: recordInput(record.args),
-      tool,
-    };
-  }
-
-  resolveDirectHelperTool(name: string, input: unknown): ResolvedMcpGatewayCall | null {
-    const direct = this.tools.get(mcpGatewayKey('cindy_helper', name));
-    const tool = direct ?? (this.botHelperFacadeEnabled && CINDY_DIRECT_BOT_TOOLS.has(name)
-      ? this.tools.get(mcpGatewayKey('cindy_helper', 'call_tool')) : undefined);
-    if (!tool) return null;
-    return {
-      ...(!direct ? { helperCommand: name } : {}),
-      qualifiedName: 'mcp__cindy_helper__' + name,
-      args: recordInput(input),
-      tool,
-    };
-  }
-
-  resolveStartSessionTask(input: unknown): ResolvedMcpGatewayCall | null {
-    return this.resolveDirectHelperTool(CINDY_START_SESSION_TASK_TOOL, input);
-  }
-
-  resolveCreateTeammate(input: unknown): ResolvedMcpGatewayCall | null {
-    return this.resolveDirectHelperTool(CINDY_CREATE_TEAMMATE_TOOL, input);
-  }
-
-  resolveBotMemory(input: unknown): ResolvedMcpGatewayCall | null {
-    if (!this.botMemoryFacadeEnabled) return null;
-    const tool = this.tools.get(mcpGatewayKey('cindy_memory', 'call_tool'));
-    if (!tool) return null;
-    const record = recordInput(input);
-    const action = typeof record.action === 'string' ? record.action : '';
-    const stringValue = (key: string): string | null =>
-      typeof record[key] === 'string' && String(record[key]).trim().length > 0
-        ? String(record[key])
-        : null;
-    let name = '';
-    let args: Record<string, unknown> = {};
-    if (action === 'list') {
-      name = 'memory_list';
-    } else if (action === 'review') {
-      name = 'memory_review';
-    } else if (action === 'read' || action === 'delete') {
-      const filename = stringValue('filename');
-      if (!filename) return null;
-      name = action === 'read' ? 'memory_read' : 'memory_delete';
-      args = { filename };
-    } else if (action === 'search') {
-      const query = stringValue('query');
-      if (!query) return null;
-      name = 'memory_search';
-      args = {
-        query,
-        ...(typeof record.type === 'string' ? { type: record.type } : {}),
-        ...(Number.isInteger(record.limit) ? { limit: record.limit } : {}),
-      };
-    } else if (action === 'write') {
-      const type = stringValue('type');
-      const memoryName = stringValue('name');
-      const title = stringValue('title');
-      const description = stringValue('description');
-      const body = stringValue('body');
-      if (!type || !memoryName || !title || !description || !body) return null;
-      name = 'memory_write';
-      args = {
-        type,
-        name: memoryName,
-        title,
-        description,
-        body,
-        ...(typeof record.mode === 'string' ? { mode: record.mode } : {}),
-      };
-    } else if (action === 'consolidate') {
-      const type = stringValue('type');
-      const memoryName = stringValue('name');
-      const title = stringValue('title');
-      const description = stringValue('description');
-      const body = stringValue('body');
-      const sources = Array.isArray(record.sources)
-        && record.sources.every((value): value is string =>
-          typeof value === 'string' && value.trim().length > 0)
-        ? record.sources
-        : [];
-      if (!type || !memoryName || !title || !description || !body || sources.length === 0) {
-        return null;
-      }
-      name = 'memory_consolidate';
-      args = {
-        sources,
-        target: {
-          type,
-          name: memoryName,
-          title,
-          description,
-          body,
-        },
-      };
-    } else {
-      return null;
-    }
-    return {
-      qualifiedName: 'mcp__cindy_memory__call_tool',
-      args: { name, args },
       tool,
     };
   }
@@ -2953,7 +2826,6 @@ class CindyMcpGateway {
 
   list(serverName?: string): Array<{ server: string; name: string; description: string }> {
     return [...this.tools.values()]
-      .filter((tool) => !this.botMemoryFacadeEnabled || tool.serverName !== 'cindy_memory')
       .filter((tool) => !serverName || tool.serverName === serverName)
       .sort((a, b) => a.serverName.localeCompare(b.serverName) || a.name.localeCompare(b.name))
       .map((tool) => ({
@@ -3003,9 +2875,7 @@ class CindyMcpGateway {
         availableServers: this.availableServers(),
       };
     } else if (serverName && toolName) {
-      const selected = this.botMemoryFacadeEnabled && serverName === 'cindy_memory'
-        ? undefined
-        : this.tools.get(mcpGatewayKey(serverName, toolName));
+      const selected = this.tools.get(mcpGatewayKey(serverName, toolName));
       if (!selected) {
         payload = {
           ok: false,
@@ -3067,8 +2937,7 @@ class CindyMcpGateway {
     try {
       result = await resolved.tool.client.request('tools/call', {
         name: resolved.tool.name,
-        arguments: resolved.helperCommand
-          ? { name: resolved.helperCommand, args: resolved.args } : resolved.args,
+        arguments: resolved.args,
       }, signal);
     } catch (error) {
       throw new Error(
@@ -3105,260 +2974,7 @@ class CindyMcpGateway {
     return this.executeResolvedCall(resolved, signal);
   }
 
-  private async executeDirectHelperTool(name: string, params: unknown, signal?: AbortSignal): Promise<{
-    content: Array<Record<string, unknown>>;
-    details: unknown;
-  }> {
-    const resolved = this.resolveDirectHelperTool(name, params);
-    if (!resolved) throw new Error(DISPLAY_BRAND + ' tool ' + name + ' is unavailable in this task.');
-    return this.executeResolvedCall(resolved, signal);
-  }
-
-  private async executeStartSessionTask(params: unknown, signal?: AbortSignal): Promise<{
-    content: Array<Record<string, unknown>>;
-    details: unknown;
-  }> {
-    return this.executeDirectHelperTool(CINDY_START_SESSION_TASK_TOOL, params, signal);
-  }
-
-  private async executeCreateTeammate(params: unknown, signal?: AbortSignal): Promise<{
-    content: Array<Record<string, unknown>>;
-    details: unknown;
-  }> {
-    const resolved = this.resolveCreateTeammate(params);
-    if (!resolved) throw new Error(DISPLAY_BRAND + ' teammate creation is unavailable in this task.');
-    return this.executeResolvedCall(resolved, signal);
-  }
-
-  private async executeBotMemory(params: unknown, signal?: AbortSignal): Promise<{
-    content: Array<Record<string, unknown>>;
-    details: unknown;
-  }> {
-    const resolved = this.resolveBotMemory(params);
-    if (!resolved) {
-      throw new Error(
-        'Invalid Bot Memory request. Choose list, read, search, write, delete, review, or consolidate and provide the fields required by that action.',
-      );
-    }
-    return this.executeResolvedCall(resolved, signal);
-  }
-
-  register(pi: any, options: { botMemoryFacade?: boolean } = {}): void {
-    // Host-owned Bot identity enables native shortcuts; execution uses the scoped helper entry.
-    this.botHelperFacadeEnabled = options.botMemoryFacade === true;
-    this.botMemoryFacadeEnabled = options.botMemoryFacade === true
-      && this.tools.has(mcpGatewayKey('cindy_memory', 'call_tool'));
-
-    if (this.botMemoryFacadeEnabled) {
-      pi.registerTool({
-        name: CINDY_BOT_MEMORY_TOOL,
-        label: 'Bot Memory',
-        description:
-          'Read and maintain this Bot\'s own durable memory through one typed action. Search before writing; update an existing record instead of creating a duplicate. Review only when the user asks or maintenance is needed; consolidate atomically after size warnings. Use memory for stable preferences, corrections, agreements, and reusable background—not transient task progress.',
-        parameters: {
-          type: 'object',
-          properties: {
-            action: { type: 'string', enum: ['list', 'read', 'search', 'write', 'delete', 'review', 'consolidate'] },
-            filename: { type: 'string', description: 'Required for read or delete.' },
-            query: { type: 'string', description: 'Required for search.' },
-            type: { type: 'string', enum: ['user', 'feedback', 'project', 'reference'] },
-            limit: { type: 'integer', minimum: 1, maximum: 50 },
-            name: { type: 'string', pattern: '^[a-z0-9_-]{1,64}$', description: 'Filename slug required for write.' },
-            title: { type: 'string', description: 'Required for write.' },
-            description: { type: 'string', description: 'One-line index hook required for write.' },
-            body: { type: 'string', description: 'Memory content required for write.' },
-            mode: { type: 'string', enum: ['create', 'update', 'append'] },
-            sources: {
-              type: 'array',
-              items: { type: 'string' },
-              minItems: 1,
-              description: 'Source filenames required for consolidate; target uses the write fields above.',
-            },
-          },
-          required: ['action'],
-          additionalProperties: false,
-        },
-        execute: async (_toolCallId: string, params: unknown, signal?: AbortSignal) => this.executeBotMemory(params, signal),
-      });
-    }
-
-    if (this.resolveStartSessionTask({})) {
-      pi.registerTool({
-        name: CINDY_START_SESSION_TASK_TOOL,
-        label: 'Start a ' + DISPLAY_BRAND + ' Session task',
-        description:
-          'Start one real independent ' + DISPLAY_BRAND + ' Session task in the background. Proactively use it for coding implementation and medium or large work: reading/modifying a project and running checks, multi-source research, multi-file processing, or complex analysis and deliverables. Do not wait for the user to request delegation or ask permission merely to start a task. Handle short simple questions, code explanations, small snippets, and single-step work yourself unless the user explicitly requests a separate task. Respect an explicit request to work inline. Include the objective, constraints, known facts, relevant files, completed actions, and acceptance criteria in instruction; the task does not automatically inherit this chat. This never selects or wakes a Bot, including a Bot named ' + DISPLAY_BRAND + '. Start it once, do not duplicate its work or poll, and review the result when it returns automatically.',
-        parameters: {
-          type: 'object',
-          properties: {
-            instruction: { type: 'string', minLength: 1, maxLength: 12000 },
-            title: { type: 'string', minLength: 1, maxLength: 120 },
-            working_dir: { type: 'string', minLength: 1, maxLength: 1024 },
-            use_worktree: { type: 'boolean' },
-            context_refs: { type: 'array', items: { type: 'string' }, maxItems: 32 },
-            timeout_ms: { type: 'integer', minimum: 1000, maximum: 86400000 },
-          },
-          required: ['instruction'],
-          additionalProperties: false,
-        },
-        execute: async (_toolCallId: string, params: unknown, signal?: AbortSignal) =>
-          this.executeStartSessionTask(params, signal),
-      });
-    }
-
-    if (this.resolveDirectHelperTool(CINDY_SEND_TO_AGENT_TOOL, {})) {
-      pi.registerTool({
-        name: CINDY_SEND_TO_AGENT_TOOL,
-        label: 'Send message to teammate',
-        description:
-          'Send one bounded asynchronous message to a named ' + DISPLAY_BRAND + ' Bot teammate. This does not create a task or progress state. Use start_session_task for tracked work. A structured @Bot reference already contains the exact target ID, so do not list Bots first.',
-        parameters: {
-          type: 'object',
-          properties: {
-            target_id: { type: 'string', minLength: 1, maxLength: 128 },
-            message: { type: 'string', minLength: 1, maxLength: 12000 },
-          },
-          required: ['target_id', 'message'],
-          additionalProperties: false,
-        },
-        execute: async (_toolCallId: string, params: unknown, signal?: AbortSignal) =>
-          this.executeDirectHelperTool(CINDY_SEND_TO_AGENT_TOOL, params, signal),
-      });
-    }
-
-    if (this.resolveDirectHelperTool(CINDY_CHECK_SESSION_TASK_TOOL, {})) {
-      pi.registerTool({
-        name: CINDY_CHECK_SESSION_TASK_TOOL,
-        label: 'Check Session task',
-        description: 'Read one Session task state when the user asks for progress or automatic completion appears to be missing. Do not poll.',
-        parameters: { type: 'object',
-          properties: { task_id: { type: 'string', minLength: 1, maxLength: 128 },
-            queued_message_id: { type: 'string', minLength: 1, maxLength: 256 } },
-          required: ['task_id'],
-          additionalProperties: false,
-        },
-        execute: async (_toolCallId: string, params: unknown, signal?: AbortSignal) =>
-          this.executeDirectHelperTool(CINDY_CHECK_SESSION_TASK_TOOL, params, signal),
-      });
-    }
-
-    if (this.resolveDirectHelperTool(CINDY_MESSAGE_SESSION_TASK_TOOL, {})) {
-      pi.registerTool({
-        name: CINDY_MESSAGE_SESSION_TASK_TOOL,
-        label: 'Message Session task',
-        description: 'Queue instructions (default), steer the running turn with mode=steer, or release a reversible pause with mode=resume. Steer never falls back to queue. If paused, resume before answering pending interactions. A terminal task with ordinary input starts a fresh execution under the same task ID.',
-        parameters: {
-          type: 'object',
-          properties: {
-            task_id: { type: 'string', minLength: 1, maxLength: 128 },
-            mode: { type: 'string', enum: ['queue', 'steer', 'resume', 'edit', 'withdraw'] },
-            queued_message_id: { type: 'string', minLength: 1, maxLength: 256 },
-            message: { type: 'string', minLength: 1, maxLength: 4000 },
-            decision: { type: 'string', enum: ['approve', 'deny'] },
-            answers: { type: 'object', additionalProperties: { type: 'string' } },
-            reason: { type: 'string', maxLength: 4000 },
-            idempotency_key: { type: 'string', minLength: 1, maxLength: 128 },
-          },
-          required: ['task_id'],
-          additionalProperties: false,
-        },
-        execute: async (_toolCallId: string, params: unknown, signal?: AbortSignal) =>
-          this.executeDirectHelperTool(CINDY_MESSAGE_SESSION_TASK_TOOL, params, signal),
-      });
-    }
-
-    if (this.resolveDirectHelperTool(CINDY_STOP_SESSION_TASK_TOOL, {})) {
-      pi.registerTool({
-        name: CINDY_STOP_SESSION_TASK_TOOL,
-        label: 'Stop Session task',
-        description: 'mode=cancel (default) terminates the task; request-stop requests graceful stop only; pause holds the same task and queued input until explicit resume. Check returned control state: pausing/unconfirmed is not stopped.',
-        parameters: {
-          type: 'object',
-          properties: {
-            task_id: { type: 'string', minLength: 1, maxLength: 128 },
-            mode: { type: 'string', enum: ['cancel', 'request-stop', 'pause'] },
-          },
-          required: ['task_id'],
-          additionalProperties: false,
-        },
-        execute: async (_toolCallId: string, params: unknown, signal?: AbortSignal) =>
-          this.executeDirectHelperTool(CINDY_STOP_SESSION_TASK_TOOL, params, signal),
-      });
-    }
-
-    // Native companion routines use the same direct facade and permission identity
-    // as teammate creation. A generic MCP gateway would require nested discovery
-    // and would not disclose the inner routine arguments to the model.
-    const routineTriggerProperties = {
-      id: { type: 'string' },
-    };
-    const routineTools = [
-      { name: 'routine_list', description: 'List your own persistent Cindy routines. Use before creating to avoid duplicates, and after saving to verify.', properties: {}, required: [] },
-      { name: 'routine_sources', description: 'List available local event sources, event types, filter fields and listening status. Read before creating event triggers; never guess source IDs.', properties: {}, required: [] },
-      { name: 'routine_save', description: 'Create or fully update your own persistent Cindy routine when the user requests scheduled reminders, recurring work or event-triggered automation. Multiple triggers are OR. Do not use a background Session or shell loop for recurring work. Do not invent an end time. Read back with routine_list before confirming success.',
-        properties: {
-          id: { type: 'string', description: 'Existing routine ID for updates; omit to create.' },
-          name: { type: 'string', minLength: 1 },
-          prompt: { type: 'string', minLength: 1, description: 'Instructions to execute at each trigger.' },
-          enabled: { type: 'boolean' },
-          triggers: { type: 'array', minItems: 1, maxItems: 32, items: { anyOf: [
-            { type: 'object', properties: { ...routineTriggerProperties,
-              kind: { type: 'string', enum: ['interval'] },
-              intervalMs: { type: 'integer', minimum: 60000, description: 'Interval in milliseconds. One minute = 60000.' },
-            }, required: ['id', 'kind', 'intervalMs'], additionalProperties: false },
-            { type: 'object', properties: { ...routineTriggerProperties,
-              kind: { type: 'string', enum: ['cron'] },
-              expression: { type: 'string' }, timezone: { type: 'string' },
-            }, required: ['id', 'kind', 'expression', 'timezone'], additionalProperties: false },
-            { type: 'object', properties: { ...routineTriggerProperties,
-              kind: { type: 'string', enum: ['event'] },
-              sourceId: { type: 'string' }, eventType: { type: 'string' },
-              filters: { type: 'array', items: { type: 'object', properties: {
-                field: { type: 'string' }, operator: { type: 'string', enum: ['equals', 'contains', 'not-equals'] },
-                value: { type: 'string' },
-              }, required: ['field', 'operator', 'value'], additionalProperties: false } },
-            }, required: ['id', 'kind', 'sourceId', 'eventType', 'filters'], additionalProperties: false },
-          ] } },
-        }, required: ['name', 'prompt', 'enabled', 'triggers'] },
-      ...[
-        { name: 'routine_history', description: 'Read execution history and results of one of your routines.' },
-        { name: 'routine_delete', description: 'Delete one of your routines when requested. To pause instead, save its complete configuration with enabled=false.' },
-        { name: 'routine_run_now', description: 'Run one of your saved routines now when requested.' },
-      ].map((tool) => ({ ...tool, properties: { id: { type: 'string', minLength: 1 } }, required: ['id'] })),
-    ];
-    for (const tool of routineTools) {
-      if (!this.resolveDirectHelperTool(tool.name, {})) continue;
-      pi.registerTool({
-        name: tool.name,
-        label: tool.name,
-        description: tool.description,
-        parameters: { type: 'object', properties: tool.properties, required: tool.required, additionalProperties: false },
-        execute: async (_toolCallId: string, params: unknown, signal?: AbortSignal) =>
-          this.executeDirectHelperTool(tool.name, params, signal),
-      });
-    }
-
-    if (this.resolveCreateTeammate({})) {
-      pi.registerTool({
-        name: CINDY_CREATE_TEAMMATE_TOOL,
-        label: 'Create a ' + DISPLAY_BRAND + ' teammate',
-        description:
-          'Create a new ' + DISPLAY_BRAND + ' Bot teammate directly when the user asks for one. Do not write a template file or tell the user to create it manually. Use the official default model and empty capability grants.',
-        parameters: {
-          type: 'object',
-          properties: {
-            name: { type: 'string', minLength: 1, maxLength: 200 },
-            description: { type: 'string', minLength: 1, maxLength: 4000 },
-            identity_source: { type: 'string', minLength: 1, maxLength: 12000 },
-            welcome_message: { type: 'string', minLength: 1, maxLength: 4000 },
-          },
-          required: ['name', 'description', 'identity_source', 'welcome_message'],
-          additionalProperties: false,
-        },
-        execute: async (_toolCallId: string, params: unknown, signal?: AbortSignal) => this.executeCreateTeammate(params, signal),
-      });
-    }
-
+  register(pi: any): void {
     pi.registerTool({
       name: CINDY_MCP_LIST_TOOLS,
       label: 'Discover Cindy MCP tools',
@@ -4078,26 +3694,14 @@ export default async function cindyBridge(pi: any) {
     // continue seeing the real MCP identity and real arguments. That preserves
     // every existing per-server policy without loading each schema at startup.
     const resolvedGatewayCall = event.toolName === CINDY_MCP_CALL_TOOL
-      ? mcpGateway.resolveCall(event.input)
-      : CINDY_DIRECT_BOT_TOOLS.has(event.toolName)
-        ? mcpGateway.resolveDirectHelperTool(event.toolName, event.input)
-        : event.toolName === CINDY_BOT_MEMORY_TOOL
-          ? mcpGateway.resolveBotMemory(event.input)
-        : null;
+      ? mcpGateway.resolveCall(event.input) : null;
     const gatewayCall = resolvedGatewayCall && mcpGateway.isSchemaDisclosed(resolvedGatewayCall)
-      ? resolvedGatewayCall
-      : CINDY_DIRECT_BOT_TOOLS.has(event.toolName)
-        ? resolvedGatewayCall
-        : event.toolName === CINDY_BOT_MEMORY_TOOL
-          ? resolvedGatewayCall
-        : null;
+      ? resolvedGatewayCall : null;
     // Invalid, unknown, or not-yet-inspected gateway input cannot execute a
     // capability. Let execute() return its deterministic discovery/schema error
     // without showing a misleading permission prompt for the wrapper itself.
     if (
-      (event.toolName === CINDY_MCP_CALL_TOOL
-        || CINDY_DIRECT_BOT_TOOLS.has(event.toolName)
-        || event.toolName === CINDY_BOT_MEMORY_TOOL)
+      event.toolName === CINDY_MCP_CALL_TOOL
       && !gatewayCall
     ) return;
     const permissionToolName = gatewayCall?.qualifiedName ?? event.toolName;
@@ -4146,19 +3750,9 @@ export default async function cindyBridge(pi: any) {
 
   pi.on('tool_result', async (event: any, ctx: any) => {
     const resolvedGatewayCall = event.toolName === CINDY_MCP_CALL_TOOL
-      ? mcpGateway.resolveCall(event.input)
-      : CINDY_DIRECT_BOT_TOOLS.has(event.toolName)
-        ? mcpGateway.resolveDirectHelperTool(event.toolName, event.input)
-        : event.toolName === CINDY_BOT_MEMORY_TOOL
-          ? mcpGateway.resolveBotMemory(event.input)
-        : null;
+      ? mcpGateway.resolveCall(event.input) : null;
     const gatewayCall = resolvedGatewayCall && mcpGateway.isSchemaDisclosed(resolvedGatewayCall)
-      ? resolvedGatewayCall
-      : CINDY_DIRECT_BOT_TOOLS.has(event.toolName)
-        ? resolvedGatewayCall
-        : event.toolName === CINDY_BOT_MEMORY_TOOL
-          ? resolvedGatewayCall
-        : null;
+      ? resolvedGatewayCall : null;
     const captureToolName = gatewayCall?.qualifiedName ?? event.toolName;
     const captureInput = gatewayCall?.args ?? event.input ?? {};
     if (!isCindyShellTool(captureToolName) && !String(captureToolName ?? '').startsWith('mcp__')) return;
@@ -4512,7 +4106,7 @@ export default async function cindyBridge(pi: any) {
   // ── MCP 桥 ────────────────────────────────────────────────────────────────
   const raw = process.env.CINDY_PI_MCP_BRIDGE;
   if (!raw) return;
-  let cfg: { token?: string; servers?: McpServerRef[]; botMemoryFacade?: boolean };
+  let cfg: { token?: string; servers?: McpServerRef[] };
   try {
     cfg = JSON.parse(raw);
   } catch {
@@ -4533,13 +4127,12 @@ export default async function cindyBridge(pi: any) {
       console.error('[cindy-bridge] connect ' + server.name + ' failed: ' + safeMcpFailure(err));
     }
   }));
-  // Keep the generic capability surface constant at two schemas. When the
-  // first-party Bot facade is present, add its one stable high-frequency schema;
-  // every low-frequency/external MCP still stays behind discovery.
+  // Keep the generic capability surface constant at two schemas;
+  // MCP tools remain behind discovery.
   if (servers.length > 0) {
     try {
-      mcpGateway.register(pi, { botMemoryFacade: cfg.botMemoryFacade === true });
-      console.error('[cindy-bridge] MCP gateway ready (' + mcpGateway.size + ' tools; companion facade=' + (cfg.botMemoryFacade === true) + ')');
+      mcpGateway.register(pi);
+      console.error('[cindy-bridge] MCP gateway ready (' + mcpGateway.size + ' tools)');
     } catch (err) {
       console.error('[cindy-bridge] MCP gateway registration failed: ' + String(err));
     }

@@ -1,7 +1,7 @@
 /**
  * useActiveMainView
  * ---------------------------------------------------------------------------
- * 推导主区域当前激活的 View（任务 / Issues / Plugins / 伙伴），并返回 navigateToView 切换函数。
+ * 推导主区域当前激活的 View（任务 / Issues / Plugins），并返回 navigateToView 切换函数。
  *
  * 激活态由 URL 派生：pathname === prefix || pathname.startsWith(prefix + '/')。
  * 当 pathname 不匹配任何 view prefix 时（如 /settings），通常保留最近一次匹配过的 key —

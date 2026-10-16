@@ -22,11 +22,13 @@
 
 import { ipcMain } from 'electron';
 import { createId } from '@paralleldrive/cuid2';
-import { and, asc, eq, inArray, notInArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, notInArray, not, sql } from 'drizzle-orm';
 
 import { getDbClient } from '../client/current.js';
 import { rightSidebarTabs, sessions } from '../schema.js';
-import { MAX_STATE_JSON_BYTES } from '../../../shared/rightSidebarTabState.js';
+import { MAX_STATE_JSON_BYTES, RETIRED_WORKSPACE_TAB_KINDS, isRetiredWorkspaceTabKind } from '../../../shared/rightSidebarTabState.js';
+import { retiredCompanionSessionSql } from '../retiredCompanionSql.js';
+import { assertNotRetiredCompanionSession } from '../retiredCompanions.js';
 import {
   workspaceSurface,
   isHiddenTerminal,
@@ -126,11 +128,12 @@ export function registerRightSidebarTabsIpc(): void {
     assertTrustedAppRendererEvent(event);
     const obj = requireObject(payload, 'list payload');
     const sessionId = requireString(obj.sessionId, 'sessionId');
+    await assertNotRetiredCompanionSession(sessionId);
     const db = getDbClient().drizzle;
     const sessionExists = await db
       .select({ id: sessions.id })
       .from(sessions)
-      .where(eq(sessions.id, sessionId))
+      .where(and(eq(sessions.id, sessionId), not(retiredCompanionSessionSql(sessions.id))))
       .limit(1);
     if (sessionExists.length === 0) {
       return {
@@ -142,7 +145,7 @@ export function registerRightSidebarTabsIpc(): void {
     const rows = await db
       .select()
       .from(rightSidebarTabs)
-      .where(eq(rightSidebarTabs.sessionId, sessionId))
+      .where(and(eq(rightSidebarTabs.sessionId, sessionId), notInArray(rightSidebarTabs.kind, [...RETIRED_WORKSPACE_TAB_KINDS]), not(retiredCompanionSessionSql(rightSidebarTabs.sessionId))))
       .orderBy(asc(rightSidebarTabs.position));
     const activeRow = rows.find((r) => r.isActive);
     return {
@@ -168,7 +171,9 @@ export function registerRightSidebarTabsIpc(): void {
       assertTrustedAppRendererEvent(event);
       const obj = requireObject(payload, 'ensure singleton payload');
       const sessionId = requireString(obj.sessionId, 'sessionId');
+    await assertNotRetiredCompanionSession(sessionId);
       const kind = requireString(obj.kind, 'kind');
+    if (isRetiredWorkspaceTabKind(kind)) throwIpcError('NOT_FOUND', 'Workspace tab is unavailable');
       if (!SINGLETON_TAB_KINDS.has(kind)) {
         throwIpcError('INVALID_PARAMS', `${kind} is not a singleton tab kind`);
       }
@@ -178,7 +183,7 @@ export function registerRightSidebarTabsIpc(): void {
         const sessionExists = await db
           .select({ id: sessions.id })
           .from(sessions)
-          .where(eq(sessions.id, sessionId))
+          .where(and(eq(sessions.id, sessionId), not(retiredCompanionSessionSql(sessions.id))))
           .limit(1);
         if (sessionExists.length === 0) {
           return { tab: null, created: false, persistable: false };
@@ -186,7 +191,7 @@ export function registerRightSidebarTabsIpc(): void {
         const [existing] = await db
           .select()
           .from(rightSidebarTabs)
-          .where(and(eq(rightSidebarTabs.sessionId, sessionId), eq(rightSidebarTabs.kind, kind)))
+          .where(and(and(eq(rightSidebarTabs.sessionId, sessionId), notInArray(rightSidebarTabs.kind, [...RETIRED_WORKSPACE_TAB_KINDS]), not(retiredCompanionSessionSql(rightSidebarTabs.sessionId))), eq(rightSidebarTabs.kind, kind)))
           .limit(1);
         if (existing) {
           return { tab: rowToTab(existing), created: false, persistable: true };
@@ -194,7 +199,7 @@ export function registerRightSidebarTabsIpc(): void {
         const current = await db
           .select({ id: rightSidebarTabs.id })
           .from(rightSidebarTabs)
-          .where(eq(rightSidebarTabs.sessionId, sessionId));
+          .where(and(eq(rightSidebarTabs.sessionId, sessionId), notInArray(rightSidebarTabs.kind, [...RETIRED_WORKSPACE_TAB_KINDS]), not(retiredCompanionSessionSql(rightSidebarTabs.sessionId))));
         if (current.length >= MAX_TABS_PER_SESSION) {
           throwIpcError(
             'RIGHT_SIDEBAR_TOO_MANY_TABS',
@@ -219,7 +224,7 @@ export function registerRightSidebarTabsIpc(): void {
         const [canonical] = await db
           .select()
           .from(rightSidebarTabs)
-          .where(and(eq(rightSidebarTabs.sessionId, sessionId), eq(rightSidebarTabs.kind, kind)))
+          .where(and(and(eq(rightSidebarTabs.sessionId, sessionId), notInArray(rightSidebarTabs.kind, [...RETIRED_WORKSPACE_TAB_KINDS]), not(retiredCompanionSessionSql(rightSidebarTabs.sessionId))), eq(rightSidebarTabs.kind, kind)))
           .limit(1);
         if (!canonical) throw new Error(`failed to ensure ${kind} tab for session ${sessionId}`);
         return {
@@ -238,18 +243,24 @@ export function registerRightSidebarTabsIpc(): void {
     const obj = requireObject(payload, 'upsert payload');
     const id = requireString(obj.id, 'id');
     const sessionId = requireString(obj.sessionId, 'sessionId');
+    await assertNotRetiredCompanionSession(sessionId);
     const kind = requireString(obj.kind, 'kind');
+    if (isRetiredWorkspaceTabKind(kind)) throwIpcError('NOT_FOUND', 'Workspace tab is unavailable');
     if (kind === LEGACY_GIT_GRAPH_KIND) {
       throwIpcError('INVALID_PARAMS', 'git-graph is a legacy alias; use the unified Git workspace');
     }
     const position = requireInt(obj.position, 'position');
     const stateJson = serializeState(obj.state);
     const db = getDbClient().drizzle;
+    const [existingIdentity] = await db.select().from(rightSidebarTabs).where(eq(rightSidebarTabs.id, id)).limit(1);
+    if (existingIdentity && (existingIdentity.sessionId !== sessionId || isRetiredWorkspaceTabKind(existingIdentity.kind))) {
+      throwIpcError('NOT_FOUND', 'Workspace tab is unavailable');
+    }
     // tab count 上限:仅在"新增"路径上校验(更新已有 tab 不增加总数)
     const existing = await db
       .select({ id: rightSidebarTabs.id })
       .from(rightSidebarTabs)
-      .where(eq(rightSidebarTabs.sessionId, sessionId));
+      .where(and(eq(rightSidebarTabs.sessionId, sessionId), notInArray(rightSidebarTabs.kind, [...RETIRED_WORKSPACE_TAB_KINDS]), not(retiredCompanionSessionSql(rightSidebarTabs.sessionId))));
     const isNew = !existing.some((r) => r.id === id);
     if (isNew && existing.length >= MAX_TABS_PER_SESSION) {
       throwIpcError(
@@ -287,12 +298,12 @@ export function registerRightSidebarTabsIpc(): void {
     const exists = await db
       .select({ id: rightSidebarTabs.id })
       .from(rightSidebarTabs)
-      .where(eq(rightSidebarTabs.id, id))
+      .where(and(eq(rightSidebarTabs.id, id), notInArray(rightSidebarTabs.kind, [...RETIRED_WORKSPACE_TAB_KINDS]), not(retiredCompanionSessionSql(rightSidebarTabs.sessionId))))
       .limit(1);
     if (exists.length === 0) {
       throwIpcError('NOT_FOUND', `tab ${id} not found`);
     }
-    await db.delete(rightSidebarTabs).where(eq(rightSidebarTabs.id, id));
+    await db.delete(rightSidebarTabs).where(and(eq(rightSidebarTabs.id, id), notInArray(rightSidebarTabs.kind, [...RETIRED_WORKSPACE_TAB_KINDS]), not(retiredCompanionSessionSql(rightSidebarTabs.sessionId))));
     return { ok: true };
   });
 
@@ -301,6 +312,7 @@ export function registerRightSidebarTabsIpc(): void {
     assertTrustedAppRendererEvent(event);
     const obj = requireObject(payload, 'setActive payload');
     const sessionId = requireString(obj.sessionId, 'sessionId');
+    await assertNotRetiredCompanionSession(sessionId);
     const targetId = obj.id === null ? null : requireString(obj.id, 'id');
     const db = getDbClient().drizzle;
     const now = Date.now();
@@ -309,7 +321,7 @@ export function registerRightSidebarTabsIpc(): void {
     const rows = await db
       .select()
       .from(rightSidebarTabs)
-      .where(eq(rightSidebarTabs.sessionId, sessionId));
+      .where(and(eq(rightSidebarTabs.sessionId, sessionId), notInArray(rightSidebarTabs.kind, [...RETIRED_WORKSPACE_TAB_KINDS]), not(retiredCompanionSessionSql(rightSidebarTabs.sessionId))));
     const target = rows.find((row) => row.id === targetId);
     if (targetId && !target) throwIpcError('NOT_FOUND', 'tab does not belong to this session');
     if (obj.surface !== undefined && obj.surface !== 'tool' && obj.surface !== 'content') {
@@ -328,7 +340,7 @@ export function registerRightSidebarTabsIpc(): void {
       })
       .where(
         and(
-          eq(rightSidebarTabs.sessionId, sessionId),
+          and(eq(rightSidebarTabs.sessionId, sessionId), notInArray(rightSidebarTabs.kind, [...RETIRED_WORKSPACE_TAB_KINDS]), not(retiredCompanionSessionSql(rightSidebarTabs.sessionId))),
           surface === undefined
             ? undefined
             : surface === 'tool'
@@ -345,6 +357,7 @@ export function registerRightSidebarTabsIpc(): void {
     assertTrustedAppRendererEvent(event);
     const obj = requireObject(payload, 'reorder payload');
     const sessionId = requireString(obj.sessionId, 'sessionId');
+    await assertNotRetiredCompanionSession(sessionId);
     if (!Array.isArray(obj.orderedIds)) {
       throwIpcError('INVALID_PARAMS', 'orderedIds must be an array');
     }
@@ -361,7 +374,7 @@ export function registerRightSidebarTabsIpc(): void {
         .update(rightSidebarTabs)
         .set({ position: i, updatedAt: now })
         .where(
-          and(eq(rightSidebarTabs.id, orderedIds[i]), eq(rightSidebarTabs.sessionId, sessionId)),
+          and(eq(rightSidebarTabs.id, orderedIds[i]), and(eq(rightSidebarTabs.sessionId, sessionId), notInArray(rightSidebarTabs.kind, [...RETIRED_WORKSPACE_TAB_KINDS]), not(retiredCompanionSessionSql(rightSidebarTabs.sessionId)))),
         );
     }
     return { ok: true };

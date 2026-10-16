@@ -1,3 +1,5 @@
+import { not } from 'drizzle-orm';
+import { retiredCompanionSessionSql } from './retiredCompanions.js';
 /**
  * chatHistoryReader.ts —— 给 cindy_helper 的 history 类 MCP 工具用的纯查询层。
  *
@@ -108,7 +110,7 @@ export async function listWorkdirsForHistory(
       agentKinds: kinds,
     })
     .from(sessions)
-    .where(and(...baseConds))
+    .where(and(not(retiredCompanionSessionSql(sessions.id)), and(...baseConds)))
     .groupBy(sessions.workingDir)
     .orderBy(orderFn(lastTs), orderFn(sessions.workingDir));
 
@@ -254,7 +256,7 @@ export async function listSessionsForHistory(
       userSendAt: sessions.userSendAt,
     })
     .from(sessions)
-    .where(and(...conds))
+    .where(and(not(retiredCompanionSessionSql(sessions.id)), and(...conds)))
     .orderBy(orderFn(sessions.createdAt), orderFn(sessions.id))
     .limit(fetchLimit);
 
@@ -271,7 +273,7 @@ export async function listSessionsForHistory(
         cnt: sql<number>`COUNT(*)`,
       })
       .from(messages)
-      .where(and(inArray(messages.sessionId, ids), isNull(messages.rewindAt)))
+      .where(and(not(retiredCompanionSessionSql(messages.sessionId)), inArray(messages.sessionId, ids), isNull(messages.rewindAt)))
       .groupBy(messages.sessionId);
     for (const r of countRows) countMap.set(r.sessionId, Number(r.cnt));
   }
@@ -383,7 +385,7 @@ export async function getMessagesForHistory(
     const sessionRows = await db
       .select({ id: sessions.id })
       .from(sessions)
-      .where(and(...sessionConds))
+      .where(and(not(retiredCompanionSessionSql(sessions.id)), and(...sessionConds)))
       .limit(MAX_WORKDIR_SESSION_RESOLUTION + 1);
     if (sessionRows.length <= MAX_WORKDIR_SESSION_RESOLUTION) {
       const ids = sessionRows.map((r) => r.id);
@@ -452,7 +454,7 @@ export async function getMessagesForHistory(
     })
     .from(messages)
     .innerJoin(sessions, eq(messages.sessionId, sessions.id))
-    .where(and(...conds))
+    .where(and(not(retiredCompanionSessionSql(sessions.id)), and(...conds)))
     .orderBy(orderFn(messages.createdAt), orderFn(!params.cursor || params.cursor.rowid !== undefined
       ? messageRowid
       : messages.id))

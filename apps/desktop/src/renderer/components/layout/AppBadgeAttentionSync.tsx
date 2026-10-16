@@ -14,7 +14,7 @@ import { useSessionDisplayRunningState } from '@/features/cc-agent/hooks/useSess
 
 const log = createLogger('AppBadgeAttentionSync');
 
-/** 主窗口常驻：设置/伙伴页也持续更新，独立订阅避免带动布局重渲染。 */
+/** 主窗口常驻：设置页也持续更新，独立订阅避免带动布局重渲染。 */
 export function AppBadgeAttentionSync() {
   useAuth();
   const owner = getDataOwnerGeneration();

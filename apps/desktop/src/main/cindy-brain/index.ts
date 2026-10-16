@@ -4,10 +4,10 @@ import { GHOST_COMPOSER_LIST_CHANNEL } from '../../shared/ghostComposer.js';
 import { ensurePluginTaskApproval, hasPluginTaskApproval, PluginTaskApprovalGate } from './taskCapability.js';
 import { PluginDownloadSlot } from './downloadSlot.js';
 import { createDownloader } from '../downloader/index.js';
-import { getBotAuthorizationService } from '../maker-ipc/botAuthorizationService.js';
+
 import { isResidentBrowserGhost, spawnResidentGhost } from './residentGhost.js';
 import { handleRoutineRequest } from './routineSlot.js';
-import { getRoutineEngine, disconnectRoutineSource } from '../routines/service.js';
+
 import {
   app,
   BrowserWindow,
@@ -1053,7 +1053,6 @@ export function suspendCindyAccountGhosts(): void {
 export async function interruptGhostCallsForAccountBoundary(): Promise<void> {
   pluginDownloads.abortAll();
   cancelActiveGhostOauthFlow();
-  await getBotAuthorizationService()?.dispose();
   getGhostSetupInteractionBridge()?.cleanupAll('session_aborted');
   getGhostGrantConfirmBridge()?.cleanupAll('session_aborted');
   getGhostConfirmDialogBridge()?.cancelAll();
@@ -1654,7 +1653,6 @@ export function getGhostRuntime(): GhostRuntime {
       onFused: (id) => log.warn('ghost fused after repeated crashes', { id }),
       onStateChanged: (id, state) => {
         log.info('ghost runtime state', { id, state });
-        if (state !== 'running') disconnectRoutineSource(id);
         // 崩溃/熄灯时把该意识名下的在途工具调用收掉(结构化失败给 agent)。
         getGhostPipeDispatcher().onRuntimeState(id, state);
         broadcastGhostRuntimeStates();
@@ -7190,12 +7188,7 @@ export function registerGhostIpc(): void {
     // schedule-request = 打开自动化创建面板并预填(agent 槽的 schedule 加档):
     // 只开面板,任务由用户选模型后亲手保存才落库——本槽全程不碰 schedule storage。
     // 资格审/净化/频率钳制/限速在 scheduleSlot,落地在 renderer。
-    if (type === 'routine-request') {
-      const owner = activeOwnerScopeKey();
-      const ghost = getGhostManager().list().find((item) => item.manifest.id === id);
-      return handleRoutineRequest(ghost, payload, getRoutineEngine, () =>
-        activeOwnerScopeKey() === owner && getGhostManager().list().some((item) => item.manifest.id === id && item.enabled && ghostInstallApprovalToken(item.approval) === ghostInstallApprovalToken(ghost?.approval)));
-    }
+    if (type === 'routine-request') return handleRoutineRequest();
     if (type === 'schedule-request') {
       return getGhostScheduleSlot().handleRequest(id, payload);
     }

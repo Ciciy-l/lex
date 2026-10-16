@@ -1,3 +1,5 @@
+import { tx } from '../../worker/opHandlers/tx';
+import { RETAINED_COMPANION_DDL } from '../../__tests__/fixtures/retiredCompanionTables';
 import { setSessionOpeningModelAdmission, type SessionOpenBody } from '../../sessionOpening';
 /**
  * sessionsUpdate.test.ts — `local-db:sessions:update` handler 集成接线。
@@ -9,7 +11,7 @@ import { setSessionOpeningModelAdmission, type SessionOpenBody } from '../../ses
  *
  * 通过 mock electron ipcMain 捕获真实 handler + 内存 sqlite 全列 sessions 表做集成断言。
  */
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { mkdir, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -27,7 +29,7 @@ type SessionRouteLockMock = SessionRouteLock &
 
 const h = vi.hoisted(() => ({
   db: null as ReturnType<typeof drizzle> | null,
-  client: null as { drizzle: ReturnType<typeof drizzle> } | null,
+  client: null as { drizzle: ReturnType<typeof drizzle>; query: (sql: string, params?: unknown[]) => Promise<unknown[]>; exec: (sql: string, params?: unknown[]) => Promise<unknown>; tx: (name: string, args: unknown) => Promise<unknown> } | null,
   sqlite: null as InstanceType<typeof import('better-sqlite3')> | null,
   handlers: new Map<string, (...args: unknown[]) => unknown>(),
   relocate: vi.fn(async (): Promise<{ persistedSdkSessionId: string | null }> => ({
@@ -162,6 +164,7 @@ import { assertTrustedAppRendererEvent } from '../../../security/trustedAppRende
 
 function createDb(): void {
   const sqlite = new Database(':memory:');
+  sqlite.exec(RETAINED_COMPANION_DDL.join(';'));
   // 与 schema.ts 的 sessions/messages 全列对齐(selectSessionWithCount select 全列)。
   sqlite.exec(`
     CREATE TABLE sessions (
@@ -231,6 +234,9 @@ function createDb(): void {
       last_used_at INTEGER NOT NULL
     );
   `);
+  for (const file of ['0112_amused_guardsmen.sql', '0113_yummy_maelstrom.sql']) {
+    sqlite.exec(readFileSync(path.resolve(process.cwd(), 'drizzle', file), 'utf8'));
+  }
   const insert = sqlite.prepare(`
     INSERT INTO sessions (id, working_dir, agent_kind, remote_host_id, workspace_kind, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, 1, 1)
@@ -259,7 +265,7 @@ function createDb(): void {
     .run('bot-local', '/bot/dir', 'pi', null, 'dialogue');
   h.sqlite = sqlite;
   h.db = drizzle(sqlite, { schema: { messages, recentWorkdirs, sessions } });
-  h.client = { drizzle: h.db };
+  h.client = { drizzle: h.db, query: async (sql, params = []) => sqlite.prepare(sql).all(...params), exec: async (sql, params = []) => sqlite.prepare(sql).run(...params), tx: async (name, args) => tx(sqlite, { name, args }) };
 }
 
 async function invokeUpdate(id: string, patch: Record<string, unknown>): Promise<unknown> {
@@ -620,16 +626,30 @@ describe('local-db:sessions:update handler wiring', () => {
     expect(persisted).toEqual({ effort: 'high', title: '审查记录' });
   });
 
-  it('keeps Bot metadata editable but rejects ordinary lifecycle writes', async () => {
-    await invokeUpdate('bot-local', { title: 'Release Bot' });
+  it('preserves retired Bot metadata and rejects all ordinary writes', async () => {
+    await expect(invokeUpdate('bot-local', { title: 'Release Bot' })).rejects.toThrow(/NOT_FOUND/);
     await expect(invokeUpdate('bot-local', { status: 'archived' })).rejects.toThrow(
-      /Bot task lifecycle/,
+      /NOT_FOUND/,
     );
 
     const persisted = h
       .sqlite!.prepare('SELECT title, status FROM sessions WHERE id = ?')
       .get('bot-local') as { title: string; status: string };
-    expect(persisted).toEqual({ title: 'Release Bot', status: 'active' });
+    expect(persisted).toEqual({ title: 'New CCS', status: 'active' });
+  });
+
+  it('does not broadcast unapplied remote settings for retired or missing tasks', async () => {
+    const before = h.sqlite!.prepare('SELECT * FROM sessions WHERE id = ?').get('bot-local');
+    await persistSessionFields('bot-local', { model: 'changed-model', effort: 'low' });
+    await persistSessionFields('missing-task', { model: 'changed-model' });
+    expect(h.sqlite!.prepare('SELECT * FROM sessions WHERE id = ?').get('bot-local')).toEqual(before);
+    expect(h.tapWindowBroadcast).not.toHaveBeenCalled();
+
+    await persistSessionFields('cc-local', { model: 'ordinary-model' });
+    expect(h.tapWindowBroadcast).toHaveBeenCalledWith(
+      'local-db:sessions:patched',
+      expect.objectContaining({ sessionId: 'cc-local', patch: { model: 'ordinary-model' } }),
+    );
   });
 
   it('persists and broadcasts title-only patches to device-link subscribers', async () => {

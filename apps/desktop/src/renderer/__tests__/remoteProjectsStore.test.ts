@@ -52,6 +52,25 @@ function mk(id: string, partial: Partial<Session> = {}): Session {
 }
 
 describe('remoteProjectsStore', () => {
+  it('does not revive retired rows through late active, archived or cached snapshots', () => {
+    remoteProjectsStore.clear();
+    remoteProjectsStore.setDeviceSessions('retirement-host', 'Desktop', [{ ...mk('legacy'), source: 'bot' }, mk('ordinary')]);
+    remoteProjectsStore.mergeDeviceSessions('retirement-host', 'Desktop', [mk('legacy')]);
+    remoteProjectsStore.setDeviceSessions('retirement-host', 'Desktop', [mk('legacy', { status: 'archived' })], 'archived');
+    expect(remoteProjectsStore.getDeviceSessions('retirement-host').map(row => row.id)).toEqual(['ordinary']);
+    remoteProjectsStore.applyPatch('retirement-host', 'unseen', { source: 'bot' });
+    remoteProjectsStore.mergeDeviceSessions('retirement-host', 'Desktop', [mk('unseen')]);
+    expect(remoteProjectsStore.getDeviceSessions('retirement-host').map(row => row.id)).toEqual(['ordinary']);
+    remoteProjectsStore.removeDevice('retirement-host');
+    remoteProjectsStore.hydrateFromCache([{ deviceId: 'retirement-host', deviceName: 'Desktop', sessions: [mk('legacy')] }]);
+    expect(remoteProjectsStore.getDeviceSessions('retirement-host')).toEqual([]);
+    remoteProjectsStore.setDeviceSessions('another-host', 'Other', [mk('legacy')]);
+    expect(remoteProjectsStore.getDeviceSessions('another-host')).toHaveLength(1);
+    remoteProjectsStore.clear();
+    remoteProjectsStore.setDeviceSessions('retirement-host', 'New account', [mk('legacy')]);
+    expect(remoteProjectsStore.getDeviceSessions('retirement-host')).toHaveLength(1);
+  });
+
   beforeEach(() => {
     setRemoteReseedImpl(null);
     setRemoteSessionBootstrapRetryImpl(null);

@@ -14,6 +14,7 @@ describe('issue runtime metadata parsers', () => {
     expect(parseIssueEnvHarness('Claude Code')).toBe('Claude Code');
     expect(parseIssueEnvHarness('Codex')).toBe('Codex');
     expect(parseIssueEnvHarness('Pi')).toBe('Pi');
+    expect(parseIssueEnvHarness('OMP')).toBe('OMP');
     expect(parseIssueEnvHarness('cc')).toBeUndefined();
     expect(parseIssueEnvHarness('cx')).toBeUndefined();
     expect(parseIssueEnvHarness(undefined)).toBeUndefined();

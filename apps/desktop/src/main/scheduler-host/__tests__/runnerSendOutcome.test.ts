@@ -1,3 +1,7 @@
+// These runner units stub persistence; real ownership SQL is covered by the retention integration test.
+vi.mock('../../localDb/retiredCompanions.js', () => ({
+  assertNotRetiredCompanionSession: vi.fn(async () => undefined),
+}));
 import type { ScheduledModelSelection } from '../../maker-ipc/scheduledModelSelection';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
@@ -457,7 +461,7 @@ describe('MakerScheduleRunner send outcome policy', () => {
     expect(h.send).not.toHaveBeenCalled();
   });
 
-  it.each(['archived', 'deleted'])('keeps unavailable %s bot targets in the routine failure lifecycle', async (status) => {
+  it.each(['archived', 'deleted'])('rejects retained %s bot targets without reviving their routine lifecycle', async (status) => {
     const order: string[] = [];
     const h = createSessionHarness(async () => ({ accepted: true }));
     const acquirePendingAgentSwitch = vi.fn(async () => () => { order.push('release'); });
@@ -467,9 +471,10 @@ describe('MakerScheduleRunner send outcome policy', () => {
     const pause = vi.fn(async () => { order.push('pause'); throw new Error('Schedule not found: schedule-1'); });
     runner.attachScheduler({ pause } as never);
     await expect(runner.fire(baseSchedule({ source: 'bot', manual: true, targetSessionId: 'scheduler-session' }),
-      createFireContext())).rejects.toThrow(`target session not available (${status})`);
-    expect(order).toEqual(['release', 'pause', 'notify']);
-    expect(pause).toHaveBeenCalledWith('schedule-1', { exemptRunId: 'run-1' });
+      createFireContext())).rejects.toThrow('Schedule is unavailable');
+    expect(order).toEqual([]);
+    expect(pause).not.toHaveBeenCalled();
+    expect(notifier.notify).not.toHaveBeenCalled();
     expect(h.send).not.toHaveBeenCalled();
   });
 

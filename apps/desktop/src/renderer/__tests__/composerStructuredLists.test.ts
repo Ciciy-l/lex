@@ -1817,7 +1817,7 @@ describe('composer structured list serialization', () => {
     }]);
   });
 
-  it('serializes a Bot mention as a structured delegation target, not a filesystem mention', () => {
+  it('leaves a retired Bot mention as inert text without a delegation or filesystem target', () => {
     const editor = makeEditor({
       type: 'doc',
       content: [{
@@ -1834,16 +1834,8 @@ describe('composer structured list serialization', () => {
     });
 
     const serialized = serializeEditorContent(editor);
-    const href = 'cindy://bot/bot-dash-1';
-    expect(serialized.text).toBe(`[Dash Bot](${href})`);
+    expect(serialized.text).toBe('@bot-dash-1');
     expect(serialized.mentions).toEqual([]);
-    expect(serialized.agentReferences).toEqual([{
-      kind: 'bot',
-      start: 0,
-      end: serialized.text.length,
-      href,
-      botId: 'bot-dash-1',
-      name: 'Dash Bot',
-    }]);
+    expect(serialized.agentReferences).toEqual([]);
   });
 });

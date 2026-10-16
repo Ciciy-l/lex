@@ -45,7 +45,7 @@ function fixture() {
  let setPlan!: (event:unknown, sessionId:string, enabled:boolean)=>Promise<unknown>;
  let remote = false;
  const persistedResults = new WeakSet<object>();
- const settingDeps = {...deps, log:{warn:vi.fn()}, ipcMain:{handle:(_name:unknown,fn:typeof setMode)=>{setMode=fn;}}, MAKER_INVOKE:{SET_PERMISSION_MODE:'permission'}, isDeviceLinkInvoke:()=>remote, assertTrustedAppRendererEvent:()=>{}, assertReviewSettingsUnlocked:async()=>{}, isSessionPermissionMode:()=>true, throwIpcError:(code:string,message:string)=>{throw Object.assign(Error(message),{code});}, persistPermissionModeWithoutRuntime:async(_id:string,mode:string)=>(await epoch.client.tx('bots.persistSessionPermission',{mode})).updated, markRemoteSettingPersistedInsideHandler:(result:object)=>persistedResults.add(result)};
+ const settingDeps = {...deps, log:{warn:vi.fn()}, ipcMain:{handle:(_name:unknown,fn:typeof setMode)=>{setMode=fn;}}, MAKER_INVOKE:{SET_PERMISSION_MODE:'permission'}, isDeviceLinkInvoke:()=>remote, assertTrustedAppRendererEvent:()=>{}, assertReviewSettingsUnlocked:async()=>{}, isSessionPermissionMode:()=>true, throwIpcError:(code:string,message:string)=>{throw Object.assign(Error(message),{code});}, persistPermissionModeWithoutRuntime:async(_id:string,mode:string)=>(await epoch.client.tx('sessions.persistPermission',{mode})).updated, markRemoteSettingPersistedInsideHandler:(result:object)=>persistedResults.add(result)};
  new Function(...Object.keys(settingDeps), settingJs)(...Object.values(settingDeps));
  expect(setMode, 'SET_PERMISSION_MODE source extraction must register its handler').toBeTypeOf('function');
  const planPersist=vi.fn(async(_id:string,patch:{planModeEnabled:boolean})=>{history.planModeEnabled=patch.planModeEnabled;});
@@ -56,7 +56,7 @@ function fixture() {
   sessionId:'task', mode, modes:[{id:mode,displayName:mode}],
   readPreviousMode:async()=>history.permissionMode as PermissionMode,
   getLiveSession:()=>cold?null:live,
-  persist:async next=>{await epoch.client.tx('bots.persistSessionPermission',{mode:next});},
+  persist:async next=>{await epoch.client.tx('sessions.persistPermission',{mode:next});},
  });
  return {setPlan:(enabled:boolean)=>setPlan({},'task',enabled),planPersist,runtimePlan:()=>runtimePlan,nativePlan:(enabled:boolean|null)=>{runtimePlan=enabled;},setImMode, setMode:(mode:string)=>setMode({},'task',mode), persistedResults, remote:()=>{remote=true;}, cold:()=>{cold=true;}, runtimeMode:()=>runtimeMode, changeOwner:()=>{ownership.current={};}, run: (mode = 'acceptEdits', explicit = false) => run('plugin', { kind: 'requestWriteAccess', taskId: 'task', mode }, explicit), queue, gate, identity: (next: string) => {identity=next;}, service, live, epoch, dialog, slots, write, history, drain, config: () => cfg, change: (next: Record<string, unknown>) => { cfg = next; } };
 }
@@ -156,7 +156,7 @@ describe('plugin write confirmation interleavings', () => {
   await expect(f.run('auto')).rejects.toMatchObject({ code: 'PERMISSION_DENIED' });
   expect(f.write).not.toHaveBeenCalled(); expect(f.slots.size).toBe(0);
   expect(f.live.setPermissionMode).toHaveBeenLastCalledWith('plan');
-  expect(f.epoch.client.tx).toHaveBeenLastCalledWith('bots.persistSessionPermission', {sessionId:'task', mode:'plan'});
+  expect(f.epoch.client.tx).toHaveBeenLastCalledWith('sessions.persistPermission', {sessionId:'task', mode:'plan'});
  });
  it.each(['database', 'lastRead'] as const)('rolls back runtime and stored permission after late %s revocation', async point => {
   const f=fixture();
@@ -167,7 +167,7 @@ describe('plugin write confirmation interleavings', () => {
    .mockImplementationOnce(async()=>{revoke();return {taskId:'task',revision:1,status:'active',permissionMode:'auto'};});
   await expect(f.run('auto')).rejects.toMatchObject({code:'PERMISSION_DENIED'});
   expect(f.live.setPermissionMode.mock.calls).toEqual([['auto'],['plan']]);
-  expect(f.epoch.client.tx).toHaveBeenLastCalledWith('bots.persistSessionPermission',{sessionId:'task',mode:'plan'});
+  expect(f.epoch.client.tx).toHaveBeenLastCalledWith('sessions.persistPermission',{sessionId:'task',mode:'plan'});
   expect(f.config()).toEqual({permissionMode:'acceptEdits',model:'new'});
   expect(f.write).not.toHaveBeenCalled();expect(f.slots.size).toBe(0);
  });
@@ -178,7 +178,7 @@ describe('plugin write confirmation interleavings', () => {
    .mockRejectedValueOnce(new Error('owner revoked'));
   await expect(f.run('auto')).rejects.toThrow('owner revoked');
   expect(f.live.setPermissionMode).toHaveBeenLastCalledWith('plan');
-  expect(f.epoch.client.tx).toHaveBeenLastCalledWith('bots.persistSessionPermission',{sessionId:'task',mode:'plan'});
+  expect(f.epoch.client.tx).toHaveBeenLastCalledWith('sessions.persistPermission',{sessionId:'task',mode:'plan'});
   expect(f.write).not.toHaveBeenCalled();
  });
 });

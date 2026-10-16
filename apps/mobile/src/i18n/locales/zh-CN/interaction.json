@@ -280,17 +280,5 @@
         "fallback": "手机上会按电脑端的请求顺序处理。"
       }
     }
-  },
-  "companion": {
-    "operation": "操作",
-    "details": "查看详情",
-    "fields": {
-      "path": "文件",
-      "file_path": "文件",
-      "url": "地址",
-      "command": "命令",
-      "ghost_id": "插件",
-      "tool": "工具"
-    }
   }
 }

@@ -30,17 +30,17 @@ vi.mock('@/device-link/remoteResources', async (original) => ({
 import { useRemoteResourceList } from '@/session/useRemoteResourceList';
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const targets = [{ deviceId: 'mac', deviceName: 'Mac' }, { deviceId: 'pc', deviceName: 'PC' }];
-const item = (id: string) => ({ ref: { collectionId: 'teammates', kind: 'bot', id }, display: { title: id, preview: 'Last real reply', lastReplyAt: 200 }, revision: '1', links: [] });
+const item = (id: string) => ({ ref: { collectionId: 'projects', kind: 'project', id }, display: { title: id, preview: 'Last real reply', lastReplyAt: 200 }, revision: '1', links: [] });
 const cached = (host: RemoteResourceHostTarget, id: string): HostedRemoteCollectionItem => ({ key: `${host.deviceId}:${id}`, host, item: item(id) });
 let root: Root | undefined;
 let result: ReturnType<typeof useRemoteResourceList>;
-function Probe({ enabled = true }: { enabled?: boolean }) { result = useRemoteResourceList('teammates', targets, enabled); return null; }
+function Probe({ enabled = true }: { enabled?: boolean }) { result = useRemoteResourceList('projects', targets, enabled); return null; }
 async function render(enabled = true) { root ??= createRoot(document.createElement('div')); await act(async () => root!.render(createElement(Probe, { enabled }))); }
 beforeEach(() => {
   vi.clearAllMocks(); h.auth.accountGeneration = 1; h.auth.user.id = 'owner'; h.cached = [];
   h.link.status = 'online'; h.link.connectionEpoch = 1; h.link.getPresenceAvailability.mockReturnValue(true);
   h.list.mockResolvedValue({ items: [] }); h.link.openLink.mockResolvedValue(undefined);
-  h.snapshot.mockImplementation(async () => ({ home: [], items: { teammates: h.cached }, read: {} }));
+  h.snapshot.mockImplementation(async () => ({ home: [], items: { projects: h.cached }, read: {} }));
 });
 afterEach(() => { act(() => root?.unmount()); root = undefined; vi.useRealTimers(); });
 describe('shared real resource list', () => {
@@ -55,7 +55,7 @@ describe('shared real resource list', () => {
     expect(result.isOnline(targets[0])).toBe(true);
     expect(result.isOnline(targets[1])).toBe(false);
     expect(result.error).toContain('host unavailable');
-    expect(h.persist).toHaveBeenCalledWith('owner', 'teammates', result.items);
+    expect(h.persist).toHaveBeenCalledWith('owner', 'projects', result.items);
   });
   it('bounds cache hydration and never resurrects stale entries when a late cache arrives after live deletion', async () => {
     vi.useFakeTimers();
@@ -64,7 +64,7 @@ describe('shared real resource list', () => {
     await render(); expect(h.list).not.toHaveBeenCalled();
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(h.list).toHaveBeenCalledTimes(2); expect(result.items).toEqual([]);
-    await act(async () => finish({ items: { teammates: [cached(targets[0], 'deleted')] } }));
+    await act(async () => finish({ items: { projects: [cached(targets[0], 'deleted')] } }));
     expect(result.items).toEqual([]);
   });
   it('preserves the roster offline without claiming it can open or issuing requests', async () => {
@@ -131,7 +131,7 @@ it.each([false, true])('coalesces generation invalidations while reading and dra
   h.list.mockReturnValue(new Promise((resolve, fail) => { settle = resolve; reject = fail; }));
   await render();
   const notify = h.link.onRemoteResourceChanged.mock.calls.at(-1)![0];
-  await act(async () => { for (let n = 0; n < 20; n++) notify('mac', { collectionId: 'teammates' }); });
+  await act(async () => { for (let n = 0; n < 20; n++) notify('mac', { collectionId: 'projects' }); });
   // Each host has one request, with just one follow-up roster read queued.
   expect(h.list).toHaveBeenCalledTimes(2);
   h.list.mockResolvedValue({ items: [item('latest-final')] });
@@ -146,7 +146,7 @@ it('drops queued invalidations when the picker closes', async () => {
   h.list.mockReturnValue(new Promise(resolve => { settle = resolve; }));
   await render();
   const notify = h.link.onRemoteResourceChanged.mock.calls.at(-1)![0];
-  await act(async () => notify('mac', { collectionId: 'teammates' }));
+  await act(async () => notify('mac', { collectionId: 'projects' }));
   await render(false);
   await act(async () => settle({ items: [item('late')] }));
   expect(h.list).toHaveBeenCalledTimes(2);

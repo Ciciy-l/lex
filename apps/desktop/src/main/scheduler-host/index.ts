@@ -62,7 +62,7 @@ import { sendFeishuSessionNotification } from '../im/feishu/notificationOrigin';
 import { withScheduleLock } from './scheduleLock';
 import { wecomGroupNotificationService } from '../wecomGroupNotification';
 import { runSchedulerStartup } from './scheduler-startup-lifecycle';
-import { getRoutineEngine, stopRoutines } from '../routines/service.js';
+
 
 export interface StartSchedulerDeps {
   maker: Maker;
@@ -244,7 +244,6 @@ async function startSchedulerInternal(deps: StartSchedulerDeps): Promise<Schedul
     },
   });
   _scheduler = scheduler;
-  void getRoutineEngine().catch((error) => deps.logger.warn?.('routine startup failed', { error: String(error) }));
   _loader = loader;
   deps.logger.info?.(`[scheduler-host] started${passive ? ' (passive: auto-fire disabled)' : ''}`);
   void loader.reconcileAll().catch((err) => {
@@ -295,7 +294,6 @@ export function getProjectAutomationLoader(): ProjectAutomationLoader {
  * 当前 resetMaker（maker-host:131）也不会调本函数。
  */
 export async function resetScheduler(): Promise<void> {
-  await stopRoutines();
   _startupGeneration++;
   const pendingStartup = _startupPromise;
   if (pendingStartup) {

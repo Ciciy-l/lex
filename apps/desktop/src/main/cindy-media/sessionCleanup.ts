@@ -1,4 +1,5 @@
-import { eq } from 'drizzle-orm';
+import { retiredCompanionSessionSql } from '../localDb/retiredCompanionSql.js';
+import { and, eq, not } from 'drizzle-orm';
 
 import { sessions } from '../localDb/schema.js';
 import { createLogger } from '../logger.js';
@@ -46,7 +47,7 @@ export async function reconcileSessionMediaRefsForDeletedSessions(
     rows = await options.db
       .select({ id: sessions.id })
       .from(sessions)
-      .where(eq(sessions.status, 'deleted'))
+      .where(and(eq(sessions.status, 'deleted'), not(retiredCompanionSessionSql(sessions.id))))
       .all();
   } catch (error) {
     log.warn('deleted task media reconcile query failed', {
@@ -69,7 +70,7 @@ export async function reconcileSessionMediaRefsForDeletedSessions(
         const [current] = await options.db
           .select({ status: sessions.status })
           .from(sessions)
-          .where(eq(sessions.id, row.id))
+          .where(and(eq(sessions.id, row.id), not(retiredCompanionSessionSql(sessions.id))))
           .limit(1)
           .all();
         if (!options.isOwnerCurrent() || current?.status !== 'deleted') return null;

@@ -20,6 +20,7 @@ describe('hydrateQueuedAgentReferences message visibility', () => {
     rawDb.exec(`
       CREATE TABLE sessions (
         id TEXT PRIMARY KEY,
+        source TEXT,
         cleared_at INTEGER
       );
       CREATE TABLE messages (
@@ -34,6 +35,7 @@ describe('hydrateQueuedAgentReferences message visibility', () => {
       CREATE TABLE bot_profiles (
         id TEXT PRIMARY KEY,
         display_name TEXT NOT NULL,
+        canonical_session_id TEXT,
         status TEXT NOT NULL,
         attention_reason TEXT
       );
@@ -53,6 +55,7 @@ describe('hydrateQueuedAgentReferences message visibility', () => {
         id TEXT PRIMARY KEY,
         requesting_bot_id TEXT NOT NULL,
         target_bot_id TEXT NOT NULL,
+        child_session_id TEXT,
         status TEXT NOT NULL
       );
       INSERT INTO sessions (id, cleared_at) VALUES ('source-session', NULL);
@@ -146,6 +149,31 @@ describe('hydrateQueuedAgentReferences message visibility', () => {
     });
   });
 
+  it.each(['source', 'link', 'profile', 'delegation'])('does not hydrate retained %s ownership from live or captured content', async kind => {
+    seedMessage(null);
+    if (kind === 'source') rawDb.exec("UPDATE sessions SET source = 'bot'");
+    if (kind === 'link') rawDb.exec("INSERT INTO bot_session_links (bot_id, session_id, role) VALUES ('old', 'source-session', 'history')");
+    if (kind === 'profile') rawDb.exec("INSERT INTO bot_profiles (id, display_name, status, canonical_session_id) VALUES ('old', 'Old', 'active', 'source-session')");
+    if (kind === 'delegation') rawDb.exec("INSERT INTO bot_delegations (id, requesting_bot_id, target_bot_id, status, child_session_id) VALUES ('old', 'a', 'b', 'completed', 'source-session')");
+    const hydrated = await hydrateQueuedAgentReferences(queued());
+    expect(hydrated.agentReferences?.[0]).not.toHaveProperty('text');
+    expect(JSON.parse(hydrated.persistedContent).agentReferences[0]).not.toHaveProperty('text');
+    expect(rawDb.prepare('SELECT content FROM messages').get()).toEqual({ content: 'Authoritative visible body' });
+  });
+
+  it('discards reference content when the account changes during the ownership query', async () => {
+    seedMessage(null);
+    const originalQuery = client.query;
+    client.query = async (sql, params) => {
+      const rows = await originalQuery(sql, params);
+      clearCurrentDbClient(client);
+      return rows as never;
+    };
+    const hydrated = await hydrateQueuedAgentReferences(queued());
+    expect(hydrated.agentReferences?.[0]).not.toHaveProperty('text');
+    expect(JSON.parse(hydrated.persistedContent).agentReferences[0]).not.toHaveProperty('text');
+  });
+
   it('does not re-inject a rewound target through captured fallback text', async () => {
     seedMessage(300);
 
@@ -164,49 +192,5 @@ describe('hydrateQueuedAgentReferences message visibility', () => {
 
     expect(hydrated.agentReferences?.[0]).not.toHaveProperty('text');
     expect(JSON.parse(hydrated.persistedContent).agentReferences[0]).not.toHaveProperty('text');
-  });
-
-  it('attaches current host Bot state without persisting a stale snapshot', async () => {
-    rawDb.exec(`
-      INSERT INTO bot_profiles (id, display_name, status, attention_reason)
-      VALUES ('bot-b', '小柴', 'active', NULL);
-      INSERT INTO bot_session_links (bot_id, session_id, role, archived_at)
-      VALUES ('bot-b', 'bot-b-main', 'canonical', NULL);
-      INSERT INTO bot_runtime_snapshots (bot_id, session_id, status, prepared_at)
-      VALUES ('bot-b', 'bot-b-main', 'applied', 100);
-      INSERT INTO bot_delegations (id, requesting_bot_id, target_bot_id, status)
-      VALUES ('delegation-1', 'bot-a', 'bot-b', 'running');
-    `);
-    const href = 'cindy://bot/bot-b';
-    const text = `@${href}`;
-    const reference = {
-      kind: 'bot' as const,
-      start: 1,
-      end: text.length,
-      href,
-      botId: 'bot-b',
-      name: '旧名字',
-    };
-    const input = queued();
-    input.text = text;
-    input.persistedContent = JSON.stringify({ text, agentReferences: [reference] });
-    input.agentReferences = [reference];
-
-    const hydrated = await hydrateQueuedAgentReferences(input, {
-      isSessionTurnRunning: (sessionId) => sessionId === 'bot-b-main',
-    });
-
-    expect(hydrated.agentReferences?.[0]).toMatchObject({
-      kind: 'bot',
-      botId: 'bot-b',
-      name: '小柴',
-      hostSnapshot: {
-        availability: 'ready',
-        activity: 'working',
-        activeDelegations: 1,
-      },
-    });
-    expect(JSON.parse(hydrated.persistedContent).agentReferences[0])
-      .not.toHaveProperty('hostSnapshot');
   });
 });

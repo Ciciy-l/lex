@@ -2,15 +2,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { canonicalSkillPath } from "./skill-activation.js";
-import {
-  resolveAllowedManagedSkills,
-  snapshotManagedSkillGrants,
-} from "./managed-skill-policy.js";
+
+import { resolveAllowedManagedSkills } from "./managed-skill-policy.js";
 import { prepareManagedSkillPlugins } from "../claude-code/managed-skill-plugins.js";
 
-describe("managed skill Bot grants", () => {
-  it("checks and mounts the same source if an alias moves between approval and loading", async () => {
+describe("managed skill physical paths", () => {
+  it("mounts the selected physical source if a discovery alias moves before loading", async () => {
     const root = fs.mkdtempSync(
       path.join(os.tmpdir(), "cindy-managed-grants-"),
     );
@@ -27,19 +24,6 @@ describe("managed skill Bot grants", () => {
         alias,
         process.platform === "win32" ? "junction" : "dir",
       );
-      const grants = snapshotManagedSkillGrants({
-        mode: "allowlist",
-        configured: ["cindy:learn"],
-        catalog: [
-          {
-            name: "learn",
-            runtimeCommandName: "cindy:learn",
-            path: path.join(alias, "SKILL.md"),
-            enabled: true,
-          },
-        ],
-      });
-      expect(grants?.has(canonicalSkillPath(approved))).toBe(true);
       const discovered = [
         {
           kind: "agent-skill" as const,
@@ -49,7 +33,7 @@ describe("managed skill Bot grants", () => {
           path: path.join(alias, "SKILL.md"),
         },
       ];
-      const selected = resolveAllowedManagedSkills(discovered, grants, []);
+      const selected = resolveAllowedManagedSkills(discovered, []);
       // Pi receives these exact physical paths as --skill arguments.
       expect(selected[0]?.path).toBe(
         fs.realpathSync(path.join(approved, "SKILL.md")),
@@ -60,9 +44,7 @@ describe("managed skill Bot grants", () => {
         alias,
         process.platform === "win32" ? "junction" : "dir",
       );
-      expect(grants?.has(canonicalSkillPath(alias))).toBe(false);
-      expect(grants?.has(canonicalSkillPath(approved))).toBe(true);
-      expect(resolveAllowedManagedSkills(discovered, grants, [])).toEqual([]);
+      expect(resolveAllowedManagedSkills(discovered, [])[0]?.path).toBe(fs.realpathSync(path.join(replaced, "SKILL.md")));
       const mounted = await prepareManagedSkillPlugins(selected);
       try {
         expect(
@@ -71,11 +53,11 @@ describe("managed skill Bot grants", () => {
       } finally {
         await mounted.dispose();
       }
-      expect(resolveAllowedManagedSkills(selected, grants, [approved])).toEqual(
+      expect(resolveAllowedManagedSkills(selected, [approved])).toEqual(
         [],
       );
       fs.rmSync(approved, { recursive: true });
-      expect(resolveAllowedManagedSkills(selected, grants, [])).toEqual([]);
+      expect(resolveAllowedManagedSkills(selected, [])).toEqual([]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

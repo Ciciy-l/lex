@@ -87,7 +87,7 @@ import { readDeviceLinkSettings } from './settings-store';
 import { dispatchLocalInvoke } from './invoke-registry';
 import {
   assertRemoteBotInvocationAllowed, projectRemoteSessionResult, projectRemoteBotPush,
-  hasRemoteBotSessionLookup, setRemoteBotSessionLookup,
+  setRemoteBotSessionLookup,
 } from './remoteBotSessionBoundary.js';
 import { getControllerPlatform } from './controllerPlatform';
 import { getDeviceLinkInvokeContext, runDeviceLinkInvokeContext } from './invoke-context';
@@ -200,11 +200,12 @@ function sendBotCheckedPush(
   if (!sharedTaskFence) return;
   const deliver = send;
   send = (projected) => { if (sharedTaskFence()) deliver(projected); };
-  if (!hasRemoteBotSessionLookup()) { send(payload); return; }
   let size: number;
-  try { size = byteLength(JSON.stringify(payload)); } catch (error) { failed(error); return; }
+  // Include closure/promise overhead in the budget. A normal burst of tiny
+  // token frames must not lose its tail merely because it exceeds 64 frames.
+  try { size = Math.max(1024, byteLength(JSON.stringify(payload))); } catch (error) { failed(error); return; }
   const queue = botPushChecks.get(dst) ?? { tail: Promise.resolve(), bytes: 0, count: 0 };
-  if (queue.count >= 64 || queue.bytes + size > 8 * 1024 * 1024) {
+  if (queue.bytes + size > 8 * 1024 * 1024) {
     failed(new DeviceLinkError('BACKPRESSURE', 'remote push authorization queue full'));
     return;
   }
@@ -1469,6 +1470,7 @@ interface MakerEventBatchFlushOutcome {
   offline: boolean;
   /** 本轮丢弃的事件数。 */
   droppedEvents: number;
+  pendingChecks?: Promise<void>[];
 }
 
 function createMakerEventBatchFlushOutcome(): MakerEventBatchFlushOutcome {
@@ -1479,6 +1481,10 @@ function reportMakerEventBatchFlushOutcome(
   dst: string,
   outcome: MakerEventBatchFlushOutcome,
 ): void {
+  if (outcome.pendingChecks?.length) {
+    void Promise.all(outcome.pendingChecks.splice(0)).then(() => reportMakerEventBatchFlushOutcome(dst, outcome));
+    return;
+  }
   if (outcome.droppedEvents === 0) return;
   const line = `maker:event batch flush to ${shortId(dst)}: `
     + `${outcome.offline ? 'relay offline' : 'send rejected'}, `
@@ -1542,13 +1548,14 @@ function flushMakerEventBatchSession(
           stageSessionSync(dst, sessionId, historyRequired);
           continue;
         }
-        sendBotCheckedPush(dst, MAKER_EVENT_BATCH_CHANNEL, payload, (projected) => {
+        const checked = sendBotCheckedPush(dst, MAKER_EVENT_BATCH_CHANNEL, payload, (projected) => {
           if (segment.ownerStamp === undefined) activeClient?.sendPush(dst, MAKER_EVENT_BATCH_CHANNEL, projected);
           else activeClient?.sendPush(dst, MAKER_EVENT_BATCH_CHANNEL, projected, segment.ownerStamp);
         }, () => {
           outcome.droppedEvents += slice.length;
           stageSessionSync(dst, sessionId, historyRequired);
         });
+        if (checked) (outcome.pendingChecks ??= []).push(checked);
       } catch (err) {
         stageSessionSync(dst, sessionId, historyRequired);
         // 发不出去就丢这一片(不降级、不重试、不滞留):理由与四轮 review 的推导见
@@ -2026,7 +2033,13 @@ function sendPushBestEffort(
 ): void {
   sendBotCheckedPush(dst, channel, payload,
     (projected) => sendPushBestEffortAuthorized(dst, channel, projected, ownerStamp),
-    (error) => reportPushFailure(dst, channel, error));
+    (error) => {
+      const sessionId = readPushSessionId(payload);
+      if (sessionId && channel !== SESSION_SYNC_CHANNEL) {
+        stageSessionSync(dst, sessionId, channel !== 'maker:event' || !isNonFinalTextPush(payload));
+      }
+      reportPushFailure(dst, channel, error);
+    });
 }
 
 function sendPushBestEffortAuthorized(
@@ -2668,7 +2681,7 @@ async function handleInvoke(
     return;
   }
   if (payload && (payload.channel === DL_SUBSCRIBE_CHANNEL || payload.channel === DL_UNSUBSCRIBE_CHANNEL)) {
-    const result = handleSubscriptionFrame(src, payload);
+    const result = await handleSubscriptionFrame(src, payload);
     if (!await sendAuthorizedInvokeResultSafe(
       client,
       src,
@@ -3124,7 +3137,6 @@ async function authorizeInvokeResultForPeer(
 async function sendAuthorizedInvokeResultSafe(
   ...args: Parameters<typeof sendInvokeResultSafe>
 ): Promise<boolean> {
-  if (!hasRemoteBotSessionLookup()) return sendInvokeResultSafe(...args);
   const [client, src] = args;
   const epoch = remoteInvokeLinkEpoch.get(src) ?? 0;
   const owner = broadcastTap.captureDataOwnerBroadcastScope();
@@ -3412,7 +3424,7 @@ function flushRemoteInvokeResultOutbox(onlySrc?: string): void {
       blockedPeers.add(queued.src);
       continue;
     }
-    if (hasRemoteBotSessionLookup() && queued.result.ok) {
+    if (queued.result.ok) {
       flushAuthorizedBotOutboxEntry(key, queued, client);
       continue;
     }
@@ -3728,7 +3740,9 @@ function isRemoteSubscriptionTopic(value: unknown): value is Topic {
   return parseFsWatchTopic(value) !== null;
 }
 
-function handleSubscriptionFrame(src: string, payload: InvokePayload): InvokeResultPayload {
+function handleSubscriptionFrame(src: string, payload: InvokePayload): InvokeResultPayload | Promise<InvokeResultPayload> {
+  const snapshotChecks: Promise<void>[] = [];
+  let snapshotError: unknown;
   // 被控开关(server 已 gate invoke,这里二次兜底)
   if (!isSharedTaskPeer(src) && !readDeviceLinkSettings().remoteControlEnabled) {
     return { ok: false, error: { code: 'REMOTE_DISABLED', message: 'remote control disabled' } };
@@ -3808,13 +3822,14 @@ function handleSubscriptionFrame(src: string, payload: InvokePayload): InvokeRes
         if (snapshot) {
           try {
             const ownerStamp = broadcastTap.getSafeDataOwnerPushStamp?.();
-            sendBotCheckedPush(src, SESSION_SYNC_CHANNEL, snapshot,
+            const checked = sendBotCheckedPush(src, SESSION_SYNC_CHANNEL, snapshot,
               (projected) => {
                 if (subscriptions.controllerHasTopic(src, topic)) {
                   activeClient?.sendPush(src, SESSION_SYNC_CHANNEL, projected, ownerStamp);
                 }
               },
-              () => stageSessionSync(src, topic.slice('session:'.length)));
+              (error) => { snapshotError = error; stageSessionSync(src, topic.slice('session:'.length)); });
+            if (checked) snapshotChecks.push(checked);
           } catch (error) {
             return { ok: false, error: {
               code: error instanceof DeviceLinkError ? error.code : 'INTERNAL',
@@ -3825,7 +3840,11 @@ function handleSubscriptionFrame(src: string, payload: InvokePayload): InvokeRes
       }
     }
   }
-  return { ok: true, result: { ok: true } };
+  const result = (): InvokeResultPayload => snapshotError ? { ok: false, error: {
+    code: snapshotError instanceof DeviceLinkError ? snapshotError.code : 'INTERNAL',
+    message: 'session text snapshot could not be queued',
+  } } : { ok: true, result: { ok: true } };
+  return snapshotChecks.length ? Promise.all(snapshotChecks).then(result) : result();
 }
 
 /** 纯函数:执行远程 invoke 并产出 result(可单测,不依赖 client) */
@@ -4106,7 +4125,7 @@ async function executeRemoteInvoke(
       ?? broadcastTap.captureDataOwnerBroadcastScope();
     const historyView = (payload.channel === 'local-db:messages:view' || payload.channel === 'local-db:messages:view-intent')
       && typeof args[0] === 'string' ? subscriptions.prepareHistoryView(src, args[0]) : undefined;
-    if (hasRemoteBotSessionLookup()) await assertRemoteBotInvocationAllowed(args, payload.channel);
+    await assertRemoteBotInvocationAllowed(args, payload.channel);
     const listingCapabilities = payload.channel === 'maker:provider:list'
       ? invokeControllerCapabilities(payload)
       : [];
@@ -4174,7 +4193,7 @@ async function executeRemoteInvoke(
         ));
       },
     );
-    if (hasRemoteBotSessionLookup()) await assertRemoteBotInvocationAllowed(args, payload.channel);
+    await assertRemoteBotInvocationAllowed(args, payload.channel);
     const sharedTaskContext = getDeviceLinkInvokeContext();
     if (sharedTaskContext?.sharedTask?.isCurrent() === false &&
         !sharedTaskContext.sharedTaskSetting?.admitted) {

@@ -8,7 +8,7 @@ const parse = (result: unknown) =>
 
 describe("create_project MCP", () => {
   it("discovers and dispatches through the real transport, validates arguments and rechecks the task surface", async () => {
-    let surface: "default" | "bot" | "restricted" = "default";
+    let surface: "default" | "bot" | "bot-main" | "restricted" = "default";
     let sessionId: string | undefined = "caller";
     let remoteHostId: string | undefined;
     const createProject = vi.fn(async () => ({
@@ -72,7 +72,9 @@ describe("create_project MCP", () => {
         errorCode: "NO_SESSION_CONTEXT",
       });
       sessionId = "caller";
-      for (const restricted of ["restricted"] as const) {
+      expect(createProject).toHaveBeenCalledTimes(1);
+      createProject.mockClear();
+      for (const restricted of ["bot", "bot-main", "restricted"] as const) {
         surface = restricted;
         const categories = parse(
           await client.callTool({ name: "list_tools", arguments: {} }),
@@ -82,11 +84,11 @@ describe("create_project MCP", () => {
             expect.objectContaining({ name: "control" }),
           ]),
         );
-        expect((await call({ working_dir: "/project" })).isError).toBe(true);
+        const denied = await call({ working_dir: "/project" });
+        expect(denied.isError).toBe(true);
+        expect(parse(denied)).toMatchObject({ errorCode: "CAPABILITY_NOT_AVAILABLE" });
+        expect(createProject).not.toHaveBeenCalled();
       }
-      surface = "bot";
-      expect(parse(await call({ working_dir: "/project" }))).toMatchObject({ ok: true });
-      expect(createProject).toHaveBeenCalledTimes(2);
     } finally {
       await client.close();
       await server.close();

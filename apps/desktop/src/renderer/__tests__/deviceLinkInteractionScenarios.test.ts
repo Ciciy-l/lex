@@ -1631,6 +1631,8 @@ describe('远程交互接线不变式', () => {
 
     const start = src.indexOf('function handleSubscriptionFrame');
     expect(start).toBeGreaterThan(-1);
-    expect(src.slice(start, start + 900)).toContain('o.topics.filter(isRemoteSubscriptionTopic)');
+    const end = src.indexOf('export async function runInvoke(', start);
+    expect(end).toBeGreaterThan(start);
+    expect(src.slice(start, end)).toContain('o.topics.filter(isRemoteSubscriptionTopic)');
   });
 });

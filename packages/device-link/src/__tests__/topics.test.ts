@@ -28,10 +28,10 @@ describe('topicForPush', () => {
     })).toBe('session:s1');
     expect(topicForPush('maker:session-credential-switch-failed', { reason: 'apply-failed' })).toBeNull();
   });
-  it('delivers companion task state to the parent and private-thread changes to the account topic', () => {
-    expect(topicForPush('maker:bot-delegation:changed', { parentSessionId: 'parent', childSessionId: 'child' })).toBe('session:parent');
+  it('does not route retired companion task or private-thread events', () => {
+    expect(topicForPush('maker:bot-delegation:changed', { parentSessionId: 'parent', childSessionId: 'child' })).toBeNull();
     expect(topicForPush('maker:bot-delegation:changed', { parentSessionId: null })).toBeNull();
-    expect(topicForPush('maker:bot-direct-message:changed', { threadId: 'private' })).toBe('sessions');
+    expect(topicForPush('maker:bot-direct-message:changed', { threadId: 'private' })).toBeNull();
   });
   it('会话列表级 channel → sessions', () => {
     expect(topicForPush('local-db:sessions:created', { sessionId: 's1' })).toBe('sessions');

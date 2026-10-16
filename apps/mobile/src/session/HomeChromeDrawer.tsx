@@ -58,8 +58,6 @@ import {
 } from "@/theme/tokens";
 
 import { confirmLogout } from './confirmLogout';
-import { HomeModeSwitch } from './HomeModeSwitch';
-import type { HomeMode } from './homeViewPreferenceStore';
 
 const DRAWER_CLOSE_DISTANCE_RATIO = 1 / 3;
 const DRAWER_CLOSE_VELOCITY = -800;
@@ -78,8 +76,6 @@ export function HomeChromeDrawer({
   onLogout,
   hasRunningTasks = false,
   loggingOut = false,
-  mode = 'tasks',
-  onModeChange,
   open,
   user,
 }: {
@@ -97,8 +93,6 @@ export function HomeChromeDrawer({
   /** 退出确认文案用:有运行中任务时额外说明任务会继续在电脑上运行。 */
   hasRunningTasks?: boolean;
   loggingOut?: boolean;
-  mode?: HomeMode;
-  onModeChange?(mode: HomeMode): void;
   open: boolean;
   user: {
     avatar: string | null;
@@ -326,7 +320,6 @@ export function HomeChromeDrawer({
             </View>
 
             <View style={styles.divider} />
-            {onModeChange ? <HomeModeSwitch mode={mode} onModeChange={onModeChange} /> : null}
 
             <Pressable
               accessibilityLabel={t("devices.list.a11y.openSearch")}

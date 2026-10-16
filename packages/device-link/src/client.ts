@@ -508,8 +508,6 @@ const PEER_RESET_RETRYABLE_READ_CHANNELS = new Set([
   'local-db:subagent-runs:list',
   'local-db:subagent-runs:detail',
   'local-db:subagent-runs:transcript',
-  'local-db:bots:list',
-  'local-db:bots:get',
   'local-db:orca-workflows:get-by-lead',
   'local-db:orca-workflows:get-by-worker-session',
   'local-db:orca-workflows:list-workers-by-lead',

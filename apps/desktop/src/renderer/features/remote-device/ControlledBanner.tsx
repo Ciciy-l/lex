@@ -52,7 +52,7 @@ let pushSubscribed = false;
 let controllerRevision = 0;
 const controllerListeners = new Set<(c: Controller[]) => void>();
 
-// 按实际挂载的内联提示让全局浮条退让，不猜路由（伙伴也复用聊天视图）。
+// 按实际挂载的内联提示让全局浮条退让，不猜路由。
 // 多个 pane / 路由过渡可短暂共存，必须等最后一个内联提示卸载才恢复兜底。
 const inlineBannerOwners = new Set<symbol>();
 const inlineBannerListeners = new Set<() => void>();

@@ -36,9 +36,9 @@ describe('REMOTE_INVOKE_ALLOWLIST', () => {
   it('allows Review start to run on the data-owning Desktop', () => {
     expect(REMOTE_INVOKE_ALLOWLIST.has('maker:review:start')).toBe(true);
   });
-  it('allows the reduced teammate directory while keeping native configuration local', () => {
+  it('rejects the retired teammate directory and native configuration channels', () => {
     for (const channel of ['local-db:bots:list', 'local-db:bots:get']) {
-      expect(REMOTE_INVOKE_ALLOWLIST.has(channel)).toBe(true);
+      expect(REMOTE_INVOKE_ALLOWLIST.has(channel)).toBe(false);
     }
     for (const channel of [
       'local-db:bots:choose-avatar', 'local-db:bots:create', 'local-db:bots:update',

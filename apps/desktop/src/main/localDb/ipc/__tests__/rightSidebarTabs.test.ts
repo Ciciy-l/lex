@@ -8,12 +8,14 @@
 
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { rightSidebarTabs, sessions } from '../../schema.js';
 
 const h = vi.hoisted(() => ({
   db: null as ReturnType<typeof drizzle> | null,
+  sqlite: null as Database.Database | null,
+  owner: null as { client: { query(sql: string, args: unknown[]): Promise<unknown[]> } } | null,
   handlers: new Map<string, (...args: unknown[]) => unknown>(),
 }));
 
@@ -33,7 +35,9 @@ vi.mock('../../../security/trustedAppRenderer.js', () => ({
 }));
 vi.mock('../../client/current.js', () => ({
   getDbClient: () => ({ drizzle: h.db }),
+  getCurrentDbClientSnapshot: () => h.owner,
 }));
+vi.mock('../../../appSessionState.js', () => ({ isAppSessionBoundaryPending: () => false }));
 
 import { registerRightSidebarTabsIpc } from '../rightSidebarTabs.js';
 import { assertTrustedAppRendererEvent } from '../../../security/trustedAppRenderer.js';
@@ -42,7 +46,10 @@ function createDb(): Database.Database {
   const sqlite = new Database(':memory:');
   // 与 schema.ts 对齐(测试只需 sessions PK + right_sidebar_tabs 全列)
   sqlite.exec(`
-    CREATE TABLE sessions (id TEXT PRIMARY KEY);
+    CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT);
+    CREATE TABLE bot_profiles (canonical_session_id TEXT);
+    CREATE TABLE bot_session_links (session_id TEXT);
+    CREATE TABLE bot_delegations (child_session_id TEXT);
     CREATE TABLE right_sidebar_tabs (
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,
@@ -65,6 +72,8 @@ function createDb(): Database.Database {
   sqlite.prepare(`INSERT INTO sessions (id) VALUES (?)`).run('s1');
   sqlite.prepare(`INSERT INTO sessions (id) VALUES (?)`).run('s2');
   h.db = drizzle(sqlite, { schema: { rightSidebarTabs, sessions } });
+  h.sqlite = sqlite;
+  h.owner = { client: { query: async (sql, args) => sqlite.prepare(sql).all(...args) } };
   return sqlite;
 }
 
@@ -90,11 +99,40 @@ async function invoke<T>(channel: string, payload: unknown): Promise<T> {
 }
 
 describe('rightSidebarTabs IPC', () => {
+  afterEach(() => { h.sqlite?.close(); h.sqlite = null; h.owner = null; });
   beforeEach(() => {
     vi.mocked(assertTrustedAppRendererEvent).mockReset();
     h.handlers.clear();
     createDb();
     registerRightSidebarTabsIpc();
+  });
+
+  it('hides retained tabs without deleting or rewriting them through ordinary workspace actions', async () => {
+    const db = h.sqlite!;
+    db.exec("INSERT INTO right_sidebar_tabs VALUES ('old', 's1', 'bot-workbench', 0, 1, '{\"note\":\"keep\"}', 1, 2)");
+    const before = db.prepare("SELECT * FROM right_sidebar_tabs WHERE id = 'old'").get();
+    expect((await invoke<ListResp>('local-db:right-sidebar-tabs:list', { sessionId: 's1' })).tabs).toEqual([]);
+    await expect(invoke('local-db:right-sidebar-tabs:close', { id: 'old' })).rejects.toThrow('NOT_FOUND');
+    await expect(invoke('local-db:right-sidebar-tabs:upsert', { id: 'old', sessionId: 's1', kind: 'file-browser', position: 1 })).rejects.toThrow('NOT_FOUND');
+    await expect(invoke('local-db:right-sidebar-tabs:upsert', { id: 'new', sessionId: 's1', kind: 'routines', position: 1 })).rejects.toThrow('NOT_FOUND');
+    await invoke('local-db:right-sidebar-tabs:setActive', { sessionId: 's1', id: null });
+    await invoke('local-db:right-sidebar-tabs:reorder', { sessionId: 's1', orderedIds: ['old'] });
+    expect(db.prepare("SELECT * FROM right_sidebar_tabs WHERE id = 'old'").get()).toEqual(before);
+  });
+
+  it.each(['source', 'profile', 'link', 'delegation'])('rejects direct workspace access to retained %s tasks', async kind => {
+    const db = h.sqlite!;
+    if (kind === 'source') db.exec("UPDATE sessions SET source = 'bot' WHERE id = 's1'");
+    if (kind === 'profile') db.exec("INSERT INTO bot_profiles VALUES ('s1')");
+    if (kind === 'link') db.exec("INSERT INTO bot_session_links VALUES ('s1')");
+    if (kind === 'delegation') db.exec("INSERT INTO bot_delegations VALUES ('s1')");
+    db.exec("INSERT INTO right_sidebar_tabs VALUES ('old', 's1', 'file-browser', 0, 1, '{}', 1, 2)");
+    const before = db.prepare('SELECT * FROM right_sidebar_tabs').all();
+    await expect(invoke('local-db:right-sidebar-tabs:list', { sessionId: 's1' })).rejects.toThrow('NOT_FOUND');
+    await expect(invoke('local-db:right-sidebar-tabs:ensure-singleton', { sessionId: 's1', kind: 'review' })).rejects.toThrow('NOT_FOUND');
+    await expect(invoke('local-db:right-sidebar-tabs:close', { id: 'old' })).rejects.toThrow('NOT_FOUND');
+    await expect(invoke('local-db:right-sidebar-tabs:upsert', { id: 'old', sessionId: 's2', kind: 'file-browser', position: 0 })).rejects.toThrow('NOT_FOUND');
+    expect(db.prepare('SELECT * FROM right_sidebar_tabs').all()).toEqual(before);
   });
 
   it('rejects every read and write handler before parsing untrusted payloads', async () => {
@@ -406,7 +444,7 @@ describe('rightSidebarTabs IPC', () => {
           sessionId: 's1',
           kind: 'bot-artifacts',
         }),
-      ).rejects.toThrow(/INVALID_PARAMS/);
+      ).rejects.toThrow(/NOT_FOUND/);
     });
   });
 

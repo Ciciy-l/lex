@@ -1,3 +1,7 @@
+// These runner units stub persistence; real ownership SQL is covered by the retention integration test.
+vi.mock('../../localDb/retiredCompanions.js', () => ({
+  assertNotRetiredCompanionSession: vi.fn(async () => undefined),
+}));
 /**
  * runner.fire 前置检查脚本(Pre-run Hook)的 cwd 解析回归:
  *   - heartbeat(绑定会话)任务 schedule.workingDir 通常为空,hook 必须在绑定

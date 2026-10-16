@@ -1,4 +1,4 @@
-import { resolveAllowedManagedSkills, snapshotManagedSkillGrants } from '../shared/managed-skill-policy.js';
+import { resolveAllowedManagedSkills } from '../shared/managed-skill-policy.js';
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -255,7 +255,7 @@ export class OmpAgent extends BaseAgent {
     // engines. OMP names a disabled Skill in settings, so resolve the current
     // native discovery view before the process starts rather than treating a
     // disabled path as an arbitrary command name.
-    const disabledSkillPaths = remoteHostId || opts.botRuntimeProfile || opts.reviewMode === true
+    const disabledSkillPaths = remoteHostId || opts.reviewMode === true
       ? []
       : [...(this.deps.getDisabledSkillPaths?.() ?? [])];
     const disabledSkillLaunch = snapshotDisabledSkillLaunch(disabledSkillPaths);
@@ -287,7 +287,7 @@ export class OmpAgent extends BaseAgent {
     // opaque root so one process cannot inherit another's startup files.
     const firstRuntimeInstanceId = opts.sessionInstanceId?.trim() || randomUUID();
     let runtimeNumber = 0;
-    const harnessSettings = remoteHostId || isolatedProbe || opts.reviewMode || opts.botRuntimeProfile
+    const harnessSettings = remoteHostId || isolatedProbe || opts.reviewMode
       ? undefined : this.deps.resolveOmpHarnessSettings?.({ model: opts.model, providerId: sourceProviderId });
     const memoryEnabled = harnessSettings?.unifiedMemoryEnabled === true
       && opts.makerMemoryEnabled !== false && this.deps.makerMemory?.isEnabled() === true;
@@ -410,7 +410,7 @@ export class OmpAgent extends BaseAgent {
         };
         const managedSkills = remoteHostId || isolatedProbe || opts.reviewMode ? []
           : resolveAllowedManagedSkills(await this.deps.getManagedSkills?.() ?? [],
-              snapshotManagedSkillGrants(opts.botRuntimeProfile?.skillPolicy), this.deps.getDisabledSkillPaths?.() ?? []);
+              this.deps.getDisabledSkillPaths?.() ?? []);
         const plan = createOmpSessionLaunchPlan({
           harnessSettings,
           managedSkillDirectories: [...new Set(managedSkills.map((skill) => path.dirname(skill.path)))],

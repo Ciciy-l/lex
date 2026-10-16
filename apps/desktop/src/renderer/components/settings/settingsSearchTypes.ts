@@ -3,7 +3,6 @@ import type { ImBotIdentity } from './imBotVisibility';
 
 export interface SettingsSearchContext extends ImBotIdentity {
   platform: string;
-  teammatesEnabled: boolean;
 }
 
 export interface SettingsSearchEntry {

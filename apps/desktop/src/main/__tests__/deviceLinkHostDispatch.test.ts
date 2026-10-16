@@ -1,3 +1,4 @@
+import { setRemoteBotSessionLookup } from '../device-link/remoteBotSessionBoundary';
 /**
  * deviceLinkHostDispatch.test.ts —— device-link「被控端 dispatch 决策」端到端集成(Tier 2)。
  * ---------------------------------------------------------------------------
@@ -94,6 +95,7 @@ beforeEach(() => {
 
 afterEach(() => {
   dispatchTesting.reset();
+  setRemoteBotSessionLookup(async () => 'ordinary');
   setRemoteSettingsPersist(null);
   vi.clearAllMocks();
 });

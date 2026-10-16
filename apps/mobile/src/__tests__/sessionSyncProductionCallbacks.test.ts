@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
+import { isExplicitRemoteNotFoundError } from '@/session/newSessionWorktree';
 import { createRemoteSyncCoordinator } from '@/device-link/remoteSyncTask';
 import { runConnectionScopedSessionMetadataRead, waitForIndependentSnapshotReads } from '@/device-link/sessionSnapshotSingleFlight';
 import { syncSessionMessageWindow } from '@/session/sessionMessageWindowSync';
@@ -101,6 +102,7 @@ function fixture(reopen = false, remoteHistoryAvailable = true) {
   };
   const bindings = {
     mobileDebugLog: vi.fn(),
+    isExplicitRemoteNotFoundError, router: { replace: vi.fn() },
     remoteHistoryAvailable,
     deviceId: 'd1', deviceName: 'test', sessionId: 's1',
     historyView: { snapshot: { ready: false }, view: { refresh: async (): Promise<void> => undefined, getSnapshot: (): { ready: boolean; error: unknown } => ({ ready: false, error: new Error('[CHANNEL_NOT_ALLOWED] legacy host') }) } },
@@ -150,6 +152,31 @@ function fixture(reopen = false, remoteHistoryAvailable = true) {
 }
 
 describe('production session recovery callbacks', () => {
+  it.each(['[NOT_FOUND] retired task', '[INVOKE_TIMEOUT] metadata'])('redirects only a definitive missing task: %s', async message => {
+    const f = fixture(true);
+    const rows = f.state.rows;
+    f.maker.getSession.mockRejectedValue(new Error(message));
+    await expect(f.sync()).rejects.toThrow(message);
+    if (message.startsWith('[NOT_FOUND]')) expect(f.bindings.router.replace).toHaveBeenCalledWith('/devices');
+    else expect(f.bindings.router.replace).not.toHaveBeenCalled();
+    expect(f.state.rows).toBe(rows);
+  });
+
+  it.each(['connection', 'account'])('does not redirect on a late missing response from the old %s', async boundary => {
+    const f = fixture(true);
+    const read = deferred<typeof session>();
+    f.maker.getSession.mockReturnValue(read.promise);
+    const result = f.sync();
+    await tick();
+    expect(f.maker.getSession).toHaveBeenCalledOnce();
+    if (boundary === 'connection') f.bindings.sessionSubscriptionIdentityRef.current = JSON.stringify(['d1', 's1', 2]);
+    else f.store.isSessionMessageAuthorityCurrent = () => false;
+    read.reject(new Error('[NOT_FOUND] old account task'));
+    await result.catch(() => undefined);
+    expect(f.bindings.router.replace).not.toHaveBeenCalled();
+    expect(f.store.upsertDeviceSession).not.toHaveBeenCalled();
+  });
+
   it.each([null, true])('recovers cached history with an online relay and presence=%s', async (presence) => {
     // A failed roster request leaves presence unknown even after link/subscription
     // recovery. Evaluate the real page gate and then execute its real sync callback.

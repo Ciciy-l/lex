@@ -1,3 +1,5 @@
+import { not } from 'drizzle-orm';
+import { assertNotRetiredCompanionSession, retiredCompanionSessionSql } from '../retiredCompanions.js';
 import { openSession } from '../sessionOpening.js';
 /**
  * chat-data-localization F5：Sessions IPC handlers（C6）。
@@ -28,7 +30,7 @@ import { getDbClient } from '../client/current';
 import * as currentDb from '../client/current';
 import type { DbClient } from '../client/DbClient';
 import { sessions, messages } from '../schema';
-import { commitBotProfileDeletion } from '../botProfileDeletionStore.js';
+
 import {
   LIST_PREVIEW_EXTRACT_SQL,
   LATEST_VISIBLE_PREVIEW_FILTER_SQL,
@@ -285,7 +287,7 @@ async function readSessionWorktreeResources(
         remoteHostId: sessions.remoteHostId,
       })
       .from(sessions)
-      .where(eq(sessions.id, sessionId))
+      .where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, sessionId)))
       .limit(1);
     if (!row || row.remoteHostId) return [];
     return [row.workingDir, row.worktreePath].flatMap((value) => {
@@ -323,9 +325,9 @@ async function writeSessionPatch(
     .update(sessions)
     .set(setObj)
     .where(
-      deletedIsTerminal
+      and(not(retiredCompanionSessionSql(sessions.id)), deletedIsTerminal
         ? and(eq(sessions.id, sessionId), ne(sessions.status, 'deleted'))
-        : eq(sessions.id, sessionId),
+        : eq(sessions.id, sessionId)),
     )
     .run();
   if (!deletedIsTerminal || result.changes > 0) return;
@@ -333,7 +335,7 @@ async function writeSessionPatch(
   const [existing] = await db
     .select({ id: sessions.id })
     .from(sessions)
-    .where(eq(sessions.id, sessionId));
+    .where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, sessionId)));
   if (!existing) throwIpcError('NOT_FOUND', 'Session 不存在');
   throwIpcError('PRECONDITION_FAILED', '已删除的任务不能恢复或归档');
 }
@@ -689,7 +691,7 @@ export async function applyAgentSwitchToSessionRow(
   }
   // RETURNING keeps the projection tied to this committed write, including axes
   // omitted by the caller. A later SELECT could observe a newer selection.
-  const [committed] = await db.update(sessions).set(setObj).where(eq(sessions.id, sessionId))
+  const [committed] = await db.update(sessions).set(setObj).where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, sessionId)))
     .returning({
       id: sessions.id, agentKind: sessions.agentKind, model: sessions.model,
       providerId: sessions.providerId, effort: sessions.effort, fastMode: sessions.fastMode,
@@ -758,11 +760,11 @@ export async function persistSessionPermissionModeIfAuto(sessionId: string): Pro
   await db
     .update(sessions)
     .set({ permissionMode: 'ask' })
-    .where(and(eq(sessions.id, sessionId), eq(sessions.permissionMode, 'auto')));
+    .where(and(not(retiredCompanionSessionSql(sessions.id)), and(eq(sessions.id, sessionId), eq(sessions.permissionMode, 'auto'))));
   const row = await db
     .select({ permissionMode: sessions.permissionMode })
     .from(sessions)
-    .where(eq(sessions.id, sessionId))
+    .where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, sessionId)))
     .get();
   const applied = row?.permissionMode === 'ask';
   if (applied && isOwnerScopeCurrent(ownerScope)) {
@@ -791,8 +793,12 @@ export async function persistSessionFields(
     bumpUpdatedAt: false,
   });
   if (Object.keys(setObj).length === 0) return;
-  await db.update(sessions).set(setObj).where(eq(sessions.id, sessionId));
-  if (isOwnerScopeCurrent(ownerScope)) broadcastSessionPatched(sessionId, clean, ownerScope);
+  const changed = await db.update(sessions).set(setObj)
+    .where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, sessionId)))
+    .returning({ id: sessions.id });
+  if (changed.length > 0 && isOwnerScopeCurrent(ownerScope)) {
+    broadcastSessionPatched(sessionId, clean, ownerScope);
+  }
 }
 
 const MAX_LIMIT = 1000;
@@ -880,7 +886,7 @@ export function createSessionRemoteHostIdReader(): (sessionId: string) => Promis
       const [row] = await db
         .select({ remoteHostId: sessions.remoteHostId })
         .from(sessions)
-        .where(eq(sessions.id, sessionId))
+        .where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, sessionId)))
         .limit(1);
       value = normalizeRemoteHostId(row?.remoteHostId ?? null);
     } catch {
@@ -929,7 +935,7 @@ async function selectSessionRowSnapshot(id: string): Promise<SessionRowSnapshot 
       agentKind: sessions.agentKind,
     })
     .from(sessions)
-    .where(eq(sessions.id, id))
+    .where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, id)))
     .limit(1);
   return row ?? null;
 }
@@ -981,7 +987,7 @@ export async function getSessionFsSnapshot(id: string, capturedDb?: Pick<DbClien
         remoteHostId: sessions.remoteHostId,
       })
       .from(sessions)
-      .where(eq(sessions.id, id))
+      .where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, id)))
       .limit(1);
     return row ?? null;
   } catch (err) {
@@ -1017,10 +1023,10 @@ export async function touchUserSendInDb(id: string, atMs?: number): Promise<void
     .update(sessions)
     .set({ userSendAt: ts, updatedAt: sql`MAX(${sessions.updatedAt}, ${ts})` })
     .where(
-      and(
+      and(not(retiredCompanionSessionSql(sessions.id)), and(
         eq(sessions.id, id),
         sql`(${sessions.userSendAt} IS NULL OR ${sessions.userSendAt} < ${ts})`,
-      ),
+      )),
     );
   // 验证 UPDATE 是否落地，避免向 renderer 广播过时值。
   // WHERE 条件为假时（并发写入已领先，或 userSendAt 已 >= ts）UPDATE 为 no-op；
@@ -1030,7 +1036,7 @@ export async function touchUserSendInDb(id: string, atMs?: number): Promise<void
   const updated = await db
     .select({ userSendAt: sessions.userSendAt, updatedAt: sessions.updatedAt })
     .from(sessions)
-    .where(and(eq(sessions.id, id), eq(sessions.userSendAt, ts)))
+    .where(and(not(retiredCompanionSessionSql(sessions.id)), and(eq(sessions.id, id), eq(sessions.userSendAt, ts))))
     .limit(1);
   if (updated.length === 0) return;
   // 广播 sessions:patched,让 renderer 把刚发过消息的会话从「草稿(未分类)」即时重归到
@@ -1173,7 +1179,7 @@ export async function persistSessionTitleIfStillDraft(
   await db
     .update(sessions)
     .set(setObj)
-    .where(and(eq(sessions.id, sessionId), eq(sessions.title, expectedTitle)));
+    .where(and(not(retiredCompanionSessionSql(sessions.id)), and(eq(sessions.id, sessionId), eq(sessions.title, expectedTitle))));
 
   const row = await selectSessionWithCount(db, sessionId);
   if (!row || row.title !== cleanTitle) return false;
@@ -1220,11 +1226,11 @@ export async function clearSessionContextInDb(sessionId: string, atMs?: number):
       listPreview: null,
       listPreviewRole: null,
     })
-    .where(eq(sessions.id, sessionId));
+    .where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, sessionId)));
   const [updated] = await db
     .select({ clearedAt: sessions.clearedAt, updatedAt: sessions.updatedAt })
     .from(sessions)
-    .where(eq(sessions.id, sessionId))
+    .where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, sessionId)))
     .limit(1);
   const effectiveClearedAt = updated?.clearedAt ?? ts;
   const effectiveUpdatedAt = updated?.updatedAt ?? effectiveClearedAt;
@@ -1402,6 +1408,7 @@ export function registerSessionIpc(
     const now = Date.now();
     const bodyObj = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
     const id = resolveBusinessSessionId(bodyObj.id);
+    await assertNotRetiredCompanionSession(id, bodyObj.source);
     const createBody = bodyObj as Parameters<typeof sessionCreateToRow>[1];
     // M16: agentKind 白名单校验（防止 renderer 传非法值）
     const ALLOWED_AGENT_KINDS = new Set<string>(['cc', 'codex', 'pi', 'omp']);
@@ -1477,7 +1484,7 @@ export function registerSessionIpc(
       if (resource) await withWorktreeMutation([resource], insert);
       else await insert();
     });
-    const [row] = await db.select().from(sessions).where(eq(sessions.id, id));
+    const [row] = await db.select().from(sessions).where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, id)));
     if (!row) throwIpcError('NOT_FOUND', 'Session 创建后查询失败');
     // recent-workdirs: 项目目录走 sidebar 分组,要进"最近"列表;dialogue 目录是
     // app-managed 临时 cwd,跟用户选过的项目目录语义不同,不污染最近列表。
@@ -1594,6 +1601,7 @@ export function registerSessionIpc(
   // 幂等窄写,device-link 远程会话经隧道调用(allowlist 收录)。
   ipcMain.handle('local-db:sessions:ack-interrupted', async (_e, id: unknown) => {
     const sid = requireString(id, 'id');
+    await assertNotRetiredCompanionSession(sid);
     // renderer 的「忽略」立即走本 IPC；「继续任务」由执行端 maker send 事务 /
     // coordinator 在 dispatch 成功后用进入 vendor 前冻结的本机时间戳直调 durable 写。
     // awaited 版:等落库完成才广播 / 返回 —— 用户点忽略后立刻退出/重载时,写不能
@@ -1608,6 +1616,7 @@ export function registerSessionIpc(
 
   ipcMain.handle('local-db:sessions:get', async (_e, id: unknown) => {
     const sid = requireString(id, 'id');
+    await assertNotRetiredCompanionSession(sid);
     const db = getDbClient().drizzle;
     const row = await selectSessionWithCount(db, sid);
     if (!row) throwIpcError('NOT_FOUND', 'Session 不存在');
@@ -1636,7 +1645,7 @@ export function registerSessionIpc(
         agentKind: sessions.agentKind,
       })
       .from(sessions)
-      .where(inArray(sessions.id, sessionIds));
+      .where(and(not(retiredCompanionSessionSql(sessions.id)), inArray(sessions.id, sessionIds)));
     const rowsById = new Map(rows.map((row) => [row.id, row]));
 
     return sessionIds.map((sessionId): SessionReference => {
@@ -1661,6 +1670,7 @@ export function registerSessionIpc(
     'local-db:sessions:restore-if-archived',
     async (_e, id: unknown, expected: unknown) => {
       const sid = requireString(id, 'id');
+    await assertNotRetiredCompanionSession(sid);
       const ownerScope = captureOwnerScope();
       const identity = requireObject(expected, 'expected');
       const expectedWorkingDir = identity.workingDir;
@@ -1687,7 +1697,7 @@ export function registerSessionIpc(
           .update(sessions)
           .set(sessionPatchToRow({ status: 'active' }))
           .where(
-            and(
+            and(not(retiredCompanionSessionSql(sessions.id)), and(
               eq(sessions.id, sid),
               eq(sessions.status, 'archived'),
               expectedWorkingDir === null
@@ -1697,7 +1707,7 @@ export function registerSessionIpc(
               expectedRemoteHostId === null
                 ? isNull(sessions.remoteHostId)
                 : eq(sessions.remoteHostId, expectedRemoteHostId),
-            ),
+            )),
           )
           .run();
 
@@ -1705,7 +1715,7 @@ export function registerSessionIpc(
           const [existing] = await db
             .select({ id: sessions.id })
             .from(sessions)
-            .where(eq(sessions.id, sid));
+            .where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, sid)));
           if (!existing) throwIpcError('NOT_FOUND', 'Session 不存在');
           return null;
         }
@@ -1732,6 +1742,7 @@ export function registerSessionIpc(
 
   ipcMain.handle('local-db:sessions:update', async (_e, id: unknown, patch: unknown) => {
     const sid = requireString(id, 'id');
+    await assertNotRetiredCompanionSession(sid);
     const p = requireObject(patch, 'patch');
     return updateSessionInDb(sid, p, opts);
   });
@@ -1743,6 +1754,7 @@ export function registerSessionIpc(
   // 仅被隧道(远程操作)调到 —— 本机操作走 sessions:update + renderer 乐观更新。
   ipcMain.handle('local-db:sessions:patch-meta', async (_e, id: unknown, patch: unknown) => {
     const sid = requireString(id, 'id');
+    await assertNotRetiredCompanionSession(sid);
     const p = requireObject(patch, 'patch');
     const updated = await patchSessionMetaInDb(
       sid,
@@ -1762,6 +1774,7 @@ export function registerSessionIpc(
     'local-db:sessions:touchUserSend',
     async (_e, id: unknown, atMs: unknown): Promise<void> => {
       const sid = requireString(id, 'id');
+    await assertNotRetiredCompanionSession(sid);
       await touchUserSendInDb(sid, typeof atMs === 'number' ? atMs : undefined);
     },
   );
@@ -1853,7 +1866,7 @@ export async function updateSessionInDb(
       const [target] = await db
         .select({ source: sessions.source })
         .from(sessions)
-        .where(eq(sessions.id, sid))
+        .where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, sid)))
         .limit(1);
       if (target?.source === 'review') {
         throwIpcError(
@@ -1875,7 +1888,7 @@ export async function updateSessionInDb(
                 remoteHostId: sessions.remoteHostId,
               })
               .from(sessions)
-              .where(eq(sessions.id, sid))
+              .where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, sid)))
           )[0]
         : undefined;
     const movingLocalNonClaudeSession =
@@ -2013,7 +2026,7 @@ export async function updateSessionInDb(
     if (!row) throwIpcError('NOT_FOUND', 'Session 不存在');
     // 取消置顶后摘要不再有展示面,立刻清掉,避免列表/再次置顶前继续吃旧句。
     if (p.pinnedAt !== undefined && row.pinnedAt == null) {
-      await db.update(sessions).set({ summary: null }).where(eq(sessions.id, sid));
+      await db.update(sessions).set({ summary: null }).where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, sid)));
       row.summary = null;
     }
     const updated = sessionToCamel(row);
@@ -2053,7 +2066,7 @@ export async function updateSessionInDb(
       const [currentRow] = await db
         .select({ status: sessions.status })
         .from(sessions)
-        .where(eq(sessions.id, sid))
+        .where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, sid)))
         .limit(1);
       if (currentRow) broadcastStatus = currentRow.status;
     }
@@ -2106,7 +2119,7 @@ export async function updateSessionInDb(
     const [binding] = await db
       .select({ remoteHostId: sessions.remoteHostId })
       .from(sessions)
-      .where(eq(sessions.id, sid))
+      .where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, sid)))
       .limit(1);
     const resource =
       !binding?.remoteHostId && typeof p.workingDir === 'string'
@@ -2176,7 +2189,7 @@ export async function patchSessionMetaInDb(
     const row = await selectSessionWithCount(db, sessionId);
     if (!row) throwIpcError('NOT_FOUND', 'Session 不存在');
     if (patch.pinnedAt !== undefined && row.pinnedAt == null) {
-      await db.update(sessions).set({ summary: null }).where(eq(sessions.id, sessionId));
+      await db.update(sessions).set({ summary: null }).where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, sessionId)));
       row.summary = null;
     }
     cleanupSessionRuntimeForTerminalStatus(sessionId, patch.status);
@@ -2243,21 +2256,8 @@ export async function patchSessionMetaInDb(
  * route transitions must go through the Bot lifecycle service. That service
  * updates the Profile pointer and Session projection atomically.
  */
-async function assertGenericSessionLifecycleAllowed(
-  db: DbClient['drizzle'],
-  sessionId: string,
-): Promise<void> {
-  const [target] = await db
-    .select({ source: sessions.source })
-    .from(sessions)
-    .where(eq(sessions.id, sessionId))
-    .limit(1);
-  if (target?.source === 'bot') {
-    throwIpcError(
-      'PRECONDITION_FAILED',
-      'Bot task lifecycle is managed by teammate recovery and history controls',
-    );
-  }
+async function assertGenericSessionLifecycleAllowed(_db: DbClient['drizzle'], sessionId: string): Promise<void> {
+  await assertNotRetiredCompanionSession(sessionId);
 }
 
 export interface RenameSessionMetaChange {
@@ -2292,7 +2292,7 @@ export async function renameSessionTitlesInDb(
       updatedAt: sessions.updatedAt,
     })
     .from(sessions)
-    .where(inArray(sessions.id, ids));
+    .where(and(not(retiredCompanionSessionSql(sessions.id)), inArray(sessions.id, ids)));
   const rowById = new Map(rows.map((row) => [row.id, row]));
 
   const preview: RenameSessionMetaItem[] = [];
@@ -2472,70 +2472,6 @@ function cancelDeletedPiSubagentCleanupImpl(sessionId: string): void {
 }
 
 bindDeletedPiSubagentCleanupCancel(cancelDeletedPiSubagentCleanupImpl);
-
-/**
- * Detach Bot-owned tasks before the owning Profile is permanently removed.
- * Kept transcripts become ordinary archived tasks; discarded transcripts
- * become ordinary deleted tombstones so no inaccessible source=bot orphan is
- * left after the Bot FK graph is cascaded away.
- */
-export async function deleteBotProfileAndDetachSessionsInDb(
-  botId: string,
-  sessionIds: string[],
-  keepTaskHistory: boolean,
-  operationGuard?: () => void,
-): Promise<void> {
-  const ids = [...new Set(sessionIds)];
-  const ownerScope = captureOwnerScope();
-  const dbClient = getDbClient();
-  const db = dbClient.drizzle;
-  const commitDeletion = () =>
-    commitBotProfileDeletion({
-      botId,
-      sessionIds: ids,
-      keepTaskHistory,
-      operationGuard,
-    });
-  const prepared: SharedTaskClosurePreparation[] = [];
-  let committed: Awaited<ReturnType<typeof commitBotProfileDeletion>>;
-  try {
-    for (const id of ids) {
-      const closure = await prepareSharedTaskClosure(id, dbClient);
-      assertSharedTaskClosureLeaseAvailable(closure);
-      if (closure) prepared.push(closure);
-    }
-    committed = ids.length > 0 ? await withSessionRouteLocks(ids, commitDeletion) : await commitDeletion();
-  } catch (error) {
-    for (const closure of prepared) await rollbackSharedTaskClosure(dbClient, closure);
-    throw error;
-  }
-  const status = committed.status;
-  const committedSessionIds = [...new Set(committed.sessionIds)];
-
-  for (const closure of prepared) await finalizeSharedTaskClosure(dbClient, closure);
-  if (committedSessionIds.length > 0) {
-    const { closeSharedTaskForTask } = await import('../../device-link/sharedTaskRuntime.js');
-    for (const id of committedSessionIds) await closeSharedTaskForTask(id, dbClient);
-  }
-
-  for (const id of committedSessionIds) {
-    notifyAgentIslandSessionPatch(id, { status });
-    broadcastSessionPatched(id, { status, source: 'desktop' }, ownerScope);
-    notifyGhostSessionStatusChange(id, status, null);
-    removeHookAttachmentDir(id, status);
-    if (status === 'deleted') {
-      void imageCacheStore.removeSession(id).catch((error) => {
-        log.warn('Bot task image cleanup failed', { sessionId: id, error: String(error) });
-      });
-      void removeWechatSessionAttachmentDir(id).catch((error) => {
-        log.warn('Bot task attachment cleanup failed', { sessionId: id, error: String(error) });
-      });
-      void removeDeletedSessionMediaRefs(id, db).catch((error) => {
-        log.warn('Bot task media cleanup failed', { sessionId: id, error: String(error) });
-      });
-    }
-  }
-}
 
 /**
  * hook 入站附件目录回收(fire-and-forget): deleted/archived 都是终态,
@@ -2729,7 +2665,7 @@ export async function resumeDeletedPiSubagentCleanup(): Promise<void> {
   const deletedPi = await db
     .select({ id: sessions.id })
     .from(sessions)
-    .where(and(eq(sessions.status, 'deleted'), eq(sessions.agentKind, 'pi')));
+    .where(and(not(retiredCompanionSessionSql(sessions.id)), and(eq(sessions.status, 'deleted'), eq(sessions.agentKind, 'pi'))));
 
   const diskDeleted =
     idsFromDisk.length === 0
@@ -2737,7 +2673,7 @@ export async function resumeDeletedPiSubagentCleanup(): Promise<void> {
       : await db
           .select({ id: sessions.id })
           .from(sessions)
-          .where(and(inArray(sessions.id, idsFromDisk), eq(sessions.status, 'deleted')));
+          .where(and(not(retiredCompanionSessionSql(sessions.id)), and(inArray(sessions.id, idsFromDisk), eq(sessions.status, 'deleted'))));
 
   const ids = new Set<string>();
   for (const row of deletedPi) ids.add(row.id);
@@ -2871,7 +2807,7 @@ function selectSessionUsageRows(
       updatedAt: sessions.updatedAt,
     })
     .from(sessions)
-    .where(where)
+    .where(and(not(retiredCompanionSessionSql(sessions.id)), where))
     .orderBy(desc(sessions.updatedAt))
     .then((rows) => rows);
 }
@@ -2901,7 +2837,7 @@ function selectSessionListRows(
   where: SQL | undefined,
   cap: number | null,
 ): Promise<SessionListRow[]> {
-  const pickedBase = db.select({ id: sessions.id }).from(sessions).where(where);
+  const pickedBase = db.select({ id: sessions.id }).from(sessions).where(and(not(retiredCompanionSessionSql(sessions.id)), where));
   const picked = db
     .$with('picked')
     .as(
@@ -2919,7 +2855,7 @@ function selectSessionListRows(
     })
     .from(sessions)
     .innerJoin(picked, eq(picked.id, sessions.id))
-    .where(where)
+    .where(and(not(retiredCompanionSessionSql(sessions.id)), where))
     .orderBy(desc(sessions.updatedAt));
 }
 
@@ -2938,7 +2874,7 @@ async function selectSessionWithCount(
       latestMessageRole: LATEST_MSG_ROLE_SQL,
     })
     .from(sessions)
-    .where(eq(sessions.id, id))
+    .where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, id)))
     .limit(1);
   if (!r) return undefined;
   return {
@@ -3013,7 +2949,7 @@ export async function setWorktreePathInDb(
 ): Promise<void> {
   try {
     const db = getDbClient().drizzle;
-    await db.update(sessions).set({ worktreePath }).where(eq(sessions.id, sessionId));
+    await db.update(sessions).set({ worktreePath }).where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, sessionId)));
   } catch (err) {
     log.warn(
       `[localDb] setWorktreePathInDb failed for ${sessionId}:`,
@@ -3042,7 +2978,7 @@ export async function setSessionProviderIdInDb(
 ): Promise<void> {
   try {
     const db = getDbClient().drizzle;
-    await db.update(sessions).set({ providerId }).where(eq(sessions.id, sessionId));
+    await db.update(sessions).set({ providerId }).where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, sessionId)));
   } catch (err) {
     log.warn(
       `[localDb] setSessionProviderIdInDb failed for ${sessionId}:`,
@@ -3058,7 +2994,7 @@ export async function setSessionSourceInDb(
 ): Promise<void> {
   try {
     const db = getDbClient().drizzle;
-    await db.update(sessions).set({ source }).where(eq(sessions.id, sessionId));
+    await db.update(sessions).set({ source }).where(and(not(retiredCompanionSessionSql(sessions.id)), eq(sessions.id, sessionId)));
   } catch (err) {
     log.warn(
       `[localDb] setSessionSourceInDb failed for ${sessionId}:`,

@@ -1,3 +1,4 @@
+import { setRemoteBotSessionLookup } from '../device-link/remoteBotSessionBoundary';
 /**
  * device-link 被控端 dispatch 单测:runInvoke 的双层校验(被控开关 + allowlist)
  * 与 invoke-registry 的 dispatchLocalInvoke。
@@ -53,7 +54,8 @@ beforeEach(() => {
   remoteControlEnabled = true;
   revokedControllers = [];
   registry.reset();
-  dispatchTesting.reset(); // 清订阅 registry / tap / onControllersChanged / activeClient
+  dispatchTesting.reset();
+  setRemoteBotSessionLookup(async () => 'ordinary'); // 清订阅 registry / tap / onControllersChanged / activeClient
   setRemoteWorkingDirGuard(null); // 默认不注入,行为同生产未就绪态(放行)
   setRemoteReviewInputGuard(null);
   setRemoteSettingsPersist(null);
@@ -66,11 +68,13 @@ describe('runInvoke 双层校验', () => {
   it('开关关闭 → REMOTE_DISABLED', async () => {
     remoteControlEnabled = false;
     const r = await runInvoke('ctrl', { channel: 'maker:list-active', args: [] });
+    await settleRetirementDelivery();
     expect(r).toMatchObject({ ok: false, error: { code: 'REMOTE_DISABLED' } });
   });
 
   it('非 allowlist channel → CHANNEL_NOT_ALLOWED', async () => {
     const r = await runInvoke('ctrl', { channel: 'shell:open-path', args: [] });
+    await settleRetirementDelivery();
     expect(r).toMatchObject({ ok: false, error: { code: 'CHANNEL_NOT_ALLOWED' } });
   });
 
@@ -78,6 +82,7 @@ describe('runInvoke 双层校验', () => {
     revokedControllers = ['ctrl'];
     registry.register('maker:list-active', () => ['s']); // 即便 channel 合法也被挡
     const r = await runInvoke('ctrl', { channel: 'maker:list-active', args: [] });
+    await settleRetirementDelivery();
     expect(r).toMatchObject({ ok: false, error: { code: 'ACCESS_REVOKED' } });
   });
 
@@ -85,12 +90,14 @@ describe('runInvoke 双层校验', () => {
     revokedControllers = ['other-ctrl'];
     registry.register('maker:list-active', () => ['s']);
     const r = await runInvoke('ctrl', { channel: 'maker:list-active', args: [] });
+    await settleRetirementDelivery();
     expect(r).toEqual({ ok: true, result: ['s'] });
   });
 
   it('allowlist channel:dispatch 到本机 handler 并回传 result', async () => {
     registry.register('maker:list-active', () => ['session-x']);
     const r = await runInvoke('ctrl', { channel: 'maker:list-active', args: [] });
+    await settleRetirementDelivery();
     expect(r).toEqual({ ok: true, result: ['session-x'] });
   });
 
@@ -123,11 +130,13 @@ describe('runInvoke 双层校验', () => {
         },
       });
     }
+    await settleRetirementDelivery();
     expect(handler).not.toHaveBeenCalled();
 
     await expect(
       runInvoke('ctrl', { channel: 'maker:send', args: ['desktop-1', 'hello'] }),
     ).resolves.toEqual({ ok: true, result: { accepted: true } });
+    await settleRetirementDelivery();
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
@@ -139,6 +148,7 @@ describe('runInvoke 双层校验', () => {
 
     const r = await runInvoke('ctrl-a', { channel: 'maker:list-active', args: [] });
 
+    await settleRetirementDelivery();
     expect(r).toEqual({
       ok: true,
       result: {
@@ -154,6 +164,7 @@ describe('runInvoke 双层校验', () => {
         }),
       },
     });
+    await settleRetirementDelivery();
     expect(isDeviceLinkInvoke()).toBe(false);
   });
 
@@ -187,6 +198,7 @@ describe('runInvoke 双层校验', () => {
       throw e;
     });
     const r = await runInvoke('ctrl', { channel: 'maker:send', args: [] });
+    await settleRetirementDelivery();
     expect(r).toMatchObject({
       ok: false,
       error: { code: 'IPC_ERROR', message: '[SESSION_RUNNING] busy' },
@@ -198,6 +210,7 @@ describe('runInvoke 双层校验', () => {
       throw new Error('db worker RPC queue overloaded: op="rawAll" inFlight=128 queued=512');
     });
     const r = await runInvoke('ctrl', { channel: 'local-db:sessions:list', args: [1, 'all'] });
+    await settleRetirementDelivery();
     expect(r).toMatchObject({
       ok: false,
       error: {
@@ -209,12 +222,15 @@ describe('runInvoke 双层校验', () => {
 
   it('handler 不存在(未注册)→ IPC_ERROR NOT_FOUND', async () => {
     const r = await runInvoke('ctrl', { channel: 'maker:create-session', args: [] });
+    await settleRetirementDelivery();
     expect(r).toMatchObject({ ok: false, error: { code: 'IPC_ERROR' } });
+    await settleRetirementDelivery();
     expect((r as { error: { message: string } }).error.message).toMatch(/NOT_FOUND/);
   });
 
   it('malformed payload → INTERNAL', async () => {
     const r = await runInvoke('ctrl', undefined);
+    await settleRetirementDelivery();
     expect(r).toMatchObject({ ok: false, error: { code: 'INTERNAL' } });
   });
 
@@ -227,14 +243,18 @@ describe('runInvoke 双层校验', () => {
       channel: 'maker:create-session',
       args: [{ workingDir: '/etc' }],
     });
+    await settleRetirementDelivery();
     expect(denied).toMatchObject({ ok: false, error: { code: 'CHANNEL_NOT_ALLOWED' } });
+    await settleRetirementDelivery();
     expect(handler).not.toHaveBeenCalled();
 
     const allowed = await runInvoke('ctrl', {
       channel: 'maker:create-session',
       args: [{ workingDir: '/allowed/proj' }],
     });
+    await settleRetirementDelivery();
     expect(allowed).toMatchObject({ ok: true });
+    await settleRetirementDelivery();
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
@@ -248,6 +268,7 @@ describe('runInvoke 双层校验', () => {
       args: [{ workingDir: 'Z:\\offline-project' }],
     });
 
+    await settleRetirementDelivery();
     expect(result).toMatchObject({
       ok: false,
       error: {
@@ -255,6 +276,7 @@ describe('runInvoke 双层校验', () => {
         message: expect.stringContaining('[REMOTE_WORKDIR_UNAVAILABLE]'),
       },
     });
+    await settleRetirementDelivery();
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -264,6 +286,7 @@ describe('runInvoke 双层校验', () => {
       channel: 'maker:create-session',
       args: [{ workingDir: '/whatever' }],
     });
+    await settleRetirementDelivery();
     expect(r).toMatchObject({ ok: true });
   });
 });
@@ -275,27 +298,34 @@ describe('runInvoke media:fetch 拦截(入方向媒体)', () => {
       channel: 'device-link:media:fetch',
       args: [{ url: 'xdt-image://s/x.png' }],
     });
+    await settleRetirementDelivery();
     expect(fetchLocalMediaToOssMock).toHaveBeenCalledWith({ url: 'xdt-image://s/x.png' });
+    await settleRetirementDelivery();
     expect(r).toEqual({ ok: true, result: { ossKey: 'k', mimeType: 'image/png', size: 10 } });
   });
 
   it('解析/上传失败 → MEDIA_FETCH_FAILED', async () => {
     fetchLocalMediaToOssMock.mockRejectedValue(new Error('boom'));
     const r = await runInvoke('ctrl', { channel: 'device-link:media:fetch', args: [{ url: 'bad' }] });
+    await settleRetirementDelivery();
     expect(r).toMatchObject({ ok: false, error: { code: 'MEDIA_FETCH_FAILED', message: 'boom' } });
   });
 
   it('已撤销控制端 media:fetch → ACCESS_REVOKED,不触发解析', async () => {
     revokedControllers = ['ctrl'];
     const r = await runInvoke('ctrl', { channel: 'device-link:media:fetch', args: [{ url: 'x' }] });
+    await settleRetirementDelivery();
     expect(r).toMatchObject({ ok: false, error: { code: 'ACCESS_REVOKED' } });
+    await settleRetirementDelivery();
     expect(fetchLocalMediaToOssMock).not.toHaveBeenCalled();
   });
 
   it('开关关闭 → REMOTE_DISABLED,不触发解析', async () => {
     remoteControlEnabled = false;
     const r = await runInvoke('ctrl', { channel: 'device-link:media:fetch', args: [{ url: 'x' }] });
+    await settleRetirementDelivery();
     expect(r).toMatchObject({ ok: false, error: { code: 'REMOTE_DISABLED' } });
+    await settleRetirementDelivery();
     expect(fetchLocalMediaToOssMock).not.toHaveBeenCalled();
   });
 });
@@ -313,7 +343,9 @@ describe('runInvoke voice:transcribe 拦截(手机语音输入)', () => {
       channel: 'device-link:voice:transcribe',
       args: [req],
     });
+    await settleRetirementDelivery();
     expect(transcribeRemoteVoiceInputMock).toHaveBeenCalledWith(req);
+    await settleRetirementDelivery();
     expect(r).toEqual({
       ok: true,
       result: {
@@ -331,6 +363,7 @@ describe('runInvoke voice:transcribe 拦截(手机语音输入)', () => {
       channel: 'device-link:voice:transcribe',
       args: [{ ossKey: 'k' }],
     });
+    await settleRetirementDelivery();
     expect(r).toMatchObject({ ok: false, error: { code: 'VOICE_TRANSCRIBE_FAILED', message: 'asr down' } });
   });
 
@@ -340,7 +373,9 @@ describe('runInvoke voice:transcribe 拦截(手机语音输入)', () => {
       channel: 'device-link:voice:transcribe',
       args: [{ ossKey: 'k' }],
     });
+    await settleRetirementDelivery();
     expect(r).toMatchObject({ ok: false, error: { code: 'ACCESS_REVOKED' } });
+    await settleRetirementDelivery();
     expect(transcribeRemoteVoiceInputMock).not.toHaveBeenCalled();
   });
 });
@@ -351,6 +386,7 @@ describe('runInvoke voice:credential-sync 拦截(能力已下线,保留可读拒
       channel: 'device-link:voice:credential-sync',
       args: [],
     });
+    await settleRetirementDelivery();
     expect(r).toMatchObject({
       ok: false,
       error: {
@@ -366,6 +402,7 @@ describe('runInvoke voice:credential-sync 拦截(能力已下线,保留可读拒
       channel: 'device-link:voice:credential-sync',
       args: [],
     });
+    await settleRetirementDelivery();
     expect(r).toMatchObject({ ok: false, error: { code: 'ACCESS_REVOKED' } });
   });
 });
@@ -401,6 +438,7 @@ describe('runInvoke voice:dictionary-learning 拦截(手机语音词典学习回
       args: [req],
     });
 
+    await settleRetirementDelivery();
     expect(adviseAndRecordVoiceInputDictionaryLearningMock).toHaveBeenCalledWith(
       {
         source: 'in_app',
@@ -414,6 +452,7 @@ describe('runInvoke voice:dictionary-learning 拦截(手机语音词典学习回
         sourceLabel: 'mobile',
       },
     );
+    await settleRetirementDelivery();
     expect(r).toEqual({
       ok: true,
       result: {
@@ -436,6 +475,7 @@ describe('runInvoke voice:dictionary-learning 拦截(手机语音词典学习回
       channel: 'device-link:voice:dictionary-learning',
       args: [{ source: 'mobile', beforeText: 'a', afterText: 'b' }],
     });
+    await settleRetirementDelivery();
     expect(r).toMatchObject({
       ok: false,
       error: { code: 'VOICE_DICTIONARY_LEARNING_FAILED', message: 'advisor down' },
@@ -448,7 +488,9 @@ describe('runInvoke voice:dictionary-learning 拦截(手机语音词典学习回
       channel: 'device-link:voice:dictionary-learning',
       args: [{ source: 'mobile', beforeText: 'a', afterText: 'b' }],
     });
+    await settleRetirementDelivery();
     expect(r).toMatchObject({ ok: false, error: { code: 'ACCESS_REVOKED' } });
+    await settleRetirementDelivery();
     expect(adviseAndRecordVoiceInputDictionaryLearningMock).not.toHaveBeenCalled();
   });
 });
@@ -458,8 +500,10 @@ describe('dispatchLocalInvoke', () => {
     const handler = vi.fn(async (_e: unknown, a: number, b: number) => a + b);
     registry.register('maker:set-model', handler as never);
     const result = await dispatchLocalInvoke('maker:set-model', [2, 3]);
+    await settleRetirementDelivery();
     expect(result).toBe(5);
     // 合成 event 作为首参
+    await settleRetirementDelivery();
     expect(handler).toHaveBeenCalledWith(expect.anything(), 2, 3);
   });
 
@@ -553,7 +597,7 @@ describe('被控端控制链路生命周期', () => {
     // 清掉可能残留的 controllers:dropAll 需要 client,改用重置 listener 后逐个 close
   });
 
-  it('link-open(开关开)→ 回 link-accept + 记录控制端名 + 激活 broadcast-tap', () => {
+  it('link-open(开关开)→ 回 link-accept + 记录控制端名 + 激活 broadcast-tap', async () => {
     remoteControlEnabled = true;
     const changes: number[] = [];
     setControllersChangedListener((cs) => changes.push(cs.length));
@@ -562,19 +606,26 @@ describe('被控端控制链路生命周期', () => {
 
     feed({ v: 1, kind: 'link-open', id: 'r1', src: 'ctrl-a', payload: { controllerName: 'MacBook', protocolVersion: 1, appVersion: '1.0.0' } });
 
+    await settleRetirementDelivery();
     expect(calls.linkAccept).toHaveLength(1);
     const ctrls = getActiveControllers();
+    await settleRetirementDelivery();
     expect(ctrls).toEqual([{ deviceId: 'ctrl-a', name: 'MacBook' }]);
+    await settleRetirementDelivery();
     expect(hasBroadcastTapListener()).toBe(true);
+    await settleRetirementDelivery();
     expect(changes.at(-1)).toBe(1);
 
     dropAllControllers(client, 'user');
+    await settleRetirementDelivery();
     expect(calls.closed).toEqual([{ dst: 'ctrl-a', reason: 'user' }]);
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toHaveLength(0);
+    await settleRetirementDelivery();
     expect(hasBroadcastTapListener()).toBe(false);
   });
 
-  it('目录刷新在无 active link 时预存数据库名，并让活跃提示立即响应改名与清空', () => {
+  it('目录刷新在无 active link 时预存数据库名，并让活跃提示立即响应改名与清空', async () => {
     remoteControlEnabled = true;
     const changes: ActiveController[][] = [];
     setControllersChangedListener((controllers) => changes.push(controllers));
@@ -597,36 +648,43 @@ describe('被控端控制链路生命周期', () => {
     // 目录先于 link 到达时先预存名称，之后的控制帧仍以数据库名展示。
     applyDirectoryName('MacBook-Pro-2');
     feed(subFrame('ctrl-a', SUB, ['session:s1'], 'Chriss-MacBook-Pro-2.local'));
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toEqual([
       { deviceId: 'ctrl-a', name: 'MacBook-Pro-2' },
     ]);
 
     applyDirectoryName('工作电脑');
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toEqual([{ deviceId: 'ctrl-a', name: '工作电脑' }]);
+    await settleRetirementDelivery();
     expect(changes.at(-1)).toEqual([{ deviceId: 'ctrl-a', name: '工作电脑' }]);
 
     applyDirectoryName('');
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toEqual([
       { deviceId: 'ctrl-a', name: 'Chriss-MacBook-Pro-2.local' },
     ]);
+    await settleRetirementDelivery();
     expect(changes.at(-1)).toEqual([
       { deviceId: 'ctrl-a', name: 'Chriss-MacBook-Pro-2.local' },
     ]);
   });
 
-  it('数据库展示名为空或被清空时回退到控制端自报名，再缺失时回退到设备 ID 短码', () => {
+  it('数据库展示名为空或被清空时回退到控制端自报名，再缺失时回退到设备 ID 短码', async () => {
     remoteControlEnabled = true;
     const { client, feed } = makeFakeClient();
     wireInboundDispatch(client);
 
     setControllerDisplayName('ctrl-reported', '数据库名称');
     feed(subFrame('ctrl-reported', SUB, ['session:s1'], 'Host.local'));
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toContainEqual({
       deviceId: 'ctrl-reported',
       name: '数据库名称',
     });
 
     setControllerDisplayName('ctrl-reported', '   ');
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toContainEqual({
       deviceId: 'ctrl-reported',
       name: 'Host.local',
@@ -634,29 +692,32 @@ describe('被控端控制链路生命周期', () => {
 
     setControllerDisplayName('1234567890abcdef', '');
     feed(subFrame('1234567890abcdef', SUB, ['session:s2']));
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toContainEqual({
       deviceId: '1234567890abcdef',
       name: '12345678',
     });
   });
 
-  it('没有历史 presence 时先显示自报名，设备目录补齐后立即切换到数据库展示名', () => {
+  it('没有历史 presence 时先显示自报名，设备目录补齐后立即切换到数据库展示名', async () => {
     remoteControlEnabled = true;
     const { client, feed } = makeFakeClient();
     wireInboundDispatch(client);
 
     feed(subFrame('ctrl-late-directory', SUB, ['session:s1'], 'Host.local'));
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toEqual([
       { deviceId: 'ctrl-late-directory', name: 'Host.local' },
     ]);
 
     setControllerDisplayName('ctrl-late-directory', '数据库展示名');
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toEqual([
       { deviceId: 'ctrl-late-directory', name: '数据库展示名' },
     ]);
   });
 
-  it('旧协议 presence 临时名不遮蔽同一链路后到的控制端自报名', () => {
+  it('旧协议 presence 临时名不遮蔽同一链路后到的控制端自报名', async () => {
     remoteControlEnabled = true;
     const { client, feed } = makeFakeClient();
     wireInboundDispatch(client);
@@ -666,6 +727,7 @@ describe('被控端控制链路生命周期', () => {
     const forgetName = vi.fn();
 
     feed(subFrame(deviceId, SUB, ['session:s1']));
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toEqual([{ deviceId, name: '12345678' }]);
 
     applyControllerDisplayNamePresence({
@@ -678,17 +740,23 @@ describe('被控端控制链路生命周期', () => {
       rememberName,
       forgetName,
     });
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toEqual([{ deviceId, name: 'Old-Host.local' }]);
+    await settleRetirementDelivery();
     expect(freshness.epoch).toBe(0);
+    await settleRetirementDelivery();
     expect(rememberName).not.toHaveBeenCalled();
+    await settleRetirementDelivery();
     expect(forgetName).not.toHaveBeenCalled();
 
     // 旧协议 presence 只改过当前 metadata，没有写入权威 map；空目录名仍必须
     // 强制重算回退，不能因 delete(false) 留下旧主机名。
     setControllerDisplayName(deviceId, '');
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toEqual([{ deviceId, name: '12345678' }]);
 
     feed(subFrame(deviceId, SUB, ['session:s2'], 'New-Host.local'));
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toEqual([{ deviceId, name: 'New-Host.local' }]);
 
     applyControllerDisplayNamePresence({
@@ -701,9 +769,11 @@ describe('被控端控制链路生命周期', () => {
       rememberName,
       forgetName,
     });
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toEqual([{ deviceId, name: 'New-Host.local' }]);
 
     setControllerDisplayName(deviceId, '');
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toEqual([{ deviceId, name: 'New-Host.local' }]);
   });
 
@@ -720,7 +790,7 @@ describe('被控端控制链路生命周期', () => {
     ['撤销访问', (_feed: (env: Envelope) => unknown, deviceId: string) => {
       purgeRevokedController(deviceId);
     }],
-  ] as const)('%s 会清掉旧链路自报名，新链路缺名时回退设备 ID 短码', (_label, close) => {
+  ] as const)('%s 会清掉旧链路自报名，新链路缺名时回退设备 ID 短码', async (_label, close) => {
     remoteControlEnabled = true;
     const { client, feed } = makeFakeClient();
     wireInboundDispatch(client);
@@ -729,38 +799,45 @@ describe('被控端控制链路生命周期', () => {
     setControllerDisplayName(deviceId, '数据库展示名');
     feed(subFrame(deviceId, SUB, ['session:s1'], 'Old-Host.local'));
     setControllerDisplayName(deviceId, '');
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toEqual([{ deviceId, name: 'Old-Host.local' }]);
 
     close(feed, deviceId);
     feed(subFrame(deviceId, SUB, ['session:s2']));
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toEqual([{ deviceId, name: '12345678' }]);
   });
 
   it.each([
     ['topics 为空', []],
     ['topics 全被过滤', ['*', 'invalid-topic']],
-  ] as const)('%s 的 subscribe 自报名也会在整体断开时清理', (_label, topics) => {
+  ] as const)('%s 的 subscribe 自报名也会在整体断开时清理', async (_label, topics) => {
     remoteControlEnabled = true;
     const { client, calls, feed } = makeFakeClient();
     wireInboundDispatch(client);
     const deviceId = '1234567890abcdef';
 
     feed(subFrame(deviceId, SUB, [...topics], 'Old-Host.local'));
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toEqual([]);
 
     dropAllControllers(client, 'user');
+    await settleRetirementDelivery();
     expect(calls.closed).toContainEqual({ dst: deviceId, reason: 'user' });
 
     feed(subFrame(deviceId, SUB, ['session:s1']));
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toEqual([{ deviceId, name: '12345678' }]);
   });
 
-  it('link-open(开关关)→ 不 accept、不记录', () => {
+  it('link-open(开关关)→ 不 accept、不记录', async () => {
     remoteControlEnabled = false;
     const { client, calls, feed } = makeFakeClient();
     wireInboundDispatch(client);
     feed({ v: 1, kind: 'link-open', id: 'r2', src: 'ctrl-b', payload: { controllerName: 'X', protocolVersion: 1, appVersion: '1' } });
+    await settleRetirementDelivery();
     expect(calls.linkAccept).toHaveLength(0);
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toHaveLength(0);
   });
 
@@ -789,11 +866,13 @@ describe('被控端控制链路生命周期', () => {
     await Promise.resolve();
     await Promise.resolve();
 
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toEqual([]);
+    await settleRetirementDelivery();
     expect(hasBroadcastTapListener()).toBe(false);
   });
 
-  it('弱网下 link-close 写 socket 失败也会完成本地 dropAll 清理', () => {
+  it('弱网下 link-close 写 socket 失败也会完成本地 dropAll 清理', async () => {
     remoteControlEnabled = true;
     const { client, feed } = makeFakeClient();
     const mutableClient = client as unknown as {
@@ -815,12 +894,15 @@ describe('被控端控制链路生命周期', () => {
       throw new DeviceLinkError('BACKPRESSURE', 'socket buffer full');
     };
 
+    await settleRetirementDelivery();
     expect(() => dropAllControllers(client, 'user')).not.toThrow();
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toEqual([]);
+    await settleRetirementDelivery();
     expect(hasBroadcastTapListener()).toBe(false);
   });
 
-  it('显式 dropAll 清理断线期间已排队的 push', () => {
+  it('显式 dropAll 清理断线期间已排队的 push', async () => {
     remoteControlEnabled = true;
     const { client, feed } = makeFakeClient();
     wireInboundDispatch(client);
@@ -830,11 +912,14 @@ describe('被控端控制链路生命周期', () => {
       sessionId: 's1',
       id: 'm-stale',
     });
+    await settleRetirementDelivery();
     expect(dispatchTesting.queuedPushesFor('ctrl-drop-queue')).toHaveLength(1);
 
     dropAllControllers(client, 'toggle-off');
 
+    await settleRetirementDelivery();
     expect(dispatchTesting.queuedPushesFor('ctrl-drop-queue')).toEqual([]);
+    await settleRetirementDelivery();
     expect(hasBroadcastTapListener()).toBe(false);
   });
 
@@ -875,14 +960,17 @@ describe('被控端控制链路生命周期', () => {
 
     const current = await runInvoke('ctrl-cap', { channel: 'maker:provider:list', args: [] });
     const legacy = await runInvoke('ctrl-legacy', { channel: 'maker:provider:list', args: [] });
+    await settleRetirementDelivery();
     expect(current).toMatchObject({
       ok: true,
       result: { providers: [{ logoKind: 'vercel', routing: { codex: {} } }] },
     });
+    await settleRetirementDelivery();
     expect(legacy).toMatchObject({
       ok: true,
       result: { providers: [{ routing: { codex: {} } }] },
     });
+    await settleRetirementDelivery();
     expect((legacy as { result: { providers: Record<string, unknown>[] } }).result.providers[0])
       .not.toHaveProperty('logoKind');
   });
@@ -900,6 +988,7 @@ describe('被控端控制链路生命周期', () => {
       channel: 'maker:provider:list',
       args: [{ capabilities: ['provider-logo-kinds-v2'] }],
     });
+    await settleRetirementDelivery();
     expect(current).toMatchObject({
       ok: true,
       result: { providers: [{ logoKind: 'vercel', routing: { codex: {} } }] },
@@ -922,17 +1011,19 @@ describe('被控端控制链路生命周期', () => {
       },
     });
 
+    await settleRetirementDelivery();
     expect(calls.linkAccept).toContainEqual({
       dst: 'ctrl-malformed-cap',
       requestId: 'r-malformed-cap',
     });
+    await settleRetirementDelivery();
     expect(dispatchTesting.controllerSupports(
       'ctrl-malformed-cap',
       'provider-logo-kinds-v2',
     )).toBe(false);
   });
 
-  it('link-close clears remembered routing and queued pushes', () => {
+  it('link-close clears remembered routing and queued pushes', async () => {
     remoteControlEnabled = true;
     const { client, feed } = makeFakeClient();
     wireInboundDispatch(client);
@@ -942,6 +1033,7 @@ describe('被控端控制链路生命周期', () => {
       sessionId: 's1',
       id: 'm-before-close',
     });
+    await settleRetirementDelivery();
     expect(dispatchTesting.queuedPushesFor('ctrl-c')).toHaveLength(1);
 
     feed({ v: 1, kind: 'link-close', src: 'ctrl-c', payload: { reason: 'user' } });
@@ -950,8 +1042,11 @@ describe('被控端控制链路生命周期', () => {
       id: 'm-after-close',
     });
 
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toHaveLength(0);
+    await settleRetirementDelivery();
     expect(dispatchTesting.queuedPushesFor('ctrl-c')).toEqual([]);
+    await settleRetirementDelivery();
     expect(hasBroadcastTapListener()).toBe(false);
   });
 
@@ -979,10 +1074,13 @@ describe('被控端控制链路生命周期', () => {
     });
 
     await vi.waitFor(() => expect(hasInFlightRemoteInvokes()).toBe(true));
+    await settleRetirementDelivery();
     expect(busyChanges).toEqual([true]);
     resolveInvoke?.(['s1']);
     await vi.waitFor(() => expect(hasInFlightRemoteInvokes()).toBe(false));
+    await settleRetirementDelivery();
     expect(busyChanges).toEqual([true, false]);
+    await settleRetirementDelivery();
     expect(calls.invokeResult).toContainEqual({
       dst: 'ctrl-a',
       requestId: 'invoke-1',
@@ -1022,7 +1120,9 @@ describe('被控端控制链路生命周期', () => {
     await vi.waitFor(() => expect(
       calls.invokeResult.filter((call) => call.requestId === 'invoke-duplicate'),
     ).toHaveLength(3));
+    await settleRetirementDelivery();
     expect(handler).toHaveBeenCalledTimes(1);
+    await settleRetirementDelivery();
     expect(calls.invokeResult.filter((call) => call.requestId === 'invoke-duplicate')).toEqual([
       { dst: 'ctrl-a', requestId: 'invoke-duplicate', payload: { ok: true, result: ['s1'] } },
       { dst: 'ctrl-a', requestId: 'invoke-duplicate', payload: { ok: true, result: ['s1'] } },
@@ -1055,7 +1155,9 @@ describe('被控端控制链路生命周期', () => {
 
     feed(invoke);
     await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+    await settleRetirementDelivery();
     expect(calls.invokeResult).toEqual([]);
+    await settleRetirementDelivery();
     expect(dispatchTesting.remoteInvokeResultOutboxSize()).toBe(1);
 
     feed({
@@ -1064,7 +1166,9 @@ describe('被控端控制链路生命周期', () => {
     });
     await Promise.resolve();
     await Promise.resolve();
+    await settleRetirementDelivery();
     expect(handler).toHaveBeenCalledTimes(1);
+    await settleRetirementDelivery();
     expect(dispatchTesting.remoteInvokeResultOutboxSize()).toBe(1);
 
     // presence offline 是弱网瞬断信号，不能把已执行但未发出的结果清掉。
@@ -1072,13 +1176,16 @@ describe('被控端控制链路生命周期', () => {
     blocked = false;
     dispatchTesting.flushRemoteInvokeResultOutbox();
 
+    await settleRetirementDelivery();
     expect(calls.invokeResult).toEqual([
       { dst: 'ctrl-a', requestId: 'invoke-outbox', payload: { ok: true, result: ['s1'] } },
     ]);
+    await settleRetirementDelivery();
     expect(dispatchTesting.remoteInvokeResultOutboxSize()).toBe(0);
 
     feed(invoke);
     await vi.waitFor(() => expect(calls.invokeResult).toHaveLength(2));
+    await settleRetirementDelivery();
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
@@ -1122,13 +1229,17 @@ describe('被控端控制链路生命周期', () => {
 
     dispatchTesting.flushRemoteInvokeResultOutbox();
 
+    await settleRetirementDelivery();
     expect(calls.invokeResult).toHaveLength(1);
     const payload = calls.invokeResult[0]?.payload as {
       ok: true;
       result: Array<{ clientId?: string }>;
     };
+    await settleRetirementDelivery();
     expect(payload.ok).toBe(true);
+    await settleRetirementDelivery();
     expect(payload.result.some((message) => message.clientId === 'anchor')).toBe(true);
+    await settleRetirementDelivery();
     expect(dispatchTesting.remoteInvokeResultOutboxSize()).toBe(0);
   });
 
@@ -1166,7 +1277,9 @@ describe('被控端控制链路生命周期', () => {
         (call) => call.requestId === 'list-1' || call.requestId === 'list-2',
       )).toHaveLength(2);
     });
+    await settleRetirementDelivery();
     expect(handler).toHaveBeenCalledTimes(1);
+    await settleRetirementDelivery();
     expect(calls.invokeResult).toEqual(expect.arrayContaining([
       expect.objectContaining({
         requestId: 'list-1',
@@ -1211,6 +1324,7 @@ describe('被控端控制链路生命周期', () => {
         },
       },
     }));
+    await settleRetirementDelivery();
     expect(diagnosticLog.debug).toHaveBeenCalledWith('remote invoke admission busy', expect.objectContaining({
       executing: limit, pendingResults: 0, controllerAtLimit: true, globalAtLimit: false,
       channels: { 'local-db:sessions:list': limit },
@@ -1220,6 +1334,7 @@ describe('被控端控制链路生命周期', () => {
       expect(calls.invokeResult.filter((call) => call.payload && (call.payload as { ok?: boolean }).ok === true))
         .toHaveLength(limit);
     });
+    await settleRetirementDelivery();
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
@@ -1246,6 +1361,7 @@ describe('被控端控制链路生命周期', () => {
         (call) => call.requestId === 'fresh-1' || call.requestId === 'fresh-2',
       )).toHaveLength(2);
     });
+    await settleRetirementDelivery();
     expect(calls.invokeResult).toEqual(expect.arrayContaining([
       expect.objectContaining({ requestId: 'fresh-1', payload: { ok: true, result: [{ id: 'old' }] } }),
       expect.objectContaining({ requestId: 'fresh-2', payload: { ok: true, result: [{ id: 'new' }] } }),
@@ -1272,6 +1388,7 @@ describe('被控端控制链路生命周期', () => {
         (call) => call.requestId === 'get-stale' || call.requestId === 'get-after-write',
       )).toHaveLength(2);
     });
+    await settleRetirementDelivery();
     expect(calls.invokeResult).toEqual(expect.arrayContaining([
       expect.objectContaining({ requestId: 'get-stale', payload: { ok: true, result: { id: 'sess-1', model: 'old' } } }),
       expect.objectContaining({ requestId: 'get-after-write', payload: { ok: true, result: { id: 'sess-1', model: 'new' } } }),
@@ -1293,7 +1410,7 @@ describe('被控端控制链路生命周期', () => {
       src: 'ctrl-a',
       payload: { channel: 'maker:list-active', args: [] },
     });
-    await vi.waitFor(() => expect(hasInFlightRemoteInvokes()).toBe(true));
+    await vi.waitFor(() => expect(resolveInvoke).toBeTypeOf('function'));
 
     feed({ v: 1, kind: 'link-close', src: 'ctrl-a', payload: { reason: 'user' } });
     feed({
@@ -1317,7 +1434,9 @@ describe('被控端控制链路生命周期', () => {
     resolveInvoke?.(['stale']);
     await vi.waitFor(() => expect(hasInFlightRemoteInvokes()).toBe(false));
 
+    await settleRetirementDelivery();
     expect(calls.invokeResult.some((call) => call.requestId === 'invoke-old-link')).toBe(false);
+    await settleRetirementDelivery();
     expect(calls.linkAccept).toContainEqual({ dst: 'ctrl-a', requestId: 'open-new-link' });
   });
 
@@ -1363,12 +1482,15 @@ describe('被控端控制链路生命周期', () => {
       sent += batchSize;
       await vi.waitFor(() => expect(calls.invokeResult).toHaveLength(sent));
     }
+    await settleRetirementDelivery();
     expect(handler).toHaveBeenCalledTimes(131);
 
     feed(queuedInvoke);
     await Promise.resolve();
     await Promise.resolve();
+    await settleRetirementDelivery();
     expect(handler).toHaveBeenCalledTimes(131);
+    await settleRetirementDelivery();
     expect(dispatchTesting.remoteInvokeResultOutboxSize()).toBe(1);
   });
 
@@ -1383,6 +1505,7 @@ describe('被控端控制链路生命周期', () => {
       index < dispatchTesting.remoteInvokeResultOutboxPerControllerLimit;
       index++
     ) {
+      await settleRetirementDelivery();
       expect(dispatchTesting.sendInvokeResultSafe(
         client,
         'ctrl-a',
@@ -1392,9 +1515,11 @@ describe('被控端控制链路生命周期', () => {
       )).toBe(true);
     }
 
+    await settleRetirementDelivery();
     expect(dispatchTesting.remoteInvokeResultOutboxSize()).toBe(
       dispatchTesting.remoteInvokeResultOutboxPerControllerLimit,
     );
+    await settleRetirementDelivery();
     expect(dispatchTesting.sendInvokeResultSafe(
       client,
       'ctrl-a',
@@ -1425,10 +1550,11 @@ describe('被控端控制链路生命周期', () => {
         },
       },
     }));
+    await settleRetirementDelivery();
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('多个控制端的 invoke-result outbox 仍受全局消息上限保护', () => {
+  it('多个控制端的 invoke-result outbox 仍受全局消息上限保护', async () => {
     const client = {
       sendInvokeResult: () => {
         throw new DeviceLinkError('BACKPRESSURE', 'socket buffer full');
@@ -1446,6 +1572,7 @@ describe('被控端控制链路生命周期', () => {
           && queued < dispatchTesting.remoteInvokeResultOutboxLimit;
         index++
       ) {
+        await settleRetirementDelivery();
         expect(dispatchTesting.sendInvokeResultSafe(
           client,
           `ctrl-${controller}`,
@@ -1456,9 +1583,11 @@ describe('被控端控制链路生命周期', () => {
         queued++;
       }
     }
+    await settleRetirementDelivery();
     expect(dispatchTesting.remoteInvokeResultOutboxSize()).toBe(
       dispatchTesting.remoteInvokeResultOutboxLimit,
     );
+    await settleRetirementDelivery();
     expect(dispatchTesting.sendInvokeResultSafe(
       client,
       'ctrl-over',
@@ -1468,7 +1597,7 @@ describe('被控端控制链路生命周期', () => {
     )).toBe(false);
   });
 
-  it('invoke-result outbox 字节预算包含 request fingerprint', () => {
+  it('invoke-result outbox 字节预算包含 request fingerprint', async () => {
     const client = {
       sendInvokeResult: () => {
         throw new DeviceLinkError('BACKPRESSURE', 'socket buffer full');
@@ -1477,6 +1606,7 @@ describe('被控端控制链路生命周期', () => {
     const fingerprint = 'x'.repeat(1_500_000);
 
     for (let index = 0; index < 2; index++) {
+      await settleRetirementDelivery();
       expect(dispatchTesting.sendInvokeResultSafe(
         client,
         'ctrl-a',
@@ -1487,6 +1617,7 @@ describe('被控端控制链路生命周期', () => {
         `${fingerprint}${index}`,
       )).toBe(true);
     }
+    await settleRetirementDelivery();
     expect(dispatchTesting.sendInvokeResultSafe(
       client,
       'ctrl-a',
@@ -1529,6 +1660,7 @@ describe('被控端控制链路生命周期', () => {
 
     feed(invoke);
     await vi.waitFor(() => expect(calls.invokeResult).toHaveLength(2));
+    await settleRetirementDelivery();
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
@@ -1566,8 +1698,11 @@ describe('被控端控制链路生命周期', () => {
     feed(invoke);
     await vi.waitFor(() => expect(calls.invokeResult).toHaveLength(2));
 
+    await settleRetirementDelivery();
     expect(handler).toHaveBeenCalledTimes(1);
+    await settleRetirementDelivery();
     expect(JSON.stringify(calls.invokeResult[0].payload).length).toBeLessThan(1024 * 1024);
+    await settleRetirementDelivery();
     expect(calls.invokeResult[1].payload).toEqual(calls.invokeResult[0].payload);
   });
 
@@ -1592,14 +1727,18 @@ describe('被控端控制链路生命周期', () => {
       feed(invoke);
       await Promise.resolve();
       await Promise.resolve();
+      await settleRetirementDelivery();
       expect(handler).toHaveBeenCalledTimes(1);
+      await settleRetirementDelivery();
       expect(hasInFlightRemoteInvokes()).toBe(true);
+      await settleRetirementDelivery();
       expect(busyChanges).toEqual([true]);
 
       await vi.advanceTimersByTimeAsync(
         dispatchTesting.remoteInvokeOrphanTimeoutForChannelMs('maker:list-active'),
       );
 
+      await settleRetirementDelivery();
       expect(calls.invokeResult).toContainEqual({
         dst: 'ctrl-a',
         requestId: 'invoke-orphan',
@@ -1611,13 +1750,17 @@ describe('被控端控制链路生命周期', () => {
           },
         },
       });
+      await settleRetirementDelivery();
       expect(hasInFlightRemoteInvokes()).toBe(false);
+      await settleRetirementDelivery();
       expect(busyChanges).toEqual([true, false]);
 
       feed(invoke);
       await Promise.resolve();
       await Promise.resolve();
+      await settleRetirementDelivery();
       expect(handler).toHaveBeenCalledTimes(1);
+      await settleRetirementDelivery();
       expect(calls.invokeResult).toHaveLength(2);
     } finally {
       vi.useRealTimers();
@@ -1677,6 +1820,7 @@ describe('被控端控制链路生命周期', () => {
           === 'request id reused with different payload'
       )),
     ).toHaveLength(2));
+    await settleRetirementDelivery();
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
@@ -1713,6 +1857,7 @@ describe('被控端控制链路生命周期', () => {
         },
       },
     }));
+    await settleRetirementDelivery();
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
@@ -1748,13 +1893,16 @@ describe('被控端控制链路生命周期', () => {
         },
       },
     }));
+    await settleRetirementDelivery();
     expect(handler).not.toHaveBeenCalled();
+    await settleRetirementDelivery();
     expect(hasInFlightRemoteInvokes()).toBe(false);
 
     feed(invoke);
     await vi.waitFor(() => expect(
       calls.invokeResult.filter((call) => call.requestId === 'invoke-guard-crash'),
     ).toHaveLength(2));
+    await settleRetirementDelivery();
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -1791,6 +1939,7 @@ describe('被控端控制链路生命周期', () => {
     await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(
       dispatchTesting.remoteInvokeInFlightLimit,
     ));
+    await settleRetirementDelivery();
     expect(calls.invokeResult).toContainEqual({
       dst: 'ctrl-over',
       requestId: 'invoke-over-limit',
@@ -1849,6 +1998,7 @@ describe('被控端控制链路生命周期', () => {
     await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(
       dispatchTesting.remoteInvokeInFlightPerControllerLimit + 1,
     ));
+    await settleRetirementDelivery();
     expect(calls.invokeResult).toContainEqual({
       dst: 'ctrl-a',
       requestId: 'invoke-controller-a-over-limit',
@@ -1860,6 +2010,7 @@ describe('被控端控制链路生命周期', () => {
         },
       },
     });
+    await settleRetirementDelivery();
     expect(calls.invokeResult).not.toContainEqual(expect.objectContaining({
       dst: 'ctrl-b',
       requestId: 'invoke-controller-b-admitted',
@@ -1905,7 +2056,9 @@ describe('被控端控制链路生命周期', () => {
           payload: { ok: true, result: [] },
         }),
       );
+      await settleRetirementDelivery();
       expect(hasInFlightRemoteInvokes()).toBe(false);
+      await settleRetirementDelivery();
       expect(busyChanges).toEqual([]);
     },
   );
@@ -1934,10 +2087,13 @@ describe('被控端控制链路生命周期', () => {
     });
 
     await vi.waitFor(() => expect(hasInFlightRemoteInvokes()).toBe(true));
+    await settleRetirementDelivery();
     expect(busyChanges).toEqual([true]);
     resolveInvoke?.({ id: 's1' });
     await vi.waitFor(() => expect(hasInFlightRemoteInvokes()).toBe(false));
+    await settleRetirementDelivery();
     expect(busyChanges).toEqual([true, false]);
+    await settleRetirementDelivery();
     expect(calls.invokeResult).toContainEqual({
       dst: 'ctrl-a',
       requestId: 'invoke-interactive-get',
@@ -1986,7 +2142,9 @@ describe('被控端控制链路生命周期', () => {
     });
 
     await vi.waitFor(() => expect(calls.invokeResult).toHaveLength(1));
+    await settleRetirementDelivery();
     expect(hasInFlightRemoteInvokes()).toBe(false);
+    await settleRetirementDelivery();
     expect(busyChanges).toEqual([]);
   });
 });
@@ -2021,7 +2179,7 @@ function subFrame(
 }
 
 describe('被控端订阅 registry + topic 转发', () => {
-  it('subscribe frame negotiates bounded capabilities and rejects malformed shapes', () => {
+  it('subscribe frame negotiates bounded capabilities and rejects malformed shapes', async () => {
     const { client, feed } = makeFakeClient();
     wireInboundDispatch(client);
 
@@ -2032,19 +2190,21 @@ describe('被控端订阅 registry + topic 转发', () => {
       'Current',
       ['provider-logo-kinds-v2'],
     ));
+    await settleRetirementDelivery();
     expect(dispatchTesting.controllerSupports(
       'ctrl-current',
       'provider-logo-kinds-v2',
     )).toBe(true);
 
     feed(subFrame('ctrl-malformed', SUB, ['sessions'], 'Malformed', { invalid: true }));
+    await settleRetirementDelivery();
     expect(dispatchTesting.controllerSupports(
       'ctrl-malformed',
       'provider-logo-kinds-v2',
     )).toBe(false);
   });
 
-  it('link-close(transport-timeout) 保留被控端反向控制状态;永久关闭 reason 维持清理语义', () => {
+  it('link-close(transport-timeout) 保留被控端反向控制状态;永久关闭 reason 维持清理语义', async () => {
     remoteControlEnabled = true;
     const { client, calls, feed } = makeFakeClient();
     wireInboundDispatch(client);
@@ -2063,6 +2223,7 @@ describe('被控端订阅 registry + topic 转发', () => {
       payload: { reason: 'transport-timeout' },
     });
     tapWindowBroadcast('local-db:sessions:created', { sessionId: 's1' });
+    await settleRetirementDelivery();
     expect(calls.push).toEqual([
       { dst: 'ctrl-desktop', channel: 'local-db:sessions:created', payload: { sessionId: 's1' } },
     ]);
@@ -2071,15 +2232,17 @@ describe('被控端订阅 registry + topic 转发', () => {
     calls.push.length = 0;
     feed({ v: 1, kind: 'link-close', src: 'ctrl-desktop', payload: { reason: 'user' } });
     tapWindowBroadcast('local-db:sessions:created', { sessionId: 's2' });
+    await settleRetirementDelivery();
     expect(calls.push).toEqual([]);
   });
 
-  it('subscribe 帧 → 回 invoke-result;sessions topic 只发列表订阅者,不发未订阅的 heavy 事件', () => {
+  it('subscribe 帧 → 回 invoke-result;sessions topic 只发列表订阅者,不发未订阅的 heavy 事件', async () => {
     remoteControlEnabled = true;
     const { client, calls, feed } = makeFakeClient();
     wireInboundDispatch(client);
 
     feed(subFrame('ctrl-a', SUB, ['sessions'], 'MacA'));
+    await settleRetirementDelivery();
     expect(calls.invokeResult).toContainEqual({
       dst: 'ctrl-a',
       requestId: 'q-ctrl-a-sessions',
@@ -2087,6 +2250,7 @@ describe('被控端订阅 registry + topic 转发', () => {
     });
 
     tapWindowBroadcast('local-db:sessions:created', { sessionId: 's1' });
+    await settleRetirementDelivery();
     expect(calls.push).toEqual([
       { dst: 'ctrl-a', channel: 'local-db:sessions:created', payload: { sessionId: 's1' } },
     ]);
@@ -2097,6 +2261,7 @@ describe('被控端订阅 registry + topic 转发', () => {
       phase: 'running',
       compactDetail: 'Editing README',
     });
+    await settleRetirementDelivery();
     expect(calls.push).toEqual([
       {
         dst: 'ctrl-a',
@@ -2108,10 +2273,11 @@ describe('被控端订阅 registry + topic 转发', () => {
     // 只订阅了 sessions → maker:event(session:s1)不转发(bandwidth scoping)
     calls.push.length = 0;
     tapWindowBroadcast('maker:event', { sessionId: 's1', event: {} });
+    await settleRetirementDelivery();
     expect(calls.push).toEqual([]);
   });
 
-  it('sessions subscribe triggers a current activity replay for late list subscribers', () => {
+  it('sessions subscribe triggers a current activity replay for late list subscribers', async () => {
     remoteControlEnabled = true;
     const { client, calls, feed } = makeFakeClient();
     wireInboundDispatch(client);
@@ -2125,6 +2291,7 @@ describe('被控端订阅 registry + topic 转发', () => {
 
     feed(subFrame('ctrl-a', SUB, ['sessions'], 'MacA'));
 
+    await settleRetirementDelivery();
     expect(calls.push).toEqual([
       {
         dst: 'ctrl-a',
@@ -2152,12 +2319,15 @@ describe('被控端订阅 registry + topic 转发', () => {
         tapWindowBroadcast(SESSION_ACTIVITY_CHANNEL, { sessionId: 's1', phase: 'running', compactDetail: 'step 1' });
         tapWindowBroadcast(SESSION_ACTIVITY_CHANNEL, { sessionId: 's1', phase: 'running', compactDetail: 'step 2' });
         tapWindowBroadcast(SESSION_ACTIVITY_CHANNEL, { sessionId: 's2', phase: 'running', compactDetail: 'other' });
+        await settleRetirementDelivery();
         expect(calls.push).toEqual([]);
         // 同一会话只保留最新值 → 暂存里只有 s1 + s2 两个键
+        await settleRetirementDelivery();
         expect(dispatchTesting.sessionActivityStageSize('ctrl-a')).toBe(2);
 
         setReliableSendQueueDepth(0);
         await vi.advanceTimersByTimeAsync(dispatchTesting.sessionActivityDrainRetryMs);
+        await settleRetirementDelivery();
         expect(calls.push).toEqual([
           {
             dst: 'ctrl-a',
@@ -2170,6 +2340,7 @@ describe('被控端订阅 registry + topic 转发', () => {
             payload: { sessionId: 's2', phase: 'running', compactDetail: 'other' },
           },
         ]);
+        await settleRetirementDelivery();
         expect(dispatchTesting.sessionActivityStageSize('ctrl-a')).toBe(0);
       } finally {
         vi.useRealTimers();
@@ -2187,10 +2358,13 @@ describe('被控端订阅 registry + topic 转发', () => {
 
         failNextPush(new DeviceLinkError('BACKPRESSURE', 'buffer full'));
         tapWindowBroadcast(SESSION_ACTIVITY_CHANNEL, { sessionId: 's1', phase: 'running', compactDetail: 'busy' });
+        await settleRetirementDelivery();
         expect(calls.push).toEqual([]);
+        await settleRetirementDelivery();
         expect(dispatchTesting.sessionActivityStageSize('ctrl-a')).toBe(1);
 
         await vi.advanceTimersByTimeAsync(dispatchTesting.sessionActivityDrainRetryMs);
+        await settleRetirementDelivery();
         expect(calls.push).toEqual([
           {
             dst: 'ctrl-a',
@@ -2203,8 +2377,10 @@ describe('被控端订阅 registry + topic 转发', () => {
         calls.push.length = 0;
         failNextPush(new DeviceLinkError('PAYLOAD_TOO_LARGE', 'too large'));
         tapWindowBroadcast(SESSION_ACTIVITY_CHANNEL, { sessionId: 's3', phase: 'running', compactDetail: 'x' });
+        await settleRetirementDelivery();
         expect(dispatchTesting.sessionActivityStageSize('ctrl-a')).toBe(0);
         tapWindowBroadcast(SESSION_ACTIVITY_CHANNEL, { sessionId: 's4', phase: 'running', compactDetail: 'y' });
+        await settleRetirementDelivery();
         expect(calls.push).toEqual([
           {
             dst: 'ctrl-a',
@@ -2217,7 +2393,7 @@ describe('被控端订阅 registry + topic 转发', () => {
       }
     });
 
-    it('定向 replay 只投给目标控制端,不扇出给其它订阅者;未订阅目标为 no-op', () => {
+    it('定向 replay 只投给目标控制端,不扇出给其它订阅者;未订阅目标为 no-op', async () => {
       remoteControlEnabled = true;
       const { client, calls, feed } = makeFakeClient();
       wireInboundDispatch(client);
@@ -2226,6 +2402,7 @@ describe('被控端订阅 registry + topic 转发', () => {
       calls.push.length = 0;
 
       pushSessionActivityToController('ctrl-b', { sessionId: 's1', phase: 'running', compactDetail: 'replay' });
+      await settleRetirementDelivery();
       expect(calls.push).toEqual([
         {
           dst: 'ctrl-b',
@@ -2237,7 +2414,9 @@ describe('被控端订阅 registry + topic 转发', () => {
       // 未订阅 sessions 的控制端:不投递、不暂存
       calls.push.length = 0;
       pushSessionActivityToController('ctrl-unknown', { sessionId: 's1', phase: 'running', compactDetail: 'replay' });
+      await settleRetirementDelivery();
       expect(calls.push).toEqual([]);
+      await settleRetirementDelivery();
       expect(dispatchTesting.sessionActivityStageSize('ctrl-unknown')).toBe(0);
     });
 
@@ -2253,18 +2432,22 @@ describe('被控端订阅 registry + topic 转发', () => {
         // 背压下暂存 → 随后 relay 离线
         setReliableSendQueueDepth(dispatchTesting.sessionActivityWindowSoftCap);
         tapWindowBroadcast(SESSION_ACTIVITY_CHANNEL, { sessionId: 's1', phase: 'completed', compactDetail: '', attention: false });
+        await settleRetirementDelivery();
         expect(dispatchTesting.sessionActivityStageSize('ctrl-a')).toBe(1);
         setStatus('connecting');
         setReliableSendQueueDepth(0);
 
         // 离线期间定时器照常触发:不投递、不丢暂存、继续自我调度
         await vi.advanceTimersByTimeAsync(dispatchTesting.sessionActivityDrainRetryMs * 3);
+        await settleRetirementDelivery();
         expect(calls.push).toEqual([]);
+        await settleRetirementDelivery();
         expect(dispatchTesting.sessionActivityStageSize('ctrl-a')).toBe(1);
 
         // 恢复在线:无需新活动事件/重订阅,下一轮重试自动投递
         setStatus('online');
         await vi.advanceTimersByTimeAsync(dispatchTesting.sessionActivityDrainRetryMs);
+        await settleRetirementDelivery();
         expect(calls.push).toEqual([
           {
             dst: 'ctrl-a',
@@ -2272,6 +2455,7 @@ describe('被控端订阅 registry + topic 转发', () => {
             payload: { sessionId: 's1', phase: 'completed', compactDetail: '', attention: false },
           },
         ]);
+        await settleRetirementDelivery();
         expect(dispatchTesting.sessionActivityStageSize('ctrl-a')).toBe(0);
       } finally {
         vi.useRealTimers();
@@ -2289,13 +2473,16 @@ describe('被控端订阅 registry + topic 转发', () => {
 
         setReliableSendQueueDepth(dispatchTesting.sessionActivityWindowSoftCap);
         tapWindowBroadcast(SESSION_ACTIVITY_CHANNEL, { sessionId: 's1', phase: 'running', compactDetail: 'staged' });
+        await settleRetirementDelivery();
         expect(dispatchTesting.sessionActivityStageSize('ctrl-a')).toBe(1);
 
         feed(subFrame('ctrl-a', UNSUB, ['sessions']));
+        await settleRetirementDelivery();
         expect(dispatchTesting.sessionActivityStageSize('ctrl-a')).toBe(0);
 
         setReliableSendQueueDepth(0);
         await vi.advanceTimersByTimeAsync(dispatchTesting.sessionActivityDrainRetryMs * 2);
+        await settleRetirementDelivery();
         expect(calls.push).toEqual([]);
       } finally {
         vi.useRealTimers();
@@ -2303,7 +2490,7 @@ describe('被控端订阅 registry + topic 转发', () => {
     });
   });
 
-  it('订阅 session:<id> → heavy 事件转发 + 横幅亮;纯 sessions 不亮横幅', () => {
+  it('订阅 session:<id> → heavy 事件转发 + 横幅亮;纯 sessions 不亮横幅', async () => {
     remoteControlEnabled = true;
     const changes: ActiveController[][] = [];
     setControllersChangedListener((cs) => changes.push(cs));
@@ -2311,12 +2498,15 @@ describe('被控端订阅 registry + topic 转发', () => {
     wireInboundDispatch(client);
 
     feed(subFrame('ctrl-a', SUB, ['sessions']));
+    await settleRetirementDelivery();
     expect(changes.at(-1)).toEqual([]); // 纯 sessions → 无横幅
 
     feed(subFrame('ctrl-a', SUB, ['session:s1'], 'MacA'));
+    await settleRetirementDelivery();
     expect(changes.at(-1)).toEqual([{ deviceId: 'ctrl-a', name: 'MacA' }]); // 横幅亮
 
     tapWindowBroadcast('maker:event', { sessionId: 's1', event: { t: 1 } });
+    await settleRetirementDelivery();
     expect(calls.push).toContainEqual({
       dst: 'ctrl-a',
       channel: 'maker:event',
@@ -2324,7 +2514,7 @@ describe('被控端订阅 registry + topic 转发', () => {
     });
   });
 
-  it('空 subscribe 保留 legacy wildcard，现代有效 subscribe 替换它且重复 open 不恢复', () => {
+  it('空 subscribe 保留 legacy wildcard，现代有效 subscribe 替换它且重复 open 不恢复', async () => {
     remoteControlEnabled = true;
     const { client, calls, feed } = makeFakeClient();
     wireInboundDispatch(client);
@@ -2341,19 +2531,24 @@ describe('被控端订阅 registry + topic 转发', () => {
         capabilities: ['provider-logo-kinds-v2'],
       },
     });
+    await settleRetirementDelivery();
     expect(getUpdateRelaunchControllers()).toEqual([
       { deviceId: 'ctrl-modern', name: 'Modern' },
     ]);
 
     feed(subFrame('ctrl-modern', SUB, ['*', 'garbage', 'session:', 'fs-watch:']));
+    await settleRetirementDelivery();
     expect(getUpdateRelaunchControllers()).toEqual([
       { deviceId: 'ctrl-modern', name: 'Modern' },
     ]);
 
     feed(subFrame('ctrl-modern', SUB, ['sessions'], 'Modern'));
 
+    await settleRetirementDelivery();
     expect(dispatchTesting.getActiveControllers()).toEqual([]);
+    await settleRetirementDelivery();
     expect(dispatchTesting.getUpdateRelaunchControllers()).toEqual([]);
+    await settleRetirementDelivery();
     expect(dispatchTesting.controllerSupports(
       'ctrl-modern',
       'provider-logo-kinds-v2',
@@ -2371,8 +2566,11 @@ describe('被控端订阅 registry + topic 转发', () => {
         capabilities: ['provider-logo-kinds-v2'],
       },
     });
+    await settleRetirementDelivery();
     expect(dispatchTesting.getActiveControllers()).toEqual([]);
+    await settleRetirementDelivery();
     expect(dispatchTesting.getUpdateRelaunchControllers()).toEqual([]);
+    await settleRetirementDelivery();
     expect(dispatchTesting.controllerSupports(
       'ctrl-modern',
       'provider-logo-kinds-v2',
@@ -2380,6 +2578,7 @@ describe('被控端订阅 registry + topic 转发', () => {
 
     tapWindowBroadcast('local-db:sessions:created', { sessionId: 's1' });
     tapWindowBroadcast('maker:event', { sessionId: 's1', event: {} });
+    await settleRetirementDelivery();
     expect(calls.push).toEqual([
       {
         dst: 'ctrl-modern',
@@ -2405,14 +2604,16 @@ describe('被控端订阅 registry + topic 转发', () => {
         appVersion: '1.0.0',
       },
     });
+    await settleRetirementDelivery();
     expect(getUpdateRelaunchControllers()).toEqual([]);
     feed(subFrame('ctrl-modern', SUB, ['session:s1'], 'Modern reconnect'));
+    await settleRetirementDelivery();
     expect(getUpdateRelaunchControllers()).toEqual([
       { deviceId: 'ctrl-modern', name: 'Modern reconnect' },
     ]);
   });
 
-  it('modern reconnect after releasing every topic waits for a fresh subscribe', () => {
+  it('modern reconnect after releasing every topic waits for a fresh subscribe', async () => {
     remoteControlEnabled = true;
     const { client, calls, feed } = makeFakeClient();
     wireInboundDispatch(client);
@@ -2447,11 +2648,13 @@ describe('被控端订阅 registry + topic 转发', () => {
     tapWindowBroadcast('local-db:sessions:created', { sessionId: 's1' });
     tapWindowBroadcast('maker:event', { sessionId: 's1', event: {} });
 
+    await settleRetirementDelivery();
     expect(calls.push).toEqual([]);
+    await settleRetirementDelivery();
     expect(getUpdateRelaunchControllers()).toEqual([]);
   });
 
-  it('dropAll closes an accepted modern reconnect before explicit subscribe', () => {
+  it('dropAll closes an accepted modern reconnect before explicit subscribe', async () => {
     remoteControlEnabled = true;
     const { client, calls, feed } = makeFakeClient();
     wireInboundDispatch(client);
@@ -2471,13 +2674,14 @@ describe('被控端订阅 registry + topic 转发', () => {
     });
     dropAllControllers(client, 'shutdown');
 
+    await settleRetirementDelivery();
     expect(calls.closed).toContainEqual({
       dst: 'ctrl-modern',
       reason: 'shutdown',
     });
   });
 
-  it('无人值守更新忽略纯 sessions viewer，但保护文件浏览和实际会话控制', () => {
+  it('无人值守更新忽略纯 sessions viewer，但保护文件浏览和实际会话控制', async () => {
     remoteControlEnabled = true;
     const changes: Array<{
       controlled: ActiveController[];
@@ -2491,55 +2695,69 @@ describe('被控端订阅 registry + topic 转发', () => {
 
     feed(subFrame('ctrl-empty', SUB, []));
     feed(subFrame('ctrl-invalid', SUB, ['*', 'garbage', 'session:', 'fs-watch:']));
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toEqual([]);
 
     feed(subFrame('ctrl-viewer', SUB, ['sessions'], 'Viewer'));
 
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toEqual([]);
+    await settleRetirementDelivery();
     expect(getUpdateRelaunchControllers()).toEqual([]);
+    await settleRetirementDelivery();
     expect(changes.at(-1)).toEqual({ controlled: [], updateBusy: [] });
 
     feed(subFrame('ctrl-viewer', SUB, ['fs-watch:/repo'], 'Viewer'));
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toEqual([]);
+    await settleRetirementDelivery();
     expect(getUpdateRelaunchControllers()).toEqual([
       { deviceId: 'ctrl-viewer', name: 'Viewer' },
     ]);
+    await settleRetirementDelivery();
     expect(changes.at(-1)).toEqual({
       controlled: [],
       updateBusy: [{ deviceId: 'ctrl-viewer', name: 'Viewer' }],
     });
 
     feed(subFrame('ctrl-viewer', UNSUB, ['fs-watch:/repo']));
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toEqual([]);
+    await settleRetirementDelivery();
     expect(getUpdateRelaunchControllers()).toEqual([]);
+    await settleRetirementDelivery();
     expect(changes.at(-1)).toEqual({ controlled: [], updateBusy: [] });
 
     feed(subFrame('ctrl-viewer', SUB, ['session:s1'], 'Viewer'));
+    await settleRetirementDelivery();
     expect(getActiveControllers()).toEqual([
       { deviceId: 'ctrl-viewer', name: 'Viewer' },
     ]);
+    await settleRetirementDelivery();
     expect(getUpdateRelaunchControllers()).toEqual([
       { deviceId: 'ctrl-viewer', name: 'Viewer' },
     ]);
+    await settleRetirementDelivery();
     expect(changes.at(-1)).toEqual({
       controlled: [{ deviceId: 'ctrl-viewer', name: 'Viewer' }],
       updateBusy: [{ deviceId: 'ctrl-viewer', name: 'Viewer' }],
     });
   });
 
-  it('多控制端:各只收自己订阅 session 的 push', () => {
+  it('多控制端:各只收自己订阅 session 的 push', async () => {
     remoteControlEnabled = true;
     const { client, calls, feed } = makeFakeClient();
     wireInboundDispatch(client);
     feed(subFrame('ctrl-a', SUB, ['session:s1']));
     feed(subFrame('ctrl-b', SUB, ['session:s2']));
     tapWindowBroadcast('maker:event', { sessionId: 's1', event: {} });
+    await settleRetirementDelivery();
     expect(calls.push).toEqual([
       { dst: 'ctrl-a', channel: 'maker:event', payload: { sessionId: 's1', event: {} } },
     ]);
   });
 
-  it('device-link strips Desktop-only plugin setup helpers without mutating local push', () => {
+  it('device-link strips Desktop-only plugin setup helpers without mutating local push', async () => {
     remoteControlEnabled = true;
     const { client, calls, feed } = makeFakeClient();
     wireInboundDispatch(client);
@@ -2582,7 +2800,9 @@ describe('被控端订阅 registry + topic 转发', () => {
 
     tapWindowBroadcast(MAKER_PUSH.INTERACTION_REQUEST, payload);
 
+    await settleRetirementDelivery();
     expect(calls.push).toHaveLength(1);
+    await settleRetirementDelivery();
     expect(calls.push[0]).toMatchObject({
       dst: 'ctrl-a',
       channel: MAKER_PUSH.INTERACTION_REQUEST,
@@ -2611,7 +2831,9 @@ describe('被控端订阅 registry + topic 转发', () => {
         },
       },
     });
+    await settleRetirementDelivery();
     expect(JSON.stringify(calls.push[0].payload)).not.toContain('desktop-only.example');
+    await settleRetirementDelivery();
     expect(payload.request.steps[0].action.form.fields[0].externalLink).toEqual({
       url: 'https://desktop-only.example/keys',
     });
@@ -2621,7 +2843,7 @@ describe('被控端订阅 registry + topic 转发', () => {
     'issue_confirm',
     'rename_sessions_confirm',
     'ghost_grant_confirm',
-  ])('device-link forwards a redacted Desktop-only %s live status', (kind) => {
+  ])('device-link forwards a redacted Desktop-only %s live status', async (kind) => {
     remoteControlEnabled = true;
     const { client, calls, feed } = makeFakeClient();
     wireInboundDispatch(client);
@@ -2637,7 +2859,9 @@ describe('被控端订阅 registry + topic 转发', () => {
       },
     });
 
+    await settleRetirementDelivery();
     expect(calls.push).toHaveLength(1);
+    await settleRetirementDelivery();
     expect(calls.push[0]).toMatchObject({
       dst: 'ctrl-a',
       channel: MAKER_PUSH.INTERACTION_REQUEST,
@@ -2646,11 +2870,13 @@ describe('被控端订阅 registry + topic 转发', () => {
         request: { kind, requestId: expect.stringMatching(/^desktop-confirm-/) },
       },
     });
+    await settleRetirementDelivery();
     expect(JSON.stringify(calls.push[0].payload)).not.toContain('private');
+    await settleRetirementDelivery();
     expect(JSON.stringify(calls.push[0].payload)).not.toContain(`${kind}-1`);
   });
 
-  it('device-link dismisses a Desktop-only status with its opaque request id', () => {
+  it('device-link dismisses a Desktop-only status with its opaque request id', async () => {
     remoteControlEnabled = true;
     const { client, calls, feed } = makeFakeClient();
     wireInboundDispatch(client);
@@ -2661,6 +2887,7 @@ describe('被控端订阅 registry + topic 转发', () => {
       sessionId: 's1',
       request: { kind: 'issue_confirm', requestId: sourceRequestId, draft: { title: 'private' } },
     });
+    await settleRetirementDelivery();
     const remoteRequestId = (calls.push[0].payload as {
       request: { requestId: string };
     }).request.requestId;
@@ -2671,25 +2898,29 @@ describe('被控端订阅 registry + topic 转发', () => {
       reason: 'resolved',
     });
 
+    await settleRetirementDelivery();
     expect(calls.push[1]).toMatchObject({
       dst: 'ctrl-a',
       channel: MAKER_PUSH.INTERACTION_DISMISSED,
       payload: { sessionId: 's1', requestId: remoteRequestId, reason: 'resolved' },
     });
+    await settleRetirementDelivery();
     expect(JSON.stringify(calls.push[1].payload)).not.toContain(sourceRequestId);
   });
 
-  it('explicit unsubscribe removes the final remembered topic and stops the tap', () => {
+  it('explicit unsubscribe removes the final remembered topic and stops the tap', async () => {
     remoteControlEnabled = true;
     const { client, feed } = makeFakeClient();
     wireInboundDispatch(client);
     feed(subFrame('ctrl-a', SUB, ['sessions']));
+    await settleRetirementDelivery();
     expect(hasBroadcastTapListener()).toBe(true);
     feed(subFrame('ctrl-a', UNSUB, ['sessions']));
+    await settleRetirementDelivery();
     expect(hasBroadcastTapListener()).toBe(false);
   });
 
-  it('relay-offline queues broadcasts for active topic subscribers', () => {
+  it('relay-offline queues broadcasts for active topic subscribers', async () => {
     remoteControlEnabled = true;
     const { client, calls, feed, setStatus } = makeFakeClient();
     wireInboundDispatch(client);
@@ -2701,7 +2932,9 @@ describe('被控端订阅 registry + topic 转发', () => {
       id: 'm1',
     });
 
+    await settleRetirementDelivery();
     expect(calls.push).toEqual([]);
+    await settleRetirementDelivery();
     expect(dispatchTesting.queuedPushesFor('ctrl-a')).toEqual([
       {
         channel: 'local-db:messages:created',
@@ -2711,20 +2944,23 @@ describe('被控端订阅 registry + topic 转发', () => {
     ]);
   });
 
-  it('presence-offline keeps the tap alive and queues broadcasts for remembered topics', () => {
+  it('presence-offline keeps the tap alive and queues broadcasts for remembered topics', async () => {
     remoteControlEnabled = true;
     const { client, calls, feed } = makeFakeClient();
     wireInboundDispatch(client);
     feed(subFrame('ctrl-a', SUB, ['session:s1']));
     handleControllerOffline('ctrl-a');
 
+    await settleRetirementDelivery();
     expect(hasBroadcastTapListener()).toBe(true);
     tapWindowBroadcast('local-db:messages:created', {
       sessionId: 's1',
       id: 'm1',
     });
 
+    await settleRetirementDelivery();
     expect(calls.push).toEqual([]);
+    await settleRetirementDelivery();
     expect(dispatchTesting.queuedPushesFor('ctrl-a')).toEqual([
       {
         channel: 'local-db:messages:created',
@@ -2734,16 +2970,18 @@ describe('被控端订阅 registry + topic 转发', () => {
     ]);
   });
 
-  it('开关关闭 → subscribe 帧回 REMOTE_DISABLED,不记录', () => {
+  it('开关关闭 → subscribe 帧回 REMOTE_DISABLED,不记录', async () => {
     remoteControlEnabled = false;
     const { client, calls, feed } = makeFakeClient();
     wireInboundDispatch(client);
     feed(subFrame('ctrl-a', SUB, ['sessions']));
+    await settleRetirementDelivery();
     expect(calls.invokeResult).toContainEqual({
       dst: 'ctrl-a',
       requestId: 'q-ctrl-a-sessions',
       payload: { ok: false, error: { code: 'REMOTE_DISABLED', message: 'remote control disabled' } },
     });
+    await settleRetirementDelivery();
     expect(hasBroadcastTapListener()).toBe(false);
   });
 });
@@ -2754,7 +2992,9 @@ describe('远程 set-* 持久化回流', () => {
     setRemoteSettingsPersist(persist);
     registry.register('maker:set-model', () => undefined);
     const r = await runInvoke('ctrl-a', { channel: 'maker:set-model', args: ['sess-1', 'claude-x'] });
+    await settleRetirementDelivery();
     expect(r).toMatchObject({ ok: true });
+    await settleRetirementDelivery();
     expect(persist).toHaveBeenCalledWith('sess-1', { model: 'claude-x' });
   });
 
@@ -2774,7 +3014,9 @@ describe('远程 set-* 持久化回流', () => {
       args: ['sess-1', 'small-pi-model', 'pi-provider'],
     });
 
+    await settleRetirementDelivery();
     expect(r).toEqual({ ok: true, result: confirmation });
+    await settleRetirementDelivery();
     expect(persist).not.toHaveBeenCalled();
   });
 
@@ -2791,7 +3033,9 @@ describe('远程 set-* 持久化回流', () => {
       args: ['sess-1', 'small-pi-model', 'pi-provider'],
     });
 
+    await settleRetirementDelivery();
     expect(r).toEqual({ ok: true, result: confirmation });
+    await settleRetirementDelivery();
     expect(persist).not.toHaveBeenCalled();
   });
 
@@ -2805,7 +3049,9 @@ describe('远程 set-* 持久化回流', () => {
       args: ['sess-1', 'claude-x', '  anthropic  '],
     });
 
+    await settleRetirementDelivery();
     expect(r).toMatchObject({ ok: true });
+    await settleRetirementDelivery();
     expect(persist).toHaveBeenCalledWith('sess-1', {
       model: 'claude-x',
       providerId: 'anthropic',
@@ -2822,7 +3068,9 @@ describe('远程 set-* 持久化回流', () => {
       args: ['sess-1', 'stale-model', 'stale-provider', 7],
     });
 
+    await settleRetirementDelivery();
     expect(r).toEqual({ ok: true, result: { deferred: false, superseded: true } });
+    await settleRetirementDelivery();
     expect(persist).not.toHaveBeenCalled();
   });
 
@@ -2842,7 +3090,9 @@ describe('远程 set-* 持久化回流', () => {
       args: ['sess-1', 'claude-x', 'anthropic'],
     });
 
+    await settleRetirementDelivery();
     expect(r).toEqual({ ok: true, result: handlerResult });
+    await settleRetirementDelivery();
     expect(persist).not.toHaveBeenCalled();
   });
 
@@ -2855,7 +3105,9 @@ describe('远程 set-* 持久化回流', () => {
     const result = await runInvoke('ctrl-a', {
       channel: channel as string, args: ['sess-1', value],
     });
+    await settleRetirementDelivery();
     expect(result).toEqual({ ok: true, result: response });
+    await settleRetirementDelivery();
     expect(persist).not.toHaveBeenCalled();
   });
 
@@ -2864,6 +3116,7 @@ describe('远程 set-* 持久化回流', () => {
     setRemoteSettingsPersist(persist);
     registry.register('maker:set-fast-mode', () => undefined);
     await runInvoke('ctrl-a', { channel: 'maker:set-fast-mode', args: ['sess-1', true] });
+    await settleRetirementDelivery();
     expect(persist).toHaveBeenCalledWith('sess-1', { fastMode: true });
   });
 
@@ -2872,6 +3125,7 @@ describe('远程 set-* 持久化回流', () => {
     setRemoteSettingsPersist(persist);
     registry.register('maker:set-plan-mode', () => undefined);
     await runInvoke('ctrl-a', { channel: 'maker:set-plan-mode', args: ['sess-1', true] });
+    await settleRetirementDelivery();
     expect(persist).toHaveBeenCalledWith('sess-1', { planModeEnabled: true });
   });
 
@@ -2893,7 +3147,9 @@ describe('远程 set-* 持久化回流', () => {
     });
 
     for (let i = 0; i < 5; i++) await Promise.resolve();
+    await settleRetirementDelivery();
     expect(persist).toHaveBeenCalledWith('sess-1', { model: 'claude-x' });
+    await settleRetirementDelivery();
     expect(resolved).toBe(false);
 
     resolvePersist();
@@ -2912,6 +3168,7 @@ describe('远程 set-* 持久化回流', () => {
       args: ['sess-1', true],
     });
 
+    await settleRetirementDelivery();
     expect(r).toMatchObject({
       ok: false,
       error: { code: 'IPC_ERROR', message: 'db write failed' },
@@ -2923,12 +3180,14 @@ describe('远程 set-* 持久化回流', () => {
     setRemoteSettingsPersist(persist);
     registry.register('maker:list-active', () => []);
     await runInvoke('ctrl-a', { channel: 'maker:list-active', args: [] });
+    await settleRetirementDelivery();
     expect(persist).not.toHaveBeenCalled();
   });
 
   it('未注入 persist 时 set-model 仍正常(no-op 回流)', async () => {
     registry.register('maker:set-model', () => undefined);
     const r = await runInvoke('ctrl-a', { channel: 'maker:set-model', args: ['sess-1', 'm'] });
+    await settleRetirementDelivery();
     expect(r).toMatchObject({ ok: true });
   });
 });
@@ -2946,17 +3205,28 @@ describe('remote subscription data reads', () => {
     await expect(runInvoke('ctrl', { channel, args: ['account-2'] })).resolves.toEqual({
       ok: true, result: { providerId: 'account-2', fiveHour: { utilization: 12 } },
     });
+    await settleRetirementDelivery();
     expect(reader).toHaveBeenCalledWith('account-2');
+    await settleRetirementDelivery();
     expect(ipcHandler).not.toHaveBeenCalled();
     reader.mockClear();
     await expect(runInvoke('ctrl', { channel, args: [42] })).resolves.toMatchObject({ ok: false, error: { code: 'IPC_ERROR', message: expect.stringContaining('[INVALID_PARAMS]') } });
+    await settleRetirementDelivery();
     expect(reader).not.toHaveBeenCalled();
     remoteControlEnabled = false;
     await expect(runInvoke('ctrl', { channel, args: ['account-2'] })).resolves.toMatchObject({ ok: false, error: { code: 'REMOTE_DISABLED' } });
+    await settleRetirementDelivery();
     expect(reader).not.toHaveBeenCalled();
     remoteControlEnabled = true;
     revokedControllers = ['ctrl'];
     await expect(runInvoke('ctrl', { channel, args: ['account-2'] })).resolves.toMatchObject({ ok: false, error: { code: 'ACCESS_REVOKED' } });
+    await settleRetirementDelivery();
     expect(reader).not.toHaveBeenCalled();
   });
 });
+
+/** Drain the asynchronous ownership read and delivery queue without advancing retry deadlines. */
+async function settleRetirementDelivery(): Promise<void> {
+  if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(0);
+  else await new Promise<void>(resolve => setTimeout(resolve, 0));
+}

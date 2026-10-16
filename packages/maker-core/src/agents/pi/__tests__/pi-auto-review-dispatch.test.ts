@@ -3090,54 +3090,35 @@ describe('pi auto-review dispatch & spawn config (mocked pi process)', () => {
     }
   });
 
-  it('keeps Bot tools and memory independent of global memory while honoring task permissions', async () => {
+  it.each([true, false])('preserves native tools and honors task permissions with host memory=%s', async memoryEnabled => {
     const deps = buildDeps(undefined, false, { serverNames: ['cindy_memory', 'cindy_helper'] });
-    deps.resolvePiGlobalContextHome = vi.fn(() => { throw new Error('Bot must not read user context'); });
-    deps.getGhostRosterPrompt = vi.fn(() => 'BOT ROSTER');
-    deps.runtimeConfig.memoryEnabled = false;
+    deps.getGhostRosterPrompt = vi.fn(() => 'TASK ROSTER');
+    deps.runtimeConfig.memoryEnabled = memoryEnabled;
     const handle = await new PiAgent(deps).startSession({
-      sessionId: 'bot-read-only-session',
+      sessionId: 'task-memory-session',
       workingDir: cwd,
       model: 'm',
       permissionMode: 'bypassPermissions',
-      botProfilePrompt: 'BOT SOUL: research without changing the project.',
-      makerMemoryScopeKey: 'bot:bot-read-only',
+      makerMemoryScopeKey: 'project:task-memory',
       makerMemoryEnabled: true,
-      makerMemoryIndexSnapshot: '## Bot Memory\n- frozen memory',
-      botUserProfilePrompt: '## User Profile\nCall the user Chris.',
+      makerMemoryIndexSnapshot: '## Task Memory\n- frozen memory',
       userPrompt: 'GLOBAL USER PROMPT',
-      botRuntimeProfile: {
-        botId: 'bot-read-only',
-        profileVersion: 1,
-        skillPolicy: { mode: 'allowlist', configured: [], catalog: [] },
-        mcpPolicy: { mode: 'allowlist', configured: [], catalog: [] },
-        toolsetPolicy: { mode: 'allowlist', configured: [], catalog: [] },
-      },
     });
     try {
       expect(captured.args).not.toContain('--tools');
       expect(captured.mcpVendorOptions).toBeDefined();
-      expect(captured.mcpMemoryEnabled).toBe(true);
+      expect(captured.mcpMemoryEnabled).toBe(memoryEnabled);
       const extensionPaths = captured.args.flatMap((arg, index) =>
         arg === '--extension' ? [captured.args[index + 1]] : []);
       expect(extensionPaths).toEqual(expect.arrayContaining([
         path.posix.join(captured.env.PI_CODING_AGENT_DIR!, 'internal-extensions', 'cindy-bridge.ts'),
         path.posix.join(captured.env.PI_CODING_AGENT_DIR!, 'internal-extensions', 'cindy-subagent.ts'),
       ]));
-      // Bot 共享普通任务的子代理能力，但仍保留独立人格和记忆，
-      // 不从 cwd 链加载项目/全局 AGENTS.md。
-      expect(captured.args).toContain('--no-context-files');
-      expect(deps.resolvePiGlobalContextHome).not.toHaveBeenCalled();
       const promptIndex = captured.args.indexOf('--append-system-prompt');
-      expect(captured.args[promptIndex + 1]).toContain('BOT SOUL');
-      expect(captured.args[promptIndex + 1]).not.toContain('BOT ROSTER');
-      expect(captured.args[promptIndex + 1]).not.toContain('You are Cindy.');
-      expect(captured.args[promptIndex + 1]).not.toContain('GLOBAL USER PROMPT');
-      expect(captured.args[promptIndex + 1]).toContain('frozen memory');
-      expect(captured.args[promptIndex + 1]).toContain('Call the user Chris');
-      expect(captured.args[promptIndex + 1].indexOf('frozen memory')).toBeLessThan(
-        captured.args[promptIndex + 1].indexOf('Call the user Chris'),
-      );
+      expect(captured.args[promptIndex + 1]).toContain('GLOBAL USER PROMPT');
+      expect(captured.args[promptIndex + 1]).toContain('TASK ROSTER');
+      if (memoryEnabled) expect(captured.args[promptIndex + 1]).toContain('frozen memory');
+      else expect(captured.args[promptIndex + 1]).not.toContain('frozen memory');
 
       const permissionFile = captured.env.CINDY_PI_PERMISSION_FILE;
       expect(permissionFile).toBeTruthy();

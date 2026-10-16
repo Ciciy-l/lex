@@ -1,6 +1,6 @@
 import type { SessionPathAuthorization, SessionPathAuthorizationRequest } from '@cindy/mcps';
-import { getBotAuthorizationService } from '../maker-ipc/botAuthorizationService.js';
-import { isBotAuthorizationSession } from '../maker-ipc/botAuthorizationHost.js';
+
+
 import { createPluginMarketAgentTools } from '../plugin-market/agentTools.js';
 import type { GhostInstallConsentPrompt } from '../cindy-brain/ghostInstallConsent.js';
 import {
@@ -1453,14 +1453,6 @@ export function getCindyGhostsMcpDeps(
             marketTools.install(request, signal),
         }
       : {}),
-    connectAccount: async (target) => {
-      const context = resolveSessionContext();
-      const sessionId = ghostSetupInteractionSessionId(context);
-      if (!sessionId) return { ok: false, errorCode: 'NO_SESSION_CONTEXT' };
-      const service = getBotAuthorizationService();
-      if (!service) return { ok: false, errorCode: 'HOST_NOT_READY' };
-      return service.request(sessionId, target);
-    },
     callMedia: async (request) => {
       const sessionContext = resolveSessionContext();
       const sessionId = sessionContext?.sessionId;
@@ -1535,7 +1527,7 @@ export function getCindyGhostsMcpDeps(
     // 宁缺勿全,不注入工具描述;Codex 正常 startSession 的 developerInstructions
     // 会在拿到真实 workdir 后单独装配 system 段。
     //
-    // 伙伴冻结 Toolset 只清空本花名册快照（不把全量插件写进工具描述）；
+      // 显式冻结 Toolset 只清空本花名册快照（不把全量插件写进工具描述）；
     // ghost_list / ghost_info / ghost_call 仍按实时可见性发现已装插件，
     // 内置工具冻结名单不套到插件 ID；授权卡同样由 Host 按实时插件可见性守门。
     getRosterItems() {
@@ -1654,13 +1646,6 @@ export function getCindyGhostsMcpDeps(
           errorCode: 'INTERNAL',
           message: '插件设置通道尚未就绪，本次调用未执行。',
         };
-      }
-      const authorizationSessionId = ghostSetupInteractionSessionId(sessionContext);
-      const authorizationService = getBotAuthorizationService();
-      if (authorizationService && authorizationSessionId && await isBotAuthorizationSession(authorizationSessionId)) {
-        const service = authorizationService;
-        const card = await service.request(authorizationSessionId, { kind: 'plugin', id: ghostId, ...(setupPlan && getGhostSetupAssessment(ghostId).reauthSuggest ? { reauthorize: true } : {}) }, setupPlan);
-        if (!card.ok) return card;
       }
       const setup = await setupCoordinator.ensureReady({
         sessionId: ghostSetupInteractionSessionId(sessionContext),

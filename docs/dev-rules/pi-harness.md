@@ -122,7 +122,8 @@ Skill 停用适配同时保存物理身份与管理页已扫描的词法发现�
 `AGENTS.override.md` → `AGENTS.md` → `AGENTS.MD` → `CLAUDE.md` → `CLAUDE.MD`。
 本机尊重启动 Cindy 时的 `PI_CODING_AGENT_DIR`
 覆写（支持 `~`）。SSH 使用远端 `$HOME/.pi/agent`，不读取控制端个人文件；手机／设备互联
-控制本机任务复用桌面链路。Bot 保持 `--no-context-files`，不读取或复制这些全局约定。
+控制本机任务复用桌面链路。Lex 0.1.6 已退休产品伙伴，旧伙伴任务不再启动或恢复，见
+[伙伴退休与旧资料保留](../product-rules/lex-companion-retirement.md)。
 
 每次启动读取软链目标并复制内容到独立 `configHome`，不建立指向用户文件的可写链接。
 用户更新约定后，新启动的任务读取新版；运行中的任务保留启动快照。SSH 的配置目录身份
@@ -204,10 +205,10 @@ Pi CLI 管理入口、内核自更新与旧工具兼容的执行边界见
    存在明确安装且未停用的用户包根时，为保留 Pi 原生 package discovery 可以只省略
    `--no-extensions`：包根只能来自 Main 生成的 runtime `settings.json`，`--no-approve` 仍禁止
    读取项目 `.pi/settings.json` 与自动安装项目 packages，不得因此传 `--approve`。
-   本地非 Review、非 Bot、非 SSH 的 root 任务用重复 `--skill` / `--prompt-template` /
+   本地非 Review、非 SSH 的 root 任务用重复 `--skill` / `--prompt-template` /
    `--extension` 把仓库原路径交给 Pi：`.pi/skills` 与 cwd→git root 内 `.agents/skills`
    的目录型 Skill、`.pi/prompts/*.md`、`.pi/extensions/*.ts` 与 `*/index.ts`。越界 symlink
-   不传入。root 仍回装 Cindy 自有 bridge/subagent 与 pinned plan-mode。Review、Bot、子代理、
+   不传入。root 仍回装 Cindy 自有 bridge/subagent 与 pinned plan-mode。Review、子代理、
    离线 `forkSdkSession` 克隆进程与远端会话不带这些项目资源。随后以 `resumeSessionId`
    恢复的本地根任务（含 fork 之后的恢复）与普通本地任务相同，加载项目资源。
    不得读取/复制项目 `.pi/settings.json`，不得传 `--approve`，

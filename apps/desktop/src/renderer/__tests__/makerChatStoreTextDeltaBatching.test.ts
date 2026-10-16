@@ -1818,9 +1818,9 @@ describe('makerChatStore text delta batching', () => {
     vi.advanceTimersByTime(32);
     // Leave a delta queued so the snapshot also exercises the batching boundary.
     pushText('maker:event', ' queued');
-    pushText('maker:session-sync', 'complete snapshot', { model: 'old-model', botPrivateReply: true });
+    pushText('maker:session-sync', 'complete snapshot', { model: 'old-model', });
     const agentMeta = {
-      model: 'updated-model', parentUuid: 'parent-tool', turnCompleted: true, botPrivateReply: false,
+      model: 'updated-model', parentUuid: 'parent-tool', turnCompleted: true,
     };
     // Metadata can change even when the authoritative text is identical.
     pushText('maker:session-sync', 'complete snapshot', agentMeta);
@@ -1828,7 +1828,7 @@ describe('makerChatStore text delta batching', () => {
       streamingClientId: 'assistant-1', streamingText: 'complete snapshot', lastAgentMeta: agentMeta,
       messages: [expect.objectContaining({
         clientId: 'assistant-1', content: 'complete snapshot', isStreaming: true,
-        model: 'updated-model', parentToolUseId: 'parent-tool', turnCompleted: true, botPrivateReply: false,
+        model: 'updated-model', parentToolUseId: 'parent-tool', turnCompleted: true,
       })],
     });
 
@@ -1839,7 +1839,7 @@ describe('makerChatStore text delta batching', () => {
       streamingText: 'complete snapshot without metadata tail', lastAgentMeta: agentMeta,
       messages: [expect.objectContaining({
         content: 'complete snapshot without metadata tail', model: 'updated-model',
-        parentToolUseId: 'parent-tool', turnCompleted: true, botPrivateReply: false,
+        parentToolUseId: 'parent-tool', turnCompleted: true,
       })],
     });
   });
@@ -1859,11 +1859,11 @@ describe('makerChatStore text delta batching', () => {
       });
     };
     pushText('assistant-1', 'old answer', { model: 'old-model' }, true);
-    const currentMeta = { model: 'current-model', parentUuid: 'current-parent', botPrivateReply: false };
+    const currentMeta = { model: 'current-model', parentUuid: 'current-parent', };
     pushText('assistant-2', 'new answer', currentMeta, false);
     pushText('assistant-2', 'new answer complete', currentMeta, false);
     pushText('assistant-1', 'repaired old answer', {
-      model: 'repaired-model', parentUuid: 'old-parent', turnCompleted: true, botPrivateReply: true,
+      model: 'repaired-model', parentUuid: 'old-parent', turnCompleted: true,
     }, false);
 
     expect(makerChatStore.getSnapshot(SESSION_ID)).toMatchObject({
@@ -1875,7 +1875,7 @@ describe('makerChatStore text delta batching', () => {
         }),
         expect.objectContaining({
           clientId: 'assistant-2', content: 'new answer complete', isStreaming: true,
-          model: 'current-model', parentToolUseId: 'current-parent', botPrivateReply: false,
+          model: 'current-model', parentToolUseId: 'current-parent',
         }),
       ],
     });

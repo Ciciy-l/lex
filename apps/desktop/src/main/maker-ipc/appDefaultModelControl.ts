@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { isModelVisible, type ProviderView } from '@cindy/model-providers';
-import { defaultBotModelChain } from '../../shared/botDefaultModelChain.js';
-import type { BotModelRoute } from '../../shared/botModelChain.js';
+import { resolveSelectedModelRoutes } from '../../shared/selectedModelRoutes.js';
+import type { ModelRoute } from '../../shared/modelRoute.js';
 import { sameModelRoute, type AppDefaultModelSelection } from '../../shared/appDefaultModelSelection.js';
 import { activeOwnerScopeKey, getActiveDataOwnerPushStamp, isAppSessionBoundaryPending } from '../appSessionState.js';
 import { getDesktopProviderService } from '../maker-host/createDesktopProviderService.js';
@@ -17,18 +17,18 @@ export function configureAppDefaultModelSelection(dispatch: typeof dispatchSelec
 
 export function availableAppDefaultModels(input: {
   providers: readonly ProviderView[];
-  currentRoute?: BotModelRoute | null;
+  currentRoute?: ModelRoute | null;
   tuning?: (agent: 'claude-code' | 'codex' | 'pi' | 'omp', providerId: string, model: string) => { effort?: string; fastMode?: boolean };
   availableAgents: ReadonlySet<'cc' | 'codex' | 'pi' | 'omp'>;
-  enabled: NonNullable<Parameters<typeof defaultBotModelChain>[0]['isModelEnabled']>;
+  enabled: NonNullable<Parameters<typeof resolveSelectedModelRoutes>[0]['isModelEnabled']>;
 }) {
-  const current = defaultBotModelChain({ providers: input.providers, providersLoading: false,
+  const current = resolveSelectedModelRoutes({ providers: input.providers, providersLoading: false,
     availableAgents: input.availableAgents, availableAgentsLoaded: true,
     preferredRoute: input.currentRoute ?? undefined, isModelEnabled: input.enabled })[0];
   return input.providers.flatMap(provider => (['claude-code', 'codex', 'pi', 'omp'] as const).flatMap(agent =>
     (provider.models[agent] ?? []).flatMap(model => {
       const remembered = input.tuning?.(agent, provider.id, model.id);
-      const route: BotModelRoute = { harness: agent === 'claude-code' ? 'claude' : agent,
+      const route: ModelRoute = { harness: agent === 'claude-code' ? 'claude' : agent,
         providerId: provider.id, model: model.id,
         effort: model.defaultEffort && model.efforts.includes(model.defaultEffort) ? model.defaultEffort : '',
         fastMode: false };
@@ -41,7 +41,7 @@ export function availableAppDefaultModels(input: {
       if (remembered?.effort !== undefined) route.effort = model.efforts.some(effort => effort === remembered.effort)
         ? remembered.effort : (model.defaultEffort && model.efforts.includes(model.defaultEffort) ? model.defaultEffort : '');
       if (remembered?.fastMode !== undefined) route.fastMode = model.supportsFastMode === true && remembered.fastMode;
-      const valid = defaultBotModelChain({ providers: input.providers, providersLoading: false,
+      const valid = resolveSelectedModelRoutes({ providers: input.providers, providersLoading: false,
         availableAgents: input.availableAgents, availableAgentsLoaded: true,
         preferredRoute: route, isModelEnabled: input.enabled });
       return valid.length ? [{ id: JSON.stringify([route.harness, route.providerId, route.model]),
@@ -81,7 +81,7 @@ export interface TaskModelSelection {
 }
 
 /** Resolve one per-task selection from the live catalog; never mutate picker/default preferences. */
-export async function resolveTaskModelSelection(selection: TaskModelSelection): Promise<BotModelRoute> {
+export async function resolveTaskModelSelection(selection: TaskModelSelection): Promise<ModelRoute> {
   const { available } = await inspectAppDefaultModel();
   const option = available.find(entry => entry.id === selection.id);
   if (!option) throw new Error('任务模型已不可用，请重新查询可用模型');
@@ -97,8 +97,8 @@ export async function resolveTaskModelSelection(selection: TaskModelSelection): 
   };
 }
 
-/** Check a saved full route without changing the application or teammate's primary model. */
-export async function validateTaskModel(route: BotModelRoute): Promise<boolean> {
+/** Check a saved full route without changing the application's primary model. */
+export async function validateTaskModel(route: ModelRoute): Promise<boolean> {
   const { available } = await inspectAppDefaultModel();
   return available.some(entry => entry.route.harness === route.harness
     && entry.route.model === route.model && entry.route.providerId === route.providerId

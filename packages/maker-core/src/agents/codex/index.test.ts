@@ -369,64 +369,6 @@ function createDeps(
 }
 
 describe('Codex managed Skill startup', () => {
-  it('does not submit a Bot thread when refreshed discovery has an unscoped error', async () => {
-    const agent = new CodexAgent(createDeps({}, { prepareCodexSkills: async () => {} }));
-    const host = installFakeHost(agent, method => method === Method.SkillsList
-      ? { data: [{ cwd: '/repo', skills: [], errors: [{ message: 'catalog unavailable' }] }] } : undefined,
-    { codexHome: '/tmp/mock-codex-home' });
-    try {
-      await expect(agent.startSession({ sessionId: 'bot-error', workingDir: '/repo', model: 'gpt-5.4',
-        botRuntimeProfile: { botId: 'bot-1', profileVersion: 1,
-          skillPolicy: { mode: 'allowlist', configured: [], catalog: [] },
-          mcpPolicy: { mode: 'allowlist', configured: [], catalog: [] },
-          toolsetPolicy: { mode: 'allowlist', configured: [], catalog: [] },
-        },
-      })).rejects.toThrow('catalog unavailable');
-      expect(host.request.mock.calls.some(([method]) => method === Method.ThreadStart || method === Method.ThreadResume)).toBe(false);
-    } finally { await agent.dispose(); }
-  });
-
-  it.each(['start', 'resume'] as const)('keeps late discovered skills outside frozen Bot grants on %s', async (operation) => {
-    let projected = false;
-    const known = '/skills/approved/SKILL.md';
-    const late = '/skills/late/SKILL.md';
-    const failed = '/skills/failed/SKILL.md';
-    const own = '/bots/bot-1/skills/own/SKILL.md';
-    const agent = new CodexAgent(createDeps({}, {
-      prepareCodexSkills: async () => { projected = true; },
-    }));
-    const host = installFakeHost(agent, (method) => {
-      if (method !== Method.SkillsList) return undefined;
-      expect(projected).toBe(true);
-      return { data: [{ cwd: '/repo', errors: [], skills: [known, late, failed].map(source => ({
-        name: 'same-name', description: 'fixture', path: source, scope: 'user', enabled: true,
-      })) }] };
-    }, { codexHome: '/tmp/mock-codex-home', userAgent: 'mock-codex/0.145.0' });
-    try {
-      for (const restricted of [false, true]) {
-        const handle = await agent.startSession({
-          sessionId: `bot-${restricted}`, model: 'gpt-5.4', workingDir: '/repo',
-          ...(operation === 'resume' ? { resumeSessionId: '11111111-1111-4111-8111-111111111111' } : {}),
-          botRuntimeProfile: { botId: 'bot-1', profileVersion: 1,
-            skillPolicy: { mode: 'allowlist', configured: ['same-name', 'failed'],
-              catalog: restricted ? [] : [
-                { name: 'same-name', path: known },
-                { name: 'failed', path: failed, runtimeStatus: 'failed' },
-              ], ownSkills: [{ name: 'own', path: own }] },
-            mcpPolicy: { mode: 'allowlist', configured: [], catalog: [] },
-            toolsetPolicy: { mode: 'allowlist', configured: [], catalog: [] },
-          },
-        });
-        const method = operation === 'resume' ? Method.ThreadResume : Method.ThreadStart;
-        const params = host.request.mock.calls.filter(([m]) => m === method).at(-1)?.[1] as { config: Record<string, unknown> };
-        expect(params.config['skills.config']).toEqual(expect.arrayContaining([
-          { path: known, enabled: !restricted }, { path: late, enabled: false },
-          { path: failed, enabled: false }, { path: own, enabled: true },
-        ]));
-        await handle.close();
-      }
-    } finally { await agent.dispose(); }
-  });
 
   it.each(['start', 'resume'] as const)('refreshes projections and reloads the catalog before %s on a reused server', async (operation) => {
     let enabled = true;
@@ -1993,20 +1935,20 @@ describe('CodexAgent permissions', () => {
     realpath.mockRestore();
   });
 
-  it('keeps Bot identity and MCP config while honoring the selected task permission mode', async () => {
+  it('keeps task instructions and MCP config while honoring the selected task permission mode', async () => {
     const agent = new CodexAgent(createDeps());
     const host = installFakeHost(agent, undefined, {
       buildSessionMcpConfig: () => ({
-        'mcp_servers.bot_helper.url': 'http://127.0.0.1:45831/mcp',
+        'mcp_servers.task_helper.url': 'http://127.0.0.1:45831/mcp',
       }),
     });
     const handle = await agent.startSession({
-      sessionId: 'session-bot-permissions',
-      sessionInstanceId: 'instance-bot-permissions',
+      sessionId: 'session-task-permissions',
+      sessionInstanceId: 'instance-task-permissions',
       model: 'gpt-5.5',
       workingDir: '/repo',
       permissionMode: 'bypassPermissions',
-      botProfilePrompt: 'BOT SOUL: research without changing the project.',
+      userPrompt: 'TASK INSTRUCTIONS: research without changing the project.',
     });
 
     const threadStart = host.request.mock.calls.find(
@@ -2016,11 +1958,11 @@ describe('CodexAgent permissions', () => {
       approvalPolicy: 'never',
       sandbox: 'danger-full-access',
       config: {
-        'mcp_servers.bot_helper.url': 'http://127.0.0.1:45831/mcp',
+        'mcp_servers.task_helper.url': 'http://127.0.0.1:45831/mcp',
       },
     });
     expect(threadStart).not.toHaveProperty('permissions');
-    expect(threadStart.developerInstructions).toContain('BOT SOUL');
+    expect(threadStart.developerInstructions).toContain('TASK INSTRUCTIONS');
 
     await handle.setPermissionMode?.('ask');
     await handle.send({ type: 'user', content: 'Inspect the project.' });
@@ -6376,52 +6318,6 @@ describe('CodexAgent.startSession developerInstructions', () => {
     await handle.close();
   });
 
-  it('keeps global Cindy prompts and discovery context out of a Bot thread', async () => {
-    const getGhostRosterPrompt = vi.fn(() => 'GLOBAL GHOST ROSTER');
-    const getContactsPromptState = vi.fn(() => 'enabled' as const);
-    const agent = new CodexAgent(createDeps(
-      { systemPrompt: 'GLOBAL CINDY HOST PROMPT' },
-      { getGhostRosterPrompt, getContactsPromptState },
-    ));
-    const host = installFakeHost(agent, undefined, { userAgent: 'mock-codex/0.145.0' });
-
-    const handle = await agent.startSession({
-      sessionId: 'session-bot-home-context',
-      model: 'gpt-5.4',
-      workingDir: '/repo',
-      botProfilePrompt: 'BOT SOUL',
-      botProfileContextPrompt: 'BOT HOME CONTEXT',
-      userPrompt: 'GLOBAL USER PROMPT',
-      botRuntimeProfile: {
-        botId: 'bot-1',
-        profileVersion: 1,
-        skillPolicy: { mode: 'allowlist', configured: [], catalog: [] },
-        mcpPolicy: { mode: 'allowlist', configured: [], catalog: [] },
-        toolsetPolicy: { mode: 'allowlist', configured: [], catalog: [] },
-      },
-    });
-
-    const params = host.request.mock.calls.find(([method]) => method === Method.ThreadStart)?.[1] as {
-      developerInstructions?: string;
-      config?: Record<string, unknown>;
-    };
-    expect(params.config).toMatchObject({
-      'memories.generate_memories': false,
-      'memories.use_memories': false,
-    });
-    expect(params.config?.['features.multi_agent']).not.toBe(false);
-    expect(params.config?.['features.multi_agent_v2']).not.toBe(false);
-    expect(params.config?.['agents.enabled']).not.toBe(false);
-    expect(params.developerInstructions).toContain('BOT SOUL');
-    expect(params.developerInstructions).toContain('BOT HOME CONTEXT');
-    expect(params.developerInstructions).not.toContain('GLOBAL CINDY HOST PROMPT');
-    expect(params.developerInstructions).not.toContain('GLOBAL GHOST ROSTER');
-    expect(params.developerInstructions).not.toContain('GLOBAL USER PROMPT');
-    expect(getGhostRosterPrompt).not.toHaveBeenCalled();
-    expect(getContactsPromptState).not.toHaveBeenCalled();
-    await handle.close();
-  });
-
   it('keeps thread/start developerInstructions identical to proxy resume registered text for the same prompt inputs', async () => {
     const runtimeConfig = { systemPrompt: 'HOST PRODUCT PROMPT' };
     const userPrompt = [
@@ -9794,8 +9690,8 @@ describe('CodexAgent MCP thread context hooks', () => {
     await handle.close();
   });
 
-  it.each([{ bot: true, resume: false }, { bot: true, resume: true }, { bot: false, resume: false }])(
-    'enables the remote helper transport only for a Bot (bot=$bot, resume=$resume)', async ({ bot, resume }) => {
+  it.each([{ resume: false }, { resume: true }])(
+    'does not re-enable a retired remote helper transport (resume=$resume)', async ({ resume }) => {
       const agent = new CodexAgent(createDeps());
       const host = installFakeHost(agent, undefined, {
         userAgent: 'mock-codex/0.145.0',
@@ -9806,57 +9702,15 @@ describe('CodexAgent MCP thread context hooks', () => {
         }),
       });
       const handle = await agent.startSession({
-        sessionId: 'remote-bot', sessionInstanceId: 'remote-instance', remoteHostId: 'ssh-host', workingDir: '/bot', model: 'gpt-5.4',
+        sessionId: 'remote-task', sessionInstanceId: 'remote-instance', remoteHostId: 'ssh-host', workingDir: '/repo', model: 'gpt-5.4',
         ...(resume ? { resumeSessionId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' } : {}),
-        ...(bot ? { botRuntimeProfile: {
-          botId: 'bot-1', profileVersion: 1,
-          skillPolicy: { mode: 'allowlist' as const, configured: [], catalog: [] },
-          mcpPolicy: { mode: 'allowlist' as const, configured: [], catalog: [] },
-          toolsetPolicy: { mode: 'allowlist' as const, configured: [], catalog: [] },
-        } } : {}),
       });
       const params = host.request.mock.calls.find(([method]) => method === (resume ? Method.ThreadResume : Method.ThreadStart))?.[1] as { config: Record<string, unknown> };
-      expect(params.config['mcp_servers.cindy_helper.enabled']).toBe(bot);
+      expect(params.config['mcp_servers.cindy_helper.enabled']).toBe(false);
       expect(params.config['mcp_servers.cindy_helper.url']).toBe('http://127.0.0.1:47921/mcp/cindy_helper?instance=remote-instance');
       await handle.close();
     },
   );
-
-  it.each([
-    { resume: false, driftAfterRead: false }, { resume: true, driftAfterRead: false },
-    { resume: false, driftAfterRead: true }, { resume: true, driftAfterRead: true },
-  ])('does not start a remote Bot with unapplied helper config (resume=$resume, late=$driftAfterRead)', async ({ resume, driftAfterRead }) => {
-    const agent = new CodexAgent(createDeps());
-    let ready = false;
-    let reads = 0;
-    const host = installFakeHost(agent, (method) => method === Method.ConfigRead
-      ? { config: { mcp_servers: { cindy_helper: { url: 'http://127.0.0.1:47921/mcp/cindy_helper' } } } }
-      : undefined, {
-      userAgent: 'mock-codex/0.145.0',
-      // config/read can still contain an old daemon transport. Only the Host's
-      // current instance-bound config proves its generation has been applied.
-      buildSessionMcpConfig: () => ready || (driftAfterRead && reads++ === 0)
-        ? { 'mcp_servers.cindy_helper.url': 'http://127.0.0.1:47921/mcp/cindy_helper?instance=remote-instance' }
-        : {},
-    });
-    const opts = {
-      sessionId: 'remote-bot', sessionInstanceId: 'remote-instance', remoteHostId: 'ssh-host', workingDir: '/bot', model: 'gpt-5.4',
-      ...(resume ? { resumeSessionId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' } : {}),
-      botRuntimeProfile: {
-        botId: 'bot-1', profileVersion: 1,
-        skillPolicy: { mode: 'allowlist' as const, configured: [], catalog: [] },
-        mcpPolicy: { mode: 'allowlist' as const, configured: [], catalog: [] },
-        toolsetPolicy: { mode: 'allowlist' as const, configured: [], catalog: [] },
-      },
-    };
-    await expect(agent.startSession(opts)).rejects.toThrow('Remote Codex Bot tools are not ready');
-    expect(host.request.mock.calls.some(([method]) =>
-      method === Method.ThreadStart || method === Method.ThreadResume || method === Method.TurnStart)).toBe(false);
-    expect(host.request.mock.calls.some(([method]) => method === Method.TurnInterrupt)).toBe(false);
-    ready = true;
-    const handle = await agent.startSession(opts);
-    await handle.close();
-  });
 
   it('applies instance-bound MCP URLs to both thread/start and thread/resume', async () => {
     const buildConfig = (sessionInstanceId?: string) => ({

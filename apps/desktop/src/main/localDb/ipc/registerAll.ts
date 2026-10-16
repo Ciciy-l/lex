@@ -1,5 +1,3 @@
-import { registerRoutineRemoteResources } from '../../routines/remote.js';
-import { registerRoutinesIpc } from '../../routines/service.js';
 /**
  * chat-data-localization F2/F5：聚合注册所有 localDb IPC handlers + ensure-ready。
  *
@@ -32,8 +30,8 @@ import { enqueueDurableWrite } from '../../messagePersistBroadcaster';
 import { registerDevSqliteVecIpc } from './dev/sqliteVec';
 import { registerSearchIpc } from './search';
 import { registerRemoteHistoryIpc } from './history';
-import { recoverActiveTeammateInvitations, registerBotIpc } from './bots';
-import { registerBotRemoteResourceProvider } from './botRemoteResourceProvider';
+import { readRetiredCompanionSessions } from '../retiredCompanions.js';
+import { setRemoteBotSessionLookup } from '../../device-link/remoteBotSessionBoundary.js';
 
 import { createLogger } from '../../logger';
 import { recordDesktopDevLocalDbStartupResult } from '../../devStartupStatus';
@@ -141,7 +139,6 @@ export function registerLocalDbIpc(opts: RegisterLocalDbIpcOpts = {}): void {
         getCurrentDbClientUserId() === userId &&
         (opts.isOwnerCurrent?.(userId) ?? true);
       // Resume saved invitations after the database and account boundary are ready.
-      await recoverActiveTeammateInvitations();
       if (!isReadyOwnerCurrent()) return;
       startMediaRefCompensationReconcile(userId, client, isReadyOwnerCurrent);
 
@@ -257,10 +254,14 @@ export function registerLocalDbIpc(opts: RegisterLocalDbIpcOpts = {}): void {
   });
   registerMessageIpc(opts.isSessionTurnPendingCompletion, opts.readHistoryLiveMessages);
   registerRemoteHistoryIpc();
-  registerBotIpc();
-  registerRoutinesIpc();
-  registerRoutineRemoteResources();
-  registerBotRemoteResourceProvider();
+  // Install the privacy boundary independently of the removed companion runtime.
+  setRemoteBotSessionLookup(
+    async (id, kind) => kind === 'bot' || (await readRetiredCompanionSessions([id])).has(id) ? 'hidden' : 'ordinary',
+    async (ids, kind) => {
+      const retired = kind === 'bot' ? new Set(ids) : await readRetiredCompanionSessions(ids);
+      return new Map(ids.map(id => [id, retired.has(id) ? 'hidden' as const : 'ordinary' as const]));
+    },
+  );
   registerSessionImportIpc();
   registerSessionShareIpc();
   registerOrcaWorkflowIpc();

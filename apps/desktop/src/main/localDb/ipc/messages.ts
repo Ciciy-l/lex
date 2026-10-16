@@ -27,6 +27,8 @@ import { historyOutlineContent, withHistoryArtifacts } from './historyViewOutlin
 import { historyViewLeaves, isHistoryViewUnavailable } from '@cindy/maker-shared/message-window';
 
 import { getDbClient, getCurrentDbClientSnapshot } from '../client/current';
+import { assertNotRetiredCompanionSession } from '../retiredCompanions.js';
+import { isAppSessionBoundaryPending } from '../../appSessionState.js';
 import type { ContextRebuildArgs } from '../client/tx/types';
 import { latestVisiblePreviewRow } from '../latestMessageText';
 import { messages, sessions } from '../schema';
@@ -67,7 +69,7 @@ import {
 import { capReferenceMessageRows } from './history.js';
 import { maybeUpgradeCodexHistoryOversizedError } from '../codexHistoryOversizedUpgrade';
 import type { Message, MessageRole, AgentMeta } from '../../../renderer/lib/ccAgent.types';
-import { scheduleBotRemoteResourceChangedForSession } from '../../maker-ipc/botRemoteResourceInvalidation';
+
 import { assertTrustedAppRendererEvent } from '../../security/trustedAppRenderer';
 import { createHistoryViewReader, MAX_HISTORY_SCAN_ROWS } from './historyViewReader';
 
@@ -240,8 +242,34 @@ const VALID_ROLES: ReadonlySet<MessageRole> = new Set([
   'thinking',
 ] as const);
 
+async function captureMessageSessionAccess(sessionId: string): Promise<() => void> {
+  const owner = getCurrentDbClientSnapshot();
+  await assertNotRetiredCompanionSession(sessionId);
+  const assertCurrent = () => {
+    if (!owner || owner !== getCurrentDbClientSnapshot() || isAppSessionBoundaryPending()) {
+      throwIpcError('NOT_FOUND', 'Session does not exist');
+    }
+  };
+  assertCurrent();
+  return assertCurrent;
+}
+
+/** Local IPC needs the same retirement check as Device Link, including cached history pages. */
+function handleMessageIpc(channel: string, listener: Parameters<typeof ipcMain.handle>[1]): void {
+  ipcMain.handle(channel, async (event, sessionId: unknown, ...args: unknown[]) => {
+    const sid = requireString(sessionId, 'sessionId');
+    const assertCurrent = await captureMessageSessionAccess(sid);
+    assertCurrent();
+    const result = await listener(event, sid, ...args);
+    assertCurrent();
+    return result;
+  });
+}
+
 export async function readMessagesList(sessionId: unknown, opts: unknown, skipImport = false, outline = false) {
     const sid = requireString(sessionId, 'sessionId');
+    const assertCurrent = await captureMessageSessionAccess(sid);
+    assertCurrent();
     const limit = outline ? 1000 : clampLimit((opts as { limit?: number } | undefined)?.limit);
     const before = (opts as { before?: string } | undefined)?.before;
     const beforeTs = (opts as { beforeTs?: number } | undefined)?.beforeTs;
@@ -332,7 +360,9 @@ export async function readMessagesList(sessionId: unknown, opts: unknown, skipIm
       .limit(limit);
     const orderedRows = afterCursor ? rows.slice().reverse() : rows;
     const restored = await restoreTaskImageRows(imageDbClient, orderedRows);
+    assertCurrent();
     const listed = await hydrateLegacyUserTurnCosts(restored.map(messageToCamelWithRowid));
+    assertCurrent();
     // 不阻塞首屏。旧 reconnect-stalled 横幅只在首页扫描一次，分页不再读 rollout。
     if (!before && beforeTs == null && !after) {
       const ownerScope = captureOwnerBroadcastScope();
@@ -356,6 +386,7 @@ export function registerMessageIpc(
   readRunning: (sessionId: string) => boolean = () => false,
   readLive: (sessionId: string) => Message[] = () => [],
 ): void {
+  // readMessagesList also serves internal callers and owns its pre-import/delivery checks.
   ipcMain.handle('local-db:messages:list', (_e, sessionId: unknown, opts: unknown) =>
     readMessagesList(sessionId, opts));
 
@@ -431,7 +462,7 @@ export function registerMessageIpc(
       return outline ? withHistoryArtifacts(message) : message;
     },
   });
-  ipcMain.handle('local-db:messages:view', async (event, sessionId: unknown, opts: unknown) => {
+  handleMessageIpc('local-db:messages:view', async (event, sessionId: unknown, opts: unknown) => {
     if (!isDeviceLinkInvoke()) assertTrustedAppRendererEvent(event);
     const sid = requireString(sessionId, 'sessionId');
     const before = (opts as { before?: unknown } | null)?.before;
@@ -447,14 +478,14 @@ export function registerMessageIpc(
     }
     return page;
   });
-  ipcMain.handle('local-db:messages:view-intent', (event, sessionId: unknown, refs: unknown) => {
+  handleMessageIpc('local-db:messages:view-intent', (event, sessionId: unknown, refs: unknown) => {
     if (!isDeviceLinkInvoke()) assertTrustedAppRendererEvent(event);
     requireString(sessionId, 'sessionId');
     if (!Array.isArray(refs) || refs.length > 100) throwIpcError('INVALID_PARAMS', 'Invalid expanded work groups');
     const keys = refs.map((ref) => requireString(ref?.key, 'key').replace(/^preview-work-/, 'work-'));
     getDeviceLinkInvokeContext()?.historyView?.setExpanded(keys);
   });
-  ipcMain.handle('local-db:messages:work-details', async (event, sessionId: unknown, ref: unknown, opts: unknown) => {
+  handleMessageIpc('local-db:messages:work-details', async (event, sessionId: unknown, ref: unknown, opts: unknown) => {
     if (!isDeviceLinkInvoke()) assertTrustedAppRendererEvent(event);
     const sid = requireString(sessionId, 'sessionId');
     const value = ref as { key?: unknown; firstMessageId?: unknown; lastMessageId?: unknown; firstStoredMessageId?: unknown; lastStoredMessageId?: unknown; liveMessageIds?: unknown; parentToolUseId?: unknown } | null;
@@ -471,7 +502,7 @@ export function registerMessageIpc(
     }, after == null ? undefined : requireString(after, 'after'));
   });
 
-  ipcMain.handle(
+  handleMessageIpc(
     'local-db:messages:around',
     async (_e, sessionId: unknown, messageId: unknown, opts: unknown) => {
       const sid = requireString(sessionId, 'sessionId');
@@ -554,7 +585,7 @@ export function registerMessageIpc(
     },
   );
 
-  ipcMain.handle(
+  handleMessageIpc(
     'local-db:messages:around-client-id',
     async (_e, sessionId: unknown, clientId: unknown, opts: unknown) => {
       const sid = requireString(sessionId, 'sessionId');
@@ -640,7 +671,7 @@ export function registerMessageIpc(
     },
   );
 
-  ipcMain.handle('local-db:messages:estimatedSessionValue', async (_e, sessionId: unknown) => {
+  handleMessageIpc('local-db:messages:estimatedSessionValue', async (_e, sessionId: unknown) => {
     const sid = requireString(sessionId, 'sessionId');
     const db = getDbClient().drizzle;
 
@@ -680,7 +711,7 @@ export function registerMessageIpc(
     };
   });
 
-  ipcMain.handle('local-db:messages:create', async (_e, sessionId: unknown, body: unknown) => {
+  handleMessageIpc('local-db:messages:create', async (_e, sessionId: unknown, body: unknown) => {
     const sid = requireString(sessionId, 'sessionId');
     if (!body || typeof body !== 'object') {
       throwIpcError('INVALID_PARAMS', 'body 必须是对象');
@@ -732,7 +763,7 @@ export function registerMessageIpc(
 
   // rewind-session：把 SDK echo 出的 user 消息 cc 元信息（uuid / sdkSessionId）
   // 回写到那条已存在的 user 消息。renderer 暂时用不到，注册 IPC 仅为对称完整性。
-  ipcMain.handle(
+  handleMessageIpc(
     'local-db:messages:updateAgentMeta',
     async (_e, sessionId: unknown, clientId: unknown, agentMeta: unknown) => {
       const sid = requireString(sessionId, 'sessionId');
@@ -751,7 +782,7 @@ export function registerMessageIpc(
     },
   );
 
-  ipcMain.handle(
+  handleMessageIpc(
     'local-db:messages:updateContent',
     async (_e, sessionId: unknown, clientId: unknown, content: unknown) => {
       const sid = requireString(sessionId, 'sessionId');
@@ -770,7 +801,7 @@ export function registerMessageIpc(
 
   // error-tail-banner:「关闭 / 忽略」错误行(merge dismissed:true,main 读原
   // content,不丢 sdkError 等字段)。中断行与普通错误行共用。
-  ipcMain.handle(
+  handleMessageIpc(
     'local-db:messages:dismiss-error',
     async (_e, sessionId: unknown, clientId: unknown) => {
       const sid = requireString(sessionId, 'sessionId');
@@ -860,9 +891,6 @@ export function broadcastMessageRow(
   ownerScope?: DataOwnerBroadcastScope | null,
 ): void {
   broadcastOwnedPayload('local-db:messages:created', { sessionId, message: msg }, ownerScope);
-  if (msg.role === 'user' || msg.role === 'assistant') {
-    scheduleBotRemoteResourceChangedForSession(sessionId, ownerScope?.ownerScopeKey);
-  }
 }
 
 export interface MessageDeletedPayload {
@@ -1238,7 +1266,6 @@ export function broadcastMessageDeleted(
   payload: MessageDeletedPayload,
   ownerScope?: DataOwnerBroadcastScope | null,
 ): void {
-  scheduleBotRemoteResourceChangedForSession(payload.sessionId, ownerScope?.ownerScopeKey);
   const ownerStamp = ownerStampForBroadcast(ownerScope);
   if (ownerStamp === null) return;
   if (ownerScope !== undefined && ownerScope !== null) {

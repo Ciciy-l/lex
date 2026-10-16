@@ -7,7 +7,7 @@ import { iconSize, iconStroke, motionDuration, useTheme } from '@/theme';
 
 /**
  * 列表行右侧状态位的运行中转圈：与桌面右槽同款 LoaderCircle，中性色，1s 匀速旋转；
- * 任务行与伙伴 / 群聊行共用。减弱动效时静止。
+ * 任务行使用。减弱动效时静止。
  */
 export function SessionRightSpinner({ testID }: { testID?: string }) {
   const { colors } = useTheme();

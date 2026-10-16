@@ -56,8 +56,8 @@ export function isReviewSessionSource(source: unknown): source is 'review' {
 // shared: .xdtshare 导入的分享会话,按 workingDir 归组。
 // plugin: 插件经 workspace 槽创建的工作区会话入口(空 draft,用户确认后建;
 //         projectGrouping 对零消息的 plugin 会话豁免草稿判定,直接落项目分组)。
-// bot: 伙伴的任务(主对话 / 渠道 / 历史)。由 Bots 面板投影，不散进普通任务列表；
-//      任务本身仍是 Cindy 的真实 Session，隐藏的是普通列表投影，不是运行时能力。
+// bot: retired companion provenance. Keep the value for stored data; never normalize it
+//      to desktop, display it in task lists, or start its historical runtime.
 // cindy-make: legacy source retained only so historical rows remain readable. New sessions
 //      cannot select it and no Cindy Make tools or prompts are injected.
 export const DESKTOP_VISIBLE_SESSION_SOURCES: SessionSource[] = [

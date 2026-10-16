@@ -90,7 +90,7 @@ export interface CcRemoteHttpMcpServerConfig {
   headers: Record<string, string>;
 }
 
-/** Query startup may degrade optional MCPs, but a Bot must have its task tools. */
+/** Query startup may degrade optional MCP injection while preserving its cleanup. */
 export async function prepareCcRemoteQueryMcp(
   args: Parameters<typeof buildCcRemoteHttpMcpServers>[0],
   deps: CcRemoteHttpMcpDeps & { onOptionalInjectionError?: (error: unknown) => void },
@@ -98,15 +98,11 @@ export async function prepareCcRemoteQueryMcp(
   let injected: Awaited<ReturnType<typeof buildCcRemoteHttpMcpServers>> | undefined;
   try {
     injected = await buildCcRemoteHttpMcpServers(args, deps);
-    if (args.botSession && !injected.servers.cindy_helper) {
-      throw new Error('Remote Claude Code Bot tools are not ready: cindy_helper was not injected.');
-    }
     return injected;
   } catch (error) {
-    // A partial injection can register memory/collab without the required helper.
+    // A partial injection may already have registered a session context.
     // Do not leave that context behind when no query will own its cleanup.
     try { injected?.cleanup(); } catch { /* Preserve the startup failure. */ }
-    if (args.botSession) throw error;
     deps.onOptionalInjectionError?.(error);
     return { servers: {}, cleanup: () => {} };
   }
@@ -130,8 +126,6 @@ export async function buildCcRemoteHttpMcpServers(
     /** 当前 Maker Session 实例代号；作为 opaque bridge route identity 下发。 */
     sessionInstanceId?: string;
     workingDir: string;
-    /** Host-owned Bot classification; helper also rechecks the live surface. */
-    botSession?: boolean;
     /** session 自己的 vendorOptions (maker-core startSession 透传); 优先于 DB 合成。 */
     vendorOptions?: Record<string, unknown>;
     /**
@@ -141,12 +135,7 @@ export async function buildCcRemoteHttpMcpServers(
      * 的工具。缺省 false。
      */
     makerMemoryEnabled?: boolean;
-    /**
-     * per-session Maker Memory 作用域键 (maker-core startSession 透传)。
-     * Cindy Bot 会话恒为 `bot:<botId>` —— 必须写进注册的 session ctx,
-     * 否则远端 cindy_memory 的 withStore 只能回落 workdir 键, 与本地
-     * prompt 注入读的伙伴记忆分家。
-     */
+    /** Keep the selected memory scope shared by prompt reads and tool writes. */
     makerMemoryScopeKey?: string;
   },
   deps: CcRemoteHttpMcpDeps,
@@ -186,30 +175,11 @@ export async function buildCcRemoteHttpMcpServers(
   // cindy_memory 独立走 per-session Maker Memory 开关, 与 collab 互不牵连。
   // 合成规则唯一真源在 selectRemoteInjectableServerNames (codexHttpBridge.ts)。
   //
-  // 冻结策略必须走 isFrozenBuiltinPluginAllowed —— 与调用期同一个判据。
-  // ------------------------------------------------------------------
-  // 这里过去只读 disabled 一键 (`!disabled.includes('collab')`),而 bridge 在
-  // **调用期**用的是 isFrozenBuiltinPluginAllowed(ctx.vendorOptions, pluginId)
-  // (codexHttpBridge.ts),它的语义是「allowed 键存在时以 allowed 为准,否则才看
-  // disabled」。伙伴会话恰恰会写 allowed 键:maker-host/index.ts 在
-  // botRuntimeSnapshot 存在时把该伙伴配置的 toolset 白名单塞进
-  // CODEX_ALLOWED_BUILTIN_PLUGIN_IDS_KEY,且**不分 agentKind**,所以 SSH 远端的
-  // Claude Code 伙伴会话同样带着它。
-  //
-  // 两边不一致的后果:伙伴的 toolset 白名单里没有 collab、collab 又不在 disabled
-  // 列表里时,注入侧算出「可以注入」→ 协同工具被通告给远端 Claude Code;而调用侧
-  // 一律以 'disabled' 拒绝。远端 agent 看得见一整排协同工具,每次调用都被拒 ——
-  // 摆出来却用不了。改用同一个判据后,注入面永远不会宽于执行面。
-  //
-  // 这个改动只会**收窄**注入(allowed 键不存在时行为逐字不变),不会放开任何原本
-  // 被禁的东西。names 变化会经 computeRemoteMcpFingerprint 变成新代际,策略变更
-  // 触发 forceFresh 正是既定语义。
+  // Injection and execution use the same frozen per-task built-in tool policy.
   const names = selectRemoteInjectableServerNames(started.serverNames, {
     collabEnabled:
       (deps.isCollabEnabled?.() ?? true) && isFrozenBuiltinPluginAllowed(vendorOptions, 'collab'),
     memoryEnabled: args.makerMemoryEnabled === true,
-    botHelperEnabled: args.botSession === true && !!args.sessionInstanceId
-      && isFrozenBuiltinPluginAllowed(vendorOptions, 'xdt_helper'),
   });
   if (names.length === 0) {
     // 无注入也是一代 (collab 禁用 / 白名单空):指纹常量 'disabled',

@@ -3,8 +3,8 @@ import { TASK_MIGRATION_LOCAL_CHANNEL } from '@cindy/device-link';
 import { FAVORITE_HOST_READY, FAVORITE_HOST_REQUEST, FAVORITE_HOST_REPLY, FAVORITE_HOST_CHANGED, type ModelFavoritesHostApi } from '../shared/modelFavoritesSync';
 import { invokeOpenPath } from './openPath';
 import { REMOTE_VIEWER } from '../shared/remoteDesktopViewer';
-import type { RoutineInput } from '@cindy/maker-scheduler';
-import type { BotToolsetContext } from '../shared/botRemoteCapabilities';
+
+
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { DESKTOP_LOCAL, type RemoteDesktopApi } from '../shared/remoteDesktop';
 import { DEVICE_LINK_PUSH } from '../shared/deviceLinkIpc';
@@ -791,12 +791,6 @@ const fanOutIOSSimulatorRouteStatus = createIpcFanOut(IOS_SIMULATOR_ROUTE_STATUS
 const fanOutMakerSessionBackgroundActivityChanged = createIpcFanOut(
   'maker:session-background-activity-changed',
 );
-const fanOutBotDelegationChanged = createIpcFanOut('maker:bot-delegation:changed');
-const fanOutBotDirectMessageChanged = createIpcFanOut('maker:bot-direct-message:changed');
-const fanOutBotGroupChanged = createIpcFanOut('maker:bot-group:changed');
-const fanOutBotProfileChanged = createIpcFanOut('maker:bot-profile:changed');
-const fanOutBotWorkbenchChanged = createIpcFanOut('maker:bot-workbench:changed');
-const fanOutBotLifecycleChanged = createIpcFanOut('maker:bot-lifecycle:changed');
 const fanOutMakerPiPackagesChanged = createIpcFanOut('maker:pi-packages:changed');
 const fanOutMakerUsageTodaySpend = createIpcFanOut('usage:today-spend-changed'); // Claude USD
 const fanOutMakerUsageTodayTokens = createIpcFanOut('usage:today-tokens-changed'); // Codex token
@@ -1045,19 +1039,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => { ipcRenderer.removeListener(FAVORITE_HOST_REQUEST, receive); };
     },
   } satisfies ModelFavoritesHostApi,
-  routines: {
-    list: (botId: string) => ipcRenderer.invoke('routines:list', botId),
-    save: (botId: string, input: RoutineInput, id?: string) => ipcRenderer.invoke('routines:save', botId, input, id),
-    remove: (botId: string, id: string) => ipcRenderer.invoke('routines:remove', botId, id),
-    runNow: (botId: string, id: string) => ipcRenderer.invoke('routines:run-now', botId, id),
-    history: (botId: string, id: string) => ipcRenderer.invoke('routines:history', botId, id),
-    sources: () => ipcRenderer.invoke('routines:sources'),
-    onChanged: (listener: () => void) => {
-      const wrapped = () => listener();
-      ipcRenderer.on('routines:changed', wrapped);
-      return () => ipcRenderer.removeListener('routines:changed', wrapped);
-    },
-  },
   platform: process.platform,
   supportsBetaUpdateChannel: supportsBetaUpdateChannel(process.platform, process.arch),
   windowBackdropMaterial: readWindowBackdropMaterialFromArgv(process.argv),
@@ -2509,7 +2490,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
    */
   syncNewMakerDraft: (snapshot: {
     ownerStamp: import('../shared/dataOwnerPush').DataOwnerPushStamp;
-    selectedRoute?: import('../shared/botModelChain').BotModelRoute;
+    selectedRoute?: import('../shared/modelRoute').ModelRoute;
     lastByVendor: Partial<
       Record<
         'cc' | 'codex' | 'pi' | 'omp',
@@ -5332,63 +5313,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('local-db:sessions:ack-interrupted', id),
       // Stage 2 C2: fork 已迁到 electronAPI.maker.fork (走 maker:fork IPC)。
     },
-    bots: {
-      generateAvatar: (token: string): Promise<{ avatarImageBase64: string }> => ipcRenderer.invoke('local-db:bots:generate-avatar', token),
-      generateDraft: (body: import('../shared/botCreation').BotCreationRequest): Promise<import('../shared/botCreation').BotCreationDraft> => ipcRenderer.invoke('local-db:bots:generate-draft', body),
-      getModelChainSettings: (): Promise<{
-        modelChain: import('../shared/botModelChain').BotModelRoute[];
-        isCustomized: boolean;
-      }> => ipcRenderer.invoke('local-db:bots:model-chain-settings-get'),
-      resetModelChainSettings: (): Promise<{
-        modelChain: import('../shared/botModelChain').BotModelRoute[];
-        isCustomized: boolean;
-      }> => ipcRenderer.invoke('local-db:bots:model-chain-settings-reset'),
-      setModelChainSettings: (body: {
-        modelChain: import('../shared/botModelChain').BotModelRoute[];
-      }): Promise<{
-        modelChain: import('../shared/botModelChain').BotModelRoute[];
-        isCustomized: boolean;
-      }> => ipcRenderer.invoke('local-db:bots:model-chain-settings-set', body),
-      list: (body?: { lastReadAtByBotId?: Record<string, number> }): Promise<unknown[]> =>
-        ipcRenderer.invoke('local-db:bots:list', body),
-      get: (botId: string): Promise<unknown> => ipcRenderer.invoke('local-db:bots:get', botId),
-      chooseAvatar: (body: { botId: string }): Promise<unknown> =>
-        ipcRenderer.invoke('local-db:bots:choose-avatar', body),
-      searchHistory: (body: unknown): Promise<unknown> =>
-        ipcRenderer.invoke('local-db:bots:search-history', body),
-      create: (body: unknown): Promise<unknown> => ipcRenderer.invoke('local-db:bots:create', body),
-      update: (body: unknown): Promise<unknown> => ipcRenderer.invoke('local-db:bots:update', body),
-      createCanonicalSession: (body: unknown): Promise<unknown> =>
-        ipcRenderer.invoke('local-db:bots:create-canonical-session', body),
-      history: (botId: string): Promise<unknown[]> =>
-        ipcRenderer.invoke('local-db:bots:history', botId),
-      workbench: {
-        get: (botId: string): Promise<unknown> =>
-          ipcRenderer.invoke('local-db:bots:workbench:get', botId),
-        addDirectory: (botId: string, path: string): Promise<unknown> =>
-          ipcRenderer.invoke('local-db:bots:workbench:add-directory', botId, path),
-        removeDirectory: (botId: string, path: string): Promise<void> =>
-          ipcRenderer.invoke('local-db:bots:workbench:remove-directory', botId, path),
-        readTask: (botId: string, taskId: string): Promise<unknown> =>
-          ipcRenderer.invoke('local-db:bots:workbench:read-task', botId, taskId),
-        candidates: (botId: string): Promise<unknown> =>
-          ipcRenderer.invoke('local-db:bots:workbench:candidates', botId),
-        followScopes: (): Promise<unknown> =>
-          ipcRenderer.invoke('local-db:bots:workbench:follow-scopes'),
-      },
-      listSkills: (botId: string): Promise<import('../shared/botSkill').BotSkillSummary[]> =>
-        ipcRenderer.invoke('local-db:bots:skills:list', botId),
-      memory: {
-        list: (botId: string, query?: string): Promise<unknown> =>
-          ipcRenderer.invoke('local-db:bots:memory:list', botId, query),
-        read: (botId: string, filename: string): Promise<unknown> =>
-          ipcRenderer.invoke('local-db:bots:memory:read', botId, filename),
-        update: (body: unknown): Promise<unknown> =>
-          ipcRenderer.invoke('local-db:bots:memory:update', body),
-        delete: (body: unknown): Promise<void> =>
-          ipcRenderer.invoke('local-db:bots:memory:delete', body),
-      },
-    },
     conversations: {
       search: (request: unknown): Promise<unknown> =>
         ipcRenderer.invoke('local-db:conversations:search', request),
@@ -5732,79 +5656,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onAgentsChanged: fanOutMakerAgentsChanged,
     getCapabilities: (agentKind: 'claude-code' | 'codex' | 'pi' | 'omp'): Promise<unknown> =>
       ipcRenderer.invoke('maker:get-capabilities', agentKind),
-    listBotDelegations: (
-      parentSessionId: string,
-    ): Promise<import('../shared/botDelegation').BotDelegationListResult> =>
-      ipcRenderer.invoke('maker:bot-delegations:list', parentSessionId),
-    cancelBotDelegation: (
-      parentSessionId: string,
-      delegationId: string,
-    ): Promise<import('../shared/botDelegation').BotDelegationCancelResult> =>
-      ipcRenderer.invoke('maker:bot-delegation:cancel', parentSessionId, delegationId),
-    onBotDelegationChanged: fanOutBotDelegationChanged,
-    getBotDirectMessageThread: (
-      threadId: string,
-      viewerBotId: string,
-    ): Promise<import('../shared/botDirectMessage').BotDirectMessageThreadResult> =>
-      ipcRenderer.invoke('maker:bot-direct-message-thread:get', threadId, viewerBotId),
-    onBotDirectMessageChanged: fanOutBotDirectMessageChanged,
-    listBotGroups: (): Promise<import('../shared/botGroupChat').BotGroupListResult> =>
-      ipcRenderer.invoke('maker:bot-group:list'),
-    getBotGroup: (
-      groupId: string,
-      options?: import('../shared/botGroupChat').BotGroupGetOptions,
-    ): Promise<import('../shared/botGroupChat').BotGroupGetResult> =>
-      ipcRenderer.invoke('maker:bot-group:get', groupId, options),
-    createBotGroup: (
-      input: import('../shared/botGroupChat').BotGroupCreateInput,
-    ): Promise<import('../shared/botGroupChat').BotGroupCreateResult> =>
-      ipcRenderer.invoke('maker:bot-group:create', input),
-    updateBotGroup: (
-      input: import('../shared/botGroupChat').BotGroupUpdateInput,
-    ): Promise<import('../shared/botGroupChat').BotGroupMutationResult> =>
-      ipcRenderer.invoke('maker:bot-group:update', input),
-    setBotGroupMembers: (
-      input: import('../shared/botGroupChat').BotGroupSetMembersInput,
-    ): Promise<import('../shared/botGroupChat').BotGroupMutationResult> =>
-      ipcRenderer.invoke('maker:bot-group:set-members', input),
-    deleteBotGroup: (groupId: string): Promise<import('../shared/botGroupChat').BotGroupMutationResult> =>
-      ipcRenderer.invoke('maker:bot-group:delete', groupId),
-    sendBotGroupMessage: (
-      input: import('../shared/botGroupChat').BotGroupSendInput,
-    ): Promise<import('../shared/botGroupChat').BotGroupSendResult> =>
-      ipcRenderer.invoke('maker:bot-group:send', input),
-    continueBotGroupRound: (groupId: string): Promise<import('../shared/botGroupChat').BotGroupMutationResult> =>
-      ipcRenderer.invoke('maker:bot-group:continue', groupId),
-    stopBotGroupRound: (groupId: string): Promise<import('../shared/botGroupChat').BotGroupMutationResult> =>
-      ipcRenderer.invoke('maker:bot-group:stop', groupId),
-    startBotGroupPlan: (
-      input: import('../shared/botGroupChat').BotGroupPlanActionInput,
-    ): Promise<import('../shared/botGroupChat').BotGroupMutationResult> =>
-      ipcRenderer.invoke('maker:bot-group:plan-start', input),
-    dismissBotGroupPlan: (
-      input: import('../shared/botGroupChat').BotGroupPlanActionInput,
-    ): Promise<import('../shared/botGroupChat').BotGroupMutationResult> =>
-      ipcRenderer.invoke('maker:bot-group:plan-dismiss', input),
-    continueBotGroupPlan: (
-      input: import('../shared/botGroupChat').BotGroupPlanActionInput,
-    ): Promise<import('../shared/botGroupChat').BotGroupMutationResult> =>
-      ipcRenderer.invoke('maker:bot-group:plan-continue', input),
-    retryBotGroupPlan: (
-      input: import('../shared/botGroupChat').BotGroupPlanActionInput,
-    ): Promise<import('../shared/botGroupChat').BotGroupMutationResult> =>
-      ipcRenderer.invoke('maker:bot-group:plan-retry', input),
-    editBotGroupPlanStep: (
-      input: import('../shared/botGroupChat').BotGroupPlanEditInput,
-    ): Promise<import('../shared/botGroupChat').BotGroupMutationResult> =>
-      ipcRenderer.invoke('maker:bot-group:plan-edit', input),
-    onBotGroupChanged: fanOutBotGroupChanged,
-    onBotProfileChanged: fanOutBotProfileChanged,
-    onBotWorkbenchChanged: fanOutBotWorkbenchChanged,
-    runBotLifecycleAction: (
-      request: import('../shared/botLifecycle').BotLifecycleActionRequest,
-    ): Promise<import('../shared/botLifecycle').BotLifecycleActionResult> =>
-      ipcRenderer.invoke('maker:bot-lifecycle:action', request),
-    onBotLifecycleChanged: fanOutBotLifecycleChanged,
     listTurnChangeSets: (
       sessionId: string,
     ): Promise<import('../shared/turnChangeSet').TurnChangeSetSummary[]> =>
@@ -7591,8 +7442,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     // ── Plugin system (Phase 1) ──────────────────────────────────────────
     plugins: {
-      list: (workingDir?: string, includeHidden?: boolean, botContext?: Omit<BotToolsetContext, 'workingDir'>): Promise<PluginListItem[]> =>
-        ipcRenderer.invoke('maker:plugins:list', workingDir, includeHidden, botContext),
+      list: (workingDir?: string, includeHidden?: boolean): Promise<PluginListItem[]> =>
+        ipcRenderer.invoke('maker:plugins:list', workingDir, includeHidden),
       getState: (
         id: string,
         workingDir?: string,

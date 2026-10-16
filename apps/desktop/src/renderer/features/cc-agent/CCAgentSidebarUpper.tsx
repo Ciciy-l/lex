@@ -102,12 +102,7 @@ import { useActiveMainView } from '@/hooks/useActiveMainView';
 import { useAnyGhostUnread } from '@/cindy-brain/ghostUnreadStore';
 import { GhostPanelRestoreEntry } from '@/cindy-brain/GhostPanelRestoreEntry';
 import { GhostMainViewNavEntries } from '@/components/sidebar/GhostMainViewNavEntries';
-import {
-  BOT_GROUP_LANE_SESSION,
-  botOwnedSessionNotificationTitle,
-  findSessionNotificationSession,
-  sendSessionEventNotification,
-} from '@/lib/sessionEventNotification';
+import { findSessionNotificationSession, sendSessionEventNotification } from '@/lib/sessionEventNotification';
 import type { Session } from '@/lib/ccAgent.types';
 import {
   clearSessionAttentionMany,
@@ -1093,11 +1088,7 @@ function ExpandedView({
         sendSessionEventNotification(sessionId, title, kind);
         return;
       }
-      void botOwnedSessionNotificationTitle(sessionId).then((botTitle) => {
-        // 伙伴群专线不发系统通知,确认请求在群聊里提示(docs/product-rules/bot-group-chat.md §3)。
-        if (botTitle === BOT_GROUP_LANE_SESSION) return;
-        sendSessionEventNotification(sessionId, botTitle ?? unnamedLabelRef.current, kind);
-      });
+      // Unknown/retired tasks have no visible notification target.
     },
     [],
   );
@@ -3732,8 +3723,6 @@ function ExpandedView({
                   unclassified={visibleUnclassified}
                   projects={visibleProjectsWithVendor}
                   dialogues={visibleDialogues}
-                  bots={groups.bots}
-                  onOpenBot={(botId) => navigate(`/bots/${botId}`)}
                   allKnownProjects={visibleProjectUniverse}
                   dialogueCount={allGroups.dialogues.length}
                   allProjectKeysForOrder={gcProjectKeys}

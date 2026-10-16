@@ -7,12 +7,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { SESSION_SOURCES } from '../../../../shared/sessionSource.js';
 import { buildDbWorkerBundle } from '../../__tests__/dbWorkerTestUtils.js';
+import { RETAINED_COMPANION_DDL } from '../../__tests__/fixtures/retiredCompanionTables';
 import { computeForkSourceMessagesDigest, type ForkSourceMessage } from '../../forkRecoverySnapshot.js';
 import type { DbClient } from '../DbClient.js';
 import { createDbClient } from '../DbClient.js';
 import type { SkillUsageApplyMutationArgs } from '../tx/types.js';
 
 const INIT_SQL = `
+${RETAINED_COMPANION_DDL.join(';')};
 CREATE TABLE migration_meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE migration_history (
   seq INTEGER PRIMARY KEY,
@@ -477,7 +479,7 @@ describe('db worker tx handlers', () => {
   );
 
   it.each([false, true])(
-    'compacts SSH sessions and every local source while skipping restored sessions (inline=%s)',
+    'compacts SSH and ordinary sources while retaining restored and retired tasks (inline=%s)',
     async (useInlineWorker) => {
       await withClient(async (client) => {
         const sourceSessionIds = SESSION_SOURCES.map((source) => `source-${source}`);
@@ -510,7 +512,7 @@ describe('db worker tx handlers', () => {
         );
         await client.exec("UPDATE sessions SET status = 'active' WHERE id = 'restored'");
 
-        for (const sessionId of ['restored']) {
+        for (const sessionId of ['restored', 'source-bot']) {
           await expect(
             client.tx('toolResults.compactSession', {
               sessionId,
@@ -518,7 +520,8 @@ describe('db worker tx handlers', () => {
             }),
           ).resolves.toEqual({ compactedRows: 0, originalBytes: 0 });
         }
-        for (const sessionId of [...sourceSessionIds, 'ssh', 'orca', 'turn']) {
+        const ordinarySourceIds = sourceSessionIds.filter(id => id !== 'source-bot');
+        for (const sessionId of [...ordinarySourceIds, 'ssh', 'orca', 'turn']) {
           await expect(
             client.tx('toolResults.compactSession', {
               sessionId,
@@ -542,9 +545,10 @@ describe('db worker tx handlers', () => {
             'message-ssh',
             'message-orca',
             'message-turn',
-            ...sourceSessionIds.map((id) => `message-${id}`),
+            ...ordinarySourceIds.map((id) => `message-${id}`),
           ].sort(),
         );
+        expect(rows.find(row => row.id === 'message-source-bot')?.content).toBe(JSON.stringify('x'.repeat(70 * 1024)));
       }, { useInlineWorker });
     },
   );

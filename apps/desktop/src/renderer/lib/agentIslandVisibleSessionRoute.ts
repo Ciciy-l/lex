@@ -20,13 +20,6 @@ export function resolveAgentIslandVisibleSessionIdFromPath(
   return sessionId;
 }
 
-export function isAgentIslandVisibleSessionOwnedByBotRoute(pathname: string): boolean {
-  const sessionMatch = matchPath('/bots/:botId/session/:sessionId', pathname) ??
-    matchPath('/bots/:botId/history/:sessionId', pathname);
-  // The matching view must validate ownership before reporting a visible session.
-  return Boolean(sessionMatch?.params.sessionId);
-}
-
 export function resolveAgentIslandVisibleSessionsFromPath(
   pathname: string,
   splitSessionIds: readonly string[],

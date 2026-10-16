@@ -1,11 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  botOwnedSessionNotificationTitle,
-  findSessionNotificationSession,
-  sendSessionEventNotification,
-} from '@/lib/sessionEventNotification';
+import { findSessionNotificationSession, sendSessionEventNotification } from '@/lib/sessionEventNotification';
 
 const gates = vi.hoisted(() => ({
   desktop: true,
@@ -39,7 +35,6 @@ describe('shared session event notifications', () => {
     (window as unknown as { electronAPI: unknown }).electronAPI = {
       notificationMarkSessionAttention: markAttention,
       notificationShowSessionEvent: showSessionEvent,
-      localDb: { bots: { list: vi.fn(async () => []) } },
     };
   });
 
@@ -82,19 +77,6 @@ describe('shared session event notifications', () => {
 
     expect(markAttention).not.toHaveBeenCalled();
     expect(showSessionEvent).not.toHaveBeenCalled();
-  });
-
-  it('resolves a Bot name for sessions omitted from the ordinary task list', async () => {
-    window.electronAPI.localDb.bots.list = vi.fn(async () => [{
-      id: 'bot-lizi',
-      name: 'LiZi',
-      sessions: [{ id: 'bot-session', title: '修复登录' }],
-    }]) as typeof window.electronAPI.localDb.bots.list;
-
-    await expect(botOwnedSessionNotificationTitle('bot-session')).resolves.toBe(
-      'LiZi · 修复登录',
-    );
-    await expect(botOwnedSessionNotificationTitle('missing')).resolves.toBeNull();
   });
 
   it('looks up a notification session across complete and remote snapshots', () => {

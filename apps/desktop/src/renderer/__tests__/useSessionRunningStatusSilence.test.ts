@@ -104,35 +104,6 @@ describe('useSessionRunningStatus silenced completion handling', () => {
     vi.useRealTimers();
   });
 
-  it('keeps private replies quiet even when the final attribution arrives during debounce', async () => {
-    vi.useFakeTimers();
-    const onSessionDone = vi.fn();
-    renderHook(() => useSessionRunningStatus(undefined, { onSessionDone }));
-    await emitSnapshot(new Map([['private', status(true)]]));
-    await emitSnapshot(new Map([['private', status(false)]]));
-    storeMock.privateReplySessions.add('private');
-    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
-    expect(onSessionDone).not.toHaveBeenCalled();
-    expect(addSessionAttention).not.toHaveBeenCalled();
-    storeMock.privateReplySessions.clear();
-    await emitSnapshot(new Map([['private', status(true)]]));
-    await emitSnapshot(new Map([['private', status(false)]]));
-    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
-    expect(onSessionDone).toHaveBeenCalledWith('private');
-  });
-
-  it('never raises attention or callbacks for a Bot group lane, even when it fails', async () => {
-    const onSessionDone = vi.fn();
-    const onSessionError = vi.fn();
-    renderHook(() => useSessionRunningStatus(undefined, { onSessionDone, onSessionError }));
-    storeMock.groupLaneSessions.add('lane');
-    await emitSnapshot(new Map([['lane', status(true)]]));
-    await emitSnapshot(new Map([['lane', status(false, true)]]));
-    expect(addSessionAttention).not.toHaveBeenCalled();
-    expect(onSessionError).not.toHaveBeenCalled();
-    storeMock.groupLaneSessions.clear();
-  });
-
   it('does not mute a normal follow-up that starts during silenced completion linger', async () => {
     vi.useFakeTimers();
     const onSessionDone = vi.fn();

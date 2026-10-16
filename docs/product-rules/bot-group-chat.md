@@ -1,5 +1,7 @@
 # 伙伴群聊
 
+> **Lex 历史文档**：从 Lex 0.1.6 起此功能已退休，以下状态与实现阶段属于上游历史，不代表当前 Lex 功能。当前行为以 [Lex 伙伴退休与资料保留契约](lex-companion-retirement.md) 为准。
+
 > **状态**：权威产品规则（authoritative）。第一、二阶段已实现；第三阶段手机端实现中（第 8 节）。
 > **读取时机**：新增或修改伙伴群聊的数据、发言编排、群专线 Session、分工（负责人、安排、分工 Session、群工作目录）、群聊界面、手机端群聊或相关 IPC／远程资源前。
 > 伙伴身份、Profile、主任务与后台任务的通用契约仍以 [`cindy-bots-runtime.md`](cindy-bots-runtime.md) 为准。

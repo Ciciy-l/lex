@@ -152,10 +152,11 @@ describe('mobile session main layer desktop-first noise budget', () => {
 
     expect(deleteSource).toContain("Alert.alert(t('session.screen.deleteMessageTitle')");
     expect(deleteSource).toContain("t('session.screen.deleteMessageBody')");
-    expect(deleteSource).toContain('const result = await maker.deleteMessage(sessionId, clientId);');
-    expect(deleteSource).toContain('Array.isArray(result.clientIds)');
+    expect(deleteSource).toContain('send: () => maker.deleteMessage(sessionId, clientId)');
+    expect(deleteSource).toContain('await deleteRemoteMessageConfirmed({');
     expect(deleteSource).toContain('remoteSessionStore.removeMessages(');
-    expect(deleteSource).toContain('returnedClientIds.length > 0 ? returnedClientIds : [clientId]');
+    expect(deleteSource).toContain('isSessionMessageAuthorityCurrent(authority)');
+    expect(deleteSource).toContain('isMobileAuthOwnerCurrent(owner)');
   });
 
   it('renders system cards by their desktop title without a generic debug eyebrow', () => {

@@ -20,6 +20,7 @@ const VALID_ARGS = {
 
 function setup(opts?: {
   sessionId?: string | undefined;
+  agentKind?: string;
   result?: SubmitGithubIssueHostResult;
 }) {
   const sessionId = 'sessionId' in (opts ?? {}) ? opts?.sessionId : 'sess-1';
@@ -38,7 +39,7 @@ function setup(opts?: {
   registerSubmitGithubIssueTool(registry, {
     getSessionContext: () => ({
       sessionId,
-      agentKind: 'claude-code',
+      agentKind: opts?.agentKind ?? 'claude-code',
       workingDir: '/tmp/wd',
     }),
     submit,
@@ -61,6 +62,16 @@ function descriptionOf(schema: unknown): string | undefined {
 }
 
 describe('submit_github_issue tool', () => {
+  it('preserves the OMP runtime and rejects unknown runtime metadata before confirmation', async () => {
+    const omp = setup({ agentKind: 'omp' });
+    await omp.registry.call('submit_github_issue', VALID_ARGS);
+    expect(omp.submit).toHaveBeenCalledWith(expect.objectContaining({ agentKind: 'omp' }));
+    const unknown = setup({ agentKind: 'future-runtime' });
+    const result = await unknown.registry.call('submit_github_issue', VALID_ARGS);
+    expect(parse(result)).toMatchObject({ ok: false, errorCode: 'HOST_NOT_READY' });
+    expect(unknown.submit).not.toHaveBeenCalled();
+  });
+
   it('要求按最小公开原则泛化用户原话与示例', () => {
     const { registry } = setup();
     const tool = registry.get('submit_github_issue');

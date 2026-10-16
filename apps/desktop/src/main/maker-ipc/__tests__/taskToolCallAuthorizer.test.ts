@@ -11,6 +11,7 @@ describe('shared task tool admission', () => {
   beforeEach(() => {
     sqlite = new Database(':memory:');
     sqlite.exec("CREATE TABLE sessions (id TEXT PRIMARY KEY, status TEXT, source TEXT); INSERT INTO sessions VALUES ('companion','active','bot'),('ordinary','active','desktop'),('automation','active','scheduler'),('hook','active','hook');");
+    sqlite.exec("CREATE TABLE bot_session_links(session_id TEXT); CREATE TABLE bot_profiles(canonical_session_id TEXT); CREATE TABLE bot_delegations(child_session_id TEXT);");
     db = { drizzle: drizzle(sqlite) } as unknown as Pick<DbClient, 'drizzle'>;
     current = true;
   });
@@ -19,9 +20,9 @@ describe('shared task tool admission', () => {
     ['cindy_helper', 'archive_sessions'], ['cindy_helper', 'some_future_tool'],
     ['cindy_helper', 'set_teammate_capability'], ['cindy_scheduler', 'schedule_create'],
   ] as const;
-  it('uses the same admission for ordinary tasks and companions, including future tools', async () => {
+  it('preserves ordinary task admission including future tools', async () => {
     const authorize = createTaskToolCallAuthorizer({ getDb: () => db, isScopeCurrent: () => current });
-    for (const sessionId of ['ordinary', 'companion']) for (const [server, tool] of commands)
+    for (const sessionId of ['ordinary', 'automation', 'hook']) for (const [server, tool] of commands)
       expect(await authorize({ sessionId, server, tool, args: {} })).toEqual({ ok: true });
   });
   it.each(['companion', 'ordinary', 'automation', 'hook'])('allows the next tool call after archiving %s, but rejects deletion', async (sessionId) => {
@@ -29,7 +30,7 @@ describe('shared task tool admission', () => {
     for (const status of ['active', 'archived', 'deleted']) {
       sqlite.prepare('UPDATE sessions SET status = ? WHERE id = ?').run(status, sessionId);
       for (const [server, tool] of commands) {
-        expect(await authorize({ sessionId, server, tool, args: {} })).toMatchObject(status === 'deleted'
+        expect(await authorize({ sessionId, server, tool, args: {} })).toMatchObject(status === 'deleted' || sessionId === 'companion'
           ? { ok: false, errorCode: 'TASK_UNAVAILABLE' } : { ok: true });
       }
     }

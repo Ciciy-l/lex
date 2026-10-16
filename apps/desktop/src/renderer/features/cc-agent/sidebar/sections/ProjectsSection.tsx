@@ -77,7 +77,7 @@ import {
   type MainListEntry,
   type ViewedPriorityHoldState,
 } from '../../lib/mainListModel';
-import { projectKeyComparisonKey, type BotGroupNode } from '../../lib/projectGrouping';
+import { projectKeyComparisonKey } from '../../lib/projectGrouping';
 import { buildSessionSourceLabelMap } from '../../lib/sessionSourceLabel';
 import { useSessionAttentionKinds } from '@/lib/sessionAttentionStore';
 import { useSessionAttentionUrgencySet } from '../../contexts/SessionAttentionUrgencyContext';
@@ -103,7 +103,7 @@ import type {
   AutomationSessionGroup,
 } from '../../lib/automationSidebarGrouping';
 import type { Session } from '@/lib/ccAgent.types';
-import { BotAvatar } from '@/features/bots/BotAvatar';
+
 import type { FolderPickerOption } from '@/components/new-chat/FolderPickerPopover';
 import type { SessionMoveTarget } from '../sessionMoveTarget';
 import { resolveCollapsedProjectAttentionTone } from '../projectCollapsedAttention';
@@ -161,15 +161,6 @@ export interface ProjectsSectionProps {
    * 与项目行按同一口径混排;「对话归为一组」开启时收进对话组行。
    */
   dialogues: Session[];
-  /**
-   * 按伙伴分的组(与项目行并列混排)。
-   *
-   * 伙伴的任务归伙伴,不按工作目录散进项目组 —— 一个伙伴可以在多个项目里干活,
-   * 按目录分只会把它的对话切碎到几个组里。
-   */
-  bots?: BotGroupNode[];
-  /** 点伙伴组头的新建入口:打开这个伙伴。不给则该按钮禁用(不摆一个点了没反应的入口)。 */
-  onOpenBot?: (botId: string) => void;
   /**
    * 未经过用户筛选、但已排除“从侧栏移除”项目的候选集。
    * 用于 SidebarFilterPopover 与来源标签；隐藏项目不能从这些入口泄漏。
@@ -250,8 +241,6 @@ export function ProjectsSection({
   unclassified,
   projects,
   dialogues,
-  bots = [],
-  onOpenBot,
   allKnownProjects,
   dialogueCount = 0,
   allProjectKeysForOrder,
@@ -530,7 +519,6 @@ export function ProjectsSection({
       buildMainListEntries({
         projects,
         dialogues,
-        bots,
         unclassified: deviceGroupingActive && !unclassifiedHidden ? unclassified : [],
         groupBy: filter.groupBy,
         groupDialogue: filter.groupDialogue,
@@ -544,7 +532,6 @@ export function ProjectsSection({
     [
       projects,
       dialogues,
-      bots,
       unclassified,
       unclassifiedHidden,
       deviceGroupingActive,
@@ -886,50 +873,6 @@ export function ProjectsSection({
           // 混排下每条散排对话各是一个单条列表,若都补顶线,会与上一行的底线叠成
           // 两根横线(2026-08-12 实机反馈)。底线已覆盖行间分割,这里只关顶线。
           showFirstDivider={false}
-        />
-      );
-    }
-    if (entry.kind === 'bot-group') {
-      const groupKey = `bot:${entry.bot.botId}`;
-      const isCollapsed = collapsedDialogueGroups.has(groupKey);
-      return (
-        <SessionGroupNode
-          key={`bot-group:${entry.bot.botId}`}
-          sessions={entry.bot.sessions}
-          groupIcon={
-            <BotAvatar
-              bot={{
-                name: entry.bot.displayName,
-                avatar: entry.bot.avatar,
-                avatarColor: entry.bot.avatarColor,
-              }}
-              // xs = 20px,与组头 15px 图标同一档视觉重量(头像是实心块,略小于线条图标会显轻)。
-              size="xs"
-              className="shrink-0"
-            />
-          }
-          groupTitle={entry.bot.displayName}
-          createLabel={t('bots.sidebar.newTaskWith', { name: entry.bot.displayName })}
-          collapsed={isCollapsed}
-          onToggle={() => setDialogueCollapsed([groupKey], !isCollapsed)}
-          onCreateDialogue={() => onOpenBot?.(entry.bot.botId)}
-          isCreateDisabled={!onOpenBot}
-          parentSectionCollapsed={false}
-          disableSessionCollapse={disableSessionCollapse}
-          activeSessionId={activeSessionId}
-          runningSessionIds={runningSessionIds}
-          attachedSessionIds={attachedSessionIds}
-          notifications={notifications}
-          scheduleSessionIndex={scheduleSessionIndex}
-          selectedSessionIds={selectedSessionIds}
-          onSessionClick={onSessionClick}
-          onAction={onAction}
-          onRename={onRename}
-          onTogglePin={onTogglePin}
-          onMoveSession={onMoveSession}
-          projectOptions={projectOptions}
-          onScheduleAction={onScheduleAction}
-          sessionVariant={mainSessionVariant}
         />
       );
     }

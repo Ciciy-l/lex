@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { messages, sessions } from '../../schema';
 import * as taskImages from '../../../cindy-media/taskImageDelivery';
 import * as currentDb from '../../client/current';
+import { RETAINED_COMPANION_DDL } from '../../__tests__/fixtures/retiredCompanionTables';
 import { runDeviceLinkInvokeContext } from '../../../device-link/invoke-context';
 import { MAX_HISTORY_SCAN_ROWS } from '../historyViewReader';
 import { historyViewLeaves, type HistoryViewPage, type HistoryDetailPage, type HistoryMessageSource } from '@cindy/maker-shared/message-window';
@@ -12,6 +13,7 @@ import { historyViewLeaves, type HistoryViewPage, type HistoryDetailPage, type H
 const h = vi.hoisted(() => ({
   db: null as ReturnType<typeof drizzle> | null,
   sqlite: null as Database.Database | null,
+  snapshot: null as currentDb.CurrentDbClientSnapshot | null,
   handlers: new Map<string, (...args: unknown[]) => unknown>(),
   query: vi.fn(
     async (query: string, params: unknown[] = []): Promise<Array<Record<string, unknown>>> => {
@@ -85,7 +87,7 @@ vi.mock('../../../cindy-media/chatAttachments', () => ({
 }));
 vi.mock('../../client/current', () => ({
   getDbClient: () => ({ drizzle: h.db, query: h.query, tx: h.tx }),
-  getCurrentDbClientSnapshot: () => ({ client: { drizzle: h.db, query: h.query, tx: h.tx }, clientEpoch: 1 }),
+  getCurrentDbClientSnapshot: () => h.snapshot,
 }));
 
 import { maybeUpgradeCodexHistoryOversizedError } from '../../codexHistoryOversizedUpgrade';
@@ -100,6 +102,7 @@ import {
   markLatestAgentHandoffConsumed,
   readPriorUserRoundCost,
   registerMessageIpc,
+  readMessagesList,
   updateMessageContent,
 } from '../messages';
 
@@ -108,6 +111,7 @@ function createDb(): Database.Database {
   sqlite.exec(`
     CREATE TABLE sessions (
       id TEXT PRIMARY KEY,
+      source TEXT NOT NULL DEFAULT 'desktop',
       cleared_at INTEGER,
       parent_session_id TEXT,
       status TEXT NOT NULL DEFAULT 'active',
@@ -129,6 +133,8 @@ function createDb(): Database.Database {
   `);
   h.db = drizzle(sqlite, { schema: { messages, sessions } });
   h.sqlite = sqlite;
+  for (const ddl of RETAINED_COMPANION_DDL) sqlite.exec(ddl);
+  h.snapshot = { client: { drizzle: h.db, query: h.query, tx: h.tx }, clientEpoch: 1, userId: 'message-test' } as unknown as currentDb.CurrentDbClientSnapshot;
   return sqlite;
 }
 
@@ -182,6 +188,47 @@ function insertCostMessage(
 }
 
 describe('local-db:messages:list cursor', () => {
+  it.each(['source', 'link', 'profile', 'delegation'])('blocks every retired message IPC and retains original rows (%s)', async (kind) => {
+    const sqlite = createDb();
+    try {
+      sqlite.prepare('INSERT INTO sessions (id, source) VALUES (?, ?)').run('s1', kind === 'source' ? 'bot' : 'desktop');
+      if (kind === 'link') sqlite.exec("INSERT INTO bot_session_links VALUES ('s1')");
+      if (kind === 'profile') sqlite.exec("INSERT INTO bot_profiles VALUES ('s1')");
+      if (kind === 'delegation') sqlite.exec("INSERT INTO bot_delegations VALUES ('s1')");
+      insertMessage(sqlite, { id: 'old', createdAt: 1, content: 'Retained private history' });
+      const before = sqlite.prepare('SELECT * FROM messages').all();
+      registerMessageIpc();
+      const calls: Array<[string, ...unknown[]]> = [
+        ['list', { limit: 10 }], ['view', {}], ['view-intent', []],
+        ['work-details', { key: 'work-old', firstMessageId: 'old', lastMessageId: 'old' }, {}],
+        ['around', 'old', { radius: 1 }], ['around-client-id', 'old', { radius: 1 }],
+        ['estimatedSessionValue'], ['create', { clientId: 'new', role: 'user', content: 'changed' }],
+        ['updateAgentMeta', 'old', {}], ['updateContent', 'old', 'changed'], ['dismiss-error', 'old'],
+      ];
+      expect([...h.handlers.keys()].sort()).toEqual(calls.map(([name]) => 'local-db:messages:' + name).sort());
+      for (const [name, ...args] of calls) {
+        await expect(h.handlers.get('local-db:messages:' + name)!({}, 's1', ...args)).rejects.toThrow('[NOT_FOUND]');
+      }
+      await expect(readMessagesList('s1', {})).rejects.toThrow('[NOT_FOUND]');
+      expect(sqlite.prepare('SELECT * FROM messages').all()).toEqual(before);
+    } finally { sqlite.close(); }
+  });
+
+  it('discards a message page when its owner changes during hydration', async () => {
+    const sqlite = createDb();
+    sqlite.prepare('INSERT INTO sessions (id) VALUES (?)').run('s1');
+    insertMessage(sqlite, { id: 'old', createdAt: 1, content: 'Previous owner history' });
+    const restore = vi.spyOn(taskImages, 'restoreTaskImageRows').mockImplementationOnce(async (_db, rows) => {
+      h.snapshot = { ...h.snapshot!, clientEpoch: 2, userId: 'other-owner' };
+      return rows;
+    });
+    try {
+      registerMessageIpc();
+      await expect(h.handlers.get('local-db:messages:list')!({}, 's1', {})).rejects.toThrow('[NOT_FOUND]');
+      expect(maybeUpgradeCodexHistoryOversizedError).not.toHaveBeenCalled();
+    } finally { restore.mockRestore(); sqlite.close(); }
+  });
+
   it('serves a lightweight SQLite view, hydrates visible text, then reads only the expanded subagent', async () => {
     const sqlite = createDb();
     sqlite.prepare('INSERT INTO sessions (id, cleared_at) VALUES (?, NULL)').run('s1');
@@ -328,12 +375,14 @@ describe('local-db:messages:list cursor', () => {
   });
 
   it('rejects a live reference above the scan budget before reading anchors', async () => {
+    const sqlite = createDb();
     const live = vi.fn(() => []);
     registerMessageIpc(() => true, live);
     await expect(runDeviceLinkInvokeContext({ controllerDeviceId: 'd', channel: 'local-db:messages:work-details' },
       () => h.handlers.get('local-db:messages:work-details')!({}, 's1', { liveMessageIds: Array(MAX_HISTORY_SCAN_ROWS + 1).fill('x') }, {})))
       .rejects.toThrow('[INVALID_PARAMS]');
     expect(live).not.toHaveBeenCalled();
+    sqlite.close();
   });
 
   beforeEach(() => {
@@ -695,7 +744,9 @@ describe('local-db:messages:list cursor', () => {
     });
     // list/session + prior-user lookup + bounded visibility scan
     // (plus the direct storage assertion); never one SQLite query set per SDK segment.
-    expect(prepareSpy).toHaveBeenCalledTimes(6);
+    const retirementReads = prepareSpy.mock.calls.filter(([sql]) => String(sql).includes('bot_session_links'));
+    expect(retirementReads).toHaveLength(1);
+    expect(prepareSpy.mock.calls.filter(([sql]) => !String(sql).includes('bot_session_links'))).toHaveLength(6);
   });
 
   it('does not scan older user rounds when projecting legacy turn cost', async () => {

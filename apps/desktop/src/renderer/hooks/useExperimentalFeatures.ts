@@ -31,13 +31,7 @@ export interface ExperimentalFeatureMeta {
 /**
  * 实验功能注册表。新 feature 在这里追加一项即可。
  */
-export const EXPERIMENTAL_FEATURES: ReadonlyArray<ExperimentalFeatureMeta> = [
-  {
-    key: 'teammates',
-    title: 'Teammates',
-    description: 'Show the Teammates workspace and related settings.',
-  },
-];
+export const EXPERIMENTAL_FEATURES: ReadonlyArray<ExperimentalFeatureMeta> = [];
 
 const KEY_PREFIX = 'experimental.';
 const CHANGE_EVENT = 'experimental-feature-change';

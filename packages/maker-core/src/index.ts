@@ -92,7 +92,6 @@ export {
   type SetEnabledResult,
   type SqliteFactory,
 } from './memory/manager.js';
-export { isBotMcpServerAllowed } from './agents/shared/bot-runtime-policy.js';
 export {
   MemoryFlushController,
   DEFAULT_FLUSH_THRESHOLDS,

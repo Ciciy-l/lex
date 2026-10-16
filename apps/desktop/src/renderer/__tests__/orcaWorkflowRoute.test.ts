@@ -208,7 +208,7 @@ describe('OrcaWorkflowRoute source invariants', () => {
     // legacy /orca 路由(orcaMode)必须先被 `!orcaMode &&` 短路掉,否则它也会去跑项目
     // 策略查询并订阅刷新。
     expect(sessionViewSource).toContain(
-      'const collabPolicyEligible = !orcaMode && !botChatIdentity && collabEntry.eligible;',
+      'const collabPolicyEligible = !orcaMode && collabEntry.eligible;',
     );
     expect(sessionViewSource).toContain('resolveCollabEntryPolicy({');
   });

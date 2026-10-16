@@ -1,5 +1,6 @@
+import { Redirect } from 'expo-router';
 import { lineHeight } from '@/theme/tokens';
-import { cacheRemoteResourceItems, readRemoteResourceSnapshot, isRemoteResourceUnread, subscribeRemoteResourceCache, remoteResourceCacheRevision } from '@/device-link/remoteResourceCache';
+import { cacheRemoteResourceItems, readRemoteResourceSnapshot, subscribeRemoteResourceCache, remoteResourceCacheRevision } from '@/device-link/remoteResourceCache';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
@@ -14,14 +15,14 @@ import {
 import { ChevronRight, RefreshCw } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
-import { BOT_GROUP_REMOTE_COLLECTION_ID } from '@cindy/maker-shared/botGroupChat';
+
 import {
   resolveRemoteText,
 } from '@cindy/device-link';
 
 import { Text } from '@/components/AppText';
-import { TeammateList } from '@/session/TeammateList';
-import { RemoteCompanionAvatar } from '@/components/RemoteCompanionAvatar';
+
+import { RemoteResourceAvatar } from '@/components/RemoteResourceAvatar';
 import { MainWindowActionButton, MainWindowEmptyState, RemoteListSyncingPlaceholder, StatusDot } from '@/components/MobilePrimitives';
 import { mobileInteractionStyles } from '@/components/mobileInteractionStyles';
 import { SimpleStackHeader, simpleScrollInsetProps, simpleScrollScreenSafeAreaEdges } from '@/platform/chrome';
@@ -43,7 +44,7 @@ import { goBackGuarded } from '@/utils/backGuard';
 import { useGuardedPush } from '@/utils/useGuardedPush';
 import { useTheme, useThemedStyles, type ThemeColors } from '@/theme';
 import { fontWeight, iconSize, iconStroke, radius, spacing, typeScale } from '@/theme/tokens';
-import { BotGroupSection } from '@/session/BotGroupList';
+
 
 type HostedResourceItem = HostedRemoteCollectionItem;
 
@@ -57,7 +58,7 @@ function timestampLabel(value: number | undefined, locale: string): string | nul
   }).format(new Date(value));
 }
 
-export default function RemoteCollectionScreen() {
+function RemoteCollectionScreen() {
   const styles = useThemedStyles(makeStyles);
   const { colors } = useTheme();
   const { t, i18n } = useTranslation();
@@ -84,7 +85,6 @@ export default function RemoteCollectionScreen() {
     unsubscribe,
   } = useDeviceLink();
   const { accountGeneration, user } = useAuth();
-  const isBotGroups = collectionId === BOT_GROUP_REMOTE_COLLECTION_ID;
   useSyncExternalStore(subscribeRemoteResourceCache, remoteResourceCacheRevision);
   const [hydratedOwner, setHydratedOwner] = useState('');
   const cacheOwner = `${user?.id ?? ''}:${accountGeneration}`;
@@ -205,13 +205,7 @@ export default function RemoteCollectionScreen() {
 
   const openItem = useCallback((hosted: HostedResourceItem) => {
     if (!isRemoteResourceHostOnline(relayStatus, getPresenceAvailability(hosted.host.deviceId), replyEpochs[hosted.host.deviceId], connectionEpoch)) return;
-    if (isBotGroups) {
-      guardedPush({
-        pathname: '/companions/groups/[groupId]',
-        params: { groupId: hosted.item.ref.id, deviceId: hosted.host.deviceId, deviceName: hosted.host.deviceName },
-      });
-      return;
-    }
+
     guardedPush({
       pathname: '/resources/[collectionId]/[resourceId]',
       params: {
@@ -223,14 +217,7 @@ export default function RemoteCollectionScreen() {
         title: resolveRemoteText(hosted.item.display.title, i18n.language),
       },
     });
-  }, [collectionId, connectionEpoch, getPresenceAvailability, guardedPush, i18n.language, isBotGroups, relayStatus, replyEpochs]);
-
-  const groupIsOnline = useCallback((host: RemoteResourceHostTarget) =>
-    isRemoteResourceHostOnline(relayStatus, getPresenceAvailability(host.deviceId), replyEpochs[host.deviceId], connectionEpoch),
-  [connectionEpoch, getPresenceAvailability, relayStatus, replyEpochs]);
-  const openCreatedGroup = useCallback((host: RemoteResourceHostTarget, groupId: string) => {
-    guardedPush({ pathname: '/companions/groups/[groupId]', params: { groupId, deviceId: host.deviceId, deviceName: host.deviceName } });
-  }, [guardedPush]);
+  }, [collectionId, connectionEpoch, getPresenceAvailability, guardedPush, i18n.language, false, relayStatus, replyEpochs]);
 
   return (
     <SafeAreaView
@@ -242,32 +229,15 @@ export default function RemoteCollectionScreen() {
         scrollEdge
         backTestID="remoteResources.backButton"
         onBack={() => goBackGuarded(router)}
-        subtitle={collectionId === 'teammates' ? undefined : targets.length > 1 ? t('devices.resources.hostCount', { count: targets.length }) : targets[0]?.deviceName}
+        subtitle={(targets.length > 1 ? t('devices.resources.hostCount', { count: targets.length }) : targets[0]?.deviceName)}
         title={title || t('devices.resources.titleFallback')}
         titleTestID="remoteResources.title"
       />
-      {collectionId === 'teammates' ? <TeammateList
-        items={itemsAccount === accountGeneration ? items : []} loading={loading} refreshing={refreshing} error={error}
-        connectionState={host => remoteResourceConnectionState(relayStatus, getPresenceAvailability(host.deviceId))}
-        isOnline={host => isRemoteResourceHostOnline(relayStatus, getPresenceAvailability(host.deviceId), replyEpochs[host.deviceId], connectionEpoch)}
-        onRefresh={() => void load(true)} onSelect={openItem} scrollInsetProps={simpleScrollInsetProps} /> : loading && items.length === 0 ? (
+      {(loading && items.length === 0 ? (
         <View style={styles.center}>
           <RemoteListSyncingPlaceholder testID="remoteResources.loading" />
         </View>
-      ) : isBotGroups ? (
-        <View style={styles.groupListContainer}>
-          <BotGroupSection
-            createTargets={targets.filter(groupIsOnline)}
-            isOnline={groupIsOnline}
-            items={itemsAccount === accountGeneration ? items : []}
-            onOpen={openItem}
-            onOpenCreated={openCreatedGroup}
-            preferredDeviceId={targets[0]?.deviceId}
-            query=""
-          />
-          {error ? <Text accessibilityRole="alert" style={styles.groupError}>{error}</Text> : null}
-        </View>
-      ) : (
+      ) : ((
         <FlatList
           {...simpleScrollInsetProps}
           contentContainerStyle={items.length === 0 ? styles.emptyContent : styles.listContent}
@@ -275,7 +245,7 @@ export default function RemoteCollectionScreen() {
           keyExtractor={(item) => item.key}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={colors.textSecondary} />}
           ListHeaderComponent={error && items.length > 0 ? (
-            // 已有内容时加载失败:列表保持可读,顶部行内提示 + 重试(与伙伴列表同一呈现)。
+            // 已有内容时加载失败:列表保持可读,顶部行内提示 + 重试。
             <View style={styles.noticeRow}>
               <Text accessibilityRole="alert" style={styles.noticeText} testID="remoteResources.error">
                 {t('devices.resources.stale')}
@@ -307,7 +277,6 @@ export default function RemoteCollectionScreen() {
             const status = !online ? t('devices.resources.hostOffline') : display.status
               ? resolveRemoteText(display.status.label, i18n.language)
               : '';
-            const unread = hosted.item.ref.kind === 'bot' && isRemoteResourceUnread(user?.id ?? '', hosted.host.deviceId, hosted.item.ref.id, display.lastReplyAt);
             const time = timestampLabel(display.timestamp, i18n.language);
             return (
               <Pressable
@@ -320,13 +289,13 @@ export default function RemoteCollectionScreen() {
                 testID={`remoteResources.item.${hosted.item.ref.id}`}
               >
                 <View style={styles.avatar}>
-                  <RemoteCompanionAvatar avatar={display.avatar} deviceId={hosted.host.deviceId} name={titleText} online={online} />
+                  <RemoteResourceAvatar avatar={display.avatar} deviceId={hosted.host.deviceId} name={titleText} online={online} />
                   <View style={styles.connectionDot}><StatusDot tone={online ? 'ready' : 'off'} /></View>
                 </View>
                 <View style={styles.body}>
                   <View style={styles.titleRow}>
                     <Text numberOfLines={1} style={styles.title}>{titleText}</Text>
-                    {unread ? <View accessibilityLabel={t('devices.companions.unread')} style={styles.unread} /> : null}
+
                     {time ? <Text numberOfLines={1} style={styles.time}>{time}</Text> : null}
                   </View>
                   {subtitle ? <Text numberOfLines={1} style={styles.subtitle}>{subtitle}</Text> : null}
@@ -366,7 +335,7 @@ export default function RemoteCollectionScreen() {
             )
           )}
         />
-      )}
+      )))}
     </SafeAreaView>
   );
 }
@@ -413,3 +382,10 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   subtitle: { color: colors.textSecondary, fontSize: typeScale.body },
   meta: { color: colors.textTertiary, fontSize: typeScale.footnote },
 });
+
+export default function ResourceCollectionRoute() {
+  const params = useLocalSearchParams<{ collectionId?: string }>();
+  const collectionId = Array.isArray(params.collectionId) ? params.collectionId[0] : params.collectionId;
+  if (['teammates', 'bot-groups', 'routines'].includes(collectionId ?? '')) return <Redirect href="/devices" />;
+  return <RemoteCollectionScreen />;
+}

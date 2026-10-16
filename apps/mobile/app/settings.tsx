@@ -414,7 +414,7 @@ export default function SettingsScreen() {
     }
   }, [auth, loggingOut, router, t]);
 
-  // 退出登录先确认(与首页抽屉、伙伴页同一套 confirmLogout 文案):运行中任务要额外说明。
+  // 退出登录先确认(与首页抽屉同一套 confirmLogout 文案):运行中任务要额外说明。
   const requestLogout = useCallback(() => {
     if (loggingOut) return;
     confirmLogout(t, hasRunningRemoteTasks(), () => void logout());

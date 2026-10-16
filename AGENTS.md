@@ -52,6 +52,8 @@
   提的，提交者身份不构成例外。
 - 新增或调整产品功能、判断能力应进入 Core / Skill / 插件、设计人机交互或多端体验
   前，必须先读 `docs/product-rules/core-product-principles.md`。
+- Lex 0.1.6 已退休产品伙伴与伙伴群聊。涉及旧资料、直接 ID/远程访问或清理逻辑时，先读
+  `docs/product-rules/lex-companion-retirement.md`；以下两篇伙伴文档仅作历史参考。
 - 修改伙伴（Bot）的身份、Session 生命周期、模型 fallback、工作目录、Skill / MCP 装配、
   委派协作或伙伴设置前，必须先读 `docs/product-rules/cindy-bots-runtime.md`。
 - 新增或修改伙伴群聊的数据、发言编排、群专线 Session、分工（负责人、安排、分工 Session、群工作目录）、

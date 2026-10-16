@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createBetterSqliteDatabase } from '../betterSqliteFactory';
 import { listMigrations, runMigrationReplay } from '../migrationRunner';
+import './retiredCompanionRetention.fixture';
 
 const canRunMigrationReplay = process.platform === 'win32' || process.platform === 'darwin';
 const describeMigrationReplay = canRunMigrationReplay ? describe : describe.skip;
@@ -436,6 +437,9 @@ describeMigrationReplay('migration replay', () => {
           (64, '0064_amusing_white_tiger.sql', 'ef297d4140b49cb3f6e87d58ea76e7f5a427fc6b3857a02210b9108650dcab23', 1064);
       `);
 
+      // This fixture starts at 0073, so the provider table created by 0052
+      // must exist before later provider-channel migrations are replayed.
+      db.exec(readFileSync(path.join(drizzleDir(), '0052_breezy_tag.sql'), 'utf8'));
       const result = runMigrationReplay(db, {
         drizzleDir: drizzleDir(),
         currentVersion: 73,

@@ -1,11 +1,5 @@
 import { createHash } from 'node:crypto';
-import {
-  NOTIFY_BODY_MAX_LENGTH,
-  NOTIFY_DEEP_LINK_MAX_LENGTH,
-  NOTIFY_TITLE_MAX_LENGTH,
-  type NotifyCategory,
-  type NotifyPayload,
-} from '@cindy/device-link';
+import { NOTIFY_BODY_MAX_LENGTH, NOTIFY_TITLE_MAX_LENGTH, type NotifyCategory, type NotifyPayload } from '@cindy/device-link';
 
 /**
  * 手机推送(notify 帧)的纯逻辑:payload 组装 + 短窗去重。
@@ -48,8 +42,6 @@ export function buildSessionNotifyPayload(opts: {
   fallbackBody: string;
   /** 内容摘要(可选):折叠空白后按协议上限截断 */
   detail?: string;
-  /** 伙伴主任务的 Bot id；未提供时保留普通任务深链。 */
-  teammateBotId?: string;
 }): NotifyPayload {
   const safeTitle = (opts.title.trim() || opts.sessionId.slice(0, 8)).slice(
     0,
@@ -60,7 +52,7 @@ export function buildSessionNotifyPayload(opts: {
     category: CATEGORY_BY_KIND[opts.kind],
     title: safeTitle,
     body: detail || opts.fallbackBody.slice(0, NOTIFY_BODY_MAX_LENGTH),
-    deepLink: sessionDeepLink(opts.sessionId, opts.selfDeviceId, opts.teammateBotId),
+    deepLink: sessionDeepLink(opts.sessionId, opts.selfDeviceId),
     // 同会话的通知在系统层合并(APNs collapse-id / thread-id);混入 srcDeviceId,
     // 多台桌面推同名会话时互不顶替。原样拼接不可行:deviceId 可能是 64 位
     // machineId,拼出 100+ 字符会被 APNs 的 64 字节 collapse-id 上限截断成
@@ -73,32 +65,8 @@ export function buildSessionNotifyPayload(opts: {
   };
 }
 
-/** 手机端分工步骤等待用户操作时复用既有 session-needs-reply 通知类别。 */
-export function buildBotGroupNotifyPayload(opts: {
-  groupId: string;
-  title: string;
-  body: string;
-  selfDeviceId: string;
-}): NotifyPayload {
-  const title = (opts.title.trim() || opts.groupId.slice(0, 8)).slice(0, NOTIFY_TITLE_MAX_LENGTH);
-  return {
-    category: 'session-needs-reply',
-    title,
-    body: notificationPreview(opts.body, NOTIFY_BODY_MAX_LENGTH),
-    deepLink: `/companions/groups/${encodeURIComponent(opts.groupId)}?deviceId=${encodeURIComponent(opts.selfDeviceId)}`
-      .slice(0, NOTIFY_DEEP_LINK_MAX_LENGTH),
-    collapseId: createHash('sha256')
-      .update(`${opts.selfDeviceId}:bot-group:${opts.groupId}`)
-      .digest('hex')
-      .slice(0, 32),
-  };
-}
-
-function sessionDeepLink(sessionId: string, deviceId: string, teammateBotId?: string): string {
-  const base = `/sessions/${encodeURIComponent(sessionId)}?deviceId=${encodeURIComponent(deviceId)}`;
-  if (!teammateBotId) return base;
-  const teammate = `${base}&resourceCollectionId=teammates&resourceId=${encodeURIComponent(teammateBotId)}&resourceKind=bot`;
-  return teammate.length <= NOTIFY_DEEP_LINK_MAX_LENGTH ? teammate : base;
+function sessionDeepLink(sessionId: string, deviceId: string): string {
+  return `/sessions/${encodeURIComponent(sessionId)}?deviceId=${encodeURIComponent(deviceId)}`;
 }
 
 /**

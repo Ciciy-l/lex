@@ -1,3 +1,4 @@
+import { RETAINED_COMPANION_DDL } from '../../localDb/__tests__/fixtures/retiredCompanionTables';
 /**
  * scheduler storage DB-tier smoke。
  *
@@ -89,6 +90,7 @@ function baseSchedule(overrides: Partial<Schedule> = {}): Schedule {
 // 按语句拆成数组:直连 harness 一次 exec,drizzleProxy 回归用例经 client.exec
 // 逐条下发(worker 'exec' op 单语句)。
 const SCHEDULER_DDL = [
+  ...RETAINED_COMPANION_DDL,
   `
     CREATE TABLE sessions (
       id TEXT PRIMARY KEY,
@@ -1748,7 +1750,7 @@ it('excludes internal routine rows in SQLite before materializing the public sid
   const harness = createStorageHarness(queries);
   try {
     for (const id of ['public', 'legacy', 'routine-owned']) {
-      await harness.storage.insert(baseSchedule({ id, source: id === 'routine-owned' ? 'bot' : 'user' }));
+      await harness.storage.insert(baseSchedule({ id, source: 'user' }));
       harness.db.run(sql`INSERT INTO sessions (id, title) VALUES (${id}, ${id})`);
       await harness.storage.insertRun({ id: `${id}-failed`, scheduleId: id, sessionId: id, firedAt: 1, status: 'failed', readAt: 2 });
       await harness.storage.insertRun({ id: `${id}-running`, scheduleId: id, sessionId: id, firedAt: 2, status: 'running' });
@@ -1758,6 +1760,7 @@ it('excludes internal routine rows in SQLite before materializing the public sid
     for (let i = 0; i < 128; i++) {
       await harness.storage.insertRun({ id: `routine-unread-${i}`, scheduleId: 'routine-owned', sessionId: 'routine-owned', firedAt: i + 4, status: 'success' });
     }
+    harness.sqlite.prepare("UPDATE schedules SET source = 'bot' WHERE id = 'routine-owned'").run();
     queries.length = 0;
     const runs = await harness.storage.listSidebarIndexRuns();
     expect(new Set(runs.map((run) => run.scheduleId))).toEqual(new Set(['public', 'legacy']));
@@ -1771,27 +1774,67 @@ it('excludes internal routine rows in SQLite before materializing the public sid
       const rows = harness.sqlite.prepare(query).all(...params) as { source: string | null }[];
       expect(rows.every((row) => row.source !== 'bot')).toBe(true);
     }
-    expect(await harness.storage.listRuns('routine-owned', 131)).toHaveLength(131);
+    expect(await harness.storage.listRuns('routine-owned', 131)).toEqual([]);
+    expect(harness.sqlite.prepare("SELECT count(*) AS n FROM schedule_runs WHERE schedule_id = 'routine-owned'").get()).toEqual({ n: 131 });
   } finally {
     harness.close();
   }
 });
 
+it.each(['source', 'link', 'profile', 'delegation'] as const)(
+  'retains a schedule whose only companion ownership is a historical run (%s)',
+  async (ownership) => {
+    const harness = createStorageHarness();
+    try {
+      await harness.storage.insert(baseSchedule({ id: 'retained-through-run' }));
+      await harness.storage.insert(baseSchedule({ id: 'ordinary' }));
+      harness.sqlite.prepare("INSERT INTO sessions (id, title) VALUES ('retained-session', 'Old task')").run();
+      await harness.storage.insertRun({ id: 'retained-run', scheduleId: 'retained-through-run',
+        sessionId: 'retained-session', firedAt: 1, status: 'success', resultText: 'original result' });
+      await harness.storage.insertRun({ id: 'ordinary-run', scheduleId: 'ordinary', firedAt: 1, status: 'success' });
+      // Model the pre-upgrade record: the schedule itself has no source/target hint.
+      if (ownership === 'source') harness.sqlite.prepare("UPDATE sessions SET source = 'bot' WHERE id = 'retained-session'").run();
+      if (ownership === 'link') harness.sqlite.prepare("INSERT INTO bot_session_links VALUES ('retained-session')").run();
+      if (ownership === 'profile') harness.sqlite.prepare("INSERT INTO bot_profiles VALUES ('retained-session')").run();
+      if (ownership === 'delegation') harness.sqlite.prepare("INSERT INTO bot_delegations VALUES ('retained-session')").run();
+      const schedule = harness.sqlite.prepare("SELECT * FROM schedules WHERE id = 'retained-through-run'").get();
+      const run = harness.sqlite.prepare("SELECT * FROM schedule_runs WHERE id = 'retained-run'").get();
+      await harness.storage.delete('retained-through-run');
+      expect(harness.sqlite.prepare("SELECT * FROM schedule_runs WHERE id = 'retained-run'").get()).toEqual(run);
+      expect(harness.sqlite.prepare("SELECT * FROM schedules WHERE id = 'retained-through-run'").get()).toEqual(schedule);
+      expect(await harness.storage.get('retained-through-run')).toBeNull();
+      expect((await harness.storage.listActive()).map(row => row.id)).toEqual(['ordinary']);
+      expect(await harness.storage.claimDueFire('retained-through-run', baseSchedule().nextFireAt!)).toBeNull();
+      expect(await harness.storage.update('retained-through-run', { status: 'paused' })).toBeNull();
+      expect(await harness.storage.listRuns('retained-through-run')).toEqual([]);
+      expect(await harness.storage.deleteRun('retained-run')).toBeNull();
+      await harness.storage.delete('ordinary');
+      expect(await harness.storage.get('ordinary')).toBeNull();
+      expect(harness.sqlite.prepare("SELECT * FROM schedule_runs WHERE id = 'ordinary-run'").get()).toBeUndefined();
+      expect(harness.sqlite.prepare("SELECT * FROM schedules WHERE id = 'retained-through-run'").get()).toEqual(schedule);
+      expect(harness.sqlite.prepare("SELECT * FROM schedule_runs WHERE id = 'retained-run'").get()).toEqual(run);
+    } finally { harness.close(); }
+  },
+);
+
 it('excludes internal routine history from public indexes, unread counts and deletion', async () => {
   const harness = createStorageHarness();
   try {
     await harness.storage.insert(baseSchedule({ id: 'public' }));
-    await harness.storage.insert(baseSchedule({ id: 'routine-owned', source: 'bot', manual: true }));
+    await harness.storage.insert(baseSchedule({ id: 'routine-owned', source: 'user', manual: true }));
     await harness.storage.insertRun({ id: 'public-run', scheduleId: 'public', firedAt: 1, finishedAt: 2, status: 'success' });
     await harness.storage.insertRun({ id: 'routine-run', scheduleId: 'routine-owned', firedAt: 1, finishedAt: 2, status: 'success' });
+    harness.sqlite.prepare("UPDATE schedules SET source = 'bot' WHERE id = 'routine-owned'").run();
+    const retained = harness.sqlite.prepare("SELECT * FROM schedule_runs WHERE id = 'routine-run'").get();
     expect((await harness.storage.listSidebarIndexRuns()).map((run) => run.runId)).toEqual(['public-run']);
     expect(await harness.storage.getUnreadRunCount()).toBe(1);
     await expect(harness.storage.deleteRun('routine-run', { excludeBotSchedules: true })).resolves.toBeNull();
-    expect(await harness.storage.listRuns('routine-owned')).toHaveLength(1);
+    expect(await harness.storage.listRuns('routine-owned')).toEqual([]);
     await harness.storage.markAllUnreadRuns();
     expect(await harness.storage.getUnreadRunCount()).toBe(0);
-    expect((await harness.storage.listRuns('routine-owned'))[0].readAt).toBeUndefined();
-    await expect(harness.storage.deleteRun('routine-run')).resolves.toMatchObject({ id: 'routine-run' });
+    expect(harness.sqlite.prepare("SELECT * FROM schedule_runs WHERE id = 'routine-run'").get()).toEqual(retained);
+    await expect(harness.storage.deleteRun('routine-run')).resolves.toBeNull();
+    expect(harness.sqlite.prepare("SELECT * FROM schedule_runs WHERE id = 'routine-run'").get()).toEqual(retained);
     await expect(harness.storage.deleteRun('public-run', { excludeBotSchedules: true })).resolves.toMatchObject({ id: 'public-run' });
   } finally {
     harness.close();

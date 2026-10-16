@@ -1,89 +1,28 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-const mocks = vi.hoisted(() => ({
-  getDbClient: vi.fn(),
-  queryOne: vi.fn(),
-  query: vi.fn(),
-}));
-
-vi.mock('../../localDb/client/current.js', () => ({
-  getDbClient: mocks.getDbClient,
-}));
-
-import { searchSessionsFn, searchSessionsWithBotScope } from '../session-search.js';
-
-describe('session_search Bot ownership boundary', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.getDbClient.mockReturnValue({
-      queryOne: mocks.queryOne,
-      query: mocks.query,
-    });
-    mocks.query.mockResolvedValue([]);
-  });
-
-  it('restricts a Bot caller to Sessions linked to the same Bot', async () => {
-    mocks.queryOne.mockResolvedValue({ source: 'bot', botId: 'bot-a' });
-
-    await searchSessionsFn('release', { callerSessionId: 'bot-session-a' });
-
-    expect(mocks.queryOne).toHaveBeenCalledWith(expect.stringContaining('LEFT JOIN bot_session_links'), [
-      'bot-session-a',
-    ]);
-    expect(mocks.query).toHaveBeenCalledWith(
-      expect.stringMatching(/FROM\s+bot_session_links scoped[\s\S]*FROM\s+bot_delegations delegated/),
-      [16_384, '"release"', 'bot-a', 'bot-a', 10],
-    );
-  });
-
-  it('lets the host widen a Bot main task to account history for owner or arranged turns', async () => {
-    mocks.queryOne.mockResolvedValue({ source: 'bot', botId: 'bot-a' });
-
-    await searchSessionsWithBotScope('release', { callerSessionId: 'bot-session-a' }, { botAccountWide: true });
-
-    const [sql, params] = mocks.query.mock.calls[0] as [string, unknown[]];
-    expect(sql).not.toContain('FROM bot_session_links scoped');
-    expect(params).toEqual([16_384, '"release"', 10]);
-  });
-
-  it('keeps a model-supplied session filter inside the same Bot scope', async () => {
-    mocks.queryOne.mockResolvedValue({ source: 'bot', botId: 'bot-a' });
-
-    await searchSessionsFn('release', {
-      callerSessionId: 'bot-session-a',
-      sessionId: 'foreign-session',
-    });
-
-    expect(mocks.query).toHaveBeenCalledWith(
-      expect.stringMatching(/m\.session_id = \?[\s\S]*scoped\.bot_id = \?/),
-      [16_384, '"release"', 'foreign-session', 'bot-a', 'bot-a', 10],
-    );
-  });
-
-  it('fails closed when a Bot Session has lost its ownership link', async () => {
-    mocks.queryOne.mockResolvedValue({ source: 'bot', botId: null });
-
-    await expect(
-      searchSessionsFn('release', { callerSessionId: 'orphan-bot-session' }),
-    ).resolves.toEqual([]);
-    expect(mocks.query).not.toHaveBeenCalled();
-  });
-
-  it('fails closed when Bot memory attribution survives but caller Session attribution is lost', async () => {
-    await expect(
-      searchSessionsFn('release', { callerMemoryScopeKey: 'bot:bot-a' }),
-    ).resolves.toEqual([]);
-    expect(mocks.queryOne).not.toHaveBeenCalled();
-    expect(mocks.query).not.toHaveBeenCalled();
-  });
-
-  it('preserves the existing account history behavior for non-Bot Sessions', async () => {
-    mocks.queryOne.mockResolvedValue({ source: 'desktop', botId: null });
-
-    await searchSessionsFn('release', { callerSessionId: 'desktop-session' });
-
-    const [sql, params] = mocks.query.mock.calls[0] as [string, unknown[]];
-    expect(sql).not.toContain('FROM bot_session_links scoped');
-    expect(params).toEqual([16_384, '"release"', 10]);
-  });
+import { beforeEach, expect, it, vi } from 'vitest';
+const state = vi.hoisted(() => ({ query: vi.fn(), assertAllowed: vi.fn() }));
+vi.mock('../../localDb/client/current.js', () => ({ getDbClient: () => ({ query: state.query }) }));
+vi.mock('../../localDb/retiredCompanions.js', async (original) => ({ ...await original<object>(), assertNotRetiredCompanionSession: state.assertAllowed }));
+import { searchSessionsFn } from '../session-search.js';
+beforeEach(() => { vi.clearAllMocks(); state.query.mockResolvedValue([]); state.assertAllowed.mockResolvedValue(undefined); });
+it('filters every historical ownership form from ordinary FTS results without widening a selected task', async () => {
+  await searchSessionsFn('release', { callerSessionId: 'ordinary', sessionId: 'selected' });
+  expect(state.assertAllowed).toHaveBeenCalledWith('ordinary');
+  const [sql, params] = state.query.mock.calls[0];
+  expect(sql).toContain('m.session_id NOT IN (');
+  for (const table of ['bot_session_links', 'bot_profiles', 'bot_delegations']) expect(sql).toContain(table);
+  expect(sql).toContain('AND m.session_id = ?');
+  expect(params).toEqual([16_384, '"release"', 'selected', 10]);
+});
+it('refuses a retired caller before searching account history', async () => {
+  state.assertAllowed.mockRejectedValueOnce(new Error('[NOT_FOUND]'));
+  await expect(searchSessionsFn('release', { callerSessionId: 'retired' })).rejects.toThrow('NOT_FOUND');
+  expect(state.query).not.toHaveBeenCalled();
+});
+it('does not turn an old companion memory scope into account-wide search', async () => {
+  expect(await searchSessionsFn('release', { callerMemoryScopeKey: 'bot:old' })).toEqual([]);
+  expect(state.query).not.toHaveBeenCalled();
+});
+it('preserves the ordinary account query and parameters', async () => {
+  await searchSessionsFn('release');
+  expect(state.query.mock.calls[0][1]).toEqual([16_384, '"release"', 10]);
 });

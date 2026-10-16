@@ -280,17 +280,5 @@
         "fallback": "Mobile handles remote requests in the order sent by the desktop."
       }
     }
-  },
-  "companion": {
-    "operation": "Operation",
-    "details": "Details",
-    "fields": {
-      "path": "File",
-      "file_path": "File",
-      "url": "Address",
-      "command": "Command",
-      "ghost_id": "Plugin",
-      "tool": "Tool"
-    }
   }
 }

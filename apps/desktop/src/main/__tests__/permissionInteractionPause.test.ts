@@ -15,17 +15,8 @@ const names = new Set([
 ]);
 const functions = ast.statements.filter((node) => ts.isFunctionDeclaration(node)
   && node.name && names.has(node.name.text)).map(node => node.getText(ast).replace(/^export /, ''));
-let holdInputSource = '';
-function visit(node: ts.Node): void {
-  if (ts.isPropertyAssignment(node) && node.name.getText(ast) === 'holdInput') {
-    holdInputSource = node.initializer.getText(ast);
-  }
-  ts.forEachChild(node, visit);
-}
-visit(ast);
-if (!holdInputSource) throw new Error('Task holdInput adapter missing');
 const compiled = ts.transpileModule(`${functions.join('\n')}
-return { install: installDesktopInteractionListener, hold: ${holdInputSource},
+return { install: installDesktopInteractionListener, pauseTimeouts: setPendingInteractionTimeoutsPaused,
   answer: resolvePendingInteraction, cleanup: cleanupPendingAgentInteractionsForSession,
   take: takePendingInteractionsForSession };`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
@@ -59,7 +50,7 @@ function harness() {
   };
   const runtime = new Function(...Object.keys(deps), compiled)(...Object.values(deps)) as {
     install: (session: { id: string }) => void;
-    hold: (id: string, held: boolean) => string[];
+    pauseTimeouts: (id: string, held: boolean) => string[];
     answer: (id: string, decision: InteractionDecision) => boolean;
     cleanup: (id: string, reason: string) => void;
     take: (id: string) => Array<{ resolve: (decision: InteractionDecision) => void }>;
@@ -71,7 +62,10 @@ function harness() {
     void promise.then(settled);
     return { promise, settled };
   };
-  return { ...runtime, request, entries, dismiss };
+  return { ...runtime, request, entries, dismiss, hold: (id: string, paused: boolean) => {
+    coordinator.setExecutionPaused(id, paused);
+    return runtime.pauseTimeouts(id, paused);
+  } };
 }
 
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(0); });

@@ -55,13 +55,13 @@ export type SubmitGithubIssueHostResult =
 export interface SubmitGithubIssueDeps {
   getSessionContext: () => {
     sessionId?: string;
-    agentKind: 'claude-code' | 'codex' | 'pi';
+    agentKind: import('./../types.js').LiziMcpSessionContext['agentKind'];
     workingDir: string;
   };
   /** host 回调:弹确认卡片 → 用户确认后提交到 server。 */
   submit: (req: {
     sessionId: string;
-    agentKind: 'claude-code' | 'codex' | 'pi';
+    agentKind: 'claude-code' | 'codex' | 'pi' | 'omp';
     workingDir: string;
     title: string;
     body: string;
@@ -130,9 +130,13 @@ export function registerSubmitGithubIssueTool(
         );
       }
 
+      const agentKind = ctx.agentKind;
+      if (agentKind !== 'claude-code' && agentKind !== 'codex' && agentKind !== 'pi' && agentKind !== 'omp') {
+        return errorPayload('HOST_NOT_READY', '当前运行时尚不支持反馈确认，请通过应用反馈入口提交。');
+      }
       const result = await deps.submit({
         sessionId: ctx.sessionId,
-        agentKind: ctx.agentKind,
+        agentKind,
         workingDir: ctx.workingDir,
         title: title.trim(),
         body: body.trim(),

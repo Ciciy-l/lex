@@ -1,9 +1,42 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import {
   assertRemoteBotInvocationAllowed,
-  projectRemoteSessionResult, setRemoteBotSessionLookup } from '../remoteBotSessionBoundary';
+  projectRemoteBotPush, projectRemoteSessionResult, setRemoteBotSessionLookup } from '../remoteBotSessionBoundary';
 
 afterEach(() => setRemoteBotSessionLookup(null));
+
+it.each(['local-db:sessions:get-many', 'local-db:orca-workflows:list-workers-by-leads'])(
+  'checks every positional task ID before a batch invocation: %s', async channel => {
+    const lookup = vi.fn(async (id: string) => id === 'retained' ? 'hidden' as const : 'ordinary' as const);
+    setRemoteBotSessionLookup(lookup);
+    await expect(assertRemoteBotInvocationAllowed([['normal', 'retained']], channel)).rejects.toThrow('NOT_FOUND');
+    await expect(assertRemoteBotInvocationAllowed([['normal']], channel)).resolves.toBeUndefined();
+    expect(lookup).toHaveBeenCalledWith('retained', 'session');
+  },
+);
+
+it('does not interpret catalog kinds, plugin paths or schedule IDs as task IDs before DB startup', async () => {
+  for (const [channel, args] of [
+    ['maker:get-capabilities', ['pi']],
+    ['maker:agent:binary-version', ['claude-code']],
+    ['maker:plugins:list', ['/workspace', true]],
+    ['maker:schedule:get', ['scheduled-job']],
+    ['maker:provider:list', [{ capabilities: ['chat'] }]],
+  ] as const) {
+    await expect(assertRemoteBotInvocationAllowed([...args], channel)).resolves.toBeUndefined();
+  }
+  for (const channel of ['maker:send', 'maker:set-model', 'local-db:messages:list', 'local-db:sessions:get']) {
+    await expect(assertRemoteBotInvocationAllowed(['retained'], channel)).rejects.toThrow('[NOT_FOUND]');
+  }
+});
+
+it('checks structured source and target task IDs while allowing a genuinely new task', async () => {
+  setRemoteBotSessionLookup(async id => id === 'retained' ? 'hidden' : 'missing');
+  await expect(assertRemoteBotInvocationAllowed([{ sessionId: 'new-task' }], 'maker:create-session')).resolves.toBeUndefined();
+  for (const arg of [{ parentSessionId: 'retained' }, { targetSessionId: 'retained' }, { sourceSessionId: 'retained' }]) {
+    await expect(assertRemoteBotInvocationAllowed([arg], 'maker:create-session')).rejects.toThrow('[NOT_FOUND]');
+  }
+});
 
 it('checks the normalized source task before remote Review and rechecks visibility changes', async () => {
   let hidden = false;
@@ -46,18 +79,18 @@ it('bounds single-lookup adapters, deduplicates checks and preserves collection 
   expect(peak).toBe(1);
 });
 
-it('batches Bot resource identities, preserves other resource kinds and recomputes filtered revision', async () => {
+it('strips all retired resource identities while preserving portable resources and revisions', async () => {
   const single = vi.fn(async () => 'visible' as const);
-  const batch = vi.fn(async () => new Map([['visible', 'visible' as const], ['hidden', 'hidden' as const]]));
+  const batch = vi.fn(async () => new Map<string, 'visible'>());
   setRemoteBotSessionLookup(single, batch);
   const other = { ref: { id: 'other', kind: 'document' }, revision: 'a' };
-  const visible = { ref: { id: 'visible', kind: 'bot' }, revision: 'b' };
   const result = await projectRemoteSessionResult('maker:remote-resources:list', {
-    items: [other, visible, { ref: { id: 'hidden', kind: 'bot' } }], revision: 'old', collectionId: 'teammates',
+    items: [other, { ref: { id: 'old', kind: 'bot' }, revision: 'b' },
+      { ref: { id: 'group', kind: 'group', collectionId: 'bot-groups' } }], revision: 'old',
   });
-  expect(result).toEqual({ items: [other, visible], revision: 'a|b', collectionId: 'teammates' });
-  expect(batch).toHaveBeenCalledWith(['visible', 'hidden'], 'bot');
+  expect(result).toEqual({ items: [other], revision: 'a' });
   expect(single).not.toHaveBeenCalled();
+  expect(batch).not.toHaveBeenCalled();
 });
 
 it('fails closed for incomplete batch results, rejects hidden gets and clears a replaced batch adapter', async () => {
@@ -65,9 +98,21 @@ it('fails closed for incomplete batch results, rejects hidden gets and clears a 
   setRemoteBotSessionLookup(async () => 'hidden', batch);
   expect(await projectRemoteSessionResult('maker:list-active', [{ sessionId: 's1' }])).toEqual([]);
   await expect(projectRemoteSessionResult('local-db:sessions:get', { id: 's1' })).rejects.toThrow('[NOT_FOUND]');
+  expect(batch).toHaveBeenCalledTimes(2);
   setRemoteBotSessionLookup(async () => 'ordinary');
   expect(await projectRemoteSessionResult('maker:list-active', [{ sessionId: 's1' }])).toEqual([{ sessionId: 's1' }]);
-  expect(batch).toHaveBeenCalledTimes(1);
+  expect(batch).toHaveBeenCalledTimes(2);
+});
+
+it.each(['kind', 'resourceKind'])('rejects legacy bot-group %s even outside the original collection', async (field) => {
+  const ref = { id: 'legacy-group', collectionId: 'custom-collection', [field]: 'bot-group' };
+  await expect(assertRemoteBotInvocationAllowed([{ ref }], 'maker:remote-resources:get')).rejects.toThrow('[NOT_FOUND]');
+  await expect(projectRemoteSessionResult('maker:remote-resources:get', { ref })).rejects.toThrow('[NOT_FOUND]');
+  expect(await projectRemoteSessionResult('maker:remote-resources:list', { items: [{ ref }] })).toEqual({ items: [], revision: '' });
+  expect(await projectRemoteBotPush({ ref }, 'maker:remote-resources:changed')).toBeNull();
+  const ordinary = { ref: { ...ref, [field]: 'document' } };
+  await expect(assertRemoteBotInvocationAllowed([ordinary], 'maker:remote-resources:get')).resolves.toBeUndefined();
+  expect(await projectRemoteSessionResult('maker:remote-resources:get', ordinary)).toEqual(ordinary);
 });
 
 it('filters hidden runtime rows inside a complete active-session snapshot', async () => {
@@ -149,4 +194,43 @@ it('bounds normalized tag authorization and ignores unrelated object references'
     'local-db:task-tags:execute',
   );
   expect(lookup).toHaveBeenCalledTimes(1);
+});
+
+it('rejects retired channels and resource references before DB startup', async () => {
+  for (const channel of ['local-db:bots:get', 'maker:bot-direct-message-thread:get', 'routines:save']) {
+    await expect(assertRemoteBotInvocationAllowed(['old'], channel)).rejects.toThrow('[NOT_FOUND]');
+  }
+  for (const ref of [
+    { collectionId: 'teammates', kind: 'bot', id: 'old' },
+    { collectionId: 'bot-groups', kind: 'group', id: 'old' },
+    { collectionId: 'routines', kind: 'routine', id: 'old' },
+  ]) {
+    await expect(assertRemoteBotInvocationAllowed([{ ref }], 'maker:remote-resources:get')).rejects.toThrow('[NOT_FOUND]');
+  }
+  await expect(assertRemoteBotInvocationAllowed(['session'], 'maker:send')).rejects.toThrow('[NOT_FOUND]');
+  expect(await projectRemoteSessionResult('local-db:sessions:list', [{ id: 'old', source: 'bot' }, { id: 'not-yet-checked' }])).toEqual([]);
+  expect(await projectRemoteBotPush({ sessionId: 'old' }, 'maker:event')).toBeNull();
+  expect(await projectRemoteBotPush({ source: 'bot' }, 'maker:event')).toBeNull();
+  expect(await projectRemoteBotPush({ online: true }, 'devices:changed')).toEqual({ online: true });
+});
+
+it('rejects a lookup result crossing a replaced account adapter', async () => {
+  let release!: (value: 'ordinary') => void;
+  setRemoteBotSessionLookup(() => new Promise(resolve => { release = resolve; }));
+  const checking = assertRemoteBotInvocationAllowed(['old'], 'maker:send');
+  setRemoteBotSessionLookup(async () => 'ordinary');
+  release('ordinary');
+  await expect(checking).rejects.toThrow('[NOT_FOUND]');
+});
+
+it('filters retired manifests and buffered pushes without touching unrelated payloads', async () => {
+  setRemoteBotSessionLookup(async id => id === 'legacy' ? 'hidden' : 'ordinary');
+  const document = { id: 'docs', resourceKind: 'document' };
+  expect(await projectRemoteSessionResult('maker:remote-resources:manifest', {
+    protocolVersion: 1, collections: [document, { id: 'teammates', resourceKind: 'bot' },
+      { id: 'bot-groups', resourceKind: 'group' }, { id: 'routines', resourceKind: 'routine' }],
+  })).toEqual({ protocolVersion: 1, collections: [document] });
+  expect(await projectRemoteBotPush({ message: { sessionId: 'legacy' } }, 'local-db:messages:created')).toBeNull();
+  const payload = { sessionId: 'ordinary', message: { text: 'kept' } };
+  expect(await projectRemoteBotPush(payload, 'maker:event')).toBe(payload);
 });

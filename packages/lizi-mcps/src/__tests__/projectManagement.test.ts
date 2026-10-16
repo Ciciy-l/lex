@@ -10,7 +10,7 @@ describe("project management MCP", () => {
   it.each(["pi", "codex", "claude-code"] as const)(
     "discovers and dispatches project operations for %s with runtime surface checks",
     async (agentKind) => {
-      let surface: "default" | "bot" | "restricted" = "default";
+      let surface: "default" | "bot" | "bot-main" | "restricted" = "default";
       let remoteHostId: string | undefined;
       const list = vi.fn(async () => ({
         ok: true as const,
@@ -146,9 +146,7 @@ describe("project management MCP", () => {
           ).ok,
         ).toBe(false);
         remoteHostId = undefined;
-        surface = "bot";
-        expect(await call("list_projects", {})).toMatchObject({ ok: true });
-        for (const nextSurface of ["restricted"] as const) {
+        for (const nextSurface of ["bot", "bot-main", "restricted"] as const) {
           surface = nextSurface;
           for (const tool of [
             "list_projects",
@@ -160,7 +158,7 @@ describe("project management MCP", () => {
             });
           }
         }
-        expect(list).toHaveBeenCalledTimes(2);
+        expect(list).toHaveBeenCalledTimes(1);
         expect(rename).toHaveBeenCalledTimes(1);
         expect(remove).toHaveBeenCalledTimes(1);
       } finally {

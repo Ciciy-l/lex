@@ -1,4 +1,4 @@
-import type { BotModelRoute } from '../../../shared/botModelChain';
+import type { ModelRoute } from '../../../shared/modelRoute';
 import type { ProviderView } from '@cindy/model-providers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { changeAppDefaultModel, configureAppDefaultModelSelection, inspectAppDefaultModel, validateTaskModel, resolveTaskModelSelection } from '../appDefaultModelControl';
@@ -18,7 +18,7 @@ vi.mock('../../appSessionState.js', () => ({
   getActiveDataOwnerPushStamp: () => ({ dataOwnerId: 'owner', ownerGeneration: 1 }),
 }));
 const route = { harness: 'codex' as const, providerId: 'openai', model: 'luna', effort: 'medium', fastMode: false };
-const mirror = (selectedRoute: BotModelRoute = route, requestId?: string) => setNewMakerDraftCache({ selectedRoute,
+const mirror = (selectedRoute: ModelRoute = route, requestId?: string) => setNewMakerDraftCache({ selectedRoute,
   lastByVendor: {}, fastModeByModel: {}, effortByModel: {} }, host.owner, requestId);
 const id = JSON.stringify(['codex', 'openai', 'luna']);
 

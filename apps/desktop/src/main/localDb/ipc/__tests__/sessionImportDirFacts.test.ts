@@ -4,7 +4,7 @@ import { createGitRepoProbe } from '../sessionImportDirFacts.js';
 
 describe('createGitRepoProbe', () => {
   it('stats each unique directory once and reports only git repositories', async () => {
-    const statExists = vi.fn(async (target: string) => target.startsWith('/w/repo'));
+    const statExists = vi.fn(async (target: string) => target.replace(/\\/g, '/').startsWith('/w/repo'));
     const probe = createGitRepoProbe(statExists);
     expect(await probe(['/w/repo', '/w/plain', '/w/repo', ''])).toEqual(['/w/repo']);
     expect(await probe(['/w/plain', '/w/repo'])).toEqual(['/w/repo']);

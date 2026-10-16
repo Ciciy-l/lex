@@ -4,6 +4,7 @@ import { DeviceLinkError } from '@cindy/device-link';
 import {
   MOBILE_REMOTE_RESOURCE_PRIMITIVES,
   getRemoteResource,
+  invokeRemoteResourceAction,
   discoverRemoteHomeCollections,
   remoteResourceDiscoveryTargets,
   isRemoteResourcesUnsupported,
@@ -19,9 +20,42 @@ const targets = [
   { deviceId: 'mac-2', deviceName: 'Laptop' },
 ];
 
+describe('retired resource collections', () => {
+  it.each(['bot', 'bot-group'])('rejects %s resources in arbitrary live or cached collections', async kind => {
+    const invoke = vi.fn();
+    const ref = { collectionId: 'custom', kind, id: 'old' };
+    await expect(getRemoteResource(invoke, targets[0], ref)).rejects.toThrow('Unsupported');
+    await expect(invokeRemoteResourceAction(invoke, targets[0], { collectionId: 'custom', actionId: 'open', resourceRef: ref })).rejects.toThrow('Unsupported');
+    expect(invoke).not.toHaveBeenCalled();
+    const item = { ref, display: { title: 'Old' }, revision: '1', links: [] };
+    expect(normalizeRemoteCollectionItems({ items: [item] }, 'custom')).toEqual([]);
+    expect(mergeRemoteCollectionHostShards([{ key: 'old', host: targets[0], item }], [], new Set(), targets)).toEqual([]);
+    const previous = [{ id: 'custom', title: 'Old', resourceKind: kind, placement: 'home-scope', targets }];
+    expect(remoteResourceDiscoveryTargets([{ deviceId: 'mac-1', name: 'Studio', state: 'offline', canOpen: false }], previous)).toEqual([]);
+    const document = { id: 'docs', title: 'Documents', resourceKind: 'document', placement: 'home-scope', targets };
+    const live = vi.fn(async () => ({ protocolVersion: 1, collections: [...previous, document] })) as RemoteInvoke;
+    expect((await discoverRemoteHomeCollections(live, targets, 'en', previous)).map(row => row.id)).toEqual(['docs']);
+    const offline = vi.fn(async () => { throw new Error('offline'); }) as RemoteInvoke;
+    expect((await discoverRemoteHomeCollections(offline, targets, 'en', [...previous, document])).map(row => row.id)).toEqual(['docs']);
+  });
+  it.each(['teammates', 'bot-groups', 'routines'])('rejects %s even when an old screen advertises its primitive', async collectionId => {
+    const invoke = vi.fn();
+    await expect(getRemoteResource(invoke, targets[0], { collectionId, kind: 'bot', id: 'old' }, 'en', ['bot-group-chat']))
+      .rejects.toThrow('Unsupported');
+    expect(invoke).not.toHaveBeenCalled();
+    expect(normalizeRemoteCollectionItems({ items: [{ ref: { collectionId, kind: 'bot', id: 'old' }, display: { title: 'Old' }, revision: '1', links: [] }] }, collectionId)).toEqual([]);
+  });
+  it('does not resurrect retired collections from a live manifest or its offline fallback', async () => {
+    const previous = ['teammates', 'bot-groups', 'routines'].map(id => ({ id, title: id, resourceKind: 'bot', targets }));
+    const invoke = vi.fn(async () => ({ protocolVersion: 1, collections: previous.map(row => ({ ...row, placement: 'home-scope' })) })) as RemoteInvoke;
+    await expect(discoverRemoteHomeCollections(invoke, targets, 'en', previous)).resolves.toEqual([]);
+    expect(remoteResourceDiscoveryTargets([{ deviceId: 'mac-1', name: 'Studio', state: 'offline', canOpen: false }], previous)).toEqual([]);
+  });
+});
+
 describe('remote resource discovery', () => {
   it('keeps a discovered offline host while excluding revoked and disabled hosts', async () => {
-    const previous = [{ id: 'teammates', title: 'Teammates', resourceKind: 'bot', placement: 'home-scope', targets }];
+    const previous = [{ id: 'projects', title: 'Projects', resourceKind: 'project', placement: 'home-scope', targets }];
     const selected = remoteResourceDiscoveryTargets([
       { deviceId: 'mac-1', name: 'Studio', canOpen: false, state: 'offline' },
       { deviceId: 'mac-2', name: 'Laptop', canOpen: false, state: 'access_revoked' },
@@ -43,21 +77,21 @@ describe('remote resource discovery', () => {
     const invoke = vi.fn(async (deviceId: string) => ({
       protocolVersion: 1,
       collections: [{
-        id: 'teammates',
-        resourceKind: 'bot',
+        id: 'projects',
+        resourceKind: 'project',
         placement: 'home-scope',
         title: {
-          fallback: 'Teammates',
-          translations: { 'zh-CN': '所有伙伴' },
+          fallback: 'Projects',
+          translations: { 'zh-CN': '所有项目' },
         },
         futureField: deviceId,
       }],
     })) as RemoteInvoke;
 
     await expect(discoverRemoteHomeCollections(invoke, targets, 'zh-CN')).resolves.toEqual([{
-      id: 'teammates',
-      title: '所有伙伴',
-      resourceKind: 'bot',
+      id: 'projects',
+      title: '所有项目',
+      resourceKind: 'project',
       placement: 'home-scope',
       iconName: undefined,
       targets,
@@ -112,9 +146,9 @@ describe('remote resource discovery', () => {
       return { protocolVersion: 1, collections: [] };
     }) as RemoteInvoke;
     const previous = [{
-      id: 'teammates',
-      title: 'Teammates',
-      resourceKind: 'bot',
+      id: 'projects',
+      title: 'Projects',
+      resourceKind: 'project',
       placement: 'home-scope',
       targets: [targets[0]],
     }];
@@ -128,25 +162,25 @@ describe('remote resource response boundaries', () => {
   it('keeps valid additive items and drops malformed or cross-collection items', () => {
     expect(normalizeRemoteCollectionItems({ items: [
       {
-        ref: { collectionId: 'teammates', kind: 'bot', id: 'bot-1' },
+        ref: { collectionId: 'projects', kind: 'project', id: 'project-1' },
         display: { title: 'Cindy', futureDisplay: true },
         links: [],
         revision: '1',
         futureField: true,
       },
       {
-        ref: { collectionId: 'other', kind: 'bot', id: 'bot-2' },
+        ref: { collectionId: 'other', kind: 'project', id: 'project-2' },
         display: { title: 'Wrong scope' },
         links: [],
         revision: '1',
       },
       { display: null },
-    ] }, 'teammates')).toHaveLength(1);
+    ] }, 'projects')).toHaveLength(1);
   });
 
   it('normalizes hostile optional display and link fields before rendering', () => {
     const [item] = normalizeRemoteCollectionItems({ items: [{
-      ref: { collectionId: 'teammates', kind: 'bot', id: 'bot-1' },
+      ref: { collectionId: 'projects', kind: 'project', id: 'project-1' },
       display: {
         title: 'Cindy',
         timestamp: 9e15,
@@ -158,10 +192,10 @@ describe('remote resource response boundaries', () => {
         { rel: 'conversation', target: { kind: 'session', sessionId: 'session-1' } },
       ],
       revision: '1',
-    }] }, 'teammates');
+    }] }, 'projects');
 
     expect(item).toEqual({
-      ref: { collectionId: 'teammates', kind: 'bot', id: 'bot-1' },
+      ref: { collectionId: 'projects', kind: 'project', id: 'project-1' },
       display: { title: 'Cindy' },
       links: [{ rel: 'conversation', target: { kind: 'session', sessionId: 'session-1' } }],
       revision: '1',
@@ -173,7 +207,7 @@ describe('remote resource response boundaries', () => {
       key: `${deviceId}:${id}`,
       host: targets.find((target) => target.deviceId === deviceId)!,
       item: {
-        ref: { collectionId: 'teammates', kind: 'bot', id },
+        ref: { collectionId: 'projects', kind: 'project', id },
         display: { title: id },
         links: [],
         revision: '1',
@@ -232,32 +266,32 @@ describe('portable task controls', () => {
 });
 
 it('preserves additive public generation state without interpreting unknown future phases', () => {
-  const input = (generation?: unknown) => ({ items: [{ ref: { collectionId: 'teammates', kind: 'bot', id: 'bot' },
+  const input = (generation?: unknown) => ({ items: [{ ref: { collectionId: 'projects', kind: 'project', id: 'project' },
     display: { title: 'Cindy', generation }, links: [], revision: '1' }] });
-  expect(normalizeRemoteCollectionItems(input({ phase: 'replying', startedAt: 123 }), 'teammates')[0].display.generation)
+  expect(normalizeRemoteCollectionItems(input({ phase: 'replying', startedAt: 123 }), 'projects')[0].display.generation)
     .toEqual({ phase: 'replying', startedAt: 123 });
-  expect(normalizeRemoteCollectionItems(input(), 'teammates')[0].display.generation).toBeUndefined();
-  expect(normalizeRemoteCollectionItems(input({ phase: {}, startedAt: Infinity }), 'teammates')[0].display.generation).toBeUndefined();
+  expect(normalizeRemoteCollectionItems(input(), 'projects')[0].display.generation).toBeUndefined();
+  expect(normalizeRemoteCollectionItems(input({ phase: {}, startedAt: Infinity }), 'projects')[0].display.generation).toBeUndefined();
 });
 
-describe('bot group chat block', () => {
-  const ref = { collectionId: 'bot-groups', kind: 'bot-group', id: 'g1' };
+describe('unknown resource primitive', () => {
+  const ref = { collectionId: 'reports', kind: 'report', id: 'g1' };
   const response = {
     ref, revision: '1', display: { title: '官网介绍页' }, links: [],
-    blocks: [{ id: 'chat', primitive: 'bot-group-chat', fallbackMarkdown: '**阿布**: 写好了', data: { id: 'g1', messages: [{ id: 'm1' }] } }],
+    blocks: [{ id: 'chat', primitive: 'future-chart', fallbackMarkdown: '**阿布**: 写好了', data: { id: 'g1', messages: [{ id: 'm1' }] } }],
   };
 
-  it('keeps the structured group data only for the screen that declared the primitive', async () => {
+  it('keeps unknown data inert even when an old screen advertises an extra primitive', async () => {
     const invoke = vi.fn(async () => response) as RemoteInvoke;
-    const resource = await getRemoteResource(invoke, targets[0], ref, 'zh-CN', ['bot-group-chat']);
-    expect(resource.blocks?.[0]).toEqual(response.blocks[0]);
+    const resource = await getRemoteResource(invoke, targets[0], ref, 'zh-CN', ['future-chart']);
+    expect(resource.blocks?.[0]).toEqual({ id: 'chat', primitive: 'future-chart', fallbackMarkdown: '**阿布**: 写好了' });
     const request = (invoke as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]![2] as [{ client: { primitives: string[] } }];
-    expect(request[0].client.primitives).toEqual([...MOBILE_REMOTE_RESOURCE_PRIMITIVES, 'bot-group-chat']);
+    expect(request[0].client.primitives).toEqual([...MOBILE_REMOTE_RESOURCE_PRIMITIVES, 'future-chart']);
   });
 
   it('never hands the group data to an ordinary resource view', async () => {
     const invoke = vi.fn(async () => response) as RemoteInvoke;
     const resource = await getRemoteResource(invoke, targets[0], ref);
-    expect(resource.blocks?.[0]).toEqual({ id: 'chat', primitive: 'bot-group-chat', fallbackMarkdown: '**阿布**: 写好了' });
+    expect(resource.blocks?.[0]).toEqual({ id: 'chat', primitive: 'future-chart', fallbackMarkdown: '**阿布**: 写好了' });
   });
 });

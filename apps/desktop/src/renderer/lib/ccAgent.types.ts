@@ -54,7 +54,6 @@ export interface MessageAutomationOrigin {
 export interface CcMeta {
   /** Host captured authority receipt, never accepted from renderer writes. */
   autoReviewUserText?: string | { kind: 'scheduled-continuation' | 'delegated-continuation' };
-  botLearning?: import('@cindy/maker-shared/bot-learning').BotLearningReceipt[];
   uuid?: string;
   parentUuid?: string;
   /** Claude transcript chain parent. Do not confuse with parentUuid, which is parent_tool_use_id. */
@@ -188,38 +187,6 @@ export interface CcMeta {
 
   /** /review 创建的独立只读审查任务及其来源卡状态。 */
   reviewRun?: ReviewRunMeta;
-
-  /**
-   * Host-side marker: 后台 Session 任务的持久卡片锚点或后续消息留痕。
-   * renderer 只用它呈现和打开对应任务，不进 prompt。历史角色仍由
-   * shared/botCollaboration.ts 严格解析，但新数据不再创建伙伴客座镜像。
-   */
-  botCollaboration?: import('../../shared/botCollaboration').BotCollaborationMeta;
-
-  /**
-   * Host-side marker for the read-only entrance to a hidden Bot pair conversation.
-   * The actual messages live in the dedicated Bot DM tables and never enter the
-   * normal task transcript through this metadata field.
-   */
-  /** Automatic reply to a private Bot message; retained without unread attention. */
-  botPrivateReply?: boolean;
-  /** Turn of a Bot's hidden group-chat lane; the group chat surfaces its result and failures. */
-  botGroupLane?: boolean;
-  botAuthorization?: import('../../shared/botAuthorization').BotAuthorizationCard;
-  botDirectMessage?: import('../../shared/botDirectMessage').BotDirectMessageMeta;
-
-  /**
-   * Host-side marker for a Hermes-style Bot group room message. The text still
-   * lives in Cindy's normal messages table; this metadata only identifies who
-   * spoke so the room renderer can label it without parsing display text.
-   */
-  botGroup?: {
-    roomId: string;
-    threadId: string;
-    senderKind: 'user' | 'bot';
-    botId?: string;
-    name: string;
-  };
 
   /**
    * Host-side marker:这条 user 消息是一个 /goal 目标的设定 / 更新(goal-host 在新建或

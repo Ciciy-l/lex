@@ -337,6 +337,37 @@ describe('cindy_scheduler MCP server (in-process smoke)', () => {
     await h.cleanup();
   });
 
+  it('schedule_list combines local text and status filters without trimming the returned records', async () => {
+    try {
+      const active = await h.scheduler.create({ ...baseCreate, name: 'Release audit',
+        prompt: 'Review https://github.com/example/project/pull/82', workingDir: 'D:/Projects/Lex',
+        targetSessionId: 'Target-Session', preRunHook: { command: 'node verify.mjs' },
+      });
+      const paused = await h.scheduler.create({ ...baseCreate, name: 'Other release',
+        executionMode: 'script', scriptConfig: { command: 'node report.mjs', capabilities: [] },
+      });
+      await h.scheduler.pause(paused.id);
+      const rows = await h.scheduler.list();
+      const list = async (args: Record<string, unknown>) => {
+        const result = await h.client.callTool({ name: 'call_tool', arguments: { name: 'schedule_list', args } });
+        const parsed = parseToolResult(result as { content: unknown[]; isError?: boolean });
+        expect(parsed.isError).toBe(false);
+        expect(parsed.envelope.ok).toBe(true);
+        if (!parsed.envelope.ok) throw new Error('unexpected error');
+        return parsed.envelope.data;
+      };
+      for (const query of ['', '   ', undefined]) expect(await list({ query })).toEqual(rows);
+      for (const query of [' RELEASE AUDIT ', 'PULL/82', 'projects/lex', 'target-session', 'VERIFY.MJS', active.id.toUpperCase()]) {
+        expect(await list({ query })).toEqual([rows.find((row) => row.id === active.id)]);
+      }
+      expect(await list({ query: 'REPORT.MJS', status: 'paused' })).toEqual([rows.find((row) => row.id === paused.id)]);
+      expect(await list({ query: 'release', status: 'active' })).toEqual([rows.find((row) => row.id === active.id)]);
+      expect(await list({ query: 'no such schedule' })).toEqual([]);
+      expect(await list({ query: 'audit', status: 'paused' })).toEqual([]);
+      expect(await h.scheduler.list()).toEqual(rows);
+    } finally { await h.cleanup(); }
+  });
+
   it.each(['pi', 'omp'] as const)('call_tool(schedule_create) accepts agentKind: %s as a first-class scheduled agent', async (agentKind) => {
     const created = await h.client.callTool({
       name: 'call_tool',

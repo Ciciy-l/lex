@@ -1,4 +1,5 @@
-import { botsPersistSessionPermission } from '../botSessionPermissionSql.js';
+import { RETIRED_COMPANION_SESSION_IDS_SQL } from '../retiredCompanionSql.js';
+import { persistSessionPermission } from '../sessionPermissionSql.js';
 import { createAutoReviewIntentProjection } from '@cindy/maker-shared/auto-review-intent';
 import { batchAutoReviewProjection, readAutoReviewProjection } from '../autoReviewProjection.js';
 import fs from 'node:fs';
@@ -21,7 +22,8 @@ import { TASK_DATABASE_FILE_PREFIXES } from '../worker/worktreeReferences.js';
 import { CLOSE_SHARED_TASKS_FOR_SESSION_SQL } from '../sharedTaskClosureSql.js';
 
 const WORKER_CODE = `
-const botsPersistSessionPermission = ${botsPersistSessionPermission.toString()};
+const RETIRED_COMPANION_SESSION_IDS_SQL = ${JSON.stringify(RETIRED_COMPANION_SESSION_IDS_SQL)};
+const persistSessionPermission = ${persistSessionPermission.toString()};
 const createAutoReviewIntentProjection = ${createAutoReviewIntentProjection.toString()};
 const readAutoReviewProjection = ${readAutoReviewProjection.toString()};
 const batchAutoReviewProjection = ${batchAutoReviewProjection.toString()};
@@ -377,8 +379,22 @@ function worktreeReferenceQuery(nextDb) {
     || (hasSource && !hasWorktree) || (hasRemote && !hasSource)) {
     throw new Error('unsupported task reference schema');
   }
+  const retiredChecks = [];
+  for (const [table, column] of [
+    ['bot_session_links', 'session_id'], ['bot_profiles', 'canonical_session_id'], ['bot_delegations', 'child_session_id'],
+  ]) {
+    const legacyColumns = nextDb.prepare('PRAGMA table_info(' + table + ')').all();
+    if (!legacyColumns.length) continue; // Older databases have no companion tables.
+    if (!legacyColumns.some((item) => item.name === column)) throw new Error('unsupported retained task ownership schema');
+    retiredChecks.push('id IN (SELECT ' + column + ' FROM ' + table + ' WHERE ' + column + ' IS NOT NULL)');
+  }
+  // This is a deletion-evidence projection only. Retained rows and ownership are never rewritten.
+  const originalSource = hasSource ? 'source' : 'NULL';
+  const protectedSource = retiredChecks.length
+    ? "CASE WHEN " + retiredChecks.join(' OR ') + " THEN 'bot' ELSE " + originalSource + ' END'
+    : originalSource;
   const status = hasRemote ? 'status' : 'NULL';
-  return 'SELECT id, ' + status + ' AS status, ' + (hasSource ? 'source' : 'NULL') + ' AS source, '
+  return 'SELECT id, ' + status + ' AS status, ' + protectedSource + ' AS source, '
     + 'working_dir AS workingDir, ' + (hasWorktree ? 'worktree_path' : 'NULL') + ' AS worktreePath '
     + 'FROM sessions' + (hasRemote ? ' WHERE remote_host_id IS NULL' : '');
 }
@@ -431,8 +447,8 @@ function dispatchTransaction(readyDb, payload) {
   const request = asRecord(payload, 'tx args');
   const name = expectString(request.name, 'name');
   switch (name) {
-    case 'bots.persistSessionPermission':
-      return botsPersistSessionPermission(readyDb, request.args);
+    case 'sessions.persistPermission':
+      return persistSessionPermission(readyDb, request.args);
     case 'authorization.readProjection':
       return readAutoReviewProjection(readyDb, request.args, createAutoReviewIntentProjection);
     case 'codex.importMessages':
@@ -1120,8 +1136,8 @@ function sessionsSetStatus(readyDb, args) {
           code: 'PRECONDITION_FAILED',
         });
       }
-      if (existing.source === 'bot') {
-        throw Object.assign(new Error('Bot 任务必须通过 Bot 生命周期管理: ' + sessionId), {
+      if (readyDb.prepare('SELECT 1 FROM (' + RETIRED_COMPANION_SESSION_IDS_SQL + ') WHERE id = ?').get(sessionId)) {
+        throw Object.assign(new Error('Retired companion task is unavailable: ' + sessionId), {
           code: 'PRECONDITION_FAILED',
         });
       }
@@ -1162,8 +1178,8 @@ function sessionsSetTerminalStatus(readyDb, args) {
     if (existing.status === 'deleted') {
       throw Object.assign(new Error('Deleted session cannot change status: ' + sessionId), { code: 'PRECONDITION_FAILED' });
     }
-    if (existing.source === 'bot') {
-      throw Object.assign(new Error('Bot sessions must use Bot lifecycle: ' + sessionId), { code: 'PRECONDITION_FAILED' });
+    if (readyDb.prepare('SELECT 1 FROM (' + RETIRED_COMPANION_SESSION_IDS_SQL + ') WHERE id = ?').get(sessionId)) {
+      throw Object.assign(new Error('Retired session is unavailable: ' + sessionId), { code: 'PRECONDITION_FAILED' });
     }
     const now = Date.now();
     readyDb.prepare(CLOSE_SHARED_TASKS_FOR_SESSION_SQL).run(now, sessionId);
@@ -1181,7 +1197,7 @@ function compactSessionToolResults(readyDb, args) {
   const now = expectNumber(payload.now, 'now');
 
   const selectSession = readyDb.prepare(
-    "SELECT id FROM sessions WHERE id = ? AND status IN ('archived', 'deleted') LIMIT 1",
+    "SELECT id FROM sessions WHERE id = ? AND status IN ('archived', 'deleted') AND id NOT IN (" + RETIRED_COMPANION_SESSION_IDS_SQL + ") LIMIT 1",
   );
   // Keep this aggregate + bulk update path in sync with worker/opHandlers/tx.ts.
   // Only prefix-shaped rows pay for JSON validation.
@@ -1249,6 +1265,9 @@ function sessionImportShare(readyDb, args) {
   );
   const insertSessionWithMessages = (rawSession, rawMessages) => {
     const sessionId = expectString(rawSession.id, 'session.id');
+    if (rawSession.source === 'bot' || readyDb.prepare('SELECT 1 FROM (' + RETIRED_COMPANION_SESSION_IDS_SQL + ') WHERE id = ?').get(sessionId)) {
+      throw Object.assign(new Error('Retired session is unavailable: ' + sessionId), { code: 'PRECONDITION_FAILED' });
+    }
     const existing = readyDb.prepare('SELECT id FROM sessions WHERE id = ? LIMIT 1').get(sessionId);
     if (existing) {
       throw Object.assign(new Error('session already exists: ' + sessionId), { code: 'ALREADY_EXISTS' });
@@ -1306,6 +1325,9 @@ function sessionImportShare(readyDb, args) {
     );
     const replacementUpdatedAt = expectNumber(session.updatedAt, 'session.updatedAt');
     for (const replacedSession of replaceSessions) {
+      if (readyDb.prepare('SELECT 1 FROM (' + RETIRED_COMPANION_SESSION_IDS_SQL + ') WHERE id = ?').get(replacedSession.id)) {
+        throw Object.assign(new Error('Retired session is unavailable: ' + replacedSession.id), { code: 'PRECONDITION_FAILED' });
+      }
       deleteReplacedSession.run(replacementUpdatedAt, replacedSession.id);
       readyDb.prepare(CLOSE_SHARED_TASKS_FOR_SESSION_SQL).run(replacementUpdatedAt, replacedSession.id);
     }

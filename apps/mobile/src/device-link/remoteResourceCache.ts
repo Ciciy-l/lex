@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { normalizeRemoteCollectionItems, parseRemoteResourceTargets, type HostedRemoteCollectionItem, type RemoteHomeCollection } from './remoteResources';
+import { isMobileRemoteCollectionSupported, normalizeRemoteCollectionItems, parseRemoteResourceTargets, type HostedRemoteCollectionItem, type RemoteHomeCollection } from './remoteResources';
 
 const PREFIX = 'cindy.remoteResources.v1.';
 const MAX_CHARS = 256 * 1024;
@@ -21,10 +21,11 @@ function normalize(raw: unknown): Snapshot {
   const value = raw as Partial<Snapshot>;
   if (Array.isArray(value.home)) for (const row of value.home.slice(0, 32)) {
     if (!row || typeof row.id !== 'string' || row.id.length > 160 || typeof row.title !== 'string' || typeof row.resourceKind !== 'string') continue;
+    if (!isMobileRemoteCollectionSupported(row.id) || row.resourceKind === 'bot') continue;
     out.home.push({ id: row.id, title: row.title.slice(0, 512), resourceKind: row.resourceKind.slice(0,160), placement: 'home-scope', targets: parseRemoteResourceTargets(JSON.stringify(row.targets)) });
   }
   if (value.items && typeof value.items === 'object') for (const [id, rows] of Object.entries(value.items).slice(0, 32)) {
-    if (id.length > 160 || !Array.isArray(rows)) continue;
+    if (id.length > 160 || !Array.isArray(rows) || !isMobileRemoteCollectionSupported(id)) continue;
     out.items[id] = rows.slice(0, 200).flatMap((row) => {
       if (!row) return [];
       const [host] = parseRemoteResourceTargets(JSON.stringify([row.host]));
@@ -73,22 +74,14 @@ export const cacheRemoteResourceHome = (userId: string, home: RemoteHomeCollecti
 export const remoteResourceReadKey = (deviceId: string, resourceId: string) => JSON.stringify([deviceId, resourceId]);
 export const cacheRemoteResourceItems = (userId: string, collectionId: string, items: HostedRemoteCollectionItem[]) => update(userId, (s) => {
   s.items[collectionId] = items;
-  for (const row of items) {
+  // Seed the first observed reply, without advancing an existing read position.
+  // Only supported, normalized rows participate; legacy resources stay inert.
+  for (const row of normalize({ items: { [collectionId]: items } }).items[collectionId] ?? []) {
+    const at = row.item.display.lastReplyAt;
     const key = remoteResourceReadKey(row.host.deviceId, row.item.ref.id);
-    if (row.item.ref.kind === 'bot' && s.read[key] === undefined) s.read[key] = row.item.display.lastReplyAt ?? 0;
+    if (s.read[key] === undefined && typeof at === 'number') s.read[key] = at;
   }
 });
-/** Read one already-hydrated row without introducing async I/O in avatar rendering. */
-export function cachedBotItem(
-  userId: string,
-  collectionId: string,
-  deviceId: string,
-  resourceId: string,
-): HostedRemoteCollectionItem | null {
-  return snapshots.get(userId)?.items[collectionId]?.find((row) =>
-    row.host.deviceId === deviceId && row.item.ref.id === resourceId,
-  ) ?? null;
-}
 export const markRemoteResourceRead = (userId: string, deviceId: string, resourceId: string, at: number) => update(userId, (s) => {
   const key = remoteResourceReadKey(deviceId, resourceId);
   if (Number.isFinite(at) && at >= 0) s.read[key] = Math.max(s.read[key] ?? 0, at);
@@ -102,16 +95,4 @@ export async function clearRemoteResourceCache(): Promise<void> {
   await Promise.allSettled([...writes.values()]);
   const keys = await AsyncStorage.getAllKeys().catch(() => []);
   await AsyncStorage.multiRemove(keys.filter((key) => key.startsWith(PREFIX))).catch(() => undefined);
-}
-
-export function cachedBotIdForSession(userId: string, collectionId: string, deviceId: string, sessionId: string): string {
-  const row = snapshots.get(userId)?.items[collectionId]?.find(({ host, item }) => host.deviceId === deviceId
-    && item.ref.kind === 'bot' && item.links.some(({ rel, target }) => rel === 'conversation'
-      && target.kind === 'session' && target.sessionId === sessionId));
-  return row?.item.ref.id ?? '';
-}
-/** A cached roster row for display (name/avatar) only; never an authorization or availability signal. */
-export function cachedBotDisplayItem(userId: string, collectionId: string, deviceId: string, botId: string) {
-  return snapshots.get(userId)?.items[collectionId]?.find(({ host, item }) => host.deviceId === deviceId
-    && item.ref.kind === 'bot' && item.ref.id === botId)?.item ?? null;
 }

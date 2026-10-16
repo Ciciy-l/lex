@@ -119,9 +119,8 @@ describe('desktop 会话标题投影出口', () => {
     expect(sidebarUpper).toContain(
       'const title = projectDraftSessionTitle(session.title, unnamedLabelRef.current);',
     );
-    expect(sidebarUpper).toContain('void botOwnedSessionNotificationTitle(sessionId).then((botTitle) => {');
     expect(sidebarUpper).toContain(
-      'sendSessionEventNotification(sessionId, botTitle ?? unnamedLabelRef.current, kind);',
+      'sendSessionEventNotification(sessionId, title, kind);',
     );
     expect(sidebarUpper).toContain("unnamedLabelRef.current = t('ccAgent.common.unnamedSession');");
   });

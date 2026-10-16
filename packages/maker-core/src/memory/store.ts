@@ -14,7 +14,7 @@
  *
  * 跨 session 一致性:
  *  本类是 per-workdir 单例 (manager 实例池保证), 同一 workdir 内多 session 共享同一个 store,
- *  storage 按目录串行变更，界面条件更新/删除与伙伴工具写入共享同一互斥。
+ *  storage 按目录串行变更，界面条件更新/删除与记忆工具写入共享同一互斥。
  */
 
 import type Database from 'better-sqlite3';

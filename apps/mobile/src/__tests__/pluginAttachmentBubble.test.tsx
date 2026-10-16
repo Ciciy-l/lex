@@ -1,4 +1,6 @@
-import { createElement, useState } from 'react';
+// @vitest-environment jsdom
+import { act, createElement, useState } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -7,11 +9,13 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('react-native', async () => {
   const React = await import('react');
   const view = ({ children, testID, accessibilityLabel }: any) => React.createElement('div', { 'data-testid': testID, 'aria-label': accessibilityLabel }, children);
-  class Value { constructor(public value: number) {} interpolate() { return 0; } setValue() {} }
+  class Value { constructor(public value: number) {} interpolate() { return 0; } setValue() {} stopAnimation() {} }
   return {
     View: view, Text: view, Pressable: view, ScrollView: view, Modal: () => null,
     Image: Object.assign(view, { getSize() {} }), ActivityIndicator: view,
-    Animated: { Value, View: view, Text: view, createAnimatedComponent: (c: any) => c },
+    Animated: { Value, View: view, Text: view, createAnimatedComponent: (c: any) => c,
+      timing: () => ({ start() {}, stop() {} }), loop: () => ({ start() {}, stop() {} }),
+    },
     Platform: { OS: 'ios', select: (s: any) => s.ios ?? s.default },
     StyleSheet: { create: (s: any) => s, flatten: (s: any) => s, hairlineWidth: 1 },
     Easing: { linear: (n: number) => n, bezier: () => (n: number) => n },
@@ -33,7 +37,6 @@ vi.mock('expo-router', () => ({ useRouter: () => ({ push: vi.fn() }), useFocusEf
 vi.mock('@/device-link/DeviceLinkContext', () => ({
   useDeviceLink: () => ({ status: 'offline', connectionEpoch: 0, getPresenceAvailability: () => false,
     invoke: vi.fn(), openLink: vi.fn() }),
-  subscribeRemoteBotChanges: () => () => {},
 }));
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 vi.mock('@/theme', async () => {
@@ -54,7 +57,9 @@ vi.mock('@/session/mermaidWebView', () => ({ MermaidDiagram: () => null }));
 vi.mock('@/session/mathWebView', () => ({ MathFormulaWebView: () => null }));
 vi.mock('@/session/mediaPlayerWebView', () => ({ RemoteMediaPlayerWebView: () => null }));
 vi.mock('@/session/MarkdownBlockContent', () => ({ MarkdownBlockContent: () => null }));
-vi.mock('@/session/MessageActionSheet', () => ({ MessageActionSheet: () => null }));
+vi.mock('@/session/MessageActionSheet', () => ({
+  MessageActionSheet: ({ items }: any) => createElement('div', { 'data-menu-items': items.map((item: any) => item.id).join(',') }),
+}));
 vi.mock('@/session/AuthorizationMessageCard', () => ({ AuthorizationMessageCard: () => null }));
 vi.mock('@/session/CompanionMessageActions', () => ({ CompanionMessageActions: () => null }));
 vi.mock('@/session/CompanionMessageCard', () => ({ CompanionMessageCard: () => null }));
@@ -75,6 +80,30 @@ function render(showPluginInvocations = true, settled = false, withCall = true, 
   return renderToStaticMarkup(<MessageRenderer items={items} isSessionStreaming showPluginInvocations={showPluginInvocations} />);
 }
 
+describe('completed message delete entry', () => {
+  function renderMenu(props: { isSessionStreaming?: boolean; onDeleteMessage?: (clientId: string) => void }) {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    const items = buildMobileMessageRenderItems([msg('u1', 'user', 'first'), msg('u2', 'user', 'second')], {})
+      .filter((item) => item.type === 'message');
+    const host = document.createElement('div');
+    const root = createRoot(host);
+    try {
+      act(() => root.render(<MessageRenderer items={items} {...props} />));
+      return [...host.innerHTML.matchAll(/data-menu-items="([^"]*)"/g)].map((match) => match[1].split(','));
+    } finally { act(() => root.unmount()); }
+  }
+
+  it.each([true, false])('keeps delete available with local streaming=%s and leaves authority to the host', (isSessionStreaming) => {
+    const menus = renderMenu({ onDeleteMessage: vi.fn(), isSessionStreaming });
+    expect(menus).toHaveLength(2);
+    for (const menu of menus) expect(menu).toContain('delete');
+  });
+
+  it('does not offer delete to a read-only viewer', () => {
+    for (const menu of renderMenu({})) expect(menu).not.toContain('delete');
+  });
+});
+
 describe('attachment-only user plugin bubble', () => {
   it.each(['file', 'image'] as const)('renders a %s-only plugin header through completion', (kind) => {
     for (const settled of [false, true]) {
@@ -89,24 +118,5 @@ describe('attachment-only user plugin bubble', () => {
   });
   it('does not add an empty bubble to ordinary attachments', () => {
     expect(render(true, false, false)).not.toContain('message.userBubble');
-  });
-});
-
-describe('partner work feedback', () => {
-  it('uses the short hint in the existing live work row and preserves the completed record', () => {
-    const messages = [msg('u', 'user', 'Remember this'), msg('c', 'tool_use', {
-      toolName: 'bot_memory', toolUseId: 'c', input: { action: 'write' },
-    }, { toolUseId: 'c' })];
-    const items = buildMobileMessageRenderItems(messages, { isSessionStreaming: true }).filter(item => item.type === 'work_group');
-    expect(items).toHaveLength(1);
-    const live = renderToStaticMarkup(<MessageRenderer items={items} companion isSessionStreaming companionWorkingLabel="Saving memory…" />);
-    expect(live).toContain('Expand Saving memory…');
-    expect(live).not.toContain('Expand Working…');
-    const ordinary = renderToStaticMarkup(<MessageRenderer items={items} isSessionStreaming companionWorkingLabel="Saving memory…" />);
-    expect(ordinary).not.toContain('Saving memory…');
-    const done = items.map(item => ({ ...item, isStreaming: false }));
-    const completed = renderToStaticMarkup(<MessageRenderer items={done} companion companionWorkingLabel="Saving memory…" />);
-    expect(completed).not.toContain('Saving memory…');
-    expect(completed).toContain('message.workGroupToggle');
   });
 });

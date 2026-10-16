@@ -20,6 +20,23 @@ function reader(source: HistoryMessageSource[]) {
   return { list, api: createHistoryViewReader({ list, anchor, running: () => false }) };
 }
 describe('host history view', () => {
+  it.each([false, true])('retains ordinary short seals but carries a recovery boundary across pages (recovered=%s)', async (recovered) => {
+    const source = [row(0, 'user'), row(1),
+      { ...row(2, 'assistant'), content: 'Continuing', agentMeta: { turnCompleted: true } },
+      { ...row(3, 'user'), content: 'Next request', ...(recovered ? { agentMeta: { autoResume: true } } : {}) },
+      row(4), { ...row(5, 'assistant'), content: '# Result', agentMeta: { turnCompleted: true } }];
+    const { api } = reader(source);
+    const older = await api.page('s', '3');
+    const visible = older.items.flatMap(item => item.type === 'messages' ? item.messages : []);
+    expect(visible.some(message => message.id === '2')).toBe(!recovered);
+    expect(visible.some(message => message.id === '3')).toBe(false);
+    expect(older.hasMore).toBe(false);
+    if (recovered) {
+      const work = older.items.find(item => item.type === 'work');
+      if (!work || work.type !== 'work') throw new Error('Missing preserved work');
+      expect((await api.details('s', work.summary)).messages.map(message => message.id)).toEqual(['1', '2']);
+    }
+  });
   it('paginates visible items across a long hidden run without splitting or sending its bodies', async () => {
     const source = [row(0, 'user'), ...Array.from({ length: 600 }, (_, i) => row(i + 1)), row(601, 'assistant')];
     const { api, list } = reader(source);
@@ -227,6 +244,9 @@ describe('history scan budget', () => {
     for (let turn = 0; turn < 90; turn++) {
       for (let step = 0; step < 50; step++) source.push({ ...row(n++), content: 'detail '.repeat(300) });
       source.push({ ...row(n++, 'assistant'), content: 'Continuing', agentMeta: { turnCompleted: true } });
+      // Only a recovery supersedes an earlier short seal. Ordinary sealed
+      // answers remain visible even when later tool work follows.
+      source.push({ ...row(n++, 'user'), content: '[UI_ACTION_TRIGGER] resume', agentMeta: { autoResume: true } });
       source.push(row(n++));
       source.push({ ...row(n++, 'assistant'), content: '# Result\nDelivered', agentMeta: { turnCompleted: true } });
     }

@@ -43,6 +43,8 @@ function freshDb(): LedgerDb {
     }
   }
   migration0071.run(raw);
+  raw.exec("CREATE TABLE bot_session_links(session_id TEXT); CREATE TABLE bot_profiles(canonical_session_id TEXT); CREATE TABLE bot_delegations(child_session_id TEXT);");
+  if (!(raw.pragma("table_info(sessions)") as Array<{name:string}>).some(column => column.name === "source")) raw.exec("ALTER TABLE sessions ADD COLUMN source TEXT");
   return drizzle(raw, { schema }) as unknown as LedgerDb;
 }
 

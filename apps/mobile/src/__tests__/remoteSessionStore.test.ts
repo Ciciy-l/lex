@@ -3,6 +3,7 @@ import { MAKER_EVENT_BATCH_CHANNEL, SESSION_SYNC_CHANNEL } from '@cindy/device-l
 import { clampLiveRowCreatedAt } from '@/session/messagePaging';
 import { MOBILE_TOOL_INPUT_PROJECTION_THRESHOLD_BYTES } from '@/session/messageToolPayloadProjection';
 import { remoteSessionStore, sessionPendingWrites } from '@/session/remoteSessionStore';
+import { isRetiredSession } from '@/session/retiredSessionAccess';
 import type { InputProjection, PendingInteraction, RemoteMessage, RemoteSession } from '@/session/types';
 
 function session(id: string, patch: Partial<RemoteSession> = {}): RemoteSession {
@@ -134,6 +135,63 @@ function pending(kind: string, requestId?: string, persistId?: string): PendingI
 
 describe('remoteSessionStore', () => {
   beforeEach(() => remoteSessionStore.clear());
+
+  it('ignores late messages, batches, snapshots and activity for retired tasks without deleting history', () => {
+    remoteSessionStore.setDeviceSessions('dev-1', 'Desktop', [session('legacy'), session('ordinary')]);
+    remoteSessionStore.setMessages('legacy', [message('retained', 'legacy')]);
+    remoteSessionStore.applyRemotePush('dev-1', 'local-db:sessions:patched', { sessionId: 'legacy', patch: { source: 'bot' } });
+    const retained = remoteSessionStore.getMessages('legacy');
+    const version = remoteSessionStore.getMessageVersion();
+    const event = { sessionId: 'legacy', persistId: 'late', event: { type: 'text', data: { text: 'late', isFinal: false } } };
+    for (const [channel, payload] of [
+      ['local-db:messages:created', { sessionId: 'legacy', message: message('late', 'legacy') }],
+      ['local-db:messages:deleted', { sessionId: 'legacy', clientIds: ['retained'] }],
+      ['maker:event', event],
+      [MAKER_EVENT_BATCH_CHANNEL, { sessionId: 'legacy', events: [event] }],
+      [SESSION_SYNC_CHANNEL, { sessionId: 'legacy', resyncRequired: true, text: 'late' }],
+      ['local-db:sessions:created', { id: 'legacy', source: 'user' }],
+      ['local-db:sessions:patched', { sessionId: 'legacy', patch: { status: 'deleted' } }],
+    ] as const) remoteSessionStore.applyRemotePush('dev-1', channel, payload);
+    remoteSessionStore.applySessionActivity('dev-1', { sessionId: 'legacy', phase: 'running' });
+    remoteSessionStore.applyMakerEventPush(event, 'dev-1');
+    remoteSessionStore.applyMakerEvent('legacy', event.event, 'late', 'dev-1');
+    expect(remoteSessionStore.getMessages('legacy')).toBe(retained);
+    expect(remoteSessionStore.getMessageVersion()).toBe(version);
+    expect(remoteSessionStore.getSessionLiveActivity('legacy')).toBeNull();
+    expect(remoteSessionStore.getSessions().map(row => row.id)).toEqual(['ordinary']);
+    remoteSessionStore.applyRemotePush('dev-1', 'local-db:messages:created', { sessionId: 'ordinary', message: message('new', 'ordinary') });
+    expect(remoteSessionStore.getMessages('ordinary')).toHaveLength(1);
+  });
+
+  it.each(['id', 'sessionId'])('remembers retired created pushes using %s without reviving a later detail', key => {
+    remoteSessionStore.applyRemotePush('dev-1', 'local-db:sessions:created', { [key]: 'legacy', source: 'bot' });
+    remoteSessionStore.upsertDeviceSession('dev-1', 'Desktop', session('legacy'));
+    expect(isRetiredSession('dev-1', 'legacy')).toBe(true);
+    expect(remoteSessionStore.getSessions()).toEqual([]);
+  });
+
+  it('hides retired cached tasks, preserves their history, and rejects late ordinary snapshots', () => {
+    remoteSessionStore.setMessages('legacy', [message('retained', 'legacy')]);
+    remoteSessionStore.hydrateDeviceSessionsIfEmpty('dev-1', 'Desktop', [session('legacy', { source: 'bot' }), session('ordinary')]);
+    expect(isRetiredSession('dev-1', 'legacy')).toBe(true);
+    expect(isRetiredSession('dev-2', 'legacy')).toBe(false);
+    expect(remoteSessionStore.getSessions().map(row => row.id)).toEqual(['ordinary']);
+    remoteSessionStore.upsertDeviceSession('dev-1', 'Desktop', session('legacy'));
+    remoteSessionStore.setDeviceSessions('dev-1', 'Desktop', [session('legacy'), session('ordinary')]);
+    expect(remoteSessionStore.getSessions().map(row => row.id)).toEqual(['ordinary']);
+    expect(remoteSessionStore.getMessages('legacy')).toEqual([message('retained', 'legacy')]);
+    remoteSessionStore.clear();
+    expect(isRetiredSession('dev-1', 'legacy')).toBe(false);
+  });
+
+  it('records retirement on an absent row before a late detail response can restore it', () => {
+    remoteSessionStore.applySessionPatch('dev-1', 'legacy', { source: 'bot' });
+    remoteSessionStore.upsertDeviceSession('dev-1', 'Desktop', session('legacy'));
+    expect(isRetiredSession('dev-1', 'legacy')).toBe(true);
+    expect(remoteSessionStore.getSessions()).toEqual([]);
+    remoteSessionStore.upsertDeviceSession('dev-2', 'Other desktop', session('legacy'));
+    expect(remoteSessionStore.getSessions()).toHaveLength(1);
+  });
 
   it('releases a large persisted tool input when the matching result is appended', () => {
     remoteSessionStore.setMessages('s1', [{

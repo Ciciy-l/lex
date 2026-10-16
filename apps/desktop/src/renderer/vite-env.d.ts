@@ -15,8 +15,6 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
-
-type BotToolsetContext = import('../shared/botRemoteCapabilities').BotToolsetContext;
 type AgentProxyPrefPayload = import('../shared/agentProxyConfig').SshHostAgentProxyPref;
 type AgentProxyTunnelStatePayload = import('../shared/agentProxyConfig').AgentProxyTunnelState;
 type ModelAccessStatusPayload = import('../shared/modelAccess').ModelAccessStatus;
@@ -1177,7 +1175,6 @@ type ElectronLocalDbSessionListUsageOptions = Omit<
 
 interface ElectronAPI {
   modelFavoritesHost: import('../shared/modelFavoritesSync').ModelFavoritesHostApi;
-  routines: import('../shared/routines').RoutinesAPI;
   platform: string;
   /** 当前 Desktop 构建是否具备 Beta 更新渠道。 */
   supportsBetaUpdateChannel?: boolean;
@@ -2442,7 +2439,7 @@ interface ElectronAPI {
   syncNewMakerDraft: (snapshot: {
     appDefaultModelRequestId?: string;
     ownerStamp: import('../shared/dataOwnerPush').DataOwnerPushStamp;
-    selectedRoute?: import('../shared/botModelChain').BotModelRoute;
+    selectedRoute?: import('../shared/modelRoute').ModelRoute;
     lastByVendor: Partial<
       Record<
         'cc' | 'codex' | 'pi' | 'omp',
@@ -4659,93 +4656,6 @@ interface ElectronAPI {
       ackInterrupted: (id: string) => Promise<void>;
       // Stage 2 C2: fork 已迁到 electronAPI.maker.fork (走 maker:fork IPC)。
     };
-    bots: {
-      getModelChainSettings: () => Promise<{
-        modelChain: import('../shared/botModelChain').BotModelRoute[];
-        isCustomized: boolean;
-      }>;
-      resetModelChainSettings: () => Promise<{
-        modelChain: import('../shared/botModelChain').BotModelRoute[];
-        isCustomized: boolean;
-      }>;
-      setModelChainSettings: (body: {
-        modelChain: import('../shared/botModelChain').BotModelRoute[];
-      }) => Promise<{
-        modelChain: import('../shared/botModelChain').BotModelRoute[];
-        isCustomized: boolean;
-      }>;
-      list: (body?: { lastReadAtByBotId?: Record<string, number> }) => Promise<unknown[]>;
-      get: (botId: string) => Promise<unknown>;
-      generateDraft: (body: import('../shared/botCreation').BotCreationRequest) => Promise<import('../shared/botCreation').BotCreationDraft>;
-      generateAvatar: (token: string) => Promise<{ avatarImageBase64: string }>;
-      chooseAvatar: (body: { botId: string }) => Promise<{
-        canceled: boolean;
-        profile?: unknown;
-      }>;
-      searchHistory: (
-        body: import('../shared/botLifecycle').BotHistorySearchRequest,
-      ) => Promise<import('../shared/botLifecycle').BotHistorySearchResponse>;
-      create: (body: unknown) => Promise<unknown>;
-      update: (body: unknown) => Promise<unknown>;
-      createCanonicalSession: (body: {
-        botId: string;
-        expectedCanonicalSessionId: string | null;
-        expectedProfileVersion: number;
-        recoverMissingOnly?: boolean;
-      }) => Promise<{
-        created: boolean;
-        canonicalSessionId: string;
-        session: import('@/lib/ccAgent.types').Session;
-      }>;
-      history: (botId: string) => Promise<unknown[]>;
-      workbench: {
-        get: (botId: string) => Promise<import('../shared/botWorkbench').BotWorkbench | null>;
-        addDirectory: (
-          botId: string,
-          path: string,
-        ) => Promise<{ ok: true } | { ok: false; errorCode: 'NOT_A_DIRECTORY' | 'TOO_MANY' }>;
-        removeDirectory: (botId: string, path: string) => Promise<void>;
-        readTask: (
-          botId: string,
-          taskId: string,
-        ) => Promise<
-          | { ok: true; taskId: string; transcript: import('../shared/botWorkbench').WorkbenchTranscript }
-          | { ok: false; errorCode: string; message: string }
-        >;
-        candidates: (
-          botId: string,
-        ) => Promise<
-          | {
-              ok: true;
-              candidates: Array<{
-                source: 'claude' | 'codex' | 'pi';
-                id: string;
-                projectDir: string | null;
-                updatedAt: string;
-                archived: boolean;
-              }>;
-            }
-          | { ok: false; errorCode: string; message: string }
-        >;
-        /** 每个在用的本机伙伴接手的项目目录(侧栏「在跟进」标记用)。 */
-        followScopes: () => Promise<Array<{ botId: string; directories: string[] }>>;
-      };
-      listSkills: (botId: string) => Promise<import('../shared/botSkill').BotSkillSummary[]>;
-      memory: {
-        list: (
-          botId: string,
-          query?: string,
-        ) => Promise<import('../shared/botMemory').BotMemorySummary[]>;
-        read: (
-          botId: string,
-          filename: string,
-        ) => Promise<import('../shared/botMemory').BotMemoryDetail>;
-        update: (
-          body: import('../shared/botMemory').BotMemoryUpdateInput,
-        ) => Promise<import('../shared/botMemory').BotMemoryDetail>;
-        delete: (body: import('../shared/botMemory').BotMemoryDeleteInput) => Promise<void>;
-      };
-    };
     conversations: {
       search: (
         request: import('../shared/conversationSearch').ConversationSearchRequest,
@@ -5182,86 +5092,6 @@ interface ElectronAPI {
     listAvailableAgents: () => Promise<Array<'claude-code' | 'codex' | 'pi' | 'omp'>>;
     onAgentsChanged: (cb: () => void) => () => void;
     getCapabilities: (agentKind: 'claude-code' | 'codex' | 'pi' | 'omp') => Promise<unknown>;
-    listBotDelegations: (
-      parentSessionId: string,
-    ) => Promise<import('../shared/botDelegation').BotDelegationListResult>;
-    cancelBotDelegation: (
-      parentSessionId: string,
-      delegationId: string,
-    ) => Promise<import('../shared/botDelegation').BotDelegationCancelResult>;
-    onBotDelegationChanged: (
-      cb: (
-        payload: import('../shared/botDelegation').BotDelegationChangedPayload,
-        ownerStamp?: import('../shared/dataOwnerPush').DataOwnerPushStamp,
-      ) => void,
-    ) => () => void;
-    getBotDirectMessageThread: (
-      threadId: string,
-      viewerBotId: string,
-    ) => Promise<import('../shared/botDirectMessage').BotDirectMessageThreadResult>;
-    onBotDirectMessageChanged: (
-      cb: (
-        payload: import('../shared/botDirectMessage').BotDirectMessageChangedPayload,
-        ownerStamp?: import('../shared/dataOwnerPush').DataOwnerPushStamp,
-      ) => void,
-    ) => () => void;
-    listBotGroups: () => Promise<import('../shared/botGroupChat').BotGroupListResult>;
-    getBotGroup: (
-      groupId: string,
-      options?: import('../shared/botGroupChat').BotGroupGetOptions,
-    ) => Promise<import('../shared/botGroupChat').BotGroupGetResult>;
-    createBotGroup: (
-      input: import('../shared/botGroupChat').BotGroupCreateInput,
-    ) => Promise<import('../shared/botGroupChat').BotGroupCreateResult>;
-    updateBotGroup: (
-      input: import('../shared/botGroupChat').BotGroupUpdateInput,
-    ) => Promise<import('../shared/botGroupChat').BotGroupMutationResult>;
-    setBotGroupMembers: (
-      input: import('../shared/botGroupChat').BotGroupSetMembersInput,
-    ) => Promise<import('../shared/botGroupChat').BotGroupMutationResult>;
-    deleteBotGroup: (groupId: string) => Promise<import('../shared/botGroupChat').BotGroupMutationResult>;
-    sendBotGroupMessage: (
-      input: import('../shared/botGroupChat').BotGroupSendInput,
-    ) => Promise<import('../shared/botGroupChat').BotGroupSendResult>;
-    continueBotGroupRound: (groupId: string) => Promise<import('../shared/botGroupChat').BotGroupMutationResult>;
-    stopBotGroupRound: (groupId: string) => Promise<import('../shared/botGroupChat').BotGroupMutationResult>;
-    startBotGroupPlan: (
-      input: import('../shared/botGroupChat').BotGroupPlanActionInput,
-    ) => Promise<import('../shared/botGroupChat').BotGroupMutationResult>;
-    dismissBotGroupPlan: (
-      input: import('../shared/botGroupChat').BotGroupPlanActionInput,
-    ) => Promise<import('../shared/botGroupChat').BotGroupMutationResult>;
-    continueBotGroupPlan: (
-      input: import('../shared/botGroupChat').BotGroupPlanActionInput,
-    ) => Promise<import('../shared/botGroupChat').BotGroupMutationResult>;
-    retryBotGroupPlan: (
-      input: import('../shared/botGroupChat').BotGroupPlanActionInput,
-    ) => Promise<import('../shared/botGroupChat').BotGroupMutationResult>;
-    editBotGroupPlanStep: (
-      input: import('../shared/botGroupChat').BotGroupPlanEditInput,
-    ) => Promise<import('../shared/botGroupChat').BotGroupMutationResult>;
-    onBotGroupChanged: (
-      cb: (
-        payload: import('../shared/botGroupChat').BotGroupChangedPayload,
-        ownerStamp?: import('../shared/dataOwnerPush').DataOwnerPushStamp,
-      ) => void,
-    ) => () => void;
-    onBotProfileChanged: (
-      cb: (payload: { botId: string; change: 'created' | 'updated' }) => void,
-    ) => () => void;
-    onBotWorkbenchChanged: (cb: (payload: { botId: string }) => void) => () => void;
-    runBotLifecycleAction: (
-      request: import('../shared/botLifecycle').BotLifecycleActionRequest,
-    ) => Promise<import('../shared/botLifecycle').BotLifecycleActionResult>;
-    onBotLifecycleChanged: (
-      cb: (
-        payload: {
-          botId: string;
-          action: import('../shared/botLifecycle').BotLifecycleAction;
-        },
-        ownerStamp?: import('../shared/dataOwnerPush').DataOwnerPushStamp,
-      ) => void,
-    ) => () => void;
     /** workflow 逐 agent 进度树(只读);读不到 / 解析失败返回 null → 回退 workflow 级卡片。 */
     getWorkflowProgress: (
       sessionId: string,
@@ -6816,7 +6646,7 @@ interface ElectronAPI {
     };
 
     plugins: {
-      list: (workingDir?: string, includeHidden?: boolean, botContext?: Omit<BotToolsetContext, 'workingDir'>) => Promise<PluginListItem[]>;
+      list: (workingDir?: string, includeHidden?: boolean) => Promise<PluginListItem[]>;
       getState: (
         id: string,
         workingDir?: string,

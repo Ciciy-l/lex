@@ -84,11 +84,7 @@ describe('selectVisibleSessions', () => {
       expect(
         remoteProjectsStore.getDeviceSessions('dev-a').filter((row) => row.source === 'bot'),
       ).toEqual(
-        expect.arrayContaining(
-          bots.map((bot) =>
-            expect.objectContaining({ id: bot.id, status: bot.status, model: 'gpt-6-astra' }),
-          ),
-        ),
+        [],
       );
     },
   );

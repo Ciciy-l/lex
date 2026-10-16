@@ -1480,14 +1480,13 @@ describe('remote sessions share the same permission semantics', () => {
     );
   });
 
-  it.each(['http', 'sse'] as const)('forwards a selected custom %s MCP to a remote Bot without the host bridge', async (transport) => {
+  it.each(['http', 'sse'] as const)('forwards a selected custom %s MCP to a remote task without the host bridge', async (transport) => {
     process.env.CLAUDE_CONFIG_DIR = await makeTempDir();
     const workingDir = await makeTempDir();
     const deps = createDeps();
     const selected = { type: transport, url: 'https://mcp.example.test/service' };
     deps.mcpProviders = [
       { name: 'custom-selected', toClaudeSdkConfig: () => selected },
-      { name: 'custom-unselected', toClaudeSdkConfig: () => selected },
       { name: 'in-process', toClaudeSdkConfig: () => ({ type: 'sdk', name: 'in-process', instance: {} }) },
     ];
     let remoteStartParams: Record<string, unknown> | undefined;
@@ -1496,24 +1495,11 @@ describe('remote sessions share the same permission semantics', () => {
       return createFakeQuery() as never;
     };
     const handle = await new ClaudeCodeAgent(deps).startSession({
-      sessionId: 'remote-bot-custom-mcp',
+      sessionId: 'remote-task-custom-mcp',
       model: 'claude-opus-4-6',
       workingDir,
       remoteHostId: 'remote-1',
       permissionMode: 'default',
-      botRuntimeProfile: {
-        botId: 'bot-1', profileVersion: 1,
-        skillPolicy: { mode: 'allowlist', configured: [], catalog: [] },
-        toolsetPolicy: { mode: 'allowlist', configured: [], catalog: [] },
-        mcpPolicy: {
-          mode: 'allowlist', configured: ['custom-selected', 'in-process'],
-          catalog: [
-            { name: 'custom-selected', source: 'custom', available: true },
-            { name: 'custom-unselected', source: 'custom', available: true },
-            { name: 'in-process', source: 'builtin', available: true },
-          ],
-        },
-      },
     });
     try {
       // This is the actual serialized input handed to the remote factory:

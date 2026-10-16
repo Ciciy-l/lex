@@ -468,16 +468,10 @@ async function runRefreshRemoteDeviceSessions(
         // Do not let its late response replace the last known mirror.
         if (unresponsiveDevicesStore.has(deviceId)) return 'gave-up';
         const sessions = parseRemoteSessionList(value, status);
-        // Companions are fetched by resource:get + sessions:get, not by the
-        // ordinary task list. Keep their live state and reconcile them by id,
-        // even when the ordinary list is empty or is a full replacement.
         const incomingIds = new Set(sessions.map((session) => session.id));
         const missingSessions = remoteProjectsStore
           .getDeviceSessions(deviceId, status)
-          .filter((session) => !incomingIds.has(session.id));
-        const missingCompanionIds = missingSessions
-          .filter((session) => session.source === 'bot')
-          .map((session) => session.id);
+          .filter((session) => session.source !== 'bot' && !incomingIds.has(session.id));
         if ((opts.snapshotMode ?? 'merge') === 'merge') {
           const missingSessionIds = missingSessions.map((session) => session.id);
           // archived 使用与本地侧栏一致的 1000 条产品窗口，可直接替换并清掉断线期间的
@@ -485,11 +479,10 @@ async function runRefreshRemoteDeviceSessions(
           if (status === 'archived' || sessions.length < LIST_LIMIT) {
             if (status === 'active') {
               for (const session of missingSessions) {
-                if (session.source !== 'bot') removeRemoteSessionActivityEntry(session.id);
+                removeRemoteSessionActivityEntry(session.id);
               }
             }
             remoteProjectsStore.setDeviceSessions(deviceId, deviceName, sessions, status);
-            await probeMissingSessionStatuses(deviceId, epoch, missingCompanionIds, status);
           } else {
             remoteProjectsStore.mergeDeviceSessions(deviceId, deviceName, sessions, status);
             if (status === 'active') {
@@ -498,7 +491,6 @@ async function runRefreshRemoteDeviceSessions(
           }
         } else {
           remoteProjectsStore.setDeviceSessions(deviceId, deviceName, sessions, status);
-          await probeMissingSessionStatuses(deviceId, epoch, missingCompanionIds, status);
         }
       }
       if (!remoteProjectsStore.isLatestSnapshotEpoch(deviceId, epoch, status)) return 'superseded';

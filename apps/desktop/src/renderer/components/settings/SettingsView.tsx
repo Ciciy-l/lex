@@ -53,8 +53,6 @@ import type { SettingsSearchContext, SettingsSearchEntry } from './settingsSearc
 import { useSettingsSectionTarget } from './useSettingsSectionTarget';
 import { getLastWorkingDir, subscribeToLastWorkingDir } from '@/state/lastWorkingDir';
 import { BillingSettingsSection } from '@/features/billing/BillingPage';
-import { BotsGlobalSettingsSection } from '@/features/bots/BotsGlobalSettingsSection';
-import { useExperimentalFlag } from '@/hooks/useExperimentalFeatures';
 import { canAccessBillingSettings } from './billingVisibility';
 import { canAccessUsageSettings } from './usageVisibility';
 import { UsageHistorySection } from './usage/UsageHistorySection';
@@ -70,7 +68,6 @@ export function SettingsView() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { t } = useTranslation();
   const { mode, dataOwnerId, serviceRealm, user } = useAuth();
-  const { enabled: teammatesEnabled } = useExperimentalFlag('teammates');
   const menuWidth = outletContext?.sidebarWidth ?? DEFAULT_SETTINGS_MENU_WIDTH;
   const isMac = window.electronAPI?.platform === 'darwin';
   const [helpAssistantOpen, setHelpAssistantOpen] = useState(false);
@@ -185,9 +182,8 @@ export function SettingsView() {
       mode,
       membershipKind: user?.membershipKind ?? null,
       platform: window.electronAPI?.platform ?? '',
-      teammatesEnabled,
     }),
-    [mode, serviceRealm, teammatesEnabled, user?.membershipKind],
+    [mode, serviceRealm, user?.membershipKind],
   );
   const handleSelectSearchResult = useCallback(
     (entry: SettingsSearchEntry) => {
@@ -332,18 +328,6 @@ export function SettingsView() {
                 >
                   <NotificationSection />
                 </section>
-
-                {teammatesEnabled && (
-                  /* Section — 伙伴（功能级设置：怎么提醒你 + 带走/接回一个伙伴）。
-                      单个伙伴的性格、记忆、能力与日程仍在 TA 自己的设置页里。 */
-                  <section
-                    id="settings-bots"
-                    className="py-[18px]"
-                    aria-label={t('settings.sections.bots')}
-                  >
-                    <BotsGlobalSettingsSection />
-                  </section>
-                )}
 
                 {/* Section — App Behavior(「应用行为」)
                     「保持电脑唤醒」跨平台生效,故 section 常驻;其中

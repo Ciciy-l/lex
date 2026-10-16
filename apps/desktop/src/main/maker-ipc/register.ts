@@ -1,3 +1,4 @@
+import { assertNotRetiredCompanionSession } from '../localDb/retiredCompanions.js';
 import { resolveSafe as resolveCindyMediaUrl } from '../cindy-media/blobStore.js';
 import { getSessionFsSnapshot } from '../localDb/ipc/sessions.js';
 import { isModelSelectableForNewRoute } from '@cindy/model-providers';
@@ -21,19 +22,19 @@ import { registerModelFavoritesSync } from './modelFavoritesSync.js';
 import { advanceRuntimeRecoveryNotice } from '../im/shared/runtimeRecoveryNotice.js';
 import { configureAppDefaultModelSelection, inspectAppDefaultModel } from './appDefaultModelControl.js';
 import type { BuiltinApiKeyBridgeDeps } from '../secrets/builtinApiKeyBridge.js';
-import { setBotInvitationWelcomeDispatch } from './botInvitation.js';
+
 import type { TurnUsageContext } from './turnUsageContext.js';
 import { retainProviderPresentationAfterAuthChange } from '../maker-host/provider-presentation-store.js';
 import { registerPluginListHandler } from './pluginListHandler.js';
-import { initializeBotAuthorizationHost } from './botAuthorizationHost.js';
-import { resolveBotAuthorizationDelivery, buildBotAuthorizationContinuation, commitBotAuthorizationInput, type BotAuthorizationInputGuard, getBotAuthorizationService } from './botAuthorizationService.js';
+
+
 import { registerSessionSetModelHandler } from './sessionSetModelHandler.js';
 import { refreshSubscriptionAccountModels } from '../maker-host/subscription-account-models.js';
 import { syncSubscriptionAccountUsage } from '../usage/subscriptionAccountUsage.js';
 import { clearXaiRateLimitSnapshot } from '../usageBroadcaster.js';
 import { subscriptionAccountKind, subscriptionAccountState, loginSubscriptionAccount, logoutSubscriptionAccount, cancelSubscriptionAccountLogin, removeSubscriptionAccountCredentialsReversibly } from '../maker-host/subscription-account-auth.js';
 import { isCodexAccountProvider, codexAccountState, codexAccountLoginName, loginCodexAccount, logoutCodexAccount, cancelCodexAccountLogin, removeCodexAccountCredentialsReversibly, retireCodexAccount } from '../maker-host/codex-account-auth.js';
-import { projectRemoteBotDelegations } from './remoteBotDelegations.js';
+
 /**
  * registerMakerIpc — 把 Maker Core 的能力暴露为 maker:* IPC channel。
  *
@@ -118,7 +119,7 @@ import {
 } from '../appSessionState.js';
 import { upsertRecentWorkdir } from '../localDb/ipc/recentWorkdirs.js';
 import type { AgentMeta } from '../../renderer/lib/ccAgent.types';
-import { getMobileNotifyGeneration, sendMobileBotGroupNotify } from '../device-link/index.js';
+import { getMobileNotifyGeneration } from '../device-link/index.js';
 import {
   deriveAutoTitleSeed,
   normalizeAgentInputClearBoundaryMs,
@@ -194,7 +195,7 @@ import {
   shutdownCodexEnvironment,
 } from '../mcp-integrations/codexEnvironment.js';
 import { invalidatePiEnvironment } from '../mcp-integrations/piEnvironment.js';
-import { REMOTE_MEMORY_SERVER_NAME, REMOTE_BOT_HELPER_SERVER_NAME } from '../mcp-integrations/codexHttpBridge.js';
+import { REMOTE_MEMORY_SERVER_NAME } from '../mcp-integrations/codexHttpBridge.js';
 import { getRemoteMcpBridgeToken } from '../mcp-integrations/remoteMcpBridgeToken.js';
 import {
   checkComputerDriverUpdate,
@@ -260,7 +261,7 @@ import {
   getDbClient,
   isDbClientNotReadyError,
 } from '../localDb/client/current.js';
-import { createBotRuntimeRestoreCoordinator } from './botRuntimeRestore.js';
+
 import { createWorkingDirectoryRecovery, isUnavailableFilesystemError } from './workingDirectoryRecovery.js';
 import { statWorkingDirectory, mkdirWorkingDirectory, realpathWorkingDirectory, findSimilarWorkingDirectory } from '../workdir-probe-host/index.js';
 import { getMessagesForHistory } from '../localDb/chatHistoryReader.js';
@@ -391,20 +392,10 @@ import {
   setWorkerFocus,
   updateWorkerStatus,
 } from '../localDb/orcaTeamStore.js';
-import {
-  botLifecycleEvents,
-  botProfileVersions,
-  botProfiles,
-  botSessionLinks,
-  messages,
-  orcaTeams,
-  orcaWorkers,
-  orcaWorkerCreationReservations,
-  sessions,
-} from '../localDb/schema.js';
-import { nextBotModelRoute } from '../../shared/botModelChain.js';
-import { createBotModelRouteReconciler } from './botModelRouteReconciler.js';
-import { readEffectiveBotModelChain, readEffectiveBotModelSelection } from '../maker-host/bot-model-chain-settings-store.js';
+import { messages, orcaTeams, orcaWorkers, orcaWorkerCreationReservations, sessions } from '../localDb/schema.js';
+
+
+
 import {
   isOrcaWorkerPermissionMode,
   type OrcaWorkerPermissionMode,
@@ -448,68 +439,35 @@ import {
   writeAgentResourceSetting,
 } from '../maker-host/agent-resource-settings-store.js';
 import { createAgentResourceSettingsIpc } from './agent-resource-settings-ipc.js';
-import {
-  createBotDelegationService,
-  hasExplicitSessionTaskModel,
-  type BotDelegationService,
-} from './botDelegationService.js';
-import { createBotSessionTaskRouteBridge } from './botSessionTaskRouteBridge.js';
-import {
-  createBotDirectMessageService,
-  type BotDirectMessageService,
-} from './botDirectMessageService.js';
-import { createBotGroupChatService, type BotGroupChatService } from './botGroupChatService.js';
-import { createBotGroupPlanDecider } from './botGroupPlanDecider.js';
-import { createBotGroupWorkDir, validateExistingBotGroupProjectDirectory } from './botGroupWorkDir.js';
-import { createBotGroupAttachmentStore } from './botGroupAttachments.js';
-import { createBotGroupAttachmentUploadRegistry } from './botGroupAttachmentUploadRegistry.js';
+
+
+
+
+
+
+
+
 import { captureMediaRefCompensationScope } from '../cindy-media/refCompensationJournal.js';
-import { botGroupMembersVisibleRemotely, registerBotGroupRemoteResourceProvider } from './botGroupRemoteResourceProvider.js';
-import { broadcastBotGroupRemoteResourceChanged } from './botGroupRemoteResourceInvalidation.js';
-import { getBotGroupStepNotificationBody } from '../sessionNotificationCopy.js';
+
+
+
 import { requestUtilityText } from '../utility-model/oneShotCandidates.js';
 import { gitExec } from '../worktree/gitExec.js';
 import { ownerScopedUserDataPath } from '../appSessionState.js';
-import { BOT_GROUP_CLIENT_ID_PREFIX } from '../../shared/botGroupChat.js';
-import { ensureBotGroupLaneSession } from '../localDb/ipc/bots.js';
-import { restartBotRuntime } from './botRuntimeRestart.js';
-import { registerBotLifecycleHandlers } from './botLifecycleService.js';
+
+
+
+
 import { isSessionPermissionMode, persistPermissionModeWithoutRuntime } from './sessionPermissionPersistence.js';
 import { withSessionPermissionChange } from './sessionPermissionChange.js';
-import { updateBotRoutineLifecycle } from '../routines/service.js';
-import {
-  createBotCompactRuntimeRefreshCoordinator,
-  refreshBotRuntimeAfterModelSelection,
-  replaceBotRuntimeAfterPreflight,
-  type BotCompactBoundary,
-  type BotCompactRuntimeRefreshOutcome,
-  type BotCompactRuntimeSession,
-} from './botCompactRuntimeRefresh.js';
-import { isBotCanonicalReplacementBusy } from './botCanonicalReplacementGuard.js';
-import { configureBotCanonicalReplacementCoordinator } from './botCanonicalReplacementCoordinator.js';
-import { botSessionInputBlockReason } from './botSessionInputGuard.js';
-import { configureBotRuntimeEpochRefreshRequest } from './botRuntimeEpochRefreshSignal.js';
+
+
+
+
+
+
 import { createGitSnapshotCoordinator } from '../maker-host/git-snapshot-host.js';
-import {
-  cancelCodexAuthModeChange,
-  ensureCodexMcpBridgeStartedForRemote,
-  finalizeCodexAfterAuthModeChange,
-  getMaker,
-  getMakerIfReady,
-  getPluginRegistry,
-  isBotToolsetAvailable,
-  disposeRemoteCodexHostAfterRestart,
-  listBotRuntimeMcpServers,
-  preflightBotRuntimeResources,
-  listSshCodexProviders,
-  prepareCodexForAuthModeChange,
-  prepareCodexForCustomProviderHostChange,
-  restartCodexAfterAuthModeChange,
-  setBeforeLocalCodexSessionStartHook,
-  setBotCapabilityAgentKindResolver,
-  setModelContextRuntimeRefreshListener,
-  setAutoReviewContextResolver,
-} from '../maker-host/index.js';
+import { cancelCodexAuthModeChange, ensureCodexMcpBridgeStartedForRemote, finalizeCodexAfterAuthModeChange, getMaker, getMakerIfReady, getPluginRegistry, disposeRemoteCodexHostAfterRestart, listRuntimeMcpServers, listSshCodexProviders, prepareCodexForAuthModeChange, prepareCodexForCustomProviderHostChange, restartCodexAfterAuthModeChange, setBeforeLocalCodexSessionStartHook, setModelContextRuntimeRefreshListener, setAutoReviewContextResolver } from '../maker-host/index.js';
 import {
   assertSshCodexModel,
   isVerifiedSshCodexResume,
@@ -1162,11 +1120,7 @@ import {
   type InterruptedTurnErrorSignals,
 } from './interruptedTurnAutoResume.js';
 import { readInterruptedTurnAutoResumeSettings } from '../maker-host/interrupted-turn-auto-resume-store.js';
-import {
-  isBotCandidateUnavailable,
-  canResumeAfterRuntimeFallback,
-  type RuntimeFallbackResult,
-} from './botCandidateRecovery.js';
+
 
 import {
   broadcastGhostMessageBlocked,
@@ -2214,27 +2168,6 @@ interface EnableOrcaOptions {
 }
 
 let orcaCollabServiceHolder: OrcaCollabService | null = null;
-let botDelegationServiceHolder: BotDelegationService | null = null;
-let botDirectMessageServiceHolder: BotDirectMessageService | null = null;
-let botGroupChatServiceHolder: BotGroupChatService | null = null;
-
-const botRuntimeRestoreCoordinator = createBotRuntimeRestoreCoordinator({
-  readDbIdentity: () => {
-    const snapshot = getCurrentDbClientSnapshot();
-    return snapshot
-      ? { userId: snapshot.userId, clientEpoch: snapshot.clientEpoch }
-      : null;
-  },
-  readServices: () => ({
-    directMessages: botDirectMessageServiceHolder,
-    delegation: botDelegationServiceHolder,
-  }),
-  log,
-});
-
-export function restoreBotRuntimeForCurrentOwner(): Promise<boolean> {
-  return botRuntimeRestoreCoordinator.restoreCurrentOwner();
-}
 
 function markWorkerManualInterruptIfKnown(
   sessionId: string,
@@ -2292,14 +2225,6 @@ let idleReleaseWatcher: OrcaIdleReleaseWatcher | null = null;
  */
 export function tryGetOrcaCollabService(): OrcaCollabService | null {
   return orcaCollabServiceHolder;
-}
-
-export function tryGetBotDelegationService(): BotDelegationService | null {
-  return botDelegationServiceHolder;
-}
-
-export function tryGetBotDirectMessageService(): BotDirectMessageService | null {
-  return botDirectMessageServiceHolder;
 }
 
 function createBridgeWorkerLabel(task: string): string {
@@ -2660,42 +2585,6 @@ function hasPendingAgentInteractionForSession(sessionId: string): boolean {
       (entry) => entry.sessionId === sessionId,
     ) || ghostSetupInteractionBridge.pendingSnapshots(sessionId).length > 0
   );
-}
-
-type BotCompactRuntimeRefreshHandler = (
-  session: BotCompactRuntimeSession,
-  boundary: BotCompactBoundary,
-) => Promise<BotCompactRuntimeRefreshOutcome>;
-
-/**
- * `wireSessionToIpc` is module-scoped because IM adapters and scheduler paths
- * create Sessions outside the renderer IPC handler.  The real refresh routine
- * needs the register-time Maker/bootstrap closure, so keep one narrow holder
- * and let the instance-scoped coordinator own all compact settle signals.
- */
-let botCompactRuntimeRefreshHandler: BotCompactRuntimeRefreshHandler | null = null;
-const botCompactRuntimeRefreshCoordinator = createBotCompactRuntimeRefreshCoordinator({
-  hasPendingInteraction: hasPendingAgentInteractionForSession,
-  refresh: (session, boundary) =>
-    botCompactRuntimeRefreshHandler?.(session, boundary) ?? Promise.resolve('deferred'),
-  onError: (sessionId, error) => {
-    log.warn('Bot compact runtime refresh failed; lazy resume remains available', {
-      sessionId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  },
-});
-
-function attemptBotCompactRuntimeRefresh(session: WiredSession, trigger: string): void {
-  if (!botCompactRuntimeRefreshCoordinator.hasPending(session.id)) return;
-  void botCompactRuntimeRefreshCoordinator.attempt(session).then((outcome) => {
-    if (outcome === 'refreshed') {
-      log.info('Bot compact runtime refreshed at idle boundary', {
-        sessionId: session.id,
-        trigger,
-      });
-    }
-  });
 }
 
 function isPendingDesktopOnlyConfirmation(requestId: string): boolean {
@@ -3437,34 +3326,6 @@ const sessionTurnLeaseTracker = new SessionTurnLeaseTracker({
   now: Date.now,
   warn: (message, fields) => log.warn(message, fields),
 });
-/**
- * Recovering a missing/deleted canonical task can replace its runtime. The same
- * per-session lock used by message dispatch must therefore cover the final
- * busy check and the SQLite CAS; otherwise a turn can start between a renderer
- * precheck and the archive transaction and lose its terminal output.
- */
-export async function assertBotCanonicalReplacementIdle(sessionId: string): Promise<void> {
-  const live = getMakerIfReady()?.getSession(sessionId);
-  const busy = isBotCanonicalReplacementBusy({
-    turnRunning: live?.isTurnRunning() === true,
-    backgroundTaskCount: live?.listBackgroundTasks().length ?? 0,
-    trackedTurn: sessionTurnActivityTracker.isSessionInTurn(sessionId),
-    leasedTurn: await sessionTurnLeaseTracker.isTurnActive(sessionId),
-    pendingInteraction: hasPendingAgentInteractionForSession(sessionId),
-  });
-  if (busy) {
-    throwIpcError(
-      'SESSION_RUNNING',
-      '伙伴主任务仍在运行或等待处理，现在不能恢复替代任务',
-    );
-  }
-}
-configureBotCanonicalReplacementCoordinator((sessionId, operation) =>
-  withSendToSessionLock(sessionId, async () => {
-    await assertBotCanonicalReplacementIdle(sessionId);
-    return operation();
-  }),
-);
 let reviewOwnerLivenessHandle: ReviewOwnerLivenessHandle | null = null;
 const ensureReviewOwnerLivenessReady = createRetryableReviewInitialization(async () => {
   const handle = reviewOwnerLivenessHandle ?? (await startReviewOwnerLiveness());
@@ -3763,8 +3624,6 @@ export function getPendingCredentialSwitchTarget(
 
 export interface SchedulerQueuedPromptRequest {
   sessionId: string;
-  /** Routine dispatch preserves the teammate's current planning preference. */
-  inheritTargetPlanMode?: boolean;
   /** 发给 agent 的正文(可含静默运行隐藏协议后缀)。 */
   text: string;
   /** 落库与队列气泡展示的用户原始 prompt(不含隐藏协议)。 */
@@ -4595,7 +4454,6 @@ const sessionBindings = createSessionBindingLifecycle<WiredSession, WiredSession
     });
   },
   beforeCloseTeardown: (session: WiredSession) => {
-    botCompactRuntimeRefreshCoordinator.clearForClosedSession(session);
     cancelDirectAbortReconciliation(session.id);
     pendingFailedTurnAssistantPersistId.delete(session.id);
   },
@@ -4663,10 +4521,6 @@ const sessionEventDependencies: SessionEventDependencies = {
   onPluginTaskTerminal: (sessionId, execution, outcome, outputMessageId) => {
     notePluginTaskLifecycle(service => service.settle(sessionId, execution, outcome, outputMessageId));
   },
-  get botCompactRuntimeRefreshCoordinator() { return botCompactRuntimeRefreshCoordinator; },
-  get attemptBotCompactRuntimeRefresh() { return attemptBotCompactRuntimeRefresh; },
-  get botDelegationServiceHolder() { return botDelegationServiceHolder; },
-  get botGroupChatServiceHolder() { return botGroupChatServiceHolder; },
   get isFencedStaleSessionTerminal() {
     return isFencedStaleSessionTerminal;
   },
@@ -4888,23 +4742,9 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
   installInteractionLifecycleObserver(session, {
     onStart: (request, route) => {
       ghostSessionTap.interactionObserver.onStart(request, route);
-      void botDelegationServiceHolder?.handleInteractionStart(session.id, request).catch((error) => {
-        log.warn('failed to project child interaction to requesting Bot', {
-          sessionId: session.id,
-          requestId: request.requestId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
     },
     onEnd: (request, route) => {
       ghostSessionTap.interactionObserver.onEnd(request, route);
-      void botDelegationServiceHolder?.handleInteractionEnd(session.id, request).catch((error) => {
-        log.warn('failed to clear child interaction for requesting Bot', {
-          sessionId: session.id,
-          requestId: request.requestId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
     },
   });
 }
@@ -6103,13 +5943,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   // 自定义 MCP 服务器 CRUD —— CRUD 成功后刷新三个 agent 的 mcpProviders 数组
   // （下次新建会话生效）并广播 MCP_CHANGED 让设置页列表 live 刷新。
   registerMcpHandlers(createElectronIpcHandlerRegistry(), {
-    listMcpServers: listBotRuntimeMcpServers,
-    resolveBotContext: async (sessionId, chain) => {
-      const route = await reconcileBotModelRoute.preview(sessionId, chain);
-      if (!route) return null;
-      const meta = await maker.getSessionMeta(sessionId);
-      return meta ? { agentKind: route.agentKind, remoteHostId: meta.remoteHostId } : null;
-    },
+    listMcpServers: listRuntimeMcpServers,
     refreshProviders: () => refreshCustomMcpProviders(),
     broadcastChanged: () => broadcastToAllWindows(MAKER_PUSH.MCP_CHANGED, {}),
     // 内置 server 名对自定义 MCP 是保留名：撞名会在装配层顶替内置 server 并继承
@@ -7191,295 +7025,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     return { session, didInjectOrcaInstructions, didInjectProjectContext };
   }
 
-  async function recordBotCompactRuntimeLifecycle(input: {
-    botId: string;
-    sessionId: string;
-    eventType: 'compact-runtime-refresh-requested' | 'compact-runtime-refresh-applied' |
-      'compact-runtime-refresh-deferred' | 'compact-runtime-refresh-failed';
-    boundary: BotCompactBoundary;
-    profileVersion: number;
-    reason?: string;
-  }): Promise<void> {
-    await getDbClient().drizzle.insert(botLifecycleEvents).values({
-      id: randomUUID(),
-      botId: input.botId,
-      sessionId: input.sessionId,
-      eventType: input.eventType,
-      payloadJson: JSON.stringify({
-        profileVersion: input.profileVersion,
-        runtimeInstanceId: input.boundary.sessionInstanceId,
-        compactBoundaryCount: input.boundary.boundaryCount,
-        firstObservedAt: input.boundary.firstObservedAt,
-        lastObservedAt: input.boundary.lastObservedAt,
-        ...(input.reason ? { reason: input.reason } : {}),
-      }),
-      createdAt: Date.now(),
-    });
-  }
-
-  botCompactRuntimeRefreshHandler = async (
-    compactSession,
-    boundary,
-  ): Promise<BotCompactRuntimeRefreshOutcome> => {
-    const expectedSession = compactSession as WiredSession;
-    return withSendToSessionLock(expectedSession.id, async () => {
-      if (maker.getSession(expectedSession.id) !== expectedSession) return 'not-bot';
-
-      const db = getDbClient().drizzle;
-      const [row] = await db
-        .select({
-          botId: botSessionLinks.botId,
-          role: botSessionLinks.role,
-          profileVersion: botSessionLinks.profileVersion,
-          source: sessions.source,
-          status: sessions.status,
-          title: sessions.title,
-          workingDir: sessions.workingDir,
-          workspaceKind: sessions.workspaceKind,
-          agentKind: sessions.agentKind,
-          model: sessions.model,
-          providerId: sessions.providerId,
-          effort: sessions.effort,
-          fastMode: sessions.fastMode,
-          permissionMode: sessions.permissionMode,
-          planModeEnabled: sessions.planModeEnabled,
-          sdkSessionId: sessions.sdkSessionId,
-          remoteHostId: sessions.remoteHostId,
-          orcaRole: sessions.orcaRole,
-          codexHistoryHasProductPrompt: sessions.codexHistoryHasProductPrompt,
-        })
-        .from(sessions)
-        .innerJoin(botSessionLinks, eq(botSessionLinks.sessionId, sessions.id))
-        .where(eq(sessions.id, expectedSession.id))
-        .limit(1);
-      if (
-        !row ||
-        row.source !== 'bot' ||
-        row.status !== 'active' ||
-        (row.role !== 'canonical' && row.role !== 'delegation' && row.role !== 'group')
-      ) {
-        return 'not-bot';
-      }
-      if (row.role === 'delegation') {
-        // These short-lived delegation runs own their own terminal archive
-        // transaction. Rebuilding one here would race that owner and could
-        // resurrect it.
-        return 'not-bot';
-      }
-      if (
-        expectedSession.isTurnRunning() ||
-        expectedSession.listBackgroundTasks().length > 0 ||
-        hasPendingAgentInteractionForSession(expectedSession.id)
-      ) {
-        await recordBotCompactRuntimeLifecycle({
-          botId: row.botId,
-          sessionId: expectedSession.id,
-          eventType: 'compact-runtime-refresh-deferred',
-          boundary,
-          profileVersion: row.profileVersion,
-          reason: 'runtime-busy',
-        });
-        return 'deferred';
-      }
-      if (!row.workingDir) {
-        await recordBotCompactRuntimeLifecycle({
-          botId: row.botId,
-          sessionId: expectedSession.id,
-          eventType: 'compact-runtime-refresh-failed',
-          boundary,
-          profileVersion: row.profileVersion,
-          reason: 'working-dir-missing',
-        });
-        return 'not-bot';
-      }
-
-      // Only a canonical Bot may eagerly settle a settings switch. The ordinary
-      // task picker retains its existing next-send semantics. Do not rebuild
-      // from the pre-switch row or close a healthy runtime after a failed switch.
-      if (agentSwitchDeps.pendingSwitches?.get(expectedSession.id)) {
-        await applyPendingAgentSwitchIfIdle(agentSwitchDeps, expectedSession.id, { bootstrapAfterSwitch: true });
-        return agentSwitchDeps.pendingSwitches?.get(expectedSession.id) ? 'deferred' : 'not-bot';
-      }
-
-      const createOpts = buildCreateOptsWithStderr({
-        id: expectedSession.id,
-        agentKind: dbToMakerAgentKind(row.agentKind),
-        workingDir: row.workingDir,
-        workspaceKind: row.workspaceKind,
-        model: row.model ?? undefined,
-        providerId: row.providerId,
-        effort: (row.effort ?? undefined) as CreateOpts['effort'],
-        fastMode: !!row.fastMode,
-        permissionMode: permissionModeOrAsk(row.permissionMode),
-        planMode: !!row.planModeEnabled,
-        title: row.title ?? undefined,
-        resumeSessionId: row.sdkSessionId ?? undefined,
-        remoteHostId: row.remoteHostId ?? undefined,
-        orcaRole: row.orcaRole as CreateOpts['orcaRole'],
-        codexHistoryHasProductPrompt: row.codexHistoryHasProductPrompt ?? undefined,
-      });
-      await synthesizeOrcaVendorOptionsFromDb(expectedSession.id, createOpts);
-      const extraDirs = await readSessionExtraDirsFromDb(expectedSession.id).catch((error) => {
-        log.warn('Bot compact refresh could not read extra dirs; continuing without them', {
-          sessionId: expectedSession.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return [];
-      });
-      if (extraDirs.length > 0) createOpts.extraDirs = extraDirs;
-
-      const workDirReady = await checkWorkDirExists(
-        expectedSession.id,
-        createOpts.workingDir,
-        createOpts.agentKind,
-        createOpts.remoteHostId,
-      );
-      if (!workDirReady) {
-        await recordBotCompactRuntimeLifecycle({
-          botId: row.botId,
-          sessionId: expectedSession.id,
-          eventType: 'compact-runtime-refresh-failed',
-          boundary,
-          profileVersion: row.profileVersion,
-          reason: 'working-dir-unavailable',
-        });
-        return 'not-bot';
-      }
-
-      await recordBotCompactRuntimeLifecycle({
-        botId: row.botId,
-        sessionId: expectedSession.id,
-        eventType: 'compact-runtime-refresh-requested',
-        boundary,
-        profileVersion: row.profileVersion,
-      });
-      try {
-        await ensureRemoteReadyForSessionStart({ createOpts });
-        // Resource drift is a runtime restart boundary, not a reason to destroy the
-        // currently healthy runtime. Resolve the exact native Skill/MCP/
-        // Toolset bundle before closeSession so a failed preflight leaves the
-        // old process and its resume ownership untouched.
-        await withRehydrateCloseSuppressed(expectedSession.id, async () => {
-          const refreshed = await replaceBotRuntimeAfterPreflight({
-            preflight: async () => {
-              await preflightBotRuntimeResources(createOpts as MakerSessionCreateOpts);
-            },
-            isCurrentOwner: () => maker.getSession(expectedSession.id) === expectedSession,
-            close: () => maker.closeSession(expectedSession.id, 'runtime-refresh'),
-            bootstrap: async () => (await bootstrapSession(createOpts)).session,
-          });
-          await markOrcaRoleIfNeeded(refreshed.id, createOpts.orcaRole);
-          broadcastSessionCreated(refreshed.id);
-        });
-        await recordBotCompactRuntimeLifecycle({
-          botId: row.botId,
-          sessionId: expectedSession.id,
-          eventType: 'compact-runtime-refresh-applied',
-          boundary,
-          profileVersion: row.profileVersion,
-        });
-        return 'refreshed';
-      } catch (error) {
-        await recordBotCompactRuntimeLifecycle({
-          botId: row.botId,
-          sessionId: expectedSession.id,
-          eventType: 'compact-runtime-refresh-failed',
-          boundary,
-          profileVersion: row.profileVersion,
-          reason:
-            error instanceof Error && error.name.trim()
-              ? error.name.trim().slice(0, 120)
-              : 'Error',
-        }).catch(() => undefined);
-        throw error;
-      }
-    });
-  };
-
-  async function refreshBotCapabilityEpochBeforeSend(
-    live: WiredSession,
-  ): Promise<void> {
-    if (botCompactRuntimeRefreshCoordinator.hasPending(live.id)) {
-      await botCompactRuntimeRefreshCoordinator.attempt(live);
-      if (botCompactRuntimeRefreshCoordinator.hasPending(live.id)) {
-        throwIpcError(
-          'PRECONDITION_FAILED',
-          '伙伴能力正在刷新，请稍后再发送',
-        );
-      }
-      return;
-    }
-
-    const db = getDbClient().drizzle;
-    const [row] = await db
-      .select({
-        role: botSessionLinks.role,
-        source: sessions.source,
-        status: sessions.status,
-        title: sessions.title,
-        workingDir: sessions.workingDir,
-        workspaceKind: sessions.workspaceKind,
-        agentKind: sessions.agentKind,
-        model: sessions.model,
-        providerId: sessions.providerId,
-        effort: sessions.effort,
-        fastMode: sessions.fastMode,
-        permissionMode: sessions.permissionMode,
-        planModeEnabled: sessions.planModeEnabled,
-        sdkSessionId: sessions.sdkSessionId,
-        remoteHostId: sessions.remoteHostId,
-        orcaRole: sessions.orcaRole,
-        codexHistoryHasProductPrompt: sessions.codexHistoryHasProductPrompt,
-      })
-      .from(sessions)
-      .innerJoin(botSessionLinks, eq(botSessionLinks.sessionId, sessions.id))
-      .where(eq(sessions.id, live.id))
-      .limit(1);
-    if (
-      !row
-      || (row.role !== 'canonical' && row.role !== 'group')
-      || row.source !== 'bot'
-      || row.status !== 'active'
-      || !row.workingDir
-    ) {
-      return;
-    }
-
-    const createOpts = buildCreateOptsWithStderr({
-      id: live.id,
-      agentKind: dbToMakerAgentKind(row.agentKind),
-      workingDir: row.workingDir,
-      workspaceKind: row.workspaceKind,
-      model: row.model ?? undefined,
-      providerId: row.providerId,
-      effort: (row.effort ?? undefined) as CreateOpts['effort'],
-      fastMode: !!row.fastMode,
-      permissionMode: permissionModeOrAsk(row.permissionMode),
-      planMode: !!row.planModeEnabled,
-      title: row.title ?? undefined,
-      resumeSessionId: row.sdkSessionId ?? undefined,
-      remoteHostId: row.remoteHostId ?? undefined,
-      orcaRole: row.orcaRole as CreateOpts['orcaRole'],
-      codexHistoryHasProductPrompt: row.codexHistoryHasProductPrompt ?? undefined,
-    });
-    await synthesizeOrcaVendorOptionsFromDb(live.id, createOpts);
-    const extraDirs = await readSessionExtraDirsFromDb(live.id).catch(() => []);
-    if (extraDirs.length > 0) createOpts.extraDirs = extraDirs;
-    const snapshot = await preflightBotRuntimeResources(
-      createOpts as MakerSessionCreateOpts,
-    );
-    if (!snapshot?.runtimeEpochChanged) return;
-
-    botCompactRuntimeRefreshCoordinator.noteBoundary(live);
-    await botCompactRuntimeRefreshCoordinator.attempt(live);
-    if (botCompactRuntimeRefreshCoordinator.hasPending(live.id)) {
-      throwIpcError(
-        'PRECONDITION_FAILED',
-        '伙伴能力正在刷新，请稍后再发送',
-      );
-    }
-  }
-
   // switchFocus 和 sendToWorker 都可能唤醒 idle worker；统一走这里才能保留 extraDirs。
   async function resumeOrcaWorkerSessionIfMissing(target: {
     id: string;
@@ -7570,7 +7115,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       // 不能只看 manager 现值 — 否则旧 bridge 缺 cindy_memory 时 drift 永不
       // 收敛, 每次 live send 白跑完整 ensure。
       makerMemoryEnabled: remoteMakerMemoryEnabledForBridge(),
-      botHelperAvailable: getActiveCodexBridgeServerNames()?.includes(REMOTE_BOT_HELPER_SERVER_NAME) ?? false,
       token: getRemoteMcpBridgeToken(),
       bridgeInstanceId: getActiveCodexBridgeInstanceId(),
     };
@@ -8840,7 +8384,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   pendingAgentSwitchApplyHolder = async (sessionId, signal, selection) => {
     const release = await acquireSendToSessionLock(sessionId);
     try {
-      await reconcileBotModelRoute(sessionId, true);
       await applyPendingAgentSwitchIfIdle(agentSwitchDeps, sessionId, {
         bootstrapAfterSwitch: true,
         signal,
@@ -9048,7 +8591,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     origin?: AgentInputQueuedMessage['origin'];
     /** Host-only receipt: plugin-authored input is not user-authored permission. */
     autoReviewUserText?: { kind: 'delegated-continuation' };
-    authorizationGuard?: BotAuthorizationInputGuard;
     createDefaults?: SendToSessionCreateDefaults;
     /** 安全调用方可要求新会话不比来源会话拥有更高的权限。 */
     inheritSourcePermissionMode?: boolean;
@@ -9102,9 +8644,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           message: error instanceof Error ? error.message : String(error),
         };
       }
-      await reconcileBotModelRoute(targetSessionId);
-      const compactedRuntime = maker.getSession(targetSessionId);
-      if (compactedRuntime) await refreshBotCapabilityEpochBeforeSend(compactedRuntime);
     }
 
     // ── create 分支 ──────────────────────────────────────────────────────────
@@ -9395,7 +8934,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     // await 上,日志即可直接定位挂点(PR #2829 QA:回执 deliver 挂死 64 分钟零线索)。
     let lockStage = 'resolve-session-meta+row';
     const run = waitPrev.then(async () => {
-      await reconcileBotModelRoute(targetSessionId, true);
       const [meta, dbRow] = await Promise.all([
         maker.getSessionMeta(targetSessionId).catch(() => null),
         getSessionRowSnapshot(targetSessionId),
@@ -9432,7 +8970,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       // Pending selections also need the canonical send transaction: it consumes the intent,
       // then refreshes queued createOpts from DB before starting the target harness.
       // enqueue does not await dispatch, so the drain can acquire this lock after we return.
-      if (params.forceQueue || explicitClientId?.startsWith('bot-dm:') || explicitClientId?.startsWith(BOT_GROUP_CLIENT_ID_PREFIX) || explicitClientId?.startsWith('bot-authorization-resume:') || inputCoordinator.shouldQueueNewTurn(targetSessionId) || agentSwitchPending.get(targetSessionId)) {
+      if (params.forceQueue || inputCoordinator.shouldQueueNewTurn(targetSessionId) || agentSwitchPending.get(targetSessionId)) {
         lockStage = 'enqueue-queued-message';
         const qClientId = explicitClientId ?? createId();
         await enqueueSendToSessionMessage({
@@ -9447,7 +8985,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           onAcceptedCommit,
           origin: queuedOrigin,
           autoReviewUserText: params.autoReviewUserText,
-          authorizationGuard: params.authorizationGuard,
         });
         return {
           ok: true as const,
@@ -9680,7 +9217,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             ? permissionModeOrAsk(dbRow.permissionMode)
             : 'bypassPermissions',
           // 发起方回合结束后进程常被释放。漏掉 providerId = 回落到隐式默认路由,
-          // 订阅 / 自定义来源的伙伴会以 AGENT_NOT_READY 起不来,委派结果停在外发
+          // 订阅 / 自定义来源的任务会以 AGENT_NOT_READY 起不来,回复停在外发
           // 队列里,表现就是「对方做完了,发起方没被叫醒」。
           ...(dbRow.providerId ? { providerId: dbRow.providerId } : {}),
         });
@@ -9791,554 +9328,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     return trackSendToSessionLockRun(targetSessionId, run, () => lockStage);
   }
 
-  const dispatchBotSessionMessage = async (params: {
-    targetSessionId: string;
-    dispatcherSessionId?: string;
-    authorizationGuard?: BotAuthorizationInputGuard;
-    message: string;
-    persistedContent?: string;
-    clientId?: string;
-    files?: AgentInputQueuedMessage['files'];
-    onAccepted?: () => void | Promise<void>;
-    onAcceptedRollback?: () => void | Promise<void>;
-  }) => {
-    if (params.clientId && params.authorizationGuard) {
-      const delivery = await resolveBotAuthorizationDelivery(params.clientId, async (clientId) => {
-        const [row] = await getDbClient().drizzle
-          .select({ id: messages.id, createdAt: messages.createdAt, rewindAt: messages.rewindAt, clearedAt: sessions.clearedAt })
-          .from(messages).innerJoin(sessions, eq(sessions.id, messages.sessionId))
-          .where(and(eq(messages.sessionId, params.targetSessionId), eq(messages.clientId, clientId)))
-          .limit(1);
-        return row ?? null;
-      });
-      params = { ...params, clientId: delivery.clientId };
-      if (delivery.delivered) {
-        await params.authorizationGuard!.validate();
-        params.authorizationGuard!.assertCurrent();
-        await params.onAccepted?.();
-        return { ok: true as const, targetSessionId: params.targetSessionId, wakeKind: 'already-active' as const };
-      }
-    } else if (params.clientId) {
-      const [persisted] = await getDbClient()
-        .drizzle.select({ id: messages.id })
-        .from(messages)
-        .where(
-          and(
-            eq(messages.sessionId, params.targetSessionId),
-            eq(messages.clientId, params.clientId),
-          ),
-        )
-        .limit(1);
-      if (persisted) {
-        await params.onAccepted?.();
-        return {
-          ok: true as const,
-          targetSessionId: params.targetSessionId,
-          wakeKind: 'already-active' as const,
-        };
-      }
-    }
-    if (params.files?.length) {
-      const [meta, dbRow] = await Promise.all([
-        maker.getSessionMeta(params.targetSessionId).catch(() => null),
-        getSessionRowSnapshot(params.targetSessionId),
-      ]);
-      if (!meta || !dbRow || dbRow.status === 'deleted') {
-        return {
-          ok: false as const,
-          errorCode: 'NOT_FOUND' as const,
-          message: `session ${params.targetSessionId} not found`,
-        };
-      }
-      if (dbRow.status === 'archived') {
-        return {
-          ok: false as const,
-          errorCode: 'ARCHIVED' as const,
-          message: `session ${params.targetSessionId} is archived`,
-        };
-      }
-      const clientId = params.clientId ?? createId();
-      await inputCoordinator.ensureQueueRestored(params.targetSessionId).catch(() => undefined);
-      const queued = await buildSessionControlInputItem({
-        targetSessionId: params.targetSessionId,
-        message: params.message,
-        persistedContent: params.persistedContent ?? params.message,
-        clientId,
-        meta,
-        files: params.files,
-      });
-      inputCoordinator.enqueue(params.targetSessionId, queued, {
-        resumeRestorePausedQueue: true,
-      });
-      await params.onAccepted?.();
-      return {
-        ok: true as const,
-        targetSessionId: params.targetSessionId,
-        wakeKind: 'queued' as const,
-        queuedMessageId: clientId,
-      };
-    }
-    return sendToSessionInternal(params);
-  };
-
-  setBotInvitationWelcomeDispatch(dispatchBotSessionMessage);
-
-  initializeBotAuthorizationHost(async (card, validate, assertAuthorizationCurrent) => {
-    await inputCoordinator.ensureQueueRestored(card.sessionId);
-    const generation = inputCoordinator.getGeneration(card.sessionId);
-    const authorizationGuard: BotAuthorizationInputGuard = {
-      validate,
-      assertCurrent: () => {
-        assertAuthorizationCurrent();
-        assertRemoteInputClearNotInFlight(card.sessionId, true);
-        if (rewindInputSessions.has(card.sessionId) || !inputCoordinator.isGenerationCurrent(card.sessionId, generation)) {
-          throw new Error('Authorization input boundary changed');
-        }
-      },
-    };
-    authorizationGuard.assertCurrent();
-    const result = await dispatchBotSessionMessage({ ...buildBotAuthorizationContinuation(card), authorizationGuard });
-    if (!result.ok) throw new Error('Authorization continuation not accepted');
-    await awaitAgentInputQueueSnapshotPersistence(card.sessionId);
-  }, (sessionId) => {
-    const generation = inputCoordinator.getGeneration(sessionId);
-    return () => {
-      assertRemoteInputClearNotInFlight(sessionId, true);
-      if (!inputCoordinator.isGenerationCurrent(sessionId, generation))
-        throw new Error('Authorization request input boundary changed');
-    };
-  });
-
-  botDirectMessageServiceHolder = createBotDirectMessageService({
-    hasQueuedDelivery: async (sessionId, clientId) => {
-      await inputCoordinator.ensureQueueRestored(sessionId);
-      return inputCoordinator.hasKnownClientId(sessionId, clientId);
-    },
-    dispatch: ({
-      targetSessionId,
-      message,
-      persistedContent,
-      clientId,
-      onAccepted,
-      onAcceptedRollback,
-    }) =>
-      dispatchBotSessionMessage({
-        targetSessionId,
-        message,
-        persistedContent,
-        clientId,
-        onAccepted: onAccepted
-          ? async () => {
-              try {
-                await onAccepted();
-              } catch (error) {
-                throw new AcceptedCallbackDispatchCancelled(
-                  error instanceof Error ? error.message : String(error),
-                );
-              }
-            }
-          : undefined,
-        onAcceptedRollback,
-      }),
-    ensureCanonicalSession: async (botId) => {
-      if (!botDelegationServiceHolder) {
-        return { ok: false as const, errorCode: 'DELEGATION_UNAVAILABLE', message: '伙伴消息服务尚未就绪' };
-      }
-      return botDelegationServiceHolder.ensureCanonicalSession(botId);
-    },
-    captureOwnerScope: captureDataOwnerBroadcastScope,
-    isOwnerScopeCurrent: (scope) =>
-      isDataOwnerBroadcastScopeCurrent(
-        scope as ReturnType<typeof captureDataOwnerBroadcastScope>,
-      ),
-    onChanged: (payload, scope) => {
-      const ownerScope = scope as ReturnType<typeof captureDataOwnerBroadcastScope> | undefined;
-      if (ownerScope && !isDataOwnerBroadcastScopeCurrent(ownerScope)) return;
-      broadcastToAllWindows(MAKER_PUSH.BOT_DIRECT_MESSAGE_CHANGED, payload, ownerScope);
-    },
-  });
-  botGroupChatServiceHolder?.dispose();
-  // 分工 steps run in the group's folder, the 项目文件夹, or one worktree per plan (bot-group-chat.md §7.5).
-  // Group uploads use a host-memory receipt registry. Raw OSS keys and signed
-  // URLs never enter the remote resource payload or durable database.
-  const botGroupAttachmentUploads = createBotGroupAttachmentUploadRegistry();
-  const botGroupAttachments = createBotGroupAttachmentStore({
-    ownerRoot: () => ownerScopedUserDataPath(),
-    attachmentUploads: botGroupAttachmentUploads,
-    captureCompensationScope: () => captureMediaRefCompensationScope(),
-  });
-  const botGroupWorkDir = createBotGroupWorkDir({
-    ownerRoot: () => ownerScopedUserDataPath(),
-    managedDialogueRoot: () => ownerScopedUserDataPath('dialogues'),
-    detectRepo: async (dir) => {
-      const detected = await worktreeManager.detectCwd(dir);
-      return { gitInstalled: detected.gitInstalled, isGitRepo: detected.isGitRepo };
-    },
-    prepareWorktree: async (projectDir) => {
-      const prepared = await prepareHandoffWorktree({
-        getForSession: worktreeManager.getForSession, listAll: worktreeManager.listAll,
-        detectCwd: worktreeManager.detectCwd, suggestName: worktreeManager.suggestName,
-        listBranches: worktreeManager.listBranches, resolveCommit: worktreeManager.revParseCommit,
-        createWorktree: worktreeManager.createWorktree, createId: () => randomUUID(),
-        resolveFreshSource: resolveFreshSourceBranch,
-      }, undefined, projectDir);
-      return prepared.ok
-        ? { ok: true as const, sessionId: prepared.sessionId, workingDir: prepared.meta.path, branch: prepared.meta.branch }
-        : prepared;
-    },
-    git: async (args, cwd) => (await gitExec(args, cwd, { timeoutMs: 10_000 })).stdout,
-    trashItem: (fullPath) => shell.trashItem(fullPath),
-  });
-  botGroupChatServiceHolder = createBotGroupChatService({
-    ensureLane: async (input) => {
-      try {
-        return await ensureBotGroupLaneSession(input);
-      } catch (error) {
-        return { ok: false as const, errorCode: 'LANE_UNAVAILABLE', message: error instanceof Error ? error.message : String(error) };
-      }
-    },
-    dispatch: ({ targetSessionId, message, persistedContent, clientId, attachments, onAccepted }) =>
-      dispatchBotSessionMessage({
-        targetSessionId,
-        message,
-        persistedContent,
-        clientId,
-        ...(attachments && attachments.length > 0
-          ? {
-            files: attachments.map((attachment) => ({
-              id: attachment.id,
-              name: attachment.name,
-              originalName: attachment.name,
-              path: attachment.path ?? attachment.url ?? '',
-              ...(attachment.url ? { url: attachment.url } : {}),
-              ext: path.extname(attachment.name).toLowerCase(),
-              size: attachment.size,
-              category: attachment.category,
-              mimeType: attachment.mimeType,
-              ...(attachment.annotated ? { annotated: true } : {}),
-            })),
-          }
-          : {}),
-        onAccepted,
-      }),
-    prepareAttachments: botGroupAttachments.prepare,
-    abortLane: async (sessionId) => {
-      await inputCoordinator.ensureQueueRestored(sessionId);
-      resetAutomaticRecoveryForExplicitStop(sessionId);
-      contextOverflowRolloverHolder?.cancelRecovery(sessionId);
-      await pauseGoalBeforeExplicitStop(sessionId);
-      inputCoordinator.stop(sessionId);
-      await awaitAgentInputQueueSnapshotPersistence(sessionId);
-    },
-    closeLanes: async (sessionIds) => {
-      await Promise.all(sessionIds.map((id) => maker.closeSession(id).catch(() => undefined)));
-    },
-    hasPendingInteraction: (sessionId) => hasPendingAgentInteractionForSession(sessionId),
-    decidePlan: createBotGroupPlanDecider((prompt, opts) => requestUtilityText(maker, prompt, opts)),
-    workDir: botGroupWorkDir,
-    validateProjectDir: async (dir) => {
-      try {
-        const checked = await validateExistingBotGroupProjectDirectory(dir, {
-          managedDialogueRoot: ownerScopedUserDataPath('dialogues'),
-        });
-        return checked.ok
-          ? { ok: true as const, dir: checked.workingDir }
-          : { ok: false as const, message: checked.message };
-      } catch {
-        return { ok: false as const, message: '项目文件夹不存在' };
-      }
-    },
-    captureOwnerScope: captureDataOwnerBroadcastScope,
-    isOwnerScopeCurrent: (scope) =>
-      isDataOwnerBroadcastScopeCurrent(scope as ReturnType<typeof captureDataOwnerBroadcastScope>),
-    onChanged: (payload, scope) => {
-      const ownerScope = scope as ReturnType<typeof captureDataOwnerBroadcastScope> | undefined;
-      if (ownerScope && !isDataOwnerBroadcastScopeCurrent(ownerScope)) return;
-      broadcastToAllWindows(MAKER_PUSH.BOT_GROUP_CHANGED, payload, ownerScope);
-      // Phones read groups as remote resources; any change re-reads the row and the chat.
-      broadcastBotGroupRemoteResourceChanged(payload.groupId);
-    },
-    onStepSettled: (event, scope) => {
-      const ownerScope = scope as ReturnType<typeof captureDataOwnerBroadcastScope> | undefined;
-      if (ownerScope && !isDataOwnerBroadcastScopeCurrent(ownerScope)) return;
-      const generation = getMobileNotifyGeneration();
-      // Same boundary as the phone's group list: a group with a hidden member never reaches it.
-      void botGroupMembersVisibleRemotely(event.memberBotIds).then((visible) => {
-        if (!visible || (ownerScope && !isDataOwnerBroadcastScopeCurrent(ownerScope))) return;
-        sendMobileBotGroupNotify({
-          groupId: event.groupId,
-          title: event.groupName,
-          body: getBotGroupStepNotificationBody(event),
-          eventId: `${event.planId}:${event.position}:${event.outcome}:${event.settledAt}`,
-          generation,
-        });
-      }).catch((error: unknown) => {
-        log.warn('bot group step push skipped', { error: error instanceof Error ? error.message : String(error) });
-      });
-    },
-    log,
-  });
-  // Phones reach groups through the Remote Resource protocol (bot-group-chat.md §8).
-  registerBotGroupRemoteResourceProvider(() => botGroupChatServiceHolder, botGroupAttachmentUploads);
-  botDelegationServiceHolder?.dispose();
-  botDelegationServiceHolder = createBotDelegationService({
-    taskControl: {
-      steer: (params) => sessionControlService.steerSession(params),
-      stop: (params) => sessionControlService.stopSessionTurn(params),
-      isActive: (id) => {
-        const session = maker.getSession(id);
-        return !!session && (session.isTurnRunning() || session.getTurnControlSnapshot().pendingInteractionCount > 0);
-      },
-      holdInput: (id, held) => {
-        inputCoordinator.setExecutionPaused(id, held);
-        return setPendingInteractionTimeoutsPaused(id, held);
-      },
-      // Wait for sends already admitted before the hold before sampling native activity.
-      waitForInputBoundary: (id) => withSendToSessionLock(id, async () => undefined),
-      preparePause: async (id) => {
-        resetAutomaticRecoveryForExplicitStop(id);
-        contextOverflowRolloverHolder?.cancelRecovery(id);
-        await pauseGoalBeforeExplicitStop(id);
-      },
-      restoreInput: (id) => inputCoordinator.ensureQueueRestored(id),
-      flushInput: awaitAgentInputQueueSnapshotPersistence,
-      resumeInput: async (id) => { inputCoordinator.resume(id); },
-    },
-    getWorktree: worktreeManager.getForSession,
-    reconcileWorktree: worktreeManager.reconcileSessionTransfer,
-    withTransferredWorktree: worktreeManager.withTransferredSession,
-    discardUnusedWorktree: async sessionId => {
-      const [row] = await getDbClient().drizzle.select({ id: sessions.id }).from(sessions)
-        .where(eq(sessions.id, sessionId)).limit(1);
-      if (!row) await worktreeManager.removeWorktreeForSession(sessionId);
-    },
-    prepareWorktree: async workingDir => {
-      const prepared = await prepareHandoffWorktree({
-        getForSession: worktreeManager.getForSession, listAll: worktreeManager.listAll,
-        detectCwd: worktreeManager.detectCwd, suggestName: worktreeManager.suggestName,
-        listBranches: worktreeManager.listBranches, resolveCommit: worktreeManager.revParseCommit,
-        createWorktree: worktreeManager.createWorktree, createId: () => randomUUID(),
-        resolveFreshSource: resolveFreshSourceBranch,
-      }, undefined, workingDir);
-      return prepared.ok ? { ok: true, sessionId: prepared.sessionId, workingDir: prepared.meta.path } : prepared;
-    },
-    taskQueue: {
-      inspect: async (id, callerSessionId) => {
-        await inputCoordinator.ensureQueueRestored(id);
-        if (!inputCoordinator.isQueueRestored(id)) throw new Error('Task queue restoration is incomplete');
-        return inputCoordinator.getQueueInspection(id)
-          .filter(item => item.source === 'session' && item.sourceLabel === callerSessionId)
-          .map(item => ({ queuedMessageId: item.queuedMessageId, consuming: item.consuming, message: item.content }));
-      },
-      update: params => sessionControlService.updateQueuedMessage(params),
-      cancel: params => sessionControlService.cancelQueuedMessage(params),
-    },
-    readCallerPermission: (sessionId) => {
-      const state = maker.getSession(sessionId)?.stablePermissionModeState;
-      return state?.mode ? { mode: state.mode, generation: state.generation } : null;
-    },
-    readCallerRuntime: (sessionId) => {
-      const session = maker.getSession(sessionId);
-      return session ? {
-        agentKind: makerToDbAgentKind(session.agentKind),
-        model: session.model,
-        providerId: getSessionProvider(sessionId) ?? null,
-        effort: (getSessionEffort(sessionId) ?? undefined) as CreateOpts['effort'],
-        fastMode: getSessionFastMode(sessionId),
-      } : null;
-    },
-    taskRoute: createBotSessionTaskRouteBridge({
-      getSessionRuntime: params => sessionControlService.getSessionRuntime(params),
-      setSessionRuntime: params => sessionControlService.setSessionRuntime(params),
-      readConfiguredCandidate: (callerSessionId, current, childSessionId) =>
-        readBotFallbackCandidate(callerSessionId, current, childSessionId),
-    }),
-    dispatch: ({ targetSessionId, message, persistedContent, clientId, onAccepted, dispatcherSessionId }) =>
-      dispatchBotSessionMessage({
-        targetSessionId,
-        message,
-        persistedContent,
-        clientId,
-        onAccepted,
-        dispatcherSessionId,
-      }),
-    abortSession: (async (sessionId) => {
-      await inputCoordinator.ensureQueueRestored(sessionId);
-      resetAutomaticRecoveryForExplicitStop(sessionId);
-      contextOverflowRolloverHolder?.cancelRecovery(sessionId);
-      await pauseGoalBeforeExplicitStop(sessionId);
-      inputCoordinator.stop(sessionId);
-      await awaitAgentInputQueueSnapshotPersistence(sessionId);
-    }),
-    closeSession: (sessionId) => maker.closeSession(sessionId),
-    broadcastSessionCreated,
-    onChanged: (payload) => {
-      broadcastToAllWindows(MAKER_PUSH.BOT_DELEGATION_CHANGED, payload);
-    },
-    resolveInteraction: resolvePendingInteraction,
-    hasPendingInput: (sessionId) =>
-      inputCoordinator.getQueueControlSnapshot(sessionId).pendingQueue.length > 0,
-    collectArtifacts: async (sessionId) => {
-      await waitForTurnChangeSetSeal(sessionId);
-      const changeSets = await listTurnChangeSets(sessionId);
-      const byPath = new Map<string, {
-        path: string;
-        absolutePath: string;
-        status: 'added' | 'modified' | 'deleted' | 'renamed';
-      }>();
-      for (const changeSet of changeSets) {
-        for (const file of changeSet.files) {
-          const status = file.status === 'added' || file.status === 'untracked' || file.status === 'copied'
-            ? 'added'
-            : file.status === 'deleted'
-              ? 'deleted'
-              : file.status === 'renamed'
-                ? 'renamed'
-                : 'modified';
-          byPath.set(file.path, {
-            path: file.path,
-            absolutePath: path.resolve(changeSet.cwd, file.path),
-            status,
-          });
-        }
-      }
-      return [...byPath.values()];
-    },
-  });
-  registerBotLifecycleHandlers({
-    maker,
-    restartRuntime: async (sessionId, assertOwnerCurrent) => {
-      const recovery = contextOverflowRolloverHolder;
-      if (!recovery) throwIpcError('PRECONDITION_FAILED', 'Bot recovery is not ready');
-      await restartBotRuntime(sessionId, assertOwnerCurrent, {
-        stopInput: (id) => {
-          // Save the visible partial reply before abort/close clears the stream buffers.
-          flushAssistantBlock(id);
-          flushOrphanToolResults(id, null);
-          resetAutomaticRecoveryForExplicitStop(id);
-          recovery.cancelRecovery(id);
-          // Cancel sends/retries before waiting for their serialization lock.
-          // Preserve queued user input, paused until the user explicitly resumes it.
-          agentInputCoordinatorHolder?.stop(id, { keepQueue: true, pauseQueue: true, resumeOnUserInput: true });
-        },
-        withSessionLock: withSessionRestartLock,
-        rebuild: async (id, assertCurrent, signal) => {
-          await pauseGoalBeforeExplicitStop(id);
-          assertCurrent();
-          cleanupPendingInteractionsForSession(id, 'session_closed');
-          await recovery.prepareNativeSessionRecovery(id, null, assertCurrent, signal);
-        },
-        onClosed: (id) => agentInputCoordinatorHolder?.onSessionClosed(id),
-      });
-    },
-    getDelegationService: () => botDelegationServiceHolder,
-    onPaused: (botId) => updateBotRoutineLifecycle(botId, 'pause'),
-    onResumed: (botId) => updateBotRoutineLifecycle(botId, 'resume'),
-    onBeforeDelete: (botId) => updateBotRoutineLifecycle(botId, 'delete'),
-  });
-  const delegationForRestore = botDelegationServiceHolder;
-  void restoreBotRuntimeForCurrentOwner();
-
-  ipcMain.handle(
-    MAKER_INVOKE.BOT_DELEGATIONS_LIST,
-    async (event, parentSessionId: unknown) => {
-      if (!isDeviceLinkInvoke()) assertTrustedAppRendererEvent(event);
-      if (typeof parentSessionId !== 'string' || (parentSessionId.length === 0 || parentSessionId.length > 128)) {
-        throwIpcError('INVALID_PARAMS', 'parentSessionId required');
-      }
-      const result = await delegationForRestore.listDelegations(parentSessionId);
-      return isDeviceLinkInvoke() ? projectRemoteBotDelegations(result) : result;
-    },
-  );
-  ipcMain.handle(
-    MAKER_INVOKE.BOT_DIRECT_MESSAGE_THREAD_GET,
-    async (event, threadId: unknown, viewerBotId: unknown) => {
-      if (!isDeviceLinkInvoke()) assertTrustedAppRendererEvent(event);
-      if (typeof threadId !== 'string' || !threadId || threadId.length > 128) {
-        throwIpcError('INVALID_PARAMS', 'threadId required');
-      }
-      if (typeof viewerBotId !== 'string' || !viewerBotId || viewerBotId.length > 128) {
-        throwIpcError('INVALID_PARAMS', 'viewerBotId required');
-      }
-      if (!botDirectMessageServiceHolder) {
-        return { ok: false as const, errorCode: 'HOST_NOT_READY', message: '伙伴对话服务尚未就绪' };
-      }
-      return botDirectMessageServiceHolder.getThread(threadId, viewerBotId);
-    },
-  );
-  // Bot group chat is local to this Desktop in phase 1; device-link does not route these channels.
-  const botGroupNotReady = { ok: false as const, errorCode: 'HOST_NOT_READY' as const, message: '伙伴群聊服务尚未就绪' };
-  ipcMain.handle(MAKER_INVOKE.BOT_GROUP_LIST, async (event) => {
-    assertTrustedAppRendererEvent(event);
-    return botGroupChatServiceHolder ? botGroupChatServiceHolder.listGroups() : botGroupNotReady;
-  });
-  ipcMain.handle(MAKER_INVOKE.BOT_GROUP_GET, async (event, groupId: unknown, options: unknown) => {
-    assertTrustedAppRendererEvent(event);
-    return botGroupChatServiceHolder ? botGroupChatServiceHolder.getGroup(groupId, options) : botGroupNotReady;
-  });
-  ipcMain.handle(MAKER_INVOKE.BOT_GROUP_CREATE, async (event, input: unknown) => {
-    assertTrustedAppRendererEvent(event);
-    return botGroupChatServiceHolder ? botGroupChatServiceHolder.createGroup(input) : botGroupNotReady;
-  });
-  ipcMain.handle(MAKER_INVOKE.BOT_GROUP_UPDATE, async (event, input: unknown) => {
-    assertTrustedAppRendererEvent(event);
-    return botGroupChatServiceHolder ? botGroupChatServiceHolder.updateGroup(input) : botGroupNotReady;
-  });
-  ipcMain.handle(MAKER_INVOKE.BOT_GROUP_SET_MEMBERS, async (event, input: unknown) => {
-    assertTrustedAppRendererEvent(event);
-    return botGroupChatServiceHolder ? botGroupChatServiceHolder.setMembers(input) : botGroupNotReady;
-  });
-  ipcMain.handle(MAKER_INVOKE.BOT_GROUP_DELETE, async (event, groupId: unknown) => {
-    assertTrustedAppRendererEvent(event);
-    return botGroupChatServiceHolder ? botGroupChatServiceHolder.deleteGroup(groupId) : botGroupNotReady;
-  });
-  ipcMain.handle(MAKER_INVOKE.BOT_GROUP_SEND, async (event, input: unknown) => {
-    assertTrustedAppRendererEvent(event);
-    return botGroupChatServiceHolder ? botGroupChatServiceHolder.sendMessage(input) : botGroupNotReady;
-  });
-  ipcMain.handle(MAKER_INVOKE.BOT_GROUP_CONTINUE, async (event, groupId: unknown) => {
-    assertTrustedAppRendererEvent(event);
-    return botGroupChatServiceHolder ? botGroupChatServiceHolder.continueRound(groupId) : botGroupNotReady;
-  });
-  ipcMain.handle(MAKER_INVOKE.BOT_GROUP_STOP, async (event, groupId: unknown) => {
-    assertTrustedAppRendererEvent(event);
-    return botGroupChatServiceHolder ? botGroupChatServiceHolder.stopRound(groupId) : botGroupNotReady;
-  });
-  ipcMain.handle(MAKER_INVOKE.BOT_GROUP_PLAN_START, async (event, input: unknown) => {
-    assertTrustedAppRendererEvent(event);
-    return botGroupChatServiceHolder ? botGroupChatServiceHolder.startPlan(input) : botGroupNotReady;
-  });
-  ipcMain.handle(MAKER_INVOKE.BOT_GROUP_PLAN_DISMISS, async (event, input: unknown) => {
-    assertTrustedAppRendererEvent(event);
-    return botGroupChatServiceHolder ? botGroupChatServiceHolder.dismissPlan(input) : botGroupNotReady;
-  });
-  ipcMain.handle(MAKER_INVOKE.BOT_GROUP_PLAN_CONTINUE, async (event, input: unknown) => {
-    assertTrustedAppRendererEvent(event);
-    return botGroupChatServiceHolder ? botGroupChatServiceHolder.continuePlan(input) : botGroupNotReady;
-  });
-  ipcMain.handle(MAKER_INVOKE.BOT_GROUP_PLAN_RETRY, async (event, input: unknown) => {
-    assertTrustedAppRendererEvent(event);
-    return botGroupChatServiceHolder ? botGroupChatServiceHolder.retryPlan(input) : botGroupNotReady;
-  });
-  ipcMain.handle(MAKER_INVOKE.BOT_GROUP_PLAN_EDIT, async (event, input: unknown) => {
-    assertTrustedAppRendererEvent(event);
-    return botGroupChatServiceHolder ? botGroupChatServiceHolder.editPlanStep(input) : botGroupNotReady;
-  });
-  ipcMain.handle(
-    MAKER_INVOKE.BOT_DELEGATION_CANCEL,
-    async (event, parentSessionId: unknown, delegationId: unknown) => {
-      if (!isDeviceLinkInvoke()) assertTrustedAppRendererEvent(event);
-      if (
-        typeof parentSessionId !== 'string'
-        || (parentSessionId.length === 0 || parentSessionId.length > 128)
-        || typeof delegationId !== 'string'
-        || (delegationId.length === 0 || delegationId.length > 128)
-      ) {
-        throwIpcError('INVALID_PARAMS', 'parentSessionId + delegationId required');
-      }
-      return delegationForRestore.cancelDelegation(parentSessionId, delegationId);
-    },
-  );
   const captureSessionOwner = () => {
     const owner = getCurrentDbClientSnapshot();
     return () => {
@@ -10804,7 +9793,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               if (live) await live.setPermissionMode(mode);
               assertRequestCurrent();
               if (snapshot !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED', 'Account changed');
-              const saved = await snapshot!.client.tx('bots.persistSessionPermission', {sessionId: task.taskId, mode});
+              const saved = await snapshot!.client.tx('sessions.persistPermission', {sessionId: task.taskId, mode});
               persisted = saved.updated;
               if (!saved.updated) throw new PluginTaskError('TASK_NOT_FOUND', 'Task not found');
               if (snapshot !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED', 'Account changed');
@@ -10820,7 +9809,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               return { granted: true, task: updatedTask };
             } catch (error) {
               if (live) await live.setPermissionMode(task.permissionMode as Parameters<typeof live.setPermissionMode>[0]).catch(() => undefined);
-              if (persisted) await snapshot!.client.tx('bots.persistSessionPermission', {sessionId: task.taskId, mode: task.permissionMode});
+              if (persisted) await snapshot!.client.tx('sessions.persistPermission', {sessionId: task.taskId, mode: task.permissionMode});
               throw error;
             }
           })));
@@ -11140,7 +10129,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   async function buildCreateOptsForQueuedSession(
     sessionId: string,
     meta: NonNullable<Awaited<ReturnType<typeof maker.getSessionMeta>>>,
-    inheritTargetPlanMode = false,
   ): Promise<AgentInputCreateOpts> {
     const db = getDbClient().drizzle;
     const [row] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1);
@@ -11157,7 +10145,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       effort: (row.effort ?? undefined) as CreateOpts['effort'],
       fastMode: !!row.fastMode,
       permissionMode: permissionModeOrAsk(row.permissionMode),
-      planMode: inheritTargetPlanMode ? !!row.planModeEnabled : false,
+      planMode: false,
       title: row.title ?? undefined,
       remoteHostId: row.remoteHostId ?? undefined,
       orcaRole: row.orcaRole as CreateOpts['orcaRole'],
@@ -11197,8 +10185,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
 
   async function enqueueSendToSessionMessage(params: {
     targetSessionId: string;
-    inheritTargetPlanMode?: boolean;
-    message: string;
+      message: string;
     persistedContent: string;
     clientId: string;
     meta: NonNullable<Awaited<ReturnType<typeof maker.getSessionMeta>>>;
@@ -11209,8 +10196,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     origin?: AgentInputQueuedMessage['origin'];
     /** Host-only receipt: plugin-authored input is not user-authored permission. */
     autoReviewUserText?: { kind: 'delegated-continuation' };
-    authorizationGuard?: BotAuthorizationInputGuard;
   }): Promise<void> {
+    await assertNotRetiredCompanionSession(params.targetSessionId);
     const queued = await buildSessionControlInputItem(params);
     if (params.onAccepted) {
       orcaInterAgentDispatcher.registerQueuedOrcaInterAgentAcceptedCallback(
@@ -11226,13 +10213,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     // 崩溃恢复排序:确保先读回持久化队列再追加本条(见 ensureQueueRestored)。
     // 失败时 enqueue 照常入队(shouldQueueNewTurn 已守住不会直发)。
     await inputCoordinator.ensureQueueRestored(params.targetSessionId).catch(() => undefined);
-    if (params.authorizationGuard) {
-      await commitBotAuthorizationInput(params.authorizationGuard, () => {
-        inputCoordinator.enqueue(params.targetSessionId, queued);
-      });
-    } else {
-      inputCoordinator.enqueue(params.targetSessionId, queued);
-    }
+    inputCoordinator.enqueue(params.targetSessionId, queued);
     log.info('send_to_session queued while target busy', {
       targetSessionId: params.targetSessionId,
       clientId: params.clientId,
@@ -11241,8 +10222,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
 
   async function buildSessionControlInputItem(params: {
     targetSessionId: string;
-    inheritTargetPlanMode?: boolean;
-    message: string;
+      message: string;
     persistedContent: string;
     clientId: string;
     meta: NonNullable<Awaited<ReturnType<typeof maker.getSessionMeta>>>;
@@ -11251,7 +10231,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     /** Host-only receipt: plugin-authored input is not user-authored permission. */
     autoReviewUserText?: { kind: 'delegated-continuation' };
   }): Promise<AgentInputQueuedMessage> {
-    const createOpts = await buildCreateOptsForQueuedSession(params.targetSessionId, params.meta, params.inheritTargetPlanMode);
+    const createOpts = await buildCreateOptsForQueuedSession(params.targetSessionId, params.meta);
     const imageAttachments: NonNullable<AgentInputQueuedMessage['chatMessage']['images']> = [];
     for (const file of params.files ?? []) {
       if (file.category !== 'image') continue;
@@ -12595,191 +11575,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     return { baseline, effective, control, pendingMutation };
   };
 
-  const reconcileBotModelRoute = createBotModelRouteReconciler({
-    ownerEpoch: captureSessionRuntimeControlOwnerEpoch,
-    withSessionLock: withSendToSessionLock,
-    read: async (sessionId, purpose) => {
-      const [row] = await getDbClient().drizzle.select({
-        capabilitiesJson: botProfileVersions.capabilitiesJson,
-        agentKind: sessions.agentKind,
-        model: sessions.model,
-        providerId: sessions.providerId,
-        effort: sessions.effort,
-        fastMode: sessions.fastMode,
-      }).from(botSessionLinks)
-        .innerJoin(botProfiles, eq(botProfiles.id, botSessionLinks.botId))
-        .innerJoin(botProfileVersions, and(
-          eq(botProfileVersions.botId, botProfiles.id),
-          eq(botProfileVersions.version, botProfiles.currentVersion),
-        ))
-        .innerJoin(sessions, eq(sessions.id, botSessionLinks.sessionId))
-        .where(and(
-          eq(botSessionLinks.sessionId, sessionId),
-          // Group lanes follow the Bot's current model chain exactly like its canonical Chat.
-          inArray(botSessionLinks.role, ['canonical', 'group']),
-          isNull(botSessionLinks.archivedAt),
-          // Paused settings may preview grants; sending still requires an active Bot.
-          purpose === 'preview'
-            ? inArray(botProfiles.status, ['active', 'paused'])
-            : eq(botProfiles.status, 'active'),
-          eq(sessions.source, 'bot'),
-          eq(sessions.status, 'active'),
-        )).limit(1);
-      if (!row) return null;
-      const selection = await readEffectiveBotModelSelection(JSON.parse(row.capabilitiesJson));
-      const control = getSessionRuntimeControlSnapshot(sessionId);
-      const intent = agentSwitchPending.get(sessionId);
-      const live = maker.getSession(sessionId);
-      return {
-        chain: selection.chain,
-        followsCindyDefault: selection.followsCindyDefault,
-        current: {
-          agentKind: live?.agentKind ?? dbToMakerAgentKind(row.agentKind),
-          model: live?.model ?? row.model ?? '',
-          providerId: live && hasSessionProvider(sessionId)
-            ? getSessionProvider(sessionId) ?? null : row.providerId,
-          effort: (live ? getSessionEffort(sessionId) : row.effort) ?? null,
-          fastMode: live ? getSessionFastMode(sessionId) : !!row.fastMode,
-        },
-        hasRuntimeOverride: control.effectiveOverride !== null || control.pending !== null || !!intent,
-        next: intent ? { agentKind: intent.targetAgentKind, model: intent.model,
-          providerId: intent.providerId ?? null, effort: intent.effort ?? null, fastMode: intent.fastMode ?? false }
-          : control.pending?.profile ?? control.effectiveOverride ?? undefined,
-      };
-    },
-    apply: async (sessionId, route, current) => {
-      if (route.agentKind !== current.agentKind) {
-        await performSessionAgentSwitch(agentSwitchDeps, {
-          sessionId, targetAgentKind: route.agentKind, model: route.model,
-          providerId: route.providerId, effort: route.effort, fastMode: route.fastMode,
-        });
-      } else {
-        await applyWithVerifiedModelWindow((confirmedContextWindow) =>
-          applySessionRuntimeSelection(sessionId, route.model, route.providerId,
-            { effort: route.effort as SessionRuntimeProfile['effort'], fastMode: route.fastMode,
-              ...(confirmedContextWindow === undefined ? {} : { confirmedContextWindow }) },
-            { source: 'user', deferWhileRunning: true, sessionLockHeld: true }));
-      }
-      // Consume the same model/Harness intent as the normal send path. Its
-      // verified window protection and history handoff also apply here; a Bot
-      // settings save need not wait for a second user message. Busy runtimes
-      // retain their intent for the existing safe-boundary coordinator.
-      const live = maker.getSession(sessionId) as WiredSession | undefined;
-      if (!live?.isTurnRunning() && (live?.listBackgroundTasks().length ?? 0) === 0
-        && !hasPendingAgentInteractionForSession(sessionId)) {
-        await applyPendingAgentSwitchIfIdle(agentSwitchDeps, sessionId, { bootstrapAfterSwitch: true });
-      }
-    },
-  });
-
-  configureBotRuntimeEpochRefreshRequest((sessionId, reason) => {
-    return (async () => {
-      const refresh = (live: WiredSession) => {
-        botCompactRuntimeRefreshCoordinator.noteBoundary(live);
-        return botCompactRuntimeRefreshCoordinator.attempt(live);
-      };
-      if (reason === 'model') {
-        return refreshBotRuntimeAfterModelSelection({
-          current: () => getMakerIfReady()?.getSession(sessionId) as WiredSession | undefined,
-          select: () => reconcileBotModelRoute.profileChanged(sessionId),
-          refresh,
-        });
-      }
-      const live = getMakerIfReady()?.getSession(sessionId) as WiredSession | undefined;
-      if (!live) return 'not-bot';
-      return refresh(live);
-    })().then((outcome) => {
-      if (outcome === 'refreshed') {
-        log.info('Bot runtime capability epoch refreshed', { sessionId, reason });
-      }
-      return outcome;
-    }).catch((error) => {
-      // Profile/resource writes must not create an unhandled rejection. The
-      // refresh coordinator preflights before close, so the current healthy
-      // runtime stays alive and the next send retries the same epoch check.
-      log.warn('Bot runtime capability epoch refresh failed', {
-        sessionId,
-        reason,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return 'deferred' as const;
-    });
-  });
-
-  setBotCapabilityAgentKindResolver(async (sessionId, chain) =>
-    (await reconcileBotModelRoute.preview(sessionId, chain))?.agentKind ?? null);
-
-  const readBotFallbackCandidate = async (
-    sessionId: string,
-    current: SessionRuntimeProfile,
-    controlSessionId = sessionId,
-  ): Promise<{ isBot: boolean; candidate: SessionRuntimeProfile | null }> => {
-    const [row] = await getDbClient()
-      .drizzle.select({
-        capabilitiesJson: botProfileVersions.capabilitiesJson,
-        remoteHostId: sessions.remoteHostId,
-      })
-      .from(botSessionLinks)
-      .innerJoin(
-        botProfileVersions,
-        and(
-          eq(botProfileVersions.botId, botSessionLinks.botId),
-          eq(botProfileVersions.version, botSessionLinks.profileVersion),
-        ),
-      )
-      .innerJoin(sessions, eq(sessions.id, botSessionLinks.sessionId))
-      .where(
-        and(
-          eq(botSessionLinks.sessionId, sessionId),
-          isNull(botSessionLinks.archivedAt),
-          inArray(botSessionLinks.role, ['canonical', 'delegation', 'group']),
-        ),
-      )
-      .limit(1);
-    if (!row) return { isBot: false, candidate: null };
-    let config: Record<string, unknown> = {};
-    try {
-      const parsed = JSON.parse(row.capabilitiesJson) as unknown;
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        config = parsed as Record<string, unknown>;
-      }
-    } catch {
-      return { isBot: true, candidate: null };
-    }
-    const chain = await readEffectiveBotModelChain(config);
-    const toAgentKind = (harness: string): AgentKind =>
-      harness === 'codex' ? 'codex' : harness === 'pi' ? 'pi' : harness === 'omp' ? 'omp' : 'claude-code';
-    const currentHarness = current.agentKind === 'codex'
-      ? 'codex'
-      : current.agentKind === 'pi'
-        ? 'pi'
-        : current.agentKind === 'omp'
-          ? 'omp'
-          : 'claude';
-    const control = getSessionRuntimeControlSnapshot(controlSessionId);
-    const [controlSession] = controlSessionId === sessionId ? [{ remoteHostId: row.remoteHostId }]
-      : await getDbClient().drizzle.select({ remoteHostId: sessions.remoteHostId })
-        .from(sessions).where(eq(sessions.id, controlSessionId)).limit(1);
-    const route = nextBotModelRoute(
-      chain,
-      { harness: currentHarness, model: current.model, providerId: current.providerId },
-      control.visitedRoutes,
-      (candidate) => !controlSession?.remoteHostId || candidate.harness === currentHarness,
-    );
-    return {
-      isBot: true,
-      candidate: route
-        ? {
-            agentKind: toAgentKind(route.harness),
-            model: route.model,
-            providerId: route.providerId,
-            effort: (route.effort || null) as SessionRuntimeProfile['effort'],
-            fastMode: route.fastMode,
-          }
-        : null,
-    };
-  };
-
   const resolvePendingRuntimeAxisPatch = async (
     sessionId: string,
     patch: SessionRuntimeAxisPatch,
@@ -12824,9 +11619,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     sessionId: string,
     episodeAttempt: number,
     attemptToken: number,
-    requireRouteChange = false,
     isCurrent: () => boolean = () => true,
-  ): Promise<RuntimeFallbackResult<Session>> => {
+  ): Promise<{ session: Session | null; outcome: 'unchanged' | 'switched' | 'exhausted' | 'failed' | 'superseded' }> => {
     const runtimeOwnerEpoch = captureSessionRuntimeControlOwnerEpoch();
     let runtimeSession: Session | null = null;
     let blockAutoResumeForModelWindowConfirmation = false;
@@ -12837,17 +11631,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       // Do not let a later infrastructure retry replace that pending intent.
       if (profiles.control.pending ||
           !canApplyAutomaticRuntimeSelection(sessionId, profiles.control.generation)) return { session: null, outcome: 'superseded' };
-      const explicitTaskModel = await hasExplicitSessionTaskModel(sessionId);
-      if (!sessionRuntimeControlOwnerEpochMatches(runtimeOwnerEpoch) || explicitTaskModel) return { session: null, outcome: 'superseded' };
-      // Bot routes are explicit and ordered. They switch on the first recoverable
-      // failure and never depend on the generic Session fallback toggle/catalog
-      // guesser. Ordinary Sessions keep their existing second-attempt behavior.
-      const botFallback = await readBotFallbackCandidate(sessionId, profiles.effective);
-      if (!isCurrent()) return { session: null, outcome: 'superseded' };
+      if (!sessionRuntimeControlOwnerEpochMatches(runtimeOwnerEpoch)) return { session: null, outcome: 'superseded' };
       let currentForFallback = profiles.effective;
-      let candidate = botFallback.candidate;
-      if (!botFallback.isBot) {
-        if (requireRouteChange) return { session: null, outcome: 'exhausted' };
+      let candidate: SessionRuntimeProfile | null = null;
+      {
         if (episodeAttempt < 2 || !readSessionRuntimeFallbackSettings().enabled) return { session: null, outcome: 'unchanged' };
         const providers = await getDesktopProviderService().listProviders({
           allowSideEffects: false,
@@ -12908,19 +11695,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         }
         return recorded;
       };
-      const advanceConfiguredBotRoute = async (
-        failed: SessionRuntimeProfile,
-      ): Promise<boolean> => {
-        if (!await recordFailedCandidate(failed) || !botFallback.isBot) return false;
-        const next = await readBotFallbackCandidate(sessionId, currentForFallback);
-        candidate = next.candidate;
-        return candidate !== null;
-      };
-
-      // A configured route can itself be unusable (missing login, unsupported
-      // harness on a remote host, disabled provider). Skip such routes inside
-      // this one recovery boundary instead of retrying the broken primary and
-      // waiting for another user-visible failure before trying route N+1.
+      // A failed candidate is recorded against the captured runtime generation.
+      // A later recovery boundary may select another ordinary fallback route.
       while (candidate) {
         if (!isCurrent()) return { session: runtimeSession, outcome: 'superseded' };
         const selected = candidate;
@@ -12943,15 +11719,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               fastExplicit: false,
             },
           );
-          if (requireRouteChange && result.deferred && result.generation !== undefined &&
-              cancelPendingSessionRuntimeMutation(sessionId, result.generation)) {
-            const pendingCredential = getPendingCredentialSwitchTarget(sessionId);
-            if (pendingCredential?.model === selected.model &&
-                pendingCredential.providerId === selected.providerId) {
-              clearPendingCredentialSwitchForSession(sessionId, { wake: false });
-            }
-            await broadcastSessionRuntimeProjection(sessionId);
-          }
           return result;
         });
         if (selected.agentKind !== currentForFallback.agentKind) {
@@ -12981,7 +11748,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             });
             if (!result) return { session: runtimeSession, outcome: 'superseded' };
             if (!result.switched) {
-              if (await advanceConfiguredBotRoute(selected)) continue;
+              await recordFailedCandidate(selected);
               return { session: runtimeSession, outcome: 'exhausted' };
             }
             // The route transaction has already committed, including a new
@@ -12989,10 +11756,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             // candidates using the pre-switch profile/generation captured above.
             if (!result.engineReady) return { session: runtimeSession, outcome: 'failed' };
           } catch (error) {
-            if (await advanceConfiguredBotRoute(selected)) continue;
+            await recordFailedCandidate(selected);
             throw error;
           }
-          log.info('automatic Bot runtime fallback switched harness', {
+          log.info('automatic runtime fallback switched harness', {
             sessionId,
             episodeAttempt,
             fromAgentKind: currentForFallback.agentKind,
@@ -13011,7 +11778,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             !runtimeSession.remoteHostId ||
             !isRemoteModelSwitchRouteChangeError(error)
           ) {
-            if (await advanceConfiguredBotRoute(selected)) continue;
+            await recordFailedCandidate(selected);
             throw error;
           }
           // SSH Claude daemons freeze endpoint/credential env at spawn. The old
@@ -13030,7 +11797,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           try {
             result = await applyCandidate();
           } catch (retryError) {
-            if (await advanceConfiguredBotRoute(selected)) continue;
+            await recordFailedCandidate(selected);
             throw retryError;
           }
         }
@@ -13041,10 +11808,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           throw new Error(
             'automatic model-window confirmation is unsupported; runtime selection was not changed',
           );
-        }
-        if (result.deferred && requireRouteChange) {
-          // The automatic intent was withdrawn inside the route lock above.
-          return { session: runtimeSession, outcome: 'failed' };
         }
         log.info('automatic session runtime fallback evaluated', {
           sessionId,
@@ -13085,7 +11848,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (!profiles) throw new Error(`session ${sessionId} not found`);
       const activity = await readCanonicalSessionActivity(sessionId);
       const turnControl = maker.getSession(sessionId)?.getTurnControlSnapshot();
-      const botFallback = await readBotFallbackCandidate(sessionId, profiles.effective);
       return {
         ...activity,
         turnGeneration: turnControl?.turnGeneration ?? null,
@@ -13094,9 +11856,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         baselineProfile: profiles.baseline,
         effectiveProfile: profiles.effective,
         pendingMutation: profiles.pendingMutation,
-        fallbackEnabled: await hasExplicitSessionTaskModel(sessionId) ? false : botFallback.isBot
-          ? botFallback.candidate !== null
-          : readSessionRuntimeFallbackSettings().enabled,
+        fallbackEnabled: readSessionRuntimeFallbackSettings().enabled,
       };
     },
     setSessionRuntime: async ({ targetSessionId, expectedGeneration, patch }) => {
@@ -13731,7 +12491,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
     checkWorkDirExists,
     resolveRecoveredWorkingDir: (sessionId, dir) => workingDirectoryRecovery.resolve(sessionId, dir),
-    preflightBotRuntimeResources: async (opts) => { await preflightBotRuntimeResources(opts); },
     readWorkingDirectoryRecoveryCreateOpts: async (sessionId) => {
       const [row] = await getDbClient().drizzle.select().from(sessions)
         .where(eq(sessions.id, sessionId)).limit(1);
@@ -13934,46 +12693,14 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     log,
   });
 
-  // Host-only hints belong to the dispatched input, not a persistent session cache.
-  // The fallback transaction still rechecks the authoritative Bot link and chain.
-  const botFallbackInputs = new WeakSet<object>();
-  const canRecoverTurn = (signals: InterruptedTurnErrorSignals, item?: AgentInputQueuedMessage | null) =>
-    isInterruptedTurnError(signals) ||
-    (!!item && botFallbackInputs.has(item.createOpts) && isBotCandidateUnavailable(signals));
+  const canRecoverTurn = (signals: InterruptedTurnErrorSignals, _item?: AgentInputQueuedMessage | null) => isInterruptedTurnError(signals);
 
   const sendToAgentAccepted: typeof sendToAgentAcceptedUnlocked = async (...args) => {
     const [sessionId] = args;
     if (typeof sessionId !== 'string') return await sendToAgentAcceptedUnlocked(...args);
     await assertReviewExternalInputAllowed(sessionId);
-    await reconcileBotModelRoute(sessionId);
-    const compactedRuntime = maker.getSession(sessionId);
-    if (compactedRuntime) await refreshBotCapabilityEpochBeforeSend(compactedRuntime);
     return await withSendToSessionLock(sessionId, async () => {
-      await reconcileBotModelRoute(sessionId, true);
-      const [botInput] = await getDbClient()
-        .drizzle.select({
-          source: sessions.source,
-          role: botSessionLinks.role,
-          profileStatus: botProfiles.status,
-          hiddenAt: botProfiles.hiddenAt,
-        })
-        .from(sessions)
-        .leftJoin(botSessionLinks, eq(botSessionLinks.sessionId, sessions.id))
-        .leftJoin(botProfiles, eq(botProfiles.id, botSessionLinks.botId))
-        .where(eq(sessions.id, sessionId))
-        .limit(1);
-      const blocked = botSessionInputBlockReason(botInput ?? null);
-      if (args[2] && typeof args[2] === 'object') {
-        if (botInput?.source === 'bot' && ['canonical', 'delegation'].includes(botInput.role ?? '')) {
-          botFallbackInputs.add(args[2]);
-        } else {
-          botFallbackInputs.delete(args[2]);
-        }
-      }
-      if (isDeviceLinkInvoke() && botInput?.source === 'bot' && (botInput.hiddenAt || botInput.profileStatus === 'archived')) {
-        throwIpcError('NOT_FOUND', 'Session does not exist');
-      }
-      if (blocked) throwIpcError('PRECONDITION_FAILED', blocked);
+      await assertNotRetiredCompanionSession(sessionId);
       if (inputCoordinator.isExecutionPaused(sessionId)) {
         throwIpcError('PRECONDITION_FAILED', 'Task is paused; resume it before continuing');
       }
@@ -14313,19 +13040,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   ): Promise<void> => {
     if (typeof sessionId !== 'string') throwIpcError('INVALID_PARAMS', 'sessionId required');
     await assertReviewExternalInputAllowed(sessionId);
-    const [botInput] = await getDbClient()
-      .drizzle.select({
-        source: sessions.source,
-        role: botSessionLinks.role,
-        profileStatus: botProfiles.status,
-      })
-      .from(sessions)
-      .leftJoin(botSessionLinks, eq(botSessionLinks.sessionId, sessions.id))
-      .leftJoin(botProfiles, eq(botProfiles.id, botSessionLinks.botId))
-      .where(eq(sessions.id, sessionId))
-      .limit(1);
-    const blocked = botSessionInputBlockReason(botInput ?? null);
-    if (blocked) throwIpcError('PRECONDITION_FAILED', blocked);
+    await assertNotRetiredCompanionSession(sessionId);
     const so = (sendOpts ?? {}) as {
       messageUuid?: string;
       userName?: string;
@@ -15147,7 +13862,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       item: AgentInputQueuedMessage,
     ) => {
       if (!canRecoverTurn(signals, item) || inputCoordinator.isExecutionPaused(sessionId)) return null;
-      const requireRouteChange = botFallbackInputs.has(item.createOpts) && isBotCandidateUnavailable(signals);
       const erroredAt = Date.now();
       const decision = interruptedTurnAutoResumeGuard.onInterruptedTurn(sessionId, erroredAt);
       if (decision.action !== 'resume') {
@@ -15208,12 +13922,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
                 sessionId,
                 decision.episodeAttempt,
                 decision.attemptToken,
-                requireRouteChange,
                 () => attempt.isCurrent() && !inputCoordinator.isExecutionPaused(sessionId),
               );
               fallbackRebuildSession = fallback.session;
               if (!attempt.isCurrent()) return;
-              if (!canResumeAfterRuntimeFallback(requireRouteChange, fallback)) {
+              if (fallback.outcome === 'superseded') {
                 interruptedTurnAutoResumeGuard.noteResumeSendFailed(sessionId, decision.attemptToken);
                 autoResumeBookkeeping.finalizeSuppressedError(sessionId, decision.attemptToken, {
                   surfaceBanner: true,
@@ -15364,10 +14077,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       ),
     resolveSessionReferences,
     refreshAgentReferencesBeforeDispatch: async (item) => {
-      const refreshed = await hydrateQueuedAgentReferences(item, {
-        isSessionTurnRunning: (targetSessionId) =>
-          getMakerIfReady()?.getSession(targetSessionId)?.isTurnRunning() ?? false,
-      });
+      const refreshed = await hydrateQueuedAgentReferences(item);
       Object.assign(item, refreshed);
       if (refreshed.agentReferences === undefined) delete item.agentReferences;
     },
@@ -15665,7 +14375,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       (await getSessionRowSnapshotStrict(sessionId))?.clearedAt,
     loadQueueSnapshot: async (sessionId) => {
       // Rehydrate durable task holds before any entry point can drain restored/new input.
-      await botDelegationServiceHolder?.restorePauseForSession(sessionId);
+      await assertNotRetiredCompanionSession(sessionId);
       return loadAgentInputQueueSnapshot(sessionId);
     },
     getPersistedClientIds: getPersistedInputClientIds,
@@ -15782,7 +14492,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           targetSessionId: req.sessionId,
           message: req.text,
           persistedContent: req.persistedContent,
-          inheritTargetPlanMode: req.inheritTargetPlanMode,
           clientId,
           meta,
           dbRow,
@@ -16619,10 +15328,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         const queued = stampTrustedDeviceLinkQueuedOrigin(
           stampTrustedDesktopQueuedOrigin(
             stampMobileClientOrigin(
-              await hydrateQueuedAgentReferences(queuedWithAttachments, {
-                isSessionTurnRunning: (targetSessionId) =>
-                  getMakerIfReady()?.getSession(targetSessionId)?.isTurnRunning() ?? false,
-              }),
+              await hydrateQueuedAgentReferences(queuedWithAttachments),
               isMobileControllerInvoke(),
             ),
             deviceLinkInvoke,
@@ -16868,10 +15574,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         const queued = stampTrustedDeviceLinkQueuedOrigin(
           stampTrustedDesktopQueuedOrigin(
             stampMobileClientOrigin(
-              await hydrateQueuedAgentReferences(queuedWithAttachments, {
-                isSessionTurnRunning: (targetSessionId) =>
-                  getMakerIfReady()?.getSession(targetSessionId)?.isTurnRunning() ?? false,
-              }),
+              await hydrateQueuedAgentReferences(queuedWithAttachments),
               isMobileControllerInvoke(),
             ),
             deviceLinkInvoke,
@@ -17169,10 +15872,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       try {
         const queuedWithAttachments = materialized.item as AgentInputQueuedMessage;
         assertCurrentInputGeneration();
-        const queued = await hydrateQueuedAgentReferences(queuedWithAttachments, {
-          isSessionTurnRunning: (targetSessionId) =>
-            getMakerIfReady()?.getSession(targetSessionId)?.isTurnRunning() ?? false,
-        });
+        const queued = await hydrateQueuedAgentReferences(queuedWithAttachments);
         assertCurrentInputGeneration();
         // 旧 device-link update-content 调用没有 side-channel sessionRefs；显式
         // 传空数组，避免 updateQueuedMessageContent 从完整文本重新解析控制端坐标。
@@ -17485,7 +16185,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (ghostSetupInteractionBridge.resolve(requestId, decision, pluginSetupResponseTarget)) {
         return { accepted: true };
       }
-      if (await getBotAuthorizationService()?.resolve(requestId, decision, pluginSetupResponseTarget)) return { accepted: true };
       log.warn('resolve-interaction: no pending resolver (likely already dismissed/timed out)', {
         requestId,
       });
@@ -17498,7 +16197,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     const request = parseGhostSetupInlineSubmitRequest(raw);
     if (!request) throwIpcError('INVALID_PARAMS', 'invalid plugin setup submission');
     const { requestId, ...submit } = request;
-    if (!ghostSetupInteractionBridge.submitInline(requestId, submit) && !(await getBotAuthorizationService()?.submit(requestId, submit))) {
+    if (!ghostSetupInteractionBridge.submitInline(requestId, submit)) {
       throwIpcError('INVALID_PARAMS', 'plugin setup interaction is not pending');
     }
   });
@@ -19222,7 +17921,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             runtimeChanged = true;
           }
           assertOwnerCurrent();
-          const saved = await snapshot!.client.tx('bots.persistSessionPermission', {sessionId, mode});
+          const saved = await snapshot!.client.tx('sessions.persistPermission', {sessionId, mode});
           if (!saved.updated) throwIpcError('NOT_FOUND', 'session not found');
           assertOwnerCurrent();
         } catch (error) {
@@ -19910,10 +18609,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   // ── Plugin system (Phase 1) ──────────────────────────────────────────────
   registerPluginListHandler(createElectronIpcHandlerRegistry(), {
     getPluginRegistry,
-    isBotToolsetAvailable,
-    assertBotQuery: (event) => {
-      if (!isDeviceLinkInvoke()) assertTrustedAppRendererEvent(event as Parameters<typeof assertTrustedAppRendererEvent>[0]);
-    },
   });
 
   // Read one plugin's enable state by id. Unlike PLUGINS_LIST this does NOT skip

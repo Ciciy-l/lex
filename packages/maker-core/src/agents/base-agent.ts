@@ -188,8 +188,6 @@ export interface PiExtraSpawnConfig {
   mcpBridge?: {
     token: string;
     servers: PiMcpServerRef[];
-    /** Bot-scoped memory is exposed as one typed Pi tool instead of nested discovery. */
-    botMemoryFacade?: boolean;
   } | null;
   /** 外部 MCP header 真值；只进 Pi 父进程 env，并在 bash spawn 边界剥离。 */
   mcpEnv?: Record<string, string>;
@@ -384,14 +382,11 @@ export interface PiExtraSpawnConfigContext {
    *
    * 必须透到 bridge 注册的 session ctx 上:cindy_memory 的 withStore 优先用
    * ctx.memoryScopeKey 定位 store, 缺失时才回落 buildMemoryScopeKey(workingDir)。
-   * Cindy Bot 会话的注入索引来自 `bot:<botId>` store —— 这里丢掉就会出现
-   * 「prompt 读伙伴记忆、工具写项目记忆」的两张皮。
+   * 显式作用域必须同时用于注入索引与记忆工具，避免读写不同目录。
   */
   memoryScopeKey?: string;
   /** Whether this concrete Pi Session should receive the memory bridge server. */
   memoryEnabled?: boolean;
-  /** Frozen per-Bot custom MCP policy; the host filters each session's bridge descriptor. */
-  botMcpPolicy?: BotRuntimeMcpPolicy;
   vendorOptions?: Record<string, unknown>;
   mcpCallerKind?: 'root' | 'descendant' | 'unknown';
   mcpCallerAttested?: boolean;
@@ -1579,8 +1574,6 @@ export interface AgentDeps {
   remoteCcQueryFactory?: (opts: {
     remoteHostId: string;
     hostManagedProviderRoute?: { providerId: string; model: string };
-    /** Inject the narrow helper transport for a Bot runtime. */
-    botSession?: boolean;
     sessionId: string;
     /** 当前 Maker Session 实例代号；只在宿主 MCP 身份上下文中流转。 */
     sessionInstanceId?: string;
@@ -1629,8 +1622,7 @@ export interface AgentDeps {
      *
      * host 必须把它注册到远端 bridge 的 per-session ctx 上 —— cindy_memory 的
      * withStore 优先用 ctx.memoryScopeKey 定位 store, 缺失时回落
-     * buildMemoryScopeKey(workingDir, remoteHostId)。Cindy Bot 会话的 prompt
-     * 索引来自 `bot:<botId>` store, 丢掉这个键就会「读伙伴记忆、写远端项目记忆」。
+     * buildMemoryScopeKey(workingDir, remoteHostId)。注入索引与工具读写必须使用同一作用域。
      */
     makerMemoryScopeKey?: string;
     /**
@@ -1797,82 +1789,6 @@ export class AgentStartupCleanupPendingError extends Error {
   }
 }
 
-export interface BotRuntimeSkillEntry {
-  name: string;
-  runtimeCommandName?: string;
-  path?: string;
-  enabled?: boolean;
-  runtimeStatus?: 'discovered' | 'approved' | 'loaded' | 'failed' | 'unknown';
-  scope?: string;
-}
-
-/** A Skill the Bot wrote for itself, stored in Cindy-owned per-Bot storage. */
-export interface BotRuntimeOwnSkillEntry {
-  name: string;
-  description?: string;
-  /** Absolute path to the Skill directory (the folder holding SKILL.md). */
-  path: string;
-  /** Absolute path to SKILL.md for harnesses whose config expects the file. */
-  filePath?: string;
-}
-
-export interface BotRuntimeSkillPolicy {
-  mode: 'inherit' | 'allowlist';
-  configured: string[];
-  catalog: BotRuntimeSkillEntry[];
-  /**
-   * Skills this Bot distilled from its own finished work.
-   *
-   * These are deliberately kept out of `catalog` / `configured`: the allowlist
-   * describes which of the *harness-discovered* Skills a user let this Bot keep,
-   * while these are Cindy-owned files the Bot authored itself. They are always
-   * mounted, they are never something the user's allowlist can accidentally
-   * switch off, and they must not participate in the runtime resource drift
-   * freeze — a Bot that just learned something has to stay able to resume its
-   * own task.
-   */
-  ownSkills?: BotRuntimeOwnSkillEntry[];
-  /**
-   * Directories to mount as Claude Code local plugins so the Skills above reach
-   * a harness that only toggles what it discovered by itself. Other harnesses
-   * take the per-Skill paths in `ownSkills` instead.
-   */
-  ownSkillPluginRoots?: string[];
-}
-
-export interface BotRuntimeMcpEntry {
-  name: string;
-  source: 'builtin' | 'custom';
-  available?: boolean;
-}
-
-export interface BotRuntimeMcpPolicy {
-  mode: 'inherit' | 'allowlist';
-  configured: string[];
-  catalog: BotRuntimeMcpEntry[];
-}
-
-export interface BotRuntimeToolsetEntry {
-  id: string;
-  name: string;
-  essential?: boolean;
-  available?: boolean;
-}
-
-export interface BotRuntimeToolsetPolicy {
-  mode: 'inherit' | 'allowlist';
-  configured: string[];
-  catalog: BotRuntimeToolsetEntry[];
-}
-
-export interface BotRuntimeProfile {
-  botId: string;
-  profileVersion: number;
-  skillPolicy: BotRuntimeSkillPolicy;
-  mcpPolicy: BotRuntimeMcpPolicy;
-  toolsetPolicy: BotRuntimeToolsetPolicy;
-}
-
 /**
  * The adapter dispatched a turn request but could not determine whether the
  * provider accepted it. The Session wrapper must fence the ambiguous handle
@@ -1970,30 +1886,6 @@ export interface StartSessionOptions {
    * 用户改 prompt 后，下一次新 session 立即生效，老 session 维持启动时快照。
    */
   userPrompt?: string;
-  /**
-   * Bot Profile runtime context, resolved by the main/DB authority at session
-   * start. It is a startup system-prompt segment, not a per-turn user prefix.
-   * Harness adapters place it before the user personalization segment.
-   */
-  botProfilePrompt?: string;
-  /**
-   * Stable profile-binding metadata rendered separately from the Bot SOUL.
-   * Hermes keeps the active-profile marker outside the identity document so
-   * profile metadata never mutates user-authored identity bytes.
-   */
-  botProfileContextPrompt?: string;
-  /**
-   * Hermes USER.md equivalent for a Bot Profile. This is frozen with the
-   * Profile/runtime snapshot and belongs in the volatile prompt tier after
-   * memory, not inside the Bot's SOUL identity.
-   */
-  botUserProfilePrompt?: string;
-  /**
-   * Native Bot capability snapshot resolved by the host before the harness
-   * starts. Adapters must enforce this through their own Skill/MCP/tool config;
-   * it must never be converted into natural-language capability claims.
-   */
-  botRuntimeProfile?: BotRuntimeProfile;
   /**
    * 是否启用 Maker Memory (本次 session 内). 跟 userPrompt 同模式 — renderer 启 session
    * 时透传当前 memoryMode='maker' → true, 'native' / 'off' → false。main 不持久化。

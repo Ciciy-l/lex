@@ -1,23 +1,12 @@
-import { and, desc, eq, inArray, isNull, or } from 'drizzle-orm';
+import { readRetiredCompanionSessions } from '../localDb/retiredCompanions.js';
+import { and, eq } from 'drizzle-orm';
 
-import {
-  boundAgentReferenceText,
-  projectPersistedAgentFacingUserText,
-  readAgentInputReferences,
-  type AgentInputBotHostSnapshot,
-  type AgentInputReference,
-} from '@cindy/maker-shared/agent-input-projection';
+import { boundAgentReferenceText, projectPersistedAgentFacingUserText, readAgentInputReferences, type AgentInputReference } from '@cindy/maker-shared/agent-input-projection';
 
 import type { AgentInputQueuedMessage } from '../../shared/agentInputQueue.js';
-import { getDbClient } from '../localDb/client/current.js';
-import {
-  botDelegations,
-  botProfiles,
-  botRuntimeSnapshots,
-  botSessionLinks,
-  messages,
-  sessions,
-} from '../localDb/schema.js';
+import { getCurrentDbClientSnapshot } from '../localDb/client/current.js';
+import { isAppSessionBoundaryPending } from '../appSessionState.js';
+import { messages, sessions } from '../localDb/schema.js';
 
 import { extractPlainText } from './agentHandoff.js';
 
@@ -26,116 +15,15 @@ type ReferencedMessageLookup =
   | { state: 'hidden' }
   | { state: 'missing' };
 
-export interface AgentInputReferenceHydrationOptions {
-  /** Main-owned live turn lookup. null means the runtime cannot be observed. */
-  isSessionTurnRunning?: (sessionId: string) => boolean | null;
-}
-
-const ACTIVE_DELEGATION_STATUSES = ['queued', 'running', 'waiting'] as const;
-
-async function readBotHostSnapshot(
-  botId: string,
-  opts: AgentInputReferenceHydrationOptions,
-): Promise<{ name: string; snapshot: AgentInputBotHostSnapshot }> {
-  const db = getDbClient().drizzle;
-  const [profile] = await db
-    .select({
-      name: botProfiles.displayName,
-      status: botProfiles.status,
-      attentionReason: botProfiles.attentionReason,
-    })
-    .from(botProfiles)
-    .where(eq(botProfiles.id, botId))
-    .limit(1);
-  if (!profile) {
-    return {
-      name: botId,
-      snapshot: {
-        availability: 'unavailable',
-        activity: 'unknown',
-        activeDelegations: 0,
-        reason: 'The selected Bot no longer exists.',
-      },
-    };
-  }
-  if (profile.status !== 'active') {
-    return {
-      name: profile.name,
-      snapshot: {
-        availability: 'unavailable',
-        activity: 'idle',
-        activeDelegations: 0,
-        reason: `The selected Bot is ${profile.status}.`,
-      },
-    };
-  }
-
-  const [[canonical], activeDelegations] = await Promise.all([
-    db
-      .select({ sessionId: botSessionLinks.sessionId })
-      .from(botSessionLinks)
-      .where(and(
-        eq(botSessionLinks.botId, botId),
-        eq(botSessionLinks.role, 'canonical'),
-        isNull(botSessionLinks.archivedAt),
-      ))
-      .limit(1),
-    db
-      .select({ id: botDelegations.id })
-      .from(botDelegations)
-      .where(and(
-        or(
-          eq(botDelegations.requestingBotId, botId),
-          eq(botDelegations.targetBotId, botId),
-        ),
-        inArray(botDelegations.status, [...ACTIVE_DELEGATION_STATUSES]),
-      )),
-  ]);
-  const [runtime] = canonical
-    ? await db
-        .select({ status: botRuntimeSnapshots.status })
-        .from(botRuntimeSnapshots)
-        .where(and(
-          eq(botRuntimeSnapshots.botId, botId),
-          eq(botRuntimeSnapshots.sessionId, canonical.sessionId),
-        ))
-        .orderBy(desc(botRuntimeSnapshots.preparedAt))
-        .limit(1)
-    : [];
-  const liveTurn = canonical && opts.isSessionTurnRunning
-    ? opts.isSessionTurnRunning(canonical.sessionId)
-    : null;
-  const availability = runtime?.status === 'applied'
-    ? 'ready'
-    : runtime?.status === 'degraded'
-      ? 'degraded'
-      : runtime?.status === 'failed'
-        ? 'failed'
-        : 'unverified';
-  return {
-    name: profile.name,
-    snapshot: {
-      availability,
-      activity: liveTurn === true || activeDelegations.length > 0
-        ? 'working'
-        : canonical
-          ? 'idle'
-          : 'unknown',
-      activeDelegations: activeDelegations.length,
-      ...(profile.attentionReason
-        ? { reason: profile.attentionReason.slice(0, 240) }
-        : !canonical
-          ? { reason: 'The selected Bot has no active main task.' }
-          : {}),
-    },
-  };
-}
-
 async function readReferencedMessageText(
   sessionId: string,
   messageClientId: string,
 ): Promise<ReferencedMessageLookup> {
-  const [row] = await getDbClient()
+  const owner = getCurrentDbClientSnapshot();
+  if (!owner || isAppSessionBoundaryPending()) return { state: 'hidden' };
+  if ((await readRetiredCompanionSessions([sessionId])).has(sessionId)) return { state: 'hidden' };
+  if (getCurrentDbClientSnapshot() !== owner || isAppSessionBoundaryPending()) return { state: 'hidden' };
+  const [row] = await owner.client
     .drizzle.select({
       role: messages.role,
       content: messages.content,
@@ -147,6 +35,7 @@ async function readReferencedMessageText(
     .innerJoin(sessions, eq(sessions.id, messages.sessionId))
     .where(and(eq(messages.sessionId, sessionId), eq(messages.clientId, messageClientId)))
     .limit(1);
+  if (getCurrentDbClientSnapshot() !== owner || isAppSessionBoundaryPending()) return { state: 'hidden' };
   if (!row) return { state: 'missing' };
   if (
     row.rewindAt != null
@@ -172,12 +61,7 @@ function persistReferences(
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return persistedContent;
     const next = { ...(parsed as Record<string, unknown>) };
     delete next.agentReferences;
-    const persistentReferences = references.map((reference) => {
-      if (reference.kind !== 'bot' || reference.hostSnapshot === undefined) return reference;
-      const persistent = { ...reference };
-      delete persistent.hostSnapshot;
-      return persistent;
-    });
+    const persistentReferences = references;
     return JSON.stringify({
       ...next,
       ...(persistentReferences.length > 0 ? { agentReferences: persistentReferences } : {}),
@@ -212,12 +96,11 @@ function readPersistedReferences(
  */
 export async function hydrateQueuedAgentReferences(
   queued: AgentInputQueuedMessage,
-  opts: AgentInputReferenceHydrationOptions = {},
 ): Promise<AgentInputQueuedMessage> {
   const persisted = readPersistedReferences(queued.persistedContent, queued.text);
-  const references = queued.agentReferences !== undefined
+  const references = (queued.agentReferences !== undefined
     ? readAgentInputReferences(queued.agentReferences, queued.text)
-    : persisted.references;
+    : persisted.references);
   if (references.length === 0) {
     if (queued.agentReferences === undefined && !persisted.present) return queued;
     const sanitized = { ...queued };
@@ -227,22 +110,6 @@ export async function hydrateQueuedAgentReferences(
   }
 
   const hydrated = await Promise.all(references.map(async (reference): Promise<AgentInputReference> => {
-    if (reference.kind === 'bot') {
-      const base = { ...reference };
-      delete base.hostSnapshot;
-      try {
-        const resolved = await readBotHostSnapshot(reference.botId, opts);
-        return {
-          ...base,
-          name: resolved.name,
-          hostSnapshot: resolved.snapshot,
-        };
-      } catch {
-        // DB handover can race input preparation. Keep the exact stable Bot ID;
-        // projection will use the one-call status fallback instead of inventing state.
-        return base;
-      }
-    }
     if (reference.kind !== 'message') return reference;
     let lookup: ReferencedMessageLookup = { state: 'missing' };
     try {
@@ -251,8 +118,8 @@ export async function hydrateQueuedAgentReferences(
         reference.messageClientId,
       );
     } catch {
-      // Cross-device references may not exist in this host DB. The bounded
-      // Composer-captured body remains a valid fallback.
+      // An unavailable owner must not disclose a retained companion's captured body.
+      lookup = { state: 'hidden' };
     }
     const sourceText = lookup.state === 'visible'
       ? lookup.text ?? ''

@@ -329,7 +329,6 @@ export interface MakerSendTransactionLog {
 export interface MakerSendTransactionDeps {
   getSession(sessionId: string): MakerSendTransactionSession | undefined | null;
   closeSession(sessionId: string): Promise<void>;
-  preflightBotRuntimeResources(opts: CreateOpts): Promise<void>;
   getSessionMeta(sessionId: string): Promise<{ title?: string } | null>;
   /** The same clear/rewind-filtered transcript used for native context handoffs. */
   readAutoReviewHistory?(sessionId: string): Promise<AutoReviewHistoryMessage[]>;
@@ -723,7 +722,6 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
       // 中途 start_team 后丢失全部对话历史)。DB 读失败时 reconcile 抛错 → 落入下方
       // REHYDRATE_FAILED,此时尚未 closeSession,旧 runtime 不受损。
       await deps.reconcileCreateOptsWithDb?.(sessionId, createOpts);
-      if (reason === 'workdir') await deps.preflightBotRuntimeResources(createOpts);
       // A newly created device-link Codex Lead has a real sdk_session_id as soon as
       // thread/start returns, but that id is not resumable until a provider turn
       // is accepted. The live Session is the only trustworthy local evidence at
