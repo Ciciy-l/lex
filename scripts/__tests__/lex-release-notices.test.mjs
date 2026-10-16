@@ -101,6 +101,48 @@ test("orders release and prerelease versions without platform or lexical drift",
   assert.ok(compareVersions("1.2.3", "1.10.0") < 0);
 });
 
+test("every checked-in release notice passes the prebuild validator", async (t) => {
+  const directory = new URL("../../release-notices/", import.meta.url);
+  const files = fs.readdirSync(directory)
+    .filter((file) => file.endsWith(".json") && file !== "template.json")
+    .sort();
+  assert.ok(files.length > 0);
+  for (const file of files) {
+    await t.test(file, () => {
+      const value = JSON.parse(fs.readFileSync(new URL(file, directory), "utf8"));
+      validateNotice(value, path.basename(file, ".json"));
+    });
+  }
+});
+
+test("0.1.6 publishes the actual localized notice to every platform", () => {
+  const stable = JSON.parse(fs.readFileSync(
+    new URL("../../release-notices/0.1.6.json", import.meta.url), "utf8",
+  ));
+  const body = fs.readFileSync(
+    new URL("../../release-notices/0.1.6.md", import.meta.url), "utf8",
+  );
+  validateNotice(stable, "0.1.6");
+  assert.ok(body.includes(stable.contentByLocale["zh-CN"].intro));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "lex-016-notices-"));
+  try {
+    publishNotices(stable, directory);
+    for (const platform of PLATFORMS) {
+      const base = path.join(directory, "notice", platform);
+      assert.deepEqual(
+        JSON.parse(fs.readFileSync(path.join(base, "0.1.6.json"), "utf8")),
+        stable,
+      );
+      assert.deepEqual(
+        JSON.parse(fs.readFileSync(path.join(base, "index.json"), "utf8")),
+        ["0.1.6"],
+      );
+    }
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("release workflows validate tagged structured notices before publishing anything", () => {
   const updates = YAML.parse(
     fs.readFileSync(
