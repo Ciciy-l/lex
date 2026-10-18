@@ -1,3 +1,4 @@
+import { CODEX_NATIVE_TURN, CodexNativeInputAdmission, type CodexNativeSendOptions, type CodexNativeSessionHandle } from './native-input.js';
 import { syncCodexArchiveState } from './archive-state.js';
 import { normalizeAutoReviewUserIntent, createAutoReviewActionContext, type AutoReviewUserIntent } from '../shared/auto-review-decision.js';
 /**
@@ -1328,7 +1329,7 @@ const CODEX_YIELD_CONTINUATION = Symbol('codexYieldContinuation');
 const CODEX_INTERNAL_CONTINUATION = Symbol('codexInternalContinuation');
 const CODEX_INTERACTION_CONTINUATION = Symbol('codexInteractionContinuation');
 const YIELD_CONTINUATION_MAX_ATTEMPTS = 2;
-type CodexInternalSendOptions = SendOptions & {
+type CodexInternalSendOptions = CodexNativeSendOptions & {
   [CODEX_INHERITED_CAPABILITY_SELECTION]?: string;
   [CODEX_AUTO_REVIEW_INTENT]?: AutoReviewUserIntent;
   [CODEX_YIELD_CONTINUATION]?: number;
@@ -3332,7 +3333,9 @@ assertRouteCurrent();
       createTransport = () => provider(remoteHostId);
     } else {
       const binaryPath = this.requireLocalBinaryPath();
-      createTransport = () => createStdioTransport({
+      const createLocalTransport = hostPurpose !== 'control-plane' && this.deps.createLocalCodexNativeService
+        ? this.deps.createLocalCodexNativeService : createStdioTransport;
+      createTransport = () => createLocalTransport({
         binaryPath,
         env,
         extraArgs,
@@ -3715,6 +3718,7 @@ assertRouteCurrent();
       }
     }
 
+    let nativeAdmission: CodexNativeInputAdmission | undefined;
     const eventQueue: AsyncQueue<AgentEvent> = createAsyncQueue<AgentEvent>();
     const usageTracker = new UsageTracker();
     const translatorRt: CodexRuntimeState = newCodexRuntimeState();
@@ -12983,6 +12987,7 @@ assertRouteCurrent();
     ): Promise<void> {
       if (closed) return;
       closed = true;
+      nativeAdmission?.close();
       await startup.remoteRoute?.release();
       cancelInteractionContinuation('session_closed', true);
       resetCodexGenerationTiming(translatorRt);
@@ -13024,7 +13029,14 @@ assertRouteCurrent();
       try { eventQueue.end(); } catch (e) { log.warn('eventQueue.end threw', { error: String(e) }); }
     }
     // ── AgentSessionHandle ──────────────────────────────────────────────────
-    const handle: AgentSessionHandle = {
+    nativeAdmission = new CodexNativeInputAdmission(
+      () => closed ? '<closed>' : threadId, (message, options) => handle.send(message, options));
+    const handle: CodexNativeSessionHandle = {
+      setNativeInputResolver(resolver, media) { nativeAdmission!.bind(resolver, media); },
+      acceptNativeTurn(request) {
+        assertCurrentHost('native turn admission');
+        return nativeAdmission!.accept(request);
+      },
       disabledSkillPaths: disabledSkillSnapshot,
       reviewAutoPermissionAction: async (action) => {
         const decision = await reviewAutoAction(action);
@@ -13060,6 +13072,7 @@ assertRouteCurrent();
           return;
         }
         const internalOpts = sendOpts as CodexInternalSendOptions | undefined;
+        const nativeDispatch = internalOpts?.[CODEX_NATIVE_TURN];
         const yieldAttempt = internalOpts?.[CODEX_YIELD_CONTINUATION];
         if (yieldAttempt == null && internalOpts?.[CODEX_INTERNAL_CONTINUATION] !== true) {
           cancelActiveYieldContinuation('new send');
@@ -13179,7 +13192,8 @@ assertRouteCurrent();
         }
         let turnInput: TurnStartParams['input'];
         try {
-          turnInput = await toTurnInput(message.content, sendOpts?.[PINNED_SKILL_INVOCATION]);
+          turnInput = nativeDispatch ? nativeDispatch.input(message)
+            : await toTurnInput(message.content, sendOpts?.[PINNED_SKILL_INVOCATION]);
         } catch (e) {
           isTurnStartPending = false;
           flushDeferredTerminalTurnCompletionsIfIdle();
@@ -13596,9 +13610,10 @@ assertRouteCurrent();
         /** 本次请求是否已被 Stop / 撤单收口过(条目会在 finally 里删掉, 所以先取出来)。 */
         let initialStartSettledByCancel = false;
         try {
-          const resp = await host.request<TurnStartResponse>(Method.TurnStart, turnParams, {
-            timeoutMs: CRITICAL_THREAD_RPC_TIMEOUT_MS,
-          });
+          const resp = nativeDispatch ? await nativeDispatch.start(turnParams)
+            : await host.request<TurnStartResponse>(Method.TurnStart, turnParams, {
+              timeoutMs: CRITICAL_THREAD_RPC_TIMEOUT_MS,
+            });
           markTurnConfigAccepted();
           adoptUnidentifiedDeadTurn(resp, initialStartSeq);
           // yield continuation 带 throwOnStartFailure + AbortSignal: 取消检查会
@@ -13614,7 +13629,7 @@ assertRouteCurrent();
           if (isLocalAcceptBoundaryError(e)) {
             throw e;
           }
-          if (/thread not found/i.test(String(e))) {
+          if (!nativeDispatch && /thread not found/i.test(String(e))) {
             log.info('turn/start hit "thread not found" — daemon likely restarted, attempting thread/resume + retry', {
               threadId,
             });

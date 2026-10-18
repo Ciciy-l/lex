@@ -1,3 +1,5 @@
+import type { CodexNativeSessionHandle } from './native-input.js';
+import { TurnDispatchUnconfirmedError } from '../base-agent.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import path from 'node:path';
 import os from 'node:os';
@@ -4912,6 +4914,68 @@ describe('CodexAgent.refreshLocalModels', () => {
     await expect(request).rejects.toThrow('connection changed');
     hosts.clear();
     await agent.dispose();
+  });
+
+  it('admits a native turn through existing Codex policy without a second turn/start', async () => {
+    const agent = new CodexAgent(createDeps());
+    try {
+      const handle = await agent.startSession({ sessionId: 'native-admission', model: 'gpt-5.4', workingDir: '/repo', permissionMode: 'ask' }) as CodexNativeSessionHandle;
+      const owner = vi.fn(async (input: import('../native-input.js').AgentNativeInputRequest) => input.accept({ type: 'user', content: 'host prepared' }, {}));
+      handle.setNativeInputResolver!(owner);
+      const dispatch = vi.fn(async (_params: import('./app-server/protocol.js').TurnStartParams) => ({ turn: { id: 'native-turn' } }));
+      const result = await handle.acceptNativeTurn({ signal: new AbortController().signal, dispatch, params: {
+        threadId: handle.id, clientUserMessageId: '676c9703-2253-4dc2-8b4b-9fe8832d9810',
+        input: [{ type: 'text', text: 'native input' }], model: 'other-model', approvalPolicy: 'never',
+      } });
+      expect(result.turn.id).toBe('native-turn');
+      expect(owner).toHaveBeenCalledOnce(); expect(dispatch).toHaveBeenCalledOnce();
+      expect(dispatch.mock.calls[0]![0]).toMatchObject({ threadId: handle.id, model: 'gpt-5.4', approvalPolicy: 'on-request',
+        input: [{ type: 'text', text: 'host prepared' }], clientUserMessageId: '676c9703-2253-4dc2-8b4b-9fe8832d9810' });
+      expect(createdTransports.flatMap(t => t.lines).map(line => JSON.parse(line)).filter(v => v.method === 'turn/start')).toEqual([]);
+      expect(handle.getCurrentTurnId!()).toBe('native-turn');
+      await handle.close();
+    } finally { await agent.dispose(); }
+  });
+
+  it('does not replay a native turn after an unconfirmed gateway receipt', async () => {
+    const agent = new CodexAgent(createDeps());
+    try {
+      const handle = await agent.startSession({ sessionId: 'native-lost-receipt', model: 'gpt-5.4', workingDir: '/repo' }) as CodexNativeSessionHandle;
+      handle.setNativeInputResolver!(async input => input.accept(input.message, {}));
+      const dispatch = vi.fn(async () => { throw new Error('thread not found: connection receipt unavailable'); });
+      await expect(handle.acceptNativeTurn({ signal: new AbortController().signal, dispatch, params: { threadId: handle.id,
+        clientUserMessageId: '676c9703-2253-4dc2-8b4b-9fe8832d9810', input: [{ type: 'text', text: 'native input' }] } }))
+        .rejects.toBeInstanceOf(TurnDispatchUnconfirmedError);
+      expect(dispatch).toHaveBeenCalledOnce();
+      expect(createdTransports.flatMap(t => t.lines).map(line => JSON.parse(line)).filter(v => v.method === 'turn/start' || v.method === 'thread/resume')).toEqual([]);
+      await handle.close();
+    } finally { await agent.dispose(); }
+  });
+
+  it('injects the native task service without replacing control-plane probes or its resolved launch policy', async () => {
+    const native = new MockCodexTransport();
+    const factory: NonNullable<AgentDeps['createLocalCodexNativeService']> = vi.fn(options => {
+      options.onProcessSpawned?.(8100);
+      return Object.assign(native, { endpoint: Promise.resolve({ url: 'ws://127.0.0.1:31415', token: 'fixture-only' }) });
+    });
+    const register = vi.fn();
+    const agent = new CodexAgent(createDeps({}, { createLocalCodexNativeService: factory, registerLocalCodexAppServerProcess: register,
+      onCodexLocalModelsListed: vi.fn(), disableCodexPluginRuntime: true }));
+    try {
+      const first = await agent.startSession({ sessionId: 'native-first', model: 'gpt-5.4', workingDir: '/repo' });
+      const second = await agent.startSession({ sessionId: 'native-second', model: 'gpt-5.4', workingDir: '/repo' });
+      expect(factory).toHaveBeenCalledOnce(); expect(createdStdioOptions).toHaveLength(0);
+      const launch = vi.mocked(factory).mock.calls[0]![0];
+      expect(launch.binaryPath).toBe(process.execPath);
+      expect(launch.extraArgs).toEqual(expect.arrayContaining(['--disable', 'plugins', 'remote_plugin']));
+      expect(register).toHaveBeenCalledWith({ pid: 8100, role: 'task-host' });
+      await first.close(); expect(native.closed).toBe(false);
+      await agent.refreshLocalModels({ credentialMode: 'oauth-bearer' });
+      expect(factory).toHaveBeenCalledOnce(); expect(createdStdioOptions).toHaveLength(1);
+      expect(register).toHaveBeenCalledWith({ pid: 7001, role: 'control-plane-service' });
+      expect(native.closed).toBe(false); await second.close(); expect(native.closed).toBe(false);
+    } finally { await agent.dispose(); }
+    expect(native.closed).toBe(true);
   });
 
   it('uses an isolated OpenAI control-plane host without closing provider-oauth sessions', async () => {

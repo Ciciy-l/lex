@@ -125,3 +125,6 @@ export {
   type MakerContactsManagerDeps,
   type ContactsSqliteFactory,
 } from './contacts/manager.js';
+
+export { createCodexNativeService, type CodexNativeEndpoint, type CodexNativeService, type CodexNativeServiceOptions } from './agents/codex/native-service.js';
+export type { StdioTransportOptions as CodexLocalServiceLaunch } from './agents/codex/app-server/stdioTransport.js';

@@ -797,6 +797,51 @@ and the original TUI route avoid it. Product control wiring, subscriptions,
 MainIPC/database/UI, phone, SSH and non-Windows acceptance remain open.
 
 
+## Codex shared native service and input admission
+
+The local task host accepts an injected native app-server service; ordinary boot
+does not inject it yet. Control-plane probes and SSH retain their existing
+transports. The service uses an OS-allocated loopback WebSocket listener and an
+in-memory capability; argv contains only its verifier. Main owns the socket and
+process, while individual frontend connections own neither other frontends nor
+the service. Disconnect does not replay input. Shutdown confirms native process
+exit before reporting success. The native diagnostic listener line discovers the
+port only; conversation state still comes from structured protocol messages.
+
+The official app-server documentation confirms the original `codex --remote`
+frontend, but describes WebSocket transport as experimental and unsupported for
+production. This remains an integration risk to evaluate against the managed
+binary, not a guarantee inferred from the API documentation.
+
+The Codex handle's host-only native admission reuses `Session.acceptNativeInput`
+and the existing send policy, usage lifecycle and turn reconciliation. It holds
+the original TUI request, keeps `clientUserMessageId`, and forwards the prepared
+input once on the original connection instead of issuing another `turn/start`.
+Unchanged native text metadata, Skills and mentions survive preparation; image
+history requires a host importer. Unknown replacement media is refused. Closed
+or changed owners and cancellation fence acceptance; a lost forwarded receipt
+is uncertain and cannot enter the stale-thread replay path. Presentation-owned
+gateway registration, native model/permission changes, steering and approval
+ownership still require production integration.
+
+Managed Windows Codex 0.162.1 passed the isolated native service probe
+`production-codex-service1.json` (seven checks) and actual CodexAgent probe
+`production-codex-agent2.json` (eight checks). The first Agent fixture failed
+because its disabled memory MCP entry lacked a transport; the corrected fixture
+adds a disabled loopback URL without weakening product checks. Both processes
+and temporary profiles were confirmed cleaned.
+
+The actual Agent plus Core Session probe `production-codex-admission2.json`
+passes ten checks: three GUI/TUI/GUI inputs traverse three product reservations
+and terminals, the original native message ID reaches the history callback,
+both views observe streaming, and a GUI turn completes after TUI disconnect.
+Only the protocol interceptor and history callback are fixtures; they are not
+Desktop database/MainIPC/UI or remote acceptance. The native title-only auxiliary
+thread is recorded separately and not counted as a task turn. The raw retains
+the temporary-home PATH-alias warning and the deliberate `fullAdapterProven:false`.
+No actual provider credentials, live account or user profile were used.
+
+
 ## Upstream reference
 
 VelaTerm reference: `vlinx-io/VelaTerm` at
