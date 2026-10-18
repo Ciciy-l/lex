@@ -752,6 +752,51 @@ and retires the GUI card. A late GUI denial neither changes that result nor runs
 the tool again. The final GUI/TUI probes pass 17/19 checks and clean their owned
 profiles. They do not establish remote or product UI acceptance.
 
+### Claude native counters and compaction projection
+
+The native factory now shares the owning Agent's usage tracker, including its
+resolved model context window before the first reply. At each root completion,
+the Mod reads the native status-line counters with plain `session.usage()` and
+projects cumulative cost once; it does not invoke the full token-count API. A
+native window fills only a missing host window. Missing or malformed cost is not
+reported as zero. Mods lacks provider retry/fork request identities, so native
+usage segments remain explicitly incomplete for billing purposes.
+
+Committed root compactions from the original TUI/automatic path and the direct
+semantic `session.compact` command publish the same GUI boundary and available
+token counts. Child/precompute/veto/error results do not change GUI context. A
+measured zero is distinct from an absent count; the terminal turn aggregate must
+not overwrite the most recent compaction until a new native API usage arrives.
+Boundary IDs identify this bridge lifetime and sequence, not native transcript
+UUIDs. Summary contents are not copied into the boundary event.
+
+The isolated actual-Agent/Main/Core Session usage probe `production-usage2.json`
+passes 35 checks, including the selected 64K context window, cumulative cost
+without double addition, five turns, one native process, draft/Stop behavior and
+owned-profile cleanup. The first fixture supplied no model-limit resolver and
+incorrectly expected a known window before the first native reply; its 34/35
+report remains available. These are fake-provider counters, not billing accuracy
+or actual MainIPC/database/UI acceptance.
+
+Both `production-compaction1.json` (direct semantic command) and
+`production-tui-compaction1.json` (original TUI `/compact`) have 43-check offline
+audits confirming the native boundary, post-compaction GUI counts, five product
+turns, continued sending and confirmed process/profile cleanup. Their inherited
+probe baselines exited nonzero because compaction adds a summarization request
+and changes the native system prefix; the audits explicitly classify all six
+requests and keep those raw failures. Prefixes are stable within each side of
+the compaction, not across it; no cache-hit-rate claim follows. The TUI fixture
+deliberately edits the terminal draft to enter `/compact` and restores it with
+fixture keyboard input, so that action does not prove draft preservation.
+
+The separate generic `command.run({ command: 'compact' })` experiment exposes an
+unresolved input-admission mismatch: its command is appended through the prompt
+door before a turn starts, leaving a reservation that rejects the next input.
+Do not use that generic route for product compaction; direct semantic compact
+and the original TUI route avoid it. Product control wiring, subscriptions,
+MainIPC/database/UI, phone, SSH and non-Windows acceptance remain open.
+
+
 ## Upstream reference
 
 VelaTerm reference: `vlinx-io/VelaTerm` at

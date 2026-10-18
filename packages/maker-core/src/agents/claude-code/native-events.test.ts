@@ -13,6 +13,68 @@ function fixture() {
 }
 
 describe('Claude native structured product events', () => {
+  it('projects root compaction outside a turn without fabricating finality or missing token counts', () => {
+    const f = fixture(); f.adapter.usage.setContextTokensAfterCompact(900);
+    f.send('session.compacted', { trigger: 'manual', tokensBefore: 900, tokensAfter: 200 });
+    expect(f.adapter.usage.snapshot().contextTokens).toBe(200);
+    expect(f.events).toContainEqual(expect.objectContaining({ type: 'compact_boundary', data: {
+      boundaryId: expect.stringContaining('native-compact:'), trigger: 'manual', preTokens: 900, postTokens: 200,
+    } }));
+    expect(f.events.at(-1)).toMatchObject({ type: 'status', data: { isRunning: false } });
+    f.send('session.compacted', { trigger: 'plugin' });
+    expect(f.adapter.usage.snapshot().contextTokens).toBe(200);
+    expect(f.events.at(-2)?.data).not.toHaveProperty('postTokens');
+    const size = f.events.length;
+    f.send('session.compacted', { trigger: 'precompute', tokensAfter: 1 });
+    f.send('session.compacted', { trigger: 'auto', agentId: 'child', tokensAfter: 1 });
+    expect(f.events).toHaveLength(size); expect(f.events.some(event => event.type === 'done')).toBe(false);
+  });
+
+  it('retains the active turn and the compacted context through its terminal aggregate', () => {
+    const f = fixture(); f.begin(); f.send('step-result', { turnId: 'turn', index: 0, usage });
+    f.send('session.compacted', { trigger: 'auto', tokensBefore: 900, tokensAfter: 200 });
+    expect(f.events.at(-1)).toMatchObject({ type: 'status', data: { contextTokens: 200, isRunning: true } });
+    f.send('session.compacted', { trigger: 'plugin' });
+    f.send('turn.complete', { turnId: 'turn', reason: 'answer', usage });
+    expect(f.adapter.usage.snapshot().contextTokens).toBe(200);
+    expect(f.events.filter(event => event.type === 'done')).toHaveLength(1);
+  });
+
+  it('preserves a reported zero after compact and does not reuse boundary identities across native lifetimes', () => {
+    const f = fixture(), reopened = fixture(); f.begin();
+    f.send('session.compacted', { trigger: 'auto', tokensAfter: 0 });
+    f.send('turn.complete', { turnId: 'turn', reason: 'answer', usage });
+    expect(f.adapter.usage.snapshot().contextTokens).toBe(0);
+    reopened.begin(); reopened.send('session.compacted', { trigger: 'auto', tokensAfter: 0 });
+    const boundary = (events: typeof f.events) => (events.find(event => event.type === 'compact_boundary')!.data as any).boundaryId;
+    expect(boundary(f.events)).not.toBe(boundary(reopened.events));
+  });
+
+  it('uses cumulative native cost without adding it twice and preserves the selected route window', () => {
+    const f = fixture(); f.adapter.usage.setContextWindow(64000); f.begin();
+    f.send('step-result', { turnId: 'turn', index: 0, usage });
+    f.send('turn.complete', { turnId: 'turn', reason: 'answer', usage,
+      sessionUsage: { context: { window: 1000000, tokens: 30 }, cost: { usd: 0.12 } } });
+    expect(f.adapter.usage.snapshot()).toMatchObject({ costUsd: 0.12, contextWindow: 64000, contextTokens: 30 });
+    expect(f.events.at(-1)).toMatchObject({ type: 'done', data: { total_cost_usd: 0.12, usageSegmentsComplete: false } });
+    f.send('turn.start', { turnId: 'second' }); f.send('step-start', { turnId: 'second', index: 0 });
+    f.send('step-result', { turnId: 'second', index: 0, usage });
+    f.send('turn.complete', { turnId: 'second', reason: 'answer', usage,
+      sessionUsage: { context: { window: 1000000 }, cost: { usd: 0.2 } } });
+    expect(f.adapter.usage.snapshot().costUsd).toBe(0.2);
+    expect(f.events.at(-1)).toMatchObject({ data: { total_cost_usd: 0.2 } });
+  });
+
+  it('fills an unknown window from native counters and ignores absent or malformed cost', () => {
+    const f = fixture(); f.begin();
+    f.send('step-result', { turnId: 'turn', index: 0, usage });
+    f.send('turn.complete', { turnId: 'turn', reason: 'answer', usage,
+      sessionUsage: { context: { window: 200000 }, cost: { usd: Number.NaN } } });
+    expect(f.adapter.usage.snapshot()).toMatchObject({ contextWindow: 200000, costUsd: 0 });
+    expect(f.events.at(-1)?.data).not.toHaveProperty('total_cost_usd');
+    expect(f.events.at(-1)).toMatchObject({ type: 'done', data: { usage } });
+  });
+
   it('does not project a refused native turn into an unrelated product reservation', () => {
     const events: AgentEvent[] = [];
     const adapter = new ClaudeNativeEvents('session', event => events.push(event), undefined, undefined, true);

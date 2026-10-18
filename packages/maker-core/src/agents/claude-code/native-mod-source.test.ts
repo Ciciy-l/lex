@@ -15,7 +15,7 @@ function fixture() {
   let tick!: () => Promise<void>;
   const $ = {
     env: { get: async (key: string) => env[key] },
-    session: { id: async () => 'session', cwd: async () => '/owned/work', version: async () => ({ version: 'fixture' }), usage: async () => ({}), model: async () => 'fixture' },
+    session: { id: async () => 'session', cwd: async () => '/owned/work', version: async () => ({ version: 'fixture' }), compact: vi.fn(async (_input: unknown): Promise<any> => ({ messages: [], tokensBefore: 900, tokensAfter: 200 })), usage: async () => ({}), model: async () => 'fixture' },
     clock: { every: vi.fn((_ms: number, callback: () => Promise<void>) => { tick = callback; return { cancel: vi.fn() }; }),
       sleep: vi.fn((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))) },
     http: { fetch: vi.fn(async (_url: string, init: { body: string }) => {
@@ -33,6 +33,44 @@ function fixture() {
 }
 
 describe('packaged Claude native Mod', () => {
+  it('reports a committed compaction from the terminal or host command, excluding children and precompute', async () => {
+    const f = fixture(); await f.start();
+    const result = { messages: [{ text: 'private native summary' }], tokensBefore: 900, tokensAfter: 200 };
+    const next = vi.fn(async () => result);
+    expect(await f.hooks.get('session.compact')!(f.$, { trigger: 'manual' }, next)).toBe(result);
+    await f.hooks.get('session.compact')!(f.$, { trigger: 'precompute' }, next);
+    await f.hooks.get('session.compact')!(f.$, { trigger: 'auto', agentId: 'child' }, next);
+    await f.hooks.get('session.compact')!(f.$, { trigger: 'auto' }, async () => ({ skip: 'native veto' }));
+    await f.hooks.get('session.compact')!(f.$, { trigger: 'auto' }, async () => ({ skip: '' }));
+    await expect(f.hooks.get('session.compact')!(f.$, { trigger: 'auto' }, async () => { throw new Error('compact failed'); })).rejects.toThrow('compact failed');
+    f.commands.push({ id: 1, kind: 'compact', payload: { instructions: 'keep decisions' } });
+    await f.tick(); await f.flush();
+    expect(f.$.session.compact).toHaveBeenCalledWith({ instructions: 'keep decisions' });
+    expect(f.events.filter(event => event.kind === 'session.compacted').map(event => event.value)).toEqual([
+      { trigger: 'manual', tokensBefore: 900, tokensAfter: 200 },
+      { trigger: 'plugin', tokensBefore: 900, tokensAfter: 200 },
+    ]);
+    expect(JSON.stringify(f.events.filter(event => event.kind === 'session.compacted'))).not.toContain('private native summary');
+  });
+
+  it('samples local native counters at root completion and preserves finality when the optional read fails', async () => {
+    const f = fixture(); await f.start();
+    const counters = { context: { window: 200000, tokens: 20 }, cost: { usd: 0.01 } };
+    const read = vi.spyOn(f.$.session, 'usage').mockResolvedValue(counters);
+    const next = vi.fn(async () => ({ text: 'native result' }));
+    const terminal = { turnId: 'turn', reason: 'answer', answer: 'done' };
+    expect(await f.hooks.get('turn.complete')!(f.$, terminal, next)).toEqual({ text: 'native result' });
+    await f.tick();
+    expect(read).toHaveBeenCalledWith();
+    expect(f.events).toContainEqual(expect.objectContaining({ kind: 'turn.complete', value: { ...terminal, sessionUsage: counters } }));
+    read.mockRejectedValue(new Error('counter unavailable'));
+    await f.hooks.get('turn.complete')!(f.$, { ...terminal, turnId: 'second' }, next); await f.tick();
+    expect(f.events).toContainEqual(expect.objectContaining({ kind: 'turn.complete', value: { ...terminal, turnId: 'second' } }));
+    expect(next).toHaveBeenCalledTimes(2);
+    await f.hooks.get('turn.complete')!(f.$, { ...terminal, agentId: 'child' }, next);
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
   it('uses the native full context API without running a slash command or modifying the terminal draft', async () => {
     const f = fixture(); await f.start();
     const usage = { context: { breakdown: { model: 'fixture', totalTokens: 42 } } };

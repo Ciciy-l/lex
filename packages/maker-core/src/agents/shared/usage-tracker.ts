@@ -258,8 +258,10 @@ export class UsageTracker {
    * Compact 后用 postTokens 覆盖 lastApi，使后续 snapshot().contextTokens
    * 反映压缩后的真实 context 占用，而非压缩前最后一次 API call 的值。
    */
-  setContextTokensAfterCompact(postTokens: number): void {
-    if (postTokens > 0) {
+  // Legacy callers use 0 for an absent counter. Native semantic APIs may
+  // explicitly report a measured zero; only those callers opt into accepting it.
+  setContextTokensAfterCompact(postTokens: number, observedZero = false): void {
+    if (Number.isFinite(postTokens) && (postTokens > 0 || (observedZero && postTokens === 0))) {
       this.lastApi = { input: postTokens, cacheRead: 0, cacheCreate: 0 };
     }
   }

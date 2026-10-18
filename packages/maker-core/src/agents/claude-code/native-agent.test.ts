@@ -49,6 +49,15 @@ async function fixture() {
 }
 
 describe('Claude production agent native factory selection', () => {
+  it('shares the route-resolved usage tracker with the native runtime before the first provider reply', async () => {
+    const f = await fixture(); f.deps.resolveModelContextLimit = () => 64000;
+    const handle = await f.start();
+    expect(handle.getUsageSnapshot()).toMatchObject({ contextWindow: 64000, costUsd: 0 });
+    expect(f.callbacks().usageTracker).toBe(f.launch().usageTracker);
+    expect(f.callbacks().usageTracker?.snapshot().contextWindow).toBe(64000);
+  });
+
+
   it('hands the explicit resume identity to the native host without creating an SDK Query', async () => {
     const f = await fixture();
     const id = '76de74f7-694a-45bd-8337-8a5f837c9e13';

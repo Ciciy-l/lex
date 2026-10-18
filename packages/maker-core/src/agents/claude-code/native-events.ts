@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { AgentEvent } from '../../types/events.js';
 import { UsageTracker, type UsageSegment } from '../shared/usage-tracker.js';
 import type { ClaudeBridgeEvent } from './native-bridge.js';
@@ -12,7 +13,7 @@ interface NativeStep {
   thinking: Map<number, { id: string; text: string; startedAt: number }>;
 }
 interface NativeTurn {
-  id: string; admitted: boolean; steps: Map<number, NativeStep>; tools: Map<string, string>;
+  id: string; admitted: boolean; compactedContext?: number; steps: Map<number, NativeStep>; tools: Map<string, string>;
   emittedTools: Set<string>; resultTools: Set<string>; rows: Set<string>;
 }
 
@@ -20,6 +21,7 @@ interface NativeTurn {
 export class ClaudeNativeEvents {
   private turn: NativeTurn | undefined;
   private sequence = 0;
+  private readonly compactionGeneration = randomUUID();
   private closed = false;
   constructor(private readonly sessionId: string, private readonly emit: (event: AgentEvent) => void,
     readonly usage = new UsageTracker(), private readonly now = Date.now,
@@ -40,6 +42,21 @@ export class ClaudeNativeEvents {
     if (event.sequence !== this.sequence + 1) throw new Error('Native GUI event sequence gap');
     this.sequence = event.sequence;
     const value = record(event.value); if (!value || value.agentId !== undefined) return;
+    if (event.kind === 'session.compacted') {
+      if (!['manual', 'auto', 'plugin'].includes(value.trigger as string)) return;
+      const preTokens = count(value.tokensBefore), postTokens = count(value.tokensAfter);
+      if (postTokens !== undefined) this.usage.setContextTokensAfterCompact(postTokens, true);
+      if (this.turn && postTokens !== undefined) this.turn.compactedContext = postTokens;
+      this.push('compact_boundary', {
+        // This is a bridge event identity, not a fabricated native transcript UUID.
+        boundaryId: 'native-compact:' + this.sessionId + ':' + this.compactionGeneration + ':' + event.sequence,
+        trigger: value.trigger === 'auto' ? 'auto' : 'manual',
+        ...(preTokens !== undefined ? { preTokens } : {}),
+        ...(postTokens !== undefined ? { postTokens } : {}),
+      });
+      this.push('status', { ...this.usage.snapshot(), isRunning: this.turn?.admitted === true });
+      return;
+    }
     if (event.kind === 'turn.start') {
       if (this.turn || typeof value.turnId !== 'string' || !value.turnId) throw new Error('Native GUI turn identity changed');
       this.turn = { id: value.turnId, admitted: false, steps: new Map(), tools: new Map(), emittedTools: new Set(), resultTools: new Set(), rows: new Set() };
@@ -113,6 +130,7 @@ export class ClaudeNativeEvents {
   }
   private stepUsage(step: NativeStep, value: unknown): void {
     const usage = nativeUsage(value); if (!usage) return;
+    this.turn!.compactedContext = undefined;
     // This is a native step identity, not a provider message/request id. The
     // stop chunk and step result carry the same snapshot; count it only once.
     this.usage.upsertApiCallUsage(`native:${this.turn!.id}:${step.index}`, usage);
@@ -187,12 +205,28 @@ export class ClaudeNativeEvents {
       || (value.reason === 'aborted') !== (value.isAborted === true)) throw new Error('Invalid native turn terminal');
     for (const step of turn.steps.values()) this.finishThinking(step);
     const aggregate = nativeUsage(value.usage), segments = this.usage.getTurnUsageSegments();
-    const snapshot = this.usage.endTurn(aggregate);
+    const nativeState = record(value.sessionUsage), nativeContext = record(nativeState?.context);
+    // A host-resolved override remains authoritative. Native window is only
+    // a fallback when the selected route did not provide one.
+    const nativeWindow = count(nativeContext?.window);
+    if (!this.usage.snapshot().contextWindow && nativeWindow) this.usage.setContextWindow(nativeWindow);
+    const cost = record(nativeState?.cost)?.usd;
+    const costUsd = typeof cost === 'number' && Number.isFinite(cost) && cost >= 0 ? cost : undefined;
+    const observed = this.usage.getTurnUsage();
+    const snapshot = this.usage.endTurn(costUsd === undefined ? aggregate : {
+      ...(aggregate ?? { inputTokens: observed.input, outputTokens: observed.output,
+        cacheReadTokens: observed.cacheRead, cacheCreateTokens: observed.cacheCreate }), costUsd,
+    });
+    if (turn.compactedContext !== undefined) {
+      this.usage.setContextTokensAfterCompact(turn.compactedContext, true);
+      snapshot.contextTokens = turn.compactedContext;
+    }
     const failed = value.reason === 'error' || value.reason === 'refusal';
     if (failed) this.push('error', { message: '任务执行失败（模型未返回错误详情）。', isTerminal: true, reason: 'turn-failed' });
     this.push('status', { ...snapshot, isRunning: false });
     this.push('done', { result: typeof value.answer === 'string' ? value.answer : '', is_error: failed,
       ...(value.isAborted === true ? { silentStop: true } : {}), nativeTurnId: turn.id,
+      ...(costUsd !== undefined ? { total_cost_usd: costUsd } : {}),
       duration_ms: count(value.durationMs), usage: record(value.usage), usageSegments: segments,
       // Mods does not expose per-request ids or retry/fork accounting. Never
       // call these segments a complete billing ledger merely because sums match.

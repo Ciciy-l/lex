@@ -3986,7 +3986,7 @@ export class ClaudeCodeAgent extends BaseAgent {
           launch.releaseNativeResources = releaseNativeResources;
           handedToHost = true;
           const handle = await factory({
-            launch, model: mutableModel, logger: log, events: eventQueue, disabledSkillPaths: disabledSkillSnapshot,
+            launch, model: mutableModel, logger: log, events: eventQueue, usageTracker, disabledSkillPaths: disabledSkillSnapshot,
             onEvent() {},
             onFault: () => log.warn('native Claude semantic connection interrupted'),
             policy: {

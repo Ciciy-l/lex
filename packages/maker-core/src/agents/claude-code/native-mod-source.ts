@@ -122,6 +122,9 @@ export function register(on) {
                 result = await $.session.usage({ breakdown: 'full' });
               } else if (command.kind === 'compact') {
                 result = await $.session.compact(payload);
+                // Calls made through $ skip this plugin's own hook.
+                if (Array.isArray(result.messages) && typeof result.skip !== 'string') emit('session.compacted', { trigger: 'plugin',
+                  tokensBefore: result.tokensBefore, tokensAfter: result.tokensAfter });
               } else if (command.kind === 'config') {
                 result = await $.config.set(payload);
               } else if (command.kind === 'command') {
@@ -143,6 +146,16 @@ export function register(on) {
       } catch { /* Retain unacknowledged events; a disconnected GUI must not stall the native stream. */ }
       finally { exchanging = false; }
     });
+    return result;
+  });
+  on('session.compact', async ($, e, next) => {
+    const result = await next(e);
+    // Precompute prepares a candidate; only a committed root compaction changes
+    // the product context. A veto/error must leave its prior snapshot intact.
+    if (!e.agentId && e.trigger !== 'precompute' && Array.isArray(result.messages) && typeof result.skip !== 'string') {
+      emit('session.compacted', { trigger: e.trigger,
+        tokensBefore: result.tokensBefore, tokensAfter: result.tokensAfter });
+    }
     return result;
   });
   on('prompt.submit', async ($, e, next) => {
@@ -193,7 +206,13 @@ ${CLAUDE_NATIVE_TURN_START_SOURCE}
       request.retired = true; requests.delete(id);
       emit('request-retired', { requestId: id });
     }
-    emit('turn.complete', e);
+    // Plain usage reads the native status-line counters; it never calls the
+    // provider's token-count API. Failure must not erase a real terminal event.
+    let sessionUsage;
+    if (e.agentId === undefined) {
+      try { sessionUsage = await $.session.usage(); } catch { /* Optional native counters. */ }
+    }
+    emit('turn.complete', { ...e, ...(sessionUsage ? { sessionUsage } : {}) });
     return await next(e);
   });
   on('tool.call', async ($, e, next) => {

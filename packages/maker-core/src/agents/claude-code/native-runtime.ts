@@ -7,6 +7,7 @@ import { ClaudeNativeTurns, type ClaudeNativeTurn } from './native-turns.js';
 import { ClaudeNativeInputPreparations, type ClaudeNativeInputPreparation } from './native-input-preparation.js';
 import { resolveClaudeNativeInput, type ImportClaudeNativeMedia } from './native-input-adapter.js';
 import type { AgentNativeInputResolver } from '../native-input.js';
+import type { UsageTracker } from '../shared/usage-tracker.js';
 import type { AgentEvent } from '../../types/events.js';
 import { ClaudeNativeEvents } from './native-events.js';
 import type { CanUseTool, HookCallbackMatcher, HookEvent } from '@anthropic-ai/claude-agent-sdk';
@@ -22,6 +23,8 @@ export interface ClaudeNativeLaunch {
 }
 export interface ClaudeNativeRuntimeOptions {
   nativeSessionId: string;
+  /** Same tracker used by the owning agent policy and structured event stream. */
+  usageTracker?: UsageTracker;
   /** Reopen the exact persisted native session at an explicit task lifecycle boundary. */
   resumeSessionId?: string;
   executable: string;
@@ -80,7 +83,7 @@ export async function createClaudeNativeRuntime(options: ClaudeNativeRuntimeOpti
   }
   const hooks = options.hooks ? new ClaudeNativeHooks(options.nativeSessionId, options.hooks) : undefined;
   const events = options.onAgentEvent
-    ? new ClaudeNativeEvents(options.nativeSessionId, options.onAgentEvent, undefined, undefined, Boolean(options.onTurnAdmission)) : undefined;
+    ? new ClaudeNativeEvents(options.nativeSessionId, options.onAgentEvent, options.usageTracker, undefined, Boolean(options.onTurnAdmission)) : undefined;
   const prepareInput = options.onNativeInput
     ? (input: ClaudeNativeInputPreparation) => resolveClaudeNativeInput(input, options.onNativeInput!, options.importNativeMedia)
     : options.onInputPreparation;

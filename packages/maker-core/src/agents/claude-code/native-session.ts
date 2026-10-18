@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createClaudeNativeContextReader } from './native-context.js';
 import type { AgentEvent, InteractionResolver, UsageSnapshot } from '../../types/events.js';
+import type { UsageTracker } from '../shared/usage-tracker.js';
 import type { UserMessage } from '../../types/common.js';
 import { NotSupportedError } from '../../types/capabilities.js';
 import { TurnDispatchRejectedError, TurnDispatchUnconfirmedError, type AgentSessionHandle, type SendOptions } from '../base-agent.js';
@@ -20,8 +21,9 @@ export interface ClaudeNativeSessionPolicy {
 
 export interface ClaudeNativeSessionOptions {
   model: string;
+  usageTracker?: UsageTracker;
   disabledSkillPaths?: AgentSessionHandle['disabledSkillPaths'];
-  runtime: Omit<ClaudeNativeRuntimeOptions, 'onNativeInput' | 'importNativeMedia' | 'onInputPreparation' | 'onTurnAdmission' | 'onAgentEvent' | 'onUserMessage' | 'onExit' | 'onFault'>;
+  runtime: Omit<ClaudeNativeRuntimeOptions, 'onNativeInput' | 'importNativeMedia' | 'onInputPreparation' | 'onTurnAdmission' | 'onAgentEvent' | 'onUserMessage' | 'onExit' | 'onFault' | 'usageTracker'>;
   policy: ClaudeNativeSessionPolicy;
   /** Uses the existing local/SSH image and mention preparation for this route. */
   prepareInput(message: UserMessage, signal?: AbortSignal, importMedia?: AgentNativeMediaResolver): Promise<Pick<ClaudeNativeSubmission, 'text' | 'imagePaths'>>;
@@ -61,7 +63,7 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
   const observedTurns = new Map<string, InputEntry[]>();
   let closed = false, exited = false, faulted = false, initialized = false;
   let closing: Promise<void> | undefined;
-  let usage: UsageSnapshot = { tokenUsage: 0, contextTokens: 0, contextWindow: 0, costUsd: 0 };
+  let usage: UsageSnapshot = options.usageTracker?.snapshot() ?? { tokenUsage: 0, contextTokens: 0, contextWindow: 0, costUsd: 0 };
 
   const live = () => !closed && !exited && !faulted;
   const requireLive = () => { if (!live()) throw new TurnDispatchRejectedError('Native Claude session is not active'); };
@@ -98,7 +100,7 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
   }
 
   try {
-    runtime = await createClaudeNativeRuntime({ ...options.runtime,
+    runtime = await createClaudeNativeRuntime({ ...options.runtime, usageTracker: options.usageTracker,
       onEvent(event) {
         const value = event.value as { turnId?: string; agentId?: string; messageIds?: string[]; reason?: string; isAborted?: boolean };
         if (live() && value && value.agentId === undefined && typeof value.turnId === 'string') {
