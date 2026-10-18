@@ -25,6 +25,15 @@ function argument(args: readonly string[], flag: string): string {
 const expand = (text: string, env: Readonly<Record<string, string>>) => text.replace(/\$\{([^}]+)\}/g, (_, key) => env[key] ?? 'missing');
 
 describe('native Claude launch from existing session configuration', () => {
+  it('keeps the existing transcript identity when reopening an idle task with its selected provider', async () => {
+    const id = randomUUID(), input = await launch({ resume: id, sessionId: undefined });
+    const prepared = await prepareClaudeNativeLaunch(input); cleanups.push(prepared.dispose);
+    expect(prepared.nativeSessionId).toBe(id); expect(prepared.resumeSessionId).toBe(id);
+    expect(prepared.env.ANTHROPIC_API_KEY).toBe('fixture-provider-secret');
+    expect(prepared.args).not.toContain('--session-id'); expect(prepared.args).not.toContain('--resume');
+    await expect(prepareClaudeNativeLaunch(await launch({ resume: id }))).rejects.toThrow('identity changed');
+  });
+
   it('keeps HTTP, SSE and stdio MCP credentials out of files/argv while retaining host policy and prompt bytes', async () => {
     const hook = vi.fn();
     const config = await launch({ effort: 'high', hooks: { PreToolUse: [{ hooks: [hook] }] },
@@ -97,7 +106,7 @@ describe('native Claude launch from existing session configuration', () => {
   });
 
   it('never silently starts a new history or drops a configured subscription refresh callback', async () => {
-    await expect(prepareClaudeNativeLaunch(await launch({ resume: 'existing-history' }))).rejects.toThrow('history restore');
+    await expect(prepareClaudeNativeLaunch(await launch({ resumeSessionAt: 'existing-history' }))).rejects.toThrow('history restore');
     const refresh = vi.fn(async () => 'fixture-oauth');
     await expect(prepareClaudeNativeLaunch(await launch({ getOAuthToken: refresh }))).rejects.toThrow('subscription refresh');
     expect(refresh).not.toHaveBeenCalled();

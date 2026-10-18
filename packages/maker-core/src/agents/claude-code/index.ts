@@ -3241,8 +3241,7 @@ export class ClaudeCodeAgent extends BaseAgent {
     const buildExecution = async (extra?: QueryBuildOptions, native = false): Promise<
       { kind: 'sdk'; query: Query } | { kind: 'native'; handle: ClaudeNativeSessionHandle }
     > => {
-      if (native && (opts.remoteHostId || configuredResumeSessionId || durableSdkSessionId
-        || vo.resumeSessionAt || vo.forkSession || extra?.resumeSessionAt || extra?.forkSession)) {
+      if (native && (opts.remoteHostId || vo.resumeSessionAt || vo.forkSession || extra?.resumeSessionAt || extra?.forkSession)) {
         throw new Error('Native Claude remote/history restoration is not integrated');
       }
       const currentSdkModel = sdkModelFor(mutableModel);
@@ -3876,7 +3875,9 @@ export class ClaudeCodeAgent extends BaseAgent {
               }
             }
           }
-          if (outcome === 'missing') {
+          // An interactive reopen must keep its requested identity. Let native
+          // resume report missing history; never clear it and silently start fresh.
+          if (outcome === 'missing' && !native) {
             const cleared = await clearInvalidResumeSession(resumeSdkSid, 'transcript_preflight');
             if (cleared) {
               // 本地 CLI 没有转录就不可能恢复。spawn 前转 fresh，当前用户消息尚未
@@ -4016,7 +4017,7 @@ export class ClaudeCodeAgent extends BaseAgent {
             async prepareInput(message, signal, importMedia) {
               if (reviewMode) await assertReviewMessageContentPaths(message.content, opts.workingDir, reviewReadGrants);
               return prepareClaudeNativeInputContent(await toClaudeSdkContent(message.content), {
-                nativeSessionId: launch.sessionId!, signal: signal ?? abortController.signal, importMedia,
+                nativeSessionId: launch.resume ?? launch.sessionId!, signal: signal ?? abortController.signal, importMedia,
               });
             },
           });

@@ -15,7 +15,7 @@ export interface ClaudeNativeMcpProjection {
 }
 
 export type ClaudeNativePreparedLaunch = Pick<ClaudeNativeRuntimeOptions,
-  'nativeSessionId' | 'executable' | 'cwd' | 'args' | 'env' | 'hooks' | 'canUseTool' | 'signal'> & {
+  'nativeSessionId' | 'resumeSessionId' | 'executable' | 'cwd' | 'args' | 'env' | 'hooks' | 'canUseTool' | 'signal'> & {
   /** Call after native process exit, never on presentation detach. */
   dispose(): Promise<void>;
   revoke(): void;
@@ -32,9 +32,11 @@ export async function prepareClaudeNativeLaunch(
   checkLive();
   // These require their own native lifecycle/control implementations. A missing
   // transport must not silently turn a resume into fresh or drop OAuth refresh.
-  if (launch.resume || launch.resumeSessionAt || launch.forkSession) throw new Error('Native Claude history restore is not integrated');
+  if (launch.resumeSessionAt || launch.forkSession) throw new Error('Native Claude partial history restore is not integrated');
+  if (launch.resume && launch.sessionId && launch.resume !== launch.sessionId) throw new Error('Native Claude resume identity changed');
+  const nativeSessionId = launch.resume ?? launch.sessionId;
   if (launch.getOAuthToken) throw new Error('Native Claude subscription refresh is not integrated');
-  if (!launch.cwd || !launch.sessionId) throw new Error('Native Claude requires a resolved directory and session identity');
+  if (!launch.cwd || !nativeSessionId) throw new Error('Native Claude requires a resolved directory and session identity');
   if (typeof launch.settings !== 'object' || launch.settings === null || 'env' in launch.settings) {
     throw new Error('Native Claude launch settings must be resolved without environment credentials');
   }
@@ -127,7 +129,7 @@ export async function prepareClaudeNativeLaunch(
     delete env.CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH;
     if (launch.enableFileCheckpointing) env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING = 'true';
     checkLive();
-    return { nativeSessionId: launch.sessionId, executable: launch.binaryPath, cwd: launch.cwd,
+    return { nativeSessionId, ...(launch.resume ? { resumeSessionId: launch.resume } : {}), executable: launch.binaryPath, cwd: launch.cwd,
       args, env, hooks: launch.hooks, canUseTool: launch.canUseTool, signal, revoke, dispose,
       registerProcess: launch.registerProcess };
   } catch (error) { await dispose(); throw error; }

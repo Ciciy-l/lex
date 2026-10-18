@@ -30,6 +30,25 @@ function fixture() {
 }
 
 describe('continuous Claude native runtime', () => {
+  it('restores only the requested native identity without starting a new or forked session', async () => {
+    const f = fixture(), runtime = await f.start({ resumeSessionId: 'native' });
+    const args = f.spec().args;
+    expect(args.slice(args.indexOf('--resume'), args.indexOf('--resume') + 2)).toEqual(['--resume', 'native']);
+    expect(args).not.toContain('--session-id'); expect(args).not.toContain('--fork-session');
+    await f.ready(); await runtime.ready;
+    const view = runtime.presentation.attach('reopened-task', vi.fn()); view.detach();
+    expect(f.options.launch).toHaveBeenCalledOnce(); expect(f.driver.close).not.toHaveBeenCalled();
+  });
+
+  it('refuses a changed restore target or identity flags smuggled through generic launch arguments', async () => {
+    const f = fixture();
+    await expect(f.start({ resumeSessionId: 'different' })).rejects.toThrow('identity');
+    for (const arg of ['--resume=other', '-r', '--continue', '-c', '--fork-session', '--session-id=other', '--resume-session-at=row']) {
+      await expect(f.start({ args: [arg] })).rejects.toThrow('identity');
+    }
+    expect(f.options.launch).not.toHaveBeenCalled();
+  });
+
   it('does not terminate an interactive startup merely because the user has not answered yet', async () => {
     const f = fixture(), runtime = await f.start();
     vi.useFakeTimers();

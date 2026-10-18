@@ -30,7 +30,7 @@ async function fixture() {
   const factory = vi.fn(async (options: ClaudeLocalNativeSessionOptions) => {
     launch = options;
     const handle = await createClaudeNativeSession({ ...options, runtime: {
-      nativeSessionId: options.launch.sessionId!, executable: options.launch.binaryPath, cwd: root,
+      nativeSessionId: options.launch.resume ?? options.launch.sessionId!, executable: options.launch.binaryPath, cwd: root,
       args: [], env: options.launch.env, onEvent: options.onEvent, launch: () => driver, canUseTool: options.launch.canUseTool,
     } });
     cleanups.push(async () => { await handle.close(); await options.launch.releaseNativeResources?.(); });
@@ -49,6 +49,19 @@ async function fixture() {
 }
 
 describe('Claude production agent native factory selection', () => {
+  it('hands the explicit resume identity to the native host without creating an SDK Query', async () => {
+    const f = await fixture();
+    const id = '76de74f7-694a-45bd-8337-8a5f837c9e13';
+    const invalidResume = vi.fn(async () => true);
+    const handle = await f.start({ resumeSessionId: id, onInvalidResumeSession: invalidResume });
+    expect(f.launch().launch.resume).toBe(id); expect(f.launch().launch.sessionId).toBeUndefined();
+    expect(handle.id).toBe(id); expect(handle.requestSessionId).toBe(id);
+    expect(f.factory).toHaveBeenCalledOnce(); expect(mocks.query).not.toHaveBeenCalled();
+    // This fixture deliberately has no transcript. Native resume, not the SDK's
+    // fresh-session recovery, owns the outcome and the original persisted id.
+    expect(invalidResume).not.toHaveBeenCalled();
+  });
+
   it('returns the native handle from startSession with the existing launch policy and never starts an SDK Query', async () => {
     const f = await fixture(), handle = await f.start();
     expect(f.factory).toHaveBeenCalledOnce(); expect(mocks.query).not.toHaveBeenCalled();

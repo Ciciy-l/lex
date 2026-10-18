@@ -657,7 +657,7 @@ result, not permission to skip those gates.
 shares the existing launch assembly, selected MCP factories, input permission
 policy, capability selection, auto-review intent and interaction event queue.
 The branch never creates an SDK Query. It is not injected into normal Desktop
-boot yet: plan/live controls, subscription refresh, history restore, full usage
+boot yet: plan/live controls, subscription refresh, partial history restore, full usage
 and remote parity remain required before product exposure.
 
 Main's `createClaudeNativeHostSession` owns the actual PTY, process registration
@@ -724,6 +724,33 @@ the actual resolved launch model, including `[1m]`, without changing the raw. A
 separate raw-context probe likewise required an audit correction for its fixture's
 `ack` event alias. These are isolated fake-provider observations, not product
 UI, real token-cost accuracy, subscription, phone or SSH acceptance.
+
+### Claude explicit history reopen and approval ownership
+
+Explicitly reopening a closed task now selects native `--resume` with its existing
+session ID. Fresh starts alone use `--session-id`. View attach/detach still does not
+close or reopen anything. Resume identity cannot be overridden through generic
+CLI arguments; partial rewind/fork remains gated. Existing transcript relocation
+and preflight are reused, but a missing native transcript must not clear the
+saved ID and silently create a fresh conversation.
+
+The isolated real-Agent/Main/Core Session probe `production-resume2.json` and its
+40-check audit confirm the same native ID, an explicit close before a new PID,
+old and new messages in the resumed provider request, finality, confirmed close
+and owned-profile removal. The first fixture incorrectly waited for observers
+that explicit driver close had already detached; its failure is retained and
+its unknown residual profile is not claimed as cleaned. The corrected run still
+logged two node-pty `AttachConsole failed` helper errors during explicit close;
+both task close promises resolved and both native PIDs were absent afterward.
+This is Windows/fake-provider evidence, not MainIPC/database/UI, phone or SSH
+acceptance, nor proof that the helper-close race is fixed.
+
+Separate real-Agent/Main/Core Session permission probes preserve the production
+policy with the actual native Write tool: GUI denial reaches the provider as a
+denied result without creating the file; original TUI approval creates the file
+and retires the GUI card. A late GUI denial neither changes that result nor runs
+the tool again. The final GUI/TUI probes pass 17/19 checks and clean their owned
+profiles. They do not establish remote or product UI acceptance.
 
 ## Upstream reference
 

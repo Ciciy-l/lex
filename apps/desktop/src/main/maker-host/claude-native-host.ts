@@ -31,7 +31,7 @@ export async function createClaudeNativeHostSession(
       model: options.model, policy: options.policy, prepareInput: options.prepareInput, onFault: options.onFault, events: options.events,
       disabledSkillPaths: options.disabledSkillPaths,
       runtime: {
-        nativeSessionId: prepared.nativeSessionId, executable: prepared.executable, cwd: prepared.cwd,
+        nativeSessionId: prepared.nativeSessionId, resumeSessionId: prepared.resumeSessionId, executable: prepared.executable, cwd: prepared.cwd,
         args: prepared.args, env: prepared.env, hooks: prepared.hooks, canUseTool: prepared.canUseTool, signal: prepared.signal,
         onEvent: options.onEvent,
         launch(spec) {

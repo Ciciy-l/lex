@@ -22,6 +22,8 @@ export interface ClaudeNativeLaunch {
 }
 export interface ClaudeNativeRuntimeOptions {
   nativeSessionId: string;
+  /** Reopen the exact persisted native session at an explicit task lifecycle boundary. */
+  resumeSessionId?: string;
   executable: string;
   cwd: string;
   /** Existing adapter's resolved flags; no print/SDK transport flags. */
@@ -67,10 +69,13 @@ export async function createClaudeNativeRuntime(options: ClaudeNativeRuntimeOpti
   if (options.readyTimeoutMs !== undefined && (!Number.isFinite(options.readyTimeoutMs) || options.readyTimeoutMs <= 0)) {
     throw new Error('Invalid native Claude startup deadline');
   }
+  if (options.resumeSessionId !== undefined && options.resumeSessionId !== options.nativeSessionId) {
+    throw new Error('Native Claude resume identity changed');
+  }
   if ((options.onInputPreparation || options.onNativeInput) && !options.onTurnAdmission) throw new Error('Native input preparation requires turn admission');
   if (options.onInputPreparation && options.onNativeInput) throw new Error('Native input requires one preparation owner');
-  if (options.args.some(arg => ['--', '-p', '--print', '--input-format', '--output-format', '--session-id', '--resume', '--continue'].includes(arg)
-    || ['--input-format=', '--output-format=', '--session-id='].some(prefix => arg.startsWith(prefix)))) {
+  if (options.args.some(arg => ['--', '-p', '--print', '--input-format', '--output-format', '--session-id', '--resume', '-r', '--continue', '-c', '--fork-session', '--resume-session-at'].includes(arg)
+    || ['--input-format=', '--output-format=', '--session-id=', '--resume=', '--continue=', '--fork-session=', '--resume-session-at='].some(prefix => arg.startsWith(prefix)))) {
     throw new Error('Native Claude requires one interactive session identity');
   }
   const hooks = options.hooks ? new ClaudeNativeHooks(options.nativeSessionId, options.hooks) : undefined;
@@ -168,7 +173,7 @@ export async function createClaudeNativeRuntime(options: ClaudeNativeRuntimeOpti
     if (options.signal?.aborted) throw new Error('Native Claude launch cancelled');
     options.signal?.addEventListener('abort', abort, { once: true });
     const spec = { executable: options.executable, cwd: options.cwd,
-      args: [...options.args, '--session-id', options.nativeSessionId, '--plugin-dir', plugin.root],
+      args: [...options.args, ...(options.resumeSessionId ? ['--resume', options.resumeSessionId] : ['--session-id', options.nativeSessionId]), '--plugin-dir', plugin.root],
       env: { ...options.env, ...bridge.environment(), LEX_CLAUDE_BRIDGE_HOST_HOOKS: hooks ? '1' : '0',
         LEX_CLAUDE_BRIDGE_TURN_ADMISSION: turns ? '1' : '0',
         LEX_CLAUDE_BRIDGE_INPUT_PREPARATION: preparation ? '1' : '0' }, cols: 120, rows: 36 };
