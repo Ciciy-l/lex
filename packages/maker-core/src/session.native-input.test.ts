@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Session, type SessionNativeInput, type SessionOptions } from './session.js';
 import { AUTO_REVIEW_SOURCE_CONTENT, TurnDispatchRejectedError, TurnDispatchUnconfirmedError, type AgentSessionHandle } from './agents/base-agent.js';
 import type { AgentEvent } from './types/events.js';
+import type { AgentNativeInputRequest, AgentNativeInputResolver, AgentNativeMediaResolver } from './agents/native-input.js';
 
 const sessions: Session[] = [];
 afterEach(async () => { await Promise.all(sessions.splice(0).map(session => session.close())); });
@@ -20,7 +21,7 @@ function fixture(options: Partial<SessionOptions> = {}) {
     abort: vi.fn(async () => { running = false; }),
     close: vi.fn(async () => { running = false; ended.resolve(); }),
     async *events(): AsyncGenerator<AgentEvent> { await ended.promise; },
-    isTurnRunning: () => running, setInteractionResolver: vi.fn(), validateSendOptions: vi.fn(),
+    isTurnRunning: () => running, setInteractionResolver: vi.fn(), setNativeInputResolver: vi.fn(), validateSendOptions: vi.fn(),
     getUsageSnapshot: () => ({ tokenUsage: 0, contextTokens: 0, contextWindow: 0, costUsd: 0 }),
   } as unknown as AgentSessionHandle;
   const session = new Session({ id: 'task', agentKind: 'claude-code', workDir: '/owned/work', handle,
@@ -124,5 +125,98 @@ describe('native input through the product Session', () => {
     await expect(uncertain.session.acceptNativeInput(uncertain.input)).rejects.toThrow('receipt lost');
     expect(uncertain.handle.close).toHaveBeenCalledOnce(); expect(uncertain.accept).toHaveBeenCalledOnce();
     expect(uncertain.handle.send).not.toHaveBeenCalled();
+  });
+});
+
+describe('adapter native input binding', () => {
+  function bindingFixture() {
+    const f = fixture();
+    const resolver = vi.mocked(f.handle.setNativeInputResolver!).mock.calls[0]![0];
+    const controller = new AbortController();
+    const input: AgentNativeInputRequest = { ...f.input, nativeMessageId: 'native-row', signal: controller.signal };
+    return { ...f, resolver, controller, input };
+  }
+
+  it('binds attachment import to the same product owner and native session', async () => {
+    const f = bindingFixture();
+    const importMedia = vi.mocked(f.handle.setNativeInputResolver!).mock.calls[0]![1]!;
+    const input = { sessionId: 'native-session', messageId: 'row', index: 0, block: { type: 'image' }, signal: f.controller.signal };
+    await expect(importMedia(input)).rejects.toThrow('no current product owner');
+    const host = vi.fn<AgentNativeMediaResolver>(async () => ({ type: 'image', path: '/fixture/image', managedUrl: 'cindy-media://blobs/fixture.png' }));
+    const stop = f.session.onNativeInput(vi.fn(), host);
+    await expect(importMedia({ ...input, sessionId: 'foreign' })).rejects.toThrow('no longer current');
+    await expect(importMedia({ ...input, index: -1 })).rejects.toThrow('identity');
+    expect(host).not.toHaveBeenCalled();
+    await expect(importMedia(input)).resolves.toMatchObject({ type: 'image' });
+    stop();
+    await expect(importMedia(input)).rejects.toThrow('no current product owner');
+  });
+
+  it('cancels an in-flight attachment import when the product binding is disposed', async () => {
+    const f = bindingFixture(), started = deferred(), finished = deferred();
+    const importMedia = vi.mocked(f.handle.setNativeInputResolver!).mock.calls[0]![1]!;
+    let signal!: AbortSignal;
+    const stop = f.session.onNativeInput(vi.fn(), async input => {
+      signal = input.signal; started.resolve(); await finished.promise; return { type: 'image', path: '/fixture/image' };
+    });
+    const result = importMedia({ sessionId: 'native-session', messageId: 'row', index: 0, block: {}, signal: f.controller.signal });
+    const rejection = expect(result).rejects.toThrow('no longer current');
+    await started.promise; stop(); expect(signal.aborted).toBe(true); finished.resolve(); await rejection;
+  });
+
+  it('requires one product owner and explicit same-input acceptance', async () => {
+    const f = bindingFixture();
+    await expect(f.resolver(f.input)).rejects.toThrow('no current product owner');
+    const history = vi.fn();
+    const stop = f.session.onNativeInput(async input => {
+      expect(input.nativeMessageId).toBe('native-row');
+      expect(await f.session.acceptNativeInput(input, { signal: input.signal, onAccepted: history })).toEqual({ accepted: true });
+    });
+    expect(() => f.session.onNativeInput(vi.fn())).toThrow('already has a product owner');
+    await f.resolver(f.input);
+    expect(history).toHaveBeenCalledOnce(); expect(f.accept).toHaveBeenCalledOnce();
+    expect(f.handle.send).not.toHaveBeenCalled();
+    await expect(f.resolver(f.input)).rejects.toThrow('already delivered');
+    stop(); stop();
+  });
+
+  it.each(['dispose', 'close', 'cancel'] as const)('fences delayed acceptance on %s', async boundary => {
+    const f = bindingFixture(), entered = deferred(), release = deferred();
+    let receivedSignal: AbortSignal | undefined;
+    const stop = f.session.onNativeInput(async input => {
+      receivedSignal = input.signal; entered.resolve(); await release.promise;
+      await input.accept(input.message, {});
+    });
+    const result = f.resolver(f.input);
+    const rejection = expect(result).rejects.toThrow('no longer current');
+    await entered.promise;
+    if (boundary === 'dispose') stop();
+    else if (boundary === 'close') await f.session.close();
+    else f.controller.abort();
+    expect(receivedSignal?.aborted).toBe(true);
+    release.resolve(); await rejection; expect(f.accept).not.toHaveBeenCalled();
+  });
+
+  it('rejects mismatched provenance and a callback that never admits the input', async () => {
+    const f = bindingFixture(), listener = vi.fn<AgentNativeInputResolver>(async () => {});
+    f.session.onNativeInput(listener);
+    await expect(f.resolver({ ...f.input, source: { version: 1, engine: 'claude-code',
+      sessionId: 'foreign', messageId: 'native-row', origin: { kind: 'user' } } })).rejects.toThrow('identity changed');
+    expect(listener).not.toHaveBeenCalled();
+    await expect(f.resolver(f.input)).rejects.toThrow('not admitted');
+    expect(f.accept).not.toHaveBeenCalled();
+  });
+
+  it('freezes native payload and leaves a replacement owner intact when an old disposer runs', async () => {
+    const f = bindingFixture();
+    const staleStop = f.session.onNativeInput(vi.fn()); staleStop();
+    let received!: AgentNativeInputRequest;
+    const entered = deferred(), release = deferred();
+    f.session.onNativeInput(async input => { received = input; entered.resolve(); await release.promise; await input.accept(input.message, {}); });
+    staleStop();
+    const result = f.resolver(f.input); await entered.promise;
+    f.input.message.content = 'mutated';
+    expect(received.message.content).toBe('native input');
+    release.resolve(); await result; expect(f.accept).toHaveBeenCalledOnce();
   });
 });

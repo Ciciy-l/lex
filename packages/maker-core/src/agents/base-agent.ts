@@ -1,5 +1,6 @@
 import type { AutoReviewUserIntent } from './shared/auto-review-decision.js';
 import type { AgentSessionPresentation } from './presentation.js';
+import type { AgentNativeInputResolver, AgentNativeMediaResolver } from './native-input.js';
 /**
  * BaseAgent — Claude Code / Codex 等具体 agent 的统一抽象。
  *
@@ -2251,6 +2252,8 @@ export interface AgentMcpServerToolsReport {
 }
 
 export interface AgentSessionHandle {
+  /** Native composer admission. A missing resolver must refuse provider execution. */
+  setNativeInputResolver?(resolver: AgentNativeInputResolver, importMedia?: AgentNativeMediaResolver): void;
   /** Native UI of this running task; attaching a view must never start another agent. */
   readonly presentation?: AgentSessionPresentation;
   /** Canonical physical Skill identities frozen at native runtime startup. */
