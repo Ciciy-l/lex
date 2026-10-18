@@ -9,10 +9,16 @@ import { createAsyncQueue } from '../../packages/maker-core/src/agents/shared/as
 let runtime, driver, view, control, inputSequence = 0, recovered = false, diagnostics, now;
 const commandNames = new Map(), pending = [], accepted = [], messages = [];
 const admissions = [], lifecycle = [], history = [], productEvents = createAsyncQueue();
+const translatedEvents = [];
 let productSession, productRunning = false;
+let nativeInputResolver;
 const denyAdmission = process.argv.includes('--deny-admission');
+const denyNativeInput = process.argv.includes('--deny-native-input');
+const prepareNativeInput = process.argv.includes('--prepare-native-input') || denyNativeInput;
+let refusedNativeInputs = 0;
+const preparedRows = new Set();
 let commandId = 0;
-const report = await probe({ scenario: denyAdmission ? 'admission-deny' : 'media',
+const report = await probe({ scenario: denyNativeInput ? 'native-input-deny' : denyAdmission ? 'admission-deny' : 'media',
   bridgeFactory(context) {
     diagnostics = context.report; now = context.now; diagnostics.droppedEvents = 0;
     return { pluginName: CLAUDE_NATIVE_BRIDGE_PLUGIN_NAME, source: CLAUDE_NATIVE_MOD_SOURCE, mediaPrompt: CLAUDE_NATIVE_MEDIA_PROMPT,
@@ -41,8 +47,18 @@ const report = await probe({ scenario: denyAdmission ? 'admission-deny' : 'media
         async steer() { throw new Error('No fixture steer'); },
         async abort() { productRunning = false; }, async close() { productEvents.end(); },
         events: () => productEvents, isTurnRunning: () => productRunning, setInteractionResolver() {},
+        setNativeInputResolver(resolve) { nativeInputResolver = resolve; },
         getUsageSnapshot: () => ({ tokenUsage: 0, contextTokens: 0, contextWindow: 0, costUsd: 0 }),
       } });
+    if (prepareNativeInput) productSession.onNativeInput(async input => {
+      if (denyNativeInput) { refusedNativeInputs++; throw new Error('Fixture host refused native input'); }
+      const content = typeof input.message.content === 'string' ? [{ type: 'text', text: input.message.content }] : input.message.content;
+      const result = await productSession.acceptNativeInput({ ...input, message: { type: 'user',
+        content: [...content, { type: 'text', text: 'LEX_HOST_PREPARED_BEFORE_APPEND' }] },
+      }, { signal: input.signal, onAccepted() { history.push({ messageId: input.nativeMessageId, preAppend: true }); } });
+      if (!result.accepted) throw new Error('Fixture pre-append admission cancelled');
+      productRunning = true; preparedRows.add(input.nativeMessageId);
+    });
     productSession.setTurnLifecycleObserver({
       beforeProviderStart(generation) { lifecycle.push({ kind: 'prepare', generation }); },
       onUndispatched(generation) { lifecycle.push({ kind: 'undispatched', generation }); },
@@ -64,15 +80,19 @@ const report = await probe({ scenario: denyAdmission ? 'admission-deny' : 'media
         if (value.submissionId) value.submissionId = commandNames.get(value.submissionId) ?? value.submissionId;
         diagnostics.events.push({ at: now(), ...event, value, sessionId: nativeSessionId,
           kind: event.kind === 'command-result' ? value.ok ? 'ack' : 'command-error' : event.kind });
-        if (event.kind === 'turn.complete' && !value.agentId) {
-          productRunning = false; productEvents.push({ type: 'done', source: 'claude-code', data: {} });
-        }
+      },
+      onAgentEvent(event) {
+        translatedEvents.push({ at: now(), ...event });
+        if (event.type === 'done') productRunning = false;
+        productEvents.push(event);
       },
       onUserMessage(message) { messages.push(message); },
+      ...(prepareNativeInput ? { onNativeInput: input => nativeInputResolver(input) } : {}),
       async onTurnAdmission(turn, signal) {
         admissions.push({ at: now(), turnId: turn.turnId, messageIds: turn.messages.map(message => message.row.uuid) });
         if (denyAdmission) throw new Error('Fixture host refusal');
         if (turn.messages.length !== 1) throw new Error('Unexpected fixture input grouping');
+        if (preparedRows.has(turn.messages[0].row.uuid)) return;
         const result = await productSession.acceptNativeInput({ nativeSessionId,
           message: { type: 'user', content: turn.messages[0].display.content },
           async accept() { productRunning = true; },
@@ -98,6 +118,7 @@ const report = await probe({ scenario: denyAdmission ? 'admission-deny' : 'media
 });
 report.nativeUserMessages = messages; report.acceptedSubmissions = accepted;
 report.productAdmissions = admissions; report.productLifecycle = lifecycle; report.productHistory = history;
+report.productEvents = translatedEvents;
 const submissions = report.commands.filter(command => command.kind === 'submit');
 report.checks.productionInputReceipts = submissions.length === 4 && submissions.length === accepted.length && submissions.every(command =>
   accepted.some(receipt => receipt.id === command.id && messages.some(message =>
@@ -111,6 +132,13 @@ report.checks.productionNativeHistory = messages.some(message => message.row.ori
   && !message.submission && JSON.stringify(message.display.content) === JSON.stringify(message.row.message.content));
 report.checks.noRuntimeFault = !report.runtimeFault && !report.commandFailure;
 report.checks.oneNativeLifetime = runtime?.presentation.state().status === 'closed';
+report.checks.productNativeFinality = translatedEvents.filter(event => event.type === 'done').length
+  === report.events.filter(event => event.kind === 'turn.complete' && !event.value.agentId
+    && admissions.some(admission => admission.turnId === event.value.turnId) && !denyAdmission).length;
+report.checks.productNativeAssistantIdentity = translatedEvents.filter(event => event.type === 'text' && event.data.isFinal).every(event =>
+  report.events.some(raw => raw.kind === 'session.append' && raw.value.result?.uuid === event.agentMeta?.uuid
+    && raw.value.result.message.type === 'assistant'))
+  && translatedEvents.every(event => event.agentMeta?.requestId === undefined);
 if (denyAdmission) {
   report.checks = { ...report.checks,
     productionInputReceipts: accepted.length === 1,
@@ -131,5 +159,24 @@ if (denyAdmission) {
 // The driver recovery is separately forced in claude-terminal-probe. A normal
 // production replay may remain below its buffer bound throughout this run.
 report.observedSnapshotRecovery = recovered;
+if (prepareNativeInput) {
+  report.checks.nativePreparation = preparedRows.size === 1
+    && history.filter(row => row.preAppend).length === 1
+    && report.requests.some(request => request.prompt === 'LEX_MODS_NATIVE'
+      && request.messages.some(message => message.role === 'user' && Array.isArray(message.content)
+        && message.content.some(block => block.type === 'text' && block.text === 'LEX_HOST_PREPARED_BEFORE_APPEND')));
+}
+if (denyNativeInput) {
+  // Exactly the two GUI turns before refusal and one after it entered Session.
+  // Native history keeps a neutral refusal, never the refused original content.
+  report.checks.productionInputReceipts = accepted.length === 3;
+  report.checks.productionGuiProjection = messages.filter(message => message.submission).every(message => !message.display.pluginSource);
+  report.checks.productSessionAdmission = history.length === 3 && admissions.length === 3;
+  report.checks.admittedBeforeProvider = admissions.length === 3 && admissions.every(admission =>
+    report.events.some(event => event.kind === 'step-start' && event.value.turnId === admission.turnId && event.at >= admission.at));
+  report.checks.nativePreparation = refusedNativeInputs === 1 && preparedRows.size === 0;
+  report.checks.refusedInputAbsentFromLaterRequests = report.requests.filter(request => request.isMain).length === 3
+    && report.requests.filter(request => request.isMain).every(request => !JSON.stringify(request.messages).includes('LEX_MODS_NATIVE'));
+}
 const passed = Object.values(report.checks).every(Boolean) && report.cleanup?.nativeExited && report.cleanup?.profileRemoved && !report.error;
 process.stdout.write(JSON.stringify(report, null, 2), () => process.exit(passed ? 0 : 1));

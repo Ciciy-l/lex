@@ -32,15 +32,19 @@ export function fixturePrompt(messages, pluginName = 'lex-mods-probe') {
   }
 }
 
-export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', scenario = 'controls', bridgeFactory, terminalFactory } = {}) {
+export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', scenario = 'controls', bridgeFactory, terminalFactory, permissionTool = 'Write', permissionLateAnswer = false } = {}) {
   if (!['api-key', 'auth-token'].includes(auth)) throw new Error('Unknown fixture auth kind');
-  if (!['controls', 'identity', 'media', 'admission-deny', 'permission-gui', 'permission-tui', 'permission-deny-rule', 'permission-host-hook'].includes(scenario)) throw new Error('Unknown fixture scenario');
+  if (!['Write', 'Read'].includes(permissionTool)) throw new Error('Unknown fixture permission tool');
+  if (!['controls', 'identity', 'media', 'admission-deny', 'native-input-deny', 'permission-gui', 'permission-tui', 'permission-parallel', 'permission-deny-rule', 'permission-host-hook'].includes(scenario)) throw new Error('Unknown fixture scenario');
   const permissionScenario = scenario.startsWith('permission-');
   const mediaScenario = scenario === 'media';
   const fixture = await mkdtemp(path.join(tmpdir(), 'lex-claude-mods-'));
   const home = path.join(fixture, 'home');
   const cwd = path.join(fixture, mediaScenario ? 'work with spaces' : 'work');
   const imagePath = path.join(cwd, 'fixture image.png');
+  const permissionArguments = permissionTool === 'Read'
+    ? { file_path: path.join(cwd, 'mods-read-proof.txt') }
+    : { file_path: path.join(cwd, 'mods-proof.txt'), content: 'synthetic mods write' };
   const imageBytes = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a0D8AAAAASUVORK5CYII=';
   const literalText = prompts[0] + String.fromCharCode(10) + '!' + String.fromCharCode(96) + 'echo LEX_LITERAL_COMMAND' + String.fromCharCode(96) + ' $ARGUMENTS @missing-literal.md';
   const config = path.join(home, '.claude');
@@ -97,10 +101,10 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
       send({ type: 'message_start', message: { ...message, content: [], stop_reason: null } });
       const useTool = permissionScenario && isMain && !afterTool;
       send({ type: 'content_block_start', index: 0, content_block: useTool
-        ? { type: 'tool_use', id: 'tool_mods_write', name: 'Write', input: {} } : { type: 'text', text: '' } });
+        ? { type: 'tool_use', id: 'tool_mods_write', name: permissionTool, input: {} } : { type: 'text', text: '' } });
       stream.firstDeltaAt = now();
       send({ type: 'content_block_delta', index: 0, delta: useTool
-        ? { type: 'input_json_delta', partial_json: JSON.stringify({ file_path: path.join(cwd, 'mods-proof.txt'), content: 'synthetic mods write' }) }
+        ? { type: 'input_json_delta', partial_json: JSON.stringify(permissionArguments) }
         : { type: 'text_delta', text: marker } });
       if (isMain && prompt === 'LEX_MODS_ABORT') return;
       if (isMain && !useTool) {
@@ -111,6 +115,13 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
       }
       if (res.destroyed) return;
       send({ type: 'content_block_stop', index: 0 });
+      if (useTool && scenario === 'permission-parallel') {
+        // Identical arguments deliberately prevent text/name-based association.
+        send({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'tool_mods_write_2', name: permissionTool, input: {} } });
+        send({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta',
+          partial_json: JSON.stringify(permissionArguments) } });
+        send({ type: 'content_block_stop', index: 1 });
+      }
       send({ type: 'message_delta', delta: { stop_reason: useTool ? 'tool_use' : 'end_turn', stop_sequence: null }, usage: { output_tokens: 5 } });
       stream.completedAt = now();
       send({ type: 'message_stop' }); res.end();
@@ -121,6 +132,7 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
     await Promise.all([mkdir(config, { recursive: true }), mkdir(cwd, { recursive: true }),
       mkdir(path.join(plugin, '.claude-plugin'), { recursive: true }), mkdir(path.join(plugin, 'hooks'), { recursive: true })]);
     if (mediaScenario) await writeFile(imagePath, Buffer.from(imageBytes, 'base64'));
+    if (permissionScenario && permissionTool === 'Read') await writeFile(path.join(cwd, 'mods-read-proof.txt'), 'Synthetic permission fixture');
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     const endpoint = 'http://127.0.0.1:' + server.address().port;
     const env = { ...isolatedEnvironment(process.env, home, endpoint), LEX_MODS_ENDPOINT: endpoint, LEX_MODS_TOKEN: token,
@@ -131,6 +143,7 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
       projects: { [cwd.split(path.sep).join('/')]: { hasTrustDialogAccepted: true } } }));
     const settings = path.join(config, 'settings.json');
     await writeFile(settings, JSON.stringify({ permissions: { defaultMode: 'default',
+      ...(permissionTool === 'Read' ? { ask: ['Read'] } : {}),
       ...(scenario === 'permission-deny-rule' ? { deny: ['Write'] } : {}) } }));
     await writeFile(path.join(plugin, '.claude-plugin/plugin.json'), JSON.stringify({ name: pluginName, version: '0.0.1', description: 'Synthetic presentation feasibility fixture', author: { name: 'Lex contributors' } }));
     await writeFile(path.join(plugin, 'hooks/hooks.json'), JSON.stringify({ modules: ['./register.ts'] }));
@@ -153,7 +166,7 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
     if (report.validation.exitCode !== 0 || report.pluginTest.exitCode !== 0) throw new Error('Native plugin validation/test failed; interactive probe not started');
     const spawnTerminal = terminalFactory ?? require('node-pty').spawn;
     terminal = await spawnTerminal(executable, ['--session-id', nativeSessionId, '--model', model,
-      '--settings', settings, '--setting-sources', '', '--strict-mcp-config', '--plugin-dir', plugin, '--tools', permissionScenario ? 'Write' : '', '--', '/plugin-types'],
+      '--settings', settings, '--setting-sources', '', '--strict-mcp-config', '--plugin-dir', plugin, '--tools', permissionScenario ? permissionTool : '', '--', '/plugin-types'],
     { cwd, env, name: 'xterm-256color', cols: 120, rows: 36, useConpty: true });
     report.pid = terminal.pid;
     terminal.onData((data) => {
@@ -193,7 +206,22 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
         await delay(100); continue;
       }
       if (permissionScenario) {
+        if (scenario === 'permission-parallel') {
+          for (const request of report.events.filter(event => event.kind === 'permission')) {
+            if (now() - request.at >= 1000) send({ id: 'gui-permission-' + request.value.requestId,
+              kind: 'permission', requestId: request.value.requestId, allow: false });
+          }
+        }
         const request = eventFor('permission', () => true);
+        if (permissionLateAnswer && bridge && request && !report.latePermissionAnswer
+          && eventFor('request-retired', value => value.requestId === request.value.requestId)) {
+          try {
+            bridge.send({ kind: 'permission', requestId: request.value.requestId, allow: false });
+            report.latePermissionAnswer = { at: now(), rejected: false };
+          } catch (error) {
+            report.latePermissionAnswer = { at: now(), rejected: true, error: String(error) };
+          }
+        }
         if (request && now() - request.at >= 1000) {
           if (scenario === 'permission-gui') send({ id: 'gui-permission', kind: 'permission', requestId: request.value.requestId, allow: false });
           if (scenario === 'permission-tui' && !nativeSubmitted && report.terminalText.includes('Yes')) {
@@ -219,6 +247,15 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
         if (afterQueue.value.result.draft.text !== prompts[2]) throw new Error('Native draft was not preserved');
         terminal.write('\r'); nativeSubmitted = true;
         report.nativeSubmittedAt = now();
+      }
+      if (scenario === 'native-input-deny') {
+        const rejected = eventFor('turn-rejected', () => true);
+        if (rejected && eventFor('turn.complete', value => value.turnId === rejected.value.turnId && value.reason === 'aborted')) {
+          send({ id: 'after-abort', kind: 'submit', text: prompts[4] });
+        }
+        if (complete(prompts[4])) send({ id: 'final', kind: 'snapshot' });
+        if (eventFor('ack', value => value.id === 'final')) break;
+        await delay(100); continue;
       }
       if (complete(prompts[2])) send({ id: 'abort-start', kind: 'submit', text: prompts[3] });
       const abortTurn = eventFor('turn.start', (v) => v.text.includes(prompts[3]));
@@ -289,7 +326,7 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
         modLoaded: report.checks.modLoaded,
         sameSession: report.checks.sameSession,
         nativeToolObserved: scenario === 'permission-deny-rule' ? disabledResult
-          : Boolean(eventFor('tool.call', (v) => v.tool === 'Write' && v.tool_use_id === 'tool_mods_write')),
+          : Boolean(eventFor('tool.call', (v) => v.tool === permissionTool && v.tool_use_id === 'tool_mods_write')),
         completed: Boolean(complete(prompts[0])),
         permissionObserved: ['permission-deny-rule', 'permission-host-hook'].includes(scenario) ? !eventFor('permission', () => true) : Boolean(eventFor('permission', () => true)),
         fileOutcome: scenario === 'permission-tui' ? report.fixtureWrite === 'synthetic mods write' : report.fixtureWrite === null,
@@ -298,6 +335,13 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
         nativeResultReturned: toolResults.some((b) => scenario === 'permission-tui' ? !b.is_error : b.is_error === true),
         completeBridgeDelivery: report.checks.completeBridgeDelivery,
       };
+      if (scenario === 'permission-parallel') {
+        const ids = ['tool_mods_write', 'tool_mods_write_2'];
+        report.checks.distinctNativeCalls = ids.every(id => report.events.filter(event => event.kind === 'tool.call' && event.value.tool_use_id === id).length === 1);
+        report.checks.distinctCallbacks = report.events.filter(event => event.kind === 'permission').length === 2;
+        report.checks.bothNativeResults = ids.every(id => report.requests.some(request => request.messages?.some(message =>
+          Array.isArray(message.content) && message.content.some(block => block.type === 'tool_result' && block.tool_use_id === id && block.is_error === true))));
+      }
     }
     if (scenario === 'admission-deny') {
       report.checks = { modLoaded: report.checks.modLoaded, sameSession: report.checks.sameSession,
@@ -305,6 +349,15 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
         nativeRejected: Boolean(eventFor('turn-rejected', () => true)),
         nativeAborted: Boolean(eventFor('turn.complete', value => value.reason === 'aborted')),
         aliveBeforeCleanup: report.aliveBeforeCleanup };
+    }
+    if (scenario === 'native-input-deny') {
+      report.checks = { modLoaded: report.checks.modLoaded, sameSession: report.checks.sameSession,
+        semanticInput: report.checks.semanticInput, draftPreserved: report.checks.draftPreserved,
+        nativeRefusedBeforeModel: !report.requests.some(request => request.prompt === prompts[2]),
+        nativeRejected: Boolean(eventFor('turn-rejected', () => true)),
+        nativeAborted: Boolean(eventFor('turn.complete', value => value.reason === 'aborted')),
+        continuedSameProcess: Boolean(complete(prompts[4]) && report.aliveBeforeCleanup),
+        completeBridgeDelivery: report.checks.completeBridgeDelivery };
     }
   } catch (e) { report.error ??= e.stack ?? String(e); }
   finally {

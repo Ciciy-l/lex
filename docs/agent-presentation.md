@@ -204,6 +204,81 @@ durable history/media ingestion, queued/continuation admission and live settings
 remain to be connected. The callback must not acknowledge vision rewrites it has
 not actually installed in the native input.
 
+Desktop now binds native-input admission to the exact Session and database owner
+in `wireSessionToIpc`. The single native resolver goes through input-coordinator
+screening and the existing send transaction's policy/history callbacks. It never
+rebuilds the native process or waits behind a competing send lock. Unbinding,
+account replacement, Stop and uncertain receipts fence the continuation; an
+unconfirmed native row is never restored as a GUI queue item. Managed image
+identities and authenticated plugin provenance survive durable Desktop/mobile
+history. These bindings are exercised by focused tests, not native UI acceptance.
+`claudeNativeMedia.ts` now imports supplied native image bytes through the
+existing media store, verifies their type, pins a task reference before returning
+the managed identity, and fences account/database/runtime changes and cancellation.
+Concurrent imports share the existing task media lock and compensation journal.
+Imported images retain the task lifetime rather than becoming unreferenced
+drafts while admission is pending. It does not
+fetch native URLs or interpret SSH paths locally; document import is still
+outstanding. The Session binding carries this importer with the same owner as
+admission. These are host tests, not real-image Desktop/phone acceptance.
+
+Claude's packaged Mod now prepares original TUI and external-plugin input in
+the official `session.append` hook, before native content is pinned. The runtime
+waits for the actual append receipt, exact UUID/content, and host completion
+before admitting the provider step. Text rewrites and original-image removal
+are supported; adding/replacing native media or dropping opaque blocks is
+refused. Cancellation and bounded pending records fence late acceptance.
+
+The actual managed 2.1.296 CLI probe with `--prepare-native-input` passes 25
+checks through the production Core Session resolver, including host-rewritten
+text reaching the loopback provider. `--deny-native-input` passes 17 checks:
+the refused original TUI input causes no corresponding model request, the
+native turn aborts, and the next GUI input succeeds in the same process. Both
+confirm process exit and temporary-profile cleanup. Evidence: external
+`ci-logs/claude-permission-lifecycle/production-preparation2.json` and
+`production-preparation-denied1.json`. A subsequent audit found that the latter
+probe's refused text still entered the next allowed turn's history. The Mod now
+replaces refused text/media with a neutral receipt before native append and
+still aborts that turn. Opaque blocks or altered refusal receipts interrupt the
+bridge rather than letting the next turn inherit unverified content. The old
+17-check refusal result alone does not establish this later-request guarantee.
+Neither probe exercises Desktop DB/MainIPC or the production image
+importer. Full engine selection, event translation, native permission races,
+live settings/auth parity, document handling and real UI/remote acceptance
+remain required. No production engine is enabled by these host-side changes.
+
+`native-events.ts` now translates root native text/thinking, actual transcript
+UUIDs, tool results and turn terminals into existing Maker events. The Mod only
+attaches assistant rows to a step while that actual step hook is active; it does
+not manufacture SDK request/message ids. Child-loop events cannot finish the
+root task. Step stop/result usage is deduplicated through the existing tracker,
+but Mods lacks request/retry billing identities, so the segment ledger remains
+explicitly incomplete and no price is invented. Native policy-denied tools can
+settle from their actual transcript results without a `tool.call` callback.
+Subagent task projection, compaction/history repair and complete accounting still
+need adapter integration.
+
+The actual `production-events1.json` probe passes 27 checks through this
+translation and Core Session lifecycle, with five root completion events and
+real assistant receipts. `production-events-denied2.json` passes 20 checks, now
+including inspection of all later main-provider request bodies: the refused
+original text is absent. The next GUI request succeeds in the same process.
+Both live under the external `ci-logs/claude-permission-lifecycle/` directory,
+confirm native exit/profile cleanup, and use isolated fake credentials/provider.
+These still use a fixture handle and do not prove the Desktop production engine
+selector, full tool/approval UI, native imported image display or phone behavior.
+
+The event translator now waits for successful host admission before projecting
+running state or completion into the product Session. A refused native append
+still has a native aborted turn, but that turn cannot clear or settle another
+GUI reservation. A provider step before admission faults the bridge. Native
+`tool.call` arguments are flattened; the fallback preserves them, including a
+tool argument literally named `input`, while validating the actual tool id/name.
+The follow-up actual `production-events2.json` (27 checks) and
+`production-events-denied3.json` (20 checks) pass with five and three product
+completions respectively, confirmed process exit and profile cleanup. The
+refused turn is excluded only from product events, retained in raw evidence.
+
 The opt-in probe is `node scripts/agent-presentation/claude-native-probe.mjs`.
 Additional scenarios are `--scenario=permission`, `--scenario=abort`, and
 `--scenario=stream-option`. The last scenario intentionally checks a rejected
@@ -365,12 +440,36 @@ The fake provider now recognizes tool-result continuations as the same main
 turn instead of misclassifying them as title requests. Native policy/results
 are forwarded unchanged. Evidence: `ci-logs/claude-mods-permission-{gui,tui,rule}2.json`.
 
-These are separate single-answer cases, not permission-race acceptance. The
-native dialog can remain visible while the module awaits an answer; a terminal
-answer did not abort the pending PermissionRequest hook in the observed run.
-The classic hook also lacks tool_use_id. Reliable retirement, parallel-call
-identity and late/duplicate GUI answers still require a production solution.
-No global allow override or modified permission policy was introduced.
+Those initial single-answer cases did not establish permission-race acceptance:
+the terminal answer did not abort the pending PermissionRequest hook, and that
+classic hook lacks tool_use_id. The packaged bridge now serializes entry into
+that hook using the actual tool.check/tool.call scope per native agent. It
+releases the gate as soon as the callback has its ID, allowing the actual tools
+and user decisions to overlap. It preserves the native verdict, ceiling and
+original classic input; unscoped queries never mint a guessed GUI identity.
+Tool completion retires that exact callback before root turn completion, even
+when the terminal answered and the classic hook is still waiting on HTTP.
+
+The opt-in `claude-permission-identity-probe.mjs` passes 15 checks on the actual
+managed Windows 2.1.296 binary: two Read calls with identical arguments really
+overlap, each has its own native ID and GUI denial, and both native results are
+preserved. `--scenario=permission-tui` passes 12 checks: the native Write dialog
+accepts the terminal answer, writes only the fixture, retires its GUI callback
+before the turn completes and rejects a late GUI denial. Both use fake loopback
+credentials, exit the native process and remove their temporary profiles.
+Evidence is `ci-logs/claude-permission-lifecycle/permission-causal-production2.json`
+and `permission-tui-retirement1.json`, outside the repository. Earlier experiments
+remain separately recorded; the Write-only parallel experiment did not overlap.
+
+`native-permissions.ts` maps the authenticated callback to the existing product
+canUseTool policy. That policy now consumes the request's cancellation signal
+for permission, question and plan cards, dismissing only the matching request
+and discarding its late result. Focused regressions also preserve sibling cards,
+native allow/deny decisions, repeated checks and native deciders that complete
+without a classic callback. This is not full product/MainIPC approval acceptance:
+production engine selection, other plugins, live configuration and subscription
+auth parity remain separate integration work. No global allow override or
+replacement permission policy was introduced.
 
 ## Codex native gate: Windows, 2026-10-18
 
