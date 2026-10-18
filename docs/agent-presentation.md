@@ -26,7 +26,7 @@ task-bound handles, never executable paths, arbitrary environment or credentials
 | Engine | Candidate integration | Required native proof |
 | --- | --- | --- |
 | Codex | One app-server/thread, protocol GUI client and upstream `--remote` TUI | Multi-client subscriptions, original thread identity, approval routing, existing external-auth/provider isolation |
-| Claude Code | Interactive process, local hooks, structured transcript, acknowledged input bridge | Real-time structured events, confirmed sends, stop/approval control, custom provider support without official Remote Control |
+| Claude Code | Interactive process with an official Mods semantic side channel | Real-time structured events, queued sends without draft loss, stop/approval control, custom provider support without official Remote Control |
 | Pi | Interactive process with Lex extension side channel | Structured events and semantic controls while original TUI and native extensions remain functional |
 | OMP | Interactive process with engine-specific extension side channel | Same-session events, queue, approvals, original UI; `rpc-ui` alone is not native TUI transport |
 
@@ -128,13 +128,92 @@ presentation gate**: live structured output and reliable editor-aware semantic
 input are still missing. This is a finding about the tested integration, not a
 claim that every possible future Claude integration is impossible. Do not ship
 final-message-only GUI synchronization as equivalent to existing streaming GUI.
-Other engine findings are recorded independently below; one successful engine
-does not establish the missing Claude interfaces.
+The subsequent Mods experiment below supplies live output and semantic input
+through a different official interface; it does not change these old results.
 
 Raw fixture-only evidence is under the workspace's sibling `ci-logs/` directory
 as `claude-native-presentation-*-final.json`; it is not shipped with the product.
 Earlier setup attempts are retained separately and are not counted as passing
 native capability tests. Product adapters/UI and RC publication remain gated.
+
+## Claude Mods native gate: Windows, 2026-10-18
+
+The preferred candidate is now an official hooks-module plugin, loaded into the
+original interactive CLI with its documented --plugin-dir option. Reference:
+[official Mods README](https://github.com/anthropics/claude-code/blob/dd6bee38458cc3e6dc5f2b16eca1f0f364619ad8/mods/README.md).
+Mods remain Early Access and load only where function hooks are enabled. The
+probe does not enable hidden flags, override policy, patch binaries or upgrade
+the managed runtime. The public declarations describe 2.1.296/2.1.302, but both
+have an older generated header; runtime evidence takes precedence.
+
+Run the isolated probe explicitly:
+
+~~~sh
+node scripts/agent-presentation/claude-mods-probe.mjs
+node scripts/agent-presentation/claude-mods-probe.mjs --auth=auth-token
+node --test scripts/agent-presentation/claude-mods-probe.test.mjs
+~~~
+
+Both native scenarios use managed Claude Code 2.1.296, a new temporary home,
+fake credentials, an empty fixture workdir and a loopback Anthropic provider.
+The first sets ANTHROPIC_API_KEY, the second ANTHROPIC_AUTH_TOKEN without an
+API key. No Anthropic login or cloud Remote Control is involved. Each uses one
+PTY process and one native session throughout five main turns. Native plugin
+validation and the CLI's plugin test run before interactive execution.
+
+The final scenarios each pass 14 focused checks:
+
+- A real hooks module loads; its structured events retain the native session.
+- GUI-origin semantic input starts a native turn. turn.step text reaches the
+  bridge while the provider response is still open and appears in the TUI.
+- A second GUI input submitted mid-generation runs after the first completes.
+  Streaming continues while its submission promise remains pending.
+- A partially typed native draft survives GUI submission and completion. Enter
+  then submits that same draft through the original TUI; native prompt/turn
+  events and completion confirm it, rather than a terminal-text guess.
+- turn.abort with the current native turn ID closes an intentionally unfinished
+  response. The native aborted event and command result arrive; the stale ID is
+  rejected afterwards. The same process accepts and completes a further input.
+- Each fixture main turn makes one provider request. Title requests are separate:
+  under bearer auth the title also uses Sonnet, so model equality is insufficient.
+- No dropped bridge event or unexpected bridge/command error is observed.
+
+Important implementation findings:
+
+- on() event names must be string literals. Passing the engine object to a
+  locally nested helper is rejected by the native module compiler; host calls
+  stay at explicit call sites. Native validation catches these constraints.
+- The tested native plugin harness did not provide the documented stream.result
+  value in the initial experiment. Consuming the generator's final return value
+  preserves the real result. The mirror calls next(e) once, yields every chunk
+  unchanged (including opaque engine refs), and closes its downstream iterator
+  on early exit. Native and Node tests cover the pass-through behavior.
+- A plugin submission is explicitly plugin-origin. Claude adds a visible/model
+  message envelope identifying the plugin. This is not indistinguishable from
+  a composer user message; the adapter must retain that provenance.
+- A busy prompt.submit promise settles only after the preceding turn completes
+  in these runs. Command dispatch, native acknowledgment and turn completion are
+  separate facts. Awaiting that promise in the event pump caused delayed event
+  delivery in an intermediate probe; commands now run independently of the pump.
+- The Mod has no Node server. Host HTTP plus an authenticated loopback exchange
+  carries events and commands. Its bounded observation buffer never blocks the
+  native stream; overflow/failed delivery is reported, not claimed as complete.
+  This disposable probe is not a durable/reconnect-safe production protocol.
+- /plugin-types returned Unknown command in the tested interactive configuration;
+  no runtime declarations were exported. Do not infer general unavailability
+  from that result or claim repository types were exported from this binary.
+
+Final raw reports are ci-logs/claude-mods-native-api-final2.json and
+ci-logs/claude-mods-native-token-final.json outside the repository. Earlier
+compiler/harness/assertion failures remain separately recorded. All probe-owned
+native processes exited and their temporary profiles were removed.
+
+This closes the earlier basic streaming/semantic-input feasibility gap for the
+tested Windows/BYOK configurations. It does not finish the four product adapters
+or permit RC publication. Permission races, durable message UUID mapping,
+session.append support, attachment bytes, compaction, other mods, backpressure
+recovery, actual subscription accounts, SSH, Device Link and non-Windows hosts
+still require their own acceptance. No production UI or user install changed.
 
 ## Codex native gate: Windows, 2026-10-18
 
@@ -225,8 +304,9 @@ ownership, attachment/compaction/history mapping, existing Lex bridge behavior,
 backpressure/reconnect, Device Link, SSH and non-Windows platforms remain
 unverified. The test extension awaits local event delivery for evidence; a
 production bridge must not let a slow or absent GUI stall the native engine.
-All-four-engine exposure and RC gates remain closed because the Claude native
-interface gap above is unresolved.
+All-four-engine exposure and RC gates remain closed pending full adapter and
+remote acceptance; the subsequent Claude Mods probe is a basic feasibility
+result, not permission to skip those gates.
 
 ## Upstream reference
 
