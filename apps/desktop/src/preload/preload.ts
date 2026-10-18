@@ -5651,6 +5651,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ─── Maker Core IPC ─────────────────────────────────────────────────────
   // renderer 通过统一 maker API 按 agentKind 调用 Claude Code / Codex / Pi。
   maker: {
+    presentation: (request: import('../shared/agentPresentation').AgentPresentationRequest): Promise<unknown> =>
+      ipcRenderer.invoke('maker:presentation:v1', request),
     listAvailableAgents: (): Promise<Array<'claude-code' | 'codex' | 'pi' | 'omp'>> =>
       ipcRenderer.invoke('maker:list-available-agents'),
     onAgentsChanged: fanOutMakerAgentsChanged,

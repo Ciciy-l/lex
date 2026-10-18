@@ -1,4 +1,5 @@
 import { assertNotRetiredCompanionSession } from '../localDb/retiredCompanions.js';
+import { createAgentPresentationHandler, AGENT_PRESENTATION_CHANNEL } from './agentPresentationHandlers.js';
 import { resolveSafe as resolveCindyMediaUrl } from '../cindy-media/blobStore.js';
 import { getSessionFsSnapshot } from '../localDb/ipc/sessions.js';
 import { isModelSelectableForNewRoute } from '@cindy/model-providers';
@@ -4805,6 +4806,7 @@ export interface RegisterMakerIpcOptions {
 }
 
 let disposePiPackagesChangedBroadcast: (() => void) | null = null;
+let presentationHandler: ReturnType<typeof createAgentPresentationHandler> | undefined;
 
 /**
  * Register before the first BrowserWindow: modelVisibilityPrefs mirrors its initial snapshot as
@@ -4846,6 +4848,10 @@ export function registerModelVisibilitySyncIpc(): void {
 }
 
 export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions): void {
+  presentationHandler?.close();
+  presentationHandler = createAgentPresentationHandler((sessionId) => maker.getSession(sessionId)?.presentation);
+  ipcMain.removeHandler(AGENT_PRESENTATION_CHANNEL);
+  ipcMain.handle(AGENT_PRESENTATION_CHANNEL, presentationHandler.handle);
   // Catalog updates and explicit budget edits share one serial refresh boundary.
   let contextRefresh = Promise.resolve();
   let applyPiModelSettingsRefresh: (sessionId: string, model: string, providerId: string | null) => Promise<void> =
