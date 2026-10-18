@@ -32,13 +32,17 @@ export function fixturePrompt(messages, pluginName = 'lex-mods-probe') {
   }
 }
 
-export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', scenario = 'controls', bridgeFactory } = {}) {
+export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', scenario = 'controls', bridgeFactory, terminalFactory } = {}) {
   if (!['api-key', 'auth-token'].includes(auth)) throw new Error('Unknown fixture auth kind');
-  if (!['controls', 'identity', 'permission-gui', 'permission-tui', 'permission-deny-rule'].includes(scenario)) throw new Error('Unknown fixture scenario');
+  if (!['controls', 'identity', 'media', 'admission-deny', 'permission-gui', 'permission-tui', 'permission-deny-rule', 'permission-host-hook'].includes(scenario)) throw new Error('Unknown fixture scenario');
   const permissionScenario = scenario.startsWith('permission-');
+  const mediaScenario = scenario === 'media';
   const fixture = await mkdtemp(path.join(tmpdir(), 'lex-claude-mods-'));
   const home = path.join(fixture, 'home');
-  const cwd = path.join(fixture, 'work');
+  const cwd = path.join(fixture, mediaScenario ? 'work with spaces' : 'work');
+  const imagePath = path.join(cwd, 'fixture image.png');
+  const imageBytes = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a0D8AAAAASUVORK5CYII=';
+  const literalText = prompts[0] + String.fromCharCode(10) + '!' + String.fromCharCode(96) + 'echo LEX_LITERAL_COMMAND' + String.fromCharCode(96) + ' $ARGUMENTS @missing-literal.md';
   const config = path.join(home, '.claude');
   const plugin = path.join(fixture, 'plugin');
   const nativeSessionId = randomUUID();
@@ -73,7 +77,8 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
       }
       if (req.url?.includes('count_tokens')) { res.end(JSON.stringify({ input_tokens: 100 })); return; }
       if (!req.url?.startsWith('/v1/messages')) { res.writeHead(404); res.end(); return; }
-      const prompt = fixturePrompt(body.messages, pluginName);
+      const prompt = mediaScenario && body.messages?.at(-1)?.content?.some?.((b) => b.type === 'text' && b.text === literalText)
+        ? prompts[0] : fixturePrompt(body.messages, pluginName);
       const afterTool = (body.messages ?? []).some((m) => Array.isArray(m.content) && m.content.some((b) => b.type === 'tool_result'));
       const isMain = prompt !== undefined;
       report.requests.push({ at: now(), model: body.model, isMain, prompt,
@@ -115,6 +120,7 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
   try {
     await Promise.all([mkdir(config, { recursive: true }), mkdir(cwd, { recursive: true }),
       mkdir(path.join(plugin, '.claude-plugin'), { recursive: true }), mkdir(path.join(plugin, 'hooks'), { recursive: true })]);
+    if (mediaScenario) await writeFile(imagePath, Buffer.from(imageBytes, 'base64'));
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     const endpoint = 'http://127.0.0.1:' + server.address().port;
     const env = { ...isolatedEnvironment(process.env, home, endpoint), LEX_MODS_ENDPOINT: endpoint, LEX_MODS_TOKEN: token,
@@ -130,6 +136,10 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
     await writeFile(path.join(plugin, 'hooks/hooks.json'), JSON.stringify({ modules: ['./register.ts'] }));
     const moduleSource = bridge?.source ?? await readFile(new URL('./claude-mods-fixture.mjs', import.meta.url), 'utf8');
     await writeFile(path.join(plugin, 'hooks/register.ts'), moduleSource);
+    if (bridge?.mediaPrompt) {
+      await mkdir(path.join(plugin, 'commands'));
+      await writeFile(path.join(plugin, 'commands/send.md'), bridge.mediaPrompt);
+    }
     await mkdir(path.join(plugin, 'tests'));
     await writeFile(path.join(plugin, 'tests/register.test.ts'), await readFile(new URL('./claude-mods-native.test.ts', import.meta.url)));
     const executable = binary ?? path.join(root, 'apps/claude-code-bin', process.platform + '-' + process.arch, process.platform === 'win32' ? 'claude.exe' : 'claude');
@@ -141,15 +151,16 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
     report.validation = cli(['plugin', 'validate', plugin]);
     report.pluginTest = cli(['plugin', 'test', plugin]);
     if (report.validation.exitCode !== 0 || report.pluginTest.exitCode !== 0) throw new Error('Native plugin validation/test failed; interactive probe not started');
-    terminal = require('node-pty').spawn(executable, ['--session-id', nativeSessionId, '--model', model,
+    const spawnTerminal = terminalFactory ?? require('node-pty').spawn;
+    terminal = await spawnTerminal(executable, ['--session-id', nativeSessionId, '--model', model,
       '--settings', settings, '--setting-sources', '', '--strict-mcp-config', '--plugin-dir', plugin, '--tools', permissionScenario ? 'Write' : '', '--', '/plugin-types'],
     { cwd, env, name: 'xterm-256color', cols: 120, rows: 36, useConpty: true });
     report.pid = terminal.pid;
     terminal.onData((data) => {
       if (report.terminal.length < 200_000) report.terminal += data;
       if (report.terminalText.length < 200_000) report.terminalText += observeTerminal(terminalState, data);
-      if (data.includes('\x1b[6n')) terminal.write('\x1b[1;1R');
-      if (data.includes('\x1b[c')) terminal.write('\x1b[?1;2c');
+      if (!terminalFactory && data.includes('\x1b[6n')) terminal.write('\x1b[1;1R');
+      if (!terminalFactory && data.includes('\x1b[c')) terminal.write('\x1b[?1;2c');
     });
     terminal.onExit((e) => { report.exit = { at: now(), ...e }; });
     let trusted = false;
@@ -163,13 +174,24 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
     };
     const eventFor = (kind, predicate) => report.events.find((e) => e.kind === kind && predicate(e.value));
     const complete = (prompt) => eventFor('turn.complete', (v) => !v.agentId && v.answer === prompt + '_RESULT CONTINUED' && v.reason === 'answer');
+    const submittedTurn = (id, text) => {
+      // Media turn.start names the native command, not the expanded prompt. Its
+      // unique bridge marker binds that command row; never deduplicate user text.
+      const command = mediaScenario ? eventFor('session.append', value => value.submissionId === id && value.door === 'command') : undefined;
+      const nativeText = command?.value.result.message.content.find(block => block.type === 'text')?.text;
+      return eventFor('turn.start', value => !value.agentId && (nativeText ? value.text === nativeText : value.text.includes(text)));
+    };
     let draftedAt;
     let nativeSubmitted = false;
     while (now() < deadlineMs && !report.exit) {
       if (!trusted && report.terminalText.replace(/\s/g, '').includes('Yes,Itrustthisfolder')) {
         terminal.write('\x1b[B'); await delay(100); terminal.write('\r'); trusted = true;
       }
-      if (report.events.some((e) => e.kind === 'ready')) send({ id: 'first', kind: 'submit', text: prompts[0] });
+      if (report.events.some((e) => e.kind === 'ready')) send({ id: 'first', kind: 'submit', text: mediaScenario ? literalText : prompts[0], ...(mediaScenario ? { imagePaths: [imagePath] } : {}) });
+      if (scenario === 'admission-deny') {
+        if (eventFor('turn-rejected', () => true) && eventFor('turn.complete', () => true)) break;
+        await delay(100); continue;
+      }
       if (permissionScenario) {
         const request = eventFor('permission', () => true);
         if (request && now() - request.at >= 1000) {
@@ -189,7 +211,7 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
       }
       if (draftedAt && now() - draftedAt >= 200) {
         send({ id: 'before-queue', kind: 'snapshot' });
-        send({ id: 'queued', kind: 'submit', text: prompts[1] });
+        send({ id: 'queued', kind: 'submit', text: prompts[1], ...(mediaScenario ? { imagePaths: [imagePath] } : {}) });
       }
       if (complete(prompts[1])) send({ id: 'after-queue', kind: 'snapshot' });
       const afterQueue = eventFor('ack', (v) => v.id === 'after-queue');
@@ -220,17 +242,17 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
     }
     report.checks.modLoaded = report.events.some((e) => e.kind === 'ready');
     report.checks.sameSession = report.events.length > 0 && report.events.every((e) => e.sessionId === nativeSessionId);
-    report.checks.semanticInput = report.events.some((e) => e.kind === 'turn.start' && e.value.text.includes(prompts[0]));
+    report.checks.semanticInput = Boolean(submittedTurn('first', prompts[0]));
     report.checks.liveStructuredOutput = report.events.some((e) => e.kind === 'chunk' && e.value.chunk.kind === 'text'
       && report.streams.some((s) => s.isMain && s.prompt === prompts[0] && s.completedAt > e.at && s.firstDeltaAt <= e.at));
     const firstComplete = complete(prompts[0]);
-    const queuedStart = eventFor('turn.start', (v) => v.text.includes(prompts[1]));
+    const queuedStart = submittedTurn('queued', prompts[1]);
     const queuedAck = eventFor('ack', (v) => v.id === 'queued');
     const queuedCall = eventFor('command-start', (v) => v.id === 'queued');
     report.checks.busySubmissionRunsAfterFirstTurn = Boolean(firstComplete && queuedStart && queuedAck && queuedCall && complete(prompts[1])
       && queuedCall.at < firstComplete.at && queuedStart.sequence > firstComplete.sequence);
     report.queuedAckBeforeFirstComplete = Boolean(queuedAck && firstComplete && queuedAck.sequence < firstComplete.sequence);
-    const firstTurn = eventFor('turn.start', (v) => v.text.includes(prompts[0]));
+    const firstTurn = submittedTurn('first', prompts[0]);
     report.checks.streamingWhileInputPending = Boolean(firstTurn && queuedCall && queuedAck && report.events.some((e) =>
       e.kind === 'chunk' && e.value.turnId === firstTurn.value.turnId && e.value.chunk.text === ' CONTINUED'
       && e.at > queuedCall.at && e.at < queuedAck.at));
@@ -247,6 +269,16 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
     report.checks.nativeTuiRendered = [prompts[0], prompts[1], prompts[2], prompts[4]].every((p) => report.terminalText.includes(p + '_RESULT'));
     report.checks.completeBridgeDelivery = report.droppedEvents === 0 && !report.events.some((e) =>
       e.kind === 'bridge-error' || (e.kind === 'command-error' && e.value.id !== 'stale-abort'));
+    if (mediaScenario) {
+      report.checks.mediaBytesDelivered = [prompts[0], prompts[1]].every(prompt => report.requests.some(request => request.prompt === prompt
+        && request.messages.flatMap(message => Array.isArray(message.content) ? message.content : []).some(block =>
+          block.type === 'image' && block.source?.type === 'base64' && block.source.data === imageBytes)));
+      report.checks.literalBodyPreservedOnce = report.requests.filter(request => request.prompt === prompts[0]).length === 1
+        && report.requests.find(request => request.prompt === prompts[0])?.messages.flatMap(message =>
+          Array.isArray(message.content) ? message.content : []).filter(block => block.type === 'text' && block.text === literalText).length === 1;
+      report.checks.mediaCommandIdentity = ['first', 'queued'].every(id => report.events.filter(event =>
+        event.kind === 'session.append' && event.value.door === 'command' && event.value.submissionId === id).length === 1);
+    }
     if (permissionScenario) {
       report.fixtureWrite = await readFile(path.join(cwd, 'mods-proof.txt'), 'utf8').catch(() => null);
       const toolResults = report.requests.flatMap((r) => r.messages ?? []).flatMap((m) =>
@@ -259,13 +291,20 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
         nativeToolObserved: scenario === 'permission-deny-rule' ? disabledResult
           : Boolean(eventFor('tool.call', (v) => v.tool === 'Write' && v.tool_use_id === 'tool_mods_write')),
         completed: Boolean(complete(prompts[0])),
-        permissionObserved: scenario === 'permission-deny-rule' ? !eventFor('permission', () => true) : Boolean(eventFor('permission', () => true)),
+        permissionObserved: ['permission-deny-rule', 'permission-host-hook'].includes(scenario) ? !eventFor('permission', () => true) : Boolean(eventFor('permission', () => true)),
         fileOutcome: scenario === 'permission-tui' ? report.fixtureWrite === 'synthetic mods write' : report.fixtureWrite === null,
         ruleRespected: scenario !== 'permission-deny-rule' || (disabledResult
           && !eventFor('tool.call', () => true) && !eventFor('permission', () => true)),
         nativeResultReturned: toolResults.some((b) => scenario === 'permission-tui' ? !b.is_error : b.is_error === true),
         completeBridgeDelivery: report.checks.completeBridgeDelivery,
       };
+    }
+    if (scenario === 'admission-deny') {
+      report.checks = { modLoaded: report.checks.modLoaded, sameSession: report.checks.sameSession,
+        semanticInput: report.checks.semanticInput, refusedBeforeModel: report.requests.every(request => !request.isMain),
+        nativeRejected: Boolean(eventFor('turn-rejected', () => true)),
+        nativeAborted: Boolean(eventFor('turn.complete', value => value.reason === 'aborted')),
+        aliveBeforeCleanup: report.aliveBeforeCleanup };
     }
   } catch (e) { report.error ??= e.stack ?? String(e); }
   finally {

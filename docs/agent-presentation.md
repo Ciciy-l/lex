@@ -104,8 +104,13 @@ Harness latest-download/auto-update policy is a separate PR.
 bounded output replay and attachment-specific input lease. Detaching all views
 leaves the native driver alive; takeover fences the old writer. An uncertain
 write cannot be replayed with the same sequence. A missing output prefix is
-reported as a gap, not rendered as a complete terminal screen. Screen snapshot
-recovery and host/UI binding are still separate implementation work.
+reported as a gap, not rendered as a complete terminal screen. The task-owned
+headless terminal now supplies bounded screen snapshots, including alternate
+buffer, cursor and pending escape state, and answers device queries without a
+renderer. MainIPC/Device Link attach only to that existing runtime. The desktop
+footer and terminal view preserve the mounted GUI and release input control
+when hidden; reconnect never replays uncertain input. Production adapters must
+still supply their live presentation before the control becomes available.
 
 The packaged Claude Mod and authenticated host side channel are in
 `native-mod-source.ts` and `native-bridge.ts`. Commands retain one ID across
@@ -115,7 +120,7 @@ retirement arrives before its HTTP request. Changed payloads cannot reuse an
 answered identity. Neither a credential nor a host execution path is sent to a
 renderer. These components are not yet selected by the production agent.
 
-Run `node scripts/agent-presentation/claude-bridge-probe.mjs` for the actual
+Run `node --import tsx scripts/agent-presentation/claude-bridge-probe.mjs` for the actual
 packaged source and host transport, with the same isolated native/provider
 assertions as the earlier fixture. `--scenario=permission-gui` and
 `--scenario=permission-tui` cover single-answer decisions. Managed Windows Claude
@@ -131,6 +136,73 @@ Reading the image inside the Mod did not insert it into the model conversation.
 The native composer did send the same fixture image. Do not silently substitute
 a text-only GUI submission for an attachment, or claim this transport alone
 preserves all SDK policies, subscription refresh, parallel approvals or SSH.
+
+The subsequent packaged `--scenario=media` route expands host-staged images
+through the owned native slash command and correlates its command/meta rows by
+submission identity. It substitutes the original prompt only in that owned meta
+row after attachment expansion. The actual host PTY probe
+`node --import tsx scripts/agent-presentation/claude-terminal-probe.mjs` passed
+20 checks, including image bytes reaching the fake provider, literal prompt
+preservation and screen recovery. Evidence: external
+`ci-logs/claude-permission-lifecycle/production-terminal2.json`. This fixes that
+specific media transport gap; it is not product attachment acceptance.
+
+`native-runtime.ts` now owns the plugin, authenticated side channel and original
+PTY as one lifetime. It exposes presentation during startup, requires a native
+ready identity, and confirms process exit before removing the temporary plugin.
+`native-hooks.ts` reuses the existing PreToolUse/PostToolUse/failure/denial/exit
+callbacks instead of replacing their image, command or subagent policies. Native
+and host refusals are retained and cancellation retires outstanding callbacks.
+Configured host hooks must be acknowledged in the ready handshake. The actual
+`--scenario=permission-host-hook` passed 10 checks on managed Claude 2.1.296,
+including native tool/session identity and a denied fixture write, with confirmed
+exit and profile cleanup. Evidence: external
+`ci-logs/claude-permission-lifecycle/production-host-hooks4.json`. Full adapter
+selection, native-input admission/history, subscription refresh, live settings
+and parallel GUI/TUI approval acceptance remain required integration work.
+
+`native-messages.ts` now binds host input IDs before native dispatch, freezes the
+original content, and supplies the actual accepted native row plus its display
+association through the runtime's `onUserMessage` callback. Foreign plugin rows,
+native composer rows and late uncertain submissions are distinguished by
+identity. Metadata/tool-result rows do not create additional user messages.
+`node --import tsx scripts/agent-presentation/claude-runtime-probe.mjs` exercises
+this exact production runtime and host PTY, not a separately constructed bridge.
+Its 22 checks passed, including four distinct input receipts, managed image
+identity in the projection, native composer history, abort and one process
+lifetime. Evidence: external
+`ci-logs/claude-permission-lifecycle/production-runtime2.json`. The first attempt
+was rejected before launch because the fixture included an initial diagnostic
+command; the corrected fixture removes that command instead of relaxing runtime
+identity checks.
+
+The runtime now associates accepted native row UUIDs with `turn.start` and holds
+the first root `turn.step` behind a host admission callback. The separate request
+connection waits for ordered events, rather than matching prompt text. This gate
+uses the documented streaming-hook boundary: `session.append` cannot refuse an
+ordinary user row, and `turn.start` is observational. Missing/refused admission
+aborts the same turn without invoking the underlying model step. It does not
+erase the row already accepted into the native transcript. Subagent steps retain
+their native lifecycle and existing host tool policies.
+
+`Session.acceptNativeInput` reuses the normal reservation, provider preflight,
+turn observer, history callback, cancellation, vision and review preparation. Its
+host-only continuation accepts the held native input and never calls `handle.send`
+again. A foreign session, reused capability, Stop or uncertain receipt follows
+the same existing rejection/shutdown boundaries as GUI sends.
+
+The updated runtime probe passes 24 checks with the real CLI and production
+Session: five model turns traverse five distinct reservations and terminal
+callbacks, including original TUI input. `--deny-admission` passes 13 checks with
+zero provider requests, native aborted finality and the process still alive
+before explicit cleanup. Evidence: external
+`ci-logs/claude-permission-lifecycle/production-session1.json` and
+`production-session-denied1.json`; both confirm native exit and profile cleanup.
+The host handle, history callback and credentials are isolated fixtures: these
+are not Desktop database/MainIPC/UI acceptance. Production adapter selection,
+durable history/media ingestion, queued/continuation admission and live settings
+remain to be connected. The callback must not acknowledge vision rewrites it has
+not actually installed in the native input.
 
 The opt-in probe is `node scripts/agent-presentation/claude-native-probe.mjs`.
 Additional scenarios are `--scenario=permission`, `--scenario=abort`, and
