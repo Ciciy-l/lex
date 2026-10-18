@@ -128,12 +128,52 @@ presentation gate**: live structured output and reliable editor-aware semantic
 input are still missing. This is a finding about the tested integration, not a
 claim that every possible future Claude integration is impossible. Do not ship
 final-message-only GUI synchronization as equivalent to existing streaming GUI.
-The three other engine routes remain candidates, not newly verified integrations.
+Other engine findings are recorded independently below; one successful engine
+does not establish the missing Claude interfaces.
 
 Raw fixture-only evidence is under the workspace's sibling `ci-logs/` directory
 as `claude-native-presentation-*-final.json`; it is not shipped with the product.
 Earlier setup attempts are retained separately and are not counted as passing
 native capability tests. Product adapters/UI and RC publication remain gated.
+
+## Codex native gate: Windows, 2026-10-18
+
+Run `node scripts/agent-presentation/codex-native-probe.mjs` explicitly. The
+managed `0.162.1` binary owns one app-server and conversation. A JSON client and
+the real `codex resume <id> --remote ...` terminal connect concurrently over
+authenticated loopback WebSockets. Only synthetic prompts and a loopback fake
+Responses provider are used, with isolated homes. The transparent observation
+proxy forwards original TUI protocol frames; it does not emulate the TUI.
+
+The final experiment proved:
+
+- Both clients receive live structured deltas before the first provider response
+  completes; the original terminal also renders the response.
+- An input submitted through the original terminal editor enters the same native
+  thread and is observed by the JSON client. A subsequent JSON input enters that
+  thread too. The thread contains exactly three completed main turns.
+- Disconnecting the TUI during the third response, and refusing its reconnect,
+  leaves the original app-server alive and the original turn completes in GUI.
+- The TUI calls `thread/resume` to subscribe to the already loaded thread. In this
+  experiment it does not restart the agent, replace the process, fork history or
+  replay the running turn. The native protocol method name is not evidence of a
+  stop/resume handoff.
+- Native title generation creates an ephemeral auxiliary thread. The probe
+  separately classifies that request; it does not count it as a main turn.
+
+The first setup attempt used incompatible `--no-daemon` with `--remote`; the CLI
+rejected it before connecting. The corrected final run has seven positive
+checks, confirmed native exits and temporary-profile cleanup. A native warning
+about helper aliases in temporary directories remains; no shell/tool execution
+is claimed. Raw evidence: `ci-logs/codex-native-presentation-final.json` outside
+the repository. Pure isolation/classification checks are in the adjacent test.
+
+This establishes a viable continuous dual-frontend route, **not a complete Lex
+adapter**. Approval races, unified input queue, control leases, configuration
+ownership, tools, attachments, compaction, SSH, Device Link and other OSes remain
+unverified. The official [app-server documentation](https://learn.chatgpt.com/docs/app-server)
+labels WebSocket transport experimental and unsupported; native version and
+protocol compatibility must therefore remain explicit product gates.
 
 ## Upstream reference
 
