@@ -11,6 +11,16 @@ test('same-model title requests are not main turns; only the latest native input
       { type: 'text', text: 'The lex-mods-probe plugin sent a message:\nLEX_MODS_QUEUED\n\nPlugin provenance.' }] }]), 'LEX_MODS_QUEUED');
 });
 
+test('tool results continue the preceding fixture turn without classifying unrelated later input as that turn', () => {
+  const history = [{ role: 'user', content: 'LEX_MODS_FIRST' },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'one', name: 'Write', input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'one', is_error: true, content: 'denied' }] }];
+  assert.equal(fixturePrompt(history), 'LEX_MODS_FIRST');
+  assert.equal(fixturePrompt([...history, { role: 'user', content: 'unrelated next input' }]), undefined);
+  assert.equal(fixturePrompt([...history, { role: 'user', content: [
+    { type: 'tool_result', tool_use_id: 'two', content: 'value' }, { type: 'text', text: 'unrelated input' }] }]), undefined);
+});
+
 function fixture() {
   const hooks = new Map();
   const batches = [];
@@ -107,4 +117,34 @@ test('closing the observing generator closes its one downstream stream', async (
   const mirror = f.hooks.get('turn.step')(f.$, { turnId: 'current', index: 0 }, () => stream);
   await mirror.next(); await mirror.return();
   assert.equal(closed, true);
+});
+
+test('serialized submissions bind distinct native UUIDs even for repeated text and interleaved external plugin messages', async () => {
+  const f = fixture(); await f.start();
+  const waiters = [];
+  f.$.prompt.submit = ({ text }) => new Promise((resolve) => { f.inputs.push({ text }); waiters.push(resolve); });
+  f.commands.push({ id: 'first', kind: 'submit', text: 'same' }, { id: 'second', kind: 'submit', text: 'same' });
+  await f.tick();
+  const append = async (uuid, origin, extra = {}) => {
+    const input = { uuid, door: 'prompt', origin, message: { type: 'user', content: [{ type: 'text', text: 'same' }] }, ...extra };
+    const stored = { uuid, message: input.message };
+    assert.equal(await f.hooks.get('session.append')(f.$, input, async (e) => {
+      assert.equal(e, input); return stored;
+    }), stored);
+  };
+  assert.equal(f.inputs.length, 1);
+  await append('external', { kind: 'plugin', name: 'lex-mods-probe-other' });
+  await append('child', { kind: 'plugin', name: 'lex-mods-probe' }, { agentId: 'child' });
+  await append('one', { kind: 'plugin', name: 'lex-mods-probe' });
+  await append('extra', { kind: 'plugin', name: 'lex-mods-probe' });
+  waiters.shift()({ text: 'same' });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(f.inputs.length, 2);
+  await append('two', { kind: 'plugin', name: 'lex-mods-probe' });
+  waiters.shift()({ text: 'same' });
+  await new Promise((resolve) => setImmediate(resolve));
+  await f.tick();
+  const rows = f.batches.flatMap((b) => b.events).filter((e) => e.kind === 'session.append');
+  assert.deepEqual(rows.filter((e) => e.value.submissionId).map((e) => [e.value.uuid, e.value.submissionId]),
+    [['one', 'first'], ['two', 'second']]);
 });

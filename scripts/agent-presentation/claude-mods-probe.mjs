@@ -10,6 +10,7 @@ import { execFileSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { isolatedEnvironment } from './claude-native-probe.mjs';
 import { observeTerminal } from './terminal-observation.mjs';
+import { projectClaudeNativeMessage } from '../../packages/maker-core/src/agents/claude-code/native-message-projection.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const require = createRequire(import.meta.url);
@@ -17,17 +18,24 @@ const model = 'claude-sonnet-4-6';
 const prompts = ['LEX_MODS_FIRST', 'LEX_MODS_QUEUED', 'LEX_MODS_NATIVE', 'LEX_MODS_ABORT', 'LEX_MODS_AFTER'];
 
 export function fixturePrompt(messages) {
-  // Title generation may use the main model too. Only a synthetic input block
-  // in the latest user message identifies one of this probe's five main turns.
-  const user = messages?.findLast((m) => m.role === 'user');
-  const blocks = typeof user?.content === 'string' ? [user.content]
-    : (user?.content ?? []).filter((b) => b.type === 'text').map((b) => b.text);
-  return prompts.find((p) => blocks.some((text) => text === p
-    || text.startsWith('The lex-mods-probe plugin sent a message:\n' + p + '\n\n')));
+  // Tool continuations have a newer user-role result, but no new human prompt.
+  // Do not search past a different user input (including a title request).
+  for (const user of [...(messages ?? [])].reverse()) {
+    if (user.role !== 'user') continue;
+    const content = typeof user.content === 'string' ? [{ type: 'text', text: user.content }] : user.content ?? [];
+    const blocks = content.filter((b) => b.type === 'text').map((b) => b.text);
+    const prompt = prompts.find((p) => blocks.some((text) => text === p
+      || text.startsWith('The lex-mods-probe plugin sent a message:\n' + p + '\n\n')));
+    if (prompt) return prompt;
+    if (!content.some((b) => b.type === 'tool_result')
+      || !content.every((b) => b.type === 'tool_result' || (b.type === 'text' && b.text.startsWith('<system-reminder>')))) return;
+  }
 }
 
-export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key' } = {}) {
+export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', scenario = 'controls' } = {}) {
   if (!['api-key', 'auth-token'].includes(auth)) throw new Error('Unknown fixture auth kind');
+  if (!['controls', 'identity', 'permission-gui', 'permission-tui', 'permission-deny-rule'].includes(scenario)) throw new Error('Unknown fixture scenario');
+  const permissionScenario = scenario.startsWith('permission-');
   const fixture = await mkdtemp(path.join(tmpdir(), 'lex-claude-mods-'));
   const home = path.join(fixture, 'home');
   const cwd = path.join(fixture, 'work');
@@ -37,7 +45,7 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key' } = 
   const token = randomUUID();
   const start = Date.now();
   const now = () => Date.now() - start;
-  const report = { auth, nativeSessionId, events: [], requests: [], streams: [], commands: [],
+  const report = { auth, scenario, nativeSessionId, events: [], requests: [], streams: [], commands: [],
     terminal: '', terminalText: '', exit: null, checks: {}, error: null };
   const commands = [];
   const pending = new Set();
@@ -62,6 +70,7 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key' } = 
       if (req.url?.includes('count_tokens')) { res.end(JSON.stringify({ input_tokens: 100 })); return; }
       if (!req.url?.startsWith('/v1/messages')) { res.writeHead(404); res.end(); return; }
       const prompt = fixturePrompt(body.messages);
+      const afterTool = (body.messages ?? []).some((m) => Array.isArray(m.content) && m.content.some((b) => b.type === 'tool_result'));
       const isMain = prompt !== undefined;
       report.requests.push({ at: now(), model: body.model, isMain, prompt,
         messages: body.messages });
@@ -77,11 +86,15 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key' } = 
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       const send = (event) => res.write('event: ' + event.type + '\ndata: ' + JSON.stringify(event) + '\n\n');
       send({ type: 'message_start', message: { ...message, content: [], stop_reason: null } });
-      send({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
+      const useTool = permissionScenario && isMain && !afterTool;
+      send({ type: 'content_block_start', index: 0, content_block: useTool
+        ? { type: 'tool_use', id: 'tool_mods_write', name: 'Write', input: {} } : { type: 'text', text: '' } });
       stream.firstDeltaAt = now();
-      send({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: marker } });
+      send({ type: 'content_block_delta', index: 0, delta: useTool
+        ? { type: 'input_json_delta', partial_json: JSON.stringify({ file_path: path.join(cwd, 'mods-proof.txt'), content: 'synthetic mods write' }) }
+        : { type: 'text_delta', text: marker } });
       if (isMain && prompt === 'LEX_MODS_ABORT') return;
-      if (isMain) {
+      if (isMain && !useTool) {
         await delay(1500);
         if (res.destroyed) return;
         send({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: ' CONTINUED' } });
@@ -89,7 +102,7 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key' } = 
       }
       if (res.destroyed) return;
       send({ type: 'content_block_stop', index: 0 });
-      send({ type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 5 } });
+      send({ type: 'message_delta', delta: { stop_reason: useTool ? 'tool_use' : 'end_turn', stop_sequence: null }, usage: { output_tokens: 5 } });
       stream.completedAt = now();
       send({ type: 'message_stop' }); res.end();
     })().catch((error) => { report.error ??= String(error); res.destroy(); });
@@ -106,10 +119,12 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key' } = 
       customApiKeyResponses: { approved: ['sk-ant-api03-lex-native-probe-not-a-real-key'.slice(-20)], rejected: [] },
       projects: { [cwd.split(path.sep).join('/')]: { hasTrustDialogAccepted: true } } }));
     const settings = path.join(config, 'settings.json');
-    await writeFile(settings, JSON.stringify({ permissions: { defaultMode: 'default' } }));
+    await writeFile(settings, JSON.stringify({ permissions: { defaultMode: 'default',
+      ...(scenario === 'permission-deny-rule' ? { deny: ['Write'] } : {}) } }));
     await writeFile(path.join(plugin, '.claude-plugin/plugin.json'), JSON.stringify({ name: 'lex-mods-probe', version: '0.0.1', description: 'Synthetic presentation feasibility fixture', author: { name: 'Lex contributors' } }));
     await writeFile(path.join(plugin, 'hooks/hooks.json'), JSON.stringify({ modules: ['./register.ts'] }));
-    await writeFile(path.join(plugin, 'hooks/register.ts'), await readFile(new URL('./claude-mods-fixture.mjs', import.meta.url)));
+    const moduleSource = await readFile(new URL('./claude-mods-fixture.mjs', import.meta.url), 'utf8');
+    await writeFile(path.join(plugin, 'hooks/register.ts'), moduleSource);
     await mkdir(path.join(plugin, 'tests'));
     await writeFile(path.join(plugin, 'tests/register.test.ts'), await readFile(new URL('./claude-mods-native.test.ts', import.meta.url)));
     const executable = binary ?? path.join(root, 'apps/claude-code-bin', process.platform + '-' + process.arch, process.platform === 'win32' ? 'claude.exe' : 'claude');
@@ -122,7 +137,7 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key' } = 
     report.pluginTest = cli(['plugin', 'test', plugin]);
     if (report.validation.exitCode !== 0 || report.pluginTest.exitCode !== 0) throw new Error('Native plugin validation/test failed; interactive probe not started');
     terminal = require('node-pty').spawn(executable, ['--session-id', nativeSessionId, '--model', model,
-      '--settings', settings, '--setting-sources', '', '--strict-mcp-config', '--plugin-dir', plugin, '--tools', '', '--', '/plugin-types'],
+      '--settings', settings, '--setting-sources', '', '--strict-mcp-config', '--plugin-dir', plugin, '--tools', permissionScenario ? 'Write' : '', '--', '/plugin-types'],
     { cwd, env, name: 'xterm-256color', cols: 120, rows: 36, useConpty: true });
     report.pid = terminal.pid;
     terminal.onData((data) => {
@@ -149,6 +164,18 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key' } = 
         terminal.write('\x1b[B'); await delay(100); terminal.write('\r'); trusted = true;
       }
       if (report.events.some((e) => e.kind === 'ready')) send({ id: 'first', kind: 'submit', text: prompts[0] });
+      if (permissionScenario) {
+        const request = eventFor('permission', () => true);
+        if (request && now() - request.at >= 1000) {
+          if (scenario === 'permission-gui') send({ id: 'gui-permission', kind: 'permission', requestId: request.value.requestId, allow: false });
+          if (scenario === 'permission-tui' && !nativeSubmitted && report.terminalText.includes('Yes')) {
+            terminal.write('\r'); nativeSubmitted = true; report.nativePermissionAt = now();
+          }
+        }
+        if (eventFor('turn.complete', (v) => !v.agentId)) break;
+        await delay(100);
+        continue;
+      }
       if (!draftedAt && eventFor('chunk', (v) => v.chunk.kind === 'text' && v.chunk.text === prompts[0] + '_RESULT')) {
         terminal.write('\x1b[200~' + prompts[2] + '\x1b[201~');
         draftedAt = now();
@@ -214,6 +241,26 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key' } = 
     report.checks.nativeTuiRendered = [prompts[0], prompts[1], prompts[2], prompts[4]].every((p) => report.terminalText.includes(p + '_RESULT'));
     report.checks.completeBridgeDelivery = report.droppedEvents === 0 && !report.events.some((e) =>
       e.kind === 'bridge-error' || (e.kind === 'command-error' && e.value.id !== 'stale-abort'));
+    if (permissionScenario) {
+      report.fixtureWrite = await readFile(path.join(cwd, 'mods-proof.txt'), 'utf8').catch(() => null);
+      const toolResults = report.requests.flatMap((r) => r.messages ?? []).flatMap((m) =>
+        Array.isArray(m.content) ? m.content.filter((b) => b.type === 'tool_result' && b.tool_use_id === 'tool_mods_write') : []);
+      const disabledResult = toolResults.some((b) => b.is_error === true
+        && typeof b.content === 'string' && b.content.includes('Write is disabled for this session'));
+      report.checks = {
+        modLoaded: report.checks.modLoaded,
+        sameSession: report.checks.sameSession,
+        nativeToolObserved: scenario === 'permission-deny-rule' ? disabledResult
+          : Boolean(eventFor('tool.call', (v) => v.tool === 'Write' && v.tool_use_id === 'tool_mods_write')),
+        completed: Boolean(complete(prompts[0])),
+        permissionObserved: scenario === 'permission-deny-rule' ? !eventFor('permission', () => true) : Boolean(eventFor('permission', () => true)),
+        fileOutcome: scenario === 'permission-tui' ? report.fixtureWrite === 'synthetic mods write' : report.fixtureWrite === null,
+        ruleRespected: scenario !== 'permission-deny-rule' || (disabledResult
+          && !eventFor('tool.call', () => true) && !eventFor('permission', () => true)),
+        nativeResultReturned: toolResults.some((b) => scenario === 'permission-tui' ? !b.is_error : b.is_error === true),
+        completeBridgeDelivery: report.checks.completeBridgeDelivery,
+      };
+    }
   } catch (e) { report.error ??= e.stack ?? String(e); }
   finally {
     if (terminal && !report.exit) {
@@ -224,6 +271,52 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key' } = 
     }
     server.closeAllConnections(); await new Promise((resolve) => server.close(resolve));
     await Promise.allSettled([...pending]);
+    // Read only this run's isolated transcript, after native shutdown flushed it.
+    try {
+      if (terminal && report.exit) {
+        const projects = path.join(config, 'projects');
+        report.transcriptRows = [];
+        for (const name of await readdir(projects, { recursive: true }).catch(() => [])) {
+          if (path.basename(name) !== nativeSessionId + '.jsonl') continue;
+          const rows = (await readFile(path.join(projects, name), 'utf8')).split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
+          report.transcriptRows.push(...rows);
+        }
+        if (scenario === 'identity') {
+          const rows = report.events.filter((e) => e.kind === 'session.append'
+            && ['user', 'assistant'].includes(e.value.result.message?.type));
+          report.checks.nativeMessageIds = ['user', 'assistant'].every((type) => rows.some((e) => e.value.result.message.type === type))
+            && rows.every((e) => e.value.uuid === e.value.result.uuid && report.transcriptRows.some((row) =>
+              row.uuid === e.value.uuid && row.type === e.value.result.message.type
+              && JSON.stringify(typeof row.message?.content === 'string'
+                ? [{ type: 'text', text: row.message.content }] : row.message?.content)
+                === JSON.stringify(e.value.result.message.content)));
+          const submits = report.commands.filter((c) => c.kind === 'submit');
+          report.checks.submissionIdentity = submits.length === 4 && submits.every((command) => {
+            const matches = rows.filter((e) => e.value.submissionId === command.id);
+            return matches.length === 1 && matches[0].value.origin.kind === 'plugin'
+              && matches[0].value.origin.name === 'lex-mods-probe';
+          });
+          report.checks.nativeInputHasNoBridgeSubmission = rows.some((e) => e.value.door === 'prompt'
+            && e.value.origin.kind === 'composer' && !e.value.submissionId);
+          report.guiMessages = rows.map((event) => {
+            const row = { sessionId: event.sessionId, ...event.value, message: event.value.result.message };
+            const command = submits.find((c) => c.id === event.value.submissionId);
+            const binding = command ? { sessionId: event.sessionId, nativeMessageId: row.uuid,
+              submissionId: command.id, pluginName: 'lex-mods-probe',
+              originalContent: [{ type: 'text', text: command.text }] } : undefined;
+            return { uuid: row.uuid, submissionId: command?.id,
+              projection: projectClaudeNativeMessage(row, 'lex-mods-probe', binding) };
+          });
+          report.checks.builtInGuiProjection = submits.every((command) => {
+            const display = report.guiMessages.find((m) => m.submissionId === command.id)?.projection;
+            return display && !display.pluginSource
+              && JSON.stringify(display.content) === JSON.stringify([{ type: 'text', text: command.text }]);
+          });
+        }
+      }
+    } catch (error) {
+      report.error ??= 'Isolated transcript audit failed: ' + String(error);
+    }
     // Only this mkdtemp-owned path; never remove a live profile or a caller path.
     const relative = path.relative(tmpdir(), fixture);
     if ((!terminal || report.exit) && !relative.startsWith('..') && !path.isAbsolute(relative) && relative.startsWith('lex-claude-mods-')) {
@@ -236,7 +329,8 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key' } = 
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const auth = process.argv.find((a) => a.startsWith('--auth='))?.split('=')[1] ?? 'api-key';
-  const report = await probe({ auth });
+  const scenario = process.argv.find((a) => a.startsWith('--scenario='))?.split('=')[1] ?? 'controls';
+  const report = await probe({ auth, scenario });
   const passed = Object.keys(report.checks).length > 0 && Object.values(report.checks).every(Boolean)
     && report.cleanup?.nativeExited && report.cleanup?.profileRemoved && !report.error;
   process.stdout.write(JSON.stringify(report, null, 2) + '\n', () => process.exit(passed ? 0 : 1));

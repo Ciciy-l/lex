@@ -17,6 +17,15 @@ uses the upstream interactive UI and a terminal transport. ANSI output is not
 the source of truth for messages, approvals, completion, or accounting. Native
 session/turn/message identities reconcile both inputs without text-based dedup.
 
+GUI messages submitted through Lex's built-in Claude bridge show the user's
+original input, without the internal plugin badge or Claude's plugin envelope.
+Keep the native UUID, structured origin and unmodified native message internally.
+This exception requires a trusted bridge submission bound to that native row;
+matching a plugin-looking string or name prefix is insufficient. Other installed
+Claude plugins keep their source labels and content, including after reload or
+remote synchronization. This is a display projection, not a change to Claude's
+model input, native transcript or original TUI.
+
 Engine integration belongs in maker-core. Main owns executable resolution,
 credentials, PTYs, device authorization and durable resources. Renderer receives
 task-bound handles, never executable paths, arbitrary environment or credentials.
@@ -190,7 +199,9 @@ Important implementation findings:
   on early exit. Native and Node tests cover the pass-through behavior.
 - A plugin submission is explicitly plugin-origin. Claude adds a visible/model
   message envelope identifying the plugin. This is not indistinguishable from
-  a composer user message; the adapter must retain that provenance.
+  a composer user message; the adapter must retain that provenance internally.
+  The GUI hides only Lex's own bridge label/envelope as specified above; it does
+  not hide sources from other plugins or rewrite the native transcript.
 - A busy prompt.submit promise settles only after the preceding turn completes
   in these runs. Command dispatch, native acknowledgment and turn completion are
   separate facts. Awaiting that promise in the event pump caused delayed event
@@ -210,10 +221,50 @@ native processes exited and their temporary profiles were removed.
 
 This closes the earlier basic streaming/semantic-input feasibility gap for the
 tested Windows/BYOK configurations. It does not finish the four product adapters
-or permit RC publication. Permission races, durable message UUID mapping,
-session.append support, attachment bytes, compaction, other mods, backpressure
+or permit RC publication. Permission races, durable host message association,
+attachment bytes, compaction, other mods, backpressure
 recovery, actual subscription accounts, SSH, Device Link and non-Windows hosts
 still require their own acceptance. No production UI or user install changed.
+
+### Native message identity and GUI source display
+
+The follow-up `--scenario=identity` passes 18 checks on the same managed 2.1.296
+binary, including the earlier continuous controls. Its `session.append` hook
+observes user and assistant UUIDs; every observed user/assistant row matches
+the isolated JSONL transcript by UUID, role and content after native shutdown.
+Native JSONL stores plain user text as a string whereas the hook exposes a text
+block array; the comparison normalizes only that representation. Version 296's
+repository declarations omitted this hook, but the actual binary supports it.
+
+Serialized bridge submissions associate four command IDs with four native user
+UUIDs; the TUI-origin row remains unbound. Identical input is not deduplicated by
+text. The display projection in
+`packages/maker-core/src/agents/claude-code/native-message-projection.ts` restores
+the host's original input only for a matching session/UUID and trusted built-in
+submission. Six focused cases retain external plugin labels, unmatched rows,
+attachments and literal plugin-looking input, and preserve the raw native row.
+The real probe exercises the same projection. Persisting these associations and
+wiring them to product history/GUI remains adapter work; this helper alone does
+not enable the product UI. Evidence: `ci-logs/claude-mods-identity3.json`.
+
+### Native permission observations
+
+`--scenario=permission-gui`, `permission-tui` and `permission-deny-rule` each
+pass nine focused checks with a synthetic Write confined to the owned fixture.
+GUI semantic denial prevents the write; answering the original terminal dialog
+allows exactly the expected file; an explicit native deny rule removes Write
+before `tool.call`/`tool.check` and returns an error tool_result with its native
+tool_use_id. The absence of those hook events in the last case is not a bypass.
+The fake provider now recognizes tool-result continuations as the same main
+turn instead of misclassifying them as title requests. Native policy/results
+are forwarded unchanged. Evidence: `ci-logs/claude-mods-permission-{gui,tui,rule}2.json`.
+
+These are separate single-answer cases, not permission-race acceptance. The
+native dialog can remain visible while the module awaits an answer; a terminal
+answer did not abort the pending PermissionRequest hook in the observed run.
+The classic hook also lacks tool_use_id. Reliable retirement, parallel-call
+identity and late/duplicate GUI answers still require a production solution.
+No global allow override or modified permission policy was introduced.
 
 ## Codex native gate: Windows, 2026-10-18
 
