@@ -338,6 +338,18 @@ export interface SessionSendOptions extends SendOptions {
   onDispatching?: () => void;
 }
 
+/**
+ * An input held by the task's native adapter before provider execution. This is
+ * a host capability, never an IPC payload. accept continues that same input; it
+ * must not enqueue another prompt. The transformed message includes the normal
+ * vision bridge, and the adapter must preserve those bytes before acknowledging.
+ */
+export interface SessionNativeInput {
+  readonly nativeSessionId: string;
+  readonly message: UserMessage;
+  accept(message: UserMessage, opts: SendOptions): Promise<void>;
+}
+
 export interface SessionTurnLifecycleObserver {
   /** Awaited after option validation and before any provider-owned start hook or send. */
   beforeProviderStart(turnGeneration: number): void | Promise<void>;
@@ -564,6 +576,7 @@ export class Session {
   /** 优雅停止所需的 turn 控制事实；不承担 UI/MCP 会话状态投影。 */
   private turnControlState: TurnControlState | null = null;
   private readonly asyncUserQuestions: AsyncUserQuestions;
+  private readonly nativeInputs = new WeakSet<SessionNativeInput>();
 
   constructor(opts: SessionOptions) {
     this.hostStartupPreferences = opts.hostStartupPreferences
@@ -754,6 +767,41 @@ export class Session {
     return this.dispatchSend(message, opts, false);
   }
 
+  /** Admit a held native input through the same reservation/policy/history path. */
+  async acceptNativeInput(input: SessionNativeInput, opts?: SessionSendOptions): Promise<SessionSendResult> {
+    const nativeSessionId = input.nativeSessionId;
+    const assertIdentity = () => {
+      if (!nativeSessionId || nativeSessionId !== this.sdkSessionId) {
+        throw new TurnDispatchRejectedError('Native input belongs to a different session');
+      }
+    };
+    assertIdentity();
+    if (this.nativeInputs.has(input)) throw new TurnDispatchRejectedError('Native input was already admitted');
+    this.nativeInputs.add(input);
+    const accept = input.accept.bind(input);
+    return this.dispatchSend(input.message, {
+      ...opts,
+      afterTurnReserved: async () => {
+        assertIdentity();
+        await opts?.afterTurnReserved?.();
+        assertIdentity();
+      },
+      beforeProviderStart: async () => {
+        assertIdentity();
+        await opts?.beforeProviderStart?.();
+        assertIdentity();
+      },
+      onAccepted: async () => {
+        assertIdentity();
+        await opts?.onAccepted?.();
+        assertIdentity();
+      },
+    }, false, async (message, sendOptions) => {
+      assertIdentity();
+      await accept(message, sendOptions);
+    });
+  }
+
   /**
    * Host-owned silent-stop continuation. This is the only send admitted while a
    * retiring runtime has claimed the current generation; ordinary `send()` stays
@@ -770,6 +818,7 @@ export class Session {
     message: UserMessage | string,
     opts: SessionSendOptions | undefined,
     allowRetirementContinuation: boolean,
+    nativeDispatch?: (message: UserMessage, opts: SendOptions) => Promise<void>,
   ): Promise<SessionSendResult> {
     const {
       afterTurnReserved,
@@ -963,11 +1012,13 @@ export class Session {
         onDispatching?.();
         this.insideProviderSendSync = true;
         try {
-          await this.handle.send(msg, {
+          const sendOptions: SendOptions = {
             ...handleOpts,
             [AUTO_REVIEW_SOURCE_CONTENT]: autoReviewSourceContent,
             signal: reservation.abortController.signal,
-          });
+          };
+          if (nativeDispatch) await nativeDispatch(msg, sendOptions);
+          else await this.handle.send(msg, sendOptions);
         } finally {
           this.insideProviderSendSync = false;
         }

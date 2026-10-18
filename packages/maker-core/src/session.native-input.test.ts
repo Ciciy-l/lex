@@ -1,0 +1,128 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Session, type SessionNativeInput, type SessionOptions } from './session.js';
+import { AUTO_REVIEW_SOURCE_CONTENT, TurnDispatchRejectedError, TurnDispatchUnconfirmedError, type AgentSessionHandle } from './agents/base-agent.js';
+import type { AgentEvent } from './types/events.js';
+
+const sessions: Session[] = [];
+afterEach(async () => { await Promise.all(sessions.splice(0).map(session => session.close())); });
+const deferred = () => {
+  let resolve!: () => void;
+  const promise = new Promise<void>(r => { resolve = r; });
+  return { promise, resolve };
+};
+function fixture(options: Partial<SessionOptions> = {}) {
+  const ended = deferred();
+  let running = false;
+  const logger = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {}, child() { return logger; } };
+  const handle = {
+    id: 'native-session', agentKind: 'claude-code', model: 'fixture-model',
+    send: vi.fn(async () => { running = true; }), steer: vi.fn(),
+    abort: vi.fn(async () => { running = false; }),
+    close: vi.fn(async () => { running = false; ended.resolve(); }),
+    async *events(): AsyncGenerator<AgentEvent> { await ended.promise; },
+    isTurnRunning: () => running, setInteractionResolver: vi.fn(), validateSendOptions: vi.fn(),
+    getUsageSnapshot: () => ({ tokenUsage: 0, contextTokens: 0, contextWindow: 0, costUsd: 0 }),
+  } as unknown as AgentSessionHandle;
+  const session = new Session({ id: 'task', agentKind: 'claude-code', workDir: '/owned/work', handle,
+    capabilities: {} as never, logger, turnStallMs: 0, ...options });
+  sessions.push(session);
+  const accept = vi.fn<SessionNativeInput['accept']>(async () => { running = true; });
+  const input: SessionNativeInput = { nativeSessionId: 'native-session', message: { type: 'user', content: 'native input' }, accept };
+  return { session, handle, input, accept };
+}
+
+describe('native input through the product Session', () => {
+  it('runs the existing policy/history lifecycle and accepts the original input without sending another prompt', async () => {
+    const f = fixture(), order: string[] = [];
+    f.session.setTurnLifecycleObserver({ beforeProviderStart: generation => { order.push('lifecycle:' + generation); },
+      onUndispatched: vi.fn(), onTerminal: vi.fn() });
+    f.accept.mockImplementation(async () => { order.push('native'); });
+    const result = await f.session.acceptNativeInput(f.input, {
+      afterTurnReserved: () => { order.push('reserved'); },
+      beforeProviderStart: () => { order.push('policy'); },
+      onAccepted: () => { order.push('history'); },
+      onDispatching: () => { order.push('dispatching'); },
+    });
+    expect(result).toEqual({ accepted: true });
+    expect(order).toEqual(['reserved', 'lifecycle:1', 'policy', 'history', 'dispatching', 'native']);
+    expect(f.handle.validateSendOptions).toHaveBeenCalledOnce();
+    expect(f.handle.send).not.toHaveBeenCalled();
+    expect(f.session.getTurnControlSnapshot()).toMatchObject({ active: true, turnGeneration: 1 });
+  });
+
+  it('does not admit GUI input during native preparation or native input during GUI preparation', async () => {
+    for (const nativeFirst of [true, false]) {
+      const f = fixture(), entered = deferred(), release = deferred();
+      const opts = { beforeProviderStart: async () => { entered.resolve(); await release.promise; } };
+      const first = nativeFirst ? f.session.acceptNativeInput(f.input, opts) : f.session.send('gui', opts);
+      await entered.promise;
+      await expect(nativeFirst ? f.session.send('gui') : f.session.acceptNativeInput(f.input)).rejects.toThrow('running');
+      expect(f.accept).not.toHaveBeenCalled(); expect(f.handle.send).not.toHaveBeenCalled();
+      release.resolve(); expect(await first).toEqual({ accepted: true });
+      expect(nativeFirst ? f.accept : f.handle.send).toHaveBeenCalledOnce();
+    }
+  });
+
+  it('cancels a held input on Stop before history and provider acceptance', async () => {
+    const f = fixture(), entered = deferred(), release = deferred(), history = vi.fn(), cleanup = vi.fn();
+    f.session.setTurnLifecycleObserver({ beforeProviderStart: async () => { entered.resolve(); await release.promise; },
+      onUndispatched: cleanup, onTerminal: vi.fn() });
+    const pending = f.session.acceptNativeInput(f.input, { onAccepted: history });
+    await entered.promise; await f.session.abort(); release.resolve();
+    expect(await pending).toEqual({ accepted: false, reason: 'cancelled-before-dispatch' });
+    expect(f.accept).not.toHaveBeenCalled(); expect(history).not.toHaveBeenCalled();
+    expect(cleanup).toHaveBeenCalledWith(1); expect(f.session.getTurnGeneration()).toBe(0);
+  });
+
+  it('preserves vision conversion and the original review input without re-submitting either', async () => {
+    const original = { type: 'user' as const, content: [{ type: 'image' as const, path: '/owned/image.png' }] };
+    const converted = { type: 'user' as const, content: 'host vision description' };
+    const f = fixture({ visionBridge: async () => ({ applied: true, message: converted }) });
+    await f.session.acceptNativeInput({ ...f.input, message: original });
+    expect(f.accept).toHaveBeenCalledWith(converted, expect.objectContaining({
+      [AUTO_REVIEW_SOURCE_CONTENT]: original.content, signal: expect.any(AbortSignal),
+    }));
+    expect(f.handle.send).not.toHaveBeenCalled();
+  });
+
+  it('rejects stale session identities and repeated native capabilities before persistence', async () => {
+    const f = fixture(), history = vi.fn();
+    await expect(f.session.acceptNativeInput({ ...f.input, nativeSessionId: 'other' }, { onAccepted: history })).rejects.toThrow('different session');
+    expect(history).not.toHaveBeenCalled();
+    await f.session.acceptNativeInput(f.input, { onAccepted: history });
+    await expect(f.session.acceptNativeInput(f.input, { onAccepted: history })).rejects.toThrow('already admitted');
+    expect(history).toHaveBeenCalledOnce(); expect(f.accept).toHaveBeenCalledOnce();
+  });
+
+  it('rechecks native identity after asynchronous host preparation before writing history', async () => {
+    const f = fixture(), entered = deferred(), release = deferred(), history = vi.fn();
+    const result = f.session.acceptNativeInput(f.input, {
+      beforeProviderStart: async () => { entered.resolve(); await release.promise; }, onAccepted: history,
+    });
+    const rejected = expect(result).rejects.toThrow('different session');
+    await entered.promise; Object.defineProperty(f.handle, 'id', { value: 'replacement' }); release.resolve(); await rejected;
+    expect(history).not.toHaveBeenCalled(); expect(f.accept).not.toHaveBeenCalled();
+  });
+
+  it('waits for an existing host turn lease and honors cancellation while waiting', async () => {
+    const f = fixture(), controller = new AbortController(), history = vi.fn();
+    const release = f.session.acquireTurnLease();
+    const pending = f.session.acceptNativeInput(f.input, { signal: controller.signal, onAccepted: history });
+    controller.abort();
+    expect(await pending).toEqual({ accepted: false, reason: 'cancelled-before-dispatch' });
+    release(); expect(history).not.toHaveBeenCalled(); expect(f.accept).not.toHaveBeenCalled();
+  });
+
+  it('keeps confirmed native refusal distinct from an uncertain receipt and never retries', async () => {
+    const f = fixture(), cleanup = vi.fn();
+    f.session.setTurnLifecycleObserver({ beforeProviderStart: vi.fn(), onUndispatched: cleanup, onTerminal: vi.fn() });
+    f.accept.mockRejectedValue(new TurnDispatchRejectedError('refused'));
+    expect(await f.session.acceptNativeInput(f.input)).toEqual({ accepted: false, reason: 'provider-rejected-before-dispatch' });
+    expect(f.handle.close).not.toHaveBeenCalled(); expect(cleanup).toHaveBeenCalledWith(1);
+    const uncertain = fixture();
+    uncertain.accept.mockRejectedValue(new TurnDispatchUnconfirmedError('receipt lost'));
+    await expect(uncertain.session.acceptNativeInput(uncertain.input)).rejects.toThrow('receipt lost');
+    expect(uncertain.handle.close).toHaveBeenCalledOnce(); expect(uncertain.accept).toHaveBeenCalledOnce();
+    expect(uncertain.handle.send).not.toHaveBeenCalled();
+  });
+});
