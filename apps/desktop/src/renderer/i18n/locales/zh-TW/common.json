@@ -9589,6 +9589,21 @@
     "sessionLoading": "載入任務中"
   },
   "ccAgent": {
+    "presentation": {
+      "retry": "重新連線",
+      "label": "顯示方式",
+      "gui": "GUI",
+      "tui": "TUI",
+      "guiDescription": "圖形介面",
+      "tuiDescription": "原生終端介面",
+      "connecting": "正在連線至終端…",
+      "viewing": "僅檢視，其他位置可能正在輸入",
+      "controlling": "可以輸入",
+      "exited": "此原生程序已結束",
+      "unavailable": "終端連線中斷，可切回 GUI 繼續檢視",
+      "gap": "終端畫面需要重新同步，可切回 GUI 查看進度",
+      "takeControl": "接管輸入"
+    },
     "agentStatus": {
       "thinking": "正在思考…",
       "generating": "正在生成…",

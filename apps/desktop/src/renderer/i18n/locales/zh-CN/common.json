@@ -9589,6 +9589,21 @@
     }
   },
   "ccAgent": {
+    "presentation": {
+      "retry": "重新连接",
+      "label": "显示方式",
+      "gui": "GUI",
+      "tui": "TUI",
+      "guiDescription": "图形界面",
+      "tuiDescription": "原生终端界面",
+      "connecting": "正在连接终端…",
+      "viewing": "仅查看，另一处可能正在输入",
+      "controlling": "可以输入",
+      "exited": "此原生进程已结束",
+      "unavailable": "终端连接中断，可切回 GUI 继续查看",
+      "gap": "终端画面需要重新同步，可切回 GUI 查看进度",
+      "takeControl": "接管输入"
+    },
     "agentStatus": {
       "thinking": "正在思考…",
       "generating": "正在生成…",

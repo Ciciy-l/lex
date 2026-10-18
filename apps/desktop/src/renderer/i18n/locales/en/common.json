@@ -9604,6 +9604,21 @@
     }
   },
   "ccAgent": {
+    "presentation": {
+      "retry": "Reconnect",
+      "label": "Presentation",
+      "gui": "GUI",
+      "tui": "TUI",
+      "guiDescription": "Graphical interface",
+      "tuiDescription": "Native terminal interface",
+      "connecting": "Connecting to terminal…",
+      "viewing": "View only; another view may be entering input",
+      "controlling": "Input enabled",
+      "exited": "This native process has exited",
+      "unavailable": "Terminal disconnected. Switch to GUI to continue viewing.",
+      "gap": "Terminal display needs synchronization. View progress in GUI.",
+      "takeControl": "Take control"
+    },
     "agentStatus": {
       "thinking": "Thinking…",
       "generating": "Generating…",

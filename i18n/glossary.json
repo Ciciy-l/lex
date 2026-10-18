@@ -14,6 +14,20 @@
   ],
   "terms": [
     {
+      "id": "agent-gui-presentation",
+      "status": "proposed",
+      "en": "GUI",
+      "translations": { "zh-CN": "GUI", "zh-TW": "GUI", "ja": "GUI", "ko": "GUI" },
+      "note": "Graphical presentation of the same running native task; footer label requested by the user."
+    },
+    {
+      "id": "agent-tui-presentation",
+      "status": "proposed",
+      "en": "TUI",
+      "translations": { "zh-CN": "TUI", "zh-TW": "TUI", "ja": "TUI", "ko": "TUI" },
+      "note": "Original native terminal presentation of the same running task, not a second CLI task."
+    },
+    {
       "id": "wallpaper",
       "status": "proposed",
       "en": "Wallpaper",

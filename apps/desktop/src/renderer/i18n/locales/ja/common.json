@@ -9589,6 +9589,21 @@
     }
   },
   "ccAgent": {
+    "presentation": {
+      "retry": "再接続",
+      "label": "表示モード",
+      "gui": "GUI",
+      "tui": "TUI",
+      "guiDescription": "グラフィカルインターフェース",
+      "tuiDescription": "ネイティブ端末インターフェース",
+      "connecting": "端末に接続中…",
+      "viewing": "閲覧のみ。他の画面から入力している可能性があります",
+      "controlling": "入力できます",
+      "exited": "ネイティブプロセスは終了しました",
+      "unavailable": "端末の接続が切れました。GUI に切り替えて確認できます。",
+      "gap": "端末画面の再同期が必要です。GUI で進捗を確認できます。",
+      "takeControl": "入力を引き継ぐ"
+    },
     "agentStatus": {
       "thinking": "考え中…",
       "generating": "生成中…",
