@@ -1987,8 +1987,9 @@ export class ClaudeCodeAgent extends BaseAgent {
      */
     async function dispatchInteraction(
       req: InteractionRequest,
-      opts?: { forcePrompt?: boolean; directorySensitive?: boolean },
+      opts?: { forcePrompt?: boolean; directorySensitive?: boolean; signal?: AbortSignal },
     ): Promise<InteractionDecision> {
+      if (opts?.signal?.aborted) return safeDefaultDecision(req.kind, 'native_request_retired');
       if (!interactionResolver) {
         return safeDefaultDecision(req.kind, 'no_resolver_attached');
       }
@@ -1996,7 +1997,7 @@ export class ClaudeCodeAgent extends BaseAgent {
       return new Promise<InteractionDecision>((resolve) => {
         const entry: PendingEntry = {
           kind: req.kind,
-          resolve,
+          resolve: decision => { opts?.signal?.removeEventListener('abort', retire); resolve(decision); },
           settled: false,
           ...(opts?.forcePrompt ? { forcePrompt: true } : {}),
           ...(opts?.directorySensitive ? { directorySensitive: true } : {}),
@@ -2005,11 +2006,15 @@ export class ClaudeCodeAgent extends BaseAgent {
             : {}),
         };
         pendingInteractions.set(req.requestId, entry);
+        const retire = () => {
+          if (pendingInteractions.get(req.requestId) === entry) dismissSinglePending(req.requestId, 'native_request_retired');
+        };
+        opts?.signal?.addEventListener('abort', retire, { once: true });
         const finalize = (d: InteractionDecision) => {
           if (entry.settled) return;
           entry.settled = true;
-          pendingInteractions.delete(req.requestId);
-          resolve(d);
+          if (pendingInteractions.get(req.requestId) === entry) pendingInteractions.delete(req.requestId);
+          entry.resolve(d);
         };
         resolver(req)
           .then(finalize)
@@ -2168,7 +2173,7 @@ export class ClaudeCodeAgent extends BaseAgent {
     //  3. 其他工具:        转 permission kind, allow/deny + 可选 updatedInput
     // 注: destructive guard(agentManager.ts:1054-1065)只在 feishuBot session 启用; chat 默认 OFF,
     // 本轮不在 maker-core 实现; 若未来需要按 session opt-in, 通过 vendorOptions 传入 guard 函数。
-    const canUseTool: CanUseTool = async (toolName, input, options) => {
+    const canUseToolImpl: CanUseTool = async (toolName, input, options) => {
       // SDK 不保证 assistant message 先于 canUseTool yield, 冗余 add (Set 幂等),
       // 顺便覆盖 AskUserQuestion / ExitPlanMode 等用户交互期间不计 idle 配额。
       if (typeof options.toolUseID === 'string' && options.toolUseID.length > 0) {
@@ -2187,7 +2192,8 @@ export class ClaudeCodeAgent extends BaseAgent {
           requestId: options.toolUseID,
           toolUseId: options.toolUseID,
           questions,
-        });
+        }, { signal: options.signal });
+        if (options.signal?.aborted) return { behavior: 'deny', message: 'Native permission request retired' };
         if (decision.kind !== 'ask_user_question') {
           log.warn('AskUserQuestion got mismatched decision', { decKind: decision.kind });
           return { behavior: 'deny', message: 'resolver kind mismatch' };
@@ -2224,7 +2230,8 @@ export class ClaudeCodeAgent extends BaseAgent {
           toolUseId: options.toolUseID,
           plan,
           planFilePath,
-        });
+        }, { signal: options.signal });
+        if (options.signal?.aborted) return { behavior: 'deny', message: 'Native permission request retired' };
         if (decision.kind !== 'plan_review') {
           log.warn('ExitPlanMode got mismatched decision', { decKind: decision.kind });
           return { behavior: 'deny', message: 'resolver kind mismatch' };
@@ -2410,8 +2417,9 @@ export class ClaudeCodeAgent extends BaseAgent {
         unavailableHandoff
           ? annotatePermissionRequestForUnavailableReview(permissionRequest)
           : permissionRequest,
-        { forcePrompt, directorySensitive: directorySensitivePermission },
+        { forcePrompt, directorySensitive: directorySensitivePermission, signal: options.signal },
       );
+      if (options.signal?.aborted) return { behavior: 'deny', message: 'Native permission request retired' };
       notifyIfAutoReviewConfirmUndelivered(unavailableHandoff, decision);
       if (decision.kind !== 'permission') {
         log.warn('permission got mismatched decision', { tool: toolName, decKind: decision.kind });
@@ -2450,6 +2458,14 @@ export class ClaudeCodeAgent extends BaseAgent {
         return out;
       }
       return { behavior: 'deny', message: formatPermissionDenial(isSystemPermissionDenialReason(decision.reason) ? 'system' : 'user', decision.reason) };
+    };
+
+    // Native TUI and GUI can race to answer the same request. The original
+    // request signal owns its card and invalidates a late policy/GUI result.
+    const canUseTool: CanUseTool = async (toolName, input, options) => {
+      if (options.signal?.aborted) return { behavior: 'deny', message: 'Native permission request retired' };
+      const result = await canUseToolImpl(toolName, input, options);
+      return options.signal?.aborted ? { behavior: 'deny', message: 'Native permission request retired' } : result;
     };
 
     // ── thinking display 配置（与 vendor/claude/runtime.ts:121-126 等价） ─────

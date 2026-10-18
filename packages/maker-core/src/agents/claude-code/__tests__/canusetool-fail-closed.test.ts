@@ -34,6 +34,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 import { ClaudeCodeAgent } from '../index.js';
+import { createAsyncQueue } from '../../shared/async-queue.js';
 
 const tempDirs: string[] = [];
 const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
@@ -77,15 +78,16 @@ function createDeps(): AgentDeps {
 
 /** 最小可用的 SDK Query 假实现: 消息流永远挂起, 控制方法全部记录调用。 */
 function createFakeQuery() {
+  const events = createAsyncQueue<unknown>();
   return {
     [Symbol.asyncIterator]() {
-      return { next: () => new Promise<IteratorResult<unknown>>(() => {}) };
+      return events[Symbol.asyncIterator]();
     },
     setPermissionMode: vi.fn(async () => {}),
     setModel: vi.fn(async () => {}),
     applyFlagSettings: vi.fn(async () => {}),
     interrupt: vi.fn(async () => {}),
-    close: vi.fn(async () => {}),
+    close: vi.fn(async () => { events.end(); }),
     rewindFiles: vi.fn(async () => ({ canRewind: false })),
   };
 }
@@ -93,7 +95,7 @@ function createFakeQuery() {
 type CanUseToolFn = (
   toolName: string,
   input: Record<string, unknown>,
-  options: { toolUseID: string },
+  options: { toolUseID: string; signal?: AbortSignal },
 ) => Promise<{ behavior: 'allow' | 'deny'; updatedInput?: Record<string, unknown>; message?: string }>;
 
 async function makeTempDir(): Promise<string> {
@@ -109,7 +111,10 @@ async function startBareSession() {
   const workingDir = await makeTempDir();
 
   const fakeQuery = createFakeQuery();
-  sdkMock.query.mockReturnValue(fakeQuery);
+  sdkMock.query.mockImplementation(({ options }) => {
+    options.abortController.signal.addEventListener('abort', () => { void fakeQuery.close(); }, { once: true });
+    return fakeQuery;
+  });
 
   const agent = new ClaudeCodeAgent(createDeps());
   const handle = await agent.startSession({
@@ -169,6 +174,44 @@ describe('ClaudeCodeAgent canUseTool fail-closed (no interactionResolver)', () =
 });
 
 describe('ClaudeCodeAgent canUseTool with interactionResolver (unchanged path)', () => {
+  it.each([
+    ['Write', { file_path: '/fixture', content: 'fixture' }, 'permission'],
+    ['AskUserQuestion', { questions: [{ question: 'Proceed?', header: 'Fixture', options: [{ label: 'Yes', description: 'Proceed' }] }] }, 'ask_user_question'],
+    ['ExitPlanMode', { plan: 'Fixture implementation plan' }, 'plan_review'],
+  ] as const)('retires only the cancelled %s card and fences its late answer', async (tool, input, kind) => {
+    const { handle, canUseTool } = await startBareSession();
+    const pending = new Map<string, (decision: InteractionDecision) => void>();
+    handle.setInteractionResolver(req => new Promise(resolve => pending.set(req.requestId, resolve)));
+    const events: Array<{ type: string; data: any }> = [];
+    const consume = (async () => { for await (const event of handle.events()) events.push(event); })();
+    try {
+      const cancelled = new AbortController();
+      const first = canUseTool(tool, input, { toolUseID: 'first', signal: cancelled.signal });
+      const sibling = canUseTool('Read', { file_path: '/fixture-sibling' }, { toolUseID: 'sibling', signal: new AbortController().signal });
+      await vi.waitFor(() => expect(pending.size).toBe(2));
+      cancelled.abort();
+      expect(await first).toMatchObject({ behavior: 'deny' });
+      await vi.waitFor(() => expect(events.filter(event => event.type === 'interaction_dismissed')).toEqual([
+        expect.objectContaining({ data: expect.objectContaining({ requestId: 'first', reason: 'native_request_retired' }) }),
+      ]));
+      pending.get('first')!(kind === 'ask_user_question' ? { kind, answers: { 'Proceed?': 'Yes' } }
+        : { kind, behavior: 'allow' });
+      pending.get('sibling')!({ kind: 'permission', behavior: 'allow' });
+      expect(await sibling).toMatchObject({ behavior: 'allow' });
+      expect(events.filter(event => event.type === 'interaction_dismissed')).toHaveLength(1);
+    } finally { await handle.close(); await consume; }
+  });
+
+  it('does not create a GUI card for an already retired native permission', async () => {
+    const { handle, canUseTool } = await startBareSession();
+    const resolver = vi.fn(async (): Promise<InteractionDecision> => ({ kind: 'permission', behavior: 'allow' }));
+    handle.setInteractionResolver(resolver);
+    const controller = new AbortController(); controller.abort();
+    expect(await canUseTool('Write', { file_path: '/fixture' }, { toolUseID: 'old', signal: controller.signal })).toMatchObject({ behavior: 'deny' });
+    expect(resolver).not.toHaveBeenCalled();
+    await handle.close();
+  });
+
   it('routes every tool (incl. read-only) through the resolver and honors allow', async () => {
     const { handle, canUseTool } = await startBareSession();
     const seen: InteractionRequest[] = [];
