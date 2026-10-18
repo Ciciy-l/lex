@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   BUNDLED_CATALOG,
   buildUserProvider,
+  unifiedModelEntries,
   type AgentKind,
   type Catalog,
   type CatalogModel,
@@ -839,5 +840,26 @@ describe('anthropic 发现条目的 modelRegistry 元数据基线', () => {
     expect(anthropicList()[0]?.name).toBe('Fable Raw');
     expect(getCindyModelContextWindow('claude-fable-5')).toBeNull();
     expect(getCindyModelEffortBaseline('claude-fable-5')).toBeNull();
+  });
+});
+
+
+describe('OMP preset selection from the active catalog', () => {
+  afterEach(() => {
+    setAnthropicDiscoveredModels([]);
+    setActiveCatalog(BUNDLED_CATALOG);
+  });
+
+  it('makes discovered built-in models selectable for OMP without changing the connection identity', () => {
+    setActiveCatalog(bundledWithoutRegistry());
+    setAnthropicDiscoveredModels([fake('claude-omp-projection')]);
+    const provider = getActiveCatalog().providers.find(p => p.id === 'anthropic')!;
+    expect(provider.models.omp?.map(m => m.id)).toContain('claude-omp-projection');
+    expect(provider.routing.omp?.wireProtocol).toBe('anthropic-messages');
+    expect(provider.routing.omp?.authStrategy).toBe('provider-oauth-header');
+    const rows = unifiedModelEntries({ providers: [{ ...provider, connected: true }], agents: ['omp'] });
+    expect(rows.some(row => row.providerId === 'anthropic' && row.modelId === 'claude-omp-projection')).toBe(true);
+    setAnthropicDiscoveredModels([]);
+    expect(getActiveCatalog().providers.find(p => p.id === 'anthropic')!.models.omp?.some(m => m.id === 'claude-omp-projection')).not.toBe(true);
   });
 });

@@ -1,4 +1,5 @@
 import { previousModelGenerations, generationCapabilities } from './modelGeneration.js';
+import { withOmpPresetRuntime } from './ompProjection.js';
 import { alignModelApiRoute, providerInterfaceModelRoute, hasDeclaredProviderInterface, providerWireProtocolForApi, providerBaseUrlForApi } from './providerInterfaceRoutes.js';
 import { nativeModelAgents } from './modelProtocol.js';
 import { resolveCatalogModelNativeApi, resolveModelNativeApi } from './modelRegistry.js';
@@ -501,7 +502,11 @@ export function buildUserProvider(
     const preset = options.presets?.find(
       (preset) => preset.id === rt.catalogPresetId,
     );
-    const presetRuntimeSource = preset?.runtimes[agent];
+    // Resolve metadata for an explicitly saved OMP runtime without opting other
+    // connections or quick-setup templates into another engine.
+    const derivedOmpPreset = agent === 'omp' && preset?.runtimes.omp === undefined;
+    const presetRuntimeSource = derivedOmpPreset && preset
+      ? withOmpPresetRuntime(preset).runtimes.omp : preset?.runtimes[agent];
     const presetBindings = presetRuntimeSource
       ? providerEndpointBindings(presetRuntimeSource.baseUrl, rt.baseUrl) : null;
     const presetRuntime = presetRuntimeSource && presetBindings
@@ -639,13 +644,13 @@ export function buildUserProvider(
         const baseModel = findBaseModel(source, m.id);
         const routeNativeApi = resolveModelNativeApi(source, config.id, m.id);
         return routeNativeApi !== undefined ? routeNativeApi
-          : imported || baseModel || (followsPreset && (presetModel || m.discoveredMetadata))
+          : imported || baseModel || (followsPreset && (presetModel || (!derivedOmpPreset && m.discoveredMetadata)))
             ? resolveCatalogModelNativeApi(source, baseModel?.id ?? m.id)
             : undefined;
       };
       const projected = toCatalogModel(
         m,
-        followsPreset && sameRoute ? preset!.id : config.id,
+        followsPreset && sameRoute && (!derivedOmpPreset || presetModel) ? preset!.id : config.id,
         agent,
         options.modelRegistry,
         defaults,

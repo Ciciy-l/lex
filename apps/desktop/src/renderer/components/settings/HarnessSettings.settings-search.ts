@@ -49,7 +49,8 @@ export default {
     {
       id: 'harness.ompCompaction',
       tab: 'harness',
-      targetId: 'settings-search-target-personalization-compaction',
+      targetId: 'settings-omp-compaction-advanced',
+      fallbackTargetId: 'settings-search-target-personalization-compaction',
       titleKey: 'settings.harness.compactionEnabled',
       sectionKey: 'settings.tabs.harness',
       aliases: [

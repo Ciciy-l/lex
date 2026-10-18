@@ -275,6 +275,10 @@ describe('OMP settings within function groups', () => {
   it('disables compaction parameters without discarding them or inventing a default threshold', async () => {
     value.keepRecentTokens = 1234;
     await mount(['compaction']);
+    expect(screen.queryByRole('switch')).toBeNull();
+    expect(screen.queryByText('restore')).toBeNull();
+    const header = screen.getByText('OMP').parentElement!;
+    expect(header.lastElementChild?.textContent).toBe('OMP');
     expand();
     const slider = screen.getByRole('slider', {
       name: 'settings.harness.compactionThreshold',
@@ -314,6 +318,7 @@ describe('OMP settings within function groups', () => {
     fireEvent.change(slider, { target: { value: '90' } });
     fireEvent.blur(slider);
     await waitFor(() => expect(slider.value).toBe('81'));
+    expand();
     fireEvent.click(screen.getByText('restore'));
     await waitFor(() =>
       expect(slider.getAttribute('aria-valuetext')).toBe('settings.harness.nativeDefault'),
@@ -328,6 +333,7 @@ describe('OMP settings within function groups', () => {
   it('pauses native memory under unified memory and requires confirmation before clearing', async () => {
     value.nativeMemory = true;
     const view = await mount(['memory']);
+    expect(screen.getByRole('button', { name: 'settings.harness.clearMemory' }).querySelector('svg')).toBeTruthy();
     expand();
     const native = screen.getByRole('switch', {
       name: 'settings.harness.nativeMemory',
@@ -339,11 +345,11 @@ describe('OMP settings within function groups', () => {
     view.rerender(<Harness groups={['memory']} />);
     expect(native.disabled).toBe(false);
     mocks.confirm.mockResolvedValueOnce(false);
-    fireEvent.click(screen.getByText('settings.harness.clearMemory'));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.harness.clearMemory' }));
     await waitFor(() => expect(mocks.confirm).toHaveBeenCalledTimes(1));
     expect(api.clearMemory).not.toHaveBeenCalled();
     api.clearMemory.mockRejectedValueOnce(new Error('OMP_MEMORY_BUSY'));
-    fireEvent.click(screen.getByText('settings.harness.clearMemory'));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.harness.clearMemory' }));
     await waitFor(() => expect(mocks.error).toHaveBeenCalledWith('settings.harness.memoryBusy'));
     expect(api.clearMemory).toHaveBeenCalledWith(7);
     expect(value.nativeMemory).toBe(true);
@@ -357,6 +363,7 @@ describe('OMP settings within function groups', () => {
       }),
     );
     await mount(['memory', 'subagents', 'compaction']);
+    expand(2);
     expect(api.get).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByText('pick-model'));
     expect(

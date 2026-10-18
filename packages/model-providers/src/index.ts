@@ -320,3 +320,5 @@ export {
   groupProviderChannelEntries,
   providerChannelChoices,
 } from "./channelSelection.js";
+
+export { projectBuiltinOmpProvider, withOmpPresetRuntime } from './ompProjection.js';

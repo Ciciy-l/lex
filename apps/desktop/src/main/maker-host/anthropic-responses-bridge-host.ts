@@ -466,7 +466,8 @@ function piNativeUpstream(
     return null;
   }
   if (isOpenAiSubscriptionProviderId(providerId)) {
-    return pathname === '/codex/responses'
+    // Pi uses the Codex prefix; OMP's managed Responses client uses /responses.
+    return pathname === '/codex/responses' || pathname === '/responses'
       ? {
           url: 'https://chatgpt.com/backend-api/codex/responses',
           wireProtocol: 'openai-responses',
@@ -755,6 +756,7 @@ export function getPiNativeSubscriptionHandler(
   providerId: PiNativeSubscriptionProvider,
   sessionId: string,
   deps: PiNativeSubscriptionHandlerDeps = defaultPiNativeSubscriptionHandlerDeps,
+  isCurrent: () => boolean = () => true,
 ): LocalRequestHandler {
   return async ({ rawBody, parsedBody, ctx, res }) => {
     const upstream = piNativeUpstream(providerId, ctx.url);
@@ -770,6 +772,7 @@ export function getPiNativeSubscriptionHandler(
     const fastAtStart = getSessionFastMode(sessionId);
     try {
       throwIfOwnerBoundDispatchUnsafe(scopeAtStart);
+      if (!isCurrent()) throw new Error('Subscription route is no longer current.');
       let accessToken: string;
       let headers: Record<string, string>;
       if (isOpenAiSubscriptionProviderId(providerId)) {
@@ -819,6 +822,7 @@ export function getPiNativeSubscriptionHandler(
         }
       }
       throwIfOwnerBoundDispatchUnsafe(scopeAtStart);
+      if (!isCurrent()) throw new Error('Subscription route is no longer current.');
       if (contentEncoding) headers['content-encoding'] = contentEncoding;
 
       const response = await deps.fetch(upstream.url, {

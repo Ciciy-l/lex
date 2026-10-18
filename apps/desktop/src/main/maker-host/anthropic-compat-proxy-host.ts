@@ -87,6 +87,7 @@ import { shouldApplyExclusiveProviderReroute } from './model-route-guard.js';
 import { getSessionProvider } from './session-provider-store.js';
 import {
   buildRouteDecision,
+  isProviderRouteMutationInProgress,
   providerRoutingForModel,
   gatewayDefaultRouteDecision,
   getUserProviderIdForSession,
@@ -572,6 +573,28 @@ function resolveOmpRoute(
       'omp_provider_unavailable',
       'The selected OMP provider route is unavailable.',
     );
+  if (selectedProviderId && isOpenAiSubscriptionProviderId(selectedProviderId)) {
+    const pending = resolvePendingSessionRouteDecision(sessionId, wireModel);
+    if (pending) return pending;
+    const available = () => {
+      const provider = getActiveCatalog().providers.find(entry => entry.id === selectedProviderId);
+      return getSessionProvider(sessionId) === selectedProviderId &&
+        !isProviderRouteMutationInProgress(selectedProviderId) &&
+        provider?.routing.omp?.disabled !== true &&
+        provider?.routing.omp?.wireProtocol === 'openai-responses' &&
+        provider.models.omp?.some(model => model.id === wireModel) &&
+        ctx.method === 'POST' && new URL(ctx.url, 'http://127.0.0.1').pathname === '/responses';
+    };
+    if (!available()) return unavailableSelectedProvider();
+    // Reuse the host-owned native Responses forwarder: it builds fresh upstream
+    // OAuth/account headers and never forwards OMP's process bearer. The header
+    // claiming a provider was deliberately ignored above.
+    const handler = getPiNativeSubscriptionHandler(selectedProviderId, sessionId, undefined, () => Boolean(available()));
+    return { localHandler: async (args) => {
+      if (!available()) return unavailableSelectedProvider().localHandler!(args);
+      return handler(args);
+    } };
+  }
   const resolve = (decision: RoutingDecision | null): RoutingDecision => {
     // Keep OMP's selected-source error contract even when the generic resolver
     // returns a fail-closed tombstone for an absent channel/provider.

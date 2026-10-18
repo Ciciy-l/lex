@@ -1,4 +1,4 @@
-import { projectProviderMediaModels } from '@cindy/model-providers';
+import { projectBuiltinOmpProvider, projectProviderMediaModels } from '@cindy/model-providers';
 import {
   applyExistingModelLocalPatch,
   applyLocalModelCatalogOverrides,
@@ -1704,6 +1704,7 @@ function computeMerged(): Catalog {
     providers = [...projectedProviders];
   }
 
+  providers = providers.map(projectBuiltinOmpProvider);
   if (providers === b.providers && !localOverrides.localModels && !localOverrides.baseModels)
     return b;
   const effectiveLocalModels = projectLocalModelCatalog(b);

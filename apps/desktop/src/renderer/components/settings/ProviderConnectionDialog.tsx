@@ -6,6 +6,7 @@ import {
   mergeModelMetadata,
   nativeEngineProtocol,
   providerEndpointBindings,
+  withOmpPresetRuntime,
 } from '@cindy/model-providers';
 /**
  * Connection credentials and advanced routing only. Model capabilities are imported into the
@@ -14,6 +15,7 @@ import {
  */
 
 import * as Dialog from '@radix-ui/react-dialog';
+import { ProviderSetupTabs } from './ProviderSetupTabs';
 import {
   useCallback,
   useEffect,
@@ -479,8 +481,8 @@ export function ProviderConnectionDialog(props: ProviderConnectionDialogProps) {
   );
   const returnFocusRef = props.returnFocusRef ?? initialReturnFocusRef;
   if (!props.initial || props.initial.channels) return <>
-    <ProviderChannelsDialog {...props} returnFocusRef={returnFocusRef} suspended={specialized}
-      {...(!props.initial ? { onSpecializedSetup: () => { setSpecializedVisited(true); setSpecialized(true); } } : {})} />
+    <ProviderChannelsDialog {...props} returnFocusRef={returnFocusRef} suspended={specialized} focusSetupTab={specializedVisited}
+      {...(!props.initial ? { onHarnessSetup: () => { setSpecializedVisited(true); setSpecialized(true); } } : {})} />
     {specializedVisited && <LegacyProviderConnectionDialog {...props} returnFocusRef={returnFocusRef} suspended={!specialized}
       onBackToChannels={() => setSpecialized(false)} />}
   </>;
@@ -787,7 +789,7 @@ function LegacyProviderConnectionDialog({
     if (suspended) return;
     const frame = requestAnimationFrame(() => {
       (
-        dialogPanelRef.current?.querySelector<HTMLInputElement>('input')
+        dialogPanelRef.current?.querySelector<HTMLElement>(onBackToChannels ? '[role=tab][aria-selected=true]' : 'input')
       )?.focus();
     });
     return () => {
@@ -795,7 +797,7 @@ function LegacyProviderConnectionDialog({
       const focusTarget = returnFocusRef?.current;
       if (!suspendedRef.current && focusTarget?.isConnected) focusTarget.focus();
     };
-  }, [returnFocusRef, suspended]);
+  }, [returnFocusRef, suspended, Boolean(onBackToChannels)]);
   // 最新 runtime 表单状态镜像：拉取响应到达时据此构建弹层行/预勾选，而不是用请求发出时的
   // 闭包快照——在途期间被用户删除的行不得复活。镜像在每个 setRt updater 内**同步**更新
   // （见 setRtSynced），不用被动 useEffect——effect 在 commit 后才跑，IPC 响应若落在
@@ -939,17 +941,17 @@ function LegacyProviderConnectionDialog({
   /** 应用预设：预填显示名 + 各 runtime 的 baseUrl / 模型 / headers（创建时快照，之后与预设脱钩）。 */
   const applyPreset = useCallback(
     (p: ProviderPreset) => {
+      // Only this explicit per-Harness form offers derived OMP templates. Do not
+      // add runtimes to the shared catalog or the quick wizard's automatic choices.
+      const template = withOmpPresetRuntime(p);
       setAppliedPreset(p.id);
       setName(presetDisplayName(p, i18n.language));
       setAuthMode(p.authMethod ?? 'apiKey');
       setRtSynced((prev) => {
         const next = { ...prev };
         for (const a of AGENTS) {
-          // 目录里 27 条预设都不带 omp runtime,用共享 helper 让 omp 回落到同一预设的
-          // claude-code runtime —— 详见 shared/piRuntimeInitialization.ts 的
-          // presetRuntimeForAgent 注释(对 OMP 真正起作用的是模型清单,端点/密钥由 host
-          // 侧重写为 loopback proxy)。没有 claude-code 的预设保持留空,不猜。
-          const rc = presetRuntimeForAgent(p, a);
+          // Preserve the template's exact upstream API and metadata for every supported Harness.
+          const rc = presetRuntimeForAgent(template, a);
           if (!isConfiguredPresetRuntime(a, rc)) {
             next[a] = emptyRuntime(a);
             continue;
@@ -986,7 +988,7 @@ function LegacyProviderConnectionDialog({
         return next;
       });
       setTest({ 'claude-code': IDLE_TEST, codex: IDLE_TEST, pi: IDLE_TEST, omp: IDLE_TEST });
-      const first = configuredPresetAgents(p).find(isDialogAgentKind);
+      const first = configuredPresetAgents(template).find(isDialogAgentKind);
       if (first) setActiveTab(first);
       // 预设整体替换名称/鉴权/全部 runtime:任何既有字段错误的指向(字段值、
       // 行结构、tab)都已失效。程序化赋值不触发输入的 change,须在此显式清除
@@ -2129,7 +2131,7 @@ function LegacyProviderConnectionDialog({
         if (event.key !== 'Tab') return;
         const focusable = Array.from(
           dialogPanelRef.current?.querySelectorAll<HTMLElement>(DIALOG_FOCUSABLE_SELECTOR) ?? [],
-        );
+        ).filter(element => element.tabIndex >= 0);
         if (focusable.length === 0) {
           event.preventDefault();
           dialogPanelRef.current?.focus();
@@ -2197,8 +2199,16 @@ function LegacyProviderConnectionDialog({
           </div>
         </div>
 
+        {onBackToChannels && (
+          <div className="px-4 pb-3">
+            <ProviderSetupTabs mode="harness" panelId={formId + '-panel'} disabled={saving} onChange={() => {
+              if (!savingRef.current) onBackToChannels();
+            }} />
+          </div>
+        )}
+
         {/* Body (scrollable) */}
-        <div className="flex min-h-0 flex-col gap-4 overflow-y-auto px-4 pb-2 pt-1">
+        <div id={formId + '-panel'} role={onBackToChannels ? 'tabpanel' : undefined} aria-labelledby={onBackToChannels ? formId + '-panel-harness' : undefined} className="flex min-h-0 flex-col gap-4 overflow-y-auto px-4 pb-2 pt-1">
           <p className="text-13 leading-[1.55] text-[var(--settings-section-desc)]">
             {t('settings.providers.custom.dialog.desc')}
           </p>
@@ -2922,9 +2932,6 @@ function LegacyProviderConnectionDialog({
 
         {/* Footer: only the save request owns this busy state. */}
         <div className="flex shrink-0 flex-wrap justify-end gap-2.5 p-4">
-          {onBackToChannels && <Button variant="secondary" disabled={saving} onClick={onBackToChannels}>
-            {t('models.channels.backToChannels')}
-          </Button>}
           <Button
             variant="secondary"
             size="lg"
