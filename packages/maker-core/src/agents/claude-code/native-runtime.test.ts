@@ -30,6 +30,27 @@ function fixture() {
 }
 
 describe('continuous Claude native runtime', () => {
+  it('routes native permission callbacks through the existing product policy and retires its exact signal', async () => {
+    const f = fixture();
+    let signal!: AbortSignal;
+    const policy = vi.fn(async (_tool: string, _input: object, options: { signal: AbortSignal }) => {
+      signal = options.signal;
+      return { behavior: 'deny' as const, message: 'product policy' };
+    });
+    const runtime = await f.start({ canUseTool: policy }); await f.ready(); await runtime.ready;
+    const spec = f.spec();
+    const reply = await fetch(spec.env.LEX_CLAUDE_BRIDGE_URL + '/request', { method: 'POST',
+      headers: { authorization: 'Bearer ' + spec.env.LEX_CLAUDE_BRIDGE_TOKEN, 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 'native', generation: spec.env.LEX_CLAUDE_BRIDGE_GENERATION,
+        request: { requestId: '1', kind: 'permission', input: { session_id: 'native', hook_event_name: 'PermissionRequest',
+          tool_name: 'Read', tool_use_id: 'native-tool', tool_input: { file_path: '/fixture' } } } }) });
+    expect(await reply.json()).toEqual({ result: { behavior: 'deny', message: 'product policy' } });
+    expect(policy).toHaveBeenCalledWith('Read', { file_path: '/fixture' }, expect.objectContaining({ toolUseID: 'native-tool' }));
+    expect(f.options.onRequest).not.toHaveBeenCalled();
+    await f.post([{ sequence: 2, kind: 'request-retired', value: { requestId: '1' } }]);
+    expect(signal.aborted).toBe(true);
+  });
+
   it('requires model admission installation and routes authenticated input identities to the host', async () => {
     const missing = fixture(), rejected = await missing.start({ onTurnAdmission: async () => {} });
     const failure = expect(rejected.ready).rejects.toThrow('identity');

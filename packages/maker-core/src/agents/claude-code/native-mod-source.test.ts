@@ -16,7 +16,8 @@ function fixture() {
   const $ = {
     env: { get: async (key: string) => env[key] },
     session: { id: async () => 'session', cwd: async () => '/owned/work', version: async () => ({ version: 'fixture' }), usage: async () => ({}), model: async () => 'fixture' },
-    clock: { every: vi.fn((_ms: number, callback: () => Promise<void>) => { tick = callback; return { cancel: vi.fn() }; }) },
+    clock: { every: vi.fn((_ms: number, callback: () => Promise<void>) => { tick = callback; return { cancel: vi.fn() }; }),
+      sleep: vi.fn((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))) },
     http: { fetch: vi.fn(async (_url: string, init: { body: string }) => {
       const body = JSON.parse(init.body);
       events.push(...body.events);
@@ -32,6 +33,131 @@ function fixture() {
 }
 
 describe('packaged Claude native Mod', () => {
+  it('binds identical overlapping permission calls to native IDs without changing the native input or verdict', async () => {
+    const f = fixture(); await f.start();
+    const exchange = f.$.http.fetch.getMockImplementation()!;
+    const inputs: any[] = [];
+    const answers: Array<(result: unknown) => void> = [];
+    f.$.http.fetch.mockImplementation((url, init) => {
+      if (!url.endsWith('/request')) return exchange(url, init);
+      inputs.push(JSON.parse(init.body).request.input);
+      return new Promise(resolve => answers.push(result => resolve({ ok: true, text: JSON.stringify({ result }) })));
+    });
+    const nativeInputs: any[] = [];
+    const invoke = (id: string, agentId?: string) => {
+      const controller = new AbortController();
+      const verdict = { decision: 'ask', ceiling: 'ask', reason: 'native rule' };
+      const check = Object.assign(async () => verdict, { signal: controller.signal });
+      const input = { agent_id: agentId, tool_name: 'Read', tool_input: { file_path: '/same' } };
+      nativeInputs.push(input);
+      return f.hooks.get('tool.call')!(f.$, { tool_use_id: id, tool: 'Read', agentId, file_path: '/same' }, async () => {
+        expect(await f.hooks.get('tool.check')!(f.$, { tool_use_id: id, tool: 'Read', input: input.tool_input }, check)).toBe(verdict);
+        return f.hooks.get('classic.PermissionRequest')!(f.$, input,
+          Object.assign(vi.fn(async (e: unknown) => { expect(e).toBe(input); return {}; }), { signal: controller.signal }));
+      });
+    };
+    const running = [invoke('first'), invoke('second'), invoke('child', 'agent-child')];
+    await vi.waitFor(() => expect(inputs).toHaveLength(3));
+    expect(new Set(inputs.map(input => input.tool_use_id))).toEqual(new Set(['first', 'second', 'child']));
+    expect(nativeInputs.every(input => !('tool_use_id' in input))).toBe(true);
+    answers.forEach(answer => answer({ behavior: 'deny', message: 'GUI refusal' }));
+    expect(await Promise.all(running)).toEqual(Array(3).fill({ decision: { behavior: 'deny', message: 'GUI refusal' } }));
+    await f.tick();
+    expect(f.events.filter(event => event.kind === 'permission')).toHaveLength(3);
+    expect(f.events.filter(event => event.kind === 'request-retired')).toHaveLength(3);
+  });
+
+  it('retires a terminal-answered card at tool completion and ignores its late GUI answer', async () => {
+    const f = fixture(); await f.start();
+    const exchange = f.$.http.fetch.getMockImplementation()!;
+    let lateAnswer!: (value: unknown) => void;
+    f.$.http.fetch.mockImplementation((url, init) => url.endsWith('/request')
+      ? new Promise(resolve => { lateAnswer = result => resolve({ ok: true, text: JSON.stringify({ result }) }); })
+      : exchange(url, init));
+    const signal = new AbortController().signal;
+    const original = { tool_name: 'Write', tool_input: { file_path: '/same' } };
+    const nativeDecision = { decision: { behavior: 'allow' } };
+    const nativeNext = Object.assign(vi.fn(async () => nativeDecision), { signal });
+    let pending!: Promise<unknown>;
+    await f.hooks.get('tool.call')!(f.$, { tool: 'Write', tool_use_id: 'terminal-tool' }, async () => {
+      await f.hooks.get('tool.check')!(f.$, { tool: 'Write', tool_use_id: 'terminal-tool' },
+        Object.assign(async () => ({ decision: 'ask' }), { signal }));
+      pending = f.hooks.get('classic.PermissionRequest')!(f.$, original, nativeNext);
+      // The upstream terminal resolves the actual tool while its classic hook
+      // is still awaiting an answer, as the real native probe demonstrates.
+      return { content: 'native tool completed' };
+    });
+    await f.tick();
+    expect(f.events.filter(event => event.kind === 'request-retired')).toHaveLength(1);
+    expect(f.events.some(event => event.kind === 'turn.complete')).toBe(false);
+    lateAnswer({ behavior: 'deny', message: 'stale GUI action' });
+    expect(await pending).toBe(nativeDecision);
+    expect(nativeNext).toHaveBeenCalledWith(original);
+    await f.tick();
+    expect(f.events.filter(event => event.kind === 'request-retired')).toHaveLength(1);
+  });
+
+  it.each(['allow', 'deny', 'ask'])('releases a %s scope when the native decider completes without a classic callback', async decision => {
+    const f = fixture(); await f.start();
+    const signal = new AbortController().signal;
+    const check = (id: string, value: string) => f.hooks.get('tool.check')!(f.$, { tool: 'Read', tool_use_id: id },
+      Object.assign(async () => ({ decision: value }), { signal }));
+    await f.hooks.get('tool.call')!(f.$, { tool: 'Read', tool_use_id: 'automatic' }, () => check('automatic', decision));
+    await f.hooks.get('tool.call')!(f.$, { tool: 'Read', tool_use_id: 'next' }, () => check('next', 'ask'));
+    expect(f.$.clock.sleep).not.toHaveBeenCalled();
+    await f.tick();
+    expect(f.events.some(event => event.kind === 'permission')).toBe(false);
+  });
+
+  it('does not deadlock a repeated native check of the same call before its classic callback', async () => {
+    const f = fixture(); await f.start();
+    const signal = new AbortController().signal;
+    const input = { tool: 'Read', tool_use_id: 'same-call' };
+    const check = Object.assign(async () => ({ decision: 'ask' }), { signal });
+    await f.hooks.get('tool.call')!(f.$, input, async () => {
+      expect(await f.hooks.get('tool.check')!(f.$, input, check)).toEqual({ decision: 'ask' });
+      expect(await f.hooks.get('tool.check')!(f.$, input, check)).toEqual({ decision: 'ask' });
+    });
+    expect(f.$.clock.sleep).not.toHaveBeenCalled();
+  });
+
+  it('keeps unscoped permission queries on their native path and does not infer identity from matching arguments', async () => {
+    const f = fixture(); await f.start();
+    const signal = new AbortController().signal;
+    const input = { tool_name: 'Read', tool_input: { file_path: '/same' } };
+    const native = Object.assign(vi.fn(async () => ({ decision: { behavior: 'deny' } })), { signal });
+    await f.hooks.get('tool.check')!(f.$, { tool: 'Read', input: input.tool_input },
+      Object.assign(async () => ({ decision: 'ask' }), { signal }));
+    expect(await f.hooks.get('classic.PermissionRequest')!(f.$, input, native)).toEqual({ decision: { behavior: 'deny' } });
+    expect(native).toHaveBeenCalledWith(input);
+    await f.tick();
+    expect(f.events.some(event => event.kind === 'permission')).toBe(false);
+  });
+
+  it('installs host preparation before native append and fences a refused input before provider I/O', async () => {
+    for (const allow of [true, false]) {
+      const f = fixture(); f.env.LEX_CLAUDE_BRIDGE_INPUT_PREPARATION = '1'; f.env.LEX_CLAUDE_BRIDGE_TURN_ADMISSION = '1'; await f.start();
+      const original = f.$.http.fetch.getMockImplementation()!;
+      f.$.http.fetch.mockImplementation(async (url, init) => {
+        if (!url.endsWith('/request')) return original(url, init);
+        return { ok: true, text: JSON.stringify({ result: { allow, content: [{ type: 'text', text: 'rewritten' }] } }) };
+      });
+      const e = { uuid: 'native-row', door: 'prompt', origin: { kind: 'composer' }, message: { type: 'user', content: [{ type: 'text', text: 'original' }] } };
+      const append = Object.assign(vi.fn(async (value: any) => ({ uuid: value.uuid, message: value.message })), { signal: new AbortController().signal });
+      await f.hooks.get('session.append')!(f.$, e, append);
+      expect(append.mock.calls[0]?.[0].message.content[0].text).toBe(allow ? 'rewritten' : '[Input was not submitted by Lex.]');
+      await f.hooks.get('turn.start')!(f.$, { turnId: 'turn', text: 'original' }, async () => ({ turnId: 'turn' }));
+      const provider = Object.assign(vi.fn(async function* () { return {}; }), { signal: new AbortController().signal });
+      const stream = f.hooks.get('turn.step')!(f.$, { turnId: 'turn', index: 0 }, provider);
+      while (!(await stream.next()).done) {}
+      expect(provider).toHaveBeenCalledTimes(allow ? 1 : 0);
+      await f.tick();
+      const appendIndex = f.events.findIndex(event => event.kind === 'session.append');
+      const retiredIndex = f.events.findIndex(event => event.kind === 'request-retired');
+      expect(appendIndex).toBeGreaterThan(-1); expect(retiredIndex).toBeGreaterThan(appendIndex);
+    }
+  });
+
   it('holds the first native model call behind host admission and refuses provider work when unavailable', async () => {
     for (const allow of [true, false]) {
       const f = fixture(); f.env.LEX_CLAUDE_BRIDGE_TURN_ADMISSION = '1'; await f.start();
@@ -54,6 +180,24 @@ describe('packaged Claude native Mod', () => {
       if (allow) { expect(provider).toHaveBeenCalledOnce(); expect(f.$.turn.abort).not.toHaveBeenCalled(); }
       else { expect(provider).not.toHaveBeenCalled(); expect(f.$.turn.abort).toHaveBeenCalledWith({ turnId: 'turn' }); }
     }
+  });
+
+  it.each(['media', 'opaque', 'changed-receipt'])('removes refused content before future turns and faults an unverifiable %s row', async kind => {
+    const f = fixture(); f.env.LEX_CLAUDE_BRIDGE_INPUT_PREPARATION = '1'; await f.start();
+    const original = f.$.http.fetch.getMockImplementation()!;
+    f.$.http.fetch.mockImplementation(async (url, init) => url.endsWith('/request')
+      ? { ok: true, text: JSON.stringify({ result: { allow: false } }) } : original(url, init));
+    const input = { uuid: 'row', door: 'prompt', origin: { kind: 'composer' }, message: { type: 'user', content: [
+      { type: 'text', text: 'REFUSED_PRIVATE_INPUT' },
+      kind === 'opaque' ? { type: 'opaque', value: 'private' } : { type: 'image', source: { data: 'private' } },
+    ] } };
+    const append = Object.assign(vi.fn(async (e: any) => ({ uuid: e.uuid, message: kind === 'changed-receipt' ? input.message : e.message })),
+      { signal: new AbortController().signal });
+    await f.hooks.get('session.append')!(f.$, input, append);
+    expect(append.mock.calls[0]?.[0].message.content).toEqual([{ type: 'text', text: '[Input was not submitted by Lex.]' }]);
+    await f.tick();
+    const exchange = f.$.http.fetch.mock.calls.find(([url]) => url.endsWith('/exchange'))!;
+    expect(JSON.parse(exchange[1].body).overflow).toBe(kind !== 'media');
   });
 
   it('forwards the native tool scope to the existing host hook and preserves native refusal', async () => {
@@ -135,6 +279,20 @@ describe('packaged Claude native Mod', () => {
     expect(stale.$.clock.every).not.toHaveBeenCalled();
   });
 
+  it('does not let a child turn consume the root native input receipt', async () => {
+    const f = fixture(); f.env.LEX_CLAUDE_BRIDGE_TURN_ADMISSION = '1'; await f.start();
+    const row = { uuid: 'root-row', door: 'prompt', origin: { kind: 'composer' },
+      message: { type: 'user', content: [{ type: 'text', text: 'root input' }] } };
+    await f.hooks.get('session.append')!(f.$, row, async () => ({ uuid: row.uuid, message: row.message }));
+    await f.hooks.get('turn.start')!(f.$, { turnId: 'child-turn', agentId: 'child' }, async () => ({}));
+    await f.hooks.get('turn.start')!(f.$, { turnId: 'root-turn' }, async () => ({}));
+    await f.tick();
+    expect(f.events.filter(event => event.kind === 'turn.start').map(event => event.value)).toEqual([
+      { turnId: 'child-turn', agentId: 'child', messageIds: [] },
+      { turnId: 'root-turn', messageIds: ['root-row'] },
+    ]);
+  });
+
   it('passes stream identity, order and final value unchanged while the host is unavailable', async () => {
     const f = fixture(); await f.start();
     f.$.http.fetch.mockImplementation(() => new Promise(() => {}));
@@ -195,7 +353,11 @@ describe('packaged Claude native Mod', () => {
     f.$.http.fetch.mockImplementation((url, init) => url.endsWith('/request')
       ? new Promise((resolve) => replies.push(resolve)) : original(url, init));
     const next = Object.assign(vi.fn(async () => ({ native: true })), { signal: new AbortController().signal });
-    const decision = f.hooks.get('classic.PermissionRequest')!(f.$, { agent_id: 'one', tool_name: 'Write' }, next);
+    const decision = f.hooks.get('tool.call')!(f.$, { agentId: 'one', tool: 'Write', tool_use_id: 'one-tool' }, async () => {
+      await f.hooks.get('tool.check')!(f.$, { tool: 'Write', tool_use_id: 'one-tool' },
+        Object.assign(async () => ({ decision: 'ask' }), { signal: next.signal }));
+      return f.hooks.get('classic.PermissionRequest')!(f.$, { agent_id: 'one', tool_name: 'Write' }, next);
+    });
     await vi.waitFor(() => expect(replies).toHaveLength(1));
     await f.hooks.get('turn.complete')!(f.$, { agentId: 'sibling' }, async () => ({}));
     await f.tick();

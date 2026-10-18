@@ -1,7 +1,9 @@
 /** Included literally in the packaged Mod; $ calls must stay in native hooks. */
 export const CLAUDE_NATIVE_TURN_START_SOURCE = String.raw`
   on('turn.start', async ($, e, next) => {
-    const messageIds = pendingUserRows.splice(0);
+    const messageIds = e.agentId === undefined ? pendingUserRows.splice(0) : [];
+    if (messageIds.some(id => rejectedInputIds.has(id))) rejectedTurnIds.add(e.turnId);
+    for (const id of messageIds) rejectedInputIds.delete(id);
     emit('turn.start', { ...e, messageIds });
     return await next(e);
   });
@@ -19,7 +21,7 @@ export const CLAUDE_NATIVE_TURN_ADMISSION_SOURCE = String.raw`
       next.signal.addEventListener('abort', retire, { once: true });
       let allowed = false;
       try {
-        while (!state.retired && !next.signal.aborted && !overflow) {
+        while (!state.retired && !next.signal.aborted && !overflow && !rejectedTurnIds.has(e.turnId)) {
           const response = await $.http.fetch(endpoint + '/request', {
             method: 'POST', headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
             body: JSON.stringify({ sessionId, generation, request: { requestId, kind: 'turn-admission', input: { turnId: e.turnId } } }),

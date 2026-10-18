@@ -1,4 +1,5 @@
 import { CLAUDE_NATIVE_HOST_HOOK_SOURCE } from './native-hook-source.js';
+import { CLAUDE_NATIVE_INPUT_PREPARATION_SOURCE } from './native-input-source.js';
 import { CLAUDE_NATIVE_TURN_ADMISSION_SOURCE, CLAUDE_NATIVE_TURN_START_SOURCE } from './native-turn-source.js';
 
 /** Packaged source, written only to a host-owned plugin directory at runtime. */
@@ -19,6 +20,9 @@ export function register(on) {
   let sessionId;
   let hostHooksEnabled = false;
   let hostTurnAdmission = false;
+  let hostInputPreparation = false;
+  const rejectedInputIds = new Set();
+  const rejectedTurnIds = new Set();
   let timer;
   let exchanging = false;
   let sequence = 0;
@@ -31,8 +35,14 @@ export function register(on) {
   const pending = [];
   const requests = new Map();
   const toolScopes = new Map();
+  const permissionScopes = new Map();
+  const stepScopes = new Map();
   const pendingUserRows = [];
   const emit = (kind, value) => {
+    if (kind === 'session.append') {
+      const step = stepScopes.get(value.agentId);
+      if (step) value = { ...value, nativeTurnId: step.turnId, nativeStep: step.index };
+    }
     if (hostTurnAdmission && kind === 'session.append' && !value.agentId
       && (value.door === 'prompt' || value.door === 'command')
       && value.result?.uuid === value.uuid && value.result?.message?.type === 'user'
@@ -51,6 +61,7 @@ export function register(on) {
   on('session.start', async ($, e, next) => {
     hostHooksEnabled = (await $.env.get('LEX_CLAUDE_BRIDGE_HOST_HOOKS')) === '1';
     hostTurnAdmission = (await $.env.get('LEX_CLAUDE_BRIDGE_TURN_ADMISSION')) === '1';
+    hostInputPreparation = (await $.env.get('LEX_CLAUDE_BRIDGE_INPUT_PREPARATION')) === '1';
     const result = await next(e);
     endpoint = await $.env.get('LEX_CLAUDE_BRIDGE_URL');
     token = await $.env.get('LEX_CLAUDE_BRIDGE_TOKEN');
@@ -59,7 +70,7 @@ export function register(on) {
     const expectedSession = await $.env.get('LEX_CLAUDE_BRIDGE_SESSION');
     if (!endpoint?.startsWith('http://127.0.0.1:') || !/^[0-9]+$/.test(endpoint.slice('http://127.0.0.1:'.length))
       || !token || !generation || expectedSession !== sessionId) return result;
-    emit('ready', { ...e, sessionId, hostHooksEnabled, hostTurnAdmission, version: await $.session.version() });
+    emit('ready', { ...e, sessionId, hostHooksEnabled, hostTurnAdmission, hostInputPreparation, version: await $.session.version() });
     timer?.cancel();
     timer = $.clock.every(50, async () => {
       if (exchanging) return;
@@ -167,12 +178,14 @@ export function register(on) {
       && e.message.type === 'user' && !e.message.isMeta
       && e.origin.kind === 'plugin' && e.origin.name === 'lex-native-bridge';
     if (matches) submission.bound = true;
+${CLAUDE_NATIVE_INPUT_PREPARATION_SOURCE}
     const result = await next(e);
     emit('session.append', { ...e, result, ...(matches && result.uuid === e.uuid ? { submissionId: submission.id } : {}) });
     return result;
   });
 ${CLAUDE_NATIVE_TURN_START_SOURCE}
   on('turn.complete', async ($, e, next) => {
+    rejectedTurnIds.delete(e.turnId);
     for (const [id, request] of requests) {
       if (request.agentId !== e.agentId) continue;
       request.retired = true; requests.delete(id);
@@ -183,36 +196,67 @@ ${CLAUDE_NATIVE_TURN_START_SOURCE}
   });
   on('tool.call', async ($, e, next) => {
     emit('tool.call', e);
-    toolScopes.set(e.tool_use_id, { agentId: e.agentId });
+    const scope = { toolUseId: e.tool_use_id, agentId: e.agentId, tool: e.tool };
+    toolScopes.set(e.tool_use_id, scope);
     try {
       const result = await next(e);
       emit('tool.result', { tool_use_id: e.tool_use_id, agentId: e.agentId, result });
       return result;
-    } finally { toolScopes.delete(e.tool_use_id); }
+    } finally {
+      if (permissionScopes.get(e.agentId) === scope) permissionScopes.delete(e.agentId);
+      if (toolScopes.get(e.tool_use_id) === scope) toolScopes.delete(e.tool_use_id);
+      // A terminal answer does not abort classic.PermissionRequest. Retire the
+      // GUI callback at this exact tool boundary, not at a later turn.complete.
+      for (const [id, request] of requests) {
+        if (request.toolUseId !== e.tool_use_id || request.agentId !== e.agentId) continue;
+        request.retired = true; requests.delete(id);
+        emit('request-retired', { requestId: id });
+      }
+    }
   });
   on('tool.check', async ($, e, next) => {
     const result = await next(e);
     emit('tool.check', { ...e, result });
+    const scope = toolScopes.get(e.tool_use_id);
+    if (endpoint && token && !overflow && result.decision === 'ask' && scope) {
+      // The classic hook lacks tool_use_id. Serialize only entry into that
+      // hook so it consumes one causal native scope; names/arguments never
+      // choose between concurrent calls. Queries have no native tool scope.
+      while (permissionScopes.has(scope.agentId) && permissionScopes.get(scope.agentId) !== scope && !next.signal.aborted) {
+        await $.clock.sleep(10, { signal: next.signal });
+      }
+      if (!next.signal.aborted && toolScopes.get(e.tool_use_id) === scope) {
+        permissionScopes.set(scope.agentId, scope);
+      }
+    }
     return result;
   });
 ${CLAUDE_NATIVE_HOST_HOOK_SOURCE}
   on('classic.PermissionRequest', async ($, e, next) => {
     if (!endpoint || !token || overflow) return await next(e);
+    const scope = permissionScopes.get(e.agent_id);
+    if (!scope || toolScopes.get(scope.toolUseId) !== scope || scope.tool !== e.tool_name) {
+      // Never guess an identity for a hook not raised by an observed native
+      // call. Preserve the original decision path without inventing a GUI card.
+      return await next(e);
+    }
+    permissionScopes.delete(e.agent_id);
+    const input = { ...e, tool_use_id: scope.toolUseId };
     const requestId = String(++requestSequence);
-    const state = { agentId: e.agent_id, retired: false };
+    const state = { agentId: e.agent_id, toolUseId: scope.toolUseId, retired: false };
     requests.set(requestId, state);
     const retire = () => {
       if (state.retired) return;
       state.retired = true; requests.delete(requestId); emit('request-retired', { requestId });
     };
     next.signal.addEventListener('abort', retire, { once: true });
-    emit('permission', { requestId, input: e });
+    emit('permission', { requestId, input });
     try {
       while (!state.retired && !next.signal.aborted) {
         // Host API waits do not consume HookBudget. A raw human-wait Promise does.
         const response = await $.http.fetch(endpoint + '/request', {
           method: 'POST', headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
-          body: JSON.stringify({ sessionId, generation, request: { requestId, kind: 'permission', input: e } }),
+          body: JSON.stringify({ sessionId, generation, request: { requestId, kind: 'permission', input } }),
         });
         if (!response.ok || state.retired || next.signal.aborted) break;
         const data = JSON.parse(response.text);
@@ -227,6 +271,7 @@ ${CLAUDE_NATIVE_HOST_HOOK_SOURCE}
   on('turn.step', async function* ($, e, next) {
 ${CLAUDE_NATIVE_TURN_ADMISSION_SOURCE}
     emit('step-start', e);
+    stepScopes.set(e.agentId, e);
     const stream = next(e);
     let done = false;
     try {
@@ -236,7 +281,10 @@ ${CLAUDE_NATIVE_TURN_ADMISSION_SOURCE}
         emit('chunk', { turnId: e.turnId, step: e.index, agentId: e.agentId, chunk: item.value });
         yield item.value;
       }
-    } finally { if (!done) await stream.return(); }
+    } finally {
+      if (stepScopes.get(e.agentId) === e) stepScopes.delete(e.agentId);
+      if (!done) await stream.return();
+    }
   });
 }
 `;
