@@ -31,6 +31,12 @@ interface PendingCommand {
   timer: ReturnType<typeof setTimeout>;
 }
 
+export interface ClaudeNativeCommand {
+  /** Host-only identity, available before the native process can accept input. */
+  id: number;
+  result: Promise<unknown>;
+}
+
 interface PendingRequest {
   controller: AbortController;
   result: Promise<unknown>;
@@ -94,18 +100,23 @@ export class ClaudeNativeBridge {
   }
 
   command(kind: string, payload: unknown, timeoutMs = 120_000): Promise<unknown> {
-    if (!this.endpoint || this.closed || this.faulted) return Promise.reject(new Error('Native bridge unavailable'));
-    if (this.commands.size >= 128) return Promise.reject(new Error('Native command queue full'));
-    if (!kind || !Number.isFinite(timeoutMs) || timeoutMs <= 0) return Promise.reject(new Error('Invalid native command'));
+    try { return this.enqueueCommand(kind, payload, timeoutMs).result; }
+    catch (error) { return Promise.reject(error); }
+  }
+
+  enqueueCommand(kind: string, payload: unknown, timeoutMs = 120_000): ClaudeNativeCommand {
+    if (!this.endpoint || this.closed || this.faulted) throw new Error('Native bridge unavailable');
+    if (this.commands.size >= 128) throw new Error('Native command queue full');
+    if (!kind || !Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('Invalid native command');
     // Freeze at enqueue time: callers cannot change an already dispatched command.
     let ownedPayload: unknown;
     try {
       const encoded = JSON.stringify(payload);
       if (encoded === undefined || Buffer.byteLength(encoded) > 1_048_576) throw new Error();
       ownedPayload = JSON.parse(encoded);
-    } catch { return Promise.reject(new Error('Invalid native command payload')); }
+    } catch { throw new Error('Invalid native command payload'); }
     const id = ++this.nextCommand;
-    return new Promise((resolve, reject) => {
+    const result = new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.commands.delete(id);
         // A lost receipt is not proof that the command was unexecuted. Never retry automatically.
@@ -114,6 +125,7 @@ export class ClaudeNativeBridge {
       timer.unref();
       this.commands.set(id, { command: { id, kind, payload: ownedPayload }, resolve, reject, timer });
     });
+    return { id, result };
   }
 
   /** Cancels only this native callback, e.g. on a matching tool/turn completion. */

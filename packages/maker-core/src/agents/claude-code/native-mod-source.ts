@@ -1,5 +1,13 @@
+import { CLAUDE_NATIVE_HOST_HOOK_SOURCE } from './native-hook-source.js';
+import { CLAUDE_NATIVE_TURN_ADMISSION_SOURCE, CLAUDE_NATIVE_TURN_START_SOURCE } from './native-turn-source.js';
+
 /** Packaged source, written only to a host-owned plugin directory at runtime. */
 export const CLAUDE_NATIVE_BRIDGE_PLUGIN_NAME = 'lex-native-bridge';
+export const CLAUDE_NATIVE_MEDIA_COMMAND = 'send';
+export const CLAUDE_NATIVE_MEDIA_PROMPT = [
+  '---', 'description: Deliver attachments from the Lex task composer',
+  'disable-model-invocation: true', '---', '$ARGUMENTS', '',
+].join(String.fromCharCode(10));
 
 // Keep literal event registrations and direct $ calls: the native Mod compiler
 // deliberately rejects indirection through Node helpers or an aliased Engine.
@@ -9,6 +17,8 @@ export function register(on) {
   let token;
   let generation;
   let sessionId;
+  let hostHooksEnabled = false;
+  let hostTurnAdmission = false;
   let timer;
   let exchanging = false;
   let sequence = 0;
@@ -20,7 +30,16 @@ export function register(on) {
   let activeSubmission;
   const pending = [];
   const requests = new Map();
+  const toolScopes = new Map();
+  const pendingUserRows = [];
   const emit = (kind, value) => {
+    if (hostTurnAdmission && kind === 'session.append' && !value.agentId
+      && (value.door === 'prompt' || value.door === 'command')
+      && value.result?.uuid === value.uuid && value.result?.message?.type === 'user'
+      && !value.result.message.isMeta) {
+      if (pendingUserRows.length >= 128) overflow = true;
+      else pendingUserRows.push(value.uuid);
+    }
     const event = { sequence: ++sequence, kind, value };
     let size;
     try { size = JSON.stringify(event).length; }
@@ -30,6 +49,8 @@ export function register(on) {
     pending.push({ event, size });
   };
   on('session.start', async ($, e, next) => {
+    hostHooksEnabled = (await $.env.get('LEX_CLAUDE_BRIDGE_HOST_HOOKS')) === '1';
+    hostTurnAdmission = (await $.env.get('LEX_CLAUDE_BRIDGE_TURN_ADMISSION')) === '1';
     const result = await next(e);
     endpoint = await $.env.get('LEX_CLAUDE_BRIDGE_URL');
     token = await $.env.get('LEX_CLAUDE_BRIDGE_TOKEN');
@@ -38,7 +59,7 @@ export function register(on) {
     const expectedSession = await $.env.get('LEX_CLAUDE_BRIDGE_SESSION');
     if (!endpoint?.startsWith('http://127.0.0.1:') || !/^[0-9]+$/.test(endpoint.slice('http://127.0.0.1:'.length))
       || !token || !generation || expectedSession !== sessionId) return result;
-    emit('ready', { ...e, sessionId, version: await $.session.version() });
+    emit('ready', { ...e, sessionId, hostHooksEnabled, hostTurnAdmission, version: await $.session.version() });
     timer?.cancel();
     timer = $.clock.every(50, async () => {
       if (exchanging) return;
@@ -68,7 +89,19 @@ export function register(on) {
               const payload = command.payload;
               if (command.kind === 'submit') {
                 if (typeof payload.text !== 'string') throw new Error('Invalid text');
-                activeSubmission = { id: command.id, bound: false };
+                if (payload.imagePaths !== undefined) {
+                  if (!Array.isArray(payload.imagePaths) || payload.imagePaths.length < 1 || payload.imagePaths.length > 20
+                    || payload.imagePaths.some(path => typeof path !== 'string' || !path || path.length > 4096
+                      || [...path].some(char => char.charCodeAt(0) < 32 || char === '"' || char.charCodeAt(0) === 96))) throw new Error('Invalid media paths');
+                  const marker = 'LEX_SUBMISSION_' + generation + '_' + command.id;
+                  const args = marker + ' ' + payload.imagePaths.map(path => '@' + JSON.stringify(path.split(String.fromCharCode(92)).join('/'))).join(' ');
+                  activeSubmission = { id: command.id, bound: false, media: true, marker, text: payload.text, release };
+                  // command.run acknowledges enqueueing before the native row exists.
+                  // Keep this serialized submission until its authenticated meta row.
+                  await $.command.run({ command: 'lex-native-bridge:send', args });
+                  return;
+                }
+                activeSubmission = { id: command.id, bound: false, release };
                 result = await $.prompt.submit({ text: payload.text });
               } else if (command.kind === 'abort') {
                 result = await $.turn.abort({ turnId: payload.turnId });
@@ -82,8 +115,16 @@ export function register(on) {
                 result = await $.command.run(payload);
               } else throw new Error('Unsupported bridge command');
               emit('command-result', { id: command.id, ok: true, result });
-            } catch { emit('command-result', { id: command.id, ok: false }); }
-            finally { if (command.kind === 'submit') { activeSubmission = undefined; release(); } }
+            } catch {
+              if (activeSubmission?.id === command.id) activeSubmission = undefined;
+              release?.(); emit('command-result', { id: command.id, ok: false });
+            }
+            finally {
+              if (command.kind === 'submit' && !activeSubmission?.media) {
+                if (activeSubmission?.id === command.id) activeSubmission = undefined;
+                release();
+              }
+            }
           })();
         }
       } catch { /* Retain unacknowledged events; a disconnected GUI must not stall the native stream. */ }
@@ -97,7 +138,32 @@ export function register(on) {
   });
   on('session.append', async ($, e, next) => {
     const submission = activeSubmission;
+    if (submission?.media && !e.agentId && e.origin.kind === 'plugin' && e.origin.name === 'lex-native-bridge'
+      && e.message.type === 'user' && e.message.content?.some(block => block.type === 'text' && block.text.includes(submission.marker))) {
+      if (e.door === 'command' && !e.message.isMeta && !submission.commandUuid) {
+        const result = await next(e);
+        if (result.uuid === e.uuid) submission.commandUuid = e.uuid;
+        emit('session.append', { ...e, result, ...(submission.commandUuid ? { submissionId: submission.id, submissionKind: 'media' } : {}) });
+        return result;
+      }
+      if (e.door === 'prompt' && e.message.isMeta && submission.commandUuid && !submission.bound) {
+        submission.bound = true;
+        // Expand only the owned attachment paths. User text bypasses slash-command
+        // interpolation, preserving literal shell/mention syntax and exact bytes.
+        const projected = { ...e, message: { ...e.message, content: [
+          { type: 'text', text: submission.text }, ...e.message.content.filter(block => block.type !== 'text'),
+        ] } };
+        try {
+          const result = await next(projected);
+          emit('session.append', { ...projected, result, submissionId: submission.id, submissionKind: 'media', commandMessageId: submission.commandUuid });
+          emit('command-result', { id: submission.id, ok: result.uuid === e.uuid, result: { uuid: submission.commandUuid } });
+          return result;
+        } catch (error) { emit('command-result', { id: submission.id, ok: false }); throw error; }
+        finally { if (activeSubmission === submission) activeSubmission = undefined; submission.release(); }
+      }
+    }
     const matches = submission && !submission.bound && !e.agentId && e.door === 'prompt'
+      && !submission.media
       && e.message.type === 'user' && !e.message.isMeta
       && e.origin.kind === 'plugin' && e.origin.name === 'lex-native-bridge';
     if (matches) submission.bound = true;
@@ -105,7 +171,7 @@ export function register(on) {
     emit('session.append', { ...e, result, ...(matches && result.uuid === e.uuid ? { submissionId: submission.id } : {}) });
     return result;
   });
-  on('turn.start', async ($, e, next) => { emit('turn.start', e); return await next(e); });
+${CLAUDE_NATIVE_TURN_START_SOURCE}
   on('turn.complete', async ($, e, next) => {
     for (const [id, request] of requests) {
       if (request.agentId !== e.agentId) continue;
@@ -117,15 +183,19 @@ export function register(on) {
   });
   on('tool.call', async ($, e, next) => {
     emit('tool.call', e);
-    const result = await next(e);
-    emit('tool.result', { tool_use_id: e.tool_use_id, agentId: e.agentId, result });
-    return result;
+    toolScopes.set(e.tool_use_id, { agentId: e.agentId });
+    try {
+      const result = await next(e);
+      emit('tool.result', { tool_use_id: e.tool_use_id, agentId: e.agentId, result });
+      return result;
+    } finally { toolScopes.delete(e.tool_use_id); }
   });
   on('tool.check', async ($, e, next) => {
     const result = await next(e);
     emit('tool.check', { ...e, result });
     return result;
   });
+${CLAUDE_NATIVE_HOST_HOOK_SOURCE}
   on('classic.PermissionRequest', async ($, e, next) => {
     if (!endpoint || !token || overflow) return await next(e);
     const requestId = String(++requestSequence);
@@ -155,6 +225,7 @@ export function register(on) {
     } finally { next.signal.removeEventListener('abort', retire); retire(); }
   });
   on('turn.step', async function* ($, e, next) {
+${CLAUDE_NATIVE_TURN_ADMISSION_SOURCE}
     emit('step-start', e);
     const stream = next(e);
     let done = false;

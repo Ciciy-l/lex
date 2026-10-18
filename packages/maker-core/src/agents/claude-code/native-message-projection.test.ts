@@ -17,6 +17,15 @@ function fixture() {
 }
 
 describe('Claude native GUI message projection', () => {
+  it('projects only an authenticated media command row, never arbitrary plugin commands', () => {
+    const { row, submission } = fixture(); row.door = 'command';
+    expect(projectClaudeNativeMessage(row, bridgePluginName, submission).pluginSource).toBe(bridgePluginName);
+    expect(projectClaudeNativeMessage(row, bridgePluginName, { ...submission, inputKind: 'media' }))
+      .toEqual({ content: submission.originalContent });
+    row.origin.name = 'third-party';
+    expect(projectClaudeNativeMessage(row, bridgePluginName, { ...submission, inputKind: 'media' }).pluginSource).toBe('third-party');
+  });
+
   it('hides only a bound built-in submission, preserving original input and attachments', () => {
     const { row, submission } = fixture();
     const before = JSON.stringify(row);

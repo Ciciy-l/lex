@@ -19,6 +19,8 @@ export interface ClaudeBridgeSubmission {
   nativeMessageId: string;
   submissionId: string;
   pluginName: string;
+  /** Set by the host only when the authenticated command expands staged media. */
+  inputKind?: 'text' | 'media';
   originalContent: readonly unknown[];
 }
 
@@ -36,7 +38,8 @@ export function projectClaudeNativeMessage(
   const pluginSource = row.origin.kind === 'plugin' ? row.origin.name : undefined;
   if (submission && bridgePluginName.length > 0 && submission.submissionId.length > 0
     && row.sessionId === submission.sessionId && row.uuid === submission.nativeMessageId
-    && !row.agentId && row.door === 'prompt' && row.message.type === 'user' && !row.message.isMeta
+    && !row.agentId && (row.door === 'prompt' || (row.door === 'command' && submission.inputKind === 'media'))
+    && row.message.type === 'user' && !row.message.isMeta
     && row.origin.kind === 'plugin' && pluginSource === bridgePluginName
     && submission.pluginName === bridgePluginName) {
     // Original input includes attachments and literal plugin-looking text. No
