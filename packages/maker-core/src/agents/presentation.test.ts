@@ -16,6 +16,27 @@ function fixture(maxReplayBytes?: number) {
 }
 
 describe('task-owned native presentation', () => {
+  it('pages escaped output within the wire budget without splitting surrogate pairs', () => {
+    const f = fixture(2_000_000); const view = f.runtime.attach('desktop', vi.fn());
+    const data = String.fromCharCode(27).repeat(90_000) + '😀'.repeat(20_000); f.data(data);
+    const first = view.read();
+    expect(Buffer.byteLength(JSON.stringify(first.frames))).toBeLessThan(263_000);
+    expect(first.frames.at(-1)!.sequence).toBeLessThan(first.state.sequence);
+    let sequence = first.frames.at(-1)!.sequence;
+    const frames = [...first.frames];
+    while (sequence < first.state.sequence) {
+      const next = view.read(sequence); frames.push(...next.frames); sequence = next.frames.at(-1)!.sequence;
+    }
+    expect(frames.map((frame) => frame.data).join('')).toBe(data);
+    for (const frame of frames) expect(Buffer.from(frame.data).toString()).toBe(frame.data);
+  });
+
+  it('returns a trusted screen at the current cursor when replay has expired', () => {
+    const f = fixture(3); f.driver.snapshot = () => ({ data: 'screen', cols: 40, rows: 8 });
+    f.data('long output'); const view = f.runtime.attach('desktop', vi.fn());
+    expect(view.read()).toMatchObject({ gap: false, frames: [], snapshot: { sequence: 1, data: 'screen', cols: 40, rows: 8 } });
+  });
+
   it('keeps output and the same runtime alive while every view is detached', () => {
     const f = fixture();
     const view = f.runtime.attach('desktop', vi.fn());
@@ -39,6 +60,8 @@ describe('task-owned native presentation', () => {
     expect(remote.acquireControl()).toBeNull();
     local.write(first, 1, 'draft');
     const second = remote.acquireControl(true)!;
+    expect(local.read().controlling).toBe(false);
+    expect(remote.read().controlling).toBe(true);
     expect(second.lease).not.toBe(first.lease);
     expect(() => local.write(first, 2, '\r')).toThrow('expired');
     expect(() => local.resize(first, 80, 24)).toThrow('expired');

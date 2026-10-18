@@ -4,14 +4,17 @@ import { randomUUID } from 'node:crypto';
 export interface AgentTerminalDriver {
   write(data: string): void;
   resize(cols: number, rows: number): void;
-  onData(listener: (data: string) => void): () => void;
+  onData(listener: (data: string, size?: { cols: number; rows: number }) => void): () => void;
   onExit(listener: (exit: { code: number | null; signal?: string }) => void): () => void;
+  /** Parsed screen at the last delivered output, including native terminal modes. */
+  snapshot?(): { data: string; cols: number; rows: number };
   close(): void | Promise<void>;
 }
 
 export interface AgentTerminalFrame {
   sequence: number;
   data: string;
+  size?: { cols: number; rows: number };
 }
 
 export interface AgentPresentationState {
@@ -28,8 +31,12 @@ export interface AgentPresentationState {
 export interface AgentTerminalReplay {
   state: AgentPresentationState;
   frames: readonly AgentTerminalFrame[];
+  /** This exact attachment owns input, not merely another view of the same peer. */
+  controlling: boolean;
   /** A screen snapshot is required. Never render a truncated ANSI tail as a full screen. */
   gap: boolean;
+  /** Replaces a missing prefix; restore at these dimensions before later frames. */
+  snapshot?: { sequence: number; data: string; cols: number; rows: number };
 }
 
 export interface AgentTerminalControl {
@@ -86,7 +93,7 @@ export class AgentPresentationRuntime implements AgentSessionPresentation {
       throw new Error('Invalid terminal replay limit');
     }
     this.maxReplayBytes = options.maxReplayBytes ?? 1_048_576;
-    this.stopData = driver.onData((data) => this.append(data));
+    this.stopData = driver.onData((data, size) => this.append(data, size));
     this.stopExit = driver.onExit((exit) => {
       if (this.status !== 'running') return;
       this.status = 'exited';
@@ -124,9 +131,23 @@ export class AgentPresentationRuntime implements AgentSessionPresentation {
         if (!Number.isSafeInteger(afterSequence) || afterSequence < 0 || afterSequence > this.sequence) {
           throw new Error('Invalid terminal output cursor');
         }
-        return { state: this.state(),
-          frames: this.frames.filter((frame) => frame.sequence > afterSequence).map((frame) => ({ ...frame })),
-          gap: afterSequence < (this.frames[0]?.sequence ?? this.sequence + 1) - 1 };
+        const gap = afterSequence < (this.frames[0]?.sequence ?? this.sequence + 1) - 1;
+        const screen = gap ? this.driver.snapshot?.() : undefined;
+        if (screen) {
+          return { state: this.state(), controlling: this.controller?.attachmentId === id, frames: [], gap: false,
+            snapshot: { ...screen, sequence: this.sequence } };
+        }
+        // Page output, including JSON escaping, below the legacy Device Link frame limit.
+        const frames: AgentTerminalFrame[] = [];
+        let bytes = 0;
+        for (const frame of this.frames) {
+          if (frame.sequence <= afterSequence) continue;
+          const size = Buffer.byteLength(JSON.stringify(frame));
+          if (frames.length && bytes + size > 262_144) break;
+          frames.push({ ...frame, ...(frame.size ? { size: { ...frame.size } } : {}) });
+          bytes += size;
+        }
+        return { state: this.state(), controlling: this.controller?.attachmentId === id, frames, gap };
       },
       acquireControl: (takeOver = false) => {
         attached();
@@ -190,10 +211,21 @@ export class AgentPresentationRuntime implements AgentSessionPresentation {
     return this.closePromise;
   }
 
-  private append(data: string): void {
-    if (this.status !== 'running' || !data) return;
-    this.frames.push({ sequence: ++this.sequence, data });
-    this.bytes += Buffer.byteLength(data);
+  private append(data: string, size?: { cols: number; rows: number }): void {
+    if (this.status !== 'running' || (!data && !size)) return;
+    if (size) { this.cols = size.cols; this.rows = size.rows; }
+    // Drivers bound frames; retain streaming parser state between pieces. Avoid
+    // splitting surrogate pairs, but ANSI sequences may cross frame boundaries.
+    for (let offset = 0; offset < data.length || (offset === 0 && !data);) {
+      let end = Math.min(offset + 16_384, data.length);
+      const last = data.charCodeAt(end - 1);
+      if (end < data.length && last >= 0xd800 && last <= 0xdbff) end--;
+      const part = data.slice(offset, end);
+      this.frames.push({ sequence: ++this.sequence, data: part, ...(size ? { size: { ...size } } : {}) });
+      this.bytes += Buffer.byteLength(part);
+      offset = end;
+      if (!data) break;
+    }
     // Drop whole frames, never split UTF-8, a surrogate pair or an ANSI sequence.
     while ((this.bytes > this.maxReplayBytes || this.frames.length > 4096) && this.frames.length) {
       this.bytes -= Buffer.byteLength(this.frames.shift()!.data);
