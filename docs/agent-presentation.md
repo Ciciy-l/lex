@@ -420,9 +420,49 @@ receipt patches the original visible user row with one conditional SQLite
 over the existing Desktop/phone history channel. Clear, rewind, deletion,
 replacement and conflicting receipts do not revive or relabel an old row. A
 failed association is diagnostic only; it never resubmits accepted input. Pi's
-transcript-entry callback remains separate. Production Claude handle selection
-must pass this observer into `runtime.submit`; the receipt path alone does not
-enable GUI/TUI switching.
+transcript-entry callback remains separate. The native Maker handle now passes
+this observer into `runtime.submit`; production engine selection and shared
+launch/control parity remain gated, so this does not enable GUI/TUI switching.
+
+### Native Maker handle and product input queue
+
+`native-session.ts` now implements the Maker handle over the continuous native
+runtime. GUI input enters through real `Session.send`; original TUI input enters
+through that same Session's pre-append resolver. Both use the supplied Claude
+policy and exact native receipt. The handle publishes its task-owned presentation,
+semantic event stream and usage snapshot. Stop targets the current native turn;
+view detach never closes it. Missing dispatch receipts use Session's existing
+unconfirmed-dispatch shutdown, while an actual accepted row survives a lost
+command response without resubmission. Native same-turn steering remains
+unsupported here: Mods `prompt.submit` schedules a new turn. It must not be
+advertised as the old streaming-input steer capability.
+
+Run `node --import tsx scripts/agent-presentation/claude-session-probe.mjs` for
+the actual managed 2.1.296 CLI, production handle, Core Session and Desktop PTY
+driver with isolated homes and a fake loopback provider. The second run passes
+26 checks, including five product reservations/terminals, four GUI UUID receipts,
+one original TUI input, streaming, Stop followed by another input, retained
+native draft and view detach/reattach during generation with the same process
+and presentation generation. Its fixture queues GUI follow-ups until the real
+product terminal, rather than submitting into Claude's busy queue. The old
+direct-native queue checks are retained as separate baseline results; they are
+not counted as product-queue passes. The earlier run failed those two mismatched
+baseline checks; it is preserved. Evidence: external
+`ci-logs/claude-permission-lifecycle/production-handle2.json`. This still does not
+exercise the product engine selector, Desktop MainIPC/renderer, credentials,
+full shared launch configuration, permissions or remote UI.
+
+Live-settings experiments on the same isolated runtime establish a narrower
+boundary. `config.set(model)` changes the running model but writes
+`CLAUDE_CONFIG_DIR/settings.json`, even with a distinct `--settings` file and
+empty setting sources. A `turn.step` model/effort rewrite changes subsequent
+provider requests without a settings write or process replacement, but does not
+change `session.model()` or establish native selector/UI synchronization.
+`command.run(model)` did not preserve the existing draft or apply the requested
+model in these experiments; its command result is not an applied-state receipt.
+None is yet a complete product live-settings implementation. Original reports
+remain under `ci-logs/claude-permission-lifecycle/`; no real profile was read or
+changed.
 
 The follow-up `--scenario=identity` passes 18 checks on the same managed 2.1.296
 binary, including the earlier continuous controls. Its `session.append` hook
