@@ -11,7 +11,13 @@
  *   · 只有 session id 没有合规 bearer → 401,绝不能掉进 Claude / Pi 的默认路由。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildUserProvider } from '@cindy/model-providers';
+import { BUNDLED_CATALOG, buildUserProvider } from '@cindy/model-providers';
+
+const nativeSubscription = vi.hoisted(() => ({ create: vi.fn(), request: vi.fn() }));
+vi.mock('../anthropic-responses-bridge-host.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../anthropic-responses-bridge-host.js')>(),
+  getPiNativeSubscriptionHandler: nativeSubscription.create,
+}));
 
 vi.mock('../../appCapabilities.js', () => ({
   getAppCapabilities: () => ({ canUseCindyGateway: true }),
@@ -62,7 +68,7 @@ import {
   readOmpRequestToken,
   parseOmpGoogleRequest,
 } from '../omp-proxy-session-auth';
-import { setCustomProviders } from '../active-catalog';
+import { setActiveCatalog, setCustomProviders, setDiscoveredCodexModels } from '../active-catalog';
 import { setCustomProviderKeyReader } from '../provider-route';
 import { clearSessionProvider, setSessionProvider } from '../session-provider-store';
 
@@ -156,10 +162,36 @@ describe('OMP gateway route in cc routingTransform', () => {
   });
 
   afterEach(() => {
+    setActiveCatalog(BUNDLED_CATALOG);
+    setDiscoveredCodexModels([]);
     setClaudeProxyGatewayKeyReader(() => null);
     setCustomProviders([]);
     setCustomProviderKeyReader(() => null);
     clearSessionProvider('sess-omp');
+  });
+
+  it('routes an authenticated OpenAI OMP request through the host handler, never native OAuth passthrough', async () => {
+    setActiveCatalog(BUNDLED_CATALOG);
+    setDiscoveredCodexModels([{ id: 'gpt-omp-test', name: 'GPT', contextWindow: 200_000, efforts: [], defaultEffort: null }]);
+    setSessionProvider('sess-omp', 'openai');
+    nativeSubscription.create.mockReset().mockReturnValue(nativeSubscription.request);
+    nativeSubscription.request.mockReset().mockResolvedValue(undefined);
+    const headers = { ...OMP_HEADERS, authorization: 'Bearer omp-tok-sess-omp', 'x-cindy-omp-provider-id': 'untrusted-other-account' };
+    const body = { model: 'gpt-omp-test', input: 'fixture' };
+    const decision = await settledDecision(createModelRoutingTransform()(body, ctxWith(headers, '/responses')));
+    expect(nativeSubscription.create).toHaveBeenCalledWith('openai', 'sess-omp', undefined, expect.any(Function));
+    expect(decision?.upstreamOverride).toBeUndefined();
+    const args = { parsedBody: body, res: { writeHead: vi.fn(), end: vi.fn() } };
+    await decision?.localHandler?.(args as never);
+    expect(nativeSubscription.request).toHaveBeenCalledOnce();
+    expect(await errorBodyOf(createModelRoutingTransform()(body, ctxWith({ ...headers, authorization: 'Bearer invalid' }, '/responses')))).toMatchObject({ status: 401 });
+    expect(await errorBodyOf(createModelRoutingTransform()({ ...body, model: 'not-in-account' }, ctxWith(headers, '/responses')))).toMatchObject({ status: 503 });
+    expect(await errorBodyOf(createModelRoutingTransform()(body, ctxWith(headers, '/v1/messages')))).toMatchObject({ status: 503 });
+    clearSessionProvider('sess-omp');
+    expect(nativeSubscription.create.mock.calls[0][3]()).toBe(false);
+    await decision?.localHandler?.(args as never);
+    expect(nativeSubscription.request).toHaveBeenCalledOnce();
+    expect(args.res.writeHead).toHaveBeenCalledWith(503, expect.anything());
   });
 
   function selectDirectOmpProvider(): void {

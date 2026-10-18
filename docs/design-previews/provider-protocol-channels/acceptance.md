@@ -90,3 +90,52 @@ token 或改变布局。截图及请求序列／CAS 记录位于仓库外本轮 
 监听已关闭。未关闭正式 Lex／Cindy，未执行真实供应商请求、付费会话、真实远程设备
 或手机触控／弱网／扫码／升级验收。Pi 原始两个 20 秒超时的首次阻塞点仍未被证明；
 新增真实文件系统回归只证明 fixture 清理必须等待异步 body 与 mutation-lock tail。
+
+## 紧凑供应商与 OMP 设置补验（2026-10-18）
+
+标准隔离启动器 `pnpm restart:desktop:remote --region=global --isolated=provider-harness-ux --isolated-auth --passive`
+返回 `DESKTOP_DEV_VERDICT=ready`，主进程 PID 34296、CDP 9443。Claude 使用本轮空配置目录，
+Codex 使用标准隔离授权；四个固定引擎资产均已存在，OMP 为 18.10.4，无本轮资产下载。
+使用「跳过登录」进入真实产品路由、preload 和 Main IPC，没有替换产品接口或挂载组件替身。
+
+| 场景 | 实际结果 |
+| --- | --- |
+| 添加供应商 | 最大 600px 单列表单；顶部「按协议 / 按 Harness」切换，两边草稿保留 |
+| 键盘 | 方向键往返后焦点留在所选 Tab；18 次 Tab 均留在弹窗；Esc 先确认未保存更改 |
+| 连接和模型发现 | 假密钥只发往本机 127.0.0.1:18768；Main IPC 实际 POST /v1/responses、GET /v1/models 成功 |
+| 保存重开 | 两个模型持久化；重开时密钥输入为空，不回显已存密钥 |
+| 预设 | 协议表单显示已选 OpenAI API 模板；Harness 表单的 vLLM 模板提供 OMP 协议配置 |
+| OMP Subagent | 保存本机 vLLM 模板连接后，模型实际出现在选择器；选择后 Main IPC 回读及设置重开均保留 |
+| OMP 记忆 | 行尾常驻图标，确认明确只清 OMP 原生记忆、不含统一记忆；取消未执行清理 |
+| OMP 压缩 | OMP 标签在标题末位；收起时无开关/组恢复按钮；高级区有具名开关，修改后恢复默认实际生效 |
+| 双主题、窄窗 | 浅色/深色、1120×820 与 680×760 实际操作；截图已查看；表单底部按钮保持可见 |
+
+实机发现并修复了协议 fieldset 的滚动溢出、Tab 选中背景不明显，以及 OMP 模型字段被高级入口/
+自定义状态挤窄后导致弹出列表不可用的问题。OMP 高级入口移到说明行，模型与恢复按钮保持同列。
+对模型 ID/请求头 textarea 补了稳定可访问名称，避免已填内容混入标签名。
+
+外部自动化的首次步骤曾因预期中文不同、把 option 当 button、对只读预设 URL 填写、没有等待
+设置路由完成而失败；保存预设时也曾遗漏 Claude Code 的模型，产品正确拒绝。原始记录保留，
+按实际控件与表单要求修正后上述场景通过，不把这些初次尝试记作成功。
+
+![按协议添加供应商](../../assets/provider-harness-ux/protocol-light.png)
+
+![OMP 与其他引擎并列设置](../../assets/provider-harness-ux/omp-light.png)
+
+![深色窄窗 OMP 模型选择](../../assets/provider-harness-ux/omp-narrow-dark.png)
+
+设计依据：DESIGN.md §4（表单、Tab、模型字段与弹层宽度）、§5（图标点击目标与圆角）、
+§10（双主题）、§14.6（图标提示）；复用现有语义色和组件，不新增主题 token。
+
+边界：Subagent 偏好仍为父任务供应商内的模型 ID，不是独立跨供应商绑定；原生订阅的凭证
+替换/失效绑定由定向回归覆盖，未登录真实供应商或发起计费请求。未做四引擎真实对话、SSH、
+手机触控或弱网验收。记忆只验证确认与取消，不删除真实记忆。隔离开发版经「退出 Lex」正常
+退出，未关闭正式 Lex 或宿主 Cindy。完整截图、步骤和本机请求记录存于仓库外
+`F:/Projects/lex/ci-logs/provider-harness-ux/`。
+
+完整相关门禁发现公共预设扩展对旧向导及导入的连带影响后，将 OMP 模板补全收窄至
+「按 Harness」表单与已保存 runtime 的资料解析。复验标准隔离启动器 ready（PID 6172），
+真实 Main IPC 确认公共 vLLM 模板仍无派生 OMP；新建连接后 Subagent 能选择模型并在
+设置重开后保留。此次窗口关闭后出现已有原生窗口恢复监听清理路径的
+`Object has been destroyed` 异常；最终 whoami 的 instances 为空。未把此次退出称为
+无异常退出，也未扩展修改窗口生命周期。原始失败门禁、修复回归和退出日志均保留。

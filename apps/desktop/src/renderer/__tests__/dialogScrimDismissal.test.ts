@@ -1,7 +1,7 @@
 /**
- * DESIGN.md §4 Dialog & Modal「Closing affordance」:模态弹窗点遮罩/窗口外部一律不关闭,
- * 只能用自身按钮或 Esc 关闭。Radix Dialog 默认点外部即关闭,所以每个 `Dialog.Content`
- * 都必须无条件 `preventDefault` 外部指针事件。AlertDialog 本身不响应外部点击,不在此列。
+ * DESIGN.md §4 Dialog & Modal「Closing affordance」:可放弃的表单支持遮罩关闭，
+ * 但由业务关闭流程处理忙碌状态和未保存确认，不能直接依赖 Radix 的默认 dismiss。
+ * `Dialog.Content` 先无条件 preventDefault，再按需调用受控关闭；AlertDialog 不在此列。
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
@@ -57,7 +57,7 @@ function dialogContentTags(sourceFile: ts.SourceFile): (tag: string) => boolean 
   };
 }
 
-/** `(e) => e.preventDefault()` 或只含这一句的函数体。 */
+/** 先无条件阻止默认关闭；后续可显式调用含忙碌/草稿保护的业务关闭流程。 */
 function alwaysPreventsDefault(attribute: ts.JsxAttribute): boolean {
   const initializer = attribute.initializer;
   if (!initializer || !ts.isJsxExpression(initializer) || !initializer.expression) return false;
@@ -65,7 +65,7 @@ function alwaysPreventsDefault(attribute: ts.JsxAttribute): boolean {
   if (!ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn)) return false;
   const body = fn.body;
   const expression = ts.isBlock(body)
-    ? body.statements.length === 1 && ts.isExpressionStatement(body.statements[0])
+    ? body.statements.length >= 1 && ts.isExpressionStatement(body.statements[0])
       ? body.statements[0].expression
       : undefined
     : body;
@@ -114,7 +114,7 @@ function rendererLabel(path: string): string {
 }
 
 describe('dialog scrim dismissal', () => {
-  it('every Radix Dialog.Content ignores clicks outside the dialog', () => {
+  it('every Radix Dialog.Content controls outside dismissal explicitly', () => {
     const offenders = rendererComponentFiles(RENDERER_ROOT)
       .filter((path) => !EXEMPT_FILES.has(rendererLabel(path)))
       .flatMap((path) => unguardedDialogContents(rendererLabel(path), readFileSync(path, 'utf8')));
@@ -144,6 +144,12 @@ describe('dialog scrim dismissal', () => {
       unguardedDialogContents(
         'fixture',
         fixture(' onPointerDownOutside={(e) => e.preventDefault()}'),
+      ),
+    ).toEqual([]);
+    expect(
+      unguardedDialogContents(
+        'fixture',
+        fixture(' onPointerDownOutside={(e) => { e.preventDefault(); requestClose(); }}'),
       ),
     ).toEqual([]);
     expect(

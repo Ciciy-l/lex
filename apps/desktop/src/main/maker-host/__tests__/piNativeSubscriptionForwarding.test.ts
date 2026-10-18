@@ -109,6 +109,32 @@ function installPiFastFixture(availability: 'available' | 'missing' | 'unknown')
 }
 
 describe('PI native subscription forwarding', () => {
+  it('replaces an OMP process bearer with host account credentials and rejects a stale binding after auth resolves', async () => {
+    const injected = deps();
+    let current = true;
+    const body = { model: 'gpt-test', input: 'fixture' };
+    const args = () => ({ rawBody: Buffer.from(JSON.stringify(body)), parsedBody: body,
+      ctx: { reqId: 1, method: 'POST', url: '/responses', headers: {
+        authorization: 'Bearer omp-process-secret', 'x-cindy-omp-session-id': 'session-omp',
+        'x-cindy-omp-provider-id': 'forged-account',
+      } }, res: responseRecorder() });
+    await getPiNativeSubscriptionHandler('openai', 'session-omp', injected, () => current)(args() as never);
+    const outbound = vi.mocked(injected.fetch).mock.calls[0][1]!;
+    expect(outbound.headers).toMatchObject({ authorization: 'Bearer host-openai-token' });
+    expect(JSON.stringify(outbound)).not.toContain('omp-process-secret');
+    expect(JSON.stringify(outbound)).not.toContain('forged-account');
+    vi.mocked(injected.fetch).mockClear();
+    let release!: () => void;
+    injected.getChatgptAuth = vi.fn(async () => {
+      await new Promise<void>(resolve => { release = resolve; });
+      return { accessToken: 'host-openai-token', accountId: 'account-1' };
+    });
+    const pending = getPiNativeSubscriptionHandler('openai', 'session-omp', injected, () => current)(args() as never);
+    current = false;
+    release();
+    await pending;
+    expect(injected.fetch).not.toHaveBeenCalled();
+  });
   afterEach(() => {
     setActiveCatalog(BUNDLED_CATALOG);
     setXaiDiscoveredModels(null);

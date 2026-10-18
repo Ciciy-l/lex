@@ -54,14 +54,15 @@ afterEach(cleanup);
 // These cases exercise the retained OAuth/specialized form. New connections
 // now enter the protocol-channel form first, so follow its real setup entry.
 async function enterSpecializedSetup(): Promise<void> {
-  const entry = screen.queryByRole('button', { name: 'models.channels.specializedSetup' });
+  const entry = screen.queryByRole('tab', { name: 'models.channels.byHarness' });
   if (entry) fireEvent.click(entry);
 }
 
 async function waitForInitialDialogFocus(): Promise<void> {
   await enterSpecializedSetup();
-  const nameInput = screen.getByPlaceholderText('settings.providers.custom.fields.namePlaceholder');
-  await waitFor(() => expect(document.activeElement).toBe(nameInput));
+  const initialFocus = screen.queryByRole('tab', { name: 'models.channels.byHarness' })
+    ?? screen.getByPlaceholderText('settings.providers.custom.fields.namePlaceholder');
+  await waitFor(() => expect(document.activeElement).toBe(initialFocus));
 }
 
 function modelRoutedCodexProvider(): CustomProviderConfig {
@@ -596,7 +597,7 @@ describe('ProviderConnectionDialog accessibility', () => {
     const trigger = screen.getByRole('button', { name: 'Add provider' });
     const stable = screen.getByRole('button', { name: 'Stable provider entry' });
     await user.click(trigger);
-    await user.click(screen.getByRole('button', { name: 'models.channels.specializedSetup' }));
+    await user.click(screen.getByRole('tab', { name: 'models.channels.byHarness' }));
     const dialog = screen.getByRole('dialog', { name: 'settings.providers.custom.dialog.createTitle' });
     await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
     // Radix settles the departing form's closeAutoFocus on the next task.
@@ -613,7 +614,7 @@ describe('ProviderConnectionDialog accessibility', () => {
     fireEvent.change(screen.getByLabelText('models.channels.supplierName'), { target: { value: 'Channel draft' } });
     await enterSpecializedSetup();
     fireEvent.change(screen.getByPlaceholderText('settings.providers.custom.fields.namePlaceholder'), { target: { value: 'Specialized draft' } });
-    fireEvent.click(screen.getByRole('button', { name: 'models.channels.backToChannels' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'models.channels.byProtocol' }));
     expect(screen.getByDisplayValue('Channel draft')).toBeTruthy();
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     expect(screen.getByRole('alertdialog')).toBeTruthy();
@@ -622,6 +623,20 @@ describe('ProviderConnectionDialog accessibility', () => {
     await enterSpecializedSetup();
     expect(screen.getByDisplayValue('Specialized draft')).toBeTruthy();
     expect(screen.queryByDisplayValue('Channel draft')).toBeNull();
+  });
+
+  it('keeps keyboard focus on the selected setup tab when switching forms', async () => {
+    render(<ProviderConnectionDialog onSaved={vi.fn()} onClose={vi.fn()} />);
+    const protocol = screen.getByRole('tab', { name: 'models.channels.byProtocol' });
+    protocol.focus();
+    fireEvent.keyDown(protocol, { key: 'ArrowRight' });
+    const harness = await screen.findByRole('tab', { name: 'models.channels.byHarness' });
+    await waitFor(() => expect(document.activeElement).toBe(harness));
+    expect(screen.getByRole('tabpanel').getAttribute('aria-labelledby')).toBe(harness.id);
+    fireEvent.keyDown(harness, { key: 'ArrowLeft' });
+    const returned = screen.getByRole('tab', { name: 'models.channels.byProtocol' });
+    await waitFor(() => expect(document.activeElement).toBe(returned));
+    expect(returned.getAttribute('aria-controls')).toBe(screen.getByRole('tabpanel').id);
   });
 
   it('uses a stable fallback when the immediate opener unmounts during a wizard transition', async () => {

@@ -32,11 +32,11 @@ beforeEach(() => {
   window.electronAPI = { maker: { listProviderPresets: vi.fn(async () => ({ presets: [] })) } } as unknown as typeof window.electronAPI;
 });
 afterEach(cleanup);
-function mount(onSpecializedSetup?: () => void) {
+function mount(onHarnessSetup?: () => void) {
   const onSaved = vi.fn();
   const onClose = vi.fn();
   render(<ProviderChannelsDialog initial={config} onSaved={onSaved} onClose={onClose}
-    onSpecializedSetup={onSpecializedSetup} />);
+    onHarnessSetup={onHarnessSetup} />);
   return { onSaved, onClose };
 }
 function escape() {
@@ -54,7 +54,8 @@ describe('protocol-channel form requests', () => {
     fireEvent.click(screen.getByText('models.channels.advanced'));
     fireEvent.change(screen.getByLabelText('models.channels.headers'), { target: { value: '{invalid' } });
     fireEvent.change(screen.getByLabelText('models.channels.modelIds'), { target: { value: 'm\nsecond' } });
-    fireEvent.click(within(screen.getByRole('navigation')).getByRole('button', { name: 'Backup' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'models.channels.chooseChannel' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Backup' }));
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'models.channels.test' })); });
     expect(test).toHaveBeenCalledExactlyOnceWith({ kind: 'saved', providerId: 'backup--openai-responses', agent: 'pi' });
     expect(screen.getByRole('status').textContent).toBe('models.channels.connected');
@@ -75,7 +76,7 @@ describe('protocol-channel form requests', () => {
     fireEvent.click(screen.getByRole('button', { name: 'models.channels.keepEditing' }));
     expect(screen.getByDisplayValue('Edited')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'settings.providers.custom.save' }).closest('footer')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'common.dismiss' }));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.providers.custom.cancel' }));
     fireEvent.click(screen.getByRole('button', { name: 'models.channels.discard' }));
     expect(onClose).toHaveBeenCalledOnce();
   });
@@ -90,16 +91,20 @@ describe('protocol-channel form requests', () => {
     expect(screen.queryByText('private upstream secret')).toBeNull();
     expect(window.electronAPI.maker.testProviderConnection).toHaveBeenCalledWith(expect.objectContaining({ kind: 'adhoc' }));
   });
-  it('keeps an idle draft open on outside clicks while allowing explicit cancellation', async () => {
+  it('asks before discarding an edited draft on outside clicks', async () => {
     const { onClose, onSaved } = mount();
     await waitFor(() => expect(document.activeElement).toBe(screen.getByDisplayValue('Supplier')));
+    fireEvent.change(screen.getByDisplayValue('Supplier'), { target: { value: 'Edited supplier' } });
     fireEvent.pointerDown(document.body, { button: 0, pointerType: 'mouse' });
     fireEvent.click(document.body);
     expect(onClose).not.toHaveBeenCalled();
     expect(onSaved).not.toHaveBeenCalled();
     expect(calls.update).not.toHaveBeenCalled();
-    expect(screen.getByDisplayValue('Supplier')).not.toBeNull();
+    expect(screen.getByRole('alertdialog')).toBeTruthy();
+    expect(screen.getByDisplayValue('Edited supplier')).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'models.channels.keepEditing' }));
     fireEvent.click(screen.getByRole('button', { name: 'settings.providers.custom.cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'models.channels.discard' }));
     expect(onClose).toHaveBeenCalledOnce();
   });
   it('focuses the supplier field and prevents duplicate saves and dismissal until settlement', async () => {
@@ -143,22 +148,22 @@ describe('protocol-channel form requests', () => {
   it('blocks specialized setup during a pending save and permits it after a failure', async () => {
     let reject!: (error: Error) => void;
     calls.update.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
-    const onSpecializedSetup = vi.fn();
-    const { onSaved, onClose } = mount(onSpecializedSetup);
-    const entry = screen.getByRole('button', { name: 'models.channels.specializedSetup' });
+    const onHarnessSetup = vi.fn();
+    const { onSaved, onClose } = mount(onHarnessSetup);
+    const entry = screen.getByRole('tab', { name: 'models.channels.byHarness' });
     act(() => {
       fireEvent.click(screen.getByRole('button', { name: 'settings.providers.custom.save' }));
       fireEvent.click(entry);
     });
     expect(calls.update).toHaveBeenCalledOnce();
     expect((entry as HTMLButtonElement).disabled).toBe(true);
-    expect(onSpecializedSetup).not.toHaveBeenCalled();
+    expect(onHarnessSetup).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     expect(onSaved).not.toHaveBeenCalled();
     await act(async () => { reject(new Error('Save failed; retry')); });
     expect((entry as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(entry);
-    expect(onSpecializedSetup).toHaveBeenCalledOnce();
+    expect(onHarnessSetup).toHaveBeenCalledOnce();
     expect(calls.update).toHaveBeenCalledOnce();
   });
 });

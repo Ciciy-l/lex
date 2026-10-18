@@ -16,7 +16,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { ArrowLeft, Plus, X } from 'lucide-react';
+import { Plus, Sparkles } from 'lucide-react';
+import { ProviderSetupTabs } from './ProviderSetupTabs';
 import { Textarea } from '@/components/ui/input';
 import { SettingsTextInput } from './SettingsTextInput';
 import {
@@ -46,8 +47,9 @@ export interface ProviderChannelsDialogProps {
   returnFocusRef?: RefObject<HTMLElement | null>;
   onSaved(): void;
   onClose(): void;
-  onSpecializedSetup?(): void;
+  onHarnessSetup?(): void;
   suspended?: boolean;
+  focusSetupTab?: boolean;
 }
 
 /** Credentials are write-only form input. Saved values never return to this view. */
@@ -56,6 +58,8 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
   const { serviceRealm } = useAuth();
   const [catalogPresets, setCatalogPresets] = useState(BUNDLED_CATALOG.presets ?? []);
   const formId = useId();
+  const panelId = formId + '-panel';
+  const [appliedPreset, setAppliedPreset] = useState('');
   const nameInput = useRef<HTMLInputElement>(null);
   const requestPending = useRef(false);
   const transferringFocus = useRef(false);
@@ -116,7 +120,6 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState(false);
-  const [narrowDetail, setNarrowDetail] = useState(false);
   const [pendingAction, setPendingAction] = useState<
     { kind: 'close' } | { kind: 'preset'; id: string } | null
   >(null);
@@ -140,7 +143,6 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
     invalidate();
     setProtocol(wire);
     setSelectedId(id ?? '');
-    setNarrowDetail(true);
   };
   const presets = sortPresetsForRegion(catalogPresets, serviceRealm).filter(
     (preset) =>
@@ -193,6 +195,7 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
         number: plan.configuration.channels.indexOf(channel) + 1,
       });
     setConfig({ ...prepared, channels: plan.configuration });
+    setAppliedPreset(id);
     setKeys({});
     setModelDrafts({});
     setHeaderDrafts({});
@@ -284,7 +287,6 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
   };
   const add = (existingId?: string) => {
     invalidate();
-    setNarrowDetail(true);
     const next = { baseUrl: '', wireProtocol: protocol, models: [] };
     if (existingId) {
       updateChannel(existingId, (current) => ({
@@ -501,11 +503,13 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
         <Dialog.Content
           onPointerDownOutside={(event) => {
             event.preventDefault();
+            close();
           }}
           onOpenAutoFocus={(event) => {
             event.preventDefault();
             transferringFocus.current = false;
-            nameInput.current?.focus();
+            if (p.focusSetupTab) document.getElementById(panelId + '-protocol')?.focus();
+            else nameInput.current?.focus();
           }}
           aria-describedby={formId + '-description'}
           onEscapeKeyDown={(event) => {
@@ -519,36 +523,50 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
             const target = p.returnFocusRef?.current ?? opener.current;
             if (target?.isConnected) target.focus();
           }}
-          className="fixed left-1/2 top-1/2 z-[10001] flex h-[min(780px,90vh)] w-[min(960px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-[var(--border-default)] bg-[var(--confirm-bg)] text-[var(--text-primary)] shadow-[var(--confirm-shadow)] [-webkit-app-region:no-drag]"
+          className="fixed left-1/2 top-1/2 z-[10001] flex max-h-[88vh] w-[min(600px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-[var(--border-default)] bg-[var(--confirm-bg)] text-[var(--text-primary)] shadow-[var(--confirm-shadow)] [-webkit-app-region:no-drag]"
         >
-          <header className="shrink-0 border-b border-[var(--border-default)] p-4">
-            <div className="flex items-center justify-between gap-3">
-              <Dialog.Title className="text-18 font-semibold">
-                {t('models.channels.settingsTitle')}
-              </Dialog.Title>
-              <Button
-                variant="secondary"
-                className="w-8 px-0"
+          <header className="flex shrink-0 flex-col items-start gap-3 px-4 py-3">
+            <Dialog.Title className="flex items-center gap-2.5 text-18 font-semibold">
+              <Sparkles size={20} />
+              {t(
+                p.initial
+                  ? 'settings.providers.custom.dialog.editTitle'
+                  : 'settings.providers.custom.dialog.createTitle',
+              )}
+            </Dialog.Title>
+            {p.onHarnessSetup && (
+              <ProviderSetupTabs
+                mode="protocol"
+                panelId={panelId}
                 disabled={busy}
-                aria-label={t('common.dismiss')}
-                onClick={close}
-              >
-                <X size={16} />
-              </Button>
-            </div>
-            <Dialog.Description
-              id={formId + '-description'}
-              className="text-13 text-[var(--text-secondary)]"
+                onChange={() => {
+                  if (requestPending.current) return;
+                  transferringFocus.current = true;
+                  p.onHarnessSetup?.();
+                }}
+              />
+            )}
+          </header>
+          <div className="min-h-0 overflow-y-auto">
+            <fieldset
+              id={panelId}
+              role={p.onHarnessSetup ? 'tabpanel' : undefined}
+              aria-labelledby={p.onHarnessSetup ? panelId + '-protocol' : undefined}
+              disabled={busy}
+              className="flex min-w-0 flex-col gap-4 px-4 pb-4 pt-1"
             >
-              {t('models.channels.settingsDescription')}
-            </Dialog.Description>
-            <fieldset disabled={busy} className="mt-3 grid min-w-0 gap-3 min-[800px]:grid-cols-2">
+              <Dialog.Description
+                id={formId + '-description'}
+                className="text-13 leading-[1.55] text-[var(--text-secondary)]"
+              >
+                {t('models.channels.settingsDescription')}
+              </Dialog.Description>
               {!p.initial && (
                 <label className="flex flex-col gap-1 text-13">
                   {t('settings.providers.custom.presets.label')}
                   <Select
                     label={t('settings.providers.custom.presets.label')}
-                    value=""
+                    value={appliedPreset}
                     disabled={busy}
                     options={presets.map((preset) => ({
                       value: preset.id,
@@ -559,19 +577,6 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
                     }
                   />
                 </label>
-              )}
-              {p.onSpecializedSetup && (
-                <Button
-                  variant="secondary"
-                  disabled={busy}
-                  onClick={() => {
-                    if (requestPending.current) return;
-                    transferringFocus.current = true;
-                    p.onSpecializedSetup?.();
-                  }}
-                >
-                  {t('models.channels.specializedSetup')}
-                </Button>
               )}
               <label className="flex flex-col gap-1 text-13">
                 {t('models.channels.supplierName')}
@@ -586,63 +591,35 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
                   }}
                 />
               </label>
-            </fieldset>
-          </header>
-          <fieldset disabled={busy} className="flex min-h-0 flex-1 overflow-hidden">
-            <nav
-              aria-label={t('models.channels.protocol')}
-              className={
-                (narrowDetail ? 'hidden min-[800px]:block ' : '') +
-                'w-full shrink-0 overflow-y-auto p-3 min-[800px]:w-64 min-[800px]:border-r min-[800px]:border-[var(--border-default)]'
-              }
-            >
-              {PROVIDER_WIRE_PROTOCOLS.map((wire) => (
-                <section key={wire} className="mb-4">
-                  <h3 className="px-2 py-1 text-12 text-[var(--text-secondary)]">
-                    {protocolNames[wire]}
-                  </h3>
-                  {channels
-                    .filter((entry) => entry.protocols[wire])
-                    .map((entry) => (
-                      <Button
-                        key={entry.id}
-                        variant={
-                          wire === protocol && entry.id === channel?.id ? 'primary' : 'secondary'
-                        }
-                        aria-pressed={wire === protocol && entry.id === channel?.id}
-                        className="mb-1 w-full justify-start truncate"
-                        onClick={() => selectRoute(wire, entry.id)}
-                      >
-                        {entry.name}
-                      </Button>
-                    ))}
-                  <Button
-                    variant="secondary"
-                    className="w-full justify-start gap-2"
-                    onClick={() => selectRoute(wire)}
-                  >
-                    <Plus size={14} />
-                    {t('models.channels.manageProtocol')}
-                  </Button>
-                </section>
-              ))}
-            </nav>
-            <div
-              className={
-                (narrowDetail ? 'flex ' : 'hidden min-[800px]:flex ') +
-                'min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto p-4'
-              }
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <Button
-                  variant="secondary"
-                  className="min-[800px]:hidden"
-                  onClick={() => setNarrowDetail(false)}
-                >
-                  <ArrowLeft size={16} />
-                  {t('models.channels.backToChannels')}
-                </Button>
-                <h3 className="text-14 font-medium">{protocolNames[protocol]}</h3>
+              <label className="flex flex-col gap-1 text-13">
+                {t('models.channels.protocol')}
+                <Select
+                  label={t('models.channels.protocol')}
+                  value={protocol}
+                  disabled={busy}
+                  options={PROVIDER_WIRE_PROTOCOLS.map((wire) => ({
+                    value: wire,
+                    label: protocolNames[wire],
+                  }))}
+                  onValueChange={(value) => {
+                    const wire = value as ProviderWireProtocol;
+                    selectRoute(wire, channels.find((entry) => entry.protocols[wire])?.id);
+                  }}
+                />
+              </label>
+              <div className="flex min-w-0 items-end gap-2">
+                <label className="flex min-w-0 flex-1 flex-col gap-1 text-13">
+                  {t('models.channels.chooseChannel')}
+                  <Select
+                    label={t('models.channels.chooseChannel')}
+                    value={channel?.id ?? ''}
+                    disabled={busy}
+                    options={channels
+                      .filter((entry) => entry.protocols[protocol])
+                      .map((entry) => ({ value: entry.id, label: entry.name }))}
+                    onValueChange={(id) => selectRoute(protocol, id)}
+                  />
+                </label>
                 <Button variant="secondary" onClick={() => add()}>
                   <Plus size={14} />
                   {t('models.channels.add')}
@@ -718,6 +695,7 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
                   <label className="flex flex-col gap-1 text-13">
                     {t('models.channels.modelIds')}
                     <Textarea
+                      aria-label={t('models.channels.modelIds')}
                       surface="ivory"
                       rows={5}
                       value={
@@ -767,6 +745,7 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
                       <label className="text-13">
                         {t('models.channels.headers')}
                         <Textarea
+                          aria-label={t('models.channels.headers')}
                           surface="ivory"
                           rows={3}
                           value={headerDrafts[draftId] ?? ''}
@@ -812,8 +791,8 @@ export function ProviderChannelsDialog(p: ProviderChannelsDialogProps) {
                   </details>
                 </>
               )}
-            </div>
-          </fieldset>
+            </fieldset>
+          </div>
           <footer className="shrink-0 space-y-2 border-t border-[var(--border-default)] p-4">
             {error && (
               <p role="alert" className="text-13 text-[var(--text-primary)]">

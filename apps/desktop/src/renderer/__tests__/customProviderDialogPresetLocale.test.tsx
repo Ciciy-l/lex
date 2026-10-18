@@ -126,7 +126,7 @@ function renderDialog(onClose = vi.fn()) {
   const view = render(<ProviderConnectionDialog onSaved={vi.fn()} onClose={onClose} existingIds={[]} />);
   // These contracts cover the retained specialized per-engine setup. The
   // default protocol-channel form has separate interaction coverage.
-  fireEvent.click(screen.getByRole('button', { name: 'models.channels.specializedSetup' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'models.channels.byHarness' }));
   return {
     onClose,
     ...view,
@@ -141,7 +141,8 @@ async function findReadyPresetTrigger() {
   // that focus settles can immediately dismiss it and leave tests using a stale node.
   await waitFor(() => {
     expect(document.activeElement).toBe(
-      screen.getByPlaceholderText('settings.providers.custom.fields.namePlaceholder'),
+      screen.queryByRole('tab', { name: 'models.channels.byHarness' })
+        ?? screen.getByPlaceholderText('settings.providers.custom.fields.namePlaceholder'),
     );
   });
   return trigger;
@@ -219,6 +220,12 @@ describe('ProviderConnectionDialog preset locale ownership', () => {
       fireEvent.click(screen.getByRole('button', { name: 'settings.providers.custom.save' }));
       await waitFor(() => expect(createCustomProvider).toHaveBeenCalledTimes(1));
       expect(vi.mocked(createCustomProvider).mock.calls[0][0].name).toBe(expectedName);
+      expect(vi.mocked(createCustomProvider).mock.calls[0][0].runtimes.omp).toMatchObject({
+        baseUrl: 'http://127.0.0.1:4000/v1',
+        wireProtocol: 'openai-responses',
+        models: [expect.objectContaining({ id: 'local-model' })],
+      });
+      expect(localizedPreset.runtimes.omp).toBeUndefined();
     },
   );
 

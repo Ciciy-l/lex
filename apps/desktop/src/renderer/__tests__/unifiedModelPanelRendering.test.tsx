@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { projectBuiltinOmpProvider, BUNDLED_CATALOG } from '@cindy/model-providers';
 
 /**
  * 统一模型选择器面板(M3 / M4)的**接线锁**:纯逻辑层算出来的东西必须真的到达像素,
@@ -4030,5 +4031,23 @@ describe('settings configuration without shared memory', () => {
     await act(async () => { fireEvent.click(fast); });
     expect(change).toHaveBeenLastCalledWith('xd', 'gpt-5.5', 'high', true);
     expect(dismiss).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('OMP Subagent model field', () => {
+  it('renders and selects an actual connected built-in model with a model-only persistence contract', async () => {
+    const source = structuredClone(BUNDLED_CATALOG.providers.find(p => p.id === 'anthropic')!);
+    source.models.codex = [{ id: 'claude-omp-ui', name: 'OMP preset model', group: 'anthropic',
+      contextWindow: 200_000, efforts: [], defaultEffort: null, defaultEnabled: true }];
+    const change = vi.fn().mockResolvedValue(true);
+    renderPanel({ vendorKey: 'omp', unifiedAgents: ['omp'], modelId: '',
+      currentProviderId: undefined, onProviderChange: undefined, onModelChange: change,
+      configurationEnabled: false,
+      providersOverride: [{ ...projectBuiltinOmpProvider(source), connected: true }],
+    });
+    await act(async () => { fireEvent.click(rowFor('OMP preset model')); });
+    expect(change).toHaveBeenCalledWith('claude-omp-ui');
+    expect(onProviderChange).not.toHaveBeenCalled();
   });
 });

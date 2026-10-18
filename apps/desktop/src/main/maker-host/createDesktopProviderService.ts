@@ -486,10 +486,10 @@ export function ensureActiveCatalogLoaded(): Promise<Catalog> {
     if (subscriptionAccountKind(providerId) === 'claude') {
       return getValidClaudeAccountOAuth(providerId, options).then(oauth => oauth?.accessToken ?? null);
     }
-    // Codex and Pi processes do not carry Claude Code's native OAuth credential.
+    // Codex, Pi and OMP do not carry Claude Code's native OAuth credential.
     // Their Anthropic bridges read the host-owned Claude.ai token and allow the
     // existing refresher to rotate it when needed.
-    if (providerId === 'anthropic' && (agent === 'codex' || agent === 'pi')) {
+    if (providerId === 'anthropic' && (agent === 'codex' || agent === 'pi' || agent === 'omp')) {
       return getValidClaudeAiOAuth(options).then((oauth) => oauth?.accessToken ?? null);
     }
     return null;
