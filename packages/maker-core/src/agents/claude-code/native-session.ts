@@ -32,7 +32,9 @@ export interface ClaudeNativeSessionOptions {
 interface InputEntry {
   id: string;
   nativeId?: string;
-  cancelled: boolean;
+  readonly cancelled: boolean;
+  readonly signal: AbortSignal;
+  cancel(): void;
   accepted: boolean;
   stop(): void;
 }
@@ -55,7 +57,7 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
   let runtime: ClaudeNativeRuntime | undefined;
   let currentTurn: { id: string; inputs: InputEntry[] } | undefined;
   const observedTurns = new Map<string, InputEntry[]>();
-  let closed = false, exited = false, faulted = false;
+  let closed = false, exited = false, faulted = false, initialized = false;
   let closing: Promise<void> | undefined;
   let usage: UsageSnapshot = { tokenUsage: 0, contextTokens: 0, contextWindow: 0, costUsd: 0 };
 
@@ -67,8 +69,10 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
   };
   const makeEntry = (id: string, signal?: AbortSignal): InputEntry => {
     if (signal?.aborted) throw new TurnDispatchRejectedError('Claude input cancelled before dispatch');
-    const entry: InputEntry = { id, cancelled: false, accepted: false, stop: () => signal?.removeEventListener('abort', cancel) };
-    const cancel = () => { entry.cancelled = true; };
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
+    const entry: InputEntry = { id, get cancelled() { return controller.signal.aborted; },
+      signal: controller.signal, cancel, accepted: false, stop: () => signal?.removeEventListener('abort', cancel) };
     signal?.addEventListener('abort', cancel, { once: true });
     return entry;
   };
@@ -82,7 +86,7 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
   function close(): Promise<void> {
     if (closing) return closing;
     closed = true;
-    for (const entry of new Set([...guiInputs.values(), ...nativeInputs.values()])) { entry.cancelled = true; entry.stop(); }
+    for (const entry of new Set([...guiInputs.values(), ...nativeInputs.values()])) { entry.cancel(); entry.stop(); }
     guiInputs.clear(); nativeInputs.clear(); observedTurns.clear(); currentTurn = undefined;
     closing = Promise.resolve().then(async () => {
       try { await runtime?.close(); }
@@ -182,7 +186,13 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
       },
       onFault: fail,
     });
-    await runtime.ready;
+    // Publish the already-live terminal before native onboarding finishes. The
+    // original CLI can ask for trust/login; its user must be able to answer.
+    void runtime.ready.then(() => {
+      if (!live()) return;
+      initialized = true;
+      events.push({ type: 'session_id', data: options.runtime.nativeSessionId, source: 'claude-code' });
+    }, () => { if (live()) fail('Native Claude initialization failed'); });
     requireLive();
   } catch (error) { if (closing) await runtime?.close(); await close(); throw error; }
   const native = runtime;
@@ -190,7 +200,8 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
   return {
     nativeRuntime: native,
     disabledSkillPaths: options.disabledSkillPaths,
-    id: options.runtime.nativeSessionId, requestSessionId: options.runtime.nativeSessionId, agentKind: 'claude-code', model: options.model,
+    get id() { return initialized ? options.runtime.nativeSessionId : '<pending>'; },
+    requestSessionId: options.runtime.nativeSessionId, agentKind: 'claude-code', model: options.model,
     presentation: native.presentation,
     setNativeInputResolver(next, media) { requireLive(); resolver = next; importMedia = media; },
     setInteractionResolver(next) { requireLive(); options.policy.setInteractionResolver(next); },
@@ -203,7 +214,11 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
       const entry = makeEntry(id, sendOptions.signal); guiInputs.set(id, entry);
       let dispatched = false;
       try {
-        const input = await options.prepareInput(owned, sendOptions.signal, importMedia);
+        // A startup wait is definitively pre-dispatch: cancellation/timeout may
+        // reject this input, but must not replay it or restart the native task.
+        await waitForNativeReady(native.ready, entry.signal);
+        requireLive();
+        const input = await options.prepareInput(owned, entry.signal, importMedia);
         requireLive();
         if (entry.cancelled) throw new TurnDispatchRejectedError('Claude input cancelled before dispatch');
         await options.policy.beforeInput(owned, sendOptions);
@@ -222,7 +237,7 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
     async steer() { throw new NotSupportedError('steer', { supported: false, reason: 'sdk-missing', upstreamRef: 'Mods prompt.submit queues a new turn' }); },
     async abort() {
       requireLive();
-      for (const entry of [...guiInputs.values(), ...nativeInputs.values()]) entry.cancelled = true;
+      for (const entry of [...guiInputs.values(), ...nativeInputs.values()]) entry.cancel();
       const turn = currentTurn;
       if (turn) await native.command('abort', { turnId: turn.id });
     },
@@ -232,4 +247,24 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
     getUsageSnapshot: () => ({ ...usage }),
     close,
   };
+}
+
+/** Bound only the pending GUI input, never a native dialog awaiting its user. */
+function waitForNativeReady(ready: Promise<void>, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+    const finish = (error?: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer); signal.removeEventListener('abort', cancelled);
+      if (error) reject(error); else resolve();
+    };
+    const cancelled = () => finish(new TurnDispatchRejectedError('Claude input cancelled before initialization'));
+    if (signal.aborted) { cancelled(); return; }
+    signal.addEventListener('abort', cancelled, { once: true });
+    timer = setTimeout(() => finish(new TurnDispatchRejectedError('Native Claude is not ready to accept GUI input')), 120_000);
+    timer.unref();
+    void ready.then(() => finish(), error => finish(error));
+  });
 }

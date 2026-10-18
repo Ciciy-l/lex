@@ -4020,9 +4020,10 @@ export class ClaudeCodeAgent extends BaseAgent {
               });
             },
           });
-          sdkSessionId = handle.requestSessionId; durableSdkSessionId = handle.id;
-          publishedSdkSessionId = handle.id;
-          eventQueue.push({ type: 'session_id', data: handle.id, source: 'claude-code' });
+          sdkSessionId = handle.requestSessionId;
+          // Native readiness publishes the confirmed id through the shared queue.
+          // A merely spawned process must not persist an uncreated transcript.
+          if (handle.id !== '<pending>') durableSdkSessionId = publishedSdkSessionId = handle.id;
           return { kind: 'native', handle };
         } catch (error) {
           // Once invoked, Main keeps launch resources if process exit is unknown.

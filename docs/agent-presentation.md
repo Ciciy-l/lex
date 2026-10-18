@@ -686,6 +686,24 @@ Native launch now emits that flag only when bypass is actually selected. No
 warning was automatically accepted. All raw failures remain in the external
 `ci-logs/claude-permission-lifecycle/` directory; the fourth probe succeeded.
 
+### Claude interactive startup
+
+The native handle publishes its terminal as soon as the PTY exists, before a
+trust/onboarding dialog finishes. Only the actual ready handshake publishes the
+durable session ID. Human onboarding has no default process deadline; opt-in
+unattended probes may still request a bounded startup deadline. GUI input waits
+for readiness with its own deadline and cancellation. Stop, close and cancelled
+input never replay that input after the native process becomes ready.
+
+The isolated real-Agent/Main/Session probe `production-startup2.json` passes
+31 checks on managed Windows Claude 2.1.296: the handle returns at 1.5 seconds,
+the native trust dialog is answered at 35 seconds, and five subsequent turns
+preserve streaming, queueing, terminal draft, Stop and process identity. Exit and
+temporary-profile cleanup are confirmed. It uses a fake provider and fixture
+history bindings; this is not MainIPC/database/UI, phone or SSH acceptance.
+The focused startup tests also exercise a real Core Session reservation cancelled
+before readiness, with no native submit and no process restart.
+
 ## Upstream reference
 
 VelaTerm reference: `vlinx-io/VelaTerm` at

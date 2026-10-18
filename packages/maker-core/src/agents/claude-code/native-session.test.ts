@@ -9,13 +9,13 @@ import { createClaudeNativeSession } from './native-session.js';
 const mocked = vi.hoisted(() => ({ create: vi.fn() }));
 vi.mock('./native-runtime.js', () => ({ createClaudeNativeRuntime: mocked.create }));
 const handles: AgentSessionHandle[] = [];
-afterEach(async () => { await Promise.all(handles.splice(0).map(handle => handle.close())); vi.clearAllMocks(); });
+afterEach(async () => { await Promise.all(handles.splice(0).map(handle => handle.close())); vi.clearAllMocks(); vi.useRealTimers(); });
 
-async function fixture() {
+async function fixture(ready: Promise<void> = Promise.resolve()) {
   let callbacks!: ClaudeNativeRuntimeOptions;
   const driver = { write: vi.fn(), resize: vi.fn(), close: vi.fn(), onData: () => vi.fn(), onExit: () => vi.fn() };
   const presentation = new AgentPresentationRuntime('native', driver);
-  const runtime = { presentation, ready: Promise.resolve(), command: vi.fn(async () => ({})),
+  const runtime = { presentation, ready, command: vi.fn(async () => ({})),
     submit: vi.fn(async (_input: any) => ({ nativeMessageId: 'row' })), close: vi.fn(async () => { await presentation.close(); }) };
   mocked.create.mockImplementation(async options => { callbacks = options; return runtime; });
   const policy = { setInteractionResolver: vi.fn(), beforeInput: vi.fn(async () => {}), close: vi.fn() };
@@ -46,6 +46,85 @@ async function fixture() {
 }
 
 describe('Claude native Maker handle', () => {
+  it('publishes its task terminal during onboarding and sends only after native readiness', async () => {
+    let ready!: () => void;
+    const f = await fixture(new Promise(resolve => { ready = resolve; }));
+    expect(f.handle.id).toBe('<pending>'); expect(f.handle.requestSessionId).toBe('native');
+    const view = f.handle.presentation!.attach('desktop', vi.fn());
+    const control = view.acquireControl()!;
+    view.write(control, 1, '\r');
+    expect(f.driver.write).toHaveBeenCalledWith('\r');
+    const sent = f.handle.send({ type: 'user', content: 'after onboarding' });
+    await Promise.resolve();
+    expect(f.runtime.submit).not.toHaveBeenCalled(); expect(f.policy.beforeInput).not.toHaveBeenCalled();
+    ready(); await sent;
+    expect(f.handle.id).toBe('native');
+    expect(f.runtime.submit).toHaveBeenCalledOnce();
+    expect(f.runtime.submit).toHaveBeenCalledWith(expect.objectContaining({ text: 'after onboarding' }));
+    view.detach(); expect(f.runtime.close).not.toHaveBeenCalled();
+  });
+
+  it('settles the real Session reservation when Stop arrives before native readiness', async () => {
+    let ready!: () => void;
+    const f = await fixture(new Promise(resolve => { ready = resolve; }));
+    const undispatched = vi.fn(), accepted = vi.fn();
+    f.session.setTurnLifecycleObserver({ beforeProviderStart() {}, onUndispatched: undispatched, onTerminal() {} });
+    const sent = f.session.send('cancel before onboarding', { onAccepted: accepted });
+    const rejected = expect(sent).resolves.toEqual({ accepted: false, reason: 'provider-rejected-before-dispatch' });
+    await vi.waitFor(() => expect(f.handle.isTurnRunning?.()).toBe(true));
+    await f.session.abort(); await rejected;
+    // Session prepares product history before dispatch; only the native command is cancelled.
+    expect(accepted).toHaveBeenCalledOnce(); expect(undispatched).toHaveBeenCalledOnce();
+    expect(f.session.isTurnRunning()).toBe(false); expect(f.runtime.close).not.toHaveBeenCalled();
+    ready(); await Promise.resolve();
+    expect(f.runtime.submit).not.toHaveBeenCalled();
+    await f.session.close();
+  });
+
+  it.each(['signal', 'stop', 'close'] as const)('cancels an initializing send through %s without replaying it after readiness', async action => {
+    let ready!: () => void;
+    const f = await fixture(new Promise(resolve => { ready = resolve; }));
+    const cancellation = new AbortController();
+    const sent = f.handle.send({ type: 'user', content: 'cancelled' }, { signal: cancellation.signal });
+    const rejected = expect(sent).rejects.toBeInstanceOf(TurnDispatchRejectedError);
+    if (action === 'signal') cancellation.abort();
+    else if (action === 'stop') await f.handle.abort();
+    else await f.handle.close();
+    await rejected; ready(); await Promise.resolve();
+    expect(f.runtime.submit).not.toHaveBeenCalled(); expect(f.policy.beforeInput).not.toHaveBeenCalled();
+    if (action !== 'close') {
+      expect(f.runtime.close).not.toHaveBeenCalled();
+      await f.handle.send({ type: 'user', content: 'new explicit input' });
+      expect(f.runtime.submit).toHaveBeenCalledOnce();
+    }
+  });
+
+  it('bounds a pending GUI send without killing a native dialog or replaying the timed-out input', async () => {
+    vi.useFakeTimers();
+    let ready!: () => void;
+    const f = await fixture(new Promise(resolve => { ready = resolve; }));
+    const sent = f.handle.send({ type: 'user', content: 'timeout' });
+    const rejected = expect(sent).rejects.toBeInstanceOf(TurnDispatchRejectedError);
+    await vi.advanceTimersByTimeAsync(120_000); await rejected;
+    expect(f.runtime.close).not.toHaveBeenCalled(); expect(f.runtime.submit).not.toHaveBeenCalled();
+    ready(); await Promise.resolve();
+    expect(f.runtime.submit).not.toHaveBeenCalled();
+    await f.handle.send({ type: 'user', content: 'new explicit input' });
+    expect(f.runtime.submit).toHaveBeenCalledOnce();
+  });
+
+  it('reports failed native initialization and releases the pending send exactly once', async () => {
+    let reject!: (error: Error) => void;
+    const f = await fixture(new Promise((_resolve, failed) => { reject = failed; }));
+    const sent = f.handle.send({ type: 'user', content: 'never dispatch' });
+    const rejected = expect(sent).rejects.toBeInstanceOf(TurnDispatchRejectedError);
+    reject(new Error('native handshake failed')); await rejected;
+    await f.handle.close();
+    expect(f.runtime.submit).not.toHaveBeenCalled();
+    expect(f.runtime.close).toHaveBeenCalledOnce(); expect(f.policy.close).toHaveBeenCalledOnce();
+    expect(f.onFault).toHaveBeenCalledOnce();
+  });
+
   it('uses one real Session reservation for GUI and native input and keeps presentation detach independent', async () => {
     const f = await fixture(), history = vi.fn(), terminal = vi.fn();
     f.session.setTurnLifecycleObserver({ beforeProviderStart() {}, onUndispatched() {}, onTerminal: terminal });
@@ -128,7 +207,9 @@ describe('Claude native Maker handle', () => {
     f.callbacks.onEvent({ sequence: 1, kind: 'turn.start', value: { turnId: 'stopped', messageIds: ['actual'] } });
     await expect(f.callbacks.onTurnAdmission!({ nativeSessionId: 'native', turnId: 'stopped', messages: [message] }, new AbortController().signal)).rejects.toThrow('not admitted');
     f.callbacks.onEvent({ sequence: 2, kind: 'turn.complete', value: { turnId: 'stopped', reason: 'aborted', isAborted: true } });
-    expect(await f.handle.events()[Symbol.asyncIterator]().next()).toMatchObject({ value: { type: 'done', data: { silentStop: true, nativeTurnId: 'stopped' } } });
+    const events = f.handle.events()[Symbol.asyncIterator]();
+    const first = await events.next();
+    expect(first.value.type === 'session_id' ? await events.next() : first).toMatchObject({ value: { type: 'done', data: { silentStop: true, nativeTurnId: 'stopped' } } });
     expect(f.handle.isTurnRunning?.()).toBe(false); expect(f.runtime.close).not.toHaveBeenCalled();
   });
 });

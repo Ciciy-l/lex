@@ -5,7 +5,7 @@ import type { AgentTerminalDriver } from '../presentation.js';
 import { createClaudeNativeRuntime, type ClaudeNativeLaunch, type ClaudeNativeRuntime } from './native-runtime.js';
 
 const runtimes: ClaudeNativeRuntime[] = [];
-afterEach(async () => { await Promise.all(runtimes.splice(0).map(runtime => runtime.close())); });
+afterEach(async () => { vi.useRealTimers(); await Promise.all(runtimes.splice(0).map(runtime => runtime.close())); });
 function fixture() {
   let launch!: ClaudeNativeLaunch;
   const exits = new Set<(exit: { code: number | null }) => void>();
@@ -30,6 +30,24 @@ function fixture() {
 }
 
 describe('continuous Claude native runtime', () => {
+  it('does not terminate an interactive startup merely because the user has not answered yet', async () => {
+    const f = fixture(), runtime = await f.start();
+    vi.useFakeTimers();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(f.options.onFault).not.toHaveBeenCalled(); expect(f.driver.close).not.toHaveBeenCalled();
+    const view = runtime.presentation.attach('desktop', vi.fn());
+    view.write(view.acquireControl()!, 1, '\r');
+    expect(f.driver.write).toHaveBeenCalledWith('\r');
+    vi.useRealTimers(); await f.ready(); await runtime.ready;
+  });
+
+  it('retains an explicit bounded deadline for unattended native probes', async () => {
+    const f = fixture(), runtime = await f.start({ readyTimeoutMs: 20 });
+    await expect(runtime.ready).rejects.toThrow('timed out');
+    await runtime.close();
+    expect(f.options.onFault).toHaveBeenCalledOnce(); expect(f.driver.close).toHaveBeenCalledOnce();
+  });
+
   it('routes native permission callbacks through the existing product policy and retires its exact signal', async () => {
     const f = fixture();
     let signal!: AbortSignal;

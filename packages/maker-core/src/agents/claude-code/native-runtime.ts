@@ -49,6 +49,7 @@ export interface ClaudeNativeRuntimeOptions {
   onExit(exit: { code: number | null; signal?: string }): void;
   onFault(reason: string): void;
   signal?: AbortSignal;
+  /** Optional startup deadline for unattended probes. Human onboarding has no process deadline. */
   readyTimeoutMs?: number;
 }
 
@@ -63,6 +64,9 @@ export interface ClaudeNativeRuntime {
 
 export async function createClaudeNativeRuntime(options: ClaudeNativeRuntimeOptions): Promise<ClaudeNativeRuntime> {
   if (options.signal?.aborted) throw new Error('Native Claude launch cancelled');
+  if (options.readyTimeoutMs !== undefined && (!Number.isFinite(options.readyTimeoutMs) || options.readyTimeoutMs <= 0)) {
+    throw new Error('Invalid native Claude startup deadline');
+  }
   if ((options.onInputPreparation || options.onNativeInput) && !options.onTurnAdmission) throw new Error('Native input preparation requires turn admission');
   if (options.onInputPreparation && options.onNativeInput) throw new Error('Native input requires one preparation owner');
   if (options.args.some(arg => ['--', '-p', '--print', '--input-format', '--output-format', '--session-id', '--resume', '--continue'].includes(arg)
@@ -182,8 +186,10 @@ export async function createClaudeNativeRuntime(options: ClaudeNativeRuntimeOpti
       void bridge.close().catch(() => {});
       options.onExit(exit);
     });
-    if (!observedReady) {
-      readyTimer = setTimeout(() => fail('Native Claude initialization timed out'), options.readyTimeoutMs ?? 30_000);
+    // Waiting for the user's native onboarding/trust response is not a failed
+    // process. GUI submissions have their own cancellable pre-dispatch deadline.
+    if (!observedReady && options.readyTimeoutMs !== undefined) {
+      readyTimer = setTimeout(() => fail('Native Claude initialization timed out'), options.readyTimeoutMs);
       readyTimer.unref();
     }
     return { presentation, ready, close,
