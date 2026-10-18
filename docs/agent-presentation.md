@@ -464,6 +464,38 @@ None is yet a complete product live-settings implementation. Original reports
 remain under `ci-logs/claude-permission-lifecycle/`; no real profile was read or
 changed.
 
+### Shared local launch configuration
+
+The existing SDK startup now builds a typed `ClaudeLocalSessionLaunch` before
+transport selection. Its model, resolved provider environment, permission and
+tool callbacks, allowed tools, memory/skill settings, plugin roots and assembled
+system prefix retain the existing values and ordering. `claudeSdkOptions` owns
+only SDK transport plumbing. This does not change the engine selector.
+
+`prepareClaudeNativeLaunch` projects those same inputs to original interactive
+CLI flags and owned temporary files. MCP URLs, headers, stdio commands,
+arguments and environment values travel via per-launch environment references,
+not plaintext launch files or command-line arguments. A host must project every
+in-process MCP under its exact name; none is silently dropped or serialized as
+an SDK instance. The projection retains HTTP, SSE and stdio forms. Unsupported
+history restore and subscription-refresh paths currently reject preparation;
+they must be implemented before this factory can replace normal GUI startup.
+The host must dispose these files after confirmed process exit, never on detach.
+
+Run `node --import tsx scripts/agent-presentation/claude-session-probe.mjs --prepared-launch`
+for the isolated actual-CLI path through this launch factory, the native Maker
+handle and Core Session. Managed Claude 2.1.296 on Windows passes 29 checks:
+all five main requests contain the exact fixture prefix and have the same
+system hash, with the existing queue/Stop/view-lifetime checks and confirmed
+launch-file/profile cleanup. This measures prefix stability, not a real-provider
+cache-hit rate. No new file IO occurs on the per-token path. Evidence: external
+`ci-logs/claude-permission-lifecycle/production-shared-launch1.json`.
+The separate `mcp-env1.json`, `mcp-stdio1.json` and `mcp-semantics1.json` probes
+verify actual native environment expansion, including empty values, defaults
+and non-recursive credential substitution. They do not establish full product
+MCP tool-call or child/root provenance parity. Actual MainIPC/UI, host bridge
+registration, live controls and remote acceptance still remain.
+
 The follow-up `--scenario=identity` passes 18 checks on the same managed 2.1.296
 binary, including the earlier continuous controls. Its `session.append` hook
 observes user and assistant UUIDs; every observed user/assistant row matches

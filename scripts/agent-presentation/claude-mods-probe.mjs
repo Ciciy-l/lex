@@ -32,7 +32,7 @@ export function fixturePrompt(messages, pluginName = 'lex-mods-probe') {
   }
 }
 
-export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', scenario = 'controls', bridgeFactory, terminalFactory, permissionTool = 'Write', permissionLateAnswer = false } = {}) {
+export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', scenario = 'controls', bridgeFactory, terminalFactory, permissionTool = 'Write', permissionLateAnswer = false, observeRequest } = {}) {
   if (!['api-key', 'auth-token'].includes(auth)) throw new Error('Unknown fixture auth kind');
   if (!['Write', 'Read'].includes(permissionTool)) throw new Error('Unknown fixture permission tool');
   if (!['controls', 'identity', 'media', 'admission-deny', 'native-input-deny', 'permission-gui', 'permission-tui', 'permission-parallel', 'permission-deny-rule', 'permission-host-hook'].includes(scenario)) throw new Error('Unknown fixture scenario');
@@ -85,6 +85,7 @@ export async function probe({ binary, deadlineMs = 65_000, auth = 'api-key', sce
         ? prompts[0] : fixturePrompt(body.messages, pluginName);
       const afterTool = (body.messages ?? []).some((m) => Array.isArray(m.content) && m.content.some((b) => b.type === 'tool_result'));
       const isMain = prompt !== undefined;
+      observeRequest?.({ isMain, model: body.model, system: body.system, tools: body.tools });
       report.requests.push({ at: now(), model: body.model, isMain, prompt,
         messages: body.messages });
       const marker = isMain ? (prompt ?? 'UNKNOWN') + '_RESULT' : 'LEX_TITLE';

@@ -4,12 +4,20 @@ import { createClaudeNativeSession } from '../../packages/maker-core/src/agents/
 import { CLAUDE_NATIVE_BRIDGE_PLUGIN_NAME, CLAUDE_NATIVE_MOD_SOURCE, CLAUDE_NATIVE_MEDIA_PROMPT } from '../../packages/maker-core/src/agents/claude-code/native-mod-source.ts';
 import { Session } from '../../packages/maker-core/src/session.ts';
 import { probe } from './claude-mods-probe.mjs';
+import { prepareClaudeNativeLaunch } from '../../packages/maker-core/src/agents/claude-code/native-launch.ts';
+import { readFile, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import path from 'node:path';
 
 let handle, session, driver, view, lease, diagnostics, now;
 let commandId = 0, inputSequence = 0, draining = false, stopped = false;
 const commandNames = new Map(), pending = [], queued = [], receipts = [], history = [], productEvents = [], lifecycle = [];
 const policyInputs = [];
 const presentationSwitches = [];
+const preparedLaunchScenario = process.argv.includes('--prepared-launch');
+const launchPrefix = 'Lex isolated launch fixture.\nPreserve this prefix exactly.';
+const launchRequests = [];
+let preparedLaunch;
 async function drain() {
   if (draining || stopped || !session || session.isTurnRunning() || !queued.length) return;
   draining = true;
@@ -26,7 +34,13 @@ async function drain() {
   finally { draining = false; if (!session.isTurnRunning()) void drain(); }
 }
 
-const report = await probe({ scenario: 'identity', bridgeFactory(context) {
+const report = await probe({ scenario: 'identity', observeRequest(request) {
+  if (!preparedLaunchScenario || !request.isMain) return;
+  const text = typeof request.system === 'string' ? request.system
+    : (request.system ?? []).filter(block => block.type === 'text').map(block => block.text).join('\n');
+  launchRequests.push({ prefixPresent: text.includes(launchPrefix),
+    systemHash: createHash('sha256').update(JSON.stringify(request.system)).digest('hex'), model: request.model });
+}, bridgeFactory(context) {
   diagnostics = context.report; now = context.now; diagnostics.droppedEvents = 0;
   return { pluginName: CLAUDE_NATIVE_BRIDGE_PLUGIN_NAME, source: CLAUDE_NATIVE_MOD_SOURCE, mediaPrompt: CLAUDE_NATIVE_MEDIA_PROMPT,
     async start() { return {}; },
@@ -56,6 +70,16 @@ const report = await probe({ scenario: 'identity', bridgeFactory(context) {
     if (args[index] === '--session-id' || args[index] === '--plugin-dir') { index++; continue; }
     resolvedArgs.push(args[index]);
   }
+  const canUseTool = async () => ({ behavior: 'deny', message: 'Unexpected fixture tool' });
+  if (preparedLaunchScenario) {
+    preparedLaunch = await prepareClaudeNativeLaunch({
+      abortController: new AbortController(), cwd: options.cwd, additionalDirectories: [], managedSkillPluginRoots: [],
+      model: 'claude-sonnet-4-6', permissionMode: 'default', binaryPath: executable, sessionId: nativeSessionId,
+      systemPromptAppend: launchPrefix, enableFileCheckpointing: true, env: options.env,
+      canUseTool, settingSources: [], settings: JSON.parse(await readFile(resolvedArgs[resolvedArgs.indexOf('--settings') + 1], 'utf8')),
+      allowDangerouslySkipPermissions: false, debug: false, hooks: {},
+    });
+  }
   handle = await createClaudeNativeSession({ model: 'claude-sonnet-4-6',
     policy: { setInteractionResolver() {}, beforeInput(message, sendOptions) {
       policyInputs.push({ id: sendOptions.messageUuid, content: message.content });
@@ -66,7 +90,9 @@ const report = await probe({ scenario: 'identity', bridgeFactory(context) {
       return { text: blocks.map(block => block.text).join('\n') };
     },
     onFault(reason) { diagnostics.droppedEvents++; diagnostics.runtimeFault = reason; },
-    runtime: { nativeSessionId, executable, args: resolvedArgs, cwd: options.cwd, env: options.env,
+    runtime: { nativeSessionId, executable,
+      args: preparedLaunch ? [...preparedLaunch.args, '--tools', '', '--strict-mcp-config'] : resolvedArgs,
+      cwd: options.cwd, env: preparedLaunch?.env ?? options.env,
       launch(spec) { driver = new AgentTerminalPtyDriver(spec); return driver; },
       onEvent(event) {
         const value = { ...event.value };
@@ -75,7 +101,7 @@ const report = await probe({ scenario: 'identity', bridgeFactory(context) {
         diagnostics.events.push({ at: now(), ...event, value, sessionId: nativeSessionId,
           kind: event.kind === 'command-result' ? value.ok ? 'ack' : 'command-error' : event.kind });
       },
-      async canUseTool() { return { behavior: 'deny', message: 'Unexpected fixture tool' }; },
+      canUseTool,
     },
   });
   const logger = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {}, child() { return logger; } };
@@ -98,6 +124,18 @@ const report = await probe({ scenario: 'identity', bridgeFactory(context) {
     kill() { void handle.close().catch(() => {}); },
   };
 } });
+if (preparedLaunchScenario) {
+  let disposed = false;
+  if (preparedLaunch && report.cleanup?.nativeExited) {
+    const settingsPath = preparedLaunch.args[preparedLaunch.args.indexOf('--settings') + 1];
+    await preparedLaunch.dispose();
+    disposed = await stat(path.dirname(settingsPath)).then(() => false, error => error.code === 'ENOENT');
+  }
+  report.launch = { requests: launchRequests, disposed };
+  report.checks.preparedPrefixReachedProvider = launchRequests.length === 5 && launchRequests.every(request => request.prefixPresent);
+  report.checks.preparedPrefixStable = launchRequests.length === 5 && new Set(launchRequests.map(request => request.systemHash)).size === 1;
+  report.checks.preparedLaunchCleaned = disposed;
+}
 report.productEvents = productEvents; report.productHistory = history; report.nativeReceipts = receipts; report.productLifecycle = lifecycle;
 report.presentationSwitches = presentationSwitches;
 // The baseline sends its second prompt into the native queue while busy. This

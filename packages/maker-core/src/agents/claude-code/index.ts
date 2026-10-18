@@ -42,7 +42,7 @@ import type {
   Settings,
 } from '@anthropic-ai/claude-agent-sdk';
 import { discoverSubagentDefinitions } from './subagent-definitions.js';
-import { spawnObservedClaudeProcess } from './local-process-spawn.js';
+import { claudeSdkOptions, type ClaudeLocalSessionLaunch } from './local-session-launch.js';
 import { claudeMcpServerToolsReport, type ClaudeMcpServerStatusEntry } from './mcp-server-tools.js';
 import {
   reportSubagentModelDiagnostics,
@@ -3932,126 +3932,49 @@ export class ClaudeCodeAgent extends BaseAgent {
       // A fork keeps its resume source but must publish a new destination id.
       const newSdkSessionId = !resumeSdkSid || finalFork ? randomUUID() : undefined;
       const previousSdkSessionId = sdkSessionId;
-      const createLocalQueryArgs = (): Parameters<typeof sdkQuery>[0] => ({
-
-        prompt: inputQueue as unknown as Parameters<typeof sdkQuery>[0]['prompt'],
-        options: {
-          abortController,
-          cwd: opts.workingDir,
-          // 附加目录在 Query 创建时冻结；运行时 setter 立即收紧 Cindy 审核，后续 Query
-          // 重建再取最新 closure。空数组省略字段，让 SDK 走默认。
-          ...(additionalDirectories.length > 0 ? { additionalDirectories } : {}),
-          // Bot 自有技能和已按启用状态/白名单过滤的 Cindy 托管技能，
-          // 只通过本次 Query 的本地插件加载，不写用户共用技能目录。
-          // 与 additionalDirectories 同理:路径是本机的,远端 cc-mgr 分支不透传。
-          ...(managedSkillPluginRoots.length > 0
-            ? { plugins: managedSkillPluginRoots.map((root) => ({ type: 'local' as const, path: root })) }
-            : {}),
-          model: currentSdkModel,
-          ...(currentSdkEffort ? { effort: currentSdkEffort } : {}),
-          permissionMode: sdkStartPermissionMode,
-          includePartialMessages: true,
-          ...thinkingOpts,
-          pathToClaudeCodeExecutable: binaryPath,
-          // SDK preset is followed by the shared engine, memory/contact/plugin rules,
-          // host instructions, current memory index and per-call user prompt.
-          systemPrompt: (() => {
-            const appendText = buildClaudeSystemPromptAppend({
-              makerMemoryRules,
-              contactsRules,
-              ghostRosterPrompt,
-              hostSystemPrompt,
-              makerMemoryIndex,
-              userPrompt: reviewMode ? undefined : opts.userPrompt,
-            });
-            return {
-              type: 'preset' as const,
-              preset: 'claude_code' as const,
-              ...(appendText ? { append: appendText } : {}),
-            };
-          })(),
-          ...(resumeSdkSid ? { resume: resumeSdkSid } : {}),
-          ...(newSdkSessionId ? { sessionId: newSdkSessionId } : {}),
-          enableFileCheckpointing,
-          ...(finalResumeAt ? { resumeSessionAt: finalResumeAt } : {}),
-          ...(finalFork ? { forkSession: true } : {}),
-          env,
-          ...(this.deps.registerLocalAgentProcess
-            ? {
-                spawnClaudeCodeProcess: (spawnOptions) =>
-                  spawnObservedClaudeProcess({
-                    spawnOptions,
-                    registerProcess: (pid) =>
-                      this.deps.registerLocalAgentProcess?.({
-                        pid,
-                        kind: 'claude',
-                        role: 'task-host',
-                      }),
-                    onStderr: vo.onStderrLine as ((line: string) => void) | undefined,
-                  }),
-              }
-            : {}),
-          // 订阅 token 到期续命回调 —— 仅当本次 spawn 实际注入了订阅 OAuth token
-          // (oauth-spawn, 见 desktop auth-adapters getAuthEnv)且 host 实现了强刷时接线。
-          // cc 侧 turn 中途 401 会发 oauth_token_refresh control 请求, SDK 调本回调向
-          // host 要新 token (SDK 检测到回调存在时自动注入 CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH=1
-          // 告知 CLI)。gateway-key 模式 env 里没有 CLAUDE_CODE_OAUTH_TOKEN, 不接 —— 避免
-          // API-key 401 被误引导去刷订阅 token。回调字段 SDK Options 类型未声明但运行时
-          // 支持 (sdk.mjs oauth_token_refresh 分支), 经 spread 注入绕过 excess property 检查。
-          // ⚠️ 本回调生效有两个前提, 缺一即静默失效: (a) SDK 注入的 SDK_HAS_OAUTH_REFRESH;
-          // (b) CLAUDE_CODE_ENTRYPOINT 在 cc 的白名单内 —— 由 env-builder 在 oauth-spawn
-          // 时强制设为 claude-vscode。cc 的 401 恢复有两条路: 先走本回调
-          // (tengu_oauth_401_sdk_callback_refreshed), 回调超时/失败后还会直接重读系统
-          // 凭证库兜底 (tengu_oauth_401_recovered_from_disk) —— host 刷新总是写回凭证库,
-          // 所以即使回调超时返回 null, 第二条路仍能捡到新 token, 排障时两条都要看。
-          ...(env.CLAUDE_CODE_OAUTH_TOKEN && this.deps.auth.getFreshSubscriptionToken
-            ? {
-                getOAuthToken: (): Promise<string | null> =>
-                  this.refreshSubscriptionTokenInPlace(env),
-              }
-            : {}),
-          // 第一方只读工具由 host 精确列名, 直接走 SDK public allowlist, 避免
-          // permissionMode=auto 时再调用远程安全分类器。动态聚合入口不在列表中。
-          ...(claudeAllowedTools ? { allowedTools: [...claudeAllowedTools] } : {}),
-          canUseTool,
-          // Bot MCP selection is explicit; native delegation remains available.
-          settingSources: reviewMode || false
-            ? []
-            : ['user', 'project', 'local'],
-          // Settings (SDK "flag settings" 层, 优先级最高 — 覆盖 user/project/local 文件层):
-          //  - showThinkingSummaries        : reasoning summary 展示开关
-          //  - autoMemoryEnabled / autoDream: memory 联动 (host 通过 runtimeConfig.memoryEnabled 或
-          //    BaseAgent.setMemory 控制; this.memoryOverride === undefined 时不传, 让 SDK 走默认)
-          // **同一对象远端分支也透传 (extraOptions.settings)**, 别在两边漂移。
-          settings: buildSettings(),
-          allowDangerouslySkipPermissions:
-            !reviewMode,
-          stderr: vo.onStderrLine as ((line: string) => void) | undefined,
-          // SDK debug 等同 --debug CLI flag, 让 cc 子进程吐 verbose 日志。
-          // - debug: true 触发 verbose 模式
-          // - debugFile (可选): 直接写到指定文件, 绕过 stderr 这条对 SEA 二进制不一定通的路
-          // host 在开 debug 时通过 resolveCcDebugFile 把 debugFile 指到该 session 的
-          // sessions/<id>/cc-debug.raw.log (见上 ccDebugFile); 没注入则回退全局
-          // XDT_CC_DEBUG_FILE, 都没有就只开 debug:true 走 stderr 兜底。
-          ...(process.env.XDT_CC_DEBUG_NET === '1'
-            ? {
-                debug: true,
-                ...(ccDebugFile ? { debugFile: ccDebugFile } : {}),
-              }
-            : {}),
-          ...(mcpServers ? { mcpServers } : {}),
-          // Host hooks keep their normal behavior, while the harness adapter
-          // prepends its narrow capability-route guard. Both run in-process
-          // before Claude's permission mode (including Full access).
-          ...(Object.keys(localClaudeHooks).length > 0
-            ? { hooks: localClaudeHooks }
-            : {}),
-        },
+      const createLocalLaunch = (): ClaudeLocalSessionLaunch => ({
+        abortController,
+        cwd: opts.workingDir,
+        additionalDirectories,
+        managedSkillPluginRoots,
+        model: currentSdkModel,
+        effort: currentSdkEffort,
+        permissionMode: sdkStartPermissionMode,
+        thinking: thinkingOpts.thinking,
+        binaryPath,
+        systemPromptAppend: buildClaudeSystemPromptAppend({
+          makerMemoryRules, contactsRules, ghostRosterPrompt, hostSystemPrompt, makerMemoryIndex,
+          userPrompt: reviewMode ? undefined : opts.userPrompt,
+        }),
+        resume: resumeSdkSid,
+        sessionId: newSdkSessionId,
+        enableFileCheckpointing,
+        resumeSessionAt: finalResumeAt,
+        forkSession: finalFork,
+        env,
+        registerProcess: this.deps.registerLocalAgentProcess
+          ? (pid) => this.deps.registerLocalAgentProcess?.({ pid, kind: 'claude', role: 'task-host' })
+          : undefined,
+        getOAuthToken: env.CLAUDE_CODE_OAUTH_TOKEN && this.deps.auth.getFreshSubscriptionToken
+          ? () => this.refreshSubscriptionTokenInPlace(env) : undefined,
+        allowedTools: claudeAllowedTools,
+        canUseTool,
+        settingSources: reviewMode ? [] : ['user', 'project', 'local'],
+        settings: buildSettings(),
+        allowDangerouslySkipPermissions: !reviewMode,
+        stderr: vo.onStderrLine as ((line: string) => void) | undefined,
+        debug: process.env.XDT_CC_DEBUG_NET === '1',
+        debugFile: ccDebugFile,
+        mcpServers,
+        hooks: localClaudeHooks,
       });
       let query: Query;
       try {
         if (managedPlugins && querySignal.aborted) throw new Error('Claude session closed before skill plugins were loaded');
-        const queryArgs = createLocalQueryArgs();
+        const queryArgs: Parameters<typeof sdkQuery>[0] = {
+          prompt: inputQueue as unknown as Parameters<typeof sdkQuery>[0]['prompt'],
+          options: claudeSdkOptions(createLocalLaunch()),
+        };
         if (newSdkSessionId) sdkSessionId = newSdkSessionId;
         query = sdkQuery(queryArgs);
       } catch (error) {
