@@ -87,6 +87,54 @@ draft, checksums, actual signing and five-language notices before publishing.
 Advance beta feeds only; preserve stable feeds, Latest and the stable website.
 Harness latest-download/auto-update policy is a separate PR.
 
+## Claude native gate: Windows, 2026-10-18
+
+The opt-in probe is `node scripts/agent-presentation/claude-native-probe.mjs`.
+Additional scenarios are `--scenario=permission`, `--scenario=abort`, and
+`--scenario=stream-option`. The last scenario intentionally checks a rejected
+native option combination and exits nonzero. Pure fixture checks run with
+`node --test scripts/agent-presentation/claude-native-probe.test.mjs`.
+
+Tested managed Claude Code `2.1.296`, Windows x64, with a fresh temporary home,
+empty trusted fixture directory and loopback Anthropic-compatible fake provider.
+No real credentials, cloud Remote Control, binary patches or version changes.
+All final probe processes exited and their temporary profiles were removed.
+
+Observed facts:
+
+- Two successive inputs received `UserPromptSubmit` hooks under the same native
+  session and process. The second input was diagnostic bracketed paste, not a
+  proven product input queue or an exactly-once transport.
+- First main response: first provider delta at 1032 ms, stream completed at
+  4034 ms, first completed assistant transcript observed at 4202 ms. No partial
+  assistant transcript appeared during the intentionally delayed stream. The
+  second response likewise appeared in the transcript after completion.
+- Native title generation also issued provider requests. The probe distinguishes
+  these from the main conversation. Observing all proxy response bytes does not
+  by itself identify which events belong in the task's GUI or usage ledger.
+- `PreToolUse` and `PermissionRequest` arrived for a synthetic Write. A denial
+  returned through the permission hook reached the native UI and prevented the
+  file write. The native permission dialog was visible while the hook waited.
+  Multiple-controller answer races and full approval identity remain unproven.
+- Native Escape closed the deliberately open main provider response while the
+  CLI process stayed alive. This proves native keyboard interruption, not a
+  complete structured interrupt/acknowledgment protocol.
+- Requesting partial JSON events in interactive mode exited with
+  `Error: --include-partial-messages requires --print and --output-format=stream-json.`
+  The existing SDK stream uses non-interactive mode.
+
+The hooks/transcript candidate therefore has **not passed the continuous dual
+presentation gate**: live structured output and reliable editor-aware semantic
+input are still missing. This is a finding about the tested integration, not a
+claim that every possible future Claude integration is impossible. Do not ship
+final-message-only GUI synchronization as equivalent to existing streaming GUI.
+The three other engine routes remain candidates, not newly verified integrations.
+
+Raw fixture-only evidence is under the workspace's sibling `ci-logs/` directory
+as `claude-native-presentation-*-final.json`; it is not shipped with the product.
+Earlier setup attempts are retained separately and are not counted as passing
+native capability tests. Product adapters/UI and RC publication remain gated.
+
 ## Upstream reference
 
 VelaTerm reference: `vlinx-io/VelaTerm` at
