@@ -15,7 +15,7 @@ async function fixture(ready: Promise<void> = Promise.resolve()) {
   let callbacks!: ClaudeNativeRuntimeOptions;
   const driver = { write: vi.fn(), resize: vi.fn(), close: vi.fn(), onData: () => vi.fn(), onExit: () => vi.fn() };
   const presentation = new AgentPresentationRuntime('native', driver);
-  const runtime = { presentation, ready, command: vi.fn(async () => ({})),
+  const runtime = { presentation, ready, command: vi.fn(async (): Promise<unknown> => ({})),
     submit: vi.fn(async (_input: any) => ({ nativeMessageId: 'row' })), close: vi.fn(async () => { await presentation.close(); }) };
   mocked.create.mockImplementation(async options => { callbacks = options; return runtime; });
   const policy = { setInteractionResolver: vi.fn(), beforeInput: vi.fn(async () => {}), close: vi.fn() };
@@ -46,6 +46,87 @@ async function fixture(ready: Promise<void> = Promise.resolve()) {
 }
 
 describe('Claude native Maker handle', () => {
+  const context = () => ({ context: { breakdown: { model: 'fixture-model', totalTokens: 80, maxTokens: 200000, rawMaxTokens: 200000,
+    percentage: 0.04, isAutoCompactEnabled: true, apiUsage: null, gridRows: [], memoryFiles: [], mcpTools: [], agents: [],
+    categories: [{ name: 'Messages', tokens: 80, color: 'purple' }], autocompactSource: 'model-default' } } });
+
+  it('shares one explicit native context count without submitting input or sharing mutable GUI results', async () => {
+    const f = await fixture();
+    let finish!: (value: unknown) => void;
+    f.runtime.command.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const first = f.session.getContextUsage(), second = f.session.getContextUsage();
+    await vi.waitFor(() => expect(f.runtime.command).toHaveBeenCalledOnce());
+    expect(f.runtime.command).toHaveBeenCalledWith('context-usage', {}, 30_000);
+    const original = context(); finish(original);
+    const [a, b] = await Promise.all([first, second]);
+    expect(a).toEqual(original.context.breakdown); expect(b).toEqual(a);
+    a.categories[0]!.tokens = 0;
+    expect(b.categories[0]!.tokens).toBe(80);
+    expect(original.context.breakdown.categories[0]!.tokens).toBe(80);
+    expect(f.runtime.submit).not.toHaveBeenCalled(); expect(f.policy.beforeInput).not.toHaveBeenCalled();
+    f.runtime.command.mockResolvedValue(context());
+    await f.session.getContextUsage(); expect(f.runtime.command).toHaveBeenCalledTimes(2);
+  });
+
+  it('waits for native readiness before reading context and cancels the read when its owner closes', async () => {
+    let ready!: () => void;
+    const f = await fixture(new Promise(resolve => { ready = resolve; }));
+    const read = f.handle.getContextUsage!();
+    const rejected = expect(read).rejects.toThrow('cancelled');
+    expect(f.runtime.command).not.toHaveBeenCalled();
+    await f.handle.close(); await rejected; ready(); await Promise.resolve();
+    expect(f.runtime.command).not.toHaveBeenCalled();
+  });
+
+  it('rejects a late context reply after closure instead of publishing a stale snapshot', async () => {
+    const f = await fixture();
+    let finish!: (value: unknown) => void;
+    f.runtime.command.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const read = f.handle.getContextUsage!();
+    const rejected = expect(read).rejects.toThrow('cancelled');
+    await vi.waitFor(() => expect(f.runtime.command).toHaveBeenCalledOnce());
+    await f.handle.close(); await rejected; finish(context());
+    expect(f.runtime.submit).not.toHaveBeenCalled();
+  });
+
+  it('does not fabricate a zero context snapshot when the native bridge lacks a complete breakdown', async () => {
+    const f = await fixture();
+    f.runtime.command.mockResolvedValue({ context: { window: 200000 } });
+    await expect(f.handle.getContextUsage!()).rejects.toThrow('complete context breakdown');
+    const broken = context(); broken.context.breakdown.categories[0]!.tokens = Number.NaN;
+    f.runtime.command.mockResolvedValue(broken);
+    await expect(f.handle.getContextUsage!()).rejects.toThrow('complete context breakdown');
+    f.runtime.command.mockResolvedValue(context());
+    expect((await f.handle.getContextUsage!()).totalTokens).toBe(80);
+  });
+
+  it('cancels an in-flight context read when the native process exits', async () => {
+    const f = await fixture();
+    f.runtime.command.mockImplementation(() => new Promise(() => {}));
+    const read = f.handle.getContextUsage!();
+    const rejected = expect(read).rejects.toThrow('cancelled');
+    await vi.waitFor(() => expect(f.runtime.command).toHaveBeenCalledOnce());
+    f.callbacks.onExit({ code: 0 });
+    await rejected;
+    await expect(f.handle.getContextUsage!()).rejects.toThrow('no longer active');
+  });
+
+  it('bounds an explicit context read without closing or sending into native onboarding', async () => {
+    const deadline = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
+    try {
+    const f = await fixture(new Promise(() => {}));
+    const read = f.handle.getContextUsage!();
+    const rejected = expect(read).rejects.toThrow('timed out');
+    expect(timeout).toHaveBeenCalledWith(30_000);
+    deadline.abort(new DOMException('Timed out', 'TimeoutError'));
+    await rejected;
+    expect(f.runtime.command).not.toHaveBeenCalled();
+    expect(f.runtime.submit).not.toHaveBeenCalled();
+    expect(f.runtime.close).not.toHaveBeenCalled();
+    } finally { timeout.mockRestore(); }
+  });
+
   it('publishes its task terminal during onboarding and sends only after native readiness', async () => {
     let ready!: () => void;
     const f = await fixture(new Promise(resolve => { ready = resolve; }));

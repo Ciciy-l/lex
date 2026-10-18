@@ -118,6 +118,8 @@ export function register(on) {
                 result = await $.turn.abort({ turnId: payload.turnId });
               } else if (command.kind === 'snapshot') {
                 result = { draft: await $.prompt.read(), usage: await $.session.usage(), model: await $.session.model() };
+              } else if (command.kind === 'context-usage') {
+                result = await $.session.usage({ breakdown: 'full' });
               } else if (command.kind === 'compact') {
                 result = await $.session.compact(payload);
               } else if (command.kind === 'config') {

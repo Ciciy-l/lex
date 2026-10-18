@@ -33,6 +33,18 @@ function fixture() {
 }
 
 describe('packaged Claude native Mod', () => {
+  it('uses the native full context API without running a slash command or modifying the terminal draft', async () => {
+    const f = fixture(); await f.start();
+    const usage = { context: { breakdown: { model: 'fixture', totalTokens: 42 } } };
+    const read = vi.spyOn(f.$.session, 'usage').mockResolvedValue(usage);
+    f.commands.push({ id: 1, kind: 'context-usage', payload: {} });
+    await f.tick(); await f.flush();
+    expect(read).toHaveBeenCalledWith({ breakdown: 'full' });
+    expect(f.events).toContainEqual(expect.objectContaining({ kind: 'command-result', value: { id: 1, ok: true, result: usage } }));
+    expect(f.$.command.run).not.toHaveBeenCalled(); expect(f.$.prompt.submit).not.toHaveBeenCalled();
+    expect(f.$.prompt.read).not.toHaveBeenCalled();
+  });
+
   it('binds identical overlapping permission calls to native IDs without changing the native input or verdict', async () => {
     const f = fixture(); await f.start();
     const exchange = f.$.http.fetch.getMockImplementation()!;

@@ -704,6 +704,27 @@ history bindings; this is not MainIPC/database/UI, phone or SSH acceptance.
 The focused startup tests also exercise a real Core Session reservation cancelled
 before readiness, with no native submit and no process restart.
 
+### Claude native context usage
+
+The existing `Session.getContextUsage` path now reads the interactive process's
+official `session.usage({ breakdown: 'full' })` result. Concurrent readers share
+one count request and receive independent snapshots. It does not submit a
+message, run `/context`, touch the native draft or maintain a separate ledger.
+Missing/malformed required values fail explicitly; native categories and extra
+metadata remain intact. Reads have a 30-second deadline and are cancelled when
+their task closes or its native process exits; late replies cannot publish into
+a replacement owner.
+
+Managed Windows Claude 2.1.296 returned a full context breakdown through the real
+Agent/Main/Core Session in `production-context1.json`. The offline audit has 33
+passing checks, including one native read for two concurrent GUI consumers, no
+extra product turn, stable request system prefixes and owned-profile cleanup.
+The first report expected an unsuffixed model name; the corrected audit compares
+the actual resolved launch model, including `[1m]`, without changing the raw. A
+separate raw-context probe likewise required an audit correction for its fixture's
+`ack` event alias. These are isolated fake-provider observations, not product
+UI, real token-cost accuracy, subscription, phone or SSH acceptance.
+
 ## Upstream reference
 
 VelaTerm reference: `vlinx-io/VelaTerm` at

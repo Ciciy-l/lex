@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { createClaudeNativeContextReader } from './native-context.js';
 import type { AgentEvent, InteractionResolver, UsageSnapshot } from '../../types/events.js';
 import type { UserMessage } from '../../types/common.js';
 import { NotSupportedError } from '../../types/capabilities.js';
@@ -51,6 +52,7 @@ export interface ClaudeNativeSessionHandle extends AgentSessionHandle {
  */
 export async function createClaudeNativeSession(options: ClaudeNativeSessionOptions): Promise<ClaudeNativeSessionHandle> {
   const events = options.events ?? createAsyncQueue<AgentEvent>();
+  const lifetime = new AbortController();
   const guiInputs = new Map<string, InputEntry>();
   const nativeInputs = new Map<string, InputEntry>();
   let resolver: AgentNativeInputResolver | undefined, importMedia: AgentNativeMediaResolver | undefined;
@@ -85,7 +87,7 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
   };
   function close(): Promise<void> {
     if (closing) return closing;
-    closed = true;
+    closed = true; lifetime.abort();
     for (const entry of new Set([...guiInputs.values(), ...nativeInputs.values()])) { entry.cancel(); entry.stop(); }
     guiInputs.clear(); nativeInputs.clear(); observedTurns.clear(); currentTurn = undefined;
     closing = Promise.resolve().then(async () => {
@@ -178,7 +180,7 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
         events.push(event);
       },
       onExit() {
-        exited = true;
+        exited = true; lifetime.abort();
         if (!closed) {
           events.push({ type: 'error', source: 'claude-code', data: { message: 'Claude 原生进程已退出。', isTerminal: true, reason: 'native-exit' } });
           events.end();
@@ -245,6 +247,7 @@ export async function createClaudeNativeSession(options: ClaudeNativeSessionOpti
     isTurnRunning: () => Boolean(currentTurn || guiInputs.size || nativeInputs.size),
     events: () => events,
     getUsageSnapshot: () => ({ ...usage }),
+    getContextUsage: createClaudeNativeContextReader(native, lifetime.signal, live),
     close,
   };
 }
