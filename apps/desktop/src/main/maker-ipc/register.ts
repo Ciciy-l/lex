@@ -1163,6 +1163,8 @@ import { normalizeWorkingDirForStorage } from '../../shared/workingDir.js';
 import { openMainWindowSession } from '../deepLink.js';
 import { handleSessionEvent, type SessionEventDependencies } from './sessionEventPipeline.js';
 import { installSessionTurnObserver } from './sessionTurnObserver.js';
+import { bindNativeSessionInput, type NativeInputBindingDeps } from './nativeInputBinding.js';
+import { createClaudeNativeMediaImporter } from '../maker-host/claudeNativeMedia.js';
 
 const log = createLogger('maker-ipc');
 const sshCodexCreationScopeKeys = new WeakMap<object, { identity: string; token: object }>();
@@ -3201,6 +3203,7 @@ async function syncLibraryReadonlyExtraDir(
 }
 
 let agentInputCoordinatorHolder: AgentInputCoordinator | null = null;
+let nativeInputBindingDepsHolder: Omit<NativeInputBindingDeps, 'isCurrent'> | null = null;
 let contextOverflowRolloverHolder: ReturnType<typeof createContextOverflowRollover> | null = null;
 const overflowSuppressedBroadcasts = new Map<
   string,
@@ -4727,6 +4730,24 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
     handleSessionEvent(ownerEventDependencies, session, event);
   };
   const ownerDb = getCurrentDbClientSnapshot();
+  if (nativeInputBindingDepsHolder && typeof session.onNativeInput === 'function') {
+    const nativeDeps = nativeInputBindingDepsHolder;
+    const isCurrent = (current: typeof session) => Boolean(ownerDb && ownerDb === getCurrentDbClientSnapshot()
+      && nativeInputBindingDepsHolder === nativeDeps && sessionBindings.getSession(current.id) === current);
+    let importMedia: NativeInputBindingDeps['importMedia'];
+    registration.disposers.push(bindNativeSessionInput(session, {
+      ...nativeDeps,
+      isCurrent,
+      importMedia: async input => {
+        if (!isCurrent(session) || session.agentKind !== 'claude-code' || input.sessionId !== session.sdkSessionId) {
+          throwIpcError('PRECONDITION_FAILED', 'Native attachment no longer belongs to this task');
+        }
+        importMedia ??= createClaudeNativeMediaImporter({ sessionId: session.id, nativeSessionId: input.sessionId,
+          isCurrent: () => isCurrent(session) && session.sdkSessionId === input.sessionId });
+        return importMedia(input);
+      },
+    }));
+  }
   const ownerEventDependencies = Object.create(sessionEventDependencies) as SessionEventDependencies;
   Object.defineProperty(ownerEventDependencies, 'onPluginTaskTerminal', {
     value: (...args: Parameters<NonNullable<SessionEventDependencies['onPluginTaskTerminal']>>) => {
@@ -12486,7 +12507,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     };
   }));
 
-  const { sendToAgentAccepted: sendToAgentAcceptedUnlocked } = createMakerSendTransaction({
+  const { sendToAgentAccepted: sendToAgentAcceptedUnlocked, acceptNativeInput } = createMakerSendTransaction({
     readAutoReviewHistory,
     readScheduledPermissions: getSessionFsSnapshot,
     getSession: (sessionId) => maker.getSession(sessionId),
@@ -14387,6 +14408,30 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     getPersistedClientIds: getPersistedInputClientIds,
   });
   agentInputCoordinatorHolder = inputCoordinator;
+  nativeInputBindingDepsHolder = {
+    coordinator: inputCoordinator, accept: acceptNativeInput,
+    assertAllowed: async sessionId => {
+      await assertReviewExternalInputAllowed(sessionId);
+      await assertNotRetiredCompanionSession(sessionId);
+    },
+    readCreateOpts: async session => {
+      const meta = await maker.getSessionMeta(session.id);
+      if (!meta) throwIpcError('NOT_FOUND', 'Native input task no longer exists');
+      const configured = await buildCreateOptsForQueuedSession(session.id, meta);
+      // This input is already owned by the running adapter. A deferred route or
+      // engine selection must not replace it while accepting terminal input.
+      return { ...configured, agentKind: session.agentKind, workingDir: session.workDir,
+        model: session.model, effort: session.getEffort() ?? undefined,
+        permissionMode: session.stablePermissionModeState?.mode ?? undefined,
+        remoteHostId: session.remoteHostId ?? undefined };
+    },
+    withIdleSendLock: (sessionId, run) => {
+      if (hasSendToSessionLock(sessionId)) {
+        throwIpcError('PRECONDITION_FAILED', 'A task input or runtime change is already in progress');
+      }
+      return withSendToSessionLock(sessionId, run);
+    },
+  };
   setSharedTaskQueueReader((sessionId, clientId) => {
     const item = inputCoordinator.getProjection(sessionId).pendingQueue.find(
       (pending) => pending.clientId === clientId,

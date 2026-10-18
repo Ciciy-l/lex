@@ -11,9 +11,11 @@ import {
   type MainOwnedSendContext,
   type SessionSendOptions,
   type SessionSendResult,
+  type SessionNativeInput,
   type UserMessage,
 } from '@cindy/maker-core';
 import { CODEX_RESUME_NOT_READY_WIRE_MESSAGE } from '@cindy/maker-shared/agent-input-projection';
+import type { NativeMessageSource } from '@cindy/maker-shared/message-presentation';
 import type { AgentInputQueuedMessage } from '../../shared/agentInputQueue.js';
 
 import {
@@ -319,6 +321,8 @@ export interface MakerSendTransactionSession {
   codexThreadMayHaveRollout?: boolean;
   isTurnRunning(): boolean;
   send(message: UserMessage | string, opts?: SessionSendOptions): Promise<SessionSendResult>;
+  /** Host-only admission of an input already held by this exact native runtime. */
+  acceptNativeInput?: Session['acceptNativeInput'];
 }
 
 export interface MakerSendTransactionLog {
@@ -487,6 +491,13 @@ export interface MakerSendTransaction {
     message: unknown,
     createOpts?: unknown,
     sendOpts?: unknown,
+  ): Promise<DesktopMakerSendResult>;
+  /** Never registered as an IPC handler; callers must hold the live Session capability. */
+  acceptNativeInput(
+    session: MakerSendTransactionSession,
+    input: SessionNativeInput,
+    sendOpts?: unknown,
+    source?: NativeMessageSource,
   ): Promise<DesktopMakerSendResult>;
 }
 
@@ -880,20 +891,33 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
     }
   }
 
-  return {
-    async sendToAgentAccepted(
-      sessionId,
-      message,
-      createOpts,
-      sendOpts,
+  const nativeInputs = new WeakSet<SessionNativeInput>();
+  async function sendToAgentAccepted(
+      sessionId: unknown,
+      message: unknown,
+      createOpts?: unknown,
+      sendOpts?: unknown,
+      native?: { session: MakerSendTransactionSession; input: SessionNativeInput; source?: NativeMessageSource },
     ): Promise<DesktopMakerSendResult> {
       if (typeof sessionId !== 'string') throwIpcError('INVALID_PARAMS', 'sessionId required');
+      const assertNativeCurrent = () => {
+        if (native && (deps.getSession(sessionId) !== native.session
+          || !native.session.acceptNativeInput
+          || ['closed', 'error', 'aborting'].includes(native.session.getStatus?.() ?? 'active'))) {
+          throwIpcError('PRECONDITION_FAILED', 'Native input runtime is no longer current');
+        }
+      };
+      assertNativeCurrent();
       const requestedSendOpts = (sendOpts ?? {}) as MakerSendOptions;
       // session-agent-switch:pending 切换在发送时刻生效(用户语义:「消息真正发出
       // 去时才切」)。必须在 getSession 之前——apply 会 close 旧引擎的 live session,
       // 让下方走 lazy-create 按 DB 新值 spawn 新引擎。
-      await deps.applyPendingAgentSwitch?.(sessionId);
-      await deps.prepareUnhealthySession?.(sessionId);
+      // A held native turn cannot be moved to a rebuilt process. Recovery and
+      // pending engine switches still run on the next ordinary GUI send.
+      if (!native) {
+        await deps.applyPendingAgentSwitch?.(sessionId);
+        await deps.prepareUnhealthySession?.(sessionId);
+      }
       let sess = deps.getSession(sessionId);
       // Maker keeps a failed Session registered until its real handle cleanup
       // succeeds. It is not a reusable send target: route it through the
@@ -933,6 +957,7 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
           ((sess.agentKind === 'claude-code' || sess.agentKind === 'pi') &&
           !!deps.peekWorkingDirectoryRecoveryNote?.(sessionId, sess.workDir)));
         if ((!ok && fallbackDir) || needsCwdRefresh) {
+          if (native) throwIpcError('PRECONDITION_FAILED', 'Native input requires its existing working directory');
           const supplied = (createOpts as CreateOpts | undefined) ??
             await deps.readWorkingDirectoryRecoveryCreateOpts(sessionId);
           const startupPreferences = sess.hostStartupPreferences ?? {};
@@ -988,6 +1013,7 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
       }
 
       if (!sess) {
+        assertNativeCurrent();
         if (!createOpts)
           throwIpcError('NOT_FOUND', `Session ${sessionId} not found and no createOpts provided`);
         const co = deps.buildCreateOptsWithStderr({ ...(createOpts as CreateOpts), id: sessionId });
@@ -1364,7 +1390,18 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
         const interruptedAckAt = so.ackInterruptedTurnOnDispatch
           ? Math.max(0, Date.now() - 1)
           : null;
-        const sendResult = await sess.send(outgoing as never, {
+        assertNativeCurrent();
+        const dispatch = native
+          ? (prepared: UserMessage | string, options: SessionSendOptions) => sess.acceptNativeInput!({
+              nativeSessionId: native.input.nativeSessionId,
+              message: typeof prepared === 'string' ? { type: 'user', content: prepared } : prepared,
+              accept: (acceptedMessage, acceptedOptions) => {
+                assertNativeCurrent();
+                return native.input.accept(acceptedMessage, acceptedOptions);
+              },
+            }, options)
+          : sess.send.bind(sess);
+        const sendResult = await dispatch(outgoing as never, {
           [AUTO_REVIEW_SOURCE_CONTENT]: autoReviewSourceContent,
           ...(so[AUTO_REVIEW_DELEGATED_CONTINUATION] ? { [AUTO_REVIEW_DELEGATED_CONTINUATION]: true as const } : {}),
           ...(so[INHERITED_CAPABILITY_SELECTION] !== undefined
@@ -1435,6 +1472,7 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
             : {}),
           onAccepted: persistUserMessage
             ? async () => {
+                assertNativeCurrent();
                 persistUserMessage.onPersisting?.();
                 deps.previewUserPrompt?.(sess, persistUserMessage.content, {
                   source: 'maker_send:onPersisting',
@@ -1450,13 +1488,14 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
                       role: 'user',
                       content: persistUserMessage.content,
                       agentMeta: {
-                        uuid: so.messageUuid,
+                        uuid: native?.source?.messageId ?? so.messageUuid,
+                        ...(native?.source ? { nativeSource: native.source } : {}),
                         ...(so.origin?.kind === 'scheduler'
                           ? { autoReviewUserText: { kind: 'scheduled-continuation' } }
                           : so[AUTO_REVIEW_DELEGATED_CONTINUATION]
                             ? { autoReviewUserText: { kind: 'delegated-continuation' } }
                           : trustedUserText !== undefined ? { autoReviewUserText: trustedUserText } : {}),
-                        sdkSessionId: persistUserMessage.sdkSessionId,
+                        sdkSessionId: native?.input.nativeSessionId ?? persistUserMessage.sdkSessionId,
                         ...(persistUserMessage.delivery
                           ? { delivery: persistUserMessage.delivery }
                           : {}),
@@ -1508,6 +1547,7 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
               }
             : undefined,
           onDispatching: () => {
+            assertNativeCurrent();
             if (persistUserMessage?.shouldBroadcast && !persistUserMessage.shouldBroadcast()) {
               throwIpcError(
                 'PRECONDITION_FAILED',
@@ -1602,6 +1642,18 @@ export function createMakerSendTransaction(deps: MakerSendTransactionDeps): Make
         }
         throw err;
       }
+    }
+  return {
+    sendToAgentAccepted: (sessionId, message, createOpts, sendOpts) =>
+      sendToAgentAccepted(sessionId, message, createOpts, sendOpts),
+    async acceptNativeInput(session, input, sendOpts, source) {
+      if (nativeInputs.has(input)) throwIpcError('PRECONDITION_FAILED', 'Native input was already submitted');
+      if (source && (source.sessionId !== input.nativeSessionId || !source.messageId)) {
+        throwIpcError('PRECONDITION_FAILED', 'Native input source identity changed');
+      }
+      nativeInputs.add(input);
+      const ownedSource = source ? structuredClone(source) : undefined;
+      return sendToAgentAccepted(session.id, input.message, undefined, sendOpts, { session, input, source: ownedSource });
     },
   };
 }

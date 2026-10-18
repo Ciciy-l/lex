@@ -1,4 +1,5 @@
 import { AUTO_REVIEW_SOURCE_CONTENT, AUTO_REVIEW_USER_INTENT } from '@cindy/maker-core';
+import { throwIpcError } from '../utils/ipcValidate.js';
 import { SchedulerQueuedPreparationError } from './schedulerQueuedPreparation.js';
 /**
  * AgentInputCoordinator — main 侧排队输入事务协调器。
@@ -587,6 +588,8 @@ export interface AgentInputCoordinatorDeps {
 }
 
 interface ActiveTurn {
+  /** Owned by a native append continuation; never serialize/requeue as a new send. */
+  nativeInput?: true;
   /** Retained after steering receipt cleanup until this turn ends. */
   latestSteeringClientId?: string;
   acceptedSteeringItem?: AgentInputQueuedMessage;
@@ -1088,6 +1091,7 @@ export class AgentInputCoordinator {
   private readonly restoredQueueSessions = new Set<string>();
   private readonly restoreAttempted = new Set<string>();
   private readonly queueRestorePromises = new Map<string, Promise<void>>();
+  private readonly nativeAdmissions = new WeakSet<object>();
   private readonly lastQueueSnapshotJson = new Map<string, string>();
   /**
    * 自动重试项在真正 vendor dispatch 前仍可被 Stop / 新消息 / ghost block 丢弃。
@@ -1099,6 +1103,29 @@ export class AgentInputCoordinator {
   private readonly autoResumeDispatchAttempts = new Map<string, number>();
 
   constructor(private readonly deps: AgentInputCoordinatorDeps) {}
+
+  /** Host-only: adopt a held native input without placing another prompt in the queue. */
+  async acceptNativeInput(
+    sessionId: string,
+    item: AgentInputQueuedMessage,
+    input: { session: object; messageId: string; dispatch: AgentInputCoordinatorDeps['sendToAgent'];
+      signal?: AbortSignal; buildMessage?: (head: AgentInputQueuedMessage) => AgentInputMakerMessage },
+  ): Promise<void> {
+    if (this.nativeAdmissions.has(input)) throwIpcError('PRECONDITION_FAILED', 'Native input was already submitted');
+    this.nativeAdmissions.add(input);
+    await this.ensureQueueRestored(sessionId);
+    const state = this.getState(sessionId);
+    if (!input.messageId || input.signal?.aborted || this.deps.getTurnSessionIdentity?.(sessionId) !== input.session) {
+      throwIpcError('PRECONDITION_FAILED', 'Native input runtime is no longer current');
+    }
+    // Check the ordinary queue gates without inserting or persisting this native
+    // row. An already-held first model step must never wait behind a GUI send.
+    const gate = this.explainDrainBlockGate(sessionId, { ...state, pendingQueue: [item, ...state.pendingQueue] });
+    if (gate || state.pendingQueue.length > 0) throwIpcError('PRECONDITION_FAILED', 'Native input cannot enter the current task boundary');
+    const native = { ...input, accepted: false };
+    await this.dispatchInput(sessionId, item, 'native-input', native);
+    if (!native.accepted) throwIpcError('PRECONDITION_FAILED', 'Native input was not admitted');
+  }
 
   /**
    * 媒体回收器活引用取证(recycler.ts 的内存队列暂存区):序列化所有会话在
@@ -3626,6 +3653,16 @@ export class AgentInputCoordinator {
     this.clearAbortReconcileRetry(state);
     state.queueAbortPending = false;
     state.abortBoundaryToken = null;
+    if (active?.nativeInput && !isActiveTurnDispatched(active) && type === 'error') {
+      // Native may reject/close after history was written but before the host
+      // receives its acceptance. Persistence alone must not authorize replay.
+      recordPendingTerminalEvent(active, { type: 'error', message, signals });
+      state.error = message ?? state.error;
+      setErrorProjectionSignals(state, signals);
+      state.recovery = null;
+      this.emit(sessionId);
+      return;
+    }
     if (type === 'error') {
       if (
         active &&
@@ -4042,6 +4079,7 @@ export class AgentInputCoordinator {
     const active = state.activeTurn;
     const activeItem =
       active?.item &&
+      !active.nativeInput &&
       !active.persisted &&
       !state.pendingQueue.some((q) => q.clientId === active.item?.clientId)
         ? [active.item]
@@ -4586,6 +4624,14 @@ export class AgentInputCoordinator {
     state.staleLiveIdleSinceMs = null;
     state.pendingQueue = state.pendingQueue.slice(1);
     this.removePendingCompactWaitClientId(state, head.clientId);
+    await this.dispatchInput(sessionId, head, reason);
+  }
+
+  private async dispatchInput(sessionId: string, head: AgentInputQueuedMessage, reason: string,
+    native?: { session: object; messageId: string; dispatch: AgentInputCoordinatorDeps['sendToAgent']; accepted: boolean;
+      signal?: AbortSignal; buildMessage?: (head: AgentInputQueuedMessage) => AgentInputMakerMessage },
+  ): Promise<void> {
+    const state = this.getState(sessionId);
     if (!state.stickyError) {
       state.error = null;
       clearErrorProjectionSignals(state);
@@ -4595,7 +4641,8 @@ export class AgentInputCoordinator {
     const active: ActiveTurn = {
       item: head,
       delivery: 'turn',
-      messageUuid: crypto.randomUUID(),
+      messageUuid: native?.messageId ?? crypto.randomUUID(),
+      ...(native ? { nativeInput: true as const } : {}),
       createdAt: new Date().toISOString(),
       generation: state.generation,
       clearBoundaryMs: state.clearBoundaryMs,
@@ -4616,7 +4663,7 @@ export class AgentInputCoordinator {
       // rewrite 用新正文替换 head(送 agent / 落库 / 显示都用它),通知宿主
       // 留痕署名后照常派发。activeTurn 已置位,并发 drain 被挡住,询问期间
       // 不会抢发下一条。
-      if (!head.bypassGhostHooks && this.deps.screenUserMessage) {
+      if ((native || !head.bypassGhostHooks) && this.deps.screenUserMessage) {
         const verdict = await this.deps.screenUserMessage(
           sessionId,
           getAgentFacingText(head),
@@ -4670,14 +4717,17 @@ export class AgentInputCoordinator {
         head.persistedContent,
         referenceContexts,
       );
-      const makerUserMessage = buildMakerUserMessage(head, referenceContexts);
+      const makerUserMessage = native?.buildMessage?.(head) ?? buildMakerUserMessage(head, referenceContexts);
       active.sendStarted = true;
       active.dispatchLifecycle = 'sending';
       // Freeze side-effect timestamps before entering vendor code. A dispatch
       // may synchronously emit the new turn's started marker before it returns;
       // post-dispatch acknowledgements must remain older than that marker.
       const preVendorDispatchAt = Math.max(0, Date.now() - 1);
-      const result = await this.deps.sendToAgent(sessionId, makerUserMessage, head.createOpts, {
+      if (native && (native.signal?.aborted || this.deps.getTurnSessionIdentity?.(sessionId) !== native.session)) {
+        throwIpcError('PRECONDITION_FAILED', 'Native input runtime changed during preparation');
+      }
+      const result = await (native?.dispatch ?? this.deps.sendToAgent)(sessionId, makerUserMessage, head.createOpts, {
         [AUTO_REVIEW_SOURCE_CONTENT]: queuedAutoReviewText(head),
         ...(head.autoReviewUserText && typeof head.autoReviewUserText === 'object' && head.autoReviewUserText.kind === 'delegated-continuation'
           ? { [AUTO_REVIEW_DELEGATED_CONTINUATION]: true as const } : {}),
@@ -4689,7 +4739,9 @@ export class AgentInputCoordinator {
         ...(head.autoResume && typeof head.autoResumeInfo?.sessionTotal === 'number'
           ? { turnAttemptToken: head.autoResumeInfo.sessionTotal }
           : {}),
-        signal: this.getInputAbortSignal(sessionId, active.generation),
+        signal: native?.signal
+          ? AbortSignal.any([native.signal, this.getInputAbortSignal(sessionId, active.generation)])
+          : this.getInputAbortSignal(sessionId, active.generation),
         expectedClearBoundaryMs: active.clearBoundaryMs,
         expectedInputGeneration: active.generation,
         ...(head.origin?.kind === 'scheduler' ? { origin: head.origin } : {}),
@@ -4752,7 +4804,7 @@ export class AgentInputCoordinator {
           },
           onPersistFailed: () => {
             this.notifyUserMessagePersistenceFailed(sessionId, head, {
-              retainForRetry: true,
+              retainForRetry: !native,
             });
           },
         },
@@ -4760,10 +4812,12 @@ export class AgentInputCoordinator {
       if (this.discardOnStaleActiveTurn(sessionId, active, isSendDispatched(result))) return;
       active.persisting = false;
       if (!isSendDispatched(result)) {
+        if (native) throwIpcError('PRECONDITION_FAILED', 'Native input was not admitted');
         this.handleSendNotDispatched(sessionId, active, head, result);
         return;
       }
       this.markActiveTurnDispatched(sessionId, active);
+      if (native) native.accepted = true;
       // 派发成功 = 凭证切换等待(若有)结束。
       this.clearCredentialSwitchWait(this.getState(sessionId));
       // vendor dispatch 已不可逆：此时再 durable-ack 旧中断。onAccepted 仍可能
@@ -4811,6 +4865,17 @@ export class AgentInputCoordinator {
       this.emit(sessionId);
     } catch (err) {
       if (this.discardOnStaleActiveTurn(sessionId, active)) return;
+      if (native) {
+        // The native append continuation owns this input. Never restore it as a
+        // GUI queue head, even when persistence or the acceptance receipt failed.
+        const latest = this.getState(sessionId);
+        latest.activeTurn = null;
+        this.notifyRejectedUserTurn(sessionId, head);
+        if (active.persisted) this.notifyUndispatchedUserTurn(sessionId, head, 'failed');
+        else this.deps.onDiscardedQueuedMessage?.(sessionId, head);
+        this.emit(sessionId);
+        throw err;
+      }
       // 派发 / 落库失败(含 SESSION_RUNNING 让位):暂存的 error 候选到此作废,补落它的行。
       // 放在分支之前 —— 三条出口都不会再走到接管决策。
       this.discardDeferredResumableCandidate(sessionId, active);
@@ -5431,6 +5496,14 @@ export class AgentInputCoordinator {
     active: ActiveTurn,
   ): void {
     const message = 'Session closed before dispatch completed';
+    if (active.nativeInput) {
+      state.activeTurn = null;
+      if (active.item) {
+        if (active.persisted) this.notifyUndispatchedUserTurn(sessionId, active.item, 'failed');
+        else this.deps.onDiscardedQueuedMessage?.(sessionId, active.item);
+      }
+      return;
+    }
     if (!active.item) {
       state.activeTurn = null;
       state.error = message;
@@ -5504,6 +5577,11 @@ export class AgentInputCoordinator {
     state.activeTurn = null;
     const item = active.item;
     if (!item) return;
+    if (active.nativeInput) {
+      if (active.persisted) this.notifyUndispatchedUserTurn(sessionId, item, 'cancelled');
+      else this.deps.onDiscardedQueuedMessage?.(sessionId, item);
+      return;
+    }
     if (active.persisted) {
       this.notifyUndispatchedUserTurn(sessionId, item, 'cancelled');
       // 第六条终态路径(本轮自查补上,不是等 reviewer 报的):用户 Stop 赢在 pre-vendor
